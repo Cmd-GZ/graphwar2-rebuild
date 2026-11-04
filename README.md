@@ -35,8 +35,8 @@
 模块全集与行号下界见 [`docs/02-module-map.md`](docs/02-module-map.md)，共约 90 个 `graphwar_*.rs`。
 
 **Rust 实现状态**：`parse` / `eval` / `calculate` / `shot` / `plane`（坐标变换 + 掩膜）/ `events`（枚举形状）/ `life`（两张表）已可运行，
-由 `cargo test` 对 331 条真值用例验收（其中 294 条直接来自真二进制），
-外加常量锚定与形状断言。夹具的生成方式见
+由 `cargo test` 的 **40 条**断言验收（含 331 条真值夹具中的抽样、常量锚定、形状与入口）；
+另有 5 个对拍脚本（`tools/*_check.py`、`tools/gdext_probe.c`）与真二进制比较。夹具的生成方式见
 [`docs/06-verification.md §9`](docs/06-verification.md)。
 
 ## 文档

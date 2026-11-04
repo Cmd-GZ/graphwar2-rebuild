@@ -2,7 +2,15 @@
 
 **读这一篇就够了。** 它替代"翻 17 篇文档"的过程。若与本篇冲突，以代码与 `docs/` 原文为准。
 
-最后更新：目标 2（"构建出二进制 + 还原资源"）刚起步时。
+最后更新：构建与资源两条线均已完成并验证。
+
+**四条独立验收**（都能重跑）：
+```
+cargo test                        40 条通过
+cargo build --release             产出 libgw2_rebuild.so (ELF, 12 个导出符号)
+tools/gdext_probe.c               dlopen + 入口契约 PASS
+tools/{capi,mask,mask_api,simulate}_check.py   全部 RESULT: PASS
+```
 
 ---
 
