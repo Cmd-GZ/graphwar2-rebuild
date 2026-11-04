@@ -25,12 +25,12 @@
 | 求值器 / 常量折叠 | ✅ 复原完成 | 逐位验证 |
 | 点序列采样 `graphwar_path_calculator.rs` | ✅ 复原完成 | 逐位验证（2552 条曲线） |
 | 开火结算 `graphwar_shot_calculator.rs` | 🔶 调用链已还原，内部细节待补 | 观测（调用点） |
-| 棋盘 / 坐标 `graphwar_plane*.rs` | ⬜ 待逆向 | — |
+| 棋盘 / 坐标 `graphwar_plane*.rs` | 🔶 核心变换已解出（20 px/单位，画布 1000×600）；命中判定未证 | 观测 |
 | 回合 `graphwar_turn_manager.rs` | ⬜ 待逆向 | — |
 | 命中与生命 `life/soldier/team_manager` | ⬜ 待逆向 | — |
 | 关卡生成 `graphwar_level_generator.rs` | ⬜ 待逆向 | — |
 | AI `computer_player_manager` / `function_evolutionator` | ⬜ 待逆向 | — |
-| 联机 `game_server/client`、`lan_broadcaster_v6`、`broker` | ⬜ 待逆向 | — |
+| 联机 `game_server/client`、`lan_broadcaster_v6`、`broker` | ⬜ 协议形状已还原（见 docs/07），实现未逆向 | 观测（字符串） |
 
 模块全集与行号下界见 [`docs/02-module-map.md`](docs/02-module-map.md)，共约 90 个 `graphwar_*.rs`。
 
