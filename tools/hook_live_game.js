@@ -1,0 +1,54 @@
+/**
+ * 让 harness 开一局真实对局，同时在 libgraphwarrust.so 上挂 hook，统计玩法函数调用。
+ * 这是"玩法 oracle"的存在性证明：能抓到调用，才能真正问行为。
+ */
+const path = require('path');
+const ROOT = '/home/user/MyProject/gw2';
+const frida = require(path.join(ROOT, '.rea-runtime/node_modules/frida'));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const TARGETS = {
+  calculate_path: 0x3c2530, parse_function: 0x4ed670, eval: 0x4eb9d0,
+  rasterize: 0x3f11e0, point_test: 0x3f15b0, mask_ctor: 0x523020,
+  shot_calc: 0x3c2bc0, turn_a: 0x4628d0, turn_b: 0x4627c0,
+  life_entry: 0x454b40, levelgen_a: 0x466c40, levelgen_b: 0x466d20,
+};
+
+const SRC = `
+const targets = ${JSON.stringify(TARGETS)};
+const counts = {};
+let installed = false;
+setInterval(() => {
+  if (installed) return;
+  const gw = Process.enumerateModules().find(m => /graphwarrust/i.test(m.name));
+  if (!gw) return;
+  installed = true;
+  for (const [name, rva] of Object.entries(targets)) {
+    try {
+      Interceptor.attach(gw.base.add(rva), { onEnter() { counts[name] = (counts[name] || 0) + 1; } });
+      counts[name] = 0;
+    } catch (e) { counts[name] = 'ERR'; }
+  }
+  send({ installed: true });
+}, 5);
+setInterval(() => { if (installed) send({ counts: Object.assign({}, counts) }); }, 2000);
+`;
+
+(async () => {
+  const dev = await frida.getLocalDevice();
+  const env = Object.assign({}, process.env, {
+    XDG_DATA_HOME: ROOT + '/.godot-data', XDG_CACHE_HOME: ROOT + '/.godot-cache',
+    XDG_CONFIG_HOME: ROOT + '/.godot-config',
+  });
+  const pid = await dev.spawn([ROOT + '/tools/Godot_v4.7.2-stable_linux.x86_64', '--headless', '--path', ROOT + '/godot-live'], { env, cwd: ROOT });
+  const session = await dev.attach(pid);
+  const script = await session.createScript(SRC);
+  let last = null;
+  script.message.connect((m) => { if (m.payload && m.payload.counts) last = m.payload; });
+  await script.load();
+  await dev.resume(pid);
+  await sleep(12000);           // 让 probe.gd 完成 Battle->Create->AddBot->Start
+  console.log(JSON.stringify(last));
+  await session.detach();
+  await dev.kill(pid);
+})().catch((e) => { console.error('ERR', e.message); process.exit(1); });

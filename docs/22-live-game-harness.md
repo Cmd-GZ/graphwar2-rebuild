@@ -51,3 +51,53 @@ godot --headless --path .                         # 运行
 
 `godot-live/` 由 `rsc/`（修好命名后的导出资源）+ 原版 `.so` + 我们的桩构成，
 属于本地产物，已 gitignore。
+
+## 5. 开一局真实对局（本轮达成）
+
+### 5.1 按钮链路（靠枚举按钮摸出来的）
+
+```
+MainMenu  .../VBoxContainer2/LocalButton                    text=Battle
+LanLobby  .../MarginContainer/HBoxContainer/CreateButton    text= Create Game
+GameSetup .../OptionsContainer/AddBotButton                 打开 AddBotPopUp
+AddBotPopUp .../VBoxContainer/OptionsContainer/AspectRatioContainer/AddBotButton   选难度，加 Bot
+GameSetup .../MarginContainer/HBoxContainer/StartButton     text= Start
+```
+
+按完后 `ScreensControl` 的可见子节点从 `GameSetup` 变成 **`PlayScreen`** —— 对局开始。
+
+**坑**：`AddBotPopUp` 打开时会挡住 Start；不加 Bot 直接 Start 不会报错、也不会切屏（静默无操作）。
+
+### 5.2 对局里玩法函数确实在跑（hook 计数）
+
+```bash
+node gw2-rebuild/tools/hook_live_game.js
+```
+
+12 秒一局，`libgraphwarrust.so` 上的调用计数：
+
+```
+parse_function  11      eval            1       rasterize     38
+point_test   21629      mask_ctor       2       life_entry    12
+turn_a       1259       turn_b       1531      levelgen    1 + 1
+shot_calc       0       calculate_path  0
+```
+
+⇒ **回合、生命、关卡、碰撞全部在实际执行**，而且可以用 frida 观察。
+`docs/21` 里"玩法没有真值来源"的结论**正式作废**。
+
+### 5.3 现在能做但还没做的事
+
+- 用 `Interceptor.attach` 抓参数，问出回合/生命的语义；
+- 在同一局里主动调用内部函数（活体 oracle），与我们的复刻对拍；
+- `shot_calc=0 / calculate_path=0` 说明这一局 Bot 还没开火（只跑了 12 秒），
+  需要更长观察窗或让 Bot 真正行动，才能覆盖开火结算。
+
+## 6. 复现
+
+```bash
+# 手动开一局（按钮链路见 5.1），probe.gd 会自动按
+godot --headless --path godot-live
+# 带 hook 观察
+node gw2-rebuild/tools/hook_live_game.js
+```

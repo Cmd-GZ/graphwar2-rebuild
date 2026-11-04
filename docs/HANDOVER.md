@@ -47,7 +47,15 @@ godot --headless --path .                  # → GRAPHWarRootNode 活着，子�
 
 三个卡点与解法见 `docs/22-live-game-harness.md`：占位资源、Ad_holder 桩、
 **`project.binary` 覆盖 `project.godot`**（最隐蔽的那个）。
-⇒ `docs/21` 里"玩法无真值来源"的结论已作废，接下来是"如何开一局对战"。
+⇒ `docs/21` 里"玩法无真值来源"的结论已作废。
+
+**而且能开一局真实对局了**（按钮链路见 `docs/22` §5.1）：
+Battle -> Create Game -> AddBot（弹窗里选难度）-> Start -> `PlayScreen`。
+
+对局中 hook 计数（12s）证明玩法在跑：
+`parse 11 / eval 1 / rasterize 38 / point_test 21629 / mask_ctor 2 /
+turn 1259+1531 / life_entry 12 / levelgen 1+1`。
+工具：`tools/hook_live_game.js`（frida 拉起 harness 并自动开局）。
 
 ### 玩法 oracle：四条尝试的记录（部分已被 docs/22 推翻）
 
