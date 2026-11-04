@@ -38,7 +38,18 @@ frida 拉起真游戏 → 等扩展加载 → 在**运行中的进程**里调 `l
 npm rebuild frida --foreground-scripts`。REA 自带 frida 工具因缓存失效仍不可用，
 所以直接走 Node API。**每次 bash 是独立 PID 命名空间**，必须用 spawn 模式。
 
-### 玩法 oracle：已尝试四条路，全部有证据地失败
+### 原版游戏已能在我们的 harness 里跑（本轮突破）
+
+```bash
+cd godot-live && rm -f project.binary      # 关键
+godot --headless --path .                  # → GRAPHWarRootNode 活着，子节点齐全
+```
+
+三个卡点与解法见 `docs/22-live-game-harness.md`：占位资源、Ad_holder 桩、
+**`project.binary` 覆盖 `project.godot`**（最隐蔽的那个）。
+⇒ `docs/21` 里"玩法无真值来源"的结论已作废，接下来是"如何开一局对战"。
+
+### 玩法 oracle：四条尝试的记录（部分已被 docs/22 推翻）
 
 见 `docs/21-oracle-limits.md`。摘要：
 1. GDScript 层面玩法不暴露（12 类 25 个 UI 方法）；

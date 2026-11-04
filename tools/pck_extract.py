@@ -59,7 +59,7 @@ def parse_pck(path):
         fflags, = struct.unpack_from("<I", mv, off)
         off += 4
         files.append({
-            "path": name.lstrip("res://").lstrip("/"),
+            "path": name.removeprefix("res://").lstrip("/"),  # 不能用 lstrip("res://")：它按字符集合剥离，会吃掉开头的 e/r/s
             "offset": foff,
             "size": fsize,
             "md5": md5.hex(),
