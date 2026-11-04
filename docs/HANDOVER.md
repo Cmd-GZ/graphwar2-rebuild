@@ -38,6 +38,17 @@ frida 拉起真游戏 → 等扩展加载 → 在**运行中的进程**里调 `l
 npm rebuild frida --foreground-scripts`。REA 自带 frida 工具因缓存失效仍不可用，
 所以直接走 Node API。**每次 bash 是独立 PID 命名空间**，必须用 spawn 模式。
 
+### 玩法 oracle：已尝试四条路，全部有证据地失败
+
+见 `docs/21-oracle-limits.md`。摘要：
+1. GDScript 层面玩法不暴露（12 类 25 个 UI 方法）；
+2. headless 主菜单下 12 个玩法函数 hook **全零调用**；
+3. 自建项目跑原版场景失败：AdMob 原生插件缺失 + 导出态资源（只有 `.ctex`/`.import`，
+   源 `.svg` 不在包内）无法按源码路径加载；
+4. 直接实例化 `GraphwarRootNode`：无资源时 panic，有资源时依赖链仍失败。
+
+⇒ 回合/关卡/AI/结算保持 🔶/⬜ 是**缺真值**，不是没做。
+
 ### 本轮新增的两个坑
 
 7. `GDExtensionClassMethodInfo` 末尾还有 `default_argument_count` / `default_arguments`，
