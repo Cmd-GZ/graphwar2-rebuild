@@ -106,6 +106,16 @@ def main():
                      max(rec["lines"]) if rec["lines"] else 0))
     rows.sort(key=lambda r: (-r[1], r[0]))
 
+    # 每个模块的函数地址清单（供逐模块反编译使用）
+    funcs_out = os.path.join(SUB, "fixtures", "module_funcs.tsv")
+    with open(funcs_out, "w", encoding="utf-8") as fh:
+        fh.write("module\tfunc_addr\n")
+        for module in sorted(per_module):
+            if not module.startswith("graphwar_"):
+                continue
+            for f in sorted(per_module[module]["funcs"]):
+                fh.write("%s\t0x%x\n" % (module, f))
+
     out = os.path.join(SUB, "fixtures", "module_map.tsv")
     with open(out, "w", encoding="utf-8") as fh:
         fh.write("module\tfunctions\trefs\tfirst_func\tlast_func\tmax_line\n")
