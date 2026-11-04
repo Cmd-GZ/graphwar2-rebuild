@@ -57,6 +57,10 @@ Battle -> Create Game -> AddBot（弹窗里选难度）-> Start -> `PlayScreen`�
 turn 1259+1531 / life_entry 12 / levelgen 1+1`。
 工具：`tools/hook_live_game.js`（frida 拉起 harness 并自动开局）。
 
+**真实对局对拍已通过**（`docs/23`）：从对局里抓 `calculate_path` 的入参与输出，
+`graphwar_curve.calculate_path` 逐点一致 69/69（step=0.5、flip=True）。
+⚠️ 由此发现"游戏一律用 step=0.01"的说法不准确：真实调用点会传别的步长。
+
 **让 Bot 开火的关键**：GameSetup 里先按两次 `TurnTimeButton`、再按 `TurnModeButton`，
 然后 Start。否则默认回合时限太长，`shot_calc/calculate_path` 一直是 0。
 调快后 60 秒内 `shot_calc 159 / calculate_path 159 / parse_function 66`。
