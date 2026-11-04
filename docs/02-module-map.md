@@ -177,12 +177,14 @@
 **地址换算**：这张表用的是 ELF 虚地址；Ghidra/REA 的地址 = 虚地址 **+ 0x100000**。
 例如 `graphwar_plane.rs` 的首个函数 `0x4b1784` → REA 里是 `0x5b1784`。
 
-`graphwar_plane.rs` 的 11 个函数（虚地址）：
+`graphwar_plane.rs` 的 10 个函数（虚地址，已按 §12 的 Ghidra 边界重取）：
 
 ```
-0x4b1784 0x4b6b74 0x4b6d04 0x4b6dcc 0x4b6e94 0x4b6ecc
-0x4b8634 0x4bc0fc 0x4bc6a4 0x4bc8ac 0x4bca94 0x4be164
+0x4b2260 0x4b23e0 0x4b5df0 0x4b7a70 0x4b83f0
+0x4bc490 0x4bc6b0 0x4bc860 0x4bcab0 0x4be3e0
 ```
+
+各函数的规模与已确认的语义见 [`08-plane.md`](08-plane.md)。
 
 ## 12. 函数边界的数据源修正（重要）
 
