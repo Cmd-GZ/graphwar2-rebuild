@@ -64,6 +64,21 @@
 | [17-resources.md](docs/17-resources.md) | 游戏资源还原：PCK v4 格式、rsc/ 生成与为何不入库 |
 | [18-build.md](docs/18-build.md) | **构建出真实二进制**：cdylib、gdext_rust_init、dlopen 验证 |
 
+## 对外接口（构建产物里的符号）
+
+```
+gdext_rust_init                                               Godot GDExtension 入口
+gw2_parse_len(text)                                        -> token 个数
+gw2_shot_points(text,x0,y0,step,flip,ode,out,cap)          -> 点数（xy 交替写 out）
+gw2_correction(text,x0,y0,flip)                            -> 修正常数
+gw2_rasterize(x,y,size,out,len,fill)                       -> 0（写掩膜）
+gw2_is_occupied(mask,len,x,y)                              -> 1 命中 / 0 空
+gw2_simulate(text,x0,y0,step,flip,ode,obstacles,n,count)   -> 首个命中序号 / -1
+```
+
+前四个与"曲线"相关，中间两个是掩膜 API，最后一个是把两者拼起来的开火模拟。
+每个都有对应的对拍脚本（见 `docs/16`）。
+
 ## 目录
 
 ```
