@@ -43,14 +43,22 @@
 
 | 文档 | 内容 |
 |---|---|
-| [00-status.md](docs/00-status.md) | 当前状态总览：什么已完成、什么只观测、什么还空白 |
+| [00-status.md](docs/00-status.md) | 状态总览：什么已完成、什么只观测、什么还空白 |
 | **[15-end-to-end.md](docs/15-end-to-end.md)** | **端到端：从敲下函数到有人死亡（建议先读这篇）** |
 | [01-architecture.md](docs/01-architecture.md) | 整体分层：Godot 外壳 / GDExtension 内核 / 资源包 |
-| [02-module-map.md](docs/02-module-map.md) | ~90 个模块的清单、职责、已知行号与地址锚点 |
+| [02-module-map.md](docs/02-module-map.md) | ~90 个模块的清单、职责、行号与地址锚点；函数↔模块映射 |
 | [03-function-language.md](docs/03-function-language.md) | 玩家输入的函数语言：文法、优先级、全部怪癖 |
 | [04-path-sampling.md](docs/04-path-sampling.md) | 等弦长二分采样：算法本体与全部常量 |
 | [05-shot-pipeline.md](docs/05-shot-pipeline.md) | 一次开火的完整链路：位置 → 修正 → 采点 → 广播 |
-| [06-verification.md](docs/06-verification.md) | 如何证明复原正确；证据分级与已知边界 |
+| [06-verification.md](docs/06-verification.md) | 如何证明复原正确；证据分级、工具链现状与已知边界 |
+| [07-protocol.md](docs/07-protocol.md) | 事件枚举、字段、变体顺序与传输线索 |
+| [08-plane.md](docs/08-plane.md) | 坐标变换、碰撞掩膜、y 轴方向与光栅化舍入 |
+| [09-report-decision.md](docs/09-report-decision.md) | 上游报告是否拆分的决策与判据 |
+| [10-lifecycle.md](docs/10-lifecycle.md) | 生命与死亡：模块规模、驱动者、两张表 |
+| [11-dispatch.md](docs/11-dispatch.md) | 间接派发：用重定位表补调用图的盲区 |
+| [12-ai.md](docs/12-ai.md) | AI：结构已探明，评分规则未还原 |
+| [13-turns.md](docs/13-turns.md) | 回合：规模与驱动者、无时间常量的负结果 |
+| [14-target.md](docs/14-target.md) | 目标选择：核心十字路口，SIMD 未解 |
 
 ## 目录
 
