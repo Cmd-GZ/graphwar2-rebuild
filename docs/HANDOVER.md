@@ -23,6 +23,21 @@ cd godot-ref && ../tools/Godot_v4.7.2-stable_linux.x86_64 --headless --path .
 **注意**：`~` 只读，必须设三个 XDG 目录；`godot-probe/main.tscn` 必须指向 `main.gd`
 （指错会静默退出，什么都不打印）。
 
+### 活体 oracle（本轮新增，能力级突破）
+
+```bash
+node tools/frida_live.js modules
+node tools/frida_live.js call <rva-hex> <ret-type> [type:value,...]
+```
+
+frida 拉起真游戏 → 等扩展加载 → 在**运行中的进程**里调 `libgraphwarrust.so` 的内部函数。
+实测 `0x9302b0`（Ghidra `0xa302b0`）：`2.7→2`、`-2.7→-3` ⇒ 是 **floor**。
+详见 `docs/20-live-oracle.md`。
+
+前置修复（一次性）：`cd .rea-runtime && npm install-scripts approve frida &&
+npm rebuild frida --foreground-scripts`。REA 自带 frida 工具因缓存失效仍不可用，
+所以直接走 Node API。**每次 bash 是独立 PID 命名空间**，必须用 spawn 模式。
+
 ### 本轮新增的两个坑
 
 7. `GDExtensionClassMethodInfo` 末尾还有 `default_argument_count` / `default_arguments`，
