@@ -44,6 +44,7 @@
 | 文档 | 内容 |
 |---|---|
 | [00-status.md](docs/00-status.md) | 当前状态总览：什么已完成、什么只观测、什么还空白 |
+| **[15-end-to-end.md](docs/15-end-to-end.md)** | **端到端：从敲下函数到有人死亡（建议先读这篇）** |
 | [01-architecture.md](docs/01-architecture.md) | 整体分层：Godot 外壳 / GDExtension 内核 / 资源包 |
 | [02-module-map.md](docs/02-module-map.md) | ~90 个模块的清单、职责、已知行号与地址锚点 |
 | [03-function-language.md](docs/03-function-language.md) | 玩家输入的函数语言：文法、优先级、全部怪癖 |
