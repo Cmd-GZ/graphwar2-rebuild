@@ -38,7 +38,7 @@ MAJORITY = 2.0 / 3.0
 
 
 def load_funcs():
-    starts = sorted(pickle.load(open(os.path.join(ROOT, "analysis", "funcstarts.pkl"), "rb")))
+    starts = sorted(pickle.load(open(os.path.join(ROOT, "analysis", "funcstarts_ghidra_va.pkl"), "rb")))
     return starts, set(starts)
 
 

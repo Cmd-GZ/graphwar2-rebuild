@@ -146,7 +146,13 @@ NaN 只要求双方都是 NaN，不比较载荷位。
 （`ghidra.startup_timeout_ms` 已设到 40 分钟），但**客户端**的截止时间在注册配置里，
 需要给 `rea-mcp` 条目加 `toolCallTimeoutMs` 并重启宿主。
 
-因此当前的重活走 REA CLI（无客户端截止时间），MCP 侧只做秒级的无 provider 操作。
+因此重活既可以走 REA CLI，也可以走 MCP（客户端截止时间已设为 30 分钟，
+实测 Ghidra 首次导入约 21 分钟可通过）。
+
+**一次代价很高的教训（详见 `docs/02` §12）**：本仓库第一版用的函数边界
+（上游 `funcstarts.pkl`，来自 `.eh_frame`）与 Ghidra 的边界只交集 2 条，
+且大量地址越出 `.text`。现在一律以 **Ghidra 函数表**为准，
+换算 `Ghidra 地址 = 虚地址 + 0x100000`。此前"反汇编漂移"的判断是错的。
 
 **另一个负结果**：这个 `.so` **没有 `.dep-v0`（cargo-auditable）段**
 （`inspect_rust_binary` 已确认），所以无法从依赖清单反推 crate 结构。

@@ -43,7 +43,7 @@ def section_of(secs, pos):
 
 def main():
     E = Elf(SO)
-    funcstarts = sorted(pickle.load(open(os.path.join(ROOT, "analysis", "funcstarts.pkl"), "rb")))
+    funcstarts = sorted(pickle.load(open(os.path.join(ROOT, "analysis", "funcstarts_ghidra_va.pkl"), "rb")))
     xrefs = pickle.load(open(os.path.join(ROOT, "analysis", "xrefs.pkl"), "rb"))
     relocs = pickle.load(open(os.path.join(ROOT, "analysis", "relocs.pkl"), "rb"))
 
