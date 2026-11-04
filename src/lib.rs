@@ -106,4 +106,5 @@ pub const E: f64 = std::f64::consts::E;
 
 pub mod function;
 pub mod path;
+pub mod plane;
 pub mod shot;
