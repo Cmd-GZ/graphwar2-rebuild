@@ -1,0 +1,9 @@
+[package]
+name = "gw2-rebuild"
+version = "0.1.0"
+edition = "2021"
+description = "Graphwar II source reconstruction from static reverse engineering of libgraphwarrust.so"
+license = "UNLICENSED"
+publish = false
+
+[dependencies]
