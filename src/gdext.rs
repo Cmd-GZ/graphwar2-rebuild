@@ -60,6 +60,7 @@ static INIT_CALLS: AtomicUsize = AtomicUsize::new(0);
 static DEINIT_CALLS: AtomicUsize = AtomicUsize::new(0);
 static LAST_LEVEL: AtomicUsize = AtomicUsize::new(usize::MAX);
 static PROC_ADDR: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static LIBRARY: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 /// 入口实际拿到的 `get_proc_address`（供自检使用）。
 pub fn proc_address() -> *mut c_void {
@@ -124,16 +125,28 @@ unsafe extern "C" fn on_initialize(_userdata: *mut c_void, level: i32) {
     INIT_CALLS.fetch_add(1, Ordering::Relaxed);
     LAST_LEVEL.store(level as usize, Ordering::Relaxed);
 
+    // 真引擎里通过 stderr 观察初始化（headless 时也会出现在控制台）
+    eprintln!("[gw2-rebuild] initialize level={level}");
     // 只在 SCENE 级别做类注册（与 Godot 的约定一致）。
     if level == LEVEL_SCENE {
         for name in WANTED {
             let _ = request(name);
         }
+        // 真正注册一个类，供 GDScript 通过 ClassDB 访问
+        let f = PROC_ADDR.load(Ordering::Relaxed);
+        let lib = LIBRARY.load(Ordering::Relaxed);
+        if !f.is_null() {
+            let get: GetProcAddress = std::mem::transmute(f);
+            unsafe {
+                crate::gdext_class::register_class(get, lib);
+            }
+        }
     }
 }
 
-unsafe extern "C" fn on_deinitialize(_userdata: *mut c_void, _level: i32) {
+unsafe extern "C" fn on_deinitialize(_userdata: *mut c_void, level: i32) {
     DEINIT_CALLS.fetch_add(1, Ordering::Relaxed);
+    eprintln!("[gw2-rebuild] deinitialize level={level}");
 }
 
 /// Godot 的扩展入口。符号名必须与 godot-rust 生成的一致。
@@ -153,6 +166,7 @@ pub unsafe extern "C" fn gdext_rust_init(
     if let Some(f) = get_proc_address {
         PROC_ADDR.store(f as *mut c_void, Ordering::Relaxed);
     }
+    LIBRARY.store(library, Ordering::Relaxed);
 
     // 只在 CORE 级别以上完成注册；这里目前什么都不注册。
     r_initialization.write(Initialization {

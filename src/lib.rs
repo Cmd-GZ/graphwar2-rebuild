@@ -111,4 +111,5 @@ pub mod events;
 pub mod life;
 pub mod gdext;
 pub mod capi;
+pub mod gdext_class;
 pub mod shot;
