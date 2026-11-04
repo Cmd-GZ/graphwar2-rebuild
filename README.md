@@ -29,7 +29,7 @@
 | 回合 `graphwar_turn_manager.rs` | ⬜ 待逆向 | — |
 | 命中与生命 `life/soldier/team_manager` | 🔶 结构已还原（RwLock + 两张表），伤害规则未知 | 观测 |
 | 关卡生成 `graphwar_level_generator.rs` | ⬜ 待逆向 | — |
-| AI `computer_player_manager` / `function_evolutionator` | ⬜ 待逆向 | — |
+| AI `computer_player_manager` / `function_evolutionator` | 🔶 已知它经指针间接调用开火结算（疑似批量试射评分） | 观测+推断 |
 | 联机 `game_server/client`、`lan_broadcaster_v6`、`broker` | ⬜ 协议形状已还原（见 docs/07），实现未逆向 | 观测（字符串） |
 
 模块全集与行号下界见 [`docs/02-module-map.md`](docs/02-module-map.md)，共约 90 个 `graphwar_*.rs`。
