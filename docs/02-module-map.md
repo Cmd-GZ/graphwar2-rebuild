@@ -90,8 +90,47 @@
 `src/parser.rs`、`src/uts46.rs`（idna）、`src/zio.rs`（flate2）、`src/time.rs`、
 `src/socket.rs`、`src/types.rs` 等属于依赖库，不属于游戏本体。
 
-## 8. 下一步：把 13430 个函数映射到模块
+## 8. 观测结果：函数 → 模块（首批）
 
-方法：以 panic 字符串的**引用点**为锚，取所在函数，再沿调用图扩散；
-未命中的函数按调用簇归类。产物应是一张 `函数地址 → 模块` 表，
-作为后续逐模块逆向的索引。
+**方法**（无 Ghidra，纯静态，2.5 分钟）：
+
+1. 在二进制里扫 `src/<file>.rs` 字符串，算出其虚拟地址；
+2. Rust 的 panic `Location` 是 `{ptr, len}` 结构体，字符串地址存在 `.data.rel.ro`
+   的 `R_X86_64_RELATIVE` 重定位 addend 里 —— 于是反查"哪个指针槽指向这个字符串"；
+3. 取引用该槽位的指令（capstone 建的 rip-relative 交叉引用）；
+4. 用 `.eh_frame` 恢复的函数边界判定指令属于哪个函数。
+
+产物：`fixtures/module_map.tsv`（脚本 `tools/module_map.py`）。
+
+**观测到的规模**（游戏自身模块，按归属函数数排序）：
+
+| 模块 | 归属函数 | 引用点 | 模块 | 归属函数 | 引用点 |
+|---|---|---|---|---|---|
+| `graphwar_game_client.rs` | 72 | 311 | `graphwar_plane.rs` | 12 | 22 |
+| `graphwar_game_state_manager.rs` | 39 | 256 | `graphwar_function_input.rs` | 12 | 37 |
+| `graphwar_level_manager.rs` | 36 | 590 | `graphwar_nodes.rs` | 11 | 12 |
+| `graphwar_turn_manager.rs` | 27 | 46 | `graphwar_play_screen_control.rs` | 10 | 65 |
+| `graphwar_setup_control.rs` | 21 | 82 | `graphwar_lan_vbox.rs` | 10 | 37 |
+| `graphwar_module_container.rs` | 20 | 20 | `graphwar_client_connection_handler.rs` | 9 | 17 |
+| `graphwar_mode_manager.rs` | 20 | 46 | `graphwar_level_generator.rs` | 8 | 30 |
+| `graphwar_function_evolutionator.rs` | 18 | 39 | `graphwar_audio_control.rs` | 8 | 17 |
+| `graphwar_root_node.rs` | 16 | 186 | `graphwar_obstacle_manager.rs` | 6 | 16 |
+
+合计 **56 个游戏模块、483 个函数归属**（约占 13430 个函数的 3.6%）。
+
+**这个数字为什么小**：只有带 `Location` 的 panic / `unwrap` / 索引越界点才留锚。
+没有 panic 点的函数（纯计算、被内联的叶子函数）不会出现在表里。
+
+**下一步**：以这些锚点做种子，沿调用图扩散（被 A 调用的函数按 A 的模块归属），
+并标注为"推断"而非"观测"。这一步能覆盖大部分剩余函数，但必然带噪声。
+
+顺带可读出的结构信息：`graphwar_game_client.rs` 归属函数最多（72），说明联机客户端
+逻辑远比"一个客户端类"要重；`level_manager` 的引用点密度最高（590 次 / 36 函数），
+说明它对配置项的读取非常频繁。
+
+## 9. 第三方 crate 的干扰
+
+同一套方法也会命中依赖库（`time.rs`、`weak_caller.rs`、`entity_drawer.rs` 等），
+它们**不是**游戏代码：文件名没有 `graphwar_` 前缀。统计时先按前缀过滤。
+注意 `entity_drawer.rs` / `effect_drawer.rs` 虽不带前缀，但确实是游戏自己的绘制模块
+（见 §2），这类要靠人工判断。

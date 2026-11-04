@@ -130,3 +130,23 @@ NaN 只要求双方都是 NaN，不比较载荷位。
 参照实现是 `math.copysign(inf, a) * math.copysign(1, b)`。移植时若把
 `copysign` 的参数顺序写反（Rust 是 `x.copysign(y)`，取 `x` 的量值、`y` 的符号），
 `1/0` 会得到 `0` 而不是 `+inf`。夹具里的 `div` 用例就是为这一条准备的。
+
+## 11. 工具链现状与已知限制
+
+| 能力 | 状态 | 代价 |
+|---|---|---|
+| 快速索引（capstone 反汇编 + rip-relative 交叉引用） | ✅ 可用 | 2.5 分钟，生成 139 MB `insns.pkl` / 19 MB `xrefs.pkl` |
+| 函数边界 | ✅ `.eh_frame` 恢复出 13430 个 | 秒级 |
+| 模块归属 | ✅ 首批 56 个模块 / 483 个函数 | 秒级（依赖上面的索引） |
+| Ghidra 12.1.4 反编译 | ✅ 已装并验证 | **首次全量分析约 19 分钟** |
+| REA 的 MCP 原生分析 | ⚠️ 受客户端超时限制 | 见下 |
+
+**为什么 MCP 侧的 Ghidra 目前不好用**：导入 + 全量 auto-analysis 约 19 分钟，
+而 DeepSeek Harness 的 MCP 调用默认 60 秒超时。REA 自身可以放宽
+（`ghidra.startup_timeout_ms` 已设到 40 分钟），但**客户端**的截止时间在注册配置里，
+需要给 `rea-mcp` 条目加 `toolCallTimeoutMs` 并重启宿主。
+
+因此当前的重活走 REA CLI（无客户端截止时间），MCP 侧只做秒级的无 provider 操作。
+
+**另一个负结果**：这个 `.so` **没有 `.dep-v0`（cargo-auditable）段**
+（`inspect_rust_binary` 已确认），所以无法从依赖清单反推 crate 结构。
