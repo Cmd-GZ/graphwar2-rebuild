@@ -129,3 +129,39 @@ cd godot-probe && ../../tools/Godot_v4.7.2-stable_linux.x86_64 --headless --edit
 # 原扩展的 API 面
 cd godot-ref   && ../../tools/Godot_v4.7.2-stable_linux.x86_64 --headless --path . 
 ```
+
+## 7. 用还原的资源打包并运行（本轮达成）
+
+用 `rsc/` 里还原出来的 `basic_soldier.png`（1024×1016）建了一个最小项目，
+导出 `.pck` 后**从包启动**：
+
+```
+$ ls godot-dist/
+libgw2_rebuild.so   out.pck (28K)
+
+$ godot --headless --main-pack out.pck
+[gw2-rebuild] initialize level=0..3
+[gw2-rebuild] registered class GW2Rebuild (parent RefCounted)
+[gw2-rebuild] registered method ping()
+GW2_TEX=true size=(1024.0, 1016.0)      ← 还原的资源真的被引擎加载了
+GW2_INSTANCE=true
+[gw2-rebuild] ping() called from GDScript
+```
+
+`.pck` 内容用我们自己的 `tools/pck_extract.py` 独立核对过（11 个文件，
+含 `basic_soldier.png` 的 `.ctex` 25 102 字节、`gw2.gdextension`、`main.gdc`）。
+
+### 踩到的坑
+
+- **`.pck` 不包含 `.so`**：扩展库默认与可执行文件并列存放，不在包里。
+  写成 `res://libgw2_rebuild.so` 会报
+  `Can't open dynamic library, file not found`；改成裸文件名并把 `.so` 放在 `.pck` 同目录才通过。
+- 场景脚本引用写错时有**静默失败**（主场景仍指向旧的 `dump.gd`，什么都不打印就退出）。
+
+## 8. 结论
+
+到这一步，"重建的代码 + 重建的资源"已经**被真实引擎加载并运行**，
+不再是 ABI 推断。这补上了目标里"能构建、能加载、能跑"的部分。
+
+**但这不等于玩法复原**：回合、关卡、AI、结算仍未还原（见 README 进度表），
+它们与"能否打包运行"是两条独立的线。

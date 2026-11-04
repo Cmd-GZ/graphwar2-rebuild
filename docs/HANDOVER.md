@@ -2,7 +2,33 @@
 
 **读这一篇就够了。** 它替代"翻 17 篇文档"的过程。若与本篇冲突，以代码与 `docs/` 原文为准。
 
-最后更新：构建与资源两条线均已完成并验证。
+最后更新：**Godot 4.7.2 已就位，扩展能在真引擎里加载/注册/被调用；
+用还原资源打包的 `.pck` 已能启动**。
+
+### 当前可复现的三条验收（真引擎）
+
+```bash
+export XDG_DATA_HOME=$PWD/.godot-data XDG_CACHE_HOME=$PWD/.godot-cache XDG_CONFIG_HOME=$PWD/.godot-config
+# ① 扩展加载 + 类注册 + 方法调用
+cd godot-probe && ../tools/Godot_v4.7.2-stable_linux.x86_64 --headless --editor --path . --quit
+                   ../tools/Godot_v4.7.2-stable_linux.x86_64 --headless --path .
+#   期望：GW2_HAS_CLASS/INSTANCE/HAS_PING=true，并打印 "ping() called from GDScript"
+# ② 用还原资源打包并从 pck 启动
+cd godot-dist && ../tools/Godot_v4.7.2-stable_linux.x86_64 --headless --main-pack out.pck
+#   期望：GW2_TEX=true size=(1024.0, 1016.0)
+# ③ 原始扩展的 API 面（负面结论：只暴露 12 类 25 个 UI 方法）
+cd godot-ref && ../tools/Godot_v4.7.2-stable_linux.x86_64 --headless --path .
+```
+
+**注意**：`~` 只读，必须设三个 XDG 目录；`godot-probe/main.tscn` 必须指向 `main.gd`
+（指错会静默退出，什么都不打印）。
+
+### 本轮新增的两个坑
+
+7. `GDExtensionClassMethodInfo` 末尾还有 `default_argument_count` / `default_arguments`，
+   少写这两个字段 → 引擎 abort（读到栈外垃圾）。
+8. `.pck` **不包含** `.so`：`res://libgw2_rebuild.so` 会 `file not found`，
+   必须用裸文件名并把库放在 `.pck` 同目录。
 
 **四条独立验收**（都能重跑）：
 ```
