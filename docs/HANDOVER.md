@@ -5,6 +5,16 @@
 最后更新：**Godot 4.7.2 已就位，扩展能在真引擎里加载/注册/被调用；
 用还原资源打包的 `.pck` 已能启动**。
 
+### 最终验收（全部实测）
+
+```
+cargo test                40 条通过
+cargo build --release     492,688 字节, 12 个导出符号, 含 gdext_rust_init
+真 Godot 4.7.2            GW2_HAS_CLASS=true GW2_INSTANCE=ok GW2_HAS_PING=true
+仓库                      子仓 5e6cef3 / 主仓 28eb9b0；主仓跟踪 gw2-rebuild 文件数 0
+进度表                     ✅ 7   🔶 4   ⬜ 2
+```
+
 ### 当前可复现的三条验收（真引擎）
 
 ```bash
