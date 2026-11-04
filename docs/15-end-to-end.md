@@ -70,8 +70,8 @@ idx  = py*1000 + px
 hit  = mask[idx] != 0xFF     // 0xFF = 空；越界一律算命中
 ```
 
-掩膜 1000×600 字节，由 `play_screen_control` 分配持有（`0x422070` 里 6 处
-`600000` 常量）、`obstacle_manager` 填充与查询。详见 `docs/08` §6。
+掩膜 1000×600 字节，由 `obstacle_manager` 创建（`0x523020`：`alloc(600000)` +
+`memset 0xFF` + 引用计数容器）、填充与查询。详见 `docs/08` §6。
 
 ### ⑥–⑦ 死亡
 

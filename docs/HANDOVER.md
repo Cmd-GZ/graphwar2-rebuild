@@ -40,8 +40,8 @@
 
 **命中**（观测，`0x4f15b0`）
 1000×600 字节掩膜，`idx = py*1000+px`，`!= 0xFF` 即命中，**越界算命中**。
-掩膜由 `play_screen_control` `0x422070` 分配（6 处 `600000` 常量），
-`obstacle_manager` 填充与查询。
+掩膜由 `obstacle_manager` 的 `0x523020` 创建：`alloc(600000)` + `memset 0xFF`
++ 引用计数容器；同模块负责填充（`0x4f11e0`）与查询（`0x4f15b0`）。
 
 **资源**（实测）
 PCK v4：索引在包尾（头部 `0x20` 处 `directory_offset`），
@@ -75,6 +75,9 @@ PCK v4：索引在包尾（头部 `0x20` 处 `directory_offset`），
 4. 用一次 `str.replace` 改文档却没核对结果 → README 索引**只更新了一半**（静默失败）。
 5. 相信 `funcstarts.pkl` → 与 Ghidra 交集仅 2/13430。
 6. 按 Godot 源码字面理解 `PACK_REL_FILEBASE` → 692 个文件 md5 全错，实测要用 `file_base`。
+7. 把**文件偏移当虚地址**用 → 掩膜归属算错（`.text` 段 offset 与 vaddr 差 `0x1000`）。
+   换算必须走 ELF 段表：`vaddr = sec.addr + (off - sec.offset)`。
+8. 从局部伪代码推取整函数 → 把"截断"说成"四舍五入"；必须用输入输出对拍。
 
 ## 7. 下一步优先级
 
