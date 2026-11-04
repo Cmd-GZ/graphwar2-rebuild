@@ -26,7 +26,7 @@
 | 点序列采样 `graphwar_path_calculator.rs` | ✅ 复原完成 | 逐位验证（2552 条曲线） |
 | 开火结算 `graphwar_shot_calculator.rs` | 🔶 调用链已还原，内部细节待补 | 观测（调用点） |
 | 棋盘 / 坐标 `graphwar_plane*.rs` | 🔶 核心变换已解出（20 px/单位，画布 1000×600）；命中判定未证 | 观测 |
-| 回合 `graphwar_turn_manager.rs` | ⬜ 待逆向 | — |
+| 回合 `graphwar_turn_manager.rs` | 🔶 结构已探明（14 函数/22 调用者/无时间常量），语义未还原 | 观测 |
 | 命中与生命 `life/soldier/team_manager` | 🔶 结构已还原（RwLock + 两张表），伤害规则未知 | 观测 |
 | 关卡生成 `graphwar_level_generator.rs` | ⬜ 待逆向 | — |
 | AI `computer_player_manager` / `function_evolutionator` | 🔶 已知它经指针间接调用开火结算（疑似批量试射评分） | 观测+推断 |
