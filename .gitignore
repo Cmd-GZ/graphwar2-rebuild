@@ -1,2 +1,6 @@
 target/
 Cargo.lock
+
+# 从 Graphwar.pck 解出的游戏资源（二进制衍生，不入库；见 docs/17）
+rsc/*
+!rsc/MANIFEST.tsv

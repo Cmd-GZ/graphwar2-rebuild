@@ -43,6 +43,7 @@
 
 | 文档 | 内容 |
 |---|---|
+| [HANDOVER.md](docs/HANDOVER.md) | **给上下文压缩后的人/自己：一篇替代全部** |
 | [00-status.md](docs/00-status.md) | 状态总览：什么已完成、什么只观测、什么还空白 |
 | **[15-end-to-end.md](docs/15-end-to-end.md)** | **端到端：从敲下函数到有人死亡（建议先读这篇）** |
 | [01-architecture.md](docs/01-architecture.md) | 整体分层：Godot 外壳 / GDExtension 内核 / 资源包 |
@@ -60,6 +61,7 @@
 | [13-turns.md](docs/13-turns.md) | 回合：规模与驱动者、无时间常量的负结果 |
 | [14-target.md](docs/14-target.md) | 目标选择：核心十字路口，SIMD 未解 |
 | [16-reproduce.md](docs/16-reproduce.md) | **如何验证这份复原**：跑测试、真值来源、复现环境、环境坑 |
+| [17-resources.md](docs/17-resources.md) | 游戏资源还原：PCK v4 格式、rsc/ 生成与为何不入库 |
 
 ## 目录
 
