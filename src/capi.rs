@@ -167,3 +167,53 @@ pub unsafe extern "C" fn gw2_is_occupied(mask: *const u8, len: usize, x: f64, y:
         0
     }
 }
+
+/// 开火模拟：按障碍建掩膜、采点、逐点查，返回首个命中点序号。
+///
+/// `obstacles` 是 `3 * n` 个 `f64`（x, y, size 依次）。
+/// 返回 `>= 0` 命中序号；`-1` 未命中；`-2` 参数非法。
+/// `out_count`（可空）回填点序列长度。
+///
+/// # Safety
+/// `text` 为有效 NUL 结尾字符串；`obstacles` 能容纳 `3*n` 个 f64。
+#[no_mangle]
+pub unsafe extern "C" fn gw2_simulate(
+    text: *const c_char,
+    x0: f64,
+    y0: f64,
+    step: f64,
+    flip: u8,
+    ode: u8,
+    obstacles: *const f64,
+    n: usize,
+    out_count: *mut i64,
+) -> i64 {
+    if text.is_null() {
+        return -2;
+    }
+    let s = match CStr::from_ptr(text).to_str() {
+        Ok(s) => s,
+        Err(_) => return -2,
+    };
+    let mut obs = Vec::with_capacity(n);
+    for i in 0..n {
+        if obstacles.is_null() {
+            return -2;
+        }
+        let base = obstacles.add(i * 3);
+        obs.push(crate::shot::Obstacle {
+            x: *base,
+            y: *base.add(1),
+            size: *base.add(2),
+        });
+    }
+    let mode = if ode != 0 { Mode::Ode } else { Mode::Normal };
+    let r = crate::shot::simulate(s, x0, y0, step, flip != 0, mode, &obs);
+    if !out_count.is_null() {
+        *out_count = r.point_count as i64;
+    }
+    match r.hit_index {
+        Some(i) => i as i64,
+        None => -1,
+    }
+}
