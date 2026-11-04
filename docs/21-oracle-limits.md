@@ -82,3 +82,50 @@ ERROR: Failed loading scene: res://main.tscn.
 3. **继续纯静态逆向**，接受"只到结构"的现状。
 
 本仓库当前的选择是 (3)，并把 (1)(2) 记录为已知可行但未验证的方向。
+
+## 尝试 5 · 补桩让原版场景在我们项目里跑起来（部分成功，卡在编译字节码）
+
+按"尝试 3"的结论，继续做两件事：
+
+**① 补齐缺失的资源源文件。** `tools/make_placeholders.py` 为只有 `.import` 没有源的
+资源生成同名占位（149 个 `.svg` + 16 个 `.png`）。效果：
+
+```
+（之前）ERROR: Resource file not found: res://return.svg ...
+（之后）这类错误全部消失
+```
+
+**② 给 AdMob 写 GDScript 桩。** `godot-live/stubs/` 里补了
+`AdSize` / `AdPosition`（含 `Values`/`values` 嵌套）/ `AdRequest` / `AdView` /
+`AdListener` / `LoadAdError` / `MobileAds` / `PoingAdMobVersionHelper`。
+迭代过程：先是 `Could not find type "AdView"`，再是 `AdPosition.Values` 缺失、
+`new()` 参数过多、`const` 被赋值 → 逐个修到只剩三条：
+
+```
+SCRIPT ERROR: Parse Error: Cannot assign a new value to a constant.
+          at: GDScript::reload (res://Ad_holder.gd:53)
+          at: GDScript::reload (res://Ad_holder.gd:57)
+          at: GDScript::reload (res://Ad_holder.gd:63)
+```
+
+**③ 卡点。** `Ad_holder.gd` 在包里是**编译字节码** `Ad_holder.gdc`（1699 字节，
+`GDSC` 魔数），没有可读的符号表，`strings`/`grep` 都取不到标识符；
+行号 53/57/63 对应字节码里的哪条赋值无从得知，无法判断它到底在给哪个常量赋值
+（我们已把可疑的 `AdSize.*` / `AdPosition.*` 全改成 `static var`，错误仍在）。
+
+⇒ **要么完整重写 `Ad_holder.gd` 并逆向出它被其它脚本调用的接口（GDScript 字节码逆向），
+要么放弃这条路线。** 目前停在这里。
+
+## 结论（更新）
+
+| 尝试 | 结果 |
+|---|---|
+| 1 脚本级 oracle | 否（玩法不暴露） |
+| 2 headless hook | 否（菜单下零调用） |
+| 3 原版场景自建 harness | 否（资源形态 + 原生插件） |
+| 4 直接实例化根节点 | 否（同上） |
+| 5 补桩 + 占位资源 | **资源障碍已解除；卡在编译字节码 `Ad_holder.gdc`** |
+
+尝试 5 的产出（`tools/make_placeholders.py`、`godot-live/stubs/`）是可复用的：
+它把"导出态资源不能源码加载"这一条从"不可能"降级为"已被绕过"。
+剩下的唯一障碍是广告脚本的字节码，与玩法逻辑本身无关。
