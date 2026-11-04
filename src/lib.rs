@@ -110,4 +110,5 @@ pub mod plane;
 pub mod events;
 pub mod life;
 pub mod gdext;
+pub mod capi;
 pub mod shot;

@@ -116,6 +116,44 @@ string_name_new_with_latin1_chars
 
 这一步的价值：**"知道该请求什么"是可验证的**，而"注册成功"必须等真 Godot。
 
+## 4.6 功能证据：产物真的复现了算法（本轮新增）
+
+符号存在只能证明"能加载"，不能证明"算得对"。所以另开一条 C ABI：
+
+```
+gw2_parse_len(text)                          -> token 个数
+gw2_shot_points(text, x0, y0, step, flip, ode, out, cap) -> 点数（写 xy 交替）
+gw2_correction(text, x0, y0, flip)           -> 修正常数
+```
+
+`tools/capi_check.py` 用 `ctypes` 直接 `CDLL` 载入构建产物，跑 5 组用例并与
+`graphwar_curve.py`（上游已验证与真二进制逐位一致）逐点比较：
+
+```
+ok   'sin(x)'                2471 点  修正 +2.958924
+ok   'x^2/10 - 3'            3062 点  修正 +2.100000
+ok   'sqrt(abs(x))'          2735 点  修正 -5.000000
+ok   '2*x+1'                  309 点  修正 -6.000000
+ok   'log(abs(x)+1)'         1916 点  修正 +4.886057
+RESULT: PASS
+```
+
+合计 10493 个点逐位相同，含修正项。这条比符号检查强得多：
+**它证明从复原源码构建出的二进制，行为与游戏一致。**
+
+## 4.7 类注册：调研了，但没有硬写
+
+取到权威头文件（`godot-cpp/4.4/gdextension/gdextension_interface.h`）后确认：
+
+- `GDExtensionClassCreationInfo2` 有 **21 个函数指针 + `class_userdata`**；
+- 该接口函数 `classdb_register_extension_class2` **在 Godot 4.3 起已废弃**，
+  应改用 `classdb_register_extension_class4` + `GDExtensionClassCreationInfo4`；
+- `GDExtensionClassCreateInstance2` 多了一个 `notify_postinitialize` 参数。
+
+**结论：不硬写。** 目标引擎是 Godot 4.7，而本机只有**导出模板**、没有编辑器，
+无法验证任何一个布局假设。把 21 个函数指针按记忆排错，只会在真 Godot 里崩，
+比"没做"更糟。所以本轮只做到"请求正确的接口名"（§4.5），并把这条记为待办。
+
 ## 5. 复现
 
 ```bash
