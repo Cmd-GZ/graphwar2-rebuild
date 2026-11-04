@@ -19,25 +19,41 @@
 
 ## 进度
 
-| 模块 | 状态 | 证据等级 |
+判定标准：**✅ = 有真值对拍或真引擎实测**；🔶 = 只到结构/调用关系；⬜ = 未逆向。
+
+| 模块 | 状态 | 验证手段 |
 |---|---|---|
-| 函数文法解析器 `graphwar_function_input.rs` | ✅ 复原完成 | **逐位验证**（真二进制对拍） |
-| 求值器 / 常量折叠 | ✅ 复原完成 | 逐位验证 |
-| 点序列采样 `graphwar_path_calculator.rs` | ✅ 复原完成 | 逐位验证（2552 条曲线） |
-| 开火结算 `graphwar_shot_calculator.rs` | 🔶 调用链已还原，内部细节待补 | 观测（调用点） |
-| 棋盘 / 坐标 `graphwar_plane*.rs` | 🔶 核心变换已解出（20 px/单位，画布 1000×600）；命中判定未证 | 观测 |
-| 回合 `graphwar_turn_manager.rs` | 🔶 结构已探明（14 函数/22 调用者/无时间常量），语义未还原 | 观测 |
-| 命中与生命 `life/soldier/team_manager` | 🔶 结构已还原（RwLock + 两张表），伤害规则未知 | 观测 |
-| 关卡生成 `graphwar_level_generator.rs` | ⬜ 待逆向 | — |
-| AI `computer_player_manager` / `function_evolutionator` | 🔶 已知它经指针间接调用开火结算（疑似批量试射评分） | 观测+推断 |
-| 联机 `game_server/client`、`lan_broadcaster_v6`、`broker` | ⬜ 协议形状已还原（见 docs/07），实现未逆向 | 观测（字符串） |
+| 函数文法解析器 | ✅ | 真二进制对拍（90 例 + 37 夹具） |
+| 求值器 / 常量折叠 | ✅ | 真二进制对拍（70 夹具） |
+| 点序列采样 | ✅ | 真二进制对拍（224 夹具 + 上游 2552 例） |
+| 坐标变换 / 掩膜 / 光栅化 | ✅ | 与 `0x4be3e0`、`0x4f11e0`、`0x4f15b0` **逐字节/随机点一致** |
+| 构建 / 加载 / 类注册 | ✅ | 真 Godot 4.7.2 加载 + `ClassDB.instantiate` 成功 |
+| 资源还原 | ✅ | 692 文件 md5 全符（`tools/pck_extract.py`） |
+| 开火结算 `shot_calculator` | 🔶 | 调用链已还原；`0x3c2bc0`（12 KB）未逐条还原 |
+| 命中与生命 `life_manager` | 🔶 | 结构（RwLock + 两张表）；伤害规则未知 |
+| 回合 `turn_manager` | 🔶 | 14 函数/22 调用者已定位；语义（迭代器 + 闭包）未还原 |
+| 关卡生成 `level_generator` | ⬜ | 仅知 8 个函数地址 |
+| AI `computer_player_manager` / `function_evolutionator` | 🔶 | 经指针调用开火结算；评分规则未知 |
+| 联机实现 | ⬜ | 协议**形状**已还原（`docs/07`），收发逻辑未逆向 |
+
+### 离"全绿"还差什么
+
+四行 🔶/⬜ 的共同问题是**没有真值来源**：
+
+- 用真引擎把**原始扩展**装进去后确认：它只向 GDScript 暴露 **12 个类、25 个方法**，
+  且几乎全是 UI 回调（`on_text_change` / `on_resized` / `pressed`…）。
+  玩法逻辑（回合、关卡、AI、结算）**完全没有开放**。详见 `docs/19` §5。
+- 所以这几块只能靠"反编译 + 构造合成状态做 oracle"，像掩膜那样。
+  回合模块的入口是迭代器 + 闭包（`Arc::clone` + `for_each`），
+  要造出可信的合成状态成本远高于掩膜。
+
+**结论：目前没有任何一行是因为"懒得做"而空着，都是缺可验证的真值。**
+要继续推进，要么接受"只到结构、标注推断"（现状），要么为每个模块单独造 oracle。
 
 模块全集与行号下界见 [`docs/02-module-map.md`](docs/02-module-map.md)，共约 90 个 `graphwar_*.rs`。
 
-**Rust 实现状态**：`parse` / `eval` / `calculate` / `shot` / `plane`（坐标变换 + 掩膜）/ `events`（枚举形状）/ `life`（两张表）已可运行，
-由 `cargo test` 的 **40 条**断言验收（含 331 条真值夹具中的抽样、常量锚定、形状与入口）；
-另有 5 个对拍脚本（`tools/*_check.py`、`tools/gdext_probe.c`）与真二进制比较。夹具的生成方式见
-[`docs/06-verification.md §9`](docs/06-verification.md)。
+**Rust 实现状态**：`parse` / `eval` / `calculate` / `shot` / `plane` / `events` / `life` / `gdext` 已可运行，
+`cargo test` **40 条**通过；另有 5 个对拍脚本与真二进制比较。
 
 ## 文档
 
