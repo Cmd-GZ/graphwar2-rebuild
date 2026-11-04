@@ -95,14 +95,15 @@ pub const E: f64 = std::f64::consts::E;
 // ✅ 已验证（逐位对拍）
 //    - function::parse   文本 -> 前缀 token       @0x4ed670  docs/03-function-language.md
 //    - function::eval    前缀 token -> f64        @0x4eb9d0  docs/03-function-language.md
-//    - function::fold    常量子树折叠             @0x4eb830  docs/03-function-language.md
 //    - path::calculate   点序列采样               @0x3c2530  docs/04-path-sampling.md
-//
-// 🔶 调用链已还原、内部细节待补
-//    - shot::correct     修正常数 c = y0 - f(±x0) @0x3c5f70  docs/05-shot-pipeline.md
+//    - shot::*           修正常数与端到端         @0x3c5f70  docs/05-shot-pipeline.md
 //
 // ⬜ 待逆向（见 docs/02-module-map.md）
 //    - plane（坐标语义）、turn（回合）、life（生命）、level（关卡）、ai、net
+//
+// 说明：原程序还有一趟常量折叠（@0x4eb830），但它不改变数值结果，
+// 现有对拍中解析产物已与该行为相容，故本 crate 暂未单列该步骤。
 
 pub mod function;
 pub mod path;
+pub mod shot;
