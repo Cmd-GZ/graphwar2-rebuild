@@ -34,9 +34,9 @@
 
 模块全集与行号下界见 [`docs/02-module-map.md`](docs/02-module-map.md)，共约 90 个 `graphwar_*.rs`。
 
-**Rust 实现状态**：`parse` / `eval` / `calculate` / `shot` / `plane`（坐标变换 + 掩膜测试）已可运行，
+**Rust 实现状态**：`parse` / `eval` / `calculate` / `shot` / `plane`（坐标变换 + 掩膜）/ `events`（枚举形状）/ `life`（两张表）已可运行，
 由 `cargo test` 对 331 条真值用例验收（其中 294 条直接来自真二进制），
-外加 6 条把常量钉在 `.rodata` 比特上的断言。夹具的生成方式见
+外加常量锚定与形状断言。夹具的生成方式见
 [`docs/06-verification.md §9`](docs/06-verification.md)。
 
 ## 文档
