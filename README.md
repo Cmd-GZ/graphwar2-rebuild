@@ -62,6 +62,7 @@
 | [14-target.md](docs/14-target.md) | 目标选择：核心十字路口，SIMD 未解 |
 | [16-reproduce.md](docs/16-reproduce.md) | **如何验证这份复原**：跑测试、真值来源、复现环境、环境坑 |
 | [17-resources.md](docs/17-resources.md) | 游戏资源还原：PCK v4 格式、rsc/ 生成与为何不入库 |
+| [18-build.md](docs/18-build.md) | **构建出真实二进制**：cdylib、gdext_rust_init、dlopen 验证 |
 
 ## 目录
 

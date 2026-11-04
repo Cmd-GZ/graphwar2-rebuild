@@ -25,8 +25,10 @@
 | 修正常数 + 端到端 | `src/shot.rs` | 端到端冒烟 + 上游 648 例对拍 |
 | 坐标变换 + 碰撞掩膜测试 | `src/plane.rs` | 6 条（角点、20px/单位、越界命中…） |
 | 事件枚举形状 + 生命表 | `src/events.rs`、`src/life.rs` | 5 条（判别值连续、9 字段、两张表） |
+| **GDExtension 入口（可构建 .so）** | `src/gdext.rs` | 4 条 + `dlopen` 探测器实测 |
 
-`cargo test` 合计 **21 条测试**：6 条常量锚定、4 条金标准、6 条坐标系、5 条形状。
+`cargo test` 合计 **25 条测试**：6 常量锚定、4 金标准、6 坐标系、5 形状、4 入口。
+另有 `cargo build --release` 产出的 `.so` 与 `tools/gdext_probe.c` 的 dlopen 实测（`docs/18`）。
 
 > `events` / `life` 只复原**形状**（变体顺序、两张表与 `mode` 分支），字段语义是推断，
 > 代码注释里已逐条标注。

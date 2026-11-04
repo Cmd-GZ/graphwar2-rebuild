@@ -25,6 +25,7 @@
 | 坐标变换 + 掩膜点测试 | `src/plane.rs` | 6 条 |
 | 事件枚举形状 + 生命两张表 | `src/events.rs`、`src/life.rs` | 5 条 |
 | 游戏资源 | `tools/pck_extract.py` → `rsc/` | 692 文件 md5 全符 |
+| **可构建二进制** | `Cargo.toml` cdylib + `src/gdext.rs` | `cargo build --release` 出 .so；`nm` 见 `gdext_rust_init`；`tools/gdext_probe.c` dlopen 实测 PASS |
 
 ## 3. 核心结论速查（省掉重新推导）
 
@@ -58,7 +59,7 @@ PCK v4：索引在包尾（头部 `0x20` 处 `directory_offset`），
 | 回合 `turn_manager` | 14 个函数全是 HashMap 探测（`0x28` 步长）；无浮点常量 ⇒ 时限是数据驱动 |
 | 目标选择 `target_manager` | SIMD 字节扫描，反编译不可读 |
 | AI `function_evolutionator` | 跳转表 Ghidra 未建模；"批量试射"仍是推断 |
-| 二进制构建 | 尚未开始：需 cdylib + 导出 `gdext_rust_init`（原 `.so` 唯一动态导出） |
+| 二进制功能 | 入口已可加载，但**未注册任何类**；且本机只有导出模板、无编辑器，未在真 Godot 里跑过（`docs/18` §6） |
 
 ## 5. 决策记录
 

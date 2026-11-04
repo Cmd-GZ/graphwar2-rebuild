@@ -6,4 +6,10 @@ description = "Graphwar II source reconstruction from static reverse engineering
 license = "UNLICENSED"
 publish = false
 
+[lib]
+name = "gw2_rebuild"
+# cdylib：产出真正的 .so，供 Godot GDExtension 加载
+# rlib：保留给 cargo test 使用
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
