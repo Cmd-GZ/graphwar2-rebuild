@@ -57,6 +57,10 @@ Battle -> Create Game -> AddBot（弹窗里选难度）-> Start -> `PlayScreen`�
 turn 1259+1531 / life_entry 12 / levelgen 1+1`。
 工具：`tools/hook_live_game.js`（frida 拉起 harness 并自动开局）。
 
+**开火结算/生命的活体取证**（docs/23 §5）：`shot_calc` 入参 Vec len 3 → 返回后 len 5
+（cap 3→8、指针换新，像在追加事件）；`life_entry(ctx, id, 1, 0)`，id ∈ {230,231,233,234}。
+**两者仍未复刻**，只是观测。
+
 **真实对局对拍已通过**（`docs/23`）：从对局里抓 `calculate_path` 的入参与输出，
 `graphwar_curve.calculate_path` 逐点一致 69/69（step=0.5、flip=True）。
 ⚠️ 由此发现"游戏一律用 step=0.01"的说法不准确：真实调用点会传别的步长。
