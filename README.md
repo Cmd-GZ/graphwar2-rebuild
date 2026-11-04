@@ -59,6 +59,7 @@
 | [12-ai.md](docs/12-ai.md) | AI：结构已探明，评分规则未还原 |
 | [13-turns.md](docs/13-turns.md) | 回合：规模与驱动者、无时间常量的负结果 |
 | [14-target.md](docs/14-target.md) | 目标选择：核心十字路口，SIMD 未解 |
+| [16-reproduce.md](docs/16-reproduce.md) | **如何验证这份复原**：跑测试、真值来源、复现环境、环境坑 |
 
 ## 目录
 
