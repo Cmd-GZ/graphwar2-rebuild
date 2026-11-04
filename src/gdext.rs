@@ -81,9 +81,55 @@ pub fn deinitialize_calls() -> usize {
     DEINIT_CALLS.load(Ordering::Relaxed)
 }
 
+/// 初始化时要向 Godot 请求的接口函数名（按注册一个类的最小集合）。
+pub const WANTED: &[&str] = &[
+    "classdb_register_extension_class2",
+    "classdb_register_extension_class_method",
+    "classdb_register_extension_class_integer_constant",
+    "object_set_instance",
+    "object_get_instance_binding",
+    "mem_alloc",
+    "mem_free",
+    "print_error",
+    "string_name_new_with_latin1_chars",
+];
+
+static REQUESTED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+static RESOLVED: AtomicUsize = AtomicUsize::new(0);
+
+/// 按名取接口函数指针，并记录请求过的名字。
+///
+/// # Safety
+/// 只有在 `gdext_rust_init` 记录了 `get_proc_address` 之后调用才安全。
+unsafe fn request(name: &str) -> *mut c_void {
+    if let Ok(mut v) = REQUESTED.lock() {
+        v.push(name.to_string());
+    }
+    let f = PROC_ADDR.load(Ordering::Relaxed);
+    if f.is_null() {
+        return std::ptr::null_mut();
+    }
+    let getter: GetProcAddress = std::mem::transmute(f);
+    let mut c = Vec::with_capacity(name.len() + 1);
+    c.extend_from_slice(name.as_bytes());
+    c.push(0);
+    let p = getter(c.as_ptr());
+    if !p.is_null() {
+        RESOLVED.fetch_add(1, Ordering::Relaxed);
+    }
+    p
+}
+
 unsafe extern "C" fn on_initialize(_userdata: *mut c_void, level: i32) {
     INIT_CALLS.fetch_add(1, Ordering::Relaxed);
     LAST_LEVEL.store(level as usize, Ordering::Relaxed);
+
+    // 只在 SCENE 级别做类注册（与 Godot 的约定一致）。
+    if level == LEVEL_SCENE {
+        for name in WANTED {
+            let _ = request(name);
+        }
+    }
 }
 
 unsafe extern "C" fn on_deinitialize(_userdata: *mut c_void, _level: i32) {
@@ -129,6 +175,28 @@ pub extern "C" fn gw2_rebuild_entry_calls() -> usize {
 #[no_mangle]
 pub extern "C" fn gw2_rebuild_initialize_calls() -> usize {
     INIT_CALLS.load(Ordering::Relaxed)
+}
+
+/// 自检用导出：向 Godot 请求过的接口函数名，`\n` 分隔、以 NUL 结尾。
+///
+/// 指针指向一块 `static` 的 C 字符串，生命周期到进程结束。
+#[no_mangle]
+pub extern "C" fn gw2_rebuild_requested_names() -> *const std::os::raw::c_char {
+    use std::sync::OnceLock;
+    static BUF: OnceLock<std::ffi::CString> = OnceLock::new();
+    let joined = match REQUESTED.lock() {
+        Ok(v) => v.join("\n"),
+        Err(_) => String::new(),
+    };
+    // 只构建一次；重复调用返回首次快照（够用于自检）。
+    let c = BUF.get_or_init(|| std::ffi::CString::new(joined).unwrap_or_default());
+    c.as_ptr()
+}
+
+/// 自检用导出：成功解析到的接口函数个数。
+#[no_mangle]
+pub extern "C" fn gw2_rebuild_resolved_count() -> usize {
+    RESOLVED.load(Ordering::Relaxed)
 }
 
 /// 自检用导出：`deinitialize` 回调次数。

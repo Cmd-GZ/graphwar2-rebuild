@@ -94,6 +94,28 @@ RESULT: PASS
 
 计数器是关键：它把"函数被调用"从"看起来对"变成"Rust 内部状态确实变了"。
 
+## 4.5 接口请求（本轮新增）
+
+`initialize(SCENE)` 时会按名向 Godot 请求注册一个类所需的最小接口集合，
+并记录请求过的名字：
+
+```
+classdb_register_extension_class2
+classdb_register_extension_class_method
+classdb_register_extension_class_integer_constant
+object_set_instance
+object_get_instance_binding
+mem_alloc
+mem_free
+print_error
+string_name_new_with_latin1_chars
+```
+
+探测器把这些名字逐条打出来；因为桩 `get_proc_address` 一律返回 `NULL`，
+`resolved=0` 是**正确**结果——说明缺接口时我们能安全降级，不会崩。
+
+这一步的价值：**"知道该请求什么"是可验证的**，而"注册成功"必须等真 Godot。
+
 ## 5. 复现
 
 ```bash

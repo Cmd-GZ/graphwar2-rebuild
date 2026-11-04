@@ -43,6 +43,8 @@ int main(int argc, char **argv) {
     printf("ok   dlsym(gdext_rust_init) = %p\n", (void *)entry);
 
     count_t n_entry = (count_t)dlsym(h, "gw2_rebuild_entry_calls");
+    count_t n_resolved = (count_t)dlsym(h, "gw2_rebuild_resolved_count");
+    const char *(*names)(void) = (const char *(*)(void))dlsym(h, "gw2_rebuild_requested_names");
     count_t n_init = (count_t)dlsym(h, "gw2_rebuild_initialize_calls");
     count_t n_deinit = (count_t)dlsym(h, "gw2_rebuild_deinitialize_calls");
 
@@ -70,6 +72,25 @@ int main(int argc, char **argv) {
         failed |= !(e == 1 && i == 1 && d == 1);
     } else {
         printf("...  counters unavailable (diagnostic symbols missing)\n");
+    }
+
+    /* 桩 get_proc 一律返回 NULL，所以"解析成功 0 个"是正确结果；
+       真正要看的是：我们的扩展**请求了哪些**接口名。 */
+    if (names) {
+        const char *list = names();
+        printf("...  请求的接口:\n");
+        const char *p = list;
+        while (*p) {
+            const char *nl = strchr(p, '\n');
+            int len = nl ? (int)(nl - p) : (int)strlen(p);
+            printf("       %.*s\n", len, p);
+            p += nl ? len + 1 : len;
+        }
+    }
+    if (n_resolved) {
+        size_t r = n_resolved();
+        printf("%s resolved=%zu (桩返回 NULL，期望 0)\n", r == 0 ? "ok  " : "FAIL", r);
+        failed |= (r != 0);
     }
 
     dlclose(h);
