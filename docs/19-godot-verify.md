@@ -51,6 +51,32 @@ GW2_INSTANCE=ok class=GW2Rebuild
 
 **这比 `dlopen` 探针强一档**：不是"按 ABI 约定能调通"，而是**引擎真的认了这个类并造出实例**。
 
+## 3.5 方法注册与调用（本轮新增）
+
+注册方法需要 `GDExtensionClassMethodInfo`。**第一次尝试让引擎 abort 了**，
+原因是我漏了结构体末尾两个字段：
+
+```c
+uint32_t default_argument_count;
+GDExtensionVariantPtr *default_arguments;
+```
+
+补上后正常。实测：
+
+```
+[gw2-rebuild] registered method ping()
+GW2_HAS_CLASS=true
+GW2_INSTANCE=ok
+GW2_HAS_PING=true
+[gw2-rebuild] ping() called from GDScript   ← Rust 侧回调真的执行了
+GW2_PING_DONE
+```
+
+`ping()` 无参数、无返回值，所以不需要构造 Variant；它证明的是
+**"引擎 → 我们代码"的调用链通了**。下一步才是带参数/返回值的方法。
+
+> 教训：跨语言结构体必须逐字段核对头文件，少一个尾部字段就可能越界读栈。
+
 ## 4. 把原始扩展装进同一个引擎（关键尝试）
 
 `godot-ref/`：把 `libgraphwarrust.so` 当 GDExtension 加载。

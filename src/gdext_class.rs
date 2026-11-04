@@ -193,3 +193,98 @@ pub unsafe fn register_class(get: GetProc, library: *mut c_void) -> bool {
     eprintln!("[gw2-rebuild] registered class GW2Rebuild (parent RefCounted)");
     true
 }
+
+// ---------------------------------------------------------------------------
+// 方法注册：classdb_register_extension_class_method
+// ---------------------------------------------------------------------------
+
+/// `GDExtensionClassMethodInfo`（字段序照头文件）。
+#[repr(C)]
+pub struct ClassMethodInfo {
+    pub name: *const c_void,          // StringName
+    pub method_userdata: *mut c_void,
+    pub call_func: CallFunc,
+    pub ptrcall_func: *const c_void,
+    pub method_flags: u32,
+    pub has_return_value: u8,
+    pub return_value_info: *const c_void,
+    pub return_value_metadata: i32,
+    pub argument_count: u32,
+    pub arguments_info: *const c_void,
+    pub arguments_metadata: *const c_void,
+    pub default_argument_count: u32,
+    pub default_arguments: *const c_void,
+}
+
+type CallFunc = Option<
+    unsafe extern "C" fn(
+        method_userdata: *mut c_void,
+        instance: *mut c_void,
+        args: *const *const c_void,
+        arg_count: i64,
+        ret: *mut c_void,
+        error: *mut c_void,
+    ),
+>;
+
+/// `METHOD_FLAG_NORMAL`
+const METHOD_FLAG_NORMAL: u32 = 1;
+
+static PINGS: AtomicUsize = AtomicUsize::new(0);
+
+/// `ping()` 被调用次数（自检用）。
+pub fn pings() -> usize {
+    PINGS.load(Ordering::Relaxed)
+}
+
+unsafe extern "C" fn ping_call(
+    _ud: *mut c_void,
+    _instance: *mut c_void,
+    _args: *const *const c_void,
+    _argc: i64,
+    _ret: *mut c_void,
+    _err: *mut c_void,
+) {
+    PINGS.fetch_add(1, Ordering::Relaxed);
+    eprintln!("[gw2-rebuild] ping() called from GDScript");
+}
+
+/// 给已注册的类挂一个 `ping()` 方法。
+///
+/// # Safety
+/// `get` 必须是 Godot 的 `get_proc_address`，且必须在类注册之后调用。
+pub unsafe fn register_ping_method(get: GetProc, library: *mut c_void) -> bool {
+    let f_reg = sym(get, "classdb_register_extension_class_method");
+    let f_sn = sym(get, "string_name_new_with_latin1_chars");
+    if f_reg.is_null() || f_sn.is_null() {
+        eprintln!("[gw2-rebuild] method registration unavailable");
+        return false;
+    }
+    type FnRegister = unsafe extern "C" fn(*mut c_void, *const c_void, *const ClassMethodInfo);
+    let f_reg: FnRegister = std::mem::transmute(f_reg);
+    let f_sn: FnStringName = std::mem::transmute(f_sn);
+
+    let mut cls_sn = [0u8; 8];
+    let mut meth_sn = [0u8; 8];
+    f_sn(cls_sn.as_mut_ptr() as *mut c_void, b"GW2Rebuild\0".as_ptr(), 0);
+    f_sn(meth_sn.as_mut_ptr() as *mut c_void, b"ping\0".as_ptr(), 0);
+
+    let info = ClassMethodInfo {
+        name: meth_sn.as_ptr() as *const c_void,
+        method_userdata: std::ptr::null_mut(),
+        call_func: Some(ping_call),
+        ptrcall_func: std::ptr::null(),
+        method_flags: METHOD_FLAG_NORMAL,
+        has_return_value: 0,
+        return_value_info: std::ptr::null(),
+        return_value_metadata: 0,
+        argument_count: 0,
+        arguments_info: std::ptr::null(),
+        arguments_metadata: std::ptr::null(),
+        default_argument_count: 0,
+        default_arguments: std::ptr::null(),
+    };
+    f_reg(library, cls_sn.as_ptr() as *const c_void, &info);
+    eprintln!("[gw2-rebuild] registered method ping()");
+    true
+}

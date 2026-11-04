@@ -138,7 +138,9 @@ unsafe extern "C" fn on_initialize(_userdata: *mut c_void, level: i32) {
         if !f.is_null() {
             let get: GetProcAddress = std::mem::transmute(f);
             unsafe {
-                crate::gdext_class::register_class(get, lib);
+                if crate::gdext_class::register_class(get, lib) {
+                    crate::gdext_class::register_ping_method(get, lib);
+                }
             }
         }
     }
