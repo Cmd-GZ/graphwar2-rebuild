@@ -10,7 +10,7 @@ oracle 侧（三段全部调真二进制）：
 
 两边用的积木各自都已单独对拍过；这一步校验的是**装配**（循环边界、顺序）。
 """
-import ctypes, os, struct, sys
+import ctypes, os, random, struct, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUB = os.path.dirname(HERE); ROOT = os.path.dirname(SUB)
@@ -73,6 +73,23 @@ CASES = [
 ]
 
 
+def random_cases(seed=7, k=10):
+    rnd = random.Random(seed)
+    texts = ["sin(x)", "x^2/10 - 3", "sqrt(abs(x))", "2*x+1", "cos(x/3)", "y"]
+    out = []
+    for _ in range(k):
+        text = rnd.choice(texts)
+        ode = 1 if text == "y" else rnd.choice([0, 0, 1])
+        flip = rnd.choice([0, 1])
+        x0 = round(rnd.uniform(-20, 20), 2)
+        y0 = round(rnd.uniform(-12, 12), 2)
+        step = rnd.choice([0.01, 0.02, 0.05])
+        obs = [(round(rnd.uniform(-22, 22), 2), round(rnd.uniform(-13, 13), 2),
+                round(rnd.uniform(0.2, 1.2), 2)) for _ in range(rnd.choice([0, 1, 2, 3]))]
+        out.append((text, x0, y0, step, flip, ode, obs))
+    return out
+
+
 def main():
     o = Oracle()
     lib = ctypes.CDLL(SO)
@@ -82,7 +99,8 @@ def main():
                                  ctypes.POINTER(ctypes.c_double), ctypes.c_size_t,
                                  ctypes.POINTER(ctypes.c_int64)]
     bad = 0
-    for (text, x0, y0, step, flip, ode, obstacles) in CASES:
+    cases = CASES + random_cases()
+    for (text, x0, y0, step, flip, ode, obstacles) in cases:
         exp_hit, exp_n = o.run(text, x0, y0, step, bool(flip), bool(ode), obstacles)
         flat = [v for obs in obstacles for v in obs] or [0.0]
         arr = (ctypes.c_double * len(flat))(*flat)

@@ -21,7 +21,7 @@
 |---|---|---|
 | 函数文法（词法/解析/求值） | `src/function/` | 37 + 70 条真值夹具 |
 | 等弦长采点（含 RK4） | `src/path.rs` | 224 条（flip × ode 全覆盖） |
-| 修正常数 + 端到端 + **开火模拟原语** | `src/shot.rs` | 端到端 + 上游 648 例；装配校验 `tools/simulate_check.py` |
+| 修正常数 + 端到端 + **开火模拟原语** | `src/shot.rs` | 端到端 + 上游 648 例；装配校验 15 组（含 ODE/flip/2 次真实命中）`tools/simulate_check.py` |
 | 坐标变换 + 掩膜点测试 + **光栅化** | `src/plane.rs` | 14 条 + 与 oracle 逐字节对拍 |
 | 事件枚举形状 + 生命两张表 | `src/events.rs`、`src/life.rs` | 5 条 |
 | 游戏资源 | `tools/pck_extract.py` → `rsc/` | 692 文件 md5 全符 |
