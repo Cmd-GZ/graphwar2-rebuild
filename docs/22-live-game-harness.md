@@ -86,12 +86,24 @@ shot_calc       0       calculate_path  0
 ⇒ **回合、生命、关卡、碰撞全部在实际执行**，而且可以用 frida 观察。
 `docs/21` 里"玩法没有真值来源"的结论**正式作废**。
 
+### 5.2.1 让 Bot 真正开火（关键开关）
+
+第一次跑 45 秒时 `shot_calc / calculate_path` **都是 0**——Bot 没动手，因为
+默认回合时限太长。在 GameSetup 里先按 `TurnTimeButton` 两次、再按 `TurnModeButton`
+把节奏调快，然后 Start，60 秒内就得到了完整覆盖：
+
+```
+shot_calc 159   calculate_path 159   parse_function 66
+turn_a 2075     turn_b 2085          life_entry 12   levelgen 1+1
+```
+
+⇒ 开火链路（解析 → 采点 → 结算）在真实对局里被完整执行过 159 次。
+
 ### 5.3 现在能做但还没做的事
 
 - 用 `Interceptor.attach` 抓参数，问出回合/生命的语义；
 - 在同一局里主动调用内部函数（活体 oracle），与我们的复刻对拍；
-- `shot_calc=0 / calculate_path=0` 说明这一局 Bot 还没开火（只跑了 12 秒），
-  需要更长观察窗或让 Bot 真正行动，才能覆盖开火结算。
+- ~~`shot_calc=0 / calculate_path=0`~~ 已解决：调短回合时限后 Bot 会开火（见 5.2.1）。
 
 ## 6. 复现
 

@@ -57,6 +57,10 @@ Battle -> Create Game -> AddBot（弹窗里选难度）-> Start -> `PlayScreen`�
 turn 1259+1531 / life_entry 12 / levelgen 1+1`。
 工具：`tools/hook_live_game.js`（frida 拉起 harness 并自动开局）。
 
+**让 Bot 开火的关键**：GameSetup 里先按两次 `TurnTimeButton`、再按 `TurnModeButton`，
+然后 Start。否则默认回合时限太长，`shot_calc/calculate_path` 一直是 0。
+调快后 60 秒内 `shot_calc 159 / calculate_path 159 / parse_function 66`。
+
 ### 玩法 oracle：四条尝试的记录（部分已被 docs/22 推翻）
 
 见 `docs/21-oracle-limits.md`。摘要：
