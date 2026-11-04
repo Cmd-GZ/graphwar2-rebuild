@@ -129,3 +129,24 @@ mod tests {
         assert_eq!((buf[0], buf[1]), (5.0, 2.0));
     }
 }
+
+/// 光栅化：把实体画进调用方缓冲区（长度应为 1000*600）。
+///
+/// # Safety
+/// `out` 必须至少能容纳 `len` 个字节。
+#[no_mangle]
+pub unsafe extern "C" fn gw2_rasterize(
+    x: f64,
+    y: f64,
+    size: f64,
+    out: *mut u8,
+    len: usize,
+    fill: u8,
+) -> i64 {
+    if out.is_null() || len < crate::plane::CANVAS_W as usize * crate::plane::CANVAS_H as usize {
+        return -1;
+    }
+    let buf = std::slice::from_raw_parts_mut(out, len);
+    crate::plane::rasterize(buf, x, y, size, fill);
+    0
+}

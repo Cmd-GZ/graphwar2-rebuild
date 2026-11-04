@@ -22,7 +22,7 @@
 | 函数文法（词法/解析/求值） | `src/function/` | 37 + 70 条真值夹具 |
 | 等弦长采点（含 RK4） | `src/path.rs` | 224 条（flip × ode 全覆盖） |
 | 修正常数 + 端到端 | `src/shot.rs` | 端到端 + 上游 648 例 |
-| 坐标变换 + 掩膜点测试 | `src/plane.rs` | 6 条 |
+| 坐标变换 + 掩膜点测试 + **光栅化** | `src/plane.rs` | 14 条 + 与 oracle 逐字节对拍 |
 | 事件枚举形状 + 生命两张表 | `src/events.rs`、`src/life.rs` | 5 条 |
 | 游戏资源 | `tools/pck_extract.py` → `rsc/` | 692 文件 md5 全符 |
 | **可构建二进制** | `Cargo.toml` cdylib + `src/gdext.rs` | `cargo build --release` 出 .so；`nm` 见 `gdext_rust_init`；`tools/gdext_probe.c` dlopen 实测 PASS |
@@ -55,7 +55,7 @@ PCK v4：索引在包尾（头部 `0x20` 处 `directory_offset`），
 
 | 块 | 卡点 |
 |---|---|
-| 光栅化 `0x4f11e0` | 已确认用 `f64::round`；缺 `dy` 循环端点/裁剪、第二个取整 `0xa30650`、"已占据不覆盖"分支 |
+| ~~光栅化~~ | **已完成**：`src/plane.rs::rasterize` 与真二进制逐字节一致（`tools/mask_check.py`，5 组 0 差异） |
 | 回合 `turn_manager` | 14 个函数全是 HashMap 探测（`0x28` 步长）；无浮点常量 ⇒ 时限是数据驱动 |
 | 目标选择 `target_manager` | SIMD 字节扫描，反编译不可读 |
 | AI `function_evolutionator` | 跳转表 Ghidra 未建模；"批量试射"仍是推断 |
