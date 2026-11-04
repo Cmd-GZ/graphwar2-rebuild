@@ -42,6 +42,7 @@
 1000×600 字节掩膜，`idx = py*1000+px`，`!= 0xFF` 即命中，**越界算命中**。
 掩膜由 `obstacle_manager` 的 `0x523020` 创建：`alloc(600000)` + `memset 0xFF`
 + 引用计数容器；同模块负责填充（`0x4f11e0`）与查询（`0x4f15b0`）。
+**三个 API 都已与真二进制对拍通过**（`tools/mask_api_check.py`，随机用例 0 差异）。
 
 **资源**（实测）
 PCK v4：索引在包尾（头部 `0x20` 处 `directory_offset`），

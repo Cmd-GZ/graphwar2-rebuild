@@ -150,3 +150,20 @@ pub unsafe extern "C" fn gw2_rasterize(
     crate::plane::rasterize(buf, x, y, size, fill);
     0
 }
+
+/// 单点碰撞测试：与 `0x4f15b0` 同构（越界算命中，只认 `!= 0xFF`）。
+///
+/// # Safety
+/// `mask` 必须至少能容纳 `len` 个字节。
+#[no_mangle]
+pub unsafe extern "C" fn gw2_is_occupied(mask: *const u8, len: usize, x: f64, y: f64) -> i64 {
+    if mask.is_null() {
+        return 1; // 无掩膜时保守当作命中，与原程序越界即命中的语义一致
+    }
+    let buf = std::slice::from_raw_parts(mask, len);
+    if crate::plane::is_occupied(buf, x, y) {
+        1
+    } else {
+        0
+    }
+}

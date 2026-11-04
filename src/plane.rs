@@ -241,6 +241,18 @@ mod tests {
     }
 
     #[test]
+    fn pixel_mapping_truncates_toward_zero() {
+        // 实测：游戏坐标 -0.05 -> 像素 499（不是 498），即 -0.05*20+500 = 499.0 截断
+        assert_eq!(to_pixel(-0.05, 0.0), (499, 300));
+        assert_eq!(to_pixel(0.05, 0.0), (501, 300));
+        // 掩膜按像素寻址：标记 499 只影响 -0.05，不影响 0.0
+        let mut m = empty_mask();
+        m[mask_index(499, 300)] = 0x00;
+        assert!(is_occupied(&m, -0.05, 0.0));
+        assert!(!is_occupied(&m, 0.0, 0.0));
+    }
+
+    #[test]
     fn occupied_helper_sees_rasterized_pixels() {
         let mut m = empty();
         rasterize(&mut m, 0.0, 0.0, 1.0, 0x00);
