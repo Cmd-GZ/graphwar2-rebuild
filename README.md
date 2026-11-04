@@ -27,7 +27,7 @@
 | 开火结算 `graphwar_shot_calculator.rs` | 🔶 调用链已还原，内部细节待补 | 观测（调用点） |
 | 棋盘 / 坐标 `graphwar_plane*.rs` | 🔶 核心变换已解出（20 px/单位，画布 1000×600）；命中判定未证 | 观测 |
 | 回合 `graphwar_turn_manager.rs` | ⬜ 待逆向 | — |
-| 命中与生命 `life/soldier/team_manager` | ⬜ 待逆向 | — |
+| 命中与生命 `life/soldier/team_manager` | 🔶 结构已还原（RwLock + 两张表），伤害规则未知 | 观测 |
 | 关卡生成 `graphwar_level_generator.rs` | ⬜ 待逆向 | — |
 | AI `computer_player_manager` / `function_evolutionator` | ⬜ 待逆向 | — |
 | 联机 `game_server/client`、`lan_broadcaster_v6`、`broker` | ⬜ 协议形状已还原（见 docs/07），实现未逆向 | 观测（字符串） |
