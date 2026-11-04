@@ -4,8 +4,8 @@
 同时把"游戏到底怎么运作"讲清楚。
 
 与上游 `graphwar-algorithm-analysis` 的关系：那是**逆向报告与对拍工具链**（`REPORT.md` +
-`analysis/` + `graphwar_curve.py`）；本仓库是**实现本体**。两者共用同一套二进制证据，
-但本仓库暂不推送到上游。
+`analysis/` + `graphwar_curve.py`）；本仓库是**实现本体**，独立托管在
+`Cmd-GZ/graphwar2`，与上游仓库分离、互不包含。
 
 ## 目标二进制
 
