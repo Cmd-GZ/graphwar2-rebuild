@@ -331,3 +331,43 @@ fn resolve_reproduces_captured_kills_and_endpoints() {
         );
     }
 }
+
+#[test]
+fn generated_events_follow_captured_protocol_sequence() {
+    use gw2_rebuild::settle::{events, resolve, ShotEvent, Target};
+
+    let mask = build_mask_no_soldiers();
+    let targets: Vec<Target> = KILL_SOLDIERS
+        .iter()
+        .filter(|(id, _, _)| *id != 234)
+        .map(|(id, x, y)| Target { id: *id, x: *x, y: *y, radius: 0.5 })
+        .collect();
+
+    let (x0, y0) = (17.627629369923454_f64, -12.391816789113197_f64);
+    let r = resolve("(x/3.02)", x0, y0, 0.5, true, Mode::Normal, &mask, &targets);
+    let ev = events(234, x0, y0, &r, &targets);
+
+    // 抓包里的顺序（Tick / FunctionActive / GameStateInfo 属于状态机，不在本测试范围）：
+    //   FunctionPoints -> LifeQueuedDeath -> EffectInfo(DeathEffect) -> EffectInfo(ExplosionEffect)
+    assert!(matches!(ev[0], ShotEvent::FunctionPoints { owner_id: 234, .. }), "首条应是 FunctionPoints");
+    assert!(matches!(ev[1], ShotEvent::LifeQueuedDeath { entity_id: 230 }), "其次应是 230 的死亡");
+    match &ev[2] {
+        ShotEvent::DeathEffect { entity_id, x, y } => {
+            assert_eq!(*entity_id, 230);
+            // 死亡效果点在士兵站立处（抓包：-10.452779035793856, -2.651563472451839）
+            assert!((x - (-10.452779035793856)).abs() < 1e-9, "死亡效果 x 不符: {x}");
+            assert!((y - (-2.651563472451839)).abs() < 1e-9, "死亡效果 y 不符: {y}");
+        }
+        other => panic!("第三条应是 DeathEffect，实际 {other:?}"),
+    }
+    // 这一发没有撞到障碍，所以不产生 QueueDestroyObstacle
+    assert!(!ev.iter().any(|e| matches!(e, ShotEvent::QueueDestroyObstacle { .. })),
+            "未被阻挡时不应产生 QueueDestroyObstacle");
+    match ev.last().unwrap() {
+        ShotEvent::ExplosionEffect { x, .. } => {
+            // 抓到的爆炸点 x = -24.99362063007402
+            assert!((x - (-24.99362063007402)).abs() < 1.0, "爆炸点 x 不符: {x}");
+        }
+        other => panic!("最后应是 ExplosionEffect，实际 {other:?}"),
+    }
+}

@@ -118,3 +118,49 @@ mod tests {
         assert!(r.killed.is_empty());
     }
 }
+
+// ---------------------------------------------------------------------------
+// 事件生成：把结算结果变成协议消息
+// ---------------------------------------------------------------------------
+
+/// 一次开火会产生的协议事件（顺序即协议上的出现顺序）。
+///
+/// 依据真实抓包：
+///
+/// ```text
+/// FunctionPoints -> LifeQueuedDeath -> EffectInfo(DeathEffect) -> ... -> EffectInfo(ExplosionEffect)
+/// ```
+///
+/// 若弹道被障碍挡住，还会多一条 `QueueDestroyObstacle`（位置 = 停止点）。
+/// **tick 值没有建模**：真实 tick 取决于弹丸飞行时间，尚未还原，
+/// 所以这里不带 tick 字段，只保证种类与坐标一致。
+#[derive(Debug, Clone, PartialEq)]
+pub enum ShotEvent {
+    FunctionPoints { owner_id: i64, start_x: f64, start_y: f64, end_x: f64 },
+    LifeQueuedDeath { entity_id: i64 },
+    DeathEffect { entity_id: i64, x: f64, y: f64 },
+    QueueDestroyObstacle { x: f64, y: f64, radius: f64 },
+    ExplosionEffect { x: f64, y: f64 },
+}
+
+/// 由结算结果生成事件序列。
+pub fn events(owner_id: i64, x0: f64, y0: f64, outcome: &ShotOutcome, targets: &[Target]) -> Vec<ShotEvent> {
+    let mut out = vec![ShotEvent::FunctionPoints {
+        owner_id,
+        start_x: x0,
+        start_y: y0,
+        end_x: outcome.stop.0,
+    }];
+    for id in &outcome.killed {
+        out.push(ShotEvent::LifeQueuedDeath { entity_id: *id });
+        if let Some(t) = targets.iter().find(|t| t.id == *id) {
+            // 死亡效果点在**士兵站立处**，不是弹道上的点（docs/30）
+            out.push(ShotEvent::DeathEffect { entity_id: *id, x: t.x, y: t.y });
+        }
+    }
+    if outcome.blocked {
+        out.push(ShotEvent::QueueDestroyObstacle { x: outcome.stop.0, y: outcome.stop.1, radius: 0.5 });
+    }
+    out.push(ShotEvent::ExplosionEffect { x: outcome.stop.0, y: outcome.stop.1 });
+    out
+}
