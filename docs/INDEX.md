@@ -8,7 +8,7 @@
 > **[`107-docs-consolidation.md`](107-docs-consolidation.md)**。
 > 三节（现行 / 已归档 / 已并档）与磁盘上的文件**逐一对得上**，可以当清单核对。
 
-## 一、现行文档（111 份）
+## 一、现行文档（112 份）
 
 > 数法：`find docs -name "*.md" -not -path "*/archive/*" | wc -l`（2026-11-06 复核）。
 > 之前这里写过的 76 / 77 / 85 / 86 / 87 都是当时的旧数，已统一改成本次实测值。
@@ -122,6 +122,7 @@
 | [101-gdc-contents.md](101-gdc-contents.md) | `.gdc` 逐字节格式 + 5 个行为脚本 + 47 行布局数值表 |
 | [128-audio-client.md](128-audio-client.md) | **音频接入客户端**：10 个音效全通（含 `humm` 的 `AudioStreamGenerator`+`push_buffer` 那条路）；音量 -15/-5 dB 实测校验；静音走 Master 总线；**事件↔音效映射仍是 0 条确定**（只缩小了范围，三条临时接线标 `PENDING_MAPPING`） |
 | [129-player-screen.md](129-player-screen.md) | **玩家页白卡/格子按真帧重做**：白卡其实是 `shop_theme.tres` 的 Button normal stylebox；格子 = `(安全区宽/2−50)/3` = **303**（96 是别的控件的公式）；**70.06% → 0.49%**；三页签实测 15/15/**24** |
+| [134-net-client.md](134-net-client.md) | **联机客户端接通**：真 TCP + `u16` 大端分帧 + 握手 7 条 + LAN 发现 + broker；假的 `create_timer(1.2)` 已删；⚠️ **PlayScreen 还没读 `App.online_room`**（战场仍是本地摆） |
 | [133-replay-player.md](133-replay-player.md) | **回放播放器**：零依赖 gzip+DEFLATE、复用 `protocol::parse_message`；按 tick 驱动（60/s）；三方对拍 400 份/103104 事件/1610 局面 **0 失败**；顺带查出"列表一直空"的根因=真实回放**没有扩展名** |
 | [135-fire-fx.md](135-fire-fx.md) | **开火表现三条**：键盘直输（原版 `GraphwarFunctionInput` 是 LineEdit 的 Rust 子类=观测；我们的屏幕级接管=自定）、准备光圈（开环→闭合，绘制细节全自定）、**弹道按 tick 逐点揭示**（60 ticks/s 观测、0.29 单位/tick 推断） |
 | [132-android-build.md](132-android-build.md) | **官方 Android/Windows 包对照**：三平台资源与配置**逐字节相同**；广告判据只有 `are_ads_enabled = !owned`、Android 用真实广告位；**`backend` 不是广告而是联机层**；跨架构逐位一致**未验证** |
