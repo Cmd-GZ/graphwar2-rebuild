@@ -361,3 +361,25 @@ python3 tools/client_match.py 39993       # 打完整一局
 node tools/capture_rand_values.js         # 抓随机流 + 真实报文
 python3 tools/predict_obstacles.py        # 关卡重放 → 应输出 "完全一致 13/13"
 ```
+
+## 7.8 本轮收尾（5 个子 agent 全部完成）
+
+| 结论 | 文档 | 一句话 |
+|---|---|---|
+| 采样器缺陷已修 | `docs/91` / `89` §32 | 半步复检漏了 `hi = mid2`（`0x3c2a0a`）；修后与真二进制 **24/24 逐点一致**，difftest 768 例全过 |
+| 同时回合制 | `docs/86` §14 | 修后 82 发**多报 0 / 漏报 0**，时刻判决 **38:0** |
+| `live_hits` 结案 | `docs/89` §33 | 不是极点问题，是测试跳过射手身体的半径固定 0.5；改 `SHOOTER_SKIP_R=0.56` 后 12 条全过（实况 0.01） |
+| 变量槽 | `docs/94` | **生成时区分**（`mode&1` 直接当 tag），不是事后裁剪 ⇒ 双表实现不用改 |
+| "精英 5" | `docs/95` | **不存在**；精英 = 每代前 **20%**（`种群/per_slot`），字面量 5 是每槽个体数 |
+| AI 时间预算 | `docs/93` | **有，墙钟 25 秒**（每代查一次）；难度 6 实测被截断（217580/253000） |
+| 协议覆盖 | `docs/96` | 实现 33 个，**缺 24 个事件名**；且 `events.rs` 的判别值**缺独立验证** |
+| 界面台账 | `docs/92` | 125 条、15/15 界面进入过；**界面逻辑在 Rust 里，不在 `.gdc` 里** |
+
+### 代码侧已同步
+
+- `src/aigen.rs`：新增 `GAME_TIME_BUDGET_SECS = 25.0` 与 `evolve_with_budget(...)`（`evolve` 保持不限时）；
+  `Params.elite` 正名为 `per_slot` 并修正注释（原注释"用途未定"已过时）。
+- `tests/live_hits.rs`：切到 `SERVER_STEP`(0.01) + `SHOOTER_SKIP_R = 0.56`，12 条全过。
+- 全部 `0.5` 硬编码清理完毕（`preflight` 的扫描项通过）。
+
+**测试：137 条全绿。`PREFLIGHT: PASS`。**
