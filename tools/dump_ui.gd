@@ -173,6 +173,43 @@ var ROUTES := {
 		[820, "dump", "setup_after_cycle"],
 		[830, "quit"],
 	],
+	# Connection refused (closed port on loopback): should reach DisconnectedPopUp fast.
+	"connect_refused": [
+		[50, "press", MENU2 + "/LocalButton"],
+		[90, "press", LOBBY + "/MarginContainer/HBoxContainer/JoinButton"],
+		[140, "settext", "VBoxContainer/ScreensControl/JoinIpPopUp/MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/MarginContainer2/JoinIpIpLineEdit", "127.0.0.1:1"],
+		[170, "press", "VBoxContainer/ScreensControl/JoinIpPopUp/MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3/MarginContainer2/GraphwarButton"],
+		[200, "dump", "after_join_click"],
+		[220, "watchmany", [["DisconnectedPopUp", "disconnected", "45000"], ["ConnectingPopUp", "connecting", "15000"]]],
+	],
+	# Level-6 bot (Deep Thought, 1000 generations) so the match ends quickly.
+	"endgame6": [
+		[50, "press", MENU2 + "/LocalButton"],
+		[90, "press", LOBBY + "/MarginContainer/HBoxContainer/CreateButton"],
+		[130, "press", SETUP + "/OptionsContainer/AddBotButton"],
+		[170, "press", POPBOT + "/OptionsContainer2/AspectRatioContainer4/AddBotButton"],
+		[210, "press", SETUP + "/OptionsContainer/TurnTimeButton"],
+		[240, "press", SETUP + "/MarginContainer/HBoxContainer/StartButton"],
+		[380, "dump", "match_start"],
+		[400, "watchmany", [["EndGamePopUp", "endgame_popup", "420000"], ["ConfirmPlayExitPopUp", "confirm_exit_late", "10000"]]],
+	],
+	# Join a public ("Global") room from the room list: exercises the connect path.
+	"connect_room": [
+		[50, "press", MENU2 + "/LocalButton"],
+		[90, "press", LOBBY + "/HBoxContainer/ShowGlobalContainer/ShowGlobalButton"],
+		[200, "press", LOBBY + "/MarginContainer2/VBoxContainer/ScrollContainer/GraphwarLanVBox/HBoxContainer/JoinButtonContainer/JoinButton"],
+		[220, "dump", "after_room_join"],
+		[240, "watchmany", [["ConnectingPopUp", "connecting", "20000"], ["DisconnectedPopUp", "disconnected", "90000"]]],
+	],
+	# Same, but the IP popup gets an explicit host:port.
+	"connect_ip_port": [
+		[50, "press", MENU2 + "/LocalButton"],
+		[90, "press", LOBBY + "/MarginContainer/HBoxContainer/JoinButton"],
+		[140, "settext", "VBoxContainer/ScreensControl/JoinIpPopUp/MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/MarginContainer2/JoinIpIpLineEdit", "10.255.255.1:12345"],
+		[170, "press", "VBoxContainer/ScreensControl/JoinIpPopUp/MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3/MarginContainer2/GraphwarButton"],
+		[200, "dump", "after_join_click"],
+		[220, "watchmany", [["ConnectingPopUp", "connecting", "20000"], ["DisconnectedPopUp", "disconnected", "90000"]]],
+	],
 	# Try to provoke ConnectingPopUp / DisconnectedPopUp with an unreachable peer.
 	"connect_fail": [
 		[50, "press", MENU2 + "/LocalButton"],
@@ -288,6 +325,10 @@ func _flags_of(n: Node) -> String:
 			if rp != "":
 				f.append(prop + "=" + rp)
 				break
+	# scene_file_path is set on the root of every instanced sub-scene: this maps each
+	# .tscn we extracted to the exact node it was instantiated at.
+	if n.scene_file_path != "":
+		f.append("scene=" + n.scene_file_path)
 	var tt = n.get("tooltip_text")
 	if tt is String and String(tt) != "":
 		f.append("tip=" + _esc(String(tt)))
@@ -354,6 +395,20 @@ var watch_name := ""
 var watch_label := ""
 var watch_deadline := 0
 var watch_dumped := false
+var watch_queue: Array = []   # [[screen,label,budget_ms], ...] for "watchmany"
+
+func _advance_watch() -> void:
+	if watch_queue.is_empty():
+		print("@@WATCHDONE")
+		get_tree().quit()
+		return
+	var item: Array = watch_queue.pop_front()
+	watch_name = String(item[0])
+	watch_label = String(item[1])
+	watch_deadline = Time.get_ticks_msec() + int(item[2])
+	watch_dumped = false
+	print("@@WATCH|", watch_name, "|", watch_label, "|budget_ms=", item[2])
+
 
 func _do(st: Array) -> void:
 	var kind := String(st[1])
@@ -387,6 +442,11 @@ func _do(st: Array) -> void:
 				if target.has_signal("text_changed"):
 					target.emit_signal("text_changed", val)
 				print("@@SETTEXT|", rel, "|", val)
+		"watchmany":
+			watch_queue = []
+			for item in st[2]:
+				watch_queue.append(item)
+			_advance_watch()
 		"watch":
 			watch_name = String(st[2])
 			watch_label = String(st[3])
@@ -435,11 +495,11 @@ func _process(_dt: float) -> void:
 			watch_dumped = true
 			print("@@WATCHHIT|", watch_name, "|ms=", Time.get_ticks_msec())
 			_dump(watch_label)
-			get_tree().quit()
+			_advance_watch()
 		elif Time.get_ticks_msec() > watch_deadline:
 			watch_dumped = true
 			print("@@WATCHTIMEOUT|", watch_name, "|ms=", Time.get_ticks_msec())
 			_dump(watch_label + "_timeout")
-			get_tree().quit()
+			_advance_watch()
 	elif frames > last_frame + 30:
 		get_tree().quit()

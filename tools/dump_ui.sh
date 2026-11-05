@@ -19,7 +19,7 @@ WS="$(cd "$REBUILD/.." && pwd)"
 LIVE="$WS/godot-live"
 GODOT="$WS/tools/Godot_v4.7.2-stable_linux.x86_64"
 OUT="${GW2_UI_OUT:-$WS/.rea-work/ui}"
-ALL_ROUTES="boot campaign player replay lobby setup addbot setup_bots joinip setup_cycle play play_diffeq play_extra play_chat play_exit connect_fail endgame"
+ALL_ROUTES="boot campaign player replay lobby setup addbot setup_bots joinip setup_cycle play play_diffeq play_extra play_chat play_exit connect_fail connect_room connect_ip_port connect_refused endgame endgame6"
 
 if [ ! -x "$GODOT" ]; then echo "missing godot: $GODOT" >&2; exit 1; fi
 if [ ! -d "$LIVE" ]; then echo "missing harness: $LIVE" >&2; exit 1; fi

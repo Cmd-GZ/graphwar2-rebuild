@@ -202,7 +202,7 @@ mod correction_tests {
             (-19.512760846799154_f64, 10.99018276610812_f64, -12.040885846800286_f64, 10.99_f64, false),
         ];
         for (x0, y0, end_x, end_y, flip) in cases {
-            let pts = shot_points("0.00", x0, y0, 0.5, flip, Mode::Normal, true);
+            let pts = shot_points("0.00", x0, y0, crate::SERVER_STEP, flip, Mode::Normal, true);
             assert!(!pts.is_empty());
             // 水平直线：整条轨迹 y 恒等于修正后的常数
             let c = y0; // f(x)=0 ⇒ 修正后恒为 y0

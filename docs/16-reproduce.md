@@ -51,7 +51,7 @@ cargo test --offline
 真正的"标准答案"在上游那套对拍里，本仓库**不自我证明**：
 
 ```bash
-cd .. && .venv/bin/python analysis/difftest.py         # 704 例
+cd .. && .venv/bin/python analysis/difftest.py         # 768 例（原 704 + 64 条早停回归用例）
 .venv/bin/python analysis/difftest_parser.py           # 90 例
 .venv/bin/python analysis/final_verify.py              # 648 + 40
 .venv/bin/python analysis/fuzz.py 300 7                # 随机语法树

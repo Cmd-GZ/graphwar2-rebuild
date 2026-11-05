@@ -1,0 +1,1205 @@
+
+libgraphwarrust.so：     文件格式 elf64-x86-64
+
+
+Disassembly of section .text:
+
+000000000051d080 <gdext_rust_init@@Base+0x409a0>:
+  51d080:	55                   	push   %rbp
+  51d081:	41 57                	push   %r15
+  51d083:	41 56                	push   %r14
+  51d085:	41 55                	push   %r13
+  51d087:	41 54                	push   %r12
+  51d089:	53                   	push   %rbx
+  51d08a:	48 81 ec 58 02 00 00 	sub    $0x258,%rsp
+  51d091:	44 89 4c 24 60       	mov    %r9d,0x60(%rsp)
+  51d096:	44 89 84 24 dc 00 00 	mov    %r8d,0xdc(%rsp)
+  51d09d:	00 
+  51d09e:	89 4c 24 08          	mov    %ecx,0x8(%rsp)
+  51d0a2:	49 89 ff             	mov    %rdi,%r15
+  51d0a5:	4c 8b ac 24 90 02 00 	mov    0x290(%rsp),%r13
+  51d0ac:	00 
+  51d0ad:	48 89 74 24 50       	mov    %rsi,0x50(%rsp)
+  51d0b2:	4c 8b 36             	mov    (%rsi),%r14
+  51d0b5:	49 8d 5e 10          	lea    0x10(%r14),%rbx
+  51d0b9:	b9 01 00 00 00       	mov    $0x1,%ecx
+  51d0be:	31 c0                	xor    %eax,%eax
+  51d0c0:	f0 41 0f b1 4e 10    	lock cmpxchg %ecx,0x10(%r14)
+  51d0c6:	0f 85 7f 16 00 00    	jne    51e74b <gdext_rust_init@@Base+0x4206b>
+  51d0cc:	48 b9 f8 ff ff ff ff 	movabs $0x7ffffffffffffff8,%rcx
+  51d0d3:	ff ff 7f 
+  51d0d6:	48 8b 05 e3 d8 49 00 	mov    0x49d8e3(%rip),%rax        # 9ba9c0 <__xstat64@plt+0x6b9a0>
+  51d0dd:	48 8b 00             	mov    (%rax),%rax
+  51d0e0:	48 83 c1 07          	add    $0x7,%rcx
+  51d0e4:	48 85 c8             	test   %rcx,%rax
+  51d0e7:	0f 85 6c 16 00 00    	jne    51e759 <gdext_rust_init@@Base+0x42079>
+  51d0ed:	31 ed                	xor    %ebp,%ebp
+  51d0ef:	41 0f b6 46 14       	movzbl 0x14(%r14),%eax
+  51d0f4:	84 c0                	test   %al,%al
+  51d0f6:	0f 85 76 16 00 00    	jne    51e772 <gdext_rust_init@@Base+0x42092>
+  51d0fc:	49 8d 76 18          	lea    0x18(%r14),%rsi
+  51d100:	48 8d bc 24 70 01 00 	lea    0x170(%rsp),%rdi
+  51d107:	00 
+  51d108:	8b 54 24 08          	mov    0x8(%rsp),%edx
+  51d10c:	ff 15 ae db 49 00    	call   *0x49dbae(%rip)        # 9bacc0 <__xstat64@plt+0x6bca0>
+  51d112:	40 84 ed             	test   %bpl,%bpl
+  51d115:	4c 8b 64 24 50       	mov    0x50(%rsp),%r12
+  51d11a:	49 bd f8 ff ff ff ff 	movabs $0x7ffffffffffffff8,%r13
+  51d121:	ff ff 7f 
+  51d124:	75 17                	jne    51d13d <gdext_rust_init@@Base+0x40a5d>
+  51d126:	48 8b 05 93 d8 49 00 	mov    0x49d893(%rip),%rax        # 9ba9c0 <__xstat64@plt+0x6b9a0>
+  51d12d:	48 8b 00             	mov    (%rax),%rax
+  51d130:	49 8d 4d 07          	lea    0x7(%r13),%rcx
+  51d134:	48 85 c8             	test   %rcx,%rax
+  51d137:	0f 85 9d 16 00 00    	jne    51e7da <gdext_rust_init@@Base+0x420fa>
+  51d13d:	31 c0                	xor    %eax,%eax
+  51d13f:	87 03                	xchg   %eax,(%rbx)
+  51d141:	83 f8 02             	cmp    $0x2,%eax
+  51d144:	0f 84 5c 16 00 00    	je     51e7a6 <gdext_rust_init@@Base+0x420c6>
+  51d14a:	41 0f b6 6c 24 5c    	movzbl 0x5c(%r12),%ebp
+  51d150:	40 88 6c 24 07       	mov    %bpl,0x7(%rsp)
+  51d155:	48 8b 9c 24 70 01 00 	mov    0x170(%rsp),%rbx
+  51d15c:	00 
+  51d15d:	49 8d 45 08          	lea    0x8(%r13),%rax
+  51d161:	48 89 84 24 b0 01 00 	mov    %rax,0x1b0(%rsp)
+  51d168:	00 
+  51d169:	48 39 c3             	cmp    %rax,%rbx
+  51d16c:	40 88 6c 24 0f       	mov    %bpl,0xf(%rsp)
+  51d171:	0f 85 a2 00 00 00    	jne    51d219 <gdext_rust_init@@Base+0x40b39>
+  51d177:	40 0f b6 dd          	movzbl %bpl,%ebx
+  51d17b:	48 8d bc 24 20 01 00 	lea    0x120(%rsp),%rdi
+  51d182:	00 
+  51d183:	89 de                	mov    %ebx,%esi
+  51d185:	e8 96 1e fd ff       	call   4ef020 <gdext_rust_init@@Base+0x12940>
+  51d18a:	48 8d 7c 24 10       	lea    0x10(%rsp),%rdi
+  51d18f:	48 8d 94 24 20 01 00 	lea    0x120(%rsp),%rdx
+  51d196:	00 
+  51d197:	89 de                	mov    %ebx,%esi
+  51d199:	e8 42 0f fd ff       	call   4ee0e0 <gdext_rust_init@@Base+0x11a00>
+  51d19e:	48 8b 44 24 20       	mov    0x20(%rsp),%rax
+  51d1a3:	48 89 84 24 30 01 00 	mov    %rax,0x130(%rsp)
+  51d1aa:	00 
+  51d1ab:	f3 0f 6f 44 24 10    	movdqu 0x10(%rsp),%xmm0
+  51d1b1:	66 0f 7f 84 24 20 01 	movdqa %xmm0,0x120(%rsp)
+  51d1b8:	00 00 
+  51d1ba:	66 0f 7f 44 24 10    	movdqa %xmm0,0x10(%rsp)
+  51d1c0:	48 89 44 24 20       	mov    %rax,0x20(%rsp)
+  51d1c5:	48 8d bc 24 f0 00 00 	lea    0xf0(%rsp),%rdi
+  51d1cc:	00 
+  51d1cd:	48 8d 74 24 10       	lea    0x10(%rsp),%rsi
+  51d1d2:	e8 49 15 fd ff       	call   4ee720 <gdext_rust_init@@Base+0x12040>
+  51d1d7:	f3 0f 6f 84 24 f0 00 	movdqu 0xf0(%rsp),%xmm0
+  51d1de:	00 00 
+  51d1e0:	66 0f 7f 84 24 70 01 	movdqa %xmm0,0x170(%rsp)
+  51d1e7:	00 00 
+  51d1e9:	4c 8b ac 24 00 01 00 	mov    0x100(%rsp),%r13
+  51d1f0:	00 
+  51d1f1:	4c 89 ac 24 80 01 00 	mov    %r13,0x180(%rsp)
+  51d1f8:	00 
+  51d1f9:	48 8b 9c 24 70 01 00 	mov    0x170(%rsp),%rbx
+  51d200:	00 
+  51d201:	48 3b 9c 24 b0 01 00 	cmp    0x1b0(%rsp),%rbx
+  51d208:	00 
+  51d209:	0f 84 a5 15 00 00    	je     51e7b4 <gdext_rust_init@@Base+0x420d4>
+  51d20f:	48 8b ac 24 78 01 00 	mov    0x178(%rsp),%rbp
+  51d216:	00 
+  51d217:	eb 10                	jmp    51d229 <gdext_rust_init@@Base+0x40b49>
+  51d219:	48 8b ac 24 78 01 00 	mov    0x178(%rsp),%rbp
+  51d220:	00 
+  51d221:	4c 8b ac 24 80 01 00 	mov    0x180(%rsp),%r13
+  51d228:	00 
+  51d229:	4d 89 ee             	mov    %r13,%r14
+  51d22c:	49 c1 e6 04          	shl    $0x4,%r14
+  51d230:	4c 89 e8             	mov    %r13,%rax
+  51d233:	48 c1 e8 3c          	shr    $0x3c,%rax
+  51d237:	0f 95 c0             	setne  %al
+  51d23a:	48 b9 f8 ff ff ff ff 	movabs $0x7ffffffffffffff8,%rcx
+  51d241:	ff ff 7f 
+  51d244:	49 39 ce             	cmp    %rcx,%r14
+  51d247:	0f 97 c1             	seta   %cl
+  51d24a:	08 c1                	or     %al,%cl
+  51d24c:	74 14                	je     51d262 <gdext_rust_init@@Base+0x40b82>
+  51d24e:	45 31 e4             	xor    %r12d,%r12d
+  51d251:	4c 89 e7             	mov    %r12,%rdi
+  51d254:	4c 89 f6             	mov    %r14,%rsi
+  51d257:	ff 15 c3 d3 49 00    	call   *0x49d3c3(%rip)        # 9ba620 <__xstat64@plt+0x6b600>
+  51d25d:	e9 00 16 00 00       	jmp    51e862 <gdext_rust_init@@Base+0x42182>
+  51d262:	4c 89 bc 24 a8 01 00 	mov    %r15,0x1a8(%rsp)
+  51d269:	00 
+  51d26a:	4d 85 f6             	test   %r14,%r14
+  51d26d:	0f 84 59 14 00 00    	je     51e6cc <gdext_rust_init@@Base+0x41fec>
+  51d273:	ff 15 af d3 49 00    	call   *0x49d3af(%rip)        # 9ba628 <__xstat64@plt+0x6b608>
+  51d279:	41 bc 08 00 00 00    	mov    $0x8,%r12d
+  51d27f:	be 08 00 00 00       	mov    $0x8,%esi
+  51d284:	4c 89 f7             	mov    %r14,%rdi
+  51d287:	ff 15 a3 d3 49 00    	call   *0x49d3a3(%rip)        # 9ba630 <__xstat64@plt+0x6b610>
+  51d28d:	48 85 c0             	test   %rax,%rax
+  51d290:	74 bf                	je     51d251 <gdext_rust_init@@Base+0x40b71>
+  51d292:	49 89 c7             	mov    %rax,%r15
+  51d295:	4d 89 ec             	mov    %r13,%r12
+  51d298:	4d 85 ed             	test   %r13,%r13
+  51d29b:	74 0f                	je     51d2ac <gdext_rust_init@@Base+0x40bcc>
+  51d29d:	4c 89 ff             	mov    %r15,%rdi
+  51d2a0:	48 89 ee             	mov    %rbp,%rsi
+  51d2a3:	4c 89 f2             	mov    %r14,%rdx
+  51d2a6:	ff 15 8c d3 49 00    	call   *0x49d38c(%rip)        # 9ba638 <__xstat64@plt+0x6b618>
+  51d2ac:	4c 89 a4 24 20 01 00 	mov    %r12,0x120(%rsp)
+  51d2b3:	00 
+  51d2b4:	4c 89 bc 24 28 01 00 	mov    %r15,0x128(%rsp)
+  51d2bb:	00 
+  51d2bc:	4c 89 ac 24 30 01 00 	mov    %r13,0x130(%rsp)
+  51d2c3:	00 
+  51d2c4:	66 0f ef c0          	pxor   %xmm0,%xmm0
+  51d2c8:	f3 0f 7f 84 24 38 01 	movdqu %xmm0,0x138(%rsp)
+  51d2cf:	00 00 
+  51d2d1:	48 c7 84 24 48 01 00 	movq   $0x0,0x148(%rsp)
+  51d2d8:	00 00 00 00 00 
+  51d2dd:	48 85 db             	test   %rbx,%rbx
+  51d2e0:	74 15                	je     51d2f7 <gdext_rust_init@@Base+0x40c17>
+  51d2e2:	48 c1 e3 04          	shl    $0x4,%rbx
+  51d2e6:	ba 08 00 00 00       	mov    $0x8,%edx
+  51d2eb:	48 89 ef             	mov    %rbp,%rdi
+  51d2ee:	48 89 de             	mov    %rbx,%rsi
+  51d2f1:	ff 15 a9 d2 49 00    	call   *0x49d2a9(%rip)        # 9ba5a0 <__xstat64@plt+0x6b580>
+  51d2f7:	48 8b 44 24 50       	mov    0x50(%rsp),%rax
+  51d2fc:	80 78 5c 00          	cmpb   $0x0,0x5c(%rax)
+  51d300:	4c 8b ac 24 90 02 00 	mov    0x290(%rsp),%r13
+  51d307:	00 
+  51d308:	75 0e                	jne    51d318 <gdext_rust_init@@Base+0x40c38>
+  51d30a:	48 8d bc 24 20 01 00 	lea    0x120(%rsp),%rdi
+  51d311:	00 
+  51d312:	ff 15 38 ef 49 00    	call   *0x49ef38(%rip)        # 9bc250 <__xstat64@plt+0x6d230>
+  51d318:	ff 15 da d5 49 00    	call   *0x49d5da(%rip)        # 9ba8f8 <__xstat64@plt+0x6b8d8>
+  51d31e:	48 89 84 24 08 02 00 	mov    %rax,0x208(%rsp)
+  51d325:	00 
+  51d326:	89 94 24 10 02 00 00 	mov    %edx,0x210(%rsp)
+  51d32d:	83 bc 24 dc 00 00 00 	cmpl   $0x0,0xdc(%rsp)
+  51d334:	00 
+  51d335:	0f 84 08 12 00 00    	je     51e543 <gdext_rust_init@@Base+0x41e63>
+  51d33b:	49 bc ff ff ff ff ff 	movabs $0xfffffffffffffff,%r12
+  51d342:	ff ff 0f 
+  51d345:	48 8d bc 24 08 02 00 	lea    0x208(%rsp),%rdi
+  51d34c:	00 
+  51d34d:	48 8b 0d 94 dc 49 00 	mov    0x49dc94(%rip),%rcx        # 9bafe8 <__xstat64@plt+0x6bfc8>
+  51d354:	48 8d 9c 24 b8 01 00 	lea    0x1b8(%rsp),%rbx
+  51d35b:	00 
+  51d35c:	4c 8d b4 24 20 01 00 	lea    0x120(%rsp),%r14
+  51d363:	00 
+  51d364:	48 b8 f8 ff ff ff ff 	movabs $0x7ffffffffffffff8,%rax
+  51d36b:	ff ff 7f 
+  51d36e:	48 83 c0 07          	add    $0x7,%rax
+  51d372:	48 89 84 24 50 01 00 	mov    %rax,0x150(%rsp)
+  51d379:	00 
+  51d37a:	48 b8 00 00 00 00 00 	movabs $0x800000000000000,%rax
+  51d381:	00 00 08 
+  51d384:	48 ff c8             	dec    %rax
+  51d387:	48 89 84 24 00 02 00 	mov    %rax,0x200(%rsp)
+  51d38e:	00 
+  51d38f:	4c 8d 7c 24 68       	lea    0x68(%rsp),%r15
+  51d394:	31 ed                	xor    %ebp,%ebp
+  51d396:	ff d1                	call   *%rcx
+  51d398:	48 83 f8 19          	cmp    $0x19,%rax
+  51d39c:	75 09                	jne    51d3a7 <gdext_rust_init@@Base+0x40cc7>
+  51d39e:	85 d2                	test   %edx,%edx
+  51d3a0:	74 0f                	je     51d3b1 <gdext_rust_init@@Base+0x40cd1>
+  51d3a2:	e9 9c 11 00 00       	jmp    51e543 <gdext_rust_init@@Base+0x41e63>
+  51d3a7:	48 83 f8 19          	cmp    $0x19,%rax
+  51d3ab:	0f 87 92 11 00 00    	ja     51e543 <gdext_rust_init@@Base+0x41e63>
+  51d3b1:	48 c7 44 24 10 00 00 	movq   $0x0,0x10(%rsp)
+  51d3b8:	00 00 
+  51d3ba:	48 89 df             	mov    %rbx,%rdi
+  51d3bd:	4c 89 f6             	mov    %r14,%rsi
+  51d3c0:	48 8d 54 24 10       	lea    0x10(%rsp),%rdx
+  51d3c5:	e8 16 e8 fc ff       	call   4ebbe0 <gdext_rust_init@@Base+0xf500>
+  51d3ca:	89 ac 24 6c 01 00 00 	mov    %ebp,0x16c(%rsp)
+  51d3d1:	48 8b 84 24 30 01 00 	mov    0x130(%rsp),%rax
+  51d3d8:	00 
+  51d3d9:	48 89 c5             	mov    %rax,%rbp
+  51d3dc:	48 c1 e5 04          	shl    $0x4,%rbp
+  51d3e0:	4c 39 e0             	cmp    %r12,%rax
+  51d3e3:	49 89 c4             	mov    %rax,%r12
+  51d3e6:	0f 97 c0             	seta   %al
+  51d3e9:	48 b9 f8 ff ff ff ff 	movabs $0x7ffffffffffffff8,%rcx
+  51d3f0:	ff ff 7f 
+  51d3f3:	48 39 cd             	cmp    %rcx,%rbp
+  51d3f6:	0f 97 c1             	seta   %cl
+  51d3f9:	08 c1                	or     %al,%cl
+  51d3fb:	0f 85 e2 12 00 00    	jne    51e6e3 <gdext_rust_init@@Base+0x42003>
+  51d401:	48 8b 9c 24 28 01 00 	mov    0x128(%rsp),%rbx
+  51d408:	00 
+  51d409:	48 85 ed             	test   %rbp,%rbp
+  51d40c:	0f 84 bc 03 00 00    	je     51d7ce <gdext_rust_init@@Base+0x410ee>
+  51d412:	ff 15 10 d2 49 00    	call   *0x49d210(%rip)        # 9ba628 <__xstat64@plt+0x6b608>
+  51d418:	41 be 08 00 00 00    	mov    $0x8,%r14d
+  51d41e:	be 08 00 00 00       	mov    $0x8,%esi
+  51d423:	48 89 ef             	mov    %rbp,%rdi
+  51d426:	ff 15 04 d2 49 00    	call   *0x49d204(%rip)        # 9ba630 <__xstat64@plt+0x6b610>
+  51d42c:	48 89 84 24 88 00 00 	mov    %rax,0x88(%rsp)
+  51d433:	00 
+  51d434:	48 85 c0             	test   %rax,%rax
+  51d437:	0f 84 a9 12 00 00    	je     51e6e6 <gdext_rust_init@@Base+0x42006>
+  51d43d:	4c 89 a4 24 60 01 00 	mov    %r12,0x160(%rsp)
+  51d444:	00 
+  51d445:	4c 89 64 24 48       	mov    %r12,0x48(%rsp)
+  51d44a:	4d 85 e4             	test   %r12,%r12
+  51d44d:	74 14                	je     51d463 <gdext_rust_init@@Base+0x40d83>
+  51d44f:	48 8b bc 24 88 00 00 	mov    0x88(%rsp),%rdi
+  51d456:	00 
+  51d457:	48 89 de             	mov    %rbx,%rsi
+  51d45a:	48 89 ea             	mov    %rbp,%rdx
+  51d45d:	ff 15 d5 d1 49 00    	call   *0x49d1d5(%rip)        # 9ba638 <__xstat64@plt+0x6b618>
+  51d463:	48 8b 44 24 50       	mov    0x50(%rsp),%rax
+  51d468:	4c 8b 60 10          	mov    0x10(%rax),%r12
+  51d46c:	49 8d 5c 24 10       	lea    0x10(%r12),%rbx
+  51d471:	31 c0                	xor    %eax,%eax
+  51d473:	b9 01 00 00 00       	mov    $0x1,%ecx
+  51d478:	f0 41 0f b1 4c 24 10 	lock cmpxchg %ecx,0x10(%r12)
+  51d47f:	0f 85 cf 0f 00 00    	jne    51e454 <gdext_rust_init@@Base+0x41d74>
+  51d485:	48 8b 05 34 d5 49 00 	mov    0x49d534(%rip),%rax        # 9ba9c0 <__xstat64@plt+0x6b9a0>
+  51d48c:	48 8b 00             	mov    (%rax),%rax
+  51d48f:	48 85 84 24 50 01 00 	test   %rax,0x150(%rsp)
+  51d496:	00 
+  51d497:	0f 85 c5 0f 00 00    	jne    51e462 <gdext_rust_init@@Base+0x41d82>
+  51d49d:	45 31 f6             	xor    %r14d,%r14d
+  51d4a0:	41 0f b6 44 24 14    	movzbl 0x14(%r12),%eax
+  51d4a6:	84 c0                	test   %al,%al
+  51d4a8:	0f 85 44 13 00 00    	jne    51e7f2 <gdext_rust_init@@Base+0x42112>
+  51d4ae:	8b 44 24 08          	mov    0x8(%rsp),%eax
+  51d4b2:	89 44 24 10          	mov    %eax,0x10(%rsp)
+  51d4b6:	66 0f ef c0          	pxor   %xmm0,%xmm0
+  51d4ba:	66 0f 7f 84 24 e0 00 	movdqa %xmm0,0xe0(%rsp)
+  51d4c1:	00 00 
+  51d4c3:	49 83 7c 24 30 00    	cmpq   $0x0,0x30(%r12)
+  51d4c9:	0f 84 ae 00 00 00    	je     51d57d <gdext_rust_init@@Base+0x40e9d>
+  51d4cf:	49 8d 7c 24 38       	lea    0x38(%r12),%rdi
+  51d4d4:	48 8d 74 24 10       	lea    0x10(%rsp),%rsi
+  51d4d9:	e8 e2 09 f6 ff       	call   47dec0 <__cxa_thread_atexit_impl@@Base-0x5e810>
+  51d4de:	48 89 c6             	mov    %rax,%rsi
+  51d4e1:	48 c1 ee 39          	shr    $0x39,%rsi
+  51d4e5:	49 8b 4c 24 18       	mov    0x18(%r12),%rcx
+  51d4ea:	49 8b 54 24 20       	mov    0x20(%r12),%rdx
+  51d4ef:	66 0f 6e c6          	movd   %esi,%xmm0
+  51d4f3:	66 0f 60 c0          	punpcklbw %xmm0,%xmm0
+  51d4f7:	f2 0f 70 c0 00       	pshuflw $0x0,%xmm0,%xmm0
+  51d4fc:	66 0f 70 c0 44       	pshufd $0x44,%xmm0,%xmm0
+  51d501:	31 f6                	xor    %esi,%esi
+  51d503:	48 21 d0             	and    %rdx,%rax
+  51d506:	f3 0f 6f 0c 01       	movdqu (%rcx,%rax,1),%xmm1
+  51d50b:	66 0f 6f d1          	movdqa %xmm1,%xmm2
+  51d50f:	66 0f 74 d0          	pcmpeqb %xmm0,%xmm2
+  51d513:	66 0f d7 fa          	pmovmskb %xmm2,%edi
+  51d517:	85 ff                	test   %edi,%edi
+  51d519:	74 2d                	je     51d548 <gdext_rust_init@@Base+0x40e68>
+  51d51b:	f3 44 0f bc cf       	tzcnt  %edi,%r9d
+  51d520:	49 01 c1             	add    %rax,%r9
+  51d523:	49 21 d1             	and    %rdx,%r9
+  51d526:	49 c1 e1 05          	shl    $0x5,%r9
+  51d52a:	49 89 c8             	mov    %rcx,%r8
+  51d52d:	4d 29 c8             	sub    %r9,%r8
+  51d530:	44 8b 4c 24 08       	mov    0x8(%rsp),%r9d
+  51d535:	45 3b 48 e0          	cmp    -0x20(%r8),%r9d
+  51d539:	74 2e                	je     51d569 <gdext_rust_init@@Base+0x40e89>
+  51d53b:	44 8d 47 ff          	lea    -0x1(%rdi),%r8d
+  51d53f:	66 41 21 f8          	and    %di,%r8w
+  51d543:	44 89 c7             	mov    %r8d,%edi
+  51d546:	75 d3                	jne    51d51b <gdext_rust_init@@Base+0x40e3b>
+  51d548:	66 0f 76 d2          	pcmpeqd %xmm2,%xmm2
+  51d54c:	66 0f 74 ca          	pcmpeqb %xmm2,%xmm1
+  51d550:	66 0f d7 f9          	pmovmskb %xmm1,%edi
+  51d554:	85 ff                	test   %edi,%edi
+  51d556:	0f 85 b7 02 00 00    	jne    51d813 <gdext_rust_init@@Base+0x41133>
+  51d55c:	48 01 f0             	add    %rsi,%rax
+  51d55f:	48 83 c0 10          	add    $0x10,%rax
+  51d563:	48 83 c6 10          	add    $0x10,%rsi
+  51d567:	eb 9a                	jmp    51d503 <gdext_rust_init@@Base+0x40e23>
+  51d569:	f2 41 0f 10 40 e8    	movsd  -0x18(%r8),%xmm0
+  51d56f:	0f 29 84 24 e0 00 00 	movaps %xmm0,0xe0(%rsp)
+  51d576:	00 
+  51d577:	f3 41 0f 7e 40 f0    	movq   -0x10(%r8),%xmm0
+  51d57d:	66 0f 7f 84 24 90 01 	movdqa %xmm0,0x190(%rsp)
+  51d584:	00 00 
+  51d586:	45 84 f6             	test   %r14b,%r14b
+  51d589:	75 18                	jne    51d5a3 <gdext_rust_init@@Base+0x40ec3>
+  51d58b:	48 8b 05 2e d4 49 00 	mov    0x49d42e(%rip),%rax        # 9ba9c0 <__xstat64@plt+0x6b9a0>
+  51d592:	48 8b 00             	mov    (%rax),%rax
+  51d595:	48 85 84 24 50 01 00 	test   %rax,0x150(%rsp)
+  51d59c:	00 
+  51d59d:	0f 85 29 0f 00 00    	jne    51e4cc <gdext_rust_init@@Base+0x41dec>
+  51d5a3:	31 c0                	xor    %eax,%eax
+  51d5a5:	87 03                	xchg   %eax,(%rbx)
+  51d5a7:	83 f8 02             	cmp    $0x2,%eax
+  51d5aa:	0f 84 d2 0e 00 00    	je     51e482 <gdext_rust_init@@Base+0x41da2>
+  51d5b0:	48 8b 44 24 50       	mov    0x50(%rsp),%rax
+  51d5b5:	4c 8b 60 08          	mov    0x8(%rax),%r12
+  51d5b9:	49 8d 5c 24 10       	lea    0x10(%r12),%rbx
+  51d5be:	31 c0                	xor    %eax,%eax
+  51d5c0:	b9 01 00 00 00       	mov    $0x1,%ecx
+  51d5c5:	f0 41 0f b1 4c 24 10 	lock cmpxchg %ecx,0x10(%r12)
+  51d5cc:	0f 85 be 0e 00 00    	jne    51e490 <gdext_rust_init@@Base+0x41db0>
+  51d5d2:	48 8b 05 e7 d3 49 00 	mov    0x49d3e7(%rip),%rax        # 9ba9c0 <__xstat64@plt+0x6b9a0>
+  51d5d9:	48 8b 00             	mov    (%rax),%rax
+  51d5dc:	48 85 84 24 50 01 00 	test   %rax,0x150(%rsp)
+  51d5e3:	00 
+  51d5e4:	0f 85 b4 0e 00 00    	jne    51e49e <gdext_rust_init@@Base+0x41dbe>
+  51d5ea:	45 31 f6             	xor    %r14d,%r14d
+  51d5ed:	41 0f b6 44 24 14    	movzbl 0x14(%r12),%eax
+  51d5f3:	84 c0                	test   %al,%al
+  51d5f5:	0f 85 28 12 00 00    	jne    51e823 <gdext_rust_init@@Base+0x42143>
+  51d5fb:	8b 44 24 08          	mov    0x8(%rsp),%eax
+  51d5ff:	89 44 24 10          	mov    %eax,0x10(%rsp)
+  51d603:	49 83 7c 24 30 00    	cmpq   $0x0,0x30(%r12)
+  51d609:	0f 84 9a 00 00 00    	je     51d6a9 <gdext_rust_init@@Base+0x40fc9>
+  51d60f:	49 8d 7c 24 38       	lea    0x38(%r12),%rdi
+  51d614:	48 8d 74 24 10       	lea    0x10(%rsp),%rsi
+  51d619:	e8 a2 08 f6 ff       	call   47dec0 <__cxa_thread_atexit_impl@@Base-0x5e810>
+  51d61e:	48 89 c6             	mov    %rax,%rsi
+  51d621:	48 c1 ee 39          	shr    $0x39,%rsi
+  51d625:	49 8b 4c 24 18       	mov    0x18(%r12),%rcx
+  51d62a:	49 8b 54 24 20       	mov    0x20(%r12),%rdx
+  51d62f:	66 0f 6e c6          	movd   %esi,%xmm0
+  51d633:	66 0f 60 c0          	punpcklbw %xmm0,%xmm0
+  51d637:	f2 0f 70 c0 00       	pshuflw $0x0,%xmm0,%xmm0
+  51d63c:	66 0f 70 c0 44       	pshufd $0x44,%xmm0,%xmm0
+  51d641:	31 f6                	xor    %esi,%esi
+  51d643:	48 21 d0             	and    %rdx,%rax
+  51d646:	f3 0f 6f 0c 01       	movdqu (%rcx,%rax,1),%xmm1
+  51d64b:	66 0f 6f d1          	movdqa %xmm1,%xmm2
+  51d64f:	66 0f 74 d0          	pcmpeqb %xmm0,%xmm2
+  51d653:	66 0f d7 fa          	pmovmskb %xmm2,%edi
+  51d657:	85 ff                	test   %edi,%edi
+  51d659:	74 31                	je     51d68c <gdext_rust_init@@Base+0x40fac>
+  51d65b:	f3 44 0f bc c7       	tzcnt  %edi,%r8d
+  51d660:	49 01 c0             	add    %rax,%r8
+  51d663:	49 21 d0             	and    %rdx,%r8
+  51d666:	4e 8d 0c c5 00 00 00 	lea    0x0(,%r8,8),%r9
+  51d66d:	00 
+  51d66e:	49 89 ca             	mov    %rcx,%r10
+  51d671:	4d 29 ca             	sub    %r9,%r10
+  51d674:	44 8b 4c 24 08       	mov    0x8(%rsp),%r9d
+  51d679:	45 3b 4a f8          	cmp    -0x8(%r10),%r9d
+  51d67d:	74 39                	je     51d6b8 <gdext_rust_init@@Base+0x40fd8>
+  51d67f:	44 8d 47 ff          	lea    -0x1(%rdi),%r8d
+  51d683:	66 41 21 f8          	and    %di,%r8w
+  51d687:	44 89 c7             	mov    %r8d,%edi
+  51d68a:	75 cf                	jne    51d65b <gdext_rust_init@@Base+0x40f7b>
+  51d68c:	66 0f 76 d2          	pcmpeqd %xmm2,%xmm2
+  51d690:	66 0f 74 ca          	pcmpeqb %xmm2,%xmm1
+  51d694:	66 0f d7 f9          	pmovmskb %xmm1,%edi
+  51d698:	85 ff                	test   %edi,%edi
+  51d69a:	75 0d                	jne    51d6a9 <gdext_rust_init@@Base+0x40fc9>
+  51d69c:	48 01 f0             	add    %rsi,%rax
+  51d69f:	48 83 c0 10          	add    $0x10,%rax
+  51d6a3:	48 83 c6 10          	add    $0x10,%rsi
+  51d6a7:	eb 9a                	jmp    51d643 <gdext_rust_init@@Base+0x40f63>
+  51d6a9:	c7 44 24 58 00 00 00 	movl   $0x0,0x58(%rsp)
+  51d6b0:	00 
+  51d6b1:	45 84 f6             	test   %r14b,%r14b
+  51d6b4:	75 2c                	jne    51d6e2 <gdext_rust_init@@Base+0x41002>
+  51d6b6:	eb 12                	jmp    51d6ca <gdext_rust_init@@Base+0x40fea>
+  51d6b8:	49 f7 d8             	neg    %r8
+  51d6bb:	42 0f b6 44 c1 fc    	movzbl -0x4(%rcx,%r8,8),%eax
+  51d6c1:	89 44 24 58          	mov    %eax,0x58(%rsp)
+  51d6c5:	45 84 f6             	test   %r14b,%r14b
+  51d6c8:	75 18                	jne    51d6e2 <gdext_rust_init@@Base+0x41002>
+  51d6ca:	48 8b 05 ef d2 49 00 	mov    0x49d2ef(%rip),%rax        # 9ba9c0 <__xstat64@plt+0x6b9a0>
+  51d6d1:	48 8b 00             	mov    (%rax),%rax
+  51d6d4:	48 85 84 24 50 01 00 	test   %rax,0x150(%rsp)
+  51d6db:	00 
+  51d6dc:	0f 85 03 0e 00 00    	jne    51e4e5 <gdext_rust_init@@Base+0x41e05>
+  51d6e2:	31 c0                	xor    %eax,%eax
+  51d6e4:	87 03                	xchg   %eax,(%rbx)
+  51d6e6:	83 f8 02             	cmp    $0x2,%eax
+  51d6e9:	0f 84 cf 0d 00 00    	je     51e4be <gdext_rust_init@@Base+0x41dde>
+  51d6ef:	48 c7 84 24 90 00 00 	movq   $0x0,0x90(%rsp)
+  51d6f6:	00 00 00 00 00 
+  51d6fb:	48 c7 84 24 98 00 00 	movq   $0x8,0x98(%rsp)
+  51d702:	00 08 00 00 00 
+  51d707:	48 c7 84 24 a0 00 00 	movq   $0x0,0xa0(%rsp)
+  51d70e:	00 00 00 00 00 
+  51d713:	83 7c 24 60 00       	cmpl   $0x0,0x60(%rsp)
+  51d718:	0f 84 dc 00 00 00    	je     51d7fa <gdext_rust_init@@Base+0x4111a>
+  51d71e:	48 8b 44 24 48       	mov    0x48(%rsp),%rax
+  51d723:	48 3b 84 24 00 02 00 	cmp    0x200(%rsp),%rax
+  51d72a:	00 
+  51d72b:	0f 87 c6 0f 00 00    	ja     51e6f7 <gdext_rust_init@@Base+0x42017>
+  51d731:	48 85 c0             	test   %rax,%rax
+  51d734:	0f 84 f4 00 00 00    	je     51d82e <gdext_rust_init@@Base+0x4114e>
+  51d73a:	4c 8b 25 e7 ce 49 00 	mov    0x49cee7(%rip),%r12        # 9ba628 <__xstat64@plt+0x6b608>
+  51d741:	41 ff d4             	call   *%r12
+  51d744:	41 be 08 00 00 00    	mov    $0x8,%r14d
+  51d74a:	be 08 00 00 00       	mov    $0x8,%esi
+  51d74f:	48 89 ef             	mov    %rbp,%rdi
+  51d752:	4c 8b 3d d7 ce 49 00 	mov    0x49ced7(%rip),%r15        # 9ba630 <__xstat64@plt+0x6b610>
+  51d759:	41 ff d7             	call   *%r15
+  51d75c:	48 85 c0             	test   %rax,%rax
+  51d75f:	0f 84 95 0f 00 00    	je     51e6fa <gdext_rust_init@@Base+0x4201a>
+  51d765:	48 89 c3             	mov    %rax,%rbx
+  51d768:	48 89 c7             	mov    %rax,%rdi
+  51d76b:	48 8b b4 24 88 00 00 	mov    0x88(%rsp),%rsi
+  51d772:	00 
+  51d773:	48 89 ea             	mov    %rbp,%rdx
+  51d776:	4c 8b 2d bb ce 49 00 	mov    0x49cebb(%rip),%r13        # 9ba638 <__xstat64@plt+0x6b618>
+  51d77d:	41 ff d5             	call   *%r13
+  51d780:	48 8b 44 24 48       	mov    0x48(%rsp),%rax
+  51d785:	48 89 44 24 68       	mov    %rax,0x68(%rsp)
+  51d78a:	48 89 5c 24 70       	mov    %rbx,0x70(%rsp)
+  51d78f:	48 89 44 24 78       	mov    %rax,0x78(%rsp)
+  51d794:	41 ff d4             	call   *%r12
+  51d797:	be 08 00 00 00       	mov    $0x8,%esi
+  51d79c:	48 89 ef             	mov    %rbp,%rdi
+  51d79f:	41 ff d7             	call   *%r15
+  51d7a2:	48 85 c0             	test   %rax,%rax
+  51d7a5:	4c 8b 64 24 50       	mov    0x50(%rsp),%r12
+  51d7aa:	0f 84 a4 10 00 00    	je     51e854 <gdext_rust_init@@Base+0x42174>
+  51d7b0:	49 89 c6             	mov    %rax,%r14
+  51d7b3:	48 89 c7             	mov    %rax,%rdi
+  51d7b6:	48 89 de             	mov    %rbx,%rsi
+  51d7b9:	48 89 ea             	mov    %rbp,%rdx
+  51d7bc:	41 ff d5             	call   *%r13
+  51d7bf:	4c 8d 7c 24 68       	lea    0x68(%rsp),%r15
+  51d7c4:	48 8b 44 24 48       	mov    0x48(%rsp),%rax
+  51d7c9:	e9 82 00 00 00       	jmp    51d850 <gdext_rust_init@@Base+0x41170>
+  51d7ce:	b8 08 00 00 00       	mov    $0x8,%eax
+  51d7d3:	48 89 84 24 88 00 00 	mov    %rax,0x88(%rsp)
+  51d7da:	00 
+  51d7db:	48 c7 84 24 60 01 00 	movq   $0x0,0x160(%rsp)
+  51d7e2:	00 00 00 00 00 
+  51d7e7:	4c 89 64 24 48       	mov    %r12,0x48(%rsp)
+  51d7ec:	4d 85 e4             	test   %r12,%r12
+  51d7ef:	0f 85 5a fc ff ff    	jne    51d44f <gdext_rust_init@@Base+0x40d6f>
+  51d7f5:	e9 69 fc ff ff       	jmp    51d463 <gdext_rust_init@@Base+0x40d83>
+  51d7fa:	41 be 08 00 00 00    	mov    $0x8,%r14d
+  51d800:	31 c0                	xor    %eax,%eax
+  51d802:	31 f6                	xor    %esi,%esi
+  51d804:	49 bc ff ff ff ff ff 	movabs $0xfffffffffffffff,%r12
+  51d80b:	ff ff 0f 
+  51d80e:	e9 32 02 00 00       	jmp    51da45 <gdext_rust_init@@Base+0x41365>
+  51d813:	66 0f ef c0          	pxor   %xmm0,%xmm0
+  51d817:	66 0f 7f 84 24 90 01 	movdqa %xmm0,0x190(%rsp)
+  51d81e:	00 00 
+  51d820:	45 84 f6             	test   %r14b,%r14b
+  51d823:	0f 84 62 fd ff ff    	je     51d58b <gdext_rust_init@@Base+0x40eab>
+  51d829:	e9 75 fd ff ff       	jmp    51d5a3 <gdext_rust_init@@Base+0x40ec3>
+  51d82e:	48 c7 44 24 68 00 00 	movq   $0x0,0x68(%rsp)
+  51d835:	00 00 
+  51d837:	48 c7 44 24 70 08 00 	movq   $0x8,0x70(%rsp)
+  51d83e:	00 00 
+  51d840:	48 89 44 24 78       	mov    %rax,0x78(%rsp)
+  51d845:	41 be 08 00 00 00    	mov    $0x8,%r14d
+  51d84b:	4c 8b 64 24 50       	mov    0x50(%rsp),%r12
+  51d850:	48 89 44 24 10       	mov    %rax,0x10(%rsp)
+  51d855:	4c 89 74 24 18       	mov    %r14,0x18(%rsp)
+  51d85a:	48 89 44 24 20       	mov    %rax,0x20(%rsp)
+  51d85f:	41 80 7c 24 5c 00    	cmpb   $0x0,0x5c(%r12)
+  51d865:	0f 85 d9 00 00 00    	jne    51d944 <gdext_rust_init@@Base+0x41264>
+  51d86b:	80 7c 24 58 00       	cmpb   $0x0,0x58(%rsp)
+  51d870:	75 0b                	jne    51d87d <gdext_rust_init@@Base+0x4119d>
+  51d872:	66 0f 28 84 24 e0 00 	movapd 0xe0(%rsp),%xmm0
+  51d879:	00 00 
+  51d87b:	eb 11                	jmp    51d88e <gdext_rust_init@@Base+0x411ae>
+  51d87d:	66 0f 28 84 24 e0 00 	movapd 0xe0(%rsp),%xmm0
+  51d884:	00 00 
+  51d886:	66 0f 57 05 02 0e c8 	xorpd  -0x37f1fe(%rip),%xmm0        # 19e690 <__cxa_thread_atexit_impl@@Base-0x33e040>
+  51d88d:	ff 
+  51d88e:	48 c7 84 24 f0 00 00 	movq   $0x0,0xf0(%rsp)
+  51d895:	00 00 00 00 00 
+  51d89a:	66 0f ef c9          	pxor   %xmm1,%xmm1
+  51d89e:	66 0f ef d2          	pxor   %xmm2,%xmm2
+  51d8a2:	4c 89 ff             	mov    %r15,%rdi
+  51d8a5:	48 8d b4 24 f0 00 00 	lea    0xf0(%rsp),%rsi
+  51d8ac:	00 
+  51d8ad:	e8 1e e1 fc ff       	call   4eb9d0 <gdext_rust_init@@Base+0xf2f0>
+  51d8b2:	f2 0f 11 84 24 d0 00 	movsd  %xmm0,0xd0(%rsp)
+  51d8b9:	00 00 
+  51d8bb:	4c 8b 74 24 20       	mov    0x20(%rsp),%r14
+  51d8c0:	4c 3b 74 24 10       	cmp    0x10(%rsp),%r14
+  51d8c5:	75 0b                	jne    51d8d2 <gdext_rust_init@@Base+0x411f2>
+  51d8c7:	48 8d 7c 24 10       	lea    0x10(%rsp),%rdi
+  51d8cc:	ff 15 7e e5 49 00    	call   *0x49e57e(%rip)        # 9bbe50 <__xstat64@plt+0x6ce30>
+  51d8d2:	48 8b 5c 24 18       	mov    0x18(%rsp),%rbx
+  51d8d7:	4d 85 f6             	test   %r14,%r14
+  51d8da:	74 14                	je     51d8f0 <gdext_rust_init@@Base+0x41210>
+  51d8dc:	48 8d 7b 10          	lea    0x10(%rbx),%rdi
+  51d8e0:	4c 89 f2             	mov    %r14,%rdx
+  51d8e3:	48 c1 e2 04          	shl    $0x4,%rdx
+  51d8e7:	48 89 de             	mov    %rbx,%rsi
+  51d8ea:	ff 15 40 d3 49 00    	call   *0x49d340(%rip)        # 9bac30 <__xstat64@plt+0x6bc10>
+  51d8f0:	48 c7 03 03 00 00 00 	movq   $0x3,(%rbx)
+  51d8f7:	49 8d 5e 01          	lea    0x1(%r14),%rbx
+  51d8fb:	48 89 5c 24 20       	mov    %rbx,0x20(%rsp)
+  51d900:	48 3b 5c 24 10       	cmp    0x10(%rsp),%rbx
+  51d905:	75 0b                	jne    51d912 <gdext_rust_init@@Base+0x41232>
+  51d907:	48 8d 7c 24 10       	lea    0x10(%rsp),%rdi
+  51d90c:	ff 15 3e e5 49 00    	call   *0x49e53e(%rip)        # 9bbe50 <__xstat64@plt+0x6ce30>
+  51d912:	66 0f 28 84 24 90 01 	movapd 0x190(%rsp),%xmm0
+  51d919:	00 00 
+  51d91b:	f2 0f 5c 84 24 d0 00 	subsd  0xd0(%rsp),%xmm0
+  51d922:	00 00 
+  51d924:	48 8b 44 24 18       	mov    0x18(%rsp),%rax
+  51d929:	48 c1 e3 04          	shl    $0x4,%rbx
+  51d92d:	48 c7 04 18 11 00 00 	movq   $0x11,(%rax,%rbx,1)
+  51d934:	00 
+  51d935:	f2 0f 11 44 18 08    	movsd  %xmm0,0x8(%rax,%rbx,1)
+  51d93b:	49 83 c6 02          	add    $0x2,%r14
+  51d93f:	4c 89 74 24 20       	mov    %r14,0x20(%rsp)
+  51d944:	48 8d bc 24 18 02 00 	lea    0x218(%rsp),%rdi
+  51d94b:	00 
+  51d94c:	4c 89 e6             	mov    %r12,%rsi
+  51d94f:	48 8d 54 24 10       	lea    0x10(%rsp),%rdx
+  51d954:	8b 4c 24 08          	mov    0x8(%rsp),%ecx
+  51d958:	f2 0f 10 05 70 1d c8 	movsd  -0x37e290(%rip),%xmm0        # 19f6d0 <__cxa_thread_atexit_impl@@Base-0x33d000>
+  51d95f:	ff 
+  51d960:	e8 eb cd ff ff       	call   51a750 <gdext_rust_init@@Base+0x3e070>
+  51d965:	48 8b 5c 24 68       	mov    0x68(%rsp),%rbx
+  51d96a:	4c 8b 64 24 70       	mov    0x70(%rsp),%r12
+  51d96f:	4c 8b 6c 24 78       	mov    0x78(%rsp),%r13
+  51d974:	4c 8b b4 24 a0 00 00 	mov    0xa0(%rsp),%r14
+  51d97b:	00 
+  51d97c:	4c 3b b4 24 90 00 00 	cmp    0x90(%rsp),%r14
+  51d983:	00 
+  51d984:	75 0e                	jne    51d994 <gdext_rust_init@@Base+0x412b4>
+  51d986:	48 8d bc 24 90 00 00 	lea    0x90(%rsp),%rdi
+  51d98d:	00 
+  51d98e:	ff 15 cc e4 49 00    	call   *0x49e4cc(%rip)        # 9bbe60 <__xstat64@plt+0x6ce40>
+  51d994:	48 8b 84 24 98 00 00 	mov    0x98(%rsp),%rax
+  51d99b:	00 
+  51d99c:	4b 8d 0c 76          	lea    (%r14,%r14,2),%rcx
+  51d9a0:	48 c1 e1 04          	shl    $0x4,%rcx
+  51d9a4:	48 89 1c 08          	mov    %rbx,(%rax,%rcx,1)
+  51d9a8:	4c 89 64 08 08       	mov    %r12,0x8(%rax,%rcx,1)
+  51d9ad:	4c 89 6c 08 10       	mov    %r13,0x10(%rax,%rcx,1)
+  51d9b2:	66 0f 10 84 24 18 02 	movupd 0x218(%rsp),%xmm0
+  51d9b9:	00 00 
+  51d9bb:	66 0f 11 44 08 18    	movupd %xmm0,0x18(%rax,%rcx,1)
+  51d9c1:	48 8b 94 24 28 02 00 	mov    0x228(%rsp),%rdx
+  51d9c8:	00 
+  51d9c9:	48 89 54 08 28       	mov    %rdx,0x28(%rax,%rcx,1)
+  51d9ce:	49 ff c6             	inc    %r14
+  51d9d1:	4c 89 b4 24 a0 00 00 	mov    %r14,0xa0(%rsp)
+  51d9d8:	00 
+  51d9d9:	48 8b 74 24 10       	mov    0x10(%rsp),%rsi
+  51d9de:	48 85 f6             	test   %rsi,%rsi
+  51d9e1:	74 14                	je     51d9f7 <gdext_rust_init@@Base+0x41317>
+  51d9e3:	48 8b 7c 24 18       	mov    0x18(%rsp),%rdi
+  51d9e8:	48 c1 e6 04          	shl    $0x4,%rsi
+  51d9ec:	ba 08 00 00 00       	mov    $0x8,%edx
+  51d9f1:	ff 15 a9 cb 49 00    	call   *0x49cba9(%rip)        # 9ba5a0 <__xstat64@plt+0x6b580>
+  51d9f7:	83 7c 24 60 01       	cmpl   $0x1,0x60(%rsp)
+  51d9fc:	4c 8b ac 24 90 02 00 	mov    0x290(%rsp),%r13
+  51da03:	00 
+  51da04:	4c 8b 64 24 48       	mov    0x48(%rsp),%r12
+  51da09:	0f 85 71 04 00 00    	jne    51de80 <gdext_rust_init@@Base+0x417a0>
+  51da0f:	4c 8b b4 24 98 00 00 	mov    0x98(%rsp),%r14
+  51da16:	00 
+  51da17:	48 8b b4 24 a0 00 00 	mov    0xa0(%rsp),%rsi
+  51da1e:	00 
+  51da1f:	48 8d 44 24 67       	lea    0x67(%rsp),%rax
+  51da24:	48 89 44 24 10       	mov    %rax,0x10(%rsp)
+  51da29:	48 83 fe 02          	cmp    $0x2,%rsi
+  51da2d:	0f 83 cb 0a 00 00    	jae    51e4fe <gdext_rust_init@@Base+0x41e1e>
+  51da33:	49 bc ff ff ff ff ff 	movabs $0xfffffffffffffff,%r12
+  51da3a:	ff ff 0f 
+  51da3d:	48 8b 84 24 90 00 00 	mov    0x90(%rsp),%rax
+  51da44:	00 
+  51da45:	48 8d 2c 76          	lea    (%rsi,%rsi,2),%rbp
+  51da49:	48 c1 e5 04          	shl    $0x4,%rbp
+  51da4d:	4c 01 f5             	add    %r14,%rbp
+  51da50:	4c 89 74 24 68       	mov    %r14,0x68(%rsp)
+  51da55:	4c 89 74 24 70       	mov    %r14,0x70(%rsp)
+  51da5a:	48 89 84 24 d0 00 00 	mov    %rax,0xd0(%rsp)
+  51da61:	00 
+  51da62:	48 89 44 24 78       	mov    %rax,0x78(%rsp)
+  51da67:	48 89 ac 24 80 00 00 	mov    %rbp,0x80(%rsp)
+  51da6e:	00 
+  51da6f:	4d 89 f7             	mov    %r14,%r15
+  51da72:	48 85 f6             	test   %rsi,%rsi
+  51da75:	0f 84 04 03 00 00    	je     51dd7f <gdext_rust_init@@Base+0x4169f>
+  51da7b:	80 7c 24 58 00       	cmpb   $0x0,0x58(%rsp)
+  51da80:	74 1a                	je     51da9c <gdext_rust_init@@Base+0x413bc>
+  51da82:	66 0f 6f 84 24 e0 00 	movdqa 0xe0(%rsp),%xmm0
+  51da89:	00 00 
+  51da8b:	66 0f ef 05 fd 0b c8 	pxor   -0x37f403(%rip),%xmm0        # 19e690 <__cxa_thread_atexit_impl@@Base-0x33e040>
+  51da92:	ff 
+  51da93:	66 0f 7f 84 24 e0 00 	movdqa %xmm0,0xe0(%rsp)
+  51da9a:	00 00 
+  51da9c:	4c 89 b4 24 c8 00 00 	mov    %r14,0xc8(%rsp)
+  51daa3:	00 
+  51daa4:	49 8d 46 30          	lea    0x30(%r14),%rax
+  51daa8:	49 89 c7             	mov    %rax,%r15
+  51daab:	48 8b 48 d0          	mov    -0x30(%rax),%rcx
+  51daaf:	48 8b 40 f8          	mov    -0x8(%rax),%rax
+  51dab3:	48 89 84 24 10 01 00 	mov    %rax,0x110(%rsp)
+  51daba:	00 
+  51dabb:	41 0f 10 47 e8       	movups -0x18(%r15),%xmm0
+  51dac0:	0f 29 84 24 00 01 00 	movaps %xmm0,0x100(%rsp)
+  51dac7:	00 
+  51dac8:	66 41 0f 10 47 d8    	movupd -0x28(%r15),%xmm0
+  51dace:	66 0f 29 84 24 f0 00 	movapd %xmm0,0xf0(%rsp)
+  51dad5:	00 00 
+  51dad7:	48 3b 8c 24 b0 01 00 	cmp    0x1b0(%rsp),%rcx
+  51dade:	00 
+  51dadf:	0f 84 85 02 00 00    	je     51dd6a <gdext_rust_init@@Base+0x4168a>
+  51dae5:	48 89 4c 24 48       	mov    %rcx,0x48(%rsp)
+  51daea:	48 89 4c 24 10       	mov    %rcx,0x10(%rsp)
+  51daef:	48 8b 84 24 10 01 00 	mov    0x110(%rsp),%rax
+  51daf6:	00 
+  51daf7:	48 8d 4c 24 18       	lea    0x18(%rsp),%rcx
+  51dafc:	48 89 41 20          	mov    %rax,0x20(%rcx)
+  51db00:	66 0f 28 84 24 f0 00 	movapd 0xf0(%rsp),%xmm0
+  51db07:	00 00 
+  51db09:	66 0f 28 8c 24 00 01 	movapd 0x100(%rsp),%xmm1
+  51db10:	00 00 
+  51db12:	66 0f 11 49 10       	movupd %xmm1,0x10(%rcx)
+  51db17:	66 0f 11 01          	movupd %xmm0,(%rcx)
+  51db1b:	4c 8b 6c 24 20       	mov    0x20(%rsp),%r13
+  51db20:	4d 89 ee             	mov    %r13,%r14
+  51db23:	49 c1 e6 04          	shl    $0x4,%r14
+  51db27:	4d 39 e5             	cmp    %r12,%r13
+  51db2a:	0f 97 c0             	seta   %al
+  51db2d:	48 b9 f8 ff ff ff ff 	movabs $0x7ffffffffffffff8,%rcx
+  51db34:	ff ff 7f 
+  51db37:	49 39 ce             	cmp    %rcx,%r14
+  51db3a:	0f 97 c1             	seta   %cl
+  51db3d:	08 c1                	or     %al,%cl
+  51db3f:	0f 85 c6 0b 00 00    	jne    51e70b <gdext_rust_init@@Base+0x4202b>
+  51db45:	48 89 6c 24 58       	mov    %rbp,0x58(%rsp)
+  51db4a:	48 8b 5c 24 18       	mov    0x18(%rsp),%rbx
+  51db4f:	4d 85 f6             	test   %r14,%r14
+  51db52:	74 2b                	je     51db7f <gdext_rust_init@@Base+0x4149f>
+  51db54:	ff 15 ce ca 49 00    	call   *0x49cace(%rip)        # 9ba628 <__xstat64@plt+0x6b608>
+  51db5a:	41 bc 08 00 00 00    	mov    $0x8,%r12d
+  51db60:	be 08 00 00 00       	mov    $0x8,%esi
+  51db65:	4c 89 f7             	mov    %r14,%rdi
+  51db68:	ff 15 c2 ca 49 00    	call   *0x49cac2(%rip)        # 9ba630 <__xstat64@plt+0x6b610>
+  51db6e:	48 85 c0             	test   %rax,%rax
+  51db71:	0f 84 97 0b 00 00    	je     51e70e <gdext_rust_init@@Base+0x4202e>
+  51db77:	48 89 c5             	mov    %rax,%rbp
+  51db7a:	4d 89 ec             	mov    %r13,%r12
+  51db7d:	eb 08                	jmp    51db87 <gdext_rust_init@@Base+0x414a7>
+  51db7f:	bd 08 00 00 00       	mov    $0x8,%ebp
+  51db84:	45 31 e4             	xor    %r12d,%r12d
+  51db87:	4d 85 ed             	test   %r13,%r13
+  51db8a:	74 0f                	je     51db9b <gdext_rust_init@@Base+0x414bb>
+  51db8c:	48 89 ef             	mov    %rbp,%rdi
+  51db8f:	48 89 de             	mov    %rbx,%rsi
+  51db92:	4c 89 f2             	mov    %r14,%rdx
+  51db95:	ff 15 9d ca 49 00    	call   *0x49ca9d(%rip)        # 9ba638 <__xstat64@plt+0x6b618>
+  51db9b:	4c 89 a4 24 a8 00 00 	mov    %r12,0xa8(%rsp)
+  51dba2:	00 
+  51dba3:	48 89 ac 24 b0 00 00 	mov    %rbp,0xb0(%rsp)
+  51dbaa:	00 
+  51dbab:	4c 89 ac 24 b8 00 00 	mov    %r13,0xb8(%rsp)
+  51dbb2:	00 
+  51dbb3:	48 8b 74 24 50       	mov    0x50(%rsp),%rsi
+  51dbb8:	80 7e 5c 00          	cmpb   $0x0,0x5c(%rsi)
+  51dbbc:	4c 8b ac 24 90 02 00 	mov    0x290(%rsp),%r13
+  51dbc3:	00 
+  51dbc4:	48 8b 6c 24 58       	mov    0x58(%rsp),%rbp
+  51dbc9:	0f 85 e3 00 00 00    	jne    51dcb2 <gdext_rust_init@@Base+0x415d2>
+  51dbcf:	48 c7 84 24 d0 01 00 	movq   $0x0,0x1d0(%rsp)
+  51dbd6:	00 00 00 00 00 
+  51dbdb:	66 0f 57 c9          	xorpd  %xmm1,%xmm1
+  51dbdf:	66 0f ef d2          	pxor   %xmm2,%xmm2
+  51dbe3:	48 8d 7c 24 10       	lea    0x10(%rsp),%rdi
+  51dbe8:	66 0f 28 84 24 e0 00 	movapd 0xe0(%rsp),%xmm0
+  51dbef:	00 00 
+  51dbf1:	48 8d b4 24 d0 01 00 	lea    0x1d0(%rsp),%rsi
+  51dbf8:	00 
+  51dbf9:	e8 d2 dd fc ff       	call   4eb9d0 <gdext_rust_init@@Base+0xf2f0>
+  51dbfe:	f2 0f 11 84 24 c0 00 	movsd  %xmm0,0xc0(%rsp)
+  51dc05:	00 00 
+  51dc07:	4c 8b a4 24 b8 00 00 	mov    0xb8(%rsp),%r12
+  51dc0e:	00 
+  51dc0f:	4c 3b a4 24 a8 00 00 	cmp    0xa8(%rsp),%r12
+  51dc16:	00 
+  51dc17:	75 0e                	jne    51dc27 <gdext_rust_init@@Base+0x41547>
+  51dc19:	48 8d bc 24 a8 00 00 	lea    0xa8(%rsp),%rdi
+  51dc20:	00 
+  51dc21:	ff 15 29 e2 49 00    	call   *0x49e229(%rip)        # 9bbe50 <__xstat64@plt+0x6ce30>
+  51dc27:	4c 8b b4 24 b0 00 00 	mov    0xb0(%rsp),%r14
+  51dc2e:	00 
+  51dc2f:	4d 85 e4             	test   %r12,%r12
+  51dc32:	74 14                	je     51dc48 <gdext_rust_init@@Base+0x41568>
+  51dc34:	49 8d 7e 10          	lea    0x10(%r14),%rdi
+  51dc38:	4c 89 e2             	mov    %r12,%rdx
+  51dc3b:	48 c1 e2 04          	shl    $0x4,%rdx
+  51dc3f:	4c 89 f6             	mov    %r14,%rsi
+  51dc42:	ff 15 e8 cf 49 00    	call   *0x49cfe8(%rip)        # 9bac30 <__xstat64@plt+0x6bc10>
+  51dc48:	49 c7 06 03 00 00 00 	movq   $0x3,(%r14)
+  51dc4f:	4d 8d 74 24 01       	lea    0x1(%r12),%r14
+  51dc54:	4c 89 b4 24 b8 00 00 	mov    %r14,0xb8(%rsp)
+  51dc5b:	00 
+  51dc5c:	4c 3b b4 24 a8 00 00 	cmp    0xa8(%rsp),%r14
+  51dc63:	00 
+  51dc64:	75 0e                	jne    51dc74 <gdext_rust_init@@Base+0x41594>
+  51dc66:	48 8d bc 24 a8 00 00 	lea    0xa8(%rsp),%rdi
+  51dc6d:	00 
+  51dc6e:	ff 15 dc e1 49 00    	call   *0x49e1dc(%rip)        # 9bbe50 <__xstat64@plt+0x6ce30>
+  51dc74:	66 0f 28 84 24 90 01 	movapd 0x190(%rsp),%xmm0
+  51dc7b:	00 00 
+  51dc7d:	f2 0f 5c 84 24 c0 00 	subsd  0xc0(%rsp),%xmm0
+  51dc84:	00 00 
+  51dc86:	48 8b 84 24 b0 00 00 	mov    0xb0(%rsp),%rax
+  51dc8d:	00 
+  51dc8e:	49 c1 e6 04          	shl    $0x4,%r14
+  51dc92:	4a c7 04 30 11 00 00 	movq   $0x11,(%rax,%r14,1)
+  51dc99:	00 
+  51dc9a:	f2 42 0f 11 44 30 08 	movsd  %xmm0,0x8(%rax,%r14,1)
+  51dca1:	49 83 c4 02          	add    $0x2,%r12
+  51dca5:	4c 89 a4 24 b8 00 00 	mov    %r12,0xb8(%rsp)
+  51dcac:	00 
+  51dcad:	48 8b 74 24 50       	mov    0x50(%rsp),%rsi
+  51dcb2:	48 8d bc 24 40 02 00 	lea    0x240(%rsp),%rdi
+  51dcb9:	00 
+  51dcba:	48 8d 94 24 a8 00 00 	lea    0xa8(%rsp),%rdx
+  51dcc1:	00 
+  51dcc2:	8b 4c 24 08          	mov    0x8(%rsp),%ecx
+  51dcc6:	f2 0f 10 05 42 14 c8 	movsd  -0x37ebbe(%rip),%xmm0        # 19f110 <__cxa_thread_atexit_impl@@Base-0x33d5c0>
+  51dccd:	ff 
+  51dcce:	e8 7d ca ff ff       	call   51a750 <gdext_rust_init@@Base+0x3e070>
+  51dcd3:	8b 84 24 50 02 00 00 	mov    0x250(%rsp),%eax
+  51dcda:	3b 44 24 38          	cmp    0x38(%rsp),%eax
+  51dcde:	75 29                	jne    51dd09 <gdext_rust_init@@Base+0x41629>
+  51dce0:	f2 0f 10 84 24 48 02 	movsd  0x248(%rsp),%xmm0
+  51dce7:	00 00 
+  51dce9:	f2 0f 5c 44 24 30    	subsd  0x30(%rsp),%xmm0
+  51dcef:	66 0f 54 05 59 e3 c7 	andpd  -0x381ca7(%rip),%xmm0        # 19c050 <__cxa_thread_atexit_impl@@Base-0x340680>
+  51dcf6:	ff 
+  51dcf7:	f2 0f 10 0d d1 19 c8 	movsd  -0x37e62f(%rip),%xmm1        # 19f6d0 <__cxa_thread_atexit_impl@@Base-0x33d000>
+  51dcfe:	ff 
+  51dcff:	66 0f 2e c8          	ucomisd %xmm0,%xmm1
+  51dd03:	0f 87 ce 05 00 00    	ja     51e2d7 <gdext_rust_init@@Base+0x41bf7>
+  51dd09:	48 8b b4 24 a8 00 00 	mov    0xa8(%rsp),%rsi
+  51dd10:	00 
+  51dd11:	48 85 f6             	test   %rsi,%rsi
+  51dd14:	74 17                	je     51dd2d <gdext_rust_init@@Base+0x4164d>
+  51dd16:	48 8b bc 24 b0 00 00 	mov    0xb0(%rsp),%rdi
+  51dd1d:	00 
+  51dd1e:	48 c1 e6 04          	shl    $0x4,%rsi
+  51dd22:	ba 08 00 00 00       	mov    $0x8,%edx
+  51dd27:	ff 15 73 c8 49 00    	call   *0x49c873(%rip)        # 9ba5a0 <__xstat64@plt+0x6b580>
+  51dd2d:	48 8b 74 24 48       	mov    0x48(%rsp),%rsi
+  51dd32:	48 85 f6             	test   %rsi,%rsi
+  51dd35:	49 bc ff ff ff ff ff 	movabs $0xfffffffffffffff,%r12
+  51dd3c:	ff ff 0f 
+  51dd3f:	74 14                	je     51dd55 <gdext_rust_init@@Base+0x41675>
+  51dd41:	48 8b 7c 24 18       	mov    0x18(%rsp),%rdi
+  51dd46:	48 c1 e6 04          	shl    $0x4,%rsi
+  51dd4a:	ba 08 00 00 00       	mov    $0x8,%edx
+  51dd4f:	ff 15 4b c8 49 00    	call   *0x49c84b(%rip)        # 9ba5a0 <__xstat64@plt+0x6b580>
+  51dd55:	49 8d 4f d0          	lea    -0x30(%r15),%rcx
+  51dd59:	49 8d 47 30          	lea    0x30(%r15),%rax
+  51dd5d:	48 83 c1 30          	add    $0x30,%rcx
+  51dd61:	48 39 e9             	cmp    %rbp,%rcx
+  51dd64:	0f 85 3e fd ff ff    	jne    51daa8 <gdext_rust_init@@Base+0x413c8>
+  51dd6a:	4c 89 7c 24 70       	mov    %r15,0x70(%rsp)
+  51dd6f:	4c 8b ac 24 90 02 00 	mov    0x290(%rsp),%r13
+  51dd76:	00 
+  51dd77:	4c 8b b4 24 c8 00 00 	mov    0xc8(%rsp),%r14
+  51dd7e:	00 
+  51dd7f:	48 89 e8             	mov    %rbp,%rax
+  51dd82:	4c 29 f8             	sub    %r15,%rax
+  51dd85:	48 b9 ab aa aa aa aa 	movabs $0xaaaaaaaaaaaaaaab,%rcx
+  51dd8c:	aa aa aa 
+  51dd8f:	48 f7 e1             	mul    %rcx
+  51dd92:	4c 39 fd             	cmp    %r15,%rbp
+  51dd95:	48 8b 2d 04 c8 49 00 	mov    0x49c804(%rip),%rbp        # 9ba5a0 <__xstat64@plt+0x6b580>
+  51dd9c:	74 34                	je     51ddd2 <gdext_rust_init@@Base+0x416f2>
+  51dd9e:	48 89 d3             	mov    %rdx,%rbx
+  51dda1:	48 c1 eb 05          	shr    $0x5,%rbx
+  51dda5:	49 83 c7 08          	add    $0x8,%r15
+  51dda9:	eb 0e                	jmp    51ddb9 <gdext_rust_init@@Base+0x416d9>
+  51ddab:	0f 1f 44 00 00       	nopl   0x0(%rax,%rax,1)
+  51ddb0:	49 83 c7 30          	add    $0x30,%r15
+  51ddb4:	48 ff cb             	dec    %rbx
+  51ddb7:	74 19                	je     51ddd2 <gdext_rust_init@@Base+0x416f2>
+  51ddb9:	49 8b 77 f8          	mov    -0x8(%r15),%rsi
+  51ddbd:	48 85 f6             	test   %rsi,%rsi
+  51ddc0:	74 ee                	je     51ddb0 <gdext_rust_init@@Base+0x416d0>
+  51ddc2:	49 8b 3f             	mov    (%r15),%rdi
+  51ddc5:	48 c1 e6 04          	shl    $0x4,%rsi
+  51ddc9:	ba 08 00 00 00       	mov    $0x8,%edx
+  51ddce:	ff d5                	call   *%rbp
+  51ddd0:	eb de                	jmp    51ddb0 <gdext_rust_init@@Base+0x416d0>
+  51ddd2:	48 8b 84 24 d0 00 00 	mov    0xd0(%rsp),%rax
+  51ddd9:	00 
+  51ddda:	48 85 c0             	test   %rax,%rax
+  51dddd:	74 12                	je     51ddf1 <gdext_rust_init@@Base+0x41711>
+  51dddf:	48 c1 e0 04          	shl    $0x4,%rax
+  51dde3:	48 8d 34 40          	lea    (%rax,%rax,2),%rsi
+  51dde7:	ba 08 00 00 00       	mov    $0x8,%edx
+  51ddec:	4c 89 f7             	mov    %r14,%rdi
+  51ddef:	ff d5                	call   *%rbp
+  51ddf1:	48 8b b4 24 60 01 00 	mov    0x160(%rsp),%rsi
+  51ddf8:	00 
+  51ddf9:	48 85 f6             	test   %rsi,%rsi
+  51ddfc:	48 8d bc 24 08 02 00 	lea    0x208(%rsp),%rdi
+  51de03:	00 
+  51de04:	4c 8d b4 24 20 01 00 	lea    0x120(%rsp),%r14
+  51de0b:	00 
+  51de0c:	4c 8d 7c 24 68       	lea    0x68(%rsp),%r15
+  51de11:	74 19                	je     51de2c <gdext_rust_init@@Base+0x4174c>
+  51de13:	48 c1 e6 04          	shl    $0x4,%rsi
+  51de17:	ba 08 00 00 00       	mov    $0x8,%edx
+  51de1c:	48 89 fb             	mov    %rdi,%rbx
+  51de1f:	48 8b bc 24 88 00 00 	mov    0x88(%rsp),%rdi
+  51de26:	00 
+  51de27:	ff d5                	call   *%rbp
+  51de29:	48 89 df             	mov    %rbx,%rdi
+  51de2c:	48 8b b4 24 b8 01 00 	mov    0x1b8(%rsp),%rsi
+  51de33:	00 
+  51de34:	48 85 f6             	test   %rsi,%rsi
+  51de37:	8b ac 24 6c 01 00 00 	mov    0x16c(%rsp),%ebp
+  51de3e:	74 1d                	je     51de5d <gdext_rust_init@@Base+0x4177d>
+  51de40:	48 89 fb             	mov    %rdi,%rbx
+  51de43:	48 8b bc 24 c0 01 00 	mov    0x1c0(%rsp),%rdi
+  51de4a:	00 
+  51de4b:	48 c1 e6 04          	shl    $0x4,%rsi
+  51de4f:	ba 08 00 00 00       	mov    $0x8,%edx
+  51de54:	ff 15 46 c7 49 00    	call   *0x49c746(%rip)        # 9ba5a0 <__xstat64@plt+0x6b580>
+  51de5a:	48 89 df             	mov    %rbx,%rdi
+  51de5d:	ff c5                	inc    %ebp
+  51de5f:	3b ac 24 dc 00 00 00 	cmp    0xdc(%rsp),%ebp
+  51de66:	48 8b 0d 7b d1 49 00 	mov    0x49d17b(%rip),%rcx        # 9bafe8 <__xstat64@plt+0x6bfc8>
+  51de6d:	48 8d 9c 24 b8 01 00 	lea    0x1b8(%rsp),%rbx
+  51de74:	00 
+  51de75:	0f 85 1b f5 ff ff    	jne    51d396 <gdext_rust_init@@Base+0x40cb6>
+  51de7b:	e9 c3 06 00 00       	jmp    51e543 <gdext_rust_init@@Base+0x41e63>
+  51de80:	48 8b 8c 24 c8 01 00 	mov    0x1c8(%rsp),%rcx
+  51de87:	00 
+  51de88:	49 89 ce             	mov    %rcx,%r14
+  51de8b:	49 c1 e6 04          	shl    $0x4,%r14
+  51de8f:	48 b8 ff ff ff ff ff 	movabs $0xfffffffffffffff,%rax
+  51de96:	ff ff 0f 
+  51de99:	48 89 8c 24 58 01 00 	mov    %rcx,0x158(%rsp)
+  51dea0:	00 
+  51dea1:	48 39 c1             	cmp    %rax,%rcx
+  51dea4:	0f 97 84 24 c8 00 00 	seta   0xc8(%rsp)
+  51deab:	00 
+  51deac:	48 b8 f8 ff ff ff ff 	movabs $0x7ffffffffffffff8,%rax
+  51deb3:	ff ff 7f 
+  51deb6:	49 39 c6             	cmp    %rax,%r14
+  51deb9:	0f 97 c0             	seta   %al
+  51debc:	80 7c 24 58 00       	cmpb   $0x0,0x58(%rsp)
+  51dec1:	75 0b                	jne    51dece <gdext_rust_init@@Base+0x417ee>
+  51dec3:	66 0f 28 84 24 e0 00 	movapd 0xe0(%rsp),%xmm0
+  51deca:	00 00 
+  51decc:	eb 11                	jmp    51dedf <gdext_rust_init@@Base+0x417ff>
+  51dece:	66 0f 28 84 24 e0 00 	movapd 0xe0(%rsp),%xmm0
+  51ded5:	00 00 
+  51ded7:	66 0f 57 05 b1 07 c8 	xorpd  -0x37f84f(%rip),%xmm0        # 19e690 <__cxa_thread_atexit_impl@@Base-0x33e040>
+  51dede:	ff 
+  51dedf:	66 0f 29 84 24 30 02 	movapd %xmm0,0x230(%rsp)
+  51dee6:	00 00 
+  51dee8:	48 8b 8c 24 c0 01 00 	mov    0x1c0(%rsp),%rcx
+  51deef:	00 
+  51def0:	48 89 8c 24 f8 01 00 	mov    %rcx,0x1f8(%rsp)
+  51def7:	00 
+  51def8:	08 84 24 c8 00 00 00 	or     %al,0xc8(%rsp)
+  51deff:	b8 01 00 00 00       	mov    $0x1,%eax
+  51df04:	4c 89 b4 24 c0 00 00 	mov    %r14,0xc0(%rsp)
+  51df0b:	00 
+  51df0c:	83 f8 14             	cmp    $0x14,%eax
+  51df0f:	89 84 24 d0 00 00 00 	mov    %eax,0xd0(%rsp)
+  51df16:	77 61                	ja     51df79 <gdext_rust_init@@Base+0x41899>
+  51df18:	0f b6 5c 24 0f       	movzbl 0xf(%rsp),%ebx
+  51df1d:	48 8d bc 24 f0 00 00 	lea    0xf0(%rsp),%rdi
+  51df24:	00 
+  51df25:	89 de                	mov    %ebx,%esi
+  51df27:	e8 f4 10 fd ff       	call   4ef020 <gdext_rust_init@@Base+0x12940>
+  51df2c:	48 8d 7c 24 10       	lea    0x10(%rsp),%rdi
+  51df31:	89 de                	mov    %ebx,%esi
+  51df33:	48 8d 94 24 f0 00 00 	lea    0xf0(%rsp),%rdx
+  51df3a:	00 
+  51df3b:	e8 a0 01 fd ff       	call   4ee0e0 <gdext_rust_init@@Base+0x11a00>
+  51df40:	48 8b 44 24 20       	mov    0x20(%rsp),%rax
+  51df45:	48 89 84 24 00 01 00 	mov    %rax,0x100(%rsp)
+  51df4c:	00 
+  51df4d:	66 0f 10 44 24 10    	movupd 0x10(%rsp),%xmm0
+  51df53:	66 0f 29 84 24 f0 00 	movapd %xmm0,0xf0(%rsp)
+  51df5a:	00 00 
+  51df5c:	66 0f 29 44 24 10    	movapd %xmm0,0x10(%rsp)
+  51df62:	48 89 44 24 20       	mov    %rax,0x20(%rsp)
+  51df67:	4c 89 ff             	mov    %r15,%rdi
+  51df6a:	48 8d 74 24 10       	lea    0x10(%rsp),%rsi
+  51df6f:	e8 ac 07 fd ff       	call   4ee720 <gdext_rust_init@@Base+0x12040>
+  51df74:	e9 10 01 00 00       	jmp    51e089 <gdext_rust_init@@Base+0x419a9>
+  51df79:	83 f8 23             	cmp    $0x23,%eax
+  51df7c:	77 44                	ja     51dfc2 <gdext_rust_init@@Base+0x418e2>
+  51df7e:	4d 85 e4             	test   %r12,%r12
+  51df81:	0f 84 80 00 00 00    	je     51e007 <gdext_rust_init@@Base+0x41927>
+  51df87:	ff 15 9b c6 49 00    	call   *0x49c69b(%rip)        # 9ba628 <__xstat64@plt+0x6b608>
+  51df8d:	bb 08 00 00 00       	mov    $0x8,%ebx
+  51df92:	be 08 00 00 00       	mov    $0x8,%esi
+  51df97:	48 89 ef             	mov    %rbp,%rdi
+  51df9a:	ff 15 90 c6 49 00    	call   *0x49c690(%rip)        # 9ba630 <__xstat64@plt+0x6b610>
+  51dfa0:	48 85 c0             	test   %rax,%rax
+  51dfa3:	0f 84 bb 08 00 00    	je     51e864 <gdext_rust_init@@Base+0x42184>
+  51dfa9:	49 89 c6             	mov    %rax,%r14
+  51dfac:	48 89 c7             	mov    %rax,%rdi
+  51dfaf:	48 8b b4 24 88 00 00 	mov    0x88(%rsp),%rsi
+  51dfb6:	00 
+  51dfb7:	48 89 ea             	mov    %rbp,%rdx
+  51dfba:	ff 15 78 c6 49 00    	call   *0x49c678(%rip)        # 9ba638 <__xstat64@plt+0x6b618>
+  51dfc0:	eb 4b                	jmp    51e00d <gdext_rust_init@@Base+0x4192d>
+  51dfc2:	80 bc 24 c8 00 00 00 	cmpb   $0x0,0xc8(%rsp)
+  51dfc9:	00 
+  51dfca:	0f 85 68 07 00 00    	jne    51e738 <gdext_rust_init@@Base+0x42058>
+  51dfd0:	4d 85 f6             	test   %r14,%r14
+  51dfd3:	74 5c                	je     51e031 <gdext_rust_init@@Base+0x41951>
+  51dfd5:	ff 15 4d c6 49 00    	call   *0x49c64d(%rip)        # 9ba628 <__xstat64@plt+0x6b608>
+  51dfdb:	bb 08 00 00 00       	mov    $0x8,%ebx
+  51dfe0:	be 08 00 00 00       	mov    $0x8,%esi
+  51dfe5:	4c 89 f7             	mov    %r14,%rdi
+  51dfe8:	ff 15 42 c6 49 00    	call   *0x49c642(%rip)        # 9ba630 <__xstat64@plt+0x6b610>
+  51dfee:	48 85 c0             	test   %rax,%rax
+  51dff1:	0f 84 75 08 00 00    	je     51e86c <gdext_rust_init@@Base+0x4218c>
+  51dff7:	49 89 c6             	mov    %rax,%r14
+  51dffa:	48 8b 84 24 58 01 00 	mov    0x158(%rsp),%rax
+  51e001:	00 
+  51e002:	48 89 c3             	mov    %rax,%rbx
+  51e005:	eb 3a                	jmp    51e041 <gdext_rust_init@@Base+0x41961>
+  51e007:	41 be 08 00 00 00    	mov    $0x8,%r14d
+  51e00d:	4c 89 64 24 10       	mov    %r12,0x10(%rsp)
+  51e012:	4c 89 74 24 18       	mov    %r14,0x18(%rsp)
+  51e017:	4c 89 64 24 20       	mov    %r12,0x20(%rsp)
+  51e01c:	4c 89 ff             	mov    %r15,%rdi
+  51e01f:	48 8d 74 24 07       	lea    0x7(%rsp),%rsi
+  51e024:	48 8d 54 24 10       	lea    0x10(%rsp),%rdx
+  51e029:	ff 15 59 e2 49 00    	call   *0x49e259(%rip)        # 9bc288 <__xstat64@plt+0x6d268>
+  51e02f:	eb 58                	jmp    51e089 <gdext_rust_init@@Base+0x419a9>
+  51e031:	41 be 08 00 00 00    	mov    $0x8,%r14d
+  51e037:	31 db                	xor    %ebx,%ebx
+  51e039:	48 8b 84 24 58 01 00 	mov    0x158(%rsp),%rax
+  51e040:	00 
+  51e041:	48 85 c0             	test   %rax,%rax
+  51e044:	74 21                	je     51e067 <gdext_rust_init@@Base+0x41987>
+  51e046:	4c 89 f7             	mov    %r14,%rdi
+  51e049:	48 8b b4 24 f8 01 00 	mov    0x1f8(%rsp),%rsi
+  51e050:	00 
+  51e051:	48 8b 94 24 c0 00 00 	mov    0xc0(%rsp),%rdx
+  51e058:	00 
+  51e059:	ff 15 d9 c5 49 00    	call   *0x49c5d9(%rip)        # 9ba638 <__xstat64@plt+0x6b618>
+  51e05f:	48 8b 84 24 58 01 00 	mov    0x158(%rsp),%rax
+  51e066:	00 
+  51e067:	48 89 5c 24 10       	mov    %rbx,0x10(%rsp)
+  51e06c:	4c 89 74 24 18       	mov    %r14,0x18(%rsp)
+  51e071:	48 89 44 24 20       	mov    %rax,0x20(%rsp)
+  51e076:	4c 89 ff             	mov    %r15,%rdi
+  51e079:	48 8d 74 24 07       	lea    0x7(%rsp),%rsi
+  51e07e:	48 8d 54 24 10       	lea    0x10(%rsp),%rdx
+  51e083:	ff 15 ff e1 49 00    	call   *0x49e1ff(%rip)        # 9bc288 <__xstat64@plt+0x6d268>
+  51e089:	4c 8b 6c 24 78       	mov    0x78(%rsp),%r13
+  51e08e:	4c 89 eb             	mov    %r13,%rbx
+  51e091:	48 c1 e3 04          	shl    $0x4,%rbx
+  51e095:	48 b8 ff ff ff ff ff 	movabs $0xfffffffffffffff,%rax
+  51e09c:	ff ff 0f 
+  51e09f:	49 39 c5             	cmp    %rax,%r13
+  51e0a2:	0f 97 c0             	seta   %al
+  51e0a5:	48 b9 f8 ff ff ff ff 	movabs $0x7ffffffffffffff8,%rcx
+  51e0ac:	ff ff 7f 
+  51e0af:	48 39 cb             	cmp    %rcx,%rbx
+  51e0b2:	0f 97 c1             	seta   %cl
+  51e0b5:	08 c1                	or     %al,%cl
+  51e0b7:	0f 85 67 06 00 00    	jne    51e724 <gdext_rust_init@@Base+0x42044>
+  51e0bd:	48 8b 74 24 70       	mov    0x70(%rsp),%rsi
+  51e0c2:	48 85 db             	test   %rbx,%rbx
+  51e0c5:	74 36                	je     51e0fd <gdext_rust_init@@Base+0x41a1d>
+  51e0c7:	49 89 f7             	mov    %rsi,%r15
+  51e0ca:	ff 15 58 c5 49 00    	call   *0x49c558(%rip)        # 9ba628 <__xstat64@plt+0x6b608>
+  51e0d0:	41 bc 08 00 00 00    	mov    $0x8,%r12d
+  51e0d6:	be 08 00 00 00       	mov    $0x8,%esi
+  51e0db:	48 89 df             	mov    %rbx,%rdi
+  51e0de:	ff 15 4c c5 49 00    	call   *0x49c54c(%rip)        # 9ba630 <__xstat64@plt+0x6b610>
+  51e0e4:	48 85 c0             	test   %rax,%rax
+  51e0e7:	0f 84 3a 06 00 00    	je     51e727 <gdext_rust_init@@Base+0x42047>
+  51e0ed:	49 89 c6             	mov    %rax,%r14
+  51e0f0:	4d 89 ec             	mov    %r13,%r12
+  51e0f3:	4c 89 fe             	mov    %r15,%rsi
+  51e0f6:	4c 8d 7c 24 68       	lea    0x68(%rsp),%r15
+  51e0fb:	eb 09                	jmp    51e106 <gdext_rust_init@@Base+0x41a26>
+  51e0fd:	41 be 08 00 00 00    	mov    $0x8,%r14d
+  51e103:	45 31 e4             	xor    %r12d,%r12d
+  51e106:	4d 85 ed             	test   %r13,%r13
+  51e109:	74 0c                	je     51e117 <gdext_rust_init@@Base+0x41a37>
+  51e10b:	4c 89 f7             	mov    %r14,%rdi
+  51e10e:	48 89 da             	mov    %rbx,%rdx
+  51e111:	ff 15 21 c5 49 00    	call   *0x49c521(%rip)        # 9ba638 <__xstat64@plt+0x6b618>
+  51e117:	4c 89 64 24 10       	mov    %r12,0x10(%rsp)
+  51e11c:	4c 89 74 24 18       	mov    %r14,0x18(%rsp)
+  51e121:	4c 89 6c 24 20       	mov    %r13,0x20(%rsp)
+  51e126:	48 8b 74 24 50       	mov    0x50(%rsp),%rsi
+  51e12b:	80 7e 5c 00          	cmpb   $0x0,0x5c(%rsi)
+  51e12f:	0f 85 c5 00 00 00    	jne    51e1fa <gdext_rust_init@@Base+0x41b1a>
+  51e135:	49 89 f4             	mov    %rsi,%r12
+  51e138:	48 c7 84 24 f0 00 00 	movq   $0x0,0xf0(%rsp)
+  51e13f:	00 00 00 00 00 
+  51e144:	66 0f ef c9          	pxor   %xmm1,%xmm1
+  51e148:	66 0f ef d2          	pxor   %xmm2,%xmm2
+  51e14c:	4c 89 ff             	mov    %r15,%rdi
+  51e14f:	66 0f 28 84 24 30 02 	movapd 0x230(%rsp),%xmm0
+  51e156:	00 00 
+  51e158:	48 8d b4 24 f0 00 00 	lea    0xf0(%rsp),%rsi
+  51e15f:	00 
+  51e160:	e8 6b d8 fc ff       	call   4eb9d0 <gdext_rust_init@@Base+0xf2f0>
+  51e165:	f2 0f 11 84 24 f0 01 	movsd  %xmm0,0x1f0(%rsp)
+  51e16c:	00 00 
+  51e16e:	4c 8b 74 24 20       	mov    0x20(%rsp),%r14
+  51e173:	4c 3b 74 24 10       	cmp    0x10(%rsp),%r14
+  51e178:	75 0b                	jne    51e185 <gdext_rust_init@@Base+0x41aa5>
+  51e17a:	48 8d 7c 24 10       	lea    0x10(%rsp),%rdi
+  51e17f:	ff 15 cb dc 49 00    	call   *0x49dccb(%rip)        # 9bbe50 <__xstat64@plt+0x6ce30>
+  51e185:	48 8b 5c 24 18       	mov    0x18(%rsp),%rbx
+  51e18a:	4d 85 f6             	test   %r14,%r14
+  51e18d:	74 14                	je     51e1a3 <gdext_rust_init@@Base+0x41ac3>
+  51e18f:	48 8d 7b 10          	lea    0x10(%rbx),%rdi
+  51e193:	4c 89 f2             	mov    %r14,%rdx
+  51e196:	48 c1 e2 04          	shl    $0x4,%rdx
+  51e19a:	48 89 de             	mov    %rbx,%rsi
+  51e19d:	ff 15 8d ca 49 00    	call   *0x49ca8d(%rip)        # 9bac30 <__xstat64@plt+0x6bc10>
+  51e1a3:	48 c7 03 03 00 00 00 	movq   $0x3,(%rbx)
+  51e1aa:	49 8d 5e 01          	lea    0x1(%r14),%rbx
+  51e1ae:	48 89 5c 24 20       	mov    %rbx,0x20(%rsp)
+  51e1b3:	48 3b 5c 24 10       	cmp    0x10(%rsp),%rbx
+  51e1b8:	75 0b                	jne    51e1c5 <gdext_rust_init@@Base+0x41ae5>
+  51e1ba:	48 8d 7c 24 10       	lea    0x10(%rsp),%rdi
+  51e1bf:	ff 15 8b dc 49 00    	call   *0x49dc8b(%rip)        # 9bbe50 <__xstat64@plt+0x6ce30>
+  51e1c5:	66 0f 28 84 24 90 01 	movapd 0x190(%rsp),%xmm0
+  51e1cc:	00 00 
+  51e1ce:	f2 0f 5c 84 24 f0 01 	subsd  0x1f0(%rsp),%xmm0
+  51e1d5:	00 00 
+  51e1d7:	48 8b 44 24 18       	mov    0x18(%rsp),%rax
+  51e1dc:	48 c1 e3 04          	shl    $0x4,%rbx
+  51e1e0:	48 c7 04 18 11 00 00 	movq   $0x11,(%rax,%rbx,1)
+  51e1e7:	00 
+  51e1e8:	f2 0f 11 44 18 08    	movsd  %xmm0,0x8(%rax,%rbx,1)
+  51e1ee:	49 83 c6 02          	add    $0x2,%r14
+  51e1f2:	4c 89 74 24 20       	mov    %r14,0x20(%rsp)
+  51e1f7:	4c 89 e6             	mov    %r12,%rsi
+  51e1fa:	48 8d bc 24 18 02 00 	lea    0x218(%rsp),%rdi
+  51e201:	00 
+  51e202:	48 8d 54 24 10       	lea    0x10(%rsp),%rdx
+  51e207:	8b 4c 24 08          	mov    0x8(%rsp),%ecx
+  51e20b:	f2 0f 10 05 bd 14 c8 	movsd  -0x37eb43(%rip),%xmm0        # 19f6d0 <__cxa_thread_atexit_impl@@Base-0x33d000>
+  51e212:	ff 
+  51e213:	e8 38 c5 ff ff       	call   51a750 <gdext_rust_init@@Base+0x3e070>
+  51e218:	48 8b 5c 24 68       	mov    0x68(%rsp),%rbx
+  51e21d:	4c 8b 64 24 70       	mov    0x70(%rsp),%r12
+  51e222:	4c 8b 6c 24 78       	mov    0x78(%rsp),%r13
+  51e227:	4c 8b b4 24 a0 00 00 	mov    0xa0(%rsp),%r14
+  51e22e:	00 
+  51e22f:	4c 3b b4 24 90 00 00 	cmp    0x90(%rsp),%r14
+  51e236:	00 
+  51e237:	75 0e                	jne    51e247 <gdext_rust_init@@Base+0x41b67>
+  51e239:	48 8d bc 24 90 00 00 	lea    0x90(%rsp),%rdi
+  51e240:	00 
+  51e241:	ff 15 19 dc 49 00    	call   *0x49dc19(%rip)        # 9bbe60 <__xstat64@plt+0x6ce40>
+  51e247:	48 8b 84 24 98 00 00 	mov    0x98(%rsp),%rax
+  51e24e:	00 
+  51e24f:	4b 8d 0c 76          	lea    (%r14,%r14,2),%rcx
+  51e253:	48 c1 e1 04          	shl    $0x4,%rcx
+  51e257:	48 89 1c 08          	mov    %rbx,(%rax,%rcx,1)
+  51e25b:	4c 89 64 08 08       	mov    %r12,0x8(%rax,%rcx,1)
+  51e260:	4c 89 6c 08 10       	mov    %r13,0x10(%rax,%rcx,1)
+  51e265:	66 0f 10 84 24 18 02 	movupd 0x218(%rsp),%xmm0
+  51e26c:	00 00 
+  51e26e:	66 0f 11 44 08 18    	movupd %xmm0,0x18(%rax,%rcx,1)
+  51e274:	48 8b 94 24 28 02 00 	mov    0x228(%rsp),%rdx
+  51e27b:	00 
+  51e27c:	48 89 54 08 28       	mov    %rdx,0x28(%rax,%rcx,1)
+  51e281:	49 ff c6             	inc    %r14
+  51e284:	4c 89 b4 24 a0 00 00 	mov    %r14,0xa0(%rsp)
+  51e28b:	00 
+  51e28c:	48 8b 74 24 10       	mov    0x10(%rsp),%rsi
+  51e291:	48 85 f6             	test   %rsi,%rsi
+  51e294:	74 14                	je     51e2aa <gdext_rust_init@@Base+0x41bca>
+  51e296:	48 8b 7c 24 18       	mov    0x18(%rsp),%rdi
+  51e29b:	48 c1 e6 04          	shl    $0x4,%rsi
+  51e29f:	ba 08 00 00 00       	mov    $0x8,%edx
+  51e2a4:	ff 15 f6 c2 49 00    	call   *0x49c2f6(%rip)        # 9ba5a0 <__xstat64@plt+0x6b580>
+  51e2aa:	8b 84 24 d0 00 00 00 	mov    0xd0(%rsp),%eax
+  51e2b1:	ff c0                	inc    %eax
+  51e2b3:	39 44 24 60          	cmp    %eax,0x60(%rsp)
+  51e2b7:	4c 8b ac 24 90 02 00 	mov    0x290(%rsp),%r13
+  51e2be:	00 
+  51e2bf:	4c 8b 64 24 48       	mov    0x48(%rsp),%r12
+  51e2c4:	4c 8b b4 24 c0 00 00 	mov    0xc0(%rsp),%r14
+  51e2cb:	00 
+  51e2cc:	0f 85 3a fc ff ff    	jne    51df0c <gdext_rust_init@@Base+0x4182c>
+  51e2d2:	e9 38 f7 ff ff       	jmp    51da0f <gdext_rust_init@@Base+0x4132f>
+  51e2d7:	4c 89 7c 24 70       	mov    %r15,0x70(%rsp)
+  51e2dc:	48 8b 6c 24 20       	mov    0x20(%rsp),%rbp
+  51e2e1:	49 89 ee             	mov    %rbp,%r14
+  51e2e4:	49 c1 e6 04          	shl    $0x4,%r14
+  51e2e8:	48 b8 ff ff ff ff ff 	movabs $0xfffffffffffffff,%rax
+  51e2ef:	ff ff 0f 
+  51e2f2:	48 39 c5             	cmp    %rax,%rbp
+  51e2f5:	0f 97 c0             	seta   %al
+  51e2f8:	48 b9 f8 ff ff ff ff 	movabs $0x7ffffffffffffff8,%rcx
+  51e2ff:	ff ff 7f 
+  51e302:	49 39 ce             	cmp    %rcx,%r14
+  51e305:	0f 97 c1             	seta   %cl
+  51e308:	08 c1                	or     %al,%cl
+  51e30a:	0f 85 b6 04 00 00    	jne    51e7c6 <gdext_rust_init@@Base+0x420e6>
+  51e310:	48 8b 5c 24 18       	mov    0x18(%rsp),%rbx
+  51e315:	4d 85 f6             	test   %r14,%r14
+  51e318:	74 2b                	je     51e345 <gdext_rust_init@@Base+0x41c65>
+  51e31a:	ff 15 08 c3 49 00    	call   *0x49c308(%rip)        # 9ba628 <__xstat64@plt+0x6b608>
+  51e320:	41 bc 08 00 00 00    	mov    $0x8,%r12d
+  51e326:	be 08 00 00 00       	mov    $0x8,%esi
+  51e32b:	4c 89 f7             	mov    %r14,%rdi
+  51e32e:	ff 15 fc c2 49 00    	call   *0x49c2fc(%rip)        # 9ba630 <__xstat64@plt+0x6b610>
+  51e334:	48 85 c0             	test   %rax,%rax
+  51e337:	0f 84 8c 04 00 00    	je     51e7c9 <gdext_rust_init@@Base+0x420e9>
+  51e33d:	48 89 c2             	mov    %rax,%rdx
+  51e340:	49 89 ec             	mov    %rbp,%r12
+  51e343:	eb 08                	jmp    51e34d <gdext_rust_init@@Base+0x41c6d>
+  51e345:	ba 08 00 00 00       	mov    $0x8,%edx
+  51e34a:	45 31 e4             	xor    %r12d,%r12d
+  51e34d:	48 85 ed             	test   %rbp,%rbp
+  51e350:	74 25                	je     51e377 <gdext_rust_init@@Base+0x41c97>
+  51e352:	4c 89 a4 24 e0 00 00 	mov    %r12,0xe0(%rsp)
+  51e359:	00 
+  51e35a:	49 89 d4             	mov    %rdx,%r12
+  51e35d:	48 89 d7             	mov    %rdx,%rdi
+  51e360:	48 89 de             	mov    %rbx,%rsi
+  51e363:	4c 89 f2             	mov    %r14,%rdx
+  51e366:	ff 15 cc c2 49 00    	call   *0x49c2cc(%rip)        # 9ba638 <__xstat64@plt+0x6b618>
+  51e36c:	4c 89 e2             	mov    %r12,%rdx
+  51e36f:	4c 8b a4 24 e0 00 00 	mov    0xe0(%rsp),%r12
+  51e376:	00 
+  51e377:	48 8d 4c 24 18       	lea    0x18(%rsp),%rcx
+  51e37c:	48 8b 41 20          	mov    0x20(%rcx),%rax
+  51e380:	48 89 84 24 e0 01 00 	mov    %rax,0x1e0(%rsp)
+  51e387:	00 
+  51e388:	0f 10 41 10          	movups 0x10(%rcx),%xmm0
+  51e38c:	0f 29 84 24 d0 01 00 	movaps %xmm0,0x1d0(%rsp)
+  51e393:	00 
+  51e394:	48 8b b4 24 20 01 00 	mov    0x120(%rsp),%rsi
+  51e39b:	00 
+  51e39c:	48 85 f6             	test   %rsi,%rsi
+  51e39f:	74 1d                	je     51e3be <gdext_rust_init@@Base+0x41cde>
+  51e3a1:	49 89 d6             	mov    %rdx,%r14
+  51e3a4:	48 8b bc 24 28 01 00 	mov    0x128(%rsp),%rdi
+  51e3ab:	00 
+  51e3ac:	48 c1 e6 04          	shl    $0x4,%rsi
+  51e3b0:	ba 08 00 00 00       	mov    $0x8,%edx
+  51e3b5:	ff 15 e5 c1 49 00    	call   *0x49c1e5(%rip)        # 9ba5a0 <__xstat64@plt+0x6b580>
+  51e3bb:	4c 89 f2             	mov    %r14,%rdx
+  51e3be:	4c 89 a4 24 20 01 00 	mov    %r12,0x120(%rsp)
+  51e3c5:	00 
+  51e3c6:	48 89 94 24 28 01 00 	mov    %rdx,0x128(%rsp)
+  51e3cd:	00 
+  51e3ce:	48 89 ac 24 30 01 00 	mov    %rbp,0x130(%rsp)
+  51e3d5:	00 
+  51e3d6:	48 8b 84 24 e0 01 00 	mov    0x1e0(%rsp),%rax
+  51e3dd:	00 
+  51e3de:	48 8d 8c 24 38 01 00 	lea    0x138(%rsp),%rcx
+  51e3e5:	00 
+  51e3e6:	48 89 41 10          	mov    %rax,0x10(%rcx)
+  51e3ea:	66 0f 28 84 24 d0 01 	movapd 0x1d0(%rsp),%xmm0
+  51e3f1:	00 00 
+  51e3f3:	66 0f 11 01          	movupd %xmm0,(%rcx)
+  51e3f7:	48 8b b4 24 a8 00 00 	mov    0xa8(%rsp),%rsi
+  51e3fe:	00 
+  51e3ff:	48                   	rex.W

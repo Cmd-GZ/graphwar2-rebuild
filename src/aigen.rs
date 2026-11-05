@@ -768,7 +768,7 @@ mod tests {
             x0: 10.0,
             y0: 0.0,
             flip: true,
-            step: 0.5,
+            step: crate::SERVER_STEP,
             mask: &mask,
             targets: &targets,
             limit: 200,

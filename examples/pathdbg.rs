@@ -9,7 +9,7 @@ fn main() {
     let toks = parse(&text);
     let c = correction(&toks, x0, y0, false);
     let sh = shifted_tokens(&toks, c);
-    let pts = calculate(&sh, x0, y0, 0.5, false, Mode::Normal);
+    let pts = calculate(&sh, x0, y0, gw2_rebuild::SERVER_STEP, false, Mode::Normal);
     println!("函数 {text}  起点 ({x0}, {y0})  c={c:.6}");
     println!("点数 {}  末点 {:?}", pts.len(), pts.last());
     for k in 1..=4 {

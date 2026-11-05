@@ -20,26 +20,47 @@ L(i) = hypot( x_{i+1} − x_i ,  y_{i+1} − y_i )  =  step
 ```
 pts = [(x0, y0)]                      # 首点就是士兵位置
 x = flip ? -x0 : x0 ;  y = y0
-n = (200.0 / step) as i32             # 点数预算，饱和转换
-if n < 2 { n = 1 }
+n = (200.0 / step) as i32 ; if n < 1 { n = 1 }   # 点数预算，饱和转换（docs/91 §4.4）
 
 repeat at most n times:
     lo = x ;  hi = x + step
-    repeat at most 100 times:
+    repeat at most 100 times (首次进入不计次):
         mid = (lo + hi) / 2
-        L = hypot(mid - x, F(mid) - y)
-        if |L - step| < 0.001:
-            接受 (mid, F(mid))；x = mid ; y = F(mid) ; break
-        else if L > step or is_NaN(L):
-            hi = mid
-        else:
-            lo = mid
-    若二分失败（100 次未收敛）：整条曲线到此结束
+        L   = hypot(mid - x, F(mid) - y)
+        if not (|L - step| < 0.001):       # 严格 <；等号与 NaN 都走"不满足"
+            if L > step or is_NaN(L):  hi = mid
+            else:                      lo = mid
+            continue
+
+        # 容差已满足 —— 普通模式还要做一次"半步复检"
+        if 普通模式:
+            mid2 = (x + mid) / 2
+            L2   = hypot(mid2 - x, F(mid2) - y)
+            hi   = mid2                    # ★ 比较之前就无条件写（0x3c2a0a）
+            if not (L > L2):               # 复检不通过
+                lo = x                     # ★ 退回基点（0x3c2a47）
+                continue                   # ★ 两行必须同时有
+
+        # 接受
+        px = flip ? -mid : mid
+        if is_NaN(px) or is_NaN(F(mid)): return pts
+        if |mid| > 25 or |F(mid)| > 15:  return pts
+        pts.append((px, F(mid))) ; x = mid ; y = F(mid) ; break
+
+    若二分 100 次未收敛：整条曲线到此结束（不裁剪、不留坏点）
 ```
 
-> ⚠️ **上面的伪代码不完整**：容差满足后**还有一次半步复检**
-> （`mid2 = (x+mid)/2`、`chord2`），复检不通过时 `lo = x` **且** `hi = mid2`。
-> 逐条指令与完整伪代码见 **[`91-bisection-loop.md`](91-bisection-loop.md)**（现行）。
+**三处"用 `x` 不用 `lo`"**：弦长算 `mid - x`、`mid2 = (x + mid)/2`、退回时 `lo = x`。
+`x` 是**本点的基点**（整段内层不变），`lo` 只是本轮搜索的下界。
+
+> ⚠️ **★ 那三行是长期漏实现的地方**。参考实现曾只写了 `lo = x`，没写 `hi = mid2`，
+> 于是复检不通过后退回区间宽了一倍，在"陡峭 + 穿越对称中心"的函数上从第 4 点起分叉，
+> 表现为"弹道在半空提前终止"（实况步长下约 23% 的射击）。
+> 2026-11 补齐后与真二进制 **24/24 用例整条点序列逐位相等**。
+> 逐条汇编清单见 **[`91-bisection-loop.md`](91-bisection-loop.md)**（现行、改码依据）。
+>
+> 另两点：① 复检**不是**可选优化——去掉它会让二分接受远处的候选（`docs/89` §18 已否证）；
+> ② **ODE 模式没有这段复检**（`0x3c2840` 在容差满足时直接接受），两边的 ODE 分支都不要动。
 
 其中 `F(x)`：
 
@@ -115,5 +136,8 @@ ODE 求值时第三个参数在**全部 7 个调用点**都传 `0`：`y'` 这个
 
 ## 8. 复刻物
 
-- Python 参照实现（已逐位验证）：上游 `graphwar_curve.py`
-- Rust 复原：本仓库 `src/path.rs`（进行中）
+- Python 参照实现（已逐位验证）：上游 `graphwar_curve.py`（`hi = mid2` 已补）
+- Rust 复原：本仓库 `src/path.rs`（同步修复；`docs/89` §32 记录 `cargo test` 135 条全绿）
+
+验收数字（两份实现共用）：第 4 点 = `-1.174402651902936`；`step=0.5` → 401 点 / 末点
+`(24.8098, 9.8719)`；`step=0.01` → 20001 点 / 末点 `(23.2128, 6.4176)`。

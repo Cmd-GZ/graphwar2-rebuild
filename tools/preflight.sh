@@ -26,10 +26,11 @@ echo "== 4. 已知早停 canary（必须报告，不静默） =="
 if [ -x examples/rep.rs ] || [ -f examples/rep.rs ]; then
   out=$(timeout 300 cargo run --release --offline --example rep 2>/dev/null | grep "^step")
   printf '%s\n' "$out" | sed 's/^/      /'
-  if printf '%s' "$out" | grep -q "step=0.01 *npts=20[0-9][0-9]"; then
-    note "⚠ 早停缺陷【仍在】（docs/90 §4 第 1 条），引用任何物理结论前先看这条"
+  # 修复后的正确行为：step=0.5 → 401 点，step=0.01 → 20001 点
+  if printf '%s' "$out" | grep -q "npts=20001"; then
+    note "✓ 早停已修复（npts=20001，与真二进制一致）"
   else
-    note "✓ 早停 canary 未触发（若刚修过，请更新 docs/90 §4）"
+    note "⚠ 早停 canary 异常：期望 npts=20001（见 docs/91）。物理结论不可信，先查这个"
   fi
 fi
 
