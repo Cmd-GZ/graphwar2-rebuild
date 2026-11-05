@@ -238,7 +238,9 @@ fn signed_term(coef: f64, body: &str) -> String {
 /// * `m*x + k·sin(w·(x − x0))`：两端归零的半正弦鼓包，`k` 控制绕多高，`w = h·π/dx` 给 h 种鼓法；
 /// * `m*x + b·(x − x0)·(x − xt)`：过"路标"的抛物线，`b` 由路标反解。
 fn candidate_exprs(m: f64, x0: f64, y0: f64, target: (f64, f64)) -> Vec<String> {
-    let (xt, yt) = target;
+    // `y` 分量已经在 `m` 里了（修正把曲线钉在射手身上，`m` 再把它钉到目标），
+    // 所以这里只需要目标的 `x`；`target.1` 留着是为了调用点读起来完整。
+    let (xt, _yt) = target;
     let mut out = vec![scaled_x(m)];
     let dx = xt - x0;
     if dx.abs() < 1e-6 {
@@ -269,7 +271,6 @@ fn candidate_exprs(m: f64, x0: f64, y0: f64, target: (f64, f64)) -> Vec<String> 
             ));
         }
     }
-    let _ = yt;
     out
 }
 
