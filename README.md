@@ -38,7 +38,7 @@
 | **回合状态机**（`src/turnstate.rs`） | ✅ | 6 状态 + 7 事件，**13 次迁移与抓包逐个相同**（`docs/41`） |
 | 回合调度 `turn_manager` | ⬜ | **出场顺序不可复现**（10 局样本：仅队伍交替稳定，起始人与队内顺序随机，与创建顺序无关；推断为开局随机，`docs/47`） |
 | 关卡生成 `level_generator` | ⬜ | **随机源是 OS 熵**（`getrandom` 921 次/40s，`rand/srand` 全 0）⇒ 同局**不可复现**；只观测到分布（障碍 5~21 个、`r∈[0.8,5.26]`、位置可越界，`docs/40`） |
-| AI `computer_player_manager` / `function_evolutionator` | 🔶 | 入口 `0x51b440`（每回合 1 次）+ 评分循环 `0x51a750`（每回合约 3800 次、step=0.5）已定量刻画；**候选生成/适应度/RNG 均未知**（`docs/29`） |
+| AI `computer_player_manager` / `function_evolutionator` | ⬜ | 入口与评分循环已定量刻画（`docs/29`），但**候选生成依赖同一条 OS 熵**、适应度未知 ⇒ 不可复现（`docs/48`） |
 | **tick 时钟（60 Hz）** | ✅ | `tick_at()` 用 113 个真实样本验证；`TickReply` 逐字节一致（`docs/35`）。**另解出** `end_of_turn_tick = 回合开始 tick + 时长`，**六档全部实测**（含 `Timer30s`、`TimerInf=0` 哨兵，`docs/42`） |
 | **服务端握手（状态同步）** | ✅ | `server::on_new_connection` 7 条消息与抓包逐字节一致；`serve_handshake` 经真实 TCP 往返验证（`docs/33`） |
 | **服务端对象 `Match`（开火结算+出报文）** | ✅ | `fire()` 按抓包顺序产出 8 类报文（`docs/43`），状态推进位置与真实一致；按回合配对回放 4 发终点全对、致死集合一致（`docs/37`） |

@@ -14,6 +14,10 @@
 - **一整回合 12 条报文序列**（`docs/46`）：`begin_turn`（TurnInfo/EndOfTurnInfo/
   WaitingForFunctions）+ `fire`（8 条）+ `end_turn`（TurnCountInfo），
   种类顺序有测试断言；新增 `emit_end_of_turn` 并用抓包样本逐字节验证
+- **随机源重放试过，不行**（`docs/48`）：hook `getrandom` 抓到 921 次调用，
+  采样载荷全是 **16 字节**（更像 Rust `HashMap` 的哈希种子，而非 32 字节 ChaCha 密钥）；
+  即便拿到种子，**消费顺序不可观测**，无法定位"关卡那一刻"的流位置。
+  ⇒ 随机模块（关卡生成、AI）此路终局；README 的 AI 行降为 ⬜
 - **回合出场顺序判定为不可复现**（`docs/47`）：按 `SoldierInfo` 创建顺序重新检验，
   三局创建顺序完全相同却给出不同回合序列；合并 `docs/28` 共 10 局，
   排除所有简单确定性排列 ⇒ **推断为开局随机打乱**（与 OS 熵一致），标记为推断。
