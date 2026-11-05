@@ -14,6 +14,10 @@
 - **一整回合 12 条报文序列**（`docs/46`）：`begin_turn`（TurnInfo/EndOfTurnInfo/
   WaitingForFunctions）+ `fire`（8 条）+ `end_turn`（TurnCountInfo），
   种类顺序有测试断言；新增 `emit_end_of_turn` 并用抓包样本逐字节验证
+- **回合出场顺序判定为不可复现**（`docs/47`）：按 `SoldierInfo` 创建顺序重新检验，
+  三局创建顺序完全相同却给出不同回合序列；合并 `docs/28` 共 10 局，
+  排除所有简单确定性排列 ⇒ **推断为开局随机打乱**（与 OS 熵一致），标记为推断。
+  README 该行由 🔶 降为 ⬜。影响：整局逐条回放不可行，只能按"每一发"对拍
 - **回合计数与结束判定**（`docs/45`）：`TurnCountInfo` 在回合结束发出、每回合 +1；
   `EndingGame` 紧跟其后且**只在某队全灭时**出现（本局我方两士兵全死）。
   坑：`Match::new` 曾把士兵默认登记为 0 号队 → 误判全灭，已改为不预设
