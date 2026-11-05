@@ -70,6 +70,47 @@ pub fn draw_token(next: &mut dyn FnMut() -> u64) -> Token {
     }
 }
 
+/// 变异算子（`FUN_005ee720`，见 `docs/73`）。
+///
+/// 在 token 序列上挑一个"值 token"（`x` / `y` / 常数），然后：
+///
+/// * 挑到 `y`   → 在它**前面插入**一个常数 `N(0,1)×10.2`；
+/// * 挑到常数   → 一半概率原地乘 `(1 + N(0,1))`（这就是常数漂移的来源），
+///                一半概率换成新的 `N(0,1)×10.2`；
+/// * 挑到其它   → **未实现**（`docs/73` 里这条分支的插入/替换次序还没读准，
+///                按仓库规矩不臆造，直接原样返回）。
+///
+/// 返回是否真的改动了序列，便于调用方统计。
+pub fn mutate(tokens: &mut Vec<Token>, next: &mut dyn FnMut() -> u64) -> bool {
+    let positions: Vec<usize> = tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| matches!(t.tag, Function::VarX | Function::VarY | Function::Const))
+        .map(|(i, _)| i)
+        .collect();
+    if positions.is_empty() {
+        return false;
+    }
+    let pos = positions[(next() % positions.len() as u64) as usize];
+    match tokens[pos].tag {
+        Function::VarY => {
+            tokens.insert(pos, Token::constant(normal(next) * CONST_SCALE));
+            true
+        }
+        Function::Const => {
+            // 二进制里是"抽一个随机 int，看符号"决定走哪条路
+            if (next() as i32) >= 0 {
+                tokens[pos].value *= 1.0 + normal(next);
+            } else {
+                tokens[pos].value = normal(next) * CONST_SCALE;
+            }
+            true
+        }
+        // 其它（`x` 或算子）：那条分支的语义未读准，见函数注释
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,5 +186,57 @@ mod tests {
                 "不应抽到 {tag:?}"
             );
         }
+    }
+
+    #[test]
+    fn mutate_does_nothing_without_value_tokens() {
+        let mut tokens = vec![Token::op(Function::Add), Token::op(Function::Sin)];
+        let mut next = stream(7);
+        assert!(!mutate(&mut tokens, &mut next), "没有值 token 时不应改动");
+        assert_eq!(tokens.len(), 2);
+    }
+
+    #[test]
+    fn mutate_inserts_constant_before_y() {
+        let mut tokens = vec![Token::op(Function::VarY)];
+        let mut next = stream(11);
+        assert!(mutate(&mut tokens, &mut next));
+        assert_eq!(tokens.len(), 2, "应在 y 前插入一个常数");
+        assert_eq!(tokens[0].tag, Function::Const);
+        assert_eq!(tokens[1].tag, Function::VarY);
+    }
+
+    #[test]
+    fn mutate_constant_is_multiplicative_drift_or_refresh() {
+        // 反复变异同一个常数：结果必须是"乘上 (1+N)"或"换成新的 N(0,10.2)"之一，
+        // 所以绝不能保持原值不变。
+        let mut changed = 0;
+        for seed in 0..200u64 {
+            let mut tokens = vec![Token::constant(3.0)];
+            let mut next = stream(seed * 7919 + 13);
+            assert!(mutate(&mut tokens, &mut next));
+            if tokens[0].value != 3.0 {
+                changed += 1;
+            }
+        }
+        assert_eq!(changed, 200, "每次变异都应改变常数");
+    }
+
+    #[test]
+    fn mutate_spreads_constants_over_many_rounds() {
+        // 乘性随机游走：多轮之后常数会明显偏离初值（这正是 1770417.48 的成因）
+        let mut next = stream(0xDEAD_BEEF);
+        let mut tokens = vec![Token::constant(10.0)];
+        for _ in 0..400 {
+            let mut t = tokens.clone();
+            mutate(&mut t, &mut next);
+            if t[0].tag == Function::Const && t.len() == 1 {
+                tokens = t;
+            }
+        }
+        assert!(
+            (tokens[0].value - 10.0).abs() > 1e-9,
+            "多轮变异后常数不应仍是原值"
+        );
     }
 }
