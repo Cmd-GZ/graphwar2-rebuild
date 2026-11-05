@@ -108,7 +108,8 @@ fn main() {
         if !real_tokens.is_empty() {
             let c = correction(&real_tokens, shooter.0, shooter.1, flip);
             let shifted = shifted_tokens(&real_tokens, c);
-            let pts = calculate(&shifted, shooter.0, shooter.1, 0.5, flip, Mode::Normal);
+            let step: f64 = std::env::var("GW2_STEP").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5);
+        let pts = calculate(&shifted, shooter.0, shooter.1, step, flip, Mode::Normal);
             let mut killed: Vec<i64> = Vec::new();
             for &(px, py) in &pts {
                 for t in &targets {
@@ -129,7 +130,8 @@ fn main() {
         use gw2_rebuild::shot::{correction, shifted_tokens};
         let c = correction(&real_tokens, shooter.0, shooter.1, flip);
         let shifted = shifted_tokens(&real_tokens, c);
-        let pts = calculate(&shifted, shooter.0, shooter.1, 0.5, flip, Mode::Normal);
+        let step: f64 = std::env::var("GW2_STEP").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5);
+        let pts = calculate(&shifted, shooter.0, shooter.1, step, flip, Mode::Normal);
         // ⚠️ 必须沿路径查掩膜：撞到第一个被占据的点就停（和 settle::resolve 一致）
         // ALT_STOP: 三种查询方式各算一次停点，比较谁更贴近真实终点
         let q_trunc = |x: f64, y: f64| gw2_rebuild::plane::is_occupied(&mask, x, y);
