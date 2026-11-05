@@ -78,7 +78,7 @@ fn captured_hits_are_reproduced_by_our_collision_chain() {
         ((1.651220991201045, 4.638020825690482), true, (-16.405029008797804, 4.638)),
     ];
     for ((x0, y0), flip, hit) in cases {
-        let pts = shot_points("0.00", x0, y0, 0.5, flip, Mode::Normal, true);
+        let pts = shot_points("0.00", x0, y0, gw2_rebuild::SERVER_STEP, flip, Mode::Normal, true);
         let got = first_hit(&mask, &pts, x0, y0).unwrap_or_else(|| panic!("轨迹没有撞到任何实体: {hit:?}"));
         let d = ((got.0 - hit.0).powi(2) + (got.1 - hit.1).powi(2)).sqrt();
         // 采样步长是 0.5，命中发生在两次采样之间，所以误差必然小于一个步长
@@ -167,7 +167,7 @@ fn captured_curved_shots_are_reproduced() {
         ("cos((0.73*x))", 22.093_f64, 0.730_f64, 17.995_f64, 2.485_f64, true),
     ];
     for (text, x0, y0, end_x, hit_y, flip) in cases {
-        let pts = shot_points(text, x0, y0, 0.5, flip, Mode::Normal, true);
+        let pts = shot_points(text, x0, y0, gw2_rebuild::SERVER_STEP, flip, Mode::Normal, true);
         let got = first_hit(&mask, &pts, x0, y0)
             .unwrap_or_else(|| panic!("轨迹没有撞到任何实体: {text}"));
         let d = ((got.0 - end_x).powi(2) + (got.1 - hit_y).powi(2)).sqrt();
@@ -202,7 +202,7 @@ fn full_level_replay_of_all_four_captured_shots() {
     ];
     let mut worst = 0.0_f64;
     for (text, x0, y0, hit_x, hit_y, flip) in cases {
-        let pts = shot_points(text, x0, y0, 0.5, flip, Mode::Normal, true);
+        let pts = shot_points(text, x0, y0, gw2_rebuild::SERVER_STEP, flip, Mode::Normal, true);
         let got = first_hit(&mask, &pts, x0, y0)
             .unwrap_or_else(|| panic!("{text}: 轨迹没有撞到任何实体"));
         let d = ((got.0 - hit_x).powi(2) + (got.1 - hit_y).powi(2)).sqrt();
@@ -269,7 +269,7 @@ fn captured_kills_happen_when_trajectory_passes_through_soldier() {
         let c = gw2_rebuild::shot::correction(&toks, x0, y0, true);
         assert!((c - captured_c).abs() < 5e-4, "{text}: 修正 {c} 与抓到的 {captured_c} 不符");
 
-        let pts = shot_points(text, x0, y0, 0.5, true, Mode::Normal, true);
+        let pts = shot_points(text, x0, y0, gw2_rebuild::SERVER_STEP, true, Mode::Normal, true);
         let (_, vx, vy) = KILL_SOLDIERS.iter().find(|(id, _, _)| *id == victim).unwrap();
         let d = pts
             .iter()
@@ -284,7 +284,7 @@ fn soldiers_do_not_block_the_trajectory() {
     // 掩膜里只有障碍：致死那发不会停在士兵处，而是继续飞到更远的地方
     let mask = build_mask_no_soldiers();
     let (x0, y0) = (17.627629369923454_f64, -12.391816789113197_f64);
-    let pts = shot_points("(x/3.02)", x0, y0, 0.5, true, Mode::Normal, true);
+    let pts = shot_points("(x/3.02)", x0, y0, gw2_rebuild::SERVER_STEP, true, Mode::Normal, true);
     // 这一发没有撞到任何障碍：它一路飞到棋盘边界（|x|<=25）
     let max_left = pts.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
     assert!(max_left < -10.45, "轨迹没有越过死者 x≈-10.45（最左只到 {max_left}）");
@@ -428,7 +428,7 @@ fn replays_every_shot_of_the_death_level() {
     let mut worst = 0.0_f64;
     for (text, x0, y0, end_x, flip) in shots {
         let others: Vec<Target> = targets.iter().filter(|t| (t.x - x0).abs() > 1e-9 || (t.y - y0).abs() > 1e-9).copied().collect();
-        let r = resolve(text, x0, y0, 0.5, flip, Mode::Normal, &mask, &others);
+        let r = resolve(text, x0, y0, gw2_rebuild::SERVER_STEP, flip, Mode::Normal, &mask, &others);
         let d = (r.stop.0 - end_x).abs();
         assert!(d < 0.5, "{text}: 停止点 x={} 与抓到的 {end_x} 相差 {d}", r.stop.0);
         worst = worst.max(d);

@@ -11,7 +11,7 @@ fn main() {
         let toks = parse(text);
         let c = correction(&toks, x0, y0, flip);
         let shifted = shifted_tokens(&toks, c);
-        let pts = calculate(&shifted, x0, y0, 0.5, flip, Mode::Normal);
+        let pts = calculate(&shifted, x0, y0, gw2_rebuild::SERVER_STEP, flip, Mode::Normal);
         println!("\n{text}  x0={x0:.3} y0={y0:.3} flip={flip}");
         println!("  我们的修正常数 c = {c:.6}");
         println!("  点数 {}，终点 {:?}", pts.len(), pts.last());

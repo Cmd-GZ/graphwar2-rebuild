@@ -7,7 +7,7 @@ fn main() {
         let toks = parse(text);
         let c = correction(&toks, x0, y0, flip);
         let sh = shifted_tokens(&toks, c);
-        let pts = calculate(&sh, x0, y0, 0.5, flip, Mode::Normal);
+        let pts = calculate(&sh, x0, y0, gw2_rebuild::SERVER_STEP, flip, Mode::Normal);
         println!("flip={flip:<5} x0={x0:<6} 点数 {:>3}  末点 ({:.3}, {:.3})",
                  pts.len(), pts.last().unwrap().0, pts.last().unwrap().1);
     }

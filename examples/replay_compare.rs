@@ -93,7 +93,7 @@ fn main() {
     let p = aigen::params(level);
     let real_tokens = parse(&func);
     let ctx = ScoringContext {
-        x0: shooter.0, y0: shooter.1, flip, step: 0.5,
+        x0: shooter.0, y0: shooter.1, flip, step: gw2_rebuild::SERVER_STEP,
         mask: &mask, targets: &targets, limit: p.limit,
     };
     let real_score = aigen::fitness(&real_tokens, &ctx);
@@ -108,7 +108,7 @@ fn main() {
         if !real_tokens.is_empty() {
             let c = correction(&real_tokens, shooter.0, shooter.1, flip);
             let shifted = shifted_tokens(&real_tokens, c);
-            let step: f64 = std::env::var("GW2_STEP").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5);
+            let step: f64 = std::env::var("GW2_STEP").ok().and_then(|v| v.parse().ok()).unwrap_or(gw2_rebuild::SERVER_STEP);
         let pts = calculate(&shifted, shooter.0, shooter.1, step, flip, Mode::Normal);
             let mut killed: Vec<i64> = Vec::new();
             for &(px, py) in &pts {
@@ -130,7 +130,7 @@ fn main() {
         use gw2_rebuild::shot::{correction, shifted_tokens};
         let c = correction(&real_tokens, shooter.0, shooter.1, flip);
         let shifted = shifted_tokens(&real_tokens, c);
-        let step: f64 = std::env::var("GW2_STEP").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5);
+        let step: f64 = std::env::var("GW2_STEP").ok().and_then(|v| v.parse().ok()).unwrap_or(gw2_rebuild::SERVER_STEP);
         let pts = calculate(&shifted, shooter.0, shooter.1, step, flip, Mode::Normal);
         // ⚠️ 必须沿路径查掩膜：撞到第一个被占据的点就停（和 settle::resolve 一致）
         // ALT_STOP: 三种查询方式各算一次停点，比较谁更贴近真实终点

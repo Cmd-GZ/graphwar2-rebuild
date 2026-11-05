@@ -53,3 +53,30 @@
 早停的真正原因还没找到，下一步应当**直接观测二分循环**：记录每次迭代的
 `lo/hi/chord/accepted`，看它到底卡在哪一步、失败前最后的状态是什么。
 不要再靠"猜一个改一个"。
+
+## 6. 追责：这个错是**我自己造的**，不是新发现
+
+`AGENTS.md` 的 "Hard facts (do not re-derive)" 表里**早就写着**：
+
+```
+| step (chord length) | `0.01` on the server (`0x3f847ae147ae147b`) |
+```
+
+我们自己的 `docs/01/04/05/06/08` 也全都写的是 0.01。
+`grep "0.5" docs/*.md` **一条都没有**。
+
+⇒ **0.5 完全是本轮和上几轮我在 `examples/`、`tests/` 里硬编码的默认值**：
+
+| 文件 | 原来的错值 |
+|---|---|
+| `examples/replay_compare.rs` | `step: 0.5` |
+| `tests/live_hits.rs` | `shot_points(..., 0.5, ...)` |
+| `src/aigen.rs` 测试 | `ScoringContext { step: 0.5 }` |
+
+所以这不是"发现实况是 0.01"，而是**我没读权威清单、自己写错了一个常量，
+然后用它跑了一整轮对比**。
+
+### 防复发
+
+- `src/lib.rs` 新增 `pub const SERVER_STEP: f64 = 0.01;`，所有示例/测试改用它；
+- 以后凡涉及"硬事实"的常量，**先查 `AGENTS.md` 的 Hard facts 表**，再写代码。

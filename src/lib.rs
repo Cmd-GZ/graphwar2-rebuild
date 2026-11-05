@@ -70,6 +70,13 @@ pub const MAX_ABS_X: f64 = 25.0;
 /// 棋盘 Y 半高，`0x19fd40`。
 pub const MAX_ABS_Y: f64 = 15.0;
 
+/// 服务器使用的弦长（步长），`0x3f847ae147ae147b` = **0.01**。
+///
+/// 这是 `AGENTS.md` 的 "Hard facts (do not re-derive)" 表里的一条。
+/// **不要用 0.5** —— 那会让停点产生约 ±0.25 的离散化误差，
+/// 看起来"大致对"但永远差一截（`docs/89` §3）。
+pub const SERVER_STEP: f64 = 0.01;
+
 /// 弦长收敛容差，`0x19fc78`。判据是 `|L - step| < 0.001`。
 pub const LENGTH_TOL: f64 = 0.001;
 
