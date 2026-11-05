@@ -8,7 +8,7 @@
 > **[`107-docs-consolidation.md`](107-docs-consolidation.md)**。
 > 三节（现行 / 已归档 / 已并档）与磁盘上的文件**逐一对得上**，可以当清单核对。
 
-## 一、现行文档（85 份）
+## 一、现行文档（86 份）
 
 > 数法：`find docs -name "*.md" -not -path "*/archive/*" | wc -l` = **85**（2026-11 复核；
 > 含本轮新增的 [`109`](109-kernel-turn-aigen.md)）。之前这里写的 76 是旧数，已改。
@@ -57,7 +57,7 @@
 | [43-turn-message-sequence.md](43-turn-message-sequence.md) | 一回合的报文顺序 |
 | [46-full-turn.md](46-full-turn.md) | 一整回合的 12 条报文序列 |
 | [62-server-loop.md](62-server-loop.md) | 能跑完整一局的服务端；**§5 = 自建客户端连真服务器（吸收 64，未打通）** |
-| [96-protocol-coverage.md](96-protocol-coverage.md) | 协议覆盖面（还缺哪些消息） |
+| [96-protocol-coverage.md](96-protocol-coverage.md) | **协议事件全量清单（73/73 已实现）**：13 个强类型、10 个透传；含"为什么不猜键名"与字段数更正 |
 | [41-turn-state-machine.md](41-turn-state-machine.md) | 回合状态机（13 次迁移逐个相同；时间基准未解） |
 | [42-end-of-turn.md](42-end-of-turn.md) | `end_of_turn_tick` = 回合截止时刻（六档实测） |
 | [44-destroy-delay.md](44-destroy-delay.md) | `DestroyObstacle` 延迟 165 tick |
