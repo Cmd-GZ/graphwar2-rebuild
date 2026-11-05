@@ -1,0 +1,742 @@
+[
+ {
+  "frame": "00002.png",
+  "text": "(abs(x))i",
+  "user_made": false
+ },
+ {
+  "frame": "00004.png",
+  "text": "(sin(exp(log((x+14.55))))*(0.44*x))",
+  "user_made": false
+ },
+ {
+  "frame": "00006.png",
+  "text": "-7.27",
+  "user_made": false
+ },
+ {
+  "frame": "00007.png",
+  "text": "999999999999999x",
+  "user_made": true
+ },
+ {
+  "frame": "00008.png",
+  "text": "0.00",
+  "user_made": false
+ },
+ {
+  "frame": "00015.png",
+  "text": "((-14.06+(0.83+x)))/(-17.41/cos(x))",
+  "user_made": false
+ },
+ {
+  "frame": "00016.png",
+  "text": "((-14.06+(0.83+x)))/(-17.41/cos(x))",
+  "user_made": false
+ },
+ {
+  "frame": "00017.png",
+  "text": "(x*-1.39)",
+  "user_made": false
+ },
+ {
+  "frame": "00021.png",
+  "text": "(cos((-5.02+x))/-1.47)",
+  "user_made": false
+ },
+ {
+  "frame": "00023.png",
+  "text": "999999999999",
+  "user_made": true
+ },
+ {
+  "frame": "00028.png",
+  "text": ".26*((-9.62/exp((-12.62*((x*0.62)+-14.76))))+x",
+  "user_made": false
+ },
+ {
+  "frame": "00029.png",
+  "text": "1770417.48",
+  "user_made": false
+ },
+ {
+  "frame": "00030.png",
+  "text": "(sin(exp(log((x+14.55))))*(0.44*x))",
+  "user_made": false
+ },
+ {
+  "frame": "00031.png",
+  "text": "(sin(exp(log((x+14.55))))*(0.44*x))",
+  "user_made": false
+ },
+ {
+  "frame": "00032.png",
+  "text": "(sin(exp(log((x+14.55))))*(0.44*x))",
+  "user_made": false
+ },
+ {
+  "frame": "00033.png",
+  "text": "(sin((0.16*x))*7.57)",
+  "user_made": false
+ },
+ {
+  "frame": "00034.png",
+  "text": "(sin((0.16*x))*7.57)",
+  "user_made": false
+ },
+ {
+  "frame": "00035.png",
+  "text": "(sin((0.16*x))*7.57)",
+  "user_made": false
+ },
+ {
+  "frame": "00038.png",
+  "text": "(-0.35*(-11.40+x))",
+  "user_made": false
+ },
+ {
+  "frame": "00040.png",
+  "text": "(37.67/(-2.62-abs((-9.14+x))))",
+  "user_made": false
+ },
+ {
+  "frame": "00041.png",
+  "text": "9999999999999x",
+  "user_made": true
+ },
+ {
+  "frame": "00048.png",
+  "text": "((sin(((-1.03+x)/-2.74))+18.43))",
+  "user_made": false
+ },
+ {
+  "frame": "00049.png",
+  "text": "(x)w",
+  "user_made": false
+ },
+ {
+  "frame": "00051.png",
+  "text": "((-0.35*(-5.66+x)))",
+  "user_made": false
+ },
+ {
+  "frame": "00052.png",
+  "text": "(37.67/(-2.62-abs((-9.14+x))))",
+  "user_made": false
+ },
+ {
+  "frame": "00053.png",
+  "text": "(25.81/(-5.16-abs((-16.36+x))))",
+  "user_made": false
+ },
+ {
+  "frame": "00057.png",
+  "text": "-1.8",
+  "user_made": false
+ },
+ {
+  "frame": "00060.png",
+  "text": "-1.878/(1+e*(999(x+)))",
+  "user_made": true
+ },
+ {
+  "frame": "00061.png",
+  "text": "-1.878/(1+e*(999(x+20)))+",
+  "user_made": true
+ },
+ {
+  "frame": "00062.png",
+  "text": "-1.878/(1+e*(999(x+20)))-4.5",
+  "user_made": true
+ },
+ {
+  "frame": "00063.png",
+  "text": "-1.878/(1+e*(999(x+20)))-4.5",
+  "user_made": true
+ },
+ {
+  "frame": "00064.png",
+  "text": "-1.878/(1+e*(999(x+20)))-4.5/(1)",
+  "user_made": true
+ },
+ {
+  "frame": "00065.png",
+  "text": "-1.878/(1+e*(999(x+20)))-4.5/(1+e()",
+  "user_made": true
+ },
+ {
+  "frame": "00066.png",
+  "text": ".878/(1+e(999(x+20)))-4.5/(1+e(999))",
+  "user_made": true
+ },
+ {
+  "frame": "00070.png",
+  "text": "78/(1+e(999(x+20)))-4.5/(1+e*(999(x+20)(x+5))",
+  "user_made": true
+ },
+ {
+  "frame": "00071.png",
+  "text": "78/(1+e(999(x+20)))-4.5/(1+e(999(x+20)(x+5))",
+  "user_made": true
+ },
+ {
+  "frame": "00072.png",
+  "text": "78/(1+e(999(x+20)))-4.5/(1+e(999(x+20)(x+5))",
+  "user_made": true
+ },
+ {
+  "frame": "00073.png",
+  "text": "378/(1+e(999(x+20)))-4.5/(1+e(999(x+20)(x+5)))-",
+  "user_made": true
+ },
+ {
+  "frame": "00074.png",
+  "text": "378/(1+e(999(x+20)))-4.5/(1+e(999(x+20)(x+5)))+2/(1+e",
+  "user_made": true
+ },
+ {
+  "frame": "00078.png",
+  "text": "78/(1+e(999(x+20)))-4.5/(1+e(999(x+20)(x+5)))+2/(1+e(999x))+",
+  "user_made": true
+ },
+ {
+  "frame": "00079.png",
+  "text": "78/(1+e(999(x+20)))-4.5/(1+e(999(x+20)(x+5)))+2/(1+e(999x))+",
+  "user_made": true
+ },
+ {
+  "frame": "00080.png",
+  "text": "78/(1+e(999(x+20)))-4.5/(1+e(999(x+20)(x+5)))+2/(1+e(999x))+(S",
+  "user_made": true
+ },
+ {
+  "frame": "00081.png",
+  "text": "78/(1+e(999(x+20)))-4.5/(1+e(999(x+20)(x+5)))+2/(1+e(999x))+(9+sin(6x))",
+  "user_made": true
+ },
+ {
+  "frame": "00089.png",
+  "text": "((sin(((-1.03+x)/-2.74))+18.43))",
+  "user_made": false
+ },
+ {
+  "frame": "00090.png",
+  "text": "((sin(((-1.03+x)/-2.74))+18.43))",
+  "user_made": false
+ },
+ {
+  "frame": "00091.png",
+  "text": "((sin(((-1.03+x)/-2.74))+18.43))",
+  "user_made": false
+ },
+ {
+  "frame": "00092.png",
+  "text": "((sin(((-1.03+x)/-2.74))+18.43))",
+  "user_made": false
+ },
+ {
+  "frame": "00093.png",
+  "text": "((sin(((-1.03+x)/-2.74))+18.43))",
+  "user_made": false
+ },
+ {
+  "frame": "00094.png",
+  "text": "((sin(((-1.03+x)/-2.74))+18.43))",
+  "user_made": false
+ },
+ {
+  "frame": "00095.png",
+  "text": "((sin(((-2.74+x)/-2.83))+0.44))",
+  "user_made": false
+ },
+ {
+  "frame": "00096.png",
+  "text": "(xj",
+  "user_made": false
+ },
+ {
+  "frame": "00097.png",
+  "text": "(x*-0.51)",
+  "user_made": false
+ },
+ {
+  "frame": "00098.png",
+  "text": "(9.03/abs((5.31/(x+-9.46))))",
+  "user_made": false
+ },
+ {
+  "frame": "00099.png",
+  "text": "((0.33*(-6.54+x)))",
+  "user_made": false
+ },
+ {
+  "frame": "00100.png",
+  "text": "(25.81/(-5.16-abs((-16.36+x))))",
+  "user_made": false
+ },
+ {
+  "frame": "00105.png",
+  "text": "-4.663",
+  "user_made": false
+ },
+ {
+  "frame": "00106.png",
+  "text": "-4.663",
+  "user_made": false
+ },
+ {
+  "frame": "00108.png",
+  "text": "-4.663/(1+e(-999(x+)))",
+  "user_made": true
+ },
+ {
+  "frame": "00109.png",
+  "text": "-4.663/(1+e(-999(x+)))",
+  "user_made": true
+ },
+ {
+  "frame": "00110.png",
+  "text": "-4.663/(1+e(-999(x+23)))",
+  "user_made": true
+ },
+ {
+  "frame": "00111.png",
+  "text": "-4.663/(1+e*(-999(x+23)))-",
+  "user_made": true
+ },
+ {
+  "frame": "00112.png",
+  "text": "-4.663/(1+e(-999(x+23)))-",
+  "user_made": true
+ },
+ {
+  "frame": "00119.png",
+  "text": "663/(1+e(-999(x+23)))+(-4.5)/(1+e(999(x+23)(x+5))",
+  "user_made": true
+ },
+ {
+  "frame": "00120.png",
+  "text": "63/(1+e(-999(x+23)))+(-4.5)/(1+e(999(x+23)(x+5)))+2/(",
+  "user_made": true
+ },
+ {
+  "frame": "00122.png",
+  "text": "63/(1+e(-999(x+23)))+(-4.5)/(1+e(999(x+23)(x+5)))+2/(1+e(999x)",
+  "user_made": true
+ },
+ {
+  "frame": "00123.png",
+  "text": "63/(1+e(-999(x+23)))+(-4.5)/(1+e(999(x+23)(x+5)))+2/(1+e(999x))+",
+  "user_made": true
+ },
+ {
+  "frame": "00124.png",
+  "text": "3/(1+e(-999(x+23)))+(-4.5)/(1+e(999(x+23)(x+5)))+2/(1+e(999x))+(7+2",
+  "user_made": true
+ },
+ {
+  "frame": "00125.png",
+  "text": "63/(1+e(-999(x+23)))+(-4.5)/(1+e(999(x+23)(x+5)))+2/(1+e(999x))+(7+25in(6x))/(1+e",
+  "user_made": true
+ },
+ {
+  "frame": "00128.png",
+  "text": "((sin(((-2.74+x)/-2.83))+0.44))",
+  "user_made": false
+ },
+ {
+  "frame": "00129.png",
+  "text": "((sin(((-2.74+x)/-2.83))+0.44))",
+  "user_made": false
+ },
+ {
+  "frame": "00130.png",
+  "text": "((sin(((-2.74+x)/-2.83))+0.44))",
+  "user_made": false
+ },
+ {
+  "frame": "00131.png",
+  "text": "((sin(((-2.74+x)/-2.83))+0.44))",
+  "user_made": false
+ },
+ {
+  "frame": "00132.png",
+  "text": "((sin(((-2.74+x)/-2.83))+0.44))",
+  "user_made": false
+ },
+ {
+  "frame": "00133.png",
+  "text": "((sin(((-2.74+x)/-2.83))+0.44))",
+  "user_made": false
+ },
+ {
+  "frame": "00134.png",
+  "text": "((sin(((-2.87+x)/-2.84))+0.46))",
+  "user_made": false
+ },
+ {
+  "frame": "00135.png",
+  "text": "(x)",
+  "user_made": false
+ },
+ {
+  "frame": "00136.png",
+  "text": "(x*-0.36)",
+  "user_made": false
+ },
+ {
+  "frame": "00137.png",
+  "text": "(9.03/abs((-5.24/(-9.46+x))))",
+  "user_made": false
+ },
+ {
+  "frame": "00138.png",
+  "text": "(9.03/abs((-5.24/(-9.46+x))))",
+  "user_made": false
+ },
+ {
+  "frame": "00139.png",
+  "text": "((0.33*(-6.80+x)))",
+  "user_made": false
+ },
+ {
+  "frame": "00141.png",
+  "text": "(25.80/(-5.16-abs((-16.36+x))))",
+  "user_made": false
+ },
+ {
+  "frame": "00151.png",
+  "text": "((sin(((-2.87+x)/-2.84))+0.46))",
+  "user_made": false
+ },
+ {
+  "frame": "00152.png",
+  "text": "((sin(((-2.87+x)/-2.84))+0.46))",
+  "user_made": false
+ },
+ {
+  "frame": "00153.png",
+  "text": "((sin(((-2.87+x)/-2.84))+0.46))",
+  "user_made": false
+ },
+ {
+  "frame": "00154.png",
+  "text": "((sin(((-2.87+x)/-2.84))+0.46))",
+  "user_made": false
+ },
+ {
+  "frame": "00155.png",
+  "text": "((sin(((-2.87+x)/-2.84))+0.46))",
+  "user_made": false
+ },
+ {
+  "frame": "00156.png",
+  "text": "((sin(((-2.87+x)/-2.84))+0.46))",
+  "user_made": false
+ },
+ {
+  "frame": "00157.png",
+  "text": "((sin(((14.95+x)/-2.84))+0.46))",
+  "user_made": false
+ },
+ {
+  "frame": "00158.png",
+  "text": "(x)w",
+  "user_made": false
+ },
+ {
+  "frame": "00159.png",
+  "text": "(x/-2.95)",
+  "user_made": false
+ },
+ {
+  "frame": "00160.png",
+  "text": "(9.00/abs((5.23/(-9.48+x))))",
+  "user_made": false
+ },
+ {
+  "frame": "00161.png",
+  "text": "(9.00/abs((5.23/(-9.48+x))))",
+  "user_made": false
+ },
+ {
+  "frame": "00162.png",
+  "text": "((0.33*(-6.78+x)))",
+  "user_made": false
+ },
+ {
+  "frame": "00163.png",
+  "text": "(25.80/(-5.16-abs((-16.36+x))))",
+  "user_made": false
+ },
+ {
+  "frame": "00166.png",
+  "text": "53/(1de(-99kx+23)))+(-4.5)/(1+e(999(x+23)(x+5)))+2/(1+e(999x))+(7+2sin(6x))/(1+e*(999(x-10)",
+  "user_made": true
+ },
+ {
+  "frame": "00176.png",
+  "text": "((sin(((14.95+x)/-2.84))+0.46))",
+  "user_made": false
+ },
+ {
+  "frame": "00177.png",
+  "text": "((sin(((14.95+x)/-2.84))+0.46))",
+  "user_made": false
+ },
+ {
+  "frame": "00178.png",
+  "text": "((sin(((14.95+x)/-2.84))+0.46))",
+  "user_made": false
+ },
+ {
+  "frame": "00179.png",
+  "text": "((sin(((14.95+x)/-2.84))+0.46))",
+  "user_made": false
+ },
+ {
+  "frame": "00180.png",
+  "text": "((sin(((14.95+x)/-2.84))+0.46))",
+  "user_made": false
+ },
+ {
+  "frame": "00181.png",
+  "text": "((sin(((14.95+x)/-2.84))+0.46))",
+  "user_made": false
+ },
+ {
+  "frame": "00182.png",
+  "text": "((sin(((14.95+x)/-2.84))+0.46))",
+  "user_made": false
+ },
+ {
+  "frame": "00183.png",
+  "text": "(x*-0.36)",
+  "user_made": false
+ },
+ {
+  "frame": "00184.png",
+  "text": "(x/-2.95)",
+  "user_made": false
+ },
+ {
+  "frame": "00185.png",
+  "text": "(9.00/abs((5.25/(-9.51+x))))",
+  "user_made": false
+ },
+ {
+  "frame": "00186.png",
+  "text": "((0.33*(-6.78+x)))",
+  "user_made": false
+ },
+ {
+  "frame": "00187.png",
+  "text": "((0.33*(-6.91+x)))",
+  "user_made": false
+ },
+ {
+  "frame": "00188.png",
+  "text": "((x*cos(3.76)))",
+  "user_made": false
+ },
+ {
+  "frame": "00198.png",
+  "text": "-30.83",
+  "user_made": false
+ },
+ {
+  "frame": "00199.png",
+  "text": "-30.83",
+  "user_made": false
+ },
+ {
+  "frame": "00200.png",
+  "text": "-30.83",
+  "user_made": false
+ },
+ {
+  "frame": "00201.png",
+  "text": "-30.83",
+  "user_made": false
+ },
+ {
+  "frame": "00202.png",
+  "text": "-30.83",
+  "user_made": false
+ },
+ {
+  "frame": "00203.png",
+  "text": "-13.41",
+  "user_made": false
+ },
+ {
+  "frame": "00204.png",
+  "text": "(-0.13*x)",
+  "user_made": false
+ },
+ {
+  "frame": "00205.png",
+  "text": "(9.00/abs((5.26/(-9.51+x))))",
+  "user_made": false
+ },
+ {
+  "frame": "00206.png",
+  "text": "(9.00/abs((5.26/(-9.51+x))))",
+  "user_made": false
+ },
+ {
+  "frame": "00207.png",
+  "text": "((0.33*(-6.95+x)))",
+  "user_made": false
+ },
+ {
+  "frame": "00208.png",
+  "text": "(25.80/(-5.16-abs((-16.36+x))))",
+  "user_made": false
+ },
+ {
+  "frame": "00215.png",
+  "text": "-13.41",
+  "user_made": false
+ },
+ {
+  "frame": "00216.png",
+  "text": "-13.41",
+  "user_made": false
+ },
+ {
+  "frame": "00217.png",
+  "text": "-13.41",
+  "user_made": false
+ },
+ {
+  "frame": "00218.png",
+  "text": "-13.41",
+  "user_made": false
+ },
+ {
+  "frame": "00219.png",
+  "text": "-13.41",
+  "user_made": false
+ },
+ {
+  "frame": "00220.png",
+  "text": "-13.41",
+  "user_made": false
+ },
+ {
+  "frame": "00222.png",
+  "text": "(9.00/abs((5.26/(-9.51+x))))",
+  "user_made": false
+ },
+ {
+  "frame": "00223.png",
+  "text": "(9.00/abs((5.26/(-9.54+x))))",
+  "user_made": false
+ },
+ {
+  "frame": "00234.png",
+  "text": "((11.62/sin((-6.14+sin(tan(((x*2.16)*(1.25*x))))))))l",
+  "user_made": false
+ },
+ {
+  "frame": "00235.png",
+  "text": "((11.62/sin((-6.14+sin(tan(((x*2.16)*(1.25*x))))))))l",
+  "user_made": false
+ },
+ {
+  "frame": "00236.png",
+  "text": "((11.62/sin((-6.14+sin(tan(((x*2.16)*(1.25*x))))))))l",
+  "user_made": false
+ },
+ {
+  "frame": "00237.png",
+  "text": "((11.62/sin((-6.14+sin(tan(((x*2.16)*(1.25*x))))))))l",
+  "user_made": false
+ },
+ {
+  "frame": "00238.png",
+  "text": "((11.62/sin((-6.14+sin(tan(((x*2.16)*(1.25*x))))))))l",
+  "user_made": false
+ },
+ {
+  "frame": "00239.png",
+  "text": "((11.62/sin((-6.14+sin(tan(((x*2.16)*(1.25*x))))))))l",
+  "user_made": false
+ },
+ {
+  "frame": "00240.png",
+  "text": "((11.62/sin((-6.14+sin(tan(((x*2.16)*(1.25*x))))))))l",
+  "user_made": false
+ },
+ {
+  "frame": "00241.png",
+  "text": "(x*-0.26)",
+  "user_made": false
+ },
+ {
+  "frame": "00242.png",
+  "text": "(9.00/abs((5.26/(-9.54+x))))",
+  "user_made": false
+ },
+ {
+  "frame": "00245.png",
+  "text": "53/(1+e(-99(x+23)))+(-4.5)/(1+e(99(x+23)(x+5)))+2/(1+e(-99x))+(",
+  "user_made": true
+ },
+ {
+  "frame": "00249.png",
+  "text": "63/(1+e(-99(x+23)))+(-4.5)/(1+e(99(x+23)(x+5)))+2/(1+e(99x(x-6))",
+  "user_made": true
+ },
+ {
+  "frame": "00250.png",
+  "text": "53/(1+e(-99(x+23)))+(-4.5)/(1+e(99(x+23)(x+5)))+2/(1+e(99x(x-6)))-C",
+  "user_made": true
+ },
+ {
+  "frame": "00251.png",
+  "text": "13/(1+e(-99(x+23)))+(-4.5)/(1+e(99(x+23Xx+5)))+2/(1+e(99x(x-6)))-0.5/(1+",
+  "user_made": true
+ },
+ {
+  "frame": "00255.png",
+  "text": "(x*-0.27)",
+  "user_made": false
+ },
+ {
+  "frame": "00256.png",
+  "text": "(-0.15*(x+x))",
+  "user_made": false
+ },
+ {
+  "frame": "00267.png",
+  "text": "78/(1+e(-99(x+20)))-4.5/(1+e(99(x+20)(x+5)))+2/(1+e(-99x))+2.",
+  "user_made": true
+ },
+ {
+  "frame": "00268.png",
+  "text": "78/(1+e(-99(x+20)))-4.5/(1+e(99(x+20)(x+5)))+2/(1+e(-99x))+2.5",
+  "user_made": true
+ },
+ {
+  "frame": "00269.png",
+  "text": "78/(1+e(-99(x+20)))-4.5/(1+e(99(x+20)(x+5)))+2/(1+e(-99x))+2.5",
+  "user_made": true
+ },
+ {
+  "frame": "00270.png",
+  "text": "78/(1+e(-99(x+20)))-4.5/(1+e(99(x+20)(x+5)))+2/(1+e(-99x))+9.5/(",
+  "user_made": true
+ },
+ {
+  "frame": "00271.png",
+  "text": "8/(1+e(-99(x+20)))-4.5/(1+e(99(x+20)(x+5)))+2/(1+e(-99x))+9.5/(1+",
+  "user_made": true
+ },
+ {
+  "frame": "00282.png",
+  "text": "3/(1+e(-99(x+20)))-4.5/(1+e*(99(x+20)(x+5)))+2/(1+e(-99x))+9.5/(1+e*(-99(x-2.5)))+2.5/(1",
+  "user_made": false
+ }
+]
