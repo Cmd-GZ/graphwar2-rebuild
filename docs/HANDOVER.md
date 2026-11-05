@@ -14,6 +14,13 @@
 - **一整回合 12 条报文序列**（`docs/46`）：`begin_turn`（TurnInfo/EndOfTurnInfo/
   WaitingForFunctions）+ `fire`（8 条）+ `end_turn`（TurnCountInfo），
   种类顺序有测试断言；新增 `emit_end_of_turn` 并用抓包样本逐字节验证
+- **推翻"OS 熵"结论**（`docs/50`）：给每次 getrandom 取调用栈后发现 **915/921 来自 libudev**，
+  游戏本体只有 3 次且是 HashMap 的 RandomState 播种。二进制里 `expand 32-byte k`
+  出现 6 次 ⇒ 确有 ChaCha；看不见是因为 Rust 走原始 syscall(318)，绕过 libc 函数。
+  hook syscall 会让 frida 自断通信，该路不可用
+- **障碍生成链路已定位**（`docs/51`）：`send` 见到 AddObstacle 时取栈，得到
+  `0x8f46c3 → 0x45d404 → 0x3d8d2b → 0x45a60c → 0x3f1d85 → …`（三帧一致）。
+  另试过扫内存找 ChaCha 状态：命中 7 处但**密钥位是指针/长度，不是随机数**，判定不是活状态
 - **随机源重放试过，不行**（`docs/48`）：hook `getrandom` 抓到 921 次调用，
   采样载荷全是 **16 字节**（更像 Rust `HashMap` 的哈希种子，而非 32 字节 ChaCha 密钥）；
   即便拿到种子，**消费顺序不可观测**，无法定位"关卡那一刻"的流位置。
