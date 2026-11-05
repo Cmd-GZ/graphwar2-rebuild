@@ -77,8 +77,10 @@ pub fn draw_token(next: &mut dyn FnMut() -> u64) -> Token {
 /// * 挑到 `y`   → 在它**前面插入**一个常数 `N(0,1)×10.2`；
 /// * 挑到常数   → 一半概率原地乘 `(1 + N(0,1))`（这就是常数漂移的来源），
 ///                一半概率换成新的 `N(0,1)×10.2`；
-/// * 挑到其它   → **未实现**（`docs/73` 里这条分支的插入/替换次序还没读准，
-///                按仓库规矩不臆造，直接原样返回）。
+/// * 挑到其它（`x` / 算子）→ 把它**包一层**：`v` 变成 `(op const v)`，
+///   `op` 按 50/25/25 取 `+` / `*` / `/`，`const` 仍是 `N(0,1)×10.2`。
+///   （这一条是**推断**：伪代码里出现两次 `memmove` + 两次写入，
+///     读作"先插常数、再在更前面插算子"最自洽；见 `docs/73` §5）
 ///
 /// 返回是否真的改动了序列，便于调用方统计。
 pub fn mutate(tokens: &mut Vec<Token>, next: &mut dyn FnMut() -> u64) -> bool {
@@ -106,8 +108,21 @@ pub fn mutate(tokens: &mut Vec<Token>, next: &mut dyn FnMut() -> u64) -> bool {
             }
             true
         }
-        // 其它（`x` 或算子）：那条分支的语义未读准，见函数注释
-        _ => false,
+        _ => {
+            let konst = Token::constant(normal(next) * CONST_SCALE);
+            tokens.insert(pos, konst);
+            // 抽随机 int 定算子：>=0 → `+`；<0 再抽一次，<0 → `*`，否则 `/`
+            let first = next() as i32;
+            let op = if first >= 0 {
+                Function::Add
+            } else if (next() as i32) < 0 {
+                Function::Mul
+            } else {
+                Function::Divide
+            };
+            tokens.insert(pos, Token::op(op));
+            true
+        }
     }
 }
 
@@ -238,5 +253,41 @@ mod tests {
             (tokens[0].value - 10.0).abs() > 1e-9,
             "多轮变异后常数不应仍是原值"
         );
+    }
+
+    #[test]
+    fn mutate_wraps_x_in_an_operation() {
+        let mut next = stream(0x5EED);
+        let mut tokens = vec![Token::op(Function::VarX)];
+        assert!(mutate(&mut tokens, &mut next));
+        assert_eq!(tokens.len(), 3, "x 应被包成 (op const x)");
+        assert!(
+            matches!(tokens[0].tag, Function::Add | Function::Mul | Function::Divide),
+            "最外层应是 +/*/ 之一，实测 {:?}",
+            tokens[0].tag
+        );
+        assert_eq!(tokens[1].tag, Function::Const, "中间是常数");
+        assert_eq!(tokens[2].tag, Function::VarX, "原来是 x 的位置仍在最后");
+    }
+
+    #[test]
+    fn mutation_only_grows_or_keeps_the_sequence() {
+        // 注意：y 分支插入常数后会短暂出现"两个值相邻"的形态，
+        // 这在前缀式里是不合法的 —— 说明调用方后面应该还有一趟修复
+        // （GW1 里对应 adjustFunction）。这里只断言"不会越变越短、不会 panic"。
+        let mut next = stream(0xC0FFEE);
+        let mut tokens = vec![Token::op(Function::VarX)];
+        let mut prev_len = tokens.len();
+        for round in 0..200 {
+            mutate(&mut tokens, &mut next);
+            assert!(
+                tokens.len() >= prev_len,
+                "第 {} 轮变异后长度变小了：{} -> {}",
+                round + 1,
+                prev_len,
+                tokens.len()
+            );
+            prev_len = tokens.len();
+        }
     }
 }
