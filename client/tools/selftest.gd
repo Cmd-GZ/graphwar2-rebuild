@@ -34,6 +34,7 @@ func run(main: Control) -> int:
 	_test_fonts_and_icons()
 	_test_assets_and_original_settings()
 	_test_geometry_and_campaign_save()
+	_test_core_path_mode()
 	await _test_audio()
 	await _test_level_rules()
 	await _test_fire_fx()
@@ -1332,6 +1333,73 @@ func _fire_function(play: Node, expr_text: String) -> void:
 	if input != null:
 		input.text = expr_text
 	play.call("fire")
+
+# ---------------------------------------------------------------- 弹道模式（docs/138）
+#
+# `GwCore.calculate_path` 的第 4 个参数是**可选**的 `mode`（默认 `"normal"`），
+# `"ode"` 走内核新方法 `GW2Rebuild.path_calculate_mode`（`dy/dx = f(x,y)`，一阶 RK4）。
+# 这里只做"能观察到的事实"：
+#   1. 三参数调用（既有调用点）与显式 `"normal"` 结果一致 —— 加参数没有改坏老路径；
+#   2. `"ode"` 有内核时能出点，且与 `"normal"` 的 `points` **不相等**（真的走了不同分支）；
+#   3. ODE 的 `offset` 是 `NaN`（没有修正常数，`format_offset()` 显示空串）；
+#   4. 未知 mode 直接 `ok:false`（不猜默认值）。
+func _test_core_path_mode() -> void:
+	var start := Vector2(5.0, 2.0)
+	var norm_default := GwCore.calculate_path("sin(x)", start, 1.0)
+	var norm_explicit := GwCore.calculate_path("sin(x)", start, 1.0, "normal")
+	_expect(String(norm_default.get("mode", "")) == "normal",
+		"弹道模式：默认 mode = normal（实际 %s）" % String(norm_default.get("mode", "<缺失>")))
+	_expect(norm_default.get("points", PackedVector2Array()).size()
+			== norm_explicit.get("points", PackedVector2Array()).size()
+			and norm_default.get("points", PackedVector2Array())
+				== norm_explicit.get("points", PackedVector2Array()),
+		"弹道模式：显式 mode=normal 与三参数调用结果相同（%d vs %d 点）"
+			% [norm_default.get("points", PackedVector2Array()).size(),
+				norm_explicit.get("points", PackedVector2Array()).size()])
+	_expect(GwCore.calculate_path("sin(x)", start, 1.0, "nope").get("ok", true) == false,
+		"弹道模式：未知 mode 直接 ok:false（不猜 normal）")
+	if not GwCore.kernel_has_path_calculate_mode():
+		_skip("弹道模式：内核没有 path_calculate_mode（先 cargo build 并覆盖 client/libgw2_rebuild.so）")
+		return
+	# 同一表达式、同一起点：ODE 与 normal 必须给出不同的点序列
+	var ode := GwCore.calculate_path("sin(x)", start, 1.0, "ode")
+	_expect(bool(ode.get("ok", false)), "弹道模式：mode=ode 能算出弹道（note=%s）"
+		% String(ode.get("note", "")))
+	_expect(String(ode.get("source", "")) == "kernel",
+		"弹道模式：mode=ode 走内核（source=%s）" % String(ode.get("source", "")))
+	var ode_pts: PackedVector2Array = ode.get("points", PackedVector2Array())
+	var norm_pts: PackedVector2Array = norm_explicit.get("points", PackedVector2Array())
+	_expect(ode_pts.size() > 1 and ode_pts != norm_pts,
+		"弹道模式：同一表达式下 ode 与 normal 的 points 不相等（%d vs %d 点）"
+			% [ode_pts.size(), norm_pts.size()])
+	_expect(is_nan(float(ode.get("offset", 0.0))),
+		"弹道模式：ODE 没有修正常数 ⇒ offset = NaN（显示为 '%s'）"
+			% GwCore.format_offset(float(ode.get("offset", 0.0))))
+	# ODE 的右端能用 `y`（客户端求值器只认 x，所以这条同时证明 ODE 没走客户端预检）
+	var ode_y := GwCore.calculate_path("y", Vector2(0.0, 1.0), 1.0, "ode")
+	_expect(bool(ode_y.get("ok", false)) and ode_y.get("points", PackedVector2Array()).size() > 1,
+		"弹道模式：ODE 的右端能用 y（dy/dx = y 从 y=1 出发；note=%s）"
+			% String(ode_y.get("note", "")))
+	# 下面两条**绕过 GwCore**、直接打内核方法：覆盖 FFI 层的两个分支
+	# （GwCore 自己会先把未知 mode 拦下，所以上面那条测不到内核的 bad_arguments）
+	var kern: Object = ClassDB.instantiate(GwCore.KERNEL_CLASS)
+	_expect(kern != null, "弹道模式：内核类可实例化（供下面两条直调内核）")
+	if kern == null:
+		return
+	# ① 内核的 mode=normal 分支与 path_calculate 完全同形同值
+	var k_norm: Variant = kern.call("path_calculate", "sin(x)", 5.0, 2.0, 1.0)
+	var k_mode: Variant = kern.call("path_calculate_mode", "sin(x)", 5.0, 2.0, 1.0, "normal")
+	_expect(k_norm is Dictionary and k_mode is Dictionary
+			and (k_norm as Dictionary).get("points", PackedVector2Array())
+				== (k_mode as Dictionary).get("points", PackedVector2Array())
+			and float((k_norm as Dictionary).get("offset", 0.0))
+				== float((k_mode as Dictionary).get("offset", 0.0)),
+		"弹道模式：内核 path_calculate_mode(mode=normal) 与 path_calculate 逐点相同")
+	# ② 内核的非法 mode 分支：bad_arguments，不 panic、不猜 normal
+	var k_bad: Variant = kern.call("path_calculate_mode", "sin(x)", 5.0, 2.0, 1.0, "nope")
+	_expect(k_bad is Dictionary and bool((k_bad as Dictionary).get("ok", true)) == false
+			and String((k_bad as Dictionary).get("error", "")) == "bad_arguments",
+		"弹道模式：内核对非法 mode 返回 bad_arguments（实际 %s）" % str(k_bad))
 
 # ---------------------------------------------------------------- 开火表现（docs/135）
 #

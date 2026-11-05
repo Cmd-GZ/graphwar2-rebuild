@@ -16,6 +16,15 @@ class_name GwCore
 ##         -> Dictionary { ok: bool, points: PackedVector2Array, offset: float, error: String }
 ## 参数与返回值与本文件 `calculate_path()` 完全一致，调用方无需改动。
 ##
+## 微分方程模式的契约（`docs/138`，实现见内核 `src/api.rs::calculate_path_mode`）：
+##     GW2Rebuild.path_calculate_mode(expr: String, x0: float, y0: float,
+##                                    direction: float, mode: String)
+##         -> Dictionary { ok: bool, points: PackedVector2Array, offset: float, error: String }
+## 返回**同形**（同样四个键）；`mode` 取 `"normal"` / `"ode"`（大小写不敏感）。
+## ODE 下 `offset` 恒为 `NaN`（微分方程局没有修正常数 ⇒ `format_offset()` 显示空串）。
+## 本文件 `calculate_path(..., mode)` 的第 4 个参数是可选的，默认 `"normal"`，
+## 所以既有三参数调用点一个字都不用改。
+##
 ## 命中侧的契约（`docs/120` §1，实现见内核 `src/api.rs::hit_test`）：
 ##     GW2Rebuild.hit_test(points: PackedVector2Array,
 ##                         obstacles: PackedFloat64Array,   # [x, y, size] * n
@@ -54,6 +63,8 @@ static var _kernel_checked := false
 static var _kernel_ok := false
 static var _kernel_has_hit_test := false
 static var _kernel_has_level_obstacles := false
+## 内核有没有 `path_calculate_mode`（微分方程模式，`docs/138`）。
+static var _kernel_has_path_calculate_mode := false
 static var _kernel_methods: PackedStringArray = PackedStringArray()
 static var _kernel_note := ""
 
@@ -70,6 +81,11 @@ static func kernel_has_hit_test() -> bool:
 static func kernel_has_level_obstacles() -> bool:
 	_probe_kernel()
 	return _kernel_ok and _kernel_has_level_obstacles
+
+## 微分方程弹道能不能走内核（`path_calculate_mode` 是否注册上了，`docs/138`）。
+static func kernel_has_path_calculate_mode() -> bool:
+	_probe_kernel()
+	return _kernel_ok and _kernel_has_path_calculate_mode
 
 static func kernel_note() -> String:
 	_probe_kernel()
@@ -100,11 +116,14 @@ static func _probe_kernel() -> void:
 	_kernel_methods = names
 	_kernel_has_hit_test = names.has("hit_test")
 	_kernel_has_level_obstacles = names.has("level_obstacles")
+	_kernel_has_path_calculate_mode = names.has("path_calculate_mode")
 	if names.has("path_calculate"):
 		_kernel_ok = true
 		_kernel_note = "内核 %s 已加载，使用 path_calculate" % KERNEL_CLASS
 		_kernel_note += (" + hit_test" if _kernel_has_hit_test else "（无 hit_test）")
 		_kernel_note += (" + level_obstacles" if _kernel_has_level_obstacles else "（无 level_obstacles）")
+		_kernel_note += ("" if _kernel_has_path_calculate_mode
+			else "（无 path_calculate_mode）")
 	else:
 		_kernel_ok = false
 		_kernel_note = ("内核 %s 已加载，但只暴露 %s —— 弹道用界面预览"
@@ -112,13 +131,32 @@ static func _probe_kernel() -> void:
 
 ## 算一条弹道。
 ## start: 士兵所在位置（棋盘坐标）；direction: +1 向右飞（team 0），-1 向左飞（team 1）。
-## 返回 { ok, points: PackedVector2Array, offset: float, source: String, note: String }
-static func calculate_path(expr_text: String, start: Vector2, direction: float) -> Dictionary:
+## mode: `"normal"`（默认，`y = f(x)`）或 `"ode"`（`dy/dx = f(x,y)`，微分方程局，`docs/138`）。
+##   大小写/两侧空白不敏感；其它值直接 `ok:false, source="mode"`（不猜一个默认值）。
+##
+## 返回 `{ ok, points: PackedVector2Array, offset: float, mode: String, source: String, note: String }`
+##   * `mode` 是**归一化后**的模式名（`"normal"` / `"ode"`），便于排查；
+##   * `source`：`kernel` = 内核采样器；`preview` = 界面预览（只有 normal 可能退到这里）；
+##     `parse` = 客户端解析器先拒了；`mode` = 模式名不认识；`none` = 内核没有 ODE 入口。
+##   * `offset`：normal = `c = y0 − f(±x0)`；ode = **恒 `NaN`**（ODE 没有修正常数，
+##     `format_offset()` 会把 NaN 显示成空串，与原版 DiffEq 局一致，`docs/92` §4.10）。
+static func calculate_path(expr_text: String, start: Vector2, direction: float,
+		mode: String = "normal") -> Dictionary:
+	var mode_name := mode.strip_edges().to_lower()
+	if mode_name == "ode":
+		return _calculate_path_ode(expr_text, start, direction)
+	if mode_name != "normal":
+		return {
+			"ok": false, "points": PackedVector2Array(), "offset": NAN,
+			"mode": mode_name, "source": "mode",
+			"note": "未知 mode=%s（只认 normal / ode）" % mode,
+		}
 	var expr := GwExpr.compile(expr_text)
 	if not expr.is_ok():
 		return {
 			"ok": false, "points": PackedVector2Array(), "offset": NAN,
-			"source": "parse", "note": "函数解析失败：%s" % expr.get_error(),
+			"mode": mode_name, "source": "parse",
+			"note": "函数解析失败：%s" % expr.get_error(),
 		}
 	_probe_kernel()
 	if _kernel_ok:
@@ -130,9 +168,50 @@ static func calculate_path(expr_text: String, start: Vector2, direction: float) 
 				return {
 					"ok": true, "points": pts,
 					"offset": float(res.get("offset", 0.0)),
+					"mode": mode_name,
 					"source": "kernel", "note": "内核 path_calculate",
 				}
-	return _preview(expr, start, direction)
+	# 内核缺席、或这次没算出来 ⇒ 与以前完全一样退回预览（`source` 由 `_preview` 标 "preview"），
+	# 只多带一个 `mode` 便于排查。
+	var preview := _preview(expr, start, direction)
+	preview["mode"] = mode_name
+	return preview
+
+## ODE（微分方程局）：`dy/dx = f(x, y)`，内核一阶 RK4（`docs/138`）。
+##
+## 为什么不走 `GwExpr` 预检：ODE 的右端是 `f(x, y)`，而客户端求值器 `expr.gd` 只认 `x`
+## （遇到 `y` 直接报"未知标识符"）—— 在内核之前把关会把合法的 ODE 表达式错杀。
+## 内核自己会 parse（`function::parse` 认识 `y`），所以这里把原文直接交过去。
+##
+## 内核没有这个方法时**不拿预览折线冒充**：预览是"`y = f(x)` 的固定 dx 折线"，
+## 与 ODE 的积分曲线是两条不同的东西（`docs/133` §6 #3 的现状就是这么留空的）。
+## 返回同形字典，多一个 `mode: "ode"`；失败时 `source` 写清是内核报错还是内核没这方法。
+static func _calculate_path_ode(expr_text: String, start: Vector2, direction: float) -> Dictionary:
+	if kernel_has_path_calculate_mode():
+		var obj: Object = ClassDB.instantiate(KERNEL_CLASS)
+		if obj != null:
+			var res: Variant = obj.call("path_calculate_mode", expr_text, start.x, start.y,
+				direction, "ode")
+			if res is Dictionary and bool(res.get("ok", false)):
+				return {
+					"ok": true,
+					"points": res.get("points", PackedVector2Array()),
+					# ODE 没有修正常数：内核给的就是 NaN，这里原样带出（见 `docs/138`）
+					"offset": float(res.get("offset", NAN)),
+					"mode": "ode",
+					"source": "kernel", "note": "内核 path_calculate_mode(mode=ode)",
+				}
+			var err := String(res.get("error", "unknown")) if res is Dictionary else "non_dict"
+			return {
+				"ok": false, "points": PackedVector2Array(), "offset": NAN,
+				"mode": "ode", "source": "kernel",
+				"note": "内核 path_calculate_mode 失败(%s)" % err, "error": err,
+			}
+	return {
+		"ok": false, "points": PackedVector2Array(), "offset": NAN,
+		"mode": "ode", "source": "none",
+		"note": "内核没有 path_calculate_mode → 微分方程弹道留空",
+	}
 
 ## 生成一关的障碍（`docs/126`）。**公式与随机流都在核心里**，本文件不自己造。
 ##

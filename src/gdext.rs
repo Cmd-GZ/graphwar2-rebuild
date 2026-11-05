@@ -143,6 +143,7 @@ unsafe extern "C" fn on_initialize(_userdata: *mut c_void, level: i32) {
                     // 真正的算法出口：GDScript 的 `GW2Rebuild.path_calculate(...)`
                     // （契约见 `client/src/core/core_bridge.gd` 文件头、`docs/116`）
                     let _ = crate::api::register_path_method(get, lib);
+                    let _ = crate::api::register_path_mode_method(get, lib);
                     let _ = crate::api::register_hit_test_method(get, lib);
                     let _ = crate::api::register_level_obstacles_method(get, lib);
                 }

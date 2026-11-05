@@ -46,6 +46,17 @@
 //!   （`dict.set(k,v)`、`packed.append(v)`），不需要 `variant_get_ptr_builtin_method`
 //!   所需的编译期 hash —— 这是本实现能不依赖 godot-rust 的关键；
 //! * `variant_set_keyed` 在 4.7.2 上签名与头文件推断不符（实测 SIGSEGV），**不用**。
+//!
+//! ## 微分方程模式（`docs/138-ode-api.md`）
+//!
+//! 4 参数的 `path_calculate` 只跑 [`Mode::Normal`]；`Mode::Ode`（`dy/dx = f(x,y)`，
+//! 一阶 RK4）由**另一个**方法 [`calculate_path_mode`] 暴露成
+//! `GW2Rebuild.path_calculate_mode(expr, x0, y0, direction, mode)`：
+//! 第 5 个参数是**字符串** `"normal"` / `"ode"`（大小写不敏感、忽略两侧空白），
+//! 非法值走 `ok:false, error:"bad_arguments"`（沿用既有错误码，不新造）。
+//! `"normal"` 直接**委托给** [`calculate_path`]（所以逐位相同，不是第二份实现）；
+//! `"ode"` 走 [`calculate_path_ode`]，**不做**修正常数（与 [`crate::shot::shot_points`]
+//! 里 `apply_correction && mode == Mode::Normal` 一致），`offset` 恒为 `NaN`。
 
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -141,6 +152,106 @@ pub fn calculate_path(expr: &str, x0: f64, y0: f64, direction: f64) -> PathOutco
         return PathOutcome { ok: false, points, offset, error: E_NO_POINTS };
     }
     PathOutcome { ok: true, points, offset, error: "" }
+}
+
+// ---------------------------------------------------------------------------
+// 1b. 微分方程模式：`path_calculate_mode(expr, x0, y0, direction, mode)`
+// ---------------------------------------------------------------------------
+//
+// `docs/116` §8.3 留的坑：`Mode::Ode` 在核心里有实现（`src/path.rs` 的 RK4 分支），
+// 但**没有**暴露给 GDScript，所以微分方程局只能画士兵/障碍、弹道留空
+// （`docs/133` §6 #3）。这里补上入口，**不改** `path_calculate` 的签名与行为。
+
+/// 解析模式名（`path_calculate_mode` 的第 5 个参数）。
+///
+/// 接受的是**字符串**，不是整数：
+/// * `"normal"` → [`Mode::Normal`]：`y = f(x)`，等弦长采样 + 修正常数 `c = y0 − f(±x0)`；
+/// * `"ode"` → [`Mode::Ode`]：`dy/dx = f(x, y)`，一阶 RK4，**没有**修正常数。
+///
+/// 大小写不敏感、忽略两侧空白（`" ODE "` 等价于 `"ode"`）；其余任何输入（空串、
+/// `"0"`、`"diffeq"`…）返回 `None` —— 调用方把它翻成 `bad_arguments`。
+///
+/// 为什么不做整数重载：FFI 侧 `PropertyInfo` 把这个参数声明成 `String`，GDScript 传
+/// 整数会被**引擎先拒**（`docs/116` §3.7 实测同形），所以整数分支永远走不到，写了也是死代码。
+pub fn parse_mode(mode: &str) -> Option<Mode> {
+    let m = mode.trim();
+    if m.eq_ignore_ascii_case("normal") {
+        Some(Mode::Normal)
+    } else if m.eq_ignore_ascii_case("ode") {
+        Some(Mode::Ode)
+    } else {
+        None
+    }
+}
+
+/// ODE 模式：`dy/dx = f(x, y)`，一阶 RK4（[`Mode::Ode`]，见 `src/path.rs`）。
+///
+/// 与 [`calculate_path`] 的**唯一**差别：**不求修正常数**、也不做 `shifted_tokens`。
+/// 依据是 [`crate::shot::shot_points`] 的那一行判断
+/// `if apply_correction && mode == Mode::Normal { … }` —— 微分方程局里修正常数
+/// 根本不参与运算，所以这里传进采样器的就是**原样**的 `f(x, y)` token。
+/// （单测 `ode_matches_shot_points_without_correction` 钉住这一点：本函数与
+/// `shot_points(expr, x0, y0, STEP_DEFAULT, flip, Mode::Ode, false)` 逐点相等。）
+///
+/// `offset` 恒为 `NaN`（成功时也是），理由：
+/// 1. ODE 模式下**不存在** `c`，返回任何有限数（尤其 `0.0`）都会让界面显示
+///    `+ 0.000`，那是在暗示"弹道被平移过" —— 与事实相反；
+/// 2. 客户端对这个值的读法是 `float(res.get("offset", 0.0))` + `format_offset()`，
+///    `NaN` 会变成**空串**，正好是原版 DiffEq 局右下角不显示修正文本的样子
+///    （`docs/92` §4.10；`docs/116` §8.3 也记着"ODE 下修正常数为空"）；
+/// 3. 与模块既有约定一致：`offset` 的 `NaN` 表示"本次没有修正常数"，
+///    是否成功一律看 `ok` / `error` 两个字段（错误分支的 `offset` 也是 `NaN`，
+///    所以**不能**用 `offset` 判别成功与否）。
+///
+/// 一处有意保留的差异：Normal 模式的 `undefined_at_start` 来自"修正常数不是有限数"；
+/// ODE 没有修正常数，所以**不会**报这个码。导数在起点无定义（`sqrt(x)` 在 `x=−1`）
+/// 会让 RK4 的 `k1` 变 NaN ⇒ 整段不收敛 ⇒ 退化成 `no_points`（采样器的既有语义，
+/// 与 `shot::shot_points(..., Mode::Ode, false)` 完全一样）。
+pub fn calculate_path_ode(expr: &str, x0: f64, y0: f64, direction: f64) -> PathOutcome {
+    if !x0.is_finite() || !y0.is_finite() {
+        return PathOutcome::err(E_START_FINITE);
+    }
+    // 与 `calculate_path` 同一条判据：采样器把 (x0, y0) 无条件塞成首点，
+    // 起点越界时整条曲线在平面外，入口先拒（AGENTS.md 的 |x|<=25 / |y|<=15）。
+    if x0.abs() > MAX_ABS_X || y0.abs() > MAX_ABS_Y {
+        return PathOutcome::err(E_START_BOUNDS);
+    }
+
+    let tokens: Vec<Token> = parse(expr);
+    if tokens.is_empty() {
+        // 与 `calculate_path` 保持一致（空表达式 = 错误，`docs/116` §6 第 2 条）。
+        return PathOutcome::err(E_EMPTY);
+    }
+
+    let flip = direction_is_flip(direction);
+    // **不**求 correction、**不**做 shifted_tokens —— 见函数文档第 1 段。
+    let points = calculate(&tokens, x0, y0, STEP_DEFAULT, flip, Mode::Ode);
+
+    if points.len() < 2 {
+        // 导数在起点就爆炸/越界/100 次二分不收敛：采样器只留下首点，它不区分原因，这里也不猜。
+        return PathOutcome { ok: false, points, offset: f64::NAN, error: E_NO_POINTS };
+    }
+    PathOutcome { ok: true, points, offset: f64::NAN, error: "" }
+}
+
+/// 带模式的弹道入口：`mode` 决定走 [`calculate_path`]（`"normal"`）还是
+/// [`calculate_path_ode`]（`"ode"`）；其余值一律 `bad_arguments`。
+///
+/// `"normal"` 分支**直接调用** [`calculate_path`]，不是复制一份：
+/// 这样"`mode="normal"` 与 `path_calculate` 结果完全相同"是**结构上**成立的，
+/// 不依赖两处实现保持同步（单测仍逐位复核一遍）。
+pub fn calculate_path_mode(
+    expr: &str,
+    x0: f64,
+    y0: f64,
+    direction: f64,
+    mode: &str,
+) -> PathOutcome {
+    match parse_mode(mode) {
+        Some(Mode::Normal) => calculate_path(expr, x0, y0, direction),
+        Some(Mode::Ode) => calculate_path_ode(expr, x0, y0, direction),
+        None => PathOutcome::err(E_BAD_ARGS),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -531,6 +642,9 @@ static OBST_CALLS: AtomicUsize = AtomicUsize::new(0);
 static OBST_OK_CALLS: AtomicUsize = AtomicUsize::new(0);
 /// `level_obstacles` 最近一次成功调用生成的障碍个数（调试/自检用）。
 static OBST_LAST_COUNT: AtomicUsize = AtomicUsize::new(0);
+/// `path_calculate_mode`（`docs/138`）的调用计数。
+static MODE_CALLS: AtomicUsize = AtomicUsize::new(0);
+static MODE_OK_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 /// `path_calculate` 被 GDScript 调用的次数。
 pub fn calls() -> usize {
@@ -554,6 +668,10 @@ pub fn obstacle_calls() -> (usize, usize) {
 /// `level_obstacles` 最近一次成功调用生成多少个障碍（`usize::MAX` = 还没成功过）。
 pub fn obstacle_last_count() -> usize {
     OBST_LAST_COUNT.load(Ordering::Relaxed)
+}
+/// `path_calculate_mode` 被调用 / 返回 `ok: true` 的次数（`docs/138`）。
+pub fn mode_calls() -> (usize, usize) {
+    (MODE_CALLS.load(Ordering::Relaxed), MODE_OK_CALLS.load(Ordering::Relaxed))
 }
 
 fn api() -> Option<&'static Api> {
@@ -1125,6 +1243,67 @@ unsafe extern "C" fn path_calculate_call(
 // 6. 注册
 // ---------------------------------------------------------------------------
 
+/// GDScript 调 `path_calculate_mode` 时走这里（`docs/138`）。
+///
+/// 参数约定（与 `path_calculate` 相比只多第 5 个）：
+///
+/// ```text
+/// path_calculate_mode(expr: String, x0: float, y0: float, direction: float, mode: String)
+///     -> Dictionary { ok: bool, points: PackedVector2Array, offset: float, error: String }
+/// ```
+///
+/// 返回的 Dictionary **与 `path_calculate` 完全同形**（同样是 [`RESULT_KEYS`] 四个键），
+/// 所以客户端的读法不用改：`mode` 只在 GDScript 包装层回填，内核不往契约里塞第 5 个键。
+///
+/// 三条与 `path_calculate` 相同的硬要求：`catch_unwind` 兜底、出错走 `ok:false + error`、
+/// `ret` 是引擎给的**空 Variant 槽**（用 [`write_dict`] 填）。
+unsafe extern "C" fn path_calculate_mode_call(
+    _ud: *mut c_void,
+    _instance: *mut c_void,
+    args: *const *const c_void,
+    argc: i64,
+    ret: *mut c_void,
+    _error: *mut c_void,
+) {
+    MODE_CALLS.fetch_add(1, Ordering::Relaxed);
+    let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let Some(api) = api() else {
+            return PathOutcome::err(E_PANIC);
+        };
+        if argc < 5 || args.is_null() || ret.is_null() {
+            return PathOutcome::err(E_BAD_ARGS);
+        }
+        let arg = |i: usize| *args.add(i);
+        let expr = match api.get_string(arg(0)) {
+            Some(s) => s,
+            None => return PathOutcome::err(E_BAD_ARGS),
+        };
+        let (x0, y0, dir) = match (
+            api.get_f64(arg(1)),
+            api.get_f64(arg(2)),
+            api.get_f64(arg(3)),
+        ) {
+            (Some(a), Some(b), Some(c)) => (a, b, c),
+            _ => return PathOutcome::err(E_BAD_ARGS),
+        };
+        // 非法 mode 在 `calculate_path_mode` 里翻成 E_BAD_ARGS（不 panic、不猜一个默认值）。
+        let mode = match api.get_string(arg(4)) {
+            Some(s) => s,
+            None => return PathOutcome::err(E_BAD_ARGS),
+        };
+        let outcome = calculate_path_mode(&expr, x0, y0, dir, &mode);
+        write_result(api, ret as *mut c_void, &outcome);
+        outcome
+    }))
+    .unwrap_or_else(|_| {
+        // panic 之后 ret 里可能已经有半成品；不再动它。
+        PathOutcome::err(E_PANIC)
+    });
+    if out.ok {
+        MODE_OK_CALLS.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 /// GDScript 调 `hit_test` 时走这里。
 ///
 /// 参数约定（`docs/120` §1）：
@@ -1377,6 +1556,96 @@ pub unsafe fn register_path_method(get: GetProc, library: *mut c_void) -> bool {
 
     f_reg(library, cls_sn.as_ptr() as *const c_void, &info);
     eprintln!("[gw2-rebuild] registered method path_calculate(expr, x0, y0, direction)");
+    true
+}
+
+/// 给已注册的 `GW2Rebuild` 类挂上
+/// `path_calculate_mode(expr, x0, y0, direction, mode) -> Dictionary`（`docs/138`）。
+///
+/// 与 [`register_path_method`] 的差别只有"多一个 `String` 参数"：
+/// `class_name` / `hint_string` 一律指向**默认构造的空** `StringName` / `String`
+/// （传 NULL 会 SIGSEGV，`docs/116` §3.3 的实测坑），`arguments_metadata` 给 5 个 0。
+///
+/// 必须**在** [`register_path_method`] **之后**调用：接口表是同一个 `OnceLock`，
+/// 这里只是复用（`build_table` 的返回值会被 `API.set` 忽略）。
+///
+/// # Safety
+/// `get` / `library` 的约束同 [`register_path_method`]。
+pub unsafe fn register_path_mode_method(get: GetProc, library: *mut c_void) -> bool {
+    let table = build_table(get);
+    if !table_ok(&table) {
+        eprintln!("[gw2-rebuild] path_calculate_mode NOT registered (missing interface)");
+        return false;
+    }
+    let _ = API.set(table);
+    let Some(api) = api() else { return false };
+    if !install_names() {
+        eprintln!("[gw2-rebuild] path_calculate_mode: cannot build method StringNames");
+        return false;
+    }
+
+    let f_reg: unsafe extern "C" fn(*mut c_void, *const c_void, *const ClassMethodInfo) =
+        std::mem::transmute(api.register_method);
+    let mut cls_sn = [0u8; 8];
+    let f_sn: FnSnNew = std::mem::transmute(api.sn_new);
+    f_sn(cls_sn.as_mut_ptr() as *mut c_void, b"GW2Rebuild\0".as_ptr(), 0);
+
+    let mut meth_sn = [0u8; 8];
+    f_sn(meth_sn.as_mut_ptr() as *mut c_void, b"path_calculate_mode\0".as_ptr(), 0);
+    let empty_sn = [0u8; 8];
+    let empty_str = [0u8; 8];
+    let mut arg_names = [[0u8; 8]; 5];
+    for (slot, name) in arg_names
+        .iter_mut()
+        .zip(["expr\0", "x0\0", "y0\0", "direction\0", "mode\0"])
+    {
+        f_sn(slot.as_mut_ptr() as *mut c_void, name.as_ptr(), 0);
+    }
+    let mut ret_name = [0u8; 8];
+    f_sn(ret_name.as_mut_ptr() as *mut c_void, b"result\0".as_ptr(), 0);
+
+    let ret_info = PropertyInfo {
+        ty: V_DICTIONARY,
+        name: ret_name.as_ptr() as *const c_void,
+        class_name: empty_sn.as_ptr() as *const c_void,
+        hint: 0,
+        hint_string: empty_str.as_ptr() as *const c_void,
+        usage: USAGE_DEFAULT,
+    };
+    // 第 5 个参数是 mode（String），不是 int：见 `parse_mode` 的文档。
+    let arg_types = [V_STRING, V_FLOAT, V_FLOAT, V_FLOAT, V_STRING];
+    let arg_info: Vec<PropertyInfo> = (0..5)
+        .map(|i| PropertyInfo {
+            ty: arg_types[i],
+            name: arg_names[i].as_ptr() as *const c_void,
+            class_name: empty_sn.as_ptr() as *const c_void,
+            hint: 0,
+            hint_string: empty_str.as_ptr() as *const c_void,
+            usage: USAGE_DEFAULT,
+        })
+        .collect();
+    let arg_meta: [i32; 5] = [0; 5];
+
+    let info = ClassMethodInfo {
+        name: meth_sn.as_ptr() as *const c_void,
+        method_userdata: std::ptr::null_mut(),
+        call_func: Some(path_calculate_mode_call),
+        ptrcall_func: std::ptr::null(),
+        method_flags: METHOD_FLAG_NORMAL,
+        has_return_value: 1,
+        return_value_info: &ret_info,
+        return_value_metadata: 0,
+        argument_count: 5,
+        arguments_info: arg_info.as_ptr(),
+        arguments_metadata: arg_meta.as_ptr() as *const c_void,
+        default_argument_count: 0,
+        default_arguments: std::ptr::null(),
+    };
+
+    f_reg(library, cls_sn.as_ptr() as *const c_void, &info);
+    eprintln!(
+        "[gw2-rebuild] registered method path_calculate_mode(expr, x0, y0, direction, mode)"
+    );
     true
 }
 
@@ -1754,6 +2023,168 @@ mod tests {
                 assert!(out.offset.is_finite());
             }
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // 微分方程模式（`docs/138`）
+    // -----------------------------------------------------------------------
+    //
+    // 四条硬要求，每条一个测试：
+    //   1. `mode="ode"` 能出点，而且真的是 RK4 积分（对照解析解）；
+    //   2. `mode="normal"` 与 `calculate_path` **逐位**相同（不许改坏既有契约）；
+    //   3. ODE 的点序列 == `shot_points(..., Mode::Ode, apply_correction=false)`
+    //      （= "ODE 不做修正常数" 与既有端到端入口同一个语义）；
+    //   4. 非法 mode 走错误分支、不 panic。
+
+    /// `dy/dx = cos(x)` 从 (0,0) 出发 ⇒ `y = sin(x)`（RK4 的解析对照）。
+    ///
+    /// 这条同时证明"ODE 不是把 `f` 当 `y=f(x)` 画"：Normal 模式在同一起点给出
+    /// `y = cos(x) − 1`，两条点序列必然不同。
+    #[test]
+    fn ode_mode_integrates_the_derivative() {
+        let out = calculate_path_mode("cos(x)", 0.0, 0.0, 1.0, "ode");
+        assert!(out.ok, "err={}", out.error);
+        assert!(out.points.len() > 100, "点数 {}", out.points.len());
+        assert_eq!(out.points[0], (0.0, 0.0), "首点仍是士兵位置");
+        assert!(out.offset.is_nan(), "ODE 没有修正常数 ⇒ offset 必须是 NaN");
+        // RK4 + 弦长容差 0.001 ⇒ 与解析解差在 5e-3 内（x 方向最多差一个容差）
+        for &(x, y) in out.points.iter().take(300) {
+            assert!(close(y, x.sin(), 5e-3), "在 x={x} 处 y={y}，解析解 {}", x.sin());
+        }
+        // 反面：Normal 给出的是 y = cos(x) − 1，不是积分曲线
+        let normal = calculate_path("cos(x)", 0.0, 0.0, 1.0);
+        assert!(normal.ok, "err={}", normal.error);
+        assert_ne!(out.points, normal.points, "ODE 与 Normal 给出了同一条点序列");
+    }
+
+    /// ODE 的右端真的能用 `y`：`dy/dx = y` 从 (0,1) 出发 ⇒ `y = e^x`。
+    ///
+    /// Normal 模式下第三个变量 `y` 恒被求值成 `0`（AGENTS.md 的"死特性"），
+    /// 同一表达式会变成水平直线 —— 这条是"两种模式确实走了不同分支"的最强证据。
+    #[test]
+    fn ode_mode_uses_the_y_variable() {
+        let ode = calculate_path_mode("y", 0.0, 1.0, 1.0, "ode");
+        assert!(ode.ok, "err={}", ode.error);
+        assert!(ode.points.len() > 100, "点数 {}", ode.points.len());
+        for &(x, y) in ode.points.iter().take(100) {
+            assert!(close(y, x.exp(), 2e-3), "在 x={x} 处 y={y}，解析解 {}", x.exp());
+        }
+        let normal = calculate_path("y", 0.0, 1.0, 1.0);
+        assert!(normal.ok, "err={}", normal.error);
+        assert!(normal.points.iter().all(|p| p.1 == 1.0), "Normal 下 y 变量恒 0 ⇒ 水平线");
+        assert_ne!(ode.points, normal.points, "ODE 与 Normal 给出了同一条点序列");
+    }
+
+    /// `mode="normal"`（含大小写/空白变体）与 `path_calculate` **逐位**相同。
+    ///
+    /// 覆盖 5 种成功输入 + 5 种错误分支（错误码与 `offset` 也要一致）。
+    #[test]
+    fn normal_mode_is_bit_identical_to_calculate_path() {
+        let cases = [
+            ("sin(x)", 5.0, 2.0),
+            ("x/5", -3.0, -4.0),
+            ("cos(x/3)", 0.0, 0.0),
+            ("sqrt(abs(x))", -2.0, 1.0),
+            ("1/x", 4.0, 0.0),
+            ("@@@", 0.0, 0.0),         // empty_expression
+            ("sin(x)", 25.5, 0.0),     // start_out_of_bounds
+            ("sqrt(x)", -1.0, 0.0),    // undefined_at_start
+            ("x", 25.0, 0.0),          // no_points
+            ("sin(x)", f64::NAN, 0.0), // start_not_finite
+        ];
+        for (expr, x0, y0) in cases {
+            for dir in [1.0f64, -1.0f64] {
+                let want = calculate_path(expr, x0, y0, dir);
+                for mode in ["normal", "NORMAL", "  Normal  "] {
+                    let got = calculate_path_mode(expr, x0, y0, dir, mode);
+                    assert_eq!(got.ok, want.ok, "{expr} dir={dir} mode={mode:?} 的 ok");
+                    assert_eq!(got.error, want.error, "{expr} mode={mode:?} 的 error");
+                    assert_eq!(
+                        got.points.len(),
+                        want.points.len(),
+                        "{expr} mode={mode:?} 的点数"
+                    );
+                    for (g, w) in got.points.iter().zip(want.points.iter()) {
+                        assert_eq!(g.0.to_bits(), w.0.to_bits(), "{expr} mode={mode:?} 的 x");
+                        assert_eq!(g.1.to_bits(), w.1.to_bits(), "{expr} mode={mode:?} 的 y");
+                    }
+                    assert_eq!(
+                        got.offset.to_bits(),
+                        want.offset.to_bits(),
+                        "{expr} mode={mode:?} 的 offset"
+                    );
+                }
+            }
+        }
+    }
+
+    /// ODE 的点序列 == `shot_points(..., Mode::Ode, apply_correction = false)` 逐点相等。
+    ///
+    /// 这条钉住的是 `src/shot.rs` 的那一行判断：
+    /// `if apply_correction && mode == Mode::Normal { … }` —— 微分方程局里
+    /// **修正常数根本不参与**，API 层不许自己加一个。
+    #[test]
+    fn ode_matches_shot_points_without_correction() {
+        let cases = [
+            ("cos(x)", 0.0, 0.0),
+            ("y", 0.0, 1.0),
+            ("x-y", 2.0, 1.0),
+            ("sin(x*y/4)", -1.0, 0.5),
+        ];
+        for (expr, x0, y0) in cases {
+            for dir in [1.0f64, -1.0f64] {
+                let ours = calculate_path_mode(expr, x0, y0, dir, "ode");
+                // 端到端既有入口：同一个采样器、同一个 Mode，只是不经过 api 层
+                let theirs =
+                    shot_points(expr, x0, y0, STEP_DEFAULT, dir < 0.0, Mode::Ode, false);
+                assert_eq!(ours.points, theirs, "{expr} dir={dir} 与 shot_points 不一致");
+                assert!(ours.ok, "{expr} dir={dir} err={}", ours.error);
+            }
+        }
+        // `apply_correction = true` 对 ODE **无效**（同一行判断的 `mode == Normal` 那一半）：
+        // 两次调用必须一模一样。谁在 api 层偷偷加修正，这条就会红。
+        let a = shot_points("y", 0.0, 1.0, STEP_DEFAULT, false, Mode::Ode, false);
+        let b = shot_points("y", 0.0, 1.0, STEP_DEFAULT, false, Mode::Ode, true);
+        assert_eq!(a, b, "ODE 模式下 apply_correction 应当被忽略");
+    }
+
+    /// 非法 mode：`ok:false + bad_arguments`（沿用既有错误码），不 panic、不猜默认值。
+    #[test]
+    fn invalid_mode_is_an_error_not_a_panic() {
+        for mode in ["", " ", "0", "1", "od", "ode2", "diffeq", "normal2", "-", "正常"] {
+            let out = calculate_path_mode("sin(x)", 0.0, 0.0, 1.0, mode);
+            assert!(!out.ok, "mode={mode:?} 不应成功");
+            assert_eq!(out.error, E_BAD_ARGS, "mode={mode:?} 应走 bad_arguments");
+            assert!(out.points.is_empty(), "mode={mode:?} 不该有点");
+            assert!(out.offset.is_nan(), "mode={mode:?} 出错时 offset 应为 NaN");
+        }
+        // 合法的两种写法（大小写/空白不敏感）必须成功
+        for mode in ["ode", "ODE", "  Ode  "] {
+            assert!(calculate_path_mode("cos(x)", 0.0, 0.0, 1.0, mode).ok, "mode={mode:?}");
+        }
+    }
+
+    /// ODE 模式的错误分支沿用既有错误码。
+    ///
+    /// 唯一的差异（有意保留）：ODE 没有修正常数 ⇒ **不会**报 `undefined_at_start`；
+    /// 导数在起点无定义会让整段不收敛，退化成 `no_points`（采样器既有语义）。
+    #[test]
+    fn ode_error_codes_are_the_shared_ones() {
+        assert_eq!(
+            calculate_path_mode("y", f64::INFINITY, 0.0, 1.0, "ode").error,
+            E_START_FINITE
+        );
+        assert_eq!(
+            calculate_path_mode("y", 25.5, 0.0, 1.0, "ode").error,
+            E_START_BOUNDS
+        );
+        assert_eq!(calculate_path_mode("@@@", 0.0, 0.0, 1.0, "ode").error, E_EMPTY);
+        // `1/x` 在 x=0 处导数是 inf ⇒ 整段不接受 ⇒ 只剩首点
+        let out = calculate_path_mode("1/x", 0.0, 1.0, 1.0, "ode");
+        assert!(!out.ok);
+        assert_eq!(out.error, E_NO_POINTS);
+        assert_eq!(out.points, vec![(0.0, 1.0)], "坏点不进入点序列");
+        assert!(out.offset.is_nan());
     }
 }
 
