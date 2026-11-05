@@ -93,6 +93,34 @@
 | [19-godot-verify.md](docs/19-godot-verify.md) | 在真 Godot 4.7.2 里加载注册类；原扩展 API 面只有 12 类 |
 | [20-live-oracle.md](docs/20-live-oracle.md) | 活体 oracle：frida 注入真游戏进程，调用内部函数 |
 | [21-oracle-limits.md](docs/21-oracle-limits.md) | **玩法 oracle 为何不可达**：四条尝试与证据 |
+| [22-live-game-harness.md](docs/22-live-game-harness.md) | 让原版游戏在我们自己的 harness 里跑起来 |
+| [23-live-verification.md](docs/23-live-verification.md) | 用真实对局轨迹验证采样器 |
+| [24-network-protocol.md](docs/24-network-protocol.md) | **网络协议**：帧格式与 46 种消息（真实抓包） |
+| [25-live-collision.md](docs/25-live-collision.md) | 碰撞链路端到端验证（整关 4 发 / 6 发回放） |
+| [26-harness-control.md](docs/26-harness-control.md) | 把 harness 当玩家用：能做什么、卡在哪 |
+| [27-death-flow.md](docs/27-death-flow.md) | 死亡语义与回合状态机（真值） |
+| [28-turn-order.md](docs/28-turn-order.md) | 回合出场顺序：只有「队伍交替」稳定 |
+| [29-ai-probe.md](docs/29-ai-probe.md) | AI 内部探针：每回合 1 次 + 数千次模拟打分 |
+| [30-kill-semantics.md](docs/30-kill-semantics.md) | **穿过即死，但不挡弹道** |
+| [31-event-generation.md](docs/31-event-generation.md) | 由结算生成协议事件 |
+| [32-netcode-implementation.md](docs/32-netcode-implementation.md) | 网络编解码实现（逐字节一致） |
+| [33-server-handshake.md](docs/33-server-handshake.md) | 服务端握手（真实 TCP 验证） |
+| [34-color-assignment.md](docs/34-color-assignment.md) | 玩家颜色分配（规则未定） |
+| [35-tick-clock.md](docs/35-tick-clock.md) | tick 时钟：60 Hz（113 样本） |
+| [36-match-server.md](docs/36-match-server.md) | 一局对战的服务端对象 Match |
+| [37-paired-replay.md](docs/37-paired-replay.md) | 按回合配对的精确回放（致死集合一致） |
+| [38-dynamic-mask.md](docs/38-dynamic-mask.md) | 动态掩膜假设：**被数据否定** |
+| [39-punch-hole.md](docs/39-punch-hole.md) | **障碍摧毁=命中点挖洞**（frida 实证） |
+| [40-level-generator.md](docs/40-level-generator.md) | 关卡生成：OS 熵 ⇒ 不可复现 |
+| [41-turn-state-machine.md](docs/41-turn-state-machine.md) | 回合状态机（13 次迁移逐个相同） |
+| [42-end-of-turn.md](docs/42-end-of-turn.md) | end_of_turn_tick = 回合截止时刻（六档实测） |
+| [43-turn-message-sequence.md](docs/43-turn-message-sequence.md) | 一回合的报文顺序 |
+| [44-destroy-delay.md](docs/44-destroy-delay.md) | DestroyObstacle 延迟 165 tick |
+| [45-turn-count-and-ending.md](docs/45-turn-count-and-ending.md) | 回合计数与结束判定 |
+| [46-full-turn.md](docs/46-full-turn.md) | 一整回合的 12 条报文序列 |
+| [47-turn-order-random.md](docs/47-turn-order-random.md) | 回合出场顺序：推断为开局随机 ⇒ 不可复现 |
+| [48-rng-replay-attempt.md](docs/48-rng-replay-attempt.md) | 随机源重放：试过，不行 |
+| [49-verification-checklist.md](docs/49-verification-checklist.md) | **验收清单**（每条都实际跑过） |
 
 ## 对外接口（构建产物里的符号）
 

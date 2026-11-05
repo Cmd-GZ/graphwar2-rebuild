@@ -84,6 +84,20 @@
 - **自我更正**：docs/24 曾写"广播拼 `Timers1m`、TCP 拼 `Timer1m`"，实测 `Timers1m`
   出现 0 次（两次抓包共 385 个 `Timer1m`/`Timer3m`），原文已改并记录教训
 
+### 验收清单（本轮新增）
+
+[`docs/49-verification-checklist.md`](49-verification-checklist.md) 把每条 ✅ 整理成
+**可直接照跑的命令 + 实测输出**。本轮逐条执行的结果：
+
+```
+cargo test --offline               通过 106，失败 0
+cargo build --release              12 个导出符号（含 gdext_rust_init）
+emit_broadcast 逐字节比对           一致 ✓
+cargo test --test live_hits        12 passed（真实关卡回放 / 致死 / 事件序列）
+tools/{capi,mask,mask_api,simulate}_check.py   四条 RESULT: PASS
+serve_handshake 真实 TCP 往返       7 帧 / 324 字节
+```
+
 ### 最终验收（全部实测）
 
 ```
