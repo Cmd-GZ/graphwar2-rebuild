@@ -7,14 +7,14 @@
 # tool_version: 1
 # binary_sha256: 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
 # funcstarts_sha256: b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a
-# src_tree_sha256: fb333482d0d45bec578d2be51b2843fcef61a22d901ded204e97f6b7d19e3820
+# src_tree_sha256: c737fcfd0cada5504a1c437a4b6d42b0a835fa7d727ef117ec9413fbd6980cec
 # funcstarts_n: 13263
 # src_modules: 246
 # loc_structs: 2042
 # attributed_funcs: 527
 # contested_funcs: 86
-# src_files: 29
-# src_fns: 822
+# src_files: 30
+# src_fns: 854
 module	scope	orig_funcs	contested	anchors	ours_file	ours_funcs	status	evidence
 graphwar_ad_switch.rs	graphwar	6	0	3		0	未做	docs/132：判据只有 are_ads_enabled() = !owned；AdMob 在 .gdc 插件侧，src/ 无实现
 graphwar_audio_control.rs	graphwar	7	1	16		0	未做	docs/111：SoundHandler / -15f / -5f / 32767 归一化已还原，但没接进 src/（client/ 是仿制）
@@ -30,13 +30,13 @@ graphwar_effect_manager.rs	graphwar	1	0	3		0	未知	全仓库 0 处提及：无�
 graphwar_entity_effect_manager.rs	graphwar	3	0	4		0	未知	全仓库 0 处提及：只有名字，没有行为证据
 graphwar_event.rs	graphwar	0	0	0	src/events.rs	2	观测	docs/114：72 个判别值实测；但 serde 键序只在 41 行抓包上同序，仍是推断（docs/96 §9.1）
 graphwar_event_handler.rs	graphwar	2	0	4	src/events.rs	2	观测	docs/114：0x3d38f0 的「事件名 → 判别值」表逐条解出（四道自校验）；事件枚举与分派已落码
-graphwar_function_evolutionator.rs	graphwar	16	0	25	src/aigen.rs	87	观测	docs/AI.md：权重/长度/装配/交叉/变异/适应度全部从反汇编 + 40 万次运行时抽样得出；无逐字节对拍
+graphwar_function_evolutionator.rs	graphwar	16	0	25	src/aigen.rs	88	观测	docs/AI.md：权重/长度/装配/交叉/变异/适应度全部从反汇编 + 40 万次运行时抽样得出；无逐字节对拍
 graphwar_function_input.rs	graphwar	13	2	33		0	未做	13 个归属函数（行号到 ≥519）；docs/02 §1 把解析器 0x4ed670 记在它名下，但 0x4ed670 体内唯一的 Location 锚是 math_function.rs:75 ⇒ 按本方法解析器算 math_function.rs；本模块本体未复原
-graphwar_function_manager.rs	graphwar	7	0	12	src/game.rs	61	观测	docs/112 §2.1：7 个函数的存取结构逐条读出（HashMap<u32, 112 字节>、Vec<Token>）；我方 Match::functions 同构，但没有逐字节对拍
+graphwar_function_manager.rs	graphwar	7	0	12	src/game.rs	70	观测	docs/112 §2.1：7 个函数的存取结构逐条读出（HashMap<u32, 112 字节>、Vec<Token>）；我方 Match::functions 同构，但没有逐字节对拍
 graphwar_game_client.rs	graphwar	36	19	59		0	未做	归属函数最多的模块；只有 docs/archive 10/13 的调用形态观测，src/ 无实现
 graphwar_game_recorder.rs	graphwar	2	1	4		0	未知	只有 docs/02 一行（对局录制），无地址级观测、无实现
 graphwar_game_server.rs	graphwar	3	1	86	src/server.rs+src/serverloop.rs	23	逐位	docs/43/46：一回合 12 条报文与抓包逐字节一致；docs/62 真实 TCP 跑到 EndingGame
-graphwar_game_state_manager.rs	graphwar	33	10	207	src/game.rs+src/turnstate.rs	67	逐位	docs/41：6 状态 7 事件、13 次迁移在真实对局里逐个相同
+graphwar_game_state_manager.rs	graphwar	33	10	207	src/game.rs+src/turnstate.rs	76	逐位	docs/41：6 状态 7 事件、13 次迁移在真实对局里逐个相同
 graphwar_graphics_manager.rs	graphwar	6	0	8		0	未知	只有 docs/02 一行（图形资源管理），无地址级观测、无实现
 graphwar_lan_broadcaster_v6.rs	graphwar	4	0	4		0	未做	docs/07/24：局域网广播报文已抓包；docs/134 里只有 client/ GDScript 侧，src/ 无实现
 graphwar_lan_vbox.rs	graphwar	11	1	19		0	未知	只有 docs/02 一行（局域网列表 UI），无地址级观测、无实现
