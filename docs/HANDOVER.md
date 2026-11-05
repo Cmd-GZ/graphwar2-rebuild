@@ -11,6 +11,8 @@
 - LAN 发现：UDP 广播，明文 JSON（`time_mode` 写作 `"Timers1m"`）
 - 对局：TCP，**`u16` 大端长度 + JSON**
 - 29 种消息已入库为 `fixtures/protocol.jsonl`，`src/protocol.rs` 全部解析通过
+- **障碍延迟删除**（`docs/44`）：`QueueDestroyObstacle` → `DestroyObstacle` 实测延迟
+  **165 tick**（三样本 163.9/164.0/167.0），`Match::tick()` 到期发出且不重复
 - **一回合的报文顺序对上**（`docs/43`）：`fire()` 现在按抓包顺序产出
   `CalculatingResults → FunctionInfo(修正后) → FunctionPoints → SynchronizingResults →
   [死者] → [销毁] → FunctionActive → ExplosionEffect → ExecutingResults`；

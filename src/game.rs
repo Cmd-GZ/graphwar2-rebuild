@@ -34,7 +34,16 @@ pub struct Match {
     mask: Vec<u8>,
     /// 已经用掉的效果 id（抓包里从 236 开始递增）
     next_effect_id: i64,
+    /// 已排队但还没到期的 `DestroyObstacle`：`(到期 tick, 报文原文)`。
+    ///
+    /// 实测延迟 ≈165 tick（2.75 秒），见 `docs/44`。
+    pending_destroy: Vec<(i64, String)>,
 }
+
+/// `QueueDestroyObstacle` 到 `DestroyObstacle` 的实测延迟（tick）。
+///
+/// 三次配对样本为 163.9 / 164.0 / 167.0 tick，取 165。
+pub const DESTROY_DELAY_TICKS: i64 = 165;
 
 impl Match {
     pub fn new(
@@ -47,12 +56,26 @@ impl Match {
         for (x, y, r) in &obstacles {
             rasterize(&mut mask, *x, *y, *r, 0x00);
         }
-        Match { room, obstacles, soldiers, tick_base, mask, next_effect_id: 236 }
+        Match { room, obstacles, soldiers, tick_base, mask, next_effect_id: 236, pending_destroy: Vec::new() }
     }
 
     /// 当前时刻的 tick。
     pub fn tick_now(&self, now_ms: i64) -> i64 {
         tick_at(self.tick_base.0, self.tick_base.1, now_ms)
+    }
+
+    /// 推进到 `now_tick`，返回所有到期的 `DestroyObstacle`。
+    pub fn tick(&mut self, now_tick: i64) -> Vec<String> {
+        let mut due = Vec::new();
+        let mut i = 0;
+        while i < self.pending_destroy.len() {
+            if self.pending_destroy[i].0 <= now_tick {
+                due.push(self.pending_destroy.remove(i).1);
+            } else {
+                i += 1;
+            }
+        }
+        due
     }
 
     /// 处理一次开火，返回要广播的消息（顺序见模块注释）。
@@ -115,6 +138,14 @@ impl Match {
             ));
             // 真实游戏：在命中点用 fill=0xFF、半径 0.5 挖洞（docs/39）
             rasterize(&mut self.mask, outcome.stop.0, outcome.stop.1, 0.5, 0xFF);
+            // 真正的删除要延后：实测 ≈165 tick 之后才发 DestroyObstacle
+            self.pending_destroy.push((
+                now_tick + DESTROY_DELAY_TICKS,
+                format!(
+                    r#"{{"DestroyObstacle":{{"pos_x":{},"pos_y":{},"radius":0.5}}}}"#,
+                    outcome.stop.0, outcome.stop.1
+                ),
+            ));
         }
 
         msgs.push(crate::protocol::emit_function_active(owner_id, now_tick));
@@ -208,6 +239,22 @@ mod tests {
         let mut m = Match::new(room(), vec![(-5.0, 0.0, 1.0)], vec![], (0, 0));
         let msgs = m.fire(1, "0.00", 10.0, 0.0, true, 0);
         assert!(msgs.iter().any(|s| s.starts_with(r#"{"QueueDestroyObstacle""#)), "应排队销毁障碍");
+    }
+
+    #[test]
+    fn destroy_is_delayed_by_measured_ticks() {
+        let mut m = Match::new(room(), vec![(-5.0, 0.0, 1.0)], vec![], (0, 0));
+        // 基准 (tick=0, ms=0)，fire 在 1000ms 处 -> 当时 tick = 60
+        let msgs = m.fire(1, "0.00", 10.0, 0.0, true, 1000);
+        assert!(msgs.iter().any(|s| s.starts_with(r#"{"QueueDestroyObstacle""#)));
+        let queued_at = 60; // tick_at(0, 0, 1000)
+        assert!(m.tick(queued_at).is_empty(), "刚排队时不该立刻删除");
+        assert!(m.tick(queued_at + DESTROY_DELAY_TICKS - 1).is_empty(), "差一个 tick 时仍不该删除");
+        let due = m.tick(queued_at + DESTROY_DELAY_TICKS);
+        assert_eq!(due.len(), 1, "到期应恰好发出一条");
+        assert!(due[0].starts_with(r#"{"DestroyObstacle""#));
+        assert!(due[0].contains(r#""radius":0.5"#));
+        assert!(m.tick(queued_at + DESTROY_DELAY_TICKS + 100).is_empty(), "不应重复发出");
     }
 
     #[test]
