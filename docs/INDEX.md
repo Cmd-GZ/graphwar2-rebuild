@@ -8,7 +8,7 @@
 > **[`107-docs-consolidation.md`](107-docs-consolidation.md)**。
 > 三节（现行 / 已归档 / 已并档）与磁盘上的文件**逐一对得上**，可以当清单核对。
 
-## 一、现行文档（102 份）
+## 一、现行文档（103 份）
 
 > 数法：`find docs -name "*.md" -not -path "*/archive/*" | wc -l`（2026-11-06 复核）。
 > 之前这里写过的 76 / 77 / 85 / 86 / 87 都是当时的旧数，已统一改成本次实测值。
@@ -120,6 +120,7 @@
 | [92-ui-inventory.md](92-ui-inventory.md) | **客户端界面台账**（15/15 界面，运行时枚举） |
 | [104-recovered-project.md](104-recovered-project.md) | **GDRE 整项目恢复**：静态场景属性，并与 `92` 的运行时台账逐项对拍 |
 | [101-gdc-contents.md](101-gdc-contents.md) | `.gdc` 逐字节格式 + 5 个行为脚本 + 47 行布局数值表 |
+| [127-ai-speaks.md](127-ai-speaks.md) | **AI 的函数上线**：一个回合本来就发**两条** `FunctionInfo`（提交版 `corrected_function:null`、修正版带 `f(x) ± c`）；顺带修出 `corrected_text` 写死 `" + "` 的真 bug（`c<0` 时静默发错） |
 | [125-playscreen.md](125-playscreen.md) | **PlayScreen / JoinLevelPopUp 对齐**：棋盘白底等五色**从原版真帧逐像素取**；顶栏 4 个开关是 view_functions/names/chat/mute（不是网格/坐标轴）；弹窗用 21 关真数据 |
 | [124-ui-geometry.md](124-ui-geometry.md) | **UI 几何与原版逐像素对齐**：viewport 1600×900 + 删 stretch；主菜单截图与正版 `Graphwar.x86_64` **sha256 相同**；Campaign 手写体 IoU 0.997；调试文字改走 `--debug-overlay` 与 `dump` |
 | [119-token-to-text.md](119-token-to-text.md) | **token → 函数文本**（`0x4ec160`）：零空格、二元式一律加括号、`neg` 只写 `-`、常量 `{:.2}` 无 π/e 特判；unicorn 对拍 **1032/1032 逐字符一致** |
