@@ -23,27 +23,42 @@
 | 一局有多少事件 | 真实语料 400 份、**103 104** 条；单局 2 … 1471 条（另有 2 份空回放） | **观测** |
 | 播放按什么推进 | **按 tick**（不是按墙钟/按事件）。60 tick/秒 | **观测**（`docs/35`）+ 我们自定的取整规则 |
 | 回放的弹道点序列在哪 | **没有**。只有 `FunctionPoints{start_x,start_y,end_x}` | **观测**（400 份里 0 例带点序列） |
-| 那弹道怎么画 | 用内核 `GwCore.calculate_path(函数文本, 起点, 队伍方向)` 重算 | 我们的做法（走内核，不绕过） |
+| 那弹道怎么画 | 用内核重算：`GwCore.calculate_path(函数文本, 起点, 队伍方向, "ode"/"normal")`，`mode` **取自这一局的 `FunctionModeInfo`** | 我们的做法（走内核，不绕过） |
+| `DiffEqFunction` 局（320/400）的弹道 | 走 **`Mode::Ode`**（RK4）⇒ 能画了。内核钩子是 `GW2Rebuild.path_calculate_mode(…, mode: String)`，取 `"normal"` / `"ode"`（`docs/138` 交付，已进 main）；`path_calculate` 的签名一字未动 | **逐位验证**（§5.3 第 7 组、§5.6：4 发 `end_x` 全中） |
 | 回放界面长什么样 | **未知**（只有场景名 `replay_lobby.tscn` / `replay_entry.tscn`） | **未知** ⇒ 播放控件我们自定 |
 | 播放/暂停/进度 | **我们自定**（原版无观测） | 自定，显式标注 |
 | 能播了吗 | 能。真实回放读、解析、按 tick 播、死亡事件生效、弹道由内核重算 | **逐位验证**（§5） |
 
 **新增文件**：`src/replay.rs`（格式/局面/播放器/对拍 ABI）、`src/replay_inflate.rs`
 （纯 Rust gzip+DEFLATE）、`client/src/play/replay_file.gd`（客户端读文件）、
-`client/src/play/replay_player.gd`（tick 播放器 + 局面还原）。
-**改动文件**：`client/src/screens/play_screen.gd`（**只加**回放分支）、
-`client/src/screens/replay_lobby.gd`（列表数据源）、`client/tools/selftest.gd`（只新增断言）、
-`src/lib.rs`（**两行** `pub mod`）。
+`client/src/play/replay_player.gd`（tick 播放器 + 局面还原）、`docs/133`（本文）。
+**改动文件**（都是"只加"或删占位，没有改既有语义）：`client/src/screens/play_screen.gd`
+（回放分支 + 一条隐藏进度行 + **按录像的 `FunctionModeInfo` 选 `normal`/`ode`**）、
+`client/src/screens/replay_lobby.gd`（列表数据源）、
+`client/src/app/app.gd`（**只删**两处"回放未实现"占位）、
+`src/lib.rs`（**两行** `pub mod`）、`client/tools/selftest.gd`（只新增断言）。
+微分方程模式的**内核侧**（`src/api.rs` / `src/gdext.rs` / `core_bridge.gd`）由另一条分支
+`agent/ode-api` 交付、已进 main，见 `docs/138` —— 本文只负责"回放里怎么用它"，
+**不重复实现**。
 
 ---
 
-## 1. 为什么之前"回放列表永远是空的"
+## 1. ⚠️ 根因（单列一条）：列表按**扩展名**过滤，而真实回放**没有扩展名**
+
+> **这是"看起来是功能没做、其实是过滤条件错了"的典型 bug。**
+> `client/src/app/replay_index.gd` 的 `EXTENSIONS := ["replay","gw2r","json","dat"]` 白名单，
+> 而真实回放的文件名是**纯 unix 时间戳、没有扩展名**（`docs/78` §1 早就写了这一点）。
+> ⇒ **400 份真实回放一份都进不了 ReplayLobby**，界面长期显示空白列表；
+> 空列表看起来像"回放功能没做"，实际只是筛掉了全部文件。
+>
+> 修法：`GwReplayFile.list_dir()` 列举**全部常规文件**，不按扩展名筛（`docs/133` §4.4）。
+> 教训：**当"某个目录里明明有东西、界面却是空的时候"，先看过滤条件，再看功能实现。**
+> 同类陷阱：`get_files()` 只列文件不列目录、只列**不递归**子目录、
+> 大小写敏感的 `get_extension()`、以及 `.hidden` 文件在部分平台被跳过。
 
 两件事叠在一起，缺一个都看不见回放：
 
-1. `client/src/app/replay_index.gd` 用**扩展名白名单**（`replay/gw2r/json/dat`）筛文件；
-   而真实回放的文件名就是**纯 unix 时间戳、没有扩展名**（`docs/78` §1 早就写了）。
-   ⇒ 400 份真实回放**一份都进不了列表**。
+1. 上面那条：扩展名白名单把**全部**真实回放筛掉了。
 2. 就算进了列表，`PlayScreen` 也没有回放分支：`state.kind == REPLAY` 时
    `begin_match()` 走的是普通对局路径，玩家表是空的（`reset_replay()` 清空了 `players`），
    于是棋盘上一个士兵都没有。
@@ -205,11 +220,11 @@ play_screen.gd: begin_match()
 > ⇒ 按钮直接接本界面的播放器（原版命令键记在 `meta("observed_input_text")` 与 tooltip 里），
 > 免得按一下弹一个假提示。右侧三颗（存截图/存摘要/存片段）保持原样 —— 它们的语义本来就**未知**。
 >
-> 同一个占位还留在 `app.gd::_play_replay()` 里：它先 `notify("回放播放未实现")` 再
-> `_begin_match()`。回放分支加载成功后**用一句准确的覆盖掉它**
-> （`notify("回放 <房间名> ／ N 条事件 ／ tick A–B")`，气泡里不能出现
-> `app.gd::INTERNAL_MARKERS` 那几个内部标记），所以用户不会一边看回放一边读到"未实现"。
-> 那句话本身该删，但 `app.gd` 不在本轮可改范围 ⇒ 记为待改项。
+> **两个占位已经删掉**（本轮获准只动这两处）：`app.gd::_play_replay()` 里的
+> `notify("回放播放未实现")`，以及 `PLAY_PAUSE` 分支的同名占位（现在什么都不做，
+> 因为那三颗播放键直接接播放器）。回放分支加载成功后会弹一句准确的气泡
+> ——`回放 <房间名> ／ N 条事件 ／ tick A–B`（气泡里不能出现
+> `app.gd::INTERNAL_MARKERS` 那几个内部标记，所以只写事实）。
 
 ### 4.4 ReplayLobby
 
@@ -220,23 +235,49 @@ play_screen.gd: begin_match()
 | 房间名 / 四个模式 | **列表里不解析**（要解压整份文件，400 份 ≈ 64 MB）；打开回放后显示 | 自定 |
 | 空列表 | 一个字都不画（既有断言 `回放列表空时只剩标题一个 Label` 仍然成立） | 沿用 |
 
-### 4.5 弹道怎么画（不绕过内核）
+### 4.5 弹道怎么画（不绕过内核；DiffEq 局走 ODE）
 
 回放**没有**点序列（`FunctionPoints` 在 400 份里出现 1290 次，字段**恒为**
-`{owner_id, start_x, start_y, end_x}` 四个，0 例带点、0 例多余字段）。
-所以每一发都走：
+`{owner_id, start_x, start_y, end_x}` 四个，0 例带点、0 例多余字段）。所以每一发都走：
 
 ```
 expr = state.functions[owner]                    # 开火那一刻最近一次非空 FunctionInfo
+mode = "ode" if state.function_mode == "DiffEqFunction" else "normal"   # 取自**这一局自己的**录像
 dir  = +1 (Team1) / -1 (Team2)                   # 方向由队伍决定（docs/105），队伍未知才退回几何
-GwCore.calculate_path(expr, Vector2(start_x, start_y), dir)   # ← 内核采样器
+GwCore.calculate_path(expr, Vector2(start_x, start_y), dir, mode)       # ← 内核采样器
 → _clip_to_obstacle(...) → _plane.set_path(...)  # 与普通对局同一个绘制入口
 ```
 
-* 内核算不出来（例如**微分方程局**：`GwCore.calculate_path` 只跑 `Mode::Normal`，
-  见 `docs/116` §6）⇒ **清空弹道**并在状态行写明原因，**不拿界面预览折线冒充**；
-* 修正常数沿用原版格式（`_offset_label`），并且**与录像里记录的值对得上**（§5.2 的用例：
-  内核给 `-3.694`，录像的 `corrected_function` 写的是 `x+2sin(20x) - 3.694`）。
+**为什么要有 `mode`**：`DiffEqFunction` 局（400 份真实回放里 **320 局**）的 `f` 是
+`dy/dx`，要走 `src/path.rs` 的 RK4（`Mode::Ode`）；既有的
+`GW2Rebuild.path_calculate` 只跑 `Mode::Normal` —— 拿普通模式去画一条导数曲线，
+**看起来能画、其实是错的线**。
+
+内核侧的钩子由 **`agent/ode-api` 交付并已进 main**（`docs/138`），本文不重复实现。
+与本文件相关的三条契约（**逐位验证**，见 §5.3 第 7 组）：
+
+```text
+GW2Rebuild.path_calculate_mode(expr: String, x0: float, y0: float,
+                               direction: float, mode: String)
+    -> Dictionary { ok, points, offset, error }      # 与 path_calculate 同结构
+mode: "normal"（y = f(x)）/ "ode"（dy/dx = f(x, y)），大小写与两侧空白不敏感
+      其它任何取值 ⇒ ok:false, error:"bad_arguments"（不静默退回 Normal）
+```
+
+| 位置 | 说明 |
+|---|---|
+| `src/api.rs::calculate_path_mode()` | `"normal"` 分支**直接转调** `calculate_path` ⇒ 与原契约结构上等价；`"ode"` 走 `calculate_path_ode()` |
+| `src/api.rs::parse_mode()` | 只认 `normal` / `ode`（`trim` + `eq_ignore_ascii_case`）；**不做整数重载** —— `PropertyInfo` 把第 5 个参数声明成 `String`，GDScript 传整数会被引擎先拒 |
+| `client/src/core/core_bridge.gd::calculate_path()` | 第 4 个参数 `mode: String = "normal"`（默认值 ⇒ **既有三参数调用点一个字都不用改**） |
+
+**修正常数的口径**：只有 `normal` 加修正（`src/shot.rs::shot_points` 的既有规则）。
+`ode` 下内核返回的 `offset` 是 **`NaN`** ⇒ `GwCore.format_offset()` 出空串，
+正好是原版 DiffEq 局右下角不显示修正文本的样子（`docs/92` §4.10、`docs/138`）。
+这是**观测**：微分方程回放的 `FunctionInfo{function:"y+0.1", corrected_function:"y+0.1"}`
+逐字相同，没有 `" - 3.694"` 那种尾巴。
+
+**内核算不出来时**（表达式非法、起点越界、首点之后一步都接受不了）⇒ **清空弹道**并在
+状态行写明原因，**不拿界面预览折线冒充**。
 
 ---
 
@@ -244,10 +285,23 @@ GwCore.calculate_path(expr, Vector2(start_x, start_y), dir)   # ← 内核采样
 
 ### 5.1 单元测试（`cargo test --offline`）
 
-**314 条全绿**（本轮起点 **296**，新增 **18** 条：12 条 `replay` + 6 条 `replay_inflate`）。
+**333 条**：`--lib` **273** + 9 个集成测试二进制 **60**（broker 4 / events 6 / evidence 6 /
+golden 4 / live_hits 12 / plane 6 / replay_diff 12 / server_match 3 / to_text 7）；
+其中 **331 绿、2 红**（见下面的已知红）。
+回放相关本轮新增 **18** 条：12 条 `replay` + 6 条 `replay_inflate`。
+带模式的弹道那几条不在这里 —— 它是 `agent/ode-api` 的交付（`docs/138`，+6 条）。
+⚠️ `tests/server_match` 里 **两条已知会红**（本机实测就是这两条，第三条过但很慢）：
+`plays_a_full_match_over_tcp` / `rotation_and_ai_are_wired_over_tcp` ——
+`src/game.rs::fire` 的步长从写死的 `0.5` 改成 `SERVER_STEP`(0.01) 之后，
+那两条靠"穿过墙"才打中的用例被正确挡住（`docs/136`）。
+**不是回放引入的**：本轮 `src/` 相对 main **零改动**（`git diff --stat origin/main` 只有
+`play_screen.gd` 与 `selftest.gd`），因此红/绿与 main 逐条相同。
 新增断言覆盖：明文/gzip 两种输入、未知事件透传、坏行跳过、空回放、
 tick 边界（2168 活 / 2169 死）、规范串格式、播放器 tick 推进与倍速、
-`seek` 与从头重放一致、上一/下一事件、C ABI 往返。
+`seek` 与从头重放一致、上一/下一事件、C ABI 往返；
+带模式的弹道那三条硬约束（`"normal"` ≡ `path_calculate`、`"ode"` 复现真实 DiffEq 局的
+`end_x` 与点数、未知取值被拒）由 `agent/ode-api` 自己的测试覆盖（`docs/138`），
+本文不重复。
 
 ### 5.2 三方对拍（这是本轮最强的一条证据）
 
@@ -298,7 +352,10 @@ PY
 
 ### 5.3 自检（`bash client/run.sh selftest`）
 
-**295 条全绿**（本轮起点 **245**，新增 **50** 条，**没有改/删任何既有断言**）。
+**581 条全绿**（main `e9c188b` 上实测；回放本轮新增 **16** 条 —— 就是第 7 组。
+**没有改/删任何既有断言**）。
+把 `examples/serve_match` 拿掉时是 `505 passed, 0 failed, 2 skipped`（联机两组整组 SKIP）。
+两个数都 ≥ 交付要求的 489。
 回放相关的新增断言（`_test_replay_player`，故意排在最后，不影响其它用例）：
 
 1. 行解析：坏行跳过并计数、空回放明确报错、协议里没有的事件名照样读出字段；
@@ -313,11 +370,19 @@ PY
    `begin_match()` → 回放分支；然后断言：进入即播、进度条在 0..1、tick 标签、
    **键盘与 Fire 不接管**、靶子在 2169 从棋盘上消失、tick 550 的弹道由内核重算出 >1 个点、
    **内核算出的修正 = 录像记录的 `-3.694`**、播放键取反/跳转、`exit_play` 回到 MainMenu
-   且模式归位。
+   且模式归位；
+7. **第 7 组：微分方程局能画出弹道**（`_test_replay_ode`，样本 `1783255495`，Level 16、
+   131 条事件、4 发、靶子 3683 在 tick 1291 阵亡）：
+   内核确实暴露 `path_calculate_mode`、`calculate_path(..., "ode")` 走内核且
+   **`offset` 是 `NaN`**（`format_offset()` 出空串）、ODE 弹道 **1058 点**且
+   **最后一点 x = 录像 `end_x`（-2.759978…）**、`mode="diffeq"` 这类未知取值被拒
+   （不静默退回 Normal）、`mode="normal"` 与三参数调用同点数（既有契约未变）、
+   回放里模式**取自录像**（`DiffEqFunction`）、状态行写明 `Ode(dy/dx)`、
+   DiffEq 局不显示修正项、靶子在 1290 活 / 1291 死。
 
-缺存档目录的机器上，第 2–6 组整块记 **1 条 `SKIP`** 并打印原因（不算通过），
-其余 5 条合成用例照常跑 —— 实测：`HOME` 指到空目录时
-`SELFTEST 250 passed, 0 failed, 1 skipped`（245 条既有 + 5 条新增合成用例）。
+缺存档目录的机器上，第 2–7 组各记 **1 条 `SKIP`** 并打印原因（不算通过），
+其余合成用例照常跑 —— 实测：`HOME` 指到空目录时
+`SELFTEST 285 passed, 0 failed, 2 skipped`（280 条既有 + 5 条新增合成用例）。
 
 ### 5.4 本轮踩到并修掉的坑
 
@@ -347,6 +412,29 @@ bash client/run.sh dump | head -1
 
 `dump` 确认内核仍在线：`@@KERNEL available=1 hit_test=1 methods=…path_calculate,hit_test,level_obstacles…`。
 
+### 5.6 顺带发现：`FunctionPoints.end_x` 是弹道的**停点** x
+
+把每一发按"函数文本 + 起点 + 队伍方向 + 这一局的模式"重算，再和录像里的 `end_x` 比：
+
+| 分组（这发之前有没有障碍 / 模式） | 最后一点 x **逐位相同** | 最大差 |
+|---|---|---|
+| Normal / 无障碍 | 148 / 200 | 48.7 |
+| Normal / 有障碍 | 254 / 537 | 45 |
+| Ode / 无障碍 | 280 / 312 | 0.525 |
+| Ode / 有障碍 | 111 / 234 | 45 |
+
+合计 **793 / 1290 发逐位相同**。抽查不同意的样本（前 12 例）里 **10 例**这一发实际
+**穿进了障碍**（`crosses_obs=True`）⇒ `end_x` 是**停点**（被墙拦住时的撞点），
+不是"整条数学路径的最后一点"。剩下 2 例是 1e-4 量级的小差（`24.9999` vs `25.0000`），
+疑似像素/精度量化 —— **未证实**。
+
+⇒ 因此：**我们不用 `end_x` 画弹道**（画整条路径，遇障碍按 `hit_test` 截断 ——
+与游戏判停是同一套掩膜），只把它当**验证基准**。上文两个样本（Level 0 的 Normal 局、
+Level 16 的 DiffEq 局）都**没有障碍**，所以它们 6 发的 `end_x` 全部逐位相同，
+可以直接当断言。
+**仍未确定**：有障碍的那 483 发为什么不是"截断后的停点"—— 客户端确实按 `hit_test` 截断，
+但没有逐发核对过（见 §6）。
+
 ---
 
 ## 6. 仍未确定
@@ -355,8 +443,8 @@ bash client/run.sh dump | head -1
 |---|---|---|---|
 | 1 | **原版回放界面**（有没有进度条、能不能拖、倍速/跳转语义） | 原版真帧 / 原版脚本。恢复出的 `.tscn` 只有 13 + 21 个静态节点，播放控件的行为在 Rust 里 | 我们的播放控件全是自定（§4.3 已逐项标注） |
 | 2 | 原版**播放时钟**：是按 tick 还是按事件时间轴 | `graphwar_replay_player.rs`（8 个函数）/`graphwar_replay_control.rs`（2 个函数）**整块没逆** | 我们按 tick（`docs/35` 的真值）—— 若原版按事件，进度语义会不同 |
-| 3 | **微分方程局的弹道** | `GwCore.calculate_path` 只跑 `Mode::Normal`；`Mode::Ode` 在内核里**没有暴露成 GDScript 方法**（要改 `src/api.rs`，本轮不可动） | 微分方程回放只画士兵/障碍/生死，弹道留空并说明（样本 `1783255495` 就是这种） |
+| 3 | ~~微分方程局的弹道~~ | ✅ **已解决**：内核 `path_calculate_mode(…, mode: `"normal"`/`"ode"`)`（`agent/ode-api` 交付，`docs/138`）＋本文的「按录像的 `FunctionModeInfo` 选模式」接线；真实 DiffEq 局 4 发的 `end_x` 全中（§5.3 第 7 组、§5.6） | — |
 | 4 | 谁是 **bot** | `NameInfo` 只给名字，`docs/79` §4 说"名字↔难度"这一步没做完 | 回放里士兵一律按真人画（皮肤从 `SkinGraphicsInfo` 反查，头像/帽子名未映射） |
 | 5 | **gzip 尾部的 CRC32/ISIZE 不校验** | 有意省略（回放不是校验场景） | 损坏文件可能"解出一半"而不是报错；DEFLATE 结构错误仍会报 |
-| 6 | 回放里 `end_x` 的语义 | `FunctionPoints.end_x` 与 `EffectInfo.pos_x` 在部分局里相差很大 | 我们不使用 `end_x`（弹道一律重算），所以没有影响，但**别拿它当命中点** |
+| 6 | 回放里 `end_x` 的语义 | 793/1290 发与重算路径的最后一点逐位相同；其余多数是"被障碍拦住"（撞点），少数是 1e-4 量级的小差（§5.6）。**没有逐发核对过**"按 `hit_test` 截断后是否等于 `end_x`" | 我们**不用**它画弹道（只当验证基准），所以没有功能影响，但**别拿它当命中点/终点坐标** |
 | 7 | 多 member gzip / 未压缩回放 | 真实语料里 0 例，代码支持但**没有真值样本** | 属"支持但未验证" |

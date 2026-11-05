@@ -41,6 +41,7 @@ func run(main: Control) -> int:
 	await _test_fire_fx()
 
 	await _test_replay_player()
+	await _test_replay_ode()
 	# 联机（docs/134）：分帧/解析 → 假服务器 → 失败路径 → LAN 发现 → broker → 真服务端
 	await _test_net_framing()
 	await _test_net_join_fake_server()
@@ -3276,3 +3277,91 @@ func _test_play_online_lifeinfo_fake_server() -> void:
 	_command("exit_play")
 	await _frames(2)
 	await _net_reset()
+
+## 微分方程局（`DiffEqFunction`）的样本：Level 16、131 条事件、4 发、靶子 3683 在 tick 1291 阵亡。
+## 选它的理由：这一局**必须**走 ODE 才能重算出弹道（`docs/138`），
+## 而且它的 `FunctionPoints.end_x` 与内核重算弹道的**最后一点 x 逐位相同**（4/4）。
+const REPLAY_DIFFEQ_SAMPLE := "1783255495"
+const DIFFEQ_FIRST_SHOT_TICK := 212
+const DIFFEQ_FIRST_SHOT_END_X := -2.7599786229272687
+
+## 第 7 组：**微分方程局的回放能画出弹道**（内核 `path_calculate_mode`，`docs/138`）。
+##
+## `mode` 是**字符串** `"normal"` / `"ode"`（不是 0/1）：`PropertyInfo` 把它声明成
+## `String`，GDScript 传整数会被引擎先拒 —— 所以这里也只用字符串，
+## 顺带把"非法取值一律 `bad_arguments`"钉住。
+func _test_replay_ode() -> void:
+	var dir := _real_replay_dir()
+	if dir == "":
+		_skip("回放（Ode）：本机没有原版存档目录")
+		return
+	var path := dir.path_join(REPLAY_DIFFEQ_SAMPLE)
+	if not FileAccess.file_exists(path):
+		_skip("回放（Ode）：样本 %s 不在 %s" % [REPLAY_DIFFEQ_SAMPLE, dir])
+		return
+	# 内核必须真的暴露了带模式的那条路
+	var methods := GwCore.kernel_methods()
+	_expect(methods.has("path_calculate_mode"),
+		"内核暴露 path_calculate_mode（%s）" % str(methods.slice(0, 6)))
+	# mode="ode" 要走内核并对上录像的 end_x；`offset` 必须是 NaN（没有修正常数）
+	var ode := GwCore.calculate_path("y", Vector2(-3.954041122927256, -4.543043212675496),
+		1.0, "ode")
+	_expect(bool(ode.get("ok", false)) and String(ode.get("source", "")) == "kernel",
+		"GwCore.calculate_path(..., 'ode') 走内核（source=%s ／ %s）"
+		% [String(ode.get("source", "?")), String(ode.get("note", ""))])
+	_expect(is_nan(float(ode.get("offset", 0.0))) and GwCore.format_offset(float(ode.get("offset", 0.0))) == "",
+		"ODE 不返回修正常数（offset=NaN ⇒ format_offset 出空串）")
+	var ode_pts: PackedVector2Array = ode.get("points", PackedVector2Array())
+	_expect(ode_pts.size() == 1058, "ODE 弹道点数 1058（实际 %d）" % ode_pts.size())
+	if ode_pts.size() > 0:
+		_expect(absf(float(ode_pts[ode_pts.size() - 1].x) - DIFFEQ_FIRST_SHOT_END_X) < 0.001,
+			"ODE 弹道最后一点 x = 录像 end_x %.6f（实际 %.6f）"
+			% [DIFFEQ_FIRST_SHOT_END_X, float(ode_pts[ode_pts.size() - 1].x)])
+	# 未知取值一律拒绝（不许静默退回 Normal —— 画错的线比不画更糟）
+	var bad := GwCore.calculate_path("y", Vector2.ZERO, 1.0, "diffeq")
+	_expect(not bool(bad.get("ok", true)), "未知 mode='diffeq' 被拒绝（不静默退回 Normal）")
+	# mode="normal" 与三参数调用等价（既有契约没变）
+	var a := GwCore.calculate_path("sin(x)", Vector2(0.0, 0.0), 1.0)
+	var b := GwCore.calculate_path("sin(x)", Vector2(0.0, 0.0), 1.0, "normal")
+	_expect((a.get("points", PackedVector2Array()) as PackedVector2Array).size()
+		== (b.get("points", PackedVector2Array()) as PackedVector2Array).size(),
+		"mode='normal' 与三参数调用同点数（既有契约一字未改）")
+
+	# 进回放：模式必须取自**录像**（这一局是 DiffEqFunction）
+	var app_node := get_node("/root/App")
+	app_node.state.reset_replay(path)
+	var play = _screen("PlayScreen")
+	play.call("begin_match")
+	await _frames(3)
+	var rs: Dictionary = play.call("replay_state")
+	_expect(bool(rs.get("mode", false)), "微分方程回放进了回放模式")
+	_expect(int(rs.get("events", 0)) == 131,
+		"微分方程回放 131 条事件（实际 %d）" % int(rs.get("events", 0)))
+
+	# 第一发（tick 212）：弹道由内核 ODE 重算出来
+	play.call("replay_seek_for_test", DIFFEQ_FIRST_SHOT_TICK)
+	var plane := play.find_child("GraphwarPlane", true, false) as GwPlaneView
+	_expect(plane != null, "有 GraphwarPlane")
+	if plane == null:
+		return
+	_expect(plane.path_points.size() > 100,
+		"DiffEq 局的弹道由内核 ODE 重算出来（%d 点）" % plane.path_points.size())
+	var lastx := 0.0
+	if plane.path_points.size() > 0:
+		lastx = float(plane.path_points[plane.path_points.size() - 1].x)
+	_expect(absf(lastx - DIFFEQ_FIRST_SHOT_END_X) < 0.001,
+		"重算弹道最后一点 x = 录像 end_x %.6f（实际 %.6f）" % [DIFFEQ_FIRST_SHOT_END_X, lastx])
+	var status := String(play.call("replay_state").get("shot_status", ""))
+	_expect(status.contains("Ode"), "状态行说明这一发走的是 Ode(dy/dx)（实际 '%s'）" % status)
+	var offset_label := play.find_child("OffsetLabel", true, false) as Label
+	_expect(offset_label != null and offset_label.text == "",
+		"DiffEq 局不显示修正常数（观测：corrected_function 与 function 相同）")
+
+	# 死亡事件：靶子 3683 在 tick 1291 阵亡
+	play.call("replay_seek_for_test", 1290)
+	_expect(plane.targets.size() == 1, "tick 1290 靶子还在（实际 %d 个）" % plane.targets.size())
+	play.call("replay_seek_for_test", 1291)
+	_expect(plane.targets.size() == 0, "tick 1291 靶子被打掉（实际 %d 个）" % plane.targets.size())
+	play.call("end_match")
+	await _frames(2)
+	app_node.state.reset_lan()
