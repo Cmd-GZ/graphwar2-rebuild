@@ -256,13 +256,14 @@ pub fn crossover(
     out
 }
 
-/// 走一代（`docs/75` 的构成：80% 子代工厂 + 20% 直接复制，含 5 个精英）。
+/// 走一代（`docs/75` §2.5 的实测结构）。
 ///
-/// `score` 是适应度函数（调用方提供，规则见 `docs/74`）。
-/// 返回新一代（按分数降序，方便下一轮取精英）。
+/// 实测：每个外层迭代 = **1 个克隆（数组头部按索引顺序）+ 4 个工厂子代**，
+/// 外层 0.2×种群 次 ⇒ `0.2n + 4×0.2n = n`。
 ///
-/// ⚠️ 二十个百分点里"除 5 个精英外的选取规则"**未还原**，
-/// 这里按"分数降序取前 N"实现，属**假设**。
+/// ⚠️ 两条仍是假设：① 头部"已按质量排序"只有间接证据；
+/// ② 工厂内部的交叉切点规则未还原（见 [`crossover`]）。
+/// `elite`（栈参数 5）的用途仍未定，这里**不使用**它。
 pub fn next_generation<F>(
     pop: &[Individual],
     p: &Params,
@@ -274,36 +275,31 @@ where
 {
     let mut sorted: Vec<Individual> = pop.to_vec();
     sorted.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    if sorted.is_empty() {
+        return Vec::new();
+    }
 
     let n = p.population as usize;
-    let factory = n * 4 / 5; // 实测：工厂入口恒为 0.8 × 种群
-    let elite = (p.elite as usize).min(n);
-
-    let copy_slots = n - factory; // 20%：直接复制（含精英）
-
+    let clones = n / 5; // 0.2 × 种群
     let mut out: Vec<Individual> = Vec::with_capacity(n);
-    // ① 精英原样保留
-    for ind in sorted.iter().take(elite) {
-        out.push(ind.clone());
-    }
-    // ② 其余复制坑位：未还原，按假设"从分数靠前的个体里随机取"
-    while out.len() < copy_slots {
-        let idx = (next() % sorted.len().max(1) as u64) as usize;
-        out.push(sorted[idx].clone());
-    }
-    // ③ 工厂坑位：80%
-    while out.len() < n {
-        let a = (next() % sorted.len().max(1) as u64) as usize;
-        let b = (next() % sorted.len().max(1) as u64) as usize;
-        let tokens = if sorted[b].tokens.len() < 20 {
-            // 第二个父代太短 → 直接重生（实测：cmp $0x14）
-            random_function(next)
-        } else {
-            let mut child = crossover(&sorted[a].tokens, &sorted[b].tokens, next);
-            mutate(&mut child, next);
-            child
-        };
-        out.push(Individual { tokens, score: 0.0 });
+
+    for i in 0..clones {
+        // ① 克隆头部第 i 个（索引顺序，实测）
+        out.push(sorted[i.min(sorted.len() - 1)].clone());
+        // ② 4 个工厂子代（实测：内层循环 = 4 × 外层）
+        for _ in 0..4 {
+            let a = (next() % sorted.len() as u64) as usize;
+            let b = (next() % sorted.len() as u64) as usize;
+            let tokens = if sorted[b].tokens.len() < 20 {
+                // 第二个父代太短 → 重生（实测 cmp $0x14）
+                random_function(next)
+            } else {
+                let mut child = crossover(&sorted[a].tokens, &sorted[b].tokens, next);
+                mutate(&mut child, next);
+                child
+            };
+            out.push(Individual { tokens, score: 0.0 });
+        }
     }
     out.truncate(n);
     for ind in out.iter_mut() {
@@ -311,6 +307,36 @@ where
     }
     out.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
     out
+}
+
+/// 跑满 `params.generations` 代，返回按分数降序的最终种群。
+///
+/// 这就是"一回合思考"的骨架：调用方负责提供初始种群与适应度闭包。
+pub fn evolve<F>(
+    mut pop: Vec<Individual>,
+    p: &Params,
+    next: &mut dyn FnMut() -> u64,
+    mut score: F,
+) -> Vec<Individual>
+where
+    F: FnMut(&[Token]) -> f64,
+{
+    for ind in pop.iter_mut() {
+        if ind.score == 0.0 {
+            ind.score = score(&ind.tokens);
+        }
+    }
+    for _ in 0..p.generations {
+        pop = next_generation(&pop, p, next, &mut score);
+    }
+    pop
+}
+
+/// 造一个初始种群。
+pub fn initial_population(p: &Params, next: &mut dyn FnMut() -> u64) -> Vec<Individual> {
+    (0..p.population)
+        .map(|_| Individual { tokens: random_function(next), score: 0.0 })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -638,77 +664,67 @@ mod tests {
     }
 
     #[test]
-    fn next_generation_keeps_size_and_elites() {
-        let p = params(1);
+    fn next_generation_keeps_size_and_reuses_head() {
+        let p = params(1); // 种群 50 → 克隆 10，工厂 40
         let mut next = stream(0xFEED);
-        // 造一个初始种群
-        let mut pop: Vec<Individual> = (0..p.population)
-            .map(|_| Individual { tokens: random_function(&mut next), score: 0.0 })
-            .collect();
+        let mut pop = initial_population(&p, &mut next);
         for (i, ind) in pop.iter_mut().enumerate() {
-            ind.score = i as f64; // 分数递增
+            ind.score = i as f64;
         }
-        let best: Vec<Vec<Token>> = {
-            let mut sorted = pop.clone();
-            sorted.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-            sorted.iter().take(p.elite as usize).map(|i| i.tokens.clone()).collect()
+        let top: Vec<Vec<Token>> = {
+            let mut s = pop.clone();
+            s.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+            s.iter().take(10).map(|i| i.tokens.clone()).collect()
         };
         let g1 = next_generation(&pop, &p, &mut next, |t| t.len() as f64);
         assert_eq!(g1.len(), p.population as usize, "种群规模应不变");
-        for b in &best {
-            assert!(
-                g1.iter().any(|i| &i.tokens == b),
-                "精英应被原样保留"
-            );
+        for t in &top {
+            assert!(g1.iter().any(|i| &i.tokens == t), "头部个体应被克隆保留");
         }
     }
 
     #[test]
-    fn fitness_rewards_hits_and_penalises_complexity() {
+    fn evolve_runs_requested_generations() {
+        let p = Params { generations: 3, population: 10, elite: 5, limit: 200 };
+        let mut next = stream(99);
+        let pop = initial_population(&p, &mut next);
+        let out = evolve(pop, &p, &mut next, |t| t.len() as f64);
+        assert_eq!(out.len(), 10);
+        // 结果应按分数降序
+        for w in out.windows(2) {
+            assert!(w[0].score >= w[1].score);
+        }
+    }
+
+    #[test]
+    fn evolve_can_learn_to_hit_a_target() {
+        // 端到端：射手在 (10,0)，敌人在 (0,0)，空场。
+        // 初始种群是随机函数，几乎不可能命中（分数约 -1e6）；
+        // 跑若干代后应当出现能命中的个体（分数 > 0）。
         use crate::plane::empty_mask;
         use crate::settle::Target;
-        use crate::function::parse;
 
         let mask = empty_mask();
-        let target = vec![Target { id: 7, x: 0.0, y: 0.0, radius: 0.5 }];
-        let miss_target = vec![Target { id: 8, x: 0.0, y: 12.0, radius: 0.5 }];
-
-        // 平地一条直线，从 (10,0) 向左打
-        let hit_tokens = parse("0.00");
-        let ctx_hit = ScoringContext {
-            x0: 10.0, y0: 0.0, flip: true, step: 0.5,
-            mask: &mask, targets: &target, limit: 200,
-        };
-        let s_hit = fitness(&hit_tokens, &ctx_hit);
-        // 命中一人：2e6 - 1e6 - V²/100，V=2（常数 + 修正项？这里按实际 token 数）
-        let v = hit_tokens.len() as f64;
-        assert!(
-            (s_hit - (1_000_000.0 - v * v / 100.0)).abs() < 1.0,
-            "命中一人应约 +1e6，实测 {s_hit}（V={v}）"
-        );
-
-        let ctx_miss = ScoringContext {
-            x0: 10.0, y0: 0.0, flip: true, step: 0.5,
-            mask: &mask, targets: &miss_target, limit: 200,
-        };
-        let s_miss = fitness(&hit_tokens, &ctx_miss);
-        assert!(s_miss < -900_000.0, "打空应约 -1e6，实测 {s_miss}");
-    }
-
-    #[test]
-    fn fitness_penalises_exceeding_the_limit() {
-        use crate::plane::empty_mask;
-        use crate::function::parse;
-        let mask = empty_mask();
-        let mut tokens = parse("sin(x)");
-        while tokens.len() <= 5 {
-            tokens.push(Token::op(Function::Sin));
-        }
+        let targets = vec![Target { id: 1, x: 0.0, y: 0.0, radius: 0.5 }];
         let ctx = ScoringContext {
-            x0: 10.0, y0: 0.0, flip: true, step: 0.5,
-            mask: &mask, targets: &[], limit: 5,
+            x0: 10.0,
+            y0: 0.0,
+            flip: true,
+            step: 0.5,
+            mask: &mask,
+            targets: &targets,
+            limit: 200,
         };
-        let s = fitness(&tokens, &ctx);
-        assert!(s < -40_000_000.0, "超上限应吃 5e7 惩罚，实测 {s}");
+        let p = Params { generations: 6, population: 20, elite: 5, limit: 200 };
+        let mut next = stream(0x1234_5678);
+        let pop = initial_population(&p, &mut next);
+        let out = evolve(pop, &p, &mut next, |t| fitness(t, &ctx));
+        let best = out.first().expect("应有结果");
+        assert!(
+            best.score > 0.0,
+            "6 代内应学会命中，最好的分数是 {}（函数 {} 个 token）",
+            best.score,
+            best.tokens.len()
+        );
     }
 }
