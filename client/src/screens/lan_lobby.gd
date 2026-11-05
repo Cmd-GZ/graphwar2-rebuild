@@ -35,6 +35,21 @@ extends GwScreen
 ## `turns_simultaneous` / `turn_1m` 四张图（`game_room_entry.tscn` 的静态值）。
 ## 房间名与在线人数是**服务端数据**，离线拿不到：名字沿用原版真帧里出现过的四个，
 ## 人数用真帧里读到的 0。
+##
+## ## 列表的真实来源（docs/134）
+##
+## 两页的数据现在都来自 `App.net`，占位行只在**没有数据**时兜底：
+##
+## | 页 | 数据来源 | 依据 |
+## |---|---|---|
+## | Local | `GwLanDiscovery`：UDP 42968 收到的裸 9 字段 JSON 行 | **观测**（`docs/24` §1.1、`docs/115` §5.3） |
+## | Global | `GwBrokerClient`：broker 推的 `GameInfo` 行 | **逐位**（`fixtures/protocol_match.jsonl:83–86`） |
+##
+## * broker 地址**默认空**（原版默认从 graphwar.com 取；本项目不发外网请求），
+##   所以 Global 页在默认配置下仍然是那 4 条占位 —— 与真帧一致；
+## * 点某一行右侧的 ` Join ` 会真的去连该行的 `address`（`App.connect_to`），
+##   连不上就走 `DisconnectedPopUp`；
+## * 占位行没有真实地址，点 Join 只给一句"没有地址"的提示。
 const GLOBAL_ROOMS := [
 	{"name": "US Room 3", "players": "0"},
 	{"name": "EU Room 1", "players": "0"},
@@ -153,6 +168,9 @@ func on_enter() -> void:
 	var mode := "local"
 	if app_node != null:
 		mode = String(app_node.room_list_mode)
+		if mode == "global" and app_node.net != null:
+			# 进 Global 页才开始连 broker（地址为空时它什么都不做）。
+			app_node.net.browse_global()
 	_local_button.button_pressed = mode == "local"
 	_global_button.button_pressed = mode == "global"
 	_rebuild_list(mode)
@@ -161,18 +179,36 @@ func _rebuild_list(mode: String) -> void:
 	for c in _list.get_children():
 		_list.remove_child(c)
 		c.queue_free()
+	var app_node := app()
+	var net: GwNet = app_node.net if app_node != null else null
 	if mode == "global":
 		# 原版这一页只有房间条目，**没有任何说明文字**（真帧逐像素对照，docs/129 §4.4）。
-		for room in GLOBAL_ROOMS:
-			_list.add_child(_room_entry(String(room.name), String(room.players)))
+		var rooms: Array = net.global_rooms() if net != null else []
+		if rooms.is_empty():
+			# 没有 broker 数据 ⇒ 沿用占位行（默认配置就是这样：broker 地址为空）。
+			for room in GLOBAL_ROOMS:
+				_list.add_child(_room_entry(String(room.name), String(room.players)))
+		else:
+			for room in rooms:
+				_list.add_child(_room_entry(
+					String(room.get("room_name", "")),
+					"%d" % int(room.get("current_player_count", 0)),
+					String(room.get("address", ""))))
 	else:
-		var app_node := app()
-		var has_room: bool = app_node != null and app_node.state.players.size() > 0
-		if has_room:
+		# Local 页 = LAN 广播收到的房间（+ 我们自己开的本地房间）。
+		# 空列表就**什么都不画**（原版 Local 页在 1920×1160 下就是一片空背景）。
+		var lan_rooms: Array = net.local_rooms() if net != null else []
+		for room in lan_rooms:
+			_list.add_child(_room_entry(
+				String(room.get("room_name", "")),
+				"%d" % int(room.get("current_player_count", 0)),
+				String(room.get("address", ""))))
+		var has_local_room: bool = app_node != null and app_node.state.players.size() > 0 \
+			and not app_node.online
+		if has_local_room and lan_rooms.is_empty():
 			_list.add_child(_room_entry(
 				String(app_node.state.room_name),
 				"%d" % app_node.state.players.size()))
-		# 空列表就**什么都不画**（原版 Local 页在 1920×1160 下就是一片空背景）。
 	# 行是运行时建的 ⇒ 字号必须在这里重新套一遍（`apply_font_scale()` 只在 `_ready` 跑过，
 	# 那时这些节点还不存在；漏掉这一步的话四行会停在主题默认的 24 号字，真帧是 48）。
 	apply_font_scale()
@@ -183,7 +219,8 @@ func _rebuild_list(mode: String) -> void:
 ##     ├ PlayersContainer/PlayerCount(居中)          ← ratio 0.1
 ##     ├ ModeContainer/OptionsContainer/[Margin, 4×AspectRatio(GraphwarButton+icon), Margin]
 ##     └ JoinButtonContainer/JoinButton(" Join ")
-func _room_entry(room_name: String, players: String) -> HBoxContainer:
+## `address` 为空 = 占位行（没有真实地址，点 Join 只提示）。
+func _room_entry(room_name: String, players: String, address: String = "") -> HBoxContainer:
 	var row := GwUI.hbox("HBoxContainer", GwUI.SEPARATION)
 	row.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 
@@ -244,7 +281,8 @@ func _room_entry(room_name: String, players: String) -> HBoxContainer:
 	join_m.size_flags_horizontal = Control.SIZE_FILL
 	var join := GwButton.make(" Join ")
 	join.name = "JoinButton"
-	join.pressed.connect(_on_join_pressed)
+	join.set_meta("room_address", address)
+	join.pressed.connect(_on_join_pressed.bind(address))
 	join_m.add_child(join)
 	return row
 
@@ -255,7 +293,17 @@ func apply_font_scale() -> void:
 	if _bottom_row != null:
 		_apply_lobby_button_widths(_bottom_row)
 
-func _on_join_pressed() -> void:
-	# 原版点 Join 之后的行为**未观测**（离线环境里没有反应）。这里只给一句人话提示，
-	# 不写内部文档编号。
-	notify("联机对战尚未接入")
+## 点房间条目的 ` Join `。
+##
+## **观测缺口**：原版点了 Join 之后做什么**没有观测**（离线环境里点它毫无反应）。
+## 这里的语义是"连这一行的 address"（`App.connect_to`），属于**本项目的接线**：
+## 地址来自 LAN 广播的 `address` 字段 / broker 的 `GameInfo.address`，两处都是同一个
+## `host:port` 形状（`docs/24` §1.1、`docs/115` §2.2）。占位行没有地址，只提示。
+func _on_join_pressed(address: String = "") -> void:
+	if address.is_empty():
+		notify("这一行没有房间地址")
+		return
+	var app_node := app()
+	if app_node == null:
+		return
+	app_node.call("connect_to", address)

@@ -46,8 +46,27 @@ var campaign_selected_level := 0
 var pending_join_ip := ""
 ## 最近一局的胜负（由 PlayScreen 调 report_match_result 写入，结算框读它）。
 var last_result := {}
-## 自检/自动化模式下不弹"模拟连接"计时器（避免阻塞 headless 退出）。
+## 自检/自动化模式标记（headless 下有些交互要跳过）。**不再用来跳过联机**：
+## 连接是真的 TCP（见 `docs/134`），自检里也走同一条路径。
 var automation := false
+
+# ---------------------------------------------------------------- 联机层（docs/134）
+#
+# 原版的联机在 Rust 侧（`graphwar_backend.rs` 15 个方法 + `graphwar_client_connection_handler.rs`），
+# 本项目把它做成 `client/src/net/` 里的一组 GDScript（`App.net`）：
+#   lan / broker / session 三通道，分帧一律 `u16` 大端 + JSON（`docs/24` §1）。
+## 联机层。`_ready` 里建；为空说明没建起来（所有联机分支会走"不可用"）。
+var net: GwNet
+## 当前是否在**联机对局**里。置真的唯一入口是 `GwNet.joined`。
+var online := false
+## 联机对局里服务端那份快照（`GwNetSession.snapshot()`）。
+##
+## ⚠️ PlayScreen 目前**还没有**读它：它的士兵/障碍是按本地规则摆的
+## （`play_screen.gd::begin_match` 里"非战役 ⇒ 没有障碍"那条注释）。联机要真正同屏，
+## PlayScreen 侧需要改读这个字典 —— 交接内容在 `docs/134` §6。
+var online_room := {}
+## 最近一次联机错误（人话；自检与排障读它，不显示在界面上）。
+var net_error := ""
 
 # ---------------------------------------------------------------- 音频接线
 #
@@ -63,8 +82,6 @@ const SFX_FIRE := "explosion"         # 开火（一次 fire 内就结算完，�
 const SFX_WIN := "unpop"
 const SFX_LOSE := "squash"
 
-const _DISCONNECT_DELAY := 1.2
-
 
 func _ready() -> void:
 	store = GwStore.new()
@@ -73,6 +90,27 @@ func _ready() -> void:
 	state.reset_lan()
 	automation = OS.get_cmdline_user_args().has("--selftest") or OS.get_cmdline_user_args().has("--dump-tree")
 	_install_audio()
+	_install_net()
+
+# ------------------------------------------------------------------ 联机层
+
+## 建联机层并接三条通道（`client/src/net/`）。
+##
+## LAN 发现一启动就绑 UDP 42968（原版的观测端口）。**绑定失败不算错**：
+## 同一台机器再开一个客户端 / 原版客户端正在跑，都会占住这个端口，
+## 那时只是"发现不到房间"，手动 Join IP 仍然可用（`docs/134` §5）。
+func _install_net() -> void:
+	net = GwNet.new()
+	add_child(net)
+	net.joined.connect(_on_net_joined)
+	net.join_failed.connect(_on_net_join_failed)
+	net.disconnected.connect(_on_net_disconnected)
+	net.game_started.connect(_on_net_game_started)
+	net.ended.connect(_on_net_ended)
+	net.rooms_changed.connect(_on_net_rooms_changed)
+	var err := net.lan_listen(GwLanDiscovery.DEFAULT_PORT)
+	if err != OK:
+		print("[gw2/net] LAN 发现未启用：%s" % String(net.lan.last_error))
 
 # ------------------------------------------------------------------ 注册与路由
 
@@ -203,6 +241,10 @@ func command(cmd: String) -> void:
 			_refresh("LanLobby")
 		GwCommands.SHOW_GLOBAL:
 			room_list_mode = "global"
+			# 公网列表 = broker 的房间表（`docs/115`）。地址没配就**不连**
+			# （原版默认从 graphwar.com 取，本项目不发外网请求），此时页面仍显示占位行。
+			if net != null:
+				net.browse_global()
 			_refresh("LanLobby")
 		GwCommands.CREATE_GAME:
 			state.reset_lan()
@@ -216,10 +258,14 @@ func command(cmd: String) -> void:
 		GwCommands.CANCEL_JOIN_IP:
 			close_popup("JoinIpPopUp")
 		GwCommands.CANCEL_CONNECTING:
-			close_popup("ConnectingPopUp")
-			close_popup("DisconnectedPopUp")
+			# 取消 = 真的把那条 TCP 连接放掉（`docs/134` §4）。以前这里只是关窗。
+			_cancel_connect()
 		GwCommands.OK_DISCONNECTED:
 			close_popup("DisconnectedPopUp")
+			# 断线后还留在对局界面是没有意义的（那边没有任何服务器数据可显示）：
+			# 回主菜单。**本轮自定**，原版断线后停在哪一屏未观测。
+			if current_screen == "PlayScreen" and not online:
+				_leave_to_main_menu()
 		# --- 对局设置 ---
 		GwCommands.LOCK_GAME:
 			state.locked = not state.locked
@@ -289,6 +335,14 @@ func _leave_to_main_menu() -> void:
 		var play: Control = screens.get("PlayScreen")
 		if play != null and play.has_method("end_match"):
 			play.call("end_match")
+		# 离开对局 = 放掉那条联机连接（不然服务端会一直等我们的 `FunctionFireRequest`）。
+		if net != null:
+			net.leave()
+		online = false
+		online_room = {}
+	if current_screen == "LanLobby" and net != null:
+		# 出大厅就不该继续占着 broker 连接（LAN 监听留着，代价只是收包）。
+		net.stop_broker()
 	show_screen("MainMenu")
 
 func _refresh(screen_name: String) -> void:
@@ -360,6 +414,18 @@ func _play_replay() -> void:
 		state.reset_replay(lobby.call("selected_replay"))
 	_begin_match()
 
+# ------------------------------------------------------------------ 联机：加入一台服务器
+
+## `JoinIpPopUp` 的"Join"：校验 → 关窗 → `ConnectingPopUp` → **真的连**。
+##
+## 以前这里是模拟的（校验通过后 `await create_timer(1.2)` 再弹断线框）。现在的路径：
+##
+## ```text
+## JoinIpPopUp  →（host:port 校验，观测 docs/92 §4.7）→ ConnectingPopUp
+##   → GwNetSession.start() → TCP → NewConnectionRequest
+##      → 7 条状态同步到齐 ⇒ _on_net_joined() ⇒ PlayScreen（联机模式）
+##      → 连不上 / 握手超时 ⇒ _on_net_join_failed() ⇒ DisconnectedPopUp
+## ```
 func _submit_join_ip() -> void:
 	var popup: Control = screens.get("JoinIpPopUp")
 	var raw := pending_join_ip.strip_edges()
@@ -371,13 +437,143 @@ func _submit_join_ip() -> void:
 		return
 	pending_join_ip = raw
 	close_popup("JoinIpPopUp")
+	connect_to(raw)
+
+
+## 连一台对局服务器（`host:port`）。返回 false = 地址不合法或联机层没建起来。
+##
+## 大厅里点房间条目的 Join 也走这里（那一条的地址来自 LAN 广播）。
+func connect_to(address: String) -> bool:
+	var parsed := GwNet.split_host_port(address)
+	if parsed.is_empty():
+		notify("地址要写成 host:port")
+		return false
+	if net == null:
+		notify("联机层不可用")
+		return false
+	pending_join_ip = address
+	net_error = ""
+	close_popup("DisconnectedPopUp")
 	open_popup("ConnectingPopUp")
-	if automation:
+	net.join(String(parsed["host"]), int(parsed["port"]))
+	return true
+
+
+## 取消连接：关窗 + 放掉 socket。已经加入的对局不会被这个命令关掉
+## （那时 `ConnectingPopUp` 早就关了，取消键在该屏不可见）。
+func _cancel_connect() -> void:
+	if net != null:
+		net.leave()
+	online = false
+	online_room = {}
+	close_popup("ConnectingPopUp")
+	close_popup("DisconnectedPopUp")
+
+
+# ---------------------------------------------------------------- 联机：信号处理
+
+## 握手完成。把服务端那份房间状态搬进 `state`，然后照常进对局界面。
+##
+## 搬什么、为什么：
+## * 四个模式串（`EveryUnit` / `NormalFunction` / `SequentialTurns` / `Timer1m` …）
+##   是**服务端说了算**（`docs/33` §1 的状态同步就是干这个的）；
+## * 玩家表从 `SoldierInfo` + `TeamInfo` 反推（`docs/24` §3 的实体分配）；
+## * 名字/皮肤/段位要 `NameInfo`/`SkinGraphicsInfo` 才有 —— 我们的服务端**没实现**
+##   这一层（`docs/33` §4），所以名字退化成 `Player <id>`（第一个用本机档案名）。
+func _on_net_joined() -> void:
+	close_popup("ConnectingPopUp")
+	online = true
+	net_error = ""
+	print("[gw2/net] joined %s (connection_id=%d)" % [
+		pending_join_ip, net.session.my_connection_id if net.session != null else -1])
+	_sync_state_from_net()
+	_begin_match()
+
+
+func _on_net_game_started() -> void:
+	if not online:
 		return
-	await get_tree().create_timer(_DISCONNECT_DELAY).timeout
-	if screens.has("ConnectingPopUp") and (screens["ConnectingPopUp"] as Control).visible:
-		close_popup("ConnectingPopUp")
-		open_popup("DisconnectedPopUp")
+	# 开局那一批（障碍/士兵/位置/轮到谁）到齐后再刷一次状态。
+	# PlayScreen 不在本轮改动范围内，所以这里用**它已有的** `begin_match()` 重建战场；
+	# 服务器下发的坐标要真正同屏，还得 PlayScreen 侧改读 `online_room`（docs/134 §6）。
+	_sync_state_from_net()
+	if current_screen == "PlayScreen":
+		var play: Control = screens.get("PlayScreen")
+		if play != null and play.has_method("begin_match"):
+			play.call("begin_match")
+
+
+func _on_net_join_failed(reason: String) -> void:
+	online = false
+	online_room = {}
+	net_error = reason
+	print("[gw2/net] join failed: %s" % reason)
+	close_popup("ConnectingPopUp")
+	open_popup("DisconnectedPopUp")
+
+
+func _on_net_disconnected(reason: String) -> void:
+	online = false
+	online_room = {}
+	net_error = reason
+	print("[gw2/net] disconnected: %s" % reason)
+	close_popup("ConnectingPopUp")
+	open_popup("DisconnectedPopUp")
+	if current_screen == "PlayScreen":
+		var play: Control = screens.get("PlayScreen")
+		if play != null and play.has_method("end_match"):
+			play.call("end_match")
+
+
+## 服务端发 `EndingGame`：**正常结束**，不是断线（`src/serverloop.rs` 之后会关连接）。
+func _on_net_ended(reason: String) -> void:
+	print("[gw2/net] match ended (%s)" % reason)
+	online = false
+
+
+func _on_net_rooms_changed(_mode: String) -> void:
+	if current_screen == "LanLobby":
+		_refresh("LanLobby")
+
+
+## 把 `GwNetSession.room` 搬到 `state`（并留一份快照给 PlayScreen 侧）。
+func _sync_state_from_net() -> void:
+	if net == null or net.session == null:
+		return
+	var room: Dictionary = net.session.room
+	online_room = net.session.snapshot()
+	state.reset_lan()
+	var room_name := String(room.get("room_name", ""))
+	state.room_name = room_name if not room_name.is_empty() else "Graphwar Game"
+	state.axis_mode = GwNetSession.axis_mode_index(String(room.get("axis_mode", "")))
+	state.function_mode = GwNetSession.function_mode_index(String(room.get("function_mode", "")))
+	state.turn_mode = GwNetSession.turn_mode_index(String(room.get("turn_mode", "")))
+	state.time_mode = GwNetSession.time_mode_index(String(room.get("time_mode", "")))
+	var players: Dictionary = room.get("players", {})
+	var ids := players.keys()
+	ids.sort()
+	var first := true
+	for pid in ids:
+		var p: Dictionary = players[pid]
+		var team := int(p.get("team", 0))
+		var soldiers := maxi((p.get("soldiers", []) as Array).size(), 1)
+		state.players.append({
+			"name": store.profile.name if first else "Player %d" % int(pid),
+			"team": team,
+			"is_bot": false,
+			"bot_tier": -1,
+			"soldiers": soldiers,
+			"skin": int(team) * 3,
+			"face": -1,
+			"hat": -1,
+			"player_id": int(pid),
+			"connection_id": int(p.get("connection_id", -1)),
+		})
+		first = false
+	if state.players.is_empty():
+		# 服务端还没告诉我们有谁（没开局）：先放自己一个，保证对局界面能建起来。
+		state.add_human(store.profile.name, store.profile.skin, store.profile.face, store.profile.hat)
+	changed()
 
 static func _looks_like_host_port(s: String) -> bool:
 	var idx := s.rfind(":")

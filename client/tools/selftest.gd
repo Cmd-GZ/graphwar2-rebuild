@@ -39,6 +39,15 @@ func run(main: Control) -> int:
 	await _test_fire_fx()
 
 	await _test_replay_player()
+	# 联机（docs/134）：分帧/解析 → 假服务器 → 失败路径 → LAN 发现 → broker → 真服务端
+	await _test_net_framing()
+	await _test_net_join_fake_server()
+	await _test_net_failure_path()
+	await _test_net_link_retry()
+	await _test_net_mid_session_disconnect()
+	await _test_net_lan_discovery()
+	await _test_net_broker_global()
+	await _test_net_real_server()
 
 	var passed := _checks - _failures.size()
 	if _skipped.is_empty():
@@ -1737,3 +1746,757 @@ func _replay_play_button(lobby: Node, title: String) -> GwButton:
 			continue
 		return (row as Node).find_child("PlayReplayButton", true, false) as GwButton
 	return null
+# ================================================================ 联机（docs/134）
+#
+# 这一组只**新增**断言（起点 245 条）。分层与理由：
+#
+# | 用例 | 依赖 | 能证明什么 |
+# |---|---|---|
+# | `_test_net_framing` | 无 socket | 分帧/解析/地址解析与抓包原文逐字节一致 |
+# | `_test_net_join_fake_server` | 进程内 `TCPServer` | 抓包那 7 条→界面真的进 PlayScreen；1.4 s 后**没有**假断线 |
+# | `_test_net_failure_path` | 关着的端口 | 连不上→`DisconnectedPopUp`（不是计时器伪造的） |
+# | `_test_net_mid_session_disconnect` | 假服务器 | 对端断开→`DisconnectedPopUp`；OK 后回主菜单 |
+# | `_test_net_lan_discovery` | UDP 回环 | Local 页真的显示广播里的房间；点 Join 能连上 |
+# | `_test_net_broker_global` | 进程内 broker | Global 页显示 broker 推的 `GameInfo`；`GameRemoved` 删行 |
+# | `_test_net_real_server` | `examples/serve_match` | 与**我们自己的服务端**跑完握手+开局+一发（缺二进制造 skip） |
+
+## 联机用例共用的看门狗上限（帧）。headless 下 1 帧 ≈ 1/60 s。
+const NET_WAIT_FRAMES := 240
+
+func _net() -> GwNet:
+	var app_node := get_node_or_null("/root/App")
+	return app_node.net if app_node != null else null
+
+## 等到 `pred()` 为真，最多 `frames` 帧。返回是否等到。
+func _wait_until(pred: Callable, frames: int = NET_WAIT_FRAMES) -> bool:
+	for i in frames:
+		if bool(pred.call()):
+			return true
+		await _frames(1)
+	return bool(pred.call())
+
+## 从 `StreamPeerTCP` 里把当前可读的字节全读出来（累加到 `into`）。
+func _peer_read(peer: StreamPeerTCP, into: PackedByteArray) -> PackedByteArray:
+	var out := into
+	while peer != null and peer.get_available_bytes() > 0:
+		var r: Array = peer.get_partial_data(65536)
+		if int(r[0]) != OK:
+			break
+		out.append_array(r[1])
+	return out
+
+## 挑一个"当前没人监听"的回环端口（先绑再放）。
+func _free_port() -> int:
+	var srv := TCPServer.new()
+	if srv.listen(0, "127.0.0.1") != OK:
+		return 0
+	var p := srv.get_local_port()
+	srv.stop()
+	return p
+
+## 把 JoinIpPopUp 的输入框写成 `text_` 再按 Join —— 走的是用户真实的点击路径。
+func _submit_join_ip_text(text_: String) -> void:
+	var popup := _screen("JoinIpPopUp")
+	if popup == null:
+		return
+	var edit := popup.find_child("JoinIpIpLineEdit", true, false) as LineEdit
+	if edit != null:
+		edit.text = text_
+	_command("join_ip")
+	await _frames(1)
+	_command("join_join_ip")
+
+## 清掉本组用例留下的状态：退出对局、关掉弹窗、停掉 broker。
+func _net_reset() -> void:
+	var app_node := get_node("/root/App")
+	if app_node.net != null:
+		app_node.net.leave()
+		app_node.net.stop_broker()
+	app_node.online = false
+	app_node.online_room = {}
+	app_node.net_error = ""
+	_command("exit_play")
+	await _frames(2)
+	_command("exit_lan_lobby")
+	await _frames(2)
+	_command("ok_disconnected")
+	await _frames(1)
+
+# ---------------------------------------------------------------- 1. 分帧与解析
+
+func _test_net_framing() -> void:
+	# --- 帧头：u16 **大端**，长度只算负载（docs/24 §1 的 0x0031 = 49） ---
+	var one := GwWireSamples.STATE_SYNC[0]
+	var body := one.to_utf8_buffer()
+	var bytes := GwNetFrame.encode(one)
+	_expect(bytes.size() == body.size() + 2, "分帧：帧长 = 负载 + 2（实际 %d vs %d）"
+		% [bytes.size(), body.size() + 2])
+	_expect(int(bytes[0]) == ((body.size() >> 8) & 0xFF) and int(bytes[1]) == (body.size() & 0xFF),
+		"分帧：长度前缀是大端（%02x %02x）" % [int(bytes[0]), int(bytes[1])])
+	_expect(bytes.slice(2) == body, "分帧：负载逐字节等于原文")
+
+	# --- 7 条状态同步拼一起 = 一次 write；切回来必须一模一样 ---
+	var whole := GwNetFrame.encode_many(GwWireSamples.STATE_SYNC)
+	var d1 := GwNetFrame.decode_buffer(whole)
+	_expect((d1["frames"] as Array).size() == 7, "切帧：一次写入的 7 帧全切出来（实际 %d）"
+		% (d1["frames"] as Array).size())
+	_expect((d1["rest"] as PackedByteArray).is_empty(), "切帧：整帧切完不留残余")
+	_expect((d1["frames"] as Array) == GwWireSamples.STATE_SYNC,
+		"切帧：切出的 7 条与抓包原文逐字节相同")
+
+	# --- 半帧：最后 3 字节还没到 → 只出 6 帧，剩 3 字节留着 ---
+	var cut := whole.slice(0, whole.size() - 3)
+	var d2 := GwNetFrame.decode_buffer(cut)
+	_expect((d2["frames"] as Array).size() == 6, "切帧：半帧不整帧（只出 6 条，实际 %d）"
+		% (d2["frames"] as Array).size())
+	# 残余 = 最后一帧已经到的部分（2 字节头 + 38 字节负载），**不是**"少掉的那 3 字节"
+	var last_frame_len := GwNetFrame.encode(GwWireSamples.STATE_SYNC[6]).size()
+	_expect((d2["rest"] as PackedByteArray).size() == last_frame_len - 3,
+		"切帧：半帧的已到部分留在残余里（%d 字节，最后一帧长 %d）"
+		% [(d2["rest"] as PackedByteArray).size(), last_frame_len])
+
+	# --- 逐字节喂（真实 TCP 会这么拆）：流式重组必须还原 ---
+	var acc := PackedByteArray()
+	var got: Array = []
+	for i in whole.size():
+		acc.append(whole[i])
+		var d := GwNetFrame.decode_buffer(acc)
+		acc = d["rest"]
+		for f in (d["frames"] as Array):
+			got.append(f)
+	_expect(got == GwWireSamples.STATE_SYNC, "切帧：逐字节喂入也能重组出 7 条")
+
+	# --- 非法 UTF-8：与 Frame::decode 一样当成"这帧不能要"，由连接层断开 ---
+	var bad := PackedByteArray([0, 3, 0xff, 0xfe, 0xfd])
+	_expect(bool(GwNetFrame.decode_buffer(bad)["bad_utf8"]), "切帧：非法 UTF-8 被识别")
+
+	# --- 消息解析（外部标签：单键对象，键就是事件名）---
+	var m := GwNetFrame.parse_message('{"NewConnection":{"connection_id":228}}')
+	_expect(String(m.get("kind", "")) == "NewConnection", "解析：取出事件名 NewConnection")
+	_expect(GwNetFrame.as_int(m, "connection_id", -1) == 228, "解析：connection_id = 228")
+	_expect(GwNetFrame.parse_message('{"ClearObstacles":{}}').get("kind", "") == "ClearObstacles",
+		"解析：空体消息也解得开")
+	_expect(GwNetFrame.parse_message('{"a":1,"b":2}').is_empty(), "解析：多键对象拒绝")
+	_expect(GwNetFrame.parse_message('not json').is_empty(), "解析：非 JSON 拒绝")
+	_expect(GwNetFrame.parse_message('{"PosInfo":{"entity_id":231,"pos_x":-21.5,"pos_y":5.9,"radius":0.5}}')
+		.get("kind", "") == "PosInfo", "解析：浮点字段的消息解得开")
+	var ver := GwNetFrame.parse_message(GwWireSamples.VERSION_INFO)
+	_expect(GwNetFrame.as_str(ver, "version") == "2.0.60"
+		and GwNetFrame.as_str(ver, "system") == "linux", "解析：VersionInfo 的 2.0.60/linux")
+	var gi := GwNetFrame.parse_message(GwWireSamples.GAME_INFO_1)
+	var inner := GwNetFrame.as_dict(gi, "game_info")
+	_expect(String(inner.get("room_name", "")) == "US Room 2"
+		and String(inner.get("address", "")) == "69.164.213.144:35981",
+		"解析：GameInfo 的 game_info 内层 9 字段")
+
+	# --- LAN 广播：构造器与抓包原文逐字节相同（两把尺子互相钉住）---
+	var built := GwWireSamples.broadcast("Graphwar Game", "Setup", 1, "[::1]:43717",
+		"EveryUnit", "NormalFunction", "SequentialTurns", "Timer1m", false)
+	_expect(built == GwWireSamples.BROADCAST_1, "广播：构造器与抓包原文逐字节相同")
+	var info := GwLanDiscovery.parse_broadcast(GwWireSamples.BROADCAST_1)
+	_expect(String(info.get("address", "")) == "[::1]:43717"
+		and int(info.get("current_player_count", -1)) == 1
+		and String(info.get("time_mode", "")) == "Timer1m", "广播：解出 9 字段")
+	# 原版受控实验（docs/115 §5.3）：变体 B（事件外壳）与变体 E（Timers1m）都被丢弃。
+	_expect(GwLanDiscovery.parse_broadcast(
+		'{"GameInfo":{"game_info":%s}}' % GwWireSamples.BROADCAST_1).is_empty(),
+		"广播：带事件外壳的变体被丢弃（原版变体 B）")
+	_expect(GwLanDiscovery.parse_broadcast(
+		GwWireSamples.BROADCAST_1.replace('"Timer1m"', '"Timers1m"')).is_empty(),
+		"广播：Timers1m 被丢弃（原版变体 E）")
+	_expect(not GwLanDiscovery.parse_broadcast('{"room_name":"x"}').size() > 0,
+		"广播：缺字段的行被丢弃")
+
+	# --- 超长负载：原版 Message too large，不许截断 ---
+	_expect(GwNetFrame.encode("x".repeat(GwNetFrame.MAX_PAYLOAD + 1)).is_empty(),
+		"分帧：超过 u16 的负载拒绝成帧（原版 Message too large）")
+
+	# --- 地址解析（原版只写 IP 时毫无反应，docs/92 §4.7）---
+	_expect(GwNet.split_host_port("127.0.0.1:39997") == {"host": "127.0.0.1", "port": 39997},
+		"地址：host:port 解得开")
+	_expect(GwNet.split_host_port("[::1]:35245") == {"host": "::1", "port": 35245},
+		"地址：[::1]:port 按 IPv6 写法解得开（抓包里的 address 就是这个形状）")
+	_expect(GwNet.split_host_port("127.0.0.1").is_empty(), "地址：只写 IP 不合法")
+	_expect(GwNet.split_host_port("127.0.0.1:0").is_empty(), "地址：端口 0 不合法")
+	_expect(GwNet.split_host_port("127.0.0.1:70000").is_empty(), "地址：端口越界不合法")
+
+	# --- 会话的字符串 ↔ 档位映射（观测值 + 推断值）---
+	_expect(GwNetSession.turn_mode_index("SimultaneousTurns") == 1
+		and GwNetSession.turn_mode_index("SequentialTurns") == 0, "档位：turn_mode 串 → 索引")
+	_expect(GwNetSession.time_mode_index("Timer1m") == 1
+		and GwNetSession.time_mode_index("Timer3m") == 3, "档位：time_mode 串 → 索引")
+	_expect(GwNetSession.axis_mode_index("EveryUnit") == 3
+		and GwNetSession.function_mode_index("NormalFunction") == 0, "档位：axis/function 串 → 索引")
+	_expect(GwNetSession.team_index("Team2") == 1 and GwNetSession.team_index("Team1") == 0,
+		"档位：Team1/Team2 → 0/1")
+
+
+# ---------------------------------------------------------------- 2. 假服务器 → 进对局
+
+## 进程内起一台"服务端"：`listen(0)` 拿端口，`frames` 是要吐的报文原文。
+func _fake_server_start(frames: Array) -> Dictionary:
+	var srv := TCPServer.new()
+	if srv.listen(0, "127.0.0.1") != OK:
+		return {}
+	return {"srv": srv, "port": srv.get_local_port(), "frames": frames, "peer": null}
+
+func _test_net_join_fake_server() -> void:
+	var app_node := get_node("/root/App")
+	await _net_reset()
+	_command("multiplayer")
+	await _frames(2)
+
+	var fake := _fake_server_start(GwWireSamples.STATE_SYNC)
+	_expect(not fake.is_empty(), "假服务器：起来了")
+	if fake.is_empty():
+		return
+	var srv: TCPServer = fake["srv"]
+	var port := int(fake["port"])
+	_expect(app_node.connect_to("127.0.0.1:%d" % port), "假服务器：connect_to 接受合法地址")
+	_expect(_screen("JoinIpPopUp") == null or not _screen("JoinIpPopUp").visible,
+		"假服务器：点 Join 后 JoinIpPopUp 关上")
+	_expect(_screen("ConnectingPopUp").visible, "假服务器：先进 ConnectingPopUp")
+	_expect(not app_node.online, "假服务器：此刻还没加入")
+
+	# TCP 连上，但**一个字节都不发**：1.4 s 之后必须还停在 ConnectingPopUp。
+	# 这条专门盯住"以前是 1.2 s 计时器假装断线"那个假实现（docs/108 §7）。
+	var got_peer := await _wait_until(func(): return srv.is_connection_available(), 120)
+	_expect(got_peer, "假服务器：客户端连上来了")
+	if not got_peer:
+		srv.stop()
+		return
+	var peer := srv.take_connection()
+	peer.set_no_delay(true)
+	await get_tree().create_timer(1.4).timeout
+	_expect(_screen("ConnectingPopUp").visible,
+		"假服务器：1.4 s 后仍在 ConnectingPopUp（没有假断线计时器）")
+	_expect(not _screen("DisconnectedPopUp").visible,
+		"假服务器：1.4 s 后没有冒出 DisconnectedPopUp")
+
+	# --- 客户端发出去的第一帧必须逐字节等于抓包原文 ---
+	var client_bytes := _peer_read(peer, PackedByteArray())
+	var want_first := GwNetFrame.encode(GwWireSamples.NEW_CONNECTION_REQUEST)
+	_expect(client_bytes.size() >= want_first.size()
+		and client_bytes.slice(0, want_first.size()) == want_first,
+		"假服务器：客户端第一帧是 NewConnectionRequest 的抓包原文字节")
+
+	# --- 故意把 7 条拆成 3 段、段内还切断一只帧，验证流式重组 ---
+	var whole := GwNetFrame.encode_many(GwWireSamples.STATE_SYNC)
+	var cut1 := 5          # 第一段 5 字节（把第一帧的负载切断）
+	var cut2 := 40         # 第二段接着 35 字节（又把第二帧切断）
+	_expect(peer.put_data(whole.slice(0, cut1)) == OK, "假服务器：第一段写入成功")
+	await _frames(3)
+	_expect(not app_node.online, "假服务器：半帧时还没有 joined")
+	_expect(peer.put_data(whole.slice(cut1, cut2)) == OK, "假服务器：第二段写入成功")
+	await _frames(3)
+	_expect(not app_node.online, "假服务器：第二批半帧时还没有 joined")
+	_expect(peer.put_data(whole.slice(cut2)) == OK, "假服务器：剩余字节写入成功")
+
+	var joined := await _wait_until(func(): return app_node.online, NET_WAIT_FRAMES)
+	_expect(joined, "假服务器：7 条到齐后 joined")
+	if not joined:
+		peer.disconnect_from_host()
+		srv.stop()
+		return
+
+	# --- 界面状态变化（这才是"接进界面"的判据）---
+	_expect(not _screen("ConnectingPopUp").visible, "接到后 ConnectingPopUp 关上")
+	_expect(_screen("PlayScreen").visible, "接到后进 PlayScreen")
+	_expect(app_node.current_screen == "PlayScreen", "接到后当前界面是 PlayScreen")
+	var session: GwNetSession = app_node.net.session
+	_expect(session != null and session.my_connection_id == 228,
+		"假服务器：connection_id = 228（NewConnection）")
+	_expect(session.state_sync_progress() == 7, "假服务器：7 条状态同步全收到（实际 %d）"
+		% session.state_sync_progress())
+	# 服务端说了算的四个模式 + 房间名
+	_expect(app_node.state.room_name == "Graphwar Game", "假服务器：房间名来自 GameNameInfo")
+	_expect(app_node.state.turn_mode == 0, "假服务器：turn_mode = SequentialTurns → 0")
+	_expect(app_node.state.time_mode == 1, "假服务器：time_mode = Timer1m → 1")
+	_expect(app_node.state.axis_mode == 3, "假服务器：axis_mode = EveryUnit → 3")
+	_expect(app_node.state.function_mode == 0, "假服务器：function_mode = NormalFunction → 0")
+	_expect(app_node.online_room.get("connection_id", -1) == 228,
+		"假服务器：App.online_room 里有服务端快照")
+	_expect(app_node.state.players.size() >= 1, "假服务器：state.players 建起来了（%d 人）"
+		% app_node.state.players.size())
+
+	# --- 加入后自动发的两条：NewPlayerRequest{228} + GameStartRequest ---
+	var rest := _peer_read(peer, client_bytes)
+	var sent := GwNetFrame.decode_buffer(rest.slice(want_first.size()))
+	var kinds: Array = []
+	for f in (sent["frames"] as Array):
+		kinds.append(String(GwNetFrame.parse_message(String(f)).get("kind", "")))
+	_expect(kinds.has("NewPlayerRequest"), "假服务器：加入后发 NewPlayerRequest（实际 %s）" % str(kinds))
+	_expect(kinds.has("GameStartRequest"), "假服务器：加入后发 GameStartRequest（联机开局，自定）")
+
+	# 清理：假服务器关掉，回主菜单
+	peer.disconnect_from_host()
+	srv.stop()
+	await _net_reset()
+
+
+# ---------------------------------------------------------------- 3. 失败路径
+
+func _test_net_failure_path() -> void:
+	var app_node := get_node("/root/App")
+	await _net_reset()
+	_command("multiplayer")
+	await _frames(2)
+	var port := _free_port()
+	_expect(port > 0, "失败路径：找到一个关着的端口")
+	if port <= 0:
+		return
+	await _submit_join_ip_text("127.0.0.1:%d" % port)
+	_expect(_screen("ConnectingPopUp").visible or _screen("DisconnectedPopUp").visible,
+		"失败路径：先进 ConnectingPopUp")
+	var failed_in_time := await _wait_until(func(): return _screen("DisconnectedPopUp").visible)
+	_expect(failed_in_time, "失败路径：连不上真的走 DisconnectedPopUp（不是计时器）")
+	_expect(not app_node.online, "失败路径：online 保持假")
+	_expect(not _screen("ConnectingPopUp").visible, "失败路径：ConnectingPopUp 已关")
+	_expect(not String(app_node.net_error).is_empty(), "失败路径：net_error 记下了原因（%s）"
+		% app_node.net_error)
+	_expect(app_node.current_screen == "LanLobby", "失败路径：留在 LanLobby（没进对局）")
+
+	# 取消键必须真的把连接放掉（以前只是关窗）
+	_command("cancel_connecting")
+	await _frames(2)
+	_expect(not _screen("DisconnectedPopUp").visible and not _screen("ConnectingPopUp").visible,
+		"失败路径：cancel_connecting 关掉两个连接弹窗")
+	_expect(app_node.net.session == null, "失败路径：cancel_connecting 把会话丢掉了")
+
+	# 地址不合法时**不许**开 ConnectingPopUp（原版只写 IP 时毫无反应）
+	_command("join_ip")
+	await _frames(1)
+	await _submit_join_ip_text("127.0.0.1")
+	_expect(not _screen("ConnectingPopUp").visible, "失败路径：只写 IP 不进 ConnectingPopUp")
+	_expect(not app_node.online, "失败路径：只写 IP 不连")
+	_command("cancel_join_ip")
+	await _frames(1)
+
+
+# ---------------------------------------------------------------- 3.5 重连
+
+## `GwNetLink` 的"失败后重试"能力。
+##
+## 场景与真实用途一致：服务端还没起来（第一次 connect 被拒），随后起来了。
+## `GwNetLink` 是 `RefCounted`，没有 `_process`，所以这里**手动**每帧 `poll()`。
+func _test_net_link_retry() -> void:
+	var port := _free_port()
+	_expect(port > 0, "重连：先找一个空端口")
+	if port <= 0:
+		return
+	var link := GwNetLink.new()
+	link.connect_timeout = 1.0
+	link.retries = 5
+	link.retry_delay = 0.05
+	link.start("127.0.0.1", port)
+	var srv := TCPServer.new()
+	var up := false
+	for i in 600:
+		link.poll(1.0 / 60.0)
+		# 第一次尝试已经被拒（attempts >= 2）才把服务端立起来，制造"重试成功"
+		if link.attempts >= 2 and not srv.is_listening():
+			srv.listen(port, "127.0.0.1")
+		if link.is_open():
+			up = true
+			break
+		await _frames(1)
+	_expect(up, "重连：服务端晚一步起来也能连上（attempts=%d）" % link.attempts)
+	_expect(link.attempts >= 2, "重连：确实重试过（attempts=%d）" % link.attempts)
+	link.shutdown()
+	srv.stop()
+	_expect(not link.is_open(), "重连：shutdown 之后不再是连接态")
+
+
+# ---------------------------------------------------------------- 4. 连上之后被断开
+
+func _test_net_mid_session_disconnect() -> void:
+	var app_node := get_node("/root/App")
+	await _net_reset()
+	_command("multiplayer")
+	await _frames(2)
+	var fake := _fake_server_start(GwWireSamples.STATE_SYNC)
+	if fake.is_empty():
+		_expect(false, "断线：假服务器起不来")
+		return
+	var srv: TCPServer = fake["srv"]
+	app_node.connect_to("127.0.0.1:%d" % int(fake["port"]))
+	var ok := await _wait_until(func(): return srv.is_connection_available(), 120)
+	_expect(ok, "断线：客户端连上来了")
+	if not ok:
+		srv.stop()
+		await _net_reset()
+		return
+	var peer := srv.take_connection()
+	peer.put_data(GwNetFrame.encode_many(GwWireSamples.STATE_SYNC))
+	var joined := await _wait_until(func(): return app_node.online, NET_WAIT_FRAMES)
+	_expect(joined, "断线：先正常加入")
+	if not joined:
+		peer.disconnect_from_host()
+		srv.stop()
+		await _net_reset()
+		return
+	# 对端关连接（真游戏里服务端崩了/房主退了就是这样）
+	peer.disconnect_from_host()
+	var dropped := await _wait_until(func(): return _screen("DisconnectedPopUp").visible)
+	_expect(dropped, "断线：对端断开 → DisconnectedPopUp")
+	_expect(not app_node.online, "断线：online 置假")
+	_expect(not String(app_node.net_error).is_empty(), "断线：net_error 记下了原因")
+	# OK → 回主菜单（我们不再假装还在一局里）
+	_command("ok_disconnected")
+	await _frames(3)
+	_expect(not _screen("DisconnectedPopUp").visible, "断线：OK 关掉 DisconnectedPopUp")
+	_expect(app_node.current_screen == "MainMenu", "断线：OK 后回主菜单（实际 %s）"
+		% app_node.current_screen)
+	srv.stop()
+	await _net_reset()
+
+
+# ---------------------------------------------------------------- 5. LAN 房间发现
+
+func _test_net_lan_discovery() -> void:
+	var app_node := get_node("/root/App")
+	var net: GwNet = app_node.net
+	await _net_reset()
+	_expect(net != null, "LAN：App.net 起来了")
+	if net == null:
+		return
+	# 用临时端口，避免和同一台机器上的另一个客户端/原版抢 42968
+	net.lan_stop()
+	var err := net.lan_listen(0)
+	_expect(err == OK, "LAN：监听临时端口成功（err=%d）" % err)
+	if err != OK:
+		return
+	var listen_port := net.lan_port
+	_expect(listen_port > 0, "LAN：拿到监听端口（%d）" % listen_port)
+
+	# 广播里的 address 指向一台真的（进程内）服务端：点 Join 就能进去
+	var fake := _fake_server_start(GwWireSamples.STATE_SYNC)
+	_expect(not fake.is_empty(), "LAN：房间里那台服务端起起来了")
+	if fake.is_empty():
+		return
+	var fake_port := int(fake["port"])
+	var sender := PacketPeerUDP.new()
+	_expect(sender.bind(0, "127.0.0.1") == OK, "LAN：发送端 socket 起来了")
+	var room_line := GwWireSamples.broadcast("Selftest Lan Room", "Setup", 2,
+		"127.0.0.1:%d" % fake_port, "EveryUnit", "NormalFunction", "SequentialTurns", "Timer1m", false)
+	sender.set_dest_address("127.0.0.1", listen_port)
+	# 换行分帧（LAN 通道），与原版抓包一致
+	_expect(sender.put_packet((room_line + "\n").to_utf8_buffer()) == OK, "LAN：广播报文发出去了")
+
+	var seen := await _wait_until(func(): return net.lan.room_count() >= 1, 120)
+	_expect(seen, "LAN：房间表收到 1 条（实际 %d）" % net.lan.room_count())
+	if not seen:
+		sender.close()
+		return
+	_expect(net.local_rooms()[0]["room_name"] == "Selftest Lan Room",
+		"LAN：房间名来自广播")
+
+	# 界面：Local 页真的画出这一行
+	_command("multiplayer")
+	await _frames(1)
+	_command("show_local")
+	await _frames(3)
+	var lobby := _screen("LanLobby")
+	var list := lobby.find_child("GraphwarLanVBox", true, false)
+	var rows := 0
+	var row_name := ""
+	var row_players := ""
+	for c in list.get_children():
+		if c is HBoxContainer:
+			rows += 1
+			var nm := (c as Node).find_child("RoomName", true, false) as Label
+			var pc := (c as Node).find_child("PlayerCount", true, false) as Label
+			if nm != null:
+				row_name = nm.text
+			if pc != null:
+				row_players = pc.text
+	_expect(rows == 1, "LAN：Local 页画出 1 行（实际 %d）" % rows)
+	_expect(row_name == "Selftest Lan Room", "LAN：行里的房间名是广播里的（实际 %s）" % row_name)
+	_expect(row_players == "2", "LAN：行里的人数来自广播（实际 %s）" % row_players)
+
+	# 非法枚举的报文必须被丢弃（原版变体 E 的现象）
+	sender.put_packet((room_line.replace('"Timer1m"', '"Timers1m"') + "\n").to_utf8_buffer())
+	await _frames(4)
+	_expect(net.lan.room_count() == 1, "LAN：Timers1m 那条没进房间表（仍是 %d 条）"
+		% net.lan.room_count())
+
+	# 点这一行的 Join → 真的去连它广播里的 address
+	var lobby_list := _screen("LanLobby").find_child("GraphwarLanVBox", true, false)
+	var join_btn: GwButton = null
+	for c in lobby_list.get_children():
+		if c is HBoxContainer:
+			join_btn = (c as Node).find_child("JoinButton", true, false) as GwButton
+			break
+	_expect(join_btn != null, "LAN：行里有 Join 按钮")
+	if join_btn != null:
+		_expect(String(join_btn.get_meta("room_address", "")) == "127.0.0.1:%d" % fake_port,
+			"LAN：Join 按钮带着这一行的 address")
+		join_btn.pressed.emit()
+		await _frames(1)
+		_expect(_screen("ConnectingPopUp").visible or app_node.online,
+			"LAN：点房间 Join → ConnectingPopUp（或已经连上）")
+		var srv: TCPServer = fake["srv"]
+		var accepted := await _wait_until(func(): return srv.is_connection_available(), 120)
+		_expect(accepted, "LAN：点 Join 后那台服务端收到了连接")
+		if accepted:
+			var peer := srv.take_connection()
+			peer.put_data(GwNetFrame.encode_many(GwWireSamples.STATE_SYNC))
+			var joined := await _wait_until(func(): return app_node.online, NET_WAIT_FRAMES)
+			_expect(joined, "LAN：从房间列表点进去真的加入成功")
+			if joined:
+				_expect(app_node.current_screen == "PlayScreen", "LAN：加入后进 PlayScreen")
+				_expect(app_node.state.room_name == "Graphwar Game",
+					"LAN：房间名被服务端的 GameNameInfo 覆盖（不是广播里那个）")
+			peer.disconnect_from_host()
+		srv.stop()
+
+	sender.close()
+	net.lan_stop()
+	await _net_reset()
+
+
+# ---------------------------------------------------------------- 6. broker（Global 页）
+
+func _test_net_broker_global() -> void:
+	var app_node := get_node("/root/App")
+	var net: GwNet = app_node.net
+	await _net_reset()
+	var srv := TCPServer.new()
+	if srv.listen(0, "127.0.0.1") != OK:
+		_expect(false, "broker：假 broker 起不来")
+		return
+	var port := srv.get_local_port()
+	# broker 地址默认空（不发外网请求）；这里显式指到本机的假 broker
+	net.set_broker_address("127.0.0.1:%d" % port)
+	var conn := await _wait_until(func(): return srv.is_connection_available(), 120)
+	_expect(conn, "broker：客户端连上来了")
+	if not conn:
+		net.set_broker_address("")
+		srv.stop()
+		return
+	var peer := srv.take_connection()
+	peer.set_no_delay(true)
+	# 客户端第一帧必须是抓包原文的 VersionInfo
+	var buf := PackedByteArray()
+	for i in 120:
+		buf = _peer_read(peer, buf)
+		if (GwNetFrame.decode_buffer(buf)["frames"] as Array).size() >= 1:
+			break
+		await _frames(1)
+	var frames: Array = GwNetFrame.decode_buffer(buf)["frames"]
+	_expect(frames.size() >= 1 and String(frames[0]) == GwWireSamples.VERSION_INFO,
+		"broker：客户端第一帧是 VersionInfo 抓包原文")
+	# broker 推两条 GameInfo
+	peer.put_data(GwNetFrame.encode_many([GwWireSamples.GAME_INFO_1, GwWireSamples.GAME_INFO_2]))
+	var two := await _wait_until(func(): return net.global_rooms().size() == 2, 120)
+	_expect(two, "broker：房间表收到 2 条（实际 %d）" % net.global_rooms().size())
+
+	# 界面：Global 页显示 broker 的行，不再是 4 条占位
+	_command("multiplayer")
+	await _frames(1)
+	_command("show_global")
+	await _frames(3)
+	var list := _screen("LanLobby").find_child("GraphwarLanVBox", true, false)
+	var names: Array = []
+	for c in list.get_children():
+		if c is HBoxContainer:
+			var nm := (c as Node).find_child("RoomName", true, false) as Label
+			if nm != null:
+				names.append(nm.text)
+	_expect(names.size() == 2, "broker：Global 页画出 2 行（实际 %d）" % names.size())
+	_expect(names.has("US Room 2") and names.has("US Room 1"),
+		"broker：行名来自 GameInfo（实际 %s）" % str(names))
+	_expect(not names.has("US Room 3"), "broker：占位行被真数据取代")
+
+	# GameRemoved → 删掉那一行（该报文本身从未抓到，格式来自序列化代码）
+	peer.put_data(GwNetFrame.encode(
+		'{"GameRemoved":{"game_address":"69.164.213.144:37933"}}'))
+	var removed := await _wait_until(func(): return net.global_rooms().size() == 1, 120)
+	_expect(removed, "broker：GameRemoved 删掉对应房间（剩 %d 条）" % net.global_rooms().size())
+	await _frames(2)
+	var left := 0
+	for c in list.get_children():
+		if c is HBoxContainer:
+			left += 1
+	_expect(left == 1, "broker：Global 页跟着删到 1 行（实际 %d）" % left)
+
+	# 地址清空 ⇒ 停止浏览，Global 页回到占位行（真帧口径）
+	net.set_broker_address("")
+	await _frames(2)
+	_command("show_global")
+	await _frames(3)
+	var placeholder := 0
+	for c in list.get_children():
+		if c is HBoxContainer:
+			placeholder += 1
+	_expect(placeholder == PLACEHOLDER_ROOM_COUNT,
+		"broker：没有 broker 数据时 Global 页回到 %d 条占位（实际 %d）"
+		% [PLACEHOLDER_ROOM_COUNT, placeholder])
+	peer.disconnect_from_host()
+	srv.stop()
+	await _net_reset()
+
+
+# ---------------------------------------------------------------- 7. 真服务端端到端
+
+## 找 `examples/serve_match` 的可执行文件。
+##
+## 顺序：`GW2_NET_SERVER` 环境变量 → 仓库根的 `target/debug/examples/serve_match`。
+## 找不到就**显式 skip**（不是静默通过）：没有 Rust 构建产物时这一层验不了。
+func _find_server_binary() -> String:
+	var env := OS.get_environment("GW2_NET_SERVER").strip_edges()
+	if not env.is_empty() and FileAccess.file_exists(env):
+		return env
+	var root := ProjectSettings.globalize_path("res://").path_join("..")
+	var candidates := [
+		root.path_join("target/debug/examples/serve_match"),
+		root.path_join("target/release/examples/serve_match"),
+	]
+	for c in candidates:
+		if FileAccess.file_exists(c):
+			return c
+	return ""
+
+## 真服务端"开局那一批到了"的判据（单独成函数：GDScript 的多行 lambda 不能跨行）。
+func _server_started(session: GwNetSession) -> bool:
+	return session.count_of("AddObstacle") > 0 and session.count_of("SoldierInfo") >= 4
+
+func _test_net_real_server() -> void:
+	var app_node := get_node("/root/App")
+	await _net_reset()
+	var bin := _find_server_binary()
+	if bin.is_empty():
+		_skip("联机端到端：没找到 examples/serve_match（先 `cargo build --offline --example serve_match`，"
+			+ "或用 GW2_NET_SERVER 指定路径）")
+		return
+	var port := _free_port()
+	_expect(port > 0, "真服务端：找到一个空闲端口")
+	if port <= 0:
+		return
+	var pid := OS.create_process(bin, ["127.0.0.1:%d" % port])
+	_expect(pid > 0, "真服务端：把 %s 拉起来了（pid=%d）" % [bin.get_file(), pid])
+	if pid <= 0:
+		return
+
+	var addr := "127.0.0.1:%d" % port
+
+	# --- ① 让**我们自己的服务端**出现在 Local 列表里 ---
+	#
+	# 原版房主侧会周期性地往 UDP 广播端口灌一条裸 9 字段 JSON（`docs/24` §7.2 的
+	# `graphwar_lan_broadcaster_v6.rs`）。我们的 Rust 服务端**没有**这个广播循环
+	# （本轮不动 `src/`），所以这里替它发一条**同形状**的报文 —— 这正是
+	# `docs/115` §5.3 反过来做的那个实验。地址就是这台真服务端的 `host:port`。
+	var net: GwNet = app_node.net
+	if not net.lan_listening():
+		net.lan_listen(0)
+	var lan_port := net.lan_port
+	await get_tree().create_timer(0.3).timeout
+	var sender := PacketPeerUDP.new()
+	sender.bind(0, "127.0.0.1")
+	sender.set_dest_address("127.0.0.1", lan_port)
+	sender.put_packet((GwWireSamples.broadcast("Graphwar Game", "Setup", 1, addr,
+		"EveryUnit", "NormalFunction", "SequentialTurns", "Timer1m", false) + "\n").to_utf8_buffer())
+	_command("multiplayer")
+	await _frames(1)
+	_command("show_local")
+	var listed := await _wait_until(func(): return net.lan.room_count() >= 1, 120)
+	_expect(listed, "真服务端：Local 列表收到这台服务端的广播（%d 条）" % net.lan.room_count())
+	var lobby_list := _screen("LanLobby").find_child("GraphwarLanVBox", true, false)
+	var seen_addr := ""
+	for c in lobby_list.get_children():
+		if c is HBoxContainer:
+			var jb := (c as Node).find_child("JoinButton", true, false) as GwButton
+			if jb != null:
+				seen_addr = String(jb.get_meta("room_address", ""))
+	_expect(seen_addr == addr, "真服务端：Local 页那一行的 address 就是它（%s）" % seen_addr)
+
+	# --- ② 从列表里点进去（连不上就退避重试：服务端刚起来可能还没 bind）---
+	var joined := false
+	for attempt in 6:
+		await get_tree().create_timer(0.25).timeout
+		var btn: GwButton = null
+		for c in _screen("LanLobby").find_child("GraphwarLanVBox", true, false).get_children():
+			if c is HBoxContainer:
+				btn = (c as Node).find_child("JoinButton", true, false) as GwButton
+				if btn != null:
+					break
+		if btn != null:
+			btn.pressed.emit()
+		else:
+			app_node.connect_to(addr)
+		joined = await _wait_until(func(): return app_node.online, 90)
+		if joined:
+			break
+		_command("cancel_connecting")
+		await _frames(2)
+	_expect(joined, "真服务端：从 Local 列表点 Join 真的连上并完成握手")
+	sender.close()
+	if not joined:
+		OS.kill(pid)
+		await _net_reset()
+		return
+
+	var session: GwNetSession = app_node.net.session
+	_expect(app_node.current_screen == "PlayScreen", "真服务端：握手完成即进 PlayScreen")
+	_expect(_screen("PlayScreen").visible, "真服务端：PlayScreen 可见")
+	_expect(session.my_connection_id == 228, "真服务端：NewConnection.connection_id = 228")
+	for kind in ["NewConnection", "TurnModeInfo", "GameStateInfo", "GameNameInfo",
+			"AxisModeInfo", "FunctionModeInfo", "TimeModeInfo"]:
+		_expect(session.count_of(kind) >= 1, "真服务端：收到 %s" % kind)
+	_expect(app_node.state.room_name == "Graphwar Game", "真服务端：房间名进了 state")
+	_expect(app_node.state.time_mode == 1, "真服务端：time_mode=Timer1m → 1")
+
+	# 开局：客户端自动发 GameStartRequest，服务端回障碍/士兵/轮到谁
+	var started := await _wait_until(func(): return _server_started(session), NET_WAIT_FRAMES)
+	_expect(started, "真服务端：开局那一批到了（障碍 %d、SoldierInfo %d）"
+		% [session.count_of("AddObstacle"), session.count_of("SoldierInfo")])
+	if started:
+		_expect(session.room["obstacles"].size() > 0, "真服务端：障碍落进 room.obstacles（%d 个）"
+			% session.room["obstacles"].size())
+		_expect(session.count_of("PosInfo") >= 4, "真服务端：收到 PosInfo（士兵坐标）")
+		_expect(session.count_of("LifeInfo") >= 4, "真服务端：收到 LifeInfo（生死）")
+		_expect(session.count_of("TurnInfo") >= 1, "真服务端：收到 TurnInfo（轮到谁）")
+		var players: Dictionary = session.room["players"]
+		_expect(players.size() == 2, "真服务端：两名玩家（实际 %d）" % players.size())
+		var soldiers_ok := true
+		for player_key in players:
+			if (players[player_key]["soldiers"] as Array).size() != 2:
+				soldiers_ok = false
+		_expect(soldiers_ok, "真服务端：每人 2 名士兵（按 SoldierInfo 归到玩家）")
+		_expect(app_node.state.players.size() == 2, "真服务端：state 里也是 2 名玩家（实际 %d）"
+			% app_node.state.players.size())
+		_expect(app_node.online_room.get("soldiers", 0) == 4, "真服务端：App.online_room 记下 4 名士兵")
+
+		# 真的打一发：以**当前回合玩家**的身份提交并开火。
+		# ⚠️ 我们的服务端不发 `PlayerInfo`（docs/33 §4），所以客户端不知道自己是哪个
+		# player_id —— 这里借用服务端 `TurnInfo` 里的那个 id（docs/134 §6 记了这个缺口）。
+		var turn: Dictionary = session.room["turn"]
+		var who := int(turn.get("player_id", -1))
+		_expect(who > 0, "真服务端：TurnInfo 给了当前回合玩家（%d）" % who)
+		if who > 0:
+			_expect(session.submit_function(who, "0.00"), "真服务端：FunctionUpdateRequest 发出去了")
+			var echoed := await _wait_until(func(): return session.count_of("FunctionInfo") >= 1, 180)
+			_expect(echoed, "真服务端：收到 FunctionInfo 回执")
+			_expect(session.fire(who), "真服务端：FunctionFireRequest 发出去了")
+			var fired := await _wait_until(
+				func(): return session.count_of("FunctionPoints") >= 1, 240)
+			_expect(fired, "真服务端：开火后收到 FunctionPoints（服务器只广播首末点）")
+			if fired:
+				_expect(session.count_of("EffectInfo") >= 1 or session.count_of("QueueDestroyObstacle") >= 1,
+					"真服务端：命中链路有回包（EffectInfo / QueueDestroyObstacle）")
+				var corrected := ""
+				for owner in (session.room["functions"] as Dictionary):
+					corrected = String(session.room["functions"][owner]["corrected"])
+				_expect(not corrected.is_empty(),
+					"真服务端：修正后的函数文本进了 room.functions（`f(x) ± c`，实际 \"%s\"）" % corrected)
+				_expect(app_node.state.players.size() == 2,
+					"真服务端：对局中 state 仍是 2 名玩家")
+
+	# 退出对局 → 回主菜单（同时把 socket 放掉）
+	_command("exit_play")
+	await _frames(2)
+	_expect(app_node.current_screen == "MainMenu", "真服务端：exit_play 回主菜单")
+	_expect(not app_node.online, "真服务端：退出后 online 置假")
+	OS.kill(pid)
+	await _frames(2)
+	await _net_reset()
