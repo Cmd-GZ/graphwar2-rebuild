@@ -30,9 +30,18 @@ ROUTES="${*:-$ALL_ROUTES}"
 # project.binary (the shipped, compiled project settings) overrides project.godot,
 # which would drop our autoload. docs/22 §1 case 3.
 rm -f "$LIVE/project.binary"
-cp "$LIVE/probe.gd" "$OUT/probe.gd.bak" 2>/dev/null || true
+# Back up the harness probe ONCE, and never back up our own dumper (a run that was
+# killed before its trap fired would otherwise poison the backup).
+MARK="Runtime UI inventory dumper"
+if ! grep -q "$MARK" "$LIVE/probe.gd" 2>/dev/null; then
+  cp "$LIVE/probe.gd" "$OUT/probe.gd.bak"
+fi
 cp "$HERE/dump_ui.gd" "$LIVE/probe.gd"
-restore() { cp "$OUT/probe.gd.bak" "$LIVE/probe.gd" 2>/dev/null || true; }
+restore() {
+  if [ -f "$OUT/probe.gd.bak" ] && ! grep -q "$MARK" "$OUT/probe.gd.bak"; then
+    cp "$OUT/probe.gd.bak" "$LIVE/probe.gd"
+  fi
+}
 trap restore EXIT INT TERM
 
 export XDG_DATA_HOME="$WS/.godot-data"
