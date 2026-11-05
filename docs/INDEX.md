@@ -41,6 +41,7 @@
 | [103-disk-levelgen.md](103-disk-levelgen.md) | **`0x4ea6dc` 不是关卡生成器** | 关卡只有散布 + 中心单障碍两种 |
 | [104-recovered-project.md](104-recovered-project.md) | **GDRE 恢复整项目：静态场景属性 + 与运行时台账对拍** | `.tscn` 精确属性、动态节点分解、连接对账、反编译源码校验 |
 | [102-color-assignment.md](102-color-assignment.md) | **玩家颜色分配结案：两张 6 色队色表 + 随机起点线性探测** | 取代 `34`；二进制逐条指令 + 1501 条 replay 观测 |
+| [100-runtime-ai-checks.md](100-runtime-ai-checks.md) | **AI 三问的运行时验证**（25 s 预算 / 两阶段评分 / 每代评分次数，frida 跑真游戏） | 运行时证据；探针 `tools/hook_ai_phases.js` |
 
 ## 二、已归档（`docs/archive/`，**不要引用其结论**）
 
