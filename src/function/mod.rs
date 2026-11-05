@@ -14,6 +14,9 @@
 use crate::{Token, E, PI};
 use crate::Function::{self, *};
 
+mod to_text;
+pub use to_text::{const_text, is_printable, to_text, try_to_text, InvalidToken, CONST_DECIMALS};
+
 // ---------------------------------------------------------------------------
 // 1. 词法
 // ---------------------------------------------------------------------------
