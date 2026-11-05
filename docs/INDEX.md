@@ -33,6 +33,7 @@
 | [90-anti-waste.md](90-anti-waste.md) | 防无用功守则（本轮会话的失败清单与对策） | 防无用功守则（开工必读） |
 | [91-bisection-loop.md](91-bisection-loop.md) | 采样器 normal 二分循环的逐条汇编：`lo`/`hi` 更新规则 | 二分 `lo`/`hi` 规则（早停根因，改码依据） |
 | [92-ui-inventory.md](92-ui-inventory.md) | **客户端界面台账（15/15 界面，运行时枚举）** | 界面 × 控件 × 作用 × 实现状态（唯一台账） |
+| [100-runtime-ai-checks.md](100-runtime-ai-checks.md) | **AI 三问的运行时验证**（25 s 预算 / 两阶段评分 / 每代评分次数，frida 跑真游戏） | 运行时证据；探针 `tools/hook_ai_phases.js` |
 
 ## 二、已归档（`docs/archive/`，**不要引用其结论**）
 
