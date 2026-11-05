@@ -11,6 +11,8 @@
 - LAN 发现：UDP 广播，明文 JSON（`time_mode` 写作 `"Timers1m"`）
 - 对局：TCP，**`u16` 大端长度 + JSON**
 - 29 种消息已入库为 `fixtures/protocol.jsonl`，`src/protocol.rs` 全部解析通过
+- **玩家颜色**（`docs/34`）：观测到 10 个不同取值且有重复 → 不是纯随机 RGB；
+  但同一玩家跨局颜色不同 → 也不按 id 绑定。**规则未定**，`server` 里用占位值
 - **服务端握手可运行**（`docs/33`）：`server::on_new_connection` 产出抓包里的 7 条状态同步，
   逐字节一致；`examples/serve_handshake.rs` 经**真实 TCP 往返**验证
   （客户端发 `NewConnectionRequest`，收到 7 帧 324 字节）
