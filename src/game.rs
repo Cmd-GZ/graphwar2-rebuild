@@ -178,6 +178,27 @@ pub struct TurnStart {
 /// 三次配对样本为 163.9 / 164.0 / 167.0 tick，取 165。
 pub const DESTROY_DELAY_TICKS: i64 = 165;
 
+// ---------------------------------------------------------------------------
+// 玩家加入：`PlayerInfo`（补 `docs/33` §4 的缺口；接线与文档见 `docs/139`）
+// ---------------------------------------------------------------------------
+
+/// `PlayerInfo{player_id, connection_id}` 的报文文本。
+///
+/// **形状是抓包原文**（两个字段、蛇形键名、判别名不上线，`docs/96` §4）：
+/// `fixtures/protocol.jsonl:13` 与 `fixtures/protocol_match.jsonl:36–37` 都是
+/// `{"PlayerInfo":{"player_id":229,"connection_id":228}}`。
+///
+/// 为什么需要它：真客户端靠这条消息知道"**我是哪个 player_id**"。没有它，客户端只能
+/// 退化成"按 `TurnInfo` 里的玩家假定"（`docs/134` §7.1 记的就是这个缺口）。
+/// 本函数只负责**报文文本**，什么时候发由 `serverloop::serve` 决定（收到
+/// `NewPlayerRequest` 时回一条）。
+pub fn player_info_message(player_id: i64, connection_id: i64) -> String {
+    format!(
+        r#"{{"PlayerInfo":{{"player_id":{},"connection_id":{}}}}}"#,
+        player_id, connection_id
+    )
+}
+
 impl Match {
     pub fn new(
         room: RoomState,
@@ -1110,6 +1131,30 @@ mod tests {
         }
         assert_eq!(per_soldier.ai_population_entries(), 4, "按士兵：4 份种群");
         assert_eq!(per_player.ai_population_entries(), 2, "按玩家：2 份种群");
+    }
+
+    /// `PlayerInfo` 的报文文本必须与抓包**逐字节**相同（`docs/139` §4）。
+    ///
+    /// 夹具里那两行是原版客户端的入向报文（`fixtures/protocol_match.jsonl:36–37`），
+    /// 所以这条测试同时钉住"字段名 / 顺序 / 没有空白"三件事。
+    #[test]
+    fn player_info_message_matches_the_captured_bytes() {
+        let captured = include_str!("../fixtures/protocol_match.jsonl")
+            .lines()
+            .find(|l| l.starts_with(r#"{"PlayerInfo""#))
+            .expect("夹具里应有 PlayerInfo 样本");
+        assert_eq!(player_info_message(229, 228), captured);
+        // 第二个样本（同一个 connection_id 上的第二名玩家）也走同一个函数。
+        assert_eq!(
+            player_info_message(232, 228),
+            r#"{"PlayerInfo":{"player_id":232,"connection_id":228}}"#
+        );
+        // 解析回来仍然是一条单键消息，键名 = `PlayerInfo`（客户端按它分派）。
+        let msg = crate::protocol::parse_message(&player_info_message(229, 228))
+            .expect("应能解析回 RawMessage");
+        assert_eq!(msg.kind, "PlayerInfo");
+        assert_eq!(get_int(&msg, "player_id"), Some(229));
+        assert_eq!(get_int(&msg, "connection_id"), Some(228));
     }
 }
 

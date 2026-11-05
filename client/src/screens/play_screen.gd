@@ -133,6 +133,41 @@ var _replay_label: Label = null
 ## 回放里的"当前这一发"（诊断 / 状态行用）。
 var _replay_shot_status := ""
 
+# --- 联机模式（`docs/139`；落实 `docs/134` §7.1 的交接清单） ---
+#
+# 判据是 `App.online`（它的唯一置真入口是 `GwNet.joined`），**不是** `state.kind`：
+# 联机局在 `state` 里就是一次 `reset_lan()`（`kind == Kind.LAN`），与"本机 LAN + Bot"
+# 同一种 kind —— 两者的区别只有"战场是谁摆的"。
+#
+# 联机为真时，本节的数据是**服务端那一份**：
+#   * 士兵 = `room.entities` 里 `kind == "soldier"` 的那些（坐标/队伍/生死都来自 `PosInfo`
+#     /`TeamInfo`/`LifeInfo`），**不再**调 `_spawn_position()`（`docs/134` §7.1 第 1 条）；
+#   * 障碍 = `room.obstacles`（`AddObstacle` 的顺序），**不再**用内核的关卡生成器；
+#   * 靶子 = 没有（服务端的 `Match` 里只有士兵，`docs/117`）。
+var _online_mode := false
+## 正在订阅的会话。`begin_match()` 会被 App 调用**两次**（`joined` 一次、开局批到齐一次），
+## 所以订阅必须可重入（先断后连）。
+var _online_session: GwNetSession = null
+## 服务端的 `PlayerInfo` 给的 player_id；`-1` = 不知道（降级口径见 `_online_can_fire()`）。
+var _my_player_id := -1
+## 服务端 `player_id` → `state.players` 的下标。
+##
+## `App._sync_state_from_net()` 是按 **id 排序**建表的，这里用同一个顺序，
+## 于是 `_functions` / `_active` 这套既有的"按下标存函数"逻辑在联机下也能用。
+var _pid_index := {}
+## 本回合的射手实体 id（`TurnInfo.soldier_id`）；`-1` = 服务端还没说。
+var _online_soldier := -1
+## 本回合轮到哪个玩家（`TurnInfo.player_id`）。
+var _online_turn_player := -1
+## 最近一发复算出来的弹道与诊断（`online_state()` 读；不参与逻辑）。
+var _online_shot := {}
+var _online_shot_status := ""
+## 服务端广播过的特效（`EffectInfo`）：`[{x, y, type, tick}]`。**只记录不绘制** ——
+## `GwPlaneView` 没有特效图层，本轮不新造一个（`docs/139` §7）。
+var _online_effects: Array = []
+## 服务端广播过的生死（`LifeInfo`）：`{entity_id: alive}`。
+var _online_lives := {}
+
 func _ready() -> void:
 	font_divisor = 30        # ButtonGrid.gd / FireContainer.gd / ExtraOptionsHBox.gd 都是 /30
 	super()
@@ -501,6 +536,17 @@ func begin_match() -> void:
 	if st.kind == GwGameState.Kind.REPLAY and String(st.replay_file) != "":
 		_begin_replay(String(st.replay_file))
 		return
+	# 联机分支：**战场来自服务端**（`docs/139`；`docs/134` §7.1 第 1 条）。
+	# 判 `App.online` 而不是 `st.kind`：联机局的 kind 也是 LAN（见成员区注释）。
+	if bool(app_node.online):
+		_replay_mode = false
+		_replay = null
+		if _replay_bar != null:
+			_replay_bar.visible = false
+		_set_replay_input_enabled(true)
+		_begin_online(app_node)
+		return
+	_online_teardown()          # 从联机局退回本地局时把订阅放掉（幂等）
 	_replay_mode = false
 	_replay = null
 	_replay_bar.visible = false
@@ -583,6 +629,7 @@ func end_match() -> void:
 		_replay_bar.visible = false
 	_set_replay_input_enabled(true)
 	_plane.clear_path()
+	_online_teardown()
 
 func _apply_layout_sizes() -> void:
 	apply_font_scale()
@@ -610,6 +657,11 @@ func _target_positions(level_index: int, count: int) -> Array:
 func _refresh_plane() -> void:
 	var list: Array[Dictionary] = []
 	for s in _soldiers:
+		# 联机：阵亡的士兵**不上场**。服务端开火时就把死者从 `Soldiers` 里 retain 掉
+		# （`src/game.rs::fire`），所以"服务端还有这个人"与"画面上还有这个人"是同一件事；
+		# 本地局仍按老样子画成灰 + 叉（那套行为一个字没动）。
+		if _online_mode and not bool(s.get("alive", true)):
+			continue
 		list.append(s)
 	_plane.set_soldiers(list)
 	_plane.set_show_names(_show_names)
@@ -707,6 +759,20 @@ func fire_fx_state() -> Dictionary:
 	var state := {"running": _running, "rings": []}
 	if not _running:
 		return state
+	# 联机：光圈只跟**服务端的 `TurnInfo`** 走（一个回合只有一个射手，
+	# 而且"该不该我开火"由服务端说，不由本地队伍算）。同时回合制在联机里没接，
+	# 所以这里不做 `_shot_owners()` 那一套（`docs/139` §7 记为未做）。
+	if _online_mode:
+		var shooter_o := _active_soldier()
+		if not shooter_o.is_empty() and bool(shooter_o.get("alive", true)):
+			state["rings"] = [{
+				"index": _soldiers.find(shooter_o),
+				"pos": shooter_o.pos,
+				"color": shooter_o.get("color", GwThemeFactory.COL_ACCENT),
+				"ready": _online_can_fire()
+					and String(_functions.get(_active, "")).strip_edges() != "",
+			}]
+		return state
 	var app_node := app()
 	if app_node == null:
 		return state
@@ -761,6 +827,11 @@ func fire() -> void:
 	var expr := String(_input.text).strip_edges()
 	if expr == "":
 		_status("先输入一个函数")
+		return
+	# 联机：开火不再走本地结算（`docs/134` §7.1 第 3 条）。判定、生死、回合全在服务端；
+	# 本界面只发两条请求，然后等 `FunctionPoints` 把弹道带回来（`_draw_online_shot()`）。
+	if _online_mode:
+		_fire_online(expr, active_soldier)
 		return
 	var team := int(active_soldier.team)
 	var direction := 1.0 if team == 0 else -1.0     # 队伍固定在两侧（docs/105）
@@ -973,6 +1044,13 @@ func _active_soldier() -> Dictionary:
 	var app_node := app()
 	if app_node == null:
 		return {}
+	# 联机：射手是**服务端 `TurnInfo.soldier_id` 指的那个实体**，不是"这个玩家的第一个
+	# 活着的士兵"（本地那条规则在联机里没有依据：服务端的游标在 `TurnManager` 里）。
+	if _online_mode and _online_soldier >= 0:
+		for s2 in _soldiers:
+			if int(s2.get("entity_id", -1)) == _online_soldier:
+				return s2
+		return {}
 	for s in _soldiers:
 		if int(s.player) == _active:
 			return s
@@ -1020,6 +1098,10 @@ func _load_active_function() -> void:
 func _check_match_over() -> void:
 	if _replay_mode:
 		return
+	# 联机：胜负由**服务端**判（它发 `EndingGame`，`src/serverloop.rs`；本界面只收）。
+	# 本地这套 `GwLevelRules` 是"单机/战役"的规则，拿去判联机局会出现两个真相源。
+	if _online_mode:
+		return
 	var app_node := app()
 	if app_node == null:
 		return
@@ -1061,7 +1143,14 @@ func _teams_present() -> Array:
 
 ## 人类玩家所在队伍。与 `app.gd::match_summary()` 用同一条规则（第一个非 Bot 玩家），
 ## 这样"谁赢了"与结算框的文案永远一致。
+##
+## 联机分支：队伍取**我自己那个玩家**的队（`PlayerInfo` → 实体上的 `team`），
+## 而不是"state 里的第一个非 Bot" —— 那个人可能是对手（`docs/139` §4）。
 func _human_team() -> int:
+	if _online_mode and _my_player_id >= 0:
+		for s in _soldiers:
+			if int(s.get("player_id", -1)) == _my_player_id:
+				return int(s.get("team", 0))
 	var app_node := app()
 	if app_node == null:
 		return 0
@@ -1454,6 +1543,491 @@ func replay_seek_for_test(target_tick: int) -> void:
 func replay_press_for_test(cmd: String) -> void:
 	_on_replay_button(cmd)
 
+# ---------------------------------------------------------------- 联机模式（docs/139）
+#
+# `docs/134` §7.1 留下的交接清单，本节逐条落实（编号沿用那份清单）：
+#
+# | # | 清单 | 本文件的落点 |
+# |---|---|---|
+# | ① | 士兵/障碍来源 | `_build_online_soldiers()` / `_build_online_obstacles()` —— **不调** `_spawn_position()` |
+# | ② | 轮到谁 | `_apply_online_turn()`（`TurnInfo`）+ `_active_soldier()` 的联机分支 |
+# | ③ | 开火 | `_fire_online()` → `session.submit_function()` + `session.fire()`；弹道在 `_draw_online_shot()` 复算 |
+# | ④ | 随事件刷屏 | `_on_online_message()`（`PosInfo`/`LifeInfo`/`EffectInfo`/`TurnInfo`/`EndOfTurnInfo`/`FunctionPoints`/…） |
+#
+# 谁是"我"：`session.my_player_id`（服务端 `PlayerInfo` 给的 —— 本仓库已补，`docs/139` §4）。
+# 拿不到时（旧服务端 / 自检里的假服务器）降级成"按 `TurnInfo` 里的玩家假定"，
+# 并在状态行里写明"不知道我是谁"。
+
+## 联机开局：把**服务端那一份**战场搬进界面。
+##
+## `App._on_net_joined()` 与 `App._on_net_game_started()` 都会调 `begin_match()`，
+## 所以本函数必须**幂等**：每次都从 `room` 整体重建，不做增量。
+func _begin_online(app_node) -> void:
+	_online_mode = true
+	_online_subscribe(app_node.net.session if app_node.net != null else null)
+	var room := _online_room()
+	_my_player_id = int(_online_session.my_player_id) if _online_session != null else -1
+
+	_functions.clear()
+	_shot_queue.clear()
+	_last_result = {}
+	_soldiers.clear()
+	_targets = GwTargetSet.new()
+	_destroyed_this_shot.clear()
+	_turns_used = 0
+	_last_verdict = {}
+	_time_left = 0.0
+	_plane.clear_path()
+	_plane.set_targets([])            # 服务端的 `Match` 里只有士兵，没有靶子（docs/117）
+	_rebuild_pid_index(room)
+	_build_online_soldiers(room, app_node)
+	_build_online_obstacles(room)
+	_apply_online_turn(room)
+	# 胜负规则只做占位：联机局由服务端判（`_check_match_over()` 的联机分支直接返回）。
+	_rules = GwLevelRules.for_versus(_human_team())
+	_plane.set_axis_mode(int(app_node.state.axis_mode))
+	_refresh_mode_indicators()
+	_refresh_plane()
+	_load_active_function()
+	_update_timer_label()
+	_apply_layout_sizes()
+	_replay_left.visible = false
+	_replay_right.visible = false
+	_running = true
+	_status(_online_status_text())
+
+## 退出联机局（`end_match()` 调用；断线时 App 也会调 `end_match()`）。幂等。
+func _online_teardown() -> void:
+	if _online_session != null and _online_session.message_received.is_connected(_on_online_message):
+		_online_session.message_received.disconnect(_on_online_message)
+	_online_session = null
+	_online_mode = false
+	_online_soldier = -1
+	_online_turn_player = -1
+	_online_shot = {}
+	_online_lives.clear()
+	_online_effects.clear()
+
+## 订阅会话的 `message_received`。**先断后连**，所以连着调多次也只会有一个订阅。
+func _online_subscribe(session: GwNetSession) -> void:
+	var changed := _online_session != session
+	if _online_session != null and changed \
+			and _online_session.message_received.is_connected(_on_online_message):
+		_online_session.message_received.disconnect(_on_online_message)
+	_online_session = session
+	if changed:
+		# 换了一条连接 = 换了一局：上一局的生死/特效/弹道记录一律作废。
+		# （同一条连接上 `begin_match()` 会被调两次，那时这些记录要留着 —— 不然
+		#  第一次重建之后收到的 `LifeQueuedDeath` 会在第二次重建时被抹掉。）
+		_online_lives.clear()
+		_online_effects.clear()
+		_online_shot = {}
+		_online_shot_status = ""
+	if session != null and not session.message_received.is_connected(_on_online_message):
+		session.message_received.connect(_on_online_message)
+
+## 服务端那份房间模型。
+##
+## 会话没了（断线 / 被 `App._cancel_connect()` 放掉）就返回空字典 —— **不**拿
+## `App.online_room` 顶替：那一份是 `GwNetSession.snapshot()` 的**摘要**（只有条数，
+## 没有坐标），拿它摆只会摆出一个空场。`App.online_room` 只在本文件的
+## `online_state()` 里当"App 侧看到的条数"用（诊断 / 自检对拍）。
+func _online_room() -> Dictionary:
+	if _online_session != null:
+		return _online_session.room
+	return {}
+
+## 服务端 `player_id` → `state.players` 下标。**顺序必须与 `App._sync_state_from_net()`
+## 一致**（那里也是 `ids.sort()`），否则 `_functions` / `_active` 会错位。
+func _rebuild_pid_index(room: Dictionary) -> void:
+	_pid_index = {}
+	var players: Dictionary = room.get("players", {})
+	var ids := players.keys()
+	ids.sort()
+	for i in ids.size():
+		_pid_index[int(ids[i])] = i
+
+## 士兵：**服务端 `entities` 里 `kind == "soldier"` 的那些**（`PosInfo` 给坐标、
+## `TeamInfo` 给队伍、`SoldierInfo` 给归属、`LifeInfo` 给生死）。
+##
+## 这与本地局的三处不同，正是 `docs/134` §7.1 第 1 条要的：
+## * 坐标来自服务端（本地 `_spawn_position()` 在联机分支里**不再被调用**）；
+## * 一名玩家可以有多个士兵（本地是"每个玩家的第一个活着的士兵"）；
+## * 每个士兵带 `entity_id` —— 服务端的 `TurnInfo/FunctionPoints/LifeInfo` 都用实体 id 说话。
+func _build_online_soldiers(room: Dictionary, app_node) -> void:
+	var players: Dictionary = room.get("players", {})
+	# 颜色：一支队伍一张 6 色表（`docs/102` §1.2）。联机下用**确定性**种子 ——
+	# 原版的颜色是服务端用 `ColorInfo` 发的（`docs/33` §4 没实现），所以"同一个士兵
+	# 每局都同色"是自定做法，不是复原结论（`docs/139` §6）。
+	var teams: Array[int] = []
+	for pid in _pid_index:
+		var p: Dictionary = players.get(pid, {})
+		teams.append(int(p.get("team", 0)))
+	var colors := GwPlaneView.assign_colors(teams, 1)
+	var entities: Dictionary = room.get("entities", {})
+	var ids := entities.keys()
+	ids.sort()                  # 服务端的下发顺序不保证；固定顺序让自检可复现
+	for eid in ids:
+		var e: Dictionary = entities[eid]
+		if String(e.get("kind", "")) != "soldier":
+			continue
+		var pid := int(e.get("player_id", -1))
+		if not _pid_index.has(pid):
+			# 玩家表里还没这个人（`SoldierInfo` 可能比 `PlayerInfo` 先到）：补一个下标，
+			# 让"下标"这件事永远有定义（`docs/139` §4）。
+			_pid_index[pid] = _pid_index.size()
+			teams.append(int(e.get("team", 0)))
+			colors = GwPlaneView.assign_colors(teams, 1)
+		var pi := int(_pid_index[pid])
+		# 生死：会话模型里的 `alive` 优先；但 `LifeQueuedDeath` 不会被 `GwNetSession` 落进
+		# `entities`（它只认 `LifeInfo`），所以再用本界面记下的那份广播覆盖一次
+		# （否则同一条连接上第二次 `begin_match()` 会把刚死的人复活，`docs/139` §4）。
+		var alive := bool(e.get("alive", true))
+		if _online_lives.has(int(eid)):
+			alive = bool(_online_lives[int(eid)])
+		_soldiers.append({
+			"name": _online_player_name(pi, pid, app_node),
+			"team": int(e.get("team", 0)),
+			"pos": Vector2(float(e.get("x", 0.0)), float(e.get("y", 0.0))),
+			"alive": alive,
+			"is_bot": false,        # 服务端不说谁是谁；一律按真人画（未知，docs/139 §7）
+			"bot_tier": 0,
+			"skin": int(e.get("team", 0)) * 3,   # 与 `App._sync_state_from_net()` 同一取值
+			"player": pi,
+			"player_id": pid,
+			"entity_id": int(eid),
+			"color": colors[pi] if pi < colors.size() else GwThemeFactory.COL_ACCENT,
+		})
+
+func _online_player_name(pi: int, pid: int, app_node) -> String:
+	if app_node != null and pi >= 0 and pi < app_node.state.players.size():
+		return String(app_node.state.players[pi].name)
+	return "Player %d" % pid
+
+## 障碍：`AddObstacle` 下发的 `{pos_x, pos_y, radius}`，顺序即服务端顺序。
+## 形状与 `GwCore.level_obstacles()` 的产物一致（`{pos: Vector2, size: 半径}`），
+## 因为 `GwPlaneView.set_obstacles()` 与 `GwCore.hit_test()` 都吃这一种。
+func _build_online_obstacles(room: Dictionary) -> void:
+	var list: Array = []
+	for o in (room.get("obstacles", []) as Array):
+		list.append({
+			"pos": Vector2(float(o.get("x", 0.0)), float(o.get("y", 0.0))),
+			"size": float(o.get("r", 0.0)),
+		})
+	_obstacles = list
+	_plane.set_obstacles(_obstacles)
+
+## 回合：`turn{player_id, soldier_id}` 决定**谁是射手**（`_active` 是玩家下标，
+## `_online_soldier` 是实体 id —— 两套编号都在用，别混）。
+func _apply_online_turn(room: Dictionary) -> void:
+	var turn: Dictionary = room.get("turn", {})
+	_online_turn_player = int(turn.get("player_id", -1))
+	_online_soldier = int(turn.get("soldier_id", -1))
+	_active = int(_pid_index.get(_online_turn_player, 0))
+	var app_node := app()
+	if app_node != null:
+		_time_left = float(GwModes.turn_seconds(app_node.state.time_mode))
+	# 服务端已经记着的函数原文（`FunctionInfo.owner_id` = **soldier_id**，`docs/24` §4.5）
+	var fns: Dictionary = room.get("functions", {})
+	for owner in fns:
+		var s := _online_soldier_by_entity(int(owner))
+		if not s.is_empty():
+			_functions[int(s.player)] = String(fns[owner].get("function", ""))
+	_load_active_function()
+	_update_timer_label()
+	_refresh_function_list()
+
+## 这一发能不能由我来发。
+##
+## * `_online_soldier < 0`：服务端还没说轮到谁（开局批还没到）⇒ 不能发；
+## * `_my_player_id < 0`：**降级** —— 不知道我是谁，就按"当前回合的玩家"打
+##   （真服务端不发 `PlayerInfo` 时只有这样；`docs/134` §7.1 的临时办法）；
+## * 否则严格比对：`TurnInfo.player_id == 我`。
+func _online_can_fire() -> bool:
+	if not _online_mode:
+		return true
+	if _online_soldier < 0:
+		return false
+	if _my_player_id < 0:
+		return true
+	return _online_turn_player == _my_player_id
+
+## 联机下的时钟：只走数、不换手。换手是服务端 `TurnInfo` 的事 ——
+## 本地那条"到点自动换手"（`_process` 的另一半）在这里会让两个真相源打架。
+func _online_tick(delta: float) -> void:
+	var app_node := app()
+	if app_node == null:
+		return
+	var limit := GwModes.turn_seconds(app_node.state.time_mode)
+	if limit <= 0:
+		_update_timer_label()
+		return
+	_time_left = maxf(0.0, _time_left - delta)
+	_update_timer_label()
+
+## 联机开火：**只发两条请求**，弹道与服务端算。判定/生死/回合全在服务端
+## （`src/serverloop.rs`；`docs/134` §7.1 第 3 条）。
+func _fire_online(expr: String, soldier: Dictionary) -> void:
+	if _online_session == null:
+		_status("联机会话已断（socket 关了），这一发没有发出去")
+		return
+	if _online_soldier >= 0 and int(soldier.get("entity_id", -1)) != _online_soldier:
+		_status("服务端说的射手是实体 %d，不是 %d —— 这一发不发" % [
+			_online_soldier, int(soldier.get("entity_id", -1))])
+		return
+	if not _online_can_fire():
+		_status("还没轮到我（服务端：玩家 %d ／ 我：%s）" % [_online_turn_player,
+			"不知道（服务端没发 PlayerInfo）" if _my_player_id < 0 else str(_my_player_id)])
+		return
+	var pid := _my_player_id if _my_player_id >= 0 else _online_turn_player
+	_functions[_active] = expr
+	var sent_submit := _online_session.submit_function(pid, expr)
+	var sent_fire := _online_session.fire(pid)
+	_online_shot_status = "已请求开火：player %d ／ 函数 %s ／ 提交 %s ／ 开火 %s" % [
+		pid, expr, "已发" if sent_submit else "没发出去", "已发" if sent_fire else "没发出去"]
+	_status("联机：弹道等服务端的 FunctionPoints 回来再画（%s）" % _online_shot_status)
+
+## 服务端每广播一条消息就到这里（`GwNetSession.message_received`）。
+##
+## 注意**顺序**：`GwNetSession._on_frame()` 先 `_apply()` 落到 `room`，再发这个信号 ——
+## 所以这里读 `room` 拿到的是**已更新**的模型（`PosInfo`/`LifeInfo`/`AddObstacle` 都是）。
+func _on_online_message(kind: String, body: Dictionary) -> void:
+	if not _online_mode:
+		return
+	match kind:
+		"PlayerInfo":
+			# 会话侧已经判过"这条是不是给我的"（`GwNetSession._apply` 比对 connection_id），
+			# 这里只做镜像，不再自己判一次（免得出现两个真相源）。
+			if _online_session != null and int(_online_session.my_player_id) >= 0:
+				_my_player_id = int(_online_session.my_player_id)
+				_status(_online_status_text())
+		"PosInfo":
+			var eid := GwNetFrame.body_int(body, "entity_id", -1)
+			var s := _online_soldier_by_entity(eid)
+			if not s.is_empty():
+				s["pos"] = Vector2(GwNetFrame.body_float(body, "pos_x"),
+					GwNetFrame.body_float(body, "pos_y"))
+				_refresh_plane()
+				_status("联机：实体 %d 移动到 (%.2f, %.2f)"
+					% [eid, float(s.pos.x), float(s.pos.y)])
+		"LifeInfo":
+			# `LifeInfo{alive:false}` 是**回放**里的死亡记录（`docs/96` §4 的真相样本），
+			# 也是"复活"（`docs/123` §3.2）唯一能表达的形态 ⇒ 两种取值都认。
+			_online_apply_life(GwNetFrame.body_int(body, "entity_id", -1),
+				GwNetFrame.body_bool(body, "alive", true))
+		"LifeQueuedDeath":
+			# 而**线上**的致死那一批是 `LifeQueuedDeath{entity_id, tick}` + `EffectInfo(DeathEffect)`
+			# （`docs/31` §1、`docs/43`）：我们的服务端照这个发（`src/game.rs::fire`），
+			# 它**不**发 `LifeInfo{alive:false}`。本客户端没有 tick 队列（收尸时刻未还原，
+			# `docs/30` §5），所以收到就按"已死"处理 —— **推断/自定**，写进 `docs/139` §5。
+			_online_apply_life(GwNetFrame.body_int(body, "entity_id", -1), false)
+		"EffectInfo":
+			# 只记录不绘制：`GwPlaneView` 没有特效图层，本轮不新造一个（`docs/139` §7）。
+			_online_effects.append({
+				"x": GwNetFrame.body_float(body, "pos_x"),
+				"y": GwNetFrame.body_float(body, "pos_y"),
+				"type": GwNetFrame.body_str(body, "effect_type"),
+				"tick": GwNetFrame.body_int(body, "start_tick", 0),
+			})
+		"TurnInfo":
+			_apply_online_turn(_online_room())
+			_status(_online_status_text())
+		"EndOfTurnInfo":
+			# 本客户端还没发 `TickRequest`（`room.current_tick` 恒 0），所以只记下来，
+			# 倒计时仍按墙钟走（`docs/139` §7 记为未做）。
+			_status("联机：本回合截止 tick %d（%s）／当前 tick %d" % [
+				GwNetFrame.body_int(body, "end_of_turn_tick", 0),
+				GwNetFrame.body_str(body, "time_mode"),
+				int(_online_room().get("current_tick", 0))])
+		"FunctionInfo":
+			var owner_id := GwNetFrame.body_int(body, "owner_id", -1)
+			var so := _online_soldier_by_entity(owner_id)
+			if not so.is_empty():
+				_functions[int(so.player)] = GwNetFrame.body_str(body, "function")
+				_refresh_function_list()
+		"FunctionPoints":
+			# **弹道的唯一来源**：服务端只广播起点与终点 x（`docs/24` §6.1）。
+			_draw_online_shot(GwNetFrame.body_int(body, "owner_id", -1),
+				Vector2(GwNetFrame.body_float(body, "start_x"),
+					GwNetFrame.body_float(body, "start_y")),
+				GwNetFrame.body_float(body, "end_x"))
+		"AddObstacle", "ClearObstacles", "QueueDestroyObstacle", "DestroyObstacle":
+			_build_online_obstacles(_online_room())
+			_refresh_plane()
+		"EndingGame":
+			_status("联机：服务端宣布本局结束（`EndingGame`）")
+		_:
+			pass
+
+## 一条生死广播落到界面：翻 `_soldiers` 的 alive 位、刷绘制、记进 `_online_lives`。
+##
+## **只翻 alive 位**（与 `docs/123` §2.2 的形状结论一致：不重建实体、不碰掩膜）。
+## 联机下 `_refresh_plane()` 会把阵亡者从**绘制列表**里去掉（服务端在
+## `src/game.rs::fire` 里也把它从 `Soldiers` 里 retain 掉了 —— 两边是同一件事）。
+func _online_apply_life(eid: int, alive: bool) -> void:
+	if eid < 0:
+		return
+	_online_lives[eid] = alive
+	var s := _online_soldier_by_entity(eid)
+	if not s.is_empty():
+		s["alive"] = alive
+		_refresh_plane()
+	_status("联机：实体 %d %s（场上还剩 %d 名士兵）" % [
+		eid, "存活" if alive else "阵亡", _alive_soldier_count()])
+
+func _online_soldier_by_entity(eid: int) -> Dictionary:
+	if eid < 0:
+		return {}
+	for s in _soldiers:
+		if int(s.get("entity_id", -1)) == eid:
+			return s
+	return {}
+
+func _alive_soldier_count() -> int:
+	var n := 0
+	for s in _soldiers:
+		if bool(s.get("alive", true)):
+			n += 1
+	return n
+
+## 用**内核**复算服务端那一发弹道并画出来（`docs/134` §7.1 第 3 条）。
+##
+## 为什么能复算：服务端只发 `start_x/start_y/end_x`（`docs/24` §6.1），轨迹本身不发 ——
+## 但采样器是确定性的（`docs/04`/`docs/116`），所以"同一条函数 + 同一个起点 + 同一个方向"
+## 必然给出同一条曲线。**方向由服务端数据定**：`end_x` 落在起点哪一侧就往哪一侧飞
+## （不是按队伍猜 —— 抓包里 `docs/24` §6.3 那两个样本的方向正是这样定下来的）。
+##
+## 修正（`f(x) + c`）由内核按 `c = y0 - f(x0)` 自己算（`src/api.rs::calculate_path`），
+## 与 `Match::fire` 用的是同一个 `correction()`。`corrected_function`（三位小数的文本）
+## 只拿来当**交叉证据**写进诊断，不参与计算：它被四舍五入过，用它反而会引入误差。
+func _draw_online_shot(owner_id: int, start: Vector2, end_x: float) -> void:
+	var shooter := _online_soldier_by_entity(owner_id)
+	var expr := ""
+	var corrected := ""
+	if _online_session != null:
+		var fns: Dictionary = _online_session.room.get("functions", {})
+		if fns.has(owner_id):
+			expr = String(fns[owner_id].get("function", ""))
+			corrected = String(fns[owner_id].get("corrected", ""))
+	if expr == "":
+		_online_shot_status = ("收到实体 %d 的 FunctionPoints（起点 (%.3f, %.3f)、终点 x %.3f），"
+			+ "但这一发没有函数原文，画不出来") % [owner_id, start.x, start.y, end_x]
+		_status(_online_shot_status)
+		return
+	var direction := 1.0
+	if end_x < start.x:
+		direction = -1.0
+	var result := GwCore.calculate_path(expr, start, direction)
+	if not bool(result.ok):
+		_plane.clear_path()
+		_online_shot_status = "内核算不出这一发（%s）／ 函数 %s" % [String(result.note), expr]
+		_status(_online_shot_status)
+		return
+	var pts: PackedVector2Array = result.points
+	# 只画到服务端说的 `end_x`：服务端的停点 = 它那条点序列的最后一点
+	# （`src/settle.rs::resolve_points`），而采样器确定性 ⇒ 到同一个 x 之前的点序列
+	# 就是服务端那条轨迹。服务端按 0.5 的弦长采样、内核按 0.01，所以停点最多差一个弦长
+	# （`docs/139` §4 记了这一条）。
+	var cut := _truncate_path_at_x(pts, end_x, direction)
+	if cut.size() < 2:
+		cut = pts
+	var impact: Vector2 = cut[cut.size() - 1]
+	_plane.path_color = (shooter.get("color", GwThemeFactory.COL_ACCENT)
+		if not shooter.is_empty() else GwThemeFactory.COL_ACCENT)
+	_plane.set_path(cut, impact, true)
+	if _fire_fx != null:
+		_fire_fx.play(cut)          # 与本地开火同一条 tick 动画（docs/135）
+	var app_node := app()
+	if app_node != null and int(app_node.state.function_mode) == 0:
+		_offset_label.text = GwCore.format_offset(float(result.offset))
+	_online_shot = {
+		"owner": owner_id, "function": expr, "start": start, "end_x": end_x,
+		"direction": direction, "points": cut.size(), "offset": float(result.offset),
+		"last_x": float(impact.x), "last_y": float(impact.y),
+		"corrected": corrected, "blocked_at_end": bool(_stop_before_end(pts, end_x, direction)),
+	}
+	_online_shot_status = ("服务端弹道：实体 %d ／ 函数 %s ／ 起点 (%.3f, %.3f) ／ 终点 x %.3f ／ "
+		+ "方向 %s ／ %d 点 ／ 修正 %s（服务端文本 %s）") % [
+		owner_id, expr, start.x, start.y, end_x, "+x" if direction > 0.0 else "-x",
+		cut.size(), GwCore.format_offset(float(result.offset)),
+		corrected if corrected != "" else "—"]
+	_status(_online_shot_status)
+
+## 把点序列截到 `end_x` 为止（含越过它的第一个点）。
+func _truncate_path_at_x(pts: PackedVector2Array, end_x: float, direction: float) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for p in pts:
+		out.append(p)
+		if (p.x - end_x) * direction >= -1e-9:
+			break
+	return out
+
+## 内核算出来的整条点序列是否**已经越过** `end_x`（= 服务端提前停下，通常是被障碍挡住）。
+func _stop_before_end(pts: PackedVector2Array, end_x: float, direction: float) -> bool:
+	if pts.is_empty():
+		return true
+	return (pts[pts.size() - 1].x - end_x) * direction < -1e-6
+
+func _online_status_text() -> String:
+	var where := "（会话已断）"
+	if _online_session != null:
+		where = "%s:%d" % [String(_online_session.host), int(_online_session.port)]
+	var who := "不知道（服务端没发 PlayerInfo）" if _my_player_id < 0 else str(_my_player_id)
+	return ("联机 %s ／ 我 = %s ／ 轮到玩家 %d（射手实体 %d）／ 士兵 %d（活 %d）／ 障碍 %d ／ "
+		+ "可开火 %s ／ 弹道 %s") % [
+		where, who, _online_turn_player, _online_soldier, _soldiers.size(),
+		_alive_soldier_count(), _obstacles.size(), "是" if _online_can_fire() else "否",
+		_online_shot_status if _online_shot_status != "" else "等 FunctionPoints"]
+
+## 联机局的**只读**快照（自检 / `--dump` 诊断用；不改任何状态）。
+##
+## 与 `level_state()` / `replay_state()` 同一性质：都是"把内部状态摊平成字典"，
+## 让自检可以断言"画面上的士兵/障碍确实来自服务端"。
+func online_state() -> Dictionary:
+	var soldiers: Array = []
+	for s in _soldiers:
+		soldiers.append({
+			"entity_id": int(s.get("entity_id", -1)),
+			"player_id": int(s.get("player_id", -1)),
+			"player": int(s.get("player", -1)),
+			"team": int(s.get("team", 0)),
+			"alive": bool(s.get("alive", true)),
+			"x": float(s.pos.x),
+			"y": float(s.pos.y),
+		})
+	var obstacles: Array = []
+	for o in _obstacles:
+		obstacles.append({
+			"x": float(o["pos"].x), "y": float(o["pos"].y), "r": float(o.get("size", 0.0)),
+		})
+	var shooter := _active_soldier()
+	var app_node := app()
+	return {
+		"mode": _online_mode,
+		"my_player_id": _my_player_id,
+		"turn_player": _online_turn_player,
+		"turn_soldier": _online_soldier,
+		"can_fire": _online_can_fire(),
+		"shooter": {} if shooter.is_empty() else {
+			"entity_id": int(shooter.get("entity_id", -1)),
+			"x": float(shooter.pos.x), "y": float(shooter.pos.y),
+			"team": int(shooter.get("team", 0)),
+		},
+		"players": _pid_index.size(),
+		"soldiers": soldiers,
+		"alive_soldiers": _alive_soldier_count(),
+		"drawn_soldiers": _plane.soldiers.size() if _plane != null else -1,
+		"drawn_points": _plane.path_points.size() if _plane != null else -1,
+		"obstacles": obstacles,
+		"effects": _online_effects.size(),
+		"lives": _online_lives.duplicate(),
+		"shot": _online_shot.duplicate(true),
+		"shot_status": _online_shot_status,
+		"status": _status_text,
+		"received": _online_session.received_kinds() if _online_session != null else [],
+		"room_snapshot": (app_node.online_room.duplicate(true) if app_node != null else {}),
+	}
+
 # ---------------------------------------------------------------- 每帧
 
 func _process(delta: float) -> void:
@@ -1461,6 +2035,11 @@ func _process(delta: float) -> void:
 		_replay_tick(delta)
 		return
 	if not _running:
+		return
+	# 联机：时钟照走，但**回合推进不由本地做**（服务端的 `TurnInfo` 说了算）。
+	# 本地那条"到点自动换手"在联机里会与服务端打架 —— 于是分成独立分支，互不干扰。
+	if _online_mode:
+		_online_tick(delta)
 		return
 	var app_node := app()
 	if app_node == null:

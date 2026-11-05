@@ -50,6 +50,7 @@ func run(main: Control) -> int:
 	await _test_net_lan_discovery()
 	await _test_net_broker_global()
 	await _test_net_real_server()
+	await _test_play_online()
 
 	var passed := _checks - _failures.size()
 	if _skipped.is_empty():
@@ -2724,5 +2725,554 @@ func _test_net_real_server() -> void:
 	_expect(app_node.current_screen == "MainMenu", "真服务端：exit_play 回主菜单")
 	_expect(not app_node.online, "真服务端：退出后 online 置假")
 	OS.kill(pid)
+	await _frames(2)
+	await _net_reset()
+
+# ---------------------------------------------------------------- 8. 联机 PlayScreen（docs/139）
+
+## `docs/134` §7.1 的交接清单，验收分两段：
+##
+## **A. 真服务端**（`examples/serve_match`）—— 本任务的三条硬指标都在这里：
+##   ① 战场上的士兵/障碍来自服务端（不是 `_spawn_position()` 摆的）；
+##   ② 开火后收到 `FunctionPoints`，界面用内核按它复算并画出弹道；
+##   ③ 收到死亡广播后那名士兵从画面上消失。
+##
+## **B. 进程内假服务器** —— 补 A 段拿不到的两件事（真服务端的时序/内容由 `src/` 决定）：
+##   * `LifeInfo{alive:false}` 这一条**线上**从来不发（我们的服务端发 `LifeQueuedDeath`，
+##     `docs/31` §1），所以这条分支只能用受控报文验；
+##   * 弹道复算的"点序列 = 服务端那条"可以用一条**固定**的 `FunctionPoints` 钉死。
+##
+## 缺 `serve_match` 时 A 段整段 skip（显式打印原因），B 段照样跑。
+## 联机用例的**关卡种子**（固定值，见 `src/serverloop.rs::run` 的 `GW2_MATCH_SEED`）。
+##
+## 为什么钉死：真服务端的关卡种子默认来自 `seed_from_os()`，所以每局障碍布局都不同。
+## 实测 30 个种子里有 8 个会**有障碍压住射手**（开局位置固定 x=±10，生成器不看这两个点），
+## 还有约 1.6% 的种子一个障碍都不生成 —— 用例若跟着摇骰子，就会偶发红灯。
+## 这个种子是实测挑出来的：10 个障碍、4 名士兵都不在障碍里。
+const ONLINE_TEST_SEED := 8
+
+func _test_play_online() -> void:
+	# 子进程继承父进程的环境（`OS.create_process` 没有 env 参数，只能这样给）。
+	OS.set_environment("GW2_MATCH_SEED", str(ONLINE_TEST_SEED))
+	await _test_play_online_real_server()
+	await _test_play_online_lifeinfo_fake_server()
+	OS.set_environment("GW2_MATCH_SEED", "")      # 还回去：别的用例不该被这个种子影响
+
+## 挑一条"能打中敌人"的函数：**用内核**预演服务端会怎么判。
+##
+## 为什么要挑：服务端的障碍是每局随机生成的（`docs/62` §1），一条固定水平线经常被墙挡住，
+## 而这一局只轮到我开一次火 —— 打空就再也验不了"死亡 ⇒ 消失"。
+##
+## 候选不是拍脑袋列的，是**按几何构造**的：
+##
+## ```text
+## f(x) = a·x + k·sin(m·π·(x - x0)/(xt - x0))
+## 修正后 g(x) = f(x) + (y0 - f(x0)) = y0 + a·(x - x0) + k·sin(…)      （g(x0) = y0）
+## 取 a = (yt - y0)/(xt - x0) ⇒ g(xt) = yt                             （两端都在弹道上）
+## ```
+##
+## 正弦项在两个端点上都是 0，所以 **k 只改中间鼓起来多少**（绕墙用的自由度），
+## `m = 1/2/3` 给三种鼓法。这样每一族曲线都**必然穿过目标**，只需再问两件事：
+## 内核的掩膜有没有把它挡下、它有没有顺手打到别人。
+##
+## 预演用的是**服务端那条规则**（掩膜判停 + 士兵半径 0.5 判死，`src/settle.rs::resolve_points`），
+## 数据也全是服务端广播的 —— 这等于客户端本来就会做的本地预览，不是作弊。
+## 采样口径：服务端按弦长 0.5 结算（`src/game.rs::fire`），内核按 0.01；这里每 50 点取 1，
+## 让预演贴近服务端那一份（`docs/139` §4 记了这条近似）。
+func _pick_online_shot(state: Dictionary) -> String:
+	var shooter: Dictionary = state["shooter"]
+	if shooter.is_empty():
+		return ""
+	var start := Vector2(float(shooter["x"]), float(shooter["y"]))
+	var direction := 1.0 if int(shooter["team"]) == 0 else -1.0
+	var enemies := _online_enemies_of(state)
+	var obstacles := _online_obstacles_of(state)
+	if enemies.is_empty():
+		return ""
+	var tried := {}
+	for e in enemies:
+		var target: Vector2 = e["pos"]
+		var dx := target.x - start.x
+		if absf(dx) < 1e-6:
+			continue
+		var slope := (target.y - start.y) / dx
+		# ---- ① 直线 + 正弦鼓包：k 控制中间鼓多少（m 给 1/2/3 个鼓包） ----
+		for m in [1, 2, 3]:
+			var w: float = float(m) * PI / dx
+			for k in [0.0, 1.0, -1.0, 2.0, -2.0, 3.0, -3.0, 4.0, -4.0, 5.0, -5.0, 6.0, -6.0]:
+				var expr := _online_sine_expr(slope, k, w, start.x)
+				if tried.has(expr):
+					continue
+				tried[expr] = true
+				if _online_shot_hits(expr, start, direction, enemies, obstacles):
+					print("[gw2/selftest] 联机：选中函数 %s（目标 %.3f, %.3f）" % [expr, target.x, target.y])
+					return expr
+		# ---- ② 过"路标"的抛物线：f(x) = slope·x + b·(x-x0)·(x-xt) ----
+		# 这一族同样**必然穿过射手与目标**（两个因子在端点上归零），而 b 由路标
+		# (wx, wy) 反解 ⇒ 相当于"先挑一个空的中间点，再问内核这条路通不通"。
+		for wx_f in [0.2, 0.35, 0.5, 0.65, 0.8]:
+			var wx: float = start.x + dx * float(wx_f)
+			for wy in [-14.0, -11.0, -8.0, -5.0, -2.0, 1.0, 4.0, 7.0, 10.0, 13.0]:
+				var den := (wx - start.x) * (wx - target.x)
+				if absf(den) < 1e-9:
+					continue
+				var b: float = (float(wy) - (start.y + slope * (wx - start.x))) / den
+				var expr2 := _online_poly_expr(slope, b, start.x, target.x)
+				if tried.has(expr2):
+					continue
+				tried[expr2] = true
+				if _online_shot_hits(expr2, start, direction, enemies, obstacles):
+					print("[gw2/selftest] 联机：选中函数 %s（路标 %.3f, %.3f → 目标 %.3f, %.3f）"
+						% [expr2, wx, float(wy), target.x, target.y])
+					return expr2
+	# 全都否了：把布局与各理由的计数打出来（否则现场只剩"挑不到"三个字）
+	var reasons := {}
+	for expr_key in tried:
+		var why := String(_online_shot_reason(String(expr_key), start, direction, enemies, obstacles))
+		reasons[why] = int(reasons.get(why, 0)) + 1
+	print("[gw2/selftest] 联机：挑不到函数 —— 射手 (%.3f, %.3f) dir=%.0f ／ 敌人 %s ／ 障碍 %s ／ 理由 %s"
+		% [start.x, start.y, direction, str(enemies), str(obstacles), str(reasons)])
+	return ""
+
+## `f(x) = slope·x + k·sin(w·(x - x0))` 的原文。
+##
+## 符号一律显式拼（`+ 10.0` / `- 10.0`），不依赖解析器对 `x - -10` 的处理。
+func _online_sine_expr(slope: float, k: float, w: float, x0: float) -> String:
+	var inner := "(x %s %.12f)" % ["-" if x0 >= 0.0 else "+", absf(x0)]
+	var out := "%.12f*x" % slope
+	if absf(k) > 1e-15:
+		out += " %s %.12f*sin(%.12f*%s)" % ["+" if k > 0.0 else "-", absf(k), w, inner]
+	return out
+
+## `f(x) = slope·x + b·(x - x0)·(x - xt)` 的原文（两个因子在端点上归零）。
+func _online_poly_expr(slope: float, b: float, x0: float, xt: float) -> String:
+	var out := "%.12f*x" % slope
+	if absf(b) > 1e-15:
+		out += " %s %.12f*(x %s %.12f)*(x %s %.12f)" % [
+			"+" if b > 0.0 else "-", absf(b),
+			"-" if x0 >= 0.0 else "+", absf(x0),
+			"-" if xt >= 0.0 else "+", absf(xt),
+		]
+	return out
+
+## 这一条函数**按服务端的判法**会不会打死一个敌人（且不被墙挡住）。
+func _online_shot_hits(expr: String, start: Vector2, direction: float, enemies: Array,
+		obstacles: Array) -> bool:
+	return String(_online_shot_reason(expr, start, direction, enemies, obstacles)) == ""
+
+## 判定理由（`""` = 可用）。诊断用：全都被否掉时把它按理由计数打出来。
+func _online_shot_reason(expr: String, start: Vector2, direction: float, enemies: Array,
+		obstacles: Array) -> String:
+	var res := GwCore.calculate_path(expr, start, direction)
+	if not bool(res.ok):
+		return "parse:" + String(res.note)
+	var pts: PackedVector2Array = res.points
+	var coarse := PackedVector2Array()
+	var i := 0
+	while i < pts.size():
+		coarse.append(pts[i])
+		i += 50
+	if coarse.size() < 2:
+		return "too_short"
+	var judged := GwCore.hit_test(coarse, enemies, obstacles)
+	if not bool(judged.get("ok", false)):
+		return "hit_test_failed"
+	if bool(judged.get("blocked", true)):
+		return "blocked"
+	var hits: Array = judged.get("hits", [])
+	var hit_points: PackedVector2Array = judged.get("hit_points", PackedVector2Array())
+	if hits.size() != 1:
+		return "hits=%d" % hits.size()
+	if hit_points.size() < 1:
+		return "no_hit_point"
+	var idx := int(hits[0])
+	if idx < 0 or idx >= enemies.size():
+		return "bad_index"
+	if hit_points[0].distance_to((enemies[idx] as Dictionary)["pos"]) > 0.2:
+		return "far"
+	return ""
+
+func _online_enemies_of(state: Dictionary) -> Array:
+	var enemies: Array = []
+	var my_pid := int(state.get("my_player_id", -1))
+	var my_team := -1
+	for s in state["soldiers"]:
+		if int(s["player_id"]) == my_pid:
+			my_team = int(s["team"])
+			break
+	for s in state["soldiers"]:
+		if not bool(s["alive"]):
+			continue
+		if my_pid >= 0 and int(s["player_id"]) == my_pid:
+			continue
+		if my_pid < 0 and my_team >= 0 and int(s["team"]) == my_team:
+			continue
+		enemies.append({"pos": Vector2(float(s["x"]), float(s["y"])), "radius": 0.5})
+	return enemies
+
+func _online_obstacles_of(state: Dictionary) -> Array:
+	var obstacles: Array = []
+	for o in state["obstacles"]:
+		obstacles.append({
+			"pos": Vector2(float(o["x"]), float(o["y"])), "size": float(o["r"]),
+		})
+	return obstacles
+
+## 服务端 `entities` 里第一个 `alive == false` 的士兵实体；没有就 -1。
+func _first_dead_entity(session: GwNetSession) -> int:
+	var entities: Dictionary = session.room["entities"]
+	var ids := entities.keys()
+	ids.sort()
+	for eid in ids:
+		var e: Dictionary = entities[eid]
+		if String(e.get("kind", "")) == "soldier" and not bool(e.get("alive", true)):
+			return int(eid)
+	return -1
+
+## 本用例的"开局那一批到了"判据。
+##
+## **不用** `_server_started()`：那个要求 `AddObstacle > 0`，而 `levelgen::generate()` 的
+## `n = trunc(normal()*7 + 15)` 在 `min_count = 0` 时有约 1.6% 会落到 0 个障碍
+## （`src/levelgen.rs:87`；`docs/139` §7 记了这一条 —— 既有用例 `_test_net_real_server`
+## 用的是旧判据，本轮不动它）。这里只要求"士兵都到了 + 轮到谁说了"。
+func _play_online_started(session: GwNetSession) -> bool:
+	return session.count_of("SoldierInfo") >= 4 and session.count_of("TurnInfo") >= 1
+
+## A 段：真服务端（`examples/serve_match`）。
+func _test_play_online_real_server() -> void:
+	var app_node := get_node("/root/App")
+	await _net_reset()
+	var bin := _find_server_binary()
+	if bin.is_empty():
+		_skip("联机 PlayScreen：没找到 examples/serve_match（先 `cargo build --offline --example serve_match`，"
+			+ "或用 GW2_NET_SERVER 指定路径）")
+		return
+	# ---- 先找一局**打得出去**的 ----
+	#
+	# 为什么可能打不出去：服务端的障碍是每局重抽的（`docs/62` §1），而开局位置是固定的
+	# （两队各 x=±10，`src/serverloop.rs`），障碍**不看**这两个点 ⇒ 偶尔会有障碍压住射手，
+	# 那样任何弹道在第一点就被掩膜判"挡住"（`src/settle.rs::resolve_points`），
+	# 本地预演会如实告诉你 153 个候选全都 blocked。这种情况换一局（最多 4 次），
+	# 不在断言里制造随机失败（`docs/139` §6.2 记了这一条）。
+	var play = _screen("PlayScreen")
+	if not _expect(play != null and play.has_method("online_state"),
+			"联机 PlayScreen：PlayScreen 有 online_state()（本轮新增的诊断入口）"):
+		return
+	var pid := -1
+	var session: GwNetSession = null
+	var st := {}
+	var expr := ""
+	var attempts := 0
+	# 6 次：射手被障碍压住的概率约 40%（x=±10 是固定开局位、障碍随机撒），
+	# 6 次全撞上的概率 ~0.4%（每次尝试 ~3 s，只在真撞上时才多花时间）。
+	for attempt in 6:
+		attempts += 1
+		var port := _free_port()
+		if port <= 0:
+			break
+		pid = OS.create_process(bin, ["127.0.0.1:%d" % port])
+		if pid <= 0:
+			break
+		var addr := "127.0.0.1:%d" % port
+		var joined := false
+		for a2 in 6:
+			await get_tree().create_timer(0.2).timeout
+			app_node.connect_to(addr)
+			joined = await _wait_until(func(): return app_node.online, 90)
+			if joined:
+				break
+			_command("cancel_connecting")
+			await _frames(2)
+		if not joined:
+			OS.kill(pid)
+			pid = -1
+			await _net_reset()
+			continue
+		session = app_node.net.session
+		var started := await _wait_until(
+			func(): return _play_online_started(session), NET_WAIT_FRAMES)
+		if not started:
+			OS.kill(pid)
+			pid = -1
+			await _net_reset()
+			continue
+		await _frames(3)      # 让 App 的 game_started → PlayScreen.begin_match() 跑完
+		st = play.call("online_state")
+		expr = _pick_online_shot(st)
+		if expr != "":
+			break
+		print("[gw2/selftest] 联机：第 %d 局的射手打不出去（障碍压住 / 全被挡），换一局"
+			% (attempt + 1))
+		OS.kill(pid)
+		pid = -1
+		_command("exit_play")
+		await _frames(2)
+		await _net_reset()
+	if not _expect(pid > 0 and session != null and expr != "",
+			"联机 PlayScreen：%d 次尝试内找到一局打得出去的（连上 + 开局 + 有一条能命中敌人的函数）"
+				% attempts):
+		if pid > 0:
+			OS.kill(pid)
+		await _net_reset()
+		return
+	_expect(int(session.my_connection_id) == 228,
+		"联机 PlayScreen：NewConnection.connection_id = 228")
+
+	# ---------------- ④ 我是谁：服务端 `PlayerInfo`（本轮补的） ----------------
+	_expect(session.count_of("PlayerInfo") >= 1,
+		"联机 PlayScreen：收到 PlayerInfo（服务端本轮补上，docs/139 §4）")
+	_expect(int(session.my_player_id) == 229,
+		"联机 PlayScreen：会话认下 my_player_id = 229（实际 %d）" % int(session.my_player_id))
+	st = play.call("online_state")      # 重读一次：`game_started` 之后 App 又刷过一遍
+	_expect(bool(st["mode"]), "联机 PlayScreen：PlayScreen 走的是**联机分支**（不是本地摆兵）")
+	_expect(int(st["my_player_id"]) == 229,
+		"联机 PlayScreen：界面侧也认下 229（实际 %d）" % int(st["my_player_id"]))
+	_expect(int(st["turn_player"]) > 0,
+		"联机 PlayScreen：TurnInfo 给了当前回合玩家（%d）" % int(st["turn_player"]))
+	_expect(int(st["turn_player"]) == int(session.room["turn"]["player_id"]),
+		"联机 PlayScreen：界面里的回合玩家 = 服务端 room.turn.player_id")
+	_expect(int(st["turn_soldier"]) == int(session.room["turn"]["soldier_id"]),
+		"联机 PlayScreen：界面里的射手实体 = 服务端 room.turn.soldier_id")
+
+	# ---------------- ① 战场来自服务端 ----------------
+	var room: Dictionary = session.room
+	var entities: Dictionary = room["entities"]
+	var soldiers: Array = st["soldiers"]
+	_expect(soldiers.size() == 4, "① 战场上有 4 名士兵（服务端下发，实际 %d）" % soldiers.size())
+	var ids_ok := true
+	var pos_ok := true
+	var no_local_spawn := true
+	for s in soldiers:
+		var eid := int(s["entity_id"])
+		if not entities.has(eid):
+			ids_ok = false
+			continue
+		var e: Dictionary = entities[eid]
+		# 容差 1e-4：界面把坐标存进 `Vector2`（Godot 的 Vector2 是 **float32**），
+		# 所以末几位本来就会掉；棋盘单位下 1e-4 远小于一个像素（`docs/139` §4）。
+		if absf(float(s["x"]) - float(e["x"])) > 1e-4 or absf(float(s["y"]) - float(e["y"])) > 1e-4:
+			pos_ok = false
+		# `_spawn_position()` 只会在 x = ±18 上放人（本地规则）；服务端放在 x = ±10。
+		if absf(absf(float(s["x"])) - 18.0) < 1e-6:
+			no_local_spawn = false
+	_expect(ids_ok, "① 界面上的每一名士兵都是服务端 `entities` 里的实体（entity_id 对得上）")
+	_expect(pos_ok, "① 士兵坐标逐条等于服务端 `PosInfo` 写下的坐标（不是本地摆的）")
+	_expect(no_local_spawn, "① 没有一名士兵落在 `_spawn_position()` 的 x=±18 上")
+	var obstacles: Array = st["obstacles"]
+	var server_obstacles: Array = room["obstacles"]
+	_expect(obstacles.size() == server_obstacles.size(),
+		"① 障碍数与服务端 `AddObstacle` 一致（界面 %d ／ 服务端 %d）"
+			% [obstacles.size(), server_obstacles.size()])
+	if server_obstacles.is_empty():
+		# 服务端这一局真的没下发障碍（`src/levelgen.rs:87` 的 n 可以钳到 0，约 1.6%）。
+		# 不假装通过：显式 skip，并把理由打出来。
+		_skip("① 障碍来自服务端：本次服务端下发 0 个障碍（levelgen 的 n 钳到 0），这条无从判")
+	else:
+		_expect(obstacles.size() > 0, "① 障碍非空（%d 个，本地非战役原本恒为 0）"
+			% obstacles.size())
+	var obs_ok := true
+	for i in mini(obstacles.size(), server_obstacles.size()):
+		if absf(float(obstacles[i]["x"]) - float(server_obstacles[i]["x"])) > 1e-4 \
+				or absf(float(obstacles[i]["y"]) - float(server_obstacles[i]["y"])) > 1e-4 \
+				or absf(float(obstacles[i]["r"]) - float(server_obstacles[i]["r"])) > 1e-4:
+			obs_ok = false
+	if not obs_ok:
+		for i in mini(obstacles.size(), server_obstacles.size()):
+			if absf(float(obstacles[i]["x"]) - float(server_obstacles[i]["x"])) > 1e-4 \
+					or absf(float(obstacles[i]["y"]) - float(server_obstacles[i]["y"])) > 1e-4 \
+					or absf(float(obstacles[i]["r"]) - float(server_obstacles[i]["r"])) > 1e-4:
+				print("[gw2/selftest] 障碍首次不符 #%d：界面 %s ／ 服务端 %s"
+					% [i, str(obstacles[i]), str(server_obstacles[i])])
+				break
+	_expect(obs_ok, "① 每个障碍的坐标/半径逐条等于服务端 `AddObstacle`（含顺序）")
+	_expect(int(st["drawn_soldiers"]) == soldiers.size(),
+		"① 画出来的士兵数 = 服务端下发的士兵数（%d）" % int(st["drawn_soldiers"]))
+
+	# 构造式的候选表达式必须**内核能解析**（否则"挑不到函数"会变成静默失败）
+	var probe_a := GwCore.calculate_path(_online_poly_expr(0.2, -0.5, -10.0, 10.0),
+		Vector2(-10.0, 0.0), 1.0)
+	var probe_b := GwCore.calculate_path(_online_sine_expr(0.0, 2.0, 0.15708, -10.0),
+		Vector2(-10.0, 0.0), 1.0)
+	_expect(bool(probe_a.ok) and bool(probe_b.ok),
+		"联机 PlayScreen：构造出来的候选表达式内核能解析（抛物线 %s ／ 正弦 %s）"
+			% [String(probe_a.note), String(probe_b.note)])
+
+	# ---------------- ② 开火 → FunctionPoints → 内核复算弹道 ----------------
+	_expect(bool(st["can_fire"]),
+		"② PlayerInfo 说我是 229、TurnInfo 也轮到 229 ⇒ 可以开火")
+	# `expr` 是上面那轮"找一局打得出去的"里挑好的（这里不重新挑：同一条状态只会给同一个答案，
+	# 而每挑一次要跑 150+ 次内核调用）。
+	_expect(expr != "", "② 用内核挑到一条能打中敌人的函数（%s）" % expr)
+	if expr != "":
+		var fp_before := session.count_of("FunctionPoints")
+		_fire_function(play, expr)
+		var fired := await _wait_until(
+			func(): return session.count_of("FunctionPoints") > fp_before, 240)
+		_expect(fired, "② 开火后收到 FunctionPoints（服务端只发首末点）")
+		await _frames(2)
+		var st2: Dictionary = play.call("online_state")
+		var shot: Dictionary = st2["shot"]
+		_expect(not shot.is_empty(), "② 界面按 FunctionPoints 复算了弹道")
+		if not shot.is_empty():
+			if String(shot["function"]) != expr:
+				print("[gw2/selftest] 复算函数不符：提交 %s ／ 复算 %s ／ room.functions=%s"
+					% [expr, String(shot["function"]), str(session.room["functions"])])
+			_expect(String(shot["function"]) == expr,
+				"② 复算用的函数文本 = 我提交的那一条（%s）" % String(shot["function"]))
+			_expect(int(shot["points"]) >= 2, "② 复算出的点序列 ≥ 2 点（实际 %d）" % int(shot["points"]))
+			_expect(int(st2["drawn_points"]) == int(shot["points"]),
+				"② 画在棋盘上的点数 = 复算出的点数（%d）" % int(st2["drawn_points"]))
+			# 方向由 end_x 定（不是按队伍猜）
+			var start_x := float((shot["start"] as Vector2).x)
+			var end_x := float(shot["end_x"])
+			var dir_ok := (end_x > start_x and float(shot["direction"]) > 0.0) \
+				or (end_x < start_x and float(shot["direction"]) < 0.0)
+			_expect(dir_ok, "② 方向由 end_x 定（起点 x %.3f → 终点 x %.3f）" % [start_x, end_x])
+			# 只画到服务端说的终点：最后一个点的 x 不该越过 end_x 一个弦长以上
+			_expect(absf(float(shot["last_x"]) - end_x) <= 0.6,
+				"② 弹道收在服务端给的 end_x 上（末点 x %.3f ／ end_x %.3f）"
+					% [float(shot["last_x"]), end_x])
+
+	# ---------------- ③ 死亡广播 → 士兵从画面上消失 ----------------
+	#
+	# ⚠️ 判据为什么不看 `session.room`：我们的服务端发的是 `LifeQueuedDeath`（`docs/31` §1），
+	# 而 `GwNetSession._apply()` 只认 `LifeInfo`（联机层不在本轮可改范围）—— 所以会话模型里的
+	# `alive` 位**不会**变。界面侧两种报文都收（`_online_apply_life()`），这里就以界面为准，
+	# 同时断言线上真的来了死亡报文（否则"消失"就没有依据）。
+	var died := await _wait_until(
+		func(): return int(play.call("online_state")["alive_soldiers"]) < soldiers.size(), 300)
+	_expect(died, "③ 收到死亡广播后界面记下了阵亡（线上报文：LifeQueuedDeath %d 条）"
+		% session.count_of("LifeQueuedDeath"))
+	_expect(session.count_of("LifeQueuedDeath") >= 1,
+		"③ 线上真的来了 `LifeQueuedDeath`（docs/31 §1，实际 %d 条）"
+			% session.count_of("LifeQueuedDeath"))
+	if died:
+		var st3: Dictionary = play.call("online_state")
+		var dead_id := -1
+		for eid_key in (st3["lives"] as Dictionary):
+			if not bool(st3["lives"][eid_key]):
+				dead_id = int(eid_key)
+				break
+		_expect(dead_id > 0, "③ 界面记下了是哪个实体死的（entity %d）" % dead_id)
+		var still_alive := false
+		for s3 in st3["soldiers"]:
+			if int(s3["entity_id"]) == dead_id and bool(s3["alive"]):
+				still_alive = true
+		_expect(not still_alive, "③ 实体 %d 的 alive 位翻成 false" % dead_id)
+		_expect(int(st3["drawn_soldiers"]) == int(st3["alive_soldiers"]),
+			"③ 画面上只剩活着的（画 %d ／ 活 %d）"
+				% [int(st3["drawn_soldiers"]), int(st3["alive_soldiers"])])
+		_expect(int(st3["drawn_soldiers"]) < soldiers.size(),
+			"③ 阵亡的士兵从画面上消失（%d → %d）"
+				% [soldiers.size(), int(st3["drawn_soldiers"])])
+
+	# ---------------- ⑤ 回合交给对手之后不能再开火（PlayerInfo 的用处） ----------------
+	var swapped := await _wait_until(
+		func(): return int(session.room["turn"]["player_id"]) != 229, 240)
+	_expect(swapped, "⑤ 服务端把回合交给了对手（TurnInfo 驱动，界面不自己换手）")
+	if swapped:
+		await _frames(2)
+		var st4: Dictionary = play.call("online_state")
+		_expect(not bool(st4["can_fire"]),
+			"⑤ 不是我的回合 ⇒ 界面拒绝开火（只有 PlayerInfo 分得清我跟对手）")
+		var fp2 := session.count_of("FunctionPoints")
+		_fire_function(play, "0")
+		await _frames(3)
+		_expect(session.count_of("FunctionPoints") == fp2,
+			"⑤ 被拒绝的那一发**没有**发到服务端（FunctionPoints 数不变）")
+
+	# 退出对局 → 回主菜单（同时把 socket 放掉）
+	_command("exit_play")
+	await _frames(2)
+	_expect(app_node.current_screen == "MainMenu", "联机 PlayScreen：exit_play 回主菜单")
+	_expect(not app_node.online, "联机 PlayScreen：退出后 online 置假")
+	var after: Dictionary = play.call("online_state")
+	_expect(not bool(after["mode"]), "联机 PlayScreen：退出后联机分支关掉了（订阅已放）")
+	OS.kill(pid)
+	await _frames(2)
+	await _net_reset()
+
+## B 段：进程内假服务器 —— 只发**这一条**要验的报文。
+##
+## 为什么需要它：真服务端在我们的复原里**不发** `LifeInfo{alive:false}`（它发
+## `LifeQueuedDeath`，`docs/31` §1），而"生死的唯一权威是 `LifeInfo`"是回放语料
+## （`docs/96` §4）与协议表（`docs/24` §4.5）都写着的事实。所以这条分支必须**单独**验，
+## 否则一旦真服务器哪天改发 `LifeInfo`，界面就会挂。
+func _test_play_online_lifeinfo_fake_server() -> void:
+	var app_node := get_node("/root/App")
+	await _net_reset()
+	var srv := TCPServer.new()
+	if srv.listen(0, "127.0.0.1") != OK:
+		_expect(false, "联机 PlayScreen：假服务器起不来")
+		return
+	var port := srv.get_local_port()
+	app_node.connect_to("127.0.0.1:%d" % port)
+	var got_peer := await _wait_until(func(): return srv.is_connection_available(), 120)
+	if not _expect(got_peer, "联机 PlayScreen：假服务器收到连接"):
+		srv.stop()
+		await _net_reset()
+		return
+	var peer := srv.take_connection()
+	peer.set_no_delay(true)
+
+	# 一笔写下去：7 条状态同步 + 开局那一批 + `PlayerInfo` + `TurnInfo`。
+	# 形状全部是抓包的（`GwWireSamples.STATE_SYNC` 逐字节，其余照 `docs/24` §3–§6）。
+	var batch: Array[String] = []
+	for m in GwWireSamples.STATE_SYNC:
+		batch.append(m)
+	batch.append(GwNetFrame.message("AddObstacle",
+		'{"pos_x":-4.0,"pos_y":3.0,"radius":1.5}'))
+	batch.append(GwNetFrame.message("SoldierInfo", '{"soldier_id":230,"player_id":229}'))
+	batch.append(GwNetFrame.message("SoldierInfo", '{"soldier_id":232,"player_id":231}'))
+	batch.append(GwNetFrame.message("TeamInfo", '{"entity_id":230,"team":"Team1"}'))
+	batch.append(GwNetFrame.message("TeamInfo", '{"entity_id":232,"team":"Team2"}'))
+	batch.append(GwNetFrame.message("PosInfo",
+		'{"entity_id":230,"pos_x":-10.0,"pos_y":0.0,"radius":0.5}'))
+	batch.append(GwNetFrame.message("PosInfo",
+		'{"entity_id":232,"pos_x":10.0,"pos_y":0.0,"radius":0.5}'))
+	batch.append(GwNetFrame.message("LifeInfo", '{"entity_id":230,"alive":true}'))
+	batch.append(GwNetFrame.message("LifeInfo", '{"entity_id":232,"alive":true}'))
+	batch.append(GwNetFrame.message("PlayerInfo", '{"player_id":229,"connection_id":228}'))
+	batch.append(GwNetFrame.message("TurnInfo", '{"player_id":229,"soldier_id":230}'))
+	_expect(peer.put_data(GwNetFrame.encode_many(batch)) == OK,
+		"联机 PlayScreen：假服务器把整批报文写进去了")
+	var joined := await _wait_until(func(): return app_node.online, NET_WAIT_FRAMES)
+	_expect(joined, "联机 PlayScreen：假服务器这一局也进了 PlayScreen")
+	if not joined:
+		peer.disconnect_from_host()
+		srv.stop()
+		await _net_reset()
+		return
+	var play = _screen("PlayScreen")
+	await _frames(3)
+	var st: Dictionary = play.call("online_state")
+	_expect(int(st["my_player_id"]) == 229,
+		"联机 PlayScreen：`PlayerInfo` 一条就够（界面侧 my_player_id = %d）"
+			% int(st["my_player_id"]))
+	_expect((st["soldiers"] as Array).size() == 2,
+		"联机 PlayScreen：假服务器这一局摆了 2 名士兵（实际 %d）"
+			% (st["soldiers"] as Array).size())
+	_expect(int(st["drawn_soldiers"]) == 2, "联机 PlayScreen：画面上 2 名士兵")
+	# 灌一条 `LifeInfo{alive:false}` —— ③ 的字面口径就是这一条。
+	_expect(peer.put_data(GwNetFrame.encode(
+		GwNetFrame.message("LifeInfo", '{"entity_id":232,"alive":false}'))) == OK,
+		"联机 PlayScreen：LifeInfo{alive:false} 写出去了")
+	var disappeared := await _wait_until(
+		func(): return int(play.call("online_state")["drawn_soldiers"]) < 2, 180)
+	_expect(disappeared, "③ 收到 `LifeInfo{alive:false}` 后士兵从画面上消失（2 → 1）")
+	var st2: Dictionary = play.call("online_state")
+	_expect(int(st2["alive_soldiers"]) == 1 and int(st2["drawn_soldiers"]) == 1,
+		"③ 只剩 1 名活着的士兵（画 %d ／ 活 %d）"
+			% [int(st2["drawn_soldiers"]), int(st2["alive_soldiers"])])
+	var dead_listed := false
+	for s in st2["soldiers"]:
+		if int(s["entity_id"]) == 232:
+			dead_listed = true
+			_expect(not bool(s["alive"]),
+				"③ 实体 232 的 alive 位翻成 false（只翻位，不重建实体）")
+	_expect(dead_listed, "③ 阵亡的实体仍然记在 `_soldiers` 里（只是不画）")
+	peer.disconnect_from_host()
+	srv.stop()
+	_command("exit_play")
 	await _frames(2)
 	await _net_reset()
