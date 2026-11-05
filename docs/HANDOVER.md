@@ -18,6 +18,12 @@
   游戏本体只有 3 次且是 HashMap 的 RandomState 播种。二进制里 `expand 32-byte k`
   出现 6 次 ⇒ 确有 ChaCha；看不见是因为 Rust 走原始 syscall(318)，绕过 libc 函数。
   hook syscall 会让 frida 自断通信，该路不可用
+- **服务端循环可跑完整一局**（`docs/62`）：`serverloop::run` + `tests/server_match.rs`
+  在真实 TCP 上握手→开局→轮流开火→延迟删除→回合推进→全灭 EndingGame（7 秒，自动化）
+- **关卡生成 Rust 实现**（`docs/61`）：`levelgen::generate` 用真实随机流夹具
+  复现 13 个障碍，`x/y/r` 的 `to_bits()` 全等
+- **生命规则现状**（`docs/63`）：3 局数据挖掘 0 次多杀/0 次队友命中；静态追踪只追到
+  `tick_event` 构造器与 Arc 派发，未到判定。下一步应写客户端直接驱动真服务器来制造场景
 - **回合顺序判定**（`docs/60`）：按状态指针分 2~4 条流分别记录后重新检验
   （3 局 × 每流 × 3 方法 × 25 偏移）仍全不一致 ⇒ **证伪"来自 ChaCha 流"**。
   最可能来自 **HashMap 迭代顺序**（Rust RandomState 的 SipHash 键由 getrandom 播种，
