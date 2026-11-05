@@ -8,7 +8,7 @@ AI 参数）已复原到"逐位验证"或"强观测"；`client/` 里 15/15 界�
 最后更新：2026-11-06。本轮（README/本页/HANDOVER §0 一起重写的那一轮）确认的事实：
 
 1. **客户端不再是 0 进度**：`client/` 里 **15/15 界面**（7 基础 + 8 弹窗）能启动、能跳转、能开一局；
-   自检 **146 条断言**（有资产时全绿；无资产时 `90 passed, 9 skipped`，每条 skip 显式报原因）；
+   自检 **181 条断言**（有资产时全绿；缺资产时 `175 passed, 10 skipped`，每条 skip 显式报原因）；
    内核经 `client/gw2rebuild.gdextension` 接进来，状态行显示 `判定来源：kernel`（[`108`](108-client-rebuild.md)、
    [`116`](116-kernel-api.md)、[`120`](120-hit-test.md)）。
 2. **协议 73/73**（旧文"46 种消息、缺 24 个"作废）：13 个强类型 + 10 个原样透传；
@@ -115,7 +115,7 @@ AI 参数）已复原到"逐位验证"或"强观测"；`client/` 里 15/15 界�
 |---|---|---|
 | 界面 | **15/15**（7 基础 + 8 弹窗），能启动、能跳转 | `client/scenes/screens/` 15 个 `.tscn`；[`108`](108-client-rebuild.md)、`92` 运行时台账 |
 | 能否开一局 | ✅ 设置对局 → 加 Bot → Start → 输入函数 → Fire → 弹道 → 命中 → 结算 | [`108`](108-client-rebuild.md) §0 |
-| 自动验收 | `bash client/run.sh selftest` = **146 条断言**；无资产时 `90 passed, 9 skipped`（每条 skip 显式报原因） | 本机实测 |
+| 自动验收 | `bash client/run.sh selftest` = **181 条断言**；缺资产时 `175 passed, 10 skipped`（每条 skip 显式报原因） | 本机实测 |
 | 弹道来源 | **内核**（`GW2Rebuild.path_calculate`，等弦长采样）；拔掉 `.so` 才退到 `preview` | [`116`](116-kernel-api.md) |
 | 命中来源 | **内核**（`GW2Rebuild.hit_test` → `settle::resolve_points`）；状态行显示 `判定来源：kernel` | [`120`](120-hit-test.md) |
 | 媒体资产 | 仓库**不含任何媒体文件**；用自己的 `Graphwar.pck` 跑 `tools/extract_assets.py` → `client/assets/`（gitignored） | [`121`](121-visual-fidelity.md) |

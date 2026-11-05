@@ -347,6 +347,20 @@ def main(argv):
 
     print("解出 %d 个文件（%.1f MB）到 %s" % (len(rows), total / 1e6, args.out))
     print("原版工程设置 %d 条 -> original_project_settings.json" % len(settings))
+
+    # 音频单独一段：包里只有导入产物（`.mp3str` / `.sample` / `.oggvorbisstr`），
+    # 要把它们还原成能直接播放的文件，逻辑在 `client/src/audio/extract_audio.py`
+    # （`docs/128` §2）。这里用子进程调用而不是 import，避免把客户端脚本变成库依赖。
+    audio = os.path.join(HERE, "..", "client", "src", "audio", "extract_audio.py")
+    audio = os.path.normpath(audio)
+    if os.path.isfile(audio):
+        import subprocess
+        rc = subprocess.call([sys.executable, audio, "--pck", args.pck,
+                              "--out", os.path.join(args.out, "sounds")])
+        if rc != 0:
+            print("⚠ 音频提取失败（exit %d）；图标/字体已就绪，音频需单独排查" % rc)
+    else:
+        print("⚠ 没找到 %s —— 音频不会解出" % audio)
     return 0
 
 
