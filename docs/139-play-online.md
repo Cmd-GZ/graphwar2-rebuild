@@ -497,5 +497,5 @@ cargo test --offline                              → 333 passed / 0 failed / 1 
 
 | 文件 | 变化 | 内容 |
 |---|---|---|
-| `tests/server_match.rs` | **+383 / −15** | `Board`（报文→局面）+ `mask()`/`others()`/`enemies_of()` + `candidate_exprs()`/`judge()`/`aim()` 瞄准板；测试 1 改成逐回合瞄准（并新增"至少两发是瞄准过的"）；测试 2、3 的种子换成 `[53;32]`；三处 `drop(client)`；新增 `#[ignore] search_ai_seed` |
+| `tests/server_match.rs` | **+384 / −15** | `Board`（报文→局面）+ `mask()`/`others()`/`enemies_of()` + `candidate_exprs()`/`judge()`/`aim()` 瞄准板；测试 1 改成逐回合瞄准（并新增"至少两发是瞄准过的"）；测试 2、3 的种子换成 `[53;32]`；三处 `drop(client)`；新增 `#[ignore] search_ai_seed` |
 | `docs/139-play-online.md` | 本章 | §10 台账 + §11 改法；§3.2 的"另一条线"改成"已合入"；§5.4 收成指向 §10 的一句 |
