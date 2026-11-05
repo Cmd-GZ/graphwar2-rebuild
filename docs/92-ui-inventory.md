@@ -325,7 +325,7 @@ GraphwarRootNode                        [GraphwarRootNode]  (Rust)
 | `PlayScreen/.../PlayMainHBox/LeftControls/LeftButtonGrid` | GridContainer `ButtonGrid.gd` | **18 个** `GraphwarButton` | **左键盘**：`C` `π` `e` `1`…`9` `0` `.` `(` + 三个控制键（icon=`arrow_left_bar.svg` / `arrow_left.svg` / `delete_left.svg`） | ❌ 控件；函数文法 **逻辑✅** `src/function/` |
 | `.../RightControls/RightButtonGrid` | GridContainer `ButtonGrid.gd` | **18 个** `GraphwarButton` | **右键盘**：`abs` `ln` `√` `sin` `cos` `tan` `*` `/` `exp` `+` `-` `^` `x` `y`(disabled) `)` + icon=`delete_right.svg` / `arrow_right.svg` / `arrow_right_bar.svg` | ❌ 控件；文法 **逻辑✅** `src/function/` |
 | `.../RightButtonGrid/YButton` | GraphwarButton | `y`，**永远 `disabled`** | **观测**：Normal 与 DiffEq 两种模式下都 disabled。**推断**：与"`y'` 是死特性、DiffEq 只生成 x/y 权重"有关，但**为什么 `y` 也不给按**未知 | ❌ |
-| `.../RightControls/HBoxContainer/FireContainer/FireButton` | GraphwarButton | ` Fire! ` | **观测**：`emit_signal("pressed")` 真的发出 `FunctionFireRequest`（`docs/26`），随后 `shot_calc/calculate_path` 计数上升 | ❌ 控件；**开火链路 逻辑✅** `src/shot.rs`/`path.rs` |
+| `.../RightControls/HBoxContainer/FireContainer/FireButton` | GraphwarButton | ` Fire! ` | 开火。**`docs/26` 观测**：`emit_signal("pressed")` 真的发出 `FunctionFireRequest`，随后 `shot_calc/calculate_path` 计数上升（本文件只观测到按钮存在且未 `disabled`，**没有重复验证开火**） | ❌ 控件；**开火链路 逻辑✅** `src/shot.rs`/`path.rs` |
 | `.../FireContainer/ClipButton` | GraphwarButton | ` Fire! `（同文本，带 `AnimationRect` 子节点） | 开火按钮的动画层（点击用 `FireButton`） | ❌ |
 | `.../LeftControls/LeftTopButtonsContainer/ExitButtonContainer/{ClipButton,LongPressButton}` | GraphwarButton ×2 | icon=`return.svg` | 退出对局（**长按**才出确认框，见 §4.11） | ❌ |
 | `.../LeftTopButtonsContainer/MarginContainer/ShowExtraButtons` | GraphwarButton `ShowExtraButtons.gd` | icon 由脚本 `set_button_icon(load(...))` 切换（`hide_extra_buttons.svg`/`show_extra_buttons.svg`） | **观测（字符串池）**：切换"附加按钮区"显示，`set_show_extra_buttons(...)` 联动 `plane_container`/`view_function_pad` | ❌ |
@@ -340,7 +340,7 @@ GraphwarRootNode                        [GraphwarRootNode]  (Rust)
 | `PlayScreen/.../VBoxContainer/HBoxContainer2/GraphwarFunctionInput` | GraphwarFunctionInput（Rust） | `text` = 当前函数串，如 `(1.44*(cos(x)+x))`、`log(exp((12.10/(-19.42/x))))`、`sin((-1.20+x))` | 函数输入框（Rust 自绘，无 LineEdit 子节点）。**观测**：`text` 属性可读 ⇒ 能读到场上显示的函数 | ❌ 控件；解析 **逻辑✅** `src/function/` |
 | `.../HBoxContainer2/FxContainer/FxLabel` | Label | ` f(x) = `（DiffEq 时同位置显示 `dx/dy` 图标） | 函数前缀提示 | ❌ |
 | `.../FxContainer/AspectRatioContainer/FxTextureButton` | GraphwarButton | icon `fx_option.svg`（Normal）/`dx_dy_option.svg`（DiffEq） | **观测**：模式指示图标 | ❌ |
-| `.../HBoxContainer2/TimerContainer/TimerLabel` | Label | `02:58`、`01:59`、`00:04`、`00:00` | 回合倒计时。**观测**：3 次 `TurnTimeButton` ⇒ 起始 `02:59`（= 3 分钟档） | ❌ 控件；时钟 **观测✅** `docs/35` |
+| `.../HBoxContainer2/TimerContainer/TimerLabel` | Label | `02:59`、`01:59`、`00:04`、`00:00` | 回合倒计时。**观测**：按 2 次 `TurnTimeButton` ⇒ 起始 `02:59`（3 分钟档）、按 1 次 ⇒ `01:59`（2 分钟档）；见 §6 | ❌ 控件；时钟 **观测✅** `docs/35` |
 | `.../HBoxContainer2/OffsetContainer/OffsetLabel` | Label | Normal：` + 2.515 `、` + 0.919 `；**DiffEq：空** | 修正常数显示。**观测**：DiffEq 模式下为空（`+c` 修正不显示/不适用） | ❌ 控件；修正 **逻辑✅** `src/shot.rs` |
 | `.../HBoxContainer2/GraphwarFunctionInput`（同上） | — | — | — | — |
 | `PlayScreen/.../VBoxContainer/PlayMainHBox/PlaneContainer/GamePlane/PlaneContainer/VBoxContainer/HBoxContainer/ViewFunctionsLabel` | RichTextLabel `ViewFunctionsLabel.gd` | `[outline_size=4][outline_color=black][color=green]player 1: f(x) = 3x+234[/color]…` | 顶部"各玩家当前函数"列表 | ❌ |
@@ -476,22 +476,33 @@ Rust 直接 `new` 而不是 `instantiate`。要证实需要进"回放播放"那�
 
 ## 6. 选项枚举（连点 `@@CYCLE`，观测）
 
-四个选项按钮点下去后 `icon` 的变化（**注意：记录的是"按下之后"的状态**）：
+四个选项按钮连点后 `icon` 的变化。**注意一个坑**：`@@CYCLE` 打印的是**按下那一瞬间**
+读到的 `icon`，而 Rust 在**下一帧**才刷新图标 ⇒ **打印值 = 这次按下之前的状态**。
+这不是推断，是用"连点后的终态"交叉验证出来的（见下表最后一列）：
 
-| 按钮 | 第 1 次 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
-|---|---|---|---|---|---|---|---|---|
-| `AxisModeButton` | `axis_option_3` | `_2` | `_1` | `_0` | `_3` | `_2` | — | — |
-| `FunctionModeButton` | `dx_dy_option` | `fx_option` | `dx_dy` | `fx` | `dx_dy` | `fx` | — | — |
-| `TurnModeButton` | `turns_simultaneous` | `turns_sequential` | `simultaneous` | `sequential` | `simultaneous` | `sequential` | — | — |
-| `TurnTimeButton` | `turn_1m` | `turn_2m` | `turn_3m` | `turn_5m` | `turn_inf` | `turn_30s` | `turn_1m` | `turn_2m` |
+| 按钮 | 初值（未按之前） | 每按一次的转移顺序 | 状态数 | 连点后终态（`setup_after_cycle`） |
+|---|---|---|---|---|
+| `AxisModeButton` | `axis_option_3` | `3→2→1→0→3` | **4** | 按 6 次 ⇒ `axis_option_1` ✔ |
+| `FunctionModeButton` | `fx_option` | `fx→dx_dy→fx` | **2** | 按 6 次 ⇒ `fx_option` ✔ |
+| `TurnModeButton` | `turns_sequential` | `sequential→simultaneous→sequential` | **2** | 按 6 次 ⇒ `turns_sequential` ✔ |
+| `TurnTimeButton` | `turn_1m` | `1m→2m→3m→5m→∞→30s→1m` | **6** | 按 8 次 ⇒ `turn_3m` ✔ |
 
-⇒ 状态数：**Axis 4 个 / Function 2 个 / Turn 2 个 / Time 6 个**，与 `docs/88` §1 的
-2×2×6×4 完全吻合（**这是第一次用界面本身验证这张表**）。
+原始 `@@CYCLE` 打印序列（＝按之前的状态，故整体比"按下后"早一格）：
 
-`TurnTime` 的初值可由玩法反推：在 `play` 路由里按了 **3 次**，对局开始 `TimerLabel=02:59`
-⇒ 初值 `30s`，3 次后到 `3m`。`AxisMode` 初值 `axis_option_0`（第 1 次按下变成 3 ⇒ 递减循环）。
+```
+AxisModeButton   3 2 1 0 3 2          FunctionModeButton  fx dx fx dx fx dx
+TurnModeButton   seq sim seq sim seq sim   TurnTimeButton  1m 2m 3m 5m inf 30s 1m 2m
+```
 
----
+**玩法侧交叉验证**（两处独立观测）：
+
+- `play` 路由按 **2 次** `TurnTimeButton` → 开局 `TimerLabel = 02:59`（= **3 分钟**档）；
+- `play_diffeq` 路由按 **1 次** → `TimerLabel = 01:59`（= **2 分钟**档）；
+- 四个快照（`game_setup` / `setup_initial` / `setup_six_bots`）在**未按任何选项**时
+  `TurnTimeButton` 恒为 `turn_1m` ⇒ 初值 1m，每按一次前进一档。三条互相吻合。
+
+⇒ 状态数：**Axis 4 / Function 2 / Turn 2 / Time 6**，与 `docs/88` §1 的 2×2×6×4 完全吻合
+（**这是第一次用界面本身验证这张表**）。
 
 ## 7. 与 `docs/88` §10–§11 的差异（补正）
 
