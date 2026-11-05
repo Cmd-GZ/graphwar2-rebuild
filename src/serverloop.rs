@@ -99,6 +99,18 @@ impl Default for Config {
     }
 }
 
+/// 本 harness 里**第一条连接**（= 那个真实客户端）拿到的 `player_id`。
+///
+/// 两处共用它，所以不可能出现"`PlayerInfo` 说 229、开局那批 `SoldierInfo` 说别的"：
+/// * 开局造玩家槽时：`FIRST_PLAYER_ID + t`（`t` = 队伍下标，`docs/117`）；
+/// * 收到 `NewPlayerRequest` 回 `PlayerInfo` 时（`docs/139` §4）。
+///
+/// 这是**重建版自有规则**（真游戏由服务端的玩家表分配，顺序不可复现，`docs/47`）；
+/// 本 harness 只有一条连接，所以它就是第一个玩家槽。没有玩家槽的极端配置
+/// （`per_team = 0`）下这条 `PlayerInfo` 指向一个不存在的玩家 —— 客户端会看到空战场，
+/// 不会崩（`docs/139` §5 记为已知边界）。
+pub const FIRST_PLAYER_ID: i64 = 229;
+
 /// 一名士兵的**局面**（坐标 / 当前函数）。
 ///
 /// 注意它**不持有**队伍：朝向由 `TurnManager::flip_for`（= 队伍，`docs/105`）给，
@@ -323,6 +335,9 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
     let mut log = TurnLog::default();
     let mut started = false;
     let mut ended = false;
+    // 这条连接自报的 `connection_id`（`NewPlayerRequest` 带来）。只用来回 `PlayerInfo`，
+    // 不参与任何对局状态 —— 缺省 228 是本 harness 在 `NewConnection` 里固定给的那个值。
+    let mut my_connection_id: i64 = 228;
 
     while let Some(frame) = read_frame(sock)? {
         let kind = frame.kind.clone();
@@ -331,6 +346,27 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
             "NewConnectionRequest" => {
                 let msgs = on_new_connection(&room, 228);
                 send(sock, &msgs)?;
+            }
+            // ---- 「我是谁」（本项**只加**，`docs/33` §4 明确列的缺口）----
+            //
+            // 真客户端加入时发 `NewPlayerRequest{connection_id}`，服务端回
+            // `PlayerInfo{player_id, connection_id}`（抓包原文，`docs/24` §3）。
+            // 本 harness 只有**一条**连接、开局时也只造两队的第一个玩家槽，
+            // 所以这条连接拿到的就是 `FIRST_PLAYER_ID`（开局那批 `SoldierInfo`/`TeamInfo`
+            // 用的是同一个 id —— 两处共用一个常量，不可能是两个值）。
+            //
+            // 这样 `GwNetSession.my_player_id` 才有值；在那之前客户端只能退化成
+            // "按 `TurnInfo` 里的玩家假定"（`docs/134` §7.1，`docs/139` §4）。
+            "NewPlayerRequest" => {
+                if let Some(cid) = crate::protocol::get_int(&frame, "connection_id") {
+                    my_connection_id = cid;
+                }
+                let msg = crate::game::player_info_message(FIRST_PLAYER_ID, my_connection_id);
+                send(sock, &[msg])?;
+                eprintln!(
+                    "PLAYER_INFO player_id={} connection_id={}",
+                    FIRST_PLAYER_ID, my_connection_id
+                );
             }
             "TickRequest" => {
                 let msg = on_tick_request(5, base_ms, now_ms());
@@ -365,7 +401,7 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
                     for k in 0..cfg.per_team {
                         let x = if t == 0 { -10.0 } else { 10.0 };
                         let y = -4.0 + 4.0 * k as f64;
-                        let player_id = 229 + t as i64;
+                        let player_id = FIRST_PLAYER_ID + t as i64;
                         players.push(PlayerState {
                             player_id,
                             soldier_id: id,
@@ -465,8 +501,21 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
             "FunctionUpdateRequest" => {
                 if let Some(pid) = crate::protocol::get_int(&frame, "player_id") {
                     let f = crate::protocol::get_str(&frame, "function").unwrap_or_default();
-                    if let Some(p) = players.iter_mut().find(|p| p.player_id == pid) {
+                    // ⚠️ 修 bug（`docs/139` §4.1）：`players` 是**按士兵**建的（一名玩家
+                    // `per_team` 条），而 `find()` 只命中该玩家的**第一条**。开火那一步是按
+                    // `soldier_id` 找 `PlayerState` 的（本回合的射手往往是第二、第三名士兵），
+                    // 于是它读到的是**构造时的默认值** `"0.00"` —— 客户端提交的函数根本不生效。
+                    // 默认值恰好也是 `"0.00"`，所以以前的端到端（只提交 `"0.00"`）看不出来。
+                    // 现在把**该玩家的每一条**都写一遍：函数是"按玩家"提交的，按士兵各存一份
+                    // 只是这一层的实现细节（`docs/139` §4.1 记了这条判断）。
+                    let mut any = false;
+                    for p in players.iter_mut().filter(|p| p.player_id == pid) {
                         p.function = f.clone();
+                        any = true;
+                    }
+                    if !any {
+                        // 不在玩家表里（例如还没开局就提交）：行为与以前一致 —— 什么都不写。
+                        eprintln!("UPDATE_UNKNOWN_PLAYER pid={}", pid);
                     }
                     // `FunctionInfo.owner_id` 是 **soldier_id**（`AGENTS.md` 硬事实）。
                     // 抓包帧 135：`FunctionUpdateRequest{player_id:229}` 之后那条
