@@ -1,6 +1,17 @@
-# 06 · 如何证明复原是对的
+# 06 · 如何证明复原是对的（证据分级 / oracle / 活体 harness）
 
 逆向最怕"看起来像"。本仓库的每条结论都标注证据等级，并说明它凭什么成立。
+
+**本文件的结构**（2026-11 归并后，原 `11`/`20`/`21`/`22`/`23`/`26` 六篇并入）：
+
+| 节 | 内容 |
+|---|---|
+| §1–§11 | 证据分级、静态 oracle（unicorn / 差分测试）、工具链现状与已知边界 |
+| §12 | **调用图的盲区**：函数指针派发怎么补（原 `11`） |
+| §13 | **活体 oracle**：frida 注入真进程（原 `20`） |
+| §14 | **原版游戏 harness**：五条被否证的路 + 最后怎么跑起来（原 `21`→`22`） |
+| §15 | **用真实对局验证与取证**：采样器 69/69、`shot_calc`/`life_entry` 形态、harness 当玩家（原 `23`/`26`） |
+| §16 | 手段选择顺序 |
 
 ## 1. 证据分级
 
@@ -17,8 +28,9 @@
 
 stripped 二进制没有符号，所以用三样东西互相校验：
 
-1. **`.eh_frame` 恢复函数边界** —— 编译器生成的调用帧表，比 Ghidra 的启发式可靠，
-   得到 13430 个真实函数。
+1. **函数边界** —— 以 **Ghidra 函数表**为准（13503 条，其中 13263 条落在 `.text`）。
+   ~~`.eh_frame` 恢复出 13430 条"真实函数"~~ 这条**当年写错了**：那份解析是坏的，
+   与 Ghidra 只交集 2 条，大量地址不是指令边界（见 `02` §12）。现行口径见 §11。
 2. **capstone 建 rip-relative 交叉引用 + panic 字符串锚定** ——
    把代码定位到 `src/xxx.rs:line`。
 3. **unicorn 指令级模拟器当预言机** —— 把 `.so` 映射进 unicorn，
@@ -136,8 +148,8 @@ NaN 只要求双方都是 NaN，不比较载荷位。
 | 能力 | 状态 | 代价 |
 |---|---|---|
 | 快速索引（capstone 反汇编 + rip-relative 交叉引用） | ✅ 可用 | 2.5 分钟，生成 139 MB `insns.pkl` / 19 MB `xrefs.pkl` |
-| 函数边界 | ✅ `.eh_frame` 恢复出 13430 个 | 秒级 |
-| 模块归属 | ✅ 首批 56 个模块 / 483 个函数 | 秒级（依赖上面的索引） |
+| 函数边界 | ✅ **Ghidra 函数表 13503 条**（13263 在 `.text`）；`analysis/funcstarts_ghidra_va.pkl` | 秒级 |
+| 模块归属 | ✅ 观测 544 / 扩散后 885（占 13263 的 6.7%），见 `02` §8/§10。~~483 / 3.6%~~ 是旧边界下的数，作废 | 秒级（依赖上面的索引） |
 | Ghidra 12.1.4 反编译 | ✅ 已装并验证 | **首次全量分析约 19 分钟** |
 | REA 的 MCP 原生分析 | ⚠️ 受客户端超时限制 | 见下 |
 
@@ -156,3 +168,325 @@ NaN 只要求双方都是 NaN，不比较载荷位。
 
 **另一个负结果**：这个 `.so` **没有 `.dep-v0`（cargo-auditable）段**
 （`inspect_rust_binary` 已确认），所以无法从依赖清单反推 crate 结构。
+
+---
+
+## 12. 调用图的盲区：函数指针派发（原 `11`）
+
+> 2026-11 归并：原文 `archive/11-dispatch.md` 已移入 `docs/archive/`，本节收其全部结论。
+
+### 12.1 现象
+
+做调用关系分析时反复出现两种情况：
+
+- `0x3c2bc0`（开火结算）**本地索引里零调用者**，Ghidra 的 `procedure_callers` 也是空；
+- `0x5eb57d`（掩膜测试的薄包装）同样零调用者。
+
+原因不是它们没被用，而是**经函数指针调用**：Rust 的 `dyn Trait`/闭包被编译成
+「`.data.rel.ro` 里一个指针槽 + 运行时间接跳转」。静态调用图与 Ghidra 的 caller 列表都断在这里。
+
+### 12.2 方法：从重定位表反查指针槽
+
+`analysis/relocs.pkl` 记录了 `R_X86_64_RELATIVE` 重定位（`槽位 → 目标地址`）。
+把目标地址反过来查，就能找到"哪个数据槽装着这个函数的地址"；再用 capstone 的
+交叉引用找"谁引用这个槽"。
+
+```python
+slots = [slot for slot, adds in relocs.items()
+         if any(typ == 8 and addend == TARGET for typ, addend in adds)]
+users = {owner_of(insn) for slot in slots for insn, *_ in xrefs.get(slot, ())}
+```
+
+工具封装：`tools/ptr_slots.py <vaddr>`。
+
+### 12.3 结果（观测）
+
+| 目标函数 | 指针槽 | 引用槽的函数 | 模块 |
+|---|---|---|---|
+| `calculate_path` `0x3c2530` | 1 | `0x3c2bc0` | `graphwar_shot_calculator.rs` |
+| | | `0x3e2830` | **`graphwar_target_manager.rs`** |
+| `shot_calculator` `0x3c2bc0` | 1 | `0x470eb0` | `graphwar_game_state_manager.rs` |
+| | | `0x51a750` | **`graphwar_function_evolutionator.rs`** |
+| `mask_test` `0x4f15b0` | 0 | — | 无指针槽，调用者全是直接调用 |
+
+**观测**：`calculate_path` 被 `shot_calculator` 与 `target_manager` 两处间接调用；
+`shot_calculator` 被 `game_state_manager` 与 `function_evolutionator` 两处间接调用。
+
+**当时的两条推断（已分别结案）**：
+
+| 推断 | 现在 |
+|---|---|
+| `function_evolutionator` 会"模拟开火"——它拿到的是整个开火结算函数，说明 AI 在批量试射候选函数评分 | ✅ **成立**：AI 把候选函数当一次真实射击跑（`AI.md` §4、`98`） |
+| `target_manager` 也会算曲线（直接用 `calculate_path`），暗示它在做瞄准/威胁评估 | 🔶 **仍未验证**：`target_manager` 本身就是未解模块（`02` §13.4） |
+
+### 12.4 方法学结论（已写进 `00-status` §7）
+
+- "谁调用谁"只看直接调用**会得出错误结论**（会以为某函数是死代码）；
+- 补法：重定位表反查指针槽 → 交叉引用找使用者；
+- 仍有盲区：经**寄存器/结构体字段**传递的函数指针（不是静态槽位）依然看不到。
+  所以任何"没有被调用"的判断都必须写成"**未观测到调用**"，而不是"没有调用"。
+
+---
+
+## 13. 活体 oracle：frida 注入真游戏进程（原 `20`）
+
+> 2026-11 归并：原文 `archive/20-live-oracle.md` 已移入 `docs/archive/`。
+
+### 13.1 为什么这一步是分水岭
+
+| 手段 | 能回答 | 不能回答 |
+|---|---|---|
+| 静态反编译（Ghidra） | 代码长什么样 | 它实际返回什么 |
+| unicorn 模拟 | **纯函数**的返回值 | 需要真实堆/锁/Godot 状态的东西 |
+| **frida 注入运行中的游戏** | 内部函数实际返回什么、实际被调用多少次 | 需要先造出合法 Rust 对象的参数 |
+
+### 13.2 环境准备（踩坑记录）
+
+REA 自带的 frida 工具报 `Could not locate the bindings file`——因为当初 npm 的
+`allowScripts` 策略拦了 frida 的安装脚本。修复：
+
+```bash
+cd .rea-runtime
+npm install-scripts approve frida       # 放行
+npm rebuild frida --foreground-scripts  # 触发 prebuild-install 下载预编译绑定
+# → node_modules/frida/build/frida_binding.node
+```
+
+两个后续坑：
+
+1. **REA 的 MCP 进程会缓存启动时的失败**，所以它那边的 frida 工具仍然不可用；
+   本仓库的做法是**绕过 REA、直接用 frida 的 Node API**（`tools/frida_live.js`）；
+2. **每次 bash 调用是独立 PID 命名空间**，`enumerateProcesses()` 看不到上一次调用启动的进程
+   ⇒ 必须用 **spawn 模式**：让 frida 自己拉起游戏，再从同一进程树里 attach。
+
+### 13.3 工具
+
+```bash
+node tools/frida_live.js modules
+node tools/frida_live.js call <rva-hex> <ret-type> [arg-type:value,...]
+```
+
+`rva` 用**虚地址**（`base + rva`）。注意 Ghidra 地址与虚地址差 `0x100000`：
+Ghidra 的 `FUN_00a302b0` → 虚地址 `0x9302b0`。
+
+实测（真游戏进程内）：
+
+```
+$ node tools/frida_live.js modules
+{"gw":{"name":"libgraphwarrust.so","base":"0x7f44e1e00000","size":10241312}}
+
+$ node tools/frida_live.js call 0x9302b0 double double:2.7   → 2
+$ node tools/frida_live.js call 0x9302b0 double double:2.3   → 2
+$ node tools/frida_live.js call 0x9302b0 double double:-2.7  → -3
+$ node tools/frida_live.js call 0x9302b0 double double:8.718 → 8
+```
+
+### 13.4 顺带纠正一个结论：`0x9302b0` 是 `floor`，不是截断
+
+`docs/08` 早先说它是 `round`（错），后按掩膜反推说"截断"。**活体调用定案：`floor`**
+（`2.7→2`、`-2.7→-3`）。对光栅化没有影响——那里的输入是 `sqrt(...) ≥ 0`，
+`floor` 与向零截断等价，所以 `docs/08` 的像素结论仍然成立；但函数身份必须写准。
+
+### 13.5 能力边界
+
+**能**：用标量参数调用任意内部函数、读返回值；枚举模块、读写内存、hook 函数看调用序列。
+
+**不能**：直接构造 Rust 的 `Arc`/`Vec`/`StringName` 当参数（要先在进程里造出合法对象）；
+headless 无输入 ⇒ 光有注入能力**驱动不了对局**（这条后来由 §14 的 harness 解决）。
+
+---
+
+## 14. 原版游戏 harness：从"不可达"到"能开一局"（原 `21` → `22`）
+
+> 2026-11 归并：`archive/21-oracle-limits.md`、`archive/22-live-game-harness.md` 已移入 `docs/archive/`。
+> 本节把"当时判定不可达的五条路"和"最后怎么绕过去的"记在一起——
+> **两半都有价值**：前一半是负结果清单，后一半是可复现的做法。
+
+### 14.1 五条被否证的路径（原 `21`，**结论已被 §14.2 推翻**）
+
+目标当时是"为回合/目标选择/AI 建立可复现的真值来源"。逐条试过：
+
+| # | 尝试 | 结果 |
+|---|---|---|
+| 1 | 从 GDScript 调原版逻辑 | ❌ **前提不成立**：原扩展只注册 12 个类、25 个方法，几乎全是 UI 回调（`on_text_change`/`on_resized`/`pressed`）；`AxisDrawer`/`EffectDrawer`/`GraphwarLanVBox`/`GraphwarLongPressAnimation` **零方法**。玩法逻辑不对外 |
+| 2 | 让真游戏 headless 跑起来再观察 | ❌ 跑得起来但停在主菜单：12 个关键函数 hook 8 秒**全部零调用**（`calculate_path`/`parse_function`/`eval`/`rasterize`/`point_test`/`mask_ctor`/`turn_a`/`turn_b`/`life_entry`/`shot_calc`/`levelgen_a`/`levelgen_b`） |
+| 3 | 用原始场景自建 harness | ❌ 两个硬障碍：AdMob 原生插件缺失（`LoadAdError` 未定义 ⇒ `Ad_holder.gd` 解析失败 ⇒ `play_screen` 连带失败）；包里只有 `.import`+`.ctex`，**源 `.svg` 不在包内** ⇒ `Resource file not found` |
+| 4 | 直接 `ClassDB.instantiate("GraphwarRootNode")` | ❌ 根节点自身就要拉起整条 UI 场景，绕不开上述两个障碍（无资源时 panic `failed to load resource at 'res://axis_option_0.svg'`） |
+| 5 | 补桩 + 占位资源 | 🔶 **资源障碍已解除**（`tools/make_placeholders.py` 生成 149 个 `.svg` + 16 个 `.png` 占位；`godot-live/stubs/` 补了 `AdSize`/`AdPosition`/`AdRequest`/`AdView`/`AdListener`/`LoadAdError`/`MobileAds`/`PoingAdMobVersionHelper`），但卡在 `Ad_holder.gdc` 是**编译字节码**（1699 字节，`GDSC` 魔数，无符号表），改不动 |
+
+当时的结论是"玩法逻辑没有可复现的真值来源"。**这个结论作废了**——见 §14.2。
+
+### 14.2 三个卡点逐个拆掉（原 `22` §1）
+
+| # | 卡点 | 解法 |
+|---|---|---|
+| 1 | 包里只有 `.ctex`/`.import`，源 `.svg`/`.png` 不在包内 → `Resource file not found` | `tools/make_placeholders.py` 生成同名占位（149 svg + 16 png） |
+| 2 | `Ad_holder.gd` 依赖 AdMob **原生插件** → `LoadAdError` 等类型未定义，脚本解析失败 | 用自己的 `Ad_holder.gd`（`extends Control` + 5 个信号）**替换**编译字节码 `Ad_holder.gdc`（§14.1 尝试 5 卡住的那一步，正解是替换而不是修字节码） |
+| 3 | 自动加载/脚本一个都不跑，引擎只打印 banner 就无限加载资源 | 游戏自带 **`project.binary`**（编译后的项目设置）覆盖了我们的 `project.godot`，**删掉它** |
+
+第 3 条是排查出来的：同样的 `project.godot` + 脚本放到空项目里能正常跑（`PROBE_READY` 打印），
+放进 `godot-live` 就完全没反应；把 `project.binary` 改名后立刻正常。
+
+### 14.3 结果（实测）
+
+```
+$ godot --headless --path godot-live
+PROBE_READY
+PROBE_F60 current=GraphwarRootNode:<GraphwarRootNode#60246984152>
+TREE root [Window]
+TREE   probe [Node]
+TREE   GraphwarRootNode [GraphwarRootNode]
+TREE     VBoxContainer [VBoxContainer]
+TREE     IAP_holder [Control]
+TREE     Ad_holder [Control]
+TREE     IOS_album_holder [Control]
+TREE     Android_mediastore_holder [Control]
+```
+
+**原版 `GraphwarRootNode`（Rust 写的游戏根节点）运行在我们的项目里**，并建起了整棵子节点。
+
+复现：
+
+```bash
+cd godot-live && rm -f project.binary            # 关键：让 project.godot 生效
+python3 ../gw2-rebuild/tools/make_placeholders.py .
+godot --headless --editor --path . --quit         # 首次导入
+godot --headless --path .                         # 运行
+```
+
+`godot-live/` 由 `rsc/`（修好命名后的导出资源）+ 原版 `.so` + 我们的桩构成，属本地产物，已 gitignore。
+
+### 14.4 开一局真实对局（原 `22` §5）
+
+**按钮链路**（靠枚举按钮摸出来的）：
+
+```
+MainMenu  .../VBoxContainer2/LocalButton                    text=Battle
+LanLobby  .../MarginContainer/HBoxContainer/CreateButton    text= Create Game
+GameSetup .../OptionsContainer/AddBotButton                 打开 AddBotPopUp
+AddBotPopUp .../VBoxContainer/OptionsContainer/AspectRatioContainer/AddBotButton   选难度，加 Bot
+GameSetup .../MarginContainer/HBoxContainer/StartButton     text= Start
+```
+
+按完后 `ScreensControl` 的可见子节点从 `GameSetup` 变成 **`PlayScreen`** —— 对局开始。
+**坑**：`AddBotPopUp` 打开时会挡住 Start；不加 Bot 直接 Start 不会报错、也不会切屏（静默无操作）。
+
+**玩法函数确实在跑**（`node gw2-rebuild/tools/hook_live_game.js`，12 秒一局）：
+
+```
+parse_function  11      eval            1       rasterize     38
+point_test   21629      mask_ctor       2       life_entry    12
+turn_a       1259       turn_b       1531       levelgen    1 + 1
+shot_calc       0       calculate_path  0
+```
+
+**让 Bot 真正开火的关键开关**：默认回合时限太长，Bot 不动手（45 秒里 `shot_calc`/`calculate_path`
+都是 0）。在 GameSetup 里先按 `TurnTimeButton` 两次、再按 `TurnModeButton` 把节奏调快，
+然后 Start，60 秒内就得到完整覆盖：
+
+```
+shot_calc 159   calculate_path 159   parse_function 66
+turn_a 2075     turn_b 2085          life_entry 12   levelgen 1+1
+```
+
+⇒ 开火链路（解析 → 采点 → 结算）在真实对局里被完整执行过 159 次。
+
+---
+
+## 15. 用真实对局做验证与取证（原 `23`、`26`）
+
+> 2026-11 归并：`archive/23-live-verification.md`、`archive/26-harness-control.md` 已移入 `docs/archive/`。
+
+### 15.1 采样器：真实对局逐点一致（69/69）
+
+`tools/capture_path.js`：frida 拉起 harness 并自动开局（Bot 开火），
+在 `calculate_path`（虚地址 `0x3c2530`）上挂钩：
+
+- **onEnter**：读入参 —— `rdi` 输出 Vec、`rsi` tokens Vec、`rdx` flip、`rcx` ode、
+  `xmm0/1/2` = `x0`/`y0`/`step`；
+- **onLeave**：读输出 Vec（`cap,ptr,len`）里的点序列，每点 16 字节 `f64 x, f64 y`；
+- Token 按 `{u64 tag, f64 value}` 共 16 字节解析。
+
+产物：`.rea-work/captured_path.json`。实测：
+
+```
+调用 0: x0=9.175978751627657 y0=-2.447450870359054 step=0.5 flip=True ode=False tokens=3
+  真游戏 69 点 / 我们 69 点 → 逐点一致 69/69
+调用 1: 同上 → 69/69
+```
+
+两个附带观察：
+
+1. **这一次抓到的 `step` 是 `0.5`**，但**不能**推出"实况步长是 0.5"——实况是 **0.01**
+   （服务端常量 `0x3f847ae147ae147b`）。抓样里出现 0.5 的原因**仍未查**
+   （该抓样来自我们自己的 harness，可能不走服务端的配置分支）。
+   ⇒ 这条 69/69 只证明"`step=0.5` 下算法逐点一致"，**不覆盖实况 0.01**；
+   0.01 的证据在 oracle 24/24（`91` §8）与 82 发停点对照（`86` §2.0/§14）。
+2. **士兵坐标是连续值**（`9.175978751627657`），不是整点 —— 与"换算成像素才取整"一致。
+
+### 15.2 开火结算与生命的活体取证（只到形态，未成规格）
+
+`tools/capture_args.js` 抓 `shot_calc`/`life_entry` 的寄存器与指针前 4 个字：
+
+```
+shot_calc（159 次/局）
+  调用前 rdi Vec = [cap=3, ptr, len=3]
+  调用后 rdi Vec = [cap=8, ptr(新), len=5]
+  xmm0 = 0.5（就是 step），xmm1 = xmm2 = 0
+
+life_entry（12 次/局）
+  rdi = 固定上下文指针（12 次相同）
+  rsi = 230 / 231 / 233 / 234（士兵 id 之类）
+  rdx = 1,  rcx = 0
+```
+
+⇒ `shot_calc` **接收一个 3 元素 Vec、产出 5 元素 Vec**（容量 3→8、指针换了新的），
+符合"往事件表里追加"的形态，但每个元素的字段布局**没解**，所以不宣称结算规则已还原；
+`life_entry` 的形态是 `life_entry(ctx, id, 1, 0)`，12 个样本不足以推出伤害/死亡规则。
+
+### 15.3 把 harness 当玩家用：能做什么、卡在哪（原 `26`）
+
+| 能力 | 做法 | 证据 |
+|---|---|---|
+| 进对局 | 按 `LocalButton → CreateButton → AddBotButton → StartButton` | `ScreensControl` 切到 `PlayScreen` |
+| 找到开火按钮 | `PlayScreen/.../RightControls/HBoxContainer/FireContainer/FireButton` | 对局开始后 `FireContainer` 有 2 个子节点（`ClipButton` + `FireButton`） |
+| **真的开火** | `emit_signal("pressed")` on `FireButton` | 协议里出现 `{"FunctionFireRequest":{"player_id":229}}` |
+| 找到函数输入节点 | `find_children("*", "GraphwarFunctionInput", true, false)` | 唯一一个：`PlayScreen/.../HBoxContainer2/GraphwarFunctionInput` |
+
+**卡住的地方**：想让玩家提交**非空函数**，试了三种调用组合都不生效——协议里
+`FunctionUpdateRequest` 始终是 `{"player_id":229,"function":""}`：
+
+```gdscript
+fi.on_text_change("0")
+fi.on_text_submitted("0")
+# 以及
+fi.on_text_change("0"); fi.force_update_cb(); fi.on_text_submitted("0")
+```
+
+节点内部**没有** `LineEdit`/`TextEdit` 子节点（`find_children` 返回 0）⇒ 文字是 Rust 自绘、
+状态在 Rust 内部；`on_text_change` 大概是"输入框内容变了"的回调，**不是**"设置内容"的接口。
+
+⇒ 未找到"程序化设置玩家函数"的入口。要继续得逆向 `GraphwarFunctionInput` 的内部状态，
+或模拟真实按键事件。**这一条至今没做**（见 `107-docs-consolidation.md` 的遗留清单）。
+
+同一次实验抓到的 AI 提交函数样本（`k*x` 过原点为主）→ 收在 [`AI.md`](AI.md) §2.1。
+
+### 15.4 这套手段能证明什么、不能证明什么
+
+| 问题 | 答案 |
+|---|---|
+| 能不能拿到"真值"？ | 能：`calculate_path`/`shot_calc`/`life_entry` 的入参与返回值可以直接读 |
+| 能不能按需制造场景（如友军误伤）？ | **不能**：玩家函数注入没打通（§15.3），只能等 Bot 随机撞上 |
+| 能不能复现游戏一局？ | **不能**：出场顺序/颜色/AI 搜索都依赖 OS 熵（`47`、`34`、`AI.md` §8.7） |
+| 界面侧能不能驱动？ | 能：按钮可以脚本化点击，且已证实等价于真点（`92` §3） |
+
+---
+
+## 16. 手段选择顺序（本轮定稿）
+
+1. **读现有文档 / 已有反汇编结论** —— 能查到就别重新逆；
+2. **`objdump`** —— 需要精确指令字节（判据、常量、调用点），这几轮所有确凿结论都来自它；
+3. **frida 运行时观测** —— 需要"实际怎么跑"（`93` 的 25 s 上限就是运行时确认的）；
+4. **REA 伪代码** —— 只有在①~③都给不出结构时，用来快速看懂控制流（前置检查见 `90` §2.6/§2.8）。
+
+REA 的定位、静默陷阱与强制前置检查见 [`90`](90-anti-waste.md) §2.6–§2.8。
