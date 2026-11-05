@@ -35,6 +35,7 @@
 | **弹道与命中结算**（`src/settle.rs::resolve`） | ✅ | 可运行实现：障碍决定停点、士兵经过即死。单发误差 < 采样步；**新建模：摧毁=命中点挖 `r=0.5` 洞**（frida 实证，`docs/39`） |
 | 开火结算 `shot_calculator`（事件生成） | 🔶 | **整关 4 发回放 + 2 次致死验证通过**（直线+曲线，误差 0.228/0.460/0.433/0.393，均 < 采样步；修正文本逐字一致，`docs/25` §7）；`0x3c2bc0` 内部未逐条还原 |
 | 命中与生命 `life_manager` | ✅ | 穿过即死、不挡弹道（仪器实测 2 例）；**无血量 / 有友军误伤 / 按弹道先后结算**（用户游戏内实测，实现与之一致并有测试 `friendly_fire_kills_teammates_in_path_order`；`docs/65`） |
+| **同时回合制（SimultaneousTurns）结算顺序** | ✅ | 4 局 / 13 回合 / 82 发：死亡集合逐回合一致（152 观测 vs 151 并集，**多报 0**）；61 个被 ≥2 发穿过的士兵里 34 例可判别，**「最早到达」34 : 「固定顺序」0** ⇒ 几何并行 + 事件按飞行时间（`docs/86`） |
 | **回合状态机**（`src/turnstate.rs`） | ✅ | 6 状态 + 7 事件，**13 次迁移与抓包逐个相同**（`docs/41`） |
 | 回合调度 `turn_manager` | ⬜ | **已证伪"来自 ChaCha 流"**（3 局 × 每局 2~4 条流 × 3 种抽样 × 25 个偏移，另加 6 局 × 2 基准 × 4 方法，全部不一致）。最可能来自 **HashMap 迭代顺序**（OS 熵播种的 SipHash 键），与 ChaCha 是两条独立熵流 ⇒ 不可确定性复现（`docs/60`） |
 | 关卡生成 `level_generator`（随机散布模式） | ✅ | **Rust 实现 + 逐位复现**（`docs/61`）：`levelgen::generate` 用真实随机流夹具跑出 13 个障碍，`x/y/r` 的 `to_bits()` 全等；公式与 ziggurat 表来自 `docs/55/56` |
@@ -123,6 +124,7 @@
 | [47-turn-order-random.md](docs/47-turn-order-random.md) | 回合出场顺序：推断为开局随机 ⇒ 不可复现 |
 | [48-rng-replay-attempt.md](docs/48-rng-replay-attempt.md) | 随机源重放：试过，不行 |
 | [49-verification-checklist.md](docs/49-verification-checklist.md) | **验收清单**（每条都实际跑过） |
+| [86-simultaneous-turns.md](docs/86-simultaneous-turns.md) | **同时回合制的击杀结算顺序**：几何并行、事件按飞行时间 |
 
 ## 对外接口（构建产物里的符号）
 
