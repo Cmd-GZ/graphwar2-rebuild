@@ -54,6 +54,8 @@ func run(main: Control) -> int:
 	await _test_net_broker_global()
 	await _test_net_real_server()
 	await _test_play_online()
+	# 用户实测的四条 bug（docs/144）：房间残留 / 占位行 Join / Players 列 / 关卡弹窗几何
+	await _test_lobby_fixes()
 
 	var passed := _checks - _failures.size()
 	if _skipped.is_empty():
@@ -3933,3 +3935,255 @@ func _flow_fire(play: Node, expr_text: String) -> void:
 	if input != null:
 		input.text = expr_text
 	play.call("fire")
+# ---------------------------------------------------------------- 大厅与关卡弹窗的实测 bug（docs/144）
+#
+# 四条都是用户实测报出来的，每条断言都必须能在**改动之前**变红：
+#   1. 上一把开的房间，退出后不再挂在大厅列表里；
+#   2. Global 页的占位行点 ` Join ` 不再弹"这一行没有房间地址"
+#      （原版的房间表键就是 `SocketAddr`，根本没有"没有地址的行"）；
+#   3. `Players` 列随人数变化（原版每帧从活数据重取，不是建行时拍一张快照）；
+#   4. `JoinLevelPopUp` 的面板下沿 / 模式按钮正方 / 坐标那一格白底
+#      —— 三条都用 `docs/130` §1 的真值管线量过（1920×1160）。
+
+func _lobby_list() -> VBoxContainer:
+	var lobby := _screen("LanLobby")
+	if lobby == null:
+		return null
+	return lobby.find_child("GraphwarLanVBox", true, false) as VBoxContainer
+
+func _lobby_row_count(list: VBoxContainer) -> int:
+	if list == null:
+		return -1
+	var n := 0
+	for c in list.get_children():
+		if c is HBoxContainer:
+			n += 1
+	return n
+
+## 第 `index` 行的 `PlayerCount` 标签。
+func _lobby_row_players(list: VBoxContainer, index: int) -> Label:
+	if list == null:
+		return null
+	var i := 0
+	for c in list.get_children():
+		if not (c is HBoxContainer):
+			continue
+		if i == index:
+			return (c as Node).find_child("PlayerCount", true, false) as Label
+		i += 1
+	return null
+
+func _test_lobby_fixes() -> void:
+	var app_node := get_node("/root/App")
+	# 干净的起点：停掉 broker、重建 LAN 监听（`stop()` 会清空房间表）、收起本机房间、回主菜单。
+	if app_node.net != null:
+		app_node.net.stop_broker()
+		app_node.net.lan.stop()
+		await _frames(1)
+		app_node.net.lan_listen(0)
+	app_node.online = false
+	app_node.online_room = {}
+	app_node.close_local_room()
+	var saved_players: Array = app_node.state.players.duplicate(true)
+	_command("exit_lan_lobby")
+	await _frames(3)
+
+	# --- bug 1（a）：退出大厅就把房间收掉 ---
+	_command("create_game")
+	await _frames(3)
+	_expect(not app_node.local_room.is_empty(),
+		"开房：create_game 之后 App 有本机房间（原版这一支是 start_server + start_lan_broadcaster）")
+	_command("multiplayer")
+	await _frames(3)
+	_command("show_local")
+	await _frames(3)
+	var list := _lobby_list()
+	_expect(_lobby_row_count(list) == 1,
+		"开房：Local 页画出自己那一行（实际 %d 行）" % _lobby_row_count(list))
+	_command("exit_lan_lobby")
+	await _frames(3)
+	_expect(app_node.local_room.is_empty(),
+		"退出大厅：本机房间被收掉（原版 exit_lan_lobby → stop_lan_broadcaster + stop_server_broker_handler）")
+	_command("multiplayer")
+	await _frames(3)
+	_command("show_local")
+	await _frames(3)
+	list = _lobby_list()
+	_expect(_lobby_row_count(list) == 0,
+		"退出大厅再进来：Local 页没有残留房间（实际 %d 行）" % _lobby_row_count(list))
+
+	# --- bug 1（b）：打完一局退出，房间同样不许留 ---
+	_command("exit_lan_lobby")
+	await _frames(2)
+	_command("create_game")
+	await _frames(3)
+	_command("add_bot_0")
+	await _frames(2)
+	_command("start_game")
+	await _frames(5)
+	_expect(app_node.current_screen == "PlayScreen", "退出对局：先真的进了 PlayScreen（实际 %s）"
+		% app_node.current_screen)
+	_command("exit_play")
+	await _frames(3)
+	_expect(app_node.local_room.is_empty(), "退出对局：本机房间被收掉")
+	_command("multiplayer")
+	await _frames(3)
+	_command("show_local")
+	await _frames(3)
+	list = _lobby_list()
+	_expect(_lobby_row_count(list) == 0,
+		"退出对局再进大厅：Local 页没有残留房间（实际 %d 行）" % _lobby_row_count(list))
+
+	# --- bug 2：Global 页的占位行不许可点，也不许弹"没有房间地址" ---
+	var toasts: Array[String] = []
+	var on_toast := func(t: String) -> void:
+		toasts.append(t)
+	app_node.toast.connect(on_toast)
+	_command("show_global")
+	await _frames(3)
+	list = _lobby_list()
+	var rows := _lobby_row_count(list)
+	_expect(rows == PLACEHOLDER_ROOM_COUNT,
+		"Global 页占位行数 = %d（实际 %d）" % [PLACEHOLDER_ROOM_COUNT, rows])
+	var inert := 0
+	for c in list.get_children():
+		if not (c is HBoxContainer):
+			continue
+		var jb := (c as Node).find_child("JoinButton", true, false) as GwButton
+		if jb == null:
+			continue
+		var addr := String(jb.get_meta("room_address", ""))
+		if addr.is_empty() and jb.mouse_filter == Control.MOUSE_FILTER_IGNORE:
+			inert += 1
+		jb.pressed.emit()
+	await _frames(3)
+	_expect(rows > 0 and inert == rows,
+		"Global 占位行的 Join 不接受点击（%d/%d 行；原版没有无地址的行，见 docs/144 §2）" % [inert, rows])
+	_expect(toasts.is_empty(),
+		"点占位行的 Join 不弹任何提示（实际 %d 条：%s）" % [toasts.size(), str(toasts.slice(0, 2))])
+	_expect(app_node.net.session == null, "点占位行的 Join 不发起连接")
+	if app_node.toast.is_connected(on_toast):
+		app_node.toast.disconnect(on_toast)
+
+	# --- bug 3：Players 列随人数变（不重建行、不靠信号） ---
+	_command("exit_lan_lobby")
+	await _frames(2)
+	_command("create_game")
+	await _frames(3)
+	_command("multiplayer")
+	await _frames(3)
+	_command("show_local")
+	await _frames(3)
+	list = _lobby_list()
+	var pc := _lobby_row_players(list, 0)
+	_expect(pc != null and pc.text == "1",
+		"人数：刚开房时 Players = 1（实际 %s）" % (pc.text if pc != null else "<无这一行>"))
+	var row_before: Node = list.get_child(0) if list != null and list.get_child_count() > 0 else null
+	# 模拟"别人加入房间"：原版这时收到 `NewConnection`/`PlayerInfo`，服务端那份 `GameInfo` 的
+	# `current_player_count` 就变了；`GraphwarLanVBox::process` 下一帧把它读出来（docs/144 §3）。
+	app_node.state.players.append({
+		"name": "Peer", "team": 1, "is_bot": false, "bot_tier": -1, "soldiers": 1,
+		"skin": 3, "face": -1, "hat": -1,
+	})
+	await _frames(4)
+	pc = _lobby_row_players(list, 0)
+	_expect(pc != null and pc.text == "2",
+		"人数：别人加入后 Players 列变 2（实际 %s）" % (pc.text if pc != null else "<无这一行>"))
+	_expect(list.get_child_count() > 0 and list.get_child(0) == row_before,
+		"人数：只改文本，不重建行（同一行节点还在）")
+	app_node.state.players = saved_players.duplicate(true)
+	app_node.close_local_room()
+	_command("exit_lan_lobby")
+	await _frames(3)
+
+	# --- bug 4：JoinLevelPopUp 的真值几何 + 坐标那一格白底 ---
+	_command("campaign")
+	await _frames(3)
+	_command("level_0")
+	await _frames(4)
+	var popup := _screen("JoinLevelPopUp")
+	if not _expect(popup != null and popup.visible, "弹窗：JoinLevelPopUp 打开了"):
+		return
+	var vp := popup.get_viewport_rect().size
+	var panel := popup.find_child("Panel", true, false) as Control
+	if not _expect(panel != null, "弹窗：面板存在"):
+		return
+	# headless 下视口可能只有几十像素宽（内容会溢出），所以"面板下沿"这条按**结构**断言：
+	# 屏幕级 VBox 必须是 4 个孩子（返回行 / 面板行 / **96 那行** / 广告条）。
+	# 少掉第 3 个孩子就是用户报的"下面的部分太长"——面板会一直顶到屏底。
+	var outer := popup.find_child("VBoxContainer", true, false) as VBoxContainer
+	var bottom_row: Control = null
+	if outer != null and outer.get_child_count() > 2 \
+			and outer.get_child(2) is Control:
+		bottom_row = outer.get_child(2) as Control
+	_expect(outer != null and outer.get_child_count() == 4,
+		"弹窗：屏幕级 VBox 有 4 行（返回 / 面板 / 底部 96 / 广告条；实际 %d）"
+		% (outer.get_child_count() if outer != null else -1))
+	var exit_row := popup.find_child("ExitButtonContainer", true, false) as Control
+	_expect(bottom_row != null and exit_row != null \
+		and bottom_row.custom_minimum_size.y > 0.0 \
+		and absf(bottom_row.custom_minimum_size.y - exit_row.custom_minimum_size.y) <= 0.5,
+		"弹窗：底部那行高 = 返回键高（真值 1920 下都是 96）")
+	# 视口够大时再量像素口径：真值 1920×1160 下屏底到面板下沿 = 96 + 4 + 4 = 104。
+	if vp.x >= 800.0:
+		var gap := (popup.get_global_rect().position.y + popup.size.y) \
+			- (panel.get_global_rect().position.y + panel.size.y)
+		var want_gap := vp.x * 0.05 + 8.0
+		_expect(absf(gap - want_gap) <= 3.0,
+			"弹窗：面板下沿离屏底 = 返回键高 + 两个分隔（%.0f，真值口径 %.0f）" % [gap, want_gap])
+	# 四个模式按钮：正方，边长按面板宽的 1/6 撑满（真值 226，面板 1434 ⇒ 226/235.7 = 0.96）。
+	var modes: Array[Button] = []
+	for bname in ["AxisModeButton", "FunctionModeButton", "TurnModeButton", "TimeModeButton"]:
+		var b := popup.find_child(bname, true, false) as Button
+		if b != null:
+			modes.append(b)
+	_expect(modes.size() == 4, "弹窗：四个模式按钮都在（实际 %d）" % modes.size())
+	var square := 0
+	var big := 0
+	var cell := panel.size.x / 6.0
+	for b in modes:
+		if absf(b.size.x - b.size.y) <= 2.0:
+			square += 1
+		if b.size.x >= cell * 0.85:
+			big += 1
+	_expect(square == 4, "弹窗：四个模式按钮都是正方（%d/4 方形）" % square)
+	# 像素口径的"撑满 1/6 格"只在视口够大时成立（headless 下内容会溢出，
+	# AspectRatioContainer 的正方尺寸被行高挤小，此时只有"正方"这一条有意义）。
+	if vp.x >= 800.0:
+		_expect(big == 4, "弹窗：四个模式按钮撑满 1/6 格（真值 226 vs 格宽 236；实际 %d/4，面板宽 %.0f，格宽 %.0f）"
+			% [big, panel.size.x, cell])
+	# 坐标模式那一格是**白底**（真值 axis_button_theme.tres：白底 + 3px 黑边 + 圆角 10），
+	# 另外三格是面板色 #1A3B2D（game_menu_icon_theme.tres）。两份主题只差底色。
+	var white := 0
+	var panel_colored := 0
+	for i in modes.size():
+		var sb := modes[i].get_theme_stylebox("normal") as StyleBoxFlat
+		if sb == null:
+			continue
+		var c := sb.bg_color
+		if c.r > 0.99 and c.g > 0.99 and c.b > 0.99 and sb.border_width_left == 3:
+			white += 1
+		elif absf(c.r - 0.101961) < 0.01 and absf(c.g - 0.231373) < 0.01 \
+				and absf(c.b - 0.176471) < 0.01 and sb.border_width_left == 3:
+			panel_colored += 1
+	_expect(white == 1 and panel_colored == 3,
+		"弹窗：坐标模式白底、其余三格面板色（白 %d / 面板色 %d）" % [white, panel_colored])
+	var axis := popup.find_child("AxisModeButton", true, false) as Button
+	if axis != null:
+		var axis_sb := axis.get_theme_stylebox("normal") as StyleBoxFlat
+		_expect(axis_sb != null and axis_sb.bg_color.r > 0.99 and axis_sb.bg_color.g > 0.99 \
+			and axis_sb.bg_color.b > 0.99,
+			"弹窗：表示坐标模式的那一格背景是白色（用户实测报的那一格）")
+	# OptionsContainer：`custom_minimum_size.y = 0.25 × 父高`（`OptionsContainer.gd` 真源码）。
+	var options := popup.find_child("OptionsContainer", true, false) as Control
+	if options != null and options.get_parent() is Control:
+		var parent_h := (options.get_parent() as Control).size.y
+		_expect(absf(options.custom_minimum_size.y - 0.25 * parent_h) <= 1.0,
+			"弹窗：OptionsContainer.min.y = 0.25 × 父高（%.1f vs %.1f）"
+			% [options.custom_minimum_size.y, 0.25 * parent_h])
+		_expect(options.size_flags_vertical == Control.SIZE_EXPAND_FILL,
+			"弹窗：OptionsContainer 竖直 EXPAND（真值 flags=V-EXPAND）")
+	_command("cancel_level")
+	await _frames(2)
+	_command("exit_campaign")
+	await _frames(3)
