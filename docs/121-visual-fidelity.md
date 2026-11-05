@@ -432,7 +432,7 @@ mv client/assets.off client/assets
 | 1 | 原版 22 个 `.res` **主题**没直接用 | 它们按 `res://xxx.tres` 互相引用，单独解出来加载失败（§4.2 实测）。数值已照抄，但 `StyleBox` 的 `corner_radius_*` 之外还有 `expand_margin` 等细节没逐条核 |
 | 2 | `campaign_button_theme` 的**描边**（`outline_size = 5` + 黑描边）没做 | 关卡按钮现在是纯文字，原版有 5 px 描边 |
 | 3 | 快照/回放/结算里的**分享图标语义**未验 | `share_*` 三张图已能加载，但原版点下去干什么未观测（`docs/108` §4 记 🔶） |
-| 4 | 音频 | 包里 1 个音频文件损坏；`mute/unmute` 只切图标 |
+| 4 | 音频 | ~~包里 1 个音频文件损坏~~ ❌ **已证伪**（`docs/111`）：10 个导入产物四道独立检查全过；"损坏的那份"是使用者自己 `rebuild_ogg.py` 的产物（granule 全 0、缺 EOS 页）。`mute/unmute` 目前仍只切图标 |
 | 5 | `view_single_function.svg` | 原版有图、无引用点（**未知**） |
 
 ---
