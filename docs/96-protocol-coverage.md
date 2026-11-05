@@ -66,3 +66,30 @@
 |---|---|
 | 我们缺 24 个事件名，且这些名字在二进制里真实存在 | **观测**（逐名 grep） |
 | 它们是"线上会收发的事件"而非普通字符串 | **推断**（依据：与已知事件同处枚举表、命名规律一致；未逐条抓包验证） |
+
+## 7. ⚠️ 更正：那段 `.rodata` **不是**枚举判别值表，不要据此改 `events.rs`
+
+我把 `0x1bc000`–`0x1bc900` 这段按"最长匹配"切分后，得到 **45 段、44 个不同名字**，顺序是：
+
+```
+Request → NameRequest → RankRequest → SoldierInfo → VersionInfo → GameInfo →
+AxisModeInfo → FunctionFire → FunctionInfo → GameNameInfo → TimeModeInfo →
+TurnModeInfo → EndOfTurnInfo → EntityRemoved → GameStateInfo → NewBotRequest →
+NewConnection → TurnCountInfo → TurnLimitInfo → FunctionActive → FunctionPoints →
+DestroyObstacle → GameNameRequest → ...
+```
+
+这**与 `events.rs` 的枚举顺序完全不一致**：我们的判别值 0 是 `TickRequest`，
+而 `TickRequest` 根本不在这一段（它在 `0x19e570`）。
+
+⇒ 结论有两条，**必须写清楚**：
+
+1. 这段表**不是**"`enum Event` 的判别值顺序表"（`docs/07` §2 的假设在这一点上不成立）；
+2. 因此 **`events.rs` 里那 33 个 `= N` 判别值，缺独立的验证**。
+
+**所以：不要用本文档的 44 个名字去给 `events.rs` 增删变体或调整判别值**——
+加错位置比不加更糟。要定判别值，必须另找证据（例如运行时按未知 tag 发帧看报错，
+或找到真正的 enum 判别表）。
+
+本文档 §2–§5 关于"我们缺哪些事件**名**"的结论仍然成立（那 18 个名字确实在二进制里），
+但"应该按什么顺序/编号实现"**尚无证据**。
