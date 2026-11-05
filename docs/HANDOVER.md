@@ -11,6 +11,10 @@
 - LAN 发现：UDP 广播，明文 JSON（`time_mode` 写作 `"Timers1m"`）
 - 对局：TCP，**`u16` 大端长度 + JSON**
 - 29 种消息已入库为 `fixtures/protocol.jsonl`，`src/protocol.rs` 全部解析通过
+- **关卡生成不可确定性复现**（`docs/40`）：hook libc 随机源，40 秒内 `getrandom` **921 次**、
+  `getentropy` 2 次，`rand/random/srand` **全 0** ⇒ 种子来自 OS 熵，同局无法重现。
+  只能观测分布（41 样本：障碍 5~21 个、`x∈[-26.35,25.80]`、`y∈[-20.17,20.58]`、
+  `r∈[0.80,5.26]`，0.8 像下限钳位）。这一行因此回落为 ⬜
 - **障碍摧毁=挖洞**（`docs/39`，本轮关键发现）：frida hook 光栅化，发现一局 28 次调用里
   有 **8 次 `fill=0xFF`、半径 0.5**，位置正是命中点 ⇒ 不是整块移除，而是打洞。
   `QueueDestroyObstacle.radius` 恒 0.5 就是洞半径。回放验证：#2 从差 23.3 → 差 0.34。
