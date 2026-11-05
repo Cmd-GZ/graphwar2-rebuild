@@ -8,6 +8,14 @@ use gw2_rebuild::rng::ChaCha12;
 use gw2_rebuild::settle::Target;
 use std::io::BufRead;
 
+/// 取轨迹上 x 最接近 target 的点的 y。
+fn p_y_at(target: f64, pts: &[(f64, f64)]) -> f64 {
+    pts.iter()
+        .min_by(|a, b| (a.0 - target).abs().partial_cmp(&(b.0 - target).abs()).unwrap())
+        .map(|p| p.1)
+        .unwrap_or(f64::NAN)
+}
+
 fn main() {
     let mut args = std::env::args().skip(1);
     let path = args.next().expect("需要 state.txt 路径");
@@ -23,6 +31,7 @@ fn main() {
     let mut flip = true;
     let mut mode = VarMode::Normal;
     let mut real_end_x: Option<f64> = None;
+    let mut real_end_y: Option<f64> = None;
 
     for line in std::io::BufReader::new(f).lines() {
         let line = line.unwrap();
@@ -41,6 +50,7 @@ fn main() {
             Some("FLIP") => flip = it.next() == Some("1"),
             Some("FUNC") => func = it.collect::<Vec<_>>().join(" "),
             Some("ENDX") => real_end_x = it.next().and_then(|v| v.parse().ok()),
+            Some("ENDY") => real_end_y = it.next().and_then(|v| v.parse().ok()),
             Some("O") => obstacles.push((
                 it.next().unwrap().parse().unwrap(),
                 it.next().unwrap().parse().unwrap(),
@@ -104,6 +114,22 @@ fn main() {
         println!("  几何校验: replay 记录的终点 x = {:.3}，我们算的 = {:.3}（差 {:.3}）",
                  end_x_real, end_x_ours, (end_x_real - end_x_ours).abs());
         // 我们算的轨迹在真实终点 x 处的 y
+        if let (Some(ex), Some(ey)) = (real_end_x, real_end_y) {
+        println!("  真实终点 = ({ex:.3}, {ey:.3})，该点掩膜占用 = {}",
+                 gw2_rebuild::plane::is_occupied(&mask, ex, ey));
+    }
+    // 找离真实终点最近的若干障碍，看我们的曲线是否"擦过"
+        let mut near: Vec<(f64, f64, f64, f64)> = obstacles.iter()
+            .map(|&(ox, oy, or)| {
+                let d = ((ox - end_x_real).powi(2) + (oy - p_y_at(end_x_real, &pts)).powi(2)).sqrt();
+                (d, ox, oy, or)
+            })
+            .collect();
+        near.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        for (d, ox, oy, or) in near.iter().take(3) {
+            println!("    障碍({ox:.2},{oy:.2}) r={or:.2}  到我们曲线在终点x处的距离={d:.3}  覆盖={}",
+                     *d <= *or);
+        }
         if let Some(p) = pts.iter().min_by(|a, b| {
             (a.0 - end_x_real).abs().partial_cmp(&(b.0 - end_x_real).abs()).unwrap()
         }) {

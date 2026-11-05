@@ -55,6 +55,7 @@ def main():
     team = {}               # soldier_id -> "Team1"/"Team2"
     alive = {}              # soldier_id -> bool
     pending_func = None
+    last_hole = None
     shots = []
 
     for e in evs:
@@ -68,6 +69,7 @@ def main():
         if "DestroyObstacle" in ev:
             d = ev["DestroyObstacle"]
             obstacles.append(("HOLE", d["pos_x"], d["pos_y"], d.get("radius", 0.5)))
+            last_hole = (d["pos_x"], d["pos_y"])
         if "PosInfo" in ev:
             p = ev["PosInfo"]
             pos[p["entity_id"]] = (p["pos_x"], p["pos_y"], p.get("radius", 0.5))
@@ -85,6 +87,7 @@ def main():
                 "tick": tick, "owner": fp["owner_id"],
                 "start": (fp["start_x"], fp["start_y"]), "end_x": fp["end_x"],
                 "func": pending_func[0] if pending_func else "",
+                "end": last_hole,
                 "obstacles": list(obstacles),
                 "pos": dict(pos), "team": dict(team), "alive": dict(alive),
                 "mode": mode,
@@ -118,6 +121,8 @@ def main():
     print(f"SHOOTER {shooter} {sx!r} {sy!r} {picked['team'].get(shooter,'?')}")
     print(f"FLIP {flip}")
     print(f"ENDX {picked['end_x']!r}")
+    if picked.get("end"):
+        print(f"ENDY {picked['end'][1]!r}")
     print(f"FUNC {picked['func']}")
     for o in picked["obstacles"]:
         if o[0] == "HOLE":
