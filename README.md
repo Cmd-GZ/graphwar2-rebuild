@@ -37,7 +37,7 @@
 | 命中与生命 `life_manager` | 🔶 | 死亡链路 + **致死判定已定量验证**（穿过即死、不挡弹道，2 例距离 0.4746/0.4944，`docs/30`）；血量/友军规则未知 |
 | **回合状态机**（`src/turnstate.rs`） | ✅ | 6 状态 + 7 事件，**13 次迁移与抓包逐个相同**（`docs/41`） |
 | 回合调度 `turn_manager` | ⬜ | **出场顺序不可复现**（10 局样本：仅队伍交替稳定，起始人与队内顺序随机，与创建顺序无关；推断为开局随机，`docs/47`） |
-| 关卡生成 `level_generator` | 🔶 | **重新开放**：先前「OS 熵」结论已推翻（921 次 getrandom 里 915 次来自 libudev，游戏本体仅 3 次且是 HashMap 播种）。二进制含 ChaCha 常量，但**种子来源未找到**（`docs/50`）；分布已记录（障碍 5~21 个、`r∈[0.8,5.26]`） |
+| 关卡生成 `level_generator` | 🔶 | **算法已反出**（`docs/53`）：个数 = `trunc(rand*7+15)`、每个障碍 `r/x/y` 由 ChaCha 生成、`x=(2r+25)(2u-1)`、`y=(2r+15)(2v-1)`；RNG 是 ChaCha，状态已在运行时读出（key+计数器）。**重放尚未对上**（缓冲区索引未处理） |
 | AI `computer_player_manager` / `function_evolutionator` | ⬜ | 入口与评分循环已定量刻画（`docs/29`），但**候选生成依赖同一条 OS 熵**、适应度未知 ⇒ 不可复现（`docs/48`） |
 | **tick 时钟（60 Hz）** | ✅ | `tick_at()` 用 113 个真实样本验证；`TickReply` 逐字节一致（`docs/35`）。**另解出** `end_of_turn_tick = 回合开始 tick + 时长`，**六档全部实测**（含 `Timer30s`、`TimerInf=0` 哨兵，`docs/42`） |
 | **服务端握手（状态同步）** | ✅ | `server::on_new_connection` 7 条消息与抓包逐字节一致；`serve_handshake` 经真实 TCP 往返验证（`docs/33`） |

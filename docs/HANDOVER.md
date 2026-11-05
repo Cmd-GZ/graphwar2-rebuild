@@ -18,6 +18,11 @@
   游戏本体只有 3 次且是 HashMap 的 RandomState 播种。二进制里 `expand 32-byte k`
   出现 6 次 ⇒ 确有 ChaCha；看不见是因为 Rust 走原始 syscall(318)，绕过 libc 函数。
   hook syscall 会让 frida 自断通信，该路不可用
+- **RNG 找到了（ChaCha，可读状态）**（`docs/53`）：Ghidra 反编译出关卡生成函数
+  `FUN_004f1e50`（模块 `graphwar_level_generator.rs`）：个数=`trunc(rand*7+15)`，
+  每个障碍 `r/x/y` 由 ChaCha 产生，`x=(2r+25)(2u-1)`、`y=(2r+15)(2v-1)`；
+  块函数 `FUN_00850f30` 是标准 ChaCha（σ 常量 + quarter-round）；
+  hook `0x47f700` 可直接读出 key+计数器。**重放暂未对上**（疑为 BlockRng 缓冲区索引）
 - **找 RNG 的现状**（`docs/52`）：调用链已确定；两次内存扫（全内存 / 栈）都命中
   σ 常量，但结构是 **72 字节步长、密钥位是指针或低地址**（每次运行还变），
   与 ChaCha 状态（64 字节、密钥位为随机字节）不符 ⇒ **判定不是活的 PRNG 状态**。
