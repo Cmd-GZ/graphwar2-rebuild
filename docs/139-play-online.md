@@ -277,22 +277,23 @@ SELFTEST 529 passed, 0 failed
 | 用例 | 依赖 | 断言数 | 能证明什么 |
 |---|---|---|---|
 | `_test_play_online_real_server` | `examples/serve_match`（真 TCP） | 40 个调用点 | ① 士兵/障碍来自服务端（entity_id、坐标、`x≠±18`、障碍逐条对拍）；② `FunctionPoints` → 内核复算 → 画出来（函数文本/点数/终点/方向）；③ 死亡广播 → 士兵从画面消失；④ `PlayerInfo` 让"我/对手"分得清（回合交给对手后拒绝开火，且**没有**报文发出去） |
-| `_test_play_online_lifeinfo_fake_server` | 进程内 `TCPServer` | 11 个调用点 | `LifeInfo{alive:false}` 这一条**线上**（我们的服务端不发）也能让士兵消失；`PlayerInfo` 单条就够用 |
+| `_test_play_online_lifeinfo_fake_server` | 进程内 `TCPServer` | 12 个调用点 | `LifeInfo{alive:false}` 这一条**线上**（我们的服务端不发）也能让士兵消失；`PlayerInfo` 单条就够用 |
 
-三条硬指标的断言原话（节选）：
+三条硬指标的断言原文（**括号里的数是运行时填的**，这里不抄具体数值 ——
+同一份断言每局会给出不同的士兵数/障碍数/点数，抄一个数反而是在编造）：
 
 ```text
 ① 界面上的每一名士兵都是服务端 `entities` 里的实体（entity_id 对得上）
 ① 士兵坐标逐条等于服务端 `PosInfo` 写下的坐标（不是本地摆的）
 ① 没有一名士兵落在 `_spawn_position()` 的 x=±18 上
-① 障碍数与服务端 `AddObstacle` 一致（界面 9 ／ 服务端 9）
+① 障碍数与服务端 `AddObstacle` 一致（界面 n ／ 服务端 n）
 ① 每个障碍的坐标/半径逐条等于服务端 `AddObstacle`（含顺序）
 ② 开火后收到 FunctionPoints（服务端只发首末点）
-② 画在棋盘上的点数 = 复算出的点数（482）
-② 方向由 end_x 定（起点 x -10.000 → 终点 x 24.985）
-② 弹道收在服务端给的 end_x 上（末点 x 24.985 ／ end_x 24.985）
-③ 线上真的来了 `LifeQueuedDeath`（docs/31 §1，实际 1 条）
-③ 阵亡的士兵从画面上消失（4 → 3）
+② 画在棋盘上的点数 = 复算出的点数（n）
+② 方向由 end_x 定（起点 x x0 → 终点 x x1）
+② 弹道收在服务端给的 end_x 上（末点 x ／ end_x）
+③ 线上真的来了 `LifeQueuedDeath`（docs/31 §1，实际 n 条）
+③ 阵亡的士兵从画面上消失（k → k−1）
 ⑤ 不是我的回合 ⇒ 界面拒绝开火（只有 PlayerInfo 分得清我跟对手）
 ⑤ 被拒绝的那一发**没有**发到服务端（FunctionPoints 数不变）
 ```
@@ -305,7 +306,7 @@ SELFTEST 529 passed, 0 failed
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | 服务端偶尔**一个障碍都不发** | `levelgen::generate()` 的 `n = trunc(normal()*7 + 15)`，`min_count = 0` 时约 1.6% 会落到 0（`src/levelgen.rs:87`；`serverloop` 传的 min_count 就是 0） | 用例自己的开局判据只要"士兵到齐 + `TurnInfo`"；障碍那两条在"服务端发了 0 个"时**显式 skip** 并打印原因（不假装通过） |
-| 偶尔**射手被障碍压住**，任何弹道都在第一点被判挡住 | 开局位置是固定的 `x = ±10`（`src/serverloop.rs`），障碍却是随机撒的、**不看**这两个点 | 本地预演（内核）会如实报 153 个候选全 `blocked` ⇒ 用例**换一局**（服务端每局重抽障碍，最多 4 次）。这条只在自检里做，界面不做 |
+| 偶尔**射手被障碍压住**，任何弹道都在第一点被判挡住（5 次实测里 2 次） | 开局位置是固定的 `x = ±10`（`src/serverloop.rs`），障碍却是随机撒的、**不看**这两个点 | 本地预演（内核）会如实报 153 个候选全 `blocked` ⇒ 用例**换一局**（服务端每局重抽障碍，最多 6 次）。这条只在自检里做，界面不做 |
 
 附带发现（**观测**）：既有的 `_test_net_real_server` 用的是 `_server_started()`
 （要求 `AddObstacle > 0`），所以它也有那 1.6% 的抖动。本轮**不动**它（只许加断言），
@@ -367,7 +368,7 @@ bash client/run.sh dump | grep '@@KERNEL'      # 期望 available=1 hit_test=1
 | 文件 | 变化 | 内容 |
 |---|---|---|
 | `client/src/screens/play_screen.gd` | **+579 / −0** | 联机成员 12 个 + `_begin_online`/`_online_teardown`/`_online_subscribe`/`_build_online_soldiers`/`_build_online_obstacles`/`_apply_online_turn`/`_online_can_fire`/`_online_tick`/`_fire_online`/`_on_online_message`/`_online_apply_life`/`_online_soldier_by_entity`/`_draw_online_shot`/`_truncate_path_at_x`/`_stop_before_end`/`_online_status_text`/`online_state`；**既有行只加了分支**（`begin_match`/`fire`/`_refresh_plane`/`_active_soldier`/`_human_team`/`_check_match_over`/`fire_fx_state`/`end_match`/`_process` 各一处），回放分支与 `_fire_fx` 的 4 处落点**一字未动** |
-| `client/tools/selftest.gd` | **+536 / −0** | 只**新增**两个用例 + 五个辅助函数（`_play_online_started`/`_online_enemies_of`/`_online_obstacles_of`/`_pick_online_shot`/`_online_shot_hits`/`_online_shot_reason`/`_online_sine_expr`/`_online_poly_expr`/`_first_dead_entity`）；**既有 478 条断言一条没动** |
+| `client/tools/selftest.gd` | **+539 / −0** | 只**新增**两个用例 + 九个辅助函数（`_play_online_started`/`_online_enemies_of`/`_online_obstacles_of`/`_pick_online_shot`/`_online_shot_hits`/`_online_shot_reason`/`_online_sine_expr`/`_online_poly_expr`/`_first_dead_entity`）；**既有 478 条断言一条没动** |
 | `src/game.rs` | **+45 / −0** | `player_info_message()` + 逐字节测试 |
 | `src/serverloop.rs` | **+51 / −2** | `FIRST_PLAYER_ID` 常量、`NewPlayerRequest` 分支、开局玩家槽改用常量（值不变）、`FunctionUpdateRequest` 的 bug 修复（§5.4） |
 | `client/src/net/*` | **0** | 照它的 API 用，一个字没改 |
