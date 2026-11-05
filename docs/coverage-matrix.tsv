@@ -7,14 +7,14 @@
 # tool_version: 1
 # binary_sha256: 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
 # funcstarts_sha256: b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a
-# src_tree_sha256: c737fcfd0cada5504a1c437a4b6d42b0a835fa7d727ef117ec9413fbd6980cec
+# src_tree_sha256: e7f2ea8fdd9424e90d71b16fdee75b35d118afa02e7dc48caa388c35b72698da
 # funcstarts_n: 13263
 # src_modules: 246
 # loc_structs: 2042
 # attributed_funcs: 527
 # contested_funcs: 86
-# src_files: 30
-# src_fns: 854
+# src_files: 32
+# src_fns: 873
 module	scope	orig_funcs	contested	anchors	ours_file	ours_funcs	status	evidence
 graphwar_ad_switch.rs	graphwar	6	0	3		0	未做	docs/132：判据只有 are_ads_enabled() = !owned；AdMob 在 .gdc 插件侧，src/ 无实现
 graphwar_audio_control.rs	graphwar	7	1	16		0	未做	docs/111：SoundHandler / -15f / -5f / 32767 归一化已还原，但没接进 src/（client/ 是仿制）

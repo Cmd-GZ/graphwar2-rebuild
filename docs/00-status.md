@@ -16,6 +16,36 @@
 
 ## 1. 一句话状态
 
+## 0.2 进度尺（2026-11-07 本轮收尾，**这才是"还原了多少"**）
+
+> 口径：**原版可归属函数里，我们还原并验证了多少**。不用测试条数当进度（见 `AGENTS.md` §0.2）。
+> 复现：`python3 tools/coverage_matrix.py`（`--check` 只校验不重写）。
+
+```
+原版可归属函数 488 个，分布在 70 个模块（58 个 graphwar_*.rs 占 431、12 个非 graphwar 占 57）
+   已实现 138（逐位 98 / 观测 40 / 推断 0）｜ 未做 265 ｜ 完全未知模块 22（graphwar 里 15）
+归属率 527 / 13263 个 Ghidra 函数 = 4.0%（硬上限：纯计算函数没有 panic 就没有锚）
+```
+
+⚠️ **488 是可度量下限，不是模块规模**——求值器 `0x4eb9d0`、采样器 `0x3c2530` 全函数体零 Location 引用。
+
+## 0.3 本轮（07:00 前后）新增
+
+| 模块 | 产出 | 档位 |
+|---|---|---|
+| `entity_drawer.rs` | `src/entity_drawer.rs`：`EntityDrawer::draw` 只画两类图元（`draw_arc`×3 + 多边形×3），**不画士兵贴图/弹道**；弧半径 = `f32(radius)×1.5`、箭头 = 向心三角（∓12°、+0.5） | 观测（常量逐条带槽地址） |
+| `play_screen_control` | `src/play_control.rs`：回放/对局视图是一对互补的孪生函数；只订阅 `function_info_event` + `function_fire_event` ⇒ **`TurnInfo`/`GameStateInfo` 不经这层**；**弹道清除不在这层**（否定证据） | 观测 |
+| 15 个零锚点模块 | `docs/02` §16：定性 10 个（观测 3 / 推断 7），剩 5 个纯未知。**全库只有 12 个 GDExtension 类** ⇒ 那 15 个里只有 3 个是 Godot 类，其余是被节点调用的普通 Rust 模块 | 见 §16 |
+
+## 0.4 下一轮最高性价比（按"能不能指到证据"排）
+
+1. **`ptr_slots.py` 解 `0x3d5260` 的名字表** ⇒ 一次性定死"弹道什么时候清除"的落点（`play_control` 已排除本层）；
+2. **`0x3dcbb0`（0x2250 字节）**：`play_screen_control` 内最大函数，被 `root_node 0x3a5760` 直接调用，很可能是"回合推进 / game_state 分派"的真身；
+3. **`entity_drawer` 补暴露**：`src/api.rs`/`gdext.rs` 还没把新图元暴露给客户端（本轮禁止改 `client/`），
+   所以棋盘仍用旧近似画法；
+4. 5 个纯未知模块（effect_manager / entity_effect_manager / game_recorder / graphics_manager / video_writer）。
+
+
 内核（函数语言 / 弹道 / 掩膜 / 命中 / 协议 / broker / 回合与生命 / 服务端 / 关卡 / 战役数据 / AI 参数）
 已复原到"逐位验证"或"强观测"；`client/` 里 **15/15 界面**能启动、能开一局，弹道与命中走内核，
 并且**回放播放器、联机层、音频播放层、`token → 文本` 都已经接上了**。
