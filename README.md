@@ -38,7 +38,7 @@
 | **回合状态机**（`src/turnstate.rs`） | ✅ | 6 状态 + 7 事件，**13 次迁移与抓包逐个相同**（`docs/41`） |
 | 回合调度 `turn_manager` | ⬜ | **已证伪"来自 ChaCha 流"**（3 局 × 每局 2~4 条流 × 3 种抽样 × 25 个偏移，另加 6 局 × 2 基准 × 4 方法，全部不一致）。最可能来自 **HashMap 迭代顺序**（OS 熵播种的 SipHash 键），与 ChaCha 是两条独立熵流 ⇒ 不可确定性复现（`docs/60`） |
 | 关卡生成 `level_generator` | ✅ | **Rust 实现 + 逐位复现**（`docs/61`）：`levelgen::generate` 用真实随机流夹具跑出 13 个障碍，`x/y/r` 的 `to_bits()` 全等；公式与 ziggurat 表来自 `docs/55/56` |
-| AI `computer_player_manager` / `function_evolutionator` | 🔶 | **算法与参数表已还原**（`docs/66`/`67`）：GW1 的进化算法（±2e6/1e6 适应度常数在 GW2 二进制中确认）；反编译 AI 核心得"每回合评估 = 代数×(种群+3)"，**六个难度实测前五个精确吻合** (3,50)(10,100)(25,150)(100,200)(250,250)。**仍缺**：精英/变异/交叉个数、随机函数生成器的 token 集、`-5e7` 惩罚条件 |
+| AI `computer_player_manager` / `function_evolutionator` | 🔶 | **算法 + 参数表 + 机器人名单已还原**（`docs/66`/`67`/`68`）：GW1 进化算法、适应度 `命中×2e6 − minDist²/100 − 步数超限?5e7`、六档 `(代数, 种群)` 从实参直读、六个机器人名 ↔ 六档难度。**仍缺**：token 权重、变异/交叉个数、`-5e7` 阈值 |
 | **tick 时钟（60 Hz）** | ✅ | `tick_at()` 用 113 个真实样本验证；`TickReply` 逐字节一致（`docs/35`）。**另解出** `end_of_turn_tick = 回合开始 tick + 时长`，**六档全部实测**（含 `Timer30s`、`TimerInf=0` 哨兵，`docs/42`） |
 | **服务端握手（状态同步）** | ✅ | `server::on_new_connection` 7 条消息与抓包逐字节一致；`serve_handshake` 经真实 TCP 往返验证（`docs/33`） |
 | **服务端对象 `Match`（开火结算+出报文）** | ✅ | `fire()` 按抓包顺序产出 8 类报文（`docs/43`），状态推进位置与真实一致；按回合配对回放 4 发终点全对、致死集合一致（`docs/37`） |
