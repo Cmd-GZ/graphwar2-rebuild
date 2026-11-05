@@ -14,6 +14,10 @@ const targets = {
   s4:      '0x4eab32',
   s5:      '0x4eaca6',
   center:  '0x49f370',
+  q564d10: '0x464d10',   // Ghidra 0x564d10
+  q565a70: '0x465a70',   // Ghidra 0x565a70
+  q56f690: '0x46f690',   // Ghidra 0x56f690
+  q578fc0: '0x478fc0',   // Ghidra 0x578fc0
 };
 const timer = setInterval(() => {
   if (ready) return;
