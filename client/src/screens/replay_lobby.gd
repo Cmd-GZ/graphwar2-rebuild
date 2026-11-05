@@ -15,7 +15,6 @@ extends GwScreen
 ## 回放头解析未做 ⇒ 房间名/模式都是 `--`（不假装知道）。
 
 var _list: VBoxContainer
-var _empty_note: Label
 var _selected := ""
 
 func _ready() -> void:
@@ -34,10 +33,6 @@ func build() -> void:
 	scroll.add_child(_list)
 	vbox.add_child(scroll)
 
-	_empty_note = GwUI.label("", 0, HORIZONTAL_ALIGNMENT_CENTER, true)
-	_empty_note.add_theme_color_override("font_color", GwThemeFactory.COL_TEXT_DIM)
-	vbox.add_child(_empty_note)
-
 	vbox.add_child(GwUI.ad_bar())
 
 func on_enter() -> void:
@@ -49,11 +44,9 @@ func _rebuild() -> void:
 	GwReplayIndex.ensure_dir()
 	var entries := GwReplayIndex.scan()
 	_selected = ""
-	if entries.is_empty():
-		_empty_note.text = ("user://replays/ 里没有回放文件。\n"
-			+ "原版回放格式见 docs/78；本项目不做回放解析/播放（docs/108 §7）。")
-		return
-	_empty_note.text = "%d 个回放文件（user://replays/）" % entries.size()
+	# 空列表就**什么都不画**：原版 1920×1160 真帧里，没有回放时这一屏只有返回键和
+	# "REPLAYS" 标题，其余是纯底色（逐像素确认）。我们以前在这里加了两行自造提示，
+	# 其中一行还写着内部文档编号（docs/129 §5）。
 	for e in entries:
 		_list.add_child(_entry(e))
 
@@ -74,7 +67,6 @@ func _entry(entry: Dictionary) -> HBoxContainer:
 	game_m.size_flags_stretch_ratio = 2.0
 	var game_label := GwUI.label(String(entry.game_name))
 	game_label.name = "GameName"
-	game_label.tooltip_text = "房间名要解析回放头才知道；本项目不解析（docs/108 §7）"
 	game_m.add_child(game_label)
 
 	var mode_m := GwUI.margin("ModeContainer", 2, row)
@@ -82,7 +74,7 @@ func _entry(entry: Dictionary) -> HBoxContainer:
 	mode_m.size_flags_stretch_ratio = 2.0
 	var options := GwUI.hbox("OptionsContainer", 4, mode_m)
 	for icon_name in ["axis_option_3", "fx_option", "turns_sequential", "turn_1m"]:
-		var b := GwUI.mode_button(icon_name, "模式未知（回放头未解析）")
+		var b := GwUI.mode_button(icon_name)
 		b.custom_minimum_size = Vector2(34, 34)
 		b.disabled = true
 		b.modulate = Color(1, 1, 1, 0.5)
@@ -95,7 +87,6 @@ func _entry(entry: Dictionary) -> HBoxContainer:
 	var play := GwButton.make("")
 	play.name = "PlayReplayButton"
 	play.icon = GwIcons.get_icon("play_option")
-	play.tooltip_text = "播放该回放（play_replay）—— 本项目只进空回放模式"
 	play.pressed.connect(_on_play.bind(String(entry.path)))
 	play_holder.add_child(play)
 	row.add_child(play_holder)

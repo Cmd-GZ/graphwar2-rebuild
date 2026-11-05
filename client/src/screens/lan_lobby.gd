@@ -1,41 +1,57 @@
 extends GwScreen
 ## LanLobby —— 联机大厅（Local / Global 两个房间列表）。
 ##
-## 结构（`docs/92` §4.4，恢复出的 lan_lobby.tscn 32 节点）：
+## 结构（`docs/92` §4.4，恢复出的 `lan_lobby.tscn` 32 节点）：
 ##   MarginContainer/VBoxContainer
 ##     ├ HBoxContainer
-##     │    ├ ExitButtonContainer/…            (input_text="exit_lan_lobby")
+##     │    ├ ExitButtonContainer/…            (input_text="exit_lan_lobby")  字号 宽/30
 ##     │    ├ ShowLocalContainer/ShowLocalButton("Local",  input_text="show_local", toggle+checked)
+##     │    │        └ 挂 `LanLobbyTitle.gd` ⇒ **字号 = 宽/30**
 ##     │    └ ShowGlobalContainer/ShowGlobalButton("Global", input_text="show_global", toggle)
 ##     ├ MarginContainer2/VBoxContainer
-##     │    ├ HBoxContainer（表头：Room Name / Players / Game Mode / Join）
+##     │    ├ HBoxContainer（表头，`LanLobbyFontResize.gd` 的四个 MarginContainer ⇒ 字号 宽/40）
+##     │    │    ├ NameContainer    size_flags_horizontal=3, ratio 1
+##     │    │    ├ PlayersContainer size_flags_horizontal=3, ratio **0.1**
+##     │    │    ├ ModeContainer    size_flags_horizontal=3, ratio 1
+##     │    │    └ JoinButtonContainer（**不** EXPAND）里放一个全透明主题的 " Join "
 ##     │    └ ScrollContainer/GraphwarLanVBox/<房间条目>   ← game_room_entry.tscn 实例
-##     ├ MarginContainer/HBoxContainer
-##     │    ├ CreateButton(" Create Game ", input_text="create_game")
-##     │    └ JoinButton(" Join IP ", input_text="join_ip")
-##     └ AdContainer(0,60)
+##     ├ MarginContainer/HBoxContainer（`LobbyButtonContainer.gd`）
+##     │    ├ MarginContainer  ┐
+##     │    ├ CreateButton     │ 四个子节点的 custom_minimum_size.x 全被设成 **屏宽×0.2**，
+##     │    ├ JoinButton       │ 字号 = 宽/30 ⇒ " Join IP " 的宽度由 0.2×1920=384 兜底
+##     │    └ MarginContainer2 ┘
+##     └ AdContainer（运行 0 高、无文字）
 ##
-## 观测要点：
-##   * Local 默认选中；Global 列表里是 5 条公网房间（US Room 1/3/4、EU Room 1/2，**没有 US Room 2**）。
-##     这些房间从哪来**未知**（`docs/92` §8："无网络，未抓包验证"），所以本项目只做静态占位条目。
-##   * 本地房间列表：本项目没有网络层，本地"房间"就是当前进程里的那个房间（有的话）。
-##   * Join 按钮在本项目里也是"未实现网络"的明写占位。
+## 本轮按真帧纠正的三件事（docs/129 §4）：
+##   1. 表头：三列都 `size_flags_horizontal=3`、标签**居中**、字号 宽/40、颜色用默认白。
+##      我们以前是 3:1:2 的比例 + 左对齐 + 自选灰 ⇒ 整排左移约 260 px。
+##   2. 底部按钮：`LobbyButtonContainer.gd` 给**每个**子节点设 `宽度 = 屏宽×0.2 = 384`，
+##      所以 " Join IP " 是 384 而不是文本宽度 286（真帧 1000..1383 = 384，逐像素对得上）。
+##   3. 公网列表的 `Players` 是 **0**（真帧四行全是 0），不是 `--`；四个模式图标照
+##      `game_room_entry.tscn` 的结构做（AspectRatioContainer 里的 GraphwarButton + expand_icon）。
 
-## 观测到的公网房间条目（docs/92 §4.4）。名字照抄，人数/模式未知 → 显示 `--`。
+## 真帧观测（1920×1160、离线、Global 页）：四行，`Players` 全是 0；模式四块分别是
+## 网格 / `f(x)=` / 回合箭头 / `01:00` —— 也就是 `axis_option_3` / `fx_option` /
+## `turns_simultaneous` / `turn_1m` 四张图（`game_room_entry.tscn` 的静态值）。
+## 房间名与在线人数是**服务端数据**，离线拿不到：名字沿用原版真帧里出现过的四个，
+## 人数用真帧里读到的 0。
 const GLOBAL_ROOMS := [
-	{"name": "US Room 1", "players": "--"},
-	{"name": "US Room 3", "players": "--"},
-	{"name": "US Room 4", "players": "--"},
-	{"name": "EU Room 1", "players": "--"},
-	{"name": "EU Room 2", "players": "--"},
+	{"name": "US Room 3", "players": "0"},
+	{"name": "EU Room 1", "players": "0"},
+	{"name": "EU Room 2", "players": "0"},
+	{"name": "US Room 2", "players": "0"},
 ]
+
+## `game_room_entry.tscn` 的四个模式图标（顺序就是节点顺序）。
+const MODE_ICONS := ["axis_option_3", "fx_option", "turns_sequential", "turn_1m"]
 
 var _local_button: GwButton
 var _global_button: GwButton
 var _list: VBoxContainer
+var _bottom_row: HBoxContainer
 
 func _ready() -> void:
-	font_divisor = 40        # LanLobbyFontResize.gd: 宽/40（标题 LanLobbyTitle 是 /30）
+	font_divisor = 40        # LanLobbyFontResize.gd: 宽/40（返回/Local/Global/底部是 /30）
 	super()
 
 func build() -> void:
@@ -43,46 +59,62 @@ func build() -> void:
 	var vbox: VBoxContainer = f.vbox
 
 	# --- 顶部：返回 + Local/Global 切换 ---
-	var top := GwUI.hbox("HBoxContainer", 8, vbox)
+	var top := GwUI.hbox("HBoxContainer", GwUI.SEPARATION, vbox)
 	top.add_child(GwUI.exit_pair(GwCommands.EXIT_LAN_LOBBY))
-	# 原版截图（1920×1160 真机/真二进制）：[返回][Local][Global] 三者横向铺满整行，
-	# Local 与 Global 各占剩余宽度的一半（实测 Local 146..1030、Global 1047..1913）。
-	# 我们以前给它们自然宽度、末尾再塞一个弹簧，于是两个按钮挤在左边（docs/124 §4）。
-	var local_holder := GwUI.margin("ShowLocalContainer", 4, top)
+	# 原版 [返回][Local][Global] 横向铺满整行，Local / Global 各占剩余宽度的一半
+	# （真帧：Local 文字 516..664、Global 1385..1566，各自半区居中）。
+	var local_holder := GwUI.margin("ShowLocalContainer", 0, top)
 	local_holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	local_holder.set_meta("font_divisor", 30)      # `LanLobbyTitle.gd`
 	_local_button = GwButton.make("Local", GwCommands.SHOW_LOCAL)
 	_local_button.name = "ShowLocalButton"
 	_local_button.toggle_mode = true
 	_local_button.button_pressed = true
 	local_holder.add_child(_local_button)
-	var global_holder := GwUI.margin("ShowGlobalContainer", 4, top)
+	var global_holder := GwUI.margin("ShowGlobalContainer", 0, top)
 	global_holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	global_holder.set_meta("font_divisor", 30)
 	_global_button = GwButton.make("Global", GwCommands.SHOW_GLOBAL)
 	_global_button.name = "ShowGlobalButton"
 	_global_button.toggle_mode = true
 	global_holder.add_child(_global_button)
 
-	# --- 表头（原版这里三个 Label 有两个都叫 RoomName，照抄名字会撞，所以保留命名后缀）---
-	var header := GwUI.hbox("HBoxContainer", 8, vbox)
-	header.add_child(_header_cell("NameContainer", "RoomName", "Room Name", 3.0))
-	header.add_child(_header_cell("PlayersContainer", "RoomName", "Players", 1.0))
-	header.add_child(_header_cell("ModeContainer", "GameMode", "Game Mode", 2.0))
-	header.add_child(_header_cell("JoinButtonContainer", "", " ", 1.0))
+	# --- 表头 ---
+	var header := GwUI.hbox("HBoxContainer", GwUI.SEPARATION, vbox)
+	header.add_child(_header_cell("NameContainer", "RoomName", "Room Name", 1.0))
+	header.add_child(_header_cell("PlayersContainer", "RoomName", "Players", 0.1))
+	header.add_child(_header_cell("ModeContainer", "GameMode", "Game Mode", 1.0))
+	# 第四格在 `.tscn` 里是一个**全透明主题**的 " Join " 按钮（字号 48）：只为把 Join 列的
+	# 宽度撑出来，屏幕上什么都看不见（Theme_hffrm 的 font_color alpha = 0、五个 stylebox 全空）。
+	var join_head := GwUI.margin("JoinButtonContainer", 0, header)
+	join_head.size_flags_horizontal = Control.SIZE_FILL
+	var ghost := GwButton.make(" Join ")
+	ghost.name = "GraphwarButton"
+	ghost.disabled = true
+	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+		ghost.add_theme_stylebox_override(state, StyleBoxEmpty.new())
+	ghost.add_theme_color_override("font_color", Color(0, 0, 0, 0))
+	ghost.add_theme_color_override("font_disabled_color", Color(0, 0, 0, 0))
+	join_head.add_child(ghost)
 
 	# --- 房间列表 ---
 	var scroll := GwUI.scroll("ScrollContainer")
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_list = GwUI.vbox("GraphwarLanVBox", 6)
+	_list = GwUI.vbox("GraphwarLanVBox", GwUI.SEPARATION)
 	_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.add_child(_list)
 	vbox.add_child(scroll)
 
 	# --- 底部：建房 / 加 IP ---
-	var bottom := GwUI.margin("MarginContainer", 4, vbox)
-	var bottom_row := GwUI.hbox("HBoxContainer", 10, bottom)
-	# `LobbyButtonContainer.gd`: Create/Join 用的是 **宽/30**（与列表头的 /40 不同）。
+	var bottom := GwUI.margin("MarginContainer", 0, vbox)
+	var bottom_row := GwUI.hbox("HBoxContainer", GwUI.SEPARATION, bottom)
+	# `LobbyButtonContainer.gd`：**每个**子节点（两个弹性垫片也算）宽度 = 屏宽×0.2，
+	# 字号 = 宽/30。这正是 " Join IP " 384 px 宽的来源。
 	bottom_row.set_meta("font_divisor", 30)
-	var pad := GwUI.margin("MarginContainer", 4, bottom_row)
+	bottom_row.set_meta("lobby_button_ratio", 0.2)
+	_bottom_row = bottom_row
+	var pad := GwUI.margin("MarginContainer", 0, bottom_row)
 	pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var create := GwButton.make(" Create Game ", GwCommands.CREATE_GAME)
 	create.name = "CreateButton"
@@ -90,21 +122,31 @@ func build() -> void:
 	var join := GwButton.make(" Join IP ", GwCommands.JOIN_IP)
 	join.name = "JoinButton"
 	bottom_row.add_child(join)
-	var pad2 := GwUI.margin("MarginContainer2", 4, bottom_row)
+	var pad2 := GwUI.margin("MarginContainer2", 0, bottom_row)
 	pad2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-	vbox.add_child(GwUI.ad_bar())
+	vbox.add_child(GwUI.ad_slot())
 
 func _header_cell(node_name: String, label_name: String, text_: String, ratio: float) -> MarginContainer:
-	var m := GwUI.margin(node_name, 4)
+	var m := GwUI.margin(node_name, 0)
 	m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	m.size_flags_stretch_ratio = ratio
-	var l := GwUI.label(text_)
-	if label_name != "":
-		l.name = label_name
-	l.add_theme_color_override("font_color", GwThemeFactory.COL_TEXT_DIM)
+	var l := GwUI.label(text_, 0, HORIZONTAL_ALIGNMENT_CENTER)
+	l.name = label_name
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	m.add_child(l)
 	return m
+
+## `LobbyButtonContainer.gd::update_child_sizes` 的等价物：
+## 给这一行的每个子节点设 `custom_minimum_size.x = 屏宽 × ratio`。
+func _apply_lobby_button_widths(row: HBoxContainer) -> void:
+	var ratio := float(row.get_meta("lobby_button_ratio", 0.2))
+	var width := get_viewport_rect().size.x
+	if width <= 0.0:
+		return
+	for c in row.get_children():
+		if c is Control:
+			(c as Control).custom_minimum_size = Vector2(width * ratio, 0.0)
 
 func on_enter() -> void:
 	var app_node := app()
@@ -117,58 +159,103 @@ func on_enter() -> void:
 
 func _rebuild_list(mode: String) -> void:
 	for c in _list.get_children():
+		_list.remove_child(c)
 		c.queue_free()
 	if mode == "global":
-		# 原版这里只有房间条目，**没有任何说明文字**（原版截图逐像素对照，docs/124 §4）。
+		# 原版这一页只有房间条目，**没有任何说明文字**（真帧逐像素对照，docs/129 §4.4）。
 		for room in GLOBAL_ROOMS:
-			_list.add_child(_room_entry(String(room.name), String(room.players), true))
+			_list.add_child(_room_entry(String(room.name), String(room.players)))
 	else:
 		var app_node := app()
 		var has_room: bool = app_node != null and app_node.state.players.size() > 0
 		if has_room:
 			_list.add_child(_room_entry(
 				String(app_node.state.room_name),
-				"%d" % app_node.state.players.size(),
-				false))
+				"%d" % app_node.state.players.size()))
 		# 空列表就**什么都不画**（原版 Local 页在 1920×1160 下就是一片空背景）。
+	# 行是运行时建的 ⇒ 字号必须在这里重新套一遍（`apply_font_scale()` 只在 `_ready` 跑过，
+	# 那时这些节点还不存在；漏掉这一步的话四行会停在主题默认的 24 号字，真帧是 48）。
+	apply_font_scale()
 
-## 一条房间条目（原版是 `game_room_entry.tscn` 实例，20 节点）：
-## RoomName / PlayerCount / 四个模式图标 / Join 按钮。
-func _room_entry(room_name: String, players: String, remote: bool) -> HBoxContainer:
-	var row := GwUI.hbox("Room", 8)
+## 一条房间条目（`game_room_entry.tscn`，20 节点）：
+##   HBoxContainer
+##     ├ ScrollContainer/NameContainer/RoomName(居中)
+##     ├ PlayersContainer/PlayerCount(居中)          ← ratio 0.1
+##     ├ ModeContainer/OptionsContainer/[Margin, 4×AspectRatio(GraphwarButton+icon), Margin]
+##     └ JoinButtonContainer/JoinButton(" Join ")
+func _room_entry(room_name: String, players: String) -> HBoxContainer:
+	var row := GwUI.hbox("HBoxContainer", GwUI.SEPARATION)
 	row.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 
-	var name_m := GwUI.margin("NameContainer", 4, row)
+	# 原版把 NameContainer **套在一个 ScrollContainer 里**（`vertical_scroll_mode = 0`）。
+	# 这层壳让名字列的最小宽度不随文本增长（ScrollContainer 的最小尺寸很小），照抄。
+	var name_scroll := ScrollContainer.new()
+	name_scroll.name = "ScrollContainer"
+	name_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	name_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	row.add_child(name_scroll)
+	var name_m := GwUI.margin("NameContainer", 0, name_scroll)
 	name_m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	name_m.size_flags_stretch_ratio = 3.0
-	var name_label := GwUI.label(room_name)
+	var name_label := GwUI.label(room_name, 0, HORIZONTAL_ALIGNMENT_CENTER)
 	name_label.name = "RoomName"
+	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	name_m.add_child(name_label)
 
-	var players_m := GwUI.margin("PlayersContainer", 4, row)
+	var players_m := GwUI.margin("PlayersContainer", 0, row)
 	players_m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	players_m.size_flags_stretch_ratio = 0.1
 	var count := GwUI.label(players, 0, HORIZONTAL_ALIGNMENT_CENTER)
 	count.name = "PlayerCount"
+	count.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	players_m.add_child(count)
 
-	var mode_m := GwUI.margin("ModeContainer", 4, row)
+	var mode_m := GwUI.margin("ModeContainer", 0, row)
 	mode_m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	mode_m.size_flags_stretch_ratio = 2.0
-	var options := GwUI.hbox("OptionsContainer", 4, mode_m)
-	for icon_name in ["axis_option_3", "fx_option", "turns_sequential", "turn_1m"]:
-		var b := GwUI.mode_button(icon_name)
-		b.custom_minimum_size = Vector2(34, 34)
-		b.disabled = true
-		options.add_child(b)
+	var options := GwUI.hbox("OptionsContainer", GwUI.SEPARATION, mode_m)
+	options.size_flags_stretch_ratio = 0.5
+	# 这两个垫片在 `.tscn` 里是 `size_flags_horizontal = 3`（EXPAND）的 MarginContainer，
+	# 不是固定宽度的弹簧 —— 4 个模式块各占 OptionsContainer 的 1/6，两侧各留 1/6。
+	var left_pad := GwUI.margin("MarginContainer", 0, options)
+	left_pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for i in MODE_ICONS.size():
+		var aspect := AspectRatioContainer.new()
+		aspect.name = "AspectRatioContainer" if i == 0 else "AspectRatioContainer%d" % (i + 1)
+		aspect.ratio = 1.0
+		aspect.stretch_mode = AspectRatioContainer.STRETCH_FIT
+		aspect.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var b := GwButton.make("")
+		b.name = ["AxisModeButton", "FunctionModeButton", "TurnModeButton", "TimeModeButton"][i]
+		b.icon = GwIcons.get_icon(MODE_ICONS[i])
+		b.expand_icon = true
+		b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		b.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		# 第 1 格白底、其余三格深绿底（形制各一份 .tres，见 GwThemeFactory.mode_icon_stylebox）
+		var sb := GwThemeFactory.mode_icon_stylebox(i == 0)
+		for state in ["normal", "hover", "pressed", "disabled"]:
+			b.add_theme_stylebox_override(state, sb)
+		aspect.add_child(b)
+		options.add_child(aspect)
+	var right_pad := GwUI.margin("MarginContainer2", 0, options)
+	right_pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-	var join_m := GwUI.margin("JoinButtonContainer", 4, row)
+	var join_m := GwUI.margin("JoinButtonContainer", 0, row)
+	join_m.size_flags_horizontal = Control.SIZE_FILL
 	var join := GwButton.make(" Join ")
 	join.name = "JoinButton"
-	join.custom_minimum_size = Vector2(96, 40)
-	join.input_text = ""     # 点 Join 之后的行为**未观测**（docs/92 §4.4 推断：离线时静默失败）
 	join.pressed.connect(_on_join_pressed)
 	join_m.add_child(join)
 	return row
 
+func apply_font_scale() -> void:
+	super()
+	if not _built:
+		return
+	if _bottom_row != null:
+		_apply_lobby_button_widths(_bottom_row)
+
 func _on_join_pressed() -> void:
-	notify("联机未实现：本项目没有网络层（协议复原在 Rust 侧 docs/24）")
+	# 原版点 Join 之后的行为**未观测**（离线环境里没有反应）。这里只给一句人话提示，
+	# 不写内部文档编号。
+	notify("联机对战尚未接入")

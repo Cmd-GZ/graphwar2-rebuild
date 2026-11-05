@@ -130,7 +130,30 @@ func _on_screen_entered(screen_name: String) -> void:
 		_apply_mute_to_screen()
 		_align_play_mute_once()
 
+## 用户可见文本里**不许**出现内部标记。这类事故已经出现过三次
+## （`advertisement slot — disabled in this build`、`战役第 0 关（占位关卡数据…）`、
+## 联机大厅底部那句 `公网房间列表来源未知（docs/92 §8）`），所以做成运行期自检：
+## 每条气泡在发出前先扫一遍，命中就**不发**、记进 `internal_text_violations` 并报错。
+## 自检里断言这个列表为空（`selftest.gd`），于是"往气泡里写内部说明"会当场 fail。
+const INTERNAL_MARKERS := ["docs/", "§", "TODO", "占位", "未观测", "原版"]
+
+## 本次进程里被拦下的气泡（去重、保序）。自检断言为空。
+static var internal_text_violations: Array[String] = []
+
+static func internal_markers_in(text: String) -> Array[String]:
+	var hits: Array[String] = []
+	for m in INTERNAL_MARKERS:
+		if text.find(m) >= 0:
+			hits.append(m)
+	return hits
+
 func notify(text: String) -> void:
+	var hits := internal_markers_in(text)
+	if not hits.is_empty():
+		if not internal_text_violations.has(text):
+			internal_text_violations.append(text)
+		push_error("[gw2] 气泡文本里出现内部标记 %s：%s" % [str(hits), text])
+		return
 	toast.emit(text)
 
 ## 供界面读取"我要刷新的数据变了"。
@@ -181,7 +204,6 @@ func command(cmd: String) -> void:
 		GwCommands.SHOW_GLOBAL:
 			room_list_mode = "global"
 			_refresh("LanLobby")
-			notify("公网房间列表来源未知（docs/92 §8）：这里显示的是静态占位条目")
 		GwCommands.CREATE_GAME:
 			state.reset_lan()
 			state.add_human(store.profile.name, store.profile.skin, store.profile.face, store.profile.hat)
@@ -237,15 +259,15 @@ func command(cmd: String) -> void:
 		GwCommands.PLAY_REPLAY:
 			_play_replay()
 		GwCommands.PLAY_PAUSE:
-			notify("回放播放未实现（回放文件格式见 docs/78，本项目不解析）")
+			notify("回放播放未实现")
 		GwCommands.KEY_PREV, GwCommands.KEY_NEXT:
 			notify("回放跳转未实现")
 		GwCommands.SAVE_SCREENSHOT, GwCommands.SAVE_SUMMARY, GwCommands.SAVE_CLIP:
-			notify("这三个按钮的原版语义未观测（只拿到键名 %s）" % cmd)
+			notify("这个按钮还没有接上")
 		GwCommands.UNLOCK_SKINS:
-			notify("内购未实现：Linux 端没有广告/内购（用户要求）")
+			notify("内购在本构建里不可用")
 		_:
-			notify("未接的命令：%s" % cmd)
+			notify("这个按钮还没有接上")
 
 func _is_keypad_key(cmd: String) -> bool:
 	var keys := [
@@ -290,14 +312,14 @@ func _start_game() -> void:
 	if not state.can_start():
 		# 原版行为：不加 Bot 直接 Start 会**静默无操作**（docs/22 §5.1）。
 		# 这里保留"不开始"，但额外给一句提示（有意偏离，写在 docs/108 §7）。
-		notify("还需要至少一个对手：先用 AddBot 加一个 Bot（原版此处是静默无操作）")
+		notify("至少还需要一个对手：先加一个 Bot")
 		return
 	_begin_match()
 
 func _start_level() -> void:
 	var lv := GwCampaign.level(campaign_selected_level)
 	if not store.is_level_unlocked(int(lv.index)):
-		notify("第 %d 关尚未解锁（原版存档 user://campaign.save 里没通到这一关）" % int(lv.index))
+		notify("第 %d 关尚未解锁" % int(lv.index))
 		return
 	state.reset_campaign(int(lv.index))
 	state.axis_mode = int(lv.axis)
@@ -334,7 +356,7 @@ func _play_replay() -> void:
 	var lobby: Control = screens.get("ReplayLobby")
 	if lobby != null and lobby.has_method("selected_replay"):
 		state.reset_replay(lobby.call("selected_replay"))
-	notify("回放播放未实现：只进 PlayScreen 的空回放模式（docs/108 §7）")
+	notify("回放播放未实现")
 	_begin_match()
 
 func _submit_join_ip() -> void:
@@ -344,7 +366,7 @@ func _submit_join_ip() -> void:
 		raw = String(popup.call("current_text")).strip_edges()
 	# 观测（docs/92 §4.7）：地址**必须带端口**，只写 IP 时原版毫无反应。
 	if not _looks_like_host_port(raw):
-		notify("地址要写成 host:port（原版只写 IP 时同样没有反应）")
+		notify("地址要写成 host:port")
 		return
 	pending_join_ip = raw
 	close_popup("JoinIpPopUp")

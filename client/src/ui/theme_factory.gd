@@ -103,6 +103,67 @@ static func _flat(bg: Color, edge: Color = COL_PANEL_EDGE, radius: int = PANEL_R
 	return sb
 
 
+## 页签（TabContainer 的 tab_selected / tab_unselected）的样式盒。
+##
+## 逐条照抄 `tab_unselected.tres` 与 `player_screen.tscn` 里的 `StyleBoxFlat_7qouw`：
+##   bg #1A3B2D、**只有上/左/右** 3px 黑边（没有下边 —— 选中的页签要和面板连成一片）、
+##   圆角只给左上/右上 10、`expand_margin_right = 3`；
+##   选中态再额外 `expand_margin_bottom = 3`，正好盖住面板顶边那条黑线（真帧里选中页签
+##   底下没有横线、未选中的底下有，就是这么来的）。
+##
+## `expand_bottom > 0` = 选中态。
+static func _tab_box(expand_bottom: float) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = COL_PANEL
+	sb.border_color = COL_PANEL_EDGE
+	sb.border_width_left = PANEL_BORDER
+	sb.border_width_top = PANEL_BORDER
+	sb.border_width_right = PANEL_BORDER
+	sb.border_width_bottom = 0
+	sb.corner_radius_top_left = PANEL_RADIUS
+	sb.corner_radius_top_right = PANEL_RADIUS
+	sb.expand_margin_right = 3.0
+	sb.expand_margin_bottom = expand_bottom
+	return sb
+
+
+## 玩家页那 15 / 15 / 24 个格子的**白卡**。
+##
+## 颜色不是我们挑的 —— 是 `shop_theme.tres` 的 `Button/styles/normal`：
+##   `bg_color = Color(1, 1, 1, 1)` + 四边 3px 黑边 + 圆角 10。
+## 原版把这份主题挂在 Skins/Faces/Hats 三个下拉框里那层 `VBoxContainer` 上，于是它下面的
+## 按钮全部继承成白底黑框；Faces/Hats 的 `shop_button_entry.tscn` 则是靠一个
+## **默认颜色就是白色**的 `ColorRect` 画同一张白卡（那个节点没写 `color`）。
+## 我们两处都没画，玩家页于是只剩深绿面板（docs/129 §1）。
+##
+## 五个状态都是同一个白盒：原版 hover/pressed/disabled 三份 StyleBoxFlat 与 normal
+## 逐字段相同，所以按下去格子不会闪。
+static func shop_cell_stylebox() -> StyleBoxFlat:
+	return _flat(Color(1, 1, 1, 1))
+
+
+## 白卡**上面那一层图标**用的样式盒 = `shop_button_entry.tscn` 里
+## `SkinBackgroundButton` / `Button` 的 `Button/styles/normal`（`StyleBoxFlat_bw5kj` 与
+## `StyleBoxFlat_7rfby`）：**透明底 + 3px 黑边 + 圆角 10**。
+##
+## 为什么不能图省事用 `StyleBoxEmpty`：`expand_icon` 把图标铺满的是**内容区**，而内容区
+## 在 `StyleBoxFlat` 下等于边框宽度（3）。用空盒的话内容区变成 303²，圆的直径就从
+## 139 px 变成 142 px —— 真帧逐像素会差 1.2%（docs/129 §3.2 就是这么找出来的）。
+static func shop_overlay_stylebox() -> StyleBoxFlat:
+	return _flat(Color(0.6, 0.6, 0.6, 0))
+
+
+## 联机大厅房间行里那 4 个模式图标按钮的底。原版四块**底色不一样**：
+##   * `AxisModeButton`   挂 `axis_button_theme.tres`      → 正常态 = `axis_menu_icon_theme.tres`
+##     = **白底** + 3px 黑边 + 圆角 10
+##   * `FunctionModeButton` / `TurnModeButton` / `TimeModeButton` 挂 `game_menu_icon_theme.tres`
+##     → 正常态 = `game_menu_icon_button_theme.tres` = **#1A3B2D** + 3px 黑边 + 圆角 10
+## 两者除了底色逐字段相同。真帧里第一格是"白底灰网格"，其余三格是深绿底 —— 就是这个差别
+## （docs/129 §4.5）。
+static func mode_icon_stylebox(on_white: bool) -> StyleBoxFlat:
+	return _flat(Color(1, 1, 1, 1) if on_white else COL_PANEL)
+
+
 ## 原版 `campaign_button_theme_2.tres` —— **Campaign 屏 21 个关卡数字用的主题**。
 ##
 ## `campaign.tscn` 把这份主题挂在生成关卡按钮的那个 `Control` 上
@@ -167,11 +228,20 @@ static func build() -> Theme:
 	t.set_stylebox("panel", "PanelContainer", _flat(COL_PANEL))
 
 	# --- TabContainer（PlayerScreen 的三个页签）---
+	# 逐条照抄 `graphwar_theme.tres`：
+	#   TabContainer/styles/panel        = StyleBoxFlat(#1A3B2D, 3px 黑边四周, radius 10)
+	#   TabContainer/styles/tab_selected = StyleBoxFlat(#1A3B2D, 上/左/右 3px 黑边, radius 左上/右上 10,
+	#                                      expand_margin right 3 + bottom 3)
+	#   TabContainer/styles/{tab_unselected,tab_hovered} = tab_unselected.tres（同上，只 expand right）
+	#   TabContainer/font_sizes/font_size = 50
+	# 原版**没有**覆盖 `font_selected_color` / `font_unselected_color` ⇒ 用 Godot 默认主题的白 /
+	# 白@0.7（实测未选中页签的文字是 (178,178,178)，正是 0.7×255）。我们以前自己写了一个
+	# 全透明 tab_unselected + 自选灰色，于是三个页签看起来一模一样（docs/129 §2）。
 	t.set_stylebox("panel", "TabContainer", _flat(COL_PANEL))
-	t.set_stylebox("tab_selected", "TabContainer", _flat(COL_PANEL))
-	t.set_stylebox("tab_unselected", "TabContainer", _flat(Color(0, 0, 0, 0)))
-	t.set_color("font_selected_color", "TabContainer", COL_TEXT)
-	t.set_color("font_unselected_color", "TabContainer", COL_TEXT_DIM)
+	t.set_stylebox("tab_selected", "TabContainer", _tab_box(3.0))
+	t.set_stylebox("tab_unselected", "TabContainer", _tab_box(0.0))
+	t.set_stylebox("tab_hovered", "TabContainer", _tab_box(0.0))
+	t.set_stylebox("tab_focus", "TabContainer", StyleBoxEmpty.new())
 	# 原版 graphwar_theme.tres：`TabContainer/font_sizes/font_size = 50`（逐字照抄）。
 	t.set_font_size("font_size", "TabContainer", 50)
 

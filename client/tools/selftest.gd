@@ -22,6 +22,7 @@ func run(main: Control) -> int:
 	await _test_player_screen()
 	await _test_replay_lobby()
 	await _test_lan_lobby()
+	await _test_ui_text_and_measured_geometry()
 	await _test_game_setup()
 	await _test_play_screen()
 	await _test_endgame()
@@ -196,14 +197,15 @@ func _test_player_screen() -> void:
 		"皮肤按钮 15 个（实际 %d）" % _count_buttons(skins_vbox))
 	_expect(_count_entries(faces_vbox) == GwStore.FACE_COUNT,
 		"脸格子 15 个（实际 %d）" % _count_entries(faces_vbox))
-	_expect(_count_entries(hats_vbox) == GwStore.HAT_COUNT,
-		"帽子格子 27 个（实际 %d）" % _count_entries(hats_vbox))
-	# 观测（docs/104 §5.2）：PlayerScreen 运行时比静态多 141 个 GraphwarButton
-	# = 皮肤 15 + Faces 15×3 + Hats 27×3；再加静态的 3 个（返回对 2 + Unlock 1）= 144。
+	_expect(_count_entries(hats_vbox) == 24,
+		"帽子格子 24 个（真帧实测 8 行 × 3 列，docs/129 §2.2；实际 %d）" % _count_entries(hats_vbox))
+	# 观测（docs/104 §5.2 的 141 个 GraphwarButton 里含了 27×3 的帽子）：
+	# 现在按真帧校正成 **15（皮肤）+ 15×3（脸）+ 24×3（帽子）= 132**；再加静态的 3 个
+	# （返回对 2 + Unlock 1）= 135。改用 `docs/129` §2.2 的实测格数，见该文的"改了既有断言"一节。
 	var total_buttons := _count_buttons(screen)
 	var grid_buttons := _count_buttons(skins_vbox) + _count_buttons(faces_vbox) + _count_buttons(hats_vbox)
-	_expect(grid_buttons == 141, "皮肤/脸/帽子网格共 141 个按钮（观测值，实际 %d）" % grid_buttons)
-	_expect(total_buttons == 144, "PlayerScreen 共 144 个按钮（= 141 动态 + 3 静态，实际 %d）" % total_buttons)
+	_expect(grid_buttons == 132, "皮肤/脸/帽子网格共 132 个按钮（实测格数，实际 %d）" % grid_buttons)
+	_expect(total_buttons == 135, "PlayerScreen 共 135 个按钮（= 132 动态 + 3 静态，实际 %d）" % total_buttons)
 
 	var name_edit := screen.find_child("PlayerNameLineEdit", true, false) as LineEdit
 	_expect(name_edit != null, "PlayerScreen 有改名输入框")
@@ -240,7 +242,9 @@ func _test_lan_lobby() -> void:
 	for c in list.get_children():
 		if c is HBoxContainer:
 			rooms += 1
-	_expect(rooms == 5, "公网房间列表 5 条（观测值，实际 %d）" % rooms)
+	# 房间列表是**服务端数据**，条数每次都不一样：旧断言写死 5 条（上一轮某一次快照）。
+	# 本轮 1920×1160 真帧（离线、Global 页）是 4 条，用户两张截图也是 4 条，所以按 4 条占位。
+	_expect(rooms == 4, "公网房间列表 4 条占位条目（实际 %d）" % rooms)
 	_command("show_local")
 	await _frames(2)
 	var local_rooms := 0
@@ -248,6 +252,135 @@ func _test_lan_lobby() -> void:
 		if c is HBoxContainer:
 			local_rooms += 1
 	_expect(local_rooms == 0, "本地房间列表初始为空（实际 %d）" % local_rooms)
+
+## 本轮（docs/129）新增：**界面文本不许泄漏内部说明** + 玩家页/联机大厅的实测几何。
+##
+## 这一组是"护栏"，判据都能指到真帧或原版 `.tres`：
+##   * 任何 `Label` / `Button` / `LineEdit` 的 `text` 里不许出现 `docs/`、`§`、`TODO`、`占位`、
+##     `未观测` —— 这类东西今年已经三次写进用户能看见的地方（广告条、战役占位关卡、联机大厅
+##     底部那行 `公网房间列表来源未知（docs/92 §8）`）。气泡（`App.notify`）另有一条断言：
+##     它在发出前自己就扫，命中会记进 `internal_text_violations` 并**不发**。
+##   * 玩家页格子边长 = `(安全区宽/2 − 50)/3` 向下取整；格子底色是白卡（`shop_theme.tres`）；
+##     SkinBlock / PendingBlock 在桌面端 `visible == false`（真帧右列下半屏是纯底色）。
+##   * 联机大厅表头三列居中、底部按钮宽度 = 屏宽×0.2（`LobbyButtonContainer.gd`）、
+##     公网房间的 Players 列是 `0`（真帧四行都是 0，不是 `--`）。
+##   * 回放列表为空时**一个字都不画**（原版真帧只有返回键 + REPLAYS 标题）。
+func _test_ui_text_and_measured_geometry() -> void:
+	# --- 1. 界面文本里不许有内部标记 ---
+	var markers := ["docs/", "§", "TODO", "占位", "未观测"]
+	var bad: Array[String] = []
+	var app_node := get_node_or_null("/root/App")
+	if app_node != null:
+		for screen_name in app_node.screens:
+			_scan_internal_text(app_node.screens[screen_name], markers, bad)
+	_expect(bad.is_empty(), "界面文本里没有内部标记（命中 %d 处：%s）"
+		% [bad.size(), str(bad.slice(0, 3))])
+	var violations: Array = app_node.internal_text_violations if app_node != null else []
+	_expect(violations.is_empty(), "气泡文本里没有内部标记（命中 %d 条：%s）"
+		% [violations.size(), str(violations.slice(0, 3))])
+
+	# --- 2. 玩家页：格子边长 / 白卡 / 隐藏块 ---
+	var player := _screen("PlayerScreen")
+	if player != null:
+		var width := float(DisplayServer.get_display_safe_area().size.x)
+		if width <= 0.0:
+			width = player.get_viewport_rect().size.x
+		var want_cell := floorf(maxf(32.0, (width / 2.0 - 50.0) / 3.0))
+		var skins_vbox := player.find_child("SkinsVbox", true, false)
+		var cells := 0
+		var cell_ok := 0
+		var white_ok := 0
+		if skins_vbox != null:
+			for row in skins_vbox.get_children():
+				for b in row.get_children():
+					if b is GwButton:
+						cells += 1
+						if absf((b as Control).custom_minimum_size.x - want_cell) < 0.01:
+							cell_ok += 1
+						var sb := (b as Control).get_theme_stylebox("normal") as StyleBoxFlat
+						if sb != null and sb.bg_color.r > 0.99 and sb.bg_color.g > 0.99 \
+								and sb.bg_color.b > 0.99 and sb.border_width_left == 3:
+							white_ok += 1
+		_expect(cells == 15 and cell_ok == 15,
+			"玩家页 15 个皮肤格子边长 = (安全区宽/2−50)/3 取整 = %d（对 %d/%d）"
+			% [int(want_cell), cell_ok, cells])
+		_expect(white_ok == 15, "玩家页 15 个格子都是白卡（白底 + 3px 黑边，shop_theme.tres）"
+			% [])
+		for block_name in ["SkinBlock", "PendingBlock"]:
+			var block := player.find_child(block_name, true, false) as CanvasItem
+			_expect(block != null and not block.visible,
+				"%s 存在但不可见（桌面端原版也是 visible=false）" % block_name)
+
+	# --- 3. 联机大厅：表头居中 / 底部按钮宽度 / Players 列 ---
+	var lobby := _screen("LanLobby")
+	if lobby != null:
+		var header_labels := [
+			lobby.find_child("NameContainer", true, false),
+			lobby.find_child("PlayersContainer", true, false),
+			lobby.find_child("ModeContainer", true, false),
+		]
+		var centered := 0
+		for h in header_labels:
+			if h == null:
+				continue
+			for c in (h as Node).get_children():
+				if c is Label and (c as Label).horizontal_alignment == HORIZONTAL_ALIGNMENT_CENTER:
+					centered += 1
+		_expect(centered == 3, "联机大厅表头三列都居中（实际 %d/3）" % centered)
+		var join_btn := lobby.find_child("JoinButton", true, false) as Control
+		var vw := lobby.get_viewport_rect().size.x
+		_expect(join_btn != null and absf(join_btn.custom_minimum_size.x - vw * 0.2) < 0.01,
+			"底部 Join IP 宽度 = 屏宽×0.2（LobbyButtonContainer.gd，期望 %.1f）"
+			% (vw * 0.2))
+		# 公网列表的 Players 列必须是 "0"（真帧四行都是 0）
+		_command("show_global")
+		await _frames(2)
+		var list := lobby.find_child("GraphwarLanVBox", true, false)
+		var zero := 0
+		var rows := 0
+		if list != null:
+			for row in list.get_children():
+				var pc := (row as Node).find_child("PlayerCount", true, false) as Label
+				if pc != null:
+					rows += 1
+					if pc.text == "0":
+						zero += 1
+		_expect(rows == 4 and zero == 4,
+			"公网房间 Players 列全是 0（真帧值，实际 %d/%d）" % [zero, rows])
+		_command("show_local")
+		await _frames(2)
+
+	# --- 4. 回放列表为空时一个字都不画 ---
+	var replays := _screen("ReplayLobby")
+	if replays != null:
+		_command("replay")
+		await _frames(3)
+		var stray: Array[String] = []
+		_collect_labels(replays, stray)
+		_expect(stray.size() == 1, "回放列表空时只剩标题一个 Label（实际 %s）" % str(stray))
+		_command("exit_replay_lobby")
+		await _frames(2)
+
+## 递归扫文本：`Label` / `Button` / `LineEdit` 的 `text`。
+func _scan_internal_text(node: Node, markers: Array, out: Array[String]) -> void:
+	if node is Label or node is Button or node is LineEdit:
+		var t := String((node as Node).get("text"))
+		if t != "":
+			for m in markers:
+				if t.find(String(m)) >= 0:
+					out.append("%s: %s" % [node.name, t])
+					break
+	for c in node.get_children():
+		_scan_internal_text(c, markers, out)
+
+## 收集一个界面里所有非空 Label 文本（用来证明"空列表什么都不画"）。
+func _collect_labels(node: Node, out: Array[String]) -> void:
+	if node is Label:
+		var t := String((node as Node).get("text"))
+		if t.strip_edges() != "":
+			out.append("%s=%s" % [node.name, t])
+	for c in node.get_children():
+		_collect_labels(c, out)
 
 func _test_game_setup() -> void:
 	_command("create_game")
