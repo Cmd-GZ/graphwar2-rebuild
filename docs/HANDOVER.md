@@ -93,8 +93,8 @@ README 的工作包表共 **15 行，其中 ⬜（未做）0 行**——已经�
 
 | 仓库 | 路径 | 远端 | 说明 |
 |---|---|---|---|
-| 上游 | `..`（`gw2/`） | `Cmd-GZ/graphwar-algorithm-analysis`（`master`） | 曲线算法报告；**绝不包含**本子仓库 |
-| 本仓库 | `gw2-rebuild/` | `Cmd-GZ/graphwar2`（`main`） | 源码复原 + 全部文档 |
+| 上游 | `..`（`gw2/`） | `Cmd-GZ/graphwar2-analysis`（`master`） | 曲线算法报告；**绝不包含**本子仓库 |
+| 本仓库 | `gw2-rebuild/` | `Cmd-GZ/graphwar2-rebuild`（`main`） | 源码复原 + 全部文档 |
 
 - 推送必须用：`GIT_SSH_COMMAND="ssh -F /dev/null -o StrictHostKeyChecking=accept-new" git push`
 - 自检：在上游执行 `git ls-files | grep gw2-rebuild` **必须为空**。

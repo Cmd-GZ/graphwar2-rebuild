@@ -52,4 +52,4 @@ cargo test --offline                      # 21 条，无需游戏二进制
 GIT_SSH_COMMAND="ssh -F /dev/null" git push origin main
 ```
 
-上游 `Cmd-GZ/graphwar-algorithm-analysis` 与本仓库互不包含；本仓库的内容**绝不**提交到上游。
+上游 `Cmd-GZ/graphwar2-analysis` 与本仓库互不包含；本仓库的内容**绝不**提交到上游。

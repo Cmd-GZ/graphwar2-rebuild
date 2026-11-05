@@ -3,9 +3,9 @@
 本仓库目标：基于 `libgraphwarrust.so` 的静态逆向结果，**复原 Graphwar II 的实现并重写成可编译的源码**，
 同时把"游戏到底怎么运作"讲清楚。
 
-与上游 `graphwar-algorithm-analysis` 的关系：那是**逆向报告与对拍工具链**（`REPORT.md` +
+与上游 `graphwar2-analysis` 的关系：那是**逆向报告与对拍工具链**（`REPORT.md` +
 `analysis/` + `graphwar_curve.py`）；本仓库是**实现本体**，独立托管在
-`Cmd-GZ/graphwar2`，与上游仓库分离、互不包含。
+`Cmd-GZ/graphwar2-rebuild`，与上游仓库分离、互不包含。
 
 **现在是什么**（2026-11-06）：内核（曲线 / 物理 / 协议 / broker / 服务端 / 关卡 / 战役数据 / AI 参数）
 已按真值复刻；`client/` 里 **15/15 界面**能启动、能开一局，弹道与命中**已经走内核**（不再走界面预览）。
