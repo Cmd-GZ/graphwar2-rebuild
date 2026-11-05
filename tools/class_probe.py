@@ -39,6 +39,12 @@
 `libgraphwarrust.so` + `analysis/{relocs,xrefs,funcstarts_ghidra_va}.pkl`（都不入库）。
 用 `GW2_UPSTREAM=/path/to/gw2` 硬指，或从本脚本位置逐级上溯。
 """
+# ⚠️ 运行前提：它 import 的是上游 `analysis/elf.py`，那个模块需要 **capstone**。
+# 系统 python 没装，必须用仓库的 venv 跑：
+#     ../.venv/bin/python tools/class_probe.py classes
+#     ../.venv/bin/python tools/class_probe.py module graphwar_texture_loader
+# （否则报 ModuleNotFoundError: No module named 'capstone'）
+
 
 import bisect
 import os
