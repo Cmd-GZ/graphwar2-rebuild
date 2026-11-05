@@ -31,10 +31,32 @@
 //!   ③ decision.broadcast() == Some((p, s)) 才发报文；Skip 时 messages 为空
 //! ```
 //!
-//! **没接的**（都写在 `docs/117` §6）：`token → 文本`（`0x4ec160`）未实现，所以 AI
-//! 进化出来的函数只能进槽、进不了 `FunctionInfo`；回合超时的**检测**没有证据，
+//! ## AI 说话：`token → 文本 → FunctionInfo`（`docs/127-ai-speaks.md`）
+//!
+//! 2026-11 之前，`aigen` 的产物是 token，而 `token → 文本`（`0x4ec160`）没有调用点，
+//! 于是 AI"会思考、不会说话"。现在 `function::to_text`（`docs/119`，1032/1032 对拍）
+//! 就是那个缺口，接线后一个 AI 回合里有**两条** `FunctionInfo`，形态各自照真实抓包
+//! （`docs/127` §2 的原始字节流帧号）：
+//!
+//! ```text
+//! TurnInfo{p,s} -> EndOfTurnInfo -> GameStateInfo(WaitingForFunctions)
+//! FunctionInfo{owner_id: s, function: <AI 文本>, corrected_function: null}   ← 提交（帧 135/158/200）
+//! ……客户端 FunctionFireRequest……
+//! GameStateInfo(CalculatingResults)
+//! FunctionInfo{owner_id: s, function: <AI 文本>, corrected_function: "f(x) ± c"}  ← 修正（帧 143/161/203）
+//! FunctionPoints{owner_id: s, …}
+//! ```
+//!
+//! `owner_id` 一律是 **`soldier_id`**（`AGENTS.md` 硬事实；抓包里 `FunctionInfo.owner_id`
+//! 与同一回合的 `FunctionPoints.owner_id` 相同，都不是 `player_id`）。
+//! 修正版**只**在开火那一刻发（`docs/43` 的既有顺序不改）。
+//!
+//! **没接的**（都写在 `docs/117` §6 / `docs/127` §6）：回合超时的**检测**没有证据，
 //! 本层只把 `timed_out` 当输入参数；游标初值取 `PlayerTurns::new` 的 0
-//! （`TurnManager::add_player` 没有 index 入口，见 `docs/98` §6-B）。
+//! （`TurnManager::add_player` 没有 index 入口，见 `docs/98` §6-B）；
+//! 同时回合制没接（房间状态写死 `SequentialTurns`）；AI 文本的 `corrected_function`
+//! 在 c < 0 时的**符号形态**与真机不同（`src/shot.rs::corrected_text` 写死 `" + "`，
+//! 见 `docs/127` §5 第 1 条）。
 
 use crate::aigen::{self, Individual, SoldierEvolver, SoldierFunctions, SoldierTurn, VarMode};
 use crate::life::{LifeState, Status};
@@ -298,8 +320,46 @@ impl Match {
         let mut messages = Vec::new();
         if let Some((p, s)) = decision.broadcast() {
             messages = self.begin_turn(p, s, now_ms, time_mode);
+            // **AI 说话**：进化刚把这个士兵的槽写过，于是把槽里的 token 写成文本广播。
+            // 只有**真的进化过**才发 —— 没进化的回合（非电脑玩家 / 被跳过 / 全灭）
+            // 没有"提交了一个函数"这件事，发一条空 `FunctionInfo` 反而是假消息。
+            if evolution.is_some() {
+                if let Some(info) = self.ai_submit_info(s) {
+                    messages.push(info);
+                }
+            }
         }
         TurnStart { decision, messages, evolution }
+    }
+
+    /// 该士兵函数槽里的**文本**：`function::to_text`（`0x4ec160`）在本仓库的唯一调用点。
+    ///
+    /// 为什么需要它：`aigen` 的产物是 token（[`FunctionSlot::tokens`](crate::aigen::FunctionSlot)），
+    /// 协议 `FunctionInfo.function` 要的是文本，中间只有这一步（`docs/119`、`docs/127`）。
+    /// `None` = 这个士兵没有槽（没登记过）。
+    ///
+    /// ⚠️ 它**不是单射**（`docs/119` §5.3）：π 写成 `3.14`、负常量写成 `neg` 的文本形态、
+    /// 缺操作数的空位在文本里不存在。这三条都是真二进制行为，不在这里修。
+    pub fn ai_function_text(&self, soldier_id: i64) -> Option<String> {
+        self.functions.tokens(soldier_id).map(crate::function::to_text)
+    }
+
+    /// AI 这一回合**提交**时要发的那条 `FunctionInfo`（`docs/127` §2.1、§3.1）。
+    ///
+    /// 形态逐字段照真实抓包（`docs/127` §2 的原始字节流帧 **73–76 / 135 / 158 / 200**）：
+    ///
+    /// ```text
+    /// {"FunctionInfo":{"owner_id":233,"function":"abs((abs((-0.57+x))+-4.85))","corrected_function":null}}
+    /// ```
+    ///
+    /// * `owner_id` = **soldier_id**（`AGENTS.md` 硬事实；抓包里同回合 `FunctionPoints.owner_id` 相同）；
+    /// * `corrected_function` = **null** —— 修正版（`f(x) ± c`）不在这一刻发，
+    ///   它由 [`Match::fire`] 夹在 `CalculatingResults` 与 `FunctionPoints` 之间发出（帧 143/161/203）。
+    ///
+    /// 空槽（开局、还没进化）返回 `function: ""`，与抓包里那条空函数完全同形。
+    pub fn ai_submit_info(&self, soldier_id: i64) -> Option<String> {
+        let text = self.ai_function_text(soldier_id)?;
+        Some(crate::protocol::emit_function_info(soldier_id, &text, None))
     }
 
     /// 只为**一个**士兵跑一次进化，并把结果写进**它自己的**槽（`docs/98` §3）。
@@ -518,7 +578,7 @@ impl Match {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{get_int, parse_message};
+    use crate::protocol::{get_int, get_str, parse_message};
 
     pub(super) fn room() -> RoomState {
         RoomState {
@@ -911,10 +971,132 @@ mod tests {
         assert_eq!(wired(replay_ai(), &[]).ai_config().budget_secs, None, "测试口径可关掉");
     }
 
+    // -----------------------------------------------------------------
+    // AI 说话：token → 文本 → `FunctionInfo`（`docs/127-ai-speaks.md`）
+    // -----------------------------------------------------------------
+
+    /// 本回合 AI 报的那条 `FunctionInfo`（键盘名 + 字段都过一遍协议解析器）。
+    fn ai_info(st: &TurnStart) -> Option<crate::protocol::RawMessage> {
+        st.messages
+            .iter()
+            .filter(|m| m.starts_with(r#"{"FunctionInfo""#))
+            .filter_map(|m| parse_message(m))
+            .next()
+    }
+
+    /// **接线验收（内核层）**：电脑玩家的回合里必须有一条 `FunctionInfo`，
+    /// `owner_id` 是 **soldier_id**、文本是槽里 token 的 `to_text`、修正字段是 `null`。
+    #[test]
+    fn ai_turn_broadcasts_its_function_as_text() {
+        let mut m = wired(replay_ai(), &[229]);
+        let st = m.begin_next_turn(229, false, 0, "Timer1m");
+        assert_eq!(announced(&st), (229, 231));
+        // 回合头三条 + AI 的一条，顺序照真实抓包（`FunctionInfo` 在 `WaitingForFunctions` 之后）。
+        assert_eq!(
+            kinds(&st.messages),
+            vec!["TurnInfo", "EndOfTurnInfo", "GameStateInfo", "FunctionInfo"],
+            "AI 的话必须落在 WaitingForFunctions 后面：{:?}",
+            st.messages
+        );
+        let info = ai_info(&st).expect("电脑玩家的回合应有一条 FunctionInfo");
+        assert_eq!(get_int(&info, "owner_id"), Some(231), "owner_id 必须是 soldier_id");
+        let text = get_str(&info, "function").expect("应有 function 字段");
+        assert!(!text.is_empty(), "进化过就不是空串");
+        // 文本**只**来自槽里的 token（不是常量、不是客户端给的那条 "0.00"）。
+        let toks = m.functions().tokens(231).expect("231 应已登记");
+        assert_eq!(text, crate::function::to_text(toks));
+        assert_eq!(Some(text.as_str()), m.ai_function_text(231).as_deref());
+        // 提交时没有修正文本（抓包帧 135/158/200）。
+        assert!(get_str(&info, "corrected_function").is_none(), "提交时的 corrected_function 是 null");
+        assert_eq!(get_str(&info, "corrected_function"), None);
+        // 与 `TurnStart.evolution`（同一份 token）同源。
+        let ev = st.evolution.as_ref().expect("电脑玩家应进化");
+        assert_eq!(crate::function::to_text(&ev.tokens), text);
+    }
+
+    /// 人类玩家的回合**一条都不多**（不替人类编函数）。
+    #[test]
+    fn human_turns_do_not_speak() {
+        let mut m = wired(replay_ai(), &[]);
+        let st = m.begin_next_turn(229, false, 0, "Timer1m");
+        assert_eq!(kinds(&st.messages), vec!["TurnInfo", "EndOfTurnInfo", "GameStateInfo"]);
+        assert!(st.evolution.is_none());
+    }
+
+    /// 多个 AI：各说各的，`owner_id` 各自是自己的 `soldier_id`，文本各自对应自己的槽。
+    #[test]
+    fn each_ai_speaks_for_its_own_soldier() {
+        let mut m = wired(replay_ai(), &[229, 230]);
+        let a = m.begin_next_turn(229, false, 0, "Timer1m");
+        let sa = announced(&a).1;
+        let ta = get_str(&ai_info(&a).expect("第一个 AI 应说话"), "function").unwrap();
+        let b = m.begin_next_turn(230, false, 0, "Timer1m");
+        let sb = announced(&b).1;
+        let tb = get_str(&ai_info(&b).expect("第二个 AI 应说话"), "function").unwrap();
+        assert_eq!(sa, 231);
+        assert_eq!(sb, 233);
+        assert_eq!(get_int(&ai_info(&a).unwrap(), "owner_id"), Some(sa));
+        assert_eq!(get_int(&ai_info(&b).unwrap(), "owner_id"), Some(sb));
+        // 互换就说明写串了：各自的文本必须等于各自槽里的 token 转出来那份。
+        assert_eq!(ta, m.ai_function_text(sa).unwrap());
+        assert_eq!(tb, m.ai_function_text(sb).unwrap());
+        assert_ne!(ta, tb, "两个士兵是两份独立种群，进化出来的 token 不该一样");
+    }
+
+    /// `owner_id` 不是 `player_id`：玩家 229 的射手是 231，报文里必须是 231。
+    #[test]
+    fn ai_function_info_owner_is_the_soldier_not_the_player() {
+        let mut m = wired(replay_ai(), &[229]);
+        let st = m.begin_next_turn(229, false, 0, "Timer1m");
+        let info = ai_info(&st).expect("应有 FunctionInfo");
+        assert_eq!(get_int(&info, "owner_id"), Some(231));
+        assert_eq!(get_int(&info, "player_id"), None, "不该出现 player_id 键");
+        // `Match::fire` 那条（修正版）也是同一个 owner_id。
+        let msgs = m.fire(231, &m.ai_function_text(231).unwrap(), -10.0, 0.0, false, 0);
+        let fired = msgs
+            .iter()
+            .filter_map(|x| parse_message(x))
+            .find(|p| p.kind == "FunctionInfo")
+            .expect("开火必须带 FunctionInfo");
+        assert_eq!(get_int(&fired, "owner_id"), Some(231));
+    }
+
+    /// 空槽（还没进化过）也得能发：与抓包里那条空 `FunctionInfo` 同形；
+    /// 修正版就是抓样的 `" + 10.990"`（`docs/24` §6.2）。
+    #[test]
+    fn empty_slot_speaks_the_captured_empty_form() {
+        let m = wired(replay_ai(), &[]);
+        assert_eq!(
+            m.ai_submit_info(231).expect("登记过就该有槽"),
+            r#"{"FunctionInfo":{"owner_id":231,"function":"","corrected_function":null}}"#
+        );
+        assert_eq!(
+            crate::shot::corrected_text("", -19.512760846799154, 10.99018276610812, false),
+            " + 10.990",
+            "空函数的修正文本就是抓包里那条"
+        );
+    }
+
+    /// AI 的文本**能被 `parse` 吃回去**（`docs/119` §5：`to_text` 不是单射，
+    /// 但"文本 → token → 文本"对本局这批 token 是恒等 —— 不动点）。
+    #[test]
+    fn ai_text_round_trips_through_the_parser() {
+        let mut m = wired(replay_ai(), &[229, 230]);
+        let mut seen = 0;
+        for pid in [229, 230, 229, 230] {
+            let st = m.begin_next_turn(pid, false, 0, "Timer1m");
+            let text = get_str(&ai_info(&st).expect("两个都是电脑玩家"), "function").unwrap();
+            let toks = crate::function::parse(&text);
+            assert!(!toks.is_empty(), "文本解析回空 token 流：{text}");
+            assert_eq!(crate::function::to_text(&toks), text, "文本不是不动点（{text}）");
+            seen += 1;
+        }
+        assert_eq!(seen, 4);
+    }
+
     /// 进化种群的归属（`docs/98` §6-A **未定**）在缓存条数上分叉 —— 一个显式开关。
     #[test]
-    fn population_scope_is_explicit() {
-        let mut per_soldier =
+    fn population_scope_is_explicit() {        let mut per_soldier =
             wired(AiConfig { pop_scope: PopScope::Soldier, ..replay_ai() }, &[229, 230]);
         let mut per_player =
             wired(AiConfig { pop_scope: PopScope::Player, ..replay_ai() }, &[229, 230]);

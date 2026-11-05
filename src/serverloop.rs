@@ -20,7 +20,19 @@
 //! ① TurnManager::begin_turn  -> TurnDecision（Some(id) / Some(0) / None）
 //! ② 只为判出的 soldier_id 跑 SoldierEvolver::evolve_soldier（25 s 预算，仅电脑玩家）
 //! ③ broadcast() == Some((p, s)) 才发报文 —— 这就是"Some(0) 仍发 / None 不发"的开关
+//! ④ 进化过 ⇒ 同一条 `begin_next_turn` 里多一条 `FunctionInfo`（AI 说话，`docs/127`）
 //! ```
+//!
+//! ## 电脑玩家的函数由服务端 AI 决定（`docs/127` §5）
+//!
+//! 真游戏里机器人也是一个**客户端**：它算完把函数交上来（`FunctionUpdateRequest`），
+//! 再 `FunctionFireRequest`（原始抓包 `docs/127` §2 的 fd15 帧 36/60 就是机器人这么发的）。
+//! 本仓库里机器人住在服务端，所以这两处都改读 [`Match::ai_function_text`]：
+//!
+//! * `FunctionUpdateRequest` 的回执（提交时的 `FunctionInfo{corrected_function: null}`）；
+//! * `FunctionFireRequest` 的开火函数（修正版的 `FunctionInfo` 由 `Match::fire` 发）。
+//!
+//! 客户端对机器人交上来的文本**不生效**（它是重建版的测试客户端，只会发 `"0.00"`）。
 //!
 //! **玩家出场顺序仍然由调用方给**（`docs/47`：真游戏来自 HashMap 迭代序，不可复现）：
 //! [`Config::player_order`]；留空时用"玩家/士兵的构造顺序"，这是**重建版自有规则**，
@@ -105,9 +117,11 @@ struct PlayerState {
 
 /// 一条"轮到谁"的记录。
 ///
-/// 为什么需要它：AI 进化出来的函数是 **token**，而 `token → 文本`（`0x4ec160`）
-/// 还没实现（`docs/109` §6-H），所以**报文里看不到 AI 的产物**。这条记录是
-/// "AI 真的为这个士兵跑过"的唯一可观测痕迹，端到端测试就断言它（`docs/117` §4）。
+/// 为什么需要它：AI 的产物在 2026-11 之前**一条都上不了线**（`token → 文本` 没实现），
+/// 那时这条记录是"AI 真的为这个士兵跑过"的唯一可观测痕迹。现在 AI 的函数已经进了
+/// 报文（`docs/127`），日志的价值变成**把"该发什么"和"发了什么"对上**：
+/// `function_text` / `corrected` 与同一回合报文里的两条 `FunctionInfo` 逐字符相同
+/// （端到端测试就是这么比的）。它**不进协议**。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnRecord {
     /// 本回合轮到哪个玩家。
@@ -123,11 +137,29 @@ pub struct TurnRecord {
     pub evolved: bool,
     /// 进化后写进该士兵槽的 token 数（没进化 = 0）。
     pub function_tokens: usize,
+    /// AI 这一回合说出的**函数文本**（`function::to_text`，`0x4ec160`）。没进化 = `None`。
+    ///
+    /// 它必须与 `begin_next_turn` 那条 `FunctionInfo.function` 逐字符相同。
+    pub function_text: Option<String>,
+    /// 同一回合的**修正后**文本（`f(x) ± c`，三位小数）。它必须与开火那一刻
+    /// `Match::fire` 发的那条 `FunctionInfo.corrected_function` 逐字符相同。
+    pub corrected: Option<String>,
 }
 
 impl TurnRecord {
-    fn from_start(player_id: i64, st: &TurnStart) -> Self {
+    fn from_start(m: &Match, player_id: i64, st: &TurnStart) -> Self {
         let announced = st.decision.broadcast();
+        // AI 说话的唯一来源：本回合进化的 token（= 写进槽的那份）。
+        let function_text = st.evolution.as_ref().map(|e| crate::function::to_text(&e.tokens));
+        // 修正后的文本用**射手自己的位置与朝向**算，与 `Match::fire` 同一口径。
+        let corrected = match (function_text.as_deref(), announced) {
+            (Some(text), Some((_, sid))) => m
+                .soldiers
+                .iter()
+                .find(|t| t.id == sid)
+                .map(|t| crate::shot::corrected_text(text, t.x, t.y, st.decision.flip().unwrap_or(false))),
+            _ => None,
+        };
         TurnRecord {
             player_id,
             soldier_id: announced.map(|(_, s)| s),
@@ -135,6 +167,8 @@ impl TurnRecord {
             flip: st.decision.flip(),
             evolved: st.evolution.is_some(),
             function_tokens: st.evolution.as_ref().map(|e| e.tokens.len()).unwrap_or(0),
+            function_text,
+            corrected,
         }
     }
 }
@@ -235,7 +269,7 @@ fn advance(
         // `timed_out = false`：**超时检测没有证据**，本服务端不实现它
         // （`docs/117` §6；用户口述"超时 = 跳过该玩家"仍未独立验证）。
         let st = m.begin_next_turn(pid, false, now_ms, time_mode);
-        log.records.push(TurnRecord::from_start(pid, &st));
+        log.records.push(TurnRecord::from_start(m, pid, &st));
         let announced = st.decision.broadcast();
         messages.extend(st.messages);
         match announced {
@@ -254,6 +288,17 @@ fn advance(
 struct Advance {
     messages: Vec<String>,
     current: Option<(i64, i64)>,
+}
+
+/// 电脑玩家这一回合的 **AI 文本**（`docs/127`）；不是电脑玩家 / 还没登记 ⇒ `None`。
+///
+/// 人类玩家永远走 `None`：他们的函数来自 `FunctionUpdateRequest`，不替他们编。
+fn ai_text_of(m: Option<&Match>, player_id: i64, soldier_id: i64) -> Option<String> {
+    let m = m?;
+    if !m.is_bot(player_id) {
+        return None;
+    }
+    m.ai_function_text(soldier_id)
 }
 
 fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(String, TurnLog)> {
@@ -423,10 +468,20 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
                     if let Some(p) = players.iter_mut().find(|p| p.player_id == pid) {
                         p.function = f.clone();
                     }
-                    send(
-                        sock,
-                        &[crate::protocol::emit_function_info(pid, &f, None)],
-                    )?;
+                    // `FunctionInfo.owner_id` 是 **soldier_id**（`AGENTS.md` 硬事实）。
+                    // 抓包帧 135：`FunctionUpdateRequest{player_id:229}` 之后那条
+                    // `FunctionInfo` 的 `owner_id` 是 **230**（该玩家本回合的射手）。
+                    // ⇒ 本行此前发的是 `player_id`，是个 bug（`docs/127` §2.1 第 2 条）。
+                    let owner = match current {
+                        Some((p, s)) if p == pid => s,
+                        // 不在自己回合里提交：没有"当前的士兵"可指，退回 player_id 并把
+                        // 这一条留成**未知**（抓包里没观测到这种时序）。
+                        _ => pid,
+                    };
+                    // 电脑玩家的函数由**服务端 AI** 决定（`docs/127` §5）：客户端交上来的
+                    // `"0.00"` 不生效，回执照 AI 的文本发。
+                    let text = ai_text_of(m.as_ref(), pid, owner).unwrap_or(f);
+                    send(sock, &[crate::protocol::emit_function_info(owner, &text, None)])?;
                 }
             }
             "FunctionFireRequest" => {
@@ -455,6 +510,14 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
                     .turns()
                     .flip_for(pid)
                     .unwrap_or_else(|| panic!("玩家 {pid} 应已在 TurnManager 里登记"));
+                // **AI 真的打自己算出来的那个函数**（`docs/127` §5）：电脑玩家不看客户端交的
+                // 文本，用槽里的（= 本回合进化出来的）token 转成的文本开火。于是这条链闭环：
+                // 进化 → `to_text` → 提交时的 `FunctionInfo` → 用同一份文本开火 → 修正版
+                // `FunctionInfo`（`docs/117` §4 那条"文本仍来自客户端"的缺口在这里闭上）。
+                let function = match mref.is_bot(pid) {
+                    true => mref.ai_function_text(soldier).unwrap_or(function),
+                    false => function,
+                };
                 let now = now_ms();
                 let mut out = mref.fire(soldier, &function, x0, y0, flip, now);
                 // 推进到销毁到期

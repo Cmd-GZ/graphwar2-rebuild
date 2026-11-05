@@ -305,6 +305,211 @@ fn rotation_and_ai_are_wired_over_tcp() {
     assert_eq!(log.evolved_soldiers(), announced);
 }
 
+/// **AI 说话验收**（`docs/127-ai-speaks.md`）：电脑玩家的每一回合都要在报文流里
+/// 说出自己的函数，且这条函数**就是它真的打出去的那条**。
+///
+/// 断言的六件事（都不复用被测代码算出来的数）：
+///
+/// 1. 回合开始（还没开火）就有一条 `FunctionInfo`，`owner_id` == 本回合的 `soldier_id`，
+///    `function` **非空**、没有空格（`to_text` 一个空格都不加，`docs/119` §3.1）；
+/// 2. 这段文本能被 `function::parse` 吃回去，且 `to_text(parse(text)) == text`（往返闭合）；
+/// 3. `FunctionUpdateRequest` 的回执照旧是 `soldier_id`，且**客户端的 `"0.00"` 改不动**
+///    电脑玩家的函数（AI 才是它的作者）；
+/// 4. 开火窗口的顺序是 `CalculatingResults → FunctionInfo → FunctionPoints`（`docs/43`），
+///    中间那条 `function` 与第 1 步逐字符相同；
+/// 5. `corrected_function` 的形态 = `"<函数文本> + <三位小数>"`，常数用**独立路径**复算
+///    （`function::eval` + `FunctionPoints.start_x/start_y`），不是读实现里的私有函数；
+/// 6. 每个 AI 回合都过一遍（不是"某一回合过了就算"），并且真的跑了若干回合。
+#[test]
+fn ai_functions_are_broadcast_and_round_trip_over_tcp() {
+    let cfg = Config {
+        seed: [11u8; 32],
+        bot_players: vec![229, 230],
+        ai_budget_secs: None,
+        ..Default::default()
+    };
+    let (addr, server) = start_server(cfg, true);
+    let mut client = TcpStream::connect(addr).expect("connect");
+    handshake(&mut client);
+
+    client.write_all(&frame(r#"{"GameStartRequest":{}}"#)).unwrap();
+    let mut batch = read_batch(&mut client);
+
+    // 队伍（`flip` 由队伍决定，`docs/105`）+ 士兵→玩家。
+    let mut team_of: BTreeMap<i64, String> = BTreeMap::new();
+    let mut owner: BTreeMap<i64, i64> = BTreeMap::new();
+    for m in &batch {
+        if let Some(rm) = gw2_rebuild::protocol::parse_message(m) {
+            match rm.kind.as_str() {
+                "TeamInfo" => {
+                    team_of.insert(
+                        gw2_rebuild::protocol::get_int(&rm, "entity_id").unwrap(),
+                        gw2_rebuild::protocol::get_str(&rm, "team").unwrap(),
+                    );
+                }
+                "SoldierInfo" => {
+                    owner.insert(
+                        gw2_rebuild::protocol::get_int(&rm, "soldier_id").unwrap(),
+                        gw2_rebuild::protocol::get_int(&rm, "player_id").unwrap(),
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+    assert_eq!(owner.len(), 4, "应有 4 名士兵");
+
+    let mut turns: Vec<i64> = Vec::new();
+    let mut texts: Vec<String> = Vec::new();
+    for _ in 0..20 {
+        let Some(pid) = read_who(&batch) else { break };
+        let sid = read_whom(&batch, pid).expect("TurnInfo 应带 soldier_id");
+        assert_eq!(owner[&sid], pid);
+        turns.push(sid);
+
+        // ---- 1) 回合开始那条：owner_id = soldier_id、function 非空 ----
+        let submit = function_info_of(&batch, sid).unwrap_or_else(|| {
+            panic!("士兵 {sid} 的回合里没有 FunctionInfo：{batch:?}")
+        });
+        let text = submit.0.clone();
+        assert!(!text.is_empty(), "AI 的函数文本是空串（士兵 {sid}）");
+        assert!(!text.contains(' '), "`to_text` 不加空格，这条却有空格：{text:?}");
+        assert!(submit.2.is_none(), "提交时的 corrected_function 必须是 null：{:?}", submit);
+        texts.push(text.clone());
+
+        // ---- 2) 往返闭合：文本 → token → 文本 ----
+        let toks = gw2_rebuild::function::parse(&text);
+        assert!(!toks.is_empty(), "AI 文本解析回空 token 流：{text:?}");
+        assert_eq!(
+            gw2_rebuild::function::to_text(&toks),
+            text,
+            "AI 文本经 parse/to_text 往返后变了：{text:?}"
+        );
+
+        // ---- 3) 客户端改不动电脑玩家的函数；回执的 owner_id 仍是 soldier_id ----
+        client
+            .write_all(&frame(&format!(
+                r#"{{"FunctionUpdateRequest":{{"player_id":{pid},"function":"0.00"}}}}"#
+            )))
+            .unwrap();
+        let echo = read_batch(&mut client);
+        let (etext, eowner, _) = function_info_in(&echo).expect("FunctionUpdateRequest 应有回执");
+        assert_eq!(eowner, sid, "回执的 owner_id 必须是 soldier_id（不是 player_id）");
+        assert_eq!(etext, text, "电脑玩家的函数由 AI 决定，客户端的 \"0.00\" 不该生效");
+
+        client
+            .write_all(&frame(&format!(r#"{{"FunctionFireRequest":{{"player_id":{pid}}}}}"#)))
+            .unwrap();
+        let got = read_batch(&mut client);
+        if got.is_empty() {
+            break;
+        }
+
+        // ---- 4) 顺序：CalculatingResults → FunctionInfo(修正后) → FunctionPoints ----
+        let calc = got
+            .iter()
+            .position(|m| m.contains("CalculatingResults"))
+            .unwrap_or_else(|| panic!("本回合没有 CalculatingResults：{got:?}"));
+        assert_eq!(kind(&got[calc + 1]), "FunctionInfo", "CalculatingResults 之后必须是 FunctionInfo");
+        assert_eq!(kind(&got[calc + 2]), "FunctionPoints", "FunctionInfo 之后必须是 FunctionPoints");
+        let fired = gw2_rebuild::protocol::parse_message(&got[calc + 1]).unwrap();
+        assert_eq!(gw2_rebuild::protocol::get_int(&fired, "owner_id"), Some(sid));
+        assert_eq!(
+            gw2_rebuild::protocol::get_str(&fired, "function"),
+            Some(text.clone()),
+            "打出去的必须是它说的那个函数（士兵 {sid}）"
+        );
+
+        // ---- 5) 修正文本：`<f> + <三位小数>`，常数独立复算 ----
+        let corrected = gw2_rebuild::protocol::get_str(&fired, "corrected_function")
+            .unwrap_or_else(|| panic!("修正版必须有 corrected_function：{fired:?}"));
+        let pts = gw2_rebuild::protocol::parse_message(&got[calc + 2]).unwrap();
+        let x0 = gw2_rebuild::protocol::get_f64(&pts, "start_x").expect("FunctionPoints.start_x");
+        let y0 = gw2_rebuild::protocol::get_f64(&pts, "start_y").expect("FunctionPoints.start_y");
+        let flip = team_of.get(&sid).map(|t| t == "Team2").expect("每名士兵都有 TeamInfo");
+        // c = y0 - f(±x0)：与 `src/shot.rs::correction` 同一定义，但这里**自己算**。
+        let f_at = gw2_rebuild::function::eval(&toks, if flip { -x0 } else { x0 }, 0.0, 0.0);
+        let c = y0 - f_at;
+        assert_eq!(
+            corrected,
+            format!("{} + {:.3}", text, c),
+            "修正文本的形态与常数不符（士兵 {sid}，起点 ({x0}, {y0})）"
+        );
+        // 三位小数：尾巴必须正好是 `" + "` + 3 位小数
+        let tail = &corrected[text.len()..];
+        assert_eq!(tail, format!(" + {:.3}", c));
+        let frac = tail.rsplit('.').next().unwrap();
+        assert_eq!(frac.len(), 3, "修正常数必须是三位小数：{tail:?}");
+
+        if got.iter().any(|m| m.contains("EndingGame")) {
+            break;
+        }
+        batch = got;
+    }
+
+    assert!(turns.len() >= 4, "只打了 {} 回合，断言覆盖不足", turns.len());
+    let log = server.join().unwrap().unwrap();
+    // ---- 6) 日志与报文同源：AI 说的文本、修正文本都与报文逐字符相同 ----
+    let announced: Vec<i64> = log.announced().map(|(_, s)| s).collect();
+    assert_eq!(announced, turns, "报文里的射手序列应与日志一致");
+    assert!(log.records.len() >= turns.len(), "日志少了回合：{:?}", log.records);
+    for (r, text) in log.records.iter().zip(&texts) {
+        let sid = r.soldier_id.expect("本局不该有跳过回合");
+        assert!(r.evolved, "士兵 {sid} 的回合没进化");
+        assert_eq!(
+            r.function_text.as_deref(),
+            Some(text.as_str()),
+            "士兵 {sid}：日志里的函数与报文里的不是同一份"
+        );
+        assert!(r.corrected.is_some(), "士兵 {sid}：日志缺修正文本");
+        assert!(r.function_tokens > 0, "士兵 {sid}：进化的 token 为空");
+    }
+}
+
+/// `(function, owner_id, corrected_function)` 的解析结果。
+type FunctionInfo = (String, i64, Option<String>);
+
+/// 报文窗口里**最后一条** `FunctionInfo`（最新的那条，通常是本回合 AI 的提交）。
+fn function_info_in(batch: &[String]) -> Option<FunctionInfo> {
+    batch
+        .iter()
+        .rev()
+        .filter_map(|m| {
+            let rm = gw2_rebuild::protocol::parse_message(m)?;
+            if rm.kind != "FunctionInfo" {
+                return None;
+            }
+            Some((
+                gw2_rebuild::protocol::get_str(&rm, "function").unwrap_or_default(),
+                gw2_rebuild::protocol::get_int(&rm, "owner_id")?,
+                gw2_rebuild::protocol::get_str(&rm, "corrected_function"),
+            ))
+        })
+        .next()
+}
+
+/// 指定士兵的**最后一条** `FunctionInfo`。
+fn function_info_of(batch: &[String], soldier_id: i64) -> Option<FunctionInfo> {
+    batch
+        .iter()
+        .rev()
+        .filter_map(|m| {
+            let rm = gw2_rebuild::protocol::parse_message(m)?;
+            if rm.kind != "FunctionInfo" {
+                return None;
+            }
+            if gw2_rebuild::protocol::get_int(&rm, "owner_id") != Some(soldier_id) {
+                return None;
+            }
+            Some((
+                gw2_rebuild::protocol::get_str(&rm, "function").unwrap_or_default(),
+                soldier_id,
+                gw2_rebuild::protocol::get_str(&rm, "corrected_function"),
+            ))
+        })
+        .next()
+}
+
 fn read_who(batch: &[String]) -> Option<i64> {
     for m in batch.iter().rev() {
         if let Some(rm) = gw2_rebuild::protocol::parse_message(m) {
