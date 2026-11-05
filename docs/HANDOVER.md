@@ -18,6 +18,10 @@
   游戏本体只有 3 次且是 HashMap 的 RandomState 播种。二进制里 `expand 32-byte k`
   出现 6 次 ⇒ 确有 ChaCha；看不见是因为 Rust 走原始 syscall(318)，绕过 libc 函数。
   hook syscall 会让 frida 自断通信，该路不可用
+- **RNG 能力总结**（`docs/58`）：类型/状态/种子来源/重放全部打通，
+  关卡生成 13/13 逐位复现。回合顺序与 AI **有了验证手段但未验证**：
+  实测士兵创建与首个 TurnInfo 都在 draw 34 之前，洗牌应落在 draw 2..34
+  （4 元素 Fisher–Yates 只需 3 次随机数，量级吻合），但具体值未定位
 - **种子来源定位**（`docs/57`）：播种是惰性的（首次 `next_u64` 前状态全零），
   事件顺序为 `getrandom×3(16B, GW+0x907c66) → 首次 next_u64` ⇒ 种子来自 **OS 熵**；
   但 key ≠ 种子字节原样，中间有派生（未还原）。这不影响 docs/56 的重放
