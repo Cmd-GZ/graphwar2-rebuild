@@ -27,6 +27,7 @@
 //!   把它当成第三种关卡模式是 `docs/70` 的误读（`docs/72` 已提出怀疑）。
 
 use crate::levelgen_tables::{ZIG_NORM_F, ZIG_NORM_X};
+use crate::rng::ChaCha12;
 
 /// 一个障碍。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -114,6 +115,152 @@ pub fn generate_center(next: &mut dyn FnMut() -> u64) -> Vec<Obstacle> {
         y: 0.0,
         r: u * 5.0 + 3.0,
     }]
+}
+
+// ---------------------------------------------------------------------------
+// 关卡 → 障碍参数（21 关全表）与"种子 → 障碍"的入口
+// ---------------------------------------------------------------------------
+
+/// 一关的障碍**模式**。只有三种，`docs/103` 已排除"圆盘式"是关卡模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObstacleMode {
+    /// 整关没有障碍（`level_0`/`level_1`/`level_16`）。
+    None,
+    /// 中心单障碍：1 颗、位置恒 `(0,0)`、`r = u*5+3 ∈ [3,8)`（[`generate_center`]）。
+    Center,
+    /// 随机散布：`n = trunc(normal()*7+15)`、钳到下界 `min_count`（[`generate`]）。
+    Scatter,
+}
+
+/// 一关的障碍参数：模式 + 散布式的个数**下界** `min_count`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObstacleParams {
+    pub mode: ObstacleMode,
+    /// 散布式 `n` 的下界（`docs/118` §7.2：`if n <= min_count { n = min_count }`）。
+    /// 非散布式一律 0；中心式的"数量 1"由 [`generate_center`] 自身保证。
+    pub min_count: i32,
+}
+
+/// **21 关的障碍参数表**（0 基：`LEVEL_OBSTACLE_PARAMS[0]` = `level_0` = 第 1 关）。
+///
+/// 逐条抄自 `docs/118` §7.1 的「障碍（模式 / 数量）」列。该列每个格子都带证据短码：
+/// `C` = `.data.rel.ro` 里的**闭包预设记录**（地址可指认，写在下面每行的注释里），
+/// `R` = 385 份 replay 的**运行时真值**。两列 21/21 一致，所以这张表的证据等级是
+/// **逐位验证 + 运行时**（本仓库 `AGENTS.md` 的四档里最高的一档）。
+///
+/// 同一张表在客户端 `client/src/app/campaign.gd` 里也有一份（`obstacles`/`obstacle_min`
+/// 字段，界面用）；两处必须一致 —— `api.rs` 的单测
+/// `level_params_match_docs_118_table` 把这张表与文档原文钉在一起。
+///
+/// ⚠️ 注意事项：
+/// 1. `min_count` 是**下界不是定值**（`docs/118` §7.2 有运行时硬证据：关 11/18/20
+///    出现过恰好 10 个、关 5/21 出现过恰好 15 个）；
+/// 2. 表里的"数量"对散布式**不是**实际个数 —— 实际个数每局都不同，
+///    这正是本表的第 3 列（模式）配上第 4 列（下界）而不是"固定坐标表"的原因。
+pub const LEVEL_OBSTACLE_PARAMS: [ObstacleParams; 21] = [
+    // 关 1  Level 0   无障碍      〔C 0x95a350 / 0x95a378；R 0 个〕
+    ObstacleParams { mode: ObstacleMode::None, min_count: 0 },
+    // 关 2  Level 1   无障碍      〔C；R 0〕
+    ObstacleParams { mode: ObstacleMode::None, min_count: 0 },
+    // 关 3  Level 2   中心单障碍  〔C 0x49f1c0；R 1 个 @(0,0) r=3.34〕
+    ObstacleParams { mode: ObstacleMode::Center, min_count: 0 },
+    // 关 4  Level 3   中心单障碍  〔C 0x49f370；R 1 个 @(0,0) r=4.81/6.75〕
+    ObstacleParams { mode: ObstacleMode::Center, min_count: 0 },
+    // 关 5  Level 4   散布 min=15 〔C 0x49fe80；R 15 个〕
+    ObstacleParams { mode: ObstacleMode::Scatter, min_count: 15 },
+    // 关 6  Level 5   散布 min=5  〔C 0x4a12f0；R 17 个〕
+    ObstacleParams { mode: ObstacleMode::Scatter, min_count: 5 },
+    // 关 7  Level 6   散布 min=10 〔C 0x4a2410；R 17 个〕
+    ObstacleParams { mode: ObstacleMode::Scatter, min_count: 10 },
+    // 关 8  Level 7   散布 min=6  〔C 0x4a2da0；R 16 个〕
+    ObstacleParams { mode: ObstacleMode::Scatter, min_count: 6 },
+    // 关 9  Level 8   散布 min=10 〔C 0x4a2410；R 16 个〕
+    ObstacleParams { mode: ObstacleMode::Scatter, min_count: 10 },
+    // 关 10 Level 9   散布 min=5  〔C 0x4a12f0；R 15/17 个〕
+    ObstacleParams { mode: ObstacleMode::Scatter, min_count: 5 },
+    // 关 11 Level 10  散布 min=10 〔C 0x4a2410；R 10/13 个〕
+    ObstacleParams { mode: ObstacleMode::Scatter, min_count: 10 },
+    // 关 12 Level 11  散布 min=5  〔C 0x4a12f0；R 15 个〕
+    ObstacleParams { mode: ObstacleMode::Scatter, min_count: 5 },
+    // 关 13 Level 12  中心单障碍  〔C 0x4a5e80；R 1 个 @(0,0) r=5.69〕
+    ObstacleParams { mode: ObstacleMode::Center, min_count: 0 },
+    // 关 14 Level 13  散布 min=10 〔C 0x4a2410；R 12/27 个〕
+    ObstacleParams { mode: ObstacleMode::Scatter, min_count: 10 },
+    // 关 15 Level 14  散布 min=5  〔C 0x4a12f0；R 21 个〕
+    ObstacleParams { mode: ObstacleMode::Scatter, min_count: 5 },
+    // 关 16 Level 15  散布 min=10 〔C 0x4a2410；R 10…29 个〕
+    ObstacleParams { mode: ObstacleMode::Scatter, min_count: 10 },
+    // 关 17 Level 16  无障碍      〔C 0x95d358；R 0〕
+    ObstacleParams { mode: ObstacleMode::None, min_count: 0 },
+    // 关 18 Level 17  散布 min=10 〔C 0x4a2410；R 10 个〕
+    ObstacleParams { mode: ObstacleMode::Scatter, min_count: 10 },
+    // 关 19 Level 18  散布 min=10 〔C 0x4a2410；R 14/15/23/29 个〕
+    ObstacleParams { mode: ObstacleMode::Scatter, min_count: 10 },
+    // 关 20 Level 19  散布 min=10 〔C 0x4a2410；R 10…25 个〕
+    ObstacleParams { mode: ObstacleMode::Scatter, min_count: 10 },
+    // 关 21 Level 20  散布 min=15 〔C 0x49fe80；R 15…31 个〕
+    ObstacleParams { mode: ObstacleMode::Scatter, min_count: 15 },
+];
+
+/// 关卡总数（= 表长）。`docs/118` §5.2 有三处独立证据。
+pub const LEVEL_COUNT: usize = LEVEL_OBSTACLE_PARAMS.len();
+
+/// 种子 → ChaCha 的 32 字节 key（**我们自定的展开**，不是原版的做法）。
+///
+/// 原版是在开局时从 `/dev/urandom` 取 key（`docs/57` `seed-source`），所以**没有**
+/// "种子 → key"这层映射可抄；这里用 splitmix64 把 64 位种子摊成 4 个 64 位字，
+/// 目的只是"同种子必然同结果、不同种子必然不同结果"，并避开 `seed=0` 得到全零 key。
+///
+/// 证据等级：**自定**（`docs/126` §2.3 写清了这一点：本函数生成的障碍与任何一份
+/// 原版抓包都**不会**逐位相同；能对上的是**公式与分布**，不是具体数值）。
+fn seed_key(seed: u64) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    let mut s = seed;
+    for chunk in out.chunks_mut(8) {
+        // splitmix64（与 `rand` 的 `SeedableRng::seed_from_u64` 同一构造，常量照抄）
+        s = s.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = s;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^= z >> 31;
+        chunk.copy_from_slice(&z.to_le_bytes());
+    }
+    out
+}
+
+/// 该关的障碍参数；关卡号越界返回 `None`。
+pub fn params_for_level(level_index: usize) -> Option<ObstacleParams> {
+    LEVEL_OBSTACLE_PARAMS.get(level_index).copied()
+}
+
+/// **按（关卡, 种子）生成一关的障碍** —— `GW2Rebuild.level_obstacles` 的语义本体。
+///
+/// 走的是本文件既有、已被逐位验证的两个生成器（[`generate`] 13/13 逐位、
+/// [`generate_center`]），**不重写公式**。
+///
+/// # 种子语义（重要，见 `docs/126` §2.2）
+///
+/// 原版每局的障碍布局**逐局不同**（`docs/118` §7.1 的 `R` 列：关 16 出现过 10…29 个），
+/// 因为种子是每局开局从 `/dev/urandom` 抽的（`docs/57`）。所以"种子"是**调用方的输入**：
+///
+/// * 同一个 `(level_index, seed)` 必然得到**逐位相同**的障碍（可复现、可写测试）；
+/// * 换 `seed` 就换一局布局（等价于原版"再开一局"）；
+/// * 原版的随机流（ChaCha 的 key/counter）我们没有，所以**给定种子也无法**复现某一份
+///   历史抓包的布局 —— 见 [`seed_key`] 的证据等级说明。
+///
+/// 另外：`docs/56` §2 观测到原版的关卡生成**从随机流第 3 个 `next_u64` 开始**
+/// （前 3 个被别处消费）。我们的种子语义是"从流的第 0 个开始"，因为这个流本来就不是
+/// 原版那条 —— 若将来拿到原版的 key，需要先丢弃 3 个 `next_u64` 再调本函数。
+pub fn obstacles_from_seed(level_index: usize, seed: u64) -> Option<Vec<Obstacle>> {
+    let params = params_for_level(level_index)?;
+    let mut rng = ChaCha12::from_seed(&seed_key(seed));
+    let mut next = || rng.next_u64();
+    let out = match params.mode {
+        ObstacleMode::None => Vec::new(),
+        ObstacleMode::Center => generate_center(&mut next),
+        ObstacleMode::Scatter => generate(&mut next, params.min_count),
+    };
+    Some(out)
 }
 
 /// 圆盘式生成器的入口（`FUN_004ea6dc`，虚地址 `0x4ea6dc`，Ghidra `0x5ea6dc`）。
@@ -430,5 +577,162 @@ mod tests {
             (mean - 3.75).abs() < 0.6,
             "半径均值 {mean}，不像 [0,7.5) 上的均匀分布（圆环会接近 7.5）"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // 21 关参数表 + "种子 → 障碍"入口（`docs/126`）
+    // -----------------------------------------------------------------
+
+    /// 表必须与 `docs/118` §7.1 **逐条**一致。
+    ///
+    /// 这里的期望值是**照文档原文重抄一遍**（关号 / 模式 / `min_count`），不是
+    /// `LEVEL_OBSTACLE_PARAMS` 的镜像：表被改错时这条测试才会红。
+    /// 短码 `N/C/S` = None / Center / Scatter（文档写的是「无障碍 / 中心单障碍 / 散布式」）。
+    #[test]
+    fn level_params_match_docs_118_table() {
+        let want: [(char, i32); 21] = [
+            ('N', 0),  // 关 1  Level 0   无障碍
+            ('N', 0),  // 关 2  Level 1   无障碍
+            ('C', 0),  // 关 3  Level 2   中心单障碍（r∈[3,8)）
+            ('C', 0),  // 关 4  Level 3   中心单障碍
+            ('S', 15), // 关 5  Level 4   散布式 min_count = 15
+            ('S', 5),  // 关 6  Level 5   散布式 min_count = 5
+            ('S', 10), // 关 7  Level 6   散布式 min_count = 10
+            ('S', 6),  // 关 8  Level 7   散布式 min_count = 6
+            ('S', 10), // 关 9  Level 8   散布式 min_count = 10
+            ('S', 5),  // 关 10 Level 9   散布式 min_count = 5
+            ('S', 10), // 关 11 Level 10  散布式 min_count = 10
+            ('S', 5),  // 关 12 Level 11  散布式 min_count = 5
+            ('C', 0),  // 关 13 Level 12  中心单障碍
+            ('S', 10), // 关 14 Level 13  散布式 min_count = 10
+            ('S', 5),  // 关 15 Level 14  散布式 min_count = 5
+            ('S', 10), // 关 16 Level 15  散布式 min_count = 10
+            ('N', 0),  // 关 17 Level 16  无障碍
+            ('S', 10), // 关 18 Level 17  散布式 min_count = 10
+            ('S', 10), // 关 19 Level 18  散布式 min_count = 10
+            ('S', 10), // 关 20 Level 19  散布式 min_count = 10
+            ('S', 15), // 关 21 Level 20  散布式 min_count = 15
+        ];
+        assert_eq!(LEVEL_OBSTACLE_PARAMS.len(), 21, "关卡总数 21（docs/118 §5.2）");
+        for (i, (code, min)) in want.iter().enumerate() {
+            let p = LEVEL_OBSTACLE_PARAMS[i];
+            let got = match p.mode {
+                ObstacleMode::None => 'N',
+                ObstacleMode::Center => 'C',
+                ObstacleMode::Scatter => 'S',
+            };
+            assert_eq!(
+                (got, p.min_count),
+                (*code, *min),
+                "第 {} 关（level_{}）的参数与 docs/118 §7.1 不一致",
+                i + 1,
+                i
+            );
+        }
+    }
+
+    /// 21 关**全都**生成得出来（无障碍的关返回空表而不是错误）。
+    #[test]
+    fn every_level_generates_through_the_seeded_entry() {
+        for i in 0..LEVEL_COUNT {
+            let obs = obstacles_from_seed(i, 0x1234_5678_9ABC_DEF0)
+                .unwrap_or_else(|| panic!("level_{i} 应当有参数"));
+            match LEVEL_OBSTACLE_PARAMS[i].mode {
+                ObstacleMode::None => assert!(obs.is_empty(), "level_{i} 无障碍，却生成了 {} 个", obs.len()),
+                ObstacleMode::Center => assert_eq!(obs.len(), 1, "level_{i} 中心式恰好 1 个"),
+                ObstacleMode::Scatter => assert!(
+                    obs.len() >= LEVEL_OBSTACLE_PARAMS[i].min_count as usize,
+                    "level_{i} 只有 {} 个，低于 min_count {}",
+                    obs.len(),
+                    LEVEL_OBSTACLE_PARAMS[i].min_count
+                ),
+            }
+            for o in &obs {
+                assert!(o.x.is_finite() && o.y.is_finite() && o.r.is_finite(), "level_{i} 出现非有限值");
+                // 公式自带的界：x = (2r+25)(2u−1) ⇒ |x| ≤ 2r+25（docs/55 §2）
+                assert!(o.x.abs() <= 2.0 * o.r + 25.0, "level_{i} x 越界: {o:?}");
+                assert!(o.y.abs() <= 2.0 * o.r + 15.0, "level_{i} y 越界: {o:?}");
+                assert!(o.r >= 0.8, "level_{i} 半径 {} 低于下限 0.8", o.r);
+            }
+        }
+    }
+
+    /// 同种子逐位可复现；换种子换布局。
+    #[test]
+    fn seeded_generation_is_reproducible_and_seed_dependent() {
+        // 关 21（Level 20，散布 min=15）障碍最多，最能看出差别
+        let a = obstacles_from_seed(20, 7).unwrap();
+        let b = obstacles_from_seed(20, 7).unwrap();
+        assert_eq!(a.len(), b.len(), "同种子个数必须相同");
+        for (p, q) in a.iter().zip(b.iter()) {
+            assert_eq!(p.x.to_bits(), q.x.to_bits());
+            assert_eq!(p.y.to_bits(), q.y.to_bits());
+            assert_eq!(p.r.to_bits(), q.r.to_bits());
+        }
+        let c = obstacles_from_seed(20, 8).unwrap();
+        assert!(
+            a.len() != c.len() || a.iter().zip(c.iter()).any(|(p, q)| p.x.to_bits() != q.x.to_bits()),
+            "换了种子却得到同一份布局"
+        );
+    }
+
+    /// 反"偷偷重写生成器"：入口必须与既有 `generate` / `generate_center` 在**同一条流**上
+    /// 逐位一致（`generate` 的 13/13 逐位验证才是真值来源，见 `docs/61`）。
+    #[test]
+    fn seeded_entry_reuses_the_verified_generators() {
+        for i in 0..LEVEL_COUNT {
+            let seed = 0xDEAD_BEEF_0000_0000 + i as u64;
+            let want = match LEVEL_OBSTACLE_PARAMS[i].mode {
+                ObstacleMode::None => Vec::new(),
+                ObstacleMode::Center => {
+                    let mut rng = ChaCha12::from_seed(&seed_key(seed));
+                    generate_center(&mut || rng.next_u64())
+                }
+                ObstacleMode::Scatter => {
+                    let mut rng = ChaCha12::from_seed(&seed_key(seed));
+                    generate(&mut || rng.next_u64(), LEVEL_OBSTACLE_PARAMS[i].min_count)
+                }
+            };
+            let got = obstacles_from_seed(i, seed).unwrap();
+            assert_eq!(got.len(), want.len(), "level_{i} 个数不同");
+            for (k, (g, w)) in got.iter().zip(want.iter()).enumerate() {
+                assert_eq!(g.x.to_bits(), w.x.to_bits(), "level_{i} #{k} x");
+                assert_eq!(g.y.to_bits(), w.y.to_bits(), "level_{i} #{k} y");
+                assert_eq!(g.r.to_bits(), w.r.to_bits(), "level_{i} #{k} r");
+            }
+        }
+    }
+
+    /// 关卡号越界 → `None`（由 `api.rs` 翻成 `ok:false`）。
+    #[test]
+    fn out_of_range_level_has_no_params() {
+        assert!(obstacles_from_seed(LEVEL_COUNT, 1).is_none(), "21（0 基越界）应当是 None");
+        assert!(obstacles_from_seed(usize::MAX, 1).is_none());
+        assert!(params_for_level(LEVEL_COUNT).is_none());
+    }
+
+    /// 退化种子（0 / 全 1 / 高位全满）不 panic、不产生非有限值。
+    #[test]
+    fn degenerate_seeds_are_safe() {
+        for seed in [0u64, 1, u64::MAX, 0x8000_0000_0000_0000] {
+            for i in [0usize, 2, 4, 20] {
+                let obs = obstacles_from_seed(i, seed).unwrap();
+                for o in &obs {
+                    assert!(o.x.is_finite() && o.y.is_finite() && o.r.is_finite());
+                }
+            }
+        }
+    }
+
+    /// 散布式的个数**不是**常数：同关卡换 8 个种子应当出现不止一种个数
+    /// （`docs/118` §7.1 的 `R` 列观测到同一关 10…29 个）。
+    #[test]
+    fn scatter_counts_vary_with_the_seed() {
+        let mut counts: Vec<usize> = (0..8)
+            .map(|s| obstacles_from_seed(15, 1000 + s).unwrap().len()) // 关 16 Level 15
+            .collect();
+        counts.sort_unstable();
+        counts.dedup();
+        assert!(counts.len() >= 2, "8 个种子只出现了一种个数 {counts:?}，与 R 列的观测不符");
     }
 }

@@ -160,6 +160,11 @@ pub enum ApiValue {
     Vec2(f64, f64),
     /// `Array[int]`（`hit_test` 的 `hits` / `hit_points_index`）。
     IntArray(Vec<i64>),
+    /// `PackedFloat64Array`（`level_obstacles` 的扁平 `[x, y, size] * n`）。
+    ///
+    /// 与 `hit_test` 的**入参**同一个类型：客户端拿到什么就原样传回去，
+    /// 中间不经过 `Vector2`（那是 f32）——否则障碍的位置会在往返里掉精度。
+    F64Array(Vec<f64>),
 }
 
 /// 契约要求的四个键，顺序固定（`ok` 在前：客户端先读它）。
@@ -335,6 +340,93 @@ pub fn hit_result_pairs(out: &HitOutcome) -> Vec<(&'static str, ApiValue)> {
 }
 
 // ---------------------------------------------------------------------------
+// 2c. `level_obstacles`（`docs/126`）：把"关卡 → 障碍"抬到 GDScript
+// ---------------------------------------------------------------------------
+//
+// 契约（`docs/126` §1）：
+//
+// ```text
+// GW2Rebuild.level_obstacles(level_index: int, seed: int)
+//     -> Dictionary { ok: bool, obstacles: PackedFloat64Array, error: String }
+// ```
+//
+// `obstacles` = `[x, y, size] * n`，**棋盘坐标**、`size` = 半径（游戏单位）——
+// 与 `hit_test` 的第 2 个入参**同一种数组**，客户端拿到就原样传回去，中间不重排。
+//
+// 生成本体在 [`crate::levelgen::obstacles_from_seed`]（既有、已逐位验证的实现），
+// 这里只做三件事：参数校验、类型转换、错误翻译。**没有第二份公式。**
+
+/// 一关的障碍生成结果。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObstacleOutcome {
+    pub ok: bool,
+    /// `[x, y, size] * n`（棋盘坐标，`size` = 半径）。
+    pub obstacles: Vec<(f64, f64, f64)>,
+    /// 空字符串表示成功；否则是机器可读的错误码。
+    pub error: &'static str,
+}
+
+impl ObstacleOutcome {
+    fn err(code: &'static str) -> Self {
+        ObstacleOutcome { ok: false, obstacles: Vec::new(), error: code }
+    }
+}
+
+/// 错误码：关卡号超出 `0..=20`（`docs/118` §5.2：一共 21 关）。
+pub const E_BAD_LEVEL_INDEX: &str = "bad_level_index";
+
+/// 关卡总数（与 [`crate::levelgen::LEVEL_COUNT`] 同一个数，这里只是给错误信息用）。
+pub const LEVEL_COUNT: usize = crate::levelgen::LEVEL_COUNT;
+
+/// 生成一关的障碍。**这是 `level_obstacles` 的全部语义**，FFI 层只是搬运。
+///
+/// * `level_index`：**0 基**，`0..=20`（`level_0`..`level_20`，与客户端
+///   `GwCampaign.level(i)`、`state.level_index` 同一套编号）；越界 → `bad_level_index`。
+/// * `seed`：**调用方给的种子**。同 `(level_index, seed)` ⇒ 逐位相同；换 seed ⇒ 换一局布局。
+///   语义与"为什么不是原版那条流"写在 [`crate::levelgen::obstacles_from_seed`] 的文档里
+///   （要点：原版每局开局从 `/dev/urandom` 抽种子 ⇒ 逐局不同，`docs/118` §7.1 的 `R` 列）。
+///
+/// `seed` 是 `i64`：负值也接受，按 `u64` 位模式解释（GDScript 的 `int` 就是 64 位有符号）。
+pub fn level_obstacles(level_index: i64, seed: i64) -> ObstacleOutcome {
+    if level_index < 0 || level_index as usize >= LEVEL_COUNT {
+        return ObstacleOutcome::err(E_BAD_LEVEL_INDEX);
+    }
+    let Some(obs) = crate::levelgen::obstacles_from_seed(level_index as usize, seed as u64) else {
+        // `obstacles_from_seed` 只在关卡号越界时返回 None —— 上面已挡住，这里再兜一次。
+        return ObstacleOutcome::err(E_BAD_LEVEL_INDEX);
+    };
+    if obs.iter().any(|o| !o.x.is_finite() || !o.y.is_finite() || !o.r.is_finite()) {
+        // 生成器不该产出非有限值（单测钉住了）；真出现就报错，别把 NaN 交给渲染。
+        return ObstacleOutcome::err(E_NOT_FINITE);
+    }
+    ObstacleOutcome {
+        ok: true,
+        obstacles: obs.iter().map(|o| (o.x, o.y, o.r)).collect(),
+        error: "",
+    }
+}
+
+/// 错误码：生成器给出了非有限值（NaN/±inf）。
+pub const E_NOT_FINITE: &str = "obstacles_not_finite";
+
+/// `level_obstacles` 返回的 Dictionary 键（顺序固定，`ok` 在最前）。
+pub const OBSTACLE_KEYS: [&str; 3] = ["ok", "obstacles", "error"];
+
+/// 把 [`ObstacleOutcome`] 整形为要写进 Dictionary 的键值对。
+pub fn obstacle_pairs(out: &ObstacleOutcome) -> Vec<(&'static str, ApiValue)> {
+    let flat: Vec<f64> = out
+        .obstacles
+        .iter()
+        .flat_map(|&(x, y, r)| [x, y, r])
+        .collect();
+    vec![
+        ("ok", ApiValue::Bool(out.ok)),
+        ("obstacles", ApiValue::F64Array(flat)),
+        ("error", ApiValue::Str(out.error.to_string())),
+    ]
+}
+
+// ---------------------------------------------------------------------------
 // 3. Godot 接口表
 // ---------------------------------------------------------------------------
 
@@ -434,6 +526,11 @@ static ERR_CALLS: AtomicUsize = AtomicUsize::new(0);
 /// `hit_test` 的调用计数（`docs/120`）。
 static HIT_CALLS: AtomicUsize = AtomicUsize::new(0);
 static HIT_OK_CALLS: AtomicUsize = AtomicUsize::new(0);
+/// `level_obstacles` 的调用计数（`docs/126`）。
+static OBST_CALLS: AtomicUsize = AtomicUsize::new(0);
+static OBST_OK_CALLS: AtomicUsize = AtomicUsize::new(0);
+/// `level_obstacles` 最近一次成功调用生成的障碍个数（调试/自检用）。
+static OBST_LAST_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// `path_calculate` 被 GDScript 调用的次数。
 pub fn calls() -> usize {
@@ -449,6 +546,14 @@ pub fn err_calls() -> usize {
 /// `hit_test` 被调用 / 返回 `ok: true` 的次数。
 pub fn hit_calls() -> (usize, usize) {
     (HIT_CALLS.load(Ordering::Relaxed), HIT_OK_CALLS.load(Ordering::Relaxed))
+}
+/// `level_obstacles` 被调用 / 返回 `ok: true` 的次数。
+pub fn obstacle_calls() -> (usize, usize) {
+    (OBST_CALLS.load(Ordering::Relaxed), OBST_OK_CALLS.load(Ordering::Relaxed))
+}
+/// `level_obstacles` 最近一次成功调用生成多少个障碍（`usize::MAX` = 还没成功过）。
+pub fn obstacle_last_count() -> usize {
+    OBST_LAST_COUNT.load(Ordering::Relaxed)
 }
 
 fn api() -> Option<&'static Api> {
@@ -535,6 +640,31 @@ impl Api {
             _ => None,
         }
     }
+    /// 读 `i64` 参数（`level_obstacles` 的 `level_index` / `seed`）。
+    ///
+    /// 接受 INT；也接受**整值** FLOAT（GDScript 里 `4.0` 这种写法不该让整次调用失败），
+    /// 但**不接受**带小数的 FLOAT —— 静默截断会把"关卡 4.5"悄悄变成关卡 4。
+    unsafe fn get_i64(&self, v: *const c_void) -> Option<i64> {
+        match self.ty(v) {
+            V_INT => {
+                let f = self.to_ctor(V_INT)?;
+                let mut out = 0i64;
+                f(&mut out as *mut i64 as *mut c_void, v as *mut c_void);
+                Some(out)
+            }
+            V_FLOAT => {
+                let x = self.get_f64(v)?;
+                if x.is_finite() && x.fract() == 0.0 && x >= (i64::MIN as f64) && x <= (i64::MAX as f64)
+                {
+                    Some(x as i64)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
     /// 读 `String` 参数（接受 STRING 与 NIL）。
     unsafe fn get_string(&self, v: *const c_void) -> Option<String> {
         match self.ty(v) {
@@ -854,6 +984,7 @@ unsafe fn write_dict(api: &Api, ret: *mut c_void, pairs: Vec<(&'static str, ApiV
                 None => false,
             },
             ApiValue::IntArray(items) => put_int_array_variant(api, val_slot.p(), items),
+            ApiValue::F64Array(items) => put_f64_array_variant(api, val_slot.p(), items),
         };
         if built {
             let _ = api.call(ret, names.set.p(), &[key_slot.p(), val_slot.p()]);
@@ -901,6 +1032,47 @@ unsafe fn put_int_array_variant(api: &Api, dest: *mut c_void, items: &[i64]) -> 
 /// 把 `path_calculate` 的结果写成 Dictionary。
 unsafe fn write_result(api: &Api, ret: *mut c_void, out: &PathOutcome) {
     write_dict(api, ret, result_pairs(out));
+}
+
+/// 造一个 `PackedFloat64Array` 的 Variant 写进 `dest`（`level_obstacles` 的 `obstacles`）。
+///
+/// 与 [`put_int_array_variant`] 同一条路：默认构造一个**空** `PackedFloat64Array` →
+/// `from_ctor` 包成 Variant（CowData 共享一次）→ 立刻释放裸对象 → 之后**只**通过
+/// Variant 上的 `append` 追加元素。这样不会有 COW 分家写丢的问题。
+unsafe fn put_f64_array_variant(api: &Api, dest: *mut c_void, items: &[f64]) -> bool {
+    let Some(get_ptr_ctor) = (if api.ptr_ctor != 0 {
+        Some(std::mem::transmute::<usize, FnGetPtrCtor>(api.ptr_ctor))
+    } else {
+        None
+    }) else {
+        return false;
+    };
+    let ctor0 = get_ptr_ctor(V_PACKED_FLOAT64_ARRAY, 0);
+    if ctor0.is_null() {
+        return false;
+    }
+    let ctor0: FnPtrCtor = std::mem::transmute(ctor0);
+    let raw = Slot::new();
+    ctor0(raw.p(), std::ptr::null());
+    let (Some(from_packed), Some(from_float)) =
+        (api.from_ctor(V_PACKED_FLOAT64_ARRAY), api.from_ctor(V_FLOAT))
+    else {
+        api.destroy_raw(V_PACKED_FLOAT64_ARRAY, raw.p());
+        return false;
+    };
+    from_packed(dest, raw.p());
+    api.destroy_raw(V_PACKED_FLOAT64_ARRAY, raw.p());
+
+    let Some(names) = NAMES.get() else { return false };
+    let item = Slot::new();
+    for &v in items {
+        // f64 全程不降精度：障碍的坐标/半径与 `hit_test` 的入参是同一批 f64
+        let mut raw_d = v;
+        from_float(item.p(), &mut raw_d as *mut f64 as *mut c_void);
+        let _ = api.call(dest, names.append.p(), &[item.p()]);
+        api.destroy_variant(item.p());
+    }
+    true
 }
 
 /// GDScript 调 `path_calculate` 时走这里。
@@ -1010,6 +1182,50 @@ unsafe extern "C" fn hit_test_call(
     .unwrap_or_else(|_| HitOutcome::err(E_PANIC));
     if out.ok {
         HIT_OK_CALLS.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// GDScript 调 `level_obstacles` 时走这里（`docs/126` §1）。
+///
+/// 参数约定：
+///
+/// ```text
+/// level_obstacles(level_index: int, seed: int) -> Dictionary { ok, obstacles, error }
+/// ```
+///
+/// 与 `path_calculate` / `hit_test` 相同的三条硬要求：
+/// 1. 整个函数体包在 `catch_unwind` 里（跨 FFI 的 panic 会 abort 掉 Godot）；
+/// 2. 出错一律走 `ok:false + error`，不 panic；
+/// 3. `ret` 是 Godot 给的**空 Variant 槽**，用 `write_dict` 填。
+unsafe extern "C" fn level_obstacles_call(
+    _ud: *mut c_void,
+    _instance: *mut c_void,
+    args: *const *const c_void,
+    argc: i64,
+    ret: *mut c_void,
+    _error: *mut c_void,
+) {
+    OBST_CALLS.fetch_add(1, Ordering::Relaxed);
+    let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let Some(api) = api() else {
+            return ObstacleOutcome::err(E_PANIC);
+        };
+        if argc < 2 || args.is_null() || ret.is_null() {
+            return ObstacleOutcome::err(E_BAD_ARGS);
+        }
+        let arg = |i: usize| *args.add(i);
+        let (Some(level_index), Some(seed)) = (api.get_i64(arg(0)), api.get_i64(arg(1))) else {
+            // level_index 可以是"整值的 FLOAT"，但 4.5 这种一律拒绝（见 `Api::get_i64`）。
+            return ObstacleOutcome::err(E_BAD_ARGS);
+        };
+        let outcome = level_obstacles(level_index, seed);
+        write_dict(api, ret, obstacle_pairs(&outcome));
+        outcome
+    }))
+    .unwrap_or_else(|_| ObstacleOutcome::err(E_PANIC));
+    if out.ok {
+        OBST_OK_CALLS.fetch_add(1, Ordering::Relaxed);
+        OBST_LAST_COUNT.store(out.obstacles.len(), Ordering::Relaxed);
     }
 }
 
@@ -1249,6 +1465,89 @@ pub unsafe fn register_hit_test_method(get: GetProc, library: *mut c_void) -> bo
 
     f_reg(library, cls_sn.as_ptr() as *const c_void, &info);
     eprintln!("[gw2-rebuild] registered method hit_test(points, obstacles, soldiers)");
+    true
+}
+
+/// 给已注册的 `GW2Rebuild` 类挂上 `level_obstacles(level_index, seed) -> Dictionary`
+/// （`docs/126`）。
+///
+/// 必须在 [`register_path_method`] **之后**调用（接口表是同一个 `OnceLock`）。
+/// 这是三者里最省的一个：只要 `path_calculate` 那一套接口齐备就够 ——
+/// **不**需要 `packed_*_array_operator_index_const`（那两个只在**读**数组时用；
+/// 这里只**写**一个 `PackedFloat64Array`，走 `append`）。
+///
+/// # Safety
+/// `get` / `library` 的约束同 [`register_path_method`]。
+pub unsafe fn register_level_obstacles_method(get: GetProc, library: *mut c_void) -> bool {
+    let table = build_table(get);
+    if !table_ok(&table) {
+        eprintln!("[gw2-rebuild] level_obstacles NOT registered (missing interface)");
+        return false;
+    }
+    let _ = API.set(table);
+    let Some(api) = api() else { return false };
+    if !install_names() {
+        eprintln!("[gw2-rebuild] level_obstacles: cannot build method StringNames");
+        return false;
+    }
+
+    let f_reg: unsafe extern "C" fn(*mut c_void, *const c_void, *const ClassMethodInfo) =
+        std::mem::transmute(api.register_method);
+    let mut cls_sn = [0u8; 8];
+    let f_sn: FnSnNew = std::mem::transmute(api.sn_new);
+    f_sn(cls_sn.as_mut_ptr() as *mut c_void, b"GW2Rebuild\0".as_ptr(), 0);
+
+    let mut meth_sn = [0u8; 8];
+    f_sn(meth_sn.as_mut_ptr() as *mut c_void, b"level_obstacles\0".as_ptr(), 0);
+    let empty_sn = [0u8; 8];
+    let empty_str = [0u8; 8];
+    let mut arg_names = [[0u8; 8]; 2];
+    for (slot, name) in arg_names.iter_mut().zip(["level_index\0", "seed\0"]) {
+        f_sn(slot.as_mut_ptr() as *mut c_void, name.as_ptr(), 0);
+    }
+    let mut ret_name = [0u8; 8];
+    f_sn(ret_name.as_mut_ptr() as *mut c_void, b"result\0".as_ptr(), 0);
+
+    let ret_info = PropertyInfo {
+        ty: V_DICTIONARY,
+        name: ret_name.as_ptr() as *const c_void,
+        class_name: empty_sn.as_ptr() as *const c_void,
+        hint: 0,
+        hint_string: empty_str.as_ptr() as *const c_void,
+        usage: USAGE_DEFAULT,
+    };
+    // 两个参数都是 int：GDScript 的 `int` 就是 Variant::INT（64 位）。
+    let arg_types = [V_INT, V_INT];
+    let arg_info: Vec<PropertyInfo> = (0..2)
+        .map(|i| PropertyInfo {
+            ty: arg_types[i],
+            name: arg_names[i].as_ptr() as *const c_void,
+            class_name: empty_sn.as_ptr() as *const c_void,
+            hint: 0,
+            hint_string: empty_str.as_ptr() as *const c_void,
+            usage: USAGE_DEFAULT,
+        })
+        .collect();
+    let arg_meta: [i32; 2] = [0; 2];
+
+    let info = ClassMethodInfo {
+        name: meth_sn.as_ptr() as *const c_void,
+        method_userdata: std::ptr::null_mut(),
+        call_func: Some(level_obstacles_call),
+        ptrcall_func: std::ptr::null(),
+        method_flags: METHOD_FLAG_NORMAL,
+        has_return_value: 1,
+        return_value_info: &ret_info,
+        return_value_metadata: 0,
+        argument_count: 2,
+        arguments_info: arg_info.as_ptr(),
+        arguments_metadata: arg_meta.as_ptr() as *const c_void,
+        default_argument_count: 0,
+        default_arguments: std::ptr::null(),
+    };
+
+    f_reg(library, cls_sn.as_ptr() as *const c_void, &info);
+    eprintln!("[gw2-rebuild] registered method level_obstacles(level_index, seed)");
     true
 }
 
@@ -1770,5 +2069,235 @@ mod hit_tests {
             assert_eq!(ours.blocked, theirs.blocked, "{text}: blocked 不一致");
             assert_eq!(ours.stop, theirs.stop, "{text}: 停止点不一致");
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 8. `level_obstacles` 的单测（`docs/126`）
+// ---------------------------------------------------------------------------
+//
+// 三条硬要求，每条都有对应的测试：
+// * 21 关**全都**生成得出来，且模式/数量与 `docs/118` §7.1 一致；
+// * 同 `(关卡, 种子)` 逐位可复现，换种子换布局；
+// * 生成出来的障碍**真的能挡弹道**（不是只把数字交出去）—— 这一条把
+//   `level_obstacles` 与 `hit_test` 串起来，避免"画了墙但子弹穿墙"。
+#[cfg(test)]
+mod obstacle_tests {
+    use super::*;
+
+    /// 表里的 `min_count`（测试内自抄一份，故意不引用 `levelgen` 的常量：
+    /// 若两处不同步，这条测试会红 —— 这正是目的）。
+    const MIN_COUNT: [i32; 21] = [0, 0, 0, 0, 15, 5, 10, 6, 10, 5, 10, 5, 0, 10, 5, 10, 0, 10, 10, 10, 15];
+    /// 该关用的是散布式（关 5/6/7/8/9/10/11/12/14/15/16/18/19/20/21，1 基）。
+    const IS_SCATTER: [bool; 21] = [
+        false, false, false, false, true, true, true, true, true, true, true, true, false, true,
+        true, true, false, true, true, true, true,
+    ];
+    /// 该关用的是中心单障碍（关 3/4/13，1 基）。
+    const IS_CENTER: [bool; 21] = [
+        false, false, true, true, false, false, false, false, false, false, false, false, true,
+        false, false, false, false, false, false, false, false,
+    ];
+
+    /// 契约形状：`{ok, obstacles, error}`，`obstacles` 是步长 3 的扁平 f64 数组。
+    #[test]
+    fn result_shape_is_exactly_the_contract() {
+        let out = level_obstacles(4, 1); // 关 5 Level 4，散布 min=15
+        assert!(out.ok, "err={}", out.error);
+        assert_eq!(out.error, "", "成功时 error 必须是空串");
+        let pairs = obstacle_pairs(&out);
+        let keys: Vec<&str> = pairs.iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys, OBSTACLE_KEYS.to_vec(), "键名与顺序都必须固定");
+        match &pairs[1].1 {
+            ApiValue::F64Array(flat) => {
+                assert_eq!(flat.len() % 3, 0, "必须是 [x, y, size] * n");
+                assert_eq!(flat.len() / 3, out.obstacles.len(), "扁平长度与元组个数必须一致");
+                // 逐位相等：写进 Dictionary 的不能是"再算一遍"的值
+                for (i, &(x, y, r)) in out.obstacles.iter().enumerate() {
+                    assert_eq!(flat[i * 3].to_bits(), x.to_bits());
+                    assert_eq!(flat[i * 3 + 1].to_bits(), y.to_bits());
+                    assert_eq!(flat[i * 3 + 2].to_bits(), r.to_bits());
+                }
+            }
+            other => panic!("obstacles 类型不对：{other:?}"),
+        }
+    }
+
+    /// 关卡号越界 → `ok:false` + `bad_level_index`（不 panic、不返回空表蒙混）。
+    #[test]
+    fn out_of_range_level_is_rejected() {
+        for bad in [-1i64, 21, 22, 999, i64::MIN, i64::MAX] {
+            let out = level_obstacles(bad, 1);
+            assert!(!out.ok, "关卡 {bad} 不应当成功");
+            assert_eq!(out.error, E_BAD_LEVEL_INDEX, "关卡 {bad} 的错误码");
+            assert!(out.obstacles.is_empty(), "失败时不应带障碍");
+        }
+        // 边界内的两支必须成功（0 与 20 都是合法关卡号）
+        assert!(level_obstacles(0, 1).ok);
+        assert!(level_obstacles(20, 1).ok);
+    }
+
+    /// 21 关全表：模式、个数下界、坐标/半径的合法范围。
+    #[test]
+    fn all_21_levels_generate_and_match_the_table() {
+        assert_eq!(MIN_COUNT.len(), LEVEL_COUNT);
+        for i in 0..LEVEL_COUNT {
+            let out = level_obstacles(i as i64, 0x0BAD_C0DE_1234_5678);
+            assert!(out.ok, "level_{i} 失败：{}", out.error);
+            let n = out.obstacles.len();
+            if IS_SCATTER[i] {
+                assert!(
+                    n >= MIN_COUNT[i] as usize,
+                    "level_{i} 只有 {n} 个，低于 min_count {}",
+                    MIN_COUNT[i]
+                );
+            } else if IS_CENTER[i] {
+                assert_eq!(n, 1, "level_{i} 是中心单障碍，整关只有 1 个");
+            } else {
+                assert_eq!(n, 0, "level_{i} 无障碍（docs/118 §7.1）");
+            }
+            for &(x, y, r) in &out.obstacles {
+                assert!(x.is_finite() && y.is_finite() && r.is_finite(), "level_{i} 出现非有限值");
+                // 原版公式自带的界（docs/55 §2）：x ∈ ±(2r+25)、y ∈ ±(2r+15)、r ≥ 0.8
+                assert!(x.abs() <= 2.0 * r + 25.0, "level_{i} x 越界: {x} r={r}");
+                assert!(y.abs() <= 2.0 * r + 15.0, "level_{i} y 越界: {y} r={r}");
+                assert!(r >= 0.8, "level_{i} 半径 {r} 低于下限 0.8");
+            }
+            if IS_CENTER[i] {
+                let (x, y, r) = out.obstacles[0];
+                assert_eq!((x, y), (0.0, 0.0), "中心式位置恒为原点（docs/118 §7.2）");
+                assert!((3.0..8.0).contains(&r), "中心式半径应在 [3,8) 内，实测 {r}");
+            }
+        }
+    }
+
+    /// 三关"无障碍"必须真的给空表 —— 而且**不是**错误（客户端按空表画空气）。
+    #[test]
+    fn obstacle_free_levels_return_an_empty_ok_list() {
+        for i in [0usize, 1, 16] {
+            let out = level_obstacles(i as i64, 42);
+            assert!(out.ok, "level_{i} 应当成功（无碍 ≠ 失败）");
+            assert!(out.obstacles.is_empty(), "level_{i}（docs/118 §7.1「无障碍」）不该有障碍");
+        }
+    }
+
+    /// 同 `(关卡, 种子)` 逐位可复现；换种子换布局。
+    #[test]
+    fn same_seed_is_bit_identical_and_new_seed_changes_the_layout() {
+        let a = level_obstacles(19, 2026);
+        let b = level_obstacles(19, 2026);
+        assert_eq!(a.obstacles.len(), b.obstacles.len());
+        for (p, q) in a.obstacles.iter().zip(b.obstacles.iter()) {
+            assert_eq!(p.0.to_bits(), q.0.to_bits(), "x 必须逐位相同");
+            assert_eq!(p.1.to_bits(), q.1.to_bits(), "y 必须逐位相同");
+            assert_eq!(p.2.to_bits(), q.2.to_bits(), "r 必须逐位相同");
+        }
+        // 换种子：至少有一个值不同（个数可能相同，所以比较内容）
+        let c = level_obstacles(19, 2027);
+        assert!(
+            a.obstacles.len() != c.obstacles.len()
+                || a.obstacles
+                    .iter()
+                    .zip(c.obstacles.iter())
+                    .any(|(p, q)| p.0.to_bits() != q.0.to_bits()),
+            "换了种子却得到同一份布局"
+        );
+    }
+
+    /// 退化种子（0 / 负值 / i64 上下界）不 panic、不产生非有限值。
+    #[test]
+    fn degenerate_seeds_are_safe() {
+        for seed in [0i64, -1, i64::MIN, i64::MAX, 1] {
+            for level in [0i64, 2, 4, 20] {
+                let out = level_obstacles(level, seed);
+                assert!(out.ok, "level {level} seed {seed} 失败：{}", out.error);
+                for &(x, y, r) in &out.obstacles {
+                    assert!(x.is_finite() && y.is_finite() && r.is_finite());
+                }
+            }
+        }
+    }
+
+    /// 反"偷偷重写生成器"：API 的产出必须与 `levelgen` 既有实现逐位相同。
+    #[test]
+    fn agrees_with_levelgen_entry_point_bit_for_bit() {
+        for i in 0..LEVEL_COUNT {
+            let seed = 0x5EED_0000_0000_0000u64 + i as u64;
+            let want = crate::levelgen::obstacles_from_seed(i, seed).unwrap();
+            let got = level_obstacles(i as i64, seed as i64);
+            assert_eq!(got.obstacles.len(), want.len(), "level_{i} 个数不同");
+            for (k, (g, w)) in got.obstacles.iter().zip(want.iter()).enumerate() {
+                assert_eq!(g.0.to_bits(), w.x.to_bits(), "level_{i} #{k} x");
+                assert_eq!(g.1.to_bits(), w.y.to_bits(), "level_{i} #{k} y");
+                assert_eq!(g.2.to_bits(), w.r.to_bits(), "level_{i} #{k} r");
+            }
+        }
+    }
+
+    /// **墙真的挡子弹**：把生成的障碍喂给 `hit_test`，一条穿过障碍的水平弹道
+    /// 必须停在障碍圆上；把同一批障碍拿掉就飞到底。
+    ///
+    /// 这条是"客户端画了墙但子弹穿墙"这一整类 bug 的守门测试 ——
+    /// 它同时钉住两件事：`obstacles` 的 `size` 是**半径**（不是直径），
+    /// 以及 `level_obstacles` 与 `hit_test` 用的是**同一套坐标系**（棋盘坐标）。
+    #[test]
+    fn generated_obstacles_actually_block_a_shot() {
+        // 关 5（Level 4，散布 min=15）障碍多，随便找个种子都有横跨 y=0 的
+        let out = level_obstacles(4, 7);
+        assert!(out.ok && out.obstacles.len() >= 10, "样本太少：{}", out.obstacles.len());
+
+        // 水平弹道：从 x = −24 走到 x = +24（y 恒 0）
+        let mut pts = Vec::new();
+        let mut x = -24.0;
+        while x <= 24.0 {
+            pts.push((x, 0.0));
+            x += 0.01;
+        }
+
+        // 理论上第一个撞点：所有"与 y=0 相交、且入口在 x=−24 右边"的障碍里，入口最小的那个。
+        // 入口 x = cx − sqrt(r² − cy²)（圆与直线的交点）—— 纯几何，不依赖掩膜实现。
+        let mut best: Option<(f64, f64, f64, f64)> = None; // (entry, cx, cy, r)
+        for &(cx, cy, r) in &out.obstacles {
+            if cy.abs() >= r {
+                continue; // 圆与 y=0 不相交
+            }
+            let entry = cx - (r * r - cy * cy).sqrt();
+            if entry <= -24.0 {
+                continue; // 弹道起点已经在圆里（或圆整个在起点左边）
+            }
+            if best.map_or(true, |(e, _, _, _)| entry < e) {
+                best = Some((entry, cx, cy, r));
+            }
+        }
+        let (entry, cx, cy, r) = best.expect("这一关的样本里应当有一个能挡住 y=0 直线的障碍");
+
+        let blocked = hit_test(&pts, &out.obstacles, &[]);
+        assert!(blocked.ok, "err={}", blocked.error);
+        assert!(blocked.blocked, "弹道穿过了障碍却没被挡住");
+        assert!(blocked.first_hit >= 0, "blocked=true 却给不出撞点序号");
+
+        let (hx, hy) = pts[blocked.first_hit as usize];
+        assert_eq!(hy, 0.0);
+        // 掩膜是"20 px/单位"的像素圆 + 一圈边缘容差 ⇒ 撞点可能比几何入口早 ~1 像素（0.05 单位）
+        assert!(
+            (hx - entry).abs() <= 0.25,
+            "撞点 x={hx:.3} 与几何入口 {entry:.3} 差太多（打到的不是算出来那面墙）"
+        );
+        // 撞点到该圆圆心的距离必须 ≈ 半径（这就是"size 是半径"的直接证据）
+        let d = ((hx - cx).powi(2) + (hy - cy).powi(2)).sqrt();
+        assert!(
+            (d - r).abs() <= 0.25,
+            "撞点到圆心 ({cx:.3},{cy:.3}) 距离 {d:.3}，半径 {r:.3} —— size 不是半径？"
+        );
+        // 停止点与撞点一致（`stop` 是棋盘坐标的撞击点）
+        assert_eq!(blocked.stop.0, hx, "stop 应当就是撞点");
+        assert_eq!(blocked.stop.1, hy, "stop 应当就是撞点");
+
+        // 反证：同一批点、没有障碍 ⇒ 一路飞到底，不 blocked
+        let clear = hit_test(&pts, &[], &[]);
+        assert!(clear.ok);
+        assert!(!clear.blocked, "没有障碍时不该 blocked");
+        assert_eq!(clear.first_hit, -1);
+        assert_eq!(clear.stop, *pts.last().unwrap(), "没有障碍时停在最后一个点");
     }
 }

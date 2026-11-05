@@ -23,6 +23,14 @@ class_name GwCore
 ##         -> Dictionary { ok: bool, hits: Array[int], hit_points: PackedVector2Array,
 ##                         first_hit: int, stop: Vector2, blocked: bool, error: String }
 ## 坐标一律**棋盘坐标**（`|x| <= 25`、`|y| <= 15`），像素换算在核心里做一次。
+##
+## 障碍侧的契约（`docs/126` §1，实现见内核 `src/api.rs::level_obstacles`）：
+##     GW2Rebuild.level_obstacles(level_index: int, seed: int)
+##         -> Dictionary { ok: bool, obstacles: PackedFloat64Array, error: String }
+## `obstacles` 与上面 `hit_test` 的第 2 个入参是**同一种数组**（步长 3，`size` = 半径），
+## 所以本文件拿到什么就把什么记在 `flat` 里；界面画的和 `hit_test` 判的是**同一批 f64**。
+## ⚠️ 原版每局的障碍布局不同（种子每局从 `/dev/urandom` 抽，`docs/57`），本函数**不自己抽**
+## 随机数 —— 种子由调用方给，真正的权威将来是服务端广播的 `AddObstacle`。
 
 ## 棋盘边界（`AGENTS.md` 的硬事实：`|x| <= 25`、`|y| <= 15`，越界点在**接受之前**检查）。
 const MAX_ABS_X := 25.0
@@ -45,6 +53,7 @@ const SOLDIER_HIT_RADIUS := 0.5
 static var _kernel_checked := false
 static var _kernel_ok := false
 static var _kernel_has_hit_test := false
+static var _kernel_has_level_obstacles := false
 static var _kernel_methods: PackedStringArray = PackedStringArray()
 static var _kernel_note := ""
 
@@ -56,6 +65,11 @@ static func kernel_available() -> bool:
 static func kernel_has_hit_test() -> bool:
 	_probe_kernel()
 	return _kernel_ok and _kernel_has_hit_test
+
+## 障碍能不能向内核要（`level_obstacles` 是否注册上了，`docs/126`）。
+static func kernel_has_level_obstacles() -> bool:
+	_probe_kernel()
+	return _kernel_ok and _kernel_has_level_obstacles
 
 static func kernel_note() -> String:
 	_probe_kernel()
@@ -85,10 +99,12 @@ static func _probe_kernel() -> void:
 			names.append(n)
 	_kernel_methods = names
 	_kernel_has_hit_test = names.has("hit_test")
+	_kernel_has_level_obstacles = names.has("level_obstacles")
 	if names.has("path_calculate"):
 		_kernel_ok = true
 		_kernel_note = "内核 %s 已加载，使用 path_calculate" % KERNEL_CLASS
 		_kernel_note += (" + hit_test" if _kernel_has_hit_test else "（无 hit_test）")
+		_kernel_note += (" + level_obstacles" if _kernel_has_level_obstacles else "（无 level_obstacles）")
 	else:
 		_kernel_ok = false
 		_kernel_note = ("内核 %s 已加载，但只暴露 %s —— 弹道用界面预览"
@@ -117,6 +133,42 @@ static func calculate_path(expr_text: String, start: Vector2, direction: float) 
 					"source": "kernel", "note": "内核 path_calculate",
 				}
 	return _preview(expr, start, direction)
+
+## 生成一关的障碍（`docs/126`）。**公式与随机流都在核心里**，本文件不自己造。
+##
+## `level_index`：0 基（`0..=20`，与 `GwCampaign.level(i)` / `state.level_index` 同一套编号）。
+## `seed_value`：**调用方给的种子**。同一 `(关卡, 种子)` 必然得到同一份布局；换种子换一局。
+##
+## 返回 `{ ok, obstacles: Array[{pos: Vector2, size: float}], flat: PackedFloat64Array,
+##         source: String, error: String }`
+##   * `size` = **半径**（棋盘单位），与 `hit_test` 的 `obstacles` 第 3 个数同一个量；
+##   * `flat` 是内核原样给的 `[x, y, size] * n`，**不要**用它代替 `obstacles` 之外的数组；
+##   * `source`：`kernel` = 内核生成；`none` = 内核没有这个方法（此时 `ok:false`）。
+##
+## ⚠️ 内核缺席时**不**退回"界面自己撒点"：原版没有这个行为，随便撒点会让
+## "墙"变成假的（既不挡子弹，也不对应任何真实数据）。调用方看到 `ok:false` 就当没墙。
+static func level_obstacles(level_index: int, seed_value: int) -> Dictionary:
+	_probe_kernel()
+	if kernel_has_level_obstacles():
+		var obj: Object = ClassDB.instantiate(KERNEL_CLASS)
+		if obj != null:
+			var res: Variant = obj.call("level_obstacles", level_index, seed_value)
+			if res is Dictionary and bool(res.get("ok", false)):
+				var flat: PackedFloat64Array = res.get("obstacles", PackedFloat64Array())
+				var items := []
+				var i := 0
+				while i + 2 < flat.size():
+					items.append({"pos": Vector2(flat[i], flat[i + 1]), "size": flat[i + 2]})
+					i += 3
+				return {
+					"ok": true, "obstacles": items, "flat": flat,
+					"source": "kernel", "error": "",
+				}
+			var err := String(res.get("error", "unknown")) if res is Dictionary else "non_dict"
+			return {"ok": false, "obstacles": [], "flat": PackedFloat64Array(),
+				"source": "kernel", "error": err}
+	return {"ok": false, "obstacles": [], "flat": PackedFloat64Array(),
+		"source": "none", "error": "kernel_unavailable"}
 
 ## 界面预览：固定 dx 折线 + 修正常数。**不是**内核的等弦长采样。
 static func _preview(expr: GwExpr, start: Vector2, direction: float) -> Dictionary:

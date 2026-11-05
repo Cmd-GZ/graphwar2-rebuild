@@ -91,6 +91,20 @@ func build() -> void:
 	desc.virtual_keyboard_enabled = false
 	desc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	desc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	# 说明栏**不能有底色**：原版 `LevelDescriptionEdit` 的 theme 是
+	# `transparent_text_edit.tres`，整块面板是统一的 `#1A3B2D`（观测：原版真帧
+	# `.agent-work/playfit/shots/orig_join_level.png` 在面板矩形内取样，
+	# y=130/200/300/400 全是 `(26,59,45)`，没有任何横贯色带）。
+	#
+	# 之前只覆盖了主题里的 `TextEdit/normal`，但控件设了 `editable = false`
+	# ⇒ Godot 实际画的是 **`read_only`** 那套样式（主题没覆盖 ⇒ 落回默认主题的
+	# 深色底 + `font_readonly_color` 暗绿字），于是面板上多出一条深色带、
+	# 说明文字也发绿（实测底色 `(26,49,39)`、字色 `(124,136,131)`）。
+	# 原版真帧的说明文字是 `(223,223,223)`，所以这里把两样都显式钉死。
+	for slot in ["normal", "focus", "read_only"]:
+		desc.add_theme_stylebox_override(slot, StyleBoxEmpty.new())
+	desc.add_theme_color_override("font_readonly_color", Color8(223, 223, 223))
+	desc.add_theme_color_override("font_color", Color8(223, 223, 223))
 	scroll.add_child(desc)
 	_description = desc
 

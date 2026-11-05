@@ -84,6 +84,10 @@ var _muted := false
 # --- 对局状态（界面侧） ---
 var _running := false
 var _soldiers: Array[Dictionary] = []          # {name, team, pos, alive, is_bot, skin, player, color}
+## 本局的障碍：每项 `{pos: Vector2, size: float}`（`size` = 半径，棋盘单位）。
+## 来自内核 `level_obstacles()`（`docs/126`）；**同一个数组**既给 `_plane.set_obstacles()`
+## 画，也给 `GwCore.hit_test()` 判 —— 画的和判的必须是同一批圆。
+var _obstacles: Array = []
 var _functions := {}                            # player_index -> String
 var _active := 0
 var _time_left := 0.0
@@ -460,9 +464,16 @@ func begin_match() -> void:
 	_apply_layout_sizes()
 	_replay_left.visible = st.kind == GwGameState.Kind.REPLAY
 	_replay_right.visible = st.kind == GwGameState.Kind.REPLAY
-	# 战役：靶子数来自 docs/118 §7.1（位置是我们的自定值，原版由关卡生成器随机放置）
+	# 战役：靶子数来自 docs/118 §7.1（位置是我们的自定值，原版由关卡生成器随机放置）；
+	# 障碍：**模式 + min_count 来自 docs/118 §7.1，坐标/半径由内核的生成器算**（docs/126）。
 	if st.kind == GwGameState.Kind.CAMPAIGN:
 		_plane.set_targets(_target_positions(int(st.level_index), int(level.get("targets", 0))))
+		_obstacles = _level_obstacles(int(st.level_index))
+	else:
+		# 非战役（LAN / 回放）：目前服务端还没有广播 AddObstacle，先按"没有障碍"处理。
+		# 真接上之后这里应当用**服务端下发的那批**，不要用本地生成（见 docs/126 §5）。
+		_obstacles = []
+	_plane.set_obstacles(_obstacles)
 
 func end_match() -> void:
 	_running = false
@@ -498,6 +509,35 @@ func _refresh_plane() -> void:
 	_plane.set_soldiers(list)
 	_plane.set_show_names(_show_names)
 	_plane.queue_redraw()
+
+# ---------------------------------------------------------------- 障碍（docs/126）
+
+## 本局的障碍列表。**生成在内核里**（`src/levelgen.rs` 的既有实现，公式逐位验证过），
+## 本界面只负责把结果存起来、画出来、并原样交给 `hit_test`。
+##
+## 种子语义（`docs/126` §2.2）：
+## * 原版**每局重新抽种子**（`docs/118` §7.1 的 `R` 列：同一关出现过 10…29 个障碍），
+##   所以这里默认每局给一个不同的种子（`randi()` 混进关卡种子）；
+## * 但 `--selftest` / `--dump-tree` / `--shots=` 这三种"要可复现"的运行**固定**用
+##   `GwCampaign.level_seed()` —— 否则自检与截图基准每跑一次变一张图。
+func _level_obstacles(level_index: int) -> Array:
+	var base := int(GwCampaign.level_seed(level_index))
+	var seed_value := base if _reproducible_run() else (base ^ int(randi()))
+	var gen := GwCore.level_obstacles(level_index, seed_value)
+	if not bool(gen.get("ok", false)):
+		# 内核没有这个方法（或参数被拒）：**不**退回"界面自己撒点"——原版没有这种行为。
+		_status("障碍取不到（%s），本局按无障碍处理" % String(gen.get("error", "?")))
+		return []
+	var list: Array = gen.get("obstacles", [])
+	_status("障碍 %d 个（内核生成，种子 %d）" % [list.size(), seed_value])
+	return list
+
+## 本次运行是否要"可复现"（自检 / dump / 截图基准）。
+func _reproducible_run() -> bool:
+	for a in OS.get_cmdline_user_args():
+		if a == "--selftest" or a == "--dump-tree" or a.begins_with("--shots="):
+			return true
+	return false
 
 func _refresh_mode_indicators() -> void:
 	var app_node := app()
@@ -548,13 +588,23 @@ func fire() -> void:
 		_status("弹道算不出来：%s" % String(result.note))
 		return
 	var pts: PackedVector2Array = result.points
-	var impact: Vector2 = pts[pts.size() - 1] if pts.size() > 0 else active_soldier.pos
+	# 障碍挡弹道（`docs/30` §2：障碍让弹道**停下**，士兵只是被穿过）。
+	# 这里只决定"**画**到哪一点"：`shot.points` 仍保留整条点序列 ——
+	# 将来的 tick 动画（父 agent 另派）应当沿 `shot.points` 逐点推进、到
+	# `drawn.impact` 停住，**不要**在这里写死"一次画完整条 = 本回合结束"。
+	var drawn := _clip_to_obstacle(pts)
+	var impact: Vector2 = drawn.impact
 	_plane.path_color = active_soldier.get("color", GwThemeFactory.COL_ACCENT)
-	_plane.set_path(pts, impact, true)
+	_plane.set_path(drawn.points, impact, true)
 	# 修正常数（`docs/24` §6.2 的样本格式：`+ 4.638` / `- 8.315`，三位小数、符号后一个空格）。
 	# DiffEq 模式下原版 OffsetLabel 为空（观测）。
 	_offset_label.text = GwCore.format_offset(float(result.offset)) if int(app_node.state.function_mode) == 0 else ""
-	_status("弹道来源：%s ／ %s" % [String(result.source), String(result.note)])
+	if bool(drawn.blocked):
+		_status("弹道撞到障碍，停在 (%.2f, %.2f) ／ 本局障碍 %d 个 ／ 点序列 %d 点（未截断）"
+			% [impact.x, impact.y, _obstacles.size(), pts.size()])
+	else:
+		_status("弹道来源：%s ／ %s ／ 本局障碍 %d 个" %
+			[String(result.source), String(result.note), _obstacles.size()])
 
 	var shot := {"points": pts, "team": team, "shooter": _active, "soldier": active_soldier}
 	if int(app_node.state.turn_mode) == GwModes.Turn.SIMULTANEOUS:
@@ -570,6 +620,36 @@ func fire() -> void:
 		_resolve_shots([shot])
 		_next_turn(true)
 	_check_match_over()
+
+## 弹道在障碍处**截断**（只为绘制）。返回
+## `{points: PackedVector2Array, impact: Vector2, blocked: bool}`。
+##
+## 用内核的 `hit_test(points, [], obstacles)` 问"撞没撞、撞在第几点"——
+## 判定本体是 `src/plane.rs` 的掩膜，与 `_resolve_shots` 里那次调用同一条规则；
+## 两次调用只差"有没有士兵"，不会给出矛盾的撞点。
+##
+## ⚠️ 这里**不**改 `shot.points`（整条点序列）：
+## 将来的 tick 动画要沿整条序列推进、到 `impact` 收尾，接口留在原处。
+func _clip_to_obstacle(pts: PackedVector2Array) -> Dictionary:
+	var fallback := {
+		"points": pts,
+		"impact": pts[pts.size() - 1] if pts.size() > 0 else Vector2.ZERO,
+		"blocked": false,
+	}
+	if _obstacles.is_empty() or pts.size() < 2:
+		return fallback
+	var judged := GwCore.hit_test(pts, [], _obstacles)
+	if not bool(judged.get("ok", false)):
+		return fallback
+	var first := int(judged.get("first_hit", -1))
+	if not bool(judged.get("blocked", false)) or first < 0 or first + 1 > pts.size():
+		return fallback
+	var cut := pts.slice(0, first + 1)
+	return {
+		"points": cut,
+		"impact": judged.get("stop", cut[cut.size() - 1]),
+		"blocked": true,
+	}
 
 func _all_alive_players_shot() -> bool:
 	var app_node := app()
@@ -597,6 +677,7 @@ func _resolve_shots(shots: Array) -> void:
 	var kills := 0
 	var sources: Array[String] = []
 	var note := ""
+	var blocked := false
 	for shot in shots:
 		var pts: PackedVector2Array = shot.points
 		var targets: Array = []
@@ -606,18 +687,22 @@ func _resolve_shots(shots: Array) -> void:
 			if is_same(s, shot.get("soldier", null)):
 				continue                      # 射手本人不参与致死判定
 			targets.append({"pos": s.pos, "radius": GwCore.SOLDIER_HIT_RADIUS, "soldier": s})
-		if targets.is_empty():
+		# 没有靶子但**有障碍**也要判：墙会把弹道拦住，士兵在墙后就是安全的
+		# （`docs/30`：掩膜决定停点，士兵不挡弹道）。`_obstacles` 与画的是同一个数组。
+		if targets.is_empty() and _obstacles.is_empty():
 			continue
-		var judged := GwCore.hit_test(pts, targets, [])
+		var judged := GwCore.hit_test(pts, targets, _obstacles)
 		sources.append(String(judged.source))
 		note = String(judged.note)
+		blocked = blocked or bool(judged.get("blocked", false))
 		for idx in judged.hits:
 			var victim: Dictionary = targets[int(idx)].soldier
 			if bool(victim.alive):
 				victim.alive = false
 				kills += 1
 	if not sources.is_empty():
-		_status("本轮命中 %d 个士兵 ／ 判定来源：%s ／ %s" % [kills, sources[0], note])
+		_status("本轮命中 %d 个士兵 ／ 判定来源：%s ／ %s%s" % [kills, sources[0], note,
+			"（弹道被障碍拦下）" if blocked else ""])
 	if kills > 0:
 		_refresh_plane()
 

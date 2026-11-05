@@ -23,8 +23,24 @@ class_name GwPlaneView
 ## 线宽用"画布像素"（1000×600）表达：`1 canvas px = _unit() / 20`，
 ## 这样在任何窗口尺寸下都与原版同比例（1920 窗口下 1 canvas px = 1 设备像素）。
 ##
-## 不画的东西（诚实标注）：障碍物（需要内核的关卡生成器喂位置）、特效、命中后的洞、
-## 士兵手里的小枪（原版由 `entity_drawer` 的 `draw_polygon` 画，未逐点取证）。
+## **障碍（`docs/126`）**：原版是**纯黑实心圆**，半径 = 关卡生成器给的 `r`（棋盘单位）。
+## 取样来自 LAN 真帧 `.agent-work/playfit/shots/orig_play_default.png`（1920×1160）：
+##
+## | 项 | 实测 |
+## |---|---|
+## | 颜色 | `#000000`（圆心逐像素 `(0,0,0)`；5 个圆里最大的 9289 个采样点全黑） |
+## | 边缘 | 每个圆最外圈有 1 个**半覆盖**像素（灰度 154 / 242 / 43），即原版开抗锯齿 |
+## | 半径（棋盘单位） | 0.80 / 0.81 / 1.66 / 2.13 / 3.42（最大那个被棋盘下边裁掉） |
+## | 落在棋盘外 | **允许**：圆心可以到 `±(25+r)`、`±(15+r)`，超出部分被棋盘边**裁掉** |
+##
+## 其中"半径 0.80"这一颗是**独立的旁证**：关卡生成器的半径下限正好是
+## `maxsd 0.8`（`docs/55` §2），而真帧里最小的圆量出来就是 0.80 单位 ⇒
+## "画多大 = 生成器给的 r"（这条是**推断**：那一局真实的 `r` 值我们没有，
+## 但 `docs/56` §3 抓到的 13 个障碍里确实出现过 `r = 0.800`）。
+##
+## 不画的东西（诚实标注）：障碍被摧毁的洞（`QueueDestroyObstacle` 的语义仍未定，
+## `docs/38`）、特效、士兵手里的小枪（原版由 `entity_drawer` 的 `draw_polygon` 画，
+## 未逐点取证）。
 
 const BOARD_HALF_X := 25.0
 const BOARD_HALF_Y := 15.0
@@ -58,6 +74,8 @@ const COL_GRID_MINOR := Color(0.90196078, 0.90196078, 0.90196078)    # #E6E6E6
 const COL_GRID_MAJOR := Color(0.69803922, 0.69803922, 0.69803922)    # #B2B2B2
 const COL_AXIS := Color(0.2, 0.2, 0.2)                               # #333333
 const COL_BORDER := Color(0, 0, 0)                                   # #000000
+## 障碍：与棋盘外框同色（纯黑）。出处见文件头表格：LAN 真帧 5 个圆的圆心全是 `(0,0,0)`。
+const COL_OBSTACLE := Color(0, 0, 0)                                 # #000000
 
 ## AxisMode（`docs/118` §4.3 / §7.1）：3 = EveryUnit 最密、2 = EveryFive、1 = OnlyMain、0 = NoAxis。
 const AXIS_NONE := 0
@@ -67,6 +85,10 @@ const AXIS_EVERY_UNIT := 3
 
 var soldiers: Array[Dictionary] = []      # {name, team, pos:Vector2, alive, is_bot, skin, color}
 var targets: Array = []                   # 靶子位置（棋盘单位）；战役关的靶子数来自 docs/118 §7.1
+## 障碍：每项 `{pos: Vector2, size: float}`，`size` = **半径**（棋盘单位）。
+## 数据来自内核 `GW2Rebuild.level_obstacles(level_index, seed)`（`docs/126`），
+## 本控件只负责画；**同一份数组**还必须传给 `GwCore.hit_test()`，否则子弹会穿墙。
+var obstacles: Array = []
 var path_points := PackedVector2Array()
 var impact := Vector2.ZERO
 var has_impact := false
@@ -81,6 +103,11 @@ func _ready() -> void:
 	# 原版战场是 Rust 控件自绘；这里同样自绘，不需要子节点。
 	resized.connect(queue_redraw)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# 障碍允许落在棋盘外（圆心可到 ±(25+r) / ±(15+r)，`docs/118` §7.2 的生成公式），
+	# 原版真帧里超出棋盘的部分被**裁掉**（`orig_play_default.png` 左下那颗圆心 y=−12.44、
+	# r=3.42，下缘 −15.86 被切在 y=−15）。本控件的矩形恰好就是棋盘，所以开 clip_contents
+	# 即等价于原版的裁剪（实测：它连**自己** `_draw` 画出去的东西也裁，`docs/126` §4.2）。
+	clip_contents = true
 
 # ---------------------------------------------------------------- 坐标换算
 
@@ -115,6 +142,13 @@ func set_soldiers(list: Array[Dictionary]) -> void:
 
 func set_targets(list: Array) -> void:
 	targets = list
+	queue_redraw()
+
+## 设障碍（`docs/126`）。`list` 每项 `{pos: Vector2, size: float}`，`size` = 半径（棋盘单位）。
+## **同一份数组要原样传给 `GwCore.hit_test(pts, soldiers, obstacles)`** —— 画的和判的
+## 必须是同一批圆，否则就会出现"看得见墙、子弹却穿过去"。
+func set_obstacles(list: Array) -> void:
+	obstacles = list
 	queue_redraw()
 
 func set_axis_mode(v: int) -> void:
@@ -163,8 +197,23 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), COL_BOARD, true)
 	_draw_grid()
 	_draw_border()
+	_draw_obstacles()
 	_draw_path()
 	_draw_soldiers()
+
+## 障碍：纯黑实心圆，半径 = 生成器给的 `r`（棋盘单位 × _scale()）。
+##
+## 画在弹道与士兵**之下**：原版真帧里弹道不会与障碍重叠（弹道在撞点停下，`docs/30`），
+## 士兵站在障碍旁边也是画在上面的（`EntityDrawer` 在障碍之后绘制）。
+func _draw_obstacles() -> void:
+	if obstacles.is_empty():
+		return
+	var s := _scale()
+	for o in obstacles:
+		var c: Vector2 = board_to_screen(o.pos)
+		# 抗锯齿：原版真帧每个圆最外圈有 1 个半覆盖像素（灰度 154/242/43），
+		# 这里用 `antialiased=true` 复刻（实测同样给出半覆盖边缘，`docs/126` §4.2）。
+		draw_circle(c, s * float(o.get("size", 0.0)), COL_OBSTACLE, true, -1.0, true)
 
 ## 网格按 AxisMode 的 4 档画（原版 `AxisDrawer`；档位含义见 `docs/118` §7.1 的 21/21 描述对照）。
 func _draw_grid() -> void:
