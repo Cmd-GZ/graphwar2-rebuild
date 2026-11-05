@@ -500,3 +500,67 @@ fn match_replays_the_death_level_through_the_protocol_layer() {
         assert!(*id == 230 || *id == 231, "复算出抓包里没死过的实体 {id}，说明模型有误");
     }
 }
+
+// ---------------------------------------------------------------------------
+// 按回合配对的精确回放（函数原文取自开火时刻，见 tools/replay_extract.py）
+// ---------------------------------------------------------------------------
+
+const PAIRED_OBSTACLES: [(f64, f64, f64); 8] = [
+    (14.046310675855437, -14.924477914559672, 2.352930364790025),
+    (29.696182564548714, -12.163323118078395, 2.6766182869779684),
+    (-13.680667750408213, 17.948543431250446, 4.749150775191251),
+    (4.49738461075144, -11.137813176563517, 3.449605100302236),
+    (8.009478662892661, -4.329916910826, 3.165704264535919),
+    (-1.4935534327929743, -8.121366608231103, 1.7039845170941725),
+    (-17.75327174189561, 2.071423010597829, 3.7050938867242724),
+    (11.655733033805847, -18.264933522033925, 4.756526761470473),
+];
+
+const PAIRED_SOLDIERS: [(i64, f64, f64); 4] = [
+    (234, 2.7158137579070476, -5.845221853870052),
+    (231, -14.352153074285424, -11.263853493977628),
+    (230, -3.046663662665346, -10.672775349227418),
+    (233, 7.366983680391016, 4.8970427823140135),
+];
+
+#[test]
+fn paired_replay_reproduces_exact_kill_sets() {
+    use gw2_rebuild::game::Match;
+    use gw2_rebuild::protocol::{get_f64, get_int, parse_message};
+    use gw2_rebuild::server::RoomState;
+    use gw2_rebuild::settle::Target;
+
+    let room = RoomState {
+        room_name: "Graphwar Game".into(), game_state: "Setup".into(),
+        axis_mode: "EveryUnit".into(), function_mode: "NormalFunction".into(),
+        turn_mode: "SequentialTurns".into(), time_mode: "Timer1m".into(),
+    };
+    let soldiers: Vec<Target> = PAIRED_SOLDIERS.iter()
+        .map(|(id, x, y)| Target { id: *id, x: *x, y: *y, radius: 0.5 })
+        .collect();
+    let mut m = Match::new(room, PAIRED_OBSTACLES.to_vec(), soldiers, (5, 0));
+
+    // (函数原文, 射手, 起点 x, 起点 y, 抓到的终点 x, flip, 抓到的致死集合)
+    let shots: [(&str, i64, f64, f64, f64, bool, &[i64]); 4] = [
+        ("0.00", 230, -3.046663662665346, -10.672775349227418, 1.0502113373346385, false, &[]),
+        ("abs((11.66-x))", 233, 7.366983680391016, 4.8970427823140135, -24.995516319609788, true, &[231]),
+        ("0.00", 230, -3.046663662665346, -10.672775349227418, 1.6033363373346332, false, &[]),
+        ("(exp(x)*(3.34-x))", 234, 2.7158137579070476, -5.845221853870052, -3.58317061709248, true, &[230]),
+    ];
+
+    for (i, (text, owner, x0, y0, end_x, flip, expect_kills)) in shots.iter().enumerate() {
+        let msgs = m.fire(*owner, text, *x0, *y0, *flip, (i as i64 + 1) * 1000);
+        let first = parse_message(&msgs[0]).expect("首条应为合法消息");
+        let got_end = get_f64(&first, "end_x").unwrap();
+        assert!((got_end - end_x).abs() < 0.5,
+                "第 {i} 发终点 x={got_end} 与抓到的 {end_x} 相差过大");
+
+        let mut kills: Vec<i64> = msgs.iter()
+            .filter_map(|m| parse_message(m))
+            .filter(|p| p.kind == "LifeQueuedDeath")
+            .map(|p| get_int(&p, "entity_id").unwrap())
+            .collect();
+        kills.sort_unstable();
+        assert_eq!(&kills[..], *expect_kills, "第 {i} 发致死集合与抓包不符（函数 {text}）");
+    }
+}

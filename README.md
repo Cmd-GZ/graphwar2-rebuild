@@ -40,7 +40,7 @@
 | AI `computer_player_manager` / `function_evolutionator` | 🔶 | 入口 `0x51b440`（每回合 1 次）+ 评分循环 `0x51a750`（每回合约 3800 次、step=0.5）已定量刻画；**候选生成/适应度/RNG 均未知**（`docs/29`） |
 | **tick 时钟（60 Hz）** | ✅ | `tick_at()` 用 113 个真实 `TickReply` 样本验证（110 精确、抖动 ≤7），`TickReply` 序列化逐字节一致（`docs/35`） |
 | **服务端握手（状态同步）** | ✅ | `server::on_new_connection` 7 条消息与抓包逐字节一致；`serve_handshake` 经真实 TCP 往返验证（`docs/33`） |
-| **服务端对象 `Match`（开火结算+出报文）** | ✅ | `Match::fire` 产出 FunctionPoints/生死/爆炸/销毁完整消息串；死亡关卡 6 发回放终点全对，产出全部可解析（`docs/36`） |
+| **服务端对象 `Match`（开火结算+出报文）** | ✅ | `Match::fire` 产出完整消息串；**按回合配对的精确回放：4 发终点全对、致死集合逐发一致**（`docs/37`） |
 | 联机实现（玩家/tick/结算广播） | 🔶 | 传输层与 46 种消息已还原；**颜色分配规则未定**（10 个观测值、非纯随机也非按 id 绑定，`docs/34`）、tick 节拍与结算广播未实现 |
 
 ### 离"全绿"还差什么

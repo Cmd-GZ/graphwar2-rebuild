@@ -11,6 +11,9 @@
 - LAN 发现：UDP 广播，明文 JSON（`time_mode` 写作 `"Timers1m"`）
 - 对局：TCP，**`u16` 大端长度 + JSON**
 - 29 种消息已入库为 `fixtures/protocol.jsonl`，`src/protocol.rs` 全部解析通过
+- **按回合配对精确回放**（`docs/37`，`tools/replay_extract.py`）：维护函数时间线，
+  把每次开火与当时的函数原文绑定 → 4 发终点全对（差 0.006~0.394），
+  **致死集合逐发完全一致**（`[]`/`[231]`/`[]`/`[230]`）
 - **`Match` 服务端对象**（`docs/36`）：`fire()` 一次产出整串报文
   （FunctionPoints → 生死 → 爆炸 → 销毁），tick 走 60Hz 时钟；死者从场上移除。
   死亡关卡 6 发回放：终点全对、产出全部可解析。
