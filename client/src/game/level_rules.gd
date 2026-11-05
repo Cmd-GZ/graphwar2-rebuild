@@ -1,26 +1,50 @@
 extends RefCounted
 class_name GwLevelRules
-## **关卡胜负规则**：按关卡类型分别判定，而不是"两队存活数都 > 0 就继续"（`docs/131`）。
+## **关卡胜负规则：一条判据。**（`docs/150-win-rule.md`）
 ##
-## 之前的问题（`docs/131` §1）：`play_screen.gd::_check_match_over()` 只数两队**士兵**的存活数。
-## 打靶关（`targets > 0`、没有对手）里 `Team2` **一个士兵都没有** ⇒ `alive[1] == 0`
-## ⇒ 第一发一落地就判"人类胜"。所以现象是"发射一次就通关"——**射击本身跟胜负无关**，
-## 是存活统计把打靶关误判了。
+## > **某队没有存活实体 ⇒ 这局结束；还有活实体的那队赢。**
+##
+## 这就是原版的全部胜负逻辑。`docs/150` §Q2 把判定点钉在两条指令上：
+##
+## ```text
+## 0x473520(self) -> (Team1 有活实体, Team2 有活实体)
+##     遍历生命表的每个 id：0x454950(判活) → 0x3c2120(查队伍) → 置位
+## 0x4759f0（回合末）
+##     0x475a64/0x475a77  回合上限用尽 ⇒ END
+##     0x475a80  al == 0            ⇒ END   ; Team1 没人
+##     0x475a88  dl == 0            ⇒ END   ; Team2 没人
+##     0x475bac  mov [self+0x120],6          ; EndingGame
+## ```
+##
+## **"打靶关"与"对战关"不是两条规则**，是同一个判据的两种输入：
+##
+## | 关卡 | `Team2` 里有什么 | "Team2 全灭" 长什么样 |
+## |---|---|---|
+## | 打靶关 | **只有靶子**（`docs/150` §Q1：127/127 个靶子 `TeamInfo{Team2}`、0 个 `SoldierInfo`） | 靶子全清 |
+## | 对战关 | 只有对手士兵 | 对方全灭 |
+##
+## ## 这份文件以前错在哪（`docs/148` §3.1 的第 1 条矛盾）
+##
+## `docs/131` 把胜负写成**按关卡类型两分**（`targets>0` 看靶子、`bot>0` 看队伍），
+## 理由是"我们的客户端没有给靶子分配队伍"。那是**客户端自造的两分法**：
+## 原版靶子本来就带队伍（`0x46f310` 的队伍是入参），所以一条规则就够，
+## 两分法在**我们自己的实现里**反而制造了"两个真相源"。
+## 现在：`GwTargetSet.TEAM`（= 1 = Team2）把靶子并进该队的存活统计，
+## 判据只剩 [`evaluate`] 里那一段。
 ##
 ## 真值依据：
 ##
 ## | 规则 | 出处 | 等级 |
 ## |---|---|---|
-## | 对战关胜利 = **对方队伍全灭** | `docs/84` §1 / `docs/123` §4.5：45/45 份回放都是 `Team2` 全灭 ⇒ `EndingGame` | 观测（45/45） |
-## | 打靶关的靶子全在 `Team2` | `docs/123` §2.1：`0x46f310` 里发 `TeamInfo{Team2}` | 逐位验证 |
-## | 每关**目标数 / 回合上限 / 有没有 Bot** | `docs/118` §7.1（`S`+`C`+`R` 三源对照，21/21） | 逐位 + 运行时 |
-## | `Level 7` 的回合上限 = **1**（"in your first try"） | `docs/118` §7.1；`docs/123` §5.1 #2 | 逐位 + 运行时 |
-## | 回合上限用尽 ⇒ **失败** | `docs/118` §7.1 有 `turn_limit` 这一列；**用尽后的判决没有样本**（`docs/123` §5.3 #1） | **推断** |
-##
-## ⇒ "靶子全部摧毁"与"`Team2` 全灭"在原版里是**同一件事**（靶子就是 Team2 的全部实体），
-## 这里把它写成显式的"目标全部达成"，因为我们的客户端没有给靶子分配队伍。
+## | 靶子是 `Team2` 的实体、且不是士兵 | `docs/150` §Q1（111 份回放 / 127 个靶子：`TeamInfo{Team2}` 127、`SoldierInfo` 0） | **观测** |
+## | 造靶子的函数按**入参**写队伍 | `docs/150` §Q1（`0x46f310`：`movzx edx,bpl` → `0x3c17d0`） | **逐位** |
+## | 判据 = 数"两队各有没有活实体" | `docs/150` §Q2（`0x473520`） | **逐位** |
+## | 结束 = 上限用尽 / 某队没人（同一条出口） | `docs/150` §Q2/§Q3（`0x4759f0`） | **逐位** |
+## | 回合上限用尽 ⇒ 胜方 `1`（Team2）——**以前标的是推断，现在是真值** | `docs/150` §Q3（`0x475bfb`–`0x475c14` 写 `[self+0x11f]`）；语料里 `TurnLimitInfo` 21 条全是 `{"turn_limit":N}` | **逐位 + 观测** |
+## | 每关**靶子数 / 上限 / 有没有 Bot** | `docs/118` §7.1（`S`+`C`+`R` 三源，21/21） | **逐位 + 运行时** |
+## | 217/217 次 `EndingGame` 都有一队"零活实体" | `docs/150` §Q2（401 份回放） | **观测** |
 
-## 关卡类型（`docs/118` §7.1 的两列：目标数 / Bot 数）。
+## 关卡类型 —— **现在只是给状态行/文档看的标签，不参与判定**（`docs/150` §3）。
 enum Kind {
 	VERSUS,   ## 对战关：`bot > 0`、`targets == 0`（8 关：5/9/11/14/15/18/19/20）
 	TARGETS,  ## 打靶关：`targets > 0`、`bot == 0`（13 关）
@@ -34,7 +58,7 @@ const KIND_NAMES := {
 }
 
 ## 回合上限兜底值：`docs/118` §7.1 的 `0` = **无上限**（原版此时压根不发 `TurnLimitInfo`，
-## `docs/123` §5.1 #4 观测）。
+## `docs/123` §5.1 #4 观测；`0x472400` 只在真的设上限时才被关卡分支调用）。
 const NO_TURN_LIMIT := 0
 
 var kind := Kind.VERSUS
@@ -47,7 +71,7 @@ var level_index := -1
 ## 关卡表里写的目标数（只做一致性自检，判定用实际靶子集合）。
 var targets_planned := 0
 
-## 战役关：类型由 `docs/118` §7.1 的两列决定。
+## 战役关：类型由 `docs/118` §7.1 的两列决定（**只是标签**，见文件头）。
 static func for_campaign(level: Dictionary, human_team_: int) -> GwLevelRules:
 	var r := GwLevelRules.new()
 	r.level_index = int(level.get("index", -1))
@@ -64,15 +88,15 @@ static func for_campaign(level: Dictionary, human_team_: int) -> GwLevelRules:
 		r.kind = Kind.VERSUS
 	return r
 
-## 非战役对局（LAN / 回放）：没有靶子、没有回合上限，只有"对方全灭"这一条。
-## 若调用方另有靶子（将来的自定义关/服务端下发），用 [`for_match`]。
+## 非战役对局（LAN / 回放）：没有靶子、没有回合上限。
+## 判定仍然是同一条 —— 只是 `Team2` 里只有士兵。
 static func for_versus(human_team_: int) -> GwLevelRules:
 	var r := GwLevelRules.new()
 	r.kind = Kind.VERSUS
 	r.human_team = human_team_
 	return r
 
-## 通用构造：类型由"有没有靶子 / 有没有对手"两件事决定。
+## 通用构造：类型由"有没有靶子 / 有没有对手"两件事决定（**只是标签**）。
 static func for_match(has_targets: bool, has_opponent: bool, turn_limit_: int,
 		human_team_: int) -> GwLevelRules:
 	var r := GwLevelRules.new()
@@ -95,19 +119,24 @@ func has_targets() -> bool:
 func has_opponent_rule() -> bool:
 	return kind == Kind.VERSUS or kind == Kind.BOTH
 
-## 判一局的胜负。
+## 判一局的胜负。**只有一条判据**：某队没有存活实体 ⇒ 结束。
 ##
 ## `state` 的键（都可省，缺省按"0 / 空"处理）：
-##   * `alive_by_team`：`{team: 存活士兵数}`；
-##   * `teams_present`：**开局时**有士兵的队伍（不是"当前还活着的队伍"——否则一队全灭后
-##     它就从这个表里消失，`enemy_present` 会永远为假）；
-##   * `targets_total` / `targets_alive`：靶子集合的规模与存活数；
-##   * `turns_used`：已经结算过的回合数（`docs/118` §7.1 的 `turn_limit` 与它比较）。
+##   * `alive_by_team`：`{team: 存活士兵数}`（**只数士兵**；靶子靠 `targets_*` 补）；
+##   * `teams_present`：有士兵的队伍（含已全灭的队 —— 否则它一灭就从表里消失，
+##     判不出"这队没了"）；
+##   * `targets_total` / `targets_alive`：靶子集合的规模与存活数
+##     （靶子算 **`GwTargetSet.TEAM` = Team2** 的成员，`docs/150` §Q1）；
+##   * `turns_used`：已经结算过的回合数（与 `docs/118` §7.1 的 `turn_limit` 比）。
 ##
 ## 返回 `{over: bool, human_won: bool, winner_team: int, reason: String}`。
-## `reason` 的取值（也是状态行/自检里断言的东西）：
-##   `playing` / `own_wiped` / `targets_cleared` / `enemy_wiped` / `mutual_wipe` /
-##   `turn_limit` / `no_verdict`。
+## `reason` 是**给状态行/自检看的标签**，不是分支：取值
+## `playing` / `own_wiped` / `targets_cleared` / `enemy_wiped` / `mutual_wipe` /
+## `turn_limit` / `no_verdict`。
+##
+## 注意 `winner_team` 在这条规则下是**算出来的**（"还有活实体的那队"），
+## 不是按关卡类型猜的 —— 打靶关输掉时它仍然是 `1`（Team2 = 靶子所在的队），
+## 因为靶子本来就是 Team2（`docs/150`）。
 func evaluate(state: Dictionary) -> Dictionary:
 	var alive: Dictionary = state.get("alive_by_team", {})
 	var teams: Array = state.get("teams_present", [])
@@ -115,44 +144,51 @@ func evaluate(state: Dictionary) -> Dictionary:
 	var targets_alive := int(state.get("targets_alive", 0))
 	var turns_used := int(state.get("turns_used", 0))
 
-	var my_alive := int(alive.get(human_team, 0))
-	var enemy_present := false
-	var enemy_alive := 0
+	# 参评的队伍 = 有士兵的队 ∪ 靶子所在的队（靶子有队伍，`docs/150` §Q1）。
+	var judged: Array = []
 	for t in teams:
 		var team := int(t)
-		if team == human_team:
-			continue
-		enemy_present = true
-		enemy_alive += int(alive.get(team, 0))
+		if not judged.has(team):
+			judged.append(team)
+	if targets_total > 0 and not judged.has(GwTargetSet.TEAM):
+		judged.append(GwTargetSet.TEAM)
 
-	# ① 失败优先：我方全灭。**只有存在对手时才有意义** —— 打靶关没有敌人，
-	#    "我方全灭"不是关卡条件（靶子不会还手）。
-	if has_opponent_rule() and enemy_present and my_alive == 0:
-		return _verdict(true, false, _other_team(teams), "own_wiped")
+	# ★ 唯一判据：逐队数**存活实体**（士兵 + 靶子），为 0 的队算"全灭"。
+	var wiped: Array = []
+	for team in judged:
+		var still_alive := int(alive.get(team, 0))
+		if team == GwTargetSet.TEAM:
+			still_alive += targets_alive
+		if still_alive == 0:
+			wiped.append(team)
 
-	# ② 打靶：全部靶子被摧毁 ⇒ 通关。
-	#    与"Team2 全灭"等价（`docs/123` §2.1/§4.5：靶子就生在 Team2，45/45 回放同向）。
-	if has_targets() and targets_total > 0 and targets_alive == 0:
-		return _verdict(true, true, human_team, "targets_cleared")
+	if not wiped.is_empty():
+		var human_wiped := wiped.has(human_team)
+		var others := wiped.filter(func(t): return int(t) != human_team)
+		if human_wiped and not others.is_empty():
+			# 同一发把两边都清空：真值里没有样本（`docs/150` §6），按"人类失败"处理。
+			return _verdict(true, false, _other_team(judged), "mutual_wipe")
+		if human_wiped:
+			# 我方全灭 ⇒ 对方胜（`0x475a80`：`al == 0` ⇒ END，胜方 = 还有活人的那队）。
+			return _verdict(true, false, _other_team(judged), "own_wiped")
+		# 对手方（打靶关 = 靶子所在的 Team2）全灭 ⇒ 人类胜（`0x475a88`）。
+		var w := int(others[0])
+		var reason := "enemy_wiped"
+		if w == GwTargetSet.TEAM and int(alive.get(w, 0)) == 0 and targets_total > 0:
+			# 这一队**没有士兵**，清空它的只能是靶子 ⇒ 标签用 targets_cleared。
+			# ⚠️ 这只是**同一个判据**的两种标签，不是两条规则。
+			reason = "targets_cleared"
+		return _verdict(true, true, human_team, reason)
 
-	# ③ 对战：对方队伍全灭 ⇒ 通关（`docs/84` §1，45/45 实测）。
-	if has_opponent_rule() and enemy_present and enemy_alive == 0:
-		if my_alive == 0:
-			# 同一发把两边都清空：真值里没有样本（`docs/123` §5.3 #5 同类问题）。
-			# 这里判人类失败，并把这条明确登记成"未观测"。
-			return _verdict(true, false, _other_team(teams), "mutual_wipe")
-		return _verdict(true, true, human_team, "enemy_wiped")
+	# 回合上限 = **独立的**第二个结束入口（真值 `0x475a64`–`0x475a7a`，在两条 wipe 判定**之前**）。
+	# 语料里没有"打满还没分胜负"的样本（`docs/123` §5.3 #1），但**二进制里有判定点**：
+	# 上限用尽 ⇒ `EndingGame`，且胜方被写死成 `1`（Team2）—— 见 `docs/150` §Q3。
+	if turn_limit > NO_TURN_LIMIT and turns_used >= turn_limit:
+		return _verdict(true, false, _other_team(judged), "turn_limit")
 
-	# ④ 回合上限用尽、靶子还没清完 ⇒ 失败。
-	#    `docs/118` §7.1 的 `turn_limit` 是真的（`Level 7` = 1，"in your first try"）；
-	#    **用尽之后原版怎么判没有样本**（`docs/123` §5.3 #1），这里取"判负"并标成推断。
-	if has_targets() and targets_total > 0 and turn_limit > NO_TURN_LIMIT \
-			and turns_used >= turn_limit:
-		return _verdict(true, false, _other_team(teams), "turn_limit")
-
-	# ⑤ 什么都没触发。若这局根本没有判定所需的双方（例如回放模式没有玩家表），
-	#    明确说"判不了"而不是像旧代码那样"两队都是 0 ⇒ 有人赢"。
-	if not enemy_present and not has_targets():
+	# 什么都没触发。若这局根本没有判定所需的双方（例如回放模式没有玩家表），
+	# 明确说"判不了"而不是像旧实现那样"两队都是 0 ⇒ 有人赢"。
+	if judged.is_empty():
 		return _verdict(false, false, human_team, "no_verdict")
 	return _verdict(false, false, human_team, "playing")
 
@@ -160,7 +196,7 @@ func _other_team(teams: Array) -> int:
 	for t in teams:
 		if int(t) != human_team:
 			return int(t)
-	# 打靶关没有别的玩家队 —— 靶子在 **Team2**（`docs/123` §2.1），
+	# 打靶关没有别的玩家队 —— 靶子在 **Team2**（`docs/150` §Q1），
 	# 所以"关卡失败"的胜方就是 1（= Team2）。这条让结算框的文案与原版语义一致。
 	return 1 - human_team
 
