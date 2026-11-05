@@ -435,7 +435,11 @@ fn ai_functions_are_broadcast_and_round_trip_over_tcp() {
             format!("{} + {:.3}", text, c),
             "修正文本的形态与常数不符（士兵 {sid}，起点 ({x0}, {y0})）"
         );
-        // 三位小数：尾巴必须正好是 `" + "` + 3 位小数
+        // 三位小数：尾巴必须正好是 `" + "` + 3 位小数。
+        // ⚠️ 这条钉的是**当前实现**的形态。真机在 `c < 0` 时写 `" - 3.420"`（抓包帧
+        // 143/182/203），而 `shot::corrected_text` 写死 `" + "`，于是发出去的是
+        // `"5.53 + -9.530"` 这种。本局 7 回合里有 4 回合踩到；修法见 `docs/127` §5 第 1 条，
+        // 修好后这里要同步改成 `format!("{}{}", text, 带符号的尾巴)`。
         let tail = &corrected[text.len()..];
         assert_eq!(tail, format!(" + {:.3}", c));
         let frac = tail.rsplit('.').next().unwrap();
