@@ -667,6 +667,209 @@ pub fn initial_population(p: &Params, mode: VarMode, next: &mut dyn FnMut() -> u
 }
 
 // ---------------------------------------------------------------------------
+// 按士兵的进化层（docs/98 §3 / §7 第 3 条）
+// ---------------------------------------------------------------------------
+//
+// 真链路（`docs/98` §0/§3/§4）：
+//
+// ```text
+// turn_manager 0x463da0   选好本回合的 soldier_id，发 TurnInfo
+//   ↓（computer_player_manager 0x4785f0 / 0x47a300）
+// AI 入口 0x47a300        为**这一个**士兵跑一次进化（变体 A 0x51b440）
+//   ↓
+// 0x3f27d0                结果写回共享表
+//   ↓
+// FunctionInfo{owner_id = soldier_id}
+// ```
+//
+// 三条硬结论（全部有 replay 观测）：
+//
+// 1. **AI 不选射手**。`soldier_id` 由 [`crate::turn::TurnManager`] 先定，本层只接收它；
+// 2. **槽按士兵**：`FunctionInfo.owner_id` / `FunctionActive.owner_id` 就是 `soldier_id`，
+//    开局每个士兵各收一条**空**函数（`docs/98` §3.1）；
+// 3. **每回合重算**：同一士兵**下一次**被轮到时文本又变了（`docs/98` §3.2 的 tick
+//    168 / 12269 / 26038 三行）⇒ 写回 = 覆盖，不是"算一次缓存住"。
+//
+// 因此"同一玩家的两个士兵"各有各的槽，**不共享**；本模块从类型上保证这一点
+// （[`SoldierFunctions`] 是 `soldier_id → 槽` 的映射，没有"玩家 → 槽"这一层）。
+//
+// ⚠️ **仍未确定**（`docs/98` §6-A）：`computer_player_manager` 的
+// `HashMap<i32, V>` 键是 `player_id` 还是 `soldier_id`——也就是"**进化的种群**是每人一份
+// 还是每士兵一份"。本层因此**不持有种群**：种群由调用方传进来、由调用方决定下一回合
+// 复用给谁（[`SoldierTurn::survivors`] 就是这份"可以传给下一次的种子"）。
+
+/// 一个士兵的函数槽。
+///
+/// 对应协议里的 `FunctionInfo{owner_id, function, corrected_function}`：**一个士兵一格**。
+/// 槽里存的是**前缀 token 序列**，不是文本——token → 文本（`0x4ec160`）还没实现，
+/// 见 `docs/109` §"仍未确定"。
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct FunctionSlot {
+    /// `owner_id` = `soldier_id`（`docs/98` §3.1）。
+    pub owner_id: i64,
+    /// 这个士兵当前的函数（前缀 token）。空 = 开局那条空 `FunctionInfo`。
+    pub tokens: Vec<Token>,
+    /// 这个槽最后一次被写入的回合号（`None` = 开局以来还没进化过）。
+    pub updated_turn: Option<u64>,
+}
+
+impl FunctionSlot {
+    pub fn new(owner_id: i64) -> Self {
+        Self { owner_id, tokens: Vec::new(), updated_turn: None }
+    }
+
+    /// 开局状态：空函数、没被算过（`docs/98` §3.1 的 tick=15 那批空 `FunctionInfo`）。
+    pub fn is_empty(&self) -> bool {
+        self.tokens.is_empty()
+    }
+}
+
+/// `soldier_id → 函数槽`。**一士兵一格**，同一玩家的不同士兵互不影响（`docs/98` §3.3）。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SoldierFunctions {
+    slots: std::collections::BTreeMap<i64, FunctionSlot>,
+}
+
+impl SoldierFunctions {
+    pub fn new() -> Self {
+        Self { slots: std::collections::BTreeMap::new() }
+    }
+
+    /// 登记一个士兵的**空**槽（开局每个士兵各一条空 `FunctionInfo`）。
+    ///
+    /// 已存在时**不覆盖**（重复登记不是"把这格清空"）。
+    pub fn register(&mut self, soldier_id: i64) -> &mut FunctionSlot {
+        self.slots.entry(soldier_id).or_insert_with(|| FunctionSlot::new(soldier_id))
+    }
+
+    /// 这个士兵的槽（没登记过 = `None`）。
+    pub fn slot(&self, soldier_id: i64) -> Option<&FunctionSlot> {
+        self.slots.get(&soldier_id)
+    }
+
+    /// 这个士兵当前的函数。
+    pub fn tokens(&self, soldier_id: i64) -> Option<&[Token]> {
+        self.slots.get(&soldier_id).map(|s| s.tokens.as_slice())
+    }
+
+    /// 写回一个士兵的函数（`0x3f27d0` 的 Rust 形态）。**覆盖**，不是追加。
+    ///
+    /// 没登记过的士兵会被顺手建格（真实链路里槽是开局建的，这里只是不 panic）。
+    pub fn set(&mut self, soldier_id: i64, tokens: Vec<Token>, turn: u64) -> &mut FunctionSlot {
+        let slot = self.slots.entry(soldier_id).or_insert_with(|| FunctionSlot::new(soldier_id));
+        slot.tokens = tokens;
+        slot.updated_turn = Some(turn);
+        slot
+    }
+
+    /// 这个士兵被算过的回合号。
+    pub fn updated_turn(&self, soldier_id: i64) -> Option<u64> {
+        self.slots.get(&soldier_id).and_then(|s| s.updated_turn)
+    }
+
+    /// 已登记的士兵数。
+    pub fn len(&self) -> usize {
+        self.slots.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.slots.is_empty()
+    }
+
+    /// 已登记的士兵 id（`BTreeMap` ⇒ 顺序确定）。
+    pub fn soldier_ids(&self) -> impl Iterator<Item = i64> + '_ {
+        self.slots.keys().copied()
+    }
+}
+
+/// 一个士兵"这一回合"的进化结果。
+///
+/// `tokens` 已经写进 [`SoldierFunctions`] 里该士兵的槽；`survivors` 是这一代留下的
+/// 存活者（按分数降序），交给调用方决定下一回合当谁的初始种群（§6-A 未定）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct SoldierTurn {
+    pub soldier_id: i64,
+    /// 这是该士兵第几回合被轮到时算的（写入 [`FunctionSlot::updated_turn`]）。
+    pub turn: u64,
+    /// 本回合该士兵要发的函数（写进 `FunctionInfo{soldier_id}` 的那条）。
+    pub tokens: Vec<Token>,
+    /// 进化后的存活者，按分数降序（`evolve_with_budget` 的返回）。
+    pub survivors: Vec<Individual>,
+}
+
+/// "为一个士兵进化一次"的入口。
+///
+/// 它是 [`evolve_with_budget`] 外面的一层皮，负责**上下文绑定**：
+/// 评分上下文由"本回合这个射手"的位置/朝向决定（`flip` 来自队伍，`docs/105`），
+/// 参数与预算来自难度档（`docs/93`），结果写进这个士兵自己的槽。
+///
+/// ```text
+/// // 典型调用顺序（`turn.rs` 先定射手，AI 只为它跑）：
+/// let d = turns.begin_turn(player_id, |id| life_state(id), timed_out);
+/// if let TurnDecision::Announce { soldier_id, flip, .. } = d {
+///     if soldier_id != 0 {
+///         let ctx = ScoringContext { x0, y0, flip, step: SERVER_STEP, mask, targets, limit };
+///         let ev = SoldierEvolver::new(params(level), VarMode::Normal, ctx)
+///             .with_budget(Some(GAME_TIME_BUDGET_SECS));
+///         let out = ev.evolve_soldier(&mut slots, soldier_id, turn_no, pop, &mut next);
+///     }
+/// }
+/// ```
+pub struct SoldierEvolver<'a> {
+    /// 难度参数（`params(level)`）。
+    pub params: Params,
+    /// 变量模式（`Normal` / `DiffEq`，见 `docs/94`）。
+    pub mode: VarMode,
+    /// 这一回合的评分上下文（射手的 `x0/y0/flip` + 掩膜 + 目标）。
+    pub ctx: ScoringContext<'a>,
+    /// 墙钟预算：`Some(25.0)` = 真游戏（`docs/93`）；`None` = 不限时（测试用）。
+    pub budget_secs: Option<f64>,
+}
+
+impl<'a> SoldierEvolver<'a> {
+    pub fn new(params: Params, mode: VarMode, ctx: ScoringContext<'a>) -> Self {
+        Self { params, mode, ctx, budget_secs: None }
+    }
+
+    /// 设墙钟预算。真游戏用 `Some(GAME_TIME_BUDGET_SECS)`；测试传 `None` 保证可复现。
+    pub fn with_budget(mut self, secs: Option<f64>) -> Self {
+        self.budget_secs = secs;
+        self
+    }
+
+    /// 造初始种群（第 0 代）。真实游戏的 gen-0 生成路径**仍未还原**（`docs/95` §5、
+    /// `HANDOVER` §7.11.1），这里用 [`initial_population`]，与旧行为一致。
+    pub fn seed_population(&self, next: &mut dyn FnMut() -> u64) -> Vec<Individual> {
+        initial_population(&self.params, self.mode, next)
+    }
+
+    /// 为**一个** `soldier_id` 跑一次进化，并把结果写进**它自己的**槽。
+    ///
+    /// * 不选射手：`soldier_id` 必须由回合系统先给出（`docs/98` §0）；
+    /// * 不共享：同一玩家的另一个士兵的槽**完全不动**；
+    /// * 每回合重算：同一士兵第二次调用会**覆盖**上一次的 `tokens`，`updated_turn` 前进。
+    ///
+    /// 边界：`pop` 为空时不产生存活者，槽会被写成**空函数**（`updated_turn` 仍前进）。
+    /// 真实链路里种群至少有 1 个个体（[`initial_population`] 保证），这里只是不 panic。
+    pub fn evolve_soldier(
+        &self,
+        slots: &mut SoldierFunctions,
+        soldier_id: i64,
+        turn: u64,
+        pop: Vec<Individual>,
+        next: &mut dyn FnMut() -> u64,
+    ) -> SoldierTurn {
+        let ctx = &self.ctx;
+        let mut score = |tokens: &[Token], phase: Phase| ctx.evaluate(tokens, phase);
+        let survivors = evolve_with_budget(pop, &self.params, self.mode, next, &mut score, self.budget_secs);
+        // evolve/next_generation 的返回是"按分数降序"的存活者，第 0 个就是本回合要发的函数。
+        let tokens = survivors.first().map(|ind| ind.tokens.clone()).unwrap_or_default();
+        slots.set(soldier_id, tokens.clone(), turn);
+        SoldierTurn { soldier_id, turn, tokens, survivors }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 适应度（docs/74 的公式，接上路径采样与命中判定）
 // ---------------------------------------------------------------------------
 
@@ -1406,5 +1609,169 @@ mod tests {
         });
         // 截断到 s = 10/5 = 2
         assert_eq!(out.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // 按士兵的进化层（docs/98 §3）
+    // -----------------------------------------------------------------------
+
+    /// 空场 + 无目标时，分数只由 `V²/100` 决定 ⇒ **token 最少的个体一定赢**
+    /// （同分时 `sort_by` 是稳定排序，克隆排在子代前面，所以克隆保住第 0 名）。
+    /// 于是"塞一条 1 token 的函数当种子"就能让存活者**确定**，测试不依赖 RNG。
+    fn empty_field_targets() -> Vec<crate::settle::Target> {
+        Vec::new()
+    }
+
+    /// 只有一条 `Const 0.0`（1 个 token）——空场下不可能被更短的打败。
+    fn const_zero_pop() -> Vec<Individual> {
+        vec![Individual::new(vec![Token::constant(0.0)])]
+    }
+
+    /// 同上但常数不同：用来证明"两个槽各存各的"。
+    fn const_seven_pop() -> Vec<Individual> {
+        vec![Individual::new(vec![Token::constant(7.0)])]
+    }
+
+    /// 造一个针对"空场"的进化器（难度参数调小，跑得快）。
+    ///
+    /// `flip` 显式给：真链路里它来自**队伍**（`docs/105`），这里只为把 `ScoringContext`
+    /// 填满，与本测试的断言无关。
+    fn empty_field_evolver<'a>(
+        mask: &'a [u8],
+        targets: &'a [crate::settle::Target],
+    ) -> SoldierEvolver<'a> {
+        let ctx = ScoringContext {
+            x0: 10.0,
+            y0: 0.0,
+            flip: true,
+            step: crate::SERVER_STEP,
+            mask,
+            targets,
+            limit: 200,
+        };
+        SoldierEvolver::new(
+            Params { generations: 1, population: 5, per_slot: 5, limit: 200 },
+            VarMode::Normal,
+            ctx,
+        )
+    }
+
+    /// 开局：每个士兵一条**空**槽（`docs/98` §3.1 的 tick=15）。
+    #[test]
+    fn slots_start_empty_for_every_soldier() {
+        let mut slots = SoldierFunctions::new();
+        slots.register(2507);
+        slots.register(2508);
+        assert_eq!(slots.len(), 2);
+        assert_eq!(slots.tokens(2507), Some(&[][..]), "开局是空函数");
+        assert_eq!(slots.updated_turn(2507), None, "还没被算过");
+        assert!(slots.slot(2507).unwrap().is_empty());
+        assert_eq!(slots.slot(2507).unwrap().owner_id, 2507, "owner_id = soldier_id");
+        assert_eq!(slots.soldier_ids().collect::<Vec<_>>(), vec![2507, 2508]);
+        assert!(slots.slot(9999).is_none(), "没登记过的士兵没有槽");
+    }
+
+    /// **不共享**：为士兵 A 进化，同一玩家的士兵 B 的槽一点不动（`docs/98` §3.3）。
+    #[test]
+    fn two_soldiers_of_one_player_have_separate_slots() {
+        let mask = crate::plane::empty_mask();
+        let targets = empty_field_targets();
+        let ev = empty_field_evolver(&mask, &targets);
+        let mut slots = SoldierFunctions::new();
+        slots.register(2510);
+        slots.register(2511);
+        let mut next = stream(0xA11CE_u64);
+
+        let a = ev.evolve_soldier(&mut slots, 2510, 1, const_zero_pop(), &mut next);
+        // A 写进去了（空场下 1 token 的种子必赢，内容确定 = [Const 0.0]）
+        assert_eq!(a.soldier_id, 2510);
+        assert_eq!(a.tokens, vec![Token::constant(0.0)]);
+        assert_eq!(slots.tokens(2510), Some(a.tokens.as_slice()));
+        assert_eq!(slots.updated_turn(2510), Some(1));
+        // B 一点没动 —— 这就是"不共享"
+        assert_eq!(slots.tokens(2511), Some(&[][..]), "B 的槽仍为空");
+        assert_eq!(slots.updated_turn(2511), None);
+
+        let b = ev.evolve_soldier(&mut slots, 2511, 1, const_seven_pop(), &mut next);
+        assert_eq!(b.soldier_id, 2511);
+        assert_eq!(b.tokens, vec![Token::constant(7.0)]);
+        // 两个槽**各存各的**：同一个玩家、同一条链路，内容互不相同
+        assert_eq!(slots.tokens(2510), Some(a.tokens.as_slice()));
+        assert_eq!(slots.tokens(2511), Some(b.tokens.as_slice()));
+        assert_ne!(slots.tokens(2510), slots.tokens(2511), "两个士兵的槽内容不同");
+        // 再写回一次 A 也不会碰到 B
+        ev.evolve_soldier(&mut slots, 2510, 2, const_seven_pop(), &mut next);
+        assert_eq!(slots.updated_turn(2511), Some(1), "B 的回合号没被 A 顶掉");
+        assert_eq!(slots.updated_turn(2510), Some(2));
+        assert_eq!(slots.tokens(2511), Some(b.tokens.as_slice()), "B 的函数也没被 A 顶掉");
+    }
+
+    /// **每回合重算**：同一士兵下一回合再调用会**覆盖**上一次结果（`docs/98` §3.2：
+    /// tick 168 / 12269 / 26038 三次文本都不一样）。
+    #[test]
+    fn same_soldier_is_recomputed_next_turn() {
+        let mask = crate::plane::empty_mask();
+        let targets = empty_field_targets();
+        let ev = empty_field_evolver(&mask, &targets);
+        let mut slots = SoldierFunctions::new();
+        slots.register(2507);
+        let mut next = stream(0xBEEF_u64);
+
+        // 第 1 回合：种子是 [Const 0.0]
+        let t1 = ev.evolve_soldier(&mut slots, 2507, 1, const_zero_pop(), &mut next);
+        assert_eq!(t1.tokens, vec![Token::constant(0.0)]);
+        assert_eq!(slots.updated_turn(2507), Some(1));
+
+        // 第 2 回合：种子换成 [Const 7.0] ⇒ 槽被**覆盖**，不是"沿用上次的结果"
+        let t2 = ev.evolve_soldier(&mut slots, 2507, 2, const_seven_pop(), &mut next);
+        assert_eq!(slots.updated_turn(2507), Some(2));
+        assert_eq!(slots.tokens(2507), Some(t2.tokens.as_slice()));
+        assert_eq!(t2.tokens, vec![Token::constant(7.0)]);
+        assert_ne!(t1.tokens, t2.tokens, "同一士兵两回合的函数不同 ⇒ 每回合重算");
+        // 上一回合的结果**没有**被缓存下来复用：槽里只有这一次的
+        assert_eq!(slots.tokens(2507), Some(&[Token::constant(7.0)][..]));
+    }
+
+    /// 进化结果就是"存活者第 0 个"（`evolve` 返回按分数降序的存活者）。
+    #[test]
+    fn slot_holds_the_best_survivor() {
+        let mask = crate::plane::empty_mask();
+        let targets = empty_field_targets();
+        let ev = empty_field_evolver(&mask, &targets);
+        let mut slots = SoldierFunctions::new();
+        let mut next = stream(0x5157_u64);
+        let out = ev.evolve_soldier(&mut slots, 42, 7, const_zero_pop(), &mut next);
+        assert_eq!(out.survivors.len(), 1, "种群 5 / 每槽 5 ⇒ s = 1");
+        assert_eq!(out.tokens, out.survivors[0].tokens, "槽里是第 0 名");
+        assert_eq!(slots.tokens(42), Some(out.tokens.as_slice()));
+        assert_eq!(out.turn, 7);
+    }
+
+    /// 预算接的是真游戏那档（25 s，`docs/93`）。
+    #[test]
+    fn budget_is_wired_to_the_game_value() {
+        let mask = crate::plane::empty_mask();
+        let targets = empty_field_targets();
+        let ev = empty_field_evolver(&mask, &targets);
+        assert_eq!(ev.budget_secs, None, "默认不限时（测试可复现）");
+        assert_eq!(ev.with_budget(Some(GAME_TIME_BUDGET_SECS)).budget_secs, Some(25.0));
+    }
+
+    /// `soldier_id` 由**外部**给出，本层不选射手：传什么 id 就写谁的槽。
+    #[test]
+    fn soldier_id_comes_from_the_caller_not_the_ai() {
+        let mask = crate::plane::empty_mask();
+        let targets = empty_field_targets();
+        let ev = empty_field_evolver(&mask, &targets);
+        let mut slots = SoldierFunctions::new();
+        let mut next = stream(0xC0FFEE_u64);
+        // 同一个进化器先后为三个不同士兵算，槽各自独立
+        for id in [7444, 7445, 7446] {
+            let out = ev.evolve_soldier(&mut slots, id, 1, const_zero_pop(), &mut next);
+            assert_eq!(out.soldier_id, id);
+            assert_eq!(slots.slot(id).unwrap().owner_id, id);
+        }
+        assert_eq!(slots.len(), 3);
+        assert_eq!(slots.soldier_ids().collect::<Vec<_>>(), vec![7444, 7445, 7446]);
     }
 }

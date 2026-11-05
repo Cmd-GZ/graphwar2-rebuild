@@ -60,3 +60,52 @@ impl LifeState {
         (self.alive.len(), self.queued_death.len())
     }
 }
+
+// ---------------------------------------------------------------------------
+// 状态字节（`docs/98` §1.3 的观测落成代码）
+// ---------------------------------------------------------------------------
+//
+// `0x454950`（`graphwar_life_manager.rs`）是 "HashMap<i32, 8 字节值> 查找"，
+// 返回**值里的那个 byte**；**查不到时返回 2**（反编译里 `uVar15 = CONCAT71(...,2)`）。
+// 调用方 `0x463da0` 只看最低位：`test $0x1,%al`（`0x463fbb`）。
+// ⇒ `1`（活）能开火；`0`（死）与 `2`（查不到 / 未上场）都不能。
+
+/// `life_manager` 查不到该士兵时返回的状态字节（`docs/98` §1.3）。
+pub const MISSING_STATE: u8 = 2;
+
+/// "能开火吗"：只有最低位为 1 才算活（`0x454950` 的返回值 → `0x463fbb` 的 `& 1`）。
+///
+/// 任意奇数都算活——这是二进制里 `test $0x1` 的实际语义，不是"只有 1"。
+pub const fn is_alive_byte(state: u8) -> bool {
+    state & 1 != 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn life_table_round_trip() {
+        let mut life = LifeState::default();
+        assert_eq!(life.status(1), None, "没记录就是未知，不默认成任何一边");
+        life.set(1, Status::Alive, None);
+        assert_eq!(life.status(1), Some(Status::Alive));
+        assert_eq!(life.lens(), (1, 0));
+        // mode == 1 的那条路：同时写第二张表
+        life.set(2, Status::Dead, Some(77));
+        assert_eq!(life.take_queued_death(2), Some(77));
+        assert_eq!(life.take_queued_death(2), None);
+    }
+
+    /// `docs/98` §1.3：`& 1` 为真才算活，查不到（2）与死（0）同属"不可开火"。
+    #[test]
+    fn only_the_low_bit_means_alive() {
+        assert_eq!(MISSING_STATE, 2, "反编译里查不到时返回的字面量就是 2");
+        assert!(!is_alive_byte(0));
+        assert!(is_alive_byte(1));
+        assert!(!is_alive_byte(2));
+        assert!(is_alive_byte(3));
+        assert!(!is_alive_byte(0xFE));
+        assert!(is_alive_byte(0xFF));
+    }
+}

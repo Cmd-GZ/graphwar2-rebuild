@@ -8,10 +8,10 @@
 > **[`107-docs-consolidation.md`](107-docs-consolidation.md)**。
 > 三节（现行 / 已归档 / 已并档）与磁盘上的文件**逐一对得上**，可以当清单核对。
 
-## 一、现行文档（84 份）
+## 一、现行文档（85 份）
 
-> 数法：`find docs -name "*.md" -not -path "*/archive/*" | wc -l` = **84**（2026-11 复核）。
-> 之前这里写的 76 是旧数，已改。
+> 数法：`find docs -name "*.md" -not -path "*/archive/*" | wc -l` = **85**（2026-11 复核；
+> 含本轮新增的 [`109`](109-kernel-turn-aigen.md)）。之前这里写的 76 是旧数，已改。
 
 ### 1.1 总览与索引
 
@@ -67,6 +67,7 @@
 | [34-color-assignment.md](34-color-assignment.md) | 玩家颜色分配：观测记录（**结论见 [102](102-color-assignment.md)**） |
 | [102-color-assignment.md](102-color-assignment.md) | **玩家颜色分配结案**：两张 6 色队色表 + 随机起点线性探测 |
 | [105-team-sides.md](105-team-sides.md) | **队伍固定在 x 两侧**，`flip` 由队伍决定（不用几何猜） |
+| [109-kernel-turn-aigen.md](109-kernel-turn-aigen.md) | **内核两处缺口的实现**：`turn.rs` 射手轮转（`Vec<soldier_id>`+游标/判活/全灭发 0）、`aigen` 按士兵的进化层（不共享、每回合重算）、`flip` 由队伍、超时跳过（用户口述） |
 | [53-rng-found.md](53-rng-found.md) | **随机源找到了**（结论篇） |
 | [54-rng-replay-verified.md](54-rng-replay-verified.md) | RNG 重放验证（结论篇） |
 | [37-paired-replay.md](37-paired-replay.md) | 按回合配对的精确回放（致死集合一致） |
