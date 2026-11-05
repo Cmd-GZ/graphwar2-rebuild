@@ -191,6 +191,9 @@ static func dialog(root: Control, panel_min: Vector2 = Vector2(560, 320)) -> Dic
 	mid.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var p := panel("Panel", mid)
 	p.custom_minimum_size = panel_min
+	# 弹窗**不占满整屏**：按内容的最小尺寸居中（否则内容少的弹窗会被拉成一整块黑板）。
+	p.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	p.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var content := vbox("VBoxContainer", 10, p)
 	return {"frame": f, "margin": f.margin, "vbox": f.vbox, "panel": p, "content": content}
 
