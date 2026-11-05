@@ -30,7 +30,7 @@
 | 弹道哪来的 | 服务端只发 `FunctionPoints{start_x,start_y,end_x}`（**没有点序列**）。客户端用**内核**按"函数原文 + 起点 + 方向"复算，方向由 `end_x` 落在起点哪一侧定，画到 `end_x` 为止 |
 | 士兵死亡会消失吗 | **会**。`LifeInfo{alive:false}` 与 `LifeQueuedDeath` 都收；联机下阵亡者从绘制列表里去掉（服务端也在 `Match::fire` 里 retain 掉） |
 | "我是谁"解决了吗 | **解决了**。服务端补了 `PlayerInfo{player_id,connection_id}`（抓包原文形状，逐字节测试）；拿不到时降级成"按 `TurnInfo` 的玩家假定"并在状态行写明 |
-| 顺手修了什么 | **一个真 bug**：`FunctionUpdateRequest` 只写了玩家**第一条** `PlayerState`，于是"谁开火读谁的函数"永远读到默认值 `"0.00"` —— 客户端提交的函数从没真正生效过（以前的端到端只提交 `"0.00"`，看不出来） |
+| 顺手修了什么 | **一个真 bug**：`FunctionUpdateRequest` 只写了玩家**第一条** `PlayerState`，于是"谁开火读谁的函数"永远读到默认值 `"0.00"` —— 客户端提交的函数从没真正生效过（以前的端到端只提交 `"0.00"`，看不出来）。**台账见 §10** |
 | 三种老模式还好吗 | **好**。回放分支、`_fire_fx` 的 4 处落点、战役/LAN 的本地规则一个字没动；自检 478 条既有断言**全部照过** |
 | 数字 | `cargo test --offline` **314 → 315**（+1，`PlayerInfo` 逐字节）；客户端自检 **478 → 529**（+51，0 失败） |
 
@@ -131,11 +131,13 @@ FunctionPoints{owner_id, start_x, start_y, end_x}      ← **只有起点与终�
 服务端那条在 0.5 单位内等价、**不是逐点相同**。自检里的判据因此写成
 `|末点 x − end_x| ≤ 0.6`。
 
-> ⚠️ **另一条线正在改这件事**（不是本任务的结论）：`docs/136` 用 739 发回放做几何探针，
-> 给出"`step = 0.01` 时 `end_x` 逐位相同 605/739、`step = 0.5` 只有 27/739"，
-> 并把 `src/game.rs::fire` 的 `0.5` 换成 `SERVER_STEP`。那条一旦合入，
-> 客户端这边**什么都不用改**（我们本来就是 0.01），"差一个弦长"会变成"逐点相同"。
-> 本任务**没有**验证过那条结论（我的基线里 `fire` 还是 0.5）。
+> ✅ **这条已经落地了**（main `10e11fb`；`docs/136` 的几何探针：`step = 0.01` 时 `end_x`
+> 逐位相同 605/739、`step = 0.5` 只有 27/739）：`Match::fire` 现在用 `SERVER_STEP`（0.01），
+> 与内核 `path_calculate` 的 `STEP_DEFAULT` **是同一个值**，所以客户端这边**一行都不用改** ——
+> 复算出来的点序列与服务端结算用的是同一份输入、同一个步长（"差一个弦长"变成同一批点）。
+> 自检里 `|末点 x − end_x| ≤ 0.6` 那条判据留在原地：它是"末点就是服务端停点"的**下限**，
+> 不是精度上限。这条改动**打穿了** `tests/server_match.rs` 的两条 e2e（固定水平线靠
+> 0.5 的隧穿才打中人），改法见 §11。
 
 ### 3.3 联机下**不**做的事
 
@@ -225,32 +227,12 @@ FunctionPoints{owner_id, start_x, start_y, end_x}      ← **只有起点与终�
 降级不是摆设：自检里 `_test_net_join_fake_server` 的抓包 7 条**没有** `PlayerInfo`，
 那些用例仍然要能跑；本文新加的假服务器用例则**专门**灌一条 `PlayerInfo` 来验"一条就够"。
 
-### 5.4 顺带修掉的 bug（`FunctionUpdateRequest` → 开火用的是默认函数）
+### 5.4 顺带修掉的一个真 bug
 
-这是本轮**端到端逼出来**的一个真 bug，`src/serverloop.rs` 里修，记在这里：
-
-```text
-players: Vec<PlayerState> 是**按士兵**建的：一名玩家 per_team 条，每条 {player_id, soldier_id, x, y, function}
-FunctionUpdateRequest 处理器：players.iter_mut().find(|p| p.player_id == pid)   ← 只命中该玩家的**第一条**
-FunctionFireRequest 处理器： players.iter().position(|p| p.soldier_id == cur_sid) ← 按**本回合射手**找
-```
-
-⇒ 只要本回合的射手不是该玩家的**第一名**士兵（`TurnManager` 的游标从 0 起步，实战里
-经常是第二、第三名），开火读到的是构造时的默认值 `"0.00"` —— **客户端提交的函数从来没生效过**。
-
-为什么以前没暴露：既有的端到端（`_test_net_real_server`）只提交 `"0.00"`，**恰好等于默认值**；
-`tests/server_match.rs` 也是默认值。本轮的自检第一次提交了一条非默认函数（`sqrt(abs(x))`、
-正弦鼓包这类），立刻看到 `FunctionInfo` / `FunctionPoints` 用的还是 `"0.00"`：
-
-```text
-FAIL ② 复算用的函数文本 = 我提交的那一条（0.00）        ← 修之前
-```
-
-修法（最小、无报文形状变化）：`FunctionUpdateRequest` 把**该玩家的每一条**都写一遍 ——
-函数是"按玩家"提交的，按士兵各存一份只是这一层的实现细节。修完自检断言
-"② 复算用的函数文本 = 我提交的那一条" 通过，`cargo test` 的
-`plays_a_full_match_over_tcp` / `rotation_and_ai_are_wired_over_tcp` 等仍然全绿
-（它们只用默认函数，不受影响）。
+`FunctionUpdateRequest` 只写了玩家**第一条** `PlayerState`，于是"开火读谁的函数"永远
+读到构造时的默认值 `"0.00"` —— **客户端提交的函数从来没生效过**。
+它**单独成章**写在 §10（对拍/端到端才发现的 bug 台账），因为它的价值不在本章的
+`PlayerInfo` 叙事里。
 
 ---
 
@@ -367,7 +349,7 @@ soldier 231、站位 `(-10, 0)`），障碍数从 4 到 25 不等。种子 8 = 1
 | 死亡报文有两种形态（线上 `LifeQueuedDeath` / 回放 `LifeInfo`） | **观测** | `docs/31` §1、`docs/96` §4 |
 | 收到死亡就把人从画面上拿掉 | **自定**（+ 推断） | 服务端 `Match::fire` 会 retain 掉死者；原版客户端画不画灰**未知**（本地局仍画灰 + 叉，未改） |
 | 联机胜负由服务端判 | **观测** | `src/serverloop.rs` 发 `EndingGame` 后关 socket |
-| `FunctionUpdateRequest` 只写第一条 `PlayerState` 是 bug | **观测**（自检红过一次 + 代码） | §5.4 |
+| `FunctionUpdateRequest` 只写第一条 `PlayerState` 是 bug | **观测**（自检红过一次 + 代码） | §10.1 |
 
 ---
 
@@ -393,5 +375,127 @@ bash client/run.sh dump | grep '@@KERNEL'      # 期望 available=1 hit_test=1
 | `client/tools/selftest.gd` | **+550 / −0** | 只**新增**两个用例 + 九个辅助函数（`_play_online_started`/`_online_enemies_of`/`_online_obstacles_of`/`_pick_online_shot`/`_online_shot_hits`/`_online_shot_reason`/`_online_sine_expr`/`_online_poly_expr`/`_first_dead_entity`）；**既有 478 条断言一条没动** |
 | `src/game.rs` | **+45 / −0** | `player_info_message()` + 逐字节测试 |
 | `src/serverloop.rs` | **+75 / −3** | `FIRST_PLAYER_ID` 常量、`NewPlayerRequest` 分支、开局玩家槽改用常量（值不变）、`FunctionUpdateRequest` 的 bug 修复（§5.4）、`run()` 里的 `GW2_MATCH_SEED` 测试旋钮（§6.5） |
+| `tests/server_match.rs` | **见 §11.5** | 两条 e2e 的客户端改成"真的瞄准"、两条 bot 测试换种子、三处 `drop(client)` 防挂死、新增 `#[ignore]` 的 `search_ai_seed`（§11） |
 | `client/src/net/*` | **0** | 照它的 API 用，一个字没改 |
 | `core_bridge.gd` / `replay_player.gd` / `player_screen.gd` / `client/src/ui/*` | **0** | 不碰 |
+
+---
+
+## 10. 对拍 / 端到端才发现的 bug（台账）
+
+> 单独成节。每条都写清五件事：**症状 / 为什么既有测试看不出来 / 证据 / 修法 / 回归**。
+> 收录标准与回放那边的"列表按扩展名过滤"一样：**只有在把两条独立的实现摆到一起比、
+> 或者真的跑一局时才会暴露**的那类 bug；纯靠读代码就能看出来的小错不算。
+
+### 10.1 `FunctionUpdateRequest` 只写了玩家**第一条**局面 ⇒ 客户端提交的函数从没生效
+
+| 项 | 内容 |
+|---|---|
+| **症状** | 客户端提交 `"sqrt(abs(x))"`，服务端回执的 `FunctionInfo.function` 与开火那一刻 `FunctionPoints` 用的函数都是 **`"0.00"`**（玩家表里的默认值）。也就是说：**"提交函数"这个动作在非首名士兵的回合里从来没生效过** |
+| **为什么既有测试看不出来** | 既有的两条端到端（`tests/server_match.rs` 的 `plays_a_full_match_over_tcp` / 客户端自检的 `_test_net_real_server`）提交的都是 **`"0.00"`** —— 与服务端 `PlayerState::function` 的构造初值**恰好相同**。测试"通过"了，但证明的是"默认值和默认值相等" |
+| **证据（观测）** | 本轮自检第一次提交**非默认**函数时立刻红：`FAIL ② 复算用的函数文本 = 我提交的那一条（0.00）`（修复前，见 §6.3 的 ② 那一组）。随后在服务端日志里看到的是同一个 `owner_id`、函数却是默认值 |
+| **根因** | `players: Vec<PlayerState>` 是**按士兵**建的（一名玩家 `per_team` 条）；`FunctionUpdateRequest` 用 `find(|p| p.player_id == pid)`（**只命中第一条**）写函数，而 `FunctionFireRequest` 用 `position(|p| p.soldier_id == cur_sid)`（**按本回合射手**）读函数。`TurnManager` 的游标从 0 起步、先自增再取 ⇒ 首名射手往往是该玩家的**第二**名士兵 ⇒ 读到的永远是初值 |
+| **修法**（`src/serverloop.rs`） | 把该玩家的**每一条**都写一遍：`for p in players.iter_mut().filter(\|p\| p.player_id == pid) { p.function = f.clone(); }`。函数本来就是"按玩家"提交的，按士兵各存一份只是这一层的实现细节；报文形状、顺序、判别值一个都没动 |
+| **回归** | 自检的 ② 组断言转绿（"复算用的函数文本 = 我提交的那一条"）；`cargo test` 里那三条 e2e 全绿（它们现在也真的提交非默认函数了，见 §11） |
+| **档位** | **观测**（自检红过）+ **逐位验证**（修后 `cargo test` + 自检覆盖） |
+
+---
+
+## 11. 步长 0.5 → 0.01 之后：两条 e2e 改成"真的瞄准"
+
+### 11.1 现象与根因（**观测**）
+
+`src/game.rs::fire` 的步长从写死的 `0.5` 改成 `SERVER_STEP`（`0.01`，`docs/136` 的几何探针：
+`end_x` 逐位相同 605/739 vs 27/739）之后，`tests/server_match.rs` 的两条 e2e 红了：
+
+* `plays_a_full_match_over_tcp` —— `assert!(ended, "直线射击应当能打死敌人并最终触发 EndingGame")`；
+* `rotation_and_ai_are_wired_over_tcp` —— 先 `assert!(ended)`，再过不了 `assert!(!deaths.is_empty())`。
+
+根因不是种子，而是**物理变准了**：旧的两条测试都在打**固定水平线 `"0.00"`**，
+它们之所以能打中人，靠的是 `0.5` 的弦长**粗到会隧穿障碍**（步长 0.5 意味着采样点相隔
+半个棋盘单位，半径 0.8–4.27 的墙会被"跨过去"）。换成 0.01 之后墙真的把人挡住了：
+水平线从射手出发，走不到对手那里就撞墙停下 ⇒ 没人死 ⇒ 没有 `EndingGame` ⇒ 僵局。
+
+> **不改回 0.5，也不放宽断言**。修的是"测试客户端"，不是物理。
+
+### 11.2 人类玩家局：客户端**真的瞄准**（`plays_a_full_match_over_tcp`）
+
+服务端对**人类玩家**是"你交什么就按什么开火"（`FunctionUpdateRequest` 那条函数原样用），
+所以这条测试的客户端现在做三件事（全部在 `tests/server_match.rs` 里，只驱动客户端、
+**不参与任何断言**）：
+
+```text
+① Board::absorb(报文)       ← PosInfo 坐标 / SoldierInfo 归属 / TeamInfo 队伍 /
+                               AddObstacle 障碍 / LifeQueuedDeath 存活位
+② Board::mask()             ← 与服务端 `Match::new` 同一套：只把障碍光栅化进 1000×600 掩膜
+③ aim(board, shooter)       ← 每回合按"当前射手 + 最近的敌人"重新挑：
+                               候选 = 过射手与目标两点的直线 m·x
+                                    + 半正弦鼓包 m·x + k·sin(h·π·(x−x0)/dx)（两端归零，k 控制绕多高）
+                                    + 过"路标"的抛物线 m·x + b·(x−x0)·(x−xt)
+                               判定 = `settle::resolve(expr, x0, y0, SERVER_STEP, flip, Normal,
+                                                      mask, others)` —— **服务端那个函数本身**
+                               要求 = 没被墙挡住 && 打死至少一个敌人 && 没误伤队友
+```
+
+* 候选是**按几何构造**的（每一条都必然穿过射手与目标），所以"打不中"只可能是"被墙挡住"，
+  搜索只需要换鼓包高度/路标位置；
+* 判定用的是**同一个函数、同一个步长、同一份掩膜**，所以"客户端觉得能中"⇒"服务端就是能中"
+  （这条正是 §3.2 那个"步长已经一致"的直接好处）；
+* **尝试次数进断言消息**：`assert!(ended, "…打了 N 回合、M 回合做了瞄准、共试过 K 条候选弹道；
+  记录：{:?}")`；
+* 另加一条**只加不减**的断言：`至少两发是瞄准过的（不是随手甩的 "0.00"）` ——
+  它防的是"退回到固定水平线也能过"的假绿。
+
+实测（seed `[11;32]`，9 个障碍）：`ENDED at turn 5`，测试 8.3 s。
+
+### 11.3 电脑玩家局：客户端**改不动**，只能换夹具种子
+
+`Match::fire` 对电脑玩家一律用 `ai_function_text()`（`docs/127` §5），客户端交的函数
+**不生效**，所以这两条测试的胜负完全由 `(seed, AI 进化)` 决定。而 AI 的适应度里**含掩膜**
+（`aigen::ScoringContext.mask = Match::mask`），障碍一多就可能僵成"AI 一直贴着墙打"。
+
+于是新加了一条 `#[ignore]` 的 **`search_ai_seed`**（同文件末尾，平时不跑）：
+
+```bash
+cargo test --offline --test server_match -- --ignored --nocapture search_ai_seed
+```
+
+它先按 `[k;32]`（k = 0..=63）**纯计算**障碍数（`ChaCha12::from_seed` + `levelgen::generate(.., 0)`，
+与 `serverloop` 开局同一条），再对障碍最少的若干个真的跑一局 AI-vs-AI：
+
+```text
+障碍最少的 12 个 `[k;32]` 种子: [(0,30),(0,62),(1,53),(3,34),(3,55),(3,58),(4,12),(4,27),(4,51),(5,1),(5,36),(5,42)]
+SEED [30;32] 障碍=0 回合=20 死亡=2 ending=false
+SEED [62;32] 障碍=0 回合=12 死亡=3 ending=true
+SEED [53;32] 障碍=1 回合= 6 死亡=3 ending=true      ← 选它
+SEED [34;32] 障碍=3 回合=20 死亡=2 ending=false
+SEED [55;32] 障碍=3 回合=20 死亡=2 ending=false
+SEED [58;32] 障碍=3 回合=20 死亡=2 ending=false
+```
+
+⇒ 两条电脑玩家测试的夹具种子 `[11;32]` → **`[53;32]`**（1 个障碍、第 6 回合 3 人阵亡、
+`EndingGame`；它是"AI 真能打死人"的种子里障碍最多的那一档里最快的）。**断言一条没改**：
+测试 2 仍然要求 `ended` + `deaths` 非空（"跳过死者"这条规则必须真的被走到），
+测试 3 仍然要求 AI 每回合都说话、`corrected_function` 的常数逐位对得上。
+
+### 11.4 顺手修掉的"挂死"（不是失败，是挂住）
+
+三条测试里都有 `server.join()`。**对局没打完**时服务端仍阻塞在 `read_frame` 上，
+而客户端 socket 还开着 ⇒ `join()` 永远不返回 ⇒ 测试进程挂死（`--test-threads=1` 下整个
+`cargo test` 就停在那儿，看起来像"跑不完"）。三处 `join()` 之前都加了 `drop(client)`：
+连接一关，服务端 `read_frame` 拿到 EOF 退出，`join()` 立刻返回 —— **该红的就红，
+不再装死**。
+
+### 11.5 验证与改动
+
+```text
+cargo test --offline --test server_match          → 3 passed / 0 failed / 1 ignored（25 s，串行）
+cargo test --offline                              → 333 passed / 0 failed / 1 ignored
+```
+
+逐文件（本次增量）：
+
+| 文件 | 变化 | 内容 |
+|---|---|---|
+| `tests/server_match.rs` | **+384 / −15** | `Board`（报文→局面）+ `mask()`/`others()`/`enemies_of()` + `candidate_exprs()`/`judge()`/`aim()` 瞄准板；测试 1 改成逐回合瞄准（并新增"至少两发是瞄准过的"）；测试 2、3 的种子换成 `[53;32]`；三处 `drop(client)`；新增 `#[ignore] search_ai_seed` |
+| `docs/139-play-online.md` | 本章 | §10 台账 + §11 改法；§3.2 的"另一条线"改成"已合入"；§5.4 收成指向 §10 的一句 |
