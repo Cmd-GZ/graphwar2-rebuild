@@ -41,9 +41,19 @@ pub fn turn_duration_ticks(time_mode: &str) -> Option<i64>
 pub fn end_of_turn_tick(turn_start_tick: i64, time_mode: &str) -> Option<i64>
 ```
 
-- **已验证**：`Timer3m` = 10800 tick（180 s）；
-- **推断**（文档里标了）：其余档位按"名字里的时间 × 60"。
-  `Timer1m`/`Timer2m`/`Timer5m`/`Timer30s` 没有取到独立样本；
+### 四档实测（改 harness 的回合时间按钮抓到的）
+
+| 模式 | 实测 `end - 当时 current_tick` | 应为 | |
+|---|---|---|---|
+| `Timer1m` | 3620 / 3659 | 3600 | ✓ |
+| `Timer2m` | 7227 / 7205 | 7200 | ✓ |
+| `Timer3m` | 10820 … 10859 | 10800 | ✓ |
+| `Timer5m` | 18019 / 18041 | 18000 | ✓ |
+
+差值总是比标称值大 20~60 —— 因为抓包时刻比"回合真正开始"晚一点，与前面的解释一致。
+
+- **已验证**：`Timer1m/2m/3m/5m`（×60 的整分钟档位）；
+- **推断**（文档里标了）：`Timer30s` —— 没取到样本；
 - `TimerInf`（无限时）返回 `None`（没有截止）。
 
 ## 4. 还剩什么

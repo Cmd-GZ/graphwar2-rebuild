@@ -73,12 +73,11 @@ mod tests {
 
 /// 时间模式对应的回合时长（tick 数）。
 ///
-/// **已验证**：`Timer3m` = 10800（180 秒 × 60）。依据是真实抓包——
-/// 若 `end_of_turn_tick = 回合开始 tick + 10800`，则 `end_of_turn_tick - 10800`
-/// 应等于回合开始时的 `current_tick`；实测该差值与当时的 `current_tick`
-/// 相差 0~60（见 `docs/42`）。
+/// **已验证**（真实抓包，见 `docs/42`）：`Timer1m` / `Timer2m` / `Timer3m` / `Timer5m`
+/// 分别是 `60 / 120 / 180 / 300` 秒 × 60 tick。验法：把 harness 的回合时间按钮按不同次数，
+/// 抓 `EndOfTurnInfo` 与同时刻的 `current_tick`，其差值应为 `时长 - 采样偏移`。
 ///
-/// **推断**（未验证）：其余档位按"名字里的时间 × 60"给出。
+/// **推断**（未验证）：`Timer30s` —— 没有单独取到样本。
 pub fn turn_duration_ticks(time_mode: &str) -> Option<i64> {
     Some(match time_mode {
         "Timer30s" => 30 * TICKS_PER_SECOND,
@@ -100,11 +99,19 @@ mod end_of_turn_tests {
     use super::*;
 
     /// 真实抓包里的 `(当时 current_tick, end_of_turn_tick, time_mode)`。
-    const SAMPLES: [(i64, i64, &str); 5] = [
+    ///
+    /// `Timer1m/2m/5m` 三档是通过改变 harness 的回合时间按钮抓到的（见 docs/42），
+    /// `Timer3m` 是默认档位。
+    const SAMPLES: [(i64, i64, &str); 10] = [
         (65, 10885, "Timer3m"),
         (606, 11432, "Timer3m"),
-        (846, 11680, "Timer3m"),
         (1086, 11945, "Timer3m"),
+        (66, 3686, "Timer1m"),
+        (362, 4021, "Timer1m"),
+        (61, 7288, "Timer2m"),
+        (426, 7631, "Timer2m"),
+        (66, 18085, "Timer5m"),
+        (301, 18342, "Timer5m"),
         (1146, 11945, "Timer3m"),
     ];
 
