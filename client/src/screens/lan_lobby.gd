@@ -49,7 +49,20 @@ extends GwScreen
 ##   所以 Global 页在默认配置下仍然是那 4 条占位 —— 与真帧一致；
 ## * 点某一行右侧的 ` Join ` 会真的去连该行的 `address`（`App.connect_to`），
 ##   连不上就走 `DisconnectedPopUp`；
-## * 占位行没有真实地址，点 Join 只给一句"没有地址"的提示。
+## * 占位行**没有地址**，所以它们的 ` Join ` 不接受点击（**原版里没有这种行**：
+##   房间表的键就是 `SocketAddr`，见 docs/144 §2）。以前这里会弹一句
+##   "这一行没有房间地址"，那是我们自造的、用户实测撞到的提示 —— 已删除。
+##
+## ## 列表是**每帧重投影**的，不是缓存（docs/144 §1/§3）
+##
+## 原版 `GraphwarLanVBox::process` 每帧重新取一遍房间表：每一行的名字/人数/mode 图标
+## 都从活的数据源现取，取不到就把这一行删掉。所以"人数变了"和"房间没了"都在下一帧生效。
+## 本类照做（`_process` → `_sync_list`）：键序列没变就只改文本，变了才重建行。
+##
+## 自己开的那间房由 `App.local_room` 代表，生命周期 = 原版
+## `start_lan_broadcaster()` / `stop_lan_broadcaster()`：`create_game` 时开，
+## 离开大厅/对局时收。以前它直接读 `state.players`（对局状态），退出对局不清 ⇒
+## 上一把的房间一直挂着。
 const GLOBAL_ROOMS := [
 	{"name": "US Room 3", "players": "0"},
 	{"name": "EU Room 1", "players": "0"},
@@ -64,10 +77,20 @@ var _local_button: GwButton
 var _global_button: GwButton
 var _list: VBoxContainer
 var _bottom_row: HBoxContainer
+## 当前画出来的行：`key` 的序列 + 每行的两个文本标签。
+##
+## 有了它才能"只改数字不重建行"：原版 `GraphwarLanVBox::process` 每帧重取房间表，
+## 人数变了就改那一格的文本，**不重画整行**（docs/144 §3）。行还在、只有内容变的情况下
+## 我们照做；键序列变了才重建（增/删房间）。
+var _row_keys: Array[String] = []
+var _row_labels := {}     # key -> {"name": Label, "players": Label}
+## 当前在画哪一页（"local" / "global"）。`_process` 的重投影要用它。
+var _mode := "local"
 
 func _ready() -> void:
 	font_divisor = 40        # LanLobbyFontResize.gd: 宽/40（返回/Local/Global/底部是 /30）
 	super()
+	set_process(true)
 
 func build() -> void:
 	var f := GwUI.frame(self)
@@ -175,40 +198,112 @@ func on_enter() -> void:
 	_global_button.button_pressed = mode == "global"
 	_rebuild_list(mode)
 
-func _rebuild_list(mode: String) -> void:
-	for c in _list.get_children():
-		_list.remove_child(c)
-		c.queue_free()
+## 每帧重投影（原版 `GraphwarLanVBox::process` 就是这么干的）。
+##
+## 为什么必须每帧：房间表是**活数据**（人数会变、房间会消失），而"我的房间"的人数
+## 更是随时在变（别人加入 = `NewConnection`/`PlayerInfo`）。只在收到
+## `rooms_changed` 时刷新的写法，遇到"没人发信号但数字变了"就永远不更新
+## （用户实测：别人进了房间，Players 列不动）。
+func _process(_delta: float) -> void:
+	if not _built or not visible:
+		return
+	_sync_list(_mode)
+
+## 只改文本、不重建行。键序列变了才回退到 `_rebuild_list()`。
+func _sync_list(mode: String) -> void:
+	var wanted := _wanted_rows(mode)
+	if not _same_keys(wanted):
+		_rebuild_list(mode)
+		return
+	for w in wanted:
+		var labels: Dictionary = _row_labels.get(String(w["key"]), {})
+		if labels.is_empty():
+			continue
+		var name_label := labels.get("name") as Label
+		var players_label := labels.get("players") as Label
+		if name_label != null:
+			name_label.text = String(w["name"])
+		if players_label != null:
+			players_label.text = String(w["players"])
+
+func _same_keys(wanted: Array) -> bool:
+	if wanted.size() != _row_keys.size():
+		return false
+	for i in wanted.size():
+		if String((wanted[i] as Dictionary)["key"]) != _row_keys[i]:
+			return false
+	return true
+
+## 当前页面**应该**画出来的行。
+##
+## `key` 是这一行的身份：真实房间用它的 `address`（原版的表就是
+## `HashMap<SocketAddr, GameInfo>`，地址是键 —— docs/144 §2），占位行用房间名。
+## 占位行的 `address` 是空串 ⇒ 这一行没有地址 ⇒ Join 不可点（见 `_room_entry`）。
+func _wanted_rows(mode: String) -> Array:
 	var app_node := app()
 	var net: GwNet = app_node.net if app_node != null else null
+	var out: Array = []
 	if mode == "global":
 		# 原版这一页只有房间条目，**没有任何说明文字**（真帧逐像素对照，docs/129 §4.4）。
 		var rooms: Array = net.global_rooms() if net != null else []
 		if rooms.is_empty():
 			# 没有 broker 数据 ⇒ 沿用占位行（默认配置就是这样：broker 地址为空）。
+			# 这四行是**本项目自定**的（离线真帧里那几行来自真实 broker，有地址），
+			# 所以它们没有地址、Join 不可点 —— 见 docs/144 §2。
 			for room in GLOBAL_ROOMS:
-				_list.add_child(_room_entry(String(room.name), String(room.players)))
-		else:
-			for room in rooms:
-				_list.add_child(_room_entry(
-					String(room.get("room_name", "")),
-					"%d" % int(room.get("current_player_count", 0)),
-					String(room.get("address", ""))))
-	else:
-		# Local 页 = LAN 广播收到的房间（+ 我们自己开的本地房间）。
-		# 空列表就**什么都不画**（原版 Local 页在 1920×1160 下就是一片空背景）。
-		var lan_rooms: Array = net.local_rooms() if net != null else []
-		for room in lan_rooms:
-			_list.add_child(_room_entry(
-				String(room.get("room_name", "")),
-				"%d" % int(room.get("current_player_count", 0)),
-				String(room.get("address", ""))))
-		var has_local_room: bool = app_node != null and app_node.state.players.size() > 0 \
-			and not app_node.online
-		if has_local_room and lan_rooms.is_empty():
-			_list.add_child(_room_entry(
-				String(app_node.state.room_name),
-				"%d" % app_node.state.players.size()))
+				out.append({
+					"key": "placeholder:" + String(room.name),
+					"name": String(room.name),
+					"players": String(room.players),
+					"address": "",
+				})
+			return out
+		for room in rooms:
+			var addr := String(room.get("address", ""))
+			out.append({
+				"key": addr,
+				"name": String(room.get("room_name", "")),
+				"players": "%d" % int(room.get("current_player_count", 0)),
+				"address": addr,
+			})
+		return out
+	# Local 页 = LAN 广播收到的房间 + 我们自己那间（`App.local_room`）。
+	# 空列表就**什么都不画**（原版 Local 页在 1920×1160 下就是一片空背景）。
+	for room in (net.local_rooms() if net != null else []):
+		var addr := String(room.get("address", ""))
+		out.append({
+			"key": addr,
+			"name": String(room.get("room_name", "")),
+			"players": "%d" % int(room.get("current_player_count", 0)),
+			"address": addr,
+		})
+	# 自己那间：`App.local_room_row()` 为空 ⇒ 房间已经收了 ⇒ 这一行**不画**。
+	# 这就是"上一把的房间不会留在大厅里"的机制（docs/144 §1）。
+	var self_row: Dictionary = app_node.local_room_row() if app_node != null else {}
+	if not self_row.is_empty() and not (app_node != null and app_node.online):
+		out.append({
+			"key": "@self",
+			"name": String(self_row.get("room_name", "")),
+			"players": "%d" % int(self_row.get("players", 0)),
+			"address": String(self_row.get("address", "")),
+		})
+	return out
+
+func _rebuild_list(mode: String) -> void:
+	_mode = mode
+	for c in _list.get_children():
+		_list.remove_child(c)
+		c.queue_free()
+	_row_keys.clear()
+	_row_labels.clear()
+	for w in _wanted_rows(mode):
+		var row := _room_entry(String(w["name"]), String(w["players"]), String(w["address"]))
+		_list.add_child(row)
+		_row_keys.append(String(w["key"]))
+		_row_labels[String(w["key"])] = {
+			"name": row.find_child("RoomName", true, false),
+			"players": row.find_child("PlayerCount", true, false),
+		}
 	# 行是运行时建的 ⇒ 字号必须在这里重新套一遍（`apply_font_scale()` 只在 `_ready` 跑过，
 	# 那时这些节点还不存在；漏掉这一步的话四行会停在主题默认的 24 号字，真帧是 48）。
 	apply_font_scale()
@@ -282,7 +377,15 @@ func _room_entry(room_name: String, players: String, address: String = "") -> HB
 	var join := GwButton.make(" Join ")
 	join.name = "JoinButton"
 	join.set_meta("room_address", address)
-	join.pressed.connect(_on_join_pressed.bind(address))
+	if address.is_empty():
+		# **没有地址的行在原版里不存在**：房间表的键就是 `SocketAddr`
+		# （`GraphwarLanVBox::update_game_list<Iter<SocketAddr, GameInfo>>`），
+		# 所以原版永远不会画出一行"点了却没有地址"。我们的占位行是自定的，
+		# 因此这里把 Join 画出来（保真帧的形状）但**不接受点击**：
+		# 点了什么都不会发生，也不会再弹"这一行没有房间地址"（用户实测的 bug）。
+		join.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	else:
+		join.pressed.connect(_on_join_pressed.bind(address))
 	join_m.add_child(join)
 	return row
 
@@ -295,13 +398,18 @@ func apply_font_scale() -> void:
 
 ## 点房间条目的 ` Join `。
 ##
-## **观测缺口**：原版点了 Join 之后做什么**没有观测**（离线环境里点它毫无反应）。
-## 这里的语义是"连这一行的 address"（`App.connect_to`），属于**本项目的接线**：
-## 地址来自 LAN 广播的 `address` 字段 / broker 的 `GameInfo.address`，两处都是同一个
-## `host:port` 形状（`docs/24` §1.1、`docs/115` §2.2）。占位行没有地址，只提示。
+## 原版这一行的 ` Join ` 就是"连这一行自己的地址"：房间表的键是 `SocketAddr`，
+## 行上的数据是 `GameInfo`，`GraphwarLanVBox::process` 里按下后走的是
+## `GraphwarBackend::start_client_to_remote_server(addr)`（docs/144 §2 的证据链）。
+##
+## 所以这里**只**做一件事：连这一行的 `address`（`App.connect_to`）。地址来自
+## LAN 广播的 `address` 字段 / broker 的 `GameInfo.address`，两处都是同一个
+## `host:port` 形状（`docs/24` §1.1、`docs/115` §2.2）。
+##
+## 空地址走不到这里 —— `_room_entry` 对没有地址的行根本不接 `pressed`
+## （原版不存在这种行，见那里的注释）。这一支只留作防御。
 func _on_join_pressed(address: String = "") -> void:
 	if address.is_empty():
-		notify("这一行没有房间地址")
 		return
 	var app_node := app()
 	if app_node == null:

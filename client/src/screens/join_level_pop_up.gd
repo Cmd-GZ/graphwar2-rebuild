@@ -5,13 +5,47 @@ extends GwScreen
 ## `GwCampaign.level(i)`，也就是 `docs/118` §4.1（标题 21/21）、§4.2（描述逐字节）、
 ## §4.3（四个模式 = 每关的 `imm32`）。
 ##
-## 几何抄自恢复出的原版场景与脚本（1920×1160 实测值在括号里）：
-##   `HBoxContainer2` 里 `MarginContainer(3) : Panel(6) : MarginContainer(3)` ⇒ 面板按内容撑到
-##   **1434×910 @1920**（x=243..1677）；
-##   `LevelTitleLabel.gd` 字号 `x/30`；`LevelDescriptionScrollContainer.gd` 字号 `x/40`；
-##   `OptionsContainer.gd` 自身 `min.y = 0.25 × 父高`（实测 228 = 0.25×910）；
-##   四个模式按钮各在一个 `AspectRatioContainer`（ratio 1.0/STRETCH_FIT）里 ⇒ **228×228 正方**，
-##   左右各一个等宽占位；`Cancel`/`Start` 在 `HBoxContainer3` 里居中（实测 194×73 / 218×73）。
+## ## 几何：本轮（docs/144）用**真值管线**重量了一遍，改了四处
+##
+## 真值来自 `docs/130` §1 的管线（正版 `Graphwar.pck` + `libgraphwarrust.so` 喂 stock
+## Godot 4.7.2），`res://join_level_pop_up.tscn` 在 1920×1160 下逐节点实测：
+##
+## ```text
+## MarginContainer(满屏) → VBoxContainer(sep 4)
+##   ├ MarginContainer2  1920×96                 ← 返回键那一行（高 = 屏宽×0.05）
+##   ├ HBoxContainer2    1920×956  EXPAND ratio 10
+##   │    ├ MarginContainer    239  EXPAND ratio 1
+##   │    ├ MarginContainer2  1434  EXPAND ratio 6   ← 3:6:3 ⇒ 1:6:1 之后落在 239/1434/239
+##   │    │    └ Panel + VBoxContainer 1434×956
+##   │    │         ├ LevelTitleLabel            1434×90   V-SHRINK-CENTER
+##   │    │         ├ HBoxContainer              1434×535  EXPAND ratio 2
+##   │    │         │    ├ MarginContainer2  64  (ratio 1)
+##   │    │         │    ├ MarginContainer 1297  (ratio 20) → ScrollContainer 1277×515（内边距 10）
+##   │    │         │    └ MarginContainer3  65  (ratio 1)
+##   │    │         ├ OptionsContainer           1434×226  EXPAND ratio 0.5
+##   │    │         │    6 格：垫片 + 4×AspectRatio + 垫片（各 235/236 宽）
+##   │    │         │    └ 每个 AspectRatio(ratio 1, FIT) 里 226×226 的正方按钮
+##   │    │         └ HBoxContainer3             1434×93
+##   │    │              垫片 485 + Cancel 214 + Start 238 + 垫片 485（按钮 194×73 / 218×73）
+##   ├ HBoxContainer3    1920×96                 ← **屏幕级还有一行 96**（无子节点、min=0）
+##   └ AdContainer       1920×0
+## ```
+##
+## 本轮按这条真值改的四件事：
+##   1. **补上屏幕级那行 96 px**（`HBoxContainer3`）。它没有子节点、`combined_min=(0,0)`，
+##      却拿到 96 —— 高度来自原版那次布局的剩余量分配，**机制未知**（推断：与返回键同高）。
+##      少这一行，面板就变成 1056 高、整块往下顶到 y=1155，这就是用户说的"下面的部分太长"。
+##   2. **说明栏两侧补 1:20:1 的垫片**（真值 64 / 1297 / 65，中间那层还有 10 px 内边距）。
+##      以前只有一个 ratio 20 的容器，说明文字从面板左边框一路顶到右边框。
+##   3. **`OptionsContainer` 是 EXPAND + ratio 0.5**，`custom_minimum_size.y = 0.25 × 父高`
+##      （`OptionsContainer.gd` 的真源码，docs/101 §4.5）。真值场景冻结在 225.25
+##      （= 0.25×901，是 ad 条折叠前那一次 `resized` 的残留），我们按公式求值 ⇒ 239。
+##      这 14 px 是**已知残差**，写在 docs/144 §4 里。
+##   4. **表示坐标模式的那一格是白底**：真值里 `AxisModeButton` 挂 `axis_button_theme.tres`
+##      → normal 态 `bg=(1,1,1,1)` + 3 px 黑边 + 圆角 10；另外三格挂 `game_menu_icon_theme.tres`
+##      → `bg=(0.102,0.2314,0.1765)`（= #1A3B2D）+ 同样的黑边。两份主题除底色外逐字段相同，
+##      形状就是 `GwThemeFactory.mode_icon_stylebox(白底?)`（docs/129 §4.5 在大厅房间行里
+##      已经用过同一对样式盒）。以前四格都没挂样式盒 ⇒ 白底那格丢成面板色。
 ##
 ## 数据来源：`GwCampaign.LEVELS`（21 项，标注了二进制地址/文档出处）。
 
@@ -22,6 +56,7 @@ var _title: Label
 var _description: TextEdit
 var _options: HBoxContainer
 var _content: VBoxContainer
+var _bottom_row: HBoxContainer
 var _mode_buttons := {}
 
 func _ready() -> void:
@@ -38,18 +73,20 @@ func build() -> void:
 	var vbox := GwUI.vbox("VBoxContainer", 4, margin)
 
 	# 左上角返回（原版 MarginContainer2/HBoxContainer/ExitButtonContainer）
-	var top := GwUI.hbox("HBoxContainer", 4, vbox)
+	var top_holder := GwUI.margin("MarginContainer2", 0, vbox)
+	top_holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var top := GwUI.hbox("HBoxContainer", 4, top_holder)
 	_exit_pair = GwUI.exit_pair(GwCommands.CANCEL_LEVEL)
 	top.add_child(_exit_pair)
 	var top_spacer := GwUI.spacer(Vector2(0, 0))
 	top_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(top_spacer)
 
-	# 面板宽 = 视口宽 × 6/(6+1+1) = 75% —— **按实测拟合**：原版 1920 下是 1434 px = 74.7%
-	# （`orig_campaign_play.png` 的 GEOM）。原版 `.tscn` 写的是 3:6:3，但它的面板最小宽
-	# 由 TextEdit 的最小宽撑到 ~790，最终仍落在 74.7%；这里直接用能复现该比例的 1:6:1。
+	# 面板行。真值 239 : 1434 : 239 —— `.tscn` 写的是 3:6:3，但面板最小宽由 TextEdit
+	# 撑住，最终落在 1:6:1；这里直接写 1:6:1 能复现同一个矩形（docs/130 实测 x=243..1677）。
 	var row := GwUI.hbox("HBoxContainer2", 4, vbox)
 	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	row.size_flags_stretch_ratio = 10.0
 	var side_left := GwUI.margin("MarginContainer", 0, row)
 	side_left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	side_left.size_flags_stretch_ratio = 1.0
@@ -60,23 +97,30 @@ func build() -> void:
 	side_right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	side_right.size_flags_stretch_ratio = 1.0
 
-	var panel := PanelContainer.new()
+	# 面板：原版是 `Panel` + `VBoxContainer` **两个兄弟**（都铺满 MarginContainer2），
+	# 不是 PanelContainer —— PanelContainer 会用 stylebox 的 content_margin 再内缩 3 px，
+	# 真值里 `Panel` 与 `VBoxContainer` 是同一个 1434×956 矩形（docs/130 的节点 dump）。
+	var panel := Panel.new()
 	panel.name = "Panel"
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	panel_holder.add_child(panel)
-	_content = GwUI.vbox("VBoxContainer", 4, panel)
+	_content = GwUI.vbox("VBoxContainer", 4, panel_holder)
 
 	_title = GwUI.label("Level 0", 0, HORIZONTAL_ALIGNMENT_CENTER)
 	_title.name = "LevelTitleLabel"
 	_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_title.size_flags_vertical = Control.SIZE_SHRINK_CENTER   # 真值 flags=V-SHRINK-CENTER
 	_content.add_child(_title)
 
-	# 说明：只读 TextEdit（原版如此：`LevelDescriptionEdit`，theme = transparent_text_edit.tres）
+	# 说明行：真值三个子节点 + 中间那层 10 px 内边距 ⇒ 64 / 1297 / 65。
 	var desc_row := GwUI.hbox("HBoxContainer", 4, _content)
 	desc_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	desc_row.size_flags_stretch_ratio = 2.0
-	var desc_margin := GwUI.margin("MarginContainer", 0, desc_row)
+	var desc_pad_l := GwUI.margin("MarginContainer2", 0, desc_row)
+	desc_pad_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	desc_pad_l.size_flags_stretch_ratio = 1.0
+	var desc_margin := GwUI.margins("MarginContainer", 10, 10, 10, 10, desc_row)
 	desc_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	desc_margin.size_flags_stretch_ratio = 20.0
 	var scroll := GwUI.scroll("ScrollContainer")
@@ -110,7 +154,14 @@ func build() -> void:
 
 	# 四个模式控件。**可点**（原版没有 disabled=true）——按下只是回写同一份数据，
 	# 因为 JoinLevelPopUp 只是"确认页"，真正能循环的是 GameSetup。
+	#
+	# 底色：真值里只有 **第一格（坐标模式）是白底**，另外三格是面板色。两格用的主题
+	# （`axis_button_theme.tres` / `game_menu_icon_theme.tres`）除底色外逐字段相同，
+	# 所以这里挂同一份 `mode_icon_stylebox()` 的两个变体即可（docs/144 §4）。
 	_options = GwUI.hbox("OptionsContainer", 4, _content)
+	_options.size_flags_vertical = Control.SIZE_EXPAND_FILL   # 真值 flags=V-EXPAND
+	_options.size_flags_stretch_ratio = 0.5                   # 真值 ratio=0.50
+	var mode_index := 0
 	for spec in [
 		{"key": "axis", "name": "AxisModeButton"},
 		{"key": "function", "name": "FunctionModeButton"},
@@ -118,7 +169,7 @@ func build() -> void:
 		{"key": "time", "name": "TimeModeButton"},
 	]:
 		var holder := AspectRatioContainer.new()
-		holder.name = "AspectRatioContainer"
+		holder.name = "AspectRatioContainer" if mode_index == 0 else "AspectRatioContainer%d" % (mode_index + 1)
 		holder.ratio = 1.0
 		holder.stretch_mode = AspectRatioContainer.STRETCH_FIT
 		holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -128,9 +179,13 @@ func build() -> void:
 		b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		var sb := GwThemeFactory.mode_icon_stylebox(mode_index == 0)
+		for state in ["normal", "hover", "pressed", "disabled"]:
+			b.add_theme_stylebox_override(state, sb)
 		holder.add_child(b)
 		_options.add_child(holder)
 		_mode_buttons[String(spec.key)] = b
+		mode_index += 1
 	# 首尾各一个等宽空占位（原版 OptionsContainer 里就是 6 个槽）
 	var lead := GwUI.margin("MarginContainer", 0, _options)
 	lead.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -157,6 +212,12 @@ func build() -> void:
 	right_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	actions.add_child(right_spacer)
 
+	# **屏幕级**那一行 96 px（真值 `HBoxContainer3`：无子节点、combined_min=(0,0)，却拿到 96）。
+	# 它把面板从 1056 压回 956 —— 没有它，整块面板会一直顶到屏幕底边
+	# （用户实测的"弹窗下面的部分太长"就是这个）。高度在 `apply_font_scale()` 里按
+	# 屏宽×0.05 设（1920 下 = 96，与返回键同高）。**机制未观测**，只观测到矩形。
+	_bottom_row = GwUI.hbox("HBoxContainer3", 4, vbox)
+
 	(vbox as VBoxContainer).add_child(GwUI.ad_bar())
 	_content.resized.connect(_update_options_height)
 	_options.resized.connect(_update_options_height)
@@ -166,10 +227,11 @@ func _update_options_height() -> void:
 	if _options == null or _content == null:
 		return
 	var parent_h := _content.size.y
-	# 面板还没布局（弹窗隐藏时 size 为 0）就先用"实测比例"兜底：
-	# 1920×1160 下 HBoxContainer2 = 910 = 视口高 × 0.785（GEOM 实测）。
+	# 面板还没布局（弹窗隐藏时 size 为 0）就先用**真值结构**兜底：
+	# 面板高 = 视口高 − 2×（屏宽×0.05 的上/下两行）− 3×4 的分隔 ⇒ 1920×1160 下 = 956。
 	if parent_h <= 1.0:
-		parent_h = get_viewport_rect().size.y * 0.785
+		var vp := get_viewport_rect().size
+		parent_h = vp.y - 2.0 * (vp.x * 0.05) - 12.0
 	var want := 0.25 * parent_h
 	if absf(_options.custom_minimum_size.y - want) > 0.5:
 		_options.custom_minimum_size = Vector2(0, want)
@@ -205,6 +267,9 @@ func apply_font_scale() -> void:
 	if _exit_pair != null:
 		var k := get_viewport_rect().size.x * 0.05
 		(_exit_pair as Control).custom_minimum_size = Vector2(k, k)
+		# 屏幕级那一行 96（= 屏宽×0.05，与返回键同高）。真值矩形 1920×96。
+		if _bottom_row != null:
+			_bottom_row.custom_minimum_size = Vector2(0, k)
 
 ## `LevelDescriptionScrollContainer.gd`：说明栏字号 = `x / 40`（比标题小一档）。
 func _apply_desc_font() -> void:

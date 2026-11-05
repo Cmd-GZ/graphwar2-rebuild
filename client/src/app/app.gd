@@ -68,6 +68,22 @@ var online_room := {}
 ## 最近一次联机错误（人话；自检与排障读它，不显示在界面上）。
 var net_error := ""
 
+## 本机开着的房间（`{}` = 没开）。
+##
+## # 为什么要单独一个对象（docs/144 §1）
+##
+## 原版的大厅列表**不是缓存**：`GraphwarLanVBox::process` 每帧从两个活的数据源
+## （`GraphwarLanBroadcasterV6` / `GraphwarServerBrokerHandler` 各自的 `GameInfo` 表）
+## 里重取一次，取不到就把那一行删掉。我们这一侧没有广播器（`src/` 不动，`docs/134`），
+## 所以"自己的房间"只能由这个对象代表；它的生命周期就是原版
+## `start_lan_broadcaster()` / `stop_lan_broadcaster()` 的生命周期：
+## `create_game` 时开、离开大厅或对局时收（`exit_lan_lobby` 那一支会
+## `stop_lan_broadcaster() + stop_server_broker_handler()`，见 docs/144 §1）。
+##
+## **以前没有这个对象**：大厅直接用 `state.players` 拼一行"我的房间"，而 `state.players`
+## 是**对局状态**、退出对局时不清 ⇒ 上一把的房间一直挂在列表里（用户实测 bug）。
+var local_room := {}
+
 # ---------------------------------------------------------------- 音频接线
 #
 # ⚠️ **原版的"事件↔音效"映射是未知的**（`docs/111` §5.1）。本轮的补充证据只到
@@ -249,6 +265,10 @@ func command(cmd: String) -> void:
 		GwCommands.CREATE_GAME:
 			state.reset_lan()
 			state.add_human(store.profile.name, store.profile.skin, store.profile.face, store.profile.hat)
+			# 原版这一支是 `start_server() + start_lan_broadcaster() + start_server_broker_handler()`
+			# （`GraphwarRootNode::process_button_pressed` 的 create_game 分支，docs/144 §1）：
+			# 房间从这一刻开始存在，并进 LAN 表/公网表。
+			_open_local_room()
 			changed()
 			_enter("GameSetup")
 		GwCommands.JOIN_IP:
@@ -343,7 +363,32 @@ func _leave_to_main_menu() -> void:
 	if current_screen == "LanLobby" and net != null:
 		# 出大厅就不该继续占着 broker 连接（LAN 监听留着，代价只是收包）。
 		net.stop_broker()
+	# 本机房间跟着大厅一起收掉。原版 `exit_lan_lobby` 那一支就是
+	# `stop_lan_broadcaster() + stop_server_broker_handler()`（docs/144 §1）：
+	# 广播停了 ⇒ 自己那一行从 LAN 表里消失 ⇒ 下一次进大厅列表是空的。
+	close_local_room()
 	show_screen("MainMenu")
+
+## 开一间本机房间。`create_game` 调它。
+func _open_local_room() -> void:
+	local_room = {
+		"room_name": state.room_name,
+		"address": "",
+		"game_state": "Setup",
+	}
+
+## 收掉本机房间（原版 `stop_lan_broadcaster()` 的等价物）。幂等。
+func close_local_room() -> void:
+	local_room = {}
+
+## 大厅要画的那一行"我的房间"。**人数是实时读的**（原版每帧从 `GameInfo` 重取，
+## 不是建表时拍一张快照 —— docs/144 §3）。返回 `{}` = 没开房间。
+func local_room_row() -> Dictionary:
+	if local_room.is_empty():
+		return {}
+	var row := local_room.duplicate()
+	row["players"] = state.players.size()
+	return row
 
 func _refresh(screen_name: String) -> void:
 	var node: Control = screens.get(screen_name)
@@ -451,6 +496,9 @@ func connect_to(address: String) -> bool:
 	if net == null:
 		notify("联机层不可用")
 		return false
+	# 去连别人的房间 = 自己不再开房（原版 `stop_server()` + `stop_lan_broadcaster()`
+	# 就在 `start_client_to_*` 之前，docs/144 §1）。
+	close_local_room()
 	pending_join_ip = address
 	net_error = ""
 	close_popup("DisconnectedPopUp")
