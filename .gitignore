@@ -34,3 +34,6 @@ client/tools/*.uid
 # Python 缓存
 __pycache__/
 *.pyc
+
+# 子 agent 若误在仓库内建了工作区
+.agent-work/
