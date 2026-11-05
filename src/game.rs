@@ -34,6 +34,12 @@ pub struct Match {
     mask: Vec<u8>,
     /// 已经用掉的效果 id（抓包里从 236 开始递增）
     next_effect_id: i64,
+    /// 士兵 → 队伍（用于判定"某队全灭"）。
+    pub teams: std::collections::BTreeMap<i64, u8>,
+    /// 这一局出现过的所有队伍。
+    all_teams: std::collections::BTreeSet<u8>,
+    /// 已完成的回合数（`TurnCountInfo.turn_count`）。
+    pub turn_count: i64,
     /// 已排队但还没到期的 `DestroyObstacle`：`(到期 tick, 报文原文)`。
     ///
     /// 实测延迟 ≈165 tick（2.75 秒），见 `docs/44`。
@@ -56,12 +62,49 @@ impl Match {
         for (x, y, r) in &obstacles {
             rasterize(&mut mask, *x, *y, *r, 0x00);
         }
-        Match { room, obstacles, soldiers, tick_base, mask, next_effect_id: 236, pending_destroy: Vec::new() }
+        // 队伍归属由调用方通过 `set_team` 登记（不预设，否则会误判"0 队全灭"）
+        let teams = std::collections::BTreeMap::new();
+        let all_teams = std::collections::BTreeSet::new();
+        Match {
+            room, obstacles, soldiers, tick_base, mask,
+            next_effect_id: 236, teams, all_teams, turn_count: 0,
+            pending_destroy: Vec::new(),
+        }
     }
 
     /// 当前时刻的 tick。
     pub fn tick_now(&self, now_ms: i64) -> i64 {
         tick_at(self.tick_base.0, self.tick_base.1, now_ms)
+    }
+
+    /// 登记某名士兵属于哪支队伍。
+    pub fn set_team(&mut self, soldier_id: i64, team: u8) {
+        self.teams.insert(soldier_id, team);
+        self.all_teams.insert(team);
+    }
+
+    /// 回合结束：推进 `turn_count`，并在某队全灭时进入 `EndingGame`。
+    ///
+    /// 依据真实抓包：`{"TurnCountInfo":{"turn_count":4}}` 之后紧跟
+    /// `{"GameStateInfo":{"game_state":"EndingGame"}}`，而那一回合我方最后一名士兵阵亡
+    /// （`docs/45`）。
+    pub fn end_turn(&mut self) -> Vec<String> {
+        self.turn_count += 1;
+        let mut out = vec![format!(
+            r#"{{"TurnCountInfo":{{"turn_count":{}}}}}"#,
+            self.turn_count
+        )];
+        // 还有存活士兵的队伍
+        let alive_teams: std::collections::BTreeSet<u8> = self
+            .soldiers
+            .iter()
+            .filter_map(|s| self.teams.get(&s.id).copied())
+            .collect();
+        let annihilated = self.all_teams.iter().any(|t| !alive_teams.contains(t));
+        if annihilated {
+            out.push(crate::protocol::emit_game_state("EndingGame"));
+        }
+        out
     }
 
     /// 推进到 `now_tick`，返回所有到期的 `DestroyObstacle`。
@@ -161,7 +204,7 @@ impl Match {
 mod tests {
     use super::*;
 
-    fn room() -> RoomState {
+    pub(super) fn room() -> RoomState {
         RoomState {
             room_name: "Graphwar Game".into(),
             game_state: "Setup".into(),
@@ -242,6 +285,27 @@ mod tests {
     }
 
     #[test]
+    fn end_turn_counts_and_detects_annihilation() {
+        let soldiers = vec![
+            Target { id: 1, x: 10.0, y: 0.0, radius: 0.5 },
+            Target { id: 2, x: 0.0, y: 0.0, radius: 0.5 },
+        ];
+        let mut m = Match::new(room(), vec![], soldiers, (0, 0));
+        m.set_team(1, 1);
+        m.set_team(2, 2);
+        // 第一回合：没人死，只推进计数
+        let out = m.end_turn();
+        assert_eq!(out.len(), 1);
+        assert!(out[0].contains(r#""turn_count":1"#));
+        // 打死 2 号（Team2 全灭）
+        m.fire(1, "0.00", 10.0, 0.0, true, 0);
+        assert_eq!(m.soldiers.len(), 1);
+        let out = m.end_turn();
+        assert_eq!(out.len(), 2, "全灭时应多一条 EndingGame: {out:?}");
+        assert!(out[1].contains("EndingGame"));
+    }
+
+    #[test]
     fn destroy_is_delayed_by_measured_ticks() {
         let mut m = Match::new(room(), vec![(-5.0, 0.0, 1.0)], vec![], (0, 0));
         // 基准 (tick=0, ms=0)，fire 在 1000ms 处 -> 当时 tick = 60
@@ -300,3 +364,4 @@ mod tests {
         assert!(!msgs.iter().any(|s| s.contains(r#"{"LifeQueuedDeath""#)), "射手不该判定自己死亡");
     }
 }
+
