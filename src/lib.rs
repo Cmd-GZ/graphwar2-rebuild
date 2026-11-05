@@ -144,3 +144,6 @@ pub mod replaydiff;
 /// 回放对拍**收敛**层（`docs/142-diff-converge.md`）：模式感知的预测器 + 分歧归因。
 /// 只新增，不改 `replaydiff` / `game` / `settle` / `protocol`。
 pub mod diffconv;
+/// 对局界面控制器 `graphwar_play_screen_control.rs`（10 个可归属函数）。
+/// 逐函数规格见 `docs/14-turn.md` §9；本模块只放**已被反汇编证据支持**的部分。
+pub mod play_control;

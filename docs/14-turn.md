@@ -374,3 +374,200 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 
 ---
 
+
+## 9. 对局界面控制器 `graphwar_play_screen_control.rs`（10 个可归属函数）
+
+> **本篇为什么有这一节**：回合推进 / 准备态 / 弹道生命周期 / 胜负时机这四件事，
+> `client/src/screens/play_screen.gd` 里的写法是**照 `.tscn` 与截图重写的仿制品**，
+> 时序没有证据（`AGENTS.md` §0 第 4 条），已实测出多处与原版不符。
+> 原版的这些逻辑在 Rust 的 `graphwar_play_screen_control` 里。本节给出**截至目前的**逐函数规格。
+>
+> 证据口径：本节全部是 **观测**（能指到 vaddr / `.rodata` 串）或显式 **未知**。
+> 没有"逐位"级结论——逐位对拍的对象是采样器/求值器这类纯函数。
+> 地址一律 **ELF vaddr**；Ghidra/REA 地址 = 本地址 + `0x100000`。
+> 实现落在 `src/play_control.rs`，回归用例在 `tests/play_control.rs`。
+
+### 9.1 模块全景：10 个函数与它们之间的直接调用
+
+函数边界取自 `analysis/funcstarts_ghidra_va.pkl`；`0x3d9b50 … 0x3dcbb0` 这 8 个
+**首尾相接**（前一个的结束地址 = 后一个的开始地址），边界互相印证。
+
+| # | vaddr | 大小 | 直接调用者（`analysis/insns.pkl` 全量扫） | 已解出的角色 | 档位 |
+|---|---|---|---|---|---|
+| 1 | `0x3d9000` | `0x3c0` | `0x3da130` ×2 | 取 `VictoryPlayerContainer1` / `SkinIcon`、`set_texture`、写 `f(x) = ` 标签 | 观测 |
+| 2 | `0x3d9b50` | `0x2f0` | `0x3a5760` ×4、`0x3b0830` ×3 | 5 个节点置 `(0,0,0,1,1)` ⇒ **回放视图** | 观测 |
+| 3 | `0x3d9e40` | `0x2f0` | `0x3b0830` ×4 | 同 5 个节点置 `(1,1,1,0,0)` ⇒ **对局视图** | 观测 |
+| 4 | `0x3da130` | `0x12b0` | `0x3a5760` ×1 | **胜负横幅**（`TeamVictoryLabel` / `SelfVictoryLabel` / 头像） | 观测 |
+| 5 | `0x3db3e0` | `0x1090` | `0x3da130` ×3 | 被胜负重绘调用 3 次，内部逻辑**未解** | 未知 |
+| 6 | `0x3dc470` | `0x1c0` | `0x3b0830`、`0x3dc7f0` | 小整数键哈希表查找 + 取 `Gd<T>` | 推断 |
+| 7 | `0x3dc630` | `0x1c0` | `0x3b0830`、`0x3dc7f0` | 同上（另一张表） | 推断 |
+| 8 | `0x3dc7f0` | `0x3c0` | `0x3a2e10` ×1 | **订阅两个信号**，并造闭包（见 §9.2） | 观测 |
+| 9 | `0x3dcbb0` | `0x2250` | `0x3a5760` ×1 | 模块内最大函数；含 `f(x) = ` 与 `LeftButtonGrid` 串，语义**未解** | 未知 |
+| 10 | `0x522070` | `0x480` | `0x3dc7f0` ×1 | 取 `TimerLabel`/`ViewFunctionButton`/`ShowNames`/`PlayPauseButton`/`YButton` + `player_info_event` | 观测（角色推断） |
+
+调用图（只画本模块相关）：
+
+```text
+0x3a2e10 (root_node) ──→ 0x3dc7f0 ──→ {0x522070, 0x3dc630, 0x3dc470}
+0x3a5760 (root_node) ──→ 0x3d9b50 ×4, 0x3da130, 0x3dcbb0
+0x3b0830 (root_node) ──→ 0x3d9b50 ×3, 0x3d9e40 ×4, 0x3dc470, 0x3dc630
+0x3da130 ──→ 0x3d9000 ×2, 0x3db3e0 ×3
+```
+
+⇒ **整个模块没有一条直接调用进 `function_active_event` / `function_points_event` 的处理链**
+（见 §9.3）。唯一只有一条行号信息：`src/graphwar_play_screen_control.rs:561`
+（`.rodata` `0x1bf9a7` 紧跟 `ViewFunctionsLabel` 之后），被 `0x3dc7f0` 与 `0x3dcbb0` 引用。
+
+### 9.2 它订阅哪些事件（问题 1）
+
+`0x3dc7f0` 里 **`call *0x9bb030`**（GOT 槽，`Object::connect` 口径）只出现 **2 次**：
+
+| 信号名 | `.rodata` | 长度立即数 | `lea` 点 | `connect` 调用点 |
+|---|---|---|---|---|
+| `function_info_event` | `0x1bf61a` | `0x13` = 19 | `0x3dc98b` | `0x3dc9a1` |
+| `function_fire_event` | `0x1bf607` | `0x13` = 19 | `0x3dca26` | `0x3dca3c` |
+
+同一函数还做两件事（观测）：
+1. `get_node("ViewFunctionsLabel")`（`0x1bf9a7`，长 `0x12` = 18；调用 `0x3dc856` → `0x3ab790`），
+   紧接着字符串 `"upcast_ref"`（`0x1bf7e7`，长 `0xa` = 10）→ 是把节点**上抛**成具体类型；
+2. 调 `0x522070` 造闭包（`0x3dc8b4`），该闭包捕获 `TimerLabel` / `ViewFunctionButton` 等（§9.1 #10）。
+
+**15 条远程事件名**在 `.rodata` 里是**一段连续字面量**（`0x1bf5b0` 起），整段只被
+**`0x3d5260`** 一个函数引用——那是"名字 → 分派"的表，**不在本模块**。
+本模块内部只引用了其中两个名字，且是 `connect` 形式。
+
+⇒ **观测**：`play_screen_control` 直接订阅的只有 `function_info_event` 与 `function_fire_event`。
+⇒ 这同时说明 **`TurnInfo` / `EndOfTurnInfo` / `GameStateInfo` 不是由这一层直接 connect 的**；
+它们走 `0x3d5260` 那条名字表（另有模块收），本模块只是被 `root_node` 的
+`0x3a5760` / `0x3b0830` **主动调用**（§9.1 调用图）。
+
+⚠️ **未知**：`0x9ba978` / `0x9bb030` 这两个 GOT 槽**没有**解出 gdext 引擎侧的成员名
+（`set_visible`? `connect`?）。
+缺的证据：运行时读 GOT 槽指向的引擎函数指针符号（Frida / 调试器）。
+本节的"`connect`"是依据"串名 + 长度 + 紧跟 callable 实参"三点做出的**强推断**，不是逐位结论。
+
+### 9.3 弹道什么时候清掉（问题 3）——**否定证据**
+
+`docs/05-shot-pipeline.md` 记着"飞完清"，但一直没找到二进制判定点。本轮给出的结论是**否定的**：
+
+> **观测**：`graphwar_play_screen_control.rs` 的 10 个函数里，**没有一个**直接引用
+> `function_active_event` / `function_points_event`（`analysis/xrefs.pkl` 全量，
+> 该两串的引用点只有 `0x3d5260` 一处，在别的模块）。
+> ⇒ "弹道清除"**不发生在这一层**。
+
+那它在哪？本轮**未解出**。已排除/已收窄的范围：
+* 不是 `play_screen_control`（本节）；
+* `entity_drawer` 是绘制层，`docs/05` 已记其调用面；
+* 剩下最可能的落点是 `root_node`（`0x3a5760` / `0x3b0830`）或 `entity_drawer`，
+  但**必须**用 `function_points_event` 的**接收方**反查才能定罪。
+
+缺的证据：`0x3d5260` 那张"名字 → 分派"表里，`function_points_event` 与
+`function_active_event` 各自映射到哪个处理函数的**实参**（表项是重定位，
+要用 `.rela.dyn` 的 addend 还原，`tools/ptr_slots.py` 可做）。
+
+### 9.4 "准备完毕"怎么判（问题 2）
+
+实测已知：**回合闭合要等 Fire**。本轮的二进制侧证据只到这一步：
+
+* **观测**：本模块 `connect` 了 `function_fire_event`（§9.2）；
+* **观测**：本模块**没有** `connect` 任何"输入框文本变化 / 定时器到期"类的信号
+  （订阅表只有两条，见 §9.2）；
+* **推断**：因此"准备完毕"**不可能**是本模块靠输入框非空推出来的——它能看到的只有
+  `function_info_event`（函数信息回填）和 `function_fire_event`（开火）。
+  与实测"闭合要等 Fire"一致。
+
+⚠️ **未知**：`function_fire_event` 的处理体里到底判断了什么（是否校验"输入框非空"、
+是否置 `FireContainer` 的可用态）。缺的证据：`0x522070` 里那 5 个节点
+（`TimerLabel` / `ViewFunctionButton` / `ShowNames` / `PlayPauseButton` / `YButton`）
+各自被调哪些 setter——`0x522070` 长 `0x480` 且以 GOT 间接调用为主，本轮未逐条解析。
+
+### 9.5 胜负在哪里展示（问题 4）
+
+**观测**：`0x3da130` 是本模块里唯一引用胜负字面量的函数，也是唯一被 `root_node`
+（`0x3a5760`，`0x3a6fbf` 处）调用的"展示"函数。
+
+它引用的 `.rodata`：
+
+| 用途 | 字面量 | 地址 |
+|---|---|---|
+| 队胜利 | `Team 1 Victory!` / `Team 2 Victory!` | `0x1bf91e` / `0x1bf934` |
+| 自己 | `YOU WON` / `YOU DID NOT WIN` / `YOU lOST`（**小写 L**） | `0x1bf92d` / `0x1bf943` / `0x19fcc8` |
+| 平局 | `Tie!` | `0x1bb6d8` |
+| 标签节点 | `TeamVictoryLabel` / `SelfVictoryLabel` | `0x19eb60` / `0x19da90` |
+| 头像节点 | `SkinIcon` / `FaceIcon` / `HatIcon` | `0x19f3d0` / `0x19f180` / `0x1bf968` |
+| 容器 | `VictoryPlayerContainer`（`+1` 变体） | `0x1bf952` / `0x1bf86a` |
+
+它内部还调 `0x3d9000` ×2（重写 `f(x) = ` 标签、`set_texture`）与 `0x3db3e0` ×3。
+
+⚠️ **未知**：**"哪种结局显示哪条"没解出来**。缺的证据：`0x3da130` 里那几个分支的
+**输入**——是 `GameStateInfo` 的字段、`TurnCountInfo` 的计数、还是
+`player_manager` 的队号。所以 `src/play_control.rs` 只把 6 条字面量与枚举写死，
+**不实现选择逻辑**。
+
+#### 与 `game_state_manager` 的 `state = 6` 怎么衔接 —— **未知**
+
+本轮**没有**找到连接点。已知的边界事实只有两条：
+* `0x3da130` 的唯一调用者是 `root_node` 的 `0x3a5760`（不是 `game_state_manager`）；
+* `game_state_info_event` 那条名字**不在**本模块的订阅表里（§9.2）。
+
+⇒ 衔接点在 `root_node`（`0x3a5760`）里，而 `0x3a5760`（`graphwar_root_node.rs`）
+本轮**未解**。缺的证据：`0x3a6fbf` 那处调用前的比较指令（拿什么跟 `6` 比）。
+
+### 9.6 它和 `function_input` / `entity_drawer` 的边界（问题 5）
+
+* **观测**：本模块只碰**节点名**（`§9.1` 的 20 个名字）与**信号名**（2 条），
+  不碰任何几何（没有 `draw_arc` / `draw_line` 的调用，没有平面常量）。
+* **推断**：因此"画什么"在 `entity_drawer`，"输入框里是什么"在 `function_input`
+  那个子类；本模块只做**开关与文本**：谁可见（§9.7）、标签写什么（`f(x) = `、胜负）、
+  订阅哪两个事件（§9.2）。
+* ⚠️ **未知**：`0x3dcbb0`（`0x2250`）与 `0x3db3e0`（`0x1090`）两个大函数没解，
+  它们完全可能包含与 `function_input` / `entity_drawer` 的交互。**不要**把上面这条
+  当成"边界已定"。
+
+### 9.7 唯一完整解出的一对函数：`0x3d9b50` / `0x3d9e40`（控件模式）
+
+两个函数**结构完全相同**（同样 5 次 `get_node` → 上抛 → `call *0x9ba978`），
+唯一差别是传入的布尔值**恰好互补**：
+
+| 节点 | `get_node` 调用点（`0x3d9b50`） | `0x3d9b50` 的 `esi` | `0x3d9e40` 的 `esi` | 指令地址（`0x3d9b50` / `0x3d9e40`） |
+|---|---|---|---|---|
+| `LeftButtonGrid` | `0x3d9b94` | **0** | **1** | `xor %esi,%esi` @`0x3d9be2` / `mov $0x1,%esi` @`0x3d9ecf` |
+| `RightButtonGrid` | `0x3d9c16` | **0** | **1** | `0x3d9c64` / `0x3d9f51` |
+| `FireContainer` | `0x3d9c98` | **0** | **1** | `0x3d9ce6` / `0x3d9fd3` |
+| `LeftReplaysButtonsGrid` | `0x3d9d1a` | **1** | **0** | `mov $0x1,%esi` @`0x3d9d65` / `xor` |
+| `RightReplaysButtonsGrid` | `0x3d9d99` | **1** | **0** | `0x3d9de3` / `xor` |
+
+⇒ 语义（**推断**，方向唯一）：`0x3d9b50` = **回放视图**（对局控件关、回放控件开），
+`0x3d9e40` = **对局视图**（对局控件开、回放控件关）。
+实现：`src/play_control.rs::UiMode::{Play, Replay}` + `widget_flags()`。
+
+⚠️ **推断**的部分：`*0x9ba978` 收一个 `bool`，作用于刚取到的节点——但成员名
+（`set_visible` / `set_disabled` / `set_process`）**没有**从二进制确认。
+缺的证据：该 GOT 槽指向的引擎函数指针符号。
+
+### 9.8 进了 Rust 的部分 / 仍是未知
+
+| 进 `src/play_control.rs` | 判据地址 |
+|---|---|
+| `UiMode::{Play, Replay}` + `widget_flags()` + `widgets()` + `flag_of()` | `0x3d9b50` / `0x3d9e40`（§9.7 全表） |
+| `SUBSCRIBED_SIGNALS` + `subscribed_remote_events()` | `0x3dc98b` / `0x3dca26`（connect 实参） |
+| `REMOTE_EVENT_NAMES`（15 条，只记顺序不记判别值） | `0x1bf5b0` 起的连续字面量 |
+| `VICTORY_TEXTS` + `VictoryBanner::text()`（**只做字面量映射**） | `0x1bf91e` … `0x1bb6d8` |
+| `PLAY_WIDGET_NODES` / `REPLAY_WIDGET_NODES` / `OTHER_NODES` / `ACTION_NODES` | §9.1 的各 `get_node` 点 |
+| `PANIC_LOCATION = ("src/graphwar_play_screen_control.rs", 561)` | `0x1bf9a7`+18 |
+
+**仍是未知（按重要性）**：
+
+1. **胜负条件 → 横幅**的映射（§9.5）——缺 `0x3da130` 分支输入的解析；
+2. **`state = 6` 的衔接点**（§9.5）——缺 `0x3a5760`（root_node）的解；
+3. **弹道清除的真实判定点**（§9.3）——缺 `0x3d5260` 名字表的重定位还原；
+4. **`0x3dcbb0` / `0x3db3e0` 两个大函数**（合计 `0x32e0` 字节）**完全没解**；
+5. **GOT 槽 `0x9ba978` / `0x9bb030` 的引擎侧成员名**——缺运行时观测；
+6. **函数指针派发**：本节所有"没有引用 X"都是**直接调用**口径，
+   未用 `tools/ptr_slots.py` 复查 `play_screen_control` 的函数有没有被塞进表里。
+
+> 本轮**没有**改 `client/`、`src/path.rs`、`src/protocol.rs`、`src/game.rs`。
+> 只新增 `src/play_control.rs`、`tests/play_control.rs`，`src/lib.rs` 加一行 `pub mod`，
+> 以及本节。
+
+---
