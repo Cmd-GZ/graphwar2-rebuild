@@ -36,6 +36,7 @@ func run(main: Control) -> int:
 	_test_geometry_and_campaign_save()
 	await _test_audio()
 	await _test_level_rules()
+	await _test_fire_fx()
 
 	var passed := _checks - _failures.size()
 	if _skipped.is_empty():
@@ -1320,3 +1321,183 @@ func _fire_function(play: Node, expr_text: String) -> void:
 	if input != null:
 		input.text = expr_text
 	play.call("fire")
+
+# ---------------------------------------------------------------- 开火表现（docs/135）
+#
+# 三条都是用户实测"原版有、我们没有"的行为（`docs/126` §6.3 登记的三条）：
+#   ① 物理键盘直接输入表达式
+#   ② 准备发射的士兵有光圈、准备完毕光圈闭合
+#   ③ 弹道按 tick 逐点推进，不是一次画完
+#
+# 判据的口径：**能观测的就观测**（键位映射、光圈跟着状态走、揭示点数随时间单调增），
+# 观不到的地方不假装（原版光圈长什么样、每 tick 走多远，见 `docs/135` 的四档标注）。
+
+## 造一个"按下"的按键事件。
+## `unicode` 不传时取 `keycode` 本身 —— Godot 的字母/数字/标点 Key 枚举值就是 ASCII，
+## 所以 `KEY_S` 自带 unicode 83（大写 'S'）：顺带验证"大写折成小写"。
+func _key_event(keycode: int, unicode: int = -1, pressed: bool = true) -> InputEventKey:
+	var ev := InputEventKey.new()
+	ev.keycode = keycode
+	ev.physical_keycode = keycode
+	ev.pressed = pressed
+	ev.unicode = keycode if unicode < 0 else unicode
+	return ev
+
+## 把一次按键送进 PlayScreen 的**真实**入口（`_unhandled_key_input`，屏幕级接管）。
+func _press(play: Node, keycode: int, unicode: int = -1) -> void:
+	play.call("_unhandled_key_input", _key_event(keycode, unicode))
+
+func _test_fire_fx() -> void:
+	var app_node := get_node("/root/App")
+
+	# ---------------- ① 键盘：映射表本体（纯函数，不依赖界面） ----------------
+	_expect(GwKeyInput.command_for(_key_event(KEY_S)) == "s",
+		"键盘：字母键 S ⇒ 插入 's'（大写折成小写，词法器本来就整串 to_lowercase）")
+	_expect(GwKeyInput.command_for(_key_event(KEY_9, 40)) == "(",
+		"键盘：Shift+9 ⇒ 插入 '('（按 unicode，不按物理键）")
+	_expect(GwKeyInput.command_for(_key_event(KEY_P, 0x3C0)) == "π",
+		"键盘：输入法上屏的 'π' ⇒ 插入 'π'（文法里 π = π）")
+	_expect(GwKeyInput.command_for(_key_event(KEY_BACKSPACE)) == GwCommands.KEY_BACKSPACE,
+		"键盘：退格 ⇒ ⌫（删光标左，与屏上键同一条命令）")
+	_expect(GwKeyInput.command_for(_key_event(KEY_END)) == GwCommands.KEY_END,
+		"键盘：End ⇒ ⇥（光标到行尾）")
+	_expect(GwKeyInput.command_for(_key_event(KEY_ENTER)) == GwKeyInput.SUBMIT,
+		"键盘：回车 ⇒ 提交（SUBMIT 哨兵，不当作字符插入）")
+	_expect(GwKeyInput.command_for(_key_event(KEY_SPACE)) == "",
+		"键盘：空格不插入（文法里没有这个字符；词法器会跳过它）")
+	_expect(GwKeyInput.command_for(_key_event(KEY_S, -1, false)) == "",
+		"键盘：按键抬起（pressed=false）不插入")
+	var ctrl_ev := _key_event(KEY_S)
+	ctrl_ev.ctrl_pressed = true
+	_expect(GwKeyInput.command_for(ctrl_ev) == "",
+		"键盘：Ctrl+字母不接管（留给系统快捷键）")
+
+	# ---------------- ① 键盘：端到端敲进输入框 ----------------
+	# 先把 PlayScreen 真的切到前台：屏幕级接管**只在它可见时**吃键
+	# （否则在主菜单打字会改到看不见的函数串上）。
+	app_node.show_screen("PlayScreen")
+	var play = _begin_campaign_for_test(0, [Vector2(12.0, 2.0)], [])
+	await _frames(1)
+	app_node.close_all_popups()
+	var input := play.find_child("GraphwarFunctionInput", true, false) as GwFunctionInput
+	_expect(input != null, "键盘：有 GraphwarFunctionInput")
+	if input == null:
+		return
+	input.text = ""
+	# 连敲 s i n ( x ) —— 中间不点输入框、不拿焦点，验的就是"屏幕级接管"。
+	for kc in [KEY_S, KEY_I, KEY_N, KEY_PARENLEFT, KEY_X, KEY_PARENRIGHT]:
+		_press(play, kc)
+	_expect(input.text == "sin(x)",
+		"键盘：连敲 s i n ( x ) ⇒ 'sin(x)'（实际 '%s'）" % input.text)
+	_press(play, KEY_END)              # ⇥ 光标到行尾
+	_press(play, KEY_BACKSPACE)        # ⌫ 删掉 ')'
+	_expect(input.text == "sin(x",
+		"键盘：End + 退格 ⇒ 'sin(x'（实际 '%s'）" % input.text)
+
+	# ---------------- ② 准备光圈：可见性/闭合跟着状态走 ----------------
+	var plane := play.find_child("GraphwarPlane", true, false) as GwPlaneView
+	var fx := play.find_child("FireFx", true, false) as GwFireFx
+	_expect(plane != null, "光圈：有 GraphwarPlane")
+	_expect(fx != null, "光圈：有 FireFx（开火表现节点，挂在棋盘上）")
+	if plane == null or fx == null:
+		return
+	input.text = ""                    # 函数空 ⇒ 未准备
+	fx.advance_seconds(0.0)            # 与 _process 同一条路径，只是步长为 0（可复现）
+	_expect(plane.ready_rings.size() == 1,
+		"光圈：顺序回合 + 1 个士兵 ⇒ 恰好 1 个光圈（实际 %d）" % plane.ready_rings.size())
+	var ring: Dictionary = plane.ready_rings[0] if plane.ready_rings.size() > 0 else {}
+	_expect(not ring.is_empty() and ring.get("pos", Vector2.ZERO) == plane.soldiers[0]["pos"],
+		"光圈：画在**当前该开火的士兵**身上（%s）" % str(ring.get("pos", "?")))
+	_expect(not bool(ring.get("ready", true)) and float(ring.get("progress", -1.0)) <= 0.001,
+		"光圈：函数为空 ⇒ **开环**（progress=0、ready=false，实际 %.3f）"
+			% float(ring.get("progress", -1.0)))
+	_expect(float(ring.get("coverage", 0.0)) > 0.05,
+		"光圈：开环也看得见（露出一小段弧 coverage=%.2f，**自定**）"
+			% float(ring.get("coverage", 0.0)))
+	input.text = "sin(x)"              # 函数非空 ⇒ 准备好
+	fx.advance_seconds(GwFireFx.RING_CLOSE_SECONDS)
+	ring = plane.ready_rings[0] if plane.ready_rings.size() > 0 else {}
+	_expect(bool(ring.get("ready", false)) and float(ring.get("progress", -1.0)) >= 0.999,
+		"光圈：函数非空 ⇒ **闭合**（progress=1、ready=true，实际 %.3f）"
+			% float(ring.get("progress", -1.0)))
+	_expect(is_equal_approx(float(ring.get("coverage", 0.0)), 1.0),
+		"光圈：闭合后覆盖整圈（coverage=%.2f）" % float(ring.get("coverage", 0.0)))
+	# 半程也要如实：闭合动画不是瞬时切换（时长本身是**自定**的 0.18 s）
+	input.text = ""
+	fx.advance_seconds(GwFireFx.RING_CLOSE_SECONDS * 0.5)
+	ring = plane.ready_rings[0] if plane.ready_rings.size() > 0 else {}
+	_expect(float(ring.get("progress", -1.0)) > 0.4 and float(ring.get("progress", -1.0)) < 0.6,
+		"光圈：张开动画走到半程（progress≈0.5，实际 %.3f）" % float(ring.get("progress", -1.0)))
+	fx.advance_seconds(GwFireFx.RING_CLOSE_SECONDS)
+	# 对局结束后**不该还留着光圈**
+	play.call("end_match")
+	fx.advance_seconds(0.2)
+	_expect(plane.ready_rings.is_empty(),
+		"光圈：对局结束 ⇒ 光圈全部消失（实际 %d 个）" % plane.ready_rings.size())
+
+	# ---------------- ③ 弹道按 tick 推进 ----------------
+	# 先把这两条的"档位"钉住：tick 频率是**观测**，每 tick 弧长是**推断**（`docs/135` §3.1）。
+	_expect(is_equal_approx(GwFireFx.TICKS_PER_SECOND, 60.0) and GwFireFx.TICKS_PER_SECOND == 60.0,
+		"tick：60 ticks/秒（**观测**，docs/35：113 个 TickReply 样本拟合）")
+	_expect(is_equal_approx(GwFireFx.SPEED_UNITS_PER_TICK, 0.29),
+		"tick：0.29 棋盘单位/tick（**推断**，docs/86 §6：active_tick 与爆炸 start_tick 之差）")
+
+	play = _begin_campaign_for_test(0, [Vector2(12.0, 2.0)], [])   # 靶子不在弹道线上
+	await _frames(1)
+	app_node.close_all_popups()
+	plane = play.find_child("GraphwarPlane", true, false) as GwPlaneView
+	fx = play.find_child("FireFx", true, false) as GwFireFx
+	_fire_function(play, "0")
+	var s0: Dictionary = fx.shot_state()
+	_expect(int(s0["total_points"]) == plane.path_points.size() and int(s0["total_points"]) > 500,
+		"tick：推进用的是 **shot.points 全量**（%d 点，未截断）" % int(s0["total_points"]))
+	_expect(bool(s0["playing"]) and int(s0["reveal"]) >= 1
+		and int(s0["reveal"]) < int(s0["total_points"]),
+		"tick：开火瞬间只揭示起点，**不是一次画完**（reveal=%d / %d）"
+			% [int(s0["reveal"]), int(s0["total_points"])])
+	var counts := [int(s0["reveal"])]
+	for i in 3:
+		fx.advance_seconds(0.25)
+		counts.append(int(fx.shot_state()["reveal"]))
+	_expect(counts[1] > counts[0] and counts[2] > counts[1] and counts[3] > counts[2],
+		"tick：揭示点数随时间**严格单调增**（%s）" % str(counts))
+	# 0.25 s = 15 tick × 0.29 单位/tick = 4.35 单位；采样步长（弦长）0.01 ⇒ 约 435 点。
+	var expected := int(round(0.25 * GwFireFx.TICKS_PER_SECOND
+		* GwFireFx.SPEED_UNITS_PER_TICK / 0.01))
+	_expect(absi(counts[1] - expected) <= 40,
+		"tick：0.25 s 后揭示约 %d 点（弧长 ÷ 0.01 弦长；实际 %d）" % [expected, counts[1]])
+	_expect(plane.path_reveal == counts[3],
+		"tick：棋盘上的 `path_reveal` = 状态里的揭示点数（%d）" % plane.path_reveal)
+	# 步长为 0 时不许倒退（单调性对任意步长成立）
+	fx.advance_seconds(0.0)
+	_expect(int(fx.shot_state()["reveal"]) == counts[3],
+		"tick：零步长不倒退（仍是 %d）" % counts[3])
+	# 走完全程 ⇒ 到 `drawn.impact`（撞点就是序列最后一点）收尾，且不再增加
+	fx.advance_seconds(600.0)
+	var done: Dictionary = fx.shot_state()
+	_expect(int(done["reveal"]) == int(done["total_points"]) and not bool(done["playing"]),
+		"tick：飞完 ⇒ 揭示点数 = 全量（reveal=%d / total=%d，playing=%s）"
+			% [int(done["reveal"]), int(done["total_points"]), str(done["playing"])])
+	_expect(is_equal_approx(float(done["arc"]), float(done["total_arc"])),
+		"tick：收尾条件是「走到弹道末端」（arc=%.3f / total=%.3f）"
+			% [float(done["arc"]), float(done["total_arc"])])
+	_expect(plane.path_points.size() == int(done["total_points"]),
+		"tick：动画跑完后 `shot.points` 仍是全量（%d 点，没被截断）" % plane.path_points.size())
+
+	# ---------------- ① 键盘：回车 = 提交 = 开火（与 Fire 按钮同一条链） ----------------
+	play = _begin_campaign_for_test(0, [Vector2(12.0, 2.0)], [])
+	await _frames(1)
+	app_node.close_all_popups()
+	input = play.find_child("GraphwarFunctionInput", true, false) as GwFunctionInput
+	input.text = "0"
+	var turns0 := int(play.call("level_state")["turns_used"])
+	_press(play, KEY_ENTER)
+	var turns1 := int(play.call("level_state")["turns_used"])
+	_expect(turns1 == turns0 + 1,
+		"键盘：回车提交 ⇒ 真的开火了（turns_used %d → %d）" % [turns0, turns1])
+	_expect(plane.path_points.size() > 1,
+		"键盘：回车开火后棋盘上真的有弹道（%d 点）" % plane.path_points.size())
+
+	# ---------------- 收尾：把随机布局的钉子拔掉 ----------------
+	play.call("clear_layout_override")
+	app_node.close_all_popups()

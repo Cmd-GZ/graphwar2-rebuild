@@ -41,6 +41,11 @@ class_name GwPlaneView
 ## 不画的东西（诚实标注）：障碍被摧毁的洞（`QueueDestroyObstacle` 的语义仍未定，
 ## `docs/38`）、特效、士兵手里的小枪（原版由 `entity_drawer` 的 `draw_polygon` 画，
 ## 未逐点取证）。
+##
+## **`docs/135` 的两条开火表现也在这里画**：
+## * `ready_rings`：准备发射的光圈（**绘制细节全部自定**，原版无观测；见 `_draw_ready_rings`）；
+## * `path_reveal`：弹道只画前 N 个点，由 `GwFireFx` 按 tick 往上顶，
+##   `path_points` 仍是**全量**（`docs/126` §3.1 的留口）。
 
 const BOARD_HALF_X := 25.0
 const BOARD_HALF_Y := 15.0
@@ -77,6 +82,10 @@ const COL_BORDER := Color(0, 0, 0)                                   # #000000
 ## 障碍：与棋盘外框同色（纯黑）。出处见文件头表格：LAN 真帧 5 个圆的圆心全是 `(0,0,0)`。
 const COL_OBSTACLE := Color(0, 0, 0)                                 # #000000
 
+## 准备光圈的线宽（画布像素）。与 `GwFireFx.RING_WIDTH_CANVAS_PX` 同值 —— 两边各留一份常数，
+## 是为了**避免两个脚本互相引用**（GDScript 的类名循环依赖会让 `--import` 报错）。
+const RING_WIDTH_CANVAS_PX := 2.0
+
 ## AxisMode（`docs/118` §4.3 / §7.1）：3 = EveryUnit 最密、2 = EveryFive、1 = OnlyMain、0 = NoAxis。
 const AXIS_NONE := 0
 const AXIS_MAIN_ONLY := 1
@@ -92,6 +101,14 @@ var obstacles: Array = []
 var path_points := PackedVector2Array()
 var impact := Vector2.ZERO
 var has_impact := false
+## 只画前 N 个点（`docs/135` §3：弹道按 tick 逐点揭示）。`-1` = 全画（默认）。
+## **`path_points` 永远是全量**：这个变量只影响"画多少"，不影响"这一发到底飞了多长"。
+var path_reveal := -1
+## 准备发射的光圈（`docs/135` §2）。每项
+## `{index, pos: Vector2, color: Color, ready, progress, radius, coverage, alpha}`：
+## `progress` 0 = 开环、1 = 闭合；`coverage`/`alpha` 由 `GwFireFx` 按 `progress` 插值算好。
+## 数据源是 `PlayScreen.fire_fx_state()` → `GwFireFx`；本控件只负责画。
+var ready_rings: Array = []
 var show_names := true
 var axis_mode := AXIS_EVERY_UNIT
 var path_color := Color(0.2, 0.2, 0.2)
@@ -159,11 +176,26 @@ func set_path(points: PackedVector2Array, impact_point: Vector2 = Vector2.ZERO, 
 	path_points = points
 	impact = impact_point
 	has_impact = show
+	path_reveal = -1          # 默认全画；要逐 tick 揭示由 GwFireFx 之后设成具体点数
 	queue_redraw()
 
 func clear_path() -> void:
 	path_points = PackedVector2Array()
 	has_impact = false
+	path_reveal = -1
+	queue_redraw()
+
+## 只画前 `n` 个点（`-1` = 全画）。`GwFireFx` 每帧往上顶，**单调不减**。
+func set_path_reveal(n: int) -> void:
+	var v := -1 if n < 0 else clampi(n, 0, maxi(path_points.size(), 1))
+	if v == path_reveal:
+		return
+	path_reveal = v
+	queue_redraw()
+
+## 设置准备光圈（`GwFireFx` 每帧算好后推进来）。传空数组 = 全部熄灭。
+func set_ready_rings(list: Array) -> void:
+	ready_rings = list
 	queue_redraw()
 
 func set_show_names(v: bool) -> void:
@@ -199,6 +231,7 @@ func _draw() -> void:
 	_draw_border()
 	_draw_obstacles()
 	_draw_path()
+	_draw_ready_rings()
 	_draw_soldiers()
 
 ## 障碍：纯黑实心圆，半径 = 生成器给的 `r`（棋盘单位 × _scale()）。
@@ -316,13 +349,41 @@ func _draw_soldiers() -> void:
 			draw_string(font, base, label, HORIZONTAL_ALIGNMENT_LEFT, -1.0, fsize, team_color)
 
 func _draw_path() -> void:
-	if path_points.size() < 2:
+	# `path_reveal >= 0` 时只画前缀（`docs/135` §3：按 tick 逐点揭示）。
+	# 撞点标记只在"整条都揭示完"时画 —— 弹丸没到就先画个撞点会骗人。
+	var n := path_points.size()
+	if path_reveal >= 0:
+		n = clampi(path_reveal, 0, n)
+	if n < 2:
 		return
 	var mapped := PackedVector2Array()
-	for i in path_points.size():
+	for i in n:
 		mapped.append(board_to_screen(path_points[i]))
 	# 原版弹道是一条 Line2D（`@Line2D@N`，运行时新建，`docs/92` §4.10），颜色取射手的玩家色。
 	draw_polyline(mapped, path_color, maxf(1.5, _canvas_px() * 3.0), true)
-	if has_impact:
+	if has_impact and (path_reveal < 0 or path_reveal >= path_points.size()):
 		var ip := board_to_screen(impact)
 		draw_circle(ip, _scale() * 0.2, path_color)
+
+## 准备发射的光圈（`docs/135` §2）。**所有绘制细节都是自定**：
+## 半径 1.15 单位（= 士兵半径 0.5 的 2.3 倍，正好在精灵方块之外）、线宽 2 画布像素、按玩家色、
+## 从 12 点方向**顺时针**画 `coverage` 圈（`progress`=1 时正好闭合）。
+##
+## 画在士兵**下面**（`_draw` 里先画环再画精灵）：身体压住环的内侧，看起来像"站在光圈里"。
+## 原版光圈长什么样**没有任何证据**（`docs/126` §6.3 第 2 条：用户口述），见 `docs/135` §2.3。
+func _draw_ready_rings() -> void:
+	if ready_rings.is_empty():
+		return
+	var s := _scale()
+	var width := maxf(1.0, _canvas_px() * RING_WIDTH_CANVAS_PX)
+	for r in ready_rings:
+		var coverage: float = clampf(float(r.get("coverage", 1.0)), 0.0, 1.0)
+		if coverage <= 0.0:
+			continue
+		var c: Vector2 = board_to_screen(r.get("pos", Vector2.ZERO))
+		var radius: float = s * float(r.get("radius", 1.15))
+		var col: Color = r.get("color", COL_AXIS)
+		col.a = clampf(float(r.get("alpha", 1.0)), 0.0, 1.0)
+		var start := -PI * 0.5
+		var segments := maxi(8, int(64.0 * coverage))
+		draw_arc(c, radius, start, start + TAU * coverage, segments, col, width, true)

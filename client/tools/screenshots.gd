@@ -87,6 +87,11 @@ func _prepare(app_node: Node, screen: String) -> void:
 		for cmd in ["-", "1", "0", "*", "x", "+", "5"]:
 			play.call("key_input", cmd)
 		play.call("fire")
+		# 弹道现在按 tick 逐点揭示（`docs/135` §3）：截图是"一张定格"，所以把这一发
+		# 直接推到飞完，否则截到的是动画第 1 帧（几乎没有弹道），基准图就没法比了。
+		var fx = play.find_child("FireFx", true, false)
+		if fx != null:
+			fx.advance_seconds(600.0)
 	elif screen == "GameSetup":
 		app_node.state.reset_lan()
 		app_node.state.add_human(app_node.store.profile.name, 0, 0, 0)

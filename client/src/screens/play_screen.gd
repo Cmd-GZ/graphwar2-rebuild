@@ -57,6 +57,8 @@ const VIEW_MODES := ["view_single_function", "view_recent_functions", "view_all_
 
 var _plane: GwPlaneView
 var _input: GwFunctionInput
+## 开火表现（`docs/135`）：准备光圈 + 弹道按 tick 推进。挂在棋盘上，自己 `_process`。
+var _fire_fx: GwFireFx
 var _timer_label: Label
 var _offset_label: Label
 var _fx_button: GwButton
@@ -190,6 +192,13 @@ func build() -> void:
 
 	_plane = GwPlaneView.new()
 	_plane_aspect.add_child(_plane)
+
+	# 开火表现（`docs/135`）：光圈 + 弹道逐 tick 揭示。**挂在棋盘上当子节点**，
+	# 自己 `_process`；棋盘上的东西仍由 `GwPlaneView` 画，分工不变。
+	_fire_fx = GwFireFx.new()
+	_fire_fx.plane = _plane
+	_fire_fx.state_provider = fire_fx_state
+	_plane.add_child(_fire_fx)
 
 	var overlay := GwUI.vbox("VBoxContainer", 2, _plane_aspect)
 	overlay.alignment = BoxContainer.ALIGNMENT_BEGIN
@@ -598,6 +607,77 @@ func key_input(cmd: String) -> void:
 	_input.key_input(cmd)
 	_functions[_active] = _input.text
 
+## 物理键盘（`docs/135` §1）—— **屏幕级接管**，不用先点输入框。
+##
+## 映射表在 `GwKeyInput`（那张表里逐条写了哪几条是观测、哪几条是自定）；
+## 这里只做三件事：挡住"不该接管"的情形、把命令喂给屏上键盘用的同一条 `key_input()`、
+## 把事件标记为已处理（否则同一次按键会被别的控件再吃一遍）。
+##
+## 为什么不挂在 `GwFunctionInput._gui_input`：原版确实是"控件聚焦后接管"
+## （`GraphwarFunctionInput` 是 `LineEdit` 子类且实现了 `gui_input`，见 `GwKeyInput` 文件头），
+## 但"进对局后会不会自动抢焦点"**没有观测**；屏幕级接管对"自动聚焦"和"要点一下"
+## 两种情形都成立。代价与升级路径写在 `docs/135` §1.3。
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not _running or not is_visible_in_tree() or not (event is InputEventKey):
+		return
+	# 聊天框之类的**真**文本控件拿到焦点时不抢键（原版这时会由 LineEdit 自己处理）。
+	var focused := get_viewport().gui_get_focus_owner() if get_viewport() != null else null
+	if focused != null and (focused is LineEdit or focused is TextEdit):
+		return
+	var cmd := GwKeyInput.command_for(event as InputEventKey)
+	if cmd == "":
+		return
+	if cmd == GwKeyInput.SUBMIT:
+		_input.submit()          # 与 Fire 按钮同一条链：text_submitted → fire()
+	else:
+		key_input(cmd)
+	get_viewport().set_input_as_handled()
+
+## 开火表现的状态源（`docs/135` §2.2）：**谁该开火、他准备好没有**。
+##
+## `GwFireFx` 每帧拉一次，本函数不写任何对局状态。两个模式的口径：
+## * **顺序回合**（`TurnInfo{player_id, soldier_id}`，`docs/46`）：只有当前该开火的那个
+##   士兵有光圈 —— 也就是 `_active_soldier()`（射手轮转的真规则在
+##   `docs/98`：每玩家一张士兵表 + 游标，我们这一版取"该玩家的第一个活着的士兵"）。
+## * **同时回合**（`docs/86` §6）：每个还没提交函数、且自己还有活着的士兵的玩家，
+##   各显示一个光圈；提交过的（已经在 `_shot_queue` 里）熄灭。
+##
+## "准备好"= **函数非空**（`strip_edges()` 后）。这条是**推断**：原版光圈"闭合"到底
+## 对应"函数非空"还是"按了 Fire"，没有观测（`docs/135` §2.3）。
+func fire_fx_state() -> Dictionary:
+	var state := {"running": _running, "rings": []}
+	if not _running:
+		return state
+	var app_node := app()
+	if app_node == null:
+		return state
+	var simultaneous := int(app_node.state.turn_mode) == GwModes.Turn.SIMULTANEOUS
+	var rings: Array = []
+	if simultaneous:
+		var fired := _shot_owners()
+		for i in _soldiers.size():
+			var s: Dictionary = _soldiers[i]
+			if not bool(s.alive) or fired.has(int(s.player)):
+				continue
+			rings.append({
+				"index": i,
+				"pos": s.pos,
+				"color": s.get("color", GwThemeFactory.COL_ACCENT),
+				"ready": String(_functions.get(int(s.player), "")).strip_edges() != "",
+			})
+	else:
+		var shooter := _active_soldier()
+		if not shooter.is_empty() and bool(shooter.alive):
+			var i2 := _soldiers.find(shooter)
+			rings.append({
+				"index": i2,
+				"pos": shooter.pos,
+				"color": shooter.get("color", GwThemeFactory.COL_ACCENT),
+				"ready": String(_functions.get(int(shooter.player), "")).strip_edges() != "",
+			})
+	state["rings"] = rings
+	return state
+
 func _on_function_text_changed(new_text: String) -> void:
 	_functions[_active] = new_text
 	if not _suppress_offset_clear:
@@ -635,6 +715,11 @@ func fire() -> void:
 	var impact: Vector2 = drawn.impact
 	_plane.path_color = active_soldier.get("color", GwThemeFactory.COL_ACCENT)
 	_plane.set_path(drawn.points, impact, true)
+	# tick 动画（`docs/135` §3）：沿**同一条** `drawn.points` 逐 tick 揭示，
+	# 撞点就是它的最后一点。`shot.points` 仍是全量 ⇒ "画到哪"与"飞到哪"是两件事，
+	# 与回合结算**没有**耦合（结算仍在下面 `_commit_shot`，见 §3.4 的取舍说明）。
+	if _fire_fx != null:
+		_fire_fx.play(drawn.points)
 	# 修正常数（`docs/24` §6.2 的样本格式：`+ 4.638` / `- 8.315`，三位小数、符号后一个空格）。
 	# DiffEq 模式下原版 OffsetLabel 为空（观测）。
 	_offset_label.text = GwCore.format_offset(float(result.offset)) if int(app_node.state.function_mode) == 0 else ""
