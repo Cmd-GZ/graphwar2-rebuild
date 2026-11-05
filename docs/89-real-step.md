@@ -162,3 +162,27 @@ calculate(&shifted_tokens(&toks,c), x0, y0, 0.01, false, Mode::Normal); // 2078 
 修它需要 oracle：子 agent 试过 `lo=mid`、跳过半步复核、失败硬接受三个变体，
 **都复现不出游戏的终点** ⇒ 不是一行能改的。
 下一步应 **hook/unicorn 记录真二进制在"二分 100 次未收敛"那一刻的 lo/hi/返回值**。
+
+## 10. 修早停所需的 oracle：接口已定位，尚未跑通
+
+要修"二分 100 次未收敛"，必须先拿到**真二进制在那一刻的答案**。可用工具链：
+
+| 组件 | 位置 | 作用 |
+|---|---|---|
+| `Gw` 类 | `analysis/gwemu.py` | unicorn 驱动真二进制 |
+| `Gw.call_path(toks, x0, y0, step, flagA, flagB)` | 同上 | **直接调真二进制的采样器** |
+| `Gw.make_vec` / `read_vec_points` | 同上 | 构造 token 向量、读回点序列 |
+| `graphwar_curve.parse_function` | 根目录 | 文本 → token（**需转成 emulator 的 token 结构**） |
+
+**卡点**：`call_path` 需要 emulator 内部格式的 token 列表（`tokens_bytes` 序列化），
+而 `graphwar_curve.parse_function` 返回的是 Python 侧结构，两者的转换还没接上。
+
+**下一步（明确、可执行）**：
+
+1. 看 `analysis/difftest.py` 第 13 行附近怎么构造 `tokens` 并喂给 `call_path`——照抄那段即可；
+2. 用该路径跑本文档 §8 的最小复现（`step=0.5` 期望 **70 点、末点 (3.236, 5.368)**），
+   确认 oracle 与我们的实现一致（此时 oracle 尚不能提供"正确答案"）；
+3. 再跑 §9 里被截断的那些样本（17 发），用 oracle 得到**真值终点**；
+4. 对比后判断游戏在未收敛时的行为，再改 `path.rs`。
+
+**在拿到 oracle 真值之前，不要动 `path.rs`**——子 agent 已试过三个变体，全部复现不出游戏终点。
