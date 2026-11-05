@@ -611,3 +611,102 @@ chat_message_event
 
 ---
 
+
+---
+
+## 16. 12 个 Godot 扩展类清单 + 15 个「完全未知」模块的定性（2026-11）
+
+> 本节回答两个以前只能靠猜的问题：**哪些模块真的是 Godot 类**、**那 15 个零锚点模块各干什么**。
+> **地址口径**：全部是 **ELF 虚地址**；Ghidra/REA 地址 = 虚地址 **+ 0x100000**（只加一次）。
+> 所有 `.rodata` 地址都可直接与 `strings -a -t x libgraphwarrust.so` 的输出对齐
+> （该文件 `.rodata` 的 `Address == Offset`，这是本节能一句句核对的原因）。
+
+### 16.1 先纠一个地基问题：`strings` 会把相邻字面量粘成一条
+
+Rust 的字面量**不以 NUL 结尾**，`.rodata` 里首尾相接。所以
+`strings` 输出 `GraphwarAdSwitchexit_player_setttarget_info_evenfunction_active_chat_message_eve`
+这种"单词"其实是 **6 个以上的字面量**。
+
+⇒ 本节引用的 `0x1cXXXX` 一律是**一条连续可打印游程的起点**，不是每个字面量的精确起点。
+要精确边界只能用 `(ptr,len)`：`.data.rel.ro` 里 `R_X86_64_RELATIVE` 的 addend 是 ptr，
+**槽位 +8 就是 len**（`docs/149` §1.1 用的同一套自校验）。
+**精确边界本轮只对 12 个类名做了**（见 16.2），其余都是游程级证据 —— 这就是下面很多行只能标「推断」的原因。
+
+### 16.2 结论一：全二进制只有 **12 个** GDExtension 类
+
+`graphwarrust::<module>::<Type>` 形态的字面量（`core::any::type_name` 的输出）只出现在
+**三份 12 元清单**里，内容完全一致：`0x1bfe9c`、`0x1c1854`、`0x1c1ef8`。
+（三份是因为三个不同的调用点各带了一份；`strings` 里能看到的
+`graphwarrust::player_showcase::PlayerShowcasegraphwarrust::entity_drawer::EntityDrawer…` 就是其中一份。）
+
+| # | 类型 | 模块 |
+|---|---|---|
+| 1 | `PlayerShowcase` | `player_showcase.rs` |
+| 2 | `EntityDrawer` | `entity_drawer.rs` |
+| 3 | `GraphwarRootNode` | `graphwar_root_node.rs` |
+| 4 | `GraphwarPlane` | `graphwar_plane.rs` |
+| 5 | `AxisDrawer` | `axis_drawer.rs` |
+| 6 | `GraphwarSetupControl` | `graphwar_setup_control.rs` |
+| 7 | `GraphwarLongPressAnimation` | `graphwar_long_press_animation.rs` |
+| 8 | `GraphwarButton` | `graphwar_button.rs` |
+| 9 | `GraphwarFunctionInput` | `graphwar_function_input.rs` |
+| 10 | `GraphwarAdSwitch` | `graphwar_ad_switch.rs` |
+| 11 | `EffectDrawer` | `effect_drawer.rs` |
+| 12 | `GraphwarLanVBox` | `graphwar_lan_vbox.rs` |
+
+**这条结论的用处（也是反面证据的上限）**：15 个未知模块里**只有 3 个是 Godot 类**
+（`button` / `lan_vbox` / `long_press_animation`），其余 12 个**不是类**，
+它们是被这 12 个节点调用的**普通 Rust 结构体/模块**。
+⇒ 对手写场景的还原者：不要再给 `player_manager` / `team_manager` 去"造一个节点"，
+它们没有 `class_name`、没有方法表，只以函数形式存在。
+**负证据的强度**：`graphwar_graphics_manager` / `graphwar_crash_reporter` / … 这些名字
+在 `.rodata` 里**没有** `graphwarrust::…` 形态的字符串（全长搜索，0 命中），
+但"没有类型名"**只**说明"不是以该模块名注册的类"，**不排除**它注册时用了别的类名。
+
+### 16.3 结论二：15 个「完全未知」模块的定性表
+
+**档位定义**（同 `AGENTS.md` §0.3）：`观测` = 能指到反汇编地址/字符串地址；
+`推断` = 有依据但**未证**（同一行必须写清缺什么）；`未知` = 除模块名外没有可用证据。
+
+| module | 职责（一句话） | 证据 | 档位 | 还缺什么 |
+|---|---|---|---|---|
+| `graphwar_button.rs` | 可换皮肤图标的**按钮控件**（`GraphwarButton`），商店/对战界面共用 | 类名在两份清单里（`0x1c1ef8`/`0x1bfe9c`）；短类名 `GraphwarButton` @`0x1c40c8` 游程；**4 个 panic 锚**：`:14:10`→`0x4e8f80`、`:83:1`→`0x4e1520`/`0x4e91d0`/`0x4e9380`、`:111:1`→`0x4e9730`（ELF 虚地址）；同池有 `set_button_icon`、`res://shop_button_entry.tscn`、`ButtonSkinsVbox`、`SkinBackgroundButton` | 观测 | 方法表与属性表（`classdb_register_extension_class_method/property` 的名字序列）；`:14`/`:83`/`:111` 三处的语义 |
+| `graphwar_lan_vbox.rs` | **局域网房间列表** `VBoxContainer`（`GraphwarLanVBox`），带"显示本机 IP"按钮 | 类名清单同上；短类名 @`0x1c40fd`、`0x1bfcb0`；方法名 `ShowLocalButton` @`0x1bfbac` 游程；同池 `JoinButton`/`PlayerCount`/`JoinIp`/`IpLineEdit`/`ShowLocal`；`docs/149` 记 11 个 panic 锚 | 观测 | 11 个锚函数各自语义；房间条目什么时候刷新（订阅了 `function_info_event`/`tick_event` 仍需确认调用点） |
+| `graphwar_long_press_animation.rs` | **长按动画控件**（`GraphwarLongPressAnimation`）：按下/抬起喂动画矩形，并代理一个 `LineEdit` 的 `input_text` / `long_press_input_text` | 类名清单同上；短类名 @`0x1c4319`、`0x1c2b6f`；**5 个 panic 锚**：`:10:10`→`0x4be530`、`:17:1`→`0x4be6e0`/`0x4d8b00`/`0x4d8e30`、`:31:1`→`0x4be6e0`、`:52:56`/`:52:86`/`:53:56`/`:53:87`→`0x4d9500`；同池 `AnimationRect`/`button_up`/`button_down`/`pressed`/`get_input_text`/`set_long_press_input_text`/`get_long_press_input_text`/`PlayerNameLineEdit`/`text_changed` | 观测 | 动画时长/曲线的常量；`:52`/`:53` 那两对 (col 56/87) 说明同一条语句里有两个 `.expect()` |
+| `graphwar_computer_player_manager.rs` | **电脑玩家**：每个 bot 一个线程，名字从固定表里取 | 字符串池 @`0x1c1854` 内有 `Failed to join computer player thread.`、`failed to spawn thread`、bot 名 `Deep Thought`/`HAL`/`Skynet`/`Agent Smith`/`Deep Blue`/`Cleverbot`/`Alpha Zordon`/`Wolfram`/`ChatGPT`、以及 `bot_0`…`bot_5` | 推断 | **缺关键一步**：这些串还没有被绑到具体函数（本轮只看清了字符串池，没做 `lea`+`mov len` 的逐条配对）；线程模型（一人一线程 vs 一池）未证 |
+| `graphwar_crash_reporter.rs` | 崩溃日志落盘 `user://crash_log.txt` + 上报到 collector（地址来自 CLI/全局服务器） | 字符串 `user://crash_log.txt` @`0x1c29a9` 游程；`Failed to get global server address for crash reporting.` @`0x1c2dce` 游程；CLI 选项 `CRASH_REPORT_ADDRESS`/`crash_report_address` @`0x1bdaaf` 游程（与 `BROKER_ADDRESS`/`SERVER_PORT` 同池，`docs/07` 的启动参数块）；时间格式 `%Y-%m-%d %H:%M:%S` | 推断 | **该模块 0 个 panic 锚**，全二进制却有 **8 份** `src/graphwar_crash_reporter.rs` 字面量（其它模块各 1 份，这个 8 份是未解释的异常）；8 份都没配上 `Location` 结构 ⇒ 它们是 inline `&str`，得逐条解 `lea`+`mov len` 才能钉住函数 |
+| `graphwar_texture_loader.rs` | **资源路径 → 贴图**的查表/加载（皮肤/帽子/脸/段位/图标整套 `res://…svg`） | `src/graphwar_texture_loader.rs` @`0x1b29f6`，被函数 `0x4d3180`（0x3e40 B）与 `0x4c2b90` 引用；`0x4d3180` 同体还引用 `Team1Container`/`Team2Container`/`PlayerListContainer`/`GameIpLabel`/`user://local_ip.config`，并带 `src/graphwar_setup_control.rs`、`src/graphwar_game_client.rs` 的 Location ⇒ 它是**被 setup/lan 界面复用的泛型/内联体**；panic 锚 `:145:47` | 推断 | 一个函数被两个模块的内联体共用 ⇒ 归属本身有歧义；`res://hats|faces|ranks|skins/*.svg` 全表 @`0x1c2dce` 游程只能证明"在这片代码里被引用"，**没有**证明 `(名→路径)` 的映射顺序 |
+| `graphwar_team_manager.rs` | **队伍**：两队各一个容器 + 队伍条目场景 | `Team1Container`/`Team2Container` @`0x1c2d0d` 游程；同池 `res://team1_entry.tscn`、`res://team2_entry.tscn`；`docs/149` 记 7 个锚 | 推断 | 7 个锚函数语义未解；两队容器是 setup 界面还是 game 界面尚未分辨（本轮它们与 `texture_loader` 出现在同一函数体里） |
+| `graphwar_player_manager.rs` | **玩家条目**的增删（玩家列表里移除玩家） | `RemovePlayerButton` @`0x1c2dce` 游程；同池 `PlayerListContainer`、`PlayerNameLabel`、`force_title_update`、`on_visibility_change` | 推断 | 3 个锚函数语义；"移除玩家"到底是 UI 还是管理器自身行为未证 |
+| `graphwar_soldier_manager.rs` | **士兵条目/移除**（每名士兵一个图标格） | `RemoveSoldierButton` @`0x1c2dce` 游程；同池 `SoldierIconContainer`、`HatIcon`、`EmptyIcon` | 推断 | 4 个锚函数语义；士兵图标格是否由 `player_showcase` 而非本模块绘制，未证 |
+| `graphwar_player_screen_control.rs` | **玩家界面控制器**：等级标题、改名、皮肤/帽子/脸的选择 | `PlayerScreenLevelTitleLabel` @`0x1bdaaf` 游程，同池 `Replay`/`Lobby`/`JoinIpPopUp`/`AddBotPopUp`/`ConfirmPlay`/`ExitPopUp`/`JoinLevelPopUp`（= 该屏弹出的全部弹窗名）；`unlock_skins`/`purchase_graphwar_support` 同池 | 推断 | 8 个锚函数语义；`client/` 里同名 GDScript 是**仿制品**，不能当证据（`AGENTS.md` §0.4） |
+| `graphwar_effect_manager.rs` | — | 仅 `docs/149` 记 1 个 panic 锚；全仓库无字符串线索 | 未知 | 缺最小证据：那 1 个锚函数的地址 + 它引用的字符串。**这一条本轮没跑出来**（工具在工作目录被清空后只来得及重建字符串面） |
+| `graphwar_entity_effect_manager.rs` | — | 仅 3 个 panic 锚（`docs/149`） | 未知 | 同上：3 个锚函数地址/字符串 |
+| `graphwar_game_recorder.rs` | — | 仅 2 个 panic 锚（`docs/149`）；`docs/02` 旧行写"对局录制"是**按名字猜的**，没有证据 | 未知 | 同上；另需确认它是否与 `graphwar_replay_player.rs` 共用录像格式 |
+| `graphwar_graphics_manager.rs` | — | 仅 6 个 panic 锚（`docs/149`）；旧行"图形资源管理"是**按名字猜的** | 未知 | 同上；并需分辨它与 `texture_loader` 的分工（谁持有资源表、谁只做加载） |
+| `graphwar_video_writer.rs` | — | 仅 3 个 panic 锚（`docs/149`）；旧行"录像导出"是**按名字猜的** | 未知 | 同上；另需确认它是写 mp4/png 序列还是仅转发 Godot 的 `MovieWriter` |
+
+**统计**：15 个里 **3 个 `观测`**（button / lan_vbox / long_press_animation）、
+**7 个 `推断`**（computer_player_manager / crash_reporter / texture_loader / team_manager /
+player_manager / soldier_manager / player_screen_control）、
+**5 个 `未知`**（effect_manager / entity_effect_manager / game_recorder / graphics_manager / video_writer）。
+
+### 16.4 这批结论怎么复核（不依赖本节，任何人可重跑）
+
+```bash
+# 1) 类清单（12 个）：三份 12 元清单都在 .rodata，rodata 的 Address == Offset
+strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' | sort -u
+
+# 2) 某个串是否真的属于某模块的代码：先取串地址，再找引用它的函数
+#    （lea rXX,[rip±disp] 的 disp 是「到指令末尾」的偏移；写成 +disp 会算错）
+#    本轮用的判据：panic::Location 的 (file.ptr,file.len,line,col) 四元组，
+#    以及「同一函数体里还 lea 了哪些 .rodata 串」
+
+# 3) 别用 fixtures/module_funcs.tsv 判函数身份：那是 panic 串的启发式，不是归属
+```
+
+**本节的已知偏差（写结论时必须带上）**：
+① 除 12 个类名外，字符串边界的精确长度没解，所以"同池"≠"同一模块"；
+② `call rel32` 看不到间接调用，凡写"没有调用者"的地方都要配 `tools/ptr_slots.py`；
+③ 一个 `Location` 结构体被多个函数引用时（`texture_loader` 就是），归属**天然有歧义**，
+本节对此只写"复用"，不写"属于"。
