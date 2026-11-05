@@ -6,9 +6,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const SRC = `
 let ready = false;
 const GEN = 253;                       // 难度 5：种群 250 + 3 次精评
-const c = { crossover: 0, mutate: 0, randfunc: 0, ctor: 0 };
+const c = { factory: 0, mutate: 0, randfunc: 0, cross_core: 0, ctor: 0 };
 let score = 0; const gens = []; let prev = { ...c };
-const targets = { crossover: '0x4ee3a0', mutate: '0x4ee720', randfunc: '0x4ef020', ctor: '0x4ee0e0' };
+const targets = { factory: '0x4ee3a0', mutate: '0x4ee720', randfunc: '0x4ef020', cross_core: '0x3be7d0', ctor: '0x4ee0e0' };
 const timer = setInterval(() => {
   if (ready) return;
   const m = Process.enumerateModules().find(x => /graphwarrust/i.test(x.name));
@@ -47,6 +47,6 @@ setInterval(() => send({ gens, score, c, ready }), 3000);
   try { await dev.kill(pid); } catch (e) {}
   if (!last) { console.log('NO_DATA'); return; }
   console.log('评分总次数:', last.score, ' 完整代数:', last.gens.length);
-  console.log('每代：crossover  mutate  randfunc  ctor');
-  last.gens.forEach((g, i) => console.log(`  #${i+1}: ${String(g.crossover).padStart(4)}  ${String(g.mutate).padStart(4)}  ${String(g.randfunc).padStart(4)}  ${String(g.ctor).padStart(4)}`));
+  console.log('每代：factory  mutate  randfunc  xcore  ctor');
+  last.gens.forEach((g, i) => console.log(`  #${i+1}: ${String(g.factory).padStart(4)}  ${String(g.mutate).padStart(4)}  ${String(g.randfunc).padStart(4)}  ${String(g.cross_core).padStart(4)}  ${String(g.ctor).padStart(4)}`));
 })().catch((e) => { console.error('ERR', e.message); process.exit(1); });
