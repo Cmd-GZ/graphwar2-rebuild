@@ -33,7 +33,8 @@ setInterval(() => send({ counts, marks }), 3000);
   const script = await session.createScript(SRC);
   let last = null;
   script.message.connect((m) => { if (m.payload && m.payload.counts) last = m.payload; });
-  await script.load(); await dev.resume(pid); await sleep(70000);
+  await script.load(); await dev.resume(pid); const dur = parseInt(process.argv[3] || '70', 10) * 1000;
+  await sleep(dur);
   try { await session.detach(); } catch (e) {}
   try { await dev.kill(pid); } catch (e) {}
   if (!last) { console.log('NO_DATA'); return; }
