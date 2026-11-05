@@ -49,7 +49,339 @@ struct Tgt {
 
 fn main() {
     let path = std::env::args().nth(1).expect("需要 state 文件路径");
-    let text = std::fs::read_to_string(&path).expect("读不了 state 文件");
+    if path == "--replay-sim" {
+        // 新入口：同时回合制的**消息级对拍**（`docs/141` §5）。
+        // 语料目录可用第二个位置参数覆盖。
+        let dir = std::env::args()
+            .nth(2)
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(gw2_rebuild::replaydiff::default_corpus_dir);
+        let quiet = std::env::args().any(|a| a == "--quiet");
+        return replay_sim(&dir, quiet);
+    }
+    geometry(&path);
+}
+
+// ---------------------------------------------------------------------------
+// 消息级对拍：**同一个口径、两种预测驱动**（`docs/141` §5）
+// ---------------------------------------------------------------------------
+
+/// 一次语料对拍的结论（按回合模式分桶）。
+#[derive(Default)]
+struct Bucket {
+    files: usize,
+    files_scored: usize,
+    files_clean: usize,
+    batches: usize,
+    content_ok: usize,
+    order_ok: usize,
+    kind_seq_ok: usize,
+    shots: usize,
+    /// 多发批（`>=2` 发）单独统计
+    multi_batches: usize,
+    multi_kind_seq_ok: usize,
+    multi_content_ok: usize,
+    /// **结构**命中：把"死亡/灰烬特效块"整个剔掉后，块序列完全相同。
+    /// 这一项把"分组与排序规则对不对"和"死亡集合对不对"彻底分开。
+    multi_skeleton_ok: usize,
+}
+
+impl Bucket {
+    fn add(&mut self, o: &Bucket) {
+        self.files += o.files;
+        self.files_scored += o.files_scored;
+        self.files_clean += o.files_clean;
+        self.batches += o.batches;
+        self.content_ok += o.content_ok;
+        self.order_ok += o.order_ok;
+        self.kind_seq_ok += o.kind_seq_ok;
+        self.shots += o.shots;
+        self.multi_batches += o.multi_batches;
+        self.multi_kind_seq_ok += o.multi_kind_seq_ok;
+        self.multi_content_ok += o.multi_content_ok;
+        self.multi_skeleton_ok += o.multi_skeleton_ok;
+    }
+    fn line(&self, name: &str) -> String {
+        let p = |a: usize, b: usize| {
+            if b == 0 { "   -  ".into() } else { format!("{:5.1}%", 100.0 * a as f64 / b as f64) }
+        };
+        format!(
+            "  {:<20} 文件 {:>4}（有开火 {:>4}）完全一致 {:>3} {} | 结算批 {:>5} 内容 {:>4} {} 种类序列 {:>4} {} | 多发批 {:>4} 种类 {:>4} {} 内容 {:>4} {}",
+            name,
+            self.files,
+            self.files_scored,
+            self.files_clean,
+            p(self.files_clean, self.files_scored),
+            self.batches,
+            self.content_ok,
+            p(self.content_ok, self.batches),
+            self.kind_seq_ok,
+            p(self.kind_seq_ok, self.batches),
+            self.multi_batches,
+            self.multi_kind_seq_ok,
+            p(self.multi_kind_seq_ok, self.multi_batches),
+            self.multi_content_ok,
+            p(self.multi_content_ok, self.multi_batches),
+        )
+    }
+}
+
+/// 一轮语料：`batch_driver = true` 走 `Match::fire_batch`（一次事务），
+/// `false` 走旧的"每发一个完整窗口"（= `replaydiff::Predictor` 的驱动方式）。
+///
+/// 两者**共用** `compare_batch`：投影 / 折叠 / 分块 / 多重集 / 字段级 diff 全是同一份
+/// 代码（`docs/136` §1.2–§1.4 的口径），所以差异只可能来自驱动方式。
+fn sweep(
+    dir: &std::path::Path,
+    policy: &gw2_rebuild::replaydiff::Policy,
+    batch_driver: bool,
+) -> (std::collections::BTreeMap<String, Bucket>, std::collections::BTreeMap<String, usize>) {
+    use gw2_rebuild::game::{Match, Submission};
+    use gw2_rebuild::replaydiff::{compare_batch, split_batches, Inputs, Msg, Replay};
+    use gw2_rebuild::settle::Target;
+
+    let mut why: std::collections::BTreeMap<String, usize> = Default::default();
+    let mut out: std::collections::BTreeMap<String, Bucket> = Default::default();
+    let mut names: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .expect("读不了语料目录")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .collect();
+    names.sort();
+
+    for path in names {
+        let Ok(replay) = Replay::load(&path) else { continue };
+        let batches = split_batches(&replay);
+        let mode = replay
+            .msgs
+            .iter()
+            .find(|m| m.kind == "TurnModeInfo")
+            .and_then(|m| m.get_str("turn_mode"))
+            .unwrap_or_else(|| "<none>".into());
+        let b = out.entry(mode).or_default();
+        b.files += 1;
+        if batches.is_empty() {
+            continue;
+        }
+        let inputs = Inputs::scan(&replay, batches[0].start);
+        let soldiers: Vec<Target> = inputs
+            .pos
+            .iter()
+            .filter(|(id, _)| inputs.alive.get(id).copied().unwrap_or(true))
+            .map(|(id, (x, y))| Target { id: *id, x: *x, y: *y, radius: 0.5 })
+            .collect();
+        if soldiers.is_empty() {
+            continue;
+        }
+        let base_tick = replay.msgs[batches[0].start].tick;
+        let mut model = Match::new(
+            inputs.room.clone(),
+            inputs.obstacles.clone(),
+            soldiers,
+            (base_tick, 0),
+        );
+
+        let mut file = Bucket::default();
+        for bt in &batches {
+            if bt.shots.is_empty() {
+                continue;
+            }
+            file.batches += 1;
+            file.shots += bt.shots.len();
+            let tick = replay.msgs[bt.start].tick;
+            // 与 `Predictor::predict` 一致：把 tick 基准挪到本批。
+            model.tick_base = (tick, 0);
+
+            let wire: Vec<String> = if batch_driver {
+                let subs: Vec<Submission<'_>> = bt
+                    .shots
+                    .iter()
+                    .map(|s| Submission {
+                        owner_id: s.owner,
+                        function_text: &s.text,
+                        x0: s.x0,
+                        y0: s.y0,
+                        flip: s.flip,
+                    })
+                    .collect();
+                model.fire_batch(&subs, 0)
+            } else {
+                let mut v = Vec::new();
+                for s in &bt.shots {
+                    v.extend(model.fire(s.owner, &s.text, s.x0, s.y0, s.flip, 0));
+                }
+                v
+            };
+            let ours: Vec<Msg> = wire.iter().filter_map(|w| Msg::parse_wire(w).ok()).collect();
+            let observed: Vec<Msg> = replay.msgs[bt.start..=bt.end].to_vec();
+            let v = compare_batch(&ours, &observed, policy, 4);
+            if v.content_ok {
+                file.content_ok += 1;
+            }
+            if v.order_ok {
+                file.order_ok += 1;
+            }
+            if v.kind_seq_ok {
+                file.kind_seq_ok += 1;
+            }
+            if bt.shots.len() > 1 {
+                file.multi_batches += 1;
+                if skeleton(&ours, policy, true) == skeleton(&observed, policy, false) {
+                    file.multi_skeleton_ok += 1;
+                }
+                if v.kind_seq_ok {
+                    file.multi_kind_seq_ok += 1;
+                }
+                if v.content_ok {
+                    file.multi_content_ok += 1;
+                }
+                if !v.kind_seq_ok {
+                    let k = match &v.first {
+                        Some(f) => format!("{}|{}|{}", f.kind, f.path, gw2_rebuild::replaydiff::class_name(&f.class)),
+                        None => "<无 first>".into(),
+                    };
+                    *why.entry(k).or_insert(0) += 1;
+                    *why.entry(format!("  我方={} 回放={}", f_ours(&v), f_obs(&v))).or_insert(0) += 1;
+                }
+            }
+        }
+        // "完全一致"用与 `docs/136` 同一个判据：每一批的内容都命中（+ 不产非法 JSON）。
+        if file.batches > 0 {
+            file.files_scored = 1;
+            file.files_clean = (file.content_ok == file.batches) as usize;
+        }
+        b.add(&file);
+    }
+    (out, why)
+}
+
+/// 种类（`EffectInfo` 带 `effect_type`）。与 `replaydiff::compare_batch` 的 `kind_of` 同定义。
+fn kind_of(m: &gw2_rebuild::replaydiff::Msg) -> String {
+    if m.kind == "EffectInfo" {
+        format!("EffectInfo/{}", m.get_str("effect_type").unwrap_or_default())
+    } else {
+        m.kind.clone()
+    }
+}
+
+/// **骨架**：块序列，**剔掉死亡/灰烬特效块**。
+///
+/// 为什么要有这一项：死亡块的在/不在取决于"我们算出的死亡集合"，那是**另一个**缺口
+/// （`docs/136` §6 第 8 条），与"分组与顺序规则"是两件事。把死亡块剔掉以后，
+/// 剩下的是纯粹的批结构（前缀按类型分组、后缀每发一对），它应当 130/130 全中。
+fn skeleton(
+    ms: &[gw2_rebuild::replaydiff::Msg],
+    policy: &gw2_rebuild::replaydiff::Policy,
+    ours: bool,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut prev = String::new();
+    for m in ms {
+        // 与 `compare_batch` 同一套投影：我方产出但回放不记的丢掉；
+        // 回放里有但我方根本不产的也丢掉（那是缺口，不是分歧）。
+        let skip = if ours { policy.is_unobserved(m) } else { policy.is_unproduced(m) };
+        if skip {
+            continue;
+        }
+        // 同一 tick 里的相邻完全重复（回放记录器会重复记，`docs/136` §1.2）
+        let c = m.canonical();
+        if c == prev {
+            continue;
+        }
+        prev = c;
+        let k = kind_of(m);
+        if out.last() != Some(&k) {
+            out.push(k);
+        }
+    }
+    // 死亡/灰烬块整体剔掉：它们的"在不在"取决于死亡集合（另一处缺口），不是批结构。
+    out.retain(|k| k != "EffectInfo/DeathEffect" && k != "EffectInfo/AshEffect");
+    out
+}
+
+/// 把 `"A | B | B | C"` 压成连续同类块 `"Ax1|Bx2|Cx1"`，块内的倍数保留下来。
+fn compress(s: &str) -> String {
+    let mut out: Vec<(String, usize)> = Vec::new();
+    for k in s.split('|') {
+        let k = k.trim().to_string();
+        match out.last_mut() {
+            Some(last) if last.0 == k => last.1 += 1,
+            _ => out.push((k, 1)),
+        }
+    }
+    out.iter()
+        .map(|(k, n)| if *n > 1 { format!("{k}x{n}") } else { k.clone() })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+fn f_ours(v: &gw2_rebuild::replaydiff::BatchVerdict) -> String {
+    v.first.as_ref().map(|f| compress(&f.ours)).unwrap_or_default()
+}
+fn f_obs(v: &gw2_rebuild::replaydiff::BatchVerdict) -> String {
+    v.first.as_ref().map(|f| compress(&f.observed)).unwrap_or_default()
+}
+
+fn replay_sim(dir: &std::path::Path, quiet: bool) {
+    use gw2_rebuild::replaydiff::Policy;
+    let policy = Policy::default();
+    let (legacy, _why_a) = sweep(dir, &policy, false);
+    let (batch, why_b) = sweep(dir, &policy, true);
+    let modes: Vec<String> = {
+        let mut v: Vec<String> = legacy.keys().cloned().collect();
+        for k in batch.keys() {
+            if !v.contains(k) {
+                v.push(k.clone());
+            }
+        }
+        v.sort();
+        v
+    };
+    let (mut lt, mut bt) = (Bucket::default(), Bucket::default());
+    println!("== 语料：{} ==", dir.display());
+    println!("口径与 `docs/136` 完全相同（同一份 `Policy` / `compare_batch`）；只有**预测驱动**不同。");
+    println!("\n--- 驱动 A：每发一个完整窗口（= `Match::fire` ×N，现行实现对拍的方式）---");
+    for m in &modes {
+        if let Some(b) = legacy.get(m) {
+            println!("{}", b.line(m));
+            lt.add(b);
+        }
+    }
+    println!("{}", lt.line("合计"));
+    println!("\n--- 驱动 B：一次事务（= `Match::fire_batch`，`docs/141`）---");
+    for m in &modes {
+        if let Some(b) = batch.get(m) {
+            println!("{}", b.line(m));
+            bt.add(b);
+        }
+    }
+    println!("{}", bt.line("合计"));
+    println!("\n--- 只看多发批（>=2 发 = 同时回合制的结算批）---");
+    println!(
+        "  驱动 A: 种类序列 {}/{}  内容 {}/{}",
+        lt.multi_kind_seq_ok, lt.multi_batches, lt.multi_content_ok, lt.multi_batches
+    );
+    println!(
+        "  驱动 B: 种类序列 {}/{}  内容 {}/{}",
+        bt.multi_kind_seq_ok, bt.multi_batches, bt.multi_content_ok, bt.multi_batches
+    );
+    println!(
+        "  **骨架**（剔掉死亡/灰烬块的批结构，只看分组与排序）: A {} / B {} （共 {}）",
+        lt.multi_skeleton_ok, bt.multi_skeleton_ok, bt.multi_batches
+    );
+    if !quiet {
+        let mut w: Vec<(&String, &usize)> = why_b.iter().collect();
+        w.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        println!("\n--- 驱动 B 仍失败的多发批：第一处分歧（前 12）---");
+        for (k, n) in w.iter().take(12) {
+            println!("  {n:>4}  {k}");
+        }
+    }
+    println!("\n（口径与复跑命令见 `docs/141` §5）");
+}
+
+fn geometry(path: &str) {
+    let text = std::fs::read_to_string(path).expect("读不了 state 文件");
 
     let mut mode = Mode::Normal;
     let mut step = 0.5f64;

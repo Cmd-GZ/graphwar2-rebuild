@@ -179,6 +179,28 @@ pub struct TurnStart {
 pub const DESTROY_DELAY_TICKS: i64 = 165;
 
 // ---------------------------------------------------------------------------
+// 同时回合制：一发的提交（收集阶段的产物）
+// ---------------------------------------------------------------------------
+
+/// 一名玩家在**本回合**提交的那一发（`docs/141` §1 的收集阶段产出）。
+///
+/// 为什么要有这个类型：`SequentialTurns` 一回合只有一发，`Match::fire` 用一个
+/// 函数签名就够了；`SimultaneousTurns` 一回合是 **N 发一个事务**（130 个真回放批，
+/// 2~8 发），报文按类型分组而不是"一发一个完整窗口"，所以必须先把提交攒起来再结算。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Submission<'a> {
+    /// 开火的实体（士兵 id）。
+    pub owner_id: i64,
+    /// **未修正**的函数原文。
+    pub function_text: &'a str,
+    /// 起点（士兵站位）。
+    pub x0: f64,
+    pub y0: f64,
+    /// 朝向：由队伍决定（`turn::Team::flip`，`docs/105`）。
+    pub flip: bool,
+}
+
+// ---------------------------------------------------------------------------
 // 玩家加入：`PlayerInfo`（补 `docs/33` §4 的缺口；接线与文档见 `docs/139`）
 // ---------------------------------------------------------------------------
 
@@ -353,8 +375,74 @@ impl Match {
         TurnStart { decision, messages, evolution }
     }
 
-    /// 该士兵函数槽里的**文本**：`function::to_text`（`0x4ec160`）在本仓库的唯一调用点。
+    /// **同时回合制的回合开始**：给每个玩家都定一次射手，并**一次**广播。
     ///
+    /// 与 [`Match::begin_next_turn`]（逐玩家轮转、一回合只定一个人）的区别，全部来自
+    /// 真回放（`观测`，`docs/141` §1，`1793884702` 的每个回合都是这个形状）：
+    ///
+    /// ```text
+    /// TurnInfo{player, soldier} × P     ← 每个玩家一条，**同一个 tick**，公告顺序
+    /// EndOfTurnInfo × 1                 ← 只有一条（不是每人一条）
+    /// GameStateInfo(WaitingForFunctions) × 1
+    /// ```
+    ///
+    /// 返回的两样东西：要广播的报文，以及**每个玩家**的判决 + 进化结果
+    /// （[`TurnStart`]，**按公告顺序**）。收集阶段的等待名单 = 其中
+    /// `decision.broadcast()` 给出 `soldier_id != 0` 的那些 `player_id`。
+    ///
+    /// 那个顺序同时就是结算批里射击者的顺序（`docs/141` §4，130/130 批实测），
+    /// 所以调用方把它原样交给 [`crate::turn::RoundCollection`] 即可。
+    ///
+    /// 全灭的玩家照样拿到 `TurnInfo{p, 0}`（`0x463fd0` 的观测），但**不在等待名单里**：
+    /// 他没有士兵可以开火，等他只会把回合卡死。真回放里正是这样（9 条 `TurnInfo`、
+    /// 8 发结算批）。
+    pub fn begin_simultaneous_turn(
+        &mut self,
+        players: &[i64],
+        now_ms: i64,
+        time_mode: &str,
+    ) -> (Vec<String>, Vec<TurnStart>) {
+        let start_tick = self.tick_now(now_ms);
+        self.turn_start_tick = start_tick;
+        self.time_mode = time_mode.to_string();
+        let turn_no = self.turn_count.max(0) as u64;
+
+        let mut starts = Vec::with_capacity(players.len());
+        for pid in players {
+            let decision = {
+                let state = turn::life_state_of(&self.life);
+                self.turns.begin_turn(*pid, state, false)
+            };
+            // 与逐玩家路径同序：**先定射手、再进化**（`docs/98` §0）。
+            let evolution = match decision {
+                TurnDecision::Announce { player_id, soldier_id, flip } => {
+                    self.evolve_for_soldier(player_id, soldier_id, flip, turn_no)
+                }
+                TurnDecision::Skip { .. } => None,
+            };
+            starts.push(TurnStart { decision, messages: Vec::new(), evolution });
+        }
+
+        let mut msgs = Vec::with_capacity(players.len() + 3);
+        for st in &starts {
+            // Skip 的玩家一条报文都没有（`docs/98` §1.4）；Announce（含 soldier 0）都发。
+            if let Some((p, s)) = st.decision.broadcast() {
+                msgs.push(crate::protocol::emit_turn_info(p, s));
+            }
+        }
+        // `EndOfTurnInfo` 与 `GameStateInfo` 各**一条**。
+        //
+        // ⚠️ `end_of_turn_tick` 在真回放里恒为 **0**（`1793884702` 三回合全是
+        // `{"end_of_turn_tick":0,"time_mode":"TimerInf"}`），而 `tick::end_of_turn_tick_wire`
+        // 给的是 `start + 时长`。这两个数在 `docs/41` 就没对上过，是**已知分歧**；
+        // 本函数沿用逐玩家路径的发法（不在这里另造一个数）。
+        let end = crate::tick::end_of_turn_tick_wire(start_tick, time_mode);
+        msgs.push(crate::protocol::emit_end_of_turn(end, time_mode));
+        msgs.push(crate::protocol::emit_game_state("WaitingForFunctions"));
+        (msgs, starts)
+    }
+
+    /// 该士兵函数槽里的**文本**：`function::to_text`（`0x4ec160`）在本仓库的唯一调用点。    ///
     /// 为什么需要它：`aigen` 的产物是 token（[`FunctionSlot::tokens`](crate::aigen::FunctionSlot)），
     /// 协议 `FunctionInfo.function` 要的是文本，中间只有这一步（`docs/119`、`docs/127`）。
     /// `None` = 这个士兵没有槽（没登记过）。
@@ -514,6 +602,9 @@ impl Match {
     ///
     /// `owner_id` 是开火实体；`function_text` 是**未修正**的函数原文
     /// （修正由 `resolve` 内部完成）。
+    ///
+    /// 这是 [`Match::fire_batch`] 的 `N = 1` 特例：单发批的报文种类序列与
+    /// 逐发实现**逐字节相同**，所以 `SequentialTurns` 的行为没有被这次重构改动。
     pub fn fire(
         &mut self,
         owner_id: i64,
@@ -523,77 +614,164 @@ impl Match {
         flip: bool,
         now_ms: i64,
     ) -> Vec<String> {
-        // 射手本人不参与致死判定
-        let others: Vec<Target> = self
-            .soldiers
-            .iter()
-            .filter(|t| {
-                !(t.id == owner_id)
-                    && !((t.x - x0).abs() < 1e-12 && (t.y - y0).abs() < 1e-12)
-            })
-            .copied()
-            .collect();
+        self.fire_batch(
+            &[Submission { owner_id, function_text, x0, y0, flip }],
+            now_ms,
+        )
+    }
 
-        // 步长用**实况 SERVER_STEP（0.01）**，不是 0.5。
-        // `docs/136` 的几何探针给出：同一批回放，step=0.01 时 `end_x` 逐位相同 605/739；
-        // step=0.5 只有 27/739 —— 这条写死的 0.5 是本轮对拍里最大的一块红。
-        let outcome = resolve(function_text, x0, y0, crate::SERVER_STEP, flip, crate::path::Mode::Normal, &self.mask, &others);
+    /// **同时回合制的一批开火**：收集阶段拿到的全部提交，一次结算、一次广播。
+    ///
+    /// 报文结构是 `docs/141` 从 130 个真回放的多发结算批里量出来的（`观测`）：
+    ///
+    /// ```text
+    /// GameStateInfo(CalculatingResults)
+    /// FunctionInfo   × N            ① 先按类型分组（射击者顺序 = 提交顺序）
+    /// FunctionPoints × N            ①
+    /// GameStateInfo(SynchronizingResults)
+    /// [LifeQueuedDeath + EffectInfo(死亡)] × D   ② 按**弹丸飞行时间**排序
+    /// [QueueDestroyObstacle] × B                 ③ 回放不记录，位置无证据
+    /// (FunctionActive + EffectInfo(爆炸)) × N    ④ 与①同序
+    /// GameStateInfo(ExecutingResults)
+    /// ```
+    ///
+    /// 三条要点，每条都有独立证据（`docs/141` §2–§4）：
+    ///
+    /// 1. **几何并行**：所有弹道都对着**批开始那一刻**的士兵表与掩膜算，谁死不影响
+    ///    别人的弹道（`docs/86` §5.1：152/152 死亡集合 = 逐发独立并集，多报 0）；
+    /// 2. **事件按飞行时间串行**：死者按"沿弹道到命中点的弧长"升序排列，
+    ///    同一士兵只出现一次、归最早到达的那一发（`docs/86` §6：时刻判决 38:0）；
+    /// 3. **前缀按类型分组、后缀按发交替**：`FunctionInfo`/`FunctionPoints` 是
+    ///    `N` 条同类连排，`FunctionActive+EffectInfo` 是每发一对（130/130 批实测）。
+    ///
+    /// 队列里的顺序（①④里"谁排前面"）**不是** id 序、**不是**提交到达序，
+    /// 而是一个每局固定的全序（`docs/141` §4，判为 A 类）；本实现**照抄调用方给的
+    /// 顺序**，把那个不可复现的置换留在接线层。
+    pub fn fire_batch(&mut self, shots: &[Submission<'_>], now_ms: i64) -> Vec<String> {
         let now_tick = self.tick_now(now_ms);
 
-        // 报文顺序照真实抓包（docs/43）：
-        //   CalculatingResults -> FunctionInfo(修正后) -> FunctionPoints
-        //   -> SynchronizingResults -> [死者] -> [销毁] -> FunctionActive
-        //   -> ExplosionEffect -> ExecutingResults
-        let mut msgs = vec![
-            crate::protocol::emit_game_state("CalculatingResults"),
-            crate::protocol::emit_function_info(
-                owner_id,
-                function_text,
-                Some(&crate::shot::corrected_text(function_text, x0, y0, flip)),
-            ),
-            emit_function_points(owner_id, x0, y0, outcome.stop.0),
-            crate::protocol::emit_game_state("SynchronizingResults"),
-        ];
+        // ---- 收集阶段已经结束；这里是结算阶段 ----
+        // ① 几何并行：先把每一发的弹道都算完，用的是**批开始时**的士兵表与掩膜。
+        //    谁被打死**不影响**别人的弹道（士兵本就不挡弹道，`docs/30`）。
+        let mut outcomes = Vec::with_capacity(shots.len());
+        for s in shots {
+            // 射手本人不参与致死判定
+            let others: Vec<Target> = self
+                .soldiers
+                .iter()
+                .filter(|t| {
+                    !(t.id == s.owner_id)
+                        && !((t.x - s.x0).abs() < 1e-12 && (t.y - s.y0).abs() < 1e-12)
+                })
+                .copied()
+                .collect();
+            // 步长用**实况 SERVER_STEP（0.01）**，不是 0.5。
+            // `docs/136` 的几何探针给出：同一批回放，step=0.01 时 `end_x` 逐位相同 605/739；
+            // step=0.5 只有 27/739。
+            outcomes.push(resolve(
+                s.function_text,
+                s.x0,
+                s.y0,
+                crate::SERVER_STEP,
+                s.flip,
+                crate::path::Mode::Normal,
+                &self.mask,
+                &others,
+            ));
+        }
 
-        for id in &outcome.killed {
+        // ② 合并死亡：按 (弧长, 发序号, 士兵 id) 升序；同一士兵只留最早到达的那一发。
+        //    同一回合所有弹丸的 `active_tick` 相同（13/13 回合），所以弧长序 == 到达时刻序。
+        let mut merged: Vec<(f64, usize, i64)> = Vec::new();
+        for (si, out) in outcomes.iter().enumerate() {
+            for h in &out.hits {
+                merged.push((h.arc, si, h.id));
+            }
+        }
+        merged.sort_by(|a, b| {
+            a.0.partial_cmp(&b.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.1.cmp(&b.1))
+                .then(a.2.cmp(&b.2))
+        });
+        let mut deaths: Vec<i64> = Vec::with_capacity(merged.len());
+        for (_, _, id) in &merged {
+            if !deaths.contains(id) {
+                deaths.push(*id);
+            }
+        }
+
+        // ---- 广播阶段 ----
+        // ① 按类型分组的前缀
+        let mut msgs = vec![crate::protocol::emit_game_state("CalculatingResults")];
+        for s in shots {
+            msgs.push(crate::protocol::emit_function_info(
+                s.owner_id,
+                s.function_text,
+                Some(&crate::shot::corrected_text(s.function_text, s.x0, s.y0, s.flip)),
+            ));
+        }
+        for (s, out) in shots.iter().zip(outcomes.iter()) {
+            msgs.push(emit_function_points(s.owner_id, s.x0, s.y0, out.stop.0));
+        }
+        msgs.push(crate::protocol::emit_game_state("SynchronizingResults"));
+
+        // ② 死亡块：顺序 = 到达时刻（`docs/86` §6）
+        for id in &deaths {
             msgs.push(emit_life_queued_death(*id, now_tick));
             if let Some(t) = self.soldiers.iter().find(|t| t.id == *id) {
                 self.next_effect_id += 1;
                 msgs.push(emit_effect_info(self.next_effect_id, t.x, t.y, "DeathEffect", now_tick));
             }
         }
-        if !outcome.killed.is_empty() {
-            // 记进 `life_manager` 那张表：轮转据此判活，死掉的返回 0（而不是 2「查不到」），
-            // 两者都不可开火（`docs/98` §1.3），但"死过"这件事要留下来。
-            for id in &outcome.killed {
-                if let Ok(v) = u32::try_from(*id) {
-                    self.life.set(v, Status::Dead, None);
-                }
-            }
-            self.soldiers.retain(|t| !outcome.killed.contains(&t.id));
-        }
 
-        if outcome.blocked {
+        // ③ 挖洞块（回放不记录 `QueueDestroyObstacle`，位置**无证据**；沿用单发实现的
+        //    "死亡之后、`FunctionActive` 之前"，这样 N=1 时与原实现逐字节相同）
+        for out in &outcomes {
+            if !out.blocked {
+                continue;
+            }
             msgs.push(format!(
                 r#"{{"QueueDestroyObstacle":{{"pos_x":{},"pos_y":{},"radius":0.5,"tick":{}}}}}"#,
-                outcome.stop.0, outcome.stop.1, now_tick
+                out.stop.0, out.stop.1, now_tick
             ));
             // 真实游戏：在命中点用 fill=0xFF、半径 0.5 挖洞（docs/39）
-            rasterize(&mut self.mask, outcome.stop.0, outcome.stop.1, 0.5, 0xFF);
+            rasterize(&mut self.mask, out.stop.0, out.stop.1, 0.5, 0xFF);
             // 真正的删除要延后：实测 ≈165 tick 之后才发 DestroyObstacle
             self.pending_destroy.push((
                 now_tick + DESTROY_DELAY_TICKS,
                 format!(
                     r#"{{"DestroyObstacle":{{"pos_x":{},"pos_y":{},"radius":0.5}}}}"#,
-                    outcome.stop.0, outcome.stop.1
+                    out.stop.0, out.stop.1
                 ),
             ));
         }
 
-        msgs.push(crate::protocol::emit_function_active(owner_id, now_tick));
-        self.next_effect_id += 1;
-        msgs.push(emit_effect_info(self.next_effect_id, outcome.stop.0, outcome.stop.1, "ExplosionEffect", now_tick));
+        // ④ 每发一对 `FunctionActive` + `ExplosionEffect`，顺序与①相同（130/130 批实测）
+        for (s, out) in shots.iter().zip(outcomes.iter()) {
+            msgs.push(crate::protocol::emit_function_active(s.owner_id, now_tick));
+            self.next_effect_id += 1;
+            msgs.push(emit_effect_info(
+                self.next_effect_id,
+                out.stop.0,
+                out.stop.1,
+                "ExplosionEffect",
+                now_tick,
+            ));
+        }
         msgs.push(crate::protocol::emit_game_state("ExecutingResults"));
+
+        // ---- 状态落地（放在报文之后：报文里的坐标与 id 都来自批开始时的快照）----
+        if !deaths.is_empty() {
+            // 记进 `life_manager` 那张表：轮转据此判活，死掉的返回 0（而不是 2「查不到」），
+            // 两者都不可开火（`docs/98` §1.3），但"死过"这件事要留下来。
+            for id in &deaths {
+                if let Ok(v) = u32::try_from(*id) {
+                    self.life.set(v, Status::Dead, None);
+                }
+            }
+            self.soldiers.retain(|t| !deaths.contains(&t.id));
+        }
 
         msgs
     }

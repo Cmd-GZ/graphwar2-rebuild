@@ -24,6 +24,21 @@ pub struct Target {
     pub radius: f64,
 }
 
+/// 一次命中：谁、在弹道的哪个位置被扫过。
+///
+/// 存在的唯一理由：同时回合制要按**弹丸飞行时间**给一批死亡排序（`docs/86` §6、
+/// `docs/141`）。同一回合里所有弹丸的 `active_tick` 相同（13/13 回合观测），
+/// 所以"谁先到"等价于"谁的弧长更短" —— 不需要先知道那 ≈0.29 单位/tick 的速度本身。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Hit {
+    /// 被扫过的士兵 id。
+    pub id: i64,
+    /// 从起点沿弹道量到命中点的弧长（棋盘单位）。
+    pub arc: f64,
+    /// 命中发生在第几个采样点（0 = 起点）。
+    pub index: usize,
+}
+
 /// 一次开火的结果。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShotOutcome {
@@ -35,6 +50,8 @@ pub struct ShotOutcome {
     pub blocked: bool,
     /// 被判定致死的士兵，按**经过的先后顺序**。
     pub killed: Vec<i64>,
+    /// 与 `killed` 一一对应的命中细节（弧长 + 采样点下标），顺序相同。
+    pub hits: Vec<Hit>,
 }
 
 /// 结算一次开火。
@@ -73,10 +90,17 @@ pub fn resolve(
 pub fn resolve_points(mask: &[u8], targets: &[Target], points: &[(f64, f64)]) -> ShotOutcome {
     let (x0, y0) = *points.first().unwrap_or(&(0.0, 0.0));
     let mut killed: Vec<i64> = Vec::new();
+    let mut hits: Vec<Hit> = Vec::new();
     let mut stop = (x0, y0);
     let mut blocked = false;
+    // 沿弹道累计的弧长：同时回合制靠它给一批死亡排序（`docs/141` §2）。
+    let mut arc = 0.0f64;
 
-    for &(px, py) in points {
+    for (index, &(px, py)) in points.iter().enumerate() {
+        if index > 0 {
+            let (qx, qy) = points[index - 1];
+            arc += ((px - qx).powi(2) + (py - qy).powi(2)).sqrt();
+        }
         // 先判致死：经过即死，且不影响弹道
         for t in targets {
             if killed.contains(&t.id) {
@@ -85,6 +109,7 @@ pub fn resolve_points(mask: &[u8], targets: &[Target], points: &[(f64, f64)]) ->
             let d = ((px - t.x).powi(2) + (py - t.y).powi(2)).sqrt();
             if d <= t.radius {
                 killed.push(t.id);
+                hits.push(Hit { id: t.id, arc, index });
             }
         }
         // 再判阻挡：只有障碍会让弹道停下
@@ -96,7 +121,7 @@ pub fn resolve_points(mask: &[u8], targets: &[Target], points: &[(f64, f64)]) ->
         stop = (px, py);
     }
 
-    ShotOutcome { points: points.to_vec(), stop, blocked, killed }
+    ShotOutcome { points: points.to_vec(), stop, blocked, killed, hits }
 }
 
 #[cfg(test)]

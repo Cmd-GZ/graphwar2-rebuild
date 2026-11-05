@@ -78,6 +78,16 @@ pub struct Config {
     pub ai_budget_secs: Option<f64>,
     /// 进化种群的归属（`docs/98` §6-A **未定**，见 [`PopScope`]）。
     pub ai_pop_scope: PopScope,
+    /// 回合模式：`"SequentialTurns"`（默认，一回合一人一发）或
+    /// `"SimultaneousTurns"`（一回合每个存活玩家各一发、一次结算一次广播，`docs/141`）。
+    pub turn_mode: String,
+    /// 同时回合制的**收集截止**（tick）。`None` = 不超时，只等"所有公告玩家都交了"。
+    ///
+    /// ⚠️ **真值未知**：`EndOfTurnInfo.end_of_turn_tick` 在真回放里恒为 0
+    /// （`1793884702` 每回合都是 `{"end_of_turn_tick":0}`），而 60Hz tick 在回合开始时就
+    /// 已上万 —— 那个字段**不能**当截止用。真游戏靠什么超时（墙钟？tick？根本不超时）
+    /// 没有证据，这里只提供旋钮，不猜数值。
+    pub sim_turn_timeout_ticks: Option<i64>,
 }
 
 impl Default for Config {
@@ -95,6 +105,8 @@ impl Default for Config {
             // 25 s 上限**默认就接上**（此前 `evolve()` 传 `None`，上限实际没生效）。
             ai_budget_secs: Some(crate::aigen::GAME_TIME_BUDGET_SECS),
             ai_pop_scope: PopScope::default(),
+            turn_mode: "SequentialTurns".into(),
+            sim_turn_timeout_ticks: None,
         }
     }
 }
@@ -336,13 +348,132 @@ fn ai_text_of(m: Option<&Match>, player_id: i64, soldier_id: i64) -> Option<Stri
     m.ai_function_text(soldier_id)
 }
 
+// ---------------------------------------------------------------------------
+// 同时回合制（`docs/141`）：收集阶段
+// ---------------------------------------------------------------------------
+
+/// 已经受理、**还没结算**的一发。收集阶段的唯一产物。
+#[derive(Debug, Clone)]
+struct SimShot {
+    soldier_id: i64,
+    x0: f64,
+    y0: f64,
+    flip: bool,
+    function: String,
+}
+
+/// 同时回合制的一局收集状态。
+struct SimRound {
+    /// 本回合每个能开火的玩家各一发（`turn::RoundCollection`，超时/攒齐由它判）。
+    col: crate::turn::RoundCollection<SimShot>,
+    /// `player_id -> 本回合公告给他的射手`（`TurnInfo.soldier_id`）。
+    ///
+    /// 为什么不能从 `players` 里按 `player_id` 找：`players` 是**按士兵**建的表
+    /// （一名玩家 `per_team` 条），`find(pid)` 只会命中他的**第一个**士兵，
+    /// 而本回合的射手往往是第二个/第三个（`docs/139` §4.1 踩过同一个坑）。
+    shooters: std::collections::BTreeMap<i64, i64>,
+}
+
+impl SimRound {
+    /// 收集是否结束（攒齐 or 超时）。
+    fn should_resolve(&self, now_tick: i64) -> bool {
+        self.col.should_resolve(now_tick)
+    }
+
+    /// 收一发，返回一声明给人看的处理结果（日志用）。
+    fn submit(&mut self, player_id: i64, shot: SimShot) -> crate::turn::SubmitResult {
+        self.col.submit(player_id, shot)
+    }
+}
+
+/// 开一个同时回合：**全体玩家一次公告**，返回报文 + 收集器。
+///
+/// 公告顺序就是结算批的射击者顺序（`docs/141` §4，130/130 批），所以这里不做任何重排。
+fn start_sim_round(
+    m: &mut Match,
+    order: &[i64],
+    log: &mut TurnLog,
+    cfg: &Config,
+    now_ms: i64,
+) -> (Vec<String>, SimRound) {
+    let (msgs, starts) = m.begin_simultaneous_turn(order, now_ms, &cfg.time_mode);
+    let mut waitlist: Vec<i64> = Vec::with_capacity(starts.len());
+    for (pid, st) in order.iter().zip(starts.iter()) {
+        log.records.push(TurnRecord::from_start(m, *pid, st));
+        if let Some((p, s)) = st.decision.broadcast() {
+            if s != crate::turn::SOLDIER_ID_NONE {
+                waitlist.push(p);
+            }
+        }
+    }
+    let deadline = cfg
+        .sim_turn_timeout_ticks
+        .map(|d| m.tick_now(now_ms) + d.max(0));
+    let mut shooters = std::collections::BTreeMap::new();
+    for st in &starts {
+        if let Some((p, s)) = st.decision.broadcast() {
+            if s != crate::turn::SOLDIER_ID_NONE {
+                shooters.insert(p, s);
+            }
+        }
+    }
+    (
+        msgs,
+        SimRound { col: crate::turn::RoundCollection::new(waitlist, deadline), shooters },
+    )
+}
+
+/// 结算一个同时回合：`fire_batch` → 到期销毁 → `end_turn`，然后开下一回合。
+///
+/// 三段的分界就是 `docs/141` §1 的"结算 / 广播"：
+/// `fire_batch` 一口气产出**整个结算批**（分组的前缀 + 按到达时刻排的死亡块 +
+/// 每发一对 `FunctionActive`/`Explosion`），**不是**"一发一个完整窗口"。
+fn resolve_sim_round(
+    m: &mut Match,
+    round: SimRound,
+    order: &[i64],
+    log: &mut TurnLog,
+    cfg: &Config,
+    now_ms: i64,
+) -> (Vec<String>, SimRound) {
+    let shots = round.col.resolve();
+    let mut out = Vec::new();
+    let subs: Vec<crate::game::Submission<'_>> = shots
+        .iter()
+        .map(|(_, s)| crate::game::Submission {
+            owner_id: s.soldier_id,
+            function_text: &s.function,
+            x0: s.x0,
+            y0: s.y0,
+            flip: s.flip,
+        })
+        .collect();
+    out.extend(m.fire_batch(&subs, now_ms));
+    let tick_now = m.tick_now(now_ms);
+    out.extend(m.tick(tick_now + crate::game::DESTROY_DELAY_TICKS));
+    out.extend(m.end_turn());
+    if out.iter().any(|s| s.contains("EndingGame")) {
+        // 结束：下一回合的收集器留空（调用方据 `EndingGame` 收工）。
+        return (
+            out,
+            SimRound {
+                col: crate::turn::RoundCollection::new(Vec::<i64>::new(), None),
+                shooters: Default::default(),
+            },
+        );
+    }
+    let (next_msgs, next) = start_sim_round(m, order, log, cfg, now_ms);
+    out.extend(next_msgs);
+    (out, next)
+}
+
 fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(String, TurnLog)> {
     let room = RoomState {
         room_name: cfg.room_name.clone(),
         game_state: "Setup".into(),
         axis_mode: "EveryUnit".into(),
         function_mode: "NormalFunction".into(),
-        turn_mode: "SequentialTurns".into(),
+        turn_mode: cfg.turn_mode.clone(),
         time_mode: cfg.time_mode.clone(),
     };
     let t0 = Instant::now();
@@ -352,6 +483,10 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
     let mut players: Vec<PlayerState> = Vec::new();
     let mut m: Option<Match> = None;
     let mut current: Option<(i64, i64)> = None; // (player_id, soldier_id)
+    // 同时回合制的收集状态（`docs/141`）。`Some` = 本回合正在攒提交，还没结算。
+    // 与 `current` 互斥：`SequentialTurns` 用 `current`（一次一个射手），
+    // `SimultaneousTurns` 用 `sim`（一次等全体）。
+    let mut sim: Option<SimRound> = None;
     // 玩家出场顺序 + 游标（`docs/47`：顺序由调用方给，不由本文件推导）。
     let mut order: Vec<i64> = Vec::new();
     let mut at: usize = 0;
@@ -503,9 +638,16 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
                 // 第一回合：从 `order[len-1]` 出发 ⇒ advance 落到 `order[0]`。
                 at = order.len() - 1;
                 let Some(mref) = m.as_mut() else { continue };
-                let adv = advance(mref, &order, &mut at, &mut log, now_ms(), &cfg.time_mode);
-                msgs.extend(adv.messages);
-                current = adv.current;
+                if cfg.turn_mode == "SimultaneousTurns" {
+                    // 全体玩家一次公告 + 开一个收集器（`docs/141` §1）。
+                    let (m2msgs, round) = start_sim_round(mref, &order, &mut log, cfg, now_ms());
+                    msgs.extend(m2msgs);
+                    sim = Some(round);
+                } else {
+                    let adv = advance(mref, &order, &mut at, &mut log, now_ms(), &cfg.time_mode);
+                    msgs.extend(adv.messages);
+                    current = adv.current;
+                }
                 send(sock, &msgs)?;
                 eprintln!(
                     "STARTED obstacles={} players={} order={:?} bots={:?} ai=level{} budget={:?}",
@@ -516,8 +658,8 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
                     cfg.ai_level,
                     cfg.ai_budget_secs
                 );
-                if current.is_none() {
-                    // 一个能开火的玩家都没有 ⇒ 没人可等。
+                if current.is_none() && sim.is_none() {
+                    // 一个能开火的玩家都没有 ⇒ 没人可等（同时回合制下看 `sim`，不看 `current`）。
                     break;
                 }
             }
@@ -560,8 +702,70 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
                 if ended {
                     continue;
                 }
-                let Some(mref) = m.as_mut() else { continue };
                 let Some(pid) = crate::protocol::get_int(&frame, "player_id") else { continue };
+
+                // ---- 同时回合制：**收集阶段**（`docs/141` §1）----
+                //
+                // 与逐玩家路径的区别只有一条：不要求"轮到你"，只要求"你在本回合的公告名单里"。
+                // 收下之后**什么都不广播** —— 真回放里从提交到 `CalculatingResults`
+                // 之间没有任何服务端报文（`1793884702`：FunctionFire 在 9282 段之后，
+                // 结算批在 9282 tick 的 `CalculatingResults` 才出现）。
+                if let Some(round) = sim.as_mut() {
+                    let Some(mref) = m.as_mut() else { continue };
+                    // 射手是**公告给他的那一个**（不是他在 `players` 里的第一条）。
+                    let Some(&soldier) = round.shooters.get(&pid) else {
+                        eprintln!("NOT_ANNOUNCED pid={pid}");
+                        continue;
+                    };
+                    let client_function = players
+                        .iter()
+                        .find(|p| p.player_id == pid)
+                        .map(|p| p.function.clone())
+                        .unwrap_or_default();
+                    // 位置以 `Match` 为准（它才是这场对局的真相源）。
+                    let Some(t) = mref.soldiers.iter().find(|s| s.id == soldier) else {
+                        eprintln!("SOLDIER_DEAD {soldier}");
+                        continue;
+                    };
+                    let (x0, y0) = (t.x, t.y);
+                    let flip = mref.turns().flip_for(pid).unwrap_or(false);
+                    // 电脑玩家：AI 决定的函数（`docs/127` §5）。
+                    let function = match mref.is_bot(pid) {
+                        true => mref.ai_function_text(soldier).unwrap_or(client_function),
+                        false => client_function,
+                    };
+                    let shot = SimShot { soldier_id: soldier, x0, y0, flip, function };
+                    match round.submit(pid, shot) {
+                        crate::turn::SubmitResult::Accepted => {
+                            eprintln!("COLLECTED pid={pid} soldier={soldier}");
+                        }
+                        other => {
+                            eprintln!("SUBMIT_REJECTED pid={pid} {:?} waiting={:?}", other, round.col.waiting_on());
+                            continue;
+                        }
+                    }
+                    let now = now_ms();
+                    let tick_now = mref.tick_now(now);
+                    if !round.should_resolve(tick_now) {
+                        // 还没攒齐、也没超时：继续等，不回任何报文。
+                        eprintln!("WAITING {:?}", round.col.waiting_on());
+                        continue;
+                    }
+                    let taken = sim.take().expect("sim 刚刚还是 Some");
+                    let (out, next) =
+                        resolve_sim_round(mref, taken, &order, &mut log, cfg, now);
+                    let annihilated = out.iter().any(|s| s.contains("EndingGame"));
+                    send(sock, &out)?;
+                    if annihilated {
+                        // 不再受理任何提交；`sim` 保持 `None` 之外的旧值也无所谓 —— 循环退出。
+                        eprintln!("ENDED at turn {}", mref.turn_count);
+                        break;
+                    }
+                    sim = Some(next);
+                    continue;
+                }
+
+                let Some(mref) = m.as_mut() else { continue };
                 let Some((cur_pid, cur_sid)) = current else { continue };
                 if cur_pid != pid {
                     eprintln!("NOT_YOUR_TURN pid={} current={:?}", pid, current);
