@@ -114,6 +114,8 @@ pub const E: f64 = std::f64::consts::E;
 pub mod function;
 pub mod path;
 pub mod plane;
+/// 原版 `entity_drawer.rs` 的图元级复原（`EntityDrawer::draw` = vaddr `0x4b2890`）。
+pub mod entity_drawer;
 pub mod events;
 pub mod life;
 pub mod gdext;
