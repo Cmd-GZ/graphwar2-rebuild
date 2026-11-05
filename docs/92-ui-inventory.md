@@ -218,13 +218,13 @@ GraphwarRootNode                        [GraphwarRootNode]  (Rust)
 | 控件 | 类型 | 文本/图标 | 作用 | 本仓库 |
 |---|---|---|---|---|
 | `LanLobby/.../HBoxContainer/ShowLocalContainer/ShowLocalButton` | GraphwarButton | `Local`（`toggle;checked`） | **观测**：切换按钮，默认选中 | ❌ |
-| `.../HBoxContainer/ShowGlobalContainer/ShowGlobalButton` | GraphwarButton | `Global`（`toggle`） | **观测**：按下后 `GraphwarLanVBox` 里出现**公网房间条目**（`US Room 1/2`、`EU Room 1/2` …）。⇒ `docs/88` §10 里"ShowGlobalButton/ShowLocalButton 用途未知"已解：**是 LAN 大厅的"本地/公网房间列表"开关，不是回放界面** | ❌ 控件；协议 观测✅ `docs/24` |
+| `.../HBoxContainer/ShowGlobalContainer/ShowGlobalButton` | GraphwarButton | `Global`（`toggle`） | **观测**：按下后 `GraphwarLanVBox` 里出现 **5 个公网房间条目**：`US Room 1`、`US Room 3`、`US Room 4`、`EU Room 1`、`EU Room 2`（注意**没有** `US Room 2`）。⇒ `docs/88` §10 里"ShowGlobalButton/ShowLocalButton 用途未知"已解：**是 LAN 大厅的"本地/公网房间列表"开关，不是回放界面** | ❌ 控件；协议 观测✅ `docs/24` |
 | `.../MarginContainer/HBoxContainer/CreateButton` | GraphwarButton | ` Create Game ` | **观测**：→ `GameSetup.visible=1` | ❌ 控件；建房/服务端 逻辑✅ `src/server.rs` |
 | `.../MarginContainer/HBoxContainer/JoinButton` | GraphwarButton | ` Join IP ` | **观测**：→ `JoinIpPopUp.visible=1` | ❌ |
 | `.../MarginContainer2/VBoxContainer/HBoxContainer/NameContainer/RoomName` | Label | `Room Name` | 列表表头 | ❌ |
 | `.../PlayersContainer/RoomName` | Label | `Players` | 列表表头（名字重复，是场景原作者的习惯） | ❌ |
 | `.../ModeContainer/GameMode` | Label | `Game Mode` | 列表表头 | ❌ |
-| `.../ScrollContainer/GraphwarLanVBox/<房间条目>` | Control（`scene=res://game_room_entry.tscn`） | 每条：`NameContainer/RoomName`=`EU Room 1`…、`PlayersContainer/PlayerCount`=`  0  `/`  1  `、`ModeContainer/OptionsContainer/{Axis,Function,Turn,Time}ModeButton` 四个图标、`JoinButtonContainer/JoinButton`=` Join ` | **观测**：公网房间列表条目；Join 按下后**没有**出现 `ConnectingPopUp`（`connect_room` 路由 20 s 超时）⇒ **推断**：公网房间列表来自服务器/缓存，离线时 Join 不发起连接或直接静默失败。**缺**：房间列表的来源（无网络，未抓包验证） | ❌ |
+| `.../ScrollContainer/GraphwarLanVBox/<房间条目>` | Control（`scene=res://game_room_entry.tscn`） | 每条：`NameContainer/RoomName`=`US Room 1`/`EU Room 1`…、`PlayersContainer/PlayerCount`=`  0  `/`  1  `、`ModeContainer/OptionsContainer/{Axis,Function,Turn,Time}ModeButton` 四个图标、`JoinButtonContainer/JoinButton`=` Join ` | **观测**：公网房间列表条目；Join 按下后**没有**出现 `ConnectingPopUp`（`connect_room` 路由 20 s 超时）⇒ **推断**：公网房间列表来自服务器/缓存，离线时 Join 不发起连接或直接静默失败。**缺**：房间列表的来源（无网络，未抓包验证） | ❌ |
 | `.../HBoxContainer/ExitButtonContainer/{ClipButton,LongPressButton}` | GraphwarButton | icon=`return.svg` | 返回主菜单 | ❌ |
 
 ### 4.5 GameSetup（对局设置）
@@ -514,7 +514,7 @@ TurnModeButton   seq sim seq sim seq sim   TurnTimeButton  1m 2m 3m 5m inf 30s 1
 | §10 "Player 界面 / 皮肤系统 **从未查过**" | §4.14 完整清单（三页签、改名、`SkinBackgroundButton`、`UnlockButton`、`PendingBlock`） | **关闭** |
 | §10 "Replays 回放播放器" | §4.15 条目结构完整；**播放行为未点** | 部分关闭 |
 | §10 "房间 IP/端口显示 `game_ip_label` **未查**" | 实测节点名是 **`GameIpLabel`**，显示 `198.18.0.1:<port>` | **关闭** |
-| §10 "`ShowGlobalButton`/`ShowLocalButton` 用途未知" | LAN 大厅的**公网/本地房间列表开关**（toggle），公网列表条目名 `US Room 1/2`、`EU Room 1/2` | **关闭** |
+| §10 "`ShowGlobalButton`/`ShowLocalButton` 用途未知" | LAN 大厅的**公网/本地房间列表开关**（toggle），公网列表 5 条：`US Room 1/3/4`、`EU Room 1/2` | **关闭** |
 | §10 "用户口述 21 关（0–20）" | `level_0`…`level_20` 共 21 个按钮，且由脚本运行时创建 | **确认** |
 | §10 "Battle：Local/Global、Create/Join IP、四模式、加 AI（6 级）" | 全部落实：`ShowLocal/ShowGlobal`、`CreateButton`、`JoinButton`→`JoinIpPopUp`、四个选项按钮、6 个 `AddBotButton` | **确认** |
 
