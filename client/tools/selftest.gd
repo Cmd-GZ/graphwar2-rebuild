@@ -35,6 +35,7 @@ func run(main: Control) -> int:
 	_test_assets_and_original_settings()
 	_test_geometry_and_campaign_save()
 	await _test_audio()
+	await _test_level_rules()
 
 	var passed := _checks - _failures.size()
 	if _skipped.is_empty():
@@ -1047,3 +1048,275 @@ func _rms_of(frames: PackedVector2Array) -> float:
 	for v in frames:
 		acc += v.x * v.x
 	return sqrt(acc / float(frames.size()))
+
+# ---------------------------------------------------------------- 关卡胜负规则（docs/131）
+#
+# 这一组用例是为**"发射一次就通关"**那个 bug 加的：打靶关没有敌方士兵，旧实现
+# `alive = {0:n, 1:m}` 里 `alive[1]` 恒 0 ⇒ 第一发一落地就判人类胜（`docs/131` §1）。
+#
+# 判定规则、靶子判定、重置规则的依据见 `docs/131`；四个端到端场景的编号与那里一致：
+#   ① 打靶关：空放一枪 ⇒ 不通关；打掉全部靶子 ⇒ 通关
+#   ② 打掉部分靶子 ⇒ 靶子全部复原、且不通关
+#   ③ 对战关：对方全灭 ⇒ 通关；我方全灭 ⇒ 失败
+#   ④ 第 8 关（index 7，"第一个回合内打掉"）：一回合没打中 ⇒ 失败
+#
+# 全部走**真实开火路径**（`fire()` → `GwCore.calculate_path()` → `GwCore.hit_test()`；
+# 内核在时 `judged.source == "kernel"`）。唯一被钉住的是"每局随机的靶子/障碍布局"——
+# `docs/118` §8 #16 明确原版靶子坐标是随机生成的，本来就没有"每关固定坐标"。
+func _test_level_rules() -> void:
+	var app_node := get_node("/root/App")
+	var play = _screen("PlayScreen")
+	if play == null:
+		_expect(false, "PlayScreen 存在（关卡规则用例）")
+		return
+	app_node.close_all_popups()
+	await _frames(1)
+
+	# ---------------- 0. 规则本体（纯逻辑，不依赖内核/界面） ----------------
+	# 关卡分类：`docs/118` §7.1 的两列（目标数 / Bot 数）
+	var r0 := GwLevelRules.for_campaign(GwCampaign.level(0), 0)
+	var r6 := GwLevelRules.for_campaign(GwCampaign.level(6), 0)
+	var r7 := GwLevelRules.for_campaign(GwCampaign.level(7), 0)
+	var r5 := GwLevelRules.for_campaign(GwCampaign.level(5), 0)
+	_expect(r0.kind_name() == "targets" and int(r0.targets_planned) == 1 and r0.turn_limit == 0,
+		"规则：第 1 关（index 0）= 打靶关、1 个靶子、无回合上限（实际 %s）" % str(r0.snapshot()))
+	_expect(r6.kind_name() == "targets" and int(r6.targets_planned) == 2 and r6.turn_limit == 6,
+		"规则：第 7 关（index 6）= 打靶关、2 个靶子、上限 6（实际 %s）" % str(r6.snapshot()))
+	_expect(r7.kind_name() == "targets" and r7.turn_limit == 1,
+		"规则：第 8 关（index 7）= 打靶关、上限 **1**（docs/118 §7.1 'first try'；实际 %s）"
+			% str(r7.snapshot()))
+	_expect(r5.kind_name() == "versus", "规则：第 6 关（index 5）= 对战关（有 Bot、无靶子）")
+	_expect(GwLevelRules.for_match(true, true, 0, 0).kind_name() == "both",
+		"规则：目标 + 对手 ⇒ both（21 关数据里不存在，见 docs/131 §2.2）")
+
+	# 打靶关：靶子全清 ⇒ 通关 / 还在且未到上限 ⇒ 继续
+	var v := r0.evaluate({"alive_by_team": {0: 1}, "teams_present": [0],
+		"targets_total": 1, "targets_alive": 0, "turns_used": 1})
+	_expect(bool(v.over) and bool(v.human_won) and String(v.reason) == "targets_cleared",
+		"规则：打靶关靶子全清 ⇒ 人类通关（实际 %s）" % str(v))
+	v = r0.evaluate({"alive_by_team": {0: 1}, "teams_present": [0],
+		"targets_total": 1, "targets_alive": 1, "turns_used": 3})
+	_expect(not bool(v.over) and String(v.reason) == "playing",
+		"规则：打靶关靶子还在、没到上限 ⇒ **不结束**（旧实现这里判人类胜，实际 %s）" % str(v))
+	# 第 8 关（index 7）：上限 1 用尽 ⇒ 失败，胜方 = Team2（靶子所在的队伍）
+	v = r7.evaluate({"alive_by_team": {0: 1}, "teams_present": [0],
+		"targets_total": 1, "targets_alive": 1, "turns_used": 1})
+	_expect(bool(v.over) and not bool(v.human_won) and String(v.reason) == "turn_limit"
+		and int(v.winner_team) == 1,
+		"规则：第 8 关（index 7）一回合没打中 ⇒ 判负、胜方 Team2（实际 %s）" % str(v))
+	# 对战关：对方全灭 ⇒ 通关；我方全灭 ⇒ 失败（docs/84：45/45 实测）
+	v = r5.evaluate({"alive_by_team": {0: 2, 1: 0}, "teams_present": [0, 1],
+		"targets_total": 0, "targets_alive": 0, "turns_used": 3})
+	_expect(bool(v.over) and bool(v.human_won) and String(v.reason) == "enemy_wiped"
+		and int(v.winner_team) == 0, "规则：对战关对方全灭 ⇒ 人类通关（实际 %s）" % str(v))
+	v = r5.evaluate({"alive_by_team": {0: 0, 1: 1}, "teams_present": [0, 1],
+		"targets_total": 0, "targets_alive": 0, "turns_used": 3})
+	_expect(bool(v.over) and not bool(v.human_won) and String(v.reason) == "own_wiped"
+		and int(v.winner_team) == 1, "规则：对战关我方全灭 ⇒ 人类失败（实际 %s）" % str(v))
+	# 没有对手也没有靶子（例如回放模式没有玩家表）：**判不了**，不能像旧实现那样"0 == 0 ⇒ 有人赢"
+	v = r5.evaluate({"alive_by_team": {0: 0, 1: 0}, "teams_present": [],
+		"targets_total": 0, "targets_alive": 0, "turns_used": 0})
+	_expect(not bool(v.over) and String(v.reason) == "no_verdict",
+		"规则：双方都不在场 ⇒ 明确报 no_verdict（不猜胜负；实际 %s）" % str(v))
+
+	# 靶子集合：只翻 alive、不重建实体（docs/123 §2.2）；半径 0.5 是**推断**（docs/131 §3.2）
+	var ts := GwTargetSet.new()
+	ts.setup([Vector2(1.0, 2.0), Vector2(3.0, 4.0)])
+	_expect(ts.total() == 2 and ts.alive_count() == 2, "靶子：setup 后 2 个都活着")
+	_expect(ts.entities().size() == 2
+		and is_equal_approx(float(ts.entities()[0]["radius"]), GwTargetSet.HIT_RADIUS),
+		"靶子：进 hit_test 的半径 = %.2f（**推断**，docs/131 §3.2）" % GwTargetSet.HIT_RADIUS)
+	ts.destroy(0)
+	_expect(ts.destroy(0) == false and ts.alive_count() == 1, "靶子：重复 destroy 幂等")
+	var plan := ts.settle_shot([0])
+	_expect(bool(plan["reset"]) and (plan["ids"] as Array).size() == 1 and int(plan["ids"][0]) == 0,
+		"重置：打掉 2 个里的 1 个 ⇒ 复原全部已摧毁的（实际 %s）" % str(plan))
+	ts.restore(plan["ids"])
+	_expect(ts.alive_count() == 2, "重置：复原是翻 alive，靶子数不变（实际 %d）" % ts.total())
+	plan = ts.settle_shot([])
+	_expect(not bool(plan["reset"]) and String(plan["reason"]) == "nothing_destroyed",
+		"重置：空放（一个都没打掉）⇒ 什么都不做（实际 %s）" % str(plan))
+	ts.destroy(0)
+	ts.destroy(1)
+	plan = ts.settle_shot([0, 1])
+	_expect(not bool(plan["reset"]) and String(plan["reason"]) == "all_destroyed"
+		and ts.is_cleared(), "重置：一次全清 ⇒ 不复原（实际 %s）" % str(plan))
+
+	# ---------------- 1. 端到端前提 ----------------
+	# 弹道前提：`f(x)="0"` 的修正常数 `c = y0 − f(x0)`（docs/24 §6.2）把这一发钉成
+	# **水平线 y = 士兵的 y**。第 1 关只有 1 个士兵、`_spawn_position(0, 0)` ⇒ y = −5.1。
+	var probe := GwCore.calculate_path("0", Vector2(-18.0, -5.1), 1.0)
+	var probe_pts: PackedVector2Array = probe.get("points", PackedVector2Array())
+	_expect(bool(probe.ok) and probe_pts.size() > 1,
+		"前提：f(x)=0 能算出弹道（实际 ok=%s note=%s）"
+			% [str(probe.ok), String(probe.get("note", ""))])
+	_expect(is_equal_approx((0.0 - 1.5) * 3.4, -5.1),
+		"前提：我方 0 号槽位的 y = −5.1（_spawn_position 的公式）")
+
+	# ---------------- 2. ① 打靶关：空放一枪 ⇒ 不通关 ----------------
+	# 第 1 关（index 0）：1 个靶子、**无障碍**、无回合上限（docs/118 §7.1）。
+	# 靶子放在弹道之外（y = 2.0，而这一发是 y = −5.1 的水平线）⇒ 必然打空。
+	play = _begin_campaign_for_test(0, [Vector2(12.0, 2.0)], [])
+	await _frames(1)
+	var pre: Dictionary = play.call("level_state")
+	_expect(int(pre["targets"]["total"]) == 1 and int(pre["targets"]["alive"]) == 1,
+		"① 开局：1 个靶子在场（实际 %s）" % str(pre["targets"]))
+	var plane := play.find_child("GraphwarPlane", true, false) as GwPlaneView
+	_expect(plane != null and plane.soldiers.size() == 1
+		and is_equal_approx(float(plane.soldiers[0]["pos"].y), -5.1),
+		"① 前提：射手在 y = −5.1（实际 %s）"
+			% str(plane.soldiers[0]["pos"] if plane != null and plane.soldiers.size() > 0 else "?"))
+	var won_before := bool(app_node.last_result.get("human_won", false))
+	var team_before := int(app_node.last_result.get("winner_team", -1))
+	_fire_function(play, "0")
+	await _frames(1)
+	var after_miss: Dictionary = play.call("level_state")
+	_expect(bool(after_miss["running"]), "① 空放一枪 ⇒ 局还在（running = true，旧实现这里直接通关）")
+	_expect(not (_screen("EndGamePopUp") as Control).visible, "① 空放一枪 ⇒ **不弹结算框**")
+	_expect(bool(app_node.last_result.get("human_won", false)) == won_before
+		and int(app_node.last_result.get("winner_team", -1)) == team_before,
+		"① 空放一枪 ⇒ **没有写胜负结果**")
+	_expect(int(after_miss["targets"]["alive"]) == 1, "① 空放一枪 ⇒ 靶子还在")
+	_expect(int(after_miss["turns_used"]) == 1, "① 空放也消耗一个回合（turns_used = 1）")
+	_expect(String(after_miss["verdict"].get("reason", "playing")) == "playing",
+		"① 空放一枪 ⇒ 判定 = playing（实际 %s）" % str(after_miss["verdict"]))
+
+	# ---------------- 3. ① 打靶关：打掉全部靶子 ⇒ 通关 ----------------
+	# 靶子放在**弹道线上**（y = −5.1）⇒ 一定被打中。
+	play = _begin_campaign_for_test(0, [Vector2(12.0, -5.1)], [])
+	await _frames(1)
+	_fire_function(play, "0")
+	await _frames(2)
+	var cleared: Dictionary = play.call("level_state")
+	_expect(int(cleared["targets"]["alive"]) == 0,
+		"① 靶子进 hit_test 并且真能被打中（alive = 0，实际 %s）" % str(cleared["targets"]))
+	_expect(String(cleared["shot_status"]).contains("1 个靶子"),
+		"① 状态行记到靶子命中（实际 '%s'）" % String(cleared["shot_status"]))
+	_expect(not bool(cleared["running"]), "① 打掉全部靶子 ⇒ 局结束")
+	_expect(String(cleared["verdict"].get("reason", "")) == "targets_cleared",
+		"① 判定理由 = targets_cleared（实际 %s）" % str(cleared["verdict"]))
+	_expect(bool(app_node.last_result.get("human_won", false))
+		and int(app_node.last_result.get("winner_team", -1)) == 0,
+		"① 打靶关通关 ⇒ human_won = true、胜方 Team1（实际 %s）" % str(app_node.last_result))
+	_expect((_screen("EndGamePopUp") as Control).visible, "① 通关 ⇒ 结算框弹出（才会 mark_completed）")
+
+	# ---------------- 4. ② 打掉部分靶子 ⇒ 靶子全部复原、且不通关 ----------------
+	# 第 7 关（index 6，Level 6）：2 个靶子、回合上限 6、"hit these targets in a single shot"。
+	# 一个靶子放在弹道线上（必中），另一个在 y = 2.0（必不中）⇒ **部分命中**。
+	play = _begin_campaign_for_test(6, [Vector2(12.0, -5.1), Vector2(12.0, 2.0)], [])
+	await _frames(1)
+	app_node.close_all_popups()
+	_fire_function(play, "0")
+	await _frames(1)
+	var partial: Dictionary = play.call("level_state")
+	_expect(int(partial["targets"]["total"]) == 2, "② 两个靶子在场（实际 %s）" % str(partial["targets"]))
+	_expect(String(partial["shot_status"]).contains("1 个靶子"),
+		"② 本发真的打掉了 1 个靶子（实际 '%s'）" % String(partial["shot_status"]))
+	_expect(int(partial["targets"]["alive"]) == 2,
+		"② 打不全 ⇒ **两个靶子都活着**（已摧毁的全部复原；实际 %s）" % str(partial["targets"]))
+	_expect(bool(partial["running"]), "② 部分命中 ⇒ 不通关")
+	_expect(String(partial["verdict"].get("reason", "playing")) != "targets_cleared",
+		"② 部分命中 ⇒ 绝不判 targets_cleared（实际 %s）" % str(partial["verdict"]))
+	_expect(int(partial["turns_used"]) == 1, "② 部分命中仍算一个回合（turns_used = 1）")
+	var plane6 := play.find_child("GraphwarPlane", true, false) as GwPlaneView
+	_expect(plane6 != null and plane6.targets.size() == 2,
+		"② 画出来的靶子也回来了（GwPlaneView.targets = %d 项）"
+			% (plane6.targets.size() if plane6 != null else -1))
+
+	# ---------------- 5. ③ 对战关：对方全灭 ⇒ 通关 ----------------
+	# LAN 局：1 人 + 1 Bot，各 1 个士兵，分别在 (−18, −5.1) 与 (18, −5.1)。
+	# f(x)=0 是水平线 y = −5.1 ⇒ 正好穿过对方士兵（致死半径 0.5）。
+	play = _begin_versus_for_test()
+	await _frames(1)
+	app_node.close_all_popups()
+	_fire_function(play, "0")
+	await _frames(1)
+	var versus_win: Dictionary = play.call("level_state")
+	_expect(String(versus_win["verdict"].get("reason", "")) == "enemy_wiped",
+		"③ 对方全灭 ⇒ 判定 enemy_wiped（实际 %s）" % str(versus_win["verdict"]))
+	_expect(bool(app_node.last_result.get("human_won", false))
+		and int(app_node.last_result.get("winner_team", -1)) == 0,
+		"③ 对方全灭 ⇒ 人类胜、胜方 Team1（实际 %s）" % str(app_node.last_result))
+
+	# ---------------- 6. ③ 对战关：我方全灭 ⇒ 失败 ----------------
+	# 客户端还没有 AI 开火循环（对手不会开火），所以这里用 `apply_external_shot()`
+	# 把"对手打过来的一发"送进**同一条结算路径**（docs/131 §5.2）。
+	play = _begin_versus_for_test()
+	await _frames(1)
+	app_node.close_all_popups()
+	# 从右往左扫回去的一串点：会穿过我方士兵 (−18, −5.1)
+	var incoming := PackedVector2Array()
+	var x := 18.0
+	while x >= -19.0:
+		incoming.append(Vector2(x, -5.1))
+		x -= 0.5
+	var accepted := bool(play.call("apply_external_shot", incoming, 1))
+	_expect(accepted, "③ 外部来弹被接受（射手 = 玩家 1 = Bot）")
+	var versus_lose: Dictionary = play.call("level_state")
+	_expect(String(versus_lose["verdict"].get("reason", "")) == "own_wiped",
+		"③ 我方全灭 ⇒ 判定 own_wiped（实际 %s）" % str(versus_lose["verdict"]))
+	_expect(not bool(app_node.last_result.get("human_won", true))
+		and int(app_node.last_result.get("winner_team", -1)) == 1,
+		"③ 我方全灭 ⇒ 人类负、胜方 Team2（实际 %s）" % str(app_node.last_result))
+
+	# ---------------- 7. ④ 第 8 关（index 7）：一回合没打中 ⇒ 失败 ----------------
+	_expect(int(GwCampaign.level(7)["turn_limit"]) == 1,
+		"④ 第 8 关（index 7，Level 7）回合上限 = 1（docs/118 §7.1）")
+	play = _begin_campaign_for_test(7, [Vector2(12.0, 2.0)], [])
+	await _frames(1)
+	app_node.close_all_popups()
+	_fire_function(play, "0")     # 靶子不在弹道线上 ⇒ 空放
+	await _frames(1)
+	var limit: Dictionary = play.call("level_state")
+	_expect(int(limit["turns_used"]) == 1 and int(limit["targets"]["alive"]) == 1,
+		"④ 一回合过去了、靶子还在（实际 turns=%d targets=%s）"
+			% [int(limit["turns_used"]), str(limit["targets"])])
+	_expect(bool(limit["verdict"].get("over", false))
+		and String(limit["verdict"].get("reason", "")) == "turn_limit",
+		"④ 回合上限用尽仍未清完 ⇒ 判负、理由 turn_limit（实际 %s）" % str(limit["verdict"]))
+	_expect(not bool(app_node.last_result.get("human_won", true))
+		and int(app_node.last_result.get("winner_team", -1)) == 1,
+		"④ 打靶关失败 ⇒ 胜方 Team2（靶子的队伍，docs/123 §2.1；实际 %s）"
+			% str(app_node.last_result))
+	_expect((_screen("EndGamePopUp") as Control).visible, "④ 失败 ⇒ 结算框弹出")
+
+	play.call("clear_layout_override")
+	app_node.close_all_popups()
+
+## 起一局**确定性**的战役关（`docs/131` §5.1）：关卡参数照 `docs/118` §7.1 的真值装，
+## 靶子/障碍用注入的固定布局（原版两者每局随机，`docs/118` §8 #16）。
+func _begin_campaign_for_test(level_index: int, targets: Array, obstacles: Array = []) -> Node:
+	var app_node := get_node("/root/App")
+	var lv := GwCampaign.level(level_index)
+	app_node.state.reset_campaign(level_index)
+	app_node.state.axis_mode = int(lv.axis)
+	app_node.state.function_mode = int(lv.function)
+	app_node.state.turn_mode = int(lv.turn)
+	app_node.state.time_mode = int(lv.time)
+	app_node.state.add_human("Selftest", 0, 0, 0)
+	app_node.state.players[0]["soldiers"] = int(lv.soldiers)
+	if int(lv.bot_tier) >= 0:
+		app_node.state.add_bot(int(lv.bot_tier))
+	var play = _screen("PlayScreen")
+	play.call("inject_layout", {"targets": targets, "obstacles": obstacles})
+	play.call("begin_match")
+	return play
+
+## 起一局 LAN 1v1（人 + Bot，各 1 个士兵）——对战关那条规则就是靠它验的。
+func _begin_versus_for_test() -> Node:
+	var app_node := get_node("/root/App")
+	app_node.state.reset_lan()
+	app_node.state.add_human("Selftest", 0, 0, 0)
+	app_node.state.add_bot(0)
+	var play = _screen("PlayScreen")
+	play.call("inject_layout", {})
+	play.call("begin_match")
+	return play
+
+## 走**真实开火路径**打一发：把函数写进输入框（与 `_load_active_function()` 同一种写法），
+## 再按 Fire —— 后面的解析/采样/命中/结算全都是生产代码。
+func _fire_function(play: Node, expr_text: String) -> void:
+	var input := play.find_child("GraphwarFunctionInput", true, false) as GwFunctionInput
+	if input != null:
+		input.text = expr_text
+	play.call("fire")
