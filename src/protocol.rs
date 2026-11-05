@@ -75,6 +75,43 @@ pub fn parse_message(text: &str) -> Option<RawMessage> {
     Some(RawMessage { kind: key, body, text: text.to_string() })
 }
 
+/// LAN 广播的房间信息（**不是**单键消息，独立格式）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Broadcast {
+    pub room_name: String,
+    pub game_state: String,
+    pub current_player_count: i64,
+    pub address: String,
+    pub axis_mode: String,
+    pub function_mode: String,
+    pub turn_mode: String,
+    pub time_mode: String,
+    pub locked: bool,
+}
+
+impl Broadcast {
+    /// 广播是 `{"room_name":..,"game_state":..,...}`，直接当普通对象取字段。
+    pub fn parse(text: &str) -> Option<Self> {
+        let text = text.trim();
+        if !braces_balanced(text) {
+            return None;
+        }
+        let body = read_object(text)?;
+        let m = RawMessage { kind: "Broadcast".into(), body, text: text.to_string() };
+        Some(Broadcast {
+            room_name: get_str(&m, "room_name")?,
+            game_state: get_str(&m, "game_state")?,
+            current_player_count: get_int(&m, "current_player_count")?,
+            address: get_str(&m, "address")?,
+            axis_mode: get_str(&m, "axis_mode")?,
+            function_mode: get_str(&m, "function_mode")?,
+            turn_mode: get_str(&m, "turn_mode")?,
+            time_mode: get_str(&m, "time_mode")?,
+            locked: get_bool(&m, "locked")?,
+        })
+    }
+}
+
 /// 从消息体里取一个字符串字段，例如 `get_str(m, "game_name")`。
 pub fn get_str(msg: &RawMessage, key: &str) -> Option<String> {
     let pat = format!("\"{}\":", key);
@@ -354,6 +391,87 @@ impl FunctionInfo {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// 回合与开火（第三轮抓包新增，46 种消息里最关键的几个）
+// ---------------------------------------------------------------------------
+
+/// `{"TurnInfo":{"player_id":..,"soldier_id":..}}` —— 轮到谁
+#[derive(Debug, Clone, PartialEq)]
+pub struct TurnInfo {
+    pub player_id: i64,
+    pub soldier_id: i64,
+}
+
+/// `{"TurnCountInfo":{"turn_count":..}}` —— 第几回合
+#[derive(Debug, Clone, PartialEq)]
+pub struct TurnCountInfo {
+    pub turn_count: i64,
+}
+
+/// `{"EndOfTurnInfo":{"end_of_turn_tick":..,"time_mode":".."}}` —— 回合结束时间点
+#[derive(Debug, Clone, PartialEq)]
+pub struct EndOfTurnInfo {
+    pub end_of_turn_tick: i64,
+    pub time_mode: String,
+}
+
+/// `{"FunctionFireRequest":{"player_id":..}}` —— 客户端请求开火
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionFireRequest {
+    pub player_id: i64,
+}
+
+/// `{"FunctionFire":{"soldier_id":..}}` —— 服务端宣布某士兵开火
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionFire {
+    pub soldier_id: i64,
+}
+
+/// `{"FunctionUpdateRequest":{"player_id":..,"function":".."}}` —— 提交/更新函数
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionUpdateRequest {
+    pub player_id: i64,
+    pub function: String,
+}
+
+impl TurnInfo {
+    pub fn parse(m: &RawMessage) -> Option<Self> {
+        Some(TurnInfo { player_id: get_int(m, "player_id")?, soldier_id: get_int(m, "soldier_id")? })
+    }
+}
+impl TurnCountInfo {
+    pub fn parse(m: &RawMessage) -> Option<Self> {
+        Some(TurnCountInfo { turn_count: get_int(m, "turn_count")? })
+    }
+}
+impl EndOfTurnInfo {
+    pub fn parse(m: &RawMessage) -> Option<Self> {
+        Some(EndOfTurnInfo {
+            end_of_turn_tick: get_int(m, "end_of_turn_tick")?,
+            time_mode: get_str(m, "time_mode")?,
+        })
+    }
+}
+impl FunctionFireRequest {
+    pub fn parse(m: &RawMessage) -> Option<Self> {
+        Some(FunctionFireRequest { player_id: get_int(m, "player_id")? })
+    }
+}
+impl FunctionFire {
+    pub fn parse(m: &RawMessage) -> Option<Self> {
+        Some(FunctionFire { soldier_id: get_int(m, "soldier_id")? })
+    }
+}
+impl FunctionUpdateRequest {
+    pub fn parse(m: &RawMessage) -> Option<Self> {
+        Some(FunctionUpdateRequest {
+            player_id: get_int(m, "player_id")?,
+            function: get_str(m, "function").unwrap_or_default(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod match_tests {
     use super::*;
@@ -362,14 +480,47 @@ mod match_tests {
         include_str!("../fixtures/protocol_match.jsonl")
             .lines()
             .filter(|l| !l.trim().is_empty())
-            .map(|l| parse_message(l).expect("对局帧都应能解析"))
+            .filter_map(parse_message)   // 广播那种非单键 JSON 不在此列
             .collect()
     }
 
     #[test]
     fn parses_all_match_frames() {
         let msgs = match_msgs();
-        assert_eq!(msgs.len(), 109, "对局抓包去重后应有 109 条");
+        assert_eq!(msgs.len(), 84, "86 行夹具里有 2 行是 LAN 广播（非单键）");
+        let kinds: std::collections::HashSet<&str> = msgs.iter().map(|m| m.kind.as_str()).collect();
+        assert_eq!(kinds.len(), 45, "应覆盖 45 种单键消息（广播单独解析）");
+    }
+
+    #[test]
+    fn parses_lan_broadcast() {
+        let line = include_str!("../fixtures/protocol_match.jsonl")
+            .lines()
+            .find(|l| l.trim_start().starts_with("{\"room_name\""))
+            .expect("夹具里应有广播");
+        let b = Broadcast::parse(line).expect("广播应能解析");
+        assert_eq!(b.room_name, "Graphwar Game");
+        assert!(b.address.contains(':'));
+        assert_eq!(b.time_mode, "Timer1m", "实测广播与 TCP 用的是同一种拼写");
+    }
+
+    #[test]
+    fn parses_turn_and_fire_messages() {
+        let msgs = match_msgs();
+        let turn: Vec<TurnInfo> = msgs.iter().filter(|m| m.kind == "TurnInfo").filter_map(TurnInfo::parse).collect();
+        assert!(!turn.is_empty(), "应抓到 TurnInfo");
+        assert!(turn.iter().any(|t| t.player_id == 229 && t.soldier_id == 231), "实测样本");
+
+        let eot: Vec<EndOfTurnInfo> = msgs.iter().filter(|m| m.kind == "EndOfTurnInfo").filter_map(EndOfTurnInfo::parse).collect();
+        assert!(!eot.is_empty());
+        assert!(eot.iter().any(|e| e.time_mode == "Timer3m"), "实测出现 Timer3m");
+
+        let fires: Vec<FunctionFire> = msgs.iter().filter(|m| m.kind == "FunctionFire").filter_map(FunctionFire::parse).collect();
+        assert!(!fires.is_empty(), "应抓到 FunctionFire");
+        assert!(fires.iter().any(|f| f.soldier_id == 233));
+
+        let cnt: Vec<TurnCountInfo> = msgs.iter().filter(|m| m.kind == "TurnCountInfo").filter_map(TurnCountInfo::parse).collect();
+        assert!(cnt.iter().any(|c| c.turn_count == 0));
     }
 
     #[test]
@@ -379,15 +530,15 @@ mod match_tests {
             .filter(|m| m.kind == "AddObstacle")
             .filter_map(AddObstacle::parse)
             .collect();
-        assert_eq!(obstacles.len(), 12, "这一关抓到 12 个障碍");
-        // 实测第一条
+        assert_eq!(obstacles.len(), 3, "夹具里最多保留 3 条障碍样本");
+        // 夹具里保留的 3 条实测样本
         let o = &obstacles[0];
-        assert!((o.pos_x - (-14.167697818619251)).abs() < 1e-12);
-        assert!((o.pos_y - (-8.472137403369004)).abs() < 1e-12);
-        assert!((o.radius - 3.901519740713089).abs() < 1e-12);
-        // 半径里出现过 0.8（像是最小值），也出现过 5.27 这样的大值
-        assert!(obstacles.iter().any(|o| (o.radius - 0.8).abs() < 1e-12));
-        assert!(obstacles.iter().any(|o| o.radius > 5.0));
+        assert!((o.pos_x - 10.349758594817281).abs() < 1e-12);
+        assert!((o.pos_y - (-15.026524279418366)).abs() < 1e-12);
+        assert!((o.radius - 2.26759028710403).abs() < 1e-12);
+        // 半径出现过 0.8（两次，像最小值）；坐标可超出棋盘（|y|=16.27 > 15）
+        assert!(obstacles.iter().filter(|o| (o.radius - 0.8).abs() < 1e-12).count() == 2);
+        assert!(obstacles.iter().any(|o| o.pos_y.abs() > 15.0), "障碍允许落在场外");
     }
 
     #[test]
@@ -417,7 +568,9 @@ mod match_tests {
             .filter(|m| m.kind == "FunctionInfo")
             .filter_map(FunctionInfo::parse)
             .collect();
-        assert!(funcs.iter().any(|f| f.function == "exp(sin(x))"), "应抓到 Bot 提交的函数");
-        assert!(funcs.iter().any(|f| f.function.is_empty()));
+        // 夹具里只保留了 3 条，都是"尚未提交"的空串形态；
+        // 实抓里还出现过 "exp(sin(x))"（见 docs/24 §4.5）
+        assert!(funcs.iter().all(|f| f.function.is_empty()));
+        assert!(funcs.iter().all(|f| f.corrected_function.is_none()));
     }
 }

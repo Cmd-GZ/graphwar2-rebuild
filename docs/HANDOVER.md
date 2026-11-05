@@ -15,7 +15,14 @@
   `AddObstacle{pos_x,pos_y,radius}`（一局 12 个）、`PosInfo{entity_id,pos,radius=0.5}`、
   `LifeInfo{entity_id,alive}`、`FunctionInfo{owner_id,function,corrected_function}`（函数原文！）、
   `VersionInfo`、`TimeModeChangeRequest`、`FunctionUpdateRequest`
-- 仍缺：开火结算结果消息、回合推进消息（60 秒窗口内 Bot 只提交过一次函数）
+- **回合/开火链路也抓到了**（150 秒对局）：`GameStartRequest`、`ClearObstacles`、
+  `TurnInfo{player_id,soldier_id}`、`TurnCountInfo{turn_count}`、
+  `EndOfTurnInfo{end_of_turn_tick,time_mode}`、`FunctionUpdateRequest{player_id,function}`、
+  `FunctionFireRequest{player_id}`、`FunctionFire{soldier_id}`、`LifeInfo`、`EntityEffectInfo`
+- 抓包两个坑：`recv` 内部调 `recvfrom` 导致**双计**；入向流里**长度前缀重复**
+  → 最后改用"扫描 JSON 对象"提取
+- **自我更正**：docs/24 曾写"广播拼 `Timers1m`、TCP 拼 `Timer1m`"，实测 `Timers1m`
+  出现 0 次（两次抓包共 385 个 `Timer1m`/`Timer3m`），原文已改并记录教训
 
 ### 最终验收（全部实测）
 

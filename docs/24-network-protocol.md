@@ -21,8 +21,12 @@
  "turn_mode":"SequentialTurns","time_mode":"Timers1m","locked":false}
 ```
 
-注意广播里的 `time_mode` 是 `"Timers1m"`，而 TCP 里的 `TimeModeInfo` 是
-`"Timer1m"` —— **两处拼写不一致**，是原程序的真实行为，复刻时必须照抄。
+`time_mode` 实测取值只有 `Timer1m` / `Timer3m`（两次抓包共 385 次出现，
+`Timers1m` 出现 **0** 次）。
+
+> **更正**：本文件早先写过"广播拼 `Timers1m`、TCP 拼 `Timer1m`，两处不一致"。
+> 那是我凭印象写下的**错误结论**，实测数据否定了它。教训：文档里的每一个字面量
+> 都必须来自抓包数据的直接引用，不能凭记忆补全。
 
 ## 2. 消息格式
 
@@ -88,7 +92,7 @@
 {"AddObstacle":{"pos_x":-14.167697818619251,"pos_y":-8.472137403369004,"radius":3.901519740713089}}
 ```
 
-一局抓到 **12 个**障碍。半径里同时出现过 **0.8**（两次，像最小值）和 **5.27**（大值）；
+同一局抓到 **12~14 个**障碍。半径里同时出现过 **0.8**（两次，像最小值）和 **5.27**（大值）；
 坐标可超出棋盘（`pos_y=18.32` 超过 `|y|≤15`），说明障碍允许落在场外。
 
 ### 实体位置 `PosInfo`
@@ -117,6 +121,33 @@
 
 ### 其他新抓到的
 `VersionInfo`、`TimeModeChangeRequest`、`FunctionUpdateRequest`。
+
+## 4.6 回合与开火（第三轮抓包，46 种消息）
+
+跑满 150 秒的对局后，协议里出现了完整的回合/开火链路：
+
+| 阶段 | 消息 | 样本 |
+|---|---|---|
+| 开局 | `GameStartRequest` | `{}` |
+| 清场 | `ClearObstacles` | `{}` |
+| 摆障碍 | `AddObstacle` ×N | `{"pos_x":..,"pos_y":..,"radius":..}` |
+| 轮到谁 | `TurnInfo` | `{"player_id":229,"soldier_id":231}` |
+| 第几回合 | `TurnCountInfo` | `{"turn_count":0}` |
+| 回合截止 | `EndOfTurnInfo` | `{"end_of_turn_tick":10895,"time_mode":"Timer3m"}` |
+| 提交函数 | `FunctionUpdateRequest` | `{"player_id":229,"function":""}` |
+| 请求开火 | `FunctionFireRequest` | `{"player_id":232}` |
+| 宣布开火 | `FunctionFire` | `{"soldier_id":233}` |
+| 结果 | `LifeInfo` / `EntityEffectInfo` | `{"entity_id":230,"alive":true}` / `{"effect_type":"DeathEffect"}` |
+
+⇒ **"谁在第几回合、什么时候提交了什么函数、谁开了火"全部在协议里**，
+而且带 `end_of_turn_tick` 这样的时间戳，回合语义不再需要猜。
+
+### 抓包里踩的两个坑
+
+1. **双计**：`recv` 内部会调用 `recvfrom`，两个 hook 各抓一次 → 数据重复一遍；
+2. **长度前缀重复**：入向数据里先单独读 2 字节长度，随后收到的块又以同样的
+   前缀开头（`00 27 00 27 {...}`），按朴素帧解析会卡住。
+   最终改用**扫描 JSON 对象**的方式提取，对前缀差异免疫。
 
 ## 5. 还没抓到的部分（明确标注）
 
