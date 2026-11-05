@@ -1653,21 +1653,125 @@ func _test_fire_fx() -> void:
 	_expect(float(ring.get("coverage", 0.0)) > 0.05,
 		"光圈：开环也看得见（露出一小段弧 coverage=%.2f，**自定**）"
 			% float(ring.get("coverage", 0.0)))
-	input.text = "sin(x)"              # 函数非空 ⇒ 准备好
+	# **真值修正（`docs/140` §5.2，用户实测）**：原版是**点了 Fire / 按了回车之后**圈才闭合，
+	# **不是**"输入框非空"。所以下面这两条断言原来的期望值是反的 —— 现在按真值改写：
+	# 函数非空但没开火 ⇒ **仍然是开的**。断言条数不变（改的是期望值，不是删断言）。
+	input.text = "sin(x)"              # 函数非空，但**还没开火**
 	fx.advance_seconds(GwFireFx.RING_CLOSE_SECONDS)
 	ring = plane.ready_rings[0] if plane.ready_rings.size() > 0 else {}
-	_expect(bool(ring.get("ready", false)) and float(ring.get("progress", -1.0)) >= 0.999,
-		"光圈：函数非空 ⇒ **闭合**（progress=1、ready=true，实际 %.3f）"
+	_expect(not bool(ring.get("ready", true)) and float(ring.get("progress", -1.0)) <= 0.001,
+		"光圈：**函数非空也不算准备好**（原版要点 Fire 才闭合；progress=%.3f）"
 			% float(ring.get("progress", -1.0)))
-	_expect(is_equal_approx(float(ring.get("coverage", 0.0)), 1.0),
-		"光圈：闭合后覆盖整圈（coverage=%.2f）" % float(ring.get("coverage", 0.0)))
-	# 半程也要如实：闭合动画不是瞬时切换（时长本身是**自定**的 0.18 s）
-	input.text = ""
+	_expect(is_equal_approx(float(ring.get("coverage", 0.0)), 0.5),
+		"光圈：没开火时只覆盖张开态的 180°（=3 段 × 60°，coverage=%.2f）"
+			% float(ring.get("coverage", 0.0)))
+	# 开火（= `FireFx.play()`，由 `PlayScreen.fire()` 调用）⇒ 当场那个圈闭合。
+	# 这里直接喂一条 50 单位长（≈2.9 s @0.29 单位/tick）的假弹道，好在半程处停住观察。
+	var long_path := PackedVector2Array()
+	for k in 101:
+		long_path.append(Vector2(float(k) * 0.5, 0.0))
+	fx.play(long_path)
 	fx.advance_seconds(GwFireFx.RING_CLOSE_SECONDS * 0.5)
 	ring = plane.ready_rings[0] if plane.ready_rings.size() > 0 else {}
 	_expect(float(ring.get("progress", -1.0)) > 0.4 and float(ring.get("progress", -1.0)) < 0.6,
-		"光圈：张开动画走到半程（progress≈0.5，实际 %.3f）" % float(ring.get("progress", -1.0)))
+		"光圈：**开火后**闭合动画走到半程（progress≈0.5，实际 %.3f）"
+			% float(ring.get("progress", -1.0)))
 	fx.advance_seconds(GwFireFx.RING_CLOSE_SECONDS)
+	ring = plane.ready_rings[0] if plane.ready_rings.size() > 0 else {}
+	_expect(bool(ring.get("ready", false)) and float(ring.get("progress", -1.0)) >= 0.999,
+		"光圈：**开火 ⇒ 闭合**（progress=1、ready=true，实际 %.3f）"
+			% float(ring.get("progress", -1.0)))
+	_expect(is_equal_approx(float(ring.get("coverage", 0.0)), 1.0),
+		"光圈：闭合后覆盖整圈（coverage=%.2f）" % float(ring.get("coverage", 0.0)))
+	_expect(fx.pinned_count() == 1,
+		"光圈：开火那一帧把圈**钉住**（闭合态一直画到弹道飞完；钉住 %d 个）" % fx.pinned_count())
+
+	# ---------------- ②b 准备圈的**几何**：直接从 `EntityDrawer::draw` 的立即数复算===
+	# 这一段验的不是"常数抄对了"，而是**几何能被独立复算**：段数、半张角、缺口、
+	# 方位角、旋转量与"同源驱动"的关系、外凸箭头扇区顶点。出处见 `docs/140` §2。
+	_expect(GwPlaneView.RING_SEGMENTS == 3,
+		"准备圈：**3 段**（objdump：`A_i = A0 + i·2.09439510239` 取 i=0,1,2 ⇒ 步长正好 120°）")
+	# ① 准备前是**分离的 3 段**，不是 1 段连续弧
+	var half_open := GwPlaneView.ring_half_span(0.0)
+	var half_closed := GwPlaneView.ring_half_span(1.0)
+	_expect(absf(rad_to_deg(half_open) - 30.0) < 1e-4,
+		"准备圈：张开态半张角 = π/6 = 30°（立即数 `0x19f2e8 = 0.523598775598`；实际 %.4f°）"
+			% rad_to_deg(half_open))
+	_expect(absf(rad_to_deg(half_closed) - 61.5) < 0.05,
+		"准备圈：闭合态半张角封顶 61.5°（立即数 `1.07337748998` rad；实际 %.4f°）"
+			% rad_to_deg(half_closed))
+	# 张开：3 段 × 60° = 180° ⇒ 缺口 180°（**明显是分开的**）
+	_expect(absf(3.0 * 2.0 * rad_to_deg(half_open) - 180.0) < 1e-3,
+		"准备圈：准备前 3 段各 60°、合计 180° ⇒ 缺口还剩 180°（分开的 3 段）")
+	# 闭合：3 段 × 123° = 369° > 360° ⇒ 首尾**重叠**，一定闭合
+	_expect(3.0 * 2.0 * rad_to_deg(half_closed) > 360.0,
+		"准备圈：闭合态 3 段 × 123° = %.1f° > 360° ⇒ **首尾重叠成整圈**"
+			% (3.0 * 2.0 * rad_to_deg(half_closed)))
+	_expect(is_equal_approx(float(ring.get("coverage", 0.0)), 1.0),
+		"准备圈：闭合后覆盖钳到 1.0（coverage=%.2f）" % float(ring.get("coverage", 0.0)))
+	# ② 方位角 = A0 + 120°·i；张开态整组回退，回退角**不是独立参数**
+	var az_ready := [0, 1, 2].map(func(i): return rad_to_deg(GwPlaneView.ring_segment_azimuth(i, 1.0)))
+	var az_open := [0, 1, 2].map(func(i): return rad_to_deg(GwPlaneView.ring_segment_azimuth(i, 0.0)))
+	_expect(absf(az_ready[0] - 60.0) < 1e-4 and absf(az_ready[1] - 180.0) < 1e-4
+		and absf(az_ready[2] - 300.0) < 1e-4,
+		"准备圈：闭合态方位 60°/180°/300°（**真帧实测 60.5°/180.2°/300.5°**；实际 %s）"
+			% str(az_ready))
+	_expect(absf((az_ready[0] - az_open[0]) - 15.75) < 1e-4,
+		"准备圈：张开态整组回退 15.75°（真帧实测 +15°；实际 %.2f°）" % (az_ready[0] - az_open[0]))
+	_expect(absf(GwPlaneView.RING_SPIN_DEG
+		- (GwPlaneView.RING_HALF_DEG_MAX - GwPlaneView.RING_HALF_DEG_MIN) * 0.5) < 1e-6,
+		"准备圈：回退角 = (Hmax−Hmin)/2 —— 原版 `A0 = V/120`、`dH = dV/60` ⇒ `dA0 = dH/2`，"
+		+ "**转与合拢是同一个 V 驱动的**（不是两套动画）")
+	# ③ 颜色：真帧取样 #7D6800 **就在**调色板里，且环用的就是该士兵的玩家色
+	var sampled := Color8(125, 104, 0)          # 两张裁图的主导非白/非灰颜色，逐像素数出来的
+	var palette_hit := false
+	for team in GwPlaneView.TEAM_COLORS:
+		for c in team:
+			if c == sampled:
+				palette_hit = true
+	_expect(palette_hit,
+		"准备圈：真帧取样色 #7D6800 **是调色板里的一员**（TEAM_COLORS[*] 命中）")
+	var ring_col: Color = ring.get("color", Color(1, 0, 1))
+	_expect(ring_col == plane.soldiers[0]["color"],
+		"准备圈：环的颜色 = 该士兵的**玩家色**（本局为 %s；真帧那一局恰好抽到 #7D6800）"
+			% ring_col.to_html(false))
+	_expect(GwPlaneView.TEAM_COLORS[0][2] == sampled,
+		"准备圈：真帧取样色正是 TEAM_COLORS[0][2]（环/箭头/名字/弹道同色）")
+	# ④ 尺寸：宽高比逐位对上（R 本身取自运行时 PosInfo，只有比例能静态验）
+	_expect(absf(GwPlaneView.RING_WIDTH_UNITS - 0.3) < 1e-6,
+		"准备圈：环带宽 0.3（`draw_arc` 的 width 立即数 `0x3e99999a` = 0x1bb2b4）")
+	_expect(absf(GwPlaneView.RING_RADIUS_UNITS / GwPlaneView.RING_WIDTH_UNITS - 2.859) < 0.002,
+		"准备圈：R/W = 2.859（真帧 外径/内径 = 22.57/15.85 = 1.4240 反解；实际 %.4f）"
+			% (GwPlaneView.RING_RADIUS_UNITS / GwPlaneView.RING_WIDTH_UNITS))
+	var ratio := (GwPlaneView.RING_RADIUS_UNITS + GwPlaneView.RING_WIDTH_UNITS * 0.5) \
+		/ (GwPlaneView.RING_RADIUS_UNITS - GwPlaneView.RING_WIDTH_UNITS * 0.5)
+	_expect(absf(ratio - 1.4240) < 0.002,
+		"准备圈：由 R/W 反算的 外径/内径 = %.4f，对得上真帧实测的 1.4240" % ratio)
+	_expect(GwPlaneView.RING_ARC_POINTS == 10 and not GwPlaneView.RING_ARC_ANTIALIASED,
+		"准备圈：每段只折 10 个点、**关抗锯齿**（`mov $0xa,%esi` / `xor %ecx,%ecx`）")
+	_expect(GwFireFx.RING_OPEN_ALPHA == 1.0,
+		"准备圈：张开态**不透明**（真帧准备态 #7D6800 精确色 934 px，没有半透明）")
+	# 外凸箭头：顶点都落在 [环外径, 尖端] 内、方位在 ±9° 内
+	var barb_pts := GwPlaneView.ring_barb_polygon(Vector2.ZERO, 0.0, 100.0, 20.0, 150.0)
+	var barb_ok := barb_pts.size() >= 12
+	var r_min := 1e9
+	var r_max := -1e9
+	for p in barb_pts:
+		var rr: float = Vector2(p).length()
+		r_min = minf(r_min, rr)
+		r_max = maxf(r_max, rr)
+		barb_ok = barb_ok and absf(Vector2(p).angle()) <= deg_to_rad(GwPlaneView.RING_BARB_HALF_DEG) + 1e-4
+	_expect(barb_ok and absf(r_max - 150.0) < 1e-3 and absf(r_min - 110.0) < 1e-3,
+		"准备圈：外凸箭头是扇区（顶点 %.0f~%.0f = 环外径 110 / 尖端 150，角宽 ±%.0f°）"
+			% [r_min, r_max, GwPlaneView.RING_BARB_HALF_DEG])
+	_expect(GwPlaneView.RING_BARB_TIP_UNITS > GwPlaneView.RING_RADIUS_UNITS + GwPlaneView.RING_WIDTH_UNITS * 0.5,
+		"准备圈：箭头**凸出环外径**（尖端 %.3f > 外径 %.3f）"
+			% [GwPlaneView.RING_BARB_TIP_UNITS,
+				GwPlaneView.RING_RADIUS_UNITS + GwPlaneView.RING_WIDTH_UNITS * 0.5])
+	# 弹道线宽：实测 2.83 px ⇒ 2.2 画布 px（原来 3.0，粗 1.35×）
+	_expect(absf(GwPlaneView.PATH_WIDTH_CANVAS_PX - 2.2) < 1e-6,
+		"弹道：线宽 2.2 画布 px（真帧 45° 斜线横向跨 4 px ⇒ 4·sin45° = 2.83 px 垂直线宽）")
+
 	# 对局结束后**不该还留着光圈**
 	play.call("end_match")
 	fx.advance_seconds(0.2)
