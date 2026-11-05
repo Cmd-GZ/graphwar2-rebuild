@@ -37,7 +37,7 @@
 | 命中与生命 `life_manager` | 🔶 | 死亡链路 + **致死判定已定量验证**（穿过即死、不挡弹道，2 例距离 0.4746/0.4944，`docs/30`）；血量/友军规则未知 |
 | **回合状态机**（`src/turnstate.rs`） | ✅ | 6 状态 + 7 事件，**13 次迁移与抓包逐个相同**（`docs/41`） |
 | 回合调度 `turn_manager` | ⬜ | **出场顺序不可复现**（10 局样本：仅队伍交替稳定，起始人与队内顺序随机，与创建顺序无关；推断为开局随机，`docs/47`） |
-| 关卡生成 `level_generator` | ✅ | **公式全部闭合**（`docs/55`）：个数=`trunc(N(0,1)*7+15)`、半径=`max(N(0,1)*1.6+2.6, 0.8)`、`x=(2r+25)(2u-1)`、`y=(2r+15)(2v-1)`；RNG=ChaCha（key 可运行时读）；u/v 已用真实坐标精确命中 13/13 |
+| 关卡生成 `level_generator` | ✅ | **公式闭合 + 端到端重放成功**（`docs/56`）：仅凭运行时抓到的随机流与 `.rodata` 里的 ziggurat 表，**13/13 障碍的坐标与半径逐位预测一致** |
 | AI `computer_player_manager` / `function_evolutionator` | ⬜ | 入口与评分循环已定量刻画（`docs/29`），但**候选生成依赖同一条 OS 熵**、适应度未知 ⇒ 不可复现（`docs/48`） |
 | **tick 时钟（60 Hz）** | ✅ | `tick_at()` 用 113 个真实样本验证；`TickReply` 逐字节一致（`docs/35`）。**另解出** `end_of_turn_tick = 回合开始 tick + 时长`，**六档全部实测**（含 `Timer30s`、`TimerInf=0` 哨兵，`docs/42`） |
 | **服务端握手（状态同步）** | ✅ | `server::on_new_connection` 7 条消息与抓包逐字节一致；`serve_handshake` 经真实 TCP 往返验证（`docs/33`） |
