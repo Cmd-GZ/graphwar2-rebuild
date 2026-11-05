@@ -39,7 +39,7 @@
 | 回合调度 `turn_manager` | ⬜ | **已证伪"来自 ChaCha 流"**（3 局 × 每局 2~4 条流 × 3 种抽样 × 25 个偏移，另加 6 局 × 2 基准 × 4 方法，全部不一致）。最可能来自 **HashMap 迭代顺序**（OS 熵播种的 SipHash 键），与 ChaCha 是两条独立熵流 ⇒ 不可确定性复现（`docs/60`） |
 | 关卡生成 `level_generator`（随机散布模式） | ✅ | **Rust 实现 + 逐位复现**（`docs/61`）：`levelgen::generate` 用真实随机流夹具跑出 13 个障碍，`x/y/r` 的 `to_bits()` 全等；公式与 ziggurat 表来自 `docs/55/56` |
 | 关卡生成：**其他模式**（如圆盘式） | ⬜ | `FUN_005ea6dc` 是圆盘式生成器（64 个撒在 ≤7.5、再加 16 个撒在 ≤3.0），与随机散布完全不同；其余 `next_u64` 调用者未看（`docs/70`） |
-| AI `computer_player_manager` / `function_evolutionator` | 🔶 | **算法 + 参数表 + 机器人名单已还原**（`docs/66`/`67`/`68`）：GW1 进化算法、适应度 `命中×2e6 − minDist²/100 − 步数超限?5e7`、六档 `(代数, 种群)` 从实参直读、六个机器人名 ↔ 六档难度。**仍缺**：token 权重、变异/交叉个数、`-5e7` 阈值 |
+| AI `computer_player_manager` / `function_evolutionator` | 🔶 | **算法、适应度、六档参数、机器人名单、token 权重表均已还原**（`docs/66`/`67`/`68`/`71`）：进化算法；适应度 `命中×2e6 − minDist²/100 − 步数超限?5e7`；六档 `(代数,种群)` 从实参直读；**token 权重表从二进制直读并经 40 万样本实测吻合**，已实现为 `src/aigen.rs`。**仍缺**：变异/交叉个体数、`-5e7` 阈值、整棵函数树的生成规则 |
 | **tick 时钟（60 Hz）** | ✅ | `tick_at()` 用 113 个真实样本验证；`TickReply` 逐字节一致（`docs/35`）。**另解出** `end_of_turn_tick = 回合开始 tick + 时长`，**六档全部实测**（含 `Timer30s`、`TimerInf=0` 哨兵，`docs/42`） |
 | **服务端握手（状态同步）** | ✅ | `server::on_new_connection` 7 条消息与抓包逐字节一致；`serve_handshake` 经真实 TCP 往返验证（`docs/33`） |
 | **服务端对象 `Match`（开火结算+出报文）** | ✅ | `fire()` 按抓包顺序产出 8 类报文（`docs/43`），状态推进位置与真实一致；按回合配对回放 4 发终点全对、致死集合一致（`docs/37`） |

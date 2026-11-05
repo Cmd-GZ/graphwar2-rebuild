@@ -119,6 +119,7 @@ pub mod game;
 pub mod levelgen;
 pub mod serverloop;
 pub mod rng;
+pub mod aigen;
 mod levelgen_tables;
 pub mod turnstate;
 pub mod capi;
