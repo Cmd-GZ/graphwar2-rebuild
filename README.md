@@ -32,9 +32,9 @@
 | 资源还原 | ✅ | 692 文件 md5 全符（`tools/pck_extract.py`） |
 | 打包运行（代码+资源） | ✅ | 导出 `.pck` 并从包启动：扩展注册成功、还原的纹理加载成功（`docs/19` §7） |
 | 开火结算 `shot_calculator` | 🔶 | 调用链已还原；`0x3c2bc0`（12 KB）未逐条还原 |
-| 命中与生命 `life_manager` | 🔶 | 结构（RwLock + 两张表）；伤害规则未知 |
+| 命中与生命 `life_manager` | 🔶 | 结构 + 协议里的 `LifeInfo{alive}` 真实样本；伤害规则未知 |
 | 回合 `turn_manager` | 🔶 | 14 函数/22 调用者已定位；语义（迭代器 + 闭包）未还原 |
-| 关卡生成 `level_generator` | ⬜ | 仅知 8 个函数地址 |
+| 关卡生成 `level_generator` | 🔶 | **协议里抓到真实关卡数据**（12 个障碍的坐标与半径）；生成算法未还原 |
 | AI `computer_player_manager` / `function_evolutionator` | 🔶 | 经指针调用开火结算；评分规则未知 |
 | 联机实现 | 🔶 | **传输层与 29 种消息已用真实抓包还原**（`docs/24`，`src/protocol.rs` + 29 条真实帧测试）；对局内消息未捕获 |
 

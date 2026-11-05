@@ -11,7 +11,11 @@
 - LAN 发现：UDP 广播，明文 JSON（`time_mode` 写作 `"Timers1m"`）
 - 对局：TCP，**`u16` 大端长度 + JSON**
 - 29 种消息已入库为 `fixtures/protocol.jsonl`，`src/protocol.rs` 全部解析通过
-- 未捕获：对局内（回合/开火/结算）消息 —— 抓包在 setup 阶段撞到 400 包上限
+- **对局内消息已抓到**（`fixtures/protocol_match.jsonl`，109 条去重）：
+  `AddObstacle{pos_x,pos_y,radius}`（一局 12 个）、`PosInfo{entity_id,pos,radius=0.5}`、
+  `LifeInfo{entity_id,alive}`、`FunctionInfo{owner_id,function,corrected_function}`（函数原文！）、
+  `VersionInfo`、`TimeModeChangeRequest`、`FunctionUpdateRequest`
+- 仍缺：开火结算结果消息、回合推进消息（60 秒窗口内 Bot 只提交过一次函数）
 
 ### 最终验收（全部实测）
 

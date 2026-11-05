@@ -77,10 +77,52 @@
 - `get_str` / `get_int` / `get_color`：按字段取值；
 - 测试：29 条真实帧全部解析、长度前缀自洽、半包等待、嵌套颜色、非 JSON 拒绝。
 
+## 4.5 对局内消息（第二轮抓包，关键）
+
+`tools/capture_net_raw.js` 改抓**原始字节流**再按帧重组（TCP 会拆包，不能按调用边界当帧），
+得到 166 帧、去重 109 条，存为 `fixtures/protocol_match.jsonl`。
+
+### 关卡障碍 `AddObstacle`
+
+```json
+{"AddObstacle":{"pos_x":-14.167697818619251,"pos_y":-8.472137403369004,"radius":3.901519740713089}}
+```
+
+一局抓到 **12 个**障碍。半径里同时出现过 **0.8**（两次，像最小值）和 **5.27**（大值）；
+坐标可超出棋盘（`pos_y=18.32` 超过 `|y|≤15`），说明障碍允许落在场外。
+
+### 实体位置 `PosInfo`
+
+```json
+{"PosInfo":{"entity_id":231,"pos_x":-21.604890565331004,"pos_y":5.894946389140589,"radius":0.5}}
+```
+
+士兵 `radius` **恒为 0.5**（4 条样本一致）。
+
+### 生死 `LifeInfo`
+
+```json
+{"LifeInfo":{"entity_id":231,"alive":true}}
+```
+
+### 提交的函数 `FunctionInfo`
+
+```json
+{"FunctionInfo":{"owner_id":234,"function":"exp(sin(x))","corrected_function":null}}
+{"FunctionInfo":{"owner_id":231,"function":"","corrected_function":null}}
+```
+
+⇒ **协议里直接带着玩家写的函数原文**。空串表示该实体尚未提交。
+这是"回合语义"最直接的证据来源：谁在什么时候提交了什么。
+
+### 其他新抓到的
+`VersionInfo`、`TimeModeChangeRequest`、`FunctionUpdateRequest`。
+
 ## 5. 还没抓到的部分（明确标注）
 
-- **对局内的消息**：本次抓包在 setup 阶段就达到 400 包上限，
-  `TurnStart` / 函数提交 / 开火结算 / 掉线重连等**尚未捕获**；
+- ~~对局内消息~~ **已捕获**（见 4.5）：障碍、位置、生死、函数原文都有了；
+- 仍缺：**开火结算的结果消息**（打中谁/伤害多少）与**回合推进消息**——
+  这一局只跑了 60 秒且 Bot 只提交了一次函数；
 - 服务器对局中广播给多客户端的顺序与去重规则未知；
 - 二进制里的序列化实现（是手写还是 serde）未定位——目前只按**线上字节**还原。
 
