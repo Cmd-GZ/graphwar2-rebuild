@@ -77,7 +77,9 @@ mod tests {
 /// 分别是 `60 / 120 / 180 / 300` 秒 × 60 tick。验法：把 harness 的回合时间按钮按不同次数，
 /// 抓 `EndOfTurnInfo` 与同时刻的 `current_tick`，其差值应为 `时长 - 采样偏移`。
 ///
-/// **推断**（未验证）：`Timer30s` —— 没有单独取到样本。
+/// `Timer30s` 也已实测（1800）。`TimerInf` 表示无限时，返回 `None`；
+/// **注意**：线上它把 `end_of_turn_tick` 发成 `0`（实测 `end - current_tick = -66`，
+/// 而当时 `current_tick = 66`），所以写报文时要用 `end_of_turn_tick_wire`。
 pub fn turn_duration_ticks(time_mode: &str) -> Option<i64> {
     Some(match time_mode {
         "Timer30s" => 30 * TICKS_PER_SECOND,
@@ -94,6 +96,11 @@ pub fn end_of_turn_tick(turn_start_tick: i64, time_mode: &str) -> Option<i64> {
     turn_duration_ticks(time_mode).map(|d| turn_start_tick + d)
 }
 
+/// 线上表示：有限时给截止 tick，无限时（`TimerInf`）发 `0`。
+pub fn end_of_turn_tick_wire(turn_start_tick: i64, time_mode: &str) -> i64 {
+    end_of_turn_tick(turn_start_tick, time_mode).unwrap_or(0)
+}
+
 #[cfg(test)]
 mod end_of_turn_tests {
     use super::*;
@@ -102,7 +109,7 @@ mod end_of_turn_tests {
     ///
     /// `Timer1m/2m/5m` 三档是通过改变 harness 的回合时间按钮抓到的（见 docs/42），
     /// `Timer3m` 是默认档位。
-    const SAMPLES: [(i64, i64, &str); 10] = [
+    const SAMPLES: [(i64, i64, &str); 12] = [
         (65, 10885, "Timer3m"),
         (606, 11432, "Timer3m"),
         (1086, 11945, "Timer3m"),
@@ -113,11 +120,19 @@ mod end_of_turn_tests {
         (66, 18085, "Timer5m"),
         (301, 18342, "Timer5m"),
         (1146, 11945, "Timer3m"),
+        (66, 1866, "Timer30s"),
+        (66, 0, "TimerInf"), // 无限时：线上发 0
     ];
 
     #[test]
     fn end_of_turn_is_start_plus_duration() {
         for (cur, end, mode) in SAMPLES {
+            if mode == "TimerInf" {
+                // 无限时：线上就是 0，不存在"开始 + 时长"
+                assert_eq!(end, 0, "TimerInf 应发 0");
+                assert_eq!(turn_duration_ticks(mode), None);
+                continue;
+            }
             let implied_start = end - turn_duration_ticks(mode).unwrap();
             let delta = implied_start - cur;
             // 抓包时刻与"回合开始"不完全同步，允许一秒（60 tick）的偏差
@@ -133,6 +148,9 @@ mod end_of_turn_tests {
         assert_eq!(turn_duration_ticks("Timer3m"), Some(10800));
         assert_eq!(turn_duration_ticks("Timer1m"), Some(3600));
         assert_eq!(turn_duration_ticks("TimerInf"), None);
+        assert_eq!(turn_duration_ticks("Timer30s"), Some(1800));
+        assert_eq!(end_of_turn_tick_wire(100, "TimerInf"), 0, "无限时应发 0");
+        assert_eq!(end_of_turn_tick_wire(100, "Timer30s"), 1900);
         assert_eq!(end_of_turn_tick(100, "Timer3m"), Some(10900));
     }
 }

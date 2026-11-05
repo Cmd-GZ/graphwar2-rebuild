@@ -52,9 +52,25 @@ pub fn end_of_turn_tick(turn_start_tick: i64, time_mode: &str) -> Option<i64>
 
 差值总是比标称值大 20~60 —— 因为抓包时刻比"回合真正开始"晚一点，与前面的解释一致。
 
-- **已验证**：`Timer1m/2m/3m/5m`（×60 的整分钟档位）；
-- **推断**（文档里标了）：`Timer30s` —— 没取到样本；
-- `TimerInf`（无限时）返回 `None`（没有截止）。
+### 全部档位（按键循环实测）
+
+把回合时间按钮按 0~6 次，得到的循环顺序是：
+
+```
+Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回到 Timer1m)
+```
+
+| 模式 | 实测 `end - 当时 current_tick` | 应为 |
+|---|---|---|
+| `Timer1m` | 3620 / 3619 | 3600 |
+| `Timer2m` | 7227 | 7200 |
+| `Timer3m` | 10820 / 10819 | 10800 |
+| `Timer5m` | 18019 | 18000 |
+| `Timer30s` | 1819 | 1800 |
+| `TimerInf` | **−66**（当时 cur=66 ⇒ 线上值为 `0`） | 0（哨兵） |
+
+⇒ **六档全部实测**。`TimerInf` 用 `0` 表示"没有截止"，
+所以实现里 `end_of_turn_tick()` 返回 `None`，写报文时用 `end_of_turn_tick_wire()` 得到 `0`。
 
 ## 4. 还剩什么
 
