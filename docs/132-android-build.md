@@ -752,3 +752,23 @@ lipo -create -output libgw2_rebuild.dylib \
 * 没有做任何交叉编译，没有装工具链。
 * 没有动 `docs/INDEX.md` / `docs/HANDOVER.md`。
 * 没有把任何二进制、APK、`Win/` 内容复制进本仓库（`git ls-files` 自检见提交说明）。
+
+## 附录 B · 为什么桌面端**永远**不会有广告（脚本级证据）
+
+`Ad_holder.gd` 的 `_ready()` 第一件事就是：
+
+```gdscript
+func _ready():
+	root = get_node("/root/GraphwarRootNode")
+	MobileAds.initialize()          # ← AdMob 插件的全局单例
+	create_ad_view()
+```
+
+而 `MobileAds` 这个单例**只在 AdMob 插件的 Android 构建里注册**。
+在 Linux / Windows 上它不存在 ⇒ `_ready()` 在这一行就抛错，**后面的 `create_ad_view()` 根本到不了**。
+
+⇒ **桌面端看不到广告不是"没填充"，是结构上不可能。** 用户"在哪个平台都没见过广告"里，
+桌面那部分由此解释；Android 那部分仍需要真机 `logcat` 才能定性（见 §6 的待验证项）。
+
+我们的重建版**没有实现广告**，也不需要——`docs/132` §2 已证广告与采样器/掩膜/命中/生命/目标/回合
+**零引用**。
