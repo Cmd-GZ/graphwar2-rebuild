@@ -11,6 +11,9 @@
 - LAN 发现：UDP 广播，明文 JSON（`time_mode` 写作 `"Timers1m"`）
 - 对局：TCP，**`u16` 大端长度 + JSON**
 - 29 种消息已入库为 `fixtures/protocol.jsonl`，`src/protocol.rs` 全部解析通过
+- **`end_of_turn_tick` 解开**（`docs/42`）：它是**回合截止时刻** =
+  `回合开始 tick + 时长`；频率同为 60Hz，`Timer3m`=10800 tick 已用 5 个样本验证
+  （反推的回合开始 tick 与当时 `current_tick` 差 0~60）。其余档位按名字×60 推断
 - **回合状态机可运行**（`docs/41`）：6 状态 7 事件，13 次迁移与抓包**逐个相同**。
   **未还原**：各状态持续时间——`end_of_turn_tick`（10886/11184/11457）与我们的
   60Hz 时钟（65/126/426）对不上，说明是另一套时间基准

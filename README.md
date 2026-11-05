@@ -39,7 +39,7 @@
 | 回合调度 `turn_manager` | 🔶 | 出场顺序只验到「队伍严格交替」（`docs/28`）；**状态时间驱动未还原**（`end_of_turn_tick` 与 60Hz 时钟对不上） |
 | 关卡生成 `level_generator` | ⬜ | **随机源是 OS 熵**（`getrandom` 921 次/40s，`rand/srand` 全 0）⇒ 同局**不可复现**；只观测到分布（障碍 5~21 个、`r∈[0.8,5.26]`、位置可越界，`docs/40`） |
 | AI `computer_player_manager` / `function_evolutionator` | 🔶 | 入口 `0x51b440`（每回合 1 次）+ 评分循环 `0x51a750`（每回合约 3800 次、step=0.5）已定量刻画；**候选生成/适应度/RNG 均未知**（`docs/29`） |
-| **tick 时钟（60 Hz）** | ✅ | `tick_at()` 用 113 个真实 `TickReply` 样本验证（110 精确、抖动 ≤7），`TickReply` 序列化逐字节一致（`docs/35`） |
+| **tick 时钟（60 Hz）** | ✅ | `tick_at()` 用 113 个真实样本验证；`TickReply` 逐字节一致（`docs/35`）。**另解出** `end_of_turn_tick = 回合开始 tick + 时长`（`Timer3m`=10800 已证，`docs/42`） |
 | **服务端握手（状态同步）** | ✅ | `server::on_new_connection` 7 条消息与抓包逐字节一致；`serve_handshake` 经真实 TCP 往返验证（`docs/33`） |
 | **服务端对象 `Match`（开火结算+出报文）** | ✅ | `Match::fire` 产出完整消息串；**按回合配对的精确回放：4 发终点全对、致死集合逐发一致**（`docs/37`） |
 | 联机实现（玩家/tick/结算广播） | 🔶 | 传输层与 46 种消息已还原；**颜色分配规则未定**（10 个观测值、非纯随机也非按 id 绑定，`docs/34`）、tick 节拍与结算广播未实现 |

@@ -70,3 +70,62 @@ mod tests {
         assert_eq!(tick_at(0, 1000, 0), -60, "负时间也要线性");
     }
 }
+
+/// 时间模式对应的回合时长（tick 数）。
+///
+/// **已验证**：`Timer3m` = 10800（180 秒 × 60）。依据是真实抓包——
+/// 若 `end_of_turn_tick = 回合开始 tick + 10800`，则 `end_of_turn_tick - 10800`
+/// 应等于回合开始时的 `current_tick`；实测该差值与当时的 `current_tick`
+/// 相差 0~60（见 `docs/42`）。
+///
+/// **推断**（未验证）：其余档位按"名字里的时间 × 60"给出。
+pub fn turn_duration_ticks(time_mode: &str) -> Option<i64> {
+    Some(match time_mode {
+        "Timer30s" => 30 * TICKS_PER_SECOND,
+        "Timer1m" => 60 * TICKS_PER_SECOND,
+        "Timer2m" => 120 * TICKS_PER_SECOND,
+        "Timer3m" => 180 * TICKS_PER_SECOND, // 已验证
+        "Timer5m" => 300 * TICKS_PER_SECOND,
+        _ => return None, // TimerInf / 未知模式：没有截止时刻
+    })
+}
+
+/// 回合截止 tick = 回合开始时的 tick + 时长。
+pub fn end_of_turn_tick(turn_start_tick: i64, time_mode: &str) -> Option<i64> {
+    turn_duration_ticks(time_mode).map(|d| turn_start_tick + d)
+}
+
+#[cfg(test)]
+mod end_of_turn_tests {
+    use super::*;
+
+    /// 真实抓包里的 `(当时 current_tick, end_of_turn_tick, time_mode)`。
+    const SAMPLES: [(i64, i64, &str); 5] = [
+        (65, 10885, "Timer3m"),
+        (606, 11432, "Timer3m"),
+        (846, 11680, "Timer3m"),
+        (1086, 11945, "Timer3m"),
+        (1146, 11945, "Timer3m"),
+    ];
+
+    #[test]
+    fn end_of_turn_is_start_plus_duration() {
+        for (cur, end, mode) in SAMPLES {
+            let implied_start = end - turn_duration_ticks(mode).unwrap();
+            let delta = implied_start - cur;
+            // 抓包时刻与"回合开始"不完全同步，允许一秒（60 tick）的偏差
+            assert!(
+                delta.abs() <= 60,
+                "mode={mode} end={end} cur={cur} 推出的开始 tick={implied_start}，偏离 {delta}"
+            );
+        }
+    }
+
+    #[test]
+    fn timer3m_is_10800_ticks() {
+        assert_eq!(turn_duration_ticks("Timer3m"), Some(10800));
+        assert_eq!(turn_duration_ticks("Timer1m"), Some(3600));
+        assert_eq!(turn_duration_ticks("TimerInf"), None);
+        assert_eq!(end_of_turn_tick(100, "Timer3m"), Some(10900));
+    }
+}
