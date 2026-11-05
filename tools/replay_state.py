@@ -113,8 +113,16 @@ def main():
     if pos_guess and (abs(pos_guess[0] - sx) > 0.01 or abs(pos_guess[1] - sy) > 0.01):
         print(f"# 注意: PosInfo=({pos_guess[0]:.2f},{pos_guess[1]:.2f}) 与 "
               f"FunctionPoints.start=({sx:.2f},{sy:.2f}) 不一致，采用后者", file=sys.stderr)
-    # 方向：功能点在 x 上向左则为 flip
-    flip = 1 if picked["end_x"] < sx else 0
+    # 方向：**由队伍决定**——我方(Team1)永远在 x<0、敌方(Team2)永远在 x>0
+    # （773 个士兵位置 0 例外，见 docs/105）。Team1 向右、Team2 向左。
+    # 不要用 start_x/end_x 比大小：弯曲弹道会出现 end_x < start_x 的假象。
+    tm = picked["team"].get(shooter, "")
+    if tm == "Team1":
+        flip = 0
+    elif tm == "Team2":
+        flip = 1
+    else:
+        flip = 1 if picked["end_x"] < sx else 0   # 队伍未知时才回退到几何判断
 
     print(f"MODE {picked['mode']}")
     print(f"TICK {picked['tick']}")
