@@ -1,61 +1,100 @@
 extends GwScreen
 ## ChatPopUp —— 聊天。
 ##
-## 结构（`docs/92` §4.12，恢复出的 chat_pop_up.tscn **只有 7 个节点**）：
-##   Control
-##   └ ChatContainer/ChatContainer2
-##        ├ MarginContainer/GraphwarButton（空文本，发送按钮）
-##        ├ ChatLineEdit（text_submitted → on_chat_submitted，Rust 侧）
-##        └ ChatBox（RichTextLabel，`ChatBox.gd`：点它 → chat_line_edit.grab_focus()）
+## 本轮（docs/130）照恢复出的 `chat_pop_up.tscn` **逐节点**重写（那个场景只有 7 个节点），
+## 并用"原版 pck 直接实例化 + 同版本引擎"的逐像素真值核对。1920×1160 下量到的矩形：
+##
+##   ChatContainer   (0,0)   1920×1160   ← 左右各 10 px 内边距（`ChatContainer` 内联脚本）
+##   ChatContainer2  (10,0)  1900×1160
+##     MarginContainer (10,0) 1900×**96**  → GraphwarButton（**看不见**的发送键，invisible_theme）
+##     ChatLineEdit    (10,100) 1900×**62** ← 黑底 62.7% + 3 px 黑边 + 圆角 10
+##     ChatBox         (10,166) 1900×**994** ← 黑底 62.7%、**无边框**、无圆角
+##
+## 也就是说：**聊天是一整屏的浮层**，不是我们以前那个 640×360 的小对话框 ——
+## 上面一条看不见的发送键、中间一条输入行、下面 994 px 的聊天记录。真帧里能看见的
+## 只有两块半透明黑（输入行与聊天区）。
+##
+## 字号：`ChatContainer` 内联脚本 = 宽/50；发送键那层是 `ExitButtonContainer.gd` = 宽/30。
+## 颜色：输入行与聊天区的黑是 `StyleBoxFlat(bg = Color(0,0,0,0.627451))`，压在原版
+## 深绿底上正好是 (5,14,10) —— 真帧逐像素核对过。
 ##
 ## `ChatBox.gd` 是**有行为的 5 个脚本之一**（`docs/101` §4.3），行为就是"点聊天区聚焦输入框"，
 ## 本项目照抄（鼠标/触屏两路，用 `_gui_input` 简化成鼠标）。
 ##
 ## 消息本身走协议（`docs/24`），本项目没有网络层：发送只回显到本地 ChatBox，并注明未发送。
 
+## 原版 `chat_pop_up.tscn` 里两块黑的颜色（逐字照抄 StyleBoxFlat 的 bg_color）
+const BLACK_BG := Color(0, 0, 0, 0.627451)
+
 var _chat_box: RichTextLabel
 var _line_edit: LineEdit
 var _lines: Array[String] = []
 
 func _ready() -> void:
-	font_divisor = 50        # ChatContainer.gd: 宽/50
+	font_divisor = 50        # ChatContainer.gd：宽/50
 	super()
 
 func build() -> void:
-	var d := GwUI.dialog(self, Vector2(640, 360))
-	var content: VBoxContainer = d.content
-	content.name = "ChatContainer2"
+	# 外层：满屏 + 左右各 10 px（原版内联脚本只写 margin_left/right）
+	var shell := GwUI.margins("ChatContainer", 10, 0, 10, 0, self)
+	shell.set_anchors_preset(Control.PRESET_FULL_RECT)
+	shell.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
+	var content := GwUI.vbox("ChatContainer2", GwUI.SEPARATION, shell)
+
+	# ① 看不见的发送键：MarginContainer(ExitButtonContainer.gd, 宽/30) → GraphwarButton
+	var send_holder := GwUI.margin("MarginContainer", 0, content)
+	send_holder.set_meta("font_divisor", 30)
+	var send := GwButton.make("      ")      # 原版文本就是 6 个空格
+	send.name = "GraphwarButton"
+	send.text = "      "
+	_invisible_theme(send)
+	# 推断：原版这个按钮没有 `input_text`（点它本来就什么都不发生），但它 mouse_filter 是
+	# STOP，会挡住底下"聊天开关"的点击。为了不把开关锁死，这里让它不接收鼠标。
+	send.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	send.tooltip_text = "发送（原版这个按钮是 invisible_theme，看不见也点不动）"
+	send.pressed.connect(func(): _on_submit(_line_edit.text))
+	send_holder.add_child(send)
+
+	# ② 输入行：黑底 + 3 px 黑边 + 圆角 10
+	_line_edit = LineEdit.new()
+	_line_edit.name = "ChatLineEdit"
+	_line_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_line_edit.add_theme_stylebox_override("normal", GwThemeFactory._flat(BLACK_BG))
+	_line_edit.add_theme_stylebox_override("focus",
+		GwThemeFactory._flat(Color(0.6, 0.6, 0.6, 0)))   # 原版 focus 是透明细边
+	_line_edit.text_submitted.connect(_on_submit)
+	content.add_child(_line_edit)
+
+	# ③ 聊天记录：黑底 62.7%、无边框、无圆角
 	_chat_box = GwUI.rich()
 	_chat_box.name = "ChatBox"
 	_chat_box.fit_content = false
 	_chat_box.scroll_active = true
 	_chat_box.scroll_following = true
 	_chat_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_chat_box.custom_minimum_size = Vector2(0, 220)
+	var box_style := StyleBoxFlat.new()
+	box_style.bg_color = BLACK_BG
+	_chat_box.add_theme_stylebox_override("normal", box_style)
 	_chat_box.gui_input.connect(_on_chat_box_input)
 	_chat_box.tooltip_text = "点这里会聚焦输入框（ChatBox.gd 的行为，docs/101 §4.3）"
 	content.add_child(_chat_box)
 
-	var row := GwUI.hbox("MarginContainer", 8, content)
-	_line_edit = LineEdit.new()
-	_line_edit.name = "ChatLineEdit"
-	_line_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_line_edit.custom_minimum_size = Vector2(0, 40)
-	_line_edit.placeholder_text = "message…"
-	_line_edit.text_submitted.connect(_on_submit)
-	row.add_child(_line_edit)
-
-	var send := GwButton.make("      ")
-	send.name = "GraphwarButton"
-	send.icon = GwIcons.get_icon("new_chat")
-	send.custom_minimum_size = Vector2(48, 40)
-	send.tooltip_text = "发送（原版这个按钮没有 text/icon，靠主题画，docs/92 §4.12）"
-	send.pressed.connect(func(): _on_submit(_line_edit.text))
-	row.add_child(send)
-
-	var actions := GwUI.hbox("HBoxContainer", 8, content)
-	actions.add_child(GwUI.exit_pair(GwCommands.TOGGLE_CHAT))
+## 原版 `invisible_theme.tres`：五态 stylebox 都指向 `invisible_button.tres`
+## —— **透明底 + 3 px 透明边框 + 圆角 10**，字色 alpha 0。
+## 注意不能用 `StyleBoxEmpty`：`invisible_button.tres` 的 3 px 边框会给按钮
+## 6 px 的 content margin，正是这条决定了发送键的 96 px 高（⇒ 输入行落在 y=100）。
+func _invisible_theme(b: Button) -> void:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0, 0, 0, 0)
+	sb.border_color = Color(0, 0, 0, 0)
+	sb.set_border_width_all(3)
+	sb.set_corner_radius_all(10)
+	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+		b.add_theme_stylebox_override(state, sb)
+	for c in ["font_color", "font_pressed_color", "font_hover_color", "font_focus_color",
+			"font_hover_pressed_color", "icon_normal_color"]:
+		b.add_theme_color_override(c, Color(0, 0, 0, 0))
 
 func _on_chat_box_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:

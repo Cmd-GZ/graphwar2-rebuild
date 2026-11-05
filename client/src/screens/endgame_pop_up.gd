@@ -1,77 +1,149 @@
 extends GwScreen
 ## EndGamePopUp —— 结算。
 ##
-## 结构（`docs/92` §4.13，恢复出的 endgame_pop_up.tscn 69 节点）：
-##   Panel/VBoxContainer
-##     ├ SelfVictoryLabel（原版文本 **"YOU lOST"** —— 小写 l，是原版原文，照抄）
-##     │      theme_override_font_sizes/font_size = 70（全项目最大的两条之一）
-##     ├ HBoxContainer/VictoryPlayerContainer1..10
-##     │      每槽 3 个 TextureRect：SkinIcon / FaceIcon / HatIcon（最多展示 10 个士兵）
-##     ├ TeamVictoryLabel（"Team 2 Victory!"）  font_size = 40
-##     └ ExitButtonContainer（input_text="exit_play"）
+## 本轮（docs/130）照恢复出的 `endgame_pop_up.tscn` 逐节点重写，并用"原版 pck 直接
+## 实例化 + 同版本引擎"的逐像素真值核对。1920×1160 下量到的矩形（绝对像素）：
+##
+##   弹窗根   (1,1) 1920×1160    ← 原版根的四个 offset 都是 **1.0**，整屏右/下偏 1 px（照抄）
+##   面板     (483,235) 956×691  ← 三列 1:2:1；竖直三条带 **1:3:1**（230 / 691 / 231）
+##   返回键   (1,1) 146×96      ← 挂在根节点上的浮层
+##
+## 原版结构与三个"和别处不一样"的地方：
+##   * **没有 AdContainer**（VBox 只有三条带 ⇒ 分隔只有 2 个 4 px，比例才正好 230/691/231）；
+##   * `SelfVictoryLabel` 是**静态** `font_size = 70` + `title_theme.tres`（Eraser 手写体），
+##     `TeamVictoryLabel` 是静态 `font_size = 40`；两个都**不**跟窗口缩放
+##     —— 而 `GwScreen.apply_font_scale()` 会把每个 Label 改成 宽/30，所以这里要盖回去；
+##   * 十个 `VictoryPlayerContainerN` 静态是 `visible = false`（真帧里那一行是空的，
+##     HBox 会把 543 px 全给它），并且 `HBoxVictoryIcon.gd` 把行内 `separation` 设成
+##     **-屏幕宽/10 = -192 px**（图标互相叠着画），不是我们以前的正间距 + 48 px 格子。
 ##
 ## 只有真的有人全灭才会出现（`docs/92` §4.13：档 5 的 Bot 31.7 s 后自然出现；
 ## 等时间不会出现）。本项目由 `App.report_match_result()` 触发。
+##
+## ⚠️ 验收边界：**"填满图标之后长什么样"没有真值**（没法把正版打到结算），
+## 所以这一屏只对齐了"空结算框"的几何（面板/两条文案/返回键）与十个格子的属性。
 
 const VICTORY_SLOTS := 10
+## 原版 `endgame_pop_up.tscn` 里两个 Label 的**静态**字号（逐字照抄，不参与缩放）。
+const SELF_FONT_SIZE := 70
+const TEAM_FONT_SIZE := 40
+## 有人的格子占行高的多少（**推断**，见文件头"验收边界"）。
+const SLOT_ROW_FRACTION := 0.5
 
 var _self_label: Label
 var _team_label: Label
-var _slots: Array[MarginContainer] = []
+var _icons_row: HBoxContainer
+var _slots: Array[AspectRatioContainer] = []
 
 func _ready() -> void:
 	font_divisor = 30
 	super()
+	# 原版根节点的四个 offset 都是 1.0（`anchors_preset = 15` + offset 1）
+	offset_left = 1.0
+	offset_top = 1.0
+	offset_right = 1.0
+	offset_bottom = 1.0
+	_apply_fixed_metrics()
+	var root := get_tree().root
+	if root != null and not root.size_changed.is_connected(_apply_fixed_metrics):
+		# 在 `GwScreen._install_font_scaling()` 之后连，保证自己**后**执行 ⇒ 盖得住
+		root.size_changed.connect(_apply_fixed_metrics)
 
 func build() -> void:
-	var d := GwUI.dialog(self, Vector2(760, 320))
-	var content: VBoxContainer = d.content
+	var frame := GwUI.frame(self)
+	var bands: VBoxContainer = frame.vbox
+
+	# 三条竖带，比例 1 : 3 : 1（原版 `HBoxContainer2` 的 `stretch_ratio = 3.0`）
+	var top_band := GwUI.hbox("HBoxContainer", GwUI.SEPARATION, bands)
+	top_band.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var panel_band := GwUI.hbox("HBoxContainer2", GwUI.SEPARATION, bands)
+	panel_band.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	panel_band.size_flags_stretch_ratio = 3.0
+	var bottom_band := GwUI.hbox("HBoxContainer3", GwUI.SEPARATION, bands)
+	bottom_band.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	# 原版**没有** AdContainer
+
+	_expander(panel_band, "MarginContainer", 1.0)
+	var panel_col := _expander(panel_band, "MarginContainer2", 2.0)
+	_expander(panel_band, "MarginContainer3", 1.0)
+
+	var panel := Panel.new()
+	panel.name = "Panel"
+	panel_col.add_child(panel)
+	var content := GwUI.vbox("VBoxContainer", GwUI.SEPARATION, panel_col)
 
 	_self_label = GwUI.label("", 0, HORIZONTAL_ALIGNMENT_CENTER)
 	_self_label.name = "SelfVictoryLabel"
-	_self_label.add_theme_font_size_override("font_size", 70)   # 静态场景里的 override 值
+	var title_font := GwThemeFactory.title_font()
+	if title_font != null:
+		_self_label.add_theme_font_override("font", title_font)
 	content.add_child(_self_label)
 
-	var slots_row := GwUI.hbox("HBoxContainer", 6, content)
+	# 图标行：`alignment = 1`（居中）+ `[v=3]`；空格子静态 `visible = false`
+	_icons_row = GwUI.hbox("HBoxContainer", GwUI.SEPARATION, content)
+	_icons_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_icons_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	for i in VICTORY_SLOTS:
-		var holder := AspectRatioContainer.new()
-		holder.name = "VictoryPlayerContainer%d" % (i + 1)
-		holder.ratio = 1.0
-		holder.stretch_mode = AspectRatioContainer.STRETCH_FIT
-		holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		holder.custom_minimum_size = Vector2(48, 48)
-		var m := GwUI.margin("MarginContainer", 2, holder)
-		var skin_icon := TextureRect.new()
-		skin_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		skin_icon.name = "SkinIcon"
-		skin_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		skin_icon.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		m.add_child(skin_icon)
-		var face_icon := TextureRect.new()
-		face_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		face_icon.name = "FaceIcon"
-		face_icon.visible = false
-		m.add_child(face_icon)
-		var hat_icon := TextureRect.new()
-		hat_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		hat_icon.name = "HatIcon"
-		hat_icon.visible = false
-		m.add_child(hat_icon)
-		slots_row.add_child(holder)
-		_slots.append(m)
+		_slots.append(_victory_slot(_icons_row, i))
 
 	_team_label = GwUI.label("", 0, HORIZONTAL_ALIGNMENT_CENTER)
 	_team_label.name = "TeamVictoryLabel"
-	_team_label.add_theme_font_size_override("font_size", 40)
 	content.add_child(_team_label)
 
-	var actions := GwUI.hbox("HBoxContainer", 8, content)
-	actions.add_child(GwUI.exit_pair(GwCommands.EXIT_PLAY))
-	var spacer := GwUI.spacer(Vector2(0, 0))
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	actions.add_child(spacer)
+	var overlay := GwUI.margin("MarginContainer2", 0, self)
+	overlay.add_child(GwUI.exit_pair(GwCommands.EXIT_PLAY))
+
+## 一个胜利者格子：`AspectRatioContainer`（`stretch_mode = 1` = 高度控宽度）
+## → `MarginContainer` → skin / face / hat 三层 `TextureRect`。
+func _victory_slot(parent: HBoxContainer, index: int) -> AspectRatioContainer:
+	var ar := AspectRatioContainer.new()
+	ar.name = "VictoryPlayerContainer%d" % (index + 1)
+	ar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ar.stretch_mode = AspectRatioContainer.STRETCH_HEIGHT_CONTROLS_WIDTH
+	ar.visible = false                     # 原版 `.tscn` 里就是 false，运行时有数据才显示
+	parent.add_child(ar)
+
+	var m := GwUI.margin("MarginContainer", 0, ar)
+	var skin := _slot_texture(m, "SkinIcon", GwIcons.get_icon("bot_3"))
+	skin.name = "SkinIcon"
+	_slot_texture(m, "FaceIcon", null)
+	_slot_texture(m, "HatIcon", null)
+	return ar
+
+func _slot_texture(parent: MarginContainer, node_name: String, tex: Texture2D) -> TextureRect:
+	var t := TextureRect.new()
+	t.name = node_name
+	t.texture = tex
+	# 原版：`expand_mode = 3`（FIT_WIDTH_PROPORTIONAL），stretch_mode 用默认值
+	t.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+	parent.add_child(t)
+	return t
+
+## 原版两个 Label 的字号是静态 override，图标行的 `separation` 是 `-屏幕宽/10`
+## （`HBoxVictoryIcon.gd`）。`GwScreen.apply_font_scale()` 会把 Label 改成 宽/30，
+## 所以这里在它之后再写一遍；宽度变化时也要重算 separation。
+func _apply_fixed_metrics() -> void:
+	if _self_label != null:
+		_self_label.add_theme_font_size_override("font_size", SELF_FONT_SIZE)
+	if _team_label != null:
+		_team_label.add_theme_font_size_override("font_size", TEAM_FONT_SIZE)
+	if _icons_row != null:
+		_icons_row.add_theme_constant_override("separation",
+			-int(get_viewport_rect().size.x / 10.0))
+
+# ---------------------------------------------------------------- 原版骨架的小工具
+
+## 只按宽度分比例的空 `MarginContainer`（原版左右留白，竖直 FILL）。
+func _expander(parent: HBoxContainer, node_name: String, ratio: float) -> MarginContainer:
+	var m := GwUI.margin(node_name, 0, parent)
+	m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	m.size_flags_stretch_ratio = ratio
+	return m
+
+# ---------------------------------------------------------------- 数据
 
 func on_enter() -> void:
+	_apply_fixed_metrics()
 	var app_node := app()
 	if app_node == null:
 		return
@@ -100,11 +172,20 @@ func on_enter() -> void:
 			for i in int(p.soldiers):
 				winners.append(p)
 	for i in _slots.size():
-		var m := _slots[i]
+		var ar := _slots[i]
+		var m := ar.get_child(0) as MarginContainer
 		var skin_icon := m.get_node_or_null("SkinIcon") as TextureRect
 		var face_icon := m.get_node_or_null("FaceIcon") as TextureRect
 		var hat_icon := m.get_node_or_null("HatIcon") as TextureRect
 		if i < winners.size():
+			ar.visible = true
+			# ⚠️ 推断：原版运行时给这 10 个格子定多大**没有观测**（`.tscn` 里没有
+			# `custom_minimum_size`，而 `stretch_mode = 1` 会让唯一显示的格子撑到行高
+			# 453~543 px）。这里取"行高的一半"作正方形：1920×1160 下 = 271 px，
+			# 正好接近 HBox 按 `separation = -192` 分给 10 个格子的 268 px（见文件头）。
+			var row_h := _icons_row.size.y
+			var side := maxf(64.0, row_h * SLOT_ROW_FRACTION)
+			ar.custom_minimum_size = Vector2(side, side)
 			var p: Dictionary = winners[i]
 			var skin_idx := int(p.skin)
 			if skin_idx >= 0:
@@ -117,6 +198,8 @@ func on_enter() -> void:
 			face_icon.visible = int(p.face) >= 0
 			hat_icon.visible = int(p.hat) >= 0
 		else:
+			ar.visible = false
+			ar.custom_minimum_size = Vector2.ZERO
 			skin_icon.texture = null
 			face_icon.visible = false
 			hat_icon.visible = false
