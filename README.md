@@ -33,7 +33,7 @@
 | 打包运行（代码+资源） | ✅ | 导出 `.pck` 并从包启动：扩展注册成功、还原的纹理加载成功（`docs/19` §7） |
 | 开火结算 `shot_calculator` | 🔶 | **碰撞链路端到端对拍通过**（真实关卡的障碍/士兵/命中点，误差 < 1 采样步，`docs/25`）；`0x3c2bc0` 内部未逐条还原 |
 | 命中与生命 `life_manager` | 🔶 | **死亡链路已抓全**（`LifeQueuedDeath`→`DeathEffect`→`LifeInfo{alive:false}`，tick 对齐，`docs/27`）；二值模型，未见血量字段 |
-| 回合 `turn_manager` | 🔶 | **协议里抓到完整回合链路**（`TurnInfo`/`TurnCountInfo`/`EndOfTurnInfo{tick}`）；内部实现未复刻 |
+| 回合 `turn_manager` | 🔶 | **出场顺序规则已验证**（四局抓包：队伍严格交替，`src/turn.rs` + 测试）；起始队伍/队内顺序/阵亡跳过未知（`docs/28`） |
 | 关卡生成 `level_generator` | 🔶 | **协议里抓到真实关卡数据**（12 个障碍的坐标与半径）；生成算法未还原 |
 | AI `computer_player_manager` / `function_evolutionator` | 🔶 | **按难度观测到函数形态差异**（低难度固定候选、`level:25` 演化为 `tan(sin((-0.12*x)))`）；评分规则未知 |
 | 联机实现 | 🔶 | **传输层与 29 种消息已用真实抓包还原**（`docs/24`，`src/protocol.rs` + 29 条真实帧测试）；对局内消息未捕获 |
