@@ -28,7 +28,7 @@
 | `bash client/run.sh selftest` | **146 passed, 0 failed**（条数不变，**未改任何断言**） | — |
 | `bash client/run.sh dump` | `@@KERNEL available=1 hit_test=1 methods=ping,path_calculate,hit_test,level_obstacles,…` | 逐位验证 |
 | 内核改动 | `src/levelgen.rs`（参数表 + 入口）、`src/api.rs`（新方法）、`src/gdext.rs`（**+1 行**注册） | — |
-| 客户端改动 | `core_bridge.gd`（+52）、`play_screen.gd`（+99/−9）、`plane_view.gd`（+53/−9）、`join_level_pop_up.gd`（+14，父 agent 追加的弹窗配色） | — |
+| 客户端改动 | `core_bridge.gd`（+52/−0）、`play_screen.gd`（+92/−7）、`plane_view.gd`（+51/−2）、`join_level_pop_up.gd`（+14/−0，父 agent 追加的弹窗配色） | — |
 | 仍未定 | **客户端自生成 vs 服务端广播**的取舍（§6.1）、障碍被摧毁的洞、我方士兵/靶子位置、三条"用户口述"的开火表现（§6.3） | — |
 
 一句话：**墙有了、画出来了、也真的挡子弹了；"每局布局不同"这条原版行为也复刻了
