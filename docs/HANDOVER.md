@@ -18,6 +18,9 @@
   游戏本体只有 3 次且是 HashMap 的 RandomState 播种。二进制里 `expand 32-byte k`
   出现 6 次 ⇒ 确有 ChaCha；看不见是因为 Rust 走原始 syscall(318)，绕过 libc 函数。
   hook syscall 会让 frida 自断通信，该路不可用
+- **种子来源定位**（`docs/57`）：播种是惰性的（首次 `next_u64` 前状态全零），
+  事件顺序为 `getrandom×3(16B, GW+0x907c66) → 首次 next_u64` ⇒ 种子来自 **OS 熵**；
+  但 key ≠ 种子字节原样，中间有派生（未还原）。这不影响 docs/56 的重放
 - **端到端重放成功**（`docs/56`）：从 `.rodata` 导出 ziggurat 表
   （X@0x25b428、F@0x25ac20），用抓到的随机流从索引 3 开始重放，
   **13/13 障碍的坐标与半径逐位一致**。判据 1、2 均达成
