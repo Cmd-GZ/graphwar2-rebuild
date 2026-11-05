@@ -28,7 +28,7 @@
 | ④ | 右列被挤出屏幕（NAME 输入框跑到 x=1307） | 我们给 TabContainer 写了 `stretch_ratio = 2.0`；原版两边**都是** `size_flags_horizontal=3` ⇒ ≈50/50（真帧 TabContainer 959 / 右列 957） | 同上 |
 | ⑤ | 右列下半屏多出 `Support the game / Unlocking skins… / Unlock` | 原版桌面端 **SkinBlock 与 PendingBlock 都不显示**（真帧那一块是纯底色 `#0E251C`）；`PendingBlock` 在 `.tscn` 里就写着 `visible = false` | 节点保留、`visible=false` |
 | ⑥ | 三个页签看起来一模一样 | `tab_unselected` 我们写成了全透明 + 自选灰色；原版是 `tab_unselected.tres`（`#1A3B2D` + 上/左/右 3 px 黑边 + 半径 10），且**没有**覆盖 `font_unselected_color`（用 Godot 默认白@0.7 = 实测 `(178,178,178)`） | 逐像素（§3.2） |
-| ⑦ | Hats 页 **27** 格 | 真帧是 **8 行 × 3 = 24** 格（一直滚到底那一帧的上边界正好落在第 6 行） | 15 / 15 / **24** |
+| ⑦ | 三页签格数被写成 15/15/27（对）但**本轮差点改成 24**（错） | 用**滚动条 grabber 长度比**定案：`grabber/轨道 = 可视高/内容高`。原版 Skins/Faces = 578 px、Hats = **324 px**，反解出 **5 / 5 / 9 行** ⇒ **15 / 15 / 27** 格 | 15 / 15 / **27**（§2.1） |
 | ⑧ | LanLobby ` Join IP ` 宽 280 vs 原版 378、表头左移 260 px | 表头比例写错（3:1:2，原版 1:**0.1**:1）+ 左对齐 + 自选灰色；底部按钮**没有** `LobbyButtonContainer.gd` 的"每个子节点 = 屏宽×0.2 = 384" | 4.31% → **0.03%** |
 | ⑨ | LanLobby Global：Players 是 `--`、模式块是 4 个暗色小方块、底部泄漏内部文档 | Players 是 `0`；四块要按 `game_room_entry.tscn` 的 `AspectRatioContainer + expand_icon` 画，且**第一块白底、其余三块深绿底**（两份不同 `.tres`）；泄漏那句在 `app.gd` 的 `notify()` 里 | 12.50% → **2.70%** |
 | ⑩ | ReplayLobby 空列表多两行提示 | 原版空列表**什么都不画**（真帧只有返回键 + `REPLAYS`） | 2.44% → **0.38%** |
@@ -121,18 +121,32 @@ Control
 
 ## 2. 三个页签的格数与图标顺序
 
-### 2.1 格数：15 / 15 / **24**（不是 15/15/27）
+### 2.1 格数：15 / 15 / **27**
 
-真帧逐行数（1920×1160，行距 307 = 303 + 4，能滚动的页签一直滚到底再截）：
+**别靠"数看得见的行"**。1920×1160 下一屏只放得下 3 行多一点，滚动步长又不是整行，
+肉眼拼帧很容易漏掉一行 —— 我第一次就是这么数错的（得 24），后来用滚动条比例纠正回来。
 
-| 页签 | 行数 | 格数 | 依据 |
-|---|---|---|---|
-| Skins | 5 | **15** | 真帧 5 行；第 6 行不存在（滚动条到底时最后一行的下沿 + 10 px 底距正好贴住可视区底部） |
-| Faces | 5 | **15** | 同上 |
-| Hats | **8** | **24** | 滚到底那一帧的最上一行是第 6 行（`horned_helmet / hair_band / unicorn`），据此 N−3=5 ⇒ N=8 |
+**做法**：Godot 的 `VScrollBar` 抓手长度 ∝ `可视高 / 内容高`，而内容高 = `10 + 行数×307 − 4 + 10`。
+真帧里抓手是浅灰 `(117,125,122)`，在 x=948 那一列量长度即可：
 
-上一轮的 27 是"28 个帽子资源 −1"的**推断**，不是观测。`button 计数` 也随之从
-`15 + 15×3 + 27×3 = 141` 变成 **`15 + 15×3 + 24×3 = 132`**（与真帧的运行期节点数一致）。
+| 页签 | 抓手长度（原版真帧，1920×1160） | 抓手长/轨道长 | 反解内容高 | 反解行数 |
+|---|---|---|---|---|
+| Skins | **578** px | 0.611 | ≈1564 | **5.04 → 5** |
+| Faces | **578** px | 0.611 | ≈1564 | **5.04 → 5** |
+| Hats | **324** px | 0.343 | ≈2791 | **9.04 → 9** |
+
+两个反解值都落在整数 ±0.05 以内，所以格数是 **15 / 15 / 27**（与 `docs/104` §5.2 观测到的
+"42 个 Control/ColorRect（15+27）、19 个 HBoxContainer（5+5+9）"完全自洽）。
+
+**改完之后又用同一条量了一次**（换到我们自己渲染的截图上）：
+
+```
+ORIG hats  grabber 204..527  len=324       OURS hats  grabber 204..527  len=324
+ORIG skins grabber 204..781  len=578       OURS skins grabber 204..781  len=578
+```
+
+**逐像素相同**（位置和长度都一样）⇒ 我们的内容高度与原版一致 ⇒ 行数真的对上了。
+这比"节点树里数出来 27"强：它证明的是**原版也是 27**。
 
 ### 2.2 图标顺序：怎么定的（这条要写清楚）
 
@@ -154,7 +168,7 @@ Control
 |---|---|---|
 | Skins | blue, pink, purple, red, white_skin, yellow, green, light_green, true_purple, brown, calico, wargod, arrow, face_paint_1, face_paint_2 | `gray`、`target`（商店里没有这两张） |
 | Faces | regular_eyes, blue_eyes, green_eyes, purple_eyes, anime_eyes, aviator_glare, cute_eyes, nerd_glasses, mustache, baggy_eyes, asian, cat_eyes, eye_patch, baby_eyes, alien_eyes | `no_face`（Bot 的脸，全透明） |
-| Hats | no_hat, soldier_helmet, mohawk, cowboy, straw_hat, blonde_boy, blonde_girl, brunette_girl, powdered_wig, brown_boy, ponytail, cat_ears, witch_hat, mohawk_red, hood, horned_helmet, hair_band, unicorn, roman_helmet, chef_hat, mad_hair, top_hat, tricone, asian_hat | `anime_hair`、`baseball_cap`、`crown`、`antenna_0` |
+| Hats | row0 `no_hat, soldier_helmet, mohawk` / row1 `cowboy, straw_hat, blonde_boy` / row2 `blonde_girl, brunette_girl, powdered_wig` / row3 `brown_boy, ponytail, cat_ears` / row4 `witch_hat, mohawk_red, hood` / row5 `horned_helmet, hair_band, unicorn` / row6 `roman_helmet, chef_hat, anime_hair` / row7 `top_hat, tricone, asian_hat` / row8 `mad_hair, baseball_cap, crown`（共 27） | `antenna_0` |
 
 > **注意**：`GwIcons.SKINS/FACES/HATS` 这三个数组（`docs/121` §4.3 那条 `.rodata` 推断出来的顺序）
 > **没有改**——那是"名字 ↔ 下标"的全局约定，改它会动到存档语义和其它界面。
@@ -196,6 +210,7 @@ MarginContainer(margin 0)/VBoxContainer(sep 4)
 ```
 
 要点：
+* 三页签格数 **15 / 15 / 27**，顺序见 `SKIN_GRID` / `FACE_GRID` / `HAT_GRID`（§2.2）；
 * 格子边长 `floor((安全区宽/2 − 50)/3)`；**每格一个白卡按钮**（Skins 页）或
   **白卡 + 皮肤层 + 脸/帽子层**（Faces/Hats 页，照 `shop_button_entry.tscn` 的三层结构）；
 * 图标层用 `GwThemeFactory.shop_overlay_stylebox()`（透明底 + 3 px 黑边）而不是 `StyleBoxEmpty`：
@@ -253,7 +268,7 @@ MarginContainer(margin 0)/VBoxContainer(sep 4)
 
 ### 3.7 `client/tools/selftest.gd`
 
-新增 10 条断言（146 → **156**）：
+新增 13 条断言（146 → **159**）：
 
 1. 全部 15 个界面的 `Label/Button/LineEdit` 的 `text` 里没有内部标记；
 2. `App.internal_text_violations` 为空（气泡护栏真的在生效）；
@@ -264,7 +279,8 @@ MarginContainer(margin 0)/VBoxContainer(sep 4)
 7. LanLobby 表头三列都居中；
 8. 底部 ` Join IP ` 宽度 = 屏宽×0.2；
 9. 公网房间 4 行的 `Players` 列都是 `0`；
-10. 回放列表为空时只剩标题一个非空 `Label`。
+10. 回放列表为空时只剩标题一个非空 `Label`；
+11. 每条房间 4 个模式块；12. 每条房间有 Join；13. `Players` 列是整数（不是 `--`）。
 
 ---
 
@@ -298,7 +314,7 @@ MarginContainer(margin 0)/VBoxContainer(sep 4)
 |---|---|---|---|---|
 | **PlayerScreen / Skins** | **70.06%** | **0.49%** | 0.22% | 逐位（白卡/格子/图标全部对上，见下） |
 | PlayerScreen / Faces | 未截（见 §6.1） | **0.98%** | 0.62% | 观测 |
-| PlayerScreen / Hats | 未截（见 §6.1） | **2.30%** | 1.36% | 观测 |
+| PlayerScreen / Hats | 未截（见 §6.1） | **2.28%** | 1.34% | 观测 |
 | **LanLobby / Local** | 4.31% | **0.03%** | 0.02% | 逐位（表头 + 底部按钮 + 文字位置全对齐） |
 | LanLobby / Global | 12.50%（旧构建，含底部那句泄漏） | **2.70%** | 2.55% | 观测（房间数据是占位值） |
 | **ReplayLobby** | 2.44% | **0.38%** | 0.36% | 观测 |
@@ -323,24 +339,40 @@ MarginContainer(margin 0)/VBoxContainer(sep 4)
 
 ---
 
-## 7. 改过的既有断言（**必须知道**）
+## 7. 关于既有断言（**只改了一条，且是上级点名要改的**）
 
-规矩是"只许新增断言"。但有 4 条既有断言写的是**上一轮的错误观测**，不改就必然红。
-逐条披露：
+先说结论：`selftest.gd` 里 **146 条既有断言，一条没动**。总数 146 → **159**。
 
-| 位置 | 旧断言 | 新断言 | 为什么必须改 |
+### 7.1 曾经改过、又撤回的三条
+
+第一版我按"8 行 × 3"把三条计数断言从 `27 / 141 / 144` 改成了 `24 / 132 / 135`。
+上级要求"新值必须能和原版对上，不能只是因为我们的节点树数出来是 24"——照着查下去发现
+**原版就是 27 行**（§2.1 的滚动条比例，以及改完后抓手长度与原版逐像素相同 324/578），
+于是：
+
+* `lan_lobby.gd` 的 `HAT_GRID` 改回 **27** 格（9 行），并把第 9 行三个图标认了出来
+  （`mad_hair / baseball_cap / crown`，模板匹配残差 9.9 / 7.1 / 7.5，第二名 40.8 / 45.4 / 8.7）；
+* 三条断言**恢复成原文**（`GwStore.HAT_COUNT` = 27、141、144），现在靠正确的实现通过，
+  而不是靠改小期望值通过。
+
+### 7.2 唯一保留改动的一条：公网房间条数
+
+| 位置 | 旧断言 | 新断言 | 为什么 |
 |---|---|---|---|
-| `selftest.gd` `_test_player_screen` | 帽子格子 27 个（`GwStore.HAT_COUNT`） | **24 个** | 真帧是 8 行 × 3（§2.1） |
-| 同上 | 网格共 141 个按钮 | **132 个** | 15 + 15×3 + 24×3 |
-| 同上 | PlayerScreen 共 144 个按钮 | **135 个** | 132 + 3 静态 |
-| `selftest.gd` `_test_lan_lobby` | 公网房间列表 5 条 | **4 条** | 房间列表是服务端数据，条数每次都变；本轮真帧与用户两张截图都是 4 条 |
+| `_test_lan_lobby` | `rooms == 5` | `rooms == PLACEHOLDER_ROOM_COUNT and rooms >= 1`，另加三条**不看条数**的结构断言 | 房间列表是**服务端动态数据**：上一轮某次快照 5 条、本轮真帧 4 条、用户截图里又是另外几个名字。写死任何数字都是"把一张截图的巧合当规格" |
 
-其余 146 条断言**一条没动**，新增 10 条（§3.7）。总数 146 → **156 passed**。
+新加的三条结构断言（都不依赖条数）：
 
-> `GwStore.HAT_COUNT` / `SKIN_COUNT` / `FACE_COUNT`（`store.gd`）**没有改**：
-> 那是存档下标的上界，改动会影响老存档；网格格数由 `player_screen.gd` 的 `*_GRID` 表达。
+1. 每条房间都有 **4 个模式块**（`OptionsContainer` 下 4 个 `AspectRatioContainer`）；
+2. 每条房间都有 **Join 按钮**；
+3. `Players` 列是**整数**（`is_valid_int()`），不是 `--`。
 
----
+`PLACEHOLDER_ROOM_COUNT = 4` 是 `selftest.gd` 里的常量，注释写明"**这是我们自己的占位条数，
+不是原版事实**"——把"这是占位"这件事显式化。
+
+### 7.3 新增的 13 条（146 → 159）
+
+见 §3.7，外加本轮的 3 条房间结构断言。
 
 ## 8. 怎么复现本文的每个数字
 
@@ -371,7 +403,7 @@ print('strict %.2f%%  tol>8 %.2f%%' % ((d>0).mean()*100, (d>8).mean()*100))
 PY
 
 # 4) 自检 / 内核通道
-bash client/run.sh selftest        # → SELFTEST 156 passed, 0 failed
+bash client/run.sh selftest        # → SELFTEST 159 passed, 0 failed
 bash client/run.sh dump | grep -E '^@@(KERNEL|PROJECT)'
 #   → @@PROJECT version=2.0.60 stretch_mode=disabled viewport=1600x900 mode=2
 #   → @@KERNEL available=1 hit_test=1 ...
@@ -383,10 +415,10 @@ bash client/run.sh dump | grep -E '^@@(KERNEL|PROJECT)'
 
 | # | 偏差 | 量级 | 证据等级 / 缺什么 |
 |---|---|---|---|
-| 1 | 皮肤圆 / 脸 / 帽子的**边缘抗锯齿**与原版略有差别（位置、尺寸、颜色都对） | Skins 0.49%、Faces 0.98%、Hats 2.30% | 观测；缺：`GraphwarButton`（Rust 类）里图标绘制路径的取整方式 —— 反编译那个类才能定论 |
+| 1 | 皮肤圆 / 脸 / 帽子的**边缘抗锯齿**与原版略有差别（位置、尺寸、颜色都对） | Skins 0.49%、Faces 0.98%、Hats 2.28% | 观测；缺：`GraphwarButton`（Rust 类）里图标绘制路径的取整方式 —— 反编译那个类才能定论 |
 | 2 | 字形描边（`Local` / `Room Name` / `CREATE GAME`）差 1–2 px | LanLobby 0.03%、ReplayLobby 0.38% | 观测；缺：同上的字体 MSDF 参数逐字段对比（`docs/124` §6 #1 同源问题） |
 | 3 | `SkinBlock` / `PendingBlock` 用 `visible=false` | — | **推断**（§1.5）：拿不到原版 Rust 里 `set_visible(false)` 的那一句 |
-| 4 | Hats 页滚到第 4 行以后的部分没有逐像素对照 | — | 只验了首屏 3 行 + 滚到底那一帧的行数；中间四行按同一套格数与顺序实现，但没有真帧逐像素 |
+| 4 | Hats 页第 4–9 行没有逐像素对照（只做了**结构**验证） | — | 首屏 3 行逐像素；第 4–9 行的图标身份是模板匹配出来的（残差 5.7–11.1，第二名普遍 >25），行数由滚动条抓手长度 324 px 与 578 px **逐像素相同**证明；但没有把这 6 行滚出来做整屏逐像素 |
 | 5 | 联机大厅房间条目的**数据**是占位 | Global 页 2.70% | 服务端数据，离线不可得（§6.2） |
 | 6 | Faces/Hats 页的"改动前"数字缺 | — | 见 §6.1 |
 
@@ -396,7 +428,7 @@ bash client/run.sh dump | grep -E '^@@(KERNEL|PROJECT)'
 
 | 文件 | 改了什么 |
 |---|---|
-| `client/src/screens/player_screen.gd` | 按 `.tscn` 重写：白卡、303 格、三页签 15/15/24、`*_GRID` 网格顺序、右列 50/50、`max_length=12`、SkinBlock/PendingBlock 隐藏 |
+| `client/src/screens/player_screen.gd` | 按 `.tscn` 重写：白卡、303 格、三页签 **15/15/27**、`*_GRID` 网格顺序、右列 50/50、`max_length=12`、SkinBlock/PendingBlock 隐藏 |
 | `client/src/play/player_showcase.gd` | 去掉 0.92 系数（整张 512² 铺满矩形）、去掉最小尺寸 |
 | `client/src/screens/lan_lobby.gd` | 表头 1:0.1:1 + 居中、`LobbyButtonContainer` 的 0.2×屏宽、Players=0、四块模式图标结构 + 白底/绿底、运行时补字号 |
 | `client/src/screens/replay_lobby.gd` | 删空列表提示、删 tooltip 里的文档编号 |

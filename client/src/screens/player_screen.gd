@@ -9,7 +9,7 @@ extends GwScreen
 ##     │    │    ├ SkinsContainer/{VBox/HBox/{Margin10, SkinsVbox, Margin10}, …}
 ##     │    │    │      SkinsVbox(ShopButtonsSize) = 5 行 × 3 个 **白卡按钮**（15）
 ##     │    │    ├ FacesContainer/…/FacesVbox  = 5 行 × 3 个 shop_button_entry（15）
-##     │    │    └ HatsScroll/…/HatsVbox       = 8 行 × 3 个 shop_button_entry（**24**）
+##     │    │    └ HatsScroll/…/HatsVbox       = 9 行 × 3 个 shop_button_entry（27）
 ##     │    └ VBoxContainer（右列，size_flags_horizontal=3）
 ##     │         ├ HBoxContainer2/{MarginContainer/Label(" NAME: "), MarginContainer2/PlayerNameLineEdit}
 ##     │         └ MarginContainer(ShowcaseMarginContainer, margin 5)/AspectRatioContainer
@@ -24,11 +24,12 @@ extends GwScreen
 ##    玩家页挂的是 `ShopButtonsSize.gd`：`(安全区宽/2 − 50)/3` → 1920 下 303.33。
 ##    白底黑框来自 `shop_theme.tres`（Skins）与 `shop_button_entry.tscn` 里那个默认白色的
 ##    `ColorRect`（Faces/Hats），见 `GwThemeFactory.shop_cell_stylebox()`。
-## 2. **三页签格数 15 / 15 / 24**（不是 15/15/27）。真帧数行：Skins 5 行、Faces 5 行、
-##    Hats 8 行，每行 3 个；Hats 页滚到底那一帧的上边界正好落在第 6 行，行数就是这么数的。
+## 2. **三页签格数 15 / 15 / 27**。真帧数行：Skins 5 行、Faces 5 行、Hats 9 行，每行 3 个；
+##    行数是用**滚动条长度比**（grabber/轨道 = 可视高/内容高）反解的，不是靠"数看得见的行"
+##    —— 见 docs/129 §2.1（这一点我第一次数错过，写成 24，后来用滚动条比例纠正回来）。
 ## 3. **格子里的图标顺序不是 `GwIcons` 数组的顺序**：原版网格跳过了一些"不该出现在商店里"
 ##    的资源。顺序在下面 `SKIN_GRID` / `FACE_GRID` / `HAT_GRID` 里，每一条都是把真帧的
-##    15/15/24 个格子逐个和资产做模板匹配（皮肤比主色、脸/帽子比 alpha 合成）得到的，
+##    15/15/27 个格子逐个和资产做模板匹配（皮肤比主色、脸/帽子比 alpha 合成）得到的，
 ##    写在 `docs/129` §2。
 ##
 ## 未实现：解锁/内购（Linux 端不做，用户要求）、段位、皮肤合法性校验。
@@ -44,12 +45,11 @@ const SKIN_GRID: Array[int] = [0, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 1
 ## Faces（15 格）：跳过 `faces/no_face`（那是 Bot 的脸，全透明）。
 const FACE_GRID: Array[int] = [2, 3, 4, 5, 1, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 
-## Hats（**24** 格）：跳过 `anime_hair` / `baseball_cap` / `crown` / `antenna_0`。
+## Hats（**27** 格 = 9 行 × 3）：只跳过 `antenna_0`。
 const HAT_GRID: Array[int] = [
-	0, 1, 7, 9, 10, 2,
-	3, 4, 11, 5, 12, 17,
-	13, 8, 14, 15, 16, 18,
-	19, 20, 24, 21, 22, 23,
+	0, 1, 7,      9, 10, 2,     3, 4, 11,
+	5, 12, 17,    13, 8, 14,    15, 16, 18,
+	19, 20, 6,    21, 22, 23,   24, 25, 26,
 ]
 
 ## `PlayerTabContainer.gd` 的三个标题（原文，含 U+2009 窄空格）

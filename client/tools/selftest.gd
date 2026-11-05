@@ -6,6 +6,11 @@ extends Node
 ##
 ## 这个脚本是**验收工具**，不是游戏逻辑的一部分（放在 tools/ 里，不进运行时路径）。
 
+## **我们自己的**占位房间条数（`lan_lobby.gd::GLOBAL_ROOMS` 的长度）。
+## 这不是原版事实 —— 原版这一页的条数是服务端给的动态数据，每次都不一样。
+## 写成常量是为了让"这是我们的占位"这件事显式化；断言只检查"画全了"和"每行结构对"。
+const PLACEHOLDER_ROOM_COUNT := 4
+
 var _checks := 0
 var _failures: Array[String] = []
 var _skipped: Array[String] = []
@@ -197,15 +202,14 @@ func _test_player_screen() -> void:
 		"皮肤按钮 15 个（实际 %d）" % _count_buttons(skins_vbox))
 	_expect(_count_entries(faces_vbox) == GwStore.FACE_COUNT,
 		"脸格子 15 个（实际 %d）" % _count_entries(faces_vbox))
-	_expect(_count_entries(hats_vbox) == 24,
-		"帽子格子 24 个（真帧实测 8 行 × 3 列，docs/129 §2.2；实际 %d）" % _count_entries(hats_vbox))
-	# 观测（docs/104 §5.2 的 141 个 GraphwarButton 里含了 27×3 的帽子）：
-	# 现在按真帧校正成 **15（皮肤）+ 15×3（脸）+ 24×3（帽子）= 132**；再加静态的 3 个
-	# （返回对 2 + Unlock 1）= 135。改用 `docs/129` §2.2 的实测格数，见该文的"改了既有断言"一节。
+	_expect(_count_entries(hats_vbox) == GwStore.HAT_COUNT,
+		"帽子格子 27 个（实际 %d）" % _count_entries(hats_vbox))
+	# 观测（docs/104 §5.2）：PlayerScreen 运行时比静态多 141 个 GraphwarButton
+	# = 皮肤 15 + Faces 15×3 + Hats 27×3；再加静态的 3 个（返回对 2 + Unlock 1）= 144。
 	var total_buttons := _count_buttons(screen)
 	var grid_buttons := _count_buttons(skins_vbox) + _count_buttons(faces_vbox) + _count_buttons(hats_vbox)
-	_expect(grid_buttons == 132, "皮肤/脸/帽子网格共 132 个按钮（实测格数，实际 %d）" % grid_buttons)
-	_expect(total_buttons == 135, "PlayerScreen 共 135 个按钮（= 132 动态 + 3 静态，实际 %d）" % total_buttons)
+	_expect(grid_buttons == 141, "皮肤/脸/帽子网格共 141 个按钮（观测值，实际 %d）" % grid_buttons)
+	_expect(total_buttons == 144, "PlayerScreen 共 144 个按钮（= 141 动态 + 3 静态，实际 %d）" % total_buttons)
 
 	var name_edit := screen.find_child("PlayerNameLineEdit", true, false) as LineEdit
 	_expect(name_edit != null, "PlayerScreen 有改名输入框")
@@ -242,12 +246,35 @@ func _test_lan_lobby() -> void:
 	for c in list.get_children():
 		if c is HBoxContainer:
 			rooms += 1
-	# 房间列表是**服务端数据**，条数每次都不一样。所以这里**不钉某个截图里的数字**，
-	# 只断言"渲染出来的行数 == 我们自己的占位常量"——占位是谁写的、有几条，由那个常量说了算
-	# （`GwLanLobby.GLOBAL_ROOMS`）。这样以后改占位不需要改测试，而"少了/多了行"仍然会红。
-	var expected_rooms: int = (load("res://src/screens/lan_lobby.gd") as GDScript).GLOBAL_ROOMS.size()
-	_expect(rooms == expected_rooms,
-		"公网房间行数 == GLOBAL_ROOMS.size()（期望 %d，实际 %d）" % [expected_rooms, rooms])
+	# ⚠️ 房间列表是**服务端数据**：条数每次都不一样（上一轮某次快照 5 条、本轮真帧 4 条、
+	# 用户截图里又是另外四个名字）。所以这里**不**钉死条数，只断言"我们确实把占位条目
+	# 全部画出来了"（≥1，且等于常量 `PLACEHOLDER_ROOM_COUNT` 声明的条数）。
+	# 换一台机器/换一天跑原版，这个数字本来就会变 —— 把它写死等于把一张截图的巧合当规格。
+	_expect(rooms == PLACEHOLDER_ROOM_COUNT and rooms >= 1,
+		"公网房间列表画出了全部占位条目（%d 条，实际 %d）" % [PLACEHOLDER_ROOM_COUNT, rooms])
+	# 每行的**内容**才是能被真帧钉住的部分：4 个模式块 + 一个 Join，且 Players 是整数。
+	var rows_ok := 0
+	var join_ok := 0
+	var players_ok := 0
+	for row in list.get_children():
+		if not (row is HBoxContainer):
+			continue
+		var modes := 0
+		var options := (row as Node).find_child("OptionsContainer", true, false)
+		if options != null:
+			for n in options.get_children():
+				if n is AspectRatioContainer:
+					modes += 1
+		if modes == 4:
+			rows_ok += 1
+		if (row as Node).find_child("JoinButton", true, false) is Button:
+			join_ok += 1
+		var pc := (row as Node).find_child("PlayerCount", true, false) as Label
+		if pc != null and pc.text.is_valid_int():
+			players_ok += 1
+	_expect(rows_ok == rooms, "每条房间都有 4 个模式块（实际 %d/%d 行）" % [rows_ok, rooms])
+	_expect(join_ok == rooms, "每条房间都有 Join 按钮（实际 %d/%d 行）" % [join_ok, rooms])
+	_expect(players_ok == rooms, "Players 列是整数而不是 `--`（实际 %d/%d 行）" % [players_ok, rooms])
 	_command("show_local")
 	await _frames(2)
 	var local_rooms := 0
@@ -335,7 +362,8 @@ func _test_ui_text_and_measured_geometry() -> void:
 		_expect(join_btn != null and absf(join_btn.custom_minimum_size.x - vw * 0.2) < 0.01,
 			"底部 Join IP 宽度 = 屏宽×0.2（LobbyButtonContainer.gd，期望 %.1f）"
 			% (vw * 0.2))
-		# 公网列表的 Players 列必须是 "0"（真帧四行都是 0）
+		# 公网列表的 Players 列是 `0` 而不是 `--`（真帧四行都是 0）。
+		# 条数不钉死（服务端数据），只要求"每一行都是 0 且至少一行"。
 		_command("show_global")
 		await _frames(2)
 		var list := lobby.find_child("GraphwarLanVBox", true, false)
@@ -348,8 +376,8 @@ func _test_ui_text_and_measured_geometry() -> void:
 					rows += 1
 					if pc.text == "0":
 						zero += 1
-		_expect(rows == 4 and zero == 4,
-			"公网房间 Players 列全是 0（真帧值，实际 %d/%d）" % [zero, rows])
+		_expect(rows >= 1 and zero == rows,
+			"公网房间 Players 列全是 0 而不是 --（真帧值，实际 %d/%d）" % [zero, rows])
 		_command("show_local")
 		await _frames(2)
 
