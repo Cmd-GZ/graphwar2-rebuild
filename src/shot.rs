@@ -159,15 +159,27 @@ mod tests {
     }
 }
 
-/// 与游戏一致的"修正后函数"文本：`原函数 + c`（c 保留三位小数）。
+/// 与游戏一致的"修正后函数"文本：`原函数` + **带符号**的修正常数（三位小数）。
 ///
-/// 依据是真实抓包：
-/// `{"FunctionInfo":{"owner_id":234,"function":"0.00","corrected_function":"0.00 + 4.638"}}`
-/// `{"FunctionInfo":{"owner_id":231,"function":"","corrected_function":" + 10.990"}}`
+/// 依据是真实抓包（`docs/24` §6.2；`docs/127` §2 的原始字节流帧号）：
+///
+/// ```text
+/// {"FunctionInfo":{"owner_id":234,"function":"0.00","corrected_function":"0.00 + 4.638"}}
+/// {"FunctionInfo":{"owner_id":231,"function":"","corrected_function":" + 10.990"}}
+/// {"FunctionInfo":{"owner_id":231,"function":"","corrected_function":" - 3.686"}}             ← 帧 182（c < 0）
+/// {"FunctionInfo":{"owner_id":233,"function":"abs((abs((-0.57+x))+-4.85))",
+///                  "corrected_function":"abs((abs((-0.57+x))+-4.85)) - 11.416"}}               ← 帧 203（c < 0）
+/// ```
+///
+/// ⇒ **运算符本身带符号**：`c >= 0` 写 `" + "`、`c < 0` 写 `" - "`，
+/// 而**不是** `" + -3.686"`。这与右下角那行字（[`correction_text`]）是同一个格式，
+/// 所以直接复用，不另写一套。
+///
+/// ⚠️ 2026-11 之前这里是写死的 `format!("{} + {:.3}", …)`：`c < 0` 时会发出
+/// `" + -3.686"`，真机从没这么写过（`docs/127` §5 第 1 条、§2.1 第 3 条）。
 pub fn corrected_text(text: &str, x0: f64, y0: f64, flip: bool) -> String {
     let toks = crate::function::parse(text);
-    let c = correction(&toks, x0, y0, flip);
-    format!("{} + {:.3}", text, c)
+    format!("{}{}", text, correction_text(&toks, x0, y0, flip))
 }
 
 #[cfg(test)]
@@ -190,6 +202,49 @@ mod correction_tests {
         let y0 = 10.99018276610812_f64;
         let txt = corrected_text("", x0, y0, false);
         assert_eq!(txt, " + 10.990", "抓包里的修正文本");
+    }
+
+    /// **符号**的回归：`c < 0` 时运算符是 `" - "`，不是 `" + -"`。
+    ///
+    /// 三条都是原始字节流抓包的**原文**（`docs/127` §2；`start_x/start_y` 取自同一回合的
+    /// `FunctionPoints`）。旧实现（写死 `" + "`）在 182/203 这两条上会给出
+    /// `" + -3.686"` / `" + -11.416"`，真机从没这么写过。
+    #[test]
+    fn correction_operator_carries_the_sign_of_the_constant() {
+        // 帧 182/183：士兵 231（Team1 ⇒ flip=false）空函数 ⇒ c = y0 = -3.6861
+        assert_eq!(
+            corrected_text("", -13.429861913415694, -3.686102115928783, false),
+            " - 3.686",
+            "抓包帧 182"
+        );
+        // 帧 203/204：士兵 233（Team2 ⇒ flip=true）曲线 + 负常数
+        assert_eq!(
+            corrected_text("abs((abs((-0.57+x))+-4.85))", 14.305645069934501, -1.3905063945238432, true),
+            "abs((abs((-0.57+x))+-4.85)) - 11.416",
+            "抓包帧 203"
+        );
+        // 帧 143/144：士兵 230 空函数，同一条链上的另一个负样本
+        assert_eq!(
+            corrected_text("", -8.2808732224322, -3.4200779499591807, false),
+            " - 3.420",
+            "抓包帧 143"
+        );
+        // 正号那一侧照旧（帧 161/162，flip=true）
+        assert_eq!(
+            corrected_text("cos((0.19*(6.70+x)))", 11.962551145879328, 3.7443842094294837, true),
+            "cos((0.19*(6.70+x))) + 3.204",
+            "抓包帧 161"
+        );
+    }
+
+    /// NaN 仍走 `+` 那一侧（`correction_text` 的既有行为，别被上面的符号分支带跑）。
+    #[test]
+    fn correction_keeps_the_nan_branch() {
+        assert_eq!(corrected_text("0.00", 0.0, f64::NAN, false), "0.00 + NaN");
+        assert_eq!(corrected_text("", 0.0, f64::NAN, false), " + NaN");
+        // 正/负两侧的定值（c = 2.000 / -2.000）
+        assert_eq!(corrected_text("0.00", 1.0, 2.0, false), "0.00 + 2.000");
+        assert_eq!(corrected_text("0.00", 1.0, -2.0, false), "0.00 - 2.000");
     }
 
     /// 抓到的弹道终点必须落在我们算出的轨迹上（这两发都是水平直线）。

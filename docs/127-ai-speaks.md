@@ -1,6 +1,6 @@
 # 127 · AI 说话：进化出来的函数怎么上线
 
-状态：**已接线**（分支 `agent/ai-speaks`），`cargo test --offline` = **279 条全绿**（272 → 279）。
+状态：**已接线**（分支 `agent/ai-speaks`），`cargo test --offline` = **281 条全绿**（272 → 281）。
 证据分级沿用仓库约定（`AGENTS.md` 三条硬规矩）：**逐位验证**（`cargo test` 覆盖）/ **观测**
 （能指到地址或字节，或真实的报文帧）/ **推断**（写明缺什么证据）/ **未知**。
 地址一律写 **vaddr**（Ghidra = vaddr + `0x100000`）。
@@ -16,6 +16,8 @@
 > 两条报文的形态**逐字段照真实抓包**（下面 §2 的帧号可复查）：
 > 提交时 `corrected_function` 是 `null`，**修正版在开火那一刻才发**
 > （`CalculatingResults → FunctionInfo → FunctionPoints`，`docs/43` 的既有顺序一字未动）。
+> 修正文本的运算符**带符号**（`c < 0` ⇒ `" - 3.686"`）；顺带修掉了 `shot::corrected_text`
+> 里写死 `" + "` 的形态 bug（§2.1、§5 第 1 条）。
 
 ---
 
@@ -72,11 +74,12 @@ fd16 162 {"FunctionPoints":{"owner_id":234,"start_x":11.962551145879328,"start_y
 `flip = true`（队 2），`cos(0.19*(6.70-11.9626)) = 0.5404` ⇒ `c = 3.7444 - 0.5404 = 3.204` ✓；
 帧 143 的函数是空串（`f ≡ 0`）⇒ `c = y0 = -3.4200779` ⇒ 文本 `" - 3.420"` ✓。
 
-> ⚠️ **这一条暴露了 `src/shot.rs::corrected_text` 的一个形态 bug**（详见 §5 第 1 条）：
-> 它写死 `format!("{} + {:.3}", …)`，于是 `c < 0` 时发出去的是 `" + -3.420"`，
-> 而真机是 `" - 3.420"`。仓库里其实**已经有**对的那个函数（`shot::correction_text`，
-> 返回 `" - 1.000"` 那种形态），只是 `corrected_text` 没用它。本轮**不许改 `shot.rs`**，
-> 所以只记录 + 在 `docs/127` 与交付说明里点名，见 §5。
+> ⚠️ 这一条**当场暴露了 `src/shot.rs::corrected_text` 的一个形态 bug，已在本轮修掉**
+> （§5 第 1 条）：它原来写死 `format!("{} + {:.3}", …)`，`c < 0` 时发出去的是
+> `" + -3.420"`，而真机是 `" - 3.420"`。仓库里本来**就有**对的那个函数
+> （`shot::correction_text`，返回 `" - 1.000"` 那种形态），只是 `corrected_text` 没用它。
+> 现在 `corrected_text` 就是 `format!("{}{}", text, correction_text(…))`，
+> 三条负样本（帧 143/182/203）+ 两条正样本（`docs/24` §6.2、帧 161）都有回归测试。
 
 ### 2.2 机器人也是客户端
 
@@ -146,7 +149,7 @@ let corrected = crate::shot::corrected_text(&text, x0, y0, flip);   // Match::fi
 | 2 | `parse(text)` 非空，且 `to_text(parse(text)) == text` | **往返闭合**（这批文本是不动点，`docs/119` §5.4 的那 7.4% 例外本局没踩到） |
 | 3 | `FunctionUpdateRequest` 的回执 `owner_id` 仍是 `soldier_id`，且**客户端的 `"0.00"` 改不动**电脑玩家的函数 | `owner_id` 语义 + "AI 才是作者" |
 | 4 | 开火窗口恰好是 `GameStateInfo(CalculatingResults) → FunctionInfo → FunctionPoints`，中间那条 `function` 与第 1 步**逐字符相同** | 顺序照真机（帧 160–162）；**打出去的就是它说的那条** |
-| 5 | `corrected_function` == `"{text} + {:.3}"`，常数用**独立路径**复算：`c = y0 - eval(parse(text), ±x0)`，`x0/y0` 取自同一回合 `FunctionPoints.start_x/start_y`，`flip` 取自 `TeamInfo`；并断言小数位恰好 3 位 | 修正文本的**常数**与真机一致、且**不复用**被测函数的私有计算。⚠️ 符号形态钉的是**当前实现**（`c < 0` 时我们发 `"5.53 + -9.530"`，真机是 `"5.53 - 9.530"`）；本局 7 回合里 **4 回合**踩到这条差异，见 §5 第 1 条 |
+| 5 | `corrected_function` == `"{text}{带符号的尾巴}"`：`c = y0 - eval(parse(text), ±x0)` 用**独立路径**复算（`x0/y0` 取自同一回合 `FunctionPoints.start_x/start_y`，`flip` 取自 `TeamInfo`），`c >= 0` 断言 `" + "`、`c < 0` 断言 `" - "`，小数位恰好 3 位 | 修正文本的**常数与符号**都与真机一致（§2.1 第 3 条），且**不复用**被测函数的私有计算。本局 7 回合里 **4 回合**落在 `c < 0` 那一侧——正是旧实现会写错的那些 |
 | 6 | 至少打 4 回合；`TurnLog` 里每回合的 `function_text` 与报文逐字符相同、`evolved == true`、`function_tokens > 0` | 不是"某一回合过了就算"，且日志与线上同源 |
 
 本 seed 的实际走向（7 回合，两 AI 轮流说话，先手仍是 `soldiers[1] = 231`）：
@@ -170,15 +173,25 @@ let corrected = crate::shot::corrected_text(&text, x0, y0, flip);   // Match::fi
 | `empty_slot_speaks_the_captured_empty_form` | 空槽 ⇒ `{"FunctionInfo":{"owner_id":231,"function":"","corrected_function":null}}`（与帧 74 同形）；空函数的修正文本 == 抓样 `" + 10.990"` |
 | `ai_text_round_trips_through_the_parser` | 四回合的 AI 文本全部是 `parse`/`to_text` 的**不动点** |
 
+另有 `src/shot.rs` 的 **2 条回归测试**（§5 第 1 条的修复）：
+
+| 测试 | 钉住的行为 |
+|---|---|
+| `correction_operator_carries_the_sign_of_the_constant` | 三条**负**样本逐字符对（帧 143 `" - 3.420"`、帧 182 `" - 3.686"`、帧 203 `"abs((abs((-0.57+x))+-4.85)) - 11.416"`）+ 一条**正**样本（帧 161 `"cos((0.19*(6.70+x))) + 3.204"`） |
+| `correction_keeps_the_nan_branch` | `NaN` 仍写 `" + NaN"`；`c = ±2.000` 分别写 `" + 2.000"` / `" - 2.000"` |
+
 ### 4.3 条数
 
 ```
-lib 231 · broker 4 · events 6 · evidence 6 · golden 4 · live_hits 12 · plane 6
-server_match 3 · to_text 7                                   ⇒  279 passed（起点 272）
+lib 233 · broker 4 · events 6 · evidence 6 · golden 4 · live_hits 12 · plane 6
+server_match 3 · to_text 7                                   ⇒  281 passed（起点 272）
 ```
 
-七个新增 = `src/game.rs` 6 条 + `tests/server_match.rs` 1 条。**既有断言一条都没改**，
-`tests/server_match.rs` 里原有的两条（含 `rotation_and_ai_are_wired_over_tcp`）原样通过。
+九个新增 = `src/game.rs` 6 条 + `tests/server_match.rs` 1 条 + `src/shot.rs` 2 条（符号回归）。
+
+**既有断言**：`tests/server_match.rs` 里原有的两条（含 `rotation_and_ai_are_wired_over_tcp`）
+一字未改、原样通过；`src/shot.rs` 原有的两条正样本（`0.00 + 4.638` / ` + 10.990`）
+也一字未改——它们本来就是正的，见 §5 第 1 条关于 `tests/live_hits.rs` 那两条的结论。
 
 ---
 
@@ -186,7 +199,7 @@ server_match 3 · to_text 7                                   ⇒  279 passed（
 
 | # | 事项 | 真游戏 | 我们 | 理由 / 缺什么 |
 |---|---|---|---|---|
-| 1 | `corrected_function` 在 `c < 0` 时的形态 | `" - 3.420"`（**观测**：帧 143/182/203） | `" + -3.420"`（`shot::corrected_text` 写死 `" + "`；端到端那局 7 回合里 4 回合踩到） | `src/shot.rs` **不在本轮可改范围**；修法是把 `corrected_text` 改成 `format!("{}{}", text, correction_text(&toks, x0, y0, flip))`——那个函数**已经在仓库里**且形态正确（`" + 0.591"` / `" - 1.000"`），改完 `docs/24` §6.2 的两个正样本仍然逐字通过。端到端测试第 5 条钉的是**当前**形态，修好后要同步改成 §2.1 第 3 条的真机形态 |
+| 1 | `corrected_function` 在 `c < 0` 时的形态 | `" - 3.420"`（**观测**：帧 143/182/203） | **已对齐**：`" - 3.420"` | **本轮已修**（2026-11-06，`src/shot.rs` 由父 agent 划给本任务）。改法就两行：`corrected_text` = `format!("{}{}", text, correction_text(&toks, x0, y0, flip))`，复用仓库里**本来就有**的 `correction_text`（它早就按 `c >= 0` / `c < 0` / NaN 三分支写过，`" + 0.591"` / `" - 1.000"` / `" + NaN"`）。旧实现写死 `" + {:.3}"`，端到端那局 7 回合里 4 回合会发 `"5.53 + -9.530"` 这种真机从没写过的形态 |
 | 2 | 电脑玩家的函数由谁决定 | 机器人**客户端**自己算、自己交（帧 36/60） | **服务端**决定，客户端交上来的文本对它不生效 | 本仓库没有"机器人客户端"这一层，AI 住在 `Match` 里。写在这里是因为它是**架构差异**，不是复原结论 |
 | 3 | 提交版 `FunctionInfo` 的**时机** | `TurnInfo` 之后 45–226 tick（`docs/98` §5，机器人算 0.75–3.8 s） | 与 `TurnInfo` **同一次调用**发出（tick 字段仍是回合开始的 `now_ms`，字节不变） | 与 `docs/117` §6.1 记的是同一条 B 类偏差（墙钟），不改进度公式 |
 | 4 | 同文本重复提交要不要再播 | `docs/83` §1：复用上一回合的函数**不会**再播 `FunctionInfo`；`0x4789b3`/`0x4789dc` 把两份文本各算一遍、`0x478a03` 调 `memcmp`、`0x478b23` 把结果写成槽前一个字节，看着就是"变了才播" | **无条件播**（AI 每回合都重新进化，就当它是新提交） | **推断**：那段比较的上下游没读完（`docs/119` §9-E 同款缺口）。本局出现过同一文本两次（`231 "-13.99"`），两条都发了。若后续实现去重，端到端测试第 1 条要改成"提交**或**开火那条里能看到它" |
@@ -200,7 +213,7 @@ server_match 3 · to_text 7                                   ⇒  279 passed（
 |---|---|---|
 | ① | **同时回合制**（`docs/86`）里多个 AI 同 tick 说话的顺序 | 房间状态写死 `SequentialTurns`（`docs/117` §6-⑨）；`SimultaneousTurns` 的发射时序**没实现**，也没有抓包对照。本轮的"多个 AI 各说各的"是在**顺序回合制**下验证的（每个玩家各自回合一条）。接线本身不需要为同时模式改：每条 `FunctionInfo` 都由**该士兵自己的** `begin_next_turn` 产出（同一个函数、同一条报文），缺的只是"谁先谁后"——而那也是 `docs/113` 记的 A 类（批内顺序来自 HashMap 迭代序，缺一份未捕获的熵） |
 | ② | 提交版 `FunctionInfo` 的去重条件（§5 第 4 条） | `0x4789b3`–`0x478b23` 那段 `memcmp` 的上下游（谁读那个字节、读了之后发不发报文） |
-| ③ | `corrected_function` 在 `c = 0` / `-0.0` / `NaN` 时的符号 | `correction_text` 按 `c >= 0.0` 取 `" + "`、`NaN` 走 `' + NaN'`（`src/shot.rs` 的注释），但 `corrected_text` 走的是 `{:.3}`；真机这三例都没抓到 |
+| ③ | `corrected_function` 在 `c = 0` / `-0.0` 时的形态（`NaN` **已钉**） | `NaN` ⇒ `" + NaN"`（本轮有回归测试，保持既有行为）；`c = 0.0` ⇒ `" + 0.000"`；`c = -0.0` ⇒ `-0.0 >= 0.0` 为真 ⇒ 走 `" + "` 分支而 `{:.3}` 印出 `-0.000`，即 `" + -0.000"`。这三个边界真机都没抓到 ⇒ **未知** |
 | ④ | 客户端拿到 `FunctionInfo.function` 后是否按**文本**重画曲线 | `docs/119` §9-C 的老问题；若重画，§5 第 1 条那种形态差异会让"客户端画的"与"服务端算的"不一致 |
 | ⑤ | 机器人是否每回合都真的提交（而不是复用） | 只有一局抓包里的两次机器人提交（帧 36/60）；`docs/83` §1 的另一条观测是"复用就不播"，两者不矛盾但也没合并成一个结论 |
 
@@ -215,7 +228,7 @@ server_match 3 · to_text 7                                   ⇒  279 passed（
 | `FunctionInfo.owner_id` = `soldier_id` | **观测**（帧 36 → 158 → 162）+ `AGENTS.md` 硬事实 |
 | 接线后 AI 的函数进报文、可 `parse` 回来、与开火用的那条逐字符相同 | **逐位验证**（§4.1 的 6 条断言 + §4.2 的 6 条单测） |
 | `corrected_function` 的常数 = `y0 - f(±x0)`（三位小数） | **逐位验证**（测试用 `eval` 独立复算）+ **观测**（帧 143/161 的 `start_x/start_y` 手算吻合） |
-| `corrected_function` 在 `c < 0` 时的**符号形态**我们与真机不同 | **观测**（帧 143/182/203 vs `shot::corrected_text`）；修法见 §5 第 1 条，**未改** |
+| `corrected_function` 的**符号**：`c < 0` 写 `" - "` | **观测**（帧 143/182/203）+ **逐位验证**（本轮修 `shot::corrected_text` 后的回归测试，§5 第 1 条） |
 | 机器人的函数来自服务端而不是客户端 | **重建版自有规则**（§5 第 2 条） |
 | 同时回合制、去重、`c = 0/NaN` 的形态 | **未知**（§6） |
 
@@ -227,7 +240,7 @@ server_match 3 · to_text 7                                   ⇒  279 passed（
 cd .agent-work/aispeak/repo
 export CARGO_HOME=/home/user/MyProject/gw2/.cargo-home
 export CARGO_TARGET_DIR=/home/user/MyProject/gw2/.agent-work/aispeak/target
-cargo test --offline                                   # 279 passed
+cargo test --offline                                   # 281 passed
 cargo test --offline --lib game::tests                 # 含 6 条新单测
 cargo test --offline --test server_match               # 3 条端到端（本条新增 1 条）
 cargo test --offline --test server_match ai_functions -- --nocapture
@@ -253,9 +266,21 @@ node tools/capture_net_raw.js 20000 60    # 原始字节流，按 u16 大端长�
 |---|---|
 | `src/game.rs` | 模块注释改成"AI 说话"的现状；新增 `ai_function_text` / `ai_submit_info`；`begin_next_turn` 多发一条提交版 `FunctionInfo`；**新增 6 条单测** |
 | `src/serverloop.rs` | `FunctionUpdateRequest` 回执的 `owner_id` 改成 `soldier_id` 且电脑玩家用 AI 文本；`FunctionFireRequest` 用 AI 文本开火；`TurnRecord` 增 `function_text` / `corrected`；模块注释补"AI 说话"一节 |
-| `tests/server_match.rs` | **新增** `ai_functions_are_broadcast_and_round_trip_over_tcp` + 3 个解析小工具；原有 2 条断言一字未改 |
+| `tests/server_match.rs` | **新增** `ai_functions_are_broadcast_and_round_trip_over_tcp` + 3 个解析小工具；原有 2 条断言一字未改（第 5 条断言随后改成真机的**带符号**形态） |
+| `src/shot.rs` | `corrected_text` 改成复用 `correction_text`（`c < 0` ⇒ `" - "`，NaN ⇒ `" + NaN"`）；**新增 2 条回归测试**（三条负样本帧 143/182/203 + 两条正样本、NaN 分支）。父 agent 在发现该差异后把本文件划给本任务 |
 | `docs/127-ai-speaks.md` | **新增**（本文） |
 
 **没动**：`src/api.rs`、`src/aigen.rs`、`src/turn.rs`、`src/protocol.rs`、`src/function/`、
-`src/shot.rs`、`src/levelgen*.rs`、`client/`、`docs/INDEX.md`、`docs/HANDOVER.md`、
-任何既有夹具与既有测试的断言。
+`src/levelgen*.rs`、`client/`、`docs/INDEX.md`、`docs/HANDOVER.md`、任何既有夹具。
+
+### 9.1 `tests/live_hits.rs` 那两条：本来就对，不是按 bug 写死的
+
+`tests/live_hits.rs::captured_correction_constants_match`（`:191` / `:195`）写死的是
+`"(-46.06/(7.94+x)) + 15.508"` 与 `"cos((0.73*x)) + 1.643"`（`docs/25` §6.1 的两个抓样）。
+这两条的修正常数分别是 **+15.508** 与 **+1.643**，**都是正的**，所以：
+
+* 它们**不是**按 bug 写死的（没有 `+ -` 形态），改完 `corrected_text` 后仍然逐字通过；
+* 本轮**没有改动** `tests/live_hits.rs`（一个字都没碰），12 条照旧全绿。
+
+⇒ 结论：`tests/live_hits.rs` 的期望值经此一改**无需变动**，这也从侧面说明旧实现的 bug
+只在 `c < 0` 那一半出现、而且是**静默**的（正样本全程看不出来）。

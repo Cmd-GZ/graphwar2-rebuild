@@ -420,7 +420,7 @@ fn ai_functions_are_broadcast_and_round_trip_over_tcp() {
             "打出去的必须是它说的那个函数（士兵 {sid}）"
         );
 
-        // ---- 5) 修正文本：`<f> + <三位小数>`，常数独立复算 ----
+        // ---- 5) 修正文本：`<f> ± <三位小数>`，常数独立复算，**运算符带符号** ----
         let corrected = gw2_rebuild::protocol::get_str(&fired, "corrected_function")
             .unwrap_or_else(|| panic!("修正版必须有 corrected_function：{fired:?}"));
         let pts = gw2_rebuild::protocol::parse_message(&got[calc + 2]).unwrap();
@@ -430,18 +430,16 @@ fn ai_functions_are_broadcast_and_round_trip_over_tcp() {
         // c = y0 - f(±x0)：与 `src/shot.rs::correction` 同一定义，但这里**自己算**。
         let f_at = gw2_rebuild::function::eval(&toks, if flip { -x0 } else { x0 }, 0.0, 0.0);
         let c = y0 - f_at;
+        // 运算符本身带符号：`c >= 0` ⇒ `" + "`、`c < 0` ⇒ `" - "`。
+        // 真机形态见抓包帧 143/182/203（`" - 3.420"` / `" - 3.686"` / `" - 11.416"`），
+        // 旧实现写死 `" + "` 会发 `"5.53 + -9.530"`（`docs/127` §5 第 1 条，已修）。
+        let tail = if c >= 0.0 { format!(" + {:.3}", c) } else { format!(" - {:.3}", -c) };
         assert_eq!(
             corrected,
-            format!("{} + {:.3}", text, c),
-            "修正文本的形态与常数不符（士兵 {sid}，起点 ({x0}, {y0})）"
+            format!("{}{}", text, tail),
+            "修正文本的形态与常数不符（士兵 {sid}，起点 ({x0}, {y0})，c = {c}）"
         );
-        // 三位小数：尾巴必须正好是 `" + "` + 3 位小数。
-        // ⚠️ 这条钉的是**当前实现**的形态。真机在 `c < 0` 时写 `" - 3.420"`（抓包帧
-        // 143/182/203），而 `shot::corrected_text` 写死 `" + "`，于是发出去的是
-        // `"5.53 + -9.530"` 这种。本局 7 回合里有 4 回合踩到；修法见 `docs/127` §5 第 1 条，
-        // 修好后这里要同步改成 `format!("{}{}", text, 带符号的尾巴)`。
-        let tail = &corrected[text.len()..];
-        assert_eq!(tail, format!(" + {:.3}", c));
+        assert_eq!(&corrected[text.len()..], tail.as_str(), "尾巴就是修正常数那一截");
         let frac = tail.rsplit('.').next().unwrap();
         assert_eq!(frac.len(), 3, "修正常数必须是三位小数：{tail:?}");
 

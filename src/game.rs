@@ -50,13 +50,13 @@
 //! `owner_id` 一律是 **`soldier_id`**（`AGENTS.md` 硬事实；抓包里 `FunctionInfo.owner_id`
 //! 与同一回合的 `FunctionPoints.owner_id` 相同，都不是 `player_id`）。
 //! 修正版**只**在开火那一刻发（`docs/43` 的既有顺序不改）。
+//! 修正文本的运算符**带符号**（`c >= 0` 写 `" + "`、`c < 0` 写 `" - "`；抓包帧 143/182/203），
+//! 由 `shot::corrected_text` 复用 `correction_text` 产出（`docs/127` §5 第 1 条，已修）。
 //!
 //! **没接的**（都写在 `docs/117` §6 / `docs/127` §6）：回合超时的**检测**没有证据，
 //! 本层只把 `timed_out` 当输入参数；游标初值取 `PlayerTurns::new` 的 0
 //! （`TurnManager::add_player` 没有 index 入口，见 `docs/98` §6-B）；
-//! 同时回合制没接（房间状态写死 `SequentialTurns`）；AI 文本的 `corrected_function`
-//! 在 c < 0 时的**符号形态**与真机不同（`src/shot.rs::corrected_text` 写死 `" + "`，
-//! 见 `docs/127` §5 第 1 条）。
+//! 同时回合制没接（房间状态写死 `SequentialTurns`）。
 
 use crate::aigen::{self, Individual, SoldierEvolver, SoldierFunctions, SoldierTurn, VarMode};
 use crate::life::{LifeState, Status};
