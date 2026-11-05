@@ -83,7 +83,8 @@
 | `graphwar_video_writer.rs` | 录像导出 |
 | `graphwar_crash_reporter.rs` (≥100) | 崩溃上报 |
 | `graphwar_logger.rs` / `graphwar_nodes.rs` / `graphwar_module_container.rs` | 基础设施 |
-| `graphwar_ad_switch.rs` / `android_iap.gdc` | 广告 / 内购 |
+| `graphwar_ad_switch.rs` / `android_iap.gdc` | **广告 / 内购**（`docs/132`：判据只有 `are_ads_enabled() = !owned`） |
+| `graphwar_backend.rs` | **联机层，不是广告**（15 个方法名：`start_server` / `start_client_to_*` / `lan_broadcaster` / `broker` / `get_next_clip_checkpoint`…，且**不是 Godot 类**）——`docs/132` 更正 |
 
 ## 7. 第三方 crate（同名 `src/` 路径，勿混淆）
 
@@ -439,7 +440,7 @@ SIMD 内联把 20 行 C 展开成 60 行位运算，`SUB161(...)`/`auVar` 满屏
 | **界面 / 呈现** | `root_node`(242)、`setup_control`(46)、`lan_vbox`(44)、`nodes`(14)、`long_press_animation`(8)、`player_screen_control`(8)、`play_screen_control`(7)、`graphics_manager`(7)、`button`(6)、`texture_loader`(1) | **383** | 客户端 agent 正在做。注意：**界面行为主要写在 `.gdc` 脚本里（105/105 已反编译），这些 Rust 函数是脚本底下那层原生调用**——所以"没引用过 Rust 地址"不等于"界面没还原" |
 | **对局元信息** | `function_manager`(7)、`rank_manager`(4)、`name_manager`(3)、`local_player_manager`(3)、`event_handler`(3)、`logger`(3)、`campaign_control`(1)、`lobby_control`(1) | **25** | 真盲区。`name_manager` / `rank_manager` 对应 `docs/96` 里缺的 `NameInfo`/`RankInfo` 一组事件 |
 | **音频** | `audio_control`(14) | **14** | `.so` 里有完整的 WAV 解析错误串（`no WAVE tag found`、`no RIFF tag found`、`bits per sample is not 8 or 16`…），说明**音频是运行时解析 WAV 的**。与用户说的"有一个文件损坏"直接相关：坏文件会在这里被拒 |
-| **广告 / 后端** | `ad_switch`(7)、`backend`(6) | **13** | 见 §14.5 |
+| **广告 + 联机后端** | `ad_switch`(7)、`backend`(6) | **13** | 见 §14.5。⚠️ **`backend` 不是广告，是联机层**（`docs/132` §3） |
 | **录像 / 回放 / 视频** | `replay_control`(3)、`video_writer`(3)、`game_recorder`(2) | **8** | 我们只做了**读**回放（`tools/parse_replay.py`），没做**写**。注意还有 `publish_video_to_album` / `Android_mediastore_holder`——"把回放发到相册"是 Android 专属 |
 | **联机外围** | `lan_broadcaster_v6`(4)、`server_broker_handler`(3) | **7** | 房间发现与 broker，见 `docs/24` §7 |
 | **已知假阴性** | `function_input`(22)、`plane_pos_manager`(7) | **29** | §14.2 说的两个反例 |
