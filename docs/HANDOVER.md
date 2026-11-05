@@ -11,6 +11,10 @@
 - LAN 发现：UDP 广播，明文 JSON（`time_mode` 写作 `"Timers1m"`）
 - 对局：TCP，**`u16` 大端长度 + JSON**
 - 29 种消息已入库为 `fixtures/protocol.jsonl`，`src/protocol.rs` 全部解析通过
+- **一回合的报文顺序对上**（`docs/43`）：`fire()` 现在按抓包顺序产出
+  `CalculatingResults → FunctionInfo(修正后) → FunctionPoints → SynchronizingResults →
+  [死者] → [销毁] → FunctionActive → ExplosionEffect → ExecutingResults`；
+  测试断言种类序列与三个状态名
 - **`end_of_turn_tick` 解开**（`docs/42`）：它是**回合截止时刻** =
   `回合开始 tick + 时长`；频率同为 60Hz；**六档全部实测**：1m=3600 / 2m=7200 / 3m=10800 / 5m=18000 / 30s=1800，
   且 `TimerInf` 线上发 **0**（哨兵）；按钮循环顺序 1m→2m→3m→5m→Inf→30s→1m

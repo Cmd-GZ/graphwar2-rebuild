@@ -847,3 +847,57 @@ mod emit_tests {
         }
     }
 }
+
+/// `{"GameStateInfo":{"game_state":".."}}`
+pub fn emit_game_state(state: &str) -> String {
+    format!(r#"{{"GameStateInfo":{{"game_state":"{}"}}}}"#, state)
+}
+
+/// `{"FunctionInfo":{"owner_id":..,"function":"..","corrected_function":..}}`
+///
+/// `corrected` 为 `None` 时输出 `null`（与抓包一致）。
+pub fn emit_function_info(owner_id: i64, function: &str, corrected: Option<&str>) -> String {
+    match corrected {
+        Some(c) => format!(
+            r#"{{"FunctionInfo":{{"owner_id":{},"function":"{}","corrected_function":"{}"}}}}"#,
+            owner_id, function, c
+        ),
+        None => format!(
+            r#"{{"FunctionInfo":{{"owner_id":{},"function":"{}","corrected_function":null}}}}"#,
+            owner_id, function
+        ),
+    }
+}
+
+/// `{"FunctionActive":{"owner_id":..,"active_tick":..}}`
+pub fn emit_function_active(owner_id: i64, active_tick: i64) -> String {
+    format!(r#"{{"FunctionActive":{{"owner_id":{},"active_tick":{}}}}}"#, owner_id, active_tick)
+}
+
+#[cfg(test)]
+mod emit_turn_sequence_tests {
+    use super::*;
+
+    #[test]
+    fn emitted_game_state_and_function_messages_match_captured() {
+        assert_eq!(emit_game_state("CalculatingResults"),
+                   r#"{"GameStateInfo":{"game_state":"CalculatingResults"}}"#);
+        assert_eq!(emit_function_active(231, 253),
+                   r#"{"FunctionActive":{"owner_id":231,"active_tick":253}}"#);
+        assert_eq!(emit_function_info(231, "", Some(" + 10.087")),
+                   r#"{"FunctionInfo":{"owner_id":231,"function":"","corrected_function":" + 10.087"}}"#);
+        assert_eq!(emit_function_info(231, "", None),
+                   r#"{"FunctionInfo":{"owner_id":231,"function":"","corrected_function":null}}"#);
+    }
+
+    /// 抓包里那一回合的 `FunctionInfo`（修正后）必须能逐字节重现。
+    #[test]
+    fn captured_corrected_function_info_round_trips() {
+        let line = r#"{"FunctionInfo":{"owner_id":231,"function":"","corrected_function":" + 10.087"}}"#;
+        let m = parse_message(line).unwrap();
+        let owner = get_int(&m, "owner_id").unwrap();
+        let function = get_str(&m, "function").unwrap_or_default();
+        let corrected = get_str(&m, "corrected_function");
+        assert_eq!(emit_function_info(owner, &function, corrected.as_deref()), line);
+    }
+}

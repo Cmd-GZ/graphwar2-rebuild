@@ -82,29 +82,28 @@ impl Match {
         let outcome = resolve(function_text, x0, y0, 0.5, flip, crate::path::Mode::Normal, &self.mask, &others);
         let now_tick = self.tick_now(now_ms);
 
-        let mut msgs = vec![emit_function_points(
-            owner_id,
-            x0,
-            y0,
-            outcome.stop.0,
-        )];
+        // 报文顺序照真实抓包（docs/43）：
+        //   CalculatingResults -> FunctionInfo(修正后) -> FunctionPoints
+        //   -> SynchronizingResults -> [死者] -> [销毁] -> FunctionActive
+        //   -> ExplosionEffect -> ExecutingResults
+        let mut msgs = vec![
+            crate::protocol::emit_game_state("CalculatingResults"),
+            crate::protocol::emit_function_info(
+                owner_id,
+                function_text,
+                Some(&crate::shot::corrected_text(function_text, x0, y0, flip)),
+            ),
+            emit_function_points(owner_id, x0, y0, outcome.stop.0),
+            crate::protocol::emit_game_state("SynchronizingResults"),
+        ];
 
         for id in &outcome.killed {
-            // 死亡 tick：这里按"当前 tick"下发（弹丸飞行时间模型未还原，见 docs/31）
             msgs.push(emit_life_queued_death(*id, now_tick));
             if let Some(t) = self.soldiers.iter().find(|t| t.id == *id) {
                 self.next_effect_id += 1;
-                msgs.push(emit_effect_info(
-                    self.next_effect_id,
-                    t.x,
-                    t.y,
-                    "DeathEffect",
-                    now_tick,
-                ));
+                msgs.push(emit_effect_info(self.next_effect_id, t.x, t.y, "DeathEffect", now_tick));
             }
         }
-
-        // 死掉的士兵从场上移除：否则后续射击会重复计死
         if !outcome.killed.is_empty() {
             self.soldiers.retain(|t| !outcome.killed.contains(&t.id));
         }
@@ -114,19 +113,14 @@ impl Match {
                 r#"{{"QueueDestroyObstacle":{{"pos_x":{},"pos_y":{},"radius":0.5,"tick":{}}}}}"#,
                 outcome.stop.0, outcome.stop.1, now_tick
             ));
-            // 真实游戏的做法：在命中点用 fill=0xFF、半径 0.5 **挖一个洞**，
-            // 而不是把整个障碍移除（frida 抓到的光栅化调用证据见 docs/39）。
+            // 真实游戏：在命中点用 fill=0xFF、半径 0.5 挖洞（docs/39）
             rasterize(&mut self.mask, outcome.stop.0, outcome.stop.1, 0.5, 0xFF);
         }
 
+        msgs.push(crate::protocol::emit_function_active(owner_id, now_tick));
         self.next_effect_id += 1;
-        msgs.push(emit_effect_info(
-            self.next_effect_id,
-            outcome.stop.0,
-            outcome.stop.1,
-            "ExplosionEffect",
-            now_tick,
-        ));
+        msgs.push(emit_effect_info(self.next_effect_id, outcome.stop.0, outcome.stop.1, "ExplosionEffect", now_tick));
+        msgs.push(crate::protocol::emit_game_state("ExecutingResults"));
 
         msgs
     }
@@ -151,17 +145,53 @@ mod tests {
         &msg[2..msg.find('"').unwrap_or(2)] // 简易取键名
     }
 
+    fn kinds(msgs: &[String]) -> Vec<String> {
+        msgs.iter()
+            .map(|m| {
+                let end = m[2..].find('"').unwrap() + 2;
+                m[2..end].to_string()
+            })
+            .collect()
+    }
+
+    /// 报文顺序必须与真实抓包一致（docs/43）。
     #[test]
-    fn fire_emits_function_points_first_and_explosion_last() {
+    fn fire_emits_captured_turn_sequence() {
+        // 一个"被障碍挡住、没打死人"的回合（与抓包里那一回合同形）
+        let mut m = Match::new(room(), vec![(-5.0, 0.0, 1.0)], vec![], (5, 0));
+        let msgs = m.fire(1, "0.00", 10.0, 0.0, true, 1000);
+        assert_eq!(
+            kinds(&msgs),
+            vec![
+                "GameStateInfo",
+                "FunctionInfo",
+                "FunctionPoints",
+                "GameStateInfo",
+                "QueueDestroyObstacle",
+                "FunctionActive",
+                "EffectInfo",
+                "GameStateInfo",
+            ],
+            "回合内报文顺序与抓包不符"
+        );
+        // 状态名也要对
+        assert!(msgs[0].contains("CalculatingResults"));
+        assert!(msgs[3].contains("SynchronizingResults"));
+        assert!(msgs[7].contains("ExecutingResults"));
+    }
+
+    #[test]
+    fn killed_soldier_appears_between_sync_and_active() {
         let soldiers = vec![
             Target { id: 10, x: 5.0, y: 0.0, radius: 0.5 },
             Target { id: 11, x: -2.0, y: 0.0, radius: 0.5 },
         ];
         let mut m = Match::new(room(), vec![], soldiers, (5, 0));
         let msgs = m.fire(10, "0.00", 5.0, 0.0, true, 1000);
-        assert!(msgs.first().unwrap().starts_with(r#"{"FunctionPoints""#));
-        assert!(msgs.last().unwrap().contains("ExplosionEffect"));
-        // 途中穿过了 11 号士兵
+        let ks = kinds(&msgs);
+        let death = ks.iter().position(|k| k == "LifeQueuedDeath").expect("应有死亡消息");
+        let active = ks.iter().position(|k| k == "FunctionActive").unwrap();
+        assert!(death < active, "死亡消息应出现在 FunctionActive 之前");
         assert!(msgs.iter().any(|s| s.contains(r#""entity_id":11"#)), "应记录 11 号死亡");
     }
 
