@@ -472,6 +472,62 @@ impl FunctionUpdateRequest {
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// 死亡与效果（第五轮抓包新增，终于拿到 alive:false）
+// ---------------------------------------------------------------------------
+
+/// `{"LifeQueuedDeath":{"entity_id":..,"tick":..}}` —— 死亡被排入某个 tick
+#[derive(Debug, Clone, PartialEq)]
+pub struct LifeQueuedDeath {
+    pub entity_id: i64,
+    pub tick: i64,
+}
+
+/// `{"EffectInfo":{"effect_id":..,"pos_x":..,"pos_y":..,"effect_type":"..","start_tick":..}}`
+#[derive(Debug, Clone, PartialEq)]
+pub struct EffectInfo {
+    pub effect_id: i64,
+    pub pos_x: f64,
+    pub pos_y: f64,
+    pub effect_type: String,
+    pub start_tick: i64,
+}
+
+/// `{"DestroyObstacle":{"pos_x":..,"pos_y":..,"radius":..}}` —— 障碍已销毁
+#[derive(Debug, Clone, PartialEq)]
+pub struct DestroyObstacle {
+    pub pos_x: f64,
+    pub pos_y: f64,
+    pub radius: f64,
+}
+
+impl LifeQueuedDeath {
+    pub fn parse(m: &RawMessage) -> Option<Self> {
+        Some(LifeQueuedDeath { entity_id: get_int(m, "entity_id")?, tick: get_int(m, "tick")? })
+    }
+}
+impl EffectInfo {
+    pub fn parse(m: &RawMessage) -> Option<Self> {
+        Some(EffectInfo {
+            effect_id: get_int(m, "effect_id")?,
+            pos_x: get_f64(m, "pos_x")?,
+            pos_y: get_f64(m, "pos_y")?,
+            effect_type: get_str(m, "effect_type")?,
+            start_tick: get_int(m, "start_tick")?,
+        })
+    }
+}
+impl DestroyObstacle {
+    pub fn parse(m: &RawMessage) -> Option<Self> {
+        Some(DestroyObstacle {
+            pos_x: get_f64(m, "pos_x")?,
+            pos_y: get_f64(m, "pos_y")?,
+            radius: get_f64(m, "radius")?,
+        })
+    }
+}
+
 #[cfg(test)]
 mod match_tests {
     use super::*;
@@ -572,5 +628,54 @@ mod match_tests {
         // 实抓里还出现过 "exp(sin(x))"（见 docs/24 §4.5）
         assert!(funcs.iter().all(|f| f.function.is_empty()));
         assert!(funcs.iter().all(|f| f.corrected_function.is_none()));
+    }
+}
+
+
+#[cfg(test)]
+mod death_tests {
+    use super::*;
+
+    fn msgs() -> Vec<RawMessage> {
+        include_str!("../fixtures/protocol_death.jsonl")
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .filter_map(parse_message)
+            .collect()
+    }
+
+    #[test]
+    fn captured_death_flow_is_coherent() {
+        let all = msgs();
+        assert!(!all.is_empty());
+
+        let deaths: Vec<LifeQueuedDeath> = all.iter().filter(|m| m.kind == "LifeQueuedDeath").filter_map(LifeQueuedDeath::parse).collect();
+        assert_eq!(deaths.len(), 2, "抓到两个被排入的死亡");
+        // 实测：231 在 tick 238，230 在 tick 953
+        assert!(deaths.iter().any(|d| d.entity_id == 231 && d.tick == 238));
+        assert!(deaths.iter().any(|d| d.entity_id == 230 && d.tick == 953));
+
+        let effects: Vec<EffectInfo> = all.iter().filter(|m| m.kind == "EffectInfo").filter_map(EffectInfo::parse).collect();
+        // 死亡效果与死亡 tick 对齐：DeathEffect.start_tick == LifeQueuedDeath.tick
+        for d in &deaths {
+            let matched = effects.iter().any(|e| e.effect_type == "DeathEffect" && e.start_tick == d.tick);
+            assert!(matched, "死亡 tick {} 没有对应的 DeathEffect", d.tick);
+        }
+        assert!(effects.iter().any(|e| e.effect_type == "ExplosionEffect"));
+
+        let dead: Vec<LifeInfo> = all.iter().filter(|m| m.kind == "LifeInfo").filter_map(LifeInfo::parse).collect();
+        assert!(dead.iter().any(|l| l.entity_id == 230 && !l.alive), "应有 230 的死亡记录");
+    }
+
+    #[test]
+    fn captured_game_states() {
+        let states: Vec<String> = msgs()
+            .iter()
+            .filter(|m| m.kind == "GameStateInfo")
+            .filter_map(|m| get_str(m, "game_state"))
+            .collect();
+        // 实测出现过的状态
+        assert!(states.iter().any(|s| s == "Setup"));
+        assert!(states.iter().any(|s| s == "WaitingForFunctions"));
     }
 }

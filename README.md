@@ -32,10 +32,10 @@
 | 资源还原 | ✅ | 692 文件 md5 全符（`tools/pck_extract.py`） |
 | 打包运行（代码+资源） | ✅ | 导出 `.pck` 并从包启动：扩展注册成功、还原的纹理加载成功（`docs/19` §7） |
 | 开火结算 `shot_calculator` | 🔶 | **碰撞链路端到端对拍通过**（真实关卡的障碍/士兵/命中点，误差 < 1 采样步，`docs/25`）；`0x3c2bc0` 内部未逐条还原 |
-| 命中与生命 `life_manager` | 🔶 | 结构 + 协议里的 `LifeInfo{alive}` 真实样本；伤害规则未知 |
+| 命中与生命 `life_manager` | 🔶 | **死亡链路已抓全**（`LifeQueuedDeath`→`DeathEffect`→`LifeInfo{alive:false}`，tick 对齐，`docs/27`）；二值模型，未见血量字段 |
 | 回合 `turn_manager` | 🔶 | **协议里抓到完整回合链路**（`TurnInfo`/`TurnCountInfo`/`EndOfTurnInfo{tick}`）；内部实现未复刻 |
 | 关卡生成 `level_generator` | 🔶 | **协议里抓到真实关卡数据**（12 个障碍的坐标与半径）；生成算法未还原 |
-| AI `computer_player_manager` / `function_evolutionator` | 🔶 | 经指针调用开火结算；评分规则未知 |
+| AI `computer_player_manager` / `function_evolutionator` | 🔶 | **按难度观测到函数形态差异**（低难度固定候选、`level:25` 演化为 `tan(sin((-0.12*x)))`）；评分规则未知 |
 | 联机实现 | 🔶 | **传输层与 29 种消息已用真实抓包还原**（`docs/24`，`src/protocol.rs` + 29 条真实帧测试）；对局内消息未捕获 |
 
 ### 离"全绿"还差什么
