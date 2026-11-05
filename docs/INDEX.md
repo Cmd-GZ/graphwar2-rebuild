@@ -39,6 +39,7 @@
 | [99-generation-dynamics.md](99-generation-dynamics.md) | **每代组装**：单父代工厂、无缓存全量重评、B 变体 | 父代 = 存活槽一对一，4 子代共用父代 |
 | [101-gdc-contents.md](101-gdc-contents.md) | `.gdc` 逐字节格式 + 5 个行为脚本 + 47 行布局数值表 | 用本机 Godot 做"已知源码→已知字节码"探针 |
 | [103-disk-levelgen.md](103-disk-levelgen.md) | **`0x4ea6dc` 不是关卡生成器** | 关卡只有散布 + 中心单障碍两种 |
+| [102-color-assignment.md](102-color-assignment.md) | **玩家颜色分配结案：两张 6 色队色表 + 随机起点线性探测** | 取代 `34`；二进制逐条指令 + 1501 条 replay 观测 |
 
 ## 二、已归档（`docs/archive/`，**不要引用其结论**）
 
