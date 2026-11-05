@@ -20,3 +20,9 @@ __pycache__/
 client/*.uid
 client/src/**/*.uid
 client/tools/*.uid
+
+# 参考用原版二进制（Windows/Android 包等）：绝不入库
+.reference/
+*.apk
+*.apks
+*.aab
