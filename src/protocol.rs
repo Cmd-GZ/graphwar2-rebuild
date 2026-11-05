@@ -926,3 +926,1019 @@ mod emit_end_of_turn_tests {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// `docs/96` §3 补齐的 23 个事件
+// ---------------------------------------------------------------------------
+//
+// 这一节只做**协议形状**：事件名 + 字段 + 未知字段原样回发。它不改变任何玩法行为，
+// 也不碰 `src/events.rs` 的判别值（线上是外部标签 JSON，判别值不上线，`docs/96` §4）。
+//
+// ## 为什么分成"强类型"和"透传"两种
+//
+// 复原目标是**逐位相同**，所以只有**真实抓包证明过键名**的事件才允许建强类型结构体
+// ——键名差一个字符就是另一条线格式，猜一个像样的名字比不实现更糟。
+//
+// | 档 | 数量 | 含义 |
+// |---|---|---|
+// | 强类型 | **13** | `fixtures/protocol*.jsonl` 里有**真实报文**，键名与键序逐位验证 |
+// | 透传 | **10** | 名字已识别、能逐字节回放，但**字段名未证实** ⇒ 不声明字段、不参与序列化 |
+//
+// 23 个里 14 个有真实报文（共 41 行）：强类型 13 个 + `ClearObstacles`（实测空体，走透传）。
+//
+// ## 字段数（可信）与字段名（要分档）
+//
+// `.rodata` 里 serde 的 `struct <Name>Event with N elements` 给出 N，见
+// [`SERDE_FIELD_COUNTS`]。**N 与实测是否一致**逐条写在结构体的 doc comment 里；
+// 三处与 `docs/96` 上一稿 §3 不同，都是**观测**：
+//
+// 1. `NameInfo`(2) / `LockRequest`(1) / `TurnLimitInfo`(1) 的 N 在 `.rodata` 里**有**，
+//    上一稿记成 `—` 是提取时漏了这三条；
+// 2. 23 个里有 **14 个**在 `fixtures/` 里早有真实报文——`docs/96` §7 那句
+//    "23 个里没有一个抓到过真实流量"与夹具**不符**；
+// 3. `ClearObstacles` 实测体为空 `{}`（与 `docs/24` §4.6 同一句），
+//    且它的变体**没有** `with N elements` 串。
+//
+// `GameHeartbeat` / `ClearObstacles` / `ClearBansRequest` 三个没有 N 串。同类的
+// `GameStartRequest` 也没有，而它实测就是 `{}`。其中 `ClearObstacles` 已实测空体，
+// `GameHeartbeat` / `ClearBansRequest` "是空体"仍只是**推断**；三者一律按透传实现：
+// 不声明字段，来什么字段就原样收进 `extra`、原样发回去。
+//
+// ## 数值格式
+//
+// 这 23 个事件**没有浮点字段**（观测：41 行抓包原文里这 14 种只有整数、字符串、
+// `null` 和空对象）。所以不存在 serde 的 `1.0` vs `1` 之争；强类型结构体里的数字
+// 全是 `i64`，用 `i64::to_string()` 输出，与 serde_json 的整数表示一致。
+
+/// 取字符串字段，并按 JSON 规则解转义。
+///
+/// [`get_str`] 不解转义，遇到 `\"` 会提前截断；昵称与外观名都可能带引号，
+/// 所以本节统一用这个。
+///
+/// 局限（未知）：`\uD83D\uDE00` 这类代理对会解成 U+FFFD（没有样本需要）。
+pub fn get_str_unescaped(msg: &RawMessage, key: &str) -> Option<String> {
+    let pat = format!("\"{}\":", key);
+    let i = msg.body.find(&pat)? + pat.len();
+    let rest = msg.body[i..].trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let mut out = String::new();
+    let mut chars = rest.char_indices();
+    while let Some((_, c)) = chars.next() {
+        match c {
+            '"' => return Some(out),
+            '\\' => {
+                let (_, e) = chars.next()?;
+                match e {
+                    '"' => out.push('"'),
+                    '\\' => out.push('\\'),
+                    '/' => out.push('/'),
+                    'b' => out.push('\u{8}'),
+                    'f' => out.push('\u{c}'),
+                    'n' => out.push('\n'),
+                    'r' => out.push('\r'),
+                    't' => out.push('\t'),
+                    'u' => {
+                        let mut hex = String::new();
+                        for _ in 0..4 {
+                            hex.push(chars.next()?.1);
+                        }
+                        let v = u32::from_str_radix(&hex, 16).ok()?;
+                        out.push(char::from_u32(v).unwrap_or('\u{fffd}'));
+                    }
+                    _ => return None,
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    None // 没有闭合引号
+}
+
+/// 把字符串编成 JSON 字面量（带引号），与 serde_json 的字符串转义一致。
+pub fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// 整数编成 JSON 数字（与 serde_json 的 `i64` 表示一致）。
+pub fn json_i64(v: i64) -> String {
+    v.to_string()
+}
+
+/// `Option<i64>` 编成数字或 `null`（抓包里实测出现过 `"rank":null`）。
+pub fn json_opt_i64(v: Option<i64>) -> String {
+    match v {
+        Some(n) => n.to_string(),
+        None => "null".to_string(),
+    }
+}
+
+/// 把对象体切成 `(键, 原始值文本)`，值文本**逐字保留**（含嵌套对象、数组、字符串）。
+///
+/// 只按**顶层**逗号切分：括号内与字符串内的逗号不切（聊天正文里就有逗号）。
+fn split_fields(body: &str) -> Vec<(String, String)> {
+    let bytes = body.as_bytes();
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut i = 0usize;
+    loop {
+        while i < bytes.len() && (bytes[i] == b',' || (bytes[i] as char).is_whitespace()) {
+            i += 1;
+        }
+        if i >= bytes.len() || bytes[i] != b'"' {
+            break;
+        }
+        let key_start = i + 1;
+        let mut j = key_start;
+        while j < bytes.len() && bytes[j] != b'"' {
+            if bytes[j] == b'\\' {
+                j += 1;
+            }
+            j += 1;
+        }
+        if j >= bytes.len() {
+            break;
+        }
+        let key = body[key_start..j].to_string();
+        j += 1;
+        while j < bytes.len() && (bytes[j] as char).is_whitespace() {
+            j += 1;
+        }
+        if j >= bytes.len() || bytes[j] != b':' {
+            break;
+        }
+        j += 1;
+        while j < bytes.len() && (bytes[j] as char).is_whitespace() {
+            j += 1;
+        }
+        let val_start = j;
+        let mut depth = 0i32;
+        let mut in_str = false;
+        while j < bytes.len() {
+            let c = bytes[j];
+            if in_str {
+                if c == b'\\' {
+                    j += 2;
+                    continue;
+                }
+                if c == b'"' {
+                    in_str = false;
+                }
+            } else if c == b'"' {
+                in_str = true;
+            } else if c == b'{' || c == b'[' {
+                depth += 1;
+            } else if c == b'}' || c == b']' {
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+            } else if c == b',' && depth == 0 {
+                break;
+            }
+            j += 1;
+        }
+        out.push((key, body[val_start..j].trim().to_string()));
+        i = j;
+    }
+    out
+}
+
+/// 取出 `body` 里**不在** `known` 里的字段，供"原样保留并回发"用。
+pub fn extra_fields(body: &str, known: &[&str]) -> Vec<(String, String)> {
+    split_fields(body)
+        .into_iter()
+        .filter(|(k, _)| !known.contains(&k.as_str()))
+        .collect()
+}
+
+/// 组装 `{"Kind":{…}}`：先写已知字段（声明顺序），再写未知字段（原样、原顺序）。
+pub fn emit_object(kind: &str, known: &[(&str, String)], extra: &[(String, String)]) -> String {
+    let mut out = String::with_capacity(64);
+    out.push('{');
+    out.push_str(&json_str(kind));
+    out.push_str(":{");
+    let mut first = true;
+    let pairs = known
+        .iter()
+        .map(|(k, v)| (*k, v))
+        .chain(extra.iter().map(|(k, v)| (k.as_str(), v)));
+    for (k, v) in pairs {
+        if !first {
+            out.push(',');
+        }
+        first = false;
+        out.push_str(&json_str(k));
+        out.push(':');
+        out.push_str(v);
+    }
+    out.push_str("}}");
+    out
+}
+
+/// 生成"字段名未证实 ⇒ 只透传"的事件。
+///
+/// 结构体**不声明任何字段**：解析时把整段 `{…}` 的字段按出现顺序原样存下，
+/// 序列化时原样拼回。这样既不会产生错误的线格式，也不会丢掉将来的新字段。
+macro_rules! passthrough_event {
+    ($(#[$meta:meta])* $ty:ident) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Default)]
+        pub struct $ty {
+            /// `{…}` 里的字段，按出现顺序**原样**保留（本事件不声明任何已知字段）。
+            pub extra: Vec<(String, String)>,
+        }
+        impl $ty {
+            pub fn parse(m: &RawMessage) -> Option<Self> {
+                Some(Self { extra: split_fields(&m.body) })
+            }
+            pub fn to_msg(&self) -> String {
+                emit_object(stringify!($ty), &[], &self.extra)
+            }
+        }
+    };
+}
+
+/// 生成"`entity_id` + 一个字符串"形状的事件（线上键名 = 字段名）。
+macro_rules! entity_str_event {
+    ($(#[$meta:meta])* $ty:ident, $field:ident) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq)]
+        pub struct $ty {
+            pub entity_id: i64,
+            pub $field: String,
+            /// 未识别字段（键 / 原始值文本），按出现顺序保留，[`Self::to_msg`] 原样回发。
+            pub extra: Vec<(String, String)>,
+        }
+        impl $ty {
+            pub fn parse(m: &RawMessage) -> Option<Self> {
+                Some(Self {
+                    entity_id: get_int(m, "entity_id")?,
+                    $field: get_str_unescaped(m, stringify!($field))?,
+                    extra: extra_fields(&m.body, &["entity_id", stringify!($field)]),
+                })
+            }
+            pub fn to_msg(&self) -> String {
+                emit_object(
+                    stringify!($ty),
+                    &[("entity_id", json_i64(self.entity_id)),
+                      (stringify!($field), json_str(&self.$field))],
+                    &self.extra,
+                )
+            }
+        }
+    };
+}
+
+// ---------- 强类型 13 个：键名与键序有真实抓包逐位验证 ----------
+
+entity_str_event! {
+    /// `{"NameRequest":{"entity_id":229,"name":"user"}}` —— 请求改名。
+    ///
+    /// **逐位验证**：真实报文（`fixtures/protocol.jsonl`、`protocol_match.jsonl`）。
+    /// N=2（serde 原文）与实测一致。
+    NameRequest, name
+}
+
+entity_str_event! {
+    /// `{"NameInfo":{"entity_id":229,"name":"user"}}` —— 广播某人当前的名字。
+    ///
+    /// **逐位验证**：真实报文（夹具）。N=2 与实测一致
+    /// （`docs/96` §3 把 N 记成 `—`，是提取漏了这条 serde 串）。
+    NameInfo, name
+}
+
+entity_str_event! {
+    /// `{"SkinGraphicsRequest":{"entity_id":229,"graphics_str":"yellow"}}` —— 请求换皮肤。
+    ///
+    /// **逐位验证**：真实报文（夹具；实测取值 `yellow` / `bot_0`）。N=2 与实测一致。
+    SkinGraphicsRequest, graphics_str
+}
+
+entity_str_event! {
+    /// `{"SkinGraphicsInfo":{"entity_id":229,"graphics_str":"yellow"}}` —— 广播皮肤。
+    ///
+    /// **逐位验证**：真实报文（夹具）。N=2 与实测一致。
+    SkinGraphicsInfo, graphics_str
+}
+
+entity_str_event! {
+    /// `{"FaceGraphicsRequest":{"entity_id":229,"graphics_str":"regular_eyes"}}` —— 请求换脸。
+    ///
+    /// **逐位验证**：真实报文（夹具；实测 `regular_eyes` / `no_face`）。N=2 与实测一致。
+    FaceGraphicsRequest, graphics_str
+}
+
+entity_str_event! {
+    /// `{"FaceGraphicsInfo":{"entity_id":229,"graphics_str":"regular_eyes"}}` —— 广播脸。
+    ///
+    /// **逐位验证**：真实报文（夹具）。N=2 与实测一致。
+    FaceGraphicsInfo, graphics_str
+}
+
+entity_str_event! {
+    /// `{"HatGraphicsRequest":{"entity_id":229,"graphics_str":"soldier_helmet"}}` —— 请求换帽子。
+    ///
+    /// **逐位验证**：真实报文（夹具；实测 `soldier_helmet` / `no_hat`）。N=2 与实测一致。
+    HatGraphicsRequest, graphics_str
+}
+
+entity_str_event! {
+    /// `{"HatGraphicsInfo":{"entity_id":229,"graphics_str":"soldier_helmet"}}` —— 广播帽子。
+    ///
+    /// **逐位验证**：真实报文（夹具）。N=2 与实测一致。
+    HatGraphicsInfo, graphics_str
+}
+
+entity_str_event! {
+    /// `{"EntityEffectInfo":{"entity_id":230,"effect_type":"DeathEffect"}}` —— 实体挂了某个效果。
+    ///
+    /// **逐位验证**：真实报文（夹具；实测 `effect_type` 全是 `DeathEffect`）。N=2 与实测一致。
+    EntityEffectInfo, effect_type
+}
+
+/// `{"RankRequest":{"entity_id":229,"rank":0}}` —— 请求/汇报段位。
+///
+/// **逐位验证**：真实报文（夹具）。N=2 与实测一致。
+/// `rank` 实测可以是 `null`（机器人 `{"entity_id":232,"rank":null}`），所以是 `Option`。
+#[derive(Debug, Clone, PartialEq)]
+pub struct RankRequest {
+    pub entity_id: i64,
+    /// `None` 既表示线路上是 `null`，也表示字段缺失——两者本实现不作区分。
+    pub rank: Option<i64>,
+    /// 未识别字段，原样保留并回发。
+    pub extra: Vec<(String, String)>,
+}
+
+impl RankRequest {
+    pub fn parse(m: &RawMessage) -> Option<Self> {
+        Some(RankRequest {
+            entity_id: get_int(m, "entity_id")?,
+            rank: get_int(m, "rank"),
+            extra: extra_fields(&m.body, &["entity_id", "rank"]),
+        })
+    }
+    pub fn to_msg(&self) -> String {
+        emit_object(
+            "RankRequest",
+            &[("entity_id", json_i64(self.entity_id)), ("rank", json_opt_i64(self.rank))],
+            &self.extra,
+        )
+    }
+}
+
+/// `{"RankInfo":{"entity_id":229,"rank":0}}` —— 广播段位（`rank` 可为 `null`）。
+///
+/// **逐位验证**：真实报文（夹具）。N=2 与实测一致。
+#[derive(Debug, Clone, PartialEq)]
+pub struct RankInfo {
+    pub entity_id: i64,
+    pub rank: Option<i64>,
+    /// 未识别字段，原样保留并回发。
+    pub extra: Vec<(String, String)>,
+}
+
+impl RankInfo {
+    pub fn parse(m: &RawMessage) -> Option<Self> {
+        Some(RankInfo {
+            entity_id: get_int(m, "entity_id")?,
+            rank: get_int(m, "rank"),
+            extra: extra_fields(&m.body, &["entity_id", "rank"]),
+        })
+    }
+    pub fn to_msg(&self) -> String {
+        emit_object(
+            "RankInfo",
+            &[("entity_id", json_i64(self.entity_id)), ("rank", json_opt_i64(self.rank))],
+            &self.extra,
+        )
+    }
+}
+
+/// `{"VersionInfo":{"version":"2.0.60","system":"linux"}}` —— 版本握手。
+///
+/// **逐位验证**：真实报文（`fixtures/protocol_match.jsonl`）。N=2 与实测一致。
+#[derive(Debug, Clone, PartialEq)]
+pub struct VersionInfo {
+    pub version: String,
+    pub system: String,
+    /// 未识别字段，原样保留并回发。
+    pub extra: Vec<(String, String)>,
+}
+
+impl VersionInfo {
+    pub fn parse(m: &RawMessage) -> Option<Self> {
+        Some(VersionInfo {
+            version: get_str_unescaped(m, "version")?,
+            system: get_str_unescaped(m, "system")?,
+            extra: extra_fields(&m.body, &["version", "system"]),
+        })
+    }
+    pub fn to_msg(&self) -> String {
+        emit_object(
+            "VersionInfo",
+            &[("version", json_str(&self.version)), ("system", json_str(&self.system))],
+            &self.extra,
+        )
+    }
+}
+
+/// `{"BotAdded":{"connection_id":228,"player_id":232,"level":3}}` —— 机器人已加入。
+///
+/// **逐位验证**：真实报文（夹具；实测 `level=3`）。N=3 与实测一致。
+#[derive(Debug, Clone, PartialEq)]
+pub struct BotAdded {
+    pub connection_id: i64,
+    pub player_id: i64,
+    pub level: i64,
+    /// 未识别字段，原样保留并回发。
+    pub extra: Vec<(String, String)>,
+}
+
+impl BotAdded {
+    pub fn parse(m: &RawMessage) -> Option<Self> {
+        Some(BotAdded {
+            connection_id: get_int(m, "connection_id")?,
+            player_id: get_int(m, "player_id")?,
+            level: get_int(m, "level")?,
+            extra: extra_fields(&m.body, &["connection_id", "player_id", "level"]),
+        })
+    }
+    pub fn to_msg(&self) -> String {
+        emit_object(
+            "BotAdded",
+            &[
+                ("connection_id", json_i64(self.connection_id)),
+                ("player_id", json_i64(self.player_id)),
+                ("level", json_i64(self.level)),
+            ],
+            &self.extra,
+        )
+    }
+}
+
+// ---------- 透传 10 个：名字已识别，字段名未证实 ----------
+
+passthrough_event! {
+    /// `{"LockInfo":{…}}` —— 房间是否已锁。
+    ///
+    /// **推断/透传**：N=1（serde 原文，可信）；`.rodata` 词汇表里有 `locked`
+    /// （`GameInfo.locked`、LAN 广播的 `locked` 是同一概念的实测证据），
+    /// 但**没有这个事件的一份抓包**能证明它就叫 `locked`、也不是别的编码
+    /// ⇒ 不声明字段，原样透传。
+    LockInfo
+}
+
+passthrough_event! {
+    /// `{"LockRequest":{…}}` —— 请求锁房/解锁（房主权限）。
+    ///
+    /// **推断/透传**：N=1（serde 原文）；与 [`LockInfo`] 同族，但字段名同样未证实。
+    LockRequest
+}
+
+passthrough_event! {
+    /// `{"ChatMessage":{…}}` —— 聊天。
+    ///
+    /// **推断/透传**：N=2（serde 原文）。`message` 在 `.rodata` 里紧邻该变体首次出现
+    /// （与 `version`/`system`、`subscriber_id`、`turn_limit` 同一张表、同一位置规律），
+    /// 但**第二个字段名被 serde 去重到别处**，且**没有抓包** ⇒ 整条透传，
+    /// 不猜"`entity_id` + `message`"。
+    ChatMessage
+}
+
+passthrough_event! {
+    /// `{"ChatMessageRequest":{…}}` —— 发送聊天。
+    ///
+    /// **推断/透传**：N=2（serde 原文），`message` 同样紧邻出现；第二个字段名未知。
+    ChatMessageRequest
+}
+
+passthrough_event! {
+    /// `{"GameHeartbeat":{…}}` —— 心跳/保活。
+    ///
+    /// **未知**：`.rodata` 里**没有** `GameHeartbeatEvent with N elements`，也没有
+    /// 相邻字段名 ⇒ N 与字段名都不知道。同类（`ClearObstacles` / `GameStartRequest`）
+    /// 实测是空体 `{}`，"大概率为空体"只是**推断**；按透传实现，来了字段也照收照发。
+    GameHeartbeat
+}
+
+passthrough_event! {
+    /// `{"GameRemoved":{…}}` —— 房间从列表里消失。
+    ///
+    /// **推断/透传**：N=1（serde 原文），`game_address` 在 `.rodata` 里紧邻该变体首次
+    /// 出现（`docs/07` §3.1 同）⇒ 归属较可靠，但**没有抓包** ⇒ 仍透传。
+    GameRemoved
+}
+
+passthrough_event! {
+    /// `{"TurnLimitInfo":{…}}` —— 回合数上限。
+    ///
+    /// **推断/透传**：N=1（serde 原文），`turn_limit` 紧邻该变体首次出现
+    /// （`docs/07` §3.3 同）；**没有抓包** ⇒ 仍透传。
+    TurnLimitInfo
+}
+
+passthrough_event! {
+    /// `{"ClearObstacles":{}}` —— 清场。
+    ///
+    /// **观测**：真实报文就是空体 `{}`（`fixtures/protocol_match.jsonl`、`docs/24` §4.6），
+    /// 且该变体没有 `with N elements` 串。没有字段可声明，仍按透传实现
+    /// （将来若出现字段也能原样转发）。
+    ClearObstacles
+}
+
+passthrough_event! {
+    /// `{"ClearBansRequest":{…}}` —— 清空封禁列表。
+    ///
+    /// **未知**：`.rodata` 里**没有** `ClearBansRequestEvent with N elements`。
+    /// 与 `ClearObstacles` 同属"管理类清空"是**推断**，且**没有抓包** ⇒ 不声明字段。
+    ClearBansRequest
+}
+
+passthrough_event! {
+    /// `{"BanConnectionRequest":{…}}` —— 踢人。
+    ///
+    /// **推断/透传**：N=2（serde 原文），`player_connection_id` /
+    /// `leader_connection_id` 两个名字首次出现就紧邻该变体、正好两个 ⇒ 归属较可靠，
+    /// 但**没有抓包** ⇒ 仍透传。
+    BanConnectionRequest
+}
+
+/// 补齐的 23 个事件的线上键名（与结构体名一致，供测试与 `docs/96` 对账）。
+pub const SUPPLEMENTED_EVENT_NAMES: [&str; 23] = [
+    "NameRequest",
+    "NameInfo",
+    "RankRequest",
+    "RankInfo",
+    "LockInfo",
+    "LockRequest",
+    "ChatMessage",
+    "ChatMessageRequest",
+    "SkinGraphicsRequest",
+    "SkinGraphicsInfo",
+    "FaceGraphicsRequest",
+    "FaceGraphicsInfo",
+    "HatGraphicsRequest",
+    "HatGraphicsInfo",
+    "GameHeartbeat",
+    "GameRemoved",
+    "VersionInfo",
+    "BotAdded",
+    "TurnLimitInfo",
+    "EntityEffectInfo",
+    "ClearObstacles",
+    "ClearBansRequest",
+    "BanConnectionRequest",
+];
+
+/// `.rodata` 里 serde 的 `struct <Name>Event with N elements` 给出的 N。
+///
+/// `None` = **没有这条串**（`docs/96` §3 里的 `—`），**不是** 0。
+/// N 是**观测**；N 是否与抓包一致，见每条事件的 doc comment。
+pub const SERDE_FIELD_COUNTS: [(&str, Option<usize>); 23] = [
+    ("NameRequest", Some(2)),
+    ("NameInfo", Some(2)),
+    ("RankRequest", Some(2)),
+    ("RankInfo", Some(2)),
+    ("LockInfo", Some(1)),
+    ("LockRequest", Some(1)),
+    ("ChatMessage", Some(2)),
+    ("ChatMessageRequest", Some(2)),
+    ("SkinGraphicsRequest", Some(2)),
+    ("SkinGraphicsInfo", Some(2)),
+    ("FaceGraphicsRequest", Some(2)),
+    ("FaceGraphicsInfo", Some(2)),
+    ("HatGraphicsRequest", Some(2)),
+    ("HatGraphicsInfo", Some(2)),
+    ("GameHeartbeat", None),
+    ("GameRemoved", Some(1)),
+    ("VersionInfo", Some(2)),
+    ("BotAdded", Some(3)),
+    ("TurnLimitInfo", Some(1)),
+    ("EntityEffectInfo", Some(2)),
+    ("ClearObstacles", None),
+    ("ClearBansRequest", None),
+    ("BanConnectionRequest", Some(2)),
+];
+
+/// 有真实抓包、**字段名逐位验证**过的 13 个事件（因而建了强类型结构体）。
+///
+/// 其余 10 个（`LockInfo` / `LockRequest` / `ChatMessage` / `ChatMessageRequest` /
+/// `GameHeartbeat` / `GameRemoved` / `TurnLimitInfo` / `ClearObstacles` /
+/// `ClearBansRequest` / `BanConnectionRequest`）只做透传。
+pub const CAPTURED_TYPED_EVENTS: [&str; 13] = [
+    "NameRequest",
+    "NameInfo",
+    "RankRequest",
+    "RankInfo",
+    "SkinGraphicsRequest",
+    "SkinGraphicsInfo",
+    "FaceGraphicsRequest",
+    "FaceGraphicsInfo",
+    "HatGraphicsRequest",
+    "HatGraphicsInfo",
+    "EntityEffectInfo",
+    "VersionInfo",
+    "BotAdded",
+];
+
+/// 生成 `AnyEvent`：变体名 = 结构体名 = 线上键名（三者必须一致）。
+macro_rules! any_event {
+    ($($ty:ident),* $(,)?) => {
+        /// 这 23 个补齐事件的统一入口：按线上键名分派，未知键返回 `None`。
+        #[derive(Debug, Clone, PartialEq)]
+        pub enum AnyEvent {
+            $($ty($ty),)*
+        }
+
+        impl AnyEvent {
+            /// 按 `{"键名":{…}}` 的键名分派。
+            pub fn parse(m: &RawMessage) -> Option<Self> {
+                Some(match m.kind.as_str() {
+                    $(stringify!($ty) => AnyEvent::$ty($ty::parse(m)?),)*
+                    _ => return None,
+                })
+            }
+
+            /// 线上键名。
+            pub fn kind(&self) -> &'static str {
+                match self {
+                    $(AnyEvent::$ty(_) => stringify!($ty),)*
+                }
+            }
+
+            /// 重新序列化成整帧 JSON 原文。
+            pub fn to_msg(&self) -> String {
+                match self {
+                    $(AnyEvent::$ty(e) => e.to_msg(),)*
+                }
+            }
+
+            /// 未识别字段（键 + 原始值文本）。
+            ///
+            /// 透传事件没有声明任何字段，所以这里返回它的**全部**字段；
+            /// 强类型事件只返回已知字段之外的那些。
+            pub fn extra_fields(&self) -> &[(String, String)] {
+                match self {
+                    $(AnyEvent::$ty(e) => &e.extra,)*
+                }
+            }
+        }
+    };
+}
+
+any_event!(
+    NameRequest,
+    NameInfo,
+    RankRequest,
+    RankInfo,
+    LockInfo,
+    LockRequest,
+    ChatMessage,
+    ChatMessageRequest,
+    SkinGraphicsRequest,
+    SkinGraphicsInfo,
+    FaceGraphicsRequest,
+    FaceGraphicsInfo,
+    HatGraphicsRequest,
+    HatGraphicsInfo,
+    GameHeartbeat,
+    GameRemoved,
+    VersionInfo,
+    BotAdded,
+    TurnLimitInfo,
+    EntityEffectInfo,
+    ClearObstacles,
+    ClearBansRequest,
+    BanConnectionRequest,
+);
+
+#[cfg(test)]
+mod supplemented_event_tests {
+    use super::*;
+
+    /// 每条事件的样本行。标 `fixture` 的是**真实抓包原文**（逐字节回放）；
+    /// 标 `合成` 的是为覆盖形状而构造的——本仓库没有任何一本抓包含该事件。
+    const SAMPLES: &[(&str, &str)] = &[
+        ("NameRequest", r#"{"NameRequest":{"entity_id":229,"name":"user"}}"#), // fixture
+        ("NameInfo", r#"{"NameInfo":{"entity_id":232,"name":"Skynet"}}"#),     // fixture
+        ("RankRequest", r#"{"RankRequest":{"entity_id":232,"rank":null}}"#),   // fixture
+        ("RankInfo", r#"{"RankInfo":{"entity_id":229,"rank":0}}"#),            // fixture
+        ("LockInfo", r#"{"LockInfo":{"locked":true}}"#),                       // 合成
+        ("LockRequest", r#"{"LockRequest":{"locked":true}}"#),                 // 合成
+        ("ChatMessage", r#"{"ChatMessage":{"entity_id":229,"message":"gg"}}"#), // 合成
+        ("ChatMessageRequest", r#"{"ChatMessageRequest":{"entity_id":232,"message":"hi"}}"#), // 合成
+        ("SkinGraphicsRequest", r#"{"SkinGraphicsRequest":{"entity_id":232,"graphics_str":"bot_0"}}"#), // fixture
+        ("SkinGraphicsInfo", r#"{"SkinGraphicsInfo":{"entity_id":229,"graphics_str":"yellow"}}"#), // fixture
+        ("FaceGraphicsRequest", r#"{"FaceGraphicsRequest":{"entity_id":232,"graphics_str":"no_face"}}"#), // fixture
+        ("FaceGraphicsInfo", r#"{"FaceGraphicsInfo":{"entity_id":229,"graphics_str":"regular_eyes"}}"#), // fixture
+        ("HatGraphicsRequest", r#"{"HatGraphicsRequest":{"entity_id":232,"graphics_str":"no_hat"}}"#), // fixture
+        ("HatGraphicsInfo", r#"{"HatGraphicsInfo":{"entity_id":229,"graphics_str":"soldier_helmet"}}"#), // fixture
+        ("GameHeartbeat", r#"{"GameHeartbeat":{}}"#),                          // 合成
+        ("GameRemoved", r#"{"GameRemoved":{"game_address":"69.164.213.144:35981"}}"#), // 合成
+        ("VersionInfo", r#"{"VersionInfo":{"version":"2.0.60","system":"linux"}}"#), // fixture
+        ("BotAdded", r#"{"BotAdded":{"connection_id":228,"player_id":232,"level":3}}"#), // fixture
+        ("TurnLimitInfo", r#"{"TurnLimitInfo":{"turn_limit":20}}"#),           // 合成
+        ("EntityEffectInfo", r#"{"EntityEffectInfo":{"entity_id":230,"effect_type":"DeathEffect"}}"#), // fixture
+        ("ClearObstacles", r#"{"ClearObstacles":{}}"#),                        // fixture
+        ("ClearBansRequest", r#"{"ClearBansRequest":{}}"#),                    // 合成
+        ("BanConnectionRequest",
+         r#"{"BanConnectionRequest":{"player_connection_id":228,"leader_connection_id":229}}"#), // 合成
+    ];
+
+    fn sample_of(kind: &str) -> &'static str {
+        SAMPLES
+            .iter()
+            .find(|(k, _)| *k == kind)
+            .unwrap_or_else(|| panic!("样本表里没有 {kind}"))
+            .1
+    }
+
+    /// 每个补齐事件一条往返测试：`解析 → 重新序列化` 必须逐字节相同。
+    macro_rules! round_trip_tests {
+        ($($name:ident => $ty:ident),* $(,)?) => {
+            $(
+                #[test]
+                fn $name() {
+                    let line = sample_of(stringify!($ty));
+                    let m = parse_message(line).expect("样本应能解析成单键消息");
+                    assert_eq!(m.kind, stringify!($ty));
+                    let ev = AnyEvent::parse(&m).expect("应被识别为补齐事件");
+                    assert_eq!(ev.kind(), stringify!($ty));
+                    assert_eq!(ev.to_msg(), line, "{} 往返后字节不一致", stringify!($ty));
+                }
+            )*
+        };
+    }
+
+    round_trip_tests! {
+        round_trip_name_request => NameRequest,
+        round_trip_name_info => NameInfo,
+        round_trip_rank_request => RankRequest,
+        round_trip_rank_info => RankInfo,
+        round_trip_lock_info => LockInfo,
+        round_trip_lock_request => LockRequest,
+        round_trip_chat_message => ChatMessage,
+        round_trip_chat_message_request => ChatMessageRequest,
+        round_trip_skin_graphics_request => SkinGraphicsRequest,
+        round_trip_skin_graphics_info => SkinGraphicsInfo,
+        round_trip_face_graphics_request => FaceGraphicsRequest,
+        round_trip_face_graphics_info => FaceGraphicsInfo,
+        round_trip_hat_graphics_request => HatGraphicsRequest,
+        round_trip_hat_graphics_info => HatGraphicsInfo,
+        round_trip_game_heartbeat => GameHeartbeat,
+        round_trip_game_removed => GameRemoved,
+        round_trip_version_info => VersionInfo,
+        round_trip_bot_added => BotAdded,
+        round_trip_turn_limit_info => TurnLimitInfo,
+        round_trip_entity_effect_info => EntityEffectInfo,
+        round_trip_clear_obstacles => ClearObstacles,
+        round_trip_clear_bans_request => ClearBansRequest,
+        round_trip_ban_connection_request => BanConnectionRequest,
+    }
+
+    /// 23 个名字一个不多一个不少；三张表（名字 / 字段数 / 抓包档）互相一致。
+    #[test]
+    fn all_twenty_three_names_are_implemented() {
+        assert_eq!(SUPPLEMENTED_EVENT_NAMES.len(), 23);
+        assert_eq!(SERDE_FIELD_COUNTS.len(), 23);
+        assert_eq!(SAMPLES.len(), 23, "样本表必须恰好每条事件一个");
+
+        let from_samples: std::collections::BTreeSet<&str> =
+            SAMPLES.iter().map(|(k, _)| *k).collect();
+        let from_const: std::collections::BTreeSet<&str> =
+            SUPPLEMENTED_EVENT_NAMES.iter().copied().collect();
+        let from_counts: std::collections::BTreeSet<&str> =
+            SERDE_FIELD_COUNTS.iter().map(|(k, _)| *k).collect();
+        assert_eq!(from_samples, from_const, "样本表与常量表的事件名不一致");
+        assert_eq!(from_counts, from_const, "字段数表与常量表的事件名不一致");
+
+        // 顺序无关，但都不能有重复
+        let mut sorted = SUPPLEMENTED_EVENT_NAMES;
+        sorted.sort_unstable();
+        for pair in sorted.windows(2) {
+            assert_ne!(pair[0], pair[1], "事件名重复");
+        }
+    }
+
+    /// 强类型那 13 个：样本的字段数必须与 serde 的 N **逐个相等**。
+    #[test]
+    fn typed_events_have_exactly_the_serde_field_count() {
+        assert_eq!(CAPTURED_TYPED_EVENTS.len(), 13);
+        for kind in CAPTURED_TYPED_EVENTS {
+            let n = SERDE_FIELD_COUNTS
+                .iter()
+                .find(|(k, _)| *k == kind)
+                .and_then(|(_, n)| *n)
+                .unwrap_or_else(|| panic!("{kind} 应有 serde 字段数"));
+            let line = sample_of(kind);
+            let m = parse_message(line).expect("样本应能解析");
+            let body = m.body.trim();
+            let got = if body.is_empty() { 0 } else { split_fields(body).len() };
+            assert_eq!(got, n, "{kind} 的实测字段数 {} 与 serde 的 N={} 不符", got, n);
+        }
+    }
+
+    /// 透传那 10 个：**没有**在代码里声明任何已知字段（声明了就是猜键名）。
+    ///
+    /// 判定方式：解析后**全部**字段都必须落在 `extra` 里，并原样回发。
+    #[test]
+    fn passthrough_events_declare_no_field_names() {
+        let passthrough: Vec<&str> = SUPPLEMENTED_EVENT_NAMES
+            .iter()
+            .copied()
+            .filter(|k| !CAPTURED_TYPED_EVENTS.contains(k))
+            .collect();
+        assert_eq!(passthrough.len(), 10);
+        for kind in passthrough {
+            let line = sample_of(kind);
+            let m = parse_message(line).expect("样本应能解析");
+            let ev = AnyEvent::parse(&m).expect("应识别");
+            let expected = split_fields(&m.body);
+            assert_eq!(
+                ev.extra_fields(),
+                expected.as_slice(),
+                "{kind} 的字段没有全部落进 extra：说明代码里给它声明了已知字段"
+            );
+            assert_eq!(ev.to_msg(), line);
+        }
+    }
+
+    /// 夹具里属于这 23 个事件的行，必须能**逐字节**回放。
+    /// 每种事件在夹具里的行数（`docs/96` §3 的表引用这些数字，钉住防止两边跑偏）。
+    const CAPTURED_LINES: [(&str, usize); 14] = [
+        ("NameRequest", 3),
+        ("NameInfo", 3),
+        ("RankRequest", 3),
+        ("RankInfo", 3),
+        ("SkinGraphicsRequest", 3),
+        ("SkinGraphicsInfo", 4),
+        ("FaceGraphicsRequest", 3),
+        ("FaceGraphicsInfo", 4),
+        ("HatGraphicsRequest", 3),
+        ("HatGraphicsInfo", 4),
+        ("EntityEffectInfo", 4),
+        ("VersionInfo", 1),
+        ("BotAdded", 2),
+        ("ClearObstacles", 1),
+    ];
+
+    #[test]
+    fn replays_every_captured_frame_of_the_supplemented_kinds() {
+        let mut kinds = std::collections::BTreeMap::new();
+        let mut lines = 0usize;
+        for text in [
+            include_str!("../fixtures/protocol.jsonl"),
+            include_str!("../fixtures/protocol_match.jsonl"),
+            include_str!("../fixtures/protocol_death.jsonl"),
+        ] {
+            for line in text.lines() {
+                let line = line.trim();
+                // LAN 广播不是单键消息，`parse_message` 返回 None
+                let Some(m) = parse_message(line) else { continue };
+                if !SUPPLEMENTED_EVENT_NAMES.contains(&m.kind.as_str()) {
+                    continue;
+                }
+                let ev = AnyEvent::parse(&m).unwrap_or_else(|| panic!("{line} 应能解析"));
+                assert_eq!(ev.kind(), m.kind);
+                assert_eq!(ev.to_msg(), line, "{} 回放不一致", m.kind);
+                *kinds.entry(m.kind.clone()).or_insert(0usize) += 1;
+                lines += 1;
+            }
+        }
+        assert_eq!(lines, 41, "夹具里属于这 23 个事件的行数变了");
+        assert_eq!(kinds.len(), 14, "夹具覆盖的补齐事件种数变了");
+        // 每种事件的行数与文档表一致
+        for (kind, n) in CAPTURED_LINES {
+            assert_eq!(kinds.get(kind), Some(&n), "{kind} 的抓包行数与文档不符");
+        }
+        // 抓到的 14 种里，13 种建了强类型，`ClearObstacles` 只有空体 ⇒ 透传
+        for kind in kinds.keys() {
+            if kind != "ClearObstacles" {
+                assert!(
+                    CAPTURED_TYPED_EVENTS.contains(&kind.as_str()),
+                    "{kind} 有抓包但没有建强类型"
+                );
+            }
+        }
+    }
+
+    /// 未知事件名不能被当成已知事件吞掉。
+    #[test]
+    fn unknown_kind_is_not_accepted() {
+        for line in [
+            r#"{"SomeFutureEvent":{"x":1}}"#,
+            r#"{"NameInfoExtra":{"entity_id":1}}"#,
+            r#"{"TickRequest":{}}"#, // 已实现，但不在本节范围
+        ] {
+            let m = parse_message(line).unwrap();
+            assert!(AnyEvent::parse(&m).is_none(), "{line} 不应被识别");
+        }
+    }
+
+    /// 未知字段：原样保留（键 + 原始值文本）并原样回发。
+    #[test]
+    fn unknown_fields_are_preserved_and_replayed() {
+        // 强类型事件上的未知标量字段
+        let line = r#"{"NameInfo":{"entity_id":229,"name":"user","title":"veteran"}}"#;
+        let m = parse_message(line).unwrap();
+        let AnyEvent::NameInfo(info) = AnyEvent::parse(&m).expect("应识别") else {
+            panic!("应解析为 NameInfo")
+        };
+        assert_eq!(info.extra, vec![("title".to_string(), "\"veteran\"".to_string())]);
+        assert_eq!(info.to_msg(), line, "未知标量字段没有原样回发");
+
+        // 透传事件上的嵌套对象 + 数组（逗号不能被当成字段分隔）
+        let line = r#"{"GameHeartbeat":{"seq":[1,2,3],"nested":{"a":1},"ok":true}}"#;
+        let m = parse_message(line).unwrap();
+        let AnyEvent::GameHeartbeat(hb) = AnyEvent::parse(&m).expect("应识别") else {
+            panic!("应解析为 GameHeartbeat")
+        };
+        assert_eq!(
+            hb.extra,
+            vec![
+                ("seq".to_string(), "[1,2,3]".to_string()),
+                ("nested".to_string(), "{\"a\":1}".to_string()),
+                ("ok".to_string(), "true".to_string()),
+            ]
+        );
+        assert_eq!(hb.to_msg(), line, "未知嵌套字段没有原样回发");
+
+        // 已知字段 + 未知字段混排：已知在前、未知按原顺序在后
+        let line =
+            r#"{"BotAdded":{"connection_id":228,"player_id":232,"level":3,"difficulty":"hard"}}"#;
+        let m = parse_message(line).unwrap();
+        let AnyEvent::BotAdded(bot) = AnyEvent::parse(&m).expect("应识别") else {
+            panic!("应解析为 BotAdded")
+        };
+        assert_eq!(bot.extra, vec![("difficulty".to_string(), "\"hard\"".to_string())]);
+        assert_eq!(bot.to_msg(), line);
+    }
+
+    /// 透传必须连**转义与字符串内的逗号**都一字节不动地保留。
+    #[test]
+    fn passthrough_keeps_escaped_strings_verbatim() {
+        let line = r#"{"ChatMessage":{"entity_id":229,"message":"he said \"hi\", ok"}}"#;
+        let m = parse_message(line).expect("含转义的帧应能解析");
+        let AnyEvent::ChatMessage(chat) = AnyEvent::parse(&m).expect("应识别") else {
+            panic!("应解析为 ChatMessage")
+        };
+        assert_eq!(chat.extra.len(), 2, "两个字段都应原样保留");
+        assert_eq!(chat.extra[1].0, "message");
+        assert_eq!(chat.extra[1].1, r#""he said \"hi\", ok""#);
+        assert_eq!(chat.to_msg(), line);
+    }
+
+    /// 抓包里机器人的段位是 `null`：`Option` 必须把 `None` 发回成 `null`。
+    #[test]
+    fn rank_null_round_trips_as_json_null() {
+        let line = r#"{"RankInfo":{"entity_id":232,"rank":null}}"#;
+        let m = parse_message(line).unwrap();
+        let AnyEvent::RankInfo(r) = AnyEvent::parse(&m).expect("应识别") else {
+            panic!("应解析为 RankInfo")
+        };
+        assert_eq!(r.rank, None);
+        assert_eq!(r.to_msg(), line);
+
+        let r = RankInfo { entity_id: 229, rank: Some(0), extra: Vec::new() };
+        assert_eq!(r.to_msg(), r#"{"RankInfo":{"entity_id":229,"rank":0}}"#);
+    }
+
+    /// 强类型事件的字符串字段：带引号的名字要能转义写出、解转义读回。
+    #[test]
+    fn typed_string_field_escapes_quotes_both_ways() {
+        let name = r#"a "quoted" name"#;
+        let ev = NameInfo { entity_id: 229, name: name.to_string(), extra: Vec::new() };
+        let line = ev.to_msg();
+        assert_eq!(line, r#"{"NameInfo":{"entity_id":229,"name":"a \"quoted\" name"}}"#);
+        let m = parse_message(&line).expect("转义后的帧应能解析");
+        let AnyEvent::NameInfo(back) = AnyEvent::parse(&m).expect("应识别") else {
+            panic!("应解析为 NameInfo")
+        };
+        assert_eq!(back.name, name, "解转义后应还原原文");
+        assert_eq!(back.to_msg(), line);
+    }
+
+    /// 解析不出来的样本不能被"猜"成默认值。
+    #[test]
+    fn missing_or_mistyped_required_field_is_rejected() {
+        // `BotAdded` 少 `level`
+        let m = parse_message(r#"{"BotAdded":{"connection_id":228,"player_id":232}}"#).unwrap();
+        assert!(AnyEvent::parse(&m).is_none(), "缺必填字段应拒绝");
+        // `NameInfo` 的 `name` 是字符串，不是数字
+        let m = parse_message(r#"{"NameInfo":{"entity_id":229,"name":7}}"#).unwrap();
+        assert!(AnyEvent::parse(&m).is_none(), "类型不符应拒绝");
+    }
+}
