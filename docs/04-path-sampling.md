@@ -37,6 +37,10 @@ repeat at most n times:
     若二分失败（100 次未收敛）：整条曲线到此结束
 ```
 
+> ⚠️ **上面的伪代码不完整**：容差满足后**还有一次半步复检**
+> （`mid2 = (x+mid)/2`、`chord2`），复检不通过时 `lo = x` **且** `hi = mid2`。
+> 逐条指令与完整伪代码见 **[`91-bisection-loop.md`](91-bisection-loop.md)**（现行）。
+
 其中 `F(x)`：
 
 - 普通模式：`F(x) = eval(tokens, x, 0, 0)`，即 `y = f(x)`
