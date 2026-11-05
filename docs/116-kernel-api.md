@@ -1,3 +1,9 @@
+> **2026-11-06 落地记录（父 agent）**：§7.5 那三步已经**在真仓库的 `client/` 上执行**——
+> `client/gw2rebuild.gdextension` 已提交，`.so` 由 `cargo build` 生成并已加进 `.gitignore`。
+> 本机复核：`bash client/run.sh selftest` = **93 passed, 0 failed**，版本行 = **`client 0.1.0 · kernel on`**。
+> ⚠️ 一个不明显但会卡人的点：**新增 `.gdextension` 后必须让 Godot 重新扫描一次**
+> （`godot --headless --path client --import`），否则它会静默地不加载，版本行仍显示 `kernel off`。
+
 # 116 · 内核 API：把采样器真正接到 GDScript
 
 状态：**现行**。本文只讲一件事：GDExtension 类 `GW2Rebuild` 现在向 GDScript 暴露了

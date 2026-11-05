@@ -8,3 +8,6 @@ rsc/*
 # 临时分析产物（不应进仓库）
 .rea-work/
 .sim-work/
+
+# 编译产物：内核库由 cargo build 生成，不进仓库
+client/*.so

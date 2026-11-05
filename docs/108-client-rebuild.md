@@ -23,7 +23,7 @@
 | 逐界面截图 | `bash run.sh shots`（Xvfb + OpenGL）→ 11 张 PNG，用于肉眼核对布局 |
 | 游戏资产 | **0 字节**：无 `.tscn`/`.gd`/`.ttf`/`.svg` 原件，无字体文件，图标全部现画 |
 | 界面逻辑归属 | 仍在 Rust（`docs/92` §2.3）；本工程通过 `core_bridge.gd` 这一层接缝调用内核 |
-| 弹道 | 内核只暴露 `GW2Rebuild.ping()`，所以现在是**界面预览**（固定 dx 折线），**不是**等弦长采样 |
+| 弹道 | ~~内核只暴露 `ping()`，所以是界面预览~~ ✅ **已接上**（`docs/116`）：`client/gw2rebuild.gdextension` 已落地，`GwCore.compute_path()` 的 `source` 现在是 **`kernel`**，PlayScreen 画的就是内核采样器的输出；⚠️ 新增 `.gdextension` 后必须跑一次 `--import` 才会被扫描到 |
 
 三句话：
 
@@ -411,7 +411,8 @@ GameSetup 的最小宽度顶到 1700+ px，界面直接被推出 1280×720。代
 
 | 项 | 状态 | 缺什么 |
 |---|---|---|
-| 内核 `path_calculate` 等接口 | ❌ 未接 | 内核只注册了 `GW2Rebuild.ping()`；接缝已就位（§2.3） |
+| 内核 `path_calculate` | ✅ **已接** | `docs/116`；`client/gw2rebuild.gdextension` + `cargo build` 出的 `.so`（`.so` 已 gitignore） |
+| 内核 `hit_test`（掩膜判定） | ❌ 未接 | 仍是几何近似（到士兵中心 < 0.8）；建议签名见 `docs/116` §8.2 |
 | 真实掩膜/障碍物绘制、摧毁（挖洞） | ❌ | `src/plane.rs` 规则未暴露；本项目战场不画掩膜 |
 | 真实杀伤规则 | 🔶 占位 | 见 §7 #2 |
 | 21 关的关卡数据 | ❌ **未知** | 关卡布局/目标/通关条件从未被观测（`docs/103`） |
