@@ -85,8 +85,8 @@
    （`target_manager` 那条旧说法已作废：`0x465780` 不是 SIMD 掩膜扫描，而是 hashbrown
    集合迭代 + 逐 id 补发 `TargetInfo`；`0x3e2830` 的模块归属依据是 panic 串启发式，`docs/123` 判为不可靠。）
 
-**数字**：**314 条测试全绿**（`cargo test --offline`，本机 2026-11-06 实测）；
-`docs/` 下现行 **112** 篇（`ls docs/*.md | wc -l`）+ `archive/` **32** 篇过程档案 + 5 份"已并档"占位指针（全量清单见 [`docs/INDEX.md`](INDEX.md)）；
+**数字**：**333 条测试全绿**（`cargo test --offline`，本机 2026-11-06 实测）；
+`docs/` 下现行 **116** 篇（`ls docs/*.md | wc -l`）+ `archive/` **32** 篇过程档案 + 5 份"已并档"占位指针（全量清单见 [`docs/INDEX.md`](INDEX.md)）；
 客户端自检 **245** 条断言（缺资产时若干条 skip，逐条打印原因）；
 README 的工作包表共 **15 行，其中 ⬜（未做）0 行**——已经没有"整块没做"的工作包了。
 ## 1. 仓库与推送规矩

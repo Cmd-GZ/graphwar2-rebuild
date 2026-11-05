@@ -2576,10 +2576,16 @@ func _find_server_binary() -> String:
 	if not env.is_empty() and FileAccess.file_exists(env):
 		return env
 	var root := ProjectSettings.globalize_path("res://").path_join("..")
-	var candidates := [
-		root.path_join("target/debug/examples/serve_match"),
-		root.path_join("target/release/examples/serve_match"),
-	]
+	var candidates := []
+	# 优先看 `CARGO_TARGET_DIR`：本项目的构建说明就是用那个环境变量把 target 放到仓库外
+	# （`.cargo-home/target`）。**不认它的话，仓库根会残留一份旧的 `target/debug/examples/serve_match`，
+	# 于是自检跑的是几个月前的服务端**——本轮就是这么踩的：连得上、但收不到 `PlayerInfo`。
+	var ctd := OS.get_environment("CARGO_TARGET_DIR").strip_edges()
+	if not ctd.is_empty():
+		candidates.append(ctd.path_join("debug/examples/serve_match"))
+		candidates.append(ctd.path_join("release/examples/serve_match"))
+	candidates.append(root.path_join("target/debug/examples/serve_match"))
+	candidates.append(root.path_join("target/release/examples/serve_match"))
 	for c in candidates:
 		if FileAccess.file_exists(c):
 			return c
