@@ -89,8 +89,11 @@ pub fn calculate(
                 let mid2 = (x + mid) * HALF;
                 let fm2 = eval(tokens, mid2, 0.0, 0.0);
                 let chord2 = hypot(mid2 - x, fm2 - y);
-                if chord <= chord2 {
+                // 反汇编 0x3c2a0a 与 0x3c2a47：复检不通过时 **lo 和 hi 都要改**
+                // （hi = mid2 在比较之前就无条件写了；此前只写了 lo=x，是长期漏实现）
+                if !(chord > chord2) {
                     lo = x;
+                    hi = mid2;
                     continue;
                 }
             }
