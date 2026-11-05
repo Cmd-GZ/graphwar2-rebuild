@@ -24,6 +24,7 @@
 | 有没有影响玩法的平台分支 | **没找到**。三平台 PCK 资产逐字节相同；`.rodata` 字面量差异里没有一个是玩法参数 | 观测 + 推断（见 §3.3 的口径限制） |
 | Windows 为什么 41 MB | `.text` 21.7 MB（**48 853** 个函数的展开数据）＋ **14.19 MB COFF 符号表**；Linux 是 6.1 MB `.text` / 13 430 个函数 / 已 strip | 观测（节表 + 头字段） |
 | **Android 上广告怎么才会出现** | 唯一的开关是"有没有买 `graphwar_support`"（`are_ads_enabled() = !owned`，**没有**平台/地区/同意判断）；广告位是**发布者的真实位**、写死在 `.so` 里（**不是**测试位）；只在 **12 个界面**出现，**对局中不出现**；游戏**不弹 UMP 同意框** | 观测（§2.8） |
+| **`owned` 的初值** | **`true`（广告默认全关）**。构造回调 `0x38c058` 用 `mov w8,#1` → `strb` → `stp q0,q1,[x0]` 把它写进 `GdCellInner<GraphwarAdSwitch>+0x18`（= value+0x18 = `owned`）；`owned` 只能由 GDScript 的 `purchase_confirmed`/`purchase_denied` 改写，Rust 侧启动流程不查单 | **逐位验证**（指令）+ **推断**（"该字节即 owned"）—— 见 §2.10 |
 | 跨架构逐位一致 | **未验证**，本文不承诺 | 未知 |
 
 ---
@@ -407,6 +408,172 @@ join_ip_pop_up  join_level_pop_up
    缺一次反编译确认）。
 3. `process_button_pressed` 里 `unlock_skins` 分支的完整控制流。
 4. `user://player.config` 的实际键名与格式。
+
+### 2.10 `owned` 的初值 = **`true`**（广告**默认全关**）
+
+> **一句话：`[adswitch+0x18]` 在构造时被写成 `1`，所以 `are_ads_enabled()` 一出生就是 `false`。
+> 广告不是"请求了没填充"，而是**默认根本不请求**；只有 GDScript 的 `purchase_denied` 把它
+> 翻回 `0` 之后，广告才会开始工作。**
+
+> 位置说明：本小节归在 §2.8/§2.9 这条广告主线里；本文档的 §4 是跨平台构建，不是广告章节。
+
+#### ① 构造写入点（指令级）
+
+`GraphwarAdSwitch` 的构造回调是 `godot_core::registry::callbacks::create` @ **`0x38c058`**
+（Android `.so`，VMA = 文件偏移，本文件全程如此）。它确实属于 `GraphwarAdSwitch`，两条独立证据：
+
+| 证据 | 指令 |
+|---|---|
+| 基类 = `Control`（先由引擎建基类对象） | `0x38c07c` `bl <Control as GodotClass>::class_id` → `0x38c08c` `bl classdb_construct_object` |
+| token = **本类**的 `CLASS_ID` | `0x38c090`–`0x38c0a8` 读 `[0x8b40c0]` = `GraphwarAdSwitch::CLASS_ID.llvm.940736…`（`nm` 精确给出该符号在 `0x8b40c0`），取出 `+0x4` 的 `u16` |
+
+> 顺带纠正一条口径：`GraphwarAdSwitch` 的**基类观测为 `Control`**，不是 `Node`。
+
+写入序列（全在 `0x38c058` 内）：
+
+```
+38c124:  mov   w8, #0x1              // 常量 true
+38c12c:  strb  w8, [sp, #0x38]       // 先摆进栈上的临时 Base 结构
+38c158:  ldp   q0, q1, [sp, #0x20]   // q1 = { [sp+0x30]=Gd 第2字, [sp+0x38]=1 }
+38c17c:  bl    __rust_alloc(0x50, 8) // 分配 GdCellInner<GraphwarAdSwitch>（0x50 字节）
+38c194:  stp   xzr, x0, [x0, #0x20]  // cell+0x20 = 0 ; cell+0x28 = cell 自身
+38c198:  stp   xzr, xzr,[x0, #0x38]
+38c19c:  stp   q0, q1, [x0]          // ★ 32 字节落到 cell+0x00…+0x1f
+38c1a4:  str   xzr, [x0, #0x30]
+38c1a8:  strb  wzr, [x0, #0x48]      // 尾部一个 bool = 0（gdext 框架字段，非 owned）
+```
+
+`0x38c19c` 的 `q1` 覆盖 `cell+0x10` 与 `cell+0x18`，其中 `cell+0x18` 就是 `mov w8,#1`。
+
+#### ② 为什么 `cell+0x18` 就是 `owned`（而不是 gdext 的框架字段）
+
+`godot_cell::GdCellInner<T>::borrow_mut`（AdSwitch 那份 = `0x4b50f8`；`are_ads_enabled` 内联体
+`0x377cf4` 里的 `bl 0x4b50f8` 用的就是**同一实例** `he21e418d7324d658E`）给出两个定标量：
+
+| 事实 | 指令 |
+|---|---|
+| `BorrowState` 在 `cell+0x30` | `4b511c` `add x0, x0, #0x30` → `BorrowState::increment_mut` |
+| guard 的 **value 指针 = `[cell+0x28]`** | `4b5130` `ldr x9,[x19,#0x28]` / `4b5138` `add x8,x19,#0x20` |
+
+而 `0x38c194` 把 `cell+0x28` 设成 **cell 自身**（`stp xzr, x0, [x0,#0x20]`，此处的 `x0` 就是刚
+分配、紧接着被写的那个 cell）⇒ **value 基址 == cell 基址** ⇒ `value+0x18 == cell+0x18`。
+
+再叠上 §2.8 已复核的读写点（`are_ads_enabled` 读 `[value+0x18]`；两个回调写 `[value+0x18]`），
+`value+0x18` 唯一可能是 `owned`。
+
+**判别器（关键）**：同一个 idiom 在**另一个** Control 派生类的 `create`（`0x389ef8`）里，栈槽被
+写入的是常量 **`3`**（`389fc4` `mov w8, #0x3`），不是 `1`。若该槽是 gdext 框架常量，跨类必须
+一致；既不一致，说明它是**按类不同的实例字段**。AdSwitch 这一格是 `1`。
+
+⇒ **`owned` 初值 = `true`**。等级：**逐位验证**（上面的指令序列可逐条复现）＋**推断**（"该字节
+即 `owned`"这一步，依据是偏移定标与跨类判别器；见 §2.10 未知 1–3）。
+
+#### ③ 独立复核："只有两个写点"成立，但**起点不是零**
+
+对全 `.text`（1 306 358 条指令）穷举所有落在 `[reg, #0x18]` 的字节写：`strb w<n>` 106 处 +
+`strb wzr/w0` 61 处。逐个按所属函数归类后——
+
+| 位置 | 动作 | 是否触及 adswitch |
+|---|---|---|
+| `0x3a658c`（`GraphwarRootNode::purchase_confirmed`） | `strb w10(=1), [x8,#0x18]` | **是** |
+| `0x3a61b0`（`GraphwarRootNode::purchase_denied`） | `strb wzr, [x8,#0x18]` | **是** |
+| 其余 165 处 | 分属 serde / rustls / regex / hyper / aho-corasick / WABT 等 | 否 |
+
+**没有任何 `graphwar_ad_switch` 函数包含 `[reg,#0x18]` 的字节写**——所以只按 `.rodata` 引用或
+按符号名去找会漏掉构造点：它内联在 gdext 的 `create` 里，没有独立符号。
+
+另外，两个回调**没有 Rust 内部调用者**：全二进制只有 4 条 `bl` 指向它们，全部来自
+`godot_core::private::handle_fallible_call` 的 4 个单态化（每个回调 ptrcall + varcall 各一份）：
+
+```
+0x36fa60 → purchase_denied      0x37c434 → purchase_denied
+0x370d38 → purchase_confirmed   0x37e094 → purchase_confirmed
+```
+
+⇒ **`owned` 只能被 GDScript 改**：`GraphwarRootNode.purchase_confirmed()` /
+`.purchase_denied()`。Rust 侧启动流程里**没有**任何"重新查单"的代码。
+
+从存档 / `player.config` / 服务端配置读 `owned` 的路径：**不存在**（穷举写点已覆盖）。
+
+#### ④ 这个类对外只有两个 getter，场景改不了它
+
+`.rea-work/extension_api.txt` 的类声明原文：
+
+```
+== GraphwarAdSwitch
+  M are_ads_enabled() -> 1
+  M get_ad_unit_id() -> 4
+== GraphwarButton
+  M pressed() -> 0
+  ...
+  P input_text:4
+```
+
+**没有 `P`（属性）行，也没有 setter**（对比 `GraphwarButton` 有 `P input_text:4`）。
+⇒ `owned` **不在 Godot 属性系统里**，`.tscn`/`.scn` 和 GDScript 都无法直接设置它。
+⇒ `create_ad_view` / `destroy_ad_view` 也**不在**这个类上（它们属于 `Ad_holder.gd`），
+与 §2.8③ 的调用链一致。
+
+#### ⑤ 实例化位置：根场景里 `Ad_holder` 下的常驻子节点（**不是 autoload**）
+
+* `.pck` 里 `main.scn`（`PackedScene`）的 `names` 表含 `IAP_holder` / `IAP_Android` / `IAP_IOS`
+  / `Ad_holder` / **`GraphwarAdSwitch`** / `IOS_album_holder` / `Android_mediastore_holder`；
+* 运行时节点全路径（`.rea-work/ui/*.log`，13 个界面各打一次）：
+  **`GraphwarRootNode/Ad_holder/GraphwarAdSwitch`** —— boot / campaign / player_screen /
+  replay_lobby / lan_lobby / game_setup / add_bot_popup / join_ip_popup / play_screen 全都在。
+
+⇒ 它是**随根场景常驻**的节点，只因 `Ad_holder` 常驻而常驻；**不是 autoload**（autoload 会挂在
+`/root/<name>` 下）。它不参与渲染，只当 `owned` + 广告位 id 的持有者。
+
+#### ⑥ 这条结论怎么解释用户的观察
+
+`owned = true` ⇒ `are_ads_enabled() = !true = false` ⇒ `Ad_holder.gd::create_ad_view()` 里的
+`if ad_switch.are_ads_enabled()` **直接短路**，`AdView.new(...)` / `load_ad()` 根本不会执行。
+
+要让广告开始工作，必须**先**发生这条链：
+
+```
+android_iap.gd::_on_connected() → queryPurchases("inapp")
+   → 购物列表为空 → root.purchase_denied() → owned = false → are_ads_enabled() = true
+```
+
+如果 **IAP 桥没起来**（插件缺失 / 没有 Play 服务 / 启动时离线 / `_on_connected` 没触发），
+`purchase_denied` 不发射，`owned` 就**永远停在 `true`**，广告在整个生命周期里一次都不会被请求。
+这与"Android 和桌面端都从没见到任何广告"完全一致；桌面端的另一层原因见附录 B。
+
+#### ⑦ 与 Play 商店"包含广告"声明的关系：**不矛盾**
+
+商店的"含广告"是**上架元数据字段**（开发者自己勾选），不是运行时契约：
+
+* 它不保证运行时一定发广告请求——本作的实际行为是"**默认不发，等 IAP 说不拥有才发**"；
+* 对**未购买且 IAP 正常**的用户，广告确实会出现，所以商店勾这一项是成立的；
+* 因此**不能**用"Play 说含广告"反推"运行时会请求"，也**不能**用"看不到广告"反推"商店写错了"。
+
+#### ⑧ 对 §2.8⑥ 的修正：多出第四种可能，且它排在第一位
+
+§2.8⑥ 结尾那句"看不到只可能是 ①已经买过 ②请求无填充 ③连不上 Google——代码里没有第四种可能"
+需要加一条，**且它优先级最高**：
+
+| # | 新判据 | 怎么查 | 判读 |
+|---|---|---|---|
+| **0** | **`owned` 还是否停在初值 `true`**，即 `purchase_denied` 到底有没有被调用过 | `adb logcat` 抓游戏自己的日志：`create_ad_view` / `_on_ad_loaded` / `_on_ad_failed_to_load`；再抓 IAP 插件（billing / AndroidIAP）的 tag | **一条 `create_ad_view`/AdMob 日志都没有** ⇒ `are_ads_enabled()` 一直是 `false`，`owned` 从未被动过 ⇒ 去查 IAP 桥，**不是**广告问题 |
+| | | | 有 `create_ad_view` 但紧跟 `_on_ad_failed_to_load: 3` ⇒ 才轮到"无填充"（原 ①②③） |
+
+排查顺序因此变成：**先证 `are_ads_enabled()` 变 `true`（= `purchase_denied` 到过）→ 再看 fill。**
+
+#### 2.10 的未知
+
+1. `GdCellInner<T>` 尾部字段（`+0x20` / `+0x28` / `+0x38` / `+0x40` / `+0x48`）的确切语义
+   —— ELF 无 DWARF，只能靠偏移定标。
+2. 由 `BorrowState @ cell+0x30` 反推 `size_of::<GraphwarAdSwitch>() = 0x28`（**推断**），
+   因此 `owned`(`+0x18`) 之后还有一个 8 字节字段 `+0x20`（构造时置 0），**含义未知**。
+3. 无法区分 `#[class(init)]`（宏生成 `Default`）与显式 `fn init` —— AdSwitch **没有**独立的
+   `init` 符号（对比 `GraphwarButton` 有 `IButton::init` @ `0x43eb08`），构造体完全内联在
+   `create` 里；但构造时写入的**常量本身**是明确的（`mov w8,#1`）。反过来，若按"没有 init
+   符号 ⇒ 走宏生成 `Default` ⇒ `bool::default() == false`"推，会得到相反结论——这条推理链
+   被 §2.10② 的 `mov w8,#1` 直接否证，记录在此以免后人重走。
+4. `purchase_confirmed` / `purchase_denied` 各自的 `.gd` 触发条件仍只来自 §2.8 的脚本级证据，
+   没有一次真机 logcat 证明 `queryPurchases` 的实际返回路径。
 
 ---
 
