@@ -18,6 +18,12 @@
   游戏本体只有 3 次且是 HashMap 的 RandomState 播种。二进制里 `expand 32-byte k`
   出现 6 次 ⇒ 确有 ChaCha；看不见是因为 Rust 走原始 syscall(318)，绕过 libc 函数。
   hook syscall 会让 frida 自断通信，该路不可用
+- **关卡生成公式闭合**（`docs/55`）：`FUN_005625b0` 其实是 **ziggurat 标准正态采样器**
+  （含 rand 的 R 常量 3.654152885361009），所以
+  个数 = `trunc(N(0,1)*7+15)`、半径 = `max(N(0,1)*1.6+2.6, 0.8)`、
+  `x=(2r+25)(2u-1)`、`y=(2r+15)(2v-1)`。
+  这解释了障碍数 5~21、半径 0.8~5.3，以及 docs/54 里"半径对不上线性关系"
+  （正态 + ziggurat 拒绝采样会消耗不定数量随机数）
 - **RNG 找到了（ChaCha，可读状态）**（`docs/53`）：Ghidra 反编译出关卡生成函数
   `FUN_004f1e50`（模块 `graphwar_level_generator.rs`）：个数=`trunc(rand*7+15)`，
   每个障碍 `r/x/y` 由 ChaCha 产生，`x=(2r+25)(2u-1)`、`y=(2r+15)(2v-1)`；
