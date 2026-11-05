@@ -32,8 +32,10 @@
 ## 三条硬规矩
 
 1. **不把推断写成结论。** 每个结论必须能标成四档之一：
-   **逐位验证**（`cargo test` 覆盖）/ **观测**（能指到地址或字节）/ **推断**（写明未证实）/
-   **未知**。文档里出现"应该是""大概是"这类措辞时，必须同时写清缺什么证据。
+   **逐位验证**（与**真二进制**逐字节/逐位对拍，**不是**"cargo test 过了"）/
+   **观测**（能指到反汇编地址、真实报文或真机真帧）/ **推断**（写明缺什么证据）/ **未知**。
+   文档里出现"应该是""大概是"这类措辞时，必须同时写清缺什么证据。
+   ⚠️ 与 §0 第 2 条一致：**`cargo test` / `selftest` 的通过只是回归保护，不构成复原证据。**
 2. **代码不自我证明。** 行为正确性只由真二进制决定。改动 `src/` 后：
    `cargo test` 必须全绿；若夹具要改，说明真值变了，必须回到上游 `analysis/` 用
    unicorn 对拍复核（见 `docs/16-reproduce.md` §4）。
@@ -43,19 +45,27 @@
 ## 目录
 
 ```
-src/        Rust 复原实现（function/path/shot/plane/events/life）
-tests/       与真二进制对齐的验收（21 条）
-fixtures/   真值夹具（已入库；重新生成见 tools/gen_fixtures.py）
-tools/       分析脚本（callers/ptr_slots/const_xrefs/pck_extract/gen_fixtures/module_map/propagate）
-docs/        观测、推断、决策与操作说明（17 篇，索引在 README）
-rsc/         ← gitignore，用 tools/pck_extract.py 生成
+src/          Rust 复原实现（内核 + 对拍/回放等新模块）
+tests/        与真二进制对齐的验收（11 个 test 二进制；条数会变，别写死在这里）
+fixtures/     真值夹具（已入库；重新生成见 tools/gen_fixtures.py）
+examples/     可跑的小工具（serve_match / replay_diff / diff_conv / ai_explain …）
+tools/        分析脚本（callers/ptr_slots/const_xrefs/pck_extract/module_map/propagate/
+              campaign_data/campaign_params/event_tags/replay_state/gdc_* …）
+client/       Godot 客户端 ⚠️ **不是原版源码**，见 §0 第 4 条
+docs/         观测/推断/决策/操作说明 —— **索引在 docs/INDEX.md**，不在 README
+docs/guide/   （规划中）攻略向行为手册
+recovered-src/（规划中）从 pck 回收的原版文本源码：.gd/.tscn/.tres/project.godot
+rsc/          ← gitignore，用 tools/pck_extract.py 生成
+.agent-work/  ← gitignore，子 agent 隔离工作区与证据
 ```
+
+⚠️ **这里的数字只写"结构"，不写"条数"**：条数每轮都在变，写进来必然过期（历史上写过"21 条""17 篇"，都过期了）。
 
 ## 常用命令
 
 ```bash
 export CARGO_HOME=$PWD/../.cargo-home CARGO_TARGET_DIR=$PWD/../.cargo-home/target
-cargo test --offline                      # 21 条，无需游戏二进制
+cargo test --offline                      # 全绿即可，别把条数当进度（见 §0.2）
 
 ../.venv/bin/python tools/callers.py --module graphwar_turn_manager.rs
 ../.venv/bin/python tools/ptr_slots.py 0x3c2bc0      # 函数指针派发
@@ -78,7 +88,12 @@ cargo test --offline                      # 21 条，无需游戏二进制
 GIT_SSH_COMMAND="ssh -F /dev/null" git push origin main
 ```
 
-上游 `Cmd-GZ/graphwar2-analysis` 与本仓库互不包含；本仓库的内容**绝不**提交到上游。
+上游 `Cmd-GZ/graphwar2-analysis`（= `../`）与本仓库互不包含；本仓库的内容**绝不**提交到上游。
+
+两个仓库都在 **2026-11 改过名**（旧名 `graphwar-algorithm-analysis` / `graphwar2` 已失效）：
+`git@github.com:Cmd-GZ/graphwar2-analysis.git` 与 `git@github.com:Cmd-GZ/graphwar2-rebuild.git`。
+
+子 agent 一律推**自己的分支**（`git push origin HEAD:refs/heads/agent/<topic>`），不要直接推 `main`。
 
 ## 间接调用与函数归属（2026-11 新学到的，务必照用）
 
