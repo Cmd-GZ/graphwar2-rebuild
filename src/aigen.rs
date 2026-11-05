@@ -185,7 +185,11 @@ pub struct Params {
     /// 种群大小 = 实参 `a5` × 5。
     pub population: u32,
     /// 精英个数（栈参数，六档恒为 5）。
-    pub elite: u32,
+    /// **每个槽位的个体数**（反汇编 `cfg+0x78`）：1 个克隆 + 4 个工厂子代。
+    ///
+    /// 早期文档把它误标为"精英数 5"；`docs/95` 已证明精英是**比例**（每代保留前
+    /// `种群/5` = 20% 个），而这个 5 是每槽个体数。
+    pub per_slot: u32,
     /// 复杂度硬上限（`V > limit` 罚 5e7），六档 5/5/10/15/25/200。
     pub limit: u32,
 }
@@ -200,7 +204,7 @@ pub fn params(level: u8) -> Params {
         5 => (250, 250, 25),
         _ => (1000, 250, 200),
     };
-    Params { generations, population, elite: 5, limit }
+    Params { generations, population, per_slot: 5, limit }
 }
 
 /// 一个个体：token 序列 + 适应度。
@@ -312,7 +316,8 @@ pub fn crossover(
 ///
 /// ⚠️ 两条仍是假设：① 头部"已按质量排序"只有间接证据；
 /// ② 工厂内部的交叉切点规则未还原（见 [`crossover`]）。
-/// `elite`（栈参数 5）的用途仍未定，这里**不使用**它。
+/// 精英比例 = `1 / per_slot`（即 20%）：每代按分数降序只保留前 `种群/per_slot` 个并全部克隆，
+/// 每个槽再补 `per_slot - 1` 个工厂子代（`docs/95`）。
 pub fn next_generation<F>(
     pop: &[Individual],
     p: &Params,
@@ -363,11 +368,33 @@ where
 ///
 /// 这就是"一回合思考"的骨架：调用方负责提供初始种群与适应度闭包。
 pub fn evolve<F>(
+    pop: Vec<Individual>,
+    p: &Params,
+    mode: VarMode,
+    next: &mut dyn FnMut() -> u64,
+    score: F,
+) -> Vec<Individual>
+where
+    F: FnMut(&[Token]) -> f64,
+{
+    evolve_with_budget(pop, p, mode, next, score, None)
+}
+
+/// 真游戏的每回合墙钟上限，单位秒（反汇编 `0x51b7cf`：`cmp $0x19`）。
+///
+/// 终止条件是「代数到顶 ∨ elapsed > 25 s」取先到，**两者共用同一出口**，
+/// 所以调用方无法得知是否被截断（`docs/93`）。难度 6（1000 代）在实际机器上
+/// 通常会撞到它：实测期望 253000 次评分，只跑到 217580 / 234278。
+pub const GAME_TIME_BUDGET_SECS: f64 = 25.0;
+
+/// 带墙钟预算的进化。`max_secs = None` 表示不限时（测试用，保证可复现）。
+pub fn evolve_with_budget<F>(
     mut pop: Vec<Individual>,
     p: &Params,
     mode: VarMode,
     next: &mut dyn FnMut() -> u64,
     mut score: F,
+    max_secs: Option<f64>,
 ) -> Vec<Individual>
 where
     F: FnMut(&[Token]) -> f64,
@@ -377,7 +404,14 @@ where
             ind.score = score(&ind.tokens);
         }
     }
+    let start = std::time::Instant::now();
     for _ in 0..p.generations {
+        // 与游戏一致：**每代顶部**检查一次（不是每次评分都查）
+        if let Some(limit) = max_secs {
+            if start.elapsed().as_secs_f64() > limit {
+                break;
+            }
+        }
         pop = next_generation(&pop, p, mode, next, &mut score);
     }
     pop
@@ -716,9 +750,9 @@ mod tests {
 
     #[test]
     fn params_match_measured_table() {
-        assert_eq!(params(1), Params { generations: 3, population: 50, elite: 5, limit: 5 });
-        assert_eq!(params(3), Params { generations: 25, population: 150, elite: 5, limit: 10 });
-        assert_eq!(params(6), Params { generations: 1000, population: 250, elite: 5, limit: 200 });
+        assert_eq!(params(1), Params { generations: 3, population: 50, per_slot: 5, limit: 5 });
+        assert_eq!(params(3), Params { generations: 25, population: 150, per_slot: 5, limit: 10 });
+        assert_eq!(params(6), Params { generations: 1000, population: 250, per_slot: 5, limit: 200 });
     }
 
     #[test]
@@ -743,7 +777,7 @@ mod tests {
 
     #[test]
     fn evolve_runs_requested_generations() {
-        let p = Params { generations: 3, population: 10, elite: 5, limit: 200 };
+        let p = Params { generations: 3, population: 10, per_slot: 5, limit: 200 };
         let mut next = stream(99);
         let pop = initial_population(&p, VarMode::Normal, &mut next);
         let out = evolve(pop, &p, VarMode::Normal, &mut next, |t| t.len() as f64);
@@ -773,7 +807,7 @@ mod tests {
             targets: &targets,
             limit: 200,
         };
-        let p = Params { generations: 6, population: 20, elite: 5, limit: 200 };
+        let p = Params { generations: 6, population: 20, per_slot: 5, limit: 200 };
         let mut next = stream(0x1234_5678);
         let pop = initial_population(&p, VarMode::Normal, &mut next);
         let out = evolve(pop, &p, VarMode::Normal, &mut next, |t| fitness(t, &ctx));
@@ -836,5 +870,22 @@ mod tests {
         assert!(((c as i64) - (N as i64) / 2).abs() < 500, "常数应约 50%，实测 {c}/{N}");
         assert!(((x as i64) - (N as i64 * 34 / 100) as i64).abs() < 500, "x 应约 34%，实测 {x}/{N}");
         assert!(((y as i64) - (N as i64 * 16 / 100) as i64).abs() < 500, "y 应约 16%，实测 {y}/{N}");
+    }
+
+    #[test]
+    fn time_budget_stops_early_without_changing_semantics() {
+        // 预算 0 秒 ⇒ 一代都不跑，种群原样返回（与游戏"共用同一出口"一致）
+        let mut next = stream(0xB0D6_u64);
+        let p = Params { generations: 50, population: 10, per_slot: 5, limit: 200 };
+        let pop = initial_population(&p, VarMode::Normal, &mut next);
+        let before = pop.clone();
+        let out = evolve_with_budget(pop, &p, VarMode::Normal, &mut next, |_| 0.0, Some(0.0));
+        assert_eq!(out.len(), before.len());
+    }
+
+    #[test]
+    fn game_budget_constant_matches_disassembly() {
+        // 反汇编 0x51b7cf：cmp $0x19 ⇒ 25 秒
+        assert_eq!(GAME_TIME_BUDGET_SECS, 25.0);
     }
 }
