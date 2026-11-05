@@ -438,6 +438,146 @@ pub fn life_state_of(life: &LifeState) -> impl Fn(i64) -> u8 + '_ {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 同时回合制的**收集阶段**（`docs/141` §1）
+// ---------------------------------------------------------------------------
+
+/// 一次提交的受理结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubmitResult {
+    /// 收下了。
+    Accepted,
+    /// 这个人已经交过，后交的被丢弃（一人一发，`docs/86`：一回合一个士兵只出一次手）。
+    Duplicate,
+    /// 这个人不在这回合的公告里（没上场 / 全灭 / 记错 id）。
+    NotExpected,
+    /// 这一轮已经结算过了，不再受理。
+    Closed,
+}
+
+/// 同时回合制的**收集阶段**：攒齐"本回合每个能开火的玩家各一发"，或超时。
+///
+/// 为什么需要它：`SequentialTurns` 一回合只有一发，轮转给出射手后**立刻**就能结算；
+/// `SimultaneousTurns` 一回合是 **N 发一个事务**（130 个真回放批，2~8 发），必须先把
+/// 提交攒起来。`docs/141` §1 把这一段拆成"收集 / 结算 / 广播"三阶段，这里只负责第一段：
+/// **它不碰几何、不碰报文**，所以可以单独测。
+///
+/// 顺序语义（`观测`，`docs/141` §4，130/130 批）：
+///
+/// > 批内射击者的顺序 = 本回合 `TurnInfo` 的**公告顺序**，取"实际提交了函数"的那些。
+///
+/// 所以 [`RoundCollection::resolve`] 按**公告顺序**交还，而不是按提交到达顺序 ——
+/// 后者是网络竞态（B 类），前者是输入决定的。公告顺序本身来自 `turn_manager`
+/// 遍历玩家表（HashMap 迭代序，`docs/113` 的 A 类），本类型**照抄调用方给的顺序**。
+pub struct RoundCollection<T> {
+    /// 本回合的公告顺序（`TurnInfo` 里 `soldier_id != 0` 的那些玩家，按公告先后）。
+    announced: Vec<i64>,
+    /// 已收到的提交，键 = `player_id`。
+    got: std::collections::BTreeMap<i64, T>,
+    /// 回合截止 tick（`EndOfTurnInfo.end_of_turn_tick`）。`None` = 不计时。
+    ///
+    /// ⚠️ 真值里这个字段实测恒为 **0**（`EndOfTurnInfo{end_of_turn_tick:0, time_mode:"TimerInf"}`
+    /// 在 `1793884702` 的每一回合都是 0），而 60Hz tick 在回合开始时就已上万 ——
+    /// 所以**不能用它当截止**。本结构的 `deadline` 是调用方给的**墙钟/tick 预算**，
+    /// 与那个字段无关。超时语义只做过"用户口述"级别的核对（模块注释 §4）。
+    deadline: Option<i64>,
+    closed: bool,
+}
+
+impl<T> RoundCollection<T> {
+    /// `announced` = 本回合拿到 `TurnInfo{player_id, soldier_id != 0}` 的玩家，**按公告顺序**。
+    pub fn new(announced: impl IntoIterator<Item = i64>, deadline: Option<i64>) -> Self {
+        RoundCollection {
+            announced: announced.into_iter().collect(),
+            got: std::collections::BTreeMap::new(),
+            deadline,
+            closed: false,
+        }
+    }
+
+    /// 本回合在等谁（公告顺序）。
+    pub fn announced(&self) -> &[i64] {
+        &self.announced
+    }
+
+    /// 还没交的玩家（公告顺序）。
+    pub fn waiting_on(&self) -> Vec<i64> {
+        self.announced
+            .iter()
+            .copied()
+            .filter(|p| !self.got.contains_key(p))
+            .collect()
+    }
+
+    /// 已经交了几发。
+    pub fn len(&self) -> usize {
+        self.got.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.got.is_empty()
+    }
+
+    /// 收一发。
+    pub fn submit(&mut self, player_id: i64, value: T) -> SubmitResult {
+        if self.closed {
+            return SubmitResult::Closed;
+        }
+        if !self.announced.contains(&player_id) {
+            return SubmitResult::NotExpected;
+        }
+        if self.got.contains_key(&player_id) {
+            return SubmitResult::Duplicate;
+        }
+        self.got.insert(player_id, value);
+        SubmitResult::Accepted
+    }
+
+    /// 都交了？（空公告时算"齐了"，因为没人在等。）
+    pub fn is_complete(&self) -> bool {
+        self.announced.iter().all(|p| self.got.contains_key(p))
+    }
+
+    /// 到点了吗。
+    pub fn expired(&self, now_tick: i64) -> bool {
+        matches!(self.deadline, Some(d) if now_tick >= d)
+    }
+
+    /// 现在该不该结算：**攒齐**或**超时**，二者之一。
+    ///
+    /// 两者都没有 ⇒ 继续等。这就是"等所有存活玩家提交（或超时）"的全部逻辑。
+    /// 已经 [`RoundCollection::close`] 过的轮次不再要求结算（调用方已经收走了）。
+    pub fn should_resolve(&self, now_tick: i64) -> bool {
+        !self.closed && (self.is_complete() || self.expired(now_tick))
+    }
+
+    /// 提前关掉这一轮（例如对局结束 / 被外部取消）。之后 [`RoundCollection::submit`]
+    /// 返回 [`SubmitResult::Closed`]，[`RoundCollection::should_resolve`] 恒 `false`。
+    pub fn close(&mut self) {
+        self.closed = true;
+    }
+
+    /// 这一轮关掉了吗。
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
+
+    /// 结束收集，按**公告顺序**交还本回合真正提交了的那些（`(player_id, value)`）。
+    ///
+    /// 没交的玩家**不出现在返回值里** —— 真回放里正是这样：`TurnInfo` 公告了 3 个人、
+    /// 结算批只有 2 发（`docs/141` §4 的 9 个反例，全部由"公告了但没交"造成）。
+    pub fn resolve(mut self) -> Vec<(i64, T)> {
+        self.closed = true;
+        let mut out = Vec::with_capacity(self.got.len());
+        for p in &self.announced {
+            if let Some(v) = self.got.remove(p) {
+                out.push((*p, v));
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
