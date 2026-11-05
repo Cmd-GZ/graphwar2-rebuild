@@ -38,7 +38,7 @@
 | **回合状态机**（`src/turnstate.rs`） | ✅ | 6 状态 + 7 事件，**13 次迁移与抓包逐个相同**（`docs/41`） |
 | 回合调度 `turn_manager` | ⬜ | **已证伪"来自 ChaCha 流"**（3 局 × 每局 2~4 条流 × 3 种抽样 × 25 个偏移，另加 6 局 × 2 基准 × 4 方法，全部不一致）。最可能来自 **HashMap 迭代顺序**（OS 熵播种的 SipHash 键），与 ChaCha 是两条独立熵流 ⇒ 不可确定性复现（`docs/60`） |
 | 关卡生成 `level_generator` | ✅ | **Rust 实现 + 逐位复现**（`docs/61`）：`levelgen::generate` 用真实随机流夹具跑出 13 个障碍，`x/y/r` 的 `to_bits()` 全等；公式与 ziggurat 表来自 `docs/55/56` |
-| AI `computer_player_manager` / `function_evolutionator` | ⬜ | 入口与评分循环已定量刻画（`docs/29`）；RNG 现已可观测（`docs/58`），可重放其随机搜索，**但本轮未做** |
+| AI `computer_player_manager` / `function_evolutionator` | 🔶 | **确认为 GW1 那套进化算法**（`docs/66`）：GW2 二进制里有 GW1 的 `2e6`/`1e6` 适应度常数，且被 AI 区域的评分表达式引用；反编译显示 `命中×2e6 − minDist²/100 − 步数超限?5e7`。GW1 的等级=代数、种群50/精英5/变异25/交叉20 已从源码确认；**GW2 的种群与变异参数、随机函数生成器的 token 集合仍未知** |
 | **tick 时钟（60 Hz）** | ✅ | `tick_at()` 用 113 个真实样本验证；`TickReply` 逐字节一致（`docs/35`）。**另解出** `end_of_turn_tick = 回合开始 tick + 时长`，**六档全部实测**（含 `Timer30s`、`TimerInf=0` 哨兵，`docs/42`） |
 | **服务端握手（状态同步）** | ✅ | `server::on_new_connection` 7 条消息与抓包逐字节一致；`serve_handshake` 经真实 TCP 往返验证（`docs/33`） |
 | **服务端对象 `Match`（开火结算+出报文）** | ✅ | `fire()` 按抓包顺序产出 8 类报文（`docs/43`），状态推进位置与真实一致；按回合配对回放 4 发终点全对、致死集合一致（`docs/37`） |
