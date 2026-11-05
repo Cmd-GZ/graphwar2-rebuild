@@ -34,6 +34,11 @@
 | [91-bisection-loop.md](91-bisection-loop.md) | 采样器 normal 二分循环的逐条汇编：`lo`/`hi` 更新规则 | 二分 `lo`/`hi` 规则（早停根因，改码依据） |
 | [92-ui-inventory.md](92-ui-inventory.md) | **客户端界面台账（15/15 界面，运行时枚举）** | 界面 × 控件 × 作用 × 实现状态（唯一台账） |
 | [101-gdc-contents.md](101-gdc-contents.md) | **`.gdc` 字节码内容：5 个行为脚本 + 47 行布局数值表**（`tools/gdc_disasm.py`） | `.gdc` 常量/标识符/函数/伪源码（补 `92` §2 的缺口） |
+| [97-two-phase-scoring.md](97-two-phase-scoring.md) | **两阶段评分：粗评 0.5 → 前 3 名精评 0.01 → 不一致换新** | 判据是 `hits`/`dist` 两个字段，不是总分 |
+| [98-shooter-selection.md](98-shooter-selection.md) | **AI 不选射手**：turn_manager 按 `Vec<soldier_id>`+游标轮转 | replay 三局逐发吻合（含严格交替 7 次） |
+| [99-generation-dynamics.md](99-generation-dynamics.md) | **每代组装**：单父代工厂、无缓存全量重评、B 变体 | 父代 = 存活槽一对一，4 子代共用父代 |
+| [101-gdc-contents.md](101-gdc-contents.md) | `.gdc` 逐字节格式 + 5 个行为脚本 + 47 行布局数值表 | 用本机 Godot 做"已知源码→已知字节码"探针 |
+| [103-disk-levelgen.md](103-disk-levelgen.md) | **`0x4ea6dc` 不是关卡生成器** | 关卡只有散布 + 中心单障碍两种 |
 
 ## 二、已归档（`docs/archive/`，**不要引用其结论**）
 
