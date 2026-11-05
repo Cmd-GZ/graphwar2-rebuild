@@ -1415,7 +1415,12 @@ func _replay_draw_shot(d: Dictionary) -> void:
 	elif team < 0:
 		# 队伍未知才退回几何：起点在左就往右（`docs/105`：Team1 恒在 x<0）
 		direction = 1.0 if start.x < 0.0 else -1.0
-	var result := GwCore.calculate_path(expr, start, direction)
+	# 模式**取自这一局的录像**（`FunctionModeInfo`），不是界面上的开关：
+	# `DiffEqFunction` 的 `f` 是 `dy/dx`，必须走 ODE（一阶 RK4），否则画出来是错的线
+	# —— 契约与实测见 `docs/138`（内核 `path_calculate_mode`，`mode` 是字符串
+	# `"normal"` / `"ode"`；`GwCore.calculate_path()` 的第 4 个参数就是它）。
+	var mode := "ode" if String(_replay.state.function_mode) == "DiffEqFunction" else "normal"
+	var result := GwCore.calculate_path(expr, start, direction, mode)
 	var replay_corrected := String(d.get("corrected", ""))
 	if not bool(result.ok):
 		_plane.clear_path()
@@ -1427,10 +1432,12 @@ func _replay_draw_shot(d: Dictionary) -> void:
 		"team": maxi(0, team),
 	})
 	_plane.set_path(drawn.points, drawn.impact, true)
-	if app() != null and int(app().state.function_mode) == 0:
-		_offset_label.text = GwCore.format_offset(float(result.offset))
-	_replay_shot_status = "内核重算：函数 %s ／ 修正 %s（回放记录：%s）／ %d 点%s" % [
-		expr, GwCore.format_offset(float(result.offset)),
+	# 修正常数：只有 Normal 有。ODE 下内核给的是 `NaN` ⇒ `format_offset()` 出空串，
+	# 正好是原版 DiffEq 局右下角不显示修正文本的样子（`docs/92` §4.10、`docs/138`）。
+	_offset_label.text = GwCore.format_offset(float(result.offset))
+	var mode_name := "Ode(dy/dx)" if mode == "ode" else "Normal(y=f(x))"
+	_replay_shot_status = "内核重算（%s）：函数 %s ／ 修正 %s（回放记录：%s）／ %d 点%s" % [
+		mode_name, expr, GwCore.format_offset(float(result.offset)),
 		replay_corrected if replay_corrected != "" else "—",
 		drawn.points.size(),
 		"（撞障碍截断）" if bool(drawn.blocked) else "",
