@@ -8,7 +8,7 @@
 > **[`107-docs-consolidation.md`](107-docs-consolidation.md)**。
 > 三节（现行 / 已归档 / 已并档）与磁盘上的文件**逐一对得上**，可以当清单核对。
 
-## 一、现行文档（86 份）
+## 一、现行文档（87 份）
 
 > 数法：`find docs -name "*.md" -not -path "*/archive/*" | wc -l` = **85**（2026-11 复核；
 > 含本轮新增的 [`109`](109-kernel-turn-aigen.md)）。之前这里写的 76 是旧数，已改。
@@ -105,6 +105,7 @@
 | [97-two-phase-scoring.md](97-two-phase-scoring.md) | 两阶段评分：粗评 0.5 → 前 3 名精评 0.01 → 不一致换新 |
 | [98-shooter-selection.md](98-shooter-selection.md) | AI 不选射手：`turn_manager` 按 `Vec<soldier_id>`+游标轮转 |
 | [99-generation-dynamics.md](99-generation-dynamics.md) | 每代组装：单父代工厂、无缓存全量重评、B 变体 |
+| [112-meta-managers.md](112-meta-managers.md) | **对局元信息 8 模块 23 个函数**：名字存 `HashMap<u32,String>`、函数存 `HashMap<u32,112B>`（Token 16B）、`local_player` 一次索要 name/rank/skin/face/hat；段位换算**不在** `rank_manager`（负结果）；`0x3d38f0` 的名字↔数字跳表 |
 | [110-gen0-and-variantb.md](110-gen0-and-variantb.md) | **第 0 代初始种群从哪来**（无独立初始化函数；来自哈希表 move-out，空则全走随机分支＝随机+补齐+变异）／**B 何时启用**（`param_15` = 本局 function_mode，即微分方程局走 B） |
 
 ### 1.7 覆盖面 / 验收 / 构建 / 界面

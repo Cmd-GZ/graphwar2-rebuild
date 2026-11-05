@@ -437,9 +437,13 @@ SIMD 内联把 20 行 C 展开成 60 行位运算，`SUB161(...)`/`auVar` 满屏
    `unlock_skins`、`purchase_graphwar_support`。
    这些是 Godot 的 **Android 单例**调用（`Android_mediastore_holder` 同类），
    ⇒ **Linux 端跑不到**（用户判断正确），但**代码路径在**，要看行为得走 APK。
-2. **段位图标共 22 张**：`res://ranks/rank_0.svg` … `rank_21.svg`。
-   `graphwar_campaign_control.rs` 只有一个函数，配合 `user://campaign.save`，
-   ⇒ 战役进度**存在存档文件里，不在代码里**（推断：那 1 个函数只做存取）。
+2. **段位图标共 22 张**（`res://ranks/rank_0.svg` … `rank_21.svg`，观测）。
+   ⚠️ **本节原先由它推出的两条结论已被 `docs/112` 推翻一半**：
+   - "22 张图标 ⇒ 22 个段位"**不成立**：`rank_manager` 的 4 个函数里**没有任何**
+     22 项表、取模或阈值比较，段位换算**不在这个模块**（可复现的负结果）。22 档位仍未知。
+   - `user://campaign.save` 的引用点**不在** `0x418820`，而在 `0x418170` / `0x4183b0`
+     ⇒ "那 1 个函数只做存取"的说法证据链要换：方向对，但地址指错了。
+   详见 `docs/112` §14。
 
 ### 14.6 这份审计没做的事
 

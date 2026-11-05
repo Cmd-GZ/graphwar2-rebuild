@@ -123,6 +123,38 @@ replay 里有 **380 份**真对局录像（`user://replays/`，gzip + JSONL）�
    但它现在被降级为"内部注记"——**不影响任何可观测行为**。
    不要再花时间去找它的判别表。
 
+## 4.5 ⚠️ 两种名字别混：**线上键** 是 CamelCase，**内部分派键** 是 snake_case
+
+`docs/112` 发现 `0x3d38f0` 里被比较的键是 **`name_info_event` / `rank_info_event`** 这种
+**snake_case + `_event`** 形态，而真实抓包/replay 里的 JSON 键是 **`NameInfo` / `RankInfo`**。
+
+两套名字都真实存在，但**用途不同**：
+
+| 名字形态 | 出现在哪 | 是不是线格式 |
+|---|---|---|
+| `NameInfo`（CamelCase） | 抓包、380 份 replay 的 JSON 键 | **是**——`src/protocol.rs` 用的就是这套，已逐行对拍 |
+| `name_info_event`（snake_case） | `.rodata` 里被 `0x3d38f0` 比较的键；serde 的字段名表 | **不是**——内部结构体字段名/分派键 |
+
+⇒ **补协议时写 CamelCase**。`docs/112` 提到的那组 snake_case 名字是内部分派层的，
+把它当成线上键会写出错误的线格式。
+
+## 4.6 新的线索：判别值**可能**可以解出来（但别急着改 `events.rs`）
+
+`docs/112` 报告：`0x3d38f0` 的**长度跳表 + 两段 16 字节 SIMD 比较 + 常量折叠**
+可以逐位解出「事件名 ↔ 数字」20+ 条（`name_info_event`=60、`rank_info_event`=67、
+`entity_removed_event`=14、`player_info_event`=13 …），且 `K+16 == len` 全中可自校验。
+
+这条线索**很有价值**，因为它可能终于能验证 `src/events.rs` 那 33 个悬空的判别值。
+但**在改 `events.rs` 之前必须先分清一件事**：
+
+> 那些数字是 **`enum Event` 的判别值**，还是**分派表的 handler 下标**？
+
+两者都能解释"名字 ↔ 数字"，但只有前者能拿去改 `events.rs`。目前 `docs/112` 只说
+"构造处 + 反查表两处独立命中"，**没有直接证据**区分这两者。
+
+另外注意量级：`0x3d38f0` 给出的数字已经到 **67**，而 `events.rs` 现在只有 **33 个变体**
+⇒ 无论那些数字是什么，`events.rs` 的**枚举本身是不完整的**，这一点已可确认。
+
 ## 5. 字段名：能拿到词汇表，拿不到逐事件归属
 
 - **能拿到**：`.rodata` 里有一大段 snake_case 字段名（`soldier_id`、`corrected_function`、
