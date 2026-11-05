@@ -106,3 +106,50 @@
 2. 把变体集写进本文件，逐项标注「已实现 / 未实现 / 不适用」；
 3. 只有**全部变体都有归属**时，才允许在 README 上写 ✅；
 4. 任何"用户玩出来才知道"的模式，都算**枚举失误**，要回头补第 1 步。
+
+## 10. 界面/功能清单（从 `.pck` 场景推导，**不是靠记忆**）
+
+用户指出：即使核心逻辑全绿，只要功能清单是"我记得查过的"，产物仍残次。
+`Player`、`Replays` 这两个界面我此前**从未查过**（`Replays` 还是用户告诉我的）。
+
+从 `rsc/*.tscn.remap` 可枚举出**全部 27 个场景**：
+
+```
+main_menu  campaign  GameSetup  lan_lobby  play_screen  player_screen
+replay_lobby  replay_entry  shop_button_entry
+team1_entry  team2_entry  name_label  function_buttons  function_buttons_no_control
+line_2d  main
+add_bot_pop_up  chat_pop_up  confirm_exit_pop_up  connecting_pop_up
+disconnected_pop_up  endgame_pop_up  join_ip_pop_up  join_level_pop_up
+```
+
+二进制里的控件类名另有一批（`ReplayLobby`、`PlayerScreen`、`ReplaysContainer`、
+`PlayReplayButton`、`SkinBackgroundButton`、`ShowGlobalButton`、`ShowLocalButton`、
+`JoinIpPopUp`、`AddBotPopUp`、`ConfirmPlayExitPopUp`、`TurnTimeButton` …）。
+
+### 与用户口述对照
+
+| 用户说的 | 对应场景 | 我们查过吗 |
+|---|---|---|
+| 主界面 4 个按钮（Campaign / Battle / Player / Replays） | `main_menu` | ❓ 未逐项核对 |
+| Campaign 21 关（0–20，逐关解锁） | `campaign` / `join_level_pop_up` | ✅ 关卡生成器已逆（`docs/60`+） |
+| Battle：Local/Global、Create/Join IP、四模式、加 AI（6 级） | `lan_lobby` / `GameSetup` / `join_ip_pop_up` / `add_bot_pop_up` | 🔶 四模式已枚举；**6 个 AI 等级**已逆 |
+| Player：改名 + Skins/Faces/Hats | `player_screen` / `shop_button_entry` / `skin_background_button` | ❌ **从未查过** |
+| Replays：回放存储 | `replay_lobby` / `replay_entry` | ✅ 用户在 `docs/78` 指出后才查 |
+| 房间 IP/端口显示 | `game_ip_label` | ❓ 未查 |
+
+### 判定
+
+**当前产物是残次品**，缺口按严重度：
+
+| 缺口 | 严重度 |
+|---|---|
+| `SimultaneousTurns` 结算 | 高 |
+| `Player` 界面 / 皮肤系统（Skins/Faces/Hats） | 中（不影响对局物理，但属功能缺失） |
+| `Replays` 回放播放器 | 中 |
+| `AxisMode`/`TimeMode` 对判定的参与度 | 中/低 |
+
+### 规矩补充
+
+**功能清单的权威来源是 `.pck` 的场景与控件名，不是任何人的记忆。**
+每轮开工前先列这份清单，逐项标状态；"用户玩出来才知道"的功能一律算枚举失误。

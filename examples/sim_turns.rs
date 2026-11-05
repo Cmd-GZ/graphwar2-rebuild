@@ -133,10 +133,22 @@ fn main() {
             cum.push(acc);
         }
 
-        let mut hits: Vec<(i64, usize, f64, f64)> = Vec::new(); // (tid, first_i, arclen, mindist)
+        // 先定停点（障碍），再只在 [0, stopi] 上判命中
         let mut stopi = pts.len() - 1;
         let mut blocked = false;
         for (i, &(px, py)) in pts.iter().enumerate() {
+            if is_occupied(&mask, px, py) {
+                stopi = i;
+                blocked = true;
+                break;
+            }
+        }
+        // 逐点命中（与 settle::resolve 一致：只在采样点上判）
+        let mut hits: Vec<(i64, usize, f64, f64)> = Vec::new(); // (tid, first_i, arclen, mindist)
+        for (i, &(px, py)) in pts.iter().enumerate() {
+            if i > stopi {
+                break;
+            }
             for t in &targets {
                 if t.id == s.owner || hits.iter().any(|h| h.0 == t.id) {
                     continue;
@@ -146,18 +158,50 @@ fn main() {
                     hits.push((t.id, i, cum[i], d));
                 }
             }
-            if is_occupied(&mask, px, py) {
-                stopi = i;
-                blocked = true;
-                break;
+        }
+        // 连续命中（折线段到圆心的最短距离）——子弹是沿折线连续飞行的
+        let mut hits_c: Vec<(i64, usize, f64, f64)> = Vec::new();
+        for t in &targets {
+            if t.id == s.owner {
+                continue;
+            }
+            let mut best = (f64::INFINITY, 0usize, 0.0f64);
+            for i in 1..=stopi {
+                let (ax, ay) = pts[i - 1];
+                let (bx, by) = pts[i];
+                let (vx, vy) = (bx - ax, by - ay);
+                let len2 = vx * vx + vy * vy;
+                let mut u = if len2 > 0.0 {
+                    ((t.x - ax) * vx + (t.y - ay) * vy) / len2
+                } else {
+                    0.0
+                };
+                if u < 0.0 {
+                    u = 0.0;
+                } else if u > 1.0 {
+                    u = 1.0;
+                }
+                let (cx, cy) = (ax + u * vx, ay + u * vy);
+                let d = ((cx - t.x).powi(2) + (cy - t.y).powi(2)).sqrt();
+                if d <= t.r && best.0 > t.r {
+                    // 第一次进入半径的那一段
+                    best = (d, i, cum[i - 1] + u * (cum[i] - cum[i - 1]));
+                    hits_c.push((t.id, i, best.2, d));
+                    break;
+                }
             }
         }
-        // 只保留发生在停点之前（含停点）的命中
-        hits.retain(|h| h.1 <= stopi);
 
         let (sx, sy) = pts[stopi];
+        // 路径是"正常终止"（撞障碍 / 出边界 / 点数用尽）还是"采样提前中止"？
+        // 提前中止 = 折长二分在 100 次内没收敛 ⇒ 我们的采样器放弃了，真游戏没有。
+        let n_budget = gw2_rebuild::path::point_budget(step) as usize;
+        let normal_end = blocked as usize
+            + (sx.abs() > 24.99) as usize
+            + (sy.abs() > 14.99) as usize
+            + (pts.len() >= n_budget) as usize;
         println!(
-            "SHOT {} {} {} {} {} {:.6} {:.6} {:.6}",
+            "SHOT {} {} {} {} {} {:.6} {:.6} {:.6} {}",
             s.idx,
             s.owner,
             pts.len(),
@@ -165,10 +209,14 @@ fn main() {
             if blocked { 1 } else { 0 },
             cum[stopi],
             sx,
-            sy
+            sy,
+            if normal_end > 0 { 1 } else { 0 }
         );
         for (tid, i, arc, d) in &hits {
-            println!("HIT {} {} {} {:.6} {:.6}", s.idx, tid, i, arc, d);
+            println!("HITP {} {} {} {:.6} {:.6}", s.idx, tid, i, arc, d);
+        }
+        for (tid, i, arc, d) in &hits_c {
+            println!("HITC {} {} {} {:.6} {:.6}", s.idx, tid, i, arc, d);
         }
     }
 }
