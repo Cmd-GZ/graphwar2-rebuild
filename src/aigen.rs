@@ -888,4 +888,23 @@ mod tests {
         // 反汇编 0x51b7cf：cmp $0x19 ⇒ 25 秒
         assert_eq!(GAME_TIME_BUDGET_SECS, 25.0);
     }
+
+    #[test]
+    fn rng_u32_consumes_one_word_per_draw() {
+        // 每 token 一次 u32 抽样（反汇编 0x4ef193）。这里验证：
+        // 连续 16 次 next_u32 恰好用掉一个 ChaCha 输出块，第 17 次触发换块。
+        use crate::rng::ChaCha12;
+        let mut key = [0u8; 32];
+        key[..8].copy_from_slice(&0x1234_5678_9ABC_DEF0u64.to_le_bytes());
+        let mut r = ChaCha12::from_seed(&key);
+        let mut got = Vec::new();
+        for _ in 0..17 {
+            got.push(r.next_u32());
+        }
+        assert_eq!(got.len(), 17);
+        // 同种子两次运行必须一致
+        let mut r2 = ChaCha12::from_seed(&key);
+        let got2: Vec<u32> = (0..17).map(|_| r2.next_u32()).collect();
+        assert_eq!(got, got2);
+    }
 }

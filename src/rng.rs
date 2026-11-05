@@ -45,7 +45,7 @@ impl ChaCha12 {
                 seed[i * 4 + 3],
             ]);
         }
-        ChaCha12 { key, nonce: [0, 0], counter: 0, buf: [0; 8], idx: 8 }
+        ChaCha12 { key, nonce: [0, 0], counter: 0, buf: [0; 8], idx: 16 }
     }
 
     fn block(&mut self) {
@@ -77,13 +77,40 @@ impl ChaCha12 {
         self.counter = self.counter.wrapping_add(1);
     }
 
-    pub fn next_u64(&mut self) -> u64 {
-        if self.idx >= 8 {
+    /// 取 **一个 32 位字**（与真二进制的 token 抽样粒度一致）。
+    ///
+    /// 反汇编 `0x4ef193`：`mov 0x10(%r13,%rcx,4),%r12d` —— 从 ChaCha 输出块里
+    /// 按 4 字节步长取字，即**每抽一次只消耗一个 u32**。
+    /// 我们的 [`next_u64`](Self::next_u64) 一次吃两个 32 位字，所以 AI 侧
+    /// **必须用这个函数**，否则同种子下 token 流会错位（`docs/AI.md` §8.7）。
+    pub fn next_u32(&mut self) -> u32 {
+        if self.idx >= 16 {
             self.block();
         }
-        let v = self.buf[self.idx];
+        let i = self.idx;
         self.idx += 1;
-        v
+        let v = self.buf[i / 2];
+        if i % 2 == 0 {
+            v as u32
+        } else {
+            (v >> 32) as u32
+        }
+    }
+
+    pub fn next_u64(&mut self) -> u64 {
+        if self.idx >= 16 {
+            self.block();
+        }
+        // 与 next_u32 共用同一条 32 位字流：不足两个字时回退到逐字拼装
+        let i = self.idx;
+        if i % 2 == 0 && i + 1 < 16 {
+            self.idx += 2;
+            self.buf[i / 2]
+        } else {
+            let lo = self.next_u32() as u64;
+            let hi = self.next_u32() as u64;
+            lo | (hi << 32)
+        }
     }
 }
 

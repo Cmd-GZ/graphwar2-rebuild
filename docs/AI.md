@@ -157,6 +157,19 @@ r2   = rand % (N - r1)
 ⇒ 评分核心是 **vaddr `0x51a750` = Ghidra `0x61a750`**；把 `0x51a750` 当 Ghidra 用会落到
 `FUN_0051ae60` 里。**引用旧文档地址时先确认它是 vaddr 还是 Ghidra。**
 
+## 8.7 RNG 抽样粒度：每 token 一个 **u32**（已改）
+
+反汇编 `0x4ef193`：`mov 0x10(%r13,%rcx,4),%r12d` —— 从 ChaCha 输出块里**按 4 字节步长**取字，
+即**每次 token 抽样只消耗一个 u32**。权重表是 `rand % 85`。
+
+我们此前用 `next_u64()`（一次吃两个 32 位字）⇒ **同种子下 token 流会错位**。
+
+已改：`ChaCha12::next_u32()` 用统一的 16 字游标（`idx: 0..16`），`next_u64` 也与它共用同一条字流。
+加了测试 `rng_u32_consumes_one_word_per_draw`。
+
+**仍未验的部分**：种子来自 OS 熵（`/dev/urandom`），所以即使粒度对齐也**无法与真游戏对种**；
+这一条的价值是"内部一致 + 与二进制的消耗模式相同"，不是"能复现游戏的一局"。
+
 ## 9. 实现
 
 `src/aigen.rs`（21 条测试），含 `VarMode`、`table(mode)`、`repair`、`crossover`、`evolve`。
