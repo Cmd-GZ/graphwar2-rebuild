@@ -92,7 +92,7 @@ def main():
                 "pos": dict(pos), "team": dict(team), "alive": dict(alive),
                 "mode": mode,
             })
-            pending.pop(fp["owner_id"], None)
+            # 不清空：玩家复用上一回合的函数时不会再发 FunctionInfo
 
     picked = None
     if args.bot:

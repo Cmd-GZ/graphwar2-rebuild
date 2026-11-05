@@ -101,6 +101,26 @@ fn main() {
     println!("局面: {} 个障碍、{} 个目标、射手在 ({:.2}, {:.2}) flip={}",
              obstacles.len(), targets.len(), shooter.0, shooter.1, flip);
     println!("真游戏函数 ({} token): {}", real_tokens.len(), func);
+    {
+        // 顺便报出"我们的物理预测这一发打死几个人"
+        use gw2_rebuild::path::{calculate, Mode};
+        use gw2_rebuild::shot::{correction, shifted_tokens};
+        if !real_tokens.is_empty() {
+            let c = correction(&real_tokens, shooter.0, shooter.1, flip);
+            let shifted = shifted_tokens(&real_tokens, c);
+            let pts = calculate(&shifted, shooter.0, shooter.1, 0.5, flip, Mode::Normal);
+            let mut killed: Vec<i64> = Vec::new();
+            for &(px, py) in &pts {
+                for t in &targets {
+                    if killed.contains(&t.id) { continue; }
+                    let d = ((px - t.x).powi(2) + (py - t.y).powi(2)).sqrt();
+                    if d <= t.radius { killed.push(t.id); }
+                }
+                if gw2_rebuild::plane::is_occupied(&mask, px, py) { break; }
+            }
+            println!("PREDICTED_KILLS {}", killed.len());
+        }
+    }
     println!("  我们的 fitness 打分 = {:.0}", real_score);
 
     // 几何校验：用真实函数算弹道，看停止点是否与 replay 记录的 end_x 一致
@@ -110,7 +130,15 @@ fn main() {
         let c = correction(&real_tokens, shooter.0, shooter.1, flip);
         let shifted = shifted_tokens(&real_tokens, c);
         let pts = calculate(&shifted, shooter.0, shooter.1, 0.5, flip, Mode::Normal);
-        let end_x_ours = pts.last().map(|p| p.0).unwrap_or(f64::NAN);
+        // ⚠️ 必须沿路径查掩膜：撞到第一个被占据的点就停（和 settle::resolve 一致）
+        let mut stop_pt = None;
+        for &(px, py) in &pts {
+            if gw2_rebuild::plane::is_occupied(&mask, px, py) {
+                stop_pt = Some((px, py));
+                break;
+            }
+        }
+        let end_x_ours = stop_pt.map(|p| p.0).unwrap_or_else(|| pts.last().map(|p| p.0).unwrap_or(f64::NAN));
         println!("  几何校验: replay 记录的终点 x = {:.3}，我们算的 = {:.3}（差 {:.3}）",
                  end_x_real, end_x_ours, (end_x_real - end_x_ours).abs());
         // 我们算的轨迹在真实终点 x 处的 y
@@ -134,9 +162,7 @@ fn main() {
         if let Some(p) = pts.iter().min_by(|a, b| {
             (a.0 - end_x_real).abs().partial_cmp(&(b.0 - end_x_real).abs()).unwrap()
         }) {
-            println!("  我们轨迹在 x≈{:.2} 处是 ({:.2}, {:.2})；该点掩膜占用={}",
-                     end_x_real, p.0, p.1,
-                     gw2_rebuild::plane::is_occupied(&mask, p.0, p.1));
+            println!("  轨迹在真实终点 x 附近的点 = ({:.2}, {:.2})", p.0, p.1);
         }
     }
 
