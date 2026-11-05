@@ -375,3 +375,76 @@ SIMD 内联把 20 行 C 展开成 60 行位运算，`SUB161(...)`/`auVar` 满屏
 `life_manager`、`turn_manager`、`function_evolutionator` 都是**同一套路子**：
 `RwLock` + 若干张 HashMap，没有明显的面向对象层次。
 所以这里的"模块"更像"一组围绕同一张表的小函数"，不是类。
+
+## 14. 模块级覆盖审计：54 个模块，479 个函数连地址都没落过纸（2026-11）
+
+### 14.1 为什么要做这个
+
+用户反复问"所以到底漏了什么"。此前唯一的答案是 `docs/88` 的**模式维度**矩阵
+（`TurnMode × FunctionMode × TimeMode × AxisMode`），它回答的是"我这些结论在哪个
+模式下成立"，**没有回答"哪些代码我从没看过"**。§1–§7 的表全是按模块名**推断**的职责，
+不是审计。
+
+工具：`tools/module_audit.py`（输入全是已有夹具，不重新反汇编）。
+
+### 14.2 口径，以及它为什么不能当完成度
+
+`cited` = **函数起始地址在 `docs/**/*.md` 里被写下来过**。它测的是"我有没有把地址
+落在纸面上"这个**记录习惯**。
+
+两个方向都实测过噪声：
+
+* **假阴性**（懂了但没写地址）：`graphwar_function_input.rs` 映射到 13 个函数，
+  引用数 **0** —— 可解析器 `0x4ed670` 是**逐位验证**过的，它根本不在
+  `fixtures/module_funcs.tsv` 里（该表只收"有 panic 字符串被引用"的函数）。
+  `graphwar_plane_pos_manager.rs` 同理：`px = 20x + 500` 是常量反查得到的，文档里
+  一个 `0x3c62xx` 都没有。
+* **假阳性**（写了地址但没读懂）：只被 xref 表连带提到的地址也计数。
+
+⇒ 所以下面这张表**只能**用来找"大面积、连地址都没出现过"的模块。`NO-CITE` 不等于
+"没看过"，要下结论必须逐条人工复核。
+
+### 14.3 分档
+
+| 档 | 模块数 | 函数数 | 占比 |
+|---|---|---|---|
+| `core`（引用率 ≥ 40%） | 18 | 188 | 21.2% |
+| `partial`（15%–40%） | 4 | 53 | 6.0% |
+| `thin`（> 0 但 < 15%） | 4 | 165 | 18.6% |
+| `NO-CITE`（一个地址都没写过） | **28** | **479** | **54.1%** |
+
+另有全二进制口径：**13263** 个函数里，文档写下过地址的 **168** 个 = **1.27%**。
+（分母混着 Rust std / hashbrown / Godot 绑定，所以这个数注定很小，
+**不能**读成"只做了 1.3%"。它只能说明"绝大多数函数我连提都没提过"。）
+
+### 14.4 28 个 `NO-CITE` 模块，按域归堆
+
+| 域 | 模块（函数数） | 小计 | 说明 |
+|---|---|---|---|
+| **界面 / 呈现** | `root_node`(242)、`setup_control`(46)、`lan_vbox`(44)、`nodes`(14)、`long_press_animation`(8)、`player_screen_control`(8)、`play_screen_control`(7)、`graphics_manager`(7)、`button`(6)、`texture_loader`(1) | **383** | 客户端 agent 正在做。注意：**界面行为主要写在 `.gdc` 脚本里（105/105 已反编译），这些 Rust 函数是脚本底下那层原生调用**——所以"没引用过 Rust 地址"不等于"界面没还原" |
+| **对局元信息** | `function_manager`(7)、`rank_manager`(4)、`name_manager`(3)、`local_player_manager`(3)、`event_handler`(3)、`logger`(3)、`campaign_control`(1)、`lobby_control`(1) | **25** | 真盲区。`name_manager` / `rank_manager` 对应 `docs/96` 里缺的 `NameInfo`/`RankInfo` 一组事件 |
+| **音频** | `audio_control`(14) | **14** | `.so` 里有完整的 WAV 解析错误串（`no WAVE tag found`、`no RIFF tag found`、`bits per sample is not 8 or 16`…），说明**音频是运行时解析 WAV 的**。与用户说的"有一个文件损坏"直接相关：坏文件会在这里被拒 |
+| **广告 / 后端** | `ad_switch`(7)、`backend`(6) | **13** | 见 §14.5 |
+| **录像 / 回放 / 视频** | `replay_control`(3)、`video_writer`(3)、`game_recorder`(2) | **8** | 我们只做了**读**回放（`tools/parse_replay.py`），没做**写**。注意还有 `publish_video_to_album` / `Android_mediastore_holder`——"把回放发到相册"是 Android 专属 |
+| **联机外围** | `lan_broadcaster_v6`(4)、`server_broker_handler`(3) | **7** | 房间发现与 broker，见 `docs/24` §7 |
+| **已知假阴性** | `function_input`(22)、`plane_pos_manager`(7) | **29** | §14.2 说的两个反例 |
+
+### 14.5 顺带确认的两件事
+
+1. **广告 / 内购在 `.so` 里是有代码的**，不是"Linux 上不存在"这么简单：
+   字符串里有 `IAP_holder`、`Ad_holder`、`purchase_pending` / `purchase_confirmed` /
+   `purchase_denied`、`create_ad_view` / `destroy_ad_view`、`request_permissions_result`、
+   `unlock_skins`、`purchase_graphwar_support`。
+   这些是 Godot 的 **Android 单例**调用（`Android_mediastore_holder` 同类），
+   ⇒ **Linux 端跑不到**（用户判断正确），但**代码路径在**，要看行为得走 APK。
+2. **段位图标共 22 张**：`res://ranks/rank_0.svg` … `rank_21.svg`。
+   `graphwar_campaign_control.rs` 只有一个函数，配合 `user://campaign.save`，
+   ⇒ 战役进度**存在存档文件里，不在代码里**（推断：那 1 个函数只做存取）。
+
+### 14.6 这份审计没做的事
+
+- 没区分"函数属于游戏逻辑"还是"编译器/库内联产物"——`module_funcs.tsv` 已经是
+  "能归到 `graphwar_*.rs` 的"，但传播层（`module_map_propagated.tsv` 的 `inferred` 列）
+  会把邻居也算进来，所以 885 这个总数是**上界估计**；
+- 没评价"看懂了多少"，只评价"提没提过地址"；
+- `NO-CITE` 的 28 个模块**没有逐个反编译**，§14.4 的"说明"列是据名字与同族字符串的推断。

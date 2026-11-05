@@ -27,9 +27,11 @@ Graphwar II 的 **曲线 / 物理 / 协议 / 服务端 / 关卡生成 / AI / 颜
 ② `aigen` 缺"回合先定 soldier_id、AI 只为它进化"这一层；
 ③ 第 0 代初始种群生成路径未还原；
 ④ 变体 B（(1+λ) 爬山，`0x51d080`）未实现——运行时实测走 A，暂不影响；
-⑤ 协议缺 24 个事件名、`events.rs` 的 33 个判别值缺独立验证（`docs/96`）。
+⑤ 协议：二进制里**共 73 个事件名**，已实现 **50**、缺 **23**（`docs/96` 已重写为全量清单）。
+   ~~`events.rs` 的 33 个判别值缺验证~~ —— 这条**降级了**：线上是**外部标签 JSON**
+   （`{"LifeInfo":{...}}`），**判别值根本不上线**，补事件只需名字+字段，不用知道编号。
 
-**数字**：**150 条测试全绿**（`cargo test`）；`docs/*.md` 现行 **68** 篇 + 5 篇"已并档"占位指针 + `archive/` 过程档案（全量清单见 `docs/INDEX.md`）；
+**数字**：**150 条测试全绿**（`cargo test`）；`docs/*.md` 现行 **84** 篇 + 5 篇"已并档"占位指针 + `archive/` 过程档案（全量清单见 `docs/INDEX.md`）；
 README 的工作包表 **6 ✅ / 4 🔶 / 2 ⬜**。
 
 ## 1. 仓库与推送规矩
@@ -485,3 +487,70 @@ git push origin HEAD:refs/heads/agent/<task>           # 绝不推 main
 - 内核两条缺口是**纯实现**，结论已在 `docs/98`，不需要再逆向；
 - **临时产物禁止进 git**：`.rea-work/`、`.sim-work/`、`.agent-work/` 都已 gitignore
   （本轮曾误传 49 个文件，已 `git rm --cached` 清理，见提交 `e03c8e6`）。
+
+## 7.12 压缩后的这一轮（父 agent 自己做的，不碰子 agent 的文件）
+
+三个子 agent（`agent/client`、`agent/kernel-turn-aigen`、`agent/gen0-variantb`）在跑，
+父 agent 只做**不与它们重叠**的部分：协议清单、服务发现、模块审计。
+
+### 7.12.1 协议：从"缺 24 个"变成"73 / 50 / 23"（`docs/96` 已重写）
+
+- 方法改了：不再只扫 `0x1bc000` 一段，而是**全二进制** `strings` + CamelCase 分词，
+  修掉 `Eventstruct` 这种粘连。得 **77** 个候选，剔 4 个粘连残留 ⇒ **73** 个事件名。
+- 已实现 **50**、缺 **23**（旧版"缺 24"里 5 个其实早实现了，又漏了 `NameInfo` 等）。
+- **关键结论**：线上是 serde **外部标签 JSON**（`{"LifeInfo":{...}}`，380 份 replay 佐证），
+  **判别值不上线**。⇒ `events.rs` 那 33 个 `= N` 不再是阻塞项，别再去找判别表。
+- 还拿到 44 个事件的**字段数**（serde `with N elements` 原文）。
+  字段名**只有词汇表**，逐事件归属拿不到（试过按相邻回推，16 个里多数是垃圾 token）。
+
+### 7.12.2 房间列表的来源（`docs/24` §7 新增）
+
+`.so` 里留着 clap 生成的参数说明，逐字：
+
+- `BROKER_ADDRESS`：`... If not specified, the address is fetched from https://graphwar.com/graphwar_II_ip.txt`
+- `BROADCAST_PORT`：局域网发现广播
+- `LOGGER_PORT` / `SERVER_PORT` / `CRASH_REPORT_ADDRESS`
+
+再加上 `ff02::1`（IPv6 全节点多播）与模块名 `graphwar_lan_broadcaster_v6.rs`：
+
+⇒ **房间列表来自一台 broker（地址从 graphwar.com 的文本文件取）；局域网发现是另一套
+（IPv6 多播）**。broker 的消息格式**仍然未知**（拿不到 graphwar 服务端），
+但 `--broker_address` 可指向任意地址，**可以自己写一个顶替**（推断，未验证）。
+
+### 7.12.3 模块级覆盖审计（`docs/02` §14 新增，工具 `tools/module_audit.py`）
+
+回答"到底漏了什么"，用数据：
+
+| 档 | 模块 | 函数 |
+|---|---|---|
+| `core` | 18 | 188（21.2%） |
+| `partial` | 4 | 53（6.0%） |
+| `thin` | 4 | 165（18.6%） |
+| **`NO-CITE`** | **28** | **479（54.1%）** |
+
+全二进制口径：**13263** 个函数里文档写过地址的 **168** 个 = **1.27%**。
+
+⚠️ 口径警告（写在文档里了）：`cited` 测的是"地址有没有落纸"，不是"懂没懂"。
+已实测两个假阴性（`function_input` 的解析器、`plane_pos_manager` 的坐标换算）。
+**`NO-CITE` ≠ 没看过**，只能用来找大块盲区。
+
+28 个模块按域归堆后：界面/呈现 383（客户端 agent 的活）、对局元信息 25、
+音频 14、广告后端 13、录像 8、联机外围 7、假阴性 29。
+
+### 7.12.4 顺带确认的
+
+- **广告/内购在 `.so` 里有代码**（`IAP_holder`、`Ad_holder`、`purchase_*`、
+  `create_ad_view`、`unlock_skins`…），是 Godot 的 Android 单例调用
+  ⇒ Linux 跑不到（用户判断对），要看行为得走 APK。
+- **段位图标 22 张**（`res://ranks/rank_0..21.svg`）；`graphwar_campaign_control.rs`
+  只有 1 个函数 + `user://campaign.save` ⇒ 战役进度在存档里，不在代码里（推断）。
+- **音频是运行时解析 WAV 的**（`.so` 里有 `no WAVE tag found` / `no RIFF tag found` /
+  `bits per sample is not 8 or 16` 等错误串）⇒ 用户说的"有一个文件损坏"，
+  坏文件会在这一层被拒。
+
+### 7.12.5 下一轮从哪接
+
+1. 三个子 agent 的分支合并（各自 `agent/*`，父 agent 审查后 cherry-pick）；
+2. 协议补齐优先做 `Name/Rank/Lock` 六件 + `ChatMessage`（`docs/96` §6 有排序）；
+3. `NO-CITE` 里的"对局元信息 25 个函数"是**真盲区**，值得单独派一个 agent；
+4. 音频那 14 个函数 + 坏文件定位，可以一个人做完。

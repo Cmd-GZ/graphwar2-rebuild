@@ -203,3 +203,52 @@
 **还没做到的**：本局 **没有出现** `alive:false` —— 12 次 `EntityEffectInfo` 里
 没有死亡事件，可能因为这一局双方各 2 名士兵且都在打空/打在障碍上。
 因此"伤害数值/死亡判定"仍未取得真值。
+
+## 7. 服务发现：房间列表从哪来（2026-11，纯字符串证据）
+
+上一轮用户问"房间列表的来源"，当时答不出。**现在有答案了**：`.so` 里留着完整的
+命令行参数说明（clap 生成的 help 文本），直接写明了四套地址/端口的用途。
+
+### 7.1 原文字符串
+
+| 名字 | 原文（逐字） |
+|---|---|
+| `BROKER_ADDRESS` | `Address of the broker server to connect (e.g. 127.0.0.1:42970). If not specified, the address is fetched from https://graphwar.com/graphwar_II_ip.txt` |
+| `BROADCAST_PORT` | `Port used for LAN game discovery broadcasts` |
+| `LOGGER_PORT` | `Port used for the debug logger` |
+| `SERVER_PORT` | `Port the game server listens on when hosting a game. If not specified, the OS picks a free port` |
+| `CRASH_REPORT_ADDRESS` | `Address of the crash report collector server (e.g. 127.0.0.1:42972). If not specified, the game's global server address is reused with CRASH_REPORT_PORT` |
+
+配套的错误/日志串：
+
+```
+Failed to parse --broker_address:          （clap 解析失败）
+Failed to connect to broker at             （连不上）
+Failed to get global server address.       （取 graphwar_II_ip.txt 失败）
+Failed to get global server address for crash reporting.
+Failed to serialize game info.             src/graphwar_lan_broadcaster_v6.rs:78
+https://graphwar.com/graphwar_II_ip.txt    （出现两次：broker 与崩溃上报各一次）
+[broadcast_port / logger_port] 是必填参数："The following required argument was not provided: broadcast_port"
+```
+
+### 7.2 由此可确定的结构（观测 + 推断分层）
+
+| 结论 | 等级 |
+|---|---|
+| 局域网发现走 **IPv6 广播**（`ff02::1` = 全节点多播，且模块名是 `graphwar_lan_broadcaster_v6.rs`） | **观测**（字符串 `ff02::1` + 模块名 + `Failed to serialize game info.` 的定位） |
+| "房间列表"来自 **broker 服务器**，地址默认从 `https://graphwar.com/graphwar_II_ip.txt` 取 | **观测**（help 文本逐字） |
+| broker 与崩溃上报**共用同一个 IP 文件**，崩溃上报换端口 | **观测**（同一句 help） |
+| 客户端**连 broker 拿房间表**，再直连房主 | **推断**——字符串只说 "connect to broker"；房间表的具体消息（`GameInfo` 广播）已在抓包里见过，但没抓到 broker 这一段 |
+| 各端口的具体数值 | **未知**——只有 `broadcast_port` / `logger_port` 是必填，说明由**启动方传入**，不在二进制里 |
+
+### 7.3 对复现的影响
+
+- 我们**不需要**复现 graphwar.com 的 broker 才能单机/局域网跑一局：
+  `ServerPort` + 直连已经够（`docs/62`）。
+- 但要复现"进游戏能看到房间列表"这个体验，就得**自己写一个 broker**，
+  且它的消息格式**我们没抓到过**（拿不到 graphwar 的服务端）。
+- `--broker_address` 可指向任意地址，所以**可以用我们自己的 broker 顶替**做实验——
+  这条是纯推断，未验证。
+
+⇒ 更新对用户那个问题的回答：**房间列表来自一台 broker；地址从 graphwar.com 的一个
+文本文件里取；局域网发现是另一套（IPv6 多播）。broker 的协议本身仍然未知。**
