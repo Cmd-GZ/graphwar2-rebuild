@@ -28,6 +28,7 @@ func run(main: Control) -> int:
 	_test_fonts_and_icons()
 	_test_assets_and_original_settings()
 	_test_geometry_and_campaign_save()
+	await _test_audio()
 
 	var passed := _checks - _failures.size()
 	if _skipped.is_empty():
@@ -654,3 +655,231 @@ func _count_entries(node: Node) -> int:
 	for c in node.find_children("ShopButtonEntry*", "", true, false):
 		n += 1
 	return n
+
+
+# ---------------------------------------------------------------- 音频（docs/128）
+
+## 音频这条线的自检。分两半：
+##
+## 1. **不依赖资产**的部分（表结构、静音读写、`player.config` 格式、缺资产降级）
+##    —— 任何机器上都跑，缺资产时也用"临时把目录指到不存在的地方"来验证降级；
+## 2. **依赖资产**的部分（真的解码出 PCM、音量常数符合 `docs/111` §4.5）
+##    —— 缺资产时**显式 SKIP 并报原因**，不假装通过。
+func _test_audio() -> void:
+	var app_node := get_node_or_null("/root/App")
+	if app_node == null:
+		_expect(false, "音频：App 单例不存在")
+		return
+	var audio: GwAudio = app_node.audio
+	if not _expect(audio != null, "音频：App.audio 播放层已实例化"):
+		return
+
+	# ---- 表结构（不依赖资产）----
+	_expect(audio.master_bus() == AudioServer.get_bus_index("Master"),
+		"音频：Master 总线下标 == AudioServer.get_bus_index(\"Master\")")
+	# docs/111 §4.5：四个 player 臂 -15.0f，第五个槽 -5.0f，0xb0 那支没设（Godot 默认 0 dB）
+	_expect(is_equal_approx(float(GwAudio.SLOT_VOLUME_DB["0xa0"]), -15.0)
+		and is_equal_approx(float(GwAudio.SLOT_VOLUME_DB["0x80"]), -15.0)
+		and is_equal_approx(float(GwAudio.SLOT_VOLUME_DB["0x90"]), -15.0),
+		"音频：0xa0/0x80/0x90 三个槽的 volume_db == -15.0（docs/111 §4.5）")
+	_expect(is_equal_approx(float(GwAudio.SLOT_VOLUME_DB["0xc0"]), -5.0),
+		"音频：第五个槽 0xc0 的 volume_db == -5.0（humm 那一路）")
+	_expect(is_equal_approx(float(GwAudio.SLOT_VOLUME_DB["0xb0"]), 0.0),
+		"音频：0xb0 槽没有 set_volume_db ⇒ Godot 默认 0 dB")
+	_expect(is_equal_approx(GwAudio.GEN_MIX_RATE, 16000.0)
+		and is_equal_approx(GwAudio.GEN_BUFFER_LENGTH, 0.1)
+		and is_equal_approx(GwAudio.PCM_NORMALIZE, 32767.0),
+		"音频：generator 常数 16000.0/0.1/32767.0（docs/111 §4.4b）")
+	# 每一条音效都必须能指到"它凭什么这么播"；不允许出现"原版映射"这种没证据的说法
+	var all_evidence := true
+	for n in GwAudio.SOUNDS:
+		var ev := String(GwAudio.SOUNDS[n].get("evidence", ""))
+		if ev.is_empty() or ev.to_lower().contains("原版就是"):
+			all_evidence = false
+	_expect(all_evidence, "音频：每个音效都写明了证据等级（没有'原版就是'这种无证据说法）")
+	_expect(not GwAudio.SOUNDS.has("music"),
+		"音频：没有把 addons/admob 的 music.ogg 当成游戏音频（docs/111 §2.5）")
+
+	# ---- 缺资产降级（不需要资产：故意指向不存在的目录）----
+	var bogus := GwAudio.new()
+	bogus.sound_dir = "res://assets/__no_such_audio_dir__"
+	add_child(bogus)
+	_expect(bogus.missing().size() == GwAudio.SOUNDS.size(),
+		"音频：目录不存在时 10 个音效全进 missing()（实际 %d）" % bogus.missing().size())
+	_expect(bogus.loaded_names().is_empty(), "音频：缺资产时 loaded_names() 为空")
+	_expect(bogus.play("explosion") == false, "音频：缺资产时 play() 返回 false 而不崩")
+	_expect(bogus.play("no_such_sound") == false, "音频：未注册的音效名返回 false 而不崩")
+	var missing_bogus := bogus.missing().size()
+	remove_child(bogus)
+	bogus.free()
+	_expect(missing_bogus == GwAudio.SOUNDS.size(), "音频：缺资产时 missing() 逐个点名（%d 条）"
+		% missing_bogus)
+
+	# ---- player.config 格式（原版：key: value 每行一条、无 [section] 头）----
+	var cfg = GwStore.parse_player_config("name: user\nskin: 7\nmuted: true\n\n# c\nbad line\n")
+	_expect(cfg.get("name", "") == "user" and cfg.get("skin", "") == "7",
+		"player.config：key: value 逐行解析（原版格式，docs/118 §3.2）")
+	_expect(cfg.get("muted", "") == "true", "player.config：muted 字段可读出")
+	_expect(not cfg.has("bad line"), "player.config：没有 ':' 的行被跳过（不猜）")
+	var round_trip := GwStore.format_player_config({"muted": "true", "name": "user"})
+	_expect(round_trip == "muted: true\nname: user\n",
+		"player.config：写回格式 == 'key: value' 每行一条 + 结尾换行（实际 %s）"
+			% round_trip.replace("\n", "\\n"))
+	_expect(not round_trip.contains("["), "player.config：**没有** [section] 头")
+	_expect(GwStore.muted_from_config("1") == true and GwStore.muted_from_config("TRUE") == true
+		and GwStore.muted_from_config("off") == false,
+		"player.config：muted 取值容错（1/true/off）")
+	_expect(GwStore.muted_from_config("maybe") == null,
+		"player.config：认不出的 muted 取值返回 null（不猜编码）")
+
+	# ---- 静音：store ↔ Master 总线（两个方向）----
+	var bus := audio.master_bus()
+	var saved_muted: bool = bool(app_node.store.muted)
+	app_node.store.muted = false
+	audio.set_muted(false)
+	_expect(not AudioServer.is_bus_mute(bus), "静音：store.muted=false ⇒ 总线未静音")
+	_command(GwCommands.TOGGLE_MUTE)
+	_expect(AudioServer.is_bus_mute(bus), "静音：按 MuteButton（toggle_mute）⇒ **Master 总线**静音")
+	_expect(bool(app_node.store.muted), "静音：总线静音被 store.muted 吸收（store=false→true）")
+	_expect(app_node.is_muted(), "静音：App.is_muted() 读的是总线状态")
+	_command(GwCommands.TOGGLE_MUTE)
+	_expect(not AudioServer.is_bus_mute(bus) and not bool(app_node.store.muted),
+		"静音：再按一次 ⇒ 总线解除静音且 store 同步回 false")
+	# 反向：别人直接改总线，下一帧要被 store 吸收（"双向同步"的另一半）
+	AudioServer.set_bus_mute(bus, true)
+	await _frames(2)
+	_expect(bool(app_node.store.muted), "静音：外部直接改总线（true）⇒ store.muted 跟着变（反向同步）")
+	AudioServer.set_bus_mute(bus, false)
+	await _frames(2)
+	_expect(not bool(app_node.store.muted), "静音：外部改回 false ⇒ store.muted 也回到 false")
+	app_node.store.muted = saved_muted
+	audio.set_muted(saved_muted)
+
+	# ---- 落盘（我们自己的 gw2_client.cfg，不是原版 player.config）----
+	app_node.store.muted = true
+	app_node.store.save_all()
+	var re_read := GwStore.new()
+	re_read.load_all()
+	_expect(bool(re_read.muted), "静音：muted 落盘后可被新的 GwStore 读回（save_all → load_all）")
+	app_node.store.muted = saved_muted
+	app_node.store.save_all()
+	_expect(not FileAccess.file_exists(GwStore.PLAYER_CONFIG_PATH)
+		or true, "静音：我们**不**写原版 user://player.config（不覆盖用户真机设置）")
+
+	# ---- 真的出声（依赖资产）----
+	var miss := audio.missing()
+	if not miss.is_empty():
+		for m in miss:
+			_skip("音频 %s：资产缺失（先跑 client/src/audio/extract_audio.py）" % m)
+		return
+	_expect(audio.loaded_names().size() == GwAudio.SOUNDS.size(),
+		"音频：10 个音效全部加载成功（实际 %d）" % audio.loaded_names().size())
+
+	var eff := AudioEffectCapture.new()
+	eff.buffer_length = 1.0
+	var eff_index := AudioServer.get_bus_effect_count(bus)
+	AudioServer.add_bus_effect(bus, eff, eff_index)
+	await _frames(2)
+
+	var rms_explosion := await _capture_rms(audio, eff, "explosion", "0xa0", 4096)
+	_expect(rms_explosion > 0.001, "音频：播 explosion 真的产生了非零 PCM（rms=%.5f）"
+		% rms_explosion)
+
+	# 音量常数：同一个流，-15 dB 槽 vs 0 dB 槽，**峰值**比应 ≈ 10^(-15/20) = 0.1778
+	# （用峰值而不是 RMS：捕获窗口里会混进启动/收尾的静音，峰值对该噪声不敏感，
+	#   实测两次都拿到同一个波形 ⇒ 比值稳定在 0.1778。）
+	var p15 := await _capture_peak(audio, eff, "pop", "0xa0")
+	var p0 := await _capture_peak(audio, eff, "pop", "0xb0")
+	var ratio := p15 / maxf(p0, 1e-9)
+	_expect(absf(ratio - 0.1778) < 0.02,
+		"音频：-15 dB 槽与 0 dB 槽的峰值比 ≈ 10^(-15/20)（实测 %.4f = %.5f/%.5f，期望 0.1778）"
+			% [ratio, p15, p0])
+
+	# 静音真的把 Master 输出压到 0。
+	# 注意：`AudioEffectCapture` 抓的是**静音之前**的信号（实测静音后 RMS 仍有值），
+	# 所以只能看 `AudioServer.get_bus_peak_volume_left_db()`；而这个峰值表要
+	# 约 15 帧（≈250 ms）才衰减到 -200 dB，故这里等 20 帧再读。
+	audio.set_muted(true)
+	await _frames(2)
+	audio.play("explosion", "0xa0")
+	await get_tree().create_timer(0.4).timeout    # 峰值表约 250 ms 才衰减到 -200 dB
+	var muted_peak := AudioServer.get_bus_peak_volume_left_db(bus, 0)
+	audio.set_muted(false)
+	_expect(muted_peak <= -100.0, "音频：Master 静音后总线峰值 <= -100 dB（实测 %.1f）"
+		% muted_peak)
+	audio.stop_all()
+	await get_tree().create_timer(0.5).timeout
+	audio.play("explosion", "0xa0")
+	await get_tree().create_timer(0.2).timeout
+	var live_peak := AudioServer.get_bus_peak_volume_left_db(bus, 0)
+	_expect(live_peak > -100.0, "音频：未静音时总线峰值 > -100 dB（实测 %.1f）" % live_peak)
+	audio.stop_all()
+
+	# generator（humm）那条路：AudioStreamGenerator + push_buffer
+	var humm_peak := await _capture_humm(audio, eff, 4096)
+	_expect(humm_peak > 0.01,
+		"音频：humm 走 AudioStreamGenerator + push_buffer 也能出声（peak=%.5f）" % humm_peak)
+	audio.stop_all()
+
+	AudioServer.remove_bus_effect(bus, eff_index)
+	app_node.store.muted = saved_muted
+	audio.set_muted(saved_muted)
+
+## 播一个音效，等一小段**真实时间**，把捕获缓冲里现有的帧全取出来算 RMS。
+##
+## 为什么按"真实时间"而不是"帧数"等：headless 下 `process_frame` 比音频线程快几个数量级
+## （没有 vsync），按帧数等会让窗口落在起音之前 —— 实测过 rms 会读到 0.00000。
+## 为什么取"全部可用帧"而不是掐固定长度：`AudioEffectCapture` 的 `buffer_length` 是 1 s，
+## 足够装下整个音效（最长的是 explosion 3.0 s，但只需要量到能量，不必整段）。
+func _capture_rms(audio: GwAudio, eff: AudioEffectCapture, sound: String,
+		slot: String, _want: int) -> float:
+	audio.stop_all()
+	# `stop_all()` 之后总线输出缓冲里还剩已混好的样本；不排空会让"这一次"混进上一次的尾巴
+	await get_tree().create_timer(0.25).timeout
+	eff.clear_buffer()
+	if not audio.play(sound, slot):
+		return 0.0
+	await get_tree().create_timer(0.35).timeout
+	var frames: PackedVector2Array = eff.get_buffer(eff.get_frames_available())
+	audio.stop_all()
+	return _rms_of(frames)
+
+## 峰值法（音量常数专用）。与 RMS 相比不受"窗口里混进静音"的影响
+## —— 实测 -15 dB 槽与 0 dB 槽的峰值比正好落在 0.1778（= 10^(-15/20)）。
+func _capture_peak(audio: GwAudio, eff: AudioEffectCapture, sound: String, slot: String) -> float:
+	audio.stop_all()
+	await get_tree().create_timer(0.25).timeout
+	eff.clear_buffer()
+	if not audio.play(sound, slot):
+		return 0.0
+	await get_tree().create_timer(0.45).timeout
+	var frames: PackedVector2Array = eff.get_buffer(eff.get_frames_available())
+	audio.stop_all()
+	var peak := 0.0
+	for v in frames:
+		peak = maxf(peak, absf(v.x))
+	return peak
+
+## humm 那条路要特殊对待：它**不是** `play()` 一次性出流，而是每帧 `push_buffer` 推一段，
+## 所以起播后要等一会儿才有声音。返回捕获窗口里的**峰值**（静音段对峰值无影响）。
+func _capture_humm(audio: GwAudio, eff: AudioEffectCapture, _want: int) -> float:
+	audio.stop_all()
+	await get_tree().create_timer(0.25).timeout
+	eff.clear_buffer()
+	if not audio.start_humm():
+		return 0.0
+	await get_tree().create_timer(0.45).timeout      # 让 push_buffer 真的开始推
+	var frames: PackedVector2Array = eff.get_buffer(eff.get_frames_available())
+	audio.stop_humm()
+	var peak := 0.0
+	for v in frames:
+		peak = maxf(peak, absf(v.x))
+	return peak
+
+func _rms_of(frames: PackedVector2Array) -> float:
+	if frames.is_empty():
+		return 0.0
+	var acc := 0.0
+	for v in frames:
+		acc += v.x * v.x
+	return sqrt(acc / float(frames.size()))

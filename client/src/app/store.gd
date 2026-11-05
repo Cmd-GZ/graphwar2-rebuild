@@ -50,6 +50,16 @@ var profile := {
 
 ## 已通关的关卡 id 列表（本客户端自己记的一份，仅给"打勾"提示用）。
 var completed_levels: Array[int] = []
+
+## 静音开关（`docs/128` §5）。
+##
+## 这是**原版 `user://player.config` 里那 5 个字段之一**（`name/skin/face/hat/muted`，
+## `docs/118` §3.2）。本项目把它存在**自己的** `gw2_client.cfg` 里（`[profile] muted`），
+## **不写**原版那个文件：原版写者的字段顺序、`muted` 的取值编码（`1`/`true`?）都只证到
+## "分隔符是 `: `、每行以 `\n` 结尾"（`docs/118` §3.2.1 判**推断**），
+## 拿未验证的编码去覆盖用户真机的 `player.config` 会把原版设置弄坏。
+## ⇒ 我们**读**它（`read_player_config()`，容错解析），**不写**它。
+var muted := false
 ## 是否已"解锁皮肤"（内购模拟位；Linux 端不做内购）。
 var skins_unlocked := false
 
@@ -71,6 +81,7 @@ func load_all() -> void:
 		profile.face = clampi(int(cf.get_value(SECTION_PROFILE, "face", DEFAULT_FACE)), 0, FACE_COUNT - 1)
 		profile.hat = clampi(int(cf.get_value(SECTION_PROFILE, "hat", DEFAULT_HAT)), 0, HAT_COUNT - 1)
 		skins_unlocked = bool(cf.get_value(SECTION_PROFILE, "skins_unlocked", false))
+		muted = bool(cf.get_value(SECTION_PROFILE, "muted", false))
 		var done: Array = cf.get_value(SECTION_CAMPAIGN, "completed", [])
 		completed_levels.clear()
 		for v in done:
@@ -157,6 +168,7 @@ func save_all() -> void:
 	cf.set_value(SECTION_PROFILE, "face", profile.face)
 	cf.set_value(SECTION_PROFILE, "hat", profile.hat)
 	cf.set_value(SECTION_PROFILE, "skins_unlocked", skins_unlocked)
+	cf.set_value(SECTION_PROFILE, "muted", muted)
 	cf.set_value(SECTION_CAMPAIGN, "completed", completed_levels)
 	var err := cf.save(PATH)
 	if err != OK:
@@ -171,3 +183,72 @@ func mark_completed(level_index: int) -> void:
 
 func is_completed(level_index: int) -> bool:
 	return completed_levels.has(level_index)
+
+# ------------------------------------------------------- 原版 player.config（格式参考）
+#
+# 原版 `user://player.config`（`.rodata 0x1bfe12`，长度 0x14 = 20）的形状是**逐位验证/观测**的
+# （`docs/118` §3.2）：
+#
+#   * 纯文本，`FileAccess::store_string`（不是 ConfigFile / store_var / JSON / 二进制）；
+#   * **每行 `key: value`，没有 `[section]` 头**（`0x417700` 起可见 `fol…": "` 的立即数、
+#     `0x4176d9` 写 `'\n'`；`0x416911` 用长度 1 的 `":"` 切）；
+#   * 5 个键：`name` / `skin` / `face` / `hat` / `muted`（用户真机文件转述 + 协议字段一一对应）。
+#
+# 我们只**读**它：`read_player_config()` 把 `key: value` 行解成字典，容错（坏行跳过）。
+# 写回原版文件是**故意不做**的（值的编码没有证据），见 `muted` 字段的注释。
+
+const PLAYER_CONFIG_PATH := "user://player.config"
+
+## 解析 `key: value` 文本（每行一条、无 section 头）。返回 {key: value(String)}。
+## 容错规则（都写明了，因为这是一份"没有逐位验证过 match 分支"的格式）：
+##   * 空行、以及 `#` 开头的注释行跳过；
+##   * 没有 `:` 的行跳过（不猜）；
+##   * key/value 两端去空白；**值里允许再有 `:`**（只按第一个 `:` 切）。
+static func parse_player_config(text: String) -> Dictionary:
+	var out := {}
+	for line in text.split("\n"):
+		var t := line.strip_edges()
+		if t.is_empty() or t.begins_with("#"):
+			continue
+		var idx := t.find(":")
+		if idx <= 0:
+			continue
+		var key := t.substr(0, idx).strip_edges()
+		var value := t.substr(idx + 1).strip_edges()
+		if key.is_empty():
+			continue
+		out[key] = value
+	return out
+
+## 反向：把字典写成原版的 `key: value` 行（每行一个 `\n`，**没有** section 头）。
+## 仅用于单测/格式自证；不写原版文件。
+static func format_player_config(fields: Dictionary) -> String:
+	var keys := fields.keys()
+	keys.sort()
+	var lines: Array[String] = []
+	for k in keys:
+		lines.append("%s: %s" % [String(k), String(fields[k])])
+	if lines.is_empty():
+		return ""
+	return "\n".join(lines) + "\n"
+
+## 读原版 `player.config`（存在才读）。返回 {} 表示"没有这个文件"。
+func read_player_config() -> Dictionary:
+	if not FileAccess.file_exists(PLAYER_CONFIG_PATH):
+		return {}
+	var f := FileAccess.open(PLAYER_CONFIG_PATH, FileAccess.READ)
+	if f == null:
+		return {}
+	var raw := f.get_as_text()
+	f.close()
+	return parse_player_config(raw)
+
+## 原版文件里的静音值 → bool。**取值编码未定**（`docs/118` §3.2.1 判推断），
+## 所以这里只接受几种常见写法，遇到不认识的**返回 null**（不猜）。
+static func muted_from_config(value: String):
+	var v := value.strip_edges().to_lower()
+	if v in ["1", "true", "yes", "on"]:
+		return true
+	if v in ["0", "false", "no", "off"]:
+		return false
+	return null

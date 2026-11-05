@@ -6,10 +6,17 @@ extends Node
 ##     分发命令、维护房间/玩家/模式状态。
 ##   * 本项目：`App` 做同一件事，只不过用 GDScript + 明写的命令表（`commands.gd`）。
 ##     真正的规则计算仍然交给 Rust 内核（`core_bridge.gd` 是接缝）。
+##   * 音频：`GwAudio`（`client/src/audio/gw_audio.gd`）是本节点的子节点，`App.audio`。
+##     `App` 负责两件事：**静音的双向同步**（`store.muted` ↔ Master 总线）和
+##     **把已知的时机分发给播放层**。事件↔音效的原版映射**仍未确定**（`docs/111` §5.1、
+##     `docs/128` §3），所以下面凡是"哪个动作放哪个音"的接线都打了
+##     `PENDING_MAPPING` 标记并在 `docs/128` §4 逐条注明"**自定，非原版**"。
 
 signal screen_shown(screen_name: String)
 signal toast(text: String)
 signal state_changed
+## 播放层真的播出了一个音效（自检/证据链用；不代表原版在这里放过这个音）。
+signal sfx_played(sound: String, slot: String)
 
 ## 7 个"基础界面"：同一时刻只显示一个。
 const BASE_SCREENS := [
@@ -24,6 +31,8 @@ const POPUPS := [
 
 var store: GwStore
 var state: GwGameState
+## 播放层（`client/src/audio/gw_audio.gd`）。全局只有这一个实例。
+var audio: GwAudio
 
 var screens := {}
 var current_screen := ""
@@ -40,6 +49,20 @@ var last_result := {}
 ## 自检/自动化模式下不弹"模拟连接"计时器（避免阻塞 headless 退出）。
 var automation := false
 
+# ---------------------------------------------------------------- 音频接线
+#
+# ⚠️ **原版的"事件↔音效"映射是未知的**（`docs/111` §5.1）。本轮的补充证据只到
+# "`0x4bf090` 是 `effect_info_event`（tag 44）的处理函数，按 `event[+0x20]`（= `effect_type`）
+# 四臂分派"（`docs/128` §3），**证不到**哪个 `effect_type` 落哪个音效。
+#
+# 所以下面这三条是**本客户端自己的接线**（`docs/128` §4 表里逐条标 "自定/推断，非原版"）：
+# 它们只为"让音频链路真的跑起来并可被验证"，一旦原版映射解出来就按表替换。
+# 任何一条都不许在文档里写成"原版行为"。
+const PENDING_MAPPING := true         # 恒为 true：提醒读者这些接线还没有原版依据
+const SFX_FIRE := "explosion"         # 开火（一次 fire 内就结算完，命中/爆炸都在里面）
+const SFX_WIN := "unpop"
+const SFX_LOSE := "squash"
+
 const _DISCONNECT_DELAY := 1.2
 
 
@@ -49,6 +72,7 @@ func _ready() -> void:
 	state = GwGameState.new()
 	state.reset_lan()
 	automation = OS.get_cmdline_user_args().has("--selftest") or OS.get_cmdline_user_args().has("--dump-tree")
+	_install_audio()
 
 # ------------------------------------------------------------------ 注册与路由
 
@@ -102,6 +126,9 @@ func _on_screen_entered(screen_name: String) -> void:
 	var node: Control = screens.get(screen_name)
 	if node != null and node.has_method("on_enter"):
 		node.call("on_enter")
+	if screen_name == "PlayScreen":
+		_apply_mute_to_screen()
+		_align_play_mute_once()
 
 func notify(text: String) -> void:
 	toast.emit(text)
@@ -201,10 +228,12 @@ func command(cmd: String) -> void:
 		GwCommands.TOGGLE_VIEW_FUNCTIONS:
 			_play_toggle("toggle_view_functions")
 		GwCommands.TOGGLE_MUTE:
-			_play_toggle("toggle_mute")
-			notify("静音只切图标：本项目没有音频资源（docs/108 §7）")
+			toggle_mute()
 		GwCommands.FIRE:
 			_play_call("fire")
+			# PENDING_MAPPING：原版在 `EffectInfo(ExplosionEffect)` 时播某个音效
+			# （`0x3a5760` → `0x4bfe10`），但**哪个音**未知；这里先用我们自己的选择。
+			_sfx(SFX_FIRE)
 		GwCommands.PLAY_REPLAY:
 			_play_replay()
 		GwCommands.PLAY_PAUSE:
@@ -339,11 +368,103 @@ static func _looks_like_host_port(s: String) -> bool:
 		return false
 	return not s.substr(0, idx).strip_edges().is_empty()
 
+# ------------------------------------------------------------------ 音频
+
+## 建播放层，并把**存档里的静音**应用上去（`docs/128` §5）。
+##
+## 原版启动时也做这件事：`0x3a2e10` → `0x4bf550`（载资源）→ `0x4c11d0`（静音初始化，
+## `0x3a4413`）。顺序一样：先建播放层，再设静音。
+func _install_audio() -> void:
+	audio = GwAudio.new()
+	audio.name = "Audio"
+	add_child(audio)
+	audio.played.connect(_on_sfx_played)
+	audio.mute_changed.connect(_on_mute_changed)
+	# store → bus（原版语义：静音就是 **Master 总线**静音，不是逐 player 调音量）
+	audio.set_muted(bool(store.muted))
+	_apply_mute_to_screen()
+
+func _on_sfx_played(sound: String, slot: String) -> void:
+	sfx_played.emit(sound, slot)
+
+## 播放一个音效。缺资产时 `GwAudio.play()` 返回 false —— 这里**不**提示用户、
+## **不**崩（缺资产的入口在 `main.gd` 的硬检查里已经报过）。
+func _sfx(sound: String) -> bool:
+	if audio == null:
+		return false
+	return audio.play(sound)
+
+## 当前是否静音（读的是**总线**，不是某个界面里的私有标志）。
+func is_muted() -> bool:
+	return audio != null and audio.is_muted()
+
+## 切静音。**总线是唯一真相**：界面可以自己翻图标（原版 `play_screen` 就是这么做的），
+## 我们以总线的实际变化为准，然后把新状态同步到 `store.muted` 并落盘。
+##
+## 这个顺序对两种界面实现都成立：
+##   * 界面自己写了 `set_bus_mute`（当前 `play_screen.toggle_mute` 的写法）⇒ 总线变了 ⇒ 采纳；
+##   * 界面只翻图标、不碰总线（重构后可能出现）⇒ 总线没变 ⇒ 由 `App` 翻转。
+func toggle_mute() -> void:
+	if audio == null:
+		return
+	var before := audio.bus_muted()
+	var play: Control = screens.get("PlayScreen")
+	if play != null and play.has_method("toggle_mute"):
+		play.call("toggle_mute")
+	if audio.bus_muted() == before:
+		audio.set_muted(not before)
+	else:
+		audio.adopt_bus()
+	_apply_mute_to_screen()
+
+## 是否已经跟 PlayScreen 的静音显示对齐过（见 `_align_play_mute_once()`）。
+var _play_mute_aligned := false
+
+## 旧 `play_screen.gd` 只有 `toggle_mute()`、没有 `set_muted()`，它的私有 `_muted` 初值是
+## false。所以"存档里 muted=true"时，必须在**第一次进 PlayScreen** 时替它翻一次，
+## 否则用户按第一下静音键时总线已经是静音的 —— 看起来像没反应。
+##
+## 这个对齐**只做一次**，而且只在 `is_muted()` 为真时才翻（翻完总线仍是静音，无副作用）。
+## 等 `play_screen` 提供 `set_muted()`（另一个 agent 正在重写那四个开关）之后，
+## 这段会自动失效（`_apply_mute_to_screen()` 优先用 setter）。
+func _align_play_mute_once() -> void:
+	var play: Control = screens.get("PlayScreen")
+	if play == null or _play_mute_aligned:
+		return
+	_play_mute_aligned = true
+	if play.has_method("set_muted"):
+		play.call("set_muted", is_muted())
+	elif is_muted() and play.has_method("toggle_mute"):
+		play.call("toggle_mute")
+
+## 把静音状态推给界面（只对**主动提供** `set_muted` 的界面生效；没有就不管，
+## 因为不能要求每个界面都实现它 —— 原版也只有 PlayScreen 顶栏有这个开关）。
+func _apply_mute_to_screen() -> void:
+	var play: Control = screens.get("PlayScreen")
+	if play == null:
+		return
+	if play.has_method("set_muted"):
+		play.call("set_muted", is_muted())
+
+## 总线 → store 的**另一半**同步。每帧做一次极便宜的布尔比较：
+## 任何人（界面 / 未来的设置面板 / 外部脚本）直接调 `AudioServer.set_bus_mute`，
+## 下一帧就会被 `store.muted` 吸收并落盘，`mute_changed` 也会冒出去。
+func _process(_delta: float) -> void:
+	if audio != null and audio.adopt_bus():
+		_apply_mute_to_screen()
+
+func _on_mute_changed(muted: bool) -> void:
+	store.muted = muted
+	store.save_all()
+
 # ------------------------------------------------------------------ 对局结果
 
 ## 由 PlayScreen 在"一方全灭"时调用；战役模式下推进解锁。
 func report_match_result(human_won: bool, team_won: int) -> void:
 	last_result = {"human_won": human_won, "winner_team": team_won}
+	# PENDING_MAPPING：原版的播放层订阅了 `game_state_info_event`（docs/128 §3.3），
+	# 说明对局状态变化**会**触发音频；具体哪个音未知。下面两个是我们自己的选择。
+	_sfx(SFX_WIN if human_won else SFX_LOSE)
 	if state.kind == GwGameState.Kind.CAMPAIGN and human_won:
 		store.mark_completed(state.level_index)
 		notify("第 %d 关通关，已解锁第 %d 关" % [state.level_index, state.level_index + 1])
