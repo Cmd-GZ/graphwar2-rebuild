@@ -40,6 +40,9 @@ pub struct Match {
     all_teams: std::collections::BTreeSet<u8>,
     /// 已完成的回合数（`TurnCountInfo.turn_count`）。
     pub turn_count: i64,
+    /// 当前回合的起始 tick 与时间模式。
+    turn_start_tick: i64,
+    time_mode: String,
     /// 已排队但还没到期的 `DestroyObstacle`：`(到期 tick, 报文原文)`。
     ///
     /// 实测延迟 ≈165 tick（2.75 秒），见 `docs/44`。
@@ -68,6 +71,7 @@ impl Match {
         Match {
             room, obstacles, soldiers, tick_base, mask,
             next_effect_id: 236, teams, all_teams, turn_count: 0,
+            turn_start_tick: 0, time_mode: "Timer1m".to_string(),
             pending_destroy: Vec::new(),
         }
     }
@@ -81,6 +85,21 @@ impl Match {
     pub fn set_team(&mut self, soldier_id: i64, team: u8) {
         self.teams.insert(soldier_id, team);
         self.all_teams.insert(team);
+    }
+
+    /// 开始一个回合：`TurnInfo` -> `EndOfTurnInfo` -> `GameStateInfo(WaitingForFunctions)`。
+    ///
+    /// 顺序照真实抓包（`docs/43`）。
+    pub fn begin_turn(&mut self, player_id: i64, soldier_id: i64, now_ms: i64, time_mode: &str) -> Vec<String> {
+        let start_tick = self.tick_now(now_ms);
+        self.turn_start_tick = start_tick;
+        self.time_mode = time_mode.to_string();
+        let end = crate::tick::end_of_turn_tick_wire(start_tick, time_mode);
+        vec![
+            crate::protocol::emit_turn_info(player_id, soldier_id),
+            crate::protocol::emit_end_of_turn(end, time_mode),
+            crate::protocol::emit_game_state("WaitingForFunctions"),
+        ]
     }
 
     /// 回合结束：推进 `turn_count`，并在某队全灭时进入 `EndingGame`。
@@ -282,6 +301,29 @@ mod tests {
         let mut m = Match::new(room(), vec![(-5.0, 0.0, 1.0)], vec![], (0, 0));
         let msgs = m.fire(1, "0.00", 10.0, 0.0, true, 0);
         assert!(msgs.iter().any(|s| s.starts_with(r#"{"QueueDestroyObstacle""#)), "应排队销毁障碍");
+    }
+
+    /// 一整回合的报文种类序列，必须与抓包一致（docs/43）。
+    #[test]
+    fn full_turn_sequence_matches_capture() {
+        use crate::protocol::parse_message;
+        let mut m = Match::new(room(), vec![(-5.0, 0.0, 1.0)], vec![], (0, 0));
+        let mut all = Vec::new();
+        all.extend(m.begin_turn(229, 231, 0, "Timer1m"));
+        all.extend(m.fire(231, "0.00", 10.0, 0.0, true, 1000));
+        all.extend(m.end_turn());
+        let kinds: Vec<String> = all.iter()
+            .map(|x| parse_message(x).expect("应为合法消息").kind)
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                "TurnInfo", "EndOfTurnInfo", "GameStateInfo",          // 回合开始
+                "GameStateInfo", "FunctionInfo", "FunctionPoints", "GameStateInfo",
+                "QueueDestroyObstacle", "FunctionActive", "EffectInfo", "GameStateInfo", // 开火
+                "TurnCountInfo",                                        // 回合结束
+            ]
+        );
     }
 
     #[test]

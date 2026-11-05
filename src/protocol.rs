@@ -901,3 +901,28 @@ mod emit_turn_sequence_tests {
         assert_eq!(emit_function_info(owner, &function, corrected.as_deref()), line);
     }
 }
+
+/// `{"EndOfTurnInfo":{"end_of_turn_tick":..,"time_mode":".."}}`
+pub fn emit_end_of_turn(end_of_turn_tick: i64, time_mode: &str) -> String {
+    format!(
+        r#"{{"EndOfTurnInfo":{{"end_of_turn_tick":{},"time_mode":"{}"}}}}"#,
+        end_of_turn_tick, time_mode
+    )
+}
+
+#[cfg(test)]
+mod emit_end_of_turn_tests {
+    use super::*;
+
+    #[test]
+    fn matches_captured_end_of_turn() {
+        // 抓包样本（docs/45 附近）
+        let line = r#"{"EndOfTurnInfo":{"end_of_turn_tick":3685,"time_mode":"Timer1m"}}"#;
+        let m = parse_message(line).unwrap();
+        assert_eq!(
+            emit_end_of_turn(get_int(&m, "end_of_turn_tick").unwrap(),
+                             &get_str(&m, "time_mode").unwrap()),
+            line
+        );
+    }
+}

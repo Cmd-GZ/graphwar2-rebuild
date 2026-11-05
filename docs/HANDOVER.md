@@ -11,6 +11,9 @@
 - LAN 发现：UDP 广播，明文 JSON（`time_mode` 写作 `"Timers1m"`）
 - 对局：TCP，**`u16` 大端长度 + JSON**
 - 29 种消息已入库为 `fixtures/protocol.jsonl`，`src/protocol.rs` 全部解析通过
+- **一整回合 12 条报文序列**（`docs/46`）：`begin_turn`（TurnInfo/EndOfTurnInfo/
+  WaitingForFunctions）+ `fire`（8 条）+ `end_turn`（TurnCountInfo），
+  种类顺序有测试断言；新增 `emit_end_of_turn` 并用抓包样本逐字节验证
 - **回合计数与结束判定**（`docs/45`）：`TurnCountInfo` 在回合结束发出、每回合 +1；
   `EndingGame` 紧跟其后且**只在某队全灭时**出现（本局我方两士兵全死）。
   坑：`Match::new` 曾把士兵默认登记为 0 号队 → 误判全灭，已改为不预设
