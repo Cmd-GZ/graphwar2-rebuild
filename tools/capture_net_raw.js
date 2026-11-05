@@ -17,7 +17,7 @@ const chunks = [];
 function hex(buf) { const u8 = new Uint8Array(buf); let s=''; for (let i=0;i<u8.length;i++) s += u8[i].toString(16).padStart(2,'0'); return s; }
 function push(dir, fd, buf) {
   if (chunks.length >= ${MAXCHUNK}) return;
-  chunks.push({ dir, fd, hex: hex(buf), len: buf.byteLength });
+  chunks.push({ dir, fd, hex: hex(buf), len: buf.byteLength, ts: Date.now() });
 }
 function hookSend(name) {
   try { Interceptor.attach(libc.getExportByName(name), { onEnter(args) {

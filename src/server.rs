@@ -105,3 +105,37 @@ mod tests {
         assert_eq!(used, wire.len());
     }
 }
+
+/// 对 `TickRequest` 的应答。
+///
+/// 实测：`current_tick = base_tick + round(经过毫秒 * 60 / 1000)`（见 `crate::tick`）。
+pub fn on_tick_request(base_tick: i64, base_ms: i64, now_ms: i64) -> String {
+    let t = crate::tick::tick_at(base_tick, base_ms, now_ms);
+    format!(r#"{{"TickReply":{{"current_tick":{}}}}}"#, t)
+}
+
+#[cfg(test)]
+mod tick_tests {
+    use super::*;
+
+    #[test]
+    fn tick_reply_matches_captured_format() {
+        // 抓包里的样本形如 {"TickReply":{"current_tick":5}}
+        let captured: Vec<&str> = include_str!("../fixtures/protocol_match.jsonl")
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| l.starts_with("{\"TickReply\""))
+            .collect();
+        assert!(!captured.is_empty(), "夹具里应有 TickReply");
+        for line in captured {
+            let value: i64 = line
+                .trim_start_matches(r#"{"TickReply":{"current_tick":"#)
+                .trim_end_matches("}}")
+                .parse()
+                .expect("应能取出 current_tick");
+            // 用基准值构造同样的 tick，输出必须与抓包逐字节相同
+            let ours = on_tick_request(value, 0, 0);
+            assert_eq!(ours, line, "TickReply 序列化与抓包不一致");
+        }
+    }
+}

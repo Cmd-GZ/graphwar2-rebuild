@@ -114,6 +114,7 @@ pub mod protocol;
 pub mod turn;
 pub mod settle;
 pub mod server;
+pub mod tick;
 pub mod capi;
 pub mod gdext_class;
 pub mod shot;
