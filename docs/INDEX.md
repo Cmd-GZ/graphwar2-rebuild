@@ -32,6 +32,7 @@
 | [89-real-step.md](89-real-step.md) | 实况步长是 **0.01**，不是 0.5（此前所有对比都用 | 实况步长 0.01 与早停留查 |
 | [90-anti-waste.md](90-anti-waste.md) | 防无用功守则（本轮会话的失败清单与对策） | 防无用功守则（开工必读） |
 | [91-bisection-loop.md](91-bisection-loop.md) | 采样器 normal 二分循环的逐条汇编：`lo`/`hi` 更新规则 | 二分 `lo`/`hi` 规则（早停根因，改码依据） |
+| [92-ui-inventory.md](92-ui-inventory.md) | **客户端界面台账（15/15 界面，运行时枚举）** | 界面 × 控件 × 作用 × 实现状态（唯一台账） |
 
 ## 二、已归档（`docs/archive/`，**不要引用其结论**）
 

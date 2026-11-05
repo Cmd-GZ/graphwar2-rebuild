@@ -82,7 +82,7 @@ var ROUTES := {
 	"campaign": [
 		[50, "press", MENU + "/VBoxContainer/PlayButton"],
 		[100, "dump", "campaign"],
-		[110, "press", "VBoxContainer/ScreensControl/Campaign/MarginContainer/VBoxContainer/HBoxContainer/MarginContainer/LevelsContainer/level_0"],
+		[110, "press", "VBoxContainer/ScreensControl/Campaign/MarginContainer/VBoxContainer/Control/level_0"],
 		[160, "dump", "campaign_after_level0"],
 		[170, "quit"],
 	],
