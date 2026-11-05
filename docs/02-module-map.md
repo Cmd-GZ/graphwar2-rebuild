@@ -83,8 +83,8 @@
 | `graphwar_video_writer.rs` | 录像导出 |
 | `graphwar_crash_reporter.rs` (≥100) | 崩溃上报 |
 | `graphwar_logger.rs` / `graphwar_nodes.rs` / `graphwar_module_container.rs` | 基础设施 |
-| `graphwar_ad_switch.rs` / `android_iap.gdc` | **广告 / 内购**（`docs/132`：判据只有 `are_ads_enabled() = !owned`） |
-| `graphwar_backend.rs` | **联机层，不是广告**（15 个方法名：`start_server` / `start_client_to_*` / `lan_broadcaster` / `broker` / `get_next_clip_checkpoint`…，且**不是 Godot 类**）——`docs/132` 更正 |
+| `graphwar_ad_switch.rs` / `android_iap.gdc` | **广告 / 内购**（`19-android.md`：判据只有 `are_ads_enabled() = !owned`） |
+| `graphwar_backend.rs` | **联机层，不是广告**（15 个方法名：`start_server` / `start_client_to_*` / `lan_broadcaster` / `broker` / `get_next_clip_checkpoint`…，且**不是 Godot 类**）——`19-android.md` 更正 |
 
 ## 7. 第三方 crate（同名 `src/` 路径，勿混淆）
 
@@ -214,7 +214,7 @@
 ### 12.3 影响与处置
 
 - 之前"线性反汇编与 `.eh_frame` 有字节级漂移"的说法**因果搞反了**：
-  漂移的是那份 FDE 表，不是反汇编。已在 `docs/06` §11 更正。
+  漂移的是那份 FDE 表，不是反汇编。已在 `06-verification.md` §11 更正。
 - 归属流程改为：Ghidra 函数表 →（减 `0x100000`）→ 虚地址边界 → 与 capstone
   指令地址对齐。转换结果落在 `analysis/funcstarts_ghidra_va.pkl`（13263 条）。
 - §8 / §10 的数字已按新边界重算；旧数字（483 / 628）作废。
@@ -225,7 +225,7 @@
 受影响的只是"某个函数算哪个模块"的判定，因此 §8/§10 之外、
 依赖具体函数地址的结论（如 §11 里的 plane 地址清单）都需要按新边界重取。
 
-## 13. 首批逐模块反编译观测（2026-10，含负结果）
+## 13. 首批逐模块反编译观测（含负结果）
 
 > 来源：早期按模块逐篇记录的四份文档（原 `10`/`12`/`13`/`14`），2026-11 文档归并时并入本节，
 > 原文件移入 `docs/archive/`。**本节只收"能指到地址"的观测与负结果**；
@@ -284,7 +284,7 @@ SipHash XOR 常量）。当时的推断是「表一 = 存活状态、表二 = �
 ### 13.2 `graphwar_function_evolutionator.rs`（原 `12`，结论已被 `AI.md` 取代）
 
 > ⚠️ 原 `12` 的标题是"评分规则未还原"，现在**已全部还原**：参数表、权重、长度、
-> 适应度、装配、变异、每代构成、两阶段评分、25 s 预算都在 [`AI.md`](AI.md)（唯一权威）。
+> 适应度、装配、变异、每代构成、两阶段评分、25 s 预算都在 [`AI.md`](13-ai.md)（唯一权威）。
 > 本节只保留 `AI.md` 里没写的**模块级观测**。原文地址空间混写（vaddr 当 Ghidra 写），
 > 统一口径见 `AI.md` §8.6：**评分核心 = vaddr `0x51a750` = Ghidra `0x61a750`**。
 
@@ -358,13 +358,13 @@ Ghidra 边界下 **14 个函数**，全是小函数（33～236 行）：
 3. 网络事件也驱动它。
 
 ~~`0x465780`（95 行）是典型 SIMD 字节扫描……当时的推断是"在扫 1000×600 掩膜找第一个命中像素"。~~
-**❌ 这条推断已被 `docs/123` §6 证伪**：`0x465780` **不是**掩膜扫描，而是
+**❌ 这条推断已被 `15-target-life.md` §6 证伪**：`0x465780` **不是**掩膜扫描，而是
 **hashbrown 集合迭代 + 逐个 id 发 `TargetInfo`**（新连接进来时补发已有目标）。
 全二进制只有 2 处构造 `TargetInfo`：`0x46f3af`（造目标）与 `0x46580e`（补发）。
 当年"读不懂"正是因为它根本不是那件事。
 
 ⚠️ 同节把 `0x3e2830` 归到 `target_manager` 的依据是 panic 串启发式——而那套启发式
-已被 `docs/118` §12.6 判为**不可靠**（一个函数引用两个模块的 Location 会出两行）。
+已被 `10-campaign.md` §12.6 判为**不可靠**（一个函数引用两个模块的 Location 会出两行）。
 用行号法复核只剩 1 条，且可由内联解释 ⇒ **归属存疑**。
 
 **为什么停在这里（诚实记录）**：这几个函数都很小（30～95 行），但反编译产物**基本不可读**——
@@ -387,7 +387,7 @@ SIMD 内联把 20 行 C 展开成 60 行位运算，`SUB161(...)`/`auVar` 满屏
 
 ### 14.1 为什么要做这个
 
-用户反复问"所以到底漏了什么"。此前唯一的答案是 `docs/88` 的**模式维度**矩阵
+用户反复问"所以到底漏了什么"。此前唯一的答案是 `06-verification.md` 的**模式维度**矩阵
 （`TurnMode × FunctionMode × TimeMode × AxisMode`），它回答的是"我这些结论在哪个
 模式下成立"，**没有回答"哪些代码我从没看过"**。§1–§7 的表全是按模块名**推断**的职责，
 不是审计。
@@ -396,14 +396,14 @@ SIMD 内联把 20 行 C 展开成 60 行位运算，`SUB161(...)`/`auVar` 满屏
 
 ### 14.2 口径，以及它为什么不能当完成度
 
-> ⚠️ **2026-11-06 更正（`docs/118` §2）**：本节的**基础数据 `fixtures/module_funcs.tsv` 不能用来判定函数身份**。
+> ⚠️ **2026-11-06 更正（`10-campaign.md` §2）**：本节的**基础数据 `fixtures/module_funcs.tsv` 不能用来判定函数身份**。
 > 那张表是按 `src/<file>.rs:<line>` 的 panic 串启发式归堆的，**一个函数只要引用了两个模块的
 > `panic::Location` 就会在那两个模块下各出现一行**（全表 75 个地址如此，例如 `0x466d20`
 > 同时被归到 `plane_pos_manager` 和关卡相关模块）。
 > ⇒ 本节的分档**只能当"某模块名下的函数里有多少被文档提过地址"的粗估**，
 > **不能**据此说"这个函数属于哪个模块"，更不能据此判断"某个功能没做"。
 > 真实例子：`0x466d20` 被本表归到 `graphwar_plane_pos_manager.rs`，
-> 实际它是**关卡开场驱动**（`docs/118` §2）。
+> 实际它是**关卡开场驱动**（`10-campaign.md` §2）。
 
 `cited` = **函数起始地址在 `docs/**/*.md` 里被写下来过**。它测的是"我有没有把地址
 落在纸面上"这个**记录习惯**。
@@ -438,11 +438,11 @@ SIMD 内联把 20 行 C 展开成 60 行位运算，`SUB161(...)`/`auVar` 满屏
 | 域 | 模块（函数数） | 小计 | 说明 |
 |---|---|---|---|
 | **界面 / 呈现** | `root_node`(242)、`setup_control`(46)、`lan_vbox`(44)、`nodes`(14)、`long_press_animation`(8)、`player_screen_control`(8)、`play_screen_control`(7)、`graphics_manager`(7)、`button`(6)、`texture_loader`(1) | **383** | 客户端 agent 正在做。注意：**界面行为主要写在 `.gdc` 脚本里（105/105 已反编译），这些 Rust 函数是脚本底下那层原生调用**——所以"没引用过 Rust 地址"不等于"界面没还原" |
-| **对局元信息** | `function_manager`(7)、`rank_manager`(4)、`name_manager`(3)、`local_player_manager`(3)、`event_handler`(3)、`logger`(3)、`campaign_control`(1)、`lobby_control`(1) | **25** | 真盲区。`name_manager` / `rank_manager` 对应 `docs/96` 里缺的 `NameInfo`/`RankInfo` 一组事件 |
+| **对局元信息** | `function_manager`(7)、`rank_manager`(4)、`name_manager`(3)、`local_player_manager`(3)、`event_handler`(3)、`logger`(3)、`campaign_control`(1)、`lobby_control`(1) | **25** | 真盲区。`name_manager` / `rank_manager` 对应 `07-protocol.md` 里缺的 `NameInfo`/`RankInfo` 一组事件 |
 | **音频** | `audio_control`(14) | **14** | `.so` 里有完整的 WAV 解析错误串（`no WAVE tag found`、`no RIFF tag found`、`bits per sample is not 8 or 16`…），说明**音频是运行时解析 WAV 的**。与用户说的"有一个文件损坏"直接相关：坏文件会在这里被拒 |
-| **广告 + 联机后端** | `ad_switch`(7)、`backend`(6) | **13** | 见 §14.5。⚠️ **`backend` 不是广告，是联机层**（`docs/132` §3） |
+| **广告 + 联机后端** | `ad_switch`(7)、`backend`(6) | **13** | 见 §14.5。⚠️ **`backend` 不是广告，是联机层**（`19-android.md` §3） |
 | **录像 / 回放 / 视频** | `replay_control`(3)、`video_writer`(3)、`game_recorder`(2) | **8** | 我们只做了**读**回放（`tools/parse_replay.py`），没做**写**。注意还有 `publish_video_to_album` / `Android_mediastore_holder`——"把回放发到相册"是 Android 专属 |
-| **联机外围** | `lan_broadcaster_v6`(4)、`server_broker_handler`(3) | **7** | 房间发现与 broker，见 `docs/24` §7 |
+| **联机外围** | `lan_broadcaster_v6`(4)、`server_broker_handler`(3) | **7** | 房间发现与 broker，见 `09-network.md` §7 |
 | **已知假阴性** | `function_input`(22)、`plane_pos_manager`(7) | **29** | §14.2 说的两个反例 |
 
 ### 14.5 顺带确认的两件事
@@ -455,13 +455,13 @@ SIMD 内联把 20 行 C 展开成 60 行位运算，`SUB161(...)`/`auVar` 满屏
    ⇒ **Linux 端跑不到**（用户判断正确），但**代码路径在**，要看行为得走 APK。
 2. **段位图标共 22 张**（`rank_0` … `rank_21`，观测）。⚠️ 包里**没有 `.svg`/`.ttf` 文件**——
    导出时源资源已剥离，包里只有 `.ctex`（编译后纹理）与 `.fontdata`；
-   那些 `res://.../xxx.svg` 路径是 `.import/.remap` 存根里的**源路径**（`docs/121` §4）。
-   ⚠️ **本节原先由它推出的两条结论已被 `docs/112` 推翻一半**：
+   那些 `res://.../xxx.svg` 路径是 `.import/.remap` 存根里的**源路径**（`16-client.md` §4）。
+   ⚠️ **本节原先由它推出的两条结论已被 `02-module-map.md` 推翻一半**：
    - "22 张图标 ⇒ 22 个段位"**不成立**：`rank_manager` 的 4 个函数里**没有任何**
      22 项表、取模或阈值比较，段位换算**不在这个模块**（可复现的负结果）。22 档位仍未知。
    - `user://campaign.save` 的引用点**不在** `0x418820`，而在 `0x418170` / `0x4183b0`
      ⇒ "那 1 个函数只做存取"的说法证据链要换：方向对，但地址指错了。
-   详见 `docs/112` §14。
+   详见 `02-module-map.md` §14。
 
 ### 14.6 这份审计没做的事
 
@@ -470,3 +470,144 @@ SIMD 内联把 20 行 C 展开成 60 行位运算，`SUB161(...)`/`auVar` 满屏
   会把邻居也算进来，所以 885 这个总数是**上界估计**；
 - 没评价"看懂了多少"，只评价"提没提过地址"；
 - `NO-CITE` 的 28 个模块**没有逐个反编译**，§14.4 的"说明"列是据名字与同族字符串的推断。
+
+---
+
+## 15. 对局元信息八模块（23 函数）——原 `112-meta-managers`
+
+> 这一节补的是 §14 里归为「对局元信息 25 个函数、`NO-CITE`」的那一堆（本文覆盖其中 23 个）。
+> 全文与逐地址证据：[`archive/112-meta-managers.md`](archive/112-meta-managers.md)。
+
+### 15.1 一页结论
+
+1. **名字存哪**（Q1）：`HashMap<u32 /*player_id*/, String>`，
+   **entry 32 字节**、key 是 u32 @entry+0、`String` @entry+0x8（cap/ptr/len = +0x8/+0x10/+0x18）。
+   名字本身是 Rust `String`，**不是** Godot `GString`。〔逐位〕
+2. **`NameInfo` 的字段**（Q1）：serde 原文 `struct NameInfoEvent with 2 element`。
+   线上事件 `name_info_event` 的判别值 = **60（0x3c）**，payload = `String` @+8 + `u32` @+0x20。
+   两处独立命中（构造处 + 反查表），见 §4。〔逐位〕
+3. **`RankInfo` 的字段**（Q2）：判别值 = **67（0x43）**，serde 原文也说 2 个元素，
+   但 `rank_manager` 造出来的 payload 写了 **3 个 dword**（+8/+0xc/+0x10）。
+   **这是一处未收敛的矛盾，按原样记录，不强行圆。** 见 §5.4。〔观测冲突〕
+4. **段位怎么算**（Q2）：**`rank_manager` 里算不出来**。4 个函数里没有任何除法、取模、
+   阈值比较或 22 项常量表；它只是一个 `HashMap<u32,u32>` 的存取 + 广播。
+   22 张 SVG 对应"段位编号 0..21"这一点在本模块内**无法**验证。〔观测（负结果）〕
+5. **每个士兵的函数存哪**（Q3）：`HashMap<u32 /*player_id*/, 112 字节>`，
+   **entry 120（0x78）字节**，value 开头就是一个 `Vec<Token>`（元素 16 字节）。
+   `Token = 16 字节` 这一条与 `AGENTS.md` 的硬事实**对得上**。〔逐位〕
+6. **战役进度**（Q4）：`user://campaign.save` 确实存在（0x1bfe28），但它**不**被
+   `graphwar_campaign_control.rs` 唯一那个函数（0x418820）引用，而是被 0x418170 / 0x4183b0 引用；
+   这 2 个函数没有 panic 串、**无法证明**属于 `campaign_control.rs`。〔观测 + 归属未知〕
+7. **副产品**：顺手把 `.rodata` 里的**事件名全表 + 判别值对应关系**解出来了（§3、§4.2）。
+   `07-protocol.md` §4 说"判别值不上线、不用管"——**结论仍成立**，但它现在不再是"不可验证"了。
+
+---
+
+### 15.2 地址总表
+
+`vaddr` 为 ELF 虚地址；`Ghidra = vaddr + 0x100000`。`size` 由 Ghidra 入口表给出。
+`line` 来自该函数内引用的 `panic::Location`（`src/<file>.rs:LINE`），**是观测**，
+不是"函数在源文件第几行开始"，但足以给出源文件内的相对次序。
+
+#### 15.2.1 `graphwar_function_manager.rs`（7，`NO-CITE`）
+
+| vaddr | size | line | 一句话 | 证据 |
+|---|---|---|---|---|
+| `0x455b60` | `0x2d0` | 165 | **取**某 player 的 token 向量（克隆 `Vec<Token>` 返回） | 观测→逐位（`shl r15,4` + `memcpy` 16N） |
+| `0x455e30` | `0x7c0` | 152/153/158/161 | **设**：两个 `&str` 各喂一次解析器 `0x4ed670`，再发事件 tag 35 | 观测 |
+| `0x4565f0` | `0x220` | 169 | 同类存取（与 0x455b60 的 self 骨架完全同形） | 推断 |
+| `0x456810` | `0x370` | 192/199 | 按 player_id 在 `X+0x38` 的 map 上查一条并写字段 | 观测 |
+| `0x456b80` | `0x270` | 181/186 | 同上，另一个字段 | 推断 |
+| `0x456df0` | `0x190` | 208 | 同形，偏移 0x20/0x28/0x30/0x38/0x40/0x48 | 推断 |
+| `0x456f80` | `0x190` | 213 | 与 `0x456df0` **偏移直方图完全一致**（疑似同构的另一字段/另一模式） | 推断 |
+
+#### 15.2.2 `graphwar_name_manager.rs`（3）
+
+| vaddr | size | line | 一句话 | 证据 |
+|---|---|---|---|---|
+| `0x518f10` | `0x120` | 69 | 遍历 `HashMap<u32,String>`，逐条发 `name_info_event`(60) | 逐位 |
+| `0x519030` | `0x90` | 79 | **处理 `entity_removed_event`(14)**：从 map 里删掉该 player | 逐位 |
+| `0x519350` | `0x100` | 57 | **设名**：`map.insert(player_id, String)` + 发 `name_info_event`(60) | 逐位 |
+
+#### 15.2.3 `graphwar_rank_manager.rs`（4）
+
+| vaddr | size | line | 一句话 | 证据 |
+|---|---|---|---|---|
+| `0x454d80` | `0x100` | 73 | 遍历 `HashMap<u32,u32>`，逐条发 `rank_info_event`(67) | 逐位 |
+| `0x454e80` | `0x70` | 83 | 处理 `entity_removed_event`(14)：从 map 删 | 观测 |
+| `0x454f30` | `0x160` | 33 | **初始化/订阅**：向事件处理器订阅 `new_connection_event`(20 B) 与 `entity_removed_event`(20 B) | 逐位 |
+| `0x455090` | `0xd0` | 61 | **设/清**：`edx==1` → 写 `self+0x18` 的 map，否则删 `self+0x38` 的 map，然后发 (67) | 逐位 |
+
+#### 15.2.4 `graphwar_local_player_manager.rs`（3）
+
+| vaddr | size | line | 一句话 | 证据 |
+|---|---|---|---|---|
+| `0x519f40` | `0x630` | 107–128 | 处理 `player_info_event`(13)：按连接 id 过滤，push 进 `Vec<u32>`，首次入列时发 5 个"请求"事件 | 观测（tag 值逐位） |
+| `0x51a570` | `0xa0` | 76/81 | 处理 tag **7**：`self+0x18:=1`、`self+0x1c:=payload.u32`、`self+0x10:=0`，并发 tag **8** | 逐位 |
+| `0x51a610` | `0xe0` | 146 | 处理 `entity_removed_event`(14)；函数体只有一条 `panic_fmt` 出口 | 观测 |
+
+#### 15.2.5 `graphwar_event_handler.rs`（2）
+
+| vaddr | size | line | 一句话 | 证据 |
+|---|---|---|---|---|
+| `0x3d38f0` | `0x16b0` | 396/407/454 | **事件名 → 判别值**分派（~50 个名字，逐字节精确比较），每个名字把 `ebx` 置成判别值 | 逐位（比较常量可复算） |
+| `0x3d3630` | `0x2c0` | 467 | 用**常量** key `0x800000000000004a` 去查一条 `HashMap<u64, 订阅者集合>`（entry 0x38 B） | 观测 |
+
+#### 15.2.6 `graphwar_logger.rs`（2）
+
+| vaddr | size | line | 一句话 | 证据 |
+|---|---|---|---|---|
+| `0x3b6c70` | `0xd0` | 12 | 线程局部（`thread_local!`，Location 落在 `std/thread/local.rs:428`）槽的**换值**：拿旧句柄、`dec` 强引用、`dec==0` 就 drop、再存新句柄 | 观测 |
+| `0x44dd60` | `0x630` | 44 | 真正写日志的一条（大量 `0x528070` = dealloc 与 `0x45f160`/`0x461100` 格式化/落盘） | 推断 |
+
+#### 15.2.7 `graphwar_campaign_control.rs`（1）/ `graphwar_lobby_control.rs`（1）
+
+| vaddr | size | line | 一句话 | 证据 |
+|---|---|---|---|---|
+| `0x418820` | `0x2e0` | 94 | Godot 节点取值：`clone` / `init_ref()` / `upcast_ref`，随即调用 `graphwar_nodes.rs` 的节点访问器 | 观测 |
+| `0x3ef990` | `0x6e0` | 28/29/30/42/47/52 | UI 装配：取 `ShowLocalButton` / `ShowGlobalButton` / `GraphwarLanVBox` 等节点并设文本/图标 | 观测 |
+
+#### 15.2.8 三个"影子"函数（不在 8 个模块里，但离开它们读不懂本批代码）
+
+| vaddr | 名字（本文暂定） | 为什么必须知道它 | 证据 |
+|---|---|---|---|
+| `0x3d3530` | **事件入队 sink** | 本批 8 个模块共 12 处 `call [0x9bac80]` 全部指向它。`tools/ptr_slots.py` 实测 **113 个使用者**，覆盖 team/life/obstacle/turn/color/mode/… 几乎所有 manager ⇒ 它是全局唯一的"发事件"出口 | 逐位（无条件拷贝 0x48 字节） |
+| `0x3e6830` | 事件骨架加工（`0x140` B） | `0x3d38f0` 的每个分支在置 `ebx` 前都 `call 0x3e6830(rdi=rsp)` | 未知 |
+| `0x418170` / `0x4183b0` | 存档读写 | `user://campaign.save` 的**真正**使用者 | 观测 |
+
+---
+
+
+### 15.3 顺带拿到的完整事件名清单
+
+
+`.rodata` `0x1c0d84`–`0x1c14fc` 是一段**连续的** `*_info_event` 名字数组，
+被 `0x4500c0`（`graphwar_server_connection_handler.rs`）在栈上逐项建出来，
+再对每一项用 `cmp r15, 0x26` 循环 **38** 次。数组按**判别值递增**排列（下面 §5.4 的交叉验证）：
+
+```
+player_info_event          entity_removed_event      soldier_info_event
+target_info_event          team_info_event           remove_team_event
+pos_info_event             life_info_event           life_queued_death_event
+game_state_info_event      function_fire_event       function_info_event
+function_active_event      function_points_event     clear_obstacles_event
+add_obstacle_event         destroy_obstacle_event    queue_destroy_obstacle_event
+turn_info_event            effect_info_event         axis_mode_info_event
+function_mode_info_event   turn_mode_info_event      time_mode_info_event
+end_of_turn_info_event     game_name_info_event      skin_graphics_info_event
+face_graphics_info_event   hat_graphics_info_event   entity_effect_info_event
+turn_limit_info_event      turn_count_info_event     name_info_event
+color_info_event           rank_info_event           lock_info_event
+chat_message_event
+```
+
+每一项的 `(ptr,len)` 都是**逐条从代码里抄的**（不是从 blob 切出来的），
+所以 `name_info_event` = 15 B @`0x1c14ce`、`rank_info_event` = 15 B @`0x1c14dd`、
+`lock_info_event` = 15 B @`0x1c0e26` 这些长度都是确定的。
+
+> `07-protocol.md` §3 把这一族记成 `NameInfo` / `RankInfo`（CamelCase）。
+> **线上/spine 里的键是 snake_case 加 `_event` 后缀**（`name_info_event`），
+> CamelCase 只是 Rust 变体名。补协议时别写错。
+
+---
+

@@ -68,7 +68,7 @@ FunctionPointsEvent {
 这些需要先逆向 `graphwar_plane*.rs`（坐标语义）与 `graphwar_life_manager.rs`，
 否则会把像素坐标和游戏单位混在一起。
 
-## 6. 开火模拟原语（本轮新增，已装配校验）
+## 6. 开火模拟原语（已装配校验）
 
 把三块已验证的积木拼成一次完整模拟：
 
@@ -115,3 +115,156 @@ RESULT: PASS
   所以起点是否命中取决于障碍怎么给。真实游戏里士兵会占位，是否跳过起点**未观测**。
 - 真正的开火循环函数**尚未定位**，所以本原语是"用已验证积木按最自然顺序组合"，
   不是"游戏就是这么做的"。它能被独立验证，但不宣称等价于游戏服务端的结算流程。
+
+---
+
+## 7. 端到端：从敲下函数到有人死亡（原 `15-end-to-end`）
+
+> 这一节把各篇串成一条线，按一次射击的时间顺序走一遍，并标出每步的证据等级与对应代码。
+> 全文：[`archive/15-end-to-end.md`](archive/15-end-to-end.md)。
+
+## 8. 总览
+
+```
+① 输入文本           "sin(x)"
+      │  03-function-language.md     函数语言          ✅ 逐位验证   src/function/
+      ▼
+② 前缀 token 列表     [(SIN,0),(X,0)]
+      │  05-shot-pipeline.md     修正常数 c        ✅ 逐位验证   src/shot.rs
+      ▼
+③ 带修正的 token      [(ADD,0),(CONST,c)] ++ tokens
+      │  04-path-sampling.md     等弦长采点        ✅ 逐位验证   src/path.rs
+      ▼
+④ 点序列（游戏单位）  [(x0,y0),(x1,y1),...]
+      │  08-plane.md §4  坐标变换          👁 观测      src/plane.rs
+      ▼
+⑤ 像素坐标            px=20x+500, py=20y+300
+      │  08-plane.md §6  掩膜点测试        👁 观测      src/plane.rs
+      ▼
+⑥ 命中 / 未命中        mask[py*1000+px] != 0xFF
+      │  02 §13.1    排队死亡          👁 结构      src/life.rs
+      ▼
+⑦ 生命状态            (存活表, 排队表)
+      │  41 §3       回合推进          🔶 结构（时间基准未解）
+      ▼
+⑧ 下一回合
+```
+
+## 9. 逐步说明
+
+### 9.1 ①–② 文本 → token
+
+玩家输入是一门小语言，不是普通数学式：`^` 左结合、`log` 是 log10、
+`n` 是 π、支持隐式乘法、函数可以不带括号、缺操作数按 0 补。
+**全部逐位验证**（331 条真值夹具）。详见 `03-function-language.md`。
+
+### 9.2 ②–③ 修正常数
+
+`c = y0 − f(±x0)`，实际射击用 `f(x) + c`，保证曲线穿过开火的士兵。
+游戏的做法是把函数文本改写成 `"f(x) + c"` **再解析一遍**，而不是数值加偏移——
+这是实现方式差异，会影响精度。详见 `05-shot-pipeline.md`。
+
+### 9.3 ③–④ 采点
+
+沿曲线做**等弦长**追赶（二分），弦长目标 `step`（服务端固定 `0.01`），
+最多 `(200/step)` 个点，逐步二分最多 100 次、容差 `0.001`；
+容差满足后还要过一次**半步复检**（`mid2 = (x+mid)/2`；不通过就 `lo = x` **且** `hi = mid2`
+重来——这条曾长期漏实现，是"弹道半空截断"的根因，见 `04-path-sampling.md`）；
+入列前硬检查 `|x|≤25`、`|y|≤15`、非 NaN。解不出就整条曲线干净停止。
+**逐位验证**（2552 条曲线级对拍 + `04-path-sampling.md` 的 24/24 逐点 oracle）。详见 `04-path-sampling.md`。
+
+### 9.4 ④–⑤ 坐标变换
+
+```
+px = x*1000/50 + 500 = 20x + 500
+py = y*1000/50 + 300 = 20y + 300
+```
+画布 **1000×600**，比例 **20 px/游戏单位**。`y=+15` 落在画布底部，
+没有取负——**y 轴方向仍是开放问题**（见 `08-plane.md` §5）。
+观测自 `0x4be3e0`。详见 `08-plane.md` §4。
+
+### 9.5 ⑤–⑥ 命中判定
+
+**不是几何求交**，是位图查表：
+
+```
+idx  = py*1000 + px
+hit  = mask[idx] != 0xFF     // 0xFF = 空；越界一律算命中
+```
+
+掩膜 1000×600 字节，由 `obstacle_manager` 创建（`0x523020`：`alloc(600000)` +
+`memset 0xFF` + 引用计数容器）、填充与查询。详见 `08-plane.md` §6。
+
+### 9.6 ⑥–⑦ 死亡
+
+`life_manager` 在 `RwLock` 内维护**两张表**，第二张仅当 `mode == 1` 时写入。
+推断为「存活表 + 排队死亡表」，对应协议里的 `LifeQueuedDeathEvent`。
+**结构是观测，语义是推断。** 结构与地址清单见 [`02` §13.1](02-module-map.md)；
+致死规则本身已结案（无血量 / 友军致死 / 按弹道先后）见 [`65`](15-target-life.md)。
+
+### 9.7 ⑦–⑧ 回合
+
+`turn_manager` 的 14 个函数全是小函数、没有任何浮点常量（回合时限是数据驱动的），
+内部是 `0x28` 步长的 HashMap 探测。那张表现在解出了：**玩家 → `{Vec<soldier_id>, index}`**，
+是射手轮转表（[`98`](13-ai.md)）。回合的**迁移结构**见 [`41`](14-turn.md)，
+**时间驱动**（每个状态持续多久）仍未解。模块规模见 [`02` §13.3](02-module-map.md)。
+
+## 10. 谁在驱动这一切
+
+控制流大量走**函数指针**，静态调用图会断。用重定位表补查后得到（[`06` §12](06-verification.md)）：
+
+```
+game_state_manager ─┐
+                    ├─(指针)-> 开火结算 -> 采点
+function_evolutionator ┘
+target_manager ─(指针)-> 采点
+tick_handler ─> target_manager（周期性）
+```
+
+## 11. 一张表看清成熟度
+
+| 阶段 | 成熟度 | 能否复刻 |
+|---|---|---|
+| ①–④ 解析 / 修正 / 采点 | 逐位验证 | **能**，已实现且有真值夹具 |
+| ⑤ 坐标变换 | 观测 | 能（公式确定，y 方向待定） |
+| ⑥ 命中 | 观测 | 能（掩膜语义确定，光栅化规则待定） |
+| ⑦ 死亡 | 结构（规则已由用户实测结案） | 能：无血量/友军致死/按弹道先后（`65`） |
+| ⑧ 回合 / AI / 联机 | 结构 + 观测 | 回合迁移能（`41`）、AI 规则能（`AI.md`）、出场顺序不能（`47`） |
+
+
+## 12. 微分方程弹道：`Mode::Ode` 与 `path_calculate_mode`（原 `138-ode-api`）
+
+> 全文：[`archive/138-ode-api.md`](archive/138-ode-api.md)。
+
+### 12.1 一页结论
+
+| 项 | 结果 | 档位 |
+|---|---|---|
+| 新方法 | `GW2Rebuild.path_calculate_mode(expr: String, x0: float, y0: float, direction: float, mode: String) -> Dictionary` | **逐位验证**（`get_method_list` + `dump` 实测，§6.3） |
+| `mode` 的类型 | **字符串** `"normal"` / `"ode"`；大小写不敏感、忽略两侧空白 | **逐位验证**（§6.1 单测） |
+| 非法 `mode` | `ok:false, error:"bad_arguments"`（**沿用**既有错误码，不新造） | **逐位验证**（单测） |
+| 返回结构 | 与 `path_calculate` **同形**：`{ok, points, offset, error}`（`RESULT_KEYS` 四个键，顺序相同） | **逐位验证**（复用 `result_pairs`，无第二份整形） |
+| ODE 采样器本身 | `dy/dx = f(x, y)`，一阶 RK4；第三个变量（`y'`）恒 `0` | **逐位验证**（224 条 path 夹具里 **112 条是 ODE**：56 条 `flip=0` + 56 条 `flip=1`，`tests/golden.rs::path_matches_binary`） |
+| RK4 的 **`y` 反馈** | `k2/k3/k4` 用 `y + k·h/2` 回代（`src/path.rs`） | **推断**（按 `04-path-sampling.md` §2 的反编译阅读实现；**没有**真值夹具覆盖，见 §8.2） |
+| ODE 下修正常数 | **不做**（与 `shot_points` 的 `apply_correction && mode == Mode::Normal` 一致） | **逐位验证**（单测与 `shot_points(…, Mode::Ode, false)` 逐点相等） |
+| ODE 下 `offset` | **恒 `NaN`**（成功也是），理由见 §3 | **自定**（原版内部这个数没有人观测到；界面那行字为空是**观测**，§3） |
+| `mode="normal"` | 与 `path_calculate` **逐位相同**（直接委托，不是第二份实现） | **逐位验证**（单测逐位对拍 + 结构上委托） |
+| `path_calculate` 契约 | **一字未改**：签名、行为、错误码、既有 13 条单测全部原样通过 | **逐位验证** |
+| `cargo test --offline` | **314 → 320**（+6，全绿） | **逐位验证** |
+| `bash client/run.sh selftest` | **478 → 489 passed, 0 failed**（+11 条断言；未改/未删任何既有断言） | **观测** |
+| `bash client/run.sh dump` | `methods=…,path_calculate,path_calculate_mode,…` | **观测**（§6.3 贴了原行） |
+| `client/` 的 `GwCore.calculate_path` | 新增**可选**第 4 参数 `mode`（默认 `"normal"`）；返回字典多一个 `mode` 字段 | **逐位验证**（selftest：3 参数调用与显式 `"normal"` 结果相同） |
+| 微分方程局真的能画了吗 | **桥好了，界面还没接**（§8.1） | **观测** |
+
+三条最容易出错的点，先写在前面：
+
+1. **`offset` 在 ODE 下是 `NaN`，不是 `0.0`**。用 `0.0` 会让界面右下角显示 `+ 0.000`，
+   而原版 DiffEq 局那行字是**空**的（`16-client.md` §4.10 观测，`play_screen.gd:786` 也照此置空）。
+2. **ODE 不做修正常数**。谁在 API 层补一个 `c = y0 − f(±x0)`，整条微分方程弹道就平移
+   —— `src/shot.rs::shot_points` 那行判断（`apply_correction && mode == Mode::Normal`）
+   已经把这件事钉死了。
+3. **`mode` 是字符串参数**。`PropertyInfo` 声明成 `String`；传整数会被**引擎先拒**
+   （`16-client.md` §3.7 同形实测），所以内核侧不做整数重载（那段代码永远走不到）。
+
+---
+
