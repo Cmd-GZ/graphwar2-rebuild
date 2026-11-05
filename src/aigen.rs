@@ -422,7 +422,8 @@ pub fn repair(tokens: &mut Vec<Token>, mode: VarMode, next: &mut dyn FnMut() -> 
 pub fn random_function(next: &mut dyn FnMut() -> u64, mode: VarMode) -> Vec<Token> {
     let n = random_length(next).max(1) as usize;
     let mut tokens: Vec<Token> = (0..n).map(|_| draw_token(next, mode)).collect();
-    repair(&mut tokens, VarMode::Normal, next);
+    // 补齐也必须用同一个 mode：Normal 补 x、DiffEq 补 y（反汇编 0x4ee2c4/0x4ee2ce）
+    repair(&mut tokens, mode, next);
     tokens
 }
 
@@ -430,6 +431,46 @@ pub fn random_function(next: &mut dyn FnMut() -> u64, mode: VarMode) -> Vec<Toke
 ///
 /// 二进制里真正的交叉是 `FUN_003be7d0`（按 token 向量切片），
 /// 这里的实现只保留"各取一段"这个**可观测特征**，具体切点规则**未还原**。
+/// 工厂的"交叉"：从一个父代里取**一个完整子表达式**，再补齐。
+///
+/// 反汇编（`docs/99` §2）：游戏里工厂只有 `(out, &mode, &parent)` **一个父代**；
+/// 取片段不是任意字节区间，而是按前缀式**递归取一棵完整子树**
+/// （`FUN_004be7d0` vaddr `0x3be7d0`）。这里的做法：
+///
+/// ```text
+/// r1 = rand % N           起点
+/// r2 = rand % (N - r1)    长度上限
+/// 从 r1 起按 arity 走，取到第一个"恰好补齐"的位置（不超过 r1+r2）
+/// ```
+pub fn cross_from(parent: &[Token], mode: VarMode, next: &mut dyn FnMut() -> u64) -> Vec<Token> {
+    if parent.is_empty() {
+        return Vec::new();
+    }
+    let r1 = (next() % parent.len() as u64) as usize;
+    let r2 = (next() % (parent.len() - r1) as u64) as usize;
+    let limit = r1 + r2.max(1);
+    // 从前缀式的 r1 起，走到"子树完整"为止
+    let mut need: i64 = 1;
+    let mut end = r1;
+    while end < parent.len() && end < limit {
+        need -= 1;
+        need += arity(parent[end].tag);
+        end += 1;
+        if need == 0 {
+            break;
+        }
+    }
+    if need != 0 {
+        // 没走完一棵完整子树 → 退回"从 r1 到 limit"的裸片段，交给 repair 兜底
+        end = limit.min(parent.len());
+    }
+    let mut out = parent[r1..end].to_vec();
+    repair(&mut out, mode, next);
+    out
+}
+
+/// 旧的两父代交叉，**保留但不再用于工厂**（游戏里没有两个父代，`docs/99` §2）。
+/// 仅供测试与历史对照。
 pub fn crossover(
     a: &[Token],
     b: &[Token],
@@ -534,15 +575,17 @@ where
         let mut clone = sorted[i.min(sorted.len() - 1)].clone();
         clone.set_evaluation(score(&clone.tokens, Phase::Coarse));
         out.push(clone);
-        // ② per_slot − 1 个工厂子代（实测：内层循环 = 4 × 外层），每个也粗评
+        // ② per_slot − 1 个工厂子代，**全部共用同一个父代** = 本槽的 sorted[i]
+        //    （反汇编 0x51bdd7 折叠 → 0x51be5c 拷一份 → 0x51be93 call 0x4ee3a0，
+        //     后者只有 (out, &mode, &parent) 三个参数 ⇒ 游戏里**没有"两个父代"**；
+        //     见 docs/99 §2）
         for _ in 1..per_slot {
-            let a = (next() % sorted.len() as u64) as usize;
-            let b = (next() % sorted.len() as u64) as usize;
-            let tokens = if sorted[b].tokens.len() < 20 {
-                // 第二个父代太短 → 重生（实测 cmp $0x14）
+            let parent = &sorted[i.min(sorted.len() - 1)];
+            let tokens = if parent.tokens.len() < 20 {
+                // 父代太短 → 重生（实测 cmp $0x14）
                 random_function(next, mode)
             } else {
-                let mut child = crossover(&sorted[a].tokens, &sorted[b].tokens, mode, next);
+                let mut child = cross_from(&parent.tokens, mode, next);
                 mutate(&mut child, next);
                 child
             };
@@ -1334,5 +1377,34 @@ mod tests {
         let mut r2 = ChaCha12::from_seed(&key);
         let got2: Vec<u32> = (0..17).map(|_| r2.next_u32()).collect();
         assert_eq!(got, got2);
+    }
+
+    #[test]
+    fn cross_from_yields_a_well_formed_function() {
+        // 工厂只有**一个**父代（docs/99 §2）：取一棵完整子树再补齐，必须仍然合法
+        let mut next = stream(0xC2055_u64);
+        let parent = crate::function::parse("(((-0.35+x)/1.01)/-9.23)");
+        for _ in 0..200 {
+            let child = cross_from(&parent, VarMode::Normal, &mut next);
+            assert!(is_well_formed(&child), "cross_from 产出不合法: {child:?}");
+        }
+    }
+
+    #[test]
+    fn factory_children_share_the_slot_parent() {
+        // 每槽 1 克隆 + (per_slot-1) 个工厂子代，全部来自同一父代 sorted[i]
+        let p = Params { generations: 1, population: 10, per_slot: 5, limit: 200 };
+        let mut next = stream(0x5A1E_u64);
+        let pop: Vec<Individual> = (0..10)
+            .map(|i| {
+                let toks = crate::function::parse(&format!("(* {} x)", i as f64 + 0.5));
+                Individual::new(toks)
+            })
+            .collect();
+        let out = next_generation(&pop, &p, VarMode::Normal, &mut next, |t, _| {
+            Evaluation { score: 0.0, dist: DIST_SENTINEL, hits: 0 }
+        });
+        // 截断到 s = 10/5 = 2
+        assert_eq!(out.len(), 2);
     }
 }
