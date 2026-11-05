@@ -259,7 +259,9 @@ func command(cmd: String) -> void:
 		GwCommands.PLAY_REPLAY:
 			_play_replay()
 		GwCommands.PLAY_PAUSE:
-			notify("回放播放未实现")
+			# 回放已能播（docs/133）；播放/暂停由 GwReplayPlayer 自己接管，
+			# 这里不再弹"未实现"的假提示。
+			pass
 		GwCommands.KEY_PREV, GwCommands.KEY_NEXT:
 			notify("回放跳转未实现")
 		GwCommands.SAVE_SCREENSHOT, GwCommands.SAVE_SUMMARY, GwCommands.SAVE_CLIP:
@@ -356,7 +358,6 @@ func _play_replay() -> void:
 	var lobby: Control = screens.get("ReplayLobby")
 	if lobby != null and lobby.has_method("selected_replay"):
 		state.reset_replay(lobby.call("selected_replay"))
-	notify("回放播放未实现")
 	_begin_match()
 
 func _submit_join_ip() -> void:
