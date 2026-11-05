@@ -195,7 +195,7 @@ GraphwarRootNode                        [GraphwarRootNode]  (Rust)
 | 控件 | 类型 | 文本/图标 | 作用 | 本仓库 |
 |---|---|---|---|---|
 | `Campaign/MarginContainer/VBoxContainer/HBoxContainer/MarginContainer/Label` | Label | `CAMPAIGN` | 标题 | ❌ |
-| `.../VBoxContainer/Control/level_0 … level_20` | GraphwarButton ×**21** | `0`…`20` | **观测**：`level_0` 按下 → `JoinLevelPopUp.visible=1`（进关卡预览）。**推断**：每个按钮一个关卡；21 关与用户口述"21 关（0–20）"一致。**缺**：锁定态（`lock.svg` 存在但本进程全部可点，因为本地存档是新的/未锁定状态未知） | ❌ 控件；关卡生成 逻辑✅ `src/levelgen.rs`（三种模式已逆） |
+| `.../VBoxContainer/Control/level_0 … level_20` | GraphwarButton ×**21** | `0`…`20` | **观测**：`level_0` 按下 → `JoinLevelPopUp.visible=1`（进关卡预览）。**推断**：每个按钮一个关卡；21 关与用户口述"21 关（0–20）"一致。**缺**：锁定态（`lock.svg` 存在但本进程全部可点，因为本地存档是新的/未锁定状态未知） | ❌ 控件；关卡生成 逻辑✅ `src/levelgen.rs`（**只有两种模式**，见 `docs/103`） |
 | `Campaign/.../Control` | Control | — `CampaingLevelsButtons.gd` | **观测（字符串池）**：这 21 个按钮**是脚本运行时 new 出来的**（`GraphwarButton.new()` + `set_name("level_"+str(i))` + `add_child`），不是场景里摆好的 | ❌ |
 | `.../HBoxContainer/ExitButtonContainer/{ClipButton,LongPressButton}` | GraphwarButton ×2 | icon=`return.svg` | 返回（`ClipButton` 按下无反应，`LongPressButton` 是长按返回；见 §4.11 的同类验证） | ❌ |
 
