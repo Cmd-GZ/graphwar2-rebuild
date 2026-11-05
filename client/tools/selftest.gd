@@ -28,6 +28,7 @@ func run(main: Control) -> int:
 	await _test_replay_lobby()
 	await _test_lan_lobby()
 	await _test_ui_text_and_measured_geometry()
+	await _test_tab_fix()
 	await _test_game_setup()
 	await _test_pixel_truth_geometry()
 	await _test_play_screen()
@@ -409,6 +410,211 @@ func _test_ui_text_and_measured_geometry() -> void:
 		_expect(stray.size() == 1, "回放列表空时只剩标题一个 Label（实际 %s）" % str(stray))
 		_command("exit_replay_lobby")
 		await _frames(2)
+
+## 本轮（`docs/145`）新增：两个**被真帧钉住的合成规则** + 一个真值几何。
+##
+## 这一组之所以存在，是因为那两处错的根因是同一个：**把"运行时合成"写成了"固定图"**。
+##   * Faces / Hats 的格子 = 「**当前 `profile.skin`** 的皮肤圆 + 该格的脸/帽子图标」，
+##     不是 build 那一刻的快照，也不是一张固定的皮肤图；
+##   * JoinLevelPopUp 的形状 = `.tscn` 的 **1 : 10 : 1** 三条竖带 + 面板内 4 段定比，
+##     不是"按内容撑开"。
+##
+## 判据都能指到真值（`docs/145` §1/§2）：
+##   * 皮肤：真二进制帧 `A_skins_red` / `A_faces_red`——在 Skins 页点 `red` 之后，
+##     Faces 页 15 格的圆心从 `(255,204,0)` 变成 `(255,114,114)`（观测）；
+##   * 弹窗：真值管线 C（正版 pck + stock Godot）自报的 rect（1920×1160）：
+##     面板 (243,100) **1434×956**、顶带 96、底带 (0,1060) 1920×**96**，
+##     并且真二进制帧与之逐像素相同（`docs/145` §2.1）；
+##   * 模式图标底：`axis_button_theme.tres` 四个态全指向 `axis_menu_icon_theme.tres`
+##     = **白底** + 3px 黑边 + 圆角 10；另外三个是 `#1A3B2D`（两份 `.tres` 可逐字段读）。
+func _test_tab_fix() -> void:
+	var app_node := get_node_or_null("/root/App")
+
+	# ---- 1) Faces / Hats：三层结构 + 皮肤层跟着 profile.skin 走 ----
+	_command("player_settings")
+	await _frames(3)
+	var player := _screen("PlayerScreen")
+	if player == null or app_node == null:
+		_expect(false, "PlayerScreen / App 存在（tab-fix 组）")
+		return
+	var want_skin := int(app_node.store.profile.skin)
+	var entries := 0
+	var layered := 0
+	var cards_clean := 0
+	var layers_now := 0
+	var want_icon := GwIcons.get_icon("skin_%d" % want_skin)
+	for grid_name in ["FacesVbox", "HatsVbox"]:
+		var grid := player.find_child(String(grid_name), true, false)
+		if grid == null:
+			continue
+		for row in grid.get_children():
+			for entry in (row as Node).get_children():
+				entries += 1
+				var card := (entry as Node).find_child("GraphwarButton", false, false) as Button
+				var skin_layer := (entry as Node).find_child("SkinBackgroundButton", false, false) as Button
+				var item_layer := (entry as Node).find_child("Button", false, false) as Button
+				if card != null and skin_layer != null and item_layer != null:
+					layered += 1
+				if card != null and card.icon == null:
+					cards_clean += 1
+				if skin_layer != null and skin_layer.icon == want_icon:
+					layers_now += 1
+	# 观测（`docs/104` §5.2）：42 格（Faces 15 + Hats 27），每格 3 个按钮
+	_expect(entries == 42 and layered == 42,
+		"Faces/Hats 42 格都是三层（白卡 + 皮肤层 + 图标层，实际 %d/%d）" % [layered, entries])
+	# `shop_button_entry.tscn` 里根节点 `GraphwarButton` **没有** icon：白卡只画底色，
+	# 皮肤只由 `SkinBackgroundButton` 画一层（两处都画 = 同一个圆叠两次 alpha）。
+	_expect(cards_clean == entries,
+		"白卡层不带皮肤图标（皮肤只画一层，实际 %d/%d 干净）" % [cards_clean, entries])
+	_expect(layers_now == entries,
+		"Faces/Hats 每格皮肤层 = 当前皮肤 skin_%d（实际 %d/%d）" % [want_skin, layers_now, entries])
+
+	# 换皮肤：点 Skins 页里**另一张**皮肤，Faces/Hats 必须**立刻**跟着换（原来永远是旧值）。
+	var target := -1
+	var target_button: Button = null
+	var skins_vbox := player.find_child("SkinsVbox", true, false)
+	if skins_vbox != null:
+		for row in skins_vbox.get_children():
+			for b in (row as Node).get_children():
+				if not (b is Button):
+					continue
+				var ic := (b as Button).icon
+				if ic == null or ic == want_icon:
+					continue
+				for i in GwIcons.SKINS.size():
+					if GwIcons.SKINS[i] == "skins/gray" or GwIcons.SKINS[i] == "skins/target":
+						continue      # 这两张不在网格里（`docs/129` §2.2）
+					if GwIcons.get_icon("skin_%d" % i) == ic:
+						target = i
+						target_button = b as Button
+						break
+				if target_button != null:
+					break
+			if target_button != null:
+				break
+	if target_button != null:
+		target_button.emit_signal("pressed")
+		await _frames(2)
+	var switched := 0
+	var target_icon := GwIcons.get_icon("skin_%d" % target)
+	for grid_name in ["FacesVbox", "HatsVbox"]:
+		var grid := player.find_child(String(grid_name), true, false)
+		if grid == null:
+			continue
+		for row in grid.get_children():
+			for entry in (row as Node).get_children():
+				var skin_layer := (entry as Node).find_child("SkinBackgroundButton", false, false) as Button
+				if skin_layer != null and skin_layer.icon == target_icon:
+					switched += 1
+	_expect(target >= 0 and switched == entries,
+		"点 Skins 页的第 %d 号皮肤 ⇒ Faces/Hats %d 格立刻换成它（实际 %d）"
+		% [target, entries, switched])
+	# 还原：把 skin 写回原值，再**离开并重新进入**本屏（`on_enter` 必须重刷一次）
+	app_node.store.profile.skin = want_skin
+	app_node.store.save_all()
+	_command("exit_player_settings")
+	await _frames(2)
+	_command("player_settings")
+	await _frames(3)
+	var reentered := 0
+	for grid_name in ["FacesVbox", "HatsVbox"]:
+		var grid := player.find_child(String(grid_name), true, false)
+		if grid == null:
+			continue
+		for row in grid.get_children():
+			for entry in (row as Node).get_children():
+				var skin_layer := (entry as Node).find_child("SkinBackgroundButton", false, false) as Button
+				if skin_layer != null and skin_layer.icon == want_icon:
+					reentered += 1
+	_expect(int(app_node.store.profile.skin) == want_skin and reentered == entries,
+		"重新进入玩家页后皮肤恢复 skin_%d（实际 %d/%d 格，profile=%d）"
+		% [want_skin, reentered, entries, int(app_node.store.profile.skin)])
+	_command("exit_player_settings")
+	await _frames(2)
+
+	# ---- 2) JoinLevelPopUp：1:10:1 三条竖带 + 面板内四段 ----
+	_command("campaign")
+	await _frames(3)
+	var campaign := _screen("Campaign")
+	var first := _find_button(campaign, "level_0")
+	if first != null:
+		first.emit_signal("pressed")
+		await _frames(3)
+	var popup := _screen("JoinLevelPopUp")
+	if popup == null:
+		_expect(false, "JoinLevelPopUp 存在（tab-fix 组）")
+		return
+	var panel_node: Node = popup.find_child("Panel", true, false)
+	var panel := panel_node as Panel
+	# `PanelContainer` 不是 `Panel` 的子类 ⇒ 这一条同时排掉了"用 PanelContainer 冒充 Panel"
+	# 的可能（后者会按 stylebox 的 content margin 把里面的 VBox 再内缩 3px）。
+	_expect(panel != null,
+		"JoinLevelPopUp 的面板节点是 Panel（PanelContainer 会再内缩 3px，实际 %s）"
+		% (panel_node.get_class() if panel_node != null else "<null>"))
+	# headless 的 dummy 窗口只有 **64×64**（实测 `get_window().size == (64,64)`），
+	# 那个尺寸下弹窗的几何量不出真值。下面几个断言直接在真值口径 **1920×1160** 下做，
+	# 做完把窗口尺寸还原（后面的用例仍按原来的环境跑）。
+	var saved_window := get_window().size
+	get_window().size = Vector2i(1920, 1160)
+	await _frames(4)
+	# 真值 rect（引擎自报 + 真二进制帧逐像素确认，见本函数头注释）
+	# 面板的**全局**矩形（`position` 是相对 `MarginContainer2` 的，恒为 0）
+	_expect(panel != null and panel.get_global_rect().position.distance_to(Vector2(243, 100)) <= 1.0
+		and absf(panel.size.x - 1434.0) <= 1.0 and absf(panel.size.y - 956.0) <= 1.0,
+		"JoinLevelPopUp 面板 = (243,100) 1434×**956**（真值 1920×1160，实际 %s）"
+		% (str(panel.get_global_rect()) if panel != null else "<null>"))
+	var band_node := popup.get("_bottom_band") as Control
+	_expect(band_node != null and absf(band_node.position.y - 1060.0) <= 1.0
+		and absf(band_node.size.y - 96.0) <= 1.0,
+		"底部留白带 = (0,1060) 1920×**96**（真值；以前整条缺失 ⇒ 面板多 96 px，"
+		+ "用户说的\"弹窗下面的部分太长\"，实际 %s）"
+		% (str(Rect2(band_node.position, band_node.size)) if band_node != null else "<null>"))
+	# 四个模式格子 = 236×236 正方；Cancel 194 宽、Start 218 宽（真帧黑边环逐像素量得）
+	var block_ok := 0
+	var modes_boxes: Dictionary = popup.get("_mode_buttons")
+	for key in modes_boxes:
+		var btn := modes_boxes[key] as Control
+		if btn != null and absf(btn.size.x - 236.0) <= 1.0 and absf(btn.size.y - 236.0) <= 1.0:
+			block_ok += 1
+	_expect(block_ok == 4, "四个模式格子都是 236×236 正方（真值；实际 %d/4）" % block_ok)
+	var cancel_btn := popup.get("_cancel") as Control
+	var start_btn := popup.get("_start") as Control
+	_expect(cancel_btn != null and absf(cancel_btn.size.x - 194.0) <= 1.0
+		and start_btn != null and absf(start_btn.size.x - 218.0) <= 1.0,
+		"Cancel = 194 宽 / Start = 218 宽（真帧；实际 %.0f / %.0f）"
+		% [cancel_btn.size.x if cancel_btn != null else -1.0,
+			start_btn.size.x if start_btn != null else -1.0])
+
+	# ---- 3) 四个模式按钮的底色（axis 白、其余深绿） ----
+	var modes: Dictionary = popup.get("_mode_buttons")
+	var white_ok := 0
+	var dark_ok := 0
+	for key in modes:
+		var b := modes[key] as Button
+		if b == null:
+			continue
+		var sb := b.get_theme_stylebox("normal") as StyleBoxFlat
+		if sb == null:
+			continue
+		if String(key) == "axis":
+			if sb.bg_color.r > 0.99 and sb.bg_color.g > 0.99 and sb.bg_color.b > 0.99 \
+					and sb.border_width_left == 3:
+				white_ok += 1
+		else:
+			if absf(sb.bg_color.r - GwThemeFactory.COL_PANEL.r) < 0.01 \
+					and absf(sb.bg_color.g - GwThemeFactory.COL_PANEL.g) < 0.01 \
+					and absf(sb.bg_color.b - GwThemeFactory.COL_PANEL.b) < 0.01 \
+					and sb.border_width_left == 3:
+				dark_ok += 1
+	_expect(modes.size() == 4 and white_ok == 1,
+		"AxisModeButton 是白底 + 3px 黑边（axis_menu_icon_theme.tres，实际 %d/1）" % white_ok)
+	_expect(dark_ok == 3,
+		"另外三个模式按钮是 #1A3B2D + 3px 黑边（game_menu_icon_button_theme.tres，实际 %d/3）"
+		% dark_ok)
+	get_window().size = saved_window
+	await _frames(2)
+	_command("cancel_level")
+	await _frames(2)
 
 ## 递归扫文本：`Label` / `Button` / `LineEdit` 的 `text`。
 func _scan_internal_text(node: Node, markers: Array, out: Array[String]) -> void:
