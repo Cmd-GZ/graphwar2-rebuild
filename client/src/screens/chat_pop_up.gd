@@ -35,12 +35,17 @@ func _ready() -> void:
 	super()
 
 func build() -> void:
-	# 外层：满屏 + 左右各 10 px（原版内联脚本只写 margin_left/right）
+	# 原版这层 `Control` / `ChatContainer` / `ChatContainer2` 的 `mouse_filter` 全是
+	# **2（IGNORE）**：聊天浮层除了输入行和聊天区之外**不吃**鼠标 —— 否则顶部那条
+	# 看不见的发送键区域会把"再点一次聊天开关"的点击吞掉，聊天就关不掉了。
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var shell := GwUI.margins("ChatContainer", 10, 0, 10, 0, self)
 	shell.set_anchors_preset(Control.PRESET_FULL_RECT)
 	shell.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	shell.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var content := GwUI.vbox("ChatContainer2", GwUI.SEPARATION, shell)
+	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	# ① 看不见的发送键：MarginContainer(ExitButtonContainer.gd, 宽/30) → GraphwarButton
 	var send_holder := GwUI.margin("MarginContainer", 0, content)
