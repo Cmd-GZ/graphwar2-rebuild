@@ -33,6 +33,7 @@
 | [90-anti-waste.md](90-anti-waste.md) | 防无用功守则（本轮会话的失败清单与对策） | 防无用功守则（开工必读） |
 | [91-bisection-loop.md](91-bisection-loop.md) | 采样器 normal 二分循环的逐条汇编：`lo`/`hi` 更新规则 | 二分 `lo`/`hi` 规则（早停根因，改码依据） |
 | [92-ui-inventory.md](92-ui-inventory.md) | **客户端界面台账（15/15 界面，运行时枚举）** | 界面 × 控件 × 作用 × 实现状态（唯一台账） |
+| [101-gdc-contents.md](101-gdc-contents.md) | **`.gdc` 字节码内容：5 个行为脚本 + 47 行布局数值表**（`tools/gdc_disasm.py`） | `.gdc` 常量/标识符/函数/伪源码（补 `92` §2 的缺口） |
 
 ## 二、已归档（`docs/archive/`，**不要引用其结论**）
 
