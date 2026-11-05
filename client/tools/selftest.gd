@@ -2517,9 +2517,20 @@ func _test_net_real_server() -> void:
 ##   * 弹道复算的"点序列 = 服务端那条"可以用一条**固定**的 `FunctionPoints` 钉死。
 ##
 ## 缺 `serve_match` 时 A 段整段 skip（显式打印原因），B 段照样跑。
+## 联机用例的**关卡种子**（固定值，见 `src/serverloop.rs::run` 的 `GW2_MATCH_SEED`）。
+##
+## 为什么钉死：真服务端的关卡种子默认来自 `seed_from_os()`，所以每局障碍布局都不同。
+## 实测 30 个种子里有 8 个会**有障碍压住射手**（开局位置固定 x=±10，生成器不看这两个点），
+## 还有约 1.6% 的种子一个障碍都不生成 —— 用例若跟着摇骰子，就会偶发红灯。
+## 这个种子是实测挑出来的：10 个障碍、4 名士兵都不在障碍里。
+const ONLINE_TEST_SEED := 8
+
 func _test_play_online() -> void:
+	# 子进程继承父进程的环境（`OS.create_process` 没有 env 参数，只能这样给）。
+	OS.set_environment("GW2_MATCH_SEED", str(ONLINE_TEST_SEED))
 	await _test_play_online_real_server()
 	await _test_play_online_lifeinfo_fake_server()
+	OS.set_environment("GW2_MATCH_SEED", "")      # 还回去：别的用例不该被这个种子影响
 
 ## 挑一条"能打中敌人"的函数：**用内核**预演服务端会怎么判。
 ##

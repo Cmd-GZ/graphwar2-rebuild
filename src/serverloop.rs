@@ -206,7 +206,30 @@ impl TurnLog {
 /// 跑一局：接受一个客户端并服务到结束。
 ///
 /// 返回实际监听的地址（`addr` 用 `:0` 时由系统分配）。
-pub fn run(cfg: Config) -> std::io::Result<String> {
+///
+/// ## 关卡种子的**测试旋钮**（`docs/139` §6.4）
+///
+/// 默认关卡种子来自 `seed_from_os()`（`Config::default`），所以**每局障碍布局都不同**。
+/// 对"用真服务端跑端到端"的自检来说这是骰子：偶发的一局里障碍会压住射手
+/// （开局位置固定 `x = ±10`，生成器不看这两个点），那一发在任何采样下都在第一点被
+/// 掩膜判停，用例就只能靠"换一局"重试。
+///
+/// 设 `GW2_MATCH_SEED=<u64>` 就把种子钉死，于是同一份布局可以反复复跑。
+/// **不设时行为与以前完全一致**（仍然 `seed_from_os()`）；子进程继承父进程的环境，
+/// 所以自检用 `OS.set_environment()` + `OS.create_process()` 就能用上它。
+pub fn run(mut cfg: Config) -> std::io::Result<String> {
+    if let Ok(raw) = std::env::var("GW2_MATCH_SEED") {
+        let raw = raw.trim().to_string();
+        if let Ok(v) = raw.parse::<u64>() {
+            // 32 字节种子：前 8 字节是原值，接下来 8 字节是一个黄金比例混合，
+            // 只为让"相邻的 v"给出差别更大的流（挑种子好挑一点）。
+            let mut seed = [0u8; 32];
+            seed[..8].copy_from_slice(&v.to_le_bytes());
+            seed[8..16].copy_from_slice(&v.wrapping_mul(0x9E37_79B9_7F4A_7C15).to_le_bytes());
+            cfg.seed = seed;
+            eprintln!("SEED {}", v);
+        }
+    }
     let listener = TcpListener::bind(&cfg.addr)?;
     let local = listener.local_addr()?;
     eprintln!("LISTEN {}", local);

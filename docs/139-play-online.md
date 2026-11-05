@@ -312,8 +312,23 @@ SELFTEST 529 passed, 0 failed
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| 服务端偶尔**一个障碍都不发** | `levelgen::generate()` 的 `n = trunc(normal()*7 + 15)`，`min_count = 0` 时约 1.6% 会落到 0（`src/levelgen.rs:87`；`serverloop` 传的 min_count 就是 0） | 用例自己的开局判据只要"士兵到齐 + `TurnInfo`"；障碍那两条在"服务端发了 0 个"时**显式 skip** 并打印原因（不假装通过） |
-| 偶尔**射手被障碍压住**，任何弹道都在第一点被判挡住（5 次实测里 2 次） | 开局位置是固定的 `x = ±10`（`src/serverloop.rs`），障碍却是随机撒的、**不看**这两个点 | 本地预演（内核）会如实报 153 个候选全 `blocked` ⇒ 用例**换一局**（服务端每局重抽障碍，最多 6 次）。这条只在自检里做，界面不做 |
+| 服务端偶尔**一个障碍都不发** | `levelgen::generate()` 的 `n = trunc(normal()*7 + 15)`，`min_count = 0` 时约 1.6% 会落到 0（`src/levelgen.rs:87`；`serverloop` 传的 min_count 就是 0） | ① 用例的关卡种子**钉死**（见下）；② 万一还是 0 个，障碍那两条**显式 skip** 并打印原因（不假装通过） |
+| **射手被障碍压住**，任何弹道都在第一点被判挡住 | 开局位置是固定的 `x = ±10`（`src/serverloop.rs`），障碍却是随机撒的、**不看**这两个点 | ① 种子钉死；② 兜底：本地预演（内核）会如实报 153 个候选全 `blocked` ⇒ 用例**换一局**（最多 6 次）。换局只发生在自检里，界面不做 |
+
+### 6.5 种子旋钮：`GW2_MATCH_SEED`（**自定**，测试用）
+
+`src/serverloop.rs::run()` 里加了一个**只影响命令行 harness** 的旋钮：设了
+`GW2_MATCH_SEED=<u64>` 就把关卡种子从 `seed_from_os()` 换成这个值（32 字节：前 8 字节是原值、
+后 8 字节是一个黄金比例混合）。**不设时行为与以前完全一致**；`tests/server_match.rs` 走的是
+`serve_stream*`，不受影响。
+
+自检里用 `OS.set_environment("GW2_MATCH_SEED", …)` + `OS.create_process()`（子进程继承父进程环境，
+`create_process` 本身没有 env 参数），种子取 `ONLINE_TEST_SEED = 8`。
+
+怎么挑的（**观测**）：让服务端按种子 1…30 各跑一局，读回 `AddObstacle` 与 `PosInfo`，检查
+"4 名士兵有没有一个落在障碍里"。结果：8/30 个种子会压住至少一名士兵（射手恒为
+soldier 231、站位 `(-10, 0)`），障碍数从 4 到 25 不等。种子 8 = 10 个障碍、无人被压。
+钉死之后连跑 3 次都是 **529 passed, 0 failed**，且不再触发重试。
 
 附带发现（**观测**）：既有的 `_test_net_real_server` 用的是 `_server_started()`
 （要求 `AddObstacle > 0`），所以它也有那 1.6% 的抖动。本轮**不动**它（只许加断言），
@@ -375,8 +390,8 @@ bash client/run.sh dump | grep '@@KERNEL'      # 期望 available=1 hit_test=1
 | 文件 | 变化 | 内容 |
 |---|---|---|
 | `client/src/screens/play_screen.gd` | **+579 / −0** | 联机成员 12 个 + `_begin_online`/`_online_teardown`/`_online_subscribe`/`_build_online_soldiers`/`_build_online_obstacles`/`_apply_online_turn`/`_online_can_fire`/`_online_tick`/`_fire_online`/`_on_online_message`/`_online_apply_life`/`_online_soldier_by_entity`/`_draw_online_shot`/`_truncate_path_at_x`/`_stop_before_end`/`_online_status_text`/`online_state`；**既有行只加了分支**（`begin_match`/`fire`/`_refresh_plane`/`_active_soldier`/`_human_team`/`_check_match_over`/`fire_fx_state`/`end_match`/`_process` 各一处），回放分支与 `_fire_fx` 的 4 处落点**一字未动** |
-| `client/tools/selftest.gd` | **+539 / −0** | 只**新增**两个用例 + 九个辅助函数（`_play_online_started`/`_online_enemies_of`/`_online_obstacles_of`/`_pick_online_shot`/`_online_shot_hits`/`_online_shot_reason`/`_online_sine_expr`/`_online_poly_expr`/`_first_dead_entity`）；**既有 478 条断言一条没动** |
+| `client/tools/selftest.gd` | **+550 / −0** | 只**新增**两个用例 + 九个辅助函数（`_play_online_started`/`_online_enemies_of`/`_online_obstacles_of`/`_pick_online_shot`/`_online_shot_hits`/`_online_shot_reason`/`_online_sine_expr`/`_online_poly_expr`/`_first_dead_entity`）；**既有 478 条断言一条没动** |
 | `src/game.rs` | **+45 / −0** | `player_info_message()` + 逐字节测试 |
-| `src/serverloop.rs` | **+51 / −2** | `FIRST_PLAYER_ID` 常量、`NewPlayerRequest` 分支、开局玩家槽改用常量（值不变）、`FunctionUpdateRequest` 的 bug 修复（§5.4） |
+| `src/serverloop.rs` | **+75 / −3** | `FIRST_PLAYER_ID` 常量、`NewPlayerRequest` 分支、开局玩家槽改用常量（值不变）、`FunctionUpdateRequest` 的 bug 修复（§5.4）、`run()` 里的 `GW2_MATCH_SEED` 测试旋钮（§6.5） |
 | `client/src/net/*` | **0** | 照它的 API 用，一个字没改 |
 | `core_bridge.gd` / `replay_player.gd` / `player_screen.gd` / `client/src/ui/*` | **0** | 不碰 |
