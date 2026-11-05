@@ -188,3 +188,26 @@ fn captured_correction_constants_match() {
         "cos((0.73*x)) + 1.643"
     );
 }
+
+#[test]
+fn full_level_replay_of_all_four_captured_shots() {
+    // 同一关的 4 发全部复算：函数取自各实体抓到的 corrected_function
+    // （230/231 未提交函数，服务端按 `0.00` 处理）。
+    let mask = build_mask2();
+    let cases: [(&str, f64, f64, f64, f64, bool); 4] = [
+        ("0.00", -11.346008187591371, 12.212311109990708, -0.09600818759175, 12.212, false),
+        ("(-46.06/(7.94+x))", 6.01835415786761, -8.461015900864648, -19.202270842130353, 13.811015975785434, true),
+        ("0.00", -7.12554866468165, 6.212956280205123, -3.0942986646815407, 6.213, false),
+        ("cos((0.73*x))", 22.093339229702053, 0.7301541058520371, 17.994589229702342, 2.4850738714109544, true),
+    ];
+    let mut worst = 0.0_f64;
+    for (text, x0, y0, hit_x, hit_y, flip) in cases {
+        let pts = shot_points(text, x0, y0, 0.5, flip, Mode::Normal, true);
+        let got = first_hit(&mask, &pts, x0, y0)
+            .unwrap_or_else(|| panic!("{text}: 轨迹没有撞到任何实体"));
+        let d = ((got.0 - hit_x).powi(2) + (got.1 - hit_y).powi(2)).sqrt();
+        assert!(d < 0.5, "{text}: 首个碰撞 {got:?} 与抓到的 ({hit_x}, {hit_y}) 相距 {d}");
+        worst = worst.max(d);
+    }
+    assert!(worst > 0.0, "至少应有一发有偏差（采样步长导致）");
+}
