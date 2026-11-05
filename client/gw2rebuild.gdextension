@@ -5,3 +5,9 @@ compatibility_minimum = 4.1
 [libraries]
 linux.debug.x86_64 = "res://libgw2_rebuild.so"
 linux.release.x86_64 = "res://libgw2_rebuild.so"
+windows.debug.x86_64 = "res://gw2_rebuild.dll"
+windows.release.x86_64 = "res://gw2_rebuild.dll"
+macos.debug = "res://libgw2_rebuild.dylib"
+macos.release = "res://libgw2_rebuild.dylib"
+android.debug.arm64 = "res://android/arm64-v8a/libgw2_rebuild.so"
+android.release.arm64 = "res://android/arm64-v8a/libgw2_rebuild.so"
