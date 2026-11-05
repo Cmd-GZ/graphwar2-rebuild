@@ -11,6 +11,9 @@
 - LAN 发现：UDP 广播，明文 JSON（`time_mode` 写作 `"Timers1m"`）
 - 对局：TCP，**`u16` 大端长度 + JSON**
 - 29 种消息已入库为 `fixtures/protocol.jsonl`，`src/protocol.rs` 全部解析通过
+- **服务端握手可运行**（`docs/33`）：`server::on_new_connection` 产出抓包里的 7 条状态同步，
+  逐字节一致；`examples/serve_handshake.rs` 经**真实 TCP 往返**验证
+  （客户端发 `NewConnectionRequest`，收到 7 帧 324 字节）
 - **网络编解码实现完成并逐字节验证**（`docs/32`）：`Broadcast::to_json` 与
   `emit_turn_info`/`emit_life_queued_death`/`emit_function_points`/`emit_effect_info`
   重新序列化抓包样本后**完全一致**（含 f64 最短往返格式）。
