@@ -79,10 +79,18 @@ pub struct Match {
     mask: Vec<u8>,
     /// 已经用掉的效果 id（抓包里从 236 开始递增）
     next_effect_id: i64,
-    /// 士兵 → 队伍（用于判定"某队全灭"）。
+    /// 实体（士兵 **和** 靶子）→ 队伍（用于判定"某队全灭"）。
     pub teams: std::collections::BTreeMap<i64, u8>,
     /// 这一局出现过的所有队伍。
     all_teams: std::collections::BTreeSet<u8>,
+    /// **靶子表**：`id -> alive`。靶子在真值里就是 `Team2` 的普通实体，**没有**独立规则
+    /// （`docs/150`：127/127 份回放里靶子都有 `TargetInfo` + `TeamInfo{Team2}`，
+    /// 且**都没有** `SoldierInfo`；造靶子的 `0x46f310` 的 `team` 是**入参**）。
+    /// ⇒ 它和士兵一样进 [`Match::team_has_survivor`]，走**同一条**"某队全灭"规则。
+    pub targets: std::collections::BTreeMap<i64, bool>,
+    /// 回合上限：`Some(n)` = 原版发过 `TurnLimitInfo{turn_limit: n}`（构造点 `0x472400`）；
+    /// `None` = 原版**根本不发**这条事件（`docs/123` §5.1 #4：无上限是"不发"，不是发 0）。
+    pub turn_limit: Option<i64>,
     /// 已完成的回合数（`TurnCountInfo.turn_count`）。
     pub turn_count: i64,
     /// 当前回合的起始 tick 与时间模式。
@@ -221,6 +229,23 @@ pub fn player_info_message(player_id: i64, connection_id: i64) -> String {
     )
 }
 
+/// 一局为什么结束（真值 `0x4759f0` 的两个结束入口）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndingReason {
+    /// 某队没有存活实体了（`0x475a80` / `0x475a88` 两条 `je END`）。
+    TeamWiped,
+    /// 回合上限用尽（`0x475a64`–`0x475a7a`）。**独立**于上面那条的第二个入口。
+    TurnLimit,
+}
+
+/// 结束判定的结果。`winner` 的取值照真值写进 `[self+0x11f]` 的那个字节：
+/// `Some(0)` = Team1、`Some(1)` = Team2、`None` = 两边都没活实体（真值里的 `2`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ending {
+    pub reason: EndingReason,
+    pub winner: Option<u8>,
+}
+
 impl Match {
     pub fn new(
         room: RoomState,
@@ -238,6 +263,8 @@ impl Match {
         Match {
             room, obstacles, soldiers, tick_base, mask,
             next_effect_id: 236, teams, all_teams, turn_count: 0,
+            targets: std::collections::BTreeMap::new(),
+            turn_limit: None,
             turn_start_tick: 0, time_mode: "Timer1m".to_string(),
             pending_destroy: Vec::new(),
             turns: TurnManager::new(),
@@ -539,10 +566,143 @@ impl Match {
         tick_at(self.tick_base.0, self.tick_base.1, now_ms)
     }
 
-    /// 登记某名士兵属于哪支队伍。
+    /// 登记某名实体（士兵 **或** 靶子）属于哪支队伍。
+    ///
+    /// 真值里队伍是**实体**的属性，不是"士兵"的属性：造靶子的 `0x46f310` 用
+    /// `movzx edx,bpl`（它的第 2 个参数）去写 `TeamInfo`，也就是**靶子带队伍**
+    /// （`docs/150`：127/127 份回放都是 `TeamInfo{Team2}`）。所以靶子也走这张表。
     pub fn set_team(&mut self, soldier_id: i64, team: u8) {
         self.teams.insert(soldier_id, team);
         self.all_teams.insert(team);
+    }
+
+    // ---- 靶子（真值 `graphwar_target_manager.rs` + `life_manager` 的形态）----
+    //
+    // `docs/150` 把三件事分开了：
+    //   ① 靶子**是** `Team2` 的实体（所以打靶关的胜负 = `Team2` 全灭，不是另一条规则）；
+    //   ② 靶子**不是**士兵（回放里 127/127 个靶子都没有 `SoldierInfo`），
+    //      所以它不参与射手轮转、不进 `soldiers`（那张表是"能被弹道打死、能开火"的集合）；
+    //   ③ 存活位在生命表里（靶子有 `LifeInfo`），胜负判定数的正是生命表里的活实体。
+
+    /// 造一个靶子（真值 `0x46f310`）：登记 id、**写队伍**、初始 `alive = true`。
+    pub fn add_target(&mut self, id: i64, team: u8) {
+        self.targets.insert(id, true);
+        self.set_team(id, team);
+    }
+
+    /// 靶子被打死（等价于一条 `LifeInfo{alive:false}`）。返回是否真的从活翻成死。
+    pub fn kill_target(&mut self, id: i64) -> bool {
+        match self.targets.get_mut(&id) {
+            Some(alive) if *alive => {
+                *alive = false;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// 靶子**复原**（等价于一条 `LifeInfo{alive:true}`，真值 `0x454b40(id, true)`）。
+    ///
+    /// 形状是硬约束（`docs/123` §2.2/§4.3）：**只翻 alive 位**，不新建 id、不发
+    /// `TargetInfo`、不碰掩膜。返回是否真的从死翻成活。
+    pub fn restore_target(&mut self, id: i64) -> bool {
+        match self.targets.get_mut(&id) {
+            Some(alive) if !*alive => {
+                *alive = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// 靶子总数（`graphwar_target_manager` 的那张集合）。
+    pub fn targets_total(&self) -> usize {
+        self.targets.len()
+    }
+
+    /// 还活着的靶子数。
+    pub fn targets_alive(&self) -> usize {
+        self.targets.values().filter(|a| **a).count()
+    }
+
+    /// 这个 id 是不是靶子。
+    pub fn is_target(&self, id: i64) -> bool {
+        self.targets.contains_key(&id)
+    }
+
+    /// **某队还有没有存活实体**（在场士兵 ∪ 存活靶子）。
+    ///
+    /// 这就是胜负判定的**唯一判据**（真值 `0x473520` 的返回值：`(Team1 有活人, Team2 有活人)`）。
+    /// 它数的是**生命表里的活实体**，靶子有 `LifeInfo` ⇒ 算在内；玩家实体没有 `LifeInfo`
+    /// ⇒ 不算在内（`docs/150` §Q2：语料里 217 次 `EndingGame` 全部符合这条）。
+    pub fn team_has_survivor(&self, team: u8) -> bool {
+        // 士兵：死掉的已经被 `fire` 从 `self.soldiers` 里摘掉（`docs/150` §Q2 的注）
+        let soldier = self
+            .soldiers
+            .iter()
+            .any(|s| self.teams.get(&s.id).copied() == Some(team));
+        if soldier {
+            return true;
+        }
+        self.targets
+            .iter()
+            .any(|(id, alive)| *alive && self.teams.get(id).copied() == Some(team))
+    }
+
+    /// 设回合上限（真值 `0x472400`：写 `[self+0xc8]=1`、`[self+0xcc]=n`，再发 `TurnLimitInfo`）。
+    ///
+    /// 报文形状是**观测**：语料里 21 条全是 `{"TurnLimitInfo":{"turn_limit":N}}`
+    /// （N ∈ {1,5,6,10}），没有第二条字段。
+    pub fn set_turn_limit(&mut self, limit: i64) -> Vec<String> {
+        self.turn_limit = Some(limit);
+        vec![format!(r#"{{"TurnLimitInfo":{{"turn_limit":{limit}}}}}"#)]
+    }
+
+    /// 这一局结束了吗？`None` = 继续。
+    ///
+    /// 对应真值 `0x4759f0`（回合末）里的**两个**结束入口，按它的顺序：
+    ///
+    /// ```text
+    /// 0x475a64  cmp turn_count, turn_limit      ; ① 回合上限用尽（且上限被设过）
+    /// 0x475a6b  setae  /  0x475a77 test bpl,r15b
+    /// 0x475a80  test al,1  je END               ; ② Team1 没有活实体
+    /// 0x475a88  test dl,1  je END               ; ③ Team2 没有活实体
+    /// ```
+    ///
+    /// 胜方（`0x475bfb`–`0x475c14` 写进 `[self+0x11f]` 的那个字节）：
+    /// `0`=Team1、`1`=Team2、`2`=没人（两边都没活实体）。
+    pub fn ending(&self) -> Option<Ending> {
+        let limit_hit = matches!(self.turn_limit, Some(n) if self.turn_count >= n);
+        let wiped_any = self
+            .all_teams
+            .iter()
+            .any(|t| !self.team_has_survivor(*t));
+        if !limit_hit && !wiped_any {
+            return None;
+        }
+        let alive: Vec<u8> = self
+            .all_teams
+            .iter()
+            .copied()
+            .filter(|t| self.team_has_survivor(*t))
+            .collect();
+        let winner = if alive.len() == 1 {
+            Some(alive[0])
+        } else if alive.len() >= 2 && limit_hit {
+            // 真值 `0x475c06`：`cmp ebp,1` 之后 `adc al,1` —— 上限用尽而两边都还有人时，
+            // 胜方被**写死成 1（Team2）**。战役里 Team2 = 关卡方（靶子/对手），
+            // 所以"上限用尽 ⇒ 玩家输"是原版行为，不是我们的发明。
+            Some(1)
+        } else {
+            // 两边都没活实体：真值写 `2`（= 没人赢）。语料里没有这种收场。
+            None
+        };
+        let reason = if limit_hit {
+            EndingReason::TurnLimit
+        } else {
+            EndingReason::TeamWiped
+        };
+        Some(Ending { reason, winner })
     }
 
     /// 开始一个回合：`TurnInfo` -> `EndOfTurnInfo` -> `GameStateInfo(WaitingForFunctions)`。
@@ -560,25 +720,18 @@ impl Match {
         ]
     }
 
-    /// 回合结束：推进 `turn_count`，并在某队全灭时进入 `EndingGame`。
+    /// 回合结束：推进 `turn_count`，结束条件见 [`Match::ending`]。
     ///
     /// 依据真实抓包：`{"TurnCountInfo":{"turn_count":4}}` 之后紧跟
-    /// `{"GameStateInfo":{"game_state":"EndingGame"}}`，而那一回合我方最后一名士兵阵亡
-    /// （`docs/45`）。
+    /// `{"GameStateInfo":{"game_state":"EndingGame"}}`（`docs/45`）；回合上限也走同一条出口
+    /// （`0x4759f0` 里 ①②③ 全都跳到 `0x475bac`）。
     pub fn end_turn(&mut self) -> Vec<String> {
         self.turn_count += 1;
         let mut out = vec![format!(
             r#"{{"TurnCountInfo":{{"turn_count":{}}}}}"#,
             self.turn_count
         )];
-        // 还有存活士兵的队伍
-        let alive_teams: std::collections::BTreeSet<u8> = self
-            .soldiers
-            .iter()
-            .filter_map(|s| self.teams.get(&s.id).copied())
-            .collect();
-        let annihilated = self.all_teams.iter().any(|t| !alive_teams.contains(t));
-        if annihilated {
+        if self.ending().is_some() {
             out.push(crate::protocol::emit_game_state("EndingGame"));
         }
         out
