@@ -5,6 +5,14 @@
 最后更新：**Godot 4.7.2 已就位，扩展能在真引擎里加载/注册/被调用；
 用还原资源打包的 `.pck` 已能启动**。
 
+### 网络协议已还原（本轮）
+
+抓包方式：hook libc 的 `sendto/recvfrom/send/recv`（`tools/capture_net.js`）。
+- LAN 发现：UDP 广播，明文 JSON（`time_mode` 写作 `"Timers1m"`）
+- 对局：TCP，**`u16` 大端长度 + JSON**
+- 29 种消息已入库为 `fixtures/protocol.jsonl`，`src/protocol.rs` 全部解析通过
+- 未捕获：对局内（回合/开火/结算）消息 —— 抓包在 setup 阶段撞到 400 包上限
+
 ### 最终验收（全部实测）
 
 ```

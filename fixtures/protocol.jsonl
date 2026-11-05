@@ -1,0 +1,29 @@
+{"GameNameRequest":{"game_name":"Graphwar Game"}}
+{"NewConnectionRequest":{"major_version":"2.0","minor_version":"60"}}
+{"NewConnection":{"connection_id":228}}
+{"AxisModeInfo":{"axis_mode":"EveryUnit"}}
+{"FunctionModeInfo":{"function_mode":"NormalFunction"}}
+{"TimeModeInfo":{"time_mode":"Timer1m"}}
+{"TurnModeInfo":{"turn_mode":"SequentialTurns"}}
+{"GameStateInfo":{"game_state":"Setup"}}
+{"GameNameInfo":{"game_name":"Graphwar Game"}}
+{"TickRequest":{}}
+{"NewPlayerRequest":{"connection_id":228}}
+{"TickReply":{"current_tick":5}}
+{"PlayerInfo":{"player_id":229,"connection_id":228}}
+{"TeamInfo":{"entity_id":229,"team":"Team1"}}
+{"ColorInfo":{"entity_id":229,"color":{"r":149,"g":5,"b":62}}}
+{"SoldierInfo":{"soldier_id":230,"player_id":229}}
+{"EntityEffectInfo":{"entity_id":230,"effect_type":"DeathEffect"}}
+{"NameRequest":{"entity_id":229,"name":"user"}}
+{"SkinGraphicsRequest":{"entity_id":229,"graphics_str":"yellow"}}
+{"FaceGraphicsRequest":{"entity_id":229,"graphics_str":"regular_eyes"}}
+{"HatGraphicsRequest":{"entity_id":229,"graphics_str":"soldier_helmet"}}
+{"RankRequest":{"entity_id":229,"rank":0}}
+{"NameInfo":{"entity_id":229,"name":"user"}}
+{"SkinGraphicsInfo":{"entity_id":229,"graphics_str":"yellow"}}
+{"FaceGraphicsInfo":{"entity_id":229,"graphics_str":"regular_eyes"}}
+{"HatGraphicsInfo":{"entity_id":229,"graphics_str":"soldier_helmet"}}
+{"RankInfo":{"entity_id":229,"rank":0}}
+{"NewBotRequest":{"connection_id":228,"level":3}}
+{"BotAdded":{"connection_id":228,"player_id":232,"level":3}}
