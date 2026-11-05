@@ -86,8 +86,8 @@ Fire → 内核算弹道 → 内核判命中 → 结算）。**这一局不是"�
 
 **Rust 实现状态**：`parse` / `eval` / `calculate` / `shot` / `plane` / `events` / `life` / `settle` /
 `turnstate` / `protocol` / `api` / `broker` / `game` / `server` / `serverloop` / `levelgen` / `aigen` 均已可运行。
-**`cargo test --offline` = 314 条全绿**（本机实测，0 失败；`src/` 共 23 个 `*.rs`）。
-**客户端自检 = 478 条断言**：有资产时全绿；缺资产时 `175 passed, 10 skipped`，每条 skip 都显式报原因。
+**`cargo test --offline` = 333 条全绿**（本机实测，0 失败；`src/` 共 23 个 `*.rs`）。
+**客户端自检 = 581 条断言**：有资产时全绿；缺资产时 `175 passed, 10 skipped`，每条 skip 都显式报原因。
 模块全集与行号下界见 [`docs/02-module-map.md`](docs/02-module-map.md)。
 
 ## 文档
@@ -186,7 +186,7 @@ gw2_simulate(text,x0,y0,step,flip,ode,obstacles,n,count)   -> 首个命中序号
 docs/        逆向得到的实现说明（99 篇现行 + archive/ 32 篇过程档案）
 src/         Rust 复原实现（可编译，23 个模块）
 client/      Godot 4.7.2 重建客户端（15 个界面；媒体资产不入库，用 tools/extract_assets.py 从自己的 pck 解）
-tests/       与真二进制对齐用的用例（cargo test 314 条）
+tests/       与真二进制对齐用的用例（cargo test 333 条）
 fixtures/    真值夹具（已入库）
 tools/       分析脚本（含 extract_assets.py / parse_replay.py / campaign_data.py 等离线工具）
 rsc/         ← gitignore，用 tools/pck_extract.py 生成

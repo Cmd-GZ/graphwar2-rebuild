@@ -30,3 +30,7 @@ client/tools/*.uid
 *.apk
 *.apks
 *.aab
+
+# Python 缓存
+__pycache__/
+*.pyc
