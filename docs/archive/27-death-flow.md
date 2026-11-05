@@ -1,3 +1,9 @@
+> **已归档（2026-11 文档归并）**
+>
+> 本文内容已并入 [`65-life-rules-confirmed.md`](../65-life-rules-confirmed.md) §1。
+> 本文件只作**过程档案**保留：原始证据地址、命令输出都还在，但**不要引用其结论**。
+> 逐份判定与归并映射见 [`107-docs-consolidation.md`](../107-docs-consolidation.md)。
+
 # 27 · 死亡语义与回合状态机（真实对局抓包）
 
 终于抓到 `alive:false`。数据来自一次**高难度 Bot**（`level:25`）的对局，
