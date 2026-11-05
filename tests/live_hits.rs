@@ -435,3 +435,68 @@ fn replays_every_shot_of_the_death_level() {
     }
     assert!(worst > 0.0, "至少应有一发有偏差（采样步长所致）");
 }
+
+#[test]
+fn match_replays_the_death_level_through_the_protocol_layer() {
+    use gw2_rebuild::game::Match;
+    use gw2_rebuild::protocol::{get_f64, get_int, get_str, parse_message};
+    use gw2_rebuild::server::RoomState;
+    use gw2_rebuild::settle::Target;
+
+    let room = RoomState {
+        room_name: "Graphwar Game".into(),
+        game_state: "Setup".into(),
+        axis_mode: "EveryUnit".into(),
+        function_mode: "NormalFunction".into(),
+        turn_mode: "SequentialTurns".into(),
+        time_mode: "Timer1m".into(),
+    };
+    let soldiers: Vec<Target> = REPLAY_SOLDIERS
+        .iter()
+        .map(|(id, x, y)| Target { id: *id, x: *x, y: *y, radius: 0.5 })
+        .collect();
+    let mut m = Match::new(room, REPLAY_OBSTACLES.to_vec(), soldiers, (5, 0));
+
+    // 与 replays_every_shot_of_the_death_level 相同的输入序列
+    let shots: [(&str, i64, f64, f64, f64, bool); 6] = [
+        ("0.00", 230, -10.453270554921136, -2.651563472451839, -4.743, false),
+        ("(-1.65/(-8.04/x))", 234, 17.627629369923454, -12.391816789113197, -24.994, true),
+        ("0.00", 231, -11.75347210076399, -5.862016522961236, 2.309, false),
+        ("abs((5.09+x))", 233, 18.434029032407364, 0.8649132574204391, -5.095, true),
+        ("0.00", 231, -11.75347210076399, -5.862016522961236, 2.853, false),
+        ("(-1.65/(-8.04/x))", 234, 17.629369923454 * 0.0 + 17.627629369923454, -12.391816789113197, -24.550, true),
+    ];
+
+    let mut killed_all: Vec<i64> = Vec::new();
+    for (i, (text, owner, x0, y0, end_x, flip)) in shots.iter().enumerate() {
+        let msgs = m.fire(*owner, text, *x0, *y0, *flip, (i as i64 + 1) * 1000);
+        // 首条必须是 FunctionPoints，且终点与抓包相差 < 0.5
+        let first = parse_message(&msgs[0]).expect("首条应为合法消息");
+        assert_eq!(first.kind, "FunctionPoints", "第 {i} 发首条不是 FunctionPoints");
+        let got_end = get_f64(&first, "end_x").unwrap();
+        assert!((got_end - end_x).abs() < 0.5, "第 {i} 发终点 x={got_end} 与抓到的 {end_x} 相差过大");
+        // 每条都必须是可解析的合法消息
+        for msg in &msgs {
+            assert!(parse_message(msg).is_some(), "第 {i} 发产出非法消息: {msg}");
+        }
+        // 收集致死对象
+        for msg in &msgs {
+            if let Some(parsed) = parse_message(msg) {
+                if parsed.kind == "LifeQueuedDeath" {
+                    killed_all.push(get_int(&parsed, "entity_id").unwrap());
+                }
+                if parsed.kind == "EffectInfo" {
+                    assert!(!get_str(&parsed, "effect_type").unwrap().is_empty());
+                }
+            }
+        }
+    }
+    // 抓包里这局死的是 230 与 231。这里**不能**断言"恰好kill这两个"：
+    // `FunctionInfo` 会随回合更新，而提取时只保留了每个实体的最后一条，
+    // 杀死 230 的那发函数原文没有留存，所以复算出的致死集合只能做"不越界"检查。
+    killed_all.sort_unstable();
+    killed_all.dedup();
+    for id in &killed_all {
+        assert!(*id == 230 || *id == 231, "复算出抓包里没死过的实体 {id}，说明模型有误");
+    }
+}

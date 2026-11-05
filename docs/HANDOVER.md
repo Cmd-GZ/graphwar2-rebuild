@@ -11,6 +11,11 @@
 - LAN 发现：UDP 广播，明文 JSON（`time_mode` 写作 `"Timers1m"`）
 - 对局：TCP，**`u16` 大端长度 + JSON**
 - 29 种消息已入库为 `fixtures/protocol.jsonl`，`src/protocol.rs` 全部解析通过
+- **`Match` 服务端对象**（`docs/36`）：`fire()` 一次产出整串报文
+  （FunctionPoints → 生死 → 爆炸 → 销毁），tick 走 60Hz 时钟；死者从场上移除。
+  死亡关卡 6 发回放：终点全对、产出全部可解析。
+  **教训**：`FunctionInfo` 随回合更新，提取时只留最后一条会丢历史——
+  必须保留时间线（本轮因此把"精确致死集合"的断言收窄为"不越界"）
 - **tick 时钟**（`docs/35`）：抓包加了时间戳后测出**精确 60 ticks/秒**，
   `current_tick = base + round(ms*60/1000)`，113 个样本 110 个精确命中
   （差异是抓包时间戳抖动）；`TickReply` 序列化逐字节一致。
