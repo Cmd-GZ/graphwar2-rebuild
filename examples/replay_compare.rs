@@ -194,7 +194,9 @@ fn main() {
     let mut rng = ChaCha12::from_seed(&key);
     let mut next = move || rng.next_u64();
     let pop: Vec<Individual> = aigen::initial_population(&p, mode, &mut next);
-    let out = aigen::evolve(pop, &p, mode, &mut next, |t| aigen::fitness(t, &ctx));
+    // 两阶段评分（docs/97）：粗评 0.5 全部、精评 0.01 只跑前 3 名
+    let mut score = |t: &[gw2_rebuild::Token], phase| ctx.evaluate(t, phase);
+    let out = aigen::evolve(pop, &p, mode, &mut next, &mut score);
     let best = &out[0];
     println!("我们的模型 ({} 代 × {} 种群) 最优 = {:.0}（{} token）",
              p.generations, p.population, best.score, best.tokens.len());

@@ -207,11 +207,151 @@ pub fn params(level: u8) -> Params {
     Params { generations, population, per_slot: 5, limit }
 }
 
-/// 一个个体：token 序列 + 适应度。
+// ---------------------------------------------------------------------------
+// 两阶段评分（`docs/97-two-phase-scoring.md`）
+// ---------------------------------------------------------------------------
+//
+// 反汇编（vaddr；Ghidra = vaddr + 0x100000）：
+//   * 每个个体先做**粗评** step=0.5（`0x51bc8b` / `0x51c0c1` 的 `movq 0x19f6d0`）；
+//   * 代末排序 + 截断后，**前 3 名**再做**精评** step=0.01
+//     （`0x51c3ab` / `0x51c6e6` / `0x51c9a0` 的 `movsd 0x19f110`，三段展开、非循环）；
+//   * 精评与粗评"不一致"就把该条**整条换成新的随机函数**
+//     （判据 `0x51c3b8`–`0x51c3e4`；换新 `0x4ef020`/`0x4ee0e0`/`0x4ee720`，从 `0x51c3ea` 起）。
+
+/// 粗评步长。反汇编 `0x51bc8b` / `0x51c0c1` 读常量 `0x19f6d0` = 0.5。
+pub const COARSE_STEP: f64 = 0.5;
+
+/// 精评步长。反汇编 `0x51c3ab` / `0x51c6e6` / `0x51c9a0` 读常量 `0x19f110` = 0.01。
+pub const FINE_STEP: f64 = 0.01;
+
+/// 精评的条数 = **前 3 名**。
+///
+/// 反汇编里**没有**"3"这个立即数：是三段展开的代码，各自带 `len > rank` 的守卫
+/// （`0x51c451 cmpq $0x0` / `0x51c78c cmpq $0x2` / `0x51ca46 cmpq $0x3`）。
+/// 也没有配置字段控制它 —— 3 是硬编码。
+pub const FINE_RANKS: usize = 3;
+
+/// "一致"判定的距离容差 = 0.5。
+///
+/// 反汇编 `0x51c3dc ucomisd 0x19f6d0`：**与粗评步长复用同一个常量 0.5**。
+pub const CONSISTENCY_TOL: f64 = 0.5;
+
+/// 距离项未命中时的哨兵值。常量 `0x19fb30` = 1e6（`0x51ab35` / `0x51afe7` 写入）。
+pub const DIST_SENTINEL: f64 = 1_000_000.0;
+
+/// 评分阶段。两阶段**共用同一个评分核心**（`0x51a750`），只有 `step` 不同。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Phase {
+    /// 粗评：种群里每一个个体都做一次。
+    Coarse,
+    /// 精评：只有代末前 3 名做。
+    Fine,
+}
+
+impl Phase {
+    /// 该阶段的采样步长（也正是评分核心的第 1 个 SSE 参数 `xmm0`）。
+    pub const fn step(self) -> f64 {
+        match self {
+            Phase::Coarse => COARSE_STEP,
+            Phase::Fine => FINE_STEP,
+        }
+    }
+}
+
+/// 一次评分的三个分量，逐字段对应评分核心的 sret 结构体
+/// （写回点 `0x51b10d` / `0x51b11d` / `0x51b111` / `0x51b114`）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Evaluation {
+    /// 排序键（sret `+0x00`）。= `hits*2e6 − dist − V²/100 − (V>limit ? 5e7 : 0)`。
+    pub score: f64,
+    /// 距离项 `d`（sret `+0x08`）：初值 [`DIST_SENTINEL`]，按事件取 min，被从分数里减掉。
+    pub dist: f64,
+    /// 命中数项（sret `+0x10`）：适应度里乘 2e6 的整数。
+    pub hits: u32,
+}
+
+impl Evaluation {
+    /// 只有分数的退化评价：`dist` 恒为哨兵、`hits` 恒为 0。
+    ///
+    /// 用它包装"与步长无关"的测试用适应度时，两阶段判据**永不触发**，
+    /// 行为与改动前的单次评分完全一致（老测试就是这么过的）。
+    pub const fn scalar(score: f64) -> Self {
+        Self { score, dist: DIST_SENTINEL, hits: 0 }
+    }
+
+    /// 精评结果与粗评是否"一致"（= 保留该个体）。
+    ///
+    /// 逐条对应 `0x51c3b8`–`0x51c3e4`：
+    ///
+    /// ```text
+    /// 51c3b8  mov  0x108(%rsp),%eax      ; eax = 精评 sret+0x10 = hits
+    /// 51c3bf  cmp  0x38(%rsp),%eax       ; 与粗评存下的 hits（个体 +0x28）
+    /// 51c3c3  jne  <换新>                 ; 1) 命中数不同 → 不一致
+    /// 51c3c5  movsd 0x100(%rsp),%xmm0    ; xmm0 = 精评 sret+0x08 = dist
+    /// 51c3ce  subsd 0x30(%rsp),%xmm0     ; − 粗评存下的 dist（个体 +0x20）
+    /// 51c3d4  andpd <0x19c050>           ; |Δ|
+    /// 51c3dc  ucomisd 0x19f6d0           ; 与 0.5 比较
+    /// 51c3e4  jbe  <一致>                ; 2) |Δ| <= 0.5 → 一致
+    /// ```
+    ///
+    /// 注意 `jbe`：`ucomisd` 遇到 NaN 会置 ZF/CF，因此 **NaN 也算"一致"**
+    /// —— 这里用 `!(… > tol)` 而不是 `… <= tol` 来保持同样的语义。
+    pub fn consistent_with(self, coarse: &Evaluation) -> bool {
+        if self.hits != coarse.hits {
+            return false;
+        }
+        !((self.dist - coarse.dist).abs() > CONSISTENCY_TOL)
+    }
+}
+
+/// 把"只看 token、与阶段无关"的标量适应度包装成两阶段评分器。
+///
+/// 迁移用：老的 `FnMut(&[Token]) -> f64` 直接套一层即可继续喂给
+/// [`next_generation`] / [`evolve`]，且两阶段判据永不触发（行为不变）。
+pub fn scalar_scorer<F>(mut f: F) -> impl FnMut(&[Token], Phase) -> Evaluation
+where
+    F: FnMut(&[Token]) -> f64,
+{
+    move |tokens: &[Token], _phase: Phase| Evaluation::scalar(f(tokens))
+}
+
+/// 一个个体：token 序列 + 一次评分的三个分量。
+///
+/// 字段布局与二进制里 48 字节的个体逐一对应（`docs/97` §2）：
+/// `Vec<Token>`（24 字节：ptr/len/cap），接着 `score`、`dist`、`hits`、`_`（再来 24 字节）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Individual {
     pub tokens: Vec<Token>,
+    /// 排序键（个体 `+0x18` ← 评分结果 `+0x00`）。排序比较器读的就是这个字段。
     pub score: f64,
+    /// 距离项（个体 `+0x20` ← 评分结果 `+0x08`）。
+    pub dist: f64,
+    /// 命中数项（个体 `+0x28` ← 评分结果 `+0x10`）。
+    pub hits: u32,
+}
+
+impl Individual {
+    /// 还没评过分的新个体（分数 0、距离项取哨兵、命中 0）。
+    pub fn new(tokens: Vec<Token>) -> Self {
+        Self { tokens, score: 0.0, dist: DIST_SENTINEL, hits: 0 }
+    }
+
+    /// 带上一次评分结果的个体。
+    pub fn with_evaluation(tokens: Vec<Token>, eval: Evaluation) -> Self {
+        Self { tokens, score: eval.score, dist: eval.dist, hits: eval.hits }
+    }
+
+    /// 取出评分三元组（用于两阶段比对）。
+    pub fn evaluation(&self) -> Evaluation {
+        Evaluation { score: self.score, dist: self.dist, hits: self.hits }
+    }
+
+    /// 记下一次评分结果。
+    pub fn set_evaluation(&mut self, eval: Evaluation) {
+        self.score = eval.score;
+        self.dist = eval.dist;
+        self.hits = eval.hits;
+    }
 }
 
 /// token 的"需要的操作数"：值 0、二元 2、一元 1。
@@ -309,15 +449,64 @@ pub fn crossover(
     out
 }
 
-/// 走一代（`docs/75` §2.5 的实测结构）。
+/// 代末收尾：**前 3 名用 0.01 精评，不一致就整条换新**（反汇编 `0x51c3ab`–`0x51ca4f`）。
 ///
-/// 实测：每个外层迭代 = **1 个克隆（数组头部按索引顺序）+ 4 个工厂子代**，
-/// 外层 0.2×种群 次 ⇒ `0.2n + 4×0.2n = n`。
+/// 三件必须照抄的行为（`docs/97` §3）：
 ///
-/// ⚠️ 两条仍是假设：① 头部"已按质量排序"只有间接证据；
-/// ② 工厂内部的交叉切点规则未还原（见 [`crossover`]）。
-/// 精英比例 = `1 / per_slot`（即 20%）：每代按分数降序只保留前 `种群/per_slot` 个并全部克隆，
-/// 每个槽再补 `per_slot - 1` 个工厂子代（`docs/95`）。
+/// 1. **不写回**：精评分数不覆盖个体的粗评分数 —— 一致时什么都不做
+///    （`0x51c3e4 jbe 0x51c499`，只有释放临时 token 向量的代码），
+///    不一致时也只覆写 token 向量那 24 字节（`0x51c480`–`0x51c495`），
+///    `+0x18/+0x20/+0x28` 的旧粗评值留在原地。
+/// 2. **整条换新**：新个体 = `makeRandomFunction → 构造/补齐 → 变异`
+///    （`0x51c3f6` / `0x51c40a` / `0x51c44c`），与槽循环里"存活数不够"的随机分支
+///    （`0x51b90f` / `0x51b923` / `0x51b95c`）是**同一套调用、同样的 RNG 消耗**。
+/// 3. **换的是该名次本身**：第 0/1/2 名分别顶掉 `survivors[0]/[1]/[2]`
+///    （写回点 `0x51c468`、`0x51c79b`、`0x51ca5d`，偏移 `+0x00/+0x30/+0x60`），
+///    不是"丢掉一条再补一条到队尾"。
+fn fine_pass<F>(
+    survivors: &mut [Individual],
+    mode: VarMode,
+    next: &mut dyn FnMut() -> u64,
+    score: &mut F,
+) where
+    F: FnMut(&[Token], Phase) -> Evaluation,
+{
+    for rank in 0..FINE_RANKS.min(survivors.len()) {
+        // 反汇编：三名各来一次 `call 0x51a750`，xmm0 = 0.01
+        let coarse = survivors[rank].evaluation();
+        let fine = score(&survivors[rank].tokens, Phase::Fine);
+        if fine.consistent_with(&coarse) {
+            continue; // 一致 → 保留粗评结果，什么都不写
+        }
+        // 不一致 → 整条换新。`random_function` 内含 0x4ef020 与 0x4ee0e0 两步。
+        let mut tokens = random_function(next, mode);
+        mutate(&mut tokens, next); // 0x4ee720
+        survivors[rank].tokens = tokens;
+        // 注意：分数字段保持旧值（反汇编只覆盖 Vec 的 ptr/len/cap）。
+    }
+}
+
+/// 走一代。
+///
+/// 与二进制 `FUN_0061b440` 的代末顺序一致（`docs/95`、`docs/97`）：
+///
+/// ```text
+/// 槽 i ∈ [0, s)：1 个克隆重评（0x51bc8b @0.5）+ (per_slot−1) 个工厂子代（0x51c0c1 @0.5）
+/// ⇒ 共 s × per_slot = 种群 个个体，每个都做一次粗评
+/// 降序排序（0x51cb6f）→ 截断到前 s 个（0x51c208）
+/// 前 3 名精评 @0.01（0x51c3b3 / 0x51c6ee / 0x51c9a8），不一致就整条换新
+/// ```
+///
+/// **返回值是 `s = 种群/per_slot` 个存活者（已排序）**，不是整代 `种群` 个
+/// —— 二进制里截断之后数组就只剩 s 个，下一代的槽循环按槽号取 `prev[0..s]`。
+/// （改动前这里返回整代 `种群` 个，是本次修正的一部分，见 `docs/97` §6。）
+///
+/// ⚠️ 仍是假设/未建模的三条（与本次改动无关）：
+/// ① 工厂内部的交叉/重生细节见 [`crossover`]；
+/// ② `pop.len() < s` 时二进制会走"随机新生"分支（`0x51b82c jbe 0x51b900`，
+///    那是**第 0 代**的初始化路径）；这里假设调用方给的种群够长
+///    （[`initial_population`] 保证 `len = 种群`），不够时退化为重复最后一条；
+/// ③ 初始种群的生成方式仍未完全还原（`docs/95` §5 未定）。
 pub fn next_generation<F>(
     pop: &[Individual],
     p: &Params,
@@ -326,7 +515,7 @@ pub fn next_generation<F>(
     mut score: F,
 ) -> Vec<Individual>
 where
-    F: FnMut(&[Token]) -> f64,
+    F: FnMut(&[Token], Phase) -> Evaluation,
 {
     let mut sorted: Vec<Individual> = pop.to_vec();
     sorted.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
@@ -335,14 +524,18 @@ where
     }
 
     let n = p.population as usize;
-    let clones = n / 5; // 0.2 × 种群
+    let per_slot = p.per_slot.max(1) as usize;
+    let survivors = n / per_slot; // s = 种群 / 每槽个体数 = 20%
     let mut out: Vec<Individual> = Vec::with_capacity(n);
 
-    for i in 0..clones {
-        // ① 克隆头部第 i 个（索引顺序，实测）
-        out.push(sorted[i.min(sorted.len() - 1)].clone());
-        // ② 4 个工厂子代（实测：内层循环 = 4 × 外层）
-        for _ in 0..4 {
+    for i in 0..survivors {
+        // ① 克隆头部第 i 个（索引顺序，实测），并**重新粗评**
+        //    （反汇编 0x51b8c5 memcpy → 0x51b8fa → 0x51bc8b call 0x51a750 @0.5）
+        let mut clone = sorted[i.min(sorted.len() - 1)].clone();
+        clone.set_evaluation(score(&clone.tokens, Phase::Coarse));
+        out.push(clone);
+        // ② per_slot − 1 个工厂子代（实测：内层循环 = 4 × 外层），每个也粗评
+        for _ in 1..per_slot {
             let a = (next() % sorted.len() as u64) as usize;
             let b = (next() % sorted.len() as u64) as usize;
             let tokens = if sorted[b].tokens.len() < 20 {
@@ -353,20 +546,25 @@ where
                 mutate(&mut child, next);
                 child
             };
-            out.push(Individual { tokens, score: 0.0 });
+            // 反汇编 0x51c0c1：工厂子代那一份粗评（同一循环体被复制成两块）
+            let eval = score(&tokens, Phase::Coarse);
+            out.push(Individual::with_evaluation(tokens, eval));
         }
     }
     out.truncate(n);
-    for ind in out.iter_mut() {
-        ind.score = score(&ind.tokens);
-    }
+
+    // 代末：降序排序 + 只留前 s 个（0x51c1e2 → 0x51cb6f 分派 → 0x51c208 截断）
     out.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    out.truncate(survivors);
+
+    // 前 3 名精评 + 纠偏（0x51c3ab 起）
+    fine_pass(&mut out, mode, next, &mut score);
     out
 }
 
-/// 跑满 `params.generations` 代，返回按分数降序的最终种群。
+/// 跑满 `params.generations` 代，返回**存活者**（`种群/per_slot` 个，按分数降序）。
 ///
-/// 这就是"一回合思考"的骨架：调用方负责提供初始种群与适应度闭包。
+/// 这就是"一回合思考"的骨架：调用方负责提供初始种群与两阶段评分器。
 pub fn evolve<F>(
     pop: Vec<Individual>,
     p: &Params,
@@ -375,7 +573,7 @@ pub fn evolve<F>(
     score: F,
 ) -> Vec<Individual>
 where
-    F: FnMut(&[Token]) -> f64,
+    F: FnMut(&[Token], Phase) -> Evaluation,
 {
     evolve_with_budget(pop, p, mode, next, score, None)
 }
@@ -397,11 +595,12 @@ pub fn evolve_with_budget<F>(
     max_secs: Option<f64>,
 ) -> Vec<Individual>
 where
-    F: FnMut(&[Token]) -> f64,
+    F: FnMut(&[Token], Phase) -> Evaluation,
 {
     for ind in pop.iter_mut() {
         if ind.score == 0.0 {
-            ind.score = score(&ind.tokens);
+            let eval = score(&ind.tokens, Phase::Coarse);
+            ind.set_evaluation(eval);
         }
     }
     let start = std::time::Instant::now();
@@ -420,7 +619,7 @@ where
 /// 造一个初始种群。
 pub fn initial_population(p: &Params, mode: VarMode, next: &mut dyn FnMut() -> u64) -> Vec<Individual> {
     (0..p.population)
-        .map(|_| Individual { tokens: random_function(next, mode), score: 0.0 })
+        .map(|_| Individual::new(random_function(next, mode)))
         .collect()
 }
 
@@ -443,11 +642,57 @@ pub struct ScoringContext<'a> {
     pub limit: u32,
 }
 
-/// 适应度：`命中×2e6 − 1e6 − V²/100 − (V > limit ? 5e7 : 0)`。
+impl<'a> ScoringContext<'a> {
+    /// 同一上下文换个采样步长。
+    ///
+    /// 两阶段评分**只差这一个字段**（反汇编里就是评分核心第 1 个 SSE 参数
+    /// `xmm0`：粗评 0.5、精评 0.01），所以换步长不需要重建上下文。
+    pub fn with_step(&self, step: f64) -> ScoringContext<'a> {
+        ScoringContext {
+            x0: self.x0,
+            y0: self.y0,
+            flip: self.flip,
+            step,
+            mask: self.mask,
+            targets: self.targets,
+            limit: self.limit,
+        }
+    }
+
+    /// 按阶段评分：`Phase::Coarse` → 0.5、`Phase::Fine` → 0.01。
+    ///
+    /// 直接当两阶段评分器用：`|tokens, phase| ctx.evaluate(tokens, phase)`。
+    pub fn evaluate(&self, tokens: &[Token], phase: Phase) -> Evaluation {
+        let ctx = self.with_step(phase.step());
+        fitness_eval(tokens, &ctx)
+    }
+}
+
+/// 适应度：`命中×2e6 − dist − V²/100 − (V > limit ? 5e7 : 0)`。
 ///
 /// **实测**（`docs/74`）：常规对局里没有"友军惩罚"项。
 /// `V` 就是 token 数；`hits` 是这次弹道判死的士兵数。
+///
+/// 返回值只有分数 —— 两阶段判据另见 [`fitness_eval`]。
 pub fn fitness(tokens: &[Token], ctx: &ScoringContext) -> f64 {
+    fitness_eval(tokens, ctx).score
+}
+
+/// 适应度的**完整**结果：分数 + 距离项 `d` + 命中数项。
+///
+/// 三个分量正是评分核心 sret 结构体的前 24 字节，也是两阶段判据要比的东西
+/// （`docs/97` §3）。`dist` 的语义见 [`Evaluation::dist`]：
+///
+/// * 初值 [`DIST_SENTINEL`]（1e6，`0x19fb30`）；
+/// * 命中时按"命中点到目标圆心的距离"取 **min**（反汇编 `0x51aed6` 的
+///   `ucomisd` + `jbe` 就是取 min），所以 `dist ∈ [0, radius]`；
+/// * 分数里是**减**它（`0x51b0d9 subsd 0x8(%rsp)`），未命中时`−1e6` 就是这么来的。
+///
+/// ⚠️ 与原版的差距（**推断**）：`docs/74` 的运行实测显示常规对局里 `d` 恒为 1e6
+/// （全未命中约 −1e6、命中一人约 +1e6），也就是说更新分支在原版里通常不触发。
+/// 我们这里如实计算命中点距离，因此距离判据**比原版更活跃**（但仍受
+/// `dist ∈ [0, radius]` 约束，radius=0.5 时 `|Δ| <= 0.5` 恒成立 ⇒ 实际仍然不触发）。
+pub fn fitness_eval(tokens: &[Token], ctx: &ScoringContext) -> Evaluation {
     use crate::path::{calculate, Mode};
     use crate::plane::is_occupied;
     use crate::shot::{correction, shifted_tokens};
@@ -458,7 +703,7 @@ pub fn fitness(tokens: &[Token], ctx: &ScoringContext) -> f64 {
         score -= 50_000_000.0;
     }
     if tokens.is_empty() {
-        return score;
+        return Evaluation { score, dist: DIST_SENTINEL, hits: 0 };
     }
 
     // 修正后沿弹道走一遍：先判致死（穿过即死、不挡弹道），再判障碍阻挡
@@ -467,6 +712,7 @@ pub fn fitness(tokens: &[Token], ctx: &ScoringContext) -> f64 {
     let points = calculate(&shifted, ctx.x0, ctx.y0, ctx.step, ctx.flip, Mode::Normal);
 
     let mut killed: Vec<i64> = Vec::new();
+    let mut dist = DIST_SENTINEL;
     for &(px, py) in &points {
         for t in ctx.targets {
             if killed.contains(&t.id) {
@@ -475,13 +721,20 @@ pub fn fitness(tokens: &[Token], ctx: &ScoringContext) -> f64 {
             let d = ((px - t.x).powi(2) + (py - t.y).powi(2)).sqrt();
             if d <= t.radius {
                 killed.push(t.id);
+                if d < dist {
+                    dist = d;
+                }
             }
         }
         if is_occupied(ctx.mask, px, py) {
             break;
         }
     }
-    score + killed.len() as f64 * 2_000_000.0
+    Evaluation {
+        score: score + killed.len() as f64 * 2_000_000.0,
+        dist,
+        hits: killed.len() as u32,
+    }
 }
 
 #[cfg(test)]
@@ -757,22 +1010,32 @@ mod tests {
 
     #[test]
     fn next_generation_keeps_size_and_reuses_head() {
-        let p = params(1); // 种群 50 → 克隆 10，工厂 40
+        let p = params(1); // 种群 50 → 存活 s = 10，每个槽 1 克隆 + 4 工厂子代
         let mut next = stream(0xFEED);
         let mut pop = initial_population(&p, VarMode::Normal, &mut next);
         for (i, ind) in pop.iter_mut().enumerate() {
             ind.score = i as f64;
         }
-        let top: Vec<Vec<Token>> = {
+        let head: Vec<Vec<Token>> = {
             let mut s = pop.clone();
             s.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
             s.iter().take(10).map(|i| i.tokens.clone()).collect()
         };
-        let g1 = next_generation(&pop, &p, VarMode::Normal, &mut next, |t| t.len() as f64);
-        assert_eq!(g1.len(), p.population as usize, "种群规模应不变");
-        for t in &top {
-            assert!(g1.iter().any(|i| &i.tokens == t), "头部个体应被克隆保留");
+        // 记录评分调用顺序：每槽 = 1 个克隆 + 4 个工厂子代 ⇒ 第 5k 次就是第 k 个克隆。
+        let mut seen: Vec<Vec<Token>> = Vec::new();
+        let mut score = |t: &[Token], _phase: Phase| {
+            seen.push(t.to_vec());
+            Evaluation::scalar(t.len() as f64)
+        };
+        let g1 = next_generation(&pop, &p, VarMode::Normal, &mut next, &mut score);
+        // 改动后：返回值是**存活者** s = 种群/per_slot（二进制里截断后数组就只剩 s 个）
+        assert_eq!(g1.len(), (p.population / p.per_slot) as usize, "应返回 s = 种群/5 个存活者");
+        // 槽 i 的克隆就是上一代排好序的第 i 个（docs/95 §2.1：按槽号递增取 prev[0], prev[1], …）
+        for (k, t) in head.iter().enumerate() {
+            assert_eq!(&seen[k * p.per_slot as usize], t, "第 {k} 个槽的克隆应是头部第 {k} 个");
         }
+        // 克隆必须**重新粗评**（不是沿用父代分数）
+        assert!(g1.iter().any(|i| i.score != 0.0), "克隆/子代都应带着自己的评分");
     }
 
     #[test]
@@ -780,8 +1043,14 @@ mod tests {
         let p = Params { generations: 3, population: 10, per_slot: 5, limit: 200 };
         let mut next = stream(99);
         let pop = initial_population(&p, VarMode::Normal, &mut next);
-        let out = evolve(pop, &p, VarMode::Normal, &mut next, |t| t.len() as f64);
-        assert_eq!(out.len(), 10);
+        let out = evolve(
+            pop,
+            &p,
+            VarMode::Normal,
+            &mut next,
+            scalar_scorer(|t: &[Token]| t.len() as f64),
+        );
+        assert_eq!(out.len(), (p.population / p.per_slot) as usize);
         // 结果应按分数降序
         for w in out.windows(2) {
             assert!(w[0].score >= w[1].score);
@@ -807,18 +1076,170 @@ mod tests {
             targets: &targets,
             limit: 200,
         };
-        let p = Params { generations: 6, population: 20, per_slot: 5, limit: 200 };
+        // 现在每代只留 20% 存活者（s = 种群/5），所以种群要比以前大一些。
+        let p = Params { generations: 8, population: 50, per_slot: 5, limit: 200 };
         let mut next = stream(0x1234_5678);
         let pop = initial_population(&p, VarMode::Normal, &mut next);
-        let out = evolve(pop, &p, VarMode::Normal, &mut next, |t| fitness(t, &ctx));
+        // 两阶段：粗评 0.5、精评 0.01（后者只跑前 3 名）
+        let mut score = |t: &[Token], phase: Phase| ctx.evaluate(t, phase);
+        let out = evolve(pop, &p, VarMode::Normal, &mut next, &mut score);
         let best = out.first().expect("应有结果");
         assert!(
             best.score > 0.0,
-            "6 代内应学会命中，最好的分数是 {}（函数 {} 个 token）",
+            "8 代内应学会命中，最好的分数是 {}（函数 {} 个 token）",
             best.score,
             best.tokens.len()
         );
     }
+
+    // -----------------------------------------------------------------------
+    // 两阶段评分（docs/97）
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn two_phase_constants_match_disassembly() {
+        assert_eq!(COARSE_STEP, 0.5); // 0x19f6d0
+        assert_eq!(FINE_STEP, 0.01); // 0x19f110
+        assert_eq!(Phase::Coarse.step(), 0.5);
+        assert_eq!(Phase::Fine.step(), 0.01);
+        assert_eq!(FINE_RANKS, 3); // 三段展开
+        assert_eq!(CONSISTENCY_TOL, 0.5); // 与粗评步长复用同一常量
+        assert_eq!(DIST_SENTINEL, 1_000_000.0); // 0x19fb30
+    }
+
+    #[test]
+    fn consistency_rule_matches_the_asm() {
+        let base = Evaluation { score: 0.0, dist: 1_000_000.0, hits: 1 };
+        // 1) 命中数不同 → 不一致（0x51c3c3 jne）
+        assert!(!Evaluation { score: 1.0, dist: 1_000_000.0, hits: 2 }.consistent_with(&base));
+        assert!(!Evaluation { score: -1.0, dist: 1_000_000.0, hits: 0 }.consistent_with(&base));
+        // 2) 命中数相同、|Δdist| <= 0.5 → 一致（0x51c3e4 jbe）
+        assert!(Evaluation { score: 9.0, dist: 1_000_000.5, hits: 1 }.consistent_with(&base));
+        assert!(Evaluation { score: 9.0, dist: 999_999.5, hits: 1 }.consistent_with(&base));
+        // 3) |Δdist| > 0.5 → 不一致
+        assert!(!Evaluation { score: 9.0, dist: 1_000_000.6, hits: 1 }.consistent_with(&base));
+        assert!(!Evaluation { score: 9.0, dist: 999_999.4, hits: 1 }.consistent_with(&base));
+        // 4) NaN 走 ucomisd 的 unordered ⇒ CF/ZF 置位 ⇒ jbe 成立 ⇒ 算"一致"
+        assert!(Evaluation { score: 9.0, dist: f64::NAN, hits: 1 }.consistent_with(&base));
+    }
+
+    /// 代末前 3 名精评：**粗评看不到、精评看得见的东西** 才会触发换新。
+    ///
+    /// 场景：射手 (10,0) → 目标在原点，中间一堵很薄的竖墙（x≈1.25、厚 2 px = 0.1 单位）。
+    /// 粗评 step=0.5 的采样点落在 x=1.5 与 x=1.0 上、**跨过**这堵墙 ⇒ 以为能命中；
+    /// 精评 step=0.01 一定踩进墙里 ⇒ 知道打不到。这正是"精评纠偏"。
+    #[test]
+    fn fine_pass_replaces_individuals_when_hits_disagree() {
+        use crate::plane::{empty_mask, is_occupied, to_pixel};
+
+        let mut mask = empty_mask();
+        // 一点点试出墙的位置：要求粗评（0.5）的采样都躲开、精评（0.01）踩中
+        for px in 522..=528 {
+            for py in 200..400 {
+                mask[py * 1000 + px] = 0x00;
+            }
+        }
+        // 自检：粗评的两条采样点不在墙上，精评的一定会踩到
+        assert!(!is_occupied(&mask, 1.5, 0.0), "粗评采样点 x=1.5 应在墙外");
+        assert!(!is_occupied(&mask, 1.0, 0.0), "粗评采样点 x=1.0 应在墙外");
+        assert!(is_occupied(&mask, 1.25, 0.0), "精评应踩到墙");
+        assert_eq!(to_pixel(1.25, 0.0), (525, 300));
+
+        use crate::settle::Target;
+        let targets = vec![Target { id: 1, x: 0.0, y: 0.0, radius: 0.5 }];
+        let ctx = ScoringContext {
+            x0: 10.0,
+            y0: 0.0,
+            flip: true,
+            step: crate::SERVER_STEP,
+            mask: &mask,
+            targets: &targets,
+            limit: 200,
+        };
+        // 一条"直着打过去"的函数：y = 0（前缀式只有一个常数 token）
+        let straight = vec![Token::constant(0.0)];
+        let coarse = ctx.evaluate(&straight, Phase::Coarse);
+        let fine = ctx.evaluate(&straight, Phase::Fine);
+        assert_eq!(coarse.hits, 1, "粗评跨过薄墙，以为命中");
+        assert_eq!(fine.hits, 0, "精评踩到墙，知道打不到");
+        assert!(!fine.consistent_with(&coarse), "命中数不同 ⇒ 不一致");
+
+        // 让这条函数成为第一名，其余个体都是"很差"的函数
+        let mut p = Params { generations: 1, population: 5, per_slot: 5, limit: 200 };
+        p.population = 5; // s = 1：只有一个槽，正好第 0 名
+        let pop = vec![Individual::with_evaluation(straight.clone(), coarse)];
+        let mut next = stream(0x51C3B3);
+        let out = next_generation(
+            &pop,
+            &p,
+            VarMode::Normal,
+            &mut next,
+            |t: &[Token], phase| ctx.evaluate(t, phase),
+        );
+        assert_eq!(out.len(), 1, "s = 种群/5 = 1");
+        assert_ne!(out[0].tokens, straight, "不一致 ⇒ 该名次被换成新随机函数");
+        // 分数**不写回**：仍是粗评（旧）值（反汇编 0x51c480 只覆盖 Vec）
+        assert_eq!(out[0].score, coarse.score, "换新后仍保留旧粗评分数");
+    }
+
+    #[test]
+    fn fine_pass_keeps_individual_when_consistent() {
+        use crate::plane::empty_mask;
+        use crate::settle::Target;
+
+        // 空场：粗评、精评都说命中 ⇒ 一致 ⇒ 什么都不换
+        let mask = empty_mask();
+        let targets = vec![Target { id: 1, x: 0.0, y: 0.0, radius: 0.5 }];
+        let ctx = ScoringContext {
+            x0: 10.0,
+            y0: 0.0,
+            flip: true,
+            step: crate::SERVER_STEP,
+            mask: &mask,
+            targets: &targets,
+            limit: 200,
+        };
+        let straight = vec![Token::constant(0.0)];
+        let coarse = ctx.evaluate(&straight, Phase::Coarse);
+        assert_eq!(coarse.hits, 1);
+        let p = Params { generations: 1, population: 5, per_slot: 5, limit: 200 };
+        let pop = vec![Individual::with_evaluation(straight.clone(), coarse)];
+        let mut next = stream(7);
+        let out = next_generation(
+            &pop,
+            &p,
+            VarMode::Normal,
+            &mut next,
+            |t: &[Token], phase| ctx.evaluate(t, phase),
+        );
+        assert_eq!(out[0].tokens, straight, "一致 ⇒ 函数原样保留");
+        assert_eq!(out[0].score, coarse.score, "一致 ⇒ 分数保持粗评");
+    }
+
+    #[test]
+    fn each_generation_coarsely_scores_everyone_plus_three_fine() {
+        // 反汇编 `0x51bc8b`（克隆）/`0x51c0c1`（工厂子代）都在 0.5 上评分，
+        // 代末另有 3 次 0.01 精评 ⇒ 每代 (种群 + 3) 次。
+        // 这与 docs/67 的运行时实测"每回合 = 代数 × (种群 + 3)"一致。
+        let p = Params { generations: 3, population: 20, per_slot: 5, limit: 200 };
+        let mut next = stream(0xC0DE);
+        let mut pop = initial_population(&p, VarMode::Normal, &mut next);
+        for (i, ind) in pop.iter_mut().enumerate() {
+            ind.score = i as f64; // 让排序确定：分数 = 下标
+        }
+        let (mut coarse_n, mut fine_n) = (0usize, 0usize);
+        let mut score = |t: &[Token], phase: Phase| {
+            match phase {
+                Phase::Coarse => coarse_n += 1,
+                Phase::Fine => fine_n += 1,
+            }
+            Evaluation::scalar(t.len() as f64)
+        };
+        let _ = next_generation(&pop, &p, VarMode::Normal, &mut next, &mut score);
+        assert_eq!(coarse_n, p.population as usize, "每个个体（含克隆）都要粗评");
+        assert_eq!(fine_n, FINE_RANKS, "只有前 3 名精评");
+    }
+
 
     #[test]
     fn diffeq_mode_emits_y_with_weight_4() {
@@ -879,7 +1300,14 @@ mod tests {
         let p = Params { generations: 50, population: 10, per_slot: 5, limit: 200 };
         let pop = initial_population(&p, VarMode::Normal, &mut next);
         let before = pop.clone();
-        let out = evolve_with_budget(pop, &p, VarMode::Normal, &mut next, |_| 0.0, Some(0.0));
+        let out = evolve_with_budget(
+            pop,
+            &p,
+            VarMode::Normal,
+            &mut next,
+            scalar_scorer(|_: &[Token]| 0.0),
+            Some(0.0),
+        );
         assert_eq!(out.len(), before.len());
     }
 
