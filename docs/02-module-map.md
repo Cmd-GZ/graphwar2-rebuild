@@ -705,6 +705,11 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 # 3) 别用 fixtures/module_funcs.tsv 判函数身份：那是 panic 串的启发式，不是归属
 ```
 
+**本节的可复跑脚本**：`tools/class_probe.py`
+（`classes` / `module <mod>` / `func <ELF 虚地址>` / `literals <正则>`）。
+它把 §16.4 的三步做成自动的：`.rela.dyn` 解 `(ptr,len)` + capstone 解 `lea`+`mov len`，
+不依赖 Ghidra，秒级。`module graphwar_texture_loader` 能直接复现 16.3 里那一行的全部证据。
+
 **本节的已知偏差（写结论时必须带上）**：
 ① 除 12 个类名外，字符串边界的精确长度没解，所以"同池"≠"同一模块"；
 ② `call rel32` 看不到间接调用，凡写"没有调用者"的地方都要配 `tools/ptr_slots.py`；
