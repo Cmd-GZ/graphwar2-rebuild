@@ -513,7 +513,10 @@ impl Match {
             .copied()
             .collect();
 
-        let outcome = resolve(function_text, x0, y0, 0.5, flip, crate::path::Mode::Normal, &self.mask, &others);
+        // 步长用**实况 SERVER_STEP（0.01）**，不是 0.5。
+        // `docs/136` 的几何探针给出：同一批回放，step=0.01 时 `end_x` 逐位相同 605/739；
+        // step=0.5 只有 27/739 —— 这条写死的 0.5 是本轮对拍里最大的一块红。
+        let outcome = resolve(function_text, x0, y0, crate::SERVER_STEP, flip, crate::path::Mode::Normal, &self.mask, &others);
         let now_tick = self.tick_now(now_ms);
 
         // 报文顺序照真实抓包（docs/43）：

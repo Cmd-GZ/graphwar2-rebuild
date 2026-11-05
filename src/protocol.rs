@@ -856,15 +856,36 @@ pub fn emit_game_state(state: &str) -> String {
 /// `{"FunctionInfo":{"owner_id":..,"function":"..","corrected_function":..}}`
 ///
 /// `corrected` 为 `None` 时输出 `null`（与抓包一致）。
+/// JSON 字符串转义（只处理字符串里可能出现的字符）。
+///
+/// 存在的理由：`docs/136` 在真语料里抓到一例 —— 玩家输入 `sqrt(\y)` 时，
+/// 不转义会产出**非法 JSON**（`\y` 不是合法转义）。协议是 JSON，字符串必须转义。
+pub fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 pub fn emit_function_info(owner_id: i64, function: &str, corrected: Option<&str>) -> String {
+    let f = json_escape(function);
     match corrected {
         Some(c) => format!(
             r#"{{"FunctionInfo":{{"owner_id":{},"function":"{}","corrected_function":"{}"}}}}"#,
-            owner_id, function, c
+            owner_id, f, json_escape(c)
         ),
         None => format!(
             r#"{{"FunctionInfo":{{"owner_id":{},"function":"{}","corrected_function":null}}}}"#,
-            owner_id, function
+            owner_id, f
         ),
     }
 }
