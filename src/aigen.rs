@@ -20,12 +20,21 @@ pub const TOTAL_WEIGHT: u32 = 85;
 /// GW1 的 `RANDOM_FUNC_VALUE_MEAN` 同样是 10.2，两代一致。
 pub const CONST_SCALE: f64 = 10.2;
 
+/// 变量模式。**实测**（`docs/71` §5.1）：同一个分派表在两种模式下对"变量槽位"的处理不同。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VarMode {
+    /// 普通模式 `y = f(x)`：10 个变量权重全部给 `x`。
+    Normal,
+    /// 微分方程模式 `y' = f(x, y)`：拆成 `x` 6 个 + `y` 4 个。
+    DiffEq,
+}
+
 /// `(tag, 权重)`，按分派表里的下标顺序排列。
 ///
 /// 注意 `VarX` 的权重是 10 而不是 6：分派表里 11–16 走立即数分支、
 /// 17–20 走"栈上预存值"分支，普通模式下两者都产出 `x`。
 /// 运行时实测 `x` 占 11.77%（= 10/85），据此确认。
-pub const TABLE: [(Function, u32); 15] = [
+const TABLE_NORMAL: &[(Function, u32)] = &[
     (Function::Const, 11),
     (Function::VarX, 10),
     (Function::Add, 10),
@@ -43,6 +52,34 @@ pub const TABLE: [(Function, u32); 15] = [
     (Function::Tan, 1),
 ];
 
+/// 微分方程模式：分派表 idx 11–16 给 `x`（6 个权重）、idx 17–20 给 `y`（4 个权重）。
+const TABLE_DIFFEQ: &[(Function, u32)] = &[
+    (Function::Const, 11),
+    (Function::VarX, 6),
+    (Function::VarY, 4),
+    (Function::Add, 10),
+    (Function::Sub, 5),
+    (Function::Mul, 11),
+    (Function::Divide, 7),
+    (Function::Pow, 2),
+    (Function::Sqrt, 1),
+    (Function::Log, 1),
+    (Function::Ln, 1),
+    (Function::Exp, 6),
+    (Function::Abs, 7),
+    (Function::Sin, 7),
+    (Function::Cos, 5),
+    (Function::Tan, 1),
+];
+
+/// 取当前模式的权重表。
+pub fn table(mode: VarMode) -> &'static [(Function, u32)] {
+    match mode {
+        VarMode::Normal => TABLE_NORMAL,
+        VarMode::DiffEq => TABLE_DIFFEQ,
+    }
+}
+
 /// 抽一个函数长度（token 数）。
 ///
 /// 二进制里是 `trunc(N(0,1) * 5.0 + 10.0)`（`0x4ef08e` 的 `mulsd 5.0` +
@@ -59,9 +96,9 @@ pub fn random_length(next: &mut dyn FnMut() -> u64) -> i32 {
 ///
 /// 对应二进制 `FUN_005ef020` 里的 `idx = random % 85` 加区间比较；
 /// `next` 是 ChaCha 的取数闭包。
-pub fn draw_tag(next: &mut dyn FnMut() -> u64) -> Function {
+pub fn draw_tag(next: &mut dyn FnMut() -> u64, mode: VarMode) -> Function {
     let mut idx = (next() % u64::from(TOTAL_WEIGHT)) as u32;
-    for &(tag, weight) in TABLE.iter() {
+    for &(tag, weight) in table(mode).iter() {
         if idx < weight {
             return tag;
         }
@@ -73,8 +110,8 @@ pub fn draw_tag(next: &mut dyn FnMut() -> u64) -> Function {
 }
 
 /// 抽一个完整 token；抽到常数时按 `N(0,1) × 10.2` 取值。
-pub fn draw_token(next: &mut dyn FnMut() -> u64) -> Token {
-    let tag = draw_tag(next);
+pub fn draw_token(next: &mut dyn FnMut() -> u64, mode: VarMode) -> Token {
+    let tag = draw_tag(next, mode);
     if tag == Function::Const {
         Token::constant(normal(next) * CONST_SCALE)
     } else {
@@ -227,9 +264,9 @@ pub fn repair(tokens: &mut Vec<Token>, next: &mut dyn FnMut() -> u64) {
 /// 抽一个随机函数：先按 `trunc(N(0,1)×5+10)` 定长度，再抽那么多个 token，最后修复。
 ///
 /// 长度公式与"抽多少发多少"都是**实测**（`docs/76`）；修复是**假设**（见 [`repair`]）。
-pub fn random_function(next: &mut dyn FnMut() -> u64) -> Vec<Token> {
+pub fn random_function(next: &mut dyn FnMut() -> u64, mode: VarMode) -> Vec<Token> {
     let n = random_length(next).max(1) as usize;
-    let mut tokens: Vec<Token> = (0..n).map(|_| draw_token(next)).collect();
+    let mut tokens: Vec<Token> = (0..n).map(|_| draw_token(next, mode)).collect();
     repair(&mut tokens, next);
     tokens
 }
@@ -267,6 +304,7 @@ pub fn crossover(
 pub fn next_generation<F>(
     pop: &[Individual],
     p: &Params,
+    mode: VarMode,
     next: &mut dyn FnMut() -> u64,
     mut score: F,
 ) -> Vec<Individual>
@@ -292,7 +330,7 @@ where
             let b = (next() % sorted.len() as u64) as usize;
             let tokens = if sorted[b].tokens.len() < 20 {
                 // 第二个父代太短 → 重生（实测 cmp $0x14）
-                random_function(next)
+                random_function(next, mode)
             } else {
                 let mut child = crossover(&sorted[a].tokens, &sorted[b].tokens, next);
                 mutate(&mut child, next);
@@ -315,6 +353,7 @@ where
 pub fn evolve<F>(
     mut pop: Vec<Individual>,
     p: &Params,
+    mode: VarMode,
     next: &mut dyn FnMut() -> u64,
     mut score: F,
 ) -> Vec<Individual>
@@ -327,15 +366,15 @@ where
         }
     }
     for _ in 0..p.generations {
-        pop = next_generation(&pop, p, next, &mut score);
+        pop = next_generation(&pop, p, mode, next, &mut score);
     }
     pop
 }
 
 /// 造一个初始种群。
-pub fn initial_population(p: &Params, next: &mut dyn FnMut() -> u64) -> Vec<Individual> {
+pub fn initial_population(p: &Params, mode: VarMode, next: &mut dyn FnMut() -> u64) -> Vec<Individual> {
     (0..p.population)
-        .map(|_| Individual { tokens: random_function(next), score: 0.0 })
+        .map(|_| Individual { tokens: random_function(next, mode), score: 0.0 })
         .collect()
 }
 
@@ -413,9 +452,16 @@ mod tests {
 
     #[test]
     fn weights_sum_to_85() {
-        let sum: u32 = TABLE.iter().map(|(_, w)| *w).sum();
-        assert_eq!(sum, TOTAL_WEIGHT, "权重之和必须等于模数 85");
-        assert_eq!(TABLE.len(), 15, "分派表共 15 个非零区间");
+        for mode in [VarMode::Normal, VarMode::DiffEq] {
+            let sum: u32 = table(mode).iter().map(|(_, w)| *w).sum();
+            assert_eq!(sum, TOTAL_WEIGHT, "{mode:?} 的权重之和必须等于模数 85");
+        }
+        assert_eq!(table(VarMode::Normal).len(), 15, "普通模式 15 个非零区间");
+        assert_eq!(table(VarMode::DiffEq).len(), 16, "DiffEq 模式把变量槽拆成 x/y 两段");
+        // DiffEq 下变量权重拆成 x=6 / y=4（实测 6.83% / 4.86%，docs/71 §5.1）
+        let d = table(VarMode::DiffEq);
+        assert_eq!(d.iter().find(|(t, _)| *t == Function::VarX).unwrap().1, 6);
+        assert_eq!(d.iter().find(|(t, _)| *t == Function::VarY).unwrap().1, 4);
     }
 
     #[test]
@@ -424,9 +470,9 @@ mod tests {
         const N: u32 = 170_000; // 2000 轮 × 85
         let mut got = [0u32; 20];
         for _ in 0..N {
-            got[draw_tag(&mut next) as usize] += 1;
+            got[draw_tag(&mut next, VarMode::Normal) as usize] += 1;
         }
-        for &(tag, weight) in TABLE.iter() {
+        for &(tag, weight) in table(VarMode::Normal).iter() {
             let expect = (N * weight) / TOTAL_WEIGHT;
             let actual = got[tag as usize];
             let diff = (actual as i64 - expect as i64).unsigned_abs();
@@ -443,7 +489,7 @@ mod tests {
         let mut next = stream(0x1234_5678_9ABC_DEF1);
         let mut values = Vec::new();
         while values.len() < 20_000 {
-            let t = draw_token(&mut next);
+            let t = draw_token(&mut next, VarMode::Normal);
             if t.tag == Function::Const {
                 values.push(t.value);
             }
@@ -464,7 +510,7 @@ mod tests {
         // 分派表里没有 VarY / VarDy / UnaryMinus / 括号，NORMAL 模式不应出现
         let mut next = stream(42);
         for _ in 0..10_000 {
-            let tag = draw_tag(&mut next);
+            let tag = draw_tag(&mut next, VarMode::Normal);
             assert!(
                 tag != Function::VarY
                     && tag != Function::VarDy
@@ -639,7 +685,7 @@ mod tests {
                 k
             });
             for _ in 0..(seed % 12 + 1) {
-                d.push(draw_token(&mut || r.next_u64()));
+                d.push(draw_token(&mut || r.next_u64(), VarMode::Normal));
             }
             repair(&mut d, &mut next);
             assert!(is_well_formed(&d), "修复后应合法：{d:?}");
@@ -650,7 +696,7 @@ mod tests {
     fn random_function_is_always_well_formed() {
         let mut next = stream(0xBEEF);
         for _ in 0..500 {
-            let f = random_function(&mut next);
+            let f = random_function(&mut next, VarMode::Normal);
             assert!(!f.is_empty(), "不应生成空函数");
             assert!(is_well_formed(&f), "生成的函数应合法：{f:?}");
         }
@@ -667,7 +713,7 @@ mod tests {
     fn next_generation_keeps_size_and_reuses_head() {
         let p = params(1); // 种群 50 → 克隆 10，工厂 40
         let mut next = stream(0xFEED);
-        let mut pop = initial_population(&p, &mut next);
+        let mut pop = initial_population(&p, VarMode::Normal, &mut next);
         for (i, ind) in pop.iter_mut().enumerate() {
             ind.score = i as f64;
         }
@@ -676,7 +722,7 @@ mod tests {
             s.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
             s.iter().take(10).map(|i| i.tokens.clone()).collect()
         };
-        let g1 = next_generation(&pop, &p, &mut next, |t| t.len() as f64);
+        let g1 = next_generation(&pop, &p, VarMode::Normal, &mut next, |t| t.len() as f64);
         assert_eq!(g1.len(), p.population as usize, "种群规模应不变");
         for t in &top {
             assert!(g1.iter().any(|i| &i.tokens == t), "头部个体应被克隆保留");
@@ -687,8 +733,8 @@ mod tests {
     fn evolve_runs_requested_generations() {
         let p = Params { generations: 3, population: 10, elite: 5, limit: 200 };
         let mut next = stream(99);
-        let pop = initial_population(&p, &mut next);
-        let out = evolve(pop, &p, &mut next, |t| t.len() as f64);
+        let pop = initial_population(&p, VarMode::Normal, &mut next);
+        let out = evolve(pop, &p, VarMode::Normal, &mut next, |t| t.len() as f64);
         assert_eq!(out.len(), 10);
         // 结果应按分数降序
         for w in out.windows(2) {
@@ -717,8 +763,8 @@ mod tests {
         };
         let p = Params { generations: 6, population: 20, elite: 5, limit: 200 };
         let mut next = stream(0x1234_5678);
-        let pop = initial_population(&p, &mut next);
-        let out = evolve(pop, &p, &mut next, |t| fitness(t, &ctx));
+        let pop = initial_population(&p, VarMode::Normal, &mut next);
+        let out = evolve(pop, &p, VarMode::Normal, &mut next, |t| fitness(t, &ctx));
         let best = out.first().expect("应有结果");
         assert!(
             best.score > 0.0,
@@ -726,5 +772,35 @@ mod tests {
             best.score,
             best.tokens.len()
         );
+    }
+
+    #[test]
+    fn diffeq_mode_emits_y_with_weight_4() {
+        let mut next = stream(0xD1FFE9_u64);
+        const N: u32 = 85_000;
+        let mut x = 0u32;
+        let mut y = 0u32;
+        let mut dy = 0u32;
+        for _ in 0..N {
+            match draw_tag(&mut next, VarMode::DiffEq) {
+                Function::VarX => x += 1,
+                Function::VarY => y += 1,
+                Function::VarDy => dy += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(dy, 0, "y' 在两种模式里都不该出现");
+        let ex = (N * 6) / 85;
+        let ey = (N * 4) / 85;
+        assert!((x as i64 - ex as i64).abs() < 400, "x 应约 {ex}，实测 {x}");
+        assert!((y as i64 - ey as i64).abs() < 400, "y 应约 {ey}，实测 {y}");
+    }
+
+    #[test]
+    fn normal_mode_never_emits_y() {
+        let mut next = stream(0xA11CE);
+        for _ in 0..20_000 {
+            assert_ne!(draw_tag(&mut next, VarMode::Normal), Function::VarY);
+        }
     }
 }

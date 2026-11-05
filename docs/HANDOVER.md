@@ -120,6 +120,10 @@ hook **`0x47f700`**（取随机 u64）即可读状态：`arg0` 是状态指针�
 - 栈上第一个参数恒为 **5**（精英数，与 GW1 的 5 一致）
 - 适应度：`命中×2e6 − minDist²/100 − (步数超限 ? 5e7 : 0)`
   （`2e6` 在 `.rodata 0x19fc00`、`1e6` 在 `0x19fb30`，引用点全在 AI 区域）
+- **⚠️ 有两种函数模式**：`NormalFunction`（y=f(x)）与 `DiffEqFunction`（y'=f(x,y)）。
+  权重表只在变量槽位上不同：Normal 下 10 个权重全给 `x`；
+  **DiffEq 下 `x` 6 个 + `y` 4 个**（实测 6.83% / 4.86%，`docs/71` §5.0）。
+  `y'` 两种模式都不产生。Rust 侧已用 `aigen::VarMode` 区分
 - **token 权重表已从二进制直读**（`docs/71`，`src/aigen.rs`）：
   `idx = random % 85`，区间权重
   `const 11 | x 10 | + 10 | - 5 | * 11 | / 7 | ^ 2 | sqrt 1 | log 1 | ln 1 | exp 6 | abs 7 | sin 7 | cos 5 | tan 1`，
