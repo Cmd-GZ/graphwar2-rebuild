@@ -8,7 +8,7 @@
 > **[`107-docs-consolidation.md`](107-docs-consolidation.md)**。
 > 三节（现行 / 已归档 / 已并档）与磁盘上的文件**逐一对得上**，可以当清单核对。
 
-## 一、现行文档（116 份）
+## 一、现行文档（118 份）
 
 > 数法：`find docs -name "*.md" -not -path "*/archive/*" | wc -l`（2026-11-06 复核）。
 > 之前这里写过的 76 / 77 / 85 / 86 / 87 都是当时的旧数，已统一改成本次实测值。
@@ -125,6 +125,7 @@
 | [134-net-client.md](134-net-client.md) | **联机客户端接通**：真 TCP + `u16` 大端分帧 + 握手 7 条 + LAN 发现 + broker；假的 `create_timer(1.2)` 已删；⚠️ **PlayScreen 还没读 `App.online_room`**（战场仍是本地摆） |
 | [136-replay-diff.md](136-replay-diff.md) | **回放消息级对拍**（口径 + 全语料跑分）：400 份/103104 报文，**完全一致 0/400**；但几何探针把最大一块红定位到 `game.rs` 写死的 `0.5` 步长（换 0.01 后 `end_x` 逐位 605/739） |
 | [137-pixel-fidelity.md](137-pixel-fidelity.md) | **像素保真**：新建"只显示单个界面"的真值管线，**GameSetup 首次有真值**；PlayerScreen 0.49%→**0.007%**（根因：少两个渲染键 + 返回箭头画了两遍） |
+| [140-plane-visual.md](140-plane-visual.md) | **准备圈扒到代码**：GOT 槽 `0x9bc020` → `EntityDrawer::draw`（vaddr `0x4b2890`）；**3 段 ×120°**、半张角 30°→61.5°、宽 0.3、10 点、关抗锯齿；闭合时机改成"点 Fire 之后" |
 | [138-ode-api.md](138-ode-api.md) | **ODE 采样暴露给 GDScript**：`path_calculate_mode(expr,x0,y0,direction,mode)`，`"normal"` 直接委托既有实现（逐位相同），`"ode"` 不做修正常数、`offset` 恒 NaN |
 | [139-play-online.md](139-play-online.md) | **PlayScreen 接联机**：士兵/障碍来自 `room.entities`/`room.obstacles`，开火走 session，补上 `PlayerInfo`；顺带修出"提交的函数从没生效"的真 bug |
 | [133-replay-player.md](133-replay-player.md) | **回放播放器**：零依赖 gzip+DEFLATE、复用 `protocol::parse_message`；按 tick 驱动（60/s）；三方对拍 400 份/103104 事件/1610 局面 **0 失败**；顺带查出"列表一直空"的根因=真实回放**没有扩展名** |
