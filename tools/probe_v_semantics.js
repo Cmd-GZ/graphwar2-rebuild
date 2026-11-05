@@ -12,29 +12,45 @@ const timer = setInterval(() => {
   try {
     Interceptor.attach(m.base.add(ptr('0x51b0f8')), {
       onEnter(args) {
-        if (n >= 40) return;
+        if (n >= 60) return;
         n++;
         const rec = { V: this.context.rdx.toUInt32() };
         try { rec.limit = this.context.rcx.add(0x58).readU32(); } catch (e) { rec.limit = 'ERR'; }
-        // 在所有通用寄存器里找"len == V 且元素像 token"的向量
-        const regs = ['rdi','rsi','rdx','rcx','r8','r9','r10','r11','r12','r13','r14','r15','rax','rbx'];
-        rec.cands = [];
-        for (const name of regs) {
+        // 扫描栈：找到"值等于 V 且前面一格是指向合法 token 数组的指针"
+        rec.hits = 0; rec.layout = null;
+        const sp = this.context.rsp;
+        for (let off = 0; off < 0x600; off += 8) {
           try {
-            const p = this.context[name];
-            if (p.compare(ptr('0x1000')) < 0) continue;
-            const len = p.add(16).readU64().toNumber();
-            if (len !== rec.V) continue;
-            const base = p.readPointer();
-            if (base.compare(ptr('0x1000')) < 0) continue;
-            const tags = [];
-            let ok = true;
-            for (let k = 0; k < Math.min(len, 8); k++) {
-              const tag = base.add(k * 16).readU64().toNumber();
-              tags.push(tag);
-              if (tag > 19) { ok = false; break; }
+            // 布局 A: [ptr][cap][len]   len 在 off+16
+            if (sp.add(off + 16).readU64().toNumber() === rec.V) {
+              const base = sp.add(off).readPointer();
+              if (base.compare(ptr('0x1000')) > 0) {
+                let ok = true;
+                for (let k = 0; k < Math.min(rec.V, 6); k++) {
+                  if (base.add(k * 16).readU64().toNumber() > 19) { ok = false; break; }
+                }
+                if (ok) { rec.hits++; if (!rec.layout) rec.layout = 'A@' + off; }
+              }
             }
-            rec.cands.push({ reg: name, len, tags, ok });
+            // 布局 B: [ptr][len]
+            if (sp.add(off + 8).readU64().toNumber() === rec.V) {
+              const base = sp.add(off).readPointer();
+              if (base.compare(ptr('0x1000')) > 0) {
+                let ok = true;
+                for (let k = 0; k < Math.min(rec.V, 6); k++) {
+                  if (base.add(k * 16).readU64().toNumber() > 19) { ok = false; break; }
+                }
+                if (ok) {
+                  rec.hits++;
+                  if (!rec.layout) {
+                    rec.layout = 'B@' + off;
+                    const tg = [];
+                    for (let k = 0; k < Math.min(rec.V, 10); k++) tg.push(base.add(k * 16).readU64().toNumber());
+                    rec.tags = tg;
+                  }
+                }
+              }
+            }
           } catch (e) {}
         }
         samples.push(rec);
