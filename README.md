@@ -37,7 +37,7 @@
 | 命中与生命 `life_manager` | 🔶 | 死亡链路 + **致死判定已定量验证**（穿过即死、不挡弹道，2 例距离 0.4746/0.4944，`docs/30`）；血量/友军规则未知 |
 | **回合状态机**（`src/turnstate.rs`） | ✅ | 6 状态 + 7 事件，**13 次迁移与抓包逐个相同**（`docs/41`） |
 | 回合调度 `turn_manager` | ⬜ | **已证伪"来自 ChaCha 流"**（3 局 × 每局 2~4 条流 × 3 种抽样 × 25 个偏移，另加 6 局 × 2 基准 × 4 方法，全部不一致）。最可能来自 **HashMap 迭代顺序**（OS 熵播种的 SipHash 键），与 ChaCha 是两条独立熵流 ⇒ 不可确定性复现（`docs/60`） |
-| 关卡生成 `level_generator` | ✅ | **公式闭合 + 端到端重放成功**（`docs/56`）：仅凭运行时抓到的随机流与 `.rodata` 里的 ziggurat 表，**13/13 障碍的坐标与半径逐位预测一致** |
+| 关卡生成 `level_generator` | ✅ | **Rust 实现 + 逐位复现**（`docs/61`）：`levelgen::generate` 用真实随机流夹具跑出 13 个障碍，`x/y/r` 的 `to_bits()` 全等；公式与 ziggurat 表来自 `docs/55/56` |
 | AI `computer_player_manager` / `function_evolutionator` | ⬜ | 入口与评分循环已定量刻画（`docs/29`）；RNG 现已可观测（`docs/58`），可重放其随机搜索，**但本轮未做** |
 | **tick 时钟（60 Hz）** | ✅ | `tick_at()` 用 113 个真实样本验证；`TickReply` 逐字节一致（`docs/35`）。**另解出** `end_of_turn_tick = 回合开始 tick + 时长`，**六档全部实测**（含 `Timer30s`、`TimerInf=0` 哨兵，`docs/42`） |
 | **服务端握手（状态同步）** | ✅ | `server::on_new_connection` 7 条消息与抓包逐字节一致；`serve_handshake` 经真实 TCP 往返验证（`docs/33`） |
