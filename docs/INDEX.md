@@ -8,7 +8,7 @@
 > **[`107-docs-consolidation.md`](107-docs-consolidation.md)**。
 > 三节（现行 / 已归档 / 已并档）与磁盘上的文件**逐一对得上**，可以当清单核对。
 
-## 一、现行文档（90 份）
+## 一、现行文档（92 份）
 
 > 数法：`find docs -name "*.md" -not -path "*/archive/*" | wc -l`（2026-11-06 复核）。
 > 之前这里写过的 76 / 77 / 85 / 86 / 87 都是当时的旧数，已统一改成本次实测值。
@@ -120,6 +120,8 @@
 | [92-ui-inventory.md](92-ui-inventory.md) | **客户端界面台账**（15/15 界面，运行时枚举） |
 | [104-recovered-project.md](104-recovered-project.md) | **GDRE 整项目恢复**：静态场景属性，并与 `92` 的运行时台账逐项对拍 |
 | [101-gdc-contents.md](101-gdc-contents.md) | `.gdc` 逐字节格式 + 5 个行为脚本 + 47 行布局数值表 |
+| [113-hashmap-determinism.md](113-hashmap-determinism.md) | **HashMap 迭代序的非确定性实测**：开局 13 类广播顺序逐局不同（约占 45% 报文）；钉住 `getrandom` 后跨进程一致，连 ChaCha 种子一起钉则 345/370 帧逐字节相同 |
+| [117-server-wiring.md](117-server-wiring.md) | **回合轮转与 AI 进化接入服务端**：`Match::begin_next_turn` / `advance`；端到端 TCP 断言首发射手、跳死者、每回合都进化 |
 | [114-event-tags.md](114-event-tags.md) | **事件判别值实测表**：`0x3d38f0` 解出 72 条（4 道自校验），定性为 `enum Event` 判别值（不是 handler 下标）；`events.rs` 33→72 变体，旧顺序假设被就地证伪 |
 | [111-audio.md](111-audio.md) | **音频**：10 个导入产物逐字节校验（**没找到损坏的**，4 道独立检查）；`humm.wav` 确证由 Rust 侧 hound 解析（`0x50a080`）；`SoundHandler` 播放链路与音量立即数（-15f/-5f、32767 归一化） |
 | [108-client-rebuild.md](108-client-rebuild.md) | **Godot 客户端重建**（`client/`）：15 界面、命令键协议、字体/图标策略、占位与自定规则台账、93 条自检 |
