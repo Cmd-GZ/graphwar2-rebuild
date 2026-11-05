@@ -88,6 +88,23 @@ var _soldiers: Array[Dictionary] = []          # {name, team, pos, alive, is_bot
 ## 来自内核 `level_obstacles()`（`docs/126`）；**同一个数组**既给 `_plane.set_obstacles()`
 ## 画，也给 `GwCore.hit_test()` 判 —— 画的和判的必须是同一批圆。
 var _obstacles: Array = []
+## 本局的靶子集合（`docs/131`）。**同一个集合**既给 `_plane.set_targets()` 画，
+## 也给 `GwCore.hit_test()` 判 —— 画的和判的必须是同一批靶子。
+## 之前这里只有 `_plane.set_targets(...)`（纯绘制），靶子**根本没进命中判定**，
+## 于是打靶关的胜负永远由"两队士兵存活数"决定 ⇒ 第一发就通关（`docs/131` §1）。
+var _targets := GwTargetSet.new()
+## 本局的胜负规则（`docs/131` §2）：打靶关 / 对战关 / 两者都有。
+var _rules: GwLevelRules = null
+## 已结算的回合数：`docs/118` §7.1 的 `turn_limit` 与它比较（`Level 7` = 1）。
+var _turns_used := 0
+## 本次结算里被摧毁的靶子 id（保序）。用于"打不全就全部复原"这条推断规则。
+var _destroyed_this_shot: Array[int] = []
+## 上一次胜负判定结果（诊断/自检用；不参与逻辑）。
+var _last_verdict := {}
+## 自检用：注入确定的靶子/障碍布局。原版这两样都是**每局随机**的
+## （`docs/118` §8 #16："本来就没有每关固定坐标"），所以这不是篡改关卡数据，
+## 只是把随机量钉住，好让端到端用例可复现。空字典 = 用本关自己的值。
+var _layout_override := {}
 var _functions := {}                            # player_index -> String
 var _active := 0
 var _time_left := 0.0
@@ -96,6 +113,10 @@ var _show_names := true
 var _show_function_overlay := false
 var _extra_forced := false
 var _last_result := {}
+## 状态行的"本轮"部分（这一行**不显示**，只给 selftest / `--dump` 当诊断，`docs/125` §5）。
+var _shot_status := ""
+## 状态行当前文本（`_status()` 写入；诊断用）。
+var _status_text := ""
 ## 程序化改写输入框（换手时回填）期间不要清 OffsetLabel —— 否则会把刚算出来的修正抹掉。
 var _suppress_offset_clear := false
 
@@ -427,6 +448,10 @@ func begin_match() -> void:
 	_shot_queue.clear()
 	_last_result = {}
 	_soldiers.clear()
+	_targets = GwTargetSet.new()
+	_destroyed_this_shot.clear()
+	_turns_used = 0
+	_last_verdict = {}
 	var level := GwCampaign.level(int(st.level_index)) if st.kind == GwGameState.Kind.CAMPAIGN else {}
 	var team_counts := {0: 0, 1: 0}
 	# 玩家颜色（`docs/102` §1.2：本队 6 色表 + 随机起点 + 线性探测）。真值是 RNG 抽的，
@@ -464,16 +489,30 @@ func begin_match() -> void:
 	_apply_layout_sizes()
 	_replay_left.visible = st.kind == GwGameState.Kind.REPLAY
 	_replay_right.visible = st.kind == GwGameState.Kind.REPLAY
-	# 战役：靶子数来自 docs/118 §7.1（位置是我们的自定值，原版由关卡生成器随机放置）；
-	# 障碍：**模式 + min_count 来自 docs/118 §7.1，坐标/半径由内核的生成器算**（docs/126）。
+	# 靶子：**数目**来自 `docs/118` §7.1（13 个打靶关），**位置是我们的自定值** ——
+	# 原版由关卡生成器随机放置，§8 #16 明确"本来就没有每关固定坐标"这回事。
+	# 障碍：**模式 + min_count 来自 `docs/118` §7.1，坐标/半径由内核的生成器算**（`docs/126`）。
+	var positions: Array = []
 	if st.kind == GwGameState.Kind.CAMPAIGN:
-		_plane.set_targets(_target_positions(int(st.level_index), int(level.get("targets", 0))))
+		positions = _target_positions(int(st.level_index), int(level.get("targets", 0)))
 		_obstacles = _level_obstacles(int(st.level_index))
 	else:
 		# 非战役（LAN / 回放）：目前服务端还没有广播 AddObstacle，先按"没有障碍"处理。
 		# 真接上之后这里应当用**服务端下发的那批**，不要用本地生成（见 docs/126 §5）。
 		_obstacles = []
+	if _layout_override.has("targets"):
+		positions = (_layout_override["targets"] as Array).duplicate()
+	if _layout_override.has("obstacles"):
+		_obstacles = (_layout_override["obstacles"] as Array).duplicate()
+	_targets.setup(positions)
+	_plane.set_targets(_targets.alive_positions())
 	_plane.set_obstacles(_obstacles)
+	# 胜负规则（`docs/131` §2）：战役关按 `docs/118` §7.1 的"目标数 / Bot 数"两列分类；
+	# 非战役对局没有靶子也没有回合上限，只有"对方全灭"这一条。
+	_rules = (GwLevelRules.for_campaign(level, _human_team())
+		if st.kind == GwGameState.Kind.CAMPAIGN else GwLevelRules.for_versus(_human_team()))
+	_status("关卡规则：%s ／ 靶子 %d ／ 回合上限 %s" % [_rules.kind_name(), _targets.total(),
+		"∞" if _rules.turn_limit <= 0 else str(_rules.turn_limit)])
 
 func end_match() -> void:
 	_running = false
@@ -607,6 +646,16 @@ func fire() -> void:
 			[String(result.source), String(result.note), _obstacles.size()])
 
 	var shot := {"points": pts, "team": team, "shooter": _active, "soldier": active_soldier}
+	_commit_shot(shot)
+
+## 把一发（或同时回合的一批）弹道交给结算，然后走**回合结算**（`docs/131` §2、§4）。
+##
+## 同时回合制下只有"所有还活着的人都打过"才结算一次（`docs/86`）——那一批算**一个**回合。
+## 顺序与原版语料一致的那部分：`docs/84`/`docs/86` 的结算本体仍在 `src/settle.rs`。
+func _commit_shot(shot: Dictionary) -> void:
+	var app_node := app()
+	if app_node == null:
+		return
 	if int(app_node.state.turn_mode) == GwModes.Turn.SIMULTANEOUS:
 		# 同时回合：先全部记下，轮完再结算（真实结算在 src/settle.rs，docs/86）
 		_shot_queue.append(shot)
@@ -614,12 +663,48 @@ func fire() -> void:
 			_resolve_shots(_shot_queue)
 			_shot_queue.clear()
 			_next_turn(true)
+			_settle_round()
 		else:
 			_next_turn(false)
 	else:
 		_resolve_shots([shot])
 		_next_turn(true)
+		_settle_round()
+
+## 一次射击 / 一轮同时回合的**结算**：① 回合数 +1；② "打不全就全部复原"；③ 判胜负。
+##
+## 回合数为什么在这里 +1：战役关 `TimeModeInfo = TimerInf`（`docs/123` §5.1 #9），
+## 根本没有超时路径，一个回合只能由"打完一发"来推进。LAN 的 3 分钟超时不计回合
+## （那些对局的 `turn_limit` 恒为 0，`docs/118` §7.1）。这条口径见 `docs/131` §4.3。
+func _settle_round() -> void:
+	_turns_used += 1
+	var restored := _apply_target_reset()
+	var extra := ""
+	if not restored.is_empty():
+		extra = " ／ 本发没打全 ⇒ 靶子全部复原（推断，docs/131 §4）"
+	_status("%s ／ 回合 %d/%s%s" % [_shot_status, _turns_used,
+		"∞" if _rules == null or _rules.turn_limit <= 0 else str(_rules.turn_limit), extra])
 	_check_match_over()
+
+## 一次射击结束时的"**打不全就全部复原**"（`docs/131` §4）。
+##
+## 等级：**推断（依据用户实测 + `docs/123` §3.2 的形状结论）**。二进制里没找到判定点，
+## 语料 397 份回放 **0 次部分命中**（`docs/123` §4.3）⇒ 没有真值可以对。
+## 形状是硬约束（`docs/123` §2.2/§4.3 逐位验证 + 观测）：**只翻 alive 位**，
+## 不重建实体、不发 `TargetInfo`、不碰掩膜（洞留着）。
+## 返回被复原的靶子 id。
+func _apply_target_reset() -> Array:
+	if _destroyed_this_shot.is_empty() or _targets.total() == 0:
+		_destroyed_this_shot.clear()
+		return []
+	var plan := _targets.settle_shot(_destroyed_this_shot)
+	_destroyed_this_shot.clear()
+	if not bool(plan.get("reset", false)):
+		return []
+	var back := _targets.restore(plan.get("ids", []))
+	if not back.is_empty():
+		_refresh_targets()
+	return back
 
 ## 弹道在障碍处**截断**（只为绘制）。返回
 ## `{points: PackedVector2Array, impact: Vector2, blocked: bool}`。
@@ -670,41 +755,70 @@ func _shot_owners() -> Array:
 ## 命中判定 —— 走**内核的掩膜规则**（`docs/120`）。
 ##
 ## 真实规则在 `src/settle.rs::resolve_points`（`docs/30` 的真对局回放）：
-## 障碍光栅化进 1000×600 掩膜决定弹道停在哪；士兵**不**挡弹道，只在
-## "弹道点落在半径 0.5 内"时判死（`PosInfo.radius` 恒 0.5）。
+## 障碍光栅化进 1000×600 掩膜决定弹道停在哪；士兵与**靶子**都**不**挡弹道，只在
+## "弹道点落在半径内"时判死（`PosInfo.radius` 恒 0.5）。
 ## 射手本人不参与致死（`settle` 的约定：子弹从自己身上出发）。
+##
+## ⚠️ 靶子与士兵塞进 **同一个** `hit_test` 数组（借用关系，见 `GwTargetSet.entities()`
+## 与 `docs/131` §3.1）：内核第 3 个入参只当"半径实体"用，回的 `hits` 是**下标**，
+## 所以下标 → 实体的映射由本函数的 `owners` 表负责。**靶子必须在这里**，
+## 否则打靶关的靶子只是"画着玩的"（那就是 `docs/131` §1 的 bug）。
 func _resolve_shots(shots: Array) -> void:
 	var kills := 0
+	var target_kills := 0
 	var sources: Array[String] = []
 	var note := ""
 	var blocked := false
+	_destroyed_this_shot.clear()
 	for shot in shots:
 		var pts: PackedVector2Array = shot.points
-		var targets: Array = []
+		var entities: Array = []        # hit_test 第 3 个入参：[{pos, radius}, …]
+		var owners: Array = []          # 与 entities 同下标：{kind: "soldier"/"target", …}
 		for s in _soldiers:
 			if not bool(s.alive):
 				continue
 			if is_same(s, shot.get("soldier", null)):
 				continue                      # 射手本人不参与致死判定
-			targets.append({"pos": s.pos, "radius": GwCore.SOLDIER_HIT_RADIUS, "soldier": s})
-		# 没有靶子但**有障碍**也要判：墙会把弹道拦住，士兵在墙后就是安全的
+			entities.append({"pos": s.pos, "radius": GwCore.SOLDIER_HIT_RADIUS})
+			owners.append({"kind": "soldier", "soldier": s})
+		for t in _targets.entities():
+			entities.append(t)
+			owners.append({"kind": "target", "target_id": int(t["target_id"])})
+		# 没有实体但**有障碍**也要判：墙会把弹道拦住，实体在墙后就是安全的
 		# （`docs/30`：掩膜决定停点，士兵不挡弹道）。`_obstacles` 与画的是同一个数组。
-		if targets.is_empty() and _obstacles.is_empty():
+		if entities.is_empty() and _obstacles.is_empty():
 			continue
-		var judged := GwCore.hit_test(pts, targets, _obstacles)
+		var judged := GwCore.hit_test(pts, entities, _obstacles)
 		sources.append(String(judged.source))
 		note = String(judged.note)
 		blocked = blocked or bool(judged.get("blocked", false))
 		for idx in judged.hits:
-			var victim: Dictionary = targets[int(idx)].soldier
-			if bool(victim.alive):
-				victim.alive = false
-				kills += 1
+			var i := int(idx)
+			if i < 0 or i >= owners.size():
+				continue
+			var owner: Dictionary = owners[i]
+			if String(owner["kind"]) == "soldier":
+				var victim: Dictionary = owner["soldier"]
+				if bool(victim.alive):
+					victim.alive = false
+					kills += 1
+			else:
+				# 靶子：只翻 alive（对应 LifeInfo{alive:false}），不销毁实体（docs/123 §2.2）。
+				if _targets.destroy(int(owner["target_id"])):
+					target_kills += 1
+					_destroyed_this_shot.append(int(owner["target_id"]))
 	if not sources.is_empty():
-		_status("本轮命中 %d 个士兵 ／ 判定来源：%s ／ %s%s" % [kills, sources[0], note,
-			"（弹道被障碍拦下）" if blocked else ""])
-	if kills > 0:
+		_shot_status = "本轮命中 %d 个士兵、%d 个靶子 ／ 判定来源：%s ／ %s%s" % [
+			kills, target_kills, sources[0], note, "（弹道被障碍拦下）" if blocked else ""]
+		_status(_shot_status)
+	if kills > 0 or target_kills > 0:
 		_refresh_plane()
+		_refresh_targets()
+
+## 靶子的绘制入口：`GwPlaneView.set_targets()` 只收 `Array[Vector2]`（它只管画），
+## 所以"靶子被打掉 / 被复原"在界面上表现为这个数组少一项 / 多一项。
+func _refresh_targets() -> void:
+	_plane.set_targets(_targets.alive_positions())
 
 func _active_soldier() -> Dictionary:
 	var app_node := app()
@@ -748,24 +862,114 @@ func _load_active_function() -> void:
 	_suppress_offset_clear = false
 	# 注意：**不**在这里清 OffsetLabel —— 原版换手时 OffsetLabel 仍显示上一发的修正。
 
+## 判一局结束没有 —— **按关卡类型**（`docs/131` §2），不再只看两队士兵的存活数。
+##
+## 旧写法（`alive = {0:n, 1:m}`，任一为 0 就结束）在**打靶关**上是必然误判：
+## 那些关没有敌方士兵 ⇒ `alive[1] == 0` ⇒ 第一发一落地就"人类胜"（`docs/131` §1）。
+## 现在：打靶关要**靶子全清**，对战关要**对方队伍全灭**（`docs/84`：45/45 实测），
+## 回合上限用尽仍未清完 ⇒ 失败（`docs/118` §7.1，`Level 7` = 1）。
 func _check_match_over() -> void:
+	var app_node := app()
+	if app_node == null:
+		return
+	if _rules == null:
+		_rules = GwLevelRules.for_versus(_human_team())
+	var verdict := _rules.evaluate({
+		"alive_by_team": _alive_by_team(),
+		"teams_present": _teams_present(),
+		"targets_total": _targets.total(),
+		"targets_alive": _targets.alive_count(),
+		"turns_used": _turns_used,
+	})
+	_last_verdict = verdict
+	if not bool(verdict.get("over", false)):
+		return
+	_running = false
+	var human_won := bool(verdict.get("human_won", false))
+	var winner := int(verdict.get("winner_team", _human_team()))
+	_status("%s ／ 判定：%s（%s）" % [_status_text, "人类胜" if human_won else "人类负",
+		String(verdict.get("reason", "?"))])
+	app_node.report_match_result(human_won, winner)
+
+## 每队的**存活士兵数**（键固定 0/1，与旧实现的形状一致）。
+func _alive_by_team() -> Dictionary:
 	var alive := {0: 0, 1: 0}
 	for s in _soldiers:
 		if bool(s.alive):
 			alive[int(s.team)] = int(alive[int(s.team)]) + 1
-	if int(alive[0]) > 0 and int(alive[1]) > 0:
-		return
+	return alive
+
+## **开局时**就有士兵的队伍（不是"当前还活着的队伍" —— 一队全灭后它必须仍在表里，
+## 否则 `enemy_present` 会永远为假，对战关就永远判不出胜负）。
+func _teams_present() -> Array:
+	var out := []
+	for s in _soldiers:
+		if not out.has(int(s.team)):
+			out.append(int(s.team))
+	return out
+
+## 人类玩家所在队伍。与 `app.gd::match_summary()` 用同一条规则（第一个非 Bot 玩家），
+## 这样"谁赢了"与结算框的文案永远一致。
+func _human_team() -> int:
 	var app_node := app()
 	if app_node == null:
-		return
-	_running = false
-	var human_team := 0
+		return 0
 	for p in app_node.state.players:
 		if not bool(p.is_bot):
-			human_team = int(p.team)
-			break
-	var winner := 0 if int(alive[0]) > 0 else 1
-	app_node.report_match_result(winner == human_team, winner)
+			return int(p.team)
+	return 0
+
+## 关卡规则的**只读**快照（自检 / `--dump` 诊断用，不改任何状态）。
+func level_state() -> Dictionary:
+	return {
+		"running": _running,
+		"rules": (_rules.snapshot() if _rules != null else {}),
+		"targets": _targets.snapshot(),
+		"turns_used": _turns_used,
+		"verdict": (_last_verdict.duplicate(true) if not _last_verdict.is_empty() else {}),
+		"shot_status": _shot_status,
+		"obstacles": _obstacles.size(),
+	}
+
+## 自检用：把**随机**布局钉住。原版靶子与障碍都是每局随机生成的
+## （`docs/118` §8 #16："本来就没有每关固定坐标"），所以这不是篡改关卡数据，
+## 只是把随机量固定下来好让端到端用例可复现。**在 `begin_match()` 之前调用。**
+##
+## `layout` 可含 `targets`（`Array[Vector2]`）与 `obstacles`（`Array[{pos, size}]`），
+## 缺哪个就不覆盖哪个。
+func inject_layout(layout: Dictionary) -> void:
+	_layout_override = layout.duplicate(true)
+
+## 清掉注入的布局（自检结束时调，正常游戏里永远是空的）。
+func clear_layout_override() -> void:
+	_layout_override = {}
+
+## **外部来弹**：把"别人打过来的一发"走与 `fire()` **完全相同**的结算路径
+## （`_resolve_shots` → `_next_turn` → `_settle_round`）。
+##
+## 现在客户端还没有 AI 开火循环（对手不会开火）、服务端也还没接，所以这条目前只被
+## 自检用来构造"我方全灭 ⇒ 失败"（`docs/131` §5.2 ③）。接上 AI/服务端之后，
+## 它就是这个回调本身，语义不用改。
+func apply_external_shot(points: PackedVector2Array, shooter_player: int) -> bool:
+	if not _running or points.size() < 2:
+		return false
+	var shooter := _soldier_of(shooter_player)
+	if shooter.is_empty():
+		return false
+	_resolve_shots([{
+		"points": points, "team": int(shooter.team),
+		"shooter": shooter_player, "soldier": shooter,
+	}])
+	_next_turn(true)
+	_settle_round()
+	return true
+
+## 某个玩家的（第一个）还活着的士兵；没有就返回空字典。
+func _soldier_of(player_index: int) -> Dictionary:
+	for s in _soldiers:
+		if int(s.player) == player_index and bool(s.alive):
+			return s
+	return {}
 
 # ---------------------------------------------------------------- 每帧
 
@@ -852,6 +1056,7 @@ func _refresh_function_list() -> void:
 
 ## 诊断用（**不显示**）。原版没有这行字，用户实测明确指出多了一行说明。
 func _status(text_: String) -> void:
+	_status_text = text_
 	if _status_label != null:
 		_status_label.text = text_
 
