@@ -29,14 +29,33 @@
 
 ⇒ 真正需要覆盖的物理维度只有 **2×2 = 4 格**。
 
-## 3. 覆盖矩阵（诚实版）
+## 3. 覆盖矩阵（诚实版 · 本轮更新）
 
 | FunctionMode | TurnMode | 物理 | AI 生成器 | 证据 |
 |---|---|---|---|---|
-| Normal | Sequential | ✅ | ✅ | 224 例 golden；21 发终点差 <0.5；20 发击杀一致 |
-| Normal | **Simultaneous** | ⬜ **进行中** | ⬜ 未验 | 子 agent 正在判定结算顺序（`docs/86`） |
-| DiffEq | Sequential | ✅ 采样 | 🔶 只验了 y 权重 | `path.tsv` 112 例 Ode；`docs/71` §5.0 |
+| Normal | Sequential | ✅ | ✅ | 224 例 golden（修复后与二进制 **24/24 逐点一致**）；停点差 <0.5；击杀 12 发一致 |
+| Normal | **Simultaneous** | ✅ | 🔶 未单独验（口述"AI 只优化自己那一发"，§14） | 结算 = **几何并行 + 事件按飞行时间**；修复采样器后 82 发并集 **152/152**、多报 0 / 漏报 0、时刻判决 **38:0**（`docs/86` §14） |
+| DiffEq | Sequential | ✅ 采样 | 🔶 只验了 `y` 权重 | `path.tsv` 112 例 Ode |
 | DiffEq | Simultaneous | ⬜ | ⬜ | 完全没碰过 |
+
+### 3.1 本轮的关键变化
+
+| 项 | 变化 |
+|---|---|
+| **采样器缺陷已修** | 半步复检漏了 `hi = mid2`（反汇编 `0x3c2a0a`）。修复前"约 23% 弹道被截断"，修复后 24/24 逐点一致（`docs/91`） |
+| **同时回合制重验** | 漏报从 23 → **0**，时刻判决从 23:3 → **38:0**（`docs/86` §14） |
+| **实况步长** | 确认 **0.01**（`SERVER_STEP`）；此前多处误用 0.5 |
+| **AI 文档** | 12 份逐轮记录合并为 **`docs/AI.md`**（唯一权威） |
+
+### 3.2 仍开着的问题
+
+| 项 | 状态 |
+|---|---|
+| `tests/live_hits.rs` 用 0.01 时 4 个测试失败 | **未解**（`(-46.06/(7.94+x))` 极点问题；目前仍留在 0.5） |
+| `events.rs` 的 33 个判别值 | **缺独立验证**（`docs/07` §2 的顺序假设在 `0x1bc000` 那段上不成立，`docs/96` §7） |
+| 协议事件 | 实现 33 个，**缺 24 个名字**（`docs/96`），其中四个 `*ModeInfo` 广播最要紧 |
+| AI 时间预算 / `y` 裁剪 / 精英 5 | 子 agent 查证中（`docs/93`–`95`） |
+| 界面与脚本 | 子 agent 做台账中（`docs/92`） |
 
 ## 4. 我错在哪（方法论）
 
@@ -52,8 +71,9 @@
 
 - 本文件作为覆盖面的**唯一清单**，README 的每一行都必须指向这里的某一格；
 - 新增模式时先补这一格，再谈"绿"；
-- 已知待补：Simultaneous 结算顺序（进行中）、DiffEq × Sequential 的 AI 统计、
-  DiffEq × Simultaneous（零覆盖）。
+- 已知待补：DiffEq × Sequential 的 AI 统计、DiffEq × Simultaneous（零覆盖）、
+  `AxisMode`/`TimeMode` 是否参与判定（§14 只有口述，§16.3 自评把握低）。
+  原先列的"Simultaneous 结算顺序（进行中）"**已结案**（`docs/86` §14）。
 
 ## 6. 仍然成立的结论
 
@@ -96,7 +116,7 @@
 
 | 缺口 | 严重度 | 状态 |
 |---|---|---|
-| `SimultaneousTurns` 结算 | **高**（影响物理） | 子 agent 判定中 |
+| `SimultaneousTurns` 结算 | **高**（影响物理） | ✅ **已判定**（`docs/86` §14：几何并行 + 事件按飞行时间；0.01 下 152/152、38:0） |
 | `AxisMode` 四种变体的绘制/判定参与程度 | 中 | 未验证（推测仅影响绘制） |
 | `TimeMode` 六种是否影响 AI 预算 | 低 | 未验证（推测仅影响玩家） |
 
@@ -112,15 +132,17 @@
 用户指出：即使核心逻辑全绿，只要功能清单是"我记得查过的"，产物仍残次。
 `Player`、`Replays` 这两个界面我此前**从未查过**（`Replays` 还是用户告诉我的）。
 
-从 `rsc/*.tscn.remap` 可枚举出**全部 27 个场景**：
+从 `rsc/*.tscn.remap` 可枚举出**全部 31 个场景**（2026-11 核对：
+`find rsc -name '*.tscn.remap' | wc -l` = **31**；本文件旧版写"27 个"、列表只有 24 个名字，是漏枚举）：
 
 ```
-main_menu  campaign  GameSetup  lan_lobby  play_screen  player_screen
-replay_lobby  replay_entry  shop_button_entry
-team1_entry  team2_entry  name_label  function_buttons  function_buttons_no_control
-line_2d  main
-add_bot_pop_up  chat_pop_up  confirm_exit_pop_up  connecting_pop_up
-disconnected_pop_up  endgame_pop_up  join_ip_pop_up  join_level_pop_up
+main_menu campaign GameSetup lan_lobby play_screen player_screen
+replay_lobby replay_entry shop_button_entry game_room_entry
+team1_entry team2_entry name_label function_buttons function_buttons_no_control
+line_2d main Main Ump Banner
+Interstitial Rewarded RewardedInterstitial
+add_bot_pop_up chat_pop_up confirm_exit_pop_up connecting_pop_up
+disconnected_pop_up endgame_pop_up join_ip_pop_up join_level_pop_up
 ```
 
 二进制里的控件类名另有一批（`ReplayLobby`、`PlayerScreen`、`ReplaysContainer`、
