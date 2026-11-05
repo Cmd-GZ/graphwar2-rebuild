@@ -164,22 +164,41 @@ void FUN_005ef020(long *out /*rdi: Vec<Token> 返回值*/, byte mode /*esi*/)
 
 ## 6. `repair` 也不改写已有元素，只追加 + 截断
 
-`FUN_005ee0e0` 的伪代码里：
+`FUN_005ee0e0` 里 `mode` 同样只取一次 `& 1` 存进栈槽，之后只在补齐那一处用：
 
-```c
-local_38 = param_2 & 1;                         // 模式，取一次
-... uVar5 = local_38;                           // 42..49：tag = mode&1
-... if (uVar4 < 0x2a) uVar5 = 0;                // 25..41：tag = 0 = x
-*(ulong  *)(lVar3 + lVar2 * 0x10) = uVar5;      // lVar2 = 当前 len ⇒ 只写"末尾"
-*(double *)(lVar3 + 8 + lVar2*0x10) = dStack_50;
-param_3[2] = uVar5_len + 1;                     // 只改 len
+```
+4ee152: 40 80 e6 01     and    $0x1,%sil         ; mode & 1
+4ee156: 40 0f b6 c6     movzbl %sil,%eax
+4ee15a: 48 89 44 24 30  mov    %rax,0x30(%rsp)   ; 唯一的写
+...
+4ee240: mov    %r12d,%eax                          ; r12 = 一个 u32 随机数
+4ee243: imul   $0x51eb851f,%rax,%rax
+4ee24a: shr    $0x24,%rax
+4ee24e: imul   $0x32,%eax,%eax                     ; ×50
+4ee251: sub    %eax,%r12d                          ; r12 = rand % 50
+4ee254: cmp    $0x19,%r12d                         ; < 25 ?
+4ee258: jae    4ee2c0                              ;   否 ⇒ 变量档
+4ee2a3: mov    $0x11,%r12d                         ;   是 ⇒ tag = 17 const
+...
+4ee2c0: cmp    $0x2a,%r12d                         ; < 42 ?
+4ee2c4: mov    0x30(%rsp),%r12                     ; r12 = mode & 1
+4ee2c9: mov    $0x0,%eax
+4ee2ce: cmovb  %rax,%r12                           ; 是 ⇒ 0 = x
+...
+4ee18b: mov    %r12,(%rax,%rcx,1)                  ; 追加：token.tag
+4ee195: movsd  %xmm0,0x8(%rax,%rcx,1)              ; 追加：token.value
+4ee19b: inc    %r13
+4ee19e: mov    %r13,0x10(%rbx)                     ; 只改 len
+...
+4ee2ff: mov    %r11,0x10(%rbx)                     ; 截断也只改 len
 ```
 
-* 补齐三段与 `docs/AI.md` §6 一致：`rand%50` 的 `<25` → 常数、`25..41` → `x`、`42..49` → `mode&1`；
+* 补齐三段与 `docs/AI.md` §6 一致：`rand%50` 的 `<25` → 常数、`25..41` → `x`、`42..49` → `mode & 1`；
 * 截断（`uStack_48`）只用 `DAT_002c47d0` 这张**与模式无关**的 arity 表；
-* 全函数**没有任何一处读回已有 token 的 tag 再写回**。
+* 全函数只有 `0x4ee18b` 一处写 token 的 `tag`，写的是**当前 `len` 位置**（追加），
+  没有任何一处"读回已有 token 的 tag 再写回"。
 
-arnity 表（file/vaddr `0x1c47d0`，18 × i32）实测：
+arity 表（file/vaddr `0x1c47d0`，18 × i32）实测：
 
 ```
 0:x=-1 1:y=-1 2:y'=-1 3:+ =1 4:- =1 5:neg=0 6:* =1 7:/ =1 8:^ =1
@@ -236,7 +255,7 @@ jne  ...
   **Ghidra 没建成函数**（`FUN_005ee3a0` 只有 8 字节），所以它的边界是 objdump 线性反汇编给的。
 
 因此 §7 是"**有界否定**"；真正把结论钉死的是 §3–§6 的**正向**证据：
-`y` 的 tag 只在 `0x5ef230` / `0x5ee2xx` 两处由 `mode & 1` 产生，
+`y` 的 tag 只在 `0x4ef230`（生成器）与 `0x4ee2c4/0x4ee2ce`（补齐）两处由 `mode & 1` 产生，
 Normal 下这两处都等于 0。
 
 ## 8. 行为层佐证（用既有观测数据，未重新验证）
@@ -330,11 +349,11 @@ REA 侧：`procedure_pseudo_code(0x5ef020)`、`procedure_pseudo_code(0x5ee0e0)`�
 
 | # | 结论 | 等级 | 依据 |
 |---|---|---|---|
-| 1 | `0x5ef2b0` 是 `FUN_005ef020` 内部汇合点，非独立函数 | **观测** | `procedure_info` body ranges + 13 条入边全是函数内分支 |
+| 1 | `0x5ef2b0` 是 `FUN_005ef020` 内部汇合点，非独立函数 | **观测** | `procedure_info` body ranges + 11 条直接跳入 + 1 条转跳，全是函数内分支 |
 | 2 | 权重 85 格、区间边界、tag 映射（§3 表） | **观测** | 逐条指令 + 字节 |
 | 3 | `mode` 只取一次 `&1`、只喂给 `[17,21)` 那一格 | **观测** | 栈槽 `0x40(%rsp)` 全函数仅 2 次访问 |
 | 4 | **Normal 下 `y`（tag 1）永不产生** | **观测** | 3 的直接推论；tag 1 的两个产生点都乘了 `mode & 1` |
-| 5 | 全部 7 处调用点都是 `generate → repair` 成对、无中间 pass | **观测** | objdump 全量 grep + 6 处逐字节同构 |
+| 5 | 全部 7 处调用点都是 `generate → repair` 成对、无中间 pass | **观测** | objdump 全量 grep + 6 处指令序列一致 |
 | 6 | `repair` 只追加/截断，不改写已有 tag | **观测** | 伪代码 + 唯一的元素写指令地址 |
 | 7 | 全二进制无"tag==1→0"改写循环 | **有界否定** | 扫描（§7.3 列了盲区） |
 | 8 | 观测占比排除"删除 `y`" | **推断（统计）** | §8 表，用题目给的出口观测 |
