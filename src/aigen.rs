@@ -43,6 +43,18 @@ pub const TABLE: [(Function, u32); 15] = [
     (Function::Tan, 1),
 ];
 
+/// 抽一个函数长度（token 数）。
+///
+/// 二进制里是 `trunc(N(0,1) * 5.0 + 10.0)`（`0x4ef08e` 的 `mulsd 5.0` +
+/// `0x4ef096` 的 `addsd 10.0` + `0x4ef0b2` 的 `cvttsd2si`；
+/// 中间那两个 `maxsd/minsd` 只是 i32 上下界，防截断溢出）。
+///
+/// 正态取负或很小时会得到 ≤0 的长度，调用方应把它当作"最短的合法表达式"处理
+/// （实测最小值为 2，见 `docs/76`）。
+pub fn random_length(next: &mut dyn FnMut() -> u64) -> i32 {
+    (normal(next) * 5.0 + 10.0) as i32
+}
+
 /// 抽一个 tag（不含常数的取值）。
 ///
 /// 对应二进制 `FUN_005ef020` 里的 `idx = random % 85` 加区间比较；
@@ -289,5 +301,28 @@ mod tests {
             );
             prev_len = tokens.len();
         }
+    }
+
+    #[test]
+    fn random_length_is_normal_10_5() {
+        let mut next = stream(0x1CE_B00D);
+        let n = 40_000;
+        let mut sum = 0.0;
+        let mut sq = 0.0;
+        let mut count = 0;
+        let mut min_seen = i32::MAX;
+        for _ in 0..n {
+            let len = random_length(&mut next);
+            sum += len as f64;
+            sq += (len as f64) * (len as f64);
+            count += 1;
+            min_seen = min_seen.min(len);
+        }
+        let mean = sum / count as f64;
+        let sd = (sq / count as f64 - mean * mean).sqrt();
+        // cvttsd2si 向零截断，连续分布截断后均值系统性下移约 0.5
+        assert!((mean - 9.5).abs() < 0.3, "截断后均值应接近 9.5，实测 {mean}");
+        assert!((sd - 5.0).abs() < 0.4, "标准差应接近 5，实测 {sd}");
+        assert!(min_seen < 0, "正态取负时长度可以为负（实测最小 {min_seen}）");
     }
 }
