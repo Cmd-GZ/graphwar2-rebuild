@@ -88,17 +88,26 @@ func _gui_input(event: InputEvent) -> void:
 func _font() -> Font:
 	return GwThemeFactory.font()
 
+## 字号 = 屏幕宽 / 30（原版一行函数串在 1920 下约 64 px 高，量自 `orig_play_default.png`）。
+## 不取主题字号：`GwScreen.apply_font_scale()` 不会遍历到这个自绘控件。
 func _font_size() -> int:
-	var fs := get_theme_font_size("font_size", "Label")
-	return fs if fs > 0 else GwThemeFactory.BASE_FONT_SIZE
+	var w := get_viewport_rect().size.x
+	if w <= 0.0:
+		w = size.x
+	return maxi(10, int(w / 30.0))
+
+## 宽度。
+func _text_x(_font: Font, _fsize: int) -> float:
+	return (size.x - _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, _fsize).x) * 0.5
 
 func _caret_at_position(local_x: float) -> int:
 	var font := _font()
 	var fsize := _font_size()
 	var best := text.length()
+	var origin := _text_x(font, fsize)
 	for i in range(text.length() + 1):
 		var w := font.get_string_size(text.substr(0, i), HORIZONTAL_ALIGNMENT_LEFT, -1, fsize).x
-		if w + 12.0 >= local_x:
+		if origin + w >= local_x:
 			best = i
 			break
 	return best
@@ -106,13 +115,23 @@ func _caret_at_position(local_x: float) -> int:
 func _draw() -> void:
 	var font := _font()
 	var fsize := _font_size()
-	var edge := GwThemeFactory.COL_BAD if _rejected else GwThemeFactory.COL_PANEL_EDGE
-	draw_rect(Rect2(Vector2.ZERO, size), Color("101418"), true)
-	draw_rect(Rect2(Vector2.ZERO, size), edge, false, 2.0)
+	# 原版输入框 = 主题的 LineEdit 样式：**透明底** + 3px 黑边 + 圆角 10
+	# （`graphwar_theme.tres` 的 StyleBoxFlat；实测边界 x=262..1742 内只有 3px 黑框，
+	#  框内颜色与 clear_color 相同 ⇒ 没有自己的底色）。
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0, 0, 0, 0)
+	sb.border_color = GwThemeFactory.COL_BAD if _rejected else GwThemeFactory.COL_PANEL_EDGE
+	sb.set_border_width_all(GwThemeFactory.PANEL_BORDER)
+	sb.set_corner_radius_all(GwThemeFactory.PANEL_RADIUS)
+	sb.draw(get_canvas_item(), Rect2(Vector2.ZERO, size))
+
 	var baseline := size.y * 0.5 + fsize * 0.35
-	draw_string(font, Vector2(12.0, baseline), text, HORIZONTAL_ALIGNMENT_LEFT, size.x - 24.0, fsize,
+	var origin := _text_x(font, fsize)
+	# 原版 `alignment = 1` ⇒ 文本水平居中（实测 "-7.49" 的中心与控件中心重合）。
+	draw_string(font, Vector2(origin, baseline), text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, fsize,
 		GwThemeFactory.COL_TEXT)
-	var caret_x := 12.0 + font.get_string_size(text.substr(0, _caret), HORIZONTAL_ALIGNMENT_LEFT, -1, fsize).x
+	var caret_x := origin + font.get_string_size(text.substr(0, _caret),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, fsize).x
 	if _caret_blink < 0.28:
-		draw_line(Vector2(caret_x, size.y * 0.22), Vector2(caret_x, size.y * 0.78),
-			GwThemeFactory.COL_ACCENT, 2.0)
+		draw_line(Vector2(caret_x, size.y * 0.18), Vector2(caret_x, size.y * 0.82),
+			GwThemeFactory.COL_TEXT, maxf(1.5, size.y * 0.04))

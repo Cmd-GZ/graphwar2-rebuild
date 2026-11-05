@@ -93,6 +93,13 @@ static func _flat(bg: Color, edge: Color = COL_PANEL_EDGE, radius: int = PANEL_R
 	sb.border_color = edge
 	sb.set_border_width_all(width)
 	sb.set_corner_radius_all(radius)
+	# 原版 `.tres` 里**没有** content_margin 字段 ⇒ Godot 用 StyleBoxFlat 的默认值，
+	# 即四条边各等于 border width（3）。这里显式写 3：早先自选的 12/6 会让每个按钮
+	# 比原版宽 18、高 6，实测把 PlayScreen 的右键盘从 337 px 顶到 426 px（docs/125 §4）。
+	sb.content_margin_left = width
+	sb.content_margin_right = width
+	sb.content_margin_top = width
+	sb.content_margin_bottom = width
 	return sb
 
 

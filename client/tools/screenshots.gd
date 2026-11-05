@@ -14,6 +14,12 @@ const TARGETS := [
 	{"kind": "screen", "name": "PlayerScreen"},
 	{"kind": "screen", "name": "ReplayLobby"},
 	{"kind": "screen", "name": "PlayScreen", "after": "PlayScreen"},
+	# 战役第 0 关：**验收基准**（原版真帧 `orig_campaign_play.png` 就是这个状态），
+	# 走 App 的真实入口 `_start_level`，数据来自 GwCampaign（docs/118 §7）。
+	{"kind": "screen", "name": "PlayScreenCampaign", "after": "PlayScreenCampaign",
+		"target": "PlayScreen"},
+	{"kind": "screen", "name": "PlayScreenOffset", "after": "PlayScreenOffset",
+		"target": "PlayScreen"},
 	{"kind": "popup", "name": "ConfirmPlayExitPopUp", "after": "PlayScreen"},
 	{"kind": "popup", "name": "ChatPopUp", "after": "PlayScreen"},
 	# 补上剩下的 4 个弹窗，让 15 个界面每一个都有一张 1920×1160 的实渲染截图（docs/124 §4）。
@@ -34,18 +40,21 @@ func run(_main: Control, out_dir: String) -> int:
 		var after := String(t.get("after", ""))
 		if after != "":
 			_prepare(app_node, after)
+		var target := String(t.get("target", name))
 		if String(t.kind) == "screen":
-			app_node.show_screen(name)
+			app_node.show_screen(target)
 		else:
 			app_node.show_screen(String(t.after))
 			app_node.open_popup(name)
 		await _frames(4)
 		# 战场是自绘的：改尺寸后强刷一次再截，否则会截到旧尺寸那一帧
-		if name == "PlayScreen":
+		if target == "PlayScreen":
 			var plane = app_node.screens["PlayScreen"].find_child("GraphwarPlane", true, false)
 			if plane != null:
 				plane.queue_redraw()
 				await _frames(2)
+		if target == "PlayScreen" or name == "JoinLevelPopUp":
+			_print_geometry(app_node, name)
 		await RenderingServer.frame_post_draw
 		var img := get_viewport().get_texture().get_image()
 		var path := out_dir.path_join(name + ".png")
@@ -66,12 +75,45 @@ func _prepare(app_node: Node, screen: String) -> void:
 		if play.has_method("key_input"):
 			for cmd in ["sin(", "x", ")"]:
 				play.call("key_input", cmd)
+	elif screen == "PlayScreenCampaign":
+		# 战役第 0 关：1 士兵 / 1 靶子 / 无对手 / 无回合时限（docs/118 §7.1）
+		app_node.campaign_selected_level = 0
+		app_node.call("_start_level")
+	elif screen == "PlayScreenOffset":
+		# 打一发，展示右下角的修正常数（`+ 4.638` 形状，见 docs/24 §6.2）
+		app_node.campaign_selected_level = 0
+		app_node.call("_start_level")
+		var play: Control = app_node.screens["PlayScreen"]
+		for cmd in ["-", "1", "0", "*", "x", "+", "5"]:
+			play.call("key_input", cmd)
+		play.call("fire")
 	elif screen == "GameSetup":
 		app_node.state.reset_lan()
 		app_node.state.add_human(app_node.store.profile.name, 0, 0, 0)
 		app_node.state.add_bot(2)
 		app_node.state.add_bot(4)
 		app_node.show_screen("GameSetup")
+
+## 打印控件几何：`GEOM|snapshot|class|path|visible|x|y|w|h`。
+## 用来和原版真帧的同一批节点逐项比（docs/125 §4 的数值表就是这么生成的）。
+func _print_geometry(app_node: Node, snapshot: String) -> void:
+	var screen: Node = null
+	if snapshot == "JoinLevelPopUp":
+		screen = app_node.screens.get("JoinLevelPopUp")
+	if screen == null:
+		screen = app_node.screens.get("PlayScreen")
+	if screen == null:
+		return
+	var stack: Array = [screen]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is Control:
+			var c := n as Control
+			print("GEOM|%s|%s|%s|%d|%.1f|%.1f|%.1f|%.1f" % [snapshot, c.get_class(),
+				String(c.get_path()), 1 if c.visible else 0,
+				c.global_position.x, c.global_position.y, c.size.x, c.size.y])
+		for ch in n.get_children():
+			stack.append(ch)
 
 func _frames(n: int) -> void:
 	for i in n:

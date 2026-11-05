@@ -36,6 +36,12 @@ const TIME_ICONS := ["turn_30s", "turn_1m", "turn_2m", "turn_3m", "turn_5m", "tu
 ## （`docs/92` §4.10、§6），且 `docs/35` 已证 tick 时钟 60 Hz。
 const TIME_SECONDS := [30, 60, 120, 180, 300, 0]
 
+## AxisMode 四档的**含义**：由 `docs/118` §7.1 把 21 关的描述与 axis 值逐一对照得到
+## （"The finer grid lines are gone" → 2、"Most grid lines are gone" → 1、
+##  "The main axes are gone" → 0），21/21 同向；`orig_campaign_play.png` 的相机实测
+## 细线每 1 单位、粗线每 5 单位、轴 2 px（见 `docs/125` §2），与 3 档的画法一致。
+const AXIS_LABELS := ["no axis", "main axes only", "every 5 units", "every unit"]
+
 ## 档位的中文说明只用于 tooltip；界面文字保持原版英文（原版无多语言支持）。
 const TIME_LABELS := ["30 s", "1 min", "2 min", "3 min", "5 min", "∞"]
 
@@ -56,6 +62,9 @@ static func turn_next(v: int) -> int:
 
 static func time_next(v: int) -> int:
 	return wrapi(v + 1, 0, TIME_COUNT)      # 1m→2m→3m→5m→∞→30s→1m
+
+static func axis_label(v: int) -> String:
+	return AXIS_LABELS[wrapi(v, 0, AXIS_COUNT)]
 
 static func axis_icon(v: int) -> String:
 	return AXIS_ICONS[wrapi(v, 0, AXIS_COUNT)]

@@ -163,9 +163,11 @@ func _test_campaign() -> void:
 	var title := popup.find_child("LevelTitleLabel", true, false) as Label if popup != null else null
 	_expect(title != null and title.text == "Level 0", "JoinLevelPopUp 标题 = 'Level 0'（实际 '%s'）"
 		% (title.text if title != null else "<null>"))
+	# 说明栏必须是**该关原文**（docs/118 §4.2 逐字节），不是占位文案
 	var desc := popup.find_child("LevelDescriptionEdit", true, false) as TextEdit if popup != null else null
-	_expect(desc != null and desc.text.contains("PLACEHOLDER"),
-		"JoinLevelPopUp 说明里明写占位（关卡数据未知）")
+	var lv0 := GwCampaign.level(0)
+	_expect(desc != null and desc.text == String(lv0.description),
+		"JoinLevelPopUp 说明 = 第 0 关原文（实际 '%s'）" % (desc.text if desc != null else "<null>"))
 	_command("cancel_level")
 	await _frames(2)
 	_expect(not popup.visible, "cancel_level 关掉 JoinLevelPopUp")

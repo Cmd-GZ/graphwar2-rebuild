@@ -235,5 +235,8 @@ static func _flat_sizes(items: Array, key: String, fallback: float) -> PackedFlo
 static func format_offset(offset: float) -> String:
 	if is_nan(offset):
 		return ""
-	return " %+.3f " % offset
+	# 观测格式（`docs/92` §4.10 + 原版真帧）：符号与数字之间**有一个空格**，
+	# 三位小数，例：`+ 2.515`、`+ 16.872`、`- 8.315`（`docs/24` §6.2 的样本同形）。
+	var sign_str := "+" if offset >= 0.0 else "-"
+	return "%s %.3f" % [sign_str, absf(offset)]
 

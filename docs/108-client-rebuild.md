@@ -279,7 +279,7 @@ MainMenu
 |---|---|---|---|---|
 | 1 | ~~弹道~~ | ✅ **已消除**：`GW2Rebuild.path_calculate` 已暴露并被客户端使用，`source=kernel`，等弦长 0.01（`docs/116`） | 等弦长 0.01 二分采样 | PlayScreen |
 | 2 | ~~命中/致死~~ | ✅ **已消除**：`GW2Rebuild.hit_test` 走 `settle::resolve_points`（掩膜 + 数据字段半径），旧 0.8 近似已删（`docs/120`）。⚠️ 残留：原版按实体 id 排除射手，`game.rs::fire` 仍有一条 1e-12 位置排除（`docs/122`） | 掩膜逐点采样、穿过即死、友军也会死 | PlayScreen |
-| 3 | ~~关卡数据~~ | ✅ **已消除**：21 关标题 / 描述 / 参数（障碍模式、`min_count`、士兵数、目标数、Bot 难度、回合上限）**全部解出**，并与 385 份回放交叉验证 21/21（`docs/118`）。⚠️ 客户端是否已接入真数据见 `docs/125` | 硬编码在 `level_info()`（`0x4ad380`） | Campaign / JoinLevelPopUp |
+| 3 | ~~关卡数据~~ | ✅ **已消除**：21 关标题 / 描述 / 参数（障碍模式、`min_count`、士兵数、目标数、Bot 难度、回合上限）**全部解出**，并与 385 份回放交叉验证 21/21（`docs/118`）。⚠️ 客户端已接入（`docs/125`）；**仅障碍物仍不画**（公式有、原版的随机流没有） | 硬编码在 `level_info()`（`0x4ad380`） | Campaign / JoinLevelPopUp |
 | 4 | ~~关卡解锁~~ | ✅ **规则已还原**：`campaign.save` = 单行 `level_<n>`（0 基、**无尾换行**、只增不减、启动不创建），写点在 `0x4183b0`；客户端是否已接入见 `docs/124` | 同左（`docs/118` 附录 A） | Campaign |
 | 5 | **Bot 分队** | 第 1 个 Bot 去对面（team 1），之后按人数奇偶 | 未观测 | GameSetup |
 | 6 | **Bot 名字 ↔ 难度** | 固定把 `ChatGPT/Wolfram/Alpha Zordon/Multivac/Deep Blue/Deep Thought` 依次给 0..5 档 | **对应关系未观测**（`docs/92` §4.6 明写），且名字池与难度不是 1:1 | AddBotPopUp |

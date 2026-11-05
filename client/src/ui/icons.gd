@@ -49,7 +49,9 @@ const FIXED := {
 	"hide_extra_buttons": "hide_extra_buttons",      # ShowExtraButtons.gd（展开态）
 	"view_names": "view_names",                      # play_screen ShowNames
 	"hide_names": "hide_names",                      # libgraphwarrust.so .rodata（同名按钮的切换态）
-	"view_functions": "view_recent_functions",       # play_screen ViewFunctionButton
+	"view_functions": "view_recent_functions",       # play_screen ViewFunctionButton 的初值
+	"view_single_function": "view_single_function",  # pck 里有这张图（.so/.tscn 无引用点，docs/121 §4.4）
+	"view_recent_functions": "view_recent_functions",# play_screen ViewFunctionButton 的初态图标
 	"view_all_functions": "view_all_functions",      # libgraphwarrust.so .rodata
 	"mute": "mute",                                  # libgraphwarrust.so .rodata（MuteButton 切换）
 	"unmute": "unmute",                              # play_screen MuteButton 初值

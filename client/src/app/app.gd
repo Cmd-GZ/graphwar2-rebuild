@@ -275,9 +275,13 @@ func _start_level() -> void:
 	state.function_mode = int(lv.function)
 	state.turn_mode = int(lv.turn)
 	state.time_mode = int(lv.time)
+	# 士兵数与 Bot 难度档**来自真数据**（docs/118 §7.1 的 S/C/R 三源对照表）：
+	# 前 16 关的对手关（5/9/11/14/15/18/19/20）各 1 个 Bot，档位 0/2/3/3/4/3/3/4；
+	# 其余关卡没有对手，只有靶子（靶子由 PlayScreen 绘制）。
 	state.add_human(store.profile.name, store.profile.skin, store.profile.face, store.profile.hat)
-	# 关卡数据未知（docs/108 §7）：用一个固定档位的 Bot 充当对手，保证流程走得通。
-	state.add_bot(2)
+	state.players[state.players.size() - 1]["soldiers"] = int(lv.soldiers)
+	if int(lv.bot_tier) >= 0:
+		state.add_bot(int(lv.bot_tier))
 	close_popup("JoinLevelPopUp")
 	_begin_match()
 
