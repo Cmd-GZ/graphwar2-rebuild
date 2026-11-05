@@ -115,3 +115,13 @@ GIT_SSH_COMMAND="ssh -F /dev/null" git push origin main
      现在 `selftest` 会优先读 `CARGO_TARGET_DIR`。
 
 4. **`/tmp` 是逐命令 tmpfs**，跨命令的文件会凭空消失；临时产物一律放 `.agent-work/`。
+
+## `.agent-work/` 是可丢弃的，别把它写进证据链
+
+子 agent 的工作区在 `/home/user/MyProject/gw2/.agent-work/<topic>/`，**用完就删**（2026-11 一次性回收了 9.6 GB）。
+所以：
+
+- **文档里不要引用 `.agent-work/...` 的路径当证据**（截图、日志、克隆），因为过几天就没了；
+- 真要留证据，就**把关键内容复制成仓库里的文本**（数值、报文、截图放到 `docs/img/` 之类并说明来源），
+  或者写成"从哪份数据、用什么命令、得到什么数"；
+- 本轮已经有一批旧文档引用了 `pixfit/` `popups/` `playfit/` 等路径，那些**已经失效**——引用时以本文数字为准。
