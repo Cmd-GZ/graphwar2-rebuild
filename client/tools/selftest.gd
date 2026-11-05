@@ -27,6 +27,7 @@ func run(main: Control) -> int:
 	await _test_endgame()
 	_test_fonts_and_icons()
 	_test_assets_and_original_settings()
+	_test_geometry_and_campaign_save()
 
 	var passed := _checks - _failures.size()
 	if _skipped.is_empty():
@@ -472,6 +473,158 @@ func _test_assets_and_original_settings() -> void:
 	_expect(our_show == bool(orig.get("application/boot_splash/show_image", true)),
 		"boot_splash/show_image 与原版一致（我们 %s，原版 %s）"
 		% [str(our_show), str(orig.get("application/boot_splash/show_image"))])
+
+## 本轮（docs/124）新增：**几何/版本/存档**三条主线。
+##
+## 这些都是"能被真值钉住"的断言，不是观感断言：
+##   * 工程设置：viewport 1600×900、mode=2、**没有 stretch**（= disabled）、版本 2.0.60；
+##   * 主菜单：VersionLabel 显示的必须是工程版本；界面上**不许**出现我们自己的调试文字/广告文字；
+##   * 广告位：AdContainer 存在但高度 0、没有文字（原版运行时 ad_size=0）；
+##   * 内核状态：仍然通过 `dump` 通道可查（`Main.kernel_dump_line()`）；
+##   * 战役存档：`level_<n>` 解析的严格性（尾换行必须失败）、写入无尾换行、单调、不自动创建；
+##   * 字号：主题基准字号回到原版 `.tres` 的 24，关卡数字用原版手写体 + 无底色。
+func _test_geometry_and_campaign_save() -> void:
+	# --- 1. 工程设置（原版 project.binary 的观测值）---
+	_expect(int(ProjectSettings.get_setting("display/window/size/viewport_width", 0)) == 1600,
+		"viewport_width = 1600（实际 %d）" % int(ProjectSettings.get_setting("display/window/size/viewport_width", 0)))
+	_expect(int(ProjectSettings.get_setting("display/window/size/viewport_height", 0)) == 900,
+		"viewport_height = 900（实际 %d）" % int(ProjectSettings.get_setting("display/window/size/viewport_height", 0)))
+	_expect(int(ProjectSettings.get_setting("display/window/size/mode", -1)) == 2,
+		"window/size/mode = 2（最大化，原版值）")
+	var stretch := String(ProjectSettings.get_setting("display/window/stretch/mode", "disabled"))
+	_expect(stretch == "disabled",
+		"拉伸模式 = disabled（原版 project.binary 里没有 stretch 键；实际 %s）" % stretch)
+	_expect(String(ProjectSettings.get_setting("application/config/version", "")) == "2.0.60",
+		"application/config/version = 2.0.60")
+
+	# --- 2. 主菜单：版本号 = 工程版本；界面上没有自造文字 ---
+	var menu := _screen("MainMenu")
+	_expect(menu != null, "MainMenu 存在（几何/版本用例）")
+	if menu != null:
+		var ver := menu.find_child("VersionLabel", true, false) as Label
+		_expect(ver != null, "MainMenu 有 VersionLabel（右列底部）")
+		if ver != null:
+			_expect(ver.text == String(ProjectSettings.get_setting("application/config/version", "?")),
+				"VersionLabel 文本 = 工程版本（实际 '%s'）" % ver.text)
+			_expect(ver.text == "2.0.60", "VersionLabel 文本 = 2.0.60（实际 '%s'）" % ver.text)
+			_expect(ver.horizontal_alignment == HORIZONTAL_ALIGNMENT_RIGHT,
+				"VersionLabel 右对齐（原版 horizontal_alignment = 2）")
+		var ad := menu.find_child("AdContainer", true, false) as Control
+		_expect(ad != null, "MainMenu 有 AdContainer 节点（原版有，只是运行时 0×0）")
+		if ad != null:
+			_expect(is_equal_approx(ad.custom_minimum_size.y, 0.0),
+				"AdContainer 最小高度 = 0（原版 ad_size=(0,0)；实际 %.1f）" % ad.custom_minimum_size.y)
+			_expect(ad.get_child_count() == 0, "AdContainer 里没有文字（实际 %d 个子节点）"
+				% ad.get_child_count())
+		# 全屏扫一遍：界面上不许出现"广告位说明"和"内核状态"这类我们自己的调试文字。
+		var banned := ["advertisement", "kernel on", "kernel off", "client 0.1.0"]
+		var found: Array[String] = []
+		for node in menu.find_children("*", "", true, false):
+			if node is Label or node is Button:
+				var txt := String(node.get("text"))
+				for b in banned:
+					if txt.contains(b):
+						found.append("%s:%s" % [node.name, txt])
+		_expect(found.is_empty(), "主菜单不含调试/广告文字（实际命中 %s）" % str(found))
+
+	# --- 3. 内核状态仍在 dump 通道里（只是不画在界面上）---
+	var kline := String(_main.call("kernel_dump_line"))
+	_expect(kline.begins_with("@@KERNEL available="),
+		"dump 通道能查到内核状态（kernel_dump_line = %s）" % kline.substr(0, 60))
+	_expect(kline.contains("available=%d" % int(GwCore.kernel_available())),
+		"dump 的内核状态与 GwCore 一致（%s）" % kline.substr(0, 40))
+	var pline := String(_main.call("project_dump_line"))
+	_expect(pline.contains("stretch_mode=disabled") and pline.contains("version=2.0.60"),
+		"dump 通道能查到工程设置（%s）" % pline)
+
+	# --- 4. 主题基准字号回到原版 .tres 的 24 ---
+	_expect(GwThemeFactory.BASE_FONT_SIZE == 24,
+		"主题基准字号 = 24（原版 graphwar_theme.tres 的 default_font_size；实际 %d）"
+		% GwThemeFactory.BASE_FONT_SIZE)
+
+	# --- 5. 战役存档 user://campaign.save（格式逐位要求，docs/124 §3.2）---
+	_expect(GwStore.parse_campaign_save("level_20") == 20, "campaign.save: 'level_20' → 20")
+	_expect(GwStore.parse_campaign_save("level_0") == 0, "campaign.save: 'level_0' → 0")
+	_expect(GwStore.parse_campaign_save("level_0\n") == -1,
+		"campaign.save: 尾换行必须解析失败（Rust parse 不跳空白；真二进制实测进度归零）")
+	_expect(GwStore.parse_campaign_save("level_0 ") == -1, "campaign.save: 尾空格必须解析失败")
+	_expect(GwStore.parse_campaign_save("level_ 0") == -1, "campaign.save: 数字前的空格解析失败")
+	# 注意：`split('_').last()` 只取**最后一个 '_' 之后**的内容，所以前缀里的空格不影响
+	# 解析（" level_0" → "0" 成功）。这条断言钉住"我们不是整串校验"这个事实。
+	_expect(GwStore.parse_campaign_save(" level_0") == 0,
+		"campaign.save: 前缀里的空白不影响（split('_').last() 只解析尾巴）")
+	_expect(GwStore.parse_campaign_save("level_") == -1, "campaign.save: 'level_' 解析失败")
+	_expect(GwStore.parse_campaign_save("20") == -1, "campaign.save: 没有 'level_' 前缀解析失败")
+	_expect(GwStore.parse_campaign_save("") == -1, "campaign.save: 空文件解析失败")
+
+	# 写入/读取用一个临时路径，别碰用户真的存档
+	var store: GwStore = get_node("/root/App").store
+	var saved_path: String = store.campaign_path
+	var probe := "user://selftest_campaign.save"
+	store.campaign_path = probe
+	if FileAccess.file_exists(probe):
+		DirAccess.remove_absolute(probe)
+	# (a) 文件不存在时**只读不建**
+	_expect(store.read_campaign_progress() == -1, "campaign.save 不存在 → progress = -1")
+	_expect(not FileAccess.file_exists(probe), "读存档**不会**创建文件（原版删掉后重启不重建）")
+	# (b) 写入：内容恰好 `level_<n>`，**没有**尾换行
+	store.campaign_progress = -1
+	_expect(store.save_campaign_progress(7), "写入 level_7 成功")
+	var f := FileAccess.open(probe, FileAccess.READ)
+	_expect(f != null, "能打开刚写入的 campaign.save")
+	if f != null:
+		var raw := f.get_buffer(f.get_length())
+		f.close()
+		var text := raw.get_string_from_utf8()
+		_expect(text == "level_7", "写入内容恰好是 'level_7'（实际 '%s'）" % text)
+		_expect(raw.size() == 7, "写入字节数 = 7（没有尾换行/尾空格；实际 %d）" % raw.size())
+		_expect(not text.ends_with("\n"), "写入内容没有尾换行")
+	# (c) 单调：更小的值不写
+	_expect(not store.save_campaign_progress(3), "单调：level_3 不会覆盖 level_7")
+	var f2 := FileAccess.open(probe, FileAccess.READ)
+	var text2 := ""
+	if f2 != null:
+		text2 = f2.get_as_text()
+		f2.close()
+	_expect(text2 == "level_7", "单调写入后文件仍是 'level_7'（实际 '%s'）" % text2)
+	# (d) 解锁边界：没有存档时至少第 0 关可玩；level_20 ⇒ 21 关全开
+	store.campaign_progress = -1
+	_expect(store.is_level_unlocked(0), "没有存档时第 0 关可玩")
+	_expect(not store.is_level_unlocked(1), "没有存档时第 1 关锁住")
+	store.campaign_progress = 20
+	var all_open := true
+	for i in GwStore.LEVEL_COUNT:
+		if not store.is_level_unlocked(i):
+			all_open = false
+	_expect(all_open, "campaign.save = level_20 ⇒ 21 关全部解锁（用户真机截图的状态）")
+	# 收尾：清掉临时文件，恢复真实路径
+	if FileAccess.file_exists(probe):
+		DirAccess.remove_absolute(probe)
+	store.campaign_path = saved_path
+	store.campaign_progress = store.read_campaign_progress()
+
+	# --- 6. Campaign 屏：21 个数字用原版手写体 + 空 stylebox（没有圆角底）---
+	if not _main.assets_ok:
+		_skip("Campaign 关卡数字字体/底色（缺 client/assets/）")
+		return
+	var campaign := _screen("Campaign")
+	var b0 := campaign.find_child("level_0", true, false) as GwButton if campaign != null else null
+	_expect(b0 != null, "Campaign 有 level_0 按钮")
+	if b0 != null:
+		var sb := b0.get_theme_stylebox("normal")
+		_expect(sb is StyleBoxEmpty,
+			"关卡按钮 normal stylebox 是 StyleBoxEmpty（原版没有圆角底色；实际 %s）"
+			% (sb.get_class() if sb != null else "<null>"))
+		for state in ["hover", "pressed", "disabled", "focus"]:
+			var sbs := b0.get_theme_stylebox(state)
+			_expect(sbs is StyleBoxEmpty, "关卡按钮 %s stylebox 也是 StyleBoxEmpty" % state)
+		var lvl_font := b0.get_theme_font("font")
+		_expect(lvl_font != null and lvl_font == GwThemeFactory.title_font(),
+			"关卡数字字体 = 原版手写体 Eraser（title_theme 同一套）")
+		var want := int(maxf(10.0, campaign.find_child("Control", true, false).size.x / 15.0))
+		var got := int(b0.get_theme_font_size("font_size"))
+		_expect(absi(got - want) <= 1,
+			"关卡数字字号 = 容器宽/15（期望 %d，实际 %d）" % [want, got])
 
 func _color_eq(a: Array, b: Array) -> bool:
 	if a.size() != 4 or b.size() != 4:

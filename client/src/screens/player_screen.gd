@@ -47,9 +47,13 @@ func _ready() -> void:
 func build() -> void:
 	var f := GwUI.frame(self)
 	var vbox: VBoxContainer = f.vbox
-	build_header(vbox, "PLAYER OPTIONS", GwCommands.EXIT_PLAYER_SETTINGS)
+	build_header(vbox, "PLAYER OPTIONS", GwCommands.EXIT_PLAYER_SETTINGS, true)
 
-	var body := GwUI.hbox("HBoxContainer3", 10, vbox)
+	var body := GwUI.hbox("HBoxContainer3", GwUI.SEPARATION, vbox)
+	# ⚠️ `GwUI.hbox()` 只给水平 EXPAND，竖直是 FILL —— 这里必须手动撑开，
+	# 否则 `body` 只有最小高度（= 页签栏 48 px），TabContainer 与网格被压成一条缝
+	# （真渲染截图才发现，docs/124 §4）。
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
 	_tabs = TabContainer.new()
@@ -75,7 +79,7 @@ func build() -> void:
 		b.name = "SkinButton%d" % i
 		b.icon = GwIcons.get_icon("skin_%d" % i)
 		b.expand_icon = true
-		b.custom_minimum_size = Vector2(72, 72)
+		b.custom_minimum_size = _cell_size()
 		b.tooltip_text = "皮肤 %d" % i
 		b.pressed.connect(_on_skin_selected.bind(i))
 		if current_row != null:
@@ -186,6 +190,27 @@ func build() -> void:
 
 ## 一行 3 个 `shop_button_entry` 等价物：Control{GraphwarButton, SkinBackgroundButton, Button}
 ## （原版这个子场景恰好 5 个节点，`docs/104` §4.1）。
+## 格子尺寸：**原版 `ButtonGrid.gd` 的公式**，一字不改 ——
+##   `desired_size = Vector2(screen.x * 0.15 / 3.0, screen.x * 0.15 / 3.0)`
+## 1920 宽 ⇒ 96×96。我们以前随手写 72/76，于是整个网格比原版小一圈（真机截图对比，
+## docs/124 §4：原版是 3 列 × 96 px 的彩色圆点网格）。
+func _cell_size() -> Vector2:
+	var w := get_viewport_rect().size.x
+	if w <= 0.0:
+		return Vector2(96, 96)
+	var d := maxf(32.0, w * 0.15 / 3.0)
+	return Vector2(d, d)
+
+func apply_font_scale() -> void:
+	super()
+	if not _built:
+		return
+	var cell := _cell_size()
+	for n in find_children("*", "GwButton", true, false):
+		var b := n as GwButton
+		if String(b.name).begins_with("ShopButtonEntry") or String(b.name).begins_with("Skin"):
+			b.custom_minimum_size = cell
+
 func _fill_shop_grid(box: VBoxContainer, count: int, rows: int, kind: String, callback: Callable) -> void:
 	var index := 0
 	for r in rows:
@@ -196,7 +221,7 @@ func _fill_shop_grid(box: VBoxContainer, count: int, rows: int, kind: String, ca
 				break
 			var entry := Control.new()
 			entry.name = "ShopButtonEntry%d" % index
-			entry.custom_minimum_size = Vector2(76, 76)
+			entry.custom_minimum_size = _cell_size()
 			entry.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			var back := ColorRect.new()
 			back.name = "ColorRect"

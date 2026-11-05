@@ -27,11 +27,13 @@ class_name GwThemeFactory
 ## 出处：`graphwar_style_box_flat.tres`、`graphwar_theme.tres`、
 ## `project.binary` 的 `rendering/environment/defaults/default_clear_color`。
 
-## 基准字号。原版 `graphwar_theme.tres` 写的是 `default_font_size = 24`，但那是在
-## **1600×900** 的视口里（原版 `project.binary` 的 viewport_width/height）；
-## 本工程是 1280×720（`project.godot`），等物理大小换算 = 24 × 720/900 = 19.2 ≈ 20。
-## 用 24 会让按钮/文字整体偏大、把战场挤到看不见（实测截图对比，见 docs/121 §7.2）。
-const BASE_FONT_SIZE := 20
+## 基准字号。**原版 `graphwar_theme.tres` 的 `default_font_size = 24`，一字不改照抄。**
+##
+## 来历（docs/124 §2.6）：上一轮为了将就我们自己的 1280×720 视口，把它手工缩成
+## 20（24 × 720/900）—— 那是在补偿我们自己写错的 `stretch/mode="canvas_items"`。
+## 现在视口已经是原版的 **1600×900**、拉伸是原版的 **disabled**，就没有任何理由再缩放：
+## 界面上的字号本来就全部由脚本按"窗口宽 ÷ N"覆盖，这个 24 只给没被脚本覆盖的控件兜底。
+const BASE_FONT_SIZE := 24
 
 ## 原版主字体 / 标题字体的 `res://` 路径（不含扩展名）。
 const FONT_MAIN := "button_font"
@@ -78,6 +80,12 @@ static func title_font() -> Font:
 	return _title_font_cache
 
 
+## StyleBoxFlat，**不带 content margin**。
+##
+## 原版 5 个 `graphwar_style_box_flat*.tres` 的属性表只有 9 条：`bg_color` + 4 个
+## `border_width_*` + `border_color` + 4 个 `corner_radius_*`，**没有任何 content_margin**。
+## 我们以前自己加了 12/6 的内边距，等于把每个按钮的最小尺寸撑大了 24×12 px ——
+## 这也是"按钮比原版大一圈"的第二个来源（`docs/124` §2.2）。现在不设，与原版一致。
 static func _flat(bg: Color, edge: Color = COL_PANEL_EDGE, radius: int = PANEL_RADIUS,
 		width: int = PANEL_BORDER) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
@@ -85,11 +93,34 @@ static func _flat(bg: Color, edge: Color = COL_PANEL_EDGE, radius: int = PANEL_R
 	sb.border_color = edge
 	sb.set_border_width_all(width)
 	sb.set_corner_radius_all(radius)
-	sb.content_margin_left = 12
-	sb.content_margin_right = 12
-	sb.content_margin_top = 6
-	sb.content_margin_bottom = 6
 	return sb
+
+
+## 原版 `campaign_button_theme_2.tres` —— **Campaign 屏 21 个关卡数字用的主题**。
+##
+## `campaign.tscn` 把这份主题挂在生成关卡按钮的那个 `Control` 上
+## （`[node name="Control" ... theme = ExtResource("8")]`，ExtResource("8") =
+## `res://campaign_button_theme_2.tres`），所以运行时 `GraphwarButton.new()` 造出来的
+## 21 个按钮全都继承它。它的 `[resource]` 段只有 7 条（逐条照抄）：
+##
+##   default_font                      = FontFile(font_name = "Eraser")   ← 手写体，和标题同一套
+##   Button/styles/{normal,hover,pressed,disabled,focus} = StyleBoxEmpty  ← **没有圆角矩形底**
+##   Button/colors/font_disabled_color = (0.87451, 0.87451, 0.87451, **0**) ← alpha 0 ⇒ 锁住的关看不见
+##   Button/colors/icon_normal_color   = (1, 1, 1, 0)
+##
+## **没有** 覆盖 `font_color` ⇒ 白色是从上层 app 主题继承下来的（用户截图里 21 个数字全白，
+## 正是这个原因）。旧实现给每个格子画了一个灰色圆角按钮 + 我们自己的无衬线粗体，
+## 与原版完全不是一回事（docs/124 §3）。
+static func campaign_level_theme() -> Theme:
+	var t := Theme.new()
+	var f := title_font()
+	if f != null:
+		t.default_font = f
+	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+		t.set_stylebox(state, "Button", StyleBoxEmpty.new())
+	t.set_color("font_disabled_color", "Button", Color(0.87451, 0.87451, 0.87451, 0.0))
+	t.set_color("icon_normal_color", "Button", Color(1, 1, 1, 0.0))
+	return t
 
 
 ## 圆角 + 黑边 + 深绿底：原版 `graphwar_style_box_flat.tres` 的形状。
@@ -134,7 +165,8 @@ static func build() -> Theme:
 	t.set_stylebox("tab_unselected", "TabContainer", _flat(Color(0, 0, 0, 0)))
 	t.set_color("font_selected_color", "TabContainer", COL_TEXT)
 	t.set_color("font_unselected_color", "TabContainer", COL_TEXT_DIM)
-	t.set_font_size("font_size", "TabContainer", BASE_FONT_SIZE)
+	# 原版 graphwar_theme.tres：`TabContainer/font_sizes/font_size = 50`（逐字照抄）。
+	t.set_font_size("font_size", "TabContainer", 50)
 
 	# --- RichTextLabel（聊天/函数列表/名字）---
 	t.set_color("default_color", "RichTextLabel", COL_TEXT)

@@ -1,132 +1,166 @@
 extends GwScreen
-## MainMenu —— 主菜单。
+## MainMenu —— 主菜单。**节点树、比例、字号全部照抄恢复出的 `main_menu.tscn`**（25 个节点）。
 ##
-## 结构（`docs/92` §4.1 运行时 + `docs/104` §4 静态，恢复出的 main_menu.tscn 25 个节点）：
-##   MarginContainer/VBoxContainer
-##     ├ MarginContainer/Label("Graphwar II")          ← 标题，字号 = 宽/8（TitleSize.gd）
-##     ├ HBoxContainer
-##     │   ├ MarginContainer(0.2 弹性)/MarginContainer/VBoxContainer
-##     │   │     ├ PlayButton("Campaign",  input_text="campaign")
-##     │   │     └ CharacterButton("Player\n", input_text="player_settings")
-##     │   ├ MarginContainer(0.05 弹性)
-##     │   └ MarginContainer2/MarginContainer2/VBoxContainer2
-##     │         ├ LocalButton("Battle",   input_text="multiplayer")
-##     │   ├ ReplayButton("Replays",  input_text="replay")
-##     │         └ MarginContainer3/VersionLabel("2.0.60"，右对齐)
-##     └ AdContainer(custom_minimum_size=(0,60))
+##   MarginContainer                     ← 挂 MarginContainer.gd（安全区；桌面下 margin=0）
+##   └ VBoxContainer                     ← separation = 4（Godot 默认，原版没有 override）
+##      ├ MarginContainer                [size_flags_vertical=3]  ← 挂 TitleSize.gd
+##      │  └ Label "Graphwar II"         ← 字号 = 视口宽/8，EraserRegular（title_theme.tres）
+##      ├ HBoxContainer                  [size_flags_vertical=3]
+##      │  ├ MarginContainer7            [h=3, stretch_ratio=0.2]   ← 左侧留白
+##      │  ├ MarginContainer             [h=3]                     ← 左列
+##      │  │  └ VBoxContainer            ← 挂 MainMenuButtonResize.gd（字号 = 视口宽/30）
+##      │  │     ├ PlayButton            "Campaign"  input_text="campaign"
+##      │  │     ├ MarginContainer       [v=3, ratio=0.05]         ← 按钮之间的弹性空隙
+##      │  │     ├ CharacterButton       "Player\n"  input_text="player_settings"
+##      │  │     └ MarginContainer2      [v=3]                     ← 底部弹性空隙
+##      │  ├ MarginContainer3            [h=3, ratio=0.05]         ← 两列之间
+##      │  ├ MarginContainer2            [h=3]                     ← 右列
+##      │  │  └ VBoxContainer2           ← 同样挂 MainMenuButtonResize.gd
+##      │  │     ├ LocalButton           "Battle"    input_text="multiplayer"
+##      │  │     ├ MarginContainer       [v=3, ratio=0.05]
+##      │  │     ├ ReplayButton          "Replays"   input_text="replay"
+##      │  │     ├ MarginContainer2      [v=3]
+##      │  │     └ MarginContainer3      ← 挂 VersionLabel.gd（字号 = 视口宽/60）
+##      │  │        └ VersionLabel       "2.0.60"，右对齐（horizontal_alignment=2）
+##      │  ├ MarginContainer5            [h=3, ratio=0.05]
+##      │  └ MarginContainer6            [h=3, ratio=0.2]
+##      └ AdContainer                    ← 运行时 0×0（AdContainer.gd 从 ad_size 取值）
 ##
-## 观测补充：`VersionLabel` 在 `.tscn` 里写的是 "0.0.0"，运行时显示 "2.0.60" ⇒ 版本号由
-## Rust 在运行时填（`docs/92` §4.1）。本项目显示自己的版本号，并注明原版版本。
+## 六列的弹性比例之和 = 0.2 + 1 + 0.05 + 1 + 0.05 + 0.2 = **2.5**，于是（1920 宽、separation 4）：
+##   左右留白 152 / **列 760** / 列间 38 / **列 760** / 38 / 152   （docs/124 §2.2 有实测表）
+##
+## 两个版本号事实（别混）：
+##   * `.tscn` 里 `VersionLabel` 的静态文本是 `"0.0.0"`；
+##   * `VersionLabel.gd` **只改字号**（= 视口宽/60），不动文本；
+##   * 用户真机截图上显示的是 **`2.0.60`**，而 `project.binary` 的
+##     `application/config/version` 正好是 `"2.0.60"` ⇒ 文本由运行时的 `GraphwarRootNode`
+##     （Rust，封闭代码）从工程设置里填 —— **推断**，证据见 docs/124 §2.3。
+##   所以这里照这个推断实现：读 `ProjectSettings` 的 `application/config/version`。
 
 const GAME_TITLE := "Graphwar II"
-## 原版运行时显示的版本（观测）。我们不冒充它：显示自己的客户端版本，后面附原版版本。
-const UPSTREAM_VERSION := "2.0.60"
-const CLIENT_VERSION := "0.1.0"
+const TITLE_DIVISOR := 8        # TitleSize.gd:        font_size = 视口宽 / 8
+const BUTTON_DIVISOR := 30      # MainMenuButtonResize.gd: font_size = 视口宽 / 30
+const VERSION_DIVISOR := 60     # VersionLabel.gd:     font_size = 视口宽 / 60
+
+## `.tscn` 静态文本（原版没填版本时的样子）。
+const VERSION_PLACEHOLDER := "0.0.0"
+const VERSION_SETTING := "application/config/version"
+
+var _title: Label
+var _version: Label
 
 func _ready() -> void:
-	font_divisor = 30        # MainMenuButtonResize.gd: 宽/30
+	font_divisor = BUTTON_DIVISOR
 	super()
 
 func build() -> void:
-	var f := GwUI.frame(self)
-	var vbox: VBoxContainer = f.vbox
+	var outer := GwUI.margin("MarginContainer", 0)
+	outer.name = "MarginContainer"
+	outer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	outer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	add_child(outer)
+	var vbox := GwUI.vbox("VBoxContainer", GwUI.SEPARATION, outer)
 
-	# --- 标题：字号 = 宽/8（TitleSize.gd，docs/101 §5.2 表中 N=8 只有它一个）---
-	var title_margin := GwUI.margin("MarginContainer", 4, vbox)
+	# --- 标题（TitleSize.gd：子节点最小宽 = 整屏宽，字号 = 宽/8，EraserRegular）---
+	var title_margin := GwUI.margin("MarginContainer", 0, vbox)
 	title_margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var title := GwUI.title(GAME_TITLE, title_margin)
-	title.name = "Label"
-	title.set_meta("title_font", true)   # 字号由 apply_font_scale() 按"宽/8"单独设
-	# 标题字体：原版 `title_theme.tres` 的 `default_font = res://EraserRegular.ttf`
-	# （`docs/121` §5.4）。缺资产时 title_font() 退回主字体，不会崩。
-	var tf := GwThemeFactory.title_font()
-	if tf != null:
-		title.add_theme_font_override("font", tf)
+	_title = GwUI.label(GAME_TITLE, 0, HORIZONTAL_ALIGNMENT_CENTER)
+	_title.name = "Label"
+	_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	var title_font := GwThemeFactory.title_font()
+	if title_font != null:
+		_title.add_theme_font_override("font", title_font)
+	title_margin.add_child(_title)
 
-	# --- 4 个按钮：2×2 布局（原版两列，左列 Campaign/Player，右列 Battle/Replays）---
-	var row := GwUI.hbox("HBoxContainer", 12, vbox)
+	# --- 两列 ---
+	var row := GwUI.hbox("HBoxContainer", GwUI.SEPARATION, vbox)
 	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
-	var left_pad := GwUI.margin("MarginContainer7", 4, row)
-	left_pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	left_pad.size_flags_stretch_ratio = 0.2
+	var pad_left := _h_spacer("MarginContainer7", row, 0.2)
 
-	var left_col_margin := GwUI.margin("MarginContainer", 4, row)
+	var left_col_margin := GwUI.margin("MarginContainer", 0, row)
 	left_col_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var left_col := GwUI.vbox("VBoxContainer", 10, left_col_margin)
-	var campaign := _menu_button("Campaign", GwCommands.CAMPAIGN, "campaign")
-	campaign.name = "PlayButton"
+	left_col_margin.size_flags_vertical = Control.SIZE_FILL
+	var left_col := GwUI.vbox("VBoxContainer", GwUI.SEPARATION, left_col_margin)
+	left_col.size_flags_vertical = Control.SIZE_FILL
+	var campaign := _menu_button("Campaign", GwCommands.CAMPAIGN, "PlayButton")
 	left_col.add_child(campaign)
-	left_col.add_child(GwUI.spacer(Vector2(0, 0)))
-	var player := _menu_button("Player\n", GwCommands.PLAYER_SETTINGS, "player_settings")
-	player.name = "CharacterButton"
+	_v_spacer("MarginContainer", left_col, 0.05)
+	var player := _menu_button("Player\n", GwCommands.PLAYER_SETTINGS, "CharacterButton")
 	left_col.add_child(player)
+	_v_spacer("MarginContainer2", left_col, 1.0)
 
-	var gap := GwUI.margin("MarginContainer2", 4, row)
-	gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	gap.size_flags_stretch_ratio = 0.05
+	var mid := _h_spacer("MarginContainer3", row, 0.05)
 
-	var right_gap := GwUI.margin("MarginContainer3", 4, row)
-	right_gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	right_gap.size_flags_stretch_ratio = 0.05
-
-	var right_col_margin := GwUI.margin("MarginContainer2", 4, row)
-	right_col_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var right_col_margin := GwUI.margin("MarginContainer2", 0, row)
 	right_col_margin.name = "MarginContainer2"
-	var right_col := GwUI.vbox("VBoxContainer2", 10, right_col_margin)
-	var battle := _menu_button("Battle", GwCommands.MULTIPLAYER, "multiplayer")
-	battle.name = "LocalButton"
+	right_col_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right_col_margin.size_flags_vertical = Control.SIZE_FILL
+	var right_col := GwUI.vbox("VBoxContainer2", GwUI.SEPARATION, right_col_margin)
+	right_col.size_flags_vertical = Control.SIZE_FILL
+	var battle := _menu_button("Battle", GwCommands.MULTIPLAYER, "LocalButton")
 	right_col.add_child(battle)
-	right_col.add_child(GwUI.spacer(Vector2(0, 0)))
-	var replays := _menu_button("Replays", GwCommands.REPLAY, "replay")
-	replays.name = "ReplayButton"
+	_v_spacer("MarginContainer", right_col, 0.05)
+	var replays := _menu_button("Replays", GwCommands.REPLAY, "ReplayButton")
 	right_col.add_child(replays)
+	_v_spacer("MarginContainer2", right_col, 1.0)
 
-	# --- 版本号（原版右对齐挂在右列底部；运行时值 2.0.60 由 Rust 填）---
-	var ver_margin := GwUI.margin("MarginContainer3", 4, right_col)
-	ver_margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var ver := GwUI.label(_version_text(), 0, HORIZONTAL_ALIGNMENT_RIGHT)
-	ver.name = "VersionLabel"
-	ver.size_flags_vertical = Control.SIZE_SHRINK_END
-	ver.tooltip_text = ("本客户端版本 %s；原版客户端版本 %s（docs/92 §4.1 观测）"
-		% [CLIENT_VERSION, UPSTREAM_VERSION])
-	ver_margin.add_child(ver)
+	# --- 版本号：右列**最下方**，右对齐（VersionLabel.gd 只管字号 = 宽/60）---
+	var version_margin := GwUI.margin("MarginContainer3", 0, right_col)
+	version_margin.name = "MarginContainer3"
+	version_margin.size_flags_vertical = Control.SIZE_FILL
+	_version = GwUI.label(version_text(), 0, HORIZONTAL_ALIGNMENT_RIGHT)
+	_version.name = "VersionLabel"
+	version_margin.add_child(_version)
 
-	var tail_gap := GwUI.margin("MarginContainer5", 4, row)
-	tail_gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tail_gap.size_flags_stretch_ratio = 0.05
-	var tail_pad := GwUI.margin("MarginContainer6", 4, row)
-	tail_pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tail_pad.size_flags_stretch_ratio = 0.2
+	var pad_right5 := _h_spacer("MarginContainer5", row, 0.05)
+	var pad_right := _h_spacer("MarginContainer6", row, 0.2)
 
-	vbox.add_child(GwUI.ad_bar())
+	# --- 广告位：节点在、尺寸 0、没有文字（原版 AdContainer.gd 把高度设成 ad_size=0）---
+	vbox.add_child(GwUI.ad_slot())
 
-func _version_text() -> String:
-	if GwCore.kernel_available():
-		return "client %s · kernel on" % CLIENT_VERSION
-	return "client %s · kernel off" % CLIENT_VERSION
+## 版本号文本：`ProjectSettings` 的 `application/config/version`，缺省回落到 `.tscn` 的占位文本。
+static func version_text() -> String:
+	var v := String(ProjectSettings.get_setting(VERSION_SETTING, ""))
+	return v if v != "" else VERSION_PLACEHOLDER
 
+## 菜单按钮：**不**设 size_flags_vertical —— 原版 4 个按钮都不抢竖直空间，
+## 竖直方向由两个 spacer 按 0.05 : 1 分配（我们以前给按钮写 EXPAND + custom_minimum_size=64，
+## 于是 4 个按钮被拉得一样高、把整列塞满，与原版不符）。
 func _menu_button(text_: String, cmd: String, node_name: String) -> GwButton:
 	var b := GwButton.make(text_, cmd)
 	b.name = node_name
-	b.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	b.custom_minimum_size = Vector2(0, 64)
+	b.size_flags_vertical = Control.SIZE_FILL
 	return b
 
-## 标题字号 = 视口宽 / 8（`TitleSize.gd`，docs/101 §5.2 里 N=8 只有它一个），
-## 与按钮的 /30 不同，所以单独覆盖一次。
+## 竖直弹性空隙（原版：`MarginContainer` 标 `size_flags_vertical = 3` + stretch_ratio）。
+func _v_spacer(node_name: String, parent: Node, ratio: float) -> MarginContainer:
+	var m := GwUI.margin(node_name, 0, parent)
+	m.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	m.size_flags_stretch_ratio = ratio
+	return m
+
+## 水平弹性空隙（原版：`MarginContainer` 标 `size_flags_horizontal = 3` + stretch_ratio）。
+func _h_spacer(node_name: String, parent: Node, ratio: float) -> MarginContainer:
+	var m := GwUI.margin(node_name, 0, parent)
+	m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	m.size_flags_stretch_ratio = ratio
+	return m
+
+## 字号：按钮 = 宽/30（基类递归写），标题 = 宽/8，版本 = 宽/60。
 func apply_font_scale() -> void:
 	super()
 	if not _built:
 		return
-	var title := find_child("Label", true, false) as Label
-	if title != null and title.has_meta("title_font"):
-		var width := get_viewport_rect().size.x
-		if width > 0.0:
-			title.add_theme_font_size_override("font_size", maxi(24, int(width / 8.0)))
+	var width := get_viewport_rect().size.x
+	if width <= 0.0:
+		return
+	if _title != null:
+		_title.add_theme_font_size_override("font_size", maxi(10, int(width / float(TITLE_DIVISOR))))
+	if _version != null:
+		_version.add_theme_font_size_override("font_size", maxi(10, int(width / float(VERSION_DIVISOR))))
 
 func on_enter() -> void:
-	# 版本行会随内核是否加载而变化（主菜单每次回来都刷新一下）。
-	var ver := find_child("VersionLabel", true, false)
-	if ver != null:
-		(ver as Label).text = _version_text()
+	# 版本号只取决于工程设置，不随状态变化；但路径保持与原版一致（每次进入刷新一次）。
+	if _version != null:
+		_version.text = version_text()

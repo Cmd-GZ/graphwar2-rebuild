@@ -16,6 +16,11 @@ const TARGETS := [
 	{"kind": "screen", "name": "PlayScreen", "after": "PlayScreen"},
 	{"kind": "popup", "name": "ConfirmPlayExitPopUp", "after": "PlayScreen"},
 	{"kind": "popup", "name": "ChatPopUp", "after": "PlayScreen"},
+	# 补上剩下的 4 个弹窗，让 15 个界面每一个都有一张 1920×1160 的实渲染截图（docs/124 §4）。
+	{"kind": "popup", "name": "JoinIpPopUp", "after": "LanLobby"},
+	{"kind": "popup", "name": "ConnectingPopUp", "after": "LanLobby"},
+	{"kind": "popup", "name": "DisconnectedPopUp", "after": "LanLobby"},
+	{"kind": "popup", "name": "EndGamePopUp", "after": "PlayScreen"},
 ]
 
 func run(_main: Control, out_dir: String) -> int:

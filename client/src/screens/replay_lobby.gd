@@ -25,7 +25,7 @@ func _ready() -> void:
 func build() -> void:
 	var f := GwUI.frame(self)
 	var vbox: VBoxContainer = f.vbox
-	build_header(vbox, "REPLAYS", GwCommands.EXIT_REPLAY_LOBBY)
+	build_header(vbox, "REPLAYS", GwCommands.EXIT_REPLAY_LOBBY, true)
 
 	var scroll := GwUI.scroll("ScrollContainer")
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL

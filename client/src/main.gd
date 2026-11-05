@@ -121,6 +121,63 @@ func _build_toast() -> void:
 	_toast_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_toast_label)
 
+# ---------------------------------------------------------------- 调试覆盖层（默认关）
+
+## 客户端自己的版本号（**不是**原版的 `2.0.60`；那是 VersionLabel 显示的工程版本）。
+const CLIENT_VERSION := "0.1.0"
+
+## 显式开关：`godot --path client -- --debug-overlay`
+const DEBUG_OVERLAY_ARG := "--debug-overlay"
+
+var _debug_label: Label
+
+## 状态行默认**不画在界面上**：原版主菜单右下角只有 `2.0.60`，没有内核状态、
+## 没有客户端版本（用户截图对比就是这么来的）。要调试时显式加 `--debug-overlay`，
+## 状态行出现在左下角，仍然是一眼能看出"这是我们的构建"的自陈（docs/124 §2.4）。
+func _install_debug_overlay() -> void:
+	if not OS.get_cmdline_user_args().has(DEBUG_OVERLAY_ARG):
+		return
+	_debug_label = Label.new()
+	_debug_label.name = "DebugOverlay"
+	_debug_label.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	_debug_label.offset_left = 8.0
+	_debug_label.offset_top = -30.0
+	_debug_label.offset_right = 720.0
+	_debug_label.offset_bottom = -4.0
+	_debug_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_debug_label.add_theme_font_size_override("font_size", 14)
+	_debug_label.add_theme_color_override("font_color", GwThemeFactory.COL_TEXT_DIM)
+	_debug_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_debug_label.text = debug_status_text()
+	add_child(_debug_label)
+
+## 内核状态的**文本形态**。`dump` 与 `--debug-overlay` 共用它，selftest 也从这里读
+## ⇒ 界面上不显示 ≠ 状态丢了（docs/124 §2.4）。
+static func debug_status_text() -> String:
+	return "client %s · kernel %s" % [CLIENT_VERSION,
+		"on" if GwCore.kernel_available() else "off"]
+
+## `dump` 通道里的内核状态行（机器可读）。**这是内核状态的权威出口**：
+## 断言、脚本、别的 agent 都从这里读，不再依赖界面上那行字。
+static func kernel_dump_line() -> String:
+	return "@@KERNEL available=%d hit_test=%d methods=%s note=%s" % [
+		int(GwCore.kernel_available()),
+		int(GwCore.kernel_has_hit_test()),
+		",".join(GwCore.kernel_methods()),
+		GwCore.kernel_note().replace("\n", " "),
+	]
+
+## `dump` 通道里的工程设置行：视口、拉伸模式、版本 —— 都是本轮几何对齐的关键键。
+static func project_dump_line() -> String:
+	var stretch := String(ProjectSettings.get_setting("display/window/stretch/mode", "disabled"))
+	return "@@PROJECT version=%s stretch_mode=%s viewport=%dx%d mode=%d" % [
+		String(ProjectSettings.get_setting("application/config/version", "")),
+		stretch,
+		int(ProjectSettings.get_setting("display/window/size/viewport_width", 0)),
+		int(ProjectSettings.get_setting("display/window/size/viewport_height", 0)),
+		int(ProjectSettings.get_setting("display/window/size/mode", 0)),
+	]
+
 func _on_toast(text: String) -> void:
 	_toast_label.text = text
 	_toast_timer = 5.0
@@ -134,6 +191,7 @@ func _process(delta: float) -> void:
 
 func _handle_cmdline() -> void:
 	var args := OS.get_cmdline_user_args()
+	_install_debug_overlay()
 	if args.has("--dump-tree"):
 		_dump_and_quit.call_deferred()
 	elif args.has("--selftest"):
@@ -145,6 +203,10 @@ func _handle_cmdline() -> void:
 func _dump_and_quit() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
+	# 机器可读的状态行放最前面：内核状态与工程设置**不再画在界面上**，但必须可查
+	# （docs/124 §2.4）。`run.sh dump` 的输出里 grep 这两行即可。
+	print(project_dump_line())
+	print(kernel_dump_line())
 	print("@@TREE_BEGIN")
 	_dump_node(self, "")
 	print("@@TREE_END")

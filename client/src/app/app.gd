@@ -267,8 +267,8 @@ func _start_game() -> void:
 
 func _start_level() -> void:
 	var lv := GwCampaign.level(campaign_selected_level)
-	if not GwCampaign.is_unlocked(int(lv.index), store.completed_levels):
-		notify("第 %d 关尚未解锁（本项目规则：先通关上一关）" % int(lv.index))
+	if not store.is_level_unlocked(int(lv.index)):
+		notify("第 %d 关尚未解锁（原版存档 user://campaign.save 里没通到这一关）" % int(lv.index))
 		return
 	state.reset_campaign(int(lv.index))
 	state.axis_mode = int(lv.axis)

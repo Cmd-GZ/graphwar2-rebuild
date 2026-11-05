@@ -59,11 +59,8 @@ static func _placeholder_description(i: int) -> String:
 	return "\n".join(lines)
 
 
-## 解锁规则（**本项目自定**，原版未观测）：第 0 关永远可玩，其后每关要求上一关已通关。
-static func is_unlocked(index: int, completed: Array) -> bool:
-	if index <= 0:
-		return true
-	return completed.has(index - 1)
+## 解锁规则不再放在这里：现在读**原版的** `user://campaign.save`
+## （`GwStore.is_level_unlocked()`），本文件只保留关卡数据与布局算法。
 
 
 ## 复刻 `CampaingLevelsButtons.gd::place_buttons` 的**布局算法**。
@@ -76,18 +73,28 @@ static func is_unlocked(index: int, completed: Array) -> bool:
 ## ⚠️ 与 `docs/101` §4.1 措辞的差异（值得记一笔）：那里把网格概括成"8 列 4 行"，
 ## 但真码的 y 步进**在回弹分支里**，所以 16:9 屏上实际是 **7 个一行 × 3 行 = 21**，
 ## x 从 w/8 走到 7w/8。本项目按真码实现，`tools/selftest.gd` 断言的是"3 行"。
-## 返回每个按钮应有的位置与尺寸（尺寸交给调用方应用，便于自检对比）。
+## 返回每个按钮的**锚点**（`anchor`，真码里的 `pos`）、只按宽度居中过的 `position`
+## （兼容旧调用方/自检）、应设的 `size_x` 与所在行的 y（`row_y`）。
+##
+## ⚠️ 高度：真码**只写 `button.size.x`**，高度保持控件最小尺寸（= 字号决定的行高），
+## 然后 `position = pos - button.size / 2` —— 所以竖直方向是按**真实高度**居中的。
+## 调用方（`screens/campaign.gd::place_buttons`）必须先量出最小高度再用 `anchor` 算位置；
+## `position` 只是"高度未知时"的近似（高度 0），自检只用它来数行数。
 static func layout_buttons(area: Vector2) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	var font_size := area.x / 15.0
 	var pos_x_increment := area.x / 8.0
 	var pos_y_increment := area.y / 4.0
 	var pos := Vector2(pos_x_increment, pos_y_increment / 2.0)
-	# 原版只设 size.x = |pos_x_increment|（高度不设），再用 position = pos - size/2 居中
 	for _i in LEVEL_COUNT:
 		var w: float = absf(pos_x_increment)
-		var button_pos := pos - Vector2(w, 0.0) / 2.0
-		out.append({"font_size": font_size, "position": button_pos, "size_x": w, "row_y": pos.y})
+		out.append({
+			"font_size": font_size,
+			"anchor": pos,
+			"position": pos - Vector2(w, 0.0) / 2.0,
+			"size_x": w,
+			"row_y": pos.y,
+		})
 		pos.x += pos_x_increment
 		if pos.x > area.x * 9.0 / 10.0 or pos.x < area.x / 10.0:
 			pos_x_increment = -pos_x_increment

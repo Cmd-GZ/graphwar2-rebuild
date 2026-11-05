@@ -14,6 +14,17 @@
 ; boot_splash/bg_color 这一条**必须**写：show_image=false 只关掉 Godot 的 logo 图，
 ; 引擎仍然会从建窗到首帧之间铺一块 `boot_splash/bg_color` 的纯色矩形；不写就是 Godot
 ; 默认的 #242424 中性灰 —— 那就是用户看到的"Godot 启动画面"（docs/121 §2）。
+;
+; 视口尺寸与拉伸（docs/124 §2）—— 下面三个 display 键都是**原版 project.binary 的观测值**：
+;   display/window/size/viewport_width  = 1600
+;   display/window/size/viewport_height = 900
+;   display/window/size/mode            = 2      # Window.MODE_MAXIMIZED
+; 原版的 project.binary 里**没有任何 display/window/stretch/\* 键** ⇒ Godot 4 的默认拉伸
+; 模式 = disabled：界面按 **1:1 像素**铺开、靠锚点跟窗口，字号由脚本按"窗口宽 ÷ N"重算。
+; 我们以前写的是 1280×720 + stretch/mode="canvas_items" + aspect="expand"，在 1920 宽的
+; 窗口下把整套 UI 放大 1920/1280 = **1.5×** —— 这就是"整体大一圈"的根因。
+; 所以这里**故意不写** stretch/mode 与 stretch/aspect（写 disabled 也等价，但"没有这个键"
+; 才是原版的形态；selftest 有一条断言钉住"拉伸模式必须是 disabled/缺省"）。
 
 config_version=5
 
@@ -21,6 +32,8 @@ config_version=5
 
 config/name="Graphwar II — Client Rebuild"
 config/description="Clean-room Godot 4 client for the Graphwar II reconstruction. Not affiliated with the original authors."
+; 原版 `application/config/version` 的观测值（docs/124 §2.3）。VersionLabel 显示的就是它。
+config/version="2.0.60"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 boot_splash/show_image=false
@@ -32,10 +45,9 @@ App="*res://src/app/app.gd"
 
 [display]
 
-window/size/viewport_width=1280
-window/size/viewport_height=720
-window/stretch/mode="canvas_items"
-window/stretch/aspect="expand"
+window/size/viewport_width=1600
+window/size/viewport_height=900
+window/size/mode=2
 
 [gui]
 

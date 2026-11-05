@@ -45,20 +45,22 @@ func build() -> void:
 	# --- 顶部：返回 + Local/Global 切换 ---
 	var top := GwUI.hbox("HBoxContainer", 8, vbox)
 	top.add_child(GwUI.exit_pair(GwCommands.EXIT_LAN_LOBBY))
+	# 原版截图（1920×1160 真机/真二进制）：[返回][Local][Global] 三者横向铺满整行，
+	# Local 与 Global 各占剩余宽度的一半（实测 Local 146..1030、Global 1047..1913）。
+	# 我们以前给它们自然宽度、末尾再塞一个弹簧，于是两个按钮挤在左边（docs/124 §4）。
 	var local_holder := GwUI.margin("ShowLocalContainer", 4, top)
+	local_holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_local_button = GwButton.make("Local", GwCommands.SHOW_LOCAL)
 	_local_button.name = "ShowLocalButton"
 	_local_button.toggle_mode = true
 	_local_button.button_pressed = true
 	local_holder.add_child(_local_button)
 	var global_holder := GwUI.margin("ShowGlobalContainer", 4, top)
+	global_holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_global_button = GwButton.make("Global", GwCommands.SHOW_GLOBAL)
 	_global_button.name = "ShowGlobalButton"
 	_global_button.toggle_mode = true
 	global_holder.add_child(_global_button)
-	var top_spacer := GwUI.spacer(Vector2(0, 0))
-	top_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	top.add_child(top_spacer)
 
 	# --- 表头（原版这里三个 Label 有两个都叫 RoomName，照抄名字会撞，所以保留命名后缀）---
 	var header := GwUI.hbox("HBoxContainer", 8, vbox)
@@ -78,15 +80,15 @@ func build() -> void:
 	# --- 底部：建房 / 加 IP ---
 	var bottom := GwUI.margin("MarginContainer", 4, vbox)
 	var bottom_row := GwUI.hbox("HBoxContainer", 10, bottom)
+	# `LobbyButtonContainer.gd`: Create/Join 用的是 **宽/30**（与列表头的 /40 不同）。
+	bottom_row.set_meta("font_divisor", 30)
 	var pad := GwUI.margin("MarginContainer", 4, bottom_row)
 	pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var create := GwButton.make(" Create Game ", GwCommands.CREATE_GAME)
 	create.name = "CreateButton"
-	create.custom_minimum_size = Vector2(180, 48)
 	bottom_row.add_child(create)
 	var join := GwButton.make(" Join IP ", GwCommands.JOIN_IP)
 	join.name = "JoinButton"
-	join.custom_minimum_size = Vector2(160, 48)
 	bottom_row.add_child(join)
 	var pad2 := GwUI.margin("MarginContainer2", 4, bottom_row)
 	pad2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -117,11 +119,9 @@ func _rebuild_list(mode: String) -> void:
 	for c in _list.get_children():
 		c.queue_free()
 	if mode == "global":
+		# 原版这里只有房间条目，**没有任何说明文字**（原版截图逐像素对照，docs/124 §4）。
 		for room in GLOBAL_ROOMS:
 			_list.add_child(_room_entry(String(room.name), String(room.players), true))
-		var note := GwUI.label("公网房间列表来源未知（docs/92 §8）：以上为静态占位条目", 0, HORIZONTAL_ALIGNMENT_CENTER, true)
-		note.add_theme_color_override("font_color", GwThemeFactory.COL_TEXT_DIM)
-		_list.add_child(note)
 	else:
 		var app_node := app()
 		var has_room: bool = app_node != null and app_node.state.players.size() > 0
@@ -130,10 +130,7 @@ func _rebuild_list(mode: String) -> void:
 				String(app_node.state.room_name),
 				"%d" % app_node.state.players.size(),
 				false))
-		else:
-			var note2 := GwUI.label("没有本地房间。点「Create Game」建一个。", 0, HORIZONTAL_ALIGNMENT_CENTER, true)
-			note2.add_theme_color_override("font_color", GwThemeFactory.COL_TEXT_DIM)
-			_list.add_child(note2)
+		# 空列表就**什么都不画**（原版 Local 页在 1920×1160 下就是一片空背景）。
 
 ## 一条房间条目（原版是 `game_room_entry.tscn` 实例，20 节点）：
 ## RoomName / PlayerCount / 四个模式图标 / Join 按钮。

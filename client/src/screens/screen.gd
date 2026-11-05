@@ -66,30 +66,49 @@ func current_font_size() -> int:
 	return maxi(10, int(width / float(font_divisor)))
 
 ## 把字号写到本界面所有"会显示文字"的控件上（等价于原版 32 个 `add_theme_font_size_override`）。
+##
+## ⚠️ 原版**不是每屏一个除数**：同一屏里不同容器挂的是不同的脚本、用不同的 N
+## （`docs/101` §5.2 的 28 处）。例如 LanLobby 的列表头是 `LanLobbyFontResize.gd` = 宽/40，
+## 而底部 Create/Join 是 `LobbyButtonContainer.gd` = 宽/30；每个界面的返回键是
+## `ExitButtonContainer.gd` = 宽/30。
+## 所以这里支持**按容器覆盖**：给某个节点打 `meta("font_divisor", N)`，它和它的子树
+## 就改用 宽/N。没打标记的沿用本屏的 `font_divisor`。
 func apply_font_scale() -> void:
 	if not _built:
 		return
-	var size := current_font_size()
-	_apply_size_recursive(self, size)
+	var width := get_viewport_rect().size.x
+	if width <= 0.0:
+		width = 0.0
+	_apply_size_recursive(self, current_font_size(), width)
 
-func _apply_size_recursive(node: Node, size: int) -> void:
-	if node is Label or node is Button or node is LineEdit:
-		(node as Control).add_theme_font_size_override("font_size", size)
+func _apply_size_recursive(node: Node, size: int, width: float) -> void:
+	var local_size := size
+	var div := int(node.get_meta("font_divisor", 0)) if node.has_meta("font_divisor") else 0
+	if div > 0 and width > 0.0:
+		local_size = maxi(10, int(width / float(div)))
+	if node is Label or node is Button or node is LineEdit or node is TabContainer:
+		(node as Control).add_theme_font_size_override("font_size", local_size)
 	elif node is RichTextLabel:
-		(node as RichTextLabel).add_theme_font_size_override("normal_font_size", maxi(10, int(size * 0.85)))
+		(node as RichTextLabel).add_theme_font_size_override("normal_font_size", maxi(10, int(local_size * 0.85)))
 	for c in node.get_children():
-		_apply_size_recursive(c, size)
+		_apply_size_recursive(c, local_size, width)
 
 # ---------------------------------------------------------------- 小工具
 
-## 顶部"标题 + 返回按钮"行，几乎所有原版界面都有这个形状。
+## 顶部"标题 + 返回按钮"行，几乎所有原版界面都有这个形状：
+##   HBoxContainer/{ExitButtonContainer, MarginContainer/Label}
+## 原版这个 HBox 没有 separation 覆盖 ⇒ 4；外层 MarginContainer 的 margin 也来自安全区 = 0。
+## `use_title_font`：原版有 6 个界面的标题 Label 挂 `title_theme.tres`（EraserRegular 手写体）
+## —— campaign / GameSetup / player_screen / replay_lobby / endgame_pop_up / main_menu；
+## 其余界面标题走 `graphwar_theme.tres`（Comic Relief）。所以字体要显式传，不能一刀切。
 ## 返回 {row, title_label}
-func build_header(parent: Node, title_text: String, exit_cmd: String) -> Dictionary:
-	var row := GwUI.hbox("HBoxContainer", 8, parent)
+func build_header(parent: Node, title_text: String, exit_cmd: String,
+		use_title_font: bool = false) -> Dictionary:
+	var row := GwUI.hbox("HBoxContainer", GwUI.SEPARATION, parent)
 	var exit := GwUI.exit_pair(exit_cmd)
 	exit.name = "ExitButtonContainer"
 	row.add_child(exit)
-	var m := GwUI.margin("MarginContainer", 4, row)
+	var m := GwUI.margin("MarginContainer", 0, row)
 	m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var lbl := GwUI.title(title_text, m)
+	var lbl := GwUI.title(title_text, m, use_title_font)
 	return {"row": row, "title": lbl, "exit": exit}

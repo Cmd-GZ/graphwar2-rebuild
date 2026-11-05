@@ -9,7 +9,12 @@ class_name GwUI
 ##   3. 所有布局数值集中在几个函数里，便于与 `docs/101` §5 的数值表逐条对照。
 ## 每屏仍各有一个 `scenes/screens/*.tscn`（只有根节点 + 脚本），以便编辑器里打开。
 
-const FOOTER_AD_HEIGHT := 60.0   # 观测：11 个界面的 AdContainer 都是 custom_minimum_size=(0,60)
+## 容器分隔（间距）的"原版值"。
+##
+## 恢复出的 31 个 `.tscn` 里，`VBoxContainer`/`HBoxContainer` **没有一处**写
+## `theme_override_constants/separation`，所以它们用的是 Godot 默认主题的 4 px。
+## 我们以前各屏各自写 8/10/12（自定值）—— 对齐几何时统一回到 4（docs/124 §2.2）。
+const SEPARATION := 4
 
 static func vbox(name_: String = "VBoxContainer", separation: int = 8, parent: Node = null) -> VBoxContainer:
 	var n := VBoxContainer.new()
@@ -73,12 +78,17 @@ static func label(text_: String, font_size: int = 0, align: int = HORIZONTAL_ALI
 		n.add_theme_font_size_override("font_size", font_size)
 	return n
 
-static func title(text_: String, parent: Node = null) -> Label:
+static func title(text_: String, parent: Node = null, use_title_font: bool = false) -> Label:
 	# 原版的标题都是大写（CAMPAIGN / REPLAYS / PLAYER OPTIONS），字号由 TitleSize.gd 按 宽/8 调
 	var n := label(text_, 0, HORIZONTAL_ALIGNMENT_CENTER)
 	n.name = "Label"
 	n.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	n.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	# 6 个界面的标题挂 title_theme.tres ⇒ EraserRegular（手写体）；其余走 graphwar_theme。
+	if use_title_font:
+		var f := GwThemeFactory.title_font()
+		if f != null:
+			n.add_theme_font_override("font", f)
 	if parent != null:
 		parent.add_child(n)
 	return n
@@ -113,74 +123,96 @@ static func scroll(name_: String = "ScrollContainer") -> ScrollContainer:
 static func separator_line() -> HSeparator:
 	return HSeparator.new()
 
-## 广告位。
+## 广告位容器（`AdContainer`）。**零高度、零文字、默认不可见内容**。
 ##
-## 原版 11 个界面底部都有 60 px 的 `AdContainer`（`docs/104` §4.3）。
-## 用户明确要求 Linux 端没有广告，所以这里保留**同样高度的占位条**，
-## 写上 disabled 说明 —— 布局不变，功能不做（`docs/108` §7）。
-static func ad_bar() -> MarginContainer:
+## 原版 11 个界面底部确实都有一个 `AdContainer`，但它画不画东西由广告插件决定：
+## 恢复出的 `AdContainer.gd` 每次 `_ready` 都把 `custom_minimum_size` 设成
+## `Ad_holder.ad_size`，而 `Ad_holder.gd` 里 `ad_size` 的初值是 `Vector2i(0, 0)`，
+## 只有 Android 广告真的加载成功后才会被 `on_ad_loaded` 改成横幅尺寸。
+## ⇒ **桌面/无广告环境里，AdContainer 的运行尺寸就是 0×0，屏幕上什么都没有。**
+##
+## 我们以前在这里写了一条 `advertisement slot — disabled in this build`：那是**我们自己
+## 编的字**（原版没有），还把 60 px 的死高度钉在 11 个界面底部 —— 用户截图里多出来的那条
+## 就是它。现在只留节点、不留文字、不占高度（docs/124 §2.4）。
+##
+## 注意：`.tscn` 里静态写着 `custom_minimum_size = Vector2(0, 60)`（编辑器占位值），
+## 运行时被脚本覆盖成 0 —— "静态 60 / 运行 0"不矛盾，我们对齐的是**运行值**。
+static func ad_slot() -> MarginContainer:
 	var m := MarginContainer.new()
 	m.name = "AdContainer"
-	m.custom_minimum_size = Vector2(0, FOOTER_AD_HEIGHT)
-	m.add_theme_constant_override("margin_left", 8)
-	m.add_theme_constant_override("margin_top", 4)
-	m.add_theme_constant_override("margin_right", 8)
-	m.add_theme_constant_override("margin_bottom", 4)
-	var l := label("advertisement slot — disabled in this build", 0, HORIZONTAL_ALIGNMENT_CENTER)
-	l.name = "AdPlaceholder"
-	# 固定小字号 + 截断：这一条**不能**参与最小尺寸计算，否则界面的最小宽度会被它撑开
-	# （实测：把广告条字号跟着屏幕缩放后，Campaign 的最小宽度变成 1735px）。
-	l.add_theme_font_size_override("font_size", 14)
-	l.clip_text = true
-	l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	l.add_theme_color_override("font_color", GwThemeFactory.COL_TEXT_DIM)
-	m.add_child(l)
+	m.custom_minimum_size = Vector2(0, 0)
+	m.size_flags_vertical = Control.SIZE_FILL
 	return m
+
+
+## 旧名字保留：`play_screen.gd` / `join_level_pop_up.gd` 仍按这个名字调用
+## （那两个文件正由另一位 agent 改，这里不动它们）。语义与 `ad_slot()` 完全相同。
+static func ad_bar() -> MarginContainer:
+	return ad_slot()
 
 ## 返回按钮对。原版每个界面都有 `ExitButtonContainer/{ClipButton,LongPressButton}`：
 ## 观测到"点 ClipButton 不响应、点 LongPressButton 生效"（`docs/92` §4.11），
-## 原因是 `ClipButton` 只是动画层。这里保留两个按钮，把命令挂在后者上。
+## 原因是 `ClipButton` 只是动画层。两个按钮**叠在同一个 MarginContainer 里**
+## （原版就是这么写的，没有中间层），因此两者同尺寸、后者压在上面。
+##
+## 尺寸与图标（照抄 `campaign.tscn` 的四个属性）：`text = "     "`（**5 个空格**，不可见但
+## 参与最小尺寸计算）、`icon = return.svg`、`icon_alignment = 1`（居中）、`expand_icon = true`。
+## 字号由 `ExitButtonContainer.gd` 设成 **屏幕宽 / 30**（`GwScreen.apply_font_scale()` 负责），
+## 所以按钮的尺寸随窗口走 —— 以前我们钉死 64×48，箭头被压成 4:3，形状与原版不同
+## （docs/124 §2.5）。样式盒照抄 `long_press_button_theme.tres` 的 normal：
+## 透明底 + 3 px 黑边 + 圆角 10。
 static func exit_pair(cmd: String) -> MarginContainer:
 	var container := MarginContainer.new()
 	container.name = "ExitButtonContainer"
-	var stack := Control.new()
-	stack.name = "Stack"
-	stack.custom_minimum_size = Vector2(64, 48)
-	container.add_child(stack)
+	# 原版 `ExitButtonContainer.gd` 自己按 **宽/30** 设字号，与本屏其它文字无关
+	# （LanLobby 是 /40，但它的返回键仍然是 /30 —— 真机截图实测 146×96，docs/124 §4）。
+	container.set_meta("font_divisor", 30)
+	var sb := GwThemeFactory._flat(Color(0.6, 0.6, 0.6, 0.0))
 
-	var clip := GwButton.make("", "")
+	var clip := GwButton.make("     ", "")
 	clip.name = "ClipButton"
-	clip.text = ""      # 纯图标按钮：不塞空格，否则 expand_icon 没有留给图标的宽度
 	clip.icon = GwIcons.get_icon("return")
-	clip.flat = true
-	clip.set_anchors_preset(Control.PRESET_FULL_RECT)
+	clip.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	stack.add_child(clip)
+	clip.add_theme_stylebox_override("normal", sb)
+	container.add_child(clip)
 
+	# 原版 `campaign.tscn` 里 AnimationRect 的四个属性：`show_behind_parent = true`、
+	# 满矩形、`color = Color(0.101961, 0.231373, 0.176471, 1)`（= #1A3B2D）。
+	# 返回按钮那层**深绿底**就是它画的 —— 不是 stylebox（stylebox 的 bg alpha 是 0）。
+	# 我们以前把这层写成全透明，于是返回键只剩一圈黑边（用户看到的"形状不同"）。
 	var anim := ColorRect.new()
 	anim.name = "AnimationRect"
-	anim.color = Color(1, 1, 1, 0.0)
+	anim.show_behind_parent = true
+	anim.color = GwThemeFactory.COL_PANEL
 	anim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	anim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	clip.add_child(anim)
 
-	var press := GwButton.make("")
+	var press := GwButton.make("     ", cmd)
 	press.name = "LongPressButton"
-	press.text = ""      # 同上（原版是 5 个空格 + 固定尺寸容器；我们用 stack 的 custom_minimum_size）
-	press.input_text = cmd
 	press.icon = GwIcons.get_icon("return")
-	press.set_anchors_preset(Control.PRESET_FULL_RECT)
-	stack.add_child(press)
+	press.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	press.add_theme_stylebox_override("normal", sb)
+	press.add_theme_stylebox_override("hover", sb)
+	press.add_theme_stylebox_override("pressed", sb)
+	press.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	container.add_child(press)
 	return container
 
 ## 通用的"全屏骨架"：MarginContainer → VBoxContainer。
-## 返回 {margin, vbox}，调用方往里塞内容。
-static func frame(root: Control) -> Dictionary:
-	var m := margin("MarginContainer", 10)
+##
+## 边距 = 0、分隔 = 4，都是**原版值**：原版每个界面的根都是一个挂 `MarginContainer.gd` 的
+## `MarginContainer`，而那个脚本只在"窗口超出屏幕安全区"时才写 margin 常量
+## （恢复出的 `MarginContainer.gd::update_sizes` 可逐行读）；桌面最大化下窗口 == 安全区，
+## 所以四个 margin 全是 0。分隔同样没有 override ⇒ 默认 4。
+## 我们以前用 10/10，属于自定值（docs/124 §2.2）。
+static func frame(root: Control, margin_px: int = 0) -> Dictionary:
+	var m := margin("MarginContainer", margin_px)
 	m.set_anchors_preset(Control.PRESET_FULL_RECT)
 	m.name = "MarginContainer"
 	root.add_child(m)
-	var v := vbox("VBoxContainer", 10, m)
+	var v := vbox("VBoxContainer", SEPARATION, m)
 	return {"margin": m, "vbox": v}
 
 ## 弹窗骨架：MarginContainer → VBoxContainer → 居中的 Panel。
