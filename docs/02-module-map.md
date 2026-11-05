@@ -446,7 +446,9 @@ SIMD 内联把 20 行 C 展开成 60 行位运算，`SUB161(...)`/`auVar` 满屏
    `unlock_skins`、`purchase_graphwar_support`。
    这些是 Godot 的 **Android 单例**调用（`Android_mediastore_holder` 同类），
    ⇒ **Linux 端跑不到**（用户判断正确），但**代码路径在**，要看行为得走 APK。
-2. **段位图标共 22 张**（`res://ranks/rank_0.svg` … `rank_21.svg`，观测）。
+2. **段位图标共 22 张**（`rank_0` … `rank_21`，观测）。⚠️ 包里**没有 `.svg`/`.ttf` 文件**——
+   导出时源资源已剥离，包里只有 `.ctex`（编译后纹理）与 `.fontdata`；
+   那些 `res://.../xxx.svg` 路径是 `.import/.remap` 存根里的**源路径**（`docs/121` §4）。
    ⚠️ **本节原先由它推出的两条结论已被 `docs/112` 推翻一半**：
    - "22 张图标 ⇒ 22 个段位"**不成立**：`rank_manager` 的 4 个函数里**没有任何**
      22 项表、取模或阈值比较，段位换算**不在这个模块**（可复现的负结果）。22 档位仍未知。

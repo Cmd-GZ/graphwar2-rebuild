@@ -8,7 +8,7 @@
 > **[`107-docs-consolidation.md`](107-docs-consolidation.md)**。
 > 三节（现行 / 已归档 / 已并档）与磁盘上的文件**逐一对得上**，可以当清单核对。
 
-## 一、现行文档（97 份）
+## 一、现行文档（98 份）
 
 > 数法：`find docs -name "*.md" -not -path "*/archive/*" | wc -l`（2026-11-06 复核）。
 > 之前这里写过的 76 / 77 / 85 / 86 / 87 都是当时的旧数，已统一改成本次实测值。
@@ -120,6 +120,7 @@
 | [92-ui-inventory.md](92-ui-inventory.md) | **客户端界面台账**（15/15 界面，运行时枚举） |
 | [104-recovered-project.md](104-recovered-project.md) | **GDRE 整项目恢复**：静态场景属性，并与 `92` 的运行时台账逐项对拍 |
 | [101-gdc-contents.md](101-gdc-contents.md) | `.gdc` 逐字节格式 + 5 个行为脚本 + 47 行布局数值表 |
+| [121-visual-fidelity.md](121-visual-fidelity.md) | **客户端视觉保真**：启动灰闪根因=`boot_splash/bg_color` 从没写过（不是 logo）；深绿取自包里 `project.binary`；**pck 里 0 个 svg/ttf，只有 .ctex/.fontdata**，改由 `tools/extract_assets.py` 从使用者自己的包提取 |
 | [120-hit-test.md](120-hit-test.md) | **命中判定接内核**：`GW2Rebuild.hit_test`，`settle::resolve` 与 `resolve_points` 同一个函数体（无第二份实现）；棋盘↔像素只换一次；修掉旧近似"每炮打死射手自己" |
 | [116-kernel-api.md](116-kernel-api.md) | **内核暴露给 Godot**：`GW2Rebuild.path_calculate` 手写 FFI 造 Dictionary，只用真采样器；`source` preview→**kernel**、PlayScreen 5295 点与内核逐点相同；含 `.gdextension` 落地步骤与 `--import` 陷阱 |
 | [118-campaign-data.md](118-campaign-data.md) | **战役 21 关数据**：硬编码在 Rust 里（`0x4ad380` 的 21 分支 match）；21 标题 + 21 描述逐字节解出；`campaign.save` 读写法与**尾换行会让进度归零**的实测 + 代码对应 |
