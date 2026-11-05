@@ -251,4 +251,15 @@ https://graphwar.com/graphwar_II_ip.txt    （出现两次：broker 与崩溃上
   这条是纯推断，未验证。
 
 ⇒ 更新对用户那个问题的回答：**房间列表来自一台 broker；地址从 graphwar.com 的一个
-文本文件里取；局域网发现是另一套（IPv6 多播）。broker 的协议本身仍然未知。**
+文本文件里取；局域网发现是另一套（IPv6 多播）。**
+
+**2026-11-06 补充（`docs/115`）**：broker 协议**已经还原**（与对局同一套帧，`u16` 大端长度 + JSON；
+会话 = 客户端先发 `VersionInfo{version,system}`，broker 逐条推 `GameInfo{game_info}`），
+并已实现 `src/broker.rs`。但发现一件更要紧的事：
+
+> **`--broker_address` 在这个构建里完全不生效**（6 组受控实验：snake / kebab / `=` /
+> 加必填端口 / 非法值 / 干净 argv 全都无效；二进制里也没有任何 `cmdline` 方法名串）。
+> 客户端取地址的**唯一**路径是 HTTPS 取 `graphwar_II_ip.txt`，而 TLS 根证书**编在 `.rodata` 里**
+> ⇒ **原版客户端无法在本地被改指**，除非去连 graphwar.com 或改二进制绕过证书校验。
+
+所以"接入官方 global room"不是"协议通了就能连"——是**原版客户端在设计上只认那一个地址**。
