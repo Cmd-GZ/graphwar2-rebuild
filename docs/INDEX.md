@@ -8,10 +8,10 @@
 > **[`107-docs-consolidation.md`](107-docs-consolidation.md)**。
 > 三节（现行 / 已归档 / 已并档）与磁盘上的文件**逐一对得上**，可以当清单核对。
 
-## 一、现行文档（87 份）
+## 一、现行文档（89 份）
 
-> 数法：`find docs -name "*.md" -not -path "*/archive/*" | wc -l` = **85**（2026-11 复核；
-> 含本轮新增的 [`109`](109-kernel-turn-aigen.md)）。之前这里写的 76 是旧数，已改。
+> 数法：`find docs -name "*.md" -not -path "*/archive/*" | wc -l`（2026-11-06 复核）。
+> 之前这里写过的 76 / 77 / 85 / 86 / 87 都是当时的旧数，已统一改成本次实测值。
 
 ### 1.1 总览与索引
 
@@ -120,6 +120,7 @@
 | [92-ui-inventory.md](92-ui-inventory.md) | **客户端界面台账**（15/15 界面，运行时枚举） |
 | [104-recovered-project.md](104-recovered-project.md) | **GDRE 整项目恢复**：静态场景属性，并与 `92` 的运行时台账逐项对拍 |
 | [101-gdc-contents.md](101-gdc-contents.md) | `.gdc` 逐字节格式 + 5 个行为脚本 + 47 行布局数值表 |
+| [108-client-rebuild.md](108-client-rebuild.md) | **Godot 客户端重建**（`client/`）：15 界面、命令键协议、字体/图标策略、占位与自定规则台账、93 条自检 |
 | [106-guide-crosscheck.md](106-guide-crosscheck.md) | `graphwar-guide`（GW1）的论断在 GW2 是否仍成立：逐条对账 |
 
 ## 二、已归档（`docs/archive/`，**不要引用其结论**）

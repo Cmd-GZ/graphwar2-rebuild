@@ -1,0 +1,4 @@
+# Godot 的导入缓存（可重生成：`godot --headless --path . --import`）
+.godot/
+# 截图输出（验收产物，不入库）
+shots/

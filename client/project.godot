@@ -1,0 +1,37 @@
+; Graphwar II —— 客户端重建工程（我们自己的实现）
+;
+; 本文件**不含**任何从游戏包里恢复出来的资源：所有场景/脚本/贴图都是本项目自己写的。
+; 详见 docs/108-client-rebuild.md。
+
+config_version=5
+
+[application]
+
+config/name="Graphwar II — Client Rebuild"
+config/description="Clean-room Godot 4 client for the Graphwar II reconstruction. Not affiliated with the original authors."
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+config/icon="res://icon.svg"
+boot_splash/show_image=false
+
+[autoload]
+
+App="*res://src/app/app.gd"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[gui]
+
+theme/custom_font=""
+theme/default_font_multichannel_signed_distance_field=false
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+environment/defaults/default_clear_color=Color(0.086, 0.094, 0.11, 1)
