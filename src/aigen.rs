@@ -86,13 +86,14 @@ pub fn draw_token(next: &mut dyn FnMut() -> u64) -> Token {
 ///
 /// 在 token 序列上挑一个"值 token"（`x` / `y` / 常数），然后：
 ///
-/// * 挑到 `y`   → 在它**前面插入**一个常数 `N(0,1)×10.2`；
 /// * 挑到常数   → 一半概率原地乘 `(1 + N(0,1))`（这就是常数漂移的来源），
 ///                一半概率换成新的 `N(0,1)×10.2`；
-/// * 挑到其它（`x` / 算子）→ 把它**包一层**：`v` 变成 `(op const v)`，
+/// * 挑到 `y` / `x` → 把它**包一层**：`v` 变成 `(op const v)`，
 ///   `op` 按 50/25/25 取 `+` / `*` / `/`，`const` 仍是 `N(0,1)×10.2`。
-///   （这一条是**推断**：伪代码里出现两次 `memmove` + 两次写入，
-///     读作"先插常数、再在更前面插算子"最自洽；见 `docs/73` §5）
+///
+/// `y` 分支原本我以为是"只插一个常数"，那样会得到 `const y`（两个值相邻，
+/// 在前缀式里非法）。重读伪代码后发现它**后面接着同一段包一层逻辑**，
+/// 所以 `y` 与 `x` 走同一条路，见 `docs/73` §5.1。
 ///
 /// 返回是否真的改动了序列，便于调用方统计。
 pub fn mutate(tokens: &mut Vec<Token>, next: &mut dyn FnMut() -> u64) -> bool {
@@ -107,10 +108,6 @@ pub fn mutate(tokens: &mut Vec<Token>, next: &mut dyn FnMut() -> u64) -> bool {
     }
     let pos = positions[(next() % positions.len() as u64) as usize];
     match tokens[pos].tag {
-        Function::VarY => {
-            tokens.insert(pos, Token::constant(normal(next) * CONST_SCALE));
-            true
-        }
         Function::Const => {
             // 二进制里是"抽一个随机 int，看符号"决定走哪条路
             if (next() as i32) >= 0 {
@@ -120,6 +117,7 @@ pub fn mutate(tokens: &mut Vec<Token>, next: &mut dyn FnMut() -> u64) -> bool {
             }
             true
         }
+        // `y`、`x` 以及其它：统一"包一层"
         _ => {
             let konst = Token::constant(normal(next) * CONST_SCALE);
             tokens.insert(pos, konst);
@@ -224,13 +222,17 @@ mod tests {
     }
 
     #[test]
-    fn mutate_inserts_constant_before_y() {
+    fn mutate_wraps_y_like_x() {
         let mut tokens = vec![Token::op(Function::VarY)];
         let mut next = stream(11);
         assert!(mutate(&mut tokens, &mut next));
-        assert_eq!(tokens.len(), 2, "应在 y 前插入一个常数");
-        assert_eq!(tokens[0].tag, Function::Const);
-        assert_eq!(tokens[1].tag, Function::VarY);
+        assert_eq!(tokens.len(), 3, "y 应与 x 一样被包成 (op const y)");
+        assert!(matches!(
+            tokens[0].tag,
+            Function::Add | Function::Mul | Function::Divide
+        ));
+        assert_eq!(tokens[1].tag, Function::Const);
+        assert_eq!(tokens[2].tag, Function::VarY);
     }
 
     #[test]
@@ -324,5 +326,42 @@ mod tests {
         assert!((mean - 9.5).abs() < 0.3, "截断后均值应接近 9.5，实测 {mean}");
         assert!((sd - 5.0).abs() < 0.4, "标准差应接近 5，实测 {sd}");
         assert!(min_seen < 0, "正态取负时长度可以为负（实测最小 {min_seen}）");
+    }
+
+    #[test]
+    fn mutations_keep_the_sequence_well_formed() {
+        // y 与 x 统一走"包一层"之后，反复变异应始终保持合法前缀式。
+        // 判定方式：从左到右走一遍，needed 从 1 开始，
+        // 叶子 -1、算子 +(arity-1)，走完必须恰好为 0。
+        fn well_formed(tokens: &[Token]) -> bool {
+            let mut needed: i64 = 1;
+            for t in tokens {
+                match t.tag {
+                    Function::VarX | Function::VarY | Function::Const => needed -= 1,
+                    Function::Add
+                    | Function::Sub
+                    | Function::Mul
+                    | Function::Divide
+                    | Function::Pow => needed += 1,
+                    _ => {} // 一元算子：arity 1 → +0
+                }
+                if needed < 0 {
+                    return false;
+                }
+            }
+            needed == 0
+        }
+
+        let mut next = stream(0xC0FFEE);
+        let mut tokens = vec![Token::op(Function::VarX)];
+        for round in 0..300 {
+            mutate(&mut tokens, &mut next);
+            assert!(
+                well_formed(&tokens),
+                "第 {} 轮变异后不是合法前缀式：{} 个 token",
+                round + 1,
+                tokens.len()
+            );
+        }
     }
 }
