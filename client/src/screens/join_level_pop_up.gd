@@ -56,7 +56,7 @@ var _title: Label
 var _description: TextEdit
 var _options: HBoxContainer
 var _content: VBoxContainer
-var _bottom_row: HBoxContainer
+var _bottom_band: HBoxContainer
 var _mode_buttons := {}
 
 ## `HBoxContainer2` 在 `.tscn` 里的 `size_flags_stretch_ratio`。顶部/底部两条留白带
@@ -226,7 +226,7 @@ func build() -> void:
 	# 它把面板从 1056 压回 956 —— 没有它，整块面板会一直顶到屏幕底边
 	# （用户实测的"弹窗下面的部分太长"就是这个）。高度在 `apply_font_scale()` 里按
 	# 屏宽×0.05 设（1920 下 = 96，与返回键同高）。**机制未观测**，只观测到矩形。
-	_bottom_row = GwUI.hbox("HBoxContainer3", 4, vbox)
+	_bottom_band = GwUI.hbox("HBoxContainer3", 4, vbox)
 
 	(vbox as VBoxContainer).add_child(GwUI.ad_bar())
 
@@ -301,8 +301,8 @@ func apply_font_scale() -> void:
 		var k := get_viewport_rect().size.x * 0.05
 		(_exit_pair as Control).custom_minimum_size = Vector2(k, k)
 		# 屏幕级那一行 96（= 屏宽×0.05，与返回键同高）。真值矩形 1920×96。
-		if _bottom_row != null:
-			_bottom_row.custom_minimum_size = Vector2(0, k)
+		if _bottom_band != null:
+			_bottom_band.custom_minimum_size = Vector2(0, k)
 
 ## `LevelDescriptionScrollContainer.gd`：说明栏字号 = `x / 40`（比标题小一档）。
 func _apply_desc_font() -> void:
