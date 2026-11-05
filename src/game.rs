@@ -114,6 +114,9 @@ impl Match {
                 r#"{{"QueueDestroyObstacle":{{"pos_x":{},"pos_y":{},"radius":0.5,"tick":{}}}}}"#,
                 outcome.stop.0, outcome.stop.1, now_tick
             ));
+            // 真实游戏的做法：在命中点用 fill=0xFF、半径 0.5 **挖一个洞**，
+            // 而不是把整个障碍移除（frida 抓到的光栅化调用证据见 docs/39）。
+            rasterize(&mut self.mask, outcome.stop.0, outcome.stop.1, 0.5, 0xFF);
         }
 
         self.next_effect_id += 1;
@@ -175,6 +178,27 @@ mod tests {
         let mut m = Match::new(room(), vec![(-5.0, 0.0, 1.0)], vec![], (0, 0));
         let msgs = m.fire(1, "0.00", 10.0, 0.0, true, 0);
         assert!(msgs.iter().any(|s| s.starts_with(r#"{"QueueDestroyObstacle""#)), "应排队销毁障碍");
+    }
+
+    #[test]
+    fn blocked_shot_punches_a_hole_in_the_mask() {
+        let mut m = Match::new(room(), vec![(-5.0, 0.0, 1.0)], vec![], (0, 0));
+        let first = m.fire(1, "0.00", 10.0, 0.0, true, 0);
+        let stop_x = first
+            .iter()
+            .find_map(|s| s.strip_prefix(r#"{"FunctionPoints":{"owner_id":1,"start_x":10,"start_y":0,"end_x":"#))
+            .and_then(|r| r.split('}').next())
+            .and_then(|v| v.parse::<f64>().ok())
+            .expect("应能解析终点");
+        // 同一发再打一次：洞口已经挖开，应飞得更远
+        let second = m.fire(1, "0.00", 10.0, 0.0, true, 1000);
+        let stop2 = second
+            .iter()
+            .find_map(|s| s.strip_prefix(r#"{"FunctionPoints":{"owner_id":1,"start_x":10,"start_y":0,"end_x":"#))
+            .and_then(|r| r.split('}').next())
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap();
+        assert!(stop2 < stop_x, "挖洞后应飞得更远（{stop2} 应小于 {stop_x}）");
     }
 
     #[test]
