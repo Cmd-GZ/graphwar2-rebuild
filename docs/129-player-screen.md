@@ -341,7 +341,9 @@ MarginContainer(margin 0)/VBoxContainer(sep 4)
 
 ## 7. 关于既有断言（**只改了一条，且是上级点名要改的**）
 
-先说结论：`selftest.gd` 里 **146 条既有断言，一条没动**。总数 146 → **159**。
+先说结论：`selftest.gd` 里 **146 条既有断言，一条没动**。本文这一支的增量是 **+13**（146 → 159）。
+> 合并到主干后总数会更高（别的 agent 也在加断言）：本分支 rebase 到 `281d76c` 之后跑出来的汇总是
+> **188 passed / 0 failed / 10 skipped**（skip 的那 10 条是音频资产，本机没跑 `extract_audio.py`）。
 
 ### 7.1 曾经改过、又撤回的三条
 
