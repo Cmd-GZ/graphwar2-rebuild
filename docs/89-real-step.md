@@ -80,3 +80,31 @@
 
 - `src/lib.rs` 新增 `pub const SERVER_STEP: f64 = 0.01;`，所有示例/测试改用它；
 - 以后凡涉及"硬事实"的常量，**先查 `AGENTS.md` 的 Hard facts 表**，再写代码。
+
+## 7. ⚠️ 未解矛盾：`live_hits` 的 4 个测试只在 0.5 下通过
+
+把 `tests/live_hits.rs` 里的 0.5 一并改成 `SERVER_STEP` 后，**4 个测试立刻失败**：
+
+```
+captured_hits_are_reproduced_by_our_collision_chain
+captured_curved_shots_are_reproduced
+full_level_replay_of_all_four_captured_shots
+replays_every_shot_of_the_death_level
+```
+
+这些测试的内容是：**用真实抓取的命中点，验证我们重算的弹道第一个撞到的实体与游戏一致**。
+
+| 证据 | 指向 |
+|---|---|
+| replay 停点对比（21 发）：0.01 中位 0.000，0.5 中位 0.130 | **0.01** |
+| `AGENTS.md` Hard facts：`0.01 on the server` | **0.01** |
+| `live_hits` 4 个抓取回放测试 | **0.5** |
+
+⇒ **两者冲突，原因未明**。可能的方向：
+
+1. `live_hits` 的抓取来自**我们自己的 harness**，而 harness 走的不是服务器的 0.01 分支；
+2. 那 4 个测试的期望值当初是**照着 0.5 调出来的**（即测试被拟合过），本身不可靠；
+3. 停止判定（掩膜走查）在某一步长下另有分支。
+
+**当前处置**：`tests/live_hits.rs` 暂时保持 0.5（已回退），源码全绿；
+矛盾写在这里，**在查清前不得声称"步长问题已解决"**。

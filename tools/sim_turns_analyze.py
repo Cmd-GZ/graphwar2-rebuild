@@ -18,6 +18,9 @@
     python3 tools/sim_turns_analyze.py --newest 5 --quiet
 
 state 文件格式见 `examples/sim_turns.rs` 的头注释。
+
+⚠️ 步长：**实况是 0.01**（`docs/89`）。本脚本默认 `--step 0.01`；
+早先几轮误用 0.5，停点中位误差会从 0.000 放大到 0.13。
 """
 import argparse
 import collections
@@ -116,9 +119,9 @@ def build(path):
                 effects=effects, active_list=active_list)
 
 
-def write_state(path, d, shots):
+def write_state(path, d, shots, step=0.01):
     alive = shots[0]["alive"]
-    lines = ["MODE {}".format(d["mode"]), "STEP 0.5"]
+    lines = ["MODE {}".format(d["mode"]), "STEP {}".format(step)]
     for i, s in enumerate(shots):
         flip = 1 if s["end_x"] < s["sx"] else 0
         s["flip"] = flip
@@ -178,6 +181,8 @@ def main(argv=None):
     ap.add_argument("--workdir", default=".sim-work", help="临时 state 文件目录")
     ap.add_argument("--exe", default=DEFAULT_EXE)
     ap.add_argument("--quiet", action="store_true", help="只打汇总，不逐发/逐人")
+    ap.add_argument("--step", type=float, default=0.01,
+                    help="采样步长（实况 0.01，见 docs/89；早期对比误用 0.5）")
     a = ap.parse_args(argv)
 
     reps = a.replays
@@ -202,7 +207,7 @@ def main(argv=None):
             if not shots_raw:
                 continue
             state = os.path.join(a.workdir, "{}_{}.state".format(rep, r["start"]))
-            write_state(state, d, shots_raw)
+            write_state(state, d, shots_raw, a.step)
             shots, hits = run_state(exe, state)
             nxt = starts[gi + 1] if gi + 1 < len(starts) else 10 ** 9
             obs = {e: t for e, t in d["deaths"].items() if r["start"] <= t < nxt}
