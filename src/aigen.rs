@@ -237,7 +237,7 @@ pub fn is_well_formed(tokens: &[Token]) -> bool {
 /// ⚠️ **这一步是假设**：GW2 里"raw token 流 → 合法表达式"的修复代码还没定位到
 /// （`docs/76` §4.5）。这里按 GW1 `adjustFunction` 的语义实现：
 /// 走到表达式完整就**截断**，走完仍缺操作数就**补常数**。
-pub fn repair(tokens: &mut Vec<Token>, next: &mut dyn FnMut() -> u64) {
+pub fn repair(tokens: &mut Vec<Token>, mode: VarMode, next: &mut dyn FnMut() -> u64) {
     let mut need: i64 = 1;
     let mut cut = tokens.len();
     for (i, t) in tokens.iter().enumerate() {
@@ -249,14 +249,25 @@ pub fn repair(tokens: &mut Vec<Token>, next: &mut dyn FnMut() -> u64) {
         }
     }
     tokens.truncate(cut);
-    // 走完还没闭合：补 need 个常数叶子
     need = 1;
     for t in tokens.iter() {
         need -= 1;
         need += arity(t.tag);
     }
+    // 反汇编 FUN_005ee0e0（vaddr 0x3ee0e0）：补齐时 rand%50 决定追加什么。
     while need > 0 {
-        tokens.push(Token::constant(normal(next) * CONST_SCALE));
+        let r = next() % 50;
+        let tok = if r < 25 {
+            Token::constant(normal(next) * CONST_SCALE)
+        } else if r < 42 {
+            Token::op(Function::VarX)
+        } else {
+            match mode {
+                VarMode::Normal => Token::op(Function::VarX),
+                VarMode::DiffEq => Token::op(Function::VarY),
+            }
+        };
+        tokens.push(tok);
         need -= 1;
     }
 }
@@ -267,7 +278,7 @@ pub fn repair(tokens: &mut Vec<Token>, next: &mut dyn FnMut() -> u64) {
 pub fn random_function(next: &mut dyn FnMut() -> u64, mode: VarMode) -> Vec<Token> {
     let n = random_length(next).max(1) as usize;
     let mut tokens: Vec<Token> = (0..n).map(|_| draw_token(next, mode)).collect();
-    repair(&mut tokens, next);
+    repair(&mut tokens, VarMode::Normal, next);
     tokens
 }
 
@@ -278,6 +289,7 @@ pub fn random_function(next: &mut dyn FnMut() -> u64, mode: VarMode) -> Vec<Toke
 pub fn crossover(
     a: &[Token],
     b: &[Token],
+    mode: VarMode,
     next: &mut dyn FnMut() -> u64,
 ) -> Vec<Token> {
     let mut out = Vec::new();
@@ -289,7 +301,7 @@ pub fn crossover(
         let cb = (next() % b.len() as u64) as usize;
         out.extend_from_slice(&b[cb..]);
     }
-    repair(&mut out, next);
+    repair(&mut out, mode, next);
     out
 }
 
@@ -332,7 +344,7 @@ where
                 // 第二个父代太短 → 重生（实测 cmp $0x14）
                 random_function(next, mode)
             } else {
-                let mut child = crossover(&sorted[a].tokens, &sorted[b].tokens, next);
+                let mut child = crossover(&sorted[a].tokens, &sorted[b].tokens, mode, next);
                 mutate(&mut child, next);
                 child
             };
@@ -687,7 +699,7 @@ mod tests {
             for _ in 0..(seed % 12 + 1) {
                 d.push(draw_token(&mut || r.next_u64(), VarMode::Normal));
             }
-            repair(&mut d, &mut next);
+            repair(&mut d, VarMode::Normal, &mut next);
             assert!(is_well_formed(&d), "修复后应合法：{d:?}");
         }
     }
@@ -802,5 +814,27 @@ mod tests {
         for _ in 0..20_000 {
             assert_ne!(draw_tag(&mut next, VarMode::Normal), Function::VarY);
         }
+    }
+
+    #[test]
+    fn repair_fills_with_the_documented_mix() {
+        // 空向量 ⇒ need=1，必须补 1 个 token；统计补齐 token 的类型比例
+        let mut next = stream(0x9EE0_u64);
+        let (mut c, mut x, mut y) = (0u32, 0u32, 0u32);
+        const N: u32 = 40_000;
+        for _ in 0..N {
+            let mut v: Vec<Token> = Vec::new();
+            repair(&mut v, VarMode::DiffEq, &mut next);
+            match v.first().map(|t| t.tag) {
+                Some(Function::Const) => c += 1,
+                Some(Function::VarX) => x += 1,
+                Some(Function::VarY) => y += 1,
+                _ => {}
+            }
+        }
+        // 反汇编：rand%50 <25 → 常数(50%)、<42 → x(34%)、否则 y(16%)
+        assert!(((c as i64) - (N as i64) / 2).abs() < 500, "常数应约 50%，实测 {c}/{N}");
+        assert!(((x as i64) - (N as i64 * 34 / 100) as i64).abs() < 500, "x 应约 34%，实测 {x}/{N}");
+        assert!(((y as i64) - (N as i64 * 16 / 100) as i64).abs() < 500, "y 应约 16%，实测 {y}/{N}");
     }
 }
