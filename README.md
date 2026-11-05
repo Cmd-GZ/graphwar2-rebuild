@@ -87,7 +87,7 @@ Fire → 内核算弹道 → 内核判命中 → 结算）。**这一局不是"�
 **Rust 实现状态**：`parse` / `eval` / `calculate` / `shot` / `plane` / `events` / `life` / `settle` /
 `turnstate` / `protocol` / `api` / `broker` / `game` / `server` / `serverloop` / `levelgen` / `aigen` 均已可运行。
 **`cargo test --offline` = 272 条全绿**（本机实测，0 失败；`src/` 共 23 个 `*.rs`）。
-**客户端自检 = 99 条断言**：有资产时全绿；无资产时 `90 passed, 9 skipped`，每条 skip 都显式报原因。
+**客户端自检 = 146 条断言**：有资产时全绿；无资产时 `90 passed, 9 skipped`，每条 skip 都显式报原因。
 模块全集与行号下界见 [`docs/02-module-map.md`](docs/02-module-map.md)。
 
 ## 文档
