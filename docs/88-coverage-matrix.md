@@ -66,3 +66,43 @@
 - 适应度公式反汇编
 
 受影响的是**"观测类"结论**（终点差、击杀数），它们只在那几局覆盖到的模式里成立。
+
+## 7. 从二进制**推导**出的变体清单（不是靠记忆）
+
+用户的关键批评：**就算 README 全绿，只要清单本身是"我记得查过的"，复原出来的二进制仍是残次品。**
+
+所以清单必须从二进制推导。`.rodata` 里枚举变体名是**连在一起存的**：
+
+```
+0x1c18d5  SequentialTurns SimultaneousTurns rgb Connecting Setup WaitingForFunctions ...
+          ↑ 回合模式：两者相邻，后面直接接游戏状态 ⇒ **只有 2 个**
+0x1c63b4  ... NormalFunction DiffEqFunction NoAxis EveryFive EveryUnit Timer1m Timer2m Timer3m Timer5m ...
+0x19f3a0  OnlyMain        （与其它变体不在同一段，容易漏）
+0x19f768  Timer30s        0x19f1b0 TimerInf     （同样分散）
+```
+
+| 枚举 | 变体（二进制推导） | 数量 | 我们实现了吗 |
+|---|---|---|---|
+| `TurnMode` | SequentialTurns、SimultaneousTurns | **2** | 🔶 Sequential ✅ / **Simultaneous ❌** |
+| `FunctionMode` | NormalFunction、DiffEqFunction | **2** | ✅ 两者（采样器 112+112 例；生成器 VarMode） |
+| `AxisMode` | EveryUnit、EveryFive、OnlyMain、NoAxis | **4** | ❓ 只影响绘制，未单独验证 |
+| `TimeMode` | Timer30s、Timer1m、Timer2m、Timer3m、Timer5m、TimerInf | **6** | ❓ 只影响思考时间 |
+
+## 8. 结论：残次品的判定标准
+
+> **一个复原产物是否残次，不取决于"已验证项的比例"，而取决于"是否覆盖了二进制声明过的全部变体"。**
+
+按这个标准，当前的产物**确实是残次品**，缺口已经被点名：
+
+| 缺口 | 严重度 | 状态 |
+|---|---|---|
+| `SimultaneousTurns` 结算 | **高**（影响物理） | 子 agent 判定中 |
+| `AxisMode` 四种变体的绘制/判定参与程度 | 中 | 未验证（推测仅影响绘制） |
+| `TimeMode` 六种是否影响 AI 预算 | 低 | 未验证（推测仅影响玩家） |
+
+## 9. 正确的做法（已定为规矩）
+
+1. 每新增一块复原，**先从二进制推导该块的完整变体集**（字符串表 / 跳转表 / 协议枚举）；
+2. 把变体集写进本文件，逐项标注「已实现 / 未实现 / 不适用」；
+3. 只有**全部变体都有归属**时，才允许在 README 上写 ✅；
+4. 任何"用户玩出来才知道"的模式，都算**枚举失误**，要回头补第 1 步。
