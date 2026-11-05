@@ -90,7 +90,7 @@ pub fn calculate(
                 let fm2 = eval(tokens, mid2, 0.0, 0.0);
                 let chord2 = hypot(mid2 - x, fm2 - y);
                 if chord <= chord2 {
-                    lo = mid;
+                    lo = x;
                     continue;
                 }
             }
