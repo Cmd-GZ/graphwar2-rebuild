@@ -127,6 +127,7 @@ pub mod levelgen;
 pub mod serverloop;
 pub mod rng;
 pub mod aigen;
+pub mod ai_explain;
 mod levelgen_tables;
 pub mod turnstate;
 /// 房间列表服务器（broker）：见 `docs/115-broker.md`。
