@@ -1,0 +1,213 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://MarginContainer.gd" id="1_firgh"]
+[ext_resource type="Script" path="res://ExitButtonContainer.gd" id="2_by037"]
+[ext_resource type="Theme" path="res://long_press_ghost_button_theme.tres" id="3_1k72a"]
+[ext_resource type="Texture2D" path="res://return.svg" id="4_aavc0"]
+[ext_resource type="Theme" path="res://long_press_button_theme.tres" id="5_ukeu0"]
+[ext_resource type="Script" path="res://LanLobbyTitle.gd" id="6_pw1xn"]
+[ext_resource type="Theme" path="res://graphwar_theme.tres" id="7_fwl0e"]
+[ext_resource type="Script" path="res://LanLobbyFontResize.gd" id="8_byub0"]
+[ext_resource type="Script" path="res://LobbyButtonContainer.gd" id="9_6draq"]
+[ext_resource type="Script" path="res://AdContainer.gd" id="10_wpq83"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_ourae"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_jdvmj"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_qctwm"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_1j2v1"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_woxq3"]
+
+[sub_resource type="Theme" id="Theme_hffrm"]
+Button/colors/font_color = Color(0.87451, 0.87451, 0.87451, 0)
+Button/colors/font_disabled_color = Color(0.87451, 0.87451, 0.87451, 0)
+Button/colors/font_focus_color = Color(0.94902, 0.94902, 0.94902, 0)
+Button/colors/font_hover_color = Color(0.94902, 0.94902, 0.94902, 0)
+Button/colors/font_hover_pressed_color = Color(1, 1, 1, 0)
+Button/colors/font_outline_color = Color(1, 1, 1, 0)
+Button/colors/font_pressed_color = Color(1, 1, 1, 0)
+Button/styles/disabled = SubResource("StyleBoxEmpty_ourae")
+Button/styles/focus = SubResource("StyleBoxEmpty_jdvmj")
+Button/styles/hover = SubResource("StyleBoxEmpty_qctwm")
+Button/styles/normal = SubResource("StyleBoxEmpty_1j2v1")
+Button/styles/pressed = SubResource("StyleBoxEmpty_woxq3")
+
+[node name="LanLobby" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_firgh")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer"]
+layout_mode = 2
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="ExitButtonContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+script = ExtResource("2_by037")
+
+[node name="ClipButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer/ExitButtonContainer"]
+clip_children = 2
+layout_mode = 2
+theme = ExtResource("3_1k72a")
+text = "     "
+icon = ExtResource("4_aavc0")
+icon_alignment = 1
+expand_icon = true
+
+[node name="AnimationRect" type="ColorRect" parent="MarginContainer/VBoxContainer/HBoxContainer/ExitButtonContainer/ClipButton"]
+show_behind_parent = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.101961, 0.231373, 0.176471, 1)
+
+[node name="LongPressButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer/ExitButtonContainer"]
+input_text = "exit_lan_lobby"
+clip_children = 2
+layout_mode = 2
+theme = ExtResource("5_ukeu0")
+text = "     "
+icon = ExtResource("4_aavc0")
+icon_alignment = 1
+expand_icon = true
+
+[node name="ShowLocalContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+script = ExtResource("6_pw1xn")
+
+[node name="ShowLocalButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer/ShowLocalContainer"]
+input_text = "show_local"
+layout_mode = 2
+theme = ExtResource("7_fwl0e")
+toggle_mode = true
+text = "Local"
+
+[node name="ShowGlobalContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+script = ExtResource("6_pw1xn")
+
+[node name="ShowGlobalButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer/ShowGlobalContainer"]
+input_text = "show_global"
+layout_mode = 2
+theme = ExtResource("7_fwl0e")
+toggle_mode = true
+text = "Global"
+
+[node name="MarginContainer2" type="MarginContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer/VBoxContainer/MarginContainer2"]
+layout_mode = 2
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer/MarginContainer2/VBoxContainer"]
+layout_mode = 2
+theme = ExtResource("7_fwl0e")
+
+[node name="NameContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/MarginContainer2/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+script = ExtResource("8_byub0")
+
+[node name="RoomName" type="Label" parent="MarginContainer/VBoxContainer/MarginContainer2/VBoxContainer/HBoxContainer/NameContainer"]
+layout_mode = 2
+text = "Room Name"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="PlayersContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/MarginContainer2/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.1
+script = ExtResource("8_byub0")
+
+[node name="RoomName" type="Label" parent="MarginContainer/VBoxContainer/MarginContainer2/VBoxContainer/HBoxContainer/PlayersContainer"]
+layout_mode = 2
+text = "Players"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="ModeContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/MarginContainer2/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+script = ExtResource("8_byub0")
+
+[node name="GameMode" type="Label" parent="MarginContainer/VBoxContainer/MarginContainer2/VBoxContainer/HBoxContainer/ModeContainer"]
+layout_mode = 2
+text = "Game Mode"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="JoinButtonContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/MarginContainer2/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+script = ExtResource("8_byub0")
+
+[node name="GraphwarButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/MarginContainer2/VBoxContainer/HBoxContainer/JoinButtonContainer"]
+layout_mode = 2
+theme = SubResource("Theme_hffrm")
+text = " Join "
+
+[node name="ScrollContainer" type="ScrollContainer" parent="MarginContainer/VBoxContainer/MarginContainer2/VBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="GraphwarLanVBox" type="GraphwarLanVBox" parent="MarginContainer/VBoxContainer/MarginContainer2/VBoxContainer/ScrollContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer/MarginContainer"]
+layout_mode = 2
+script = ExtResource("9_6draq")
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/MarginContainer/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="CreateButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/MarginContainer/HBoxContainer"]
+input_text = "create_game"
+layout_mode = 2
+theme = ExtResource("7_fwl0e")
+text = " Create Game "
+
+[node name="JoinButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/MarginContainer/HBoxContainer"]
+input_text = "join_ip"
+layout_mode = 2
+theme = ExtResource("7_fwl0e")
+text = " Join IP "
+
+[node name="MarginContainer2" type="MarginContainer" parent="MarginContainer/VBoxContainer/MarginContainer/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AdContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer"]
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+script = ExtResource("10_wpq83")

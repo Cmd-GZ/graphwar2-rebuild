@@ -1,0 +1,28 @@
+[gd_resource type="Theme" format=3]
+
+[ext_resource type="FontFile" path="res://EraserRegular.ttf" id="1_b1djf"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_1yqwq"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_b5u6q"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_g6xia"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_gham6"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_bko35"]
+
+[resource]
+default_font = ExtResource("1_b1djf")
+Button/colors/font_color = Color(0.87451, 0.87451, 0.87451, 0)
+Button/colors/font_disabled_color = Color(0.87451, 0.87451, 0.87451, 0)
+Button/colors/font_focus_color = Color(0.94902, 0.94902, 0.94902, 0)
+Button/colors/font_hover_color = Color(0.94902, 0.94902, 0.94902, 1)
+Button/colors/icon_disabled_color = Color(1, 1, 1, 0)
+Button/colors/icon_normal_color = Color(1, 1, 1, 0)
+Button/constants/outline_size = 5
+Button/styles/disabled = SubResource("StyleBoxEmpty_1yqwq")
+Button/styles/focus = SubResource("StyleBoxEmpty_b5u6q")
+Button/styles/hover = SubResource("StyleBoxEmpty_g6xia")
+Button/styles/normal = SubResource("StyleBoxEmpty_gham6")
+Button/styles/pressed = SubResource("StyleBoxEmpty_bko35")

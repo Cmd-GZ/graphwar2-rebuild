@@ -1,0 +1,780 @@
+[gd_scene format=3]
+
+[ext_resource type="Theme" path="res://graphwar_theme.tres" id="1_uy6hj"]
+[ext_resource type="Script" path="res://MarginContainer.gd" id="2_orgsx"]
+[ext_resource type="Script" path="res://ExitButtonContainer.gd" id="3_rlfns"]
+[ext_resource type="Theme" path="res://long_press_ghost_button_theme.tres" id="4_mqvpp"]
+[ext_resource type="Texture2D" path="res://return.svg" id="5_sg7p4"]
+[ext_resource type="Theme" path="res://long_press_button_theme.tres" id="6_4dnco"]
+[ext_resource type="Texture2D" path="res://show_extra_buttons.svg" id="7_qchhe"]
+[ext_resource type="Script" path="res://ShowExtraButtons.gd" id="8_p44i2"]
+[ext_resource type="Script" path="res://ButtonGrid.gd" id="9_8ccpf"]
+[ext_resource type="Texture2D" path="res://arrow_left_bar.svg" id="10_yue7k"]
+[ext_resource type="Texture2D" path="res://arrow_left.svg" id="11_1wkkl"]
+[ext_resource type="Texture2D" path="res://delete_left.svg" id="12_upe3f"]
+[ext_resource type="Theme" path="res://invisible_theme.tres" id="13_ph0y0"]
+[ext_resource type="Texture2D" path="res://skip_backward_option.svg" id="14_0h3c5"]
+[ext_resource type="Texture2D" path="res://play_option.svg" id="15_nycnd"]
+[ext_resource type="Texture2D" path="res://skip_forward_option.svg" id="16_1jn7j"]
+[ext_resource type="Script" path="res://ExtraOptionPad.gd" id="17_kdkbf"]
+[ext_resource type="Script" path="res://ViewFunctionPad.gd" id="18_pjdcs"]
+[ext_resource type="Theme" path="res://function_display.tres" id="19_d7aqh"]
+[ext_resource type="Script" path="res://ViewFunctionsLabel.gd" id="20_ncc7f"]
+[ext_resource type="Script" path="res://ExtraOptionsHBox.gd" id="21_whrc0"]
+[ext_resource type="Texture2D" path="res://view_recent_functions.svg" id="22_736vx"]
+[ext_resource type="Texture2D" path="res://view_names.svg" id="23_kdwya"]
+[ext_resource type="Texture2D" path="res://no_chat.svg" id="24_wwtu3"]
+[ext_resource type="Texture2D" path="res://unmute.svg" id="25_30ivb"]
+[ext_resource type="Script" path="res://FireContainer.gd" id="26_fos55"]
+[ext_resource type="Texture2D" path="res://delete_right.svg" id="27_13hl7"]
+[ext_resource type="Texture2D" path="res://arrow_right.svg" id="28_7c7jo"]
+[ext_resource type="Texture2D" path="res://arrow_right_bar.svg" id="29_ks654"]
+[ext_resource type="Script" path="res://HBoxContainer.gd" id="30_1md13"]
+[ext_resource type="Texture2D" path="res://share_screenshot.svg" id="31_bj6mm"]
+[ext_resource type="Texture2D" path="res://share_summary.svg" id="32_uy8sa"]
+[ext_resource type="Texture2D" path="res://share_video.svg" id="33_mv1s2"]
+[ext_resource type="Script" path="res://TimerContainer.gd" id="34_47g18"]
+[ext_resource type="Script" path="res://FxContainer.gd" id="35_s0p1h"]
+[ext_resource type="Texture2D" path="res://fx_option.svg" id="36_3myhc"]
+[ext_resource type="Theme" path="res://game_menu_icon_theme.tres" id="37_403u1"]
+[ext_resource type="Script" path="res://OffsetContainer.gd" id="38_melwd"]
+
+[sub_resource type="Theme" id="Theme_tkww4"]
+
+[node name="PlayScreen" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = ExtResource("1_uy6hj")
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("2_orgsx")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer"]
+layout_mode = 2
+theme = ExtResource("1_uy6hj")
+
+[node name="PlayMainHBox" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+theme = ExtResource("1_uy6hj")
+
+[node name="LeftControls" type="VBoxContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox"]
+layout_mode = 2
+theme = ExtResource("1_uy6hj")
+
+[node name="LeftTopButtonsContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls"]
+layout_mode = 2
+
+[node name="ExitButtonContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftTopButtonsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+script = ExtResource("3_rlfns")
+
+[node name="ClipButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftTopButtonsContainer/ExitButtonContainer"]
+clip_children = 2
+layout_mode = 2
+theme = ExtResource("4_mqvpp")
+text = "     "
+icon = ExtResource("5_sg7p4")
+icon_alignment = 1
+expand_icon = true
+
+[node name="AnimationRect" type="ColorRect" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftTopButtonsContainer/ExitButtonContainer/ClipButton"]
+show_behind_parent = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.101961, 0.231373, 0.176471, 1)
+
+[node name="LongPressButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftTopButtonsContainer/ExitButtonContainer"]
+input_text = "ask_exit_play"
+clip_children = 2
+layout_mode = 2
+theme = ExtResource("6_4dnco")
+text = "     "
+icon = ExtResource("5_sg7p4")
+icon_alignment = 1
+expand_icon = true
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftTopButtonsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="ShowExtraButtons" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftTopButtonsContainer/MarginContainer"]
+layout_mode = 2
+text = "     "
+icon = ExtResource("7_qchhe")
+icon_alignment = 1
+expand_icon = true
+script = ExtResource("8_p44i2")
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="LeftButtonGrid" type="GridContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls"]
+layout_mode = 2
+theme = ExtResource("1_uy6hj")
+columns = 3
+script = ExtResource("9_8ccpf")
+
+[node name="GraphwarButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftButtonGrid"]
+input_text = "C"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "C"
+
+[node name="GraphwarButton2" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftButtonGrid"]
+input_text = "π"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "π"
+
+[node name="GraphwarButton3" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftButtonGrid"]
+input_text = "e"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "e"
+
+[node name="GraphwarButton4" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftButtonGrid"]
+input_text = "1"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "1"
+
+[node name="GraphwarButton5" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftButtonGrid"]
+input_text = "2"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "2"
+
+[node name="GraphwarButton6" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftButtonGrid"]
+input_text = "3"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "3"
+
+[node name="GraphwarButton7" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftButtonGrid"]
+input_text = "4"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "4"
+
+[node name="GraphwarButton8" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftButtonGrid"]
+input_text = "5"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "5"
+
+[node name="GraphwarButton9" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftButtonGrid"]
+input_text = "6"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "6"
+
+[node name="GraphwarButton10" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftButtonGrid"]
+input_text = "7"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "7"
+
+[node name="GraphwarButton11" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftButtonGrid"]
+input_text = "8"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "8"
+
+[node name="GraphwarButton12" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftButtonGrid"]
+input_text = "9"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "9"
+
+[node name="GraphwarButton13" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftButtonGrid"]
+input_text = "("
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "("
+
+[node name="GraphwarButton14" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftButtonGrid"]
+input_text = "0"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "0"
+
+[node name="GraphwarButton15" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftButtonGrid"]
+input_text = "."
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "."
+
+[node name="GraphwarButton16" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftButtonGrid"]
+input_text = "⇤"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+icon = ExtResource("10_yue7k")
+icon_alignment = 1
+expand_icon = true
+
+[node name="GraphwarButton17" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftButtonGrid"]
+input_text = "←"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "   "
+icon = ExtResource("11_1wkkl")
+icon_alignment = 1
+expand_icon = true
+
+[node name="GraphwarButton18" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftButtonGrid"]
+input_text = "⌫"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "   "
+icon = ExtResource("12_upe3f")
+icon_alignment = 1
+expand_icon = true
+
+[node name="LeftReplaysButtonsGrid" type="GridContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls"]
+visible = false
+layout_mode = 2
+theme = ExtResource("1_uy6hj")
+columns = 3
+script = ExtResource("9_8ccpf")
+
+[node name="GraphwarButton16" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftReplaysButtonsGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("13_ph0y0")
+text = "⇤"
+
+[node name="GraphwarButton17" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftReplaysButtonsGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("13_ph0y0")
+text = "←"
+
+[node name="GraphwarButton18" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftReplaysButtonsGrid"]
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("13_ph0y0")
+text = "⌫"
+
+[node name="AspectRatioContainer3" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftReplaysButtonsGrid"]
+layout_mode = 2
+stretch_mode = 0
+
+[node name="GraphwarButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftReplaysButtonsGrid/AspectRatioContainer3"]
+input_text = "⏮︎"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+icon = ExtResource("14_0h3c5")
+icon_alignment = 1
+expand_icon = true
+
+[node name="AspectRatioContainer" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftReplaysButtonsGrid"]
+layout_mode = 2
+stretch_mode = 0
+
+[node name="PlayPauseButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftReplaysButtonsGrid/AspectRatioContainer"]
+input_text = "play_pause"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+icon = ExtResource("15_nycnd")
+icon_alignment = 1
+expand_icon = true
+
+[node name="AspectRatioContainer2" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftReplaysButtonsGrid"]
+layout_mode = 2
+stretch_mode = 0
+
+[node name="GraphwarButton3" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftReplaysButtonsGrid/AspectRatioContainer2"]
+input_text = "⏭"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+icon = ExtResource("16_1jn7j")
+icon_alignment = 1
+expand_icon = true
+
+[node name="MarginContainer2" type="MarginContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/LeftControls"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="PlaneContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="GamePlane" type="VBoxContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/PlaneContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme = ExtResource("1_uy6hj")
+
+[node name="ExtraOptionPad" type="MarginContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/PlaneContainer/GamePlane"]
+layout_mode = 2
+script = ExtResource("17_kdkbf")
+
+[node name="PlaneContainer" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/PlaneContainer/GamePlane"]
+layout_mode = 2
+size_flags_vertical = 3
+theme = ExtResource("1_uy6hj")
+ratio = 1.6667
+
+[node name="GraphwarPlane" type="GraphwarPlane" parent="MarginContainer/VBoxContainer/PlayMainHBox/PlaneContainer/GamePlane/PlaneContainer"]
+layout_mode = 2
+theme = ExtResource("1_uy6hj")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/PlaneContainer/GamePlane/PlaneContainer"]
+layout_mode = 2
+
+[node name="ViewFunctionPad" type="MarginContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/PlaneContainer/GamePlane/PlaneContainer/VBoxContainer"]
+layout_mode = 2
+script = ExtResource("18_pjdcs")
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/PlaneContainer/GamePlane/PlaneContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/PlaneContainer/GamePlane/PlaneContainer/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.01
+
+[node name="ViewFunctionsLabel" type="RichTextLabel" parent="MarginContainer/VBoxContainer/PlayMainHBox/PlaneContainer/GamePlane/PlaneContainer/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme = ExtResource("19_d7aqh")
+bbcode_enabled = true
+text = "[outline_size=4][outline_color=black][color=green]player 1: f(x) = 3x+234[/color][/outline_color][/outline_size]"
+drag_and_drop_selection_enabled = false
+script = ExtResource("20_ncc7f")
+
+[node name="ExtraOptionsVBox" type="VBoxContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/PlaneContainer"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="ExtraOptionsHBox" type="HBoxContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/PlaneContainer/ExtraOptionsVBox"]
+z_index = 10
+layout_mode = 2
+theme = SubResource("Theme_tkww4")
+alignment = 1
+script = ExtResource("21_whrc0")
+
+[node name="ViewFunctionButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/PlaneContainer/ExtraOptionsVBox/ExtraOptionsHBox"]
+input_text = "toggle_view_functions"
+layout_mode = 2
+text = "     "
+icon = ExtResource("22_736vx")
+icon_alignment = 1
+expand_icon = true
+
+[node name="ShowNames" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/PlaneContainer/ExtraOptionsVBox/ExtraOptionsHBox"]
+input_text = "toggle_names"
+layout_mode = 2
+text = "     "
+icon = ExtResource("23_kdwya")
+icon_alignment = 1
+expand_icon = true
+
+[node name="ChatButtonPlay" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/PlaneContainer/ExtraOptionsVBox/ExtraOptionsHBox"]
+input_text = "toggle_chat"
+layout_mode = 2
+theme = ExtResource("1_uy6hj")
+text = "     "
+icon = ExtResource("24_wwtu3")
+icon_alignment = 1
+expand_icon = true
+
+[node name="MuteButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/PlaneContainer/ExtraOptionsVBox/ExtraOptionsHBox"]
+input_text = "toggle_mute"
+layout_mode = 2
+text = "     "
+icon = ExtResource("25_30ivb")
+icon_alignment = 1
+expand_icon = true
+
+[node name="RightControls" type="VBoxContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox"]
+layout_mode = 2
+theme = ExtResource("1_uy6hj")
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls"]
+layout_mode = 2
+theme = ExtResource("1_uy6hj")
+
+[node name="FireContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+script = ExtResource("26_fos55")
+
+[node name="ClipButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/HBoxContainer/FireContainer"]
+clip_children = 2
+layout_mode = 2
+theme = ExtResource("4_mqvpp")
+text = " Fire! "
+icon_alignment = 1
+expand_icon = true
+
+[node name="AnimationRect" type="ColorRect" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/HBoxContainer/FireContainer/ClipButton"]
+show_behind_parent = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.101961, 0.231373, 0.176471, 1)
+
+[node name="FireButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/HBoxContainer/FireContainer"]
+long_press_input_text = "fire"
+clip_children = 2
+layout_mode = 2
+theme = ExtResource("1_uy6hj")
+text = " Fire! "
+icon_alignment = 1
+expand_icon = true
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="RightButtonGrid" type="GridContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls"]
+layout_mode = 2
+theme = ExtResource("1_uy6hj")
+columns = 3
+script = ExtResource("9_8ccpf")
+
+[node name="GraphwarButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightButtonGrid"]
+input_text = "abs("
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "abs"
+
+[node name="GraphwarButton2" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightButtonGrid"]
+input_text = "ln("
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "ln"
+
+[node name="GraphwarButton3" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightButtonGrid"]
+input_text = "sqrt("
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "√"
+
+[node name="GraphwarButton4" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightButtonGrid"]
+input_text = "sin("
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "sin"
+
+[node name="GraphwarButton5" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightButtonGrid"]
+input_text = "cos("
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "cos"
+
+[node name="GraphwarButton6" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightButtonGrid"]
+input_text = "tan("
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "tan"
+
+[node name="GraphwarButton7" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightButtonGrid"]
+input_text = "*"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "*"
+
+[node name="GraphwarButton8" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightButtonGrid"]
+input_text = "/"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "/"
+
+[node name="GraphwarButton9" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightButtonGrid"]
+input_text = "exp("
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "exp"
+
+[node name="GraphwarButton10" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightButtonGrid"]
+input_text = "+"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "+"
+
+[node name="GraphwarButton11" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightButtonGrid"]
+input_text = "-"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "-"
+
+[node name="GraphwarButton12" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightButtonGrid"]
+input_text = "^"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "^"
+
+[node name="GraphwarButton13" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightButtonGrid"]
+input_text = "x"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "x"
+
+[node name="YButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightButtonGrid"]
+input_text = "y"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "y"
+
+[node name="GraphwarButton15" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightButtonGrid"]
+input_text = ")"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = ")"
+
+[node name="GraphwarButton16" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightButtonGrid"]
+input_text = "⌦"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "   "
+icon = ExtResource("27_13hl7")
+icon_alignment = 1
+expand_icon = true
+
+[node name="GraphwarButton17" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightButtonGrid"]
+input_text = "→"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+icon = ExtResource("28_7c7jo")
+icon_alignment = 1
+expand_icon = true
+
+[node name="GraphwarButton18" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightButtonGrid"]
+input_text = "⇥"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+icon = ExtResource("29_ks654")
+icon_alignment = 1
+expand_icon = true
+
+[node name="RightReplaysButtonsGrid" type="GridContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls"]
+visible = false
+layout_mode = 2
+theme = ExtResource("1_uy6hj")
+script = ExtResource("9_8ccpf")
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightReplaysButtonsGrid"]
+layout_mode = 2
+theme = ExtResource("13_ph0y0")
+script = ExtResource("30_1md13")
+
+[node name="GraphwarButton4" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightReplaysButtonsGrid/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+text = "abs"
+
+[node name="GraphwarButton5" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightReplaysButtonsGrid/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+text = "cos"
+
+[node name="GraphwarButton6" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightReplaysButtonsGrid/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+text = "exp"
+
+[node name="GraphwarButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightReplaysButtonsGrid"]
+input_text = "save_screenshot"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "        "
+icon = ExtResource("31_bj6mm")
+icon_alignment = 1
+expand_icon = true
+
+[node name="GraphwarButton3" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightReplaysButtonsGrid"]
+input_text = "save_summary"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "        "
+icon = ExtResource("32_uy8sa")
+icon_alignment = 1
+expand_icon = true
+
+[node name="GraphwarButton4" type="GraphwarButton" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls/RightReplaysButtonsGrid"]
+input_text = "save_clip"
+layout_mode = 2
+size_flags_horizontal = 3
+focus_mode = 0
+theme = ExtResource("1_uy6hj")
+text = "        "
+icon = ExtResource("33_mv1s2")
+icon_alignment = 1
+expand_icon = true
+
+[node name="MarginContainer2" type="MarginContainer" parent="MarginContainer/VBoxContainer/PlayMainHBox/RightControls"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="HBoxContainer2" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+theme = ExtResource("1_uy6hj")
+
+[node name="TimerContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2"]
+layout_mode = 2
+script = ExtResource("34_47g18")
+
+[node name="TimerLabel" type="Label" parent="MarginContainer/VBoxContainer/HBoxContainer2/TimerContainer"]
+layout_mode = 2
+text = "00:00"
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.01
+
+[node name="FxContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2"]
+layout_mode = 2
+script = ExtResource("35_s0p1h")
+
+[node name="FxLabel" type="Label" parent="MarginContainer/VBoxContainer/HBoxContainer2/FxContainer"]
+visible = false
+layout_mode = 2
+text = " f(x) = "
+
+[node name="FxTexture" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/FxContainer"]
+visible = false
+layout_mode = 2
+texture = ExtResource("36_3myhc")
+expand_mode = 3
+
+[node name="AspectRatioContainer" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/FxContainer"]
+layout_mode = 2
+stretch_mode = 1
+
+[node name="FxTextureButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer2/FxContainer/AspectRatioContainer"]
+layout_mode = 2
+theme = ExtResource("37_403u1")
+text = "         "
+icon = ExtResource("36_3myhc")
+flat = true
+icon_alignment = 1
+expand_icon = true
+
+[node name="GraphwarFunctionInput" type="GraphwarFunctionInput" parent="MarginContainer/VBoxContainer/HBoxContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme = ExtResource("1_uy6hj")
+alignment = 1
+context_menu_enabled = false
+virtual_keyboard_enabled = false
+caret_blink = true
+caret_force_displayed = true
+
+[node name="OffsetContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2"]
+layout_mode = 2
+script = ExtResource("38_melwd")
+
+[node name="OffsetLabel" type="Label" parent="MarginContainer/VBoxContainer/HBoxContainer2/OffsetContainer"]
+custom_minimum_size = Vector2(100, 0)
+layout_mode = 2

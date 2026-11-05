@@ -1,0 +1,17 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://addons/admob/sample/Ump.gd" id="1_5kts1"]
+
+[node name="UMP" type="VBoxContainer"]
+script = ExtResource("1_5kts1")
+
+[node name="GetConsentStatus" type="Button" parent="."]
+layout_mode = 2
+text = "GetConsentStatus"
+
+[node name="ResetConsentInformation" type="Button" parent="."]
+layout_mode = 2
+text = "ResetConsentInformation"
+
+[connection signal="pressed" from="GetConsentStatus" to="." method="_on_get_consent_status_pressed"]
+[connection signal="pressed" from="ResetConsentInformation" to="." method="_on_reset_consent_information_pressed"]
