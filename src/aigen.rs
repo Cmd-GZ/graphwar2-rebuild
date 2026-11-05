@@ -313,6 +313,66 @@ where
     out
 }
 
+// ---------------------------------------------------------------------------
+// 适应度（docs/74 的公式，接上路径采样与命中判定）
+// ---------------------------------------------------------------------------
+
+/// 一次评分的上下文。
+pub struct ScoringContext<'a> {
+    pub x0: f64,
+    pub y0: f64,
+    pub flip: bool,
+    /// 采样步长：粗评 `0.5`、精评 `0.01`（`docs/74` §1.1 的 `X`）。
+    pub step: f64,
+    /// 障碍掩膜（只含障碍）。
+    pub mask: &'a [u8],
+    /// 目标士兵（**不含射手本人**）。
+    pub targets: &'a [crate::settle::Target],
+    /// 复杂度硬上限（`V > limit` 罚 5e7）。
+    pub limit: u32,
+}
+
+/// 适应度：`命中×2e6 − 1e6 − V²/100 − (V > limit ? 5e7 : 0)`。
+///
+/// **实测**（`docs/74`）：常规对局里没有"友军惩罚"项。
+/// `V` 就是 token 数；`hits` 是这次弹道判死的士兵数。
+pub fn fitness(tokens: &[Token], ctx: &ScoringContext) -> f64 {
+    use crate::path::{calculate, Mode};
+    use crate::plane::is_occupied;
+    use crate::shot::{correction, shifted_tokens};
+
+    let v = tokens.len();
+    let mut score = -1_000_000.0 - (v * v) as f64 / 100.0;
+    if v as u32 > ctx.limit {
+        score -= 50_000_000.0;
+    }
+    if tokens.is_empty() {
+        return score;
+    }
+
+    // 修正后沿弹道走一遍：先判致死（穿过即死、不挡弹道），再判障碍阻挡
+    let c = correction(tokens, ctx.x0, ctx.y0, ctx.flip);
+    let shifted = shifted_tokens(tokens, c);
+    let points = calculate(&shifted, ctx.x0, ctx.y0, ctx.step, ctx.flip, Mode::Normal);
+
+    let mut killed: Vec<i64> = Vec::new();
+    for &(px, py) in &points {
+        for t in ctx.targets {
+            if killed.contains(&t.id) {
+                continue;
+            }
+            let d = ((px - t.x).powi(2) + (py - t.y).powi(2)).sqrt();
+            if d <= t.radius {
+                killed.push(t.id);
+            }
+        }
+        if is_occupied(ctx.mask, px, py) {
+            break;
+        }
+    }
+    score + killed.len() as f64 * 2_000_000.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -601,5 +661,54 @@ mod tests {
                 "精英应被原样保留"
             );
         }
+    }
+
+    #[test]
+    fn fitness_rewards_hits_and_penalises_complexity() {
+        use crate::plane::empty_mask;
+        use crate::settle::Target;
+        use crate::function::parse;
+
+        let mask = empty_mask();
+        let target = vec![Target { id: 7, x: 0.0, y: 0.0, radius: 0.5 }];
+        let miss_target = vec![Target { id: 8, x: 0.0, y: 12.0, radius: 0.5 }];
+
+        // 平地一条直线，从 (10,0) 向左打
+        let hit_tokens = parse("0.00");
+        let ctx_hit = ScoringContext {
+            x0: 10.0, y0: 0.0, flip: true, step: 0.5,
+            mask: &mask, targets: &target, limit: 200,
+        };
+        let s_hit = fitness(&hit_tokens, &ctx_hit);
+        // 命中一人：2e6 - 1e6 - V²/100，V=2（常数 + 修正项？这里按实际 token 数）
+        let v = hit_tokens.len() as f64;
+        assert!(
+            (s_hit - (1_000_000.0 - v * v / 100.0)).abs() < 1.0,
+            "命中一人应约 +1e6，实测 {s_hit}（V={v}）"
+        );
+
+        let ctx_miss = ScoringContext {
+            x0: 10.0, y0: 0.0, flip: true, step: 0.5,
+            mask: &mask, targets: &miss_target, limit: 200,
+        };
+        let s_miss = fitness(&hit_tokens, &ctx_miss);
+        assert!(s_miss < -900_000.0, "打空应约 -1e6，实测 {s_miss}");
+    }
+
+    #[test]
+    fn fitness_penalises_exceeding_the_limit() {
+        use crate::plane::empty_mask;
+        use crate::function::parse;
+        let mask = empty_mask();
+        let mut tokens = parse("sin(x)");
+        while tokens.len() <= 5 {
+            tokens.push(Token::op(Function::Sin));
+        }
+        let ctx = ScoringContext {
+            x0: 10.0, y0: 0.0, flip: true, step: 0.5,
+            mask: &mask, targets: &[], limit: 5,
+        };
+        let s = fitness(&tokens, &ctx);
+        assert!(s < -40_000_000.0, "超上限应吃 5e7 惩罚，实测 {s}");
     }
 }

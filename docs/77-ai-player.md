@@ -49,9 +49,23 @@ pub fn next_generation(pop, params, next, score) -> Vec<Individual>
 - `params_match_measured_table`
 - `next_generation_keeps_size_and_elites`
 
-## 5. 还差什么才能"真的下棋"
+## 5. 适应度已接上（本轮新增）
 
-1. **适应度函数本身**（`docs/74` 的公式要接上弹道采样 `path`/`settle` 与士兵坐标）；
-   其中 `X` 的语义待子 agent 结论；
-2. **修复/装配规则**（假设项第一条）；
-3. 把 `next_generation` 按 `generations` 轮起来，取分数最高的个体开火。
+`aigen::fitness(tokens, &ScoringContext)` 实现了 `docs/74` 的公式：
+
+```rust
+score = 命中数 × 2e6 − 1e6 − V²/100 − (V > limit ? 5e7 : 0)
+```
+
+- **命中判定**与 `settle::resolve` 完全一致（穿过即死、不挡弹道；障碍挡停）；
+- 路径用 `path::calculate` 直接吃 token（不需要先渲染成文本）；
+- `V` = token 数，`limit` 来自 [`Params`]；
+- 步长用 `ScoringContext.step`（粗评 0.5 / 精评 0.01）。
+
+测试：命中一人约 `+1e6`、打空约 `−1e6`、超上限吃 `−5e7`。
+
+## 6. 还差什么才能"真的下棋"
+
+1. **修复/装配规则**（假设项第一条）——影响生成函数的质量；
+2. 把 `next_generation` 按 `generations` 轮起来、取分数最高的个体开火；
+3. 与真实游戏对拍（同样局面下比较 AI 选出的函数质量）。
