@@ -277,10 +277,10 @@ MainMenu
 
 | # | 项 | 我们的做法 | 原版状态 | 影响的界面 |
 |---|---|---|---|---|
-| 1 | **弹道** | 固定 `dx=0.02` 折线 + 修正常数（`source=preview`，界面明示） | 等弦长 0.01 二分采样（`src/path.rs` 已复原），未向 GDScript 暴露 | PlayScreen |
-| 2 | **命中/致死** | 路径点到士兵中心 < 0.8 棋盘单位即判死（**几何近似**） | 掩膜逐点采样、"穿过即死"、友军也会死（`docs/65`、`src/life.rs`） | PlayScreen |
-| 3 | **关卡数据** | 21 关全占位：标题 + 说明（明写未知）+ 默认选项 + 固定种子 + 一个固定档位的 Bot 当对手 | **完全未知**（`docs/103` 只证明生成器有两种模式） | Campaign / JoinLevelPopUp |
-| 4 | **关卡解锁** | 第 0 关可玩，其后要求"上一关通关"；通关 = 打赢 | 锁定判据未知（`docs/92` §8：本机存档下 21 关全可点） | Campaign |
+| 1 | ~~弹道~~ | ✅ **已消除**：`GW2Rebuild.path_calculate` 已暴露并被客户端使用，`source=kernel`，等弦长 0.01（`docs/116`） | 等弦长 0.01 二分采样 | PlayScreen |
+| 2 | ~~命中/致死~~ | ✅ **已消除**：`GW2Rebuild.hit_test` 走 `settle::resolve_points`（掩膜 + 数据字段半径），旧 0.8 近似已删（`docs/120`）。⚠️ 残留：原版按实体 id 排除射手，`game.rs::fire` 仍有一条 1e-12 位置排除（`docs/122`） | 掩膜逐点采样、穿过即死、友军也会死 | PlayScreen |
+| 3 | ~~关卡数据~~ | ✅ **已消除**：21 关标题 / 描述 / 参数（障碍模式、`min_count`、士兵数、目标数、Bot 难度、回合上限）**全部解出**，并与 385 份回放交叉验证 21/21（`docs/118`）。⚠️ 客户端是否已接入真数据见 `docs/125` | 硬编码在 `level_info()`（`0x4ad380`） | Campaign / JoinLevelPopUp |
+| 4 | ~~关卡解锁~~ | ✅ **规则已还原**：`campaign.save` = 单行 `level_<n>`（0 基、**无尾换行**、只增不减、启动不创建），写点在 `0x4183b0`；客户端是否已接入见 `docs/124` | 同左（`docs/118` 附录 A） | Campaign |
 | 5 | **Bot 分队** | 第 1 个 Bot 去对面（team 1），之后按人数奇偶 | 未观测 | GameSetup |
 | 6 | **Bot 名字 ↔ 难度** | 固定把 `ChatGPT/Wolfram/Alpha Zordon/Multivac/Deep Blue/Deep Thought` 依次给 0..5 档 | **对应关系未观测**（`docs/92` §4.6 明写），且名字池与难度不是 1:1 | AddBotPopUp |
 | 7 | **网络** | 没有网络层：`join_join_ip` 只校验 `host:port`，然后模拟"连接中→断开" | 真实 TCP 握手已复原（`docs/33`、`src/protocol.rs`），未接进界面 | LanLobby / 三个连接弹窗 |
@@ -288,7 +288,7 @@ MainMenu
 | 9 | **聊天** | 只显示在本地，不发网络包 | 走协议（`docs/24`） | ChatPopUp |
 | 10 | **回放** | 列 `user://replays/` 的文件名；不解析、不播放 | 格式已观测（`docs/78`），播放界面未观测 | ReplayLobby / PlayScreen |
 | 11 | **内购/广告** | 广告位保留 60 px 占位条（写"disabled in this build"），内购按钮只提示 | Linux 端本来就没有（用户要求） | 11 个界面有广告条 |
-| 12 | **音频** | 没有音频；`toggle_mute` 只切图标 | `.pck` 里有一个音频文件损坏（其余可用，但资产不入库） | PlayScreen |
+| 12 | ~~音频~~ | 🔶 **链路已还原、尚未接入**：10 个导入产物四道独立检查全部通过；`humm.wav` 由 Rust 侧 hound 解析（`0x50a080`），音量 `-15f`/`-5f`、32767 归一化、静音走 Master 总线（`docs/111`）。"有一个文件损坏"已查明是**使用者自己的重建脚本**产物，非游戏资源 | 见 `docs/111` | PlayScreen |
 | 13 | **结算文案** | 输：`YOU lOST`（原版原文）；赢：`YOU WON`（**占位**，tooltip 注明原文未观测） | 只观测到失败一侧 | EndGamePopUp |
 | 14 | **玩家表滚动** | 玩家列表**不用** `ScrollContainer`（原版有） | 原版用 `ScrollContainer` | GameSetup（原因见 §9.1） |
 | 15 | **"无对手时 Start"** | 不开始，并且**给一句提示** | 原版是**纯静默**（`docs/22` §5.1） | GameSetup |
