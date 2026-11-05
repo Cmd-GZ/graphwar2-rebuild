@@ -135,3 +135,6 @@ pub mod capi;
 pub mod gdext_class;
 pub mod api;
 pub mod shot;
+// 回放播放器（docs/133）：gzip + JSONL 读取、按 tick 还原局面、播放时钟。
+pub mod replay;
+pub mod replay_inflate;

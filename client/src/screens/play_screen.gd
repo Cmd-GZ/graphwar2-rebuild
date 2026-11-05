@@ -122,6 +122,17 @@ var _status_text := ""
 ## 程序化改写输入框（换手时回填）期间不要清 OffsetLabel —— 否则会把刚算出来的修正抹掉。
 var _suppress_offset_clear := false
 
+# --- 回放模式（`docs/133`；这是本文件里唯一为回放新增的分叉） ---
+## 回放模式下：不接管输入（键盘/开火无效），由 tick 时钟消费事件流。
+var _replay_mode := false
+var _replay: GwReplayPlayer = null
+var _replay_path := ""
+var _replay_bar: HBoxContainer = null
+var _replay_progress: ProgressBar = null
+var _replay_label: Label = null
+## 回放里的"当前这一发"（诊断 / 状态行用）。
+var _replay_shot_status := ""
+
 func _ready() -> void:
 	font_divisor = 30        # ButtonGrid.gd / FireContainer.gd / ExtraOptionsHBox.gd 都是 /30
 	super()
@@ -312,6 +323,26 @@ func build() -> void:
 	_offset_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	offset_m.add_child(_offset_label)
 
+	# ---------------- 回放进度（**我们自定**，原版回放界面未观测；`docs/133` §4.2） ----------------
+	# 原版 `play_screen.tscn` 里**没有**这条：左侧 `LeftReplaysButtonsGrid` 只有
+	# prev/play_pause/next 三颗键（`docs/92` §4.10）。进度条与 tick 计数是我们加的，
+	# 因为"放到第几个 tick"是回放唯一的时间轴（`docs/35`：60 tick/秒），没有它无法定位。
+	_replay_bar = GwUI.hbox("ReplayStatusBar", 6, vbox)
+	_replay_bar.visible = false
+	_replay_label = GwUI.label("", 0, HORIZONTAL_ALIGNMENT_LEFT)
+	_replay_label.name = "ReplayTickLabel"
+	_replay_bar.add_child(_replay_label)
+	_replay_progress = ProgressBar.new()
+	_replay_progress.name = "ReplayProgress"
+	_replay_progress.min_value = 0.0
+	_replay_progress.max_value = 1.0
+	_replay_progress.step = 0.0
+	_replay_progress.show_percentage = false
+	_replay_progress.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_replay_progress.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_replay_progress.custom_minimum_size = Vector2(0, 10)
+	_replay_bar.add_child(_replay_progress)
+
 	# 原版**没有**这行状态字（用户实测：底部多了一行说明）。保留节点但永不显示，
 	# 只给 selftest / --dump 当诊断用（`docs/125` §5 登记）。
 	_status_label = GwUI.label("", 12, HORIZONTAL_ALIGNMENT_LEFT)
@@ -381,10 +412,21 @@ func _build_replay_controls(node_name: String, icons: Array) -> Control:
 			"save_screenshot": cmd = GwCommands.SAVE_SCREENSHOT
 			"save_summary": cmd = GwCommands.SAVE_SUMMARY
 			"save_clip": cmd = GwCommands.SAVE_CLIP
-		var b := GwButton.make("", cmd)
+		# ⚠️ **实现偏离（`docs/133` §4.3）**：左侧三颗播放键**不走 App 命令总线**。
+		# 原版命令键（`play_pause` / `key_prev` / `key_next`）记在 `meta` 里；但 `app.gd`
+		# 对这三个键的分支仍是 `notify("回放播放未实现")` 的占位，而 `app.gd` 不在
+		# 本轮可改范围 ⇒ 直接接本界面的播放器，免得按一下弹一个假提示。
+		# 右侧三颗（存截图/存摘要/存片段）保持原样，它们的语义本来就**未观测**。
+		var playback := cmd == GwCommands.PLAY_PAUSE or cmd == GwCommands.KEY_PREV \
+			or cmd == GwCommands.KEY_NEXT
+		var b := GwButton.make("", "" if playback else cmd)
 		b.name = "GraphwarButton"
+		b.set_meta("observed_input_text", cmd)
 		b.icon = GwIcons.get_icon(String(icon_name))
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.tooltip_text = "原版命令键：%s" % cmd
+		if playback:
+			b.pressed.connect(_on_replay_button.bind(cmd))
 		box.add_child(b)
 	return box
 
@@ -453,6 +495,16 @@ func begin_match() -> void:
 	if app_node == null:
 		return
 	var st = app_node.state
+	# 回放分支：`app.gd` 只做 `state.reset_replay(path)` + `begin_match()`（它不在本轮
+	# 可改范围里），所以分叉必须在这里。其余字段（玩家表）在回放里是空的 ——
+	# 真实局面由**回放自己的事件**给出（PlayerInfo/SoldierInfo/PosInfo/…）。
+	if st.kind == GwGameState.Kind.REPLAY and String(st.replay_file) != "":
+		_begin_replay(String(st.replay_file))
+		return
+	_replay_mode = false
+	_replay = null
+	_replay_bar.visible = false
+	_set_replay_input_enabled(true)
 	_functions.clear()
 	_shot_queue.clear()
 	_last_result = {}
@@ -525,6 +577,11 @@ func begin_match() -> void:
 
 func end_match() -> void:
 	_running = false
+	_replay_mode = false
+	_replay = null
+	if _replay_bar != null:
+		_replay_bar.visible = false
+	_set_replay_input_enabled(true)
 	_plane.clear_path()
 
 func _apply_layout_sizes() -> void:
@@ -604,6 +661,8 @@ func _refresh_mode_indicators() -> void:
 func key_input(cmd: String) -> void:
 	if not _running:
 		return
+	if _replay_mode:
+		return          # 回放不接管输入（docs/133 §4.1）
 	_input.key_input(cmd)
 	_functions[_active] = _input.text
 
@@ -692,6 +751,9 @@ func fire() -> void:
 	var app_node := app()
 	if app_node == null or not _running:
 		return
+	if _replay_mode:
+		_status("回放模式不接管输入（这一局的每一发都来自录像）")
+		return
 	var active_soldier := _active_soldier()
 	if active_soldier.is_empty() or not bool(active_soldier.alive):
 		_status("当前射手已阵亡")
@@ -762,6 +824,8 @@ func _commit_shot(shot: Dictionary) -> void:
 ## 根本没有超时路径，一个回合只能由"打完一发"来推进。LAN 的 3 分钟超时不计回合
 ## （那些对局的 `turn_limit` 恒为 0，`docs/118` §7.1）。这条口径见 `docs/131` §4.3。
 func _settle_round() -> void:
+	if _replay_mode:
+		return          # 回放的胜负由录像自己的 GameStateInfo 决定，不在这里判
 	_turns_used += 1
 	var restored := _apply_target_reset()
 	var extra := ""
@@ -954,6 +1018,8 @@ func _load_active_function() -> void:
 ## 现在：打靶关要**靶子全清**，对战关要**对方队伍全灭**（`docs/84`：45/45 实测），
 ## 回合上限用尽仍未清完 ⇒ 失败（`docs/118` §7.1，`Level 7` = 1）。
 func _check_match_over() -> void:
+	if _replay_mode:
+		return
 	var app_node := app()
 	if app_node == null:
 		return
@@ -1056,9 +1122,344 @@ func _soldier_of(player_index: int) -> Dictionary:
 			return s
 	return {}
 
+# ---------------------------------------------------------------- 回放模式（docs/133）
+
+## 进入回放模式：把一局真实回放接到**现有的绘制与结算路径**上。
+##
+## 与原版的对应：原版这一块是 `graphwar_replay_player.rs` + `graphwar_replay_control.rs`
+## 两个 Rust 模块（`docs/78` §1 从 `.so` 里读到的模块名），界面是 `res://replay_lobby.tscn`。
+## 本重建的 `app.gd` 只负责 `state.reset_replay(path)` 然后调 `begin_match()`，
+## 所以**分叉点在这里** —— 这也是本文件里唯一为回放新增的分支（`docs/133` §4.1）。
+##
+## 喂给绘制/结算的东西一律**不绕过内核**：
+## * 弹道：回放只给 `FunctionPoints{start_x, start_y, end_x}`（**没有点序列**），
+##   所以用 `GwCore.calculate_path(函数文本, 起点, 方向)` 重算 —— 那条路径就是
+##   内核的采样器（`docs/116`）；算不出来就**不画**并说明原因，不拿预览折线冒充；
+## * 障碍：`AddObstacle` 的精确坐标/半径直接进 `_obstacles`（画与判定同一份数组）；
+## * 生死：`LifeInfo{alive:false}` 直接翻 `_soldiers[i].alive`；
+## * 位置：`PosInfo` 直接写坐标。
+func _begin_replay(path: String) -> void:
+	_replay_path = path
+	_replay = null
+	_replay_mode = false
+	_running = false
+	_replay_shot_status = ""
+	_functions.clear()
+	_shot_queue.clear()
+	_last_result = {}
+	_soldiers.clear()
+	_targets = GwTargetSet.new()
+	_destroyed_this_shot.clear()
+	_turns_used = 0
+	_last_verdict = {}
+	_plane.clear_path()
+	_set_replay_input_enabled(false)
+	_replay_left.visible = true
+	_replay_right.visible = true
+	_replay_bar.visible = true
+
+	var f := GwReplayFile.load_path(path)
+	if not f.ok():
+		_status("回放打不开：%s" % f.error)
+		# `app.gd::_play_replay()` 在调 `begin_match()` **之前**先弹了一句
+		# `回放播放未实现`（那是它还没接回放时的占位）。这里用一句准确的覆盖掉它 ——
+		# 否则用户会一边看着回放在播、一边读到"未实现"。气泡文本不能含内部标记
+		# （`app.gd::INTERNAL_MARKERS`），所以只写事实。
+		notify("回放打不开：%s" % f.error)
+		_replay_label.text = "回放读取失败：%s" % f.error
+		_replay_progress.value = 0.0
+		_running = false
+		return
+	_replay = GwReplayPlayer.new().setup(f)
+	_replay_mode = true
+	_running = true
+	# 四个模式：回放里记着**这一局真实的选择**（`AxisModeInfo` 等），按观测到的字符串
+	# 映射到 `GwModes` 的档位（对照表见 GwReplayPlayer.mode_indices 的注释）。
+	var app_node := app()
+	if app_node != null:
+		var mi := _replay.mode_indices()
+		app_node.state.axis_mode = int(mi.axis)
+		app_node.state.function_mode = int(mi.function)
+		app_node.state.turn_mode = int(mi.turn)
+		app_node.state.time_mode = int(mi.time)
+	_plane.set_axis_mode(int(app_node.state.axis_mode) if app_node != null else GwModes.AXIS_DEFAULT)
+	_refresh_mode_indicators()
+	# 回放不做胜负判定（录像自己会发 `GameStateInfo{EndingGame}`），这里只占位。
+	_rules = GwLevelRules.for_versus(0)
+	_replay.seek(_replay.first_tick)
+	_realize_replay_state()
+	_replay.play()
+	_update_replay_ui()
+	_status(_replay_status_text())
+	# 同上：覆盖 `app.gd` 里那句占位气泡（`回放播放未实现`）。
+	notify("回放 %s ／ %d 条事件 ／ tick %d–%d" % [
+		_replay.state.game_name if _replay.state.game_name != "" else _replay_path.get_file(),
+		_replay.file.events.size(), _replay.first_tick, _replay.last_tick])
+
+## 主循环里的回放推进（`_process` 的回放分支）。
+func _replay_tick(delta: float) -> void:
+	if _replay == null:
+		return
+	var applied := _replay.advance_dt(delta)
+	if not applied.is_empty():
+		_apply_replay_events(applied)
+	_update_replay_ui()
+
+## 把一批刚被消费掉的事件喂给绘制/状态（**按事件类型分派，不猜副作用**）。
+func _apply_replay_events(applied: Array[Dictionary]) -> void:
+	var need_actors := false
+	var need_layout := false
+	var need_shot := false
+	for ev in applied:
+		match String(ev.kind):
+			"PosInfo", "TeamInfo", "LifeInfo", "SoldierInfo", "EntityRemoved", \
+			"SkinGraphicsInfo", "FaceGraphicsInfo", "HatGraphicsInfo", "TargetInfo", "ColorInfo":
+				need_actors = true
+			"AddObstacle", "ClearObstacles", "DestroyObstacle":
+				need_layout = true
+			"FunctionPoints":
+				need_actors = true
+				need_shot = true
+			_:
+				pass
+	if need_layout:
+		_replay_sync_layout()
+	if need_actors:
+		_replay_sync_actors()
+	if need_shot:
+		_replay_draw_last_shot()
+	_status(_replay_status_text())
+
+## 从**当前局面**整体重建画面（跳转/进入时用；逐事件路径只做增量）。
+func _realize_replay_state() -> void:
+	if _replay == null:
+		return
+	_replay_sync_layout()
+	_replay_sync_actors()
+	_replay_draw_last_shot()
+	_update_replay_ui()
+
+## 画"当前局面里最近的一发"。
+##
+## 回放里没有点序列（`FunctionPoints` 只有 `start_x/start_y/end_x`），所以这条弹道只能
+## **用内核按（起点 + 函数文本 + 队伍方向）重算** —— 那就是唯一的真值路径；算不出来
+## （例如微分方程局，`GwCore.calculate_path` 只跑 `Mode::Normal`）就清空并说明原因，
+## 不拿界面预览折线冒充（`docs/133` §4.5）。
+func _replay_draw_last_shot() -> void:
+	var shots: Array = _replay.state.shots if _replay != null else []
+	if shots.is_empty():
+		_plane.clear_path()
+		_replay_shot_status = "还没有开火记录"
+		return
+	_replay_draw_shot(shots[shots.size() - 1])
+
+func _replay_sync_layout() -> void:
+	_obstacles = _replay.obstacles_for_view()
+	_plane.set_obstacles(_obstacles)
+
+## 士兵与靶子：**同一个局面对象**既给 `_plane` 画，也给"谁死了"用。
+func _replay_sync_actors() -> void:
+	var list: Array[Dictionary] = []
+	for a in _replay.actors():
+		if bool(a.is_target):
+			continue            # 靶子走 `set_targets()`（与原版一样是独立图层，docs/131）
+		list.append({
+			"name": String(a.name),
+			"pos": a.pos,
+			"alive": bool(a.alive),
+			"team": maxi(0, int(a.team)),
+			# 回放**没说**谁是 bot（`NameInfo` 只给名字，`docs/79` §1 说完这一步没做完）
+			# ⇒ 一律按真人画，皮肤从 `SkinGraphicsInfo` 的字符串反查下标（查不到用 0）。
+			"is_bot": false,
+			"bot_tier": 0,
+			"skin": _replay_skin_index(int(a.id)),
+			"color": _replay_color(a),
+			"player": 0,
+		})
+	_soldiers = list
+	_plane.set_soldiers(list)
+	_plane.set_targets(_replay.target_positions())
+	_plane.set_show_names(_show_names)
+	_plane.queue_redraw()
+
+## `SkinGraphicsInfo.graphics_str`（如 `face_paint_2`）→ `GwIcons.SKINS` 的下标。
+## 名字对不上就退回 0（不编造皮肤）。**观测**：这三类字符串就是原版资产的文件名
+## （`rsc/skins/*.svg`、`faces/*.svg`、`hats/*.svg`，`docs/121` §5）。
+func _replay_skin_index(entity_id: int) -> int:
+	if _replay == null:
+		return 0
+	var nm := String(_replay.state.graphics.get("skin:%d" % entity_id, ""))
+	if nm == "":
+		return 0
+	return maxi(0, GwIcons.SKINS.find("skins/" + nm))
+
+## 玩家颜色：优先用回放里 `ColorInfo` 的**真实颜色**（`docs/102` 的队色表就是这样解出来的），
+## 没有就退回本队色表第一色。
+func _replay_color(a: Dictionary) -> Color:
+	var c = a.get("color", null)
+	if c is Color:
+		return c
+	var team := clampi(int(a.get("team", 0)), 0, 1)
+	return GwPlaneView.TEAM_COLORS[team][0]
+
+## 画一发的弹道：**用内核按（起点 + 函数文本 + 队伍方向）重算**。
+##
+## 回放里没有点序列（`FunctionPoints` 只有 `start_x/start_y/end_x`），所以这是唯一
+## 不编造的做法；内核算不出来（例如微分方程局——`GwCore.calculate_path` 只跑
+## `Mode::Normal`，见 `docs/116` §6）就清空并说明，不画假线。
+func _replay_draw_shot(d: Dictionary) -> void:
+	if _replay == null:
+		return
+	var owner := int(d.get("owner", -1))
+	var start: Vector2 = d.get("start", Vector2.ZERO)
+	var expr := String(d.get("function", ""))
+	if expr == "":
+		expr = String(_replay.state.functions.get(owner, ""))
+	if expr == "":
+		_plane.clear_path()
+		_replay_shot_status = "这一发没有函数文本（owner %d）" % owner
+		return
+	var team := _replay.team_index(owner)
+	var direction := 1.0
+	if team == 1:
+		direction = -1.0
+	elif team < 0:
+		# 队伍未知才退回几何：起点在左就往右（`docs/105`：Team1 恒在 x<0）
+		direction = 1.0 if start.x < 0.0 else -1.0
+	var result := GwCore.calculate_path(expr, start, direction)
+	var replay_corrected := String(d.get("corrected", ""))
+	if not bool(result.ok):
+		_plane.clear_path()
+		_replay_shot_status = "内核算不出这一发（%s）／ 函数 %s" % [String(result.note), expr]
+		return
+	var drawn := _clip_to_obstacle(result.points)
+	_plane.path_color = _replay_color({
+		"color": _replay.state.colors.get(int(_replay.file.soldier_owner.get(owner, -1)), null),
+		"team": maxi(0, team),
+	})
+	_plane.set_path(drawn.points, drawn.impact, true)
+	if app() != null and int(app().state.function_mode) == 0:
+		_offset_label.text = GwCore.format_offset(float(result.offset))
+	_replay_shot_status = "内核重算：函数 %s ／ 修正 %s（回放记录：%s）／ %d 点%s" % [
+		expr, GwCore.format_offset(float(result.offset)),
+		replay_corrected if replay_corrected != "" else "—",
+		drawn.points.size(),
+		"（撞障碍截断）" if bool(drawn.blocked) else "",
+	]
+
+## 状态行（只在隐藏的 StatusLabel 上，不显示给用户；`docs/125` §5）。
+func _replay_status_text() -> String:
+	if _replay == null:
+		return "回放未载入"
+	var dead := 0
+	var total := 0
+	for a in _replay.actors():
+		total += 1
+		if not bool(a.alive):
+			dead += 1
+	return "回放 %s ／ %s ／ 状态 %s ／ 回合 %d ／ 实体 %d（阵亡 %d）／ %s ／ %s" % [
+		_replay_path.get_file(), _replay.state.game_name, _replay.state.game_state,
+		_replay.state.turn_count, total, dead, _replay.summary(), _replay_shot_status]
+
+## 进度条 / tick 标签刷新。
+func _update_replay_ui() -> void:
+	if _replay == null or _replay_progress == null:
+		return
+	_replay_progress.value = _replay.progress()
+	_replay_label.text = "回放 %s ／ %s ／ %s" % [
+		_replay.state.game_name, _replay.summary(),
+		"（已到结尾）" if _replay.finished() else "",
+	]
+
+## 左侧三颗播放键（prev / play_pause / next）。**我们自定的接线**，见 `docs/133` §4.3。
+func _on_replay_button(cmd: String) -> void:
+	if not _replay_mode or _replay == null:
+		_status("当前不是回放模式")
+		return
+	match cmd:
+		GwCommands.PLAY_PAUSE:
+			_replay.toggle()
+		GwCommands.KEY_PREV:
+			_replay.step_back_event()
+			_realize_replay_state()
+		GwCommands.KEY_NEXT:
+			_replay.step_event()
+			_realize_replay_state()
+	_update_replay_ui()
+
+## 回放模式下把输入类控件**显式禁用**（而不是"按了没反应"）。
+func _set_replay_input_enabled(enabled: bool) -> void:
+	for b in _keys:
+		if b == null:
+			continue
+		# YButton(y) 在原版**两种模式下都恒为 disabled**（docs/92 §4.10 观测），
+		# 恢复输入时不能把它一起开回来（自检有这条断言）。
+		if String(b.name) == "YButton":
+			continue
+		b.disabled = not enabled
+	if _fire_button != null:
+		_fire_button.disabled = not enabled
+	if _input != null and not enabled:
+		# `GwFunctionInput` 不是 LineEdit（自绘，没有 `editable`），禁用的做法是清空 +
+		# `key_input()`/`fire()` 两个入口直接 return。
+		_suppress_offset_clear = true
+		_input.text = ""
+		_suppress_offset_clear = false
+
+# ---- 自检 / 诊断用的只读入口（不参与游戏逻辑） ----
+
+## 当前回放播放器的**规范性局面串**（与 Kernel / Python 参考同格式，`docs/133` §5）。
+func replay_canonical() -> String:
+	return _replay.canonical() if _replay != null else ""
+
+func replay_state() -> Dictionary:
+	if _replay == null:
+		return {}
+	return {
+		"mode": _replay_mode,
+		"tick": _replay.current_tick(),
+		"first_tick": _replay.first_tick,
+		"last_tick": _replay.last_tick,
+		"cursor": _replay.cursor,
+		"events": _replay.file.events.size(),
+		"playing": _replay.playing,
+		"progress": _replay.progress(),
+		"game_name": _replay.state.game_name,
+		"game_state": _replay.state.game_state,
+		"turn_count": _replay.state.turn_count,
+		"obstacles": _replay.state.obstacles.size(),
+		"soldiers": _soldiers.size(),
+		"canonical": _replay.canonical(),
+		"shot_status": _replay_shot_status,
+	}
+
+## 自检用：把回放**推进** n 秒墙钟（等价于主循环跑 n 秒）。
+func replay_advance_for_test(seconds: float) -> int:
+	if _replay == null:
+		return 0
+	var applied := _replay.advance_dt(seconds)
+	if not applied.is_empty():
+		_apply_replay_events(applied)
+	_update_replay_ui()
+	return applied.size()
+
+## 自检用：直接跳到某个 tick（走与按键跳转**同一条**路径）。
+func replay_seek_for_test(target_tick: int) -> void:
+	if _replay == null:
+		return
+	_replay.seek(target_tick)
+	_realize_replay_state()
+
+## 自检用：按一下播放键（走 `_on_replay_button`）。
+func replay_press_for_test(cmd: String) -> void:
+	_on_replay_button(cmd)
+
 # ---------------------------------------------------------------- 每帧
 
 func _process(delta: float) -> void:
+	if _replay_mode:
+		_replay_tick(delta)
+		return
 	if not _running:
 		return
 	var app_node := app()
@@ -1126,6 +1527,17 @@ func _refresh_function_list() -> void:
 	if app_node == null:
 		return
 	var lines: Array[String] = []
+	if _replay_mode and _replay != null:
+		# 回放里的函数表在事件里（`FunctionInfo.owner_id` = 士兵号，`docs/79` §1），
+		# 不在 `state.players` 里 —— 那张表在回放模式下是空的。
+		for owner in _replay.state.functions.keys():
+			lines.append("[color=white]soldier %d: f(x) = %s[/color]"
+				% [int(owner), String(_replay.state.functions[owner])])
+		_view_functions_label.clear()
+		_view_functions_label.append_text(
+			"[outline_size=4][outline_color=black]%s[/outline_color][/outline_size]"
+			% "\n".join(lines))
+		return
 	for pi in app_node.state.players.size():
 		var p: Dictionary = app_node.state.players[pi]
 		if _view_mode == 0 and int(pi) != int(_active):

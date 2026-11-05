@@ -11,11 +11,19 @@ extends GwScreen
 ## 条目结构（`replay_entry.tscn`）：`ReplayName`（= 录制时间戳）、`GameName`（房间名）、
 ## 四个模式图标、`PlayReplayButton`（input_text="play_replay"）。
 ##
-## 本项目：扫 `user://replays/`（`replay_index.gd`），不读原版存档目录。
-## 回放头解析未做 ⇒ 房间名/模式都是 `--`（不假装知道）。
+## 本项目：扫 `user://replays/`（`GwReplayFile.list_dir`），不读原版存档目录。
+## **文件名就是 unix 时间戳、没有扩展名**（`docs/78` §1 观测），所以这里**不按扩展名过滤**
+## —— `replay_index.gd` 的 `EXTENSIONS` 白名单会把**所有真实回放**都筛掉，这正是
+## 之前"回放列表永远空着"的原因（`docs/133` §4.4）。
+##
+## 房间名/四个模式**不在列表里解析**：那要把每份 gzip 整个解压一遍（400 份 ≈ 64 MB），
+## 打开回放时才有那个信息（`play_screen.gd::_replay_status_text()` 会显示）。
+## 列表里只给文件名 + 字节数 + 录制时间，`--` 表示"这一项我们没有的字段"。
 
 var _list: VBoxContainer
 var _selected := ""
+## 扫哪个目录。默认 `user://replays`；自检可以指向真实存档目录做**只读**列举。
+var _scan_dir := "user://replays"
 
 func _ready() -> void:
 	font_divisor = 40        # GameNameContainer.gd: 宽/40
@@ -41,8 +49,8 @@ func on_enter() -> void:
 func _rebuild() -> void:
 	for c in _list.get_children():
 		c.queue_free()
-	GwReplayIndex.ensure_dir()
-	var entries := GwReplayIndex.scan()
+	_ensure_dir()
+	var entries := GwReplayFile.list_dir(_scan_dir)
 	_selected = ""
 	# 空列表就**什么都不画**：原版 1920×1160 真帧里，没有回放时这一屏只有返回键和
 	# "REPLAYS" 标题，其余是纯底色（逐像素确认）。我们以前在这里加了两行自造提示，
@@ -65,7 +73,8 @@ func _entry(entry: Dictionary) -> HBoxContainer:
 	var game_m := GwUI.margin("GameNameContainer", 2, row)
 	game_m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	game_m.size_flags_stretch_ratio = 2.0
-	var game_label := GwUI.label(String(entry.game_name))
+	# 房间名要解压整份回放才知道（列表里不解，见文件头）；录制时间倒是有现成的。
+	var game_label := GwUI.label(_entry_subtitle(entry))
 	game_label.name = "GameName"
 	game_m.add_child(game_label)
 
@@ -97,6 +106,33 @@ func _entry(entry: Dictionary) -> HBoxContainer:
 	info_m.add_child(info)
 
 	return row
+
+## 副标题：录制时间（本地时区）+ 字节数。没有房间名时**不写 `--`**，写"没有的东西"更糟。
+func _entry_subtitle(entry: Dictionary) -> String:
+	var t := int(entry.get("mtime", 0))
+	var when := "—"
+	if t > 0:
+		var d := Time.get_datetime_dict_from_unix_time(t)
+		when = "%04d-%02d-%02d %02d:%02d" % [int(d.year), int(d.month), int(d.day),
+			int(d.hour), int(d.minute)]
+	return "%s ／ %d B" % [when, int(entry.get("size", 0))]
+
+func _ensure_dir() -> void:
+	if not DirAccess.dir_exists_absolute(_scan_dir):
+		DirAccess.make_dir_recursive_absolute(_scan_dir)
+
+## 自检/诊断用：换一个目录列举（**只读**，不改任何文件）。
+## 传空串恢复默认的 `user://replays`。
+func set_scan_dir(dir: String) -> void:
+	_scan_dir = "user://replays" if dir == "" else dir
+	_rebuild()
+
+func scan_dir() -> String:
+	return _scan_dir
+
+## 条目数（自检用）。
+func entry_count() -> int:
+	return _list.get_child_count() if _list != null else -1
 
 func _on_play(path: String) -> void:
 	_selected = path

@@ -38,6 +38,8 @@ func run(main: Control) -> int:
 	await _test_level_rules()
 	await _test_fire_fx()
 
+	await _test_replay_player()
+
 	var passed := _checks - _failures.size()
 	if _skipped.is_empty():
 		print("SELFTEST %d passed, %d failed" % [passed, _failures.size()])
@@ -1501,3 +1503,237 @@ func _test_fire_fx() -> void:
 	# ---------------- 收尾：把随机布局的钉子拔掉 ----------------
 	play.call("clear_layout_override")
 	app_node.close_all_popups()
+
+# ---------------------------------------------------------------- 回放播放器（docs/133）
+
+## 真实回放的样本（本机原版存档目录里的那一份，`docs/133` §5.3）。
+## 选它的理由：NormalFunction 局、104 条事件、1 个士兵 + 1 个靶子、**有死亡事件**
+## （tick 2169 靶子被打掉）、tick 单调，而且弹道能用内核重算（微分方程局不行）。
+const REPLAY_SAMPLE := "1793897298"
+
+## 三份**期望局面串**来自 `tools/replay_state.py` 的同口径参考实现（Python），
+## 并由内核 C ABI（`gw2_replay_state_at`）逐字符复核过 —— 三方同格式见 `docs/133` §5.2。
+## 复现：见 `docs/133` §5.2 的两条命令。
+const GOLDEN_TICK_550 := "tick=550|O=|E=229,Team1,1,,,;230,Team1,1,-5.156307,-9.889981,0.500000;231,Team1,1,,,;232,Team2,1,9.782073,4.595394,0.500000|F=230=x+2sin(20x)"
+const GOLDEN_TICK_2168 := "tick=2168|O=|E=229,Team1,1,,,;230,Team1,1,-5.156307,-9.889981,0.500000;231,Team1,1,,,;232,Team2,1,9.782073,4.595394,0.500000|F=230=x+2sin(10x)"
+const GOLDEN_TICK_2169 := "tick=2169|O=|E=229,Team1,1,,,;230,Team1,1,-5.156307,-9.889981,0.500000;231,Team1,1,,,;232,Team2,0,9.782073,4.595394,0.500000|F=230=x+2sin(10x)"
+const GOLDEN_TICK_2276 := "tick=2276|O=|E=229,Team1,1,,,;230,Team1,1,-5.156307,-9.889981,0.500000;231,Team1,1,,,;232,Team2,0,9.782073,4.595394,0.500000|F=230=x+2sin(10x)"
+
+## 本机原版存档目录（**只读**；仓库里不放任何回放文件）。
+func _real_replay_dir() -> String:
+	var home := OS.get_environment("HOME")
+	if home == "":
+		return ""
+	var p := home + "/.local/share/godot/app_userdata/Graphwar/replays"
+	return p if DirAccess.dir_exists_absolute(p) else ""
+
+func _test_replay_player() -> void:
+	# ---------------- 1. 行解析：坏行跳过、空回放明确报错 ----------------
+	var inline := GwReplayFile.parse_text(
+		"{\"event\":{\"GameStateInfo\":{\"game_state\":\"Setup\"}},\"tick\":2}\n" +
+		"not json at all\n" +
+		"{\"event\":{\"FunctionPoints\":{\"owner_id\":7,\"start_x\":-1.5,\"start_y\":2.5," +
+		"\"end_x\":9.0}},\"tick\":40}\n")
+	_expect(inline.ok() and inline.events.size() == 2,
+		"回放：坏行被跳过而不让整份解析失败（实际 %d 条）" % inline.events.size())
+	_expect(inline.skipped_lines == 1, "回放：坏行计入 skipped_lines（实际 %d）" % inline.skipped_lines)
+	_expect(inline.events.size() == 2 and String(inline.events[1].kind) == "FunctionPoints"
+		and int(inline.events[1].tick) == 40, "回放：事件名 = 内层对象的键，tick 按行取")
+	var empty := GwReplayFile.parse_text("")
+	_expect(not empty.ok() and empty.error != "",
+		"回放：空/坏文件明确报错而不假装能播（'%s'）" % empty.error)
+	var unknown := GwReplayFile.parse_text(
+		"{\"event\":{\"FutureEvent\":{\"weird_key\":1.5}},\"tick\":7}\n")
+	_expect(unknown.ok() and unknown.events[0].data.get("weird_key", 0.0) == 1.5,
+		"回放：协议里没有的事件名照样读出字段（透传，不猜键名）")
+
+	# ---------------- 2. 真实回放：格式 ----------------
+	var dir := _real_replay_dir()
+	if dir == "":
+		_skip("回放：本机没有原版存档目录，真实回放的三方对拍无从验证（docs/133 §5.3）")
+		return
+	var path := dir.path_join(REPLAY_SAMPLE)
+	if not FileAccess.file_exists(path):
+		_skip("回放：约定的样本 %s 不在 %s" % [REPLAY_SAMPLE, dir])
+		return
+	var f := GwReplayFile.load_path(path)
+	_expect(f.ok(), "真实回放能读（%s）" % f.error)
+	_expect(f.gzipped, "真实回放是 gzip + JSONL（docs/78 §2）")
+	_expect(f.events.size() == 104, "真实回放 104 条事件（实际 %d）" % f.events.size())
+	_expect(f.tick_range() == Vector2i(1, 2276),
+		"真实回放 tick 范围 1..2276（实际 %s）" % str(f.tick_range()))
+	_expect(String(f.names.get(229, "")) == "cmdgz",
+		"NameInfo.entity_id 就是 player_id（docs/79 §1）")
+	_expect(int(f.soldier_owner.get(230, -1)) == 229,
+		"SoldierInfo 把士兵 230 映到玩家 229（FunctionInfo.owner_id 是士兵号）")
+	_expect(f.targets.has(232), "TargetInfo{232} 收进靶子集合")
+
+	# ---------------- 3. 播放模型：tick 驱动（不是墙钟逐事件） ----------------
+	var player := GwReplayPlayer.new().setup(f)
+	_expect(player.current_tick() == 1, "回放起点 = 第一条事件的 tick（实际 %d）" % player.current_tick())
+	_expect(player.last_tick == 2276, "回放终点 = 最后一条事件的 tick（实际 %d）" % player.last_tick)
+	player.play()
+	player.advance_dt(0.5)
+	_expect(player.current_tick() == 31,
+		"0.5 秒 = 30 tick（60 tick/秒，docs/35；实际 tick %d）" % player.current_tick())
+	player.pause()
+	var t_paused := player.current_tick()
+	player.advance_dt(1.0)
+	_expect(player.current_tick() == t_paused, "暂停时不推进（实际 %d）" % player.current_tick())
+	player.speed = 2.0
+	player.play()
+	player.advance_dt(0.5)
+	_expect(player.current_tick() == t_paused + 60,
+		"2× 倍速 0.5 秒 = 60 tick（实际 %d）" % player.current_tick())
+	player.speed = 1.0
+	player.pause()
+
+	# ---------------- 4. 局面还原：与 tools/replay_state.py 对拍 ----------------
+	player.seek(550)
+	_expect(player.canonical() == GOLDEN_TICK_550,
+		"tick 550 的局面 = replay_state.py 的口径（实际 %s）" % player.canonical())
+	player.seek(2168)
+	_expect(player.canonical() == GOLDEN_TICK_2168,
+		"tick 2168（死亡前一拍）局面一致（实际 %s）" % player.canonical())
+	player.seek(2169)
+	_expect(player.canonical() == GOLDEN_TICK_2169,
+		"tick 2169（靶子阵亡那一拍）局面一致（实际 %s）" % player.canonical())
+	_expect(bool(player.state.alive.get(232, true)) == false,
+		"tick 2169 之后靶子 232 的 alive 翻成 false（覆盖到死亡事件）")
+	player.seek(2276)
+	_expect(player.canonical() == GOLDEN_TICK_2276,
+		"tick 2276（结尾）局面一致（实际 %s）" % player.canonical())
+	# 往回跳 = 从头重放：与新建播放器逐字符相同（不留增量漂移）
+	player.seek(1000)
+	var fresh := GwReplayPlayer.new().setup(f)
+	fresh.seek(1000)
+	_expect(player.canonical() == fresh.canonical(), "往回跳与从头重放结果一致")
+	# 「上一事件 / 下一事件」
+	player.seek(1)
+	var next_tick := player.step_event()
+	_expect(next_tick == 2, "「下一事件」跳到下一条事件的 tick（实际 %d）" % next_tick)
+	var prev_tick := player.step_back_event()
+	_expect(prev_tick == 1, "「上一事件」退回上一条事件的 tick（实际 %d）" % prev_tick)
+
+	# ---------------- 5. ReplayLobby 能列出真实回放目录（只读） ----------------
+	var lobby := _screen("ReplayLobby")
+	if lobby == null:
+		_expect(false, "ReplayLobby 存在")
+		return
+	_command("replay")
+	await _frames(2)
+	var expected := 0
+	var d := DirAccess.open(dir)
+	if d != null:
+		expected = d.get_files().size()
+	lobby.call("set_scan_dir", dir)
+	await _frames(2)          # queue_free 是延迟删除：不 await 数到的是上一批
+	var listed := int(lobby.call("entry_count"))
+	_expect(expected > 0 and listed == expected,
+		"ReplayLobby 列出真实回放目录（目录 %d 个文件 / 界面 %d 条）" % [expected, listed])
+
+	# ---------------- 6. 真的按播放：走 App 的真实命令链（lobby → play_replay → begin_match） ----
+	var play_button := _replay_play_button(lobby, REPLAY_SAMPLE)
+	_expect(play_button != null, "ReplayLobby 里有 %s 那一行的 PlayReplayButton" % REPLAY_SAMPLE)
+	if play_button != null:
+		play_button.emit_signal("pressed")
+		await _frames(3)
+	var play = _screen("PlayScreen")
+	_expect(play != null and play.visible, "按播放 → 进 PlayScreen（走 app.gd 的真实命令链）")
+	if play == null:
+		_expect(false, "PlayScreen 存在")
+		return
+	var rs: Dictionary = play.call("replay_state")
+	_expect(bool(rs.get("mode", false)), "PlayScreen 进入回放模式（docs/133 §4.1）")
+	_expect(int(rs.get("events", 0)) == 104, "回放模式载入 104 条事件（实际 %d）" % int(rs.get("events", 0)))
+	_expect(bool(rs.get("playing", false)), "进入回放即开始播放（我们自定的交互）")
+	var bar := play.find_child("ReplayStatusBar", true, false) as Control
+	_expect(bar != null and bar.visible, "回放进度条可见（我们自定，docs/133 §4.2）")
+	var prog := play.find_child("ReplayProgress", true, false) as ProgressBar
+	_expect(prog != null and prog.value >= 0.0 and prog.value <= 1.0,
+		"回放进度条取值在 0..1（实际 %s）" % (str(prog.value) if prog != null else "<null>"))
+	var tick_label := play.find_child("ReplayTickLabel", true, false) as Label
+	_expect(tick_label != null and String(tick_label.text).contains("tick"),
+		"回放状态显示当前 tick（实际 '%s'）" % (tick_label.text if tick_label != null else "<null>"))
+
+	# 输入不接管：按键不改变函数框、开火什么都不做
+	var canon_before := String(rs.get("canonical", ""))
+	var input := play.find_child("GraphwarFunctionInput", true, false) as GwFunctionInput
+	_command("sin(")
+	await _frames(1)
+	_expect(input != null and input.text == "",
+		"回放模式不接管键盘输入（函数框仍是 '%s'）" % (input.text if input != null else "<null>"))
+	var fire_button := _find_button(play, "FireButton")
+	_expect(fire_button != null and fire_button.disabled, "回放模式下 Fire 按钮被显式禁用")
+	play.call("replay_press_for_test", "play_pause")      # 先暂停，排除 tick 推进的干扰
+	var canon_paused := String(play.call("replay_state").get("canonical", ""))
+	play.call("fire")
+	await _frames(1)
+	_expect(String(play.call("replay_state").get("canonical", "")) == canon_paused,
+		"回放模式下 fire() 不改变局面（暂停时逐字符相同）")
+
+	# 死亡事件：靶子在 2169 那一拍从棋盘上消失
+	var plane := play.find_child("GraphwarPlane", true, false) as GwPlaneView
+	_expect(plane != null, "回放模式里还是同一个 GraphwarPlane")
+	if plane != null:
+		play.call("replay_seek_for_test", 2168)
+		_expect(plane.targets.size() == 1,
+			"tick 2168 靶子画在棋盘上（实际 %d 个）" % plane.targets.size())
+		play.call("replay_seek_for_test", 2169)
+		_expect(plane.targets.size() == 0,
+			"tick 2169 靶子被打掉、从棋盘上消失（实际 %d 个）" % plane.targets.size())
+		# 弹道：回放不带点序列 ⇒ 用内核按（起点 + 函数文本 + 队伍方向）重算
+		play.call("replay_seek_for_test", 550)
+		_expect(plane.path_points.size() > 1,
+			"tick 550 的弹道由内核重算出来（%d 点／状态：%s）"
+			% [plane.path_points.size(), String(play.call("replay_state").get("shot_status", ""))])
+		var offset_label := play.find_child("OffsetLabel", true, false) as Label
+		var off := String(offset_label.text).replace(" ", "") if offset_label != null else ""
+		_expect(off == "-3.694",
+			"内核算出的修正 = 录像记录的 -3.694（实际 '%s'）" % off)
+		_expect(String(play.call("replay_state").get("shot_status", "")).contains("内核重算"),
+			"状态行标明弹道来自内核重算而不是界面预览")
+
+	# 播放键（左侧三颗：**我们自定的接线**，docs/133 §4.3）
+	var playing0 := bool(play.call("replay_state").get("playing", false))
+	play.call("replay_press_for_test", "play_pause")
+	_expect(bool(play.call("replay_state").get("playing", false)) != playing0,
+		"play_pause 键取反播放状态（%s → %s）"
+		% [str(playing0), str(bool(play.call("replay_state").get("playing", false)))])
+	play.call("replay_press_for_test", "play_pause")
+	_expect(bool(play.call("replay_state").get("playing", true)) == playing0,
+		"再按一次回到原来的播放状态")
+	play.call("replay_seek_for_test", 1)
+	play.call("replay_press_for_test", GwCommands.KEY_NEXT)
+	_expect(int(play.call("replay_state").get("tick", -1)) == 2,
+		"key_next 跳到下一条事件的 tick（实际 %d）"
+		% int(play.call("replay_state").get("tick", -1)))
+	play.call("replay_press_for_test", GwCommands.KEY_PREV)
+	_expect(int(play.call("replay_state").get("tick", -1)) == 1,
+		"key_prev 退回上一条事件的 tick（实际 %d）"
+		% int(play.call("replay_state").get("tick", -1)))
+	play.call("replay_press_for_test", "play_pause")
+	var advanced := int(play.call("replay_advance_for_test", 0.5))
+	_expect(advanced >= 0, "按墙钟推进 0.5 秒不报错（消费 %d 条事件）" % advanced)
+
+	# 退出回放：走 App 的真实返回路径（current_screen 现在是 PlayScreen）
+	_command("exit_play")
+	await _frames(3)
+	_expect(not bool(play.call("replay_state").get("mode", false)),
+		"exit_play 退出回放模式（replay_state 变空）")
+	_expect(_screen("MainMenu").visible, "退出回放回到 MainMenu")
+	lobby.call("set_scan_dir", "")
+	await _frames(2)
+	get_node("/root/App").state.reset_lan()
+
+## 在 ReplayLobby 里找"标题 = 文件名"那一行的播放键。
+func _replay_play_button(lobby: Node, title: String) -> GwButton:
+	var box := lobby.find_child("ReplaysContainer", true, false)
+	if box == null:
+		return null
+	for row in box.get_children():
+		var name_label := (row as Node).find_child("ReplayName", true, false) as Label
+		if name_label == null or String(name_label.text) != title:
+			continue
+		return (row as Node).find_child("PlayReplayButton", true, false) as GwButton
+	return null
