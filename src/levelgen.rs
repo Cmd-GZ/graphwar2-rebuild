@@ -93,6 +93,19 @@ pub fn generate(next: &mut dyn FnMut() -> u64, min_count: i32) -> Vec<Obstacle> 
     out
 }
 
+/// "中心单障碍"模式（`FUN_0059f370`，见 `docs/72`）。
+///
+/// 整关**只有 1 个障碍**，位置固定在原点，半径 `u*5.0 + 3.0 ∈ [3, 8)`。
+/// 只消耗 1 次随机数——比散布模式省得多，这也是它容易认出来的特征。
+pub fn generate_center(next: &mut dyn FnMut() -> u64) -> Vec<Obstacle> {
+    let u = ((next() >> 11) as f64) * (1.0 / 9007_199_254_740_992.0);
+    vec![Obstacle {
+        x: 0.0,
+        y: 0.0,
+        r: u * 5.0 + 3.0,
+    }]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,4 +179,19 @@ mod tests {
         assert!(mean.abs() < 0.1, "均值 {mean} 偏离太大");
         assert!((var - 1.0).abs() < 0.1, "方差 {var} 偏离太大");
     }
+
+    #[test]
+    fn center_mode_is_one_obstacle_at_origin() {
+        let mut d = draws().into_iter();
+        let mut next = move || d.next().unwrap();
+        let obs = generate_center(&mut next);
+        assert_eq!(obs.len(), 1, "中心模式整关只有 1 个障碍");
+        assert_eq!((obs[0].x, obs[0].y), (0.0, 0.0), "位置固定在原点");
+        assert!(
+            (3.0..8.0).contains(&obs[0].r),
+            "半径应在 [3,8) 内，实测 {}",
+            obs[0].r
+        );
+    }
+
 }
