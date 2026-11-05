@@ -11,6 +11,10 @@
 - LAN 发现：UDP 广播，明文 JSON（`time_mode` 写作 `"Timers1m"`）
 - 对局：TCP，**`u16` 大端长度 + JSON**
 - 29 种消息已入库为 `fixtures/protocol.jsonl`，`src/protocol.rs` 全部解析通过
+- **网络编解码实现完成并逐字节验证**（`docs/32`）：`Broadcast::to_json` 与
+  `emit_turn_info`/`emit_life_queued_death`/`emit_function_points`/`emit_effect_info`
+  重新序列化抓包样本后**完全一致**（含 f64 最短往返格式）。
+  示例：`cargo run --example emit_broadcast -- "[::1]:43717"` 与抓包同串
 - **对局内消息已抓到**（`fixtures/protocol_match.jsonl`，109 条去重）：
   `AddObstacle{pos_x,pos_y,radius}`（一局 12 个）、`PosInfo{entity_id,pos,radius=0.5}`、
   `LifeInfo{entity_id,alive}`、`FunctionInfo{owner_id,function,corrected_function}`（函数原文！）、

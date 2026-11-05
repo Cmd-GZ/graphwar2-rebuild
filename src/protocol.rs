@@ -234,6 +234,30 @@ fn read_object(s: &str) -> Option<String> {
     None
 }
 
+
+impl Broadcast {
+    /// 按抓包观察到的**字段顺序**与格式重新序列化。
+    ///
+    /// 依据：抓到的广播报文形如
+    /// `{"room_name":"…","game_state":"…","current_player_count":N,"address":"…",
+    ///   "axis_mode":"…","function_mode":"…","turn_mode":"…","time_mode":"…","locked":false}`
+    /// —— 键序固定、无空格、布尔小写。
+    pub fn to_json(&self) -> String {
+        format!(
+            "{{\"room_name\":\"{}\",\"game_state\":\"{}\",\"current_player_count\":{},\"address\":\"{}\",\"axis_mode\":\"{}\",\"function_mode\":\"{}\",\"turn_mode\":\"{}\",\"time_mode\":\"{}\",\"locked\":{}}}",
+            self.room_name,
+            self.game_state,
+            self.current_player_count,
+            self.address,
+            self.axis_mode,
+            self.function_mode,
+            self.turn_mode,
+            self.time_mode,
+            if self.locked { "true" } else { "false" },
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -677,5 +701,149 @@ mod death_tests {
         // 实测出现过的状态
         assert!(states.iter().any(|s| s == "Setup"));
         assert!(states.iter().any(|s| s == "WaitingForFunctions"));
+    }
+}
+
+
+#[cfg(test)]
+mod broadcast_tests {
+    use super::*;
+
+    fn captured_broadcasts() -> Vec<String> {
+        include_str!("../fixtures/protocol_match.jsonl")
+            .lines()
+            .filter(|l| l.trim_start().starts_with("{\"room_name\""))
+            .map(|l| l.trim().to_string())
+            .collect()
+    }
+
+    /// 核心测试：解析抓到的广播再重新序列化，必须**逐字节**还原。
+    #[test]
+    fn reserializes_captured_broadcasts_byte_for_byte() {
+        let lines = captured_broadcasts();
+        assert!(!lines.is_empty(), "夹具里应有 LAN 广播样本");
+        for line in lines {
+            let b = Broadcast::parse(&line).expect("广播应能解析");
+            assert_eq!(b.to_json(), line, "重新序列化后与原报文不一致");
+        }
+    }
+
+    /// 广播本身不带长度前缀；对局 TCP 帧才带 `u16` 大端长度。
+    #[test]
+    fn frame_prefix_is_not_part_of_broadcast() {
+        let line = captured_broadcasts().remove(0);
+        let b = Broadcast::parse(&line).unwrap();
+        let json = b.to_json();
+        assert!(!json.starts_with('\u{0}'), "广播不应带二进制长度前缀");
+        // 而 Frame 编码会加 2 字节前缀，长度等于负载字节数
+        let f = Frame { payload: json.clone() };
+        let wire = f.encode();
+        assert_eq!(wire.len(), json.len() + 2);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 消息序列化（只覆盖我们会主动生成的那些）
+// ---------------------------------------------------------------------------
+
+/// `{"TurnInfo":{"player_id":..,"soldier_id":..}}`
+pub fn emit_turn_info(player_id: i64, soldier_id: i64) -> String {
+    format!(r#"{{"TurnInfo":{{"player_id":{},"soldier_id":{}}}}}"#, player_id, soldier_id)
+}
+
+/// `{"LifeQueuedDeath":{"entity_id":..,"tick":..}}`
+pub fn emit_life_queued_death(entity_id: i64, tick: i64) -> String {
+    format!(r#"{{"LifeQueuedDeath":{{"entity_id":{},"tick":{}}}}}"#, entity_id, tick)
+}
+
+/// `{"FunctionPoints":{"owner_id":..,"start_x":..,"start_y":..,"end_x":..}}`
+///
+/// 浮点用 Rust 的最短往返表示（与抓包里的 `-16.405029008797804` 同形）。
+pub fn emit_function_points(owner_id: i64, start_x: f64, start_y: f64, end_x: f64) -> String {
+    format!(
+        r#"{{"FunctionPoints":{{"owner_id":{},"start_x":{},"start_y":{},"end_x":{}}}}}"#,
+        owner_id, start_x, start_y, end_x
+    )
+}
+
+/// `{"EffectInfo":{"effect_id":..,"pos_x":..,"pos_y":..,"effect_type":"..","start_tick":..}}`
+pub fn emit_effect_info(effect_id: i64, x: f64, y: f64, effect_type: &str, start_tick: i64) -> String {
+    format!(
+        r#"{{"EffectInfo":{{"effect_id":{},"pos_x":{},"pos_y":{},"effect_type":"{}","start_tick":{}}}}}"#,
+        effect_id, x, y, effect_type, start_tick
+    )
+}
+
+#[cfg(test)]
+mod emit_tests {
+    use super::*;
+
+    /// 从夹具里找某类消息的全部样本。
+    fn samples(kind: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for text in [
+            include_str!("../fixtures/protocol_match.jsonl"),
+            include_str!("../fixtures/protocol_death.jsonl"),
+            include_str!("../fixtures/protocol.jsonl"),
+        ] {
+            for line in text.lines() {
+                let line = line.trim();
+                if line.starts_with(&format!("{{\"{}\"", kind)) {
+                    out.push(line.to_string());
+                }
+            }
+        }
+        out.dedup();
+        out
+    }
+
+    #[test]
+    fn emitted_turn_info_matches_captured() {
+        let all = samples("TurnInfo");
+        assert!(!all.is_empty());
+        for line in all {
+            let m = parse_message(&line).unwrap();
+            let got = emit_turn_info(get_int(&m, "player_id").unwrap(), get_int(&m, "soldier_id").unwrap());
+            assert_eq!(got, line, "TurnInfo 序列化与抓包不一致");
+        }
+    }
+
+    #[test]
+    fn emitted_life_queued_death_matches_captured() {
+        for line in samples("LifeQueuedDeath") {
+            let m = parse_message(&line).unwrap();
+            let got = emit_life_queued_death(get_int(&m, "entity_id").unwrap(), get_int(&m, "tick").unwrap());
+            assert_eq!(got, line, "LifeQueuedDeath 序列化与抓包不一致");
+        }
+    }
+
+    /// 浮点格式：Rust 的最短往返表示必须与游戏一致。
+    #[test]
+    fn emitted_function_points_matches_captured_floats() {
+        for line in samples("FunctionPoints") {
+            let m = parse_message(&line).unwrap();
+            let got = emit_function_points(
+                get_int(&m, "owner_id").unwrap(),
+                get_f64(&m, "start_x").unwrap(),
+                get_f64(&m, "start_y").unwrap(),
+                get_f64(&m, "end_x").unwrap(),
+            );
+            assert_eq!(got, line, "FunctionPoints 序列化与抓包不一致（浮点格式）");
+        }
+    }
+
+    #[test]
+    fn emitted_effect_info_matches_captured() {
+        for line in samples("EffectInfo") {
+            let m = parse_message(&line).unwrap();
+            let got = emit_effect_info(
+                get_int(&m, "effect_id").unwrap(),
+                get_f64(&m, "pos_x").unwrap(),
+                get_f64(&m, "pos_y").unwrap(),
+                &get_str(&m, "effect_type").unwrap(),
+                get_int(&m, "start_tick").unwrap(),
+            );
+            assert_eq!(got, line, "EffectInfo 序列化与抓包不一致");
+        }
     }
 }
