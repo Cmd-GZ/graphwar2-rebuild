@@ -23,15 +23,16 @@ Graphwar II 的 **曲线 / 物理 / 协议 / 服务端 / 关卡生成 / AI / 颜
 ⇒ **当前产物是"可编程调用的内核 + 协议 + 服务端 + 完整界面契约"，不是能玩的游戏。**
 
 **内核侧仍缺（都是实现追赶结论，不是继续挖）**：
-① `src/turn.rs` 还没实现"每玩家 `Vec<soldier_id>` + 游标轮转"（`docs/98`）；
-② `aigen` 缺"回合先定 soldier_id、AI 只为它进化"这一层；
+~~① `src/turn.rs` 的"每玩家 `Vec<soldier_id>` + 游标轮转"~~ ✅ 已实现（`docs/109`）
+~~② `aigen` 缺"回合先定 soldier_id、AI 只为它进化"这一层~~ ✅ 已实现（`docs/109`）
+   ⚠️ 两处都**还没接进 `game.rs` / `serverloop.rs`** ⇒ "规则已实现并可测" ≠ "端到端走新规则"；
 ③ 第 0 代初始种群生成路径未还原；
 ④ 变体 B（(1+λ) 爬山，`0x51d080`）未实现——运行时实测走 A，暂不影响；
 ⑤ 协议：二进制里**共 73 个事件名**，已实现 **50**、缺 **23**（`docs/96` 已重写为全量清单）。
    ~~`events.rs` 的 33 个判别值缺验证~~ —— 这条**降级了**：线上是**外部标签 JSON**
    （`{"LifeInfo":{...}}`），**判别值根本不上线**，补事件只需名字+字段，不用知道编号。
 
-**数字**：**150 条测试全绿**（`cargo test`）；`docs/*.md` 现行 **84** 篇 + 5 篇"已并档"占位指针 + `archive/` 过程档案（全量清单见 `docs/INDEX.md`）；
+**数字**：**172 条测试全绿**（`cargo test`）；`docs/*.md` 现行 **85** 篇 + 5 篇"已并档"占位指针 + `archive/` 过程档案（全量清单见 `docs/INDEX.md`）；
 README 的工作包表 **6 ✅ / 4 🔶 / 2 ⬜**。
 
 ## 1. 仓库与推送规矩
@@ -554,3 +555,21 @@ git push origin HEAD:refs/heads/agent/<task>           # 绝不推 main
 2. 协议补齐优先做 `Name/Rank/Lock` 六件 + `ChatMessage`（`docs/96` §6 有排序）；
 3. `NO-CITE` 里的"对局元信息 25 个函数"是**真盲区**，值得单独派一个 agent；
 4. 音频那 14 个函数 + 坏文件定位，可以一个人做完。
+
+### 7.13 内核分支已合并（2026-11-06）
+
+`agent/kernel-turn-aigen`（`981eeeb`）已 **fast-forward 并入 main**，本机重跑
+`cargo test` = **172 全绿 / 0 失败**。
+
+- `src/turn.rs` 重写：`PlayerTurns` 三态（`Some(id)` / `Some(0)` / `None`）+ `TurnManager::begin_turn`
+- `src/aigen.rs`：`SoldierEvolver::evolve_soldier`（按士兵建槽、每回合覆盖重算、`with_budget` 接 25 s）
+- `src/life.rs`：`MISSING_STATE = 2`、`is_alive_byte`（只认 `&1`）
+- 新文档 `docs/109-kernel-turn-aigen.md`
+
+**我复核过的一处冲突**：`docs/98` §7 伪代码说"空士兵表不广播"，二进制说"发 `TurnInfo{p,0}`"。
+`objdump` 看 `0x463f2f test %r15,%r15; je 0x463fd0` 与"试满 len 次"落到**同一块** `0x463fd0`，
+该块随后写 0 并构造事件 ⇒ **空表与全灭同一条路**。agent 的选择（默认 `AnnounceZero`，
+留 `Skip` 开关）**正确，按二进制**。
+
+⚠️ **仍未接线**：`game.rs` / `serverloop.rs` 还走旧路径，`aigen::evolve*` 没有调用点。
+所以现在是"规则已实现并可测"，**不是**端到端已生效。服务端接线按 §7.11.2 暂缓。
