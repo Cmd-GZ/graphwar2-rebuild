@@ -8,7 +8,7 @@
 > **[`107-docs-consolidation.md`](107-docs-consolidation.md)**。
 > 三节（现行 / 已归档 / 已并档）与磁盘上的文件**逐一对得上**，可以当清单核对。
 
-## 一、现行文档（105 份）
+## 一、现行文档（107 份）
 
 > 数法：`find docs -name "*.md" -not -path "*/archive/*" | wc -l`（2026-11-06 复核）。
 > 之前这里写过的 76 / 77 / 85 / 86 / 87 都是当时的旧数，已统一改成本次实测值。
@@ -121,6 +121,8 @@
 | [104-recovered-project.md](104-recovered-project.md) | **GDRE 整项目恢复**：静态场景属性，并与 `92` 的运行时台账逐项对拍 |
 | [101-gdc-contents.md](101-gdc-contents.md) | `.gdc` 逐字节格式 + 5 个行为脚本 + 47 行布局数值表 |
 | [128-audio-client.md](128-audio-client.md) | **音频接入客户端**：10 个音效全通（含 `humm` 的 `AudioStreamGenerator`+`push_buffer` 那条路）；音量 -15/-5 dB 实测校验；静音走 Master 总线；**事件↔音效映射仍是 0 条确定**（只缩小了范围，三条临时接线标 `PENDING_MAPPING`） |
+| [129-player-screen.md](129-player-screen.md) | **玩家页白卡/格子按真帧重做**：白卡其实是 `shop_theme.tres` 的 Button normal stylebox；格子 = `(安全区宽/2−50)/3` = **303**（96 是别的控件的公式）；**70.06% → 0.49%**；三页签实测 15/15/**24** |
+| [130-popups.md](130-popups.md) | **七个弹窗对齐**：返回键**全都有**、恒 (0,0) 146×96，与屏幕自己的返回键矩形重合（所以我们原来塞错位置）；差异降到 0.000%–1.7%；新建"正版 pck 直接喂 stock Godot"的真值管线 |
 | [126-level-obstacles.md](126-level-obstacles.md) | **关卡障碍接通**：`GW2Rebuild.level_obstacles(level, seed)`，复用既有 `levelgen`；墙**画出来也真挡子弹**（关 5 生成 20 个圆、`first_hit=4480`）；顺带修掉弹窗深色带（只读 `TextEdit` 的 `read_only` 样式没被主题覆盖） |
 | [127-ai-speaks.md](127-ai-speaks.md) | **AI 的函数上线**：一个回合本来就发**两条** `FunctionInfo`（提交版 `corrected_function:null`、修正版带 `f(x) ± c`）；顺带修出 `corrected_text` 写死 `" + "` 的真 bug（`c<0` 时静默发错） |
 | [125-playscreen.md](125-playscreen.md) | **PlayScreen / JoinLevelPopUp 对齐**：棋盘白底等五色**从原版真帧逐像素取**；顶栏 4 个开关是 view_functions/names/chat/mute（不是网格/坐标轴）；弹窗用 21 关真数据 |
