@@ -222,6 +222,7 @@ impl Match {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::{get_int, parse_message};
 
     pub(super) fn room() -> RoomState {
         RoomState {
@@ -382,6 +383,31 @@ mod tests {
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap();
         assert!(stop2 < stop_x, "挖洞后应飞得更远（{stop2} 应小于 {stop_x}）");
+    }
+
+    /// 友军误伤（用户游戏内实测：会致死），且按弹道**先后顺序**结算。
+    #[test]
+    fn friendly_fire_kills_teammates_in_path_order() {
+        let soldiers = vec![
+            Target { id: 1, x: -10.0, y: 0.0, radius: 0.5 }, // 射手（Team1）
+            Target { id: 2, x: -2.0, y: 0.0, radius: 0.5 },  // 队友（Team1）
+            Target { id: 3, x: 5.0, y: 0.0, radius: 0.5 },   // 敌人（Team2）
+        ];
+        let mut m = Match::new(room(), vec![], soldiers, (0, 0));
+        m.set_team(1, 1);
+        m.set_team(2, 1);
+        m.set_team(3, 2);
+        // 水平直线向右：先穿过队友 2，再穿过敌人 3
+        let msgs = m.fire(1, "0.00", -10.0, 0.0, false, 0);
+
+        let killed: Vec<i64> = msgs
+            .iter()
+            .filter_map(|x| parse_message(x))
+            .filter(|p| p.kind == "LifeQueuedDeath")
+            .map(|p| get_int(&p, "entity_id").unwrap())
+            .collect();
+        assert_eq!(killed, vec![2, 3], "应先队友(2)后敌人(3)，且射手(1)不自伤");
+        assert_eq!(m.soldiers.len(), 1, "两人都应被移除，只剩射手");
     }
 
     #[test]
