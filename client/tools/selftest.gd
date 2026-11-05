@@ -242,9 +242,12 @@ func _test_lan_lobby() -> void:
 	for c in list.get_children():
 		if c is HBoxContainer:
 			rooms += 1
-	# 房间列表是**服务端数据**，条数每次都不一样：旧断言写死 5 条（上一轮某一次快照）。
-	# 本轮 1920×1160 真帧（离线、Global 页）是 4 条，用户两张截图也是 4 条，所以按 4 条占位。
-	_expect(rooms == 4, "公网房间列表 4 条占位条目（实际 %d）" % rooms)
+	# 房间列表是**服务端数据**，条数每次都不一样。所以这里**不钉某个截图里的数字**，
+	# 只断言"渲染出来的行数 == 我们自己的占位常量"——占位是谁写的、有几条，由那个常量说了算
+	# （`GwLanLobby.GLOBAL_ROOMS`）。这样以后改占位不需要改测试，而"少了/多了行"仍然会红。
+	var expected_rooms: int = (load("res://src/screens/lan_lobby.gd") as GDScript).GLOBAL_ROOMS.size()
+	_expect(rooms == expected_rooms,
+		"公网房间行数 == GLOBAL_ROOMS.size()（期望 %d，实际 %d）" % [expected_rooms, rooms])
 	_command("show_local")
 	await _frames(2)
 	var local_rooms := 0
