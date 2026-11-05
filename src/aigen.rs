@@ -195,6 +195,9 @@ pub struct Params {
 }
 
 /// 难度 1..=6 → 实测参数。越界按 6 处理。
+///
+/// ⚠️ 这是**运行时对某一台机器上六次求值**的实测组合（`docs/AI.md` §1），
+/// 不是"关卡难度值 → 参数"的映射。真链路见 [`difficulty_params`]。
 pub fn params(level: u8) -> Params {
     let (generations, population, limit) = match level {
         1 => (3, 50, 5),
@@ -205,6 +208,69 @@ pub fn params(level: u8) -> Params {
         _ => (1000, 250, 200),
     };
     Params { generations, population, per_slot: 5, limit }
+}
+
+/// **关卡难度值 → GA 参数**（真链路）。`docs/147` §2 逐条给地址。
+///
+/// 难度值来自 `bot_added_event` 的载荷 `+0x10`（`0x4a0882`/`0x4a6d62` 两处写入，
+/// 每关一个立即数：`3 / 25 / 50 / 100 / 250`），由 `0x3e3d75` 收到后**分档**：
+///
+/// ```text
+/// 3e3d95  mov  ecx,0xa            ; s = 10
+/// 3e3d9a  mov  r9d,0x5            ; limit = 5
+/// 3e3da0  cmp  r14d,0x4
+/// 3e3da4  jb   <写表>              ; d < 4   ⇒ (s=10, limit=5)
+/// 3e3daa  mov  ecx,0x14           ; s = 20
+/// 3e3daf  cmp  r14d,0xb
+/// 3e3db3  jb   <写表>              ; d < 11  ⇒ (s=20, limit=5)
+/// 3e3db9  cmp  r14d,0x1a
+/// 3e3dbd  jae  3e456d             ; d >= 26 ⇒ 下面一段
+/// 3e3dc3  mov  ecx,0x1e           ; s = 30
+/// 3e3dc8  mov  r9d,0xa            ; limit = 10
+/// 3e456d  cmp  r14d,0x65
+/// 3e4571  jae  3e458d             ; d >= 101
+/// 3e4573  mov  ecx,0x28           ; s = 40
+/// 3e4578  mov  r9d,0xf            ; limit = 15
+/// 3e458d  cmp  r14d,0xfb
+/// 3e4594  mov  eax,0x19           ; 25
+/// 3e4599  mov  r9d,0xc8           ; 200
+/// 3e459f  cmovb r9d,eax           ; d < 251 ⇒ limit = 25，否则 200
+/// 3e45a3  mov  ecx,0x32           ; s = 50
+/// ```
+///
+/// 然后一次写表：`0x3e45cd call 0x478fc0(self, key, 难度, s, 5, limit)` ——
+/// 注意第 3 个参数就是**难度值本身**，它在 `0x478fda` 起被原样搬进
+/// `[rsp+0xe0]`，最终成为表项里的"代数"（`0x479ce5` 把 16 字节搬进 payload+0x70，
+/// 驱动 `0x51b459` 再从那里读代数）。
+///
+/// ⇒ **难度值就是代数**；只有 `种群` 与 `复杂度上限` 按区间取档。
+/// 这也解释了 `docs/118` §12.4 那个"关 12 的 `50` 对不上任何一列"：
+/// `50` 落在 `26..=100` 那一档 ⇒ 代数 **50**、种群 **200**、上限 **15**，
+/// 这个组合在六档表里不存在（六档表只测了 3/10/25/100/250/1000 这几个点）。
+///
+/// | 难度值 d | 代数 | s = 种群/5 | 种群 | 每槽 | 上限 |
+/// |---|---|---|---|---|---|
+/// | `0..=3` | d | 10 | 50 | 5 | 5 |
+/// | `4..=10` | d | 20 | 100 | 5 | 5 |
+/// | `11..=25` | d | 30 | 150 | 5 | 10 |
+/// | `26..=100` | d | 40 | 200 | 5 | 15 |
+/// | `101..=250` | d | 50 | 250 | 5 | 25 |
+/// | `>=251` | d | 50 | 250 | 5 | 200 |
+pub fn difficulty_params(difficulty: u32) -> Params {
+    let (s, limit) = if difficulty < 4 {
+        (10u32, 5u32)
+    } else if difficulty < 11 {
+        (20, 5)
+    } else if difficulty < 26 {
+        (30, 10)
+    } else if difficulty < 101 {
+        (40, 15)
+    } else if difficulty < 251 {
+        (50, 25)
+    } else {
+        (50, 200)
+    };
+    Params { generations: difficulty, population: s * 5, per_slot: 5, limit }
 }
 
 // ---------------------------------------------------------------------------
