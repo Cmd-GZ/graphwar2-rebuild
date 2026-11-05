@@ -12,7 +12,7 @@ const timer = setInterval(() => {
   if (!m) return; ready = true; clearInterval(timer);
   try {
     Interceptor.attach(m.base.add(ptr('0x47f700')), {
-      onLeave(ret) { if (draws.length < 3000) { try { draws.push(ret.toString()); } catch (e) {} } }
+      onLeave(ret) { if (draws.length < 20000) { try { draws.push(ret.toString()); } catch (e) {} } }
     });
   } catch (e) {}
   try {
@@ -26,7 +26,7 @@ const timer = setInterval(() => {
           const mm = s.match(/\\{"(SoldierInfo|TurnInfo)":\\{[^}]*\\}\\}/g);
           if (!mm) return;
           for (const one of mm) {
-            if (events.length < 60) events.push({ at: draws.length, msg: one });
+            if (events.length < 80) events.push({ at: draws.length, msg: one });
           }
         } catch (e) {}
       }
@@ -49,7 +49,9 @@ setInterval(() => send({ draws, events, ready }), 3000);
   try { await session.detach(); } catch (e) {}
   try { await dev.kill(pid); } catch (e) {}
   if (!last) { console.log('NO_DATA'); return; }
-  fs.writeFileSync(path.join(ROOT, '.rea-work/turnorder_rng.json'), JSON.stringify({ draws: last.draws, events: last.events }));
+  const out = process.argv[2] || 'turnorder_rng.json';
+  fs.writeFileSync(path.join(ROOT, '.rea-work', out), JSON.stringify({ draws: last.draws, events: last.events }));
+  console.log('saved to', out);
   console.log('随机数:', last.draws.length, ' 事件:', last.events.length);
   last.events.slice(0, 12).forEach(e => console.log('  @draw', e.at, e.msg.slice(0, 70)));
 })().catch((e) => { console.error('ERR', e.message); process.exit(1); });
