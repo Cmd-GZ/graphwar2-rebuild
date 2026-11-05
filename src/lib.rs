@@ -140,3 +140,6 @@ pub mod replay;
 pub mod replay_inflate;
 /// 回放消息级对拍（`docs/136-replay-diff.md`）。**只读**回放，不改任何既有模块。
 pub mod replaydiff;
+/// 回放对拍**收敛**层（`docs/142-diff-converge.md`）：模式感知的预测器 + 分歧归因。
+/// 只新增，不改 `replaydiff` / `game` / `settle` / `protocol`。
+pub mod diffconv;
