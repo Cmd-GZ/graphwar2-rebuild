@@ -129,6 +129,8 @@ pub mod rng;
 pub mod aigen;
 mod levelgen_tables;
 pub mod turnstate;
+/// 房间列表服务器（broker）：见 `docs/115-broker.md`。
+pub mod broker;
 pub mod capi;
 pub mod gdext_class;
 pub mod shot;
