@@ -158,3 +158,66 @@ mod tests {
         assert_eq!(mask_index(999, 599), 1000 * 600 - 1);
     }
 }
+
+/// 与游戏一致的"修正后函数"文本：`原函数 + c`（c 保留三位小数）。
+///
+/// 依据是真实抓包：
+/// `{"FunctionInfo":{"owner_id":234,"function":"0.00","corrected_function":"0.00 + 4.638"}}`
+/// `{"FunctionInfo":{"owner_id":231,"function":"","corrected_function":" + 10.990"}}`
+pub fn corrected_text(text: &str, x0: f64, y0: f64, flip: bool) -> String {
+    let toks = crate::function::parse(text);
+    let c = correction(&toks, x0, y0, flip);
+    format!("{} + {:.3}", text, c)
+}
+
+#[cfg(test)]
+mod correction_tests {
+    use super::*;
+
+    /// 真实抓包样本：士兵 234 用 `0.00` 开火，修正文本是 `0.00 + 4.638`。
+    #[test]
+    fn correction_matches_captured_text_234() {
+        let x0 = 1.651220991201045_f64;
+        let y0 = 4.638020825690482_f64;
+        let txt = corrected_text("0.00", x0, y0, false);
+        assert_eq!(txt, "0.00 + 4.638", "抓包里的修正文本");
+    }
+
+    /// 真实抓包样本：士兵 231 用空函数开火，修正文本是 ` + 10.990`。
+    #[test]
+    fn correction_matches_captured_text_231() {
+        let x0 = -19.512760846799154_f64;
+        let y0 = 10.99018276610812_f64;
+        let txt = corrected_text("", x0, y0, false);
+        assert_eq!(txt, " + 10.990", "抓包里的修正文本");
+    }
+
+    /// 抓到的弹道终点必须落在我们算出的轨迹上（这两发都是水平直线）。
+    #[test]
+    fn captured_shot_endpoints_lie_on_our_trajectory() {
+        // (起点 x, 起点 y, 抓到的终点 x, 终点 y, 是否反向)
+        // 方向由实测确定：第一发向左（flip=true），第二发向右（flip=false）
+        let cases = [
+            (1.651220991201045_f64, 4.638020825690482_f64, -16.405029008797804_f64, 4.638_f64, true),
+            (-19.512760846799154_f64, 10.99018276610812_f64, -12.040885846800286_f64, 10.99_f64, false),
+        ];
+        for (x0, y0, end_x, end_y, flip) in cases {
+            let pts = shot_points("0.00", x0, y0, 0.5, flip, Mode::Normal, true);
+            assert!(!pts.is_empty());
+            // 水平直线：整条轨迹 y 恒等于修正后的常数
+            let c = y0; // f(x)=0 ⇒ 修正后恒为 y0
+            assert!((pts[0].1 - c).abs() < 1e-9, "起点 y 不符");
+            assert!(pts.iter().all(|p| (p.1 - c).abs() < 1e-9), "应恒为水平线");
+            // 抓到的爆炸点 y 与轨迹一致（抓到的是三位小数）
+            assert!((pts[0].1 - end_y).abs() < 5e-4, "终点 y 与轨迹不符: {} vs {}", pts[0].1, end_y);
+            // 终点 x 必须落在轨迹覆盖的 x 区间内
+            let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+            for p in &pts {
+                lo = lo.min(p.0);
+                hi = hi.max(p.0);
+            }
+            assert!(end_x >= lo - 1e-6 && end_x <= hi + 1e-6,
+                    "终点 x={end_x} 不在轨迹 x 区间 [{lo}, {hi}] 内");
+        }
+    }
+}

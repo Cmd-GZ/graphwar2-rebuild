@@ -31,7 +31,7 @@
 | 构建 / 加载 / 类注册 / 方法调用 | ✅ | 真 Godot 4.7.2：类可实例化，`ping()` 回调执行 |
 | 资源还原 | ✅ | 692 文件 md5 全符（`tools/pck_extract.py`） |
 | 打包运行（代码+资源） | ✅ | 导出 `.pck` 并从包启动：扩展注册成功、还原的纹理加载成功（`docs/19` §7） |
-| 开火结算 `shot_calculator` | 🔶 | 调用链已还原；`0x3c2bc0`（12 KB）未逐条还原 |
+| 开火结算 `shot_calculator` | 🔶 | **协议与真实弹道已对拍**（起点/终点/命中点/修正文本，见 `docs/24` §6）；`0x3c2bc0` 内部未逐条还原 |
 | 命中与生命 `life_manager` | 🔶 | 结构 + 协议里的 `LifeInfo{alive}` 真实样本；伤害规则未知 |
 | 回合 `turn_manager` | 🔶 | **协议里抓到完整回合链路**（`TurnInfo`/`TurnCountInfo`/`EndOfTurnInfo{tick}`）；内部实现未复刻 |
 | 关卡生成 `level_generator` | 🔶 | **协议里抓到真实关卡数据**（12 个障碍的坐标与半径）；生成算法未还原 |

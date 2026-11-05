@@ -159,3 +159,47 @@
 
 ⇒ 联机这一行现在是"**传输层与消息目录已还原并有真实样本**"，
 但"完整对局协议"还差对局内消息的抓取。
+
+## 6. 开火结算（第四轮抓包，240 秒对局）
+
+### 6.1 结算相关消息
+
+```json
+{"FunctionActive":{"owner_id":234,"active_tick":10948}}
+{"FunctionPoints":{"owner_id":234,"start_x":1.651220991201045,"start_y":4.638020825690482,"end_x":-16.405029008797804}}
+{"QueueDestroyObstacle":{"pos_x":-16.405029008797804,"pos_y":4.638,"radius":0.5,"tick":11012}}
+{"EffectInfo":{"effect_id":236,"pos_x":-16.405029008797804,"pos_y":4.638,"effect_type":"ExplosionEffect","start_tick":11012}}
+```
+
+**关键结构（观测）**：
+
+- 服务器**只广播起点和终点 x**（`FunctionPoints`），**不广播轨迹本身**——
+  所以轨迹必须由各客户端用同一个采样器重算，这正是"行为等价"要求的地方；
+- 命中点 = `QueueDestroyObstacle` 的 `pos_x/pos_y`，`radius` 是**被摧毁实体的半径**
+  （士兵恒为 0.5）；`tick` 与 `EffectInfo.start_tick` 相同，二者是同一次命中的两条记录；
+- 命中后播 `ExplosionEffect`。
+
+### 6.2 修正文本（实测）
+
+```json
+{"FunctionInfo":{"owner_id":234,"function":"0.00","corrected_function":"0.00 + 4.638"}}
+{"FunctionInfo":{"owner_id":231,"function":"","corrected_function":" + 10.990"}}
+```
+
+`4.638` / `10.990` 正是各自的 `start_y`，证实修正是 `f(x) + c` 且**以文本形式拼接**；
+`src/shot.rs::corrected_text` 复刻了这个格式（三位小数），并有针对这两个真实样本的测试。
+
+### 6.3 用真实弹道对拍
+
+`FunctionPoints` 给了起点与终点，`FunctionInfo` 给了函数原文，于是可以复算：
+
+| 起点 | 抓到终点 x | 方向 | 我们的轨迹是否覆盖终点 |
+|---|---|---|---|
+| `1.651, 4.638` | `-16.405` | `flip=true`（向左） | **是** |
+| `-19.513, 10.990` | `-12.041` | `flip=false`（向右） | **是** |
+
+⇒ 两发的爆炸点都落在我们算出的轨迹上，且方向由实测确定（不是猜的）。
+
+**还没做到的**：本局 **没有出现** `alive:false` —— 12 次 `EntityEffectInfo` 里
+没有死亡事件，可能因为这一局双方各 2 名士兵且都在打空/打在障碍上。
+因此"伤害数值/死亡判定"仍未取得真值。
