@@ -10,15 +10,24 @@
 > 相关前置：`docs/101-gdc-contents.md`（`.gdc` 容器格式）、`docs/104-recovered-project.md`
 > （GDRE 全量恢复）、`docs/02-module-map.md`（Rust 模块归堆）。
 
+**为什么"token 流逐个相同"就是能给到的最强等价（先说清楚，后面所有结论都靠它）：**
+`.gdc` 里**根本不存文本**——它存的是标识符表、常量表、行表/列表和一个 token 流
+（`docs/101` §3）。反编译器的输出只是这个 token 流的**一种渲染**：缩进、空行、
+`- 3` 还是 `-3` 都可以变，注释和被编译器丢掉的括号永远回不来。所以"源文本逐字节相同"
+在这个方向上不是难，而是**定义上不存在**。能给出的最强断言是：把恢复出的 `.gd`
+重新词法化，与从 `.gdc` 解出的 `(kind, value)` 序列**逐项相等**——这排除了"反编译器
+凭空生成 token、或悄悄丢掉 token"这两类唯一会误导人的错误。本文的 105/105 就是这个档位。
+
 ---
 
 ## 1. 结论（一句话）
 
-包里的 692 个文件中，**有 160 个曾经是文本源码，全部取回，0 失败**：
+包里的 692 个文件中，**有 161 个曾经是文本源码，全部取回，0 失败**：
 105 个 `.gdc` → `.gd`（**token 流逐个相同**）、31 个 `.scn` → `.tscn`、22 个 `.res` → `.tres`
 （**二进制/文本两态的 SceneState 与属性表完全相同**）、`project.binary` → `project.godot`、
-`Graphwar.gdextension` 原样是文本。
-剩下 532 个**天生不是源码**（`.ctex` / `.import` / `.remap` / `.fontdata` / 音视频），
+`Graphwar.gdextension` 与 `addons/admob/plugin.cfg` 原样是文本。
+其中 5 个 `.tres` 按仓库的"**不入库媒体**"策略落成**只留度量的骨架**（§3.5）。
+剩下 531 个**天生不是源码**（`.ctex` / `.import` / `.remap` / `.fontdata` / 音视频 / 编辑器缓存），
 它们的作者端输入（149 `.svg` + 17 `.png` + 1 `.jpeg` + 7 `.ttf` + 9 段音频）
 **根本不在包里**，不存在"再努力一下就能取回"的问题。
 
@@ -35,7 +44,7 @@
 |---|---:|---|---|
 | `.gdc` | 105 | Godot 4 GDScript 字节码（`GDSC` + zstd） | **能** → `.gd` |
 | `.scn` | 31 | 二进制 `PackedScene` | **能** → `.tscn` |
-| `.res` | 22 | 二进制 `Resource`（Theme / StyleBox / FontFile） | **能** → `.tres` |
+| `.res` | 22 | 二进制 `Resource`（Theme / StyleBox / FontFile） | **能** → `.tres`（5 个只留骨架，§3.5） |
 | `.gdextension` | 1 | 扩展声明，包内已是文本 | 已经是文本 |
 | `project.binary` | 1 | `ECFG` 工程设置 | **能** → `project.godot` |
 | `.import` | 184 | 导入器元数据 | 不是源码 |
@@ -44,8 +53,9 @@
 | `.fontdata` | 7 | 导入后的 MSDF 字体 | 不是源码（是 7 个 `.ttf` 的产物） |
 | `.mp3str` / `.sample` / `.oggvorbisstr` / `.wav` | 11 | 音频 | 不是源码 |
 | `.png` | 1 | 唯一一个未被导入的位图（`basic_soldier.png`，也是工程图标） | 不是源码 |
-| `.cfg` / `.bin` | 4 | `plugin.cfg` ×1、Godot 编辑器缓存（`uid_cache.bin`、`extension_list.cfg`、`global_script_class_cache.cfg`） | 不是源码 |
-| **合计** | **692** | | **160 个可回收** |
+| `.cfg` | 3 | `addons/admob/plugin.cfg`（**是源码**，已收）×1 + 编辑器缓存 ×2 | 1 个是源码 |
+| `.bin` | 1 | `.godot/uid_cache.bin`（编辑器 UID 缓存） | 不是源码 |
+| **合计** | **692** | | **161 个可回收** |
 
 ### 2.1 原始路径从哪来 —— 不用猜
 
@@ -78,13 +88,14 @@ path="res://play_screen.gdc"        # 或上面那个哈希路径
 |---|---|---:|---:|---|
 | GDScript | 105 `.gdc` | 105 `.gd`（4 210 行 / 90 648 B） | **105/105** | **逐位验证**（token 流） |
 | 场景 | 31 `.scn` | 31 `.tscn`（215 575 B） | **31/31** | **观测**（SceneState 全等） |
-| 资源 | 22 `.res` | 22 `.tres`（17 479 515 B，见 §3.3） | **22/22** | **观测**（属性表全等） |
+| 资源 | 22 `.res` | 22 `.tres`（骨架合计 600 598 B；5 个剥了媒体，§3.5） | **22/22** | **观测**（属性表全等） |
 | 工程设置 | 1 `project.binary` | `project.godot`（21 条） | **1/1** | **观测**（1346/1346 字节解完） |
 | 扩展声明 | 1 `.gdextension` | 原样 | **1/1** | **观测**（逐字节相同） |
+| 插件清单 | 1 `plugin.cfg` | 原样 | **1/1** | **观测**（包内已是文本） |
 
-`MANIFEST.tsv` 的 692 行状态分布：**完整 124 / 部分 36 / 失败 0 / 非源码 532**。
-"部分"的全部原因只有两类，且都写在每一行的备注里：`ext_resource` 的 uid 属性丢失（32 行，
-§3.2）、文本里内嵌了二进制图集（5 行，§3.3）。
+`MANIFEST.tsv` 的 692 行状态分布：**完整 125 / 部分 31 / 省略 5 / 失败 0 / 非源码 531**。
+"部分"的全部原因只有一类（31 行）：`ext_resource` 的 uid 属性被文本写入器丢弃（§3.2）。
+"省略"是**主动**的一类（5 行）：内嵌字体/图集媒体按策略剥掉，只留骨架（§3.5）。
 
 ### 3.1 `.gdc` → `.gd`：GDRE + **token 级对拍**
 
@@ -141,7 +152,8 @@ round-trip verify: 53/53 equal
 唯一的"差异"是子资源路径 `<owner>::<id>` 里的 owner 前缀（两边 owner 本来就是不同文件），
 规范化掉 `::` 之前的部分后全等。
 
-**已知损失：`ext_resource` 的 `uid` 属性（32 个文件，`部分`）。** 这是本篇唯一一处
+**已知损失：`ext_resource` 的 `uid` 属性（32 个文件都有；最终 31 行标 `部分`，
+1 行因媒体省略改标 `省略`）。** 这是本篇唯一一处
 "文本比二进制少东西"，讲清楚：
 
 * 二进制 `.scn`/`.res` 的外部资源表是
@@ -159,23 +171,30 @@ round-trip verify: 53/53 equal
 `ResourceUID.id_to_text()` 输出 `uid://ck64hmdpe1hbv`，与 GDRE 从同一份字节里读出的值**逐字符相同**——
 这既证明了 uid 解析正确，也证明 Godot 的文本写入器即使 UID 有效也只写路径。）
 
-### 3.3 22 个 `.res` 的真实构成：17 个是配置，5 个是"文本化的二进制"
+### 3.3 22 个 `.res` 的真实构成：17 个是配置，5 个自带媒体
 
-`.tres` 总共 17.5 MB，其中 **17.2 MB 来自 5 个文件**：
+`Godot` 写出来的 `.tres` 共 17.45 MB，其中**16.85 MB 是 5 个文件里的内嵌字节**：
 
-| 文件 | 大小 | 里面是什么 |
-|---|---:|---|
-| `game_menu_icon_theme.tres` | 6.08 MB | 多张 256×256 `Image`（`LumAlpha8` 字形图集） |
-| `button_font.tres` | 3.72 MB | `FontFile` 自带字形缓存 |
-| `campaign_button_theme_2.tres` | 2.56 MB | 同上，内嵌图集 |
-| `campaign_hidden_button_theme.tres` | 2.56 MB | 同上 |
-| `campaign_spacer_theme.tres` | 2.54 MB | 同上 |
+| 文件 | Godot 原始输出 | 内嵌了什么 | 丢弃的载荷 | 骨架 |
+|---|---:|---|---:|---:|
+| `game_menu_icon_theme.tres` | 6 077 060 B | 26 张 256×256 `Image`（`LumAlpha8` 字形图集） | 5 917 848 B | 159 397 B |
+| `button_font.tres` | 3 719 404 B | 18 段（图集 + **真正的 `.ttf` 字节**） | 3 604 764 B | 114 825 B |
+| `campaign_button_theme_2.tres` | 2 557 974 B | 11 段（同上） | 2 444 129 B | 114 030 B |
+| `campaign_hidden_button_theme.tres` | 2 557 806 B | 11 段 | 2 444 129 B | 113 862 B |
+| `campaign_spacer_theme.tres` | 2 542 428 B | 11 段 | 2 444 129 B | 98 484 B |
 
-它们**是合法的 `.tres`**（Godot 能加载，属性表与二进制全等），但内容是
-`PackedByteArray` 包着的像素数据——即"二进制资产穿了文本的外衣"。
-`MANIFEST.tsv` 把这 5 行标成 `部分` 并在备注里写了实际字节数，方便一眼看出
-"这 6 MB 不是源码"。要缩小仓库可以只删这 5 个文件（同时 `--check` 会报缺失，
-所以删的时候应连同清单一起决定，不要半删）。
+这些载荷是 `PackedByteArray("....")` 字符串，两种形态：
+
+```
+data = {                                    # 纹理图集
+"data": PackedByteArray("...."),
+"format": "LumAlpha8", "height": 256, "mipmaps": false, "width": 256
+}
+
+data = PackedByteArray("....")              # 字体文件本身（base64 头 AAEAAAASAQAA… = sfnt 1.0）
+```
+
+**它们是媒体，不是源码**，处理方式见 §3.5。
 
 ### 3.4 `project.binary` → `project.godot`
 
@@ -198,11 +217,69 @@ editor_plugins/enabled        = ["res://addons/admob/plugin.cfg",
 一个有意义的观测：包里**只有 `rendering_method.mobile`，没有桌面版
 `rendering_method`** ——因为导出目标就是移动端，这一条不是"丢了"，是本来就没有。
 
+### 3.5 媒体策略：这 5 个 `.tres` 落成"只留度量的骨架"
+
+**决策（项目长期策略，用户明确要求过）：仓库本身不提供媒体文件。**
+那 16.85 MB 是 `.ttf` 字节和字形图集位图——虽然穿着 base64 文本的外衣，但它是
+**导出产物**，不是作者的源文件（作者手上是 `.ttf`，而 `.ttf` 不在包里，见 §4.1）。
+所以它们不按"完整文本"入库。
+
+**做法：不是删文件，而是留骨架。** `recover_source.py` 在**两轮验证都通过之后**执行
+（这样剥离永远不会掩盖转换缺陷），把 `>= 4096` 字符的 `PackedByteArray` 载荷整段丢掉，
+其余原封不动。留下的骨架包含：
+
+* 主题的全部条目表：`Button/styles/normal = SubResource("StyleBoxEmpty_…")`、
+  `Button/colors/font_disabled_color = Color(...)`、`default_font = SubResource(...)`；
+* 全部样式盒子（`StyleBoxFlat` 的边框宽度/颜色/圆角）；
+* 外部引用关系（`ext_resource` 的 type + path）；
+* 字体度量：`button_font.tres` 保留 **2 333 条** `<codepoint>/offset|size|uv_rect|texture_idx`。
+
+**丢掉的只有像素与字体字节本身**；图集占位的 `[sub_resource type="Image" …]` 头还在，
+所以"这里原本有一张图"是看得见的。
+
+骨架仍然**能被 Godot 加载**（实测，**观测**）：
+
+| 文件 | 加载后类 | 存储属性数 |
+|---|---|---:|
+| `game_menu_icon_theme.tres` | `Theme` | 20 |
+| `button_font.tres` | `FontFile` | **2 333** |
+| `campaign_button_theme_2.tres` | `Theme` | 13 |
+| `campaign_hidden_button_theme.tres` | `Theme` | 15 |
+| `campaign_spacer_theme.tres` | `Theme` | 13 |
+
+代价是加载时会打 `ERROR: Invalid image: image is empty`（`--import` 全树 50 条）。
+这是"图集声明还在、像素没了"的必然结果，也是**唯一**能证明骨架身份的现象——不是文本坏了。
+
+**每个骨架自己会说明这件事**（写在 `[gd_resource]` 行之后）：
+
+```
+[gd_resource type="FontFile" format=4]
+; MEDIA OMITTED: 18 embedded payload(s), 3604764 B of font/atlas data removed.
+; This file's original size was 3719404 B. Original text: python3 tools/recover_source.py --include-media
+```
+
+`MANIFEST.tsv` 把这 5 行标成 **`省略`**（既不是"完整"也不是"部分"），备注里给出
+**原始字节数 / 骨架字节数 / 丢弃段数与字节数**，所以"少了什么、有多大"一眼可见。
+
+**怎么补回来**（本地看，不要提交）：
+
+```bash
+python3 tools/recover_source.py --include-media     # 17.45 MB，5 行状态变回"部分"
+```
+
+`--check` 的规则（CI 用，已实测能拦住）：
+
+* 标 `省略` 的文件**必须**既没有 `>= 4096` 字符的字面量、又带 `MEDIA OMITTED` 头；
+* 树里任何其它 `.tres`/`.tscn` 只要出现 `>= 4096` 字符的字面量 → **FAIL**
+  （实测：往 `graphwar_theme.tres` 塞一个 5 000 字符的串，`--check` 立刻报
+  `carries an embedded payload … media must not be committed`）；
+* `--include-media` 产出的树会得到**警告**而不是失败，因为它本来就不可提交。
+
 ---
 
 ## 4. 哪些东西**天生**不是文本（不需要回收）
 
-这一节是为了防止后面有人把"回收率 160/692"当成未完成度。
+这一节是为了防止后面有人把"回收率 161/692"当成未完成度。
 
 1. **`.ctex`（167）/ `.fontdata`（7）不是源，是产物。** 184 个 `.import` 的正文（本包实测，
    与 `tools/extract_assets.py` 里写的 `source_file=` / `dest_files=` 那套**不同**）是：
@@ -256,17 +333,33 @@ print(len(names)); print("\n".join(sorted(names)))
 EOF
 ```
 
-顺便修正两个流传的数字（**未知 → 观测**）：
+这个项目里流传着三个不同的"模块数"，**它们量的不是同一件事**，混用会直接算错覆盖率。
+先把三个口径并列定死，覆盖率矩阵请明确自己用的是哪一列：
 
-* 父任务给的"57 个模块"、`docs/02` 写的"约 90 个" **都不是这个量的定义**。
-  实测口径有三个，别混：
-  - `src/graphwar_*.rs` 路径串：**58**
-  - `fixtures/module_map.tsv` 里按引用归堆出的模块行：**87**
-    （其中 `graphwar_*.rs` 56 行 + 31 行是 `entity_drawer.rs` / `effect_drawer.rs` /
-    `math_function.rs` / `button_manager.rs` / `axis_drawer.rs` / `player_showcase.rs`
-    这类**子模块**，它们不是 `graphwar_` 前缀）
-  - 两者并不矛盾：58 是"顶级文件"，87 是"能归堆的文件 + 子模块"。
-    后续写文档时请分开表述。
+| 口径 | 数值 | 定义与复现 | 该用它做什么 |
+|---|---:|---|---|
+| `src/graphwar_*.rs` **路径串** | **58** | `.so` 里互不相同的 `src/graphwar_*.rs` 文件名字符串（见下方脚本）。另有 2 个只以目录形态出现的模块名 `graphwar_media` / `graphwar_support`，故 `graphwar_*` 标识符共 **60** | **顶级源文件数**——建骨架、按文件名对账用这个 |
+| `fixtures/module_map.tsv` **行数** | **87** | 按 panic 串引用点把函数归堆的产物。其中 `graphwar_*.rs` **56** 行，另 **31** 行是子模块：`entity_drawer.rs`、`effect_drawer.rs`、`math_function.rs`、`button_manager.rs`、`axis_drawer.rs`、`player_showcase.rs` …（不带 `graphwar_` 前缀，因为挂在 `graphwar_media/`、`graphwar_support/` 这类目录下） | **可归堆的模块数**——查某个函数属于哪个文件用这个 |
+| `docs/02-module-map.md` 的"约 90 个" | ≈87 | 就是上面那 87 行；正文只列了 56 个 `graphwar_*.rs` | 旧口语口径，**建议改写为"58 个顶级文件 / 87 个可归堆模块"** |
+
+三者不矛盾：**58 是顶级文件，87 是"顶级文件 + 子模块"，"约 90"是 87 的口语化说法。**
+本轮脚本、清单、README 一律用 **58**（回收的单位是文件）。
+（父任务先前记的"57"应是 56 行 `graphwar_*.rs` 的口误，与 58 差在
+`graphwar_media`/`graphwar_support` 这两个只以目录出现的名字上——已按实测更正。）
+
+复现第一条（真·观测）：
+
+```bash
+python3 - <<'EOF'
+import re
+b = open("libgraphwarrust.so","rb").read()
+names = {m.decode() for m in re.findall(rb"src/graphwar_[A-Za-z0-9_]+\.rs", b)}
+print(len(names)); print("\n".join(sorted(names)))
+EOF
+```
+
+复现第二条：`tail -n +2 fixtures/module_map.tsv | wc -l` → 87；
+`| grep -c '^graphwar_'` → 56；差值 31 就是子模块行数。
 
 ### 5.2 用 `src:line` panic 串反推文件规模（档位：观测，且**只是下界**）
 
@@ -318,14 +411,18 @@ Rust 在 panic 路径里保留 `src/graphwar_xxx.rs:NNN` 形式的字符串。
 ## 6. 复现与自检
 
 ```bash
-# 全量回收（约 30 s：staging 692 文件 + GDRE 3.5 s + 53 次 Godot 0.5 s + 两轮验证）
+# 全量回收（约 25 s：staging 692 文件 + GDRE 3.5 s + 53 次 Godot 0.5 s + 两轮验证 + 媒体剥离）
 python3 tools/recover_source.py
+
+# 把 5 个骨架换回带媒体的完整 .tres（17.45 MB，本地看，不要提交）
+python3 tools/recover_source.py --include-media
 
 # CI：只检查不重写。校验
 #   1) recovered-src/ 里没有白名单之外的文件（=.gitignore 那条硬规矩的可执行版）
-#   2) 期望的 160 个输出一个不缺、都不为空
+#   2) 期望的 161 个输出一个不缺、都不为空
 #   3) MANIFEST.tsv 覆盖包里的全部 692 条、且不虚构条目
 #   4) project.godot 没丢任何一条设置
+#   5) 媒体策略：标"省略"的必须是骨架；其它文件不得含 >=4096 字符的字面量
 python3 tools/recover_source.py --check
 
 # 只看计划，不落盘
@@ -346,14 +443,15 @@ godot --headless --path <copy> --import      → 退出码 0
 ```
 
 输出里**没有任何一条** `.tscn`/`.tres` 的解析错误（这是"文本没坏"的直接证据）。
-80 行 `ERROR`/`SCRIPT ERROR` 全部落在下面四类里，没有第五类（**观测**，逐行归类可复现）：
+133 行 `ERROR`/`SCRIPT ERROR` 全部落在下面五类里，没有第六类（**观测**，逐行归类可复现）：
 
 | 报错 | 行数 | 原因 |
 |---|---:|---|
-| `Failed loading resource: res://*.svg` / `*.ttf` | 57（32 个不同文件） | 这些是**导入源**，包里只有 `.ctex`/`.fontdata` 产物（§4.1）。`recovered-src/` 只放文本，故意不放 `.ctex`，所以它们解析不了——这是设计，不是缺陷 |
-| GDExtension 库缺失（`GDExtension dynamic library not found` ×2、`Can't open dynamic library` ×2、`Failed to load script ... Parse error` ×2） | 6 | `.gdextension` 里写的是 `res://../rust/target/debug/libgraphwarrust.so`（作者的工作路径），本机没有这个相对路径 |
+| `Failed loading resource: res://*.svg` / `*.ttf` | 57（32 个不同文件：30 svg + 2 ttf） | 这些是**导入源**，包里只有 `.ctex`/`.fontdata` 产物（§4.1）。`recovered-src/` 只放文本，故意不放 `.ctex`，所以它们解析不了——这是设计，不是缺陷 |
+| `Invalid image: image is empty` | 50 | **骨架的必然产物**（§3.5）：图集 `Image` 的声明还在、像素被剥掉了。只有这 5 个 `.tres` 会打，见到它说明媒体剥离生效 |
+| GDExtension 库缺失（`GDExtension dynamic library not found` ×2、`Can't open dynamic library` ×2、`Failed to load script … Parse error` ×2） | 6 | `.gdextension` 里写的是 `res://../rust/target/debug/libgraphwarrust.so`（作者的工作路径），本机没有这个相对路径 |
 | `Parse Error: Could not find base class "GraphwarButton"` / `Identifier not declared` | 4 | 上一类的连锁反应：`CampaingLevelsButtons.gd` / `ShowExtraButtons.gd` 继承 Rust 提供的类，库加载失败就没有这个基类 |
-| 编辑器环境噪声（`Cannot create editor config/cache directory`、`Error saving editor settings to`（空路径）、`Plugin is not attached to debugger` 等） | 13 | `HOME` 被重定向到工作目录，Godot 的编辑器配置落不了盘。与恢复内容无关 |
+| 编辑器环境噪声（`Cannot create editor config/cache directory`、`Error saving editor settings to`（空路径）、`Cannot open directory '…/feature_profiles'`、`Plugin is not attached to debugger` 等） | 16 | `HOME` 被重定向到工作目录，Godot 的编辑器配置落不了盘。与恢复内容无关 |
 
 **所以 `recovered-src/` 按设计不是可运行工程**，它只是"源码层"。
 要"能跑"的是 `client/`（另写实现）+ 本机的 `libgraphwarrust.so`。
@@ -364,19 +462,20 @@ godot --headless --path <copy> --import      → 退出码 0
 
 | # | 结论 | 档位 | 依据 |
 |---|---|---|---|
-| 1 | 692 = 105+31+22+1+1 + 532，160 个曾是文本源码 | **观测** | PCK 尾部索引逐条解析 |
+| 1 | 692 = 105+31+22+1+1+1 + 531，**161** 个曾是文本源码 | **观测** | PCK 尾部索引逐条解析；`--check` 重算 |
 | 2 | 158 个 `.remap` 精确分解为 105/31/22，路径映射是满的 | **观测** | `--list` |
-| 3 | 105/105 `.gd` 与字节码 **token 流逐个相同** | **逐位验证** | `gdc_verify_source.py`（token 粒度，非文本字节） |
-| 4 | 31/31 `.tscn`、22/22 `.tres` 与二进制形态结构/属性全等 | **观测** | SceneState + 属性表对拍，53/53 |
+| 3 | 105/105 `.gd` 与字节码 **token 流逐个相同** | **逐位验证** | `gdc_verify_source.py`（token 粒度，非文本字节；§0 说明为何这是上限） |
+| 4 | 31/31 `.tscn`、22/22 `.tres` 与二进制形态结构/属性全等 | **观测** | SceneState + 属性表对拍，53/53（**在媒体剥离之前**做，所以剥离不会掩盖缺陷） |
 | 5 | 32 个文件的 `ext_resource` uid 被文本写入器丢弃 | **观测** | uid_cache 只有 108 条；uid 注册实验；`id_to_text` 逐字符一致 |
 | 6 | `project.binary` 21 条、1346/1346 字节解完；type 34 = `PackedStringArray` | **观测** | 解完恰好 EOF |
-| 7 | 149 `.svg` / 7 `.ttf` 是 `.ctex`/`.fontdata` 的来源且不在包内 | **观测** | 每个 `.import` 的 `source_file`/`dest_files` |
-| 8 | `libgraphwarrust.so` 含 58 个 `src/graphwar_*.rs` 名字 + 2 个目录 | **观测** | 直接字符串扫描 |
-| 9 | 12 个模块的**文件行数下界**（root_node ≥1302 等） | **观测（下界）** | 54 个 `path:line` 串 |
-| 10 | `.gd` 继承 Rust 类（`GraphwarButton` ↔ `graphwar_button.rs`），故 `.gd` 是 Rust 公开 API 的证据 | **观测 → 推断** | 继承串是观测；"调用点 = API 面"是推断，未逐个核对 |
-| 11 | 屏幕控制器逻辑全在 Rust（GDScript 侧只有小控件） | **观测** | 105 个 `extends` 统计 + 无 `play_screen` 类脚本 |
-| 12 | "57 个模块"/"约 90 个模块" | **未知（口径不明）** | 见 §5.1，实测口径是 58 / 87，两者含义不同 |
-| 13 | 46 个模块的文件行数 | **未知** | 没有 `path:line` 串可用，只能靠反编译量函数边界 |
+| 7 | 149 `.svg` / 17 `.png` / 1 `.jpeg` / 7 `.ttf` 是 `.ctex`/`.fontdata` 的来源且不在包内 | **观测** | 每个 `.import` 的 `importer=` 与文件名 |
+| 8 | `libgraphwarrust.so` 含 58 个 `src/graphwar_*.rs` 名字 + 2 个目录 | **观测** | 直接字符串扫描（§5.1） |
+| 9 | 5 个 `.tres` 内嵌 16.85 MB 媒体；剥成骨架后仍可被 Godot 加载且属性数不变 | **观测** | 骨架加载实测（§3.5 表）；`--check` 拦截测试 |
+| 10 | 12 个模块的**文件行数下界**（root_node ≥1302 等） | **观测（下界）** | 54 个 `path:line` 串 |
+| 11 | `.gd` 继承 Rust 类（`GraphwarButton` ↔ `graphwar_button.rs`），故 `.gd` 是 Rust 公开 API 的证据 | **观测 → 推断** | 继承串是观测；"调用点 = API 面"是推断，未逐个核对 |
+| 12 | 屏幕控制器逻辑全在 Rust（GDScript 侧只有小控件） | **观测** | 105 个 `extends` 统计 + 无 `play_screen` 类脚本 |
+| 13 | 模块数到底是 58 / 87 / "约 90" | **观测（口径已定死）** | §5.1 的三行并列 |
+| 14 | 46 个模块的文件行数 | **未知** | 没有 `path:line` 串可用，只能靠反编译量函数边界 |
 
 ---
 
@@ -385,12 +484,13 @@ godot --headless --path <copy> --import      → 退出码 0
 1. **`recovered-src/` 不带 `.ctex`/`.fontdata`**，因此场景文本里的贴图与字体引用解析不了。
    若以后想要"能跑的复原工程"，正确做法是让 `client/` 的资产管线（`docs/121`）在运行时
    把 `.ctex` 按原路径塞进去，而**不是**把二进制搬进 `recovered-src/`。
-2. **`.cfg` 里的 `addons/admob/plugin.cfg` 是可回收源码**，但目前被扩展名白名单挡在外面。
-   要收就扩展白名单 + 改 `--check`，不要手工塞。
-3. **17.2 MB 的内嵌图集 `.tres`**（§3.3）占了本目录 95% 的体积。若要瘦身，
-   建议连 `MANIFEST.tsv` 一起重新生成并明确标注"刻意不含内嵌图集"，
-   而不是只 `rm` 文件（会让 `--check` 报缺）。
+2. **5 个骨架 `.tres` 不能当真资源用**：`--import` 会打 50 条
+   `Invalid image: image is empty`（§3.5）。要真字体/真图集，用 `--include-media`
+   在本地生成完整版（17.45 MB），或直接让 `client/` 从 `.ctex`/`.fontdata` 走原版路径。
+   本目录当前 **1.5 MB**（骨架 601 KB），比原来省 16.9 MB。
+3. **`addons/admob/plugin.cfg` 已收**（状态"完整"）。白名单为此增加了 `.cfg`；
+   另两个 `.cfg`（编辑器缓存）仍不入库，见 `MANIFEST.tsv`。
 4. **Rust 侧的"源码面"还没开始回收**：58 个模块名、12 个行数下界、
    87 行 module_map 路由表已经就位，但函数级重建仍要回到 Ghidra（§5.3 的顺序）。
-5. **`docs/02-module-map.md` 的"约 90 个模块"应当改口径**（见 §5.1）。
+5. **`docs/02-module-map.md` 的"约 90 个模块"应当改口径**（见 §5.1 的三行并列表）。
    本轮未改动该文件（不在本任务写入范围内）。

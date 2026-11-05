@@ -12,6 +12,7 @@ All numbers below come from the package itself (`Graphwar.pck`, engine version
 ```
 project.godot            from project.binary (ECFG), fields verbatim
 Graphwar.gdextension     already text in the package; copied byte for byte
+addons/admob/plugin.cfg  plugin manifest, already source in the package
 <original path>.gd       105 GDScript files decompiled from .gdc
 <original path>.tscn     31 PackedScenes rewritten from binary .scn
 <original path>.tres     22 Resources rewritten from binary .res
@@ -27,18 +28,38 @@ and the 158 remaps decompose exactly into 105 + 31 + 22.
 
 | status | files | meaning |
 |---|---|---|
-| 完整 | 124 | text form is complete and verified |
-| 部分 | 36 | text form recovered, with a known loss (see MANIFEST note) |
+| 完整 | 125 | text form is complete and verified |
+| 部分 | 31 | text form recovered as-is, with a known loss (see MANIFEST note) |
+| 省略 | 5 | `.tres` skeleton kept, **embedded font/atlas bytes removed** (media policy) |
 | 失败 | 0 | conversion failed |
-| 非源码 | 532 | never was source: import products, media, editor caches |
+| 非源码 | 531 | never was source: import products, media, editor caches |
 
-The recoverable ceiling is 160/692. The remaining 532 are `.import` (184),
+The recoverable ceiling is 161/692. The remaining 531 are `.import` (184),
 `.ctex` (167), `.remap` (158), `.fontdata` (7), audio (11), one `.png`, and editor
 caches. `.ctex`/`.fontdata` are what Godot **made out of** the authoring inputs
 (149 `.svg`, 17 `.png`, 1 `.jpeg`, 7 `.ttf`) — and those inputs are not in the package
 at all, so no amount of work turns them back into source. `.import`/`.remap` are
-exporter bookkeeping. This directory therefore is not missing 532 files; those
+exporter bookkeeping. This directory therefore is not missing 531 files; those
 files have no source form to return to.
+
+## Media policy: the 省略 rows
+
+Five `.res` files are Themes/FontFiles that carry their media **inline** — the `.ttf`
+bytes themselves and the MSDF glyph atlas images, serialised as one ~699 KB
+`PackedByteArray` literal each. **This repository does not carry media files**, and an
+embedded atlas is media regardless of being base64 text. So those are written as
+*metrics-only skeletons*: the `.tres` stays, keeping the theme item tables, the style
+boxes, the external references and all 2 333 per-glyph `uv_rect`/`offset`/`size`
+entries — only the byte payload is dropped. Each skeleton states in its own header what
+was removed and how big the original was; `MANIFEST.tsv` repeats it.
+
+5 file(s) were skeletonised: 16854999 B of embedded font/atlas data was dropped in total, leaving 600598 B. The per-file numbers are in `MANIFEST.tsv` (status `省略`).
+
+To get the full files back (they will not be committed):
+
+```bash
+python3 tools/recover_source.py --include-media
+```
 
 ## How to regenerate
 
@@ -67,8 +88,8 @@ Textuality and set completeness are asserted, and `--check` enforces both.
    small layout controls (`ButtonGrid`, `FxContainer`, `OffsetLabel`, ...) plus the
    whole AdMob/Android-IAP plugin. `play_screen`, `player_screen`, `lan_lobby`,
    `campaign`, `GameSetup` exist as **scenes** here but their behaviour lives in
-   `libgraphwarrust.so` (57 `graphwar_*.rs` modules). That is a separate track; see
-   `docs/146-source-recovery.md` §5.
+   `libgraphwarrust.so` (58 `src/graphwar_*.rs` module files plus two module
+   directories). That is a separate track; see `docs/146-source-recovery.md` §5.
 2. **`ext_resource` UID attributes.** The binary scenes carry a `u64` UID per external
    resource, and the text form drops it: Godot's binary reader resolves a UID through
    `.godot/uid_cache.bin`, which in this package registers only 108 paths (105 `.gdc`
