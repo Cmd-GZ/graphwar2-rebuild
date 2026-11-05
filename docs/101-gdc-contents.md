@@ -3,7 +3,11 @@
 状态：**现行**。本文补上 [`docs/92`](92-ui-inventory.md) §2 明确写着"拿不到"的那一层：
 `.gdc` 的**常量池、标识符表、函数表**已经全部解出，105/105 个脚本零失败。
 
-补的前提不是装了反编译器（机器上仍然没有，也**没有联网**），而是：
+> **2026-11 更新**：现在机器上**有** GDRE Tools 了（已恢复整项目，见 [`docs/104`](104-recovered-project.md)）。
+> 本文的方法**不依赖**它——下面每个结论仍可由 `.gdc` 字节 + 同版本 Godot 探针独立复现，
+> 并且已经用 GDRE 的反编译源码**逐 token 复核过：105/105 一致、5 个脚本 0 处更正**（§4.0）。
+
+补的前提不是装了反编译器（本文成文时机器上没有，也**没有联网**），而是：
 
 1. `.gdc` 的 payload 是**带类型的 token 流**，不是黑盒（§2 给出逐字节格式）；
 2. 本机 `tools/Godot_v4.7.2-stable_linux.x86_64` 能**把 `.gd` 编译成 `.gdc`**（`--export-pack`），
@@ -23,6 +27,7 @@
 | 5 个行为脚本 | 常量池 / 函数表（名字+参数个数）/ 成员 / **伪源码** 全部拿到（§4） | 观测 |
 | 布局助手数值表 | 非插件脚本 47 个全部列出数值与表达式（§5） | 观测 |
 | 是否"反编译" | 不是完整反编译：没有 AST、没有类型推断、注释/空行丢失；**但语句级伪源码可读** | 见 §7 |
+| 与 GDRE 反编译源码的一致性 | **105/105 逐 token 一致**；5 个行为脚本 **0 处更正** | 逐位对照（§4.0、`tools/gdc_verify_source.py`） |
 | 拿不到的 | 运行时行为、多行语句的精确换行、NodePath 的特殊形态；见 §7 | — |
 
 三条最有用的事实：
@@ -222,6 +227,44 @@ u32 source_line                        # 该 token 所在源码行（1 起）
 
 名单沿用 [`docs/92`](92-ui-inventory.md) §2.3（运行时台账得出），下面每一条都是本轮从字节码
 独立复核的，顺带纠正了一处小误记。
+
+### 4.0 与 GDRE 反编译源码的核对（**0 处更正**）
+
+[`docs/104`](104-recovered-project.md) §7 用 `tools/gdc_verify_source.py` 把 GDRE 反编译出的
+105 个 `.gd` 重新词法化，与 `.gdc` 的 token 流逐个比对：**105/105 一致**。5 个行为脚本逐条核对：
+
+| 脚本 | 本文（字节码）结论 | GDRE 反编译源码 | 判定 |
+|---|---|---|---|
+| `CampaingLevelsButtons` | 21 个按钮、`level_0..20`、字号=宽/15、`/8` 与 `/4` 网格、碰边回弹 | 一致（连 `add_child(button);` 的分号都在） | ✅ |
+| `ShowExtraButtons` | `!showing_buttons`、两张 svg、`/1.66667` 阈值、置灰 | 一致 | ✅ |
+| `ChatBox` | 鼠标/触屏各一遍 `grab_focus` | 一致 | ✅ |
+| `PlayerTabContainer` | 三个页签标题（U+2009）、字号=安全区宽/30 | 一致 | ✅ |
+| `OptionsContainer` | `resized→call_deferred`、高=父高×0.25 | 一致 | ✅ |
+
+真源码的关键片段（各 ≤ 4 行，仅作对照；全文属游戏资产，不入库）：
+
+```gdscript
+# CampaingLevelsButtons.gd
+	for i in 21:
+		var button = GraphwarButton.new()
+		button.text = str(i)
+		button.input_text = "level_" + str(i)
+```
+
+```gdscript
+# ShowExtraButtons.gd
+	showing_buttons = !showing_buttons
+	extra_options_box.set_show_extra_buttons(showing_buttons)
+```
+
+```gdscript
+# OptionsContainer.gd
+	var parent_size = get_parent().size
+	self.custom_minimum_size.y = 0.25 * parent_size.y
+```
+
+⇒ 下面 §4.1–§4.5 的**伪源码**保持原样：它是 `tools/gdc_disasm.py` 从 `.gdc` 直接生成的，
+不依赖恢复产物，可单独复现；与真源码语义等价，差别只在空白行/注释（`.gdc` 不存这些）。
 
 ### 4.1 `CampaingLevelsButtons.gdc` —— 运行时造 21 个关卡按钮
 
@@ -571,7 +614,8 @@ func set_minimum_size():
 | 运行时效果（字号在 1080p 下到底多大、会不会溢出） | **未验证** | 只解出代码；没跑原版游戏量像素（`docs/92` 的 dump 里有控件树，但没有 theme override 后的实际字号） |
 | token 编号在其它 Godot 版本 | **未验证** | 仅 4.7.2（版本 101）实测 |
 | 未出现在本语料的 token | **未知** | 例如 `219-222` 之外的内置常量、`array/dict` 常量编码、`@export_range` 以外的注解形态 |
-| `.gdc` 与 `.gd` 的逐字对应 | **不追求** | 伪源码故意保留 `for i in 21`、`screen_size` 这类原始名字，但不保证与原 `.gd` 文本逐字符一致 |
+| `.gdc` 与 `.gd` 的逐字对应 | **已核（token 级）** | `tools/gdc_verify_source.py`：105/105 逐 token 一致；但空白行、注释、负数字面量写法（`-3` vs `- 3`）不保证逐字符 |
+| 源码级"原样还原" | **仍有差距** | 反编译源码是 token 流的可读渲染，不是开发者原始 `.gd`（缩进/空行/注释已丢失） |
 
 ---
 

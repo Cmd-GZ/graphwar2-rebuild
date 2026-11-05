@@ -39,6 +39,7 @@
 | [99-generation-dynamics.md](99-generation-dynamics.md) | **每代组装**：单父代工厂、无缓存全量重评、B 变体 | 父代 = 存活槽一对一，4 子代共用父代 |
 | [101-gdc-contents.md](101-gdc-contents.md) | `.gdc` 逐字节格式 + 5 个行为脚本 + 47 行布局数值表 | 用本机 Godot 做"已知源码→已知字节码"探针 |
 | [103-disk-levelgen.md](103-disk-levelgen.md) | **`0x4ea6dc` 不是关卡生成器** | 关卡只有散布 + 中心单障碍两种 |
+| [104-recovered-project.md](104-recovered-project.md) | **GDRE 恢复整项目：静态场景属性 + 与运行时台账对拍** | `.tscn` 精确属性、动态节点分解、连接对账、反编译源码校验 |
 
 ## 二、已归档（`docs/archive/`，**不要引用其结论**）
 
