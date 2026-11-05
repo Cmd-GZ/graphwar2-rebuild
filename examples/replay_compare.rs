@@ -131,13 +131,33 @@ fn main() {
         let shifted = shifted_tokens(&real_tokens, c);
         let pts = calculate(&shifted, shooter.0, shooter.1, 0.5, flip, Mode::Normal);
         // ⚠️ 必须沿路径查掩膜：撞到第一个被占据的点就停（和 settle::resolve 一致）
-        let mut stop_pt = None;
-        for &(px, py) in &pts {
-            if gw2_rebuild::plane::is_occupied(&mask, px, py) {
-                stop_pt = Some((px, py));
-                break;
+        // ALT_STOP: 三种查询方式各算一次停点，比较谁更贴近真实终点
+        let q_trunc = |x: f64, y: f64| gw2_rebuild::plane::is_occupied(&mask, x, y);
+        let q_round = |x: f64, y: f64| {
+            // 用四舍五入的像素坐标重算
+            let px = (x * 20.0 + 500.0).round() as i64;
+            let py = (y * 20.0 + 300.0).round() as i64;
+            if px < 0 || px >= 1000 || py < 0 || py >= 600 {
+                return true;
             }
-        }
+            let idx = (py * 1000 + px) as usize;
+            mask.get(idx).map(|&v| v != 0xFF).unwrap_or(true)
+        };
+        let walk = |q: &dyn Fn(f64, f64) -> bool| -> Option<(f64, f64)> {
+            for &(px, py) in &pts {
+                if q(px, py) {
+                    return Some((px, py));
+                }
+            }
+            None
+        };
+        let st = walk(&q_trunc);
+        let sr = walk(&q_round);
+        println!("ALT_STOP trunc={:?} round={:?} real={:?}",
+                 st.map(|p| (p.0 * 1000.0).round() / 1000.0),
+                 sr.map(|p| (p.0 * 1000.0).round() / 1000.0),
+                 real_end_x);
+        let mut stop_pt = st;
         let end_x_ours = stop_pt.map(|p| p.0).unwrap_or_else(|| pts.last().map(|p| p.0).unwrap_or(f64::NAN));
         println!("  几何校验: replay 记录的终点 x = {:.3}，我们算的 = {:.3}（差 {:.3}）",
                  end_x_real, end_x_ours, (end_x_real - end_x_ours).abs());
