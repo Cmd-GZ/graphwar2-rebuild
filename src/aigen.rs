@@ -136,6 +136,183 @@ pub fn mutate(tokens: &mut Vec<Token>, next: &mut dyn FnMut() -> u64) -> bool {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 结构还原版 AI（docs/67、docs/75、docs/76）
+// ---------------------------------------------------------------------------
+
+/// 六档难度的 GA 参数（**实测**：从 `FUN_0061b440` 的实参直读，见 `docs/67`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Params {
+    /// 每回合的代数（外层循环次数）。
+    pub generations: u32,
+    /// 种群大小 = 实参 `a5` × 5。
+    pub population: u32,
+    /// 精英个数（栈参数，六档恒为 5）。
+    pub elite: u32,
+    /// 复杂度硬上限（`V > limit` 罚 5e7），六档 5/5/10/15/25/200。
+    pub limit: u32,
+}
+
+/// 难度 1..=6 → 实测参数。越界按 6 处理。
+pub fn params(level: u8) -> Params {
+    let (generations, population, limit) = match level {
+        1 => (3, 50, 5),
+        2 => (10, 100, 5),
+        3 => (25, 150, 10),
+        4 => (100, 200, 15),
+        5 => (250, 250, 25),
+        _ => (1000, 250, 200),
+    };
+    Params { generations, population, elite: 5, limit }
+}
+
+/// 一个个体：token 序列 + 适应度。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Individual {
+    pub tokens: Vec<Token>,
+    pub score: f64,
+}
+
+/// token 的"需要的操作数"：值 0、二元 2、一元 1。
+fn arity(tag: Function) -> i64 {
+    match tag {
+        Function::Const | Function::VarX | Function::VarY | Function::VarDy => 0,
+        Function::Add | Function::Sub | Function::Mul | Function::Divide | Function::Pow => 2,
+        _ => 1,
+    }
+}
+
+/// 是不是一棵完整、合法的前缀表达式。
+pub fn is_well_formed(tokens: &[Token]) -> bool {
+    let mut need: i64 = 1;
+    for t in tokens {
+        need -= 1;
+        need += arity(t.tag);
+        if need < 0 {
+            return false;
+        }
+    }
+    need == 0
+}
+
+/// 把任意 token 序列修成合法前缀式。
+///
+/// ⚠️ **这一步是假设**：GW2 里"raw token 流 → 合法表达式"的修复代码还没定位到
+/// （`docs/76` §4.5）。这里按 GW1 `adjustFunction` 的语义实现：
+/// 走到表达式完整就**截断**，走完仍缺操作数就**补常数**。
+pub fn repair(tokens: &mut Vec<Token>, next: &mut dyn FnMut() -> u64) {
+    let mut need: i64 = 1;
+    let mut cut = tokens.len();
+    for (i, t) in tokens.iter().enumerate() {
+        need -= 1;
+        need += arity(t.tag);
+        if need == 0 {
+            cut = i + 1;
+            break;
+        }
+    }
+    tokens.truncate(cut);
+    // 走完还没闭合：补 need 个常数叶子
+    need = 1;
+    for t in tokens.iter() {
+        need -= 1;
+        need += arity(t.tag);
+    }
+    while need > 0 {
+        tokens.push(Token::constant(normal(next) * CONST_SCALE));
+        need -= 1;
+    }
+}
+
+/// 抽一个随机函数：先按 `trunc(N(0,1)×5+10)` 定长度，再抽那么多个 token，最后修复。
+///
+/// 长度公式与"抽多少发多少"都是**实测**（`docs/76`）；修复是**假设**（见 [`repair`]）。
+pub fn random_function(next: &mut dyn FnMut() -> u64) -> Vec<Token> {
+    let n = random_length(next).max(1) as usize;
+    let mut tokens: Vec<Token> = (0..n).map(|_| draw_token(next)).collect();
+    repair(&mut tokens, next);
+    tokens
+}
+
+/// 交叉：把两个父代的 token 序列各取一段拼起来，再修复。
+///
+/// 二进制里真正的交叉是 `FUN_003be7d0`（按 token 向量切片），
+/// 这里的实现只保留"各取一段"这个**可观测特征**，具体切点规则**未还原**。
+pub fn crossover(
+    a: &[Token],
+    b: &[Token],
+    next: &mut dyn FnMut() -> u64,
+) -> Vec<Token> {
+    let mut out = Vec::new();
+    if !a.is_empty() {
+        let ca = (next() % a.len() as u64) as usize + 1;
+        out.extend_from_slice(&a[..ca]);
+    }
+    if !b.is_empty() {
+        let cb = (next() % b.len() as u64) as usize;
+        out.extend_from_slice(&b[cb..]);
+    }
+    repair(&mut out, next);
+    out
+}
+
+/// 走一代（`docs/75` 的构成：80% 子代工厂 + 20% 直接复制，含 5 个精英）。
+///
+/// `score` 是适应度函数（调用方提供，规则见 `docs/74`）。
+/// 返回新一代（按分数降序，方便下一轮取精英）。
+///
+/// ⚠️ 二十个百分点里"除 5 个精英外的选取规则"**未还原**，
+/// 这里按"分数降序取前 N"实现，属**假设**。
+pub fn next_generation<F>(
+    pop: &[Individual],
+    p: &Params,
+    next: &mut dyn FnMut() -> u64,
+    mut score: F,
+) -> Vec<Individual>
+where
+    F: FnMut(&[Token]) -> f64,
+{
+    let mut sorted: Vec<Individual> = pop.to_vec();
+    sorted.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+    let n = p.population as usize;
+    let factory = n * 4 / 5; // 实测：工厂入口恒为 0.8 × 种群
+    let elite = (p.elite as usize).min(n);
+
+    let copy_slots = n - factory; // 20%：直接复制（含精英）
+
+    let mut out: Vec<Individual> = Vec::with_capacity(n);
+    // ① 精英原样保留
+    for ind in sorted.iter().take(elite) {
+        out.push(ind.clone());
+    }
+    // ② 其余复制坑位：未还原，按假设"从分数靠前的个体里随机取"
+    while out.len() < copy_slots {
+        let idx = (next() % sorted.len().max(1) as u64) as usize;
+        out.push(sorted[idx].clone());
+    }
+    // ③ 工厂坑位：80%
+    while out.len() < n {
+        let a = (next() % sorted.len().max(1) as u64) as usize;
+        let b = (next() % sorted.len().max(1) as u64) as usize;
+        let tokens = if sorted[b].tokens.len() < 20 {
+            // 第二个父代太短 → 直接重生（实测：cmp $0x14）
+            random_function(next)
+        } else {
+            let mut child = crossover(&sorted[a].tokens, &sorted[b].tokens, next);
+            mutate(&mut child, next);
+            child
+        };
+        out.push(Individual { tokens, score: 0.0 });
+    }
+    out.truncate(n);
+    for ind in out.iter_mut() {
+        ind.score = score(&ind.tokens);
+    }
+    out.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,6 +538,67 @@ mod tests {
                 "第 {} 轮变异后不是合法前缀式：{} 个 token",
                 round + 1,
                 tokens.len()
+            );
+        }
+    }
+
+    #[test]
+    fn repair_fixes_arbitrary_sequences() {
+        let mut next = stream(123);
+        for seed in 0..200u64 {
+            let mut d = vec![];
+            let mut r = ChaCha12::from_seed(&{
+                let mut k = [0u8; 32];
+                k[..8].copy_from_slice(&(seed * 31 + 7).to_le_bytes());
+                k
+            });
+            for _ in 0..(seed % 12 + 1) {
+                d.push(draw_token(&mut || r.next_u64()));
+            }
+            repair(&mut d, &mut next);
+            assert!(is_well_formed(&d), "修复后应合法：{d:?}");
+        }
+    }
+
+    #[test]
+    fn random_function_is_always_well_formed() {
+        let mut next = stream(0xBEEF);
+        for _ in 0..500 {
+            let f = random_function(&mut next);
+            assert!(!f.is_empty(), "不应生成空函数");
+            assert!(is_well_formed(&f), "生成的函数应合法：{f:?}");
+        }
+    }
+
+    #[test]
+    fn params_match_measured_table() {
+        assert_eq!(params(1), Params { generations: 3, population: 50, elite: 5, limit: 5 });
+        assert_eq!(params(3), Params { generations: 25, population: 150, elite: 5, limit: 10 });
+        assert_eq!(params(6), Params { generations: 1000, population: 250, elite: 5, limit: 200 });
+    }
+
+    #[test]
+    fn next_generation_keeps_size_and_elites() {
+        let p = params(1);
+        let mut next = stream(0xFEED);
+        // 造一个初始种群
+        let mut pop: Vec<Individual> = (0..p.population)
+            .map(|_| Individual { tokens: random_function(&mut next), score: 0.0 })
+            .collect();
+        for (i, ind) in pop.iter_mut().enumerate() {
+            ind.score = i as f64; // 分数递增
+        }
+        let best: Vec<Vec<Token>> = {
+            let mut sorted = pop.clone();
+            sorted.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+            sorted.iter().take(p.elite as usize).map(|i| i.tokens.clone()).collect()
+        };
+        let g1 = next_generation(&pop, &p, &mut next, |t| t.len() as f64);
+        assert_eq!(g1.len(), p.population as usize, "种群规模应不变");
+        for b in &best {
+            assert!(
+                g1.iter().any(|i| &i.tokens == b),
+                "精英应被原样保留"
             );
         }
     }
