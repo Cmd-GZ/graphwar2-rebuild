@@ -59,3 +59,5 @@ theme/default_font_multichannel_signed_distance_field=false
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 environment/defaults/default_clear_color=Color(0.054902, 0.145098, 0.109804, 1)
+textures/canvas_textures/default_texture_filter=2
+anti_aliasing/quality/msaa_2d=2
