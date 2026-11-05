@@ -1,0 +1,24 @@
+# recovered-src/ holds text source only. Nothing binary may ever be committed here.
+# (Graphwar.pck and everything extracted from it stays out of the repository.)
+*.gdc
+*.scn
+*.res
+*.ctex
+*.fontdata
+*.import
+*.remap
+*.pck
+*.so
+*.dll
+*.dylib
+*.exe
+*.png
+*.svg
+*.ttf
+*.otf
+*.wav
+*.mp3
+*.ogg
+*.sample
+*.bin
+__pycache__/

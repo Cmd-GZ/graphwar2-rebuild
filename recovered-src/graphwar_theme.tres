@@ -1,0 +1,121 @@
+[gd_resource type="Theme" format=3]
+
+[ext_resource type="FontFile" path="res://button_font.tres" id="1_lovya"]
+[ext_resource type="StyleBox" path="res://graphwar_style_box_flat_hover.tres" id="2_gc3sc"]
+[ext_resource type="StyleBox" path="res://graphwar_style_box_flat_pressed.tres" id="3_y3qj0"]
+[ext_resource type="FontFile" path="res://ComicRelief-Bold.ttf" id="4_5iu0c"]
+[ext_resource type="StyleBox" path="res://tab_unselected.tres" id="5_065wa"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_b54nd"]
+bg_color = Color(0.219608, 0.219608, 0.219608, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0, 0, 0, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_oxxq5"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_hm1tw"]
+bg_color = Color(0.101961, 0.231373, 0.176471, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0, 0, 0, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_r5led"]
+bg_color = Color(0.0588235, 0.156863, 0.113725, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0, 0, 0, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_c3pm7"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_bw5kj"]
+bg_color = Color(0.6, 0.6, 0.6, 0)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0, 0, 0, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_mqgns"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_f17ly"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_kmvco"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_io4ip"]
+bg_color = Color(0.101961, 0.231373, 0.176471, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0, 0, 0, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_t1w2e"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_7qouw"]
+bg_color = Color(0.101961, 0.231373, 0.176471, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_color = Color(0, 0, 0, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+expand_margin_right = 3.0
+expand_margin_bottom = 3.0
+
+[resource]
+default_font = ExtResource("4_5iu0c")
+default_font_size = 24
+Button/colors/font_color = Color(1, 1, 1, 1)
+Button/fonts/font = ExtResource("1_lovya")
+Button/styles/disabled = SubResource("StyleBoxFlat_b54nd")
+Button/styles/focus = SubResource("StyleBoxEmpty_oxxq5")
+Button/styles/hover = ExtResource("2_gc3sc")
+Button/styles/normal = SubResource("StyleBoxFlat_hm1tw")
+Button/styles/pressed = SubResource("StyleBoxFlat_r5led")
+LineEdit/colors/caret_color = Color(1, 1, 1, 1)
+LineEdit/colors/font_color = Color(1, 1, 1, 1)
+LineEdit/constants/caret_width = 3
+LineEdit/styles/focus = SubResource("StyleBoxEmpty_c3pm7")
+LineEdit/styles/normal = SubResource("StyleBoxFlat_bw5kj")
+Panel/styles/panel = ExtResource("3_y3qj0")
+TabBar/constants/h_separation = 8
+TabBar/fonts/font = ExtResource("4_5iu0c")
+TabBar/styles/tab_hovered = SubResource("StyleBoxEmpty_mqgns")
+TabBar/styles/tab_selected = SubResource("StyleBoxEmpty_f17ly")
+TabBar/styles/tab_unselected = SubResource("StyleBoxEmpty_kmvco")
+TabContainer/constants/side_margin = 10
+TabContainer/font_sizes/font_size = 50
+TabContainer/styles/panel = SubResource("StyleBoxFlat_io4ip")
+TabContainer/styles/tab_focus = SubResource("StyleBoxEmpty_t1w2e")
+TabContainer/styles/tab_hovered = ExtResource("5_065wa")
+TabContainer/styles/tab_selected = SubResource("StyleBoxFlat_7qouw")
+TabContainer/styles/tab_unselected = ExtResource("5_065wa")
+TextEdit/fonts/font = ExtResource("4_5iu0c")
+TextEdit/styles/normal = SubResource("StyleBoxFlat_bw5kj")

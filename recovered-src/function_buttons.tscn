@@ -1,0 +1,429 @@
+[gd_scene format=3]
+
+[node name="Control" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_bottom = 2.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="GraphwarButton" type="GraphwarButton" parent="."]
+input_text = "("
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 33.0
+offset_top = -89.0
+offset_right = 83.0
+offset_bottom = -39.0
+focus_mode = 0
+text = "("
+
+[node name="GraphwarButton2" type="GraphwarButton" parent="."]
+input_text = "0"
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 97.0
+offset_top = -90.0
+offset_right = 147.0
+offset_bottom = -40.0
+focus_mode = 0
+text = "0"
+
+[node name="GraphwarButton3" type="GraphwarButton" parent="."]
+input_text = "."
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 163.0
+offset_top = -90.0
+offset_right = 213.0
+offset_bottom = -40.0
+focus_mode = 0
+text = "."
+
+[node name="GraphwarButton4" type="GraphwarButton" parent="."]
+input_text = "7"
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 32.0
+offset_top = -153.0
+offset_right = 82.0
+offset_bottom = -103.0
+focus_mode = 0
+text = "7"
+
+[node name="GraphwarButton5" type="GraphwarButton" parent="."]
+input_text = "8"
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 96.0
+offset_top = -154.0
+offset_right = 146.0
+offset_bottom = -104.0
+focus_mode = 0
+text = "8"
+
+[node name="GraphwarButton6" type="GraphwarButton" parent="."]
+input_text = "9"
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 162.0
+offset_top = -154.0
+offset_right = 212.0
+offset_bottom = -104.0
+focus_mode = 0
+text = "9"
+
+[node name="GraphwarButton7" type="GraphwarButton" parent="."]
+input_text = "4"
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 33.0
+offset_top = -218.0
+offset_right = 83.0
+offset_bottom = -168.0
+focus_mode = 0
+text = "4"
+
+[node name="GraphwarButton8" type="GraphwarButton" parent="."]
+input_text = "5"
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 97.0
+offset_top = -219.0
+offset_right = 147.0
+offset_bottom = -169.0
+focus_mode = 0
+text = "5"
+
+[node name="GraphwarButton9" type="GraphwarButton" parent="."]
+input_text = "6"
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 163.0
+offset_top = -219.0
+offset_right = 213.0
+offset_bottom = -169.0
+focus_mode = 0
+text = "6"
+
+[node name="GraphwarButton10" type="GraphwarButton" parent="."]
+input_text = "1"
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 32.0
+offset_top = -282.0
+offset_right = 82.0
+offset_bottom = -232.0
+focus_mode = 0
+text = "1"
+
+[node name="GraphwarButton11" type="GraphwarButton" parent="."]
+input_text = "2"
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 96.0
+offset_top = -283.0
+offset_right = 146.0
+offset_bottom = -233.0
+focus_mode = 0
+text = "2"
+
+[node name="GraphwarButton12" type="GraphwarButton" parent="."]
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 162.0
+offset_top = -283.0
+offset_right = 212.0
+offset_bottom = -233.0
+focus_mode = 0
+text = "3"
+
+[node name="GraphwarButton13" type="GraphwarButton" parent="."]
+input_text = "x"
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 32.0
+offset_top = -347.0
+offset_right = 82.0
+offset_bottom = -297.0
+focus_mode = 0
+text = "x"
+
+[node name="GraphwarButton14" type="GraphwarButton" parent="."]
+input_text = "y"
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 96.0
+offset_top = -348.0
+offset_right = 146.0
+offset_bottom = -298.0
+focus_mode = 0
+text = "y"
+
+[node name="GraphwarButton15" type="GraphwarButton" parent="."]
+input_text = "y'"
+layout_mode = 1
+anchors_preset = -1
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 162.0
+offset_top = -348.0
+offset_right = 212.0
+offset_bottom = -298.0
+focus_mode = 0
+text = "y'"
+
+[node name="GraphwarButton16" type="GraphwarButton" parent="."]
+input_text = "exp("
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -205.0
+offset_top = -167.0
+offset_right = -155.0
+offset_bottom = -117.0
+focus_mode = 0
+text = "exp"
+
+[node name="GraphwarButton17" type="GraphwarButton" parent="."]
+input_text = "ln("
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -141.0
+offset_top = -168.0
+offset_right = -91.0
+offset_bottom = -118.0
+focus_mode = 0
+text = "ln"
+
+[node name="GraphwarButton18" type="GraphwarButton" parent="."]
+input_text = "sqrt("
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -75.0
+offset_top = -168.0
+offset_right = -25.0
+offset_bottom = -118.0
+focus_mode = 0
+text = "sqrt"
+
+[node name="GraphwarButton19" type="GraphwarButton" parent="."]
+input_text = "sin("
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -206.0
+offset_top = -231.0
+offset_right = -156.0
+offset_bottom = -181.0
+focus_mode = 0
+text = "sin"
+
+[node name="GraphwarButton20" type="GraphwarButton" parent="."]
+input_text = "cos("
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -142.0
+offset_top = -232.0
+offset_right = -92.0
+offset_bottom = -182.0
+focus_mode = 0
+text = "cos"
+
+[node name="GraphwarButton21" type="GraphwarButton" parent="."]
+input_text = "tan("
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -76.0
+offset_top = -232.0
+offset_right = -26.0
+offset_bottom = -182.0
+focus_mode = 0
+text = "tan"
+
+[node name="GraphwarButton22" type="GraphwarButton" parent="."]
+input_text = "*"
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -205.0
+offset_top = -296.0
+offset_right = -155.0
+offset_bottom = -246.0
+focus_mode = 0
+text = "*"
+
+[node name="GraphwarButton23" type="GraphwarButton" parent="."]
+input_text = "/"
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -141.0
+offset_top = -297.0
+offset_right = -91.0
+offset_bottom = -247.0
+focus_mode = 0
+text = "/"
+
+[node name="GraphwarButton24" type="GraphwarButton" parent="."]
+input_text = "^"
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -75.0
+offset_top = -297.0
+offset_right = -25.0
+offset_bottom = -247.0
+focus_mode = 0
+text = "^"
+
+[node name="GraphwarButton25" type="GraphwarButton" parent="."]
+input_text = "+"
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -206.0
+offset_top = -360.0
+offset_right = -156.0
+offset_bottom = -310.0
+focus_mode = 0
+text = "+"
+
+[node name="GraphwarButton26" type="GraphwarButton" parent="."]
+input_text = "-"
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -142.0
+offset_top = -361.0
+offset_right = -92.0
+offset_bottom = -311.0
+focus_mode = 0
+text = "-"
+
+[node name="GraphwarButton27" type="GraphwarButton" parent="."]
+input_text = "abs"
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -80.0
+offset_top = -361.0
+offset_right = -30.0
+offset_bottom = -311.0
+focus_mode = 0
+text = "abs"
+
+[node name="GraphwarButton28" type="GraphwarButton" parent="."]
+input_text = "pi"
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -206.0
+offset_top = -103.0
+offset_right = -156.0
+offset_bottom = -53.0
+focus_mode = 0
+text = "pi"
+
+[node name="GraphwarButton29" type="GraphwarButton" parent="."]
+input_text = "e"
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -142.0
+offset_top = -104.0
+offset_right = -92.0
+offset_bottom = -54.0
+focus_mode = 0
+text = "e"
+
+[node name="GraphwarButton30" type="GraphwarButton" parent="."]
+input_text = ")"
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -77.0
+offset_top = -107.0
+offset_right = -27.0
+offset_bottom = -57.0
+focus_mode = 0
+text = ")"

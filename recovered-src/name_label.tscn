@@ -1,0 +1,24 @@
+[gd_scene format=3]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_wm83o"]
+bg_color = Color(0.6, 0.6, 0.6, 0)
+border_width_left = 2
+border_width_top = 2
+border_width_right = 2
+border_width_bottom = 2
+border_color = Color(0, 0, 0, 0)
+corner_radius_top_left = 20
+corner_radius_top_right = 20
+corner_radius_bottom_right = 20
+corner_radius_bottom_left = 20
+
+[sub_resource type="Theme" id="Theme_pp4og"]
+RichTextLabel/styles/normal = SubResource("StyleBoxFlat_wm83o")
+
+[node name="RichTextLabel" type="RichTextLabel"]
+offset_right = 25.0
+offset_bottom = 40.0
+theme = SubResource("Theme_pp4og")
+fit_content = true
+scroll_active = false
+autowrap_mode = 0

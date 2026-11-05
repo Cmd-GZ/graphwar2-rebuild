@@ -1,0 +1,146 @@
+[gd_scene format=3]
+
+[ext_resource type="PackedScene" path="res://main_menu.tscn" id="1_mn60a"]
+[ext_resource type="PackedScene" path="res://play_screen.tscn" id="2_xoy4e"]
+[ext_resource type="PackedScene" path="res://campaign.tscn" id="3_hys8d"]
+[ext_resource type="PackedScene" path="res://lan_lobby.tscn" id="4_hlxbf"]
+[ext_resource type="PackedScene" path="res://GameSetup.tscn" id="5_y01t6"]
+[ext_resource type="PackedScene" path="res://chat_pop_up.tscn" id="6_dwtu7"]
+[ext_resource type="PackedScene" path="res://join_ip_pop_up.tscn" id="7_k7uhm"]
+[ext_resource type="PackedScene" path="res://connecting_pop_up.tscn" id="8_rb77e"]
+[ext_resource type="PackedScene" path="res://disconnected_pop_up.tscn" id="9_3mulq"]
+[ext_resource type="PackedScene" path="res://join_level_pop_up.tscn" id="10_w3rsp"]
+[ext_resource type="PackedScene" path="res://player_screen.tscn" id="11_jq86q"]
+[ext_resource type="PackedScene" path="res://replay_lobby.tscn" id="12_t4muj"]
+[ext_resource type="PackedScene" path="res://add_bot_pop_up.tscn" id="13_1mguc"]
+[ext_resource type="PackedScene" path="res://endgame_pop_up.tscn" id="14_korf0"]
+[ext_resource type="PackedScene" path="res://confirm_exit_pop_up.tscn" id="15_2og05"]
+[ext_resource type="Script" path="res://IAP_holder.gd" id="16_bdiff"]
+[ext_resource type="Script" path="res://android_iap.gd" id="17_snwpq"]
+[ext_resource type="Script" path="res://IAP_IOS.gd" id="18_fnnt5"]
+[ext_resource type="Script" path="res://Ad_holder.gd" id="19_f4idk"]
+[ext_resource type="Script" path="res://IOS_album_holder.gd" id="20_cag6f"]
+[ext_resource type="Script" path="res://Android_mediastore_holder.gd" id="21_2pn13"]
+
+[node name="GraphwarRootNode" type="GraphwarRootNode"]
+
+[node name="VBoxContainer" type="VBoxContainer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="ScreensControl" type="Control" parent="VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="MainMenu" parent="VBoxContainer/ScreensControl" instance=ExtResource("1_mn60a")]
+layout_mode = 1
+
+[node name="PlayScreen" parent="VBoxContainer/ScreensControl" instance=ExtResource("2_xoy4e")]
+visible = false
+layout_mode = 1
+
+[node name="Campaign" parent="VBoxContainer/ScreensControl" instance=ExtResource("3_hys8d")]
+visible = false
+layout_mode = 1
+
+[node name="LanLobby" parent="VBoxContainer/ScreensControl" instance=ExtResource("4_hlxbf")]
+visible = false
+layout_mode = 1
+
+[node name="GameSetup" parent="VBoxContainer/ScreensControl" instance=ExtResource("5_y01t6")]
+visible = false
+layout_mode = 1
+
+[node name="ChatPopUp" parent="VBoxContainer/ScreensControl" instance=ExtResource("6_dwtu7")]
+visible = false
+z_index = 10
+layout_mode = 1
+
+[node name="JoinIpPopUp" parent="VBoxContainer/ScreensControl" instance=ExtResource("7_k7uhm")]
+visible = false
+layout_mode = 1
+
+[node name="ConnectingPopUp" parent="VBoxContainer/ScreensControl" instance=ExtResource("8_rb77e")]
+visible = false
+layout_mode = 1
+
+[node name="DisconnectedPopUp" parent="VBoxContainer/ScreensControl" instance=ExtResource("9_3mulq")]
+visible = false
+z_index = 20
+layout_mode = 1
+
+[node name="JoinLevelPopUp" parent="VBoxContainer/ScreensControl" instance=ExtResource("10_w3rsp")]
+visible = false
+layout_mode = 1
+
+[node name="PlayerScreen" parent="VBoxContainer/ScreensControl" instance=ExtResource("11_jq86q")]
+visible = false
+layout_mode = 1
+
+[node name="ReplayLobby" parent="VBoxContainer/ScreensControl" instance=ExtResource("12_t4muj")]
+visible = false
+layout_mode = 1
+
+[node name="AddBotPopUp" parent="VBoxContainer/ScreensControl" instance=ExtResource("13_1mguc")]
+visible = false
+layout_mode = 1
+
+[node name="EndGamePopUp" parent="VBoxContainer/ScreensControl" instance=ExtResource("14_korf0")]
+visible = false
+z_index = 20
+layout_mode = 1
+
+[node name="ConfirmPlayExitPopUp" parent="VBoxContainer/ScreensControl" instance=ExtResource("15_2og05")]
+visible = false
+z_index = 20
+layout_mode = 1
+
+[node name="IAP_holder" type="Control" parent="."]
+visible = false
+layout_mode = 3
+anchors_preset = 0
+offset_top = 64.0
+offset_right = 40.0
+offset_bottom = 104.0
+script = ExtResource("16_bdiff")
+
+[node name="IAP_Android" type="Node" parent="IAP_holder"]
+script = ExtResource("17_snwpq")
+
+[node name="IAP_IOS" type="Node" parent="IAP_holder"]
+script = ExtResource("18_fnnt5")
+
+[node name="Ad_holder" type="Control" parent="."]
+visible = false
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+script = ExtResource("19_f4idk")
+
+[node name="GraphwarAdSwitch" type="GraphwarAdSwitch" parent="Ad_holder"]
+visible = false
+layout_mode = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="IOS_album_holder" type="Control" parent="."]
+visible = false
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+script = ExtResource("20_cag6f")
+
+[node name="Android_mediastore_holder" type="Control" parent="."]
+visible = false
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+script = ExtResource("21_2pn13")

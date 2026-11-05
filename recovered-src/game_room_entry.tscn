@@ -1,0 +1,119 @@
+[gd_scene format=3]
+
+[ext_resource type="Theme" path="res://graphwar_theme.tres" id="1_i4jrr"]
+[ext_resource type="Script" path="res://LanLobbyFontResize.gd" id="2_p5ris"]
+[ext_resource type="Theme" path="res://axis_button_theme.tres" id="3_rrv6k"]
+[ext_resource type="Texture2D" path="res://axis_option_3.svg" id="4_e5yv3"]
+[ext_resource type="Theme" path="res://game_menu_icon_theme.tres" id="5_d25j4"]
+[ext_resource type="Texture2D" path="res://fx_option.svg" id="6_t4h51"]
+[ext_resource type="Texture2D" path="res://turns_simultaneous.svg" id="7_24fl2"]
+[ext_resource type="Texture2D" path="res://turn_1m.svg" id="8_rfunx"]
+
+[node name="HBoxContainer" type="HBoxContainer"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = ExtResource("1_i4jrr")
+
+[node name="ScrollContainer" type="ScrollContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+vertical_scroll_mode = 0
+
+[node name="NameContainer" type="MarginContainer" parent="ScrollContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+script = ExtResource("2_p5ris")
+
+[node name="RoomName" type="Label" parent="ScrollContainer/NameContainer"]
+layout_mode = 2
+text = "Room Name"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="PlayersContainer" type="MarginContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.1
+script = ExtResource("2_p5ris")
+
+[node name="PlayerCount" type="Label" parent="PlayersContainer"]
+layout_mode = 2
+text = "2/4"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="ModeContainer" type="MarginContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+script = ExtResource("2_p5ris")
+
+[node name="OptionsContainer" type="HBoxContainer" parent="ModeContainer"]
+layout_mode = 2
+size_flags_stretch_ratio = 0.5
+
+[node name="MarginContainer" type="MarginContainer" parent="ModeContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AspectRatioContainer" type="AspectRatioContainer" parent="ModeContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AxisModeButton" type="GraphwarButton" parent="ModeContainer/OptionsContainer/AspectRatioContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+theme = ExtResource("3_rrv6k")
+icon = ExtResource("4_e5yv3")
+icon_alignment = 1
+expand_icon = true
+
+[node name="AspectRatioContainer2" type="AspectRatioContainer" parent="ModeContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="FunctionModeButton" type="GraphwarButton" parent="ModeContainer/OptionsContainer/AspectRatioContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+theme = ExtResource("5_d25j4")
+icon = ExtResource("6_t4h51")
+expand_icon = true
+
+[node name="AspectRatioContainer3" type="AspectRatioContainer" parent="ModeContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="TurnModeButton" type="GraphwarButton" parent="ModeContainer/OptionsContainer/AspectRatioContainer3"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+theme = ExtResource("5_d25j4")
+icon = ExtResource("7_24fl2")
+expand_icon = true
+
+[node name="AspectRatioContainer4" type="AspectRatioContainer" parent="ModeContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="TimeModeButton" type="GraphwarButton" parent="ModeContainer/OptionsContainer/AspectRatioContainer4"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+theme = ExtResource("5_d25j4")
+icon = ExtResource("8_rfunx")
+expand_icon = true
+
+[node name="MarginContainer2" type="MarginContainer" parent="ModeContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="JoinButtonContainer" type="MarginContainer" parent="."]
+layout_mode = 2
+script = ExtResource("2_p5ris")
+
+[node name="JoinButton" type="GraphwarButton" parent="JoinButtonContainer"]
+layout_mode = 2
+text = " Join "
