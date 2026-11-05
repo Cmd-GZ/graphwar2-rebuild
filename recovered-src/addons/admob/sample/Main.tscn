@@ -1,0 +1,197 @@
+[gd_scene format=3]
+
+[ext_resource type="FontFile" path="res://addons/admob/assets/fonts/arial.ttf" id="1_8wsfh"]
+[ext_resource type="Script" path="res://addons/admob/sample/Main.gd" id="2_37ndy"]
+[ext_resource type="Texture2D" path="res://addons/admob/assets/donate/Patreon_logo_with_wordmark.svg" id="3_u3swl"]
+[ext_resource type="Texture2D" path="res://addons/admob/assets/donate/Ko-fi_Logo_RGB_ColorBg.png" id="4_4w4fg"]
+[ext_resource type="Texture2D" path="res://addons/admob/assets/donate/PayPal.svg" id="5_jjamj"]
+[ext_resource type="Texture2D" path="res://addons/admob/assets/icon-76.png" id="6_garo5"]
+[ext_resource type="PackedScene" path="res://addons/admob/sample/Banner.tscn" id="7_4i44c"]
+[ext_resource type="PackedScene" path="res://addons/admob/sample/Interstitial.tscn" id="8_xq47x"]
+[ext_resource type="PackedScene" path="res://addons/admob/sample/Rewarded.tscn" id="9_1vmbs"]
+[ext_resource type="PackedScene" path="res://addons/admob/sample/RewardedInterstitial.tscn" id="10_4kv65"]
+[ext_resource type="PackedScene" path="res://addons/admob/sample/Ump.tscn" id="11_86obq"]
+[ext_resource type="Script" path="res://addons/admob/sample/MobileAds.gd" id="12_2xjfh"]
+[ext_resource type="AudioStream" path="res://addons/admob/assets/music.ogg" id="13_hs4j4"]
+
+[sub_resource type="Theme" id="Theme_1p2mi"]
+default_font = ExtResource("1_8wsfh")
+default_font_size = 20
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_tj05g"]
+bg_color = Color(0.805616, 0.781486, 0.781947, 1)
+
+[sub_resource type="GDScript" id="GDScript_1vvio"]
+script/source = "extends TextureButton
+
+func _on_pressed():
+	OS.shell_open(\"https://www.patreon.com/poingstudios\") 
+"
+
+[sub_resource type="GDScript" id="GDScript_hcar3"]
+script/source = "extends TextureButton
+
+
+func _on_pressed():
+	OS.shell_open(\"https://ko-fi.com/poingstudios\") 
+"
+
+[sub_resource type="GDScript" id="GDScript_8xyos"]
+script/source = "extends TextureButton
+
+
+func _on_pressed():
+	OS.shell_open(\"https://www.paypal.com/donate/?hosted_button_id=EBUVPEGF4BUR8\") 
+"
+
+[node name="Main" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = SubResource("Theme_1p2mi")
+script = ExtResource("2_37ndy")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.996094, 0.425781, 0, 1)
+
+[node name="Content" type="VBoxContainer" parent="Background"]
+layout_mode = 1
+anchors_preset = 14
+anchor_top = 0.5
+anchor_right = 1.0
+anchor_bottom = 0.5
+offset_top = -129.5
+offset_bottom = 129.5
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="DonateButtons" type="PanelContainer" parent="Background/Content"]
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_tj05g")
+
+[node name="HBoxContainer" type="HBoxContainer" parent="Background/Content/DonateButtons"]
+layout_mode = 2
+size_flags_horizontal = 4
+
+[node name="Patreon" type="TextureButton" parent="Background/Content/DonateButtons/HBoxContainer"]
+custom_minimum_size = Vector2(250, 60)
+layout_mode = 2
+texture_normal = ExtResource("3_u3swl")
+ignore_texture_size = true
+stretch_mode = 0
+script = SubResource("GDScript_1vvio")
+
+[node name="Ko-fi" type="TextureButton" parent="Background/Content/DonateButtons/HBoxContainer"]
+custom_minimum_size = Vector2(150, 50)
+layout_mode = 2
+texture_normal = ExtResource("4_4w4fg")
+ignore_texture_size = true
+stretch_mode = 0
+script = SubResource("GDScript_hcar3")
+
+[node name="DonateButtons2" type="PanelContainer" parent="Background/Content"]
+layout_mode = 2
+theme_override_styles/panel = SubResource("StyleBoxFlat_tj05g")
+
+[node name="HBoxContainer" type="HBoxContainer" parent="Background/Content/DonateButtons2"]
+layout_mode = 2
+size_flags_horizontal = 4
+
+[node name="PayPal" type="TextureButton" parent="Background/Content/DonateButtons2/HBoxContainer"]
+custom_minimum_size = Vector2(250, 60)
+layout_mode = 2
+texture_normal = ExtResource("5_jjamj")
+ignore_texture_size = true
+stretch_mode = 0
+script = SubResource("GDScript_8xyos")
+
+[node name="Main" type="VBoxContainer" parent="Background/Content"]
+layout_mode = 2
+
+[node name="Title" type="PanelContainer" parent="Background/Content/Main"]
+layout_mode = 2
+
+[node name="HBoxContainer" type="HBoxContainer" parent="Background/Content/Main/Title"]
+layout_mode = 2
+
+[node name="Icon" type="TextureRect" parent="Background/Content/Main/Title/HBoxContainer"]
+layout_mode = 2
+texture = ExtResource("6_garo5")
+
+[node name="Description" type="Label" parent="Background/Content/Main/Title/HBoxContainer"]
+layout_mode = 2
+theme_override_fonts/font = ExtResource("1_8wsfh")
+theme_override_font_sizes/font_size = 25
+text = "AdMob Plugin - Poing Studios"
+
+[node name="Body" type="TabContainer" parent="Background/Content/Main"]
+layout_mode = 2
+
+[node name="Banner" parent="Background/Content/Main/Body" instance=ExtResource("7_4i44c")]
+visible = false
+layout_mode = 2
+
+[node name="Interstitial" parent="Background/Content/Main/Body" instance=ExtResource("8_xq47x")]
+visible = false
+layout_mode = 2
+
+[node name="Rewarded" parent="Background/Content/Main/Body" instance=ExtResource("9_1vmbs")]
+visible = false
+layout_mode = 2
+
+[node name="RewardedInterstitial" parent="Background/Content/Main/Body" instance=ExtResource("10_4kv65")]
+visible = false
+layout_mode = 2
+
+[node name="UMP" parent="Background/Content/Main/Body" instance=ExtResource("11_86obq")]
+visible = false
+layout_mode = 2
+
+[node name="MobileAds" type="VBoxContainer" parent="Background/Content/Main/Body"]
+visible = false
+layout_mode = 2
+script = ExtResource("12_2xjfh")
+
+[node name="GetInitializationStatus" type="Button" parent="Background/Content/Main/Body/MobileAds"]
+layout_mode = 2
+text = "GetInitializationStatus"
+
+[node name="SetiOSAppPauseOnBackgroundButton" type="CheckButton" parent="Background/Content/Main/Body/MobileAds"]
+layout_mode = 2
+text = "Set iOS App Pause On Background"
+alignment = 1
+
+[node name="SetMuteMusic" type="CheckButton" parent="Background/Content/Main/Body/MobileAds"]
+layout_mode = 2
+text = "Mute Music"
+alignment = 1
+
+[node name="Music" type="AudioStreamPlayer" parent="Background/Content/Main/Body/MobileAds"]
+stream = ExtResource("13_hs4j4")
+volume_db = -10.0
+autoplay = true
+
+[node name="Output" type="RichTextLabel" parent="Background/Content"]
+visible = false
+layout_mode = 2
+text = "TEST"
+fit_content = true
+scroll_following = true
+visible_characters = 1
+visible_ratio = 0.480769
+
+[connection signal="pressed" from="Background/Content/DonateButtons/HBoxContainer/Patreon" to="Background/Content/DonateButtons/HBoxContainer/Patreon" method="_on_pressed"]
+[connection signal="pressed" from="Background/Content/DonateButtons/HBoxContainer/Ko-fi" to="Background/Content/DonateButtons/HBoxContainer/Ko-fi" method="_on_pressed"]
+[connection signal="pressed" from="Background/Content/DonateButtons2/HBoxContainer/PayPal" to="Background/Content/DonateButtons2/HBoxContainer/PayPal" method="_on_pressed"]
+[connection signal="pressed" from="Background/Content/Main/Body/MobileAds/GetInitializationStatus" to="." method="_on_get_initialization_status_pressed"]
+[connection signal="pressed" from="Background/Content/Main/Body/MobileAds/SetiOSAppPauseOnBackgroundButton" to="Background/Content/Main/Body/MobileAds" method="_on_set_ios_app_pause_on_background_button_pressed"]
+[connection signal="pressed" from="Background/Content/Main/Body/MobileAds/SetMuteMusic" to="Background/Content/Main/Body/MobileAds" method="_on_mute_music_pressed"]

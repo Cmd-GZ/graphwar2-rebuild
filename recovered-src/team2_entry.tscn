@@ -1,0 +1,243 @@
+[gd_scene format=3]
+
+[ext_resource type="Theme" path="res://graphwar_theme.tres" id="1_exe50"]
+[ext_resource type="Texture2D" path="res://arrow_left.svg" id="2_tc7ym"]
+[ext_resource type="Texture2D" path="res://minus.svg" id="3_o7ivs"]
+[ext_resource type="Script" path="res://SoldierIconMarginContainer.gd" id="4_g0ypl"]
+[ext_resource type="Texture2D" path="res://empty_soldier.svg" id="5_m17gc"]
+[ext_resource type="Texture2D" path="res://plus.svg" id="6_mnt8g"]
+[ext_resource type="Script" path="res://GameSetupPlayerEntry.gd" id="7_7bnvj"]
+[ext_resource type="Texture2D" path="res://x.svg" id="8_k7qby"]
+
+[node name="HBoxContainer" type="HBoxContainer"]
+
+[node name="MarginContainer2" type="MarginContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.05
+
+[node name="AspectRatioContainer" type="AspectRatioContainer" parent="."]
+layout_mode = 2
+stretch_mode = 1
+
+[node name="ChangeTeamButton" type="GraphwarButton" parent="AspectRatioContainer"]
+layout_mode = 2
+theme = ExtResource("1_exe50")
+text = "    "
+icon = ExtResource("2_tc7ym")
+icon_alignment = 1
+expand_icon = true
+
+[node name="MarginContainer3" type="MarginContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.05
+
+[node name="AspectRatioContainer2" type="AspectRatioContainer" parent="."]
+layout_mode = 2
+stretch_mode = 1
+
+[node name="RemoveSoldierButton" type="GraphwarButton" parent="AspectRatioContainer2"]
+layout_mode = 2
+theme = ExtResource("1_exe50")
+text = "    "
+icon = ExtResource("3_o7ivs")
+icon_alignment = 1
+expand_icon = true
+
+[node name="Spacer" type="MarginContainer" parent="."]
+visible = false
+custom_minimum_size = Vector2(10, 0)
+layout_mode = 2
+size_flags_stretch_ratio = 2.0
+
+[node name="Label2" type="Label" parent="."]
+layout_mode = 2
+text = "     "
+
+[node name="SoldierIconContainer" type="HBoxContainer" parent="."]
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="SoldierIconContainer"]
+layout_mode = 2
+script = ExtResource("4_g0ypl")
+
+[node name="SkinIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+flip_h = true
+
+[node name="FaceIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+flip_h = true
+
+[node name="HatIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+flip_h = true
+
+[node name="EmptyIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer"]
+layout_mode = 2
+texture = ExtResource("5_m17gc")
+expand_mode = 3
+flip_h = true
+
+[node name="MarginContainer2" type="MarginContainer" parent="SoldierIconContainer"]
+layout_mode = 2
+script = ExtResource("4_g0ypl")
+
+[node name="SkinIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer2"]
+layout_mode = 2
+expand_mode = 3
+flip_h = true
+
+[node name="FaceIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer2"]
+layout_mode = 2
+expand_mode = 3
+flip_h = true
+
+[node name="HatIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer2"]
+layout_mode = 2
+expand_mode = 3
+flip_h = true
+
+[node name="EmptyIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer2"]
+layout_mode = 2
+texture = ExtResource("5_m17gc")
+expand_mode = 3
+flip_h = true
+
+[node name="MarginContainer3" type="MarginContainer" parent="SoldierIconContainer"]
+layout_mode = 2
+script = ExtResource("4_g0ypl")
+
+[node name="SkinIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer3"]
+layout_mode = 2
+expand_mode = 3
+flip_h = true
+
+[node name="FaceIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer3"]
+layout_mode = 2
+expand_mode = 3
+flip_h = true
+
+[node name="HatIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer3"]
+layout_mode = 2
+expand_mode = 3
+flip_h = true
+
+[node name="EmptyIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer3"]
+layout_mode = 2
+texture = ExtResource("5_m17gc")
+expand_mode = 3
+flip_h = true
+
+[node name="MarginContainer4" type="MarginContainer" parent="SoldierIconContainer"]
+layout_mode = 2
+script = ExtResource("4_g0ypl")
+
+[node name="SkinIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer4"]
+layout_mode = 2
+expand_mode = 3
+flip_h = true
+
+[node name="FaceIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer4"]
+layout_mode = 2
+expand_mode = 3
+flip_h = true
+
+[node name="HatIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer4"]
+layout_mode = 2
+expand_mode = 3
+flip_h = true
+
+[node name="EmptyIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer4"]
+layout_mode = 2
+texture = ExtResource("5_m17gc")
+expand_mode = 3
+flip_h = true
+
+[node name="MarginContainer5" type="MarginContainer" parent="SoldierIconContainer"]
+layout_mode = 2
+script = ExtResource("4_g0ypl")
+
+[node name="SkinIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer5"]
+layout_mode = 2
+expand_mode = 3
+flip_h = true
+
+[node name="FaceIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer5"]
+layout_mode = 2
+expand_mode = 3
+flip_h = true
+
+[node name="HatIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer5"]
+layout_mode = 2
+expand_mode = 3
+flip_h = true
+
+[node name="EmptyIcon" type="TextureRect" parent="SoldierIconContainer/MarginContainer5"]
+layout_mode = 2
+texture = ExtResource("5_m17gc")
+expand_mode = 3
+flip_h = true
+
+[node name="Spacer2" type="MarginContainer" parent="."]
+visible = false
+custom_minimum_size = Vector2(10, 0)
+layout_mode = 2
+size_flags_stretch_ratio = 2.0
+
+[node name="Label" type="Label" parent="."]
+layout_mode = 2
+text = "     "
+
+[node name="AspectRatioContainer3" type="AspectRatioContainer" parent="."]
+layout_mode = 2
+stretch_mode = 1
+
+[node name="AddSoldierButton" type="GraphwarButton" parent="AspectRatioContainer3"]
+layout_mode = 2
+theme = ExtResource("1_exe50")
+text = "    "
+icon = ExtResource("6_mnt8g")
+icon_alignment = 1
+expand_icon = true
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+script = ExtResource("7_7bnvj")
+
+[node name="PlayerNameLabel" type="Label" parent="MarginContainer"]
+layout_mode = 2
+theme = ExtResource("1_exe50")
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="RankIcon" type="TextureRect" parent="."]
+layout_mode = 2
+expand_mode = 3
+
+[node name="MarginContainer4" type="MarginContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.05
+
+[node name="AspectRatioContainer4" type="AspectRatioContainer" parent="."]
+layout_mode = 2
+stretch_mode = 1
+
+[node name="RemovePlayerButton" type="GraphwarButton" parent="AspectRatioContainer4"]
+layout_mode = 2
+theme = ExtResource("1_exe50")
+text = "    "
+icon = ExtResource("8_k7qby")
+icon_alignment = 1
+expand_icon = true
+
+[node name="MarginContainer5" type="MarginContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.05

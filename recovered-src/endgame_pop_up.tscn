@@ -1,0 +1,349 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://MarginContainer.gd" id="1_6jxq5"]
+[ext_resource type="Theme" path="res://graphwar_theme.tres" id="2_5lfaf"]
+[ext_resource type="Theme" path="res://title_theme.tres" id="3_ic6gm"]
+[ext_resource type="Script" path="res://HBoxVictoryIcon.gd" id="4_78bl2"]
+[ext_resource type="Texture2D" path="res://skins/bot_3.svg" id="5_gpwpv"]
+[ext_resource type="Script" path="res://MarginContainerPopUpBack.gd" id="6_1swbn"]
+[ext_resource type="Script" path="res://ExitButtonContainer.gd" id="7_2xy61"]
+[ext_resource type="Theme" path="res://long_press_ghost_button_theme.tres" id="8_4l8uo"]
+[ext_resource type="Texture2D" path="res://return.svg" id="9_sm2af"]
+[ext_resource type="Theme" path="res://long_press_button_theme.tres" id="10_p8p51"]
+
+[node name="EndgamePopUp" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 1.0
+offset_top = 1.0
+offset_right = 1.0
+offset_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 1
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+z_index = 5
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 3
+script = ExtResource("1_6jxq5")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer"]
+layout_mode = 2
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="HBoxContainer2" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+size_flags_stretch_ratio = 3.0
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="MarginContainer2" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 2.0
+
+[node name="Panel" type="Panel" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme = ExtResource("2_5lfaf")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2"]
+layout_mode = 2
+
+[node name="SelfVictoryLabel" type="Label" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer"]
+layout_mode = 2
+theme = ExtResource("3_ic6gm")
+theme_override_font_sizes/font_size = 70
+horizontal_alignment = 1
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+alignment = 1
+script = ExtResource("4_78bl2")
+
+[node name="VictoryPlayerContainer1" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+stretch_mode = 1
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer1"]
+layout_mode = 2
+
+[node name="SkinIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer1/MarginContainer"]
+layout_mode = 2
+texture = ExtResource("5_gpwpv")
+expand_mode = 3
+
+[node name="FaceIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer1/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="HatIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer1/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="VictoryPlayerContainer2" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+stretch_mode = 1
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer2"]
+layout_mode = 2
+
+[node name="SkinIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer2/MarginContainer"]
+layout_mode = 2
+texture = ExtResource("5_gpwpv")
+expand_mode = 3
+
+[node name="FaceIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer2/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="HatIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer2/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="VictoryPlayerContainer3" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+stretch_mode = 1
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer3"]
+layout_mode = 2
+
+[node name="SkinIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer3/MarginContainer"]
+layout_mode = 2
+texture = ExtResource("5_gpwpv")
+expand_mode = 3
+
+[node name="FaceIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer3/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="HatIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer3/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="VictoryPlayerContainer4" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+stretch_mode = 1
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer4"]
+layout_mode = 2
+
+[node name="SkinIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer4/MarginContainer"]
+layout_mode = 2
+texture = ExtResource("5_gpwpv")
+expand_mode = 3
+
+[node name="FaceIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer4/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="HatIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer4/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="VictoryPlayerContainer5" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+stretch_mode = 1
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer5"]
+layout_mode = 2
+
+[node name="SkinIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer5/MarginContainer"]
+layout_mode = 2
+texture = ExtResource("5_gpwpv")
+expand_mode = 3
+
+[node name="FaceIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer5/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="HatIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer5/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="VictoryPlayerContainer6" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+stretch_mode = 1
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer6"]
+layout_mode = 2
+
+[node name="SkinIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer6/MarginContainer"]
+layout_mode = 2
+texture = ExtResource("5_gpwpv")
+expand_mode = 3
+
+[node name="FaceIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer6/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="HatIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer6/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="VictoryPlayerContainer7" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+stretch_mode = 1
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer7"]
+layout_mode = 2
+
+[node name="SkinIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer7/MarginContainer"]
+layout_mode = 2
+texture = ExtResource("5_gpwpv")
+expand_mode = 3
+
+[node name="FaceIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer7/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="HatIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer7/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="VictoryPlayerContainer8" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+stretch_mode = 1
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer8"]
+layout_mode = 2
+
+[node name="SkinIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer8/MarginContainer"]
+layout_mode = 2
+texture = ExtResource("5_gpwpv")
+expand_mode = 3
+
+[node name="FaceIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer8/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="HatIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer8/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="VictoryPlayerContainer9" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+stretch_mode = 1
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer9"]
+layout_mode = 2
+
+[node name="SkinIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer9/MarginContainer"]
+layout_mode = 2
+texture = ExtResource("5_gpwpv")
+expand_mode = 3
+
+[node name="FaceIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer9/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="HatIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer9/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="VictoryPlayerContainer10" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer"]
+visible = false
+layout_mode = 2
+size_flags_horizontal = 3
+stretch_mode = 1
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer10"]
+layout_mode = 2
+
+[node name="SkinIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer10/MarginContainer"]
+layout_mode = 2
+texture = ExtResource("5_gpwpv")
+expand_mode = 3
+
+[node name="FaceIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer10/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="HatIcon" type="TextureRect" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/VictoryPlayerContainer10/MarginContainer"]
+layout_mode = 2
+expand_mode = 3
+
+[node name="TeamVictoryLabel" type="Label" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer"]
+layout_mode = 2
+theme = ExtResource("2_5lfaf")
+theme_override_font_sizes/font_size = 40
+horizontal_alignment = 1
+
+[node name="MarginContainer3" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="HBoxContainer3" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="MarginContainer2" type="MarginContainer" parent="."]
+layout_mode = 0
+size_flags_vertical = 3
+script = ExtResource("6_1swbn")
+
+[node name="ExitButtonContainer" type="MarginContainer" parent="MarginContainer2"]
+layout_mode = 2
+script = ExtResource("7_2xy61")
+
+[node name="ClipButton" type="GraphwarButton" parent="MarginContainer2/ExitButtonContainer"]
+clip_children = 2
+layout_mode = 2
+theme = ExtResource("8_4l8uo")
+text = "     "
+icon = ExtResource("9_sm2af")
+icon_alignment = 1
+expand_icon = true
+
+[node name="AnimationRect" type="ColorRect" parent="MarginContainer2/ExitButtonContainer/ClipButton"]
+show_behind_parent = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.101961, 0.231373, 0.176471, 1)
+
+[node name="LongPressButton" type="GraphwarButton" parent="MarginContainer2/ExitButtonContainer"]
+input_text = "exit_play"
+clip_children = 2
+layout_mode = 2
+theme = ExtResource("10_p8p51")
+text = "     "
+icon = ExtResource("9_sm2af")
+icon_alignment = 1
+expand_icon = true

@@ -1,0 +1,254 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://MarginContainerPopUpBack.gd" id="1_ev5kn"]
+[ext_resource type="Script" path="res://ExitButtonContainer.gd" id="2_xttg1"]
+[ext_resource type="Theme" path="res://long_press_ghost_button_theme.tres" id="3_xxnlv"]
+[ext_resource type="Texture2D" path="res://return.svg" id="4_4xrfp"]
+[ext_resource type="Theme" path="res://long_press_button_theme.tres" id="5_ycjik"]
+[ext_resource type="Theme" path="res://graphwar_theme.tres" id="6_vmpmg"]
+[ext_resource type="Texture2D" path="res://skins/bot_0.svg" id="7_xmpsy"]
+[ext_resource type="Texture2D" path="res://skins/bot_1.svg" id="8_jxnx8"]
+[ext_resource type="Texture2D" path="res://skins/bot_2.svg" id="9_gv3cw"]
+[ext_resource type="Texture2D" path="res://skins/bot_3.svg" id="10_syi3p"]
+[ext_resource type="Texture2D" path="res://skins/bot_4.svg" id="11_u6060"]
+[ext_resource type="Texture2D" path="res://skins/bot_5.svg" id="12_u1xep"]
+[ext_resource type="Script" path="res://IpPopUpMargin.gd" id="13_kbtv3"]
+[ext_resource type="Script" path="res://AdContainer.gd" id="14_lob0v"]
+
+[node name="AddBotPopUp" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 3
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer"]
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+script = ExtResource("1_ev5kn")
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer/MarginContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+mouse_filter = 2
+
+[node name="ExitButtonContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/MarginContainer/HBoxContainer"]
+layout_mode = 2
+script = ExtResource("2_xttg1")
+
+[node name="ClipButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/MarginContainer/HBoxContainer/ExitButtonContainer"]
+clip_children = 2
+layout_mode = 2
+theme = ExtResource("3_xxnlv")
+text = "     "
+icon = ExtResource("4_4xrfp")
+icon_alignment = 1
+expand_icon = true
+
+[node name="AnimationRect" type="ColorRect" parent="MarginContainer/VBoxContainer/MarginContainer/HBoxContainer/ExitButtonContainer/ClipButton"]
+show_behind_parent = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.101961, 0.231373, 0.176471, 1)
+
+[node name="LongPressButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/MarginContainer/HBoxContainer/ExitButtonContainer"]
+input_text = "cancel_add_bot"
+clip_children = 2
+layout_mode = 2
+theme = ExtResource("5_ycjik")
+text = "     "
+icon = ExtResource("4_4xrfp")
+icon_alignment = 1
+expand_icon = true
+
+[node name="HBoxContainer2" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+size_flags_stretch_ratio = 10.0
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="MarginContainer2" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 6.0
+
+[node name="Panel" type="Panel" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme = ExtResource("6_vmpmg")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2"]
+layout_mode = 2
+theme = ExtResource("6_vmpmg")
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+size_flags_stretch_ratio = 0.1
+
+[node name="OptionsContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AspectRatioContainer" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AddBotButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer/AspectRatioContainer"]
+input_text = "add_bot_0"
+layout_mode = 2
+size_flags_horizontal = 3
+icon = ExtResource("7_xmpsy")
+expand_icon = true
+
+[node name="MarginContainer4" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.2
+
+[node name="AspectRatioContainer2" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AddBotButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer/AspectRatioContainer2"]
+input_text = "add_bot_1"
+layout_mode = 2
+size_flags_horizontal = 3
+icon = ExtResource("8_jxnx8")
+expand_icon = true
+
+[node name="MarginContainer3" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.2
+
+[node name="AspectRatioContainer4" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AddBotButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer/AspectRatioContainer4"]
+input_text = "add_bot_2"
+layout_mode = 2
+size_flags_horizontal = 3
+icon = ExtResource("9_gv3cw")
+expand_icon = true
+
+[node name="MarginContainer5" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="OptionsContainer2" type="HBoxContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AspectRatioContainer" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AddBotButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer2/AspectRatioContainer"]
+input_text = "add_bot_3"
+layout_mode = 2
+size_flags_horizontal = 3
+icon = ExtResource("10_syi3p")
+expand_icon = true
+
+[node name="MarginContainer4" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.2
+
+[node name="AspectRatioContainer2" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AddBotButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer2/AspectRatioContainer2"]
+input_text = "add_bot_4"
+layout_mode = 2
+size_flags_horizontal = 3
+icon = ExtResource("11_u6060")
+expand_icon = true
+
+[node name="MarginContainer3" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.2
+
+[node name="AspectRatioContainer4" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AddBotButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer2/AspectRatioContainer4"]
+input_text = "add_bot_5"
+layout_mode = 2
+size_flags_horizontal = 3
+icon = ExtResource("12_u1xep")
+expand_icon = true
+
+[node name="MarginContainer5" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="HBoxContainer3" type="HBoxContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer"]
+layout_mode = 2
+
+[node name="MarginContainer3" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3"]
+layout_mode = 2
+script = ExtResource("13_kbtv3")
+
+[node name="GraphwarButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3/MarginContainer"]
+input_text = "cancel_add_bot"
+layout_mode = 2
+theme = ExtResource("6_vmpmg")
+text = " Cancel "
+
+[node name="MarginContainer4" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="MarginContainer3" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="HBoxContainer3" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="AdContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer"]
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+script = ExtResource("14_lob0v")

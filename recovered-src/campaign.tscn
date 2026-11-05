@@ -1,0 +1,92 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://MarginContainer.gd" id="1_21257"]
+[ext_resource type="Script" path="res://ExitButtonContainer.gd" id="2_duyqt"]
+[ext_resource type="Theme" path="res://long_press_ghost_button_theme.tres" id="3_2waiy"]
+[ext_resource type="Texture2D" path="res://return.svg" id="4_wpmtj"]
+[ext_resource type="Theme" path="res://long_press_button_theme.tres" id="5_ykn22"]
+[ext_resource type="Script" path="res://LanLobbyTitle.gd" id="6_gtl80"]
+[ext_resource type="Theme" path="res://title_theme.tres" id="7_tewnu"]
+[ext_resource type="Theme" path="res://campaign_button_theme_2.tres" id="8_ujchf"]
+[ext_resource type="Script" path="res://CampaingLevelsButtons.gd" id="9_rl731"]
+[ext_resource type="Script" path="res://AdContainer.gd" id="10_8yt7q"]
+
+[node name="Campaign" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_21257")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+
+[node name="ExitButtonContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+script = ExtResource("2_duyqt")
+
+[node name="ClipButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer/ExitButtonContainer"]
+clip_children = 2
+layout_mode = 2
+theme = ExtResource("3_2waiy")
+text = "     "
+icon = ExtResource("4_wpmtj")
+icon_alignment = 1
+expand_icon = true
+
+[node name="AnimationRect" type="ColorRect" parent="MarginContainer/VBoxContainer/HBoxContainer/ExitButtonContainer/ClipButton"]
+show_behind_parent = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.101961, 0.231373, 0.176471, 1)
+
+[node name="LongPressButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer/ExitButtonContainer"]
+input_text = "exit_campaign"
+clip_children = 2
+layout_mode = 2
+theme = ExtResource("5_ykn22")
+text = "     "
+icon = ExtResource("4_wpmtj")
+icon_alignment = 1
+expand_icon = true
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+script = ExtResource("6_gtl80")
+
+[node name="Label" type="Label" parent="MarginContainer/VBoxContainer/HBoxContainer/MarginContainer"]
+layout_mode = 2
+theme = ExtResource("7_tewnu")
+text = "CAMPAIGN"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="Control" type="Control" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+theme = ExtResource("8_ujchf")
+script = ExtResource("9_rl731")
+
+[node name="AdContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer"]
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+script = ExtResource("10_8yt7q")

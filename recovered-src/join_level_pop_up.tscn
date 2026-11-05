@@ -1,0 +1,258 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://MarginContainerPopUpBack.gd" id="1_33vur"]
+[ext_resource type="Script" path="res://ExitButtonContainer.gd" id="2_mvp5a"]
+[ext_resource type="Theme" path="res://long_press_ghost_button_theme.tres" id="3_knkck"]
+[ext_resource type="Texture2D" path="res://return.svg" id="4_tcxpu"]
+[ext_resource type="Theme" path="res://long_press_button_theme.tres" id="5_csbqr"]
+[ext_resource type="Theme" path="res://graphwar_theme.tres" id="6_oh3bi"]
+[ext_resource type="Script" path="res://LevelTitleLabel.gd" id="7_uyuxq"]
+[ext_resource type="Script" path="res://IpPopUpMargin.gd" id="8_sbcxc"]
+[ext_resource type="Script" path="res://LevelDescriptionScrollContainer.gd" id="9_mll1p"]
+[ext_resource type="Theme" path="res://transparent_text_edit.tres" id="10_n74ka"]
+[ext_resource type="Script" path="res://OptionsContainer.gd" id="11_0xldd"]
+[ext_resource type="Theme" path="res://axis_button_theme.tres" id="12_pmqqw"]
+[ext_resource type="Texture2D" path="res://axis_option_3.svg" id="13_aoo0o"]
+[ext_resource type="Theme" path="res://game_menu_icon_theme.tres" id="14_xcjkb"]
+[ext_resource type="Texture2D" path="res://fx_option.svg" id="15_ogd4k"]
+[ext_resource type="Texture2D" path="res://turns_simultaneous.svg" id="16_vulrv"]
+[ext_resource type="Script" path="res://TurnLimitText.gd" id="17_vd70i"]
+[ext_resource type="Script" path="res://AdContainer.gd" id="18_4mb0h"]
+
+[node name="JoinLevelPopUp" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 3
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer"]
+layout_mode = 2
+
+[node name="MarginContainer2" type="MarginContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+script = ExtResource("1_33vur")
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer/MarginContainer2"]
+layout_mode = 2
+size_flags_vertical = 3
+mouse_filter = 2
+
+[node name="ExitButtonContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/MarginContainer2/HBoxContainer"]
+layout_mode = 2
+script = ExtResource("2_mvp5a")
+
+[node name="ClipButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/MarginContainer2/HBoxContainer/ExitButtonContainer"]
+clip_children = 2
+layout_mode = 2
+theme = ExtResource("3_knkck")
+text = "     "
+icon = ExtResource("4_tcxpu")
+icon_alignment = 1
+expand_icon = true
+
+[node name="AnimationRect" type="ColorRect" parent="MarginContainer/VBoxContainer/MarginContainer2/HBoxContainer/ExitButtonContainer/ClipButton"]
+show_behind_parent = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.101961, 0.231373, 0.176471, 1)
+
+[node name="LongPressButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/MarginContainer2/HBoxContainer/ExitButtonContainer"]
+input_text = "cancel_level"
+clip_children = 2
+layout_mode = 2
+theme = ExtResource("5_csbqr")
+text = "     "
+icon = ExtResource("4_tcxpu")
+icon_alignment = 1
+expand_icon = true
+
+[node name="HBoxContainer2" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+size_flags_stretch_ratio = 10.0
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="MarginContainer2" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 6.0
+
+[node name="Panel" type="Panel" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme = ExtResource("6_oh3bi")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2"]
+layout_mode = 2
+
+[node name="LevelTitleLabel" type="Label" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer"]
+layout_mode = 2
+theme = ExtResource("6_oh3bi")
+text = "Level 0"
+horizontal_alignment = 1
+vertical_alignment = 1
+script = ExtResource("7_uyuxq")
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+size_flags_stretch_ratio = 2.0
+
+[node name="MarginContainer2" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 20.0
+script = ExtResource("8_sbcxc")
+
+[node name="ScrollContainer" type="ScrollContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/MarginContainer"]
+layout_mode = 2
+script = ExtResource("9_mll1p")
+
+[node name="LevelDescriptionEdit" type="TextEdit" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/MarginContainer/ScrollContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+mouse_filter = 1
+theme = ExtResource("10_n74ka")
+text = "This is the level description"
+editable = false
+context_menu_enabled = false
+shortcut_keys_enabled = false
+selecting_enabled = false
+drag_and_drop_selection_enabled = false
+virtual_keyboard_enabled = false
+middle_mouse_paste_enabled = false
+wrap_mode = 1
+scroll_fit_content_height = true
+
+[node name="MarginContainer3" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="OptionsContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+size_flags_stretch_ratio = 0.5
+script = ExtResource("11_0xldd")
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AspectRatioContainer" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AxisModeButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer/AspectRatioContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme = ExtResource("12_pmqqw")
+icon = ExtResource("13_aoo0o")
+icon_alignment = 1
+expand_icon = true
+
+[node name="AspectRatioContainer2" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="FunctionModeButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer/AspectRatioContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme = ExtResource("14_xcjkb")
+icon = ExtResource("15_ogd4k")
+expand_icon = true
+
+[node name="AspectRatioContainer3" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="TurnModeButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer/AspectRatioContainer3"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme = ExtResource("14_xcjkb")
+icon = ExtResource("16_vulrv")
+expand_icon = true
+
+[node name="AspectRatioContainer4" type="AspectRatioContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+script = ExtResource("17_vd70i")
+
+[node name="TimeModeButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer/AspectRatioContainer4"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme = ExtResource("14_xcjkb")
+expand_icon = true
+
+[node name="MarginContainer2" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="HBoxContainer3" type="HBoxContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer"]
+layout_mode = 2
+
+[node name="MarginContainer3" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3"]
+layout_mode = 2
+script = ExtResource("8_sbcxc")
+
+[node name="GraphwarButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3/MarginContainer"]
+input_text = "cancel_level"
+layout_mode = 2
+theme = ExtResource("6_oh3bi")
+text = " Cancel "
+
+[node name="MarginContainer2" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3"]
+layout_mode = 2
+script = ExtResource("8_sbcxc")
+
+[node name="GraphwarButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3/MarginContainer2"]
+input_text = "start_level"
+layout_mode = 2
+theme = ExtResource("6_oh3bi")
+text = "  Start  "
+
+[node name="MarginContainer4" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="MarginContainer3" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="HBoxContainer3" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="AdContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer"]
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+script = ExtResource("18_4mb0h")

@@ -1,0 +1,176 @@
+[gd_scene format=3]
+
+[ext_resource type="Theme" path="res://graphwar_theme.tres" id="1_i7138"]
+[ext_resource type="Script" path="res://IpPopUpMargin.gd" id="2_yodon"]
+[ext_resource type="Script" path="res://AdContainer.gd" id="3_mioam"]
+[ext_resource type="Script" path="res://MarginContainerPopUpBack.gd" id="4_j4h83"]
+[ext_resource type="Script" path="res://ExitButtonContainer.gd" id="5_bwydb"]
+[ext_resource type="Theme" path="res://long_press_ghost_button_theme.tres" id="6_tyhlv"]
+[ext_resource type="Texture2D" path="res://return.svg" id="7_3lqij"]
+[ext_resource type="Theme" path="res://long_press_button_theme.tres" id="8_g4fau"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_rjan3"]
+bg_color = Color(0.6, 0.6, 0.6, 0)
+
+[node name="ConfirmExitPopUp" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+size_flags_horizontal = 3
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer"]
+layout_mode = 2
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="HBoxContainer2" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="MarginContainer2" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 2.0
+
+[node name="Panel" type="Panel" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme = ExtResource("1_i7138")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2"]
+layout_mode = 2
+
+[node name="MarginContainer2" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="HBoxContainer" type="HBoxContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer"]
+layout_mode = 2
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+script = ExtResource("2_yodon")
+
+[node name="Label" type="Label" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer/MarginContainer"]
+layout_mode = 2
+theme = ExtResource("1_i7138")
+theme_override_styles/normal = SubResource("StyleBoxFlat_rjan3")
+text = "Are you sure you want to exit?"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="HBoxContainer3" type="HBoxContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer"]
+layout_mode = 2
+
+[node name="MarginContainer3" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="MarginContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3"]
+layout_mode = 2
+script = ExtResource("2_yodon")
+
+[node name="GraphwarButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3/MarginContainer"]
+input_text = "cancel_exit_play"
+layout_mode = 2
+theme = ExtResource("1_i7138")
+text = "  No  "
+
+[node name="MarginContainer5" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="MarginContainer2" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3"]
+layout_mode = 2
+script = ExtResource("2_yodon")
+
+[node name="GraphwarButton" type="GraphwarButton" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3/MarginContainer2"]
+input_text = "exit_play"
+layout_mode = 2
+theme = ExtResource("1_i7138")
+text = "  Yes  "
+
+[node name="MarginContainer4" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer/HBoxContainer3"]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="MarginContainer3" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2/MarginContainer2/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+size_flags_stretch_ratio = 0.2
+
+[node name="MarginContainer3" type="MarginContainer" parent="MarginContainer/VBoxContainer/HBoxContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="HBoxContainer3" type="HBoxContainer" parent="MarginContainer/VBoxContainer"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="AdContainer" type="MarginContainer" parent="MarginContainer/VBoxContainer"]
+custom_minimum_size = Vector2(0, 60)
+layout_mode = 2
+script = ExtResource("3_mioam")
+
+[node name="MarginContainer2" type="MarginContainer" parent="."]
+layout_mode = 0
+size_flags_vertical = 3
+script = ExtResource("4_j4h83")
+
+[node name="ExitButtonContainer" type="MarginContainer" parent="MarginContainer2"]
+layout_mode = 2
+script = ExtResource("5_bwydb")
+
+[node name="ClipButton" type="GraphwarButton" parent="MarginContainer2/ExitButtonContainer"]
+clip_children = 2
+layout_mode = 2
+theme = ExtResource("6_tyhlv")
+text = "     "
+icon = ExtResource("7_3lqij")
+icon_alignment = 1
+expand_icon = true
+
+[node name="AnimationRect" type="ColorRect" parent="MarginContainer2/ExitButtonContainer/ClipButton"]
+show_behind_parent = true
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.101961, 0.231373, 0.176471, 1)
+
+[node name="LongPressButton" type="GraphwarButton" parent="MarginContainer2/ExitButtonContainer"]
+input_text = "cancel_exit_play"
+clip_children = 2
+layout_mode = 2
+theme = ExtResource("8_g4fau")
+text = "     "
+icon = ExtResource("7_3lqij")
+icon_alignment = 1
+expand_icon = true
