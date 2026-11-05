@@ -4,16 +4,19 @@ const ROOT = '/home/user/MyProject/gw2';
 const frida = require(path.join(ROOT, '.rea-runtime/node_modules/frida'));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const SRC = `
-let ready = false; const seqs = []; let depth = 0; let cur = [];
+let ready = false; const seqs = []; let depth = 0; let cur = []; let drewLen = false;
 const timer = setInterval(() => {
   if (ready) return;
   const m = Process.enumerateModules().find(x => /graphwarrust/i.test(x.name));
   if (!m) return; ready = true; clearInterval(timer);
   try {
     Interceptor.attach(m.base.add(ptr('0x4ef020')), {
-      onEnter() { if (depth++ === 0) cur = []; },
-      onLeave() { if (--depth === 0 && cur.length && seqs.length < 25) seqs.push(cur.slice()); }
+      onEnter() { if (depth++ === 0) { cur = []; drewLen = false; } },
+      onLeave() { if (--depth === 0 && drewLen && cur.length && seqs.length < 40) seqs.push(cur.slice()); }
     });
+  } catch (e) {}
+  try {
+    Interceptor.attach(m.base.add(ptr('0x4ef0b6')), { onEnter() { if (depth === 1) drewLen = true; } });
   } catch (e) {}
   try {
     Interceptor.attach(m.base.add(ptr('0x4ef2b0')), {
