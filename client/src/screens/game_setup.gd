@@ -37,7 +37,12 @@ var _ip_label: Label
 var _start_button: GwButton
 
 func _ready() -> void:
-	font_divisor = 40        # GameSetupPlayerEntry.gd 是 /40（RoomName 是 /30）
+	# 原版这一屏的字号来源（每个容器挂不同脚本，docs/137 §5）：
+	#   RoomName.gd / LanLobbyTitle.gd（队名、GhostButton）/ LobbyButtonContainer.gd（底栏）
+	#   / ExitButtonContainer.gd  —— 全是 **宽/30**；
+	#   只有玩家行 `GameSetupPlayerEntry.gd` 是 **宽/40**（见 _player_row）。
+	# 以前整屏写 40，于是标题/队名/Start 全部小一号（真帧 64 vs 我们 48）。
+	font_divisor = 30
 	super()
 
 func build() -> void:
@@ -47,122 +52,182 @@ func build() -> void:
 	rust_root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	rust_root.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	f.vbox.add_child(rust_root)
-	var vbox := GwUI.vbox("VBoxContainer", 8, rust_root)
+	var vbox := GwUI.vbox("VBoxContainer", GwUI.SEPARATION, rust_root)
 	# rust_root 是普通 Control（不是容器），子节点得自己铺满 —— 否则整个内容会缩成最小尺寸。
 	vbox.set_anchors_preset(Control.PRESET_FULL_RECT)
 
 	# ---------------- 顶栏 ----------------
-	var top := GwUI.hbox("HBoxContainer", 8, vbox)
+	var top := GwUI.hbox("HBoxContainer", GwUI.SEPARATION, vbox)
 	top.add_child(GwUI.exit_pair(GwCommands.EXIT_GAME_SETUP))
 
-	var ghost_m := GwUI.margin("MarginContainer4", 4, top)
-	var ghost := GwButton.make("         ")
+	# GhostButton：原版是 `invisible_theme` 的 GraphwarButton，9 个空格 ⇒ 真帧宽 **159**
+	# （`docs/137` §5，宿主导出的 `@@NODE GhostButton ... size=(159,96)`）。它不画任何东西，
+	# 唯一作用就是把标题往右顶 159 px。
+	var ghost_m := GwUI.margin("MarginContainer4", 0, top)
+	ghost_m.size_flags_horizontal = Control.SIZE_FILL
+	# 宽度直接钉成真值 159：`GraphwarButton`（Rust）对"9 个空格"的度量与我们 Godot
+	# `Button` 不同（我们的空格是 28 px/个 ⇒ 252），只有钉住才能让标题落在真帧的 x=313。
+	var ghost := GwButton.make("")
 	ghost.name = "GhostButton"
+	ghost.custom_minimum_size = Vector2(159, 96)
 	ghost.disabled = true
 	ghost.flat = true
 	ghost.tooltip_text = "原版这里是空白占位按钮（LanLobbyTitle.gd 只调字号）"
 	ghost_m.add_child(ghost)
 
-	var room_m := GwUI.hbox("RoomName", 4, top)
+	var room_m := GwUI.hbox("RoomName", GwUI.SEPARATION, top)
 	room_m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_room_edit = LineEdit.new()
 	_room_edit.name = "RoomNameLineEdit"
 	_room_edit.text = "Graphwar Game"
-	_room_edit.custom_minimum_size = Vector2(240, 40)
+	# 原版这个 LineEdit 挂 `title_theme.tres`：`default_font = EraserRegular`（手写体）+
+	# 三个 stylebox 全是 `StyleBoxEmpty`（没有框）。字号由 `RoomName.gd` 设成 宽/30 = 64。
+	# 手写体的字形只有大写 ⇒ 真帧上显示成 `GRAPHWAR GAME`（不是 .tscn 里那个大小写）。
+	var tf := GwThemeFactory.title_font()
+	if tf != null:
+		_room_edit.add_theme_font_override("font", tf)
+	_room_edit.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
+	_room_edit.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	_room_edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_room_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_room_edit.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_room_edit.tooltip_text = "房间名。原版这个 LineEdit 是 Rust 类，text_changed→on_text_change（docs/104 §6.3）"
 	_room_edit.text_changed.connect(_on_room_name_changed)
 	room_m.add_child(_room_edit)
 
-	var chat_m := GwUI.margin("MarginContainer2", 4, top)
-	_chat_button = GwButton.make("")
+	# 聊天 / 上锁：原版是 `text = "     "`（5 个空格）+ `icon` + `expand_icon`，
+	# 与返回键同一套 ⇒ 真帧**都是 146×96**（宿主导出）。
+	var chat_m := GwUI.margin("MarginContainer2", 0, top)
+	chat_m.size_flags_horizontal = Control.SIZE_FILL
+	_chat_button = GwButton.make("     ")
 	_chat_button.name = "ChatButtonSetup"
 	_chat_button.input_text = GwCommands.TOGGLE_CHAT
 	_chat_button.icon = GwIcons.get_icon("no_chat")
-	_chat_button.custom_minimum_size = Vector2(48, 48)
+	_chat_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_chat_button.expand_icon = true
 	_chat_button.tooltip_text = "聊天（toggle_chat）"
 	chat_m.add_child(_chat_button)
 
-	var lock_m := GwUI.margin("MarginContainer3", 4, top)
-	_lock_button = GwButton.make("")
+	var lock_m := GwUI.margin("MarginContainer3", 0, top)
+	lock_m.size_flags_horizontal = Control.SIZE_FILL
+	_lock_button = GwButton.make("     ")
 	_lock_button.name = "LockButton"
 	_lock_button.input_text = GwCommands.LOCK_GAME
 	_lock_button.icon = GwIcons.get_icon("unlock")
-	_lock_button.custom_minimum_size = Vector2(48, 48)
+	_lock_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lock_button.expand_icon = true
 	lock_m.add_child(_lock_button)
 
 	# ---------------- 玩家列表 ----------------
-	var list_m := GwUI.margin("MarginContainer2", 4, vbox)
+	var list_m := GwUI.margin("MarginContainer2", 0, vbox)
 	list_m.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	# 原版这里套了一层 `ScrollContainer`；本项目**不用**它：ScrollContainer 的最小尺寸等于
 	# 内容最小尺寸，两列玩家表会把整屏撑爆（实测：整个 GameSetup 被推出 1280×720）。
 	# 代价是玩家很多时不会滚动（下面 ROW_LIMIT 之外的行只能靠缩小窗口看）。见 docs/108 §7。
-	var players_row := GwUI.hbox("PlayerListContainer", 8, list_m)
+	var players_row := GwUI.hbox("PlayerListContainer", GwUI.SEPARATION, list_m)
 	players_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
 	_team1 = GwUI.vbox("Team1Container", 6, players_row)
 	_team1.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_team1.size_flags_stretch_ratio = 1.0
 	_team1.add_child(_team_title("Team 1"))
-	var divider := Control.new()
-	divider.name = "MarginContainer"
+	# 中缝：原版是 `MarginContainer/ColorRect(custom_minimum_size = (10,0))`，
+	# ColorRect **没写 color** ⇒ 默认白。真帧量到 x 955..964 共 **10 px 纯白**（docs/137 §5）。
+	# 我们以前放的是一个不可见的 Control ⇒ 真帧上那道白线整条没有。
+	var divider_m := GwUI.margin("MarginContainer", 0, players_row)
+	divider_m.size_flags_horizontal = Control.SIZE_FILL
+	var divider := ColorRect.new()
+	divider.name = "ColorRect"
+	divider.color = Color(1, 1, 1)
 	divider.custom_minimum_size = Vector2(10, 0)
-	divider.size_flags_horizontal = Control.SIZE_FILL     # 固定 10 px，不抢空间
-	players_row.add_child(divider)
+	divider_m.add_child(divider)
 	_team2 = GwUI.vbox("Team2Container", 6, players_row)
 	_team2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_team2.size_flags_stretch_ratio = 1.0
 	_team2.add_child(_team_title("Team 2"))
 
 	# ---------------- 选项按钮 ----------------
-	var options := GwUI.hbox("OptionsContainer", 10, vbox)
+	# 原版 `OptionsContainer` 的 11 个子节点是**交错**的：6 个空 `MarginContainer`(h=3)
+	# 夹 5 个按钮 —— 按钮是 Margin 的**兄弟**，不是子节点（宿主导出的真值：
+	# Margin 201/202、按钮 134/134，两者相加 + 10×4 分隔 = 1920）。
+	# 我们以前把按钮塞进 Margin 里，于是按钮撑满那一格（实测 316 宽）。
+	var options := GwUI.hbox("OptionsContainer", GwUI.SEPARATION, vbox)
+	var slot := 0
 	for spec in [
 		{"key": "axis", "name": "AxisModeButton"},
 		{"key": "function", "name": "FunctionModeButton"},
 		{"key": "turn", "name": "TurnModeButton"},
 		{"key": "time", "name": "TurnTimeButton"},
 	]:
-		var m := GwUI.margin("MarginContainer", 2, options)
+		_gap(options, "MarginContainer" if slot == 0 else "MarginContainer%d" % slot)
+		slot += 1
 		var b := GwButton.make("")
 		b.name = String(spec.name)
-		b.custom_minimum_size = Vector2(64, 64)
+		b.size_flags_horizontal = Control.SIZE_FILL
+		# 原版这五个按钮**没有** `expand_icon` ⇒ 图标参与最小尺寸：
+		# 128 px 图标 + stylebox 两侧 3 px = **134×134**（宿主导出的真值）。
+		b.expand_icon = false
 		b.icon = GwIcons.get_icon("axis_option_3")
+		if String(spec.key) == "axis":
+			# 原版这个按钮单独挂 `axis_button_theme.tres`：normal/hover/pressed/disabled
+			# 四个 stylebox 全是 `axis_menu_icon_theme.tres` = **白底** + 3 px 黑边 + 圆角 10。
+			# 于是"轴模式"那块在真帧上是**白卡**（其余四个选项是深绿卡）。
+			var white_sb := GwThemeFactory._flat(Color(1, 1, 1))
+			for st in ["normal", "hover", "pressed", "disabled"]:
+				b.add_theme_stylebox_override(st, white_sb)
 		b.pressed.connect(_cycle_mode.bind(String(spec.key)))
-		m.add_child(b)
+		options.add_child(b)
 		_mode_buttons[String(spec.key)] = b
 
-	var add_bot_m := GwUI.margin("MarginContainer5", 2, options)
+	_gap(options, "MarginContainer5")
 	var add_bot := GwButton.make("")
 	add_bot.name = "AddBotButton"
 	add_bot.input_text = GwCommands.ADD_BOT
+	add_bot.expand_icon = false
 	add_bot.icon = GwIcons.get_icon("add_bot_option")
-	add_bot.custom_minimum_size = Vector2(64, 64)
 	add_bot.tooltip_text = "加 Bot（add_bot → AddBotPopUp，六档）"
-	add_bot_m.add_child(add_bot)
+	options.add_child(add_bot)
+	# 选项行最后一个**空的**弹性 MarginContainer
+	_gap(options, "MarginContainer6")
 
 	# ---------------- 底部 ----------------
-	var bottom := GwUI.margin("MarginContainer", 4, vbox)
-	var row := GwUI.hbox("HBoxContainer", 10, bottom)
-	var ip_m := GwUI.margin("MarginContainer", 4, row)
+	# 原版 `LobbyButtonContainer.gd`：**每个**子节点 custom_minimum_size = (屏宽×0.2, 0)
+	# = (384, 0)，字号 宽/30。⇒ Start 真帧 (768,0) 384×96；左右两个 384 的空位把居中撑出来。
+	var bottom := GwUI.margin("MarginContainer", 0, vbox)
+	var row := GwUI.hbox("HBoxContainer", GwUI.SEPARATION, bottom)
+	var ip_m := GwUI.margin("MarginContainer", 0, row)
 	ip_m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_ip_label = GwUI.label(PLACEHOLDER_IP)
+	ip_m.custom_minimum_size = Vector2(384, 0)
+	_ip_label = GwUI.label("")
 	_ip_label.name = "GameIpLabel"
 	_ip_label.tooltip_text = ("原版这里显示本机房间的 IP:端口（docs/92 §4.5 观测到 198.18.0.1:36071）。"
 		+ "本项目没有网络层，故显示占位")
 	ip_m.add_child(_ip_label)
 	_start_button = GwButton.make(" Start ", GwCommands.START_GAME)
 	_start_button.name = "StartButton"
-	_start_button.custom_minimum_size = Vector2(160, 48)
+	_start_button.custom_minimum_size = Vector2(384, 0)
 	row.add_child(_start_button)
-	var pad := GwUI.margin("MarginContainer2", 4, row)
+	var pad := GwUI.margin("MarginContainer2", 0, row)
 	pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pad.custom_minimum_size = Vector2(384, 0)
 
 	vbox.add_child(GwUI.ad_bar())
 
+## 选项行里的弹性空格（原版就是空的 `MarginContainer`，没有子节点）
+func _gap(parent: HBoxContainer, node_name: String) -> MarginContainer:
+	var m := GwUI.margin(node_name, 0, parent)
+	m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return m
+
 func _team_title(text_: String) -> MarginContainer:
-	var m := GwUI.margin("MarginContainer", 4)
+	# 原版队名：`MarginContainer(LanLobbyTitle.gd)` → `Label(theme = title_theme.tres)`，
+	# 字号 宽/30 = 64，手写体（→ 渲染成大写 TEAM 1 / TEAM 2）。真帧墨迹 Team1 x 354..594。
+	var m := GwUI.margin("MarginContainer", 0)
 	var l := GwUI.label(text_, 0, HORIZONTAL_ALIGNMENT_CENTER)
 	l.name = "Label"
+	var tf := GwThemeFactory.title_font()
+	if tf != null:
+		l.add_theme_font_override("font", tf)
 	m.add_child(l)
 	return m
 

@@ -33,13 +33,40 @@ const SKIN_COUNT := 15
 const FACE_COUNT := 15
 const HAT_COUNT := 27
 
-## 原版玩家的**默认外观**（`docs/92` §4.14 / §4.10 观测）：yellow 皮肤 + regular_eyes + soldier_helmet。
-## 这三个下标 = `GwIcons` 表里的位置，不是随手取的 0：
-##   skin_7 = skins/yellow、face_2 = faces/regular_eyes、hat_1 = hats/soldier_helmet。
-## （0 号分别是 blue / no_face / no_hat，其中后两个是**全透明**图，预览会变成一颗光头。）
-const DEFAULT_SKIN := 7
-const DEFAULT_FACE := 2
-const DEFAULT_HAT := 1
+## 原版玩家的**默认外观** = yellow + regular_eyes + soldier_helmet。
+##
+## 三条独立证据（`docs/137` §6）：
+##   ① **全新 `XDG_DATA_HOME`**（`user://player.config` 不存在）跑正版二进制 ⇒ 预览画的是
+##      黄色圆 + 绿色士兵盔 + regular_eyes（截图 `truth/player_skins.png`）；
+##   ② `player.config` 里**只**写 `skin: red` ⇒ 皮肤红、脸仍是 regular_eyes、帽子仍是
+##      soldier_helmet ⇒ 原版是**逐键兜底**，不是"文件在就整份覆盖"；
+##   ③ 用户提供的 App Store 图标 = 这三张图的合成（黄圆 → 白眼黑瞳 → 绿盔描边）。
+##
+## ⚠️ **不要写死下标**：`GwIcons.SKINS` 是 `.rodata` 顺序（含 `gray`/`target`），而原版
+## 界面网格跳过那两张、顺序也不同（`docs/137` §6.3 把两套顺序都列出来了）。默认值表达的
+## 是"yellow 这件皮肤"，所以这里写**名字**，下标在类加载时按名字解析。
+const DEFAULT_SKIN_NAME := "yellow"
+const DEFAULT_FACE_NAME := "regular_eyes"
+const DEFAULT_HAT_NAME := "soldier_helmet"
+
+static var DEFAULT_SKIN := 0
+static var DEFAULT_FACE := 0
+static var DEFAULT_HAT := 0
+
+static func _static_init() -> void:
+	DEFAULT_SKIN = resolve_look("skins", DEFAULT_SKIN_NAME)
+	DEFAULT_FACE = resolve_look("faces", DEFAULT_FACE_NAME)
+	DEFAULT_HAT = resolve_look("hats", DEFAULT_HAT_NAME)
+
+## 名字 → `GwIcons` 表下标。找不到返回 -1（调用方自己决定兜底，别在这里瞎猜 0）。
+static func resolve_look(dir: String, short_name: String) -> int:
+	var table: Array = []
+	match dir:
+		"skins": table = GwIcons.SKINS
+		"faces": table = GwIcons.FACES
+		"hats": table = GwIcons.HATS
+		_: return -1
+	return table.find("%s/%s" % [dir, short_name])
 
 var profile := {
 	"name": "user",
@@ -75,7 +102,8 @@ const LEVEL_COUNT := 21
 
 func load_all() -> void:
 	var cf := ConfigFile.new()
-	if cf.load(PATH) == OK:
+	var have_own := cf.load(PATH) == OK
+	if have_own:
 		profile.name = String(cf.get_value(SECTION_PROFILE, "name", profile.name))
 		profile.skin = clampi(int(cf.get_value(SECTION_PROFILE, "skin", DEFAULT_SKIN)), 0, SKIN_COUNT - 1)
 		profile.face = clampi(int(cf.get_value(SECTION_PROFILE, "face", DEFAULT_FACE)), 0, FACE_COUNT - 1)
@@ -86,8 +114,42 @@ func load_all() -> void:
 		completed_levels.clear()
 		for v in done:
 			completed_levels.append(int(v))
+	# 我们自己还没有档案（第一次跑本客户端）⇒ 把**原版** `player.config` 套上来。
+	# 有了我们自己的档案就不再套：用户在本客户端里的选择优先（两种情况都写进 docs/137 §6）。
+	if not have_own:
+		apply_original_player_config()
 	# 原版存档：**只读，不创建**（原版删掉后重启不会重建，docs/124 §3.2）。
 	campaign_progress = read_campaign_progress()
+
+## 把原版 `user://player.config` 的三项外观套到 `profile` 上（**只读，不写回**）。
+##
+## 实测语义（正版二进制三组实验，`docs/137` §6.2）：
+##   * 文件不存在 ⇒ 三项全用默认；
+##   * 只写 `skin: red` ⇒ 皮肤 red、脸/帽仍默认 ⇒ **逐键兜底**；
+##   * 值是**名字**（`asian` / `asian_hat` 这种），不是下标 ⇒ 按名字解析成我们的表下标；
+##   * 未知名字（实验 `skin: bogus`）在原版下会让那一层**不画**（皮肤整个消失）。
+##     我们这里保留默认值并告警 —— 那是坏配置下的原版行为，不照抄（理由见 docs/137 §6.4）。
+func apply_original_player_config() -> void:
+	if not FileAccess.file_exists(PLAYER_CONFIG_PATH):
+		return
+	var f := FileAccess.open(PLAYER_CONFIG_PATH, FileAccess.READ)
+	if f == null:
+		push_warning("[gw2] 读不到 %s" % PLAYER_CONFIG_PATH)
+		return
+	var kv := parse_player_config(f.get_as_text())
+	if kv.has("name") and String(kv["name"]) != "":
+		profile.name = String(kv["name"])
+	# 逐键：键在就解析，键不在就保持默认（原版实测语义，docs/137 §6.2）。
+	for pair in [["skin", "skins"], ["face", "faces"], ["hat", "hats"]]:
+		var key := String(pair[0])
+		var dir := String(pair[1])
+		if not kv.has(key):
+			continue
+		var idx := resolve_look(dir, String(kv[key]))
+		if idx < 0:
+			push_warning("[gw2] player.config 里 %s=%s 不认识，保留默认值" % [key, kv[key]])
+			continue
+		profile[key] = idx
 
 # ---------------------------------------------------------------- 原版 campaign.save
 

@@ -167,14 +167,25 @@ static func exit_pair(cmd: String) -> MarginContainer:
 	# 原版 `ExitButtonContainer.gd` 自己按 **宽/30** 设字号，与本屏其它文字无关
 	# （LanLobby 是 /40，但它的返回键仍然是 /30 —— 真机截图实测 146×96，docs/124 §4）。
 	container.set_meta("font_divisor", 30)
-	var sb := GwThemeFactory._flat(Color(0.6, 0.6, 0.6, 0.0))
+
+	# 两个按钮各自带**原版 `.tres` 里那份不透明底**，这是"箭头只画一次"的关键：
+	#   `ClipButton`      ← `long_press_ghost_button_theme.tres`，normal = #0F281D（不透明）
+	#   `LongPressButton` ← `long_press_button_theme.tres`，normal = #1A3B2D（不透明）
+	# 上层那个不透明 stylebox 把下层整块盖住，于是屏幕上只有**一个**箭头。
+	# 我们以前给两个都写透明底，两个箭头叠着画：位置一样但抗锯齿灰阶按两次 alpha 合成
+	# ⇒ 边缘比原版更白（实测差值 647 px，全是边缘灰阶，docs/137 §3）。
+	# 原版 hover/pressed 的底是**透明**的（`(1,1,1,0)`），那就是按下时"露出下层"的动画。
+	var sb_clip := GwThemeFactory._flat(GwThemeFactory.COL_PRESSED)
+	var sb_press := GwThemeFactory._flat(GwThemeFactory.COL_PANEL)
+	var sb_press_active := GwThemeFactory._flat(Color(1, 1, 1, 0))
 
 	var clip := GwButton.make("     ", "")
 	clip.name = "ClipButton"
 	clip.icon = GwIcons.get_icon("return")
 	clip.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	clip.add_theme_stylebox_override("normal", sb)
+	for st in ["normal", "hover", "pressed", "disabled"]:
+		clip.add_theme_stylebox_override(st, sb_clip)
 	container.add_child(clip)
 
 	# 原版 `campaign.tscn` 里 AnimationRect 的四个属性：`show_behind_parent = true`、
@@ -193,9 +204,9 @@ static func exit_pair(cmd: String) -> MarginContainer:
 	press.name = "LongPressButton"
 	press.icon = GwIcons.get_icon("return")
 	press.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	press.add_theme_stylebox_override("normal", sb)
-	press.add_theme_stylebox_override("hover", sb)
-	press.add_theme_stylebox_override("pressed", sb)
+	press.add_theme_stylebox_override("normal", sb_press)
+	press.add_theme_stylebox_override("hover", sb_press_active)
+	press.add_theme_stylebox_override("pressed", sb_press_active)
 	press.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	container.add_child(press)
 	return container

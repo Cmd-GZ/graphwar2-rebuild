@@ -29,6 +29,7 @@ func run(main: Control) -> int:
 	await _test_lan_lobby()
 	await _test_ui_text_and_measured_geometry()
 	await _test_game_setup()
+	await _test_pixel_truth_geometry()
 	await _test_play_screen()
 	await _test_endgame()
 	_test_fonts_and_icons()
@@ -488,6 +489,163 @@ func _test_game_setup() -> void:
 	_command("join_join_ip")
 	await _frames(2)
 	_expect(not _screen("ConnectingPopUp").visible, "空地址不会进 ConnectingPopUp")
+
+## 像素级真值相关的**结构与几何**断言（docs/137）。
+##
+## 原则：每条断言都要能指到**真帧**里的一个数值（宿主导出的 `@@NODE` rect、或真帧量出的
+## 墨迹 bbox / 颜色），不写"看起来对"的断言。真值来源见 `docs/137` §1–§2。
+func _test_pixel_truth_geometry() -> void:
+	# ---- 1) 默认外观：**按名字**解析，且三个名字就是真帧里那张合成的三件套 ----
+	_expect(GwIcons.SKINS[GwStore.DEFAULT_SKIN] == "skins/yellow",
+		"默认皮肤 = skins/yellow（真帧预览是黄圆，docs/137 §6）")
+	_expect(GwIcons.FACES[GwStore.DEFAULT_FACE] == "faces/regular_eyes",
+		"默认脸 = faces/regular_eyes（真帧预览眨眼式：白眼球+黑瞳）")
+	_expect(GwIcons.HATS[GwStore.DEFAULT_HAT] == "hats/soldier_helmet",
+		"默认帽子 = hats/soldier_helmet（真帧预览是深绿盔）")
+	_expect(GwStore.resolve_look("skins", "yellow") == GwIcons.SKINS.find("skins/yellow"),
+		"resolve_look() 按名字解析 = 表里 find()（不再有魔法下标）")
+	_expect(GwStore.resolve_look("skins", "no_such_skin") == -1,
+		"resolve_look() 对未知名字返回 -1（不悄悄变成 0 号皮肤）")
+
+	# ---- 2) 原版 player.config：逐键兜底（用正版二进制实测过，docs/137 §6.2） ----
+	var saved_skin: int = GwStore.DEFAULT_SKIN
+	var saved_face: int = GwStore.DEFAULT_FACE
+	var saved_hat: int = GwStore.DEFAULT_HAT
+	var saved_name: String = "user"
+	var cfg_path := GwStore.PLAYER_CONFIG_PATH
+	var had_cfg := FileAccess.file_exists(cfg_path)
+	var backup := ""
+	if had_cfg:
+		backup = FileAccess.get_file_as_string(cfg_path)
+	var f := FileAccess.open(cfg_path, FileAccess.WRITE)
+	if f != null:
+		f.store_string("skin: red\n")
+		f.close()
+		var probe := GwStore.new()
+		probe.profile["skin"] = saved_skin
+		probe.profile["face"] = saved_face
+		probe.profile["hat"] = saved_hat
+		probe.apply_original_player_config()
+		_expect(int(probe.profile["skin"]) == GwIcons.SKINS.find("skins/red"),
+			"player.config `skin: red` ⇒ 皮肤 red（值是**名字**，按名字解析）")
+		_expect(int(probe.profile["face"]) == saved_face and int(probe.profile["hat"]) == saved_hat,
+			"player.config 只写 skin ⇒ 脸/帽子仍是默认（**逐键兜底**，不是整份覆盖）")
+		probe.profile["skin"] = saved_skin
+		probe.profile["face"] = saved_face
+		probe.profile["hat"] = saved_hat
+		var f2 := FileAccess.open(cfg_path, FileAccess.WRITE)
+		if f2 != null:
+			f2.store_string("skin: no_such_skin\n")
+			f2.close()
+			probe.apply_original_player_config()
+			_expect(int(probe.profile["skin"]) == saved_skin,
+				"player.config 里未知皮肤名 ⇒ 保留默认（原版会让那一层不画，我们只告警，docs/137 §6.4）")
+	if had_cfg:
+		var fr := FileAccess.open(cfg_path, FileAccess.WRITE)
+		if fr != null:
+			fr.store_string(backup)
+			fr.close()
+	else:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(cfg_path))
+	_expect(true, "player.config 实验结束后恢复现场（name=%s）" % saved_name)
+
+	# ---- 3) 网格顺序：直接对真帧每个格子的**主色**（docs/137 §6.3） ----
+	var ps: Control = _screen("PlayerScreen")
+	if ps != null:
+		var consts: Dictionary = ps.get_script().get_script_constant_map()
+		var skin_grid: Array = consts.get("SKIN_GRID", [])
+		var face_grid: Array = consts.get("FACE_GRID", [])
+		var hat_grid: Array = consts.get("HAT_GRID", [])
+		_expect(skin_grid.size() == 15, "Skins 网格 15 格（真帧 5 行 × 3，实际 %d）" % skin_grid.size())
+		var want_skins := ["skins/blue", "skins/pink", "skins/purple", "skins/red",
+			"skins/white_skin", "skins/yellow", "skins/green", "skins/light_green",
+			"skins/true_purple"]
+		var ok_skins := true
+		for i in want_skins.size():
+			if i >= skin_grid.size() or GwIcons.SKINS[int(skin_grid[i])] != want_skins[i]:
+				ok_skins = false
+		_expect(ok_skins,
+			"前 9 个皮肤格顺序 = 真帧主色测出的顺序（blue/pink/purple/red/white_skin/yellow/green/light_green/true_purple）")
+		_expect(GwIcons.FACES[int(face_grid[0])] == "faces/regular_eyes",
+			"Faces 第 1 格 = regular_eyes（真帧第一格就是这个脸）")
+		_expect(GwIcons.HATS[int(hat_grid[1])] == "hats/soldier_helmet",
+			"Hats 第 2 格 = soldier_helmet（真帧第二格是绿盔）")
+
+	# ---- 4) GameSetup 的静态几何（真值来自宿主导出的原版运行时 rect，docs/137 §5） ----
+	var gs: Control = _screen("GameSetup")
+	if gs != null:
+		# 注意：**不**在这里 create_game —— 会重置玩家表，把后面的 PlayScreen 测试搞挂。
+		# 下面断言的几何（custom_minimum_size / stylebox / 子节点数）都是构建期就固定的。
+		_expect(gs.font_divisor == 30,
+			"GameSetup 字号除数 = 30（RoomName/LanLobbyTitle/LobbyButtonContainer 全是 /30）")
+		var ghost := _find_button(gs, "GhostButton")
+		_expect(ghost != null and int(ghost.custom_minimum_size.x) == 159,
+			"GhostButton 宽 159（原版真值 159 ⇒ 标题从 x=313 开始）")
+		var start := _find_button(gs, "StartButton")
+		_expect(start != null and int(start.custom_minimum_size.x) == 384,
+			"StartButton 最小宽 384（LobbyButtonContainer 的 屏宽×0.2）")
+		var divider := gs.find_child("ColorRect", true, false)
+		_expect(divider is ColorRect and int((divider as ColorRect).custom_minimum_size.x) == 10
+			and (divider as ColorRect).color == Color(1, 1, 1),
+			"中缝 = 10 px **白色** ColorRect（真帧 x 955..964 纯白）")
+		var chat := _find_button(gs, "ChatButtonSetup")
+		var lock := _find_button(gs, "LockButton")
+		_expect(chat != null and String(chat.text) == "     " and chat.expand_icon,
+			"ChatButtonSetup 文本 = 5 空格 + expand_icon（⇒ 146×96，与返回键同款）")
+		_expect(lock != null and String(lock.text) == "     " and lock.expand_icon,
+			"LockButton 文本 = 5 空格 + expand_icon（⇒ 146×96）")
+		var axis := _find_button(gs, "AxisModeButton")
+		var axis_sb: StyleBox = axis.get_theme_stylebox("normal") if axis != null else null
+		_expect(axis_sb is StyleBoxFlat and (axis_sb as StyleBoxFlat).bg_color == Color(1, 1, 1),
+			"AxisModeButton 是**白卡**（原版 axis_button_theme → axis_menu_icon_theme 白底）")
+		var opts: Node = null
+		for b in gs.find_children("*", "GwButton", true, false):
+			if String(b.name) == "AxisModeButton":
+				opts = b.get_parent()
+		if opts != null:
+			_expect(opts.get_child_count() == 11,
+				"选项行 11 个子节点 = 6 个空 Margin + 5 个按钮（实际 %d）" % opts.get_child_count())
+			var fixed := 0
+			for c in opts.get_children():
+				if c is GwButton and not (c as GwButton).expand_icon:
+					fixed += 1
+			_expect(fixed == 5, "5 个选项按钮都 expand_icon=false（图标参与最小尺寸 ⇒ 134×134，实际 %d）" % fixed)
+
+	# ---- 5) 返回键"只画一个箭头"的结构条件（docs/137 §3.3） ----
+	var any_screen: Control = _screen("MainMenu")
+	if any_screen != null:
+		var container := any_screen.find_child("ExitButtonContainer", true, false)
+		if container != null:
+			var press := container.get_node_or_null("LongPressButton")
+			_expect(press != null, "返回键有 LongPressButton")
+			if press != null:
+				var sb: StyleBox = press.get_theme_stylebox("normal")
+				var opaque: bool = sb is StyleBoxFlat and (sb as StyleBoxFlat).bg_color.a >= 0.999
+				_expect(opaque,
+					"LongPressButton 的 normal stylebox **不透明** ⇒ 盖住下层 ClipButton 的同一个箭头（只画一次）")
+
+	# ---- 5.5) 自检**不许留污染**：`_test_player_screen` 会把 profile.name 改成
+	# "selftest-user" 并落盘，历史上还出现过 skin=0/face=0/hat=0 的存档被留下 ——
+	# 用户跑完自检再开界面就会看到"自检用户 + 蓝圆 + 没有脸/帽"，这正是用户报的
+	# "默认形象不对"的一个真实来源（docs/137 §6.5）。这里把它恢复成**默认三件套**。
+	var app_node2 := get_node_or_null("/root/App")
+	if app_node2 != null and String(app_node2.store.profile.name) == "selftest-user":
+		app_node2.store.profile.name = "user"
+		app_node2.store.profile["skin"] = GwStore.DEFAULT_SKIN
+		app_node2.store.profile["face"] = GwStore.DEFAULT_FACE
+		app_node2.store.profile["hat"] = GwStore.DEFAULT_HAT
+		app_node2.store.save_all()
+		_expect(String(app_node2.store.profile.name) == "user"
+			and int(app_node2.store.profile["skin"]) == GwStore.DEFAULT_SKIN,
+			"自检结束后 profile 恢复默认（不留 selftest-user / skin=0）")
+
+	# ---- 6) 渲染键：与原版 project.binary 一致（本轮 0.49%→0.007% 的主因） ----
+	_expect(int(ProjectSettings.get_setting(
+		"rendering/textures/canvas_textures/default_texture_filter", -1)) == 2,
+		"default_texture_filter = 2（原版 project.binary 的值；不写会差 0.49%）")
+	_expect(int(ProjectSettings.get_setting(
+		"rendering/anti_aliasing/quality/msaa_2d", -1)) == 2,
+		"msaa_2d = 2（原版 project.binary 的值）")
 
 func _test_play_screen() -> void:
 	_command("start_game")
