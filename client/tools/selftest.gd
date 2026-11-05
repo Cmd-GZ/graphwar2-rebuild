@@ -39,6 +39,7 @@ func run(main: Control) -> int:
 	await _test_audio()
 	await _test_level_rules()
 	await _test_fire_fx()
+	await _test_play_flow()
 
 	await _test_replay_player()
 	await _test_replay_ode()
@@ -3475,3 +3476,254 @@ func _test_replay_ode() -> void:
 	play.call("end_match")
 	await _frames(2)
 	app_node.state.reset_lan()
+
+# ---------------------------------------------------------------- 对局流程（docs/143）
+#
+# ## 这一组为什么把 `App.automation` 关掉
+#
+# `automation`（`--selftest` / `--dump-tree`）下 `PlayScreen` 把"发射 → 结算"的时序
+# **压平**：逻辑当刻落地，动画照放。存在的端到端用例都是这么跑的（它们要"开火后下一帧
+# 就能读到结算结果"）。
+#
+# 真机（`automation == false`）走**逐 tick** 时序：弹道飞到死者那个点，那一次死亡才落地
+# （`LifeQueuedDeath{tick}`，`docs/65`）；飞到尽头才炸、才清曲线、才判胜负
+# （`docs/43` §1 的报文顺序 + `docs/41` 的状态机）。
+#
+# ⇒ 这一组关掉 automation 来**验证先后顺序**，与既有那组"打完之后世界是什么样"互补。
+# 两边走的是**同一条**判定代码（`_judge_shots` / `_apply_kills_up_to` / `_settle_round`），
+# 只有触发时机不同 —— 所以任何一边红了都说明那条规则本身坏了。
+
+func _test_play_flow() -> void:
+	var app_node := get_node("/root/App")
+	var was_automation := bool(app_node.automation)
+	app_node.automation = false          # ← 真机时序（docs/143 §3）
+
+	# ---------------- 0. 回合轮转的**单元**断言（规则同 src/turn.rs，0x463da0） ----------------
+	var td := GwTurnDriver.new()
+	td.setup([{"player": 0, "soldiers": [0, 1]}])
+	var alive_all := func(i: int) -> bool: return true
+	_expect(td.first_shooter(alive_all) == 0, "轮转：第一个射手 = 0 号士兵")
+	_expect(td.next_shooter(alive_all) == 1,
+		"轮转：**先自增再取** ⇒ 同一下一个玩家换到 1 号士兵（0x463f40 的四条指令）")
+	_expect(td.next_shooter(alive_all) == 0, "轮转：到尾回绕到 0 号")
+	td.setup([{"player": 0, "soldiers": [0, 1]}])
+	var alive_zero := func(i: int) -> bool: return int(i) == 0
+	td.first_shooter(alive_all)
+	_expect(td.next_shooter(alive_zero) == 0,
+		"轮转：跳过死士兵（最多试 len 次，0x463fc7 的 dec/jne）")
+	var alive_none := func(i: int) -> bool: return false
+	td.setup([{"player": 0, "soldiers": [0, 1]}])
+	td.first_shooter(alive_all)
+	_expect(td.next_shooter(alive_none) == -1, "轮转：全灭 ⇒ 没有射手（对应 Some(SOLDIER_ID_NONE)）")
+	_expect(GwTurnDriver.SOLDIER_ID_NONE == 0, "轮转：哨兵 soldier_id = 0（0x464016 的 movl $0x0）")
+	td.setup([{"player": 0, "soldiers": [0]}, {"player": 1, "soldiers": [1]}])
+	_expect(td.first_shooter(alive_all) == 0, "轮转：两名玩家 ⇒ 先从 0 号玩家的士兵开始")
+	_expect(td.next_shooter(alive_all) == 1, "轮转：两名玩家 ⇒ 交替到 1 号玩家")
+	_expect(td.next_shooter(alive_all) == 0, "轮转：两名玩家 ⇒ 再交替回来")
+
+	# ---------------- 1. 发射 → 逐 tick → 飞完才结算（docs/143 §3/§5） ----------------
+	# 第 1 关：1 个靶子、**无障碍**、无回合上限。靶子放在弹道之外 ⇒ 必然打空。
+	var play = _begin_campaign_live(0, [Vector2(12.0, 2.0)], [])
+	await _frames(1)
+	app_node.close_all_popups()
+	var sounds: Array = []
+	if app_node.audio != null:
+		app_node.audio.played.connect(func(s: String, slot: String) -> void:
+			sounds.append({"sound": s, "slot": slot}))
+	var plane := play.find_child("GraphwarPlane", true, false) as GwPlaneView
+	var fx_layer := play.find_child("EffectLayer", true, false) as GwEffectLayer
+	_expect(fx_layer != null, "① 棋盘上有特效层 `GwEffectLayer`（docs/143 §1）")
+
+	_flow_fire(play, "0")
+	var flying: Dictionary = play.call("level_state")
+	_expect(bool(flying["in_flight"]), "① 开火后弹道在飞（in_flight = true）")
+	_expect(int(flying["turns_used"]) == 0,
+		"① **还没结算 ⇒ 回合数仍是 0**（旧实现里开火当刻就 +1；实际 %d）" % int(flying["turns_used"]))
+	_expect(int(flying["path_points"]) > 1,
+		"① 弹道已经画上棋盘（%d 点）" % int(flying["path_points"]))
+	_expect(int((flying["effects_spawned"] as Dictionary).get("total", 0)) == 0,
+		"① 开火那一刻**还没有**特效（爆炸要等弹道飞完）")
+	_expect(String(flying["verdict"].get("reason", "")) == "",
+		"① 开火那一刻**没有**胜负判定（实际 %s）" % str(flying["verdict"]))
+	# 推进一小段（0.05 s ≈ 3 tick ≈ 0.87 单位）⇒ 仍在飞、仍没结算
+	play.call("advance_shot_for_test", 0.05)
+	var mid: Dictionary = play.call("level_state")
+	_expect(bool(mid["in_flight"]) and int(mid["turns_used"]) == 0,
+		"① 弹道只飞了一小段 ⇒ 仍在飞、仍未结算（turns_used = %d）" % int(mid["turns_used"]))
+	# 飞完
+	play.call("advance_shot_for_test", 10.0)
+	var landed: Dictionary = play.call("level_state")
+	_expect(not bool(landed["in_flight"]), "① 弹道飞完 ⇒ in_flight = false")
+	_expect(int(landed["turns_used"]) == 1,
+		"① **飞完才结算**：turns_used = 1（实际 %d）" % int(landed["turns_used"]))
+	_expect(int(landed["path_points"]) == 0,
+		"② 飞完 ⇒ **曲线被清掉**（path_points = %d；旧实现一直留到下一次发射）"
+			% int(landed["path_points"]))
+	var spawned: Dictionary = landed["effects_spawned"]
+	_expect(int(spawned.get("ExplosionEffect", 0)) == 1,
+		"① 弹道飞完 ⇒ 正好 1 条 `ExplosionEffect`（docs/31 §2：停止点爆炸；实际 %d）"
+			% int(spawned.get("ExplosionEffect", 0)))
+	_expect(String(landed["verdict"].get("reason", "playing")) == "playing",
+		"① 打空 ⇒ 判定仍是 playing（实际 %s）" % str(landed["verdict"]))
+	var fx_log: Array = landed["fx_log"]
+	var boom_x := NAN
+	if fx_log.size() > 0:
+		boom_x = absf(float(fx_log[fx_log.size() - 1]["x"]))
+	_expect(fx_log.size() > 0 and boom_x > 24.0,
+		"① 爆炸点在**弹道停止点**（x = %.3f，平面边界 ±25；docs/31 §3 的夹具坐标同型）" % boom_x)
+
+	# ---------------- 2. 音效（槽位逐位、音效自定，docs/143 §4） ----------------
+	if app_node.audio == null or not app_node.audio.loaded("explosion"):
+		_skip("对局流程：音效 —— 音频资产缺失（先跑 client/src/audio/extract_audio.py）")
+	else:
+		var found_boom := false
+		for e in sounds:
+			if String(e["sound"]) == "explosion":
+				found_boom = true
+				_expect(String(e["slot"]) == "0x80",
+					"③ 爆炸音走槽 0x80（`0x4bf090` 跳表第 0 臂；实际 %s）" % String(e["slot"]))
+		_expect(found_boom, "③ 弹道飞完真的播了一个音（旧实现只在按 Fire 那一刻响一次）")
+	_expect(String(play.call("level_state")["shot_status"]).length() >= 0, "（占位：状态行可读）")
+
+	# ---------------- 3. **还没击中就判胜利** —— 最严重的那条（docs/143 §5） ----------------
+	play = _begin_campaign_live(0, [Vector2(12.0, -5.1)], [])
+	await _frames(1)
+	app_node.close_all_popups()
+	_flow_fire(play, "0")               # 靶子正在弹道线上
+	var pre_hit: Dictionary = play.call("level_state")
+	_expect(int(pre_hit["targets"]["alive"]) == 1,
+		"⑤ 开火那一刻靶子**还没被打掉**（alive = %d）" % int(pre_hit["targets"]["alive"]))
+	_expect(bool(pre_hit["running"]), "⑤ 开火那一刻**局还没结束**（旧实现当刻判胜）")
+	_expect(String(pre_hit["verdict"].get("reason", "")) == "",
+		"⑤ 开火那一刻没有胜负判定（实际 %s）" % str(pre_hit["verdict"]))
+	_expect(not (_screen("EndGamePopUp") as Control).visible,
+		"⑤ 开火那一刻**不弹结算框**（`EndingGame` 必须在结算之后）")
+	play.call("advance_shot_for_test", 10.0)
+	var post_hit: Dictionary = play.call("level_state")
+	_expect(int(post_hit["targets"]["alive"]) == 0,
+		"⑤ 飞完 ⇒ 靶子才被打掉（alive = %d）" % int(post_hit["targets"]["alive"]))
+	_expect(not bool(post_hit["running"]), "⑤ 飞完 ⇒ 局结束")
+	_expect(String(post_hit["verdict"].get("reason", "")) == "targets_cleared",
+		"⑤ 飞完 ⇒ 判定 targets_cleared（实际 %s）" % str(post_hit["verdict"]))
+	_expect((_screen("EndGamePopUp") as Control).visible, "⑤ 飞完 ⇒ 结算框才弹出")
+	_expect(int((post_hit["effects_spawned"] as Dictionary).get("SparkEffect", 0)) >= 1,
+		"① 靶子被打掉 ⇒ 至少 1 条 `SparkEffect`（推断：靶子只有这一个效果名可依，docs/143 §1）")
+	_expect(int(post_hit["turns_used"]) == 1, "⑤ 飞完只算**一个**回合（实际 %d）"
+		% int(post_hit["turns_used"]))
+
+	# ---------------- 4. 发射期间不能再发（docs/143 §4） ----------------
+	play = _begin_campaign_live(0, [Vector2(12.0, 2.0)], [])
+	await _frames(1)
+	app_node.close_all_popups()
+	_flow_fire(play, "0")
+	var first: Dictionary = play.call("level_state")
+	var points_first := int(first["shot_points"])
+	_flow_fire(play, "3*sin(x)+x")      # 另一条**长度不同**的弹道
+	var second: Dictionary = play.call("level_state")
+	_expect(int(second["shot_points"]) == points_first and points_first > 1,
+		"④ 发射期间的第二发被拒 ⇒ 在飞的仍是原来那条（%d → %d 点）"
+			% [points_first, int(second["shot_points"])])
+	_expect(bool(second["in_flight"]), "④ 第二发没有打断第一发（in_flight 仍为 true）")
+	_expect(String(second["status"]).contains("还在飞"),
+		"④ 拒绝的理由写清了「上一发还在飞」（实际 '%s'）" % String(second["status"]))
+	play.call("advance_shot_for_test", 10.0)
+	var after_gate: Dictionary = play.call("level_state")
+	_expect(int(after_gate["turns_used"]) == 1,
+		"④ 被拒的那一发**没有**消耗回合（turns_used = %d）" % int(after_gate["turns_used"]))
+
+	# ---------------- 5. 默认士兵数 = 关卡数据（docs/118 §7.1「我方士兵」列） ----------------
+	_expect(int(GwCampaign.level(3)["soldiers"]) == 2,
+		"士兵数：`Level 3` 的关卡数据是 2 个（`docs/118` §7.1 的 edx=2）")
+	play = _begin_campaign_live(3, [Vector2(12.0, 2.0), Vector2(14.0, 6.0), Vector2(16.0, -9.0)], [])
+	await _frames(1)
+	var lv3: Dictionary = play.call("level_state")
+	_expect(int(lv3["soldiers"]) == 2,
+		"士兵数：**战役关按关卡数据装 2 个士兵**（玩家表里的默认值是 1；实际 %d）"
+			% int(lv3["soldiers"]))
+	var shooter0: Dictionary = lv3["active_soldier"]
+	_expect(absf(float(shooter0.get("y", 0.0)) - (-5.1)) < 0.01,
+		"士兵数：第一个射手是 0 号槽（y = −5.1，实际 %.2f）" % float(shooter0.get("y", 0.0)))
+	app_node.close_all_popups()
+	_flow_fire(play, "0")
+	play.call("advance_shot_for_test", 10.0)
+	var turn2: Dictionary = play.call("level_state")
+	_expect(not bool(turn2["in_flight"]), "轮转：第二发的回合已结算")
+	_expect(absf(float((turn2["active_soldier"] as Dictionary).get("y", 0.0)) - (-1.7)) < 0.01,
+		"轮转：**下一个回合换到第二个士兵**（y = −1.7，实际 %.2f；旧实现永远用第一个）"
+			% float((turn2["active_soldier"] as Dictionary).get("y", 0.0)))
+	_expect(int((turn2["turn_driver"] as Dictionary).get("cursor", -1)) == 0,
+		"轮转：只有一个玩家 ⇒ 玩家游标不动（实际 %d）"
+			% int((turn2["turn_driver"] as Dictionary).get("cursor", -1)))
+
+	# ---------------- 6. AI 的回合：它自己开火（docs/143 §6.1） ----------------
+	# LAN 1v1：人（−18,−5.1）+ Bot（18,−5.1）。人打一发**故意打偏**的 `2*x`
+	# （修正后 y = 2x + 30.9，很快飞出 |y| ≤ 15 的平面）⇒ 局面继续、轮到 Bot。
+	play = _begin_versus_live()
+	await _frames(1)
+	app_node.close_all_popups()
+	_flow_fire(play, "2*x")
+	play.call("advance_shot_for_test", 10.0)
+	var to_bot: Dictionary = play.call("level_state")
+	_expect(bool(to_bot["running"]), "⑥ 人打偏 ⇒ 局还在（实际 running=%s）" % str(to_bot["running"]))
+	_expect(bool((to_bot["active_soldier"] as Dictionary).get("is_bot", false)),
+		"⑥ 结算之后回合交给 **AI**（旧实现停在这里等人类再按一次 Fire）")
+	_expect(float(to_bot["bot_think_left"]) > 0.0,
+		"⑥ 轮到 AI ⇒ 起了思考倒计时（%.2f s，**自定**值）" % float(to_bot["bot_think_left"]))
+	var fired_by_bot := bool(play.call("bot_take_turn"))
+	_expect(fired_by_bot, "⑥ AI **自己**开了一发（`bot_take_turn()` 返回 true）")
+	var ai_shot: Dictionary = play.call("level_state")
+	_expect(bool(ai_shot["in_flight"]) and int(ai_shot["shot_points"]) > 1,
+		"⑥ AI 那一发真的上了棋盘（%d 点）" % int(ai_shot["shot_points"]))
+	var ai_plane := play.find_child("GraphwarPlane", true, false) as GwPlaneView
+	_expect(ai_plane != null and ai_plane.path_points.size() > 1
+		and float(ai_plane.path_points[0].x) > 17.0,
+		"⑥ AI 那一发的起点在**它自己**的士兵处（x = %.2f ≈ 18）"
+			% (float(ai_plane.path_points[0].x) if ai_plane != null and ai_plane.path_points.size() > 0 else -999.0))
+	play.call("advance_shot_for_test", 10.0)
+	var after_ai: Dictionary = play.call("level_state")
+	_expect(not bool(after_ai["in_flight"]), "⑥ AI 那发也结算了")
+	_expect(int(after_ai["turns_used"]) == 2,
+		"⑥ 人和 AI 各消耗一个回合（turns_used = %d）" % int(after_ai["turns_used"]))
+
+	# ---------------- 收尾 ----------------
+	play.call("clear_layout_override")
+	play.call("end_match")
+	app_node.close_all_popups()
+	app_node.automation = was_automation
+	_expect(bool(app_node.automation) == was_automation, "对局流程：automation 已还原")
+
+## 起一局**按真机时序**的战役关：**不**注入玩家士兵数（`game_state.gd` 的默认值是 1），
+## 让 `PlayScreen.begin_match()` 自己按关卡数据装人（`docs/118` §7.1）。
+func _begin_campaign_live(level_index: int, targets: Array, obstacles: Array = []) -> Node:
+	var app_node := get_node("/root/App")
+	var lv := GwCampaign.level(level_index)
+	app_node.state.reset_campaign(level_index)
+	app_node.state.axis_mode = int(lv.axis)
+	app_node.state.function_mode = int(lv.function)
+	app_node.state.turn_mode = int(lv.turn)
+	app_node.state.time_mode = int(lv.time)
+	app_node.state.add_human("Selftest", 0, 0, 0)
+	if int(lv.bot_tier) >= 0:
+		app_node.state.add_bot(int(lv.bot_tier))
+	var play = _screen("PlayScreen")
+	play.call("inject_layout", {"targets": targets, "obstacles": obstacles})
+	play.call("begin_match")
+	return play
+
+## 起一局 LAN 1v1（人 + Bot，各 1 个士兵），不注入布局。
+func _begin_versus_live() -> Node:
+	var app_node := get_node("/root/App")
+	app_node.state.reset_lan()
+	app_node.state.add_human("Selftest", 0, 0, 0)
+	app_node.state.add_bot(0)
+	var play = _screen("PlayScreen")
+	play.call("inject_layout", {})
+	play.call("begin_match")
+	return play
+
+## 只按 Fire（**不**等结算）：把函数写进输入框再调 `fire()`，与生产路径同一个入口。
+func _flow_fire(play: Node, expr_text: String) -> void:
+	var input := play.find_child("GraphwarFunctionInput", true, false) as GwFunctionInput
+	if input != null:
+		input.text = expr_text
+	play.call("fire")

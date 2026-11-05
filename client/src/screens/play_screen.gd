@@ -122,6 +122,66 @@ var _status_text := ""
 ## 程序化改写输入框（换手时回填）期间不要清 OffsetLabel —— 否则会把刚算出来的修正抹掉。
 var _suppress_offset_clear := false
 
+# ---------------------------------------------------------------- 一发弹道的生命周期（docs/143）
+#
+# 这是本文件最重要的一处流程改动：`fire()` **不再**当场结算。一发弹道的时序是
+#
+#   开火（算出全量点序列 + 预先判出命中）→ 逐 tick 揭示（弹道在飞）→
+#   弹道走到死者那个点 ⇒ 那一次死亡才落地（`LifeQueuedDeath{tick}`，docs/65）
+#   → 飞完 ⇒ 在停止点炸（`EffectInfo(ExplosionEffect)`，docs/31/§43）
+#   → 清掉曲线（docs/143 §2）→ 回合计数 / 靶子复原 / 判胜负 / 推进回合。
+#
+# 依据：`docs/43` §1 的报文顺序（`FunctionPoints` → 死亡与特效 → `FunctionActive`
+# → `EffectInfo(ExplosionEffect)` → `ExecutingResults` → `TurnCountInfo`）与
+# `docs/41` 的状态机（`Fire` 只在 `WaitingForFunctions` 下有意义）。见 `docs/143` §3。
+
+## 有弹道正在飞。发射期间**不能再发**（`docs/143` §4：原版要等 `TurnEnded`）。
+var _shot_in_flight := false
+## 在飞的那一发的记录：`{points, drawn, team, shooter, soldier, judged, phase}`。
+var _pending_shot: Dictionary = {}
+## 这一发**还没落地**的击杀（按弹道点序号排）。落地靠弹道揭示到那个点。
+var _pending_kills: Array = []
+var _pending_target_kills: Array = []
+## 这一发的命中表（`_judge_shots()` 的产物），给状态行与自检看。
+var _judged: Dictionary = {}
+var _kills_this_shot := 0
+var _target_kills_this_shot := 0
+## 逻辑是否已经落地。**自动化运行**（`--selftest`/`--dump-tree`）里在开火那一刻就落地
+## （把时序压平，好让自检"开火后下一帧读结果"照旧成立）；真机走逐 tick。
+var _logic_settled := false
+## 效果层（`docs/143` §1）。由 `build()` 挂到棋盘上。
+var _effects: GwEffectLayer = null
+## 本轮收到/发出的效果事件流水（诊断与自检用；不影响绘制）。
+var _fx_log: Array = []
+## 回合轮转（`docs/143` §6）。规则同 `src/turn.rs`（`0x463da0`）。
+var _turn_driver := GwTurnDriver.new()
+## 当前射手在 `_soldiers` 里的下标（`_active` 是**玩家**下标，两个编号都在用）。
+var _active_soldier_idx := 0
+## 轮到 AI 时还剩多少秒开火；`< 0` = 不在 AI 回合。
+var _bot_think_left := -1.0
+
+## AI 开火前的等待（秒）—— **自定**。原版是 25 s 预算内的进化（`docs/93`），
+## 我们这一版**还没有** AI 生成器接进客户端（`docs/AI.md` 的线），只用一条自定直线。
+const BOT_THINK_SECONDS := 0.6
+## AI 用的函数模板（见 `_bot_aim_expression()`）：`"%f*x"`，斜率指向最近的敌人。
+const BOT_AIM_FORMAT := "%.6f*x"
+
+## 效果 → 音效。**槽位有逐位证据**（`0x4bf090` 的 4 臂跳表：0→0x80、1→0x90、
+## 2/3→0xa0，见 `docs/143` §4.1），**音效身份一条证据都没有**（`docs/128` §4.1）
+## ⇒ 音是**自定**的，只有槽位是复原的。
+const SLOT_FOR_EFFECT := {
+	"ExplosionEffect": "0x80",
+	"DeathEffect": "0x90",
+	"SparkEffect": "0xa0",
+	"AshEffect": "0xa0",
+}
+const SFX_FOR_EFFECT := {
+	"ExplosionEffect": "explosion",
+	"DeathEffect": "squash",
+	"SparkEffect": "spark",
+	"AshEffect": "pop",
+}
+
 # --- 回放模式（`docs/133`；这是本文件里唯一为回放新增的分叉） ---
 ## 回放模式下：不接管输入（键盘/开火无效），由 tick 时钟消费事件流。
 var _replay_mode := false
@@ -165,6 +225,8 @@ var _online_shot_status := ""
 ## 服务端广播过的特效（`EffectInfo`）：`[{x, y, type, tick}]`。**只记录不绘制** ——
 ## `GwPlaneView` 没有特效图层，本轮不新造一个（`docs/139` §7）。
 var _online_effects: Array = []
+## 服务端已经宣布结束（`EndingGame`）。等当前这一发落地后才算收尾（`docs/143` §5）。
+var _online_ending := false
 ## 服务端广播过的生死（`LifeInfo`）：`{entity_id: alive}`。
 var _online_lives := {}
 
@@ -245,6 +307,11 @@ func build() -> void:
 	_fire_fx.plane = _plane
 	_fire_fx.state_provider = fire_fx_state
 	_plane.add_child(_fire_fx)
+	# 效果层挂在 `_fire_fx` **之后** ⇒ 画在弹道之上（子节点按加入顺序绘制）。
+	# 它只画 `EffectInfo` 那四种效果，不碰弹道也不碰准备圈（`docs/143` §1）。
+	_effects = GwEffectLayer.new()
+	_effects.plane = _plane
+	_plane.add_child(_effects)
 
 	var overlay := GwUI.vbox("VBoxContainer", 2, _plane_aspect)
 	overlay.alignment = BoxContainer.ALIGNMENT_BEGIN
@@ -559,6 +626,7 @@ func begin_match() -> void:
 	_destroyed_this_shot.clear()
 	_turns_used = 0
 	_last_verdict = {}
+	_reset_shot_state()
 	var level := GwCampaign.level(int(st.level_index)) if st.kind == GwGameState.Kind.CAMPAIGN else {}
 	var team_counts := {0: 0, 1: 0}
 	# 玩家颜色（`docs/102` §1.2：本队 6 色表 + 随机起点 + 线性探测）。真值是 RNG 抽的，
@@ -570,7 +638,15 @@ func begin_match() -> void:
 	for pi in st.players.size():
 		var p: Dictionary = st.players[pi]
 		_functions[pi] = ""
-		for s in int(p.soldiers):
+		# 士兵数（`docs/118` §7.1 的「我方士兵」列）：**战役关由关卡数据定**
+		# （立即数 `edx=N` → `0x476320(mgr, player, N)`，21/21 与 385 份 replay 对齐），
+		# 不是设置界面的默认值。以前这里无条件用 `p.soldiers`（默认 1），
+		# 于是 `Level 3/5/9/11/14/18/19/20`（2~5 个士兵）在界面上全都只摆 1 个。
+		# 联机/局域网局仍用玩家表自己的数（服务端才说得清）。
+		var want := int(p.soldiers)
+		if st.kind == GwGameState.Kind.CAMPAIGN and not bool(p.is_bot):
+			want = int(level.get("soldiers", want))
+		for s in want:
 			var team := int(p.team)
 			var slot := int(team_counts[team])
 			team_counts[team] = slot + 1
@@ -585,7 +661,11 @@ func begin_match() -> void:
 				"player": pi,
 				"color": colors[pi],
 			})
+	# 回合轮转：每玩家一张士兵表（`docs/143` §6，规则同 `src/turn.rs`）。
+	_reset_turn_driver()
 	_active = 0
+	if not _soldiers.is_empty():
+		_active = int(_soldiers[0].player)
 	_time_left = float(GwModes.turn_seconds(st.time_mode))
 	_running = true
 	_plane.set_axis_mode(int(st.axis_mode))
@@ -629,6 +709,7 @@ func end_match() -> void:
 		_replay_bar.visible = false
 	_set_replay_input_enabled(true)
 	_plane.clear_path()
+	_reset_shot_state()
 	_online_teardown()
 
 func _apply_layout_sizes() -> void:
@@ -812,7 +893,13 @@ func _on_function_text_changed(new_text: String) -> void:
 func _on_function_text_submitted(_new_text: String) -> void:
 	fire()
 
-## 开火：算一条弹道并画出来。
+## 开火：算一条弹道并**开始播放**它。结算在弹道飞完时（`_on_shot_arrived()`）。
+##
+## 三条时序护栏（`docs/143` §3–§5）：
+## * **发射期间不能再发**（`_shot_in_flight`）—— 原版靠 `GameStateInfo` 状态机拦住：
+##   `Fire` 只在 `WaitingForFunctions` 下有意义（`src/turnstate.rs`，13 次迁移来自真抓包）；
+## * 不是我的回合不能发（本地：射手必须是人类玩家的士兵）；
+## * 结算**延后到弹道飞完**，判胜负在结算之后。
 func fire() -> void:
 	var app_node := app()
 	if app_node == null or not _running:
@@ -820,9 +907,18 @@ func fire() -> void:
 	if _replay_mode:
 		_status("回放模式不接管输入（这一局的每一发都来自录像）")
 		return
+	# ① 发射期间不能再发（docs/143 §4）。原版的状态机里 `Fire` 只从
+	# `WaitingForFunctions` 出发，弹道在飞时服务端根本不收 `FunctionFire`。
+	if _shot_in_flight:
+		_status("上一发还在飞（服务端此时是 ExecutingResults）⇒ 不能再发")
+		return
 	var active_soldier := _active_soldier()
 	if active_soldier.is_empty() or not bool(active_soldier.alive):
 		_status("当前射手已阵亡")
+		return
+	if not _online_mode and bool(active_soldier.get("is_bot", false)):
+		_status("现在是 AI 的回合（玩家 %s）⇒ 本地不接受人类开火"
+			% String(active_soldier.get("name", "?")))
 		return
 	var expr := String(_input.text).strip_edges()
 	if expr == "":
@@ -863,7 +959,8 @@ func fire() -> void:
 		_status("弹道来源：%s ／ %s ／ 本局障碍 %d 个" %
 			[String(result.source), String(result.note), _obstacles.size()])
 
-	var shot := {"points": pts, "team": team, "shooter": _active, "soldier": active_soldier}
+	var shot := {"points": pts, "drawn": drawn.points, "team": team,
+		"shooter": _active, "soldier": active_soldier, "phase": "local"}
 	_commit_shot(shot)
 
 ## 把一发（或同时回合的一批）弹道交给结算，然后走**回合结算**（`docs/131` §2、§4）。
@@ -874,8 +971,12 @@ func _commit_shot(shot: Dictionary) -> void:
 	var app_node := app()
 	if app_node == null:
 		return
+	# 命中表在**开火这一刻**就算好（= 原版的 `SynchronizingResults`：服务端立刻算完），
+	# 但**不立刻生效**：哪一发什么时候落地由弹道自己的 tick 决定（`docs/65`）。
+	shot["judged"] = _judge_shots([shot])
 	if int(app_node.state.turn_mode) == GwModes.Turn.SIMULTANEOUS:
-		# 同时回合：先全部记下，轮完再结算（真实结算在 src/settle.rs，docs/86）
+		# 同时回合：先全部记下，轮完再结算（真实结算在 src/settle.rs，docs/86）。
+		# ⚠️ 这一支**没有**接逐 tick 时序（见 `docs/143` §9 "未做"）：整批一落地就算完。
 		_shot_queue.append(shot)
 		if _all_alive_players_shot():
 			_resolve_shots(_shot_queue)
@@ -884,10 +985,251 @@ func _commit_shot(shot: Dictionary) -> void:
 			_settle_round()
 		else:
 			_next_turn(false)
-	else:
-		_resolve_shots([shot])
-		_next_turn(true)
-		_settle_round()
+		return
+	# 顺序回合：弹道先飞，**飞完才结算**（`docs/143` §3）。
+	_begin_shot(shot)
+	if _fast_forward():
+		# 自动化运行（`--selftest` / `--dump-tree`）：把时序**压平** —— 逻辑当刻落地，
+		# 动画照放（自检既要在下一帧读到结算结果，也要能看"弹道还在飞"）。
+		_apply_kills_up_to(1 << 30)
+		_logic_settled = true
+		_finish_round(shot)
+
+# ---------------------------------------------------------------- 一发弹道的播放与落地（docs/143）
+
+## 自动化运行（`--selftest` / `--dump-tree`）把"发射 → 结算"的时序**压平**。
+##
+## 压平的只有**触发时机**：判定规则走的是同一条代码路径（`_judge_shots` /
+## `_apply_kills_up_to` / `_settle_round`）。真机（返回 `false`）走逐 tick：
+## 死亡在弹道到达那个点时落地、胜负在弹道飞完之后才判（`docs/143` §3）。
+func _fast_forward() -> bool:
+	var a := app()
+	return a != null and bool(a.get("automation"))
+
+## 清掉"一发"的所有中间状态（换局 / 退出对局时调；幂等）。
+func _reset_shot_state() -> void:
+	_shot_in_flight = false
+	_pending_shot = {}
+	_pending_kills = []
+	_pending_target_kills = []
+	_judged = {}
+	_kills_this_shot = 0
+	_target_kills_this_shot = 0
+	_logic_settled = false
+	_bot_think_left = -1.0
+	_fx_log.clear()
+	if _effects != null:
+		_effects.clear()
+	if _fire_fx != null:
+		_fire_fx.play(PackedVector2Array())    # 空序列 ⇒ 立刻 finished，不再推动画
+
+## 把 `_soldiers` 摊成"每玩家一张士兵表"，交给回合轮转（`docs/143` §6）。
+func _reset_turn_driver() -> void:
+	var players: Array = []
+	for s in _soldiers:
+		if not players.has(int(s.player)):
+			players.append(int(s.player))
+	var groups: Array = []
+	for pi in players:
+		var list: Array = []
+		for i in _soldiers.size():
+			if int(_soldiers[i].player) == int(pi):
+				list.append(i)
+		groups.append({"player": int(pi), "soldiers": list})
+	_turn_driver.setup(groups)
+	_active_soldier_idx = 0 if not _soldiers.is_empty() else -1
+
+## 开始放一发：命中表已经算好，但**一条都没落地**（顺序回合走这条）。
+func _begin_shot(shot: Dictionary) -> void:
+	_pending_shot = shot
+	_judged = shot.get("judged", {})
+	_kills_this_shot = 0
+	_target_kills_this_shot = 0
+	_destroyed_this_shot.clear()
+	_pending_kills = (_judged.get("kills", []) as Array).duplicate()
+	_pending_target_kills = (_judged.get("target_kills", []) as Array).duplicate()
+	_logic_settled = false
+	_shot_in_flight = true
+	_shot_status = ""
+
+## 每帧推进：弹道揭示到哪，就落地到哪（死亡/靶子的 `tick` 语义，`docs/65`）。
+func _advance_presentation() -> void:
+	if _pending_shot.is_empty():
+		return
+	if _fire_fx == null:
+		_on_shot_arrived()
+		return
+	var st: Dictionary = _fire_fx.shot_state()
+	if not _logic_settled:
+		_apply_kills_up_to(int(st.get("reveal", 0)))
+	if bool(st.get("finished", false)):
+		_on_shot_arrived()
+
+## 落地"弹道已经走到的那一段"里的击杀。`reveal` = 已揭示的点数。
+##
+## 为什么按点序号而不是按时间：`LifeQueuedDeath{tick}` 与 `EffectInfo.start_tick`
+## 相等（`docs/65` §1 两例），而弹道点是采样器给的（`docs/04`）⇒ "到那个点"就是
+## "到那个 tick"。`point` 由 `_first_point_within()` 算，与内核判死的规则是同一条
+## （`src/settle.rs`：点落在半径内）。
+func _apply_kills_up_to(reveal: int) -> void:
+	if _pending_kills.is_empty() and _pending_target_kills.is_empty():
+		return
+	var changed := false
+	var rest: Array = []
+	for k in _pending_kills:
+		if int(k.get("point", 0)) > reveal:
+			rest.append(k)
+			continue
+		var victim: Dictionary = k["soldier"]
+		if bool(victim.get("alive", false)):
+			victim.alive = false
+			_kills_this_shot += 1
+			changed = true
+			# 死亡特效的坐标是**死者站位**（`docs/31` §3 逐位），不是弹道停点。
+			_spawn_effect("DeathEffect", victim.pos)
+			_spawn_effect("AshEffect", victim.pos)      # 推断（灰烬），见 GwEffectLayer 文件头
+	_pending_kills = rest
+	var rest_t: Array = []
+	for k in _pending_target_kills:
+		if int(k.get("point", 0)) > reveal:
+			rest_t.append(k)
+			continue
+		if _targets.destroy(int(k["target_id"])):
+			_target_kills_this_shot += 1
+			_destroyed_this_shot.append(int(k["target_id"]))
+			changed = true
+			# 靶子只有 `SparkEffect` 这一条线索（`docs/123` §90 是**造**靶子时发的），
+			# 用在这里是**推断**：靶子被打掉与靶子出现共用同一个效果名。
+			_spawn_effect("SparkEffect", k["pos"])
+	_pending_target_kills = rest_t
+	if changed:
+		_refresh_plane()
+		_refresh_targets()
+		_note_shot_status()
+
+## 弹道飞完（到达 `drawn.impact`）：① 剩余击杀落地；② 在**停止点**炸；
+## ③ 清掉曲线；④ 判回合（真机才是这里判；压平模式早判过了）。
+func _on_shot_arrived() -> void:
+	if _pending_shot.is_empty():
+		return
+	var shot := _pending_shot
+	var judged: Dictionary = shot.get("judged", _judged)
+	if not _logic_settled:
+		_apply_kills_up_to(1 << 30)
+	# `EffectInfo(ExplosionEffect)` 的位置 = 弹道停止点（`docs/31` §2/§3 逐位），
+	# 时机 = 弹道执行时（`docs/43` §1 的报文顺序里紧跟 `FunctionActive`）。
+	# 联机不合成：那一条由**服务端**发过来（已经在 `EffectInfo` 分支里画了）。
+	if String(shot.get("phase", "local")) != "online":
+		_spawn_effect("ExplosionEffect", judged.get("stop", Vector2.ZERO))
+	_note_shot_status()
+	# 打完就**清掉曲线**（`docs/143` §2：原版一发结算完不再留线，用户实测）。
+	_plane.clear_path()
+	_pending_shot = {}
+	_shot_in_flight = false
+	if String(shot.get("phase", "local")) == "online":
+		return                      # 联机：生死与回合全在服务端，本地不结算
+	if _logic_settled:
+		return                      # 压平模式：这一发在开火那一刻已经结算过了
+	_finish_round(shot)
+
+## 一个回合的收尾：回合轮转 → 回合结算（`_settle_round` 里含判胜负）。
+func _finish_round(_shot: Dictionary) -> void:
+	_logic_settled = true
+	_next_turn(true)
+	_settle_round()
+
+## 生成一条效果 + 播它那个槽位的音效（`docs/143` §4）。
+func _spawn_effect(kind: String, pos: Vector2) -> void:
+	if _effects != null:
+		_effects.spawn(kind, pos)
+	_fx_log.append({"kind": kind, "x": float(pos.x), "y": float(pos.y)})
+	var sound := String(SFX_FOR_EFFECT.get(kind, ""))
+	if sound == "":
+		return
+	var a := app()
+	if a != null and a.audio != null:
+		a.audio.play(sound, String(SLOT_FOR_EFFECT.get(kind, "")))
+
+## 把在飞的那一发**直接跑完**（生产里由"弹道到点"触发；自检/诊断用它把时序走完）。
+## 返回是否真的推进了一发。
+func flush_shot() -> bool:
+	if _pending_shot.is_empty():
+		return false
+	if _fire_fx != null:
+		_fire_fx.advance_seconds(1000000.0)
+	_apply_kills_up_to(1 << 30)
+	_on_shot_arrived()
+	return true
+
+## 自检入口：按**秒**推进弹道，走与 `_process` 完全相同的那条路（可复现）。
+func advance_shot_for_test(seconds: float) -> void:
+	if _fire_fx == null:
+		return
+	_fire_fx.advance_seconds(seconds)
+	_advance_presentation()
+
+# ---------------------------------------------------------------- AI 的回合（docs/143 §6）
+
+## AI 的一发**自定**函数：一条过射手、指向最近敌人的直线（`f(x) = m·x`）。
+##
+## 为什么这样能指过去：修正常数 `c = y0 − f(x0)`（`docs/24` §6.2）会把曲线钉在射手身上，
+## 所以 `m = (y敌 − y我)/(x敌 − x我)` 的那条线正好穿过敌人。
+## **这不是原版 AI**：原版是 `aigen` 的进化器（`docs/AI.md`、`docs/109` §4），
+## 还没接进客户端（`docs/143` §6.4）。这里只保证"AI 的回合真的会有人开火"。
+func _bot_aim_expression(soldier: Dictionary) -> String:
+	for s in _soldiers:
+		if not bool(s.alive) or int(s.team) == int(soldier.team):
+			continue
+		if is_same(s, soldier):
+			continue
+		var dx := float(s.pos.x) - float(soldier.pos.x)
+		if absf(dx) < 0.000001:
+			return "0"
+		return BOT_AIM_FORMAT % ((float(s.pos.y) - float(soldier.pos.y)) / dx)
+	return "0"
+
+## 每帧看一眼"是不是该 AI 动手了"。
+##
+## 自动化运行里**不**让 AI 自动开火：自检用 `apply_external_shot()` 构造外部来弹
+## （否则 AI 的弹道会插进断言中间，`docs/143` §6.5）。
+func _tick_bot_turn(delta: float) -> void:
+	if _bot_think_left < 0.0 or _shot_in_flight or not _running:
+		return
+	if _fast_forward():
+		return
+	_bot_think_left -= delta
+	if _bot_think_left <= 0.0:
+		bot_take_turn()
+
+## AI 回合：由**它自己**开一发。
+##
+## 旧实现根本没有这一步 —— 回合轮转到了 Bot，界面上什么都不发生，要等人类再按一次
+## Fire 才会"动一下"（用户实测的"卡住"，`docs/143` §6.1）。返回是否真的开了火。
+func bot_take_turn() -> bool:
+	if not _running or _shot_in_flight or _online_mode or _replay_mode:
+		return false
+	var shooter := _active_soldier()
+	if shooter.is_empty() or not bool(shooter.alive) or not bool(shooter.get("is_bot", false)):
+		return false
+	_bot_think_left = -1.0
+	var expr := _bot_aim_expression(shooter)
+	var direction := 1.0 if int(shooter.team) == 0 else -1.0
+	var result := GwCore.calculate_path(expr, shooter.pos, direction)
+	if not bool(result.ok):
+		_status("AI 的弹道算不出来：%s" % String(result.note))
+		return false
+	var pts: PackedVector2Array = result.points
+	var drawn := _clip_to_obstacle(pts)
+	_plane.path_color = shooter.get("color", GwThemeFactory.COL_ACCENT)
+	_plane.set_path(drawn.points, drawn.impact, true)
+	if _fire_fx != null:
+		_fire_fx.play(drawn.points)
+	_status("AI（%s）开火：f(x) = %s ／ **自定**的一发（原版 AI 是进化器，docs/143 §6.4）"
+		% [String(shooter.get("name", "Bot")), expr])
+	var shot := {"points": pts, "drawn": drawn.points, "team": int(shooter.team),
+		"shooter": int(shooter.player), "soldier": shooter, "phase": "local"}
+	_commit_shot(shot)
+	return true
 
 ## 一次射击 / 一轮同时回合的**结算**：① 回合数 +1；② "打不全就全部复原"；③ 判胜负。
 ##
@@ -983,13 +1325,20 @@ func _shot_owners() -> Array:
 ## 与 `docs/131` §3.1）：内核第 3 个入参只当"半径实体"用，回的 `hits` 是**下标**，
 ## 所以下标 → 实体的映射由本函数的 `owners` 表负责。**靶子必须在这里**，
 ## 否则打靶关的靶子只是"画着玩的"（那就是 `docs/131` §1 的 bug）。
-func _resolve_shots(shots: Array) -> void:
-	var kills := 0
-	var target_kills := 0
+## 判一次命中的**纯计算**部分（不改任何状态）：谁被打中、弹道第几个点打中的、
+## 弹道停在哪。拆出来是为了让"算结果"（= 原版的 `SynchronizingResults`）与
+## "结果落地"（= `ExecutingResults` 的 tick）分开 —— 后者靠弹道揭示（`docs/143` §3）。
+##
+## ⚠️ 靶子与士兵塞进 **同一个** `hit_test` 数组（借用关系，见 `GwTargetSet.entities()`
+## 与 `docs/131` §3.1）：内核第 3 个入参只当"半径实体"用，回的 `hits` 是**下标**，
+## 所以下标 → 实体的映射由本函数的 `owners` 表负责。
+func _judge_shots(shots: Array) -> Dictionary:
+	var kills: Array = []
+	var target_kills: Array = []
 	var sources: Array[String] = []
 	var note := ""
 	var blocked := false
-	_destroyed_this_shot.clear()
+	var stop := Vector2.ZERO
 	for shot in shots:
 		var pts: PackedVector2Array = shot.points
 		var entities: Array = []        # hit_test 第 3 个入参：[{pos, radius}, …]
@@ -1000,10 +1349,15 @@ func _resolve_shots(shots: Array) -> void:
 			if is_same(s, shot.get("soldier", null)):
 				continue                      # 射手本人不参与致死判定
 			entities.append({"pos": s.pos, "radius": GwCore.SOLDIER_HIT_RADIUS})
-			owners.append({"kind": "soldier", "soldier": s})
+			owners.append({"kind": "soldier", "soldier": s, "pos": s.pos,
+				"radius": GwCore.SOLDIER_HIT_RADIUS})
 		for t in _targets.entities():
 			entities.append(t)
-			owners.append({"kind": "target", "target_id": int(t["target_id"])})
+			owners.append({"kind": "target", "target_id": int(t["target_id"]),
+				"pos": t["pos"], "radius": float(t.get("radius", GwTargetSet.HIT_RADIUS))})
+		if pts.size() == 0:
+			continue
+		stop = pts[pts.size() - 1]
 		# 没有实体但**有障碍**也要判：墙会把弹道拦住，实体在墙后就是安全的
 		# （`docs/30`：掩膜决定停点，士兵不挡弹道）。`_obstacles` 与画的是同一个数组。
 		if entities.is_empty() and _obstacles.is_empty():
@@ -1012,28 +1366,62 @@ func _resolve_shots(shots: Array) -> void:
 		sources.append(String(judged.source))
 		note = String(judged.note)
 		blocked = blocked or bool(judged.get("blocked", false))
+		var st = judged.get("stop", stop)
+		if st is Vector2:
+			stop = st
 		for idx in judged.hits:
 			var i := int(idx)
 			if i < 0 or i >= owners.size():
 				continue
 			var owner: Dictionary = owners[i]
+			var at := _first_point_within(pts, owner["pos"], float(owner["radius"]))
 			if String(owner["kind"]) == "soldier":
-				var victim: Dictionary = owner["soldier"]
-				if bool(victim.alive):
-					victim.alive = false
-					kills += 1
+				kills.append({"soldier": owner["soldier"], "point": at,
+					"pos": owner["pos"], "kind": "soldier"})
 			else:
-				# 靶子：只翻 alive（对应 LifeInfo{alive:false}），不销毁实体（docs/123 §2.2）。
-				if _targets.destroy(int(owner["target_id"])):
-					target_kills += 1
-					_destroyed_this_shot.append(int(owner["target_id"]))
-	if not sources.is_empty():
-		_shot_status = "本轮命中 %d 个士兵、%d 个靶子 ／ 判定来源：%s ／ %s%s" % [
-			kills, target_kills, sources[0], note, "（弹道被障碍拦下）" if blocked else ""]
-		_status(_shot_status)
-	if kills > 0 or target_kills > 0:
-		_refresh_plane()
-		_refresh_targets()
+				target_kills.append({"target_id": int(owner["target_id"]), "point": at,
+					"pos": owner["pos"], "kind": "target"})
+	# 按**弹道先后**排：多个死者时，先被打到的先落（`docs/65` §1 的 tick 语义）。
+	kills.sort_custom(func(a, b): return int(a["point"]) < int(b["point"]))
+	target_kills.sort_custom(func(a, b): return int(a["point"]) < int(b["point"]))
+	return {
+		"kills": kills, "target_kills": target_kills, "stop": stop,
+		"blocked": blocked, "sources": sources, "note": note,
+	}
+
+## 弹道点序列里**第一个**落进 `radius` 的点序号。
+##
+## 与内核判死是同一条规则（`src/settle.rs::resolve_points`：点落在半径内即死），
+## 只是内核把它当内部细节（`SoldierHit.point` 没有出现在返回的 Dictionary 里），
+## 所以这里按同一个判据再算一次序号。找不到（不该发生）⇒ 取最后一点。
+func _first_point_within(pts: PackedVector2Array, pos: Vector2, radius: float) -> int:
+	for i in pts.size():
+		if pts[i].distance_to(pos) <= radius:
+			return i
+	return maxi(0, pts.size() - 1)
+
+## 命中表 → 状态行（`_shot_status` 那一行**不显示**，只给自检/诊断，`docs/125` §5）。
+func _note_shot_status() -> void:
+	var sources: Array = _judged.get("sources", [])
+	if sources.is_empty():
+		return
+	_shot_status = "本轮命中 %d 个士兵、%d 个靶子 ／ 判定来源：%s ／ %s%s" % [
+		_kills_this_shot, _target_kills_this_shot, String(sources[0]),
+		String(_judged.get("note", "")),
+		"（弹道被障碍拦下）" if bool(_judged.get("blocked", false)) else ""]
+	_status(_shot_status)
+
+## 一次性结算一批弹道（同时回合、外部来弹、压平模式都走这条）。
+## 与逐 tick 那条路径共用 `_judge_shots()` + `_apply_kills_up_to()`：**判定只有一份**。
+func _resolve_shots(shots: Array) -> void:
+	_judged = _judge_shots(shots)
+	_kills_this_shot = 0
+	_target_kills_this_shot = 0
+	_destroyed_this_shot.clear()
+	_pending_kills = (_judged.get("kills", []) as Array).duplicate()
+	_pending_target_kills = (_judged.get("target_kills", []) as Array).duplicate()
+	_apply_kills_up_to(1 << 30)
+	_note_shot_status()
 
 ## 靶子的绘制入口：`GwPlaneView.set_targets()` 只收 `Array[Vector2]`（它只管画），
 ## 所以"靶子被打掉 / 被复原"在界面上表现为这个数组少一项 / 多一项。
@@ -1051,32 +1439,48 @@ func _active_soldier() -> Dictionary:
 			if int(s2.get("entity_id", -1)) == _online_soldier:
 				return s2
 		return {}
+	# 本地：射手由回合轮转（`GwTurnDriver`，规则同 `src/turn.rs`）**指定到具体士兵**。
+	# 旧实现是"该玩家的第一个活着的士兵"，多士兵关卡里第二个士兵永远轮不到（docs/143 §6.2）。
+	if _active_soldier_idx >= 0 and _active_soldier_idx < _soldiers.size():
+		var cur: Dictionary = _soldiers[_active_soldier_idx]
+		if int(cur.player) == _active:
+			return cur
 	for s in _soldiers:
 		if int(s.player) == _active:
 			return s
 	return {}
 
+## 回合推进（**只在结算完成之后**调，`docs/143` §6）。
+##
+## 旧实现是 `(_active + 1) % n` 的**玩家**轮转 —— 两处不对：
+## ① 多士兵关卡里那个玩家永远只用第一个士兵（`Level 3` 的描述明写
+##    "At each turn you will shoot from a different one"，**观测**）；
+## ② 轮到 Bot 之后什么都不发生，要人类再按一次 Fire 才"动一下"（用户实测的"卡住"）。
+## 现在改用 `GwTurnDriver`（规则同 `src/turn.rs`，`0x463da0` 逐位），
+## 轮到 AI 就给它一个思考倒计时（`_tick_bot_turn()`），到点由 AI 自己开火。
 func _next_turn(advance: bool) -> void:
 	if not advance:
 		return
 	var app_node := app()
 	if app_node == null:
 		return
-	var n: int = app_node.state.players.size()
-	if n <= 0:
+	# 联机：换手是**服务端 `TurnInfo`** 的事（`_apply_online_turn()`），本地不许抢。
+	if _online_mode:
 		return
-	var guard := 0
-	while guard <= n:
-		_active = (_active + 1) % n
-		guard += 1
-		var has_alive := false
-		for s in _soldiers:
-			if int(s.player) == _active and bool(s.alive):
-				has_alive = true
-				break
-		if has_alive:
-			break
+	var n: int = app_node.state.players.size()
+	if n <= 0 or _soldiers.is_empty():
+		return
+	var idx := _turn_driver.next_shooter(func(i: int) -> bool:
+		return i >= 0 and i < _soldiers.size() and bool(_soldiers[i].alive))
+	if idx >= 0 and idx < _soldiers.size():
+		_active_soldier_idx = idx
+		_active = int(_soldiers[idx].player)
 	_time_left = float(GwModes.turn_seconds(app_node.state.time_mode))
+	# 轮到 AI ⇒ 起倒计时（automation 运行里不自动开火，见 `_tick_bot_turn()`）。
+	_bot_think_left = -1.0
+	var shooter := _active_soldier()
+	if not shooter.is_empty() and bool(shooter.get("is_bot", false)):
+		_bot_think_left = BOT_THINK_SECONDS
 	_load_active_function()
 	_update_timer_label()
 	_refresh_function_list()
@@ -1161,6 +1565,7 @@ func _human_team() -> int:
 
 ## 关卡规则的**只读**快照（自检 / `--dump` 诊断用，不改任何状态）。
 func level_state() -> Dictionary:
+	var shooter := _active_soldier()
 	return {
 		"running": _running,
 		"rules": (_rules.snapshot() if _rules != null else {}),
@@ -1169,6 +1574,30 @@ func level_state() -> Dictionary:
 		"verdict": (_last_verdict.duplicate(true) if not _last_verdict.is_empty() else {}),
 		"shot_status": _shot_status,
 		"obstacles": _obstacles.size(),
+		# --- 弹道生命周期（docs/143）：这些字段只读，不参与逻辑，给自检/诊断看 ---
+		"in_flight": _shot_in_flight,
+		"logic_settled": _logic_settled,
+		"pending_kills": _pending_kills.size(),
+		"pending_target_kills": _pending_target_kills.size(),
+		"shot_points": (_pending_shot.get("points", PackedVector2Array()) as PackedVector2Array).size(),
+		"kills_this_shot": _kills_this_shot,
+		"target_kills_this_shot": _target_kills_this_shot,
+		"effects": (_effects.count() if _effects != null else -1),
+		"effects_spawned": (_effects.spawned() if _effects != null else {}),
+		"fx_log": _fx_log.duplicate(true),
+		"active_player": _active,
+		"active_soldier": ({} if shooter.is_empty() else {
+			"player": int(shooter.get("player", -1)),
+			"is_bot": bool(shooter.get("is_bot", false)),
+			"x": float(shooter.pos.x), "y": float(shooter.pos.y),
+			"alive": bool(shooter.get("alive", false)),
+		}),
+		"soldiers": _soldiers.size(),
+		"alive_soldiers": _alive_soldier_count(),
+		"turn_driver": _turn_driver.snapshot(),
+		"bot_think_left": _bot_think_left,
+		"status": _status_text,
+		"path_points": (_plane.path_points.size() if _plane != null else -1),
 	}
 
 ## 自检用：把**随机**布局钉住。原版靶子与障碍都是每局随机生成的
@@ -1184,18 +1613,30 @@ func inject_layout(layout: Dictionary) -> void:
 func clear_layout_override() -> void:
 	_layout_override = {}
 
-## **外部来弹**：把"别人打过来的一发"走与 `fire()` **完全相同**的结算路径
-## （`_resolve_shots` → `_next_turn` → `_settle_round`）。
+## **外部来弹**：把"别人打过来的一发"送进**同一条**结算路径。
 ##
-## 现在客户端还没有 AI 开火循环（对手不会开火）、服务端也还没接，所以这条目前只被
-## 自检用来构造"我方全灭 ⇒ 失败"（`docs/131` §5.2 ③）。接上 AI/服务端之后，
-## 它就是这个回调本身，语义不用改。
-func apply_external_shot(points: PackedVector2Array, shooter_player: int) -> bool:
+## `animate = false`（默认，既有签名）：立刻结算 —— 自检用它构造"我方全灭 ⇒ 失败"
+## （`docs/131` §5.2 ③）。
+## `animate = true`：与人类开火一样先放弹道、飞完再结算（`docs/143` §3）。
+## 游戏里"别人打过来的一发"应当走 `animate = true`；AI 的回合现在走 `bot_take_turn()`。
+func apply_external_shot(points: PackedVector2Array, shooter_player: int,
+		animate := false) -> bool:
 	if not _running or points.size() < 2:
 		return false
 	var shooter := _soldier_of(shooter_player)
 	if shooter.is_empty():
 		return false
+	if animate:
+		var drawn := _clip_to_obstacle(points)
+		_plane.path_color = shooter.get("color", GwThemeFactory.COL_ACCENT)
+		_plane.set_path(drawn.points, drawn.impact, true)
+		if _fire_fx != null:
+			_fire_fx.play(drawn.points)
+		var shot := {"points": points, "drawn": drawn.points, "team": int(shooter.team),
+			"shooter": shooter_player, "soldier": shooter, "phase": "local"}
+		shot["judged"] = _judge_shots([shot])
+		_begin_shot(shot)
+		return true
 	_resolve_shots([{
 		"points": points, "team": int(shooter.team),
 		"shooter": shooter_player, "soldier": shooter,
@@ -1241,6 +1682,7 @@ func _begin_replay(path: String) -> void:
 	_destroyed_this_shot.clear()
 	_turns_used = 0
 	_last_verdict = {}
+	_reset_shot_state()
 	_plane.clear_path()
 	_set_replay_input_enabled(false)
 	_replay_left.visible = true
@@ -1583,6 +2025,7 @@ func _begin_online(app_node) -> void:
 	_destroyed_this_shot.clear()
 	_turns_used = 0
 	_last_verdict = {}
+	_reset_shot_state()
 	_time_left = 0.0
 	_plane.clear_path()
 	_plane.set_targets([])            # 服务端的 `Match` 里只有士兵，没有靶子（docs/117）
@@ -1614,6 +2057,7 @@ func _online_teardown() -> void:
 	_online_shot = {}
 	_online_lives.clear()
 	_online_effects.clear()
+	_online_ending = false
 
 ## 订阅会话的 `message_received`。**先断后连**，所以连着调多次也只会有一个订阅。
 func _online_subscribe(session: GwNetSession) -> void:
@@ -1829,13 +2273,16 @@ func _on_online_message(kind: String, body: Dictionary) -> void:
 			# `docs/30` §5），所以收到就按"已死"处理 —— **推断/自定**，写进 `docs/139` §5。
 			_online_apply_life(GwNetFrame.body_int(body, "entity_id", -1), false)
 		"EffectInfo":
-			# 只记录不绘制：`GwPlaneView` 没有特效图层，本轮不新造一个（`docs/139` §7）。
+			# 现在**真的画**（`docs/143` §1）：`GwEffectLayer` 是本轮新增的特效层。
+			# 位置与种类都来自服务端，本地只负责画与出声（音效自定，`docs/128` §4）。
+			var fx_type := GwNetFrame.body_str(body, "effect_type")
+			var fx_pos := Vector2(GwNetFrame.body_float(body, "pos_x"),
+				GwNetFrame.body_float(body, "pos_y"))
 			_online_effects.append({
-				"x": GwNetFrame.body_float(body, "pos_x"),
-				"y": GwNetFrame.body_float(body, "pos_y"),
-				"type": GwNetFrame.body_str(body, "effect_type"),
+				"x": fx_pos.x, "y": fx_pos.y, "type": fx_type,
 				"tick": GwNetFrame.body_int(body, "start_tick", 0),
 			})
+			_spawn_effect(fx_type, fx_pos)
 		"TurnInfo":
 			_apply_online_turn(_online_room())
 			_status(_online_status_text())
@@ -1862,7 +2309,11 @@ func _on_online_message(kind: String, body: Dictionary) -> void:
 			_build_online_obstacles(_online_room())
 			_refresh_plane()
 		"EndingGame":
-			_status("联机：服务端宣布本局结束（`EndingGame`）")
+			# 服务端判完了胜负。**当前这一发可能还在飞** ⇒ 只记下来，收尾在弹道落地之后
+			# （`_on_shot_arrived()`）。这正好是 `docs/143` §5 要的"结算完成前不结束"。
+			_online_ending = true
+			_status("联机：服务端宣布本局结束（`EndingGame`）／当前弹道%s"
+				% ("还在飞，落地后收尾" if _shot_in_flight else "已落地"))
 		_:
 			pass
 
@@ -1944,6 +2395,12 @@ func _draw_online_shot(owner_id: int, start: Vector2, end_x: float) -> void:
 	_plane.set_path(cut, impact, true)
 	if _fire_fx != null:
 		_fire_fx.play(cut)          # 与本地开火同一条 tick 动画（docs/135）
+	# 这一发也要走"在飞"状态（`docs/143` §4）：服务端在 `ExecutingResults` 期间同样不收
+	# 新的 `FunctionFire`，本地不能比它更宽松。**不**做本地结算（生死/回合在服务端）。
+	_pending_shot = {"phase": "online", "owner": owner_id, "stop": impact,
+		"judged": {"stop": impact, "sources": []}}
+	_logic_settled = true
+	_shot_in_flight = true
 	var app_node := app()
 	if app_node != null and int(app_node.state.function_mode) == 0:
 		_offset_label.text = GwCore.format_offset(float(result.offset))
@@ -2041,6 +2498,9 @@ func _process(delta: float) -> void:
 	if _replay_mode:
 		_replay_tick(delta)
 		return
+	# 弹道的表现**任何状态下都继续推进**（`docs/143` §3）：一发打完之后还要把爆炸放完、
+	# 把曲线清掉；对局已经在 `_on_shot_arrived()` 里结束了也照样收尾。
+	_advance_presentation()
 	if not _running:
 		return
 	# 联机：时钟照走，但**回合推进不由本地做**（服务端的 `TurnInfo` 说了算）。
@@ -2051,6 +2511,8 @@ func _process(delta: float) -> void:
 	var app_node := app()
 	if app_node == null:
 		return
+	# 轮到 AI ⇒ 到点由**它自己**开火（旧实现没有这一步，界面上就一直等着人类再按 Fire）。
+	_tick_bot_turn(delta)
 	var limit := GwModes.turn_seconds(app_node.state.time_mode)
 	if limit <= 0:
 		_update_timer_label()
