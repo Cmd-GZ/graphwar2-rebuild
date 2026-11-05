@@ -112,6 +112,7 @@ pub mod life;
 pub mod gdext;
 pub mod protocol;
 pub mod turn;
+pub mod settle;
 pub mod capi;
 pub mod gdext_class;
 pub mod shot;

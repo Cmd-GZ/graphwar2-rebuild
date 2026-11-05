@@ -293,3 +293,41 @@ fn soldiers_do_not_block_the_trajectory() {
     // 障碍掩膜在这条路径上确实没有阻挡
     assert!(first_hit(&mask, &pts, x0, y0).is_none(), "不该撞到障碍");
 }
+
+#[test]
+fn resolve_reproduces_captured_kills_and_endpoints() {
+    use gw2_rebuild::settle::{resolve, Target};
+
+    let mask = build_mask_no_soldiers();
+    // 两发都是 Bot 的 234 打出的；射手本人不参与致死判定
+    let targets: Vec<Target> = KILL_SOLDIERS
+        .iter()
+        .filter(|(id, _, _)| *id != 234)
+        .map(|(id, x, y)| Target { id: *id, x: *x, y: *y, radius: 0.5 })
+        .collect();
+
+    // (函数, 抓到的终点 x, 抓到的死者)
+    let cases = [
+        ("(x/3.02)", -24.99362063007402_f64, 230_i64),
+        ("(-1.65/(-8.04/x))", -24.55049563007283, 231),
+    ];
+    for (text, end_x, victim) in cases {
+        let r = resolve(
+            text,
+            17.627629369923454,
+            -12.391816789113197,
+            0.5,
+            true,
+            Mode::Normal,
+            &mask,
+            &targets,
+        );
+        assert_eq!(r.killed, vec![victim], "{text}: 致死对象不符");
+        assert!(!r.blocked, "{text}: 这一发没有撞到障碍，不该被阻挡");
+        assert!(
+            (r.stop.0 - end_x).abs() < 1.0,
+            "{text}: 终点 x={} 与抓到的 {end_x} 相差过大",
+            r.stop.0
+        );
+    }
+}
