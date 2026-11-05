@@ -117,6 +117,8 @@ pub mod server;
 pub mod tick;
 pub mod game;
 pub mod levelgen;
+pub mod serverloop;
+pub mod rng;
 mod levelgen_tables;
 pub mod turnstate;
 pub mod capi;
