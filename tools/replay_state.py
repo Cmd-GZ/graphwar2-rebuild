@@ -54,7 +54,7 @@ def main():
     pos = {}                # soldier_id -> (x,y,r)
     team = {}               # soldier_id -> "Team1"/"Team2"
     alive = {}              # soldier_id -> bool
-    pending_func = None
+    pending = {}          # owner_id -> 该 owner 最近一次设置的函数（按 owner 配对！）
     last_hole = None
     shots = []
 
@@ -80,19 +80,19 @@ def main():
         if "FunctionInfo" in ev:
             fi = ev["FunctionInfo"]
             if fi.get("function"):
-                pending_func = (fi["function"], fi["owner_id"])
+                pending[fi["owner_id"]] = fi["function"]
         if "FunctionPoints" in ev:
             fp = ev["FunctionPoints"]
             shots.append({
                 "tick": tick, "owner": fp["owner_id"],
                 "start": (fp["start_x"], fp["start_y"]), "end_x": fp["end_x"],
-                "func": pending_func[0] if pending_func else "",
+                "func": pending.get(fp["owner_id"], ""),
                 "end": last_hole,
                 "obstacles": list(obstacles),
                 "pos": dict(pos), "team": dict(team), "alive": dict(alive),
                 "mode": mode,
             })
-            pending_func = None
+            pending.pop(fp["owner_id"], None)
 
     picked = None
     if args.bot:

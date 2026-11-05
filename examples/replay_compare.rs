@@ -115,8 +115,9 @@ fn main() {
                  end_x_real, end_x_ours, (end_x_real - end_x_ours).abs());
         // 我们算的轨迹在真实终点 x 处的 y
         if let (Some(ex), Some(ey)) = (real_end_x, real_end_y) {
-        println!("  真实终点 = ({ex:.3}, {ey:.3})，该点掩膜占用 = {}",
-                 gw2_rebuild::plane::is_occupied(&mask, ex, ey));
+        let occ = gw2_rebuild::plane::is_occupied(&mask, ex, ey);
+        println!("ENDPOINT_OCCUPIED {}", if occ { 1 } else { 0 });
+        println!("  真实终点 = ({ex:.3}, {ey:.3})，该点掩膜占用 = {occ}");
     }
     // 找离真实终点最近的若干障碍，看我们的曲线是否"擦过"
         let mut near: Vec<(f64, f64, f64, f64)> = obstacles.iter()
