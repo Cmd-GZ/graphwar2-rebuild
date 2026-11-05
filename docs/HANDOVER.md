@@ -31,7 +31,7 @@
 
 **外壳（`client/`，Godot 4.7.2）**：**15/15 界面**（7 基础 + 8 弹窗）能启动、能跳转、能开一局
 （设置对局 → 加 Bot → Start → 输入函数 → Fire → 弹道 → 命中 → 结算）。
-自检 **99 条断言**：有资产时全绿；无资产时 `90 passed, 9 skipped`，每条 skip 显式报原因。
+自检 **146 条断言**：有资产时全绿；无资产时 `90 passed, 9 skipped`，每条 skip 显式报原因。
 **弹道与命中已走内核**：`client/gw2rebuild.gdextension` 已提交（`.so` gitignored），
 `GW2Rebuild.path_calculate`（等弦长采样）与 `GW2Rebuild.hit_test`（掩膜命中，
 判定本体与 `settle::resolve_points` 同一函数体），界面状态行显示 `判定来源：kernel`——
@@ -78,7 +78,7 @@
    集合迭代 + 逐 id 补发 `TargetInfo`；`0x3e2830` 的模块归属依据是 panic 串启发式，`docs/123` 判为不可靠。）
 
 **数字**：**272 条测试全绿**（`cargo test --offline`，本机 2026-11-06 实测）；
-`docs/` 下现行 **100** 篇（`ls docs/*.md | wc -l`）+ `archive/` **32** 篇过程档案 + 5 份"已并档"占位指针（全量清单见 [`docs/INDEX.md`](INDEX.md)）；
+`docs/` 下现行 **101** 篇（`ls docs/*.md | wc -l`）+ `archive/` **32** 篇过程档案 + 5 份"已并档"占位指针（全量清单见 [`docs/INDEX.md`](INDEX.md)）；
 客户端自检 **99** 条断言（无资产时 `90 passed, 9 skipped`）；
 README 的工作包表共 **15 行，其中 ⬜（未做）0 行**——已经没有"整块没做"的工作包了。
 ## 1. 仓库与推送规矩
