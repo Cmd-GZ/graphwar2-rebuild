@@ -51,11 +51,32 @@ pub fn resolve(
     targets: &[Target],
 ) -> ShotOutcome {
     let points = shot_points(text, x0, y0, step, flip, mode, true);
+    resolve_points(mask, targets, &points)
+}
+
+/// 与 [`resolve`] 同一套规则，但**点序列由调用方给**（`docs/120`）。
+///
+/// 存在的理由只有一个：GDScript 那边已经拿着内核算好的点序列
+/// （`path_calculate` 的返回值），没必要为了判命中再算一遍 ——
+/// 更重要的是**不能**再算一遍：两次采样的输入只要有一点差别，客户端画的弹道
+/// 和致死判定就会分家。规则本体只有这一份（[`resolve`] 也走这里）。
+///
+/// 规则逐条与 [`resolve`] 相同（`docs/30`）：
+///
+/// 1. 每个点先判致死（`d <= radius`），再判阻挡（掩膜 `!= 0xFF`）；
+/// 2. 士兵**不**影响弹道，只有障碍让弹道停下；
+/// 3. 同一士兵只记一次；`killed` 的顺序 = 弹道经过的先后。
+///
+/// `points` 用**棋盘坐标**，`mask` 是**像素空间**的 1000×600 掩膜；
+/// 两者之间的换算在 [`crate::plane::is_occupied`] 里（`px = 20x+500`），
+/// 本函数与调用方都**不要**再翻一次（`docs/120` §2）。
+pub fn resolve_points(mask: &[u8], targets: &[Target], points: &[(f64, f64)]) -> ShotOutcome {
+    let (x0, y0) = *points.first().unwrap_or(&(0.0, 0.0));
     let mut killed: Vec<i64> = Vec::new();
     let mut stop = (x0, y0);
     let mut blocked = false;
 
-    for &(px, py) in &points {
+    for &(px, py) in points {
         // 先判致死：经过即死，且不影响弹道
         for t in targets {
             if killed.contains(&t.id) {
@@ -75,7 +96,7 @@ pub fn resolve(
         stop = (px, py);
     }
 
-    ShotOutcome { points, stop, blocked, killed }
+    ShotOutcome { points: points.to_vec(), stop, blocked, killed }
 }
 
 #[cfg(test)]

@@ -461,7 +461,7 @@ func fire() -> void:
 	_offset_label.text = GwCore.format_offset(float(result.offset)) if app_node.state.function_mode == 0 else ""
 	_status("弹道来源：%s ／ %s" % [String(result.source), String(result.note)])
 
-	var shot := {"points": pts, "team": team, "shooter": _active}
+	var shot := {"points": pts, "team": team, "shooter": _active, "soldier": active_soldier}
 	if int(app_node.state.turn_mode) == GwModes.Turn.SIMULTANEOUS:
 		# 同时回合：先全部记下，轮完再结算（真实结算在 src/settle.rs，docs/86）
 		_shot_queue.append(shot)
@@ -492,26 +492,41 @@ func _shot_owners() -> Array:
 		out.append(int(shot.shooter))
 	return out
 
-## 命中判定 —— **界面占位，不是复原出来的规则**。
+## 命中判定 —— 走**内核的掩膜规则**（`docs/120`）。
 ##
-## 真实规则：`src/life.rs` / `docs/65`（无血量、穿过即死、友军也会死、按弹道先后结算、
-## 掩膜逐点采样）。本项目没有把内核的掩膜/生命接口暴露到 GDScript，所以这里用
-## "路径点到士兵中心的距离 < 半径"这个**几何近似**，只为把整局跑通、能走到结算框。
-## docs/108 §7 明确登记了这个偏离。
+## 真实规则在 `src/settle.rs::resolve_points`（`docs/30` 的真对局回放）：
+## 障碍光栅化进 1000×600 掩膜决定弹道停在哪；士兵**不**挡弹道，只在
+## "弹道点落在半径 0.5 内"时判死（`PosInfo.radius` 恒 0.5，与画出来的 0.8 无关）。
+## 射手本人不参与致死（`settle` 的约定：子弹从自己身上出发）。
+##
+## 内核缺席时 `GwCore.hit_test()` 会退回几何近似，状态行必须把 `source` 写出来 ——
+## 不允许把近似当成内核算的。原来的纯近似版本登记在 `docs/108` §7，本函数是它的替代。
 func _resolve_shots(shots: Array) -> void:
 	var kills := 0
+	var sources: Array[String] = []
+	var note := ""
 	for shot in shots:
 		var pts: PackedVector2Array = shot.points
+		var targets: Array = []
 		for s in _soldiers:
 			if not bool(s.alive):
 				continue
-			for i in range(0, pts.size(), 2):
-				if pts[i].distance_to(s.pos) <= GwPlaneView.SOLDIER_RADIUS:
-					s.alive = false
-					kills += 1
-					break
+			if is_same(s, shot.get("soldier", null)):
+				continue                      # 射手本人不参与致死判定
+			targets.append({"pos": s.pos, "radius": GwCore.SOLDIER_HIT_RADIUS, "soldier": s})
+		if targets.is_empty():
+			continue
+		var judged := GwCore.hit_test(pts, targets, [])
+		sources.append(String(judged.source))
+		note = String(judged.note)
+		for idx in judged.hits:
+			var victim: Dictionary = targets[int(idx)].soldier
+			if bool(victim.alive):
+				victim.alive = false
+				kills += 1
+	if not sources.is_empty():
+		_status("本轮命中 %d 个士兵 ／ 判定来源：%s ／ %s" % [kills, sources[0], note])
 	if kills > 0:
-		_status("本轮命中 %d 个士兵（界面占位判定，见 docs/108 §7）" % kills)
 		_refresh_plane()
 
 func _active_soldier() -> Dictionary:

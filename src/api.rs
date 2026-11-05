@@ -147,13 +147,19 @@ pub fn calculate_path(expr: &str, x0: f64, y0: f64, direction: f64) -> PathOutco
 // 2. FFI 层的数据整形（不依赖 Godot，可单测：决定 Dictionary 里放什么）
 // ---------------------------------------------------------------------------
 
-/// `path_calculate` 返回的 Dictionary 里的一个值。
+/// `path_calculate` / `hit_test` 返回的 Dictionary 里的一个值。
 #[derive(Debug, Clone, PartialEq)]
 pub enum ApiValue {
     Bool(bool),
     F64(f64),
+    /// 整数（`hit_test` 的点序号、士兵下标）。
+    Int(i64),
     Str(String),
     Points(Vec<(f64, f64)>),
+    /// 单个 `Vector2`（`hit_test` 的 `stop`）。
+    Vec2(f64, f64),
+    /// `Array[int]`（`hit_test` 的 `hits` / `hit_points_index`）。
+    IntArray(Vec<i64>),
 }
 
 /// 契约要求的四个键，顺序固定（`ok` 在前：客户端先读它）。
@@ -173,6 +179,162 @@ pub fn result_pairs(out: &PathOutcome) -> Vec<(&'static str, ApiValue)> {
 }
 
 // ---------------------------------------------------------------------------
+// 2b. `hit_test`（`docs/120`）：把 `settle::resolve_points` 的规则抬到 GDScript
+// ---------------------------------------------------------------------------
+//
+// 这是 `docs/116` §8.2 留的坑。要点只有两条，其余全是搬运：
+//
+// * **规则本体唯一**：本函数先按 `docs/30` 把障碍光栅化进掩膜、把士兵变成
+//   `settle::Target`，然后调用 [`crate::settle::resolve_points`] ——
+//   与 `settle::resolve`（以及 `tests/live_hits.rs` 里那 12 条真对局回放）
+//   走的是**同一个函数**，没有第二份判定；
+// * **坐标只换一次**：进参 `points`/`obstacles`/`soldiers` 全是**棋盘坐标**，
+//   掩膜是**像素**空间；换算在 `plane::is_occupied` / `plane::rasterize` 内部完成
+//   （`px = 20x + 500`、`py = 20y + 300`）。这里**绝不**再做任何换算，
+//   否则整条弹道会偏 500/300 像素（`docs/116` §2 的老坑）。
+
+/// 一个被判死的士兵。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SoldierHit {
+    /// 士兵在入参数组里的下标（0 起）。
+    pub soldier: usize,
+    /// 弹道点序列里**第一次**进入该士兵半径的点序号。
+    pub point: usize,
+    /// 那个点的坐标（棋盘坐标）。
+    pub x: f64,
+    pub y: f64,
+}
+
+/// `hit_test` 的结果。
+#[derive(Debug, Clone, PartialEq)]
+pub struct HitOutcome {
+    pub ok: bool,
+    /// 被判死的士兵，按**弹道经过的先后顺序**。
+    pub hits: Vec<SoldierHit>,
+    /// 弹道**第一次**撞到障碍的点序号；`-1` = 没有撞到障碍。
+    ///
+    /// 注意语义分工（`docs/30`）：障碍让弹道**停下**，士兵只是**被穿过**。
+    /// 所以这个字段说的是"弹道停在哪一点"，与 `hits` 是两件事。
+    pub first_hit: i64,
+    /// 弹道停止处（棋盘坐标）：撞到障碍就是撞击点，否则是最后一个点。
+    pub stop: (f64, f64),
+    /// 是否因撞到障碍而停止。
+    pub blocked: bool,
+    /// 空字符串表示成功；否则是机器可读的错误码。
+    pub error: &'static str,
+}
+
+impl HitOutcome {
+    fn err(code: &'static str) -> Self {
+        HitOutcome {
+            ok: false,
+            hits: Vec::new(),
+            first_hit: -1,
+            stop: (f64::NAN, f64::NAN),
+            blocked: false,
+            error: code,
+        }
+    }
+}
+
+/// 错误码：点序列为空（调用方还没算弹道就来了）。
+pub const E_NO_POINTS_ARR: &str = "no_points";
+/// 错误码：点序列里有 NaN / inf。
+pub const E_POINTS_NOT_FINITE: &str = "points_not_finite";
+/// 错误码：`obstacles` 长度不是 3 的倍数（约定是 `[x, y, size] * n`）。
+pub const E_BAD_OBSTACLES: &str = "bad_obstacles";
+/// 错误码：`soldiers` 长度不是 3 的倍数（约定是 `[x, y, radius] * n`）。
+pub const E_BAD_SOLDIERS: &str = "bad_soldiers";
+/// 错误码：取不到 `packed_*_array_operator_index_const`，或参数不是内置数组。
+pub const E_UNREADABLE_ARRAY: &str = "unreadable_array";
+
+/// 判一次命中。**这是 `hit_test` 的全部语义**，FFI 层只是搬运。
+///
+/// 三个入参都是**棋盘坐标**：
+///
+/// * `points`：弹道点序列（就是 `path_calculate` 返回的那串）；
+/// * `obstacles`：三元组 `(x, y, size)`，`size` 是该障碍的半径（游戏单位）；
+/// * `soldiers`：三元组 `(x, y, radius)`；**调用方负责把射手本人排掉**
+///   （`settle` 的约定，`docs/30` §5 里"射手不会被自己打死"只有样本级证据）。
+///
+/// 返回值里 `hits[i].soldier` 是**入参下标**，所以调用方不需要给士兵编 id。
+pub fn hit_test(
+    points: &[(f64, f64)],
+    obstacles: &[(f64, f64, f64)],
+    soldiers: &[(f64, f64, f64)],
+) -> HitOutcome {
+    if points.is_empty() {
+        return HitOutcome::err(E_NO_POINTS_ARR);
+    }
+    if points.iter().any(|(x, y)| !x.is_finite() || !y.is_finite()) {
+        return HitOutcome::err(E_POINTS_NOT_FINITE);
+    }
+
+    // 掩膜只放**障碍**（`docs/30` §2：把士兵画进掩膜会让弹道错误地停在士兵处）。
+    let mut mask = crate::plane::empty_mask();
+    for &(x, y, size) in obstacles {
+        crate::plane::rasterize(&mut mask, x, y, size, 0x00);
+    }
+
+    let targets: Vec<crate::settle::Target> = soldiers
+        .iter()
+        .enumerate()
+        .map(|(i, &(x, y, radius))| crate::settle::Target { id: i as i64, x, y, radius })
+        .collect();
+
+    // ↓ 判定本体：与 `settle::resolve` 同一函数，没有第二份实现。
+    let out = crate::settle::resolve_points(&mask, &targets, points);
+
+    // 下面两次扫描**只决定"报哪几个序号"，不参与判定**：
+    // `resolve_points` 只回 `killed: Vec<id>`，没有点序号，而界面要的是"第几点打中的"。
+    let mut hits: Vec<SoldierHit> = Vec::with_capacity(out.killed.len());
+    for id in &out.killed {
+        let t = match targets.iter().find(|t| t.id == *id) {
+            Some(t) => t,
+            None => continue,
+        };
+        let idx = points.iter().position(|&(px, py)| {
+            let d = ((px - t.x).powi(2) + (py - t.y).powi(2)).sqrt();
+            d <= t.radius
+        });
+        if let Some(point) = idx {
+            hits.push(SoldierHit { soldier: *id as usize, point, x: points[point].0, y: points[point].1 });
+        }
+    }
+
+    let first_hit = if out.blocked {
+        points
+            .iter()
+            .position(|&(px, py)| crate::plane::is_occupied(&mask, px, py))
+            .map(|i| i as i64)
+            .unwrap_or(-1)
+    } else {
+        -1
+    };
+
+    HitOutcome { ok: true, hits, first_hit, stop: out.stop, blocked: out.blocked, error: "" }
+}
+
+/// `hit_test` 返回的 Dictionary 键（顺序固定）。
+pub const HIT_KEYS: [&str; 7] = ["ok", "hits", "hit_points", "first_hit", "stop", "blocked", "error"];
+
+/// 把 [`HitOutcome`] 整形为要写进 Dictionary 的键值对。
+///
+/// `hits` 与 `hit_points` **一一对应**（同下标 = 同一个士兵的第一次被判点），
+/// 这样界面既能改存活标记，也能在弹道上画一笔。
+pub fn hit_result_pairs(out: &HitOutcome) -> Vec<(&'static str, ApiValue)> {
+    vec![
+        ("ok", ApiValue::Bool(out.ok)),
+        ("hits", ApiValue::IntArray(out.hits.iter().map(|h| h.soldier as i64).collect())),
+        ("hit_points", ApiValue::Points(out.hits.iter().map(|h| (h.x, h.y)).collect())),
+        ("first_hit", ApiValue::Int(out.first_hit)),
+        ("stop", ApiValue::Vec2(out.stop.0, out.stop.1)),
+        ("blocked", ApiValue::Bool(out.blocked)),
+        ("error", ApiValue::Str(out.error.to_string())),
+    ]
+}
+
+// ---------------------------------------------------------------------------
 // 3. Godot 接口表
 // ---------------------------------------------------------------------------
 
@@ -187,6 +349,8 @@ const V_FLOAT: i32 = 3;
 const V_STRING: i32 = 4;
 const V_VECTOR2: i32 = 5;
 const V_DICTIONARY: i32 = 27;
+const V_ARRAY: i32 = 28;
+const V_PACKED_FLOAT64_ARRAY: i32 = 33;
 const V_PACKED_VECTOR2_ARRAY: i32 = 35;
 
 /// `PROPERTY_USAGE_DEFAULT`。
@@ -228,6 +392,18 @@ type FnVariantCall = unsafe extern "C" fn(
 );
 type FnGetType = unsafe extern "C" fn(v: *const c_void) -> i32;
 type FnDestroy = unsafe extern "C" fn(v: *mut c_void);
+/// `packed_*_array_operator_index_const` 的函数类型（照 `gdextension_interface.h`）：
+///
+/// ```c
+/// typedef const double *(*GDExtensionInterfacePackedFloat64ArrayOperatorIndexConst)(
+///         GDExtensionConstTypePtr p_self, GDExtensionInt p_index);
+/// typedef GDExtensionTypePtr (*GDExtensionInterfacePackedVector2ArrayOperatorIndexConst)(
+///         GDExtensionConstTypePtr p_self, GDExtensionInt p_index);
+/// ```
+///
+/// `p_self` 是**裸的** `Packed*Array`（用 `get_variant_to_type_constructor` 从 Variant
+/// 里取出来），不是 Variant —— 见 `docs/120` §3.1 里那条踩坑记录。
+type FnPackedOpIndex = unsafe extern "C" fn(base: *const c_void, index: i64) -> *mut c_void;
 
 /// 已解析的接口函数指针。存成 `usize` 是为了让静态表 `Send + Sync`。
 struct Api {
@@ -242,6 +418,11 @@ struct Api {
     str_new: usize,     // string_new_with_utf8_chars
     str_to_utf8: usize, // string_to_utf8_chars
     register_method: usize,
+    /// `packed_vector2_array_operator_index_const`（读 `PackedVector2Array` 元素，
+    /// `docs/120` §3.1）。
+    vec2_opindex: usize,
+    /// `packed_float64_array_operator_index_const`（读 `PackedFloat64Array` 元素）。
+    f64_opindex: usize,
 }
 
 static API: OnceLock<Api> = OnceLock::new();
@@ -250,6 +431,9 @@ static API: OnceLock<Api> = OnceLock::new();
 static CALLS: AtomicUsize = AtomicUsize::new(0);
 static OK_CALLS: AtomicUsize = AtomicUsize::new(0);
 static ERR_CALLS: AtomicUsize = AtomicUsize::new(0);
+/// `hit_test` 的调用计数（`docs/120`）。
+static HIT_CALLS: AtomicUsize = AtomicUsize::new(0);
+static HIT_OK_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 /// `path_calculate` 被 GDScript 调用的次数。
 pub fn calls() -> usize {
@@ -261,6 +445,10 @@ pub fn ok_calls() -> usize {
 }
 pub fn err_calls() -> usize {
     ERR_CALLS.load(Ordering::Relaxed)
+}
+/// `hit_test` 被调用 / 返回 `ok: true` 的次数。
+pub fn hit_calls() -> (usize, usize) {
+    (HIT_CALLS.load(Ordering::Relaxed), HIT_OK_CALLS.load(Ordering::Relaxed))
 }
 
 fn api() -> Option<&'static Api> {
@@ -400,12 +588,94 @@ impl Api {
         f(this_, method, args.as_ptr(), args.len() as i64, ret.p(), err.as_mut_ptr() as *mut c_void);
         i32::from_le_bytes([err[0], err[1], err[2], err[3]])
     }
+
+    // ---- 读内置数组（`docs/120` §3.1：手写 FFI 怎么把 Packed* 拆开）----
+    //
+    // 做法固定两步，两种数组共用：
+    //   ① `get_variant_to_type_constructor(type)` 把 Variant 里的**裸数组**取出来
+    //      （`Packed*Array` 就是 8 字节的 CowData 指针；取出来会加一次引用，
+    //      用完必须 `variant_get_ptr_destructor(type)` 放掉）；
+    //   ② 用 `packed_*_array_operator_index_const` 逐个取元素地址，直接读裸值。
+    //
+    // **不要**改用 `variant_get_ptr_indexed_getter`：它在 4.7.2 上实测读出来是垃圾
+    // （`docs/120` §3.1 有对照数据：同一个数组 A 路全是 1e-35 量级，B 路才对）。
+
+    /// 读 `PackedVector2Array` 的全部元素。
+    unsafe fn read_packed_v2(&self, v: *const c_void) -> Option<Vec<(f64, f64)>> {
+        let n = self.array_len(v)?;
+        if self.vec2_opindex == 0 {
+            return None;
+        }
+        let to_raw = self.to_ctor(V_PACKED_VECTOR2_ARRAY)?;
+        let raw = Slot::new();
+        to_raw(raw.p(), v as *mut c_void);
+        let index_of: FnPackedOpIndex = std::mem::transmute(self.vec2_opindex);
+        let mut out = Vec::with_capacity(n as usize);
+        for i in 0..n {
+            let p = index_of(raw.p(), i);
+            if p.is_null() {
+                self.destroy_raw(V_PACKED_VECTOR2_ARRAY, raw.p());
+                return None;
+            }
+            // Vector2 是 2 × f32（标准精度的 Godot 构建）。
+            let xy = std::slice::from_raw_parts(p as *const f32, 2);
+            out.push((xy[0] as f64, xy[1] as f64));
+        }
+        self.destroy_raw(V_PACKED_VECTOR2_ARRAY, raw.p());
+        Some(out)
+    }
+
+    /// 读 `PackedFloat64Array` 的全部元素。
+    unsafe fn read_packed_f64(&self, v: *const c_void) -> Option<Vec<f64>> {
+        let n = self.array_len(v)?;
+        if self.f64_opindex == 0 {
+            return None;
+        }
+        let to_raw = self.to_ctor(V_PACKED_FLOAT64_ARRAY)?;
+        let raw = Slot::new();
+        to_raw(raw.p(), v as *mut c_void);
+        let index_of: FnPackedOpIndex = std::mem::transmute(self.f64_opindex);
+        let mut out = Vec::with_capacity(n as usize);
+        for i in 0..n {
+            let p = index_of(raw.p(), i);
+            if p.is_null() {
+                self.destroy_raw(V_PACKED_FLOAT64_ARRAY, raw.p());
+                return None;
+            }
+            out.push(*(p as *const f64));
+        }
+        self.destroy_raw(V_PACKED_FLOAT64_ARRAY, raw.p());
+        Some(out)
+    }
+
+    /// 数组长度：`size()`（`Array` 与所有 `Packed*Array` 都有这个方法）。
+    unsafe fn array_len(&self, v: *const c_void) -> Option<i64> {
+        if self.variant_call == 0 {
+            return None;
+        }
+        let names = NAMES.get()?;
+        let f: FnVariantCall = std::mem::transmute(self.variant_call);
+        let mut err = [0u8; 16];
+        let ret = Slot::new();
+        f(v as *mut c_void, names.size.p(), std::ptr::null(), 0, ret.p(),
+          err.as_mut_ptr() as *mut c_void);
+        let ok = i32::from_le_bytes([err[0], err[1], err[2], err[3]]) == 0;
+        if !ok {
+            return None;
+        }
+        let to_i64 = self.to_ctor(V_INT)?;
+        let mut n = 0i64;
+        to_i64(&mut n as *mut i64 as *mut c_void, ret.p());
+        self.destroy_variant(ret.p());
+        Some(n)
+    }
 }
 
 /// 注册时创建一次、之后一直复用的 `StringName`（方法名）。
 struct Names {
     set: Box<Slot>,
     append: Box<Slot>,
+    size: Box<Slot>,
 }
 
 static NAMES: OnceLock<Names> = OnceLock::new();
@@ -516,8 +786,10 @@ unsafe fn put_points_variant(api: &Api, dest: *mut c_void, pts: &[(f64, f64)]) -
     true
 }
 
-/// 把结果写成 Dictionary，放进 `ret`（Godot 给的**空 Variant 槽**）。
-unsafe fn write_result(api: &Api, ret: *mut c_void, out: &PathOutcome) {
+/// 把 `pairs` 写成 Dictionary，放进 `ret`（Godot 给的**空 Variant 槽**）。
+///
+/// `path_calculate` 与 `hit_test` 共用这一段：造字典的 ABI 只在这里出现一次。
+unsafe fn write_dict(api: &Api, ret: *mut c_void, pairs: Vec<(&'static str, ApiValue)>) {
     if ret.is_null() {
         return;
     }
@@ -540,7 +812,7 @@ unsafe fn write_result(api: &Api, ret: *mut c_void, out: &PathOutcome) {
     api.destroy_raw(V_DICTIONARY, raw.p());
 
     let Some(names) = NAMES.get() else { return };
-    for (key, value) in result_pairs(out) {
+    for (key, value) in pairs {
         let key_slot = Slot::new();
         if !put_string_variant(api, key_slot.p(), key) {
             continue;
@@ -563,8 +835,25 @@ unsafe fn write_result(api: &Api, ret: *mut c_void, out: &PathOutcome) {
                 }
                 None => false,
             },
+            ApiValue::Int(i) => match api.from_ctor(V_INT) {
+                Some(f) => {
+                    let mut raw_i = *i;
+                    f(val_slot.p(), &mut raw_i as *mut i64 as *mut c_void);
+                    true
+                }
+                None => false,
+            },
             ApiValue::Str(text) => put_string_variant(api, val_slot.p(), text),
             ApiValue::Points(pts) => put_points_variant(api, val_slot.p(), pts),
+            ApiValue::Vec2(x, y) => match api.from_ctor(V_VECTOR2) {
+                Some(f) => {
+                    let mut component = [*x as f32, *y as f32];
+                    f(val_slot.p(), component.as_mut_ptr() as *mut c_void);
+                    true
+                }
+                None => false,
+            },
+            ApiValue::IntArray(items) => put_int_array_variant(api, val_slot.p(), items),
         };
         if built {
             let _ = api.call(ret, names.set.p(), &[key_slot.p(), val_slot.p()]);
@@ -573,6 +862,45 @@ unsafe fn write_result(api: &Api, ret: *mut c_void, out: &PathOutcome) {
         api.destroy_variant(val_slot.p());
         api.destroy_variant(key_slot.p());
     }
+}
+
+/// 造一个 `Array` 的 Variant 写进 `dest`，元素是整数（`append` 逐个追加）。
+unsafe fn put_int_array_variant(api: &Api, dest: *mut c_void, items: &[i64]) -> bool {
+    let Some(get_ptr_ctor) = (if api.ptr_ctor != 0 {
+        Some(std::mem::transmute::<usize, FnGetPtrCtor>(api.ptr_ctor))
+    } else {
+        None
+    }) else {
+        return false;
+    };
+    let ctor0 = get_ptr_ctor(V_ARRAY, 0);
+    if ctor0.is_null() {
+        return false;
+    }
+    let ctor0: FnPtrCtor = std::mem::transmute(ctor0);
+    let raw = Slot::new();
+    ctor0(raw.p(), std::ptr::null());
+    let (Some(from_array), Some(from_int)) = (api.from_ctor(V_ARRAY), api.from_ctor(V_INT)) else {
+        api.destroy_raw(V_ARRAY, raw.p());
+        return false;
+    };
+    from_array(dest, raw.p());
+    api.destroy_raw(V_ARRAY, raw.p());
+
+    let Some(names) = NAMES.get() else { return false };
+    let item = Slot::new();
+    for &v in items {
+        let mut raw_i = v;
+        from_int(item.p(), &mut raw_i as *mut i64 as *mut c_void);
+        let _ = api.call(dest, names.append.p(), &[item.p()]);
+        api.destroy_variant(item.p());
+    }
+    true
+}
+
+/// 把 `path_calculate` 的结果写成 Dictionary。
+unsafe fn write_result(api: &Api, ret: *mut c_void, out: &PathOutcome) {
+    write_dict(api, ret, result_pairs(out));
 }
 
 /// GDScript 调 `path_calculate` 时走这里。
@@ -625,12 +953,77 @@ unsafe extern "C" fn path_calculate_call(
 // 6. 注册
 // ---------------------------------------------------------------------------
 
-/// 给已注册的 `GW2Rebuild` 类挂上 `path_calculate(expr, x0, y0, direction)`。
+/// GDScript 调 `hit_test` 时走这里。
 ///
-/// # Safety
-/// `get` 必须是 Godot 的 `get_proc_address`，且必须在 `register_class` **之后**调用。
-pub unsafe fn register_path_method(get: GetProc, library: *mut c_void) -> bool {
-    let table = Api {
+/// 参数约定（`docs/120` §1）：
+///
+/// ```text
+/// hit_test(points: PackedVector2Array,
+///          obstacles: PackedFloat64Array,   # [x, y, size] * n，棋盘坐标
+///          soldiers:  PackedFloat64Array)   # [x, y, radius] * n，棋盘坐标
+///     -> Dictionary { ok, hits, hit_points, first_hit, stop, blocked, error }
+/// ```
+///
+/// 之所以用扁平 `PackedFloat64Array` 而不是 `Array[Dictionary]`：读数组元素走的是
+/// 与 `points` **完全相同**的那条 `operator_index_const` 路径，
+/// 不需要在 FFI 层调 `Dictionary.get` —— 少一层没用过的 ABI，就少一个静默失败点。
+unsafe extern "C" fn hit_test_call(
+    _ud: *mut c_void,
+    _instance: *mut c_void,
+    args: *const *const c_void,
+    argc: i64,
+    ret: *mut c_void,
+    _error: *mut c_void,
+) {
+    HIT_CALLS.fetch_add(1, Ordering::Relaxed);
+    let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let Some(api) = api() else {
+            return HitOutcome::err(E_PANIC);
+        };
+        if argc < 3 || args.is_null() || ret.is_null() {
+            return HitOutcome::err(E_BAD_ARGS);
+        }
+        let arg = |i: usize| *args.add(i);
+        let Some(points) = api.read_packed_v2(arg(0)) else {
+            return HitOutcome::err(E_UNREADABLE_ARRAY);
+        };
+        let Some(flat_obstacles) = api.read_packed_f64(arg(1)) else {
+            return HitOutcome::err(E_UNREADABLE_ARRAY);
+        };
+        let Some(flat_soldiers) = api.read_packed_f64(arg(2)) else {
+            return HitOutcome::err(E_UNREADABLE_ARRAY);
+        };
+        let (Some(obstacles), Some(soldiers)) =
+            (triples(&flat_obstacles), triples(&flat_soldiers))
+        else {
+            // 两个数组的步长都是 3；长度对不上就是调用方写错了。
+            return HitOutcome::err(if flat_obstacles.len() % 3 != 0 {
+                E_BAD_OBSTACLES
+            } else {
+                E_BAD_SOLDIERS
+            });
+        };
+        let outcome = hit_test(&points, &obstacles, &soldiers);
+        write_dict(api, ret as *mut c_void, hit_result_pairs(&outcome));
+        outcome
+    }))
+    .unwrap_or_else(|_| HitOutcome::err(E_PANIC));
+    if out.ok {
+        HIT_OK_CALLS.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// `[a, b, c, d, e, f]` → `[(a,b,c), (d,e,f)]`；长度不是 3 的倍数返回 `None`。
+fn triples(flat: &[f64]) -> Option<Vec<(f64, f64, f64)>> {
+    if flat.len() % 3 != 0 {
+        return None;
+    }
+    Some(flat.chunks_exact(3).map(|c| (c[0], c[1], c[2])).collect())
+}
+
+/// 全部接口函数指针；`API` 是 `OnceLock`，两次注册共用同一张表。
+unsafe fn build_table(get: GetProc) -> Api {
+    Api {
         from_ctor: sym(get, "get_variant_from_type_constructor"),
         to_ctor: sym(get, "get_variant_to_type_constructor"),
         ptr_ctor: sym(get, "variant_get_ptr_constructor"),
@@ -642,11 +1035,46 @@ pub unsafe fn register_path_method(get: GetProc, library: *mut c_void) -> bool {
         str_new: sym(get, "string_new_with_utf8_chars"),
         str_to_utf8: sym(get, "string_to_utf8_chars"),
         register_method: sym(get, "classdb_register_extension_class_method"),
+        vec2_opindex: sym(get, "packed_vector2_array_operator_index_const"),
+        f64_opindex: sym(get, "packed_float64_array_operator_index_const"),
+    }
+}
+
+/// 注册 `path_calculate` 需要的最小接口集合是否齐备（缺一个就整体不注册）。
+fn table_ok(table: &Api) -> bool {
+    table.sn_new != 0
+        && table.str_new != 0
+        && table.str_to_utf8 != 0
+        && table.from_ctor != 0
+        && table.to_ctor != 0
+        && table.ptr_ctor != 0
+        && table.variant_call != 0
+        && table.get_type != 0
+        && table.register_method != 0
+}
+
+/// 把方法名 `set` / `append` / `size` 的 `StringName` 建一次，之后复用。
+unsafe fn install_names() -> bool {
+    let Some(api) = api() else { return false };
+    let (Some(set_sn), Some(append_sn), Some(size_sn)) =
+        (api.sn("set"), api.sn("append"), api.sn("size"))
+    else {
+        return false;
     };
+    let _ = NAMES.set(Names { set: set_sn, append: append_sn, size: size_sn });
+    true
+}
+
+/// 给已注册的 `GW2Rebuild` 类挂上 `path_calculate(expr, x0, y0, direction)`。
+///
+/// # Safety
+/// `get` 必须是 Godot 的 `get_proc_address`，且必须在 `register_class` **之后**调用。
+pub unsafe fn register_path_method(get: GetProc, library: *mut c_void) -> bool {
+    let table = build_table(get);
     eprintln!(
         "[gw2-rebuild] api resolve: from_ctor={} to_ctor={} ptr_ctor={} variant_call={} \
          get_type={} variant_destroy={} raw_dtor={} sn_new={} str_new={} str_to_utf8={} \
-         register_method={}",
+         register_method={} vec2_opindex={} f64_opindex={}",
         table.from_ctor != 0,
         table.to_ctor != 0,
         table.ptr_ctor != 0,
@@ -658,18 +1086,11 @@ pub unsafe fn register_path_method(get: GetProc, library: *mut c_void) -> bool {
         table.str_new != 0,
         table.str_to_utf8 != 0,
         table.register_method != 0,
+        table.vec2_opindex != 0,
+        table.f64_opindex != 0,
     );
     // 缺任何一个都不能注册：宁可让客户端继续用预览，也不要一半可用
-    if table.sn_new == 0
-        || table.str_new == 0
-        || table.str_to_utf8 == 0
-        || table.from_ctor == 0
-        || table.to_ctor == 0
-        || table.ptr_ctor == 0
-        || table.variant_call == 0
-        || table.get_type == 0
-        || table.register_method == 0
-    {
+    if !table_ok(&table) {
         eprintln!("[gw2-rebuild] path_calculate NOT registered (missing interface)");
         return false;
     }
@@ -731,16 +1152,103 @@ pub unsafe fn register_path_method(get: GetProc, library: *mut c_void) -> bool {
 
     // 先建好 API 表（call_func 里要用）
     let _ = API.set(table);
-    let Some(api) = api() else { return false };
+    let Some(_api) = api() else { return false };
     // 方法名 StringName 复用（省掉每次调用的表查找）
-    let (Some(set_sn), Some(append_sn)) = (api.sn("set"), api.sn("append")) else {
+    if !install_names() {
         eprintln!("[gw2-rebuild] path_calculate: cannot build method StringNames");
         return false;
-    };
-    let _ = NAMES.set(Names { set: set_sn, append: append_sn });
+    }
 
     f_reg(library, cls_sn.as_ptr() as *const c_void, &info);
     eprintln!("[gw2-rebuild] registered method path_calculate(expr, x0, y0, direction)");
+    true
+}
+
+/// 给已注册的 `GW2Rebuild` 类挂上
+/// `hit_test(points, obstacles, soldiers) -> Dictionary`（`docs/120`）。
+///
+/// 必须**在** [`register_path_method`] **之后**调用：那张接口表是同一个 `OnceLock`，
+/// 这里只是复用（`build_table` 的返回值会被 `API.set` 忽略）。
+///
+/// 与 `path_calculate` 的差别只有一条：这里额外要求两个
+/// `packed_*_array_operator_index_const`（读 `Packed*Array` 的元素）。
+///
+/// # Safety
+/// `get` / `library` 的约束同 [`register_path_method`]。
+pub unsafe fn register_hit_test_method(get: GetProc, library: *mut c_void) -> bool {
+    let table = build_table(get);
+    if !table_ok(&table) {
+        eprintln!("[gw2-rebuild] hit_test NOT registered (missing interface)");
+        return false;
+    }
+    if table.vec2_opindex == 0 || table.f64_opindex == 0 {
+        // 本机 4.7.2 两个都在；缺一个就整体不注册（客户端会退回近似判定并显示出来）。
+        eprintln!("[gw2-rebuild] hit_test NOT registered (no packed_*_array_operator_index_const)");
+        return false;
+    }
+    let _ = API.set(table);
+    let Some(api) = api() else { return false };
+    if !install_names() {
+        eprintln!("[gw2-rebuild] hit_test: cannot build method StringNames");
+        return false;
+    }
+
+    let f_reg: unsafe extern "C" fn(*mut c_void, *const c_void, *const ClassMethodInfo) =
+        std::mem::transmute(api.register_method);
+    let mut cls_sn = [0u8; 8];
+    let f_sn: FnSnNew = std::mem::transmute(api.sn_new);
+    f_sn(cls_sn.as_mut_ptr() as *mut c_void, b"GW2Rebuild\0".as_ptr(), 0);
+
+    let mut meth_sn = [0u8; 8];
+    f_sn(meth_sn.as_mut_ptr() as *mut c_void, b"hit_test\0".as_ptr(), 0);
+    let empty_sn = [0u8; 8];
+    let empty_str = [0u8; 8];
+    let mut arg_names = [[0u8; 8]; 3];
+    for (slot, name) in arg_names.iter_mut().zip(["points\0", "obstacles\0", "soldiers\0"]) {
+        f_sn(slot.as_mut_ptr() as *mut c_void, name.as_ptr(), 0);
+    }
+    let mut ret_name = [0u8; 8];
+    f_sn(ret_name.as_mut_ptr() as *mut c_void, b"result\0".as_ptr(), 0);
+
+    let ret_info = PropertyInfo {
+        ty: V_DICTIONARY,
+        name: ret_name.as_ptr() as *const c_void,
+        class_name: empty_sn.as_ptr() as *const c_void,
+        hint: 0,
+        hint_string: empty_str.as_ptr() as *const c_void,
+        usage: USAGE_DEFAULT,
+    };
+    let arg_types = [V_PACKED_VECTOR2_ARRAY, V_PACKED_FLOAT64_ARRAY, V_PACKED_FLOAT64_ARRAY];
+    let arg_info: Vec<PropertyInfo> = (0..3)
+        .map(|i| PropertyInfo {
+            ty: arg_types[i],
+            name: arg_names[i].as_ptr() as *const c_void,
+            class_name: empty_sn.as_ptr() as *const c_void,
+            hint: 0,
+            hint_string: empty_str.as_ptr() as *const c_void,
+            usage: USAGE_DEFAULT,
+        })
+        .collect();
+    let arg_meta: [i32; 3] = [0; 3];
+
+    let info = ClassMethodInfo {
+        name: meth_sn.as_ptr() as *const c_void,
+        method_userdata: std::ptr::null_mut(),
+        call_func: Some(hit_test_call),
+        ptrcall_func: std::ptr::null(),
+        method_flags: METHOD_FLAG_NORMAL,
+        has_return_value: 1,
+        return_value_info: &ret_info,
+        return_value_metadata: 0,
+        argument_count: 3,
+        arguments_info: arg_info.as_ptr(),
+        arguments_metadata: arg_meta.as_ptr() as *const c_void,
+        default_argument_count: 0,
+        default_arguments: std::ptr::null(),
+    };
+
+    f_reg(library, cls_sn.as_ptr() as *const c_void, &info);
+    eprintln!("[gw2-rebuild] registered method hit_test(points, obstacles, soldiers)");
     true
 }
 
@@ -946,6 +1454,321 @@ mod tests {
                 assert!(out.points.len() >= 2);
                 assert!(out.offset.is_finite());
             }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 8. `hit_test` 的测试（`docs/120`）
+// ---------------------------------------------------------------------------
+//
+// 四类必须钉住的东西：
+//   1. 正常命中：弹道穿过士兵 → 判死；
+//   2. **擦过**：半径边界（`<=` 含等号）与**掩膜抗锯齿环**（`!= 0xFF` 即占据）——
+//      后者是"掩膜规则"与"几何圆"真正分家的地方；
+//   3. 未命中；
+//   4. **坐标换算**：入参是棋盘坐标、掩膜是像素坐标。写错会让命中整体偏 500/300。
+//
+// 外加一条"没有第二份实现"的等价性测试：把 `tests/live_hits.rs` 里那局真对局的
+// 障碍/士兵/函数原样搬过来，比较 `hit_test` 与 `settle::resolve` 的致死集合。
+
+#[cfg(test)]
+mod hit_tests {
+    use super::*;
+    use crate::plane::to_pixel;
+    use crate::settle::{resolve, Target};
+
+    /// 棋盘 y = 0 上从 x = `from` 走到 `to` 的直线点序列（步长 0.01，与内核弦长一致）。
+    fn line(from: f64, to: f64, y: f64) -> Vec<(f64, f64)> {
+        let mut pts = Vec::new();
+        let n = ((to - from).abs() / 0.01).ceil() as usize;
+        for i in 0..=n {
+            let t = i as f64 / n as f64;
+            pts.push((from + (to - from) * t, y));
+        }
+        pts
+    }
+
+    // ---- 1. 正常命中 ----
+
+    #[test]
+    fn kills_a_soldier_the_trajectory_passes_through() {
+        let pts = line(10.0, -10.0, 0.0);
+        let out = hit_test(&pts, &[], &[(0.0, 0.0, 0.5)]);
+        assert!(out.ok, "err={}", out.error);
+        assert_eq!(out.hits.len(), 1, "应恰好判死一个");
+        assert_eq!(out.hits[0].soldier, 0);
+        assert!(!out.blocked, "士兵不该让弹道停下（docs/30 §2）");
+        assert_eq!(out.first_hit, -1, "没有障碍就没有 first_hit");
+        // 停止点应是最后一个点（一路飞过去）
+        assert!((out.stop.0 - (-10.0)).abs() < 1e-9, "stop={:?}", out.stop);
+        // 判死发生在弹道经过士兵处：x ≈ 0（点序列自 +10 向 −10）
+        assert!(out.hits[0].x.abs() <= 0.5, "判死点 x={}", out.hits[0].x);
+    }
+
+    #[test]
+    fn hit_points_are_indices_into_the_trajectory() {
+        let pts = line(10.0, -10.0, 0.0);
+        let out = hit_test(&pts, &[], &[(0.0, 0.0, 0.5)]);
+        let h = out.hits[0];
+        assert!(h.point < pts.len(), "点序号越界");
+        assert_eq!(pts[h.point], (h.x, h.y), "hit_points 必须就是那个点");
+        // 再前面的点都还在半径外（这是"第一次"的判据）
+        for p in &pts[..h.point] {
+            let d = (p.0 * p.0 + p.1 * p.1).sqrt();
+            assert!(d > 0.5, "第 {} 点已在半径内，不该等到 {}", pts.iter().position(|q| q == p).unwrap(), h.point);
+        }
+    }
+
+    // ---- 2. 擦过 ----
+
+    /// 半径边界是**闭区间**（`d <= radius`）：差 0.001 就跨过去了。
+    #[test]
+    fn grazes_the_kill_radius_boundary() {
+        let pts = line(5.0, -5.0, 0.0);
+        let inside = hit_test(&pts, &[], &[(0.0, 0.499, 0.5)]);
+        assert_eq!(inside.hits.len(), 1, "0.499 < 0.5 应判死");
+        let outside = hit_test(&pts, &[], &[(0.0, 0.501, 0.5)]);
+        assert_eq!(outside.hits.len(), 0, "0.501 > 0.5 不该判死");
+        // 正好 0.5：`d <= radius` 含等号 ⇒ 判死（判据来自 settle::resolve）
+        let exact = hit_test(&pts, &[], &[(0.0, 0.5, 0.5)]);
+        assert_eq!(exact.hits.len(), 1, "d == radius 应判死（含等号）");
+    }
+
+    /// **掩膜的抗锯齿环也算占据**（`!= 0xFF`）：这是掩膜规则与"几何圆"的分界。
+    ///
+    /// 障碍 (0,0) size=1.0 ⇒ 像素半径 20；像素 (520, 302) 不在硬填充的行内
+    /// （该行 hw=19），落在环上，值 ≈ 25；而它离圆心 1.005 > 1.0。
+    /// 几何近似会说"没撞到"，掩膜说"撞到了"——真实规则是后者。
+    #[test]
+    fn graze_into_the_antialias_ring_still_counts_as_a_hit() {
+        let mut mask = crate::plane::empty_mask();
+        crate::plane::rasterize(&mut mask, 0.0, 0.0, 1.0, 0x00);
+        assert_eq!(crate::plane::to_pixel(1.0, 0.1), (520, 302), "前提：这个点落在环上");
+        let v = mask[crate::plane::mask_index(520, 302)];
+        assert!(v != crate::plane::EMPTY && v < 0x40, "环上的值应在 (0, 0x40) 之间，实际 {v:#x}");
+
+        let pts = vec![(5.0, 0.1), (1.0, 0.1), (0.0, 0.1)];
+        let out = hit_test(&pts, &[(0.0, 0.0, 1.0)], &[]);
+        assert_eq!(out.first_hit, 1, "环上的点也要算撞到（first_hit 应为第 1 点）");
+        assert!(out.blocked);
+        // 反面：再往外一个像素就是空的
+        let free = hit_test(&[(5.0, 0.1), (1.1, 0.1)], &[(0.0, 0.0, 1.0)], &[]);
+        assert_eq!(free.first_hit, -1, "1.1（离圆心 1.1）应为空");
+    }
+
+    // ---- 3. 未命中 ----
+
+    #[test]
+    fn misses_when_the_trajectory_never_gets_close() {
+        let pts = line(10.0, -10.0, 5.0);
+        let out = hit_test(&pts, &[], &[(0.0, 0.0, 0.5)]);
+        assert!(out.ok);
+        assert!(out.hits.is_empty());
+        assert_eq!(out.first_hit, -1);
+        assert!(!out.blocked);
+    }
+
+    #[test]
+    fn obstacle_stops_the_shot_without_killing_anyone() {
+        let pts = line(10.0, -10.0, 0.0);
+        let out = hit_test(&pts, &[(0.0, 0.0, 1.0)], &[]);
+        assert!(out.ok);
+        assert!(out.blocked, "障碍应让弹道停下");
+        assert!(out.first_hit >= 0, "first_hit 应给出停下那一点");
+        let stop = pts[out.first_hit as usize];
+        assert_eq!(out.stop, stop, "stop 必须就是 first_hit 那一点");
+        assert!(stop.0 > 0.9 && stop.0 < 1.1, "撞击点应在障碍右缘 (1.0)，实际 {}", stop.0);
+        assert!(out.hits.is_empty());
+    }
+
+    /// 同一次射击里：先经过士兵（判死），再撞障碍（停下）——两者互不干扰。
+    #[test]
+    fn soldier_dies_before_the_obstacle_stops_the_shot() {
+        let pts = line(10.0, -10.0, 0.0);
+        let out = hit_test(&pts, &[(-3.0, 0.0, 1.0)], &[(3.0, 0.0, 0.5)]);
+        assert!(out.blocked);
+        assert_eq!(out.hits.len(), 1, "撞障碍之前经过的士兵应判死");
+        // 判死在 x≈3，撞击在 x≈-2 附近
+        assert!((out.hits[0].x - 3.0).abs() <= 0.5, "判死点 x={}", out.hits[0].x);
+        assert!(out.stop.0 < -1.0, "stop x={}", out.stop.0);
+    }
+
+    // ---- 4. 坐标换算（本节最要紧）----
+
+    /// 棋盘 → 像素的换算只有一处（`plane::to_pixel`），常量就是 `20x+500 / 20y+300`。
+    #[test]
+    fn board_to_pixel_constants_are_20x_plus_500() {
+        assert_eq!(to_pixel(0.0, 0.0), (500, 300), "棋盘原点 = 画布中心");
+        assert_eq!(to_pixel(10.0, 0.0), (700, 300), "10 单位 = 200 像素");
+        assert_eq!(to_pixel(0.0, 5.0), (500, 400));
+        assert_eq!(to_pixel(-25.0, -15.0), (0, 0), "左下角");
+        assert_eq!(to_pixel(25.0, 15.0), (1000, 600), "右上角（不含）");
+    }
+
+    /// 入参确实是**棋盘坐标**：若内核把它们当像素用，命中点会整体挪 500/300。
+    ///
+    /// 做法：士兵放在棋盘 (10, 0)；正确的换算把它画到像素 (700, 300)。
+    /// 若错当像素，它会画到像素 (10, 0) = 棋盘 (-24.5, -15) —— 于是
+    /// "走过棋盘 (-24.5,-15) 的弹道会判死"这条就成了错误映射的指纹。
+    #[test]
+    fn hit_test_does_not_treat_board_coordinates_as_pixels() {
+        // 正确：棋盘 (10,0) 上的士兵被穿过 (10,0) 的弹道判死
+        let good = hit_test(&line(15.0, 5.0, 0.0), &[], &[(10.0, 0.0, 0.5)]);
+        assert_eq!(good.hits.len(), 1, "棋盘 (10,0) 上的士兵应被 y=0 的弹道判死");
+        assert!((good.hits[0].x - 10.0).abs() <= 0.5, "判死点 x={}", good.hits[0].x);
+
+        // 错误映射的指纹：走过棋盘 (-24.5,-15) 的弹道**不该**判死任何人
+        let bad = hit_test(&line(-24.0, -25.0, -15.0), &[], &[(10.0, 0.0, 0.5)]);
+        assert!(bad.hits.is_empty(),
+                "在 (-24.5,-15) 判死了 (10,0) 的士兵 —— 说明棋盘坐标被当成像素用了");
+
+        // y 轴同理：士兵 (0,10) 在像素 (500,500)；错当像素会落到 (0,10)→棋盘 (-25,-14.5)
+        let good_y = hit_test(&line(3.0, -3.0, 10.0), &[], &[(0.0, 10.0, 0.5)]);
+        assert_eq!(good_y.hits.len(), 1, "棋盘 (0,10) 上的士兵应被 y=10 的弹道判死");
+        let bad_y = hit_test(&line(-24.0, -25.0, -14.5), &[], &[(0.0, 10.0, 0.5)]);
+        assert!(bad_y.hits.is_empty(), "y 方向也把棋盘坐标当成像素了");
+    }
+
+    /// 障碍也走同一套换算：棋盘 (0,0) 的障碍占据像素 480..520 / 280..320。
+    #[test]
+    fn obstacle_mask_uses_the_same_board_to_pixel_mapping() {
+        let blocked = hit_test(&line(5.0, -5.0, 0.0), &[(0.0, 0.0, 1.0)], &[]);
+        assert!(blocked.blocked);
+        // 棋盘 (0, 4) 在像素 (500, 380)，离圆心 80 px，肯定空
+        let free = hit_test(&line(5.0, -5.0, 4.0), &[(0.0, 0.0, 1.0)], &[]);
+        assert!(!free.blocked, "y=4 的直线不该撞到 (0,0) 上半径 1 的障碍");
+        // 若把棋盘坐标当像素：障碍会落在像素 (0,0) = 棋盘 (-25,-15)，那条线会撞上
+        let wrong = hit_test(&line(-24.0, -25.0, -15.0), &[(0.0, 0.0, 1.0)], &[]);
+        assert!(!wrong.blocked, "在 (-24.5,-15) 撞上了 (0,0) 的障碍 —— 坐标被当成像素了");
+    }
+
+    // ---- 5. 契约形状与错误码 ----
+
+    #[test]
+    fn result_shape_is_exactly_the_contract() {
+        let out = hit_test(&line(5.0, -5.0, 0.0), &[], &[(0.0, 0.0, 0.5)]);
+        let pairs = hit_result_pairs(&out);
+        let keys: Vec<&str> = pairs.iter().map(|(k, _)| *k).collect();
+        assert_eq!(keys, HIT_KEYS.to_vec(), "键名与顺序都必须固定");
+        match &pairs[1].1 {
+            // hits 是**入参下标**，不是 id
+            ApiValue::IntArray(v) => assert_eq!(v, &vec![0], "hits 应是士兵下标"),
+            other => panic!("hits 类型不对：{other:?}"),
+        }
+        match &pairs[2].1 {
+            ApiValue::Points(v) => assert_eq!(v.len(), 1, "hit_points 应与 hits 一一对应"),
+            other => panic!("hit_points 类型不对：{other:?}"),
+        }
+    }
+
+    #[test]
+    fn soldier_indices_follow_the_input_array() {
+        let pts = line(10.0, -10.0, 0.0);
+        // 两个士兵：下标 0 在 (-4,0)，下标 1 在 (4,0)；弹道自 +10 向 −10
+        let out = hit_test(&pts, &[], &[(-4.0, 0.0, 0.5), (4.0, 0.0, 0.5)]);
+        assert_eq!(out.hits.len(), 2);
+        assert_eq!(
+            out.hits.iter().map(|h| h.soldier).collect::<Vec<_>>(),
+            vec![1, 0],
+            "顺序必须是弹道经过的先后（先 (4,0)），而不是数组顺序"
+        );
+    }
+
+    #[test]
+    fn empty_points_is_an_error_not_a_panic() {
+        let out = hit_test(&[], &[], &[(0.0, 0.0, 0.5)]);
+        assert!(!out.ok);
+        assert_eq!(out.error, E_NO_POINTS_ARR);
+        assert_eq!(out.first_hit, -1);
+        assert!(out.stop.0.is_nan(), "出错时 stop 用 NaN（客户端靠它判无效）");
+    }
+
+    #[test]
+    fn nan_points_are_rejected() {
+        let out = hit_test(&[(0.0, 0.0), (f64::NAN, 1.0)], &[], &[]);
+        assert!(!out.ok);
+        assert_eq!(out.error, E_POINTS_NOT_FINITE);
+    }
+
+    #[test]
+    fn flat_arrays_must_be_multiples_of_three() {
+        assert!(triples(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).is_some());
+        assert!(triples(&[]).is_some());
+        assert!(triples(&[1.0, 2.0, 3.0, 4.0]).is_none());
+        let t = triples(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]).unwrap();
+        assert_eq!(t, vec![(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)]);
+    }
+
+    // ---- 6. 没有第二份实现：与 settle::resolve 逐项一致 ----
+
+    /// 真对局的三发（障碍/士兵/函数都来自 `tests/live_hits.rs` 的抓包）。
+    ///
+    /// `hit_test` 与 `settle::resolve` 必须给出**同一个致死集合与同一个停止点**；
+    /// 只要有人偷偷在 api.rs 里重写一套判定，这条就会红。
+    #[test]
+    fn agrees_with_settle_resolve_on_captured_shots() {
+        // 抓包里这局的 14 个障碍（docs/30 的死亡关卡）
+        const OBSTACLES: [(f64, f64, f64); 14] = [
+            (-21.5884800661654, -7.3800965520851, 1.1902918644742717),
+            (-0.0043405309383072535, 8.031053141932013, 4.03260643486631),
+            (-27.485404156862483, -2.607348073571232, 3.0563754620559624),
+            (19.549097387425583, 12.244367460469363, 0.8),
+            (5.664280020587462, -1.4520102469532084, 5.530115811710694),
+            (-3.0987736677523, -0.41426820089414934, 2.7894043084418967),
+            (-7.271546855545921, 7.407667665483476, 2.1546288278638563),
+            (2.6337852096200587, -16.364006888151255, 4.150737650686631),
+            (-33.029423617493215, 15.326196716300089, 4.120993686035668),
+            (-3.5817439411020002, 15.61255105748268, 2.5176156833383114),
+            (31.181023534936582, -16.99000672897561, 3.187013128939303),
+            (19.295935788332006, 10.214361424896895, 2.6420553382885146),
+            (28.267826384274272, -9.996620908589026, 3.6649732987672836),
+            (-8.732270571729165, 12.312386915630467, 3.662220619519833),
+        ];
+        // (id, x, y) —— 士兵半径恒为 0.5（PosInfo 里的 radius）
+        const SOLDIERS: [(i64, f64, f64); 4] = [
+            (233, 18.434132014691514, 0.8654732803815559),
+            (231, -11.75347210076399, -5.862016522961236),
+            (234, 17.627629369923454, -12.391816789113197),
+            (230, -10.452779035793856, -2.651563472451839),
+        ];
+
+        // 掩膜只放障碍（docs/30 §2）
+        let mut mask = crate::plane::empty_mask();
+        for (x, y, r) in OBSTACLES {
+            crate::plane::rasterize(&mut mask, x, y, r, 0x00);
+        }
+
+        // (函数原文, 起点 x, 起点 y, flip) —— 两发都来自 Bot 234
+        let shots: [(&str, f64, f64, bool); 2] = [
+            ("(x/3.02)", 17.627629369923454, -12.391816789113197, true),
+            ("(-1.65/(-8.04/x))", 17.627629369923454, -12.391816789113197, true),
+        ];
+        // 排除射手本人（settle 的约定）
+        let shooter = 234_i64;
+        let targets: Vec<Target> = SOLDIERS
+            .iter()
+            .filter(|(id, _, _)| *id != shooter)
+            .map(|(id, x, y)| Target { id: *id, x: *x, y: *y, radius: 0.5 })
+            .collect();
+        let triple: Vec<(f64, f64, f64)> = targets.iter().map(|t| (t.x, t.y, t.radius)).collect();
+
+        for (text, x0, y0, flip) in shots {
+            let path = calculate_path(text, x0, y0, if flip { -1.0 } else { 1.0 });
+            assert!(path.ok, "{text}: 弹道算不出来（{}）", path.error);
+
+            // 真值：完整结算（自己采样 + 判命中）
+            let theirs = resolve(text, x0, y0, STEP_DEFAULT, flip, Mode::Normal, &mask, &targets);
+            // 待验：只判命中（点序列来自 path_calculate）
+            let ours = hit_test(&path.points, &OBSTACLES, &triple);
+
+            let mut a: Vec<i64> = ours.hits.iter().map(|h| targets[h.soldier].id).collect();
+            let mut b = theirs.killed.clone();
+            a.sort_unstable();
+            b.sort_unstable();
+            assert_eq!(a, b, "{text}: 致死集合与 settle::resolve 不一致");
+            assert_eq!(ours.blocked, theirs.blocked, "{text}: blocked 不一致");
+            assert_eq!(ours.stop, theirs.stop, "{text}: 停止点不一致");
         }
     }
 }
