@@ -37,6 +37,11 @@ func build() -> void:
 	var title := GwUI.title(GAME_TITLE, title_margin)
 	title.name = "Label"
 	title.set_meta("title_font", true)   # 字号由 apply_font_scale() 按"宽/8"单独设
+	# 标题字体：原版 `title_theme.tres` 的 `default_font = res://EraserRegular.ttf`
+	# （`docs/121` §5.4）。缺资产时 title_font() 退回主字体，不会崩。
+	var tf := GwThemeFactory.title_font()
+	if tf != null:
+		title.add_theme_font_override("font", tf)
 
 	# --- 4 个按钮：2×2 布局（原版两列，左列 Campaign/Player，右列 Battle/Replays）---
 	var row := GwUI.hbox("HBoxContainer", 12, vbox)

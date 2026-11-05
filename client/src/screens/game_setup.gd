@@ -246,6 +246,7 @@ func _player_row(index: int, p: Dictionary) -> HBoxContainer:
 	# 段位图标：原版是 ranks/rank_N.svg（玩家）或 hats/no_hat.svg（Bot）。
 	# 段位数据未知 → 本项目用一个中性的圆点占位。
 	var rank := TextureRect.new()
+	rank.expand_mode = TextureRect.EXPAND_IGNORE_SIZE   # 图标是 512×512 导入产物，不忽略会撑爆最小尺寸
 	rank.name = "RankIcon"
 	rank.custom_minimum_size = Vector2(24, 24)
 	rank.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -275,11 +276,14 @@ func _player_row(index: int, p: Dictionary) -> HBoxContainer:
 	slots.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	for s in GwGameState.MAX_SOLDIERS:
 		var slot := GwUI.margin("MarginContainer", 1, slots)
-		slot.custom_minimum_size = Vector2(24, 24)
+		# 40×40：原版 svg 的画布留白很大（士兵本体只占中间 ~45%），
+		# 用 24 会缩成一个小点（实测对比，见 docs/121 §7.2）。
+		slot.custom_minimum_size = Vector2(40, 40)
 		slot.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		var icon := TextureRect.new()
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.name = "SkinIcon" if s < int(p.soldiers) else "EmptyIcon"
-		icon.custom_minimum_size = Vector2(22, 22)
+		icon.custom_minimum_size = Vector2(38, 38)
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		if s < int(p.soldiers):
 			icon.texture = GwIcons.get_icon("skin_%d" % int(p.skin) if int(p.skin) >= 0 else "bot_%d" % int(p.bot_tier))

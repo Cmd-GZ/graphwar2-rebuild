@@ -40,7 +40,24 @@ var screens_control: Control
 var _toast_label: Label
 var _toast_timer := 0.0
 
+## 资产检查结果（`_require_assets()` 填）。selftest 用它决定要不要跳过图标/字体断言。
+var assets_ok := false
+var missing_assets: Array[String] = []
+
+## 缺资产时给用户看的**可执行**提示。绝不"静默退化"成自绘图标（docs/121 §5）。
+const ASSET_HELP := """[gw2] 缺少媒体资源目录：client/assets/
+  本仓库**不存放任何媒体文件**（图标 / 字体 / 主题都是原版资产，版权原因不入库）。
+  请在你自己的 Graphwar.pck 上跑一次提取：
+
+      cd <仓库根> && python3 tools/extract_assets.py
+      # 或显式指定包：python3 tools/extract_assets.py --pck /path/to/Graphwar.pck
+
+  产出的 client/assets/ 已 gitignore。提取完直接重跑本程序即可，不需要重新 --import。
+"""
+
 func _ready() -> void:
+	if not _require_assets():
+		return
 	theme = GwThemeFactory.build()
 	screens_control = $VBoxContainer/ScreensControl
 	_build_toast()
@@ -48,6 +65,35 @@ func _ready() -> void:
 	App.show_screen("MainMenu")
 	App.toast.connect(_on_toast)
 	_handle_cmdline()
+
+## 资产硬检查。返回 true 表示可以继续建房；false 表示已经退出（GUI 模式）。
+##
+## 规则（`docs/121` §5.3）：
+##   * **GUI 模式**：缺 `client/assets/` 就打印可执行的补救命令并 `quit(4)` —— 不静默退化；
+##   * **selftest 模式**：允许继续，但把"跳过图标/字体断言"**显式报告**出来（`tools/selftest.gd`）。
+func _is_selftest() -> bool:
+	return OS.get_cmdline_user_args().has("--selftest")
+
+func _require_assets() -> bool:
+	assets_ok = GwAssets.available()
+	if assets_ok:
+		var need := GwIcons.all_referenced_paths()
+		need.append(GwThemeFactory.FONT_MAIN)
+		need.append(GwThemeFactory.FONT_TITLE)
+		missing_assets = GwAssets.check(need)
+		if not missing_assets.is_empty():
+			assets_ok = false
+	if assets_ok:
+		return true
+	if missing_assets.is_empty():
+		missing_assets = ["（整个 client/assets/ 目录缺失，或没有 MANIFEST.tsv）"]
+	print(ASSET_HELP)
+	if _is_selftest():
+		push_warning("[gw2] 无资产目录：本次 selftest 跳过图标/字体断言（会显式报告）")
+		return true
+	printerr("[gw2] 缺资产，拒绝启动 —— 不做占位图冒充实物")
+	get_tree().quit(4)
+	return false
 
 func _instantiate_screens() -> void:
 	for screen_name in SCREEN_ORDER:

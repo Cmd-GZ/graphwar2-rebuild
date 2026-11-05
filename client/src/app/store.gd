@@ -17,11 +17,19 @@ const SKIN_COUNT := 15
 const FACE_COUNT := 15
 const HAT_COUNT := 27
 
+## 原版玩家的**默认外观**（`docs/92` §4.14 / §4.10 观测）：yellow 皮肤 + regular_eyes + soldier_helmet。
+## 这三个下标 = `GwIcons` 表里的位置，不是随手取的 0：
+##   skin_7 = skins/yellow、face_2 = faces/regular_eyes、hat_1 = hats/soldier_helmet。
+## （0 号分别是 blue / no_face / no_hat，其中后两个是**全透明**图，预览会变成一颗光头。）
+const DEFAULT_SKIN := 7
+const DEFAULT_FACE := 2
+const DEFAULT_HAT := 1
+
 var profile := {
 	"name": "user",
-	"skin": 0,
-	"face": 0,
-	"hat": 0,
+	"skin": DEFAULT_SKIN,
+	"face": DEFAULT_FACE,
+	"hat": DEFAULT_HAT,
 }
 
 ## 已通关的关卡 id 列表（战役解锁状态）。
@@ -34,9 +42,9 @@ func load_all() -> void:
 	if cf.load(PATH) != OK:
 		return
 	profile.name = String(cf.get_value(SECTION_PROFILE, "name", profile.name))
-	profile.skin = clampi(int(cf.get_value(SECTION_PROFILE, "skin", 0)), 0, SKIN_COUNT - 1)
-	profile.face = clampi(int(cf.get_value(SECTION_PROFILE, "face", 0)), 0, FACE_COUNT - 1)
-	profile.hat = clampi(int(cf.get_value(SECTION_PROFILE, "hat", 0)), 0, HAT_COUNT - 1)
+	profile.skin = clampi(int(cf.get_value(SECTION_PROFILE, "skin", DEFAULT_SKIN)), 0, SKIN_COUNT - 1)
+	profile.face = clampi(int(cf.get_value(SECTION_PROFILE, "face", DEFAULT_FACE)), 0, FACE_COUNT - 1)
+	profile.hat = clampi(int(cf.get_value(SECTION_PROFILE, "hat", DEFAULT_HAT)), 0, HAT_COUNT - 1)
 	skins_unlocked = bool(cf.get_value(SECTION_PROFILE, "skins_unlocked", false))
 	var done: Array = cf.get_value(SECTION_CAMPAIGN, "completed", [])
 	completed_levels.clear()

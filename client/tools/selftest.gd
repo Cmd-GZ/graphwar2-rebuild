@@ -8,6 +8,7 @@ extends Node
 
 var _checks := 0
 var _failures: Array[String] = []
+var _skipped: Array[String] = []
 var _main: Control
 
 func run(main: Control) -> int:
@@ -25,8 +26,17 @@ func run(main: Control) -> int:
 	await _test_play_screen()
 	await _test_endgame()
 	_test_fonts_and_icons()
+	_test_assets_and_original_settings()
 
-	print("SELFTEST %d passed, %d failed" % [_checks - _failures.size(), _failures.size()])
+	var passed := _checks - _failures.size()
+	if _skipped.is_empty():
+		print("SELFTEST %d passed, %d failed" % [passed, _failures.size()])
+	else:
+		# 缺资产时不假装通过：跳过的条目单独报，计数也进汇总行（docs/121 §6.3）
+		print("SELFTEST %d passed, %d failed, %d skipped"
+			% [passed, _failures.size(), _skipped.size()])
+		for s in _skipped:
+			print("  SKIP %s" % s)
 	if _failures.size() > 0:
 		for f in _failures:
 			print("  FAIL %s" % f)
@@ -34,6 +44,11 @@ func run(main: Control) -> int:
 	return 0
 
 # ---------------------------------------------------------------- 断言
+
+## 显式跳过：不算通过、不算失败，但**一定打印**。用于"没有 pck 就无从验证"的条目。
+func _skip(what: String) -> void:
+	_skipped.append(what)
+	print("@@SELFTEST_SKIP %s" % what)
 
 func _frames(n: int) -> void:
 	for i in n:
@@ -398,12 +413,76 @@ func _test_endgame() -> void:
 	_expect(_screen("MainMenu").visible, "exit_play 回到 MainMenu")
 
 func _test_fonts_and_icons() -> void:
+	# 这三条是原有的（docs/108 §8.2「字体/图标」组），语义从"现画"改成"加载原版资产"，
+	# 判据不变：字体对象可用、图标能取到、非默认的图标名也能取到。
+	if not _main.assets_ok:
+		_skip("字体资源存在（缺 client/assets/，无从验证原版字体）")
+		_skip("图标可用（缺 client/assets/，无从验证原版图标）")
+		_skip("bot_5 图标可用（缺 client/assets/）")
+		return
 	var font := GwThemeFactory.font()
-	_expect(font != null, "字体资源存在（SystemFont，不打包字体文件）")
+	_expect(font != null, "字体资源存在（原版 button_font，不打包字体文件）")
 	var icon := GwIcons.get_icon("return")
-	_expect(icon != null and icon.get_width() > 0, "图标生成成功（现画的 SVG）")
+	_expect(icon != null and icon.get_width() > 0, "图标可用（原版 return.svg 的导入产物）")
 	var icon2 := GwIcons.get_icon("bot_5")
-	_expect(icon2 != null and icon2.get_width() > 0, "bot_5 图标生成成功")
+	_expect(icon2 != null and icon2.get_width() > 0, "bot_5 图标可用（原版 skins/bot_5.svg）")
+
+## 资产层与"背景色照原版"的验收（docs/121 §3.3、§6）。
+## 这些都是**新增**断言；没有资产目录时显式跳过，绝不假装通过。
+func _test_assets_and_original_settings() -> void:
+	if not _main.assets_ok:
+		_skip("全部引用图标都能从 assets/ 解析（缺 client/assets/）")
+		_skip("assets/original_project_settings.json 可读（缺 client/assets/）")
+		_skip("原版 clear_color 与 boot_splash/bg_color 相同（缺 client/assets/）")
+		_skip("默认清屏色与原版 project.binary 逐位一致（缺 client/assets/）")
+		_skip("启动画面底色与原版 project.binary 逐位一致（缺 client/assets/）")
+		_skip("启动画面不显示 Godot logo，与原版一致（缺 client/assets/）")
+		return
+
+	var need := GwIcons.all_referenced_paths()
+	var bad := GwAssets.check(need)
+	_expect(bad.is_empty(), "全部引用图标都能从 assets/ 解析（引用 %d 个，缺 %d 个：%s）"
+		% [need.size(), bad.size(), str(bad.slice(0, 5))])
+
+	var orig := GwAssets.original_settings()
+	_expect(not orig.is_empty(), "assets/original_project_settings.json 可读")
+
+	# --- 背景色：与原版 project.binary 逐位比对 ---
+	# 原版里 `environment/defaults/default_clear_color` 与 `application/boot_splash/bg_color`
+	# 是**同一个** Color；我们的 project.godot 也必须两个都写、且都等于它。
+	var want: Array = orig.get("rendering/environment/defaults/default_clear_color", [])
+	var splash: Array = orig.get("application/boot_splash/bg_color", [])
+	_expect(want.size() == 4 and _color_eq(want, splash),
+		"原版 project.binary 里 clear_color 与 boot_splash/bg_color 相同（%s vs %s）"
+		% [str(want), str(splash)])
+
+	var our_clear: Color = ProjectSettings.get_setting(
+		"rendering/environment/defaults/default_clear_color", Color.BLACK)
+	_expect(_color_eq(want, [our_clear.r, our_clear.g, our_clear.b, our_clear.a]),
+		"clear_color 与原版逐位一致（我们 %s，原版 %s）"
+		% [_color_str(our_clear), str(want)])
+
+	var our_splash: Color = ProjectSettings.get_setting(
+		"application/boot_splash/bg_color", Color.BLACK)
+	_expect(_color_eq(want, [our_splash.r, our_splash.g, our_splash.b, our_splash.a]),
+		"boot_splash/bg_color 与原版逐位一致（我们 %s，原版 %s）"
+		% [_color_str(our_splash), str(want)])
+
+	var our_show := bool(ProjectSettings.get_setting("application/boot_splash/show_image", true))
+	_expect(our_show == bool(orig.get("application/boot_splash/show_image", true)),
+		"boot_splash/show_image 与原版一致（我们 %s，原版 %s）"
+		% [str(our_show), str(orig.get("application/boot_splash/show_image"))])
+
+func _color_eq(a: Array, b: Array) -> bool:
+	if a.size() != 4 or b.size() != 4:
+		return false
+	for i in 4:
+		if absf(float(a[i]) - float(b[i])) > 1e-5:
+			return false
+	return true
+
+func _color_str(c: Color) -> String:
+	return "(%.6f, %.6f, %.6f, %.1f)" % [c.r, c.g, c.b, c.a]
 
 func _count_buttons(node: Node) -> int:
 	if node == null:

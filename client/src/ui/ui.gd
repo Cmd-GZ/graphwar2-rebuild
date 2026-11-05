@@ -150,7 +150,7 @@ static func exit_pair(cmd: String) -> MarginContainer:
 
 	var clip := GwButton.make("", "")
 	clip.name = "ClipButton"
-	clip.text = "     "
+	clip.text = ""      # 纯图标按钮：不塞空格，否则 expand_icon 没有留给图标的宽度
 	clip.icon = GwIcons.get_icon("return")
 	clip.flat = true
 	clip.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -166,7 +166,7 @@ static func exit_pair(cmd: String) -> MarginContainer:
 
 	var press := GwButton.make("")
 	press.name = "LongPressButton"
-	press.text = "     "      # 原版文本是 5 个空格；宽度靠 icon 撑，不靠空格
+	press.text = ""      # 同上（原版是 5 个空格 + 固定尺寸容器；我们用 stack 的 custom_minimum_size）
 	press.input_text = cmd
 	press.icon = GwIcons.get_icon("return")
 	press.set_anchors_preset(Control.PRESET_FULL_RECT)

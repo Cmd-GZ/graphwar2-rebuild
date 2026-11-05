@@ -42,15 +42,18 @@ func build() -> void:
 		holder.custom_minimum_size = Vector2(48, 48)
 		var m := GwUI.margin("MarginContainer", 2, holder)
 		var skin_icon := TextureRect.new()
+		skin_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		skin_icon.name = "SkinIcon"
 		skin_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		skin_icon.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		m.add_child(skin_icon)
 		var face_icon := TextureRect.new()
+		face_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		face_icon.name = "FaceIcon"
 		face_icon.visible = false
 		m.add_child(face_icon)
 		var hat_icon := TextureRect.new()
+		hat_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		hat_icon.name = "HatIcon"
 		hat_icon.visible = false
 		m.add_child(hat_icon)

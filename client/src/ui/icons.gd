@@ -1,204 +1,170 @@
 extends RefCounted
 class_name GwIcons
-## 图标：**全部现画**，不使用 `rsc/` 里的任何 svg。
+## 图标名 → **原版资源路径**的映射表，以及加载入口。
 ##
-## 原版用 149 个 svg（游戏资产，不可分发）。本项目用一个小 SVG 生成器画同**语义**的
-## 几何占位图：形状是我们自己写的，颜色来自 `theme_factory.gd` 的配色。
-## 因此界面上图标位置、按钮尺寸都对得上，但美术观感与原版不同 —— 这是有意的（见 docs/108 §6）。
+## 这里**不画任何东西**：所有图都是 `GwAssets` 从使用者自己的 `Graphwar.pck` 解出来的
+## 真资源（`docs/121` §5）。找不到就返回 null 并记进 `GwAssets.missing()` —— 不做占位图。
 ##
-## 缓存：同一个名字只生成一次。
+## 映射的证据来源（每条都能核对）
+## ------------------------------
+## 1. **原版 `.tscn` 的 `icon=` / `texture=` 引用**（31 个场景，99 处节点→svg）
+##    —— 例如 `play_screen.tscn` 的 `GraphwarButton3.icon = share_summary.svg`。
+## 2. **原版 `.gd` 里的动态 `load()`** —— `ShowExtraButtons.gd` 在展开/收起时切
+##    `show_extra_buttons.svg` / `hide_extra_buttons.svg`。
+## 3. **游戏二进制 `libgraphwarrust.so` 的 `.rodata` 字面量池**（文件偏移 0x1c2f97 起）
+##    —— 界面逻辑在 Rust 里，所以"第 N 档用哪张图"只能从二进制读：
+##    `res://skins/bot_0.svg` … `bot_5`、`turn_30s…turn_inf`、`axis_option_0…3`、
+##    `ranks/rank_0…21`、`skins/*`、`faces/*`、`hats/*` 都是一段连续字面量。
+##    组内顺序 = 索引顺序：`ranks/rank_0…rank_21` 严格递增可以反证这一点；
+##    其余三组沿用同一约定（**推断**，见 `docs/121` §4.3 写明缺什么证据）。
+##
+## 名字沿用原版文件名（不含目录、不含扩展名），与 `docs/92` 的台账对得上。
 
-static var _cache := {}
+## 固定映射：界面里的名字 → 原版 `res://` 路径（不含扩展名）。注释是证据出处。
+const FIXED := {
+	# --- 返回 / 退出（每个界面都有 ExitButtonContainer）---
+	"return": "return",                              # 31 个 .tscn 的 ClipButton/LongPressButton
+	# --- 聊天 ---
+	"no_chat": "no_chat",                            # GameSetup ChatButtonSetup / play_screen ChatButtonPlay
+	"view_chat": "view_chat",                        # libgraphwarrust.so .rodata
+	"new_chat": "no_chat_new_chat",                  # libgraphwarrust.so .rodata
+	# --- 锁 ---
+	"unlock": "unlock",                              # GameSetup.tscn LockButton 初值
+	"lock": "lock",                                  # libgraphwarrust.so .rodata（LockButton 切换）
+	# --- 玩家行 ---
+	"x": "x",                                        # team1_entry / team2_entry RemovePlayerButton
+	"plus": "plus",                                  # team*_entry AddSoldierButton
+	"minus": "minus",                                # team*_entry RemoveSoldierButton
+	"arrow_left": "arrow_left",                      # team2_entry ChangeTeamButton
+	"arrow_right": "arrow_right",                    # team1_entry ChangeTeamButton
+	"empty_soldier": "empty_soldier",                # team*_entry EmptyIcon
+	"empty_set": "empty_set",                        # libgraphwarrust.so .rodata
+	# --- 函数输入键盘 ---
+	"arrow_left_bar": "arrow_left_bar",              # play_screen GraphwarButton16
+	"arrow_right_bar": "arrow_right_bar",            # play_screen GraphwarButton18
+	"delete_left": "delete_left",                    # play_screen GraphwarButton18
+	"delete_right": "delete_right",                  # play_screen GraphwarButton16
+	# --- 对局附加按钮 ---
+	"show_extra_buttons": "show_extra_buttons",      # ShowExtraButtons.gd（收起态）
+	"hide_extra_buttons": "hide_extra_buttons",      # ShowExtraButtons.gd（展开态）
+	"view_names": "view_names",                      # play_screen ShowNames
+	"hide_names": "hide_names",                      # libgraphwarrust.so .rodata（同名按钮的切换态）
+	"view_functions": "view_recent_functions",       # play_screen ViewFunctionButton
+	"view_all_functions": "view_all_functions",      # libgraphwarrust.so .rodata
+	"mute": "mute",                                  # libgraphwarrust.so .rodata（MuteButton 切换）
+	"unmute": "unmute",                              # play_screen MuteButton 初值
+	# --- 回放 ---
+	"play_option": "play_option",                    # replay_entry PlayReplayButton / play_screen PlayPauseButton
+	"play_pause": "pause_option",                    # libgraphwarrust.so .rodata（play_option 的配对态）
+	"prev": "skip_backward_option",                  # play_screen GraphwarButton
+	"next": "skip_forward_option",                   # play_screen GraphwarButton3
+	"save_screenshot": "share_screenshot",           # play_screen GraphwarButton
+	"save_summary": "share_summary",                 # play_screen GraphwarButton3
+	"save_clip": "share_video",                      # play_screen GraphwarButton4
+	# --- 对局设置 ---
+	"add_bot_option": "add_bot_option",              # GameSetup.tscn AddBotButton
+	"fx_option": "fx_option",                        # GameSetup FunctionModeButton / play_screen FxTextureButton
+	"dx_dy_option": "dx_dy_option",                  # libgraphwarrust.so .rodata
+	"turns_sequential": "turns_sequential",          # libgraphwarrust.so .rodata
+	"turns_simultaneous": "turns_simultaneous",      # GameSetup TurnModeButton
+	# --- 时限（六档，顺序同二进制字面量池）---
+	"turn_30s": "turn_30s",
+	"turn_1m": "turn_1m",
+	"turn_2m": "turn_2m",
+	"turn_3m": "turn_3m",
+	"turn_5m": "turn_5m",
+	"turn_inf": "turn_inf",
+}
 
-const SIZE := 48
+## `axis_option_0..3`
+const AXIS_OPTIONS := ["axis_option_0", "axis_option_1", "axis_option_2", "axis_option_3"]
 
-static func get_icon(name: String) -> Texture2D:
-	if _cache.has(name):
-		return _cache[name]
-	var tex := _render(name)
-	_cache[name] = tex
-	return tex
+## 皮肤：`libgraphwarrust.so` .rodata 顺序（23 条，后 6 条是 Bot 专用）。
+## 界面格子数按 `docs/92` §4.14 的观测（15），取前 15 —— 见 docs/121 §4.3 的"推断"说明。
+const SKINS := [
+	"skins/blue", "skins/gray", "skins/pink", "skins/purple", "skins/red",
+	"skins/target", "skins/white_skin", "skins/yellow", "skins/green",
+	"skins/light_green", "skins/true_purple", "skins/brown", "skins/calico",
+	"skins/wargod", "skins/arrow",
+	# 原版存在但 15 格放不下的两个（`face_paint_1/2`）。保留下标可达，不进网格。
+	"skins/face_paint_1", "skins/face_paint_2",
+]
 
-static func _render(name: String) -> Texture2D:
-	var body := _body_for(name)
-	var svg := ('<svg width="%d" height="%d" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">%s</svg>'
-		% [SIZE, SIZE, body])
-	var img := Image.new()
-	var err := img.load_svg_from_string(svg, 1.0)
-	if err != OK:
-		push_warning("[gw2] 图标 %s 生成失败（%d），用占位方块" % [name, err])
-		img = Image.create(SIZE, SIZE, false, Image.FORMAT_RGBA8)
-		img.fill(Color(0.5, 0.5, 0.5, 0.6))
-	return ImageTexture.create_from_image(img)
+## Bot 头像：`add_bot_pop_up.tscn` 里 6 个 AddBotButton 的 icon 就是 `skins/bot_N.svg`。
+const BOT_SKINS := [
+	"skins/bot_0", "skins/bot_1", "skins/bot_2",
+	"skins/bot_3", "skins/bot_4", "skins/bot_5",
+]
 
-# ------------------------------------------------------------------ 形状素材
+## 脸：`libgraphwarrust.so` .rodata 顺序，去掉 `bot_0`（Bot 专用）与 `reference`（设计参照）。
+const FACES := [
+	"faces/no_face", "faces/anime_eyes", "faces/regular_eyes", "faces/blue_eyes",
+	"faces/green_eyes", "faces/purple_eyes", "faces/aviator_glare", "faces/cute_eyes",
+	"faces/nerd_glasses", "faces/mustache", "faces/baggy_eyes", "faces/asian",
+	"faces/cat_eyes", "faces/eye_patch", "faces/baby_eyes", "faces/alien_eyes",
+]
 
-static func _ink(c: Color) -> String:
-	return "#%s" % c.to_html(false)
+## 帽子：`libgraphwarrust.so` .rodata 顺序（28 条）。
+const HATS := [
+	"hats/no_hat", "hats/soldier_helmet", "hats/blonde_boy", "hats/blonde_girl",
+	"hats/brunette_girl", "hats/brown_boy", "hats/anime_hair", "hats/mohawk",
+	"hats/mohawk_red", "hats/cowboy", "hats/straw_hat", "hats/powdered_wig",
+	"hats/ponytail", "hats/witch_hat", "hats/hood", "hats/horned_helmet",
+	"hats/hair_band", "hats/cat_ears", "hats/unicorn", "hats/roman_helmet",
+	"hats/chef_hat", "hats/top_hat", "hats/tricone", "hats/asian_hat",
+	"hats/mad_hair", "hats/baseball_cap", "hats/crown", "hats/antenna_0",
+]
 
-static func _rect(x: float, y: float, w: float, h: float, fill: Color, r: float = 2.0) -> String:
-	return ('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" rx="%.1f" fill="%s"/>'
-		% [x, y, w, h, r, _ink(fill)])
+## 原版默认外观（`docs/92` §4.10、§4.14 观测）：
+## 玩家 = yellow 皮肤 + regular_eyes + soldier_helmet；Bot = bot_N + no_face + no_hat。
+const DEFAULT_SKIN := "skins/yellow"
+const DEFAULT_FACE := "faces/regular_eyes"
+const DEFAULT_HAT := "hats/soldier_helmet"
+const BOT_FACE := "faces/no_face"
+const BOT_HAT := "hats/no_hat"
 
-static func _line(x1: float, y1: float, x2: float, y2: float, c: Color, w: float = 4.0) -> String:
-	return ('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="%.1f" stroke-linecap="round"/>'
-		% [x1, y1, x2, y2, _ink(c), w])
 
-static func _circle(cx: float, cy: float, r: float, c: Color) -> String:
-	return '<circle cx="%.1f" cy="%.1f" r="%.1f" fill="%s"/>' % [cx, cy, r, _ink(c)]
-
-static func _poly(points: Array, c: Color) -> String:
-	var s := ""
-	for i in range(0, points.size(), 2):
-		s += "%.1f,%.1f " % [points[i], points[i + 1]]
-	return '<polygon points="%s" fill="%s"/>' % [s.strip_edges(), _ink(c)]
-
-static func _path(d: String, c: Color, w: float = 4.0) -> String:
-	return ('<path d="%s" fill="none" stroke="%s" stroke-width="%.1f" stroke-linecap="round" stroke-linejoin="round"/>'
-		% [d, _ink(c), w])
-
-# ------------------------------------------------------------------ 具体图标
-
-static func _body_for(name: String) -> String:
-	var ink := GwThemeFactory.COL_TEXT
-	var acc := GwThemeFactory.COL_ACCENT
-	match name:
-		"return":
-			return _path("M30 10 L16 24 L30 38", ink) + _line(16, 24, 40, 24, ink)
-		"plus", "add_soldier":
-			return _line(24, 12, 24, 36, acc) + _line(12, 24, 36, 24, acc)
-		"minus", "remove_soldier":
-			return _line(12, 24, 36, 24, GwThemeFactory.COL_BAD)
-		"x", "remove_player":
-			return _line(14, 14, 34, 34, GwThemeFactory.COL_BAD) + _line(34, 14, 14, 34, GwThemeFactory.COL_BAD)
-		"arrow_left":
-			return _path("M28 12 L14 24 L28 36", ink)
-		"arrow_right":
-			return _path("M20 12 L34 24 L20 36", ink)
-		"arrow_left_bar":
-			return _line(12, 12, 12, 36, acc) + _path("M34 12 L20 24 L34 36", ink)
-		"arrow_right_bar":
-			return _line(36, 12, 36, 36, acc) + _path("M14 12 L28 24 L14 36", ink)
-		"delete_left":
-			return _path("M32 14 L20 24 L32 34", GwThemeFactory.COL_BAD) + _line(20, 24, 8, 24, GwThemeFactory.COL_BAD)
-		"delete_right":
-			return _path("M16 14 L28 24 L16 34", GwThemeFactory.COL_BAD) + _line(28, 24, 40, 24, GwThemeFactory.COL_BAD)
-		"unlock":
-			return _rect(12, 22, 24, 18, GwThemeFactory.COL_ACCENT) + _path("M18 22 L18 15 A6 6 0 0 1 30 15", acc, 3.0)
-		"lock":
-			return _rect(12, 22, 24, 18, GwThemeFactory.COL_ACCENT) + _path("M18 22 L18 15 A6 6 0 0 1 30 15 A6 6 0 0 1 18 15", acc, 3.0)
-		"no_chat":
-			return _rect(8, 12, 32, 22, GwThemeFactory.COL_PANEL_EDGE, 5.0) + _poly([18, 34, 26, 34, 20, 42], GwThemeFactory.COL_PANEL_EDGE)
-		"new_chat":
-			return (_rect(8, 12, 32, 22, GwThemeFactory.COL_ACCENT, 5.0)
-				+ _poly([18, 34, 26, 34, 20, 42], acc)
-				+ _circle(36, 12, 6, GwThemeFactory.COL_BAD))
-		"show_extra_buttons", "view_functions":
-			return (_line(10, 16, 38, 16, ink) + _line(10, 24, 38, 24, ink)
-				+ _line(10, 32, 26, 32, ink) + _circle(34, 32, 5, acc))
-		"hide_extra_buttons":
-			return (_line(10, 16, 38, 16, ink) + _line(10, 24, 38, 24, ink)
-				+ _line(10, 32, 26, 32, GwThemeFactory.COL_TEXT_DIM))
-		"view_names":
-			return (_circle(18, 20, 7, acc) + _path("M8 38 A10 10 0 0 1 28 38", acc)
-				+ _line(32, 18, 42, 18, ink) + _line(32, 26, 42, 26, ink) + _line(32, 34, 42, 34, ink))
-		"hide_names":
-			return (_circle(18, 20, 7, GwThemeFactory.COL_TEXT_DIM) + _path("M8 38 A10 10 0 0 1 28 38", GwThemeFactory.COL_TEXT_DIM)
-				+ _line(32, 24, 42, 24, GwThemeFactory.COL_TEXT_DIM))
-		"unmute":
-			return (_poly([14, 18, 20, 18, 28, 12, 28, 36, 20, 30, 14, 30], acc)
-				+ _path("M32 18 A8 8 0 0 1 32 30", ink, 3.0))
-		"mute":
-			return (_poly([14, 18, 20, 18, 28, 12, 28, 36, 20, 30, 14, 30], GwThemeFactory.COL_TEXT_DIM)
-				+ _line(32, 18, 40, 30, GwThemeFactory.COL_BAD) + _line(40, 18, 32, 30, GwThemeFactory.COL_BAD))
-		"add_bot_option":
-			return (_circle(24, 18, 9, GwThemeFactory.COL_ACCENT)
-				+ _path("M8 42 A16 12 0 0 1 40 42", acc) + _line(36, 12, 44, 12, ink))
-		"play_option":
-			return _poly([16, 10, 38, 24, 16, 38], acc)
-		"play_pause":
-			return _rect(14, 12, 6, 24, acc) + _rect(28, 12, 6, 24, acc)
-		"prev":
-			return _line(12, 12, 12, 36, acc) + _poly([38, 12, 22, 24, 38, 36], ink)
-		"next":
-			return _line(36, 12, 36, 36, acc) + _poly([10, 12, 26, 24, 10, 36], ink)
-		"save_screenshot":
-			return _rect(8, 14, 32, 24, GwThemeFactory.COL_PANEL_EDGE) + _circle(24, 26, 7, acc)
-		"save_summary":
-			return _rect(12, 8, 24, 32, GwThemeFactory.COL_PANEL_EDGE) + _line(18, 18, 30, 18, ink) + _line(18, 26, 30, 26, ink)
-		"save_clip":
-			return _rect(8, 12, 32, 24, GwThemeFactory.COL_PANEL_EDGE) + _poly([20, 18, 30, 24, 20, 30], acc)
-		"turn_inf":
-			return _path("M10 24 A14 14 0 1 0 24 10", acc, 3.5) + _poly([10, 6, 10, 16, 20, 16], acc)
-		"empty_soldier":
-			return _circle(24, 16, 8, Color(1, 1, 1, 0.10)) + _rect(12, 26, 24, 14, Color(1, 1, 1, 0.10), 6.0)
-	if name.begins_with("bot_"):
-		# Bot 头像：圆脸 + 档位序号点阵。序号只是视觉区分，与难度对应关系未证实。
-		var tier := int(name.substr(4))
-		var col := _tier_color(tier)
-		var s := _circle(24, 24, 18, col) + _circle(18, 20, 3, Color(0.08, 0.09, 0.10)) + _circle(30, 20, 3, Color(0.08, 0.09, 0.10))
-		for i in tier:
-			s += _circle(14 + i * 6, 33, 2, Color(0.08, 0.09, 0.10))
-		return s
-	if name.begins_with("skin_"):
-		var idx := int(name.substr(5))
-		var c2 := _tier_color(idx % 6)
-		return (_circle(24, 15, 8, c2) + _rect(13, 25, 22, 15, c2, 7.0))
-	if name.begins_with("face_"):
-		var idx2 := int(name.substr(5))
-		var eyes := _circle(18, 22, 3, Color(0.08, 0.09, 0.10)) + _circle(30, 22, 3, Color(0.08, 0.09, 0.10))
-		match idx2 % 3:
-			0: return _circle(24, 24, 17, Color(0.85, 0.75, 0.55)) + eyes + _path("M17 32 Q24 37 31 32", Color(0.2, 0.15, 0.1), 2.5)
-			1: return _circle(24, 24, 17, Color(0.85, 0.75, 0.55)) + eyes + _line(17, 33, 31, 33, Color(0.2, 0.15, 0.1), 2.5)
-			_: return _circle(24, 24, 17, Color(0.85, 0.75, 0.55)) + eyes + _circle(24, 33, 3, Color(0.2, 0.15, 0.1))
-	if name.begins_with("hat_"):
-		var idx3 := int(name.substr(4))
-		var body2 := _circle(24, 28, 15, Color(0.6, 0.6, 0.65))
-		match idx3 % 4:
-			0: return body2 + _rect(6, 26, 36, 5, Color(0.35, 0.4, 0.5))
-			1: return body2 + _rect(10, 14, 28, 14, Color(0.35, 0.4, 0.5), 7.0)
-			2: return body2 + _poly([10, 28, 24, 8, 38, 28], Color(0.35, 0.4, 0.5))
-			_: return body2 + _rect(16, 10, 16, 16, Color(0.35, 0.4, 0.5), 4.0)
+## 界面用的名字 → 原版 `res://` 路径（不含扩展名）。查不到返回 ""。
+static func path_for(name: String) -> String:
+	if FIXED.has(name):
+		return String(FIXED[name])
 	if name.begins_with("axis_option_"):
-		var n := int(name.substr(12))
-		var s2 := _line(10, 24, 38, 24, GwThemeFactory.COL_TEXT_DIM, 2.5) + _line(24, 10, 24, 38, GwThemeFactory.COL_TEXT_DIM, 2.5)
-		for i in n:
-			s2 += _circle(12 + i * 6, 34, 2.2, acc)
-		return s2
-	if name.begins_with("turn_"):
-		# 时限图标：一个钟面 + 刻度数量 = 档位；`turn_inf` 已在上面单独处理
-		var idx4 := 0
-		match name:
-			"turn_30s": idx4 = 1
-			"turn_1m": idx4 = 2
-			"turn_2m": idx4 = 3
-			"turn_3m": idx4 = 4
-			"turn_5m": idx4 = 5
-		var s3 := _circle(24, 24, 15, GwThemeFactory.COL_PANEL_EDGE) + _line(24, 24, 24, 14, acc, 3.0)
-		for i in idx4:
-			var ang := -PI / 2.0 + i * (TAU / 6.0)
-			s3 += _circle(24 + cos(ang) * 15, 24 + sin(ang) * 15, 2.2, GwThemeFactory.COL_TEXT)
-		return s3
-	match name:
-		"turns_sequential":
-			return _rect(8, 12, 12, 10, acc) + _rect(28, 26, 12, 10, GwThemeFactory.COL_TEAM2) + _line(20, 17, 28, 31, GwThemeFactory.COL_TEXT_DIM, 2.5)
-		"turns_simultaneous":
-			return (_rect(8, 12, 12, 10, acc) + _rect(28, 12, 12, 10, GwThemeFactory.COL_TEAM2)
-				+ _rect(8, 28, 12, 10, acc) + _rect(28, 28, 12, 10, GwThemeFactory.COL_TEAM2))
-		"fx_option":
-			return _path("M8 34 C 16 8, 30 8, 40 34", acc, 4.0)
-		"dx_dy_option":
-			return (_path("M10 30 C 18 30, 20 18, 24 18 S 30 30, 38 30", acc, 4.0)
-				+ _line(8, 38, 40, 38, GwThemeFactory.COL_TEXT_DIM, 2.0))
-		"show_extra":
-			return _path("M14 34 L24 14 L34 34", acc)
-		"gold_coin":
-			return _circle(24, 24, 16, Color(0.85, 0.7, 0.25))
-	return _circle(24, 24, 14, GwThemeFactory.COL_TEXT_DIM)
+		return AXIS_OPTIONS[wrapi(int(name.substr(12)), 0, AXIS_OPTIONS.size())]
+	if name.begins_with("bot_"):
+		return BOT_SKINS[wrapi(int(name.substr(4)), 0, BOT_SKINS.size())]
+	if name.begins_with("skin_"):
+		return SKINS[wrapi(int(name.substr(5)), 0, SKINS.size())]
+	if name.begins_with("face_"):
+		return FACES[wrapi(int(name.substr(5)), 0, FACES.size())]
+	if name.begins_with("hat_"):
+		return HATS[wrapi(int(name.substr(4)), 0, HATS.size())]
+	if name.begins_with("rank_"):
+		return "ranks/rank_%d" % int(name.substr(5))
+	if name == "basic_soldier":
+		return "basic_soldier"
+	return ""
 
-static func _tier_color(tier: int) -> Color:
-	var palette := [
-		Color("8fb3d9"), Color("9ad9b3"), Color("d9c48f"),
-		Color("d99a8f"), Color("b79ad9"), Color("d98fc4"),
-	]
-	return palette[wrapi(tier, 0, palette.size())]
+
+## 取图标纹理。**没有占位图**：缺了就返回 null 并进 `GwAssets.missing()`。
+static func get_icon(name: String) -> Texture2D:
+	var rel := path_for(name)
+	if rel == "":
+		push_error("[gw2] 未知图标名 %s（GwIcons.FIXED 里没有，也不是 *_N 形式）" % name)
+		return null
+	return GwAssets.texture(rel)
+
+
+## 启动前自检用：本客户端会引用到的**全部**图标路径（不含扩展名）。
+## 任何一个缺失都说明资产目录不完整 —— 见 `main.gd` 的硬检查。
+static func all_referenced_paths() -> Array[String]:
+	var out: Array[String] = []
+	for k in FIXED:
+		out.append(String(FIXED[k]))
+	out.append_array(PackedStringArray(AXIS_OPTIONS))
+	out.append_array(PackedStringArray(SKINS))
+	out.append_array(PackedStringArray(BOT_SKINS))
+	out.append_array(PackedStringArray(FACES))
+	out.append_array(PackedStringArray(HATS))
+	out.append("ranks/rank_0")
+	out.append("basic_soldier")
+	return out

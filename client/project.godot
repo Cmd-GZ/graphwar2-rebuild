@@ -1,7 +1,19 @@
 ; Graphwar II —— 客户端重建工程（我们自己的实现）
 ;
-; 本文件**不含**任何从游戏包里恢复出来的资源：所有场景/脚本/贴图都是本项目自己写的。
-; 详见 docs/108-client-rebuild.md。
+; 本文件**不含**任何媒体资源：场景/脚本都是本项目自己写的，图标与字体在运行时从
+; 使用者自己的 Graphwar.pck 解到 `client/assets/`（gitignore，见 tools/extract_assets.py）。
+; 详见 docs/121-visual-fidelity.md 与 docs/108-client-rebuild.md。
+;
+; 下面两个颜色不是"配色选择"，是**从原版工程设置里读出来的观测值**：
+;   project.binary → application/boot_splash/bg_color
+;                  = rendering/environment/defaults/default_clear_color
+;                  = Color(0.054902, 0.145098, 0.109804, 1)   # #0E251C
+; （tools/extract_assets.py 会把原版值写进 client/assets/original_project_settings.json，
+;  selftest 有一条断言逐位比对两边，见 docs/121 §3.3。）
+;
+; boot_splash/bg_color 这一条**必须**写：show_image=false 只关掉 Godot 的 logo 图，
+; 引擎仍然会从建窗到首帧之间铺一块 `boot_splash/bg_color` 的纯色矩形；不写就是 Godot
+; 默认的 #242424 中性灰 —— 那就是用户看到的"Godot 启动画面"（docs/121 §2）。
 
 config_version=5
 
@@ -11,8 +23,8 @@ config/name="Graphwar II — Client Rebuild"
 config/description="Clean-room Godot 4 client for the Graphwar II reconstruction. Not affiliated with the original authors."
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
-config/icon="res://icon.svg"
 boot_splash/show_image=false
+boot_splash/bg_color=Color(0.054902, 0.145098, 0.109804, 1)
 
 [autoload]
 
@@ -34,4 +46,4 @@ theme/default_font_multichannel_signed_distance_field=false
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
-environment/defaults/default_clear_color=Color(0.086, 0.094, 0.11, 1)
+environment/defaults/default_clear_color=Color(0.054902, 0.145098, 0.109804, 1)

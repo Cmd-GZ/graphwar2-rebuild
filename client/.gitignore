@@ -2,3 +2,9 @@
 .godot/
 # 截图输出（验收产物，不入库）
 shots/
+
+# ★ 媒体资源目录：**绝不入库**。
+# 里面是 tools/extract_assets.py 从使用者自己的 Graphwar.pck 解出来的原版图标与字体
+# （.ctex/.fontdata/.res），不会随仓库分发。版权与体积两条理由都要求它在仓库外
+# （docs/121 §5）。
+assets/

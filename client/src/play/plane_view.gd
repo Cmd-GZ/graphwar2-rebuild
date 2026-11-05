@@ -123,12 +123,27 @@ func _draw_soldiers() -> void:
 	for soldier in soldiers:
 		var p: Vector2 = board_to_screen(soldier.pos)
 		var r := maxf(6.0, SOLDIER_RADIUS * s)
-		var base := GwThemeFactory.COL_TEAM1 if int(soldier.team) == 0 else GwThemeFactory.COL_TEAM2
-		var col := base if bool(soldier.alive) else Color(0.35, 0.35, 0.35)
-		draw_circle(p, r, col)
-		draw_arc(p, r, 0.0, TAU, 24, Color(0, 0, 0, 0.55), 2.0)
-		if not bool(soldier.alive):
-			# 阵亡：画一个叉
+		var alive := bool(soldier.alive)
+		# 士兵 = 皮肤 / 脸 / 帽子 三层贴图，同位置叠加 —— 与原版战场一致
+		# （`docs/92` §4.10 观测：每个士兵 3 个 Sprite2D）。图来自 assets/，不再画圆。
+		var is_bot := bool(soldier.get("is_bot", false))
+		var skin_path: String = (String(GwIcons.BOT_SKINS[clampi(int(soldier.get("bot_tier", 0)), 0,
+				GwIcons.BOT_SKINS.size() - 1)]) if is_bot
+			else GwIcons.path_for("skin_%d" % int(soldier.get("skin", 0))))
+		var face_path: String = GwIcons.BOT_FACE if is_bot else GwIcons.DEFAULT_FACE
+		var hat_path: String = GwIcons.BOT_HAT if is_bot else GwIcons.DEFAULT_HAT
+		# 贴图里士兵本体只占画布中间一部分，所以显示边长取半径的 5 倍左右（肉眼定，见 docs/121 §7）
+		var side := r * 5.0
+		var rect := Rect2(p - Vector2(side, side) * 0.5, Vector2(side, side))
+		var tint := Color(1, 1, 1, 1) if alive else Color(0.55, 0.55, 0.55, 0.45)
+		for wp in [skin_path, face_path, hat_path]:
+			if wp == "":
+				continue
+			var tex := GwAssets.texture(String(wp))
+			if tex != null:
+				draw_texture_rect(tex, rect, false, tint)
+		if not alive:
+			# 阵亡：画一个叉（原版的阵亡表现未观测，这里沿用本客户端自己的记号）
 			draw_line(p + Vector2(-r * 0.6, -r * 0.6), p + Vector2(r * 0.6, r * 0.6), Color(0, 0, 0, 0.7), 2.0)
 			draw_line(p + Vector2(r * 0.6, -r * 0.6), p + Vector2(-r * 0.6, r * 0.6), Color(0, 0, 0, 0.7), 2.0)
 		if show_names and String(soldier.name) != "":

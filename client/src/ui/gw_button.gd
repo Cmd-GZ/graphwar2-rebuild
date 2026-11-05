@@ -83,6 +83,11 @@ static func make(text_: String, cmd: String = "", icon_: Texture2D = null) -> Gw
 	var b := GwButton.new()
 	b.text = text_
 	b.input_text = cmd
+	# `expand_icon = true`：图标按按钮大小缩放，**不参与最小尺寸**。
+	# 原版每个带图标按钮都写着 expand_icon = true（如 campaign.tscn 的 ClipButton）；
+	# 我们以前用 48×48 的现画图标，不写也看不出来；现在图标是原版 svg 的 512×512 导入
+	# 产物，不写就会把按钮的最小尺寸顶到 512 px，整个界面被挤塌（docs/121 §7.2 实测）。
+	b.expand_icon = true
 	if icon_ != null:
 		b.icon = icon_
 		b.add_theme_constant_override("h_separation", 6)
