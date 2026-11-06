@@ -8,7 +8,9 @@
 //! 由 `tools/name_bridge.py` 用 `panic::Location` 跨架构 join 得到。
 //! 先查那张表，**不要自己猜方法名**：
 //!
-//!     awk -F'\t' '$1=="graphwar_long_press_animation"' fixtures/name_to_addr.tsv
+//! ```text
+//! awk -F'\t' '$1=="graphwar_long_press_animation"' fixtures/name_to_addr.tsv
+//! ```
 //!
 //! 模块的权威函数数/类型名/方法数见 `docs/02-module-map.md` §18 的 A 表
 //! （`python3 tools/symtab_dump.py modules`）。
