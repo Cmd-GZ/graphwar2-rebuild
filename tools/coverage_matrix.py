@@ -453,8 +453,9 @@ mod("graphwar_lan_vbox.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（局域网列表 UI），无地址级观测、无实现")
 mod("graphwar_level_generator.rs", "graphwar", ("src/graphwar_level_generator.rs", "src/graphwar_level_generator/tables.rs"), "逐位",
     "docs/61/56：障碍 x/y/r 的 to_bits() 全等，13/13 逐位复现；docs/55 公式闭合")
-mod("graphwar_level_manager.rs", "graphwar", (), "未做",
-    "锚点最密的模块（590 个 Location / 40 个函数）；只有 docs/118 §2 的入口观测，src/ 无实现")
+mod("graphwar_level_manager.rs", "graphwar", ("src/graphwar_level_manager.rs",), "观测",
+    "锚点最密（590 个 Location / 40 个函数）；LEVELS[21]+SETUPS[21]+campaign.save 逐位（docs/10 §12），"
+    "40 个锚函数里 26 个已还原、14 个仅分类；level_info/campaign.save 簇无锚，落地时可能要搬去 campaign_control")
 mod("graphwar_life_manager.rs", "graphwar", ("src/graphwar_life_manager.rs",), "逐位",
     "docs/65：穿过即死/友军致死/无血量在真实对局与回放里逐个相同；docs/41 状态迁移一致")
 mod("graphwar_lobby_control.rs", "graphwar", (), "未做",
@@ -502,8 +503,9 @@ mod("graphwar_replay_control.rs", "graphwar", (), "未做",
     "不含这个控制器（文件里的 ReplayPlayer 时钟是我方自定模型，见 docs/02 §17.4）")
 mod("graphwar_replay_player.rs", "graphwar", ("src/graphwar_replay_player.rs",), "观测",
     "docs/136/142：消息级对拍 400 份回放里 71 份完全一致 ⇒ 已实现但未到逐位")
-mod("graphwar_root_node.rs", "graphwar", (), "未做",
-    "主场景节点；docs/125 只有调用形态观测，src/ 无实现")
+mod("graphwar_root_node.rs", "graphwar", ("src/graphwar_root_node.rs",), "观测",
+    "Screen×15 + Command×12 + 0x3af850 切屏决策表 + 构造初值（docs/16 §15.10）；"
+    "0x3a5760 主体 20288B 刻意未猜")
 mod("graphwar_server_broker_handler.rs", "graphwar", (), "未做",
     "原模块是**客户端侧**的 broker 处理器，未做；src/_scaffold/broker.rs 是我们自建的 broker 服务端，"
     "不是它的复原（见 docs/115）")

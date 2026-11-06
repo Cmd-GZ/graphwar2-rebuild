@@ -7,14 +7,14 @@
 # tool_version: 1
 # binary_sha256: 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
 # funcstarts_sha256: b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a
-# src_tree_sha256: be21875c586fdebcc6488c1e90d593066ca281605c1a279c7962940a52b418ed
+# src_tree_sha256: 0795d1a5e4f8210d6e4e9fe1c4383f8d058726d27b97d9e770101e5996aa5a55
 # funcstarts_n: 13263
 # src_modules: 246
 # loc_structs: 2042
 # attributed_funcs: 527
 # contested_funcs: 86
-# src_files: 33
-# src_fns: 873
+# src_files: 36
+# src_fns: 950
 module	scope	orig_funcs	contested	anchors	ours_file	ours_funcs	status	evidence
 graphwar_ad_switch.rs	graphwar	6	0	3		0	未做	docs/132：判据只有 are_ads_enabled() = !owned；AdMob 在 .gdc 插件侧，src/ 无实现
 graphwar_audio_control.rs	graphwar	7	1	16		0	未做	docs/111：SoundHandler / -15f / -5f / 32767 归一化已还原，但没接进 src/（client/ 是仿制）
@@ -41,7 +41,7 @@ graphwar_graphics_manager.rs	graphwar	6	0	8		0	未知	只有 docs/02 一行（�
 graphwar_lan_broadcaster_v6.rs	graphwar	4	0	4		0	未做	docs/07/24：局域网广播报文已抓包；docs/134 里只有 client/ GDScript 侧，src/ 无实现
 graphwar_lan_vbox.rs	graphwar	11	1	19		0	未知	只有 docs/02 一行（局域网列表 UI），无地址级观测、无实现
 graphwar_level_generator.rs	graphwar	4	1	26	src/graphwar_level_generator.rs+src/graphwar_level_generator/tables.rs	28	逐位	docs/61/56：障碍 x/y/r 的 to_bits() 全等，13/13 逐位复现；docs/55 公式闭合
-graphwar_level_manager.rs	graphwar	40	14	590		0	未做	锚点最密的模块（590 个 Location / 40 个函数）；只有 docs/118 §2 的入口观测，src/ 无实现
+graphwar_level_manager.rs	graphwar	40	14	590	src/graphwar_level_manager.rs	20	观测	锚点最密（590 个 Location / 40 个函数）；LEVELS[21]+SETUPS[21]+campaign.save 逐位（docs/10 §12），40 个锚函数里 26 个已还原、14 个仅分类；level_info/campaign.save 簇无锚，落地时可能要搬去 campaign_control
 graphwar_life_manager.rs	graphwar	9	0	12	src/graphwar_life_manager.rs	7	逐位	docs/65：穿过即死/友军致死/无血量在真实对局与回放里逐个相同；docs/41 状态迁移一致
 graphwar_lobby_control.rs	graphwar	1	0	6		0	未做	docs/112 只读出它与战役/名字模块的调用关系；界面在 client/ GDScript，src/ 无实现
 graphwar_local_player_manager.rs	graphwar	3	0	15		0	未做	docs/112 §13 记录了结构观测；src/ 无对应实现
@@ -62,7 +62,7 @@ graphwar_rank_manager.rs	graphwar	4	0	4		0	未做	docs/112 §5：RankInfo 判别
 graphwar_remote_event_handler.rs	graphwar	3	1	171	src/events.rs	2	观测	docs/110/96：远端事件名与判别值已解；我方 events.rs 实现枚举 + 编解码，无逐字节对拍
 graphwar_replay_control.rs	graphwar	2	0	9		0	未做	docs/133 的回放播放器在 client/ GDScript；src/graphwar_replay_player.rs 只做文件解析与推进，不含这个控制器（文件里的 ReplayPlayer 时钟是我方自定模型，见 docs/02 §17.4）
 graphwar_replay_player.rs	graphwar	5	5	18	src/graphwar_replay_player.rs	53	观测	docs/136/142：消息级对拍 400 份回放里 71 份完全一致 ⇒ 已实现但未到逐位
-graphwar_root_node.rs	graphwar	23	3	178		0	未做	主场景节点；docs/125 只有调用形态观测，src/ 无实现
+graphwar_root_node.rs	graphwar	23	3	178	src/graphwar_root_node.rs	57	观测	Screen×15 + Command×12 + 0x3af850 切屏决策表 + 构造初值（docs/16 §15.10）；0x3a5760 主体 20288B 刻意未猜
 graphwar_server_broker_handler.rs	graphwar	3	1	5		0	未做	原模块是**客户端侧**的 broker 处理器，未做；src/_scaffold/broker.rs 是我们自建的 broker 服务端，不是它的复原（见 docs/115）
 graphwar_server_connection_handler.rs	graphwar	6	0	24	src/server.rs	7	逐位	docs/33：新连接的状态同步与真实客户端逐字节一致
 graphwar_setup_control.rs	graphwar	21	8	70		0	未做	docs/137 有像素级观测；界面在 client/ GDScript，src/ 无实现

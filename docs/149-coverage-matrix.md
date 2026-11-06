@@ -5,14 +5,14 @@
 ## 0. 一句话总账
 
 ```
-原版可归属函数 488 个，分布在 70 个模块（58 个 graphwar_*.rs 占 431、12 个非 graphwar 游戏模块占 57）；我们已实现 161 个函数，其中 逐位 98 / 观测 63 / 推断 0；未做 242；完全未知的模块 22 个（graphwar 里 15 个）。
+原版可归属函数 488 个，分布在 70 个模块（58 个 graphwar_*.rs 占 431、12 个非 graphwar 游戏模块占 57）；我们已实现 224 个函数，其中 逐位 98 / 观测 126 / 推断 0；未做 179；完全未知的模块 22 个（graphwar 里 15 个）。
 ```
 
 拆成两个口径（下面的数字全部由脚本算出，重跑即复现）：
 
 | 口径 | 模块数 | 可归属函数 | 已实现 | 逐位 | 观测 | 推断 | 未做 | 未知模块 |
 |---|---|---|---|---|---|---|---|---|
-| 58 个 `graphwar_*.rs` | 58 | 431 | 140 | 91 | 49 | 0 | 224 | 15 |
+| 58 个 `graphwar_*.rs` | 58 | 431 | 203 | 91 | 112 | 0 | 161 | 15 |
 | 12 个非 graphwar 的游戏模块 | 12 | 57 | 21 | 7 | 14 | 0 | 18 | 7 |
 
 还有 `weak_caller.rs`（40 个归属函数）按 `docs/02` §9 判为第三方依赖库，单独一行留在 TSV 里备查，**不计入**任何合计。
@@ -99,7 +99,7 @@
 | `graphwar_lan_broadcaster_v6.rs` | 4 | 4 | — | 0 | 未做 |
 | `graphwar_lan_vbox.rs` | 11 | 19 | — | 0 | 未知 |
 | `graphwar_level_generator.rs` | 4 | 26 | `src/graphwar_level_generator.rs+src/graphwar_level_generator/tables.rs` | 28 | 逐位 |
-| `graphwar_level_manager.rs` | 40 | 590 | — | 0 | 未做 |
+| `graphwar_level_manager.rs` | 40 | 590 | `src/graphwar_level_manager.rs` | 20 | 观测 |
 | `graphwar_life_manager.rs` | 9 | 12 | `src/graphwar_life_manager.rs` | 7 | 逐位 |
 | `graphwar_lobby_control.rs` | 1 | 6 | — | 0 | 未做 |
 | `graphwar_local_player_manager.rs` | 3 | 15 | — | 0 | 未做 |
@@ -120,7 +120,7 @@
 | `graphwar_remote_event_handler.rs` | 3 | 171 | `src/events.rs` | 2 | 观测 |
 | `graphwar_replay_control.rs` | 2 | 9 | — | 0 | 未做 |
 | `graphwar_replay_player.rs` | 5 | 18 | `src/graphwar_replay_player.rs` | 53 | 观测 |
-| `graphwar_root_node.rs` | 23 | 178 | — | 0 | 未做 |
+| `graphwar_root_node.rs` | 23 | 178 | `src/graphwar_root_node.rs` | 57 | 观测 |
 | `graphwar_server_broker_handler.rs` | 3 | 5 | — | 0 | 未做 |
 | `graphwar_server_connection_handler.rs` | 6 | 24 | `src/server.rs` | 7 | 逐位 |
 | `graphwar_setup_control.rs` | 21 | 70 | — | 0 | 未做 |
@@ -239,5 +239,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（33 个文件、873 条 `fn`） | `be21875c586fdebcc6488c1e90d593066ca281605c1a279c7962940a52b418ed` |
+| `src/` 树（36 个文件、950 条 `fn`） | `0795d1a5e4f8210d6e4e9fe1c4383f8d058726d27b97d9e770101e5996aa5a55` |
 
