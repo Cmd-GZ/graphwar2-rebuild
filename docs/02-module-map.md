@@ -761,13 +761,13 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 | `graphwar_function_evolutionator.rs`（16/25） | `src/graphwar_function_evolutionator.rs` | 锚点 16 个（0x41b880/0x41c360/0x41c720 抽样与装配、0x4825b0/0x482c20/0x4839e0 带 `mid > len`/`VAR_XVAR_Y` 的 token 操作）；`docs/71`（权重表 `random % 85`、常数 `N(0,1)×10.2`）、`docs/74`（适应度）、`docs/147`（两阶段评分与预算）、40 万次运行时抽样。原文件 `aigen.rs`。⚠ 含我方接线层 `SoldierEvolver`（见 §17.4） | `一一对应` |
 | `graphwar_play_screen_control.rs`（10/64） | `src/graphwar_play_screen_control.rs` | 锚点 10 个（0x3da130、0x3dee00…，`docs/02 §11` 同款口径）；`docs/14-turn.md` §9 逐函数规格；`docs/135`（开火特效）。原文件 `play_control.rs`。⚠ 旧矩阵（`docs/149`）把它记成 `未做`，与本文件头和 `src/lib.rs` 冲突 —— 本轮按代码更正 | `一一对应` |
 | `graphwar_life_manager.rs`（9/12） | `src/graphwar_life_manager.rs` | 锚点 9 个（0x454b40…0x455b60，`docs/02 §13.1` 那张独立表逐个相同；0x454950 是 `&1` 存活判定）；`docs/65`（穿过即死/友军致死，真实对局与回放逐个相同）。原文件 `life.rs` | `一一对应` |
-| `graphwar_path_calculator.rs`（1/9） | `src/graphwar_path_calculator.rs` | 采样器 `0x3c2530`（`docs/04`）+ `docs/91`（补 `hi = mid2` 后 24/24 用例整条点序列逐位相等）。⚠ 采样器本体**没有** panic 锚，本模块只归属到 1 个辅助函数（0x469630/0x4696d0）⇒ "采样器属于本模块"是 `docs/02 §1` 的文档级归属，不是锚点归属。原文件 `path.rs` | `一一对应` |
+| `graphwar_path_calculator.rs`（1/9） | `src/graphwar_path_calculator.rs` | 采样器 `0x3c2530`（`docs/04`）+ `docs/91`（补 `hi = mid2` 后 24/24 用例整条点序列逐位相等）。⚠ 采样器本体**没有** panic 锚（**§20 复核结论不变**：`0x3c2530` 1,680 B 全函数体 0 个 Location 引用）；但「本模块只归属到 1 个辅助函数（0x469630/0x4696d0）」已被 **§20 更正**——本模块自己的 9 个 Location 锚**全部**落在 **`0x467530`**（= `calculate_paths`，5,408 B），`0x469630`/`0x4696d0` 只是 160 B 的 panic/drop 胶水。⇒ 「采样器 `0x3c2530` 属于本模块」仍是文档级归属，**不是**锚点归属（§20.5 / §20.7 第 2 条）。原文件 `path.rs` | `一一对应` |
 | `graphwar_replay_player.rs`（5/18） | `src/graphwar_replay_player.rs` | 锚点 5 个（0x3d6d70、0x3d7380、0x3d76f0 写 `user://replays/`）；`docs/133` §2（gzip+JSONL 格式）、`docs/136/142`（400 份回放消息级对拍，71 份完全一致）。原文件 `replay.rs`。⚠ 文件内 `ReplayPlayer`（播放时钟）是我方自定模型，见 §17.4 | `一一对应` |
 | `graphwar_tick_handler.rs`（2/3） | `src/graphwar_tick_handler.rs` | `docs/35`（113 个 `TickReply` 样本逐字节）+ `docs/42`（TimeMode → 回合时长）。原文件 `tick.rs`。⚠ **待核实**：本模块的锚函数是 0x51a610 / 0x51a750 / 0x3d76f0（后两个与回放写盘同址、`contested` 与 replay_player 共有），与本文件实现的"60Hz tick 时钟 + 时长表"**没有函数级对应**；现在的对应来自矩阵旧行与模块名，属**推断** | `一一对应（⚠待核实）` |
 
 | `src/graphwar_level_manager.rs` | 原版 `graphwar_level_manager.rs` + **可能属于 `graphwar_campaign_control.rs`** 的 `level_info`(`0x4ad380`) 与 `campaign.save` 簇(`0x417ef0`/`0x418170`/`0x4183b0`) | 这三处**都没有 Location 锚**；`docs/10` §12.6 | 无锚 ⇒ 归属只能靠调用形态，证据不足。暂时承载并登记，等 `graphwar_campaign_control.rs` 有锚点再决定搬不搬 |
 | `graphwar_level_generator.rs`（4/26） | `src/graphwar_level_generator.rs` + `src/graphwar_level_generator/tables.rs` | 锚点 26 个（0x466d20/0x467530 等）；`docs/55/56/61`（障碍 x/y/r 的 `to_bits()` 13/13 逐位）、`docs/103/126`（种子语义）。原文件 `levelgen.rs` + `levelgen_tables.rs`（ziggurat 表）——**同一个原版文件，我方按"逻辑 / 常量表"拆成两份**，主文件用原版名，表放同名目录 | `一一对应` |
-| `graphwar_shot_calculator.rs`（1/12） | `src/graphwar_shot_calculator.rs` + `src/graphwar_shot_calculator/settle.rs` | 锚点 12 个（0x3c5f70 修正常数、0x3c62b0 等）；`docs/05`（修正 `c = y0 − f(±x0)`）、`docs/86 §14`（82 发并集 152/152）、`docs/122`（按 id 排除射手）。原文件 `shot.rs` + `settle.rs`——**同一个原版文件**（0x3c2bc0 主函数 + 0x3c5f70 修正），我方按主题拆两份。⚠ 0x3c2bc0 本体**没有** panic 锚，"settle 属于本模块"靠 `docs/86` 的行为证据 | `一一对应` |
+| `graphwar_shot_calculator.rs`（1/12） | `src/graphwar_shot_calculator.rs` + `src/graphwar_shot_calculator/settle.rs` | 锚点 12 个（0x3c5f70 修正常数、0x3c62b0 等）；`docs/05`（修正 `c = y0 − f(±x0)`）、`docs/86 §14`（82 发并集 152/152）、`docs/122`（按 id 排除射手）。原文件 `shot.rs` + `settle.rs`——**同一个原版文件**（0x3c2bc0 主函数 + 0x3c5f70 修正），我方按主题拆两份。⚠ **本节原写「`0x3c2bc0` 本体没有 panic 锚」，该条已被 §20 证否**：它有 **13 个 `src/*.rs` 锚**（12 个 `graphwar_shot_calculator.rs` + 1 个 `graphwar_obstacle_manager.rs`），其中 **11 个双向唯一**⇒ 本函数已由锚点定名为 `GraphwarShotCalculator::calculate_shot_results`（`观测`，§20.5）；"settle 属于本模块"不再只靠 `docs/86` 的行为证据 | `一一对应` |
 | `graphwar_event.rs`（0/0） | `src/events.rs` | `enum Event` 72 个具名变体 + `GameInfo`（`docs/114`：判别值逐条解出、两道自校验；`docs/07 §3.1` 9 个字段）。⚠ 本模块**零锚点**（纯数据），对应关系靠职责与 `docs/114`。同文件还收了 event_handler 的名字表 → 见 §17.4 | `混装（待拆）` |
 | `graphwar_event_handler.rs`（2/4） | `src/events.rs` | 只落了一张表：`DISPATCH_NAME_TAGS` + `from_dispatch_name`（从 `0x3d38f0` 逐字节解出的"事件名 → 判别值"，`docs/114` §3）。⚠ `0x3d3630`（用常量 key 订阅 `HashMap<u64,_>`）**未实现**，所以本模块**没有** handler 行为，只有数据 | `混装（待拆）` |
 | `graphwar_remote_event_handler.rs`（3/171） | `src/events.rs` | 只落了枚举与名字表（同上）。本模块 171 个锚点是全二进制第三密，我方**未实现**其分发/订阅行为；旧矩阵把 `events.rs` 记成它的实现，口径偏宽 —— 本轮按"没有 handler 代码"重记 | `混装（待拆）` |
@@ -935,8 +935,8 @@ function/mod|function/to_text)\.rs' --include='*.md' --include='*.rs' --include=
 
 | 我们现在写的 | 物证给出的真名 |
 |---|---|
-| 采样器 `0x3c2530`（"语义已知、名字未知"） | `GraphwarPathCalculator::calculate_paths` |
-| 开火结算 `0x3c2bc0`（12 KB，"没有逐条还原"） | `GraphwarShotCalculator::calculate_shot_results` |
+| 采样器 `0x3c2530`（"语义已知、名字未知"） | 名字确是 `GraphwarPathCalculator::calculate_paths`，**但它不在 `0x3c2530`**——§20 把这个名字锚到 **`0x467530`**；`0x3c2530` 全函数体 **0 个 Location 引用**，用锚点无法定名（仍是 `未知`） |
+| 开火结算 `0x3c2bc0`（12 KB，"没有逐条还原"） | `GraphwarShotCalculator::calculate_shot_results` —— §20 已用 **11 个双向唯一锚**把它**落到地址上**（`观测`），不再只是名字级推断 |
 | `SETUPS[21]`（`docs/10` 从数据表反推的 21 关） | `setup_level_0` … `setup_level_20`（21 个，一个不多一个不少） |
 
 
@@ -1646,7 +1646,201 @@ GW2_OLD=2026-08-19 GW2_NEW=2026-08-27 ../.venv/bin/python tools/measure.py   # �
 `0x48`→`0x30`、`0x50`→`0x38`），所以准确的说法是：
 ⇒ **（观测）** 这条函数**没有增删或替换任何一条指令**，只有地址与栈帧排布变了；
 弹道修正的**指令形态**没变。**（未知）** 栈帧排布的变化是否对应局部变量集合的微调，本轮无法判定。
-采样器 `0x3c2530`（§18 用 2024 符号表定名为 `GraphwarPathCalculator::calculate_paths`；注意那是 2024 的名字与地址口径）在 08-27 侧**没有
+采样器 `0x3c2530`（§18 用 2024 符号表定名为 `GraphwarPathCalculator::calculate_paths`——⚠ **§20 更正**：这个名字在 2.0.60 上锚到的是 **`0x467530`**，不是 `0x3c2530`；`0x3c2530` 零 Location 锚，名字仍是 `未知`。本节"没有同尺寸对应物"说的是 `0x3c2530` 这个**名字未知**的函数，与 `0x467530` 无关）在 08-27 侧**没有
 同等大小的对应函数**（最接近的是 08-27 的 `0x4e18e0`，1,717 字节，形态相似度 0.859），
 ⇒ **（未知）** 采样器这一版是否被改过——被重排/内联差异盖住了，本轮的静态口径分辨不出来。
 **不要把这一条写成"采样器没变"**。
+
+## 20. 名字 ↔ 2.0.60 地址：用 `panic::Location` 把原版函数名钉到 x86-64 的地址上（2026-11）
+
+### 20.0 一句话
+
+§18 给的是**名字**，而且明说「地址一律是 2024 版的，禁止挪用到 2.0.60」。
+本节补上缺的那半：**把名字钉到 2.0.60 (Linux x86-64) 的地址上**——不是靠推断，是靠
+`panic::Location` 这个编译期常量做双向唯一的 join。产出 `fixtures/name_to_addr.tsv`。
+
+### 20.1 为什么这次不需要「跨版本推断」
+
+§18 用的物证是 **2024-07-30** 那一版未 strip 的 `.so`，所以它对 2.0.60 只能算 `推断`。
+本节换了一份物证：
+
+| 项 | 值 | 档位 |
+|---|---|---|
+| 名字来源 | **Android `lib/arm64-v8a/libgraphwarrust.so`**（带完整 `.symtab`：18,793 个 `FUNC`，1,300 个含 `graphwar`） | `观测` |
+| 它就是 2.0.60 | 同包 `.rea-work/apk/asset/assets/project.binary` 里 `application/config/version` = **`2.0.60`** | `观测` |
+| 地址来源 | `.reference/steam/2026-08-28/libgraphwarrust.so`（x86-64，stripped），sha256 `9a538115…` | `观测` |
+| 两者同源 | 两侧 `src/*.rs` 的 Location 三元组 **2,035 个，交集 2,035 个，差 0** | `观测` |
+
+⇒ **名字与地址都出自 2.0.60 这一版**，§18 的「两年间没改名」那条 `推断` 在本节**不需要**。
+（两边 `src/*.rs` 的 Location 三元组一个不多一个不少，本身就是「同一份源码」的硬证据；
+差异全部落在依赖 crate 上：`ring` / `reqwest` / `hyper` / `regex-automata` / `memchr` /
+`base64` / `aho-corasick` / `flate2` —— 那些是各架构各自单态化/内联出来的代码路径。）
+
+### 20.2 方法：桥是 `(file, line, col)`
+
+`core::panic::Location` 的布局（rustc 1.79 起未变）：
+
+```
+struct Location { file: &'static str, line: u32, col: u32 }   // 24 字节
+```
+
+编译器把它写进 `.data.rel.ro`：第 0 个 8 字节槽是 `R_*_RELATIVE` 重定位，addend 指向
+`.rodata` 里的文件名字面量；槽位 +8 是 `len`；+16/+20 是 `line`/`col`。
+**这四个字段全是编译期常量，与指令集无关**，于是：
+
+```
+Android arm64:  符号名  ↔  它引用的 (file,line,col) 集合
+Linux x86-64 :  地址    ↔  它引用的 (file,line,col) 集合
+                            ↓ 按 (file,line,col) join
+                符号名  ↔  x86-64 地址
+```
+
+三个实现要点（都会静默影响结果，写下来免得后人重踩）：
+
+1. **join 的键用三元组，不用 `(file,line)`**。同一行常有两个 `.expect()`：本二进制里
+   **281** 个 `(file,line)` 带 >1 个 `col`。只用 `(file,line)` 会把本来唯一的锚**人为**变成歧义。
+2. **两侧必须用同一套「什么算引用了这个 Location」的规则**。取地址（x86 `lea` / arm64
+   `adrp+add`）和取字段（`mov rax,[loc]`、`ldr x0,[x8,#off]`）都算；实现见
+   `LocIndex.lookup()`（命中 `loc`、`loc+8`、`loc+16` 三者都归到 `loc`）。
+   规则不对称会直接制造假歧义。
+3. **arm64 的寄存器跟踪必须在 `bl`/`b`/`ret` 处清空**。不清的话陈旧值会在后续基本块里
+   被当成 Location 地址——第一版实测 arm64 只解出 2,783 个键、x86 侧 4,666 个，
+   差的就是这一类（改了之后 arm64 侧 src Location 覆盖率是 2,040/2,040）。
+
+### 20.3 产出与覆盖统计
+
+分母口径：`graphwar*` 符号 demangle 后、去掉 gdext/rustc 样板（`__register_methods` /
+`panic_cold_explicit` / `__init` …）与 `{{closure}}`、再按地址去重，得到
+**758 个有源码级方法名的原版函数**，分布在 **80 个模块**。
+
+| 结果 | 行数 | 占比 | 含义 |
+|---|---|---|---|
+| `唯一锚` | **327** | 43.1% | 名字 ↔ 地址**已落定**（311 条直接双向唯一 + 16 条消去法） |
+| `歧义` | 171 | 22.6% | 有锚，但没有一个是两侧一对一 ⇒ **不选**，候选写进 `evidence` 列 |
+| `未知` | 260 | 34.3% | 全函数体**不引用任何 `panic::Location`** ⇒ 这条路定不了名 |
+| `次级证据` | **0** | — | **有意不产出**，理由见 §20.7 |
+
+地址覆盖 **60 / 80 个模块**。落地最多的：`graphwar_level_manager` 40、
+`graphwar_game_state_manager` 34、`graphwar_setup_control` 14、`graphwar_turn_manager` 13。
+
+两侧各自的中间量（`tools/name_bridge.py stats` 会全部打印）：
+
+| 项 | arm64 (Android 2.0.60) | x86-64 (Linux 2.0.60) |
+|---|---|---|
+| 函数数 | 12,609（`.symtab`，限 `.text`） | 13,263（Ghidra 起点表） |
+| `Location` 结构体 | 5,223（src 2,040） | 5,300（src 2,042） |
+| 带任意锚的函数 | 1,722 | 3,107 |
+| 带 `src/*.rs` 锚的函数 | 532 | 527 |
+| 被引用的键（三元组） | 2,783 | 4,666 |
+
+> arm64 侧的键数少是**真的少**，不是漏：它在依赖 crate 上把大量 panic 路径内联掉了。
+> 但 `src/*.rs` 这一半两侧都是全覆盖（arm64 2,040/2,040 个 src 结构体都被引用到，
+> x86 2,042/2,042），所以**游戏代码的锚不缺**。
+
+### 20.4 质量指标：歧义率就是这次方法的分母
+
+| 口径 | 歧义率 | 说明 |
+|---|---|---|
+| 仅 `src/*.rs`，键 = `(file,line,col)` | **3.5%**（72 / 2,035） | 本方法的主指标 |
+| 仅 `src/*.rs`，键退化到 `(file,line)` | **3.8%**（70 / 1,833） | 任务口径要求报的那个数：**「同一行被多个函数共享」只值 0.3 个百分点** |
+
+**歧义是内生的、而且两侧对称**：把每个键的「arm64 侧有几个函数引用 / x86 侧有几个」
+画成表，几乎全落在对角线上——`(1,1)` 1,963 个、`(2,2)` 32、`(4,4)` 15、`(3,3)` 6、
+`(6,6)` 3、`(8,8)` 2、`(45,45)` 2。两侧独立算出来的重数**相等**，这既是「同一份源码」的
+旁证，也说明歧义来自源码本身（同一行被 N 个函数内联），不是我这边漏检。
+
+另外三条检查（都只是**校验**，不参与配对）：
+
+* **与 §18 独立对账（最强的一条）**：§18 用 2024 版符号表记下
+  `GraphwarPathCalculator::calculate_paths` 的 9 个锚，本节在 2.0.60 的 `0x467530` 上解出的
+  **是同样那 9 个**（`45:108 / 49:38 / 59:108 / 60:113 / 65:45 / 66:48 / 86:37 / 86:70 / 105:71`），
+  函数字节数 5,408（§18 记 2024 版 5,351）。两份物证、两版代码、独立算法，锚点集合逐个相同。
+* **函数大小比** x86/arm64 中位数 **1.06**，98.6% 的配对落在 `[1/3, 3]` 内。
+* **次序相关**（Spearman）0.70 —— 偏低，但这是**预期**的：§19 已证这一版函数被整体重排，
+  且两个架构的内联策略本就不同。**它不构成「配对错了」的证据，也不被用来配对。**
+
+### 20.5 具体结论（本节最该被引用的三行）
+
+| 地址（ELF 虚地址） | 名字 | 证据 | 档位 |
+|---|---|---|---|
+| **`0x3c2bc0`** | **`GraphwarShotCalculator::calculate_shot_results`** | **13 个 `src/*.rs` 锚**（12 个 `graphwar_shot_calculator.rs` + 1 个 `graphwar_obstacle_manager.rs`），其中 **11 个双向唯一**；12,432 B（arm64 同名为 8,760 B） | **`观测`** |
+| **`0x467530`** | **`GraphwarPathCalculator::calculate_paths`** | 模块自己的 9 个 Location 锚**全部**落在它体内（+0x1138 起的一段冷 panic 块），5,408 B（arm64 同名 4,812 B） | **`观测`** |
+| **`0x4ed670`** | **`MathFunction::new`** | 锚 `src/math_function.rs:75:10`；与 §18 记的 2024 版同名同锚 | **`观测`** |
+
+### 20.6 顺手回答的两个问题（本节的起因）
+
+**问：采样器 `0x3c2530` 和开火结算 `0x3c2bc0` 到底有没有锚？**
+
+| 函数 | 有锚吗 | 能否定名 |
+|---|---|---|
+| 开火结算 **`0x3c2bc0`** | **有，13 个**（11 个双向唯一） | **能** → `GraphwarShotCalculator::calculate_shot_results`（`观测`） |
+| 采样器 **`0x3c2530`** | **没有，0 个**（1,680 B 全函数体零 Location 引用） | **不能** → 名字仍是 `未知` |
+
+所以 `docs/00-status.md` 说「求值器 `0x4eb9d0`、采样器 `0x3c2530` 全函数体零 Location 引用」
+**是对的**（`0x4eb9d0` 复核也是 0 个）——但 **`0x3c2bc0` 不是**，见 §20.7 第 1 条。
+
+**附带纠正一个被传错的事实**：`calculate_paths` 不在 `0x3c2530`，在 **`0x467530`**。
+`0x3c2530` 引用的浮点常量是 `0.001` / `6.0` / `15.0` / `25.0` / `200.0`
+（= 容差、`|y|≤15`、`|x|≤25`、`200/step` 的点预算，与 `AGENTS.md` 的硬事实逐个对上），
+而 `0x467530` 一个都不引用 ⇒ **两者是不同函数，采样核心没有被内联进 `calculate_paths`**。
+`0x3c2530` 的模块归属因此**没有锚点证据**；它是不是 `calculate_paths` 里被 outlining
+出来的一段（arm64 侧 `graphwar_path_calculator` 只有 `calculate_paths` 一个符号），
+本节**判定不了**，标 `未知`。
+
+### 20.7 与既有文档冲突的地方（逐条）
+
+1. **`§17.1` 说「`0x3c2bc0` 本体没有 panic 锚」→ 证否**。
+   它有 13 个 `src/*.rs` 锚、11 个双向唯一。判据：`tools/name_bridge.py probe 0x3c2bc0`
+   （会把每个锚的两侧 owner 数与 arm64 符号名都打出来）。**以本节为准**，§17.1 那两行已就地更正。
+2. **`§17.1` 说 `graphwar_path_calculator` 模块「只归属到 1 个辅助函数（0x469630/0x4696d0）」→ 更正**。
+   该模块自己的 9 个锚全部落在 `0x467530`。`0x469630`/`0x4696d0` 只有 160 B，是 panic/drop 胶水，
+   不是模块的本体函数。
+3. **`§18` 的名字表把「采样器 `0x3c2530`」直接写成 `calculate_paths` → 更正（名字对，地址错）**。
+   名字确实是 `calculate_paths`，但地址是 `0x467530`。
+4. **`§19` 结尾「采样器 `0x3c2530` …定名为 `calculate_paths`」→ 同上，已就地加更正**。
+5. **对本项目最要紧的一条**：`docs/04`（点序列采样）通篇以 `0x3c2530` 为题眼，
+   而 `graphwar_path_calculator.rs` 这个名字对应的地址是 `0x467530`。
+   ⇒ 关于「哪段代码在哪个文件里」的归属，`docs/04` 的**行为**结论（`hi = mid2`、24/24 逐位相等）
+   **不受影响**，但它的**文件名归属**缺锚点支持。`src/graphwar_path_calculator.rs` 该装
+   `0x467530` 还是 `0x3c2530`，需要另找证据（字符串引用 / 调用邻居），本轮**不猜**。
+
+### 20.8 局限（别把这些当结论）
+
+* **`歧义` 的 171 行没有地址**。其中 9 条是「一个名字在 x86 侧被拆成多个函数」
+  （内联策略不同导致的拆分，例如 `GraphwarGameRecorder::save_game` → 3 个候选地址）。
+  这类**只能人工按模块一致性挑一个**，`evidence` 列已给候选与票数，本节不选。
+* **`未知` 的 260 行是硬边界**：没有 `panic`/`unwrap`/`expect` 的函数，这条路永远定不了名。
+  `0x3c2530` 就是典型。
+* 本节**不产出 `次级证据`**：§19 已证 08-27→08-28 函数被整体重排、`.text` 净差只有 +272 字节，
+  大小/形态相似度在这个版本对上**分辨不出来**（采样器在 08-27 侧最接近的 `0x4e18e0`
+  相似度只有 0.859）；字符串引用又只证明「被这片代码引用」、不证明归属（§16.4 第 3 条）。
+  ⇒ 宁缺勿错，无锚一律 `未知`。
+* x86 侧函数边界用的是 Ghidra 起点表（`analysis/funcstarts_ghidra_va.pkl`，13,263 条），
+  **不是** `.eh_frame` 那份错的。若某个函数缺条目，它体内的引用会被记到前一个函数上；
+  这使得个别配对可能整体错位——`次序相关 0.70` 里有多少是这种噪声，本轮没分离出来。
+* 名字来自 **arm64** 符号表，`src_file:line` 是两侧共同的编译期常量；**arm64 地址一律没进任何表**。
+
+### 20.9 怎么复算（不依赖本节，任何人可重跑）
+
+```bash
+# 一条命令重建核心交付物（约 80 s：capstone 全量扫两个 .so 的 .text）
+../.venv/bin/python tools/name_bridge.py build        # 写 fixtures/name_to_addr.tsv
+
+../.venv/bin/python tools/name_bridge.py stats        # 覆盖/歧义率/对账指标
+../.venv/bin/python tools/name_bridge.py probe 0x3c2530 0x3c2bc0   # 某地址有没有锚
+../.venv/bin/python tools/name_bridge.py module graphwar_shot_calculator
+../.venv/bin/python tools/name_bridge.py conflicts    # 「一个名字被拆成多个函数」的 9 条
+```
+
+输入路径可用 `--arm64 / --x86 / --funcstarts` 或环境变量
+`GW2_ARM64_SO` / `GW2_X86_SO` / `GW2_FUNCSTARTS` 覆盖，默认在这台机器上是：
+
+* arm64：`.rea-work/apk/arm64/lib/arm64-v8a/libgraphwarrust.so`
+* x86-64：`.reference/steam/2026-08-28/libgraphwarrust.so`（与仓库根 `libgraphwarrust.so` 同 sha256）
+* 函数起点：`analysis/funcstarts_ghidra_va.pkl`（向上逐级查找，**不要**换成 `funcstarts.pkl`）
+
+`fixtures/name_to_addr.tsv` 的列：
+`module / type / method / x86_addr / src_file / src_line / join_kind / evidence`。
+`x86_addr` 是 **ELF 虚地址**，Ghidra/REA 地址 = 该值 + `0x100000`（只加一次）；
+`join_kind` ∈ `唯一锚 / 歧义 / 次级证据 / 未知`，其中 `唯一锚` 的 `evidence` 会写明
+是「直接唯一」还是「消去法唯一」。
