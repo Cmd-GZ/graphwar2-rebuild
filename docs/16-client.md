@@ -4702,3 +4702,391 @@ nm -S --defined-only $ARM | grep -E "graphwar_(target|entity_effect|effect)_mana
 # 视频：0x4494e4 的 bl 目标全是 openh264/minimp4
 # 纹理表：0x40bf7c/0x40c0a4/0x40c1cc 里 ldr [x0,#0x1c8/0x198/0x168] + add x0,x0,#0x1d0/0x1a0/0x170
 ```
+
+## 33. 最后一批杂项小模块：11 个"至今没定性的东西"逐条结案（本轮新增）
+
+本节处理的是 `docs/02-module-map.md` §18.4 / §17.5 里那批**可归属函数 0~2 个**的模块。
+它们每个都不大，但每一个都曾经是"我们知道名字、不知道它是什么"的空白。
+**0 个可归属 ≠ 没内容**：`graphwar_game_info` 一整个结构体、`graphwar_event_queue`
+全游戏的发件箱，都在这批里。
+
+### 33.0 证据链与新工具（读结论前先看这一节）
+
+本轮**没有**用 Ghidra 伪代码下任何结论，只有三类证据：
+
+| 代号 | 来源 | 怎么复核 |
+|---|---|---|
+| **A** | **2.0.60 arm64 未 strip 版**的 `.symtab`（`graphwar_crash_reporter` 等 0 锚模块**只在这里有名字**） | `nm -C -S --defined-only $ARM \| grep graphwarrust::<模块>::` |
+| **B** | **arm64 `bl` 图**：把 `.text` 按 `bl` 目标聚成 caller/callee（符号表给了函数边界，不需要 FDE） | 见本节 §33.10 的复现命令 |
+| **C** | **x86-64 目标**的 `panic::Location` 锚 + `.rodata` 字面量直引 | `../.venv/bin/python tools/loc_xrefs.py loc src/<模块>.rs` |
+
+**为什么必须用 A**：x86 目标被 strip，`docs/02.md` §17 的模块名是从 `.rodata` 残留的
+`src/<mod>.rs` 字面量反推的。**而这 11 个模块里有 6 个连一个字面量都没有**：
+
+```text
+                       arm64 src/<mod>.rs 字面量     x86 同
+graphwar_player_config            0                    0
+graphwar_game_info                0                    0
+graphwar_event_queue              0                    0
+backtracer                        0                    0
+function_token                    0                    0
+graphwar_crash_reporter           8                    8
+```
+
+⇒ 这 5 个模块在 x86 目标上**没有任何字符串可用作搜索键**，只能靠 arm64 的符号名 + 行为指纹
+搬回来。这也解释了为什么它们长期停在"未做"：**不是没做，是没有入口**。
+
+（`graphwar_crash_reporter` 的 8 份是唯一的异常值：其它模块各 1 份。它见 §33.3。）
+
+### 33.1 `polish_notation_converter` —— **活代码，而且是解析器的后半段**（旧结论要改）
+
+**问题 a 的答案：活的，删了 `sin(x)^2` 的语义就没了。唯一调用者是 `MathFunction::new`。**
+
+x86 目标 `0x4f5450`（`src/polish_notation_converter.rs:36:52` / `116:55` 两个锚，`逐位`）。
+`tools/loc_xrefs.py` 的 `calls` 表里它的调用点有三个：`0x4edd1f`、`0x4f56b3`、`0x4f5721`——
+后两个是**自递归**，第一个在 `MathFunction::new`（`0x4ed670`）里。arm64 版同构：
+`PolishNotationConverter::reorder_recursive`（`0x44db78`）← `MathFunction::new`（`0x446c4c`）+`0x28c`。
+
+调用点上下文（`逐位`，x86 `0x4edcc9..0x4edd24`）：
+
+```text
+4edcc9  mov 0x120(%rsp),%rdx        ; rdx = 输入 token 数 len
+4edce9  movq $0x0,0xa8(%rsp)        ; output Vec: cap=0
+4edcf5  movq $0x8,0xb0(%rsp)        ;             ptr=8（16 字节对齐的 dangling）
+4edd01  movq $0x0,0xb8(%rsp)        ;             len=0
+4edd0d  test %rdx,%rdx ; je 跳过     ; len==0 就不调用
+4edd12  dec %rdx                    ; end = len-1   ← 闭区间
+4edd15  lea 0x90(%rsp),%rdi
+4edd1d  xor %esi,%esi               ; start = 0
+4edd1f  call 0x4f5450
+```
+
+**修正 `docs/03-function-language.md` §13 的口径**：那里写的"解析器 `MathFunction::new` 自己就做分词"
+**只对了一半**。它自己做的是**分词**（正则 + `FunctionToken::new`），
+但**括号、优先级、缺操作数补 0 全在 `polish_notation_converter` 里**。
+分词产物是**中缀**的，且**含两个额外 token：tag 18 `(`、tag 19 `)`**（`逐位`，
+`FunctionToken::new` 的单字节跳转表里 `'('` → 18、`')'` → 19）。这两个 tag 在
+`docs/03` 的 `0..=17` 表里**没有**，因为它们是**中间表示专用**、转换完就消失。
+
+#### 33.1.1 原版正则（**第一次逐字节拿到**，`逐位`）
+
+`.rodata` 里 77 字节，arm64 `0x19dcb4` 与 x86 `0x1c4347` **逐字节相同**：
+
+```text
+[0-9]*\.?[0-9]+|\(|\)|x|y'|y|\+|-|\*|/|\^|sqrt|log|abs|sin|cos|tan|ln|n|exp|e
+```
+
+三个可观测后果：
+
+* **交替顺序 = 优先级**：`y'` 在 `y` 前、`exp` 在 `e` 前、`sqrt|log|abs|sin|cos|tan|ln` 全在 `n|e` 前。
+* **`5.` 只切出 `5`**：尾部那段 `[0-9]+` 硬性要求数字，孤立的 `.` 被 `find_iter` 丢掉。
+* **没有任何"插乘号"**：`2x` 只切出 `2`、`x` 两个 token，中间不补 `*`。
+
+在此之前还有两步**字符串重写**（`逐位`，`MathFunction::new` 开头）：
+
+```text
+逐字节 to_ascii_lowercase   （sub w12,w11,#0x41 ; cmp w12,#0x1a ; orr w11,w12,w11）
+str::replace("pi", "n")     （0x19dcaf len=2 → 0x19dcb1 len=1）
+str::replace("π",  "n")     （0x19dcb2 len=2，字节 CF 80）
+```
+
+⇒ `docs/03` 的 "`pi`/`π`/`n` = π" 的**机制**在这里：三者先被折成同一个单字符 `n`，
+再由 `FunctionToken::new` 的**单字节**表映射成 `CONST(π)`。`FunctionToken::new` 里残留的
+`"pi"` 那一臂（`0x3c0dea`）是**死臂**。
+
+#### 33.1.2 算法：递归找"这一层的根"，**不是** shunting-yard
+
+一个操作符栈都没有。`reorder_recursive(&mut self, start, end)`（`end` **闭区间**）：
+
+1. 在 `[start, end]` 扫一遍，`depth` 数括号（18 `+1`、19 `-1`，`0x4f550c..0x4f551a`）；
+2. 只在 **`depth` 最小**的那一层里挑 **`PRECEDENCE[tag]` 最大**的 token 当**根**
+   （`0x4f5533`；数值大 = 结合松 = 根）；
+3. 根 push 进 `output`（`0x4f5490`），然后：
+   * 一元（`neg`=5，或 `sqrt..tan`=9..=16）：**不递归**，`start = root+1` 接着扫
+     （`0x4f54ba` 的 `tag-9 < 8`）；
+   * 原子/常量（`0/e0007` 掩码 = `{0,1,2,17,18,19}`，`0x4f5688`）：本层结束；
+   * 二元：递归左 `[start, root-1]`（`0x4f56b3`）、递归右 `[root+1, end]`（`0x4f5721`），
+     **`+`/`-` 缺哪边就补 `CONST 0`**（`0x4f56f7` / `0x4f575f` 的 `movq $0x11`）。
+
+优先级表（`逐位`，`.rodata` `0x1c4838`；`0x1c4888` 是**同一张表的第二份拷贝**，
+链接器没合并 —— 别误当成两张不同的表）：
+
+```text
+tag  0  1  2   3  4   5   6  7   8   9 10 11 12 13 14 15 16  17
+值   2  2  2   7  7   4   6  6   4   3  3  3  3  3  3  3  3   2
+     x  y  y'  +  -  neg  *  /   ^  sqrt log ln exp abs sin cos tan const
+```
+
+**`docs/03` 里"`^` 左结合"和"`+` 补 `CONST 0`"的机制现在都在这一节了**：
+
+* **平级左结合**：两个二元相遇时判据是 `PRECEDENCE[new] >= PRECEDENCE[best]`
+  （`0x4f55ca` `jae`，三档 `+/-`=7、`*/ /`=6、`^`=4）；`>=` ⇒ 后出现的当根 ⇒ 左结合。
+* **一元右结合**：一元相遇走的是 `PRECEDENCE[best] < PRECEDENCE[new]`
+  （`0x4f5565`/`0x4f557b` `jb`，**严格**小于）⇒ 先出现的当根 ⇒ `sin cos x` = `sin (cos x)`。
+* **补洞只对 `+`/`-`**：`0x4f56c7` 的 `cmp $2,%edx`（`tag-3 < 2`）把范围锁死在 tag 3/4。
+
+**新发现（本轮）**：词法器**不产 `neg`（tag 5）**。`FunctionToken::new("-")` 给的是**二元减 4**
+（`逐位`，单字节跳转表）。⇒ `-x` 在词法层就是 `(- x)` 两个 token，靠"缺左操作数补 `CONST 0`"
+变成 `(- 0 x)`。tag 5 的产生点**本轮未定位**（`未知`；候选 `FunctionRandomizer::mutate_fine_tune`）。
+
+#### 33.1.3 结构体布局（`逐位`，两架构一致；`repr(Rust)` 被重排过）
+
+```text
++0x00 input.cap   +0x08 input.ptr   +0x10 input.len
++0x18 output.cap  +0x20 output.ptr  +0x28 output.len
+```
+
+两个 `Vec` 都装**同一个类型**（16 字节 token）⇒ `PolishNotationConverter`
+依赖 `function_token`，不是泛型。**没有 `new` 符号**：结构体在 `MathFunction::new` 里就地构造，
+所以本模块符号数 = 1。
+
+### 33.2 `function_token` —— **就是那个 16 字节 token，外加一张字符串表**
+
+`FunctionToken` = `{ tag: u64, value: f64 }`，与 `docs/03` §2 的编码、本 crate 的
+`Token`/`Function` **同一个东西**。本模块**唯一多出来的**是
+`FunctionToken::new(&str)`（arm64 `0x3c0da0`，860 字节，**唯一调用者**
+`MathFunction::new`+`0x28c`）—— 把正则切出的**一个片段**变成 token。
+
+顺序（`逐位`）：
+
+1. `parse::<f64>()` 成功 ⇒ `CONST`(17) + 值（`0x3c0dbc` 的 `float_parse`，失败分支 `0x3c0e3c`）；
+2. 否则按**长度**分派：`cmp x20,#0x1/#0x2/#0x3/#0x4` 四张表。
+
+| 片段 | tag | 备证 |
+|---|---|---|
+| `x` `y` | 0 / 1 | 单字节表（`'x'` → `0x3c0ed0`，`x0` 已清零 ⇒ 0） |
+| `y'` | 2 | 16 位比较 `0x2779` |
+| `+` `-` `*` `/` `^` | 3/4/6/7/8 | 单字节表 |
+| `sqrt` | 9 | 32 位比较 `0x74727173` |
+| `log` `abs` `sin` `cos` `tan` `exp` | 10/13/14/15/16/12 | 3 字节表 |
+| `ln` | 11 | 16 位比较 `0x6e6c` |
+| `n` | `CONST(π)` | `0x3c10cc`，`ldr d0` = `0x400921fb54442d18` = 3.141592653589793 |
+| `e` | `CONST(e)` | `0x3c1058`，`0x4005bf0a8b145769` = 2.718281828459045 |
+| `(` `)` | **18 / 19** | 单字节表 + `0x3c1074` 的 `cinc` |
+| `ˆ`(U+02C6) | **8** | 16 位比较 `0x86cb`，**这条以前没有任何文档记过** |
+| 其它 | **20** | `mov w0,#0x14`；本 crate 映射成 `None` |
+
+tag **20 = 无效**。因为正则封闭，这一档**不可达**（`逐位` + 推理）。
+
+### 33.3 `graphwar_crash_reporter` —— **崩溃日志的上报端**（**问题 b 的答案**）
+
+**它是什么**：不是"崩溃时抓栈"，而是**把上次留下的崩溃日志发去收集服务器**的组件。
+上报（`graphwar_crash_reporter`）与落盘（`backtracer`）**是两个模块**。
+
+三个函数（`逐位` arm64 符号表；0 个 `Location` 锚，所以 x86 只能靠指纹，见 §33.8）：
+
+| 符号 | arm64 | 字节 |
+|---|---|---|
+| `GraphwarCrashReporter::send_pending_report` | `0x4ca444` | 1136 |
+| `GraphwarCrashReporter::resolve_default_address` | `0x4ca8b4` | 980 |
+| `GraphwarCrashReporter::clear_report` | `0x4ca340` | 260 |
+
+**上报到哪**（`逐位`）：`resolve_default_address` 里 **`mov w8,#0xa7dc` 出现两次** ⇒
+**`CRASH_REPORT_PORT = 42972`**，与 `.rodata` 的 clap 帮助原文
+`e.g. 127.0.0.1:42972` 对得上。三级回退：
+
+1. CLI/环境 `--crash_report_address` / `CRASH_REPORT_ADDRESS`
+   （clap 名 `crash_report_address`，命令行风格 `crash-report-address`）；
+   失败 → `Failed to parse --crash_report_address: `
+2. 否则 **全局服务器地址 + 42972**（帮助原文：*"…the game's global server address is
+   reused with `CRASH_REPORT_PORT`"*）；全局地址来自
+   `https://graphwar.com/graphwar_II_ip.txt`（39 字节字面量，`mov w1,#0x27`）；
+   失败 → `Failed to parse global server address for crash reporting: `
+3. 都没有 → `Crash report pending but no crash report server address is available.`，
+   **什么都不发**，日志留在盘上等下次。
+
+**什么时候装钩子 / 什么时候发**（`观测`，arm64 `bl` 图；这是**问题 b 后半**的答案）：
+
+```text
+<GraphwarRootNode as INode>::ready  +0x30  →  backtracer::Backtracer::install_panic_log_hook
+<GraphwarRootNode as INode>::ready  +0x44  →  GraphwarCrashReporter::send_pending_report
+```
+
+⇒ **每次进主场景**（`ready` 是 Godot 虚函数，会被反复回调）装一次钩子、补发一次上次的日志，
+**不是 `main()` 里一次性**。顺序是"先装钩子、再补发"。
+
+**为什么 2024 版完全没有它**（`观测`）：2024-07-30 版 `0 符号 0 字符串`，2026 版有
+**8 处** `src/graphwar_crash_reporter.rs:NN` 字面量（其它模块各 1 处，全库唯一）。
+⇒ 是**后加的功能**，不是我们漏扫。8 处对应 8 个 panic 分支（`:54/62/65/68/82/87/92/100`）。
+**这 8 条为什么没配上 `Location` 结构体**仍未解（`未知`）：它们是
+`\x01[\xc0&] src/graphwar_crash_reporter.rs:82 - ` 这种**带长度前缀的拼装串**，
+既不被 `lea` 直接引用、也不在 `.data.rel.ro` 的 `(&str,len)` 槽里
+（`tools/loc_xrefs.py` 的 `refs_to` 与 `string_slots` 双向都查不到）。
+**推断**：它们是 `format_args!` 的**提升常量**（`.rodata` 里的 `Arguments` 片段），
+被 `.data.rel.ro` 里一个**非 `(&str,len)`** 形状的槽引用，而本仓库的槽扫描器只认后者。
+
+**五个结局**各有可 grep 的字面量：`Crash report sent to ` / `Failed to send crash report to ` /
+`Failed to connect to crash report server at ` / `Failed to clear crash log at ` / 上面那条 pending。
+
+`clear_report`（`逐位`）= **把日志 truncate 成空**：`bl std::fs::write::inner` 之后紧跟
+`chrono::Utc::now` + `format_inner`（写失败才拼错误串），时间格式 `%Y-%m-%d %H:%M:%S`。
+
+### 33.4 `backtracer` —— **panic 钩子 → 崩溃日志落盘**（**问题 e 前半的答案**）
+
+**它是什么**：`Backtracer::install_panic_log_hook`（arm64 `0x4becec`，876 字节）
++ 它的闭包（`0x4bf058`，960 字节，**钩子本体**）+ 两个静态量
+`CRASH_LOG_PATH`（`0x8b4380`）与 `OS_NAME`（`0x8b43a0`）。
+**它不上报**（那是 §33.3），只往 `user://crash_log.txt` 追加。
+
+**有界否定**：arm64/x86 两侧，本模块的 `bl` 目标里**没有** `Backtrace::capture`。
+⇒ **名字误导**：它不抓栈，只写日志。这是本轮之前没人验证过的一点。
+
+`OS_NAME` 的**取值**未读出（`未知`）；用途**推断**为区分 Android/Linux/Windows 三份构建。
+
+### 33.5 `graphwar_event_queue` —— **它不是 manager，是全游戏的发件箱**（**问题 c 的答案**）
+
+**为什么不在 25 个 manager 的注册表里**（`观测`）：
+
+1. **持有者不是容器，是 `GraphwarGameClient`**：
+   `core::ptr::drop_in_place<RefCell<GraphwarEventQueue>>` 的调用者是
+   `GraphwarGameClient::new +0xcdc`（落在 `new` 的恐慌清理段里 ⇒ 局部构造）与 `Rc::drop_slow`。
+   其余所有 manager 拿的是 **`Weak<RefCell<GraphwarEventQueue>>`**。
+   ⇒ **一个 `Rc` 主人 + 一堆 `Weak` 用户**，不是 `GraphwarModuleContainer` 的成员。
+2. **形态不像 manager**：manager 的形态是 `new` + `subscribe_to_events_event_handler`
+   + `send_all_info_events`；本模块只有 `add_event` 与 `send_buffer` 两个函数，
+   **没有 `new`、没有订阅、没有 `send_all_info_events`**。
+3. **它是所有人的出口**：`add_event`（arm64 `0x3d7a40`，276 字节）有 **200 余个**直接调用点，
+   覆盖 `game_state_manager` / `function_manager` / `life_manager` / `team_manager` /
+   `player_manager` / `soldier_manager` / `turn_manager` / `obstacle_manager` /
+   `mode_manager` / `color_manager` / `graphics_manager` / `game_client` / `game_server` /
+   `remote_event_handler` / `setup_control` 的每个 `set_*` / `handle_*` / `send_all_info_events`。
+
+**它被谁持有**：`GraphwarGameClient`（`Rc<RefCell<>>`）。
+
+**一条反常如实记录**：`send_buffer`（`0x3d793c`，260 字节）在 `bl` 图里**只有 1 个直接调用者**
+——`GraphwarLevelGenerator::generate_level_custom +0x424`。三种解释（**不选定**，标 `推断`）：
+被内联进各 `tick` / 走函数指针槽 / 真的只有关卡生成主动冲刷。
+要定死需要 `tools/ptr_slots.py` 那类间接派发扫描，**本轮未做**。
+
+### 33.6 `graphwar_mode_manager` —— **3 套模式，不是 4 套**（**问题 d 的答案**）
+
+**它是不是"当前模式的唯一真相"？不是。**
+
+* **它拿 3 套**：`AxisMode` / `FunctionMode` / `TimeMode`（arm64 符号表里三个 setter
+  `set_axis_mode` `0x497dc8`、`set_time_mode` `0x497e44`、`set_function_mode` `0x497ec0`，
+  各 124 字节，**函数体形状完全相同**：`borrow_mut` → 写 1 字节 → `add_event` ×1）。
+  **`TurnMode` 不在这里** —— 在 `graphwar_turn_manager`
+  （`GraphwarTurnManager::set_turn_mode`；`TurnMode` 序列化臂 x86 `0x479310`，`docs/07` §5.3.3）。
+  ⇒ `docs/16-client.md` §16 的"四格模式"是**界面上的四个按钮**，不是同一个 Rust 结构体。
+* **谁写它**（`观测`，`bl` 图）：`set_axis_mode` / `set_function_mode` ←
+  **只有** `GraphwarRemoteEventHandler::handle_server_remote_event`；
+  `set_time_mode` ← `GraphwarLevelManager::setup_level` + 同上。
+  ⇒ 写入方是**服务器遥控**与关卡装载，**UI 按钮不直接写**。
+* **为什么权威不在它**：客户端按钮走
+  `GraphwarGameStateManager::request_{axis,function,turn,time}_mode_change`
+  → 发 18/19/20/21 请求 → **服务器**回 45/46/47/48 Info 才落值（`docs/07` §4）。
+  ⇒ 本模块是**服务器状态的副本**。
+* 枚举取值**不重抄**：`docs/07` §5.2 已经穷举（`逐位`）。
+
+`0x4b07a0` 上**三个** `__FieldVisitor::expecting` 是同一地址（14 字节的同一函数体）——
+链接器把三个枚举的同形小函数合并了，别误读成"只有一个枚举"。
+
+### 33.7 剩下 5 个：logger / draw_util / player_config / campaign_control / game_info
+
+| 模块 | 一句话定性 | 证据 |
+|---|---|---|
+| `graphwar_logger` | **进程内调试日志 HTTP 端点**：`new` 里 `bl` 到 **`tiny_http::Server::new` ×2** + `to_socket_addrs` ×2；`log` 收的是 **`OsString`**（`RawVec<OsString>::grow_one`）；端口来自 clap `LOGGER_PORT`。`new` ← `RootNode::init`，`log` ← `RootNode::process_button_pressed` | `观测` |
+| `graphwar_draw_util` | **不画东西**（上一轮的有界否定升级为正面定性）：`get_team_overview`（arm64 `0x4c3b38`）**4 次** `GraphwarModuleContainer::get_module` + 8 次 `Rc::drop_slow`，0 次 draw API ⇒ 它是"取队伍数据"的容器访问器；7 个调用者全是 `draw`/`process`/`update_*_label`/结算面板 | `观测` |
+| `graphwar_player_config` | 8 个函数全定位；`new`→`load`（唯一）、三个 `set_*`→`save`；**`set_skin/face/hat` 没有直接调用者，因为它们是 gdext 导出方法**（`lock` 的调用者里有 `handle_fallible_call`）；`load` 用 `FileAccess::get_as_text` + `trim_matches`、`save` 用**一次** `store_string` ⇒ 文本存档、非 JSON | `逐位`/`观测` |
+| `graphwar_campaign_control` | 4 个函数；存的是**字符串**、`get_level_as_int` 再用 `StrSearcher` 抠数字；`show_hide_campaign_levels` 用 `GraphwarNodes::get_node_by_name` + `<u32>::_fmt` 拼节点名按键显隐 | `逐位`/`观测` |
+| `graphwar_game_info` | **`GameInfo` 的家在这里，不在 `graphwar_event.rs`**（serde impl 路径 `graphwarrust::graphwar_game_info::_::<impl Serialize for …::GameInfo>`）；0 个可归属函数是因为两个 impl 都在 `_::` 匿名模块下；两条进出口：`serialize` ← `GraphwarLanBroadcasterV6::process`，`visit_str` ← `serde_json::deserialize_struct` ⇒ **LAN 发现是 JSON**，且它是 `GameInfoEvent`（判别值 62）的新类型载荷 | `观测` + `逐位` |
+
+`graphwar_player_config` 的字段偏移沿用 §29 的观测（名字 `+0x00`、皮肤 `+0x60`、脸 `+0x78`、
+帽 `+0x90`、变更计数 `+0xa8`）。`+0x10..0x60` 那 80 字节是**解锁表**，
+正好解释 8 个函数里为什么有 2 个专管 `lock`/`unlock`。
+
+### 33.8 这 6 个 0 锚模块在 x86 目标上的落点（**证据等级不同，别一锅端**）
+
+| 模块 | x86 候选 | 等级 | 依据 |
+|---|---|---|---|
+| `polish_notation_converter` | `0x4f5450` | **逐位** | `src/polish_notation_converter.rs:36:52` / `116:55` 两个 Location 锚 |
+| `graphwar_draw_util` | `0x4be6e0` | **逐位** | `28:53 / 30:51 / 31:41 / 33:42` 四个锚 |
+| `graphwar_campaign_control` | `0x418820` | **逐位** | `94:107` 锚（`get_level_as_int` 的 `StrSearcher` 分支） |
+| `graphwar_logger` | `0x3b6c70`（208 字节，只 `bl` 到 memcpy ⇒ **`log`**）/ `0x44dd60`（1584 字节，`bl` 到一组 format 目标 ⇒ **`process` 或 `new`**，未进一步区分） | **逐位**（锚）| `12:37` / `44:64` 两个锚 |
+| `graphwar_crash_reporter::send_pending_report` | `0x438220` | **观测** | 函数体直引 `.rodata 0x1c04fb` = `Crash report pending but no crash report server address is available.` |
+| `graphwar_crash_reporter::clear_report` | `0x4c5fa0` | **观测** | 2 条指令直引 `user://crash_log.txt`（`0x1c2b89`） |
+| `backtracer::install_panic_log_hook` | `0x4b8bd0` | **推断** | 1 条指令直引 `user://crash_log.txt`；体量 0x… 与 arm64 876 字节的比值落在 0.61–1.19 闸内 |
+| `graphwar_crash_reporter::resolve_default_address` | `0x4c6520` | **推断** | 被 `0x438220` 直接调用 + `bl` 到 TCP 相关目标；体量 1152 vs arm64 980 = 1.176（闸内） |
+| `graphwar_mode_manager` | 6 个锚落在 **21** 个函数上 | **逐位**（锚）| `132:26/133:26/134:26` 三锚同落 **`0x5185a0`**（该函数 `calls` 为空、只在指针表里被用）；其余锚（`79:26`/`97:26`/`113:26`）散落在 20 个函数上，是 **serde 泛型被内联**的结果，**不代表**模块有 20 个函数 |
+| `graphwar_event_queue` / `function_token` / `graphwar_player_config` / `graphwar_game_info` | **未定位** | **未知** | 无锚、无独有字符串；要定位必须做 arm64↔x86 的跨架构指纹（被调者多重集 / 常量多重集），**本轮未做** |
+
+`0x5185a0` 的 `calls` 表为空（`callers: NONE`）——它只在**函数指针表**里被用到，
+这正是 `AGENTS.md` 说的"直接调用为零不代表没被使用"。
+
+### 33.9 仍然未知（本轮**没**解决的）
+
+| # | 未知 | 缺什么 |
+|---|---|---|
+| 1 | `neg`（tag 5）的产生点 | 词法器不产它（§33.1.2）；候选 `FunctionRandomizer::mutate_fine_tune` 未逐条读 |
+| 2 | `crash_reporter` 那 8 条 `\x01[\xc0&]` 串为什么不是 `Location` 结构 | 需要解 `format_args!` 的提升常量（`Arguments`）布局，本仓库没有该扫描器 |
+| 3 | `event_queue::send_buffer` 为什么只有 1 个直接调用者 | 需要 `tools/ptr_slots.py` 类间接派发扫描 |
+| 4 | `backtracer::OS_NAME` 的取值 | 静态量内容未读出 |
+| 5 | `logger` 的 HTTP 报文格式 | `process`（788 字节）里的 `tiny_http::Response` 构造未逐条解 |
+| 6 | `player_config` 存档的**分隔符** | `load` 只知 `trim_matches` + 切分，分隔符字面量未定位 |
+| 7 | `campaign_control::show_hide_campaign_levels` 的节点名模板 | 格式化串未逐字节还原 |
+| 8 | `GameInfo` 9 个字段里哪 4 个走 `serialize_field`、哪些走 map | `serialize` 的 1264 字节未逐条对齐 |
+
+### 33.10 复现命令
+
+```text
+ARM=.rea-work/apk/arm64/lib/arm64-v8a/libgraphwarrust.so
+X86=.reference/steam/2026-08-28/libgraphwarrust.so
+
+# A. 0 锚模块的名字只在这里
+nm -C -S --defined-only $ARM | grep -E "graphwarrust::(polish_notation_converter|backtracer|function_token|graphwar_event_queue|graphwar_crash_reporter|graphwar_mode_manager|graphwar_logger|graphwar_draw_util|graphwar_campaign_control|graphwar_player_config|graphwar_game_info)::"
+
+# B. 谁装钩子 / 谁持有队列：arm64 bl 图（符号表给边界，capstone 扫 bl）
+#    → <GraphwarRootNode as INode>::ready +0x30 / +0x44
+
+# C. x86 锚
+../.venv/bin/python tools/loc_xrefs.py loc src/polish_notation_converter.rs
+../.venv/bin/python tools/loc_xrefs.py func 0x4f5450     # callers/callees + 两个锚
+
+# D. 正则与优先级表（两份二进制逐字节相同）
+#    正则 77 字节 @ x86 0x1c4347 / arm64 0x19dcb4
+#    优先级 18 项 @ x86 0x1c4838（0x1c4888 是第二份拷贝）
+#    bt 掩码 0x3fe27 / 0xffe27 / 0xe0007
+```
+
+### 33.11 本轮新增的文件（**`src/lib.rs` 待父 agent 接线**）
+
+新增源码（每个都能指到原版模块，`AGENTS.md` §4 合规）：
+
+```text
+src/function_token.rs              原版 src/function_token.rs
+src/polish_notation_converter.rs   原版 src/polish_notation_converter.rs
+src/graphwar_mode_manager.rs       原版 src/graphwar_mode_manager.rs
+src/graphwar_event_queue.rs        原版 src/graphwar_event_queue.rs
+src/graphwar_crash_reporter.rs     原版 src/graphwar_crash_reporter.rs
+src/backtracer.rs                  原版 src/backtracer.rs
+src/graphwar_logger.rs             原版 src/graphwar_logger.rs
+src/graphwar_draw_util.rs          原版 src/graphwar_draw_util.rs
+src/graphwar_player_config.rs      原版 src/graphwar_player_config.rs
+src/graphwar_campaign_control.rs   原版 src/graphwar_campaign_control.rs
+src/graphwar_game_info.rs          原版 src/graphwar_game_info.rs
+tests/misc_modules.rs              11 个模块的验收（54 条）
+```
+
+**需要加进 `src/lib.rs` 的 11 行**（顺序无所谓，放在现有 `pub mod` 块里）：
+
+```text
+pub mod function_token;
+pub mod polish_notation_converter;
+pub mod graphwar_mode_manager;
+pub mod graphwar_event_queue;
+pub mod graphwar_crash_reporter;
+pub mod backtracer;
+pub mod graphwar_logger;
+pub mod graphwar_draw_util;
+pub mod graphwar_player_config;
+pub mod graphwar_campaign_control;
+pub mod graphwar_game_info;
+```
+
+**在接线之前 `tests/misc_modules.rs` 也能跑**：它用
+`#[path = "../src/<模块>.rs"]` 直接编译源码，并把依赖的 `crate::Function` / `crate::Token` /
+`crate::events::Event` 在测试 crate 根上重导出。接线之后同一份断言仍然成立（会多跑一遍）。
+
+`graphwar_game_info.rs` 只做 `pub use crate::events::{GameInfo, …}` —— **没有搬结构体**：
+`docs/02-module-map.md` §17.4 的规矩是"一个文件混了多个原版模块而边界无证据时不猜不搬"，
+本轮只登记归属依据（serde impl 路径），搬迁留给专门一轮。
