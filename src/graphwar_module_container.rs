@@ -32,7 +32,7 @@
 //!
 //! * `+0x128` / `+0x240` 是 **`GraphwarLanVBox` 自己的字段**
 //!   （`LanVBox.lan_broadcaster` / `LanVBox.server_broker_handler`，
-//!   `docs/144-lobby-fixes.md` §2 的逐指令记录；`docs/09-network.md` §10.4
+//!   `docs/144-lobby-fixes.md` §1 的逐指令记录；`docs/09-network.md` §10.4
 //!   把它们写成"根节点模块容器里的模块槽"，**那个措辞要按本节更正**——
 //!   容器里没有槽）；
 //! * `+0x16a0` / `+0x16a8` 是 `GraphwarRootNode` 的 `GraphwarTextureLoader` /

@@ -2739,7 +2739,7 @@ get_module_wk<M>(container: &Weak<RefCell<Self>>)        arm64 0x4a20a4
 |---|---|---|
 | 「`graphwar_module_container.rs`（20/1）… 无实现 / `未做`」（§14、§17 表、`docs/149`） | 已实现，档位 `观测` | 本文件 §22 + `src/graphwar_module_container.rs` + `tests/` 17 条 |
 | 「2024 版符号表显示本模块有 **68** 个函数」（本模块骨架注释、`docs/HANDOVER.md`） | 2024 版是 **66**（24/23/19）；**68** 是 2.0.60（25/23/20）。`§18` A 表一直写的是 66 | §22.2 第 1 步的三行表 |
-| 「`container+0x128` / `container+0x240` 是**模块槽**（在根节点的模块容器里）」（`docs/09-network.md` §10.4） | 它们是 **`GraphwarLanVBox` 自己的字段**（`docs/144-lobby-fixes.md` §2 已按 `LanVBox.lan_broadcaster` / `.server_broker_handler` 记）；容器**没有槽** | 本文件 §22.1：容器 = `HashMap<TypeId, Rc<dyn Any>>`，`add_module` 的 `self` 偏移 0 就是 `HashMap` |
+| 「`container+0x128` / `container+0x240` 是**模块槽**（在根节点的模块容器里）」（`docs/09-network.md` §10.4） | 它们是 **`GraphwarLanVBox` 自己的字段**（`docs/144-lobby-fixes.md` §1 已按 `LanVBox.lan_broadcaster` / `.server_broker_handler` 记）；容器**没有槽** | 本文件 §22.1：容器 = `HashMap<TypeId, Rc<dyn Any>>`，`add_module` 的 `self` 偏移 0 就是 `HashMap` |
 | 「`0x517690` 装配 **14** 个 manager」（`docs/16-client.md` §17.1） | **22** 条 `add_module`（14 是漏数；那 14 条只是"看起来像构造 manager"的 `call`） | 本文件 §22.4：x86 `0x517690` 22 条、arm64 `0x409c70` 22 条，调用序逐位相同 |
 | 「`get_module_wk` 的 x86 候选：`0x46c5a0`/`0x46c7c0`/`0x46c9e0`/`0x46cc00`（4 个，`歧义`）」（`fixtures/name_to_addr.tsv`） | **20 个**：`0x46c5a0 + i×0x220`；那 4 个只是前 4 个，TSV 那 4 条**不完整**（不可当"只有 4 个"） | 本文件 §22.2 第 3 步：Location 记录 `0x9586b8` 的引用者恰好 20 个 |
 
