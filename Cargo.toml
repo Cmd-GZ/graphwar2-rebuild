@@ -12,4 +12,16 @@ name = "gw2_rebuild"
 # rlib：保留给 cargo test 使用
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+# 用**官方 gdext**（`godot` crate）替代手写的 GDExtension 绑定层。
+# 默认关闭：关闭时本 crate 依然**零依赖**（`cargo tree` 只有本 crate 一行）。
+# 打开后 `src/_scaffold/gdext_mod.rs` 用 gdext 重新注册 `GW2Rebuild` 与 `AxisDrawer`；
+# 两份入口都导出 `gdext_rust_init`，所以手写的 `src/_scaffold/gdext.rs` 在
+# `_scaffold/mod.rs` 里被 `#[cfg(not(feature = "gdext-bindings"))]` 关掉。
+gdext-bindings = ["dep:godot"]
+
 [dependencies]
+# 只在打开 `gdext-bindings` 时参与编译。`godot` 0.5.5 在 Godot 4.7.2 上实测可用
+# （`docs/18-build.md` §10）。
+godot = { version = "0.5", optional = true }

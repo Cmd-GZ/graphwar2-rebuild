@@ -30,8 +30,14 @@ pub mod axis_drawer_class;
 pub mod broker;
 pub mod capi;
 pub mod diffconv;
+// 手写入口与 gdext 入口都导出 `gdext_rust_init`，一个 .so 里只能有一个：
+// 打开 `gdext-bindings` 时用官方 gdext 那份（`gdext_mod.rs`），关掉手写这份。
+#[cfg(not(feature = "gdext-bindings"))]
 pub mod gdext;
 pub mod gdext_class;
+// 官方 gdext 版的绑定层骨架（`docs/18-build.md` §10）。默认不编译，不引入任何依赖。
+#[cfg(feature = "gdext-bindings")]
+pub mod gdext_mod;
 pub mod protocol;
 pub mod replay_inflate;
 pub mod replaydiff;

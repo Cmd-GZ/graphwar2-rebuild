@@ -354,3 +354,191 @@ export CARGO_HOME=/path/.cargo-home CARGO_TARGET_DIR=$CARGO_HOME/target   # ✗
 
 `/tmp` 在这台机器上是**每条命令独立的 tmpfs**：上一条命令写的东西下一条就没了
 （`90` §1 #4 就因此丢过备份）。探针、日志、抓样一律写工作区内。
+
+## 10. 绑定层换回官方 gdext（最小骨架，2026-11）
+
+**一句话**：我们手写的那套 GDExtension ABI 外壳（`gdext.rs` + `gdext_class.rs` +
+`axis_drawer_class.rs` + `api.rs` 的 FFI 段）能整体换成官方 `godot` crate（gdext 0.5.5），
+**类名、方法名、返回契约一个字不用改**，`client/` 一行都不用动；代价是 32 行依赖树、
+一次性 154 秒的依赖编译、`.so` 781 KB → 5.2 MB。默认**关闭**（`--features gdext-bindings`），
+关闭时本 crate 仍然零依赖。
+
+### 10.1 为什么值得换（结论与档位）
+
+| 结论 | 档位 | 证据 |
+|---|---|---|
+| 原版 `libgraphwarrust.so` 自己就是 gdext 编的 | **观测** | `.rodata` 里有 `/home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/registry/class.rs` |
+| 我们的手写层是**等价物**，但**虚方法表一个都没接** | **观测** | `docs/16` §35 原文"它还不会画"；`gdext.rs` 文件头也自己写了这条 |
+| 换成 gdext 后 `_draw` 真的被引擎调用 | **观测** | §10.4：`draw_call_count=1 drawn_line_total=102` |
+| 原版 `axis_drawer.rs` 的形状就是 `impl IControl … fn draw` | **推断** | arm64 `.symtab` 的符号名 `… as …IControl>::draw`（`docs/16` §21）+ 上面第一条；缺的是 x86 侧的 demangle 符号（stripped） |
+
+一句话：**源码级还原要的是"长得像原版"，而原版的绑定层是 gdext**。手写 ABI 证明了
+"能注册、能调"，但长不出 `impl IControl` 这种结构，也永远接不上虚方法表。
+
+### 10.2 改了什么
+
+| 文件 | 改动 |
+|---|---|
+| `Cargo.toml` | 新增 `[features] gdext-bindings = ["dep:godot"]`（`default = []`）与可选依赖 `godot = { version = "0.5", optional = true }` |
+| `src/_scaffold/mod.rs` | 手写入口加 `#[cfg(not(feature = "gdext-bindings"))]`；新增 `#[cfg(feature = "gdext-bindings")] pub mod gdext_mod;` |
+| `src/_scaffold/gdext_mod.rs` | **新增 448 行**（代码 263 / 文档注释 141 / 空行 44）：`GW2Rebuild` + `AxisDrawer` + 入口 + 4 条单测 |
+| `client/tools/gdext_check.gd` | **新增**：24 条断言的 headless 验收脚本 |
+
+`src/lib.rs` **一行没动**（gdext 版模块挂在 `_scaffold/` 下面）。
+
+**必须 `#[cfg]` 掉的那一处**：手写 `gdext.rs` 的 `#[no_mangle] fn gdext_rust_init` 与
+`#[gdextension]` 宏生成的同名符号**在一个 `.so` 里不能共存**（重复定义）。所以 feature
+打开时只关掉手写入口模块；`gdext_class.rs` / `axis_drawer_class.rs` / `capi.rs` 照旧编译，
+只是没人调（类不会注册）。这是**唯一**为兼容性做的让步。
+
+### 10.3 a) feature 关闭时：一切照旧（实测）
+
+```text
+$ cargo test --offline
+  64 个 test 二进制；lib 457 passed / 总计 1488 passed / 0 failed
+$ cargo test --offline --features gdext-bindings
+  64 个 test 二进制；lib 457 passed / 总计 1488 passed / 0 failed
+$ cargo tree | wc -l
+  1                       # 仍然零依赖（只有 gw2-rebuild 自己）
+$ bash client/run.sh selftest
+  SELFTEST 694 passed, 0 failed
+```
+
+两种 feature 的条数**完全相同**是巧合：feature 打开时手写 `gdext.rs` 的 4 条单测被
+`#[cfg]` 掉、`gdext_mod.rs` 又补了 4 条。
+
+### 10.4 b) feature 打开时：5 个方法 + 真节点类都活着（headless 实测）
+
+```text
+$ cargo build --release --features gdext-bindings
+$ cp target/release/libgw2_rebuild.so client/libgw2_rebuild.so
+$ godot --headless --path client --import
+$ godot --headless --path client --script res://tools/gdext_check.gd
+
+Initialize godot-rust (API v4.6.stable.official, runtime v4.7.2.stable.official, safeguards balanced)
+      before load: GW2Rebuild=true AxisDrawer=true
+ok   ClassDB.class_exists("GW2Rebuild")
+ok   ClassDB.instantiate("GW2Rebuild") 非空
+      kernel.get_class() = GW2Rebuild
+ok   内核方法 ping() 存在
+ok   内核方法 path_calculate() 存在
+ok   内核方法 path_calculate_mode() 存在
+ok   内核方法 hit_test() 存在
+ok   内核方法 level_obstacles() 存在
+      ping() -> pong:gdext（String）
+      binding_version() -> gdext-bindings/gdext
+ok   path_calculate("x", 0, 0, +1).ok
+ok   path_calculate 出点：2000 个
+      first=(0.0, 0.0) last=(14.9925, 14.9925) offset=0.0
+ok   path_calculate_mode(...,"normal") 与 path_calculate 点数一致（2000）
+ok   path_calculate_mode(...,"ode") 能算（dy/dx = x + y）
+ok   未知 mode 走 bad_arguments（不猜默认值）
+ok   hit_test(...).ok
+      hit_test -> hits=[0] first_hit=-1 blocked=false stop=(14.9925, 14.9925)
+ok   level_obstacles(0..20, 12345) 全部 ok，且扁平数组都是 3 的倍数
+ok   至少一关有障碍：18 关 / 共 139 个
+ok   ClassDB.class_exists("AxisDrawer")
+ok   AxisDrawer 能实例化且是 Control
+ok   属性 axis_mode=3 往返一致
+ok   axis_mode=3 ⇒ 枚举 102 条 / 公式 102 条
+      _draw 观测: draw_call_count=1 drawn_line_total=102
+ok   _draw 真的发了线（102 条 ≥ 102）
+GDEXT 24 passed, 0 failed
+```
+
+**同一份脚本对两份绑定都跑**（A/B，这是"换绑定层对客户端透明"的第二条证据）：
+
+```text
+# 手写版（master 源码，feature 关闭，781 KB）
+[gw2-rebuild] ping() called from GDScript
+      ping() -> <null>（Nil）
+GDEXT 23 passed, 0 failed      # 少的一条是 draw_call_count —— 手写层没有虚方法表，脚本主动跳过
+```
+
+三处**已知差异**（都在观测范围内，客户端都不读）：
+
+1. `ping()`：手写版是空方法（`has_return_value = 0` ⇒ 返回 `null`），gdext 版返回
+   `"pong:gdext"`。留作"现在加载的是哪份绑定"的指纹。
+2. `binding_version()` / `draw_call_count()` / `drawn_line_total()` 是 gdext 版**新增**的
+   自检口子，不在 `core_bridge.gd` 的契约里。
+3. ⚠ **`client/gw2rebuild.gdextension` 的 `compatibility_minimum` 需要从 `4.1` 抬到 `4.6`**：
+   gdext 0.5.5 编译目标是 Godot **4.6** 的 API（上面那行 `API v4.6.stable.official`）。
+   在 4.7.2 上 4.1 照样能加载（实测），但引擎版本低于 4.6 时 gdext 会 `panic`
+   （`runtime < static`，见 `godot-ffi` 的 `ensure_static_runtime_compatibility`）。
+   本轮**没有改**这个文件（`client/` 下不是本任务的改动面），合并这条线时要一起改。
+
+> 顺手的一条观测（`AGENTS.md` "改了但没生效" 第 2 条）：仓库里的
+> `client/libgw2_rebuild.so` 是 **11-06 23:22 的旧构建**（14.9 MB，带 debug_info），
+> 里面**没有 `AxisDrawer`** —— 第一次拿它跑本脚本会失败 2 条；用 master 源码重编（781 KB）
+> 之后 23 条全过。别拿仓库里那份旧 `.so` 判断当前源码。
+
+### 10.5 c) 代价（全部实测，同一台机器、同一 target 目录）
+
+| 指标 | feature 关 | feature 开（gdext） |
+|---|---|---|
+| 依赖树 `cargo tree \| wc -l` | **1**（只有本 crate） | **32**（godot 0.5.5 及其 16 个传递依赖） |
+| 冷 release 构建 | **7.96 s** | **161.6 s**（2 分 42 秒；多出来的 154 s 全是一次性编依赖） |
+| 增量 release 构建（改一行 `.rs`） | **5.76 s** | **8.00 s** |
+| `.so`（release，not stripped） | **781 072 B**（763 KB） | **5 453 776 B**（5.2 MiB），**×7.0** |
+| `.so`（debug） | 18 904 096 B（18.0 MiB） | 118 144 136 B（**112.7 MiB**） |
+
+**要不要联网：要（一次性）**。
+
+- 首次构建从 crates.io 拉 **17 个 `.crate`，合计 11.3 MB**（解包 77.4 MB）；之后 `--offline` 可编。
+- `Cargo.lock` 目前在 `.gitignore` 里 ⇒ **版本没钉住**。两种收口：
+  1. 提交 `Cargo.lock`（改 `.gitignore`，零成本）；
+  2. `cargo vendor`（≈77 MB 源码）+ `.cargo/config.toml`（可离线、可审计，但仓库变重）。
+  建议先做 1 —— 换机器时仍然要联网拉一次，但版本至少是确定的。
+- **日常开发不受影响**：增量是 8 s，和 feature 关闭时一样。痛的是 CI 冷启动与 debug `.so`。
+
+### 10.6 d) 12 个类的迁移量
+
+| 东西 | 手写（今天） | gdext |
+|---|---|---|
+| 入口 + 类注册 + 方法/属性注册 | `gdext.rs` 309 行（代码 200）+ `gdext_class.rs` 294 行（代码 235） | `gdext_mod.rs` §4：**12 行（代码 3）** |
+| 一个 5 方法的算法单例（`GW2Rebuild`） | 上面两个文件 + `api.rs` 第 540 行以后的 FFI 段（约 2.2k 行） | `gdext_mod.rs` §2：**128 行（代码 80）** |
+| 一个带 `_draw` 的节点类（属性 + 4 方法 + 绘制本体） | `axis_drawer_class.rs` **800 行（代码 584）**，**且虚方法表没接** | `gdext_mod.rs` §3：**152 行（代码 92）**，含 `_draw` |
+| 类型搬运（`ApiValue` → `Dictionary`/`Packed*`） | `api.rs` 的 `write_dict` 等（在 2.2k 行里） | `gdext_mod.rs` §1：**58 行（代码 38）**，一次写下、所有类共用 |
+
+⇒ **一个类的量级：70–130 行代码**（doc 注释另计；上面 `-AxisDrawer` 92 行里还包含
+4 个辅助函数）。**12 个类粗估 ~1200 行代码**（含共享的 §1），对比手写路线外推的 ~7000 行；
+**而且手写路线根本没有虚方法表**，那部分不是"少写代码"，是"写不出来"。
+
+反过来说清楚**迁移量不在"写"，在"读"**：每个原版模块要读的是
+`__register_methods` / `ImplementsGodotVirtual` 里那些**属性名、方法名、方法表标志**
+（`docs/02-module-map.md` §17 的归属 + 各模块的 `.rodata` 名字表），这部分工作量换不换 gdext 都一样。
+
+### 10.7 怎么复现
+
+```text
+# 1) 编 gdext 版（默认 feature 关闭，所以必须显式打开）
+cargo build --release --features gdext-bindings
+
+# 2) 先备份手写版，再覆盖（client/*.so 已在 .gitignore 里）
+cp client/libgw2_rebuild.so ../.agent-work/keep-libgw2_rebuild-hand.so   # 别写 /tmp，见 §9.2
+cp <target>/release/libgw2_rebuild.so client/libgw2_rebuild.so
+
+# 3) 第一次必须先 import（否则 --script 模式下扩展不加载，`AGENTS.md` 那条坑）
+godot --headless --path client --import
+godot --headless --path client --script res://tools/gdext_check.gd
+
+# 4) 验完换回手写版，再跑一遍 selftest（它用的是默认 feature）
+bash client/run.sh selftest
+```
+
+⚠ 第 4 步别省：覆盖之后 `client/libgw2_rebuild.so` 就是 gdext 版了，`selftest` 跑的是它。
+
+### 10.8 这条线到什么程度（成立 / 不成立）
+
+**成立（实测/观测）**：类名与方法契约不变；`_draw` 虚方法真的被引擎调到；同一份脚本对
+两份绑定都过；feature 关闭时零依赖、条数与 master 一致、selftest 694 不变。
+
+**不成立 / 没做**：
+
+- 只迁了 **2 个类**（`GW2Rebuild` / `AxisDrawer`）；12 个 GDExtension 类里其余 10 个没动；
+- `client/gw2rebuild.gdextension` 的 `compatibility_minimum` 还是 4.1（见 §10.4 差异 3）；
+- 没有 vendor、`Cargo.lock` 没提交；
+- 手写层的**报文 / C ABI / broker** 那些（`capi.rs` / `protocol.rs` / `broker.rs`）与
+  gdext 无关，仍然留在 `_scaffold/`；
+- §8 的"下一步 1"（把 `parse`/`calculate` 暴露成带参数与返回值的方法）**已经过时**：
+  那件事在 `docs/116`/`120`/`126`/`138` 里做完了，本节就是它的 gdext 版。
