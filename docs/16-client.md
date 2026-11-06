@@ -3680,3 +3680,198 @@ PY
 `src/plane.rs` 的 6 条既有断言**一条未改**（`to_pixel` 变成再导出，`use super::*` 照样拿到）。
 本轮 `cargo test --offline`：lib **361**、总计 **707**（+27），doctest 阶段 0 条通过（本仓库无 Rust doctest，
 文档里的 shell 一律用 ```` ```text ```` 围栏）。
+
+## 27. 工具修订：`class_probe.py` 的归属列已修复（新扫描器 `tools/loc_xrefs.py`）+ 需要重核的旧结论
+
+> 本节回答三件事：① §26.1 对 `class_probe` 的**归因是错的**——不是 pkl 过期，是代码把
+> `off2va()` 套在已经是虚地址的引用点上；② 归属链路已换成**只读目标 `.so` 的独立扫描器**，
+> 一条命令复算、并拿 327 个唯一锚与 `fixtures/module_funcs.tsv` 双向交叉验证；
+> ③ 全库范围内**哪些旧结论要重核**（4 处确定冲突 + 1 处可结案 + 2 条 TSV 地址 + 1 条标注）。
+>
+> **地址口径**：本节一律 **ELF 虚地址**（`objdump` 口径）。Ghidra/REA 地址 = 本值 + `0x100000`（只加一次）。
+
+### 27.0 一页结论
+
+| 项 | 结果 | 档位 |
+|---|---|---|
+| v1 的真 bug | `Index.funcs_ref_slot()` / `classes` 把 `xrefs.pkl` 里**已经是虚地址**的引用点又过一遍 `off2va()` ⇒ 每条引用 `+0x1000`，归属整体右漂一个函数 | **逐位**（27.1 三例复算全中） |
+| pkl 是否过期 | **没有**。5301 个 Location 的「引用指令集合」与独立新扫描**逐条相同** | **逐位** |
+| 新扫描器 | `tools/loc_xrefs.py`：`.rela.dyn` + `.eh_frame` + capstone；**不读任何 `analysis/*.pkl`**，不需要 Ghidra | 观测（可复算） |
+| 引用判据 | 4 种形态（R/I/G/D）× 首址/`+8`/`+16`；本版实测 **R=9739，G/I/D=0** | **观测**（`stats` 逐形态报数） |
+| 函数边界 | `.eh_frame` FDE（13430 条，覆盖 `.text` **98.35%**，全部起点通过指令边界校验）＋ FDE 外 `call/jmp` 段内目标 63 ＋ 段首 | 观测（可复算） |
+| 对 `fixtures/module_funcs.tsv` | **544 行 / 56 个模块逐条相同** | **逐位** |
+| 对 `fixtures/name_to_addr.tsv` 的 327 唯一锚 | **324 一致**；2 条地址不在指令边界/已被编译器合并；1 条 TSV 自标「唯一锚」但证据栏写着「消去法」 | **观测**（27.3 逐条列出） |
+| 归属变化规模 | 5301 个 Location 里 **5019 个（94.7%）** 的函数归属变了；只有 282 个「碰巧对」（函数体 > `0x1000` 字节，右漂仍落在同一函数内） | **逐位** |
+| 要重核的旧结论 | 4 处**冲突**、1 处**可结案**、2 条 TSV 地址、1 条标注；另有 **13 个模块**没有 fixture 兜底 | 27.4 |
+
+### 27.1 真因：不是 pkl 过期，是 `off2va()` 套错了一次（**更正 §26.1**）
+
+§26.1 写的是「`analysis/*.pkl` 与 2026-08-28 这份 `.so` 不是同一次构建 ⇒ 过时」。
+**这条归因是错的**，三条反证：
+
+1. 上游 `libgraphwarrust.so` 与 `.reference/steam/2026-08-28/libgraphwarrust.so`
+   **sha256 相同**（`9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`）。
+2. `xrefs.pkl` 里那一跳**本来就是对的**：
+   `xrefs.pkl[0x95e4f8] == [(0x4b6dc5, 'rip', 'lea', 'rdi, [rip + 0x4a772c]')]`，
+   而 `0x4b6dc5` 正是 `src/graphwar_plane.rs:274:129` 在整份 `.text` 里的**唯一**引用点
+   （与 §26.1 自己的「重扫可自证」一句完全对上——那句话其实已经推翻了「pkl 过期」）。
+3. 5301 个 Location 的引用指令集合，与新扫描器**逐条相同**（无一条多、无一条少）。
+
+真因在 `class_probe.py` 自己身上：`xrefs.pkl` 的 `insn_addr` 已经是**虚地址**
+（`analysis/build_index.py` 用 `md.disasm(blob, t['addr'])` 生成），而 v1 又过了一次
+`off2va()`，`.text` 的「虚地址 − 文件偏移」= `0x1000`：
+
+```python
+# tools/class_probe.py —— v1（错误）
+def funcs_ref_slot(self, slot):
+    for t in self.xrefs.get(slot, ()):
+        va = self.off2va(t[0])       # ← t[0] 已经是 vaddr；再套一次 off2va = +0x1000
+        f  = self.func_of(va)
+```
+
+三例复算（`+0x1000` 后再落到 Ghidra 函数表上，与 §26.1 记录的症状**完全一致**）：
+
+| Location | 引用指令 | 正确函数 | v1 算成 `+0x1000` | v1 归属 |
+|---|---|---|---|---|
+| `:274:129`（`0x95e4f8`） | `0x4b6dc5` | **`0x4b5df0`** | `0x4b7dc5` | `0x4b7a70` |
+| `:218:129`（`0x95e540`） | `0x4b7ee0` | **`0x4b7a70`** | `0x4b8ee0` | `0x4b8bd0` |
+| `:68:1`（`0x95e280`） | `0x4b235b` / `0x4b24db` / `0x4bc7cd` / `0x4bcbe1` | **`0x4b2260` / `0x4b23e0` / `0x4bc6b0` / `0x4bcab0`** | `0x4b335b` / `0x4b34db` / `0x4bd7cd` / `0x4bdbe1` | `0x4b2890` / `0x4bd650` / `0x4bda50`（4 个塌成 3 个） |
+
+> `docs/16` §16.1.1 当时的判断**是对的**（就是 `off2va` 平移 `0x1000`，且指出
+> `module_map.py` 没这个 bug、fixture 可信）。§26.1 是后来的回退，本节把它改回来。
+
+### 27.2 新扫描器：`tools/loc_xrefs.py`（一条命令复现）
+
+```text
+../.venv/bin/python tools/loc_xrefs.py stats        # 判据逐形态计数 + 目标 sha256 + 自检
+../.venv/bin/python tools/loc_xrefs.py check-tsv    # 327 个唯一锚交叉验证（27.3）
+../.venv/bin/python tools/loc_xrefs.py loc src/graphwar_plane.rs:274:129
+../.venv/bin/python tools/loc_xrefs.py slot 0x95e4f8
+../.venv/bin/python tools/loc_xrefs.py func 0x4b5df0
+../.venv/bin/python tools/loc_xrefs.py dump refs    # 全量 xref TSV
+```
+
+只依赖 **Python 标准库 + capstone**。目标 `.so` 用 `--so` / `GW2_TARGET_SO` 指定，
+缺省 `.reference/steam/2026-08-28/libgraphwarrust.so`。全量扫描 ≈ 45 s（1 521 067 条指令）。
+
+**覆盖判据（四种引用形态，全部实测计数）**
+
+| 代号 | 形态 | 判据 | 本版命中 |
+|---|---|---|---|
+| **R** | rip-relative 直引 | 任意指令的 `[rip+disp]`，`insn.end+disp == loc{,+8,+16}` | **9739** |
+| **I** | 立即数直引 | 任意指令的立即数操作数 `== loc{,+8,+16}` | 0 |
+| **G** | 寄存器携带 | 寄存器先被 `lea r,[rip+X]` / `mov r,[rip+slot]` / `mov r,imm` 赋成该地址，再作 `call *r` / `jmp *r` / 内存基址（**这就是「只匹配 `call *(slot)` 会漏」的那一类**） | 0 |
+| **D** | 数据槽携带 | 某个 `R_X86_64_RELATIVE` 数据槽的**值**本身指向该 Location，代码经该槽间接取到 | 0 |
+
+* `G`/`D` 的 0 是**实测值，不是没实现**：`G` 走寄存器污点传播（遇分支/调用/写回即清空），
+  `D` 走「全表扫 24501 条 RELATIVE 重定位的 addend 是否落在 Location 集合里」。
+  同一套代码对**普通函数指针槽**不是 0：全库 `G` 命中 **3624 条**（其中 128 条落在
+  `.data.rel.ro`，即「表基址 + 位移」的间接调用落点，共 79 个地址）——所以
+  「`call *[rip+slot]`」与「`mov slot,%reg` + `call *%reg`」两种形态都覆盖了。
+* 一个**必须记住的假阳性坑**：本工具第一版在 Location 侧报出「2 条 R 之外的 G 引用」，
+  查下去是 `nop dword ptr [rax + rax]` 这类**多字节填充**——寄存器恰好被污点命中。
+  现在 `nop` 整体不参与引用判定。**凡是声称「多找到 N 条引用」的工具，都要先把 N 条逐条读过。**
+* `+8`/`+16` 两个阶段本版**命中 0**：这个构建里编译器一律 `lea` 结构体首址，
+  没有单独取 `len` / `line` 的写法。判据保留，是因为它决定「换个构建还对不对」。
+
+**函数边界（不依赖 Ghidra）**：`.eh_frame` 的 FDE `initial_location + range`
+（13430 条，`.text` 内 13426 条，覆盖 `0x5ba84e` / `0x5d3244` 字节 = **98.35%**；
+13426 个起点**全部**是最长指令流扫出来的指令边界）＋ FDE 覆盖不到的 `call/jmp` 段内目标
+（63 个，`.text` 内 6 个 + `.text` 尾 2 个 + `.plt` 55 个桩）＋ 段首。
+合计 **13494 个函数起点**。5301 个 Location 的**全部引用点无一落在 FDE 覆盖之外的缝隙**，
+所以归属里没有「最近前驱兜底」的成分。**作为对照**，`analysis/funcstarts.pkl` 是坏的
+（最小起点 `0x37b94c` 比真值偏 `0xc`，最大 `0x969054` 越过 `.text` 末尾），本工具不读它。
+
+**两条自洽性检查（都已通过）**
+
+| 检查 | 结果 |
+|---|---|
+| 与 `analysis/xrefs.pkl` 对打（pkl 只当对照） | 5301 / 5301 个 Location 的引用指令集合**完全相同** |
+| 与 `fixtures/module_funcs.tsv` 对打（`module_map.py` 生成，本来就对） | 544 行 / 56 模块**逐条相同**（函数地址集合逐一相等） |
+
+### 27.3 交叉验证：`fixtures/name_to_addr.tsv` 的 327 个唯一锚
+
+`check-tsv` 的判据：TSV 每行断言「`x86_addr` 这个函数引用了 `src_file:src_line`」；
+本工具独立算「`(file,line)` → 函数」，检查该行是否落进 `x86_addr` 的 Location 集合。
+
+```text
+唯一锚 327 条：一致 324 / 不一致 1 / 起点缺失 2
+```
+
+**3 条例外全部查清，没有一条是「新方法算错」**：
+
+| # | TSV 行 | 现象 | 结论 |
+|---|---|---|---|
+| 1 | `0x4eb86a math_function::remove_offset`（锚 `math_function.rs:52:43`） | **`0x4eb86a` 不是指令边界**：它落在 `0x4eb868 add eax,-3`（3 字节，`…868…86b`）的中间。Ghidra 在这造了个函数头。真正的 FDE 起点是 **`0x4eb830`**，且它确实引用 `math_function.rs:52:43` 与 `:53:43` | **TSV 地址要改成 `0x4eb830`**（`name_bridge.py` 的 Ghidra 边界口径问题，不是归属逻辑错） |
+| 2 | `0x4eccb3 math_function::to_string_recursive`（锚 `math_function.rs:285:28`） | `0x4eccb3` 是指令边界，但落在 FDE 函数 **`0x4ec160`**（`to_string`）的体内 —— x86 把 `to_string_recursive` **合并/内联**进了调用者；该 Location 的引用指令 `0x4ece8f` ∈ `0x4ec160` | **地址应记 `0x4ec160`**（或注明「x86 无独立函数，已并入 `to_string`」） |
+| 3 | `0x748000 math_function::mutate_function` | 该行 `join_kind` 写 `唯一锚`，但**证据栏自己写着「消去法唯一：无直接一对一锚」**；它展示的锚 `slice/index.rs:1020:51` 在本工具里被 **26 个函数**引用（8 个不同 Location 结构体共用同一行号），根本不唯一 | **标注问题**：这一行不该计入「唯一锚」的 327（地址本身可能仍对，但它不是靠锚定的名） |
+
+⇒ 结论：**324/327 = 99.1% 一致**，且 3 条例外都能指到「函数边界口径」或「TSV 标注」，
+没有一条指向「谁引用了这个 Location」这一跳。**这一跳现在可信。**
+
+### 27.4 需要重核的旧结论（清单）
+
+**（a）先看规模**：v1 的 `+0x1000` 平移让 **5019/5301（94.7%）** 个 Location 的函数归属
+发生变化，只有 282 个因为「函数体 > 4096 字节」而碰巧落在同一个函数里。
+⇒ **凡是引用过 `class_probe` 的 `funcs:` 列的地方，都要按本节重算**；
+`literals` 列（字面量地址）**不受影响**（它没用 `off2va`）。
+
+**（b）逐处判定**（`grep -rn class_probe docs/ src/ tools/` 的全部命中 + 受影响的 fixture）
+
+| # | 位置 | 旧说法 | 本工具的新结果 | 判定 |
+|---|---|---|---|---|
+| 1 | `docs/02` §17.1、`docs/coverage-matrix.tsv` 第 56 行 | `graphwar_obstacle_manager.rs` 的锚函数 = `0x3c64c0 / 0x3f00b0 / 0x3f2480 / 0x3f27d0`（4 个） | **10 个**：`0x3c2bc0 0x3ee190 0x3f11e0 0x3f15b0 0x3f17a0 0x3f19a0 0x3f1b30 0x3f1d30 0x3f20f0 0x3f2360`（= `module_funcs.tsv` 本模块 10 行） | **冲突** |
+| 1b | `docs/02` §17.1 的「⚠ 两处证据冲突 ⇒ 文件级对应**未定**」 | `0x4f15b0` 不在本模块锚函数里 | `0x4f15b0` 是 **Ghidra 口径**；ELF 虚地址 **`0x3f15b0` 就是**本模块锚函数之一（`module_funcs.tsv` 里也有它）。**「冲突」是地址空间混用 + v1 平移共同造成的，可以结案** | **可结案**（`混装（待拆）` 的档位由 `docs/02` 维护者定，本节只给证据） |
+| 2 | `docs/02` §17.4（`math_function.rs` 行） | 「解析器 `0x4ed670` 的 panic 锚落 `math_function.rs:285:28`（`docs/03`、`class_probe`）」 | `285:28` 全库**唯一**引用指令是 `0x4ece8f` ⇒ 属 **`0x4ec160`**（`to_string`）。`0x4ed670` 自己引的是 `math_function.rs:75:10`（另有一条 regex 池 `350:17`）。v1 把 `0x4ece8f + 0x1000 = 0x4ede8f` 归给了 `0x4ed670` —— **这正是文档那句话的来源** | **冲突**（v1 artifact） |
+| 3 | `docs/02` §17.4（`polish_notation_converter.rs` 行）、`docs/coverage-matrix.tsv` 第 94 行 | 「本模块的锚函数是 `0x4f57d0`（`:36:52` / `:116:55`）」 | **`0x4f5450`**（引用指令 `0x4f5789` / `0x4f577c`；`+0x1000` 后正好落到 `0x4f57d0`） | **冲突** |
+| 4 | `docs/14`（`0x3dcbf4` 那一节） | 「`class_probe` 记的 Location 结构体锚点是 **233/234/235/236/239/244/250/256**（8 个）」 | 该函数是 **`0x3dcbb0`**，真实 Location 行 **18 个**：`275 278 292 307 310 345 350 351 352 353 354 363 364 365 527 530 535 544`。括号里那 8 个是 v1 归给它的 **17** 行里的一段 —— 逐条对得上，属 v1 artifact | **冲突** |
+| 5 | `docs/03` §13.2（「⚠ 一处**工具**冲突」） | 「`97:63` 被 v1 归给 `0x4f57d0`；真正引用指令 `0x4f4974` 落在 `0x4f44c0` 体内（REA 核实）」 | 本工具：`graphwar_function_input.rs:97:63` → **`0x4f44c0`**。v1 会给 `0x4f57d0` | **一致**（当时手工纠对了，可删掉这处「工具冲突」） |
+| 6 | `docs/16` §16.1.1 | 真因 = `off2va` 平移 `0x1000`；fixture 可信、`funcs:` 列不可信 | 完全相同 | **一致**（本条是正确诊断，§26.1 是回退） |
+| 7 | `docs/16` §26.1 | 真因 = 「pkl 与 `.so` 不是同一次扫描」「pkl 已过期」 | **错**：pkl 与 `9a538115…` 逐条相符，真因是 `off2va` | **冲突（要改）** |
+| 8 | `docs/16` §26.2 的地址表（`draw 0x4b5df0` / `ready 0x4b7a70` / 4 个 gdext 入口 …） | 全表 | 本工具逐条复核：**全部一致**（那张表是手算 + REA 得出的，不是 `class_probe` 输出） | **一致** |
+| 9 | `src/graphwar_function_input.rs:172`、`src/graphwar_plane.rs:23`、`src/graphwar_setup_control.rs:32` | 「不要直接引用 `class_probe` 的归属」 | 结论对。但 `graphwar_plane.rs:23` 的**理由**（「pkl 与本版 `.so` 不是同一次构建」）要改成「v1 的 `off2va` 平移 `+0x1000`，已在 v2 修复」 | **结论一致 / 措辞需改** |
+| 10 | `fixtures/module_funcs.tsv`（544 行 / 56 模块）、`docs/coverage-matrix.tsv` 的**模块行** | `module_map.py` 生成 | 本工具**逐条相同** | **一致**（不受影响） |
+| 11 | `fixtures/name_to_addr.tsv`（327 唯一锚） | 地址来自 `name_bridge.py` + Ghidra 边界 | 324 一致；`0x4eb86a`→`0x4eb830`、`0x4eccb3`→`0x4ec160`；`0x748000` 行的 `join_kind` 与证据不符 | **2 条地址 + 1 条标注** |
+
+**（c）13 个模块没有 fixture 兜底** —— 这些模块的函数清单**只可能来自 v1 或手工分析**，
+是「最该先重核」的一批。根因：`tools/module_map.py` 写 `module_funcs.tsv` 时有一句
+`if not module.startswith("graphwar_"): continue`，所以 12 个非 `graphwar_` 游戏模块
+与 `weak_caller.rs` 从来没进过 fixture。本工具给出的正确清单（可用
+`tools/loc_xrefs.py dump locs` + `awk` 复算）：
+
+| 模块 | 锚函数数 | 备注 |
+|---|---|---|
+| `entity_drawer.rs` | **14** | `docs/16` §24 记的是 10 个（按 arm64 符号表 + REA 做的）；本工具多出 6 个地址（`0x4b1f60 0x4b20e0 0x4bbcc0 0x4bbee0 0x4bc090 0x4bc240`）在 §24 里**两种地址口径都没出现** ⇒ 清单可补，**但不判冲突**（§24 用名字而非地址记） |
+| `player_showcase.rs` | **10** | 与 `docs/16` §25 列出的地址**完全一致** |
+| `effect_drawer.rs` | **11** | `docs/16` §21 覆盖其中若干；6 个地址（`0x4e02b0 0x4e0430 0x4e7870 0x4e7a20 0x4e7bc0 0x4e7e10`）未出现 ⇒ 清单可补 |
+| `math_function.rs` | **7** | 见上表第 2 行（`0x4eb830` / `0x4ec160` …） |
+| `weak_caller.rs` | **40** | gdext 侧模块，非游戏源码 |
+| `axis_drawer.rs` | 6 | 6 个地址（`0x4dcd70 0x4dcef0 0x4e70c0 0x4e7260 0x4e7470 0x4e76c0`）在 `docs/16` §21 里两种口径都未出现 ⇒ 清单可补 |
+| `button_manager.rs` | 3 | |
+| `function_button_manager.rs` | 2 | |
+| `obstacle_drawer.rs` | 2 | |
+| `function_drawer.rs` | 1 | |
+| `function_history_recorder.rs` | 1 | |
+| `polish_notation_converter.rs` | 1 | 见上表第 3 行 → **`0x4f5450`** |
+| `server_broker_request_connection.rs` | 1 | |
+
+> 「清单可补」= 本工具能给出完整地址表，但**没有**逐条做 REA 复核；本节只把它标成
+> **观测（可复算）**，不替那些章节改结论。谁要写进 `docs/02` 的矩阵，请按
+> `dump locs` 重算并保留本节的命令。
+
+### 27.5 本轮同时修的第二个同类小坑（`classes` 列）
+
+`classes` 子命令在「字面量 → 引用它的函数」这一跳也套了 `off2va()`
+（`f = self.func_of(self.off2va(off[0]) or 0)`），同一个 `+0x1000`，而且 `or 0`
+会把失败静默变成「归到 0 号地址」。v2 改成直接 `refs_to()` + `func_of()`。
+`docs/16` §16.1.1 说的「`literals` 列不受影响」是对的，但 `classes` 列**受影响**，
+本轮一并修好（`classes` 现在能给出 12 个类型名 × 正确函数集合）。
+
+### 27.6 验证结果
+
+| 命令 | 结果 |
+|---|---|
+| `../.venv/bin/python tools/loc_xrefs.py check-tsv` | 324/327 一致，3 条例外已逐条解释（27.3） |
+| `../.venv/bin/python tools/class_probe.py module graphwar_plane` | `:68:1` → 4 个 gdext 入口、`:274:129` → `0x4b5df0`、`:218:129` → `0x4b7a70`（与 `docs/16` §26.2 一致）；行数 175→232（19 个 Location 不变，`funcs` 段 21→22，多出的是线索 A 修好后新增的字面量行） |
+| `cargo test --offline` | **全绿**（本轮未改 `src/`） |
+| `python3 tools/coverage_matrix.py --check` | **红**，但**与本轮改动无关**：master 上（干净工作树）同样是红的，且差异行号相同（`docs/coverage-matrix.tsv` 第 10 行、`docs/149` 第 247 行）。实测差异**只有表头 2 行**：`src_files: 46` vs 重算 `47`、`src_tree_sha256` 变化 —— 上一个提交 `c7107934` 新增了 `src/graphwar_module_container.rs` 却没重跑生成器；**96 行模块行逐行相同**。修它要重生成 `docs/coverage-matrix.tsv` + `docs/149-coverage-matrix.md`，不在本轮可改文件范围内 |
