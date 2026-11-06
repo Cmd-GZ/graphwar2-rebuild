@@ -2996,11 +2996,16 @@ awk -F'\t' '$1=="player_showcase"' fixtures/name_to_addr.tsv
 
 | 偏移 | 内容 | 写者（全 `.text` 唯一） | 谁读 |
 |---|---|---|---|
-| `+0x16a0` | `Rc<RefCell<GraphwarTextureLoader>>`（贴图缓存） | `GraphwarRootNode::ready`（arm64 `0x39a44c`） | 本模块 `draw`；另有 `EntityDrawer::draw`、`GraphwarSetupControl`、`GraphwarFunctionInput`、`GraphwarLanVBox`、`GraphwarPlayerScreenControl::skin_button_pressed` |
-| `+0x16a8` | `Rc<RefCell<GraphwarPlayerConfig>>`（玩家档案） | 同一个 `ready`（arm64 `0x39a450`） | 本模块 4 个方法；`GraphwarRootNode` 的 `process_button_pressed`/`purchase_confirmed`/`purchase_denied` |
+| `+0x16a0` | `Rc<RefCell<GraphwarTextureLoader>>`（贴图缓存） | `<GraphwarRootNode as INode>::init`（arm64 `0x39a44c`） | 本模块 `draw`；另有 `EntityDrawer::draw`、`GraphwarSetupControl`、`GraphwarFunctionInput`、`GraphwarLanVBox`、`GraphwarPlayerScreenControl::skin_button_pressed` |
+| `+0x16a8` | `Rc<RefCell<GraphwarPlayerConfig>>`（玩家档案） | 同一个 `init`（arm64 `0x39a450`） | 本模块 4 个方法；`GraphwarRootNode` 的 `process_button_pressed`/`purchase_confirmed`/`purchase_denied` |
 
 判据是**穷举写点**：`.text` 里 `str [+0x16a0]` / `str [+0x16a8]` **各只有一条**，
-都在 `<GraphwarRootNode as INode>::ready` 里。
+都在 `<GraphwarRootNode as INode>::init`（arm64 `0x399dd0`）里。
+
+⚠️ **就地更正**：本节第一稿把这两条 `str` 记成 `GraphwarRootNode::ready`——
+原因是扫描脚本把过长的 trait impl 符号名截断到 95 字符，`…::re_expor` 之后看不见了。
+按符号边界复核（`ranges_from_symtab` 的前驱起点）后是 **`INode::init`**，
+语义也更合理：两个单元在节点构造时建好，`ready` 不可能是唯一写者。
 
 **`GraphwarPlayerConfig` 的布局**（档位：偏移=观测，字段名=推断）：
 
@@ -3102,7 +3107,7 @@ llvm-objdump -d --no-show-raw-insn --demangle \
   --start-address=0x43fe7c --stop-address=0x4408d8 $ARM
 
 # 4) 「写者唯一」：扫 .text 里 disp ∈ {0x16a0,0x16a8} 的写指令
-#    → 各 1 条，都在 GraphwarRootNode::ready（arm64 0x39a44c / 0x39a450）
+#    → 各 1 条，都在 <GraphwarRootNode as INode>::init（arm64 0x39a44c / 0x39a450）
 ```
 
 ### 23.13 落码清单

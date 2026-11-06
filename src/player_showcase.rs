@@ -775,7 +775,7 @@ pub fn node_name_ok() -> bool {
 ///
 /// 三条互相独立的判据：
 /// 1. 全 `.text` 里 `str [+0x16a8]` **只有一条**（arm64 `0x39a450`），
-///    在 `<GraphwarRootNode as INode>::ready` 里；写者唯一 ⇒ 这个槽由根节点拥有；
+///    在 `<GraphwarRootNode as INode>::init`（`0x399dd0`）里；写者唯一 ⇒ 这个槽由根节点拥有；
 /// 2. 单元形状 = `[0]` 强引用计数（用到前 `+1`）、`[+0x10]` 借用计数
 ///    （共享借用 `+1`、独占借用被置 `-1`）、`[+0x18]` 载荷 —— 正是
 ///    `RcInner { strong, weak, RefCell { borrow, value } }`；
@@ -785,25 +785,31 @@ pub const ROOT_PLAYER_CONFIG: usize = 0x16a8;
 
 /// 根节点 `+0x16a0` = `Rc<RefCell<GraphwarTextureLoader>>`（贴图缓存）。档位：**观测**。
 ///
-/// 判据：`str [+0x16a0]` 全 `.text` 也只有一条（arm64 `0x39a44c`，同一个 `ready`）；
+/// 判据：`str [+0x16a0]` 全 `.text` 也只有一条（arm64 `0x39a44c`，同一个 `INode::init`）；
 /// 本模块 `draw` 从它取出 `GraphwarTextureLoader` 并调三个 `get_*_texture`；
 /// 另外 `EntityDrawer::draw`、`GraphwarSetupControl`、`GraphwarFunctionInput`、
 /// `GraphwarLanVBox`、`GraphwarPlayerScreenControl::skin_button_pressed` 也读它
 /// ⇒ 它是几个绘制类**共享**的贴图缓存（不是本模块私有）。
 pub const ROOT_TEXTURE_LOADER: usize = 0x16a0;
 
-/// 根节点这两个单元的**唯一写入者**（arm64 `GraphwarRootNode::ready` 的两条 `str`）。
+/// 根节点这两个单元的**唯一写入者**。
 ///
-/// 档位：**观测**（全 `.text` 扫 `mem.disp ∈ {0x16a0,0x16a8}` 的写指令，各 1 条）。
+/// 档位：**观测**（全 `.text` 扫 `mem.disp ∈ {0x16a0,0x16a8}` 的写指令，各 1 条；
+/// 两条都属于 arm64 `0x399dd0` = `<GraphwarRootNode as INode>::init`）。
+///
+/// ⚠️ 一条**就地更正**：本模块第一版把这两条 `str` 记成 `GraphwarRootNode::ready`
+/// ——那是因为扫描脚本把过长的 trait impl 符号名截断到 95 字符，`…::re_expor` 后面
+/// 看不见了。按符号边界复核后是 **`INode::init`**（构造函数里建两个 `Rc<RefCell<…>>`），
+/// 语义更合理：两个单元在节点构造时就存在，`ready` 不该是唯一写者。
 pub const ROOT_UNIT_WRITERS: [(u64, &str, u64); 2] = [
     (
         ROOT_TEXTURE_LOADER as u64,
-        "GraphwarRootNode::ready",
+        "<GraphwarRootNode as INode>::init",
         0x39a44c,
     ),
     (
         ROOT_PLAYER_CONFIG as u64,
-        "GraphwarRootNode::ready",
+        "<GraphwarRootNode as INode>::init",
         0x39a450,
     ),
 ];

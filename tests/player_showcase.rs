@@ -295,8 +295,14 @@ fn ready_connects_text_changed_to_on_text_change() {
 fn root_units_are_owned_by_the_root_node() {
     assert_eq!(ps::ROOT_TEXTURE_LOADER, 0x16a0);
     assert_eq!(ps::ROOT_PLAYER_CONFIG, 0x16a8);
-    assert_eq!(ps::root_unit_writer(0x16a0), Some("GraphwarRootNode::ready"));
-    assert_eq!(ps::root_unit_writer(0x16a8), Some("GraphwarRootNode::ready"));
+    assert_eq!(
+        ps::root_unit_writer(0x16a0),
+        Some("<GraphwarRootNode as INode>::init")
+    );
+    assert_eq!(
+        ps::root_unit_writer(0x16a8),
+        Some("<GraphwarRootNode as INode>::init")
+    );
     assert_eq!(ps::root_unit_writer(0x1600), None);
     assert_eq!(ps::ROOT_UNIT_WRITERS.len(), 2);
 }
