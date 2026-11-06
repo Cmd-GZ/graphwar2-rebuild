@@ -5,14 +5,14 @@
 ## 0. 一句话总账
 
 ```
-原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 431、15 个非 graphwar 游戏模块占 96）；我们已实现 351 个函数，其中 逐位 98 / 观测 253 / 推断 0；未做 125；完全未知的模块 18 个（graphwar 里 12 个）。
+原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 431、15 个非 graphwar 游戏模块占 96）；我们已实现 351 个函数，其中 逐位 88 / 观测 263 / 推断 0；未做 125；完全未知的模块 18 个（graphwar 里 12 个）。
 ```
 
 拆成两个口径（下面的数字全部由脚本算出，重跑即复现）：
 
 | 口径 | 模块数 | 可归属函数 | 已实现 | 逐位 | 观测 | 推断 | 未做 | 未知模块 |
 |---|---|---|---|---|---|---|---|---|
-| 58 个 `graphwar_*.rs` | 63 | 431 | 303 | 91 | 212 | 0 | 85 | 12 |
+| 58 个 `graphwar_*.rs` | 63 | 431 | 303 | 81 | 222 | 0 | 85 | 12 |
 | 15 个非 graphwar 的游戏模块 | 15 | 96 | 48 | 7 | 41 | 0 | 40 | 6 |
 
 还有 `weak_caller.rs`（40 个归属函数）按 `docs/02` §9 判为第三方依赖库，单独一行留在 TSV 里备查，**不计入**任何合计。
@@ -111,10 +111,10 @@
 | `graphwar_module_container.rs` | 20 | 1 | — | 0 | 未做 |
 | `graphwar_name_manager.rs` | 3 | 3 | — | 0 | 未做 |
 | `graphwar_nodes.rs` | 11 | 1 | — | 0 | 未做 |
-| `graphwar_obstacle_manager.rs` | 8 | 14 | `src/plane.rs` | 17 | 逐位 |
+| `graphwar_obstacle_manager.rs` | 8 | 14 | `src/plane.rs` | 16 | 逐位 |
 | `graphwar_path_calculator.rs` | 1 | 9 | `src/graphwar_path_calculator.rs` | 2 | 逐位 |
-| `graphwar_plane.rs` | 10 | 19 | `src/plane.rs` | 17 | 逐位 |
-| `graphwar_plane_pos_manager.rs` | 6 | 9 | `src/plane.rs` | 17 | 观测 |
+| `graphwar_plane.rs` | 10 | 19 | `src/graphwar_plane.rs+src/plane.rs` | 37 | 观测 |
+| `graphwar_plane_pos_manager.rs` | 6 | 9 | `src/plane.rs` | 16 | 观测 |
 | `graphwar_play_screen_control.rs` | 10 | 64 | `src/graphwar_play_screen_control.rs` | 8 | 观测 |
 | `graphwar_player_config.rs` | 0 | 0 | — | 0 | 未做 |
 | `graphwar_player_manager.rs` | 3 | 6 | — | 0 | 未知 |
@@ -244,5 +244,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（45 个文件、1245 条 `fn`） | `9bcb4e35b20c24421f7656e0b2eecf2b49dae67815f5d98e4534abee7363e312` |
+| `src/` 树（46 个文件、1265 条 `fn`） | `d43b0997c7fd3dea2c77864030668c9c3bb085ccd76ae785100333eaad8d91ce` |
 

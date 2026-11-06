@@ -2,17 +2,14 @@
 //!
 //! 两个独立来源的观测，各自有明确出处：
 //!
-//! - **变换**：`0x4be3e0`（`graphwar_plane.rs`）里的伪代码，
-//!   `px = x*1000/50 + 500`、`py = y*1000/50 + 300`，除数常量
-//!   `_DAT_0029ce00`（Ghidra）→ 虚地址 `0x19ce00` → `(50.0, 50.0)`。
+//! - **变换**：**已搬走** —— `px = x*1000/50 + 500`、`py = y*1000/50 + 300` 是从
+//!   `0x4be3e0`（`graphwar_plane.rs:174:18`，`GraphwarPlane::obstacle_partial_update_event`）
+//!   里逐条读出来的，所以函数体搬到 `src/graphwar_plane.rs`（见那里的 [`to_pixel`] 文档）。
+//!   本文件保留 `pub use` 再导出，调用点与既有断言一行未改。
 //! - **掩膜**：`0x4f15b0`（`graphwar_obstacle_manager.rs`）里的伪代码，
 //!   `idx = py*1000 + px`、`mask[idx] != 0xFF`、越界算命中。
 //!
-//! 详见 `docs/08-plane.md` §4 与 §6。
-//!
-//! 尚未实现：把实体光栅化进掩膜（`0x4f11e0`）。它的填充规则（`<` 还是 `<=`、
-//! 端点舍入）没有逐行确认，硬写一个"看起来对"的版本会违反本仓库"不把推断写成结论"
-//! 的约定，所以留空并标注。
+//! 详见 `docs/08-plane.md` §4 与 §6；搬家理由见 `docs/16-client.md` §26。
 
 /// 画布宽度（像素）。
 pub const CANVAS_W: u32 = 1000;
@@ -30,16 +27,13 @@ pub const PX_PER_UNIT: f64 = CANVAS_W as f64 / BOARD_W;
 /// 掩膜里的"空"值。
 pub const EMPTY: u8 = 0xFF;
 
-/// 游戏坐标 -> 像素坐标。
+/// 游戏坐标 -> 像素坐标（**实现在 `src/graphwar_plane.rs`**）。
 ///
-/// 直接照抄原程序的写法（先乘 1000 再除以 50，不用 20），因为浮点舍入顺序
-/// 会影响边界点的结果；`as i32` 在 Rust 里是饱和转换、`NaN` 归 0，
-/// 与原程序里那串显式钳位完全一致。
-pub fn to_pixel(x: f64, y: f64) -> (i32, i32) {
-    let px = x * 1000.0 / BOARD_W + 500.0;
-    let py = y * 1000.0 / BOARD_W + 300.0;
-    (px as i32, py as i32)
-}
+/// 归属证据：这条式子的出处 `0x4be3e0` 是 `GraphwarPlane::obstacle_partial_update_event`
+/// （`panic::Location` 锚 `src/graphwar_plane.rs:174:18`，两侧双向唯一），不属掩膜模块。
+/// 掩膜那两个函数（`0x4f11e0` / `0x4f15b0`）各自内联了同一个式子，所以这里只是**再导出**，
+/// 保证 `_scaffold/` 与 `plane.rs` 既有断言不用改。
+pub use crate::graphwar_plane::to_pixel;
 
 /// 像素坐标是否落在画布内。
 pub fn in_canvas(px: i32, py: i32) -> bool {
