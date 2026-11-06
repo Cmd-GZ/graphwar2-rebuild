@@ -5,14 +5,14 @@
 ## 0. 一句话总账
 
 ```
-原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 431、15 个非 graphwar 游戏模块占 96）；我们已实现 420 个函数，其中 逐位 88 / 观测 332 / 推断 0；未做 80；完全未知的模块 14 个（graphwar 里 8 个）。
+原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 431、15 个非 graphwar 游戏模块占 96）；我们已实现 437 个函数，其中 逐位 88 / 观测 349 / 推断 0；未做 69；完全未知的模块 13 个（graphwar 里 7 个）。
 ```
 
 拆成两个口径（下面的数字全部由脚本算出，重跑即复现）：
 
 | 口径 | 模块数 | 可归属函数 | 已实现 | 逐位 | 观测 | 推断 | 未做 | 未知模块 |
 |---|---|---|---|---|---|---|---|---|
-| 58 个 `graphwar_*.rs` | 63 | 431 | 372 | 81 | 291 | 0 | 40 | 8 |
+| 58 个 `graphwar_*.rs` | 63 | 431 | 389 | 81 | 308 | 0 | 29 | 7 |
 | 15 个非 graphwar 的游戏模块 | 15 | 96 | 48 | 7 | 41 | 0 | 40 | 6 |
 
 还有 `weak_caller.rs`（40 个归属函数）按 `docs/02` §9 判为第三方依赖库，单独一行留在 TSV 里备查，**不计入**任何合计。
@@ -75,7 +75,7 @@
 | module | orig_funcs | anchors | ours_file | ours_funcs | status |
 |---|---|---|---|---|---|
 | `graphwar_ad_switch.rs` | 6 | 3 | `src/graphwar_ad_switch.rs` | 21 | 观测 |
-| `graphwar_audio_control.rs` | 7 | 16 | — | 0 | 未做 |
+| `graphwar_audio_control.rs` | 7 | 16 | `src/graphwar_audio_control.rs` | 21 | 观测 |
 | `graphwar_backend.rs` | 6 | 12 | `src/graphwar_backend.rs` | 6 | 观测 |
 | `graphwar_button.rs` | 6 | 3 | `src/graphwar_button.rs` | 13 | 观测 |
 | `graphwar_campaign_control.rs` | 1 | 1 | — | 0 | 未做 |
@@ -97,7 +97,7 @@
 | `graphwar_game_recorder.rs` | 2 | 4 | — | 0 | 未知 |
 | `graphwar_game_server.rs` | 3 | 86 | `src/graphwar_game_server.rs+src/server.rs` | 23 | 逐位 |
 | `graphwar_game_state_manager.rs` | 33 | 207 | `src/game.rs+src/turnstate.rs` | 85 | 逐位 |
-| `graphwar_graphics_manager.rs` | 6 | 8 | — | 0 | 未知 |
+| `graphwar_graphics_manager.rs` | 6 | 8 | `src/graphwar_graphics_manager.rs` | 18 | 观测 |
 | `graphwar_lan_broadcaster_v6.rs` | 4 | 4 | — | 0 | 未做 |
 | `graphwar_lan_vbox.rs` | 11 | 19 | `src/graphwar_lan_vbox.rs` | 37 | 观测 |
 | `graphwar_level_generator.rs` | 4 | 26 | `src/graphwar_level_generator.rs+src/graphwar_level_generator/tables.rs` | 28 | 逐位 |
@@ -119,7 +119,7 @@
 | `graphwar_player_config.rs` | 0 | 0 | — | 0 | 未做 |
 | `graphwar_player_manager.rs` | 3 | 6 | — | 0 | 未知 |
 | `graphwar_player_screen_control.rs` | 8 | 22 | `src/graphwar_player_screen_control.rs` | 19 | 观测 |
-| `graphwar_rank_manager.rs` | 4 | 4 | — | 0 | 未做 |
+| `graphwar_rank_manager.rs` | 4 | 4 | `src/graphwar_rank_manager.rs` | 11 | 观测 |
 | `graphwar_remote_event_handler.rs` | 3 | 171 | `src/events.rs` | 2 | 观测 |
 | `graphwar_replay_control.rs` | 2 | 9 | — | 0 | 未做 |
 | `graphwar_replay_player.rs` | 5 | 18 | `src/graphwar_replay_player.rs` | 53 | 观测 |
@@ -161,7 +161,7 @@
 完整的 evidence（每行一句话的依据）在 `docs/coverage-matrix.tsv`，那张表是本脚本的唯一真源，本页的表格由它渲染。
 
 ## 3. 哪些模块连「它干什么」都不知道（问题 1）
-**58 个 `graphwar_*.rs` 里有 8 个**属于这一类 —— 判据是：没有实现、且除模块名之外**没有任何**能指到地址/报文/真机的观测。
+**58 个 `graphwar_*.rs` 里有 7 个**属于这一类 —— 判据是：没有实现、且除模块名之外**没有任何**能指到地址/报文/真机的观测。
 
 | module | orig_funcs | anchors | 现状 |
 |---|---|---|---|
@@ -169,7 +169,6 @@
 | `graphwar_effect_manager.rs` | 1 | 3 | 只有名字 |
 | `graphwar_entity_effect_manager.rs` | 3 | 4 | 只有名字 |
 | `graphwar_game_recorder.rs` | 2 | 4 | 只有名字 |
-| `graphwar_graphics_manager.rs` | 6 | 8 | 只有名字 |
 | `graphwar_player_manager.rs` | 3 | 6 | 只有名字 |
 | `graphwar_texture_loader.rs` | 1 | 1 | 只有名字 |
 | `graphwar_video_writer.rs` | 3 | 4 | 只有名字 |
@@ -240,5 +239,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（54 个文件、1410 条 `fn`） | `e7131a3b06712768b872cc14043ed2a45bd2b0d1617dd27ed55e411e902a2174` |
+| `src/` 树（57 个文件、1460 条 `fn`） | `ce389a4912e37ae170c3264bdcf4c9cee3946c09e2e96b796c921cba00ad57fe` |
 

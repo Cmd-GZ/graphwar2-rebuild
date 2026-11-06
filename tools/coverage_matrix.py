@@ -402,8 +402,8 @@ def mod(module, scope, ours, status, evidence):
 # ---- 58 个 graphwar_*.rs（`[a-z_]+` 的正则会漏掉带数字的 v6，实际是 58 个）----
 mod("graphwar_ad_switch.rs", "graphwar", ("src/graphwar_ad_switch.rs",), "观测",
     "6 条全是 gdext 惰性注册驱动；两个 getter trampoline + owned(+0x18) 已钉死")
-mod("graphwar_audio_control.rs", "graphwar", (), "未做",
-    "docs/111：SoundHandler / -15f / -5f / 32767 归一化已还原，但没接进 src/（client/ 是仿制）")
+mod("graphwar_audio_control.rs", "graphwar", ("src/graphwar_audio_control.rs",), "观测",
+    "9 函数 + 4 订阅闭包。订阅 effect_info(44，按 +0x20 的 u8 四臂落三槽) / soldier_info(15) / entity_removed(14) / game_state_info(30)；槽 +0x80/90/a0/b0/c0 = explosion/squash/spark/pop/unpop，音量 -15/-15/-15/0/-5 dB；state==1 清待播队列（docs/16 §30）")
 mod("graphwar_backend.rs", "graphwar", ("src/graphwar_backend.rs",), "观测",
     "**18 个方法**（旧文记 15，偏少）。LAN 与 broker 是两个独立字段**（+0x110 组播 ff02::1 / +0x228 broker），开房时一起装；「看哪一路」在 GraphwarLanVBox::show_global，不在这层（docs/09 §11）")
 mod("graphwar_button.rs", "graphwar", ("src/graphwar_button.rs",), "观测",
@@ -444,8 +444,8 @@ mod("graphwar_game_server.rs", "graphwar", ("src/graphwar_game_server.rs", "src/
     "docs/43/46：一回合 12 条报文与抓包逐字节一致；docs/62 真实 TCP 跑到 EndingGame")
 mod("graphwar_game_state_manager.rs", "graphwar", ("src/game.rs", "src/turnstate.rs"), "逐位",
     "docs/41：6 状态 7 事件、13 次迁移在真实对局里逐个相同")
-mod("graphwar_graphics_manager.rs", "graphwar", (), "未知",
-    "只有 docs/02 一行（图形资源管理），无地址级观测、无实现")
+mod("graphwar_graphics_manager.rs", "graphwar", ("src/graphwar_graphics_manager.rs",), "观测",
+    "6 函数。**TextureLoader 不在本模块**——它是独立模块 graphwar_texture_loader（三张 HashMap<String,Gd<Texture2D>> @ +0x150/+0x180/+0x1b0，按名字 memcmp 索引，GraphwarRootNode 的 INode impl 里 0x39a328 唯一构造、21KB 饿汉加载）。本模块只管 player_id→名字 三张表（+0x18/+0x48/+0x78）与 51/53/55 三条 info 事件（docs/16 §31）")
 mod("graphwar_lan_broadcaster_v6.rs", "graphwar", (), "未做",
     "docs/07/24：局域网广播报文已抓包；docs/134 里只有 client/ GDScript 侧，src/ 无实现")
 mod("graphwar_lan_vbox.rs", "graphwar", ("src/graphwar_lan_vbox.rs",), "观测",
@@ -505,8 +505,8 @@ mod("graphwar_player_screen_control.rs", "graphwar", ("src/graphwar_player_scree
 mod("graphwar_play_screen_control.rs", "graphwar", ("src/graphwar_play_screen_control.rs",), "观测",
     "docs/14-turn.md §9 逐函数规格（10 个可归属函数 / 64 个锚）；界面视图仍在 client/ GDScript（仿制），"
     "但控制器本体已落在 src/graphwar_play_screen_control.rs。旧行写「未做」与 src/lib.rs/文件头冲突 ⇒ 按代码更正")
-mod("graphwar_rank_manager.rs", "graphwar", (), "未做",
-    "docs/112 §5：RankInfo 判别值 67、结构观测；段位算法在本模块内算不出来（负结果）")
+mod("graphwar_rank_manager.rs", "graphwar", ("src/graphwar_rank_manager.rs",), "观测",
+    "4 函数。段位**只从远端事件进**（RemoteEventHandler::handle_{client,server}_remote_event 各一处 set_rank），模块内零换算；RankInfo(67) = 三个 dword（+8 标志 / +0xc 段位 / +0x10 player_id）；66 由 local_player_manager 发（推断）（docs/10 §14）")
 mod("graphwar_remote_event_handler.rs", "graphwar", ("src/events.rs",), "观测",
     "docs/110/96：远端事件名与判别值已解；我方 events.rs 实现枚举 + 编解码，无逐字节对拍")
 mod("graphwar_replay_control.rs", "graphwar", (), "未做",
