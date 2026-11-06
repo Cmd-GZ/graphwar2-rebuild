@@ -727,3 +727,155 @@ https://graphwar.com/graphwar_II_ip.txt    （出现两次：broker 与崩溃上
 > ⇒ **原版客户端无法在本地被改指**，除非去连 graphwar.com 或改二进制绕过证书校验。
 
 所以"接入官方 global room"不是"协议通了就能连"——是**原版客户端在设计上只认那一个地址**。
+
+---
+
+## 10. 大厅房间列表控件 `GraphwarLanVBox`（2026-11，纯静态还原）
+
+> 本节回答"**玩家看到的大厅列表是谁画的、按什么顺序、什么时候变**"，
+> 并给出 `src/graphwar_lan_vbox.rs` 的全部出处。证据来源：
+> Android **2.0.60** 的 arm64 `libgraphwarrust.so`（`.symtab` **未 strip**，权威名字与函数边界）
+> + Linux **2.0.60** 的 x86-64 `libgraphwarrust.so`（strip，靠 `panic::Location` 跨架构锚对位）。
+> 复现命令与 `docs/144` §5 同：`readelf -sW … | c++filt | grep lan_vbox`、
+> `llvm-objdump -d …`（arm64），x86 侧用 `analysis/funcstarts_ghidra_va.pkl` 的函数边界。
+
+### 10.1 一句话结论
+
+`GraphwarLanVBox` **不是**一个"收到事件就重建列表"的控件，而是**每帧把一张
+`HashMap<SocketAddr, GameInfo>` 投影成行节点**的容器：源表里有的地址有行、没有的行被
+`queue_free`；行的内容每帧从**活表**重取（不是建行时的快照）；**不排序**；
+Join 按钮**不直接连**，而是把该行地址投进自己的 `mpmc` 通道，**下一帧**才
+`start_client_to_remote_server`。
+
+### 10.2 它是 12 个 GDExtension 类里**唯一有 `process` 的大函数**那几个之一
+
+| 项 | 值 | 等级 |
+|---|---|---|
+| 类名 / 基类 | `GraphwarLanVBox` / `VBoxContainer` | 观测（`.symtab` 的 `IVBoxContainer::*`） |
+| 源文件 | `src/graphwar_lan_vbox.rs`（2.0.60 里 **≥174 行**） | 观测（`panic::Location`） |
+| arm64 `FUNC` 数 | **13** + 6 个 `drop_in_place` 胶水 | 观测 |
+| `process` | arm64 `0x450c20` / **14 524 B**；**x86 `0x4f90b0`** | 观测（唯一锚，20 个 `(file,line,col)` 与 arm64 逐一相同） |
+| x86 到下一个函数起点 | `0x4fd1b0`（跨度 16640，**上界不是大小**） | 观测 |
+
+**14 524 B 不是一个巨型函数**：`Local`/`Global` 两条分支各有一份**逐字节相同**的行更新代码
+（arm64 `0x450f70`–`0x452170` 与 `0x45218c`–`0x4533a0`，主循环跨度都是 `0xb14`）。
+x86 侧还有第二条**独立**证据：`res://game_room_entry.tscn` 字面量在全 `.text` 只有 **2** 条
+交叉引用（`0x4f97ed`、`0x4fac67`），`JoinButton` **4** 条、`RoomName`/`PlayerCount` 各 **2** 条
+—— **全部落在 `process` 里**，2/4 的分布正是"两分支各一套"。
+
+### 10.3 数据模型（arm64，全部观测）
+
+实例结构 **`0x70` 字节**：
+
+| 偏移 | 字段 | 证据 |
+|---|---|---|
+| `+0x00` | `Sender<SocketAddr>`（16 B） | `init` `0x450b54` 写 `{1,ptr}`；闭包 `0x4491d8` 调 `mpmc::Sender::send` |
+| `+0x10` | `Receiver<SocketAddr>`（16 B） | `try_recv(&self+0x10)`（`0x450c54` / `0x450d98`） |
+| `+0x20` | `base: Base<VBoxContainer>`（24 B） | `assert_constructed(self+0x20)` → `is_visible_in_tree` |
+| `+0x38` | `HashMap<SocketAddr, Gd<行>>`（48 B，桶 48 = 地址 32 + `Gd` 16） | 清理循环 `0x452018`；`0x4514c4` 的桶步长 `0x30` |
+| `+0x68` | `show_global: bool`（默认 **false = Local**） | `init` `strb wzr`；`process` `0x450ed4` 读 |
+
+**通道载荷是 `SocketAddr` 的硬证据**：`init` 的 unwind 路径引
+`drop_in_place<Counter<mpmc::list::Channel<core::net::socket_addr::SocketAddr>>>`（`0x433b54`）。
+
+### 10.4 房间表从哪来：**两套源，一个 bool 切换**
+
+| `show_global` | 模块槽（在根节点的模块容器里） | 它的表 | 逐行取值 |
+|---|---|---|---|
+| `false`（Local） | `container+0x128` = `GraphwarLanBroadcasterV6` | `container+0x1a0`（桶步长 `0x78`=120） | `get_game_info`（arm64 `0x3ddce8`） |
+| `true`（Global） | `container+0x240` = `GraphwarServerBrokerHandler` | `container+0x248` | `get_game_info`（arm64 `0x489b98`） |
+
+根节点用 `get_node_by_name(self, "GraphwarRootNode", 16)` 取到，容器在 `root+0x1668`、
+贴图加载器在 `root+0x16a0`。
+
+⇒ **`GraphwarLanVBox` 不订阅任何 `Event`**：74 个事件一个都不在这里（无 `ready`、无
+`subscribe_to_events*`、无 `Event` 判别值比较）。房间的增删是 broadcaster / broker 各自
+改自己的表，本控件每帧**读内存表**。这与 `docs/144` §1.1/§3.1 的运行期结论一致。
+
+### 10.5 每帧五步（`process`）
+
+```text
+① 排空 Join 通道（try_recv 循环）→ 每个地址 root.backend.start_client_to_remote_server(&addr)
+② if !self.base().is_visible_in_tree() { return }        // 不可见 ⇒ 整帧不刷
+③ root = get_node("GraphwarRootNode")；按 self+0x68 选 Local / Global 表
+④ 逐行：self.rows.entry(addr)（hashbrown::rustc_entry）——缺行才 load 场景 + instantiate + add_child，
+   然后无条件刷 房名 / 人数 / 4 个模式图标 / Join 可点性
+⑤ 清理：遍历 self.rows，若 get_game_info(addr) 已取不到 ⇒ queue_free(行) 并移除
+```
+
+第 ⑤ 步的判据是**再查一次源表**，不是"比两份快照"——所以"出大厅 → 广播器停 → 自己那一行
+下一帧消失"（`docs/144` §1.2）在实现上就是这一步。
+
+### 10.6 行节点：新场景实例 + **按地址缓存复用**（不是对象池，也不是整页重建）
+
+* 新地址：`load("res://game_room_entry.tscn", 26)` → `instantiate_as` → `add_child`（各一次）。
+* 已存在的地址：**复用同一个节点**，只刷字段。
+* 删行：`queue_free`。
+* 行内 7 个节点全部**按名字递归查找**（`GraphwarNodes::get_node_by_name_rec`），
+  与真机节点树（`docs/16-client.md` §160）逐字对上：
+  `JoinButton`(10) / `RoomName`(8) / `PlayerCount`(11) / `AxisModeButton`(14) /
+  `FunctionModeButton`(18) / `TurnModeButton`(14) / `TimeModeButton`(14)
+  （括号里是指令里的长度立即数；arm64 `.rodata` 分别在 `0x19dd01`/`0x179000`/`0x19dd0b`/
+  `0x19dd16`/`0x19dd24`/`0x19dd36`/`0x19dd44`，x86 在 `0x1c4394`/`0x19ef98`/`0x1c439e`/
+  `0x1c43a9`/`0x1c43b7`/`0x1c43c9`/`0x1c43d7`）。
+
+两条**玩家能看见**的细节：
+
+| 细节 | 实现 | 等级 |
+|---|---|---|
+| 人数列是**补空格**的字符串 `"  {n}  "`（前后各 2 个空格） | `0x4517bc` `mov w9,#0x2020` + `strh` 写两个 `' '` 再 `Label::set_text` | 观测（与真机 dump 的 `"  0  "` 逐字符相符） |
+| `locked` 的房间 **Join 不可点** | `0x4515a4` 从记录取一个字节 → `0x4515ac` `BaseButton::set_disabled` | 观测（字节→禁用）；**推断**（该字节叫 `locked`：9 字段里唯一的布尔） |
+
+### 10.7 Join 是"投递 + 下一帧连接"
+
+给 `JoinButton` 挂的是一个 **56 字节的 boxed 闭包**（环境 = `Sender`(16) + `SocketAddr`(32) +
+容器指针(8)，正好是 `__rust_alloc(0x38, 8)` 的大小；闭包本体在 arm64 `0x449124`，264 B）：
+
+```text
+先查 LAN 表（container+0x128），再查 broker 表（container+0x240）——按下的那一刻重查
+都没有 ⇒ 什么都不做（这一行已经不是房间了）
+有 ⇒ Sender::send(该行的 SocketAddr)   // 送进本控件自己的通道
+```
+
+下一帧 `process` ① 才 `start_client_to_remote_server`。⇒ 连点两下在**同一帧内**不会发两次，
+跨帧才会（通道不去重，本节实测无去重代码）。
+
+### 10.8 排序：**没有排序，顺序不是信息**
+
+* `process` 里 **0 处** `sort*`，也没有 `BTreeMap`。
+* 插入顺序 = 源表 `HashMap` 的迭代顺序；显示顺序 = `VBoxContainer` 子节点顺序 = `add_child` 顺序。
+* `HashMap` 用 `RandomState`（每进程随机种子）⇒ **同一张房间表，两次启动的顺序可以不同**（推断）。
+* **去重**由"键 = `SocketAddr`"天然完成，不存在重复行。
+
+⇒ 写攻略/复现时**不要**把大厅里房间的先后当成任何含义（不是按人数、不是按房名、不是按状态）。
+
+### 10.9 与 `client/lan_lobby.gd` 的出入（**只登记，不改 `client/`**）
+
+| # | 原版 | 我们的 `client/` | 影响 |
+|---|---|---|---|
+| 1 | 行按地址缓存复用，只改 4 个字段 | `_rebuild_list()` 整页重建 | 滚动位置/动画被重置 |
+| 2 | Join 走内部通道，下一帧才连 | Join 直接 `connect_to()` | 连点两下可能连两次 |
+| 3 | 没有地址就没有行 | 4 条**自定**占位行（无地址） | 见 `docs/144` §2 |
+| 4 | `PlayerCount` = `"  {n}  "` | 直接写数字 | 列宽/对齐的像素差 |
+| 5 | `locked` → `JoinButton.disabled` | 占位行用 `mouse_filter=IGNORE` 代替 | 语义相近、实现不同 |
+| 6 | 无排序 | 无排序 | 一致 |
+
+### 10.10 仍未确定
+
+1. `try_recv` 的收尾判据 `cmp w8,#2` 的变体映射（按 niche 编码读 `2` = `Empty`；那么
+   `Disconnected` 会被当成一条地址——一个**永不触发的潜在 bug**）。**推断**。
+2. 闭包投递前 `记录+0x18` 的 `u16 == 2` 跳过判据是什么意思：载荷类型是 `SocketAddr`
+   （判别值只有 0/1），**未知**。
+3. `show_global`（`self+0x68`）**谁写**：`process` 只读；`docs/archive/112-meta-managers.md` §2 的 `0x3ef990`
+   （取 `ShowLocalButton`/`ShowGlobalButton`/`GraphwarLanVBox` 并设文本/图标）最像，
+   但没逐指令对上。**未知**。
+4. `get_join_address`：2024 版 `.symtab` 有，2.0.60 arm64 **没有**这个符号。删了还是内联了，
+   **未知**。
+5. `load`/`instantiate`/`add_child` 是否在逐行循环体内（语言级结构）。**未定**，
+   但不影响可测判据（新建必须一次、复用不重建）。
+6. Join 处理器那个 `Vec<Box<dyn FnMut(&str)>>` 落在哪个结构体的 `+0x38`：同一个被 `bind`
+   的对象还带 `+0x1668`（模块容器）⇒ 更像 `GraphwarRootNode` 而不是行里的按钮。**未定**。
+
+实现与逐条对拍：`src/graphwar_lan_vbox.rs` + `tests/graphwar_lan_vbox.rs`。
+⚠️ 按 `AGENTS.md` §0.2，那两处的 `cargo test` **只是回归保护，不是复原证据**；
+本节所有结论的证据是上面的地址、`.symtab` 记录与 `.rodata` 字节。
