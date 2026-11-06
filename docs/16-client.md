@@ -3448,6 +3448,11 @@ llvm-objdump -d --no-show-raw-insn --demangle \
 
 ### 26.1 名字从哪来，地址怎么钉的（三类指纹，可逐条复核）
 
+> ⚠️ **2026-11-07 撤回**：本节曾把 `tools/class_probe.py` 的归属错误归因为「`analysis/xrefs.pkl` 与 `.so` 不是同一次扫描 / pkl 已过期」。**这个判断是错的**，已在 §27.1 更正：
+> 实测 `xrefs.pkl` 与本版 `.so` **逐条一致**（5301/5301 个 Location 的引用指令集合完全相同），
+> 真因是 `class_probe` 把**已经是虚地址**的引用点又过了一遍 `off2va()` ⇒ 整体 `+0x1000`。
+> 本节其余内容（三类指纹、逐条复核方法）仍然有效。
+
 * **名字**：arm64 2.0.60 未 strip 的 `.symtab`（`graphwarrust::graphwar_plane::GraphwarPlane` 下
   有源级名的 `FUNC` 共 8 个方法 + 2 个闭包）。
 * **判据不是函数大小**（`docs/02` §19 已证否）。本节用三类：

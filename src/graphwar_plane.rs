@@ -20,9 +20,12 @@
 //! | 2 | **被调者多重集**：两侧逐个相等 | `ready` 的 3×`subscribe_to_event`；`process` 的 2×`ObstacleDrawer::update` + 1×`get_team_overview` |
 //! | 3 | **调用者集合 + 首尾相接**：同一批调用者、相邻函数严丝合缝 | `on_resized` / `clear_state` / `update_entities`（见 [`PLANE_TAIL_CHAIN`]） |
 //!
-//! ⚠️ 本轮**不采信** `tools/class_probe.py` 的地址：它读上游 `analysis/*.pkl`，那些 pkl 与
-//! `2026-08-28` 这份 `.so` **不是同一次构建**（同一行号 `:274:129` 它给 `0x4b7a70`，按重定位 +
-//! capstone 重扫给 `0x4b5df0`；`:218:129` 它给 `0x4b8bd0`，重扫给 `0x4b7a70`）。
+//! ⚠️ 本轮**不采信** `tools/class_probe.py` **v1** 的地址：它把**已经是虚地址**的引用点
+//! 又过了一遍 `off2va()`，于是整体偏 `+0x1000`（同一行号 `:274:129` 它给 `0x4b7a70`，
+//! 按重定位 + capstone 重扫给 `0x4b5df0`；`:218:129` 它给 `0x4b8bd0`，重扫给 `0x4b7a70`）。
+//! **2026-11-07 更正**：真因**不是** pkl 过期（`analysis/xrefs.pkl` 与本版 `.so` 逐条一致，
+//! 5301/5301），而是上面那个 `off2va` 平移；`tools/class_probe.py` 已修为 v2，
+//! 且新增 `tools/loc_xrefs.py`（只读 `.so`）。详见 `docs/16-client.md` §27.1。
 //! 所以本文地址**全部**由本轮重扫得出；`fixtures/name_to_addr.tsv` 里那几行 `唯一锚`
 //! 与本轮结论一致，可交叉核对。
 //!
