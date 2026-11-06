@@ -174,6 +174,7 @@ pub mod graphwar_team_manager;
 pub mod graphwar_soldier_manager;
 pub mod graphwar_computer_player_manager;
 pub mod graphwar_module_container;
+pub mod weak_caller;
 pub mod graphwar_plane;
 pub mod player_showcase;
 pub mod graphwar_lan_vbox;

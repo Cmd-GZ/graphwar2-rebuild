@@ -5,7 +5,7 @@
 ## 0. 一句话总账
 
 ```
-原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 430、16 个非 graphwar 游戏模块占 97）；我们已实现 488 个函数，其中 逐位 88 / 观测 400 / 推断 0；未做 39；完全未知的模块 0 个（graphwar 里 0 个）。
+原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 430、16 个非 graphwar 游戏模块占 97）；我们已实现 527 个函数，其中 逐位 88 / 观测 439 / 推断 0；未做 0；完全未知的模块 0 个（graphwar 里 0 个）。
 ```
 
 拆成两个口径（下面的数字全部由脚本算出，重跑即复现）：
@@ -13,7 +13,7 @@
 | 口径 | 模块数 | 可归属函数 | 已实现 | 逐位 | 观测 | 推断 | 未做 | 未知模块 |
 |---|---|---|---|---|---|---|---|---|
 | 58 个 `graphwar_*.rs` | 62 | 430 | 430 | 81 | 349 | 0 | 0 | 0 |
-| 16 个非 graphwar 的游戏模块 | 16 | 97 | 58 | 7 | 51 | 0 | 39 | 0 |
+| 16 个非 graphwar 的游戏模块 | 16 | 97 | 97 | 7 | 90 | 0 | 0 | 0 |
 
 还有 `weak_caller.rs`（40 个归属函数）按 `docs/02` §9 判为第三方依赖库，单独一行留在 TSV 里备查，**不计入**任何合计。
 
@@ -156,7 +156,7 @@
 | `player_showcase.rs` | 10 | 18 | `src/player_showcase.rs` | 44 | 观测 |
 | `polish_notation_converter.rs` | 1 | 2 | `src/polish_notation_converter.rs` | 6 | 观测 |
 | `server_broker_request_connection.rs` | 0 | 1 | `src/server_broker_request_connection.rs` | 10 | 观测 |
-| `weak_caller.rs` | 39 | 2 | — | 0 | 未做 |
+| `weak_caller.rs` | 39 | 2 | `src/weak_caller.rs` | 8 | 观测 |
 
 完整的 evidence（每行一句话的依据）在 `docs/coverage-matrix.tsv`，那张表是本脚本的唯一真源，本页的表格由它渲染。
 
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（91 个文件、1788 条 `fn`） | `31bdf35957338e2b36baa0e03e6d3d6ac2ee52307e53fec1d177fb14ba2d26e0` |
+| `src/` 树（92 个文件、1796 条 `fn`） | `7b4eb0e7ce8c00e577731b34d17d5b155db379d45d72df9778b69aab11e7becb` |
 

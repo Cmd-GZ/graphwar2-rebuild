@@ -7,14 +7,14 @@
 # tool_version: 1
 # binary_sha256: 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
 # funcstarts_sha256: b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a
-# src_tree_sha256: 31bdf35957338e2b36baa0e03e6d3d6ac2ee52307e53fec1d177fb14ba2d26e0
+# src_tree_sha256: 7b4eb0e7ce8c00e577731b34d17d5b155db379d45d72df9778b69aab11e7becb
 # funcstarts_n: 13263
 # src_modules: 246
 # loc_structs: 2042
 # attributed_funcs: 527
 # contested_funcs: 86
-# src_files: 91
-# src_fns: 1788
+# src_files: 92
+# src_fns: 1796
 module	scope	orig_funcs	contested	anchors	ours_file	ours_funcs	status	evidence
 graphwar_ad_switch.rs	graphwar	6	0	3	src/graphwar_ad_switch.rs	21	观测	6 条全是 gdext 惰性注册驱动；两个 getter trampoline + owned(+0x18) 已钉死
 graphwar_audio_control.rs	graphwar	7	1	16	src/graphwar_audio_control.rs	21	观测	9 函数 + 4 订阅闭包。订阅 effect_info(44，按 +0x20 的 u8 四臂落三槽) / soldier_info(15) / entity_removed(14) / game_state_info(30)；槽 +0x80/90/a0/b0/c0 = explosion/squash/spark/pop/unpop，音量 -15/-15/-15/0/-5 dB；state==1 清待播队列（docs/16 §30）
@@ -93,4 +93,4 @@ obstacle_drawer.rs	other	2	1	7	src/obstacle_drawer.rs	4	观测	2 函数（update
 player_showcase.rs	other	10	0	18	src/player_showcase.rs	44	观测	10 个函数全解：ready 0x4e6480 / on_text_change 0x4efd70 / process 0x4e68f0 / draw 0x4e5400 + 6 个 gdext 生成物。**三次 draw_texture_rect_full**（皮肤→脸→帽），与颜色/段位无关；读根节点 +0x16a8 的 GraphwarPlayerConfig（名字+0x00/皮肤+0x60/脸+0x78/帽+0x90/变更计数+0xa8），process 轮询计数才重画（docs/16 §25）
 polish_notation_converter.rs	other	1	0	2	src/polish_notation_converter.rs	6	观测	**是活代码**：唯一调用者 0x4edd1f（在 MathFunction::new 0x4ed670 内），另有两条自递归。分词产物是**中缀**且含 tag 18/19 括号；括号/优先级/补 CONST 0 全在这里=> docs/03 §13「解析器自己就做分词」只对了一半。原版正则 77B、优先级表 18 项已逐字节拿到（docs/16 §33）
 server_broker_request_connection.rs	other	0	0	1	src/server_broker_request_connection.rs	10	观测	1/1；process 的 x86 0x3e5a80 是推断（调用指纹+相邻性，非唯一锚）（docs/09 §12）
-weak_caller.rs	other	39	0	2		0	未做	**旧判定已推翻**：2024 版符号表里有 graphwarrust::weak_caller 的 27 个 direct 符号（签名形如 fn(&Weak<..>,..)），是 **crate 内模块**，不是第三方依赖（docs/02 §18）。旧依据 docs/02 §9 作废
+weak_caller.rs	other	39	0	2	src/weak_caller.rs	8	观测	40 个符号定位：x86 目标 39/39 个单态化（23 个 call + 16 个 call_0，两块各自无空洞）+ 第 40 个 0x3d4fa0 查明是内联了 call 的 GraphwarGameRecorder 方法。结构 = Weak<RefCell<T>>，一个类型参数、8 字节、self 按值消费（尾部自减弱计数，调用方必须 clone）。upgrade()==None => 静默跳过返回 ()；唯一 panic 是 RefCell 已被可变借出。是 call_0<F> / call<A,F> **两个**泛型 x 26 个类型，不是回调派发器。**旧口径全部作废**：scope=dep / 「1 个泛型 27 个符号」/ 「40 个函数」/ 「gdext 胶水」（docs/02 §34）

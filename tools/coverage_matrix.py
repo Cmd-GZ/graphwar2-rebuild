@@ -585,10 +585,12 @@ mod("graphwar_replay_reader.rs", "graphwar", ("src/graphwar_replay_reader.rs",),
     "2/2：文件归它（FileAccess::open + get_buffer + GzDecoder + StrSearcher 逐行 -> Vec<EventInfo>，被调者里**零时间函数**）；时钟归 replay_player（tick += dt*60*speed）（docs/09 §12）")
 mod("graphwar_stream_buffer.rs", "graphwar", ("src/graphwar_stream_buffer.rs",), "观测",
     "2/2：**不是 TCP 拆包队列**——内部无字节队列，靠 TcpStream::peek 前瞻：写侧 u16 大端(len)+两段 write_all（限 0xffff）；读侧 peek 2 -> 校验 <=0x1000 -> peek(len+2) 不足即 Ok(None) **一个字节都不消费** -> read_exact 整帧取走。顺带结掉 docs/09 §11.7#4：0x…4a 是「整帧未到」，不是 EOF（docs/09 §12）")
-mod("weak_caller.rs", "other", (), "未做",
-    "**旧判定已推翻**：2024 版符号表里有 graphwarrust::weak_caller 的 27 个 direct 符号"
-    "（签名形如 fn(&Weak<..>,..)），是 **crate 内模块**，不是第三方依赖（docs/02 §18）。"
-    "旧依据 docs/02 §9 作废")
+mod("weak_caller.rs", "other", ("src/weak_caller.rs",), "观测",
+    "40 个符号定位：x86 目标 39/39 个单态化（23 个 call + 16 个 call_0，两块各自无空洞）+ 第 40 个 "
+    "0x3d4fa0 查明是内联了 call 的 GraphwarGameRecorder 方法。结构 = Weak<RefCell<T>>，一个类型参数、8 字节、"
+    "self 按值消费（尾部自减弱计数，调用方必须 clone）。upgrade()==None => 静默跳过返回 ()；"
+    "唯一 panic 是 RefCell 已被可变借出。是 call_0<F> / call<A,F> **两个**泛型 x 26 个类型，不是回调派发器。"
+    "**旧口径全部作废**：scope=dep / 「1 个泛型 27 个符号」/ 「40 个函数」/ 「gdext 胶水」（docs/02 §34）")
 
 SCOPE_ORDER = {"graphwar": 0, "other": 1, "dep": 2}
 STATUS_ORDER = ["逐位", "观测", "推断", "未做", "未知"]
