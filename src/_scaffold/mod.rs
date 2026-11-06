@@ -30,6 +30,10 @@ pub mod axis_drawer_class;
 pub mod broker;
 pub mod capi;
 pub mod diffconv;
+// `EntityDrawer` 的真节点类（`docs/16-client.md` §37）：把 `entity_drawer.rs` 的纯逻辑挂成
+// 3 个 `Sprite2D` + 1 个 `RichTextLabel` 的子节点树。只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod entity_drawer_class;
 // 手写入口与 gdext 入口都导出 `gdext_rust_init`，一个 .so 里只能有一个：
 // 打开 `gdext-bindings` 时用官方 gdext 那份（`gdext_mod.rs`），关掉手写这份。
 #[cfg(not(feature = "gdext-bindings"))]

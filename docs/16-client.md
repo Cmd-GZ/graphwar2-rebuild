@@ -5564,3 +5564,245 @@ pub mod obstacle_drawer;
 **接线之前 `tests/last_five.rs` 也能跑**：它用 `#[path = "../src/<模块>.rs"]` 直接编译这 5 个源文件
 （五个模块彼此**零依赖**，只用了 `std`，所以不需要在测试 crate 根上重导出任何东西）。
 接线之后同一份断言仍然成立（会多跑一遍）。
+
+## 37. `EntityDrawer` 成了真 Godot 节点（2026-11：第一个垂直切片，72 条 headless 断言全过）
+
+**一句话**：`src/_scaffold/entity_drawer_class.rs` 在 `gdext-bindings` feature 下把
+`entity_drawer.rs` 的**纯逻辑**挂成 `Control` 子类 `EntityDrawer`；`spawn_entity(id, x, y)`
+真的建出 **3 个 `Sprite2D` + 1 个 `RichTextLabel`**，位置 / 缩放 / 翻面 / 不透明度**全部**来自
+复原的算式（`sprite_transform` / `name_label_layout` / `death_alpha`），贴图是程序生成的
+8×8 纯色 `ImageTexture`（**不依赖原版 pck**）。headless 实测 **72 条断言全过**。
+
+> 档位（`AGENTS.md` §0.3）：**观测** = 这轮 headless 真跑出来的输出；**推断** = 有依据未证；
+> **未知** = 没解出来。`cargo test` / `selftest` 的条数**只是回归保护**，不是复原证据。
+
+### 37.1 本轮动了哪些文件
+
+| 文件 | 增/改 | 内容 |
+|---|---|---|
+| `src/_scaffold/entity_drawer_class.rs` | **新增 677 行**（代码 291 / `//!` 82 / `///` 119 / 行内注释 129 / 空行 56） | 类本体 + 程序生成贴图 + 名字标签 + 6 条纯逻辑单测 |
+| `src/_scaffold/mod.rs` | +4 | `#[cfg(feature = "gdext-bindings")] pub mod entity_drawer_class;` + 3 行注释 |
+| `client/tools/entity_drawer_check.gd` | **新增 296 行**（72 条断言） | headless 验收脚本 |
+| `docs/16-client.md` | +本节 | — |
+
+`src/entity_drawer.rs` **一行没动**（仍然零引擎依赖）；`src/lib.rs` 没动；`client/` 下既有
+`.gd` / `.tscn` / `run.sh` 一个没改。
+
+### 37.2 a) 能不能建成 —— **能**（观测）
+
+```text
+$ cargo build --release --features gdext-bindings
+$ cp $CARGO_TARGET_DIR/release/libgw2_rebuild.so client/libgw2_rebuild.so
+$ godot --headless --path client --import
+$ godot --headless --path client --script res://tools/entity_drawer_check.gd
+Initialize godot-rust (API v4.6.stable.official, runtime v4.7.2.stable.official, safeguards balanced)
+
+ok   ClassDB.class_exists("EntityDrawer")
+ok   EntityDrawer 能实例化且是 Control
+      drawer.get_class() = EntityDrawer
+ok   方法 spawn_entity() 存在                       # 另有 8 个方法逐一断言
+ok   属性 team_color 往返一致（255）
+ok   属性 texture_size 往返一致（8）
+ok   控件尺寸设为 (500.0, 300.0)
+ok   spawn_entity(0, 5, 5) 返回 4（建了几个子节点）
+ok   子节点个数 == 4（实际 4）
+ok   子节点 0 是 Sprite2D（皮肤）
+ok   子节点 1 是 Sprite2D（脸）
+ok   子节点 2 是 Sprite2D（帽子）
+ok   子节点 3 是 RichTextLabel（名字）
+      子节点名: @Sprite2D@2 / @Sprite2D@3 / @Sprite2D@4 / RichTextLabel
+ok   子节点 0 的 texture 非空
+ok   子节点 0 的 texture 是 Texture2D
+ok   子节点 0 的贴图是 8×8（8×8）                 # 1、2 同上
+ok   三个 Sprite2D 都 flip_v = true（entity_drawer::SPRITE_FLIP_V）
+ok   三个 Sprite2D 都 texture_filter = 4（entity_drawer::SPRITE_TEXTURE_FILTER）
+ok   三层贴图互不相同（皮肤 / 脸 / 帽子）
+      sprite0 position=(300.0, 100.0) scale=(0.266667, -2.666667) flip_h=true
+      期望   position=(300.0, 100.0) scale=(0.266667, -2.666667) flip_h=true
+ok   位置 == (300, 100)（k=10: 250+10·5, 150−10·5）
+ok   缩放 == (16/60, −160/60)（unit = 128/8）
+ok   fit_content = true（name_label.tscn）        # scroll_active / autowrap_mode 各一条
+ok   初始尺寸 25×40（offset_right / offset_bottom，实际 (25.0, 40.0)）
+ok   set_entity_name 后 text == "Bob"（实际 "Bob"）
+      label position=(15.0, 16.75)（期望 (15.0, 16.75)）min_size=(0.0, 0.0)
+ok   名字标签位置 == name_label_layout 的手算结果
+ok   死了 30 刻 ⇒ alpha = 0.5（实际 0.500000）
+ok   死了 ≥60 刻 ⇒ alpha = 0 且标签隐藏
+ok   第二个实体位置 == (200, 115)
+ok   x < 0 ⇒ flip_h = false
+ok   queue_free 之后回到 4 个子节点（实际 4）
+ok   被移除实体的子节点已经真的被释放（is_instance_valid == false）
+      引擎回调: ready=1 process=2 resized=0
+ok   _ready 被引擎调到（1 次）
+ok   _process 被引擎调到（2 次；实测不用 set_process，Godot 4.7 自己开）
+ok   resized 信号真的连上了（on_resized 被调到 1 次）
+      放大后 sprite0 position=(600.0, 200.0)（期望 (600.0, 200.0)）
+ok   控件放大到 1000×600 ⇒ 位置重摆成 (600, 200)
+ok   子节点随父节点一起被回收（没有单独 free）
+ENTITY_DRAWER 72 passed, 0 failed        # 退出码 0
+```
+
+> 上面是**节选**：省掉了 8 条同形的「方法 X() 存在」与 2 条同形的贴图断言；
+> 行尾 `#` 之后是**我加的行内说明**，不是程序输出。逐字全文用 37.7 的命令重跑即可。
+
+六条结论（每条都指到上面某一行）：
+
+| 结论 | 档位 | 证据 |
+|---|---|---|
+| 类注册成 `Control` 子类，9 个方法 + 2 个导出属性都在 | **观测** | `ClassDB.class_exists` / `get_method_list` / 属性往返 |
+| `spawn_entity` ⇒ **子节点数 4**：3×`Sprite2D` + 1×`RichTextLabel` | **观测** | `子节点个数 == 4` + 四行类型断言 |
+| `Sprite2D.texture` **非空**、是 `Texture2D`、三层互不相同 | **观测** | 三段 `texture 非空 / 是 Texture2D / 8×8` |
+| 位置 / 缩放 / 翻面 = `sprite_transform` 的手算值 | **观测** | `(300,100)`、`(16/60, −160/60)`、`flip_h=true`；放大后 `(600,200)` |
+| 名字标签的文本 / 不透明度 / 属性跟着复原逻辑走 | **观测** | `text == "Bob"`、`alpha 0.5 / 0 / 1`、`fit_content` 等四条 |
+| `_ready` / `_process` / `resized` 真的被引擎调到 | **观测** | `ready=1 process=2`，`set_size` 后 `on_resized` +1 且位置重摆 |
+
+**这张表能证明的是**「纯逻辑 → 节点树」这条链路通了；**不能**证明士兵长什么样
+（贴图是纯色方块、名字文本是脚本给的、`_draw` 的准星没画）。
+
+### 37.3 b) 一个「建 4 个子节点 + 接纯逻辑」的类多少行
+
+先给总数，再给能推广到别的类的拆分：
+
+| 块 | 行数 | 其中代码 | 说明 |
+|---|---|---|---|
+| 文件头 `//!` 文档 | 94 | 0 | 为什么 / 与原版逐条对照表 / 命令 / 契约 / 五条坑 |
+| **注册**（`#[derive]`+`#[class]`+字段+`IControl::init`） | 56 | ~30 | **宏只占 2 行**；剩下是 5 个字段与 `init` |
+| 属性 2 个（`team_color` / `texture_size`） | 8 | 8 | `#[export] i64` + 两个默认常量 |
+| 虚方法 2 个（`ready` / `process`） | 25 | 15 | `ready` 19 行里 10 行是注释 |
+| `#[func]` 9 个 + `texture_for` | 234 | ~150 | spawn 72 / relayout 65 / 名字 18 / 死亡 17 / 计数 20 / remove 13 / on_resized 9 / entity_count 9 / texture_for 11 |
+| 「造物」：`solid_texture` + `layer_color` + `new_name_label` | 120 | ~45 | 8×8 `ImageTexture`、三层颜色、`name_label.tscn` 的 6 个属性 |
+| `EntityNodes` 结构 | 22 | 8 | 4 个句柄 + 棋盘坐标 + 名字 + 死亡刻 |
+| 纯逻辑单测 6 条 | 107 | 60 | 顺序 / 颜色 / 手算位置 / 镜像 / 淡出 / 标签布局 |
+| **合计** | **677** | **291** | — |
+
+**能推广的结论**：
+
+* **注册、属性表、方法表、虚方法表一律 0 行**（gdext 宏全包）。对比 §35.3 的手写绑定：
+  同一个「1 属性 + 4 方法、不画东西」的类要 **~500 行**手工 ABI 搬运。
+* 真正与「建 4 个子节点 + 接纯逻辑」有关的**代码**只有 **~155 行**
+  （`spawn_entity` 49 + `relayout` 52 + `remove_entity` 11 + `texture_for` 8 + 两个造物函数 ~35）。
+  再往前的纯逻辑（算式、常量、子节点种类表）**一行没写**——全在 `entity_drawer.rs` 里。
+* 剩下 136 行代码是**观测点与文档**：9 个方法的 doc、5 条坑的说明、被照抄的原版常量注释。
+* 换成 6 条单测（107 行）之后，「类里有没有偷藏第二份算术」这件事有回归保护。
+
+### 37.4 c) 踩到的坑（每条都是本轮实测，不是听说）
+
+1. **`Gd<Node>` 不保活，也不负责释放。** `godot-core` 的 `RawGd::drop` 注释写死：
+   「If the held object is manually-managed, **nothing happens**」。节点归**父节点**所有
+   ⇒ 缓存句柄只是弱引用；校验脚本第 14 组断言：本类被 `queue_free` 之后，我们手里那个
+   `Gd<Sprite2D>` 已经 `is_instance_valid == false`，而**子节点是引擎跟着父节点回收的**
+   （我们一行 free 都没写）。所以要删实体，必须自己 `queue_free`（`remove_entity` 就是这么做的）。
+2. **句柄失效之后再碰 = panic + 卡死。** 从 GDScript 直接把某个子节点 `free()` 掉，
+   再调 `relayout()`：
+   ```text
+   PROBE before: valid=true children=4
+   PROBE after free(): valid=false children=3
+   ERROR: [panic godot-core/src/classes/class_runtime.rs:379]  Sprite2D::upcast_ref:
+          access to instance with ID 32631686609 after it has been freed
+   SCRIPT ERROR: Bug: Invalid call error code 1337.
+   ```
+   balanced safeguard **检出了**野句柄（不会静默 UB），但那次 `#[func]` 直接失败，
+   **进程随后卡住不退出**（60 s `timeout` 才杀掉）。⇒ 句柄与节点必须同生共死；
+   本轮**没有**加 `is_instance_valid` 防御（原版也不加），靠「只在自己的 `remove_entity` 里删」。
+3. **树外 `add_child` 只记父子关系。** `--script` 模式的 `_initialize()` 跑在根节点进树之前：
+   那一刻 `is_inside_tree()` 是 false、子节点的 `_ready` / `_process` 都不会来。
+   本类**不依赖**它们（`spawn_entity` 自己调一次 `relayout()`），所以「先 spawn 再进树」
+   和「先进树再 spawn」一样能过断言。
+4. **`resized` 是 `_ready` 里才连的** ⇒ 树外 `set_size` 不会自动重摆（信号那时还没连）。
+   要嘛手动 `relayout()`，要嘛等进树。
+5. **不用写 `set_process(true)`。** 本轮把这句**删掉重编**，`process_call_count` 照样是 2
+   —— Godot 4.7 对「实现了 `_process` 虚方法」的扩展类会自己开；原版 `ready` 的证据里
+   也没有这一句（连完信号、订完 6 个事件后写的是 `+0x108` 那个 bool）。**观测**
+   （上一版代码里我们写了它，还写了错注释，本轮删掉并改正）。
+6. **借用检查 `E0499` 是这类类的日常**：`self.entities.get_mut(id)` 的借用没结束就调
+   `self.relayout()`（它也借 `*self`）⇒ 编译不过。要先用一个块把「改状态」做完。
+7. **`--import` 与覆盖 `.so` 两个静默陷阱照旧**（`AGENTS.md` 那三条）：
+   新增 `.gd` 后不 `--import`，Godot 静默不加载；`cargo build` 之后不 `cp` 到 `client/`，
+   跑的是旧内核。本轮两次都先 `--import` 再断言，才没有出现「改了没生效」的假阴性。
+
+### 37.5 原版节点树的证据（本轮新用到的两条，都不是猜的）
+
+1. **`docs/16` §2.1.10 的运行时 dump**：`GraphwarPlane/@EntityDrawer@N/@Sprite2D@N`、
+   `GraphwarPlane/@EntityDrawer@N/<name_label 实例>`；`ShowNames` 那一行还观测到
+   `@EntityDrawer@N` 下 **4 个名字 `RichTextLabel`**（visible 1→0）。
+   ⇒ ① 一个 `EntityDrawer` 挂在 `GraphwarPlane` 下、**每个实体一个名字标签**（与
+   `ENTITY_CHILD_NODES` 的 4 项、每实体 4 个节点一致）；② 三个 sprite **没有名字**
+   （`@Sprite2D@N` 是 Godot 自动名）⇒ 本轮也**不显式命名** sprite。
+2. **`recovered-src/name_label.tscn`（pck 回收的原版场景）**：`offset_right=25` /
+   `offset_bottom=40`、`fit_content=true`、`scroll_active=false`、`autowrap_mode=0`、
+   内联 `Theme`（`StyleBoxFlat`：bg/border 全 alpha 0、四边 2px、圆角 20）
+   ⇒ 本类的名字标签按这 6 项逐条重建（不加载那个场景，因为 `client/` 里没有它）。
+
+**还没解 / 没做**（诚实清单）：
+
+* `_draw` 的准星（三段弧 + 三个箭头，几何已在 `entity_drawer::ring_primitives`，但本切片没接）；
+* `ready` 里那 6 个后端事件（`GraphwarBackend` 还没接到节点层）；
+* `entity_removed_event` 触发的清理（`entity_drawer::UNKNOWNS` 第 2 条"消失判据"仍未解）；
+* `GraphwarTextureLoader`（本类用程序生成贴图顶替）、`GraphwarPlane` 谁来 `add_child` 本类；
+* 名字文本从哪来（原版走名字管理器 / backtracer，不归本模块）。
+
+### 37.6 d) 剩下 10 个类能不能照这个模板批量做 —— **能，但要认清三类差异**
+
+名单按 `docs/18` §6.5 的 12 个 GDExtension 类：减去已落地的 `AxisDrawer`（§35，能注册 + `_draw`）
+与本节 `EntityDrawer`，**实剩 10 个**（任务书说 11 个，是把 `EntityDrawer` 自己也算进去的数）。
+
+基类与虚方法一列来自 `src/*.rs` 各文件头 + `docs/02` §17 的 `TRAIT_IMPLS`（**观测**）：
+
+| 类 | 形状 | 照本模板还要补什么 | 风险 |
+|---|---|---|---|
+| `PlayerShowcase` | `Control` + `IControl::draw`（画三层贴图）+ `ready`（灌名字 + 连信号）+ `process`（可见性闸门） | 补一个 `_draw`；其余与本类几乎一样 | 低 |
+| `GraphwarPlane` | `Control` + 画棋盘框 + 每帧驱动障碍绘制器 + 子节点（`@AxisDrawer@N` / `@EntityDrawer@N` / `@Line2D@N`） | 补 `_draw`；**它才是父节点**，要真的 `add_child` 本类 | 中 |
+| `EffectDrawer` | 图元 + `EffectData` 状态机（`src/effect_drawer.rs`） | 补 `_draw`（与 `AxisDrawer` 同形，§10 已证 gdext 的 `_draw` 会被调到） | 低 |
+| `GraphwarLongPressAnimation` | `Control` + **唯一的虚函数 `draw`**（读自己的启动时刻） | 补 `_draw` | 低 |
+| `GraphwarLanVBox` | `VBoxContainer`（`IVBoxContainer`）、**没有任何方法** | 换基类（`#[class(base = VBoxContainer)]`） | 低 |
+| `GraphwarButton` | `Button`（`IButton`）+ `pressed` / `button_up/down` / `input_text` | 信号接线（见下）+ 字符串导出属性 | 中 |
+| `GraphwarFunctionInput` | `LineEdit`（`ILineEdit`），**没有 `LineEdit` 子节点**（文字状态在 Rust 侧） | 信号接线 + 字符串属性 | 中 |
+| `GraphwarSetupControl` | `Control`（`IControl`）+ `on_text_change` / `on_visibility_change` / `on_chat_submitted` / `force_title_update` | 信号接线 + 三个容器的子节点管理 | 中 |
+| `GraphwarRootNode` | `Node`（`INode`）+ 屏表 `HashMap<&'static str, Gd<Node>>` + 平台回调（权限 / 内购 / `log`） | 换基类；平台回调只能打桩 | 中（内容未知） |
+| `GraphwarAdSwitch` | `Node` + 2 个导出方法（`are_ads_enabled` → bool、`get_ad_unit_id` → String）+ 1 个字段 | **本模板用不上**：两个 `#[func]` 就够 | 低 |
+
+**能批量做的三个理由**（本轮实测支撑）：
+
+1. 注册 / 属性 / 方法 / 虚方法全由宏生成（§35.3 那 500 行手工 ABI 已经不需要了）；
+2. 「读引擎值 → 调纯逻辑 → 写回节点」这个循环本轮跑通了两次（`_draw` 的 §10 + 子节点的本节），
+   剩下 10 个类的算式同样在 `src/*.rs` 里现成躺着（10 个类里有 **4 个**只需再加一个 `fn draw`）；
+3. 验收脚本可以**照抄 `entity_drawer_check.gd` 的 14 个段落**（类/方法/属性 → 子节点/类型 →
+   贴图 → 位置 → 文本 → 淡出 → 第二实体 → 移除 → `.new()` → 进树回调 → 尺寸变化 → 回收），
+   每类只要改「期望值」与「子节点类型」。
+
+**两个必须注意的「不一样」**：
+
+* **有信号的类**：本切片只连**别人的**信号（`resized` → `on_resized`）。`GraphwarButton` 的
+  `pressed` / `button_up/down`、`GraphwarFunctionInput` 的 `on_text_change` / `on_text_submitted`、
+  `GraphwarSetupControl` 的 `on_text_change` / `on_visibility_change` 三组，**要么**是连原生信号
+  （`pressed` / `text_changed` / `visibility_changed`，本类已验证「连别人」这一条路），**要么**是
+  自造信号（`#[signal]` + 生成器 `emit()`）。**哪一种还没有证据**（`docs/02` §17 的 `TRAIT_IMPLS`
+  只写了 `IControl` / `IButton` 这类 trait，不含信号）⇒ 自造信号那条路**未验过**。
+* **有导出属性的类**：本轮只验了 `#[export] i64`。`GString` / `Vector2` / `Gd<Resource>` 属性的
+  导出与往返没验过（**未知**）。
+
+**一个要忍住的诱惑**：不要为了「少踩坑」把 4 张 `HashMap` 合成一个公共 helper。
+原版 `EntityDrawer` 就是 4 张表（字段偏移 `+0xa8/+0xc0/…`，名字仍是**推断**），
+本节的 `EntityNodes` 已经是**一次化简**（4 个句柄塞一个结构）；下一轮迁 `player_showcase`
+时应先按 `docs/16` §25 的证据决定要不要拆回去。
+
+### 37.7 复现（三分钟）
+
+```text
+# 1) 打开 feature 构建（默认关闭 ⇒ 关着时 crate 仍然零依赖）
+export CARGO_HOME=<工作区>/.cargo-home CARGO_TARGET_DIR=<工作区>/target
+cargo build --release --features gdext-bindings --offline
+cp $CARGO_TARGET_DIR/release/libgw2_rebuild.so client/libgw2_rebuild.so
+
+# 2) 必须先 import（否则扩展静默不加载，`entity_drawer_check.gd` 连类都认不出来）
+export XDG_DATA_HOME=$PWD/.godot-data XDG_CACHE_HOME=$PWD/.godot-cache XDG_CONFIG_HOME=$PWD/.godot-config
+godot --headless --path client --import
+
+# 3) 验收（72 条断言，退出码 0）
+godot --headless --path client --script res://tools/entity_drawer_check.gd
+
+# 4) 回归保护（与本节无关的两条硬要求）
+cargo test --offline                          # lib 457 / 总计 1488
+cargo test --offline --features gdext-bindings # lib 463（457 + 本类 6 条）/ 总计 1494
+bash client/run.sh selftest                   # 694 passed（默认 feature 的 .so）
+```
