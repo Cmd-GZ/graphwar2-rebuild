@@ -879,3 +879,242 @@ x86 侧还有第二条**独立**证据：`res://game_room_entry.tscn` 字面量�
 实现与逐条对拍：`src/graphwar_lan_vbox.rs` + `tests/graphwar_lan_vbox.rs`。
 ⚠️ 按 `AGENTS.md` §0.2，那两处的 `cargo test` **只是回归保护，不是复原证据**；
 本节所有结论的证据是上面的地址、`.symtab` 记录与 `.rodata` 字节。
+
+## 11. 客户端联机层的两个模块（2026-11，arm64 未 strip 构建静态还原）
+
+本节回答四个"想自己写客户端连原版服务端"必须知道的问题：
+**(a)** 连接状态机有几个状态、**（b）**地址从哪来、**（c）**心跳/重连/超时、
+**（d）** LAN 与 Global 两条路怎么分工。
+
+### 11.1 证据基础（先说清楚凭什么）
+
+主证据是 **Android 2.0.60 未 strip 构建**的 `lib/arm64-v8a/libgraphwarrust.so`：
+`.symtab` 18793 个 `FUNC`，名字是完整 Rust mangled name ⇒ 不用猜函数归属。
+
+两条架构怎么对上：靠 **`panic::Location`**（`{file:&'static str, line:u32, col:u32}`，24 字节，
+在 `.data.rel.ro` 且里面的指针是 `R_AARCH64_RELATIVE` 重定位）。
+把 arm64 的 `.rela.dyn` 解析出来，就能枚举"某个源文件的所有 panic 点"；
+这些 `(行, 列)` 与 x86 构建 `fixtures/name_to_addr.tsv` 里的行号**逐条相同** ⇒ 同一份源码。
+
+本节的"观测"级结论都是这么来的：**arm64 地址** = ELF 虚地址（`readelf -sW`/`objdump` 口径），
+**x86 地址** = 本仓库既有口径（Ghidra = `+0x100000`）。
+复现只需 `readelf` + 任意反汇编器（本文用的是 capstone：解 `adrp`+`add`/`ldr` 的 rip 相对
+链得到 `.rodata` 字面量，再按 `.rela.dyn` 的 addend 还原 `&str`/`Location` 里的指针）。
+
+两个模块（`docs/02-module-map.md` §17 的模块名，文件名同名）：
+
+| 模块 | arm64 函数数 | x86 `fixtures/module_funcs.tsv` | 角色 |
+|---|---|---|---|
+| `graphwar_client_connection_handler` | 8 方法 + 3 订阅闭包（+1 连接线程本体） | 8 条 | 客户端连接状态机 + 帧收发 |
+| `graphwar_backend` | 18 方法 | 6 条 | 联机层总开关（装/拆子模块、每帧 `process`） |
+
+> **更正 `docs/07` 的口径**：`graphwar_backend` 不是"15 个方法"而是 **18 个**
+> （`.symtab` 数出来的：`new/setup_level/stop_client/stop_server/start_server/button_pressed/
+> subscribe_to_event/stop_lan_broadcaster/resubscribe_to_events/start_lan_broadcaster/
+> start_client_to_replay/get_next_clip_checkpoint/stop_server_broker_handler/
+> subscribe_to_event_with_id/start_server_broker_handler/start_client_to_local_server/
+> start_client_to_remote_server/process`）。`docs/19-android.md` 说"它才是联机层不是广告"这条是对的。
+
+### 11.2 （a）连接状态机：**4 个状态**，与 `GameState`（8 个）是**两套**
+
+`enum ConnectionState` 是 **1 字节**枚举，放在 `Arc<Mutex<ConnectionState>>` 里
+（`Mutex` 的 `futex` 在 `+0x10`、`poison` 在 `+0x14`、**数据首字节 `+0x15`**；
+`get_connection_state` 就是 `ldrb w0,[x20,#0x15]`，arm64 `0x48ae70`）。
+
+| 判别值 | 谁写 | arm64 |
+|---|---|---|
+| 0 `Disconnected` | `disconnect()`，关流之后**无条件**写 | `0x48aa10 strb wzr` |
+| 1 `Connecting` | `connect()`，起线程**之前** | `0x48b900 strb #1` |
+| 2 `Connected` | 连接线程：TCP 握手成功（`set_nonblocking` 之后） | `0x48de10 strb #2` |
+| 3 `Failed` | 连接线程：`connect_timeout` 返回 `Err` | `0x48dd1c strb #3` |
+
+唯一的读取者是 `tick()`，判据是 `cmp w8,#2; b.lo` + `b.ne`（`0x48b4a4`/`0x48b4b0`），
+把 `0..=3` 切成三段：
+
+```text
+if self.latch { return }                       // 0x48b488 ldrb w8,[x0,#0x68]
+state 0 | 1  -> 什么都不做                      // 连接线程还在跑 / 已经断线
+state 2      -> 发 NewConnectionRequestEvent    // 0x48b4f4
+state >= 3   -> GameStateManager::set_state(7)  // 0x48b514 -> 0x48ae398
+latch = true                                   // 0x48b4b8 / 0x48b518
+```
+
+**闩锁（`self+0x68`）是这个设计的关键**：`connect()` 清零（`0x48b928`）、`tick()` 置 1。
+每个 `connect()` 状态机只动作一次——没有它，状态 2 会在每一帧重发 `NewConnectionRequest`。
+
+与 `docs/14` 的 `GameState`（8 个）**毫无关系**：那是 `GraphwarGameStateManager` 里的东西。
+两者唯一的交点是上表最后一行——**连接失败时把 `GameState` 置 7**（该编号对应哪个界面**未知**，
+只有"失败 → 7"是观测）。
+
+"握手完成"用的是**另一个**字段，不是 `ConnectionState`：
+
+* `self+0x00`（`u32`）= 0/1：「已握手」标志，`handle_connected_to_server` 写 1；
+* `self+0x04`（`u32`）= 服务端分配的 `connection_id`（来自 `NewConnection{connection_id}`）。
+
+```text
+handle_connected_to_server(&mut self, ev):
+    if ev.tag != 0x8000_0000_0000_0007 { panic!("explicit panic") }  // 0x48af80, LOC 249:18
+    self.connected = 1; self.connection_id = ev.connection_id;       // 0x48af94 stp w9,w8,[x0]
+```
+
+上面那个 `0x8000_0000_0000_000N` 是 **`GraphwarEvent` 的 Rust 内部判别值**，
+**不是** `docs/07` 的协议 tag（协议 tag 是 serde 侧的事）。本模块只碰两个：
+`…0007` = ConnectedToServer、`…0006` = 断线事件（`.rodata 0x198680` 的 16 字节常量）。
+
+### 11.3 （b）地址从哪来：**两条起点，都只认 IP 字面量**
+
+1. **本机 / 局域网（host）**：`start_client_to_local_server`（arm64 `0x407848`）
+   在栈上**逐字段拼** `SocketAddr`：
+   `strh #1`（枚举变体 1 = `V6`）→ 16 字节来自 `.rodata 0x197680`
+   （**全零 + 末尾 1 = `::1`**）→ `flowinfo`/`scope_id` 清 0 → `strh` 写端口。
+
+   ⇒ **本机联机走 IPv6 环回 `[::1]:<port>`，不是 `127.0.0.1`**，与 §1.1 抓到的
+   `"address":"[::1]:35245"` 完全一致。端口现取（`GraphwarGameServer::get_server_port()`），
+   且 `self+0x60 == 4` 或端口为 `None` 就**直接返回** ⇒ 必须先起服务端。
+
+2. **远端 / 直连**：`start_client_to_remote_server(&mut self, addr: &SocketAddr)`
+   （arm64 `0x407b9c`）——它**不解析任何字符串**，拿到的已经是解析好的 `SocketAddr`。
+   解析发生在调用方，用的是 `SocketAddr::from_str`（该符号全库只有一份，arm64 `0x83f174`）：
+   * `GraphwarRootNode::process_button_pressed`（`0x3a6d48`）：`0x3a9400` 解析 → `0x3a9470` 调它；
+   * LAN 大厅点某一行：`IVBoxContainer::process`（`0x450c20`）→ `0x450d68` 调它。
+
+   ⇒ **只认 `IP:port` 字面量**：`[::1]:35245` 可以（IPv6 要带方括号），
+   `example.com:1234` **不行**——`from_str` 是纯文法解析，**没有 DNS**。
+   这条对"自己写客户端"很关键：想连域名得自己先解析成 IP。
+
+3. **全局地址的文本**从哪来：一个 `thread::spawn` 闭包里
+   `reqwest::blocking::get("https://graphwar.com/graphwar_II_ip.txt")`（39 字节，
+   arm64 `0x48e130` 的 `0x48e168` + `mov w1,#0x27`），失败记
+   `"Failed to get global server address."`（36 字节，`0x1a06f4`），并缓存到
+   `"user://local_ip.config"`（`0x1a16ca`，`godot_core::tools::save_load::{load,save}` 成对使用）。
+   缓存**文件格式未知**（没读到过真实文件）。
+   全部来源都拿不到时兜底 `"127.0.0.1:8080"`（`0x1a067a`，同样过 `from_str`）。
+   ⇒ §6.6.2 记录的"这个构建里命令行参数是死的，实际只有 HTTPS 一条路"与本节一致。
+
+### 11.4 （c）心跳 / 重连 / 超时：**没有心跳，也不重连**
+
+* **`GameHeartbeat`（协议 tag 63）不由本模块发，也不由它订阅。**
+  证据：`new` 的订阅表里**没有**它（见 §11.6）；`tick` 里唯一发出去的帧是
+  `NewConnectionRequest`；整个 `.rodata` 里 `game_heartbeat_event` 出现 **0 次**
+  （只有 serde 侧的结构体名 `GameHeartbeatEvent`，`0x19ea9c`/`0x19f6a1`），
+  `subscribe_to_event` 的名字分派器里也没有它。
+  ⇒ §6.5 里"GameHeartbeat 存在但从未抓到过"有了新解释：**这个构建里没有代码会发它**。
+* **唯一的时间常量是连接超时 30 秒**：`TcpStream::connect_timeout(addr, Duration::from_secs(30))`
+  （`0x48dccc mov w1,#0x1e` + `0x48dcd0 mov w2,wzr`）。没有重连退避、没有 keepalive 周期。
+* **断线靠错误发现**，三个入口同一个动作（§11.6 的 `forward_event` / `tick` 读循环 / `disconnect`）：
+
+| 入口 | 触发 | arm64 | 动作 |
+|---|---|---|---|
+| `forward_event` | `write_event` 返回 `Err` | `0x48acc4` | 把断线事件 `…0006` **本地**派发给 `GraphwarRemoteEventHandler` |
+| `tick` 读循环 | `read_event` 返回 `Err` 且 `ErrorKind != WouldBlock(13)` | `0x48b67c cmp w8,#0xd` | 同上（且只在已握手时派发：`0x48b698 tbz w8,#0`） |
+| `disconnect()` | 玩家主动断 | `0x48a8c8 cmp w8,#1` | 先把断线事件 `write_event` **写出去**，再关流、再置 0 |
+
+  非阻塞读空（`WouldBlock`）被当成"这一帧没数据"直接吞掉——**不是**断线。
+* 读写错误路径**不写** `ConnectionState`（**推断**：`tick` 只读状态不写，`disconnect` 才写 0；
+  没有观测到"错误之后状态变成什么"）。
+
+### 11.5 （d）LAN 与 Global：**两个独立字段，不是二选一开关**
+
+`GraphwarBackend` 把四个子模块**内联**在肚子里：
+
+| 偏移 | 类型 | 通道 |
+|---|---|---|
+| `+0x110` | `GraphwarLanBroadcasterV`（内联） | LAN：UDP / IPv6 组播 `ff02::1`（本地常量 `::1`）/ 明文 JSON / **换行分帧** |
+| `+0x228` | `Option<GraphwarServerBrokerHandler>`（内联） | Global：TCP / **`u16` 大端长度 + JSON** |
+| `+0x1e0` | `Option<GraphwarGameClient>` | 客户端（内含 §11.2 的 handler） |
+| `+0x220` | `Rc<RefCell<GraphwarModuleContainer>>` | 模块容器 |
+
+* **房主两条一起装**：`GraphwarRootNode::process_button_pressed`（`0x3a6d48`）在同一个分支里
+  连续调 `start_lan_broadcaster`（`0x3a79e8` 等 6 处）与 `start_server_broker_handler`
+  （`0x3a7a28` 等 6 处）。⇒ 原版"开房"= 两路都挂，**互不排斥**。
+* **"看哪一路"不是本模块的事**：本模块每帧只负责把活着的子对象挨个 `process` 一遍
+  （顺序固定，见 §11.6）。挑哪一路显示是 `GraphwarLanVBox` 的 `show_global`
+  （§10.10 第 3 条已记为"谁写未知"）。
+* **两路在大厅里汇成同一张表**：`IVBoxContainer::process`（`0x450c20`）里
+  `GraphwarLanBroadcasterV::get_game_info` 与 `GraphwarServerBrokerHandler::get_game_info`
+  **都调**，两处返回的都是同一个 9 字段 `GameInfo`（§6.4 逐位验证过的那张）。
+
+`process()`（arm64 `0x407ef0`）的固定顺序，两个守卫：
+
+```text
+if client.is_some() {                       // 0x407f18
+    if mode != 2 { ReplayPlayer::process }  // 0x407f20 cmp x8,#2
+    GameClient::process                     // 0x407f38
+}
+if lan.is_some() {                          // 0x407f48
+    if backend.state != 4 && lan.ready {    // 0x407f54 cmp x8,#4 / 0x407f60 cbz
+        if let Some(port) = server_port() { LanBroadcaster::set_room_info(...) }
+    }
+    LanBroadcaster::process                 // 0x408224
+}
+if broker.is_some() { Broker::process }     // 0x40822c → 尾调用 0x48a078
+```
+
+`set_room_info` 的入参（`0x3ddeb4` 是它的被调者）把房间名、人数、`game_state`、
+`axis_mode`/`function_mode`/`turn_mode`/`time_mode`/`locked` 与端口一起塞进广播——
+即 §1.1 那条 9 字段 LAN 报文就是从这里出去的。
+
+### 11.6 客户端 handler：订阅 26 个事件名，只做"转发"
+
+`new`（arm64 `0x48b048`）在 `Rc::new_cyclic` 里订阅：
+
+* `tick_event`（长度 `0xa`，`0x1a016a`）→ `tick`
+* `connected_to_server_event`（长度 `0x19`，`0x1a01ce`）→ `handle_connected_to_server`
+* **24 个** `*_request_event`（栈上 24 项 `(&str, usize)` 表，`0x48b15c..0x48b298`，
+  `mov w25,#1` + `cmp x25,#0x19` 循环 24 次）→ `forward_event`
+
+24 个名字，**顺序 = 表顺序（不是字母序）**：
+
+```text
+tick_request_event            new_connection_request_event   new_player_request_event
+game_start_request_event      function_fire_request_event    function_update_request_event
+change_team_request_event     remove_player_request_event    add_soldier_request_event
+remove_soldier_request_event  axis_mode_change_request_event function_mode_change_request_event
+turn_mode_change_request_event time_mode_change_request_event game_name_request_event
+new_bot_request_event         name_request_event             skin_graphics_request_event
+face_graphics_request_event   hat_graphics_request_event     functions_calculated_event
+rank_request_event            lock_request_event             chat_message_request_event
+```
+
+`forward_event` 只有一句话：拿 `Mutex<GraphwarStreamBuffer>` 的锁，`write_event`，
+出错就按 §11.4 走断线。**不解析、不改写**。
+
+三个闭包分别把 `weak_caller` 打到 `forward_event`(`0x48ac54`)、
+`handle_connected_to_server`(`0x48af7c`)、`tick`(`0x48b468`)（各 44–48 字节的
+`adr x1,<目标>` + `b WeakCaller::call`）。
+
+**最小可连通客户端**（给"自己写客户端"的人）：
+
+```text
+TCP 连到 <ip>:<port>  ->  发 {"NewConnectionRequest":{"major_version":"2.0","minor_version":"60"}}
+                      <-  收 {"NewConnection":{"connection_id":N}}  （之后可以什么都不发）
+```
+
+版本串的来源是硬的：`make_new_connection_request_event`（arm64 `0x4693c0`）在堆上
+逐字节写 `"2.0"`（`mov w9,#0x2e32`+`mov w8,#0x30`）与 `"60"`（`mov w9,#0x3036`）。
+
+### 11.7 只能标"推断/未知"的部分
+
+| # | 结论 | 等级 | 缺什么 |
+|---|---|---|---|
+| 1 | 状态 2 = "TCP 已通、尚未握手" | **观测**（`0x48de10` 在 `set_nonblocking` 成功后写 2；`tick` 见 2 就发握手帧） | — |
+| 2 | 状态 3 = "连接失败"，`GameState=7` 是失败态 | 状态迁移是**观测**；`7` 的界面语义**未知** | 没有 7 的枚举名/画面证据 |
+| 3 | 读写错误后 `ConnectionState` 保持原值 | **推断** | 没观测到错误之后的状态字节 |
+| 4 | `read_event` 的 `0x…4a` 返回值 = EOF 还是"暂时无事件" | **未知** | 两个"无事件"返回值只分得出哪个走错误路 |
+| 5 | `"127.0.0.1:8080"` 的确切生效点 | **推断**：它被 `SocketAddr::from_str` 解析（`0x487fe8`/`0x4880e0`），位于 `subscribe_to_event` 体内（内联进来的解析器），何时落到这条兜底没跑起来验证 | 真机抓一次"没网"启动 |
+| 6 | `user://local_ip.config` 的文件格式 | **未知** | 没读到真实文件 |
+| 7 | `GraphwarBackend+0x00 == 2`（跳过回放）、`+0x60 == 4`（本机联机守卫）、`+0x180` 的意义 | **未知** | 只观测到比较，没有写点归属 |
+| 8 | 订阅表里第 25 个栈槽（`0x196af0` 的 `(0, 0x18)`） | **未知**：循环只读 24 项，这个槽没有被读 | 可能是编译器残留 |
+
+### 11.8 实现与验收
+
+* `src/graphwar_client_connection_handler.rs`：`ConnectionState`（4 变体）、
+  `tick_action`（三段分派 + 闩锁）、`state_after_connect_attempt`、26 个事件名、
+  结构体/`Mutex` 布局常量、16 条 `Location` 表。
+* `src/graphwar_backend.rs`：18 个方法的表 + 12 条 `Location`、`process_steps`
+  （5 步 + 两个守卫）、`ClientTarget`/`HostChannel`、地址常量（`::1`、`ff02::1`、
+  `graphwar_II_ip.txt`、`local_ip.config`、`127.0.0.1:8080`）、默认房名。
+* 两者**都不碰网络、不碰文件**，只有常量与纯判定函数——"意图结构"而不是实现。
+* ⚠️ 按 `AGENTS.md` §0.2，`tests/graphwar_client_connection_handler.rs` 与
+  `tests/graphwar_backend.rs` 的通过**只是回归保护，不是复原证据**；
+  本节所有结论的证据是上面的地址、`.symtab` 记录与 `.relro`/`.rodata` 字节。
