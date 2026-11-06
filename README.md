@@ -104,9 +104,13 @@
 
 ⇒ 只有 A 类那一条是"补熵就能逐位"；B 类那两条永远只能是"退化口径"。别把这两类混成一类。
 
-**Rust 实现状态**：`parse` / `eval` / `calculate` / `shot` / `plane` / `events` / `life` / `settle` /
-`turnstate` / `protocol` / `api` / `broker` / `game` / `server` / `graphwar_game_server` / `levelgen` / `aigen` 均已可运行。
-**`cargo test --offline` = 333 条全绿**（本机实测，0 失败；`src/` 共 23 个 `*.rs`）。
+**Rust 实现状态**：`math_function`（解析/求值/反打印）/ `graphwar_path_calculator` / `graphwar_shot_calculator`
+（含 `settle`）/ `plane` / `events` / `graphwar_life_manager` / `turnstate` / `graphwar_turn_manager` /
+`graphwar_level_generator` / `graphwar_function_evolutionator` / `graphwar_tick_handler` /
+`graphwar_replay_player` / `graphwar_game_server` / `game` / `server` / `graphwar_play_screen_control`
+均已可运行；桥接层在 `src/_scaffold/`（`api` / `protocol` / `broker` / `capi` / `gdext*`）。
+**`cargo test --offline` 全绿**（条数每轮在变，**别把它当进度**——见 `AGENTS.md` §0.2）；
+`src/` 现有 33 个 `*.rs`，其中 12 个是 `src/_scaffold/` 里我方自造的文件。
 **客户端自检 = 604 条断言**：有资产时全绿；缺资产时 `175 passed, 10 skipped`，每条 skip 都显式报原因。
 模块全集与行号下界见 [`docs/02-module-map.md`](docs/02-module-map.md)。
 
@@ -204,7 +208,8 @@ gw2_simulate(text,x0,y0,step,flip,ode,obstacles,n,count)   -> 首个命中序号
 
 ```
 docs/        逆向得到的实现说明（99 篇现行 + archive/ 32 篇过程档案）
-src/         Rust 复原实现（可编译，23 个模块）
+src/         Rust 复原实现：**文件名 = 原版模块名**（`graphwar_*.rs` × 58 + 12 个非 graphwar 模块），
+             我方自造的桥接/工具在 src/_scaffold/；对照表见 docs/02-module-map.md §17
 client/      Godot 4.7.2 重建客户端（15 个界面；媒体资产不入库，用 tools/extract_assets.py 从自己的 pck 解）
 tests/       与真二进制对齐用的用例（cargo test 333 条）
 fixtures/    真值夹具（已入库）

@@ -891,8 +891,13 @@ function/mod|function/to_text)\.rs' --include='*.md' --include='*.rs' --include=
 
 ### 17.6 本轮改了什么（一句话）
 
-1. 1:1 的 12 个文件用 `git mv` 改成原版名（主文件用原版名，被拆出来的第二文件放同名目录）；
-2. 11 个我方自造模块移进 `src/_scaffold/` 并加 `README.md`；
+1. **14 个文件**用 `git mv` 改成原版名（`git log --follow` 全部能追到搬动之前）：
+   * 8 个整文件 1:1 改名：`turn` / `aigen` / `play_control` / `life` / `path` / `tick` / `replay` / `serverloop`；
+   * 6 个"一个原版文件、我方两份"：主文件用原版名，第二份进同名目录
+     （`graphwar_shot_calculator/settle.rs`、`graphwar_level_generator/tables.rs`、`math_function/to_text.rs`）；
+2. **11 个**我方自造模块移进 `src/_scaffold/`（外加 `mod.rs` 与 `README.md`，那里写明"这些不是原版的东西"）；
 3. 混装的 5 个文件（`events` / `game` / `plane` / `server` / `turnstate`）**原地不动**，登记在 §17.4；
 4. `polish_notation_converter.rs` 的对应关系按锚点**更正**（旧矩阵把 `to_text.rs` 记在它名下）。
+5. 全仓库的 `src/<旧名>.rs` 引用（文档 / `client/**.gd` / 代码注释 / `tools/coverage_matrix.py` 的映射）
+   一并改完，并用 §17.5 的两条命令自查过。
 

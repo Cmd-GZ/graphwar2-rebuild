@@ -869,7 +869,7 @@ def render_md(rows, spot_rows, totals, grand, meta):
     for path, why in SELF_MADE:
         A("| `%s` | %s |" % (path, why))
     A("")
-    A("合计 **%d 处**。其中 `src/broker.rs` 和 `client/` 最容易误判：前者是我们自己写的"
+    A("合计 **%d 处**。其中 `src/_scaffold/broker.rs` 和 `client/` 最容易误判：前者是我们自己写的"
       "服务端（原版只有连 broker 的客户端），后者整个是仿制品。\n" % len(SELF_MADE))
     A("## 5. 抽查：三个模块的函数数是手数出来的\n")
     A("`--check` 会重算并断言下面三个数没漂。\n")

@@ -42,10 +42,19 @@
 3. **不提交二进制衍生内容。** `rsc/`（游戏资源）、`*.pck`、反编译产物一律 gitignore。
    上游 `AGENTS.md` 有同样的规则，理由也适用于此处（体积 + 版权）。
 
+4. **文件名就是证据：复原文件用原版名，自造的进 `src/_scaffold/`。**
+   原版是 **58 个 `graphwar_*.rs` + 12 个非 `graphwar_` 游戏模块**（`docs/coverage-matrix.tsv`）。
+   `src/` 根目录下的每个文件都必须能指到其中某一个（`docs/02-module-map.md` §17）；
+   指不到的（GDExtension 入口、C ABI、报文装配、对拍器、ChaCha12、gzip、broker 服务端）
+   只能放 `src/_scaffold/`，并在那里说明"这不是原版的东西"。
+   **一个文件混了多个原版模块而边界无证据时，不猜、不搬**——原地保留，登记到 §17.4 的待拆表。
+
 ## 目录
 
 ```
-src/          Rust 复原实现（内核 + 对拍/回放等新模块）
+src/          Rust 复原实现。**文件名 = 原版模块名**（`graphwar_*.rs` × 58 + 12 个非
+              `graphwar_` 游戏模块；对照表见 docs/02-module-map.md §17）；
+              我方自造的桥接/工具全部在 src/_scaffold/（原版没有对应物）
 tests/        与真二进制对齐的验收（11 个 test 二进制；条数会变，别写死在这里）
 fixtures/     真值夹具（已入库；重新生成见 tools/gen_fixtures.py）
 examples/     可跑的小工具（serve_match / replay_diff / diff_conv / ai_explain …）

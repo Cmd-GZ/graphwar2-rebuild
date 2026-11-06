@@ -23,7 +23,7 @@
 
 ```
 原版可归属函数 488 个，分布在 70 个模块（58 个 graphwar_*.rs 占 431、12 个非 graphwar 占 57）
-   已实现 138（逐位 98 / 观测 40 / 推断 0）｜ 未做 265 ｜ 完全未知模块 22（graphwar 里 15）
+   已实现 147（逐位 98 / 观测 49 / 推断 0）｜ 未做 256 ｜ 完全未知模块 22（graphwar 里 15）
 归属率 527 / 13263 个 Ghidra 函数 = 4.0%（硬上限：纯计算函数没有 panic 就没有锚）
 ```
 
@@ -45,6 +45,22 @@
    所以棋盘仍用旧近似画法；
 4. 5 个纯未知模块（effect_manager / entity_effect_manager / game_recorder / graphics_manager / video_writer）。
 
+## 0.5 源码目录约定（2026-11 起，**看代码前先读这条**）
+
+`src/` 的文件名现在**就是原版模块名**，所以读代码不用再猜对应关系：
+
+* `src/graphwar_*.rs` = 58 个原版 `graphwar_*.rs` 之一（如 `graphwar_turn_manager.rs`）；
+  一个原版文件被我方拆成两份时，主文件用原版名、第二份进同名目录
+  （`graphwar_shot_calculator/settle.rs`、`graphwar_level_generator/tables.rs`、
+  `math_function/to_text.rs`）；
+* `src/entity_drawer.rs` = 12 个非 `graphwar_` 游戏模块之一；
+* `src/events.rs` / `game.rs` / `plane.rs` / `server.rs` / `turnstate.rs` = **混装**了多个原版模块、
+  边界尚未证实，按 `AGENTS.md` 铁律 2 原地保留并登记在待拆表里；
+* `src/_scaffold/` = **我方自造**的桥接/工具（GDExtension 入口、C ABI、报文装配、对拍器、
+  ChaCha12、gzip、broker 服务端）——原版没有这些东西，目录里有 `README.md` 逐条说明。
+
+完整对照表（70 个模块逐行 + 状态 + 依据）见 [`02-module-map.md`](02-module-map.md) §17。
+
 
 内核（函数语言 / 弹道 / 掩膜 / 命中 / 协议 / broker / 回合与生命 / 服务端 / 关卡 / 战役数据 / AI 参数）
 已复原到"逐位验证"或"强观测"；`client/` 里 **15/15 界面**能启动、能开一局，弹道与命中走内核，
@@ -56,7 +72,7 @@
 
 | 部件 | 代码 | 验收 | 文档 |
 |---|---|---|---|
-| 函数文法 / 求值 / token→文本 | `src/math_function/` | 90 例文法 + 37/70 条真值夹具；`to_text` 1032/1032 | [`03`](03-function-language.md) |
+| 函数文法 / 求值 / token→文本 | `src/math_function.rs`（+ `src/math_function/to_text.rs`） | 90 例文法 + 37/70 条真值夹具；`to_text` 1032/1032 | [`03`](03-function-language.md) |
 | 等弦长采点（含 RK4） | `src/graphwar_path_calculator.rs` | 224 条真值夹具 + **oracle 24/24 逐点逐位相等** | [`04`](04-path-sampling.md) §9 |
 | 修正常数 + 开火原语 | `src/graphwar_shot_calculator.rs` | 端到端冒烟 + 上游 648 例对拍 + 装配校验 15 组 | [`05`](05-shot-pipeline.md) |
 | 坐标 / 掩膜 / 光栅化 | `src/plane.rs` | 与真二进制**逐字节 / 300 随机点**一致；摧毁 = 挖 `r=0.5` 洞 | [`08`](08-plane.md) §10 |
