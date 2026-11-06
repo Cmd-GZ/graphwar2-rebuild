@@ -25,7 +25,7 @@
 ## 2. 做法
 
 1. 用 `src/plane.rs::rasterize` 把 17 个障碍和 4 名士兵画进 1000×600 掩膜；
-2. 用 `src/shot.rs::shot_points` 从抓到的起点、用抓到的函数文本（`0.00`）重算轨迹；
+2. 用 `src/graphwar_shot_calculator::shot_points` 从抓到的起点、用抓到的函数文本（`0.00`）重算轨迹；
 3. 沿轨迹逐点查 `is_occupied`，跳过开火者自身 0.5 半径内的点；
 4. 与抓到的 `QueueDestroyObstacle` 位置比较。
 

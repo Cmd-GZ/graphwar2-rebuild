@@ -208,9 +208,9 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 
 ### 6.3 对实现的影响（**没有改物理**）
 
-* `src/settle.rs::resolve`、`src/graphwar_path_calculator.rs`、`src/plane.rs`、`src/shot.rs` **不需要改**：
+* `graphwar_shot_calculator::settle::resolve`、`src/graphwar_path_calculator.rs`、`src/plane.rs`、`src/graphwar_shot_calculator.rs` **不需要改**：
   "每发独立算"正是现在的行为，而真游戏的死亡集合也确实是并集。
-* **要改的是事件生成**（`src/settle.rs::events` / `src/game.rs::Match::fire`）：
+* **要改的是事件生成**（`graphwar_shot_calculator::settle::events` / `src/game.rs::Match::fire`）：
   现在每发各自产出 `LifeQueuedDeath`，如果以后要做"一个回合多发同时结算"，
   需要 (a) 先算完所有发的弹道与命中，(b) 把 (到达 tick, 受害者) 按 tick 排序，
   (c) **每个受害者只产出一次死亡事件**，(d) 同一受害者被多发的其余命中直接丢弃。

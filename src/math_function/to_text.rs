@@ -4,7 +4,7 @@
 //! pos: &mut usize)`，sret 在 `rdi`）。默认分支 panic 的 `Location` 指向
 //! **`src/math_function.rs:285:28`**（`.data.rel.ro` 的 `@0x95fea8` + 字符串
 //! `@0x1b52cd`），所以它和 `Function` 枚举、`parse`、`eval` 同属"数学函数"这一层——
-//! 本 crate 因此把它放在 `src/function/`，而不是 `src/events.rs`。
+//! 本 crate 因此把它放在 `src/math_function/`，而不是 `src/events.rs`。
 //! 依据与地址见 `docs/119-token-to-text.md`。
 //!
 //! 行为规范（全部由 unicorn 直接调 `0x4ec160` 逐例验证，见 `fixtures/to_text.tsv`）：

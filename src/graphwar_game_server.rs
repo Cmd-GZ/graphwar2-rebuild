@@ -43,11 +43,11 @@
 
 use crate::graphwar_function_evolutionator::VarMode;
 use crate::game::{AiConfig, Match, PopScope, TurnStart};
-use crate::levelgen;
+use crate::graphwar_level_generator;
 use crate::protocol::{parse_message, Frame, RawMessage};
 use crate::rng::ChaCha12;
 use crate::server::{on_new_connection, on_tick_request, RoomState};
-use crate::settle::Target;
+use crate::graphwar_shot_calculator::settle::Target;
 use crate::graphwar_turn_manager::{SkipReason, Team};
 
 use std::io::{Read, Write};
@@ -161,7 +161,7 @@ pub struct TurnRecord {
     pub evolved: bool,
     /// 进化后写进该士兵槽的 token 数（没进化 = 0）。
     pub function_tokens: usize,
-    /// AI 这一回合说出的**函数文本**（`function::to_text`，`0x4ec160`）。没进化 = `None`。
+    /// AI 这一回合说出的**函数文本**（`math_function::to_text`，`0x4ec160`）。没进化 = `None`。
     ///
     /// 它必须与 `begin_next_turn` 那条 `FunctionInfo.function` 逐字符相同。
     pub function_text: Option<String>,
@@ -174,14 +174,14 @@ impl TurnRecord {
     fn from_start(m: &Match, player_id: i64, st: &TurnStart) -> Self {
         let announced = st.decision.broadcast();
         // AI 说话的唯一来源：本回合进化的 token（= 写进槽的那份）。
-        let function_text = st.evolution.as_ref().map(|e| crate::function::to_text(&e.tokens));
+        let function_text = st.evolution.as_ref().map(|e| crate::math_function::to_text(&e.tokens));
         // 修正后的文本用**射手自己的位置与朝向**算，与 `Match::fire` 同一口径。
         let corrected = match (function_text.as_deref(), announced) {
             (Some(text), Some((_, sid))) => m
                 .soldiers
                 .iter()
                 .find(|t| t.id == sid)
-                .map(|t| crate::shot::corrected_text(text, t.x, t.y, st.decision.flip().unwrap_or(false))),
+                .map(|t| crate::graphwar_shot_calculator::corrected_text(text, t.x, t.y, st.decision.flip().unwrap_or(false))),
             _ => None,
         };
         TurnRecord {
@@ -537,7 +537,7 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
                 started = true;
                 let mut rng = ChaCha12::from_seed(&cfg.seed);
                 let mut next = || rng.next_u64();
-                let obstacles = levelgen::generate(&mut next, 0);
+                let obstacles = graphwar_level_generator::generate(&mut next, 0);
 
                 let mut msgs: Vec<String> = obstacles
                     .iter()

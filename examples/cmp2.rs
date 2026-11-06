@@ -1,4 +1,4 @@
-use gw2_rebuild::function::parse;
+use gw2_rebuild::math_function::parse;
 use gw2_rebuild::graphwar_path_calculator::{calculate, Mode};
 fn main() {
     // 直接用"已修正"的完整文本，不再做 correction/shifted

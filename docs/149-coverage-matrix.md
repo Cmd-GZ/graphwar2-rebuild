@@ -5,7 +5,7 @@
 ## 0. 一句话总账
 
 ```
-原版可归属函数 488 个，分布在 70 个模块（58 个 graphwar_*.rs 占 431、12 个非 graphwar 游戏模块占 57）；我们已实现 148 个函数，其中 逐位 98 / 观测 50 / 推断 0；未做 255；完全未知的模块 22 个（graphwar 里 15 个）。
+原版可归属函数 488 个，分布在 70 个模块（58 个 graphwar_*.rs 占 431、12 个非 graphwar 游戏模块占 57）；我们已实现 147 个函数，其中 逐位 98 / 观测 49 / 推断 0；未做 256；完全未知的模块 22 个（graphwar 里 15 个）。
 ```
 
 拆成两个口径（下面的数字全部由脚本算出，重跑即复现）：
@@ -13,7 +13,7 @@
 | 口径 | 模块数 | 可归属函数 | 已实现 | 逐位 | 观测 | 推断 | 未做 | 未知模块 |
 |---|---|---|---|---|---|---|---|---|
 | 58 个 `graphwar_*.rs` | 58 | 431 | 140 | 91 | 49 | 0 | 224 | 15 |
-| 12 个非 graphwar 的游戏模块 | 12 | 57 | 8 | 7 | 1 | 0 | 31 | 7 |
+| 12 个非 graphwar 的游戏模块 | 12 | 57 | 7 | 7 | 0 | 0 | 32 | 7 |
 
 还有 `weak_caller.rs`（40 个归属函数）按 `docs/02` §9 判为第三方依赖库，单独一行留在 TSV 里备查，**不计入**任何合计。
 
@@ -98,7 +98,7 @@
 | `graphwar_graphics_manager.rs` | 6 | 8 | — | 0 | 未知 |
 | `graphwar_lan_broadcaster_v6.rs` | 4 | 4 | — | 0 | 未做 |
 | `graphwar_lan_vbox.rs` | 11 | 19 | — | 0 | 未知 |
-| `graphwar_level_generator.rs` | 4 | 26 | `src/levelgen.rs+src/levelgen_tables.rs` | 28 | 逐位 |
+| `graphwar_level_generator.rs` | 4 | 26 | `src/graphwar_level_generator.rs+src/graphwar_level_generator/tables.rs` | 28 | 逐位 |
 | `graphwar_level_manager.rs` | 40 | 590 | — | 0 | 未做 |
 | `graphwar_life_manager.rs` | 9 | 12 | `src/graphwar_life_manager.rs` | 7 | 逐位 |
 | `graphwar_lobby_control.rs` | 1 | 6 | — | 0 | 未做 |
@@ -124,7 +124,7 @@
 | `graphwar_server_broker_handler.rs` | 3 | 5 | — | 0 | 未做 |
 | `graphwar_server_connection_handler.rs` | 6 | 24 | `src/server.rs` | 7 | 逐位 |
 | `graphwar_setup_control.rs` | 21 | 70 | — | 0 | 未做 |
-| `graphwar_shot_calculator.rs` | 1 | 12 | `src/settle.rs+src/shot.rs` | 23 | 逐位 |
+| `graphwar_shot_calculator.rs` | 1 | 12 | `src/graphwar_shot_calculator.rs+src/graphwar_shot_calculator/settle.rs` | 23 | 逐位 |
 | `graphwar_soldier_manager.rs` | 4 | 5 | — | 0 | 未知 |
 | `graphwar_target_manager.rs` | 3 | 4 | — | 0 | 未做 |
 | `graphwar_team_manager.rs` | 7 | 10 | — | 0 | 未知 |
@@ -144,10 +144,10 @@
 | `function_button_manager.rs` | 2 | 3 | — | 0 | 未知 |
 | `function_drawer.rs` | 1 | 1 | — | 0 | 未知 |
 | `function_history_recorder.rs` | 1 | 3 | — | 0 | 未知 |
-| `math_function.rs` | 7 | 15 | `src/function/mod.rs+src/function/to_text.rs` | 43 | 逐位 |
+| `math_function.rs` | 7 | 15 | `src/math_function.rs+src/math_function/to_text.rs` | 43 | 逐位 |
 | `obstacle_drawer.rs` | 2 | 7 | — | 0 | 未知 |
 | `player_showcase.rs` | 10 | 18 | — | 0 | 未知 |
-| `polish_notation_converter.rs` | 1 | 2 | `src/function/to_text.rs` | 16 | 观测 |
+| `polish_notation_converter.rs` | 1 | 2 | — | 0 | 未做 |
 | `server_broker_request_connection.rs` | 0 | 1 | — | 0 | 未知 |
 
 完整的 evidence（每行一句话的依据）在 `docs/coverage-matrix.tsv`，那张表是本脚本的唯一真源，本页的表格由它渲染。
@@ -238,5 +238,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（32 个文件、873 条 `fn`） | `8a5840f6135fc6696b6b8faa189728ef997baf98c0c1e5b1bed25296f312d659` |
+| `src/` 树（32 个文件、873 条 `fn`） | `5fbb88dacbacc47532b14a6a8f41e6bea473e70b7dfa90539bf1ba187a3e4ca5` |
 

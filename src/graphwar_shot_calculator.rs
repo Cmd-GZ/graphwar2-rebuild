@@ -3,9 +3,12 @@
 //! 对应二进制：修正常数 `@0x3c5f70`，改写函数串 `@0x3c5c50`。
 //! 见 `docs/05-shot-pipeline.md`。
 
-use crate::function::{eval, parse};
+use crate::math_function::{eval, parse};
 use crate::graphwar_path_calculator::{calculate, Mode};
 use crate::{Function, Token, STEP_DEFAULT};
+
+/// 开火结算的"停止点 + 致死"那一半（原版同一个文件，我方按主题拆出）。
+pub mod settle;
 
 /// 修正常数 `c = y0 - f(±x0)`；实际射击使用 `f(x) + c`。
 pub fn correction(tokens: &[Token], x0: f64, y0: f64, flip: bool) -> f64 {
@@ -178,7 +181,7 @@ mod tests {
 /// ⚠️ 2026-11 之前这里是写死的 `format!("{} + {:.3}", …)`：`c < 0` 时会发出
 /// `" + -3.686"`，真机从没这么写过（`docs/127` §5 第 1 条、§2.1 第 3 条）。
 pub fn corrected_text(text: &str, x0: f64, y0: f64, flip: bool) -> String {
-    let toks = crate::function::parse(text);
+    let toks = crate::math_function::parse(text);
     format!("{}{}", text, correction_text(&toks, x0, y0, flip))
 }
 

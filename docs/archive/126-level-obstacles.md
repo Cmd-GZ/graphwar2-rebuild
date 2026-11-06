@@ -20,14 +20,14 @@
 | 项 | 结果 | 档位 |
 |---|---|---|
 | 新内核方法 | `GW2Rebuild.level_obstacles(level_index: int, seed: int) -> Dictionary{ok, obstacles, error}` | 逐位验证（§5.3 的注册日志 + GDScript 实调成功） |
-| 生成本体 | **复用** `src/levelgen.rs` 既有实现（`generate` 13/13 逐位、`generate_center`），本文件没有第二份公式 | 逐位验证（单测 `agrees_with_levelgen_entry_point_bit_for_bit` / `seeded_entry_reuses_the_verified_generators`） |
-| 21 关参数表 | `src/levelgen.rs::LEVEL_OBSTACLE_PARAMS`，逐条抄自 `docs/118` §7.1（每行注释带该关的闭包预设地址） | 逐位验证 + 运行时（`docs/118` 原文的 `C`+`R` 双源）；本文再加一条"照文档重抄一遍"的测试 |
+| 生成本体 | **复用** `src/graphwar_level_generator.rs` 既有实现（`generate` 13/13 逐位、`generate_center`），本文件没有第二份公式 | 逐位验证（单测 `agrees_with_levelgen_entry_point_bit_for_bit` / `seeded_entry_reuses_the_verified_generators`） |
+| 21 关参数表 | `src/graphwar_level_generator::LEVEL_OBSTACLE_PARAMS`，逐条抄自 `docs/118` §7.1（每行注释带该关的闭包预设地址） | 逐位验证 + 运行时（`docs/118` 原文的 `C`+`R` 双源）；本文再加一条"照文档重抄一遍"的测试 |
 | **障碍真的画出来了** | 是。黑色实心圆，半径 = 生成器给的 `r`（棋盘单位），逐像素与原版真帧对齐（§4） | 观测（截图 + 像素取样） |
 | **子弹真的被墙挡住** | 是。端到端手测：`x/10` 在 `first_hit=4480` 撞墙，`stop=(24.00, −0.90)`，画出来的点序列 = `4480+1` 点（§5.4） | 观测 + 逐位验证（单测 `generated_obstacles_actually_block_a_shot`） |
 | `cargo test --offline` | **272 → 287**（+15，全绿） | — |
 | `bash client/run.sh selftest` | **146 passed, 0 failed**（条数不变，**未改任何断言**） | — |
 | `bash client/run.sh dump` | `@@KERNEL available=1 hit_test=1 methods=ping,path_calculate,hit_test,level_obstacles,…` | 逐位验证 |
-| 内核改动 | `src/levelgen.rs`（参数表 + 入口）、`src/api.rs`（新方法）、`src/gdext.rs`（**+1 行**注册） | — |
+| 内核改动 | `src/graphwar_level_generator.rs`（参数表 + 入口）、`src/api.rs`（新方法）、`src/gdext.rs`（**+1 行**注册） | — |
 | 客户端改动 | `core_bridge.gd`（+52/−0）、`play_screen.gd`（+92/−7）、`plane_view.gd`（+51/−2）、`join_level_pop_up.gd`（+14/−0，父 agent 追加的弹窗配色） | — |
 | 仍未定 | **客户端自生成 vs 服务端广播**的取舍（§6.1）、障碍被摧毁的洞、我方士兵/靶子位置、三条"用户口述"的开火表现（§6.3） | — |
 
@@ -77,7 +77,7 @@ GW2Rebuild.level_obstacles(level_index: int, seed: int) -> Dictionary
 
 ## 2. 参数来源与种子语义
 
-### 2.1 21 关参数表（`src/levelgen.rs::LEVEL_OBSTACLE_PARAMS`）
+### 2.1 21 关参数表（`src/graphwar_level_generator::LEVEL_OBSTACLE_PARAMS`）
 
 `docs/118` §7.1 的「障碍（模式 / 数量）」列，21 行全抄进代码，每行注释都带该关的
 **闭包预设地址**（`C` 短码，`.data.rel.ro` 里可指认）：

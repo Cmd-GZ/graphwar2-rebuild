@@ -1,6 +1,6 @@
-use gw2_rebuild::function::parse;
+use gw2_rebuild::math_function::parse;
 use gw2_rebuild::graphwar_path_calculator::{calculate, Mode};
-use gw2_rebuild::shot::{correction, shifted_tokens};
+use gw2_rebuild::graphwar_shot_calculator::{correction, shifted_tokens};
 fn main() {
     let text = std::env::args().nth(1).unwrap_or_else(|| "x/5".into());
     let x0: f64 = std::env::args().nth(2).and_then(|v| v.parse().ok()).unwrap_or(0.0);

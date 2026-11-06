@@ -13,7 +13,7 @@
 //! ```
 //!
 //! `normal()` 是 ziggurat 标准正态采样器，表从 `.rodata` 原样导出
-//! （`levelgen_tables.rs`）。采样器会**消耗不定数量**的随机数（拒绝采样），
+//! （`graphwar_level_generator/tables.rs`）。采样器会**消耗不定数量**的随机数（拒绝采样），
 //! 这也是为什么不能用"固定偏移"去猜半径的来源。
 //!
 //! ## 三个函数的关系（`docs/103` 结论）
@@ -26,7 +26,9 @@
 //!   跳转表分派器 `FUN_004ea690` 的 case 0 产生的 0x30 字节"图案段"。
 //!   把它当成第三种关卡模式是 `docs/70` 的误读（`docs/72` 已提出怀疑）。
 
-use crate::levelgen_tables::{ZIG_NORM_F, ZIG_NORM_X};
+mod tables;
+
+use tables::{ZIG_NORM_F, ZIG_NORM_X};
 use crate::rng::ChaCha12;
 
 /// 一个障碍。

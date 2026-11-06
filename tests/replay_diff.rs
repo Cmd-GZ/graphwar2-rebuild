@@ -18,7 +18,7 @@ use gw2_rebuild::replaydiff::{
     compare_batch, compare_msg, gz, run_file, Msg, Policy, Replay,
 };
 use gw2_rebuild::server::RoomState;
-use gw2_rebuild::settle::Target;
+use gw2_rebuild::graphwar_shot_calculator::settle::Target;
 
 fn room() -> RoomState {
     RoomState {

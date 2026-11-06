@@ -248,7 +248,7 @@ r = 3.337540   4.811697   6.750724   5.694277
 
 ## 9. 实现与测试
 
-`src/levelgen.rs` 新增：
+`src/graphwar_level_generator.rs` 新增：
 
 * `PatternSegment` —— 0x30 字节记录（含布局注释）；
 * `generate_disk_pattern(next, type_code, centre)` —— 本文 §3 的实现；

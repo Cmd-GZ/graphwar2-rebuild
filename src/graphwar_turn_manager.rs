@@ -120,7 +120,7 @@ impl Team {
     /// 开火方向翻转位。**由队伍决定**，与坐标无关（`docs/105`，773 个位置样本 0 例外）。
     ///
     /// `flip = false` ⇒ 朝 `+x`；`flip = true` ⇒ 朝 `-x`（与 `graphwar_path_calculator::calculate` /
-    /// `shot::correction` 的 `flip` 参数同义）。
+    /// `graphwar_shot_calculator::correction` 的 `flip` 参数同义）。
     pub const fn flip(self) -> bool {
         match self {
             Team::One => false,

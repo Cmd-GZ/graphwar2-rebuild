@@ -7,9 +7,9 @@
 //! | 写死的地方 | 真值 | 后果 |
 //! |---|---|---|
 //! | `fire` 恒用 `graphwar_path_calculator::Mode::Normal` | `FunctionModeInfo = DiffEqFunction` 的批必须走 `Mode::Ode` | 550 发的几何整条错 |
-//! | `shot::corrected_text` 恒加后缀 | **Normal** 加 `" ± c.ddd"`，**DiffEq 不加**（`corrected_function == function`，550/550 零例外） | 550 发全错 |
+//! | `graphwar_shot_calculator::corrected_text` 恒加后缀 | **Normal** 加 `" ± c.ddd"`，**DiffEq 不加**（`corrected_function == function`，550/550 零例外） | 550 发全错 |
 //!
-//! 本模块**不改内核**（`game.rs` / `settle.rs` / `protocol.rs` 一字未动）：它自己按
+//! 本模块**不改内核**（`game.rs` / `graphwar_shot_calculator/settle.rs` / `protocol.rs` 一字未动）：它自己按
 //! `fire` 的顺序拼报文，只是把上面两条换成回放给的真值。**报文顺序、字段名、
 //! 浮点写法全部复用 `protocol::emit_*`**，所以"逐字节"这条口径没有变松。
 //!
@@ -26,7 +26,7 @@ use crate::plane::empty_mask;
 use crate::replaydiff::{
     compare_batch, split_batches, BatchVerdict, Inputs, Msg, Policy, Replay, StateMask,
 };
-use crate::settle::{resolve, Target};
+use crate::graphwar_shot_calculator::settle::{resolve, Target};
 
 /// `QueueDestroyObstacle` → `DestroyObstacle` 的延迟（与 `game.rs` 同一个常量）。
 pub use crate::game::DESTROY_DELAY_TICKS;
@@ -51,17 +51,17 @@ pub fn mode_of(function_mode: &str) -> Mode {
 ///   `function + suffix` 的字面拼接，剩下 4 条是空函数（`" + 3.333"`）；
 ///   另有 11 条函数**括号没闭合**，真值补了右括号（例：
 ///   `5/155sin(4exp(4*6cos(` → `5/155sin(4exp(4*6cos())) + 6.055`），
-///   所以先过一遍 [`crate::function::to_text`]。
+///   所以先过一遍 [`crate::math_function::to_text`]。
 pub fn corrected_function(text: &str, x0: f64, y0: f64, flip: bool, mode: Mode) -> String {
     match mode {
         Mode::Ode => text.to_string(),
         Mode::Normal => {
-            let toks = crate::function::parse(text);
+            let toks = crate::math_function::parse(text);
             format!(
                 "{}{}{}",
                 text,
                 ")".repeat(unbalanced_brackets(text)),
-                crate::shot::correction_text(&toks, x0, y0, flip)
+                crate::graphwar_shot_calculator::correction_text(&toks, x0, y0, flip)
             )
         }
     }
@@ -72,7 +72,7 @@ pub fn corrected_function(text: &str, x0: f64, y0: f64, flip: bool, mode: Mode) 
 /// 真游戏发的是 `to_text(parse(function)) + 后缀`，而它的 `to_text` **原样保留**
 /// 输入文本（740 条 Normal 里 736 条是 `function + 后缀` 的字面拼接），唯一的差别
 /// 是**没闭合的括号会被补齐**（11 条，例 `5/155sin(4exp(4*6cos(` →
-/// `5/155sin(4exp(4*6cos()))`）。本项目的 `function::to_text` 会重新加括号
+/// `5/155sin(4exp(4*6cos()))`）。本项目的 `math_function::to_text` 会重新加括号
 /// （`to_text(parse("(40)*(1/(...))")) != "(40)*(1/(...))"`），所以不能直接用它。
 pub fn unbalanced_brackets(text: &str) -> usize {
     let mut depth: i64 = 0;
@@ -103,12 +103,12 @@ pub fn explosion_point(corrected: &str, stop: (f64, f64), flip: bool, mode: Mode
     if mode != Mode::Normal {
         return stop;
     }
-    let toks = crate::function::parse(corrected);
+    let toks = crate::math_function::parse(corrected);
     if toks.is_empty() {
         return stop;
     }
     let x = if flip { -stop.0 } else { stop.0 };
-    let y = crate::function::eval(&toks, x, 0.0, 0.0);
+    let y = crate::math_function::eval(&toks, x, 0.0, 0.0);
     if y.is_nan() {
         return stop;
     }
@@ -490,7 +490,7 @@ pub fn probe_file(path: &std::path::Path) -> Vec<ShotGeom> {
                 mask.mask(),
                 &targets,
             );
-            let pts = crate::shot::shot_points(&shot.text, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true);
+            let pts = crate::graphwar_shot_calculator::shot_points(&shot.text, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true);
             let tail: Vec<(f64, f64)> = pts.iter().rev().take(4).rev().copied().collect();
             let n_points = pts.len();
             out.push(ShotGeom {
@@ -521,21 +521,21 @@ pub fn probe_file(path: &std::path::Path) -> Vec<ShotGeom> {
                     if t.is_empty() {
                         f64::NAN
                     } else {
-                        let toks = crate::function::parse(&t);
-                        crate::function::eval(&toks, if shot.flip { -xe } else { xe }, 0.0, 0.0)
+                        let toks = crate::math_function::parse(&t);
+                        crate::math_function::eval(&toks, if shot.flip { -xe } else { xe }, 0.0, 0.0)
                     }
                 },
                 h2: {
                     let t = obs_corrected.get(shot_i).cloned().unwrap_or_default();
-                    let pts = crate::shot::shot_points(&t, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true);
+                    let pts = crate::graphwar_shot_calculator::shot_points(&t, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true);
                     let last = pts.last().copied().unwrap_or((f64::NAN, f64::NAN));
                     (last.0, last.1)
                 },
                 h2_n: {
                     let t = obs_corrected.get(shot_i).cloned().unwrap_or_default();
-                    crate::shot::shot_points(&t, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true).len()
+                    crate::graphwar_shot_calculator::shot_points(&t, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true).len()
                 },
-                our_n: crate::shot::shot_points(&shot.text, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true).len(),
+                our_n: crate::graphwar_shot_calculator::shot_points(&shot.text, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true).len(),
             });
         }
     }

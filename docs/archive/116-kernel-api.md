@@ -247,8 +247,8 @@ for p in points: variant_call(ret, "append", [Vector2_variant(p)])
 
 ```
 flip = (direction < 0.0)         // 0.0 归"向右"，与客户端一致
-c    = y0 − f(flip ? −x0 : x0)   // = crate::shot::correction
-tokens' = [ADD, CONST c] ++ tokens   // = crate::shot::shifted_tokens ⇒ 实际射击用 f(x)+c
+c    = y0 − f(flip ? −x0 : x0)   // = crate::graphwar_shot_calculator::correction
+tokens' = [ADD, CONST c] ++ tokens   // = crate::graphwar_shot_calculator::shifted_tokens ⇒ 实际射击用 f(x)+c
 ```
 
 `flip` 对**几何**的影响（单测 `normal_curve_left_uses_f_of_minus_x` 钉住）：
@@ -263,9 +263,9 @@ tokens' = [ADD, CONST c] ++ tokens   // = crate::shot::shifted_tokens ⇒ 实际
 `src/api.rs::calculate_path` 只做四步，每一步都调用既有实现：
 
 ```rust
-let tokens  = crate::function::parse(expr);          // @0x4ed670
-let offset  = crate::shot::correction(&tokens, x0, y0, flip);   // @0x3c5f70
-let shifted = crate::shot::shifted_tokens(&tokens, offset);
+let tokens  = crate::math_function::parse(expr);          // @0x4ed670
+let offset  = crate::graphwar_shot_calculator::correction(&tokens, x0, y0, flip);   // @0x3c5f70
+let shifted = crate::graphwar_shot_calculator::shifted_tokens(&tokens, offset);
 let points  = crate::graphwar_path_calculator::calculate(&shifted, x0, y0, STEP_DEFAULT, flip, Mode::Normal); // @0x3c2530
 ```
 
@@ -274,7 +274,7 @@ let points  = crate::graphwar_path_calculator::calculate(&shifted, x0, y0, STEP_
 `api.rs` 里没有任何采样循环。
 
 防"偷偷重写一份"的测试：`matches_shot_points_pipeline` 拿 5 条函数 × 2 个方向，
-断言 `calculate_path(...)` 的 `points` **与 `crate::shot::shot_points(...)` 逐点相等**
+断言 `calculate_path(...)` 的 `points` **与 `crate::graphwar_shot_calculator::shot_points(...)` 逐点相等**
 （后者是已有 331 条夹具 + 上游 2552 例验证过的端到端入口）。
 档位：**逐位验证**（点序列 `assert_eq!`，f64 精确相等）。
 
@@ -435,7 +435,7 @@ bash client/run.sh dump | grep -i "kernel on"   # 期望 client 0.1.0 · kernel 
 
 ### 8.2 命中/掩膜还没接（建议签名）
 
-`src/plane.rs` 的掩膜与点测试都已逐字节/逐点验证（`docs/05` §6），`src/shot.rs::simulate`
+`src/plane.rs` 的掩膜与点测试都已逐字节/逐点验证（`docs/05` §6），`src/graphwar_shot_calculator::simulate`
 也是可用的原语，但**没有**暴露给 GDScript —— 界面的命中判定仍是"路径点到士兵中心 < 0.8"
 的几何近似（`docs/108` §7 #2）。建议的下一步：
 

@@ -650,7 +650,7 @@ cargo run --offline --example serve_broker -- 127.0.0.1:42970
 ```
 
 `4.638` / `10.990` 正是各自的 `start_y`，证实修正是 `f(x) + c` 且**以文本形式拼接**；
-`src/shot.rs::corrected_text` 复刻了这个格式（三位小数），并有针对这两个真实样本的测试。
+`src/graphwar_shot_calculator::corrected_text` 复刻了这个格式（三位小数），并有针对这两个真实样本的测试。
 
 ### 8.3 用真实弹道对拍
 

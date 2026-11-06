@@ -15,7 +15,7 @@
 use gw2_rebuild::game::{Match, Submission};
 use gw2_rebuild::protocol::parse_message;
 use gw2_rebuild::server::RoomState;
-use gw2_rebuild::settle::Target;
+use gw2_rebuild::graphwar_shot_calculator::settle::Target;
 use gw2_rebuild::graphwar_turn_manager::{RoundCollection, SubmitResult};
 
 fn room(turn_mode: &str) -> RoomState {

@@ -3,7 +3,7 @@
 //!
 //! 本模块是**独立**的（不碰 `game.rs` / `graphwar_game_server.rs` / `protocol.rs` / `api.rs`），
 //! 只用它们的公开入口：`game::Match::fire` 产报文、`protocol::emit_*` 定字节、
-//! `settle::resolve` 定几何。口径写在 [`Policy`]，语料统计与第一处分歧见
+//! `graphwar_shot_calculator::settle::resolve` 定几何。口径写在 [`Policy`]，语料统计与第一处分歧见
 //! `docs/136-replay-diff.md`。
 //!
 //! 三个子层：
@@ -1185,7 +1185,7 @@ fn last_team_before(r: &Replay, upto: usize, entity: i64) -> Option<String> {
 
 use crate::game::Match;
 use crate::server::RoomState;
-use crate::settle::Target;
+use crate::graphwar_shot_calculator::settle::Target;
 
 /// 从回放里攒出来的**输入态**（几何与身份）；不含 tick。
 pub struct Inputs {
@@ -2184,7 +2184,7 @@ pub fn run_file(path: &std::path::Path, policy: &Policy, max_diffs: usize) -> Fi
                         pos.get(id).map(|(x, y)| Target { id: *id, x: *x, y: *y, radius: 0.5 })
                     })
                     .collect();
-                let out = crate::settle::resolve(
+                let out = crate::graphwar_shot_calculator::settle::resolve(
                     &shot.text,
                     shot.x0,
                     shot.y0,

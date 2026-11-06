@@ -8,10 +8,10 @@
 
 ```
 ① 输入文本           "sin(x)"
-      │  docs/03     函数语言          ✅ 逐位验证   src/function/
+      │  docs/03     函数语言          ✅ 逐位验证   src/math_function/
       ▼
 ② 前缀 token 列表     [(SIN,0),(X,0)]
-      │  docs/05     修正常数 c        ✅ 逐位验证   src/shot.rs
+      │  docs/05     修正常数 c        ✅ 逐位验证   src/graphwar_shot_calculator.rs
       ▼
 ③ 带修正的 token      [(ADD,0),(CONST,c)] ++ tokens
       │  docs/04     等弦长采点        ✅ 逐位验证   src/graphwar_path_calculator.rs

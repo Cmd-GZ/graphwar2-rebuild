@@ -15,7 +15,7 @@
 | G | `231(T1) 233(T2) 230(T1)` |
 
 **七局全部满足：相邻两次出手来自不同队伍。** 这条写成了实现
-（`src/graphwar_turn_manager.rs::alternating_order`）与测试（`CAPTURED` 现在有 7 条）。
+（`src/graphwar_turn_manager::alternating_order`）与测试（`CAPTURED` 现在有 7 条）。
 
 ## 2. 被数据否定的假设（重要）
 

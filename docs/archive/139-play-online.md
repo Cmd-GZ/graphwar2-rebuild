@@ -122,8 +122,8 @@ FunctionPoints{owner_id, start_x, start_y, end_x}      ← **只有起点与终�
 | 选择 | 依据 | 档 |
 |---|---|---|
 | 方向由 `end_x` 定，不按队伍定 | 抓包里两发的方向本来就是这样定下来的（`docs/24` §6.3 的表格两个方向都有）；队伍方向是"通常如此"，`end_x` 是"这一发的实测" | **观测** |
-| 用**函数原文** + 内核的修正，而**不用** `corrected_function` 文本 | `corrected_function` 是三位小数的文本（`src/shot.rs::corrected_text`），拿它重算会引入四舍五入误差；`start_x/start_y` 是 f64 原值，内核的 `c = y0 - f(±x0)` 与 `Match::fire` 走同一个 `correction()`。抓包样本 `"0.00 + 4.638"` 里的 `4.638` 正是 `start_y`（`docs/24` §6.2），说明这两条路等价、只是精度不同 | **逐位验证**（同一函数体）+ **自定**（选精度高的那条） |
-| 画到 `end_x` 为止 | 服务端的停点 = 它那条点序列的**最后一点**（`src/settle.rs::resolve_points` 的 `stop`），而采样器确定性 ⇒ 到同一个 x 之前的点序列就是服务端那条轨迹 | **观测**（`stop` 的赋值）+ **推断**（两点之间按 0.01 采样是真的） |
+| 用**函数原文** + 内核的修正，而**不用** `corrected_function` 文本 | `corrected_function` 是三位小数的文本（`src/graphwar_shot_calculator::corrected_text`），拿它重算会引入四舍五入误差；`start_x/start_y` 是 f64 原值，内核的 `c = y0 - f(±x0)` 与 `Match::fire` 走同一个 `correction()`。抓包样本 `"0.00 + 4.638"` 里的 `4.638` 正是 `start_y`（`docs/24` §6.2），说明这两条路等价、只是精度不同 | **逐位验证**（同一函数体）+ **自定**（选精度高的那条） |
+| 画到 `end_x` 为止 | 服务端的停点 = 它那条点序列的**最后一点**（`graphwar_shot_calculator::settle::resolve_points` 的 `stop`），而采样器确定性 ⇒ 到同一个 x 之前的点序列就是服务端那条轨迹 | **观测**（`stop` 的赋值）+ **推断**（两点之间按 0.01 采样是真的） |
 
 **精度差在哪**（写清楚，别当成逐位）：**本文基线 `2b87b69` 上**，我们自己的服务端结算按弦长
 **0.5** 采样（`Match::fire` → `settle::resolve(…, 0.5, …)`），内核 `path_calculate` 按
@@ -294,12 +294,12 @@ SELFTEST 529 passed, 0 failed
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| 服务端偶尔**一个障碍都不发** | `levelgen::generate()` 的 `n = trunc(normal()*7 + 15)`，`min_count = 0` 时约 1.6% 会落到 0（`src/levelgen.rs:87`；`serverloop` 传的 min_count 就是 0） | ① 用例的关卡种子**钉死**（见下）；② 万一还是 0 个，障碍那两条**显式 skip** 并打印原因（不假装通过） |
+| 服务端偶尔**一个障碍都不发** | `levelgen::generate()` 的 `n = trunc(normal()*7 + 15)`，`min_count = 0` 时约 1.6% 会落到 0（`src/graphwar_level_generator.rs:87`；`serverloop` 传的 min_count 就是 0） | ① 用例的关卡种子**钉死**（见下）；② 万一还是 0 个，障碍那两条**显式 skip** 并打印原因（不假装通过） |
 | **射手被障碍压住**，任何弹道都在第一点被判挡住 | 开局位置是固定的 `x = ±10`（`src/graphwar_game_server.rs`），障碍却是随机撒的、**不看**这两个点 | ① 种子钉死；② 兜底：本地预演（内核）会如实报 153 个候选全 `blocked` ⇒ 用例**换一局**（最多 6 次）。换局只发生在自检里，界面不做 |
 
 ### 6.5 种子旋钮：`GW2_MATCH_SEED`（**自定**，测试用）
 
-`src/graphwar_game_server.rs::run()` 里加了一个**只影响命令行 harness** 的旋钮：设了
+`src/graphwar_game_server::run()` 里加了一个**只影响命令行 harness** 的旋钮：设了
 `GW2_MATCH_SEED=<u64>` 就把关卡种子从 `seed_from_os()` 换成这个值（32 字节：前 8 字节是原值、
 后 8 字节是一个黄金比例混合）。**不设时行为与以前完全一致**；`tests/server_match.rs` 走的是
 `serve_stream*`，不受影响。
@@ -343,7 +343,7 @@ soldier 231、站位 `(-10, 0)`），障碍数从 4 到 25 不等。种子 8 = 1
 | `FunctionPoints` 只有首末点、轨迹要客户端复算 | **观测** | `docs/24` §6.1 的原始报文 |
 | 方向由 `end_x` 定 | **观测** | `docs/24` §6.3 两个方向的样本 |
 | 复算用函数原文 + 内核修正（不用三位小数的 corrected 文本） | **逐位**（同一 `correction()`）+ **自定**（选精度） | `src/api.rs::calculate_path`、`src/game.rs::fire` |
-| 服务端的停点 = 点序列最后一点 | **观测** | `src/settle.rs::resolve_points` 的 `stop` |
+| 服务端的停点 = 点序列最后一点 | **观测** | `graphwar_shot_calculator::settle::resolve_points` 的 `stop` |
 | `PlayerInfo` 的报文形状 | **逐位验证** | `cargo test` 的 `player_info_message_matches_the_captured_bytes`（对 `fixtures/protocol_match.jsonl:36`） |
 | "这条连接 = 第一个玩家槽（229）" | **自定** | 本 harness 只 accept 一条连接；真游戏顺序不可复现（`docs/47`） |
 | 死亡报文有两种形态（线上 `LifeQueuedDeath` / 回放 `LifeInfo`） | **观测** | `docs/31` §1、`docs/96` §4 |

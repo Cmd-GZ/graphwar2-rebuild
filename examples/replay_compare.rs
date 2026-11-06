@@ -2,10 +2,10 @@
 //!
 //! 用法: `cargo run --release --example replay_compare -- <state.txt> <等级>`
 use gw2_rebuild::graphwar_function_evolutionator::{self, Individual, ScoringContext, VarMode};
-use gw2_rebuild::function::parse;
+use gw2_rebuild::math_function::parse;
 use gw2_rebuild::plane::{empty_mask, rasterize};
 use gw2_rebuild::rng::ChaCha12;
-use gw2_rebuild::settle::Target;
+use gw2_rebuild::graphwar_shot_calculator::settle::Target;
 use std::io::BufRead;
 
 /// 取轨迹上 x 最接近 target 的点的 y。
@@ -104,7 +104,7 @@ fn main() {
     {
         // 顺便报出"我们的物理预测这一发打死几个人"
         use gw2_rebuild::graphwar_path_calculator::{calculate, Mode};
-        use gw2_rebuild::shot::{correction, shifted_tokens};
+        use gw2_rebuild::graphwar_shot_calculator::{correction, shifted_tokens};
         if !real_tokens.is_empty() {
             let c = correction(&real_tokens, shooter.0, shooter.1, flip);
             let shifted = shifted_tokens(&real_tokens, c);
@@ -127,12 +127,12 @@ fn main() {
     // 几何校验：用真实函数算弹道，看停止点是否与 replay 记录的 end_x 一致
     if let Some(end_x_real) = real_end_x {
         use gw2_rebuild::graphwar_path_calculator::{calculate, Mode};
-        use gw2_rebuild::shot::{correction, shifted_tokens};
+        use gw2_rebuild::graphwar_shot_calculator::{correction, shifted_tokens};
         let c = correction(&real_tokens, shooter.0, shooter.1, flip);
         let shifted = shifted_tokens(&real_tokens, c);
         let step: f64 = std::env::var("GW2_STEP").ok().and_then(|v| v.parse().ok()).unwrap_or(gw2_rebuild::SERVER_STEP);
         let pts = calculate(&shifted, shooter.0, shooter.1, step, flip, Mode::Normal);
-        // ⚠️ 必须沿路径查掩膜：撞到第一个被占据的点就停（和 settle::resolve 一致）
+        // ⚠️ 必须沿路径查掩膜：撞到第一个被占据的点就停（和 graphwar_shot_calculator::settle::resolve 一致）
         // ALT_STOP: 三种查询方式各算一次停点，比较谁更贴近真实终点
         let q_trunc = |x: f64, y: f64| gw2_rebuild::plane::is_occupied(&mask, x, y);
         let q_round = |x: f64, y: f64| {

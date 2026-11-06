@@ -13,7 +13,7 @@
 
 use crate::graphwar_path_calculator::Mode;
 use crate::plane::is_occupied;
-use crate::shot::shot_points;
+use crate::graphwar_shot_calculator::shot_points;
 
 /// 参与结算的士兵。
 #[derive(Debug, Clone, Copy, PartialEq)]

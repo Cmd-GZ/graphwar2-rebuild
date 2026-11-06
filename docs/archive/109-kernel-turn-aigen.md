@@ -191,7 +191,7 @@ TurnManager::begin_turn(player_id, life_state, timed_out /* bool */)
 
 ### 3.3 对 `docs/47` §7 的影响
 
-`docs/47` §7 原句是"`src/graphwar_turn_manager.rs::alternating_order` 保持'调用方给顺序'的接口"。
+`docs/47` §7 原句是"`src/graphwar_turn_manager::alternating_order` 保持'调用方给顺序'的接口"。
 该函数已删，所以在那句后面就地加了一行注（指向本文），避免死引用。
 **`docs/47` 的核心结论不变**：玩家出场顺序仍不可复现，仍由调用方给——`TurnManager`
 这一层只是**不再冒充**"顺序"这件事。

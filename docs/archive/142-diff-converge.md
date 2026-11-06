@@ -10,7 +10,7 @@
 **推断**（写明缺什么）/ **未知**。
 
 > **改动范围**：只新增 `src/diffconv.rs`、`examples/diff_conv.rs`、`tests/diff_conv.rs`、
-> 本文。`src/game.rs` / `src/settle.rs` / `src/protocol.rs` / `src/replaydiff.rs` /
+> 本文。`src/game.rs` / `src/graphwar_shot_calculator/settle.rs` / `src/protocol.rs` / `src/replaydiff.rs` /
 > `src/graphwar_path_calculator.rs` / `client/` **一字未动**；`src/lib.rs` 只加了一行 `pub mod diffconv;`。
 
 ---

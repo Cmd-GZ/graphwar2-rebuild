@@ -451,7 +451,7 @@ mod("graphwar_lan_broadcaster_v6.rs", "graphwar", (), "未做",
     "docs/07/24：局域网广播报文已抓包；docs/134 里只有 client/ GDScript 侧，src/ 无实现")
 mod("graphwar_lan_vbox.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（局域网列表 UI），无地址级观测、无实现")
-mod("graphwar_level_generator.rs", "graphwar", ("src/levelgen.rs", "src/levelgen_tables.rs"), "逐位",
+mod("graphwar_level_generator.rs", "graphwar", ("src/graphwar_level_generator.rs", "src/graphwar_level_generator/tables.rs"), "逐位",
     "docs/61/56：障碍 x/y/r 的 to_bits() 全等，13/13 逐位复现；docs/55 公式闭合")
 mod("graphwar_level_manager.rs", "graphwar", (), "未做",
     "锚点最密的模块（590 个 Location / 40 个函数）；只有 docs/118 §2 的入口观测，src/ 无实现")
@@ -509,7 +509,7 @@ mod("graphwar_server_connection_handler.rs", "graphwar", ("src/server.rs",), "�
     "docs/33：新连接的状态同步与真实客户端逐字节一致")
 mod("graphwar_setup_control.rs", "graphwar", (), "未做",
     "docs/137 有像素级观测；界面在 client/ GDScript，src/ 无实现")
-mod("graphwar_shot_calculator.rs", "graphwar", ("src/settle.rs", "src/shot.rs"), "逐位",
+mod("graphwar_shot_calculator.rs", "graphwar", ("src/graphwar_shot_calculator.rs", "src/graphwar_shot_calculator/settle.rs"), "逐位",
     "docs/86 §14：82 发并集 152/152、漏报 0、时刻判决 38:0；docs/122 按 id 排除射手是"
     "指令级。注意：0x3c2bc0 那个 12 KB 主函数**没有逐条还原**，逐位的是行为不是函数体")
 mod("graphwar_soldier_manager.rs", "graphwar", (), "未知",
@@ -530,11 +530,11 @@ mod("graphwar_video_writer.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（录像导出），无地址级观测、无实现")
 
 # ---- 非 graphwar_ 前缀：同样是原版 src/ 里的文件，但只有 math_function 等少数是真游戏模块 ----
-mod("math_function.rs", "other", ("src/function/mod.rs", "src/function/to_text.rs"), "逐位",
+mod("math_function.rs", "other", ("src/math_function.rs", "src/math_function/to_text.rs"), "逐位",
     "docs/03：90 例文法 + 70 条真值夹具与真二进制对拍。**解析器 0x4ed670 的 panic 锚就落在这个"
     "文件上**（math_function.rs:75）⇒ 函数语言的解析器属于本模块，不属于 graphwar_function_input")
-mod("polish_notation_converter.rs", "other", ("src/function/to_text.rs",), "观测",
-    "docs/119：token → 文本 0x4ec160 的逐 case 未全解；我方 to_text.rs 只覆盖已解出的部分")
+mod("polish_notation_converter.rs", "other", (), "未做",
+    "2026-11 更正：本模块的锚函数是 0x4f57d0（:36:52 / :116:55，tools/class_probe.py），**不是** 0x4ec160。0x4ec160 的 panic 分支引的是 math_function.rs:285:28（docs/119 §4.6）⇒ 我方 to_text.rs 归 math_function.rs；本模块未实现")
 mod("entity_drawer.rs", "other", (), "未做",
     "docs/02 §2 确认是游戏自己的实体绘制模块；docs/140 有画法观测，绘制在 client/ GDScript")
 mod("effect_drawer.rs", "other", (), "未做",

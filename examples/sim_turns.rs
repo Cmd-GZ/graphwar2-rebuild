@@ -4,7 +4,7 @@
 //! 并把「每发弹道第一次进入每个士兵半径的位置（采样下标 + 沿弧长）」吐出来，
 //! 交由 Python 侧按不同假设（逐颗串行 / 全部并行 / 按飞行时间）做对照。
 //!
-//! 物理全部复用已验证的 `graphwar_path_calculator::calculate` / `plane::rasterize` / `shot::correction`。
+//! 物理全部复用已验证的 `graphwar_path_calculator::calculate` / `plane::rasterize` / `graphwar_shot_calculator::correction`。
 //!
 //! 用法: `cargo run --release --example sim_turns -- <state.txt>`
 //!
@@ -25,10 +25,10 @@
 //! SHOT <idx> <owner> <npts> <stopi> <blocked> <arclen_stop> <stopx> <stopy>
 //! HIT <idx> <tid> <first_i> <arclen_i> <mindist>
 //! ```
-use gw2_rebuild::function::parse;
+use gw2_rebuild::math_function::parse;
 use gw2_rebuild::graphwar_path_calculator::{calculate, Mode};
 use gw2_rebuild::plane::{empty_mask, is_occupied, rasterize};
-use gw2_rebuild::shot::{correction, shifted_tokens};
+use gw2_rebuild::graphwar_shot_calculator::{correction, shifted_tokens};
 
 struct Shot {
     idx: usize,
@@ -138,7 +138,7 @@ fn sweep(
 ) -> (std::collections::BTreeMap<String, Bucket>, std::collections::BTreeMap<String, usize>) {
     use gw2_rebuild::game::{Match, Submission};
     use gw2_rebuild::replaydiff::{compare_batch, split_batches, Inputs, Msg, Replay};
-    use gw2_rebuild::settle::Target;
+    use gw2_rebuild::graphwar_shot_calculator::settle::Target;
 
     let mut why: std::collections::BTreeMap<String, usize> = Default::default();
     let mut out: std::collections::BTreeMap<String, Bucket> = Default::default();
@@ -475,7 +475,7 @@ fn geometry(path: &str) {
                 break;
             }
         }
-        // 逐点命中（与 settle::resolve 一致：只在采样点上判）
+        // 逐点命中（与 graphwar_shot_calculator::settle::resolve 一致：只在采样点上判）
         let mut hits: Vec<(i64, usize, f64, f64)> = Vec::new(); // (tid, first_i, arclen, mindist)
         for (i, &(px, py)) in pts.iter().enumerate() {
             if i > stopi {

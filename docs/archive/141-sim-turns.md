@@ -110,7 +110,7 @@ for s in shots { outcomes.push(resolve(..., &self.mask, &others)); }
 实现：
 
 ```rust
-// settle.rs::resolve_points —— 沿弹道累计弧长，每次命中记下来
+// graphwar_shot_calculator::settle::resolve_points —— 沿弹道累计弧长，每次命中记下来
 arc += ((px - qx).powi(2) + (py - qy).powi(2)).sqrt();
 hits.push(Hit { id: t.id, arc, index });
 

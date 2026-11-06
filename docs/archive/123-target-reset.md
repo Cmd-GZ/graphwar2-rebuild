@@ -567,7 +567,7 @@ pub fn settle_shot(&mut self) -> Vec<String> {
 | `src/game.rs` `struct Match` | 加字段 `targets: TargetSet`（默认 `all_in_one_shot=false`），并加 `pub fn config_targets(&mut self, all_in_one_shot: bool)`（对应关卡分支里"造 N 个目标"的那一步） |
 | `src/game.rs` `Match::end_turn()` | 在**发 `TurnCountInfo` 之前**追加 `self.targets.settle_shot()` 的事件；并把"是否 `EndingGame`"的判据改成 `self.targets.is_cleared()`（当 `!ids.is_empty()` 时不结束）——与 `docs/45` 的"某队全灭"等价，但把目标池显式化了 |
 | `src/game.rs` `Match::add_target(id)`（新） | 内部 `targets.add(id)` 的 `Vec<String>` 直接拼进返回的事件流（和 `0x46f310` 一样一次发 1 条 `TargetInfo`） |
-| 关卡表（`src/levelgen.rs` 或将来放 21 关数据的地方） | 加一个布尔列 `targets_single_shot`，0 基 `6/8/10/13/17` 为 `true` |
+| 关卡表（`src/graphwar_level_generator.rs` 或将来放 21 关数据的地方） | 加一个布尔列 `targets_single_shot`，0 基 `6/8/10/13/17` 为 `true` |
 
 **⚠️ 顺序是未证实的**：`TurnCountInfo` 与复原事件谁先谁后，本轮**没有证据**
 （§4.4：回合边界块里从来没有任何 Life/Target 事件）。建议先放在 `TurnCountInfo` **之前**

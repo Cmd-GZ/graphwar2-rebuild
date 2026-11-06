@@ -10,7 +10,7 @@ use gw2_rebuild::diffconv::{
 };
 use gw2_rebuild::graphwar_path_calculator::Mode;
 use gw2_rebuild::replaydiff::{default_corpus_dir, Msg, Policy};
-use gw2_rebuild::settle::Target;
+use gw2_rebuild::graphwar_shot_calculator::settle::Target;
 
 /// 回放里的一行 `FunctionInfo` / `EffectInfo` 原文，按同一口径解析。
 fn kinds(msgs: &[String]) -> Vec<String> {
@@ -63,7 +63,7 @@ fn diffeq_corrected_function_has_no_suffix() {
 
 /// Normal 局：函数原文 + `" ± c.ddd"`（运算符带符号，`docs/127`）。
 ///
-/// 真值：抓包帧 234 / 231 / 182（`src/shot.rs` 的同一批样本）。
+/// 真值：抓包帧 234 / 231 / 182（`src/graphwar_shot_calculator.rs` 的同一批样本）。
 #[test]
 fn normal_corrected_function_appends_signed_suffix() {
     assert_eq!(

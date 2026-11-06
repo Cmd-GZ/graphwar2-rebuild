@@ -78,7 +78,7 @@ FunctionPointsEvent {
 点序列 ──逐点 is_occupied──> 首个命中序号
 ```
 
-Rust 侧：`src/shot.rs::simulate`；C ABI：`gw2_simulate(...)`。
+Rust 侧：`src/graphwar_shot_calculator::simulate`；C ABI：`gw2_simulate(...)`。
 
 ### 6.1 为什么敢拼
 
@@ -127,10 +127,10 @@ RESULT: PASS
 
 ```
 ① 输入文本           "sin(x)"
-      │  03-function-language.md     函数语言          ✅ 逐位验证   src/function/
+      │  03-function-language.md     函数语言          ✅ 逐位验证   src/math_function/
       ▼
 ② 前缀 token 列表     [(SIN,0),(X,0)]
-      │  05-shot-pipeline.md     修正常数 c        ✅ 逐位验证   src/shot.rs
+      │  05-shot-pipeline.md     修正常数 c        ✅ 逐位验证   src/graphwar_shot_calculator.rs
       ▼
 ③ 带修正的 token      [(ADD,0),(CONST,c)] ++ tokens
       │  04-path-sampling.md     等弦长采点        ✅ 逐位验证   src/graphwar_path_calculator.rs
@@ -261,7 +261,7 @@ tick_handler ─> target_manager（周期性）
 1. **`offset` 在 ODE 下是 `NaN`，不是 `0.0`**。用 `0.0` 会让界面右下角显示 `+ 0.000`，
    而原版 DiffEq 局那行字是**空**的（`16-client.md` §4.10 观测，`play_screen.gd:786` 也照此置空）。
 2. **ODE 不做修正常数**。谁在 API 层补一个 `c = y0 − f(±x0)`，整条微分方程弹道就平移
-   —— `src/shot.rs::shot_points` 那行判断（`apply_correction && mode == Mode::Normal`）
+   —— `src/graphwar_shot_calculator::shot_points` 那行判断（`apply_correction && mode == Mode::Normal`）
    已经把这件事钉死了。
 3. **`mode` 是字符串参数**。`PropertyInfo` 声明成 `String`；传整数会被**引擎先拒**
    （`16-client.md` §3.7 同形实测），所以内核侧不做整数重载（那段代码永远走不到）。

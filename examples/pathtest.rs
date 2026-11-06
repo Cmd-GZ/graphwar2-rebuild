@@ -1,7 +1,7 @@
 fn main() {
-    use gw2_rebuild::function::parse;
+    use gw2_rebuild::math_function::parse;
     use gw2_rebuild::graphwar_path_calculator::{calculate, Mode};
-    use gw2_rebuild::shot::{correction, shifted_tokens};
+    use gw2_rebuild::graphwar_shot_calculator::{correction, shifted_tokens};
 
     let cases = [
         ("tan((sin(((-1.03+x)/-2.74))+18.43))", 9.270754688284496, -0.41619794393105813, true),

@@ -12,8 +12,8 @@ use std::ffi::CStr;
 use std::os::raw::c_char;
 
 use crate::graphwar_path_calculator::{calculate, Mode};
-use crate::shot::{correction, shifted_tokens};
-use crate::function::parse;
+use crate::graphwar_shot_calculator::{correction, shifted_tokens};
+use crate::math_function::parse;
 
 /// 解析文本，返回 token 个数；`-2` 表示非法输入。
 ///
@@ -201,14 +201,14 @@ pub unsafe extern "C" fn gw2_simulate(
             return -2;
         }
         let base = obstacles.add(i * 3);
-        obs.push(crate::shot::Obstacle {
+        obs.push(crate::graphwar_shot_calculator::Obstacle {
             x: *base,
             y: *base.add(1),
             size: *base.add(2),
         });
     }
     let mode = if ode != 0 { Mode::Ode } else { Mode::Normal };
-    let r = crate::shot::simulate(s, x0, y0, step, flip != 0, mode, &obs);
+    let r = crate::graphwar_shot_calculator::simulate(s, x0, y0, step, flip != 0, mode, &obs);
     if !out_count.is_null() {
         *out_count = r.point_count as i64;
     }

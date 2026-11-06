@@ -270,7 +270,7 @@ mode: "normal"（y = f(x)）/ "ode"（dy/dx = f(x, y)），大小写与两侧空
 | `src/api.rs::parse_mode()` | 只认 `normal` / `ode`（`trim` + `eq_ignore_ascii_case`）；**不做整数重载** —— `PropertyInfo` 把第 5 个参数声明成 `String`，GDScript 传整数会被引擎先拒 |
 | `client/src/core/core_bridge.gd::calculate_path()` | 第 4 个参数 `mode: String = "normal"`（默认值 ⇒ **既有三参数调用点一个字都不用改**） |
 
-**修正常数的口径**：只有 `normal` 加修正（`src/shot.rs::shot_points` 的既有规则）。
+**修正常数的口径**：只有 `normal` 加修正（`src/graphwar_shot_calculator::shot_points` 的既有规则）。
 `ode` 下内核返回的 `offset` 是 **`NaN`** ⇒ `GwCore.format_offset()` 出空串，
 正好是原版 DiffEq 局右下角不显示修正文本的样子（`docs/92` §4.10、`docs/138`）。
 这是**观测**：微分方程回放的 `FunctionInfo{function:"y+0.1", corrected_function:"y+0.1"}`

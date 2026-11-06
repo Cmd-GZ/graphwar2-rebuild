@@ -23,7 +23,7 @@
 | `cargo test --offline` | **242 → 258**（+16，全绿） | — |
 | `bash client/run.sh selftest` | **93 passed, 0 failed**（内核开 / 关各跑一遍；**未改任何断言**） | — |
 | 客户端改动 | `core_bridge.gd` +102/−6，`play_screen.gd` +27/−12（两处函数体，无布局/文案/节点树改动） | — |
-| 内核改动 | `src/api.rs`（新增）、`src/settle.rs`（新增一个函数 + `resolve` 改为委托）、`src/gdext.rs`（**+1 行**注册） | — |
+| 内核改动 | `src/api.rs`（新增）、`src/graphwar_shot_calculator/settle.rs`（新增一个函数 + `resolve` 改为委托）、`src/gdext.rs`（**+1 行**注册） | — |
 | 客户端状态行 | `本轮命中 N 个士兵 ／ 判定来源：kernel|preview ／ <note>` | 观测（§6.2 原文） |
 | 仍未确定 | 士兵半径常量的二进制出处、友军伤害、射手免疫的直接证据、同时回合顺序（§7） | — |
 
@@ -221,20 +221,20 @@ B 路 packed_vector2_array_operator_index_const : B0=(-18.0, -5.1)     B1=(-17.9
 | 环节 | 代码 | 二进制出处 |
 |---|---|---|
 | 掩膜（1000×600 字节，`0xFF` 空，越界算命中） | `src/plane.rs`：`empty_mask` / `rasterize` / `is_occupied` / `to_pixel` | 光栅化 `0x4f11e0`、点测试 `0x4f15b0`、构造 `0x523020`（`docs/08` §6.1、§6.1.1、§6.1.2） |
-| 判定顺序（先判死、再判挡；士兵不挡弹道） | `src/settle.rs`：`resolve_points` | 真对局回放（`docs/30`、`tests/live_hits.rs` 12 条） |
+| 判定顺序（先判死、再判挡；士兵不挡弹道） | `src/graphwar_shot_calculator/settle.rs`：`resolve_points` | 真对局回放（`docs/30`、`tests/live_hits.rs` 12 条） |
 
 所以本次**没有新写判定**，只是把这两块拼起来并抬到 GDScript。
 
 ### 4.2 单一实现是**结构上**保证的
 
 ```rust
-// src/settle.rs:43
+// src/graphwar_shot_calculator/settle.rs:43
 pub fn resolve(text, x0, y0, step, flip, mode, mask, targets) -> ShotOutcome {
     let points = shot_points(text, x0, y0, step, flip, mode, true);   // 自己采样
     resolve_points(mask, targets, &points)                            // ← 同一函数
 }
 
-// src/settle.rs:73   （本次新增，规则体只有这一份）
+// src/graphwar_shot_calculator/settle.rs:73   （本次新增，规则体只有这一份）
 pub fn resolve_points(mask: &[u8], targets: &[Target], points: &[(f64, f64)]) -> ShotOutcome { … }
 ```
 
@@ -551,7 +551,7 @@ bash client/run.sh selftest    # 期望 SELFTEST 93 passed, 0 failed
 | 文件 | 性质 | 行数 |
 |---|---|---|
 | `src/api.rs` | 新增 `hit_test` 的纯逻辑 + FFI + 16 条测试；`write_result` 拆出通用 `write_dict` | +847 / −24 |
-| `src/settle.rs` | 新增 `resolve_points`（规则体），`resolve` 改为委托 | +23 / −2 |
+| `src/graphwar_shot_calculator/settle.rs` | 新增 `resolve_points`（规则体），`resolve` 改为委托 | +23 / −2 |
 | `src/gdext.rs` | **+1 行**注册调用 | +1 |
 | `client/src/core/core_bridge.gd` | 新增 `hit_test` 桥 + 近似分支 + 契约注释 | +102 / −6 |
 | `client/src/screens/play_screen.gd` | `_resolve_shots` 换内核；`fire()` 的 shot 字典加一个键 | +27 / −12 |

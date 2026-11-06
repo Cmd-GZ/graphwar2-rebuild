@@ -1,6 +1,6 @@
 # 31 · 由结算生成协议事件
 
-`src/settle.rs` 里新增 `ShotEvent` 与 `events()`：把一次开火的结算结果
+`src/graphwar_shot_calculator/settle.rs` 里新增 `ShotEvent` 与 `events()`：把一次开火的结算结果
 翻译成协议上会出现的报文序列。
 
 ## 1. 事件顺序（观测依据）

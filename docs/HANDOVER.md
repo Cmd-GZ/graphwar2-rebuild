@@ -66,7 +66,7 @@
 **内核侧仍缺（都是实现追赶结论，不是继续挖）**：
 ~~① `src/graphwar_turn_manager.rs` 的"每玩家 `Vec<soldier_id>` + 游标轮转"~~ ✅ 已实现（`13-ai.md`）
 ~~② `aigen` 缺"回合先定 soldier_id、AI 只为它进化"这一层~~ ✅ 已实现（`13-ai.md`）
-   ✅ **已接进 `game.rs::Match::begin_next_turn` 与 `graphwar_game_server.rs::advance`**（`14-turn.md`）：
+   ✅ **已接进 `game.rs::Match::begin_next_turn` 与 `graphwar_game_server::advance`**（`14-turn.md`）：
    轮转定射手 → 只为它进化（25 s 预算生效）→ `decision.broadcast()` 决定发不发；
    端到端 TCP 测试断言"首发射手 = `soldiers[1]`""跳过死者""每回合都进化过"。
 ~~③ 第 0 代初始种群生成路径未还原~~ ✅ **已解**（`13-ai.md`）：没有独立初始化函数；
@@ -444,11 +444,11 @@ else:
 ## 9. 文件地图与常用命令
 
 ```
-src/function/   文法与求值        src/protocol.rs  46 种消息 + 序列化
-src/graphwar_path_calculator.rs     采点              src/settle.rs    命中与致死结算
+src/math_function/   文法与求值        src/protocol.rs  46 种消息 + 序列化
+src/graphwar_path_calculator.rs     采点              src/graphwar_shot_calculator/settle.rs    命中与致死结算
 src/plane.rs    坐标/掩膜/光栅化   src/game.rs      Match（一回合报文序列）
-src/shot.rs     修正+开火原语      src/turnstate.rs 回合状态机
-src/graphwar_tick_handler.rs     60Hz + 回合时长    src/levelgen.rs  关卡生成（含 ziggurat）
+src/graphwar_shot_calculator.rs     修正+开火原语      src/turnstate.rs 回合状态机
+src/graphwar_tick_handler.rs     60Hz + 回合时长    src/graphwar_level_generator.rs  关卡生成（含 ziggurat）
 src/rng.rs      ChaCha12          src/graphwar_game_server.rs 服务端循环
 src/server.rs   握手/状态同步      src/gdext*.rs    Godot 扩展
 tests/          events / evidence / golden / live_hits / plane / server_match

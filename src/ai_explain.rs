@@ -40,11 +40,11 @@ use crate::graphwar_function_evolutionator::{
     self, cross_from, mutate, random_function, Params, VarMode, COARSE_STEP, DIST_SENTINEL,
     FINE_RANKS, FINE_STEP,
 };
-use crate::function::to_text;
+use crate::math_function::to_text;
 use crate::graphwar_path_calculator::{calculate, Mode};
 use crate::plane::{is_occupied, rasterize, EMPTY};
 use crate::rng::ChaCha12;
-use crate::shot::{correction, shifted_tokens};
+use crate::graphwar_shot_calculator::{correction, shifted_tokens};
 use crate::{Function, Token};
 
 /// 队伍字节"查不到"时的哨兵。
@@ -274,7 +274,7 @@ impl Origin {
 #[derive(Debug, Clone)]
 pub struct Candidate {
     pub tokens: Vec<Token>,
-    /// `function::to_text` 的产物（`0x4ec160`，`docs/119` 逐字符对拍 1032/1032）。
+    /// `math_function::to_text` 的产物（`0x4ec160`，`docs/119` 逐字符对拍 1032/1032）。
     pub text: String,
     pub score: Score,
     pub origin: Origin,

@@ -1,7 +1,7 @@
 # 122 · "射手不会打死自己"是怎么实现的：**按 id 排除**（机制 A）
 
 状态：**现行**。本文只回答一件事：`settle::resolve` / `api::hit_test` 把"射手不参与判定"
-当成**调用方约定**（`src/settle.rs` 文件头：传入"除射手本人以外"的士兵），
+当成**调用方约定**（`src/graphwar_shot_calculator/settle.rs` 文件头：传入"除射手本人以外"的士兵），
 这条规则在 `libgraphwarrust.so` 里**到底在哪、长什么样**。
 
 地址约定：本文引用一律写 **ELF 虚拟地址（vaddr）**，Ghidra 值 = vaddr + `0x100000`
@@ -388,14 +388,14 @@ y 用 `0x19f1f0(=300.0)`、`cmp $0x3e7`/`cmp $0x257` 判越界、`cmpb $0xff` �
 
 | 位置 | 现状 | 与二进制一致？ |
 |---|---|---|
-| `src/settle.rs::resolve` / `resolve_points` | 不排除任何人；文件头写"调用方保证" | 内核规则**缺一条**（剩下的部分逐位一致） |
+| `graphwar_shot_calculator::settle::resolve` / `resolve_points` | 不排除任何人；文件头写"调用方保证" | 内核规则**缺一条**（剩下的部分逐位一致） |
 | `src/game.rs::fire`（`0x1c5` 行附近） | `filter(\|t\| !(t.id == owner_id) && !(位置与起点重合 < 1e-12))` | 前半 ✅ ≡ A；**后半是多余的**（二进制只按 id） |
 | `src/api.rs::hit_test` | 没有"射手"概念，调用方先剔 | 契约里就没有这一条 |
 | `client/.../play_screen.gd` | `is_same(s, shot.soldier)` 按对象身份剔 | 行为上 ≡ A |
 
 建议（**只加不改**，并且**不改变任何现有测试的语义**）：
 
-1. **`settle.rs` 新增一个带 owner 的入口**，规则体仍然只有一份：
+1. **`graphwar_shot_calculator/settle.rs` 新增一个带 owner 的入口**，规则体仍然只有一份：
 
    ```rust
    pub fn resolve_points_owned(mask: &[u8], targets: &[Target], points: &[(f64,f64)],

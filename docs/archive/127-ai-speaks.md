@@ -74,7 +74,7 @@ fd16 162 {"FunctionPoints":{"owner_id":234,"start_x":11.962551145879328,"start_y
 `flip = true`（队 2），`cos(0.19*(6.70-11.9626)) = 0.5404` ⇒ `c = 3.7444 - 0.5404 = 3.204` ✓；
 帧 143 的函数是空串（`f ≡ 0`）⇒ `c = y0 = -3.4200779` ⇒ 文本 `" - 3.420"` ✓。
 
-> ⚠️ 这一条**当场暴露了 `src/shot.rs::corrected_text` 的一个形态 bug，已在本轮修掉**
+> ⚠️ 这一条**当场暴露了 `src/graphwar_shot_calculator::corrected_text` 的一个形态 bug，已在本轮修掉**
 > （§5 第 1 条）：它原来写死 `format!("{} + {:.3}", …)`，`c < 0` 时发出去的是
 > `" + -3.420"`，而真机是 `" - 3.420"`。仓库里本来**就有**对的那个函数
 > （`shot::correction_text`，返回 `" - 1.000"` 那种形态），只是 `corrected_text` 没用它。
@@ -115,12 +115,12 @@ TurnInfo{p,s} → EndOfTurnInfo → GameStateInfo(WaitingForFunctions) → Funct
 **修正版不在这里发**：它仍然由 `Match::fire` 产出（`docs/43` 的顺序），
 `CalculatingResults → FunctionInfo{s, 文本, "f(x) ± c"} → FunctionPoints → …`。
 
-`corrected_function` 的文本就是 `crate::shot::corrected_text(&text, x0, y0, flip)`，
+`corrected_function` 的文本就是 `crate::graphwar_shot_calculator::corrected_text(&text, x0, y0, flip)`，
 与 `docs/119` §10 给下一步写的三行接口一致：
 
 ```rust
-let text = crate::function::to_text(&slot.tokens);            // ai_function_text
-let corrected = crate::shot::corrected_text(&text, x0, y0, flip);   // Match::fire 内部
+let text = crate::math_function::to_text(&slot.tokens);            // ai_function_text
+let corrected = crate::graphwar_shot_calculator::corrected_text(&text, x0, y0, flip);   // Match::fire 内部
 ```
 
 ### 3.2 `src/graphwar_game_server.rs`
@@ -173,7 +173,7 @@ let corrected = crate::shot::corrected_text(&text, x0, y0, flip);   // Match::fi
 | `empty_slot_speaks_the_captured_empty_form` | 空槽 ⇒ `{"FunctionInfo":{"owner_id":231,"function":"","corrected_function":null}}`（与帧 74 同形）；空函数的修正文本 == 抓样 `" + 10.990"` |
 | `ai_text_round_trips_through_the_parser` | 四回合的 AI 文本全部是 `parse`/`to_text` 的**不动点** |
 
-另有 `src/shot.rs` 的 **2 条回归测试**（§5 第 1 条的修复）：
+另有 `src/graphwar_shot_calculator.rs` 的 **2 条回归测试**（§5 第 1 条的修复）：
 
 | 测试 | 钉住的行为 |
 |---|---|
@@ -187,10 +187,10 @@ lib 233 · broker 4 · events 6 · evidence 6 · golden 4 · live_hits 12 · pla
 server_match 3 · to_text 7                                   ⇒  281 passed（起点 272）
 ```
 
-九个新增 = `src/game.rs` 6 条 + `tests/server_match.rs` 1 条 + `src/shot.rs` 2 条（符号回归）。
+九个新增 = `src/game.rs` 6 条 + `tests/server_match.rs` 1 条 + `src/graphwar_shot_calculator.rs` 2 条（符号回归）。
 
 **既有断言**：`tests/server_match.rs` 里原有的两条（含 `rotation_and_ai_are_wired_over_tcp`）
-一字未改、原样通过；`src/shot.rs` 原有的两条正样本（`0.00 + 4.638` / ` + 10.990`）
+一字未改、原样通过；`src/graphwar_shot_calculator.rs` 原有的两条正样本（`0.00 + 4.638` / ` + 10.990`）
 也一字未改——它们本来就是正的，见 §5 第 1 条关于 `tests/live_hits.rs` 那两条的结论。
 
 ---
@@ -199,7 +199,7 @@ server_match 3 · to_text 7                                   ⇒  281 passed（
 
 | # | 事项 | 真游戏 | 我们 | 理由 / 缺什么 |
 |---|---|---|---|---|
-| 1 | `corrected_function` 在 `c < 0` 时的形态 | `" - 3.420"`（**观测**：帧 143/182/203） | **已对齐**：`" - 3.420"` | **本轮已修**（2026-11-06，`src/shot.rs` 由父 agent 划给本任务）。改法就两行：`corrected_text` = `format!("{}{}", text, correction_text(&toks, x0, y0, flip))`，复用仓库里**本来就有**的 `correction_text`（它早就按 `c >= 0` / `c < 0` / NaN 三分支写过，`" + 0.591"` / `" - 1.000"` / `" + NaN"`）。旧实现写死 `" + {:.3}"`，端到端那局 7 回合里 4 回合会发 `"5.53 + -9.530"` 这种真机从没写过的形态 |
+| 1 | `corrected_function` 在 `c < 0` 时的形态 | `" - 3.420"`（**观测**：帧 143/182/203） | **已对齐**：`" - 3.420"` | **本轮已修**（2026-11-06，`src/graphwar_shot_calculator.rs` 由父 agent 划给本任务）。改法就两行：`corrected_text` = `format!("{}{}", text, correction_text(&toks, x0, y0, flip))`，复用仓库里**本来就有**的 `correction_text`（它早就按 `c >= 0` / `c < 0` / NaN 三分支写过，`" + 0.591"` / `" - 1.000"` / `" + NaN"`）。旧实现写死 `" + {:.3}"`，端到端那局 7 回合里 4 回合会发 `"5.53 + -9.530"` 这种真机从没写过的形态 |
 | 2 | 电脑玩家的函数由谁决定 | 机器人**客户端**自己算、自己交（帧 36/60） | **服务端**决定，客户端交上来的文本对它不生效 | 本仓库没有"机器人客户端"这一层，AI 住在 `Match` 里。写在这里是因为它是**架构差异**，不是复原结论 |
 | 3 | 提交版 `FunctionInfo` 的**时机** | `TurnInfo` 之后 45–226 tick（`docs/98` §5，机器人算 0.75–3.8 s） | 与 `TurnInfo` **同一次调用**发出（tick 字段仍是回合开始的 `now_ms`，字节不变） | 与 `docs/117` §6.1 记的是同一条 B 类偏差（墙钟），不改进度公式 |
 | 4 | 同文本重复提交要不要再播 | `docs/83` §1：复用上一回合的函数**不会**再播 `FunctionInfo`；`0x4789b3`/`0x4789dc` 把两份文本各算一遍、`0x478a03` 调 `memcmp`、`0x478b23` 把结果写成槽前一个字节，看着就是"变了才播" | **无条件播**（AI 每回合都重新进化，就当它是新提交） | **推断**：那段比较的上下游没读完（`docs/119` §9-E 同款缺口）。本局出现过同一文本两次（`231 "-13.99"`），两条都发了。若后续实现去重，端到端测试第 1 条要改成"提交**或**开火那条里能看到它" |
@@ -267,10 +267,10 @@ node tools/capture_net_raw.js 20000 60    # 原始字节流，按 u16 大端长�
 | `src/game.rs` | 模块注释改成"AI 说话"的现状；新增 `ai_function_text` / `ai_submit_info`；`begin_next_turn` 多发一条提交版 `FunctionInfo`；**新增 6 条单测** |
 | `src/graphwar_game_server.rs` | `FunctionUpdateRequest` 回执的 `owner_id` 改成 `soldier_id` 且电脑玩家用 AI 文本；`FunctionFireRequest` 用 AI 文本开火；`TurnRecord` 增 `function_text` / `corrected`；模块注释补"AI 说话"一节 |
 | `tests/server_match.rs` | **新增** `ai_functions_are_broadcast_and_round_trip_over_tcp` + 3 个解析小工具；原有 2 条断言一字未改（第 5 条断言随后改成真机的**带符号**形态） |
-| `src/shot.rs` | `corrected_text` 改成复用 `correction_text`（`c < 0` ⇒ `" - "`，NaN ⇒ `" + NaN"`）；**新增 2 条回归测试**（三条负样本帧 143/182/203 + 两条正样本、NaN 分支）。父 agent 在发现该差异后把本文件划给本任务 |
+| `src/graphwar_shot_calculator.rs` | `corrected_text` 改成复用 `correction_text`（`c < 0` ⇒ `" - "`，NaN ⇒ `" + NaN"`）；**新增 2 条回归测试**（三条负样本帧 143/182/203 + 两条正样本、NaN 分支）。父 agent 在发现该差异后把本文件划给本任务 |
 | `docs/127-ai-speaks.md` | **新增**（本文） |
 
-**没动**：`src/api.rs`、`src/graphwar_function_evolutionator.rs`、`src/graphwar_turn_manager.rs`、`src/protocol.rs`、`src/function/`、
+**没动**：`src/api.rs`、`src/graphwar_function_evolutionator.rs`、`src/graphwar_turn_manager.rs`、`src/protocol.rs`、`src/math_function/`、
 `src/levelgen*.rs`、`client/`、`docs/INDEX.md`、`docs/HANDOVER.md`、任何既有夹具。
 
 ### 9.1 `tests/live_hits.rs` 那两条：本来就对，不是按 bug 写死的

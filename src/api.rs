@@ -26,7 +26,7 @@
 //! 点序列**全部**来自 [`crate::graphwar_path_calculator::calculate`]（`@0x3c2530` 的复原）：
 //! 步长 [`crate::STEP_DEFAULT`]（0.01）、容差 [`crate::LENGTH_TOL`]、
 //! 点数预算 `(200/step) as i32`、平面边界 `|x|<=25 / |y|<=15`、修正常数
-//! [`crate::shot::correction`]。本文件**不重新采样**，只做类型转换与错误翻译。
+//! [`crate::graphwar_shot_calculator::correction`]。本文件**不重新采样**，只做类型转换与错误翻译。
 //!
 //! ## 不 panic
 //!
@@ -55,16 +55,16 @@
 //! 第 5 个参数是**字符串** `"normal"` / `"ode"`（大小写不敏感、忽略两侧空白），
 //! 非法值走 `ok:false, error:"bad_arguments"`（沿用既有错误码，不新造）。
 //! `"normal"` 直接**委托给** [`calculate_path`]（所以逐位相同，不是第二份实现）；
-//! `"ode"` 走 [`calculate_path_ode`]，**不做**修正常数（与 [`crate::shot::shot_points`]
+//! `"ode"` 走 [`calculate_path_ode`]，**不做**修正常数（与 [`crate::graphwar_shot_calculator::shot_points`]
 //! 里 `apply_correction && mode == Mode::Normal` 一致），`offset` 恒为 `NaN`。
 
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
-use crate::function::parse;
+use crate::math_function::parse;
 use crate::graphwar_path_calculator::calculate;
-use crate::shot::{correction, shifted_tokens};
+use crate::graphwar_shot_calculator::{correction, shifted_tokens};
 use crate::graphwar_path_calculator::Mode;
 use crate::{Token, MAX_ABS_X, MAX_ABS_Y, STEP_DEFAULT};
 
@@ -116,7 +116,7 @@ pub const E_PANIC: &str = "internal_panic";
 ///
 /// 唯一的行为决策在这里：先用 [`correction`] 求 `c`，再用 [`shifted_tokens`] 得到
 /// `f(x)+c` 的 token 列表，最后交给 [`calculate`] —— 与
-/// [`crate::shot::shot_points`] 完全相同的三步，所以结果逐位一致
+/// [`crate::graphwar_shot_calculator::shot_points`] 完全相同的三步，所以结果逐位一致
 /// （单测 `matches_shot_points_pipeline` 钉住了这一点）。
 pub fn calculate_path(expr: &str, x0: f64, y0: f64, direction: f64) -> PathOutcome {
     if !x0.is_finite() || !y0.is_finite() {
@@ -131,7 +131,7 @@ pub fn calculate_path(expr: &str, x0: f64, y0: f64, direction: f64) -> PathOutco
     let tokens: Vec<Token> = parse(expr);
     if tokens.is_empty() {
         // 原程序能画 `""`（抓包里 `"function":""` → 修正文本 `" + 10.990"`，水平直线），
-        // 但 `shot::shot_points` 与 C ABI `gw2_shot_points` 都按“空 = 没有点”处理，
+        // 但 `graphwar_shot_calculator::shot_points` 与 C ABI `gw2_shot_points` 都按“空 = 没有点”处理，
         // 客户端也在调内核之前就把空串拦下了。这里保持与既有内核一致：
         // 空表达式返回错误而不是直线（`docs/116` §6 记为待定）。
         return PathOutcome::err(E_EMPTY);
@@ -187,7 +187,7 @@ pub fn parse_mode(mode: &str) -> Option<Mode> {
 /// ODE 模式：`dy/dx = f(x, y)`，一阶 RK4（[`Mode::Ode`]，见 `src/graphwar_path_calculator.rs`）。
 ///
 /// 与 [`calculate_path`] 的**唯一**差别：**不求修正常数**、也不做 `shifted_tokens`。
-/// 依据是 [`crate::shot::shot_points`] 的那一行判断
+/// 依据是 [`crate::graphwar_shot_calculator::shot_points`] 的那一行判断
 /// `if apply_correction && mode == Mode::Normal { … }` —— 微分方程局里修正常数
 /// 根本不参与运算，所以这里传进采样器的就是**原样**的 `f(x, y)` token。
 /// （单测 `ode_matches_shot_points_without_correction` 钉住这一点：本函数与
@@ -206,7 +206,7 @@ pub fn parse_mode(mode: &str) -> Option<Mode> {
 /// 一处有意保留的差异：Normal 模式的 `undefined_at_start` 来自"修正常数不是有限数"；
 /// ODE 没有修正常数，所以**不会**报这个码。导数在起点无定义（`sqrt(x)` 在 `x=−1`）
 /// 会让 RK4 的 `k1` 变 NaN ⇒ 整段不收敛 ⇒ 退化成 `no_points`（采样器的既有语义，
-/// 与 `shot::shot_points(..., Mode::Ode, false)` 完全一样）。
+/// 与 `graphwar_shot_calculator::shot_points(..., Mode::Ode, false)` 完全一样）。
 pub fn calculate_path_ode(expr: &str, x0: f64, y0: f64, direction: f64) -> PathOutcome {
     if !x0.is_finite() || !y0.is_finite() {
         return PathOutcome::err(E_START_FINITE);
@@ -295,14 +295,14 @@ pub fn result_pairs(out: &PathOutcome) -> Vec<(&'static str, ApiValue)> {
 }
 
 // ---------------------------------------------------------------------------
-// 2b. `hit_test`（`docs/120`）：把 `settle::resolve_points` 的规则抬到 GDScript
+// 2b. `hit_test`（`docs/120`）：把 `graphwar_shot_calculator::settle::resolve_points` 的规则抬到 GDScript
 // ---------------------------------------------------------------------------
 //
 // 这是 `docs/116` §8.2 留的坑。要点只有两条，其余全是搬运：
 //
 // * **规则本体唯一**：本函数先按 `docs/30` 把障碍光栅化进掩膜、把士兵变成
-//   `settle::Target`，然后调用 [`crate::settle::resolve_points`] ——
-//   与 `settle::resolve`（以及 `tests/live_hits.rs` 里那 12 条真对局回放）
+//   `graphwar_shot_calculator::settle::Target`，然后调用 [`crate::graphwar_shot_calculator::settle::resolve_points`] ——
+//   与 `graphwar_shot_calculator::settle::resolve`（以及 `tests/live_hits.rs` 里那 12 条真对局回放）
 //   走的是**同一个函数**，没有第二份判定；
 // * **坐标只换一次**：进参 `points`/`obstacles`/`soldiers` 全是**棋盘坐标**，
 //   掩膜是**像素**空间；换算在 `plane::is_occupied` / `plane::rasterize` 内部完成
@@ -392,14 +392,14 @@ pub fn hit_test(
         crate::plane::rasterize(&mut mask, x, y, size, 0x00);
     }
 
-    let targets: Vec<crate::settle::Target> = soldiers
+    let targets: Vec<crate::graphwar_shot_calculator::settle::Target> = soldiers
         .iter()
         .enumerate()
-        .map(|(i, &(x, y, radius))| crate::settle::Target { id: i as i64, x, y, radius })
+        .map(|(i, &(x, y, radius))| crate::graphwar_shot_calculator::settle::Target { id: i as i64, x, y, radius })
         .collect();
 
-    // ↓ 判定本体：与 `settle::resolve` 同一函数，没有第二份实现。
-    let out = crate::settle::resolve_points(&mask, &targets, points);
+    // ↓ 判定本体：与 `graphwar_shot_calculator::settle::resolve` 同一函数，没有第二份实现。
+    let out = crate::graphwar_shot_calculator::settle::resolve_points(&mask, &targets, points);
 
     // 下面两次扫描**只决定"报哪几个序号"，不参与判定**：
     // `resolve_points` 只回 `killed: Vec<id>`，没有点序号，而界面要的是"第几点打中的"。
@@ -464,7 +464,7 @@ pub fn hit_result_pairs(out: &HitOutcome) -> Vec<(&'static str, ApiValue)> {
 // `obstacles` = `[x, y, size] * n`，**棋盘坐标**、`size` = 半径（游戏单位）——
 // 与 `hit_test` 的第 2 个入参**同一种数组**，客户端拿到就原样传回去，中间不重排。
 //
-// 生成本体在 [`crate::levelgen::obstacles_from_seed`]（既有、已逐位验证的实现），
+// 生成本体在 [`crate::graphwar_level_generator::obstacles_from_seed`]（既有、已逐位验证的实现），
 // 这里只做三件事：参数校验、类型转换、错误翻译。**没有第二份公式。**
 
 /// 一关的障碍生成结果。
@@ -486,15 +486,15 @@ impl ObstacleOutcome {
 /// 错误码：关卡号超出 `0..=20`（`docs/118` §5.2：一共 21 关）。
 pub const E_BAD_LEVEL_INDEX: &str = "bad_level_index";
 
-/// 关卡总数（与 [`crate::levelgen::LEVEL_COUNT`] 同一个数，这里只是给错误信息用）。
-pub const LEVEL_COUNT: usize = crate::levelgen::LEVEL_COUNT;
+/// 关卡总数（与 [`crate::graphwar_level_generator::LEVEL_COUNT`] 同一个数，这里只是给错误信息用）。
+pub const LEVEL_COUNT: usize = crate::graphwar_level_generator::LEVEL_COUNT;
 
 /// 生成一关的障碍。**这是 `level_obstacles` 的全部语义**，FFI 层只是搬运。
 ///
 /// * `level_index`：**0 基**，`0..=20`（`level_0`..`level_20`，与客户端
 ///   `GwCampaign.level(i)`、`state.level_index` 同一套编号）；越界 → `bad_level_index`。
 /// * `seed`：**调用方给的种子**。同 `(level_index, seed)` ⇒ 逐位相同；换 seed ⇒ 换一局布局。
-///   语义与"为什么不是原版那条流"写在 [`crate::levelgen::obstacles_from_seed`] 的文档里
+///   语义与"为什么不是原版那条流"写在 [`crate::graphwar_level_generator::obstacles_from_seed`] 的文档里
 ///   （要点：原版每局开局从 `/dev/urandom` 抽种子 ⇒ 逐局不同，`docs/118` §7.1 的 `R` 列）。
 ///
 /// `seed` 是 `i64`：负值也接受，按 `u64` 位模式解释（GDScript 的 `int` 就是 64 位有符号）。
@@ -502,7 +502,7 @@ pub fn level_obstacles(level_index: i64, seed: i64) -> ObstacleOutcome {
     if level_index < 0 || level_index as usize >= LEVEL_COUNT {
         return ObstacleOutcome::err(E_BAD_LEVEL_INDEX);
     }
-    let Some(obs) = crate::levelgen::obstacles_from_seed(level_index as usize, seed as u64) else {
+    let Some(obs) = crate::graphwar_level_generator::obstacles_from_seed(level_index as usize, seed as u64) else {
         // `obstacles_from_seed` 只在关卡号越界时返回 None —— 上面已挡住，这里再兜一次。
         return ObstacleOutcome::err(E_BAD_LEVEL_INDEX);
     };
@@ -1827,13 +1827,13 @@ pub unsafe fn register_level_obstacles_method(get: GetProc, library: *mut c_void
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shot::shot_points;
+    use crate::graphwar_shot_calculator::shot_points;
 
     fn close(a: f64, b: f64, eps: f64) -> bool {
         (a - b).abs() <= eps
     }
 
-    /// 若 `calculate_path` 与已验证的 `shot::shot_points` 不一致，说明这里偷偷
+    /// 若 `calculate_path` 与已验证的 `graphwar_shot_calculator::shot_points` 不一致，说明这里偷偷
     /// 重新实现了采样器 —— 这条测试就是防它的。
     #[test]
     fn matches_shot_points_pipeline() {
@@ -2120,7 +2120,7 @@ mod tests {
 
     /// ODE 的点序列 == `shot_points(..., Mode::Ode, apply_correction = false)` 逐点相等。
     ///
-    /// 这条钉住的是 `src/shot.rs` 的那一行判断：
+    /// 这条钉住的是 `src/graphwar_shot_calculator.rs` 的那一行判断：
     /// `if apply_correction && mode == Mode::Normal { … }` —— 微分方程局里
     /// **修正常数根本不参与**，API 层不许自己加一个。
     #[test]
@@ -2200,13 +2200,13 @@ mod tests {
 //   4. **坐标换算**：入参是棋盘坐标、掩膜是像素坐标。写错会让命中整体偏 500/300。
 //
 // 外加一条"没有第二份实现"的等价性测试：把 `tests/live_hits.rs` 里那局真对局的
-// 障碍/士兵/函数原样搬过来，比较 `hit_test` 与 `settle::resolve` 的致死集合。
+// 障碍/士兵/函数原样搬过来，比较 `hit_test` 与 `graphwar_shot_calculator::settle::resolve` 的致死集合。
 
 #[cfg(test)]
 mod hit_tests {
     use super::*;
     use crate::plane::to_pixel;
-    use crate::settle::{resolve, Target};
+    use crate::graphwar_shot_calculator::settle::{resolve, Target};
 
     /// 棋盘 y = 0 上从 x = `from` 走到 `to` 的直线点序列（步长 0.01，与内核弦长一致）。
     fn line(from: f64, to: f64, y: f64) -> Vec<(f64, f64)> {
@@ -2260,7 +2260,7 @@ mod hit_tests {
         assert_eq!(inside.hits.len(), 1, "0.499 < 0.5 应判死");
         let outside = hit_test(&pts, &[], &[(0.0, 0.501, 0.5)]);
         assert_eq!(outside.hits.len(), 0, "0.501 > 0.5 不该判死");
-        // 正好 0.5：`d <= radius` 含等号 ⇒ 判死（判据来自 settle::resolve）
+        // 正好 0.5：`d <= radius` 含等号 ⇒ 判死（判据来自 graphwar_shot_calculator::settle::resolve）
         let exact = hit_test(&pts, &[], &[(0.0, 0.5, 0.5)]);
         assert_eq!(exact.hits.len(), 1, "d == radius 应判死（含等号）");
     }
@@ -2430,11 +2430,11 @@ mod hit_tests {
         assert_eq!(t, vec![(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)]);
     }
 
-    // ---- 6. 没有第二份实现：与 settle::resolve 逐项一致 ----
+    // ---- 6. 没有第二份实现：与 graphwar_shot_calculator::settle::resolve 逐项一致 ----
 
     /// 真对局的三发（障碍/士兵/函数都来自 `tests/live_hits.rs` 的抓包）。
     ///
-    /// `hit_test` 与 `settle::resolve` 必须给出**同一个致死集合与同一个停止点**；
+    /// `hit_test` 与 `graphwar_shot_calculator::settle::resolve` 必须给出**同一个致死集合与同一个停止点**；
     /// 只要有人偷偷在 api.rs 里重写一套判定，这条就会红。
     #[test]
     fn agrees_with_settle_resolve_on_captured_shots() {
@@ -2496,7 +2496,7 @@ mod hit_tests {
             let mut b = theirs.killed.clone();
             a.sort_unstable();
             b.sort_unstable();
-            assert_eq!(a, b, "{text}: 致死集合与 settle::resolve 不一致");
+            assert_eq!(a, b, "{text}: 致死集合与 graphwar_shot_calculator::settle::resolve 不一致");
             assert_eq!(ours.blocked, theirs.blocked, "{text}: blocked 不一致");
             assert_eq!(ours.stop, theirs.stop, "{text}: 停止点不一致");
         }
@@ -2654,7 +2654,7 @@ mod obstacle_tests {
     fn agrees_with_levelgen_entry_point_bit_for_bit() {
         for i in 0..LEVEL_COUNT {
             let seed = 0x5EED_0000_0000_0000u64 + i as u64;
-            let want = crate::levelgen::obstacles_from_seed(i, seed).unwrap();
+            let want = crate::graphwar_level_generator::obstacles_from_seed(i, seed).unwrap();
             let got = level_obstacles(i as i64, seed as i64);
             assert_eq!(got.obstacles.len(), want.len(), "level_{i} 个数不同");
             for (k, (g, w)) in got.obstacles.iter().zip(want.iter()).enumerate() {

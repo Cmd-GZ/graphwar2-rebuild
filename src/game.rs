@@ -16,7 +16,7 @@
 //!                -> [QueueDestroyObstacle] -> EffectInfo(ExplosionEffect)
 //! ```
 //!
-//! 与 `settle::events` 的区别：这里直接产出**协议报文文本**（带 tick），
+//! 与 `graphwar_shot_calculator::settle::events` 的区别：这里直接产出**协议报文文本**（带 tick），
 //! 可以直接写进 socket。
 //!
 //! ## 接线（`docs/117-server-wiring.md`）
@@ -34,7 +34,7 @@
 //! ## AI 说话：`token → 文本 → FunctionInfo`（`docs/127-ai-speaks.md`）
 //!
 //! 2026-11 之前，`aigen` 的产物是 token，而 `token → 文本`（`0x4ec160`）没有调用点，
-//! 于是 AI"会思考、不会说话"。现在 `function::to_text`（`docs/119`，1032/1032 对拍）
+//! 于是 AI"会思考、不会说话"。现在 `math_function::to_text`（`docs/119`，1032/1032 对拍）
 //! 就是那个缺口，接线后一个 AI 回合里有**两条** `FunctionInfo`，形态各自照真实抓包
 //! （`docs/127` §2 的原始字节流帧号）：
 //!
@@ -51,7 +51,7 @@
 //! 与同一回合的 `FunctionPoints.owner_id` 相同，都不是 `player_id`）。
 //! 修正版**只**在开火那一刻发（`docs/43` 的既有顺序不改）。
 //! 修正文本的运算符**带符号**（`c >= 0` 写 `" + "`、`c < 0` 写 `" - "`；抓包帧 143/182/203），
-//! 由 `shot::corrected_text` 复用 `correction_text` 产出（`docs/127` §5 第 1 条，已修）。
+//! 由 `graphwar_shot_calculator::corrected_text` 复用 `correction_text` 产出（`docs/127` §5 第 1 条，已修）。
 //!
 //! **没接的**（都写在 `docs/117` §6 / `docs/127` §6）：回合超时的**检测**没有证据，
 //! 本层只把 `timed_out` 当输入参数；游标初值取 `PlayerTurns::new` 的 0
@@ -64,7 +64,7 @@ use crate::plane::{empty_mask, rasterize};
 use crate::protocol::{emit_effect_info, emit_function_points, emit_life_queued_death};
 use crate::rng::ChaCha12;
 use crate::server::RoomState;
-use crate::settle::{resolve, Target};
+use crate::graphwar_shot_calculator::settle::{resolve, Target};
 use crate::graphwar_tick_handler::tick_at;
 use crate::graphwar_turn_manager::{self, TurnDecision, TurnManager};
 
@@ -469,7 +469,7 @@ impl Match {
         (msgs, starts)
     }
 
-    /// 该士兵函数槽里的**文本**：`function::to_text`（`0x4ec160`）在本仓库的唯一调用点。    ///
+    /// 该士兵函数槽里的**文本**：`math_function::to_text`（`0x4ec160`）在本仓库的唯一调用点。    ///
     /// 为什么需要它：`aigen` 的产物是 token（[`FunctionSlot::tokens`](crate::graphwar_function_evolutionator::FunctionSlot)），
     /// 协议 `FunctionInfo.function` 要的是文本，中间只有这一步（`docs/119`、`docs/127`）。
     /// `None` = 这个士兵没有槽（没登记过）。
@@ -477,7 +477,7 @@ impl Match {
     /// ⚠️ 它**不是单射**（`docs/119` §5.3）：π 写成 `3.14`、负常量写成 `neg` 的文本形态、
     /// 缺操作数的空位在文本里不存在。这三条都是真二进制行为，不在这里修。
     pub fn ai_function_text(&self, soldier_id: i64) -> Option<String> {
-        self.functions.tokens(soldier_id).map(crate::function::to_text)
+        self.functions.tokens(soldier_id).map(crate::math_function::to_text)
     }
 
     /// AI 这一回合**提交**时要发的那条 `FunctionInfo`（`docs/127` §2.1、§3.1）。
@@ -861,7 +861,7 @@ impl Match {
             msgs.push(crate::protocol::emit_function_info(
                 s.owner_id,
                 s.function_text,
-                Some(&crate::shot::corrected_text(s.function_text, s.x0, s.y0, s.flip)),
+                Some(&crate::graphwar_shot_calculator::corrected_text(s.function_text, s.x0, s.y0, s.flip)),
             ));
         }
         for (s, out) in shots.iter().zip(outcomes.iter()) {
@@ -1359,14 +1359,14 @@ mod tests {
         assert!(!text.is_empty(), "进化过就不是空串");
         // 文本**只**来自槽里的 token（不是常量、不是客户端给的那条 "0.00"）。
         let toks = m.functions().tokens(231).expect("231 应已登记");
-        assert_eq!(text, crate::function::to_text(toks));
+        assert_eq!(text, crate::math_function::to_text(toks));
         assert_eq!(Some(text.as_str()), m.ai_function_text(231).as_deref());
         // 提交时没有修正文本（抓包帧 135/158/200）。
         assert!(get_str(&info, "corrected_function").is_none(), "提交时的 corrected_function 是 null");
         assert_eq!(get_str(&info, "corrected_function"), None);
         // 与 `TurnStart.evolution`（同一份 token）同源。
         let ev = st.evolution.as_ref().expect("电脑玩家应进化");
-        assert_eq!(crate::function::to_text(&ev.tokens), text);
+        assert_eq!(crate::math_function::to_text(&ev.tokens), text);
     }
 
     /// 人类玩家的回合**一条都不多**（不替人类编函数）。
@@ -1426,7 +1426,7 @@ mod tests {
             r#"{"FunctionInfo":{"owner_id":231,"function":"","corrected_function":null}}"#
         );
         assert_eq!(
-            crate::shot::corrected_text("", -19.512760846799154, 10.99018276610812, false),
+            crate::graphwar_shot_calculator::corrected_text("", -19.512760846799154, 10.99018276610812, false),
             " + 10.990",
             "空函数的修正文本就是抓包里那条"
         );
@@ -1441,9 +1441,9 @@ mod tests {
         for pid in [229, 230, 229, 230] {
             let st = m.begin_next_turn(pid, false, 0, "Timer1m");
             let text = get_str(&ai_info(&st).expect("两个都是电脑玩家"), "function").unwrap();
-            let toks = crate::function::parse(&text);
+            let toks = crate::math_function::parse(&text);
             assert!(!toks.is_empty(), "文本解析回空 token 流：{text}");
-            assert_eq!(crate::function::to_text(&toks), text, "文本不是不动点（{text}）");
+            assert_eq!(crate::math_function::to_text(&toks), text, "文本不是不动点（{text}）");
             seen += 1;
         }
         assert_eq!(seen, 4);

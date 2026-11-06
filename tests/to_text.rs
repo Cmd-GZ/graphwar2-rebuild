@@ -16,7 +16,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use gw2_rebuild::function::{const_text, eval, parse, to_text, try_to_text};
+use gw2_rebuild::math_function::{const_text, eval, parse, to_text, try_to_text};
 use gw2_rebuild::{Function, Token};
 
 fn fixture(name: &str) -> String {

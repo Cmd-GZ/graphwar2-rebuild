@@ -398,7 +398,7 @@ fn trace_file(path: &std::path::Path, _show: usize) {
         // 几何探针：用回放声明的状态建掩膜，按真服务端步长 0.01 再算一次
         {
             use gw2_rebuild::replaydiff::{Inputs, StateMask};
-            use gw2_rebuild::settle::{resolve, Target};
+            use gw2_rebuild::graphwar_shot_calculator::settle::{resolve, Target};
             let inputs = Inputs::scan(&r, b.start);
             let mut sm = StateMask::new();
             sm.apply(&r.msgs[..b.start]);

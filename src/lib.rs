@@ -100,10 +100,10 @@ pub const E: f64 = std::f64::consts::E;
 // ---------------------------------------------------------------------------
 //
 // ✅ 已验证（逐位对拍）
-//    - function::parse   文本 -> 前缀 token       @0x4ed670  docs/03-function-language.md
-//    - function::eval    前缀 token -> f64        @0x4eb9d0  docs/03-function-language.md
+//    - math_function::parse   文本 -> 前缀 token       @0x4ed670  docs/03-function-language.md
+//    - math_function::eval    前缀 token -> f64        @0x4eb9d0  docs/03-function-language.md
 //    - graphwar_path_calculator::calculate   点序列采样               @0x3c2530  docs/04-path-sampling.md
-//    - shot::*           修正常数与端到端         @0x3c5f70  docs/05-shot-pipeline.md
+//    - graphwar_shot_calculator::*           修正常数与端到端         @0x3c5f70  docs/05-shot-pipeline.md
 //
 // ⬜ 待逆向（见 docs/02-module-map.md）
 //    - plane（坐标语义）、turn（回合）、life（生命）、level（关卡）、ai、net
@@ -111,7 +111,7 @@ pub const E: f64 = std::f64::consts::E;
 // 说明：原程序还有一趟常量折叠（@0x4eb830），但它不改变数值结果，
 // 现有对拍中解析产物已与该行为相容，故本 crate 暂未单列该步骤。
 
-pub mod function;
+pub mod math_function;
 pub mod graphwar_path_calculator;
 pub mod plane;
 /// 原版 `entity_drawer.rs` 的图元级复原（`EntityDrawer::draw` = vaddr `0x4b2890`）。
@@ -121,23 +121,21 @@ pub mod graphwar_life_manager;
 pub mod gdext;
 pub mod protocol;
 pub mod graphwar_turn_manager;
-pub mod settle;
 pub mod server;
 pub mod graphwar_tick_handler;
 pub mod game;
-pub mod levelgen;
+pub mod graphwar_level_generator;
 pub mod graphwar_game_server;
 pub mod rng;
 pub mod graphwar_function_evolutionator;
 pub mod ai_explain;
-mod levelgen_tables;
 pub mod turnstate;
 /// 房间列表服务器（broker）：见 `docs/115-broker.md`。
 pub mod broker;
 pub mod capi;
 pub mod gdext_class;
 pub mod api;
-pub mod shot;
+pub mod graphwar_shot_calculator;
 // 回放播放器（docs/133）：gzip + JSONL 读取、按 tick 还原局面、播放时钟。
 pub mod graphwar_replay_player;
 pub mod replay_inflate;

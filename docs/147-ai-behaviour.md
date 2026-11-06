@@ -451,7 +451,7 @@ cargo run --offline --example ai_explain -- --difficulty 250 --seed 11 \
 
 ### 11.1 代码与本文的一处已知差距
 
-`src/graphwar_function_evolutionator.rs::fitness_eval`（既有实现）把所有目标都记成 `+1` 命中、**没有队伍概念**，
+`src/graphwar_function_evolutionator::fitness_eval`（既有实现）把所有目标都记成 `+1` 命中、**没有队伍概念**，
 因此它**没有**实现 §3.2 的"误伤 −2e6"。本文与 `src/ai_explain.rs::evaluate` 用的是
 带队伍的正确版本；`fitness_eval` 保持原样（改它会动到 `src/game.rs`，不在本任务范围）。
 ⇒ 拿 `aigen::fitness` 算分时，请记得它比真二进制"宽容"（不扣误伤）。

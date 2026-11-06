@@ -237,7 +237,7 @@ sin(x)     0.00     (-1.06*x)     (-23.81*x)     tan(sin((-0.12*x)))     abs((-3
 
 #### 3.5 括号的真相：`FunctionInfo.corrected_function` 的 `+ c` 不是它
 
-`"0.00 + 4.638"` 里的 `+ 4.638` 是**另一处**字符串拼接（`src/shot.rs::corrected_text`，
+`"0.00 + 4.638"` 里的 `+ 4.638` 是**另一处**字符串拼接（`src/graphwar_shot_calculator::corrected_text`，
 `09-network.md` §6.2、`05-shot-pipeline.md`），`to_text` 不负责它。`to_text(parse("0.00")) == "0.00"` 才是本函数的输出。
 
 ---

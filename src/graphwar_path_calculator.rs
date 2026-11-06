@@ -5,7 +5,7 @@
 //!
 //! 移植自上游已验证的 `graphwar_curve.py::calculate_path`。
 
-use crate::function::{eval, hypot};
+use crate::math_function::{eval, hypot};
 use crate::{Token, LENGTH_TOL, MAX_ABS_X, MAX_ABS_Y, TOTAL_LEN};
 
 const HALF: f64 = 0.5;
@@ -31,7 +31,7 @@ pub fn point_budget(step: f64) -> i32 {
 
 /// 计算一次射击的点序列。
 ///
-/// - `tokens`：**已经**加上修正常数的 token 列表（见 [`crate::shot`]）
+/// - `tokens`：**已经**加上修正常数的 token 列表（见 [`crate::graphwar_shot_calculator`]）
 /// - `x0, y0`：开火士兵坐标；首点就是它
 /// - `step`：目标弦长；服务端恒为 [`crate::STEP_DEFAULT`]
 /// - `flip`：向左开火（镜像 x 轴）

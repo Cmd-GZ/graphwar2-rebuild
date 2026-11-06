@@ -10,7 +10,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use gw2_rebuild::function::{eval, parse};
+use gw2_rebuild::math_function::{eval, parse};
 use gw2_rebuild::graphwar_path_calculator::{calculate, Mode};
 use gw2_rebuild::{Function, Token};
 
@@ -161,7 +161,7 @@ fn path_matches_binary() {
 #[test]
 fn end_to_end_shot_is_stable() {
     // 端到端冒烟：文本 -> 点序列，锁定行为不被"顺手优化"改掉
-    let pts = gw2_rebuild::shot::shot_default("sin(x)", 5.0, 2.0);
+    let pts = gw2_rebuild::graphwar_shot_calculator::shot_default("sin(x)", 5.0, 2.0);
     assert!(pts.len() > 100, "正弦曲线点数异常: {}", pts.len());
     // 首点必须是开火士兵的位置
     assert_eq!(pts[0], (5.0, 2.0));

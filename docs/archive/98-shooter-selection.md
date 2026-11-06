@@ -267,7 +267,7 @@ computer_player_manager.rs
    `src/graphwar_function_evolutionator.rs` 没有士兵概念，需要加一层。
 4. **`docs/13` §5 第 1 条可以销账**："谁决定轮到谁" = `0x463da0`（射手）
    + 玩家轮转/队伍交替（外层，`docs/47`/`60` 已记）。
-5. **旧账仍在**：`src/graphwar_function_evolutionator.rs::evolve` 还没有 25 s 墙钟上限（`docs/93`）。
+5. **旧账仍在**：`src/graphwar_function_evolutionator::evolve` 还没有 25 s 墙钟上限（`docs/93`）。
 
 ---
 

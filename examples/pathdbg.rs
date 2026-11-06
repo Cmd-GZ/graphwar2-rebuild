@@ -1,6 +1,6 @@
-use gw2_rebuild::function::parse;
+use gw2_rebuild::math_function::parse;
 use gw2_rebuild::graphwar_path_calculator::{calculate, Mode};
-use gw2_rebuild::shot::{correction, shifted_tokens};
+use gw2_rebuild::graphwar_shot_calculator::{correction, shifted_tokens};
 
 fn main() {
     let text = std::env::args().nth(1).unwrap_or_else(|| "abs(cos((-1.43*x)))*8.65".into());
