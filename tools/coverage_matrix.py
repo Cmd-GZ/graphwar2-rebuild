@@ -404,14 +404,14 @@ mod("graphwar_ad_switch.rs", "graphwar", ("src/graphwar_ad_switch.rs",), "观测
     "6 条全是 gdext 惰性注册驱动；两个 getter trampoline + owned(+0x18) 已钉死")
 mod("graphwar_audio_control.rs", "graphwar", (), "未做",
     "docs/111：SoundHandler / -15f / -5f / 32767 归一化已还原，但没接进 src/（client/ 是仿制）")
-mod("graphwar_backend.rs", "graphwar", (), "未做",
-    "docs/132：读出 15 个方法名（start_server / lan_broadcaster / broker …），不是 Godot 类；无实现")
+mod("graphwar_backend.rs", "graphwar", ("src/graphwar_backend.rs",), "观测",
+    "**18 个方法**（旧文记 15，偏少）。LAN 与 broker 是两个独立字段**（+0x110 组播 ff02::1 / +0x228 broker），开房时一起装；「看哪一路」在 GraphwarLanVBox::show_global，不在这层（docs/09 §11）")
 mod("graphwar_button.rs", "graphwar", ("src/graphwar_button.rs",), "观测",
     "6/6 方法全解（init/ready/process/button_down/pressed/button_up）+16 条名字分派入口；docs/16 §18")
 mod("graphwar_campaign_control.rs", "graphwar", (), "未做",
     "docs/118 §7：21 关数据已从 0x4ad380 解出、campaign.save 格式已解；src/ 里还没有这张表")
-mod("graphwar_client_connection_handler.rs", "graphwar", (), "未做",
-    "docs/134 只覆盖 client/ 的 GDScript 联机；原版这个 Rust handler 未还原")
+mod("graphwar_client_connection_handler.rs", "graphwar", ("src/graphwar_client_connection_handler.rs",), "观测",
+    "11 FUNC（8 方法 + 3 订阅闭包 + 连接线程）。ConnectionState 4 个变体（0/1/2/3），**与 GameState(8) 是两套**，唯一交点：失败时 set_state(7)。本机地址是 [::1]:port（**不是 127.0.0.1**）；远端只认 IP 字面量、**无 DNS**；connect_timeout 30s、**无重连**、**不发也不订阅心跳**（docs/09 §11）")
 mod("graphwar_color_manager.rs", "graphwar", (), "未做",
     "docs/102：两张 6 色队色表 + 随机起点线性探测已解出；src/ 无实现")
 mod("graphwar_computer_player_manager.rs", "graphwar", ("src/graphwar_computer_player_manager.rs",), "观测",
