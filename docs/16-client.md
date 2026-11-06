@@ -2167,3 +2167,319 @@ computer_player / color / rank 各 1 处（模块名来自归属表，具体 `ca
 
 `tests/graphwar_game_client.rs` 的断言都是**回归保护**；每条右侧的真值要么是
 指令立即数、要么是 `.rodata` 字节，测试里逐条注明了地址。
+
+---
+
+## 18. `graphwar_button.rs` / `graphwar_long_press_animation.rs` 规格（本轮新增：2.0.60 arm64 符号表定名 + 6 个方法体 + `draw` 全解）
+
+> **本节解决什么**：这两个模块是全库**最难定位**的两个 GDExtension 类 ——
+> `fixtures/name_to_addr.tsv` 给 `graphwar_button` 的 5 行全是 `歧义`/`未知`，
+> 且它的候选地址**经反汇编核对全是错的**（§18.2）。
+> 本节把它们的**真名、x86 地址、方法分派表、状态机、`draw` 的每一步算术**全部钉下来。
+>
+> **地址口径**：一律 **ELF 虚地址**（`objdump` 口径）。Ghidra/REA 地址 = 本值 + `0x100000`（只加一次）。
+> 落码：`src/graphwar_button.rs` + `src/graphwar_long_press_animation.rs`；
+> 验收：`tests/graphwar_button.rs`（18 条）+ `tests/graphwar_long_press_animation.rs`（12 条）。
+
+### 18.1 一页结论
+
+| 项 | 结果 | 档位 |
+|---|---|---|
+| 新杠杆 | **同版本（2.0.60）arm64 `.so` 没 strip**：`.reference/x/arm64/lib/arm64-v8a/libgraphwarrust.so` 有完整 `.symtab` | 观测 |
+| `GraphwarButton` 的方法 | `init`/`ready`/`process`（`IButton` 虚函数）+ **`button_down`/`button_up`/`pressed`**（`#[func]`，`ready` 里连到同名信号） | **观测**（arm64 真名 + x86 指令） |
+| 它的导出属性 | **2 个**：`input_text`、`long_press_input_text`（每个一对 getter/setter，见 §18.6） | 观测（`.rodata` 名字对） |
+| 它的状态 | `+0x60/+0x68` 按下时刻；`+0x50/+0x58` 阈值 `0.5 s`；`+0x88/+0x90` 两个 GString；`+0x40/+0x48` 订阅者 `Vec`；`+0x18` 动画节点判别位 | 观测（偏移）+ 推断（字段名） |
+| `GraphwarLongPressAnimation` 的方法 | **2.0.60 只有 `draw`**（2024 版有 5 个，见 §18.8 更正） | **观测**（arm64 `.symtab` 全长搜索） |
+| 它的状态 | `+0x18` secs / `+0x20` nanos，哨兵 `1e9` = 「没在动画」 | 观测 |
+| 动画参数 | `angle = elapsed × 4π`，`angle > 2π` 结束 ⇒ **0.5 s**；两次绘制（黑 `{0,0,0,1}` + 白 `{1,1,1,1}`） | **观测**（逐指令 + `.rodata` 比特） |
+| 两个模块的接缝 | `button_down` 写 LPA 的 `+0x18/+0x20`（启动），`button_up` 写哨兵（停止） | **观测**（两侧指令都核过） |
+| 还缺什么 | 3 次取值 / 2 次绘制的 **godot API 名**（GOT 槽）；4 个属性存取器的**函数体**；订阅者由谁 `push` | 未知（§18.10） |
+
+### 18.2 名字从哪来；以及 `name_to_addr.tsv` 的 5 条候选**全错**（冲突登记）
+
+```bash
+awk -F'\t' '$1=="graphwar_button"' fixtures/name_to_addr.tsv
+awk -F'\t' '$1=="graphwar_long_press_animation"' fixtures/name_to_addr.tsv
+```
+
+TSV 对这两个模块只给了 **2 条可用信息**：
+
+* `GraphwarLongPressAnimation::draw` = **`0x4d8100`**，`唯一锚`
+  （`src/graphwar_long_press_animation.rs:52:55`，4 个双向唯一锚）—— **本条正确，本节采用**；
+* 两个模块的 `__register_constants` 各 4 个候选（button：`0x4e0e60`/`0x4e0fe0`/`0x4e8230`/`0x4e83d0`；
+  LPA：`0x4bd650`/`0x4bda50`/`0x4d7bc0`/`0x4d7d40`）—— **这 8 个地址全部正确**，
+  它们是 gdext 样板簇（§18.3 表末行），只是 TSV 分不出是哪一个。
+
+其余 **5 行（`button_down`/`button_up`/`ready`/`process`/`init`）的候选地址全部错误**。
+否掉的判据（可复跑，见 §18.11）：
+
+| 方法 | TSV 候选 | 反汇编事实 |
+|---|---|---|
+| `button_down`/`button_up` | `0x3afb00` | 体内引用 `src/graphwar_root_node.rs:892:35`、`:894:28` |
+| 同上 | `0x3afe90` | 体内引用 `src/graphwar_root_node.rs:868:35`、`:870:28` |
+| `ready` | `0x3a2e10` | `graphwar_root_node` 的 `_ready`（§15.4） |
+| `process` | `0x3a5760` | `graphwar_root_node` 的状态机（§15.7） |
+| `init` | `0x920850` | gdext 通用初始化样板 |
+
+⇒ **以反汇编为准**。真名改用**同版本 arm64 `.symtab`**（两个构建同源，函数集合与调用结构可比；
+arm64 地址只用于定名，绝不当作 x86 地址）：
+
+```bash
+readelf -sW .reference/x/arm64/lib/arm64-v8a/libgraphwarrust.so | c++filt | grep graphwar_button
+# graphwarrust::graphwar_button::GraphwarButton::button_down   @0x448470 (436 B)
+# graphwarrust::graphwar_button::GraphwarButton::pressed       @0x448624 (300 B)
+# graphwarrust::graphwar_button::GraphwarButton::button_up     @0x448750 (428 B)
+# <GraphwarButton as …::IButton>::init                         @0x43eb08 (280 B)
+# <GraphwarButton as …::IButton>::ready                        @0x43ec20 (868 B)
+# <GraphwarButton as …::IButton>::process                      @0x43ef84 (336 B)
+```
+
+### 18.3 x86 定位表（**观测**；每条都给判据）
+
+这 6 个方法**一个 panic 锚都没有**（`src/graphwar_button.rs` 只有 14/83/111 三处，
+全被 gdext 样板占用）⇒ 只能靠**跨架构指纹**：
+
+| 方法 | x86 vaddr | x86 B | arm64 B | 比 | 判据 |
+|---|---|---|---|---|---|
+| `init` | `0x4e3e00` | 288 | 280 | 1.029 | 逐字段写初值（`[+0x68]=0x3b9aca00`、`[+0x58]=0x1dcd6500`、两个空 GString）；紧邻 `ready`/`process`，顺序与 arm64 符号表一致 |
+| `ready` | `0x4e3f20` | 896 | 868 | 1.032 | 唯一同时 `lea` `"pressed"`/`"button_up"`/`"button_down"`/`"AnimationRect"` 的函数，且含 `"Upcast failed. This is a bug; please report it."` |
+| `process` | `0x4e42a0` | 352 | 336 | 1.048 | `cmp/mov [r+0x68],0x3b9aca00` + `GString::is_empty(+0x90)`，逐句同形 |
+| `button_down` | `0x4ef390` | 464 | 436 | 1.064 | 全库**只有它和 `button_up`** 引用 `type_name::<GraphwarLongPressAnimation>()`（`.rodata 0x1c1c13`）；arm64 侧同样只有这两个 |
+| `pressed` | `0x4ef560` | 320 | 300 | 1.067 | `[self+0x48]` 当长度、`[self+0x40]` 当指针、步长 `0x10` 的循环 + `GString::fmt(self+0x88)` |
+| `button_up` | `0x4ef6a0` | 448 | 428 | 1.047 | 开头 `mov dword [r+0x68],0x3b9aca00`；其余与 `button_down` 同形 |
+
+**gdext 样板簇**（不是游戏代码，但地址可钉住）：
+
+| 锚 | x86 函数 | 说明 |
+|---|---|---|
+| `graphwar_button.rs:14:10` | `0x4e8020`（528 B） | `#[derive(GodotClass)]` 生成 |
+| `graphwar_button.rs:83:1` | `0x4e0e60`/`0x4e0fe0`（384 B×2）、`0x4e8230`（416）、`0x4e83d0`（432） | 两个 `#[godot_api]` 块 × (`__register_methods`,`__register_constants`) |
+| `graphwar_button.rs:111:1` | `0x4e8580`（592 B） | `impl IButton` 块 |
+| `graphwar_long_press_animation.rs:10:10` | `0x4bd430`（544 B） | 同上 |
+| `…:17:1` | `0x4bd650`/`0x4bda50`（432×2）、`0x4d7bc0`/`0x4d7d40`（384×2） | 同上 |
+| `…:31:1` | `0x4bd800`（592 B） | 同上 |
+
+**两个架构的 Location 取值完全相同**（`graphwar_button.rs`：14:10 / 83:1 / 111:1；
+`graphwar_long_press_animation.rs`：10:10 / 17:1 / 31:1 / 52:55 / 52:86 / 53:56 / 53:87），
+因为 `core::panic::Location` 是编译期常量、与指令集无关。
+
+### 18.4 方法名 ↔ 分派表（**观测**）
+
+gdext 的 `#[func]` 与属性存取器**不产生 Rust 符号**，而是「按名字分派」：
+每个入口是一个小函数，体内 `lea` 出 `(类名, 方法名)` 两对 `&str`
+（`(ptr,len)` 全部自校验过）。`GraphwarButton` 实测 16 个入口：
+
+| x86 vaddr | 大小 | 类名 | 方法名 |
+|---|---|---|---|
+| `0x4e4400` / `0x4e47f0` | 192 / 240 | `GraphwarButton` | `get_input_text` |
+| `0x4e44c0` / `0x4e4700` | 192 / 240 | `GraphwarButton` | `set_long_press_input_text` |
+| `0x4e4580` / `0x4e49d0` | 192 / 240 | `GraphwarButton` | `set_input_text` |
+| `0x4e4640` / `0x4e48e0` | 192 / 240 | `GraphwarButton` | `get_long_press_input_text` |
+| `0x4e4d40` | 192 | `GraphwarButton` | `process` |
+| `0x4e4e00` | 192 | `GraphwarButton` | `ready` |
+| `0x4ef860` / `0x4efaa0` | 192 / 240 | `GraphwarButton` | `button_down` |
+| `0x4ef920` / `0x4efc81` | 192 / 239 | `GraphwarButton` | `button_up` |
+| `0x4ef9e0` / `0x4efb90` | 192 / 240 | `GraphwarButton` | `pressed` |
+
+成对的 192/240 是同一模板的两个实例化（ptrcall / varcall），差别只在尾部
+（多一次 `drop`）⇒ **推断**：接收者所有权不同（`&Self` vs `Self`）。
+
+另外两处：
+
+* `0x4e4ac0`（640 B）= **属性表**（`__register_exports`）：成对给出
+  `input_text` ↔ `get_input_text`/`set_input_text`、
+  `long_press_input_text` ↔ `get_long_press_input_text`/`set_long_press_input_text`（§18.6）；
+* `0x5009f0`（368 B）= 三个信号方法名的**分派器**（长度关 + 前 8 字节立即数比较）。
+
+### 18.5 `GraphwarButton` 状态机（**观测**：偏移 + 立即数；字段名是推断）
+
+`init`（`0x4e3e00`，写初值段 `0x4e3e5a`–`0x4e3eb3`）逐字段写出：
+
+| 偏移 | 初值 | 含义 | 读它的地方 |
+|---|---|---|---|
+| `+0x18` | `0` | 动画节点判别位（`Some`=1） | `button_down` 的 `0x4ef3aa`、`button_up` 的 `0x4ef6b1` |
+| `+0x38/+0x40/+0x48` | `{0, 8}` / `0` | 订阅者 `Vec<Box<dyn FnMut(&str)>>`（cap=0、悬垂 8、len=0） | `pressed`、`process` |
+| `+0x50` | `0` | 阈值 `Duration.secs` | —（本模块无读者，§18.10） |
+| `+0x58` | **`0x1dcd6500`** | 阈值 `Duration.nanos` = **500 ms** | —（同上） |
+| `+0x60` | （`Instant.secs`） | 按下时刻 | — |
+| `+0x68` | **`0x3b9aca00`** | → 换成「没按下」哨兵 `nanos = 1e9` | `process` 的 `0x4e42c9` |
+| `+0x88` | `GString("")` | `input_text` | `pressed` |
+| `+0x90` | `GString("")` | `long_press_input_text` | `process` |
+
+四个动作（逐句对拍 arm64 同名函数；x86 指令地址在括号里）：
+
+```text
+button_down (0x4ef390)
+  0x4ef39d  Instant::now()            → [self+0x60]=secs,[self+0x68]=nanos     ← 无条件
+  0x4ef3aa  cmp dword [self+0x18],1 ; jne 返回                                ← 没接动画节点就结束
+  0x4ef3e2  Instant::now()（第二次）  → [lpa+0x18]=secs,[lpa+0x20]=nanos
+  0x4ef420  base_mut() → queue_redraw()
+
+button_up   (0x4ef6a0)
+  0x4ef6aa  mov dword [self+0x68],0x3b9aca00      ← **在**判别之前，所以总会释放
+  0x4ef6e9  mov dword [lpa +0x20],0x3b9aca00
+  0x4ef711  base_mut() → queue_redraw()
+
+process     (0x4e42a0)
+  0x4e42bb  GString::is_empty(self+0x90) → 空则返回
+  0x4e42c9  cmp dword [self+0x68],0x3b9aca00 → 已释放则返回
+  0x4e42d7  mov dword [self+0x68],0x3b9aca00      ← **在**派发之前（一次性）
+  0x4e42df  循环 self+0x40/+0x48，用 GString(self+0x90) 逐个回调
+
+pressed     (0x4ef560)
+  同形循环，但格式化的字段是 self+0x88，且**不改**状态
+```
+
+⇒ **点一下发 `input_text`；按住不放发 `long_press_input_text` 且只发一次。**
+`process` **没有**读 `0.5 s` 阈值（它只判「还按着」）；阈值的消费者是长按动画
+（`elapsed > 0.5`，§18.8）〔推断：两者是同一个 0.5 s〕。
+
+### 18.6 `ready`：3 条信号 + 1 次按名找节点（**观测**）
+
+```text
+0x4e3f4e  lea "pressed"      + 0x4e3f5d  len 7   → Callable::from_object_method → connect
+0x4e3fc7  lea "button_up"    + 0x4e3fd6  len 9   → 同上
+0x4e4040  lea "button_down"  + 0x4e404f  len 11  → 同上
+0x4e410d  lea "AnimationRect" (13 B)             → GraphwarNodes::get_node_by_name_rec → cast
+```
+
+信号名与「被连的方法名」是**同一个 **`&str`（同一地址）⇒
+`connect("pressed", Callable::from_object_method(self, "pressed"))` 这种写法；
+三个名字在 `.rodata` 里首尾相接：`0x1c4258`(7) → `0x1c425f`(9) → `0x1c4268`(11) → `0x1c4273`(13)。
+
+最后那次按名字找的是 **`"AnimationRect"` 节点**（`0x1c4273`），随后 cast 成
+`GraphwarLongPressAnimation`（arm64 `ready` 的 `check_rtti` 目标类型名 = 71 字节的
+`graphwarrust::graphwar_long_press_animation::GraphwarLongPressAnimation`，x86 在 `0x1c1c13`）。
+
+**两个导出属性**（`0x4e4ac0` 的 24 个 `(str,len)` 立即数还原）：
+
+| 属性 | 名字地址 | getter | setter |
+|---|---|---|---|
+| `input_text` | `0x1c42ce` | `get_input_text`（`0x4e4400`/`0x4e47f0`） | `set_input_text`（`0x4e4580`/`0x4e49d0`） |
+| `long_press_input_text` | `0x1c42d8` | `get_long_press_input_text`（`0x4e4640`/`0x4e48e0`） | `set_long_press_input_text`（`0x4e44c0`/`0x4e4700`） |
+
+⚠️ 这两组存取器的**函数体未解**（只经名字分派，静态拿不到函数指针）。
+
+### 18.7 `GraphwarLongPressAnimation::draw`（`0x4d8100`，1232 B，**全解**）
+
+唯一锚（4 个，两两成对）：`52:55`+`52:86`、`53:56`+`53:87`
+⇒ 源码第 52、53 行各有**两个** `.expect()`；二进制里对应 4 条 panic 出口
+`0x4d8522`/`0x4d852f`/`0x4d855e`/`0x4d856b`。
+
+```text
+4d810d  eax = [rdi+0x20]                          ; 启动时刻 nanos
+4d8110  cmp eax, 0x3b9aca00 ; je 4d8514（返回）     ; == 1e9 ⇒ 没在动画
+4d811e  [rsp+0x78] = [rdi+0x18] ; [rsp+0x80] = eax ; 组 Instant
+4d812e  3 次 godot 取值（GOT 槽，名字不可解）⇒ p0,p1 / s0,s1 / n,c
+4d82b2  v48 = s0/10 ; v4c = s1/3 ; v44 = 0.5*v4c ; v10 = s1*0.5 - v44
+4d8337  half = n/2（i32，`shr 31`/`add`/`sar 1`）；条件 `(float)half > c`
+4d82f3  v8 = 正分支 p0+v48+v44+s0+v10 ／ 负分支 p0-v48-v44-v10
+4d8347  y  = p1 + s1*0.5
+4d83a0  call *[0x9bafe8] on [rsp+0x78]            ; Instant::elapsed()（只吃启动时刻）
+4d83fb  (double)nanos / 1e9 + (double)secs         ; = elapsed（f64）
+4d8407  ×2 ; ×2 ; ×π                               ; = elapsed × 4π ← 角度
+4d8485  draw #1  xmm0=v8 xmm1=y xmm2=v10 xmm3=-0.2 xmm4=angle+0.2 xmm5=2*0.2*v4c+v4c
+                rdx=.rodata 0x19cf70（Color{0,0,0,1}）  esi=0x1e ecx=0
+4d84ed  draw #2  xmm0=v8 xmm1=y xmm2=v10 xmm3= 0.0 xmm4=angle     xmm5=v4c
+                rdx=.rodata 0x19ed00（Color{1,1,1,1}）  esi=0x1e ecx=0
+4d8503  if (angle > 2π) [rdi+0x20] = 0x3b9aca00     ; 结束
+```
+
+`.rodata` 常量（**原始比特**，改一个就等于宣称二进制变了）：
+
+| 值 | 地址 | 指令 | f32 比特 / f64 比特 |
+|---|---|---|---|
+| 3.0 | `0x1bb2b8` | `4d82b2 divss`（`s1/3`） | `40400000` |
+| 10.0 | `0x1b9530` | `4d82c0 divss`（`s0/10`） | `41200000` |
+| 0.5 | `0x1ba128` | `4d82d6 mulss` | `3f000000` |
+| 0.2f32 | `0x1ba598` | `4d8423 movss` | `3e4cccd` |
+| 1e9 | `0x19eff8` | `4d83fb divsd` | `41cdcd6500000000` |
+| π | `0x19fdc8` | `4d840f mulsd` | `400921fb54442d18` |
+| 2π | `0x19fab8` | `4d8503 ucomisd` | `401921fb54442d18` |
+| `{0,0,0,1}` | `0x19cf70` | 第 1 次绘制的 `rdx` | Color（黑） |
+| `{1,1,1,1}` | `0x19ed00` | 第 2 次绘制的 `rdx` | Color（白） |
+| `{-0,-0,-0,-0}` | `0x19e880` | `4d8442 movaps` + `xorps` | 取负掩码 |
+
+⇒ **动画时长 = 0.5 s**：`angle = elapsed × 4π > 2π ⇔ elapsed > 0.5`（严格大于；
+正好 0.5 s 这一帧还不算结束）。这与 `GraphwarButton::init` 里 `Duration{0, 0x1dcd6500}`
+**数值相同**〔推断：同一个常量；缺的证据：把 0.5 s 传给本节点的那条指令〕。
+
+**被调用的 godot API 名未知**（`call *[0x9bc020]` 与 3 次取值全是 GOT 槽，
+静态解析不到符号）⇒ 本节只说「两次绘制 + 这些实参」，不猜它们是 `draw_rect` 还是别的。
+
+### 18.8 就地更正三条
+
+1. **`docs/02-module-map.md` §16.3 给本模块的锚地址是旧值**：那行写
+   `:52:56`/`:52:86`/`:53:56`/`:53:87` → `0x4d9500`。**实测是 `0x4d8100`**
+   （4 个 Location 的引用者只有它一个；`0x4d9500` 是
+   `time_mode_change_request_event` 的实例化 B，见 §16.5）。以本节为准。
+   同一行的列号也差 1：实测 `52:55`（不是 `52:56`）与 `53:56`/`53:87`。
+2. **`docs/02` §18.5 C 表记本模块有 5 个方法**（`draw, process, ready, start, stop`）——
+   那是**2024** 版符号表。**2.0.60 的 arm64 `.symtab` 只有 `draw`**
+   （`grep -c` 全长搜索，`start`/`stop`/`ready`/`process` 为 0）；
+   `trait impl` 也只有 `IControl`（不是 `IButton`）。
+3. **`fixtures/name_to_addr.tsv` 对 `graphwar_button` 的 5 行候选全部错误**（§18.2 表），
+   本节以反汇编为准并已把冲突登记进 `src/graphwar_button.rs::NAME_BRIDGE_CONFLICTS`。
+   同表里两个模块的 `__register_constants` 4 候选地址是**正确的**（= §18.3 的样板簇）。
+
+### 18.9 跨模块接缝：谁驱动长按动画（**观测**）
+
+| 写入方 | 指令 | 写的字段 |
+|---|---|---|
+| `GraphwarButton::button_down` | `0x4ef3e8` / `0x4ef3ec` | LPA `+0x18` = `now.secs`、`+0x20` = `now.nanos`（**启动**） |
+| `GraphwarButton::button_up` | `0x4ef6e9` | LPA `+0x20` = `0x3b9aca00`（**停止**） |
+| `GraphwarLongPressAnimation::draw` | `0x4d850d` | 自己 `+0x20` = `0x3b9aca00`（转满一圈后自停） |
+
+`GraphwarButton::ready` 用 `"AnimationRect"` 这个名字把节点找出来并 cast 成本类型
+⇒ 场景里长按动画节点的名字就是 `AnimationRect`（[推断] 缺的证据是 `.tscn` 文本）。
+
+### 18.10 本节没解出来的（照实写）
+
+| 缺口 | 缺什么证据 |
+|---|---|
+| LPA `draw` 里 3 次取值的 API 名与语义（哪一对是位置、哪一对是尺寸） | 全是 `call *[..](%rip)`（GOT 槽），静态解析不到符号；需要 `tools/ptr_slots.py` 补查槽→目标，或运行时打桩 |
+| `draw` 的两次绘制是被哪个 API 调用（`esi=0x1e` 是什么） | 同上（`call *[0x9bc020]`） |
+| 4 个属性存取器（`get/set_input_text`、`get/set_long_press_input_text`）的函数体 | 只经 `(类名,方法名)` 分派，静态没有函数指针；需要运行时抓 vcall 表 |
+| 订阅者 `Vec<Box<dyn FnMut(&str)>>` 由谁 `push` | 本模块 6 个方法里**没有** `push`（已全函数搜索 `+0x40/+0x48` 的写点） |
+| `GraphwarButton` 的 `+0x50/+0x58`（`0.5 s` 阈值）的读者 | 本模块 6 个方法里没有读它；需要找到把阈值交给 LPA 的那条指令 |
+| `init` 里 `[self+0x00]`/`[+0x10..0x18]`/`[+0x28..0x38]`/`[+0x70..0x88]` 的字段名 | 写了但没读到 ⇒ 未知 |
+
+### 18.11 复现（不依赖本节，任何人可重跑）
+
+```bash
+SO=.reference/steam/2026-08-28/libgraphwarrust.so          # sha256 9a538115…
+ARM=.reference/x/arm64/lib/arm64-v8a/libgraphwarrust.so
+
+# 1) 真名（x86 被 strip，arm64 没 strip）
+readelf -sW $ARM | c++filt | grep -E 'graphwar_(button|long_press)'
+
+# 2) 两个模块的 Location 集合（x86 与 arm64 应完全相同）
+../.venv/bin/python tools/coverage_matrix.py --check        # 依赖 Location 管线
+
+# 3) 方法分派表（类名/方法名两对 &str）
+objdump -d -M intel --start-address=0x4e4400 --stop-address=0x4e4ee0 $SO
+
+# 4) 状态机的四个动作
+objdump -d -M intel --start-address=0x4e3e00 --stop-address=0x4e43f0 $SO
+objdump -d -M intel --start-address=0x4ef390 --stop-address=0x4ef860 $SO
+
+# 5) draw 与它的常量
+objdump -d -M intel --start-address=0x4d8100 --stop-address=0x4d85d0 $SO
+```
+
+### 18.12 落码清单（`src/` 两个文件）
+
+| 原版 | 落在 | 覆盖程度 | 档位 |
+|---|---|---|---|
+| 6 个方法的名 + 地址 + 大小 | `ORIG_FUNCS` / `orig_fn` | 6 条，含大小比判据 | 观测 |
+| arm64 真名 | `ARM64_SYMS` / `arm_sym` | 8 条（含注册数据） | 观测 |
+| 3 处 panic 锚 | `SRC_ANCHORS` | 3 条（引用函数逐个列出） | 观测 |
+| 5 条 TSV 冲突 | `NAME_BRIDGE_CONFLICTS` | 6 条（含否掉的理由） | 观测 |
+| 类名 / 信号 / 节点名 / 属性 | `CLASS*`、`SIGNAL_LINKS`、`NODE_ANIMATION_RECT*`、`PROPERTIES` | 全部 `(ptr,len)` 自校验 | 观测 |
+| 状态机 | `Stamp` / `ButtonState` / `Effect` / `button_down` / `button_up` / `process` / `pressed` | 四个动作全覆盖（含哨兵与「一次性」） | 观测（字段名 = 推断） |
+| LPA `draw` | `DRAW` / `SpinState` / `geometry` / `draw_plan` / `draw_frame` / `DRAW_CONSTS` | 判定 + 算术 + 两次绘制 + 结束条件 | 观测（API 名 = 未知） |
+| LPA 样板簇 | `ORIG_FUNCS` 后 6 条 | 只到「是样板」 | 观测 |
+
+`tests/graphwar_button.rs`（18 条）与 `tests/graphwar_long_press_animation.rs`（12 条）
+的断言都是**回归保护**；每条右侧的真值要么是指令立即数、要么是 `.rodata` 比特、
+要么是 arm64 符号表真名。
