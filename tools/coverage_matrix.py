@@ -400,14 +400,14 @@ def mod(module, scope, ours, status, evidence):
 
 
 # ---- 58 个 graphwar_*.rs（`[a-z_]+` 的正则会漏掉带数字的 v6，实际是 58 个）----
-mod("graphwar_ad_switch.rs", "graphwar", (), "未做",
-    "docs/132：判据只有 are_ads_enabled() = !owned；AdMob 在 .gdc 插件侧，src/ 无实现")
+mod("graphwar_ad_switch.rs", "graphwar", ("src/graphwar_ad_switch.rs",), "观测",
+    "6 条全是 gdext 惰性注册驱动；两个 getter trampoline + owned(+0x18) 已钉死")
 mod("graphwar_audio_control.rs", "graphwar", (), "未做",
     "docs/111：SoundHandler / -15f / -5f / 32767 归一化已还原，但没接进 src/（client/ 是仿制）")
 mod("graphwar_backend.rs", "graphwar", (), "未做",
     "docs/132：读出 15 个方法名（start_server / lan_broadcaster / broker …），不是 Godot 类；无实现")
-mod("graphwar_button.rs", "graphwar", (), "未知",
-    "只有 docs/02 §6 按模块名的猜测（UI 控件），无地址级观测、无实现")
+mod("graphwar_button.rs", "graphwar", ("src/graphwar_button.rs",), "观测",
+    "6/6 方法全解（init/ready/process/button_down/pressed/button_up）+16 条名字分派入口；docs/16 §18")
 mod("graphwar_campaign_control.rs", "graphwar", (), "未做",
     "docs/118 §7：21 关数据已从 0x4ad380 解出、campaign.save 格式已解；src/ 里还没有这张表")
 mod("graphwar_client_connection_handler.rs", "graphwar", (), "未做",
@@ -430,10 +430,8 @@ mod("graphwar_event.rs", "graphwar", ("src/events.rs",), "观测",
     "docs/114：72 个判别值实测；但 serde 键序只在 41 行抓包上同序，仍是推断（docs/96 §9.1）")
 mod("graphwar_function_evolutionator.rs", "graphwar", ("src/graphwar_function_evolutionator.rs",), "观测",
     "docs/AI.md：权重/长度/装配/交叉/变异/适应度全部从反汇编 + 40 万次运行时抽样得出；无逐字节对拍")
-mod("graphwar_function_input.rs", "graphwar", (), "未做",
-    "13 个归属函数（行号到 ≥519）；docs/02 §1 把解析器 0x4ed670 记在它名下，但 0x4ed670 体内"
-    "唯一的 Location 锚是 math_function.rs:75 ⇒ 按本方法解析器算 math_function.rs；"
-    "本模块本体未复原")
+mod("graphwar_function_input.rs", "graphwar", ("src/graphwar_function_input.rs",), "观测",
+    "17 条函数；7 个原版名 + gui_input 0x4fedc0；**输入框只做一步预处理：删空格**（docs/03 §13）")
 mod("graphwar_function_manager.rs", "graphwar", ("src/game.rs",), "观测",
     "docs/112 §2.1：7 个函数的存取结构逐条读出（HashMap<u32, 112 字节>、Vec<Token>）；"
     "我方 Match::functions 同构，但没有逐字节对拍")
@@ -465,8 +463,8 @@ mod("graphwar_local_player_manager.rs", "graphwar", (), "未做",
     "docs/112 §13 记录了结构观测；src/ 无对应实现")
 mod("graphwar_logger.rs", "graphwar", (), "未做",
     "docs/112 记录 log 入口的结构观测；src/ 无实现")
-mod("graphwar_long_press_animation.rs", "graphwar", (), "未知",
-    "只有 docs/02 一行（长按动画），无地址级观测、无实现")
+mod("graphwar_long_press_animation.rs", "graphwar", ("src/graphwar_long_press_animation.rs",), "观测",
+    "2.0.60 只剩 draw（0x4d8100）：angle=elapsed×4π、>2π 结束⇒0.5s、黑白两次绘制；9 个常量逐比特")
 mod("graphwar_mode_manager.rs", "graphwar", (), "未做",
     "docs/88 §7：TurnMode/FunctionMode/AxisMode/TimeMode 的取值已从 .rodata 解出；模块本体未复原")
 mod("graphwar_module_container.rs", "graphwar", (), "未做",
@@ -545,10 +543,10 @@ mod("entity_drawer.rs", "other", ("src/entity_drawer.rs",), "观测",
     "EntityDrawer::draw = 0x4b2890（GOT 槽 + .rela.dyn 定位 draw_arc×3/draw_polygon×3）；每条常量的 .rodata 槽与"
     "指令地址都在 src/entity_drawer.rs 的注释里（多数是逐位（立即数））。只覆盖 draw 一个函数，本模块另有 13 个"
     "锚函数未做；且我方只还原到\"图元清单\"层，不复现 gdext 调用。旧行写「未做」与 src/ 现状冲突 ⇒ 按代码更正（docs/02 §17.2）")
-mod("effect_drawer.rs", "other", (), "未做",
-    "docs/02 §2 确认是游戏自己的特效绘制模块；src/ 无实现")
-mod("axis_drawer.rs", "other", (), "未做",
-    "docs/88 §7 记录了 AxisMode 的 4 个取值；绘制本体未落 src/")
+mod("effect_drawer.rs", "other", ("src/effect_drawer.rs",), "观测",
+    "7 个 pub fn / 36 常量：draw_circle×4 + polygon×1 + line×2，半径 0.05/0.06；tick 制 60 tick=1s")
+mod("axis_drawer.rs", "other", ("src/axis_drawer.rs",), "观测",
+    "3 个 pub fn / 24 常量，四档轴模式与全部数值逐条登记")
 mod("obstacle_drawer.rs", "other", (), "未知",
     "非 graphwar_ 前缀；除模块名外没有一条能指到地址或报文的观测")
 mod("function_drawer.rs", "other", (), "未知",

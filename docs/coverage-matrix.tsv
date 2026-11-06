@@ -7,19 +7,19 @@
 # tool_version: 1
 # binary_sha256: 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
 # funcstarts_sha256: b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a
-# src_tree_sha256: e2580c6b436f541d32a118b9910d618bf925ca2dbc22a994df0cad23d1a0bfbf
+# src_tree_sha256: 25075da7c5c46237c3311199b65c34530b620755ff8008906f31bc6eedb047a8
 # funcstarts_n: 13263
 # src_modules: 246
 # loc_structs: 2042
 # attributed_funcs: 527
 # contested_funcs: 86
 # src_files: 43
-# src_fns: 1039
+# src_fns: 1156
 module	scope	orig_funcs	contested	anchors	ours_file	ours_funcs	status	evidence
-graphwar_ad_switch.rs	graphwar	6	0	3		0	未做	docs/132：判据只有 are_ads_enabled() = !owned；AdMob 在 .gdc 插件侧，src/ 无实现
+graphwar_ad_switch.rs	graphwar	6	0	3	src/graphwar_ad_switch.rs	21	观测	6 条全是 gdext 惰性注册驱动；两个 getter trampoline + owned(+0x18) 已钉死
 graphwar_audio_control.rs	graphwar	7	1	16		0	未做	docs/111：SoundHandler / -15f / -5f / 32767 归一化已还原，但没接进 src/（client/ 是仿制）
 graphwar_backend.rs	graphwar	6	1	12		0	未做	docs/132：读出 15 个方法名（start_server / lan_broadcaster / broker …），不是 Godot 类；无实现
-graphwar_button.rs	graphwar	6	0	3		0	未知	只有 docs/02 §6 按模块名的猜测（UI 控件），无地址级观测、无实现
+graphwar_button.rs	graphwar	6	0	3	src/graphwar_button.rs	13	观测	6/6 方法全解（init/ready/process/button_down/pressed/button_up）+16 条名字分派入口；docs/16 §18
 graphwar_campaign_control.rs	graphwar	1	0	1		0	未做	docs/118 §7：21 关数据已从 0x4ad380 解出、campaign.save 格式已解；src/ 里还没有这张表
 graphwar_client_connection_handler.rs	graphwar	8	0	16		0	未做	docs/134 只覆盖 client/ 的 GDScript 联机；原版这个 Rust handler 未还原
 graphwar_color_manager.rs	graphwar	4	0	6		0	未做	docs/102：两张 6 色队色表 + 随机起点线性探测已解出；src/ 无实现
@@ -32,7 +32,7 @@ graphwar_event.rs	graphwar	0	0	0	src/events.rs	2	观测	docs/114：72 个判别�
 graphwar_event_handler.rs	graphwar	2	0	4	src/events.rs	2	观测	docs/114：0x3d38f0 的「事件名 → 判别值」表逐条解出（四道自校验）；事件枚举与分派已落码
 graphwar_event_queue.rs	graphwar	0	0	0		0	未做	2024 版符号表：graphwarrust::graphwar_event_queue 2 个符号 + 类型 GraphwarEventQueue；docs/ 里此前完全没有记录
 graphwar_function_evolutionator.rs	graphwar	16	0	25	src/graphwar_function_evolutionator.rs	88	观测	docs/AI.md：权重/长度/装配/交叉/变异/适应度全部从反汇编 + 40 万次运行时抽样得出；无逐字节对拍
-graphwar_function_input.rs	graphwar	13	2	33		0	未做	13 个归属函数（行号到 ≥519）；docs/02 §1 把解析器 0x4ed670 记在它名下，但 0x4ed670 体内唯一的 Location 锚是 math_function.rs:75 ⇒ 按本方法解析器算 math_function.rs；本模块本体未复原
+graphwar_function_input.rs	graphwar	13	2	33	src/graphwar_function_input.rs	41	观测	17 条函数；7 个原版名 + gui_input 0x4fedc0；**输入框只做一步预处理：删空格**（docs/03 §13）
 graphwar_function_manager.rs	graphwar	7	0	12	src/game.rs	70	观测	docs/112 §2.1：7 个函数的存取结构逐条读出（HashMap<u32, 112 字节>、Vec<Token>）；我方 Match::functions 同构，但没有逐字节对拍
 graphwar_game_client.rs	graphwar	36	19	59	src/graphwar_game_client.rs	10	观测	36 个函数分 8 类（docs/16 §17）：8 种请求事件判别值 11/12/16/17/18/19/20/21 + 0x48 记录形状 + add_bot_0..5 -> 3/10/25/100/250/1000 + 0x517690 的 3 订阅名/14 manager；6 个入口函数语义未知
 graphwar_game_info.rs	graphwar	0	0	0		0	未做	2024 版符号表：graphwar_game_info 独立模块（GameInfo **不在** graphwar_event.rs，旧文档把它当成 event 的一部分是错的）
@@ -48,7 +48,7 @@ graphwar_life_manager.rs	graphwar	9	0	12	src/graphwar_life_manager.rs	7	逐位	d
 graphwar_lobby_control.rs	graphwar	1	0	6		0	未做	docs/112 只读出它与战役/名字模块的调用关系；界面在 client/ GDScript，src/ 无实现
 graphwar_local_player_manager.rs	graphwar	3	0	15		0	未做	docs/112 §13 记录了结构观测；src/ 无对应实现
 graphwar_logger.rs	graphwar	2	0	2		0	未做	docs/112 记录 log 入口的结构观测；src/ 无实现
-graphwar_long_press_animation.rs	graphwar	7	0	7		0	未知	只有 docs/02 一行（长按动画），无地址级观测、无实现
+graphwar_long_press_animation.rs	graphwar	7	0	7	src/graphwar_long_press_animation.rs	11	观测	2.0.60 只剩 draw（0x4d8100）：angle=elapsed×4π、>2π 结束⇒0.5s、黑白两次绘制；9 个常量逐比特
 graphwar_mode_manager.rs	graphwar	2	0	6		0	未做	docs/88 §7：TurnMode/FunctionMode/AxisMode/TimeMode 的取值已从 .rodata 解出；模块本体未复原
 graphwar_module_container.rs	graphwar	20	0	1		0	未做	docs/110/112 有调用观测；src/ 无实现
 graphwar_name_manager.rs	graphwar	3	0	3		0	未做	docs/112 §0：HashMap<u32, String>、entry 32 字节、NameInfo 判别值 60 已逐位解出；src/ 无实现
@@ -79,10 +79,10 @@ graphwar_texture_loader.rs	graphwar	1	0	1		0	未知	只有 docs/02 一行（贴�
 graphwar_tick_handler.rs	graphwar	2	0	3	src/graphwar_tick_handler.rs	9	逐位	docs/35：113 个真实样本，TickReply 逐字节一致
 graphwar_turn_manager.rs	graphwar	14	1	45	src/graphwar_turn_manager.rs	60	逐位	docs/98/117：射手轮转 = Vec<soldier_id> + 游标，在真实 TCP 上断言「首发射手 = soldiers[1]」「跳过死者」；docs/41 状态迁移逐个相同
 graphwar_video_writer.rs	graphwar	3	0	4		0	未知	只有 docs/02 一行（录像导出），无地址级观测、无实现
-axis_drawer.rs	other	6	0	3		0	未做	docs/88 §7 记录了 AxisMode 的 4 个取值；绘制本体未落 src/
+axis_drawer.rs	other	6	0	3	src/axis_drawer.rs	12	观测	3 个 pub fn / 24 常量，四档轴模式与全部数值逐条登记
 backtracer.rs	other	0	0	0		0	未做	2024 版符号表：graphwarrust::backtracer 4 个 direct 符号（自带回溯器，不是外部 crate）
 button_manager.rs	other	2	0	3		0	未知	非 graphwar_ 前缀；除模块名外没有任何观测
-effect_drawer.rs	other	11	3	17		0	未做	docs/02 §2 确认是游戏自己的特效绘制模块；src/ 无实现
+effect_drawer.rs	other	11	3	17	src/effect_drawer.rs	19	观测	7 个 pub fn / 36 常量：draw_circle×4 + polygon×1 + line×2，半径 0.05/0.06；tick 制 60 tick=1s
 entity_drawer.rs	other	14	6	36	src/entity_drawer.rs	11	观测	EntityDrawer::draw = 0x4b2890（GOT 槽 + .rela.dyn 定位 draw_arc×3/draw_polygon×3）；每条常量的 .rodata 槽与指令地址都在 src/entity_drawer.rs 的注释里（多数是逐位（立即数））。只覆盖 draw 一个函数，本模块另有 13 个锚函数未做；且我方只还原到"图元清单"层，不复现 gdext 调用。旧行写「未做」与 src/ 现状冲突 ⇒ 按代码更正（docs/02 §17.2）
 function_button_manager.rs	other	2	0	3		0	未知	非 graphwar_ 前缀；除模块名外没有任何观测
 function_drawer.rs	other	1	0	1		0	未知	非 graphwar_ 前缀；除模块名外没有任何观测

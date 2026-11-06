@@ -2674,3 +2674,117 @@ objdump -d -M intel --start-address=0x4d8100 --stop-address=0x4d85d0 $SO
 `tests/graphwar_button.rs`（18 条）与 `tests/graphwar_long_press_animation.rs`（12 条）
 的断言都是**回归保护**；每条右侧的真值要么是指令立即数、要么是 `.rodata` 比特、
 要么是 arm64 符号表真名。
+
+---
+
+## 22. `graphwar_ad_switch.rs` 规格（本轮新增：2 个 getter / 1 个字段 / 6 个函数）
+
+落码：`src/graphwar_ad_switch.rs`；验收：`tests/graphwar_ad_switch.rs`。
+地址口径：**ELF 虚地址**（Ghidra = +`0x100000`）；凡是引自 `docs/19-android.md`
+的地址都是 **Android arm64**，下表逐条标了。
+
+### 22.1 它不是联机层
+
+`docs/02-module-map.md` §14.4 曾把 `graphwar_backend`(6) 与 `graphwar_ad_switch`(7)
+一起归到"广告 / 后端"堆里，**这个归类已被 `docs/19-android.md` 更正**：
+`graphwar_backend.rs` 是联机层，与广告无关；广告视图的开合在别的模块里
+（命令 → `0x3af850` → `call_deferred("create_ad_view"|"destroy_ad_view")`，见 §15）。
+
+本模块只做一件事：给 GDScript 提供**两个只读判据**（开关 + AdMob 单元 id），
+自己**不碰**任何 UI、不发任何请求。
+
+### 22.2 两个导出方法
+
+| 方法 | 名字字面量 | 长度 | 注册闭包 A / B | trampoline A / B | 档位 |
+|---|---|---|---|---|---|
+| `are_ads_enabled() -> bool` | `0x1c4425` | 15 | `0x4f02b0` / `0x4f0520` | `0x422ab0` / `0x42b7e0` | 观测 |
+| `get_ad_unit_id() -> GString` | `0x1c4434` | 14 | `0x4f0370` / `0x4f0430` | `0x42e920` / `0x42e500` | 观测 |
+
+四个闭包都还引用**类名字面量** `0x19e6a0`（长度 `0x10` = 16 = `"GraphwarAdSwitch"`，
+`lea` 在 `0x4f02d2` / `0x4f0392` / `0x4f045f` / `0x4f054f`）。
+两条方法名与 `docs/18-build.md` §6.5 的扩展 API 导出表一致。
+
+⚠️ 闭包 A/B 与 ptrcall / varcall 的对应关系没有逐指令钉死（`docs/19` §3.0.3 在 arm64
+上只说"每个方法各一份 ptrcall + varcall，方法体内联在 `handle_fallible_call` 里"），
+所以本仓库的代码里按 A/B 记，不硬指。
+
+### 22.3 唯一的字段：`owned`，偏移 `+0x18`
+
+档位：**逐位（arm64）+ 推断（"该字节就是 owned"）**：
+
+* `are_ads_enabled` 的 ptrcall 实例（arm64 `0x377cf4`）= `borrow_mut` →
+  `ldrb w22,[obj+0x18]` → `eor w8,w22,#1` → 写回 out 参数 ⇒ **`!owned`**；
+* 初值 `1`：`create` 里 `mov w8,#0x1` 写进该槽。跨类判别器：另一个 Control 派生类
+  在同一槽写 `3`，所以该槽是**按类不同的实例字段**，不是 gdext 框架常量；
+* 全 `.text` 落在 `[reg,#0x18]` 的字节写共 **167 处**，只有 **2 处**属于本类：
+  `GraphwarRootNode::purchase_confirmed`（arm64 `0x3a658c`，写 `1`）与
+  `purchase_denied`（arm64 `0x3a61b0`，写 `0`）；
+* **没有任何 `graphwar_ad_switch` 函数**写这个字节 ⇒ `owned` 只能由 GDScript 改。
+
+⇒ **首次启动 `are_ads_enabled() == false`**（`owned = true`），
+只有 `purchase_denied()` 能把它变成 `true`。Rust 侧**没有**"重新查单 / 从存档读
+`owned`"的路径（穷举写点已覆盖）。
+
+⚠️ x86 侧 `!owned` 那一步没有逐指令钉死：`0x422ab0` 在 `0x422b26` 确有一条
+`movb $0x0,(%r15)` 写返回槽，但它是"借用成功"分支的常量写，不是取反本身。
+缺的证据：x86 上 `ldrb/eor` 那一对的地址（arm64 侧已有）。
+
+### 22.4 38 字节的 AdMob 单元 id
+
+`.rodata` `0x1c43ff`，长度 **38**（arm64 侧 `docs/19` §3.0.3 记的是 `0x19dd6c`，
+长度同为 38）：
+
+```text
+ca-app-pub-3940256099942544/6300978111
+```
+
+全 `.text` 里只有两个函数引用它（`0x42e500` / `0x42e920`），正是
+`get_ad_unit_id` 的两个 trampoline ——**这条字面量只为这一个方法存在**。
+
+⚠️ 这是 **Google 官方的测试广告单元**。原版在 2.0.60 的构建里**没有**换成正式 id，
+所以"游戏靠广告赚钱"在 Linux 构建里**没有证据**；真正的闸门是
+`are_ads_enabled()`，而它的初值是"不显示广告"。
+
+### 22.5 六个函数（全部是 gdext 惰性注册驱动）
+
+`docs/19-android.md` §3.0.3 记「全二进制只有 6 条 `FUNC` 符号」；x86 侧用
+`panic::Location` 归属也正好 **6 个**，数量一致：
+
+| vaddr | 跨度 | Location | 形状 |
+|---|---|---|---|
+| `0x4e5100` | `0x180` | `14:1` | once 锁（`lock cmpxchg`）+ 遍历静态函数指针表 |
+| `0x4e5280` | `0x180` | `14:1` | 同上 |
+| `0x4e9730` | `0x1b0` | `14:1` | 同上 |
+| `0x4e98e0` | `0x210` | `7:10` | 同上 |
+| `0x4e9af0` | `0x1a0` | `14:1` | 同上 |
+| `0x4e9c90` | `0x250` | `45:1` | 同上 |
+
+六条的**跨度多重集**与 `graphwar_function_input` 的 6 个注册驱动**完全相同**
+（`0x180/0x180/0x1a0/0x1b0/0x210/0x250`）⇒ 同一组 gdext 单态化被两个类各实例化一次。
+
+Location 只落在 `7:10`、`14:1`、`45:1` 三行，与 `docs/02-module-map.md` §18 A 表给的
+`graphwar_ad_switch.rs` 行范围 `7–45` 一致 ⇒ **原版这个文件极短**（一个字段 +
+两个 getter + 一个 `#[godot_api]` impl）。
+
+### 22.6 与广告视图的关系
+
+本模块**不**创建/销毁广告视图。两条 `call_deferred` 的名字（`create_ad_view` 字面量
+`0x1bd9c1`、`destroy_ad_view` `0x1bd9cf`）由 `0x3af850` 发出，触发条件见 §15 的闸门表；
+`GraphwarRootNode.purchase_confirmed` 在关广告时还会
+`Ad_holder.call_deferred("destroy_ad_view", 15)`（`docs/19` §3.0.2）。
+
+⇒ 链路是：**买断（GDScript 回调改 `owned`）→ 命令 / `0x3af850` → `create|destroy_ad_view`**，
+中间**不经过**本模块的任何函数。
+
+### 22.7 落码清单
+
+| 原版 | 落在 | 覆盖程度 | 档位 |
+|---|---|---|---|
+| 6 个函数 | `FUNCTIONS` / `function_at` / `ANCHOR_LINES` / `ghidra` | 6 条地址 + 跨度 + 锚 | 观测 |
+| 2 个导出方法 | `EXPORTS` / `MethodRegistration` / `export` | 名字 + 长度 + 4 闭包 + 4 trampoline | 观测 |
+| `are_ads_enabled = !owned` | `ads_enabled_from_owned` / `AdSwitch::are_ads_enabled` | 真值表 | 观测（arm64 逐指令）/ 字段名推断 |
+| `owned` 偏移与初值 | `OWNED_FIELD_OFFSET` = `0x18` / `DEFAULT_OWNED` = `true` | — | 观测 |
+| 唯一写者 | `OWNED_WRITERS` / `MODULE_HAS_NO_OWNED_WRITER` / `purchase_confirmed` / `purchase_denied` | 2 条 | 观测（arm64 穷举） |
+| 38 字节单元 id | `AD_UNIT_ID` / `AD_UNIT_ID_LITERAL` / `AD_UNIT_ID_LEN` / `AD_UNIT_ID_REFS` | — | 观测 |
+| 广告链在别处 | `AD_VIEW_CHAIN` | 一条指针 | 观测（§15） |
+| 未知 | `UNKNOWNS`（3 条） | x86 取反位置 / 6 张表的归属 / 字段名本身 | 未知 |

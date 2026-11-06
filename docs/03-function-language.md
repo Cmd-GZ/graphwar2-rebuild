@@ -3,7 +3,11 @@
 玩家在输入框里敲的不是普通数学表达式，而是一门有自己规则的小语言。
 本章描述它的**全部**可见行为，均已与二进制逐位对拍。
 
-实现文件：`graphwar_function_input.rs`（解析，`0x4ed670`）、`0x4eb9d0`（求值）。
+实现文件：`math_function.rs`（解析 `0x4ed670`、求值 `0x4eb9d0`）。
+⚠️ **2026-11 更正**：本节旧版把解析器写在 `graphwar_function_input.rs` 名下，那是错的。
+`0x4ed670` 体内唯一的 `panic::Location` 锚是 `math_function.rs:75/285`（`docs/02` §16.3、
+`docs/149` §1），所以解析属于 `math_function`；`graphwar_function_input` 是**输入框**
+（`LineEdit` 子类），它对文本只做一件事——**删空格**（新增 §13）。
 
 ## 1. 记号的内存表示
 
@@ -292,4 +296,209 @@ sin(x)     0.00     (-1.06*x)     (-23.81*x)     tan(sin((-0.12*x)))     abs((-3
 全绿。⇒ 只要不踩 §5.3 那三类，文本是可以拿去做数值等价的替身的。
 
 ---
+
+## 13. 输入框：玩家敲进去的文本到底被改了什么（本轮新增）
+
+落码：`src/graphwar_function_input.rs`；验收：`tests/graphwar_function_input.rs`。
+
+### 13.1 结论先行
+
+玩家按下的字符从键盘到解析器要过三道手，**只有第一道会改文本，而且只删空格**：
+
+| 关卡 | 模块 | 对文本做了什么 | 档位 | 证据 |
+|---|---|---|---|---|
+| ① 按键 | `graphwar_function_input`（输入框） | **把 28 个"死键合成/上标"字符折回 ASCII**；`'^'` 单独判；ASCII 一律不管（交基类） | 观测 | `gui_input` `0x4fedc0` 的跳转表 `0x1c3d5c`（198 项）＋每个分支的 `mov $0x??,%eax` |
+| ② 刷新 | 同上 `force_update_cb` | **删掉所有空格**（`text.replace(' ', "")`） | 观测 | `0x4f28be`–`0x4f28dc`：`str::replace`（`0x502d20`）＋字面量 `0x1c44a1` = `' '` ＋ `to` = 空 `&str` |
+| ③ 解析 | `math_function`（`0x4ed670`，**不是**本模块） | **ASCII 小写化** → `replace("pi","n")` → `replace("π","n")` → 按 77 字节模式分词 | 观测 | `0x4ed7a3`–`0x4ed7ba`（小写化循环）、`0x4ed7ce` / `0x4ed831`（两次 `str::replace`）、`0x4ed884`（77 字节模式 `0x1c4347`） |
+
+⇒ **"输入框会不会预处理"的答案是：会，但只有"删空格"这一条**（外加键盘层的 28 条字符折叠）。
+去空格发生在**刷新**（`force_update_cb`）里，**不在提交路径**上：
+`on_text_submitted` 把文本原样交给回调的 `"fire"`（`0x4f4250`，字面量 `0x1b97c8`），
+整条路径上没有字符串变换。
+
+**π / 隐式乘 / `log`=log10 / `^` 左结合都不在输入框里**——见 §13.6。
+
+### 13.2 本模块的 17 个 x86 函数（2.0.60）
+
+`docs/02-module-map.md` §18 A 表按 **2024-07-30 版**给 15 个；2.0.60 用
+`panic::Location` 定出 **13 个**，另有 **4 个**无锚（没有 panic 路径），合计 17 条。
+地址是 **ELF 虚地址**（Ghidra = +`0x100000`）。
+
+| vaddr | 跨度 | 原版名 | 角色 | 档位 |
+|---|---|---|---|---|
+| `0x4e6dc0` | `0x180` | — | gdext 惰性注册驱动（once 锁 + 遍历静态表）；Location `434:1` | 观测 |
+| `0x4e6f40` | `0x180` | — | 同上 | 观测 |
+| `0x4e9ee0` | `0x1a0` | — | 同上 | 观测 |
+| `0x4ea080` | `0x250` | — | 同上；唯一引用 Location `466:1` | 观测 |
+| `0x4ea2d0` | `0x1b0` | — | 同上（`434:1` 四兄弟之一） | 观测 |
+| `0x4ea480` | `0x210` | — | once 锁下把 0x78 字节注册记录压进全局 `Vec`；Location `27:10` | 观测 |
+| `0x4f2200` | `0xfa0` | `force_update_cb` | 读文本 → **删空格** → 送路径计算 → 与 game_client 对账 | 观测（5 锚） |
+| `0x4f3210` | `0x700` | `move_caret_left` | 光标左移一个 token | 观测（1 锚） |
+| `0x4f3910` | `0x940` | `move_caret_right` | 光标右移一个 token | 观测（6 锚） |
+| `0x4f4250` | `0xd0` | — | 把提交的文本交给 `dyn` 回调的 `"fire"` | 推断（强） |
+| `0x4f4320` | `0xf0` | — | 插入文本 + `call("force_update_cb")` | 推断（强） |
+| `0x4f4410` | `0xb0` | — | 循环 N 次 `call("delete_char_at_caret")` | 观测 |
+| `0x4f44c0` | `0x5a0` | `delete_token_at_caret` | 删光标前一个 token（N 次退格） | 观测（1 锚） |
+| `0x4f4a60` | `0x970` | `delete_token_after_caret` | 删光标后一个 token（N 次退格） | 观测（6 锚） |
+| `0x4fd1b0` | `0x2f0` | `ready` | 接三条自己的信号（§13.5） | 观测（1 锚） |
+| `0x4fd4a0` | `0x1920` | `process` | 两次 `call("force_update_cb")` + 与 game_client 交互 | 观测（10 锚） |
+| `0x4fedc0` | `0x357` | — | 虚拟 `gui_input`：unicode → 28 条折叠 + `'^'` 特判 | 推断（见下） |
+
+`gui_input` 的定位链（三步都可指）：`.rodata` `0x1c46c9` = `"gui_input"`(9) →
+唯一引用者 = 注册闭包 `0x4f8dc0` → 它的 trampoline `0x425a20` →
+`0x425c04` `call *0x9bb7c8` → 相对重定位槽 addend = `0x4fedc0`。
+⚠️ 跨度 `0x357` 是 Ghidra 的函数体跨度：线性"下一个起点表"会在 `0x4fefd5` 处
+截断它（那是别的函数的冷块），别拿表当结束地址。
+
+**`name_to_addr.tsv` 复核结论**：7 个"唯一锚"全部通过（锚行号集合与地址一一对应，
+锚数与表里记录一致：`force_update_cb` 5 / `move_caret_left` 1 / `move_caret_right` 6 /
+`delete_token_at_caret` 1 / `delete_token_after_caret` 6 / `ready` 1 / `process` 10）。
+**没有冲突。**
+
+⚠️ 一处**工具**冲突（不是表的冲突）：仓库的 `tools/class_probe.py` 把这些 Location
+归到了隔壁商店按钮函数（例如 `97:63` 被归给 `0x4f57d0`）。真正引用该 Location 的
+指令是 `0x4f4974`，落在 `0x4f44c0` 体内（REA `resolve_containing_procedure`：
+Ghidra `0x5f4974` ∈ `FUN_005f44c0`）。**以反汇编为准**，`class_probe.py` 的
+`module` 子命令的归属列不要直接引用。
+
+### 13.3 键盘层：28 条折叠（`gui_input`）
+
+`gui_input` 只处理 `InputEventKey`：取 `unicode`（一个 `char`），先挡掉代理区
+（`0x4fef2b`–`0x4fef3d` 是 `char::from_u32` 的判据），再按**字符码**分发。
+跳转表在 `0x1c3d5c`（`0x4fef60` 处 `jmp *`），**198 项**覆盖 `0xB2..=0x177`，
+其中只有 **28 项**不落到默认分支（`0x4ff27b`，直接返回）：
+
+| 字符 | 折成 | 分支 |
+|---|---|---|
+| `²` U+00B2 | `2` | `0x4fef70` `mov $0x32` |
+| `³` U+00B3 | `3` | `0x4ff1a4` `mov $0x33` |
+| `¹` U+00B9 | `1` | `0x4ff1b9` `mov $0x31` |
+| `·` U+00B7 | `.` | `0x4ff096` `mov $0x2e` |
+| `Â`/`Ê`/`Î`/`Ô`/`Û` U+00C2/CA/CE/D4/DB | `A`/`E`/`I`/`O`/`U` | `0x4ff188`/`0x4ff181`/`0x4ff18f`/`0x4ff15e`/`0x4ff17a` |
+| `â`/`ê`/`î`/`ô`/`û` U+00E2/EA/EE/F4/FB | `a`/`e`/`i`/`o`/`u` | `0x4ff173`/`0x4ff140`/`0x4ff14a`/`0x4ff1b2`/`0x4ff10e` |
+| `Ĉ`/`ĉ` U+0108/0109 | `C`/`c` | `0x4ff19d`/`0x4ff122` |
+| `Ĝ`/`ĝ` U+011C/011D | `G`/`g` | `0x4ff154`/`0x4ff1ab` |
+| `Ĥ`/`ĥ` U+0124/0125 | `H`/`h` | `0x4ff118`/`0x4ff196` |
+| `Ĵ`/`ĵ` U+0134/0135 | `J`/`j` | `0x4ff1ce`/`0x4ff12c` |
+| `Ŝ`/`ŝ` U+015C/015D | `S`/`s` | `0x4ff136`/`0x4ff16c` |
+| `Ŵ`/`ŵ` U+0174/0175 | `W`/`w` | `0x4ff1c7`/`0x4ff1d5` |
+| `Ŷ`/`ŷ` U+0176/0177 | `Y`/`y` | `0x4ff1c0`/`0x4ff165` |
+
+**这 28 个字符是什么**：`^`（抑扬符）在 **AZERTY / QWERTZ** 上是**死键**，按完再按元音，
+引擎给的是合成字符 `â ê î ô û`；`Ĉ Ĝ Ĥ Ĵ Ŝ Ŵ Ŷ` 是同一族在拉丁扩展 A 里的对应；
+`² ³ ¹` 是上标。函数语法里只有 ASCII 字母有意义，所以输入框把它们折回 ASCII 再插入
+（插入走 `0x4ff1e1` 汇合点：`format!("{}", ch)` → `0x4ff227 call 0x4f4320`）。
+
+**ASCII 一个都不在表里**（198 项的索引区间是 `0xB2..=0x177`）⇒ 数字、括号、运算符、
+`x` / `y` / 字母**全部**落默认分支直接返回，交给基类 `LineEdit` 处理。
+这条是"输入框没有字符白名单"的直接证据。
+
+`'^'`（`0x5e`）是唯一在表**之前**单独判的字符（`0x4feeeb`–`0x4fef06`）：
+三次引擎属性读取之后才 `je 0x4fef7a` 插入 `"^"`（字面量 `0x1c4341`，长度 1）。
+**那三次读取的语义未知**（见 §13.7）。
+
+### 13.4 编辑层：`token` → N 次退格
+
+四个编辑方法（`move_caret_left` / `move_caret_right` / `delete_token_at_caret` /
+`delete_token_after_caret`）都不自己改字符串：`0x4f4410` 是个循环，每轮
+`call 0x39fe10`，方法名 = `"delete_char_at_caret"`（`.rodata` `0x1c44a2`，长度 `0x14` = 20）：
+
+```text
+0x4f4440  call 4ddb40                 ; 取对象
+0x4f4453  lea  "upcast_ref"(10)       ; 基类引用
+0x4f447a  call 39fe10                 ; NameCall("delete_char_at_caret")
+0x4f448c  dec  %ebx / jne 0x4f4440    ; N 次
+```
+
+`delete_token_at_caret`（`0x4f44c0`）调它 4 次，`delete_token_after_caret`（`0x4f4a60`）
+调 5 次。⇒ **"删一个 token" 的落地方式**（观测）；**N 怎么算出来的**未知
+（内联的 `0x3e90f0` 调用序列 = `str` 字符迭代，逐指令没还原）。
+
+### 13.5 `ready` 接的三条信号（自己接自己）
+
+`0x4fd1b0` 里三段结构相同（`Callable::from_object_method(self, handler)` +
+`StringName::from(signal)` + `connect`）：
+
+| 信号 | 字面量 | 长度 | 处理函数 | 字面量 | 长度 |
+|---|---|---|---|---|---|
+| `size_changed` | `0x1c46d2` | 12 | `on_size_changed` | `0x1c444f` | 15 |
+| `text_changed` | `0x1c430d` | 12 | `on_text_change` | `0x1c42ff` | 14 |
+| `text_submitted` | `0x1c46de` | 14 | `on_text_submitted` | `0x1c445e` | 17 |
+
+三条处理函数都是 `#[func]` 导出，与 `docs/18-build.md` §6.5 的扩展 API 表逐条一致
+（`on_text_change` / `on_text_submitted` / `on_size_changed` / `force_update_cb`）。
+与 `docs/16-client.md` §1 的运行时信号快照（那 27 条"人为连接"里的两条
+`GraphwarFunctionInput.text_changed→on_text_change` / `text_submitted→on_text_submitted`）
+**互相印证**。
+
+`process`（`0x4fd4a0`）还两次 `call("force_update_cb")`（`0x4fdeea` / `0x4fe1d2`，
+长度都是 `0xf`；同一地址、长度 `0xc` 时是 `"force_update"`——LLVM 合并了两个字面量）。
+
+### 13.6 解析器入口的归一化（补 §1 的口径）
+
+`MathFunction::new`（`0x4ed670`）的入口**逐条**是：
+
+```text
+0x4ed7a3  movzbl (%r15,%rax,1),%ecx   ; c = s[i]
+0x4ed7a8  lea    -0x41(%rcx),%esi     ; c - 'A'
+0x4ed7ab  cmp    $0x1a,%sil
+0x4ed7af  setb   %sil                 ; 大写 ASCII？
+0x4ed7b3  shl    $0x5,%sil            ;  +0x20
+0x4ed7b7  or     %cl,%sil
+0x4ed7ba  mov    %sil,(%r15,%rax,1)   ; 就地写回 ⇒ ASCII 小写化
+0x4ed7ce  replace(from="pi"(2), to="n"(1))
+0x4ed831  replace(from="π"(2 字节), to="n"(1))
+0x4ed884  lea 0x1c4347 -> rsi, mov $0x4d,%edx   ; 77 字节 token 模式 → 引擎
+```
+
+77 字节的模式（`0x1c4347`，逐字节观测）：
+
+```text
+[0-9]*\.?[0-9]+|\(|\)|x|y'|y|\+|-|\*|/|\^|sqrt|log|abs|sin|cos|tan|ln|n|exp|e
+```
+
+注意它**没有 π**：π 在上一步已经被换成 `n`，所以 `n` 就是 π（这解释了 `docs/02` 与
+本仓库 `AGENTS.md` 的硬事实「`pi`/`π`/`n` = π」——它是**两步文本替换**的结果，
+不是分词器的别名表）。也**没有空格**：空格已经在输入框那一步删掉了（§13.1 ②）。
+
+⚠️ **推断**：这 77 字节交给的是**引擎**的 `RegEx`（Godot 4 `RegEx.new()`），不是
+Rust 的 `regex` crate —— `0x4ed898` 是 `call *0x9bc280(%rip)`，该 GOT 槽是
+`R_X86_64_RELATIVE` → `0x7547f0`（GDExtension 接口包装器）。缺的证据：`0x7547f0`
+对应的 `GDExtensionInterface` 成员名。
+
+### 13.7 未知
+
+完整清单见 `src/graphwar_function_input.rs` 的 `UNKNOWNS`（6 条）。要点：
+
+1. **token 边界判据**：`move_caret_*` / `delete_token_*` 里内联的 `0x3e90f0`
+   调用序列各代表什么（字符类判定？只看左右各一个字符？）——只固定"砸 N 次退格"。
+2. **`'^'` 的附加条件**：`0x4fee94` / `0x4feea5` / `0x4feee3` 三次读引擎属性
+   （字符串 `"upcast_ref"` 经 `0x407350`）后与 `'^'` 比较。条件语义未知
+   （shift？键盘布局？caret 是否为空？）。
+3. **`0x4f4250` 的 dyn 回调**：`[rdi+0x68]` / `[rax+0x20]` 是个弱引用 trait 对象；
+   `weak_caller` 模块有同类 idiom，没有证据钉死字段类型。
+4. **`move_caret_end` / `move_caret_home` / `insert_text_at_caret` /
+   `delete_chars_at_caret` / `clear` / `update_sizes` 在 2.0.60 没有独立函数体**
+   （`name_to_addr.tsv` 也把它们标"未知/歧义"）：或已内联，或只以 `Callable` 形式存在。
+
+另外 `process`（6.4 KB / 60 个基本块）只做到"结构级"：入口构造位置串
+`"src/graphwar_function_input.rs:519"`（34 字节，`0x4fd4d6`–`0x4fd4ed` 用两条 xmm
++ 一个 `movw $0x3931` 拼出来），体内引用 `src/graphwar_game_client.rs:152:22/:152:49`
+的借用位置各 7 处。逐块语义未画完。
+
+### 13.8 落码清单
+
+| 原版 | 落在 | 覆盖程度 | 档位 |
+|---|---|---|---|
+| 17 条函数地址 + 跨度 + 锚 | `FUNCTIONS` / `function_at` / `named_functions` / `ghidra` | 17 条 | 观测 |
+| 7 个唯一锚 | 模块头表格 + `tests/graphwar_function_input.rs` 的第 1 条断言 | 7/7 复核 | 观测 |
+| 4 个导出方法 | `EXPORTS` / `MethodRegistration` | 名字+长度+4 闭包+4 trampoline | 观测 |
+| 3 个虚拟方法 | `VIRTUALS` / `VirtualRegistration` | 名字+长度+info 闭包+trampoline+实现+槽 | 观测 |
+| 3 条信号接线 | `SIGNAL_WIRING` / `handler_for_signal` / `signal_for_handler` | 3/3 | 观测 |
+| **删空格** | `strip_spaces` / `STRIPPED_CHAR` | 唯一文本变换 | 观测 |
+| **28 条折叠** | `COMPOSED_FOLDS` / `fold_composed` / `classify_key` / `intent_for_key` | 28/28 | 观测 |
+| 跳转表区间 | `FOLD_TABLE_RANGE` = `0xB2..=0x177` | 198 项 | 观测 |
+| `'^'` 特判 | `CARET_CHAR` + `classify_key` 的 `caret_condition` 参数 | 分支观测 / 条件未知 | 观测＋未知 |
+| N 次退格 | `delete_chars_at_caret_plan` / `BACKSPACE_METHOD` / `Buffer::run_plan` | 落地方式 | 观测（N 的算法未知） |
+| 提交原样 | `submit_intent` / `REFRESH_METHOD` / `REFRESH_PREFIX` | — | 观测 |
 
