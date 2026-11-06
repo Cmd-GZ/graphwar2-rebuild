@@ -23,7 +23,7 @@
 
 ```
 原版可归属函数 488 个，分布在 70 个模块（58 个 graphwar_*.rs 占 431、12 个非 graphwar 占 57）
-   已实现 147（逐位 98 / 观测 49 / 推断 0）｜ 未做 256 ｜ 完全未知模块 22（graphwar 里 15）
+   已实现 161（逐位 98 / 观测 63 / 推断 0）｜ 未做 242 ｜ 完全未知模块 22（graphwar 里 15）
 归属率 527 / 13263 个 Ghidra 函数 = 4.0%（硬上限：纯计算函数没有 panic 就没有锚）
 ```
 
@@ -33,7 +33,7 @@
 
 | 模块 | 产出 | 档位 |
 |---|---|---|
-| `entity_drawer.rs` | `src/entity_drawer.rs`：`EntityDrawer::draw` 只画两类图元（`draw_arc`×3 + 多边形×3），**不画士兵贴图/弹道**；弧半径 = `f32(radius)×1.5`、箭头 = 向心三角（∓12°、+0.5） | 观测（常量逐条带槽地址） |
+| `entity_drawer.rs` | `src/entity_drawer.rs`（**只覆盖 `draw` 1/14 个归属函数**）：`EntityDrawer::draw` 只画两类图元（`draw_arc`×3 + 多边形×3），**不画士兵贴图/弹道**；弧半径 = `f32(radius)×1.5`、箭头 = 向心三角（∓12°、+0.5） | 观测（常量逐条带槽地址） |
 | `play_screen_control` | `src/graphwar_play_screen_control.rs`：回放/对局视图是一对互补的孪生函数；只订阅 `function_info_event` + `function_fire_event` ⇒ **`TurnInfo`/`GameStateInfo` 不经这层**；**弹道清除不在这层**（否定证据） | 观测 |
 | 15 个零锚点模块 | `docs/02` §16：定性 10 个（观测 3 / 推断 7），剩 5 个纯未知。**全库只有 12 个 GDExtension 类** ⇒ 那 15 个里只有 3 个是 Godot 类，其余是被节点调用的普通 Rust 模块 | 见 §16 |
 

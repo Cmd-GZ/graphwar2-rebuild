@@ -51,7 +51,7 @@ graphwar_mode_manager.rs	graphwar	2	0	6		0	未做	docs/88 §7：TurnMode/Functio
 graphwar_module_container.rs	graphwar	20	0	1		0	未做	docs/110/112 有调用观测；src/ 无实现
 graphwar_name_manager.rs	graphwar	3	0	3		0	未做	docs/112 §0：HashMap<u32, String>、entry 32 字节、NameInfo 判别值 60 已逐位解出；src/ 无实现
 graphwar_nodes.rs	graphwar	11	0	1		0	未做	docs/112 有结构观测；src/ 无实现
-graphwar_obstacle_manager.rs	graphwar	8	0	14	src/plane.rs	17	逐位	只覆盖掩膜部分：0x4f15b0 光栅化与 is_occupied 与真二进制逐字节 / 300 随机点一致（docs/39/08），摧毁 = 挖 r=0.5 洞；障碍的生成与生命周期未落 src/
+graphwar_obstacle_manager.rs	graphwar	8	0	14	src/plane.rs	17	逐位	只覆盖掩膜部分：0x4f15b0 光栅化与 is_occupied 与真二进制逐字节 / 300 随机点一致（docs/39/08），摧毁 = 挖 r=0.5 洞；障碍的生成与生命周期未落 src/。⚠ 文件级归属未定：class_probe 给出的本模块锚函数是 0x3c64c0/0x3f00b0/0x3f2480/0x3f27d0，0x4f15b0 不在其中（docs/02 §17.1 记录了这处冲突，不强行圆）
 graphwar_path_calculator.rs	graphwar	1	0	9	src/graphwar_path_calculator.rs	2	逐位	docs/91：补上 hi=mid2 后 24/24 用例整条点序列与真二进制逐位相等。注意：采样器 0x3c2530 本体无 panic 锚 ⇒ 只归属到 1 个辅助函数，orig_funcs 远小于模块规模
 graphwar_plane.rs	graphwar	10	1	19	src/plane.rs	17	逐位	docs/08/39：掩膜光栅化与 is_occupied 逐字节 / 300 随机点一致；10 个归属函数的地址与 docs/02 §11 那张独立写下的表完全一致
 graphwar_plane_pos_manager.rs	graphwar	6	0	9	src/plane.rs	17	观测	docs/140：px = 20x + 500 由常量反查得出、准备圈画法已扒出；没有端到端逐位对拍
@@ -77,7 +77,7 @@ graphwar_video_writer.rs	graphwar	3	0	4		0	未知	只有 docs/02 一行（录像
 axis_drawer.rs	other	6	0	3		0	未做	docs/88 §7 记录了 AxisMode 的 4 个取值；绘制本体未落 src/
 button_manager.rs	other	2	0	3		0	未知	非 graphwar_ 前缀；除模块名外没有任何观测
 effect_drawer.rs	other	11	3	17		0	未做	docs/02 §2 确认是游戏自己的特效绘制模块；src/ 无实现
-entity_drawer.rs	other	14	6	36		0	未做	docs/02 §2 确认是游戏自己的实体绘制模块；docs/140 有画法观测，绘制在 client/ GDScript
+entity_drawer.rs	other	14	6	36	src/entity_drawer.rs	11	观测	EntityDrawer::draw = 0x4b2890（GOT 槽 + .rela.dyn 定位 draw_arc×3/draw_polygon×3）；每条常量的 .rodata 槽与指令地址都在 src/entity_drawer.rs 的注释里（多数是逐位（立即数））。只覆盖 draw 一个函数，本模块另有 13 个锚函数未做；且我方只还原到"图元清单"层，不复现 gdext 调用。旧行写「未做」与 src/ 现状冲突 ⇒ 按代码更正（docs/02 §17.2）
 function_button_manager.rs	other	2	0	3		0	未知	非 graphwar_ 前缀；除模块名外没有任何观测
 function_drawer.rs	other	1	0	1		0	未知	非 graphwar_ 前缀；除模块名外没有任何观测
 function_history_recorder.rs	other	1	0	3		0	未知	非 graphwar_ 前缀；除模块名外没有任何观测

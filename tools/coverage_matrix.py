@@ -475,7 +475,9 @@ mod("graphwar_nodes.rs", "graphwar", (), "未做",
     "docs/112 有结构观测；src/ 无实现")
 mod("graphwar_obstacle_manager.rs", "graphwar", ("src/plane.rs",), "逐位",
     "只覆盖掩膜部分：0x4f15b0 光栅化与 is_occupied 与真二进制逐字节 / 300 随机点一致"
-    "（docs/39/08），摧毁 = 挖 r=0.5 洞；障碍的生成与生命周期未落 src/")
+    "（docs/39/08），摧毁 = 挖 r=0.5 洞；障碍的生成与生命周期未落 src/。"
+    "⚠ 文件级归属未定：class_probe 给出的本模块锚函数是 0x3c64c0/0x3f00b0/0x3f2480/0x3f27d0，"
+    "0x4f15b0 不在其中（docs/02 §17.1 记录了这处冲突，不强行圆）")
 mod("graphwar_path_calculator.rs", "graphwar", ("src/graphwar_path_calculator.rs",), "逐位",
     "docs/91：补上 hi=mid2 后 24/24 用例整条点序列与真二进制逐位相等。注意：采样器 "
     "0x3c2530 本体无 panic 锚 ⇒ 只归属到 1 个辅助函数，orig_funcs 远小于模块规模")
@@ -535,8 +537,10 @@ mod("math_function.rs", "other", ("src/math_function.rs", "src/math_function/to_
     "文件上**（math_function.rs:75）⇒ 函数语言的解析器属于本模块，不属于 graphwar_function_input")
 mod("polish_notation_converter.rs", "other", (), "未做",
     "2026-11 更正：本模块的锚函数是 0x4f57d0（:36:52 / :116:55，tools/class_probe.py），**不是** 0x4ec160。0x4ec160 的 panic 分支引的是 math_function.rs:285:28（docs/119 §4.6）⇒ 我方 to_text.rs 归 math_function.rs；本模块未实现")
-mod("entity_drawer.rs", "other", (), "未做",
-    "docs/02 §2 确认是游戏自己的实体绘制模块；docs/140 有画法观测，绘制在 client/ GDScript")
+mod("entity_drawer.rs", "other", ("src/entity_drawer.rs",), "观测",
+    "EntityDrawer::draw = 0x4b2890（GOT 槽 + .rela.dyn 定位 draw_arc×3/draw_polygon×3）；每条常量的 .rodata 槽与"
+    "指令地址都在 src/entity_drawer.rs 的注释里（多数是逐位（立即数））。只覆盖 draw 一个函数，本模块另有 13 个"
+    "锚函数未做；且我方只还原到\"图元清单\"层，不复现 gdext 调用。旧行写「未做」与 src/ 现状冲突 ⇒ 按代码更正（docs/02 §17.2）")
 mod("effect_drawer.rs", "other", (), "未做",
     "docs/02 §2 确认是游戏自己的特效绘制模块；src/ 无实现")
 mod("axis_drawer.rs", "other", (), "未做",
