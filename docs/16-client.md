@@ -1119,7 +1119,7 @@ Godot 4 里 `user://` 映射到 `$XDG_DATA_HOME/godot/app_userdata/<项目名>/`
 | 11 | `ExitPopUp` | `0x1bdb18` | 9 | `0x3b0830` |
 | 12 | `JoinLevelPopUp` | `0x1bdb21` | 14 | `0x3b0830` ×2 |
 | 13 | `ConnectingPopUp` | `0x1bda23` | 15 | `0x3a5760` |
-| 14 | `EndGamePopUp` | `0x1bda3b` | 11 | `0x3a5760` |
+| 14 | `EndGamePopUp` | `0x1bda3b` | **12** | `0x3a5760` |
 | 15 | `DisconnectedPopUp` | `0x1bda73` | 17 | `0x3a5760` |
 
 ⇒ **7 个基础屏 + 8 个弹窗 = 15，正好等于 `docs/16` §1 的「15/15 界面」**（观测）。
@@ -1240,7 +1240,7 @@ fn 0x3af850(rdi = &{names: Vec<(&str)>, ad_holder: Option<Gd<AdHolder>>},
 | `create_game` | 11 | `:1419` |
 | `toggle_mute` | 11 | `:1438` |
 | `exit_campaign` | 13 | `:1769` |
-| `exit_ask_play` | 13 | `:1790` |
+| `ask_exit_play` | 13 | `:1790` |
 | `cancel_add_bot` | 14 | `:1846` |
 | `exit_lan_lobby` | 14 | `:1857` |
 | `cancel_join_ip` | 14 | `:1874` |
@@ -1340,3 +1340,166 @@ fn 0x3af850(rdi = &{names: Vec<(&str)>, ad_holder: Option<Gd<AdHolder>>},
 | `lan_vbox` 与 `root_node` 的信号级联系 | `ptr_slots` + 运行时 |
 
 ---
+
+### 15.10 实现侧：已落码的部分、四条更正、仍未落的（实现轮补充）
+
+> **本节解决什么**：§15.1–§15.9 是**规格**；本节记「规格变成代码」时**逐字节复核**的结果。
+> 落地文件：`src/graphwar_root_node.rs`（公开 API）、`tests/graphwar_root_node.rs`（接受验收）。
+> **本节新增的每一条都标了档位**；与 §15 旧结论冲突的，以本节为准并写明改了什么。
+
+#### 15.10.1 落码清单（与原版分母对照）
+
+| 原版函数 | 落在哪 | 覆盖程度 | 档位 |
+|---|---|---|---|
+| `0x3af850` **切屏 + 广告** | `FN_SHOW_SCREEN` / `ScreenSwap` / `screen_swap` / `apply_show_screen` | **纯逻辑全覆盖**（逐分支真值表见 §15.10.4） | 观测 |
+| `0x3b0830` 命令总线 | `FN_COMMAND_BUS` / `Command` / `CommandEvidence` / `field::CURRENT_SCREEN` | **12 条键 + 字段写点**；其余分支未过完 | 观测 |
+| `0x3a2e10` `_ready` | `FN_READY` / `READY_NODES` / `READY_POOL_LITERALS` | 3 个 `get_node` + 池字面量；**不可执行**（Godot 侧不在本 crate） | 观测 |
+| `0x3a22f0` 装配/初始化 | `FN_CONSTRUCT` / `constructor_init_fields` / `CONSTRUCTOR_IMM_STORES` | 初值字 + 8 条立即数写 | 观测 |
+| `0x3af700` 按名查屏 | `FN_SCREEN_GET` / `SCREENS_MAP_OFFSET` | 只给「它是 hashbrown 查找 + 表形状」 | 观测 |
+| `0x3afcf0` 对局中判定 | `FN_BUSY_CHECK` | **仅地址**，函数体未解 | 推断 |
+| `0x3a5760` 状态机 | `FN_STATE_MACHINE` | **仅地址**；只落了「进 `PlayScreen` 那条路」的产物（切屏调用） | 部分观测 |
+
+⇒ **进度口径**（`AGENTS.md` §0 第 2 条）：23 条可归属函数里，**2 条部分落码**
+（`0x3b0830`、`0x3a2e10`），**21 条未落码**；另有 3 条**无 panic 锚**的骨干函数
+（`0x3a22f0` / `0x3af700` / `0x3af850`）不在那 23 条里，其中 `0x3af850` 已全覆盖。
+⚠️ `cargo test` 全绿**不**改变这个分母。
+
+`0x3a5760`（20288 字节 / 339 条比较 / 64 个直接调用目标）**刻意不猜**：Ghidra 把它当
+一个函数，但它极可能是 `_process` 级入口 + 大量内联，本文件只写它**可指认的产物**。
+
+#### 15.10.2 逐位钉住的两张表（复核方法与结果）
+
+**做法**：`.rodata` 的 vaddr == 文件偏移 ⇒ 直接按 [`addr`] 读字节；长度用**第二个独立来源**
+（使用点的 `mov $len,%edx`/`%r8d`）或**紧邻关系**（`addr + len` == 下一个字面量起点）交叉验证。
+
+屏名（15 条，全部字节复核过；`len` = 字节数）：
+
+| # | 屏名 | `.rodata` | len | 长度立即数所在指令 | 紧邻的下一个字面量 |
+|---|---|---|---|---|---|
+| 1 | `MainMenu` | `0x19fc70` | 8 | `0x3b3f23` | `0x19fc78`（未解） |
+| 2 | `Campaign` | `0x19fcc0` | 8 | `0x3a8993` | `0x19fcc8` = `YOU lOST` |
+| 3 | `LanLobby` | `0x19f380` | 8 | `0x3b3e7b` | `0x19f388`（未解） |
+| 4 | `GameSetup` | `0x1bda32` | 9 | `0x3a7cc6` | `0x1bda3b` = `EndGamePopUp` |
+| 5 | `PlayScreen` | `0x1bd92b` | 10 | `0x3a57d6` | `0x1bd935` = `ScreensControl` |
+| 6 | `ReplayLobby` | `0x1bdaec` | 11 | `0x3b3ef0` | `0x1bdaf7` = `JoinIpPopUp` |
+| 7 | `PlayerScreen` | `0x1bdb2f` | 12 | `0x3b11fd` | `0x1bdb3b` = `LevelTitleLabel` |
+| 8 | `JoinIpPopUp` | `0x1bdaf7` | 11 | `0x3b0a94` | `0x1bdb02` = `AddBotPopUp` |
+| 9 | `AddBotPopUp` | `0x1bdb02` | 11 | `0x3b2d6f` | `0x1bdb0d` = `ConfirmPlay` |
+| 10 | `ConfirmPlay` | `0x1bdb0d` | 11 | **无**（见更正 ②） | `0x1bdb18` = `ExitPopUp` |
+| 11 | `ExitPopUp` | `0x1bdb18` | 9 | **无**（见更正 ②） | `0x1bdb21` = `JoinLevelPopUp` |
+| 12 | `JoinLevelPopUp` | `0x1bdb21` | 14 | `0x3b0df8` | `0x1bdb2f` = `PlayerScreen` |
+| 13 | `ConnectingPopUp` | `0x1bda23` | 15 | `0x3a6c58` | `0x1bda32` = `GameSetup` |
+| 14 | `EndGamePopUp` | `0x1bda3b` | **12** | `0x3a8122`（`mov $0xc,%edx`） | `0x1bda47` |
+| 15 | `DisconnectedPopUp` | `0x1bda73` | 17 | `0x3a7555` | `0x1bda84` |
+
+命令键（12 条，全部由**两条窗口立即数**还原；`len` 由第二窗口偏移 `len-8`（7 字节的取 `len-4`）钉死）：
+
+| # | 键 | len | 第一窗口 | 第二窗口 | 第二窗口偏移 |
+|---|---|---|---|---|---|
+| 1 | `player_settings` | 15 | `0x3b0886` | `0x3b0894` | `0x7` |
+| 2 | `start_level` | 11 | `0x3b16b7` | `0x3b16c5` | `0x3` |
+| 3 | `multiplayer` | 11 | `0x3b16dd` | `0x3b16eb` | `0x3` |
+| 4 | `create_game` | 11 | `0x3b1703` | `0x3b1711` | `0x3` |
+| 5 | `toggle_mute` | 11 | `0x3b1729` | `0x3b1737` | `0x3` |
+| 6 | `exit_campaign` | 13 | `0x3b1ed4` | `0x3b1ee2` | `0x5` |
+| 7 | `ask_exit_play` | 13 | `0x3b1efa` | `0x3b1f08` | `0x5` |
+| 8 | `cancel_add_bot` | 14 | `0x3b21d0` | `0x3b21de` | `0x6` |
+| 9 | `exit_lan_lobby` | 14 | `0x3b21f6` | `0x3b2204` | `0x6` |
+| 10 | `cancel_join_ip` | 14 | `0x3b221c` | `0x3b222a` | `0x6` |
+| 11 | `add_bot` | 7 | `0x3b0a50`（4 字节） | `0x3b0a59`（`xor 0x3(%r12)`） | `0x3` |
+| 12 | `join_ip` | 7 | `0x3b0a6b`（4 字节） | `0x3b0a74`（`xor 0x3(%r12)`） | `0x3` |
+
+比较形态（**观测**，全部 12 条一致）：
+`movabs $<前 8 字节>,%rax; xor (%r12),%rax` → `movabs $<后 8 字节>,%rcx; xor 0x<len-8>(%r12),%rcx`
+→ `or %rax,%rcx; je <命中>`。两个窗口的**并集**正好覆盖整条键，所以 `len` 不是抄来的。
+
+#### 15.10.3 四条更正（与 §15 旧结论冲突，以此为准）
+
+**① `EndGamePopUp` 是 12 字节，不是 11**（§15.2 第 14 行已就地改）。
+判据有两条且互证：名字内容 12 字节；唯一使用点 `0x3a811b`（`lea`）+ `0x3a8122`
+（`mov $0xc,%edx`）。旧表的 11 会切出 `"EndGamePopU"`，`get_node` 永远查不到。
+
+**② `ConfirmPlay`(11) / `ExitPopUp`(9) 没有「代码里用的长度」证据，而且这里有个未解之谜**：
+全库只有**一处** `lea 0x1bdb0d`，在 `0x3b3783`，紧跟的长度是 **`0x14 = 20`**；
+它随后 `add $0x1638,%rbx`（把 `rbx` 变成**屏表**指针，`0x3b377c`）、`mov %rbx,%rdi`，
+再**尾调用** `0x3af700`（按名查屏）。而 `0x1bdb0d` 起的 20 字节正好是
+`"ConfirmPlayExitPopUp"`（两个屏名在 `.rodata` 里紧邻）。
+⇒ 两种读法都成立，**未定**：(a) 原版这一处的键写成 20 字节，于是查不到、这一支**无动作**；
+(b) 屏表里真有一个 20 字节的键（那就不是「15 个屏」）。缺的证据：屏表的**插入点**
+（`map.insert` 的 `(ptr,len)` 实参）；拿到插入点就能一次定案。
+`ExitPopUp` 更彻底：全库**没有** `lea 0x1bdb18`，只能用 `0x1bdb0d + 11` 得到。
+
+**③ `0x3af850` 的语义是「切屏」，`[rdi+0x18]` 是**屏表长度**，不是广告持有者**（§15.5 已就地更新口径）。
+两条独立证据：
+1. 同一条 `[rdi+0x18]` 在 `0x3af868` 取出后，`0x3af8d7` 是 `dec %rbx; je <结束>`
+   —— 它被当**循环计数**用，不可能是 `Option<Gd<..>>` 的判空；
+2. `0x3a57ba` 用**同一个偏移**（`[self+0x1650]` = `0x1638 + 0x18`）判「屏表空，跳过」。
+   `0x3af71f` 又用 `+0x20`（= `0x1658`）取 hasher ⇒ 这三处描述的正是**同一张屏表**。
+   广告持有者在**第 4 实参**那个 16 字节捕获态的 `+8`：`0x3a7bed` 那个调用点先把
+   `%r12(=0)`/`%r14(=0)` 存到 `0x48(%rsp)`/`0x50(%rsp)`、把 `1` 存到 `0x40(%rsp)`
+   （`0x3a7bc8`–`0x3a7bd7`），再 `lea 0x40(%rsp),%rcx` 传进第 4 实参。
+而函数主体是「屏表逐项 `set_visible(name == 目标)`」⇒ **它就是 `docs/19` §③ 记成
+`show_screen` 的那个动作**（旧记的两个入口地址都不是函数边界，§15.8 已说）。
+⚠️ 仍然只是**推断**的部分：`call *0x9ba978(gd, bool)` = `set_visible`、
+`call *0x9baa20(gd) -> bool` = `is_visible`、`0x39fe10` = 组 `call_deferred` 的 `Variant`。
+三者的 GOT 槽都没定名（§15.9 同一缺口）。
+
+**④ 第 7 条命令键是 `ask_exit_play`，不是 `exit_ask_play`**（§15.6 表已就地改）。
+立即数是 `0x746978655f6b7361`（`"ask_exit"`）+ `0x79616c705f746978`（`"xit_play"`），
+指令 `0x3b1efa` / `0x3b1f08`。词序写反会让这条命令永远不被命中。
+
+#### 15.10.4 `0x3af850` 的完整决策表（观测）
+
+`fn(self, name: &str, capture: &{ +0x00: bool, +0x08: <Godot 对象> })`，对屏表
+**每一个条目** `entry`：
+
+| 条件 | 动作（指令） | 可见性 |
+|---|---|---|
+| `entry == name` 且 `entry != "PlayScreen"` | — | `true`（`0x3afa54` → `0x3af8a7`） |
+| `entry == name == "PlayScreen"`，闸门未开 | — | `true`（`0x3afa8e`） |
+| 同上，闸门开（`capture[0] && is_visible(PlayScreen)`） | `call_deferred("destroy_ad_view")` @`0x3afad5` | `true` |
+| `entry == "background"` 且未命中 | **什么都不做**（`0x3af980` → `0x3af8cd`） | 不变 |
+| `entry == "PlayScreen"` 且未命中，闸门未开 | — | `false`（`0x3af9d1`） |
+| 同上，闸门开 | `call_deferred("create_ad_view")` @`0x3afa1e` | `false` |
+| 其它未命中 | — | `false`（`0x3af8a0`） |
+
+⇒ 一句话：**只有被点名的那个屏可见**；`PlayScreen` 进出对局时顺带拆/建广告；
+`background` 完全不动。**顺序**：`call_deferred` 在 `set_visible` **之前**
+（两个分支都是先组 `Variant`、再跳回 `0x3af8a7` 写可见性）。
+⚠️ 条目**顺序**未知（`HashMap` 迭代序）；本仓库把「顺序」留成调用方的输入。
+
+#### 15.10.5 实现轮新量到的（§15 里没有的）
+
+- **`[+0x1704]`（当前屏）的全部 8 个写入点，全在 `0x3b0830` 内**（原先只知道 5 个值）：
+  `0x3b08ac`(3)、`0x3b0931`(0)、`0x3b0996`(1)、`0x3b237f`(4)、`0x3b2caa`(0)、
+  `0x3b2e24`(0)、`0x3b3168`(2)、`0x3b3416`(0)。⇒ §15.3「只在 `0x3b0830` 里被写」**成立**。
+- **`[+0x1705]`（对局状态）的写入候选值至少 {1, 6, 7, 8}**（§15.9 说“只知道 6”）：
+  紧邻 `0x3a8a09` 的跳转前各有 `mov $N,%r15b` —— `0x3a6e7b`=8、`0x3a6f59`=6、
+  `0x3a7467`=1、`0x3a7f53`=7、`0x3a89a0`=1（`0x3a7f53` 之后 3 条指令就是
+  `jmp 0x3a8a09`，定值最硬）。**枚举定义仍未解**：一个字段至少 4 个值，
+  而 `docs/14` §2 的 6 态枚举最大下标只有 5。
+- 构造体热路径的其余立即数写（`0x3a22f0`–`0x3a2baa`）：
+  `[0x00]=0`、`[0x20]=0`、`[0x90]=3`、`[0xa0]=3`、`[0x40]=0`、`[0x58]=0`、`[0x70]=0`、
+  `[0x15c8]=0`（主开关）、`[0x16fc]=0`、`[0x15d8]=0x3b9aca00`（=1e9）。
+  ⚠️ 最后一条与 §15.3「`+0x15d8` 是 `String`+长度落点」**两说未合**（登记为未知）。
+- `_ready` 的三个 `get_node` 都是**同一个**调用目标 `0x3acb00`，`lea`/长度/调用三地址：
+  `ScreensControl` `0x3a3b07`/`0x3a3b16`/`0x3a3b1c`、
+  `IAP_holder` `0x3a4129`/`0x3a4138`/`0x3a413e`、
+  `Ad_holder` `0x3a41bc`/`0x3a41cb`/`0x3a41d1`。
+- `0x3af700` 的**唯一**两处使用：`0x3b2d77`（`("AddBotPopUp", 11)`，表指针来自
+  `add $0x1638,%rbx` @`0x3b2d61`）与 `0x3b37a3`（尾调用，见更正 ②）。
+
+#### 15.10.6 仍未落的（诚实清单，与 §15.9 合并去重）
+
+| 缺口 | 缺什么证据 |
+|---|---|
+| `[+0x1705]` 枚举定义（{1,6,7,8} 各是什么） | `0x3a8a09` 处 `r15b` 的全函数定值分析 |
+| `0x3b0830` 其余命令键（已 12 条） | 131 KB 反编译逐分支审计 |
+| 屏表的**插入点**与键集（决定更正 ② 的读法） | `map.insert` 的 `(ptr,len)` 实参 |
+| `background` 键的来源（全库无字面量、无重定位指向它） | 同上；三者一起解 |
+| `0x9ba978` / `0x9baa20` / `0x9baa10` / `0x9ba720` / `0x39fe10` 的引擎侧符号 | 运行时读 GOT 槽 |
+| 屏表 V 的确切类型、`upcast_ref` 目标类名 | `0x406250` 第 2 实参逐条解 |
+| `HashMap` 的**迭代序**（切屏时 `set_visible` 的调用顺序） | 运行时观测 |
+| `0x3a22f0` 是构造器还是 `Clone::clone` | 它的调用点 + gdext 虚表槽 |
+| `[+0x15d8]` 的 `1e9` 与「String+长度落点」两说 | 运行时观测该字段的读写 |
+| `0x3a5760` 的 Rust 形状 | 按「一个个内联块各自的入口」拆，不是按 Ghidra 的函数边界 |
