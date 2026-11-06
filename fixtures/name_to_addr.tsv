@@ -1,6 +1,10 @@
 # 由 tools/name_bridge.py build 生成，不要手改。
 # x86_addr 是 Linux 2.0.60 的 ELF 虚地址；Ghidra/REA 地址 = 该值 + 0x100000。
 # 名字来自 Android 2.0.60 arm64 的 .symtab，经 panic::Location 的 (file,line) join 到 x86。
+# ⚠️ 2026-11-07 三处手工修正（docs/16 §27.4 第 11 行；重跑 name_bridge.py 会覆盖，需要同步改脚本）：
+#   remove_offset 0x4eb86a -> 0x4eb830（0x4eb86a 不是指令边界，落在 0x4eb868 add eax,-3 中间）
+#   to_string_recursive 0x4eccb3 -> 0x4ec160（已被内联进后者）
+#   mutate_function 的 join_kind 唯一锚 -> 消去法（证据栏原本就写着消去法）
 module	type	method	x86_addr	src_file	src_line	join_kind	evidence
 function_drawer	FunctionDrawer	remove_function				未知	该函数不引用任何 panic::Location（无锚，名字无法落地）
 function_drawer	FunctionDrawer	update_function	0x498c70	src/function_drawer.rs	45	唯一锚	1 个双向唯一 (file,line,col) 锚；展示锚 src/function_drawer.rs:45:38
@@ -344,14 +348,14 @@ player_showcase	PlayerShowcase	process	0x4e68f0	src/player_showcase.rs	59	唯一
 graphwar_function_input	GraphwarFunctionInput	__register_constants				歧义	引用了 1 个 Location 键（src 1 个），但没有一个是两侧一对一；候选 x86（未定）: 0x4e6dc0, 0x4e6f40, 0x4e9ee0, 0x4ea2d0
 effect_drawer	EffectData	new				未知	该函数不引用任何 panic::Location（无锚，名字无法落地）
 effect_drawer	EffectDrawer	step_effect				未知	该函数不引用任何 panic::Location（无锚，名字无法落地）
-math_function	MathFunction	remove_offset	0x4eb86a	src/math_function.rs	52	唯一锚	2 个双向唯一 (file,line,col) 锚；展示锚 src/math_function.rs:52:43
+math_function	MathFunction	remove_offset	0x4eb830	src/math_function.rs	52	唯一锚	2 个双向唯一 (file,line,col) 锚；展示锚 src/math_function.rs:52:43
 math_function	MathFunction	evaluate_token				歧义	引用了 1 个 Location 键（src 1 个），但没有一个是两侧一对一；候选 x86（未定）: 0x4eb94b, 0x4ebb68, 0x4ebbe0
 math_function	MathFunction	evaluate_recursive				歧义	引用了 1 个 Location 键（src 1 个），但没有一个是两侧一对一；候选 x86（未定）: 0x4eb94b, 0x4ebb68, 0x4ebbe0
 math_function	MathFunction	simplify_recursive				歧义	引用了 1 个 Location 键（src 1 个），但没有一个是两侧一对一；候选 x86（未定）: 0x4eb94b, 0x4ebb68, 0x4ebbe0
-math_function	MathFunction	to_string_recursive	0x4eccb3	src/math_function.rs	285	唯一锚	1 个双向唯一 (file,line,col) 锚；展示锚 src/math_function.rs:285:28
+math_function	MathFunction	to_string_recursive	0x4ec160	src/math_function.rs	285	唯一锚	1 个双向唯一（该函数已被内联进 0x4ec160） (file,line,col) 锚；展示锚 src/math_function.rs:285:28
 math_function	MathFunction	new	0x4ed670	src/math_function.rs	75	唯一锚	1 个双向唯一 (file,line,col) 锚；展示锚 src/math_function.rs:75:10
 math_function	FunctionRandomizer	adjust_tokens				未知	该函数不引用任何 panic::Location（无锚，名字无法落地）
-math_function	FunctionRandomizer	mutate_function	0x748000	/rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/slice/index.rs	1020	唯一锚	消去法唯一：无直接一对一锚，按「一个名字只对应一个地址」消去后只剩 0x748000；展示锚 /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/slice/index.rs:1020:51
+math_function	FunctionRandomizer	mutate_function	0x748000	/rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/slice/index.rs	1020	消去法	消去法唯一：无直接一对一锚，按「一个名字只对应一个地址」消去后只剩 0x748000；展示锚 /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/slice/index.rs:1020:51
 math_function	FunctionRandomizer	mutate_fine_tune	0x4ee720	src/math_function.rs	452	唯一锚	10 个双向唯一 (file,line,col) 锚；展示锚 src/math_function.rs:452:44
 math_function	FunctionRandomizer	create_random_region				未知	该函数不引用任何 panic::Location（无锚，名字无法落地）
 graphwar_button	GraphwarButton	button_down				歧义	引用了 3 个 Location 键（src 0 个），但没有一个是两侧一对一；候选 x86（未定）: 0x3a2e10, 0x3a5760, 0x3afb00, 0x3afe90
