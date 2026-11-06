@@ -477,8 +477,8 @@ mod("graphwar_module_container.rs", "graphwar", ("src/graphwar_module_container.
     "⇒ add/get 零锚是正确结果")
 mod("graphwar_name_manager.rs", "graphwar", (), "未做",
     "docs/112 §0：HashMap<u32, String>、entry 32 字节、NameInfo 判别值 60 已逐位解出；src/ 无实现")
-mod("graphwar_nodes.rs", "graphwar", (), "未做",
-    "docs/112 有结构观测；src/ 无实现")
+mod("graphwar_nodes.rs", "graphwar", ("src/graphwar_nodes.rs",), "观测",
+    "11/11：**不造节点**，是全客户端唯一的「按名字/按类型在场景树里找节点」入口——get_node_by_name::<T>（11 个单态化薄壳）/ get_node_by_name_rec（17）/ get_node_by_type_rec（1）；另给 40 个节点名 + 80 个调用点三张表（docs/16 §28）")
 mod("graphwar_obstacle_manager.rs", "graphwar", ("src/plane.rs",), "逐位",
     "只覆盖掩膜部分：0x4f15b0 光栅化与 is_occupied 与真二进制逐字节 / 300 随机点一致"
     "（docs/39/08），摧毁 = 挖 r=0.5 洞；障碍的生成与生命周期未落 src/。"
@@ -500,8 +500,8 @@ mod("graphwar_plane.rs", "graphwar", ("src/graphwar_plane.rs", "src/plane.rs"), 
     "`src/plane.rs` 里剩下的掩膜 / 换算归 obstacle_manager 与 plane_pos_manager，见 docs/02 §17.4")
 mod("graphwar_player_manager.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（玩家），无地址级观测、无实现")
-mod("graphwar_player_screen_control.rs", "graphwar", (), "未知",
-    "只有 docs/02 一行（玩家界面），无地址级观测；界面在 client/ GDScript")
+mod("graphwar_player_screen_control.rs", "graphwar", ("src/graphwar_player_screen_control.rs",), "观测",
+    "8/8：**就是写 GraphwarPlayerConfig 的地方**——set_skin/set_face/set_hat 三条具名 bl 直证，三个 setter 写 +0x60/+0x78/+0x90 且 inc dword [+0xa8]，与 docs/16 §25.9 布局逐字段吻合（§29）")
 mod("graphwar_play_screen_control.rs", "graphwar", ("src/graphwar_play_screen_control.rs",), "观测",
     "docs/14-turn.md §9 逐函数规格（10 个可归属函数 / 64 个锚）；界面视图仍在 client/ GDScript（仿制），"
     "但控制器本体已落在 src/graphwar_play_screen_control.rs。旧行写「未做」与 src/lib.rs/文件头冲突 ⇒ 按代码更正")

@@ -3880,3 +3880,410 @@ def funcs_ref_slot(self, slot):
 | `../.venv/bin/python tools/class_probe.py module graphwar_plane` | `:68:1` → 4 个 gdext 入口、`:274:129` → `0x4b5df0`、`:218:129` → `0x4b7a70`（与 `docs/16` §26.2 一致）；行数 175→232（19 个 Location 不变，`funcs` 段 21→22，多出的是线索 A 修好后新增的字面量行） |
 | `cargo test --offline` | **全绿**（本轮未改 `src/`） |
 | `python3 tools/coverage_matrix.py --check` | **红**，但**与本轮改动无关**：master 上（干净工作树）同样是红的，且差异行号相同（`docs/coverage-matrix.tsv` 第 10 行、`docs/149` 第 247 行）。实测差异**只有表头 2 行**：`src_files: 46` vs 重算 `47`、`src_tree_sha256` 变化 —— 上一个提交 `c7107934` 新增了 `src/graphwar_module_container.rs` 却没重跑生成器；**96 行模块行逐行相同**。修它要重生成 `docs/coverage-matrix.tsv` + `docs/149-coverage-matrix.md`，不在本轮可改文件范围内 |
+
+## 28. `graphwar_nodes.rs` 规格（本轮新增：从"零锚点未知模块"到 11 个归一化函数 + 40 个节点名）
+
+### 28.0 一页结论
+
+* 这个模块**不造节点**。它是全客户端**唯一的"按名字/按类型找节点"入口**：
+  调用方给一个节点名字符串，它从**场景根**开始递归找，找到后**上抛成 `Gd<T>`**。
+  `docs/02` §16 当年把它列进"13 个零锚点未知模块"，现在名字与结构都有了。
+* **11 个可归属函数 = 同一泛型函数 `get_node_by_name::<T>` 的 11 个单态化。**
+  依据是 arm64 2.0.60 `.symtab`：`graphwarrust::graphwar_nodes::GraphwarNodes::
+  get_node_by_name::h<hash>` 正好 **11** 条（204/228 字节），`get_node_by_name_rec`
+  17 条（772–816 字节），`get_node_by_type_rec` 1 条（636 字节），合计 **29**。
+* 三个入口的分工由**具名被调者**直接读出（不是猜）：
+
+| 入口 | 返回 | 具名被调者（arm64 `bl`，逐条解出） | 档位 |
+|---|---|---|---|
+| `get_node_by_name::<T>(名字)` | `Gd<T>` | `Node::get_tree` → `SceneTree::get_root` → `Gd<T>::owned_cast` → `get_node_by_name_rec::<T>` | 观测 |
+| `get_node_by_name_rec::<T>(节点, 名字)` | `Gd<T>` | `Node::get_children_full`、`AnyArray::len`、`Node::get_name`、`StringName` 的 `Display::fmt`、**自递归**、`Gd<T>::owned_cast` | 观测 |
+| `get_node_by_type_rec::<T>(节点)` | `Vec<Gd<T>>` | 同上**但换成** `RawVec::grow_one`（无 `get_name`） ⇒ 按**类型**收集、返回**多个** | 观测 |
+
+⇒ `get_node_by_name` 只是**薄壳**（先 `get_tree().get_root()`），遍历孩子的是 `_rec`。
+
+### 28.1 分母：11 怎么来的（可复现，三条判据串起来）
+
+1. `src/graphwar_nodes.rs` 在整份 `.so` 里**只有一个** `panic::Location`：
+   `.data.rel.ro` 的 `0x951678` = `{file_len 21, line 8, col 62}`，`file` 指针的
+   `R_X86_64_RELATIVE` addend 指向字面量 `src/graphwar_nodes.rs`。
+2. 引用它的函数有 **12** 个（`../.venv/bin/python tools/loc_xrefs.py loc src/graphwar_nodes.rs:8:62`）：
+   `0x3a2e10` 与 `0x3aaea0, 0x3aafa0, 0x3ab0a0, 0x3ab190, 0x3ab290, 0x3ab390, 0x3ab490,
+   0x3ab590, 0x3ab690, 0x3ab790, 0x3ab890`。
+3. `0x3a2e10`（`0x26d0` 字节，= `GraphwarRootNode::_ready`）**同时**引用别的模块的 Location，
+   按 `coverage_matrix.py` 的 contested 规则记给别的模块 ⇒ **扣掉**，剩 **11**。
+   这与 `docs/coverage-matrix.tsv` 里 `graphwar_nodes.rs` 的 `orig_funcs = 11`
+   （`contested = 0`）**同一个分母**。
+
+剩下 11 个的大小是 `0xf0`/`0x100`，首尾相接；与 arm64 的 11 个 228 字节单态化一一对应。
+
+⚠️ **档位**：第 1–2 步是**观测**；"11 个 x86 函数 ⇄ 11 个 arm64 单态化"这一步是**推断**——
+缺的是"某个 x86 函数 ↔ 某个 `::h<hash>`"的一对一锚（本模块的 Location 只有一个，
+天然做不到）。三条旁证：同一 Location、同形（都是 `upcast_ref` + 一个类型专属尾巴）、同数量。
+
+### 28.2 11 个函数体长什么样（x86 逐指令）
+
+每个都是 ~0x100 字节的同一个骨架：
+
+```text
+push r15/r14/r13/r12/rbx; sub $0x50,%rsp
+%rbx=%r8, %r15=%rcx, %r14=%rdi            ; 实参：out / 句柄两半 / 名字两半
+[%rsp+0x20]=%rsi; [%rsp+0x28]=%rdx        ; 把句柄两半钉到栈上
+%r12 = lea 0x1bd8f2                       ; "upcast_ref"（10 字节）
+call 0x4068f0(&pair, "upcast_ref", 10)    ; ← gdext 的 Gd 操作胶水
+call *0x9ba7d0(&name)                     ; 引擎槽
+call 0x405a60(&pair, "upcast_ref", 10)
+call *0x9ba7d8(&pair)                     ; → Result，判别值 1 = 成功
+if disc == 1: call <类型专属尾巴>          ; 0x3ad570 / 0x3ab990 / 0x3ad220 / …
+else:         panic(0x951678)             ; = src/graphwar_nodes.rs:8:62
+```
+
+* 11 个函数体**唯一的** `Gd` 操作是 `upcast_ref`；panic 字面量是
+  `0x1bd8fc`（`%esi = 0x2f = 47` = "Upcast failed. This is a bug; please report it."）。
+* 11 个**类型专属尾巴**互不相同（`0x3ad570, 0x3ab990, 0x3ad220, 0x3acb00, 0x3ac770,
+  0x3af0a0, 0x3ac3e0, 0x3ae650, 0x3ace90, 0x3ac050, 0x3adc50`）⇒ 11 个不同的 `T`。
+* **跨模块观测（本轮顺带解出，29 个模块共用）**：`0x4068f0` / `0x4066c0` 这两个包装
+  全 `.text` 里的调用点分别是 181 / 295 个，而它们收到的**名字立即数只有四个**：
+
+| 操作名 | 长度 | `0x4068f0` 次数 | `0x4066c0` 次数 |
+|---|---|---|---|
+| `clone` | 5 | 93 | 121 |
+| `upcast_ref` | 10 | 58 | 117 |
+| `cast` | 4 | 18 | 8 |
+| `try_with_ref_counted` | 20 | 1 | 1 |
+
+  这四个正是 **godot-rust(gdext) 里 `Gd<T>` 的内建操作** ⇒ 这两个包装是 gdext 的
+  `Gd` 绑定胶水，**不是**游戏业务代码。以后任何模块看到 `call 0x4068f0/0x4066c0`
+  都可以直接判成"一次 `Gd` 的 clone/cast/upcast"，不必再逐个反编译。
+  落码：`src/graphwar_nodes.rs` 的 `GdOp` / `GD_OP_WRAPPER_A` / `GD_OP_WRAPPER_B`。
+
+### 28.3 它按什么键索引：40 个节点名（**这一节最实用**）
+
+判据 = 每个调用点前的 `lea rcx,[rip+X]` + 紧随的 `mov r8d,<len>`；共 **80** 个调用点。
+长度是 `.rodata` 字面量的真实字节数，可逐条复核。
+
+| 名字 | len | 名字 | len | 名字 | len |
+|---|---|---|---|---|---|
+| `AxisModeButton` | 14 | `HatsVbox` | 8 | `PlayerNameLineEdit` | 18 |
+| `ChatBox` | 7 | `JoinIpIpLineEdit` | 16 | `RightButtonGrid` | 15 |
+| `ChatButtonPlay` | 14 | `LeftButtonGrid` | 14 | `RightReplaysButtonsGrid` | 23 |
+| `ChatButtonSetup` | 15 | `LeftReplaysButtonsGrid` | 22 | `RoomNameLineEdit` | 16 |
+| `ChatLineEdit` | 12 | `LockButton` | 10 | `ShowGlobalButton` | 16 |
+| `ChatPopUp` | 9 | `MuteButton` | 10 | `ShowLocalButton` | 15 |
+| `DisconnectedLabel` | 17 | `OffsetLabel` | 11 | `ShowNames` | 9 |
+| `FacesVbox` | 9 | `PendingBlock` | 12 | `SkinBlock` | 9 |
+| `FireContainer` | 13 | `PlayPauseButton` | 15 | `SkinsVbox` | 9 |
+| `FunctionModeButton` | 18 | `PlayerListContainer` | 19 | `Team1Container` | 14 |
+| `FxTextureButton` | 15 | `TimerLabel` | 10 | `TurnModeButton` | 14 |
+| `GameIpLabel` | 11 | `TurnTimeButton` | 14 | `ViewFunctionButton` | 18 |
+| `GraphwarLanVBox` | 15 | `ViewFunctionsLabel` | 18 | `YButton` | 7 |
+| `GraphwarRootNode` | 16 | | | | |
+
+交叉验证：其中 `RoomNameLineEdit` / `AxisModeButton` / `FunctionModeButton` /
+`TurnModeButton` / `TurnTimeButton` / `LockButton` / `ChatButtonSetup` / `ChatButtonPlay` /
+`ChatPopUp` / `ChatBox` / `ChatLineEdit` 这 **11** 条，与 §16.2.1 早已逐条量过的
+`.rodata` 地址**完全一致**（两条独立路径）。
+
+**名字 ↔ 单态化（已配对的部分）**：
+
+| 单态化 | 取的名字（调用顺序） |
+|---|---|
+| `0x3aaea0` | `ShowLocalButton`, `ShowGlobalButton`, `AxisModeButton`, `FunctionModeButton`, `TurnModeButton`, `TurnTimeButton`, `LockButton`, `ChatButtonSetup`, `ChatButtonPlay` |
+| `0x3aafa0` | `Team1Container`, `SkinsVbox`, `FacesVbox`, `HatsVbox` |
+| `0x3ab190` | `LeftButtonGrid`, `RightButtonGrid`, `FireContainer`, `LeftReplaysButtonsGrid`, `RightReplaysButtonsGrid`, `SkinBlock`, `PendingBlock` |
+| `0x3ab290` | `TimerLabel` |
+| `0x3ab390` | `ViewFunctionButton`, `PlayPauseButton`, `YButton`, `ShowNames`, `MuteButton` |
+| `0x3ab490` | `JoinIpIpLineEdit`, `RoomNameLineEdit`, `ChatLineEdit`, `PlayerNameLineEdit` |
+| `0x3ab590` | `GraphwarRootNode`（24 个调用点里 15 个点名它 —— 全客户端最热的取节点操作） |
+| `0x3ab690` | `GraphwarLanVBox` |
+| `0x3ab790` | `ViewFunctionsLabel` |
+| `0x3ab890` | `PlayerListContainer` |
+| `0x3ab0a0` | **未读出**（3 个调用点全在 `GraphwarRootNode` 的命令总线 `0x3b0830` 里，配对窗口被挤掉） |
+
+### 28.4 谁在用它（调用方全表，**观测**）
+
+| 单态化 | 直接调用点 | 调用方（去重） |
+|---|---|---|
+| `0x3aaea0` | 9 | `0x3ef990`(lan_vbox), `0x4cf670`(setup_control `_ready`) |
+| `0x3aafa0` | 7 | `0x4d3180`, **`0x4f57d0`(player_screen `load_items`)**, **`0x4f8050`(player_screen `update_buttons_background`)** |
+| `0x3ab0a0` | 3 | `0x3b0830`(root_node 命令总线) |
+| `0x3ab190` | 17 | `0x3d9b50`/`0x3d9e40`(play_screen 视图切换 ×5 各), `0x4cf670`, **`0x4f8850`/`0x4f8990`/`0x4f8ad0`(player_screen `lock`/`unlock`/`pending`)** |
+| `0x3ab290` | 4 | `0x3a5760`, `0x4d3180`, `0x4f2200`, `0x522070` |
+| `0x3ab390` | 7 | `0x418820`, `0x4f2200`, `0x522070`(×4), `0x5238c0` |
+| `0x3ab490` | 5 | `0x3b0830`, `0x4cf670`(×2), `0x4e6480`(player_showcase `ready` ×2) |
+| `0x3ab590` | 24 | `0x4b2890`/`0x4b4130`/`0x4b4b60`/`0x4b5df0`/`0x4b7a70`/`0x4b83f0`(entity_drawer ×6), `0x4c27f0`/`0x4c44b0`/`0x4c4850`/`0x4c4c20`(setup_control), `0x4cf670`, `0x4d3180`, `0x4e1520`/`0x4e25b0`/`0x4e2f80`, `0x4e5400`/`0x4e6480`/`0x4e68f0`/`0x4efd70`(player_showcase), `0x4f2200`, **`0x4f7940`(player_screen `skin_button_pressed`)**, `0x4f90b0`(lan_vbox `process` ×2), `0x4fd4a0` |
+| `0x3ab690` | 1 | `0x3ef990` |
+| `0x3ab790` | 2 | `0x3dc7f0`(play_screen 订阅), `0x4cf670` |
+| `0x3ab890` | 1 | `0x4d3180` |
+
+⇒ 客户端**每一个**界面控制器都从这一个模块拿节点。这解释了为什么它的 11 个函数
+个个都带 panic 锚：`get_node_by_name(...).unwrap()` 是**唯一**会失败的取节点方式
+（找不到名字就 panic），而 `get_node_by_name_rec` / `get_node_by_type_rec` 返回
+`Option` / `Vec`，不 panic。
+
+### 28.5 落码清单（`src/graphwar_nodes.rs`）
+
+| 项 | 内容 | 档位 |
+|---|---|---|
+| `PANIC_ANCHOR` / `PANIC_LOCATION_SLOT` | `8:62` / `0x951678` | 观测 |
+| `GET_NODE_BY_NAME` / `TYPE_TAILS` / `ACCESSORS` | 11 个入口 + 11 个类型尾巴 | 观测 |
+| `GdOp` / `GD_OP_WRAPPER_A` / `GD_OP_WRAPPER_B` | gdext `Gd` 的四个操作名 + 两个包装地址 | 观测（穷举 476 个调用点） |
+| `NODE_NAMES` | 40 个名字 + 长度 | 观测 |
+| `NAMES_BY_ACCESSOR` / `CALLERS` | 名字↔单态化、单态化↔调用方 | 观测 |
+| `ARM64_*` | 29 个 arm64 符号的拆分 | 观测 |
+| `unknowns()` | 6 条 | — |
+
+**本节没解出来的（照实写）**：
+
+1. **11 个 `T` 分别是什么类型** —— x86 侧只有 11 个互不相同的类型尾巴，没有类型名字符串；
+   arm64 符号只有 `::h<hash>`。缺的证据：x86 尾巴体内 `check_rtti` 的 `ClassId` 立即数
+   （要先把 `godot_core::meta::class_id` 那张表解出来，目前没人做过）。
+   唯一旁证是**用法**（`0x3aafa0` 的实参全是 `*Vbox`/容器、`0x3ab190` 全是 `*Grid`/`*Block`、
+   `0x3ab590` 全是 `GraphwarRootNode`）——这是**推断**，不是结论。
+2. **11 个 x86 函数对上 `get_node_by_name` 还是 `_rec`** —— 只有"11 == 11"这一条计数论证。
+3. **5 个实参的名字已读出、所属单态化未配对**（`lea rcx` 与 `mov r8d` 之间隔了别的 `lea`）。
+4. **节点名比较的确切语义** —— `get_node_by_name_rec` 里 `Node::get_name` 之后走
+   `StringName` 的 `Display::fmt` 再比较；是 `==` 还是 `format!` 之后比较**未知**
+   （`0x44ccc0` / `0x844d00` 两个被调者没有符号）。
+5. **`0x9bb310` / `0x9bb318`（`0x4068f0` 内部两个槽）的引擎侧成员名** —— 需要运行时读 GOT。
+6. **`0x3ab0a0` 的 3 个实参名字**。
+
+### 28.6 复现（不依赖本节结论，任何人可重跑）
+
+```text
+# ① 本模块的 Location 只有一条
+../.venv/bin/python tools/loc_xrefs.py loc src/graphwar_nodes.rs:8:62
+
+# ② arm64 的 29 个符号
+../.venv/bin/python tools/symtab_dump.py methods graphwar_nodes
+
+# ③ 11 个薄壳体里的名字 + 被调者（x86）
+objdump -d --start-address=0x3aaea0 --stop-address=0x3ab990 \
+        ../libgraphwarrust.so | grep -E 'lea|call'
+#   应看到每条都是 0x1bd8f2("upcast_ref") + 0x951678(panic 锚) + 一个不同的 call 尾巴
+
+# ④ 40 个节点名（本轮的判据）
+#    对 11 个入口各自的 call 点，回看 lea rcx,[rip+X] 与紧邻的 mov r8d,<len>
+```
+
+## 29. `graphwar_player_screen_control.rs` 规格（本轮新增：8 个函数全定位；**它就是写 `GraphwarPlayerConfig` 的地方**）
+
+### 29.0 一页结论
+
+1. **回答了本轮的核心问题：是。** 玩家页三个外观按钮的回调分别调
+   `GraphwarPlayerConfig::set_skin` / `set_face` / `set_hat` —— 这条在 arm64 `.symtab`
+   里是**具名的 `bl`**，三对一一对应，**不是**"从行为猜出来的"。
+2. `lock()` / `pending()` / `unlock()`**不动档案**，只改两个块的可见性。
+3. `load_items()` 是**造按钮**的那个函数（`PackedScene::instantiate_as` +
+   `Node::add_child_full` + `Button::set_button_icon`），并把
+   `load_skins` / `load_faces` / `load_hats` **全部内联**进来。
+4. 顺带结清一条旧"未知"：**`0x9ba978` = `CanvasItem::set_visible`**
+   （`docs/14-turn.md` §9.3 与本文 §15.9 曾登记为"需要运行时读 GOT"）。
+5. `docs/coverage-matrix.tsv` 里这一格的 `status` 本轮仍写 `未知`/`未做` ——
+   因为那张表的 `M` 字典在 `tools/coverage_matrix.py` 里手写，
+   改它不在本轮可改文件范围内（见 §29.7）。
+
+### 29.1 分母：8 个函数 + 22 个锚（`fixtures/name_to_addr.tsv` 的 8 条 `唯一锚`）
+
+| # | 函数 | x86 vaddr | size | 锚（`src/graphwar_player_screen_control.rs:line:col`） |
+|---|---|---|---|---|
+| 1 | `load_items` | `0x4f57d0` | `0x1fa0` | `113:39` + 8 条内联锚 |
+| 2 | `hat_button_pressed` | `0x4f77a0` | `0xd0` | `131:28` |
+| 3 | `face_button_pressed` | `0x4f7870` | `0xd0` | `127:28` |
+| 4 | `skin_button_pressed` | `0x4f7940` | `0x270` | `118:28`、`120:118`、`123:68` |
+| 5 | `update_buttons_background` | `0x4f8050` | `0x2e0` | `230:113`、`233:111` |
+| 6 | `lock` | `0x4f8850` | `0x140` | `252:107`、`255:113` |
+| 7 | `unlock` | `0x4f8990` | `0x140` | `268:107`、`271:113` |
+| 8 | `pending` | `0x4f8ad0` | `0x140` | `260:107`、`263:113` |
+
+22 个 `Location` 覆盖的源码行列（观测，`tools/loc_xrefs.py` 从 `.rela.dyn` 的 addend 解出）：
+
+```text
+113:39  118:28 120:118 123:68  127:28  131:28
+135:103 139:74  156:103 159:74 165:64
+183:102 186:73  192:64
+230:113 233:111
+252:107 255:113   260:107 263:113   268:107 271:113
+```
+
+三组"借用 / 解包 / 借用计数溢出"三元组同形：`118:28/120:118/123:68`（`skin_button_pressed`）、
+`252:107/255:113`（`lock`）、`268:107/271:113`（`unlock`）、`260:107/263:113`（`pending`）。
+`load_items` 占 9 条（自己 `113` + 三个被内联 loader 各 2 条）。
+
+### 29.2 三个按钮改档案（**本节最强的一条证据**，两条独立路径）
+
+| 回调 | x86 | arm64 具名被调者 | 改哪个字段（偏移） | x86 setter（槽的 addend） |
+|---|---|---|---|---|
+| `skin_button_pressed` | `0x4f7940` | `GraphwarPlayerConfig::set_skin` | 皮肤 `+0x60`（默认 `yellow`） | 槽 `0x9bb6f0` → **`0x417e20`** |
+| `face_button_pressed` | `0x4f7870` | `GraphwarPlayerConfig::set_face` | 脸 `+0x78`（默认 `regular_eyes`） | 槽 `0x9bb6e8` → **`0x417d50`** |
+| `hat_button_pressed` | `0x4f77a0` | `GraphwarPlayerConfig::set_hat` | 帽子 `+0x90`（默认 `soldier_helmet`） | 槽 `0x9bb6e0` → **`0x417c70`** |
+
+**x86 侧的独立确认**（三个 setter 的体内逐指令）：
+
+```text
+0x417c70  cmp byte ptr [rdi+0xac], 0     ; 解锁标记（=1 才同时更新"原始值"）
+          ... 把新 String 拷到 [rbx+0x48]  ; "原始"帽子
+          ... 把新 String 拷到 [rbx+0x90]  ; 帽子（当前）
+          inc dword ptr [rbx+0xa8]         ; 变更计数器 +1
+```
+
+`+0x48` / `+0x90` / `+0xa8` / `+0xac` 与 §25.9 的 `GraphwarPlayerConfig` 布局表
+**逐字段吻合**（那一节是从 `GraphwarPlayerConfig::lock` 与 `draw` 反推的，
+本节是从三个 setter 反推的 —— 两条独立路径给出同一张表）。
+`set_face`（`0x417d50`）写 `+0x78`，`set_skin`（`0x417e20`）写 `+0x60`，同形。
+
+⚠️ **推断**（不影响上面那条结论）：x86 侧这三个 setter 是**经 `.data.rel.ro` 槽间接调用**的
+（`call *[slot]`），槽被 `R_X86_64_RELATIVE` 静态写入，addend 就是入口 —— 所以语义确定；
+但"为什么没内联"（`#[godot_api]` 方法表？`OnceLock` 初始化？）**未知**。
+
+### 29.3 每个函数的具名被调者（arm64 `.symtab`，逐条解出）
+
+godot/gdext/alloc/panic 那些基础被调者已滤掉，只留说明业务的：
+
+| 函数 | 游戏内具名被调者 |
+|---|---|
+| `load_items` | `GraphwarNodes::get_node_by_name`(×3), `GraphwarNodes::get_node_by_name_rec`(×2), `GraphwarPlayerScreenControl::insert_button_in_vbox`(×3), `GraphwarTextureLoader::get_skin_texture` |
+| `skin_button_pressed` | `GraphwarNodes::get_node_by_name`, **`GraphwarPlayerConfig::set_skin`**, `GraphwarPlayerScreenControl::update_buttons_background` |
+| `face_button_pressed` | **`GraphwarPlayerConfig::set_face`** |
+| `hat_button_pressed` | **`GraphwarPlayerConfig::set_hat`** |
+| `update_buttons_background` | `GraphwarNodes::get_node_by_name`(×2), `GraphwarPlayerScreenControl::update_buttons_background_in_vbox`(×2), `GraphwarTextureLoader::get_skin_texture` |
+| `lock` / `unlock` / `pending` | `GraphwarNodes::get_node_by_name`(×2), `CanvasItem::set_visible`(×2) |
+
+`load_items` 另外用到（gdext 侧）：`PackedScene::instantiate_as`(×2)、
+`godot_core::tools::save_load::load`(×2)、`Button::set_button_icon`、`Button::set_expand_icon`、
+`Control::set_mouse_filter`、`Control::set_force_pass_scroll_events`、`GString::from(&str)`、
+`Node::add_child_full` ⇒ **它是"造按钮"的那一个**（按钮 = 现成场景实例化的，不是代码拼的）。
+
+`insert_button_in_vbox` 的被调者（`Node::add_child_full`、`Node::get_children_full`、
+`Array::len`、`Gd::owned_cast`、`construct_engine_object`、`FromGodot::from_variant`）
+⇒ 它负责"把新按钮插进 VBox 的合适位置"。
+
+### 29.4 `lock` / `pending` / `unlock`：只有可见性（**观测**，逐指令）
+
+| 函数 | `SkinBlock` | `PendingBlock` | `%esi` 来源 |
+|---|---|---|---|
+| `lock` `0x4f8850` | `1` | `0` | `0x4f88da` / `0x4f8955`（`xor`） |
+| `pending` `0x4f8ad0` | `0`（`xor`） | `1` | `0x4f8b62` / `0x4f8bdd` |
+| `unlock` `0x4f8990` | `0`（`xor`） | `0`（`xor`） | `0x4f8a22` / `0x4f8a9d` |
+
+三个函数都是"取 `SkinBlock` → `upcast_ref` → `call *0x9ba978(node, bool)`，
+再取 `PendingBlock` → `upcast_ref` → `call *0x9ba978(node, bool)`"，
+**没有任何**对 `+0x16a8`（档案）的读写 ⇒ 它们不改进度，只改界面。
+
+⚠️ 注意**同名不同物**：`GraphwarPlayerConfig::lock()`（档案模块）会写默认外观
+（`yellow` / `regular_eyes` / `soldier_helmet`，§25.9），而
+`GraphwarPlayerScreenControl::lock()`（本节）只翻可见性。两个 `lock` 别混。
+
+**就地更正一条旧"未知"**：§15.9 / `docs/14-turn.md` §9.3 把 `0x9ba978`、`0x9baa10`
+登记为"引擎侧成员名未知，需要运行时读 GOT"。本轮**不需要运行时**：
+
+* `0x9ba978` 的 `R_X86_64_RELATIVE` addend = **`0x8ab200`**（gdext 生成的方法包装，
+  与 `draw_arc` 的包装 `0x8abca0` 同一段）；
+* 本模块这三个函数是**唯一**一类"取 2 个节点 + 各调一次 `0x9ba978` + 只传 bool"的函数，
+  同一批函数在 arm64 侧具名 `bl` 全部是 `CanvasItem::set_visible`（×2，逐条解出）
+  ⇒ **`0x9ba978` = `CanvasItem::set_visible` 的 GOT 槽**。
+
+档位：地址/包装 = **观测**；"槽 ↔ 成员名"= **推断（强）**，缺的证据是 `0x8ab200` 体内
+那条 `object_method_bind_ptrcall` 的 method bind 名字。
+（`0x9baa10` 是**另一个**槽，本节没碰，仍按未知处理。）
+
+### 29.5 结构体：`+0x00` 是档案，`+0x10/+0x18` 是查找起点
+
+8 个函数的第一个实参 `%rdi` 指同一个结构体，两个字段区被用到（**偏移观测 / 字段名推断**）：
+
+| 偏移 | 内容 | 判据 |
+|---|---|---|
+| `+0x00` | `Rc<RefCell<GraphwarPlayerConfig>>` | `mov %rbp,(%rdi)` → `[%rbp+0x10]` 借用计数检查（`cmp …,0` + `jne panic_already_borrowed`）、`[%rbp+0x18]` = 载荷；三个 `set_*` 与 `lock`/`pending` 都直接对它操作 |
+| `+0x10` / `+0x18` | 一个**两字宽**句柄，两半各自做非零检查，作为 `get_node_by_name` 的查找起点 | `lock`/`unlock`/`pending` 只读这两处；`skin_button_pressed` 用它找 `GraphwarRootNode` |
+
+与 §25.9 **不冲突**：根节点 `+0x16a8` 持有同一个 `Rc` 的一份克隆，本模块把这个克隆
+**缓存在自己身上**（`+0x00`），所以"写档案"这条路径不必每次都从根节点取。
+
+`skin_button_pressed` 里还有一条值得记的：它**同时也读** `GraphwarRootNode + 0x16a0`
+（`0x4f7a60: mov %rcx,(%rdx+0x16a0)` + `0x4f7a70: mov %r14,(%rdx+0x16a0)`）——
+即"改完外观还要拿贴图缓存去刷按钮底色"，与 §25.9 那张表里
+"`+0x16a0` 的读者包含 `GraphwarPlayerScreenControl::skin_button_pressed`"一致。
+
+### 29.6 `load_items`：三个 loader 已被内联
+
+arm64 `.symtab` 里 `GraphwarPlayerScreenControl` 共 14 个符号，其中
+`load_skins` / `load_faces` / `load_hats` **只剩** `::{{closure}}`（各 52 字节）：
+
+```text
+0x0044de9c  52  GraphwarPlayerScreenControl::load_faces::{{closure}}
+0x0044f5c8  52  GraphwarPlayerScreenControl::load_skins::{{closure}}
+0x00450888  52  GraphwarPlayerScreenControl::load_hats::{{closure}}
+```
+
+外层函数体已经不在符号表里 ⇒ 被内联进 `load_items`（`0x44ded0`，5880 字节）。
+这正面解释了 `fixtures/name_to_addr.tsv` 为什么给它们标
+"**未知** — 该函数不引用任何 panic::Location"：**它们已经没有独立函数体了**，
+不是"没解出来"。
+
+按内联残留的锚点，三个块大致落在 `135` / `156` / `183` 行（各带一条 `+3~4` 行的第二个锚），
+`165` / `192` 两条是 `load_items` 自己的。
+⚠️ **推断**：行号 `135 < 156 < 183` 与 `SkinsVbox` / `FacesVbox` / `HatsVbox` 的**先后**
+还需要逐段对齐才能定死（本轮只做到"三个块各占一段、且紧邻对应的 `get_node_by_name`"）。
+
+### 29.7 落码清单（`src/graphwar_player_screen_control.rs`）
+
+| 项 | 内容 | 档位 |
+|---|---|---|
+| `ATTRIBUTED` / `FN_*` | 8 个函数 + 地址 + 大小 | 观测 |
+| `ANCHOR_LINES` | 22 个 `(line, col)` | 观测 |
+| `ConfigField` / `BUTTON_ACTIONS` | 三个回调 → 三个字段 + 三个 setter + 三个槽 | 观测（setter **经槽间接调用**这一点是推断） |
+| `BlockState` / `BLOCKS` | `lock`/`pending`/`unlock` 的两张可见性表 | 观测 |
+| `SET_VISIBLE_SLOT` / `SET_VISIBLE_WRAPPER` | `0x9ba978` / `0x8ab200` | 观测（地址）/ 推断（成员名） |
+| `NODE_NAMES` / `NODES_BY_FUNC` / `NODE_ACCESSORS_USED` | 本模块用到的 6 个名字 + 3 个 `graphwar_nodes` 单态化 | 观测 |
+| `INLINED_LOADERS` / `UNANCHORED_ARM64` | 3 个 closure + 3 个 arm64 符号 | 观测 |
+| `GAME_CALLEES` / `LOAD_ITEMS_GODOT_CALLS` | 具名被调者 | 观测 |
+| `unknowns()` | 6 条 | — |
+
+**本节没解出来的（照实写）**：
+
+1. **`insert_button_in_vbox` / `update_buttons_background_in_vbox` 的 x86 地址** ——
+   arm64 有符号（1012 / 1180 字节），但 2.0.60 x86 侧没有一对一 `Location` 锚，
+   `fixtures` 只给到 `歧义`，而且**候选里混着 `graphwar_nodes` 的单态化**
+   （那些函数也引用同一个 `src/graphwar_nodes.rs:8:62`）。**不替人选**。
+2. **`+0x10/+0x18` 两字宽句柄的确切类型** —— 只知道两半各自做非零检查、被当作查找起点。
+   `Gd<T>` 在 gdext 里是 1 字宽，所以 2 字宽**不是**单个 `Gd`；
+   缺的证据：`.text` 里找不到唯一写点（可能是 `Base<Node>` + 一个 `InstanceId` 之类的组合）。
+3. **三个 setter 为什么走间接调用**（语义不受影响，见 §29.2 的注）。
+4. **`0x9bb7c0`（`skin_button_pressed` 里那条间接调用，addend `0x8cac40`）是什么** ——
+   它在 `RawGd::bind` 之后被调用、返回 3 个 `dword` 判别值之一
+   （`cmp dword ptr [rsp+0x48], 3`），最可能是 `GraphwarTextureLoader` 的一个方法，**未证**。
+5. **改完外观谁来 `save()`** —— `GraphwarPlayerConfig::save()` 在
+   `player_showcase::on_text_change` 里被直接调用（§25.6），但本模块三个 setter 之后
+   **没有** `save` 调用 ⇒ 改外观不立即落盘，落盘靠别处（可能在切屏/退出时）。
+   缺的证据：没找到那个唯一时机。
+6. **§29.6 的行号与三个 Vbox 的先后**。
+
+### 29.8 复现
+
+```text
+# ① 8 条唯一锚（名字 ↔ x86 地址）
+awk -F'\t' '$1=="graphwar_player_screen_control" && $7=="唯一锚"' fixtures/name_to_addr.tsv
+
+# ② 22 个 Location 与它们的引用点/归属函数
+../.venv/bin/python tools/loc_xrefs.py loc src/graphwar_player_screen_control.rs:118:28
+../.venv/bin/python tools/loc_xrefs.py func 0x4f7940
+
+# ③ 三个 setter 的槽 addend（x86）
+#    R_X86_64_RELATIVE @ 0x9bb6f0 = 0x417e20, @ 0x9bb6e8 = 0x417d50, @ 0x9bb6e0 = 0x417c70
+objdump -d --start-address=0x417c70 --stop-address=0x417e20 ../libgraphwarrust.so
+#    应看到 cmp byte [rdi+0xac] / 拷 String 到 +0x48 与 +0x90 / inc dword [rbx+0xa8]
+
+# ④ arm64 侧的具名被调者（本条结论的真正来源）
+../.venv/bin/python tools/symtab_dump.py methods graphwar_player_screen_control
+#    再用 arm64 反汇编查每个符号的 bl 目标（本轮脚本：解析 .symtab + capstone ARM64）
+```
+
+### 29.9 与 `client/` 仿制实现的出入（**登记，不改 `client/`**）
+
+按 `AGENTS.md` §0 第 4 条，这里只登记差异：
+
+| # | `client/src/screens/player_screen.gd` | 原版（本节证据） | 影响 |
+|---|---|---|---|
+| 1 | 皮肤/脸/帽子点选只改 GDScript 里的本地变量 | Rust 侧 `GraphwarPlayerConfig::set_skin/set_face/set_hat` 直接写档案（`+0x60/+0x78/+0x90`）并 `+0xa8` 变更计数 | 仿制品**没有档案**，所以"关掉游戏再进来外观丢了"这类问题在它身上不存在，也就测不出来 |
+| 2 | `SkinBlock` / `PendingBlock` 在桌面端恒 `visible = false` | 原版由 `lock()`/`pending()`/`unlock()` **按内购状态**切换（三张表见 §29.4） | 仿制品只做了"桌面端不显示"这一个特例 |
+| 3 | 按钮图标/底色在 GDScript 里直接设 | 原版走 `GraphwarTextureLoader::get_skin_texture` + `update_buttons_background`（§29.3） | 仿制品没有贴图缓存这一层 |
