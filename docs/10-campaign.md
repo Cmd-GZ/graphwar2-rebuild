@@ -1355,3 +1355,259 @@ nm -S --defined-only <arm64>/libgraphwarrust.so | grep graphwar_rank_manager
 # RankInfo 的 3 个 dword：stp w21,w19,[sp,#0x10] + str w20,[sp,#0x18]（载荷基址 sp+8）
 # 调用者：全量反汇编里 bl 0x498eb8 只有 0x3e4fe4 / 0x3e7000 两处
 ```
+
+---
+
+## 15. 玩家元信息五模块：名字 / 颜色 / 玩家表 / 本机玩家 / 大厅（本轮新解）
+
+本节的五个模块合起来回答一条链：**谁在房间里、叫什么、什么颜色**。
+它们各自的 `src/` 实现与验收同轮落地：
+`graphwar_name_manager.rs` / `graphwar_color_manager.rs` / `graphwar_player_manager.rs` /
+`graphwar_local_player_manager.rs` / `graphwar_lobby_control.rs`（+ `tests/` 下同名五个文件）。
+
+证据口径沿用全库：**逐位** / **观测** / **推断** / **未知**。
+arm64 侧数字来自未 strip 的 2.0.60 `libgraphwarrust.so` 的 `.symtab`（名字与长度可直读），
+x86 侧来自 2.2 版（stripped，函数边界靠 `.eh_frame` + `panic::Location` 锚）。
+地址一律 **vaddr**（Ghidra = vaddr + `0x100000`）。
+
+### 15.1 一页结论
+
+1. **谁在房间里** = `player_manager` 的 `HashMap<u32 player_id, u32 connection_id>`；
+   加人时发 `PlayerInfo`(13)，删人时若**该连接已无玩家**则级联一条 `ConnectionRemoved`(6)。
+   它是 **4 个方法**（`new` / `add_player` / `send_all_info_events` /
+   `handle_entity_removed_event`），不是 `docs/02` §18.1 记的 3 个。
+2. **叫什么** = `name_manager` 的 `HashMap<u32 player_id, String>`。
+   写入口只有 `set_name`，而 `set_name` 的唯一调用者是**两个远端事件处理器**；
+   本模块的输出是 `NameInfo`(60)，写入方向的载体是 `NameRequest`(59)。
+3. **什么颜色** = `color_manager`：两张固定 6 色队池（就是 `docs/10` §10 那两张），
+   按**队号**选池 + **随机起点 + 线性探测**；权威在服务端，本地只在"加入/换队"时挑一次。
+4. **我是谁** = `local_player_manager` 的 `(connected 标志, connection_id, Vec<u32>)` 三件套。
+   `RankRequest`(66) 的发起侧就在这里（**升级为逐位**）；
+   但 `FunctionInfo`(35) 的上行**不在**这里（在 `function_manager`）。
+5. **大厅开关** = `lobby_control`：一对互斥按钮（`ShowLocalButton` / `ShowGlobalButton`）
+   + 切模式时把 LAN 列表整表 `queue_free`。3 个函数，不是 1 个。
+
+### 15.2 五个模块的函数表（arm64 名字与长度可直读 ⇒ 归属不再是推断）
+
+| 模块 | 函数 | arm64 vaddr / 字节 | x86 vaddr | 一句话 |
+|---|---|---|---|---|
+| `player_manager` | `new` | `0x49d170` / 396 | `0x455410` | 订阅 5 / 14 |
+| | `add_player` | `0x49ce1c` / 148 | 内联 | 写表 + 发 (13) |
+| | `send_all_info_events` | `0x49ceb0` / 240 | `0x455160` | 整表逐条发 (13) |
+| | `handle_entity_removed_event` | `0x49cfa0` / 372 | `0x455250` | 删 + **级联 (6)** |
+| `name_manager` | `new` | `0x40af68` / 552 | 内联 | 订阅 5 / 14 |
+| | `set_name` | `0x40b190` / 264 | `0x519350` | 写表 + 发 (60) |
+| | `send_all_info_events` | `0x40ad58` / 284 | `0x518f10` | 整表逐条发 (60) |
+| | `handle_entity_removed_event` | `0x40ae74` / 152 | `0x519030` | 删一条 |
+| `color_manager` | `new` | `0x49cbe8` / 396 | `0x465620` | 订阅 5 / 14，池子由初始化闭包建 |
+| | `init_team_colors` | `0x49c660` / 944 | 内联 | **两张 6 色表** |
+| | `add_team_color` | `0x49c244` / 1052 | `0x464d10` | 挑色 + 发 (61) |
+| | `set_color` | `0x49cd74` / 168 | 内联进 `0x3e2830` | 服务端说了算：发 (61) + 写表 |
+| | `send_all_info_events` | `0x49ca10` / 260 | `0x465460` | 整表逐条发 (61) |
+| | `handle_entity_removed_event` | `0x49cb14` / 120 | `0x465570` | 删一条（颜色回池） |
+| | `GraphwarColor::serialize` | `0x49c0e8` / 348 | `0x464c00` | 字段名 `r`/`g`/`b` |
+| `local_player_manager` | `handle_connected_to_server` | `0x411be8` / 180 | `0x51a570` | 记连接号 + 请求建玩家 + 清表 |
+| | `handle_player_info` | `0x4115d0` / 1560 | `0x519f40` | 过滤 + 首次入列 5 连发 |
+| | `handle_entity_removed_event` | `0x411c9c` / 176 | `0x51a610` | `Vec::retain` |
+| | `new` | 内联 | 内联 | 订阅 7 / 13 / 14（**推断**） |
+| `lobby_control` | `new` | `0x423de4` / 1624 | `0x3ef990` | 取 3 节点 + 注册 2 回调 + 跑一次 `show_local_button` |
+| | `show_local_button` | `0x4237e0` / 768 | 内联 | 互斥 + 清 LAN 列表 |
+| | `show_global_button` | `0x423ae0` / 772 | 内联 | 镜像 |
+
+`new` 的"哪个事件名接哪个方法"全部由**闭包**给出（每个闭包是一条
+`adr x1, <handler>` + `b WeakCaller::call` 的 44–48 字节小函数），
+所以订阅关系是逐位的，不是按命名表推的。
+
+### 15.3 (a) `ColorManager` 与两张 6 色表：就是它的两个字面量
+
+`init_team_colors`（arm64 `0x49c660`）里两次 `Vec::push` 各 6 次，
+因为 `GraphwarColor` 是 **3 字节**，每次 push 落成一对 `strh` + `strb`：
+
+```text
+mov w10, #0x2aba ; strh w10, [x8]      ; 0xba 0x2a → r=186 g=42
+mov w9,  #0x20   ; strb w9,  [x8,#2]   ; 0x20      → b=32
+```
+
+逐元素复算得到的两张表与 §10 **一字不差**（12 个值两两不同）：
+
+| 队 | 键（`u8`） | 表 |
+|---|---|---|
+| Team1 | `0` | `(186,42,32) (238,114,0) (125,104,0) (122,160,0) (149,5,62) (234,0,219)` |
+| Team2 | `1` | `(107,0,234) (17,0,108) (21,83,221) (0,203,163) (0,116,26) (2,85,63)` |
+
+容器是 `HashMap<u8, Vec<GraphwarColor>>`（键是 1 字节：`sturb w2,[x29,#-0x4]` 之后
+`hash_one(self+0x68, 那个字节)`），键就是**队号**。于是"按什么分配"有了确切答案：
+
+```text
+add_team_color(entity_id: u32, team: u8)
+  pool = pools[team]                       ; 队号选池（没有这个队 ⇒ 兜底）
+  base = rand::random::<u64>() % pool.len() ; udiv + msub
+  for k in 0..len {
+      c = pool[base]                        ; 3 字节
+      if !used.values().any(|u| u == c) { emit(ColorInfo); used.insert(entity_id, c); return }
+      base = (base + 1) % len               ; cmp + csinc
+  }
+  (r,g,b) = (rand::random::<u8>()%180, …)   ; and #0xff / cmp #0xb4 / csel → 就是 % 180
+```
+
+三条**否定**：不是进房顺序（输入只有 `team` 与随机数）、不是 `player_id` 取模
+（`%` 的右边是池长 6、左边是随机 u64）、不是每局固定起点。
+
+谁调它（`bl` 全扫，逐位）：
+
+| 调用点 | 所在函数 | 含义 |
+|---|---|---|
+| `0x4a9b58` | `game_state_manager::request_new_player` | 玩家加入 |
+| `0x4aa044` | `game_state_manager::request_change_team` | 换队（用**新队**的池子重挑） |
+| `0x3e7e9c` | `remote_event_handler::handle_server_remote_event` → `set_color` | 服务端 (61) 到了 ⇒ **直接采纳** |
+
+⇒ `docs/10` §10 里"加入 `0x473b4c` / 换队 `0x473f29`"这两个 x86 地址，
+现在有了**函数名**级别的对应：都在 `game_state_manager` 的两个 `request_*` 里，
+而"采纳服务端颜色"那一支走 `set_color`（不查池子、不判重）。
+
+`ColorInfo`(61) 的载荷（逐位）：
+
+```text
+str  w1, [sp, #0x10]   ; 载荷 +0x00 = entity_id
+strh w2, [sp, #0x14]   ; 载荷 +0x04/+0x05 = r, g
+strb w9, [sp, #0x16]   ; 载荷 +0x06 = b      （w9 = w2 >> 16）
+```
+
+### 15.4 (b) 名字的权威源：`name_manager`，不是 `graphics_manager` 那三张表
+
+两张都是 `HashMap<u32, String>`、entry 都是 0x20/0x30 字节、值都是 Rust `String`
+（字段序 **cap/ptr/len**）—— 这是"看起来像同一个东西"的全部原因。区别在事件：
+
+| 模块 | 表 | 事件 | 值是什么 |
+|---|---|---|---|
+| `name_manager` | 一张，`+0x18` | **60** `name_info_event` | **玩家名字** |
+| `graphics_manager` | 三张，`+0x18`/`+0x48`/`+0x78` | **51 / 53 / 55** `*_graphics_info_event` | **外观资源名**（皮肤/脸/帽子） |
+
+`graphics_manager` 的三对 setter 名字本身就说明了问题：
+`set_skin_graphics` / `set_face_graphics` / `set_hat_graphics`。
+
+**改名走哪条事件**：写入方向的载体是 **59 `name_request_event`**
+（载荷 `{String, u32}`，与 (60) **同形**），输出是 **60 `name_info_event`**。
+`name_manager::set_name` 的调用者全 `.text` 只有两个，都在
+`remote_event_handler`（`handle_client_remote_event` `0x3e4f50` /
+`handle_server_remote_event` `0x3e707c`），两处都是
+"`ldr w24,[<event>+0x20]` 取 `player_id` → clone 载荷里的 `String` → `set_name`"。
+
+⇒ **本模块没有任何本地 setter 调用者**：名字只从远端进来，它只负责"存 + 广播"。
+发起 59 的只有两处：`local_player_manager::handle_player_info`（本机玩家首次拿到
+`player_id`，见 §15.5）与 `computer_player_manager::add_computer_player`（bot 名）。
+
+**未确定（标推断）**：远端那两个调用点比的是 59 还是 60，属于 `remote_event_handler`
+的分派表，本模块无法单独判定；按"59 进、60 出"叙述。
+
+### 15.5 (c) `local_player_manager` 是"本机玩家"的真相，但不是全部上行的真相
+
+数据形状（逐位）：
+
+```text
++0x00 cap  +0x08 ptr  +0x10 len   Vec<u32>：**我名下**的 player_id（一条连接可以有多条）
++0x18 u32  "已收到 connected_to_server"（只与 1 比较）
++0x1c u32  我的 connection_id
++0x28 Rc   事件通道  +0x30 模块容器  +0x38 Rc<RefCell<本机玩家配置>>
+                                      配置里四个 String：+0x18 名字 / +0x30 皮肤 / +0x48 脸 / +0x60 帽子
+```
+
+* `handle_connected_to_server`（tag 7）：`+0x18 := 1`、`+0x1c := 载荷 u32`、
+  发 **8 `new_player_request`**（载荷同一个 u32）、最后 `+0x10 := 0`（清空 id 列表）。
+* `handle_player_info`（tag 13）：先判 `+0x18 == 1`，再判**载荷 `+0xc`（连接号）
+  等于 `+0x1c`**；通过就 `push` 载荷 `+0x8`（`player_id`）；**只有 `push` 前列表为空**时
+  才连发 5 条：`59/50/52/54/66`。
+* `handle_entity_removed_event`（tag 14）：`Vec::retain` 掉等于该 id 的全部项。
+
+五条请求的判别值在 arm64 上是"以 tag 13 为基数做加法"（`add x8, x25, #imm`，
+`x25 = 0x8000_0000_0000_000d`）⇒ `13 + 0x2e/0x25/0x27/0x29/0x35` = `59/50/52/54/66`：
+
+| 事件 | 载荷 |
+|---|---|
+| 59 名字 / 50 皮肤 / 52 脸 / 54 帽子 | `{String(本机配置里的那一项), u32 player_id}`，0x20 字节 |
+| **66 段位请求** | `{+0x08 = 1, +0x0c = level, +0x10 = player_id}`，三个 dword |
+
+`level` 来自 `bl <GraphwarCampaignControl::get_current_level>`（返回 `Option<u32>`）：
+`tst w0,#1` + `csel w8, w1, wzr, ne` ⇒ **有当前关就用它，否则 0**。
+(66) 的三个 dword 与 `rank_manager` 的 `RankInfo`(67) **完全同形**。
+
+⇒ 问题 (c) 的答案要分层：
+
+* **是**：本模块是"**我 = 哪些 entity id**"的单一真相（`+0x18`/`+0x1c`/`Vec`），
+  也是这 5 条元信息请求的**唯一**发起处；`rank_manager` §5 里"66 的发起侧在
+  `local_player_manager`"那条**推断，本轮升级为逐位**（且全 `.text` 没有第二处构造 66）。
+* **不是**：`FunctionInfo`(35) 的上行与本模块无关。arm64 全量扫 tag 35 只有两处：
+  `function_manager::set_function` 与 `function_history_recorder::handle_function_fire_event`
+  （后者更可能是转发）。本模块 3 个函数里没有任何 35 的构造。
+
+### 15.6 (d) `lobby_control` 是什么：一对互斥按钮 + 清 LAN 列表
+
+它是**大厅模式开关**，不是开局控制器（开局在 `setup_control`）：
+
+```text
+new()  get_node_by_name("ShowLocalButton")  -> self+0x18   ; 名字长度 15
+       get_node_by_name("ShowGlobalButton") -> self+0x30   ; 名字长度 16
+       get_node_by_name::<GraphwarLanVBox>("GraphwarLanVBox") -> self+0x48
+       按钮 A 的回调表 push(→ show_local_button)
+       按钮 B 的回调表 push(→ show_global_button)
+       show_local_button()                                 ; 构造完立刻跑一次
+
+show_local_button()   self+0x18.set_pressed(true) / self+0x30.set_pressed(false)
+                      然后 对 GraphwarLanVBox 的每一行 Node::queue_free() 并从 map 擦掉
+show_global_button()  完全镜像
+```
+
+**与 `lan_vbox` 的分工**：`lobby_control` 只做"开关 + 触发清空"；列表本体
+（`HashMap<_, 48 字节行>`，每行一个 `Gd<Node>`）在 `GraphwarLanVBox` 里，
+`show_*` 里那 40 余条指令是它的**清空路径被内联**过来（`Node::queue_free` 调用是逐位的）。
+`docs/02` §18.1 只数出 1 个方法，是因为两个 `show_*` 在 x86 上被内联进 `new`
+（6 条 `panic::Location` 全落在 `0x3ef990` 一个函数体内）；arm64 未 strip，它们是独立符号。
+
+两个按钮的回调挂在**按钮对象自己**的回调表上（`+0x48`，
+`Vec<Box<dyn FnMut(&str)>>`，元素 16 字节），`new` 里**没有** Godot 的 `connect`
+也没有任何信号名字符串 —— 这一点纠了本库旧文的"连信号"说法（§15.7 第 3 条）。
+
+### 15.7 本轮就地纠正的三处旧结论
+
+1. **`docs/112` §4.3**（"`find` 用 `self+0x38`、`remove` 用 `self+0x18`，两者不是同一个基址"）：
+   `self+0x38` 是**同一张表的 `RandomState`**。arm64 `handle_entity_removed_event` 里
+   `bl <BuildHasher::hash_one>` 的 `x0` 正是 `self+0x38`，随后 `remove_entry(self+0x18, hash)`
+   —— 与 `rank_manager` 那条"一张表，不是两张"（§14.3）同一形状。**是误读。**
+2. **`docs/112` §9.3**（"`0x51a610` 只有一条 `panic_fmt` 出口，是空处理"）：
+   x86 `0x51a610` 与 arm64 `0x411c9c` **两边都是** `Vec::retain` 的紧凑化循环
+   （x86 还做了 2 路展开：`cmp %ecx,(%rsi,%rdx,4)` + 后续 `lea 0x2(%rdx)`）。
+   **不是空处理。**
+3. **`docs/112` §8**（"`lobby_control` 取按钮/列表节点并**设文本/图标**"）：
+   arm64 上只看到 `BaseButton::set_pressed` 两次 + `Node::queue_free` 循环，
+   **没有** `set_text` / `set_texture` 调用 ⇒ 那句降级为"未观测"。
+
+另外一处**新发现**（不是纠错）：`docs/02` §18.1 给 `player_manager` 记的是
+"3 个方法"，实际 **4 个** —— `add_player` 在 x86 侧被内联进 `remote_event_handler`
+（`panic::Location` `:66:26` / `:74:39` 只出现在宿主函数里），arm64 侧它是独立符号
+`0x49ce1c`。
+
+### 15.8 仍未确定
+
+| # | 问题 | 缺什么 |
+|---|---|---|
+| 1 | 远端处理器比的是 59 还是 60 | `remote_event_handler` 那张分派表的逐位对照 |
+| 2 | `ConnectionRemoved`(6) 载荷 `+0x08` 那 24 字节的语义 | 消费者只读 `+0x20`；本模块级联时写的是 `0x8000…` 哨兵 |
+| 3 | `NewPlayerRequest`(8) 的载荷为什么是**连接号** | 服务端那一侧未读 |
+| 4 | `local_player_manager::new` 的字段初始化顺序 | 两个架构上都内联掉了，只剩 3 个闭包 + 形状 |
+| 5 | `color_manager::new` 的第三个字段（`+0x10`） | 本模块没有函数读过它 |
+| 6 | `lobby_control` 那个 `+0x68` 标志位 | 只观测到"清空前先判它" |
+| 7 | 随机流消耗顺序（`u64` 起点 vs 三个 `u8`） | 要真 `rand_chacha` 流才能复现"第 n 个人"的颜色 |
+
+### 15.9 复现
+
+```text
+# 1) arm64（未 strip）直接读函数名与长度
+nm -S --defined-only <arm64>/libgraphwarrust.so | grep -E 'graphwar_(local_player|player|name|color)_manager|graphwar_lobby_control'
+# 2) 一张 x86 与一张 arm64 的 emit 现场：谁的 tag 是几
+llvm-objdump -d --start-address=0x49c244 --stop-address=0x49c660 <arm64>/libgraphwarrust.so   # add_team_color
+objdump -d --start-address=0x464d10 --stop-address=0x46500c <x86>/libgraphwarrust.so          # 同一函数
+# 3) 两张 6 色表：init_team_colors 里 12 组 strh+strb（arm64 0x49c660）
+# 4) 谁调 add_team_color：全量扫 bl 0x49c244 ⇒ 只有 0x4a9b58 / 0x4aa044
+# 5) 名字写入口：全量扫 bl 0x40b190（set_name）⇒ 只有 0x3e4f50 / 0x3e707c
+# 6) 5 连发：arm64 0x4115d0 里 add x8, x25, #0x2e/0x25/0x27/0x29/0x35（x25 = tag 13）
+```
