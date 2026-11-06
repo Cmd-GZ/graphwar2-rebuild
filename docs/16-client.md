@@ -1503,3 +1503,378 @@ fn 0x3af850(rdi = &{names: Vec<(&str)>, ad_holder: Option<Gd<AdHolder>>},
 | `0x3a22f0` 是构造器还是 `Clone::clone` | 它的调用点 + gdext 虚表槽 |
 | `[+0x15d8]` 的 `1e9` 与「String+长度落点」两说 | 运行时观测该字段的读写 |
 | `0x3a5760` 的 Rust 形状 | 按「一个个内联块各自的入口」拆，不是按 Ghidra 的函数边界 |
+
+---
+
+## 16. `graphwar_setup_control.rs` 规格（本轮新增：37 个锚函数 / 四格模式 / 时间档 / 玩家条目）
+
+> **本节解决什么**：`docs/149` 记本模块 **21** 个可归属函数、**0** 个已做，`docs/02` §17 记「未实现」。
+> 本轮把这一屏解到"能照着写"的粒度：37 个 `panic::Location` 锚函数**全部登记并按 7 类分工**，
+> 其中 **四格模式 / 时间档 / 玩家条目 / Start-Cancel** 四类落进
+> `src/graphwar_setup_control.rs`（23 条验收在 `tests/graphwar_setup_control.rs`）。
+>
+> **地址口径**：本节一律 **ELF 虚拟地址**；Ghidra/REA 地址 = 本地址 + `0x100000`（**只加一次**）。
+> 读字节时注意 `.rodata` 与 `.text` 的平移**不一样**（`readelf -SW`：
+> `.rodata` Address `0x19c000` = Off `0x19c000`；`.text` Address `0x37b940` = Off `0x37a940`，差 `0x1000`）。
+> 把 `.text` 的平移套到 `.rodata` 上，会读出 ` lenVAR_XVAR_YVAR_DYADD` 这种垃圾（本轮真踩过）。
+
+### 16.1 分母：37 / 70 / 21 —— 三个数各有各的口径
+
+| 数 | 含义 | 档位 / 判据 |
+|---|---|---|
+| **70** | `src/graphwar_setup_control.rs` 的 `panic::Location` 结构体个数（= 矩阵的 `anchors`） | **逐位**：每个 `(file.ptr, file.len)` 槽的 `+8` 必须等于文件名字面量长度（`src/graphwar_setup_control.rs` = 29 字节），`line/col` 是合理正整数 |
+| **37** | 引用这些 Location 的指令所在的 Ghidra 函数入口个数（= `fixtures/module_funcs.tsv` 的本模块行数） | **逐位**：37 条与 fixture **逐条相同、同序** |
+| **21** | 矩阵的 `orig_funcs`：把"一个函数引用两个模块 Location"（`contested`，本模块 **8** 个）压平到贡献锚点最多的那个模块之后的数 | **观测**（`tools/coverage_matrix.py` 的口径） |
+
+⇒ **本模块自己的分母是 37**，"21"是跨模块去重后的口径；两个数都写进
+`LOCATION_ANCHOR_COUNT` / `ATTRIBUTED_FUNCS_AFTER_FLATTENING` 两个常量并在测试里钉住。
+
+#### 16.1.1 ⚠️ `tools/class_probe.py` 的函数归属偏移 `0x1000`（本轮实测的工具坑）
+
+`class_probe` 的 `Index.funcs_ref_slot()` 把 `analysis/xrefs.pkl` 里的**指令虚地址**
+又过了一次 `off2va()`：
+
+```python
+# tools/class_probe.py（现状）
+def funcs_ref_slot(self, slot):
+    for t in self.xrefs.get(slot, ()):
+        va = self.off2va(t[0])       # ← t[0] 已经是 vaddr，再过 off2va 就 +0x1000
+        f  = self.func_of(va)
+```
+
+`xrefs.pkl` 的 `(insn_addr, kind, mnemonic, op_str)` 里 `insn_addr` **已经是虚地址**
+（`analysis/build_index.py` 用 `md.disasm(blob, t['addr'])` 生成），而 `off2va` 对落在
+`.text` 的地址会再加 `0x1000`（`.text` 的 Address 比 Off 大 `0x1000`）。
+**后果**：`tools/class_probe.py module graphwar_setup_control` 打印的 `funcs:` 列表
+是"真实函数**再高 0x1000**"的那个函数。实测症状：它给出 23 个函数，
+与 `fixtures/module_funcs.tsv` 的 37 个**只有 6 个重合**，一眼看像"两份数据打架"。
+
+正确做法（本节全部数据用的就是它）：**直接 `bisect` 虚地址**归属，不要过 `off2va`。
+三步复算，结果与 fixture 逐条相同：
+
+1. 取 `.data.rel.ro` 里 `addend == 0x1a4a55`（`src/graphwar_setup_control.rs` 字面量；
+   全库**只有这一份**，70 个 `R_X86_64_RELATIVE` 槽**全部**指向它）的
+   `R_X86_64_RELATIVE` 槽 = Location 的 `file` 槽（70 个）；
+2. 每个槽 `+8` 是长度（必须 = 29），`+16` 是 `(line, col)`；
+3. `xrefs.pkl[槽]` 给出**指令虚地址**，直接 `bisect(funcstarts_ghidra_va.pkl, vaddr)` 得函数入口
+   ⇒ 37 个，逐条等于 `fixtures/module_funcs.tsv`。
+
+`tools/module_map.py` 早就是对的（`i = bisect.bisect_right(funcstarts, insn_addr) - 1`），
+所以 **fixture 可信、`class_probe` 的 `funcs:` 列不可信**（它的 `literals` 列不受影响）。
+
+### 16.2 37 个函数的分工（观测，逐个量过）
+
+`size` = 到下一个 Ghidra 函数入口的距离；`Location 行` = 该函数引用的 `src/graphwar_setup_control.rs:line:col`。
+"已落码"指本轮 `src/graphwar_setup_control.rs` 有对应实现。
+
+| # | 函数 | size | Location 行 | 分类 | 档位 | 已落码 |
+|---|---|---|---|---|---|---|
+| 1 | `0x4b88d0` | 384 | `95:1` | 虚方法/属性胶水（槽 `0x9bb670`） | 观测形状 / 语义**未知** | — |
+| 2 | `0x4b8a50` | 384 | `95:1` | 虚方法/属性胶水（槽 `0x9bb678`） | 同上 | — |
+| 3 | `0x4bcc60` | 544 | `46:10` | 虚方法/属性胶水（槽 `0x9ba278`） | 同上 | — |
+| 4 | `0x4bce80` | 432 | `95:1` | 虚方法/属性胶水（槽 `0x9ba290`） | 同上 | — |
+| 5 | `0x4bd030` | 592 | `608:1` | 虚方法/属性胶水（槽 `0x9ba288`） | 同上 | — |
+| 6 | `0x4bd280` | 432 | `95:1` | 虚方法/属性胶水（槽 `0x9ba280`） | 同上 | — |
+| 7 | `0x4c1e40` | 768 | `178:127,180:49` | 玩家名 `PlayerNameLabel` | 观测 | — |
+| 8 | `0x4c2140` | 1712 | `187:121,189:42` | 段位图标 `RankIcon` + `set_texture` | 观测 | — |
+| 9 | `0x4c27f0` | 928 | `462:133,464:26` | 事件/属性回调（哪个事件**未知**） | 推断 | — |
+| 10 | `0x4c2b90` | 864 | `310:45,312:57` | **模式面板同步**（命令总线 + 列表重建都调） | 观测 | ✅ 四格取值 |
+| 11 | `0x4c2ef0` | 5568 | `202:47,204:41,206:49,212:148,227:120,235:120,243:118,251:122` | **士兵图标槽**（`SoldierIconContainer`→`Skin/Face/Hat/EmptyIcon`） | 观测 | ✅ 5 槽 |
+| 12 | `0x4c44b0` | 928 | `494:133,496:62` | 事件/属性回调 | 推断 | — |
+| 13 | `0x4c4850` | 848 | `474:133,476:49,486:60` | 事件/属性回调 | 推断 | — |
+| 14 | `0x4c4c20` | 3888 | `257:133,260:145,267:149,274:145,281:151` | **一行的四个按钮**（换队/踢人/加兵/减兵） | 观测 | ✅ 增删/换队 |
+| 15 | `0x4c5b50` | 176 | `263:72` | `impl` 薄壳 | 观测形状 / 语义**未知** | — |
+| 16 | `0x4c5c00` | 176 | `277:72` | `impl` 薄壳 | 同上 | — |
+| 17 | `0x4c5cb0` | 176 | `284:72` | `impl` 薄壳 | 同上 | — |
+| 18 | `0x4c5d60` | 176 | `270:72` | `impl` 薄壳 | 同上 | — |
+| 19 | `0x4cf670` | 9776 | `652:127,744:88,745:82,746:88,762:26,781:26` | **接线**（`_ready` 级）：11 个 `get_node` + 3 个信号 + 2 个事件 | 观测 | ✅ 节点名表 |
+| 20 | `0x4d1ca0` | 176 | `696:76` | `impl` 薄壳 | 观测形状 / 语义**未知** | — |
+| 21 | `0x4d1d50` | 176 | `687:76` | `impl` 薄壳 | 同上 | — |
+| 22 | `0x4d1e00` | 96 | `705:76` | `impl` 薄壳 | 同上 | — |
+| 23 | `0x4d1e60` | 176 | `669:76` | `impl` 薄壳 | 同上 | — |
+| 24 | `0x4d1f10` | 1600 | `728:76` | `GraphwarSetupControl` 泛型体（`contested`→texture_loader） | 观测 | — |
+| 25 | `0x4d2550` | 176 | `678:76` | `impl` 薄壳 | 未知 | — |
+| 26 | `0x4d2600` | 2416 | `793:82,797:82,802:26` | `GraphwarSetupControl` 泛型体（`contested`→texture_loader） | 观测 | — |
+| 27 | `0x4d2f70` | 528 | `772:26` | `GraphwarSetupControl` 泛型体 | 观测 | — |
+| 28 | `0x4d3180` | 15936 | `100:45,103:41,128:45,131:41,144:149,161:149,298:149,329:41,356:45,384:75,442:60,450:51,527:51,532:53,536:50,813:137,815:62,824:70,826:68,828:74,831:58` | **列表重建**（Team1/Team2/PlayerList/GameIpLabel，`contested`） | 观测 | — |
+| 29 | `0x4d88b0` | 176 | `705:76` | `impl` 薄壳 | 未知 | — |
+| 30 | `0x4d8a00` | 256 | `284:72` | `impl` 薄壳 | 未知 | — |
+| 31 | `0x4d8d30` | 256 | `263:72` | `impl` 薄壳 | 未知 | — |
+| 32 | `0x4d8ff0` | 239 | `687:76` | `impl` 薄壳 | 未知 | — |
+| 33 | `0x4d9270` | 256 | `277:72` | `impl` 薄壳 | 未知 | — |
+| 34 | `0x4d9370` | 256 | `270:72` | `impl` 薄壳 | 未知 | — |
+| 35 | `0x4d9500` | 240 | `696:76` | `impl` 薄壳 | 未知 | — |
+| 36 | `0x4d95f0` | 240 | `669:76` | `impl` 薄壳 | 未知 | — |
+| 37 | `0x4d96e0` | 320 | `678:76` | `impl` 薄壳 | 未知 | — |
+
+**两条从表里直接读出来的结构**（观测）：
+
+* 第 15–18 / 30–34 两组**行号成对重复**（263/277/284/270 与 669/678/687/696/705/728/772/793），
+  且第二组每个都恰好比第一组大 `0x140`–`0x150` 字节、体内无字符串无调用
+  ⇒ 这是 gdext `#[godot_api]` 展开出来的**成对薄壳**（`I*` 常量 + 方法体），不是业务函数。
+  **语义未知**，本文件不猜它们对应哪个方法。
+* 第 1–6 六个函数的入口地址**全都出现在 `.data.rel.ro` 的函数指针槽里**
+  （`0x9bb670`/`0x9bb678` 两个相邻槽 + `0x9ba280`/`0x9ba278`/`0x9ba288`/`0x9ba290` 四个）
+  ⇒ **观测**：它们是函数指针表（虚方法/回调）里的实现；
+  **推断**：是 `Virtual` 的几个 `_ready`/`_process`/`_draw`/`_notification` 之一，
+  **缺**"槽序号 ↔ gdext 版本 vtable 顺序"的对齐证据。
+
+#### 16.2.1 `0x4cf670` 的 11 个 `get_node` 实参（逐条，观测）
+
+判据 = `lea rcx,[rip+X]`（`.rodata`）+ 紧随的 `mov edx,<len>`；长度都是指令立即数：
+
+| 节点名 | `.rodata` | len | 用途 |
+|---|---|---|---|
+| `RoomNameLineEdit` | `0x19ea20` | 16 | 房间名（连 `on_text_change` ← `text_changed`） |
+| `AxisModeButton` | `0x1c2eb2` | 14 | 第 1 格：坐标轴模式 |
+| `FunctionModeButton` | `0x1c2ec0` | 18 | 第 2 格：`f(x)` / 微分方程 |
+| `TurnModeButton` | `0x1c2ed2` | 14 | 第 3 格：顺序 / 同时回合 |
+| `TurnTimeButton` | `0x1c39b9` | 14 | 第 4 格：回合时限（**注意**：`JoinLevelPopUp` 里同一个按钮叫 `TimeModeButton`，`docs/16` §2.1.3 已记） |
+| `LockButton` | `0x1c39c7` | 10 | 房间上锁 |
+| `ChatButtonSetup` | `0x1c39d1` | 15 | 打开聊天 |
+| `ChatButtonPlay` | `0x1c39e0` | 14 | 对局里同一个聊天键（同一份 `impl` 复用） |
+| `ChatPopUp` | `0x1c39ee` | 9 | 聊天浮层 |
+| `ChatBox` | `0x1c39f7` | 7 | 聊天记录 |
+| `ChatLineEdit` | `0x1c39fe` | 12 | 聊天输入（连 `on_chat_submitted` ← `text_submitted`） |
+
+另连 `on_visibility_change` ← `visibility_changed`（`0x1c2d1f`/`0x1c39a7`），
+并订阅事件 `game_state_info_event`（`0x1c2c05`）、`chat_message_event`（`0x1c3a18`）。
+
+⚠️ **4 个模式按钮没有连 `pressed`**：函数体里连的信号只有 `text_changed`、
+`visibility_changed`、`text_submitted` 三个。⇒ **推断**：点模式走按钮的 `input_text`
+→ `root_node` 命令总线（`docs/16` §15.6）。缺：`.tscn` 里这 4 个按钮的 `input_text` 值 +
+那 131 KB 反编译里对应分支。
+
+### 16.3 四格模式：两张**逐位**表
+
+#### 16.3.1 图标 id 表（`0x4c9190`，函数 size `0x6130`）
+
+这个函数（矩阵记在 `graphwar_texture_loader.rs`，本节只**借用**数据、不声称归属）
+把 "id → 纹理" 一条条塞进表里，形态固定：
+
+```text
+lea    rdi,[rip+X]        ; X = res://… 字面量
+mov    esi,<len>          ; 长度立即数
+call   0x4b1c80
+mov    edx,<id>           ; id（为 0 时是 xor edx,edx）
+call   0x43f7c0
+```
+
+全函数 **45** 条 `(path, len, id)`。四格模式用到的 14 条（**逐位**）：
+
+| 类 | id | 路径 | len | `call 0x4b1c80` 处 |
+|---|---|---|---|---|
+| Axis（`+0x3a`） | 0 | `res://axis_option_0.svg` | 23 | `0x4c9205` |
+| | 1 | `res://axis_option_1.svg` | 23 | `0x4c928b` |
+| | 2 | `res://axis_option_2.svg` | 23 | `0x4c9314` |
+| | 3 | `res://axis_option_3.svg` | 23 | `0x4c939d` |
+| Function（`+0x38`） | 0 | `res://fx_option.svg` | 19 | `0x4c9493` |
+| | 1 | `res://dx_dy_option.svg` | 22 | `0x4c9519` |
+| Turn（`+0x39`） | 0 | `res://turns_sequential.svg` | 26 | `0x4c960f` |
+| | 1 | `res://turns_simultaneous.svg` | 28 | `0x4c9695` |
+| Time（`+0x3b`） | 0 | `res://turn_30s.svg` | 18 | `0x4c978b` |
+| | 1 | `res://turn_1m.svg` | 17 | `0x4c9811` |
+| | 2 | `res://turn_2m.svg` | 17 | `0x4c989a` |
+| | 3 | `res://turn_3m.svg` | 17 | `0x4c9923` |
+| | 4 | `res://turn_5m.svg` | 17 | `0x4c99ac` |
+| | 5 | `res://turn_inf.svg` | 18 | `0x4c9a35` |
+
+⚠️ `res://turn_30s.svg` 与 `res://turn_inf.svg` 在 `.rodata` 里**和邻居首尾相接**
+（`0x1c3236`、`0x1c328c`），`strings` 会粘成一条；只有按长度立即数切才拿到 18 字节。
+同样，`0x962720`（`OnlyMain`）与 `0x962750`（`Timer30s`）在 `.data.rel.ro` 里也是"夹"在
+别的结构中间的，判据是槽 `+8` 的长度字段。
+
+#### 16.3.2 名字表（`.data.rel.ro` `0x9626f0`…`0x9627a0`，12 项）
+
+**这是"判别值 → 线上名字"的表**：12 个 `(ptr,len)` 连续排列，表尾紧接
+`src/graphwar_name_manager.rs` 的 Location（`0x9627b0`）。**逐位**（addend 与 `+8` 互校）：
+
+| 段 | 判别值 | 名字 | 槽 | 字面量 | len |
+|---|---|---|---|---|---|
+| Function | 0 | `NormalFunction` | `0x9626f0` | `0x1c640f` | 14 |
+| | 1 | `DiffEqFunction` | `0x962700` | `0x1c641d` | 14 |
+| Axis | 0 | `NoAxis` | `0x962710` | `0x1c642b` | 6 |
+| | 1 | `OnlyMain` | `0x962720` | `0x19f3a0` | 8 |
+| | 2 | `EveryFive` | `0x962730` | `0x1c6431` | 9 |
+| | 3 | `EveryUnit` | `0x962740` | `0x1c643a` | 9 |
+| Time | 0 | `Timer30s` | `0x962750` | `0x19f768` | 8 |
+| | 1 | `Timer1m` | `0x962760` | `0x1c6443` | 7 |
+| | 2 | `Timer2m` | `0x962770` | `0x1c644a` | 7 |
+| | 3 | `Timer3m` | `0x962780` | `0x1c6451` | 7 |
+| | 4 | `Timer5m` | `0x962790` | `0x1c6458` | 7 |
+| | 5 | `TimerInf` | `0x9627a0` | `0x19f1b0` | 8 |
+
+`TurnMode` 的名字在另一处：`0x957d40` `SequentialTurns`(15)、`0x957d50` `SimultaneousTurns`(17)，
+表尾紧接 `src/graphwar_color_manager.rs` 的 Location（`0x957d60`）。**逐位**。
+
+⇒ **三处独立数据同序**：图标 id（0..5）、名字表段内下标（0..5）、`AxisMode` 那 4 条
+与运行时 `AxisModeInfo` 的 21/21 对应。所以 `src/graphwar_setup_control.rs` 把
+"枚举判别值 = 图标 id = 名字表下标" 当**数据表**实现，并把"判别值就是图标 id"这一步标**推断**。
+
+### 16.4 时间档：时长 / 显示 / 循环
+
+| 档 | 判别值 | 线上名 | 时长 | 进对局时显示的标签 | 档位 |
+|---|---|---|---|---|---|
+| 30 s | 0 | `Timer30s` | 30 s（1800 tick） | `00:29`（**推断**：同一规则的延伸） | 时长**观测**（抓包）/ 标签**推断** |
+| 1 m | 1 | `Timer1m` | 60 s（3600） | `00:59`（**推断**） | 同上 |
+| 2 m | 2 | `Timer2m` | 120 s（7200） | **`01:59`** | 时长**观测** / 标签**观测**（真帧） |
+| 3 m | 3 | `Timer3m` | 180 s（10800） | **`02:59`** | 同上 |
+| 5 m | 4 | `Timer5m` | 300 s（18000） | `04:59`（**推断**） | 同上 |
+| ∞ | 5 | `TimerInf` | 无截止 | **未知**（没有观测到它显示什么） | 时长**观测** / 标签**未知** |
+
+* **时长**：真实抓包（`docs/42`，已落地在 `src/graphwar_tick_handler.rs`）。
+  `TimerInf` 线上把 `end_of_turn_tick` 发成 `0`。
+* **显示规则 = 时长 − 1 秒**，`mm:ss` 两位补零：真帧观测到 `02:59`（3 分钟档）、`01:59`（2 分钟档），
+  以及过程中的 `00:04`、`00:00` ⇒ 倒计时从 `时长-1` 走到 `00:00`。
+  ⚠️ 30 s / 5 m 两档没有逐帧观测，标**推断**；无限档标**未知**（代码里返回 `None`，**不**编 `inf`）。
+* **点击循环**：`docs/16` §2.1.5 的原话是"点击循环"。循环顺序取判别值序
+  （依据：图标 id 序 = 名字表序），这一步**推断**；缺"从 5 档再点一次回到 30 s"的观测。
+
+**交叉验证（本轮最有用的一条）**：`docs/16` §2.1.10 的按键实验说
+"按 1 次 `TurnTimeButton` ⇒ `01:59`（2 分钟档）、按 2 次 ⇒ `02:59`（3 分钟档）"
+⇒ 房间初值必须是 `Timer1m`（判别值 1）。这条与"新建房间首个 `GameInfo` 的
+`time_mode="Timer1m"`"（`docs/09-network.md`）**互相独立**，两条都对得上
+⇒ `ROOM_DEFAULT_OPTIONS.time = Timer1m` 判**观测**。
+
+### 16.5 初值：新建房间（观测）vs 战役关（逐位）
+
+| 格 | 新建房间（`LanLobby/CreateButton` → `GameSetup`） | 战役第 n 关（`JoinLevelPopUp`） |
+|---|---|---|
+| Axis | `EveryUnit`(3) | `LEVELS[n].modes.axis`（21 关里 3 出现 10 次、2/1/0 各若干） |
+| Function | `NormalFunction`(0) | 0（关 0–15）/ 1（关 16–20，`DiffEqFunction`） |
+| Turn | `SequentialTurns`(0) | 0，只有关 11、14 是 1（`SimultaneousTurns`） |
+| Time | `Timer1m`(1) | **21/21 都是 5 = `TimerInf`** |
+
+* 新建房间那一列：**观测**（`docs/09-network.md` 新建房间的首个 `GameInfo`）+ 16.4 的按键算术交叉验证。
+* 战役那一列：**逐位**（`LEVELS[i].modes` 的四字节来自 `mov dword [rsp+0x58], <imm32>`）。
+* **本轮升级**：`docs/10` §7 第 6 条原为**推断**（"5 = `TimerInf` 缺直接证据"）。
+  名字表第 `6+5 = 11` 项就是 `"TimerInf"`（`0x9627a0`，**逐位**），
+  与运行时 `TimeModeInfo` 21/21 = `TimerInf` 同向 ⇒ **该条升为逐位**。
+  ⚠️ `src/graphwar_level_manager.rs` 的注释仍写"推断"（该文件不在本轮可改范围），
+  但 `src/graphwar_setup_control.rs::TimeMode::from_level_byte` 已按逐位实现并有测试
+  断言 21/21 都是 `TimerInf`。
+
+### 16.6 玩家条目：5 个槽 / 4 个按钮 / 士兵数来自关卡数据
+
+| 项 | 值 | 档位 |
+|---|---|---|
+| 每行最多几个士兵 | **5** | 观测（`docs/16` §2.1.5 的 `SoldierIconContainer/MarginContainer…5`；空槽画 `res://empty_soldier.svg`） |
+| 槽里画什么 | `SkinIcon`/`FaceIcon`/`HatIcon`/`EmptyIcon` 四层 | 观测（`0x4c2ef0` 的 `get_node` 实参） |
+| 加/减士兵 | `AddSoldierButton`/`RemoveSoldierButton`，**饱和在 5 / 0** | 观测（按钮存在）+ **推断**（饱和点由槽数推出） |
+| 换队 | `ChangeTeamButton`，两队容器 `Team1Container`/`Team2Container` | 观测（容器名逐位）；换到对面 **推断** |
+| 踢人 | `RemovePlayerButton` | 观测（按钮存在） |
+| 难度档 | 0..=5（`AddBotPopUp` 六个按钮） | 观测（`docs/16` §2.1.6） |
+| 战役局士兵数 | `SETUPS[n].soldiers` | **逐位**（`0x476320(mgr, player, N)` 的 `edx` 立即数） |
+| LAN 局新玩家初始士兵数 | **未知** | 缺观测。`docs/143` 附 1 的教训：**别把 1 当默认值** |
+
+⚠️ **`GameSetupPlayerEntry` 这个名字是任务书里的叫法，二进制里不存在**：
+`GameSetupPlayerEntry` / `PlayerEntry` / `SetupPlayer` 在 `.so` 里 `strings` 全库 **0 命中**。
+所以代码里的 `PlayerEntry` 只是"这一行可变状态"的建模，**不是**原版结构体名（已在代码注释里标明）。
+
+### 16.7 Start / Cancel 的屏切换
+
+| 动作 | 去哪 | 档位 / 判据 |
+|---|---|---|
+| `GameSetup` 的 ` Start ` | `PlayScreen` | **观测**（`Start` → `PlayScreen.visible=1`，`docs/16` §2.1.5） |
+| ` Start ` 但**没有对手** | 什么都不做，**也不提示** | **观测**（`docs/16` §2.1.5 + `archive/22-live-game-harness.md` §5.1）。判据"两队都非空"是**推断**（缺每队一人的边界与 3 人 2:1 的观测） |
+| `GameSetup` 返回键 | `LanLobby` | **推断**（进入路径唯一观测是 `LanLobby/CreateButton` → `GameSetup`；缺"按下返回键"的观测） |
+| `JoinLevelPopUp` ` Start ` | `PlayScreen` | **推断**（`docs/16` §2.1.3 明写未按下验证） |
+| `JoinLevelPopUp` ` Cancel ` | `Campaign` | **推断**（这一屏从 `Campaign/<level_n>` 打开是观测；命令总线有 `exit_campaign` 键是逐位） |
+
+⚠️ `docs/16` §14.1 第 15 条（我们自己的客户端"无对手时给一句提示"）与这里的
+`SilentNoOp` 冲突：**原版是纯静默**，提示是**自定**行为。
+
+### 16.8 落码清单（`src/graphwar_setup_control.rs`）
+
+| 项 | 内容 | 档位 |
+|---|---|---|
+| `MODULE_FUNCS[37]` | 37 个锚函数入口（= `fixtures/module_funcs.tsv`） | **逐位** |
+| `LOCATION_ANCHOR_COUNT` / `ATTRIBUTED_FUNCS_AFTER_FLATTENING` | 70 / 21 | **逐位** / **观测** |
+| `FN_*` 常量 7 个 + `FN_EVENT_CALLBACKS` | 主干函数的地址 + 判据写进注释 | **观测** |
+| `AXIS_ICONS` / `FUNCTION_MODE_ICONS` / `TURN_MODE_ICONS` / `TIME_MODE_ICONS` | 14 条图标路径（含长度） | **逐位** |
+| `MODE_NAME_TABLE[12]` / `TURN_MODE_NAMES[2]` | 判别值 → 线上名字 | **逐位** |
+| `TimeMode`（6 档） | 判别值 / 图标 / 名字 / 时长 / 起始标签 / 循环 | 逐位 + 观测（时长、标签）+ 推断（循环顺序） |
+| `AxisMode`/`FunctionMode`/`TurnMode` 的 `ALL`/`next`/`prev`/`icon_path`/`name` | 补在**本文件**（`level_manager` 的类型不动） | 同上 |
+| `SetupOptions` | 四格状态 + `room_default()` + `from_level(n)` + `icons()`/`names()`/`timer_label()` | 观测 + 逐位 |
+| `PlayerEntry` / `Team` | 5 槽 / 加兵 / 减兵 / 换队 / 难度档 | 观测 + 推断（饱和点、换队方向） |
+| `campaign_soldier_count` / `campaign_turn_limit` | 关卡数据直读（修 `docs/143` 附 1 那个"默认 1"的错） | **逐位** |
+| `start_action` / `can_start` / `exit_action` / `join_level_start` / `join_level_cancel` | 屏切换 | 观测 + 推断 |
+| **未做** | 玩家列表重建（`0x4d3180`，15 936 B）、行构件的节点装配（`0x4c1e40`/`0x4c2140`/`0x4c2ef0`/`0x4c4c20` 的 gdext 调用序列）、事件回呼（`0x4c27f0`/`0x4c44b0`/`0x4c4850`）、24 个 `impl` 薄壳 | 见 16.11 |
+
+### 16.9 就地更正与跨模块结论
+
+1. **`docs/10` §7 第 6 条（`byte3 = 5` 的含义）由推断升为逐位**：名字表 `0x9627a0` = `"TimerInf"`。
+2. **`tools/class_probe.py` 的 `funcs:` 列偏移 `0x1000`**（见 16.1.1）。本模块的 37 个函数
+   一律以 `fixtures/module_funcs.tsv` 为准；`class_probe` 的 `literals` 列不受影响。
+3. **`docs/16` §15.6 第 5 条说 `0x3b0830` 去 `PlayerScreen` 下取
+   `LevelTitleLabel`/`AxisModeButton`/…/`TimeModeButton` 并 `set_button_icon`** ——
+   这条**归属可疑**：那 5 个节点名只在 `JoinLevelPopUp` 的 `.tscn` 里有
+   （`docs/16` §2.1.3），`PlayerScreen` 那一屏的节点名是 `PlayerNameLineEdit`/`PlayerShowcase`/…（§2.1.14）。
+   另：§15.6 引的 `0x1bdb86`（长 15）**不是节点名**，是方法名 `set_button_icon`（逐字节核对过）。
+   ⇒ **推断**：那次 `set_button_icon` 刷的是 `JoinLevelPopUp` 的四格图标（与本文 16.3 的 id 表是同一套）。
+   缺：`get_node` 那个 `NodePath` 的父节点实参。
+4. **`GameSetup` 的四格与 `JoinLevelPopUp` 的四格是同一套 id/名字表**：
+   两屏的按钮名只差第 4 个（`TurnTimeButton` vs `TimeModeButton`），图标表只有一套（14 条）。
+   ⇒ 推断（缺两屏各自的 set 指令）。§15.6 第 5 条若按 3 修正，这条就变成观测。
+
+### 16.10 复现（需要仓库根的原版 `.so` + `analysis/*.pkl`）
+
+```bash
+# 0) 地址口径自检：.rodata vaddr == 文件偏移，.text 差 0x1000
+readelf -SW ../libgraphwarrust.so | grep -E '\.(rodata|text) '
+
+# 1) 70 个 Location → 37 个函数：bisect 虚地址（不要过 off2va）
+#    见 16.1.1 的三步；产物应与 fixtures/module_funcs.tsv 的 37 行逐条相同
+../.venv/bin/python - <<'PY'
+import bisect, pickle, struct, sys
+sys.path.insert(0, '../analysis')
+from elf import Elf
+E = Elf('../libgraphwarrust.so'); d = E.data
+SECS = [(s['addr'], s['offset'], s['size']) for s in E.sections if s.get('addr') and s.get('offset')]
+def rd(va, n):
+    for a, o, sz in SECS:
+        if a <= va < a + sz: return d[o + (va - a): o + (va - a) + n]
+rel   = pickle.load(open('../analysis/relocs.pkl', 'rb'))
+xrefs = pickle.load(open('../analysis/xrefs.pkl', 'rb'))
+starts = sorted(pickle.load(open('../analysis/funcstarts_ghidra_va.pkl', 'rb')))
+NAME = b'src/graphwar_setup_control.rs'
+# .rodata 的 vaddr == 文件偏移（readelf 自检），所以直接按偏移找字面量
+ro = next(s for s in E.sections if s['sname'] == '.rodata')
+blob = d[ro['offset']:ro['offset'] + ro['size']]
+addr = ro['addr'] + blob.index(NAME)
+print('literal @0x%x' % addr)
+funcs = set()
+for slot, ents in rel.items():
+    if any(t == 8 and ad == addr for t, ad in ents):
+        if struct.unpack('<Q', rd(slot + 8, 8))[0] != len(NAME):   # 长度自校验
+            continue
+        for insn_va, kind, mn, ops in xrefs.get(slot, ()):
+            i = bisect.bisect_right(starts, insn_va) - 1
+            if i >= 0: funcs.add(starts[i])
+print('%d functions' % len(funcs))
+print(' '.join('0x%x' % f for f in sorted(funcs)))
+PY
+
+# 2) 图标 id 表：capstone 扫 0x4c9190..0x4cf2c0 的 (lea rdi, mov esi, call 0x4b1c80,
+#    然后 call 0x43f7c0 前的 mov/xor edx) —— 45 条，其中 14 条是四格（本文 16.3.1）
+
+# 3) 名字表：.data.rel.ro 0x9626f0..0x9627b0 逐 0x10 取 addend + 长度（本文 16.3.2）
+
+# 4) 代码侧验收（回归保护，不是复原证据）
+cargo test --offline --test graphwar_setup_control
+```
+
+### 16.11 本节没解出来的（照实写）
+
+| 缺口 | 缺什么证据 |
+|---|---|
+| 4 个模式按钮点下去的信号/命令 | `.tscn` 里 `AxisModeButton`/`FunctionModeButton`/`TurnModeButton`/`TurnTimeButton` 的 `input_text`；`0x3b0830` 131 KB 体里的对应分支（已知 12 个键，`docs/16` §15.6） |
+| `0x4c2b90` 到底按什么刷图标 | 它体内"哪个枚举 → 哪个 id"的指令级证据（现在只有形状 + id 表两条同向） |
+| 6 个函数指针槽方法（`0x4b88d0`…）是谁 | `0x9bb670`/`0x9ba278…` 这几张 vtable 的槽序 ↔ gdext 版本 `Virtual` 方法的对齐 |
+| 24 个 `impl` 薄壳的语义 | 同上；另外它们的 `Location` 行号（263/277/284/270…）能反推源文件结构，但没有方法名 |
+| 3 个事件回呼（`0x4c27f0`/`0x4c44b0`/`0x4c4850`）处理哪个事件 | 它们体内只引 `GraphwarRootNode` 类型名与 Display panic；缺事件名字面量 |
+| `TimerInf` 时计时器显示什么 | 真机进无限档对局的一帧 |
+| LAN 局新玩家初始士兵数 | 真机"新玩家进房"后的 `SoldierIconContainer` 截图 |
+| 玩家列表重建（`0x4d3180`）的执行序 | 它 15 936 B、211 个直接调用；要先把 `Team1/Team2` 两条分支的节点装配逐条对完 |
+| `user://local_ip.config` 里那个 `1` | `0x4d3180` 读它之后的消费者（`docs/10` §7 第 11 条） |
+| 名单排序 / 玩家表是否 `ScrollContainer` | 场景层（`.tscn`）证据，不在 `.so` 里 |
