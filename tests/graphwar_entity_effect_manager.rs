@@ -13,6 +13,9 @@
 //! | `removal_clears_the_registration` | 14 号事件删号后死亡也没特效 | **逐位** |
 //! | `rebroadcast_one_per_entity` | 重播 = 每个实体一条 `EntityEffectInfo` | **逐位**（`0x3e9cd0`–`0x3e9da0`） |
 //! | `table_entry_is_eight_bytes` | 键 u32 + 值 u8（桶距 8） | **逐位**（`sub x22,x22,#0x40` + `and #0x78`） |
+//! | `soldier_birth_registers_by_skin_prefix` | 士兵出生：空/人类皮肤 ⇒ `Death`，`bot_*` ⇒ `Ash` | **逐位**（`0x4ab09c`/`0x4ab120`/`0x4ab270` 的 `mov w2,#1/#3`） |
+//! | `target_birth_registers_spark` | 靶子出生 ⇒ `Spark` | **逐位**（`0x4a58d0` 的 `mov w2,#0x2`） |
+//! | `late_skin_only_rewrites_on_the_bot_prefix` | 迟到的皮肤只有 `bot_*` 改写 | **逐位**（`0x4aa358` 的 `b.ne`） |
 #![allow(dead_code)]
 
 #[path = "../src/events.rs"]
@@ -127,4 +130,65 @@ fn table_entry_is_eight_bytes() {
     m.add_entity_effect(1, EffectType::Death);
     m.add_entity_effect(1, EffectType::Ash);
     assert_eq!(m.len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// 5. **登记点**：谁在什么时候写进这张表（`docs/16` §37，2026-11-07 新解）
+// ---------------------------------------------------------------------------
+
+/// 士兵出生：`add_soldier_to_player`（arm64 `0x4aaab4`）里三次内联登记。
+///
+/// 空皮肤 ⇒ `DeathEffect`（`0x4ab09c`）；`bot_` 前缀 ⇒ `AshEffect`（`0x4ab270`）；
+/// 其余 ⇒ `DeathEffect`（`0x4ab120`）。三条都是"事件载荷字节 + `HashMap::insert`
+/// 的值"两处立即数互校，见模块文档 §6.1。
+#[test]
+fn soldier_birth_registers_by_skin_prefix() {
+    assert_eq!(BOT_SKIN_PREFIX, "bot_");
+    assert_eq!(BOT_SKIN_PREFIX.as_bytes(), &[0x62, 0x6f, 0x74, 0x5f]);
+
+    let mut m = GraphwarEntityEffectManager::new();
+    m.register_soldier(1, None);
+    m.register_soldier(2, Some(""));
+    m.register_soldier(3, Some("yellow"));
+    m.register_soldier(4, Some("bot_"));
+    m.register_soldier(5, Some("bot_0"));
+    m.register_soldier(6, Some("bot_5"));
+
+    assert_eq!(m.death_effect_of(1), Some(EffectType::Death), "没有皮肤信息 ⇒ Death");
+    assert_eq!(m.death_effect_of(2), Some(EffectType::Death), "空串 ⇒ Death");
+    assert_eq!(m.death_effect_of(3), Some(EffectType::Death), "人类皮肤 ⇒ Death");
+    // 长度闸是 `cmp x8,#0x3 / b.hi`：**恰好 4 字节**就算过；"bot_" 本身已满足前缀。
+    assert_eq!(m.death_effect_of(4), Some(EffectType::Ash));
+    assert_eq!(m.death_effect_of(5), Some(EffectType::Ash));
+    assert_eq!(m.death_effect_of(6), Some(EffectType::Ash));
+    assert_eq!(m.len(), 6);
+}
+
+/// 靶子出生：`add_target`（`0x4a5704`）恒登记 `SparkEffect`（`0x4a58d0` 的 `mov w2, #0x2`）。
+#[test]
+fn target_birth_registers_spark() {
+    assert_eq!(TARGET_SKIN, "target");
+    let mut m = GraphwarEntityEffectManager::new();
+    m.register_target(350);
+    assert_eq!(m.death_effect_of(350), Some(EffectType::Spark));
+}
+
+/// 迟到的皮肤：`handle_graphics_info`（`0x4aa304`）**只有 `bot_` 前缀**会改写，
+/// 其余名字原版直接 `b.ne` 跳出去、什么都不做。
+#[test]
+fn late_skin_only_rewrites_on_the_bot_prefix() {
+    let mut m = GraphwarEntityEffectManager::new();
+    m.register_soldier(880, None);
+    assert_eq!(m.death_effect_of(880), Some(EffectType::Death));
+
+    assert!(!m.apply_skin_graphics(880, "yellow"), "人类皮肤不该改写");
+    assert!(!m.apply_skin_graphics(880, "target"), "靶子皮肤不该改写");
+    assert!(!m.apply_skin_graphics(880, "bot"), "短于 4 字节不该改写（`cmp x8,#0x3`）");
+    assert_eq!(m.death_effect_of(880), Some(EffectType::Death));
+
+    assert!(m.apply_skin_graphics(880, "bot_0"), "bot_0 必须改写");
+    assert_eq!(m.death_effect_of(880), Some(EffectType::Ash));
+    // 未登记的实体也会被这条路径写进去（`handle_graphics_info` 不看表里有没有）
+    assert!(m.apply_skin_graphics(881, "bot_2"));
+    assert_eq!(m.death_effect_of(881), Some(EffectType::Ash));
 }

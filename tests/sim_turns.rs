@@ -12,6 +12,9 @@
 //! | `blocked_shot_does_not_stop_the_other` | 一发被墙挡、另一发照常命中 | **观测**（`docs/86` §5.1） |
 //! | `single_shot_is_byte_identical_to_fire` | 重构没有改变 `SequentialTurns` | **逐位验证** |
 //! | `collection_*` | 收集阶段：攒齐 / 超时 / 重复 / 不在名单 | **观测**（`docs/141` §1、§4） |
+//! | `death_effect_type_comes_from_the_registration` | 死亡特效类型**照抄出生登记**（`bot_*` ⇒ Ash） | **逐位**（`0x4a8c50`/`0x4a8cbc`）+ 数据侧 899/953 |
+//! | `unregistered_entity_emits_no_death_effect` | 查不到就**一条都不发**（不是默认 Death） | **逐位**（`0x4a8c38`） |
+//! | `target_birth_registers_spark` | 靶子出生登记 `SparkEffect` | **逐位**（`0x4a58d0`） |
 use gw2_rebuild::game::{Match, Submission};
 use gw2_rebuild::_scaffold::protocol::parse_message;
 use gw2_rebuild::server::RoomState;
@@ -625,4 +628,78 @@ fn simultaneous_round_over_tcp_emits_one_grouped_batch() {
     let _ = FIRST_PLAYER_ID;
     drop(client);
     let _ = server.join();
+}
+
+// ---------------------------------------------------------------------------
+// 9. 死亡特效的**类型**来自实体出生登记（`graphwar_entity_effect_manager` §5–§6）
+// ---------------------------------------------------------------------------
+
+/// 一条水平弹道穿过 (5, 0) 的受害者：造一个"一发打死一个"的最小局面。
+fn one_shot_kills(victim_skin: Option<&str>) -> (Vec<String>, i64) {
+    let mut m = field(vec![tgt(10, 0.0, 0.0), tgt(7, 5.0, 0.0)], vec![]);
+    if let Some(s) = victim_skin {
+        m.note_skin_graphics(7, s);
+    }
+    let msgs = m.fire(10, "0.00", 0.0, 0.0, false, 0);
+    assert_eq!(ints(&msgs, "LifeQueuedDeath", "entity_id"), vec![7], "受害者该判死");
+    (msgs, 7)
+}
+
+/// 死亡块的 `effect_type` **不是**常量，是这名实体登记过的那一项。
+///
+/// 证据：arm64 `0x4a8c50` 的 `ldurb w21,[x13,#-4]` 把表值读出来，`0x4a8cbc` 原样写进
+/// `EffectInfo`；登记点见 `graphwar_entity_effect_manager` §6.1（`bot_` 前缀 ⇒ `Ash`）。
+/// 数据侧交叉核对：全语料 953 条死亡 `EffectInfo` 里 899 条按坐标能唯一对上实体，
+/// **536/536 `DeathEffect`、363/363 `AshEffect`、54/54 `SparkEffect` 都等于该实体的登记值**。
+#[test]
+fn death_effect_type_comes_from_the_registration() {
+    // ① 没收到皮肤 ⇒ 出生登记就是 DeathEffect
+    let (msgs, _) = one_shot_kills(None);
+    let sub = kinds_sub(&msgs);
+    assert!(sub.contains(&"EffectInfo/DeathEffect".to_string()), "默认应为 DeathEffect: {sub:?}");
+    assert!(!sub.iter().any(|k| k == "EffectInfo/AshEffect"), "不该凭空发 AshEffect: {sub:?}");
+
+    // ② 人类皮肤 ⇒ 仍是 DeathEffect（`bot_` 之外的前缀原版什么都不做）
+    let (msgs, _) = one_shot_kills(Some("yellow"));
+    let sub = kinds_sub(&msgs);
+    assert!(sub.contains(&"EffectInfo/DeathEffect".to_string()), "人类皮肤应 DeathEffect: {sub:?}");
+
+    // ③ `bot_*` ⇒ 改写为 AshEffect
+    let (msgs, _) = one_shot_kills(Some("bot_0"));
+    let sub = kinds_sub(&msgs);
+    assert!(sub.contains(&"EffectInfo/AshEffect".to_string()), "bot_0 应 AshEffect: {sub:?}");
+    assert!(!sub.iter().any(|k| k == "EffectInfo/DeathEffect"), "不该再有 DeathEffect: {sub:?}");
+}
+
+/// **查不到就一条都不发**（`0x4a8c38` 分支）：这正是不许写 `unwrap_or(DeathEffect)` 的原因。
+///
+/// 构造方式用 14 号事件（`entity_removed_event`）把表项删掉——原版删表项只走这条路，
+/// 死亡本身不删（`0x4a8cb0` 只查表）。删掉之后这个人再死，回放里就**没有**死亡特效。
+#[test]
+fn unregistered_entity_emits_no_death_effect() {
+    let mut m = field(vec![tgt(10, 0.0, 0.0), tgt(7, 5.0, 0.0)], vec![]);
+    assert_eq!(m.entity_effect_of(7), Some(gw2_rebuild::graphwar_effect_manager::EffectType::Death));
+    m.handle_entity_removed(7);
+    assert_eq!(m.entity_effect_of(7), None, "删号后表里不该还有它");
+
+    let msgs = m.fire(10, "0.00", 0.0, 0.0, false, 0);
+    assert_eq!(ints(&msgs, "LifeQueuedDeath", "entity_id"), vec![7], "死亡本身照旧要报");
+    let sub = kinds_sub(&msgs);
+    assert!(
+        !sub.iter().any(|k| k.starts_with("EffectInfo/") && k != "EffectInfo/ExplosionEffect"),
+        "没登记 ⇒ 死亡特效一条都不发: {sub:?}"
+    );
+    // 爆炸特效照发（那是另一条路径，恒 ExplosionEffect + 自增 id）
+    assert_eq!(sub.iter().filter(|k| *k == "EffectInfo/ExplosionEffect").count(), 1);
+}
+
+/// 靶子出生登记 `SparkEffect`（`add_target` 的 `mov w2, #0x2`，`0x4a58d0`）。
+#[test]
+fn target_birth_registers_spark() {
+    use gw2_rebuild::graphwar_effect_manager::EffectType;
+    let mut m = field(vec![tgt(10, 0.0, 0.0)], vec![]);
+    m.add_target(1099, 2);
+    assert_eq!(m.entity_effect_of(1099), Some(EffectType::Spark));
+    // 士兵仍是 Death
+    assert_eq!(m.entity_effect_of(10), Some(EffectType::Death));
 }

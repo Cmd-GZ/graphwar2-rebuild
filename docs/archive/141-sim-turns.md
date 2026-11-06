@@ -329,3 +329,74 @@ cargo test --offline          # 333 → 347（新增 tests/sim_turns.rs 14 条�
   只剩"`TurnInfo` 那组玩家排列本身"还是 A 类；
 * `docs/00-status` / `HANDOVER` §0 里"同时回合制结算（152/152、时刻判决 38:0）"
   说的是**物理与死亡集合**；本文补的是**报文层的分组与顺序**。
+
+---
+
+## 8. 复核（2026-11-07）：那 19 例的机制解，以及**为什么本节数字一位没动**
+
+### 8.1 结论先行
+
+§4.4 把 19 个失败批归成"我方没有 `AshEffect` 发射器"。**这个描述现在要改**：
+不是缺发射器，是**同一张登记表**在死亡时被照抄——表格类型由**实体出生时的皮肤**决定。
+机制、6 个写入点的地址、数据侧 899/953 的复核都在 `docs/16-client.md` **§37**。
+一句话版：
+
+| 实体 | 登记的 `EffectType` | 依据 |
+|---|---|---|
+| 士兵，皮肤名不以 `bot_` 开头（含"还没有皮肤"） | `DeathEffect`(1) | `0x4ab09c` / `0x4ab120` |
+| 士兵，皮肤名以 `bot_` 开头 | `AshEffect`(3) | `0x4ab270` |
+| 靶子 | `SparkEffect`(2) | `0x4a58d0` |
+| 收到 `SkinGraphicsInfo{bot_*}` 后 | 该批实体被**改写**成 `AshEffect` | `0x4aa464` |
+
+死亡结算只做两件事：`ty = map.get(entity_id)?`（查不到 ⇒ **一条都不发**）、
+`add_effect(next_effect_id, pos, ty, tick)`。
+
+### 8.2 before/after（**同一份定格快照**，401 份 / 1080 个结算批 / 1290 发）
+
+```bash
+export CARGO_HOME=/home/user/MyProject/gw2/.cargo-home
+export CARGO_TARGET_DIR=<clone>/../target
+cargo run --release --offline --example sim_turns -- --replay-sim <401 份快照目录>
+```
+
+| 指标 | before（`master` 的 `7cd557b4`） | after（本轮） |
+|---|---|---|
+| 结算批内容命中 | 21 / 1080（1.9%） | **21 / 1080（1.9%）** |
+| 结算批消息种类序列 | 916 / 1080（84.8%） | **916 / 1080（84.8%）** |
+| 多发批（`>=2` 发）种类序列 | 93 / 130（71.5%） | **93 / 130（71.5%）** |
+| 多发批"骨架"（剔掉死亡块） | 130 / 130 | **130 / 130** |
+| 完全一致的回放 | 1 / 401 | **1 / 401** |
+
+**逐行 diff 为空**（`baseline.txt` 与 `after.txt` 完全相同）。这不是"没改对"：
+
+1. 改的地方在 `game::Match::execute_results`——死亡块的 `effect_type` 从**写死**
+   `"DeathEffect"` 变成**查登记表**，查不到就**不发**；
+2. 但 `_scaffold::replaydiff::Predictor::new` 只用 `Inputs::scan` 的 `pos`/`alive`
+   建 `Match`，**`SkinGraphicsInfo` / `TargetInfo` 从来没有喂进 `Match`**
+   ⇒ 每个实体都走"出生时还没有皮肤"那条分支 ⇒ 全部登记 `DeathEffect`
+   ⇒ 输出与本轮之前**逐字节相同**；
+3. 所以这份口径**结构上问不出**这个问题。它需要的是多喂两条**输入**
+   （`docs/16-client.md` §37.5 给了那 6 行），不是再改一次死亡结算。
+
+### 8.3 喂了输入会怎样（一次性探针，**不入库**）
+
+同一份快照、同一个 `compare_batch`，只加两件事：把 `SkinGraphicsInfo`/`TargetInfo`
+喂进 `Match`，并把 `Policy.produced_effects` 扩成四类（否则回放的 `AshEffect`
+会被 `Policy::is_unproduced` 整类投掉，问题**问不出来**）：
+
+| 口径 | 未喂皮肤 | 喂了皮肤 |
+|---|---|---|
+| 默认 `Policy`（Ash/Spark 当我方不产） | 多发批 93 / 130 | 93 / 130（看不见） |
+| 严格 `Policy`（四类都参与比较） | 多发批 **77 / 130** | 多发批 **100 / 130（+23）** |
+| 严格 `Policy`，全语料结算批种类序列 | 833 / 1080 | **918 / 1080（+85）** |
+| 严格 `Policy`，全语料批内容命中 | 21 / 1080 | 21 / 1080（不变，缺的是字段级几何） |
+
+⇒ **§4.4 那 19 例全部落在 +23 里**（另 4 个是"Ash 与 Death 混排"的批）。
+剩下的差距回到 §4.6 那三条：死亡集合漏报、爆炸点、以及 `LifeInfo` 延迟段。
+
+### 8.4 本节因此要改的两句话
+
+| 位置 | 旧说法 | 新说法 |
+|---|---|---|
+| §4.4 表格第 1 行"成因"列 | "我方没有 Ash 发射器（缺口）" | **不是缺发射器**：类型由实体出生时的皮肤决定，死亡照抄；本节的 `Policy` 还把 `AshEffect` 当成"我方不产"投掉了，所以**必须先喂输入 + 放宽 Policy** 才可能看到收益（§8.3） |
+| §5 未确定 #3 | "`DeathEffect` vs `AshEffect` 的选择规则：**未知**" | **已解**（`docs/16` §37，逐位）：皮肤 `bot_` 前缀 / 靶子 / 迟到改写三档；本节 `Match` 侧的落码在 `src/game.rs` 的 `execute_results`、`note_skin_graphics`、`add_target` |
