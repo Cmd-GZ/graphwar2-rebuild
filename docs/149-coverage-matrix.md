@@ -5,14 +5,14 @@
 ## 0. 一句话总账
 
 ```
-原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 431、15 个非 graphwar 游戏模块占 96）；我们已实现 351 个函数，其中 逐位 88 / 观测 263 / 推断 0；未做 125；完全未知的模块 18 个（graphwar 里 12 个）。
+原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 431、15 个非 graphwar 游戏模块占 96）；我们已实现 371 个函数，其中 逐位 88 / 观测 283 / 推断 0；未做 105；完全未知的模块 18 个（graphwar 里 12 个）。
 ```
 
 拆成两个口径（下面的数字全部由脚本算出，重跑即复现）：
 
 | 口径 | 模块数 | 可归属函数 | 已实现 | 逐位 | 观测 | 推断 | 未做 | 未知模块 |
 |---|---|---|---|---|---|---|---|---|
-| 58 个 `graphwar_*.rs` | 63 | 431 | 303 | 81 | 222 | 0 | 85 | 12 |
+| 58 个 `graphwar_*.rs` | 63 | 431 | 323 | 81 | 242 | 0 | 65 | 12 |
 | 15 个非 graphwar 的游戏模块 | 15 | 96 | 48 | 7 | 41 | 0 | 40 | 6 |
 
 还有 `weak_caller.rs`（40 个归属函数）按 `docs/02` §9 判为第三方依赖库，单独一行留在 TSV 里备查，**不计入**任何合计。
@@ -108,7 +108,7 @@
 | `graphwar_logger.rs` | 2 | 2 | — | 0 | 未做 |
 | `graphwar_long_press_animation.rs` | 7 | 7 | `src/graphwar_long_press_animation.rs` | 11 | 观测 |
 | `graphwar_mode_manager.rs` | 2 | 6 | — | 0 | 未做 |
-| `graphwar_module_container.rs` | 20 | 1 | — | 0 | 未做 |
+| `graphwar_module_container.rs` | 20 | 1 | `src/graphwar_module_container.rs` | 17 | 观测 |
 | `graphwar_name_manager.rs` | 3 | 3 | — | 0 | 未做 |
 | `graphwar_nodes.rs` | 11 | 1 | — | 0 | 未做 |
 | `graphwar_obstacle_manager.rs` | 8 | 14 | `src/plane.rs` | 16 | 逐位 |
@@ -244,5 +244,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（47 个文件、1274 条 `fn`） | `4b6893a0b6d6b3c26fef678600e58310bd44e5b99e37346d329868bf1998ef67` |
+| `src/` 树（47 个文件、1291 条 `fn`） | `0b0141c732e83de04e8eece267d6c906c48671529da37c40881c79011ac9ff74` |
 
