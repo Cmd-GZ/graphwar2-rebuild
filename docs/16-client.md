@@ -4560,3 +4560,145 @@ nm -S --defined-only <arm64>/libgraphwarrust.so | grep graphwar_texture_loader
 #                       与 add x0,x0,#0x170/0x1a0/0x1d0（= RandomState）
 # 构造点：全量反汇编里 bl 0x40c2f4 只有一个（0x39a328，在 GraphwarRootNode 的 INode impl 里）
 ```
+
+## 32. 靶子 / 特效 / 录像 / 回放 七模块（本轮新增：`docs/123` 的判定点结案 + `video_writer` 不是"猜错的名字"）
+
+> 任务：`graphwar_{target,entity_effect,effect}_manager` / `graphwar_game_recorder` /
+> `graphwar_video_writer` / `graphwar_replay_control` / `graphwar_texture_loader`。
+> 代码落在同名 `src/*.rs`，验收在 `tests/` 同名文件。
+> ⚠️ 本节**只**回答已经能指到地址的部分；推断一律标出来，未知一律列在 §32.7。
+
+### 32.1 一页结论
+
+| # | 结论 | 等级 |
+|---|---|---|
+| 1 | `target_manager` 是**一张 `HashSet<u32>`**（桶距 4、值类型 `()`），只有 3 个可归属函数 + 被内联的 `add_target` | **逐位** |
+| 2 | 它**没有** alive 字段、**没有**任何重置分支 ⇒ `docs/123` §2.5「不在目标管理器里」在指令级成立 | **逐位** |
+| 3 | 「打不全就全部复原」的判定点在 **`GameStateManager::queue_end_turn_trigger::{{closure}}`**（arm64 `0x4abc00`）：**回合末**、两队都还有人活着、`self[+0x11d]==1` ⇒ 遍历 `target_manager` 的集合并 `life_manager.set_alive(id, true, 0)` | **观测** |
+| 4 | 死亡特效**不是死亡时判定的**：`execute_results` 拿 `entity_effect_map[entity_id]` 当类型、拿 `entity_id` 当 `effect_id`；**查不到就一条都不发** | **逐位** |
+| 5 | ⇒ `AshEffect` / `DeathEffect` 的分界在**实体出生登记**（`EntityEffectInfo`），这解释了 `docs/141` 的 19 例 | **逐位** |
+| 6 | `effect_manager`：登记 + 广播 `EffectInfo`(44)；`tick` 只回收 **`start_tick + 3600 <= now`** 的记录，不发事件 | **逐位** |
+| 7 | `EffectType` 四变体判别值 `0..3` = `ExplosionEffect/DeathEffect/SparkEffect/AshEffect`（`.rodata 0x19caf8` 首尾相接） | **逐位** |
+| 8 | `game_recorder` 录 **32 条**服务端广播事件（`{"event":…,"tick":N}` 逐行），**`GameStateInfo==EndingGame`** 时落盘到 **`user://replays/<unix 秒>`**（gzip，flate2） | **逐位** |
+| 9 | `video_writer` **真的是录视频**：`openh264::Encoder`（H.264）+ `minimp4` 封装 MP4，**60 fps**，轨道名 `Graphwar Clip`，`FileAccess` 一次写完 | **逐位** |
+| 10 | `texture_loader` 是 **4 个方法不是 1 个**（矩阵那个 1 是 `panic::Location` 口径的下限）；三张 `HashMap<String, Gd<Texture2D>>` @ `+0x150/+0x180/+0x1b0`，**119 条** `res://*.svg` | **逐位** |
+| 11 | `replay_control`：列表**异步**加载（`mpmc` 通道 + 后台线程 `load_game`），四个模式按钮 + `set_button_icon`，`process` 按 tick 推进并重放几何 | **观测** |
+
+### 32.2 (a) 靶子重置的判定点
+
+`docs/123` §3.2 列了三条候选、全部出局；本轮的答案在**另一处**：
+
+```text
+GameStateManager::queue_end_turn_trigger::{{closure}}   arm64 0x4abc00 (0x58c)
+  turn_count += 1 ; add_event(TurnCountInfo{58, turn_count})        ; 0x4abc20-0x4abc5c
+  w23 = if turn_count < self[+0xcc] { 0 } else { self[+0xc8] }      ; 0x4abc60-0x4abc78
+  (t1, t2) = get_alive_teams()                                      ; 0x4abc7c
+  if (w23 & 1) == 0 && t1 && t2 && self[+0x11d] == 1 {              ; 0x4abc80-0x4abc94
+      for id in target_set { life.set_alive(id, /*alive=*/1, 0) }   ; 0x4abea8-0x4abef8
+  }
+```
+
+* 「谁会写 `LifeInfo{alive:true}`」是反查出来的：全库构造判别值 27 的位置**只有两处**
+  （`life_manager::send_all_info_events` `0x497240`、`set_alive` `0x497cb0`）；
+  `set_alive` 的全部调用点是 5 个，其中唯一带条件的就是这个闭包；
+* 与 `docs/123` §0 的①③④⑤完全一致：**翻 alive + 广播 + 不重建实体 + 不恢复障碍洞**；
+* 三个条件里的 `self[+0x11d]`（u8）是**推断**为「一発で全部」关卡的标志位，
+  `+0xc8/+0xcc` 与 `(w23 & 1) == 0` 的用意**未定**（见 §32.7）。
+
+**`target_manager` 里没有这条规则**：它连「谁死了」都不存 —— 表项 4 字节、
+值类型 `()`，三个可归属函数里唯一写操作是 `remove(&entity_id)`。
+
+### 32.3 (b) 死亡时发哪个特效
+
+`GraphwarGameStateManager::execute_results` 里有两处 `EffectInfo`（44）的生产点：
+
+| 生产点 | `effect_id` | `effect_type` | 语义 |
+|---|---|---|---|
+| `0x4a89ec` | **自增计数器**（`ldxr/stxr`） | **恒 0** = `ExplosionEffect` | 弹道停止/命中的爆炸 |
+| `0x4a8cb0` | **实体 id** | **`entity_effect_map[entity_id]`** | 死亡 |
+
+第二处的查表就是 `GraphwarEntityEffectManager` 的 `HashMap<u32, EffectType>`（桶距 8，
+键 `u32` 在 +0、值 `u8` 在 +4）：`hash_one(+0x50, &entity_id)` → 键比较
+`subs wzr, w23, w14` → 命中后 `ldurb w21, [x13, #-0x4]`。**未命中分支 `0x4a8c38`
+直接释放借用、跳过 `add_event`**。
+
+⇒ **分界条件**：这个实体**出生时**被 `EntityEffectInfo` 登记成什么，死亡就发什么；
+没登记就什么都不发。任何 `unwrap_or(DeathEffect)` 都会让 `docs/141` 那 19 例继续错。
+
+### 32.4 (c) 录像写什么、何时写、写到哪
+
+```text
+new       : 32 条订阅 = 24 条 *_info_event + 8 条同样单向广播的
+            (entity_removed / remove_team / function_fire / function_active /
+             function_points / clear_obstacles / add_obstacle / destroy_obstacle)
+            一条 *_request_event 都不订；符号表里只有一个闭包 ⇒ 32 个 Box 同一个类型
+on_event  : tick = get_module_wk(self+0x40)[+0x58] ; events.push({tick, event})
+            if GameStateInfo(30):
+                state == 6 EndingGame ⇒ 上升沿落盘
+                state == 1 Setup && 上一条是 6 ⇒ 清空缓冲（新一局）
+save_game : DirAccess::make_dir_recursive_absolute("user://replays/", 15)
+            path = "user://replays/" + SystemTime::now().duration_since(UNIX_EPOCH).as_secs()
+            FileAccess::open(path, WRITE) → GzEncoder(flate2 1.0.30) → 每行
+            '{"event":<GraphwarEvent 的 serde 外部标签>,"tick":N}'
+```
+
+`EventInfo` = **0x50 字节** = `GraphwarEvent` 0x48 + `tick`（u32 + 对齐）。
+写侧（反汇编 + flate2 的 `panic::Location`）与读侧（`src/graphwar_replay_player.rs`
+解析 400 份真实回放）**逐字吻合**。
+
+### 32.5 (d) `video_writer` 到底是什么
+
+**是录像导出，不是别的东西被我们猜错名字。** 被调者符号名把链路钉死：
+
+| 步骤 | 证据 |
+|---|---|
+| H.264 编码 | `openh264::encoder::Encoder::new`(`0x4499b0`) / `encode_at`(`0x449cb0`) / `EncodedBitStream::write_vec`(`0x449cd8`) |
+| RGB→YUV | `openh264::formats::rgb::{Rgb,Rgba}SliceU8::new` + `YUVBuffer::read_rgb` |
+| MP4 封装 | `minimp4::Mp4Muxer::init_video`(`0x449550`) / `minimp4::writer::write_mp4`(`0x449564`) / `MP4E_close` |
+| 帧率 | `mov w1, #0x3c` = **60** |
+| 轨道名 | `.rodata 0x19ddaf` = `Graphwar Clip`（13 字节，`mov w5,#0xd`） |
+| 落盘 | `FileAccess::open(path, 2)` + `store_buffer(PackedArray<u8>)` |
+
+构造 `new(w, h, flag)` 把宽高**向上取偶**（`w + (w & 1)`，`0x4499d8`/`0x4499dc`），
+存 `+0x14e8/+0x14ec`（原始）与 `+0x14f0/+0x14f4`（取偶）。`minimp4` 自己的
+`panic::Location` 也出现在 `write_video` 的 Location 表里 ⇒ 依赖是函数级确认的。
+
+### 32.6 七个模块的函数清单
+
+| 模块 | arm64 方法数 | 可归属（x86 锚） | 本轮落码 |
+|---|---|---|---|
+| `graphwar_target_manager` | **3**（`new` + 2 闭包）+ 内联 `add_target` | 4 枚锚（`:35:24` `:65:26` `:74:30` `:84:18`） | 全 |
+| `graphwar_entity_effect_manager` | **3** + 内联 `add_entity_effect` | 4 枚锚（`:35:31` `:57:26` `:67:30` `:77:18`） | 全 |
+| `graphwar_effect_manager` | **5**（含 `EffectType::deserialize`） | 2（`tick` `0x519d80`；`add_effect` 只在内联副本里） | 全 |
+| `graphwar_game_recorder` | **3** | 4 枚锚（`:107:105` `:108:41` `:150:81` `:156:74`） | 全（gzip 只做文本侧） |
+| `graphwar_video_writer` | **3** | 4 枚锚（`:61:37` `:125:41` `:154:56` `:154:93`） | 结构全；**不产 MP4**（无 openh264） |
+| `graphwar_replay_control` | **4** | 2（`process` `0x4c6f40`、`update_replay_list` `0x523410`） | 结构全；时钟字段未解 |
+| `graphwar_texture_loader` | **4** | 1 枚锚（`:145:47`，落在 `new`） | 三张表全（值是路径字符串，不是 `Gd`） |
+
+`coverage-matrix` 里记的「1 个可归属函数」= `panic::Location` 口径的**下限**，
+不是模块规模：`texture_loader` 的 3 个 getter 一次都不 panic，所以数不到。
+
+### 32.7 未定项（都带地址，可直接接手）
+
+| # | 未定 | 已知 |
+|---|---|---|
+| 1 | `self[+0x11d]`（u8）是哪个关卡字段 | 必须 `== 1` 才复原；**推断**为「一発で全部」标志 |
+| 2 | `self[+0xc8]` / `self[+0xcc]` 与 `(w23 & 1) == 0` | `+0xcc` 参与 `turn_count <` 比较；偶数要求**无解释** |
+| 3 | `set_alive` 第三参数（`w3 = 0`） | 第二参数是 `alive`；第三个**未知** |
+| 4 | `tick` 取的模块身份 | `get_module_wk::h4ae2b3f89e2f8a81` 被 recorder / turn_manager / function_manager / gsm 共用，读 `+0x58` 当 tick；**推断**为 `TickHandler`（`TypeId` 常量不在符号里） |
+| 5 | `video_writer` 第三参数（`+0x14f8` 的 bool） | 设 `EncoderConfig` 的某个字段，字段名没逐条读 |
+| 6 | `replay_control::process` 的时钟字段 | 6760 字节，只知按 tick 推进 + 引用 `graphwar_plane.rs:174/179`（会重放几何） |
+| 7 | `texture_loader` 里 `ranks/` 与 UI 图标的查询入口 | 加载了 50 张（22 徽章 + 28 图标），**没有任何按名字取它们的方法** |
+| 8 | 士兵出生时登记的实体特效类型 | 回放侧可统计，代码侧未定位构造点 ⇒ 不给默认值 |
+
+### 32.8 复现
+
+```text
+ARM=.rea-work/apk/arm64/lib/arm64-v8a/libgraphwarrust.so
+nm -S --defined-only $ARM | grep -E "graphwar_(target|entity_effect|effect)_manager|game_recorder|video_writer|replay_control|texture_loader" | grep -v core3ptr
+# 判定点：反查 set_alive(0x497bb0) 的调用点，看 0x4abc00 那段三个条件
+# 死亡特效：搜 0x800000000000002C (EffectInfo=44) 的 mov 立即数对 → execute_results 两处
+# 录像格式：0x3d8184 里 "user://replays/" + u64 Display + FileAccess::open(...,2)
+# 视频：0x4494e4 的 bl 目标全是 openh264/minimp4
+# 纹理表：0x40bf7c/0x40c0a4/0x40c1cc 里 ldr [x0,#0x1c8/0x198/0x168] + add x0,x0,#0x1d0/0x1a0/0x170
+```
