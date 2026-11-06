@@ -80,7 +80,7 @@ const EXPECTED: &[(&str, u16, &[(&str, &str)])] = &[
     ("FunctionPoints", 37, &[("owner_id", "i64"), ("start_x", "f64"), ("start_y", "f64"), ("end_x", "f64")]),
     ("FunctionUpdateRequest", 34, &[("player_id", "i64"), ("function", "String")]),
     ("FunctionsCalculated", 38, &[]),
-    ("GameHeartbeat", NONE, &[]),
+    ("GameHeartbeat", 63, &[]),
     ("GameInfo", 62, &[("game_info", "GameInfo")]),
     ("GameNameInfo", 29, &[("game_name", "String")]),
     ("GameNameRequest", 22, &[("game_name", "String")]),
@@ -123,7 +123,7 @@ const EXPECTED: &[(&str, u16, &[(&str, &str)])] = &[
     ("TurnLimitInfo", 57, &[("turn_limit", "Option<i64>")]),
     ("TurnModeChangeRequest", 20, &[]),
     ("TurnModeInfo", 47, &[("turn_mode", "String")]),
-    ("VersionInfo", NONE, &[("version", "String"), ("system", "String")]),
+    ("VersionInfo", 65, &[("version", "String"), ("system", "String")]),
 ];
 
 /// 类型标签 → [`ValType`]。
@@ -419,27 +419,47 @@ fn payload_structs_have_the_binary_key_order() {
 
 #[test]
 fn tag_column_agrees_with_events_rs() {
-    use gw2_rebuild::events::NAMED_VARIANT_COUNT;
+    use gw2_rebuild::events::VARIANT_COUNT;
     let with_tag = WIRE_SPEC.iter().filter(|e| e.tag.is_some()).count();
     assert_eq!(
-        with_tag, NAMED_VARIANT_COUNT,
-        "有判别值的事件数应等于 events.rs 的具名变体数"
+        with_tag, VARIANT_COUNT,
+        "有判别值的事件数应等于 enum Event 的变体总数（74）"
     );
-    assert_eq!(WIRE_SPEC.len() - with_tag, 2, "只有 2 个事件没有判别值");
-    let none: Vec<&str> = WIRE_SPEC
-        .iter()
-        .filter(|e| e.tag.is_none())
-        .map(|e| e.name)
-        .collect();
-    assert_eq!(none, vec!["GameHeartbeat", "VersionInfo"]);
+    // 2026-11-07：63 / 65 定死后，**74 条全部有判别值**（旧断言"只有 2 个没有"已作废）
+    assert_eq!(
+        WIRE_SPEC.len(),
+        with_tag,
+        "74 条事件应全部带判别值（docs/07 §5.1：GameHeartbeat=63、VersionInfo=65）"
+    );
+    assert!(
+        WIRE_SPEC.iter().all(|e| e.tag.is_some()),
+        "不应再有无判别值的事件"
+    );
+    assert_eq!(
+        WIRE_SPEC.iter().find(|e| e.name == "GameHeartbeat").and_then(|e| e.tag),
+        Some(63)
+    );
+    assert_eq!(
+        WIRE_SPEC.iter().find(|e| e.name == "VersionInfo").and_then(|e| e.tag),
+        Some(65)
+    );
 
-    // 每个有判别值的事件都能在 events.rs 里找到同名判别的变体
+    // 每个有判别值的事件都能在 enum Event 里找到同判别值的变体。
+    // ⚠️ 不能用 DISPATCH_NAME_TAGS 查：63(GameHeartbeat) / 65(VersionInfo) 没有 `*_event`
+    // 派发名、不进那张表（docs/07 §5.1）。改为按 RELAY 的全量判别值集合校验。
+    let all_tags: std::collections::HashSet<u16> = gw2_rebuild::events::ALL_VARIANTS
+        .iter()
+        .map(|e| e.wire_tag())
+        .collect();
+    assert_eq!(all_tags.len(), gw2_rebuild::events::VARIANT_COUNT);
     for e in WIRE_SPEC {
         if let Some(t) = e.tag {
-            let hit = gw2_rebuild::events::DISPATCH_NAME_TAGS
-                .iter()
-                .any(|(_, ev)| ev.wire_tag() == t);
-            assert!(hit, "{} 的判别值 {} 在 events.rs 里不存在", e.name, t);
+            assert!(
+                all_tags.contains(&(t as u16)),
+                "{} 的判别值 {} 在 enum Event 里不存在",
+                e.name,
+                t
+            );
         }
     }
 }

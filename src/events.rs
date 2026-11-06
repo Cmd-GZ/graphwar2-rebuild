@@ -40,19 +40,25 @@
 //! （`docs/96` §4，380 份 replay 佐证）。⇒ 本文件的编号是**内部保真**，
 //! 改它**不会**改变任何线格式；补事件仍然只需要「名字 + 字段」。
 //!
-//! ## 枚举本身仍然不完整
+//! ## 枚举现在是完整的 74 个（2026-11-07 收口）
 //!
-//! 实测判别值覆盖 `0..=73`，其中 **63 与 65 没有任何代码 materialise 过**
-//! （全 `.text` 扫 `0x8000000000000000 | N` 的 `or` / `add` / `lea` 三种形态都没有它们），
-//! 另有 **74** 只出现一次（`0x3d3660`，`0x3d3630` 里拼出的常量 tag；`docs/112` §10.2 判为
-//! `HashMap<u64,_>` 的 key，本文只复核了常量字节），名字未知。⇒ `enum Event` **至少有 75 个变体**，这里只列**具名的 72 个**。
-//! `63` / `65` 的候选是 `GameHeartbeat` / `VersionInfo`（这两个名字在 `.rodata`
-//! 的变体名表里有，但没有 `*_event` 形态、也没有任何名字分派分支），**属推断**。
+//! **`enum Event` 恰好 74 个变体，判别值 `0..=73`，一个不缺。**
+//! 曾经缺的 `63` / `65` 已定死：`GameHeartbeat = 63`、`VersionInfo = 65`。
+//!
+//! 两条**独立机制**互校（`docs/07` §5.1，各 72/72 全中）：
+//! ① x86 侧 `.data.rel.ro 0x961608` 的 serde `VARIANTS` 表（长度 74 来自
+//!    `unknown_variant` 的 `mov ecx,0x4a`；元素 `(ptr,len)` 全在 `R_X86_64_RELATIVE` 里，
+//!    **文件里是 0**，所以直读/`strings` 都拿不到）；
+//! ② arm64 未 strip 侧 `GraphwarEvent::serialize`(`0x4695ac`) 的**按判别值索引的跳转表**
+//!    (`0x19e770`，74 格)，`[63]` 臂写 `"GameHeartbeat"`、`[65]` 臂写 `"VersionInfo"`。
+//!
+//! **旧写法作废**：曾说"`enum Event` 至少有 75 个变体"并把 `0x800000000000004a`(74)
+//! 当成第 75 个——那个常量不在 `GraphwarEvent` 的判别值空间里（是别处的 `HashMap<u64,_>` 键）。
 
 /// 联机事件枚举。
 ///
 /// 判别值 = `0x3d38f0` 里 `mov $N,%ebx` 的立即数（`docs/114` §3 全表）。
-/// **数值不连续是正常的**：63 / 65 缺号，74 起未具名（见模块文档）。
+/// **现在连续了**：74 个变体覆盖 `0..=73`（63/65 已于 2026-11-07 定死，见模块文档）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
 pub enum Event {
@@ -182,9 +188,16 @@ pub enum Event {
     ColorInfo = 61,
     /// `game_info_event`
     GameInfo = 62,
-    /// `game_removed_event`（63 缺号：全 `.text` 没有任何代码构造 tag 63）
+    /// 心跳/保活。**判别值 63 已在 2026-11-07 定死**（`docs/07` §5.1）：
+    /// x86 侧 `.data.rel.ro 0x961608` 的 serde `VARIANTS` 表 `[63]`、
+    /// 与 arm64 侧 `GraphwarEvent::serialize`(`0x4695ac`) 的跳转表(`0x19e770`) `[63]` 臂
+    /// （写 len 13 的 `"GameHeartbeat"`）两条独立机制互校 72/72。
+    GameHeartbeat = 63,
+    /// `game_removed_event`
     GameRemoved = 64,
-    /// `rank_request_event`（65 缺号：同上）
+    /// 版本握手。**判别值 65 同法定死**（两张表 `[65]` 一致，arm64 臂写 len 11 的 `"VersionInfo"`）。
+    VersionInfo = 65,
+    /// `rank_request_event`
     RankRequest = 66,
     /// `rank_info_event`
     RankInfo = 67,
@@ -201,6 +214,32 @@ pub enum Event {
     /// `clear_bans_request_event`
     ClearBansRequest = 73,
 }
+
+/// `enum Event` 的**全部 74 个变体**，按判别值升序（2026-11-07 定死，`docs/07` §5.1）。
+///
+/// 用途：不经过 `DISPATCH_NAME_TAGS` 也能校验"某个判别值是否存在于枚举里"——
+/// 这很重要，因为 `GameHeartbeat`(63) 与 `VersionInfo`(65) **没有** `*_event` 派发名。
+pub const ALL_VARIANTS: [Event; VARIANT_COUNT] = [
+    Event::TickEvent, Event::TickRequest, Event::TickReply, Event::Subscribe,
+    Event::NewConnectionRequest, Event::NewConnection, Event::ConnectionRemoved, Event::ConnectedToServer,
+    Event::NewPlayerRequest, Event::NewBotRequest, Event::BotAdded, Event::ChangeTeamRequest,
+    Event::RemovePlayerRequest, Event::PlayerInfo, Event::EntityRemoved, Event::SoldierInfo,
+    Event::AddSoldierRequest, Event::RemoveSoldierRequest, Event::AxisModeChangeRequest, Event::FunctionModeChangeRequest,
+    Event::TurnModeChangeRequest, Event::TimeModeChangeRequest, Event::GameNameRequest, Event::TargetInfo,
+    Event::TeamInfo, Event::RemoveTeam, Event::PosInfo, Event::LifeInfo,
+    Event::LifeQueuedDeath, Event::GameNameInfo, Event::GameStateInfo, Event::GameStartRequest,
+    Event::FunctionFireRequest, Event::FunctionFire, Event::FunctionUpdateRequest, Event::FunctionInfo,
+    Event::FunctionActive, Event::FunctionPoints, Event::FunctionsCalculated, Event::ClearObstacles,
+    Event::AddObstacle, Event::DestroyObstacle, Event::QueueDestroyObstacle, Event::TurnInfo,
+    Event::EffectInfo, Event::AxisModeInfo, Event::FunctionModeInfo, Event::TurnModeInfo,
+    Event::TimeModeInfo, Event::EndOfTurnInfo, Event::SkinGraphicsRequest, Event::SkinGraphicsInfo,
+    Event::FaceGraphicsRequest, Event::FaceGraphicsInfo, Event::HatGraphicsRequest, Event::HatGraphicsInfo,
+    Event::EntityEffectInfo, Event::TurnLimitInfo, Event::TurnCountInfo, Event::NameRequest,
+    Event::NameInfo, Event::ColorInfo, Event::GameInfo, Event::GameHeartbeat,
+    Event::GameRemoved, Event::VersionInfo, Event::RankRequest, Event::RankInfo,
+    Event::LockRequest, Event::LockInfo, Event::ChatMessageRequest, Event::ChatMessage,
+    Event::BanConnectionRequest, Event::ClearBansRequest,
+];
 
 /// `0x3d38f0` 里被比较的**名字**与判别值的对照（`docs/114` §3）。
 ///
@@ -300,7 +339,14 @@ impl Event {
 }
 
 /// 具名变体的个数（实测口径：`0x3d38f0` 解出 72 条）。
+/// **有派发名字**（`*_event`，即 `0x3d38f0` 那张表里出现过的）的变体数 = 72。
+///
+/// ⚠️ 与 [`VARIANT_COUNT`] 不同：`GameHeartbeat`(63) 与 `VersionInfo`(65) **没有**
+/// `*_event` 名字、也不进名字分派表（它们只被序列化上线），所以枚举有 74 个、具名派发的只有 72 个。
 pub const NAMED_VARIANT_COUNT: usize = 72;
+
+/// `enum Event` 的**变体总数** = 74（判别值 `0..=73` 连续无缺号，2026-11-07 定死）。
+pub const VARIANT_COUNT: usize = 74;
 
 /// `GameInfo` 结构体（`docs/07` §3.1，观测到 **9 个字段**）。
 ///

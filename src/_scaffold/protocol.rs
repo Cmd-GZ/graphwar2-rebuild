@@ -1513,6 +1513,28 @@ pub struct WireEvent {
 /// **有判别值的**变体 + `GameHeartbeat` 数的，漏了 [`VersionInfo`]——它同样有
 /// `Serialize` 实现和线上名字（`{"VersionInfo":{"version":..,"system":..}}`），
 /// 只是判别值未知（63 或 65）。本轮从二进制里数出来是 **74**。
+/// **线上枚举的完整取值集合**（2026-11-07 穷举，`docs/07` §5.2）。
+///
+/// 穷尽性判据是**结构性**的：serde 的 `unknown_variant` 会把 `VARIANTS` 表的
+/// **地址与长度都写成指令立即数**（`lea reg,[rip+V]; mov reg,N`）；全 `.text`
+/// 按这个形状扫，**恰好命中 8 张表**（下面 7 个 + `GraphwarEvent` 的 74 条），
+/// **没有第 9 张** ⇒ 这就是全集，不是"已知值"。
+///
+/// 校准点：`GameState` 那一行与 `.data.rel.ro 0x9586d0` 的 8 个值、字节长
+/// `10/5/19/18/20/16/10/12` 逐项相同（`docs/14` §11）。
+pub const WIRE_VALUE_ENUMS: &[(&str, &[&str])] = &[
+    ("AxisMode", &["NoAxis", "OnlyMain", "EveryFive", "EveryUnit"]),
+    ("FunctionMode", &["NormalFunction", "DiffEqFunction"]),
+    ("TurnMode", &["SequentialTurns", "SimultaneousTurns"]),
+    ("TimeMode", &["Timer30s", "Timer1m", "Timer2m", "Timer3m", "Timer5m", "TimerInf"]),
+    ("GameState", &[
+        "Connecting", "Setup", "WaitingForFunctions", "CalculatingResults",
+        "SynchronizingResults", "ExecutingResults", "EndingGame", "Disconnected",
+    ]),
+    ("GraphwarTeam", &["Team1", "Team2"]),
+    ("EffectType", &["ExplosionEffect", "DeathEffect", "SparkEffect", "AshEffect"]),
+];
+
 pub const WIRE_SPEC: &[WireEvent] = &[
     WireEvent { name: "AddObstacle", tag: Some(40), fields: &[("pos_x", ValType::F64), ("pos_y", ValType::F64), ("radius", ValType::F64)] },
     WireEvent { name: "AddSoldierRequest", tag: Some(16), fields: &[("player_id", ValType::I64)] },
@@ -1544,7 +1566,7 @@ pub const WIRE_SPEC: &[WireEvent] = &[
     WireEvent { name: "FunctionPoints", tag: Some(37), fields: &[("owner_id", ValType::I64), ("start_x", ValType::F64), ("start_y", ValType::F64), ("end_x", ValType::F64)] },
     WireEvent { name: "FunctionUpdateRequest", tag: Some(34), fields: &[("player_id", ValType::I64), ("function", ValType::Str)] },
     WireEvent { name: "FunctionsCalculated", tag: Some(38), fields: &[] },
-    WireEvent { name: "GameHeartbeat", tag: None, fields: &[] },
+    WireEvent { name: "GameHeartbeat", tag: Some(63), fields: &[] },
     WireEvent { name: "GameInfo", tag: Some(62), fields: &[("game_info", ValType::GameInfo)] },
     WireEvent { name: "GameNameInfo", tag: Some(29), fields: &[("game_name", ValType::Str)] },
     WireEvent { name: "GameNameRequest", tag: Some(22), fields: &[("game_name", ValType::Str)] },
@@ -1587,7 +1609,7 @@ pub const WIRE_SPEC: &[WireEvent] = &[
     WireEvent { name: "TurnLimitInfo", tag: Some(57), fields: &[("turn_limit", ValType::OptI64)] },
     WireEvent { name: "TurnModeChangeRequest", tag: Some(20), fields: &[] },
     WireEvent { name: "TurnModeInfo", tag: Some(47), fields: &[("turn_mode", ValType::Str)] },
-    WireEvent { name: "VersionInfo", tag: None, fields: &[("version", ValType::Str), ("system", ValType::Str)] },
+    WireEvent { name: "VersionInfo", tag: Some(65), fields: &[("version", ValType::Str), ("system", ValType::Str)] },
 ];
 
 /// 按线上键名查规格。
