@@ -1068,7 +1068,7 @@ Godot 4 里 `user://` 映射到 `$XDG_DATA_HOME/godot/app_userdata/<项目名>/`
 
 > **本节解决什么**：`graphwar_root_node.rs` 是 12 个 GDExtension 类里**规模最大**的一个
 > （`docs/02` §16.2 类清单第 3 项），`docs/149` 记 23 个可归属函数、0 个已做。
-> 本节把其中 6 个关键函数解到「能照着写」的粒度，并给全**屏名表**与**命令键表**。
+> 本节把 6 个关键函数解到「能照着写」的粒度（其中 `0x3a22f0` **不在**那 23 条里，是无 panic 锚的构造器），并给全**屏名表**与**命令键表**。
 >
 > **地址口径**：一律 **ELF vaddr**；Ghidra/REA 地址 = 本地址 + `0x100000`（只加一次）。
 > 本节所有「函数入口」都用 `analysis/funcstarts_ghidra_va.pkl` 与 REA `procedure_info`
@@ -1082,7 +1082,7 @@ Godot 4 里 `user://` 映射到 `$XDG_DATA_HOME/godot/app_userdata/<项目名>/`
 0x3b5ac0 0x3b5ce0 0x3b6e00 0x3b6ed0 0x3b7020 0x426430 0x433c00 0x4f90b0
 ```
 
-其中 5 个是「实例装配 / 分发」的主干，本节逐条给规格：
+下面 6 个是「实例装配 / 分发」的主干，本节逐条给规格：
 
 | vaddr | 大小 | 猜的名字 | 档位 |
 |---|---|---|---|
