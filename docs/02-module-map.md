@@ -802,7 +802,7 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 | `graphwar_logger.rs`（2/2） | — | `docs/112` §15.2.6：log 入口结构观测（0x3b6c70/0x44dd60）；无实现 | `未实现` |
 | `graphwar_long_press_animation.rs`（7/7） | — | `docs/02 §16.3`：类名 + 5 个锚；动画常量未解 | `未实现` |
 | `graphwar_mode_manager.rs`（2/6） | — | `docs/88` §7：TurnMode/FunctionMode/AxisMode/TimeMode 的取值已解；模块本体未复原 | `未实现` |
-| `graphwar_module_container.rs`（20/1） | — | `docs/110/112` 有调用观测；无实现 | `未实现` |
+| `graphwar_module_container.rs`（20/1） | `src/graphwar_module_container.rs` | `docs/02 §22`（2026-11 全解）：类型本体 = `HashMap<TypeId, Rc<dyn Any>>`（48 字节 / 1 字段，**没有任何 manager 偏移**）；3 个泛型方法 × 25 型 = 68 个单态化，两架构地址全定名；`add_module`/`get_module` 零 Location 锚是**正确结果**（无 panic 点） | `观测` |
 | `graphwar_name_manager.rs`（3/3） | — | `docs/112` §0/§15.2.2：`HashMap<u32,String>`、`name_info_event`=60 逐位解出；无实现 | `未实现` |
 | `graphwar_nodes.rs`（11/1） | — | `docs/112` 有结构观测；无实现 | `未实现` |
 | `graphwar_player_manager.rs`（3/6） | — | `docs/02 §16.3`：`RemovePlayerButton` 串池（推断）；3 个锚未解 | `未实现` |
@@ -2478,3 +2478,257 @@ Linux x86-64 :  地址    ↔  它引用的 (file,line,col) 集合
 | `reorder_recursive` | `PolishNotationConverter` | `0x4f5450` | `src/polish_notation_converter.rs:36` |
 
 **合计 327 个**（去重后；不含 `歧义` 171 与 `未知` 260，那两类见 TSV）。
+
+---
+
+## 22. `graphwar_module_container.rs` 全解：容器是 `HashMap<TypeId, Rc<dyn Any>>`，不是"按偏移持有 manager"（2026-11）
+
+> **本节解决什么**：这是剩下最大的单模块（**68 个函数**，`§18` A 表），此前
+> `docs/02` §14 / §17、`docs/149` 都写「未实现」，且**多处文档假定它是"按固定偏移
+> 持有 25 个 manager 的结构体"**（例如把 `graphwar_lan_vbox` 的 `+0x128` / `+0x240`、
+> `GraphwarRootNode` 的 `+0x16a0` / `+0x16a8` 当成"容器的字段"）。
+> 本节用两侧反汇编把这条假定**否掉**，并给出：容器真身（1 个字段 / 3 个方法 /
+> 68 个单态化）、25 个被注册模块的真名与尺寸、三处装配点、以及为什么
+> `panic::Location` 在这模块上几乎全哑。
+>
+> **地址口径**：一律 **ELF vaddr**；Ghidra/REA 地址 = 本地址 + `0x100000`（只加一次）。
+> 两个二进制都是 **2.0.60**：
+>
+> * **arm64**（Android，未 strip，`.symtab` 有 18793 个 `FUNC`，本模块全部类型名的来源）；
+> * **x86-64**（Linux Steam，stripped，`0x100000` 偏移的落点）。
+>
+> 2024-07-30 版只在**方法名**上被引用（`add_module` / `get_module` / `get_module_wk`），
+> 它的地址与 2.0.60 不可混用（`§18` 的口径）。
+
+### 22.1 一页结论
+
+| 项 | 结果 | 档位 |
+|---|---|---|
+| 类型本体 | `pub struct GraphwarModuleContainer { modules: HashMap<TypeId, Rc<dyn Any>> }`，**48 字节、一个字段** | **观测** |
+| 方法数 | **3 个泛型方法**：`add_module` / `get_module` / `get_module_wk` | **观测**（2024 符号表 + 两侧反汇编） |
+| 68 个函数 | 25 + 23 + 20 个**单态化**，三块各自等距且**背靠背** | **观测** |
+| 有没有 `init` / `process` | **没有**。装配在调用者：`GraphwarGameClient::new` 22 条、`game_server_thread` 20 条、`GraphwarBackend::start_*` 1 条 ×2 | **观测** |
+| "各 manager 在 `+0xNN`" | **不成立**。容器里只有 `TypeId` 键，没有偏移 | **观测**（否定结论） |
+| 注册的模块数 | **25**（另有第 26 个 `Rc<RefCell<_>>` 型 `GraphwarEventQueue` **不**注册） | **观测** |
+| `panic::Location` | `add_module`/`get_module` **零锚**；`get_module_wk` 只有 **1 个**（`30:28`，20 个单态化共用） | **观测** |
+| x86 地址 | **全部 68 个已定名**（本节 §22.3 表），主证据是 `get_module_wk` 的 `Location` 锚 + 三块等距 + 装配点调用序 | **观测** |
+| 原版源码行号 | 只有 `30:28` 一个（且是 `RefCell::borrow` 的 `#[track_caller]` 传下来的） | **推断**（行号本身无法直接复核） |
+
+**为什么这条结论重要**：它一次性回答了"全局对象叫什么、多大、放哪"——
+25 个 manager 的**类型名 + 尺寸 + 三个入口地址**（§22.3）可以直接被别的模块引用；
+`graphwar_event_queue` 不在此列这件事本身也是证据（它挂在别处，`未知`）。
+
+### 22.2 复算方法（三路证据，缺一路都不够）
+
+1. **方法名**（2024 版符号表，`§18`）：
+
+   ```text
+   python3 tools/symtab_dump.py methods graphwar_module_container
+   → GraphwarModuleContainer: add_module / get_module / get_module_wk
+   ```
+
+   2024 版 68 个 `FUNC` 里只有这 3 个名字（25/23/20 个 hash 后缀）。
+2. **每个 `add_module` 属于哪个型**（arm64 有名字，x86 没有）：
+
+   ```text
+   # 函数体形如：ldr q0,[TypeId] → adrp/add x3,<vtable> → bl HashMap::insert
+   llvm-objdump -d --no-show-raw-insn --start-address=0x49e520 --stop-address=0x49e5f4 <arm64 so>
+   # vtable 第 0 字的 R_AARCH64_RELATIVE addend =
+   #   drop_in_place<core::cell::RefCell<graphwarrust::<module>::<Type>>>
+   readelf -rW <arm64 so> | grep 858aa8      # → 4b21b8 等
+   ```
+
+   `drop_in_place` 的名字**直接给出类型**；第 2 字 = `size_of::<RefCell<M>>()`。
+   注意 LLVM 会**合并**同尺寸、同形状的 drop glue（`GraphwarRankManager` /
+   `GraphwarSoldierManager` / `GraphwarPlayerManager` 三个函数体里都指向
+   `drop_in_place<…RankManager…>`），所以必须再用**调用点的构造函数**复核：
+   每个 `add_module` 前面那条 `bl` 就是 `<Type>::new`。
+3. **x86 侧定址**（`Location` 锚 + 结构）：
+
+   ```text
+   # (a) 找到本模块唯一的 Location 记录 {file ptr,len=32,line=30,col=28}
+   #     → x86 .data.rel.ro 0x9586b8；谁 lea 它，谁就是 get_module_wk
+   #     → 恰好 20 个，0x46c5a0 起、步长 0x220（544）
+   # (b) 往低地址按下表展开，得到 add/get 两块
+   #     add 25×160 = 0x4694f0..0x46a3f0
+   #     get 23×368 = 0x46a490..0x46c430
+   # (c) 给 25 个 add_module 定名：读 GraphwarGameClient::new（0x517690）与
+   #     服务端线程（0x4500c0）里的调用序，与 arm64 的调用序逐位对齐；
+   #     再用 vtable 的 size 字（= size_of::<RefCell<M>>）逐个校验
+   ```
+
+   (c) 的校验是**逐位相等**的：两侧的 22/20 条调用序给出的尺寸序列完全相同
+   （`80,120,72,80,80,32,304,40,80,40,80,88,40,80,40,176,80,80,56,80,128,80`），
+   这是"x86 名字没有对错位"的硬证据。
+
+### 22.3 25 个被注册的模块（真名 / 尺寸 / 六个入口）
+
+`size` = `size_of::<M>()` = vtable 第 2 字 − 8（`RefCell` 借用标志占 8 字节）。
+`—` 表示**该型没有这个单态化**（不是数据缺失）。
+
+| 类型 | 原版模块 | `size` | arm64 `add` | arm64 `get` | arm64 `wk` | x86 `add` | x86 `get` | x86 `wk` |
+|---|---|---|---|---|---|---|---|---|
+| `GraphwarModeManager` | `graphwar_mode_manager` | 32 | `0x49e520` | `0x4a0754` | `0x4a5070` | `0x469a90` | `0x46abc0` | `0x46e140` |
+| `GraphwarTickHandler` | `graphwar_tick_handler` | 72 | `0x49e870` | `0x4a0ab4` | `0x4a34c4` | `0x469810` | `0x46aa50` | `0x46d040` |
+| `GraphwarPlayerManager` | `graphwar_player_manager` | 72 | `0x49f260` | `0x4a0244` | `0x4a3c50` | `0x469f90` | `0x46a490` | `0x46d8c0` |
+| `GraphwarSoldierManager` | `graphwar_soldier_manager` | 72 | `0x49f18c` | `0x4a1b94` | `0x4a2d38` | `0x46a170` | `0x46a770` | `0x46e580` |
+| `GraphwarTeamManager` | `graphwar_team_manager` | 32 | `0x49f4dc` | `0x4a0fc4` | `0x4a43dc` | `0x469770` | `0x46b8b0` | `0x46e7a0` |
+| `GraphwarTurnManager` | `graphwar_turn_manager` | 32 | `0x49f900` | `0x49fd34` | `0x4a2fbc` | `0x46a030` | `0x46b740` | `0x46ce20` |
+| `GraphwarLifeManager` | `graphwar_life_manager` | 72 | `0x49eaec` | `0x4a1324` | `0x4a48e4` | `0x469b30` | `0x46c2c0` | `0x46d6a0` |
+| `GraphwarEffectManager` | `graphwar_effect_manager` | 72 | `0x49f0b8` | `0x49f9d4` | `0x4a2328` | `0x469630` | `0x46a600` | `0x46cc00` |
+| `GraphwarTargetManager` | `graphwar_target_manager` | 72 | `0x49f408` | `0x4a1d44` | `0x4a4158` | `0x46a350` | `0x46c150` | `0x46ee00` |
+| `GraphwarNameManager` | `graphwar_name_manager` | 72 | `0x49ec94` | `0x4a1174` | `0x4a3ed4` | `0x46a2b0` | `0x46ba20` | `0x46df20` |
+| `GraphwarColorManager` | `graphwar_color_manager` | 120 | `0x49e6c8` | `0x4a1684` | `0x4a20a4` | `0x469590` | `0x46b5d0` | `0x46dd00` |
+| `GraphwarRankManager` | `graphwar_rank_manager` | 72 | `0x49ef10` | `0x49fee4` | `0x4a2ab4` | `0x469ef0` | `0x46bfe0` | `0x46e360` |
+| `GraphwarPlanePosManager` | `graphwar_plane_pos_manager` | 24 | `0x49efe4` | `0x4a0904` | `0x4a25ac` | `0x46a0d0` | `0x46ad30` | `0x46c9e0` |
+| `GraphwarFunctionManager` | `graphwar_function_manager` | 32 | `0x49ea18` | `0x4a1834` | `0x4a39cc` | `0x469db0` | `0x46bb90` | `0x46e9c0` |
+| `GraphwarGameStateManager` | `graphwar_game_state_manager` | 296 | `0x49ee3c` | `0x4a0094` | `0x4a3748` | `0x46a210` | `0x46be70` | `0x46c7c0` |
+| `GraphwarGraphicsManager` | `graphwar_graphics_manager` | 168 | `0x49e944` | `0x49fb84` | `0x4a4dec` | `0x4698b0` | `0x46a8e0` | `0x46d480` |
+| `GraphwarEntityEffectManager` | `graphwar_entity_effect_manager` | 72 | `0x49ebc0` | — | `0x4a2830` | `0x469d10` | — | `0x46dae0` |
+| `GraphwarComputerPlayerManager` | `graphwar_computer_player_manager` | 72 | `0x49e5f4` | `0x4a0e14` | `0x4a4660` | `0x469e50` | `0x46b460` | `0x46c5a0` |
+| `FunctionHistoryRecorder` | `function_history_recorder` | 48 | `0x49ed68` | `0x4a03f4` | — | `0x469bd0` | `0x46b010` | — |
+| `GraphwarObstacleManager` | `graphwar_obstacle_manager` | 80 | `0x49f82c` | `0x4a14d4` | `0x4a4b68` | `0x46a3f0` | `0x46bd00` | `0x46ebe0` |
+| `GraphwarLocalPlayerManager` | `graphwar_local_player_manager` | 64 | `0x49f334` | `0x4a0c64` | — | `0x4694f0` | `0x46c430` | — |
+| `GraphwarClientConnectionHandler` | `graphwar_client_connection_handler` | 112 | `0x49f758` | `0x4a05a4` | — | `0x469950` | `0x46b180` | — |
+| `GraphwarServerConnectionHandler` | `graphwar_server_connection_handler` | 128 | `0x49f684` | `0x4a1ef4` | — | `0x4696d0` | `0x46b2f0` | — |
+| `GraphwarBanList` | `graphwar_ban_list` | 96 | `0x49e79c` | — | `0x4a3240` | `0x4699f0` | — | `0x46d260` |
+| `GraphwarGameRecorder` | `graphwar_game_recorder` | 56 | `0x49f5b0` | `0x4a19e4` | — | `0x469c70` | `0x46aea0` | — |
+
+**覆盖关系的含义**（这三条是 §22.2 三路证据的**交集**，`tests/` 逐条断言）：
+
+* 25 个 `add` = 全部；
+* 23 个 `get` = 25 − {`GraphwarBanList`, `GraphwarEntityEffectManager`}（只用弱引用取）；
+* 20 个 `wk` = 25 − {`FunctionHistoryRecorder`, `GraphwarLocalPlayerManager`,
+  `GraphwarClientConnectionHandler`, `GraphwarServerConnectionHandler`,
+  `GraphwarGameRecorder`}（只被强持有，从不需要弱句柄）。
+
+**尺寸分布**（arm64 实测，也是指纹）：`72 × 10`、`32 × 4`、其余 11 个型各不相同
+（24 / 48 / 56 / 64 / 80 / 96 / 112 / 120 / 128 / 168 / 296）。
+10 个同为 72 字节的 manager 说明它们结构同形（若干 `Rc` + 小状态），
+`0x128` 级别的大结构**一个都没有**。
+
+### 22.4 68 个函数的块结构 + 装配点
+
+| 方法 | 个数 | arm64 块（首 / 步长 / 尾） | x86 块（首 / 步长 / 尾） |
+|---|---|---|---|
+| `add_module` | 25 | `0x49e520` / `212` / `0x49f9d4` | `0x4694f0` / `160` / `0x46a490` |
+| `get_module` | 23 | `0x49f9d4` / `432` / `0x4a20a4` | `0x46a490` / `368` / `0x46c5a0` |
+| `get_module_wk` | 20 | `0x4a20a4` / `644` / — | `0x46c5a0` / `544` / — |
+
+三块**首尾相接、零空隙**（`add` 的块尾 == `get` 的块首，依此类推），
+两侧都是如此。这条把"68 个孤立地址"变成"一条链"，`tests/graphwar_module_container.rs`
+用它反查整张表（块内任何一位抄错都会立刻红）。
+
+**装配点**（容器自己没有 `init`，25 个 `add_module` 由这些调用者发出）：
+
+| 调用者 | arm64 | x86 | `add_module` 条数 |
+|---|---|---|---|
+| `GraphwarGameClient::new` | `0x409c70` | `0x517690` | **22** |
+| `graphwar_game_server::game_server_thread` | `0x483574` | `0x4500c0` | **20** |
+| `GraphwarBackend::start_*`（两条孪生单态化） | `0x407848` / `0x407b9c` | `0x515590` / `0x5159a0` | 1 + 1（都是 `GraphwarGameRecorder`） |
+
+`22 + 20 − 18（交集）+ 1 = 25`：两个装配点的**并集**是 24 型，
+唯一只由 backend 注册的是 `GraphwarGameRecorder`。
+
+**这与 `docs/16-client.md` §17.1 的关系**：那里记「`0x517690` 装配 **14** 个 manager」，
+是当时按"看起来像 manager 构造"的 `call` 数出来的**下限**；按本节口径
+（`TypeId` + vtable 对齐）实际是 **22** 条。旧数字不删，就地更正：
+**22 才对**，14 是漏数（§17.1 的其余结论不受影响）。
+
+### 22.5 三个方法的逐指令形状
+
+```text
+add_module<M>(&mut self, module: Rc<RefCell<M>>)         x86 0x4694f0
+  incq   (%rsi)                    ; Rc::clone
+  movups <TypeId::of::<M>()>,%xmm0 ; 键：16 字节，来自 .rodata
+  lea    <dyn Any vtable>,%rcx     ; 值：胖指针 (data, vtable)
+  call   hashbrown::HashMap::insert
+  ...    decq/test/decq            ; insert 的返回值（旧值）当场 drop
+  decq   (%rsi)                    ; 放掉入参那份
+
+get_module<M>(&self) -> Option<Rc<RefCell<M>>>           arm64 0x49f9d4
+  ldr    x8,[x0,#0x18] ; cbz       ; RawTable.items == 0 → None（空表快路径）
+  add    x0,x0,#0x20 ; bl hash_one ; RandomState 在 +0x20
+  ...    探测 32 字节实体            ; sub x15,x10,x15,lsl #5
+  ldp    x19,x20,[x15,#-0x10]      ; 命中：Rc<dyn Any> 胖指针
+  incq   (%x19)                    ; Rc::clone
+  ldp    x8,x9,[x20,#0x10]         ; vtable 第 3/4 字 = align / Any::type_id
+  blr    x9                        ; 取回 TypeId::of::<RefCell<M>>() 比较值
+  ...    eor/eor/orr/cbz           ; 与常量比 → 相等给 Rc，不等给 None
+
+get_module_wk<M>(container: &Weak<RefCell<Self>>)        arm64 0x4a20a4
+  ldr    x20,[x0] ; cmn x20,#1 ; b.eq →None   ; Weak::new() 的 ptr==usize::MAX 哨兵
+  ldr    x8,[x20] ; cbz →None                 ; Weak::upgrade: strong == 0 → 死
+  incq   (%x20)                               ; upgrade 成功：strong += 1
+  ldr    x8,[x20,#0x10] ; cmp x8,#0x7fff… ; b.hs →panic_already_mutably_borrowed
+  add    x8,x8,#1 ; str x8,[x20,#0x10]        ; Rc::borrow（← 30:28 的来源）
+  ldr    x9,[x20,#0x30] ; cbz →None           ; items（容器基址 = x20+0x18）
+  add    x0,x20,#0x38 ; bl hash_one           ; RandomState（+0x18+0x20）
+  ...    同上探测 + downcast
+  ...    Rc::downgrade（incq 0x8(%x19)）→ 返还 Ref
+```
+
+**签名级的两条证据**（不是猜）：
+
+1. `get_module` 的 `self` 是**容器值**（`&Self`）——`+0x18` 读 `items`、`+0x20` 是
+   `RandomState`，正是 `HashMap` 的字段序；调用点形如
+   `……borrow().get_module::<X>()`（arm64 `0x39d3e4`，前一指令 `add x0,x21,#0x18`，
+   `x21 = [x20+0x238]` 即某 manager 里那个 `Rc<RefCell<GraphwarModuleContainer>>` 字段）。
+2. `get_module_wk` 的实参是 **`&Weak<RefCell<Self>>`**，不是 `&Rc`：
+   `cmn x20,#1` 就是 `Weak::inner()` 的 `usize::MAX` 哨兵判据。
+   ⇒ 各 manager 手里握的是 `Weak`（打断 container ↔ module 环），
+   取弱句柄时先 `upgrade` 再 `borrow`；这也是它**必须**能 panic 的原因。
+
+### 22.6 为什么 `panic::Location` 在这模块上全哑
+
+* `add_module` / `get_module` **没有任何 panic 点**（无 `unwrap` / 索引 / `expect`），
+  所以 2024 版符号表里它们没有 Location 锚；`fixtures/name_to_addr.tsv` 把
+  68 条全标成「未知」，`docs/02` §20 的 join 也一个都没配上——**这是正确结果**，
+  不是工具坏了，也不是数据残缺。
+  ⚠️ 上一轮曾把 `0x46c5a0` / `0x46c7c0` / `0x46c9e0` / `0x46cc00` 当
+  "`get_module_wk` 的 4 个候选"（TSV 里是 `歧义`）。重扫结果：**20 个**，
+  那 4 个只是前 4 个（块间距 `0x220`），TSV 那 4 条候选**不完整**，不能当"只有 4 个"。
+* `get_module_wk` 有**且仅有 1 个**锚：`src/graphwar_module_container.rs:30:28`。
+  它来自 `RefCell::borrow` 的 `#[track_caller]`——`panic_already_mutably_borrowed`
+  抛错时带的是**调用者**的 `Location`。所以第 30 行第 28 列就是那个 `.borrow()`
+  （`推断`：行号本身无法直接复核，但"`borrow` 在泛型体里"这一点与 20 个单态化
+  共用一个锚**完全一致**）。
+* 于是 x86 侧的定址顺序是：**先用这唯一的锚把 20 个 `get_module_wk` 钉住**，
+  再靠"三块等距 + 尺寸序列 + 装配点调用序"把另两块推出来（§22.2）。
+
+### 22.7 剩下的未知（不装懂）
+
+| 问题 | 档位 | 缺什么 |
+|---|---|---|
+| `graphwar_event_queue::GraphwarEventQueue` 也是 `Rc<RefCell<_>>`，为何**不**注册进容器 | **未知** | 需要找到它的持有者（它没有 `add_module` 单态化，说明挂在别处；容器不解释它） |
+| 原版 `get_module` 返回 `Option` 还是 `Rc` + panic | **观测**（`Option`） | 反汇编里未命中走 `x0 = 0` 直接返回，无 panic 调用 ⇒ 是 `Option`；但"源码是否写了 `expect` 后被优化掉"无法排除 |
+| `add_module` 对"同型重复注册"的意图（替换 vs 覆盖） | **观测**（替换） | `insert` 的返回值被 drop，行为确定；**意图**（是否期望重复）无证据 |
+| 各 manager 内部字段偏移 | **不属于本模块** | 例如 `GameRecorder` 的 `Weak` 字段在 `+0x28`（`Rc` 分配 `+0x40`）、
+`GraphwarRootNode` 的容器在 `+0x238`；这些要写到各自模块去 |
+| 25 个型的 `new` 里各自做了什么 | **不属于本模块** | 本模块只负责"注册/取回"，构造函数在各自文件里 |
+
+### 22.8 落码与测试
+
+* 实现：`src/graphwar_module_container.rs`（3 个方法 + 25 型台账 + 六块几何 + 4 个装配点）。
+* 验收：`tests/graphwar_module_container.rs`，17 条，全部围绕**可复算的结构**：
+  块内等距 / 块间背靠背 / `slot_of` 反查唯一 / 尺寸分布 / 覆盖关系 /
+  三处装配点的并集 = 25 / 容器 48 字节 / 替换语义与 drop / 弱引用生死 /
+  `Weak::new()` 哨兵 / 可变借用时 panic（`30:28`）。
+* ⚠️ 按 `AGENTS.md` §0.2：这些断言是**回归保护**，不是复原证据；
+  本节的证据是 §22.2 那三条复算路径。
+
+### 22.9 就地更正（旧文档里被本节推翻的四条）
+
+按 `AGENTS.md` §0.6「文档不许虚报」——旧文不删，就地标明。
+
+| 旧说法（出处） | 本节结论 | 证据 |
+|---|---|---|
+| 「`graphwar_module_container.rs`（20/1）… 无实现 / `未做`」（§14、§17 表、`docs/149`） | 已实现，档位 `观测` | 本文件 §22 + `src/graphwar_module_container.rs` + `tests/` 17 条 |
+| 「`container+0x128` / `container+0x240` 是**模块槽**（在根节点的模块容器里）」（`docs/09-network.md` §10.4） | 它们是 **`GraphwarLanVBox` 自己的字段**（`docs/144-lobby-fixes.md` §2 已按 `LanVBox.lan_broadcaster` / `.server_broker_handler` 记）；容器**没有槽** | 本文件 §22.1：容器 = `HashMap<TypeId, Rc<dyn Any>>`，`add_module` 的 `self` 偏移 0 就是 `HashMap` |
+| 「`0x517690` 装配 **14** 个 manager」（`docs/16-client.md` §17.1） | **22** 条 `add_module`（14 是漏数；那 14 条只是"看起来像构造 manager"的 `call`） | 本文件 §22.4：x86 `0x517690` 22 条、arm64 `0x409c70` 22 条，调用序逐位相同 |
+| 「`get_module_wk` 的 x86 候选：`0x46c5a0`/`0x46c7c0`/`0x46c9e0`/`0x46cc00`（4 个，`歧义`）」（`fixtures/name_to_addr.tsv`） | **20 个**：`0x46c5a0 + i×0x220`；那 4 个只是前 4 个，TSV 那 4 条**不完整**（不可当"只有 4 个"） | 本文件 §22.2 第 3 步：Location 记录 `0x9586b8` 的引用者恰好 20 个 |
+
+⚠️ 同样地，`docs/02` §8 表里本模块「68 个归属函数 / 311 个引用点」是**旧口径**
+（`fixtures/module_funcs.tsv` 的 panic 串启发式），与本节的 68（= 25+23+20 个**单态化**）
+**数字碰巧相同但含义不同**：前者是"函数体里出现该模块 panic 串"，后者是符号表里
+属于该模块的 `FUNC`。别把两个 68 混用。

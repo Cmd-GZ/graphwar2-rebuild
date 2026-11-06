@@ -467,8 +467,14 @@ mod("graphwar_long_press_animation.rs", "graphwar", ("src/graphwar_long_press_an
     "2.0.60 只剩 draw（0x4d8100）：angle=elapsed×4π、>2π 结束⇒0.5s、黑白两次绘制；9 个常量逐比特")
 mod("graphwar_mode_manager.rs", "graphwar", (), "未做",
     "docs/88 §7：TurnMode/FunctionMode/AxisMode/TimeMode 的取值已从 .rodata 解出；模块本体未复原")
-mod("graphwar_module_container.rs", "graphwar", (), "未做",
-    "docs/110/112 有调用观测；src/ 无实现")
+mod("graphwar_module_container.rs", "graphwar", ("src/graphwar_module_container.rs",), "观测",
+    "docs/02 §22：类型本体 = HashMap<TypeId, Rc<dyn Any>>（48 字节 / 1 字段），"
+    "3 个泛型方法 × 25 型 = 68 个单态化；三块两侧都等距且首尾背靠背"
+    "（arm64 0x49e520/0x49f9d4/0x4a20a4，x86 0x4694f0/0x46a490/0x46c5a0），"
+    "25 型真名 + size + 六个入口全部定名；装配在调用者（GameClient::new 22 / "
+    "game_server_thread 20 / Backend 1×2），容器自己没有 init；"
+    "Location 只有 get_module_wk 一个（30:28，RefCell::borrow 的 track_caller）"
+    "⇒ add/get 零锚是正确结果")
 mod("graphwar_name_manager.rs", "graphwar", (), "未做",
     "docs/112 §0：HashMap<u32, String>、entry 32 字节、NameInfo 判别值 60 已逐位解出；src/ 无实现")
 mod("graphwar_nodes.rs", "graphwar", (), "未做",

@@ -7,14 +7,14 @@
 # tool_version: 1
 # binary_sha256: 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
 # funcstarts_sha256: b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a
-# src_tree_sha256: d43b0997c7fd3dea2c77864030668c9c3bb085ccd76ae785100333eaad8d91ce
+# src_tree_sha256: 55916b9b667a436339e57d8aae03f632296a0d065a4c7d480c03fd49bb48c615
 # funcstarts_n: 13263
 # src_modules: 246
 # loc_structs: 2042
 # attributed_funcs: 527
 # contested_funcs: 86
-# src_files: 46
-# src_fns: 1265
+# src_files: 47
+# src_fns: 1282
 module	scope	orig_funcs	contested	anchors	ours_file	ours_funcs	status	evidence
 graphwar_ad_switch.rs	graphwar	6	0	3	src/graphwar_ad_switch.rs	21	观测	6 条全是 gdext 惰性注册驱动；两个 getter trampoline + owned(+0x18) 已钉死
 graphwar_audio_control.rs	graphwar	7	1	16		0	未做	docs/111：SoundHandler / -15f / -5f / 32767 归一化已还原，但没接进 src/（client/ 是仿制）
@@ -50,7 +50,7 @@ graphwar_local_player_manager.rs	graphwar	3	0	15		0	未做	docs/112 §13 记录�
 graphwar_logger.rs	graphwar	2	0	2		0	未做	docs/112 记录 log 入口的结构观测；src/ 无实现
 graphwar_long_press_animation.rs	graphwar	7	0	7	src/graphwar_long_press_animation.rs	11	观测	2.0.60 只剩 draw（0x4d8100）：angle=elapsed×4π、>2π 结束⇒0.5s、黑白两次绘制；9 个常量逐比特
 graphwar_mode_manager.rs	graphwar	2	0	6		0	未做	docs/88 §7：TurnMode/FunctionMode/AxisMode/TimeMode 的取值已从 .rodata 解出；模块本体未复原
-graphwar_module_container.rs	graphwar	20	0	1		0	未做	docs/110/112 有调用观测；src/ 无实现
+graphwar_module_container.rs	graphwar	20	0	1	src/graphwar_module_container.rs	17	观测	docs/02 §22：类型本体 = HashMap<TypeId, Rc<dyn Any>>（48 字节 / 1 字段），3 个泛型方法 × 25 型 = 68 个单态化；三块两侧都等距且首尾背靠背（arm64 0x49e520/0x49f9d4/0x4a20a4，x86 0x4694f0/0x46a490/0x46c5a0），25 型真名 + size + 六个入口全部定名；装配在调用者（GameClient::new 22 / game_server_thread 20 / Backend 1×2），容器自己没有 init；Location 只有 get_module_wk 一个（30:28，RefCell::borrow 的 track_caller）⇒ add/get 零锚是正确结果
 graphwar_name_manager.rs	graphwar	3	0	3		0	未做	docs/112 §0：HashMap<u32, String>、entry 32 字节、NameInfo 判别值 60 已逐位解出；src/ 无实现
 graphwar_nodes.rs	graphwar	11	0	1		0	未做	docs/112 有结构观测；src/ 无实现
 graphwar_obstacle_manager.rs	graphwar	8	0	14	src/plane.rs	16	逐位	只覆盖掩膜部分：0x4f15b0 光栅化与 is_occupied 与真二进制逐字节 / 300 随机点一致（docs/39/08），摧毁 = 挖 r=0.5 洞；障碍的生成与生命周期未落 src/。⚠ 文件级归属未定：class_probe 给出的本模块锚函数是 0x3c64c0/0x3f00b0/0x3f2480/0x3f27d0，0x4f15b0 不在其中（docs/02 §17.1 记录了这处冲突，不强行圆）
