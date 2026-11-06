@@ -910,3 +910,491 @@ function/mod|function/to_text)\.rs' --include='*.md' --include='*.rs' --include=
 5. 全仓库的 `src/<旧名>.rs` 引用（文档 / `client/**.gd` / 代码注释 / `tools/coverage_matrix.py` 的映射）
    一并改完，并用 §17.5 的两条命令自查过。
 
+
+
+## 18. 权威名字清单：2024-07-30 版未 strip 的符号表（2026-11）
+
+> **本节是全仓库唯一一处「名字有物证」的地方。**
+> §1–§17 的模块名、函数名，全都是从 `.rodata` 里残留的 `src/<mod>.rs` 字面量**反推**的；
+> 本节的名字来自**符号表本身**。
+
+### 18.0 一句话
+
+2026 年的三个版本都被 `strip` 了，只剩 `.dynsym`；但 **2024-07-30 首发周那一版没 strip**，
+带完整 `.symtab`（**13,086** 个 `FUNC`，其中 **1,315** 个名字里含 `graphwar`）。
+它直接给出 **78 个模块、165 个类型、290 个源码级方法名**，并把我们标着「完全未知」的
+**22 个模块解出 21 个真身**（只剩 `graphwar_crash_reporter` 不在里面——见 §18.7 第 2 条）。
+
+三个立刻可用的结论：
+
+| 我们现在写的 | 物证给出的真名 |
+|---|---|
+| 采样器 `0x3c2530`（"语义已知、名字未知"） | `GraphwarPathCalculator::calculate_paths` |
+| 开火结算 `0x3c2bc0`（12 KB，"没有逐条还原"） | `GraphwarShotCalculator::calculate_shot_results` |
+| `SETUPS[21]`（`docs/10` 从数据表反推的 21 关） | `setup_level_0` … `setup_level_20`（21 个，一个不多一个不少） |
+
+
+
+### 18.1 物证、口径、以及这条路能走通的边界
+
+| 项 | 值 | 档位 |
+|---|---|---|
+| 二进制 | `.reference/steam/2024-07-30/libgraphwarrust.so`，sha256 `6eee7bb855d7fc46f6c9e9bb90bb233100b157e10b27c06c8fb9ba07e510db29` | `观测` |
+| 符号表 | `.symtab` 段 `0x08bd88` 字节 / 23,715 条 / `FUNC` **13,086** 条 | `观测` |
+| 名字编码 | 全部是 Rust **legacy** mangling（`_ZN…17h<16hex>E`）；**一个 `_R`（v0）都没有** | `观测` |
+| 名字解出的方式 | `readelf -sW` 取 `FUNC` 行 → `c++filt --format rust` 一次性解 13,086 条 | `观测` |
+| 这些名字对 **2.0.60** 也成立 | 两年间 `src/*.rs` 文件名只差 1 个增 1 个删（§18.7），推断源码改动集中在函数体而非改名 | **`推断`** |
+| 本节的地址 | **一律是 2024 版的 ELF 虚地址，禁止挪用到 2.0.60**（两版 `.text` 差 40 万字节） | — |
+
+**能跨版本复用的只有两样东西**，其余都作废：
+
+1. **名字**（模块 / 类型 / 方法）；
+2. **`src/<file>.rs:LINE:COL`**——它来自 `panic::Location`，是**源码坐标**，与机器码地址无关。
+
+> ⚠️ 这正是本节比 §17 硬的地方：§17 只能靠"`.rodata` 里有没有 `src/graphwar_x.rs` 这个串"
+> 判断模块存在；本节既有符号名、又有 `Location` 源坐标，两条独立证据链可以互相对账（§18.2）。
+
+**符号分类**（后面所有统计都按这个口径）：
+
+| 类 | 定义 | 例 | 数量 |
+|---|---|---|---|
+| `direct` | 名字**以** `graphwarrust::` 开头 | `graphwarrust::graphwar_shot_calculator::GraphwarShotCalculator::calculate_shot_results` | **692** |
+| `impl` | 以 `<…graphwarrust::…>` 开头 = 给游戏类型做的 trait impl | `<graphwarrust::graphwar_plane::GraphwarPlane as …IControl>::draw` | **253** |
+| `generic` | std 的泛型单态化，只是**提到**了游戏类型 | `core::ptr::drop_in_place<…TickEvent…>` | **370** |
+
+`generic` 那 370 条**不是**游戏代码，不能算进度；但它们把 165 个类型名露出来了（§18.3 的「类型」列）。
+`impl` 那 253 条里有一大半是 gdext 样板（`__register_methods`、`__virtual_call`、`class_name`），
+**只有 `IControl::draw` / `INode::ready` / `ILineEdit::process` 这类虚函数才是原版真写过的方法**。
+
+
+
+### 18.2 总量与交叉验证（这两个数字互相独立）
+
+
+#### 总量
+
+* 含 `graphwar` 的 `FUNC` 符号：**1315** 个（direct 692 / impl 253 / generic 370）
+* 模块：**78**；类型：**165**；非样板方法名（去重）：**290**
+* `panic::Location` 结构体：**5015**；其中游戏自己的 `src/*.rs` 文件 **70** 个
+* 能配上 Location 锚的函数：**2747**
+
+**交叉验证**：692 个 direct 函数里 433 个带 `src/*.rs` 锚；其中 **426** 个的「符号名模块段」正好等于某个锚点文件的 stem（98.4%）。不一致的 7 个全是泛型/内联复用（见 §18.6）。
+
+第二段交叉验证值得单独说：`direct` 符号的**名字里的模块段**，与它体内 `panic::Location`
+给出的**源文件 stem**，在 **433 个带锚的函数上一致 426 个（98.4%）**。
+两条证据链互相独立（一条来自 mangling、一条来自 `.data.rel.ro` 的重定位），
+所以本节的模块名可以当**权威**用。**7 个不一致的全是泛型/内联复用**，逐个如下——
+它们不是错误，是「这个函数为多个模块的代码做同一件事」：
+
+| 符号的模块段 | 锚点落在 | 个数 | 解释（`推断`） |
+|---|---|---|---|
+| `graphwar_backend` | `graphwar_game_client.rs` | 4 | `GraphwarBackend` 的 `start_*` / `stop_*` 被 `GraphwarGameClient` 内联 |
+| `graphwar_play_screen_control` | `weak_caller.rs` | 1 | `WeakCaller` 是泛型，闭包落在 `weak_caller.rs:11–17` |
+| `graphwar_target_manager` | `weak_caller.rs` | 1 | 同上 |
+| `graphwar_lan_vbox` | `graphwar_root_node.rs` | 1 | `GraphwarLanVBox` 的 `update_game_list` 被 `root_node` 内联 |
+
+
+
+### 18.3 A. 权威模块清单
+
+
+读法：**「函数」= `.symtab` 里 `graphwarrust::<模块>::…` 的 `FUNC` 条数**（含 `panic_cold_explicit`
+与闭包，是"编译出来的函数个数"，**不是**原版源码里的方法个数）；**「方法」= 去掉样板与闭包后的
+源码级名字个数**。
+**「行范围」= 该模块自己的函数体内 `Location` 锚在 `src/<模块>.rs` 上的最小–最大行 + 锚点个数**
+——这是**原版该文件长度的一个硬下界**（例如 `graphwar_level_manager.rs` 至少 1,888 行）。
+最后两列是 gdext/第三方 trait 的 impl：有 `IControl`/`INode`/`IVBoxContainer` 才是 Godot 类，
+与 §16.2 那 12 个类清单可以逐条对。
+
+
+#### A. 权威模块清单（78 个模块；其中 76 个有自己的函数）
+
+| 模块 | 函数 | 类型 | 方法 | `src/<模块>.rs` 行范围（锚点） | gdext trait impl |
+|---|---|---|---|---|---|
+| `axis_drawer` | 3 | `AxisDrawer` | 0 | 13–31（3） | `IControl`, `GodotClass`, `ImplementsGodotVirtual` |
+| `backtracer` | 1 | — | 1 | — | — |
+| `button_manager` | 2 | `ButtonManager` | 1 | 29–29（1） | — |
+| `effect_drawer` | 6 | `EffectData`, `EffectDrawer` | 3 | 28–469（4） | `IControl`, `GodotClass`, `ImplementsGodotVirtual` |
+| `entity_drawer` | 10 | `EntityDrawer` | 7 | 38–513（10） | `IControl`, `GodotClass`, `ImplementsGodotApi`, `ImplementsGodotVirtual` |
+| `function_button_manager` | 3 | `FunctionButtonManager` | 2 | 28–33（3） | — |
+| `function_drawer` | 7 | `FunctionDrawer` | 7 | 45–45（1） | — |
+| `function_history_recorder` | 4 | `FunctionData`, `FunctionHistoryRecorder` | 2 | 66–78（3） | — |
+| `function_token` | 1 | `FunctionToken` | 1 | — | — |
+| `graphwar_ad_switch` | 3 | `GraphwarAdSwitch` | 0 | 7–45（3） | `ImplementsGodotApi`, `ImplementsGodotVirtual` |
+| `graphwar_audio_control` | 15 | `EffectAudioData`, `FunctionAudioData`, `GraphwarAudioControl` | 8 | 168–472（15） | — |
+| `graphwar_backend` | 20 | `GraphwarBackend` | 19 | 77–352（12） | — |
+| `graphwar_button` | 5 | `GraphwarButton` | 2 | 14–109（3） | `IButton`, `GodotClass`, `ImplementsGodotApi`, `ImplementsGodotExports`, `ImplementsGodotVirtual` |
+| `graphwar_campaign_control` | 4 | `GraphwarCampaignControl` | 4 | 94–94（1） | — |
+| `graphwar_client_connection_handler` | 11 | `ConnectionState`, `GraphwarClientConnectionHandler` | 7 | 65–255（12） | — |
+| `graphwar_color_manager` | 8 | `GraphwarColor`, `GraphwarColorManager` | 5 | 46–134（6） | `Visitor` |
+| `graphwar_computer_player_manager` | 11 | `BotData`, `GraphwarComputerPlayerManager`, `SoldierBotData`, `ThreadData` | 6 | 84–369（28） | — |
+| `graphwar_draw_util` | 2 | `GraphwarDrawUtil` | 2 | 28–33（4） | — |
+| `graphwar_effect_manager` | 3 | `EffectType`, `GraphwarEffectManager` | 2 | 64–104（3） | `Visitor` |
+| `graphwar_entity_effect_manager` | 6 | `GraphwarEntityEffectManager` | 3 | 35–77（3） | — |
+| `graphwar_event` | 2 | 73 个（见下） | 2 | — | `Clone`, `Visitor` |
+| `graphwar_event_handler` | 3 | `GraphwarEventHandler` | 3 | 396–458（4） | — |
+| `graphwar_event_queue` | 2 | `GraphwarEventQueue` | 2 | — | — |
+| `graphwar_function_evolutionator` | 1 | `FunctionResult`, `GraphwarFunctionEvolutionator` | 1 | 306–331（5） | — |
+| `graphwar_function_input` | 15 | `GraphwarFunctionInput` | 12 | 23–413（23） | `ILineEdit`, `GodotClass`, `ImplementsGodotApi`, `ImplementsGodotVirtual` |
+| `graphwar_function_manager` | 10 | `FunctionState`, `GraphwarFunctionData`, `GraphwarFunctionManager` | 8 | 152–213（12） | — |
+| `graphwar_game_client` | 13 | `GraphwarGameClient` | 12 | 51–239（72） | — |
+| `graphwar_game_info` | 0 | `GameInfo` | 0 | — | `Visitor` |
+| `graphwar_game_recorder` | 4 | `EventInfo`, `GraphwarGameRecorder` | 3 | 107–163（6） | `Visitor` |
+| `graphwar_game_server` | 6 | `GameServerData`, `GraphwarGameServer`, `RxTxData` | 5 | 149–356（71） | — |
+| `graphwar_game_state_manager` | 45 | `GraphwarGameResult`, `GraphwarGameState`, `GraphwarGameStateManager` | 30 | 117–1171（202） | `Visitor` |
+| `graphwar_graphics_manager` | 9 | `GraphwarGraphicsManager` | 6 | 38–108（8） | — |
+| `graphwar_lan_broadcaster_v6` | 5 | `GraphwarLanBroadcasterV6`, `LanGameInfoInt` | 5 | 36–138（5） | — |
+| `graphwar_lan_vbox` | 5 | `GraphwarLanVBox` | 1 | 28–135（4） | `IVBoxContainer`, `ImplementsGodotVirtual` |
+| `graphwar_level_generator` | 6 | `GraphwarLevelGenerator` | 4 | 49–261（26） | — |
+| `graphwar_level_manager` | 50 | `GraphwarLevelManager`, `LevelData` | 19 | 121–1888（590） | — |
+| `graphwar_life_manager` | 14 | `GraphwarLifeData`, `GraphwarLifeManager` | 9 | 76–175（12） | — |
+| `graphwar_lobby_control` | 4 | `GraphwarLobbyControl` | 2 | — | — |
+| `graphwar_local_player_manager` | 10 | `GraphwarLocalPlayerManager` | 4 | 76–146（15） | — |
+| `graphwar_logger` | 1 | `GraphwarLogger` | 1 | — | — |
+| `graphwar_long_press_animation` | 5 | `GraphwarLongPressAnimation` | 2 | 10–31（3） | `IControl`, `GodotClass`, `ImplementsGodotVirtual` |
+| `graphwar_mode_manager` | 3 | `AxisMode`, `FunctionMode`, `GraphwarModeManager`, `TimeMode` | 2 | 132–134（3） | `Visitor` |
+| `graphwar_module_container` | 66 | `GraphwarModuleContainer` | 3 | 30–30（19） | — |
+| `graphwar_name_manager` | 7 | `GraphwarNameManager` | 4 | 34–79（4） | — |
+| `graphwar_nodes` | 31 | `GraphwarNodes` | 3 | 8–8（26） | — |
+| `graphwar_obstacle_manager` | 10 | `GraphwarObstacleData`, `GraphwarObstacleManager` | 8 | 89–295（13） | — |
+| `graphwar_path_calculator` | 1 | `GraphwarPathCalculator` | 1 | 45–105（9） | — |
+| `graphwar_plane` | 8 | `GraphwarPlane` | 4 | 33–178（4） | `IControl`, `GodotClass`, `ImplementsGodotApi`, `ImplementsGodotVirtual` |
+| `graphwar_plane_pos_manager` | 9 | `GraphwarPlanePosData`, `GraphwarPlanePosManager` | 6 | 81–144（8） | — |
+| `graphwar_play_screen_control` | 13 | `GraphwarPlayScreenControl` | 12 | 71–625（59） | — |
+| `graphwar_player_config` | 8 | `GraphwarPlayerConfig` | 8 | — | — |
+| `graphwar_player_manager` | 6 | `GraphwarPlayerManager` | 3 | 36–124（4） | — |
+| `graphwar_player_screen_control` | 10 | `GraphwarPlayerScreenControl` | 7 | 118–271（9） | — |
+| `graphwar_rank_manager` | 7 | `GraphwarRankManager` | 4 | 33–83（4） | — |
+| `graphwar_remote_event_handler` | 3 | `GraphwarRemoteEventHandler` | 3 | 134–869（167） | — |
+| `graphwar_replay_control` | 3 | `GraphwarReplayScreenControl`, `ReplayEntryInfo` | 2 | 95–197（8） | — |
+| `graphwar_replay_player` | 9 | `GraphwarReplayPlayer` | 9 | 78–256（18） | — |
+| `graphwar_replay_reader` | 2 | `GraphwarReplayReader` | 2 | — | — |
+| `graphwar_root_node` | 13 | `GraphwarRootNode` | 10 | 66–1060（102） | `INode`, `GodotClass`, `ImplementsGodotApi`, `ImplementsGodotVirtual` |
+| `graphwar_server_broker_handler` | 5 | `GraphwarServerBrokerHandler` | 5 | 75–114（4） | — |
+| `graphwar_server_connection_handler` | 11 | `GraphwarServerConnectionHandler` | 5 | 49–306（14） | — |
+| `graphwar_setup_control` | 18 | `GraphwarSetupControl` | 11 | 46–609（33） | `IControl`, `GodotClass`, `ImplementsGodotApi`, `ImplementsGodotVirtual` |
+| `graphwar_shot_calculator` | 4 | `FunctionResult`, `GraphwarShotCalculator`, `GraphwarShotResult` | 4 | 181–419（12） | — |
+| `graphwar_soldier_manager` | 7 | `GraphwarSoldierManager` | 4 | 35–105（3） | — |
+| `graphwar_stream_buffer` | 2 | `GraphwarStreamBuffer` | 2 | 24–24（1） | — |
+| `graphwar_target_manager` | 4 | `GraphwarTargetManager` | 2 | 35–84（3） | — |
+| `graphwar_team_manager` | 10 | `GraphwarTeam`, `GraphwarTeamData`, `GraphwarTeamManager` | 7 | 63–139（10） | `Visitor` |
+| `graphwar_texture_loader` | 6 | `GraphwarTextureLoader` | 6 | 145–145（1） | — |
+| `graphwar_tick_handler` | 6 | `GraphwarTickHandler` | 5 | 42–125（4） | — |
+| `graphwar_turn_manager` | 18 | `GraphwarTurnData`, `GraphwarTurnManager`, `TurnHolder`, `TurnMode` | 13 | 80–428（45） | `Visitor` |
+| `graphwar_video_writer` | 3 | `GraphwarVideoWriter` | 3 | 60–153（4） | — |
+| `math_function` | 10 | `FunctionRandomizer`, `MathFunction` | 10 | 52–454（8） | — |
+| `obstacle_drawer` | 1 | `ObstacleDrawer` | 1 | 51–128（7） | — |
+| `player_showcase` | 4 | `PlayerShowcase` | 1 | 9–37（5） | `IControl`, `GodotClass`, `ImplementsGodotApi`, `ImplementsGodotVirtual` |
+| `polish_notation_converter` | 1 | `PolishNotationConverter` | 1 | 36–116（2） | — |
+| `server_broker_request_connection` | 1 | `ServerBrokerRequestConnectionClient` | 1 | — | — |
+| `time_probe` | 0 | `TimeProbe` | 0 | — | — |
+| `weak_caller` | 37 | `WeakCaller` | 2 | 11–17（37） | — |
+
+**没有一个自己的函数**（只在 impl / 泛型实参里露面）的模块：`graphwar_game_info`, `time_probe`
+
+##### `graphwar_event` 的 73 个类型（符号表原样）
+
+`AddObstacleEvent`, `AddSoldierRequestEvent`, `AxisModeChangeRequestEvent`, `AxisModeInfoEvent`
+`BotAddedEvent`, `ChangeTeamRequestEvent`, `ChatMessageEvent`, `ChatMessageRequestEvent`
+`ClearObstaclesEvent`, `ColorInfoEvent`, `ConnectedToServerEvent`, `ConnectionRemovedEvent`
+`DestroyObstacleEvent`, `EffectInfoEvent`, `EndOfTurnInfoEvent`, `EntityEffectInfoEvent`
+`EntityRemovedEvent`, `FaceGraphicsInfoEvent`, `FaceGraphicsRequestEvent`, `FunctionActiveEvent`
+`FunctionFireEvent`, `FunctionFireRequestEvent`, `FunctionInfoEvent`, `FunctionModeChangeRequestEvent`
+`FunctionModeInfoEvent`, `FunctionPointsEvent`, `FunctionUpdateRequestEvent`, `FunctionsCalculatedEvent`
+`GameHeartbeatEvent`, `GameInfoEvent`, `GameNameInfoEvent`, `GameNameRequestEvent`
+`GameRemovedEvent`, `GameStartRequestEvent`, `GameStateInfoEvent`, `GraphwarEvent`
+`HatGraphicsInfoEvent`, `HatGraphicsRequestEvent`, `LifeInfoEvent`, `LifeQueuedDeathEvent`
+`LockInfoEvent`, `LockRequestEvent`, `NameInfoEvent`, `NameRequestEvent`
+`NewBotRequestEvent`, `NewConnectionEvent`, `NewConnectionRequestEvent`, `NewPlayerRequestEvent`
+`PlayerInfoEvent`, `PosInfoEvent`, `QueueDestroyObstacleEvent`, `RankInfoEvent`
+`RankRequestEvent`, `RemovePlayerRequestEvent`, `RemoveSoldierRequestEvent`, `RemoveTeamEvent`
+`SkinGraphicsInfoEvent`, `SkinGraphicsRequestEvent`, `SoldierInfoEvent`, `SubscribeEvent`
+`TargetInfoEvent`, `TeamInfoEvent`, `TickEvent`, `TickReplyEvent`
+`TickRequestEvent`, `TimeModeChangeRequestEvent`, `TimeModeInfoEvent`, `TurnCountInfoEvent`
+`TurnInfoEvent`, `TurnLimitInfoEvent`, `TurnModeChangeRequestEvent`, `TurnModeInfoEvent`
+`VersionInfoEvent`
+
+> **和 §16.2 的 12 个类对账**：符号表里带 Godot 基类 impl 的正好是
+> `AxisDrawer` / `EntityDrawer` / `EffectDrawer` / `PlayerShowcase` /
+> `GraphwarButton` / `GraphwarFunctionInput` / `GraphwarLanVBox` / `GraphwarLongPressAnimation` /
+> `GraphwarPlane` / `GraphwarRootNode` / `GraphwarSetupControl` —— **11 个**。
+> 第 12 个 `GraphwarAdSwitch` 在符号表里只剩 `ImplementsGodotApi` / `ImplementsGodotVirtual`，
+> `GodotClass::class_name` 没被编出来（没用到就被消掉了）⇒ §16.2 的 12 个**没有被推翻**，
+> 只是符号表这一侧只能看到 11 个（`观测` + 已知的消解规则）。
+
+
+### 18.4 B. 与我们现有认知对照
+
+
+> 口径：「我们记录」= `docs/02` §17 的两张表 ∪ `docs/coverage-matrix.tsv` 的模块列
+> （后者多一个 `weak_caller`，见下面「分类要改的」）。
+
+
+#### 与现有认知对照
+
+* 符号表（`graphwarrust::` 直系函数）：**76** 个模块
+* 只靠泛型实参/impl 露面的模块：**2** 个（`graphwar_game_info`, `time_probe`）
+* `docs/02` §17 记录：**70** 个；`docs/coverage-matrix.tsv`：**71** 个；其中标 `未知` 的 **22** 个
+
+##### 对得上的（70 个，名字逐一相同）
+
+`axis_drawer`, `button_manager`, `effect_drawer`, `entity_drawer`, `function_button_manager`, `function_drawer`, `function_history_recorder`, `graphwar_ad_switch`, `graphwar_audio_control`, `graphwar_backend`, `graphwar_button`, `graphwar_campaign_control`, `graphwar_client_connection_handler`, `graphwar_color_manager`, `graphwar_computer_player_manager`, `graphwar_draw_util`, `graphwar_effect_manager`, `graphwar_entity_effect_manager`, `graphwar_event`, `graphwar_event_handler`, `graphwar_function_evolutionator`, `graphwar_function_input`, `graphwar_function_manager`, `graphwar_game_client`, `graphwar_game_recorder`, `graphwar_game_server`, `graphwar_game_state_manager`, `graphwar_graphics_manager`, `graphwar_lan_broadcaster_v6`, `graphwar_lan_vbox`, `graphwar_level_generator`, `graphwar_level_manager`, `graphwar_life_manager`, `graphwar_lobby_control`, `graphwar_local_player_manager`, `graphwar_logger`, `graphwar_long_press_animation`, `graphwar_mode_manager`, `graphwar_module_container`, `graphwar_name_manager`, `graphwar_nodes`, `graphwar_obstacle_manager`, `graphwar_path_calculator`, `graphwar_plane`, `graphwar_plane_pos_manager`, `graphwar_play_screen_control`, `graphwar_player_manager`, `graphwar_player_screen_control`, `graphwar_rank_manager`, `graphwar_remote_event_handler`, `graphwar_replay_control`, `graphwar_replay_player`, `graphwar_root_node`, `graphwar_server_broker_handler`, `graphwar_server_connection_handler`, `graphwar_setup_control`, `graphwar_shot_calculator`, `graphwar_soldier_manager`, `graphwar_target_manager`, `graphwar_team_manager`, `graphwar_texture_loader`, `graphwar_tick_handler`, `graphwar_turn_manager`, `graphwar_video_writer`, `math_function`, `obstacle_drawer`, `player_showcase`, `polish_notation_converter`, `server_broker_request_connection`, `weak_caller`
+
+##### 我们记录了、2024 版符号表里没有（1 个）
+
+`graphwar_crash_reporter`
+
+##### 新发现的模块（6 个，我们完全没记录）
+
+* `graphwar_player_config`（8 个函数）类型 `GraphwarPlayerConfig`；方法 `load`, `lock`, `new`, `save`, `set_face`, `set_hat`, `set_skin`, `unlock`
+* `graphwar_event_queue`（2 个函数）类型 `GraphwarEventQueue`；方法 `add_event`, `send_buffer`
+* `graphwar_replay_reader`（2 个函数）类型 `GraphwarReplayReader`；方法 `load_game`, `load_games`
+* `graphwar_stream_buffer`（2 个函数）类型 `GraphwarStreamBuffer`；方法 `read_event`, `write_event`
+* `backtracer`（1 个函数）类型 —；方法 `handle_interrupt`
+* `function_token`（1 个函数）类型 `FunctionToken`；方法 `new`
+
+##### 分类要改的
+
+* `weak_caller` 在 `coverage-matrix.tsv` 里被记成 `scope=dep`（第三方依赖），但符号路径是 `graphwarrust::weak_caller::…` ⇒ 它**在 graphwarrust crate 里**，是本仓库自己的一个模块（37 个函数）。内容仍是 `WeakCaller` 这类通用工具，但它不是外部 crate。
+
+##### 22 个「完全未知」模块，这次解出真名的
+
+| 模块 | 符号表里的真身 | 函数数 | 方法（节选） |
+|---|---|---|---|
+| `button_manager` | `ButtonManager` | 2 | `find_buttons`, `new` |
+| `function_button_manager` | `FunctionButtonManager` | 3 | `find_buttons`, `new` |
+| `function_drawer` | `FunctionDrawer` | 7 | `clear_functions`, `draw`, `remove_function`, `set_z_index`, `update_function`, `update_function_fade`, `update_transform` |
+| `function_history_recorder` | `FunctionHistoryRecorder` | 4 | `handle_function_fire_event`, `new`, `subscribe_to_events_event_handler` |
+| `graphwar_button` | `GraphwarButton` | 5 | `button_down`, `pressed`, `process`, `ready` |
+| `graphwar_computer_player_manager` | `GraphwarComputerPlayerManager` | 11 | `add_computer_player`, `computer_function_thread`, `handle_entity_removed_event`, `handle_tick`, `handle_turn_info_event`, `new`, `subscribe_to_events_event_handler` |
+| `graphwar_crash_reporter` | **符号表里完全没有** | 0 | — |
+| `graphwar_effect_manager` | `GraphwarEffectManager` | 3 | `deserialize`, `new`, `subscribe_to_events_event_handler`, `tick`, `visit_str` |
+| `graphwar_entity_effect_manager` | `GraphwarEntityEffectManager` | 6 | `handle_entity_removed_event`, `new`, `send_all_info_events`, `subscribe_to_events_event_handler` |
+| `graphwar_game_recorder` | `GraphwarGameRecorder` | 4 | `new`, `save_event`, `save_game`, `subscribe_to_events` |
+| `graphwar_graphics_manager` | `GraphwarGraphicsManager` | 9 | `handle_entity_removed_event`, `new`, `send_all_info_events`, `set_face_graphics`, `set_hat_graphics`, `set_skin_graphics`, `subscribe_to_events_event_handler` |
+| `graphwar_lan_vbox` | `GraphwarLanVBox` | 5 | `get_join_address`, `process`, `update_game_list` |
+| `graphwar_long_press_animation` | `GraphwarLongPressAnimation` | 5 | `draw`, `process`, `ready`, `start`, `stop` |
+| `graphwar_player_manager` | `GraphwarPlayerManager` | 6 | `handle_entity_removed_event`, `new`, `send_all_info_events`, `subscribe_to_events_event_handler` |
+| `graphwar_player_screen_control` | `GraphwarPlayerScreenControl` | 10 | `face_button_pressed`, `hat_button_pressed`, `insert_button_in_vbox`, `load_faces`, `load_hats`, `load_skins`, `skin_button_pressed`, `unlock` … |
+| `graphwar_soldier_manager` | `GraphwarSoldierManager` | 7 | `get_soldiers_from_owner`, `handle_entity_removed_event`, `new`, `send_all_info_events`, `subscribe_to_events_event_handler` |
+| `graphwar_team_manager` | `GraphwarTeamManager` | 10 | `add_to_team`, `deserialize`, `get_most_empty_team`, `get_team`, `handle_entity_removed_event`, `new`, `remove_from_team`, `send_all_info_events` … |
+| `graphwar_texture_loader` | `GraphwarTextureLoader` | 6 | `get_chat_texture`, `get_face_texture`, `get_hat_texture`, `get_skin_texture`, `get_time_mode_texture`, `new` |
+| `graphwar_video_writer` | `GraphwarVideoWriter` | 3 | `add_frame`, `new`, `write_video` |
+| `obstacle_drawer` | `ObstacleDrawer` | 1 | `update` |
+| `player_showcase` | `PlayerShowcase` | 4 | `draw`, `on_text_change`, `process`, `ready` |
+| `server_broker_request_connection` | `ServerBrokerRequestConnectionClient` | 1 | `process` |
+
+**22 个未知模块里，21 个在符号表里有自己的函数。**
+
+**怎么读这张表**：22 个「未知」里 21 个解出来了，但这**不等于**它们被复原了——
+本节给的是**名字**，不是**行为**。按 `AGENTS.md` §0 的口径，
+`docs/coverage-matrix.tsv` 里它们的 `status` 仍然应该是「未做」，
+只是「未知」这一档（= 连名字都没有）现在可以说**已经清零**（`graphwar_crash_reporter` 除外）。
+
+
+
+### 18.5 C. 方法名清单（原版源码级函数名）
+
+
+> 这是本节最有用的部分：它把「`0x516510` 语义未知」换成
+> 「`GraphwarTurnManager::next_turn`」这种能直接去找文档、写测试的名字。
+> `†` = 只有 `{{closure}}` 符号、外层本体被内联掉的名字（`setup_level_0`…`_4` 就是这种，
+> 外层进了 `setup_level` 的分派）。
+
+
+#### C. 方法名（原版源码级函数名）
+
+> `panic_cold_explicit` / `__register_methods` / `__virtual_call` / `__inner_init` /
+> `class_name` / `__register_exports` / serde 的 `expecting` 是 rustc 的冷段 + gdext/serde
+> 的样板，**不是**原版源码里的函数名，已剔除。`{{closure}}` 也算不到方法名上。
+
+| 模块 | 方法名（按所属类型分组） |
+|---|---|
+| `axis_drawer` | `AxisDrawer`: `draw` |
+| `backtracer` | `_`: `handle_interrupt` |
+| `button_manager` | `ButtonManager`: `find_buttons`<br>`ButtonManager`: `new`† |
+| `effect_drawer` | `EffectData`: `new`<br>`EffectDrawer`: `draw`, `effect_info_event`, `process`, `ready`, `step_effect` |
+| `entity_drawer` | `EntityDrawer`: `draw`, `draw_offset_triangle`, `get_entity_face_sprite`, `get_entity_hat_sprite`, `get_entity_name_label`, `get_entity_skin_sprite`, `init`, `process`, `ready`, `update_name_label`, `update_sprite` |
+| `function_button_manager` | `FunctionButtonManager`: `find_buttons`, `new` |
+| `function_drawer` | `FunctionDrawer`: `clear_functions`, `draw`, `remove_function`, `set_z_index`, `update_function`, `update_function_fade`, `update_transform` |
+| `function_history_recorder` | `FunctionHistoryRecorder`: `handle_function_fire_event`, `new`<br>`FunctionHistoryRecorder`: `subscribe_to_events_event_handler`† |
+| `function_token` | `FunctionToken`: `new` |
+| `graphwar_audio_control` | `EffectAudioData`: `new`<br>`GraphwarAudioControl`: `effect_info_event`, `entity_removed_event`, `game_state_event`, `new`, `process`, `set_muted`, `soldier_info_event`, `update_muted`<br>`GraphwarAudioControl`: `subscribe_to_events`† |
+| `graphwar_backend` | `GraphwarBackend`: `button_pressed`, `get_next_clip_checkpoint`, `new`, `process`, `resubscribe_to_events`, `set_game_name`, `setup_level`, `start_client_to_local_server`, `start_client_to_remote_server`, `start_client_to_replay`, `start_lan_broadcaster`, `start_server`, `start_server_broker_handler`, `stop_client`, `stop_lan_broadcaster`, `stop_server`, `stop_server_broker_handler`, `subscribe_to_event`, `subscribe_to_event_with_id` |
+| `graphwar_button` | `GraphwarButton`: `button_down`, `pressed`, `process`, `ready` |
+| `graphwar_campaign_control` | `GraphwarCampaignControl`: `get_current_level`, `get_level_as_int`, `save_current_level`, `show_hide_campaign_levels` |
+| `graphwar_client_connection_handler` | `GraphwarClientConnectionHandler`: `connect`, `disconnect`, `forward_event`, `get_connection_state`, `handle_connected_to_server`, `new`, `tick`<br>`GraphwarClientConnectionHandler`: `subscribe_to_events_event_handler`† |
+| `graphwar_color_manager` | `GraphwarColor`: `serialize`<br>`GraphwarColorManager`: `add_team_color`, `handle_entity_removed_event`, `init_team_colors`, `new`, `send_all_info_events`<br>`GraphwarColorManager`: `subscribe_to_events_event_handler`† |
+| `graphwar_computer_player_manager` | `GraphwarComputerPlayerManager`: `add_computer_player`, `computer_function_thread`, `handle_entity_removed_event`, `handle_tick`, `handle_turn_info_event`, `new`<br>`GraphwarComputerPlayerManager`: `subscribe_to_events_event_handler`† |
+| `graphwar_draw_util` | `GraphwarDrawUtil`: `get_team_overview`, `set_plane_transform` |
+| `graphwar_effect_manager` | `EffectType`: `deserialize`, `visit_str`<br>`GraphwarEffectManager`: `new`, `tick`<br>`GraphwarEffectManager`: `subscribe_to_events_event_handler`† |
+| `graphwar_entity_effect_manager` | `GraphwarEntityEffectManager`: `handle_entity_removed_event`, `new`, `send_all_info_events`<br>`GraphwarEntityEffectManager`: `subscribe_to_events_event_handler`† |
+| `graphwar_event` | `EffectInfoEvent`: `visit_str`<br>`FunctionInfoEvent`: `clone`<br>`GraphwarEvent`: `clone`, `deserialize`, `serialize`, `visit_str`<br>`VersionInfoEvent`: `clone` |
+| `graphwar_event_handler` | `GraphwarEventHandler`: `get_event_discriminant`, `process_events`, `subscribe_to_event` |
+| `graphwar_event_queue` | `GraphwarEventQueue`: `add_event`, `send_buffer` |
+| `graphwar_function_evolutionator` | `GraphwarFunctionEvolutionator`: `score_function` |
+| `graphwar_function_input` | `GraphwarFunctionInput`: `clear`, `delete_chars_at_caret`, `delete_token_after_caret`, `delete_token_at_caret`, `force_update_cb`, `insert_text_at_caret`, `move_caret_end`, `move_caret_home`, `move_caret_left`, `move_caret_right`, `process`, `ready`, `substr`, `update_sizes` |
+| `graphwar_function_manager` | `GraphwarFunctionData`: `get_function`, `get_function_fade_on_tick`, `set_function`<br>`GraphwarFunctionManager`: `get_active_functions_on_tick`, `get_active_functions_on_tick_no_fade`, `get_function`, `get_function_text`, `set_function`, `set_function_active_tick`, `set_function_points` |
+| `graphwar_game_client` | `GraphwarGameClient`: `connect`, `disconnect`, `fire_function`, `get_module`, `new`, `process`, `request_add_bot`, `request_lock_change`, `send_chat_message`, `tick`, `update_function`, `wait_for_players` |
+| `graphwar_game_info` | `GameInfo`: `serialize`, `visit_str` |
+| `graphwar_game_recorder` | `GraphwarGameRecorder`: `new`, `save_event`, `save_game`<br>`GraphwarGameRecorder`: `subscribe_to_events`† |
+| `graphwar_game_server` | `GraphwarGameServer`: `get_server_port`, `new`, `start`, `stop`<br>`_`: `game_server_thread`<br>`GameServerData`: `subscribe_to_room_info_updates`† |
+| `graphwar_game_state_manager` | `GraphwarGameState`: `deserialize`, `serialize`, `visit_str`<br>`GraphwarGameStateManager`: `add_soldier_to_player`, `add_target`, `execute_results`, `fire_functions`, `get_alive_teams`, `handle_chat_message`, `handle_connection_removed_event`, `handle_entity_removed_event`, `handle_function_points`, `handle_graphics_info`, `handle_new_connection_event`, `handle_tick`, `new`, `remove_all_players`, `remove_soldier_from_player`, `request_axis_mode_change`, `request_change_team`, `request_fire_function`, `request_function_mode_change`, `request_new_player`, `request_time_mode_change`, `request_turn_mode_change`, `request_update_function`, `set_all_alive`, `set_name`, `set_player_num_soldiers`, `set_state`, `set_turn_limit`, `setup_and_start_game`, `start_game`<br>`GraphwarGameStateManager`: `queue_end_turn_trigger`†<br>`GraphwarGameStateManager`: `subscribe_to_events_event_handler`† |
+| `graphwar_graphics_manager` | `GraphwarGraphicsManager`: `handle_entity_removed_event`, `new`, `send_all_info_events`, `set_face_graphics`, `set_hat_graphics`, `set_skin_graphics`<br>`GraphwarGraphicsManager`: `subscribe_to_events_event_handler`† |
+| `graphwar_lan_broadcaster_v6` | `GraphwarLanBroadcasterV6`: `get_game_info`, `new`, `process`, `set_room_info`, `start` |
+| `graphwar_lan_vbox` | `GraphwarLanVBox`: `get_join_address`, `process`<br>`GraphwarLanVBox`: `update_game_list`† |
+| `graphwar_level_generator` | `GraphwarLevelGenerator`: `generate_level`, `generate_level_custom`, `generate_terrain`, `place_entity` |
+| `graphwar_level_manager` | `GraphwarLevelManager`: `get_level_data`, `new`, `setup_level`, `setup_level_10`, `setup_level_11`, `setup_level_12`, `setup_level_13`, `setup_level_14`, `setup_level_15`, `setup_level_16`, `setup_level_17`, `setup_level_18`, `setup_level_19`, `setup_level_20`, `setup_level_5`, `setup_level_6`, `setup_level_7`, `setup_level_8`, `setup_level_9`<br>`GraphwarLevelManager`: `setup_level_0`†<br>`GraphwarLevelManager`: `setup_level_1`†<br>`GraphwarLevelManager`: `setup_level_2`†<br>`GraphwarLevelManager`: `setup_level_3`†<br>`GraphwarLevelManager`: `setup_level_4`† |
+| `graphwar_life_manager` | `GraphwarLifeManager`: `get_alive`, `get_all_entities`, `get_death_tick`, `handle_entity_removed_event`, `handle_tick_event`, `new`, `send_all_info_events`, `set_alive`, `set_queued_death`<br>`GraphwarLifeManager`: `subscribe_to_events_event_handler`† |
+| `graphwar_lobby_control` | `GraphwarLobbyControl`: `show_global_button`, `show_local_button`<br>`GraphwarLobbyControl`: `new`† |
+| `graphwar_local_player_manager` | `GraphwarLocalPlayerManager`: `handle_connected_to_server`, `handle_entity_removed_event`, `handle_player_info`, `new`<br>`GraphwarLocalPlayerManager`: `subscribe_to_events_event_handler`† |
+| `graphwar_logger` | `GraphwarLogger`: `log` |
+| `graphwar_long_press_animation` | `GraphwarLongPressAnimation`: `draw`, `process`, `ready`, `start`, `stop` |
+| `graphwar_mode_manager` | `AxisMode`: `deserialize`, `visit_str`<br>`FunctionMode`: `deserialize`<br>`GraphwarModeManager`: `new`, `send_all_info_events`<br>`TimeMode`: `deserialize`, `serialize`, `visit_str`<br>`GraphwarModeManager`: `subscribe_to_events_event_handler`† |
+| `graphwar_module_container` | `GraphwarModuleContainer`: `add_module`, `get_module`, `get_module_wk` |
+| `graphwar_name_manager` | `GraphwarNameManager`: `handle_entity_removed_event`, `new`, `send_all_info_events`, `set_name`<br>`GraphwarNameManager`: `subscribe_to_events_event_handler`† |
+| `graphwar_nodes` | `GraphwarNodes`: `get_node_by_name`, `get_node_by_name_rec`, `get_node_by_type_rec` |
+| `graphwar_obstacle_manager` | `GraphwarObstacleData`: `draw_circle`<br>`GraphwarObstacleManager`: `add_obstacle`, `clear_obstacles`, `destroy_obstacle`, `handle_tick_event`, `is_obstacle`, `new`, `queue_destroy_obstacle` |
+| `graphwar_path_calculator` | `GraphwarPathCalculator`: `calculate_paths` |
+| `graphwar_plane` | `GraphwarPlane`: `clear_state`, `draw`, `init`, `obstacle_partial_update_event`, `on_resized`, `process`, `ready`, `update_entities` |
+| `graphwar_plane_pos_manager` | `GraphwarPlanePosManager`: `get_all_positions`, `get_position`, `handle_entity_removed_event`, `new`, `send_all_info_events`, `set_position`<br>`GraphwarPlanePosManager`: `subscribe_to_events_event_handler`† |
+| `graphwar_play_screen_control` | `GraphwarPlayScreenControl`: `add_player_victory_icon`, `add_tie_icon`, `append_debug_text`, `append_function_entry`, `clear_state`, `disable_replay_buttons`, `enable_replay_buttons`, `new`, `process`, `update_end_game_pop_up`, `update_names_button_texture`, `update_view_function_button_texture` |
+| `graphwar_player_config` | `GraphwarPlayerConfig`: `load`, `lock`, `new`, `save`, `set_face`, `set_hat`, `set_skin`, `unlock` |
+| `graphwar_player_manager` | `GraphwarPlayerManager`: `handle_entity_removed_event`, `new`, `send_all_info_events`<br>`GraphwarPlayerManager`: `subscribe_to_events_event_handler`† |
+| `graphwar_player_screen_control` | `GraphwarPlayerScreenControl`: `face_button_pressed`, `hat_button_pressed`, `insert_button_in_vbox`, `skin_button_pressed`, `unlock`, `update_buttons_background`, `update_buttons_background_in_vbox`<br>`GraphwarPlayerScreenControl`: `load_faces`†<br>`GraphwarPlayerScreenControl`: `load_hats`†<br>`GraphwarPlayerScreenControl`: `load_skins`† |
+| `graphwar_rank_manager` | `GraphwarRankManager`: `handle_entity_removed_event`, `new`, `send_all_info_events`, `set_rank`<br>`GraphwarRankManager`: `subscribe_to_events_event_handler`† |
+| `graphwar_remote_event_handler` | `GraphwarRemoteEventHandler`: `handle_client_remote_event`, `handle_server_remote_event`, `is_leader` |
+| `graphwar_replay_control` | `GraphwarReplayScreenControl`: `process`, `update`<br>`GraphwarReplayScreenControl`: `update_replay_list`† |
+| `graphwar_replay_player` | `GraphwarReplayPlayer`: `go_to_first_checkpoint`, `go_to_next_checkpoint`, `go_to_previous_checkpoint`, `inject_events`, `is_paused`, `new`, `pause`, `process`, `toggle_pause` |
+| `graphwar_replay_reader` | `GraphwarReplayReader`: `load_game`, `load_games` |
+| `graphwar_root_node` | `GraphwarRootNode`: `check_save_level`, `get_media_storage_path`, `init`, `log`, `process`, `process_button_pressed`, `process_replay_button_pressed`, `purchase_confirmed`, `purchase_denied`, `purchase_pending`, `ready`, `show_pop_up`, `show_screen` |
+| `graphwar_server_broker_handler` | `GraphwarServerBrokerHandler`: `get_game_info`, `new`, `process`, `process_events`, `stop` |
+| `graphwar_server_connection_handler` | `GraphwarServerConnectionHandler`: `forward_connection_specific_event`, `forward_event`, `handle_connection_removed_event`, `new`, `tick`<br>`GraphwarServerConnectionHandler`: `subscribe_to_events_event_handler`† |
+| `graphwar_setup_control` | `GraphwarSetupControl`: `clear_state`, `connect_entry_buttons`, `enable_play_chat_button`, `force_title_update`, `init`, `is_leader_local`, `on_chat_submitted`, `on_text_change`, `on_visibility_change`, `process`, `ready`, `update_name`, `update_rank`, `update_soldiers` |
+| `graphwar_shot_calculator` | `GraphwarShotCalculator`: `calculate_corrected_function`, `calculate_function`, `calculate_function_offset_str`, `calculate_shot_results` |
+| `graphwar_soldier_manager` | `GraphwarSoldierManager`: `get_soldiers_from_owner`, `handle_entity_removed_event`, `new`, `send_all_info_events`<br>`GraphwarSoldierManager`: `subscribe_to_events_event_handler`† |
+| `graphwar_stream_buffer` | `GraphwarStreamBuffer`: `read_event`, `write_event` |
+| `graphwar_target_manager` | `GraphwarTargetManager`: `handle_entity_removed_event`, `new`<br>`GraphwarTargetManager`: `subscribe_to_events_event_handler`† |
+| `graphwar_team_manager` | `GraphwarTeam`: `deserialize`<br>`GraphwarTeamManager`: `add_to_team`, `get_most_empty_team`, `get_team`, `handle_entity_removed_event`, `new`, `remove_from_team`, `send_all_info_events`<br>`GraphwarTeamManager`: `subscribe_to_events_event_handler`† |
+| `graphwar_texture_loader` | `GraphwarTextureLoader`: `get_chat_texture`, `get_face_texture`, `get_hat_texture`, `get_skin_texture`, `get_time_mode_texture`, `new` |
+| `graphwar_tick_handler` | `GraphwarTickHandler`: `get_fractional_tick`, `get_time_to_tick`, `handle_connected_to_server_event`, `new`, `tick` |
+| `graphwar_turn_manager` | `GraphwarTurnData`: `get_current_turn_players`, `get_current_turn_soldiers`<br>`GraphwarTurnManager`: `get_current_turn_players`, `get_current_turn_soldiers`, `get_end_of_turn_tick`, `get_turn_mode`, `handle_entity_removed_event`, `initialize_turns`, `is_on_turn`, `new`, `next_turn`, `send_all_info_events`, `set_end_of_turn_tick`, `set_turn`, `set_turn_mode`<br>`TurnMode`: `deserialize`<br>`GraphwarTurnManager`: `subscribe_to_events_event_handler`† |
+| `graphwar_video_writer` | `GraphwarVideoWriter`: `add_frame`, `new`, `write_video` |
+| `math_function` | `FunctionRandomizer`: `adjust_tokens`, `create_random_region`, `mutate_fine_tune`, `mutate_function`<br>`MathFunction`: `evaluate_recursive`, `evaluate_token`, `new`, `remove_offset`, `simplify_recursive`, `to_string_recursive` |
+| `obstacle_drawer` | `ObstacleDrawer`: `update` |
+| `player_showcase` | `PlayerShowcase`: `draw`, `on_text_change`, `process`, `ready` |
+| `polish_notation_converter` | `PolishNotationConverter`: `reorder_recursive` |
+| `server_broker_request_connection` | `ServerBrokerRequestConnectionClient`: `process` |
+| `weak_caller` | `WeakCaller`: `call`, `call_0` |
+
+<sub>† 只有 `{{closure}}` 符号、外层本体被内联掉的名字——名字本身仍是存在的证据。</sub>
+### 18.6 「符号名 ↔ `src/文件.rs:行:列`」的桥（最硬的一条证据）
+
+`panic::Location` 在 `.data.rel.ro` 里是 24 字节：`{file.ptr, file.len, line:u32, col:u32}`。
+槽位 0 被 `R_X86_64_RELATIVE` 占着（addend 就是串地址），**槽位 +8 就是 len**——
+按 len 取出来的字节必须全 ASCII 且以 `.rs` 结尾，这就是自校验。
+本次在 2024 版上解出 **5,015 个 Location 结构体**，覆盖 **70 个 `src/*.rs`**（与 §16.2/§17 的 70 个吻合）。
+
+把「函数体里 `lea` 到哪个 Location」与「`.symtab` 里的符号名」一交叉，就得到下面这种一行行可核对的桥：
+
+| 符号（原版真名） | `panic::Location` 锚点 | 函数字节数 |
+|---|---|---|
+| `GraphwarPathCalculator::calculate_paths` | `graphwar_path_calculator.rs:45:108`, `49:38`, `59:108`, `60:113`, `65:45`, `66:48`, `86:37`, `86:70`, `105:71`（9 个） | 5,351 |
+| `GraphwarShotCalculator::calculate_shot_results` | `graphwar_shot_calculator.rs:181:59` … `419:47`（12 个）+ `graphwar_obstacle_manager.rs:89:28` | 10,726 |
+| `MathFunction::new` | `math_function.rs:75:10` | 3,177 |
+| `MathFunction::to_string_recursive` | `math_function.rs:285:28` | 5,454 |
+| `FunctionRandomizer::mutate_fine_tune` | `math_function.rs:452:44`, `454:44` | 2,322 |
+| `GraphwarClientConnectionHandler::forward_event` | `graphwar_client_connection_handler.rs:255:67` | 425 |
+
+> **这张表的最强之处是它和旧结论对得上。**
+> `docs/03` 早就从 **2026 版**里读出「解析器 `0x4ed670` 的 panic 锚是 `math_function.rs:75`」，
+> `docs/119` §4.6 读出「`0x4ec160` 的 panic 分支引 `math_function.rs:285:28`」。
+> 现在 2024 版的符号表把这两个函数的**名字**给出来了：
+> `MathFunction::new` 对应 `:75:10`，`MathFunction::to_string_recursive` 对应 `:285:28`。
+> **两条完全独立的路径（2026 反汇编 vs 2024 符号表）落到同一对 `(文件, 行)` 上**
+> ⇒ ① 2024 与 2026 的源码布局在这两个函数上**没变**（`观测`）；
+> ⇒ ② 本节这套解析方法自身是对的（不是自洽，是交叉命中）。
+
+**每个模块的源文件行跨度**（已并入 §18.3 的「行范围」列）用来做还原的**下限检查**：
+把我们写的 `graphwar_root_node.rs` 和"原版至少 1,060 行、`GraphwarRootNode` 有 10 个方法"对一下，
+就知道还差多少。最长的几个文件：`graphwar_level_manager.rs` ≥ **1,888** 行、
+`graphwar_root_node.rs` ≥ **1,060**、`graphwar_game_state_manager.rs` ≥ **1,171**、
+`graphwar_remote_event_handler.rs` ≥ **869**、`graphwar_setup_control.rs` ≥ **609**、
+`graphwar_play_screen_control.rs` ≥ **625**。
+⚠ 这只是**下界**：没有 panic 的代码不会留下 Location，所以真实行数只会更多（`推断`）。
+
+
+
+### 18.7 本轮顺带确证 / 纠正的 10 件事
+
+| # | 结论 | 依据 | 档位 | 影响 |
+|---|---|---|---|---|
+| 1 | `weak_caller` **不是第三方依赖**，是 `graphwarrust` crate 自己的模块（`graphwarrust::weak_caller::WeakCaller`，37 个函数、2 个方法 `call`/`call_0`、锚 `weak_caller.rs:11–17`） | 符号路径 | `观测` | `docs/coverage-matrix.tsv` 把它记成 `scope=dep`，应改成 `graphwar` 域的普通模块（内容仍是泛型工具，但归属变了） |
+| 2 | `graphwar_crash_reporter` **在 2024 版里完全不存在**：0 个符号、`src/graphwar_crash_reporter.rs` 串 0 处 | 全 `FUNC` 名字搜索 + `strings` | `观测` | 它在 2026 版有 **8 处**同名串 ⇒ 该模块是**两年间新增的**（`推断`：无法排除"2024 有但被整模块内联掉"，但连一个符号都没有，可能性很低） |
+| 3 | `graphwar_stream_buffer`（`read_event` / `write_event`）**2024 版有**，而 2026 版的 `src/*.rs` 串里没有它 | 符号表 + 两版 `strings` 差集 | `观测`/`推断` | 可能被删或并入 `graphwar_event_queue`（`推断`，缺 2026 侧证据） |
+| 4 | `GameInfo` 在**独立的** `graphwar_game_info` 模块（`GameInfo` 有 `serialize` impl） | 符号路径 `graphwarrust::graphwar_game_info::GameInfo` | `观测` | §17.1 把 `GameInfo` 记在 `graphwar_event.rs` 名下，应改为 `graphwar_game_info.rs` |
+| 5 | `FunctionRandomizer`（`adjust_tokens` / `mutate_function` / `mutate_fine_tune` / `create_random_region`）在 **`math_function` 模块**里，锚 `math_function.rs:452:44` | 符号路径 + Location | `观测` | `docs/AI`/§17.2 把"token 级随机化"记在 `graphwar_function_evolutionator` 下；实际那个模块只有 `score_function` 一个方法（1 个 direct 函数）。分工要重划 |
+| 6 | `graphwar_level_manager` 有 `setup_level_0` … `setup_level_20`，**正好 21 个** | 符号名（`_0`…`_4` 只剩闭包，本体被内联） | `观测` | 与 `docs/10` 从数据表反推的 `SETUPS[21]` **互相印证**（两条独立证据） |
+| 7 | `graphwar_event` 有 **72 个变体** + `GraphwarEvent` 本体 = 73 个类型 | 符号名 | `观测` | 与 `docs/114` 的「72 个具名变体」**逐个数量相同**（本轮只对了数量，没逐个对名字——那是一件值得单独做的事） |
+| 8 | `graphwar_replay_player` 有 `go_to_first_checkpoint` / `go_to_next_checkpoint` / `go_to_previous_checkpoint` / `inject_events` / `is_paused` / `pause` / `toggle_pause` / `process` / `new` = **9 个方法** | 符号名 | `观测` | §17.4 说「播放时钟是我们为了让客户端能播而设计的，原版没有对应函数」—— **这句现在被推翻了**：原版确实有暂停/检查点跳转。我方 `ReplayPlayer` 应该按这 9 个名字重划，而不是登记成"自定模型" |
+| 9 | `graphwar_shot_calculator` 的 4 个方法是 `calculate_function` / `calculate_corrected_function` / `calculate_function_offset_str` / `calculate_shot_results` | 符号名 | `观测` | "修正"（`docs/05` 的 `c = y0 − f(±x0)`）是**独立方法** `calculate_corrected_function`；"`_offset_str`"说明还有一条生成函数文本的路径 |
+| 10 | 本仓库最长的原版源文件是 `graphwar_level_manager.rs`（≥1,888 行），不是 `graphwar_root_node.rs` | Location 行跨度 | `观测`（下界） | 排工时的优先级应该按行数×函数数，不是按 `docs/149` 的 anchors 排序 |
+
+**还有 3 条"没说成"的**（防止把本节读得过硬）：
+
+* `graphwar_module_container` 有 **66 个** direct 函数、但只有 3 个方法名（`add_module`/`get_module`/`get_module_wk`）——
+  这是 gdext 的泛型单态化：每注册一个模块就编一份。**它不说明原版有 66 个函数**（`观测` + `推断`）。
+* `graphwar_nodes` 31 / `graphwar_plane_pos_manager` 9 / `graphwar_local_player_manager` 10 —— 同理，
+  泛型实例的个数 ≠ 源码里的函数个数。
+* `graphwar_client_connection_handler` 有 11 个 direct 函数但 7 个方法名，差的那 4 个是
+  `panic_cold_explicit` ×1 与 `subscribe_to_events_event_handler::{{closure}}` ×3。
+
+
+
+### 18.8 这条路**做不到**什么（写清楚，免得下一轮重复试）
+
+1. **拿不到函数体。** 符号表只有名字 + 地址 + 大小。`0x516510` 干什么，还得靠反汇编。
+2. **拿不到 2.0.60 的地址。** 本节的每个 `0x…` 都是 2024 版的；两版 `.text` 差 40 万字节，
+   连函数顺序都不保证一致。**唯一能用的对照物是名字与 `src/file.rs:LINE`。**
+3. **拿不到参数表/返回类型。** legacy mangling 不编码签名（这也是为什么它比 v0 好读但信息更少）。
+   想知道 `forward_event(?)` 收什么，还得看反汇编或 `docs/07` 的报文。
+4. **拿不到 `impl Trait` / 泛型参数的约束。**
+5. **不能证明 2026 版还是这些名字。** 2026 版 stripped，名字无法直接验证；
+   间接证据只有「`src/*.rs` 文件名两年只差 1 增 1 删」这一条，属于 `推断`。
+6. **不能把 `graphwar_event` 的 72 个变体名直接对上判别值。** 名字有了，但"哪个名字 = 哪个
+   `u32` 判别值"仍需 `docs/114` 的逐条解 —— 本次**没有**做这个配对（`docs/114` 的判别值表不受影响，
+   但现在可以拿去和这 72 个名字对齐，是一件明确可做的下一步）。
+
+
+
+### 18.9 复跑（一条命令复现本节全部表格）
+
+```bash
+# 物证：只有 2024-07-30 那一版有 .symtab，另外三版 stripped
+SO=/home/user/MyProject/gw2/.reference/steam/2024-07-30/libgraphwarrust.so
+sha256sum "$SO"      # 必须是 6eee7bb855d7fc46f6c9e9bb90bb233100b157e10b27c06c8fb9ba07e510db29
+readelf -SW "$SO" | grep symtab        # [28] .symtab SYMTAB … 08bd88
+
+# 本节 §18.2 / §18.3 / §18.4 / §18.5 的四张表（原样贴进来的，未改一个字节）
+python3 tools/symtab_dump.py --so "$SO" summary
+python3 tools/symtab_dump.py --so "$SO" modules
+python3 tools/symtab_dump.py --so "$SO" compare
+python3 tools/symtab_dump.py --so "$SO" methods
+
+# §18.7 第 2/3 条（两版 src/*.rs 串的差集）
+python3 tools/symtab_dump.py --so "$SO" srcdiff
+
+# 单个模块的方法名 / 锚点（§18.6 那几张表就是这两条的子集）
+python3 tools/symtab_dump.py --so "$SO" methods   graphwar_shot_calculator
+python3 tools/symtab_dump.py --so "$SO" locations graphwar_shot_calculator
+```
+
+`tools/symtab_dump.py` 只依赖 `readelf` / `objdump` / `c++filt`（binutils）与 Python 标准库，
+**不依赖 capstone、不依赖 Ghidra、不读上游的 `.pkl`**——所以任何人换一台机器都能重跑。
+
+**本节的两条已知偏差**：
+① `c++filt --format rust` 的展开形态随 binutils 版本略有差别（约束语法、`{{closure}}` 的写法），
+表里出现 `{{closure}}` 的地方就是这样来的；名字主体不受影响。
+② `Location` 结构体的「32 位 line/col」是 `.data.rel.ro` 里的裸数据，本工具只做了
+"长度自校验 + 全 ASCII + 以 `.rs` 结尾"三道检查，**没有**逐个核对 ptr 是否真的是某条 `mov len`
+配对的起点；所以 `:行:列` 里极少数可能偏，出现"列号大得离谱"（>300）的行时应当复核。
