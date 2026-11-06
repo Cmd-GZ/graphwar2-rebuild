@@ -130,6 +130,7 @@ pub mod graphwar_level_generator;
 pub mod graphwar_game_server;
 pub mod graphwar_function_evolutionator;
 pub mod graphwar_setup_control;
+pub mod graphwar_module_container;
 pub mod graphwar_plane;
 pub mod player_showcase;
 pub mod graphwar_lan_vbox;
