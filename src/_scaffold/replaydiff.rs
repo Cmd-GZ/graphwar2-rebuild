@@ -1,7 +1,7 @@
 //! 回放**消息级**对拍：把一份回放的消息流喂给我们的实现，逐条比"我方本该发出的
 //! 下一条消息"与回放里的下一条（`docs/06-verification.md` §17.3 第 3 步）。
 //!
-//! 本模块是**独立**的（不碰 `game.rs` / `graphwar_game_server.rs` / `protocol.rs` / `api.rs`），
+//! 本模块是**独立**的（不碰 `game.rs` / `graphwar_game_server.rs` / `_scaffold/protocol.rs` / `_scaffold/api.rs`），
 //! 只用它们的公开入口：`game::Match::fire` 产报文、`protocol::emit_*` 定字节、
 //! `graphwar_shot_calculator::settle::resolve` 定几何。口径写在 [`Policy`]，语料统计与第一处分歧见
 //! `docs/136-replay-diff.md`。

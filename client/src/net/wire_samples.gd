@@ -47,7 +47,7 @@ const GAME_INFO_2 := '{"GameInfo":{"game_info":{"room_name":"US Room 1","game_st
 
 # ---------------------------------------------------------------- 测试用构造器
 
-## 按 `src/protocol.rs::Broadcast::to_json` 的**键序**拼一条 LAN 广播。
+## 按 `src/_scaffold/protocol.rs::Broadcast::to_json` 的**键序**拼一条 LAN 广播。
 ##
 ## 这不是复原结论，是给自检造"一台房主在广播"用的：线的形状（9 个键、键序、
 ## 无空格、枚举当字符串、`locked` 布尔）来自抓包；**参数**由测试给。

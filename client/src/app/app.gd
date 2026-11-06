@@ -573,7 +573,7 @@ func _on_net_disconnected(reason: String) -> void:
 			play.call("end_match")
 
 
-## 服务端发 `EndingGame`：**正常结束**，不是断线（`src/serverloop.rs` 之后会关连接）。
+## 服务端发 `EndingGame`：**正常结束**，不是断线（`src/graphwar_game_server.rs` 之后会关连接）。
 func _on_net_ended(reason: String) -> void:
 	print("[gw2/net] match ended (%s)" % reason)
 	online = false

@@ -12,8 +12,8 @@
 //!
 //! 与 `examples/replay_diff.rs` 的分工：那边是 `docs/136` 的口径与旧测量，
 //! 这边是**修完之后**的收敛测量（模式感知 + 修正文本按模式分）。
-use gw2_rebuild::diffconv::{cause_name, probe_file, run_file, Cause};
-use gw2_rebuild::replaydiff::{default_corpus_dir, Policy};
+use gw2_rebuild::_scaffold::diffconv::{cause_name, probe_file, run_file, Cause};
+use gw2_rebuild::_scaffold::replaydiff::{default_corpus_dir, Policy};
 use std::collections::BTreeMap;
 
 fn main() {
@@ -49,7 +49,7 @@ fn main() {
     let policy = if policy_kind == "default" {
         Policy::default()
     } else {
-        gw2_rebuild::diffconv::strict_policy()
+        gw2_rebuild::_scaffold::diffconv::strict_policy()
     };
     println!("口径: {policy_kind}");
 

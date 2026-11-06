@@ -3,9 +3,9 @@ class_name GwExpr
 ## 函数表达式求值器 —— **只给界面预览用，不是内核**。
 ##
 ## 为什么会有这个东西：真实采样器（等弦长二分、`step=0.01`、`(200/step) as i32` 点数上限、
-## 边界 `|x|<=25 / |y|<=15`）在 Rust 内核 `src/path.rs` 里，已逐位复原并验证
+## 边界 `|x|<=25 / |y|<=15`）在 Rust 内核 `src/graphwar_path_calculator.rs` 里，已逐位复原并验证
 ## （`docs/04`、`docs/89`）。内核目前只向 GDScript 暴露了 `GW2Rebuild.ping()`
-## （`src/gdext_class.rs`），**没有** `path_calculate`。为了让界面在没加载内核时也能画条线，
+## （`src/_scaffold/gdext_class.rs`），**没有** `path_calculate`。为了让界面在没加载内核时也能画条线，
 ## 这里实现一个**只求值、不采样**的小求值器；采样由调用方用固定 dx 折线近似。
 ##
 ## 与内核的差别（必须写清）：

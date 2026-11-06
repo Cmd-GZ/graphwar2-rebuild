@@ -21,7 +21,7 @@
 //!
 //! ## 接线（`docs/117-server-wiring.md`）
 //!
-//! 2026-11 之前，"谁开火"由**调用方**给 `soldier_id`，`aigen` 的进化**没有调用点**，
+//! 2026-11 之前，"谁开火"由**调用方**给 `soldier_id`，`graphwar_function_evolutionator` 的进化**没有调用点**，
 //! 于是 `docs/98`/`docs/109` 的规则"已实现并可测"却"端到端没走"。现在：
 //!
 //! ```text
@@ -33,7 +33,7 @@
 //!
 //! ## AI 说话：`token → 文本 → FunctionInfo`（`docs/127-ai-speaks.md`）
 //!
-//! 2026-11 之前，`aigen` 的产物是 token，而 `token → 文本`（`0x4ec160`）没有调用点，
+//! 2026-11 之前，`graphwar_function_evolutionator` 的产物是 token，而 `token → 文本`（`0x4ec160`）没有调用点，
 //! 于是 AI"会思考、不会说话"。现在 `math_function::to_text`（`docs/119`，1032/1032 对拍）
 //! 就是那个缺口，接线后一个 AI 回合里有**两条** `FunctionInfo`，形态各自照真实抓包
 //! （`docs/127` §2 的原始字节流帧号）：
@@ -61,8 +61,8 @@
 use crate::graphwar_function_evolutionator::{self, Individual, SoldierEvolver, SoldierFunctions, SoldierTurn, VarMode};
 use crate::graphwar_life_manager::{LifeState, Status};
 use crate::plane::{empty_mask, rasterize};
-use crate::protocol::{emit_effect_info, emit_function_points, emit_life_queued_death};
-use crate::rng::ChaCha12;
+use crate::_scaffold::protocol::{emit_effect_info, emit_function_points, emit_life_queued_death};
+use crate::_scaffold::rng::ChaCha12;
 use crate::server::RoomState;
 use crate::graphwar_shot_calculator::settle::{resolve, Target};
 use crate::graphwar_tick_handler::tick_at;
@@ -454,7 +454,7 @@ impl Match {
         for st in &starts {
             // Skip 的玩家一条报文都没有（`docs/98` §1.4）；Announce（含 soldier 0）都发。
             if let Some((p, s)) = st.decision.broadcast() {
-                msgs.push(crate::protocol::emit_turn_info(p, s));
+                msgs.push(crate::_scaffold::protocol::emit_turn_info(p, s));
             }
         }
         // `EndOfTurnInfo` 与 `GameStateInfo` 各**一条**。
@@ -464,13 +464,13 @@ impl Match {
         // 给的是 `start + 时长`。这两个数在 `docs/41` 就没对上过，是**已知分歧**；
         // 本函数沿用逐玩家路径的发法（不在这里另造一个数）。
         let end = crate::graphwar_tick_handler::end_of_turn_tick_wire(start_tick, time_mode);
-        msgs.push(crate::protocol::emit_end_of_turn(end, time_mode));
-        msgs.push(crate::protocol::emit_game_state("WaitingForFunctions"));
+        msgs.push(crate::_scaffold::protocol::emit_end_of_turn(end, time_mode));
+        msgs.push(crate::_scaffold::protocol::emit_game_state("WaitingForFunctions"));
         (msgs, starts)
     }
 
     /// 该士兵函数槽里的**文本**：`math_function::to_text`（`0x4ec160`）在本仓库的唯一调用点。    ///
-    /// 为什么需要它：`aigen` 的产物是 token（[`FunctionSlot::tokens`](crate::graphwar_function_evolutionator::FunctionSlot)），
+    /// 为什么需要它：`graphwar_function_evolutionator` 的产物是 token（[`FunctionSlot::tokens`](crate::graphwar_function_evolutionator::FunctionSlot)），
     /// 协议 `FunctionInfo.function` 要的是文本，中间只有这一步（`docs/119`、`docs/127`）。
     /// `None` = 这个士兵没有槽（没登记过）。
     ///
@@ -495,7 +495,7 @@ impl Match {
     /// 空槽（开局、还没进化）返回 `function: ""`，与抓包里那条空函数完全同形。
     pub fn ai_submit_info(&self, soldier_id: i64) -> Option<String> {
         let text = self.ai_function_text(soldier_id)?;
-        Some(crate::protocol::emit_function_info(soldier_id, &text, None))
+        Some(crate::_scaffold::protocol::emit_function_info(soldier_id, &text, None))
     }
 
     /// 只为**一个**士兵跑一次进化，并把结果写进**它自己的**槽（`docs/98` §3）。
@@ -714,9 +714,9 @@ impl Match {
         self.time_mode = time_mode.to_string();
         let end = crate::graphwar_tick_handler::end_of_turn_tick_wire(start_tick, time_mode);
         vec![
-            crate::protocol::emit_turn_info(player_id, soldier_id),
-            crate::protocol::emit_end_of_turn(end, time_mode),
-            crate::protocol::emit_game_state("WaitingForFunctions"),
+            crate::_scaffold::protocol::emit_turn_info(player_id, soldier_id),
+            crate::_scaffold::protocol::emit_end_of_turn(end, time_mode),
+            crate::_scaffold::protocol::emit_game_state("WaitingForFunctions"),
         ]
     }
 
@@ -732,7 +732,7 @@ impl Match {
             self.turn_count
         )];
         if self.ending().is_some() {
-            out.push(crate::protocol::emit_game_state("EndingGame"));
+            out.push(crate::_scaffold::protocol::emit_game_state("EndingGame"));
         }
         out
     }
@@ -856,9 +856,9 @@ impl Match {
 
         // ---- 广播阶段 ----
         // ① 按类型分组的前缀
-        let mut msgs = vec![crate::protocol::emit_game_state("CalculatingResults")];
+        let mut msgs = vec![crate::_scaffold::protocol::emit_game_state("CalculatingResults")];
         for s in shots {
-            msgs.push(crate::protocol::emit_function_info(
+            msgs.push(crate::_scaffold::protocol::emit_function_info(
                 s.owner_id,
                 s.function_text,
                 Some(&crate::graphwar_shot_calculator::corrected_text(s.function_text, s.x0, s.y0, s.flip)),
@@ -867,7 +867,7 @@ impl Match {
         for (s, out) in shots.iter().zip(outcomes.iter()) {
             msgs.push(emit_function_points(s.owner_id, s.x0, s.y0, out.stop.0));
         }
-        msgs.push(crate::protocol::emit_game_state("SynchronizingResults"));
+        msgs.push(crate::_scaffold::protocol::emit_game_state("SynchronizingResults"));
 
         // ② 死亡块：顺序 = 到达时刻（`docs/86` §6）
         for id in &deaths {
@@ -902,7 +902,7 @@ impl Match {
 
         // ④ 每发一对 `FunctionActive` + `ExplosionEffect`，顺序与①相同（130/130 批实测）
         for (s, out) in shots.iter().zip(outcomes.iter()) {
-            msgs.push(crate::protocol::emit_function_active(s.owner_id, now_tick));
+            msgs.push(crate::_scaffold::protocol::emit_function_active(s.owner_id, now_tick));
             self.next_effect_id += 1;
             msgs.push(emit_effect_info(
                 self.next_effect_id,
@@ -912,7 +912,7 @@ impl Match {
                 now_tick,
             ));
         }
-        msgs.push(crate::protocol::emit_game_state("ExecutingResults"));
+        msgs.push(crate::_scaffold::protocol::emit_game_state("ExecutingResults"));
 
         // ---- 状态落地（放在报文之后：报文里的坐标与 id 都来自批开始时的快照）----
         if !deaths.is_empty() {
@@ -933,7 +933,7 @@ impl Match {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{get_int, get_str, parse_message};
+    use crate::_scaffold::protocol::{get_int, get_str, parse_message};
 
     pub(super) fn room() -> RoomState {
         RoomState {
@@ -1018,7 +1018,7 @@ mod tests {
     /// 一整回合的报文种类序列，必须与抓包一致（docs/43）。
     #[test]
     fn full_turn_sequence_matches_capture() {
-        use crate::protocol::parse_message;
+        use crate::_scaffold::protocol::parse_message;
         let mut m = Match::new(room(), vec![(-5.0, 0.0, 1.0)], vec![], (0, 0));
         let mut all = Vec::new();
         all.extend(m.begin_turn(229, 231, 0, "Timer1m"));
@@ -1147,7 +1147,7 @@ mod tests {
     // 接线：射手轮转 + 按士兵的 AI 进化（`docs/117-server-wiring.md`）
     // -----------------------------------------------------------------
 
-    /// 无遮挡的四人局面。坐标与 `serverloop` 的固定布局一致，但**没有障碍**，
+    /// 无遮挡的四人局面。坐标与 `graphwar_game_server` 的固定布局一致，但**没有障碍**，
     /// 所以"哪一发打死谁"是确定的，可以写死在断言里。
     fn wired(ai: AiConfig, bots: &[i64]) -> Match {
         let soldiers = vec![
@@ -1331,7 +1331,7 @@ mod tests {
     // -----------------------------------------------------------------
 
     /// 本回合 AI 报的那条 `FunctionInfo`（键盘名 + 字段都过一遍协议解析器）。
-    fn ai_info(st: &TurnStart) -> Option<crate::protocol::RawMessage> {
+    fn ai_info(st: &TurnStart) -> Option<crate::_scaffold::protocol::RawMessage> {
         st.messages
             .iter()
             .filter(|m| m.starts_with(r#"{"FunctionInfo""#))
@@ -1481,7 +1481,7 @@ mod tests {
             r#"{"PlayerInfo":{"player_id":232,"connection_id":228}}"#
         );
         // 解析回来仍然是一条单键消息，键名 = `PlayerInfo`（客户端按它分派）。
-        let msg = crate::protocol::parse_message(&player_info_message(229, 228))
+        let msg = crate::_scaffold::protocol::parse_message(&player_info_message(229, 228))
             .expect("应能解析回 RawMessage");
         assert_eq!(msg.kind, "PlayerInfo");
         assert_eq!(get_int(&msg, "player_id"), Some(229));

@@ -202,7 +202,7 @@
 * **RNG 消耗**：与"随机新生一条"完全相同 —— 一次 `random_length`（1 次
   `normal()`）+ 每个 token 一次 `random % 85` 抽样（常数再加一次 `normal()`）
   + 补齐时的 `rand % 50` 循环 + 变异的一次抽样
-  （抽样粒度见 `src/rng.rs` 的 `next_u32`；反汇编 `0x4ef193`）。
+  （抽样粒度见 `src/_scaffold/rng.rs` 的 `next_u32`；反汇编 `0x4ef193`）。
   第 1/2 名也各来一遍 ⇒ 一代最多 **3 条**随机函数。
 * **分数字段不更新**：只覆写 `Vec` 的 24 字节，`+0x18/+0x20/+0x28` 留着**旧粗评分**。
   ⚠️ 后果（观测到的代码行为，不是 bug 报告）：若这一代正好是最后一代，
@@ -354,7 +354,7 @@ let out = evolve(pop, &p, mode, &mut next, scalar_scorer(|t: &[Token]| t.len() a
 let out = evolve(pop, &p, mode, &mut next, |t: &[Token], ph| ctx.evaluate(t, ph));
 
 // 3) 只想要一个分数（老代码）：
-let s = aigen::fitness(tokens, &ctx);        // = fitness_eval(..).score，签名未变
+let s = graphwar_function_evolutionator::fitness(tokens, &ctx);        // = fitness_eval(..).score，签名未变
 ```
 
 `examples/replay_compare.rs` 已按第 2 种改。

@@ -25,11 +25,11 @@
 | 契约来源 | `client/src/core/core_bridge.gd` 文件头（逐字）+ `docs/108` §2.3 |
 | 返回 | `{ ok: bool, points: PackedVector2Array, offset: float, error: String }` |
 | 坐标系 | **棋盘（平面）坐标**，不是画布像素 —— 依据见 §2 |
-| 用的是不是真采样器 | 是。`parse → correction → shifted_tokens → path::calculate`，参数全部取既有常量 |
+| 用的是不是真采样器 | 是。`parse → correction → shifted_tokens → graphwar_path_calculator::calculate`，参数全部取既有常量 |
 | `GwCore.calculate_path()["source"]` | **`preview` → `kernel`**（§7.3 有前后对照） |
 | `cargo test --offline` | **205 → 218**（+13，全绿） |
 | `bash client/run.sh selftest` | **93 passed, 0 failed**（未改任何断言；见 §7.4） |
-| 改动的文件 | `src/api.rs`（新增）、`src/gdext.rs`（+3 行）、`src/lib.rs`（+1 行）、`docs/116`（本文） |
+| 改动的文件 | `src/_scaffold/api.rs`（新增）、`src/_scaffold/gdext.rs`（+3 行）、`src/lib.rs`（+1 行）、`docs/116`（本文） |
 | `client/` 改动 | **0 字节**（含 `client/` 下没有新增 `.gdextension`，见 §8.1） |
 | 仍未做 | 命中/掩膜接口、ODE（微分方程）模式、`client/` 侧的扩展描述符 |
 | debug / release | 两份 `.so` 的端到端结果**逐位相同**（2471 / 5295 点，弦长一致） |
@@ -55,7 +55,7 @@
 
 | 契约项 | 实现 | 档位 |
 |---|---|---|
-| 方法名 `path_calculate` | `src/api.rs::register_path_method` | 逐位验证（`get_method_list` 实测，§7.3） |
+| 方法名 `path_calculate` | `src/_scaffold/api.rs::register_path_method` | 逐位验证（`get_method_list` 实测，§7.3） |
 | 4 个参数、顺序、类型 | `String, float, float, float`（`GDExtensionPropertyInfo` 里 `type = 4/3/3/3`） | 观测（`get_method_list` 打印出 `expr:String, x0:float, y0:float, direction:float`） |
 | 返回 `Dictionary` | `return_value_info.type = 27`（`DICTIONARY`） | 观测（`m.return` 打印 type=27） |
 | 键名 `ok/points/offset/error` | `RESULT_KEYS`，顺序固定 | 逐位验证（单测 `result_pairs_shape_is_exactly_the_contract`） |
@@ -101,7 +101,7 @@
 
 ## 3. Godot ABI：手写 FFI 怎么造 `Dictionary` 和 `PackedVector2Array`
 
-本仓库不用 godot-rust（`Cargo.toml` 零依赖），`gdext_class.rs` 里 `ping()` 只证明了
+本仓库不用 godot-rust（`Cargo.toml` 零依赖），`_scaffold/gdext_class.rs` 里 `ping()` 只证明了
 "能注册一个无参无返回的方法"。真返回 `Dictionary` 需要三样新东西：**类型化的参数/返回值信息**、
 **把内置类型包成 Variant**、**在内置类型上调用方法**。全部靠 `get_proc_address` 逐个取。
 
@@ -254,13 +254,13 @@ tokens' = [ADD, CONST c] ++ tokens   // = crate::graphwar_shot_calculator::shift
 `flip` 对**几何**的影响（单测 `normal_curve_left_uses_f_of_minus_x` 钉住）：
 采样器在 flip 时用 `mid` 求值、把 `x` 取负存点，所以点满足 `y = f(−x) + c`，
 而**不是**同一条曲线的反着走。换句话说"向左打"= 把函数关于 y 轴镜像。
-首点永远是士兵位置 `(x0, y0)` 本身（与 `_preview()` 一致，且 `path::calculate` 就是这么做的）。
+首点永远是士兵位置 `(x0, y0)` 本身（与 `_preview()` 一致，且 `graphwar_path_calculator::calculate` 就是这么做的）。
 
 ---
 
 ## 5. 用的是真采样器（没有第二份实现）
 
-`src/api.rs::calculate_path` 只做四步，每一步都调用既有实现：
+`src/_scaffold/api.rs::calculate_path` 只做四步，每一步都调用既有实现：
 
 ```rust
 let tokens  = crate::math_function::parse(expr);          // @0x4ed670
@@ -271,7 +271,7 @@ let points  = crate::graphwar_path_calculator::calculate(&shifted, x0, y0, STEP_
 
 步长 `STEP_DEFAULT = 0.01`、容差 `LENGTH_TOL = 0.001`、点数预算 `(200/step) as i32 = 20000`、
 二分上限 100、平面边界 `|x| ≤ 25 / |y| ≤ 15` —— **全部**来自 `src/lib.rs` 的常量与 `graphwar_path_calculator.rs` 的逻辑，
-`api.rs` 里没有任何采样循环。
+`_scaffold/api.rs` 里没有任何采样循环。
 
 防"偷偷重写一份"的测试：`matches_shot_points_pipeline` 拿 5 条函数 × 2 个方向，
 断言 `calculate_path(...)` 的 `points` **与 `crate::graphwar_shot_calculator::shot_points(...)` 逐点相等**
@@ -300,11 +300,11 @@ let points  = crate::graphwar_path_calculator::calculate(&shifted, x0, y0, STEP_
    `AGENTS.md` 的硬事实是"越界点在**接受之前**检查"。所以这里在入口先拒。
    档位：**推断**（真二进制在起点越界时是否也拒，未观测；客户端预览分支同样是先判 `|x| ≤ 25`）。
 2. **空表达式**：原版**能画** —— 抓包里 `{"function":""}` 的修正文本是 `" + 10.990"`，
-   也就是 `f(x) = 0` 的水平直线（`docs/05` §2）。但既有的 `shot::shot_points` 与 C ABI
+   也就是 `f(x) = 0` 的水平直线（`docs/05` §2）。但既有的 `graphwar_shot_calculator::shot_points` 与 C ABI
    `gw2_shot_points` 都按"空 = 没有点"处理，且客户端在调内核**之前**就把空串拦下了
    （`GwCore.calculate_path` 先 `GwExpr.compile`）。本次保持与既有内核一致：报错。
    **这是一处已知的、有意保留的偏差**，要不要改成"空串 ⇒ 水平直线"见 §8.4。
-3. **不收敛**：`path::calculate` 在第 100 次二分仍失败时直接 return，不区分原因；本层也不猜，
+3. **不收敛**：`graphwar_path_calculator::calculate` 在第 100 次二分仍失败时直接 return，不区分原因；本层也不猜，
    统一归到 `no_points`（只在"一段都没走成"时触发）。半路停下的情况仍然是 `ok: true`，
    只是点少 —— 与真二进制一致（真值夹具里就有这种短曲线）。
 
@@ -329,8 +329,8 @@ export CARGO_TARGET_DIR=<ws>/.agent-work/kapi/target
 cargo test --offline        # 218 passed, 0 failed（基线 205 → +13）
 ```
 
-新增 13 条全在 `src/api.rs` 的 `#[cfg(test)]`：正常曲线（向右/向左）、与
-`shot::shot_points` 的逐点一致、水平直线（真实抓包样本）、空表达式、起点越界、起点非有限、
+新增 13 条全在 `src/_scaffold/api.rs` 的 `#[cfg(test)]`：正常曲线（向右/向左）、与
+`graphwar_shot_calculator::shot_points` 的逐点一致、水平直线（真实抓包样本）、空表达式、起点越界、起点非有限、
 起点无定义、立即越界、方向映射、点数预算、契约键名/类型、极端输入不 panic。
 
 GDScript 侧的单点验证（`GW2Rebuild` 直接调用，27 项检查，0 失败）：
@@ -464,8 +464,8 @@ GW2Rebuild.mask_blob(obstacles: Array) -> PackedByteArray
 ### 8.4 空表达式的语义待定
 
 见 §6 第 2 条：原版 `""` 是合法的（水平直线），当前内核报 `empty_expression`。
-要改的话只影响 `src/api.rs` 的一行判断（`tokens.is_empty()` 之后补一条"空串 ⇒
-只保留首点+直线"），但会与 `shot::shot_points` / `gw2_shot_points` 的既有约定不一致，
+要改的话只影响 `src/_scaffold/api.rs` 的一行判断（`tokens.is_empty()` 之后补一条"空串 ⇒
+只保留首点+直线"），但会与 `graphwar_shot_calculator::shot_points` / `gw2_shot_points` 的既有约定不一致，
 需要一起定。
 
 ### 8.5 `docs/108` 的两处"未接"描述现在已经过时
@@ -481,7 +481,7 @@ GW2Rebuild.mask_blob(obstacles: Array) -> PackedByteArray
 
 | 结论 | 档位 |
 |---|---|
-| `path_calculate` 的点序列与 `shot::shot_points` 逐点相等（= 真采样器） | **逐位验证** |
+| `path_calculate` 的点序列与 `graphwar_shot_calculator::shot_points` 逐点相等（= 真采样器） | **逐位验证** |
 | 契约四个键名/类型/顺序 | **逐位验证** |
 | 各错误码的触发条件（除下面两条） | **逐位验证** |
 | `points` 是棋盘坐标（不是像素） | **观测**（调用方源码 + 实测首点 `(5,2)`） |

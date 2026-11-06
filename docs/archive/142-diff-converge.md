@@ -9,8 +9,8 @@
 证据分级沿用仓库约定：**逐位验证**（`cargo test` 覆盖）/ **观测**（能指到回放里那一条报文）/
 **推断**（写明缺什么）/ **未知**。
 
-> **改动范围**：只新增 `src/diffconv.rs`、`examples/diff_conv.rs`、`tests/diff_conv.rs`、
-> 本文。`src/game.rs` / `src/graphwar_shot_calculator/settle.rs` / `src/protocol.rs` / `src/replaydiff.rs` /
+> **改动范围**：只新增 `src/_scaffold/diffconv.rs`、`examples/diff_conv.rs`、`tests/diff_conv.rs`、
+> 本文。`src/game.rs` / `src/graphwar_shot_calculator/settle.rs` / `src/_scaffold/protocol.rs` / `src/_scaffold/replaydiff.rs` /
 > `src/graphwar_path_calculator.rs` / `client/` **一字未动**；`src/lib.rs` 只加了一行 `pub mod diffconv;`。
 
 ---
@@ -62,7 +62,7 @@
 | **真值** | 回放的 `FunctionModeInfo` 把每一局钉成 `NormalFunction` / `DiffEqFunction` 之一（全语料 868 条，只有这两个值）。`docs/136` §3 的表：Normal 564 批 / DiffEq 515 批 |
 | **旧实现** | `game::Match::fire` 恒 `crate::graphwar_path_calculator::Mode::Normal` |
 | **后果** | DiffEq 局的函数是 `dy/dx = f(x,y)` 形式（例：`-222(-y+(-5+(13)*(1/((1+exp(-42*(x-(5))))*(1+exp(42*(x-(20))))))))`）。按 `y=f(x)` 去采样，整条弹道从第二个点起就不一样 ⇒ `end_x` 差几十个单位 |
-| **改法** | 新模块 `diffconv::ConvPredictor` 自己按 `fire` 的**同一顺序**拼报文，采样模式取自回放（`mode_of`）。**没有改 `fire`**（理由见 §6） |
+| **改法** | 新模块 `_scaffold::diffconv::ConvPredictor` 自己按 `fire` 的**同一顺序**拼报文，采样模式取自回放（`mode_of`）。**没有改 `fire`**（理由见 §6） |
 | **依据** | **观测**：几何探针在 `Mode::Ode` + 0.01 下，DiffEq 的 `end_x` 逐位相同 **490/550**；按 `Normal` 算只有 14/550 量级 |
 
 ### 2.2 `corrected_function` 按模式分，且括号要补齐
@@ -71,9 +71,9 @@
 |---|---|
 | **真值（DiffEq）** | `corrected_function == function`，**一个字符都不加**。全语料 **550/550** 零例外（例：`1782760054` 的 `-222(-y+…)` 修正后与原文逐字节相同） |
 | **真值（Normal）** | `function + " ± c.ddd"`，**736/740** 是字面拼接；4 条空函数是 `" + 3.333"` 这种；**11 条函数括号没闭合，真值补了右括号**（例 `1782642986`：`5/155sin(4exp(4*6cos(` → `5/155sin(4exp(4*6cos())) + 6.055`） |
-| **旧实现** | `shot::corrected_text` **无条件**加后缀 ⇒ DiffEq 550 发全错（旧基线里 537 处字段差异） |
-| **改法** | `diffconv::corrected_function(text, x0, y0, flip, mode)`：Ode ⇒ 原文；Normal ⇒ `text + ")"×缺括号数 + 负号/正号后缀`。缺括号数用 `unbalanced_brackets`（`(` 减 `)`，下限 0） |
-| **为什么不用 `function::to_text`** | 本项目的 `to_text(parse(f))` 会**重新加括号**（`to_text(parse("(40)*(1/(…))")) != "(40)*(1/(…))"`），一用就把那 736 条正确的打坏 —— 实测：用 `to_text` 时 Normal 只有 313/739 逐位相同，改成"原文 + 补右括号"后 739/739 |
+| **旧实现** | `graphwar_shot_calculator::corrected_text` **无条件**加后缀 ⇒ DiffEq 550 发全错（旧基线里 537 处字段差异） |
+| **改法** | `_scaffold::diffconv::corrected_function(text, x0, y0, flip, mode)`：Ode ⇒ 原文；Normal ⇒ `text + ")"×缺括号数 + 负号/正号后缀`。缺括号数用 `unbalanced_brackets`（`(` 减 `)`，下限 0） |
+| **为什么不用 `math_function::to_text`** | 本项目的 `to_text(parse(f))` 会**重新加括号**（`to_text(parse("(40)*(1/(…))")) != "(40)*(1/(…))"`），一用就把那 736 条正确的打坏 —— 实测：用 `to_text` 时 Normal 只有 313/739 逐位相同，改成"原文 + 补右括号"后 739/739 |
 | **依据** | **逐位验证**（`tests/diff_conv.rs` 三条，含负样本） |
 | **收敛量** | 字段差异 537 → **19**；按批归因 334 → **14** 批 |
 
@@ -85,10 +85,10 @@
 | 项 | 内容 |
 |---|---|
 | **观测 1** | 同一发、`stop_x == end_x == pos_x` 逐位相同的 994 发里，我们采样器的 `stop_y` 与回放的 `EffectInfo(Explosion).pos_y` 只有 **33/739** 逐位相同（Normal），其余全落在 1e-3~5e-2 |
-| **观测 2** | 把回放自己那条 `corrected_function` 文本**代回 `end_x` 求值**（`flip` 时按 `-end_x`，因为 `path::calculate` 内部用 `-x`），Normal 的 `pos_y` 逐位相同 **529/739**，1~2 ulp 内再 92 发 |
+| **观测 2** | 把回放自己那条 `corrected_function` 文本**代回 `end_x` 求值**（`flip` 时按 `-end_x`，因为 `graphwar_path_calculator::calculate` 内部用 `-x`），Normal 的 `pos_y` 逐位相同 **529/739**，1~2 ulp 内再 92 发 |
 | **观测 3** | 反例（`1782640359`）：`stop_y = 14.99160678457188`，回放 `pos_y = 14.991174112697316`，差 **4.3267e-4**，而该局的修正常数恰好是 `-0.297`（精确值 `-0.29656732812543574`），`|c_印刷 - c_精确| = 4.3267e-4` —— 差值就是"用 3 位小数的常数重算一遍" |
 | **机制（推断）** | 客户端拿 `corrected_function` 这份**印刷文本**（常数只有 3 位小数）在 `end_x` 处求值，作为爆炸点。`FunctionPoints` 只带一个标量 `end_x`，客户端要拿到 y 只能这么做。缺的证据：二进制里 `EffectInfo` 的发射路径还没复核 |
-| **改法** | `diffconv::explosion_point(corrected, stop, flip, mode)`：`Normal` 走回代；`Ode` 保持采样停点（那时 y 不是纯函数值，回代无意义 —— 实测停点自己逐位相同 **376/550**） |
+| **改法** | `_scaffold::diffconv::explosion_point(corrected, stop, flip, mode)`：`Normal` 走回代；`Ode` 保持采样停点（那时 y 不是纯函数值，回代无意义 —— 实测停点自己逐位相同 **376/550**） |
 | **依据** | **逐位验证**（`tests/diff_conv.rs` 三条：Normal 正例、`flip` 正例、Ode 保持；外加反例断言"停点 ≠ 爆炸点"） |
 | **收敛量** | `pos_y` 差异 551 → **235**；按批归因 206 → **176** 批 |
 
@@ -102,8 +102,8 @@
 | **观测** | 全语料 936 条 `EffectInfo(Death/Ash/Spark)` 按坐标精确配对到士兵（`PosInfo` 逐位相等），再按该士兵的 `SkinGraphicsInfo.graphics_str` 分组：**`target` → SparkEffect 54/54**；**`bot_0..bot_5` → AshEffect 363/368**；**人类皮肤（`yellow`/`green`/`face_paint_2`）→ DeathEffect 514/514** |
 | **真值样本** | 回放 `1782640836`：`877`（皮肤 `yellow`）死亡 → `EffectInfo{DeathEffect, pos=877 的坐标}`；`881`/`880`（皮肤 `bot_0`）死亡 → `EffectInfo{AshEffect, pos=各自坐标}`。三条 `start_tick` 都等于对应 `LifeInfo{alive:false}` 的 tick |
 | **旧实现** | `game::Match::fire` 恒发 `"DeathEffect"` ⇒ 机器人/靶子被打死时我们发的类型是错的（这就是 `docs/136` 记的"多报 DeathEffect"） |
-| **改法** | `diffconv::death_effect_type(skin)`；`ConvPredictor` 从回放**加入链**里的 `SkinGraphicsInfo` 建皮肤表（那是输入，不是预测目标） |
-| **同时收紧口径** | `docs/136` 的默认 `Policy` 把 `AshEffect`/`SparkEffect` 当"我方不产"**单侧**排除：回放那侧丢了，我方那侧**没丢**（`is_unobserved` 只看 `unobserved_kinds`），于是我们发的每一条 Ash 都成了"多余"。`diffconv::strict_policy()` 把四类特效都算"我方产出"，**两侧对称比** |
+| **改法** | `_scaffold::diffconv::death_effect_type(skin)`；`ConvPredictor` 从回放**加入链**里的 `SkinGraphicsInfo` 建皮肤表（那是输入，不是预测目标） |
+| **同时收紧口径** | `docs/136` 的默认 `Policy` 把 `AshEffect`/`SparkEffect` 当"我方不产"**单侧**排除：回放那侧丢了，我方那侧**没丢**（`is_unobserved` 只看 `unobserved_kinds`），于是我们发的每一条 Ash 都成了"多余"。`_scaffold::diffconv::strict_policy()` 把四类特效都算"我方产出"，**两侧对称比** |
 | **依据** | **逐位验证**（`death_effect_type_follows_the_skin` 含负样本）+ **观测**（936 条配对统计） |
 | **收敛量** | 死亡特效类 117 批 → **4 批**；这一条是最大的单步：完全一致 44 → **71** |
 
@@ -243,8 +243,8 @@ DiffEq 的 `pos_y` 逐位相同 376/550，另有 **161 发差 <1e-12**（几个 
    而漂移本身不提供信息。
 2. **有人正在改 `game.rs`**：同时回合制的事务化（`docs/136` §6 第 3 条）改的就是
    `fire` 的报文分组。两个人同时动同一段代码，冲突的代价大于收益。
-3. **合并路径是清楚的**：`diffconv::ConvPredictor::fire` 与 `Match::fire` **报文顺序、
-   `protocol::emit_*`、掩膜、挖洞延迟完全相同**，只差四个决定（模式、修正文本、爆炸点、
+3. **合并路径是清楚的**：`_scaffold::diffconv::ConvPredictor::fire` 与 `Match::fire` **报文顺序、
+   `_scaffold::protocol::emit_*`、掩膜、挖洞延迟完全相同**，只差四个决定（模式、修正文本、爆炸点、
    死效类型）。等 §5.1 的真值到手，把这四个决定作为参数接回 `fire` 是一行一个。
 
 ---
@@ -275,7 +275,7 @@ cargo test --offline        # 337 → 349（+12，见 tests/diff_conv.rs）
 > `HANDOVER.md`/`docs/136` 里写的"333 条"是本轮开始前的旧值；本分支基线实测 **337**
 > （我把自己新增的 `tests/diff_conv.rs` 移走后跑全量得 337），加完是 **349**。
 
-**没有放宽任何既有断言**：`src/replaydiff.rs`、`tests/replay_diff.rs`、
+**没有放宽任何既有断言**：`src/_scaffold/replaydiff.rs`、`tests/replay_diff.rs`、
 `tests/server_match.rs` 一字未动。
 
 ---

@@ -2,7 +2,7 @@ extends RefCounted
 class_name GwCore
 ## 内核桥：界面 → Rust 复原内核。
 ##
-## 现状（`src/gdext_class.rs` 观测）：GDExtension 入口注册了类 `GW2Rebuild`，
+## 现状（`src/_scaffold/gdext_class.rs` 观测）：GDExtension 入口注册了类 `GW2Rebuild`，
 ## 暴露两个方法：`path_calculate()`（弹道，`docs/116`）与 `hit_test()`（命中，`docs/120`）。
 ## 本文件是**明写的接缝**：
 ##   1. 如果内核在，就用内核；
@@ -16,7 +16,7 @@ class_name GwCore
 ##         -> Dictionary { ok: bool, points: PackedVector2Array, offset: float, error: String }
 ## 参数与返回值与本文件 `calculate_path()` 完全一致，调用方无需改动。
 ##
-## 微分方程模式的契约（`docs/138`，实现见内核 `src/api.rs::calculate_path_mode`）：
+## 微分方程模式的契约（`docs/138`，实现见内核 `src/_scaffold/api.rs::calculate_path_mode`）：
 ##     GW2Rebuild.path_calculate_mode(expr: String, x0: float, y0: float,
 ##                                    direction: float, mode: String)
 ##         -> Dictionary { ok: bool, points: PackedVector2Array, offset: float, error: String }
@@ -25,7 +25,7 @@ class_name GwCore
 ## 本文件 `calculate_path(..., mode)` 的第 4 个参数是可选的，默认 `"normal"`，
 ## 所以既有三参数调用点一个字都不用改。
 ##
-## 命中侧的契约（`docs/120` §1，实现见内核 `src/api.rs::hit_test`）：
+## 命中侧的契约（`docs/120` §1，实现见内核 `src/_scaffold/api.rs::hit_test`）：
 ##     GW2Rebuild.hit_test(points: PackedVector2Array,
 ##                         obstacles: PackedFloat64Array,   # [x, y, size] * n
 ##                         soldiers:  PackedFloat64Array)   # [x, y, radius] * n
@@ -33,7 +33,7 @@ class_name GwCore
 ##                         first_hit: int, stop: Vector2, blocked: bool, error: String }
 ## 坐标一律**棋盘坐标**（`|x| <= 25`、`|y| <= 15`），像素换算在核心里做一次。
 ##
-## 障碍侧的契约（`docs/126` §1，实现见内核 `src/api.rs::level_obstacles`）：
+## 障碍侧的契约（`docs/126` §1，实现见内核 `src/_scaffold/api.rs::level_obstacles`）：
 ##     GW2Rebuild.level_obstacles(level_index: int, seed: int)
 ##         -> Dictionary { ok: bool, obstacles: PackedFloat64Array, error: String }
 ## `obstacles` 与上面 `hit_test` 的第 2 个入参是**同一种数组**（步长 3，`size` = 半径），
@@ -181,7 +181,7 @@ static func calculate_path(expr_text: String, start: Vector2, direction: float,
 ##
 ## 为什么不走 `GwExpr` 预检：ODE 的右端是 `f(x, y)`，而客户端求值器 `expr.gd` 只认 `x`
 ## （遇到 `y` 直接报"未知标识符"）—— 在内核之前把关会把合法的 ODE 表达式错杀。
-## 内核自己会 parse（`function::parse` 认识 `y`），所以这里把原文直接交过去。
+## 内核自己会 parse（`math_function::parse` 认识 `y`），所以这里把原文直接交过去。
 ##
 ## 内核没有这个方法时**不拿预览折线冒充**：预览是"`y = f(x)` 的固定 dx 折线"，
 ## 与 ODE 的积分曲线是两条不同的东西（`docs/133` §6 #3 的现状就是这么留空的）。

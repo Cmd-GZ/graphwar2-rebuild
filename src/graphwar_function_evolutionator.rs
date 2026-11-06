@@ -1052,7 +1052,7 @@ pub fn fitness_eval(tokens: &[Token], ctx: &ScoringContext) -> Evaluation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rng::ChaCha12;
+    use crate::_scaffold::rng::ChaCha12;
 
     fn stream(seed: u64) -> impl FnMut() -> u64 {
         let mut key = [0u8; 32];
@@ -1633,7 +1633,7 @@ mod tests {
     fn rng_u32_consumes_one_word_per_draw() {
         // 每 token 一次 u32 抽样（反汇编 0x4ef193）。这里验证：
         // 连续 16 次 next_u32 恰好用掉一个 ChaCha 输出块，第 17 次触发换块。
-        use crate::rng::ChaCha12;
+        use crate::_scaffold::rng::ChaCha12;
         let mut key = [0u8; 32];
         key[..8].copy_from_slice(&0x1234_5678_9ABC_DEF0u64.to_le_bytes());
         let mut r = ChaCha12::from_seed(&key);

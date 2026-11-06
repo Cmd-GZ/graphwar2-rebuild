@@ -29,7 +29,7 @@
 //!
 //! 换种子的依据不是试出来的手气，而是 `search_ai_seed`（本文件末尾，`#[ignore]`）：
 //! 它先按 `[k;32]`（k = 0..=63）**纯计算**出障碍数（`ChaCha12` + `graphwar_level_generator::generate`，
-//! 与 `serverloop` 开局同一条），再对障碍最少的若干个真的跑一局 AI-vs-AI。
+//! 与 `graphwar_game_server` 开局同一条），再对障碍最少的若干个真的跑一局 AI-vs-AI。
 //! 实测：`[53;32]` = **1 个障碍、第 6 回合 3 人阵亡、EndingGame**（最快完局）；
 //! `[62;32]` = 0 障碍、12 回合；而 3 个障碍的几颗种子全都 20 回合只死 2 人（僵局）。
 //! 断言**一条没改**（仍是"能打死敌人并触发 `EndingGame`"，测试 2 还要求"必须有死人"）。
@@ -121,34 +121,34 @@ impl Board {
     /// 把一批报文吸收进局面（只认这五种，别的不管）。
     fn absorb(&mut self, batch: &[String]) {
         for m in batch {
-            let Some(rm) = gw2_rebuild::protocol::parse_message(m) else { continue };
+            let Some(rm) = gw2_rebuild::_scaffold::protocol::parse_message(m) else { continue };
             match rm.kind.as_str() {
                 "PosInfo" => {
-                    let id = gw2_rebuild::protocol::get_int(&rm, "entity_id").unwrap();
-                    let x = gw2_rebuild::protocol::get_f64(&rm, "pos_x").unwrap();
-                    let y = gw2_rebuild::protocol::get_f64(&rm, "pos_y").unwrap();
+                    let id = gw2_rebuild::_scaffold::protocol::get_int(&rm, "entity_id").unwrap();
+                    let x = gw2_rebuild::_scaffold::protocol::get_f64(&rm, "pos_x").unwrap();
+                    let y = gw2_rebuild::_scaffold::protocol::get_f64(&rm, "pos_y").unwrap();
                     self.pos.insert(id, (x, y));
                 }
                 "SoldierInfo" => {
-                    let sid = gw2_rebuild::protocol::get_int(&rm, "soldier_id").unwrap();
-                    let pid = gw2_rebuild::protocol::get_int(&rm, "player_id").unwrap();
+                    let sid = gw2_rebuild::_scaffold::protocol::get_int(&rm, "soldier_id").unwrap();
+                    let pid = gw2_rebuild::_scaffold::protocol::get_int(&rm, "player_id").unwrap();
                     self.owner.insert(sid, pid);
                     self.alive.insert(sid);
                 }
                 "TeamInfo" => {
-                    let id = gw2_rebuild::protocol::get_int(&rm, "entity_id").unwrap();
-                    let name = gw2_rebuild::protocol::get_str(&rm, "team").unwrap();
+                    let id = gw2_rebuild::_scaffold::protocol::get_int(&rm, "entity_id").unwrap();
+                    let name = gw2_rebuild::_scaffold::protocol::get_str(&rm, "team").unwrap();
                     self.team.insert(id, name);
                 }
                 "AddObstacle" => {
                     self.obstacles.push((
-                        gw2_rebuild::protocol::get_f64(&rm, "pos_x").unwrap(),
-                        gw2_rebuild::protocol::get_f64(&rm, "pos_y").unwrap(),
-                        gw2_rebuild::protocol::get_f64(&rm, "radius").unwrap(),
+                        gw2_rebuild::_scaffold::protocol::get_f64(&rm, "pos_x").unwrap(),
+                        gw2_rebuild::_scaffold::protocol::get_f64(&rm, "pos_y").unwrap(),
+                        gw2_rebuild::_scaffold::protocol::get_f64(&rm, "radius").unwrap(),
                     ));
                 }
                 "LifeQueuedDeath" => {
-                    let id = gw2_rebuild::protocol::get_int(&rm, "entity_id").unwrap();
+                    let id = gw2_rebuild::_scaffold::protocol::get_int(&rm, "entity_id").unwrap();
                     self.alive.remove(&id);
                 }
                 _ => {}
@@ -318,7 +318,7 @@ fn aim(board: &Board, shooter: i64) -> (String, usize) {
 }
 
 fn kind(msg: &str) -> String {
-    gw2_rebuild::protocol::parse_message(msg)
+    gw2_rebuild::_scaffold::protocol::parse_message(msg)
         .map(|m| m.kind)
         .unwrap_or_default()
 }
@@ -459,16 +459,16 @@ fn rotation_and_ai_are_wired_over_tcp() {
     let mut owner: BTreeMap<i64, i64> = BTreeMap::new();
     let mut team_of: BTreeMap<i64, String> = BTreeMap::new();
     for m in &batch {
-        if let Some(rm) = gw2_rebuild::protocol::parse_message(m) {
+        if let Some(rm) = gw2_rebuild::_scaffold::protocol::parse_message(m) {
             if rm.kind == "SoldierInfo" {
-                let sid = gw2_rebuild::protocol::get_int(&rm, "soldier_id").unwrap();
-                let pid = gw2_rebuild::protocol::get_int(&rm, "player_id").unwrap();
+                let sid = gw2_rebuild::_scaffold::protocol::get_int(&rm, "soldier_id").unwrap();
+                let pid = gw2_rebuild::_scaffold::protocol::get_int(&rm, "player_id").unwrap();
                 owner.insert(sid, pid);
                 roster.entry(pid).or_default().push(sid);
             }
             if rm.kind == "TeamInfo" {
-                let sid = gw2_rebuild::protocol::get_int(&rm, "entity_id").unwrap();
-                let team = gw2_rebuild::protocol::get_str(&rm, "team").unwrap();
+                let sid = gw2_rebuild::_scaffold::protocol::get_int(&rm, "entity_id").unwrap();
+                let team = gw2_rebuild::_scaffold::protocol::get_str(&rm, "team").unwrap();
                 team_of.insert(sid, team);
             }
         }
@@ -525,9 +525,9 @@ fn rotation_and_ai_are_wired_over_tcp() {
         }
         // 死亡从报文里取（不猜）：本回合谁被打死了，就把他从存活集里去掉。
         for m in &got {
-            if let Some(rm) = gw2_rebuild::protocol::parse_message(m) {
+            if let Some(rm) = gw2_rebuild::_scaffold::protocol::parse_message(m) {
                 if rm.kind == "LifeQueuedDeath" {
-                    let id = gw2_rebuild::protocol::get_int(&rm, "entity_id").unwrap();
+                    let id = gw2_rebuild::_scaffold::protocol::get_int(&rm, "entity_id").unwrap();
                     deaths.push(id);
                     alive.remove(&id);
                 }
@@ -623,18 +623,18 @@ fn ai_functions_are_broadcast_and_round_trip_over_tcp() {
     let mut team_of: BTreeMap<i64, String> = BTreeMap::new();
     let mut owner: BTreeMap<i64, i64> = BTreeMap::new();
     for m in &batch {
-        if let Some(rm) = gw2_rebuild::protocol::parse_message(m) {
+        if let Some(rm) = gw2_rebuild::_scaffold::protocol::parse_message(m) {
             match rm.kind.as_str() {
                 "TeamInfo" => {
                     team_of.insert(
-                        gw2_rebuild::protocol::get_int(&rm, "entity_id").unwrap(),
-                        gw2_rebuild::protocol::get_str(&rm, "team").unwrap(),
+                        gw2_rebuild::_scaffold::protocol::get_int(&rm, "entity_id").unwrap(),
+                        gw2_rebuild::_scaffold::protocol::get_str(&rm, "team").unwrap(),
                     );
                 }
                 "SoldierInfo" => {
                     owner.insert(
-                        gw2_rebuild::protocol::get_int(&rm, "soldier_id").unwrap(),
-                        gw2_rebuild::protocol::get_int(&rm, "player_id").unwrap(),
+                        gw2_rebuild::_scaffold::protocol::get_int(&rm, "soldier_id").unwrap(),
+                        gw2_rebuild::_scaffold::protocol::get_int(&rm, "player_id").unwrap(),
                     );
                 }
                 _ => {}
@@ -696,20 +696,20 @@ fn ai_functions_are_broadcast_and_round_trip_over_tcp() {
             .unwrap_or_else(|| panic!("本回合没有 CalculatingResults：{got:?}"));
         assert_eq!(kind(&got[calc + 1]), "FunctionInfo", "CalculatingResults 之后必须是 FunctionInfo");
         assert_eq!(kind(&got[calc + 2]), "FunctionPoints", "FunctionInfo 之后必须是 FunctionPoints");
-        let fired = gw2_rebuild::protocol::parse_message(&got[calc + 1]).unwrap();
-        assert_eq!(gw2_rebuild::protocol::get_int(&fired, "owner_id"), Some(sid));
+        let fired = gw2_rebuild::_scaffold::protocol::parse_message(&got[calc + 1]).unwrap();
+        assert_eq!(gw2_rebuild::_scaffold::protocol::get_int(&fired, "owner_id"), Some(sid));
         assert_eq!(
-            gw2_rebuild::protocol::get_str(&fired, "function"),
+            gw2_rebuild::_scaffold::protocol::get_str(&fired, "function"),
             Some(text.clone()),
             "打出去的必须是它说的那个函数（士兵 {sid}）"
         );
 
         // ---- 5) 修正文本：`<f> ± <三位小数>`，常数独立复算，**运算符带符号** ----
-        let corrected = gw2_rebuild::protocol::get_str(&fired, "corrected_function")
+        let corrected = gw2_rebuild::_scaffold::protocol::get_str(&fired, "corrected_function")
             .unwrap_or_else(|| panic!("修正版必须有 corrected_function：{fired:?}"));
-        let pts = gw2_rebuild::protocol::parse_message(&got[calc + 2]).unwrap();
-        let x0 = gw2_rebuild::protocol::get_f64(&pts, "start_x").expect("FunctionPoints.start_x");
-        let y0 = gw2_rebuild::protocol::get_f64(&pts, "start_y").expect("FunctionPoints.start_y");
+        let pts = gw2_rebuild::_scaffold::protocol::parse_message(&got[calc + 2]).unwrap();
+        let x0 = gw2_rebuild::_scaffold::protocol::get_f64(&pts, "start_x").expect("FunctionPoints.start_x");
+        let y0 = gw2_rebuild::_scaffold::protocol::get_f64(&pts, "start_y").expect("FunctionPoints.start_y");
         let flip = team_of.get(&sid).map(|t| t == "Team2").expect("每名士兵都有 TeamInfo");
         // c = y0 - f(±x0)：与 `src/graphwar_shot_calculator::correction` 同一定义，但这里**自己算**。
         let f_at = gw2_rebuild::math_function::eval(&toks, if flip { -x0 } else { x0 }, 0.0, 0.0);
@@ -762,14 +762,14 @@ fn function_info_in(batch: &[String]) -> Option<FunctionInfo> {
         .iter()
         .rev()
         .filter_map(|m| {
-            let rm = gw2_rebuild::protocol::parse_message(m)?;
+            let rm = gw2_rebuild::_scaffold::protocol::parse_message(m)?;
             if rm.kind != "FunctionInfo" {
                 return None;
             }
             Some((
-                gw2_rebuild::protocol::get_str(&rm, "function").unwrap_or_default(),
-                gw2_rebuild::protocol::get_int(&rm, "owner_id")?,
-                gw2_rebuild::protocol::get_str(&rm, "corrected_function"),
+                gw2_rebuild::_scaffold::protocol::get_str(&rm, "function").unwrap_or_default(),
+                gw2_rebuild::_scaffold::protocol::get_int(&rm, "owner_id")?,
+                gw2_rebuild::_scaffold::protocol::get_str(&rm, "corrected_function"),
             ))
         })
         .next()
@@ -781,17 +781,17 @@ fn function_info_of(batch: &[String], soldier_id: i64) -> Option<FunctionInfo> {
         .iter()
         .rev()
         .filter_map(|m| {
-            let rm = gw2_rebuild::protocol::parse_message(m)?;
+            let rm = gw2_rebuild::_scaffold::protocol::parse_message(m)?;
             if rm.kind != "FunctionInfo" {
                 return None;
             }
-            if gw2_rebuild::protocol::get_int(&rm, "owner_id") != Some(soldier_id) {
+            if gw2_rebuild::_scaffold::protocol::get_int(&rm, "owner_id") != Some(soldier_id) {
                 return None;
             }
             Some((
-                gw2_rebuild::protocol::get_str(&rm, "function").unwrap_or_default(),
+                gw2_rebuild::_scaffold::protocol::get_str(&rm, "function").unwrap_or_default(),
                 soldier_id,
-                gw2_rebuild::protocol::get_str(&rm, "corrected_function"),
+                gw2_rebuild::_scaffold::protocol::get_str(&rm, "corrected_function"),
             ))
         })
         .next()
@@ -799,9 +799,9 @@ fn function_info_of(batch: &[String], soldier_id: i64) -> Option<FunctionInfo> {
 
 fn read_who(batch: &[String]) -> Option<i64> {
     for m in batch.iter().rev() {
-        if let Some(rm) = gw2_rebuild::protocol::parse_message(m) {
+        if let Some(rm) = gw2_rebuild::_scaffold::protocol::parse_message(m) {
             if rm.kind == "TurnInfo" {
-                return gw2_rebuild::protocol::get_int(&rm, "player_id");
+                return gw2_rebuild::_scaffold::protocol::get_int(&rm, "player_id");
             }
         }
     }
@@ -810,11 +810,11 @@ fn read_who(batch: &[String]) -> Option<i64> {
 
 fn read_whom(batch: &[String], player_id: i64) -> Option<i64> {
     for m in batch.iter().rev() {
-        if let Some(rm) = gw2_rebuild::protocol::parse_message(m) {
+        if let Some(rm) = gw2_rebuild::_scaffold::protocol::parse_message(m) {
             if rm.kind == "TurnInfo"
-                && gw2_rebuild::protocol::get_int(&rm, "player_id") == Some(player_id)
+                && gw2_rebuild::_scaffold::protocol::get_int(&rm, "player_id") == Some(player_id)
             {
-                return gw2_rebuild::protocol::get_int(&rm, "soldier_id");
+                return gw2_rebuild::_scaffold::protocol::get_int(&rm, "soldier_id");
             }
         }
     }
@@ -839,11 +839,11 @@ fn read_whom(batch: &[String], player_id: i64) -> Option<i64> {
 #[test]
 #[ignore]
 fn search_ai_seed() {
-    // ---- 第一轮：障碍数（`serverloop` 开局那条：ChaCha12(seed) → graphwar_level_generator::generate(.., 0)）
+    // ---- 第一轮：障碍数（`graphwar_game_server` 开局那条：ChaCha12(seed) → graphwar_level_generator::generate(.., 0)）
     let mut counts: Vec<(usize, u8)> = Vec::new();
     for k in 0..=63u8 {
         let seed = [k; 32];
-        let mut rng = gw2_rebuild::rng::ChaCha12::from_seed(&seed);
+        let mut rng = gw2_rebuild::_scaffold::rng::ChaCha12::from_seed(&seed);
         let mut next = || rng.next_u64();
         let n = gw2_rebuild::graphwar_level_generator::generate(&mut next, 0).len();
         counts.push((n, k));
@@ -884,7 +884,7 @@ fn search_ai_seed() {
             }
             turns += 1;
             for m in &got {
-                if let Some(rm) = gw2_rebuild::protocol::parse_message(m) {
+                if let Some(rm) = gw2_rebuild::_scaffold::protocol::parse_message(m) {
                     if rm.kind == "LifeQueuedDeath" {
                         deaths += 1;
                     }

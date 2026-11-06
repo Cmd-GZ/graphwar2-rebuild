@@ -80,7 +80,7 @@
 在任何机器上只依赖仓库里的字节做对拍。**抄写一个空格都没动**。
 
 自检里有一条"构造器 ↔ 黄金样本"的互锁：`GwWireSamples.broadcast(...)` 按
-`src/protocol.rs::Broadcast::to_json` 的键序拼出来的默认样本，必须与 `BROADCAST_1`
+`src/_scaffold/protocol.rs::Broadcast::to_json` 的键序拼出来的默认样本，必须与 `BROADCAST_1`
 **逐字节相同**。任何一边漂了都会红。
 
 ---
@@ -443,7 +443,7 @@ bash client/run.sh
 ### 8.3 broker（Global 页）
 
 ```bash
-# 终端 A：我们自己的 broker（src/broker.rs）
+# 终端 A：我们自己的 broker（src/_scaffold/broker.rs）
 cargo run --offline --example serve_broker -- 127.0.0.1:42970
 # 终端 B：让客户端去连它（默认空 = 不连任何 broker）
 GW2_BROKER_ADDR=127.0.0.1:42970 bash client/run.sh

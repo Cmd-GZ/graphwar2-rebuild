@@ -43,7 +43,7 @@ use crate::graphwar_function_evolutionator::{
 use crate::math_function::to_text;
 use crate::graphwar_path_calculator::{calculate, Mode};
 use crate::plane::{is_occupied, rasterize, EMPTY};
-use crate::rng::ChaCha12;
+use crate::_scaffold::rng::ChaCha12;
 use crate::graphwar_shot_calculator::{correction, shifted_tokens};
 use crate::{Function, Token};
 

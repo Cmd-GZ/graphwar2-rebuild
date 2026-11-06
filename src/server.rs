@@ -100,7 +100,7 @@ mod tests {
         let wire = to_wire(&msgs);
         assert_eq!(&wire[..2], &(msgs[0].len() as u16).to_be_bytes());
         // 能被自己的解码器读回
-        let (f, used) = crate::protocol::Frame::decode(&wire).unwrap();
+        let (f, used) = crate::_scaffold::protocol::Frame::decode(&wire).unwrap();
         assert_eq!(f.payload, msgs[0]);
         assert_eq!(used, wire.len());
     }

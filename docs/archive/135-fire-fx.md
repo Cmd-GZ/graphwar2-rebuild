@@ -356,7 +356,7 @@ bash client/run.sh shots <dir>  # 17 张；PlayScreen/PlayScreenCampaign/PlayScr
 | "准备好" = 函数非空 | **推断** | 真帧 + 报文时间线（闭合发生在 `FunctionFire` 之前还是之后） |
 | tick 频率 60/s | **观测** | `docs/35` §2（113 个 `TickReply`） |
 | 每 tick 0.29 单位 | **推断** | `docs/86` §6/§7；缺逐 tick 位置观测（要 hook） |
-| 协议按 tick 建模（`active_tick`/`start_tick`/`tick`） | **逐位验证** | `docs/46`/`docs/43` 的报文序列 + `src/protocol.rs` 的逐字节测试 |
+| 协议按 tick 建模（`active_tick`/`start_tick`/`tick`） | **逐位验证** | `docs/46`/`docs/43` 的报文序列 + `src/_scaffold/protocol.rs` 的逐字节测试 |
 | 死亡发生在到达 tick | **观测（强）** | `docs/86` §6（151/152，残差中位 −0.4 tick） |
 | 我们这一版"结算仍在开火时" | **自定（取舍）** | §3.4 给了改法与代价 |
 

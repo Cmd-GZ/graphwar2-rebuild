@@ -503,7 +503,7 @@ mod("graphwar_replay_player.rs", "graphwar", ("src/graphwar_replay_player.rs",),
 mod("graphwar_root_node.rs", "graphwar", (), "未做",
     "主场景节点；docs/125 只有调用形态观测，src/ 无实现")
 mod("graphwar_server_broker_handler.rs", "graphwar", (), "未做",
-    "原模块是**客户端侧**的 broker 处理器，未做；src/broker.rs 是我们自建的 broker 服务端，"
+    "原模块是**客户端侧**的 broker 处理器，未做；src/_scaffold/broker.rs 是我们自建的 broker 服务端，"
     "不是它的复原（见 docs/115）")
 mod("graphwar_server_connection_handler.rs", "graphwar", ("src/server.rs",), "逐位",
     "docs/33：新连接的状态同步与真实客户端逐字节一致")
@@ -586,16 +586,17 @@ SPOT_CHECKS = [
 # 第六步：我们自造的、原版没有的东西（D2）
 # ---------------------------------------------------------------------------
 SELF_MADE = [
-    ("src/api.rs", "内核 → GDScript 的对外 API；原版没有对应模块（它直接是 Godot 模块）"),
-    ("src/capi.rs", "C ABI，纯为把我们自己的实现暴露出去做对拍；原版无此物"),
-    ("src/replaydiff.rs", "回放**消息级**对拍器；原版没有这种工具模块"),
-    ("src/diffconv.rs", "上一条的收敛层；同上"),
-    ("src/replay_inflate.rs", "手写 DEFLATE/gzip；原版用的是第三方 crate，不是游戏模块"),
-    ("src/rng.rs", "ChaCha12 的重写；原版是 rand_chacha crate，不是游戏模块"),
-    ("src/gdext.rs", "GDExtension 入口脚手架（原版的入口在 Godot 模块侧，不在这 58 个文件里）"),
-    ("src/gdext_class.rs", "同上：classdb_register_extension_class4 的封装"),
-    ("src/broker.rs", "**我们自己的一台 broker 服务端**；原版只有连 broker 的客户端，没有服务端"),
-    ("src/protocol.rs", "报文编解码装配层；原版没有同名模块，编解码分散在各 handler 里"),
+    ("src/_scaffold/api.rs", "内核 → GDScript/JSON 的对外 API；原版把这件事交给 Godot 模块反射，没有这一层"),
+    ("src/_scaffold/capi.rs", "C ABI，纯为把我们自己的实现暴露出去做对拍；原版无此物"),
+    ("src/_scaffold/replaydiff.rs", "回放**消息级**对拍器；原版没有这种工具模块"),
+    ("src/_scaffold/diffconv.rs", "上一条的收敛层；同上"),
+    ("src/_scaffold/replay_inflate.rs", "手写 DEFLATE/gzip；原版用的是第三方 crate，不是游戏模块"),
+    ("src/_scaffold/rng.rs", "ChaCha12 的重写；原版是 rand_chacha crate，不是游戏模块"),
+    ("src/_scaffold/gdext.rs", "GDExtension 入口脚手架（原版的入口在 Godot 模块侧，不在这 58+12 个文件里）"),
+    ("src/_scaffold/gdext_class.rs", "同上：classdb_register_extension_class4 的封装"),
+    ("src/_scaffold/broker.rs", "**我们自己的一台 broker 服务端**；原版只有连 broker 的客户端，没有服务端"),
+    ("src/_scaffold/protocol.rs", "报文编解码装配层；原版没有同名模块，编解码分散在各 handler 里"),
+    ("src/_scaffold/ai_explain.rs", "AI 决策链解释器（工具）；不引入新行为，只把已对过地址的零件按原版顺序跑一遍"),
     ("client/", "整个 Godot 客户端是照 .tscn 与截图重写的仿制品，**不是**原版源码（AGENTS §0.4）"),
 ]
 

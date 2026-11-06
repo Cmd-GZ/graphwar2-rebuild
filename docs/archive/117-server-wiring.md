@@ -14,7 +14,7 @@
 
 > `docs/109` §6.1 留的尾巴（"规则已实现并可测 ≠ 端到端走新规则"）补上了：
 > 回合开始走 `TurnManager::begin_turn`（三态），**先定射手、再只为它**跑一次
-> `SoldierEvolver::evolve_soldier`，**25 s 预算默认接上**；`serverloop` 的
+> `SoldierEvolver::evolve_soldier`，**25 s 预算默认接上**；`graphwar_game_server` 的
 > "谁下一个开火"不再由它自己算。
 > 仍然没接的：`token → 文本`（AI 的函数上不了线）、回合超时的**检测**、游标初值的**配置入口**。
 
@@ -29,7 +29,7 @@
 | `tests/server_match.rs` | 新增端到端 `rotation_and_ai_are_wired_over_tcp`；原 `plays_a_full_match_over_tcp` **只换了夹具种子**（理由见 §5） | — |
 | `docs/117-server-wiring.md` | 本文 | — |
 
-**没动**：`src/graphwar_turn_manager.rs`、`src/graphwar_function_evolutionator.rs`（**签名一字未改**，只调用）、`src/protocol.rs`、
+**没动**：`src/graphwar_turn_manager.rs`、`src/graphwar_function_evolutionator.rs`（**签名一字未改**，只调用）、`src/_scaffold/protocol.rs`、
 `src/graphwar_life_manager.rs`、`src/gdext*.rs`、`client/`、`docs/INDEX.md`、`docs/HANDOVER.md`。
 
 ### 1.1 两个接线入口
@@ -37,7 +37,7 @@
 ```rust
 // ① src/game.rs —— 一个回合的开始（唯一入口）
 Match::begin_next_turn(player_id, timed_out, now_ms, time_mode) -> TurnStart
-    // a) turn::TurnManager::begin_turn(player_id, life_state_of(&life), timed_out) -> TurnDecision
+    // a) graphwar_turn_manager::TurnManager::begin_turn(player_id, life_state_of(&life), timed_out) -> TurnDecision
     // b) Announce{soldier_id != 0} ⇒ evolve_for_soldier(player_id, soldier_id, flip, turn_no)
     // c) decision.broadcast() == Some((p, s)) 才调既有 Match::begin_turn(p, s, …) 拼报文
     //    （Some(0) 仍发、None 不发 —— 就是 broadcast() 那个开关）
@@ -73,11 +73,11 @@ soldier_id == 0        // 全灭哨兵，真游戏也没有 FunctionFire（docs/
 // 跑的时候：
 ScoringContext { x0, y0, flip, step: COARSE_STEP, mask: &self.mask,
                  targets: 场上除射手以外的人, limit: params.limit }
-SoldierEvolver::new(aigen::params(level), mode, ctx).with_budget(budget)
+SoldierEvolver::new(graphwar_function_evolutionator::params(level), mode, ctx).with_budget(budget)
     .evolve_soldier(&mut self.functions, soldier_id, turn_no, pop, &mut next)
 ```
 
-* **`flip` 从轮转来**：`TurnDecision::flip()`（= 队伍，`docs/105`）。`serverloop` 里
+* **`flip` 从轮转来**：`TurnDecision::flip()`（= 队伍，`docs/105`）。`graphwar_game_server` 里
   开火时也改成读 `TurnManager::flip_for`，"谁开火"和"朝哪边"因此只有一个来源；
 * **槽按士兵**：写回的是 `soldier_id` 自己的槽，同玩家的另一个士兵完全不动
   （单测 `ai_evolves_only_for_computer_players_and_only_its_own_soldier`）；
@@ -88,18 +88,18 @@ SoldierEvolver::new(aigen::params(level), mode, ctx).with_budget(budget)
 ### 1.4 25 s 预算：默认接上
 
 ```rust
-AiConfig::default().budget_secs == Some(aigen::GAME_TIME_BUDGET_SECS)   // = Some(25.0)
+AiConfig::default().budget_secs == Some(graphwar_function_evolutionator::GAME_TIME_BUDGET_SECS)   // = Some(25.0)
 Config::default().ai_budget_secs   == Some(25.0)
 ```
 
 `docs/109` §6.1 记的"`evolve()` 默认传 `None`，25 s 上限实际没生效"在**接线路径**上不再成立：
 `Match` 的 AI 配置默认值就是 25 s，并且原样交给 `SoldierEvolver::with_budget`。
-（`aigen::evolve` 这个便捷函数本身仍是 `None`，没改它的签名——接线路径不走它。）
+（`graphwar_function_evolutionator::evolve` 这个便捷函数本身仍是 `None`，没改它的签名——接线路径不走它。）
 
 | 断言 | 分级 |
 |---|---|
 | 常量 = 25.0（`0x51b7cf cmp $0x19`） | **观测**（`aigen` 的 `game_budget_constant_matches_disassembly`） |
-| `with_budget` 到点就停 | **逐位验证**（`aigen::time_budget_stops_early_without_changing_semantics`） |
+| `with_budget` 到点就停 | **逐位验证**（`graphwar_function_evolutionator::time_budget_stops_early_without_changing_semantics`） |
 | 本接线层把 25 s 传进去 | **逐位验证**（`ai_budget_defaults_to_the_game_value` 断言默认值与转发字段） |
 
 ⚠️ 一旦预算真的截断，这一局就**不再逐位**（`docs/06` §17.2 的 B 类：取决于机器速度）。
@@ -201,7 +201,7 @@ FunctionFireRequest（当前玩家）
 
 做法：保留全部断言（含 `EndingGame`、`SoldierInfo` 条数 4 条、握手序列），
 换成一颗能打完的种子。取值过程（可复现，未入库的临时脚本）：
-把 `serverloop` 的回合推进在进程内重放（同样的 `levelgen` 种子 + 每回合 `fire("0.00")`），
+把 `graphwar_game_server` 的回合推进在进程内重放（同样的 `levelgen` 种子 + 每回合 `fire("0.00")`），
 扫 `1..=64` 号种子，能在 12 回合内打出 `EndingGame` 的是
 **11（7 回合）/ 17（9）/ 32（9）/ 52（11）/ 55（3）/ 63（11）**；取 11。
 
@@ -243,13 +243,13 @@ FunctionFireRequest（当前玩家）
 |---|---|---|---|
 | ① | **游标初值**（`docs/98` §6-B）。三例 replay 吻合 0，但 `1782763022` 首取 `2509` 不符 | 更多 replay / 二进制初始化点 | 只能是 `PlayerTurns::new` 的 0。**`TurnManager::add_player` 没有 index 参数**，所以接线层**没法**把它做成配置项 —— 这是唯一一个"要改 `graphwar_turn_manager.rs` 才能接的东西"，本轮**没改**（`graphwar_turn_manager.rs` 是别的 agent 刚交付的），需要时加一个 `add_player_with_index` 即可 |
 | ② | **进化种群的归属**（`docs/98` §6-A）：键是 player 还是 soldier | 插入点 | 显式开关 `PopScope`，默认**按士兵**；单测证明两种读法可观测地分叉 |
-| ③ | **回合超时的检测**（用户口述"超时 = 跳过该玩家"，**未独立验证**） | 谁触发超时、超时那一刻 `TurnInfo` 是否已广播、游标推不推 | 只做了**分支**：`begin_next_turn(..., timed_out=true)` ⇒ `SkipReason::TurnTimeout`，游标不动；`serverloop` **永远传 `false`**（没有任何计时线程，加计时器等于引入新的墙钟不确定源） |
+| ③ | **回合超时的检测**（用户口述"超时 = 跳过该玩家"，**未独立验证**） | 谁触发超时、超时那一刻 `TurnInfo` 是否已广播、游标推不推 | 只做了**分支**：`begin_next_turn(..., timed_out=true)` ⇒ `SkipReason::TurnTimeout`，游标不动；`graphwar_game_server` **永远传 `false`**（没有任何计时线程，加计时器等于引入新的墙钟不确定源） |
 | ④ | **`Some(0)` 之后谁推进**（§5 第 3 条） | `0x463da0` 两分支的发射时序（`docs/98` §6-D） | 重建版立刻推进 |
 | ⑤ | **空士兵表**到底发不发 `TurnInfo{p,0}`（`docs/109` §2.4 的文档冲突） | 一个"空表玩家进 `0x463da0`"的现场 | 用默认 `AnnounceZero`（按 objdump），`EmptyRoster::Skip` 保留 |
 | ⑥ | **`token → 文本`（`0x4ec160`）** | 逐 case 还原 | 未实现 ⇒ AI 产物上不了线（§4） |
 | ⑦ | **第 0 代种群**（`docs/110`） | 那条"缓存空 ⇒ 每槽随机 + 截断 + 变异"的链路 | `seed_population` 仍用 `initial_population`（与 `docs/109` 一致，未退步也未前进） |
-| ⑧ | **变体 B**（`docs/110`：`function_mode != Normal` 走 `0x51d080`） | 实现 | **未实现**；`AiConfig.mode` 是 `aigen::VarMode`（`docs/94` 的变量权重），**没有**从 `room.function_mode` 推导——那个字符串到 `VarMode`/变体 A/B 的对应没有证据 |
-| ⑨ | **顺序模式 vs 同时模式** | `docs/98` §6-D | 只跑 `SequentialTurns`（`serverloop` 的房间状态写死），同时模式没接 |
+| ⑧ | **变体 B**（`docs/110`：`function_mode != Normal` 走 `0x51d080`） | 实现 | **未实现**；`AiConfig.mode` 是 `graphwar_function_evolutionator::VarMode`（`docs/94` 的变量权重），**没有**从 `room.function_mode` 推导——那个字符串到 `VarMode`/变体 A/B 的对应没有证据 |
+| ⑨ | **顺序模式 vs 同时模式** | `docs/98` §6-D | 只跑 `SequentialTurns`（`graphwar_game_server` 的房间状态写死），同时模式没接 |
 | ⑩ | **整局逐位** | 回放对拍（`docs/06` §17.3 的"预测下一条报文并逐字节比对"） | 没做。本轮的验收口径只有 §3 那条：**给定同一串消息 ⇒ 状态转移逐位** |
 
 ### 6.1 一处已知的时序偏差（写明白）

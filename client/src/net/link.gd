@@ -130,7 +130,7 @@ func poll(delta: float) -> void:
 func _read_available() -> void:
 	# 已经断开的 socket 上 `get_available_bytes()` 会打一条 `Condition "!is_open()"` 错误
 	# 并返回 -1，所以先看状态。（代价：如果对端"把最后一批数据发完就立刻关"，
-	# 那一批可能读不到 —— 与 `src/serverloop.rs::read_frame` 的 `read_exact` 失败同性质。）
+	# 那一批可能读不到 —— 与 `src/graphwar_game_server.rs::read_frame` 的 `read_exact` 失败同性质。）
 	if _peer == null or _peer.get_status() != StreamPeerTCP.STATUS_CONNECTED:
 		return
 	while _peer != null and _peer.get_available_bytes() > 0:

@@ -12,8 +12,8 @@ FunctionFireRequest   -> begin_turn -> fire（8 条）-> tick（到期销毁）-
                       -> 某队全灭则 EndingGame              (docs/45)
 ```
 
-关卡由 `levelgen::generate`（`docs/61`）现生成，种子来自 `/dev/urandom`，
-随机数用 `rng::ChaCha12`（与游戏同算法，`docs/53`）。
+关卡由 `graphwar_level_generator::generate`（`docs/61`）现生成，种子来自 `/dev/urandom`，
+随机数用 `_scaffold::rng::ChaCha12`（与游戏同算法，`docs/53`）。
 
 ## 2. 验证：真实 TCP 上打完一局
 

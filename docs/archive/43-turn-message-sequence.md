@@ -44,7 +44,7 @@ EffectInfo(ExplosionEffect)
 GameStateInfo(ExecutingResults)
 ```
 
-新增的序列化函数（`src/protocol.rs`，都有逐字节测试）：
+新增的序列化函数（`src/_scaffold/protocol.rs`，都有逐字节测试）：
 `emit_game_state`、`emit_function_info`、`emit_function_active`。
 
 ## 3. 验证

@@ -29,7 +29,7 @@
 mod tables;
 
 use tables::{ZIG_NORM_F, ZIG_NORM_X};
-use crate::rng::ChaCha12;
+use crate::_scaffold::rng::ChaCha12;
 
 /// 一个障碍。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -151,7 +151,7 @@ pub struct ObstacleParams {
 /// **逐位验证 + 运行时**（本仓库 `AGENTS.md` 的四档里最高的一档）。
 ///
 /// 同一张表在客户端 `client/src/app/campaign.gd` 里也有一份（`obstacles`/`obstacle_min`
-/// 字段，界面用）；两处必须一致 —— `api.rs` 的单测
+/// 字段，界面用）；两处必须一致 —— `_scaffold/api.rs` 的单测
 /// `level_params_match_docs_118_table` 把这张表与文档原文钉在一起。
 ///
 /// ⚠️ 注意事项：
@@ -705,7 +705,7 @@ mod tests {
         }
     }
 
-    /// 关卡号越界 → `None`（由 `api.rs` 翻成 `ok:false`）。
+    /// 关卡号越界 → `None`（由 `_scaffold/api.rs` 翻成 `ok:false`）。
     #[test]
     fn out_of_range_level_has_no_params() {
         assert!(obstacles_from_seed(LEVEL_COUNT, 1).is_none(), "21（0 基越界）应当是 None");

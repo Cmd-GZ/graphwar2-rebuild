@@ -1,6 +1,6 @@
 //! 对外 C ABI：把复原的算法从 `.so` 里暴露出来，供外部程序对拍。
 //!
-//! 与 GDExtension 入口（`gdext.rs`）并列的另一条路：那条要真 Godot 才能验证，
+//! 与 GDExtension 入口（`_scaffold/gdext.rs`）并列的另一条路：那条要真 Godot 才能验证，
 //! 这条只要有二进制 + Python 的 ctypes 就能验证。
 //!
 //! 约定：

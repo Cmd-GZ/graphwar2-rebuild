@@ -41,7 +41,7 @@
 
 1. **`ptr_slots.py` 解 `0x3d5260` 的名字表** ⇒ 一次性定死"弹道什么时候清除"的落点（`play_control` 已排除本层）；
 2. **`0x3dcbb0`（0x2250 字节）**：`play_screen_control` 内最大函数，被 `root_node 0x3a5760` 直接调用，很可能是"回合推进 / game_state 分派"的真身；
-3. **`entity_drawer` 补暴露**：`src/api.rs`/`gdext.rs` 还没把新图元暴露给客户端（本轮禁止改 `client/`），
+3. **`entity_drawer` 补暴露**：`src/_scaffold/api.rs`/`_scaffold/gdext.rs` 还没把新图元暴露给客户端（本轮禁止改 `client/`），
    所以棋盘仍用旧近似画法；
 4. 5 个纯未知模块（effect_manager / entity_effect_manager / game_recorder / graphics_manager / video_writer）。
 
@@ -61,16 +61,16 @@
 | 修正常数 + 开火原语 | `src/graphwar_shot_calculator.rs` | 端到端冒烟 + 上游 648 例对拍 + 装配校验 15 组 | [`05`](05-shot-pipeline.md) |
 | 坐标 / 掩膜 / 光栅化 | `src/plane.rs` | 与真二进制**逐字节 / 300 随机点**一致；摧毁 = 挖 `r=0.5` 洞 | [`08`](08-plane.md) §10 |
 | 弹道与命中结算 | `src/graphwar_shot_calculator/settle.rs` | 整关回放致死集合逐发一致；实况 0.01 下 82 发并集 **152/152** | [`14`](14-turn.md) §6 |
-| 命中判定暴露给引擎 | `src/api.rs` | `hit_test` 与 `resolve` **同一个函数体**（无第二份实现） | [`16`](06-verification.md) §4 |
+| 命中判定暴露给引擎 | `src/_scaffold/api.rs` | `hit_test` 与 `resolve` **同一个函数体**（无第二份实现） | [`16`](06-verification.md) §4 |
 | 事件 / 生命 / 回合状态机 | `src/events.rs`、`src/graphwar_life_manager.rs`、`src/turnstate.rs` | 6 状态 7 事件，**13 次迁移逐个相同** | [`14`](14-turn.md) §2 |
-| 协议 + 编解码 | `src/protocol.rs` | **73/73 事件**；判别值 **72 个实测值** | [`07`](07-protocol.md) §6–§7 |
-| broker（房间列表） | `src/broker.rs` | 12 条测试；`VersionInfo` → `GameInfo` 线格式与真实抓包一致 | [`09`](09-network.md) §6 |
+| 协议 + 编解码 | `src/_scaffold/protocol.rs` | **73/73 事件**；判别值 **72 个实测值** | [`07`](07-protocol.md) §6–§7 |
+| broker（房间列表） | `src/_scaffold/broker.rs` | 12 条测试；`VersionInfo` → `GameInfo` 线格式与真实抓包一致 | [`09`](09-network.md) §6 |
 | 服务端（握手 / Match / 一回合 / 整局循环） | `src/server.rs`、`src/game.rs`、`src/graphwar_game_server.rs` | 与抓包逐字节/逐条一致；真实 TCP 跑到 `EndingGame` | [`09`](09-network.md) §3–§5 |
 | tick 时钟 | `src/graphwar_tick_handler.rs` | 113 个真实样本；`TickReply` 逐字节一致 | [`14`](14-turn.md) §1 |
 | 关卡生成 | `src/graphwar_level_generator.rs` | 散布模式**逐位复现 13/13**；中心模式 4 个真值样本 | [`11`](11-levelgen.md) |
 | 战役 21 关数据 | 数据在二进制；全表见 [`10`](10-campaign.md) §4 | 21/21 标题、21/21 描述、每关参数；**385 份回放交叉验证 21/21** | [`10`](10-campaign.md) |
 | AI（进化） | `src/graphwar_function_evolutionator.rs` | 参数/权重/长度/装配/变异/每代构成全部还原；终止 = 代数 ∨ **25 s 墙钟** | [`13`](13-ai.md) |
-| GDExtension 入口与构建 | `src/gdext.rs` | 真 Godot 4.7.2 里注册成功；`.pck` 能从包启动 | [`18`](18-build.md) |
+| GDExtension 入口与构建 | `src/_scaffold/gdext.rs` | 真 Godot 4.7.2 里注册成功；`.pck` 能从包启动 | [`18`](18-build.md) |
 | 客户端 15 界面 + 内核接缝 | `client/` | `bash client/run.sh selftest`；弹道/命中/障碍都走内核 | [`16`](06-verification.md) |
 
 ## 3. 明确未知 / 已证不可复现

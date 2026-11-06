@@ -29,7 +29,7 @@
 //! | `--top N` | 每代额外打印前 N 名 |
 //! | `--summary` | 只打印参数 + 最终选择 |
 
-use gw2_rebuild::ai_explain::{self, demo_situation, Entity, Settings, Situation};
+use gw2_rebuild::_scaffold::ai_explain::{self, demo_situation, Entity, Settings, Situation};
 use gw2_rebuild::graphwar_function_evolutionator::VarMode;
 
 fn parse_pair(s: &str) -> (f64, f64) {

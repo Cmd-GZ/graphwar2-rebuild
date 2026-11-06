@@ -9,7 +9,7 @@ class_name GwTargetSet
 ## 不重建实体、不发 `TargetInfo`、不碰掩膜（`docs/123` §2.2、§4.3）。
 ##
 ## 本类只持有界面侧需要的三样：位置、半径、alive。**判定本体不在这里** ——
-## 谁被打中仍由 `GwCore.hit_test()`（内核 `src/api.rs::hit_test` → `settle::resolve_points`）
+## 谁被打中仍由 `GwCore.hit_test()`（内核 `src/_scaffold/api.rs::hit_test` → `graphwar_shot_calculator::settle::resolve_points`）
 ## 决定，本类只接受它的结果并维护状态。
 ##
 ## 复原规则（`docs/131` §4，**推断**）：一次射击结算结束时，若"本发摧毁的靶子"
@@ -85,8 +85,8 @@ func alive_positions() -> Array:
 ## 判命中用的实体表：`[{pos: Vector2, radius: float, target_id: int}, …]`，只含活着的。
 ##
 ## ⚠️ **借用关系**（`docs/131` §3.1）：内核 `hit_test` 的第 3 个入参在签名里叫
-## `soldiers`，但它的实现只是把每个三元组变成 `settle::Target{id: 下标, x, y, radius}`
-## （`src/api.rs`），**没有任何"士兵"语义过滤**。所以靶子与士兵可以塞进**同一个数组**：
+## `soldiers`，但它的实现只是把每个三元组变成 `graphwar_shot_calculator::settle::Target{id: 下标, x, y, radius}`
+## （`src/_scaffold/api.rs`），**没有任何"士兵"语义过滤**。所以靶子与士兵可以塞进**同一个数组**：
 ## 内核只回"哪几个下标被判死"，由调用方按下标映射回"是士兵还是靶子"。
 func entities() -> Array:
 	var out := []

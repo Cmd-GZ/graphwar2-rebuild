@@ -13,7 +13,7 @@
 //! | `single_shot_is_byte_identical_to_fire` | 重构没有改变 `SequentialTurns` | **逐位验证** |
 //! | `collection_*` | 收集阶段：攒齐 / 超时 / 重复 / 不在名单 | **观测**（`docs/141` §1、§4） |
 use gw2_rebuild::game::{Match, Submission};
-use gw2_rebuild::protocol::parse_message;
+use gw2_rebuild::_scaffold::protocol::parse_message;
 use gw2_rebuild::server::RoomState;
 use gw2_rebuild::graphwar_shot_calculator::settle::Target;
 use gw2_rebuild::graphwar_turn_manager::{RoundCollection, SubmitResult};
@@ -41,7 +41,7 @@ fn kinds_sub(msgs: &[String]) -> Vec<String> {
         .map(|m| {
             let r = parse_message(m).expect("应为合法消息");
             if r.kind == "EffectInfo" {
-                let t = gw2_rebuild::protocol::get_str(&r, "effect_type").unwrap_or_default();
+                let t = gw2_rebuild::_scaffold::protocol::get_str(&r, "effect_type").unwrap_or_default();
                 format!("EffectInfo/{t}")
             } else {
                 r.kind
@@ -55,7 +55,7 @@ fn ints(msgs: &[String], kind: &str, field: &str) -> Vec<i64> {
     msgs.iter()
         .filter_map(|m| parse_message(m))
         .filter(|r| r.kind == kind)
-        .filter_map(|r| gw2_rebuild::protocol::get_int(&r, field))
+        .filter_map(|r| gw2_rebuild::_scaffold::protocol::get_int(&r, field))
         .collect()
 }
 
@@ -318,7 +318,7 @@ fn blocked_shot_does_not_stop_the_other() {
         .filter_map(|m| parse_message(m))
         .find(|r| r.kind == "QueueDestroyObstacle")
         .expect("应有队列挖洞");
-    let py = gw2_rebuild::protocol::get_f64(&qdo, "pos_y").unwrap();
+    let py = gw2_rebuild::_scaffold::protocol::get_f64(&qdo, "pos_y").unwrap();
     assert!((py + 4.0).abs() < 1.0, "挖洞点应在 A 那条线（y≈-4）上，实际 {py}");
 }
 
@@ -578,8 +578,8 @@ fn simultaneous_round_over_tcp_emits_one_grouped_batch() {
         .filter_map(|m| {
             let r = parse_message(m)?;
             Some((
-                gw2_rebuild::protocol::get_int(&r, "player_id")?,
-                gw2_rebuild::protocol::get_int(&r, "soldier_id")?,
+                gw2_rebuild::_scaffold::protocol::get_int(&r, "player_id")?,
+                gw2_rebuild::_scaffold::protocol::get_int(&r, "soldier_id")?,
             ))
         })
         .collect();

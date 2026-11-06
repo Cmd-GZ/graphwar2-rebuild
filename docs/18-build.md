@@ -29,7 +29,7 @@ name = "gw2_rebuild"
 crate-type = ["cdylib", "rlib"]   # cdylib 出 .so；rlib 留给 cargo test
 ```
 
-`src/gdext.rs` 按 Godot 4 `gdextension_interface.h` 手写入口（不依赖 godot-rust）：
+`src/_scaffold/gdext.rs` 按 Godot 4 `gdextension_interface.h` 手写入口（不依赖 godot-rust）：
 
 ```rust
 #[repr(C)]

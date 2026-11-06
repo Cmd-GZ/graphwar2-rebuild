@@ -3,10 +3,10 @@
 //! 判据来自真实抓包 `fixtures/protocol_match.jsonl` 第 83–86 行：
 //! 连上 → 报 `VersionInfo` → broker 逐条推 `GameInfo`。
 //! 这里不需要真游戏，也不需要真二进制：协议本身就是被测对象。
-use gw2_rebuild::broker::{
+use gw2_rebuild::_scaffold::broker::{
     game_info_event, game_removed_event, spawn, Broker, Config, RoomTable,
 };
-use gw2_rebuild::protocol::{parse_message, Broadcast, Frame};
+use gw2_rebuild::_scaffold::protocol::{parse_message, Broadcast, Frame};
 
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -90,7 +90,7 @@ fn client_lists_our_brokers_rooms() {
     // 行的内容与房主登记的一致（键序/取值逐位）。
     let raw = parse_message(&got[0]).unwrap();
     assert_eq!(raw.kind, "GameInfo");
-    let info = gw2_rebuild::broker::parse_game_info_event(&got[0]).unwrap();
+    let info = gw2_rebuild::_scaffold::broker::parse_game_info_event(&got[0]).unwrap();
     assert_eq!(info, room);
 }
 

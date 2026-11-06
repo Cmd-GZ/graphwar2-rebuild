@@ -22,7 +22,7 @@ class_name GwConnectPopup
 ##
 ## 观测（`docs/92` §4.7）：地址**必须**是 `host:port`；只写 IP 时原版毫无反应。
 ## `App._submit_join_ip()` 照抄了这条校验。真正的 TCP 连接/握手属于 Rust 侧
-## （`docs/33`、`src/protocol.rs`），本项目没有网络层，所以：校验通过 → ConnectingPopUp
+## （`docs/33`、`src/_scaffold/protocol.rs`），本项目没有网络层，所以：校验通过 → ConnectingPopUp
 ## →（1.2 s）→ DisconnectedPopUp。**这条链路是模拟的**，docs/108 §7 有写。
 
 ## popup 种类：三个界面共用这一份实现，子类只改 `kind`（三者只差两行文字）。

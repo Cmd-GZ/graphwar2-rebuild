@@ -74,7 +74,7 @@
    （如 1783013905：53101 与 53116），按 tick 切会把一个回合切成两半、死亡归属全错。
 2. 每回合取**第一发之前**的局面快照：障碍（`AddObstacle`）、已被挖掉的洞（`DestroyObstacle`，
    `r=0.5`）、仍然存活的士兵（`PosInfo` 取最后一条 + `LifeInfo` 状态）。
-3. 每一发用**已验证的物理**逐发独立计算：`shot::correction` → `path::calculate(step=0.5，见 §2.0)` →
+3. 每一发用**已验证的物理**逐发独立计算：`graphwar_shot_calculator::correction` → `graphwar_path_calculator::calculate(step=0.5，见 §2.0)` →
    `plane::rasterize` 掩膜 → 沿弹道查停点（`examples/sim_turns.rs`）。
 4. 命中判定用**连续折线距离**（弹道线段到士兵中心的最短距离 ≤ 半径 0.5，且发生在停点之前），
    比"只在采样点上判"更接近真游戏（后者会漏掉擦边的命中，§5.3）。
@@ -346,7 +346,7 @@ replay 里实际的死亡集合是 **152 人**：**多报 0**，漏报 1（士�
 
 ### 9.1 采样器会"提前终止"（实况步长下 **19/82 = 23%**）—— ✅ 已修复
 
-`path::calculate` 的折长二分在 100 次内没能把 `|弦长 − step|` 压到 `0.001` 时，
+`graphwar_path_calculator::calculate` 的折长二分在 100 次内没能把 `|弦长 − step|` 压到 `0.001` 时，
 我们的实现直接返回已有点（`accepted == false` ⇒ 整条曲线结束）。
 把上限抬到 1000 次**仍是同一点** —— 是活锁而不是慢收敛：
 `if ln <= ln2 { lo = x; continue }` 这条 reset 让二分重新收敛到同一个 `mid`，再触发同一条分支。

@@ -110,7 +110,7 @@ static func calculate_path(expr_text: String, start: Vector2, direction: float,
 采样器那部分的权威结论在 [`04-path-sampling.md`](04-path-sampling.md) §2：
 `dy/dx = eval(tokens, x, y, 0)`，RK4 的 `1/6` 来自 `.rodata`（`0x19f098`），
 且 **ODE 模式没有 Normal 那条"半步再校验一次"**（`0x3c2840` 容差满足即接受）。
-本轮 `src/api.rs` 的改动全部在调用侧，不触碰这三条。
+本轮 `src/_scaffold/api.rs` 的改动全部在调用侧，不触碰这三条。
 
 ### 2.2 不做修正常数：与 `shot_points` 一致（**逐位验证**）
 
@@ -216,12 +216,12 @@ k1 = eval(tokens, x0, y0, 0) = NaN
 ```
 
 这条与 `shot_points(…, Mode::Ode, false)` **完全一致**（同一个采样器），
-不是本轮新发明的口径。选择"不额外加一次导数预检"的理由：`api.rs` 的角色是搬运
+不是本轮新发明的口径。选择"不额外加一次导数预检"的理由：`_scaffold/api.rs` 的角色是搬运
 （`docs/116` §5），加预检就多一处可能与被验证过的采样器分家的判断。
 
 ---
 
-## 5. 内核实现（`src/api.rs`，全部新增）
+## 5. 内核实现（`src/_scaffold/api.rs`，全部新增）
 
 ### 5.1 纯 Rust 层（可脱离 Godot 单测）
 
@@ -248,11 +248,11 @@ k1 = eval(tokens, x0, y0, 0) = NaN
   （五个参数都必填；GDScript 侧的可选性由 `core_bridge.gd` 的默认值提供）；
 * 返回复用 `write_result` / `result_pairs`（**没有**第二份字典整形，`RESULT_KEYS` 仍是四个键）。
 
-### 5.3 `src/gdext.rs`：+1 行
+### 5.3 `src/_scaffold/gdext.rs`：+1 行
 
 ```rust
-let _ = crate::api::register_path_method(get, lib);
-let _ = crate::api::register_path_mode_method(get, lib);   // ← 新增的唯一一行
+let _ = crate::_scaffold::api::register_path_method(get, lib);
+let _ = crate::_scaffold::api::register_path_mode_method(get, lib);   // ← 新增的唯一一行
 ```
 
 必须在 `register_path_method` **之后**：接口表是同一个 `OnceLock`（`docs/120` §3 的约定）。
@@ -263,7 +263,7 @@ let _ = crate::api::register_path_mode_method(get, lib);   // ← 新增的唯�
 
 ### 6.1 `cargo test --offline`：314 → 320（+6，全绿）
 
-新增 6 条，全在 `src/api.rs::tests`：
+新增 6 条，全在 `src/_scaffold/api.rs::tests`：
 
 | 测试 | 钉住什么 |
 |---|---|
@@ -363,14 +363,14 @@ SELFTEST 489 passed, 0 failed
 ### 6.5 改动的文件
 
 ```text
-src/api.rs                      +431 行（新方法 + 单测；path_calculate 一行未改）
-src/gdext.rs                    +1 行（注册）
+src/_scaffold/api.rs                      +431 行（新方法 + 单测；path_calculate 一行未改）
+src/_scaffold/gdext.rs                    +1 行（注册）
 client/src/core/core_bridge.gd  +83 −4（可选 mode 参数 + ODE 分支）
 client/tools/selftest.gd        +68（新增断言；既有断言一条未动）
 docs/138-ode-api.md             新增（本文）
 ```
 
-**没碰**：`src/graphwar_path_calculator.rs`（采样器）、`src/graphwar_shot_calculator.rs`、`src/protocol.rs`、`play_screen.gd`、
+**没碰**：`src/graphwar_path_calculator.rs`（采样器）、`src/graphwar_shot_calculator.rs`、`src/_scaffold/protocol.rs`、`play_screen.gd`、
 `replay_player.gd`、`client/src/net/`、`docs/INDEX.md`、`docs/HANDOVER.md`。
 
 ---

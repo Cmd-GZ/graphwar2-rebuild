@@ -313,7 +313,7 @@ DiffEq 表在 `[17,21)` 给 `VarY`，正好等于 `mode & 1 == 1`。
 
 二进制每个 token 是**一次 `u32` 抽样**（`0x4ef193 mov 0x10(%r13,%rcx,4),%r12d`，
 `rand_chacha` 式 64 个 u32 的块缓冲）；而 `src/graphwar_function_evolutionator.rs` 的 `next` 是
-`r.next_u64()`（`src/graphwar_function_evolutionator.rs:462`），`src/rng.rs:80` 的 `next_u64` 一次吃掉
+`r.next_u64()`（`src/graphwar_function_evolutionator.rs:462`），`src/_scaffold/rng.rs:80` 的 `next_u64` 一次吃掉
 ChaCha 的**两个 32 位字**。所以即使从同一个种子出发，我们的 token 抽取值也会和
 二进制不同。
 

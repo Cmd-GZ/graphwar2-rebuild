@@ -7,7 +7,7 @@
 # 27 · 死亡语义与回合状态机（真实对局抓包）
 
 终于抓到 `alive:false`。数据来自一次**高难度 Bot**（`level:25`）的对局，
-样本存 `fixtures/protocol_death.jsonl`，测试在 `src/protocol.rs::death_tests`。
+样本存 `fixtures/protocol_death.jsonl`，测试在 `src/_scaffold/protocol.rs::death_tests`。
 
 ## 1. 死亡流程（观测）
 

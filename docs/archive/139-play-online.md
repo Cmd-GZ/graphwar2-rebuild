@@ -126,7 +126,7 @@ FunctionPoints{owner_id, start_x, start_y, end_x}      ← **只有起点与终�
 | 画到 `end_x` 为止 | 服务端的停点 = 它那条点序列的**最后一点**（`graphwar_shot_calculator::settle::resolve_points` 的 `stop`），而采样器确定性 ⇒ 到同一个 x 之前的点序列就是服务端那条轨迹 | **观测**（`stop` 的赋值）+ **推断**（两点之间按 0.01 采样是真的） |
 
 **精度差在哪**（写清楚，别当成逐位）：**本文基线 `2b87b69` 上**，我们自己的服务端结算按弦长
-**0.5** 采样（`Match::fire` → `settle::resolve(…, 0.5, …)`），内核 `path_calculate` 按
+**0.5** 采样（`Match::fire` → `graphwar_shot_calculator::settle::resolve(…, 0.5, …)`），内核 `path_calculate` 按
 **0.01**（`docs/04`）。所以"我们的末点"与 `end_x` 最多差一个弦长（0.5），画出来的线与
 服务端那条在 0.5 单位内等价、**不是逐点相同**。自检里的判据因此写成
 `|末点 x − end_x| ≤ 0.6`。
@@ -294,7 +294,7 @@ SELFTEST 529 passed, 0 failed
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| 服务端偶尔**一个障碍都不发** | `levelgen::generate()` 的 `n = trunc(normal()*7 + 15)`，`min_count = 0` 时约 1.6% 会落到 0（`src/graphwar_level_generator.rs:87`；`serverloop` 传的 min_count 就是 0） | ① 用例的关卡种子**钉死**（见下）；② 万一还是 0 个，障碍那两条**显式 skip** 并打印原因（不假装通过） |
+| 服务端偶尔**一个障碍都不发** | `graphwar_level_generator::generate()` 的 `n = trunc(normal()*7 + 15)`，`min_count = 0` 时约 1.6% 会落到 0（`src/graphwar_level_generator.rs:89`；`graphwar_game_server` 传的 min_count 就是 0） | ① 用例的关卡种子**钉死**（见下）；② 万一还是 0 个，障碍那两条**显式 skip** 并打印原因（不假装通过） |
 | **射手被障碍压住**，任何弹道都在第一点被判挡住 | 开局位置是固定的 `x = ±10`（`src/graphwar_game_server.rs`），障碍却是随机撒的、**不看**这两个点 | ① 种子钉死；② 兜底：本地预演（内核）会如实报 153 个候选全 `blocked` ⇒ 用例**换一局**（最多 6 次）。换局只发生在自检里，界面不做 |
 
 ### 6.5 种子旋钮：`GW2_MATCH_SEED`（**自定**，测试用）
@@ -342,7 +342,7 @@ soldier 231、站位 `(-10, 0)`），障碍数从 4 到 25 不等。种子 8 = 1
 | 联机战场来自服务端（士兵/障碍） | **观测**（端到端断言） | §6.3 的 ① 那一组 |
 | `FunctionPoints` 只有首末点、轨迹要客户端复算 | **观测** | `docs/24` §6.1 的原始报文 |
 | 方向由 `end_x` 定 | **观测** | `docs/24` §6.3 两个方向的样本 |
-| 复算用函数原文 + 内核修正（不用三位小数的 corrected 文本） | **逐位**（同一 `correction()`）+ **自定**（选精度） | `src/api.rs::calculate_path`、`src/game.rs::fire` |
+| 复算用函数原文 + 内核修正（不用三位小数的 corrected 文本） | **逐位**（同一 `correction()`）+ **自定**（选精度） | `src/_scaffold/api.rs::calculate_path`、`src/game.rs::fire` |
 | 服务端的停点 = 点序列最后一点 | **观测** | `graphwar_shot_calculator::settle::resolve_points` 的 `stop` |
 | `PlayerInfo` 的报文形状 | **逐位验证** | `cargo test` 的 `player_info_message_matches_the_captured_bytes`（对 `fixtures/protocol_match.jsonl:36`） |
 | "这条连接 = 第一个玩家槽（229）" | **自定** | 本 harness 只 accept 一条连接；真游戏顺序不可复现（`docs/47`） |
@@ -432,7 +432,7 @@ bash client/run.sh dump | grep '@@KERNEL'      # 期望 available=1 hit_test=1
                                候选 = 过射手与目标两点的直线 m·x
                                     + 半正弦鼓包 m·x + k·sin(h·π·(x−x0)/dx)（两端归零，k 控制绕多高）
                                     + 过"路标"的抛物线 m·x + b·(x−x0)·(x−xt)
-                               判定 = `settle::resolve(expr, x0, y0, SERVER_STEP, flip, Normal,
+                               判定 = `graphwar_shot_calculator::settle::resolve(expr, x0, y0, SERVER_STEP, flip, Normal,
                                                       mask, others)` —— **服务端那个函数本身**
                                要求 = 没被墙挡住 && 打死至少一个敌人 && 没误伤队友
 ```
@@ -452,7 +452,7 @@ bash client/run.sh dump | grep '@@KERNEL'      # 期望 available=1 hit_test=1
 
 `Match::fire` 对电脑玩家一律用 `ai_function_text()`（`docs/127` §5），客户端交的函数
 **不生效**，所以这两条测试的胜负完全由 `(seed, AI 进化)` 决定。而 AI 的适应度里**含掩膜**
-（`aigen::ScoringContext.mask = Match::mask`），障碍一多就可能僵成"AI 一直贴着墙打"。
+（`graphwar_function_evolutionator::ScoringContext.mask = Match::mask`），障碍一多就可能僵成"AI 一直贴着墙打"。
 
 于是新加了一条 `#[ignore]` 的 **`search_ai_seed`**（同文件末尾，平时不跑）：
 
@@ -460,8 +460,8 @@ bash client/run.sh dump | grep '@@KERNEL'      # 期望 available=1 hit_test=1
 cargo test --offline --test server_match -- --ignored --nocapture search_ai_seed
 ```
 
-它先按 `[k;32]`（k = 0..=63）**纯计算**障碍数（`ChaCha12::from_seed` + `levelgen::generate(.., 0)`，
-与 `serverloop` 开局同一条），再对障碍最少的若干个真的跑一局 AI-vs-AI：
+它先按 `[k;32]`（k = 0..=63）**纯计算**障碍数（`ChaCha12::from_seed` + `graphwar_level_generator::generate(.., 0)`，
+与 `graphwar_game_server` 开局同一条），再对障碍最少的若干个真的跑一局 AI-vs-AI：
 
 ```text
 障碍最少的 12 个 `[k;32]` 种子: [(0,30),(0,62),(1,53),(3,34),(3,55),(3,58),(4,12),(4,27),(4,51),(5,1),(5,36),(5,42)]

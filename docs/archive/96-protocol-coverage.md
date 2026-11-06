@@ -3,7 +3,7 @@
 状态：**现行**。本文档取代自己 2026-11 的旧版（旧版只覆盖 `.rodata` 的一小段，
 结论是"44 个名字、缺 24 个"）。旧结论的更正记录保留在 §8。
 
-**2026-11-06 更新**：§3 的 23 个缺口**已全部补进 `src/protocol.rs`**（见 §9）。
+**2026-11-06 更新**：§3 的 23 个缺口**已全部补进 `src/_scaffold/protocol.rs`**（见 §9）。
 其中 **13 个**有真实抓包、键名与键序逐位验证；**10 个**字段名未证实，
 按"宁可透传、不猜键名"的原则实现成原样透传。
 
@@ -55,7 +55,7 @@ strings -t d libgraphwarrust.so | grep 'with .* element'
 ## 3. 原缺的 23 个：现在怎么实现的
 
 "N（serde 原文）"来自 `.rodata` 的 `<Name>Event with N elements`，**观测**、可信。
-"实现"一列是本轮代码形状（`src/protocol.rs` 末节；测试 `protocol::supplemented_event_tests`）。
+"实现"一列是本轮代码形状（`src/_scaffold/protocol.rs` 末节；测试 `_scaffold::protocol::supplemented_event_tests`）。
 
 | 事件 | N（serde 原文） | 实现 | 证据档 |
 |---|---|---|---|
@@ -132,7 +132,7 @@ replay 里有 **380 份**真对局录像（`user://replays/`，gzip + JSONL）�
 
 | 名字形态 | 出现在哪 | 是不是线格式 |
 |---|---|---|
-| `NameInfo`（CamelCase） | 抓包、380 份 replay 的 JSON 键 | **是**——`src/protocol.rs` 用的就是这套，已逐行对拍 |
+| `NameInfo`（CamelCase） | 抓包、380 份 replay 的 JSON 键 | **是**——`src/_scaffold/protocol.rs` 用的就是这套，已逐行对拍 |
 | `name_info_event`（snake_case） | `.rodata` 里被 `0x3d38f0` 比较的键；serde 的字段名表 | **不是**——内部结构体字段名/分派键 |
 
 ⇒ **补协议时写 CamelCase**。`docs/112` 提到的那组 snake_case 名字是内部分派层的，
@@ -249,7 +249,7 @@ replay 里有 **380 份**真对局录像（`user://replays/`，gzip + JSONL）�
 
 ## 9. 本轮实现（2026-11-06，分支 `agent/protocol-events`）
 
-代码在 `src/protocol.rs` 末尾一节，测试在 `protocol::supplemented_event_tests`
+代码在 `src/_scaffold/protocol.rs` 末尾一节，测试在 `_scaffold::protocol::supplemented_event_tests`
 （**33 条**：23 条逐事件往返 + 10 条结构性/边界测试；`cargo test` 由 172 变 **205** 全绿）。
 
 对外 API：

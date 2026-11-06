@@ -162,7 +162,7 @@ FunctionActive, FunctionPoints, FunctionsCalculated, ...
 ### 6.2 原缺的 23 个：现在怎么实现的
 
 "N（serde 原文）"来自 `.rodata` 的 `<Name>Event with N elements`，**观测**、可信。
-"实现"一列是本轮代码形状（`src/protocol.rs` 末节；测试 `protocol::supplemented_event_tests`）。
+"实现"一列是本轮代码形状（`src/_scaffold/protocol.rs` 末节；测试 `_scaffold::protocol::supplemented_event_tests`）。
 
 | 事件 | N（serde 原文） | 实现 | 证据档 |
 |---|---|---|---|
@@ -221,7 +221,7 @@ FunctionActive, FunctionPoints, FunctionsCalculated, ...
 
 | 名字形态 | 出现在哪 | 是不是线格式 |
 |---|---|---|
-| `NameInfo`（CamelCase） | 抓包、380 份 replay 的 JSON 键 | **是**——`src/protocol.rs` 用的就是这套，已逐行对拍 |
+| `NameInfo`（CamelCase） | 抓包、380 份 replay 的 JSON 键 | **是**——`src/_scaffold/protocol.rs` 用的就是这套，已逐行对拍 |
 | `name_info_event`（snake_case） | `.rodata` 里被 `0x3d38f0` 比较的键；serde 的字段名表 | **不是**——内部结构体字段名/分派键 |
 
 ⇒ **补协议时写 CamelCase**。`02-module-map.md` 提到的那组 snake_case 名字是内部分派层的，

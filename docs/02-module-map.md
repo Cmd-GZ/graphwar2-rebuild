@@ -836,7 +836,7 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 `AGENTS.md` 铁律 3：**我们自造的东西不许挂原版名**。下列文件全部移进 `src/_scaffold/`，
 目录里有一份 [`README.md`](../src/_scaffold/README.md) 说明"这些不是原版的东西"。
 
-| 我们的文件（原路径） | 做什么 | 依据 / 说明 | 状态 |
+| 我们的文件 | 做什么 | 依据 / 说明 | 状态 |
 |---|---|---|---|
 | `src/_scaffold/api.rs` | 内核 → GDScript / JSON 的对外 API（`GW2Rebuild.path_calculate`）；原版没有这一层（它本身就是 Godot 模块） | `docs/108` §2.3 / `docs/116` | `我方自造（无原版对应）` |
 | `src/_scaffold/protocol.rs` | 报文编解码装配层（`Frame` / `parse_message` / `emit_*`）；原版没有同名模块，编解码分散在各 handler 里 | `docs/07`/`docs/33` 的抓包口径 | `我方自造（无原版对应）` |

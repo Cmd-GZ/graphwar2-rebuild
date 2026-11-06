@@ -19,11 +19,11 @@
 | 新方法 | `GW2Rebuild.hit_test(points, obstacles, soldiers) -> Dictionary` | 逐位验证（`get_method_list` 与“注册成功”日志，§6.3） |
 | 返回 | `{ ok, hits, hit_points, first_hit, stop, blocked, error }`（顺序固定） | 逐位验证（单测 `result_shape_is_exactly_the_contract`） |
 | 坐标系 | 三个入参全是**棋盘坐标**（`|x|≤25`、`|y|≤15`）；掩膜是**像素**空间，换算只在 `plane::to_pixel` 里做一次 | 逐位验证（§2 三条测试） |
-| 用的是不是真规则 | 是。判定本体是 `settle::resolve_points`，`settle::resolve` 也走它 —— **只有一份实现** | 逐位验证（等价性测试 `agrees_with_settle_resolve_on_captured_shots`） |
+| 用的是不是真规则 | 是。判定本体是 `graphwar_shot_calculator::settle::resolve_points`，`graphwar_shot_calculator::settle::resolve` 也走它 —— **只有一份实现** | 逐位验证（等价性测试 `agrees_with_settle_resolve_on_captured_shots`） |
 | `cargo test --offline` | **242 → 258**（+16，全绿） | — |
 | `bash client/run.sh selftest` | **93 passed, 0 failed**（内核开 / 关各跑一遍；**未改任何断言**） | — |
 | 客户端改动 | `core_bridge.gd` +102/−6，`play_screen.gd` +27/−12（两处函数体，无布局/文案/节点树改动） | — |
-| 内核改动 | `src/api.rs`（新增）、`src/graphwar_shot_calculator/settle.rs`（新增一个函数 + `resolve` 改为委托）、`src/gdext.rs`（**+1 行**注册） | — |
+| 内核改动 | `src/_scaffold/api.rs`（新增）、`src/graphwar_shot_calculator/settle.rs`（新增一个函数 + `resolve` 改为委托）、`src/_scaffold/gdext.rs`（**+1 行**注册） | — |
 | 客户端状态行 | `本轮命中 N 个士兵 ／ 判定来源：kernel|preview ／ <note>` | 观测（§6.2 原文） |
 | 仍未确定 | 士兵半径常量的二进制出处、友军伤害、射手免疫的直接证据、同时回合顺序（§7） | — |
 
@@ -58,7 +58,7 @@ obstacles = [x0, y0, size0,   x1, y1, size1,   …]    # size = 障碍半径（�
 soldiers  = [x0, y0, rad0,    x1, y1, rad1,    …]    # rad  = 致死半径，抓包里恒 0.5
 ```
 
-返回（`src/api.rs::HIT_KEYS`，顺序固定，`ok` 在最前——客户端先读它）：
+返回（`src/_scaffold/api.rs::HIT_KEYS`，顺序固定，`ok` 在最前——客户端先读它）：
 
 | 键 | 类型 | 含义 |
 |---|---|---|
@@ -122,7 +122,7 @@ px = px as i32                        py = py as i32                      （向
   （内部同样 `to_pixel`）；
 * 返回的 `stop` / `hit_points` 也全是**棋盘坐标**（直接取自入参点序列）。
 
-也就是说：`src/api.rs::hit_test` 里既没有 `20.0`、也没有 `500`/`300`。
+也就是说：`src/_scaffold/api.rs::hit_test` 里既没有 `20.0`、也没有 `500`/`300`。
 谁要是在这里加一次换算，结果就会整体偏 500/300 像素，而且**看上去仍然"能打中人"**
 （只是打错人）——所以必须有测试钉住。
 
@@ -141,7 +141,7 @@ px = px as i32                        py = py as i32                      （向
 
 | 对象 | 判据 | 出处 | 测试 |
 |---|---|---|---|
-| 士兵 | `d <= radius`（**闭区间**，含等号） | `settle::resolve_points` | `grazes_the_kill_radius_boundary`（0.499 死 / 0.5 死 / 0.501 不死） |
+| 士兵 | `d <= radius`（**闭区间**，含等号） | `graphwar_shot_calculator::settle::resolve_points` | `grazes_the_kill_radius_boundary`（0.499 死 / 0.5 死 / 0.501 不死） |
 | 障碍 | 掩膜像素 `!= 0xFF`（**不是几何圆**） | `plane::is_occupied` | `graze_into_the_antialias_ring_still_counts_as_a_hit` |
 
 第二条容易被忽略：障碍光栅化会写一圈**抗锯齿值**（`docs/08` 实测出现过
@@ -168,8 +168,8 @@ typedef void (*GDExtensionPtrIndexedGetter)(GDExtensionConstTypePtr p_base,
 
 ```text
 handle_crash: Program crashed with signal 11
-[3] libgw2_rebuild.so  <gw2_rebuild::api::Api>::destroy_variant      src/api.rs:552
-[2] libgw2_rebuild.so  <gw2_rebuild::api::Api>::read_packed_v2       src/api.rs:627
+[3] libgw2_rebuild.so  <gw2_rebuild::_scaffold::api::Api>::destroy_variant      src/_scaffold/api.rs:552
+[2] libgw2_rebuild.so  <gw2_rebuild::_scaffold::api::Api>::read_packed_v2       src/_scaffold/api.rs:627
 ```
 
 改成"`r_value` 收裸内置类型"（`Vector2` / `double`）后不再崩，但**读出来的值是垃圾**。
@@ -238,10 +238,10 @@ pub fn resolve(text, x0, y0, step, flip, mode, mask, targets) -> ShotOutcome {
 pub fn resolve_points(mask: &[u8], targets: &[Target], points: &[(f64, f64)]) -> ShotOutcome { … }
 ```
 
-`src/api.rs::hit_test` 里没有一行判定逻辑，它只做三件事：
+`src/_scaffold/api.rs::hit_test` 里没有一行判定逻辑，它只做三件事：
 
 1. 按 `docs/30` 建掩膜（**只放障碍**，`rasterize(…, 0x00)`）；
-2. 把士兵三元组变成 `settle::Target { id: i, x, y, radius }`（`id` = 入参下标）；
+2. 把士兵三元组变成 `graphwar_shot_calculator::settle::Target { id: i, x, y, radius }`（`id` = 入参下标）；
 3. 调 `resolve_points`，把结果翻译成 Dictionary。
 
 `hit_test` 里那两次再扫描（找"第几个点第一次进半径"、找 `first_hit` 的点序号）
@@ -252,12 +252,12 @@ pub fn resolve_points(mask: &[u8], targets: &[Target], points: &[(f64, f64)]) ->
 
 `agrees_with_settle_resolve_on_captured_shots`：把 `tests/live_hits.rs` 里那局
 **真对局**（14 个障碍、4 名士兵、两发 `(x/3.02)` / `(-1.65/(-8.04/x))`）原样搬到
-`api.rs` 的测试里，对每一发同时算：
+`_scaffold/api.rs` 的测试里，对每一发同时算：
 
-* 真值 = `settle::resolve`（自己采样 + 判命中，`docs/30` 里验证过会打死 230/231）；
+* 真值 = `graphwar_shot_calculator::settle::resolve`（自己采样 + 判命中，`docs/30` 里验证过会打死 230/231）；
 * 待验 = `hit_test`（点序列来自 `calculate_path`，与客户端完全同源）。
 
-断言两者**致死集合、`blocked`、`stop` 逐项相等**。谁要在 `api.rs` 里偷偷重写一套判定，
+断言两者**致死集合、`blocked`、`stop` 逐项相等**。谁要在 `_scaffold/api.rs` 里偷偷重写一套判定，
 这条就红。它同时证明了"客户端拿到的点序列足够用来判定"（不需要第二次采样）。
 
 ---
@@ -338,7 +338,7 @@ cargo test --offline
 
 | 目标 | 条数 |
 |---|---|
-| `unittests src/lib.rs` | **218**（其中新增 `api::hit_tests::*` **16** 条） |
+| `unittests src/lib.rs` | **218**（其中新增 `_scaffold::api::hit_tests::*` **16** 条） |
 | `tests/broker.rs` | 4 |
 | `tests/events.rs` | 6 |
 | `tests/evidence.rs` | 6 |
@@ -348,7 +348,7 @@ cargo test --offline
 | `tests/server_match.rs` | 2 |
 | **合计** | **258**（起点 242，+16） |
 
-新增的 16 条（全部在 `src/api.rs` 的 `mod hit_tests`）：
+新增的 16 条（全部在 `src/_scaffold/api.rs` 的 `mod hit_tests`）：
 
 ```text
 kills_a_soldier_the_trajectory_passes_through     正常命中
@@ -366,7 +366,7 @@ soldier_indices_follow_the_input_array           hits 是入参下标、按经�
 empty_points_is_an_error_not_a_panic             空点序列走 error
 nan_points_are_rejected                          NaN 点序列被拒
 flat_arrays_must_be_multiples_of_three           步长 3 校验
-agrees_with_settle_resolve_on_captured_shots      与 settle::resolve 逐项一致
+agrees_with_settle_resolve_on_captured_shots      与 graphwar_shot_calculator::settle::resolve 逐项一致
 ```
 
 ### 6.2 客户端自检（`selftest`，两种分支各跑一遍）
@@ -511,7 +511,7 @@ PROBE E_offboard_soldier hits=[] source=kernel
 |---|---|---|
 | `hit_test` 的方法名/参数/返回类型在 4.7.2 上注册成功并能被 GDScript 调用 | **逐位验证** | §6.3 注册日志 + §6.5 探针实跑 |
 | 入参是棋盘坐标、掩膜是像素坐标、换算只发生一次 | **逐位验证** | §2.3 三条测试（含错误映射的指纹） |
-| 判定本体与 `settle::resolve` 是同一条代码路径 | **逐位验证** | §4.2 结构 + §4.3 真对局等价性测试 |
+| 判定本体与 `graphwar_shot_calculator::settle::resolve` 是同一条代码路径 | **逐位验证** | §4.2 结构 + §4.3 真对局等价性测试 |
 | 掩膜规则（光栅化 / 点测试 / 越界算命中） | **逐位验证** | 既有：`docs/08` §6.1.2（300 随机点 0 差异、6 组光栅化 0 像素差异） |
 | "障碍停弹道、士兵穿过即死" | **观测（强）** | 既有：`docs/30`（真对局的死亡点与终点）+ `tests/live_hits.rs` 12 条 |
 | 客户端判定来源变成内核 | **观测** | §6.2 状态行原文、§6.4 击杀实跑、§6.5 B 组与旧近似结论相反 |
@@ -550,13 +550,13 @@ bash client/run.sh selftest    # 期望 SELFTEST 93 passed, 0 failed
 
 | 文件 | 性质 | 行数 |
 |---|---|---|
-| `src/api.rs` | 新增 `hit_test` 的纯逻辑 + FFI + 16 条测试；`write_result` 拆出通用 `write_dict` | +847 / −24 |
+| `src/_scaffold/api.rs` | 新增 `hit_test` 的纯逻辑 + FFI + 16 条测试；`write_result` 拆出通用 `write_dict` | +847 / −24 |
 | `src/graphwar_shot_calculator/settle.rs` | 新增 `resolve_points`（规则体），`resolve` 改为委托 | +23 / −2 |
-| `src/gdext.rs` | **+1 行**注册调用 | +1 |
+| `src/_scaffold/gdext.rs` | **+1 行**注册调用 | +1 |
 | `client/src/core/core_bridge.gd` | 新增 `hit_test` 桥 + 近似分支 + 契约注释 | +102 / −6 |
 | `client/src/screens/play_screen.gd` | `_resolve_shots` 换内核；`fire()` 的 shot 字典加一个键 | +27 / −12 |
 | `docs/120-hit-test.md` | 本文 | 新增 |
 
-**没有碰**：`src/graphwar_turn_manager.rs`、`src/graphwar_function_evolutionator.rs`、`src/protocol.rs`、`src/game.rs`、
+**没有碰**：`src/graphwar_turn_manager.rs`、`src/graphwar_function_evolutionator.rs`、`src/_scaffold/protocol.rs`、`src/game.rs`、
 `src/graphwar_game_server.rs`、`docs/INDEX.md`、`docs/HANDOVER.md`、`docs/108`（那是客户端交付物，
 留给客户端负责人一并更新）、`client/run.sh`、`client/tools/selftest.gd`。

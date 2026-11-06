@@ -8,7 +8,7 @@
 | 组件 | 检验方式 | 结果 |
 |---|---|---|
 | 掩膜光栅化 `rasterize` | `tools/mask_api_check.py`（unicorn 调真二进制 `0x3f11e0`） | **逐字节一致**（点测试 300 例 + 光栅化 6 组，差异 0） |
-| 采样器 `path::calculate` | `fixtures/path.tsv`（**224 个用例，由 unicorn 调 `0x3c2530` 生成**） | 现有 golden 测试通过 |
+| 采样器 `graphwar_path_calculator::calculate` | `fixtures/path.tsv`（**224 个用例，由 unicorn 调 `0x3c2530` 生成**） | 现有 golden 测试通过 |
 | 修正常数 | 与 replay 里记录的 `corrected_function` 逐位比 | **`c = 1.137123` vs 游戏记录的 `+1.137`** |
 
 修正常数这一条是新的强证据：以前只能从"轨迹终点大致吻合"间接推断，现在
@@ -53,10 +53,10 @@
 ## 4.5 一个重要的结构澄清：**采样器不碰障碍**
 
 `fixtures/path.tsv` 的 224 个用例是**纯路径计算**（给定函数与起点，吐出点序列），
-我们的 golden 测试全部通过 ⇒ `path::calculate` 与真二进制一致。
+我们的 golden 测试全部通过 ⇒ `graphwar_path_calculator::calculate` 与真二进制一致。
 
 而这些用例里根本没有障碍参与 ⇒ **"撞墙就停"不在采样器里，在调用方**。
-我们这边对应的是 `settle::resolve`（逐点查掩膜、第一个被占用的点就是终点）。
+我们这边对应的是 `graphwar_shot_calculator::settle::resolve`（逐点查掩膜、第一个被占用的点就是终点）。
 
 ⇒ 差异范围进一步缩小到：**调用方沿点序列走查时的那次判定**。
 

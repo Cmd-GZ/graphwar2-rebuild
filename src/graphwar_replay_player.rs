@@ -10,7 +10,7 @@
 //! ```
 //!
 //! 内层 `{"<EventName>":{…}}` 与网络协议**同一套名字与字段**
-//! （`src/protocol.rs` / `src/events.rs`），所以这里**不重写解析**：
+//! （`src/_scaffold/protocol.rs` / `src/events.rs`），所以这里**不重写解析**：
 //! 每行拆出 `event` 对象后直接交给 [`protocol::parse_message`]，
 //! 字段读取也复用 [`protocol::get_str`] / [`protocol::get_int`] / [`protocol::get_f64`] /
 //! [`protocol::get_bool`] / [`protocol::get_color`]。
@@ -39,9 +39,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use crate::protocol::{self, RawMessage};
+use crate::_scaffold::protocol::{self, RawMessage};
 
-pub use crate::replay_inflate::{gunzip, is_gzip, InflateError};
+pub use crate::_scaffold::replay_inflate::{gunzip, is_gzip, InflateError};
 
 /// gzip 解压 / 文件读取层面失败的原因。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -813,7 +813,7 @@ impl ReplayPlayer {
 
 use std::os::raw::c_char;
 
-/// 缓冲区不足（与 `src/capi.rs` 的约定一致）。
+/// 缓冲区不足（与 `src/_scaffold/capi.rs` 的约定一致）。
 pub const E_BUFFER_SMALL: i64 = -1;
 /// 参数非法（空指针 / 非 UTF-8 / 文件打不开）。
 pub const E_BAD_ARGS: i64 = -2;

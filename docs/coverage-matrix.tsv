@@ -7,13 +7,13 @@
 # tool_version: 1
 # binary_sha256: 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
 # funcstarts_sha256: b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a
-# src_tree_sha256: 5fbb88dacbacc47532b14a6a8f41e6bea473e70b7dfa90539bf1ba187a3e4ca5
+# src_tree_sha256: be21875c586fdebcc6488c1e90d593066ca281605c1a279c7962940a52b418ed
 # funcstarts_n: 13263
 # src_modules: 246
 # loc_structs: 2042
 # attributed_funcs: 527
 # contested_funcs: 86
-# src_files: 32
+# src_files: 33
 # src_fns: 873
 module	scope	orig_funcs	contested	anchors	ours_file	ours_funcs	status	evidence
 graphwar_ad_switch.rs	graphwar	6	0	3		0	未做	docs/132：判据只有 are_ads_enabled() = !owned；AdMob 在 .gdc 插件侧，src/ 无实现
@@ -63,7 +63,7 @@ graphwar_remote_event_handler.rs	graphwar	3	1	171	src/events.rs	2	观测	docs/11
 graphwar_replay_control.rs	graphwar	2	0	9		0	未做	docs/133 的回放播放器在 client/ GDScript；src/graphwar_replay_player.rs 只做文件解析与推进，不含这个控制器（文件里的 ReplayPlayer 时钟是我方自定模型，见 docs/02 §17.4）
 graphwar_replay_player.rs	graphwar	5	5	18	src/graphwar_replay_player.rs	53	观测	docs/136/142：消息级对拍 400 份回放里 71 份完全一致 ⇒ 已实现但未到逐位
 graphwar_root_node.rs	graphwar	23	3	178		0	未做	主场景节点；docs/125 只有调用形态观测，src/ 无实现
-graphwar_server_broker_handler.rs	graphwar	3	1	5		0	未做	原模块是**客户端侧**的 broker 处理器，未做；src/broker.rs 是我们自建的 broker 服务端，不是它的复原（见 docs/115）
+graphwar_server_broker_handler.rs	graphwar	3	1	5		0	未做	原模块是**客户端侧**的 broker 处理器，未做；src/_scaffold/broker.rs 是我们自建的 broker 服务端，不是它的复原（见 docs/115）
 graphwar_server_connection_handler.rs	graphwar	6	0	24	src/server.rs	7	逐位	docs/33：新连接的状态同步与真实客户端逐字节一致
 graphwar_setup_control.rs	graphwar	21	8	70		0	未做	docs/137 有像素级观测；界面在 client/ GDScript，src/ 无实现
 graphwar_shot_calculator.rs	graphwar	1	1	12	src/graphwar_shot_calculator.rs+src/graphwar_shot_calculator/settle.rs	23	逐位	docs/86 §14：82 发并集 152/152、漏报 0、时刻判决 38:0；docs/122 按 id 排除射手是指令级。注意：0x3c2bc0 那个 12 KB 主函数**没有逐条还原**，逐位的是行为不是函数体

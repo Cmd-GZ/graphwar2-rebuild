@@ -24,7 +24,7 @@ FunctionPoints -> [LifeQueuedDeath -> EffectInfo(DeathEffect)]*
                 -> [QueueDestroyObstacle] -> EffectInfo(ExplosionEffect)
 ```
 
-tick 由 `tick::tick_at` 给出（60 Hz）。**死掉的士兵会从场上移除**，
+tick 由 `graphwar_tick_handler::tick_at` 给出（60 Hz）。**死掉的士兵会从场上移除**，
 否则后续射击会重复计死（这条是测试逼出来的）。
 
 ## 2. 验证（真实关卡回放）

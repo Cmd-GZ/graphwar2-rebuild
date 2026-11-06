@@ -4,12 +4,12 @@
 //! （证明这条规则不是"怎么写都算过"）。语料相关的那条在没有语料时会打印原因跳过，
 //! 不静默通过（和 `tests/replay_diff.rs::real_corpus_smoke_if_present` 同一约定）。
 
-use gw2_rebuild::diffconv::{
+use gw2_rebuild::_scaffold::diffconv::{
     corrected_function, death_effect_type, explosion_point, mode_of, strict_policy,
     unbalanced_brackets, ConvPredictor,
 };
 use gw2_rebuild::graphwar_path_calculator::Mode;
-use gw2_rebuild::replaydiff::{default_corpus_dir, Msg, Policy};
+use gw2_rebuild::_scaffold::replaydiff::{default_corpus_dir, Msg, Policy};
 use gw2_rebuild::graphwar_shot_calculator::settle::Target;
 
 /// 回放里的一行 `FunctionInfo` / `EffectInfo` 原文，按同一口径解析。
@@ -292,7 +292,7 @@ fn real_corpus_replays_that_are_byte_identical() {
             eprintln!("跳过 {name}：语料里没有这一份");
             continue;
         }
-        let r = gw2_rebuild::diffconv::run_file(&p, &policy, 8);
+        let r = gw2_rebuild::_scaffold::diffconv::run_file(&p, &policy, 8);
         assert!(r.scored_batches > 0, "{name} 应该有结算批");
         assert!(r.clean, "{name} 应当完全一致，逐批成因：{:?}", r.causes);
     }

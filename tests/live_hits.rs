@@ -447,7 +447,7 @@ fn replays_every_shot_of_the_death_level() {
 #[test]
 fn match_replays_the_death_level_through_the_protocol_layer() {
     use gw2_rebuild::game::Match;
-    use gw2_rebuild::protocol::{get_f64, get_int, get_str, parse_message};
+    use gw2_rebuild::_scaffold::protocol::{get_f64, get_int, get_str, parse_message};
     use gw2_rebuild::server::RoomState;
     use gw2_rebuild::graphwar_shot_calculator::settle::Target;
 
@@ -538,7 +538,7 @@ const PAIRED_SOLDIERS: [(i64, f64, f64); 4] = [
 #[test]
 fn paired_replay_reproduces_exact_kill_sets() {
     use gw2_rebuild::game::Match;
-    use gw2_rebuild::protocol::{get_f64, get_int, parse_message};
+    use gw2_rebuild::_scaffold::protocol::{get_f64, get_int, parse_message};
     use gw2_rebuild::server::RoomState;
     use gw2_rebuild::graphwar_shot_calculator::settle::Target;
 

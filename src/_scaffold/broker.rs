@@ -3,7 +3,7 @@
 //! # 为什么放在 `src/` 而不是 `tools/`
 //!
 //! 它不是在逆向时用一次的脚本，而是"能被 `cargo test` 直接测的协议实现"：
-//! 它要复用 [`crate::protocol`] 里**已经被抓包钉死**的 `Frame` / `Broadcast` /
+//! 它要复用 [`crate::_scaffold::protocol`] 里**已经被抓包钉死**的 `Frame` / `Broadcast` /
 //! `VersionInfo`，并且要能用两个普通 TCP 连接做端到端断言。放 `src/` 才能进
 //! `cargo test`，放 `tools/` 只能靠人工跑。
 //!
@@ -34,7 +34,7 @@
 //! * 心跳/超时：`GameHeartbeat` 从未抓到。这里做成"连接在 = 房间在"，另加一个
 //!   可配的空闲超时兜底。
 
-use crate::protocol::{parse_message, Broadcast, Frame, VersionInfo};
+use crate::_scaffold::protocol::{parse_message, Broadcast, Frame, VersionInfo};
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -76,7 +76,7 @@ pub fn parse_game_info_event(text: &str) -> Option<Broadcast> {
 pub fn game_removed_event(game_address: &str) -> String {
     format!(
         "{{\"GameRemoved\":{{\"game_address\":{}}}}}",
-        crate::protocol::json_str(game_address)
+        crate::_scaffold::protocol::json_str(game_address)
     )
 }
 
@@ -86,7 +86,7 @@ pub fn parse_game_removed_event(text: &str) -> Option<String> {
     if raw.kind != "GameRemoved" {
         return None;
     }
-    crate::protocol::get_str(&raw, "game_address")
+    crate::_scaffold::protocol::get_str(&raw, "game_address")
 }
 
 /// 在 `{"game_info":{…}}` 里取出内层对象（带花括号配平，非对象返回 `None`）。
@@ -490,7 +490,7 @@ mod tests {
 
     /// `fixtures/protocol_match.jsonl` 里的真实 broker 报文（第 83–86 行）。
     fn broker_fixture() -> Vec<String> {
-        include_str!("../fixtures/protocol_match.jsonl")
+        include_str!("../../fixtures/protocol_match.jsonl")
             .lines()
             .filter(|l| l.contains("\"GameInfo\"") || l.contains("\"VersionInfo\""))
             .map(|l| l.trim().to_string())

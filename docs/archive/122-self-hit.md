@@ -1,6 +1,6 @@
 # 122 · "射手不会打死自己"是怎么实现的：**按 id 排除**（机制 A）
 
-状态：**现行**。本文只回答一件事：`settle::resolve` / `api::hit_test` 把"射手不参与判定"
+状态：**现行**。本文只回答一件事：`graphwar_shot_calculator::settle::resolve` / `_scaffold::api::hit_test` 把"射手不参与判定"
 当成**调用方约定**（`src/graphwar_shot_calculator/settle.rs` 文件头：传入"除射手本人以外"的士兵），
 这条规则在 `libgraphwarrust.so` 里**到底在哪、长什么样**。
 
@@ -390,7 +390,7 @@ y 用 `0x19f1f0(=300.0)`、`cmp $0x3e7`/`cmp $0x257` 判越界、`cmpb $0xff` �
 |---|---|---|
 | `graphwar_shot_calculator::settle::resolve` / `resolve_points` | 不排除任何人；文件头写"调用方保证" | 内核规则**缺一条**（剩下的部分逐位一致） |
 | `src/game.rs::fire`（`0x1c5` 行附近） | `filter(\|t\| !(t.id == owner_id) && !(位置与起点重合 < 1e-12))` | 前半 ✅ ≡ A；**后半是多余的**（二进制只按 id） |
-| `src/api.rs::hit_test` | 没有"射手"概念，调用方先剔 | 契约里就没有这一条 |
+| `src/_scaffold/api.rs::hit_test` | 没有"射手"概念，调用方先剔 | 契约里就没有这一条 |
 | `client/.../play_screen.gd` | `is_same(s, shot.soldier)` 按对象身份剔 | 行为上 ≡ A |
 
 建议（**只加不改**，并且**不改变任何现有测试的语义**）：
@@ -404,10 +404,10 @@ y 用 `0x19f1f0(=300.0)`、`cmp $0x3e7`/`cmp $0x257` 判越界、`cmpb $0xff` �
    ```
 
    `resolve_points` 保持原签名并委托 `resolve_points_owned(.., None)`
-   ——`api::hit_test` 的 16 条测试与 `agrees_with_settle_resolve_on_captured_shots` 全部不动。
+   ——`_scaffold::api::hit_test` 的 16 条测试与 `agrees_with_settle_resolve_on_captured_shots` 全部不动。
    `resolve` 同理加 `resolve_owned(.., owner_id)`。
 
-2. **`api.rs` 新增一个方法**而不是改签名（GDExtension 方法的实参个数是固定的，改 3 → 4 会
+2. **`_scaffold/api.rs` 新增一个方法**而不是改签名（GDExtension 方法的实参个数是固定的，改 3 → 4 会
    让现有客户端静默失败）：`hit_test_owned(points, obstacles, soldiers, owner_index)`，
    `owner_index < 0` 表示不排除。`hit_test` 保留，内部等价于 `owner_index = -1`。
 

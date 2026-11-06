@@ -631,7 +631,7 @@ python3 -m venv ../.venv && ../.venv/bin/pip install -r requirements.txt
 
 | 维度 | 影响物理？ | 依据 |
 |---|---|---|
-| `FunctionMode` | **是** | Normal 用 `y=f(x)`；DiffEq 用 **RK4 积分**（`path::calculate` 的 `Mode::Ode`）；生成器变量槽也变（`archive/ai/71` §5.0） |
+| `FunctionMode` | **是** | Normal 用 `y=f(x)`；DiffEq 用 **RK4 积分**（`graphwar_path_calculator::calculate` 的 `Mode::Ode`）；生成器变量槽也变（`archive/ai/71` §5.0） |
 | `TurnMode` | **是** | Sequential 每回合一发；Simultaneous 同 tick 多发同时结算 |
 | `TimeMode` | 否 | 只影响玩家思考时间 |
 | `AxisMode` | 否 | 只影响坐标轴绘制 |

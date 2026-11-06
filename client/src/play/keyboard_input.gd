@@ -39,7 +39,7 @@ class_name GwKeyInput
 ##
 ## | 键 | 效果 | 依据 |
 ## |---|---|---|
-## | 数字 `0`–`9`、`.`、`(`、`)`、`+`、`-`、`*`、`/`、`^` | 插入该字符（按 `unicode`，Shift 自动换算） | 文法（`src/function/mod.rs::lex`） |
+## | 数字 `0`–`9`、`.`、`(`、`)`、`+`、`-`、`*`、`/`、`^` | 插入该字符（按 `unicode`，Shift 自动换算） | 文法（`src/math_function.rs::lex`） |
 ## | 字母 `a`–`z` / `A`–`Z` | 插入**小写**字符（`sin(`、`sqrt(`、`pi`、`e`、`x`、`y`… 直接敲即可） | 词法器整串 `to_lowercase()` |
 ## | `π` | 插入 `π` | 文法里 `π` = π（`lex` 把 `pi`/`π` 换成 `n`） |
 ## | `√` | 插入 `sqrt(` | 屏上键 `√` 的 `input_text` 就是 `sqrt(`（`docs/92` §4.10）；裸 `√` 会被词法器**跳过** |
@@ -62,7 +62,7 @@ class_name GwKeyInput
 const SUBMIT := "\n"
 
 ## 允许**直接插入**的字符集（小写字母在表里；大写先 `to_lower()`）。
-## 依据：`src/function/mod.rs::lex` 认的记号 = 数字 / `.` / `( ) + - * / ^` /
+## 依据：`src/math_function.rs::lex` 认的记号 = 数字 / `.` / `( ) + - * / ^` /
 ## `x` / `y` / `y'` / `sqrt log abs sin cos tan ln exp e` / `n`（=π），
 ## 而整串会先 `to_lowercase()` + 把 `pi`/`π` 换成 `n`。
 const PRINTABLE := "0123456789.()+-*/^abcdefghijklmnopqrstuvwxyzπ√"

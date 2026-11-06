@@ -44,8 +44,8 @@
 use crate::graphwar_function_evolutionator::VarMode;
 use crate::game::{AiConfig, Match, PopScope, TurnStart};
 use crate::graphwar_level_generator;
-use crate::protocol::{parse_message, Frame, RawMessage};
-use crate::rng::ChaCha12;
+use crate::_scaffold::protocol::{parse_message, Frame, RawMessage};
+use crate::_scaffold::rng::ChaCha12;
 use crate::server::{on_new_connection, on_tick_request, RoomState};
 use crate::graphwar_shot_calculator::settle::Target;
 use crate::graphwar_turn_manager::{SkipReason, Team};
@@ -96,7 +96,7 @@ impl Default for Config {
             addr: "127.0.0.1:0".into(),
             room_name: "Graphwar Game".into(),
             time_mode: "Timer1m".into(),
-            seed: crate::rng::seed_from_os(),
+            seed: crate::_scaffold::rng::seed_from_os(),
             per_team: 2,
             player_order: Vec::new(),
             bot_players: Vec::new(),
@@ -516,7 +516,7 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
             // 这样 `GwNetSession.my_player_id` 才有值；在那之前客户端只能退化成
             // "按 `TurnInfo` 里的玩家假定"（`docs/134` §7.1，`docs/139` §4）。
             "NewPlayerRequest" => {
-                if let Some(cid) = crate::protocol::get_int(&frame, "connection_id") {
+                if let Some(cid) = crate::_scaffold::protocol::get_int(&frame, "connection_id") {
                     my_connection_id = cid;
                 }
                 let msg = crate::game::player_info_message(FIRST_PLAYER_ID, my_connection_id);
@@ -625,7 +625,7 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
 
                 for (pid, team_id, sids) in &rosters {
                     // 只建过 1/2 队（`docs/105` §4 没观测到 3 队）。
-                    let team = Team::from_id(*team_id).expect("serverloop 只生成 1/2 队");
+                    let team = Team::from_id(*team_id).expect("graphwar_game_server 只生成 1/2 队");
                     m2.register_player(*pid, team, sids);
                 }
                 for pid in &cfg.bot_players {
@@ -664,8 +664,8 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
                 }
             }
             "FunctionUpdateRequest" => {
-                if let Some(pid) = crate::protocol::get_int(&frame, "player_id") {
-                    let f = crate::protocol::get_str(&frame, "function").unwrap_or_default();
+                if let Some(pid) = crate::_scaffold::protocol::get_int(&frame, "player_id") {
+                    let f = crate::_scaffold::protocol::get_str(&frame, "function").unwrap_or_default();
                     // ⚠️ 修 bug（`docs/139` §4.1）：`players` 是**按士兵**建的（一名玩家
                     // `per_team` 条），而 `find()` 只命中该玩家的**第一条**。开火那一步是按
                     // `soldier_id` 找 `PlayerState` 的（本回合的射手往往是第二、第三名士兵），
@@ -695,14 +695,14 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
                     // 电脑玩家的函数由**服务端 AI** 决定（`docs/127` §5）：客户端交上来的
                     // `"0.00"` 不生效，回执照 AI 的文本发。
                     let text = ai_text_of(m.as_ref(), pid, owner).unwrap_or(f);
-                    send(sock, &[crate::protocol::emit_function_info(owner, &text, None)])?;
+                    send(sock, &[crate::_scaffold::protocol::emit_function_info(owner, &text, None)])?;
                 }
             }
             "FunctionFireRequest" => {
                 if ended {
                     continue;
                 }
-                let Some(pid) = crate::protocol::get_int(&frame, "player_id") else { continue };
+                let Some(pid) = crate::_scaffold::protocol::get_int(&frame, "player_id") else { continue };
 
                 // ---- 同时回合制：**收集阶段**（`docs/141` §1）----
                 //

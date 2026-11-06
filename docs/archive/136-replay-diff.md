@@ -4,7 +4,7 @@
 > 本文写在"服务端模拟步长还是 0.5"之前，当时（以及修步长后立刻重测）的基线是 **0–1/400**。
 > 后续在 `142` 里做了四处有真值的修正（采样模式跟 `FunctionModeInfo`、修正文本按模式、
 > 爆炸点≠停点、死效类型由皮肤定），**完全一致率已到 71/400 (17.8%)**。
-> 本文的价值是**口径与工具**（`src/replaydiff.rs` 的比对方法），不是最新跑分。
+> 本文的价值是**口径与工具**（`src/_scaffold/replaydiff.rs` 的比对方法），不是最新跑分。
 
 状态：**现行**。本轮补的是 `docs/06-verification.md` §17.3 第 3 步——
 **"预测我方本该发出的下一条消息"并与回放里的下一条逐条比**。
@@ -69,13 +69,13 @@
 
 ## 2. 实现结构
 
-新模块 `src/replaydiff.rs`（**独立**，不碰 `game.rs` / `graphwar_game_server.rs` / `protocol.rs` /
-`api.rs` / `client/`），一个命令行 `examples/replay_diff.rs`，一份验收 `tests/replay_diff.rs`。
+新模块 `src/_scaffold/replaydiff.rs`（**独立**，不碰 `game.rs` / `graphwar_game_server.rs` / `_scaffold/protocol.rs` /
+`_scaffold/api.rs` / `client/`），一个命令行 `examples/replay_diff.rs`，一份验收 `tests/replay_diff.rs`。
 
 | 层 | 内容 | 为什么这么写 |
 |---|---|---|
-| `replaydiff::gz` | 纯 std 的 **gzip/DEFLATE** 解码，校验 CRC32 + ISIZE，支持多成员 | 本 crate 零依赖（`Cargo.toml` 的 `[dependencies]` 是空的），回放是 gzip（`docs/78` §2）。引 `flate2` 就把 `cargo test --offline` 绑到 registry 上。**注**：`docs/133` 的回放播放器另有一份 `src/replay_inflate.rs`（同一件事，独立实现）。本轮为不互相依赖各留一份；**建议合并时收敛成一份**（本模块只用 `gz::gunzip` / `gz::is_gzip` 两个入口） |
-| `replaydiff::wire` | **保原始文本**的 JSON 读取：每个值都留 `raw`，数字区分 `1.0` / `1` / `1e-7` | `docs/06` §17.4 点名过"`1.0` 写成 `1`"这类偏差，`parse` 成 f64 再比就抓不到 |
+| `_scaffold::replaydiff::gz` | 纯 std 的 **gzip/DEFLATE** 解码，校验 CRC32 + ISIZE，支持多成员 | 本 crate 零依赖（`Cargo.toml` 的 `[dependencies]` 是空的），回放是 gzip（`docs/78` §2）。引 `flate2` 就把 `cargo test --offline` 绑到 registry 上。**注**：`docs/133` 的回放播放器另有一份 `src/_scaffold/replay_inflate.rs`（同一件事，独立实现）。本轮为不互相依赖各留一份；**建议合并时收敛成一份**（本模块只用 `gz::gunzip` / `gz::is_gzip` 两个入口） |
+| `_scaffold::replaydiff::wire` | **保原始文本**的 JSON 读取：每个值都留 `raw`，数字区分 `1.0` / `1` / `1e-7` | `docs/06` §17.4 点名过"`1.0` 写成 `1`"这类偏差，`parse` 成 f64 再比就抓不到 |
 | `Replay` | 一份回放 → 有序 `Msg` 流 + 解压字节数 | 只读，不落盘 |
 | `split_batches` | 切**结算批**：`GameStateInfo(CalculatingResults)` … `(ExecutingResults)` | 实测同时回合制一次结算会发 **N 个 `FunctionInfo` + N 个 `FunctionPoints`**，全在同一个窗口里、**按消息类型分组**（§4.4）。以"一发"为单位切会切错 |
 | `Inputs` | 从回放攒**输入态**：模式四元组、障碍、`PosInfo`、`TeamInfo`、`LifeInfo` | 位置/队伍/函数原文是"已知量"（`docs/06` §17.2：顺序按回放给定的消费），不是预测目标 |
@@ -185,7 +185,7 @@ cargo test --offline            # 296 → 308 条
 | 消息 | 条数 | 说明 |
 |---|---|---|
 | `EntityEffectInfo` | 6889 | 实体特效（Death/Spark/Ash） |
-| `LifeInfo` | 6584 | 只有 `alive:true` 在 `serverloop` 里手拼过，**死亡状态更新没有发射器** |
+| `LifeInfo` | 6584 | 只有 `alive:true` 在 `graphwar_game_server` 里手拼过，**死亡状态更新没有发射器** |
 | `Skin/Face/HatGraphicsInfo` | 4518 ×3 | 外观 |
 | `SoldierInfo` / `PlayerInfo` / `TeamInfo` / `PosInfo` / `ColorInfo` / `NameInfo` | 4553 / 1490 / 6427 / 5318 / 1556 / 1183 | 只在握手/加入链里，**本轮当输入消费**，没有接回放的输入流 |
 | `AddObstacle` / `ClearObstacles` | 4410 / 380 | 同上级别生成链 |
@@ -252,9 +252,9 @@ cargo test --offline            # 296 → 308 条
 | # | 发现 | 档 | 证据 |
 |---|---|---|---|
 | 1 | **`game::Match::fire` 用 step = 0.5**，而真服务端是 0.01（`AGENTS.md` 硬事实、`docs/89`） | **观测**（代码 `src/game.rs:516`）+ 探针量化（§4.2） | 0.01 下 605/739 逐位相同，0.5 下 27/739 |
-| 2 | **`corrected_function` 按模式不同**：Normal = 文本 + `" ± c.ddd"`（740/740，其中 9 条的函数部分要先重新序列化，见第 3 条）；**DiffEq = 函数原文、无后缀**（**550/550**，400 份语料零例外） | **观测** | 本轮全语料统计；我们的 `shot::corrected_text` 无条件加后缀 ⇒ DiffEq 的 550 发全错 |
+| 2 | **`corrected_function` 按模式不同**：Normal = 文本 + `" ± c.ddd"`（740/740，其中 9 条的函数部分要先重新序列化，见第 3 条）；**DiffEq = 函数原文、无后缀**（**550/550**，400 份语料零例外） | **观测** | 本轮全语料统计；我们的 `graphwar_shot_calculator::corrected_text` 无条件加后缀 ⇒ DiffEq 的 550 发全错 |
 | 3 | Normal 模式下有 **9/740** 的修正文本不是"原文 + 后缀"，而是把函数**重新序列化**后再加后缀（例：`5/155sin(4exp(4*6cos(` → `5/155sin(4exp(4*6cos())) + 6.055`，补括号） | **观测**（9 例逐条列出） | 与 `docs/119` 的 `to_text` 同构，**推断**：`corrected = to_text(parse(f)) + suffix` |
-| 4 | **`protocol::emit_function_info` 不转义字符串**：玩家输入 `sqrt(\y)` 时产出**非法 JSON** | **观测**（1 条） | `json_str` 存在但没被调用；回放里存的是合法转义 `sqrt(\\y)` |
+| 4 | **`_scaffold::protocol::emit_function_info` 不转义字符串**：玩家输入 `sqrt(\y)` 时产出**非法 JSON** | **观测**（1 条） | `json_str` 存在但没被调用；回放里存的是合法转义 `sqrt(\\y)` |
 | 5 | **同时回合制一次结算 N 发**，且按**消息类型分组**：`FunctionInfo ×N` → `FunctionPoints ×N` → `Sync` → 特效 → `FunctionActive/Explosion` 交替 → `Executing`。`fire()` 是"一发一个完整窗口" | **观测**（130 个窗口 ≥2 发，最多 8 发） | 例：`1793883985` 的 8 发窗口，65 条报文 |
 | 6 | 回放记录器会**重复记录**同一 tick 的相同报文 | **观测**（1774 条） | `LifeInfo`×2、`DestroyObstacle`×2 相邻出现 |
 | 7 | `LifeInfo{alive:false}` **比开火晚**（落在后续回合），死亡特效 `EffectInfo(DeathEffect)` 反而在窗口内 | **观测** | `docs/113` 也记录过同类延迟；归属规则见 `run_file` 注释 |
@@ -282,7 +282,7 @@ cargo test --offline            # 296 → 308 条
 6. **补齐未产出的消息类型**（§4.3），优先级：`LifeInfo`（死亡状态）→`EntityEffectInfo`
    →`FunctionFire`→外观/实体类。
 7. **开局"全量重发"批（13 类，约占 45% 报文）**：本轮没覆盖——它要求把回放的**加入/开局
-   输入流**接进 `serverloop`（现在只接了结算）。口径已经就绪：块内多重集 + 内容逐字节
+   输入流**接进 `graphwar_game_server`（现在只接了结算）。口径已经就绪：块内多重集 + 内容逐字节
    （`docs/113` 的 A 类只影响顺序）。
 8. **死亡集合**（169/382）：主要成因是"漏报 192"——我方弹道过早停在环像素上
    （可复现例：`1782641048`，δ=0.0175 的环像素挡住了我们，真游戏穿过去了）。

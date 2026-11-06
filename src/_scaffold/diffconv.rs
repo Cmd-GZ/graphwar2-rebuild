@@ -9,7 +9,7 @@
 //! | `fire` 恒用 `graphwar_path_calculator::Mode::Normal` | `FunctionModeInfo = DiffEqFunction` 的批必须走 `Mode::Ode` | 550 发的几何整条错 |
 //! | `graphwar_shot_calculator::corrected_text` 恒加后缀 | **Normal** 加 `" ± c.ddd"`，**DiffEq 不加**（`corrected_function == function`，550/550 零例外） | 550 发全错 |
 //!
-//! 本模块**不改内核**（`game.rs` / `graphwar_shot_calculator/settle.rs` / `protocol.rs` 一字未动）：它自己按
+//! 本模块**不改内核**（`game.rs` / `graphwar_shot_calculator/settle.rs` / `_scaffold/protocol.rs` 一字未动）：它自己按
 //! `fire` 的顺序拼报文，只是把上面两条换成回放给的真值。**报文顺序、字段名、
 //! 浮点写法全部复用 `protocol::emit_*`**，所以"逐字节"这条口径没有变松。
 //!
@@ -23,7 +23,7 @@
 
 use crate::graphwar_path_calculator::Mode;
 use crate::plane::empty_mask;
-use crate::replaydiff::{
+use crate::_scaffold::replaydiff::{
     compare_batch, split_batches, BatchVerdict, Inputs, Msg, Policy, Replay, StateMask,
 };
 use crate::graphwar_shot_calculator::settle::{resolve, Target};
@@ -206,18 +206,18 @@ impl ConvPredictor {
         let corrected = corrected_function(function_text, x0, y0, flip, self.mode);
 
         let mut msgs = vec![
-            crate::protocol::emit_game_state("CalculatingResults"),
-            crate::protocol::emit_function_info(owner_id, function_text, Some(&corrected)),
-            crate::protocol::emit_function_points(owner_id, x0, y0, outcome.stop.0),
-            crate::protocol::emit_game_state("SynchronizingResults"),
+            crate::_scaffold::protocol::emit_game_state("CalculatingResults"),
+            crate::_scaffold::protocol::emit_function_info(owner_id, function_text, Some(&corrected)),
+            crate::_scaffold::protocol::emit_function_points(owner_id, x0, y0, outcome.stop.0),
+            crate::_scaffold::protocol::emit_game_state("SynchronizingResults"),
         ];
 
         for id in &outcome.killed {
-            msgs.push(crate::protocol::emit_life_queued_death(*id, now_tick));
+            msgs.push(crate::_scaffold::protocol::emit_life_queued_death(*id, now_tick));
             if let Some(t) = self.soldiers.iter().find(|t| t.id == *id) {
                 self.next_effect_id += 1;
                 let et = death_effect_type(self.skin.get(id).map(|s| s.as_str()));
-                msgs.push(crate::protocol::emit_effect_info(
+                msgs.push(crate::_scaffold::protocol::emit_effect_info(
                     self.next_effect_id,
                     t.x,
                     t.y,
@@ -245,17 +245,17 @@ impl ConvPredictor {
             ));
         }
 
-        msgs.push(crate::protocol::emit_function_active(owner_id, now_tick));
+        msgs.push(crate::_scaffold::protocol::emit_function_active(owner_id, now_tick));
         self.next_effect_id += 1;
         let (ex, ey) = explosion_point(&corrected, outcome.stop, flip, self.mode);
-        msgs.push(crate::protocol::emit_effect_info(
+        msgs.push(crate::_scaffold::protocol::emit_effect_info(
             self.next_effect_id,
             ex,
             ey,
             "ExplosionEffect",
             now_tick,
         ));
-        msgs.push(crate::protocol::emit_game_state("ExecutingResults"));
+        msgs.push(crate::_scaffold::protocol::emit_game_state("ExecutingResults"));
 
         (
             msgs,
@@ -381,7 +381,7 @@ pub fn probe_file(path: &std::path::Path) -> Vec<ShotGeom> {
                 }
                 "LifeInfo" => {
                     if let Some(id) = m.get_i64("entity_id") {
-                        if matches!(m.get("alive").map(|v| v.kind.clone()), Some(crate::replaydiff::wire::Kind::Bool(false))) {
+                        if matches!(m.get("alive").map(|v| v.kind.clone()), Some(crate::_scaffold::replaydiff::wire::Kind::Bool(false))) {
                             alive.remove(&id);
                         } else {
                             alive.insert(id);
@@ -448,7 +448,7 @@ pub fn probe_file(path: &std::path::Path) -> Vec<ShotGeom> {
                     break;
                 }
                 if m.kind == "LifeInfo"
-                    && matches!(m.get("alive").map(|x| x.kind.clone()), Some(crate::replaydiff::wire::Kind::Bool(false)))
+                    && matches!(m.get("alive").map(|x| x.kind.clone()), Some(crate::_scaffold::replaydiff::wire::Kind::Bool(false)))
                 {
                     if let Some(id) = m.get_i64("entity_id") {
                         if !v.contains(&id) {
@@ -643,7 +643,7 @@ pub struct FileResult {
     /// 逐批成因
     pub causes: Vec<Cause>,
     /// 每一批的第一处分歧（`ours` / `observed` 原文）——排障用
-    pub first_diffs: Vec<Option<crate::replaydiff::FieldDiff>>,
+    pub first_diffs: Vec<Option<crate::_scaffold::replaydiff::FieldDiff>>,
     pub clean: bool,
     /// 全部字段差异计数（`kind|path|class`）
     pub diff_counts: std::collections::BTreeMap<String, usize>,
@@ -726,7 +726,7 @@ pub fn run_file(path: &std::path::Path, policy: &Policy, max_diffs: usize) -> Fi
         let v = compare_batch(&ours, &observed, policy, max_diffs);
         for d in &v.diffs {
             *res.diff_counts
-                .entry(format!("{}|{}|{}", d.kind, d.path, crate::replaydiff::class_name(&d.class)))
+                .entry(format!("{}|{}|{}", d.kind, d.path, crate::_scaffold::replaydiff::class_name(&d.class)))
                 .or_insert(0) += 1;
         }
         res.causes.push(classify(&v, b.shots.len() > 1));

@@ -31,7 +31,7 @@
 | `docs/INDEX.md` | 加一行（§1.4 联机/回合 那张表） | 仓库约定 |
 | `docs/47-turn-order-random.md` | §7 就地加一句"接口已换"的注（原句指向的 `alternating_order` 已不存在） | 防死引用 |
 
-`src/` 之外**没有**动别的代码：`game.rs`、`protocol.rs`、`graphwar_game_server.rs` 均未改，
+`src/` 之外**没有**动别的代码：`game.rs`、`_scaffold/protocol.rs`、`graphwar_game_server.rs` 均未改，
 所以既有 21 条验收测试（`tests/`）一行没动也全绿（§5）。
 
 ---
@@ -134,7 +134,7 @@ pub const fn is_alive_byte(state: u8) -> bool { state & 1 != 0 }
 
 * `0`（死）与 `2`（查不到 / 未上场）**都不可开火**（`docs/98` §1.3）；
 * 任意奇数都算活——这是 `test $0x1` 的实际语义，不是"只有 1"；
-* `turn::life_state_of(&LifeState)` 把 `Alive/Dead/没记录` 映射成 `1/0/2`。
+* `graphwar_turn_manager::life_state_of(&LifeState)` 把 `Alive/Dead/没记录` 映射成 `1/0/2`。
 
 ### 2.6 `flip` 由队伍决定
 
@@ -143,7 +143,7 @@ pub const fn is_alive_byte(state: u8) -> bool { state & 1 != 0 }
 
 **不用坐标比大小猜**这件事由**类型**保证：`TurnManager` / `PlayerTurns` / `Team` 的
 **任何接口里都没有坐标参数**，所以"用起点与终点 x 比大小"在结构上不可能出现。
-AI 侧拿到的是 `TurnDecision::flip()`，直接填进 `aigen::ScoringContext.flip`。
+AI 侧拿到的是 `TurnDecision::flip()`，直接填进 `graphwar_function_evolutionator::ScoringContext.flip`。
 
 ### 2.7 回合超时 = 跳过该玩家（**用户口述**）
 
@@ -169,10 +169,10 @@ TurnManager::begin_turn(player_id, life_state, timed_out /* bool */)
 
 | 旧 API（`main`） | 新 API | 说明 |
 |---|---|---|
-| `turn::alternating_order(teams, start_team, rounds) -> Vec<i64>` | **删除**。改用 `PlayerTurns::next_shooter*` + `TurnManager::begin_turn` | 全仓库**只有 `graphwar_turn_manager.rs` 自己的测试**调用它（`grep` 过：`src/`、`tests/`、`examples/` 里没有别的调用点），所以删除不影响任何生产代码 |
+| `graphwar_turn_manager::alternating_order(teams, start_team, rounds) -> Vec<i64>` | **删除**。改用 `PlayerTurns::next_shooter*` + `TurnManager::begin_turn` | 全仓库**只有 `graphwar_turn_manager.rs` 自己的测试**调用它（`grep` 过：`src/`、`tests/`、`examples/` 里没有别的调用点），所以删除不影响任何生产代码 |
 | （无） | `Team`、`PlayerTurns`、`TurnManager`、`TurnDecision`、`SkipReason`、`EmptyRoster`、`SOLDIER_ID_NONE`、`life_state_of` | 新增 |
-| （无） | `life::MISSING_STATE`、`life::is_alive_byte` | 新增 |
-| （无） | `aigen::{FunctionSlot, SoldierFunctions, SoldierTurn, SoldierEvolver}` | 新增；**没有改动**既有 `aigen` API（`evolve` / `evolve_with_budget` / `next_generation` / `ScoringContext` 签名一字未动） |
+| （无） | `graphwar_life_manager::MISSING_STATE`、`graphwar_life_manager::is_alive_byte` | 新增 |
+| （无） | `graphwar_function_evolutionator::{FunctionSlot, SoldierFunctions, SoldierTurn, SoldierEvolver}` | 新增；**没有改动**既有 `aigen` API（`evolve` / `evolve_with_budget` / `next_generation` / `ScoringContext` 签名一字未动） |
 
 ### 3.2 旧测试怎么办
 

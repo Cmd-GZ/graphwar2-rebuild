@@ -4,7 +4,7 @@
 use gw2_rebuild::graphwar_function_evolutionator::{self, Individual, ScoringContext, VarMode};
 use gw2_rebuild::math_function::parse;
 use gw2_rebuild::plane::{empty_mask, rasterize};
-use gw2_rebuild::rng::ChaCha12;
+use gw2_rebuild::_scaffold::rng::ChaCha12;
 use gw2_rebuild::graphwar_shot_calculator::settle::Target;
 use std::io::BufRead;
 

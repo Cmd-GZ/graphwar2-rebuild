@@ -28,7 +28,7 @@ signal rooms_changed
 signal opened                        ## 连上并已发出 VersionInfo
 signal failed(reason: String)
 
-## 帮助文本里的示例端口（观测，`docs/115` §6.1 / `src/broker.rs::DEFAULT_PORT`）。
+## 帮助文本里的示例端口（观测，`docs/115` §6.1 / `src/_scaffold/broker.rs::DEFAULT_PORT`）。
 const DEFAULT_PORT := 42970
 
 ## "idle" | "connecting" | "browsing" | "failed"

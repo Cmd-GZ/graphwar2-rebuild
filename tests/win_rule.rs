@@ -68,7 +68,7 @@ fn versus_level() -> Match {
 fn kinds(msgs: &[String]) -> Vec<String> {
     msgs.iter()
         .map(|m| {
-            gw2_rebuild::protocol::parse_message(m)
+            gw2_rebuild::_scaffold::protocol::parse_message(m)
                 .expect("应为合法消息")
                 .kind
         })

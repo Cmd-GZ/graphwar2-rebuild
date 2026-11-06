@@ -23,7 +23,7 @@
 
 | 组件 | 证据 | 等级 |
 |---|---|---|
-| 弹道采样 `path::calculate` | 224 个 unicorn 用例 golden 通过 | 逐位验证 |
+| 弹道采样 `graphwar_path_calculator::calculate` | 224 个 unicorn 用例 golden 通过 | 逐位验证 |
 | 掩膜光栅化 `rasterize` | `mask_api_check.py` 与真二进制逐字节一致 | 逐位验证 |
 | 修正常数 | 与 replay 记录的 `corrected_function` 6 位一致 | 逐位验证 |
 | **停止点** | 21 发终点差 <0.5；干净实验差 **0.011** | 观测（强） |

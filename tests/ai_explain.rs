@@ -1,4 +1,4 @@
-//! `src/ai_explain.rs` 的验收。
+//! `src/_scaffold/ai_explain.rs` 的验收。
 //!
 //! ⚠️ 按 `AGENTS.md` §0.2：这些断言是**回归保护**，不是复原证据。
 //! 真正决定行为对错的是二进制（地址都写在 `docs/147` 与代码注释里）。
@@ -8,7 +8,7 @@
 //! 2. **难度真的会改决策** —— 难度值改档 ⇒ 参数改、过程改、结果改；
 //! 3. **机制本身对** —— 友军算负分、障碍截断弹道、粗评/精评会分歧。
 
-use gw2_rebuild::ai_explain::{
+use gw2_rebuild::_scaffold::ai_explain::{
     self, evaluate, is_friendly, Entity, Settings, Situation, TEAM_UNKNOWN,
 };
 use gw2_rebuild::graphwar_function_evolutionator::{difficulty_params, params, VarMode, DIST_SENTINEL};

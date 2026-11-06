@@ -183,19 +183,20 @@
 
 | 位置 | 为什么它不是复原 |
 |---|---|
-| `src/api.rs` | 内核 → GDScript 的对外 API；原版没有对应模块（它直接是 Godot 模块） |
-| `src/capi.rs` | C ABI，纯为把我们自己的实现暴露出去做对拍；原版无此物 |
-| `src/replaydiff.rs` | 回放**消息级**对拍器；原版没有这种工具模块 |
-| `src/diffconv.rs` | 上一条的收敛层；同上 |
-| `src/replay_inflate.rs` | 手写 DEFLATE/gzip；原版用的是第三方 crate，不是游戏模块 |
-| `src/rng.rs` | ChaCha12 的重写；原版是 rand_chacha crate，不是游戏模块 |
-| `src/gdext.rs` | GDExtension 入口脚手架（原版的入口在 Godot 模块侧，不在这 58 个文件里） |
-| `src/gdext_class.rs` | 同上：classdb_register_extension_class4 的封装 |
-| `src/broker.rs` | **我们自己的一台 broker 服务端**；原版只有连 broker 的客户端，没有服务端 |
-| `src/protocol.rs` | 报文编解码装配层；原版没有同名模块，编解码分散在各 handler 里 |
+| `src/_scaffold/api.rs` | 内核 → GDScript/JSON 的对外 API；原版把这件事交给 Godot 模块反射，没有这一层 |
+| `src/_scaffold/capi.rs` | C ABI，纯为把我们自己的实现暴露出去做对拍；原版无此物 |
+| `src/_scaffold/replaydiff.rs` | 回放**消息级**对拍器；原版没有这种工具模块 |
+| `src/_scaffold/diffconv.rs` | 上一条的收敛层；同上 |
+| `src/_scaffold/replay_inflate.rs` | 手写 DEFLATE/gzip；原版用的是第三方 crate，不是游戏模块 |
+| `src/_scaffold/rng.rs` | ChaCha12 的重写；原版是 rand_chacha crate，不是游戏模块 |
+| `src/_scaffold/gdext.rs` | GDExtension 入口脚手架（原版的入口在 Godot 模块侧，不在这 58+12 个文件里） |
+| `src/_scaffold/gdext_class.rs` | 同上：classdb_register_extension_class4 的封装 |
+| `src/_scaffold/broker.rs` | **我们自己的一台 broker 服务端**；原版只有连 broker 的客户端，没有服务端 |
+| `src/_scaffold/protocol.rs` | 报文编解码装配层；原版没有同名模块，编解码分散在各 handler 里 |
+| `src/_scaffold/ai_explain.rs` | AI 决策链解释器（工具）；不引入新行为，只把已对过地址的零件按原版顺序跑一遍 |
 | `client/` | 整个 Godot 客户端是照 .tscn 与截图重写的仿制品，**不是**原版源码（AGENTS §0.4） |
 
-合计 **11 处**。其中 `src/broker.rs` 和 `client/` 最容易误判：前者是我们自己写的服务端（原版只有连 broker 的客户端），后者整个是仿制品。
+合计 **12 处**。其中 `src/broker.rs` 和 `client/` 最容易误判：前者是我们自己写的服务端（原版只有连 broker 的客户端），后者整个是仿制品。
 
 ## 5. 抽查：三个模块的函数数是手数出来的
 `--check` 会重算并断言下面三个数没漂。
@@ -238,5 +239,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（32 个文件、873 条 `fn`） | `5fbb88dacbacc47532b14a6a8f41e6bea473e70b7dfa90539bf1ba187a3e4ca5` |
+| `src/` 树（33 个文件、873 条 `fn`） | `be21875c586fdebcc6488c1e90d593066ca281605c1a279c7962940a52b418ed` |
 

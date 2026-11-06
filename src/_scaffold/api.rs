@@ -79,7 +79,7 @@ pub struct PathOutcome {
     pub points: Vec<(f64, f64)>,
     /// 修正常数 `c = y0 − f(±x0)`；出错时为 `NaN`。
     pub offset: f64,
-    /// 空字符串表示成功；否则是机器可读的错误码（见 [`crate::api`] 文档）。
+    /// 空字符串表示成功；否则是机器可读的错误码（见 [`crate::_scaffold::api`] 文档）。
     pub error: &'static str,
 }
 
@@ -2435,7 +2435,7 @@ mod hit_tests {
     /// 真对局的三发（障碍/士兵/函数都来自 `tests/live_hits.rs` 的抓包）。
     ///
     /// `hit_test` 与 `graphwar_shot_calculator::settle::resolve` 必须给出**同一个致死集合与同一个停止点**；
-    /// 只要有人偷偷在 api.rs 里重写一套判定，这条就会红。
+    /// 只要有人偷偷在 _scaffold/api.rs 里重写一套判定，这条就会红。
     #[test]
     fn agrees_with_settle_resolve_on_captured_shots() {
         // 抓包里这局的 14 个障碍（docs/30 的死亡关卡）

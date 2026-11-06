@@ -10,13 +10,13 @@
 ## 0. 一句话
 
 > `docs/117` §4 记的那个缺口（"AI 真的每回合进化，但报文里那条 `FunctionInfo` 的文本
-> 仍然来自客户端"）**关上了**：`function::to_text`（`0x4ec160`，`docs/119` 1032/1032 对拍）
+> 仍然来自客户端"）**关上了**：`math_function::to_text`（`0x4ec160`，`docs/119` 1032/1032 对拍）
 > 现在有调用点，`Match::begin_next_turn` 在进化之后就把这个士兵的 token 写成文本广播出去，
 > 开火时用的也**就是同一份文本**，于是修正版的 `FunctionInfo` 里带的是 AI 真正打出去的那个函数。
 > 两条报文的形态**逐字段照真实抓包**（下面 §2 的帧号可复查）：
 > 提交时 `corrected_function` 是 `null`，**修正版在开火那一刻才发**
 > （`CalculatingResults → FunctionInfo → FunctionPoints`，`docs/43` 的既有顺序一字未动）。
-> 修正文本的运算符**带符号**（`c < 0` ⇒ `" - 3.686"`）；顺带修掉了 `shot::corrected_text`
+> 修正文本的运算符**带符号**（`c < 0` ⇒ `" - 3.686"`）；顺带修掉了 `graphwar_shot_calculator::corrected_text`
 > 里写死 `" + "` 的形态 bug（§2.1、§5 第 1 条）。
 
 ---
@@ -77,7 +77,7 @@ fd16 162 {"FunctionPoints":{"owner_id":234,"start_x":11.962551145879328,"start_y
 > ⚠️ 这一条**当场暴露了 `src/graphwar_shot_calculator::corrected_text` 的一个形态 bug，已在本轮修掉**
 > （§5 第 1 条）：它原来写死 `format!("{} + {:.3}", …)`，`c < 0` 时发出去的是
 > `" + -3.420"`，而真机是 `" - 3.420"`。仓库里本来**就有**对的那个函数
-> （`shot::correction_text`，返回 `" - 1.000"` 那种形态），只是 `corrected_text` 没用它。
+> （`graphwar_shot_calculator::correction_text`，返回 `" - 1.000"` 那种形态），只是 `corrected_text` 没用它。
 > 现在 `corrected_text` 就是 `format!("{}{}", text, correction_text(…))`，
 > 三条负样本（帧 143/182/203）+ 两条正样本（`docs/24` §6.2、帧 161）都有回归测试。
 
@@ -102,7 +102,7 @@ FunctionUpdateRequest{player_id, function}  →  FunctionFireRequest{player_id}
 
 | 位置 | 作用 |
 |---|---|
-| `Match::ai_function_text(soldier_id)` | **`function::to_text` 的唯一调用点**：槽里的 token → 文本（`None` = 没有槽） |
+| `Match::ai_function_text(soldier_id)` | **`math_function::to_text` 的唯一调用点**：槽里的 token → 文本（`None` = 没有槽） |
 | `Match::ai_submit_info(soldier_id)` | 拼**提交版** `FunctionInfo{owner_id: soldier_id, function, corrected_function: null}` |
 | `Match::begin_next_turn` | 进化**之后**把上面那条 `push` 进本回合的报文（只在 `evolution.is_some()` 时） |
 
@@ -228,7 +228,7 @@ server_match 3 · to_text 7                                   ⇒  281 passed（
 | `FunctionInfo.owner_id` = `soldier_id` | **观测**（帧 36 → 158 → 162）+ `AGENTS.md` 硬事实 |
 | 接线后 AI 的函数进报文、可 `parse` 回来、与开火用的那条逐字符相同 | **逐位验证**（§4.1 的 6 条断言 + §4.2 的 6 条单测） |
 | `corrected_function` 的常数 = `y0 - f(±x0)`（三位小数） | **逐位验证**（测试用 `eval` 独立复算）+ **观测**（帧 143/161 的 `start_x/start_y` 手算吻合） |
-| `corrected_function` 的**符号**：`c < 0` 写 `" - "` | **观测**（帧 143/182/203）+ **逐位验证**（本轮修 `shot::corrected_text` 后的回归测试，§5 第 1 条） |
+| `corrected_function` 的**符号**：`c < 0` 写 `" - "` | **观测**（帧 143/182/203）+ **逐位验证**（本轮修 `graphwar_shot_calculator::corrected_text` 后的回归测试，§5 第 1 条） |
 | 机器人的函数来自服务端而不是客户端 | **重建版自有规则**（§5 第 2 条） |
 | 同时回合制、去重、`c = 0/NaN` 的形态 | **未知**（§6） |
 
@@ -270,7 +270,7 @@ node tools/capture_net_raw.js 20000 60    # 原始字节流，按 u16 大端长�
 | `src/graphwar_shot_calculator.rs` | `corrected_text` 改成复用 `correction_text`（`c < 0` ⇒ `" - "`，NaN ⇒ `" + NaN"`）；**新增 2 条回归测试**（三条负样本帧 143/182/203 + 两条正样本、NaN 分支）。父 agent 在发现该差异后把本文件划给本任务 |
 | `docs/127-ai-speaks.md` | **新增**（本文） |
 
-**没动**：`src/api.rs`、`src/graphwar_function_evolutionator.rs`、`src/graphwar_turn_manager.rs`、`src/protocol.rs`、`src/math_function/`、
+**没动**：`src/_scaffold/api.rs`、`src/graphwar_function_evolutionator.rs`、`src/graphwar_turn_manager.rs`、`src/_scaffold/protocol.rs`、`src/math_function/`、
 `src/levelgen*.rs`、`client/`、`docs/INDEX.md`、`docs/HANDOVER.md`、任何既有夹具。
 
 ### 9.1 `tests/live_hits.rs` 那两条：本来就对，不是按 bug 写死的

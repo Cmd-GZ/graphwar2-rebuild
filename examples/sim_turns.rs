@@ -55,7 +55,7 @@ fn main() {
         let dir = std::env::args()
             .nth(2)
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(gw2_rebuild::replaydiff::default_corpus_dir);
+            .unwrap_or_else(gw2_rebuild::_scaffold::replaydiff::default_corpus_dir);
         let quiet = std::env::args().any(|a| a == "--quiet");
         return replay_sim(&dir, quiet);
     }
@@ -133,11 +133,11 @@ impl Bucket {
 /// 代码（`docs/136` §1.2–§1.4 的口径），所以差异只可能来自驱动方式。
 fn sweep(
     dir: &std::path::Path,
-    policy: &gw2_rebuild::replaydiff::Policy,
+    policy: &gw2_rebuild::_scaffold::replaydiff::Policy,
     batch_driver: bool,
 ) -> (std::collections::BTreeMap<String, Bucket>, std::collections::BTreeMap<String, usize>) {
     use gw2_rebuild::game::{Match, Submission};
-    use gw2_rebuild::replaydiff::{compare_batch, split_batches, Inputs, Msg, Replay};
+    use gw2_rebuild::_scaffold::replaydiff::{compare_batch, split_batches, Inputs, Msg, Replay};
     use gw2_rebuild::graphwar_shot_calculator::settle::Target;
 
     let mut why: std::collections::BTreeMap<String, usize> = Default::default();
@@ -238,7 +238,7 @@ fn sweep(
                 }
                 if !v.kind_seq_ok {
                     let k = match &v.first {
-                        Some(f) => format!("{}|{}|{}", f.kind, f.path, gw2_rebuild::replaydiff::class_name(&f.class)),
+                        Some(f) => format!("{}|{}|{}", f.kind, f.path, gw2_rebuild::_scaffold::replaydiff::class_name(&f.class)),
                         None => "<无 first>".into(),
                     };
                     *why.entry(k).or_insert(0) += 1;
@@ -257,7 +257,7 @@ fn sweep(
 }
 
 /// 种类（`EffectInfo` 带 `effect_type`）。与 `replaydiff::compare_batch` 的 `kind_of` 同定义。
-fn kind_of(m: &gw2_rebuild::replaydiff::Msg) -> String {
+fn kind_of(m: &gw2_rebuild::_scaffold::replaydiff::Msg) -> String {
     if m.kind == "EffectInfo" {
         format!("EffectInfo/{}", m.get_str("effect_type").unwrap_or_default())
     } else {
@@ -271,8 +271,8 @@ fn kind_of(m: &gw2_rebuild::replaydiff::Msg) -> String {
 /// （`docs/136` §6 第 8 条），与"分组与顺序规则"是两件事。把死亡块剔掉以后，
 /// 剩下的是纯粹的批结构（前缀按类型分组、后缀每发一对），它应当 130/130 全中。
 fn skeleton(
-    ms: &[gw2_rebuild::replaydiff::Msg],
-    policy: &gw2_rebuild::replaydiff::Policy,
+    ms: &[gw2_rebuild::_scaffold::replaydiff::Msg],
+    policy: &gw2_rebuild::_scaffold::replaydiff::Policy,
     ours: bool,
 ) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
@@ -315,15 +315,15 @@ fn compress(s: &str) -> String {
         .collect::<Vec<_>>()
         .join("|")
 }
-fn f_ours(v: &gw2_rebuild::replaydiff::BatchVerdict) -> String {
+fn f_ours(v: &gw2_rebuild::_scaffold::replaydiff::BatchVerdict) -> String {
     v.first.as_ref().map(|f| compress(&f.ours)).unwrap_or_default()
 }
-fn f_obs(v: &gw2_rebuild::replaydiff::BatchVerdict) -> String {
+fn f_obs(v: &gw2_rebuild::_scaffold::replaydiff::BatchVerdict) -> String {
     v.first.as_ref().map(|f| compress(&f.observed)).unwrap_or_default()
 }
 
 fn replay_sim(dir: &std::path::Path, quiet: bool) {
-    use gw2_rebuild::replaydiff::Policy;
+    use gw2_rebuild::_scaffold::replaydiff::Policy;
     let policy = Policy::default();
     let (legacy, _why_a) = sweep(dir, &policy, false);
     let (batch, why_b) = sweep(dir, &policy, true);

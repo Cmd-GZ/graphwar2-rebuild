@@ -9,7 +9,7 @@
 |---|---|---|
 | 只有两支队伍 | ✅ | 用户确认；replay 只出现 Team1/Team2 |
 | 我方永远 `x<0`、敌方 `x>0` | ✅ **773 个位置 0 例外** | `docs/105` |
-| 子弹只沿 +x 前进，不能向左 | ✅ | `path::calculate` 单向；`docs/04` |
+| 子弹只沿 +x 前进，不能向左 | ✅ | `graphwar_path_calculator::calculate` 单向；`docs/04` |
 | `f_real(x) = f(x) + (y₀ − f(x₀))` | ✅，且向左开火时用 `−x₀` | 修正 93/93 逐字符一致（`docs/86`） |
 | 曲线只在 `x ≥ x₀` 有定义 | ✅ | 同上 |
 | 撞到障碍 → 爆炸、挖小洞、子弹消失 | ✅ 洞半径 0.5 | `docs/39`、replay `DestroyObstacle` |

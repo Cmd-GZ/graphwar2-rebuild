@@ -281,11 +281,11 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 
 | 层 | 类型 / 函数 | 做什么 |
 |---|---|---|
-| 收集 | `turn::RoundCollection<T>` | 公告名单 → 攒提交 → **攒齐或超时**即可结算；顺序 = 公告顺序 |
+| 收集 | `graphwar_turn_manager::RoundCollection<T>` | 公告名单 → 攒提交 → **攒齐或超时**即可结算；顺序 = 公告顺序 |
 | 收集 | `game::Match::begin_simultaneous_turn` | 每人一条 `TurnInfo` + **一条** `EndOfTurnInfo` + **一条** `WaitingForFunctions`；返回每人的 `TurnStart`（含 AI 进化结果） |
 | 结算 + 广播 | `game::Match::fire_batch(&[Submission])` | 一次产出**整个结算批**；`fire()` 现在是它的 `N = 1` 特例 |
-| 几何 | `settle::ShotOutcome.hits: Vec<Hit>` | 每次命中带 `arc`（沿弹道弧长）与 `index`，用来给死亡块排序 |
-| 接线 | `serverloop::start_sim_round` / `resolve_sim_round` | `Config::turn_mode = "SimultaneousTurns"` 时走这条路；`tests/sim_turns.rs` 有一条真 TCP e2e |
+| 几何 | `graphwar_shot_calculator::settle::ShotOutcome.hits: Vec<Hit>` | 每次命中带 `arc`（沿弹道弧长）与 `index`，用来给死亡块排序 |
+| 接线 | `graphwar_game_server::start_sim_round` / `resolve_sim_round` | `Config::turn_mode = "SimultaneousTurns"` 时走这条路；`tests/sim_turns.rs` 有一条真 TCP e2e |
 
 `SequentialTurns` 一个字节都没变：`Match::fire` 改成 `fire_batch(&[一发])` 之后，
 单发批的报文种类序列、`effect_id` 序号、坐标与之前**完全相同**
@@ -330,7 +330,7 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 
 **残余的 A 类**只有一层：**`TurnInfo` 那组本身的顺序**来自玩家表的 HashMap 迭代序
 （`12-rng.md` §1.1 已实测：钉住 `getrandom(16)` 后跨进程一致）。本实现不碰它——
-`begin_simultaneous_turn` **照抄调用方给的 `players` 顺序**，接线层（`serverloop`）给的是
+`begin_simultaneous_turn` **照抄调用方给的 `players` 顺序**，接线层（`graphwar_game_server`）给的是
 `Config::player_order` 或玩家表的构造顺序。所以：
 
 * **批内分组与顺序：规则已定，130/130 复现**；
@@ -368,7 +368,7 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 
 > `13-ai.md` §6.1 留的尾巴（"规则已实现并可测 ≠ 端到端走新规则"）补上了：
 > 回合开始走 `TurnManager::begin_turn`（三态），**先定射手、再只为它**跑一次
-> `SoldierEvolver::evolve_soldier`，**25 s 预算默认接上**；`serverloop` 的
+> `SoldierEvolver::evolve_soldier`，**25 s 预算默认接上**；`graphwar_game_server` 的
 > "谁下一个开火"不再由它自己算。
 > 仍然没接的：`token → 文本`（AI 的函数上不了线）、回合超时的**检测**、游标初值的**配置入口**。
 
@@ -566,7 +566,7 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 6. **函数指针派发**：本节所有"没有引用 X"都是**直接调用**口径，
    未用 `tools/ptr_slots.py` 复查 `play_screen_control` 的函数有没有被塞进表里。
 
-> 本轮**没有**改 `client/`、`src/graphwar_path_calculator.rs`、`src/protocol.rs`、`src/game.rs`。
+> 本轮**没有**改 `client/`、`src/graphwar_path_calculator.rs`、`src/_scaffold/protocol.rs`、`src/game.rs`。
 > 只新增 `src/graphwar_play_screen_control.rs`、`tests/play_control.rs`，`src/lib.rs` 加一行 `pub mod`，
 > 以及本节。
 

@@ -26,7 +26,7 @@
 | 项 | 结果 | 档位 |
 |---|---|---|
 | 根因 | `_check_match_over()` **只数两队士兵存活数**（`alive = {0:n, 1:m}`）。打靶关**没有敌方士兵** ⇒ `alive[1] == 0` ⇒ 第一发一落地就判人类胜。**射击跟胜负无关，是存活统计误判** | 观测（旧代码 + 用户现象） |
-| 靶子参与判定 | 是。靶子与士兵塞进**同一个** `hit_test` 第 3 参数（`[x,y,r]*n`），内核把它变成 `settle::Target{id: 下标}` —— **没有任何"士兵"语义过滤** | 逐位验证（`src/api.rs:266`/`:284`、`src/graphwar_shot_calculator/settle.rs:73`）+ 观测（端到端打中） |
+| 靶子参与判定 | 是。靶子与士兵塞进**同一个** `hit_test` 第 3 参数（`[x,y,r]*n`），内核把它变成 `graphwar_shot_calculator::settle::Target{id: 下标}` —— **没有任何"士兵"语义过滤** | 逐位验证（`src/_scaffold/api.rs:266`/`:284`、`src/graphwar_shot_calculator/settle.rs:73`）+ 观测（端到端打中） |
 | 打靶关胜利 | **全部靶子被摧毁** | 推断转观测：等价于"`Team2` 全灭"（`docs/123` §2.1/§4.5，45/45 回放）；本文端到端实测 |
 | 打靶关失败 | **回合上限用尽仍未清完**（`turn_limit > 0` 时） | **推断**（`docs/123` §5.3 #1：语料 0 样本）+ 端到端实测 |
 | 对战关胜负 | 对方队伍全灭 ⇒ 胜；我方全灭 ⇒ 负 | 观测（`docs/84` §1 / `docs/123` §4.5：45/45） |
@@ -155,7 +155,7 @@ func _check_match_over() -> void:
 ### 3.1 借用 `hit_test` 的第 3 个参数（**先读了签名才敢借**）
 
 `GW2Rebuild.hit_test(points, obstacles, soldiers)` 的 `soldiers` 是扁平 `[x, y, radius] * n`
-（`docs/120` §1.1）。**读了内核实现**（`src/api.rs:266` 起）：
+（`docs/120` §1.1）。**读了内核实现**（`src/_scaffold/api.rs:266` 起）：
 
 ```rust
 pub fn hit_test(points, obstacles, soldiers) -> HitOutcome {
@@ -374,7 +374,7 @@ SELFTEST 233 passed, 9 failed
 | 结论 | 档位 | 出处 |
 |---|---|---|
 | 旧实现只看两队士兵存活数 ⇒ 打靶关必误判 | **观测**（代码 + 用户现象） | §1；`git diff` 的旧函数体 |
-| `hit_test` 的第 3 参数没有"士兵"语义（就是半径实体表） | **逐位验证** | `src/api.rs:266`/`:284`、`src/graphwar_shot_calculator/settle.rs:73` |
+| `hit_test` 的第 3 参数没有"士兵"语义（就是半径实体表） | **逐位验证** | `src/_scaffold/api.rs:266`/`:284`、`src/graphwar_shot_calculator/settle.rs:73` |
 | 靶子被打中会让 `alive` 翻 false、且能驱动胜负 | **观测**（端到端跑通） | §5.2 ①③ |
 | 对战关胜负 = 队伍全灭 | **观测**（45/45） | `docs/84` §1、`docs/123` §4.5 |
 | 打靶关胜利 = 靶子全清（≡ Team2 全灭） | **观测 + 逐位验证** | `docs/123` §2.1/§4.5 |

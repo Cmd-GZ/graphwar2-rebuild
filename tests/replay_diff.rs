@@ -14,7 +14,7 @@
 //! 保证"期望值"与"我方预测"在构造上一致 —— 然后只改一个字节，看比对器抓不抓得到。
 
 use gw2_rebuild::game::Match;
-use gw2_rebuild::replaydiff::{
+use gw2_rebuild::_scaffold::replaydiff::{
     compare_batch, compare_msg, gz, run_file, Msg, Policy, Replay,
 };
 use gw2_rebuild::server::RoomState;
@@ -173,7 +173,7 @@ fn numeric_format_difference_is_classified_separately() {
     assert_eq!(d.len(), 3, "三个浮点字段都应报出: {d:?}");
     for f in &d {
         assert!(
-            matches!(f.class, gw2_rebuild::replaydiff::DiffClass::NumericFormat),
+            matches!(f.class, gw2_rebuild::_scaffold::replaydiff::DiffClass::NumericFormat),
             "{} 应当是格式差异: {:?}",
             f.path,
             f.class
@@ -182,7 +182,7 @@ fn numeric_format_difference_is_classified_separately() {
     // 反过来：真正的值差异不能算成格式
     let c = Msg::parse_wire(r#"{"FunctionPoints":{"owner_id":1,"start_x":1.0,"start_y":2.0,"end_x":10.5}}"#).unwrap();
     let d2 = compare_msg(&a, &c, &policy);
-    assert!(d2.iter().all(|f| !matches!(f.class, gw2_rebuild::replaydiff::DiffClass::NumericFormat)));
+    assert!(d2.iter().all(|f| !matches!(f.class, gw2_rebuild::_scaffold::replaydiff::DiffClass::NumericFormat)));
 }
 
 /// 字段顺序也要算差异（`docs/06` §17.1 的第三条）。
@@ -193,7 +193,7 @@ fn field_order_difference_is_reported() {
     let b = Msg::parse_wire(r#"{"LifeQueuedDeath":{"tick":9,"entity_id":7}}"#).unwrap();
     let d = compare_msg(&a, &b, &policy);
     assert!(
-        d.iter().any(|f| matches!(f.class, gw2_rebuild::replaydiff::DiffClass::FieldOrder)),
+        d.iter().any(|f| matches!(f.class, gw2_rebuild::_scaffold::replaydiff::DiffClass::FieldOrder)),
         "字段顺序不同必须报 FieldOrder: {d:?}"
     );
 }
@@ -217,7 +217,7 @@ fn order_inside_batch_is_multiset_by_declared_policy() {
     assert!(v
         .diffs
         .iter()
-        .any(|d| matches!(d.class, gw2_rebuild::replaydiff::DiffClass::MessageOrder)));
+        .any(|d| matches!(d.class, gw2_rebuild::_scaffold::replaydiff::DiffClass::MessageOrder)));
 }
 
 /// 跨批的顺序改动（把两批的内容互换）必须算**内容**失败，不能被多重集口径放过。
@@ -357,7 +357,7 @@ fn gunzip_rejects_corrupted_streams() {
 /// 目录不存在时**跳过并打印原因**（仓库约定：缺资产不许静默通过）。
 #[test]
 fn real_corpus_smoke_if_present() {
-    let dir = gw2_rebuild::replaydiff::default_corpus_dir();
+    let dir = gw2_rebuild::_scaffold::replaydiff::default_corpus_dir();
     if !dir.is_dir() {
         eprintln!("skip: 没有真回放目录 {}（本测试需要本机语料）", dir.display());
         return;

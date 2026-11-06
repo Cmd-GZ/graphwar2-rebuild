@@ -20,7 +20,7 @@
 中间那一步就是 `0x4ec160`。`docs/109` §6-H、`docs/117` §4/§6 都把它列为唯一的缺口。
 
 本文只补**这一块**，不接线：`src/graphwar_game_server.rs` / `src/game.rs` / `src/graphwar_turn_manager.rs` /
-`src/graphwar_function_evolutionator.rs` / `src/protocol.rs` 一行未改（见 §8）。
+`src/graphwar_function_evolutionator.rs` / `src/_scaffold/protocol.rs` 一行未改（见 §8）。
 
 ---
 
@@ -314,7 +314,7 @@ pub fn is_printable(tag: Function) -> bool
 1. **它是 `parse` 的逆运算**。两个方向放同一个模块，`docs/03` 的文法表和这份格式表才不会漂。
 2. **二进制里它就在"数学函数"这一层**：panic 的 `Location` 是 `src/math_function.rs:285`（§4.6），
    不是 `graphwar_event.rs`。
-3. 不动 `src/graphwar_turn_manager.rs` / `src/graphwar_function_evolutionator.rs` / `src/protocol.rs` / `src/game.rs` / `src/graphwar_game_server.rs`
+3. 不动 `src/graphwar_turn_manager.rs` / `src/graphwar_function_evolutionator.rs` / `src/_scaffold/protocol.rs` / `src/game.rs` / `src/graphwar_game_server.rs`
    / `src/gdext*.rs` / `client/`（本次约束）。接线留给下一步。
 
 `docs/02` 的模块映射表把 `0x4ed670`（解析）记在 `graphwar_function_input.rs` 名下；
@@ -386,7 +386,7 @@ cargo test --offline --test to_text
 | `tools/gen_to_text_fixture.py` | **新增**（夹具生成器，含抓包不动点自检） |
 | `docs/119-token-to-text.md` | **新增**（本文） |
 
-**没动**：`src/graphwar_turn_manager.rs`、`src/graphwar_function_evolutionator.rs`、`src/protocol.rs`、`src/game.rs`、`src/graphwar_game_server.rs`、
+**没动**：`src/graphwar_turn_manager.rs`、`src/graphwar_function_evolutionator.rs`、`src/_scaffold/protocol.rs`、`src/game.rs`、`src/graphwar_game_server.rs`、
 `src/gdext*.rs`、`client/`、`docs/INDEX.md`、`docs/HANDOVER.md`、任何已有夹具。
 
 ---

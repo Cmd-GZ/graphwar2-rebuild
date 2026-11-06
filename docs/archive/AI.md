@@ -187,8 +187,8 @@ AI 只是被喂"这回合的射手是谁"，**为那一个士兵跑一次进化*
 ~~**对实现的缺口**：`src/graphwar_turn_manager.rs` 需要实现这套轮转；`src/graphwar_function_evolutionator.rs` 缺"回合系统先定
 soldier_id、AI 只为它进化"这一层。~~
 
-**已实现**（`docs/109`）：`turn::PlayerTurns` 三态轮转 + `TurnManager::begin_turn`；
-`aigen::SoldierEvolver::evolve_soldier` 按士兵建槽、每回合覆盖重算、`with_budget` 接 25 s。
+**已实现**（`docs/109`）：`graphwar_turn_manager::PlayerTurns` 三态轮转 + `TurnManager::begin_turn`；
+`graphwar_function_evolutionator::SoldierEvolver::evolve_soldier` 按士兵建槽、每回合覆盖重算、`with_budget` 接 25 s。
 ⚠️ **但都还没有调用点**——`game.rs` / `graphwar_game_server.rs` 仍走旧路径（服务端接线暂缓）。
 
 ## 8.5 ⏱ 时间预算：**墙钟 25 秒**（`docs/93`）
