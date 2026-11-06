@@ -2747,3 +2747,230 @@ get_module_wk<M>(container: &Weak<RefCell<Self>>)        arm64 0x4a20a4
 （`fixtures/module_funcs.tsv` 的 panic 串启发式），与本节的 68（= 25+23+20 个**单态化**）
 **数字碰巧相同但含义不同**：前者是"函数体里出现该模块 panic 串"，后者是符号表里
 属于该模块的 `FUNC`。别把两个 68 混用。
+
+---
+
+## 34. `weak_caller.rs` 全解：包一个 `Weak<RefCell<T>>` 的 6 行工具，**39 个单态化 = 2 个泛型方法 × 26 个类型**（2026-11）
+
+> 编号说明：本节编号按本轮并行任务的预分配取 **34**（23–33 留给同时落地的其它模块），
+> 文件当前到 §22 为止，中间是**空号不是丢步**。
+>
+> 本节对应 `src/weak_caller.rs` + `tests/weak_caller.rs`（17 条）。
+> 按 `AGENTS.md` §0.2，那 17 条是**回归保护**；本节给出的证据是 §34.7 的复算命令与
+> 两架构的**交叉相等**（§34.5），不是 `cargo test`。
+
+### 34.1 一句话结论 + 四问四答
+
+`graphwarrust::weak_caller::WeakCaller<T>` 是 **crate 内模块**（旧文档判「第三方依赖」，
+已由 §18.7 推翻）：一个 8 字节的 `Weak<RefCell<T>>` 包装，两个方法把
+「升级 → 可变借出 → 调一个函数 → 放掉」压成一次调用。**它不是回调派发器**
+（无注册表 / 无 id / 无队列 / 无返回值），而是每个 manager 的**弱自句柄**。
+
+| 问题 | 结论 | 档位 |
+|---|---|---|
+| **(a) 数据结构** | `Weak<RefCell<T>>`，**一个**类型参数，整型 8 字节；`Weak` 的目标是**它自己**那个 manager。不是 `Mutex`、不是 `Rc<RefCell<_>>`、**不是 `dyn Trait`**（`&mut T` 是瘦指针，只占一个整数寄存器） | **观测** |
+| **(b) 升级失败** | **静默跳过**：`upgrade() == None` 就什么都不做、返回 `()`。不 panic、不打日志、没有返回值可查。唯一的 panic 是 **`RefCell` 已被可变借出**（`RefCell already borrowed`）；`strong` 溢出是 `abort` | **观测** |
+| **(c) 是不是同一个泛型方法** | **不是**。是 **`call_0<F>` 与 `call<A, F>` 两个**泛型方法，`F` 也泛型。x86 目标 **39 = 23 + 16** 个外联单态化；arm64 2.0.60 **35 = 21 + 14** | **观测** |
+| **(d) 谁在用** | **26 个 manager / control 自己**（`GraphwarPlanePosManager` … `GraphwarModeManager`）。`new` 里用 `Rc::new_cyclic` 造弱句柄，`subscribe_to_events` / `new` 里的闭包克隆它并把 `T::方法` 交给 `call` / `call_0` | **观测** |
+
+### 34.2 数据结构与指令骨架（arm64 2.0.60 `0x3d519c`，逐指令）
+
+```text
+  cmn   x0, #1                     ; x0 == -1 ⇒ Weak::new() 的哨兵 usize::MAX ⇒ 跳过
+  ldr   x9, [x0]                   ; RcBox +0x00 = strong
+  cbz   x9, <尾部>                 ; strong == 0 ⇒ upgrade() 给 None ⇒ 跳过
+  adds  x9, x9, #1 ; str x9,[x0]   ; strong += 1（b.hs ⇒ brk，溢出 abort）
+  ldr   x9, [x0, #0x10]            ; RcBox +0x10 = RefCell 借用标志
+  cbnz  x9, <panic_already_borrowed>
+  mov   x9, #-1 ; str x9,[x0,#0x10]; 标志 = WRITING(-1)
+  add   x0, x0, #0x18              ; &mut *guard == RcBox+0x18 == &mut T
+  mov   x8, x1 ; mov x1, x2 ; blr x8   ; f(&mut T, a)     ← call_0 是 blr x1
+  ldr   x8,[x0,#0x10] ; add 1 ; str    ; 释放借用（-1+1=0）
+  ldr   x8,[x19]      ; sub 1 ; str    ; Rc 强计数 -1（归零 ⇒ Rc::drop_slow）
+  ldr   x8,[x19,#8]   ; sub 1 ; str    ; **self 的** Weak 弱计数 -1（归零 ⇒ dealloc）
+```
+
+由此钉死：`RcBox<RefCell<T>>` = `{strong@0x00, weak@0x08, 借用标志@0x10, T@0x18}`；
+`size_of::<RcBox<RefCell<T>>>() = 24 + size_of::<T>()`（39 处内联 `__rust_dealloc` 的
+`size` 常量），`align` **39 处全是 8**（⇒ 26 个类型的对齐都 ≤ 8）。
+
+**`self` 按值消费**是一条硬事实、不是风格选择：调用点只把指针装进 `x0` / `%rdi`
+（**不取地址**），被调函数尾部**自己**把弱计数减一并可能 `dealloc`。
+所以调用方必须先 `clone()` —— 每个事件闭包开头那三行
+（`ldr x8,[x0,#8]; adds 1; str` / x86 `incq 0x8(%rbx)`）就是 `Weak::clone`。
+
+### 34.3 `borrow_mut` 而不是 `borrow`：两条独立证据
+
+1. 冲突时调的是 `core::cell::panic_already_borrowed`（arm64 `0x836c70`，x86 GOT 槽
+   `0x9ba6d0`）。std 里 `panic_already_borrowed` 只被 `borrow_mut` 用，消息是
+   `RefCell already borrowed`；`borrow()` 走的是 `panic_already_mutably_borrowed`，
+   消息 `RefCell already mutably borrowed`。两条消息在 arm64 2.0.60 的 `.rodata` 里**都在**。
+2. 标志位：写入 `-1`、释放 `+1`。`BorrowFlag::WRITING == -1` 是 `borrow_mut` 的写法
+   （`borrow()` 是 `+1` 计数）。
+
+### 34.4 矩阵：`Method` × `T`（26 个类型）
+
+`size_of(T)` 由 `dealloc` 布局常量减 24 得到；x86 地址是目标版（stripped）、arm64 地址是
+2.0.60（未 strip）。最后一列是**调用点实际交出去的 `f`** —— 它就是「谁在用它」的签名级证据，
+也是这 26 个类型名本身的来源。
+
+| `T` | `size_of(T)` | x86 `call` | x86 `call_0` | arm64 `call` | arm64 `call_0` | 观测到的 `f`（`T::*`） |
+|---|---|---|---|---|---|---|
+| `FunctionHistoryRecorder` | 48 | `0x3d2520` | — | `0x3d6854` | — | handle_function_fire_event |
+| `GraphwarAudioControl` | 216 | `0x3d1df0` | — | `0x3d5ba0` | — | effect_info_event / game_state_event |
+| `GraphwarClientConnectionHandler` | 112 | `0x3d1670` | `0x3d3250` | `0x3d53ec` | `0x3d6dfc` | forward_event / handle_connected_to_server / tick |
+| `GraphwarColorManager` | 120 | `0x3d12c0` | `0x3d2c30` | `0x3d63b0` | `0x3d781c` | handle_entity_removed_event / send_all_info_events |
+| `GraphwarComputerPlayerManager` | 72 | `0x3d1850` | — | `0x3d6600` | — | handle_entity_removed_event / handle_tick / handle_turn_info_event |
+| `GraphwarEffectManager` | 72 | — | `0x3d2fb0` | — | `0x3d697c` | tick |
+| `GraphwarEntityEffectManager` | 72 | `0x3d2340` | `0x3d2df0` | — | — | subscribe_to_events_event_handler |
+| `GraphwarGameStateManager` | 296 | `0x3d1a30` | — | `0x3d5df0` | — | handle_chat_message / handle_connection_removed_event / handle_entity_removed_event / handle_function_points / handle_graphics_info / handle_new_connection_event |
+| `GraphwarGraphicsManager` | 168 | `0x3d1fd0` | `0x3d28b0` | `0x3d5950` | `0x3d6bbc` | handle_entity_removed_event / send_all_info_events |
+| `GraphwarLifeManager` | 72 | `0x3d1940` | `0x3d2610` | `0x3d5f18` | `0x3d75dc` | handle_entity_removed_event / handle_tick_event / send_all_info_events |
+| `GraphwarLobbyControl` | 96 | — | `0x3d2b50` | — | `0x3d6cdc` | （闭包被内联，`f` 无符号） |
+| `GraphwarLocalPlayerManager` | 64 | `0x3d1490` | — | `0x3d563c` | — | handle_connected_to_server / handle_entity_removed_event / handle_player_info |
+| `GraphwarModeManager` | 32 | — | `0x3d2990` | — | `0x3d76fc` | send_all_info_events |
+| `GraphwarNameManager` | 72 | `0x3d1580` | `0x3d2d10` | `0x3d64d8` | `0x3d74bc` | handle_entity_removed_event / send_all_info_events |
+| `GraphwarObstacleManager` | 80 | `0x3d20c0` | — | `0x3d5cc8` | — | handle_tick_event |
+| `GraphwarPlanePosManager` | 24 | `0x3d1760` | `0x3d3090` | `0x3d519c` | `0x3d703c` | handle_entity_removed_event / send_all_info_events |
+| `GraphwarPlayScreenControl` | 144 | `0x3d22a0` | — | `0x3d588c` | — | （闭包被内联，`f` 无符号） |
+| `GraphwarPlayerManager` | 72 | `0x3d2430` | `0x3d26f0` | `0x3d52c4` | `0x3d727c` | handle_entity_removed_event / send_all_info_events |
+| `GraphwarPlayerScreenControl` | 32 | `0x3d10e0` | — | `0x3d6728` | — | face_button_pressed / hat_button_pressed / skin_button_pressed |
+| `GraphwarRankManager` | 72 | `0x3d1b20` | `0x3d27d0` | `0x3d5514` | `0x3d6f1c` | handle_entity_removed_event / send_all_info_events |
+| `GraphwarServerConnectionHandler` | 128 | `0x3d21b0` | `0x3d2a70` | `0x3d6040` | `0x3d6a9c` | forward_connection_specific_event / forward_event / handle_ban_connection_request_event / handle_clear_bans_request_event / handle_connection_removed_event / tick |
+| `GraphwarSoldierManager` | 72 | `0x3d1ee0` | `0x3d3170` | `0x3d5a78` | `0x3d715c` | handle_entity_removed_event / send_all_info_events |
+| `GraphwarTargetManager` | 72 | `0x3d11d0` | `0x3d3330` | — | — | subscribe_to_events_event_handler |
+| `GraphwarTeamManager` | 32 | `0x3d1d00` | — | `0x3d6168` | — | handle_entity_removed_event / send_all_info_events |
+| `GraphwarTickHandler` | 72 | `0x3d13b0` | — | `0x3d6290` | — | handle_connected_to_server_event |
+| `GraphwarTurnManager` | 32 | `0x3d1c10` | `0x3d2ed0` | `0x3d5764` | `0x3d739c` | handle_entity_removed_event / send_all_info_events |
+
+* `call_0` 的 14 个 arm64 单态化里只有 **3 个**是 `call` 没有的新类型
+  （`GraphwarEffectManager` / `GraphwarLobbyControl` / `GraphwarModeManager`），
+  其余 11 个类型两个方法都用到 ⇒ **13 个类型两个都有、10 个只有 `call`、3 个只有 `call_0`**。
+* `call` 与 `call_0` 的分界是**被调函数的元数**，不是名字、也不是类：
+  `handle_entity_removed_event` 出现在 **13 个**类型的 `call` 里；
+  而 `send_all_info_events` **两种都有** —— 10 个类型上它不带载荷（`call_0`），
+  **`GraphwarTeamManager` 上它带一个载荷**（`call`，`0x3d1d00` 那一行同时列了
+  `handle_entity_removed_event`）。同一个方法名两边出现，直接否掉「按语义选口」的猜测。
+* `GraphwarPlayerScreenControl` 那一行搬了**两个**整数寄存器（16 字节载荷）：
+  `face_button_pressed` / `skin_button_pressed` / `hat_button_pressed`。
+* `GraphwarPlayScreenControl`（`0x3d22a0`，160 字节；arm64 孪生 `0x3d588c`，196 字节）
+  是个**形状例外**：里面**没有间接调用** —— 闭包体
+  （`movb $0x1, 0xa3(%rdi)` / `strb w9,[x0,#0xa3]`，即 `t.<+0x8b> = true`）被内联了进去。
+  这一条同时证明 **`F` 是泛型参数而不是写死的 `fn` 指针**（`fn` 指针不可能被内联）。
+* 反过来，同一个 `(T, A)` 的多个调用点**共用 1 个**单态化
+  （`GraphwarGameStateManager` 7 个调用点、`GraphwarServerConnectionHandler` 5 个），
+  说明那些点把 `fn` 项**强制成同一个 `fn` 指针类型**才传进来。
+
+### 34.5 谁在用它（d）＋ 两架构交叉相等
+
+句柄指向 `T` 自己，不是容器。两条证据：
+
+* 回调收到 `&mut T`，而 `f` 一律是 **`T` 自己的方法**（上表最后一列，每一项都以该行 `T` 开头）；
+* `T` 的构造函数走 **`Rc::new_cyclic`**（arm64 2.0.60 有 21 个
+  `alloc::rc::Rc::<..>::new_cyclic_in` 实例），例：`GraphwarPlanePosManager::new`
+  在 `0x3b89bc` 就是 `bl Rc::new_cyclic_in`。这是「先有 `Rc`、再在闭包里拿到 `Weak`
+  装进结构体」的唯一标准写法。
+
+**交叉相等（本节最强的一条，`观测`）**：同一个 `T` 在两个架构上的
+`size_of::<T>()` **逐一相等** —— 35 个 arm64 单态化的内联 `dealloc` 常量
+`== 24 + size_of(T)(由 x86 侧读出)`，**零个例外**
+（`tests/weak_caller.rs::arm64_rcb_size_matches_the_other_arch`）。
+这一条同时验证了「`RcBox` 头部 24 字节」「类型 → 尺寸映射」「39/35 个地址归属」三件事。
+
+### 34.6 版本差：x86 26 个类型，arm64 24 个 —— 是**内联**差，不是源码差
+
+| | `call` 外联 | `call_0` 外联 | 被内联掉的 |
+|---|---|---|---|
+| x86 2026-08-28（目标） | 23 | 16 | `GraphwarGameRecorder`（`0x3d4fa0`，704 字节） |
+| arm64 2.0.60 | 21 | 14 | `GraphwarTargetManager`、`GraphwarEntityEffectManager`、`GraphwarGameRecorder` |
+
+`GraphwarTargetManager` / `GraphwarEntityEffectManager` 的
+`subscribe_to_events_event_handler::{{closure}}` 在 arm64 上分别是
+`0x3da9bc`（**740** 字节）与 `0x3e9c58`（**744** 字节），而其它 manager 的同类闭包只有
+~60 字节 —— 差的正是 `call` 被**整个内联**进去的体积。所以两边是同一份源码，
+只是内联决策不同；**26 个类型是源码事实，39 / 35 是构建产物事实**。
+
+### 34.7 两个陷阱（都是本轮踩到的）
+
+1. **`drop_slow` 的同一地址 ≠ 同一个类型。** `Rc::<RefCell<T>>::drop_slow` 按 `T`
+   单态化，但**代码完全相同的实例被链接器 ICF 合并**：arm64 `0x41a668` 上同时挂着
+   `drop_slow17h{224f049b,a03b81ec,75485ae1}…` **三个** `FUNC` 符号
+   （`PlayerManager` / `RankManager` / `SoldierManager`，三者 `size_of == 72`、字段布局相同）。
+   所以「按 `drop_slow` 地址分组 = 按类型分组」**是错的**；本轮改按
+   **调用点交出的 `f`** 与 **`dealloc` 尺寸**双重定名。
+2. **`fixtures/module_map.tsv` 的 40 与进度尺的 39 差一个。** `0x3d4fa0`（704 字节）
+   引用了 `src/weak_caller.rs:17:28`，但它**不是**单态化：它自己的 panic 锚在
+   `src/graphwar_game_recorder.rs:107:105` / `108:41`，是 `GraphwarGameRecorder`
+   的方法内联了 `call` 之后的产物。⇒ **按「锚」数出来的 40 要减掉它才是单态化数**
+   （`docs/02` §20 / §21 里那两张按锚统计的表，遇到本模块要按本条读）。
+
+### 34.8 两个 `panic::Location` = 源码行号（**推断**）
+
+本模块**只有 2 个** panic 点，都是 `borrow_mut` 的 `#[track_caller]`：
+
+| 方法 | 锚 | x86 `Location` 结构体 | arm64 |
+|---|---|---|---|
+| `call_0` | `src/weak_caller.rs:11:28` | `0x9531f8` | `0x84c7c8` |
+| `call` | `src/weak_caller.rs:17:28` | `0x9531e0` | `0x84c7b0` |
+
+`track_caller` 记的列号是**方法名**那一列（本机 rustc 1.99 实测：
+`let b = c.borrow_mut();` 报 `5:15`，即 `borrow_mut` 的 `b`）。由此（**推断**）：
+
+* 两行列号**相同**（28）⇒ 两个方法体形状与缩进相同；
+* `17 − 11 = 6` ⇒ 每个方法 6 行、两方法之间**可以不留空行**，
+  于是 `impl` 之前只有 ~8 行 ⇒ **原版这个文件几乎没有模块级文档**，
+  最可能是「一行 `pub struct WeakCaller<T>(pub Weak<RefCell<T>>);` + 两个 6 行方法」；
+* 列 28 只钉死 `borrow_mut` 那一行**接收者表达式的长度**（缩进 12 + 6 字符接收者，
+  或缩进 8 + 10 字符接收者），**不钉死标识符**。
+  `tests/weak_caller.rs::anchor_arithmetic_admits_a_six_line_body` 用一个最小模板
+  把这条算术钉住了，模板正好落在 `(11,28)` / `(17,28)`。
+
+⚠️ 我们的 `src/weak_caller.rs` **不复现**这两个行号（它自带写结论用的 `//!` 文档）。
+
+### 34.9 就地更正（旧文档里被本节推翻或需改口径的几条）
+
+按 `AGENTS.md` §0.6「文档不许虚报」：旧文不删，在这里指明该按哪条读。
+
+| 旧说法（出处） | 本节结论 | 证据 |
+|---|---|---|
+| 「`weak_caller.rs`（`dep`，39 个函数）是第三方依赖库，不算游戏代码」（§17 表、`docs/149`、`docs/coverage-matrix.tsv` 的 `scope=dep`） | 是 **crate 内模块**（`graphwarrust::weak_caller::…`），且**不是** 39 个函数的「库」，是 2 个泛型方法的 39 个单态化 | §18.7 + §34.4 |
+| 「`weak_caller` 是 **1** 个泛型方法 `call`（27 个 direct 符号）」 | **2** 个方法 `call` / `call_0`；`call` 本身再按 `(T, A, F)` 单态化。27 这个数是某次按 `call` 名字前缀数出来的，漏了 `call_0` 的 14~16 个 | §34.4 的两块地址区间 |
+| 「`weak_caller.rs` 有 **40** 个归属函数」（`fixtures/module_map.tsv`、`docs/16-client.md` §27 的「13 个模块没有 fixture 兜底」表（该表把本模块记成 `gdext 侧模块`，同样要改）、`docs/149`） | **39** 个单态化 + **1** 个内联了 `call` 的调用者（`0x3d4fa0`，属 `graphwar_game_recorder.rs`） | §34.7 第 2 条 |
+| 「`weak_caller.rs` 有 **37** 个函数（2024-07-30 符号表）」（§18 A 表） | 那一版确实是 37（22 `call` + 15 `call_0`）；**2.0.60 是 35**（21 + 14）——两年里少了一型的两条 | `readelf -sW` 逐条数 |
+| 「`weak_caller` 的闭包落在 `weak_caller.rs:11–17`，所以它是 gdext 绑定胶水」（§18 表注） | 11–17 是**两个 `borrow_mut`** 的行号，不是「胶水」的证据；它是**弱自句柄工具**，与 gdext 无关（不进 `__register_methods` / `__virtual_call` 任何一条链） | §34.2 / §34.8 |
+
+### 34.10 复算命令
+
+```text
+# 1) arm64 2.0.60（未 strip）：2 个方法名 + 35 个单态化
+readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so \
+  | grep weak_caller | grep FUNC | wc -l                       # 35
+readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so \
+  | grep -c 'WeakCaller4call1'                                  # 21   （call）
+readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so \
+  | grep -c 'WeakCaller6call_01'                                # 14   （call_0）
+
+# 2) 每个单态化内联的 dealloc 布局常量 = 24 + size_of(T)
+llvm-objdump -d --start-address=0x3d519c --stop-address=0x3d52c4 <arm64 so>
+
+# 3) x86 目标（stripped）：两个 Location 锚把 40 个函数分成 16 + 24
+.venv/bin/python tools/loc_xrefs.py loc src/weak_caller.rs:11:28   # 16 个 -> call_0
+.venv/bin/python tools/loc_xrefs.py loc src/weak_caller.rs:17:28   # 24 个 -> 23 call + 1 内联调用者
+
+# 4) 类型名：找每个 call 的调用者，看它把哪个 fn 项交给 f
+#    arm64 = adr x1, <T>::method ；x86 = lea rsi,[rip+..]
+#    再把那个地址查 fixtures/name_to_addr.tsv
+```
+
+### 34.11 还缺什么（`未知`）
+
+* **字段名**：只有布局与类型证据，没有字段名证据。
+* **`WeakCaller` 的构造函数**：被内联进 21 个 `new_cyclic` 闭包，符号表里**没有**
+  `WeakCaller::new` / `from` / `Clone` 的符号，所以构造写法（`WeakCaller(w)` 还是
+  `w.into()` 还是 `WeakCaller::new(w)`）**未知**。`src/` 里给的是便利口，已标注。
+* **`F` 的上界**：观测只能说明它是泛型且被当 `FnOnce(&mut T[, A])` 调用；
+  是否写了 `move`、是否 `+ 'static`，**未知**。
+* **`T: ?Sized`**：26 个类型全是 `Sized`，没有 `dyn` 实例，所以**无法判断**
+  原版有没有写 `?Sized`（写了也不会产生不同的单态化）。
+* **`GraphwarTeamManager::send_all_info_events` 为什么带载荷**（其它 10 个同类不带）：
+  载荷类型未定，`未知`。
