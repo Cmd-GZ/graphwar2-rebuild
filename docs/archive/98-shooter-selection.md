@@ -246,7 +246,7 @@ computer_player_manager.rs
 
 ## 7. 对复原的影响（我们缺什么）
 
-1. **`src/turn.rs` 要重写**。现在是 `alternating_order`（调用方给顺序）。正确的是：
+1. **`src/graphwar_turn_manager.rs` 要重写**。现在是 `alternating_order`（调用方给顺序）。正确的是：
    ```rust
    struct PlayerTurns { soldiers: Vec<i32>, index: usize }
    fn next_soldier(p: &mut PlayerTurns, alive: impl Fn(i32) -> bool) -> Option<i32> {
@@ -264,10 +264,10 @@ computer_player_manager.rs
 2. **`life_manager` 的状态字节语义**要落地：`1` = 活；`0`/`2`（未找到）= 不可开火。
 3. **AI 的调用契约要改**：现在是"给一个局面 → 返回一个函数"。真实现是
    "回合系统先选定 `soldier_id`，AI 只为这一个士兵进化，结果写该士兵的槽"。
-   `src/aigen.rs` 没有士兵概念，需要加一层。
+   `src/graphwar_function_evolutionator.rs` 没有士兵概念，需要加一层。
 4. **`docs/13` §5 第 1 条可以销账**："谁决定轮到谁" = `0x463da0`（射手）
    + 玩家轮转/队伍交替（外层，`docs/47`/`60` 已记）。
-5. **旧账仍在**：`src/aigen.rs::evolve` 还没有 25 s 墙钟上限（`docs/93`）。
+5. **旧账仍在**：`src/graphwar_function_evolutionator.rs::evolve` 还没有 25 s 墙钟上限（`docs/93`）。
 
 ---
 

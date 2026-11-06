@@ -29,7 +29,7 @@ current_tick = base_tick + round((now_ms - base_ms) * 60 / 1000)
 ## 3. 实现
 
 ```rust
-// src/tick.rs
+// src/graphwar_tick_handler.rs
 pub const TICKS_PER_SECOND: i64 = 60;
 pub fn tick_at(base_tick: i64, base_ms: i64, now_ms: i64) -> i64
 

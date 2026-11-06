@@ -379,7 +379,7 @@ bash client/run.sh dump | grep @@KERNEL
 | 3 | 障碍的层级（障碍在士兵/弹道之上还是之下） | 画在弹道与士兵**之下** | 原版真帧里弹道不会与障碍重叠（撞点即停）， Soldiers 也没有与障碍重叠的样本 |
 | 4 | 障碍的抗锯齿参数 | 用 `antialiased=true` 复现"半覆盖边缘" | 原版是 Rust 侧自绘，AA 的具体采样规则未取证（只对齐了"有半覆盖像素"这个观测） |
 | 5 | 我方士兵 / 靶子的位置 | **仍是我们的自定值**（`_spawn_position` / `_target_positions`） | 原版由关卡生成器随机放置，坐标未解；与障碍无关，但同属"平面上的东西从哪来" |
-| 6 | 服务端侧 | `src/game.rs` / `serverloop.rs` **没有**接这条生成（本轮没碰那几个文件） | 谁在服务端调 `obstacles_from_seed`、事件怎么广播 |
+| 6 | 服务端侧 | `src/game.rs` / `graphwar_game_server.rs` **没有**接这条生成（本轮没碰那几个文件） | 谁在服务端调 `obstacles_from_seed`、事件怎么广播 |
 
 ### 6.3 **三条"用户口述、未实现"的开火表现**（父 agent 明确要求只登记，本轮不动手）
 

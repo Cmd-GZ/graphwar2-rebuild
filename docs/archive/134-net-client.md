@@ -143,7 +143,7 @@ idle → connecting ──TCP 连上──→ handshaking ──7 条状态同�
 | 加入后发 `NewPlayerRequest{connection_id}` | 原版加入时发（`docs/24` §3） | **观测**（消息存在）／**自定**（我们的服务端忽略它） |
 | 加入后**自动**发 `GameStartRequest` | 真游戏是**房主**按 Start 才发；我们的服务端是"等客户端来开局"的 harness | **自定**（`auto_start`，可关） |
 | 收到的事件落到 `room` 模型：房间名/四个模式串/玩家表/实体坐标/生死/障碍/回合/函数原文 | `docs/24` §3–§6 的字段 | **观测** |
-| `EndingGame` = 正常结束，**不弹**断线框 | `src/serverloop.rs` 发完就关 socket | **观测** |
+| `EndingGame` = 正常结束，**不弹**断线框 | `src/graphwar_game_server.rs` 发完就关 socket | **观测** |
 
 房间模型 `session.room`（PlayScreen 侧将来要读的就是它）：
 

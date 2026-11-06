@@ -10,7 +10,7 @@
 //! 服务器**不广播轨迹**，只广播起点与终点，所以这里做的事正是客户端要做的：
 //! 用同一套采样器重算轨迹，再沿轨迹查掩膜，看第一个被占据的点是不是抓到的命中点。
 
-use gw2_rebuild::path::Mode;
+use gw2_rebuild::graphwar_path_calculator::Mode;
 use gw2_rebuild::plane::{empty_mask, is_occupied, rasterize};
 use gw2_rebuild::shot::shot_points;
 

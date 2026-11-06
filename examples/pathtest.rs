@@ -1,6 +1,6 @@
 fn main() {
     use gw2_rebuild::function::parse;
-    use gw2_rebuild::path::{calculate, Mode};
+    use gw2_rebuild::graphwar_path_calculator::{calculate, Mode};
     use gw2_rebuild::shot::{correction, shifted_tokens};
 
     let cases = [

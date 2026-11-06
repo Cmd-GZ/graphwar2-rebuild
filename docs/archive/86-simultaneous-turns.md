@@ -330,7 +330,7 @@ replay 里实际的死亡集合是 **152 人**：**多报 0**，漏报 1（士�
 
 ## 8. 对实现的影响（**没有改物理**）
 
-* `src/settle.rs::resolve`、`src/path.rs`、`src/plane.rs`、`src/shot.rs` **不需要改**：
+* `src/settle.rs::resolve`、`src/graphwar_path_calculator.rs`、`src/plane.rs`、`src/shot.rs` **不需要改**：
   "每发独立算"正是现在的行为，而真游戏的死亡集合也确实是并集。
 * **要改的是事件生成**（`src/settle.rs::events` / `src/game.rs::Match::fire`）：
   现在每发各自产出 `LifeQueuedDeath`，如果以后要做"一个回合多发同时结算"，

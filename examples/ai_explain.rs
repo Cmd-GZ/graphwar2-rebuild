@@ -14,7 +14,7 @@
 //!
 //! | 参数 | 含义 |
 //! |---|---|
-//! | `--difficulty D` | 用**关卡难度值**（`bot_added_event` 载荷 +0x10），见 `aigen::difficulty_params` |
+//! | `--difficulty D` | 用**关卡难度值**（`bot_added_event` 载荷 +0x10），见 `graphwar_function_evolutionator::difficulty_params` |
 //! | `--level N` | 用 `docs/AI.md` 的六档表（1..6） |
 //! | `--x0/--y0` | 射手坐标（默认 0,0） |
 //! | `--flip` | 左右翻转（队 2 的射击方向） |
@@ -30,7 +30,7 @@
 //! | `--summary` | 只打印参数 + 最终选择 |
 
 use gw2_rebuild::ai_explain::{self, demo_situation, Entity, Settings, Situation};
-use gw2_rebuild::aigen::VarMode;
+use gw2_rebuild::graphwar_function_evolutionator::VarMode;
 
 fn parse_pair(s: &str) -> (f64, f64) {
     let mut it = s.split(',');

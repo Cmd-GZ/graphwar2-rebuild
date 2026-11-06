@@ -289,7 +289,7 @@
 | `client/src/game/target_set.gd` | 新增 `const TEAM := 1`（= Team2，靶子的队伍）；半径注释从"推断"改成"观测（302/302）" | §1 |
 | `client/libgw2_rebuild.so` | `cargo build` 后覆盖（内核） | — |
 
-**没有改**：`client/src/screens/*`、`client/src/play/*`、`src/path.rs`、`src/api.rs`、
+**没有改**：`client/src/screens/*`、`client/src/play/*`、`src/graphwar_path_calculator.rs`、`src/api.rs`、
 `src/replaydiff.rs`、`src/diffconv.rs`、`tests/server_match.rs`、`docs/INDEX.md`、
 `docs/HANDOVER.md`、`docs/131`（交接见下）。
 

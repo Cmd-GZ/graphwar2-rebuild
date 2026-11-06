@@ -210,9 +210,9 @@ B 路 packed_vector2_array_operator_index_const : B0=(-18.0, -5.1)     B1=(-17.9
 
 ## 4. 与内核规则的关系：没有第二份实现
 
-### 4.1 先纠正一句：掩膜判定**不在** `src/life.rs`
+### 4.1 先纠正一句：掩膜判定**不在** `src/graphwar_life_manager.rs`
 
-`src/life.rs`（111 行）里只有**生命表**（两张 `HashMap` + `mode==1` 分支）和
+`src/graphwar_life_manager.rs`（111 行）里只有**生命表**（两张 `HashMap` + `mode==1` 分支）和
 状态字节的语义 `is_alive_byte(state & 1)`（`docs/98` §1.3）。它**没有**掩膜、
 没有坐标、没有"谁死"的判定——档位：观测（读文件即可）。
 
@@ -557,6 +557,6 @@ bash client/run.sh selftest    # 期望 SELFTEST 93 passed, 0 failed
 | `client/src/screens/play_screen.gd` | `_resolve_shots` 换内核；`fire()` 的 shot 字典加一个键 | +27 / −12 |
 | `docs/120-hit-test.md` | 本文 | 新增 |
 
-**没有碰**：`src/turn.rs`、`src/aigen.rs`、`src/protocol.rs`、`src/game.rs`、
-`src/serverloop.rs`、`docs/INDEX.md`、`docs/HANDOVER.md`、`docs/108`（那是客户端交付物，
+**没有碰**：`src/graphwar_turn_manager.rs`、`src/graphwar_function_evolutionator.rs`、`src/protocol.rs`、`src/game.rs`、
+`src/graphwar_game_server.rs`、`docs/INDEX.md`、`docs/HANDOVER.md`、`docs/108`（那是客户端交付物，
 留给客户端负责人一并更新）、`client/run.sh`、`client/tools/selftest.gd`。

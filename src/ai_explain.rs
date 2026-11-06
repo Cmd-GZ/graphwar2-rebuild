@@ -1,6 +1,6 @@
 //! 把"**局面 → bot 选哪条函数**"这条链变成能读、能复算的东西（`docs/147`）。
 //!
-//! 这个模块**不引入新行为**：它把 `src/aigen.rs` 里已经逐条对过地址的零件
+//! 这个模块**不引入新行为**：它把 `src/graphwar_function_evolutionator.rs` 里已经逐条对过地址的零件
 //! （权重表 / 装配 / 变异 / 单父亲交叉 / 两阶段评分 / 截断）按**原版的实际顺序**跑一遍，
 //! 并在每一步留下可打印的记录。用途只有一个：回答"为什么它选了这条函数"。
 //!
@@ -36,12 +36,12 @@
 //!   —— 缺的直接证据是"AI 那份 config 的 +0x38 字节也是 1"（只在真开火侧读到过）；
 //! * 本模块的输出是**回归保护**，不是复原证据（见 `AGENTS.md` §0.2）。
 
-use crate::aigen::{
+use crate::graphwar_function_evolutionator::{
     self, cross_from, mutate, random_function, Params, VarMode, COARSE_STEP, DIST_SENTINEL,
     FINE_RANKS, FINE_STEP,
 };
 use crate::function::to_text;
-use crate::path::{calculate, Mode};
+use crate::graphwar_path_calculator::{calculate, Mode};
 use crate::plane::{is_occupied, rasterize, EMPTY};
 use crate::rng::ChaCha12;
 use crate::shot::{correction, shifted_tokens};
@@ -316,7 +316,7 @@ pub struct Generation {
 #[derive(Debug, Clone)]
 pub struct Report {
     pub params: Params,
-    /// 若来源是关卡难度值，记下它（见 [`aigen::difficulty_params`]）。
+    /// 若来源是关卡难度值，记下它（见 [`graphwar_function_evolutionator::difficulty_params`]）。
     pub difficulty: Option<u32>,
     pub mode: VarMode,
     pub generations: Vec<Generation>,
@@ -372,7 +372,7 @@ impl Settings {
     /// 按**关卡难度值**建设置（真链路：`bot_added_event` 载荷 +0x10）。
     pub fn from_difficulty(difficulty: u32, mode: VarMode) -> Self {
         Self {
-            params: aigen::difficulty_params(difficulty),
+            params: graphwar_function_evolutionator::difficulty_params(difficulty),
             mode,
             difficulty: Some(difficulty),
             max_generations: None,
@@ -383,7 +383,7 @@ impl Settings {
     /// 按 `docs/AI.md` 的六档建设置（那是**实测**的一套参数组合，不是关卡难度值）。
     pub fn from_level(level: u8, mode: VarMode) -> Self {
         Self {
-            params: aigen::params(level),
+            params: graphwar_function_evolutionator::params(level),
             mode,
             difficulty: None,
             max_generations: None,
@@ -400,7 +400,7 @@ fn rng_from_seed(seed: u64) -> ChaCha12 {
 
 /// 跑一次"思考"并记录全过程。
 ///
-/// 与 `aigen::evolve_with_budget` 的差别**只有"记录"**：循环顺序、每代个体数、
+/// 与 `graphwar_function_evolutionator::evolve_with_budget` 的差别**只有"记录"**：循环顺序、每代个体数、
 /// 截断、精评换新都照原版（`0x51b440`）。
 pub fn explain(sit: &Situation, settings: &Settings, seed: u64) -> Report {
     let p = settings.params;
@@ -475,7 +475,7 @@ pub fn explain(sit: &Situation, settings: &Settings, seed: u64) -> Report {
             evaluations += 1;
             let coarse = born[rank].score;
             let ok_hits = fine.net_hits() == coarse.net_hits();
-            let ok_dist = !((fine.dist - coarse.dist).abs() > aigen::CONSISTENCY_TOL);
+            let ok_dist = !((fine.dist - coarse.dist).abs() > graphwar_function_evolutionator::CONSISTENCY_TOL);
             if ok_hits && ok_dist {
                 continue;
             }

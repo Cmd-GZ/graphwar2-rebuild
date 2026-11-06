@@ -23,7 +23,7 @@
 //!
 //! ## 只用真采样器
 //!
-//! 点序列**全部**来自 [`crate::path::calculate`]（`@0x3c2530` 的复原）：
+//! 点序列**全部**来自 [`crate::graphwar_path_calculator::calculate`]（`@0x3c2530` 的复原）：
 //! 步长 [`crate::STEP_DEFAULT`]（0.01）、容差 [`crate::LENGTH_TOL`]、
 //! 点数预算 `(200/step) as i32`、平面边界 `|x|<=25 / |y|<=15`、修正常数
 //! [`crate::shot::correction`]。本文件**不重新采样**，只做类型转换与错误翻译。
@@ -63,9 +63,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 use crate::function::parse;
-use crate::path::calculate;
+use crate::graphwar_path_calculator::calculate;
 use crate::shot::{correction, shifted_tokens};
-use crate::path::Mode;
+use crate::graphwar_path_calculator::Mode;
 use crate::{Token, MAX_ABS_X, MAX_ABS_Y, STEP_DEFAULT};
 
 // ---------------------------------------------------------------------------
@@ -158,7 +158,7 @@ pub fn calculate_path(expr: &str, x0: f64, y0: f64, direction: f64) -> PathOutco
 // 1b. 微分方程模式：`path_calculate_mode(expr, x0, y0, direction, mode)`
 // ---------------------------------------------------------------------------
 //
-// `docs/116` §8.3 留的坑：`Mode::Ode` 在核心里有实现（`src/path.rs` 的 RK4 分支），
+// `docs/116` §8.3 留的坑：`Mode::Ode` 在核心里有实现（`src/graphwar_path_calculator.rs` 的 RK4 分支），
 // 但**没有**暴露给 GDScript，所以微分方程局只能画士兵/障碍、弹道留空
 // （`docs/133` §6 #3）。这里补上入口，**不改** `path_calculate` 的签名与行为。
 
@@ -184,7 +184,7 @@ pub fn parse_mode(mode: &str) -> Option<Mode> {
     }
 }
 
-/// ODE 模式：`dy/dx = f(x, y)`，一阶 RK4（[`Mode::Ode`]，见 `src/path.rs`）。
+/// ODE 模式：`dy/dx = f(x, y)`，一阶 RK4（[`Mode::Ode`]，见 `src/graphwar_path_calculator.rs`）。
 ///
 /// 与 [`calculate_path`] 的**唯一**差别：**不求修正常数**、也不做 `shifted_tokens`。
 /// 依据是 [`crate::shot::shot_points`] 的那一行判断

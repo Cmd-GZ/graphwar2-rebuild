@@ -750,7 +750,7 @@ pub fn initial_population(p: &Params, mode: VarMode, next: &mut dyn FnMut() -> u
 //
 // 三条硬结论（全部有 replay 观测）：
 //
-// 1. **AI 不选射手**。`soldier_id` 由 [`crate::turn::TurnManager`] 先定，本层只接收它；
+// 1. **AI 不选射手**。`soldier_id` 由 [`crate::graphwar_turn_manager::TurnManager`] 先定，本层只接收它；
 // 2. **槽按士兵**：`FunctionInfo.owner_id` / `FunctionActive.owner_id` 就是 `soldier_id`，
 //    开局每个士兵各收一条**空**函数（`docs/98` §3.1）；
 // 3. **每回合重算**：同一士兵**下一次**被轮到时文本又变了（`docs/98` §3.2 的 tick
@@ -870,7 +870,7 @@ pub struct SoldierTurn {
 /// 参数与预算来自难度档（`docs/93`），结果写进这个士兵自己的槽。
 ///
 /// ```text
-/// // 典型调用顺序（`turn.rs` 先定射手，AI 只为它跑）：
+/// // 典型调用顺序（`graphwar_turn_manager.rs` 先定射手，AI 只为它跑）：
 /// let d = turns.begin_turn(player_id, |id| life_state(id), timed_out);
 /// if let TurnDecision::Announce { soldier_id, flip, .. } = d {
 ///     if soldier_id != 0 {
@@ -1005,7 +1005,7 @@ pub fn fitness(tokens: &[Token], ctx: &ScoringContext) -> f64 {
 /// 我们这里如实计算命中点距离，因此距离判据**比原版更活跃**（但仍受
 /// `dist ∈ [0, radius]` 约束，radius=0.5 时 `|Δ| <= 0.5` 恒成立 ⇒ 实际仍然不触发）。
 pub fn fitness_eval(tokens: &[Token], ctx: &ScoringContext) -> Evaluation {
-    use crate::path::{calculate, Mode};
+    use crate::graphwar_path_calculator::{calculate, Mode};
     use crate::plane::is_occupied;
     use crate::shot::{correction, shifted_tokens};
 

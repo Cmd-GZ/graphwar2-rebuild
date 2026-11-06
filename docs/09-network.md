@@ -239,11 +239,11 @@ tick 由 `tick::tick_at` 给出（60 Hz）。**死掉的士兵会从场上移除
 结果：6 发终点全部对上，产出消息全部合法。
 
 
-## 5. 完整一局的服务端循环（`src/serverloop.rs`）
+## 5. 完整一局的服务端循环（`src/graphwar_game_server.rs`）
 
 ### 5.1 装配了什么
 
-`src/serverloop.rs` 把已有零件串成一个真正的服务端：
+`src/graphwar_game_server.rs` 把已有零件串成一个真正的服务端：
 
 ```text
 NewConnectionRequest  -> 状态同步 7 条                     (09-network.md)

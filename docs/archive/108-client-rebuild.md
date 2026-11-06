@@ -419,7 +419,7 @@ GameSetup 的最小宽度顶到 1700+ px，界面直接被推出 1280×720。代
 | 回放解析与播放 | ❌ | 格式见 `docs/78`；播放界面从未被观测（`docs/92` §8） |
 | 联机（建房/加房/握手/聊天协议） | ❌ | 协议已复原（`docs/24`/`33`/`src/protocol.rs`），界面侧未接 |
 | 段位、皮肤解锁、内购 | ❌ | 内购 Linux 端没有；段位数据未知（玩家行 `RankIcon` 是空占位） |
-| AI 决策（Bot 怎么选函数） | ❌ | 在 Rust（`src/aigen.rs`）；本项目 Bot 只是"站着挨打"的实体 |
+| AI 决策（Bot 怎么选函数） | ❌ | 在 Rust（`src/graphwar_function_evolutionator.rs`）；本项目 Bot 只是"站着挨打"的实体 |
 | 同时回合制的真实结算顺序 | 🔶 | 现在是"本轮所有弹道按发射顺序结算"；真实规则见 `docs/86`/`src/settle.rs` |
 | 音频 | ❌ | `.pck` 里一个音频文件损坏；资产不入库 |
 | 9 条 `theme_override` 的完整复刻 | 🔶 | 只做了字号，没做 4 个 `StyleBoxFlat` |

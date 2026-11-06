@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use gw2_rebuild::function::{eval, parse};
-use gw2_rebuild::path::{calculate, Mode};
+use gw2_rebuild::graphwar_path_calculator::{calculate, Mode};
 use gw2_rebuild::{Function, Token};
 
 fn fixture(name: &str) -> String {

@@ -7,7 +7,7 @@
 # tool_version: 1
 # binary_sha256: 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
 # funcstarts_sha256: b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a
-# src_tree_sha256: e7f2ea8fdd9424e90d71b16fdee75b35d118afa02e7dc48caa388c35b72698da
+# src_tree_sha256: 8a5840f6135fc6696b6b8faa189728ef997baf98c0c1e5b1bed25296f312d659
 # funcstarts_n: 13263
 # src_modules: 246
 # loc_structs: 2042
@@ -30,19 +30,19 @@ graphwar_effect_manager.rs	graphwar	1	0	3		0	未知	全仓库 0 处提及：无�
 graphwar_entity_effect_manager.rs	graphwar	3	0	4		0	未知	全仓库 0 处提及：只有名字，没有行为证据
 graphwar_event.rs	graphwar	0	0	0	src/events.rs	2	观测	docs/114：72 个判别值实测；但 serde 键序只在 41 行抓包上同序，仍是推断（docs/96 §9.1）
 graphwar_event_handler.rs	graphwar	2	0	4	src/events.rs	2	观测	docs/114：0x3d38f0 的「事件名 → 判别值」表逐条解出（四道自校验）；事件枚举与分派已落码
-graphwar_function_evolutionator.rs	graphwar	16	0	25	src/aigen.rs	88	观测	docs/AI.md：权重/长度/装配/交叉/变异/适应度全部从反汇编 + 40 万次运行时抽样得出；无逐字节对拍
+graphwar_function_evolutionator.rs	graphwar	16	0	25	src/graphwar_function_evolutionator.rs	88	观测	docs/AI.md：权重/长度/装配/交叉/变异/适应度全部从反汇编 + 40 万次运行时抽样得出；无逐字节对拍
 graphwar_function_input.rs	graphwar	13	2	33		0	未做	13 个归属函数（行号到 ≥519）；docs/02 §1 把解析器 0x4ed670 记在它名下，但 0x4ed670 体内唯一的 Location 锚是 math_function.rs:75 ⇒ 按本方法解析器算 math_function.rs；本模块本体未复原
 graphwar_function_manager.rs	graphwar	7	0	12	src/game.rs	70	观测	docs/112 §2.1：7 个函数的存取结构逐条读出（HashMap<u32, 112 字节>、Vec<Token>）；我方 Match::functions 同构，但没有逐字节对拍
 graphwar_game_client.rs	graphwar	36	19	59		0	未做	归属函数最多的模块；只有 docs/archive 10/13 的调用形态观测，src/ 无实现
 graphwar_game_recorder.rs	graphwar	2	1	4		0	未知	只有 docs/02 一行（对局录制），无地址级观测、无实现
-graphwar_game_server.rs	graphwar	3	1	86	src/server.rs+src/serverloop.rs	23	逐位	docs/43/46：一回合 12 条报文与抓包逐字节一致；docs/62 真实 TCP 跑到 EndingGame
+graphwar_game_server.rs	graphwar	3	1	86	src/graphwar_game_server.rs+src/server.rs	23	逐位	docs/43/46：一回合 12 条报文与抓包逐字节一致；docs/62 真实 TCP 跑到 EndingGame
 graphwar_game_state_manager.rs	graphwar	33	10	207	src/game.rs+src/turnstate.rs	76	逐位	docs/41：6 状态 7 事件、13 次迁移在真实对局里逐个相同
 graphwar_graphics_manager.rs	graphwar	6	0	8		0	未知	只有 docs/02 一行（图形资源管理），无地址级观测、无实现
 graphwar_lan_broadcaster_v6.rs	graphwar	4	0	4		0	未做	docs/07/24：局域网广播报文已抓包；docs/134 里只有 client/ GDScript 侧，src/ 无实现
 graphwar_lan_vbox.rs	graphwar	11	1	19		0	未知	只有 docs/02 一行（局域网列表 UI），无地址级观测、无实现
 graphwar_level_generator.rs	graphwar	4	1	26	src/levelgen.rs+src/levelgen_tables.rs	28	逐位	docs/61/56：障碍 x/y/r 的 to_bits() 全等，13/13 逐位复现；docs/55 公式闭合
 graphwar_level_manager.rs	graphwar	40	14	590		0	未做	锚点最密的模块（590 个 Location / 40 个函数）；只有 docs/118 §2 的入口观测，src/ 无实现
-graphwar_life_manager.rs	graphwar	9	0	12	src/life.rs	7	逐位	docs/65：穿过即死/友军致死/无血量在真实对局与回放里逐个相同；docs/41 状态迁移一致
+graphwar_life_manager.rs	graphwar	9	0	12	src/graphwar_life_manager.rs	7	逐位	docs/65：穿过即死/友军致死/无血量在真实对局与回放里逐个相同；docs/41 状态迁移一致
 graphwar_lobby_control.rs	graphwar	1	0	6		0	未做	docs/112 只读出它与战役/名字模块的调用关系；界面在 client/ GDScript，src/ 无实现
 graphwar_local_player_manager.rs	graphwar	3	0	15		0	未做	docs/112 §13 记录了结构观测；src/ 无对应实现
 graphwar_logger.rs	graphwar	2	0	2		0	未做	docs/112 记录 log 入口的结构观测；src/ 无实现
@@ -52,16 +52,16 @@ graphwar_module_container.rs	graphwar	20	0	1		0	未做	docs/110/112 有调用观
 graphwar_name_manager.rs	graphwar	3	0	3		0	未做	docs/112 §0：HashMap<u32, String>、entry 32 字节、NameInfo 判别值 60 已逐位解出；src/ 无实现
 graphwar_nodes.rs	graphwar	11	0	1		0	未做	docs/112 有结构观测；src/ 无实现
 graphwar_obstacle_manager.rs	graphwar	8	0	14	src/plane.rs	17	逐位	只覆盖掩膜部分：0x4f15b0 光栅化与 is_occupied 与真二进制逐字节 / 300 随机点一致（docs/39/08），摧毁 = 挖 r=0.5 洞；障碍的生成与生命周期未落 src/
-graphwar_path_calculator.rs	graphwar	1	0	9	src/path.rs	2	逐位	docs/91：补上 hi=mid2 后 24/24 用例整条点序列与真二进制逐位相等。注意：采样器 0x3c2530 本体无 panic 锚 ⇒ 只归属到 1 个辅助函数，orig_funcs 远小于模块规模
+graphwar_path_calculator.rs	graphwar	1	0	9	src/graphwar_path_calculator.rs	2	逐位	docs/91：补上 hi=mid2 后 24/24 用例整条点序列与真二进制逐位相等。注意：采样器 0x3c2530 本体无 panic 锚 ⇒ 只归属到 1 个辅助函数，orig_funcs 远小于模块规模
 graphwar_plane.rs	graphwar	10	1	19	src/plane.rs	17	逐位	docs/08/39：掩膜光栅化与 is_occupied 逐字节 / 300 随机点一致；10 个归属函数的地址与 docs/02 §11 那张独立写下的表完全一致
 graphwar_plane_pos_manager.rs	graphwar	6	0	9	src/plane.rs	17	观测	docs/140：px = 20x + 500 由常量反查得出、准备圈画法已扒出；没有端到端逐位对拍
-graphwar_play_screen_control.rs	graphwar	10	3	64		0	未做	docs/13(archive) 有调用观测；界面逻辑在 client/ GDScript（仿制），src/ 无实现
+graphwar_play_screen_control.rs	graphwar	10	3	64	src/graphwar_play_screen_control.rs	8	观测	docs/14-turn.md §9 逐函数规格（10 个可归属函数 / 64 个锚）；界面视图仍在 client/ GDScript（仿制），但控制器本体已落在 src/graphwar_play_screen_control.rs。旧行写「未做」与 src/lib.rs/文件头冲突 ⇒ 按代码更正
 graphwar_player_manager.rs	graphwar	3	0	6		0	未知	只有 docs/02 一行（玩家），无地址级观测、无实现
 graphwar_player_screen_control.rs	graphwar	8	0	22		0	未知	只有 docs/02 一行（玩家界面），无地址级观测；界面在 client/ GDScript
 graphwar_rank_manager.rs	graphwar	4	0	4		0	未做	docs/112 §5：RankInfo 判别值 67、结构观测；段位算法在本模块内算不出来（负结果）
 graphwar_remote_event_handler.rs	graphwar	3	1	171	src/events.rs	2	观测	docs/110/96：远端事件名与判别值已解；我方 events.rs 实现枚举 + 编解码，无逐字节对拍
-graphwar_replay_control.rs	graphwar	2	0	9		0	未做	docs/133 的回放播放器在 client/ GDScript；src/replay.rs 只做文件解析，不含这个控制器
-graphwar_replay_player.rs	graphwar	5	5	18	src/replay.rs	53	观测	docs/136/142：消息级对拍 400 份回放里 71 份完全一致 ⇒ 已实现但未到逐位
+graphwar_replay_control.rs	graphwar	2	0	9		0	未做	docs/133 的回放播放器在 client/ GDScript；src/graphwar_replay_player.rs 只做文件解析与推进，不含这个控制器（文件里的 ReplayPlayer 时钟是我方自定模型，见 docs/02 §17.4）
+graphwar_replay_player.rs	graphwar	5	5	18	src/graphwar_replay_player.rs	53	观测	docs/136/142：消息级对拍 400 份回放里 71 份完全一致 ⇒ 已实现但未到逐位
 graphwar_root_node.rs	graphwar	23	3	178		0	未做	主场景节点；docs/125 只有调用形态观测，src/ 无实现
 graphwar_server_broker_handler.rs	graphwar	3	1	5		0	未做	原模块是**客户端侧**的 broker 处理器，未做；src/broker.rs 是我们自建的 broker 服务端，不是它的复原（见 docs/115）
 graphwar_server_connection_handler.rs	graphwar	6	0	24	src/server.rs	7	逐位	docs/33：新连接的状态同步与真实客户端逐字节一致
@@ -71,8 +71,8 @@ graphwar_soldier_manager.rs	graphwar	4	0	5		0	未知	只有 docs/02 一行（士
 graphwar_target_manager.rs	graphwar	3	0	4		0	未做	docs/123：重置规则形状已钉住（翻 alive + 广播 LifeInfo）但判定点未知，397 份回放 0 次部分命中 ⇒ 无真值；docs/131 §4 的落地在 client/（自述为推断），src/ 只有 Target 数据结构
 graphwar_team_manager.rs	graphwar	7	0	10		0	未知	只有 docs/02 一行（队伍），无地址级观测、无实现
 graphwar_texture_loader.rs	graphwar	1	0	1		0	未知	只有 docs/02 一行（贴图加载），无地址级观测、无实现
-graphwar_tick_handler.rs	graphwar	2	0	3	src/tick.rs	9	逐位	docs/35：113 个真实样本，TickReply 逐字节一致
-graphwar_turn_manager.rs	graphwar	14	1	45	src/turn.rs	60	逐位	docs/98/117：射手轮转 = Vec<soldier_id> + 游标，在真实 TCP 上断言「首发射手 = soldiers[1]」「跳过死者」；docs/41 状态迁移逐个相同
+graphwar_tick_handler.rs	graphwar	2	0	3	src/graphwar_tick_handler.rs	9	逐位	docs/35：113 个真实样本，TickReply 逐字节一致
+graphwar_turn_manager.rs	graphwar	14	1	45	src/graphwar_turn_manager.rs	60	逐位	docs/98/117：射手轮转 = Vec<soldier_id> + 游标，在真实 TCP 上断言「首发射手 = soldiers[1]」「跳过死者」；docs/41 状态迁移逐个相同
 graphwar_video_writer.rs	graphwar	3	0	4		0	未知	只有 docs/02 一行（录像导出），无地址级观测、无实现
 axis_drawer.rs	other	6	0	3		0	未做	docs/88 §7 记录了 AxisMode 的 4 个取值；绘制本体未落 src/
 button_manager.rs	other	2	0	3		0	未知	非 graphwar_ 前缀；除模块名外没有任何观测

@@ -25,9 +25,9 @@
 
 | 事实 | 等级 |
 |---|---|
-| `aigen` 的产物是 **token**（`FunctionSlot.tokens`）；协议要的是**文本** | **观测**（`src/aigen.rs`、`docs/24` §6.2 的真实帧） |
+| `aigen` 的产物是 **token**（`FunctionSlot.tokens`）；协议要的是**文本** | **观测**（`src/graphwar_function_evolutionator.rs`、`docs/24` §6.2 的真实帧） |
 | `token → 文本` = `0x4ec160`，已还原并逐字符对拍 1032/1032 | **逐位验证**（`docs/119`，`fixtures/to_text.tsv`） |
-| 但没人调它 ⇒ 报文里那条 `FunctionInfo` 的文本来自客户端的 `FunctionUpdateRequest` | **观测**（接线前的 `src/serverloop.rs`） |
+| 但没人调它 ⇒ 报文里那条 `FunctionInfo` 的文本来自客户端的 `FunctionUpdateRequest` | **观测**（接线前的 `src/graphwar_game_server.rs`） |
 
 ⇒ 接线前，AI "会思考、不会说话"：`TurnLog` 里只有 token 计数，线上看不到它的函数。
 
@@ -123,7 +123,7 @@ let text = crate::function::to_text(&slot.tokens);            // ai_function_tex
 let corrected = crate::shot::corrected_text(&text, x0, y0, flip);   // Match::fire 内部
 ```
 
-### 3.2 `src/serverloop.rs`
+### 3.2 `src/graphwar_game_server.rs`
 
 | 位置 | 改法 | 依据 |
 |---|---|---|
@@ -160,7 +160,7 @@ let corrected = crate::shot::corrected_text(&text, x0, y0, flip);   // Match::fi
 
 > 难度 1 的进化在这条测试里收敛到**常函数**（水平线）——那是 AI 的合法产物，
 > 也顺带覆盖了"负常量"的文本形态（`-13.99` = `neg(const 13.99)`，`docs/119` §5.3）。
-> 曲线形态由 `src/aigen.rs` 的既有测试覆盖，不是本条的任务。
+> 曲线形态由 `src/graphwar_function_evolutionator.rs` 的既有测试覆盖，不是本条的任务。
 
 ### 4.2 单元测试（`src/game.rs`，6 条）
 
@@ -265,12 +265,12 @@ node tools/capture_net_raw.js 20000 60    # 原始字节流，按 u16 大端长�
 | 文件 | 动作 |
 |---|---|
 | `src/game.rs` | 模块注释改成"AI 说话"的现状；新增 `ai_function_text` / `ai_submit_info`；`begin_next_turn` 多发一条提交版 `FunctionInfo`；**新增 6 条单测** |
-| `src/serverloop.rs` | `FunctionUpdateRequest` 回执的 `owner_id` 改成 `soldier_id` 且电脑玩家用 AI 文本；`FunctionFireRequest` 用 AI 文本开火；`TurnRecord` 增 `function_text` / `corrected`；模块注释补"AI 说话"一节 |
+| `src/graphwar_game_server.rs` | `FunctionUpdateRequest` 回执的 `owner_id` 改成 `soldier_id` 且电脑玩家用 AI 文本；`FunctionFireRequest` 用 AI 文本开火；`TurnRecord` 增 `function_text` / `corrected`；模块注释补"AI 说话"一节 |
 | `tests/server_match.rs` | **新增** `ai_functions_are_broadcast_and_round_trip_over_tcp` + 3 个解析小工具；原有 2 条断言一字未改（第 5 条断言随后改成真机的**带符号**形态） |
 | `src/shot.rs` | `corrected_text` 改成复用 `correction_text`（`c < 0` ⇒ `" - "`，NaN ⇒ `" + NaN"`）；**新增 2 条回归测试**（三条负样本帧 143/182/203 + 两条正样本、NaN 分支）。父 agent 在发现该差异后把本文件划给本任务 |
 | `docs/127-ai-speaks.md` | **新增**（本文） |
 
-**没动**：`src/api.rs`、`src/aigen.rs`、`src/turn.rs`、`src/protocol.rs`、`src/function/`、
+**没动**：`src/api.rs`、`src/graphwar_function_evolutionator.rs`、`src/graphwar_turn_manager.rs`、`src/protocol.rs`、`src/function/`、
 `src/levelgen*.rs`、`client/`、`docs/INDEX.md`、`docs/HANDOVER.md`、任何既有夹具。
 
 ### 9.1 `tests/live_hits.rs` 那两条：本来就对，不是按 bug 写死的

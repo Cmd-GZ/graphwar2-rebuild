@@ -438,7 +438,7 @@ cargo run --offline --example ai_explain -- --difficulty 250 --seed 11 \
 
 | 文件 | 动作 |
 |---|---|
-| `src/aigen.rs` | 新增 `difficulty_params(difficulty)`（§2 的区间映射，带逐条地址）；`params(level)` 的注释改成"这是六档实测组合，不是难度映射" |
+| `src/graphwar_function_evolutionator.rs` | 新增 `difficulty_params(difficulty)`（§2 的区间映射，带逐条地址）；`params(level)` 的注释改成"这是六档实测组合，不是难度映射" |
 | `src/ai_explain.rs` | **新增**：局面/实体/评分（净击杀 + 距离项 + 惩罚）、逐代记录、`explain()`、文本渲染 |
 | `src/lib.rs` | **一行**：`pub mod ai_explain;`（新模块必须注册，否则编译不过） |
 | `examples/ai_explain.rs` | **新增**：命令行工具，打印局面 → 参数 → 逐代 → 最终选择 |
@@ -446,12 +446,12 @@ cargo run --offline --example ai_explain -- --difficulty 250 --seed 11 \
 | `docs/147-ai-behaviour.md` | **新增**（本文） |
 | `docs/guide/bot-行为说明.md` | **新增**：面向玩家/攻略作者的行为说明 |
 
-**没动**：`client/`、`src/path.rs`、`src/api.rs`、`src/protocol.rs`、`src/replaydiff.rs`、
+**没动**：`client/`、`src/graphwar_path_calculator.rs`、`src/api.rs`、`src/protocol.rs`、`src/replaydiff.rs`、
 `src/game.rs`、`tests/server_match.rs`、`docs/INDEX.md`、`docs/HANDOVER.md`、任何夹具。
 
 ### 11.1 代码与本文的一处已知差距
 
-`src/aigen.rs::fitness_eval`（既有实现）把所有目标都记成 `+1` 命中、**没有队伍概念**，
+`src/graphwar_function_evolutionator.rs::fitness_eval`（既有实现）把所有目标都记成 `+1` 命中、**没有队伍概念**，
 因此它**没有**实现 §3.2 的"误伤 −2e6"。本文与 `src/ai_explain.rs::evaluate` 用的是
 带队伍的正确版本；`fitness_eval` 保持原样（改它会动到 `src/game.rs`，不在本任务范围）。
 ⇒ 拿 `aigen::fitness` 算分时，请记得它比真二进制"宽容"（不扣误伤）。

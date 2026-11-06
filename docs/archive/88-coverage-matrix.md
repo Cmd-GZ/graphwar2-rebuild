@@ -302,7 +302,7 @@ GW2 是否同构**未定**，需要自己查。两种可能：
 > **2026-11 结案（`94`）**：**是 A，不是 B**。生成器 `0x5ef020` 全程只读一次模式参数
 > （`0x5ef0c7 and $0x1,%bpl`），85 格权重表里**第 17–20 这 4 格**产出的 tag 不是常量而是
 > `mode & 1`：DiffEq → tag `1`（`y`），Normal → tag `0`（`x`）。
-> ⇒ **Normal 从头到尾不产生 `y` token，没有东西可"裁"**，所以 `src/aigen.rs` 的双表实现正确。
+> ⇒ **Normal 从头到尾不产生 `y` token，没有东西可"裁"**，所以 `src/graphwar_function_evolutionator.rs` 的双表实现正确。
 > 见 [`94`](94-var-mode-trim.md)。
 
 **行为影响**：
@@ -326,7 +326,7 @@ GW2 是否同构**未定**，需要自己查。两种可能：
 不是靠"推测只影响绘制"，而是靠**函数签名**：
 
 ```rust
-// src/path.rs —— 采样器的全部输入
+// src/graphwar_path_calculator.rs —— 采样器的全部输入
 pub fn calculate(tokens, x0, y0, step, flip, mode) -> Vec<(f64, f64)>
 //                                                 ↑ 只有 Normal/Ode
 ```

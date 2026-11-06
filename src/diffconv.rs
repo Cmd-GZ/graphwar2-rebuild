@@ -6,7 +6,7 @@
 //!
 //! | 写死的地方 | 真值 | 后果 |
 //! |---|---|---|
-//! | `fire` 恒用 `path::Mode::Normal` | `FunctionModeInfo = DiffEqFunction` 的批必须走 `Mode::Ode` | 550 发的几何整条错 |
+//! | `fire` 恒用 `graphwar_path_calculator::Mode::Normal` | `FunctionModeInfo = DiffEqFunction` 的批必须走 `Mode::Ode` | 550 发的几何整条错 |
 //! | `shot::corrected_text` 恒加后缀 | **Normal** 加 `" ± c.ddd"`，**DiffEq 不加**（`corrected_function == function`，550/550 零例外） | 550 发全错 |
 //!
 //! 本模块**不改内核**（`game.rs` / `settle.rs` / `protocol.rs` 一字未动）：它自己按
@@ -21,7 +21,7 @@
 //! 证据档位与仓库约定一致：结论标 **观测**（能指到回放里那一条报文）/
 //! **逐位验证**（`tests/diff_conv.rs` 覆盖）/ **推断** / **未知**。
 
-use crate::path::Mode;
+use crate::graphwar_path_calculator::Mode;
 use crate::plane::empty_mask;
 use crate::replaydiff::{
     compare_batch, split_batches, BatchVerdict, Inputs, Msg, Policy, Replay, StateMask,
@@ -95,7 +95,7 @@ pub fn unbalanced_brackets(text: &str) -> usize {
 /// 文本在 `end_x` 处求一遍"，不是采样器的最后一个采样点。
 ///
 /// 为什么 `±x`：`flip` 时采样器内部用 `-x`，点序列里的 x 是取反回来的
-/// （`path::calculate` 的 `px = if flip { -mid } else { mid }`），所以回代也要取反。
+/// （`graphwar_path_calculator::calculate` 的 `px = if flip { -mid } else { mid }`），所以回代也要取反。
 ///
 /// DiffEq（`Mode::Ode`）不走这条：那时 y 不是一个纯函数值，回代无意义，
 /// 实测停点自己就是逐位相同的（376/550）。

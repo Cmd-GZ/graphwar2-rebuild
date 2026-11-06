@@ -14,7 +14,7 @@
       │  docs/05     修正常数 c        ✅ 逐位验证   src/shot.rs
       ▼
 ③ 带修正的 token      [(ADD,0),(CONST,c)] ++ tokens
-      │  docs/04     等弦长采点        ✅ 逐位验证   src/path.rs
+      │  docs/04     等弦长采点        ✅ 逐位验证   src/graphwar_path_calculator.rs
       ▼
 ④ 点序列（游戏单位）  [(x0,y0),(x1,y1),...]
       │  docs/08 §4  坐标变换          👁 观测      src/plane.rs
@@ -23,7 +23,7 @@
       │  docs/08 §6  掩膜点测试        👁 观测      src/plane.rs
       ▼
 ⑥ 命中 / 未命中        mask[py*1000+px] != 0xFF
-      │  02 §13.1    排队死亡          👁 结构      src/life.rs
+      │  02 §13.1    排队死亡          👁 结构      src/graphwar_life_manager.rs
       ▼
 ⑦ 生命状态            (存活表, 排队表)
       │  41 §3       回合推进          🔶 结构（时间基准未解）

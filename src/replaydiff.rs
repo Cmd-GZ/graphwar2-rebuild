@@ -1,7 +1,7 @@
 //! 回放**消息级**对拍：把一份回放的消息流喂给我们的实现，逐条比"我方本该发出的
 //! 下一条消息"与回放里的下一条（`docs/06-verification.md` §17.3 第 3 步）。
 //!
-//! 本模块是**独立**的（不碰 `game.rs` / `serverloop.rs` / `protocol.rs` / `api.rs`），
+//! 本模块是**独立**的（不碰 `game.rs` / `graphwar_game_server.rs` / `protocol.rs` / `api.rs`），
 //! 只用它们的公开入口：`game::Match::fire` 产报文、`protocol::emit_*` 定字节、
 //! `settle::resolve` 定几何。口径写在 [`Policy`]，语料统计与第一处分歧见
 //! `docs/136-replay-diff.md`。
@@ -1980,9 +1980,9 @@ pub fn run_file(path: &std::path::Path, policy: &Policy, max_diffs: usize) -> Fi
         }
     }
     let mut mode = if inputs.room.function_mode == "DiffEqFunction" {
-        crate::path::Mode::Ode
+        crate::graphwar_path_calculator::Mode::Ode
     } else {
-        crate::path::Mode::Normal
+        crate::graphwar_path_calculator::Mode::Normal
     };
     let mut cursor = batches[0].start;
     let mut attributed_deaths: std::collections::BTreeSet<i64> = Default::default();
@@ -1995,9 +1995,9 @@ pub fn run_file(path: &std::path::Path, policy: &Policy, max_diffs: usize) -> Fi
             match m.kind.as_str() {
                 "FunctionModeInfo" => {
                     mode = if m.get_str("function_mode").as_deref() == Some("DiffEqFunction") {
-                        crate::path::Mode::Ode
+                        crate::graphwar_path_calculator::Mode::Ode
                     } else {
-                        crate::path::Mode::Normal
+                        crate::graphwar_path_calculator::Mode::Normal
                     }
                 }
                 "LifeInfo" => {
@@ -2084,7 +2084,7 @@ pub fn run_file(path: &std::path::Path, policy: &Policy, max_diffs: usize) -> Fi
         if v.counter_ok {
             rep.counter_ok += 1;
         }
-        if mode == crate::path::Mode::Ode {
+        if mode == crate::graphwar_path_calculator::Mode::Ode {
             rep.batches_diffeq += 1;
         } else {
             rep.batches_normal += 1;
@@ -2172,7 +2172,7 @@ pub fn run_file(path: &std::path::Path, policy: &Policy, max_diffs: usize) -> Fi
                 }
             }
         }
-        let mode_name = if mode == crate::path::Mode::Ode { "DiffEq" } else { "Normal" };
+        let mode_name = if mode == crate::graphwar_path_calculator::Mode::Ode { "DiffEq" } else { "Normal" };
         for (mask_name, mref) in [("ring", &mask), ("fill", &mask_noring)] {
         for step in PROBE_STEPS {
             let key = format!("{mode_name} step={step} mask={mask_name}");
@@ -2384,7 +2384,7 @@ impl StateMask {
 #[derive(Debug, Clone)]
 pub struct GeomMeasure {
     pub step: f64,
-    pub mode: crate::path::Mode,
+    pub mode: crate::graphwar_path_calculator::Mode,
     /// 我方停点
     pub stop: (f64, f64),
     /// 我方判定的死者

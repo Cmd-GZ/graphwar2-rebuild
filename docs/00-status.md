@@ -34,7 +34,7 @@
 | 模块 | 产出 | 档位 |
 |---|---|---|
 | `entity_drawer.rs` | `src/entity_drawer.rs`：`EntityDrawer::draw` 只画两类图元（`draw_arc`×3 + 多边形×3），**不画士兵贴图/弹道**；弧半径 = `f32(radius)×1.5`、箭头 = 向心三角（∓12°、+0.5） | 观测（常量逐条带槽地址） |
-| `play_screen_control` | `src/play_control.rs`：回放/对局视图是一对互补的孪生函数；只订阅 `function_info_event` + `function_fire_event` ⇒ **`TurnInfo`/`GameStateInfo` 不经这层**；**弹道清除不在这层**（否定证据） | 观测 |
+| `play_screen_control` | `src/graphwar_play_screen_control.rs`：回放/对局视图是一对互补的孪生函数；只订阅 `function_info_event` + `function_fire_event` ⇒ **`TurnInfo`/`GameStateInfo` 不经这层**；**弹道清除不在这层**（否定证据） | 观测 |
 | 15 个零锚点模块 | `docs/02` §16：定性 10 个（观测 3 / 推断 7），剩 5 个纯未知。**全库只有 12 个 GDExtension 类** ⇒ 那 15 个里只有 3 个是 Godot 类，其余是被节点调用的普通 Rust 模块 | 见 §16 |
 
 ## 0.4 下一轮最高性价比（按"能不能指到证据"排）
@@ -57,19 +57,19 @@
 | 部件 | 代码 | 验收 | 文档 |
 |---|---|---|---|
 | 函数文法 / 求值 / token→文本 | `src/function/` | 90 例文法 + 37/70 条真值夹具；`to_text` 1032/1032 | [`03`](03-function-language.md) |
-| 等弦长采点（含 RK4） | `src/path.rs` | 224 条真值夹具 + **oracle 24/24 逐点逐位相等** | [`04`](04-path-sampling.md) §9 |
+| 等弦长采点（含 RK4） | `src/graphwar_path_calculator.rs` | 224 条真值夹具 + **oracle 24/24 逐点逐位相等** | [`04`](04-path-sampling.md) §9 |
 | 修正常数 + 开火原语 | `src/shot.rs` | 端到端冒烟 + 上游 648 例对拍 + 装配校验 15 组 | [`05`](05-shot-pipeline.md) |
 | 坐标 / 掩膜 / 光栅化 | `src/plane.rs` | 与真二进制**逐字节 / 300 随机点**一致；摧毁 = 挖 `r=0.5` 洞 | [`08`](08-plane.md) §10 |
 | 弹道与命中结算 | `src/settle.rs` | 整关回放致死集合逐发一致；实况 0.01 下 82 发并集 **152/152** | [`14`](14-turn.md) §6 |
 | 命中判定暴露给引擎 | `src/api.rs` | `hit_test` 与 `resolve` **同一个函数体**（无第二份实现） | [`16`](06-verification.md) §4 |
-| 事件 / 生命 / 回合状态机 | `src/events.rs`、`src/life.rs`、`src/turnstate.rs` | 6 状态 7 事件，**13 次迁移逐个相同** | [`14`](14-turn.md) §2 |
+| 事件 / 生命 / 回合状态机 | `src/events.rs`、`src/graphwar_life_manager.rs`、`src/turnstate.rs` | 6 状态 7 事件，**13 次迁移逐个相同** | [`14`](14-turn.md) §2 |
 | 协议 + 编解码 | `src/protocol.rs` | **73/73 事件**；判别值 **72 个实测值** | [`07`](07-protocol.md) §6–§7 |
 | broker（房间列表） | `src/broker.rs` | 12 条测试；`VersionInfo` → `GameInfo` 线格式与真实抓包一致 | [`09`](09-network.md) §6 |
-| 服务端（握手 / Match / 一回合 / 整局循环） | `src/server.rs`、`src/game.rs`、`src/serverloop.rs` | 与抓包逐字节/逐条一致；真实 TCP 跑到 `EndingGame` | [`09`](09-network.md) §3–§5 |
-| tick 时钟 | `src/tick.rs` | 113 个真实样本；`TickReply` 逐字节一致 | [`14`](14-turn.md) §1 |
+| 服务端（握手 / Match / 一回合 / 整局循环） | `src/server.rs`、`src/game.rs`、`src/graphwar_game_server.rs` | 与抓包逐字节/逐条一致；真实 TCP 跑到 `EndingGame` | [`09`](09-network.md) §3–§5 |
+| tick 时钟 | `src/graphwar_tick_handler.rs` | 113 个真实样本；`TickReply` 逐字节一致 | [`14`](14-turn.md) §1 |
 | 关卡生成 | `src/levelgen.rs` | 散布模式**逐位复现 13/13**；中心模式 4 个真值样本 | [`11`](11-levelgen.md) |
 | 战役 21 关数据 | 数据在二进制；全表见 [`10`](10-campaign.md) §4 | 21/21 标题、21/21 描述、每关参数；**385 份回放交叉验证 21/21** | [`10`](10-campaign.md) |
-| AI（进化） | `src/aigen.rs` | 参数/权重/长度/装配/变异/每代构成全部还原；终止 = 代数 ∨ **25 s 墙钟** | [`13`](13-ai.md) |
+| AI（进化） | `src/graphwar_function_evolutionator.rs` | 参数/权重/长度/装配/变异/每代构成全部还原；终止 = 代数 ∨ **25 s 墙钟** | [`13`](13-ai.md) |
 | GDExtension 入口与构建 | `src/gdext.rs` | 真 Godot 4.7.2 里注册成功；`.pck` 能从包启动 | [`18`](18-build.md) |
 | 客户端 15 界面 + 内核接缝 | `client/` | `bash client/run.sh selftest`；弹道/命中/障碍都走内核 | [`16`](06-verification.md) |
 

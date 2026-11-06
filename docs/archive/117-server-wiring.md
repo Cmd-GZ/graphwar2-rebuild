@@ -25,12 +25,12 @@
 | 文件 | 改动 | 依据 |
 |---|---|---|
 | `src/game.rs` | 新增 `TurnManager` / `SoldierFunctions` / `LifeState` / AI 配置四块状态；新增入口 `Match::begin_next_turn`、`Match::begin_next_turn` 内部的 `Match::evolve_for_soldier`；`Match::register_player` / `set_bot`；`fire()` 顺手把死者记进生命表 | `docs/98` §0–§3、`docs/109` §2/§4、`docs/105` |
-| `src/serverloop.rs` | 回合推进改成 `advance()`（走 `Match::begin_next_turn`）；`Config` 增加 `player_order` / `bot_players` / `ai_level` / `ai_mode` / `ai_budget_secs` / `ai_pop_scope`；新增 `TurnRecord` / `TurnLog` 与 `serve_stream_logged` | `docs/47`（顺序由调用方给）、`docs/67`（难度档）、`docs/93`（25 s） |
+| `src/graphwar_game_server.rs` | 回合推进改成 `advance()`（走 `Match::begin_next_turn`）；`Config` 增加 `player_order` / `bot_players` / `ai_level` / `ai_mode` / `ai_budget_secs` / `ai_pop_scope`；新增 `TurnRecord` / `TurnLog` 与 `serve_stream_logged` | `docs/47`（顺序由调用方给）、`docs/67`（难度档）、`docs/93`（25 s） |
 | `tests/server_match.rs` | 新增端到端 `rotation_and_ai_are_wired_over_tcp`；原 `plays_a_full_match_over_tcp` **只换了夹具种子**（理由见 §5） | — |
 | `docs/117-server-wiring.md` | 本文 | — |
 
-**没动**：`src/turn.rs`、`src/aigen.rs`（**签名一字未改**，只调用）、`src/protocol.rs`、
-`src/life.rs`、`src/gdext*.rs`、`client/`、`docs/INDEX.md`、`docs/HANDOVER.md`。
+**没动**：`src/graphwar_turn_manager.rs`、`src/graphwar_function_evolutionator.rs`（**签名一字未改**，只调用）、`src/protocol.rs`、
+`src/graphwar_life_manager.rs`、`src/gdext*.rs`、`client/`、`docs/INDEX.md`、`docs/HANDOVER.md`。
 
 ### 1.1 两个接线入口
 
@@ -42,7 +42,7 @@ Match::begin_next_turn(player_id, timed_out, now_ms, time_mode) -> TurnStart
     // c) decision.broadcast() == Some((p, s)) 才调既有 Match::begin_turn(p, s, …) 拼报文
     //    （Some(0) 仍发、None 不发 —— 就是 broadcast() 那个开关）
 
-// ② src/serverloop.rs —— 下一回合轮到谁
+// ② src/graphwar_game_server.rs —— 下一回合轮到谁
 advance(m, order, at, log, now_ms, time_mode) -> Advance
     // Some(id≠0) 停在这一位；Some(0) 把 TurnInfo{p,0} 放进报文后继续找；
     // Skip 一条报文都不发，继续找；最多 order.len() 次。
@@ -61,7 +61,7 @@ advance(m, order, at, log, now_ms, time_mode) -> Advance
 | `None`（空士兵表） | 按 `EmptyRoster` 策略（默认 `AnnounceZero` **也发 0**） | 不跑 | **观测**（同上）+ **推断**（"空表也进这条分支"仍差一个现场，`docs/109` §6-C） |
 
 `docs/109` §2.4 那处文档冲突（§1.4 说发 0、§7 伪代码说不发）**原样保留**：
-`turn.rs` 的两个策略一个都没删，服务端用默认的 `AnnounceZero`（按 objdump）。
+`graphwar_turn_manager.rs` 的两个策略一个都没删，服务端用默认的 `AnnounceZero`（按 objdump）。
 
 ### 1.3 AI：先定射手，再只为它进化
 
@@ -107,7 +107,7 @@ Config::default().ai_budget_secs   == Some(25.0)
 
 ---
 
-## 2. `src/serverloop.rs`：回合推进怎么变了
+## 2. `src/graphwar_game_server.rs`：回合推进怎么变了
 
 改之前：
 
@@ -241,7 +241,7 @@ FunctionFireRequest（当前玩家）
 
 | # | 未知 | 缺什么 | 本实现的取法 |
 |---|---|---|---|
-| ① | **游标初值**（`docs/98` §6-B）。三例 replay 吻合 0，但 `1782763022` 首取 `2509` 不符 | 更多 replay / 二进制初始化点 | 只能是 `PlayerTurns::new` 的 0。**`TurnManager::add_player` 没有 index 参数**，所以接线层**没法**把它做成配置项 —— 这是唯一一个"要改 `turn.rs` 才能接的东西"，本轮**没改**（`turn.rs` 是别的 agent 刚交付的），需要时加一个 `add_player_with_index` 即可 |
+| ① | **游标初值**（`docs/98` §6-B）。三例 replay 吻合 0，但 `1782763022` 首取 `2509` 不符 | 更多 replay / 二进制初始化点 | 只能是 `PlayerTurns::new` 的 0。**`TurnManager::add_player` 没有 index 参数**，所以接线层**没法**把它做成配置项 —— 这是唯一一个"要改 `graphwar_turn_manager.rs` 才能接的东西"，本轮**没改**（`graphwar_turn_manager.rs` 是别的 agent 刚交付的），需要时加一个 `add_player_with_index` 即可 |
 | ② | **进化种群的归属**（`docs/98` §6-A）：键是 player 还是 soldier | 插入点 | 显式开关 `PopScope`，默认**按士兵**；单测证明两种读法可观测地分叉 |
 | ③ | **回合超时的检测**（用户口述"超时 = 跳过该玩家"，**未独立验证**） | 谁触发超时、超时那一刻 `TurnInfo` 是否已广播、游标推不推 | 只做了**分支**：`begin_next_turn(..., timed_out=true)` ⇒ `SkipReason::TurnTimeout`，游标不动；`serverloop` **永远传 `false`**（没有任何计时线程，加计时器等于引入新的墙钟不确定源） |
 | ④ | **`Some(0)` 之后谁推进**（§5 第 3 条） | `0x463da0` 两分支的发射时序（`docs/98` §6-D） | 重建版立刻推进 |
@@ -270,7 +270,7 @@ FunctionFireRequest（当前玩家）
 
 | 结论 | 级别 |
 |---|---|
-| 射手由 `TurnManager` 轮转决定：每玩家一张 `Vec<soldier_id>` + 游标、**先自增再取**、跳死者、全灭发 0 | **观测**（`0x463f27`–`0x464072`，`docs/98` §1.2）+ **逐位验证**（三局 replay + `turn.rs` 单测） |
+| 射手由 `TurnManager` 轮转决定：每玩家一张 `Vec<soldier_id>` + 游标、**先自增再取**、跳死者、全灭发 0 | **观测**（`0x463f27`–`0x464072`，`docs/98` §1.2）+ **逐位验证**（三局 replay + `graphwar_turn_manager.rs` 单测） |
 | 接线后"谁开火"确实走这条规则 | **逐位验证**（`game.rs` 单测 + 端到端 §3） |
 | AI 只为判出的那个士兵进化一次，写它自己的槽，每回合重算 | **观测**（`docs/98` §3.2 三行 tick）+ **逐位验证**（`game.rs`/`aigen` 单测） |
 | 25 s 预算已接上（默认值 + 转发） | **逐位验证**（字段断言）+ **观测**（`0x51b7cf` 常量） |

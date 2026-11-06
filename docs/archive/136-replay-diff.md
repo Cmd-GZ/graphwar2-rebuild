@@ -69,7 +69,7 @@
 
 ## 2. 实现结构
 
-新模块 `src/replaydiff.rs`（**独立**，不碰 `game.rs` / `serverloop.rs` / `protocol.rs` /
+新模块 `src/replaydiff.rs`（**独立**，不碰 `game.rs` / `graphwar_game_server.rs` / `protocol.rs` /
 `api.rs` / `client/`），一个命令行 `examples/replay_diff.rs`，一份验收 `tests/replay_diff.rs`。
 
 | 层 | 内容 | 为什么这么写 |

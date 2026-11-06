@@ -7,7 +7,7 @@
 # 116 · 内核 API：把采样器真正接到 GDScript
 
 状态：**现行**。本文只讲一件事：GDExtension 类 `GW2Rebuild` 现在向 GDScript 暴露了
-`path_calculate`，界面画的弹道**就是** `src/path.rs` 那个等弦长二分采样器的输出。
+`path_calculate`，界面画的弹道**就是** `src/graphwar_path_calculator.rs` 那个等弦长二分采样器的输出。
 
 > 前置阅读：[`108-client-rebuild.md`](108-client-rebuild.md) §2.3（接缝契约）与 §7（占位清单）、
 > [`04-path-sampling.md`](04-path-sampling.md)（采样器权威结论）、
@@ -90,7 +90,7 @@
 `docs/05` §5 也早写过"否则会把像素坐标和游戏单位混在一起"。
 
 实测旁证：`GwCore.calculate_path("sin(x)", Vector2(5,2), 1.0)` 的 `points[0]` 就是 `(5.0, 2.0)`，
-点数 2471，弦长 0.0090–0.0105 —— 与 `src/path.rs` 单侧的值一模一样（§7.3）。
+点数 2471，弦长 0.0090–0.0105 —— 与 `src/graphwar_path_calculator.rs` 单侧的值一模一样（§7.3）。
 
 **顺带一条界面侧的观察（不是 bug，是接上内核后数字会变）**：
 `_preview()` 的修正常数恒用 `c = y0 − f(x0)`（不问方向），而内核用 `c = y0 − f(±x0)`。
@@ -266,11 +266,11 @@ tokens' = [ADD, CONST c] ++ tokens   // = crate::shot::shifted_tokens ⇒ 实际
 let tokens  = crate::function::parse(expr);          // @0x4ed670
 let offset  = crate::shot::correction(&tokens, x0, y0, flip);   // @0x3c5f70
 let shifted = crate::shot::shifted_tokens(&tokens, offset);
-let points  = crate::path::calculate(&shifted, x0, y0, STEP_DEFAULT, flip, Mode::Normal); // @0x3c2530
+let points  = crate::graphwar_path_calculator::calculate(&shifted, x0, y0, STEP_DEFAULT, flip, Mode::Normal); // @0x3c2530
 ```
 
 步长 `STEP_DEFAULT = 0.01`、容差 `LENGTH_TOL = 0.001`、点数预算 `(200/step) as i32 = 20000`、
-二分上限 100、平面边界 `|x| ≤ 25 / |y| ≤ 15` —— **全部**来自 `src/lib.rs` 的常量与 `path.rs` 的逻辑，
+二分上限 100、平面边界 `|x| ≤ 25 / |y| ≤ 15` —— **全部**来自 `src/lib.rs` 的常量与 `graphwar_path_calculator.rs` 的逻辑，
 `api.rs` 里没有任何采样循环。
 
 防"偷偷重写一份"的测试：`matches_shot_points_pipeline` 拿 5 条函数 × 2 个方向，
@@ -295,7 +295,7 @@ let points  = crate::path::calculate(&shifted, x0, y0, STEP_DEFAULT, flip, Mode:
 
 三条要写清楚的判断：
 
-1. **起点越界**为什么算错误：采样器把 `(x0, y0)` **无条件**塞成首点（`path.rs` 第一行），
+1. **起点越界**为什么算错误：采样器把 `(x0, y0)` **无条件**塞成首点（`graphwar_path_calculator.rs` 第一行），
    再做逐点边界检查 —— 起点越界时整条曲线在平面外，界面上会画到战场外面去。
    `AGENTS.md` 的硬事实是"越界点在**接受之前**检查"。所以这里在入口先拒。
    档位：**推断**（真二进制在起点越界时是否也拒，未观测；客户端预览分支同样是先判 `|x| ≤ 25`）。

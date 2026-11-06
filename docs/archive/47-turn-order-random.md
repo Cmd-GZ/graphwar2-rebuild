@@ -112,8 +112,8 @@
 
 ## 7. 对复刻的影响
 
-`src/turn.rs` 这一层**不推导顺序**——正是因为顺序无法自行推导。
-（2026-11：`turn.rs` 已按 `docs/98` 改成"每玩家 `Vec<soldier_id>` + 游标"的轮转，`alternating_order` 已删；玩家出场顺序仍由调用方给，结论不变。见 `docs/109` §3.3。）
+`src/graphwar_turn_manager.rs` 这一层**不推导顺序**——正是因为顺序无法自行推导。
+（2026-11：`graphwar_turn_manager.rs` 已按 `docs/98` 改成"每玩家 `Vec<soldier_id>` + 游标"的轮转，`alternating_order` 已删；玩家出场顺序仍由调用方给，结论不变。见 `docs/109` §3.3。）
 
 整局逐条回放因此不可能严格比对，只能按"每一发"做对拍（`37`、`25`）。
 

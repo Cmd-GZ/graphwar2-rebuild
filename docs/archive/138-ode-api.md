@@ -24,7 +24,7 @@
 | 非法 `mode` | `ok:false, error:"bad_arguments"`（**沿用**既有错误码，不新造） | **逐位验证**（单测） |
 | 返回结构 | 与 `path_calculate` **同形**：`{ok, points, offset, error}`（`RESULT_KEYS` 四个键，顺序相同） | **逐位验证**（复用 `result_pairs`，无第二份整形） |
 | ODE 采样器本身 | `dy/dx = f(x, y)`，一阶 RK4；第三个变量（`y'`）恒 `0` | **逐位验证**（224 条 path 夹具里 **112 条是 ODE**：56 条 `flip=0` + 56 条 `flip=1`，`tests/golden.rs::path_matches_binary`） |
-| RK4 的 **`y` 反馈** | `k2/k3/k4` 用 `y + k·h/2` 回代（`src/path.rs`） | **推断**（按 `docs/04-path-sampling.md` §2 的反编译阅读实现；**没有**真值夹具覆盖，见 §8.2） |
+| RK4 的 **`y` 反馈** | `k2/k3/k4` 用 `y + k·h/2` 回代（`src/graphwar_path_calculator.rs`） | **推断**（按 `docs/04-path-sampling.md` §2 的反编译阅读实现；**没有**真值夹具覆盖，见 §8.2） |
 | ODE 下修正常数 | **不做**（与 `shot_points` 的 `apply_correction && mode == Mode::Normal` 一致） | **逐位验证**（单测与 `shot_points(…, Mode::Ode, false)` 逐点相等） |
 | ODE 下 `offset` | **恒 `NaN`**（成功也是），理由见 §3 | **自定**（原版内部这个数没有人观测到；界面那行字为空是**观测**，§3） |
 | `mode="normal"` | 与 `path_calculate` **逐位相同**（直接委托，不是第二份实现） | **逐位验证**（单测逐位对拍 + 结构上委托） |
@@ -103,7 +103,7 @@ static func calculate_path(expr_text: String, start: Vector2, direction: float,
 
 ### 2.1 采样器一行没动
 
-`src/path.rs` 的 `Mode::Ode` 分支本来就在（一阶 RK4 + 与 Normal 相同的等弦长二分、
+`src/graphwar_path_calculator.rs` 的 `Mode::Ode` 分支本来就在（一阶 RK4 + 与 Normal 相同的等弦长二分、
 相同的平面边界、相同的点数预算），本轮**没有改它一个字节**。新增的只是"谁来调用它、
 用哪些 token 调用"。
 
@@ -143,7 +143,7 @@ calculate_path_mode(expr, x0, y0, dir, "ode").points
 
 ### 2.3 ODE 的几何含义（`flip`）
 
-`flip` 的语义与 Normal 完全相同（`src/path.rs` 一处 `if flip { -x0 }` 与一处
+`flip` 的语义与 Normal 完全相同（`src/graphwar_path_calculator.rs` 一处 `if flip { -x0 }` 与一处
 `px = if flip { -mid } else { mid }`）：向左开火时**从 `−x0` 向 `+x` 积分、再把 x 取负存点**。
 对 `dy/dx = f(x,y)` 来说这不是"同一条曲线反着走"，而是"在镜像坐标里解一次"。
 
@@ -370,7 +370,7 @@ client/tools/selftest.gd        +68（新增断言；既有断言一条未动）
 docs/138-ode-api.md             新增（本文）
 ```
 
-**没碰**：`src/path.rs`（采样器）、`src/shot.rs`、`src/protocol.rs`、`play_screen.gd`、
+**没碰**：`src/graphwar_path_calculator.rs`（采样器）、`src/shot.rs`、`src/protocol.rs`、`play_screen.gd`、
 `replay_player.gd`、`client/src/net/`、`docs/INDEX.md`、`docs/HANDOVER.md`。
 
 ---

@@ -4,7 +4,7 @@
 //! 见 `docs/05-shot-pipeline.md`。
 
 use crate::function::{eval, parse};
-use crate::path::{calculate, Mode};
+use crate::graphwar_path_calculator::{calculate, Mode};
 use crate::{Function, Token, STEP_DEFAULT};
 
 /// 修正常数 `c = y0 - f(±x0)`；实际射击使用 `f(x) + c`。
@@ -66,7 +66,7 @@ pub fn shot_default(text: &str, x0: f64, y0: f64) -> Vec<(f64, f64)> {
 // 组成：掩膜（创建 + 光栅化障碍）→ 点序列（采点）→ 逐点查掩膜。
 //
 // 三块积木各自都已与真二进制对拍：
-//   * 采点      `src/path.rs`     （331 条真值夹具）
+//   * 采点      `src/graphwar_path_calculator.rs`     （331 条真值夹具）
 //   * 光栅化    `src/plane.rs`    （逐字节一致）
 //   * 点测试    `src/plane.rs`    （300 随机点一致）
 //

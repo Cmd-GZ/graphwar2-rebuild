@@ -13,7 +13,7 @@
 //! ## 回合推进：走轮转，不再由这里的玩家表直接挑人（`docs/117`）
 //!
 //! 2026-11 之前，谁开火是本文件自己算的（`alive[turn % alive.len()]`），
-//! 而 `src/turn.rs` 的三态轮转与 `src/aigen.rs` 的按士兵进化**没有调用点**。
+//! 而 `src/graphwar_turn_manager.rs` 的三态轮转与 `src/graphwar_function_evolutionator.rs` 的按士兵进化**没有调用点**。
 //! 现在每个回合开始都走 [`Match::begin_next_turn`]：
 //!
 //! ```text
@@ -41,14 +41,14 @@
 //! 未实现/简化，均在 `docs/62` 写明：颜色分配、真实玩家加入流程、
 //! 客户端 `TickRequest` 节拍（这里由服务端自己推进）。
 
-use crate::aigen::VarMode;
+use crate::graphwar_function_evolutionator::VarMode;
 use crate::game::{AiConfig, Match, PopScope, TurnStart};
 use crate::levelgen;
 use crate::protocol::{parse_message, Frame, RawMessage};
 use crate::rng::ChaCha12;
 use crate::server::{on_new_connection, on_tick_request, RoomState};
 use crate::settle::Target;
-use crate::turn::{SkipReason, Team};
+use crate::graphwar_turn_manager::{SkipReason, Team};
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -103,7 +103,7 @@ impl Default for Config {
             ai_level: 1,
             ai_mode: VarMode::Normal,
             // 25 s 上限**默认就接上**（此前 `evolve()` 传 `None`，上限实际没生效）。
-            ai_budget_secs: Some(crate::aigen::GAME_TIME_BUDGET_SECS),
+            ai_budget_secs: Some(crate::graphwar_function_evolutionator::GAME_TIME_BUDGET_SECS),
             ai_pop_scope: PopScope::default(),
             turn_mode: "SequentialTurns".into(),
             sim_turn_timeout_ticks: None,
@@ -364,8 +364,8 @@ struct SimShot {
 
 /// 同时回合制的一局收集状态。
 struct SimRound {
-    /// 本回合每个能开火的玩家各一发（`turn::RoundCollection`，超时/攒齐由它判）。
-    col: crate::turn::RoundCollection<SimShot>,
+    /// 本回合每个能开火的玩家各一发（`graphwar_turn_manager::RoundCollection`，超时/攒齐由它判）。
+    col: crate::graphwar_turn_manager::RoundCollection<SimShot>,
     /// `player_id -> 本回合公告给他的射手`（`TurnInfo.soldier_id`）。
     ///
     /// 为什么不能从 `players` 里按 `player_id` 找：`players` 是**按士兵**建的表
@@ -381,7 +381,7 @@ impl SimRound {
     }
 
     /// 收一发，返回一声明给人看的处理结果（日志用）。
-    fn submit(&mut self, player_id: i64, shot: SimShot) -> crate::turn::SubmitResult {
+    fn submit(&mut self, player_id: i64, shot: SimShot) -> crate::graphwar_turn_manager::SubmitResult {
         self.col.submit(player_id, shot)
     }
 }
@@ -401,7 +401,7 @@ fn start_sim_round(
     for (pid, st) in order.iter().zip(starts.iter()) {
         log.records.push(TurnRecord::from_start(m, *pid, st));
         if let Some((p, s)) = st.decision.broadcast() {
-            if s != crate::turn::SOLDIER_ID_NONE {
+            if s != crate::graphwar_turn_manager::SOLDIER_ID_NONE {
                 waitlist.push(p);
             }
         }
@@ -412,14 +412,14 @@ fn start_sim_round(
     let mut shooters = std::collections::BTreeMap::new();
     for st in &starts {
         if let Some((p, s)) = st.decision.broadcast() {
-            if s != crate::turn::SOLDIER_ID_NONE {
+            if s != crate::graphwar_turn_manager::SOLDIER_ID_NONE {
                 shooters.insert(p, s);
             }
         }
     }
     (
         msgs,
-        SimRound { col: crate::turn::RoundCollection::new(waitlist, deadline), shooters },
+        SimRound { col: crate::graphwar_turn_manager::RoundCollection::new(waitlist, deadline), shooters },
     )
 }
 
@@ -457,7 +457,7 @@ fn resolve_sim_round(
         return (
             out,
             SimRound {
-                col: crate::turn::RoundCollection::new(Vec::<i64>::new(), None),
+                col: crate::graphwar_turn_manager::RoundCollection::new(Vec::<i64>::new(), None),
                 shooters: Default::default(),
             },
         );
@@ -736,7 +736,7 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
                     };
                     let shot = SimShot { soldier_id: soldier, x0, y0, flip, function };
                     match round.submit(pid, shot) {
-                        crate::turn::SubmitResult::Accepted => {
+                        crate::graphwar_turn_manager::SubmitResult::Accepted => {
                             eprintln!("COLLECTED pid={pid} soldier={soldier}");
                         }
                         other => {

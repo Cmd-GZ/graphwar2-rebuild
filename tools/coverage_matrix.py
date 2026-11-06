@@ -428,7 +428,7 @@ mod("graphwar_event_handler.rs", "graphwar", ("src/events.rs",), "观测",
     "docs/114：0x3d38f0 的「事件名 → 判别值」表逐条解出（四道自校验）；事件枚举与分派已落码")
 mod("graphwar_event.rs", "graphwar", ("src/events.rs",), "观测",
     "docs/114：72 个判别值实测；但 serde 键序只在 41 行抓包上同序，仍是推断（docs/96 §9.1）")
-mod("graphwar_function_evolutionator.rs", "graphwar", ("src/aigen.rs",), "观测",
+mod("graphwar_function_evolutionator.rs", "graphwar", ("src/graphwar_function_evolutionator.rs",), "观测",
     "docs/AI.md：权重/长度/装配/交叉/变异/适应度全部从反汇编 + 40 万次运行时抽样得出；无逐字节对拍")
 mod("graphwar_function_input.rs", "graphwar", (), "未做",
     "13 个归属函数（行号到 ≥519）；docs/02 §1 把解析器 0x4ed670 记在它名下，但 0x4ed670 体内"
@@ -441,7 +441,7 @@ mod("graphwar_game_client.rs", "graphwar", (), "未做",
     "归属函数最多的模块；只有 docs/archive 10/13 的调用形态观测，src/ 无实现")
 mod("graphwar_game_recorder.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（对局录制），无地址级观测、无实现")
-mod("graphwar_game_server.rs", "graphwar", ("src/server.rs", "src/serverloop.rs"), "逐位",
+mod("graphwar_game_server.rs", "graphwar", ("src/graphwar_game_server.rs", "src/server.rs"), "逐位",
     "docs/43/46：一回合 12 条报文与抓包逐字节一致；docs/62 真实 TCP 跑到 EndingGame")
 mod("graphwar_game_state_manager.rs", "graphwar", ("src/game.rs", "src/turnstate.rs"), "逐位",
     "docs/41：6 状态 7 事件、13 次迁移在真实对局里逐个相同")
@@ -455,7 +455,7 @@ mod("graphwar_level_generator.rs", "graphwar", ("src/levelgen.rs", "src/levelgen
     "docs/61/56：障碍 x/y/r 的 to_bits() 全等，13/13 逐位复现；docs/55 公式闭合")
 mod("graphwar_level_manager.rs", "graphwar", (), "未做",
     "锚点最密的模块（590 个 Location / 40 个函数）；只有 docs/118 §2 的入口观测，src/ 无实现")
-mod("graphwar_life_manager.rs", "graphwar", ("src/life.rs",), "逐位",
+mod("graphwar_life_manager.rs", "graphwar", ("src/graphwar_life_manager.rs",), "逐位",
     "docs/65：穿过即死/友军致死/无血量在真实对局与回放里逐个相同；docs/41 状态迁移一致")
 mod("graphwar_lobby_control.rs", "graphwar", (), "未做",
     "docs/112 只读出它与战役/名字模块的调用关系；界面在 client/ GDScript，src/ 无实现")
@@ -476,7 +476,7 @@ mod("graphwar_nodes.rs", "graphwar", (), "未做",
 mod("graphwar_obstacle_manager.rs", "graphwar", ("src/plane.rs",), "逐位",
     "只覆盖掩膜部分：0x4f15b0 光栅化与 is_occupied 与真二进制逐字节 / 300 随机点一致"
     "（docs/39/08），摧毁 = 挖 r=0.5 洞；障碍的生成与生命周期未落 src/")
-mod("graphwar_path_calculator.rs", "graphwar", ("src/path.rs",), "逐位",
+mod("graphwar_path_calculator.rs", "graphwar", ("src/graphwar_path_calculator.rs",), "逐位",
     "docs/91：补上 hi=mid2 后 24/24 用例整条点序列与真二进制逐位相等。注意：采样器 "
     "0x3c2530 本体无 panic 锚 ⇒ 只归属到 1 个辅助函数，orig_funcs 远小于模块规模")
 mod("graphwar_plane_pos_manager.rs", "graphwar", ("src/plane.rs",), "观测",
@@ -488,15 +488,17 @@ mod("graphwar_player_manager.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（玩家），无地址级观测、无实现")
 mod("graphwar_player_screen_control.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（玩家界面），无地址级观测；界面在 client/ GDScript")
-mod("graphwar_play_screen_control.rs", "graphwar", (), "未做",
-    "docs/13(archive) 有调用观测；界面逻辑在 client/ GDScript（仿制），src/ 无实现")
+mod("graphwar_play_screen_control.rs", "graphwar", ("src/graphwar_play_screen_control.rs",), "观测",
+    "docs/14-turn.md §9 逐函数规格（10 个可归属函数 / 64 个锚）；界面视图仍在 client/ GDScript（仿制），"
+    "但控制器本体已落在 src/graphwar_play_screen_control.rs。旧行写「未做」与 src/lib.rs/文件头冲突 ⇒ 按代码更正")
 mod("graphwar_rank_manager.rs", "graphwar", (), "未做",
     "docs/112 §5：RankInfo 判别值 67、结构观测；段位算法在本模块内算不出来（负结果）")
 mod("graphwar_remote_event_handler.rs", "graphwar", ("src/events.rs",), "观测",
     "docs/110/96：远端事件名与判别值已解；我方 events.rs 实现枚举 + 编解码，无逐字节对拍")
 mod("graphwar_replay_control.rs", "graphwar", (), "未做",
-    "docs/133 的回放播放器在 client/ GDScript；src/replay.rs 只做文件解析，不含这个控制器")
-mod("graphwar_replay_player.rs", "graphwar", ("src/replay.rs",), "观测",
+    "docs/133 的回放播放器在 client/ GDScript；src/graphwar_replay_player.rs 只做文件解析与推进，"
+    "不含这个控制器（文件里的 ReplayPlayer 时钟是我方自定模型，见 docs/02 §17.4）")
+mod("graphwar_replay_player.rs", "graphwar", ("src/graphwar_replay_player.rs",), "观测",
     "docs/136/142：消息级对拍 400 份回放里 71 份完全一致 ⇒ 已实现但未到逐位")
 mod("graphwar_root_node.rs", "graphwar", (), "未做",
     "主场景节点；docs/125 只有调用形态观测，src/ 无实现")
@@ -519,9 +521,9 @@ mod("graphwar_team_manager.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（队伍），无地址级观测、无实现")
 mod("graphwar_texture_loader.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（贴图加载），无地址级观测、无实现")
-mod("graphwar_tick_handler.rs", "graphwar", ("src/tick.rs",), "逐位",
+mod("graphwar_tick_handler.rs", "graphwar", ("src/graphwar_tick_handler.rs",), "逐位",
     "docs/35：113 个真实样本，TickReply 逐字节一致")
-mod("graphwar_turn_manager.rs", "graphwar", ("src/turn.rs",), "逐位",
+mod("graphwar_turn_manager.rs", "graphwar", ("src/graphwar_turn_manager.rs",), "逐位",
     "docs/98/117：射手轮转 = Vec<soldier_id> + 游标，在真实 TCP 上断言「首发射手 = soldiers[1]」"
     "「跳过死者」；docs/41 状态迁移逐个相同")
 mod("graphwar_video_writer.rs", "graphwar", (), "未知",

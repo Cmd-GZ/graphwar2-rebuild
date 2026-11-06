@@ -29,7 +29,7 @@
 | 播放/暂停/进度 | **我们自定**（原版无观测） | 自定，显式标注 |
 | 能播了吗 | 能。真实回放读、解析、按 tick 播、死亡事件生效、弹道由内核重算 | **逐位验证**（§5） |
 
-**新增文件**：`src/replay.rs`（格式/局面/播放器/对拍 ABI）、`src/replay_inflate.rs`
+**新增文件**：`src/graphwar_replay_player.rs`（格式/局面/播放器/对拍 ABI）、`src/replay_inflate.rs`
 （纯 Rust gzip+DEFLATE）、`client/src/play/replay_file.gd`（客户端读文件）、
 `client/src/play/replay_player.gd`（tick 播放器 + 局面还原）、`docs/133`（本文）。
 **改动文件**（都是"只加"或删占位，没有改既有语义）：`client/src/screens/play_screen.gd`
@@ -249,7 +249,7 @@ GwCore.calculate_path(expr, Vector2(start_x, start_y), dir, mode)       # ← �
 ```
 
 **为什么要有 `mode`**：`DiffEqFunction` 局（400 份真实回放里 **320 局**）的 `f` 是
-`dy/dx`，要走 `src/path.rs` 的 RK4（`Mode::Ode`）；既有的
+`dy/dx`，要走 `src/graphwar_path_calculator.rs` 的 RK4（`Mode::Ode`）；既有的
 `GW2Rebuild.path_calculate` 只跑 `Mode::Normal` —— 拿普通模式去画一条导数曲线，
 **看起来能画、其实是错的线**。
 
@@ -310,7 +310,7 @@ tick 边界（2168 活 / 2169 死）、规范串格式、播放器 tick 推进�
 | 实现 | 位置 | 它证明了什么 |
 |---|---|---|
 | Python 参考 | `tools/replay_state.py` 的循环（口径来源） | 规则本身 |
-| Rust 内核 | `src/replay.rs`（`cargo test` 覆盖） | 复原实现与参考一致 |
+| Rust 内核 | `src/graphwar_replay_player.rs`（`cargo test` 覆盖） | 复原实现与参考一致 |
 | GDScript 客户端 | `client/src/play/replay_player.gd`（自检断言） | 真正播放的那一份也一致 |
 
 规范串格式（三端同一份代码长度 ≤ 20 行，**没有任何浮点精度容差**）：

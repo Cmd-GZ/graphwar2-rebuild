@@ -8,7 +8,7 @@ use gw2_rebuild::diffconv::{
     corrected_function, death_effect_type, explosion_point, mode_of, strict_policy,
     unbalanced_brackets, ConvPredictor,
 };
-use gw2_rebuild::path::Mode;
+use gw2_rebuild::graphwar_path_calculator::Mode;
 use gw2_rebuild::replaydiff::{default_corpus_dir, Msg, Policy};
 use gw2_rebuild::settle::Target;
 
@@ -134,7 +134,7 @@ fn explosion_point_is_the_corrected_text_at_end_x() {
     assert!((sampler_stop.1 - py).abs() > 1e-5);
 }
 
-/// `flip` 时采样器内部用 `-x`，回代也要取反（`path::calculate` 的 `px = -mid`）。
+/// `flip` 时采样器内部用 `-x`，回代也要取反（`graphwar_path_calculator::calculate` 的 `px = -mid`）。
 ///
 /// 真值：回放 `1782641987` —— `function = "sin(x)"`、`corrected = "sin(x) - 6.101"`、
 /// `start_x = 14.559477538378344`（Team2 ⇒ flip=true）、`end_x = 8.746977538378527`、

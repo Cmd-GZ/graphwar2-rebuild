@@ -16,7 +16,7 @@ use gw2_rebuild::game::{Match, Submission};
 use gw2_rebuild::protocol::parse_message;
 use gw2_rebuild::server::RoomState;
 use gw2_rebuild::settle::Target;
-use gw2_rebuild::turn::{RoundCollection, SubmitResult};
+use gw2_rebuild::graphwar_turn_manager::{RoundCollection, SubmitResult};
 
 fn room(turn_mode: &str) -> RoomState {
     RoomState {
@@ -418,7 +418,7 @@ fn empty_announcement_is_immediately_complete() {
 /// ③ 结算批的分组与顺序就是上面那几条测试钉住的形状。
 #[test]
 fn a_full_simultaneous_round_runs_all_three_phases() {
-    use gw2_rebuild::turn::Team;
+    use gw2_rebuild::graphwar_turn_manager::Team;
 
     let mut m = field(vec![tgt(10, -8.0, -4.0), tgt(11, 8.0, 4.0)], vec![]);
     m.register_player(7, Team::One, &[10]);
@@ -526,13 +526,13 @@ mod tcp {
     }
 
     pub fn start_server(
-        cfg: gw2_rebuild::serverloop::Config,
+        cfg: gw2_rebuild::graphwar_game_server::Config,
     ) -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
         let l = TcpListener::bind(&cfg.addr).expect("bind");
         let addr = l.local_addr().unwrap();
         let h = std::thread::spawn(move || {
             let mut sock = l.accept().expect("accept").0;
-            gw2_rebuild::serverloop::serve_stream(&mut sock, &cfg).ok();
+            gw2_rebuild::graphwar_game_server::serve_stream(&mut sock, &cfg).ok();
         });
         (addr, h)
     }
@@ -549,7 +549,7 @@ mod tcp {
 ///   `FunctionInfo` / `FunctionPoints` / `FunctionActive` 各 N 条。
 #[test]
 fn simultaneous_round_over_tcp_emits_one_grouped_batch() {
-    use gw2_rebuild::serverloop::{Config, FIRST_PLAYER_ID};
+    use gw2_rebuild::graphwar_game_server::{Config, FIRST_PLAYER_ID};
     use std::io::Write;
     use std::net::TcpStream;
     use tcp::*;

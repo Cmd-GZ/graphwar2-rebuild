@@ -2,7 +2,7 @@
 
 ## 1. 装配了什么
 
-`src/serverloop.rs` 把已有零件串成一个真正的服务端：
+`src/graphwar_game_server.rs` 把已有零件串成一个真正的服务端：
 
 ```text
 NewConnectionRequest  -> 状态同步 7 条                     (docs/33)

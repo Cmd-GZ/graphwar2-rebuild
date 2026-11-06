@@ -411,7 +411,7 @@ fn trace_file(path: &std::path::Path, _show: usize) {
             tg.sort_by_key(|t| t.id);
             for shot in &b.shots {
                 let out = resolve(&shot.text, shot.x0, shot.y0, 0.01, shot.flip,
-                                  gw2_rebuild::path::Mode::Normal, sm.mask(), &tg);
+                                  gw2_rebuild::graphwar_path_calculator::Mode::Normal, sm.mask(), &tg);
                 println!("   probe01 stop=({:.6}, {:.6}) blocked={} killed={:?} 目标={:?}",
                          out.stop.0, out.stop.1, out.blocked, out.killed,
                          tg.iter().map(|t| (t.id, (t.x * 1000.0).round() / 1000.0, (t.y * 1000.0).round() / 1000.0)).collect::<Vec<_>>());

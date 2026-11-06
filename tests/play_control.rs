@@ -1,9 +1,9 @@
-//! `graphwar_play_screen_control.rs` 的复原验收（判据逐条对拍上面 `src/play_control.rs`）。
+//! `graphwar_play_screen_control.rs` 的复原验收（判据逐条对拍上面 `src/graphwar_play_screen_control.rs`）。
 //!
 //! ⚠️ 按 `AGENTS.md` §0.2 / §0.5：**这些断言是回归保护，不是复原证据。**
 //! 每一条右侧的真值都能指到反汇编地址；地址与口径见 `docs/14-turn.md` §9。
 
-use gw2_rebuild::play_control::*;
+use gw2_rebuild::graphwar_play_screen_control::*;
 
 /// `0x3d9b50` / `0x3d9e40` 这一对：5 个节点的布尔值**恰好互补**。
 ///

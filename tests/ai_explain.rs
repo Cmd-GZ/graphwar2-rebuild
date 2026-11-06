@@ -11,7 +11,7 @@
 use gw2_rebuild::ai_explain::{
     self, evaluate, is_friendly, Entity, Settings, Situation, TEAM_UNKNOWN,
 };
-use gw2_rebuild::aigen::{difficulty_params, params, VarMode, DIST_SENTINEL};
+use gw2_rebuild::graphwar_function_evolutionator::{difficulty_params, params, VarMode, DIST_SENTINEL};
 use gw2_rebuild::{Function, Token};
 
 fn const_fn(v: f64) -> Vec<Token> {
@@ -59,7 +59,7 @@ fn different_seed_can_change_the_decision() {
 // 2. 难度
 // ---------------------------------------------------------------------------
 
-/// 逐条对应 `0x3e3d95`–`0x3e45a3` 的分档（见 `aigen::difficulty_params`）。
+/// 逐条对应 `0x3e3d95`–`0x3e45a3` 的分档（见 `graphwar_function_evolutionator::difficulty_params`）。
 #[test]
 fn difficulty_bands_match_the_binary() {
     // (难度值, 代数, 种群, 上限)

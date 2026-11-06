@@ -11,7 +11,7 @@
 
 > **改动范围**：只新增 `src/diffconv.rs`、`examples/diff_conv.rs`、`tests/diff_conv.rs`、
 > 本文。`src/game.rs` / `src/settle.rs` / `src/protocol.rs` / `src/replaydiff.rs` /
-> `src/path.rs` / `client/` **一字未动**；`src/lib.rs` 只加了一行 `pub mod diffconv;`。
+> `src/graphwar_path_calculator.rs` / `client/` **一字未动**；`src/lib.rs` 只加了一行 `pub mod diffconv;`。
 
 ---
 
@@ -60,7 +60,7 @@
 | 项 | 内容 |
 |---|---|
 | **真值** | 回放的 `FunctionModeInfo` 把每一局钉成 `NormalFunction` / `DiffEqFunction` 之一（全语料 868 条，只有这两个值）。`docs/136` §3 的表：Normal 564 批 / DiffEq 515 批 |
-| **旧实现** | `game::Match::fire` 恒 `crate::path::Mode::Normal` |
+| **旧实现** | `game::Match::fire` 恒 `crate::graphwar_path_calculator::Mode::Normal` |
 | **后果** | DiffEq 局的函数是 `dy/dx = f(x,y)` 形式（例：`-222(-y+(-5+(13)*(1/((1+exp(-42*(x-(5))))*(1+exp(42*(x-(20))))))))`）。按 `y=f(x)` 去采样，整条弹道从第二个点起就不一样 ⇒ `end_x` 差几十个单位 |
 | **改法** | 新模块 `diffconv::ConvPredictor` 自己按 `fire` 的**同一顺序**拼报文，采样模式取自回放（`mode_of`）。**没有改 `fire`**（理由见 §6） |
 | **依据** | **观测**：几何探针在 `Mode::Ode` + 0.01 下，DiffEq 的 `end_x` 逐位相同 **490/550**；按 `Normal` 算只有 14/550 量级 |
@@ -205,7 +205,7 @@ cargo run --release --offline --example diff_conv -- --policy default   # 对照
 DiffEq 的 `pos_y` 逐位相同 376/550，另有 **161 发差 <1e-12**（几个 ulp）。同一输入重跑
 采样器是确定性的，所以这只能是"第二次计算的落点不同"（例如复检那次 `mid2` 的分支、
 或未收敛兜底的分支）。**推断**，缺的是真二进制在那一分支上的 lo/hi 记录
-（`docs/89` §10–§13 已经把这条路标成"要有 oracle 才能动 `path.rs`"）。
+（`docs/89` §10–§13 已经把这条路标成"要有 oracle 才能动 `graphwar_path_calculator.rs`"）。
 
 ### 5.3 `corrected_function` 的 14 批：NaN 与非 NaN 的分歧
 

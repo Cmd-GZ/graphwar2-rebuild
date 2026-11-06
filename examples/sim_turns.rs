@@ -4,7 +4,7 @@
 //! 并把「每发弹道第一次进入每个士兵半径的位置（采样下标 + 沿弧长）」吐出来，
 //! 交由 Python 侧按不同假设（逐颗串行 / 全部并行 / 按飞行时间）做对照。
 //!
-//! 物理全部复用已验证的 `path::calculate` / `plane::rasterize` / `shot::correction`。
+//! 物理全部复用已验证的 `graphwar_path_calculator::calculate` / `plane::rasterize` / `shot::correction`。
 //!
 //! 用法: `cargo run --release --example sim_turns -- <state.txt>`
 //!
@@ -26,7 +26,7 @@
 //! HIT <idx> <tid> <first_i> <arclen_i> <mindist>
 //! ```
 use gw2_rebuild::function::parse;
-use gw2_rebuild::path::{calculate, Mode};
+use gw2_rebuild::graphwar_path_calculator::{calculate, Mode};
 use gw2_rebuild::plane::{empty_mask, is_occupied, rasterize};
 use gw2_rebuild::shot::{correction, shifted_tokens};
 
@@ -527,7 +527,7 @@ fn geometry(path: &str) {
         let (sx, sy) = pts[stopi];
         // 路径是"正常终止"（撞障碍 / 出边界 / 点数用尽）还是"采样提前中止"？
         // 提前中止 = 折长二分在 100 次内没收敛 ⇒ 我们的采样器放弃了，真游戏没有。
-        let n_budget = gw2_rebuild::path::point_budget(step) as usize;
+        let n_budget = gw2_rebuild::graphwar_path_calculator::point_budget(step) as usize;
         let normal_end = blocked as usize
             + (sx.abs() > 24.99) as usize
             + (sy.abs() > 14.99) as usize

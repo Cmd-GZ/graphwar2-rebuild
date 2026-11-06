@@ -64,9 +64,9 @@
 目标"打不全就全部复原"（`10-campaign.md`，标为推断）、玩家页/弹窗像素对齐（`16-client.md`/`16-client.md`）。
 
 **内核侧仍缺（都是实现追赶结论，不是继续挖）**：
-~~① `src/turn.rs` 的"每玩家 `Vec<soldier_id>` + 游标轮转"~~ ✅ 已实现（`13-ai.md`）
+~~① `src/graphwar_turn_manager.rs` 的"每玩家 `Vec<soldier_id>` + 游标轮转"~~ ✅ 已实现（`13-ai.md`）
 ~~② `aigen` 缺"回合先定 soldier_id、AI 只为它进化"这一层~~ ✅ 已实现（`13-ai.md`）
-   ✅ **已接进 `game.rs::Match::begin_next_turn` 与 `serverloop.rs::advance`**（`14-turn.md`）：
+   ✅ **已接进 `game.rs::Match::begin_next_turn` 与 `graphwar_game_server.rs::advance`**（`14-turn.md`）：
    轮转定射手 → 只为它进化（25 s 预算生效）→ `decision.broadcast()` 决定发不发；
    端到端 TCP 测试断言"首发射手 = `soldiers[1]`""跳过死者""每回合都进化过"。
 ~~③ 第 0 代初始种群生成路径未还原~~ ✅ **已解**（`13-ai.md`）：没有独立初始化函数；
@@ -200,7 +200,7 @@ hook **`0x47f700`**（取随机 u64）即可读状态：`arg0` 是状态指针�
   权重表只在变量槽位上不同：Normal 下 10 个权重全给 `x`；
   **DiffEq 下 `x` 6 个 + `y` 4 个**（实测 6.83% / 4.86%，`archive/ai/71` §5.0）。
   `y'` 两种模式都不产生。Rust 侧已用 `aigen::VarMode` 区分
-- **token 权重表已从二进制直读**（`archive/ai/71`，`src/aigen.rs`）：
+- **token 权重表已从二进制直读**（`archive/ai/71`，`src/graphwar_function_evolutionator.rs`）：
   `idx = random % 85`，区间权重
   `const 11 | x 10 | + 10 | - 5 | * 11 | / 7 | ^ 2 | sqrt 1 | log 1 | ln 1 | exp 6 | abs 7 | sin 7 | cos 5 | tan 1`，
   常数 = `N(0,1) × 10.2`。**运行时 40 万样本逐项吻合到小数点后第二位**
@@ -247,13 +247,13 @@ hook **`0x47f700`**（取随机 u64）即可读状态：`arg0` 是状态指针�
 | 资源 / 音频 / 本地化 | 资源 692 文件 md5 全符；**音频只有 1 个 `sounds/humm.wav`**（无音乐、无音效库）；包里**无** `.translation`/`.csv` ⇒ 无本地化资源，文本硬编码在场景/脚本里。是否有音频系统**未确认** |
 | ~~`AxisMode` / `TimeMode` 是否参与判定~~ | ✅ **已结案：不参与任何判定**（`88` §17：采样器/掩膜/结算/开火链签名里都没有这两个参数，AI 上下文构造也没有）。口述阶段的"把握较低"（§14/§16.3）已被签名证据取代 |
 | ~~AI 的时间预算 / "精英 5" 的用途~~ | ✅ **已解**：终止 = 代数到顶 **∨ 25 s 墙钟**（`13-ai.md`，每代开头查一次，截断无标记）；精英 = 每代前 **20%**，字面量 5 = 每槽 1 克隆 + 4 工厂子代（`13-ai.md`） |
-| `aigen::evolve` 的 25 s 上限 | **未实现**（只按代数循环 ⇒ 难度 6 多算、结果依机器速度，`13-ai.md` §5.4）。另：`src/aigen.rs` 里 `Params.elite` 这个字段名与注释已与 `13-ai.md` 不符（本任务禁改 `src/`） |
+| `aigen::evolve` 的 25 s 上限 | **未实现**（只按代数循环 ⇒ 难度 6 多算、结果依机器速度，`13-ai.md` §5.4）。另：`src/graphwar_function_evolutionator.rs` 里 `Params.elite` 这个字段名与注释已与 `13-ai.md` 不符（本任务禁改 `src/`） |
 
 ## 7. 正在进行：AI 与关卡
 
 已达成：算法、适应度、六档参数、机器人名单、**token 权重表**、**变异算子**、
 **随机函数长度**、**V 的语义**、**每代构成**，并已落成
-**结构还原版 AI**（`src/aigen.rs`：`params`/`random_length`/`mutate`/`crossover`/
+**结构还原版 AI**（`src/graphwar_function_evolutionator.rs`：`params`/`random_length`/`mutate`/`crossover`/
 `next_generation`/`evolve`/`fitness`/`initial_population`，18 条测试含端到端"6 代学会命中"）。
 
 剩余：
@@ -336,12 +336,12 @@ else:
 ```
 
 * 一句话：**复检不通过时 `lo` 回基点 `x`、`hi` 砍到 `mid2`**。
-  （历史）两份实现（`graphwar_curve.py` / `path.rs`）曾都只做了 `lo = x`，**漏了 `hi = mid2`**
+  （历史）两份实现（`graphwar_curve.py` / `graphwar_path_calculator.rs`）曾都只做了 `lo = x`，**漏了 `hi = mid2`**
   ⇒ 拒绝后区间宽一倍 ⇒ 从第 4 点起走另一条轨迹（`06-verification.md` §26 的三方对照）。**现已双双补上。**
 * 计数器：**`ebx`**，`0x3c293f` 置 100，`0x3c2955 dec`，`0x3c2957 je` 直接返回（= 早停）。
   首次进入绕过 `dec`，所以恰好 100 轮。
 * ODE 分支**没有**这段复检（`0x3c2840` 直接接受），不要一起改。
-* 改法（**已完成**）：`graphwar_curve.py` 第 471–473 行、`path.rs` 第 92–95 行各加一行 `hi = mid2`，
+* 改法（**已完成**）：`graphwar_curve.py` 第 471–473 行、`graphwar_path_calculator.rs` 第 92–95 行各加一行 `hi = mid2`，
   并把判据写成 `not (ln > ln2)` / `!(chord > chord2)`（`jbe` 遇 NaN 成立）。
 * **验证已做完**（`06-verification.md` §32 记录）：
   - `analysis/gwemu.py` oracle 24 个用例，**24/24 整条点序列逐位相等**（原实现 17/24），
@@ -361,7 +361,7 @@ else:
 | # | 结论 | 可验证性 |
 |---|---|---|
 | 1 | **没有 `y''` 模式** ⇒ 上下箭头设发射角、发射角轮盘在 GW2 **都不存在** | 与 `AGENTS.md` 的"只有一阶"一致；`YButton` 有控件但两模式都 disabled（`16-client.md`） |
-| 2 | **回合超时 = 跳过该玩家** | 未独立验证；影响 `src/serverloop.rs` |
+| 2 | **回合超时 = 跳过该玩家** | 未独立验证；影响 `src/graphwar_game_server.rs` |
 | 3 | **Normal 模式写 `y` 不判非法，等价于 0** | ✅ 与我们的 parser（永远接受 `y`）+ 反汇编（`y'` 恒 0）一致；用户已实测 |
 | 4 | **士兵朝向 = 队伍**：`x<0` 朝右、`x>0` 朝左 | ✅ 与 `10-campaign.md` 的 773 个位置样本一致；朝向本身未在节点树里观测到 |
 | 5 | **等待界面与 GW1 完全不同**：**没有倒计时**，房主点 Start **立即开始** | 与 `16-client.md` 的 `lan_lobby`/`GameSetup` 台账一致（Start 就直接进 PlayScreen） |
@@ -445,11 +445,11 @@ else:
 
 ```
 src/function/   文法与求值        src/protocol.rs  46 种消息 + 序列化
-src/path.rs     采点              src/settle.rs    命中与致死结算
+src/graphwar_path_calculator.rs     采点              src/settle.rs    命中与致死结算
 src/plane.rs    坐标/掩膜/光栅化   src/game.rs      Match（一回合报文序列）
 src/shot.rs     修正+开火原语      src/turnstate.rs 回合状态机
-src/tick.rs     60Hz + 回合时长    src/levelgen.rs  关卡生成（含 ziggurat）
-src/rng.rs      ChaCha12          src/serverloop.rs 服务端循环
+src/graphwar_tick_handler.rs     60Hz + 回合时长    src/levelgen.rs  关卡生成（含 ziggurat）
+src/rng.rs      ChaCha12          src/graphwar_game_server.rs 服务端循环
 src/server.rs   握手/状态同步      src/gdext*.rs    Godot 扩展
 tests/          events / evidence / golden / live_hits / plane / server_match
 tools/          pck_extract / mask_check / simulate_check / hook_* / capture_* / predict_obstacles

@@ -11,7 +11,7 @@
 use std::ffi::CStr;
 use std::os::raw::c_char;
 
-use crate::path::{calculate, Mode};
+use crate::graphwar_path_calculator::{calculate, Mode};
 use crate::shot::{correction, shifted_tokens};
 use crate::function::parse;
 

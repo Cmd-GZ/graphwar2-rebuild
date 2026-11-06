@@ -405,7 +405,7 @@ variant != 0  →  B  (0x51d080, (1+λ) 单点爬山，λ = 种群/5，返回 1 
 
 ## 4. 若要落到 `src/`（本轮**没改**，只写怎么改）
 
-### 4.1 第 0 代（`src/aigen.rs::evolve`）
+### 4.1 第 0 代（`src/graphwar_function_evolutionator.rs::evolve`）
 
 1. 现在的实现若"先随机初始化 `5s` 个个体"，与游戏**不符**：游戏是 `s` 个随机**父代**
    （`mutate(assemble(random_function()))`），每个父代再产 `per_slot − 1` 个工厂子代 + 1 个

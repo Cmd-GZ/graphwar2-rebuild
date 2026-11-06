@@ -4,7 +4,7 @@
 //!
 //! 1. `plays_a_full_match_over_tcp` —— 判据 1："能跑完整一局"（原有测试）；
 //! 2. `rotation_and_ai_are_wired_over_tcp` —— **本轮新接线**的验收：
-//!    射手按 `turn::TurnManager` 的轮转出现，且 AI **只为那个士兵**进化过
+//!    射手按 `graphwar_turn_manager::TurnManager` 的轮转出现，且 AI **只为那个士兵**进化过
 //!    （`docs/117-server-wiring.md`）；
 //! 3. `ai_functions_are_broadcast_and_round_trip_over_tcp` —— AI 说话验收（`docs/127`）。
 //!
@@ -18,7 +18,7 @@
 //! * **电脑玩家局**（测试 2、3）：客户端**改不动** —— `Match::fire` 对电脑玩家一律用
 //!   `ai_function_text()`（`docs/127` §5），客户端交的 `"0.00"` 不生效。所以这两条
 //!   只能靠**夹具种子**挑一局 AI 真能打死人的（AI 的适应度里含掩膜
-//!   `aigen::ScoringContext.mask`，障碍一多就可能僵成"AI 一直贴着墙打"）。
+//!   `graphwar_function_evolutionator::ScoringContext.mask`，障碍一多就可能僵成"AI 一直贴着墙打"）。
 //!
 //! ## 为什么种子换过一次（`[11;32]` → `[53;32]`，只换 2、3 两条）
 //!
@@ -33,7 +33,7 @@
 //! 实测：`[53;32]` = **1 个障碍、第 6 回合 3 人阵亡、EndingGame**（最快完局）；
 //! `[62;32]` = 0 障碍、12 回合；而 3 个障碍的几颗种子全都 20 回合只死 2 人（僵局）。
 //! 断言**一条没改**（仍是"能打死敌人并触发 `EndingGame`"，测试 2 还要求"必须有死人"）。
-use gw2_rebuild::serverloop::{serve_stream, serve_stream_logged, Config, TurnLog};
+use gw2_rebuild::graphwar_game_server::{serve_stream, serve_stream_logged, Config, TurnLog};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -284,7 +284,7 @@ fn judge(expr: &str, board: &Board, shooter: i64) -> Option<gw2_rebuild::settle:
         y0,
         gw2_rebuild::SERVER_STEP,
         board.flip_of(shooter),
-        gw2_rebuild::path::Mode::Normal,
+        gw2_rebuild::graphwar_path_calculator::Mode::Normal,
         &mask,
         &board.others(shooter),
     ))
@@ -828,7 +828,7 @@ fn read_whom(batch: &[String], player_id: i64) -> Option<i64> {
 // 为什么需要：这两条用例的客户端**改不动**打出去的函数 —— 服务的 `Match::fire`
 // 对电脑玩家一律用 `ai_function_text()`（`docs/127` §5），客户端的 `"0.00"` 不生效。
 // 所以"打不打得死人"完全由 `(seed, AI 进化)` 决定，而 AI 的适应度里**含掩膜**
-// （`aigen::ScoringContext.mask` = `Match::mask`），障碍多的种子会僵成"AI 一直贴着墙打"。
+// （`graphwar_function_evolutionator::ScoringContext.mask` = `Match::mask`），障碍多的种子会僵成"AI 一直贴着墙打"。
 // 步长从 0.5 改成 0.01（`docs/136`）之后，`[11;32]` 这颗种子就是这种情况。
 //
 // 用法（改种子时照这个跑）：

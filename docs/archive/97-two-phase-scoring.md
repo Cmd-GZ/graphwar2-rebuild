@@ -1,7 +1,7 @@
 # 97 · 两阶段评分：全部粗评 0.5 → 前 3 名精评 0.01 → "不一致"就整条换新
 
 状态：结论性（静态，反汇编逐条）。回答"`docs/95` §2.7 那一句到底怎么判"，
-并把规则落进 `src/aigen.rs`。**本轮没有新的运行时实验**，运行时数据一律转引
+并把规则落进 `src/graphwar_function_evolutionator.rs`。**本轮没有新的运行时实验**，运行时数据一律转引
 `docs/archive/ai/67`、`docs/archive/ai/74`、`docs/archive/ai/75` 并单独标注。
 
 地址约定同全仓：**Ghidra 地址 = ELF vaddr + 0x100000**。本文全部写 **vaddr**
@@ -288,7 +288,7 @@ fn generation(prev: &[Individual], p: &Params) -> Vec<Individual> {
 
 ---
 
-## 8. 实现（`src/aigen.rs`）与对原版的**有意偏差**
+## 8. 实现（`src/graphwar_function_evolutionator.rs`）与对原版的**有意偏差**
 
 新增（全部带地址注释）：
 
@@ -317,7 +317,7 @@ fn generation(prev: &[Individual], p: &Params) -> Vec<Individual> {
 **顺带发现的、本轮没改的东西**（留待父 agent 决定）：
 
 1. `random_function()` 内部调 `repair(..., VarMode::Normal, next)` **写死了 Normal**
-   （`src/aigen.rs`），DiffEq 模式下补齐会补出 `x` 而不是 `y`。与两阶段无关，未动。
+   （`src/graphwar_function_evolutionator.rs`），DiffEq 模式下补齐会补出 `x` 而不是 `y`。与两阶段无关，未动。
 2. 槽循环的"随机分支"（我们这边是 `sorted[b].tokens.len() < 20` 那支）在二进制里
    **还会调一次变异**（`0x51b95c call 0x4ee720`），改动前的 Rust 没有。
    本次只在"换新"路径里补上了 `mutate`（因为那一段的二进制证据就是三条调用）。
