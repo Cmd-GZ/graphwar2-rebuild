@@ -437,8 +437,9 @@ mod("graphwar_function_input.rs", "graphwar", (), "未做",
 mod("graphwar_function_manager.rs", "graphwar", ("src/game.rs",), "观测",
     "docs/112 §2.1：7 个函数的存取结构逐条读出（HashMap<u32, 112 字节>、Vec<Token>）；"
     "我方 Match::functions 同构，但没有逐字节对拍")
-mod("graphwar_game_client.rs", "graphwar", (), "未做",
-    "归属函数最多的模块；只有 docs/archive 10/13 的调用形态观测，src/ 无实现")
+mod("graphwar_game_client.rs", "graphwar", ("src/graphwar_game_client.rs",), "观测",
+    "36 个函数分 8 类（docs/16 §17）：8 种请求事件判别值 11/12/16/17/18/19/20/21 + 0x48 记录形状 + "
+    "add_bot_0..5 -> 3/10/25/100/250/1000 + 0x517690 的 3 订阅名/14 manager；6 个入口函数语义未知")
 mod("graphwar_game_recorder.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（对局录制），无地址级观测、无实现")
 mod("graphwar_game_server.rs", "graphwar", ("src/graphwar_game_server.rs", "src/server.rs"), "逐位",

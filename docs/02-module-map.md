@@ -785,7 +785,7 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 | `graphwar_effect_manager.rs`（1/3） | — | `docs/02 §16.3`：全仓库零线索（1 个锚） | `未实现` |
 | `graphwar_entity_effect_manager.rs`（3/4） | — | `docs/02 §16.3`：3 个锚，无字符串线索 | `未实现` |
 | `graphwar_function_input.rs`（13/33） | — | `docs/02 §16.3`/`docs/149`：解析器 `0x4ed670` 体内唯一的 Location 锚是 `math_function.rs:75/285` ⇒ 解析器**不是**本模块的代码；本模块本体（13 个归属函数）未复原 | `未实现` |
-| `graphwar_game_client.rs`（36/59） | — | 归属函数最多的模块（36 个）；只有 `docs/archive` 的调用形态观测 | `未实现` |
+| `graphwar_game_client.rs`（36/59） | `src/graphwar_game_client.rs` | 归属函数最多的模块（36 个）；只有 `docs/archive` 的调用形态观测 | `观测` |
 | `graphwar_game_recorder.rs`（2/4） | — | `docs/02 §16.3`：2 个锚；"对局录制"只是按名字猜的 | `未实现` |
 | `graphwar_graphics_manager.rs`（6/8） | — | `docs/02 §16.3`：6 个锚，无字符串线索；与 texture_loader 的分工未分辨 | `未实现` |
 | `graphwar_lan_broadcaster_v6.rs`（4/4） | — | `docs/07/24`：局域网广播报文已抓包；`src/` 无实现 | `未实现` |
@@ -855,6 +855,12 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 
 **为什么 `events.rs` 不在这里**：它是原版 `graphwar_event.rs` 的复原（72 个具名变体 + 判别值），
 不是桥接层。`game.rs` / `plane.rs` / `server.rs` / `turnstate.rs` 同理。
+
+> ⚠️ **§8 与本节的"归属函数数"口径不同**：§8 那张表来自 `fixtures/module_map.tsv`（按"体内引用本模块"粗算，
+> `game_client` 记 **68**），本节来自 `docs/coverage-matrix.tsv`（按 `panic::Location` 锚，
+> `game_client` 记 **36**，19 个 contested 压平）。**两个都对，但回答的问题不同**：
+> §8 回答"这个模块的代码被哪些函数引用"，本节回答"有多少函数能逐条归属到本模块"。
+> 引用时请写清用的是哪个口径（`docs/16` §17.1 有更细的对比）。
 
 ### 17.4 混装与待拆（`AGENTS.md` 铁律 2 的登记表）
 
