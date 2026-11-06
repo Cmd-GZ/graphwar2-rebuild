@@ -2788,3 +2788,293 @@ Location 只落在 `7:10`、`14:1`、`45:1` 三行，与 `docs/02-module-map.md`
 | 38 字节单元 id | `AD_UNIT_ID` / `AD_UNIT_ID_LITERAL` / `AD_UNIT_ID_LEN` / `AD_UNIT_ID_REFS` | — | 观测 |
 | 广告链在别处 | `AD_VIEW_CHAIN` | 一条指针 | 观测（§15） |
 | 未知 | `UNKNOWNS`（3 条） | x86 取反位置 / 6 张表的归属 / 字段名本身 | 未知 |
+
+## 24. `entity_drawer.rs` 全量规格（本轮新增：从 1 个函数补到 10 个；士兵到底在哪画）
+
+### 24.0 一句话
+
+`EntityDrawer` 的 **10 个有源级名字的方法**全部落到 x86 地址并解出算术；
+**士兵/靶子不是 `draw()` 画的**——它们是一具实体的 **3 个 `Sprite2D` 子节点
+（皮肤 / 脸 / 帽子）+ 1 个 `RichTextLabel` 子节点（名字）**，由 `process` 每帧摆位置，
+`draw()` 只负责画**瞄准用的三段弧 + 三个箭头**。这与 `src/entity_drawer.rs` 上一轮
+「`draw` 里没有 `draw_texture_rect`」的结论**不冲突**，是把那个空洞填上了。
+
+### 24.1 名字从哪来，地址怎么钉的
+
+* **名字**：2.0.60 Android arm64 **未 strip** 的 `.symtab`
+  （`.rea-work/apk/arm64/lib/arm64-v8a/libgraphwarrust.so`，18,793 个 `FUNC`）。
+  与 `docs/02` §18/§20 用的是同一份物证、同一套 `(file,line,col)` 桥。
+* **地址**：Linux x86-64 `2026-08-28/libgraphwarrust.so`。
+* **判据不是函数大小**（`docs/02` §19 已证否）。本轮用三类语义指纹，逐条可复核：
+  1. `ready`：x86 `0x4b4130` 引用的 8 条字符串
+     （`on_resized` `0x1c2a7a`、`upcast_ref` `0x1c2a84`、`resized` `0x1c2a8e`、
+     `pos_info_event` `0x1c2a95` … `hat_graphics_info_event` `0x1c2af6`）
+     与 arm64 `0x4bab44` 的（`0x1a1380`、`0x1a131b`、`0x1a138a`、`0x1a1391` … `0x1a13f2`）
+     **内容与长度逐个相等，且两侧都是同一串连续字面量**。
+  2. `update_name_label`：`divss [0x1b9fc8]`（= `50.0f32`）+
+     `test 0x10000` / `sete` / `cmp 0x1000000` / `setae` / `and 0x101` / `cmp 0x100`
+     这串位测试，与 arm64 `0x4bf690` 的 `lsr #24` / `tst 0x10000` / `csel` / `and 0x101`
+     / `cset` / `or` / `tst #1` 同构。
+  3. **最强的一条：`process` 的调用多重集**。两侧都恰好各调
+     `get_entity_skin_sprite` 2 次、`get_entity_face_sprite` 2 次、`get_entity_hat_sprite` 2 次、
+     `get_entity_name_label` 2 次、`update_sprite` **3** 次、`update_name_label` **2** 次。
+     一次比对同时钉死 6 个地址，而不是 6 个独立猜测。
+
+### 24.2 地址表（**观测**；x86 虚地址，Ghidra = `+0x100000`）
+
+| 源级名 | arm64 | arm64 B | x86 vaddr | x86 B | 比值 |
+|---|---|---|---|---|---|
+| `draw` | `0x4b9430` | 5300 | **`0x4b2890`** | 5984 | 1.13 |
+| `ready` | `0x4bab44` | 2100 | **`0x4b4130`** | 2144 | 1.02 |
+| `process` | `0x4bb508` | 3696 | **`0x4b4b60`** | 4176 | 1.13 |
+| `update_sprite` | `0x4bf418` | 632 | **`0x4b9530`** | 736 | 1.16 |
+| `update_name_label` | `0x4bf690` | 496 | **`0x4b9810`** | 608 | 1.23 |
+| `draw_offset_triangle` | `0x4bf880` | 816 | **`0x4b9a70`** | 1024 | 1.25 |
+| `get_entity_hat_sprite` | `0x4bfbb0` | 1236 | **`0x4b9e70`** | 1584 | 1.28 |
+| `get_entity_name_label` | `0x4c0084` | 2832 | **`0x4ba4a0`** | 3072 | 1.08 |
+| `get_entity_face_sprite` | `0x4c0b94` | 1236 | **`0x4bb0a0`** | 1552 | 1.26 |
+| `get_entity_skin_sprite` | `0x4c1068` | 1236 | **`0x4bb6b0`** | 1552 | 1.26 |
+
+外加（**不在** 10 个之列，是 gdext 的构造器）：`IControl::init` = x86 **`0x4b3ff0`**
+（arm64 `0x4ba8e4`，608 B）。位置在 `draw` 结束（`0x4b3fea`）与 `ready`（`0x4b4130`）之间，
+体内 `call __tls_get_addr` 取对象 id 计数器、`movups` 从 `.data.rel.ro`
+（`0x95e2e0` / `0x95e2f0`）搬默认字段值写 `+0x18/+0x28/+0x48/+0x58`。
+
+> `fixtures/name_to_addr.tsv` 里 `update_name_label` 与 `draw_offset_triangle` 两行是
+> **`未知`**（全函数体不引用任何 `panic::Location`）。本节把这两个补上了；
+> `init` / `__register_constants` 那两行仍是 `歧义`，本轮**没有替人选**。
+
+### 24.3 最重要的一条：士兵/靶子在哪画
+
+**结论：`EntityDrawer` 自己有一棵子节点树，士兵是"贴图子节点"，不是 `draw()` 的图元。**
+
+四个 `process` 取用的子节点，按叠放顺序（`Node::add_child` 先后）：
+
+| # | 节点类型 | 从哪来 | 建好后统一设置 |
+|---|---|---|---|
+| 1 | `Sprite2D` | `GraphwarTextureLoader::get_skin_texture` | `texture_filter = 4`、`flip_v = true` |
+| 2 | `Sprite2D` | `GraphwarTextureLoader::get_face_texture` | 同上 |
+| 3 | `Sprite2D` | `GraphwarTextureLoader::get_hat_texture` | 同上 |
+| 4 | `RichTextLabel` | `load("res://name_label.tscn")` + `instantiate_as` | `push_font_size` / `push_outline_size` / `push_outline_color` / `push_color` / `append_text` / `pop`×3 |
+
+三个 `get_entity_*_sprite` 在 arm64 上**字节大小完全相同（1236）**，归一化后的指令序列
+也完全相同——它们是**同一段"懒建 + 缓存"代码的 3 份副本**，差别只有
+①取哪张贴图 ②落在哪个 `HashMap` 字段。每份的流程是：
+
+```text
+if let Some(gd) = self.<map>.get(&entity_id) { return Some(gd.clone()) }
+let tex = loader.get_<kind>_texture(&info)?;      // Option，None 直接落下界
+let sp  = Sprite2D::new_gd();                     // construct_engine_object
+sp.set_texture(tex);
+sp.set_texture_filter(4);                         // mov w1,#0x4  @0x4bfe10
+sp.set_flip_v(true);                              // mov w1,#0x1  @0x4bfe30
+self.base_mut().add_child(sp);                     // Node::add_child_full
+self.<map>.insert(entity_id, sp.clone());
+```
+
+`update_sprite` 反而**不建节点**，只算 `set_scale` / `set_position` / `set_visible(true)` /
+`set_flip_h` —— 一个"每帧更新"的纯变换函数。
+
+> ⇒ 上一轮 `src/entity_drawer.rs` 开头写的"**不含** `draw_texture_rect` 与 `draw_line`，
+> 所以士兵贴图与弹道由别的函数画"这句**对**，但**后半句不完整**：士兵贴图不是"别的函数用
+> `draw_texture_rect` 画"，而是**根本不用 `draw()`，用子节点**。弹道仍然不归本模块（见 §24.10）。
+
+### 24.4 `ready`（`0x4b4130`）：1 个信号 + 6 个后端事件
+
+顺序（arm64 `0x4bab44`，逐调用）:
+
+1. `Callable::from_object_method(self, "on_resized")` —— 名长 10
+2. `Object::connect("resized", callable)` —— 信号名长 7
+   （x86 `0x1c2a7a` / `0x1c2a8e`＝arm64 `0x1a1380` / `0x1a138a`）
+3. `strb 1, [self + 0x108]`（x86 `0x4b41be: mov BYTE PTR [rbx+0x108],0x1`）—— 字段名**推断**
+4. 6 × `GraphwarBackend::subscribe_to_event`，**按此顺序**：
+
+| # | 事件名 | 长度 | 处理者（`Gd::cast` 后的回调） |
+|---|---|---|---|
+| 1 | `pos_info_event` | 14 | 位置广播 → 记 `PosInfo` |
+| 2 | `life_info_event` | 15 | 存活/死亡 |
+| 3 | `entity_removed_event` | 20 | 实体移除 |
+| 4 | `skin_graphics_info_event` | 24 | 皮肤贴图 |
+| 5 | `face_graphics_info_event` | 24 | 脸贴图 |
+| 6 | `hat_graphics_info_event` | 23 | 帽子贴图 |
+
+（6 条在 `.rodata` 里**首尾相接**：arm64 `0x1a1391/…/0x1a13f2`，长度合计 = 区段长。）
+6 个 `Gd::cast` + 6 个 `subscribe_to_event` + 2 个 `Gd::from_obj_sys_weak` 一一对应。
+
+### 24.5 `process`（`0x4b4b60`）：每帧的子节点驱动
+
+```text
+"show_names" = <某模块对象 +0xa1 的 bool>        // ldrb w9,[x27,#0xa1] @0x4bb748（身份未知）
+tick         = <+0x58 的 u32>                    // ldr w8,[x0,#0x58]    @0x4bb824
+if !self.ready_flag(+0x108) { 跳过全部 }
+
+for id in pos_manager.get_all_positions() {              // 3b8348 / 0x3b7a78
+    let Some((px, py)) = pos_manager.get_position(id) else { continue };
+    let alive = life_manager.get_alive(id);
+
+    if alive && show_names {
+        // 可见分支
+        skin -> get_entity_skin_sprite(id)?  -> update_sprite(s, util, px, py)
+        face -> get_entity_face_sprite(id)?  -> update_sprite(s, util, px, py)
+        hat  -> get_entity_hat_sprite(id)?   -> update_sprite(s, util, px, py)
+        label = get_entity_name_label(id)?
+        -> update_name_label(label, util, px, py, alpha = 1.0)   // d2 = 1.0
+    } else if alive {
+        // 已知名字子节点：藏起来
+        label -> set_visible(false)
+    } else if show_names {
+        // 死亡分支：三个贴图无条件藏、名字按 death_tick 淡出
+        skin -> set_visible(false)
+        face -> set_visible(false)
+        hat  -> set_visible(false)
+        label = get_entity_name_label(id)?
+        if let Some(dt) = life_manager.get_death_tick(id) {
+            let t = tick.saturating_sub(dt);                 // subs + csel lo @0x4bbb30/34
+            if t >= 60 { hide(label) }                        // b.hs @0x4bbb3c
+            else {
+                alpha = max(1.0 + t/(-60.0), 0.0);            // @0x4bbb40..4c
+                update_name_label(label, util, px, py, alpha)
+            }
+        } else { hide(label) }
+    }
+}
+
+4 × HashMap::retain(...)      // 0x4bbc54 / 0x4bbc60 / 0x4bbc6c / 0x4bbc78，清掉已消失实体的节点
+CanvasItem::queue_redraw()    // 0x7e6da0
+```
+
+`update_sprite` 内部会 `set_visible(true)`，所以"可见"分支不需要再自己置 `true`；
+`process` 里 **5 次 `set_visible` 全是 `false`**（藏）——这一点与"`process` 负责显示"的
+直觉相反，值得记下来。
+
+### 24.6 `update_sprite`（`0x4b9530`）：棋盘单位 → 控件像素
+
+入参：`Control::get_size()` 的 `(w,h)`、`get_team_overview()` 的 packed 色、
+`Texture2D::get_width()`、棋盘 `(x,y)`。设 `k = w/50`、`s = ±1`（§24.7 的镜像判据）：
+
+```text
+position = ( w/2 + s·k·x ,  h/2 − k·y )
+scale    = ( (s/60)·(128/tex_w) ,  (k/−60)·(128/tex_w) )
+flip_h   = x > 0.0
+```
+
+常量（**逐位**）:
+
+| 量 | x86 槽 / 指令 | arm64 | 值 |
+|---|---|---|---|
+| `k` 的除数 | `0x1b9fc8`，`divss` @`0x4b9679` | `mov w8,#0x42480000` | `50.0f32` |
+| 贴图基准边 | —（向量第 2 lane）`divps` @`0x4b972e` | `movi v1.2s,#0x43,lsl#24` | `128.0f32` |
+| x 方向除数 | `0x19d1b0`，`0x4b972e` | `mov w8,#0x42700000` | `60.0f32` |
+| y 方向除数 | `0x1baacc`，`divss` @`0x4b9736` | `mov w8,#-0x3d900000` | `-60.0f32` |
+| `0.5` | `0x1ba128` | `fmov s2,#0.5` | — |
+
+`128.0` 在 x86 侧**不是一条独立常量**：它躺在 `0x19c634`（前一个 float `0x19c630` = `0.0`、
+后一个 `0x19c638` = `0.0`），因为 arm64 那条 `movi` 立即数也要靠一个 4-float 向量承载，
+`shufps …,0x55`（`0x4b9741`）把 lane1 广播出来。**只按"槽里第一个 float"读会读到 0.0。**
+
+`scale.y` 天然为负 ⇒ Godot 屏幕 y 向下、棋盘 y 向上，和 `position.y` 里的减号是同一个翻转。
+
+### 24.7 名字标签：`update_name_label`（`0x4b9810`）与死亡淡出
+
+镜像判据（`update_sprite` 与 `update_name_label` **各算一遍、算式相同**）：
+
+```text
+mirror = ((c & 0x101) == 0x100)                     // 绿置位且红不置位
+       | ((c & 0x10000) == 0 && (c >> 24) != 0)     // 蓝不置位且 alpha != 0
+s = mirror ? -1.0 : +1.0
+```
+
+布局（`w,h` = 标签自身 `get_size`；`mw,mh` = `get_minimum_size`；`k = w/50`）：
+
+```text
+cx    = w/2 + s·k·x − mw/2
+cx'   = max(cx, 0)                              // fcmp/fcsel mi @0x4bf7b4
+x_pos = if mw + cx' > w { w − mw } else { cx' } // fcmp @0x4bf7d8（上界）
+base  = (h/2 − k·y) + k·(−1.5) − mh/2
+alt   = base + (k·1.75 + mh/2)
+y_pos = if base < 0 { alt } else { base }       // fcmp/fcsel mi @0x4bf7ec
+```
+
+然后 `set_modulate(Color(1,1,1, alpha))` → `set_position_full(x_pos, y_pos, false)`
+→ `set_visible(true)`。`alpha` 是第 3 个 `f64` 实参，**只进 modulate**，不影响位置。
+
+⚠️ 注意 `alt` **没有再夹一次**：`base < 0` 只是换一支，`alt` 本身仍可为负
+（`w=h=500/300, mw=80, mh=40, y=20` ⇒ `base = −85`、`alt = −47.5`）。
+
+死亡淡出（`process` 内联，不在 `update_name_label` 里）：
+
+```text
+t     = tick.saturating_sub(death_tick)     // 0x4bbb30 subs / 0x4bbb34 csel lo
+if t >= 60 { 藏 }                            // 0x4bbb38 cmp #0x3c / 0x4bbb3c b.hs
+alpha = max(1.0 + t/(−60.0), 0.0)            // 0x4bbb40 ucvtf / 44 fdiv / 48 fadd / 4c fmaxnm
+```
+
+`−60.0` 是 **`f64`** 位型 `0xC04E000000000000`（`mov x8,#-0x3fb2000000000000` @`0x4bb850`），
+与 §24.6 那个 `f32` `−60.0`（`0xC2700000`）**不是同一条常量**，只是数值相等。
+
+### 24.8 `draw_offset_triangle`（`0x4b9a70`）＝ `draw()` 里的箭头
+
+**这就是上一轮代码里那个"匿名包装 `0x4b9a70`"的真名。** 它画一个图元：
+
+`Object::call("draw_polygon", [PackedVector2Array, PackedColorArray])`
+
+* 方法名 `"draw_polygon"` 长 12：x86 `0x1c2bad` / `mov ecx,0xc` @`0x4b9d41`，
+  arm64 `0x1a14a9` / `mov w2,#0xc` @`0x4bfa94`。参数个数 2（`mov r9d,0x2`）。
+* 顶点：`P0 = C + r·(cosθ,sinθ)`、`P1 = C + (r+0.5)·(cos(θ+c₂),sin(θ+c₂))`、
+  `P2 = C + (r+0.5)·(cos(θ+c₁),sin(θ+c₁))`。`c₁ = +0.20943951023931953`（x86 槽 `0x19fb68`，
+  `addsd` @`0x4b9ac0`）、`c₂ = −0.20943951023931953`（槽 `0x19fc80`，`addsd` @`0x4b9b74`）——
+  **两个独立槽**，不是取同一个值的相反数。`r += 0.5` 用 `0x19f6d0`（`addsd` @`0x4b9b5c`）。
+* 颜色：同一个 `Color` **push 3 份**（x86 `movupd xmm0,[r14]` @`0x4b9c1e/0x4b9c3c/0x4b9c5c`）。
+
+⇒ 既有 `arrow_head` / `arrow_primitives` 的**几何与着色结论一条都不用改**，
+本轮只是把名字补上，并把 `arrow_primitives(inp) == 3 × offset_triangle(...)` 写成断言。
+
+### 24.9 与既有 `draw` 结论有无冲突
+
+**没有。** 逐条对账：
+
+| 既有结论（上一轮） | 本轮 | 结果 |
+|---|---|---|
+| 段角 `A0=V/120`、`±2π/3`、`±4π/3` | 未重解（不在 10 个里） | 不动 |
+| 半径 = `f32(radius)×1.5` | 未重解 | 不动 |
+| 箭头 = 向心三角，`±12°`、外沿 `r+0.5` | 本轮由 `draw_offset_triangle` 独立复核，逐条相同 | **互证** |
+| 颜色 = packed `/255`，3 份同色 | 本轮确认 `draw_polygon` 侧也是 3 份同色 | **互证** |
+| `draw` 不含 `draw_texture_rect` / `draw_line` | 仍然不含（全函数体再核过一遍） | 一致 |
+| "士兵贴图与弹道由别的函数画" | 士兵贴图**不是**别的函数画的，是**子节点**；弹道仍不归本模块 | **补全**（不是矛盾） |
+
+唯一需要"改口"的是措辞：那句话把"别的函数画"暗示成"别处也是 `draw_*` 图元"，
+实际是"**根本不是图元，是节点**"。已在 `src/entity_drawer.rs` 的模块头就地改写。
+
+### 24.10 诚实清单（**未知**）
+
+1. `process` 里"要不要画名字"那个 `bool` 取自某个模块对象的 `+0xa1`
+   （`ldrb w9,[x27,#0xa1]` @arm64 `0x4bb748`）——**哪个模块、字段真名 = 未知**。
+2. 4 次 `HashMap::retain` 的谓词只看得出是"清掉已消失实体的节点"，
+   **"消失"的判据 = 未知**。
+3. `process` 里有一个 `TimeProbe`（`Instant::now` / `elapsed` / `std::io::_print`）
+   ⇒ 开了帧耗时打印，**格式串未解**（只看到一句 `: dt:` 片段 `0x1918de`）。
+4. 4 个 `HashMap` 的字段名（只有偏移：`0xa8` / `0xc0` 等）= **推断**。
+5. `ready` 之后 `+0x108` 那个 `bool` 的真名（写成"已就绪"）= **推断**。
+6. `SPRITE_TEXTURE_FILTER = 4` 的**数值**是观测（`mov w1,#0x4`），
+   "4 == Godot 的 `TEXTURE_FILTER_LINEAR_WITH_MIPMAPS`" 是查文档得来的 = **推断**。
+7. **弹道（`draw_line`）不在本模块**。上一轮已扫过全 GOT 表，本轮 `process` / `draw` 的
+   直接调用表里也没有画线原语 ⇒ 仍在别的模块（`graphwar_plane` / `graphwar_effect_manager`
+   候选，**本轮未证，不替人选**）。
+
+### 24.11 落码清单
+
+| 原版 | 落在 `src/entity_drawer.rs` | 覆盖程度 | 档位 |
+|---|---|---|---|
+| 10 个方法的地址 | `ENTITY_DRAWER_FUNCS`（名字 + x86 vaddr + arm64 `st_size`） | 10/10 | 观测 |
+| `IControl::init` | `ENTITY_DRAWER_INIT_ADDR` = `0x4b3ff0` | 1 | 观测 |
+| `ready` 的 1 信号 + 6 事件 | `RESIZED_SIGNAL` / `RESIZED_HANDLER` / `READY_EVENTS` / `READY_FLAG_OFFSET` | 全 | 观测（字符串 + 长度 + 顺序） |
+| 子节点树 | `EntityChildNode` / `ENTITY_CHILD_NODES` / `NAME_LABEL_SCENE` / `SPRITE_TEXTURE_FILTER` / `SPRITE_FLIP_V` | 4 类节点 | 观测 |
+| 镜像判据 | `team_mirror` / `team_mirror_sign` | 全 | 观测（逐条立即数） |
+| `update_sprite` | `sprite_transform` / `SpriteTransform` / 4 个常量 | 全 | 观测 |
+| `update_name_label` | `name_label_layout` / `NameLabelLayout` / `PIXELS_PER_UNIT_DIVISOR` | 全 | 观测 |
+| 死亡淡出 | `death_alpha` / `DEATH_FADE_TICKS` / `DEATH_FADE_DIVISOR` | 全 | 观测 |
+| `draw_offset_triangle` | `offset_triangle`（+ 既有 `arrow_head`） | 全 | 观测 |
+| 未知 | `UNKNOWNS`（5 条） | — | 未知 |
+
+`tests/entity_drawer.rs`：既有 11 个测试**一条未改**，新增 8 个（共 19）。
+按 `AGENTS.md` §0.2，这些条数**是回归保护，不是复原证据**。
