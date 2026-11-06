@@ -4287,3 +4287,276 @@ objdump -d --start-address=0x417c70 --stop-address=0x417e20 ../libgraphwarrust.s
 | 1 | 皮肤/脸/帽子点选只改 GDScript 里的本地变量 | Rust 侧 `GraphwarPlayerConfig::set_skin/set_face/set_hat` 直接写档案（`+0x60/+0x78/+0x90`）并 `+0xa8` 变更计数 | 仿制品**没有档案**，所以"关掉游戏再进来外观丢了"这类问题在它身上不存在，也就测不出来 |
 | 2 | `SkinBlock` / `PendingBlock` 在桌面端恒 `visible = false` | 原版由 `lock()`/`pending()`/`unlock()` **按内购状态**切换（三张表见 §29.4） | 仿制品只做了"桌面端不显示"这一个特例 |
 | 3 | 按钮图标/底色在 GDScript 里直接设 | 原版走 `GraphwarTextureLoader::get_skin_texture` + `update_buttons_background`（§29.3） | 仿制品没有贴图缓存这一层 |
+
+---
+
+## 30. `graphwar_audio_control.rs` 规格（本轮新增：**音效 ↔ 游戏事件**已解；`docs/111` §5.1 的未知项结案）
+
+> 方法的取舍：`docs/111` 已经把"资源清单 / 损坏判定 / 播放 API / 音量常量"做实，
+> 唯一没做的是 **§5.1「每个音效对应哪个游戏事件」**（当时标注"缺 `0x4bfe10` 内 match 臂的解码"）。
+> 本轮用**未 strip 的 arm64 2.0.60** 的 `.symtab`（源码级函数名）+ x86 侧 `.eh_frame` 函数边界
+> + 跨架构尺寸比闸（0.61–1.19）把 9 个函数全部定名，并把那条 match 解干净。
+> 代码落在 `src/graphwar_audio_control.rs`，验收在 `tests/graphwar_audio_control.rs`。
+
+### 30.1 一页结论
+
+| # | 结论 | 等级 |
+|---|---|---|
+| 1 | 模块订阅**四条**事件：`effect_info_event`(44) / `soldier_info_event`(15) / `entity_removed_event`(14) / `game_state_info_event`(30) | **逐位** |
+| 2 | 两条独立链互校：`new` 里 4 个 `Box::new(8)` + 4 个 `dyn FnMut` vtable 的 `call_mut` 各自 `adr` 到处理方法 | **逐位** |
+| 3 | 三个处理方法按"资源槽"选音，槽 = `self+0x80/+0x90/+0xa0/+0xb0/+0xc0` | **逐位** |
+| 4 | 槽 ↔ 文件 = **构造顺序**：explosion / squash / spark / pop / unpop | **逐位** |
+| 5 | `effect_info_event` 按 payload `+0x20` 的 u8 分四臂落三槽 | **逐位** |
+| 6 | 音量：三个特效槽 `-15.0f`、`pop` 是 `0.0f`、`unpop` 是 `-5.0f`（`docs/111` §4.5 把 `-5.0f` 归给 humm 是**错的**） | **观测** |
+| 7 | `game_state_info_event` 的 payload `+0x8` **等于 1** 时清空待播队列 | **逐位** |
+| 8 | 静音 = `+0xd0`（用户）`|` `+0xd1`（隐式），**只设 Master 总线** | **逐位** |
+| 9 | `docs/111` §5.3 悬着的 `+0xd1` 就是 `set_hidden_muted` 写的那个字节 | **逐位** |
+| 10 | 结构体 **0xf0 = 240 字节**（构造助手 `alloc(0xf0,8)`），队列元素 **0x18 = 24 字节** | **逐位** |
+
+### 30.2 函数清单（arm64 名字是符号名，不是猜的）
+
+| 函数 | x86 vaddr / 字节 | arm64 vaddr / 字节 | 源码行 | 职责 |
+|---|---|---|---|---|
+| `process` | `0x4bfe10` / 5052 | `0x4c5040` / 4268 | 170 | `humm` 的 PCM 泵（每帧） |
+| `new` | `0x4bf550` / 2230 | `0x4c4964` / 1756 | 245 | 载 6 个资源 + 订阅 4 条 |
+| `effect_info_event` | `0x4bf090` / 681 | `0x4c442c` / 712 | 328 | 按 kind 选槽入队 |
+| `game_state_event` | `0x4bef20` / 212 | `0x4c42c8` / 212 | 351 | `state == 1` 清队列 |
+| `set_muted` | `0x4c11d0` / 578 | `0x4c60ec` / 548 | 362 | 写 `+0xd0` + 总线静音 |
+| `set_hidden_muted` | `0x4bf000` / 134 | `0x4c439c` / 144 | — | 写 `+0xd1` + 总线静音 |
+| `soldier_info_event` | `0x4bf340` / 188 | `0x4c46f4` / 216 | — | 入队 `pop`（0 dB） |
+| `entity_removed_event` | `0x4bf480` / 193 | `0x4c488c` / 216 | — | 入队 `unpop`（-5 dB） |
+| `EffectAudioData::new` | `0x4bed70` / 423 | `0x4c4144` / 388 | — | 建一条待播记录 |
+| `subscribe_to_events`（4 个闭包） | 内联进 `new` | `0x4c47cc` `0x4c47fc` `0x4c482c` `0x4c485c` | — | 订阅胶合层 |
+
+x86 的 5 个锚（`:170 / :245 / :328 / :351 / :362`）来自 `fixtures/name_to_addr.tsv`；
+余下 4 个在 x86 侧无锚，用 arm64 符号名 + 尺寸比（1.07 / 1.15 / 1.12 / 1.09，全在闸内）
++ 每个函数一处独立字节证据定名：
+
+* `set_hidden_muted` = `0x4bf000`：函数第一件事就是 `mov %bl,0xd1(%rdi)`。
+* `soldier_info_event` = `0x4bf340`：`lea rdi,[rbx+0xb0]`（选 `pop` 槽）。
+* `entity_removed_event` = `0x4bf480`：`lea rdi,[rbx+0xc0]`（选 `unpop` 槽）+ `movss 0x1b9ba0`（-5.0f）。
+* `EffectAudioData::new` = `0x4bed70`：`docs/111` §4.2 记的"包住 `set_stream` 的辅助函数"
+  ——arm64 侧 6 个调用点（`effect_info_event` ×4、`soldier_info_event` ×1、`entity_removed_event` ×1）
+  与文档里"6 次 `set_stream`"逐一对上，**这个名字可以收口了**。
+
+### 30.3 四条订阅与"调用链闭合"
+
+```
+new: Box::new(8) ──> 闭包壳 ──> vtable(0x85b0f8/20/48/70) ──[+0x18]──> call_mut ──> 处理方法
+```
+
+| # | 事件名 | 长度立即数 | 判别值 | vtable | `call_mut` | 处理方法 |
+|---|---|---|---|---|---|---|
+| 1 | `effect_info_event` | `0x11`=17 | 44 | `0x85b0f8` | `0x4d5434` | `effect_info_event` |
+| 2 | `soldier_info_event` | `0x12`=18 | 15 | `0x85b120` | `0x4d632c` | `soldier_info_event` |
+| 3 | `entity_removed_event` | `0x14`=20 | 14 | `0x85b148` | `0x4d560c` | `entity_removed_event` |
+| 4 | `game_state_info_event` | `0x15`=21 | 30 | `0x85b170` | `0x4d5f58` | `game_state_event` |
+
+⚠️ 方法名叫 `game_state_event`，**订阅的事件名是 `game_state_info_event`**（30，多 `_info`）。
+
+### 30.4 事件 → 音效（`docs/111` §5.1 的答案）
+
+| 资源槽 | 文件 | 载入顺序 | 触发事件 | 音量 |
+|---|---|---|---|---|
+| `+0x80` | `res://sounds/explosion.mp3` | 1 | `effect_info_event`，`kind == 0` | `-15.0f` |
+| `+0x90` | `res://sounds/squash.mp3` | 2 | `effect_info_event`，`kind == 1` | `-15.0f` |
+| `+0xa0` | `res://sounds/spark.mp3` | 3 | `effect_info_event`，`kind == 2` 或其余 | `-15.0f` |
+| `+0xb0` | `res://sounds/pop.mp3` | 4 | `soldier_info_event`(15) | `0.0f` |
+| `+0xc0` | `res://sounds/unpop.mp3` | 5 | `entity_removed_event`(14) | `-5.0f` |
+
+**槽 ↔ 文件这一列怎么来的（逐位，两条独立链）**
+
+1. **载入顺序**：`new` 里 5 次 `load(path, len)` 依次是 explosion/squash/spark/pop/unpop（`docs/111` §4.4 已列）。
+2. **写入顺序**：构造助手（x86 `0x5238c0`，`alloc(0xf0,8)` 后逐字段初始化）把
+   源结构体的 `+0x18/+0x28/+0x38/+0x48/+0x58` 搬到载荷的 `+0x80/+0x90/+0xa0/+0xb0/+0xc0`；
+   源结构体这五个字段正是按上面 1..5 的顺序写的（`[rsp+0x130]…[rsp+0x108]` 的搬运顺序），
+   而**载荷基址 = `rbx+0x18`** 由最后那条 `mov word ptr [rbx+0xe8], 0` 定死
+   （`+0xe8-0x18 = payload+0xd0` = 两个静音字节，与 `set_muted` 写的 `+0xd0` 对上）。
+3. **读侧**：三个处理方法读的正是 `+0x80…+0xc0`（`effect_info` 四臂、`soldier` 的 `+0xb0`、
+   `entity_removed` 的 `+0xc0`），x86 侧 `lea rdi,[rbx+0xb0]` / `[rbx+0xc0]` 同址。
+
+语义自洽：士兵**出现**响 `pop`、**移除**响 `unpop`，三种命中特效响 `explosion`/`squash`/`spark`。
+
+**`effect_info_event` 的分支（逐位）**：先断言判别值 `0x800000000000002c` = 44，
+再按 payload `+0x20` 的 u8 分四臂 —— `0 → +0x80`、`1 → +0x90`、`2 → +0xa0`、其余 → `+0xa0`
+（`cmp #1 / b.gt / cmp #2 / b.ne` 的骨架，四臂落三槽，与 `docs/111` §4.5 的结构描述一致）。
+载荷 `+0x1c` 的 u32 原样带进记录的值字段。
+`soldier_info_event` / `entity_removed_event` **不校验判别值**（两侧都是），值恒 0。
+
+### 30.5 队列 / 清空 / 静音 / `humm`
+
+* **队列**：`Vec<EffectAudioData>` 在 `self+0x00`，字段序 **cap / ptr / len** = `+0x00/+0x08/+0x10`；
+  元素 **0x18 字节**（`mov w8,#0x18; madd x8, len, x8, ptr`）：
+  `{ +0x00 16 字节句柄, +0x10 u32 值, +0x14 bool 已启动 }`。
+  `push` 前有一次 `len == cap` 的增长检查（`cmp x20, x8; bl <Vec::grow>`）。
+* **清空**：`game_state_event` 读 payload `+0x8` 的 u8，**等于 1** 时 `len := 0` 并按保存的旧 len
+  逐个清理（每个元素 +0x8 处的句柄先做有效性检查）。其它状态什么都不做。
+* **静音**：`+0xd0`（用户）/ `+0xd1`（隐式），有效值 = `a | b`（`orr w8, w19, w22; and w2, #1`），
+  动作是 `AudioServer::set_bus_mute(AudioServer::get_bus_index("Master"), 有效值)`。
+  `set_muted` 与 `set_hidden_muted` 是**同一套动作的两个入口**，只差写哪个字节。
+* **`humm`**：`FileAccess::get_file_as_bytes` → `hound` 解析 → `AudioStreamGenerator`
+  （`set_mix_rate(16000.0f)`、`set_buffer_length(0.1f)`）→ `push_buffer`，
+  归一化 `32767.0f`；一帧样本预算 `16000 × 0.1 = 1600`。这条路径**不经过**那 5 个资源槽。
+
+### 30.6 与 `docs/111` 的差异（就地改正）
+
+| # | `docs/111` 原文 | 本轮实测 |
+|---|---|---|
+| 1 | §4.5 "`humm` 那一路是 -5.0 dB" | **错**：`-5.0f` 在 `entity_removed_event`（`0xc0` 槽）里，对应 `unpop.mp3`；`humm` 走 generator，不是这 5 个槽之一 |
+| 2 | §4.4 把 `0x4c01b9`(set_stream) / `0x4c0cba`(play) 记在 `new` 名下 | **错位**：`0x4bfe10` 起 5052 字节是 `process`，这两条落在 `process` 里（`new` 只到 `0x4bfdf0` 一带） |
+| 3 | §5.3 "`+0xd1` 由谁写、语义未定" | **结案**：`set_hidden_muted` 写它；与 `+0xd0` 相或后设 Master 总线 |
+| 4 | §5.1 "音效 ↔ 事件 未知" | **结案**：见 §30.4 表 |
+
+### 30.7 仍未确定
+
+| # | 项 | 缺什么 |
+|---|---|---|
+| A | `self+0x60` 那个 16 字节 `Option<Gd<…>>` 的对象身份 | `EffectAudioData::new` 用它做 `set_stream`/`set_volume_db` 的接收者（绑定字符串簇是 `AudioStreamPlayer is_playing set_volume_db get_stream_playback`），但构造路径把它写成 `([rsp], rbp)`、第二字为 0 ⇒ 只能标**推断**；缺一次运行时 hook 打印该句柄 |
+| B | `EffectAudioData` 记录的**播放时机** | `process` 里 `play()` 的调用点没有逐指令闭合（`docs/111` §4.4 的地址错位也在这条上）⇒ **推断** |
+| C | `tear.mp3` / `humm_2` / `humm_b` / `shepard_2` 的引用 | 仍是负结果（`docs/111` §5.2），本轮没有新证据 |
+
+### 30.8 复现
+
+```text
+# 名字与尺寸（arm64 未 strip）
+nm -S --defined-only <arm64>/libgraphwarrust.so | grep graphwar_audio_control
+# 订阅链：new 里的 adrp/add 指向事件名串；对应 vtable 的第 4 项是 call_mut
+#   vtable 地址来自 add x4, x4, #0xf8/0x120/0x148/0x170
+# x86 侧函数边界（只读 .so，不需要 Ghidra）
+readelf --debug-dump=frames <x86>/libgraphwarrust.so     # .eh_frame 的 FDE
+```
+
+---
+
+## 31. `graphwar_graphics_manager.rs` 规格 + **`GraphwarTextureLoader` 到底在哪**（本轮新增：`docs/02` §686 那条"未知"结案）
+
+> 任务是把 `graphwar_graphics_manager`（"22 个完全未知"之一）解出来，
+> 并回答 `GraphwarTextureLoader` 的宿主是不是它。**答案：不是**——两者是两个模块。
+> 代码落在 `src/graphwar_graphics_manager.rs`，验收在 `tests/graphwar_graphics_manager.rs`。
+
+### 31.1 一页结论
+
+| # | 结论 | 等级 |
+|---|---|---|
+| 1 | `GraphwarGraphicsManager` 三张表 `HashMap<u32, String>`，在 `+0x18 / +0x48 / +0x78`（步长 **0x30**）= 皮肤 / 脸 / 帽子 | **逐位** |
+| 2 | 三个 setter 同形（各 276 B）：写表 + 发 `Skin/Face/HatGraphicsInfo`(51/53/55) | **逐位** |
+| 3 | 只订阅两条：`new_connection_event` → `send_all_info_events`；`entity_removed_event` → `handle_entity_removed_event` | **逐位** |
+| 4 | `send_all_info_events` 用基数 `0x8000…0033` **加** `0/2/4` 造三个判别值（脸是 `add #2`、帽子是 `orr #4`） | **逐位** |
+| 5 | 外观来源只有远端事件：`RemoteEventHandler::handle_{client,server}_remote_event`；另两条旁路是 `GameStateManager::add_target`(skin) / `add_soldier_to_player`(face+hat) | **观测** |
+| 6 | **`GraphwarTextureLoader` 属于 `src/graphwar_texture_loader.rs`**（arm64 符号的模块段就是 `graphwar_texture_loader`） | **逐位** |
+| 7 | 它持三张 `HashMap<String, Gd<Texture2D>>` 在 `+0x150 / +0x180 / +0x1b0`（同样步长 0x30），表项 **0x28 = 40 字节** | **逐位** |
+| 8 | **按名字（`String`）索引**，不是按编号：hash 表 + 逐字节 `memcmp` | **逐位** |
+| 9 | 由 `GraphwarRootNode`（`impl INode`）里的**唯一**构造点 `0x39a328` 建一次；`new` **21212 字节** ⇒ 饿汉式一次性加载 | **观测** |
+
+### 31.2 `graphwar_graphics_manager`：6 个函数
+
+| 函数 | x86 vaddr | arm64 vaddr / 字节 | 源码行 |
+|---|---|---|---|
+| `new` | `0x469390` | `0x49e394` / 396 | 38 |
+| `set_skin_graphics` | `0x468c70` | `0x49dd00` / 276 | 60 |
+| `set_face_graphics` | `0x468b60` | `0x49dbec` / 276 | 69 |
+| `set_hat_graphics` | `0x468a50` | `0x49dad8` / 276 | 78 |
+| `send_all_info_events` | `0x468d80` | `0x49de14` / 1036 | 88 |
+| `handle_entity_removed_event` | `0x469220` | `0x49e220` / 280 | 108 |
+
+6 个方法名 + 6 个 `panic::Location` 锚双向唯一（`fixtures/name_to_addr.tsv`），
+`subscribe_to_events_event_handler` 内联进 `new`（两个闭包 `0x49e338`/`0x49e368`）。
+
+### 31.3 数据形状（逐位）
+
+三个 setter 骨架完全同形，差别只有三处常量：
+
+```text
+set_X_graphics(self, player_id: u32, name: &str)
+  st = self[8]                        ; 事件通道（+0x10 borrow 标志 / +0x18 emit 入口）
+  if st[0x10] != 0 → panic("src/graphwar_graphics_manager.rs")
+  event = { tag: 0x8000…|TAG          ; 0x33 / 0x35 / 0x37
+            String(cap,ptr,len) @+0x08,
+            u32 player_id       @+0x20 }
+  emit(st + 0x18, &event)
+  map.insert(player_id, name)         ; map = self + 0x18 / 0x48 / 0x78
+```
+
+每张表是 hashbrown `HashMap`：
+`ctrl@+0, bucket_mask@+8, growth_left@+0x10, items@+0x18, RandomState@+0x20`。
+`handle_entity_removed_event` 里三次 `hash(self+0x38 / +0x68 / +0x98)` 正好是
+"表基 + 0x20"，**这就是三张表的自证**。
+
+`send_all_info_events`（1036 B）：三个循环，判别值 = 基数 + `k`：
+皮肤直接用 `0x8000…33`；脸 `add x19, x9, #2`；帽子 `orr x27, x9, #4`。
+（`0x33 | 2 == 0x33`，所以脸那一支**只能**是加法——编译器混用 `add` / `orr` 反而把基数钉死了。）
+
+### 31.4 外观数据从哪来（观测，arm64 全量 `bl` 扫描）
+
+| 调用点 | 所在函数 |
+|---|---|
+| `0x3e4df4` `0x3e4e84` `0x3e5060` `0x3e50f0` `0x3e5294` `0x3e5324` | `GraphwarRemoteEventHandler::handle_client_remote_event`（`0x3e3ad0`） |
+| `0x3e6f34` `0x3e794c` `0x3e7f18` | `GraphwarRemoteEventHandler::handle_server_remote_event`（`0x3e6df0`） |
+| `0x4a5868`（skin） | `GraphwarGameStateManager::add_target`（`0x4a5704`） |
+| `0x4aaf24` `0x4ab050`（face/hat） | `GraphwarGameStateManager::add_soldier_to_player`（`0x4aaab4`） |
+
+⇒ 名字**只从远端事件**进来（`*_graphics_info_event`），本机不生成。
+
+### 31.5 `GraphwarTextureLoader` 的宿主（问题的正面答案）
+
+arm64 `.symtab` 的模块段直接写着答案：
+
+```text
+_ZN12graphwarrust23graphwar_texture_loader21GraphwarTextureLoader3new
+_ZN12graphwarrust23graphwar_texture_loader21GraphwarTextureLoader15get_hat_texture
+_ZN12graphwarrust23graphwar_texture_loader21GraphwarTextureLoader16get_face_texture
+_ZN12graphwarrust23graphwar_texture_loader21GraphwarTextureLoader16get_skin_texture
+```
+
+⇒ 它是 **`src/graphwar_texture_loader.rs`**，与 `graphwar_graphics_manager.rs` 平级；
+`graphics_manager` 只存 `player_id → 名字`，**贴图本体在 loader**。
+`docs/02` §686 把两者混在一起问"谁持有资源表、谁只做加载"，本轮分工是：
+
+* `graphics_manager`：**索引层**（谁穿什么），事件源、三条 info 事件、三张表。
+* `texture_loader`：**资源层**（名字 → `Gd<Texture2D>`），三张表 + 3 个 getter + 一次性加载。
+
+**表与索引（逐位）**
+
+| getter | arm64 vaddr / 字节 | 表偏移 | 索引方式 |
+|---|---|---|---|
+| `get_skin_texture` | `0x40c1cc` / 296 | `+0x150` | `HashMap<String, Gd<Texture2D>>` |
+| `get_face_texture` | `0x40c0a4` / 296 | `+0x180` | 同上 |
+| `get_hat_texture` | `0x40bf7c` / 296 | `+0x1b0` | 同上 |
+| `new` | `0x40c2f4` / **21212** | — | 一次性载入全部 |
+
+三个 getter 同形（296 B）：`items == 0` 快路返回 `None` → `hash(name, state=表基+0x20)`
+→ 探 ctrl 字节 → 命中桶比 `len` → `memcmp(key, entry)` → clone 值（8 字节 `Gd`）。
+表项 **0x28 = 40 字节**（`mov w25, #0x28`：1 ctrl + 24 `String` + 8 `Gd`，对齐到 40）。
+⇒ **按名字索引**（键就是 `res://…` 里的资源名），**不是**按编号。
+
+**创建与所有者（观测）**：`GraphwarTextureLoader::new` 全二进制**只有一个调用点 `0x39a328`**，
+落在 `impl INode for GraphwarRootNode`（arm64 `0x399dd0` 起）里；`GraphwarRootNode` 用
+`Weak<Rc<RefCell<GraphwarTextureLoader>>>` 持有它（drop 符号里带完整类型路径）。
+与既有结论"持有者是 `GraphwarRootNode + 0x16a0`"一致 —— 本轮补上的是**谁调用 `new`**。
+
+**消费者（getter 的全部调用点，观测）**
+
+| getter | 所在函数 |
+|---|---|
+| skin | `PlayScreenControl::add_player_victory_icon`、`PlayerShowcase`、`PlayerScreenControl::load_items` / `update_buttons_background`、`EntityDrawer::get_entity_skin_sprite`、`SetupControl::update_soldiers` |
+| face | `add_player_victory_icon`、`PlayerShowcase`、`load_items`、`EntityDrawer::get_entity_face_sprite`、`update_soldiers` |
+| hat | `add_player_victory_icon`、`PlayerShowcase`、`load_items`、`EntityDrawer::get_entity_hat_sprite` |
+
+`EntityDrawer::get_entity_{skin,face,hat}_sprite` 三个**函数名本身**就是 §24/§25
+"`EntityDrawer` 从 loader 取三张贴图"的正面证据。
+
+### 31.6 两处需要提醒后来者的歧义
+
+| # | 项 | 现状 |
+|---|---|---|
+| A | §24/§25 记的"`PlayerShowcase` 自己有三张 `HashMap`（`+0x168/+0x198/+0x1c8`，间距 0x30）" | 这三个偏移**正好等于 loader 三张表的 `items` 字段**（`+0x150+0x18` / `+0x180+0x18` / `+0x1b0+0x18`）。两种读法都能解释字节：① 那是 `get_*_texture` 内联后的表访问被误记成 PlayerShowcase 的字段（**推断**）；② PlayerShowcase 另有一套同形缓存表（**未证**）。**本节不选边** |
+| B | `docs/02` §1187 列了 6 个方法（多 `get_chat_texture` / `get_time_mode_texture`） | arm64 `.symtab` 里**只有 4 个**（`new` + 3 个 getter）。缺的两个要么被内联/合并，要么旧表多列 ⇒ **未知** |
+
+### 31.7 复现
+
+```text
+nm -S --defined-only <arm64>/libgraphwarrust.so | grep graphwar_texture_loader
+# 三个 getter 的表偏移：函数体里 ldr x9,[x0,#0x168/0x198/0x1c8]（= items）
+#                       与 add x0,x0,#0x170/0x1a0/0x1d0（= RandomState）
+# 构造点：全量反汇编里 bl 0x40c2f4 只有一个（0x39a328，在 GraphwarRootNode 的 INode impl 里）
+```
