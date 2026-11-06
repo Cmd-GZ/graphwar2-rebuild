@@ -540,13 +540,14 @@ mod("math_function.rs", "other", ("src/math_function.rs", "src/math_function/to_
 mod("polish_notation_converter.rs", "other", (), "未做",
     "2026-11 更正：本模块的锚函数是 0x4f57d0（:36:52 / :116:55，tools/class_probe.py），**不是** 0x4ec160。0x4ec160 的 panic 分支引的是 math_function.rs:285:28（docs/119 §4.6）⇒ 我方 to_text.rs 归 math_function.rs；本模块未实现")
 mod("entity_drawer.rs", "other", ("src/entity_drawer.rs",), "观测",
-    "EntityDrawer::draw = 0x4b2890（GOT 槽 + .rela.dyn 定位 draw_arc×3/draw_polygon×3）；每条常量的 .rodata 槽与"
-    "指令地址都在 src/entity_drawer.rs 的注释里（多数是逐位（立即数））。只覆盖 draw 一个函数，本模块另有 13 个"
-    "锚函数未做；且我方只还原到\"图元清单\"层，不复现 gdext 调用。旧行写「未做」与 src/ 现状冲突 ⇒ 按代码更正（docs/02 §17.2）")
+    "10 个函数全解：draw/ready/process/update_sprite/update_name_label/draw_offset_triangle/get_entity_{hat,name_label,face,skin}。**士兵/靶子不是图元而是子节点**——3 个 Sprite2D"
+    "（skin/face/hat 贴图）+ 1 个 RichTextLabel（res://name_label.tscn），懒建缓存于 4 张 HashMap，"
+    "由 process 每帧摆位置；draw() 只画准星（3 弧 + 3 箭头）。docs/16 §24")
 mod("effect_drawer.rs", "other", ("src/effect_drawer.rs",), "观测",
-    "7 个 pub fn / 36 常量：draw_circle×4 + polygon×1 + line×2，半径 0.05/0.06；tick 制 60 tick=1s")
+    "7 个 pub fn / 36 常量：draw_circle×4 + polygon×1 + line×2 + 一次 draw_set_transform，半径 0.05/0.06；"
+    "tick 制 60 tick = 1 秒，物理子步 1/600 s，相位推进 600 tick；与 client/ 有 10 处出入（docs/16 §21）")
 mod("axis_drawer.rs", "other", ("src/axis_drawer.rs",), "观测",
-    "3 个 pub fn / 24 常量，四档轴模式与全部数值逐条登记")
+    "3 个 pub fn / 24 常量：四档轴模式与全部数值逐条登记（docs/16 §21）")
 mod("obstacle_drawer.rs", "other", (), "未知",
     "非 graphwar_ 前缀；除模块名外没有一条能指到地址或报文的观测")
 mod("function_drawer.rs", "other", (), "未知",

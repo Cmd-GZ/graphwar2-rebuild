@@ -146,7 +146,7 @@
 | `backtracer.rs` | 0 | 0 | — | 0 | 未做 |
 | `button_manager.rs` | 2 | 3 | — | 0 | 未知 |
 | `effect_drawer.rs` | 11 | 17 | `src/effect_drawer.rs` | 19 | 观测 |
-| `entity_drawer.rs` | 14 | 36 | `src/entity_drawer.rs` | 11 | 观测 |
+| `entity_drawer.rs` | 14 | 36 | `src/entity_drawer.rs` | 19 | 观测 |
 | `function_button_manager.rs` | 2 | 3 | — | 0 | 未知 |
 | `function_drawer.rs` | 1 | 1 | — | 0 | 未知 |
 | `function_history_recorder.rs` | 1 | 3 | — | 0 | 未知 |
@@ -245,5 +245,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（43 个文件、1156 条 `fn`） | `25075da7c5c46237c3311199b65c34530b620755ff8008906f31bc6eedb047a8` |
+| `src/` 树（45 个文件、1164 条 `fn`） | `d3632b73740c6f3de1202d876f710898a2c6681d8b54c142f6fbf2ef27028911` |
 
