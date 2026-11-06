@@ -483,9 +483,15 @@ mod("graphwar_path_calculator.rs", "graphwar", ("src/graphwar_path_calculator.rs
     "0x3c2530 本体无 panic 锚 ⇒ 只归属到 1 个辅助函数，orig_funcs 远小于模块规模")
 mod("graphwar_plane_pos_manager.rs", "graphwar", ("src/plane.rs",), "观测",
     "docs/140：px = 20x + 500 由常量反查得出、准备圈画法已扒出；没有端到端逐位对拍")
-mod("graphwar_plane.rs", "graphwar", ("src/plane.rs",), "逐位",
-    "docs/08/39：掩膜光栅化与 is_occupied 逐字节 / 300 随机点一致；10 个归属函数的地址与 "
-    "docs/02 §11 那张独立写下的表完全一致")
+mod("graphwar_plane.rs", "graphwar", ("src/graphwar_plane.rs", "src/plane.rs"), "观测",
+    "12 个 GDExtension 类里的第 4 个，本轮补齐（docs/16-client.md §26）：8 个方法 + 1 个 "
+    "`ready::{{closure}}` + 6 个 gdext 入口全部落到 x86 地址，判据是 arm64 `.symtab` 定名 + "
+    "三类指纹（19 个 Location 键集 / 被调者多重集 / 首尾相接链）。`draw` 的图元逐位"
+    "（`Rect2(-25,-15,50,30)` + `Color(0,0,0,1)` + width `0.2` + `filled=false`），"
+    "`obstacle_partial_update_event` 的坐标变换逐位（常量槽 `0x19fbd0`/`0x19faa8`/`0x19ee00`…）。"
+    "⚠ 旧行写 `逐位` 是按**掩膜光栅化**算的，而掩膜属 `graphwar_obstacle_manager`"
+    "（同一张表里另有一行）⇒ 本模块自身只到 `观测`：没有整函数的逐字节对拍。"
+    "`src/plane.rs` 里剩下的掩膜 / 换算归 obstacle_manager 与 plane_pos_manager，见 docs/02 §17.4")
 mod("graphwar_player_manager.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（玩家），无地址级观测、无实现")
 mod("graphwar_player_screen_control.rs", "graphwar", (), "未知",

@@ -3420,3 +3420,253 @@ llvm-objdump -d --no-show-raw-insn --demangle \
 `tests/player_showcase.rs`（22 条）的断言都是**回归保护**；每条右侧的真值要么是
 指令立即数、要么是 `.rodata` 比特、要么是 arm64 `.symtab` 真名。
 本轮 `cargo test --offline`：lib **339**、总计 **645**（+22），doctest 0 条通过。
+
+---
+
+## 26. `graphwar_plane.rs` 规格（最后一个 GDExtension 类）+ 悬案结案：**弹道不是 `draw_line` 画的**
+
+> **本节解决两件事**：① 12 个 GDExtension 类里最后一个 `GraphwarPlane` 的**全部方法落到地址**；
+> ② 悬了很久的「弹道（`draw_line`）到底在哪个模块画」——结论是**没有任何模块用 `draw_line` 画弹道**，
+> 曲线走的是 **`Line2D` 子节点**，由 `function_drawer` 配置、`GraphwarPlane::draw` 驱动。
+>
+> **地址口径**：一律 **ELF 虚地址**（`objdump` 口径）。Ghidra/REA 地址 = 本值 + `0x100000`（只加一次）。
+> 引用的 **arm64** 地址只用于**定名**（2.0.60 的 Android 构建没 strip），绝不当 x86 用。
+> 落码：`src/graphwar_plane.rs`（新，占位→实现）＋ `src/plane.rs`（只搬走 1 个函数）；
+> 验收：`tests/graphwar_plane.rs`（18 条，全部是回归保护）。
+
+### 26.0 一页结论
+
+| 项 | 结果 | 档位 |
+|---|---|---|
+| 它是什么 | `Control` 子类，棋盘本体：画棋盘框 + 每帧驱动障碍绘制器 + 做脏矩形 + 持 3 个 `FunctionDrawer` 子节点 | **观测** |
+| 源级方法数 | **8 个**方法（`draw` / `init` / `ready` / `process` / `on_resized` / `clear_state` / `update_entities` / `obstacle_partial_update_event`）+ **2 个** `ready::{{closure}}`；其余是 gdext 样板 | **观测**（arm64 `.symtab`） |
+| 落到 x86 地址 | 8 个方法 **8/8**（5 个 `唯一锚`、3 个靠「调用者集合 + 首尾相接」）；1 个闭包；gdext 入口 6 个（其中 4 个只到**推断**） | 观测 / 推断（逐条标） |
+| `draw` 画什么 | **两个**图元：`draw_set_transform` ×1 + `draw_rect` ×1（`Rect2(-25,-15,50,30)`、黑、`filled=false`、宽 `0.2`） | **逐位**（常量槽逐个给了地址） |
+| 弹道在哪画 | **不在本类、也不在任何 `draw_*` 图元里**——是 `Line2D` 子节点 | **观测**（穷举 + 有界否定，§26.4） |
+| `plane.rs` 搬走了什么 | 只搬 `to_pixel`（1 个函数），`plane.rs` 保留 `pub use` 再导出 ⇒ 既有断言一行未改 | 观测（归属锚） |
+| 未知 | 实体 tag `0x28`/`0x29` 的语义、`draw` 里 5 个无锚被调者、`on_resized` 的三个 setter、字段真名 | **未知**（§26.5） |
+
+### 26.1 名字从哪来，地址怎么钉的（三类指纹，可逐条复核）
+
+* **名字**：arm64 2.0.60 未 strip 的 `.symtab`（`graphwarrust::graphwar_plane::GraphwarPlane` 下
+  有源级名的 `FUNC` 共 8 个方法 + 2 个闭包）。
+* **判据不是函数大小**（`docs/02` §19 已证否）。本节用三类：
+
+| # | 指纹 | 一句话 | 定死了谁 |
+|---|---|---|---|
+| 1 | **`panic::Location` 键集** | 两侧各 **19** 个 `src/graphwar_plane.rs:(line,col)` 键，**一个不多一个不少**；按函数分组后**完全同构**（`draw` 9 键 / `ready` 4 键 / `process` 2 键 / `obstacle_partial_update_event` 1 键 / gdext 入口 4 个共享 `:68:1`） | `draw` `ready` `process` `obstacle_partial_update_event` + `init`（锚在 `obstacle_drawer.rs:37:97`） |
+| 2 | **被调者多重集** | 两侧逐个相等：`ready` 3× `subscribe_to_event`；`process` 2× `ObstacleDrawer::update` + 1× `get_team_overview`；闭包 1× `obstacle_partial_update_event` | `ready` / `process` / 闭包 |
+| 3 | **调用者集合 + 首尾相接** | arm64 与 x86 的调用者**逐个相同**，且三个函数在两侧都**严丝合缝**：`on_resized`+span = `clear_state`，`clear_state`+span = `update_entities`，`update_entities`+span = `obstacle_partial_update_event` | `on_resized` / `clear_state` / `update_entities` |
+
+第 3 条的具体数字（x86 span 取「到下一个 Ghidra 函数起点的距离」，含对齐填充）：
+
+```text
+0x4bddb0 + 0x120 = 0x4bded0   on_resized  → clear_state
+0x4bded0 + 0x3a0 = 0x4be270   clear_state → update_entities
+0x4be270 + 0x170 = 0x4be3e0   update_entities → obstacle_partial_update_event
+```
+
+arm64 侧同样相接：`0x4c3308`+256 = `0x4c3408`，`0x4c3408`+900 = `0x4c378c`，
+`0x4c378c`+332 = `0x4c38d8`。
+
+> ⚠️ **本轮不采信 `tools/class_probe.py` 的地址**。它读的是上游 `analysis/*.pkl`，那些 pkl 与
+> `2026-08-28` 这份 `.so` **不是同一次构建**：同一行号 `:274:129` 它归 `0x4b7a70`，本轮按
+> `.rela.dyn` + capstone 重扫归 `0x4b5df0`；`:218:129` 它归 `0x4b8bd0`，重扫归 `0x4b7a70`；
+> `:68:1` 它归 `0x4b2890`，重扫归四个 gdext 入口。**重扫可自证**：`0x95e4f8`（`:274:129`）
+> 在整份 `.text` 里只有 **1** 条引用指令（`lea rdi,[rip+0x4a772c]` @ `0x4b6dc5`），落在
+> `0x4b5df0..0x4b7380` 之内。
+>
+> ⇒ 结论：**pkl 那一套（`docs/140`/`149` 时点的 `class_probe`）对本版 `.so` 已经过期**，
+> 引用它的旧表要按本节重核。
+
+### 26.2 地址表（**观测**；x86 虚地址，Ghidra = `+0x100000`）
+
+| 源级名 | x86 vaddr | x86 span | arm64 | arm64 B | 判据 |
+|---|---|---|---|---|---|
+| `draw` | **`0x4b5df0`** | 0x1590 | `0x4bc54c` | 4592 | 键集 9/9 |
+| `init` | **`0x4b7380`** | 0x06f0 | `0x4bd73c` | 1336 | `obstacle_drawer.rs:37:97` 双向唯一 |
+| `ready` | **`0x4b7a70`** | 0x05a0 | `0x4bdc74` | 1400 | 键集 4/4 + 3× subscribe |
+| `ready::{{closure}}` | **`0x4b8210`** | 0x01e0 | `0x4be1ec` | 404 | 两侧都调 `obstacle_partial_update_event` |
+| `process` | **`0x4b83f0`** | 0x03f0 | `0x4be534` | 956 | 键集 2/2 + 2× `ObstacleDrawer::update` |
+| `on_resized` | **`0x4bddb0`** | 0x0120 | `0x4c3308` | 256 | 唯一游戏内调用者 = `ready`；相接 |
+| `clear_state` | **`0x4bded0`** | 0x03a0 | `0x4c3408` | 900 | 调用者 = 根节点 `process` + `process_button_pressed`；相接 |
+| `update_entities` | **`0x4be270`** | 0x0170 | `0x4c378c` | 332 | 调用者只有根节点 `process_button_pressed`；相接 |
+| `obstacle_partial_update_event` | **`0x4be3e0`** | 0x0150 | `0x4c38d8` | 260 | `graphwar_plane.rs:174:18` 双向唯一 |
+
+gdext 入口（不是原版写的方法，是 `#[gdextension]` 生成的样板）：
+
+| 源级名 | x86 vaddr | arm64 | 判据 |
+|---|---|---|---|
+| `_::__init::__inner_init(:33:10)` | **`0x4bc490`** | `0x4c1e28` | 观测（唯一锚） |
+| `_::__init::__inner_init(:179:1)` | **`0x4bc860`** | `0x4c1c58` | 观测（唯一锚） |
+| `__register_methods` | `0x4b2260` | `0x4b8e60` | **推断**（`:68:1` 组内次序 + 等长 384↔400） |
+| `__register_constants` | `0x4b23e0` | `0x4b8ff0` | **推断**（同上） |
+| `_::__init::__inner_init(:68:1)a` | `0x4bc6b0` | `0x4c2000` | **推断**（组内次序） |
+| `_::__init::__inner_init(:68:1)b` | `0x4bcab0` | `0x4c21c0` | **推断**（组内次序） |
+
+> `docs/08` §3 当年记的「`0x4bcab0` 是 Rust lazy static 初始化」= 这一族 `_::__init::__inner_init`
+> （`std::sync::OnceLock::initialize` + `Mutex` + panic 路径）。**归属对了，名字现在有了**。
+
+### 26.3 四个方法体（**观测**）
+
+**`init`（`0x4b7380`）**：建 **3 个 `FunctionDrawer`** 并 `add_child`。
+arm64 侧 `Gd::default_instance` ×3、`ExAddChild::new` ×3、`Node::add_child_f…` ×3；
+x86 侧 `0x4db030` ×3 + 三组 `0x406d20`/`0x407030`/`0x406520`。另有
+`Image::create`（arm64）/ `Control::set_c…` 各 1 次，**用途未知**。
+
+**`ready`（`0x4b7a70`）**：一个信号 + 3 个后端事件，与 `EntityDrawer::ready` 同一套写法：
+
+```text
+Callable::from_object_method(self, "on_resized")     ; .rodata 0x1c2a7a 长 10  (0x4362f0)
+Object::connect("resized", callable)                 ; .rodata 0x1c2a8e 长 7   (0x3a0fb0)
+GraphwarBackend::subscribe_to_event ×3 (0x44b7f0)    ; 名字首尾相接：
+  add_obstacle_event      0x1c2b32 长 18
+  destroy_obstacle_event  0x1c2b44 长 20
+  clear_obstacles_event   0x1c2b5a 长 19
+```
+
+`ready` 体内还直接调了一次 `on_resized`（`0x4bddb0`）—— 两侧相同，这也是 §26.1 第 3 类的锚。
+
+**`process`（`0x4b83f0`）**：每帧 `ObstacleDrawer::update`（`0x3ee190`）**2 次** +
+`GraphwarDrawUtil::get_team_overview`（`0x4be6e0`）**1 次**。没有别的游戏内调用。
+
+**`draw`（`0x4b5df0`）**：47 条直接调用，其中游戏内的 15 条（顺序即调用顺序）：
+
+| # | 目标 | 名字 | 说明 |
+|---|---|---|---|
+| 1–2 | `0x4be6e0` | `graphwar_draw_util::get_team_overview` | 队伍色（两次） |
+| 3 | `0x499050` | `<未定名>` | 体内 `Line2D::set_width` ×2（`0x49911c`/`0x49921c`） |
+| 4 | `0x46bb90` | `<未定名>` | — |
+| 5 | `0x519530` | `graphwar_tick_handler::get_fractional_tick` | 当前 tick 的小数进度 |
+| 6 | `0x456df0` | `graphwar_function_manager::get_active_functions_on_tick` | 本 tick 生效的函数 |
+| 7 | `0x498c70` | **`function_drawer::FunctionDrawer::update_function`** | 体内 `Line2D::add_point`（`0x498fab`）+ `set_default_color`（`0x498e30`） |
+| 8 | `0x4992b0` | `<未定名>` | 体内 `Line2D::set_default_color`（`0x4993a3`） |
+| 9 | `0x4971e0` | `<未定名>` | FunctionDrawer 家族 |
+| 10 | `0x4993c0` | `<未定名>` | 体内 `draw_circle` ×5；引用 `"Write a function of x to hit the target"`（`0x1c21a7`） |
+
+两个图元（逐位）：
+
+```text
+draw_set_transform(...)                                         ; 槽 0x9bc018，调用点 0x4b607d
+draw_rect(Rect2(-25,-15,50,30), Color(0,0,0,1), false, 0.2, false)
+  ; 槽 0x9bc028，调用点 0x4b61ab
+  ; Rect2 槽 0x19cc20（与 AxisDrawer 同一个槽）、Color 槽 0x19cf70、
+  ; 宽度槽 0x1ba598 = cd cc 4c 3e = 0.2f32；filled: xor ecx,ecx @0x4b61a6；
+  ; antialiased: xor r8d,r8d @0x4b61a8
+```
+
+**`on_resized`（`0x4bddb0`）**：`Control::set_*` ×3 + `get_*` ×1（都走 GOT 槽，方法名未解），
+288 B，无其它调用。**`clear_state`（`0x4bded0`）**：`Node::queue_free` ×2 + `HashMap/Vec` 清理，
+并引用 `EntityDrawer` / `EffectDrawer` 两个类名（用途见 §26.5）。
+**`update_entities`（`0x4be270`）**：与 `clear_state` 同型但只 `queue_free` ×1。
+
+### 26.4 悬案结案：**弹道不是 `draw_line` 画的**（有界穷举）
+
+**做法**：把 `CanvasItem` 的每个绘图方法名（`.rodata` 的方法名字面量）→ 包装函数 → `.got` 槽
+的全链条解出来，然后**穷举** `.text` 里所有对该槽的调用，**两种形态都算**：
+
+* `call *0x…(%rip)`（直接读槽）；
+* `mov 0x…(%rip),%reg` + `call *%reg`（寄存器间接，**必须也扫**——`AxisDrawer` 的
+  8 个 `draw_line` 里有 2 个是这种形态，只扫前者会漏）。
+
+| 方法名 | 字面量 | 包装 | GOT 槽 | 调用点数 | 调用者 |
+|---|---|---|---|---|---|
+| `draw_line` | `0x29ef7a` | `0x8abff0` | `0x9bc228` | **10** | `AxisDrawer::draw` `0x4e05b0` **×8**（`0x4e0775` `0x4e0815` `0x4e089f` `0x4e0944` `0x4e09c6` `0x4e0a74` `0x4e0b02` `0x4e0b62`）+ `EffectDrawer::draw` `0x4e1520` **×2**（`0x4e2104` `0x4e2234`） |
+| `draw_arc` | `0x19f9d0` | `0x8abca0` | `0x9bc020` | 5 | `EntityDrawer::draw` `0x4b2890` ×3 + `GraphwarLongPressAnimation::draw` `0x4d8100` ×2 |
+| `draw_circle` | `0x29ef8c` | `0x8ac690` | `0x9bbfc0` | 9 | `0x4993c0` ×5 + `EffectDrawer::draw` ×4 |
+| `draw_polygon` | `0x29ef97` | — | `0x9bc238` | 1 | `EffectDrawer::draw` ×1（`0x4e1d8f`） |
+| `draw_rect` | `0x29ef83` | — | `0x9bc028` | 2 | **`GraphwarPlane::draw` ×1**（`0x4b61ab`）+ `AxisDrawer::draw` ×1 |
+| `draw_texture_rect` | `0x29efd8` | — | `0x9bc248` | 3 | `PlayerShowcase::draw` `0x4e5400` ×3 |
+| `draw_set_transform` | `0x29efe9` | — | `0x9bc018` | 4 | `EntityDrawer` / **`GraphwarPlane`** / `AxisDrawer` / `EffectDrawer` 各 1 |
+
+**有界否定的三条**（每一条都覆盖了整个 `.text`）：
+
+1. **`draw_polyline` / `draw_multiline` / `draw_dashed_line` / `draw_primitive` / `draw_mesh` /
+   `draw_string` / `draw_char` 这些方法名在 `.rodata` 里根本不存在** ⇒ 不可能是它们画的
+   （与 `docs/00-status` 那条旧结论一致，本轮复跑确认）。
+2. **`draw_line` 的 10 个调用点里没有一个是曲线**：8 个在 `AxisDrawer`（网格线，端点/颜色/线宽
+   已由 `src/axis_drawer.rs` 逐条落码），2 个在 `EffectDrawer`（爆炸十字，`src/effect_drawer.rs` 已落码）。
+   ⇒ **`graphwar_plane` / `graphwar_effect_manager` / `graphwar_draw_util` 三个候选全部排除**
+   （`GraphwarPlane::draw` 里 `draw_line` 调用点 = 0；`graphwar_draw_util` 只有 1 个带符号函数
+   `get_team_overview` `0x4be6e0`，它不调任何绘图原语；`graphwar_effect_manager` 的
+   `add_effect` / `tick` / `new` 三个函数也都不在下面这 7 个里）。
+3. **全二进制只有 7 个函数调用过任何绘图原语**：`EntityDrawer::draw`(0x4b2890)、
+   `GraphwarPlane::draw`(0x4b5df0)、`GraphwarLongPressAnimation::draw`(0x4d8100)、
+   `0x4993c0`（未定名）、`AxisDrawer::draw`(0x4e05b0)、`EffectDrawer::draw`(0x4e1520)、
+   `PlayerShowcase::draw`(0x4e5400)。
+
+**那曲线是怎么来的？—— `Line2D` 子节点**（观测）：
+
+| `Line2D` 方法 | GOT 槽 | 调用点数 | 落点 |
+|---|---|---|---|
+| `add_point` | `0x9bbf98` | **1** | `0x498fab`，在 **`FunctionDrawer::update_function`（`0x498c70`）** 体内（循环里） |
+| `set_default_color` | `0x9bbf90` | 2 | `0x498e30`（同一个 `update_function`）+ `0x4993a3`（`0x4992b0`） |
+| `set_width` | `0x9bbfa0` | 2 | `0x49911c` / `0x49921c`，都在 `0x499050` 里 |
+
+而 `0x498c70` / `0x499050` / `0x4992b0` **三个都被 `GraphwarPlane::draw`（`0x4b5df0`）调用**。
+⇒ 平面的 `draw` 每帧把"当前 tick 的函数"喂给 `FunctionDrawer`，后者往自己的 `Line2D` 里
+`add_point`；曲线是**节点**，不是图元。这与 `entity_drawer` 那条"士兵不是图元、是子节点"
+（§24.3）是同一个设计取向。
+
+> **推断（未证）**：`update_function` 的入参里有 `get_fractional_tick`（`0x519530`）与
+> `get_active_functions_on_tick`（`0x456df0`）⇒ 曲线长度随 tick 增长，像是**开火动画**
+> 而不是静态预览。**缺的证据**：`add_point` 那处循环的上界与步长没逐条读；
+> 也没有运行时帧对拍（谁能逐帧量 Line2D 的 `points` 就能定案）。
+
+### 26.5 本节没解出来的（照实写）
+
+1. 实体 tag **`0x28` / `0x29`** 各是哪一类（士兵 / 障碍 / 靶子）：`0x4be3e0` 只做枚举判别
+   （niche 优化形态），没有类型名字面量可比。
+2. `draw` 里 **5 个无 Location 锚**的被调者（`0x499050` `0x4992b0` `0x4971e0` `0x4993c0`
+   `0x46bb90`…）的**函数名**：只能确认它们在 `function_drawer` 的地址簇里。
+3. `on_resized` 里 3 次 `Control::set_*` 设的是哪三个属性（走 GOT 槽，槽 → 方法名的映射未做）。
+4. `obstacle_partial_update_event` 开头那次 `call *0x9bb288`（`0x4be41f`）：入参是 `size`，
+   出参直接乘 1000；**是什么转换未定**（`docs/08` §4 记成 `FUN_00a30650`）。
+5. `clear_state` 引用 `EntityDrawer` / `EffectDrawer` 类名的用途（只是 `cast` 目标？还是清子节点？）。
+6. `GraphwarPlane` 的**字段真名与偏移**：只确证了那个 `Vec` 的三个槽 `+0x50`(cap) / `+0x58`(ptr) /
+   `+0x60`(len)。
+7. 曲线到底是不是**弹道**（开火轨迹）：见 §26.4 末尾的「推断」。
+
+### 26.6 复现（不依赖本节结论，任何人可重跑）
+
+```text
+# ① 两侧的 Location 键集（本节的指纹 1）
+python3 - <<'PY'
+import sys; sys.path.insert(0,'tools'); import name_bridge as NB
+for p in (NB.DEFAULT_ARM64, NB.DEFAULT_X86):
+    e = NB.Elf(p); locs = e.locations()
+    ks = sorted({k for k in locs.values() if k[0]=='src/graphwar_plane.rs'})
+    print(p.split('/')[-3:], len(ks), ks[:4], '...')
+PY
+
+# ② draw_line 的槽与全部调用点（含 mov slot,%reg + call *%reg）
+#    字面量 0x29ef7a -> 包装 0x8abff0；.rela.dyn 里 addend==0x8abff0 的槽 = 0x9bc228
+objdump -d --start-address=0x8abff0 --stop-address=0x8ac1a0 \
+        .reference/steam/2026-08-28/libgraphwarrust.so | grep -E '29ef7a|5d1f43f3'
+
+# ③ 三条首尾相接（本节的指纹 3）
+python3 - <<'PY'
+import pickle
+s = sorted(pickle.load(open('analysis/funcstarts_ghidra_va.pkl','rb')))
+for a in (0x4bddb0,0x4bded0,0x4be270):
+    i = s.index(a); print(hex(a), 'span', hex(s[i+1]-a), '-> next', hex(s[i+1]))
+PY
+```
+
+### 26.7 落码清单
+
+| 原版东西 | 落在 | 覆盖 | 档位 |
+|---|---|---|---|
+| 8 个方法 + 1 个闭包的地址 | `PLANE_FUNCS`（名字 + x86 + span + arm64 + 长度 + 判据） | 9/9 | 观测 |
+| 6 个 gdext 入口的地址 | `PLANE_GDEXT_ENTRIES` | 6/6 | 观测（2）/ 推断（4） |
+| 首尾相接链 | `PLANE_TAIL_CHAIN`（+ 两侧断言） | 4 | 观测 |
+| 坐标变换 | `to_pixel`（**从 `src/plane.rs` 搬来**，那边保留 `pub use`） | 1 | 逐位 |
+| 脏矩形 | `PixelRect` / `obstacle_rect` / `obstacle_partial_update_event`（含"非 0x28/0x29 就 panic"） | 全 | 观测 |
+| `draw` 的图元 | `BOARD_RECT` / `BOARD_COLOR` / `BOARD_WIDTH` / `BOARD_FILLED` / `BOARD_ANTIALIASED` + 两个 GOT 槽 | 全 | 逐位 |
+| `init` / `ready` / `process` 的意图 | `FUNCTION_DRAWER_CHILDREN` / `READY_EVENTS` / `RESIZED_SIGNAL` / `RESIZED_HANDLER` / `OBSTACLE_DRAWER_UPDATES_PER_FRAME` + `GraphwarPlane` 意图结构 | 全 | 观测 |
+| 未知 | `UNKNOWNS`（6 条） | — | 未知 |
+
+`tests/graphwar_plane.rs`（18 条）与 `src/graphwar_plane.rs` 内的 9 条单测都是**回归保护**；
+`src/plane.rs` 的 6 条既有断言**一条未改**（`to_pixel` 变成再导出，`use super::*` 照样拿到）。
+本轮 `cargo test --offline`：lib **361**、总计 **707**（+27），doctest 阶段 0 条通过（本仓库无 Rust doctest，
+文档里的 shell 一律用 ```` ```text ```` 围栏）。
