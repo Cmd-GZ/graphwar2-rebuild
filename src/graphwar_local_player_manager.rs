@@ -14,7 +14,7 @@
 //! | `new` | 已内联（无独立符号） | 已内联（无独立符号） | — | 订阅 3 条事件 | 推断（3 个闭包 + 形状） |
 //! | `handle_connected_to_server` | `0x51a570` / 160 | `0x411be8` / 180 | 76, 81 | 记下自己的连接 id + 请求建玩家 + 清表 | 逐位 |
 //! | `handle_player_info` | `0x519f40` / 1584 | `0x4115d0` / 1560 | 107–128 | 按连接 id 过滤 + 首次入列时发 5 条请求 | 逐位 |
-//! | `handle_entity_removed_event` | `0x51a610` / 214 | `0x411c9c` / 176 | 146 | `Vec::retain` 掉该 id | 逐位 |
+//! | `handle_entity_removed_event` | `0x51a610` / `0xe0` | `0x411c9c` / 176 | 146 | `Vec::retain` 掉该 id | 逐位 |
 //!
 //! 三个 `subscribe` 闭包在 arm64 上是独立符号（`0x411d4c` / `0x411d7c` / `0x411dac`，各 48 B），
 //! 每个都用 `adr x1, <handler>` 把方法地址交给 `WeakCaller::call`
