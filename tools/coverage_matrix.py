@@ -412,8 +412,8 @@ mod("graphwar_campaign_control.rs", "graphwar", (), "未做",
     "docs/118 §7：21 关数据已从 0x4ad380 解出、campaign.save 格式已解；src/ 里还没有这张表")
 mod("graphwar_client_connection_handler.rs", "graphwar", ("src/graphwar_client_connection_handler.rs",), "观测",
     "11 FUNC（8 方法 + 3 订阅闭包 + 连接线程）。ConnectionState 4 个变体（0/1/2/3），**与 GameState(8) 是两套**，唯一交点：失败时 set_state(7)。本机地址是 [::1]:port（**不是 127.0.0.1**）；远端只认 IP 字面量、**无 DNS**；connect_timeout 30s、**无重连**、**不发也不订阅心跳**（docs/09 §11）")
-mod("graphwar_color_manager.rs", "graphwar", (), "未做",
-    "docs/102：两张 6 色队色表 + 随机起点线性探测已解出；src/ 无实现")
+mod("graphwar_color_manager.rs", "graphwar", ("src/graphwar_color_manager.rs",), "观测",
+    "7/7（含 GraphwarColor::serialize）：两张 6 色表就是 init_team_colors 里的字面量；分配 = **队号选池** -> rand::random::<u64>()%6 起点 -> +1 线性探测跳过 used -> 6 个全占则 (r%180,g%180,b%180)。**不是进房顺序、不是 player_id 取模**（docs/10 §15）")
 mod("graphwar_computer_player_manager.rs", "graphwar", ("src/graphwar_computer_player_manager.rs",), "观测",
     "6/7 定位：HashMap<u32,BotData>（步长 0x78）+ SoldierBotData（0x58）。**不是掉线托管**：唯一入口是 bot_added_event(10)；level 阈值 4/11/26/101/251，精英数=种群/5，limit=5/5/10/15/25/200（docs/13 §25）")
 mod("graphwar_crash_reporter.rs", "graphwar", (), "未知",
@@ -457,10 +457,10 @@ mod("graphwar_level_manager.rs", "graphwar", ("src/graphwar_level_manager.rs",),
     "40 个锚函数里 26 个已还原、14 个仅分类；level_info/campaign.save 簇无锚，落地时可能要搬去 campaign_control")
 mod("graphwar_life_manager.rs", "graphwar", ("src/graphwar_life_manager.rs",), "逐位",
     "docs/65：穿过即死/友军致死/无血量在真实对局与回放里逐个相同；docs/41 状态迁移一致")
-mod("graphwar_lobby_control.rs", "graphwar", (), "未做",
-    "docs/112 只读出它与战役/名字模块的调用关系；界面在 client/ GDScript，src/ 无实现")
-mod("graphwar_local_player_manager.rs", "graphwar", (), "未做",
-    "docs/112 §13 记录了结构观测；src/ 无对应实现")
+mod("graphwar_lobby_control.rs", "graphwar", ("src/graphwar_lobby_control.rs",), "观测",
+    "3/3（旧记 1，两个 show_* 在 x86 内联进 new）：大厅**模式开关**（ShowLocalButton/ShowGlobalButton），互斥 set_pressed + 切模式时把 LAN 列表整表 queue_free；列表本体归 lan_vbox（docs/10 §15）")
+mod("graphwar_local_player_manager.rs", "graphwar", ("src/graphwar_local_player_manager.rs",), "观测",
+    "4/4：**本机 player_id 的单一真相**（+0x18 已连上 / +0x1c connection_id / Vec<u32>）。首次入列五连发 = 59 NameRequest / 50 / 52 / 54 / 66 RankRequest；**66 的发起侧升为逐位**（全 .text 无第二处）（docs/10 §15）")
 mod("graphwar_logger.rs", "graphwar", (), "未做",
     "docs/112 记录 log 入口的结构观测；src/ 无实现")
 mod("graphwar_long_press_animation.rs", "graphwar", ("src/graphwar_long_press_animation.rs",), "观测",
@@ -475,8 +475,8 @@ mod("graphwar_module_container.rs", "graphwar", ("src/graphwar_module_container.
     "game_server_thread 20 / Backend 1×2），容器自己没有 init；"
     "Location 只有 get_module_wk 一个（30:28，RefCell::borrow 的 track_caller）"
     "⇒ add/get 零锚是正确结果")
-mod("graphwar_name_manager.rs", "graphwar", (), "未做",
-    "docs/112 §0：HashMap<u32, String>、entry 32 字节、NameInfo 判别值 60 已逐位解出；src/ 无实现")
+mod("graphwar_name_manager.rs", "graphwar", ("src/graphwar_name_manager.rs",), "观测",
+    "4/4：HashMap<u32,String>，**名字的权威源**（graphics_manager 三张表是皮肤/脸/帽资源名，不是名字）。改名链路：59 NameRequest 进 -> set_name（唯一调用者 remote_event_handler）-> 60 NameInfo 广播（docs/10 §15）")
 mod("graphwar_nodes.rs", "graphwar", ("src/graphwar_nodes.rs",), "观测",
     "11/11：**不造节点**，是全客户端唯一的「按名字/按类型在场景树里找节点」入口——get_node_by_name::<T>（11 个单态化薄壳）/ get_node_by_name_rec（17）/ get_node_by_type_rec（1）；另给 40 个节点名 + 80 个调用点三张表（docs/16 §28）")
 mod("graphwar_obstacle_manager.rs", "graphwar", ("src/plane.rs",), "逐位",
@@ -498,8 +498,8 @@ mod("graphwar_plane.rs", "graphwar", ("src/graphwar_plane.rs", "src/plane.rs"), 
     "⚠ 旧行写 `逐位` 是按**掩膜光栅化**算的，而掩膜属 `graphwar_obstacle_manager`"
     "（同一张表里另有一行）⇒ 本模块自身只到 `观测`：没有整函数的逐字节对拍。"
     "`src/plane.rs` 里剩下的掩膜 / 换算归 obstacle_manager 与 plane_pos_manager，见 docs/02 §17.4")
-mod("graphwar_player_manager.rs", "graphwar", (), "未知",
-    "只有 docs/02 一行（玩家），无地址级观测、无实现")
+mod("graphwar_player_manager.rs", "graphwar", ("src/graphwar_player_manager.rs",), "观测",
+    "4/4（旧记 3，add_player 在 x86 被内联、arm64 有独立符号）：player_id -> connection_id；该连接最后一人被删时级联 ConnectionRemoved(6)（docs/10 §15）")
 mod("graphwar_player_screen_control.rs", "graphwar", ("src/graphwar_player_screen_control.rs",), "观测",
     "8/8：**就是写 GraphwarPlayerConfig 的地方**——set_skin/set_face/set_hat 三条具名 bl 直证，三个 setter 写 +0x60/+0x78/+0x90 且 inc dword [+0xa8]，与 docs/16 §25.9 布局逐字段吻合（§29）")
 mod("graphwar_play_screen_control.rs", "graphwar", ("src/graphwar_play_screen_control.rs",), "观测",

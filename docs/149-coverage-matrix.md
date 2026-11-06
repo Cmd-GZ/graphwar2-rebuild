@@ -5,14 +5,14 @@
 ## 0. 一句话总账
 
 ```
-原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 431、15 个非 graphwar 游戏模块占 96）；我们已实现 437 个函数，其中 逐位 88 / 观测 349 / 推断 0；未做 69；完全未知的模块 13 个（graphwar 里 7 个）。
+原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 431、15 个非 graphwar 游戏模块占 96）；我们已实现 451 个函数，其中 逐位 88 / 观测 363 / 推断 0；未做 58；完全未知的模块 12 个（graphwar 里 6 个）。
 ```
 
 拆成两个口径（下面的数字全部由脚本算出，重跑即复现）：
 
 | 口径 | 模块数 | 可归属函数 | 已实现 | 逐位 | 观测 | 推断 | 未做 | 未知模块 |
 |---|---|---|---|---|---|---|---|---|
-| 58 个 `graphwar_*.rs` | 63 | 431 | 389 | 81 | 308 | 0 | 29 | 7 |
+| 58 个 `graphwar_*.rs` | 63 | 431 | 403 | 81 | 322 | 0 | 18 | 6 |
 | 15 个非 graphwar 的游戏模块 | 15 | 96 | 48 | 7 | 41 | 0 | 40 | 6 |
 
 还有 `weak_caller.rs`（40 个归属函数）按 `docs/02` §9 判为第三方依赖库，单独一行留在 TSV 里备查，**不计入**任何合计。
@@ -80,7 +80,7 @@
 | `graphwar_button.rs` | 6 | 3 | `src/graphwar_button.rs` | 13 | 观测 |
 | `graphwar_campaign_control.rs` | 1 | 1 | — | 0 | 未做 |
 | `graphwar_client_connection_handler.rs` | 8 | 16 | `src/graphwar_client_connection_handler.rs` | 8 | 观测 |
-| `graphwar_color_manager.rs` | 4 | 6 | — | 0 | 未做 |
+| `graphwar_color_manager.rs` | 4 | 6 | `src/graphwar_color_manager.rs` | 26 | 观测 |
 | `graphwar_computer_player_manager.rs` | 5 | 27 | `src/graphwar_computer_player_manager.rs` | 30 | 观测 |
 | `graphwar_crash_reporter.rs` | 0 | 0 | — | 0 | 未知 |
 | `graphwar_draw_util.rs` | 1 | 4 | — | 0 | 未做 |
@@ -103,13 +103,13 @@
 | `graphwar_level_generator.rs` | 4 | 26 | `src/graphwar_level_generator.rs+src/graphwar_level_generator/tables.rs` | 28 | 逐位 |
 | `graphwar_level_manager.rs` | 40 | 590 | `src/graphwar_level_manager.rs` | 20 | 观测 |
 | `graphwar_life_manager.rs` | 9 | 12 | `src/graphwar_life_manager.rs` | 7 | 逐位 |
-| `graphwar_lobby_control.rs` | 1 | 6 | — | 0 | 未做 |
-| `graphwar_local_player_manager.rs` | 3 | 15 | — | 0 | 未做 |
+| `graphwar_lobby_control.rs` | 1 | 6 | `src/graphwar_lobby_control.rs` | 7 | 观测 |
+| `graphwar_local_player_manager.rs` | 3 | 15 | `src/graphwar_local_player_manager.rs` | 12 | 观测 |
 | `graphwar_logger.rs` | 2 | 2 | — | 0 | 未做 |
 | `graphwar_long_press_animation.rs` | 7 | 7 | `src/graphwar_long_press_animation.rs` | 11 | 观测 |
 | `graphwar_mode_manager.rs` | 2 | 6 | — | 0 | 未做 |
 | `graphwar_module_container.rs` | 20 | 1 | `src/graphwar_module_container.rs` | 17 | 观测 |
-| `graphwar_name_manager.rs` | 3 | 3 | — | 0 | 未做 |
+| `graphwar_name_manager.rs` | 3 | 3 | `src/graphwar_name_manager.rs` | 10 | 观测 |
 | `graphwar_nodes.rs` | 11 | 1 | `src/graphwar_nodes.rs` | 17 | 观测 |
 | `graphwar_obstacle_manager.rs` | 8 | 14 | `src/plane.rs` | 16 | 逐位 |
 | `graphwar_path_calculator.rs` | 1 | 9 | `src/graphwar_path_calculator.rs` | 2 | 逐位 |
@@ -117,7 +117,7 @@
 | `graphwar_plane_pos_manager.rs` | 6 | 9 | `src/plane.rs` | 16 | 观测 |
 | `graphwar_play_screen_control.rs` | 10 | 64 | `src/graphwar_play_screen_control.rs` | 8 | 观测 |
 | `graphwar_player_config.rs` | 0 | 0 | — | 0 | 未做 |
-| `graphwar_player_manager.rs` | 3 | 6 | — | 0 | 未知 |
+| `graphwar_player_manager.rs` | 3 | 6 | `src/graphwar_player_manager.rs` | 12 | 观测 |
 | `graphwar_player_screen_control.rs` | 8 | 22 | `src/graphwar_player_screen_control.rs` | 19 | 观测 |
 | `graphwar_rank_manager.rs` | 4 | 4 | `src/graphwar_rank_manager.rs` | 11 | 观测 |
 | `graphwar_remote_event_handler.rs` | 3 | 171 | `src/events.rs` | 2 | 观测 |
@@ -161,7 +161,7 @@
 完整的 evidence（每行一句话的依据）在 `docs/coverage-matrix.tsv`，那张表是本脚本的唯一真源，本页的表格由它渲染。
 
 ## 3. 哪些模块连「它干什么」都不知道（问题 1）
-**58 个 `graphwar_*.rs` 里有 7 个**属于这一类 —— 判据是：没有实现、且除模块名之外**没有任何**能指到地址/报文/真机的观测。
+**58 个 `graphwar_*.rs` 里有 6 个**属于这一类 —— 判据是：没有实现、且除模块名之外**没有任何**能指到地址/报文/真机的观测。
 
 | module | orig_funcs | anchors | 现状 |
 |---|---|---|---|
@@ -169,7 +169,6 @@
 | `graphwar_effect_manager.rs` | 1 | 3 | 只有名字 |
 | `graphwar_entity_effect_manager.rs` | 3 | 4 | 只有名字 |
 | `graphwar_game_recorder.rs` | 2 | 4 | 只有名字 |
-| `graphwar_player_manager.rs` | 3 | 6 | 只有名字 |
 | `graphwar_texture_loader.rs` | 1 | 1 | 只有名字 |
 | `graphwar_video_writer.rs` | 3 | 4 | 只有名字 |
 
@@ -239,5 +238,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（57 个文件、1460 条 `fn`） | `ce389a4912e37ae170c3264bdcf4c9cee3946c09e2e96b796c921cba00ad57fe` |
+| `src/` 树（62 个文件、1527 条 `fn`） | `985711cbc3b3efc236bab7587a8f9bb318b2b67a4fb8500e16f98efacb188f0e` |
 
