@@ -4575,8 +4575,8 @@ nm -S --defined-only <arm64>/libgraphwarrust.so | grep graphwar_texture_loader
 | 1 | `target_manager` 是**一张 `HashSet<u32>`**（桶距 4、值类型 `()`），只有 3 个可归属函数 + 被内联的 `add_target` | **逐位** |
 | 2 | 它**没有** alive 字段、**没有**任何重置分支 ⇒ `docs/123` §2.5「不在目标管理器里」在指令级成立 | **逐位** |
 | 3 | 「打不全就全部复原」的判定点在 **`GameStateManager::queue_end_turn_trigger::{{closure}}`**（arm64 `0x4abc00`）：**回合末**、两队都还有人活着、`self[+0x11d]==1` ⇒ 遍历 `target_manager` 的集合并 `life_manager.set_alive(id, true, 0)` | **观测** |
-| 4 | 死亡特效**不是死亡时判定的**：`execute_results` 拿 `entity_effect_map[entity_id]` 当类型、拿 `entity_id` 当 `effect_id`；**查不到就一条都不发** | **逐位** |
-| 5 | ⇒ `AshEffect` / `DeathEffect` 的分界在**实体出生登记**（`EntityEffectInfo`），这解释了 `docs/141` 的 19 例 | **逐位** |
+| 4 | 死亡特效**不是死亡时判定的**：`execute_results` 拿 `entity_effect_map[entity_id]` 当类型、拿**会话级自增计数器**当 `effect_id`（**§37.6 改正了旧稿的「实体 id」**）；**查不到就一条都不发** | **逐位** |
+| 5 | ⇒ `AshEffect` / `DeathEffect` 的分界在**实体出生登记**（`EntityEffectInfo`），这解释了 `docs/141` 的 19 例；**登记规则已解到指令**（士兵看皮肤 `bot_` 前缀、靶子恒 `Spark`）——见 §37 | **逐位** |
 | 6 | `effect_manager`：登记 + 广播 `EffectInfo`(44)；`tick` 只回收 **`start_tick + 3600 <= now`** 的记录，不发事件 | **逐位** |
 | 7 | `EffectType` 四变体判别值 `0..3` = `ExplosionEffect/DeathEffect/SparkEffect/AshEffect`（`.rodata 0x19caf8` 首尾相接） | **逐位** |
 | 8 | `game_recorder` 录 **32 条**服务端广播事件（`{"event":…,"tick":N}` 逐行），**`GameStateInfo==EndingGame`** 时落盘到 **`user://replays/<unix 秒>`**（gzip，flate2） | **逐位** |
@@ -4615,7 +4615,7 @@ GameStateManager::queue_end_turn_trigger::{{closure}}   arm64 0x4abc00 (0x58c)
 | 生产点 | `effect_id` | `effect_type` | 语义 |
 |---|---|---|---|
 | `0x4a89ec` | **自增计数器**（`ldxr/stxr`） | **恒 0** = `ExplosionEffect` | 弹道停止/命中的爆炸 |
-| `0x4a8cb0` | **实体 id** | **`entity_effect_map[entity_id]`** | 死亡 |
+| `0x4a8cb0` | **同一个自增计数器**（`0x4a8c68` 的 `ldxr w23,[x28]`）〔§37.6 改正：旧稿误记成「实体 id」〕 | **`entity_effect_map[entity_id]`** | 死亡 |
 
 第二处的查表就是 `GraphwarEntityEffectManager` 的 `HashMap<u32, EffectType>`（桶距 8，
 键 `u32` 在 +0、值 `u8` 在 +4）：`hash_one(+0x50, &entity_id)` → 键比较
@@ -4624,6 +4624,9 @@ GameStateManager::queue_end_turn_trigger::{{closure}}   arm64 0x4abc00 (0x58c)
 
 ⇒ **分界条件**：这个实体**出生时**被 `EntityEffectInfo` 登记成什么，死亡就发什么；
 没登记就什么都不发。任何 `unwrap_or(DeathEffect)` 都会让 `docs/141` 那 19 例继续错。
+
+**登记规则在 §37 解完了**（士兵：皮肤 `bot_*` ⇒ `Ash`、否则 `Death`；靶子：`Spark`；
+迟到的 `SkinGraphicsInfo{bot_*}` 会改写），那里还有 6 个写入点的地址与数据侧 899/953 的复核。
 
 ### 32.4 (c) 录像写什么、何时写、写到哪
 
@@ -5564,3 +5567,171 @@ pub mod obstacle_drawer;
 **接线之前 `tests/last_five.rs` 也能跑**：它用 `#[path = "../src/<模块>.rs"]` 直接编译这 5 个源文件
 （五个模块彼此**零依赖**，只用了 `std`，所以不需要在测试 crate 根上重导出任何东西）。
 接线之后同一份断言仍然成立（会多跑一遍）。
+
+## 37. 实体特效登记表：`AshEffect` / `DeathEffect` / `SparkEffect` **在出生时定死**（本轮新增：`docs/141` 那 19 例的机制解）
+
+> 任务：`docs/141` §4.4 记着「37 个失败的多发批里，19 个是死亡块**整块**是 `AshEffect`」，
+> 并把它归成"我方没有 Ash 发射器"。§32 已经把分界推到"实体出生登记"，
+> 但**士兵到底登记什么**当时是空的（§32.7 列为未知）。
+> 本轮把 6 个写入点逐个解到指令，并落成 `src/graphwar_entity_effect_manager.rs` +
+> `src/game.rs` 的真实行为；同时**改正 §32.3 的一处错**（见 §37.6）。
+
+### 37.1 一页结论
+
+| # | 结论 | 等级 |
+|---|---|---|
+| 1 | `entity_effect_map` 全库只有 **6 个写入点**，分布在 **4 个**宿主函数里（`add_entity_effect` 本构建**全部内联**，没有独立函数体） | **逐位** |
+| 2 | **士兵出生**（`add_soldier_to_player`，arm64 `0x4aaab4`）登记 `DeathEffect`(1)，**但**：皮肤的 `graphics_str` 以 **`bot_`** 开头时登记 **`AshEffect`(3)** | **逐位** |
+| 3 | **靶子出生**（`add_target`，`0x4a5704`）恒登记 **`SparkEffect`(2)**（`mov w2, #0x2`），并把皮肤写成 `"target"` | **逐位** |
+| 4 | **迟到的皮肤**（`handle_graphics_info`，`0x4aa304`）收到 `SkinGraphicsInfo{bot_*}` 时，会把受影响实体**改写**成 `AshEffect`；非 `bot_` 前缀**什么都不做** | **逐位** |
+| 5 | 与**队伍无关**：判定里没有 `get_team` 的结果参与（`0x4aac40` 那次 `get_team` 只用来写 `flip`/颜色） | **逐位** |
+| 6 | 死亡结算**照抄表**、查不到**一条都不发**；`effect_id` 仍是**会话级自增计数器**（**改正 §32.3**，见 §37.6） | **逐位** |
+| 7 | 数据侧独立复核：全语料 953 条死亡 `EffectInfo` 里 899 条按坐标唯一对上实体，**536/536 `DeathEffect`、363/363 `AshEffect`、54/54 `SparkEffect` 全等于该实体的登记值** | **观测** |
+| 8 | `src/game.rs` 已按此改：`Match::new`/`add_target` 做出生登记、`note_skin_graphics` 做迟到改写、`execute_results` 查表（查不到不发） | **逐位** |
+| 9 | **对拍口径没变**：`replaydiff::Predictor` 不喂 `SkinGraphicsInfo`，所以 `docs/141` 的 401 份数字**一位不动**（§37.5 有实测与原因） | **观测** |
+
+### 37.2 6 个写入点（这张表的全部写者）
+
+`entity_effect_map` 是 `HashMap<u32 /*entity_id*/, EffectType /*u8*/>`（桶距 8，唯一）。
+它的 `insert` monomorphization 是 `hashbrown::map::HashMap::insert::hd46922447724ee7`
+（arm64 **`0x466f14`**；`target_manager` 那张值类型是 `()` 的表走 `he15425207191a51e`，
+两者**不是**同一份代码）。扫全 `.text` 的 `bl 0x466f14` 只有 6 条：
+
+| # | 宿主函数（arm64） | 调用点 | 登记的类型 | 触发时机 |
+|---|---|---|---|---|
+| 1 | `GraphwarGameStateManager::add_soldier_to_player` `0x4aaab4` | `0x4ab0d0` | `1 DeathEffect`（皮肤名**为空/取不到**） | 士兵出生 |
+| 2 | 同上 | `0x4ab154` | `1 DeathEffect`（皮肤名不以 `bot_` 开头，或长度 ≤ 3） | 士兵出生 |
+| 3 | 同上 | `0x4ab2a4` | `3 AshEffect`（皮肤名以 `bot_` 开头） | 士兵出生 |
+| 4 | `GraphwarGameStateManager::add_target` `0x4a5704` | `0x4a58d4` | `2 SparkEffect` | 靶子出生 |
+| 5 | `GraphwarGameStateManager::handle_graphics_info` `0x4aa304` | `0x4aa464` | `3 AshEffect`（对一批 id 循环） | 收到 `SkinGraphicsInfo{bot_*}` |
+| 6 | `GraphwarRemoteEventHandler::handle_server_remote_event` `0x3e6df0` | `0x3e8554` | 照抄收到的 `EntityEffectInfo` | 收到远端登记 |
+
+每一处都是同一段内联体：`mov w8, #<ty>` + `strb w8,[sp,#<payload+0x0c>]` 组
+`EntityEffectInfo`（判别值 56，`mov x8,#0x38` / `movk x8,#0x8000,lsl #48`）→
+`GraphwarEventQueue::add_event`（`0x3d7a40`）→ `HashMap::insert(key=entity_id, value=ty)`。
+**事件载荷里的类型字节与 `insert` 的值是两个独立立即数**，同分支里两者一致 ⇒ 不是看错。
+
+### 37.3 士兵：`bot_` 前缀（`0x4ab060`–`0x4ab270`）
+
+皮肤名取自 `GraphicsManager` 的 `HashMap<u32 /*player_id*/, String>`（桶距 `0x20`，
+`0x4aac8c`–`0x4aad48` 查表），命中就 `String::clone` 进一个 `Cow<str>` 槽
+（`[sp+0x20..0x38]`，borrowed 用 `capacity` 的高位标记）；取不到就写
+`0x8000000000000000`（= `Cow::Borrowed("")`）。随后是三个分支：
+
+```text
+0x4ab060  ldr  x20, [sp, #0x20]        ; Cow 的 capacity
+0x4ab068  cmp  x20, #0x8000000000000000
+0x4ab06c  b.ne 0x4ab0e4                ; ── 空皮肤 ⇒ 写点 1（DeathEffect）
+0x4ab0e4  ldp  x21, x8, [sp, #0x28]    ; x21 = ptr, x8 = len
+0x4ab0e8  cmp  x8, #0x3
+0x4ab0ec  b.hi 0x4ab218                ; ── len ≤ 3 ⇒ 写点 2（DeathEffect）
+0x4ab218  ldr  w9,  [x21]              ; 前 4 个字节
+0x4ab220  mov  w10, #0x6f62            ; 'b','o'
+0x4ab224  movk w10, #0x5f74, lsl #16   ; 't','_'
+0x4ab22c  cmp  w9, w10
+0x4ab234  b.eq 0x4ab24c                ; ── "bot_*" ⇒ 写点 3（AshEffect）
+                                       ; ── 其余 ⇒ 写点 2（DeathEffect）
+```
+
+**这与队伍无关**：同一条路径上唯一的 `get_team(player_id)`（`0x4aac40`）结果被
+`and w2, w8, #0x1` 送进 `flip`/颜色，没有进入登记的任何一个分支。
+
+### 37.4 靶子与"迟到的皮肤"
+
+* `add_target` 在 `0x4a583c`–`0x4a5858` 现场拼出 6 个字节 `target`（`0x7465` + `0x6174`/`0x6772`
+  两个立即数），交给 `set_skin_graphics`，然后在 `0x4a589c`/`0x4a58d0` 两处写 `2`。
+* `handle_graphics_info` 的两条闸门：事件 tag 必须是 **51 `SkinGraphicsInfo`**，
+  且 `graphics_str` **长度 ≥ 4 且以 `bot_` 开头**（`0x4aa348` 同一对立即数）；
+  命中后对一批 id 逐个登记 `3`（循环体 `0x4aa410`–`0x4aa47c`）。
+
+**回放里能直接看到这条链**（`1782640836`）：
+
+```text
+tick 20  SkinGraphicsInfo{881,"bot_0"}
+tick 20  EntityEffectInfo{880,"AshEffect"} / {881,"AshEffect"} ×2 趟   ← §37.2 写点 5
+tick 3464 EffectInfo{885, AshEffect} / {886, AshEffect}                ← 这两人死时的死亡块
+```
+
+⇒ 一个玩家开局时若还没选皮肤（登记 `DeathEffect`），等 `bot_N` 的 `SkinGraphicsInfo`
+到了，他名下实体的登记会被**改写**；死亡时发的就是这个改写后的值。
+
+### 37.5 落码与**对拍口径**（数字一位没动，原因是硬约束）
+
+`src/` 的改动（都在允许范围内）：
+
+* `graphwar_entity_effect_manager`：新增 `BOT_SKIN_PREFIX`/`TARGET_SKIN`、
+  `register_soldier`/`register_target`/`apply_skin_graphics` 三个**登记点**投影；
+* `game::Match`：`new` 给入参士兵做出生登记（此刻没有皮肤 ⇒ `DeathEffect`）、
+  `add_target` 登记 `Spark`、新增 `note_skin_graphics`（§37.4 那次改写）、
+  新增 `entity_effect_of` / `handle_entity_removed`；
+  `execute_results` 的死亡块改成**查表**，`None` ⇒ **连 `EffectInfo` 都不发**。
+
+**`docs/141` 的 401 份快照上，before/after 一位没变**：
+
+| 指标（`examples/sim_turns --replay-sim`，401 份定格快照） | before | after |
+|---|---|---|
+| 结算批内容命中 | 21 / 1080 | 21 / 1080 |
+| 结算批**消息种类序列**命中 | 916 / 1080（84.8%） | 916 / 1080（84.8%） |
+| 多发批（`>=2` 发）种类序列 | 93 / 130（71.5%） | 93 / 130（71.5%） |
+| 完全一致的回放 | 1 / 401 | 1 / 401 |
+
+不是"没改对"，而是**这份口径拿不到皮肤**：`_scaffold::replaydiff::Predictor::new` 只用
+`Inputs::scan` 的 `pos`/`alive` 建 `Match`（`Match::new(room, obstacles, soldiers, tick)`），
+`SkinGraphicsInfo` / `TargetInfo` 都在**没喂进去**的那一侧。于是每个实体走的都是
+"出生时还没有皮肤"这条分支 ⇒ 全部 `DeathEffect` ⇒ 与本轮之前的"写死 DeathEffect"
+**输出逐字节相同**。
+
+要看到收益，需要让对拍器把两条**输入**喂进来（`docs/141` 的量纲不变，只是多喂输入）：
+
+```rust
+// _scaffold/replaydiff.rs::Predictor::predict，在 cursor 推进的那一段里
+"SkinGraphicsInfo" => if let (Some(id), Some(s)) = (m.get_i64("entity_id"), m.get_str("graphics_str")) {
+    self.model.note_skin_graphics(id, &s);
+},
+"TargetInfo" => if let Some(id) = m.get_i64("target_id") { self.model.add_target(id, 2) },
+```
+
+**实测（本轮用一次性探针跑过，探针不入库）**：把上面两条喂进去、并把
+`Policy.produced_effects` 扩成四类（否则回放的 `AshEffect` 会被当成"我方不产"整类投掉，
+这个问题**问不出来**）：
+
+| 口径 | 未喂皮肤 | 喂了皮肤 |
+|---|---|---|
+| 默认 `Policy`（Ash/Spark 当我方不产） | 多发批 93 / 130 | 93 / 130（Ash 仍被投掉，看不见） |
+| 严格 `Policy`（四类都参与比较） | 多发批 **77 / 130** | 多发批 **100 / 130（+23）** |
+| 严格 `Policy`，全语料结算批种类序列 | 833 / 1080 | **918 / 1080（+85）** |
+
+⇒ 机制对了：**+23 个多发批**靠"照抄登记表"救回来（`docs/141` 记的 19 例全在这个集合里，
+多出的 4 个是"死亡块里 Ash 与 Death 混排"的批）。剩下的差距是死亡集合漏报与爆炸点，
+不在本节范围。
+
+### 37.6 **改正 §32.3**：死亡那条的 `effect_id` 是**计数器**，不是实体 id
+
+§32.3 的表格把 `0x4a8cb0` 那处写成"`effect_id` = 实体 id"。本轮逐指令复核后**改成计数器**：
+
+```text
+0x4a8c50  ldurb w21, [x13, #-0x4]      ; effect_type ← 表值（u8）
+0x4a8c68  ldxr  w23, [x28]             ; w23 ← 会话级原子计数器
+0x4a8c6c  add   w8, w23, #0x1
+0x4a8c70  stxr  w9, w8, [x28]          ; 计数器 +1
+0x4a8c90  mov   w1, w23
+0x4a8c94  bl    EffectManager::add_effect   ; ← effect_id = w23
+0x4a8cb8  stp   w23, w24, [x29, #-0x48]     ; EffectInfo +0x18 = w23, +0x1c = w24(start_tick)
+0x4a8cbc  sturb w21, [x29, #-0x40]          ; EffectInfo +0x20 = effect_type
+```
+
+事件基址 `x29-0x60` 与 §32 的 72 字节布局逐字段对上（`+0x00` tag /
+`+0x08`,`+0x10` 坐标 / `+0x18` `effect_id` / `+0x1c` `start_tick` / `+0x20` 类型）；
+`w23` 在 `0x4a8c68` 被 `ldxr` **覆盖**，所以它此刻只能是计数器。
+回放侧同结论：`1782640836` 一批里死者是 877/881/880，三条死亡 `EffectInfo` 的
+`effect_id` 是 **884/885/886**（连号），与随后的爆炸 887 共用同一个计数器。
+
+⇒ 我们原来的 `self.next_effect_id` 自增是**对的**；错的是"类型写死 `DeathEffect`"。
+
+### 37.7 未知
+
+| # | 未确定 | 缺什么 | 等级 |
+|---|---|---|---|
+| 1 | `handle_graphics_info` 里"一批 entity id"的确切来源 | 只解到形状（一张 `HashMap` 查表 + `SpecFromIterNested::from_iter`，`0x4aa398`–`0x4aa3e8`）；是"该玩家名下实体"还是"名下士兵"没有逐条确认 | **未知**（两种读法在本仓库行为相同：我们只有 `Match::soldiers`） |
+| 2 | 写点 6（远端处理器）是覆盖还是先比较 | 没逐指令核 | **未知**（不影响本地局） |
+| 3 | `bot_` 之外还有没有别的"特殊皮肤" | 全语料只出现 `target` / `bot_0..5` / 人类皮肤三类；**没有**枚举全表皮肤名 | **未知**（回放侧 899/953 全中，没有反例） |

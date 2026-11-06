@@ -12,9 +12,13 @@
 //! `Match::fire` 处理一次开火，产出**这条链路上要广播的消息**：
 //!
 //! ```text
-//! FunctionPoints -> [LifeQueuedDeath -> EffectInfo(DeathEffect)]*
+//! FunctionPoints -> [LifeQueuedDeath -> EffectInfo(登记表里查到的类型)]*
 //!                -> [QueueDestroyObstacle] -> EffectInfo(ExplosionEffect)
 //! ```
+//!
+//! 死亡那条的 `effect_type` **不是** `DeathEffect` 常量：它是这名实体出生时登记在
+//! [`Match::entity_effects`] 里的那一项（`DeathEffect` / `SparkEffect` / `AshEffect`），
+//! **查不到就整条不发**。登记点见 `graphwar_entity_effect_manager` §6。
 //!
 //! 与 `graphwar_shot_calculator::settle::events` 的区别：这里直接产出**协议报文文本**（带 tick），
 //! 可以直接写进 socket。
@@ -67,6 +71,8 @@
 
 use crate::graphwar_function_evolutionator::{self, Individual, SoldierEvolver, SoldierFunctions, SoldierTurn, VarMode};
 use crate::graphwar_life_manager::{LifeState, Status};
+use crate::graphwar_entity_effect_manager::GraphwarEntityEffectManager;
+use crate::graphwar_effect_manager::EffectType;
 use crate::plane::{empty_mask, rasterize};
 use crate::_scaffold::protocol::{emit_effect_info, emit_function_points, emit_life_queued_death};
 use crate::_scaffold::rng::ChaCha12;
@@ -131,6 +137,13 @@ pub struct Match {
     /// 已经跑过的进化次数。**可观测副作用**：端到端测试用它断言"AI 真的为这个士兵
     /// 进化过"（进化的产物是 token，暂时上不了线，见 `docs/117` §4）。
     pub evolutions: u64,
+    /// **实体特效登记表**（原版 `GraphwarEntityEffectManager` 的那张 `HashMap<u32, u8>`）。
+    ///
+    /// 死亡结算**照抄**这张表：查到了就发那条 `EffectInfo(ty)`，查不到就**一条都不发**
+    /// （arm64 `0x4a8c38` 分支）。所以 `AshEffect` 与 `DeathEffect` 的分界在**登记**时，
+    /// 见 `graphwar_entity_effect_manager` §6 的 6 个写入点与
+    /// [`Match::note_skin_graphics`]。
+    pub entity_effects: GraphwarEntityEffectManager,
 }
 
 /// 进化种群的归属（`docs/98` §6-A **未定**）。
@@ -282,6 +295,16 @@ impl Match {
         // 队伍归属由调用方通过 `set_team` 登记（不预设，否则会误判"0 队全灭"）
         let teams = std::collections::BTreeMap::new();
         let all_teams = std::collections::BTreeSet::new();
+        // 入参 `soldiers` 就是**已经出生的士兵**（原版由 `add_soldier_to_player` 逐个建），
+        // 所以这里补上那次出生登记：`Match::new` 手里还没有任何 `SkinGraphicsInfo`，
+        // 走的是"皮肤为空"那条分支 ⇒ 全部登记 `DeathEffect`（§6.1 写点 1）。
+        // 迟到的 `bot_` 皮肤会把它们改写成 `AshEffect`，见 [`Match::note_skin_graphics`]。
+        let mut entity_effects = GraphwarEntityEffectManager::new();
+        for s in &soldiers {
+            if let Ok(id) = u32::try_from(s.id) {
+                entity_effects.register_soldier(id, None);
+            }
+        }
         Match {
             room, obstacles, soldiers, tick_base, mask,
             next_effect_id: 236, teams, all_teams, turn_count: 0,
@@ -299,6 +322,7 @@ impl Match {
             ai_pops: std::collections::BTreeMap::new(),
             bots: std::collections::BTreeSet::new(),
             evolutions: 0,
+            entity_effects,
         }
     }
 
@@ -649,6 +673,53 @@ impl Match {
     pub fn add_target(&mut self, id: i64, team: u8) {
         self.targets.insert(id, true);
         self.set_team(id, team);
+        // 出生登记：靶子恒 `SparkEffect`（§6.2，`0x4a58d0` 的 `mov w2, #0x2`）。
+        if let Ok(eid) = u32::try_from(id) {
+            self.entity_effects.register_target(eid);
+        }
+    }
+
+    /// **迟到的皮肤信息**（原版 `GraphwarGameStateManager::handle_graphics_info`，
+    /// arm64 **`0x4aa304`**）：`SkinGraphicsInfo{graphics_str}` 决定这个实体的死亡特效。
+    ///
+    /// 只看两条闸门（逐位，见 `graphwar_entity_effect_manager` §6.3）：
+    ///
+    /// * 事件的 tag 必须是 **51 `SkinGraphicsInfo`**（调用方负责）；
+    /// * `graphics_str` **长度 ≥ 4 且以 `bot_` 开头**才改写，否则原版**什么都不做**
+    ///   （`0x4aa358` 的 `b.ne`）。
+    ///
+    /// 返回是否真的改写了登记表。
+    // ─────────────────────────────────────────────────────────────────────
+    // 原版边界：`handle_graphics_info`（`0x4aa304`，784 字节）里那次
+    // `add_entity_effect(_, AshEffect)` 循环（`0x4aa410`–`0x4aa47c`）。
+    // 我方：`Match::note_skin_graphics`。**没有接线**：本仓库没有事件总线，
+    // `SkinGraphicsInfo` 由调用方逐条喂进来（回放对拍器的 `replaydiff::Predictor`
+    // 现在不喂，见 `docs/16-client.md` §37.5）。
+    // ─────────────────────────────────────────────────────────────────────
+    pub fn note_skin_graphics(&mut self, id: i64, graphics_str: &str) -> bool {
+        match u32::try_from(id) {
+            Ok(eid) => self.entity_effects.apply_skin_graphics(eid, graphics_str),
+            Err(_) => false,
+        }
+    }
+
+    /// 实体特效登记表的投影（测试与对拍器用）：`None` = 这个实体**没有登记**，
+    /// 死亡时原版一条特效都不发。
+    pub fn entity_effect_of(&self, id: i64) -> Option<EffectType> {
+        u32::try_from(id).ok().and_then(|e| self.entity_effects.get(e))
+    }
+
+    /// 原版 `entity_removed_event` 的处理（判定值 **14**，`0x3e9ac4`）：**只删表项**。
+    ///
+    /// 死亡**不**走这里（`0x4a8cb0` 只查表、不删），所以活着登记的类型能一直用到
+    /// 死亡结算那一刻。
+    pub fn handle_entity_removed(&mut self, id: i64) {
+        if let Ok(eid) = u32::try_from(id) {
+            let _ = self.entity_effects.handle_entity_removed_event(
+                crate::graphwar_entity_effect_manager::ENTITY_REMOVED_TAG,
+                eid,
+            );
+        }
     }
 
     /// 靶子被打死（等价于一条 `LifeInfo{alive:false}`）。返回是否真的从活翻成死。
@@ -1069,7 +1140,14 @@ impl Match {
     /// LifeManager::set_queued_death                 ← 我们发 LifeQueuedDeath
     /// ObstacleManager::queue_destroy_obstacle       ← 我们发 QueueDestroyObstacle
     /// PlanePosManager::get_position                 ← 我们发 EffectInfo 的坐标
+    /// EffectManager::add_effect  ×2                 ← 我们发两条 EffectInfo
     /// ```
+    ///
+    /// 两处 `add_effect`（arm64 `0x4a89ec` / `0x4a8cb0`，都**内联**）的实参不同：
+    /// 前者恒 `ExplosionEffect` + 自增 id（弹道停点），后者
+    /// **`effect_type = entity_effect_map[entity_id]`**，`effect_id` 仍来自同一个自增
+    /// 计数器，**查不到就一条都不发**（`0x4a8c38`）。见
+    /// `graphwar_entity_effect_manager` §5–§6。
     ///
     /// 四个都对得上，所以 `0x472470` 的行为边界就是本方法：**一次齐射的广播 + 落地**。
     /// 报文顺序与分组见 [`Match::fire_batch`] 的文档（`docs/141` §2–§4）。
@@ -1116,11 +1194,22 @@ impl Match {
         msgs.push(crate::_scaffold::protocol::emit_game_state("SynchronizingResults"));
 
         // ② 死亡块：顺序 = 到达时刻（`docs/86` §6）
+        //
+        // 特效类型**照抄登记表**（arm64 `0x4a8cb0` 一带）：
+        //   `let ty = entity_effect_map.get(&entity_id)?;`  ← `0x4a8b8c`–`0x4a8c50`
+        //   `effect_manager.add_effect(next_effect_id, pos, ty, start_tick)`
+        // **查不到 ⇒ 连 `EffectInfo` 都不发**（`0x4a8c38` 直接跳过 `add_event`）；
+        // 旧实现写死 `"DeathEffect"`，那正是 `docs/141` 那 19 例继续错的原因。
+        // 注意 `next_effect_id` 只在**真的发**的时候自增（原版是 `add_effect` 里自增的）。
         for id in &deaths {
             msgs.push(emit_life_queued_death(*id, now_tick));
+            let ty = u32::try_from(*id)
+                .ok()
+                .and_then(|eid| self.entity_effects.death_effect_of(eid));
+            let Some(ty) = ty else { continue };
             if let Some(t) = self.soldiers.iter().find(|t| t.id == *id) {
                 self.next_effect_id += 1;
-                msgs.push(emit_effect_info(self.next_effect_id, t.x, t.y, "DeathEffect", now_tick));
+                msgs.push(emit_effect_info(self.next_effect_id, t.x, t.y, ty.name(), now_tick));
             }
         }
 
