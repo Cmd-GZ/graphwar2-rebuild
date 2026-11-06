@@ -1878,3 +1878,292 @@ cargo test --offline --test graphwar_setup_control
 | 玩家列表重建（`0x4d3180`）的执行序 | 它 15 936 B、211 个直接调用；要先把 `Team1/Team2` 两条分支的节点装配逐条对完 |
 | `user://local_ip.config` 里那个 `1` | `0x4d3180` 读它之后的消费者（`docs/10` §7 第 11 条） |
 | 名单排序 / 玩家表是否 `ScrollContainer` | 场景层（`.tscn`）证据，不在 `.so` 里 |
+
+---
+
+## 17. `graphwar_game_client.rs` 规格（本轮新增：36 个可归属函数的分类 + 两条命令链）
+
+> **本节解决什么**：`graphwar_game_client.rs` 是全库**归属函数最多**的模块
+> （`docs/coverage-matrix.tsv` 的 36 条），但它此前**一条规格都没有**——
+> `docs/02` §17 只写了「只有 `docs/archive` 的调用形态观测」，`src/` 里是占位骨架。
+> 本节给出：36 条**怎么数出来的**、它们**分成哪 8 类**、其中被解到「能照着写」的三条链
+> （命令入口 / 8 种请求事件 / `add_bot_N`），以及**没解出来的诚实清单**。
+>
+> **地址口径**：一律 **ELF vaddr**；Ghidra/REA 地址 = 本地址 + `0x100000`（只加一次）。
+> 本节每个「函数入口」都是 `analysis/funcstarts_ghidra_va.pkl` 的边界，
+> 关键几条另外用 `objdump` 逐指令核过（判据里的指令地址就是核过的那些）。
+> 落码：`src/graphwar_game_client.rs`（纯逻辑层）+ `tests/graphwar_game_client.rs`。
+
+### 16.1 一页结论
+
+| 项 | 结果 | 档位 |
+|---|---|---|
+| 可归属函数 | **36**（`tools/coverage_matrix.py` 口径），其中 **19** 条同时引用别的模块的 Location（`contested`），**68** 条函数体内引用到本模块的 Location | 观测（脚本可复现） |
+| 分类 | **8 类**：请求事件构造 16、连接/后端 5、状态查询 4、对局内动作 3、setup 回调 3、回放/远端 3、命令入口 1、事件装配 1 | 观测（类别名是推断） |
+| 模块干什么 | 客户端侧**把动作变成 `Event` 投进发送队列** + **把 14 个 manager 与 3 个事件名接起来** | 推断（依据见 §16.4–§16.7） |
+| 命令入口 `0x514a10` | 只认两条键：`start_game`（投 `Event` #31）、`fire`（转 `0x516510`）；其余立即返回 | **观测**（立即数逐条量到） |
+| 8 种请求事件 | 判别值 **11/12/16/17/18/19/20/21**，每种**两份实例化**（共 16 个函数），载荷是一个 i32 | **观测**（立即数 + 槽位相邻） |
+| `add_bot_0..5` | 六条键 → `0x516970` 收到 **3/10/25/100/250/1000** | **观测**（六个 `mov $N,%esi`） |
+| `0x517690` | 订阅 **3** 个事件名 + 装配 **14** 个 manager | **观测**（3 条 `lea`+长度立即数 + 14 个 `call`） |
+| 屏名 / 命令总线 12 条键 | **不在本模块**（在 `graphwar_root_node.rs`，§15） | 观测（否定） |
+
+### 16.2 36 这个数怎么来的（可复现）
+
+口径与 `tools/coverage_matrix.py` 完全一致：`core::panic::Location` 的
+`(file, line, col)` 从 `.rela.dyn` 的 `R_X86_64_RELATIVE`（addend = 文件名字面量）
+还原 → capstone 扫 `.text` 找引用 → 落到 **Ghidra 函数边界** →
+一个函数引用多模块时按「锚点数最多、并列取字典序」压平。
+
+复算结果：**本模块 36 条可归属 / 19 条 contested / 68 条函数体内引用到本模块**。
+`python3 tools/coverage_matrix.py` 打出的 `orig_funcs` 就是这 36。
+
+⚠️ **和旧数字的差别（就地说明，不改旧文）**：
+
+* `fixtures/module_funcs.tsv` 里本模块有 **68** 行 —— 那是「panic 串启发式」的粗表，
+  既不是 36 也不是「模块规模」，而且**不能**用来判函数身份。
+* `docs/02-module-map.md` §8 的表把本模块记成 **68 个归属函数 / 311 个引用点**，
+  那是**同一套 `module_funcs.tsv` 口径**；§17 又写 **36/59**。
+  ⇒ 同一份文档里两个数来自两套口径，**36 是这套脚本的口径**，本节一律用 36。
+
+### 16.3 分类：8 类（每类一句话 + 证据）
+
+| # | 类 | 个数 | 一句话 | 证据（地址 / 调用者 / 字符串） |
+|---|---|---|---|---|
+| 1 | **请求事件构造** | **16** | 把 `{tag=0x8000…\|判别值, +0x8=i32}` 这条 0x48 字节的 `Event` push 进 `[[self]+0x1f8]` 的 `Vec`（`+0x18`） | 判别值立即数 `0x4d8a4b` 等 16 处；`call *0x9bac80`（`0x3d3530` = `Vec::push`）；槽位 `0x95eff0…0x95f330` 成对；调用者 `graphwar_setup_control.rs` 的 `0x4c4c20`/`0x4cf670`，其体内有 `ChangeTeamButton`/`RemovePlayerButton`/`AddSoldierButton`/`RemoveSoldierButton` |
+| 2 | **连接与后端** | 5 | `0x515590`/`0x5175b0` 构造 `Event` **#22 `game_name_request_event`**；`0x515590`/`0x5159a0` 直接 `call` `graphwar_backend.rs`；`0x516370`/`0x518320` 直接 `call` `graphwar_client_connection_handler.rs` | `0x5157d3` / `0x51763e` 的 `movabs $0x8000000000000016`（判别值 22）；直接 `call` 目标：`0x514d80`(`graphwar_backend.rs`，两处 `0x5156eb`/`0x515aa5`)、`0x4592d0` 与 `0x45a340`(`graphwar_client_connection_handler.rs`，`0x5163c7`/`0x518377`) |
+| 3 | **状态查询** | 4 | 一律「取 `+0x40` 句柄 → `incq 0x10` → 调内层一次 → `decq`」，内层是 `0x46aa50`/`0x46aea0`/`0x46b180` | `0x516450`/`0x5164b0`/`0x518240`/`0x518400` 的开头 8 条指令；`0x518240` 的槽被 `graphwar_replay_player` `0x3d61a0` 读走 |
+| 4 | **对局内动作** | 3 | `0x516510`（`fire` 的落地：调 `turn_manager` 一族 `0x46b740`/`0x46c430`/`0x46b460`/`0x463340`，再 push 一条 `Event`）；`0x516ad0`（收到一段字节后投给客户端）；`0x516fd0` 未定 | `0x514acd` 调 `0x516510`；`0x3a559c`（root_node `0x3a54e0`：`memcpy` 进 `+0xf8` 缓冲后转给 `0x516ad0`） |
+| 5 | **setup 回调** | 3 | `0x516970` = `add_bot_N` 的取值器（六个立即数）；`0x5172d0`/`0x517490` 的槽只被 `graphwar_setup_control` 读 | 六个 `mov $N,%esi`（§16.6）；槽 `0x9bc128`/`0x9bc160` 的使用者 `0x4c44b0`/`0x4d1e00`/`0x4d88b0` |
+| 6 | **回放 / 远端** | 3 | `0x3d6080`/`0x3d7380`/`0x3d7630` 体内**同时**引用本模块与 `graphwar_replay_player.rs` 的 Location；`0x3d7380` 还直接 `call` `graphwar_remote_event_handler.rs` 两次 | 归属表 `contested`；`0x3d7380` 的 call 目标 |
+| 7 | **命令入口** | 1 | `0x514a10`：根节点命令总线的**兜底分支**，只认 `start_game`/`fire` | §16.4 |
+| 8 | **事件装配** | 1 | `0x517690`：3 个事件名订阅 + 14 个 manager 逐个装配 | §16.7 |
+
+分类的可执行版本在 `src/graphwar_game_client.rs` 的 `ORIG_FUNCS`（36 条，带
+`vaddr`/`size`/`anchors`/`also_in`），测试断言 8 类之和 = 36、
+类名与条数与上表一致。
+
+### 16.4 `0x514a10`：命令入口（**观测**，逐条立即数）
+
+签名 `fn(&self, name: &str)`（`rdx` = 长度）。先比长度、再比字节：
+
+```text
+514a17  cmp $0xa,%rdx ; je 514a33          ; len == 10
+514a33  movabs $0x61675f7472617473,%rax    ; "start_ga"
+514a3d  xor (%rsi),%rax
+514a40  movzwl 0x8(%rsi),%ecx
+514a44  xor $0x656d,%rcx                   ; "me"   ⇒ "start_game"
+514a4e  jne 514a2b                         ; 不中 → 直接返回
+514a1d  cmp $0x4,%rdx ; jne 514a2b         ; len == 4
+514a23  cmpl $0x65726966,(%rsi)            ; "fire"
+514a29  je 514a96
+```
+
+两个命中分支：
+
+| 键 | 指令 | 做什么 |
+|---|---|---|
+| `start_game` | `514a50` 取 `[self+0x1e0]`；空则返回。`514a73` 组 `0x800000000000001f`；`514a84` `call *0x9bac80`（`0x3d3530`） | 把 `Event` #31 `game_start_request_event` push 进该对象的 `Vec`（`r14+0x18`） |
+| `fire` | `514a96` `lea 0xe0(%rdi),%rsi`；`514aa6` `call *0x9ba8f0`（`0x91e260` = `Clone::clone`）；`514acd` `call *0x9bc450`（**`0x516510`**），`rdi=&[self+0x1e0]` | 克隆 `[self+0xe0]` 后交给 `0x516510`（语义未解，§16.9） |
+
+**谁调它**（槽 `0x9ba890` 的 5 个引用点，全部是 `call *0x9ba890`）：
+`0x3b2266`（`graphwar_root_node` 命令总线 `0x3b0830` 的**兜底分支**，见下）、
+`0x3a55f7`、`0x3a5637`、`0x3b6e1e`、`0x3b703e`（四个 `(self,name,len)` 蹦床）。
+
+兜底分支的形状（**观测**，这一段把「命令总线 → 本模块」的接缝钉死了）：
+
+```text
+3b2242  mov 0x1668(%rbx),%rbx        ; root 的控制器单元（docs/16 §15.3 的 +0x1668）
+3b2249  cmpq $0x0,0x10(%rbx) ; jne … ; 借用标记
+3b2254  movq $-1,0x10(%rbx)
+3b225c  lea 0x18(%rbx),%rdi          ; 载荷
+3b2260  mov %r12,%rsi                ; &name
+3b2263  mov %r15,%rdx                ; len
+3b2266  call *0x9ba890               ; = 0x514a10
+```
+
+⇒ **`docs/16` §15.3 里记成「play 侧控制器」的 `[+0x1668]`，它被调的方法落在
+`graphwar_game_client.rs`**（`0x514a10`、`0x515590`、`0x5159a0`、`0x516970`、
+`0x516ad0` 都是从这个偏移取出来的）。字段↔模块的对应关系据此收窄一条，**但**
+`[+0x1668]` 的确切 Rust 类型仍未证（缺：`upcast_ref` 的目标类名，与 §15.9 同一个缺口）。
+
+### 16.5 8 种请求事件 × 2 份实例化 = 16 个函数（**观测**）
+
+16 个 0xb0–0x140 字节的函数，每个只做一件事。以 `0x4d8a00` 为例（其余同形；
+唯一例外是 `0x4d96e0`，它多一次对 `graphwar_setup_control.rs` 的 `0x4d1f10` 调用，语义未定）：
+
+```text
+4d8a07  mov (%rdi),%r14          ; self.0 = 绑定单元
+4d8a0a  mov 0x8(%rdi),%eax       ; self.1 = i32（请求参数）
+4d8a28  mov 0x1f8(%r14),%rbx     ; 内层单元
+4d8a4b  movabs $0x8000000000000011,%rax     ; ⇒ 判别值 0x11 = 17
+4d8a55  mov %rax,0x10(%rsp)      ; 记录 +0x00 = tag word
+4d8a47  mov %eax,0x18(%rsp)      ; 记录 +0x08 = i32
+4d8a5f  call *0x9bac80           ; = 0x3d3530 = Vec::push（记录 0x48 字节）
+```
+
+| 判别值 | 事件（`docs/07` §7.2） | 实例化 A | 实例化 B | 共用槽 | 锚行 |
+|---|---|---|---|---|---|
+| 11 | `change_team_request_event` | `0x4c5b50` | `0x4d8d30` | `0x95eff0`/`0x95eff8` | 190 |
+| 12 | `remove_player_request_event` | `0x4c5d60` | `0x4d9370` | `0x95f030`/`0x95f038` | 194 |
+| 16 | `add_soldier_request_event` | `0x4c5c00` | `0x4d9270` | `0x95f070`/`0x95f078` | 198 |
+| 17 | `remove_soldier_request_event` | `0x4c5cb0` | `0x4d8a00` | `0x95f0b0`/`0x95f0b8` | 202 |
+| 18 | `axis_mode_change_request_event` | `0x4d1e60` | `0x4d95f0` | `0x95f2b0`/`0x95f2b8` | 206 |
+| 19 | `function_mode_change_request_event` | `0x4d2550` | `0x4d96e0` | `0x95f2d8`/`0x95f2e0` | 210 |
+| 20 | `turn_mode_change_request_event` | `0x4d1d50` | `0x4d8ff0` | `0x95f300`/`0x95f308` | 214 |
+| 21 | `time_mode_change_request_event` | `0x4d1ca0` | `0x4d9500` | `0x95f328`/`0x95f330` | 218 |
+
+四条独立证据：
+
+1. **判别值**是 `movabs $0x80000000000000NN` 的指令立即数，与 `docs/07` §7.2 用
+   `0x3d38f0` 的相等测试解出的名字表**逐条相等**（`src/events.rs` 的
+   `Event::*ChangeRequest`），两条来源完全独立。
+2. **两份实例化共用同一个 panic 锚行**（同一行、列 26）⇒ 同一源函数的两个实例化，
+   **不是**两个源函数；8 行 190→218 步长 4 = 源文件里的书写顺序。
+3. **槽位相邻**（8 字节步长）⇒ 是「同一张表里的两个方法」，不是两个独立函数指针。
+4. **两份的差别只在收尾**：B 多一次 `decq (%rcx)`（`0x4d8a78`）与一次 `0x525f60`/`0x526d80`
+   调用 ⇒ **推断**：接收者所有权不同（`&Self` vs `Self`）。缺的证据：两份各自
+   调用点的 Rust 签名。
+
+**谁在用它们**（观测）：A 组的 8 张表被 `0x4c4c20`（`graphwar_setup_control.rs`）引用，
+B 组的 8 张被 `0x4cf670`（同模块）引用；`0x4c4c20` 体内逐条 `lea` 了
+`GraphwarRootNode`(`0x19e490`)、`ChangeTeamButton`(`0x19e030`)、
+`RemovePlayerButton`(`0x1c2de5`)、`AddSoldierButton`(`0x19e740`)、
+`RemoveSoldierButton`(`0x1c2df7`) ⇒ **推断**：这 8 条请求就是 GameSetup/LanLobby
+那排按钮按下时发出去的（缺的证据：闭包经 `call_deferred`/`connect`，不在 `call rel32` 里）。
+
+⚠️ 8 个判别值**不含** 13/14/15（`player_info`/`entity_removed`/`soldier_info`）——
+那三个是**广播（info）**不是**请求（request）**，与「这些都叫 `*_request_event`」一致。
+
+### 16.6 `add_bot_0..add_bot_5`：命令总线转给本模块的 6 条键（**观测**）
+
+`graphwar_root_node.rs` 的命令总线 `0x3b0830` 里有 6 条键共用一个模板：
+`movabs $0x5f746f625f646461`（`"add_bot_"`）+ 第 9 字节与 `'0'..'5'` 异或比较
+（`0x3b1935`-`0x3b19d2`），命中后跳到各自的块，块内形状完全相同：
+
+```text
+mov 0x1668(%rbx),%r15          ; 同一个控制器单元
+cmpq $0x0,0x1f8(%r15) ; je …   ; 内层为空则跳过
+lea 0x1f8(%r15),%rdi
+mov $N,%esi                    ; ← 六个不同的立即数
+call *0x9baaa0                 ; = 0x516970
+```
+
+| 键 | N | `mov $N,%esi` | `call` | 键判据 |
+|---|---|---|---|---|
+| `add_bot_0` | **3** | `0x3b31b6` | `0x3b31bb` | `0x3b194c`(`xor $0x30`) → `0x3b1953` |
+| `add_bot_1` | **10** | `0x3b3674` | `0x3b3679` | `0x3b1966`(`xor $0x31`) → `0x3b196d` |
+| `add_bot_2` | **25** | `0x3b3975` | `0x3b397a` | `0x3b1980`(`xor $0x32`) → `0x3b1987` |
+| `add_bot_3` | **100** | `0x3b3eb4` | `0x3b3eb9` | `0x3b199a`(`xor $0x33`) → `0x3b19a1` |
+| `add_bot_4` | **250** | `0x3b40d4` | `0x3b40d9` | `0x3b19b4`(`xor $0x34`) → `0x3b19bb` |
+| `add_bot_5` | **1000** | `0x3b41ec` | `0x3b41f1` | `0x3b19cb`(`xor $0x35`) → `0x3b19d2` |
+
+六个值单调递增 ⇒ **推断**：数字是**该档 bot 的强度/预算**，不是 bot 序号。
+缺的证据：`0x516970` 拿这个数做了什么（它转给 `0x46b180`，后者是一次按名查表，
+键字面量在 `.rodata` `0x19e1d0`，未解）。
+
+⚠️ 顺带解出的**命令总线新键**（补 `docs/16` §15.6 的 12 条，判据同样是
+`movabs`+`xor` 立即数）：`exit_play`(`0x3b1914`→`0x3b2cc9`)、
+`add_bot_0..5`（上表）、`save_clip`(`0x3b19d8`→`0x3b19f9`)。
+**仍未穷举**（§16.9）。
+
+### 16.7 `0x517690`：事件装配（**观测**）：3 个名字 + 14 个 manager
+
+0xbb0 字节。它对 3 个事件名各做一次「分配闭包环境 → 订阅」：
+
+```text
+5179ec  call *0x9ba628            ; __rust_alloc（环境）
+5179fc  call *0x9ba630            ; alloc(8,8)
+5179b8  mov %rbp,(%rax)           ; 捕获态
+5179bb  lea 0x1c64c2,%rsi         ; "connected_to_server_event"
+5179cc  mov $0x19,%edx            ; len = 25
+5179c2  lea 0x962ba8,%r8          ; 回调
+5179d4  call *0x9bac88            ; = 0x3d38f0
+```
+
+| 名字 | `.rodata` | len | `lea` / `mov $len` | 判别值 |
+|---|---|---|---|---|
+| `connected_to_server_event` | `0x1c64c2` | 25 | `0x5179bb` / `0x5179cc` | 7 |
+| `player_info_event` | `0x1c6558` | 17 | `0x517a0e` / `0x517a1f` | 13 |
+| `entity_removed_event` | `0x1c646d` | 20 | `0x517a5e` / `0x517a6f` | 14 |
+
+⇒ 三个名字经 `0x3d38f0` 变成判别值 7/13/14，与 `docs/07` §7.2 第 7/13/14 行一致。
+**`0x3d38f0` 的第一类调用者是「订阅」**：它先按 `len-10` 查 25 项跳表
+（`0x3d3909`-`0x3d3928`，跳表 `0x1be9c8`），再在 `HashMap<u64, _>`（entry 步长 `0x38`，
+公共尾 `0x3d4c5c`）里插入 —— 也就是 `docs/07` §7.3.2 逐位钉过的那张表。
+〔观测；「第一类调用者」= 本模块这 3 处 + 别处，别处未统计〕
+
+同一函数里还**逐个装配了 14 个 manager**（每处一次直接 `call`）：
+`graphwar_client_connection_handler`(`0x4599f0`)、`player`(`0x455410`)、
+`soldier`(`0x455760`)、`plane_pos`(`0x3c6d30`)、`target`(`0x465910`)、
+`team`(`0x3c1fc0`)，以及 life / obstacle / turn / graphics / entity_effect /
+computer_player / color / rank 各 1 处（模块名来自归属表，具体 `call` 地址未逐条定位）。
+⇒ **推断**：这是客户端的「一次性装配」入口（订阅 3 个事件 + 把 14 个 manager 挂上）。
+缺的证据：`0x469xxx`–`0x46bxxx` 那族胶水（取句柄，每个 8-16 条指令）没有锚，不敢起名。
+
+### 16.8 委派入口表：外部怎么进本模块（**观测**）
+
+`call rel32` 与 `.rela.dyn` 指针槽的引用点合起来给出下面这张表（完整版在
+`src/graphwar_game_client.rs` 的 `ENTRY_POINTS`，测试断言每条入口都在 36 条清单里、
+且调用者不在被调函数体内）：
+
+| 目标 | 调用者 | 是什么 |
+|---|---|---|
+| `0x514a10` | `0x3b2266` + 4 个蹦床 | 命令总线兜底分支（§16.4） |
+| `0x515590` | `0x3b2b84`、`0x3b363a` | 总线里 `JoinLevelPopUp` 那条路（先 `0x5148a0` 收串再调本函数） |
+| `0x5159a0` | `0x3b3333`、`0x4f923c` | 总线 + `graphwar_lan_vbox` |
+| `0x516970` | 六个（§16.6） | `add_bot_0..5` |
+| `0x516ad0` | `0x3a559c`（root `0x3a54e0`）、`0x3b6f9b` | 字节到达：`memcpy` 进 `+0xf8` 缓冲后转发 |
+| `0x516450` | `0x3b1c93` | 总线 `save_clip` 附近 |
+| `0x5164b0` | `0x3a707a`（在 `0x3a5760` 内）、`0x3b3f6c` | 帧状态机 |
+| `0x516370` | 槽被 `0x3a5760`/`0x3b7ac0`/`0x5147f0`/`0x525f60` | 帧状态机 + 本模块 |
+| `0x517690` | 槽被 `graphwar_backend` `0x514f20` + 本模块 `0x515590`/`0x5159a0` | 装配（§16.7） |
+| `0x518240` | 槽被 `graphwar_replay_player` `0x3d61a0` + 本模块 `0x518400` | 状态查询 |
+| `0x518320`/`0x518400`/`0x516fd0` | 槽（见 `ENTRY_POINTS`） | 状态查询 / 未定 |
+
+**否定结论（省一类死路）**：本模块 36 个函数里**没有**任何屏名（15 个）、
+任何命令总线的 `input_text` 键（12 条）、任何 `set_visible`/`get_node` 字面量。
+⇒ 切屏与命令总线**不在这里**，在 `graphwar_root_node.rs`（§15）。
+本模块只有 `.rodata` 字面量 3 条（§16.7 的三个事件名）+ 若干 panic 串。
+
+### 17.9 没解出来的（诚实清单）
+
+| 缺口 | 缺什么证据 |
+|---|---|
+| `0x516510`（`fire` 的落地）语义 | 体内调 `turn_manager` 一族（`0x46b740`/`0x46c430`/`0x46b460`/`0x463340`）并 push 一条 `Event`，但判别值走 `lea`+`add` 编码，未定位；`0x516510:0x51682b` 起还有一串 `.data.rel.ro` 引用（疑似格式化串），未解 |
+| `0x516ad0`（字节到达）怎么解析 | 只观测到调用者把 `memcpy` 后的 `(ptr,len)` 交给它；报文解析可能在这里，但没读函数体 |
+| `0x516fd0` / `0x5172d0` / `0x517490` / `0x516450` / `0x5164b0` / `0x518240` / `0x518400` | 内层 `0x46aa50`/`0x46aea0`/`0x46b180` 未解（它们都做一次按名查表，键字面量 `0x19cdc0`/`0x19d8c0`/`0x19e1d0` 在 `.rodata` 里是**非 ASCII**数据，不是名字；未定它们是散列表还是别的常量表） |
+| `0x515590`/`0x5159a0`/`0x5175b0` | 只知道「构造 `game_name_request_event`」与「调 `graphwar_backend.rs`」；`JoinLevelPopUp` 那条路的 `&str` 语义（`[root+0x16f8]`/`[root+0x16fa]`）未定 |
+| `0x3d6080`/`0x3d7380`/`0x3d7630` | contested（同时引用本模块与 `graphwar_replay_player.rs`）⇒ 归属本身有歧义 |
+| 命令总线的**全部**键 | 已 12（§15.6）+ 8（§16.6：`exit_play`/`add_bot_0..5`/`save_clip`）；`0x3b0830` 是 0x4690 字节、131 KB 反编译，**未穷举** |
+| 屏表的插入点 / `[+0x1668]` 的 Rust 类型 | 与 §15.9、§15.10.6 同一缺口 |
+| 本模块与 `graphwar_server_connection_handler.rs` / `graphwar_game_server.rs` 的边界 | `0x51xxxx` 一带还有一批无锚函数（`0x5147b0`/`0x5147f0`/`0x5148a0` 等）与 `0x51a570`（`docs/07` §7.3.4 提到）**归属未定**；本轮没有把它们算进 36 |
+
+### 16.10 进度口径（按 `AGENTS.md` §0 第 2 条）
+
+| 口径 | 数 | 说明 |
+|---|---|---|
+| 原版可归属函数（本模块） | **36** | `coverage_matrix.py`，可复现 |
+| 有**完整真值表**（能照着写） | **17** | 16 个请求事件构造器 + `0x514a10` 的两条键 |
+| 只到「它跟谁打交道」 | **9** | `0x516970`（六个立即数）、`0x517690`（3 名字 + 14 manager）、`0x515590`/`0x5175b0`（#22）、`0x516370`/`0x518320`（调 conn_handler）、`0x516ad0`、`0x516510` |
+| 只到「调用图一级」 | **10** | §16.9 第 3 行那 7 个 + 3 个 contested |
+| `cargo test` 条数 | 见 §16.11 | **回归保护，不是复原证据** |
+
+⚠️ `docs/coverage-matrix.tsv` 本模块那一行**仍然是 `未做`**：那是
+`tools/coverage_matrix.py` 的**生成物**（`status` 由脚本里的手写表 `M` 决定），
+本轮没有改它的三个允许文件之外的东西。下一轮把它改成 `观测`（并同步
+`ours_file`/`ours_funcs`）需要重跑那个脚本。
+
+### 16.11 落码清单
+
+| 原版 | 落在 | 覆盖程度 | 档位 |
+|---|---|---|---|
+| 36 个函数的清单 | `ORIG_FUNCS` / `orig_fn` / `class_count` / `Class` / `Role` | 36 条地址+大小+锚+contested | 观测 |
+| `0x514a10` | `on_command` / `CommandAction` / `CMD_*` / `*_WINDOW*` / `FIRE_IMM32` | **两条键全覆盖**（含长度关） | 观测 |
+| `0x4c5b50..0x4d96e0` | `RequestKind` / `RequestEvent` / `request_event` / `REQUEST_CONSTRUCTORS` / `EVENT_RECORD_SIZE` / `EVENT_TAG_BASE` | **8 种 × 2 实例化的判别值与记录形状** | 观测（载荷语义 = i32，观测；参数含义未知） |
+| `add_bot_0..5` | `ADD_BOT_KEYS` / `add_bot_value` / `ADD_BOT_PREFIX` | 六条键 → 六个立即数 | 观测（数字含义 = 推断） |
+| `0x517690` | `SUBSCRIBED_EVENTS` / `WIRED_MANAGERS` / `FN_EVENT_SUBSCRIBE` | 3 名字 + 14 manager | 观测（装配结构 = 推断） |
+| 外部入口 | `ENTRY_POINTS` / `entry_point` | 19 条入口记录 | 观测 |
+| 跨模块调用点 | `DIRECT_CALLS_TO_OTHER_MODULES` / `INDIRECT_CALLS_TO_OTHER_MODULES` | 4 条 `call rel32` + 4 条 GOT 槽调用（含 3 处订阅、1 处 `game_state_manager`） | 观测 |
+
+`tests/graphwar_game_client.rs` 的断言都是**回归保护**；每条右侧的真值要么是
+指令立即数、要么是 `.rodata` 字节，测试里逐条注明了地址。
