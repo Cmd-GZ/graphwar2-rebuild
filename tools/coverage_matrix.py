@@ -446,8 +446,8 @@ mod("graphwar_game_state_manager.rs", "graphwar", ("src/game.rs", "src/turnstate
     "docs/41：6 状态 7 事件、13 次迁移在真实对局里逐个相同")
 mod("graphwar_graphics_manager.rs", "graphwar", ("src/graphwar_graphics_manager.rs",), "观测",
     "6 函数。**TextureLoader 不在本模块**——它是独立模块 graphwar_texture_loader（三张 HashMap<String,Gd<Texture2D>> @ +0x150/+0x180/+0x1b0，按名字 memcmp 索引，GraphwarRootNode 的 INode impl 里 0x39a328 唯一构造、21KB 饿汉加载）。本模块只管 player_id→名字 三张表（+0x18/+0x48/+0x78）与 51/53/55 三条 info 事件（docs/16 §31）")
-mod("graphwar_lan_broadcaster_v6.rs", "graphwar", (), "未做",
-    "docs/07/24：局域网广播报文已抓包；docs/134 里只有 client/ GDScript 侧，src/ 无实现")
+mod("graphwar_lan_broadcaster_v6.rs", "graphwar", ("src/graphwar_lan_broadcaster_v6.rs",), "观测",
+    "5/5（get_game_info 两侧都无锚，不给 x86 地址）。广播周期 **1 秒**（elapsed > 1s，正好 1.000s 不发）；收侧去重 = 房间表键发送方 SocketAddr + **10 秒 TTL**（cmp x0,#0xa）；**广播的 address 恒为 [::1]:<port>**（set_room_info 里 IpAddr::from_str(「::1」)）（docs/09 §12）")
 mod("graphwar_lan_vbox.rs", "graphwar", ("src/graphwar_lan_vbox.rs",), "观测",
     "13 个 FUNC 全登记；process = 0x4f90b0（唯一锚，16 个三元组）。**不消费任何事件**——每帧直读两张表（LAN 广播器 +0x128/+0x1a0 或 broker +0x240/+0x248）；行节点 = 新场景实例 + 按 SocketAddr 缓存复用；Join 走 mpmc 通道下一帧才连；**没有排序**（HashMap 迭代序）（docs/09 §10）")
 mod("graphwar_level_generator.rs", "graphwar", ("src/graphwar_level_generator.rs", "src/graphwar_level_generator/tables.rs"), "逐位",
@@ -516,9 +516,8 @@ mod("graphwar_replay_player.rs", "graphwar", ("src/graphwar_replay_player.rs",),
 mod("graphwar_root_node.rs", "graphwar", ("src/graphwar_root_node.rs",), "观测",
     "Screen×15 + Command×12 + 0x3af850 切屏决策表 + 构造初值（docs/16 §15.10）；"
     "0x3a5760 主体 20288B 刻意未猜")
-mod("graphwar_server_broker_handler.rs", "graphwar", (), "未做",
-    "原模块是**客户端侧**的 broker 处理器，未做；src/_scaffold/broker.rs 是我们自建的 broker 服务端，"
-    "不是它的复原（见 docs/115）")
+mod("graphwar_server_broker_handler.rs", "graphwar", ("src/graphwar_server_broker_handler.rs",), "观测",
+    "6/6（含线程体；get_game_info/new 无锚不给地址）。Global 一路无 TTL 扫描——疑靠 GameRemoved，该报文从未抓到（docs/09 §12）")
 mod("graphwar_server_connection_handler.rs", "graphwar", ("src/server.rs",), "逐位",
     "docs/33：新连接的状态同步与真实客户端逐字节一致")
 mod("graphwar_setup_control.rs", "graphwar", ("src/graphwar_setup_control.rs",), "观测",
@@ -570,8 +569,8 @@ mod("function_history_recorder.rs", "other", (), "未知",
     "非 graphwar_ 前缀；除模块名外没有任何观测")
 mod("player_showcase.rs", "other", ("src/player_showcase.rs",), "观测",
     "10 个函数全解：ready 0x4e6480 / on_text_change 0x4efd70 / process 0x4e68f0 / draw 0x4e5400 + 6 个 gdext 生成物。**三次 draw_texture_rect_full**（皮肤→脸→帽），与颜色/段位无关；读根节点 +0x16a8 的 GraphwarPlayerConfig（名字+0x00/皮肤+0x60/脸+0x78/帽+0x90/变更计数+0xa8），process 轮询计数才重画（docs/16 §25）")
-mod("server_broker_request_connection.rs", "other", (), "未知",
-    "非 graphwar_ 前缀；docs/115 只覆盖 broker 线格式，这个连接对象本身没看过")
+mod("server_broker_request_connection.rs", "other", ("src/server_broker_request_connection.rs",), "观测",
+    "1/1；process 的 x86 0x3e5a80 是推断（调用指纹+相邻性，非唯一锚）（docs/09 §12）")
 mod("backtracer.rs", "other", ("src/backtracer.rs",), "观测",
     "panic 钩子写 user://crash_log.txt；两侧都**没有** Backtrace::capture（名字误导）（docs/16 §33）")
 mod("function_token.rs", "other", ("src/function_token.rs",), "观测",
@@ -582,10 +581,10 @@ mod("graphwar_game_info.rs", "graphwar", ("src/graphwar_game_info.rs",), "观测
     "GameInfo 结构体（9 字段）在此模块，**不在** graphwar_event.rs；我方只做 pub use 复用（docs/16 §33）")
 mod("graphwar_player_config.rs", "graphwar", ("src/graphwar_player_config.rs",), "观测",
     "PlayerShowcase 读的 config（名字+0x00/皮肤+0x60/脸+0x78/帽+0x90/变更计数+0xa8）；存档分隔符未解（docs/16 §33）")
-mod("graphwar_replay_reader.rs", "graphwar", (), "未做",
-    "2024 版符号表：graphwar_replay_reader 2 个符号；与 graphwar_replay_player 是两个模块")
-mod("graphwar_stream_buffer.rs", "graphwar", (), "未做",
-    "2024 版符号表：graphwar_stream_buffer 2 个符号；旧文档只在 2024 版字符串里见过这个名字")
+mod("graphwar_replay_reader.rs", "graphwar", ("src/graphwar_replay_reader.rs",), "观测",
+    "2/2：文件归它（FileAccess::open + get_buffer + GzDecoder + StrSearcher 逐行 -> Vec<EventInfo>，被调者里**零时间函数**）；时钟归 replay_player（tick += dt*60*speed）（docs/09 §12）")
+mod("graphwar_stream_buffer.rs", "graphwar", ("src/graphwar_stream_buffer.rs",), "观测",
+    "2/2：**不是 TCP 拆包队列**——内部无字节队列，靠 TcpStream::peek 前瞻：写侧 u16 大端(len)+两段 write_all（限 0xffff）；读侧 peek 2 -> 校验 <=0x1000 -> peek(len+2) 不足即 Ok(None) **一个字节都不消费** -> read_exact 整帧取走。顺带结掉 docs/09 §11.7#4：0x…4a 是「整帧未到」，不是 EOF（docs/09 §12）")
 mod("weak_caller.rs", "other", (), "未做",
     "**旧判定已推翻**：2024 版符号表里有 graphwarrust::weak_caller 的 27 个 direct 符号"
     "（签名形如 fn(&Weak<..>,..)），是 **crate 内模块**，不是第三方依赖（docs/02 §18）。"

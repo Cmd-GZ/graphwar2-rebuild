@@ -5,15 +5,15 @@
 ## 0. 一句话总账
 
 ```
-原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 430、16 个非 graphwar 游戏模块占 97）；我们已实现 473 个函数，其中 逐位 88 / 观测 385 / 推断 0；未做 46；完全未知的模块 6 个（graphwar 里 0 个）。
+原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 430、16 个非 graphwar 游戏模块占 97）；我们已实现 480 个函数，其中 逐位 88 / 观测 392 / 推断 0；未做 39；完全未知的模块 5 个（graphwar 里 0 个）。
 ```
 
 拆成两个口径（下面的数字全部由脚本算出，重跑即复现）：
 
 | 口径 | 模块数 | 可归属函数 | 已实现 | 逐位 | 观测 | 推断 | 未做 | 未知模块 |
 |---|---|---|---|---|---|---|---|---|
-| 58 个 `graphwar_*.rs` | 62 | 430 | 423 | 81 | 342 | 0 | 7 | 0 |
-| 16 个非 graphwar 的游戏模块 | 16 | 97 | 50 | 7 | 43 | 0 | 39 | 6 |
+| 58 个 `graphwar_*.rs` | 62 | 430 | 430 | 81 | 349 | 0 | 0 | 0 |
+| 16 个非 graphwar 的游戏模块 | 16 | 97 | 50 | 7 | 43 | 0 | 39 | 5 |
 
 还有 `weak_caller.rs`（40 个归属函数）按 `docs/02` §9 判为第三方依赖库，单独一行留在 TSV 里备查，**不计入**任何合计。
 
@@ -98,7 +98,7 @@
 | `graphwar_game_server.rs` | 3 | 86 | `src/graphwar_game_server.rs+src/server.rs` | 23 | 逐位 |
 | `graphwar_game_state_manager.rs` | 33 | 207 | `src/game.rs+src/turnstate.rs` | 85 | 逐位 |
 | `graphwar_graphics_manager.rs` | 6 | 8 | `src/graphwar_graphics_manager.rs` | 18 | 观测 |
-| `graphwar_lan_broadcaster_v6.rs` | 4 | 4 | — | 0 | 未做 |
+| `graphwar_lan_broadcaster_v6.rs` | 4 | 4 | `src/graphwar_lan_broadcaster_v6.rs` | 20 | 观测 |
 | `graphwar_lan_vbox.rs` | 11 | 19 | `src/graphwar_lan_vbox.rs` | 37 | 观测 |
 | `graphwar_level_generator.rs` | 4 | 26 | `src/graphwar_level_generator.rs+src/graphwar_level_generator/tables.rs` | 28 | 逐位 |
 | `graphwar_level_manager.rs` | 40 | 590 | `src/graphwar_level_manager.rs` | 20 | 观测 |
@@ -123,14 +123,14 @@
 | `graphwar_remote_event_handler.rs` | 3 | 171 | `src/events.rs` | 2 | 观测 |
 | `graphwar_replay_control.rs` | 2 | 9 | `src/graphwar_replay_control.rs` | 6 | 观测 |
 | `graphwar_replay_player.rs` | 5 | 18 | `src/graphwar_replay_player.rs` | 53 | 观测 |
-| `graphwar_replay_reader.rs` | 0 | 0 | — | 0 | 未做 |
+| `graphwar_replay_reader.rs` | 0 | 0 | `src/graphwar_replay_reader.rs` | 11 | 观测 |
 | `graphwar_root_node.rs` | 23 | 178 | `src/graphwar_root_node.rs` | 57 | 观测 |
-| `graphwar_server_broker_handler.rs` | 3 | 5 | — | 0 | 未做 |
+| `graphwar_server_broker_handler.rs` | 3 | 5 | `src/graphwar_server_broker_handler.rs` | 19 | 观测 |
 | `graphwar_server_connection_handler.rs` | 6 | 24 | `src/server.rs` | 7 | 逐位 |
 | `graphwar_setup_control.rs` | 21 | 70 | `src/graphwar_setup_control.rs` | 48 | 观测 |
 | `graphwar_shot_calculator.rs` | 1 | 12 | `src/graphwar_shot_calculator.rs+src/graphwar_shot_calculator/settle.rs` | 23 | 逐位 |
 | `graphwar_soldier_manager.rs` | 4 | 5 | `src/graphwar_soldier_manager.rs` | 15 | 观测 |
-| `graphwar_stream_buffer.rs` | 0 | 0 | — | 0 | 未做 |
+| `graphwar_stream_buffer.rs` | 0 | 0 | `src/graphwar_stream_buffer.rs` | 22 | 观测 |
 | `graphwar_target_manager.rs` | 3 | 4 | `src/graphwar_target_manager.rs` | 9 | 观测 |
 | `graphwar_team_manager.rs` | 7 | 10 | `src/graphwar_team_manager.rs` | 24 | 观测 |
 | `graphwar_tick_handler.rs` | 2 | 3 | `src/graphwar_tick_handler.rs` | 9 | 逐位 |
@@ -155,7 +155,7 @@
 | `obstacle_drawer.rs` | 2 | 7 | — | 0 | 未知 |
 | `player_showcase.rs` | 10 | 18 | `src/player_showcase.rs` | 44 | 观测 |
 | `polish_notation_converter.rs` | 1 | 2 | `src/polish_notation_converter.rs` | 6 | 观测 |
-| `server_broker_request_connection.rs` | 0 | 1 | — | 0 | 未知 |
+| `server_broker_request_connection.rs` | 0 | 1 | `src/server_broker_request_connection.rs` | 10 | 观测 |
 | `weak_caller.rs` | 39 | 2 | — | 0 | 未做 |
 
 完整的 evidence（每行一句话的依据）在 `docs/coverage-matrix.tsv`，那张表是本脚本的唯一真源，本页的表格由它渲染。
@@ -168,7 +168,7 @@
 
 另外还有 **7 个模块一个 panic 锚都没有**（连「它有没有函数」都答不出来）：`graphwar_crash_reporter.rs`、`graphwar_event.rs`、`graphwar_event_queue.rs`、`graphwar_game_info.rs`、`graphwar_player_config.rs`、`graphwar_replay_reader.rs`、`graphwar_stream_buffer.rs`。
 它们的 `orig_funcs` 是 0，**不代表模块为空**，只代表这个方法对它们完全失效。
-非 graphwar 前缀里还有 6 个未知模块（`obstacle_drawer` / `function_drawer` / `button_manager` / `function_button_manager` / `function_history_recorder` / `player_showcase` / `server_broker_request_connection`），它们的共同点是**连「是不是游戏代码」都只有名字可依**。
+非 graphwar 前缀里还有 5 个未知模块（`obstacle_drawer` / `function_drawer` / `button_manager` / `function_button_manager` / `function_history_recorder` / `player_showcase` / `server_broker_request_connection`），它们的共同点是**连「是不是游戏代码」都只有名字可依**。
 
 ## 4. 我们自造的、原版没有的东西（问题 2）
 这一栏**不算复原**，列出来是为了别把「能跑」当「还原了」。
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（80 个文件、1636 条 `fn`） | `be77416514280b8043dcd5f6f170b73804ea58c62c6bbbba1edab77ce30b86a2` |
+| `src/` 树（85 个文件、1718 条 `fn`） | `a3798965ab9299f86d05187fea3b35d4a0fa143a713887a5251290095c1b387f` |
 
