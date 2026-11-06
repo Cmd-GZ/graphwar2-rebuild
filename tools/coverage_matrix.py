@@ -408,18 +408,18 @@ mod("graphwar_backend.rs", "graphwar", ("src/graphwar_backend.rs",), "观测",
     "**18 个方法**（旧文记 15，偏少）。LAN 与 broker 是两个独立字段**（+0x110 组播 ff02::1 / +0x228 broker），开房时一起装；「看哪一路」在 GraphwarLanVBox::show_global，不在这层（docs/09 §11）")
 mod("graphwar_button.rs", "graphwar", ("src/graphwar_button.rs",), "观测",
     "6/6 方法全解（init/ready/process/button_down/pressed/button_up）+16 条名字分派入口；docs/16 §18")
-mod("graphwar_campaign_control.rs", "graphwar", (), "未做",
-    "docs/118 §7：21 关数据已从 0x4ad380 解出、campaign.save 格式已解；src/ 里还没有这张表")
+mod("graphwar_campaign_control.rs", "graphwar", ("src/graphwar_campaign_control.rs",), "观测",
+    "定性完成；get_current_level 返回 Option 给 local_player_manager 的 RankRequest 用（docs/16 §33）")
 mod("graphwar_client_connection_handler.rs", "graphwar", ("src/graphwar_client_connection_handler.rs",), "观测",
     "11 FUNC（8 方法 + 3 订阅闭包 + 连接线程）。ConnectionState 4 个变体（0/1/2/3），**与 GameState(8) 是两套**，唯一交点：失败时 set_state(7)。本机地址是 [::1]:port（**不是 127.0.0.1**）；远端只认 IP 字面量、**无 DNS**；connect_timeout 30s、**无重连**、**不发也不订阅心跳**（docs/09 §11）")
 mod("graphwar_color_manager.rs", "graphwar", ("src/graphwar_color_manager.rs",), "观测",
     "7/7（含 GraphwarColor::serialize）：两张 6 色表就是 init_team_colors 里的字面量；分配 = **队号选池** -> rand::random::<u64>()%6 起点 -> +1 线性探测跳过 used -> 6 个全占则 (r%180,g%180,b%180)。**不是进房顺序、不是 player_id 取模**（docs/10 §15）")
 mod("graphwar_computer_player_manager.rs", "graphwar", ("src/graphwar_computer_player_manager.rs",), "观测",
     "6/7 定位：HashMap<u32,BotData>（步长 0x78）+ SoldierBotData（0x58）。**不是掉线托管**：唯一入口是 bot_added_event(10)；level 阈值 4/11/26/101/251，精英数=种群/5，limit=5/5/10/15/25/200（docs/13 §25）")
-mod("graphwar_crash_reporter.rs", "graphwar", (), "未知",
-    "全二进制**没有一个** panic 锚落在这个文件上，也没有任何地址级观测")
-mod("graphwar_draw_util.rs", "graphwar", (), "未做",
-    "docs/140：准备圈/弹道画法已从机器码扒出；绘制落 client/ GDScript，src/ 无实现")
+mod("graphwar_crash_reporter.rs", "graphwar", ("src/graphwar_crash_reporter.rs",), "观测",
+    "崩溃日志的**上报端**（与落盘端 backtracer 是两个模块），**不抓栈**。端口 42972（mov w8,#0xa7dc ×2），三级回退：CLI/env --crash_report_address -> 全局地址+42972 -> pending。钩子在 GraphwarRootNode::ready +0x30/+0x44 => 每次进主场景装一次。2024 版 0 符号 0 串 => 后加功能（docs/16 §33）")
+mod("graphwar_draw_util.rs", "graphwar", ("src/graphwar_draw_util.rs",), "观测",
+    "只有 get_team_overview(0x4be6e0)，**不画东西**（有界否定）（docs/16 §33）")
 mod("graphwar_effect_manager.rs", "graphwar", ("src/graphwar_effect_manager.rs",), "观测",
     "5（含 EffectType::deserialize）：EffectType 4 个取值已穷举（ExplosionEffect/DeathEffect/SparkEffect/AshEffect）（docs/16 §32）")
 mod("graphwar_entity_effect_manager.rs", "graphwar", ("src/graphwar_entity_effect_manager.rs",), "观测",
@@ -461,12 +461,12 @@ mod("graphwar_lobby_control.rs", "graphwar", ("src/graphwar_lobby_control.rs",),
     "3/3（旧记 1，两个 show_* 在 x86 内联进 new）：大厅**模式开关**（ShowLocalButton/ShowGlobalButton），互斥 set_pressed + 切模式时把 LAN 列表整表 queue_free；列表本体归 lan_vbox（docs/10 §15）")
 mod("graphwar_local_player_manager.rs", "graphwar", ("src/graphwar_local_player_manager.rs",), "观测",
     "4/4：**本机 player_id 的单一真相**（+0x18 已连上 / +0x1c connection_id / Vec<u32>）。首次入列五连发 = 59 NameRequest / 50 / 52 / 54 / 66 RankRequest；**66 的发起侧升为逐位**（全 .text 无第二处）（docs/10 §15）")
-mod("graphwar_logger.rs", "graphwar", (), "未做",
-    "docs/112 记录 log 入口的结构观测；src/ 无实现")
+mod("graphwar_logger.rs", "graphwar", ("src/graphwar_logger.rs",), "观测",
+    "定性完成；HTTP 报文格式未解（docs/16 §33）")
 mod("graphwar_long_press_animation.rs", "graphwar", ("src/graphwar_long_press_animation.rs",), "观测",
     "2.0.60 只剩 draw（0x4d8100）：angle=elapsed×4π、>2π 结束⇒0.5s、黑白两次绘制；9 个常量逐比特")
-mod("graphwar_mode_manager.rs", "graphwar", (), "未做",
-    "docs/88 §7：TurnMode/FunctionMode/AxisMode/TimeMode 的取值已从 .rodata 解出；模块本体未复原")
+mod("graphwar_mode_manager.rs", "graphwar", ("src/graphwar_mode_manager.rs",), "观测",
+    "只有**三套**（Axis/Function/Time），TurnMode 在 turn_manager；三个 setter 各 124B 形状相同（写 1 字节 + add_event），写入者是 handle_server_remote_event => 它是**服务器状态的副本**，不是唯一真相（docs/16 §33）")
 mod("graphwar_module_container.rs", "graphwar", ("src/graphwar_module_container.rs",), "观测",
     "docs/02 §22：类型本体 = HashMap<TypeId, Rc<dyn Any>>（48 字节 / 1 字段），"
     "3 个泛型方法 × 25 型 = 68 个单态化；三块两侧都等距且首尾背靠背"
@@ -547,8 +547,8 @@ mod("graphwar_video_writer.rs", "graphwar", ("src/graphwar_video_writer.rs",), "
 mod("math_function.rs", "other", ("src/math_function.rs", "src/math_function/to_text.rs"), "逐位",
     "docs/03：90 例文法 + 70 条真值夹具与真二进制对拍。**解析器 0x4ed670 的 panic 锚就落在这个"
     "文件上**（math_function.rs:75）⇒ 函数语言的解析器属于本模块，不属于 graphwar_function_input")
-mod("polish_notation_converter.rs", "other", (), "未做",
-    "2026-11 更正：本模块的锚函数是 0x4f5450（:36:52 / :116:55，tools/class_probe.py），**不是** 0x4ec160。0x4ec160 的 panic 分支引的是 math_function.rs:285:28（docs/119 §4.6）⇒ 我方 to_text.rs 归 math_function.rs；本模块未实现")
+mod("polish_notation_converter.rs", "other", ("src/polish_notation_converter.rs",), "观测",
+    "**是活代码**：唯一调用者 0x4edd1f（在 MathFunction::new 0x4ed670 内），另有两条自递归。分词产物是**中缀**且含 tag 18/19 括号；括号/优先级/补 CONST 0 全在这里=> docs/03 §13「解析器自己就做分词」只对了一半。原版正则 77B、优先级表 18 项已逐字节拿到（docs/16 §33）")
 mod("entity_drawer.rs", "other", ("src/entity_drawer.rs",), "观测",
     "10 个函数全解：draw/ready/process/update_sprite/update_name_label/draw_offset_triangle/get_entity_{hat,name_label,face,skin}。**士兵/靶子不是图元而是子节点**——3 个 Sprite2D"
     "（skin/face/hat 贴图）+ 1 个 RichTextLabel（res://name_label.tscn），懒建缓存于 4 张 HashMap，"
@@ -572,18 +572,16 @@ mod("player_showcase.rs", "other", ("src/player_showcase.rs",), "观测",
     "10 个函数全解：ready 0x4e6480 / on_text_change 0x4efd70 / process 0x4e68f0 / draw 0x4e5400 + 6 个 gdext 生成物。**三次 draw_texture_rect_full**（皮肤→脸→帽），与颜色/段位无关；读根节点 +0x16a8 的 GraphwarPlayerConfig（名字+0x00/皮肤+0x60/脸+0x78/帽+0x90/变更计数+0xa8），process 轮询计数才重画（docs/16 §25）")
 mod("server_broker_request_connection.rs", "other", (), "未知",
     "非 graphwar_ 前缀；docs/115 只覆盖 broker 线格式，这个连接对象本身没看过")
-mod("backtracer.rs", "other", (), "未做",
-    "2024 版符号表：graphwarrust::backtracer 4 个 direct 符号（自带回溯器，不是外部 crate）")
-mod("function_token.rs", "other", (), "未做",
-    "2024 版符号表：graphwarrust::function_token 1 个符号 + 类型 FunctionToken")
-mod("graphwar_event_queue.rs", "graphwar", (), "未做",
-    "2024 版符号表：graphwarrust::graphwar_event_queue 2 个符号 + 类型 GraphwarEventQueue；"
-    "docs/ 里此前完全没有记录")
-mod("graphwar_game_info.rs", "graphwar", (), "未做",
-    "2024 版符号表：graphwar_game_info 独立模块（GameInfo **不在** graphwar_event.rs，"
-    "旧文档把它当成 event 的一部分是错的）")
-mod("graphwar_player_config.rs", "graphwar", (), "未做",
-    "2024 版符号表：graphwar_player_config 8 个 direct 符号；docs/ 里此前完全没有记录")
+mod("backtracer.rs", "other", ("src/backtracer.rs",), "观测",
+    "panic 钩子写 user://crash_log.txt；两侧都**没有** Backtrace::capture（名字误导）（docs/16 §33）")
+mod("function_token.rs", "other", ("src/function_token.rs",), "观测",
+    "16B token {tag,value} + 字符串表；tag 20=无效、`(`=18 `)`=19、**ˆ(U+02C6) 也是 ^**（新发现）（docs/16 §33）")
+mod("graphwar_event_queue.rs", "graphwar", ("src/graphwar_event_queue.rs",), "观测",
+    "**不是 manager**：GraphwarGameClient 以 Rc<RefCell<>> 持有（new+0xcdc），其余 manager 拿 Weak；add_event 有 200 余个直接调用点 => 全游戏发件箱。反常：send_buffer 只 1 个直接调用者（docs/16 §33）")
+mod("graphwar_game_info.rs", "graphwar", ("src/graphwar_game_info.rs",), "观测",
+    "GameInfo 结构体（9 字段）在此模块，**不在** graphwar_event.rs；我方只做 pub use 复用（docs/16 §33）")
+mod("graphwar_player_config.rs", "graphwar", ("src/graphwar_player_config.rs",), "观测",
+    "PlayerShowcase 读的 config（名字+0x00/皮肤+0x60/脸+0x78/帽+0x90/变更计数+0xa8）；存档分隔符未解（docs/16 §33）")
 mod("graphwar_replay_reader.rs", "graphwar", (), "未做",
     "2024 版符号表：graphwar_replay_reader 2 个符号；与 graphwar_replay_player 是两个模块")
 mod("graphwar_stream_buffer.rs", "graphwar", (), "未做",
