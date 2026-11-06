@@ -414,8 +414,8 @@ mod("graphwar_client_connection_handler.rs", "graphwar", (), "未做",
     "docs/134 只覆盖 client/ 的 GDScript 联机；原版这个 Rust handler 未还原")
 mod("graphwar_color_manager.rs", "graphwar", (), "未做",
     "docs/102：两张 6 色队色表 + 随机起点线性探测已解出；src/ 无实现")
-mod("graphwar_computer_player_manager.rs", "graphwar", (), "未知",
-    "只有 docs/02 一行（电脑玩家调度）；AI 行为散在 docs/AI.md，但该模块的入口函数没定位过")
+mod("graphwar_computer_player_manager.rs", "graphwar", ("src/graphwar_computer_player_manager.rs",), "观测",
+    "6/7 定位：HashMap<u32,BotData>（步长 0x78）+ SoldierBotData（0x58）。**不是掉线托管**：唯一入口是 bot_added_event(10)；level 阈值 4/11/26/101/251，精英数=种群/5，limit=5/5/10/15/25/200（docs/13 §25）")
 mod("graphwar_crash_reporter.rs", "graphwar", (), "未知",
     "全二进制**没有一个** panic 锚落在这个文件上，也没有任何地址级观测")
 mod("graphwar_draw_util.rs", "graphwar", (), "未做",
@@ -528,13 +528,13 @@ mod("graphwar_setup_control.rs", "graphwar", ("src/graphwar_setup_control.rs",),
 mod("graphwar_shot_calculator.rs", "graphwar", ("src/graphwar_shot_calculator.rs", "src/graphwar_shot_calculator/settle.rs"), "逐位",
     "docs/86 §14：82 发并集 152/152、漏报 0、时刻判决 38:0；docs/122 按 id 排除射手是"
     "指令级。注意：0x3c2bc0 那个 12 KB 主函数**没有逐条还原**，逐位的是行为不是函数体")
-mod("graphwar_soldier_manager.rs", "graphwar", (), "未知",
-    "只有 docs/02 一行（士兵实体），无地址级观测、无实现")
+mod("graphwar_soldier_manager.rs", "graphwar", ("src/graphwar_soldier_manager.rs",), "观测",
+    "5/6 定位：HashMap<u32,u32>（士兵→主人）。只管「谁的」，**轮转不查它**（turn_manager 自持 Vec<soldier_id>）；entity_removed 时比值命中就发键 => 玩家没了士兵跟着消失（docs/10 §13）")
 mod("graphwar_target_manager.rs", "graphwar", (), "未做",
     "docs/123：重置规则形状已钉住（翻 alive + 广播 LifeInfo）但判定点未知，397 份回放 0 次"
     "部分命中 ⇒ 无真值；docs/131 §4 的落地在 client/（自述为推断），src/ 只有 Target 数据结构")
-mod("graphwar_team_manager.rs", "graphwar", (), "未知",
-    "只有 docs/02 一行（队伍），无地址级观测、无实现")
+mod("graphwar_team_manager.rs", "graphwar", ("src/graphwar_team_manager.rs",), "观测",
+    "7/7 定位：Mutex<HashMap<u32, GraphwarTeam>>（桶步长 8，值 1 字节）。**唯一分队规则 0x3c1b40：进人少的队、平手进 Team1**；无队长/选边/每队容量，上限整房 10 人（docs/10 §13）")
 mod("graphwar_texture_loader.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（贴图加载），无地址级观测、无实现")
 mod("graphwar_tick_handler.rs", "graphwar", ("src/graphwar_tick_handler.rs",), "逐位",
