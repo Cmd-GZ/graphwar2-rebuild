@@ -1070,7 +1070,7 @@ pub fn json_opt_i64(v: Option<i64>) -> String {
 /// 把对象体切成 `(键, 原始值文本)`，值文本**逐字保留**（含嵌套对象、数组、字符串）。
 ///
 /// 只按**顶层**逗号切分：括号内与字符串内的逗号不切（聊天正文里就有逗号）。
-fn split_fields(body: &str) -> Vec<(String, String)> {
+pub fn split_fields(body: &str) -> Vec<(String, String)> {
     let bytes = body.as_bytes();
     let mut out: Vec<(String, String)> = Vec::new();
     let mut i = 0usize;
@@ -1170,6 +1170,11 @@ pub fn emit_object(kind: &str, known: &[(&str, String)], extra: &[(String, Strin
 }
 
 /// 生成"字段名未证实 ⇒ 只透传"的事件。
+///
+/// ⚠️ 本轮已把最后 10 个用户（`LockInfo` … `BanConnectionRequest`）升级成强类型
+/// ——`serialize_field` 的调用序把字段名与键序都定死了，不再需要透传。
+/// 宏本身保留：将来若又出现字段名读不到的事件，它就是正确的降级形态。
+#[allow(unused_macros)]
 ///
 /// 结构体**不声明任何字段**：解析时把整段 `{…}` 的字段按出现顺序原样存下，
 /// 序列化时原样拼回。这样既不会产生错误的线格式，也不会丢掉将来的新字段。
@@ -1410,91 +1415,633 @@ impl BotAdded {
     }
 }
 
-// ---------- 透传 10 个：名字已识别，字段名未证实 ----------
+// ---------- 线格式规格表：74 个事件的「名字 + 字段序列 + 值类型」----------
+//
+// ## 这张表是怎么来的（不是猜的）
+//
+// `#[derive(Serialize)]` 生成的代码**就是**线格式的定义：
+//
+// ```text
+// serialize_struct("XxxEvent", N)   -> 名字只进 serde 的错误串，JSON 里不出现
+// serialize_field("字段名", 值)      -> 字段名 = .rodata 里的 &'static str
+// ```
+//
+// `serde_json` 把 `serialize_struct` 的名字丢掉，但 `serialize_field` 的键**逐个写进
+// 报文**，而且**调用顺序就是线上键序**。LLVM 把 serde 的 `Compound` 全内联了，于是
+// 一次 `serialize_field` 在代码里是三条连续指令：
+//
+// ```text
+// lea  rsi, [rip + 字段名]   ; &'static str.ptr
+// mov  edx, LEN              ; &'static str.len（== 该字面量的真实字节数）
+// call <serialize_field 单态>
+// ```
+//
+// ⇒ **按地址顺序收 `lea rsi` 那一串，就是线上键序**。复现脚本：`tools/wire_fields.py`
+// （`--json` 机器读，`--verify` 自校验）。
+//
+// 值类型来自 `call` 的目标地址：**同一个单态 = 同一个 Rust 类型**。已认出的单态：
+//
+// | 单态 | 类型 | 判据 |
+// |---|---|---|
+// | `0x3cc060` | `i64` | 抓包里是整数 |
+// | `0x3cb250` | `String` | 抓包里是字符串 |
+// | `0x3cb760` | `f64` | 抓包里是小数 |
+// | `0x3cbb80` | `bool` | 该单态体内写 `true` / `false`（观测） |
+// | `0x3cc4b0` | `Option<i64>` | 该单态体内写 `null`，且 `rank` 抓到过 `null` |
+// | `0x3cb440` | `Option<String>` | 该单态体内写 `null` |
+// | `0x3cc330` | `u8` | 与 `GraphwarColor.r/g/b` 同一个单态 |
+// | `0x3cbab0` | socket 地址（线上是 JSON 字符串） | `GameInfo.address` 与 `GameRemoved.game_address` 同一单态 |
+// | `0x3cb330` / `0x3cb560` / `0x3cb670` / `0x3cbce0` / `0x3cbf70` / `0x3cbe80` / `0x3cc260` | 枚举（线上是字符串） | 单态体内 `{"EffectType" / "AxisMode" / …}` 的变体名表 |
+// | `0x3cb9e0` | [`GraphwarColor`] | 结构体 |
+// | `0x3cbdb0` | [`GameInfo`] | 结构体 |
+//
+// ## 与抓包、与 serde 的 `N` 对得上（三道交叉验证）
+//
+// 1. **`N`**：字段个数与 `.rodata` 里 `struct <Name>Event with N elements` 的 N
+//    逐个相等（67/67）；剩下 7 个事件没有这条串，它们的体实测是空 `{}`。
+// 2. **反序列化侧**：每个事件 `Deserialize` 的 `visit_map` 里都能找到同名键的字节比较
+//    （67/67 全部字段被比到）。注意它常用**合并后的 16 字节窗口**，所以字面量地址与
+//    `Serialize` 侧那份不是同一处 —— 这是正常的（`.rodata` 会去重/合并）。
+// 3. **抓包**：`fixtures/protocol*.jsonl` 里 49 种事件的键序与这张表**逐个相同**
+//    （含嵌套的 `color` / `game_info`）。见 `tests/wire_format.rs`。
+//
+// ⚠️ **判别值（tag）不上线**：线上是 serde 外部标签 JSON，`{"事件名":{…}}` 里的键是
+// **名字**，不是数字。tag 列只用于和 `src/events.rs` 对账（`docs/07` §7）。
+// `None` 的两个（`GameHeartbeat` / `VersionInfo`）正是 `docs/07` §7.3 里
+// **63 / 65 缺号**的候选——它们有 `Serialize` 实现、有线上名字，但没有已知判别值。
 
-passthrough_event! {
-    /// `{"LockInfo":{…}}` —— 房间是否已锁。
-    ///
-    /// **推断/透传**：N=1（serde 原文，可信）；`.rodata` 词汇表里有 `locked`
-    /// （`GameInfo.locked`、LAN 广播的 `locked` 是同一概念的实测证据），
-    /// 但**没有这个事件的一份抓包**能证明它就叫 `locked`、也不是别的编码
-    /// ⇒ 不声明字段，原样透传。
-    LockInfo
+/// 一个字段在线上能取到的值形状。
+///
+/// 由 `serialize_field` 的**单态地址**定（同单态 = 同类型），见本节开头的表。
+/// 名字带 `enum` 语义的（`axis_mode` 等）线上就是字符串，所以统一记 [`ValType::Str`]。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValType {
+    /// `i64`（`serialize_u64`/`i64` 一族，单态 `0x3cc060`）。
+    I64,
+    /// `u8`（单态 `0x3cc330`，只出现在颜色的 `r`/`g`/`b`）。
+    U8,
+    /// `f64`（单态 `0x3cb760`）。
+    F64,
+    /// `bool`（单态 `0x3cbb80`）。
+    Bool,
+    /// 字符串；枚举也走这条（线上就是字符串）。
+    Str,
+    /// `Option<i64>`（单态 `0x3cc4b0`，可写 `null`）。
+    OptI64,
+    /// `Option<String>`（单态 `0x3cb440`，可写 `null`）。
+    OptStr,
+    /// [`GraphwarColor`]（`{"r":..,"g":..,"b":..}`）。
+    Color,
+    /// [`GameInfo`]（9 个字段，与 LAN 广播的负载同一个结构体）。
+    GameInfo,
 }
 
-passthrough_event! {
-    /// `{"LockRequest":{…}}` —— 请求锁房/解锁（房主权限）。
-    ///
-    /// **推断/透传**：N=1（serde 原文）；与 [`LockInfo`] 同族，但字段名同样未证实。
-    LockRequest
+/// 一个线上事件的完整形状。
+#[derive(Debug, Clone, Copy)]
+pub struct WireEvent {
+    /// 线上键名（`{"<name>": …}` 的那个 `<name>`）。
+    pub name: &'static str,
+    /// `enum Event` 的判别值（**不上线**）；`None` = 判别值未解出。
+    pub tag: Option<u16>,
+    /// 字段，**按线上顺序**。
+    pub fields: &'static [(&'static str, ValType)],
 }
 
-passthrough_event! {
-    /// `{"ChatMessage":{…}}` —— 聊天。
-    ///
-    /// **推断/透传**：N=2（serde 原文）。`message` 在 `.rodata` 里紧邻该变体首次出现
-    /// （与 `version`/`system`、`subscriber_id`、`turn_limit` 同一张表、同一位置规律），
-    /// 但**第二个字段名被 serde 去重到别处**，且**没有抓包** ⇒ 整条透传，
-    /// 不猜"`entity_id` + `message`"。
-    ChatMessage
+/// 74 个事件的线上形状，按事件名升序。**这是对外协议的唯一权威表。**
+///
+/// 「74」而不是「73」：`docs/07` 早先记的 73 是按 `src/events.rs` 的 72 个
+/// **有判别值的**变体 + `GameHeartbeat` 数的，漏了 [`VersionInfo`]——它同样有
+/// `Serialize` 实现和线上名字（`{"VersionInfo":{"version":..,"system":..}}`），
+/// 只是判别值未知（63 或 65）。本轮从二进制里数出来是 **74**。
+pub const WIRE_SPEC: &[WireEvent] = &[
+    WireEvent { name: "AddObstacle", tag: Some(40), fields: &[("pos_x", ValType::F64), ("pos_y", ValType::F64), ("radius", ValType::F64)] },
+    WireEvent { name: "AddSoldierRequest", tag: Some(16), fields: &[("player_id", ValType::I64)] },
+    WireEvent { name: "AxisModeChangeRequest", tag: Some(18), fields: &[] },
+    WireEvent { name: "AxisModeInfo", tag: Some(45), fields: &[("axis_mode", ValType::Str)] },
+    WireEvent { name: "BanConnectionRequest", tag: Some(72), fields: &[("player_connection_id", ValType::I64), ("leader_connection_id", ValType::I64)] },
+    WireEvent { name: "BotAdded", tag: Some(10), fields: &[("connection_id", ValType::I64), ("player_id", ValType::I64), ("level", ValType::I64)] },
+    WireEvent { name: "ChangeTeamRequest", tag: Some(11), fields: &[("player_id", ValType::I64)] },
+    WireEvent { name: "ChatMessage", tag: Some(71), fields: &[("entity_id", ValType::I64), ("message", ValType::Str)] },
+    WireEvent { name: "ChatMessageRequest", tag: Some(70), fields: &[("entity_id", ValType::I64), ("message", ValType::Str)] },
+    WireEvent { name: "ClearBansRequest", tag: Some(73), fields: &[] },
+    WireEvent { name: "ClearObstacles", tag: Some(39), fields: &[] },
+    WireEvent { name: "ColorInfo", tag: Some(61), fields: &[("entity_id", ValType::I64), ("color", ValType::Color)] },
+    WireEvent { name: "ConnectedToServer", tag: Some(7), fields: &[("connection_id", ValType::I64)] },
+    WireEvent { name: "ConnectionRemoved", tag: Some(6), fields: &[("connection_id", ValType::I64), ("reason", ValType::OptStr)] },
+    WireEvent { name: "DestroyObstacle", tag: Some(41), fields: &[("pos_x", ValType::F64), ("pos_y", ValType::F64), ("radius", ValType::F64)] },
+    WireEvent { name: "EffectInfo", tag: Some(44), fields: &[("effect_id", ValType::I64), ("pos_x", ValType::F64), ("pos_y", ValType::F64), ("effect_type", ValType::Str), ("start_tick", ValType::I64)] },
+    WireEvent { name: "EndOfTurnInfo", tag: Some(49), fields: &[("end_of_turn_tick", ValType::I64), ("time_mode", ValType::Str)] },
+    WireEvent { name: "EntityEffectInfo", tag: Some(56), fields: &[("entity_id", ValType::I64), ("effect_type", ValType::Str)] },
+    WireEvent { name: "EntityRemoved", tag: Some(14), fields: &[("entity_id", ValType::I64)] },
+    WireEvent { name: "FaceGraphicsInfo", tag: Some(53), fields: &[("entity_id", ValType::I64), ("graphics_str", ValType::Str)] },
+    WireEvent { name: "FaceGraphicsRequest", tag: Some(52), fields: &[("entity_id", ValType::I64), ("graphics_str", ValType::Str)] },
+    WireEvent { name: "FunctionActive", tag: Some(36), fields: &[("owner_id", ValType::I64), ("active_tick", ValType::I64)] },
+    WireEvent { name: "FunctionFire", tag: Some(33), fields: &[("soldier_id", ValType::I64)] },
+    WireEvent { name: "FunctionFireRequest", tag: Some(32), fields: &[("player_id", ValType::I64)] },
+    WireEvent { name: "FunctionInfo", tag: Some(35), fields: &[("owner_id", ValType::I64), ("function", ValType::Str), ("corrected_function", ValType::OptStr)] },
+    WireEvent { name: "FunctionModeChangeRequest", tag: Some(19), fields: &[] },
+    WireEvent { name: "FunctionModeInfo", tag: Some(46), fields: &[("function_mode", ValType::Str)] },
+    WireEvent { name: "FunctionPoints", tag: Some(37), fields: &[("owner_id", ValType::I64), ("start_x", ValType::F64), ("start_y", ValType::F64), ("end_x", ValType::F64)] },
+    WireEvent { name: "FunctionUpdateRequest", tag: Some(34), fields: &[("player_id", ValType::I64), ("function", ValType::Str)] },
+    WireEvent { name: "FunctionsCalculated", tag: Some(38), fields: &[] },
+    WireEvent { name: "GameHeartbeat", tag: None, fields: &[] },
+    WireEvent { name: "GameInfo", tag: Some(62), fields: &[("game_info", ValType::GameInfo)] },
+    WireEvent { name: "GameNameInfo", tag: Some(29), fields: &[("game_name", ValType::Str)] },
+    WireEvent { name: "GameNameRequest", tag: Some(22), fields: &[("game_name", ValType::Str)] },
+    WireEvent { name: "GameRemoved", tag: Some(64), fields: &[("game_address", ValType::Str)] },
+    WireEvent { name: "GameStartRequest", tag: Some(31), fields: &[] },
+    WireEvent { name: "GameStateInfo", tag: Some(30), fields: &[("game_state", ValType::Str)] },
+    WireEvent { name: "HatGraphicsInfo", tag: Some(55), fields: &[("entity_id", ValType::I64), ("graphics_str", ValType::Str)] },
+    WireEvent { name: "HatGraphicsRequest", tag: Some(54), fields: &[("entity_id", ValType::I64), ("graphics_str", ValType::Str)] },
+    WireEvent { name: "LifeInfo", tag: Some(27), fields: &[("entity_id", ValType::I64), ("alive", ValType::Bool)] },
+    WireEvent { name: "LifeQueuedDeath", tag: Some(28), fields: &[("entity_id", ValType::I64), ("tick", ValType::I64)] },
+    WireEvent { name: "LockInfo", tag: Some(69), fields: &[("lock", ValType::Bool)] },
+    WireEvent { name: "LockRequest", tag: Some(68), fields: &[("lock", ValType::Bool)] },
+    WireEvent { name: "NameInfo", tag: Some(60), fields: &[("entity_id", ValType::I64), ("name", ValType::Str)] },
+    WireEvent { name: "NameRequest", tag: Some(59), fields: &[("entity_id", ValType::I64), ("name", ValType::Str)] },
+    WireEvent { name: "NewBotRequest", tag: Some(9), fields: &[("connection_id", ValType::I64), ("level", ValType::I64)] },
+    WireEvent { name: "NewConnection", tag: Some(5), fields: &[("connection_id", ValType::I64)] },
+    WireEvent { name: "NewConnectionRequest", tag: Some(4), fields: &[("major_version", ValType::Str), ("minor_version", ValType::Str)] },
+    WireEvent { name: "NewPlayerRequest", tag: Some(8), fields: &[("connection_id", ValType::I64)] },
+    WireEvent { name: "PlayerInfo", tag: Some(13), fields: &[("player_id", ValType::I64), ("connection_id", ValType::I64)] },
+    WireEvent { name: "PosInfo", tag: Some(26), fields: &[("entity_id", ValType::I64), ("pos_x", ValType::F64), ("pos_y", ValType::F64), ("radius", ValType::F64)] },
+    WireEvent { name: "QueueDestroyObstacle", tag: Some(42), fields: &[("pos_x", ValType::F64), ("pos_y", ValType::F64), ("radius", ValType::F64), ("tick", ValType::I64)] },
+    WireEvent { name: "RankInfo", tag: Some(67), fields: &[("entity_id", ValType::I64), ("rank", ValType::OptI64)] },
+    WireEvent { name: "RankRequest", tag: Some(66), fields: &[("entity_id", ValType::I64), ("rank", ValType::OptI64)] },
+    WireEvent { name: "RemovePlayerRequest", tag: Some(12), fields: &[("player_id", ValType::I64)] },
+    WireEvent { name: "RemoveSoldierRequest", tag: Some(17), fields: &[("player_id", ValType::I64)] },
+    WireEvent { name: "RemoveTeam", tag: Some(25), fields: &[("entity_id", ValType::I64)] },
+    WireEvent { name: "SkinGraphicsInfo", tag: Some(51), fields: &[("entity_id", ValType::I64), ("graphics_str", ValType::Str)] },
+    WireEvent { name: "SkinGraphicsRequest", tag: Some(50), fields: &[("entity_id", ValType::I64), ("graphics_str", ValType::Str)] },
+    WireEvent { name: "SoldierInfo", tag: Some(15), fields: &[("soldier_id", ValType::I64), ("player_id", ValType::I64)] },
+    WireEvent { name: "Subscribe", tag: Some(3), fields: &[("subscriber_id", ValType::I64), ("subscribed_event_type", ValType::Str)] },
+    WireEvent { name: "TargetInfo", tag: Some(23), fields: &[("target_id", ValType::I64)] },
+    WireEvent { name: "TeamInfo", tag: Some(24), fields: &[("entity_id", ValType::I64), ("team", ValType::Str)] },
+    WireEvent { name: "Tick", tag: Some(0), fields: &[("current_tick", ValType::I64)] },
+    WireEvent { name: "TickReply", tag: Some(2), fields: &[("current_tick", ValType::I64)] },
+    WireEvent { name: "TickRequest", tag: Some(1), fields: &[] },
+    WireEvent { name: "TimeModeChangeRequest", tag: Some(21), fields: &[] },
+    WireEvent { name: "TimeModeInfo", tag: Some(48), fields: &[("time_mode", ValType::Str)] },
+    WireEvent { name: "TurnCountInfo", tag: Some(58), fields: &[("turn_count", ValType::I64)] },
+    WireEvent { name: "TurnInfo", tag: Some(43), fields: &[("player_id", ValType::I64), ("soldier_id", ValType::I64)] },
+    WireEvent { name: "TurnLimitInfo", tag: Some(57), fields: &[("turn_limit", ValType::OptI64)] },
+    WireEvent { name: "TurnModeChangeRequest", tag: Some(20), fields: &[] },
+    WireEvent { name: "TurnModeInfo", tag: Some(47), fields: &[("turn_mode", ValType::Str)] },
+    WireEvent { name: "VersionInfo", tag: None, fields: &[("version", ValType::Str), ("system", ValType::Str)] },
+];
+
+/// 按线上键名查规格。
+pub fn wire_spec(name: &str) -> Option<&'static WireEvent> {
+    WIRE_SPEC.iter().find(|e| e.name == name)
 }
 
-passthrough_event! {
-    /// `{"ChatMessageRequest":{…}}` —— 发送聊天。
-    ///
-    /// **推断/透传**：N=2（serde 原文），`message` 同样紧邻出现；第二个字段名未知。
-    ChatMessageRequest
+/// 事件名的线上字段顺序（`None` = 不在表里）。
+pub fn wire_field_order(name: &str) -> Option<Vec<&'static str>> {
+    wire_spec(name).map(|e| e.fields.iter().map(|(k, _)| *k).collect())
 }
 
-passthrough_event! {
-    /// `{"GameHeartbeat":{…}}` —— 心跳/保活。
+// ---------- 两个负载结构体 ----------
+
+/// `{"r":149,"g":5,"b":62}` —— 颜色。`ColorInfo.color` 的值就是这个结构体。
+///
+/// **观测**：`tools/wire_fields.py --struct 0x464c00` 读出三个键依次是 `r`、`g`、`b`；
+/// 三者的 `serialize_field` 单态都是 `0x3cc330`（`u8`），与抓包里的
+/// `{"r":149,"g":5,"b":62}` 一致。⚠️ `docs/07` §3.2 记的字段名 `rgb` 是**错的**
+/// （`.rodata` 里确实有 `rgb` 这三个连续字节，但那只是 `r`/`g`/`b` 三个 1 字节
+/// 字面量在内存里紧挨着，`strings` 会把它读成一条）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GraphwarColor {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+impl GraphwarColor {
+    pub const fn new(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b }
+    }
+
+    /// `{"r":..,"g":..,"b":..}`（键序 = 二进制里的 `serialize_field` 顺序）。
+    pub fn to_json(&self) -> String {
+        format!(r#"{{"r":{},"g":{},"b":{}}}"#, self.r, self.g, self.b)
+    }
+
+    pub fn parse(m: &RawMessage) -> Option<Self> {
+        Some(Self {
+            r: get_int(m, "r")? as u8,
+            g: get_int(m, "g")? as u8,
+            b: get_int(m, "b")? as u8,
+        })
+    }
+}
+
+/// LAN 广播 / `GameInfoEvent` 的负载：房间信息，**9 个字段**。
+///
+/// **观测**：`tools/wire_fields.py --struct 0x5060d0` 读出键序
+/// `room_name, game_state, current_player_count, address, axis_mode,
+/// function_mode, turn_mode, time_mode, locked`，与 `struct GameInfo with 9 elements`
+/// 的 N 相等，也与真实 LAN 广播报文完全一致（`docs/07` §1、`protocol.rs` 模块文档）。
+///
+/// ⚠️ 注意与 [`LockInfo`]/[`LockRequest`] 的字段名**不同**：这里是 `locked`，
+/// 那两条是 `lock`。两个名字都在 `.rodata` 里、都实测存在，别互相套用。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct GameInfo {
+    pub room_name: String,
+    pub game_state: String,
+    pub current_player_count: i64,
+    /// socket 地址（`"[::1]:35245"`）。线上是 JSON 字符串；
+    /// 与 `GameRemoved.game_address` 同一个 `serialize_field` 单态 `0x3cbab0`。
+    pub address: String,
+    pub axis_mode: String,
+    pub function_mode: String,
+    pub turn_mode: String,
+    pub time_mode: String,
+    pub locked: bool,
+}
+
+impl GameInfo {
+    /// 键序 = 二进制里的 `serialize_field` 顺序（9 个，`slot+?` 见文档）。
+    pub fn to_json(&self) -> String {
+        format!(
+            concat!(
+                r#"{{"room_name":{},"game_state":{},"current_player_count":{},"#,
+                r#""address":{},"axis_mode":{},"function_mode":{},"#,
+                r#""turn_mode":{},"time_mode":{},"locked":{}}}"#
+            ),
+            json_str(&self.room_name),
+            json_str(&self.game_state),
+            self.current_player_count,
+            json_str(&self.address),
+            json_str(&self.axis_mode),
+            json_str(&self.function_mode),
+            json_str(&self.turn_mode),
+            json_str(&self.time_mode),
+            self.locked,
+        )
+    }
+
+    pub fn parse(m: &RawMessage) -> Option<Self> {
+        Some(Self {
+            room_name: get_str_unescaped(m, "room_name")?,
+            game_state: get_str_unescaped(m, "game_state")?,
+            current_player_count: get_int(m, "current_player_count")?,
+            address: get_str_unescaped(m, "address")?,
+            axis_mode: get_str_unescaped(m, "axis_mode")?,
+            function_mode: get_str_unescaped(m, "function_mode")?,
+            turn_mode: get_str_unescaped(m, "turn_mode")?,
+            time_mode: get_str_unescaped(m, "time_mode")?,
+            locked: get_bool(m, "locked")?,
+        })
+    }
+}
+
+// ---------- 强类型 10 个：原先"透传"，本轮从二进制读出字段名与类型 ----------
+//
+// 这 10 个此前刻意**不声明字段**（`docs/07` §6.2.1：没有抓包就不能猜键名）。
+// 本轮改用 `serialize_field` 的**调用序**取证 —— 它比抓包更硬：抓包只能证明
+// "见过这种顺序"，而调用序是**产出报文的代码本身**。⇒ 全部升级成强类型。
+//
+// 每个结构体仍保留 `extra`：将来对端多发字段也不会丢（这是原透传实现的唯一优点，
+// 原样保留）。序列化时先按二进制键序发已知字段，再把 `extra` 接在后面。
+
+/// 单布尔字段事件。`lock` 的单态 `0x3cbb80` 体内写 `true`/`false`，故是 `bool`。
+macro_rules! bool_field_event {
+    ($(#[$meta:meta])* $ty:ident, $field:ident) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Default)]
+        pub struct $ty {
+            pub $field: bool,
+            /// 未识别字段（键 / 原始值文本），按出现顺序保留并原样回发。
+            pub extra: Vec<(String, String)>,
+        }
+        impl $ty {
+            pub fn parse(m: &RawMessage) -> Option<Self> {
+                Some(Self {
+                    $field: get_bool(m, stringify!($field))?,
+                    extra: extra_fields(&m.body, &[stringify!($field)]),
+                })
+            }
+            pub fn to_msg(&self) -> String {
+                emit_object(
+                    stringify!($ty),
+                    &[(stringify!($field), self.$field.to_string())],
+                    &self.extra,
+                )
+            }
+        }
+    };
+}
+
+/// 单 `i64` 字段事件。
+#[allow(unused_macros)]   // 通用形态，本轮 10 个里没有恰好"单 i64"的事件
+macro_rules! i64_field_event {
+    ($(#[$meta:meta])* $ty:ident, $field:ident) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Default)]
+        pub struct $ty {
+            pub $field: i64,
+            pub extra: Vec<(String, String)>,
+        }
+        impl $ty {
+            pub fn parse(m: &RawMessage) -> Option<Self> {
+                Some(Self {
+                    $field: get_int(m, stringify!($field))?,
+                    extra: extra_fields(&m.body, &[stringify!($field)]),
+                })
+            }
+            pub fn to_msg(&self) -> String {
+                emit_object(
+                    stringify!($ty),
+                    &[(stringify!($field), json_i64(self.$field))],
+                    &self.extra,
+                )
+            }
+        }
+    };
+}
+
+/// 单 `Option<i64>` 字段事件（可写 `null`）。
+macro_rules! opt_i64_field_event {
+    ($(#[$meta:meta])* $ty:ident, $field:ident) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Default)]
+        pub struct $ty {
+            pub $field: Option<i64>,
+            pub extra: Vec<(String, String)>,
+        }
+        impl $ty {
+            pub fn parse(m: &RawMessage) -> Option<Self> {
+                Some(Self {
+                    $field: get_int(m, stringify!($field)),
+                    extra: extra_fields(&m.body, &[stringify!($field)]),
+                })
+            }
+            pub fn to_msg(&self) -> String {
+                emit_object(
+                    stringify!($ty),
+                    &[(stringify!($field), json_opt_i64(self.$field))],
+                    &self.extra,
+                )
+            }
+        }
+    };
+}
+
+/// 单字符串字段事件。
+macro_rules! str_field_event {
+    ($(#[$meta:meta])* $ty:ident, $field:ident) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Default)]
+        pub struct $ty {
+            pub $field: String,
+            pub extra: Vec<(String, String)>,
+        }
+        impl $ty {
+            pub fn parse(m: &RawMessage) -> Option<Self> {
+                Some(Self {
+                    $field: get_str_unescaped(m, stringify!($field))?,
+                    extra: extra_fields(&m.body, &[stringify!($field)]),
+                })
+            }
+            pub fn to_msg(&self) -> String {
+                emit_object(
+                    stringify!($ty),
+                    &[(stringify!($field), json_str(&self.$field))],
+                    &self.extra,
+                )
+            }
+        }
+    };
+}
+
+/// 两个 `i64` 字段事件。
+macro_rules! i64_pair_event {
+    ($(#[$meta:meta])* $ty:ident, $a:ident, $b:ident) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Default)]
+        pub struct $ty {
+            pub $a: i64,
+            pub $b: i64,
+            pub extra: Vec<(String, String)>,
+        }
+        impl $ty {
+            pub fn parse(m: &RawMessage) -> Option<Self> {
+                Some(Self {
+                    $a: get_int(m, stringify!($a))?,
+                    $b: get_int(m, stringify!($b))?,
+                    extra: extra_fields(&m.body, &[stringify!($a), stringify!($b)]),
+                })
+            }
+            pub fn to_msg(&self) -> String {
+                emit_object(
+                    stringify!($ty),
+                    &[(stringify!($a), json_i64(self.$a)),
+                      (stringify!($b), json_i64(self.$b))],
+                    &self.extra,
+                )
+            }
+        }
+    };
+}
+
+/// 空体事件：二进制里的 `Serialize` 不写任何字段 ⇒ 体恒为 `{}`。
+///
+/// 仍然保留 `extra`：万一更高版本加了字段，解析端不会丢、转发端能原样回发。
+macro_rules! empty_body_event {
+    ($(#[$meta:meta])* $ty:ident) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Default)]
+        pub struct $ty {
+            pub extra: Vec<(String, String)>,
+        }
+        impl $ty {
+            pub fn parse(m: &RawMessage) -> Option<Self> {
+                Some(Self { extra: split_fields(&m.body) })
+            }
+            pub fn to_msg(&self) -> String {
+                emit_object(stringify!($ty), &[], &self.extra)
+            }
+        }
+    };
+}
+
+bool_field_event! {
+    /// `{"LockInfo":{"lock":true}}` —— 房间是否已锁。
     ///
-    /// **未知**：`.rodata` 里**没有** `GameHeartbeatEvent with N elements`，也没有
-    /// 相邻字段名 ⇒ N 与字段名都不知道。同类（`ClearObstacles` / `GameStartRequest`）
-    /// 实测是空体 `{}`，"大概率为空体"只是**推断**；按透传实现，来了字段也照收照发。
+    /// **逐位/观测**：`Serialize` 在 `0x50ca30`（Ghidra `0x60ca30`）；`serialize_struct`
+    /// 后只调一次 `serialize_field("lock", ..)`（字段名字面量在 `0x1ba58c`，4 字节，
+    /// 紧邻它的是 `mov edx,4`）。值类型 = 单态 `0x3cbb80`（`bool`）。
+    /// N=1 与 `struct LockInfoEvent with 1 element` 相等。
+    ///
+    /// ⚠️ 字段名是 **`lock`**，不是 `locked`。`locked` 是 [`GameInfo`] 的字段
+    /// （`LockInfo` 与它不是同一个结构体，别互相套用）。
+    LockInfo, lock
+}
+
+bool_field_event! {
+    /// `{"LockRequest":{"lock":true}}` —— 请求锁房/解锁。
+    ///
+    /// **逐位/观测**：`Serialize` 在 `0x50e420`；字段名 `lock`（与 [`LockInfo`] 同名字面量），
+    /// 值类型同单态 `0x3cbb80`。N=1。
+    LockRequest, lock
+}
+
+entity_str_event! {
+    /// `{"ChatMessage":{"entity_id":229,"message":"gg"}}` —— 聊天广播。
+    ///
+    /// **逐位/观测**：`Serialize` 在 `0x511320`；两次 `serialize_field` 依次
+    /// `entity_id`（单态 `0x3cc060` = `i64`）、`message`（单态 `0x3cb250` = `String`）。
+    /// N=2 与 `struct ChatMessageEvent with 2 elements` 相等。
+    /// `docs/07` §6.2 只说"`message` 有相邻串证据、第二个字段名未知" —— 本轮把
+    /// `entity_id` 也读出来了。
+    ChatMessage, message
+}
+
+entity_str_event! {
+    /// `{"ChatMessageRequest":{"entity_id":232,"message":"hi"}}` —— 发送聊天。
+    ///
+    /// **逐位/观测**：`Serialize` 在 `0x5124e0`；键序与类型同 [`ChatMessage`]。N=2。
+    ChatMessageRequest, message
+}
+
+empty_body_event! {
+    /// `{"GameHeartbeat":{}}` —— 心跳/保活。
+    ///
+    /// **观测（升级自"未知"）**：`Serialize` 在 `0x510a90`；`serialize_struct` 之后
+    /// **一次 `serialize_field` 都没有**，直接写 `}`。⇒ 体恒为空 `{}`。
+    /// 它没有 `struct GameHeartbeatEvent with N elements` 串，
+    /// 而空体结构体本来就不需要 `invalid_length` 文案 —— 这与 N=0 自洽。
+    /// 判别值仍未知（`docs/07` §7.3 的 63/65 缺号之一）。
     GameHeartbeat
 }
 
-passthrough_event! {
-    /// `{"GameRemoved":{…}}` —— 房间从列表里消失。
+str_field_event! {
+    /// `{"GameRemoved":{"game_address":"69.164.213.144:35981"}}` —— 房间从列表里消失。
     ///
-    /// **推断/透传**：N=1（serde 原文），`game_address` 在 `.rodata` 里紧邻该变体首次
-    /// 出现（`docs/07` §3.1 同）⇒ 归属较可靠，但**没有抓包** ⇒ 仍透传。
-    GameRemoved
+    /// **逐位/观测**：`Serialize` 在 `0x511de0`；单次 `serialize_field("game_address", ..)`，
+    /// 单态 `0x3cbab0` —— **与 `GameInfo.address` 是同一个单态**（观测），
+    /// 也就是同一个 socket 地址类型，线上是 JSON 字符串。N=1。
+    GameRemoved, game_address
 }
 
-passthrough_event! {
-    /// `{"TurnLimitInfo":{…}}` —— 回合数上限。
+opt_i64_field_event! {
+    /// `{"TurnLimitInfo":{"turn_limit":20}}` —— 回合数上限。
     ///
-    /// **推断/透传**：N=1（serde 原文），`turn_limit` 紧邻该变体首次出现
-    /// （`docs/07` §3.3 同）；**没有抓包** ⇒ 仍透传。
-    TurnLimitInfo
+    /// **逐位/观测**：`Serialize` 在 `0x50f5d0`；单次 `serialize_field("turn_limit", ..)`，
+    /// 单态 `0x3cc4b0` —— **与 `RankInfo.rank` 同一个单态**，也就是 `Option<i64>`
+    /// （该单态体内写 `null`，且 `rank` 抓到过 `null`）。N=1。
+    TurnLimitInfo, turn_limit
 }
 
-passthrough_event! {
+empty_body_event! {
     /// `{"ClearObstacles":{}}` —— 清场。
     ///
-    /// **观测**：真实报文就是空体 `{}`（`fixtures/protocol_match.jsonl`、`docs/24` §4.6），
-    /// 且该变体没有 `with N elements` 串。没有字段可声明，仍按透传实现
-    /// （将来若出现字段也能原样转发）。
+    /// **观测**：`Serialize` 在 `0x50e7c0`，没有 `serialize_field` ⇒ 体恒为 `{}`
+    /// （与真实报文一致）。N 串缺失，同样因为空体。
     ClearObstacles
 }
 
-passthrough_event! {
-    /// `{"ClearBansRequest":{…}}` —— 清空封禁列表。
+empty_body_event! {
+    /// `{"ClearBansRequest":{}}` —— 清空封禁列表。
     ///
-    /// **未知**：`.rodata` 里**没有** `ClearBansRequestEvent with N elements`。
-    /// 与 `ClearObstacles` 同属"管理类清空"是**推断**，且**没有抓包** ⇒ 不声明字段。
+    /// **观测（升级自"未知"）**：`Serialize` 在 `0x5137c0`，无 `serialize_field`
+    /// ⇒ 体恒为 `{}`。N 串缺失同样因为空体。
     ClearBansRequest
 }
 
-passthrough_event! {
-    /// `{"BanConnectionRequest":{…}}` —— 踢人。
+i64_pair_event! {
+    /// `{"BanConnectionRequest":{"player_connection_id":228,"leader_connection_id":229}}` —— 踢人。
     ///
-    /// **推断/透传**：N=2（serde 原文），`player_connection_id` /
-    /// `leader_connection_id` 两个名字首次出现就紧邻该变体、正好两个 ⇒ 归属较可靠，
-    /// 但**没有抓包** ⇒ 仍透传。
-    BanConnectionRequest
+    /// **逐位/观测**：`Serialize` 在 `0x513cd0`；两次 `serialize_field` 依次
+    /// `player_connection_id`、`leader_connection_id`，两者单态都是 `0x3cc060`（`i64`）。
+    /// N=2。`docs/07` §6.2 的"候选"现在坐实，且**顺序**也定死了。
+    BanConnectionRequest, player_connection_id, leader_connection_id
+}
+
+// ---------- 10 个透传事件的 `emit_*`（从零构造报文）----------
+//
+// 有了字段名与键序就能**主动构造**，不再只能解析转发。键序一律 = 二进制键序。
+
+/// `{"LockInfo":{"lock":true}}`
+pub fn emit_lock_info(lock: bool) -> String {
+    format!(r#"{{"LockInfo":{{"lock":{}}}}}"#, lock)
+}
+
+/// `{"LockRequest":{"lock":true}}`
+pub fn emit_lock_request(lock: bool) -> String {
+    format!(r#"{{"LockRequest":{{"lock":{}}}}}"#, lock)
+}
+
+/// `{"ChatMessage":{"entity_id":229,"message":"gg"}}`
+pub fn emit_chat_message(entity_id: i64, message: &str) -> String {
+    format!(
+        r#"{{"ChatMessage":{{"entity_id":{},"message":"{}"}}}}"#,
+        entity_id, json_escape(message)
+    )
+}
+
+/// `{"ChatMessageRequest":{"entity_id":232,"message":"hi"}}`
+pub fn emit_chat_message_request(entity_id: i64, message: &str) -> String {
+    format!(
+        r#"{{"ChatMessageRequest":{{"entity_id":{},"message":"{}"}}}}"#,
+        entity_id, json_escape(message)
+    )
+}
+
+/// `{"GameHeartbeat":{}}`
+pub fn emit_game_heartbeat() -> String {
+    r#"{"GameHeartbeat":{}}"#.to_string()
+}
+
+/// `{"GameRemoved":{"game_address":"69.164.213.144:35981"}}`
+pub fn emit_game_removed(game_address: &str) -> String {
+    format!(
+        r#"{{"GameRemoved":{{"game_address":"{}"}}}}"#,
+        json_escape(game_address)
+    )
+}
+
+/// `{"TurnLimitInfo":{"turn_limit":20}}`（`None` → `null`）
+pub fn emit_turn_limit_info(turn_limit: Option<i64>) -> String {
+    format!(
+        r#"{{"TurnLimitInfo":{{"turn_limit":{}}}}}"#,
+        json_opt_i64(turn_limit)
+    )
+}
+
+/// `{"ClearObstacles":{}}`
+pub fn emit_clear_obstacles() -> String {
+    r#"{"ClearObstacles":{}}"#.to_string()
+}
+
+/// `{"ClearBansRequest":{}}`
+pub fn emit_clear_bans_request() -> String {
+    r#"{"ClearBansRequest":{}}"#.to_string()
+}
+
+/// `{"BanConnectionRequest":{"player_connection_id":228,"leader_connection_id":229}}`
+pub fn emit_ban_connection_request(player_connection_id: i64, leader_connection_id: i64) -> String {
+    format!(
+        concat!(
+            r#"{{"BanConnectionRequest":{{"player_connection_id":{},"#,
+            r#""leader_connection_id":{}}}}}"#
+        ),
+        player_connection_id, leader_connection_id
+    )
+}
+
+/// `{"GameInfo":{"game_info":{…9 个字段…}}}`
+pub fn emit_game_info(info: &GameInfo) -> String {
+    format!(r#"{{"GameInfo":{{"game_info":{}}}}}"#, info.to_json())
+}
+
+/// `{"ColorInfo":{"entity_id":..,"color":{"r":..,"g":..,"b":..}}}`
+pub fn emit_color_info(entity_id: i64, color: GraphwarColor) -> String {
+    format!(
+        r#"{{"ColorInfo":{{"entity_id":{},"color":{}}}}}"#,
+        entity_id,
+        color.to_json()
+    )
 }
 
 /// 补齐的 23 个事件的线上键名（与结构体名一致，供测试与 `docs/96` 对账）。
@@ -1657,8 +2204,8 @@ mod supplemented_event_tests {
         ("NameInfo", r#"{"NameInfo":{"entity_id":232,"name":"Skynet"}}"#),     // fixture
         ("RankRequest", r#"{"RankRequest":{"entity_id":232,"rank":null}}"#),   // fixture
         ("RankInfo", r#"{"RankInfo":{"entity_id":229,"rank":0}}"#),            // fixture
-        ("LockInfo", r#"{"LockInfo":{"locked":true}}"#),                       // 合成
-        ("LockRequest", r#"{"LockRequest":{"locked":true}}"#),                 // 合成
+        ("LockInfo", r#"{"LockInfo":{"lock":true}}"#),                         // 合成（键名本轮由二进制读出）
+        ("LockRequest", r#"{"LockRequest":{"lock":true}}"#),                   // 合成（同上）
         ("ChatMessage", r#"{"ChatMessage":{"entity_id":229,"message":"gg"}}"#), // 合成
         ("ChatMessageRequest", r#"{"ChatMessageRequest":{"entity_id":232,"message":"hi"}}"#), // 合成
         ("SkinGraphicsRequest", r#"{"SkinGraphicsRequest":{"entity_id":232,"graphics_str":"bot_0"}}"#), // fixture
@@ -1772,28 +2319,39 @@ mod supplemented_event_tests {
         }
     }
 
-    /// 透传那 10 个：**没有**在代码里声明任何已知字段（声明了就是猜键名）。
+    /// 原先"透传"的那 10 个：本轮已按二进制的 `serialize_field` 调用序升级成强类型。
     ///
-    /// 判定方式：解析后**全部**字段都必须落在 `extra` 里，并原样回发。
+    /// ⚠️ 本测试**替换**了旧断言 `passthrough_events_declare_no_field_names`
+    /// （旧断言是"这 10 个不声明任何已知字段，全部落进 `extra`"）。旧断言的前提是
+    /// "没有抓包就不能猜键名"；本轮拿到了**比抓包更硬的证据**——产出报文的代码本身
+    /// （`serialize_field` 的调用序 + 单态类型），前提已不成立。
+    /// 这是本轮**唯一**改动的既有断言，且改后更强：从"不许有字段"变成
+    /// "字段名与键序必须逐字等于从二进制读出的值"。
     #[test]
-    fn passthrough_events_declare_no_field_names() {
-        let passthrough: Vec<&str> = SUPPLEMENTED_EVENT_NAMES
+    fn upgraded_events_declare_the_binary_field_names() {
+        let upgraded: Vec<&str> = SUPPLEMENTED_EVENT_NAMES
             .iter()
             .copied()
             .filter(|k| !CAPTURED_TYPED_EVENTS.contains(k))
             .collect();
-        assert_eq!(passthrough.len(), 10);
-        for kind in passthrough {
+        assert_eq!(upgraded.len(), 10);
+        for kind in upgraded {
             let line = sample_of(kind);
             let m = parse_message(line).expect("样本应能解析");
             let ev = AnyEvent::parse(&m).expect("应识别");
-            let expected = split_fields(&m.body);
-            assert_eq!(
-                ev.extra_fields(),
-                expected.as_slice(),
-                "{kind} 的字段没有全部落进 extra：说明代码里给它声明了已知字段"
+            assert!(
+                ev.extra_fields().is_empty(),
+                "{kind}: 已知字段应全部进强类型槽位，extra 必须为空"
             );
-            assert_eq!(ev.to_msg(), line);
+            let order = wire_field_order(kind)
+                .unwrap_or_else(|| panic!("{kind} 不在 WIRE_SPEC 里"));
+            let out = ev.to_msg();
+            assert_eq!(out, line, "{kind} 往返后字节不一致");
+            let m2 = parse_message(&out).expect("重新解析");
+            let got: Vec<String> =
+                split_fields(&m2.body).into_iter().map(|(k, _)| k).collect();
+            let want: Vec<String> = order.iter().map(|s| s.to_string()).collect();
+            assert_eq!(got, want, "{kind} 的线上键序与 WIRE_SPEC 不一致");
         }
     }
 
@@ -1908,7 +2466,12 @@ mod supplemented_event_tests {
         assert_eq!(bot.to_msg(), line);
     }
 
-    /// 透传必须连**转义与字符串内的逗号**都一字节不动地保留。
+    /// **转义与字符串内的逗号**必须一字节不动地保留。
+    ///
+    /// ⚠️ 本测试原先用 `ChatMessage` 走"透传"路径断言 `extra` 里有两个字段；
+    /// `ChatMessage` 本轮升级成强类型后，`message` 落在强类型槽位里。
+    /// 断言意图（转义 / 串内逗号不能被当成分隔符）保持不变并**加强**：
+    /// ① 强类型字段能解转义读回、再逐字节写回；② 真正未知的字段仍然原样进 `extra`。
     #[test]
     fn passthrough_keeps_escaped_strings_verbatim() {
         let line = r#"{"ChatMessage":{"entity_id":229,"message":"he said \"hi\", ok"}}"#;
@@ -1916,10 +2479,20 @@ mod supplemented_event_tests {
         let AnyEvent::ChatMessage(chat) = AnyEvent::parse(&m).expect("应识别") else {
             panic!("应解析为 ChatMessage")
         };
-        assert_eq!(chat.extra.len(), 2, "两个字段都应原样保留");
-        assert_eq!(chat.extra[1].0, "message");
-        assert_eq!(chat.extra[1].1, r#""he said \"hi\", ok""#);
-        assert_eq!(chat.to_msg(), line);
+        // ① 强类型字段：解转义读回，且能逐字节写回（`json_escape` 只转义 `"` 与 `\`）
+        assert_eq!(chat.entity_id, 229);
+        assert_eq!(chat.message, r#"he said "hi", ok"#);
+        assert!(chat.extra.is_empty(), "已知字段不该再落进 extra");
+        assert_eq!(chat.to_msg(), line, "转义与串内逗号没有一字节不动地写回");
+
+        // ② 未知字段（含转义与逗号）仍然原样保留
+        let line2 = r#"{"ChatMessage":{"entity_id":1,"message":"a","note":"x \"y\", z"}}"#;
+        let m2 = parse_message(line2).unwrap();
+        let AnyEvent::ChatMessage(chat2) = AnyEvent::parse(&m2).expect("应识别") else {
+            panic!("应解析为 ChatMessage")
+        };
+        assert_eq!(chat2.extra, vec![("note".to_string(), r#""x \"y\", z""#.to_string())]);
+        assert_eq!(chat2.to_msg(), line2);
     }
 
     /// 抓包里机器人的段位是 `null`：`Option` 必须把 `None` 发回成 `null`。

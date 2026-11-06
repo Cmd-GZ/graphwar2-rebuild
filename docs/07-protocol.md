@@ -3,9 +3,16 @@
 联机部分整个建立在同一个事件枚举上：客户端与服务端、服务端与 broker、局域网广播，
 都在收发 `Event`。本章还原它的**形状**。
 
-证据来源：`.rodata` 里的 serde 字段名表（`0x1bbxxx` / `0x1c5xxx`）与
-`struct XxxEvent with N elements` 错误串。这些是**观测**；字段**顺序**、线格式
-（bincode / postcard / JSON）与语义仍属**未知**，需反编译 serde 的 `visit_map` 才能定。
+> **本轮已把字段名与字段顺序定死。** 办法不是猜、也不是 `strings`：
+> `#[derive(Serialize)]` 生成的代码**就是**线格式的定义 —— `serialize_field("键名", 值)`
+> 的**调用顺序就是线上键序**，键名是 `.rodata` 里的 `&'static str`（`lea rsi,[rip+X]` +
+> `mov edx,<len>`，**不以 NUL 结尾**，所以 `strings` 会把相邻字面量粘成一条、搜不到）。
+> 复现：`../.venv/bin/python tools/wire_fields.py --verify`；
+> 验收：`tests/wire_format.rs`。详见 §3。
+
+证据来源：`.rodata` 里的 serde 字段名表（`0x1bbxxx` / `0x1c5xxx`）、
+`struct XxxEvent with N elements` 错误串，以及**每个事件的 `Serialize` 实现本体**。
+这些都是**观测/逐位**；**线格式已证实是 JSON**（`serde_json`，见 §3.2），语义仍部分未知（§5）。
 
 ## 1. 传输线索（观测）
 
@@ -36,114 +43,199 @@ FunctionActive, FunctionPoints, FunctionsCalculated, ...
 
 （尾部还有若干变体，字符串表未连续覆盖，未列全。）
 
-## 3. 事件目录
+## 3. 事件目录：74 个事件的线上形状（**权威表**）
 
-`N` 来自 `struct XxxEvent with N elements`，是权威字段数；"字段"列是能在相邻字符串里
-读到的名字，缺的是被 serde 去重到别处的字段。
+### 3.1 怎么读这张表（第三方照着就能拼报文）
 
-### 3.1 开局与房间
+* **外层**是单键对象：`{"<事件名>":<体>}`。`<事件名>` 见下表第一列，**区分大小写**。
+* **体**普通情况下是对象 `{…}`，字段**按表中顺序**出现。空体事件就是 `{}`。
+* 传输层：TCP 每帧 = `u16 大端长度` + JSON 负载，**长度只算负载**（§1）。
+* 判别值（tag）**不上线**：线路上的键是**名字**，不是数字。tag 列只用于和
+  `src/events.rs` 对账（§7），第三方构造报文时**不需要**它。
 
-| 事件 | N | 已知字段 |
+### 3.2 这张表怎么来的（可复现）
+
+`#[derive(Serialize)]` 里一次 `serialize_field` 被 LLVM 内联成三条连续指令：
+
+```text
+lea  rsi, [rip + 键名]     ; &'static str.ptr
+mov  edx, LEN              ; &'static str.len（== 该字面量的真实字节数，这是自校验）
+call <serialize_field 单态> ; 同一单态 ⇒ 同一值类型
+```
+
+⇒ **按地址顺序收 `lea rsi` 那一串 = 线上键序**。`serialize_struct("XxxEvent", N)` 的
+名字在 `serde_json` 里**被丢掉**（只进错误串），所以线上看不到 `…Event`。
+
+三道交叉验证（都跑在 `tools/wire_fields.py --verify` 里）：
+
+| # | 验证 | 结果 |
 |---|---|---|
-| `GameInfo`（结构体） | 9 | `room_name` `game_state` `current_player_count` `address` `axis_mode` `function_mode` `turn_mode` `time_mode` `locked` |
-| `GameInfoEvent` | 1 | `game_info` |
-| `GameRemovedEvent` | 1 | `game_address` |
-| `NewConnectionRequestEvent` | 2 | `major_version` `minor_version` |
-| `NewConnectionEvent` | 1 | — |
-| `ConnectionRemovedEvent` | 2 | `reason` |
-| `ConnectedToServerEvent` | 1 | — |
-| `VersionInfoEvent` | 2 | `version` `system` |
-| `SubscribeEvent` | 2 | `subscriber_id` `subscribed_event_type` |
-| `BanConnectionRequestEvent` | 2 | `player_connection_id` `leader_connection_id` |
-| `ClearBansRequestEvent` | ? | — |
+| ① | 字段个数 == `.rodata` 里 `struct <Name>Event with N elements` 的 N | **67/67** |
+| ② | `Deserialize` 的 `visit_map` 里能找到同名键的字节比较 | **67/67 全部字段** |
+| ③ | 真实抓包（`fixtures/protocol*.jsonl`）的键序 == 本表 | **48 种事件 + 1 条 LAN 广播，全部相同** |
 
-### 3.2 玩家、队伍、士兵
+`N` 串只有 67 条：另外 **7 个事件的 `Serialize` 一次 `serialize_field` 都不调**
+（体恒为 `{}`，空体结构体本来就不需要 `invalid_length` 文案）——
+这就是"事件字段数"与"N 串条数"对不上的原因，不是缺数据。
 
-| 事件 | N | 已知字段 |
+### 3.3 全表（74 条，按判别值升序；查找请按名字）
+
+`str\|null` = `Option<String>`，`i64\|null` = `Option<i64>`，`enum(str)` = 枚举但**线上是字符串**
+（取值集合见 `docs/02`/`src/events.rs` 同名枚举）。
+
+| `Tick` | `0` | `current_tick`: i64 | 逐位（无抓包） |
+| `TickRequest` | `1` | （空体 `{}`） | 逐位 + 观测（2 行） |
+| `TickReply` | `2` | `current_tick`: i64 | 逐位 + 观测（4 行） |
+| `Subscribe` | `3` | `subscriber_id`: i64, `subscribed_event_type`: str | 逐位（无抓包） |
+| `NewConnectionRequest` | `4` | `major_version`: str, `minor_version`: str | 逐位 + 观测（2 行） |
+| `NewConnection` | `5` | `connection_id`: i64 | 逐位 + 观测（2 行） |
+| `ConnectionRemoved` | `6` | `connection_id`: i64, `reason`: str\|null | 逐位（无抓包） |
+| `ConnectedToServer` | `7` | `connection_id`: i64 | 逐位（无抓包） |
+| `NewPlayerRequest` | `8` | `connection_id`: i64 | 逐位 + 观测（2 行） |
+| `NewBotRequest` | `9` | `connection_id`: i64, `level`: i64 | 逐位 + 观测（2 行） |
+| `BotAdded` | `10` | `connection_id`: i64, `player_id`: i64, `level`: i64 | 逐位 + 观测（2 行） |
+| `ChangeTeamRequest` | `11` | `player_id`: i64 | 逐位（无抓包） |
+| `RemovePlayerRequest` | `12` | `player_id`: i64 | 逐位（无抓包） |
+| `PlayerInfo` | `13` | `player_id`: i64, `connection_id`: i64 | 逐位 + 观测（3 行） |
+| `EntityRemoved` | `14` | `entity_id`: i64 | 逐位（无抓包） |
+| `SoldierInfo` | `15` | `soldier_id`: i64, `player_id`: i64 | 逐位 + 观测（4 行） |
+| `AddSoldierRequest` | `16` | `player_id`: i64 | 逐位（无抓包） |
+| `RemoveSoldierRequest` | `17` | `player_id`: i64 | 逐位（无抓包） |
+| `AxisModeChangeRequest` | `18` | （空体 `{}`） | 逐位（无抓包） |
+| `FunctionModeChangeRequest` | `19` | （空体 `{}`） | 逐位（无抓包） |
+| `TurnModeChangeRequest` | `20` | （空体 `{}`） | 逐位 + 观测（1 行） |
+| `TimeModeChangeRequest` | `21` | （空体 `{}`） | 逐位 + 观测（1 行） |
+| `GameNameRequest` | `22` | `game_name`: str | 逐位 + 观测（2 行） |
+| `TargetInfo` | `23` | `target_id`: i64 | 逐位（无抓包） |
+| `TeamInfo` | `24` | `entity_id`: i64, `team`: enum(str) | 逐位 + 观测（4 行） |
+| `RemoveTeam` | `25` | `entity_id`: i64 | 逐位（无抓包） |
+| `PosInfo` | `26` | `entity_id`: i64, `pos_x`: f64, `pos_y`: f64, `radius`: f64 | 逐位 + 观测（3 行） |
+| `LifeInfo` | `27` | `entity_id`: i64, `alive`: bool | 逐位 + 观测（8 行） |
+| `LifeQueuedDeath` | `28` | `entity_id`: i64, `tick`: i64 | 逐位 + 观测（2 行） |
+| `GameNameInfo` | `29` | `game_name`: str | 逐位 + 观测（2 行） |
+| `GameStateInfo` | `30` | `game_state`: enum(str) | 逐位 + 观测（8 行） |
+| `GameStartRequest` | `31` | （空体 `{}`） | 逐位 + 观测（1 行） |
+| `FunctionFireRequest` | `32` | `player_id`: i64 | 逐位 + 观测（1 行） |
+| `FunctionFire` | `33` | `soldier_id`: i64 | 逐位 + 观测（1 行） |
+| `FunctionUpdateRequest` | `34` | `player_id`: i64, `function`: str | 逐位 + 观测（2 行） |
+| `FunctionInfo` | `35` | `owner_id`: i64, `function`: str, `corrected_function`: str\|null | 逐位 + 观测（3 行） |
+| `FunctionActive` | `36` | `owner_id`: i64, `active_tick`: i64 | 逐位（无抓包） |
+| `FunctionPoints` | `37` | `owner_id`: i64, `start_x`: f64, `start_y`: f64, `end_x`: f64 | 逐位（无抓包） |
+| `FunctionsCalculated` | `38` | （空体 `{}`） | 逐位（无抓包） |
+| `ClearObstacles` | `39` | （空体 `{}`） | 逐位 + 观测（1 行） |
+| `AddObstacle` | `40` | `pos_x`: f64, `pos_y`: f64, `radius`: f64 | 逐位 + 观测（3 行） |
+| `DestroyObstacle` | `41` | `pos_x`: f64, `pos_y`: f64, `radius`: f64 | 逐位 + 观测（1 行） |
+| `QueueDestroyObstacle` | `42` | `pos_x`: f64, `pos_y`: f64, `radius`: f64, `tick`: i64 | 逐位（无抓包） |
+| `TurnInfo` | `43` | `player_id`: i64, `soldier_id`: i64 | 逐位 + 观测（2 行） |
+| `EffectInfo` | `44` | `effect_id`: i64, `pos_x`: f64, `pos_y`: f64, `effect_type`: enum(str), `start_tick`: i64 | 逐位 + 观测（5 行） |
+| `AxisModeInfo` | `45` | `axis_mode`: enum(str) | 逐位 + 观测（2 行） |
+| `FunctionModeInfo` | `46` | `function_mode`: enum(str) | 逐位 + 观测（2 行） |
+| `TurnModeInfo` | `47` | `turn_mode`: enum(str) | 逐位 + 观测（3 行） |
+| `TimeModeInfo` | `48` | `time_mode`: enum(str) | 逐位 + 观测（4 行） |
+| `EndOfTurnInfo` | `49` | `end_of_turn_tick`: i64, `time_mode`: enum(str) | 逐位 + 观测（1 行） |
+| `SkinGraphicsRequest` | `50` | `entity_id`: i64, `graphics_str`: str | 逐位 + 观测（3 行） |
+| `SkinGraphicsInfo` | `51` | `entity_id`: i64, `graphics_str`: str | 逐位 + 观测（4 行） |
+| `FaceGraphicsRequest` | `52` | `entity_id`: i64, `graphics_str`: str | 逐位 + 观测（3 行） |
+| `FaceGraphicsInfo` | `53` | `entity_id`: i64, `graphics_str`: str | 逐位 + 观测（4 行） |
+| `HatGraphicsRequest` | `54` | `entity_id`: i64, `graphics_str`: str | 逐位 + 观测（3 行） |
+| `HatGraphicsInfo` | `55` | `entity_id`: i64, `graphics_str`: str | 逐位 + 观测（4 行） |
+| `EntityEffectInfo` | `56` | `entity_id`: i64, `effect_type`: enum(str) | 逐位 + 观测（4 行） |
+| `TurnLimitInfo` | `57` | `turn_limit`: i64\|null | 逐位（无抓包） |
+| `TurnCountInfo` | `58` | `turn_count`: i64 | 逐位 + 观测（1 行） |
+| `NameRequest` | `59` | `entity_id`: i64, `name`: str | 逐位 + 观测（3 行） |
+| `NameInfo` | `60` | `entity_id`: i64, `name`: str | 逐位 + 观测（3 行） |
+| `ColorInfo` | `61` | `entity_id`: i64, `color`: `{r,g,b}` | 逐位 + 观测（3 行） |
+| `GameInfo` | `62` | `game_info`: `GameInfo` | 逐位 + 观测（3 行） |
+| `GameRemoved` | `64` | `game_address`: str（地址） | 逐位（无抓包） |
+| `RankRequest` | `66` | `entity_id`: i64, `rank`: i64\|null | 逐位 + 观测（3 行） |
+| `RankInfo` | `67` | `entity_id`: i64, `rank`: i64\|null | 逐位 + 观测（3 行） |
+| `LockRequest` | `68` | `lock`: bool | 逐位（无抓包） |
+| `LockInfo` | `69` | `lock`: bool | 逐位（无抓包） |
+| `ChatMessageRequest` | `70` | `entity_id`: i64, `message`: str | 逐位（无抓包） |
+| `ChatMessage` | `71` | `entity_id`: i64, `message`: str | 逐位（无抓包） |
+| `BanConnectionRequest` | `72` | `player_connection_id`: i64, `leader_connection_id`: i64 | 逐位（无抓包） |
+| `ClearBansRequest` | `73` | （空体 `{}`） | 逐位（无抓包） |
+| `GameHeartbeat` | — | （空体 `{}`） | 逐位（无抓包） |
+| `VersionInfo` | — | `version`: str, `system`: str | 逐位 + 观测（1 行） |
+
+### 3.4 三个负载结构体（嵌在上面的字段里）
+
+| 结构体 | 字段（按线序） | 出现在 | 档位 |
+|---|---|---|---|
+| `GameInfo` | `room_name`, `game_state`, `current_player_count`, `address`, `axis_mode`, `function_mode`, `turn_mode`, `time_mode`, `locked` | `GameInfo.game_info`；**以及 LAN 广播的裸对象** | 逐位 + 观测（3 行） |
+| `GraphwarColor` | `r`, `g`, `b` | `ColorInfo.color` | 逐位 + 观测（3 行） |
+| `EventInfo` | `tick`, `event` | 未观测到上线（内部排序用） | 逐位（无抓包） |
+
+LAN 广播（UDP 发现，§1）的负载**就是** `GameInfo` 这 9 个字段，**没有外层键**：
+
+```json
+{"room_name":"Graphwar Game","game_state":"Setup","current_player_count":1,
+ "address":"[::1]:43717","axis_mode":"EveryUnit","function_mode":"NormalFunction",
+ "turn_mode":"SequentialTurns","time_mode":"Timer1m","locked":false}
+```
+
+⚠️ **两个曾经写错的字段名，本轮就地更正**：
+
+| 位置 | 旧文档 | 实测 | 证据 |
+|---|---|---|---|
+| `LockInfo` / `LockRequest` 的字段 | `locked`（候选） | **`lock`** | 字面量在 `0x1ba58c`（4 字节），`Serialize` 在 `0x50ca30` / `0x50e420` |
+| `GraphwarColor` 的字段 | `rgb`（候选） | **`r` / `g` / `b`** | `Serialize` 在 `0x464c00`，三次 1 字节 `serialize_field`（`0x1c18f5/6/7`） |
+
+`rgb` 这个"字段"是**假象**：那三个 1 字节字面量 `r`/`g`/`b` 在 `.rodata` 里紧挨着，
+`strings` 把它读成了一条 `rgb`。`locked` 则是 `GameInfo` 的字段名（那个确实叫 `locked`），
+被错套到了 `LockInfo` 上 —— **两个结构体的字段名不同，别互相套用**。
+
+### 3.5 验收：旧"serde 按声明顺序序列化"那条推断，**已升级成观测**
+
+早先的 13 个强类型事件只有一条弱证据：41 行抓包里键序相同，
+而"serde 按字段声明顺序序列化"本身是**推断**。本轮用二进制把这条推断验掉了：
+
+| 问题 | 结果 | 档位 |
 |---|---|---|
-| `PlayerInfoEvent` | 2 | — |
-| `NewPlayerRequestEvent` | 1 | — |
-| `RemovePlayerRequestEvent` | 1 | — |
-| `TeamInfoEvent` | 2 | — |
-| `RemoveTeamEvent` | 1 | — |
-| `ChangeTeamRequestEvent` | 1 | — |
-| `ColorInfoEvent` | 2 | `color` |
-| `NameInfoEvent` / `NameRequestEvent` | 2 | — |
-| `RankInfoEvent` / `RankRequestEvent` | 2 | — |
-| `SoldierInfoEvent` | 2 | `soldier_id` |
-| `AddSoldierRequestEvent` | 1 | `player_id` |
-| `RemoveSoldierRequestEvent` | 1 | — |
-| `PosInfoEvent` | 4 | `entity_id` `pos_x` `pos_y` `radius` |
-| `LifeInfoEvent` | 2 | `alive` |
-| `LifeQueuedDeathEvent` | 2 | — |
-| `TargetInfoEvent` | 1 | `target_id` |
-| `EntityRemovedEvent` | 1 | `entity_id` |
-| `GraphwarColor`（结构体） | 3 | `rgb` |
+| 抓包键序 == 二进制 `serialize_field` 顺序？ | **一致（13/13 个强类型事件，40 行）** | 逐位 + 观测 |
+| 其余抓到的事件呢？ | **一致（48 种单键事件 + 1 条裸 LAN 广播，共 133 行）** | 逐位 + 观测 |
+| 出现 `rename` / `skip_serializing_if` 了吗？ | **没有**：67 个事件的 `serialize_field` 次数与 `struct … with N elements` 的 N 逐个相等，且键名与 Rust 字段名同名（无改名痕迹） | 逐位 |
 
-### 3.3 回合与模式
+⇒ **"serde 按声明顺序序列化"在本二进制上成立**，而且线上键序现在有**两个互相独立**的
+证据源（产出报文的代码 / 真实抓包）。若哪天两者不一致，会先炸
+`tests/wire_format.rs::capture_key_order_matches_binary`。
 
-| 事件 | N | 已知字段 |
-|---|---|---|
-| `TickEvent` | 1 | `current_tick` |
-| `TickRequestEvent` / `TickReplyEvent` | 1 | — |
-| `GameHeartbeatEvent` | ? | — |
-| `TurnInfoEvent` | 2 | `soldier_id` |
-| `TurnCountInfoEvent` | 1 | `turn_count` |
-| `TurnLimitInfoEvent` | 1 | `turn_limit` |
-| `EndOfTurnInfoEvent` | 2 | — |
-| `GameStateInfoEvent` | 1 | `game_state` |
-| `TurnModeInfoEvent` / `TurnModeChangeRequestEvent` | 1 | `turn_mode` |
-| `TimeModeInfoEvent` / `TimeModeChangeRequestEvent` | 1 | `time_mode` |
-| `AxisModeInfoEvent` / `AxisModeChangeRequestEvent` | 1 | `axis_mode` |
-| `FunctionModeInfoEvent` / `FunctionModeChangeRequestEvent` | 1 | `function_mode` |
-| `GameNameInfoEvent` / `GameNameRequestEvent` | 1 | `game_name` |
-| `LockInfoEvent` / `LockRequestEvent` | 1 | — |
+复现：
 
-### 3.4 开火（本章与 §03/§04/§05 的接缝）
-
-| 事件 | N | 已知字段 |
-|---|---|---|
-| `FunctionUpdateRequestEvent` | 2 | `event` |
-| `FunctionInfoEvent` | 3 | `corrected_function` |
-| `FunctionFireRequestEvent` | 1 | — |
-| `FunctionFireEvent` | 1 | — |
-| `FunctionActiveEvent` | 2 | `active_tick` |
-| `FunctionPointsEvent` | **4** | `start_x` `start_y` `end_x`（第 4 个是点数组） |
-| `FunctionsCalculatedEvent` | ? | — |
-
-`FunctionPointsEvent` 就是 §05 里逐点还原的那条曲线在网络上的形态：
-一个起点 + 一个终点 x + 整条点序列。
-
-### 3.5 障碍、特效、聊天
-
-| 事件 | N | 已知字段 |
-|---|---|---|
-| `AddObstacleEvent` | 3 | — |
-| `DestroyObstacleEvent` | 3 | `pos_x` `pos_y` `radius` |
-| `QueueDestroyObstacleEvent` | 4 | — |
-| `ClearObstaclesEvent` | ? | — |
-| `EffectInfoEvent` | 5 | `effect_id` `effect_type` `start_tick` |
-| `EntityEffectInfoEvent` | 2 | `effect_type` |
-| `ChatMessageEvent` / `ChatMessageRequestEvent` | 2 | `message` |
-| `HatGraphicsInfoEvent` / `SkinGraphicsInfoEvent` / `FaceGraphicsInfoEvent` | 2 | `graphics_str` |
+```bash
+GW2_UPSTREAM=.. ../.venv/bin/python tools/wire_fields.py --verify   # 表 + 三道自校验
+cargo test --offline --test wire_format                              # 与抓包/与表对账
+```
 
 ## 4. UI 文本（旁证玩法流程）
 
 `Team 1 Victory!` / `Team 2 Victory!` / `YOU WON` / `YOU DID NOT WIN` —— 胜负是**按队伍**结算的，
 与 §3.2 的队伍事件一致。
 
-## 5. 明确未知
+## 5. 明确未知（本轮之后剩下的）
 
-- 线格式：字段名存在说明是自描述编码（如 JSON）或仅出现在错误路径；**未证实**。
-- 字段**顺序**：表中顺序来自内存布局，不等于 serde 声明顺序。
-- `GameInfo.game_state` 的取值集合、`axis_mode` / `turn_mode` / `time_mode` /
-  `function_mode` 的枚举值，均未还原。
-- 权威端在哪里：`graphwar_game_server.rs` 看起来是房间内权威端，但"谁判定命中/死亡"
+之前这里列的"线格式未证实""字段顺序未证实"**已经解决**，留档见 §3.2。现在真正未知的是：
+
+- **语义**：字段名与顺序是定死的，但"这个值是什么意思"仍有没定的：
+  `Subscribe.subscribed_event_type` 的取值集合、`GameInfo.game_state` 的取值集合、
+  `address` / `game_address` 的具体地址格式（线上观测为字符串，如 `"[::1]:43717"` /
+  `"69.164.213.144:35981"`）。
+- **`VersionInfo` / `GameHeartbeat` 的判别值**：两者都有 `Serialize` 实现和线上名字，
+  但全 `.text` 里找不到 materialise 它们的常量（正是 §7.3 的 63 / 65 缺号）。
+  它们**不上线**所以不影响第三方；只影响 `src/events.rs` 的枚举完整性。
+  候选对应是**推断**（`src/events.rs` 模块文档同此）。
+- **`EventInfo{tick,event}` 是否上线**：结构体读出来了（§3.4），但没观测到它作为
+  报文键出现，也没有抓包 —— 用途**未知**。
+- **权威端在哪里**：`graphwar_game_server.rs` 看起来是房间内权威端，但"谁判定命中/死亡"
   尚未证实。
+- **枚举取值**：`axis_mode` / `turn_mode` / `time_mode` / `function_mode` / `team` /
+  `effect_type` 的**完整**取值集合由各自枚举的 `Serialize` 决定，本轮只定了"线上是字符串"
+  与已知的几个值（§3.4 的变体名表在 `.rodata` `0x9626f0` / `0x962900` / `0x957d40`），
+  没有逐个字段做"哪些值合法"的穷举。
 
 ---
 
-## 6. 事件覆盖：73/73 已实现（原 `96-protocol-coverage`）
+## 6. 事件覆盖：74/74 已实现（原 `96-protocol-coverage`）
 
 > 全文：[`archive/96-protocol-coverage.md`](archive/96-protocol-coverage.md)。
 
@@ -152,12 +244,17 @@ FunctionActive, FunctionPoints, FunctionsCalculated, ...
 
 | | 数量 |
 |---|---|
-| 二进制里的事件名（全量提取） | **73** |
-| `src/` + `tests/` 已实现 | **73** |
+| 二进制里的事件名（按 `Serialize` 实现全量提取） | **74** |
+| `src/_scaffold/protocol.rs` 已实现（`WIRE_SPEC` 74 条 + `emit_*`） | **74** |
 | **缺** | **0** |
 
-旧版说"二进制里 44、缺 24"，方向对、数字偏；上一版是 73/50/23，本轮补齐到 73/73/0。
-（旧版"缺 24"里有 5 个其实早就实现了，只是当时没按词边界查。）
+**73 → 74 的原因（本轮更正）**：上一版的 73 = `src/events.rs` 里 **72 个有判别值的**变体
++ `GameHeartbeat`。它漏掉了 **`VersionInfo`** —— 那个事件有 `Serialize` 实现
+（`0x50d3a0`）、有线上名字、也有抓包（夹具 1 行），只是**判别值未知**所以不在
+`events.rs` 里。按"二进制里有几个 `Serialize` 实现"数，是 **74**。
+
+数字沿革：44 → 50/23 → 73/73/0 → **74/74/0**。旧版"缺 24"里有 5 个其实早就实现了，
+只是当时没按词边界查。
 
 ### 6.2 原缺的 23 个：现在怎么实现的
 
@@ -179,36 +276,40 @@ FunctionActive, FunctionPoints, FunctionsCalculated, ...
 | `EntityEffectInfo` | 2 | 强类型 `entity_id,effect_type` | **逐位**（夹具 4 行） |
 | `VersionInfo` | 2 | 强类型 `version,system` | **逐位**（夹具 1 行） |
 | `BotAdded` | 3 | 强类型 `connection_id,player_id,level` | **逐位**（夹具 2 行） |
-| `ClearObstacles` | 无此串 | 透传（实测就是空体 `{}`） | **观测**（夹具 1 行，空体） |
-| `LockInfo` | 1 | 透传（词汇表候选 `locked`，未证实） | **推断**（无抓包） |
-| `LockRequest` | 1 | 透传（同上） | **推断**（无抓包） |
-| `ChatMessage` | 2 | 透传（`message` 有相邻串证据，第二个字段名未知） | **推断**（无抓包） |
-| `ChatMessageRequest` | 2 | 透传（同上） | **推断**（无抓包） |
-| `GameRemoved` | 1 | 透传（候选 `game_address`，未证实） | **推断**（无抓包） |
-| `TurnLimitInfo` | 1 | 透传（候选 `turn_limit`，未证实） | **推断**（无抓包） |
-| `BanConnectionRequest` | 2 | 透传（候选 `player_connection_id`,`leader_connection_id`，未证实） | **推断**（无抓包） |
-| `GameHeartbeat` | **无此串** | 透传（字段数与字段名都未知） | **未知**（无抓包） |
-| `ClearBansRequest` | **无此串** | 透传（字段数与字段名都未知） | **未知**（无抓包） |
+| `ClearObstacles` | 无此串（空体） | 强类型（无字段，体恒 `{}`） | **逐位** + 观测（夹具 1 行，空体） |
+| `LockInfo` | 1 | 强类型 `lock: bool` | **逐位**（无抓包；键名由 `0x50ca30` 读出） |
+| `LockRequest` | 1 | 强类型 `lock: bool` | **逐位**（无抓包；`0x50e420`） |
+| `ChatMessage` | 2 | 强类型 `entity_id: i64, message: str` | **逐位**（无抓包；`0x511320`） |
+| `ChatMessageRequest` | 2 | 强类型 `entity_id: i64, message: str` | **逐位**（无抓包；`0x5124e0`） |
+| `GameRemoved` | 1 | 强类型 `game_address: str`（与 `GameInfo.address` 同类型） | **逐位**（无抓包；`0x511de0`） |
+| `TurnLimitInfo` | 1 | 强类型 `turn_limit: i64\|null`（与 `RankInfo.rank` 同类型） | **逐位**（无抓包；`0x50f5d0`） |
+| `BanConnectionRequest` | 2 | 强类型 `player_connection_id: i64, leader_connection_id: i64` | **逐位**（无抓包；`0x513cd0`） |
+| `GameHeartbeat` | 无此串（空体） | 强类型（无字段，体恒 `{}`） | **逐位**（无抓包；`0x510a90` 一次 `serialize_field` 都没有） |
+| `ClearBansRequest` | 无此串（空体） | 强类型（无字段，体恒 `{}`） | **逐位**（无抓包；`0x5137c0` 同上） |
 
-汇总：**23 个名字全部能解析、能逐字节回放**；其中 **14 种（41 行）** 有真实抓包，
-**13 种**因此建了强类型结构体（键名、键序、值的写法都由抓包定死），
-`ClearObstacles` 因为体是空的、没有字段可声明，仍走透传。
-**9 种**（`LockInfo`、`LockRequest`、`ChatMessage`、`ChatMessageRequest`、
-`GameRemoved`、`TurnLimitInfo`、`BanConnectionRequest`、`GameHeartbeat`、
-`ClearBansRequest`）**从未抓到过真实流量**。
+汇总：**23 个名字全部是强类型、能解析、能逐字节回放、也能从零构造**（`emit_*`）。
+其中 **14 种（41 行）** 有真实抓包；**其余 9 种**从未抓到过真实流量
+（`LockInfo`、`LockRequest`、`ChatMessage`、`ChatMessageRequest`、`GameRemoved`、
+`TurnLimitInfo`、`BanConnectionRequest`、`GameHeartbeat`、`ClearBansRequest`）——
+它们的键名与键序**改由二进制的 `serialize_field` 调用序定死**，
+档位从**推断/未知**升到**逐位**（口径见 §3.2）。
 
-#### 6.2.1 为什么 10 个只做"透传"
+#### 6.2.1 那 10 个原来为什么只做"透传"（**已作废，留档**）
 
 透传 = 结构体**不声明任何字段**：解析时把整段 `{…}` 的键与原始值文本按顺序存下，
-序列化时原样拼回。它保证：
+序列化时原样拼回。当时的理由是：词汇表能拿到，**逐事件归属拿不到** ——
+§3 里那些"已知字段"是**相邻字符串**读出来的，不是从该事件的 `Serialize` 读出来的，
+所以在拿到一次真实抓包之前，把它们写成结构体字段就是把推断当结论。
 
-* 不会写出一条**错误的线格式**（键名错一个字符就是另一条消息）；
-* 将来出现的新字段不会丢；
-* 但**不能**用来"构造"这些事件——只能解析与转发。
+**这条理由本轮不成立了**，因为找到了比抓包更硬的证据：`serialize_field` 的**调用序**
+就是产出报文的代码本体。10 个全部升级成强类型，并各自配了 `emit_*`。
+`extra` 保留（原透传实现的唯一优点：对端多发字段也不丢）。
 
-理由见 §5：词汇表能拿到，**逐事件归属拿不到**。`07-protocol.md` §3 里那些"已知字段"
-是**相邻字符串**读出来的，不是从该事件的 `visit_map` 读出来的。所以在拿到一次
-真实抓包之前，把它们写成结构体字段就是把推断当结论。
+⚠️ 因此 `_scaffold::protocol::supplemented_event_tests` 里
+`passthrough_events_declare_no_field_names` 这条断言**已被替换**为
+`upgraded_events_declare_the_binary_field_names`（"字段名与键序必须逐字等于二进制读出值"），
+另有 `passthrough_keeps_escaped_strings_verbatim` 的断言对象从"透传的 `extra`"
+改为"强类型字段 + 未知字段的 `extra`"，意图不变。**这是本轮唯一改动的既有断言。**
 
 
 ### 6.3 两种名字别混：线上键是 CamelCase，内部分派键是 snake_case
