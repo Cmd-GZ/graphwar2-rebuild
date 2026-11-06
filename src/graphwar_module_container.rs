@@ -46,15 +46,20 @@
 //!
 //! # 68 个函数是什么
 //!
-//! 全模块只有 **3 个方法**（2024 版符号表口径：`add_module` / `get_module` /
-//! `get_module_wk`，见 `tools/symtab_dump.py methods graphwar_module_container`），
-//! 68 = 三个泛型方法对 25 个 manager 类型的单态化：
+//! 全模块只有 **3 个方法**（`add_module` / `get_module` / `get_module_wk`，
+//! 见 `tools/symtab_dump.py methods graphwar_module_container`）；
+//! 2.0.60 的 68 = 三个泛型方法对 25 个 manager 类型的单态化：
 //!
 //! | 方法 | 单态化个数 | arm64 块首 | x86 块首 | 块内步长（arm64 / x86） |
 //! |---|---|---|---|---|
 //! | `add_module` | **25** | `0x49e520` | `0x4694f0` | `212` / `160` |
 //! | `get_module` | **23** | `0x49f9d4` | `0x46a490` | `432` / `368` |
 //! | `get_module_wk` | **20** | `0x4a20a4` | `0x46c5a0` | `644` / `544` |
+//!
+//! **版本差**（顺带量到，`观测`）：2024-07-30 那一版是 **24 / 23 / 19 = 66** 个
+//! 单态化（`tools/symtab_dump.py modules` 的 66 就是这个数），2.0.60 变成
+//! **25 / 23 / 20 = 68** ⇒ 两年里**多注册了 1 个模块、多要了 1 个弱句柄**。
+//! 究竟是哪一型新增的：`未知`（没做 2024↔2.0.60 的逐型对齐）。
 //!
 //! 六个块都是**严格等距、无空洞**（`base + i × stride`，`i` 取遍 `0..n-1`），
 //! 这一条本身就是一个强判据：`tests/graphwar_module_container.rs` 用它反查整张表。
@@ -69,7 +74,7 @@
 //! # 为什么 `panic::Location` 在这模块上几乎全哑
 //!
 //! * `add_module` / `get_module` **一个 panic 点都没有**（无 `unwrap`、无索引、
-//!   无 `expect`），所以 2024 年的 68 个 `FUNC` 符号里它们**没有** `Location` 锚，
+//!   无 `expect`），所以两版符号表里它们**都没有** `Location` 锚，
 //!   `fixtures/name_to_addr.tsv` 把它们全标成「未知」——这是**正确**的，
 //!   不是数据残缺，也不是工具坏了。
 //! * `get_module_wk` 有**且仅有 1 个**锚：`src/graphwar_module_container.rs:30:28`，
@@ -156,9 +161,13 @@
 //! # 复算命令（不要凭本文件的数字，自己跑）
 //!
 //! ```text
-//! # 1) arm64 2.0.60 未 strip：三个方法名 + 68 个 FUNC
+//! # 1) arm64 2.0.60 未 strip：三个方法名 + 68 个单态化
+//! #    （注意：`grep … | grep FUNC | wc -l` 是 69 —— 多出来那条是
+//! #     drop_in_place<Weak<RefCell<GraphwarModuleContainer>>>，不是方法）
 //! readelf -sW .rea-work/apk/arm64/lib/arm64-v8a/libgraphwarrust.so \
-//!   | grep graphwar_module_container | grep FUNC | wc -l          # 68
+//!   | grep graphwar_module_container | grep FUNC \
+//!   | grep -c 'GraphwarModuleContainer1[03]'                     # 68
+//! # 分项：25 add_module / 23 get_module / 20 get_module_wk
 //!
 //! # 2) 每个 add_module 的 vtable：adrp/add 出 .data.rel.ro 地址；
 //! #    该地址的 R_AARCH64_RELATIVE addend 就是 drop_in_place::<RefCell<M>>
