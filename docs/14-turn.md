@@ -571,3 +571,177 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 > 以及本节。
 
 ---
+
+## 10. `0x3dcbb0` / `0x3db3e0` 规格（本轮新增：play_screen_control 的两个大函数）
+
+> **本节解决什么**：`docs/14` §9.1 第 5、9 号函数（`0x3db3e0` 0x1090 B、`0x3dcbb0` 0x2250 B）
+> 上一轮是**未知**；`docs/00` §0.4 把它列成"下一轮最高性价比"第 2 项。
+> 本节给出两个函数的**可照写规格**，并回答一个关键否证：**`0x3dcbb0` 不是「回合推进 /
+> game_state 分派」**。
+>
+> **地址口径**：ELF vaddr；Ghidra/REA = 本地址 + `0x100000`。两处入口都用
+> REA `procedure_info` 与 `analysis/funcstarts_ghidra_va.pkl` 双查过（返回的
+> `mapped_address` 与请求一致，不是"文件偏移回落"的假结果）。
+
+### 10.1 先给结论（三句话）
+
+1. **`0x3dcbb0` = 「把一份数据刷到对局界面」的聚合刷新函数**，不是状态机。
+   证据：全函数 1491 条指令里**没有任何一处**把某个枚举字段与状态值比较
+   （`cmp` 只有空指针判定与 `cmp dword [rax+0xe0],1`、`cmp dword [rax],1` 两处布尔式判定），
+   也**没有引用任何远程事件名**（见 §10.3 的字面量表）。
+2. **`0x3db3e0` = 往胜利横幅里填一名玩家的头像/皮肤**（`set_texture` ×N），
+   `0x3da130` 连调 3 次 ⇒ 3 个展示位。
+3. **真正的"状态→界面"反应点在 `root_node 0x3a5760`、`graphwar_game_state_manager` 与
+   `graphwar_remote_event_handler 0x3dee00`**，不在本模块（§10.5 给全证据）。
+
+### 10.2 `0x3dcbb0`（观测）
+
+```text
+vaddr 0x3dcbb0   Ghidra 0x4dcbb0   Ghidra 记 length 0x1CB8（7 352 B）
+body 分 8 段（0x4dcbb0-0x4dd4c0 / 0x4dd4d0-0x4dd8e6 / 0x4dd8f0-0x4dd960 /
+ 0x4dd970-0x4ddafd / 0x4ddb00-0x4de842 / 0x4debdd-0x4debf9 /
+ 0x4dec47-0x4dec62 / 0x4dedcb-0x4deddf），span 0x2230 ⇒ 有跳转表孤岛
+299 个基本块 · 54 个已解析被调 · 10 处未解析间接调用 · 末尾 0x3deddb 是 call 0x94b340（panic，Ghidra 标 no-return）
+```
+
+**入参**（观测，实参来自唯一调用点 `0x3a6aaf`）：
+
+| 寄存器 | 含义 |
+|---|---|
+| `rdi` | `&mut T_a` —— 指向 `[[self+0x16c8]+0x18]`（`RefCell` 的载荷，**独占借用**：`0x3a6a77 mov qword[r14+0x10],-1`） |
+| `rsi` | `&T_b` —— 指向 `[[self+0x1668]+0x18]`（**共享借用**：`0x3a6aa7` 里 `+1`） |
+| 返回 | `void`（无返回值使用点） |
+
+⇒ **推断（结构证据强）**：`root_node` 在 `+0x1668` / `+0x16c8` 各持一个
+**`Rc<RefCell<T>>`**：`+0x0` 强引用计数、`+0x8` 弱引用计数、`+0x10` `RefCell` 借用标记
+（`-1` = 独占、`n` = 共享 n）、`+0x18` 载荷 —— 这个四段布局在 `0x3a6a60`-`0x3a6ab8`
+被完整用到，且同一形状在 `0x3a2e10`（`_ready`）里被写入（`0x3a3249`、`0x3a3df2`）。
+缺的证据：`T_a` / `T_b` 的**具体类型**（反编译里只看得到 `[T_b+0x1e0]`、`[T_b+0x220]`
+两个字段；`0x1e0` 判空后若为 0 直接跳到 `0x3de38e`）。
+
+**函数体开头（观测）**：
+
+```text
+0x3dcbc7  call *0x9ba628                       ; 引擎/hash 相关
+0x3dcbcd  edi=0x27, esi=1 ; call *0x9ba630     ; 分配 39 字节
+0x3dcbe9  movups [rax+0x10], "y_screen_control.rs:561"   (0x1bf9c9)
+0x3dcbf4  movdqu [rax],   "src/graphwar_play_screen_control.rs:561" (0x1bf9b9)
+0x3dcc00  movabs rax, 0x3136353a73722e6c  → [r15+0x1f]      ; 拼完 39 字节
+0x3dcc0e  call *0x9ba8f8                       ; 取 Location/回溯点
+0x3dcc4b  cmp qword [rsi+0x1e0], 0 ; je 0x3de38e   ; ← 主要提前返回分支
+0x3dcc68  r12 = [rsi+0x220]                    ; 一个借用的数据源
+```
+
+⇒ 函数进入时就**在堆上拼出 `src/graphwar_play_screen_control.rs:561`**
+（39 字节 = 35 + `:561`），说明它自己带 `panic::Location` 561；
+而 `class_probe.py` 记的 `Location` 结构体锚点是 **233/234/235/236/239/244/250/256**（8 个）。
+
+**它引用的 `.rodata`（33 处 rip 相对；字面量表，全部按 `(ptr,len)` 或立即数还原）**：
+
+| vaddr | 内容 | 出现的指令 |
+|---|---|---|
+| `0x1bf8bb` | `     f(x) = `（前 5 空格后接 `LeftButtonGrid`…一池） | `0x3dcfea` |
+| `0x19f8d0` | `dy/dx = `（同池还有 `TurnInfo`/`bind_mut`/`LockInfo`） | `0x3dcf64` |
+| `0x1bf8a0` 池 | `LeftButtonGridRightButtonGridFireContainerLeftReplaysButtonsGridRightReplaysButtonsGrid` | `0x3dcfea` 起 |
+| `0x19eb50` | `50.0f, 50.0f` + `TeamVictoryLabel` | `0x3dd711`、`0x3dda65` |
+| `0x19c7c0` | 颜色 `[255,255,255,1.0]`（`divps` 用它） | `0x3dd760`、`0x3ddaac` |
+| `0x19c780` | 一段常量向量（`0x0C`/`0x0E` 字节模式）+ `…entity_effect_in…name_request_eve` 池尾；**语义未知** | `0x3de3a1` |
+| `0x1bf7e7` | `upcast_ref`（len 10） | 9 处 |
+| `0x1c0a8c` | `failed to call instance_id() on destroyed object…`（godot-rust） | `0x3de640`、`0x3de65e` |
+| `0x1bf9c9`/`0x1bf9b9` | `…play_screen_control.rs:561` | `0x3dcbe9`、`0x3dcbf4` |
+
+**调用的本仓库函数（观测）**：`0x3d9590` ×2、`0x3ec130` ×2、`0x3ec6f0` ×2、`0x3ec410`、
+`0x3e6750`，以及**自己 ×2**（`0x3dcbb0` 内部自递归）。
+⚠️ 这 5 个被调者**都不在 `fixtures/module_funcs.tsv` 的 545 条归属表里**（未归属），
+所以"它调了哪个模块"这一层也是未知的一部分。
+
+**判据汇总 ⇒ 语义**：
+- 它**不按状态分派**（无状态比较）；
+- 它做的是 `f(x) = ` / `dy/dx = ` 两处**文本**、5 个控件组
+  （`Left/RightButtonGrid`、`FireContainer`、`Left/RightReplaysButtonsGrid` ——
+  正好是 `0x3d9b50`/`0x3d9e40` 那一对管的 5 个节点）、`TeamVictoryLabel`、
+  `PlayReplayButton` + `res://unmute.svg`、以及 `divps` 颜色调制；
+- ⇒ **推断（方向唯一）**：`0x3dcbb0` = "对局界面的一次全量刷新"，
+  由 `root_node` 在数据变化时调用一次；对应源码应是
+  **第 233-256 行那一段（8 个 `unwrap`/`expect`）+ 若干 `get_node`+`set_text` 调用**。
+
+⚠️ **未知**（三条，都要在实现时留接口）：
+1. `[T_b+0x1e0]` / `[T_b+0x220]` 是什么（`0x1e0` 为 0 时走 `0x3de38e` 分支）；
+2. `cmp dword [rax+0xe0],1`（`0x3dcf26`）、`cmp dword [rax],1`（`0x3dd807`）判的是哪个字段；
+3. 自递归那 2 处（`0x3dcbb0` 调自己）是泛型单态化还是真的递归，未定。
+
+### 10.3 与 `function_active_event` / `function_points_event` 的关系：**没有关系**（否证）
+
+`docs/14` §9.3 已证"本模块 10 个函数没有一条直接引用这两个事件名"。本轮把它加强为**全库口径**：
+
+```bash
+# 全 .text 里引用这两条字面量的函数（rip 相对，一次扫描）
+function_active_event  -> 0x3d5260(play_screen_control 的名字表) · 0x4500c0(server_connection_handler) · 0x477bc0(game_state_manager)
+function_points_event  -> 0x3d5260 · 0x4500c0 · 0x477bc0
+```
+
+⇒ **观测**：
+- `0x3dcbb0` **不在**这三个引用者里；它的 33 处 `.rodata` 引用里**一条事件名都没有**。
+- 所以「弹道清除 / 命中结算」既不在 `0x3dcbb0`，也不在 `0x3db3e0`。
+- 收口点仍是 `0x3d5260`（名字→分派表）与 `graphwar_game_state_manager 0x477bc0`。
+
+### 10.4 `0x3db3e0`（观测：往胜利横幅填一名玩家）
+
+```text
+vaddr 0x3db3e0  Ghidra 0x4db3e0  length 0xFB8（4 024 B），139 个基本块
+Ghidra 签名：undefined FUN_004db3e0(long param_1, undefined4 param_2, undefined4 param_3, long param_4)
+调用者：0x3da130（胜负横幅）在 0x3dac83 / 0x3daca8 / 0x3dadf3 连调 3 次
+```
+
+**入参（推断，按调用点形状）**：
+| 寄存器 | 含义 |
+|---|---|
+| `rdi` | `&容器` —— 里面 `[+0x10]`/`[+0x18]`/`[+0x20]` 三个字段被用到（节点句柄） |
+| `esi` / `edx` | 两个 `u32`：槽位/队伍一类的小整数（`0x3db3e0.c:94` 里只做 `CONCAT44` 透传，`param_3` 还进了 `0xa245b0(…,10)`） |
+| `rcx` | 一个 `Rc<RefCell<…>>` 形状的**玩家对象**（`[+0x10]` 借用标记、`[+0x18]` 载荷，`0x3db3e0.c:228-238`） |
+
+**它做的事（观测，逐条能指到行）**：
+1. `get_node("VictoryPlayerContainer")`（`0x1bf952`，16 字节 `movdqu` 于 `0x3db41d`）；
+2. 依次 `get_node`："SkinIcon"（`0x19f3d0`，len 8）、"FaceIcon"（`0x19f180`，len 8）、
+   "HatIcon"（`0x1bf968`，len 7，反编译写作 `&DAT_002bf968`）；
+   三次都带 "clone"（`0x1bfe73`，len 5）作为中间方法名；
+3. 从玩家对象取两处数据（`0x57dec0(obj+0x10)`、`0x57dec0(obj+0x16)`）；
+4. `0x507580(x, "to_godot", 8)` → `0x4a01a0(…, "set_texture", 11, …)` →
+   `0x505d20(...)`：**动态调用 `set_texture`**（"set_texture" 在 `0x1bf8b0`，len `0xb`）。
+5. 失败路径用的是 `"Upcast failed. This is a bug; please report it."`（`0x1bf881`，len `0x2f`）。
+
+⇒ **推断（方向唯一）**：`0x3db3e0` = **把一名玩家的皮肤/脸/帽三张贴图刷到胜利横幅的一个展示位**。
+与 `docs/14` §9.5「`0x3da130` 是唯一引用胜负字面量的函数」互补：`0x3da130` 决定**显示谁**，
+`0x3db3e0` 负责**画那名玩家的头像**。
+⚠️ **未知**：`param_2`/`param_3` 到底是"第几个展示位"还是"(队伍,序号)"；
+以及那 3 次调用各自对应哪个展示位（调用点 `0x3dac83`/`0x3daca8` 只隔 `0x25` 字节，
+像是同一个双人分支里连填两格，第三格在 `0x3dadf3`）。
+
+### 10.5 那"真正的分派"在哪（把线索钉住）
+
+| 落点 | 证据 | 档位 |
+|---|---|---|
+| `root_node 0x3a5760` | `0x3a7cd8 cmp byte [self+0x1705], 6` → 命中后对 `[self+0x1668]` 载荷载荷做两次间接调用（`*0x9ba990`、`*0x9ba998`，`0x3a7d03`/`0x3a7d33`），再按 `[self+0x58]==1` 分支 | 观测 |
+| `root_node 0x3afcf0` | 同一条 `cmp byte [rdi+0x1705], 6`（`0x3afd1a`），且被 `0x3a5760` 在 `0x3a7cd3` 调 | 观测 |
+| `graphwar_game_state_manager 0x477bc0` | 引用 `function_points_event`（`0x1c1978`） | 观测（仅字面量） |
+| `graphwar_remote_event_handler 0x3dee00` | **11 个 `src/graphwar_play_screen_control.rs` 的 `Location` 锚点**（:275 :278 :292 :345 :350 :351 :352 :527 :530 :535 :544）落在它体内 ⇒ 本模块一大批 UI 反应被**内联进了 remote_event_handler** | 观测（锚点）／推断（内联归属） |
+
+⇒ **必须修正 `docs/14` §9.1 的口径**：`0x3dcbb0` 之后的下一个函数是
+**`0x3dee00`（`graphwar_remote_event_handler.rs`，2449 行反编译）**，
+而它体内含 11 个 `play_screen_control` 的行号锚点。
+所以「`play_screen_control` 只做开关与文本」这条（§9.6）要改成：
+**本模块只做"被调用的一次性刷新"；事件到达时的反应有一部分写在 `remote_event_handler` 里。**
+
+### 10.6 进 `src/play_control.rs` 的部分（本轮可落地的）
+
+| 新条目 | 判据 |
+|---|---|
+| `refresh_all(&mut T_a, &T_b)` 的骨架 + 9 个 `F(x) = ` / `dy/dx = ` 文本常量 | §10.2 字面量表 |
+| `VICTORY_SLOT_COUNT = 3` + `fill_victory_slot(container, idx, player)` | §10.4 三次调用点 |
+| `VICTORY_AVATAR_NODES = ["SkinIcon","FaceIcon","HatIcon"]` + `SET_TEXTURE = "set_texture"` | §10.4 的 `get_node`/动态调用 |
+| `GAME_STATE_EQ_6` 常量与**它的不确定语义**（只能是常量 + 注释） | §10.5 |
+
+⚠️ **不要**把 §10.2 的刷新函数写成"状态机"：它没有状态比较。
+⚠️ **不要**给 `[+0x1705]==6` 编一个语义 —— 本轮只证到"被比较"，语义仍是 **未知**（见 `docs/16` §15.3 的警告）。
+
+---

@@ -1063,3 +1063,280 @@ Godot 4 里 `user://` 映射到 `$XDG_DATA_HOME/godot/app_userdata/<项目名>/`
 
 ---
 
+
+## 15. `graphwar_root_node.rs` 规格（本轮新增：屏表 / 命令总线 / 状态分派）
+
+> **本节解决什么**：`graphwar_root_node.rs` 是 12 个 GDExtension 类里**规模最大**的一个
+> （`docs/02` §16.2 类清单第 3 项），`docs/149` 记 23 个可归属函数、0 个已做。
+> 本节把 6 个关键函数解到「能照着写」的粒度（其中 `0x3a22f0` **不在**那 23 条里，是无 panic 锚的构造器），并给全**屏名表**与**命令键表**。
+>
+> **地址口径**：一律 **ELF vaddr**；Ghidra/REA 地址 = 本地址 + `0x100000`（只加一次）。
+> 本节所有「函数入口」都用 `analysis/funcstarts_ghidra_va.pkl` 与 REA `procedure_info`
+> 交叉验证过；**注意 0x3a5ea8 / 0x3a6038 / 0x3a60dc 都不是函数入口**（见 §15.8 的更正）。
+
+### 15.1 模块函数清单（`fixtures/module_funcs.tsv`，23 条）
+
+```text
+0x3a2e10 0x3a54e0 0x3a55e0 0x3a5620 0x3a5660 0x3a5760 0x3aa6a0 0x3aa820
+0x3afb00 0x3afcf0 0x3afe90 0x3b00d0 0x3b0830 0x3b4ec0 0x3b56c0 0x3b5910
+0x3b5ac0 0x3b5ce0 0x3b6e00 0x3b6ed0 0x3b7020 0x426430 0x433c00 0x4f90b0
+```
+
+下面 6 个是「实例装配 / 分发」的主干，本节逐条给规格：
+
+| vaddr | 大小 | 猜的名字 | 档位 |
+|---|---|---|---|
+| `0x3a22f0` | `0xb20` | **构造/初始化**（把下面各字段一次装配好） | 观测（写入点 §15.3）｜⚠️ 该地址是独立函数入口，但**不在** `fixtures/module_funcs.tsv` 的 23 条里（无 panic 锚） |
+| `0x3a2e10` | `0x26d0` | **`_ready()`**（名字是推断）：取 3 个 holder、连 IAP 信号 | 内容=观测／命名=推断 |
+| `0x3a5760` | `0x4f40` | **逐帧/事件状态机**（Ghidra 把几十个内联体合成一个函数） | 部分观测 |
+| `0x3af850` | `0x2b0` | **广告可见性闸门**（按屏名决定 create/destroy） | 观测 |
+| `0x3afcf0` | `0x1a0` | 进屏前的「当前是否对局中」判定 | 推断 |
+| `0x3b0830` | `0x4690` | **命令总线**（按钮 `input_text` → 动作） | 观测 |
+
+⚠️ **`0x3a5760` 是 20288 字节、339 条比较、64 个直接调用目标**。Ghidra 把它当**一个**函数，
+但它的入口第一屏就在查 `screens["PlayScreen"]`、下半段又在跑状态机——
+**它极可能是 `_process()`/`notification()` 级别的总入口 + 大量内联**，不是"一个业务函数"。
+本节只给能指到字节的结构，不猜它的 Rust 形状。
+
+### 15.2 屏名表：**15 个值，地址全部逐条量到**
+
+屏名是 `&'static str`，判据 = 代码里的 `lea rsi,[rip±X]` + 紧跟的 `mov edx,len`
+（`.rodata` 里字面量**不以 NUL 结尾**，`strings` 会把整段粘成一条，见 `docs/02` §16.1）。
+下表 len 都是**指令里的立即数**，不是目测。
+
+| # | 屏名 | vaddr | len | 引用它的函数 |
+|---|---|---|---|---|
+| 1 | `MainMenu` | `0x19fc70` | 8 | `0x3b0830` ×3 |
+| 2 | `Campaign` | `0x19fcc0` | 8 | `0x3a5760`、`0x3b0830` ×3 |
+| 3 | `LanLobby` | `0x19f380` | 8 | `0x3b0830` ×2 |
+| 4 | `GameSetup` | `0x1bda32` | 9 | `0x3a7cba`(in `0x3a5760`)、`0x3b0830` |
+| 5 | `PlayScreen` | `0x1bd92b` | 10 | `0x3a5760` ×5、`0x3b0830` ×5 |
+| 6 | `ReplayLobby` | `0x1bdaec` | 11 | `0x3b0830` ×3 |
+| 7 | `PlayerScreen` | `0x1bdb2f` | 12 | `0x3b0830` |
+| 8 | `JoinIpPopUp` | `0x1bdaf7` | 11 | `0x3b0830` |
+| 9 | `AddBotPopUp` | `0x1bdb02` | 11 | `0x3b0830` |
+| 10 | `ConfirmPlay` | `0x1bdb0d` | 11 | `0x3b0830` |
+| 11 | `ExitPopUp` | `0x1bdb18` | 9 | `0x3b0830` |
+| 12 | `JoinLevelPopUp` | `0x1bdb21` | 14 | `0x3b0830` ×2 |
+| 13 | `ConnectingPopUp` | `0x1bda23` | 15 | `0x3a5760` |
+| 14 | `EndGamePopUp` | `0x1bda3b` | 11 | `0x3a5760` |
+| 15 | `DisconnectedPopUp` | `0x1bda73` | 17 | `0x3a5760` |
+
+⇒ **7 个基础屏 + 8 个弹窗 = 15，正好等于 `docs/16` §1 的「15/15 界面」**（观测）。
+另有三条**不是屏**但同池的节点名，写实现时别混进去：
+`ScreensControl` `0x1bd935`(14)、`IAP_holder` `0x1bd943`(10)、`Ad_holder` `0x1bd94d`(9)
+—— 这三个只在 `0x3a2e10`（`_ready`）里各被 `get_node` 一次（观测）。
+
+**屏的持有结构**：`screens: HashMap<&'static str, Gd<Node>>`，落在 `[self+0x1638]`（表）
+/ `[self+0x1640]`（bucket mask）/ `[self+0x1650]`（长度）/ `[self+0x1658]`（hash builder）。
+判据（观测）：`0x3a57c8` 起是完整的 hashbrown 查找内联体 ——
+`lea rdi,[rbx+0x1658]`（hasher）→ `lea rsi,"PlayScreen"; mov edx,0xa` → `call 0x47daa0`（哈希）
+→ `shr rsi,0x39` 取高 7 位 → 16 字节 `pcmpeqb` 探测循环 → 命中后 `cmp qword [bucket-0x18],0xa`
+（比长度）→ `movabs 0x6572635379616c50`("PlayScre") + `xor word 0x6e65`("en")（比内容）。
+`cmp qword [rbx+0x1650],0; je ...` 是「表空则跳过」。
+⚠️ **推断**：K 是 `&'static str`（16 字节 `(ptr,len)`，桶步长 40 字节）；V 是 `Gd<Node>`。
+缺的证据：命中后的 `upcast_ref` 目标类型（`0x406250` 的第二个实参是类型名字面量，
+本轮没逐条解）。
+
+### 15.3 `[self+0xNN]` 字段表（写入点全列，用于还原结构体）
+
+| 偏移 | 大小 | 语义 | 判据（vaddr） |
+|---|---|---|---|
+| `+0x58` | dword | 开关/计数，**只有 0 与 1 两个值** | `0x3a7005 cmp byte[+0x58],0`、`0x3a7d4c cmp dword[+0x58],1`、`0x3afe f1 cmp dword[rbx+0x70],1`（相邻字段） |
+| `+0x60` | 指针 | 交给 `0x41d1f0` 的对象 | `0x3a700f`、`0x3a7d56` |
+| `+0x15c8` | qword（低字节=bool） | 主开关：为 0 时 `0x3a5760` 直接走 `0x3a60f0` | 读 `0x3a5789`；写 `0x3a60e6`(0)、`0x3a8ae9`(0)、`0x3b1ff2`、`0x3b398f` |
+| `+0x15cc` | dword | **倒计数**（`dec` 一次就跳到 `0x3a60f0`） | `0x3a5796`-`0x3a57a2`、`0x3a61d5`-`0x3a61e1` |
+| `+0x15d0` / `+0x15d8` | qword / dword | 一个 `String`+长度的返回值落点 | `0x3a60ad`、`0x3a60b4` |
+| `+0x1638…+0x1668` | — | 屏表 `HashMap<&str, Gd<Node>>` | §15.2 |
+| `+0x1668` | 指针→单元 | **play 侧控制器**；`[单元+0x10]` 借用标记、`[单元+0x18]` 载荷 | 约 50 处，见 `0x3a6a7f`、`0x3b0b75` |
+| `+0x16c8` | 指针→单元 | **另一个控制器/数据对象**，同形状 | `0x3a5f27`、`0x3a6a60`、`0x3b0b49` |
+| `+0x1702` | bool | 闸门 A（为 1 时 `0x3a5760` 走 `0x3a60f0`） | 读 `0x3a5774`、`0x3a65f1`；写 `0x3b3996`(1)、`0x3a8af3`(0)、`0x3b4094`(0) |
+| `+0x1703` | bool | 闸门 B | 读 `0x3a57ad`、`0x3a61ec`；写 `0x3b2130`(1)、`0x3b3ad4`(1)、`0x3b50d4`(0) |
+| `+0x1704` | u8 | **当前屏枚举**，观测到值 0/1/2/3/4；**只在 `0x3b0830` 里被写** | 写 `0x3b0931`(0)、`0x3b0996`(1)、`0x3b3168`(2)、`0x3b08ac`(3)、`0x3b237f`(4)；`0x3a5760` 在 `0x3a6fdc` 按它 `match {1,2,4}` |
+| `+0x1705` | u8 | **对局状态枚举**（`GameState`），全库**只有一个写入点** `0x3a8a09`（`mov [rbx+0x1705], r15b`） | 比较：`0x3a6e7e`(=8)、`0x3a7cd8`(=6)、`0x3afd1a`(=6) |
+
+**构造期的初值（观测，`0x3a2b25`-`0x3a2b30`）** —— 这一条把两个枚举的起点钉住了：
+
+```text
+0x3a2b25  mov dword [r15+0x15c8], 0
+0x3a2b30  mov dword [r15+0x1702], 0x8010000     ; ← 4 个字节一次写
+          ⇒ [0x1702]=0x00  [0x1703]=0x00  [0x1704]=0x01  [0x1705]=0x08
+```
+
+⇒ **`+0x1704` 初值 1、`+0x1705` 初值 8**。
+再结合「`0x3b0830` 把 `+0x1704` 写成 0/1/2/3/4」与「启动默认进 `MainMenu`」，
+可以给一条**推断**：`+0x1704` 的 1 = `MainMenu`（缺的证据：把 5 个写点与 5 个
+`get_node` 目标一一对上）。`+0x1705` 的 8 则明示它**不是** `docs/14` §2 那个 6 态枚举
+（6 态最大下标是 5），实现时要另建一个枚举。
+
+⚠️ **未知（重要）**：`+0x1705` 的**枚举定义**没解出来。已知它被与 `8`、`6` 比较，
+而 `docs/14` §2 的状态机只有 6 态（`Setup … EndingGame`）⇒ **值 6 不可能是那 6 个状态之一**，
+要么客户端状态机比服务端多几态，要么这个字段不是 `GameState`。
+缺的证据：写入点 `0x3a8a09` 的 `r15b` 来源（本轮只追到 `0x3a6f59` 的常量 `6` 与 `0x3afcf0` 的判定）。
+**这是本节最大的未决项，实现时不要照抄成「state==6 就是 X」。**
+
+### 15.4 `0x3a2e10` `_ready()`（观测）
+
+- **入参**：`rdi` = self（`GraphwarRootNode`）。
+- **取节点**：`get_node("ScreensControl")`（`0x1bd935`）、`get_node("IAP_holder")`（`0x1bd943`）、
+  `get_node("Ad_holder")`（`0x1bd94d`），各一次；随后 `upcast_ref` 到具体类
+  （`0x1bd8f2`，14 次）——被上抛的类型名在 `0x1c1c5a` / `0x1c1c87` 池里：
+  `graphwar_button::GraphwarButton`、`graphwar_function_input::GraphwarFunctionInput`、
+  `graphwar_ad_switch::GraphwarAdSwitch`（观测）。
+- **连信号**（同池字面量 + `connect` 口径的间接调用）：
+  `request_permissions_result`（`0x1bd956`）、`on_request_permissions_result`（`0x1bd970`）、
+  `purchase_confirmed`（`0x1bd98d`）、`purchase_denied`（`0x1bd99f`）、
+  `VersionLabel`（`0x1bd9ae`）、`process`（`0x1bd9b9`）、
+  以及 `0x19c1d0` 池里的 `purchase_pending` / `function_update_limit_info_event` /
+  `add_soldier_request` / `entity_removed_event` / `ban_connect…`。
+- **写字段**：`+0x1638`（屏表，`0x3a3b71`）、`+0x1668`（`0x3a3249` 起 8 处）、`+0x16c8`（`0x3a3df2`）。
+- 档位：**观测**（字面量 + 上抛点）。⚠️ **未知**：`connect` 用的是哪个 GOT 槽（
+  `0x9bb030` 未定名，见 `docs/14` §9.2），所以「连的是信号还是 property」是**强推断**。
+
+### 15.5 `0x3af850` 广告可见性闸门（观测，可照写）
+
+```
+fn 0x3af850(rdi = &{names: Vec<(&str)>, ad_holder: Option<Gd<AdHolder>>},
+            rsi = name_ptr, rdx = name_len, rcx = &bool)
+```
+- `rbx = [rdi+0x18]`，`test rbx,rbx; je 0x3afaf0`（`0x3af868`）⇒ 没有 `Ad_holder` 直接返回。
+- `r15 = [rdi]`；`movdqa xmm0,[r15]; pmovmskb` ⇒ 表头带 16 字节「空位掩码」（`0x3af883`）。
+- 遍历：`rbp = [r15+rax*8-0x20]`（名字 ptr）、`r12 = [r15+rax*8-0x18]`（len）（`0x3af928`）。
+- 判等：`cmp r12,rdx; jne`（长度先比，`0x3af932`）→ `call *0x9baa10`（三参 memcmp，`0x3af944`）。
+- **两个长度 10 的特例**（`0x3af957` 之后）：`0x756f72676b636162`+`0x646e` = **`background`**；
+  `0x6572635379616c50`+`0x6e65` = **`PlayScreen`**。
+- 命中/未命中都归到 `0x3af8a0`：`upcast_ref`（`0x406250`，"upcast_ref" 长 10）→
+  `call *0x9ba978`，`esi = bpl`（来自第 4 个实参那个 `bool`）。
+- ⇒ **推断（方向唯一）**：`*0x9ba978` = 设置可见性一类的 bool 成员（`set_visible` 候选）；
+  `0x3af850(name, visible)` 决定「这一屏要不要挂广告」。**`PlayScreen` 与 `background`
+  被单列**，与 `docs/19` 的「`play_screen` 里没有 `AdContainer`」一致（两路证据独立）。
+- `call_deferred` 侧：`create_ad_view`（`0x1bd9c1`）/ `destroy_ad_view`（`0x1bd9cf`）
+  **只被本函数引用**（各 1 处，`0x3af9xx` 那两个分支）。
+- 调用者：`0x3a7bed`、`0x3a899b`（在 `0x3a5760` 内）、`0x3b3f2b`、`0x3b410f`、`0x3b4257`（在 `0x3b0830` 内）。
+  ⚠️ **更正**：`docs/19` §③ 记的「`show_screen` `0x3a5ea8` → create_ad_view `0x3a6038`」
+  这两个地址**都不是指令边界**（`0x3a6033` 起是一条 7 字节的 `mov rdi,[rsp+0xe8]`）。
+  真实的调用链是 **命令总线/状态机 → `0x3af850` → `call_deferred("create_ad_view"|"destroy_ad_view")`**。
+- **未知**：`0x9ba978` / `0x9baa10` 的引擎侧成员名；`Vec` 里到底是 12 个「带 AdContainer 的屏」
+  还是 15 个屏名（`docs/19` 的 `.tscn` 清点给 12）。
+
+### 15.6 `0x3b0830` 命令总线（观测：键表逐条量到）
+
+签名（Ghidra）：`ulong FUN_004b0830(long self, ulong *name_ptr, ulong *name_len)`。
+参数其实是 `(self, &str)`：`rdx` 是**长度**，函数体第一件事就是
+`if (len != 8) { if (len == 0x14) … }`（`0x4b0830.c` 第 128/129 行）。
+
+**入口**：唯一调用点 `0x3a6d7d`（在 `0x3a5760` 内），而且是在一个**循环**里：
+`0x3a6d40 cmp dword[r14],3` → `call 0x3faf60`（Variant→&str）→
+`0x3a6d7d call 0x3b0830(self, ptr, len)` → 回收。
+
+**键表**：函数体用「先比长度、再比 8 字节立即数」的方式匹配下列键
+（下面每条都是把 `movabs/xor` 的立即数按小端还原出来的，**观测**）：
+
+| 键 | 长度 | 判据（反编译行） |
+|---|---|---|
+| `player_settings` | 15 | `0x4b0830.c:204`（`0x73676e6974746573`+`0x735f726579616c70`） |
+| `start_level` | 11 | `:1389` |
+| `multiplayer` | 11 | `:1418` |
+| `create_game` | 11 | `:1419` |
+| `toggle_mute` | 11 | `:1438` |
+| `exit_campaign` | 13 | `:1769` |
+| `exit_ask_play` | 13 | `:1790` |
+| `cancel_add_bot` | 14 | `:1846` |
+| `exit_lan_lobby` | 14 | `:1857` |
+| `cancel_join_ip` | 14 | `:1874` |
+| `add_bot` | 7 | `:1026` |
+| `join_ip` | 7 | `:1040` |
+
+⚠️ 与 `docs/16` §1 第 2 条互相印证：**按钮的 `input_text` 就是这套键**（`campaign` /
+`add_bot_3` / `fire` / `toggle_names` …）⇒ 本函数就是那个「命令总线」。
+**推断**：上面 12 条只是本轮**解到底**的；函数体还有大量 `param_3` 长度分支
+（8 / 0x14 / 0xf / 6 / 3 …），键总数应当 >12，**未穷举**。缺的证据：
+把 `0x4b0830.c` 的 131 KB 反编译逐分支过一遍（本轮只做了长度分支 + 立即数还原）。
+
+**它做的事**（观测）：
+1. 写 `[self+0x1704]`（当前屏）—— 0/1/2/3/4（§15.3）；
+2. 写 `[self+0x1702]`、`[self+0x1703]` 两个闸门；
+3. 大量 `lea rdi,[rbx+0x1638]` + `lea r14,[rbx+0x1638]`（屏表查找，32 处）后接
+   `[self+0x1668]` / `[self+0x16c8]` 的两个控制器；
+4. 调 `0x3af850` ×3（广告）、`0x3afcf0`（`0x3b385f`）；
+5. `get_node` 到 `PlayerScreen` 下的 `LevelTitleLabel`/`AxisModeButton`/`FunctionModeButton`/
+   `TurnModeButton`/`TimeModeButton` 并 `set_button_icon`（`0x1bdb86`，长 15）；
+   `unlock_skins`（`0x1bdaaf`）/`purchase_graphwar_support`（`0x1bdabb`）/
+   `Waiting for permissions.`（`0x1bdad4`）。
+6. 事件名比较池（`pcmpeqb` 16 字节）：`0x19cd70`（`…state_info_event`）、`0x19cef0`
+   （`toggle_view_functions`）、`0x19d180`（`cancel_exit_play`/`player_info_event`）、
+   `0x19d3e0`（`cancel_connecting`/`function_active_event`）、`0x19dc90`
+   （`exit_replay_lobby`/`destroy_obstacle`/…`count_info_event`/`time_mode_info_event`）、
+   `0x19e6b0`（`exit_player_sett`/`target_info_event`/`function_active…`/`chat_message_eve`）。
+   ⇒ **`0x3b0830` 不只是「切屏」，它还吞掉了一批远程事件名**（观测到串，**推断**为同一
+   `match` 的其它分支）。⚠️ 这条与 `docs/14` §9.3「`function_active_event` 只被 `0x3d5260` 引用」
+   **不冲突**：`0x3b0830` 引用的是那 16 字节池的**同一段字面量**，属另一处引用点。
+
+### 15.7 `0x3a5760`：状态机骨架 + 与三个外部对象的接线（部分观测）
+
+**入口闸门**（全部观测，`cmp`/跳转地址逐条给）：
+
+```text
+0x3a5774  cmp byte [self+0x1702], 0 ; jne 0x3a60f0      ; 闸门 A
+0x3a5789  cmp byte [self+0x15c8], 0 ; je  0x3a60f0      ; 主开关
+0x3a5796  mov eax,[self+0x15cc]; test; je 0x3a57ad
+0x3a57a0  dec eax; mov [self+0x15cc],eax; jmp 0x3a60f0  ; 倒计数一次就收工
+0x3a57ad  cmp byte [self+0x1703],0 ; jne 0x3a60f0      ; 闸门 B
+0x3a57ba  cmp qword [self+0x1650],0 ; je 0x3a6095       ; 屏表空
+0x3a57c8  …查 screens["PlayScreen"]（§15.2）→ 拿到 play 控制器
+0x3a5e18  rax = [rip+0x614891] (GOT 0x9ba6b0); cl=[rax+0x14f0]
+0x3a5e26  test cl,cl; je 0x3a98c7                       ; 引擎单例未就绪 → panic 路径
+0x3a5e36  call *[rax+0x11e0]
+0x3a5e3c  取 OS 名 → cmp len,3 + "iOS"(0x4f69/0x53) → 0x3a8db7
+0x3a5ebc  再取一次 → cmp len,7 + "Android"(0x72646e41/0x64696f72) → 0x3a8ee0
+```
+
+⇒ **推断**：`0x3a5e18`-`0x3a5f00` 这一段是 `OS::get_name()` 的平台判定（iOS / Android），
+两处命中分别跳到 `0x3a8db7` / `0x3a8ee0`（媒体相册/权限那套，见同池
+`publish_video_to_album` `0x1bd9de`、`publish_image_to_album` `0x1bda0d`、
+`Android_mediastore_holder` `0x1bd9f4`、`IOS_album_holder` `0x19c040`）。
+
+**与 `play_screen_control` 的接线**（观测，调用点逐条）：
+
+| 调用点 | 目标 | 传参 |
+|---|---|---|
+| `0x3a6aaf` | `0x3dcbb0` | `rdi=[[self+0x16c8]+0x18]`、`rsi=[[self+0x1668]+0x18]` |
+| `0x3a6d7d` | `0x3b0830` | `rdi=self`、`rsi/rdx = 循环里的 &str` |
+| `0x3a6fbf` | `0x3da130`（胜负横幅） | `rdi=[rbx+0x18]`、`rsi=[r14+0x1f8]` |
+| `0x3a60dd` | `0x3d9b50`（回放视图） | `rdi=[[self+0x16c8]+0x18]` |
+| 4×（`docs/14` §9.1） | `0x3d9b50` | 同上形状 |
+
+**与 `Ad_holder` 的接线**：只有 `0x3af850` 一条路（§15.5），
+`+0x1668`/`+0x16c8` 两个控制器都**不直接**碰广告。
+
+**与 `lan_vbox` 的接线**：**观测到的是「没有直接调用」** ——
+`tools/callers.py --module graphwar_lan_vbox.rs`（10 个函数）只查到 **1 个外部调用者
+`0x500810`（未归属）**，不在 `root_node` 的 64 个直接调用目标里。
+`root_node` 与局域网列表的唯一联系是 `get_node("LanLobby")`（`0x19f380`，`0x3b0830` 里 2 处）
+⇒ **推断**：`lan_vbox` 是挂在 `LanLobby` 场景里的独立控件，由脚本/引擎驱动，
+`root_node` 只负责切屏到它。⚠️ 缺的证据：`Gd` 信号回调（`call_deferred`/`connect` 的闭包）
+不在 `call rel32` 里，需要 `tools/ptr_slots.py` 或运行时复核。
+
+### 15.8 三条地址更正（写实现前必读）
+
+1. **`0x3a5ea8` 不是函数入口**。它落在 `0x3a5760`（`0x3a5760…0x3aa6a0`）**内部**。
+   `docs/19` §③ 把它当作 `GraphwarRootNode::show_screen` 的入口，那是**文件偏移口径**
+   （`0x3a5ea8 - 0x100000 + 0x101000`）——本仓库的 `AGENTS.md` 已记过这个坑。
+2. **`0x3a6038` / `0x3a60dc` 也不是指令边界**（`0x3a6033` 起是 7 字节 `mov`）。
+   广告链路的正确落点是 `0x3af850`（§15.5）。
+3. **`0x3b0830` ≠ `show_screen`**。它匹配的是**小写命令键**（§15.6），屏名在它里面
+   只作为 `get_node` 实参出现。真正的「切屏」由它写 `[self+0x1704]` 完成 ——
+   所以复现时应当是 **`command(&str) -> 设 current_screen + 显隐 + 广告闸门`** 一个函数，
+   而不是「`show_screen(name)` 再进来分派」。
+
+### 15.9 本节没解出来的（照实写）
+
+| 缺口 | 缺什么证据 |
+|---|---|
+| `[+0x1705]` 枚举定义（值 6 / 8 是什么） | 追 `0x3a8a09` 的 `r15b`；目前只知道 `0x3a6f59` 有过 `mov r15b,6` |
+| `0x3b0830` 的**全部**命令键（已解 12 条） | 131 KB 反编译逐分支过一遍 |
+| `0x47daa0` / `0x9ba978` / `0x9baa10` / `0x9ba990` / `0x9ba998` 的引擎侧成员名 | 运行时读 GOT 槽（Frida 本轮不可用：`frida_binding.node` 缺失） |
+| 屏表 V 的确切类型、`upcast_ref` 的目标类名 | 逐条解 `0x406250` 的第 2 实参 |
+| `lan_vbox` 与 `root_node` 的信号级联系 | `ptr_slots` + 运行时 |
+
+---
