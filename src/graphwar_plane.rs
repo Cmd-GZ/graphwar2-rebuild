@@ -454,19 +454,23 @@ pub const READY_EVENTS: [(&str, u64); 3] = [
 /// `draw` 里按**出现次序**调到的游戏内函数（能定名的那些）。
 ///
 /// 这张表只回答「`draw` 碰了谁」，**不**回答「谁画什么」——后者多数未解（见 [`UNKNOWNS`]）。
-pub const DRAW_GAME_CALLS: [(&str, u64); 9] = [
+pub const DRAW_GAME_CALLS: [(&str, u64); 15] = [
     ("graphwar_draw_util::get_team_overview", 0x4be6e0),
     ("<未定名>：Line2D::set_width ×2 的配置函数", 0x499050),
     ("<未定名>", 0x46bb90),
+    ("<未定名>", 0x46a770),
+    ("<未定名>", 0x46b5d0),
+    ("<未定名>", 0x46aa50),
     ("graphwar_tick_handler::get_fractional_tick", 0x519530),
     ("graphwar_function_manager::get_active_functions_on_tick", 0x456df0),
+    ("<未定名>", 0x3bf010),
+    ("<未定名>：FunctionDrawer 家族", 0x498b70),
     ("function_drawer::FunctionDrawer::update_function", 0x498c70),
     ("<未定名>：FunctionDrawer 家族，Line2D::set_default_color", 0x4992b0),
     ("<未定名>：FunctionDrawer 家族", 0x4971e0),
-    (
-        "<未定名>：draw_circle ×5，并引用 `Write a function of x to hit the target`",
-        0x4993c0,
-    ),
+    // 引用的是提示文字（.rodata 0x1c21a7）："Write a function of x to hit the target"
+    ("<未定名>：draw_circle ×5", 0x4993c0),
+    ("<未定名>", 0x46abc0),
 ];
 
 /// 子节点的运行时句柄占位：真值是 Godot 对象 id（本仓库不链接 Godot，只留类型）。

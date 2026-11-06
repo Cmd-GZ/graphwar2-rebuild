@@ -3530,19 +3530,29 @@ GraphwarBackend::subscribe_to_event ×3 (0x44b7f0)    ; 名字首尾相接：
 **`process`（`0x4b83f0`）**：每帧 `ObstacleDrawer::update`（`0x3ee190`）**2 次** +
 `GraphwarDrawUtil::get_team_overview`（`0x4be6e0`）**1 次**。没有别的游戏内调用。
 
-**`draw`（`0x4b5df0`）**：47 条直接调用，其中游戏内的 15 条（顺序即调用顺序）：
+**`draw`（`0x4b5df0`）**：47 条直接调用（gdext / std 的辅助调用不计）。其中**只有 4 个目标能定名**
+（共 5 个调用点）：`0x4be6e0` `get_team_overview` ×2、`0x519530` `get_fractional_tick`、
+`0x456df0` `get_active_functions_on_tick`、`0x498c70` `FunctionDrawer::update_function`。
+其余 **11 个**游戏内目标**一个 Location 锚都没有**（无 module 可归，也不替人起名）。
+按调用顺序（首次出现）全列如下：
 
 | # | 目标 | 名字 | 说明 |
 |---|---|---|---|
-| 1–2 | `0x4be6e0` | `graphwar_draw_util::get_team_overview` | 队伍色（两次） |
-| 3 | `0x499050` | `<未定名>` | 体内 `Line2D::set_width` ×2（`0x49911c`/`0x49921c`） |
-| 4 | `0x46bb90` | `<未定名>` | — |
-| 5 | `0x519530` | `graphwar_tick_handler::get_fractional_tick` | 当前 tick 的小数进度 |
-| 6 | `0x456df0` | `graphwar_function_manager::get_active_functions_on_tick` | 本 tick 生效的函数 |
-| 7 | `0x498c70` | **`function_drawer::FunctionDrawer::update_function`** | 体内 `Line2D::add_point`（`0x498fab`）+ `set_default_color`（`0x498e30`） |
-| 8 | `0x4992b0` | `<未定名>` | 体内 `Line2D::set_default_color`（`0x4993a3`） |
-| 9 | `0x4971e0` | `<未定名>` | FunctionDrawer 家族 |
-| 10 | `0x4993c0` | `<未定名>` | 体内 `draw_circle` ×5；引用 `"Write a function of x to hit the target"`（`0x1c21a7`） |
+| 1 | `0x4be6e0` | `graphwar_draw_util::get_team_overview` | 队伍色（调 2 次） |
+| 2 | `0x499050` | `<未定名>` | 体内 `Line2D::set_width` ×2（`0x49911c` / `0x49921c`） |
+| 3 | `0x46bb90` | `<未定名>` | — |
+| 4 | `0x46a770` | `<未定名>` | — |
+| 5 | `0x46b5d0` | `<未定名>` | — |
+| 6 | `0x46aa50` | `<未定名>` | — |
+| 7 | `0x519530` | `graphwar_tick_handler::get_fractional_tick` | 当前 tick 的小数进度 |
+| 8 | `0x456df0` | `graphwar_function_manager::get_active_functions_on_tick` | 本 tick 生效的函数 |
+| 9 | `0x3bf010` | `<未定名>` | — |
+| 10 | `0x498b70` | `<未定名>` | FunctionDrawer 家族 |
+| 11 | `0x498c70` | **`function_drawer::FunctionDrawer::update_function`** | 体内 `Line2D::add_point`（`0x498fab`）+ `set_default_color`（`0x498e30`） |
+| 12 | `0x4992b0` | `<未定名>` | 体内 `Line2D::set_default_color`（`0x4993a3`） |
+| 13 | `0x4971e0` | `<未定名>` | FunctionDrawer 家族 |
+| 14 | `0x4993c0` | `<未定名>` | 体内 `draw_circle` ×5；引用 `"Write a function of x to hit the target"`（`0x1c21a7`） |
+| 15 | `0x46abc0` | `<未定名>` | — |
 
 两个图元（逐位）：
 
