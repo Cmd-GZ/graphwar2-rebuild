@@ -1,43 +1,21 @@
 #!/usr/bin/env python3
-"""定性一个 graphwar 模块：它注册成什么 Godot 类、锚函数引用了哪些字符串。
+"""⚠️ 2026-11-07 警告：**本工具的"函数归属"列已被证不可靠，不要直接引用。**
 
-## 为什么需要它
+它把「Location 结构体 → 引用它的代码地址」这一跳交给上游 `analysis/xrefs.pkl`，
+而那份 pkl 与 `.reference/steam/2026-08-28/libgraphwarrust.so` 不是同一次扫描，
+错误形态是**归属漂移到相邻/无关函数**。已观测到的三例（`docs/16` §26.1）：
 
-`docs/02` §16 那张表里，一批模块只有名字。靠名字猜职责是禁止的（`AGENTS.md` §0.3）。
-本脚本把「能指到的证据」一次列全，且**不用 Ghidra**（纯静态，秒级）：
+    :274:129  本工具给 0x4b7a70   重扫给 0x4b5df0
+    :218:129  本工具给 0x4b8bd0   重扫给 0x4b7a70
+    :68:1     本工具给 0x4b2890   重扫给四个 gdext 入口
 
-1. **`(ptr,len)` 字面量**：Rust 的 `&str` 是两个字，`.data.rel.ro` 里
-   `R_X86_64_RELATIVE` 的 addend 是 ptr、**槽位 +8 就是 len**。要求这 len 个字节全可打印，
-   这就是自校验（`docs/149` §1.1 的同一套办法）。⇒ 得到**精确边界**的字面量，
-   避开 `strings` 把相邻字面量粘成一条的坑（`.rodata` 里字面量非 NUL 结尾）。
-2. **`lea` 形态的 `&'static str`**：`lea rsi,[rip+X]; mov edx,len` **没有重定位**，
-   第 1 条抓不到（`graphwarrust::…` 类型名就是这样，实测 0 个重定位指向它）。
-   这里用 capstone 反汇编函数体，按 SysV 的 (ptr,len) 寄存器配对取长度。
-3. **`panic::Location`**：`{file.ptr, file.len, line:u32, col:u32}` 四元组自校验后，
-   拿到 `src/<mod>.rs:<line>:<col>` 以及引用它的函数（= 该模块的**锚函数**）。
+**现在应当优先用：**
+* `fixtures/name_to_addr.tsv` —— 327 个函数的真名 ↔ x86 地址（跨架构 `panic::Location` 双向唯一 join，`docs/02` §20）
+* `tools/symtab_dump.py` —— 78 个模块 / 165 类型 / 290 方法名的权威清单
+* arm64 2.0.60 的 `.symtab` + 跨架构指纹（前几轮 agent 的通行做法）
 
-## 地址口径
-
-内部全用 **ELF 虚地址**；输出同时给 Ghidra/REA 地址（= 虚地址 + 0x100000，只加一次）。
-`.rodata` 的 `Address == Offset`（本文件实测），所以输出地址可与 `strings -a -t x` 直接对齐。
-
-## 已知局限
-
-* `call rel32` 看不到间接调用（gdext 走 GOT 槽）；写"没有调用者"前要配 `tools/ptr_slots.py`。
-* 一个 `Location` 结构体可能被多个函数引用（泛型/内联）⇒ 归属**天然有歧义**，别写成"属于"。
-* `lea`+`mov len` 的配对在长函数里会被相邻指令干扰；本脚本用寄存器配对收窄，仍非零误判。
-* 只扫 `.text`；`.plt` / `__lcxx_override` 不扫。
-
-## 用法
-
-    python3 tools/class_probe.py classes                    # 所有 Godot 类型名 + 引用函数
-    python3 tools/class_probe.py module graphwar_team_manager
-    python3 tools/class_probe.py func 0x4d3180               # ELF 虚地址
-    python3 tools/class_probe.py literals 'res://hats/'
-
-需要上游目录（放 `libgraphwarrust.so` 的上一层）里的
-`libgraphwarrust.so` + `analysis/{relocs,xrefs,funcstarts_ghidra_va}.pkl`（都不入库）。
-用 `GW2_UPSTREAM=/path/to/gw2` 硬指，或从本脚本位置逐级上溯。
+本工具仍可用于**粗筛**（"这个模块大概在哪片地址"），但凡要写进文档的地址，
+必须用 objdump / arm64 指纹 / 调用多重集复核过。详见 `docs/16-client.md` §26.1。
 """
 # ⚠️ 运行前提：它 import 的是上游 `analysis/elf.py`，那个模块需要 **capstone**。
 # 系统 python 没装，必须用仓库的 venv 跑：
