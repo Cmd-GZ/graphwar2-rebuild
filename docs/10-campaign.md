@@ -1242,3 +1242,116 @@ flipped = Σ ((team as u32) ^ 1)    // 在 0/1 上 = #Team1
 | C | `get_soldiers_from_owner` 的返回形态 | 名字是复数，但两列表一次查找只出一个 `u32`；若源码是扫描，函数体应远大于 92 B。**冲突未解** |
 | D | 键值极性的**直接**证据 | 只有级联方向这一条间接证据 |
 | E | `GraphwarTeam` 判别值 0/1 的**直接**证据 | 同 §13.2 |
+
+---
+
+## 14. `graphwar_rank_manager.rs` 规格：段位从哪来 / `RankInfo` 的载荷（本轮新增）
+
+> `docs/112` §5 已经把 4 个函数解到"读写一张表 + 广播"的程度，但留了两个口子：
+> §5.3「两张 map 用的助手不同 ⇒ 两个容器」与 §5.4「`RankInfo` 是 2 个字段还是 3 个 dword 未收敛」。
+> 本轮用 arm64 2.0.60 的 `.symtab` 复核，**两个口子都收了**，并补上"段位从哪来"的答案。
+> 代码落在 `src/graphwar_rank_manager.rs`，验收在 `tests/graphwar_rank_manager.rs`。
+
+### 14.1 一页结论
+
+| # | 结论 | 等级 |
+|---|---|---|
+| 1 | 只有**一张**表 `HashMap<u32, u32>`（`player_id → 段位`），在 `self+0x18`，hasher 在 `+0x38` | **逐位** |
+| 2 | `docs/112` §5.3 的"两张 map"是**误读**：`self+0x38` 是同一张表的 hasher，不是第二张表 | **逐位** |
+| 3 | `RankInfo`(67) 的载荷是**三个 dword**：`+0x08` 标志、`+0x0c` 段位、`+0x10` player_id | **逐位**（两条编码互校） |
+| 4 | `set_rank(player_id, op, rank)`：`op == 1` 写入，否则撤销；**两条路都发一条 (67)** | **逐位** |
+| 5 | 广播时 `+0x08` 恒为 **1**（`send_all_info_events`） | **逐位** |
+| 6 | 段位**只从远端事件进入**：`RemoteEventHandler::handle_{client,server}_remote_event` | **观测** |
+| 7 | 本模块**只发 67、不发 66**；66 的发起侧在 `local_player_manager` | **观测 / 推断** |
+| 8 | "分数 → 段位"的换算**不在本模块**（无 `div`/`sdiv`、无阈值表） | **观测（负结果）** |
+
+### 14.2 四个函数
+
+| 函数 | x86 vaddr / 字节 | arm64 vaddr / 字节 | 源码行 | 职责 |
+|---|---|---|---|---|
+| `new` | `0x454f30` / 352 | `0x498d2c` / 396 | 33 | 订阅 `new_connection_event` + `entity_removed_event` |
+| `set_rank` | `0x455090` / 208 | `0x498eb8` / 212 | 61 | 写/删表 + 发 (67) |
+| `send_all_info_events` | `0x454d80` / 256 | `0x498b5c` / 252 | 73 | 逐条广播 (67) |
+| `handle_entity_removed_event` | `0x454e80` / 112 | `0x498c58` / 120 | 83 | 删一条 |
+
+x86 ÷ arm64 = 0.89 / 0.98 / 1.02 / 0.93，全部落在 0.61–1.19 的闸内；
+四条 `panic::Location` 锚双向唯一（`fixtures/name_to_addr.tsv`）。
+
+### 14.3 一张表，不是两张（**修正 `docs/112` §5.3**）
+
+arm64 `set_rank` 的两个分支：
+
+```text
+cmp w2, #1
+ b.ne → hash(self+0x38, &key) ; remove(map=self+0x18, hashed_key)
+ b.eq → insert(self+0x18, key=player_id, value=rank)
+```
+
+`add x0, x22, #0x38 ; bl <hash>` 取的是**hasher**（表基 0x18 + 0x20），
+不是第二张表 ⇒ `docs/112` §5.3 的"另一张不同类型的容器（`HashMap<u32,u32>` vs 别的）"
+这一条**作废**。表本身只有一张，`HashMap<u32,u32>`。
+
+### 14.4 `RankInfo` 的三个 dword（**结 `docs/112` §5.4**）
+
+| 证据 | 内容 |
+|---|---|
+| arm64 `set_rank` | `stp w21, w19, [sp,#0x10]` + `str w20, [sp,#0x18]`，载荷基址 `sp+8` ⇒ `+8=op`、`+0xc=rank`、`+0x10=player_id` |
+| x86 `0x455090` | `[rsp+0x18]=edx`、`[rsp+0x1c]=ecx`、`[rsp+0x20]=esi`，载荷基址 `rsp+0x10` ⇒ 同样的 `+8/+0xc/+0x10` |
+| x86 `0x454d80` | `mov dword [rsp+8], 1`（标志恒 1）+ `pshufd 0xe1` 把 entry 的 `(key,value)` 交换后写 `+0xc` |
+
+⇒ 唯一自洽读法：**`+0x08` = 有无段位（1/0），`+0x0c` = 段位值，`+0x10` = player_id**。
+`serde` 报的 `struct RankInfoEvent with 2 element` 与"三个 dword"的冲突，
+现在的解释是：**序列化只有 2 个字段**（段位值 + player_id），`+0x08` 那个标志不参与序列化
+（**推断**：缺 `serialize` 分支的逐指令对照；也可能它确实是 `u64` 字段的高/低半，
+但那样 `+0x0c` 就与 `+0x10` 抢同一语义，与两条编码都不符）。
+
+### 14.5 段位从哪来（问题的正面答案）
+
+全量扫描 `bl 0x498eb8`（`set_rank`）只有 **2 个调用点**：
+
+| 调用点 | 所在函数 |
+|---|---|
+| `0x3e4fe4` | `GraphwarRemoteEventHandler::handle_client_remote_event`（`0x3e3ad0`） |
+| `0x3e7000` | `GraphwarRemoteEventHandler::handle_server_remote_event`（`0x3e6df0`） |
+
+⇒ 段位**只从远端事件进入**，客户端与服务器两条远程事件处理路径各一处。
+**不是**本地存档（`user://campaign.save` 与本模块无关，`docs/112` §7），**也不是**本机算出来的。
+
+与 tag 66 / 67 的关系：
+
+* **67 `rank_info_event`**：本模块**发**（`set_rank` 发一条、`send_all_info_events` 发全表）。
+* **66 `rank_request_event`**：本模块**不发**（4 个函数里没有 tag 66 的构造）。
+  发起侧在 `GraphwarLocalPlayerManager`（x86 `0x519f40`：玩家首次出现时连发 5 个请求
+  —— name 59 / skin 50 / face 52 / hat 54 / rank 66，见 `docs/112` §9.2）。
+  那一侧只有 x86 立即数证据 ⇒ **推断**。
+
+```
+玩家首次出现 ──(local_player_manager)──> rank_request_event(66)
+                                              │  （远端的应答）
+handle_{client,server}_remote_event ──────────┘
+        └─> RankManager::set_rank(player_id, op, rank) ─> rank_info_event(67) ─> 客户端 UI
+```
+
+### 14.6 段位换算：可复现的负结果（`docs/112` §5.5 仍成立）
+
+4 个函数里没有 `div` / `sdiv` / `udiv`、没有阈值 `cmp` 立即数、没有任何 22 项常量表。
+`set_rank` 把外部给的 `rank` **原样**入表（`insert(key=player_id, value=rank)`），不做任何换算。
+⇒ "22 张 `res://ranks/rank_0..21.svg`" 只证明存在编号 0..21 的**图形资源**，
+不能证明"22 段位"，也不能证明 `rank` 的值域就是 0..21（**未知**）。
+
+### 14.7 仍未确定
+
+| # | 项 | 缺什么 |
+|---|---|---|
+| A | `rank` 的值域（0..21？） | 一个能读到 67 载荷的消费侧（UI 侧按 `rank` 取 SVG 的那一段），或运行时报文 |
+| B | `+0x08` 标志是否真的不进序列化 | `RankInfoEvent::serialize` 的逐指令对照 |
+| C | `handle_entity_removed_event`（120 B）只看形状 | x86 侧无锚 ⇒ 只到**观测**级 |
+
+### 14.8 复现
+
+```text
+nm -S --defined-only <arm64>/libgraphwarrust.so | grep graphwar_rank_manager
+# set_rank 的两条支：cmp w2,#1 / b.ne <hash(self+0x38)> + remove / b.eq insert(self+0x18)
+# RankInfo 的 3 个 dword：stp w21,w19,[sp,#0x10] + str w20,[sp,#0x18]（载荷基址 sp+8）
+# 调用者：全量反汇编里 bl 0x498eb8 只有 0x3e4fe4 / 0x3e7000 两处
+```
