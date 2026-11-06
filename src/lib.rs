@@ -129,6 +129,9 @@ pub mod game;
 pub mod graphwar_level_generator;
 pub mod graphwar_game_server;
 pub mod graphwar_function_evolutionator;
+pub mod graphwar_root_node;
+pub mod graphwar_level_manager;
+pub mod graphwar_game_client;
 pub mod turnstate;
 pub mod graphwar_shot_calculator;
 // 回放播放器（docs/133）：gzip + JSONL 读取、按 tick 还原局面、播放时钟。
