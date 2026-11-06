@@ -9,9 +9,9 @@
 #[allow(dead_code)]
 mod probe;
 
-use gw2_rebuild::function::parse;
-use gw2_rebuild::path::{calculate, Mode as ProdMode};
-use gw2_rebuild::shot::{correction, shifted_tokens};
+use gw2_rebuild::math_function::parse;
+use gw2_rebuild::graphwar_path_calculator::{calculate, Mode as ProdMode};
+use gw2_rebuild::graphwar_shot_calculator::{correction, shifted_tokens};
 use gw2_rebuild::SERVER_STEP;
 
 use probe::{

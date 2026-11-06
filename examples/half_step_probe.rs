@@ -22,8 +22,8 @@
 use std::fs;
 use std::path::PathBuf;
 
-use gw2_rebuild::function::{eval, parse};
-use gw2_rebuild::shot::{correction, shifted_tokens};
+use gw2_rebuild::math_function::{eval, parse};
+use gw2_rebuild::graphwar_shot_calculator::{correction, shifted_tokens};
 use gw2_rebuild::{Function, Token, LENGTH_TOL, MAX_ABS_X, MAX_ABS_Y, SERVER_STEP, TOTAL_LEN};
 
 // ---- 与 src/path.rs 同值 -----------------------------------------------------
@@ -974,16 +974,16 @@ fn real_report(shots: &[RealShot]) {
 fn fidelity(fixtures: &[Case]) {
     section("复制品 vs 生产代码（src/path.rs）—— 复制保真度");
     for (label, v, prod) in [
-        ("Normal", Variant::Normal, gw2_rebuild::path::Mode::Normal),
-        ("Ode", Variant::Ode, gw2_rebuild::path::Mode::Ode),
+        ("Normal", Variant::Normal, gw2_rebuild::graphwar_path_calculator::Mode::Normal),
+        ("Ode", Variant::Ode, gw2_rebuild::graphwar_path_calculator::Mode::Ode),
     ] {
         let mut bad = 0;
         let mut n = 0;
         for c in fixtures.iter().filter(|c| {
-            (c.mode == Mode::Normal) == (prod == gw2_rebuild::path::Mode::Normal)
+            (c.mode == Mode::Normal) == (prod == gw2_rebuild::graphwar_path_calculator::Mode::Normal)
         }) {
             let (p, _) = sample(&c.tokens, c.x0, c.y0, c.step, c.flip, v);
-            let q = gw2_rebuild::path::calculate(&c.tokens, c.x0, c.y0, c.step, c.flip, prod);
+            let q = gw2_rebuild::graphwar_path_calculator::calculate(&c.tokens, c.x0, c.y0, c.step, c.flip, prod);
             n += 1;
             if first_divergence(&p, &q).is_some() || p.len() != q.len() {
                 bad += 1;
