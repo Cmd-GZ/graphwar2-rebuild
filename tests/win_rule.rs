@@ -22,7 +22,7 @@
 
 use gw2_rebuild::game::{Ending, EndingReason, Match};
 use gw2_rebuild::server::RoomState;
-use gw2_rebuild::settle::Target;
+use gw2_rebuild::graphwar_shot_calculator::settle::Target;
 
 /// 关卡里的靶子一律在 **Team2**（`docs/150` §Q1）。
 const TEAM_2: u8 = 1;
@@ -68,7 +68,7 @@ fn versus_level() -> Match {
 fn kinds(msgs: &[String]) -> Vec<String> {
     msgs.iter()
         .map(|m| {
-            gw2_rebuild::protocol::parse_message(m)
+            gw2_rebuild::_scaffold::protocol::parse_message(m)
                 .expect("应为合法消息")
                 .kind
         })

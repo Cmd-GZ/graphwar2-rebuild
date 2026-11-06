@@ -36,7 +36,7 @@
 ## 3. 实现
 
 ```rust
-// src/tick.rs
+// src/graphwar_tick_handler.rs
 pub fn turn_duration_ticks(time_mode: &str) -> Option<i64>
 pub fn end_of_turn_tick(turn_start_tick: i64, time_mode: &str) -> Option<i64>
 ```

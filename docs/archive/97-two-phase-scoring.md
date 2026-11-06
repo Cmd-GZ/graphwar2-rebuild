@@ -1,7 +1,7 @@
 # 97 · 两阶段评分：全部粗评 0.5 → 前 3 名精评 0.01 → "不一致"就整条换新
 
 状态：结论性（静态，反汇编逐条）。回答"`docs/95` §2.7 那一句到底怎么判"，
-并把规则落进 `src/aigen.rs`。**本轮没有新的运行时实验**，运行时数据一律转引
+并把规则落进 `src/graphwar_function_evolutionator.rs`。**本轮没有新的运行时实验**，运行时数据一律转引
 `docs/archive/ai/67`、`docs/archive/ai/74`、`docs/archive/ai/75` 并单独标注。
 
 地址约定同全仓：**Ghidra 地址 = ELF vaddr + 0x100000**。本文全部写 **vaddr**
@@ -202,7 +202,7 @@
 * **RNG 消耗**：与"随机新生一条"完全相同 —— 一次 `random_length`（1 次
   `normal()`）+ 每个 token 一次 `random % 85` 抽样（常数再加一次 `normal()`）
   + 补齐时的 `rand % 50` 循环 + 变异的一次抽样
-  （抽样粒度见 `src/rng.rs` 的 `next_u32`；反汇编 `0x4ef193`）。
+  （抽样粒度见 `src/_scaffold/rng.rs` 的 `next_u32`；反汇编 `0x4ef193`）。
   第 1/2 名也各来一遍 ⇒ 一代最多 **3 条**随机函数。
 * **分数字段不更新**：只覆写 `Vec` 的 24 字节，`+0x18/+0x20/+0x28` 留着**旧粗评分**。
   ⚠️ 后果（观测到的代码行为，不是 bug 报告）：若这一代正好是最后一代，
@@ -288,7 +288,7 @@ fn generation(prev: &[Individual], p: &Params) -> Vec<Individual> {
 
 ---
 
-## 8. 实现（`src/aigen.rs`）与对原版的**有意偏差**
+## 8. 实现（`src/graphwar_function_evolutionator.rs`）与对原版的**有意偏差**
 
 新增（全部带地址注释）：
 
@@ -317,7 +317,7 @@ fn generation(prev: &[Individual], p: &Params) -> Vec<Individual> {
 **顺带发现的、本轮没改的东西**（留待父 agent 决定）：
 
 1. `random_function()` 内部调 `repair(..., VarMode::Normal, next)` **写死了 Normal**
-   （`src/aigen.rs`），DiffEq 模式下补齐会补出 `x` 而不是 `y`。与两阶段无关，未动。
+   （`src/graphwar_function_evolutionator.rs`），DiffEq 模式下补齐会补出 `x` 而不是 `y`。与两阶段无关，未动。
 2. 槽循环的"随机分支"（我们这边是 `sorted[b].tokens.len() < 20` 那支）在二进制里
    **还会调一次变异**（`0x51b95c call 0x4ee720`），改动前的 Rust 没有。
    本次只在"换新"路径里补上了 `mutate`（因为那一段的二进制证据就是三条调用）。
@@ -354,7 +354,7 @@ let out = evolve(pop, &p, mode, &mut next, scalar_scorer(|t: &[Token]| t.len() a
 let out = evolve(pop, &p, mode, &mut next, |t: &[Token], ph| ctx.evaluate(t, ph));
 
 // 3) 只想要一个分数（老代码）：
-let s = aigen::fitness(tokens, &ctx);        // = fitness_eval(..).score，签名未变
+let s = graphwar_function_evolutionator::fitness(tokens, &ctx);        // = fitness_eval(..).score，签名未变
 ```
 
 `examples/replay_compare.rs` 已按第 2 种改。

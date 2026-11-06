@@ -8,7 +8,7 @@
 | 原文件 | 内容 | 归档 |
 |---|---|---|
 | `24-network-protocol.md` | 传输层、帧格式、29 种消息的真实样本 | [`archive/24-network-protocol.md`](archive/24-network-protocol.md) |
-| `32-netcode-implementation.md` | `src/protocol.rs` 的帧编解码与事件实现 | [`archive/32-netcode-implementation.md`](archive/32-netcode-implementation.md) |
+| `32-netcode-implementation.md` | `src/_scaffold/protocol.rs` 的帧编解码与事件实现 | [`archive/32-netcode-implementation.md`](archive/32-netcode-implementation.md) |
 | `33-server-handshake.md` | 新连接的状态同步 7 条 | [`archive/33-server-handshake.md`](archive/33-server-handshake.md) |
 | `36-match-server.md` | `Match` 对象组成 | [`archive/36-match-server.md`](archive/36-match-server.md) |
 | `62-server-loop.md` | 完整一局的服务端循环 | [`archive/62-server-loop.md`](archive/62-server-loop.md) |
@@ -129,9 +129,9 @@
 `VersionInfo`、`TimeModeChangeRequest`、`FunctionUpdateRequest`。
 
 
-## 2. 我们实现的帧编解码层（`src/protocol.rs`）
+## 2. 我们实现的帧编解码层（`src/_scaffold/protocol.rs`）
 
-### 2.1 已实现（`src/protocol.rs`）
+### 2.1 已实现（`src/_scaffold/protocol.rs`）
 
 | 能力 | API |
 |---|---|
@@ -224,7 +224,7 @@ FunctionPoints -> [LifeQueuedDeath -> EffectInfo(DeathEffect)]*
                 -> [QueueDestroyObstacle] -> EffectInfo(ExplosionEffect)
 ```
 
-tick 由 `tick::tick_at` 给出（60 Hz）。**死掉的士兵会从场上移除**，
+tick 由 `graphwar_tick_handler::tick_at` 给出（60 Hz）。**死掉的士兵会从场上移除**，
 否则后续射击会重复计死（这条是测试逼出来的）。
 
 ### 4.2 验证（真实关卡回放）
@@ -239,11 +239,11 @@ tick 由 `tick::tick_at` 给出（60 Hz）。**死掉的士兵会从场上移除
 结果：6 发终点全部对上，产出消息全部合法。
 
 
-## 5. 完整一局的服务端循环（`src/serverloop.rs`）
+## 5. 完整一局的服务端循环（`src/graphwar_game_server.rs`）
 
 ### 5.1 装配了什么
 
-`src/serverloop.rs` 把已有零件串成一个真正的服务端：
+`src/graphwar_game_server.rs` 把已有零件串成一个真正的服务端：
 
 ```text
 NewConnectionRequest  -> 状态同步 7 条                     (09-network.md)
@@ -253,8 +253,8 @@ FunctionFireRequest   -> begin_turn -> fire（8 条）-> tick（到期销毁）-
                       -> 某队全灭则 EndingGame              (14-turn.md)
 ```
 
-关卡由 `levelgen::generate`（`11-levelgen.md`）现生成，种子来自 `/dev/urandom`，
-随机数用 `rng::ChaCha12`（与游戏同算法，`12-rng.md`）。
+关卡由 `graphwar_level_generator::generate`（`11-levelgen.md`）现生成，种子来自 `/dev/urandom`，
+随机数用 `_scaffold::rng::ChaCha12`（与游戏同算法，`12-rng.md`）。
 
 ### 5.2 验证：真实 TCP 上打完一局
 
@@ -403,7 +403,7 @@ python3 tools/client_match.py 39993
 ```
 
 * **逐位验证**：`fixtures/protocol_match.jsonl` 第 84–86 行是**三条真实报文**；
-  `tests/broker.rs` 与 `src/broker.rs` 的单测把它们解析后重新序列化，断言**字节相等**。
+  `tests/broker.rs` 与 `src/_scaffold/broker.rs` 的单测把它们解析后重新序列化，断言**字节相等**。
 * **观测（静态）**：外壳由序列化函数 `0x50ff30` 逐字节写出——
   `'{'`（`movb $0x7b`）→ `"GameInfo"`（`0x19f398`，长度 8）→ `':'` → `'{'` →
   `"game_info"`（`0x1c5410`，长度 9）→ 内层结构体 → `'}'` → `'}'`。
@@ -546,9 +546,9 @@ broker 走不通，但"房间列表"这套东西还有第二个入口：**LAN �
 
 ### 6.7 我们实现的 broker
 
-#### 6.7.1 为什么放在 `src/broker.rs`（而不是 `tools/broker.rs`）
+#### 6.7.1 为什么放在 `src/_scaffold/broker.rs`（而不是 `tools/broker.rs`）
 
-因为它要**进 `cargo test`**：复用 `src/protocol.rs` 里已被抓包钉死的
+因为它要**进 `cargo test`**：复用 `src/_scaffold/protocol.rs` 里已被抓包钉死的
 `Frame`（u16 大端帧）/ `Broadcast`（9 字段房间行）/ `VersionInfo`，并且能用两条普通
 TCP 连接做端到端断言。放 `tools/` 只能靠人工跑；放 `src/` 才能被验收入口覆盖。
 （`tools/` 在本仓库是"分析脚本"，不是产品代码。）
@@ -576,7 +576,7 @@ cargo run --offline --example serve_broker -- 127.0.0.1:42970
 
 #### 6.7.4 测试（12 条，全部不需要真游戏）
 
-`src/broker.rs` 内 8 条 + `tests/broker.rs` 4 条：
+`src/_scaffold/broker.rs` 内 8 条 + `tests/broker.rs` 4 条：
 
 * **逐位**：真实抓包的 4 条 broker 报文 → 解析 → 重新序列化 → 字节相等；
   `VersionInfo` 的 `2.0.60/linux` 字段；`GameInfo` 外壳字面量；
@@ -650,7 +650,7 @@ cargo run --offline --example serve_broker -- 127.0.0.1:42970
 ```
 
 `4.638` / `10.990` 正是各自的 `start_y`，证实修正是 `f(x) + c` 且**以文本形式拼接**；
-`src/shot.rs::corrected_text` 复刻了这个格式（三位小数），并有针对这两个真实样本的测试。
+`src/graphwar_shot_calculator::corrected_text` 复刻了这个格式（三位小数），并有针对这两个真实样本的测试。
 
 ### 8.3 用真实弹道对拍
 
@@ -719,7 +719,7 @@ https://graphwar.com/graphwar_II_ip.txt    （出现两次：broker 与崩溃上
 
 **2026-11-06 补充（`09-network.md`）**：broker 协议**已经还原**（与对局同一套帧，`u16` 大端长度 + JSON；
 会话 = 客户端先发 `VersionInfo{version,system}`，broker 逐条推 `GameInfo{game_info}`），
-并已实现 `src/broker.rs`。但发现一件更要紧的事：
+并已实现 `src/_scaffold/broker.rs`。但发现一件更要紧的事：
 
 > **`--broker_address` 在这个构建里完全不生效**（6 组受控实验：snake / kebab / `=` /
 > 加必填端口 / 非法值 / 干净 argv 全都无效；二进制里也没有任何 `cmdline` 方法名串）。

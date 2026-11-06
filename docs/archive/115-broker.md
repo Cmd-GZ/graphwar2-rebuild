@@ -7,7 +7,7 @@
 > 「客户端发 `VersionInfo` → broker 逐条推 `GameInfo`」；房间表项就是那 9 个字段的
 > `GameInfo` 结构，键是它的 `address`。**
 >
-> 我们的实现：[`src/broker.rs`](../src/broker.rs)（+ [`tests/broker.rs`](../tests/broker.rs)），
+> 我们的实现：[`src/_scaffold/broker.rs`](../src/_scaffold/broker.rs)（+ [`tests/broker.rs`](../tests/broker.rs)），
 > `cargo test` **217 条全绿**（205 → 217）。
 
 ## 0. 证据等级约定
@@ -60,7 +60,7 @@
 ```
 
 * **逐位验证**：`fixtures/protocol_match.jsonl` 第 84–86 行是**三条真实报文**；
-  `tests/broker.rs` 与 `src/broker.rs` 的单测把它们解析后重新序列化，断言**字节相等**。
+  `tests/broker.rs` 与 `src/_scaffold/broker.rs` 的单测把它们解析后重新序列化，断言**字节相等**。
 * **观测（静态）**：外壳由序列化函数 `0x50ff30` 逐字节写出——
   `'{'`（`movb $0x7b`）→ `"GameInfo"`（`0x19f398`，长度 8）→ `':'` → `'{'` →
   `"game_info"`（`0x1c5410`，长度 9）→ 内层结构体 → `'}'` → `'}'`。
@@ -203,9 +203,9 @@ broker 走不通，但"房间列表"这套东西还有第二个入口：**LAN �
 
 ## 6. 我们实现的 broker
 
-### 6.1 为什么放在 `src/broker.rs`（而不是 `tools/broker.rs`）
+### 6.1 为什么放在 `src/_scaffold/broker.rs`（而不是 `tools/broker.rs`）
 
-因为它要**进 `cargo test`**：复用 `src/protocol.rs` 里已被抓包钉死的
+因为它要**进 `cargo test`**：复用 `src/_scaffold/protocol.rs` 里已被抓包钉死的
 `Frame`（u16 大端帧）/ `Broadcast`（9 字段房间行）/ `VersionInfo`，并且能用两条普通
 TCP 连接做端到端断言。放 `tools/` 只能靠人工跑；放 `src/` 才能被验收入口覆盖。
 （`tools/` 在本仓库是"分析脚本"，不是产品代码。）
@@ -233,7 +233,7 @@ cargo run --offline --example serve_broker -- 127.0.0.1:42970
 
 ### 6.4 测试（12 条，全部不需要真游戏）
 
-`src/broker.rs` 内 8 条 + `tests/broker.rs` 4 条：
+`src/_scaffold/broker.rs` 内 8 条 + `tests/broker.rs` 4 条：
 
 * **逐位**：真实抓包的 4 条 broker 报文 → 解析 → 重新序列化 → 字节相等；
   `VersionInfo` 的 `2.0.60/linux` 字段；`GameInfo` 外壳字面量；

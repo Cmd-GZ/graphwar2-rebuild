@@ -13,7 +13,7 @@
 //! ## 回合推进：走轮转，不再由这里的玩家表直接挑人（`docs/117`）
 //!
 //! 2026-11 之前，谁开火是本文件自己算的（`alive[turn % alive.len()]`），
-//! 而 `src/turn.rs` 的三态轮转与 `src/aigen.rs` 的按士兵进化**没有调用点**。
+//! 而 `src/graphwar_turn_manager.rs` 的三态轮转与 `src/graphwar_function_evolutionator.rs` 的按士兵进化**没有调用点**。
 //! 现在每个回合开始都走 [`Match::begin_next_turn`]：
 //!
 //! ```text
@@ -41,14 +41,14 @@
 //! 未实现/简化，均在 `docs/62` 写明：颜色分配、真实玩家加入流程、
 //! 客户端 `TickRequest` 节拍（这里由服务端自己推进）。
 
-use crate::aigen::VarMode;
+use crate::graphwar_function_evolutionator::VarMode;
 use crate::game::{AiConfig, Match, PopScope, TurnStart};
-use crate::levelgen;
-use crate::protocol::{parse_message, Frame, RawMessage};
-use crate::rng::ChaCha12;
+use crate::graphwar_level_generator;
+use crate::_scaffold::protocol::{parse_message, Frame, RawMessage};
+use crate::_scaffold::rng::ChaCha12;
 use crate::server::{on_new_connection, on_tick_request, RoomState};
-use crate::settle::Target;
-use crate::turn::{SkipReason, Team};
+use crate::graphwar_shot_calculator::settle::Target;
+use crate::graphwar_turn_manager::{SkipReason, Team};
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -96,14 +96,14 @@ impl Default for Config {
             addr: "127.0.0.1:0".into(),
             room_name: "Graphwar Game".into(),
             time_mode: "Timer1m".into(),
-            seed: crate::rng::seed_from_os(),
+            seed: crate::_scaffold::rng::seed_from_os(),
             per_team: 2,
             player_order: Vec::new(),
             bot_players: Vec::new(),
             ai_level: 1,
             ai_mode: VarMode::Normal,
             // 25 s 上限**默认就接上**（此前 `evolve()` 传 `None`，上限实际没生效）。
-            ai_budget_secs: Some(crate::aigen::GAME_TIME_BUDGET_SECS),
+            ai_budget_secs: Some(crate::graphwar_function_evolutionator::GAME_TIME_BUDGET_SECS),
             ai_pop_scope: PopScope::default(),
             turn_mode: "SequentialTurns".into(),
             sim_turn_timeout_ticks: None,
@@ -161,7 +161,7 @@ pub struct TurnRecord {
     pub evolved: bool,
     /// 进化后写进该士兵槽的 token 数（没进化 = 0）。
     pub function_tokens: usize,
-    /// AI 这一回合说出的**函数文本**（`function::to_text`，`0x4ec160`）。没进化 = `None`。
+    /// AI 这一回合说出的**函数文本**（`math_function::to_text`，`0x4ec160`）。没进化 = `None`。
     ///
     /// 它必须与 `begin_next_turn` 那条 `FunctionInfo.function` 逐字符相同。
     pub function_text: Option<String>,
@@ -174,14 +174,14 @@ impl TurnRecord {
     fn from_start(m: &Match, player_id: i64, st: &TurnStart) -> Self {
         let announced = st.decision.broadcast();
         // AI 说话的唯一来源：本回合进化的 token（= 写进槽的那份）。
-        let function_text = st.evolution.as_ref().map(|e| crate::function::to_text(&e.tokens));
+        let function_text = st.evolution.as_ref().map(|e| crate::math_function::to_text(&e.tokens));
         // 修正后的文本用**射手自己的位置与朝向**算，与 `Match::fire` 同一口径。
         let corrected = match (function_text.as_deref(), announced) {
             (Some(text), Some((_, sid))) => m
                 .soldiers
                 .iter()
                 .find(|t| t.id == sid)
-                .map(|t| crate::shot::corrected_text(text, t.x, t.y, st.decision.flip().unwrap_or(false))),
+                .map(|t| crate::graphwar_shot_calculator::corrected_text(text, t.x, t.y, st.decision.flip().unwrap_or(false))),
             _ => None,
         };
         TurnRecord {
@@ -364,8 +364,8 @@ struct SimShot {
 
 /// 同时回合制的一局收集状态。
 struct SimRound {
-    /// 本回合每个能开火的玩家各一发（`turn::RoundCollection`，超时/攒齐由它判）。
-    col: crate::turn::RoundCollection<SimShot>,
+    /// 本回合每个能开火的玩家各一发（`graphwar_turn_manager::RoundCollection`，超时/攒齐由它判）。
+    col: crate::graphwar_turn_manager::RoundCollection<SimShot>,
     /// `player_id -> 本回合公告给他的射手`（`TurnInfo.soldier_id`）。
     ///
     /// 为什么不能从 `players` 里按 `player_id` 找：`players` 是**按士兵**建的表
@@ -381,7 +381,7 @@ impl SimRound {
     }
 
     /// 收一发，返回一声明给人看的处理结果（日志用）。
-    fn submit(&mut self, player_id: i64, shot: SimShot) -> crate::turn::SubmitResult {
+    fn submit(&mut self, player_id: i64, shot: SimShot) -> crate::graphwar_turn_manager::SubmitResult {
         self.col.submit(player_id, shot)
     }
 }
@@ -401,7 +401,7 @@ fn start_sim_round(
     for (pid, st) in order.iter().zip(starts.iter()) {
         log.records.push(TurnRecord::from_start(m, *pid, st));
         if let Some((p, s)) = st.decision.broadcast() {
-            if s != crate::turn::SOLDIER_ID_NONE {
+            if s != crate::graphwar_turn_manager::SOLDIER_ID_NONE {
                 waitlist.push(p);
             }
         }
@@ -412,14 +412,14 @@ fn start_sim_round(
     let mut shooters = std::collections::BTreeMap::new();
     for st in &starts {
         if let Some((p, s)) = st.decision.broadcast() {
-            if s != crate::turn::SOLDIER_ID_NONE {
+            if s != crate::graphwar_turn_manager::SOLDIER_ID_NONE {
                 shooters.insert(p, s);
             }
         }
     }
     (
         msgs,
-        SimRound { col: crate::turn::RoundCollection::new(waitlist, deadline), shooters },
+        SimRound { col: crate::graphwar_turn_manager::RoundCollection::new(waitlist, deadline), shooters },
     )
 }
 
@@ -457,7 +457,7 @@ fn resolve_sim_round(
         return (
             out,
             SimRound {
-                col: crate::turn::RoundCollection::new(Vec::<i64>::new(), None),
+                col: crate::graphwar_turn_manager::RoundCollection::new(Vec::<i64>::new(), None),
                 shooters: Default::default(),
             },
         );
@@ -516,7 +516,7 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
             // 这样 `GwNetSession.my_player_id` 才有值；在那之前客户端只能退化成
             // "按 `TurnInfo` 里的玩家假定"（`docs/134` §7.1，`docs/139` §4）。
             "NewPlayerRequest" => {
-                if let Some(cid) = crate::protocol::get_int(&frame, "connection_id") {
+                if let Some(cid) = crate::_scaffold::protocol::get_int(&frame, "connection_id") {
                     my_connection_id = cid;
                 }
                 let msg = crate::game::player_info_message(FIRST_PLAYER_ID, my_connection_id);
@@ -537,7 +537,7 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
                 started = true;
                 let mut rng = ChaCha12::from_seed(&cfg.seed);
                 let mut next = || rng.next_u64();
-                let obstacles = levelgen::generate(&mut next, 0);
+                let obstacles = graphwar_level_generator::generate(&mut next, 0);
 
                 let mut msgs: Vec<String> = obstacles
                     .iter()
@@ -625,7 +625,7 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
 
                 for (pid, team_id, sids) in &rosters {
                     // 只建过 1/2 队（`docs/105` §4 没观测到 3 队）。
-                    let team = Team::from_id(*team_id).expect("serverloop 只生成 1/2 队");
+                    let team = Team::from_id(*team_id).expect("graphwar_game_server 只生成 1/2 队");
                     m2.register_player(*pid, team, sids);
                 }
                 for pid in &cfg.bot_players {
@@ -664,8 +664,8 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
                 }
             }
             "FunctionUpdateRequest" => {
-                if let Some(pid) = crate::protocol::get_int(&frame, "player_id") {
-                    let f = crate::protocol::get_str(&frame, "function").unwrap_or_default();
+                if let Some(pid) = crate::_scaffold::protocol::get_int(&frame, "player_id") {
+                    let f = crate::_scaffold::protocol::get_str(&frame, "function").unwrap_or_default();
                     // ⚠️ 修 bug（`docs/139` §4.1）：`players` 是**按士兵**建的（一名玩家
                     // `per_team` 条），而 `find()` 只命中该玩家的**第一条**。开火那一步是按
                     // `soldier_id` 找 `PlayerState` 的（本回合的射手往往是第二、第三名士兵），
@@ -695,14 +695,14 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
                     // 电脑玩家的函数由**服务端 AI** 决定（`docs/127` §5）：客户端交上来的
                     // `"0.00"` 不生效，回执照 AI 的文本发。
                     let text = ai_text_of(m.as_ref(), pid, owner).unwrap_or(f);
-                    send(sock, &[crate::protocol::emit_function_info(owner, &text, None)])?;
+                    send(sock, &[crate::_scaffold::protocol::emit_function_info(owner, &text, None)])?;
                 }
             }
             "FunctionFireRequest" => {
                 if ended {
                     continue;
                 }
-                let Some(pid) = crate::protocol::get_int(&frame, "player_id") else { continue };
+                let Some(pid) = crate::_scaffold::protocol::get_int(&frame, "player_id") else { continue };
 
                 // ---- 同时回合制：**收集阶段**（`docs/141` §1）----
                 //
@@ -736,7 +736,7 @@ fn serve(sock: &mut TcpStream, cfg: &Config, addr: String) -> std::io::Result<(S
                     };
                     let shot = SimShot { soldier_id: soldier, x0, y0, flip, function };
                     match round.submit(pid, shot) {
-                        crate::turn::SubmitResult::Accepted => {
+                        crate::graphwar_turn_manager::SubmitResult::Accepted => {
                             eprintln!("COLLECTED pid={pid} soldier={soldier}");
                         }
                         other => {

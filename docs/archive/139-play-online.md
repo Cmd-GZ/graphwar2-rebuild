@@ -52,7 +52,7 @@ begin_match()
 | 战役 | `state.kind == CAMPAIGN` | 关卡表 + 内核生成器（`docs/118`/`docs/126`） | 本地（`docs/131` 的 `GwLevelRules`） |
 | 本机 LAN + Bot | `state.kind == LAN` 且 `App.online == false` | `_spawn_position()` + 内核障碍生成器 | 本地 |
 | 回放 | `state.kind == REPLAY` + `replay_file` | 回放事件流（`docs/133`） | 不判（录像自己发 `GameStateInfo`） |
-| **联机** | **`App.online == true`** | **服务端广播** | **服务端**（`src/serverloop.rs`） |
+| **联机** | **`App.online == true`** | **服务端广播** | **服务端**（`src/graphwar_game_server.rs`） |
 
 **为什么联机不能按 `state.kind` 判**（观测）：联机局在 `state` 里就是一次
 `state.reset_lan()`（`app.gd::_sync_state_from_net`），`kind == Kind.LAN`，与"本机 LAN + Bot"
@@ -105,7 +105,7 @@ Fire 按钮
          ├─ 闸门：TurnInfo.soldier_id 对得上吗 / TurnInfo.player_id 是我吗
          ├─ session.submit_function(pid, expr)   → FunctionUpdateRequest
          └─ session.fire(pid)                    → FunctionFireRequest
-（服务端 src/serverloop.rs → Match::fire）
+（服务端 src/graphwar_game_server.rs → Match::fire）
 FunctionInfo{owner_id, function, corrected_function}   ← 修正版，文本形态 "f(x) ± c"
 FunctionPoints{owner_id, start_x, start_y, end_x}      ← **只有起点与终点 x**
 （客户端）
@@ -122,11 +122,11 @@ FunctionPoints{owner_id, start_x, start_y, end_x}      ← **只有起点与终�
 | 选择 | 依据 | 档 |
 |---|---|---|
 | 方向由 `end_x` 定，不按队伍定 | 抓包里两发的方向本来就是这样定下来的（`docs/24` §6.3 的表格两个方向都有）；队伍方向是"通常如此"，`end_x` 是"这一发的实测" | **观测** |
-| 用**函数原文** + 内核的修正，而**不用** `corrected_function` 文本 | `corrected_function` 是三位小数的文本（`src/shot.rs::corrected_text`），拿它重算会引入四舍五入误差；`start_x/start_y` 是 f64 原值，内核的 `c = y0 - f(±x0)` 与 `Match::fire` 走同一个 `correction()`。抓包样本 `"0.00 + 4.638"` 里的 `4.638` 正是 `start_y`（`docs/24` §6.2），说明这两条路等价、只是精度不同 | **逐位验证**（同一函数体）+ **自定**（选精度高的那条） |
-| 画到 `end_x` 为止 | 服务端的停点 = 它那条点序列的**最后一点**（`src/settle.rs::resolve_points` 的 `stop`），而采样器确定性 ⇒ 到同一个 x 之前的点序列就是服务端那条轨迹 | **观测**（`stop` 的赋值）+ **推断**（两点之间按 0.01 采样是真的） |
+| 用**函数原文** + 内核的修正，而**不用** `corrected_function` 文本 | `corrected_function` 是三位小数的文本（`src/graphwar_shot_calculator::corrected_text`），拿它重算会引入四舍五入误差；`start_x/start_y` 是 f64 原值，内核的 `c = y0 - f(±x0)` 与 `Match::fire` 走同一个 `correction()`。抓包样本 `"0.00 + 4.638"` 里的 `4.638` 正是 `start_y`（`docs/24` §6.2），说明这两条路等价、只是精度不同 | **逐位验证**（同一函数体）+ **自定**（选精度高的那条） |
+| 画到 `end_x` 为止 | 服务端的停点 = 它那条点序列的**最后一点**（`graphwar_shot_calculator::settle::resolve_points` 的 `stop`），而采样器确定性 ⇒ 到同一个 x 之前的点序列就是服务端那条轨迹 | **观测**（`stop` 的赋值）+ **推断**（两点之间按 0.01 采样是真的） |
 
 **精度差在哪**（写清楚，别当成逐位）：**本文基线 `2b87b69` 上**，我们自己的服务端结算按弦长
-**0.5** 采样（`Match::fire` → `settle::resolve(…, 0.5, …)`），内核 `path_calculate` 按
+**0.5** 采样（`Match::fire` → `graphwar_shot_calculator::settle::resolve(…, 0.5, …)`），内核 `path_calculate` 按
 **0.01**（`docs/04`）。所以"我们的末点"与 `end_x` 最多差一个弦长（0.5），画出来的线与
 服务端那条在 0.5 单位内等价、**不是逐点相同**。自检里的判据因此写成
 `|末点 x − end_x| ≤ 0.6`。
@@ -207,7 +207,7 @@ FunctionPoints{owner_id, start_x, start_y, end_x}      ← **只有起点与终�
 | 文件 | 加了什么 | 语义有没有变 |
 |---|---|---|
 | `src/game.rs` | `pub fn player_info_message(player_id, connection_id) -> String`（+ 逐字节测试 `player_info_message_matches_the_captured_bytes`） | **没有**。新函数，无调用点以外的影响 |
-| `src/serverloop.rs` | `pub const FIRST_PLAYER_ID: i64 = 229`；`NewPlayerRequest` 分支（回一条 `PlayerInfo`）；开局造玩家槽时 `229 + t` → `FIRST_PLAYER_ID + t` | **没有**。`FIRST_PLAYER_ID == 229`，报文序列只在"客户端发了 `NewPlayerRequest`"时多一条 |
+| `src/graphwar_game_server.rs` | `pub const FIRST_PLAYER_ID: i64 = 229`；`NewPlayerRequest` 分支（回一条 `PlayerInfo`）；开局造玩家槽时 `229 + t` → `FIRST_PLAYER_ID + t` | **没有**。`FIRST_PLAYER_ID == 229`，报文序列只在"客户端发了 `NewPlayerRequest`"时多一条 |
 
 那个常量是"**只有一个真相**"的做法：`PlayerInfo` 说的 id 与开局那批
 `SoldierInfo`/`TeamInfo` 用的 id 来自同一个常量，不可能漂。日志里多一行
@@ -294,12 +294,12 @@ SELFTEST 529 passed, 0 failed
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| 服务端偶尔**一个障碍都不发** | `levelgen::generate()` 的 `n = trunc(normal()*7 + 15)`，`min_count = 0` 时约 1.6% 会落到 0（`src/levelgen.rs:87`；`serverloop` 传的 min_count 就是 0） | ① 用例的关卡种子**钉死**（见下）；② 万一还是 0 个，障碍那两条**显式 skip** 并打印原因（不假装通过） |
-| **射手被障碍压住**，任何弹道都在第一点被判挡住 | 开局位置是固定的 `x = ±10`（`src/serverloop.rs`），障碍却是随机撒的、**不看**这两个点 | ① 种子钉死；② 兜底：本地预演（内核）会如实报 153 个候选全 `blocked` ⇒ 用例**换一局**（最多 6 次）。换局只发生在自检里，界面不做 |
+| 服务端偶尔**一个障碍都不发** | `graphwar_level_generator::generate()` 的 `n = trunc(normal()*7 + 15)`，`min_count = 0` 时约 1.6% 会落到 0（`src/graphwar_level_generator.rs:89`；`graphwar_game_server` 传的 min_count 就是 0） | ① 用例的关卡种子**钉死**（见下）；② 万一还是 0 个，障碍那两条**显式 skip** 并打印原因（不假装通过） |
+| **射手被障碍压住**，任何弹道都在第一点被判挡住 | 开局位置是固定的 `x = ±10`（`src/graphwar_game_server.rs`），障碍却是随机撒的、**不看**这两个点 | ① 种子钉死；② 兜底：本地预演（内核）会如实报 153 个候选全 `blocked` ⇒ 用例**换一局**（最多 6 次）。换局只发生在自检里，界面不做 |
 
 ### 6.5 种子旋钮：`GW2_MATCH_SEED`（**自定**，测试用）
 
-`src/serverloop.rs::run()` 里加了一个**只影响命令行 harness** 的旋钮：设了
+`src/graphwar_game_server::run()` 里加了一个**只影响命令行 harness** 的旋钮：设了
 `GW2_MATCH_SEED=<u64>` 就把关卡种子从 `seed_from_os()` 换成这个值（32 字节：前 8 字节是原值、
 后 8 字节是一个黄金比例混合）。**不设时行为与以前完全一致**；`tests/server_match.rs` 走的是
 `serve_stream*`，不受影响。
@@ -342,13 +342,13 @@ soldier 231、站位 `(-10, 0)`），障碍数从 4 到 25 不等。种子 8 = 1
 | 联机战场来自服务端（士兵/障碍） | **观测**（端到端断言） | §6.3 的 ① 那一组 |
 | `FunctionPoints` 只有首末点、轨迹要客户端复算 | **观测** | `docs/24` §6.1 的原始报文 |
 | 方向由 `end_x` 定 | **观测** | `docs/24` §6.3 两个方向的样本 |
-| 复算用函数原文 + 内核修正（不用三位小数的 corrected 文本） | **逐位**（同一 `correction()`）+ **自定**（选精度） | `src/api.rs::calculate_path`、`src/game.rs::fire` |
-| 服务端的停点 = 点序列最后一点 | **观测** | `src/settle.rs::resolve_points` 的 `stop` |
+| 复算用函数原文 + 内核修正（不用三位小数的 corrected 文本） | **逐位**（同一 `correction()`）+ **自定**（选精度） | `src/_scaffold/api.rs::calculate_path`、`src/game.rs::fire` |
+| 服务端的停点 = 点序列最后一点 | **观测** | `graphwar_shot_calculator::settle::resolve_points` 的 `stop` |
 | `PlayerInfo` 的报文形状 | **逐位验证** | `cargo test` 的 `player_info_message_matches_the_captured_bytes`（对 `fixtures/protocol_match.jsonl:36`） |
 | "这条连接 = 第一个玩家槽（229）" | **自定** | 本 harness 只 accept 一条连接；真游戏顺序不可复现（`docs/47`） |
 | 死亡报文有两种形态（线上 `LifeQueuedDeath` / 回放 `LifeInfo`） | **观测** | `docs/31` §1、`docs/96` §4 |
 | 收到死亡就把人从画面上拿掉 | **自定**（+ 推断） | 服务端 `Match::fire` 会 retain 掉死者；原版客户端画不画灰**未知**（本地局仍画灰 + 叉，未改） |
-| 联机胜负由服务端判 | **观测** | `src/serverloop.rs` 发 `EndingGame` 后关 socket |
+| 联机胜负由服务端判 | **观测** | `src/graphwar_game_server.rs` 发 `EndingGame` 后关 socket |
 | `FunctionUpdateRequest` 只写第一条 `PlayerState` 是 bug | **观测**（自检红过一次 + 代码） | §10.1 |
 
 ---
@@ -374,7 +374,7 @@ bash client/run.sh dump | grep '@@KERNEL'      # 期望 available=1 hit_test=1
 | `client/src/screens/play_screen.gd` | **+579 / −0** | 联机成员 12 个 + `_begin_online`/`_online_teardown`/`_online_subscribe`/`_build_online_soldiers`/`_build_online_obstacles`/`_apply_online_turn`/`_online_can_fire`/`_online_tick`/`_fire_online`/`_on_online_message`/`_online_apply_life`/`_online_soldier_by_entity`/`_draw_online_shot`/`_truncate_path_at_x`/`_stop_before_end`/`_online_status_text`/`online_state`；**既有行只加了分支**（`begin_match`/`fire`/`_refresh_plane`/`_active_soldier`/`_human_team`/`_check_match_over`/`fire_fx_state`/`end_match`/`_process` 各一处），回放分支与 `_fire_fx` 的 4 处落点**一字未动** |
 | `client/tools/selftest.gd` | **+550 / −0** | 只**新增**两个用例 + 九个辅助函数（`_play_online_started`/`_online_enemies_of`/`_online_obstacles_of`/`_pick_online_shot`/`_online_shot_hits`/`_online_shot_reason`/`_online_sine_expr`/`_online_poly_expr`/`_first_dead_entity`）；**既有 478 条断言一条没动** |
 | `src/game.rs` | **+45 / −0** | `player_info_message()` + 逐字节测试 |
-| `src/serverloop.rs` | **+75 / −3** | `FIRST_PLAYER_ID` 常量、`NewPlayerRequest` 分支、开局玩家槽改用常量（值不变）、`FunctionUpdateRequest` 的 bug 修复（§5.4）、`run()` 里的 `GW2_MATCH_SEED` 测试旋钮（§6.5） |
+| `src/graphwar_game_server.rs` | **+75 / −3** | `FIRST_PLAYER_ID` 常量、`NewPlayerRequest` 分支、开局玩家槽改用常量（值不变）、`FunctionUpdateRequest` 的 bug 修复（§5.4）、`run()` 里的 `GW2_MATCH_SEED` 测试旋钮（§6.5） |
 | `tests/server_match.rs` | **见 §11.5** | 两条 e2e 的客户端改成"真的瞄准"、两条 bot 测试换种子、三处 `drop(client)` 防挂死、新增 `#[ignore]` 的 `search_ai_seed`（§11） |
 | `client/src/net/*` | **0** | 照它的 API 用，一个字没改 |
 | `core_bridge.gd` / `replay_player.gd` / `player_screen.gd` / `client/src/ui/*` | **0** | 不碰 |
@@ -395,7 +395,7 @@ bash client/run.sh dump | grep '@@KERNEL'      # 期望 available=1 hit_test=1
 | **为什么既有测试看不出来** | 既有的两条端到端（`tests/server_match.rs` 的 `plays_a_full_match_over_tcp` / 客户端自检的 `_test_net_real_server`）提交的都是 **`"0.00"`** —— 与服务端 `PlayerState::function` 的构造初值**恰好相同**。测试"通过"了，但证明的是"默认值和默认值相等" |
 | **证据（观测）** | 本轮自检第一次提交**非默认**函数时立刻红：`FAIL ② 复算用的函数文本 = 我提交的那一条（0.00）`（修复前，见 §6.3 的 ② 那一组）。随后在服务端日志里看到的是同一个 `owner_id`、函数却是默认值 |
 | **根因** | `players: Vec<PlayerState>` 是**按士兵**建的（一名玩家 `per_team` 条）；`FunctionUpdateRequest` 用 `find(|p| p.player_id == pid)`（**只命中第一条**）写函数，而 `FunctionFireRequest` 用 `position(|p| p.soldier_id == cur_sid)`（**按本回合射手**）读函数。`TurnManager` 的游标从 0 起步、先自增再取 ⇒ 首名射手往往是该玩家的**第二**名士兵 ⇒ 读到的永远是初值 |
-| **修法**（`src/serverloop.rs`） | 把该玩家的**每一条**都写一遍：`for p in players.iter_mut().filter(\|p\| p.player_id == pid) { p.function = f.clone(); }`。函数本来就是"按玩家"提交的，按士兵各存一份只是这一层的实现细节；报文形状、顺序、判别值一个都没动 |
+| **修法**（`src/graphwar_game_server.rs`） | 把该玩家的**每一条**都写一遍：`for p in players.iter_mut().filter(\|p\| p.player_id == pid) { p.function = f.clone(); }`。函数本来就是"按玩家"提交的，按士兵各存一份只是这一层的实现细节；报文形状、顺序、判别值一个都没动 |
 | **回归** | 自检的 ② 组断言转绿（"复算用的函数文本 = 我提交的那一条"）；`cargo test` 里那三条 e2e 全绿（它们现在也真的提交非默认函数了，见 §11） |
 | **档位** | **观测**（自检红过）+ **逐位验证**（修后 `cargo test` + 自检覆盖） |
 
@@ -432,7 +432,7 @@ bash client/run.sh dump | grep '@@KERNEL'      # 期望 available=1 hit_test=1
                                候选 = 过射手与目标两点的直线 m·x
                                     + 半正弦鼓包 m·x + k·sin(h·π·(x−x0)/dx)（两端归零，k 控制绕多高）
                                     + 过"路标"的抛物线 m·x + b·(x−x0)·(x−xt)
-                               判定 = `settle::resolve(expr, x0, y0, SERVER_STEP, flip, Normal,
+                               判定 = `graphwar_shot_calculator::settle::resolve(expr, x0, y0, SERVER_STEP, flip, Normal,
                                                       mask, others)` —— **服务端那个函数本身**
                                要求 = 没被墙挡住 && 打死至少一个敌人 && 没误伤队友
 ```
@@ -452,7 +452,7 @@ bash client/run.sh dump | grep '@@KERNEL'      # 期望 available=1 hit_test=1
 
 `Match::fire` 对电脑玩家一律用 `ai_function_text()`（`docs/127` §5），客户端交的函数
 **不生效**，所以这两条测试的胜负完全由 `(seed, AI 进化)` 决定。而 AI 的适应度里**含掩膜**
-（`aigen::ScoringContext.mask = Match::mask`），障碍一多就可能僵成"AI 一直贴着墙打"。
+（`graphwar_function_evolutionator::ScoringContext.mask = Match::mask`），障碍一多就可能僵成"AI 一直贴着墙打"。
 
 于是新加了一条 `#[ignore]` 的 **`search_ai_seed`**（同文件末尾，平时不跑）：
 
@@ -460,8 +460,8 @@ bash client/run.sh dump | grep '@@KERNEL'      # 期望 available=1 hit_test=1
 cargo test --offline --test server_match -- --ignored --nocapture search_ai_seed
 ```
 
-它先按 `[k;32]`（k = 0..=63）**纯计算**障碍数（`ChaCha12::from_seed` + `levelgen::generate(.., 0)`，
-与 `serverloop` 开局同一条），再对障碍最少的若干个真的跑一局 AI-vs-AI：
+它先按 `[k;32]`（k = 0..=63）**纯计算**障碍数（`ChaCha12::from_seed` + `graphwar_level_generator::generate(.., 0)`，
+与 `graphwar_game_server` 开局同一条），再对障碍最少的若干个真的跑一局 AI-vs-AI：
 
 ```text
 障碍最少的 12 个 `[k;32]` 种子: [(0,30),(0,62),(1,53),(3,34),(3,55),(3,58),(4,12),(4,27),(4,51),(5,1),(5,36),(5,42)]

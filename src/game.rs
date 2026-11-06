@@ -5,8 +5,8 @@
 //! * 房间状态（`server::RoomState`）
 //! * 关卡障碍（用于建掩膜）
 //! * 士兵（致死判定）
-//! * tick 基准（`tick::tick_at`）
-//! * **射手轮转**（`turn::TurnManager`）与**按士兵的 AI 进化**（`aigen::SoldierEvolver`）
+//! * tick 基准（`graphwar_tick_handler::tick_at`）
+//! * **射手轮转**（`graphwar_turn_manager::TurnManager`）与**按士兵的 AI 进化**（`graphwar_function_evolutionator::SoldierEvolver`）
 //!   —— 见下面的"接线"一节
 //!
 //! `Match::fire` 处理一次开火，产出**这条链路上要广播的消息**：
@@ -16,25 +16,25 @@
 //!                -> [QueueDestroyObstacle] -> EffectInfo(ExplosionEffect)
 //! ```
 //!
-//! 与 `settle::events` 的区别：这里直接产出**协议报文文本**（带 tick），
+//! 与 `graphwar_shot_calculator::settle::events` 的区别：这里直接产出**协议报文文本**（带 tick），
 //! 可以直接写进 socket。
 //!
 //! ## 接线（`docs/117-server-wiring.md`）
 //!
-//! 2026-11 之前，"谁开火"由**调用方**给 `soldier_id`，`aigen` 的进化**没有调用点**，
+//! 2026-11 之前，"谁开火"由**调用方**给 `soldier_id`，`graphwar_function_evolutionator` 的进化**没有调用点**，
 //! 于是 `docs/98`/`docs/109` 的规则"已实现并可测"却"端到端没走"。现在：
 //!
 //! ```text
 //! Match::begin_next_turn(player_id, timed_out, now_ms, time_mode)
-//!   ① turn::TurnManager::begin_turn  -> TurnDecision（三态）
-//!   ② 只为判出来的 soldier_id 调 aigen::SoldierEvolver::evolve_soldier（25 s 预算）
+//!   ① graphwar_turn_manager::TurnManager::begin_turn  -> TurnDecision（三态）
+//!   ② 只为判出来的 soldier_id 调 graphwar_function_evolutionator::SoldierEvolver::evolve_soldier（25 s 预算）
 //!   ③ decision.broadcast() == Some((p, s)) 才发报文；Skip 时 messages 为空
 //! ```
 //!
 //! ## AI 说话：`token → 文本 → FunctionInfo`（`docs/127-ai-speaks.md`）
 //!
-//! 2026-11 之前，`aigen` 的产物是 token，而 `token → 文本`（`0x4ec160`）没有调用点，
-//! 于是 AI"会思考、不会说话"。现在 `function::to_text`（`docs/119`，1032/1032 对拍）
+//! 2026-11 之前，`graphwar_function_evolutionator` 的产物是 token，而 `token → 文本`（`0x4ec160`）没有调用点，
+//! 于是 AI"会思考、不会说话"。现在 `math_function::to_text`（`docs/119`，1032/1032 对拍）
 //! 就是那个缺口，接线后一个 AI 回合里有**两条** `FunctionInfo`，形态各自照真实抓包
 //! （`docs/127` §2 的原始字节流帧号）：
 //!
@@ -51,22 +51,22 @@
 //! 与同一回合的 `FunctionPoints.owner_id` 相同，都不是 `player_id`）。
 //! 修正版**只**在开火那一刻发（`docs/43` 的既有顺序不改）。
 //! 修正文本的运算符**带符号**（`c >= 0` 写 `" + "`、`c < 0` 写 `" - "`；抓包帧 143/182/203），
-//! 由 `shot::corrected_text` 复用 `correction_text` 产出（`docs/127` §5 第 1 条，已修）。
+//! 由 `graphwar_shot_calculator::corrected_text` 复用 `correction_text` 产出（`docs/127` §5 第 1 条，已修）。
 //!
 //! **没接的**（都写在 `docs/117` §6 / `docs/127` §6）：回合超时的**检测**没有证据，
 //! 本层只把 `timed_out` 当输入参数；游标初值取 `PlayerTurns::new` 的 0
 //! （`TurnManager::add_player` 没有 index 入口，见 `docs/98` §6-B）；
 //! 同时回合制没接（房间状态写死 `SequentialTurns`）。
 
-use crate::aigen::{self, Individual, SoldierEvolver, SoldierFunctions, SoldierTurn, VarMode};
-use crate::life::{LifeState, Status};
+use crate::graphwar_function_evolutionator::{self, Individual, SoldierEvolver, SoldierFunctions, SoldierTurn, VarMode};
+use crate::graphwar_life_manager::{LifeState, Status};
 use crate::plane::{empty_mask, rasterize};
-use crate::protocol::{emit_effect_info, emit_function_points, emit_life_queued_death};
-use crate::rng::ChaCha12;
+use crate::_scaffold::protocol::{emit_effect_info, emit_function_points, emit_life_queued_death};
+use crate::_scaffold::rng::ChaCha12;
 use crate::server::RoomState;
-use crate::settle::{resolve, Target};
-use crate::tick::tick_at;
-use crate::turn::{self, TurnDecision, TurnManager};
+use crate::graphwar_shot_calculator::settle::{resolve, Target};
+use crate::graphwar_tick_handler::tick_at;
+use crate::graphwar_turn_manager::{self, TurnDecision, TurnManager};
 
 /// 一局对战的服务端状态。
 pub struct Match {
@@ -130,7 +130,7 @@ pub struct Match {
 ///
 /// 二进制里 `computer_player_manager` 那张 `HashMap<i32, V>` 的键是 `player_id`
 /// 还是 `soldier_id` **没观测到插入点**，所以"种群是每人一份还是每士兵一份"没有结论。
-/// `aigen::SoldierEvolver` 因此**不持有种群**（`docs/109` §4.3）；归属这个决定落在
+/// `graphwar_function_evolutionator::SoldierEvolver` 因此**不持有种群**（`docs/109` §4.3）；归属这个决定落在
 /// 接线层，这里做成**显式开关**，默认按士兵，绝不把它写成隐含约定。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PopScope {
@@ -145,7 +145,7 @@ pub enum PopScope {
 ///
 /// * `level`：难度档 1..=6（`docs/67` 的六档参数）。**默认 1 是重建版的取值**——
 ///   真游戏里难度是房主设置，我们的 `RoomState` 没有这个字段（`docs/117` §6）；
-/// * `mode`：`aigen::VarMode`（`docs/94`）。**没有**从 `room.function_mode` 推——
+/// * `mode`：`graphwar_function_evolutionator::VarMode`（`docs/94`）。**没有**从 `room.function_mode` 推——
 ///   那个字符串到 `VarMode` 的对应没有证据，不猜；
 /// * `budget_secs`：`Some(25.0)` = 真游戏的墙钟上限（`0x51b7cf` `cmp $0x19`，
 ///   `docs/93`）；`None` = 不限时，测试用（保证可复现）。
@@ -163,7 +163,7 @@ impl Default for AiConfig {
             level: 1,
             mode: VarMode::Normal,
             // 真游戏的 25 s（`docs/93`）：**这一条就是"预算实际生效"的接线点**。
-            budget_secs: Some(aigen::GAME_TIME_BUDGET_SECS),
+            budget_secs: Some(graphwar_function_evolutionator::GAME_TIME_BUDGET_SECS),
             pop_scope: PopScope::default(),
         }
     }
@@ -204,7 +204,7 @@ pub struct Submission<'a> {
     /// 起点（士兵站位）。
     pub x0: f64,
     pub y0: f64,
-    /// 朝向：由队伍决定（`turn::Team::flip`，`docs/105`）。
+    /// 朝向：由队伍决定（`graphwar_turn_manager::Team::flip`，`docs/105`）。
     pub flip: bool,
 }
 
@@ -220,7 +220,7 @@ pub struct Submission<'a> {
 ///
 /// 为什么需要它：真客户端靠这条消息知道"**我是哪个 player_id**"。没有它，客户端只能
 /// 退化成"按 `TurnInfo` 里的玩家假定"（`docs/134` §7.1 记的就是这个缺口）。
-/// 本函数只负责**报文文本**，什么时候发由 `serverloop::serve` 决定（收到
+/// 本函数只负责**报文文本**，什么时候发由 `graphwar_game_server::serve` 决定（收到
 /// `NewPlayerRequest` 时回一条）。
 pub fn player_info_message(player_id: i64, connection_id: i64) -> String {
     format!(
@@ -342,7 +342,7 @@ impl Match {
     ///
     /// 副作用：每个士兵各开一格空函数槽（`docs/98` §3.1）、登记队伍（供全灭判定）、
     /// 初始化为"活着"（`life_manager` 那张表）。
-    pub fn register_player(&mut self, player_id: i64, team: turn::Team, soldiers: &[i64]) {
+    pub fn register_player(&mut self, player_id: i64, team: graphwar_turn_manager::Team, soldiers: &[i64]) {
         for id in soldiers {
             self.set_team(*id, team.id());
             self.functions.register(*id);
@@ -376,7 +376,7 @@ impl Match {
         time_mode: &str,
     ) -> TurnStart {
         let decision = {
-            let state = turn::life_state_of(&self.life);
+            let state = graphwar_turn_manager::life_state_of(&self.life);
             self.turns.begin_turn(player_id, state, timed_out)
         };
         // **先定射手、再进化**——顺序本身是结论的一部分（`docs/98` §0：AI 不选射手）。
@@ -418,7 +418,7 @@ impl Match {
     /// `decision.broadcast()` 给出 `soldier_id != 0` 的那些 `player_id`。
     ///
     /// 那个顺序同时就是结算批里射击者的顺序（`docs/141` §4，130/130 批实测），
-    /// 所以调用方把它原样交给 [`crate::turn::RoundCollection`] 即可。
+    /// 所以调用方把它原样交给 [`crate::graphwar_turn_manager::RoundCollection`] 即可。
     ///
     /// 全灭的玩家照样拿到 `TurnInfo{p, 0}`（`0x463fd0` 的观测），但**不在等待名单里**：
     /// 他没有士兵可以开火，等他只会把回合卡死。真回放里正是这样（9 条 `TurnInfo`、
@@ -437,7 +437,7 @@ impl Match {
         let mut starts = Vec::with_capacity(players.len());
         for pid in players {
             let decision = {
-                let state = turn::life_state_of(&self.life);
+                let state = graphwar_turn_manager::life_state_of(&self.life);
                 self.turns.begin_turn(*pid, state, false)
             };
             // 与逐玩家路径同序：**先定射手、再进化**（`docs/98` §0）。
@@ -454,30 +454,30 @@ impl Match {
         for st in &starts {
             // Skip 的玩家一条报文都没有（`docs/98` §1.4）；Announce（含 soldier 0）都发。
             if let Some((p, s)) = st.decision.broadcast() {
-                msgs.push(crate::protocol::emit_turn_info(p, s));
+                msgs.push(crate::_scaffold::protocol::emit_turn_info(p, s));
             }
         }
         // `EndOfTurnInfo` 与 `GameStateInfo` 各**一条**。
         //
         // ⚠️ `end_of_turn_tick` 在真回放里恒为 **0**（`1793884702` 三回合全是
-        // `{"end_of_turn_tick":0,"time_mode":"TimerInf"}`），而 `tick::end_of_turn_tick_wire`
+        // `{"end_of_turn_tick":0,"time_mode":"TimerInf"}`），而 `graphwar_tick_handler::end_of_turn_tick_wire`
         // 给的是 `start + 时长`。这两个数在 `docs/41` 就没对上过，是**已知分歧**；
         // 本函数沿用逐玩家路径的发法（不在这里另造一个数）。
-        let end = crate::tick::end_of_turn_tick_wire(start_tick, time_mode);
-        msgs.push(crate::protocol::emit_end_of_turn(end, time_mode));
-        msgs.push(crate::protocol::emit_game_state("WaitingForFunctions"));
+        let end = crate::graphwar_tick_handler::end_of_turn_tick_wire(start_tick, time_mode);
+        msgs.push(crate::_scaffold::protocol::emit_end_of_turn(end, time_mode));
+        msgs.push(crate::_scaffold::protocol::emit_game_state("WaitingForFunctions"));
         (msgs, starts)
     }
 
-    /// 该士兵函数槽里的**文本**：`function::to_text`（`0x4ec160`）在本仓库的唯一调用点。    ///
-    /// 为什么需要它：`aigen` 的产物是 token（[`FunctionSlot::tokens`](crate::aigen::FunctionSlot)），
+    /// 该士兵函数槽里的**文本**：`math_function::to_text`（`0x4ec160`）在本仓库的唯一调用点。    ///
+    /// 为什么需要它：`graphwar_function_evolutionator` 的产物是 token（[`FunctionSlot::tokens`](crate::graphwar_function_evolutionator::FunctionSlot)），
     /// 协议 `FunctionInfo.function` 要的是文本，中间只有这一步（`docs/119`、`docs/127`）。
     /// `None` = 这个士兵没有槽（没登记过）。
     ///
     /// ⚠️ 它**不是单射**（`docs/119` §5.3）：π 写成 `3.14`、负常量写成 `neg` 的文本形态、
     /// 缺操作数的空位在文本里不存在。这三条都是真二进制行为，不在这里修。
     pub fn ai_function_text(&self, soldier_id: i64) -> Option<String> {
-        self.functions.tokens(soldier_id).map(crate::function::to_text)
+        self.functions.tokens(soldier_id).map(crate::math_function::to_text)
     }
 
     /// AI 这一回合**提交**时要发的那条 `FunctionInfo`（`docs/127` §2.1、§3.1）。
@@ -495,7 +495,7 @@ impl Match {
     /// 空槽（开局、还没进化）返回 `function: ""`，与抓包里那条空函数完全同形。
     pub fn ai_submit_info(&self, soldier_id: i64) -> Option<String> {
         let text = self.ai_function_text(soldier_id)?;
-        Some(crate::protocol::emit_function_info(soldier_id, &text, None))
+        Some(crate::_scaffold::protocol::emit_function_info(soldier_id, &text, None))
     }
 
     /// 只为**一个**士兵跑一次进化，并把结果写进**它自己的**槽（`docs/98` §3）。
@@ -515,7 +515,7 @@ impl Match {
         flip: bool,
         turn_no: u64,
     ) -> Option<SoldierTurn> {
-        if soldier_id == turn::SOLDIER_ID_NONE || !self.is_bot(player_id) {
+        if soldier_id == graphwar_turn_manager::SOLDIER_ID_NONE || !self.is_bot(player_id) {
             return None;
         }
         // 射手的局面（不在场上 ⇒ 没有这一回合的进化）。
@@ -527,7 +527,7 @@ impl Match {
             PopScope::Soldier => soldier_id,
             PopScope::Player => player_id,
         };
-        let params = aigen::params(self.ai.level);
+        let params = graphwar_function_evolutionator::params(self.ai.level);
         let mode = self.ai.mode;
         let budget = self.ai.budget_secs;
         let pop = self.ai_pops.remove(&key);
@@ -535,12 +535,12 @@ impl Match {
         let out = {
             let Match { soldiers, mask, functions, ai_rng, .. } = self;
             let others: Vec<Target> = soldiers.iter().filter(|t| t.id != soldier_id).copied().collect();
-            let ctx = aigen::ScoringContext {
+            let ctx = graphwar_function_evolutionator::ScoringContext {
                 x0,
                 y0,
                 flip,
                 // `evaluate` 内部按 `Phase` 覆盖成 0.5 / 0.01，这里只是基值。
-                step: aigen::COARSE_STEP,
+                step: graphwar_function_evolutionator::COARSE_STEP,
                 mask: &mask[..],
                 targets: &others,
                 limit: params.limit,
@@ -712,11 +712,11 @@ impl Match {
         let start_tick = self.tick_now(now_ms);
         self.turn_start_tick = start_tick;
         self.time_mode = time_mode.to_string();
-        let end = crate::tick::end_of_turn_tick_wire(start_tick, time_mode);
+        let end = crate::graphwar_tick_handler::end_of_turn_tick_wire(start_tick, time_mode);
         vec![
-            crate::protocol::emit_turn_info(player_id, soldier_id),
-            crate::protocol::emit_end_of_turn(end, time_mode),
-            crate::protocol::emit_game_state("WaitingForFunctions"),
+            crate::_scaffold::protocol::emit_turn_info(player_id, soldier_id),
+            crate::_scaffold::protocol::emit_end_of_turn(end, time_mode),
+            crate::_scaffold::protocol::emit_game_state("WaitingForFunctions"),
         ]
     }
 
@@ -732,7 +732,7 @@ impl Match {
             self.turn_count
         )];
         if self.ending().is_some() {
-            out.push(crate::protocol::emit_game_state("EndingGame"));
+            out.push(crate::_scaffold::protocol::emit_game_state("EndingGame"));
         }
         out
     }
@@ -827,7 +827,7 @@ impl Match {
                 s.y0,
                 crate::SERVER_STEP,
                 s.flip,
-                crate::path::Mode::Normal,
+                crate::graphwar_path_calculator::Mode::Normal,
                 &self.mask,
                 &others,
             ));
@@ -856,18 +856,18 @@ impl Match {
 
         // ---- 广播阶段 ----
         // ① 按类型分组的前缀
-        let mut msgs = vec![crate::protocol::emit_game_state("CalculatingResults")];
+        let mut msgs = vec![crate::_scaffold::protocol::emit_game_state("CalculatingResults")];
         for s in shots {
-            msgs.push(crate::protocol::emit_function_info(
+            msgs.push(crate::_scaffold::protocol::emit_function_info(
                 s.owner_id,
                 s.function_text,
-                Some(&crate::shot::corrected_text(s.function_text, s.x0, s.y0, s.flip)),
+                Some(&crate::graphwar_shot_calculator::corrected_text(s.function_text, s.x0, s.y0, s.flip)),
             ));
         }
         for (s, out) in shots.iter().zip(outcomes.iter()) {
             msgs.push(emit_function_points(s.owner_id, s.x0, s.y0, out.stop.0));
         }
-        msgs.push(crate::protocol::emit_game_state("SynchronizingResults"));
+        msgs.push(crate::_scaffold::protocol::emit_game_state("SynchronizingResults"));
 
         // ② 死亡块：顺序 = 到达时刻（`docs/86` §6）
         for id in &deaths {
@@ -902,7 +902,7 @@ impl Match {
 
         // ④ 每发一对 `FunctionActive` + `ExplosionEffect`，顺序与①相同（130/130 批实测）
         for (s, out) in shots.iter().zip(outcomes.iter()) {
-            msgs.push(crate::protocol::emit_function_active(s.owner_id, now_tick));
+            msgs.push(crate::_scaffold::protocol::emit_function_active(s.owner_id, now_tick));
             self.next_effect_id += 1;
             msgs.push(emit_effect_info(
                 self.next_effect_id,
@@ -912,7 +912,7 @@ impl Match {
                 now_tick,
             ));
         }
-        msgs.push(crate::protocol::emit_game_state("ExecutingResults"));
+        msgs.push(crate::_scaffold::protocol::emit_game_state("ExecutingResults"));
 
         // ---- 状态落地（放在报文之后：报文里的坐标与 id 都来自批开始时的快照）----
         if !deaths.is_empty() {
@@ -933,7 +933,7 @@ impl Match {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{get_int, get_str, parse_message};
+    use crate::_scaffold::protocol::{get_int, get_str, parse_message};
 
     pub(super) fn room() -> RoomState {
         RoomState {
@@ -1018,7 +1018,7 @@ mod tests {
     /// 一整回合的报文种类序列，必须与抓包一致（docs/43）。
     #[test]
     fn full_turn_sequence_matches_capture() {
-        use crate::protocol::parse_message;
+        use crate::_scaffold::protocol::parse_message;
         let mut m = Match::new(room(), vec![(-5.0, 0.0, 1.0)], vec![], (0, 0));
         let mut all = Vec::new();
         all.extend(m.begin_turn(229, 231, 0, "Timer1m"));
@@ -1147,7 +1147,7 @@ mod tests {
     // 接线：射手轮转 + 按士兵的 AI 进化（`docs/117-server-wiring.md`）
     // -----------------------------------------------------------------
 
-    /// 无遮挡的四人局面。坐标与 `serverloop` 的固定布局一致，但**没有障碍**，
+    /// 无遮挡的四人局面。坐标与 `graphwar_game_server` 的固定布局一致，但**没有障碍**，
     /// 所以"哪一发打死谁"是确定的，可以写死在断言里。
     fn wired(ai: AiConfig, bots: &[i64]) -> Match {
         let soldiers = vec![
@@ -1160,8 +1160,8 @@ mod tests {
             .with_ai(ai)
             .with_ai_seed(&[7u8; 32]);
         // 士兵顺序原样给（`docs/98` §6-C：顺序不是我推的，是调用方给的）。
-        m.register_player(229, crate::turn::Team::One, &[230, 231]);
-        m.register_player(230, crate::turn::Team::Two, &[232, 233]);
+        m.register_player(229, crate::graphwar_turn_manager::Team::One, &[230, 231]);
+        m.register_player(230, crate::graphwar_turn_manager::Team::Two, &[232, 233]);
         for p in bots {
             m.set_bot(*p);
         }
@@ -1217,8 +1217,8 @@ mod tests {
             Target { id: 232, x: 10.0, y: 0.0, radius: 0.5 },
         ];
         let mut m = Match::new(room(), vec![], soldiers, (0, 0)).with_ai(replay_ai());
-        m.register_player(229, crate::turn::Team::One, &[231]);
-        m.register_player(230, crate::turn::Team::Two, &[232]);
+        m.register_player(229, crate::graphwar_turn_manager::Team::One, &[231]);
+        m.register_player(230, crate::graphwar_turn_manager::Team::Two, &[232]);
         m.set_bot(230);
         m.fire(231, "0.00", -10.0, 0.0, false, 0);
         assert!(m.soldiers.iter().all(|s| s.id != 232));
@@ -1239,7 +1239,7 @@ mod tests {
         let d = m.begin_next_turn(229, true, 0, "Timer1m");
         assert_eq!(
             d.decision.skip_reason(),
-            Some(crate::turn::SkipReason::TurnTimeout),
+            Some(crate::graphwar_turn_manager::SkipReason::TurnTimeout),
             "超时必须是显式的 TurnTimeout，不是别的原因"
         );
         assert!(d.messages.is_empty(), "超时不发报文");
@@ -1254,7 +1254,7 @@ mod tests {
     fn unknown_player_is_skipped() {
         let mut m = wired(replay_ai(), &[]);
         let d = m.begin_next_turn(999, false, 0, "Timer1m");
-        assert_eq!(d.decision.skip_reason(), Some(crate::turn::SkipReason::UnknownPlayer));
+        assert_eq!(d.decision.skip_reason(), Some(crate::graphwar_turn_manager::SkipReason::UnknownPlayer));
         assert!(d.messages.is_empty());
     }
 
@@ -1319,7 +1319,7 @@ mod tests {
     fn ai_budget_defaults_to_the_game_value() {
         // 真游戏 25 s（`0x51b7cf cmp $0x19`，`docs/93`）。此前 `evolve()` 传的是 `None`，
         // 上限**实际没生效**；接线后默认必须接上。
-        assert_eq!(AiConfig::default().budget_secs, Some(crate::aigen::GAME_TIME_BUDGET_SECS));
+        assert_eq!(AiConfig::default().budget_secs, Some(crate::graphwar_function_evolutionator::GAME_TIME_BUDGET_SECS));
         assert_eq!(AiConfig::default().budget_secs, Some(25.0));
         let m = wired(AiConfig::default(), &[229]);
         assert_eq!(m.ai_config().budget_secs, Some(25.0), "Match 要把它交给 SoldierEvolver::with_budget");
@@ -1331,7 +1331,7 @@ mod tests {
     // -----------------------------------------------------------------
 
     /// 本回合 AI 报的那条 `FunctionInfo`（键盘名 + 字段都过一遍协议解析器）。
-    fn ai_info(st: &TurnStart) -> Option<crate::protocol::RawMessage> {
+    fn ai_info(st: &TurnStart) -> Option<crate::_scaffold::protocol::RawMessage> {
         st.messages
             .iter()
             .filter(|m| m.starts_with(r#"{"FunctionInfo""#))
@@ -1359,14 +1359,14 @@ mod tests {
         assert!(!text.is_empty(), "进化过就不是空串");
         // 文本**只**来自槽里的 token（不是常量、不是客户端给的那条 "0.00"）。
         let toks = m.functions().tokens(231).expect("231 应已登记");
-        assert_eq!(text, crate::function::to_text(toks));
+        assert_eq!(text, crate::math_function::to_text(toks));
         assert_eq!(Some(text.as_str()), m.ai_function_text(231).as_deref());
         // 提交时没有修正文本（抓包帧 135/158/200）。
         assert!(get_str(&info, "corrected_function").is_none(), "提交时的 corrected_function 是 null");
         assert_eq!(get_str(&info, "corrected_function"), None);
         // 与 `TurnStart.evolution`（同一份 token）同源。
         let ev = st.evolution.as_ref().expect("电脑玩家应进化");
-        assert_eq!(crate::function::to_text(&ev.tokens), text);
+        assert_eq!(crate::math_function::to_text(&ev.tokens), text);
     }
 
     /// 人类玩家的回合**一条都不多**（不替人类编函数）。
@@ -1426,7 +1426,7 @@ mod tests {
             r#"{"FunctionInfo":{"owner_id":231,"function":"","corrected_function":null}}"#
         );
         assert_eq!(
-            crate::shot::corrected_text("", -19.512760846799154, 10.99018276610812, false),
+            crate::graphwar_shot_calculator::corrected_text("", -19.512760846799154, 10.99018276610812, false),
             " + 10.990",
             "空函数的修正文本就是抓包里那条"
         );
@@ -1441,9 +1441,9 @@ mod tests {
         for pid in [229, 230, 229, 230] {
             let st = m.begin_next_turn(pid, false, 0, "Timer1m");
             let text = get_str(&ai_info(&st).expect("两个都是电脑玩家"), "function").unwrap();
-            let toks = crate::function::parse(&text);
+            let toks = crate::math_function::parse(&text);
             assert!(!toks.is_empty(), "文本解析回空 token 流：{text}");
-            assert_eq!(crate::function::to_text(&toks), text, "文本不是不动点（{text}）");
+            assert_eq!(crate::math_function::to_text(&toks), text, "文本不是不动点（{text}）");
             seen += 1;
         }
         assert_eq!(seen, 4);
@@ -1481,7 +1481,7 @@ mod tests {
             r#"{"PlayerInfo":{"player_id":232,"connection_id":228}}"#
         );
         // 解析回来仍然是一条单键消息，键名 = `PlayerInfo`（客户端按它分派）。
-        let msg = crate::protocol::parse_message(&player_info_message(229, 228))
+        let msg = crate::_scaffold::protocol::parse_message(&player_info_message(229, 228))
             .expect("应能解析回 RawMessage");
         assert_eq!(msg.kind, "PlayerInfo");
         assert_eq!(get_int(&msg, "player_id"), Some(229));

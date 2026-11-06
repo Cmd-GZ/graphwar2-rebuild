@@ -6,10 +6,10 @@
 //!
 //! | 写死的地方 | 真值 | 后果 |
 //! |---|---|---|
-//! | `fire` 恒用 `path::Mode::Normal` | `FunctionModeInfo = DiffEqFunction` 的批必须走 `Mode::Ode` | 550 发的几何整条错 |
-//! | `shot::corrected_text` 恒加后缀 | **Normal** 加 `" ± c.ddd"`，**DiffEq 不加**（`corrected_function == function`，550/550 零例外） | 550 发全错 |
+//! | `fire` 恒用 `graphwar_path_calculator::Mode::Normal` | `FunctionModeInfo = DiffEqFunction` 的批必须走 `Mode::Ode` | 550 发的几何整条错 |
+//! | `graphwar_shot_calculator::corrected_text` 恒加后缀 | **Normal** 加 `" ± c.ddd"`，**DiffEq 不加**（`corrected_function == function`，550/550 零例外） | 550 发全错 |
 //!
-//! 本模块**不改内核**（`game.rs` / `settle.rs` / `protocol.rs` 一字未动）：它自己按
+//! 本模块**不改内核**（`game.rs` / `graphwar_shot_calculator/settle.rs` / `_scaffold/protocol.rs` 一字未动）：它自己按
 //! `fire` 的顺序拼报文，只是把上面两条换成回放给的真值。**报文顺序、字段名、
 //! 浮点写法全部复用 `protocol::emit_*`**，所以"逐字节"这条口径没有变松。
 //!
@@ -21,12 +21,12 @@
 //! 证据档位与仓库约定一致：结论标 **观测**（能指到回放里那一条报文）/
 //! **逐位验证**（`tests/diff_conv.rs` 覆盖）/ **推断** / **未知**。
 
-use crate::path::Mode;
+use crate::graphwar_path_calculator::Mode;
 use crate::plane::empty_mask;
-use crate::replaydiff::{
+use crate::_scaffold::replaydiff::{
     compare_batch, split_batches, BatchVerdict, Inputs, Msg, Policy, Replay, StateMask,
 };
-use crate::settle::{resolve, Target};
+use crate::graphwar_shot_calculator::settle::{resolve, Target};
 
 /// `QueueDestroyObstacle` → `DestroyObstacle` 的延迟（与 `game.rs` 同一个常量）。
 pub use crate::game::DESTROY_DELAY_TICKS;
@@ -51,17 +51,17 @@ pub fn mode_of(function_mode: &str) -> Mode {
 ///   `function + suffix` 的字面拼接，剩下 4 条是空函数（`" + 3.333"`）；
 ///   另有 11 条函数**括号没闭合**，真值补了右括号（例：
 ///   `5/155sin(4exp(4*6cos(` → `5/155sin(4exp(4*6cos())) + 6.055`），
-///   所以先过一遍 [`crate::function::to_text`]。
+///   所以先过一遍 [`crate::math_function::to_text`]。
 pub fn corrected_function(text: &str, x0: f64, y0: f64, flip: bool, mode: Mode) -> String {
     match mode {
         Mode::Ode => text.to_string(),
         Mode::Normal => {
-            let toks = crate::function::parse(text);
+            let toks = crate::math_function::parse(text);
             format!(
                 "{}{}{}",
                 text,
                 ")".repeat(unbalanced_brackets(text)),
-                crate::shot::correction_text(&toks, x0, y0, flip)
+                crate::graphwar_shot_calculator::correction_text(&toks, x0, y0, flip)
             )
         }
     }
@@ -72,7 +72,7 @@ pub fn corrected_function(text: &str, x0: f64, y0: f64, flip: bool, mode: Mode) 
 /// 真游戏发的是 `to_text(parse(function)) + 后缀`，而它的 `to_text` **原样保留**
 /// 输入文本（740 条 Normal 里 736 条是 `function + 后缀` 的字面拼接），唯一的差别
 /// 是**没闭合的括号会被补齐**（11 条，例 `5/155sin(4exp(4*6cos(` →
-/// `5/155sin(4exp(4*6cos()))`）。本项目的 `function::to_text` 会重新加括号
+/// `5/155sin(4exp(4*6cos()))`）。本项目的 `math_function::to_text` 会重新加括号
 /// （`to_text(parse("(40)*(1/(...))")) != "(40)*(1/(...))"`），所以不能直接用它。
 pub fn unbalanced_brackets(text: &str) -> usize {
     let mut depth: i64 = 0;
@@ -95,7 +95,7 @@ pub fn unbalanced_brackets(text: &str) -> usize {
 /// 文本在 `end_x` 处求一遍"，不是采样器的最后一个采样点。
 ///
 /// 为什么 `±x`：`flip` 时采样器内部用 `-x`，点序列里的 x 是取反回来的
-/// （`path::calculate` 的 `px = if flip { -mid } else { mid }`），所以回代也要取反。
+/// （`graphwar_path_calculator::calculate` 的 `px = if flip { -mid } else { mid }`），所以回代也要取反。
 ///
 /// DiffEq（`Mode::Ode`）不走这条：那时 y 不是一个纯函数值，回代无意义，
 /// 实测停点自己就是逐位相同的（376/550）。
@@ -103,12 +103,12 @@ pub fn explosion_point(corrected: &str, stop: (f64, f64), flip: bool, mode: Mode
     if mode != Mode::Normal {
         return stop;
     }
-    let toks = crate::function::parse(corrected);
+    let toks = crate::math_function::parse(corrected);
     if toks.is_empty() {
         return stop;
     }
     let x = if flip { -stop.0 } else { stop.0 };
-    let y = crate::function::eval(&toks, x, 0.0, 0.0);
+    let y = crate::math_function::eval(&toks, x, 0.0, 0.0);
     if y.is_nan() {
         return stop;
     }
@@ -206,18 +206,18 @@ impl ConvPredictor {
         let corrected = corrected_function(function_text, x0, y0, flip, self.mode);
 
         let mut msgs = vec![
-            crate::protocol::emit_game_state("CalculatingResults"),
-            crate::protocol::emit_function_info(owner_id, function_text, Some(&corrected)),
-            crate::protocol::emit_function_points(owner_id, x0, y0, outcome.stop.0),
-            crate::protocol::emit_game_state("SynchronizingResults"),
+            crate::_scaffold::protocol::emit_game_state("CalculatingResults"),
+            crate::_scaffold::protocol::emit_function_info(owner_id, function_text, Some(&corrected)),
+            crate::_scaffold::protocol::emit_function_points(owner_id, x0, y0, outcome.stop.0),
+            crate::_scaffold::protocol::emit_game_state("SynchronizingResults"),
         ];
 
         for id in &outcome.killed {
-            msgs.push(crate::protocol::emit_life_queued_death(*id, now_tick));
+            msgs.push(crate::_scaffold::protocol::emit_life_queued_death(*id, now_tick));
             if let Some(t) = self.soldiers.iter().find(|t| t.id == *id) {
                 self.next_effect_id += 1;
                 let et = death_effect_type(self.skin.get(id).map(|s| s.as_str()));
-                msgs.push(crate::protocol::emit_effect_info(
+                msgs.push(crate::_scaffold::protocol::emit_effect_info(
                     self.next_effect_id,
                     t.x,
                     t.y,
@@ -245,17 +245,17 @@ impl ConvPredictor {
             ));
         }
 
-        msgs.push(crate::protocol::emit_function_active(owner_id, now_tick));
+        msgs.push(crate::_scaffold::protocol::emit_function_active(owner_id, now_tick));
         self.next_effect_id += 1;
         let (ex, ey) = explosion_point(&corrected, outcome.stop, flip, self.mode);
-        msgs.push(crate::protocol::emit_effect_info(
+        msgs.push(crate::_scaffold::protocol::emit_effect_info(
             self.next_effect_id,
             ex,
             ey,
             "ExplosionEffect",
             now_tick,
         ));
-        msgs.push(crate::protocol::emit_game_state("ExecutingResults"));
+        msgs.push(crate::_scaffold::protocol::emit_game_state("ExecutingResults"));
 
         (
             msgs,
@@ -381,7 +381,7 @@ pub fn probe_file(path: &std::path::Path) -> Vec<ShotGeom> {
                 }
                 "LifeInfo" => {
                     if let Some(id) = m.get_i64("entity_id") {
-                        if matches!(m.get("alive").map(|v| v.kind.clone()), Some(crate::replaydiff::wire::Kind::Bool(false))) {
+                        if matches!(m.get("alive").map(|v| v.kind.clone()), Some(crate::_scaffold::replaydiff::wire::Kind::Bool(false))) {
                             alive.remove(&id);
                         } else {
                             alive.insert(id);
@@ -448,7 +448,7 @@ pub fn probe_file(path: &std::path::Path) -> Vec<ShotGeom> {
                     break;
                 }
                 if m.kind == "LifeInfo"
-                    && matches!(m.get("alive").map(|x| x.kind.clone()), Some(crate::replaydiff::wire::Kind::Bool(false)))
+                    && matches!(m.get("alive").map(|x| x.kind.clone()), Some(crate::_scaffold::replaydiff::wire::Kind::Bool(false)))
                 {
                     if let Some(id) = m.get_i64("entity_id") {
                         if !v.contains(&id) {
@@ -490,7 +490,7 @@ pub fn probe_file(path: &std::path::Path) -> Vec<ShotGeom> {
                 mask.mask(),
                 &targets,
             );
-            let pts = crate::shot::shot_points(&shot.text, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true);
+            let pts = crate::graphwar_shot_calculator::shot_points(&shot.text, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true);
             let tail: Vec<(f64, f64)> = pts.iter().rev().take(4).rev().copied().collect();
             let n_points = pts.len();
             out.push(ShotGeom {
@@ -521,21 +521,21 @@ pub fn probe_file(path: &std::path::Path) -> Vec<ShotGeom> {
                     if t.is_empty() {
                         f64::NAN
                     } else {
-                        let toks = crate::function::parse(&t);
-                        crate::function::eval(&toks, if shot.flip { -xe } else { xe }, 0.0, 0.0)
+                        let toks = crate::math_function::parse(&t);
+                        crate::math_function::eval(&toks, if shot.flip { -xe } else { xe }, 0.0, 0.0)
                     }
                 },
                 h2: {
                     let t = obs_corrected.get(shot_i).cloned().unwrap_or_default();
-                    let pts = crate::shot::shot_points(&t, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true);
+                    let pts = crate::graphwar_shot_calculator::shot_points(&t, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true);
                     let last = pts.last().copied().unwrap_or((f64::NAN, f64::NAN));
                     (last.0, last.1)
                 },
                 h2_n: {
                     let t = obs_corrected.get(shot_i).cloned().unwrap_or_default();
-                    crate::shot::shot_points(&t, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true).len()
+                    crate::graphwar_shot_calculator::shot_points(&t, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true).len()
                 },
-                our_n: crate::shot::shot_points(&shot.text, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true).len(),
+                our_n: crate::graphwar_shot_calculator::shot_points(&shot.text, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true).len(),
             });
         }
     }
@@ -643,7 +643,7 @@ pub struct FileResult {
     /// 逐批成因
     pub causes: Vec<Cause>,
     /// 每一批的第一处分歧（`ours` / `observed` 原文）——排障用
-    pub first_diffs: Vec<Option<crate::replaydiff::FieldDiff>>,
+    pub first_diffs: Vec<Option<crate::_scaffold::replaydiff::FieldDiff>>,
     pub clean: bool,
     /// 全部字段差异计数（`kind|path|class`）
     pub diff_counts: std::collections::BTreeMap<String, usize>,
@@ -726,7 +726,7 @@ pub fn run_file(path: &std::path::Path, policy: &Policy, max_diffs: usize) -> Fi
         let v = compare_batch(&ours, &observed, policy, max_diffs);
         for d in &v.diffs {
             *res.diff_counts
-                .entry(format!("{}|{}|{}", d.kind, d.path, crate::replaydiff::class_name(&d.class)))
+                .entry(format!("{}|{}|{}", d.kind, d.path, crate::_scaffold::replaydiff::class_name(&d.class)))
                 .or_insert(0) += 1;
         }
         res.causes.push(classify(&v, b.shots.len() > 1));

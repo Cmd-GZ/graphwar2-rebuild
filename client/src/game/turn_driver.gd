@@ -1,6 +1,6 @@
 extends RefCounted
 class_name GwTurnDriver
-## 回合射手轮转（`docs/143` §6）：**照 `src/turn.rs` 的那条规则**在客户端侧算"下一个该谁开火"。
+## 回合射手轮转（`docs/143` §6）：**照 `src/graphwar_turn_manager.rs` 的那条规则**在客户端侧算"下一个该谁开火"。
 ##
 ## ## 为什么客户端要有一份
 ##
@@ -19,7 +19,7 @@ class_name GwTurnDriver
 ## |---|---|---|
 ## | "先自增再取"（`index = (index+1) % len`） | **逐位** | `0x463f40`–`0x463f58`：`mov -0x8(%rbp),%rax` / `inc %rax` / `div %r15` / `mov %rdx,-0x8(%rbp)`（`docs/109` §2.3 原文照录） |
 ## | 最多试 `len` 次、跳过死士兵 | **逐位** | `0x463fc7`–`0x463fca` 的 `dec %r14` / `jne`；`0x463fb6` 的 `call 454950` + `test $0x1,%al` |
-## | 存活只看生命字节最低位 | **逐位** | 同上（`life::is_alive_byte`，`docs/109` §2.5） |
+## | 存活只看生命字节最低位 | **逐位** | 同上（`graphwar_life_manager::is_alive_byte`，`docs/109` §2.5） |
 ## | 一个玩家的士兵全灭 ⇒ 该玩家给 `soldier_id = 0` | **逐位** | `0x464016`–`0x464021`（`movl $0x0,0x64(%rsp)`） |
 ## | **玩家之间**的轮转顺序 | **未知**（原版判为 `HashMap` 迭代序，`docs/47`） | 这里固定用 `GwGameState.players` 的下标序（= 调用方给的顺序），见 `docs/143` §6.3 |
 ## | 初始游标 | **未知**（`docs/109` §6-A） | 这里取"第一个玩家的第一个士兵"，与既有行为一致 |

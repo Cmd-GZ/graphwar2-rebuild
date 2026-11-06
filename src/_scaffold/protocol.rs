@@ -264,7 +264,7 @@ mod tests {
 
     /// 夹具每行就是一条**原始报文**（抓包时去掉了 2 字节长度前缀）。
     fn fixtures() -> Vec<RawMessage> {
-        include_str!("../fixtures/protocol.jsonl")
+        include_str!("../../fixtures/protocol.jsonl")
             .lines()
             .filter(|l| !l.trim().is_empty())
             .map(|l| parse_message(l).expect("夹具里的帧都应能解析"))
@@ -557,7 +557,7 @@ mod match_tests {
     use super::*;
 
     fn match_msgs() -> Vec<RawMessage> {
-        include_str!("../fixtures/protocol_match.jsonl")
+        include_str!("../../fixtures/protocol_match.jsonl")
             .lines()
             .filter(|l| !l.trim().is_empty())
             .filter_map(parse_message)   // 广播那种非单键 JSON 不在此列
@@ -574,7 +574,7 @@ mod match_tests {
 
     #[test]
     fn parses_lan_broadcast() {
-        let line = include_str!("../fixtures/protocol_match.jsonl")
+        let line = include_str!("../../fixtures/protocol_match.jsonl")
             .lines()
             .find(|l| l.trim_start().starts_with("{\"room_name\""))
             .expect("夹具里应有广播");
@@ -661,7 +661,7 @@ mod death_tests {
     use super::*;
 
     fn msgs() -> Vec<RawMessage> {
-        include_str!("../fixtures/protocol_death.jsonl")
+        include_str!("../../fixtures/protocol_death.jsonl")
             .lines()
             .filter(|l| !l.trim().is_empty())
             .filter_map(parse_message)
@@ -710,7 +710,7 @@ mod broadcast_tests {
     use super::*;
 
     fn captured_broadcasts() -> Vec<String> {
-        include_str!("../fixtures/protocol_match.jsonl")
+        include_str!("../../fixtures/protocol_match.jsonl")
             .lines()
             .filter(|l| l.trim_start().starts_with("{\"room_name\""))
             .map(|l| l.trim().to_string())
@@ -782,9 +782,9 @@ mod emit_tests {
     fn samples(kind: &str) -> Vec<String> {
         let mut out = Vec::new();
         for text in [
-            include_str!("../fixtures/protocol_match.jsonl"),
-            include_str!("../fixtures/protocol_death.jsonl"),
-            include_str!("../fixtures/protocol.jsonl"),
+            include_str!("../../fixtures/protocol_match.jsonl"),
+            include_str!("../../fixtures/protocol_death.jsonl"),
+            include_str!("../../fixtures/protocol.jsonl"),
         ] {
             for line in text.lines() {
                 let line = line.trim();
@@ -1821,9 +1821,9 @@ mod supplemented_event_tests {
         let mut kinds = std::collections::BTreeMap::new();
         let mut lines = 0usize;
         for text in [
-            include_str!("../fixtures/protocol.jsonl"),
-            include_str!("../fixtures/protocol_match.jsonl"),
-            include_str!("../fixtures/protocol_death.jsonl"),
+            include_str!("../../fixtures/protocol.jsonl"),
+            include_str!("../../fixtures/protocol_match.jsonl"),
+            include_str!("../../fixtures/protocol_death.jsonl"),
         ] {
             for line in text.lines() {
                 let line = line.trim();

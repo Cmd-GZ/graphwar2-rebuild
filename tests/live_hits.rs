@@ -10,9 +10,9 @@
 //! 服务器**不广播轨迹**，只广播起点与终点，所以这里做的事正是客户端要做的：
 //! 用同一套采样器重算轨迹，再沿轨迹查掩膜，看第一个被占据的点是不是抓到的命中点。
 
-use gw2_rebuild::path::Mode;
+use gw2_rebuild::graphwar_path_calculator::Mode;
 use gw2_rebuild::plane::{empty_mask, is_occupied, rasterize};
-use gw2_rebuild::shot::shot_points;
+use gw2_rebuild::graphwar_shot_calculator::shot_points;
 
 /// 真实对局里的 4 名士兵（`PosInfo`）。
 const SOLDIERS: [(f64, f64); 4] = [
@@ -188,11 +188,11 @@ fn captured_correction_constants_match() {
     // 抓到的 corrected_function 分别是 "(-46.06/(7.94+x)) + 15.508" 与 "cos((0.73*x)) + 1.643"。
     // 必须用**全精度**起点，否则常数差千分之几（用三位小数会得到 15.504）。
     assert_eq!(
-        gw2_rebuild::shot::corrected_text("(-46.06/(7.94+x))", 6.01835415786761, -8.461015900864648, true),
+        gw2_rebuild::graphwar_shot_calculator::corrected_text("(-46.06/(7.94+x))", 6.01835415786761, -8.461015900864648, true),
         "(-46.06/(7.94+x)) + 15.508"
     );
     assert_eq!(
-        gw2_rebuild::shot::corrected_text("cos((0.73*x))", 22.093339229702053, 0.7301541058520371, true),
+        gw2_rebuild::graphwar_shot_calculator::corrected_text("cos((0.73*x))", 22.093339229702053, 0.7301541058520371, true),
         "cos((0.73*x)) + 1.643"
     );
 }
@@ -273,8 +273,8 @@ fn captured_kills_happen_when_trajectory_passes_through_soldier() {
         ("(-1.65/(-8.04/x))", 17.627629369923454, -12.391816789113197, 231, -8.774),
     ];
     for (text, x0, y0, victim, captured_c) in cases {
-        let toks = gw2_rebuild::function::parse(text);
-        let c = gw2_rebuild::shot::correction(&toks, x0, y0, true);
+        let toks = gw2_rebuild::math_function::parse(text);
+        let c = gw2_rebuild::graphwar_shot_calculator::correction(&toks, x0, y0, true);
         assert!((c - captured_c).abs() < 5e-4, "{text}: 修正 {c} 与抓到的 {captured_c} 不符");
 
         let pts = shot_points(text, x0, y0, gw2_rebuild::SERVER_STEP, true, Mode::Normal, true);
@@ -304,7 +304,7 @@ fn soldiers_do_not_block_the_trajectory() {
 
 #[test]
 fn resolve_reproduces_captured_kills_and_endpoints() {
-    use gw2_rebuild::settle::{resolve, Target};
+    use gw2_rebuild::graphwar_shot_calculator::settle::{resolve, Target};
 
     let mask = build_mask_no_soldiers();
     // 两发都是 Bot 的 234 打出的；射手本人不参与致死判定
@@ -342,7 +342,7 @@ fn resolve_reproduces_captured_kills_and_endpoints() {
 
 #[test]
 fn generated_events_follow_captured_protocol_sequence() {
-    use gw2_rebuild::settle::{events, resolve, ShotEvent, Target};
+    use gw2_rebuild::graphwar_shot_calculator::settle::{events, resolve, ShotEvent, Target};
 
     let mask = build_mask_no_soldiers();
     let targets: Vec<Target> = KILL_SOLDIERS
@@ -413,7 +413,7 @@ const REPLAY_SOLDIERS: [(i64, f64, f64); 4] = [
 
 #[test]
 fn replays_every_shot_of_the_death_level() {
-    use gw2_rebuild::settle::{resolve, Target};
+    use gw2_rebuild::graphwar_shot_calculator::settle::{resolve, Target};
     let mut mask = empty_mask();
     for (x, y, r) in REPLAY_OBSTACLES {
         rasterize(&mut mask, x, y, r, 0x00);
@@ -447,9 +447,9 @@ fn replays_every_shot_of_the_death_level() {
 #[test]
 fn match_replays_the_death_level_through_the_protocol_layer() {
     use gw2_rebuild::game::Match;
-    use gw2_rebuild::protocol::{get_f64, get_int, get_str, parse_message};
+    use gw2_rebuild::_scaffold::protocol::{get_f64, get_int, get_str, parse_message};
     use gw2_rebuild::server::RoomState;
-    use gw2_rebuild::settle::Target;
+    use gw2_rebuild::graphwar_shot_calculator::settle::Target;
 
     let room = RoomState {
         room_name: "Graphwar Game".into(),
@@ -538,9 +538,9 @@ const PAIRED_SOLDIERS: [(i64, f64, f64); 4] = [
 #[test]
 fn paired_replay_reproduces_exact_kill_sets() {
     use gw2_rebuild::game::Match;
-    use gw2_rebuild::protocol::{get_f64, get_int, parse_message};
+    use gw2_rebuild::_scaffold::protocol::{get_f64, get_int, parse_message};
     use gw2_rebuild::server::RoomState;
-    use gw2_rebuild::settle::Target;
+    use gw2_rebuild::graphwar_shot_calculator::settle::Target;
 
     let room = RoomState {
         room_name: "Graphwar Game".into(), game_state: "Setup".into(),

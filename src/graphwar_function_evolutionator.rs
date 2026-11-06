@@ -9,7 +9,7 @@
 //! 运行时用 40 万样本核过一遍（`tools/hook_token_tags.js`），
 //! 实测频率与下表逐项吻合到小数点后第二位。
 
-use crate::levelgen::normal;
+use crate::graphwar_level_generator::normal;
 use crate::{Function, Token};
 
 /// 权重总和，也就是二进制里 `random % 0x55` 的模数。
@@ -750,7 +750,7 @@ pub fn initial_population(p: &Params, mode: VarMode, next: &mut dyn FnMut() -> u
 //
 // 三条硬结论（全部有 replay 观测）：
 //
-// 1. **AI 不选射手**。`soldier_id` 由 [`crate::turn::TurnManager`] 先定，本层只接收它；
+// 1. **AI 不选射手**。`soldier_id` 由 [`crate::graphwar_turn_manager::TurnManager`] 先定，本层只接收它；
 // 2. **槽按士兵**：`FunctionInfo.owner_id` / `FunctionActive.owner_id` 就是 `soldier_id`，
 //    开局每个士兵各收一条**空**函数（`docs/98` §3.1）；
 // 3. **每回合重算**：同一士兵**下一次**被轮到时文本又变了（`docs/98` §3.2 的 tick
@@ -870,7 +870,7 @@ pub struct SoldierTurn {
 /// 参数与预算来自难度档（`docs/93`），结果写进这个士兵自己的槽。
 ///
 /// ```text
-/// // 典型调用顺序（`turn.rs` 先定射手，AI 只为它跑）：
+/// // 典型调用顺序（`graphwar_turn_manager.rs` 先定射手，AI 只为它跑）：
 /// let d = turns.begin_turn(player_id, |id| life_state(id), timed_out);
 /// if let TurnDecision::Announce { soldier_id, flip, .. } = d {
 ///     if soldier_id != 0 {
@@ -949,7 +949,7 @@ pub struct ScoringContext<'a> {
     /// 障碍掩膜（只含障碍）。
     pub mask: &'a [u8],
     /// 目标士兵（**不含射手本人**）。
-    pub targets: &'a [crate::settle::Target],
+    pub targets: &'a [crate::graphwar_shot_calculator::settle::Target],
     /// 复杂度硬上限（`V > limit` 罚 5e7）。
     pub limit: u32,
 }
@@ -1005,9 +1005,9 @@ pub fn fitness(tokens: &[Token], ctx: &ScoringContext) -> f64 {
 /// 我们这里如实计算命中点距离，因此距离判据**比原版更活跃**（但仍受
 /// `dist ∈ [0, radius]` 约束，radius=0.5 时 `|Δ| <= 0.5` 恒成立 ⇒ 实际仍然不触发）。
 pub fn fitness_eval(tokens: &[Token], ctx: &ScoringContext) -> Evaluation {
-    use crate::path::{calculate, Mode};
+    use crate::graphwar_path_calculator::{calculate, Mode};
     use crate::plane::is_occupied;
-    use crate::shot::{correction, shifted_tokens};
+    use crate::graphwar_shot_calculator::{correction, shifted_tokens};
 
     let v = tokens.len();
     let mut score = -1_000_000.0 - (v * v) as f64 / 100.0;
@@ -1052,7 +1052,7 @@ pub fn fitness_eval(tokens: &[Token], ctx: &ScoringContext) -> Evaluation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rng::ChaCha12;
+    use crate::_scaffold::rng::ChaCha12;
 
     fn stream(seed: u64) -> impl FnMut() -> u64 {
         let mut key = [0u8; 32];
@@ -1375,7 +1375,7 @@ mod tests {
         // 初始种群是随机函数，几乎不可能命中（分数约 -1e6）；
         // 跑若干代后应当出现能命中的个体（分数 > 0）。
         use crate::plane::empty_mask;
-        use crate::settle::Target;
+        use crate::graphwar_shot_calculator::settle::Target;
 
         let mask = empty_mask();
         let targets = vec![Target { id: 1, x: 0.0, y: 0.0, radius: 0.5 }];
@@ -1457,7 +1457,7 @@ mod tests {
         assert!(is_occupied(&mask, 1.25, 0.0), "精评应踩到墙");
         assert_eq!(to_pixel(1.25, 0.0), (525, 300));
 
-        use crate::settle::Target;
+        use crate::graphwar_shot_calculator::settle::Target;
         let targets = vec![Target { id: 1, x: 0.0, y: 0.0, radius: 0.5 }];
         let ctx = ScoringContext {
             x0: 10.0,
@@ -1497,7 +1497,7 @@ mod tests {
     #[test]
     fn fine_pass_keeps_individual_when_consistent() {
         use crate::plane::empty_mask;
-        use crate::settle::Target;
+        use crate::graphwar_shot_calculator::settle::Target;
 
         // 空场：粗评、精评都说命中 ⇒ 一致 ⇒ 什么都不换
         let mask = empty_mask();
@@ -1633,7 +1633,7 @@ mod tests {
     fn rng_u32_consumes_one_word_per_draw() {
         // 每 token 一次 u32 抽样（反汇编 0x4ef193）。这里验证：
         // 连续 16 次 next_u32 恰好用掉一个 ChaCha 输出块，第 17 次触发换块。
-        use crate::rng::ChaCha12;
+        use crate::_scaffold::rng::ChaCha12;
         let mut key = [0u8; 32];
         key[..8].copy_from_slice(&0x1234_5678_9ABC_DEF0u64.to_le_bytes());
         let mut r = ChaCha12::from_seed(&key);
@@ -1652,7 +1652,7 @@ mod tests {
     fn cross_from_yields_a_well_formed_function() {
         // 工厂只有**一个**父代（docs/99 §2）：取一棵完整子树再补齐，必须仍然合法
         let mut next = stream(0xC2055_u64);
-        let parent = crate::function::parse("(((-0.35+x)/1.01)/-9.23)");
+        let parent = crate::math_function::parse("(((-0.35+x)/1.01)/-9.23)");
         for _ in 0..200 {
             let child = cross_from(&parent, VarMode::Normal, &mut next);
             assert!(is_well_formed(&child), "cross_from 产出不合法: {child:?}");
@@ -1666,7 +1666,7 @@ mod tests {
         let mut next = stream(0x5A1E_u64);
         let pop: Vec<Individual> = (0..10)
             .map(|i| {
-                let toks = crate::function::parse(&format!("(* {} x)", i as f64 + 0.5));
+                let toks = crate::math_function::parse(&format!("(* {} x)", i as f64 + 0.5));
                 Individual::new(toks)
             })
             .collect();
@@ -1684,7 +1684,7 @@ mod tests {
     /// 空场 + 无目标时，分数只由 `V²/100` 决定 ⇒ **token 最少的个体一定赢**
     /// （同分时 `sort_by` 是稳定排序，克隆排在子代前面，所以克隆保住第 0 名）。
     /// 于是"塞一条 1 token 的函数当种子"就能让存活者**确定**，测试不依赖 RNG。
-    fn empty_field_targets() -> Vec<crate::settle::Target> {
+    fn empty_field_targets() -> Vec<crate::graphwar_shot_calculator::settle::Target> {
         Vec::new()
     }
 
@@ -1704,7 +1704,7 @@ mod tests {
     /// 填满，与本测试的断言无关。
     fn empty_field_evolver<'a>(
         mask: &'a [u8],
-        targets: &'a [crate::settle::Target],
+        targets: &'a [crate::graphwar_shot_calculator::settle::Target],
     ) -> SoldierEvolver<'a> {
         let ctx = ScoringContext {
             x0: 10.0,

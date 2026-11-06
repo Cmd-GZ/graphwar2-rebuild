@@ -70,11 +70,11 @@
 
 | 层 | 类型 / 函数 | 做什么 |
 |---|---|---|
-| 收集 | `turn::RoundCollection<T>` | 公告名单 → 攒提交 → **攒齐或超时**即可结算；顺序 = 公告顺序 |
+| 收集 | `graphwar_turn_manager::RoundCollection<T>` | 公告名单 → 攒提交 → **攒齐或超时**即可结算；顺序 = 公告顺序 |
 | 收集 | `game::Match::begin_simultaneous_turn` | 每人一条 `TurnInfo` + **一条** `EndOfTurnInfo` + **一条** `WaitingForFunctions`；返回每人的 `TurnStart`（含 AI 进化结果） |
 | 结算 + 广播 | `game::Match::fire_batch(&[Submission])` | 一次产出**整个结算批**；`fire()` 现在是它的 `N = 1` 特例 |
-| 几何 | `settle::ShotOutcome.hits: Vec<Hit>` | 每次命中带 `arc`（沿弹道弧长）与 `index`，用来给死亡块排序 |
-| 接线 | `serverloop::start_sim_round` / `resolve_sim_round` | `Config::turn_mode = "SimultaneousTurns"` 时走这条路；`tests/sim_turns.rs` 有一条真 TCP e2e |
+| 几何 | `graphwar_shot_calculator::settle::ShotOutcome.hits: Vec<Hit>` | 每次命中带 `arc`（沿弹道弧长）与 `index`，用来给死亡块排序 |
+| 接线 | `graphwar_game_server::start_sim_round` / `resolve_sim_round` | `Config::turn_mode = "SimultaneousTurns"` 时走这条路；`tests/sim_turns.rs` 有一条真 TCP e2e |
 
 `SequentialTurns` 一个字节都没变：`Match::fire` 改成 `fire_batch(&[一发])` 之后，
 单发批的报文种类序列、`effect_id` 序号、坐标与之前**完全相同**
@@ -110,7 +110,7 @@ for s in shots { outcomes.push(resolve(..., &self.mask, &others)); }
 实现：
 
 ```rust
-// settle.rs::resolve_points —— 沿弹道累计弧长，每次命中记下来
+// graphwar_shot_calculator::settle::resolve_points —— 沿弹道累计弧长，每次命中记下来
 arc += ((px - qx).powi(2) + (py - qy).powi(2)).sqrt();
 hits.push(Hit { id: t.id, arc, index });
 
@@ -160,7 +160,7 @@ merged.sort_by(|a, b| a.0.partial_cmp(&b.0)... .then(a.1.cmp(&b.1)).then(a.2.cmp
 
 **残余的 A 类**只有一层：**`TurnInfo` 那组本身的顺序**来自玩家表的 HashMap 迭代序
 （`docs/113` §1.1 已实测：钉住 `getrandom(16)` 后跨进程一致）。本实现不碰它——
-`begin_simultaneous_turn` **照抄调用方给的 `players` 顺序**，接线层（`serverloop`）给的是
+`begin_simultaneous_turn` **照抄调用方给的 `players` 顺序**，接线层（`graphwar_game_server`）给的是
 `Config::player_order` 或玩家表的构造顺序。所以：
 
 * **批内分组与顺序：规则已定，130/130 复现**；
@@ -179,12 +179,12 @@ merged.sort_by(|a, b| a.0.partial_cmp(&b.0)... .then(a.1.cmp(&b.1)).then(a.2.cmp
 
 ### 4.1 口径（一个字都没改）
 
-与 `docs/136` §1.2–§1.4 **完全相同**：同一份 `replaydiff::Policy`、同一个
-`replaydiff::compare_batch`（投影 → 折叠重复 → 分块 → 块内多重集 → 字段级 diff）。
+与 `docs/136` §1.2–§1.4 **完全相同**：同一份 `_scaffold::replaydiff::Policy`、同一个
+`_scaffold::replaydiff::compare_batch`（投影 → 折叠重复 → 分块 → 块内多重集 → 字段级 diff）。
 唯一改的是**预测驱动**：
 
 * **驱动 A（旧）**：每发调一次 `Match::fire`，把 N 次的报文拼起来 —— 这正是
-  `replaydiff::Predictor::predict` 现在的做法；
+  `_scaffold::replaydiff::Predictor::predict` 现在的做法；
 * **驱动 B（新）**：一个批调一次 `Match::fire_batch`。
 
 两者跑同一份语料、同一个 `Match`，所以差异只可能来自驱动方式。
@@ -321,7 +321,7 @@ cargo test --offline          # 333 → 347（新增 tests/sim_turns.rs 14 条�
 
 ## 7. 与既有文档的关系
 
-* `docs/86` §6 的"按飞行时间串行"由本文**落成代码**（`settle::Hit.arc` +
+* `docs/86` §6 的"按飞行时间串行"由本文**落成代码**（`graphwar_shot_calculator::settle::Hit.arc` +
   `fire_batch` 的排序），§8 那条"要改的是事件生成"在这里做完了；
 * `docs/136` §5 第 5 条（"同时回合制一次结算按消息类型分组发 N 发"）由本文**定成规则**，
   §6 第 3 条（"同时回合制的事务化"）由本文完成；

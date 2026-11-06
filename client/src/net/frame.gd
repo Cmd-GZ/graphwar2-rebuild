@@ -1,6 +1,6 @@
 extends RefCounted
 class_name GwNetFrame
-## 线上分帧与消息解析 —— `src/protocol.rs` 的 GDScript 对应物。
+## 线上分帧与消息解析 —— `src/_scaffold/protocol.rs` 的 GDScript 对应物。
 ##
 ## 传输层（**观测**，`docs/24` §1）：`u16` **大端**长度 + JSON 负载，长度只算负载。
 ## 实测量到的帧头 `0x0031` = 49 字节，后面正好 49 字节 JSON。
@@ -43,7 +43,7 @@ static func encode_many(payloads: Array) -> PackedByteArray:
 ##
 ## 为什么不让调用方传 `Dictionary` 再序列化：`JSON.stringify` 会重排/加空格，
 ## 而线上字节要能逐字节对拍（`docs/96` §7 的"逐位验证"档）。所以我们像
-## `src/protocol.rs` 一样**拼原文**，不做"解析再序列化"。
+## `src/_scaffold/protocol.rs` 一样**拼原文**，不做"解析再序列化"。
 static func message(kind: String, body_json: String) -> String:
 	return '{"%s":%s}' % [kind, body_json]
 
@@ -91,7 +91,7 @@ static func decode_buffer(buf: PackedByteArray) -> Dictionary:
 
 ## 解一帧：返回 `{"kind": String, "body": Dictionary, "text": String}`，解不出返回 `{}`。
 ##
-## 判据照 `src/protocol.rs::parse_message`：外层必须是**恰好一个**键的对象，
+## 判据照 `src/_scaffold/protocol.rs::parse_message`：外层必须是**恰好一个**键的对象，
 ## 它的值必须也是对象（`ClearObstacles` 的空体 `{}` 也算对象）。花括号配平由 JSON
 ## 解析器负责 —— 半截帧在切帧阶段就已经被挡掉了。
 static func parse_message(text: String) -> Dictionary:
@@ -112,7 +112,7 @@ static func parse_message(text: String) -> Dictionary:
 
 # ---------------------------------------------------------------- 取字段
 #
-# 原版是**文本查找**（`src/protocol.rs::get_str/get_int`），这里用 JSON 解析后的字典。
+# 原版是**文本查找**（`src/_scaffold/protocol.rs::get_str/get_int`），这里用 JSON 解析后的字典。
 # 差异只有一个：Godot 的 JSON 把所有数字都读成 float，所以 `as_int` 要显式取整。
 
 static func has(msg: Dictionary, key: String) -> bool:

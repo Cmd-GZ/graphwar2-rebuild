@@ -217,7 +217,7 @@
 
 | 位置 | 原文 | 改后 | 依据 |
 |---|---|---|---|
-| `91` §0 | "半步复检不通过（`chord <= chord2`）时……" | 不通过的条件改成 **`not (chord > chord2)`**，并注明"NaN 也走退回：`ucomisd` unordered 时 CF=ZF=1 ⇒ `jbe` 成立。写成 `L <= L2` 会漏掉 NaN 那一支" | 汇编 `0x3c2a4d jbe`（`91` §3）；`src/path.rs:94` `if !(chord > chord2)`；父仓库 `graphwar_curve.py:475` `if not (ln > ln2)` |
+| `91` §0 | "半步复检不通过（`chord <= chord2`）时……" | 不通过的条件改成 **`not (chord > chord2)`**，并注明"NaN 也走退回：`ucomisd` unordered 时 CF=ZF=1 ⇒ `jbe` 成立。写成 `L <= L2` 会漏掉 NaN 那一支" | 汇编 `0x3c2a4d jbe`（`91` §3）；`src/graphwar_path_calculator.rs:94` `if !(chord > chord2)`；父仓库 `graphwar_curve.py:475` `if not (ln > ln2)` |
 | `HANDOVER.md` §7.7 伪码 | "`if chord <= chord2: lo = x; continue`" | "`if not (chord > chord2): lo = x; continue`" + 三行注释说明 NaN 语义 | 同上（该文下方本来就写着"判据写成 `not (ln > ln2)`"，**伪码与自己的说明自相矛盾**，本轮统一） |
 
 > `04-path-sampling.md` 原本就写对了（`hi = mid2` + `not (L > L2)` 都在），**未改**。
@@ -227,7 +227,7 @@
 
 | 原文 | 改后 | 依据 |
 |---|---|---|
-| "Python 的 `ln <= ln2` 在 `ln2 = NaN` 时为 `False` ⇒ 走接受……**建议按 §7.1 一起改掉**" | 标 ✅ **两头已同构**：`graphwar_curve.py:475` 已写 `not (ln > ln2)`、`src/path.rs:94` 已写 `!(chord > chord2)`。剩下的是"真游戏里是否真的触发过"——**仍未实测**（残留未知，不是实现差异） | 两处源码实读 |
+| "Python 的 `ln <= ln2` 在 `ln2 = NaN` 时为 `False` ⇒ 走接受……**建议按 §7.1 一起改掉**" | 标 ✅ **两头已同构**：`graphwar_curve.py:475` 已写 `not (ln > ln2)`、`src/graphwar_path_calculator.rs:94` 已写 `!(chord > chord2)`。剩下的是"真游戏里是否真的触发过"——**仍未实测**（残留未知，不是实现差异） | 两处源码实读 |
 
 ### 3.5 函数边界：`.eh_frame` → **Ghidra**（2 处）
 

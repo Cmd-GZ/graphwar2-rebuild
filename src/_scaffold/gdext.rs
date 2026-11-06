@@ -138,14 +138,14 @@ unsafe extern "C" fn on_initialize(_userdata: *mut c_void, level: i32) {
         if !f.is_null() {
             let get: GetProcAddress = std::mem::transmute(f);
             unsafe {
-                if crate::gdext_class::register_class(get, lib) {
-                    crate::gdext_class::register_ping_method(get, lib);
+                if crate::_scaffold::gdext_class::register_class(get, lib) {
+                    crate::_scaffold::gdext_class::register_ping_method(get, lib);
                     // 真正的算法出口：GDScript 的 `GW2Rebuild.path_calculate(...)`
                     // （契约见 `client/src/core/core_bridge.gd` 文件头、`docs/116`）
-                    let _ = crate::api::register_path_method(get, lib);
-                    let _ = crate::api::register_path_mode_method(get, lib);
-                    let _ = crate::api::register_hit_test_method(get, lib);
-                    let _ = crate::api::register_level_obstacles_method(get, lib);
+                    let _ = crate::_scaffold::api::register_path_method(get, lib);
+                    let _ = crate::_scaffold::api::register_path_mode_method(get, lib);
+                    let _ = crate::_scaffold::api::register_hit_test_method(get, lib);
+                    let _ = crate::_scaffold::api::register_level_obstacles_method(get, lib);
                 }
             }
         }

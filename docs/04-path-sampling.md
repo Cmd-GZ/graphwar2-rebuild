@@ -137,7 +137,7 @@ ODE 求值时第三个参数在**全部 7 个调用点**都传 `0`：`y'` 这个
 ## 8. 复刻物
 
 - Python 参照实现（已逐位验证）：上游 `graphwar_curve.py`（`hi = mid2` 已补）
-- Rust 复原：本仓库 `src/path.rs`（同步修复；`06-verification.md` §32 当时记录 `cargo test` 135 条全绿，现为 **150 条**）
+- Rust 复原：本仓库 `src/graphwar_path_calculator.rs`（同步修复；`06-verification.md` §32 当时记录 `cargo test` 135 条全绿，现为 **150 条**）
 
 验收数字（两份实现共用）：第 4 点 = `-1.174402651902936`；`step=0.5` → 401 点 / 末点
 `(24.8098, 9.8719)`；`step=0.01` → 20001 点 / 末点 `(23.2128, 6.4176)`。
@@ -204,7 +204,7 @@ hi = (x + mid) / 2
 
 > **2026-11 复核：两边都已改成 `not (L > L2)`，与 `jbe` 同构。**
 > 依据：父仓库 `graphwar_curve.py` 第 475 行 `if not (ln > ln2):`、
-> 本仓库 `src/path.rs` 第 94 行 `if !(chord > chord2) {`。原文"建议按 §7.1 一起改掉"**已执行**。
+> 本仓库 `src/graphwar_path_calculator.rs` 第 94 行 `if !(chord > chord2) {`。原文"建议按 §7.1 一起改掉"**已执行**。
 
 - 汇编行为：**逐位验证（读指令）**；
 - 这条差异在真游戏里是否真的发生、影响多大：**仍未实测**（现有 24 例没触发）——

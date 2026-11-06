@@ -73,7 +73,7 @@
 | 控件节点（启动态全树） | 858 个节点 / 283 个 `GraphwarButton` / 25 个 `Label` / 4 个 `LineEdit` | `boot_all_screens` 快照 |
 | 挂到活动节点上的脚本 | 46 个（`.gdc` 共 105 个，其中 51 个非插件） | `@@N` 第 5 段 |
 | `.gdc` 反编译 | **无可用反编译器**（离线检索无 gdsdecomp/GDRE/pip 包）；但我们解开了 `GDSC` 容器与**字符串池**（105/105） | §2 |
-| 本仓库对界面的实现 | **0 个控件**——本仓库是 Rust 逻辑库（`GW2Rebuild` RefCounted），没有 Godot 客户端 | `src/gdext_class.rs` |
+| 本仓库对界面的实现 | **0 个控件**——本仓库是 Rust 逻辑库（`GW2Rebuild` RefCounted），没有 Godot 客户端 | `src/_scaffold/gdext_class.rs` |
 
 **最重要的一条结论（推翻了 `06-verification.md` §11–§12 的判断）**：
 
@@ -108,9 +108,9 @@
 | 控件 | 类型 | 文本/图标 | 作用 | 本仓库 |
 |---|---|---|---|---|
 | `MainMenu/MarginContainer/VBoxContainer/MarginContainer/Label` | Label | `Graphwar II` | 标题（`minsize=(64,0)`，字号由 `TitleSize.gd` 调） | ❌ |
-| `.../HBoxContainer/MarginContainer/VBoxContainer/PlayButton` | GraphwarButton | `Campaign` | **观测**：点它 → `Campaign.visible=1` | ❌ 控件；关卡生成 逻辑✅ `src/levelgen.rs` |
+| `.../HBoxContainer/MarginContainer/VBoxContainer/PlayButton` | GraphwarButton | `Campaign` | **观测**：点它 → `Campaign.visible=1` | ❌ 控件；关卡生成 逻辑✅ `src/graphwar_level_generator.rs` |
 | `.../VBoxContainer/CharacterButton` | GraphwarButton | `Player\n` | **观测**：点它 → `PlayerScreen.visible=1` | ❌ |
-| `.../MarginContainer2/VBoxContainer2/LocalButton` | GraphwarButton | `Battle` | **观测**：点它 → `LanLobby.visible=1` | ❌（联机 逻辑✅ `src/server.rs`/`protocol.rs`） |
+| `.../MarginContainer2/VBoxContainer2/LocalButton` | GraphwarButton | `Battle` | **观测**：点它 → `LanLobby.visible=1` | ❌（联机 逻辑✅ `src/server.rs`/`_scaffold/protocol.rs`） |
 | `.../VBoxContainer2/ReplayButton` | GraphwarButton | `Replays` | **观测**：点它 → `ReplayLobby.visible=1` | ❌（回放格式 观测✅ `16-client.md`） |
 | `.../VBoxContainer2/MarginContainer3/VersionLabel` | Label | `2.0.60` | 版本号（硬编码在场景里；`VersionLabel.gd` 只管字号） | ❌ |
 | `.../VBoxContainer/AdContainer` | MarginContainer | — `AdContainer.gd` | 广告位（我们 harness 里是桩 `Ad_holder.gd`） | ❌ |
@@ -124,7 +124,7 @@
 | 控件 | 类型 | 文本/图标 | 作用 | 本仓库 |
 |---|---|---|---|---|
 | `Campaign/MarginContainer/VBoxContainer/HBoxContainer/MarginContainer/Label` | Label | `CAMPAIGN` | 标题 | ❌ |
-| `.../VBoxContainer/Control/level_0 … level_20` | GraphwarButton ×**21** | `0`…`20` | **观测**：`level_0` 按下 → `JoinLevelPopUp.visible=1`（进关卡预览）。**推断**：每个按钮一个关卡；21 关与用户口述"21 关（0–20）"一致。**缺**：锁定态（`lock.svg` 存在但本进程全部可点，因为本地存档是新的/未锁定状态未知） | ❌ 控件；关卡生成 逻辑✅ `src/levelgen.rs`（**只有两种模式**，见 `11-levelgen.md`） |
+| `.../VBoxContainer/Control/level_0 … level_20` | GraphwarButton ×**21** | `0`…`20` | **观测**：`level_0` 按下 → `JoinLevelPopUp.visible=1`（进关卡预览）。**推断**：每个按钮一个关卡；21 关与用户口述"21 关（0–20）"一致。**缺**：锁定态（`lock.svg` 存在但本进程全部可点，因为本地存档是新的/未锁定状态未知） | ❌ 控件；关卡生成 逻辑✅ `src/graphwar_level_generator.rs`（**只有两种模式**，见 `11-levelgen.md`） |
 | `Campaign/.../Control` | Control | — `CampaingLevelsButtons.gd` | **观测（字符串池）**：这 21 个按钮**是脚本运行时 new 出来的**（`GraphwarButton.new()` + `set_name("level_"+str(i))` + `add_child`），不是场景里摆好的 | ❌ |
 | `.../HBoxContainer/ExitButtonContainer/{ClipButton,LongPressButton}` | GraphwarButton ×2 | icon=`return.svg` | 返回（`ClipButton` 按下无反应，`LongPressButton` 是长按返回；见 §4.11 的同类验证） | ❌ |
 
@@ -174,8 +174,8 @@
 | `.../HBoxContainer/MarginContainer4/GhostButton` | GraphwarButton | `         `（空白占位） | 标题占位（`LanLobbyTitle.gd`） | ❌ |
 | `.../VBoxContainer/MarginContainer/HBoxContainer/MarginContainer/GameIpLabel` | Label | **`198.18.0.1:36071`** 等（每个进程不同） | **观测：这就是 `game_ip_label`——本机房间的 IP:端口**，`06-verification.md` §10 里标"未查"的一项，现已拿到 | ❌ 控件；端口/握手 观测✅ `09-network.md` |
 | `.../OptionsContainer/AxisModeButton` | GraphwarButton | icon=`axis_option_?.svg` | 坐标轴模式，点击循环（§6） | ❌ 控件；对物理无影响 推断✅（`06-verification.md` §14） |
-| `.../OptionsContainer/FunctionModeButton` | GraphwarButton | icon=`fx_option.svg`⇄`dx_dy_option.svg` | 函数模式 `NormalFunction`⇄`DiffEqFunction`，点击切换 | ❌ 控件；**逻辑✅** `src/path.rs`（RK4）、`src/aigen.rs`（变量权重） |
-| `.../OptionsContainer/TurnModeButton` | GraphwarButton | icon=`turns_sequential.svg`⇄`turns_simultaneous.svg` | 回合模式，点击切换 | ❌ 控件；**逻辑✅** `src/turn.rs`+`src/settle.rs`（含同时回合结算 `14-turn.md`） |
+| `.../OptionsContainer/FunctionModeButton` | GraphwarButton | icon=`fx_option.svg`⇄`dx_dy_option.svg` | 函数模式 `NormalFunction`⇄`DiffEqFunction`，点击切换 | ❌ 控件；**逻辑✅** `src/graphwar_path_calculator.rs`（RK4）、`src/graphwar_function_evolutionator.rs`（变量权重） |
+| `.../OptionsContainer/TurnModeButton` | GraphwarButton | icon=`turns_sequential.svg`⇄`turns_simultaneous.svg` | 回合模式，点击切换 | ❌ 控件；**逻辑✅** `src/graphwar_turn_manager.rs`+`src/graphwar_shot_calculator/settle.rs`（含同时回合结算 `14-turn.md`） |
 | `.../OptionsContainer/TurnTimeButton` | GraphwarButton | icon=`turn_30s/1m/2m/3m/5m/inf.svg` | 回合时限，点击循环（§6） | ❌ 控件；只影响思考时间 |
 | `.../OptionsContainer/AddBotButton` | GraphwarButton | icon=`add_bot_option.svg` | **观测**：→ `AddBotPopUp.visible=1` | ❌ |
 | `.../MarginContainer/HBoxContainer/StartButton` | GraphwarButton | ` Start ` | **观测**：→ `PlayScreen.visible=1`。**注意**：不加 Bot 直接 Start 会静默无操作（`archive/22-live-game-harness.md` §5.1） | ❌ 控件；开局/回合状态机 **逻辑✅** `src/turnstate.rs` |
@@ -185,7 +185,7 @@
 | └ `.../HBoxContainer/MarginContainer/PlayerNameLabel` | Label | `user` / `Deep Blue` / `Alpha Zordon` / `ChatGPT` / `Multivac` / `Deep Thought` / `Skynet` / `Agent Smith` | 玩家名 | ❌ |
 | └ `.../HBoxContainer/RankIcon` | TextureRect | 玩家 `ranks/rank_0.svg`；Bot `hats/no_hat.svg`（空） | 段位图标 | ❌ |
 | └ `.../HBoxContainer/AspectRatioContainer/RemovePlayerButton` | GraphwarButton | icon=`x.svg` | 踢出玩家 | ❌ |
-| └ `.../HBoxContainer/AspectRatioContainer2/AddSoldierButton` | GraphwarButton | icon=`plus.svg` | 该玩家**加一个士兵**（多士兵=多命） | ❌ 控件；多士兵生命 **逻辑✅** `src/life.rs` |
+| └ `.../HBoxContainer/AspectRatioContainer2/AddSoldierButton` | GraphwarButton | icon=`plus.svg` | 该玩家**加一个士兵**（多士兵=多命） | ❌ 控件；多士兵生命 **逻辑✅** `src/graphwar_life_manager.rs` |
 | └ `.../HBoxContainer/AspectRatioContainer3/RemoveSoldierButton` | GraphwarButton | icon=`minus.svg` | 减一个士兵 | ❌ |
 | └ `.../HBoxContainer/AspectRatioContainer4/ChangeTeamButton` | GraphwarButton | icon=`arrow_right.svg`（Team1）/`arrow_left.svg`（Team2） | 换队 | ❌ |
 | └ `.../HBoxContainer/SoldierIconContainer/MarginContainer…5` | MarginContainer ×5（`SoldierIconMarginContainer.gd`） | 每个槽 4 个 `TextureRect`：`SkinIcon`=`skins/yellow.svg` 或 `skins/bot_N.svg`、`FaceIcon`=`faces/regular_eyes.svg`/`no_face.svg`、`HatIcon`=`hats/soldier_helmet.svg`/`no_hat.svg`、`EmptyIcon`=`empty_soldier.svg` | **观测**：每个士兵一个槽（**5 个槽**⇒每玩家最多 5 个士兵），空槽显示 `empty_soldier.svg` | ❌ 控件；皮肤系统 `rsc/skins|faces|hats` |
@@ -201,7 +201,7 @@
 
 | 控件 | 类型 | 文本/图标 | 作用 | 本仓库 |
 |---|---|---|---|---|
-| `AddBotPopUp/.../VBoxContainer/OptionsContainer/AspectRatioContainer/AddBotButton` | GraphwarButton | icon=`skins/bot_0.svg` | 难度档 0 | ❌ 控件；**六档参数表 逻辑✅** `AI.md` §1 / `src/aigen.rs` |
+| `AddBotPopUp/.../VBoxContainer/OptionsContainer/AspectRatioContainer/AddBotButton` | GraphwarButton | icon=`skins/bot_0.svg` | 难度档 0 | ❌ 控件；**六档参数表 逻辑✅** `AI.md` §1 / `src/graphwar_function_evolutionator.rs` |
 | `.../OptionsContainer/AspectRatioContainer2/AddBotButton` | GraphwarButton | icon=`skins/bot_1.svg` | 难度档 1 | 同上 |
 | `.../OptionsContainer/AspectRatioContainer4/AddBotButton` | GraphwarButton | icon=`skins/bot_2.svg` | 难度档 2（**本文件的默认点击目标**） | 同上 |
 | `.../OptionsContainer2/AspectRatioContainer/AddBotButton` | GraphwarButton | icon=`skins/bot_3.svg` | 难度档 3 | 同上 |
@@ -223,7 +223,7 @@
 | `JoinIpPopUp/.../HBoxContainer/MarginContainer/Label` | Label | `Ip:` | 提示 | ❌ |
 | `.../HBoxContainer/MarginContainer2/JoinIpIpLineEdit` | LineEdit | 空；我们写入过 `10.255.255.1`、`10.255.255.1:12345`、`127.0.0.1:1` | IP 输入（**必须带端口**） | ❌ |
 | `.../HBoxContainer3/MarginContainer/GraphwarButton` | GraphwarButton | ` Cancel ` | 取消 | ❌ |
-| `.../HBoxContainer3/MarginContainer2/GraphwarButton` | GraphwarButton | `  Join  ` | **观测**：按下 `127.0.0.1:1` → 2 s 内出现 `DisconnectedPopUp`；按下 `10.255.255.1:12345` → 2 s 内出现 `ConnectingPopUp`。**只写 `10.255.255.1`（无端口）时毫无反应**（120 s 超时）⇒ 端口必填，格式 `host:port` | ❌ 控件；握手 **逻辑✅/观测** `09-network.md`、`src/protocol.rs` |
+| `.../HBoxContainer3/MarginContainer2/GraphwarButton` | GraphwarButton | `  Join  ` | **观测**：按下 `127.0.0.1:1` → 2 s 内出现 `DisconnectedPopUp`；按下 `10.255.255.1:12345` → 2 s 内出现 `ConnectingPopUp`。**只写 `10.255.255.1`（无端口）时毫无反应**（120 s 超时）⇒ 端口必填，格式 `host:port` | ❌ 控件；握手 **逻辑✅/观测** `09-network.md`、`src/_scaffold/protocol.rs` |
 | `.../MarginContainer2/ExitButtonContainer/{ClipButton,LongPressButton}` | GraphwarButton | icon=`return.svg` | 关闭 | ❌ |
 
 #### 2.1.8 ConnectingPopUp（连接中）
@@ -255,10 +255,10 @@
 
 | 控件 | 类型 | 文本/图标 | 作用 | 本仓库 |
 |---|---|---|---|---|
-| `PlayScreen/.../PlayMainHBox/LeftControls/LeftButtonGrid` | GridContainer `ButtonGrid.gd` | **18 个** `GraphwarButton` | **左键盘**：`C` `π` `e` `1`…`9` `0` `.` `(` + 三个控制键（icon=`arrow_left_bar.svg` / `arrow_left.svg` / `delete_left.svg`） | ❌ 控件；函数文法 **逻辑✅** `src/function/` |
-| `.../RightControls/RightButtonGrid` | GridContainer `ButtonGrid.gd` | **18 个** `GraphwarButton` | **右键盘**：`abs` `ln` `√` `sin` `cos` `tan` `*` `/` `exp` `+` `-` `^` `x` `y`(disabled) `)` + icon=`delete_right.svg` / `arrow_right.svg` / `arrow_right_bar.svg` | ❌ 控件；文法 **逻辑✅** `src/function/` |
+| `PlayScreen/.../PlayMainHBox/LeftControls/LeftButtonGrid` | GridContainer `ButtonGrid.gd` | **18 个** `GraphwarButton` | **左键盘**：`C` `π` `e` `1`…`9` `0` `.` `(` + 三个控制键（icon=`arrow_left_bar.svg` / `arrow_left.svg` / `delete_left.svg`） | ❌ 控件；函数文法 **逻辑✅** `src/math_function/` |
+| `.../RightControls/RightButtonGrid` | GridContainer `ButtonGrid.gd` | **18 个** `GraphwarButton` | **右键盘**：`abs` `ln` `√` `sin` `cos` `tan` `*` `/` `exp` `+` `-` `^` `x` `y`(disabled) `)` + icon=`delete_right.svg` / `arrow_right.svg` / `arrow_right_bar.svg` | ❌ 控件；文法 **逻辑✅** `src/math_function/` |
 | `.../RightButtonGrid/YButton` | GraphwarButton | `y`，**永远 `disabled`** | **观测**：Normal 与 DiffEq 两种模式下都 disabled。**推断**：与"`y'` 是死特性、DiffEq 只生成 x/y 权重"有关，但**为什么 `y` 也不给按**未知 | ❌ |
-| `.../RightControls/HBoxContainer/FireContainer/FireButton` | GraphwarButton | ` Fire! ` | 开火。**`archive/26-harness-control.md` 观测**：`emit_signal("pressed")` 真的发出 `FunctionFireRequest`，随后 `shot_calc/calculate_path` 计数上升（本文件只观测到按钮存在且未 `disabled`，**没有重复验证开火**） | ❌ 控件；**开火链路 逻辑✅** `src/shot.rs`/`path.rs` |
+| `.../RightControls/HBoxContainer/FireContainer/FireButton` | GraphwarButton | ` Fire! ` | 开火。**`archive/26-harness-control.md` 观测**：`emit_signal("pressed")` 真的发出 `FunctionFireRequest`，随后 `shot_calc/calculate_path` 计数上升（本文件只观测到按钮存在且未 `disabled`，**没有重复验证开火**） | ❌ 控件；**开火链路 逻辑✅** `src/graphwar_shot_calculator.rs`/`graphwar_path_calculator.rs` |
 | `.../FireContainer/ClipButton` | GraphwarButton | ` Fire! `（同文本，带 `AnimationRect` 子节点） | 开火按钮的动画层（点击用 `FireButton`） | ❌ |
 | `.../LeftControls/LeftTopButtonsContainer/ExitButtonContainer/{ClipButton,LongPressButton}` | GraphwarButton ×2 | icon=`return.svg` | 退出对局（**长按**才出确认框，见 §4.11） | ❌ |
 | `.../LeftTopButtonsContainer/MarginContainer/ShowExtraButtons` | GraphwarButton `ShowExtraButtons.gd` | icon 由脚本 `set_button_icon(load(...))` 切换（`hide_extra_buttons.svg`/`show_extra_buttons.svg`） | **观测（字符串池）**：切换"附加按钮区"显示，`set_show_extra_buttons(...)` 联动 `plane_container`/`view_function_pad` | ❌ |
@@ -269,12 +269,12 @@
 | `.../PlaneContainer/GamePlane/PlaneContainer/GraphwarPlane` | GraphwarPlane（Rust） | — | 战场（Rust 自绘）。子节点：`@AxisDrawer@N`、`@EntityDrawer@N`、`@EffectDrawer@N`、`@Line2D@N` | ❌ 控件；**坐标/掩膜 逻辑✅** `src/plane.rs` |
 | `GraphwarPlane/@EntityDrawer@N/@Sprite2D@N` | Sprite2D | `texture=res://skins/yellow.svg`、`faces/regular_eyes.svg`、`hats/soldier_helmet.svg`；Bot 用 `skins/bot_N.svg`、`faces/no_face.svg`、`hats/no_hat.svg` | **观测**：每个士兵 3 个 Sprite2D（皮肤/脸/帽） | ❌ |
 | `GraphwarPlane/@EntityDrawer@N/<name_label 实例>` | RichTextLabel（`scene=res://name_label.tscn`） | 名字文本（bbcode，观测到空串时是未填） | 士兵头顶名字 | ❌ |
-| `GraphwarPlane/@Line2D@N` | Line2D | — | **观测**：开火后出现（`scene_file_path` 为空 ⇒ **不是** `line_2d.tscn` 实例，而是运行时新建/由 Rust 建） | ❌ 控件；弹道 **逻辑✅** `src/path.rs` |
-| `PlayScreen/.../VBoxContainer/HBoxContainer2/GraphwarFunctionInput` | GraphwarFunctionInput（Rust） | `text` = 当前函数串，如 `(1.44*(cos(x)+x))`、`log(exp((12.10/(-19.42/x))))`、`sin((-1.20+x))` | 函数输入框（Rust 自绘，无 LineEdit 子节点）。**观测**：`text` 属性可读 ⇒ 能读到场上显示的函数 | ❌ 控件；解析 **逻辑✅** `src/function/` |
+| `GraphwarPlane/@Line2D@N` | Line2D | — | **观测**：开火后出现（`scene_file_path` 为空 ⇒ **不是** `line_2d.tscn` 实例，而是运行时新建/由 Rust 建） | ❌ 控件；弹道 **逻辑✅** `src/graphwar_path_calculator.rs` |
+| `PlayScreen/.../VBoxContainer/HBoxContainer2/GraphwarFunctionInput` | GraphwarFunctionInput（Rust） | `text` = 当前函数串，如 `(1.44*(cos(x)+x))`、`log(exp((12.10/(-19.42/x))))`、`sin((-1.20+x))` | 函数输入框（Rust 自绘，无 LineEdit 子节点）。**观测**：`text` 属性可读 ⇒ 能读到场上显示的函数 | ❌ 控件；解析 **逻辑✅** `src/math_function/` |
 | `.../HBoxContainer2/FxContainer/FxLabel` | Label | ` f(x) = `（DiffEq 时同位置显示 `dx/dy` 图标） | 函数前缀提示 | ❌ |
 | `.../FxContainer/AspectRatioContainer/FxTextureButton` | GraphwarButton | icon `fx_option.svg`（Normal）/`dx_dy_option.svg`（DiffEq） | **观测**：模式指示图标 | ❌ |
 | `.../HBoxContainer2/TimerContainer/TimerLabel` | Label | `02:59`、`01:59`、`00:04`、`00:00` | 回合倒计时。**观测**：按 2 次 `TurnTimeButton` ⇒ 起始 `02:59`（3 分钟档）、按 1 次 ⇒ `01:59`（2 分钟档）；见 §6 | ❌ 控件；时钟 **观测✅** `14-turn.md` |
-| `.../HBoxContainer2/OffsetContainer/OffsetLabel` | Label | Normal：` + 2.515 `、` + 0.919 `；**DiffEq：空** | 修正常数显示。**观测**：DiffEq 模式下为空（`+c` 修正不显示/不适用） | ❌ 控件；修正 **逻辑✅** `src/shot.rs` |
+| `.../HBoxContainer2/OffsetContainer/OffsetLabel` | Label | Normal：` + 2.515 `、` + 0.919 `；**DiffEq：空** | 修正常数显示。**观测**：DiffEq 模式下为空（`+c` 修正不显示/不适用） | ❌ 控件；修正 **逻辑✅** `src/graphwar_shot_calculator.rs` |
 | `.../HBoxContainer2/GraphwarFunctionInput`（同上） | — | — | — | — |
 | `PlayScreen/.../VBoxContainer/PlayMainHBox/PlaneContainer/GamePlane/PlaneContainer/VBoxContainer/HBoxContainer/ViewFunctionsLabel` | RichTextLabel `ViewFunctionsLabel.gd` | `[outline_size=4][outline_color=black][color=green]player 1: f(x) = 3x+234[/color]…` | 顶部"各玩家当前函数"列表 | ❌ |
 | `.../RightControls/HBoxContainer/FireContainer/ClipButton` | — | — | （同上，动画层） | ❌ |
@@ -319,7 +319,7 @@
 | 控件 | 类型 | 文本 | 作用 | 本仓库 |
 |---|---|---|---|---|
 | `EndGamePopUp/.../VBoxContainer/SelfVictoryLabel` | Label | **`YOU lOST`**（游戏原文如此，小写 l） | 自己的胜负 | ❌ |
-| `.../VBoxContainer/TeamVictoryLabel` | Label | `Team 2 Victory!` | 获胜方 | ❌ 控件；胜负判定 **逻辑✅** `src/settle.rs`、`14-turn.md` |
+| `.../VBoxContainer/TeamVictoryLabel` | Label | `Team 2 Victory!` | 获胜方 | ❌ 控件；胜负判定 **逻辑✅** `src/graphwar_shot_calculator/settle.rs`、`14-turn.md` |
 | `.../VBoxContainer/HBoxContainer/VictoryPlayerContainer1 … 10` | MarginContainer ×10 | 每个槽 3 个 `TextureRect`：`SkinIcon`（观测 `skins/bot_5.svg`）、`FaceIcon`（`faces/no_face.svg`）、`HatIcon`（`hats/no_hat.svg`） | 胜利方士兵展示（**10 个槽**⇒最多展示 10 个士兵） | ❌ |
 | `.../MarginContainer2/ExitButtonContainer/{ClipButton,LongPressButton}` | GraphwarButton | icon=`return.svg` | 关闭 | ❌ |
 
@@ -378,11 +378,11 @@
 | 契约来源 | `client/src/core/core_bridge.gd` 文件头（逐字）+ `16-client.md` §2.3 |
 | 返回 | `{ ok: bool, points: PackedVector2Array, offset: float, error: String }` |
 | 坐标系 | **棋盘（平面）坐标**，不是画布像素 —— 依据见 §2 |
-| 用的是不是真采样器 | 是。`parse → correction → shifted_tokens → path::calculate`，参数全部取既有常量 |
+| 用的是不是真采样器 | 是。`parse → correction → shifted_tokens → graphwar_path_calculator::calculate`，参数全部取既有常量 |
 | `GwCore.calculate_path()["source"]` | **`preview` → `kernel`**（§7.3 有前后对照） |
 | `cargo test --offline` | **205 → 218**（+13，全绿） |
 | `bash client/run.sh selftest` | **93 passed, 0 failed**（未改任何断言；见 §7.4） |
-| 改动的文件 | `src/api.rs`（新增）、`src/gdext.rs`（+3 行）、`src/lib.rs`（+1 行）、`16-client.md`（本文） |
+| 改动的文件 | `src/_scaffold/api.rs`（新增）、`src/_scaffold/gdext.rs`（+3 行）、`src/lib.rs`（+1 行）、`16-client.md`（本文） |
 | `client/` 改动 | **0 字节**（含 `client/` 下没有新增 `.gdextension`，见 §8.1） |
 | 仍未做 | 命中/掩膜接口、ODE（微分方程）模式、`client/` 侧的扩展描述符 |
 | debug / release | 两份 `.so` 的端到端结果**逐位相同**（2471 / 5295 点，弦长一致） |
@@ -417,7 +417,7 @@
 `05-shot-pipeline.md` §5 也早写过"否则会把像素坐标和游戏单位混在一起"。
 
 实测旁证：`GwCore.calculate_path("sin(x)", Vector2(5,2), 1.0)` 的 `points[0]` 就是 `(5.0, 2.0)`，
-点数 2471，弦长 0.0090–0.0105 —— 与 `src/path.rs` 单侧的值一模一样（§7.3）。
+点数 2471，弦长 0.0090–0.0105 —— 与 `src/graphwar_path_calculator.rs` 单侧的值一模一样（§7.3）。
 
 **顺带一条界面侧的观察（不是 bug，是接上内核后数字会变）**：
 `_preview()` 的修正常数恒用 `c = y0 − f(x0)`（不问方向），而内核用 `c = y0 − f(±x0)`。
@@ -443,16 +443,16 @@
 
 三条要写清楚的判断：
 
-1. **起点越界**为什么算错误：采样器把 `(x0, y0)` **无条件**塞成首点（`path.rs` 第一行），
+1. **起点越界**为什么算错误：采样器把 `(x0, y0)` **无条件**塞成首点（`graphwar_path_calculator.rs` 第一行），
    再做逐点边界检查 —— 起点越界时整条曲线在平面外，界面上会画到战场外面去。
    `AGENTS.md` 的硬事实是"越界点在**接受之前**检查"。所以这里在入口先拒。
    档位：**推断**（真二进制在起点越界时是否也拒，未观测；客户端预览分支同样是先判 `|x| ≤ 25`）。
 2. **空表达式**：原版**能画** —— 抓包里 `{"function":""}` 的修正文本是 `" + 10.990"`，
-   也就是 `f(x) = 0` 的水平直线（`05-shot-pipeline.md` §2）。但既有的 `shot::shot_points` 与 C ABI
+   也就是 `f(x) = 0` 的水平直线（`05-shot-pipeline.md` §2）。但既有的 `graphwar_shot_calculator::shot_points` 与 C ABI
    `gw2_shot_points` 都按"空 = 没有点"处理，且客户端在调内核**之前**就把空串拦下了
    （`GwCore.calculate_path` 先 `GwExpr.compile`）。本次保持与既有内核一致：报错。
    **这是一处已知的、有意保留的偏差**，要不要改成"空串 ⇒ 水平直线"见 §8.4。
-3. **不收敛**：`path::calculate` 在第 100 次二分仍失败时直接 return，不区分原因；本层也不猜，
+3. **不收敛**：`graphwar_path_calculator::calculate` 在第 100 次二分仍失败时直接 return，不区分原因；本层也不猜，
    统一归到 `no_points`（只在"一段都没走成"时触发）。半路停下的情况仍然是 `ok: true`，
    只是点少 —— 与真二进制一致（真值夹具里就有这种短曲线）。
 
@@ -468,11 +468,11 @@
 | 新方法 | `GW2Rebuild.hit_test(points, obstacles, soldiers) -> Dictionary` | 逐位验证（`get_method_list` 与“注册成功”日志，§6.3） |
 | 返回 | `{ ok, hits, hit_points, first_hit, stop, blocked, error }`（顺序固定） | 逐位验证（单测 `result_shape_is_exactly_the_contract`） |
 | 坐标系 | 三个入参全是**棋盘坐标**（`|x|≤25`、`|y|≤15`）；掩膜是**像素**空间，换算只在 `plane::to_pixel` 里做一次 | 逐位验证（§2 三条测试） |
-| 用的是不是真规则 | 是。判定本体是 `settle::resolve_points`，`settle::resolve` 也走它 —— **只有一份实现** | 逐位验证（等价性测试 `agrees_with_settle_resolve_on_captured_shots`） |
+| 用的是不是真规则 | 是。判定本体是 `graphwar_shot_calculator::settle::resolve_points`，`graphwar_shot_calculator::settle::resolve` 也走它 —— **只有一份实现** | 逐位验证（等价性测试 `agrees_with_settle_resolve_on_captured_shots`） |
 | `cargo test --offline` | **242 → 258**（+16，全绿） | — |
 | `bash client/run.sh selftest` | **93 passed, 0 failed**（内核开 / 关各跑一遍；**未改任何断言**） | — |
 | 客户端改动 | `core_bridge.gd` +102/−6，`play_screen.gd` +27/−12（两处函数体，无布局/文案/节点树改动） | — |
-| 内核改动 | `src/api.rs`（新增）、`src/settle.rs`（新增一个函数 + `resolve` 改为委托）、`src/gdext.rs`（**+1 行**注册） | — |
+| 内核改动 | `src/_scaffold/api.rs`（新增）、`src/graphwar_shot_calculator/settle.rs`（新增一个函数 + `resolve` 改为委托）、`src/_scaffold/gdext.rs`（**+1 行**注册） | — |
 | 客户端状态行 | `本轮命中 N 个士兵 ／ 判定来源：kernel|preview ／ <note>` | 观测（§6.2 原文） |
 | 仍未确定 | 士兵半径常量的二进制出处、友军伤害、射手免疫的直接证据、同时回合顺序（§7） | — |
 
@@ -724,14 +724,14 @@ var skin_layer := _overlay("SkinBackgroundButton", GwIcons.get_icon("skin_%d" % 
 | 项 | 结果 | 档位 |
 |---|---|---|
 | 新内核方法 | `GW2Rebuild.level_obstacles(level_index: int, seed: int) -> Dictionary{ok, obstacles, error}` | 逐位验证（§5.3 的注册日志 + GDScript 实调成功） |
-| 生成本体 | **复用** `src/levelgen.rs` 既有实现（`generate` 13/13 逐位、`generate_center`），本文件没有第二份公式 | 逐位验证（单测 `agrees_with_levelgen_entry_point_bit_for_bit` / `seeded_entry_reuses_the_verified_generators`） |
-| 21 关参数表 | `src/levelgen.rs::LEVEL_OBSTACLE_PARAMS`，逐条抄自 `10-campaign.md` §7.1（每行注释带该关的闭包预设地址） | 逐位验证 + 运行时（`10-campaign.md` 原文的 `C`+`R` 双源）；本文再加一条"照文档重抄一遍"的测试 |
+| 生成本体 | **复用** `src/graphwar_level_generator.rs` 既有实现（`generate` 13/13 逐位、`generate_center`），本文件没有第二份公式 | 逐位验证（单测 `agrees_with_levelgen_entry_point_bit_for_bit` / `seeded_entry_reuses_the_verified_generators`） |
+| 21 关参数表 | `src/graphwar_level_generator::LEVEL_OBSTACLE_PARAMS`，逐条抄自 `10-campaign.md` §7.1（每行注释带该关的闭包预设地址） | 逐位验证 + 运行时（`10-campaign.md` 原文的 `C`+`R` 双源）；本文再加一条"照文档重抄一遍"的测试 |
 | **障碍真的画出来了** | 是。黑色实心圆，半径 = 生成器给的 `r`（棋盘单位），逐像素与原版真帧对齐（§4） | 观测（截图 + 像素取样） |
 | **子弹真的被墙挡住** | 是。端到端手测：`x/10` 在 `first_hit=4480` 撞墙，`stop=(24.00, −0.90)`，画出来的点序列 = `4480+1` 点（§5.4） | 观测 + 逐位验证（单测 `generated_obstacles_actually_block_a_shot`） |
 | `cargo test --offline` | **272 → 287**（+15，全绿） | — |
 | `bash client/run.sh selftest` | **146 passed, 0 failed**（条数不变，**未改任何断言**） | — |
 | `bash client/run.sh dump` | `@@KERNEL available=1 hit_test=1 methods=ping,path_calculate,hit_test,level_obstacles,…` | 逐位验证 |
-| 内核改动 | `src/levelgen.rs`（参数表 + 入口）、`src/api.rs`（新方法）、`src/gdext.rs`（**+1 行**注册） | — |
+| 内核改动 | `src/graphwar_level_generator.rs`（参数表 + 入口）、`src/_scaffold/api.rs`（新方法）、`src/_scaffold/gdext.rs`（**+1 行**注册） | — |
 | 客户端改动 | `core_bridge.gd`（+52/−0）、`play_screen.gd`（+92/−7）、`plane_view.gd`（+51/−2）、`join_level_pop_up.gd`（+14/−0，父 agent 追加的弹窗配色） | — |
 | 仍未定 | **客户端自生成 vs 服务端广播**的取舍（§6.1）、障碍被摧毁的洞、我方士兵/靶子位置、三条"用户口述"的开火表现（§6.3） | — |
 
@@ -798,7 +798,7 @@ Godot 4 里 `user://` 映射到 `$XDG_DATA_HOME/godot/app_userdata/<项目名>/`
 | 问题 | 结论 | 级别 |
 |---|---|---|
 | 回放文件长什么样 | gzip + JSONL，每行 `{"event":{"<事件名>":{…}},"tick":N}` | **观测**（400 份实文件） |
-| 事件名/字段名和网络协议是同一套吗 | 是。解析直接复用 `src/protocol.rs` 的 `parse_message` 与 `get_*` | **观测 + 逐位验证** |
+| 事件名/字段名和网络协议是同一套吗 | 是。解析直接复用 `src/_scaffold/protocol.rs` 的 `parse_message` 与 `get_*` | **观测 + 逐位验证** |
 | 一局有多少事件 | 真实语料 400 份、**103 104** 条；单局 2 … 1471 条（另有 2 份空回放） | **观测** |
 | 播放按什么推进 | **按 tick**（不是按墙钟/按事件）。60 tick/秒 | **观测**（`14-turn.md`）+ 我们自定的取整规则 |
 | 回放的弹道点序列在哪 | **没有**。只有 `FunctionPoints{start_x,start_y,end_x}` | **观测**（400 份里 0 例带点序列） |
@@ -808,7 +808,7 @@ Godot 4 里 `user://` 映射到 `$XDG_DATA_HOME/godot/app_userdata/<项目名>/`
 | 播放/暂停/进度 | **我们自定**（原版无观测） | 自定，显式标注 |
 | 能播了吗 | 能。真实回放读、解析、按 tick 播、死亡事件生效、弹道由内核重算 | **逐位验证**（§5） |
 
-**新增文件**：`src/replay.rs`（格式/局面/播放器/对拍 ABI）、`src/replay_inflate.rs`
+**新增文件**：`src/graphwar_replay_player.rs`（格式/局面/播放器/对拍 ABI）、`src/_scaffold/replay_inflate.rs`
 （纯 Rust gzip+DEFLATE）、`client/src/play/replay_file.gd`（客户端读文件）、
 `client/src/play/replay_player.gd`（tick 播放器 + 局面还原）、`16-client.md`（本文）。
 **改动文件**（都是"只加"或删占位，没有改既有语义）：`client/src/screens/play_screen.gd`
@@ -816,7 +816,7 @@ Godot 4 里 `user://` 映射到 `$XDG_DATA_HOME/godot/app_userdata/<项目名>/`
 `client/src/screens/replay_lobby.gd`（列表数据源）、
 `client/src/app/app.gd`（**只删**两处"回放未实现"占位）、
 `src/lib.rs`（**两行** `pub mod`）、`client/tools/selftest.gd`（只新增断言）。
-微分方程模式的**内核侧**（`src/api.rs` / `src/gdext.rs` / `core_bridge.gd`）由另一条分支
+微分方程模式的**内核侧**（`src/_scaffold/api.rs` / `src/_scaffold/gdext.rs` / `core_bridge.gd`）由另一条分支
 `agent/ode-api` 交付、已进 main，见 `05-shot-pipeline.md` —— 本文只负责"回放里怎么用它"，
 **不重复实现**。
 
@@ -984,7 +984,7 @@ Godot 4 里 `user://` 映射到 `$XDG_DATA_HOME/godot/app_userdata/<项目名>/`
 
 **客户端还没改**：`client/src/play/*.gd` 仍在用它自己的近似画法（`RING_SPIN_DEG` 那套）。
 本轮只把**原版事实**落成可查询的数据 + 计算，客户端照着画的接线留到下一轮
-（`src/api.rs` / `src/gdext.rs` 的对外暴露也**没做**，因为一旦暴露就要同时改 `client/`，
+（`src/_scaffold/api.rs` / `src/_scaffold/gdext.rs` 的对外暴露也**没做**，因为一旦暴露就要同时改 `client/`，
 而 `client/` 本轮明确不动）。
 
 #### 12.3.4 仍未解（诚实清单）
@@ -1017,7 +1017,7 @@ Godot 4 里 `user://` 映射到 `$XDG_DATA_HOME/godot/app_userdata/<项目名>/`
 | 3 | 音效缺失 | 事件↔音效映射 0 条确定（`16-client.md` §4.1），本地局连"什么时候该响"都没有 | 按效果事件出声；**槽位**用二进制跳表，**音效身份仍是自定** | 槽位 **逐位**、音效 **自定** |
 | 4 | 运动过程中再次发射会打断当前函数 | `fire()` 没有任何"在飞"判断 | `_shot_in_flight` 拦截，并写清拒绝理由 | **观测**（状态机）+ 客户端自定实现 |
 | 5 | **还没击中目标就判胜利** | `fire()` 里**同步**做了 `_resolve_shots → _settle_round → _check_match_over`：开火当刻就判胜负、当刻就弹结算框 | 结算**延后到弹道飞完**；死亡在**弹道走到那个点**才落地 | 顺序 **观测**（`14-turn.md`/`07-protocol.md`）+ tick 语义 **观测**（`15-target-life.md`） |
-| 6 | 对面是 AI 时卡住不动 | ① 回合推进靠"人类又按了一次 Fire"（`_next_turn()` 只在自己 `fire()` 之后调）；② **轮到 AI 之后没有任何人开火** | 回合推进改为**结算完成时**由 `GwTurnDriver`（规则 = `src/turn.rs`）驱动；轮到 AI 就倒计时后由 AI 自己开火 | 轮转规则 **逐位**；AI 的那一发 **自定** |
+| 6 | 对面是 AI 时卡住不动 | ① 回合推进靠"人类又按了一次 Fire"（`_next_turn()` 只在自己 `fire()` 之后调）；② **轮到 AI 之后没有任何人开火** | 回合推进改为**结算完成时**由 `GwTurnDriver`（规则 = `src/graphwar_turn_manager.rs`）驱动；轮到 AI 就倒计时后由 AI 自己开火 | 轮转规则 **逐位**；AI 的那一发 **自定** |
 | 附 1 | 默认士兵数是 1 | `begin_match()` 无条件用玩家表的 `soldiers`（默认 1），**忽略关卡数据** | 战役关按 `10-campaign.md` §7.1 的「我方士兵」列装人 | **逐位 + 运行时**（21/21） |
 | 附 2 | 成就/队伍图标过小 | 定位到 `client/src/screens/game_setup.gd:316` 的 `RankIcon` : `custom_minimum_size = Vector2(24, 24)` | **没改**（不在本任务的可改文件里，且原版尺寸无证据）——见 §8 | **未知** |
 
@@ -1041,12 +1041,12 @@ Godot 4 里 `user://` 映射到 `$XDG_DATA_HOME/godot/app_userdata/<项目名>/`
 | # | 项 | 我们的做法 | 原版状态 | 影响的界面 |
 |---|---|---|---|---|
 | 1 | ~~弹道~~ | ✅ **已消除**：`GW2Rebuild.path_calculate` 已暴露并被客户端使用，`source=kernel`，等弦长 0.01（`16-client.md`） | 等弦长 0.01 二分采样 | PlayScreen |
-| 2 | ~~命中/致死~~ | ✅ **已消除**：`GW2Rebuild.hit_test` 走 `settle::resolve_points`（掩膜 + 数据字段半径），旧 0.8 近似已删（`16-client.md`）。⚠️ 残留：原版按实体 id 排除射手，`game.rs::fire` 仍有一条 1e-12 位置排除（`15-target-life.md`） | 掩膜逐点采样、穿过即死、友军也会死 | PlayScreen |
+| 2 | ~~命中/致死~~ | ✅ **已消除**：`GW2Rebuild.hit_test` 走 `graphwar_shot_calculator::settle::resolve_points`（掩膜 + 数据字段半径），旧 0.8 近似已删（`16-client.md`）。⚠️ 残留：原版按实体 id 排除射手，`game.rs::fire` 仍有一条 1e-12 位置排除（`15-target-life.md`） | 掩膜逐点采样、穿过即死、友军也会死 | PlayScreen |
 | 3 | ~~关卡数据~~ | ✅ **已消除**：21 关标题 / 描述 / 参数（障碍模式、`min_count`、士兵数、目标数、Bot 难度、回合上限）**全部解出**，并与 385 份回放交叉验证 21/21（`10-campaign.md`）。⚠️ 客户端已接入（`10-campaign.md`）；**仅障碍物仍不画**（公式有、原版的随机流没有） | 硬编码在 `level_info()`（`0x4ad380`） | Campaign / JoinLevelPopUp |
 | 4 | ~~关卡解锁~~ | ✅ **规则已还原**：`campaign.save` = 单行 `level_<n>`（0 基、**无尾换行**、只增不减、启动不创建），写点在 `0x4183b0`；客户端是否已接入见 `16-client.md` | 同左（`10-campaign.md` 附录 A） | Campaign |
 | 5 | **Bot 分队** | 第 1 个 Bot 去对面（team 1），之后按人数奇偶 | 未观测 | GameSetup |
 | 6 | **Bot 名字 ↔ 难度** | 固定把 `ChatGPT/Wolfram/Alpha Zordon/Multivac/Deep Blue/Deep Thought` 依次给 0..5 档 | **对应关系未观测**（`16-client.md` §4.6 明写），且名字池与难度不是 1:1 | AddBotPopUp |
-| 7 | **网络** | 没有网络层：`join_join_ip` 只校验 `host:port`，然后模拟"连接中→断开" | 真实 TCP 握手已复原（`09-network.md`、`src/protocol.rs`），未接进界面 | LanLobby / 三个连接弹窗 |
+| 7 | **网络** | 没有网络层：`join_join_ip` 只校验 `host:port`，然后模拟"连接中→断开" | 真实 TCP 握手已复原（`09-network.md`、`src/_scaffold/protocol.rs`），未接进界面 | LanLobby / 三个连接弹窗 |
 | 8 | **公网房间列表** | 5 条静态占位（`US Room 1/3/4`、`EU Room 1/2`，名字照抄观测） | 来源未知（`16-client.md` §8） | LanLobby |
 | 9 | **聊天** | 只显示在本地，不发网络包 | 走协议（`09-network.md`） | ChatPopUp |
 | 10 | **回放** | 列 `user://replays/` 的文件名；不解析、不播放 | 格式已观测（`16-client.md`），播放界面未观测 | ReplayLobby / PlayScreen |

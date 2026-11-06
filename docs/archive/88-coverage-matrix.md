@@ -22,7 +22,7 @@
 
 | 维度 | 影响物理？ | 依据 |
 |---|---|---|
-| `FunctionMode` | **是** | Normal 用 `y=f(x)`；DiffEq 用 **RK4 积分**（`path::calculate` 的 `Mode::Ode`）；生成器变量槽也变（`archive/ai/71` §5.0） |
+| `FunctionMode` | **是** | Normal 用 `y=f(x)`；DiffEq 用 **RK4 积分**（`graphwar_path_calculator::calculate` 的 `Mode::Ode`）；生成器变量槽也变（`archive/ai/71` §5.0） |
 | `TurnMode` | **是** | Sequential 每回合一发；Simultaneous 同 tick 多发同时结算 |
 | `TimeMode` | 否 | 只影响玩家思考时间 |
 | `AxisMode` | 否 | 只影响坐标轴绘制 |
@@ -54,7 +54,7 @@
 | ~~`tests/live_hits.rs` 用 0.01 时 4 个测试失败~~ | ✅ **已结案**（`docs/89` §33）：不是 `(-46.06/(7.94+x))` 的极点问题，而是测试 `first_hit()` 跳过射手身体的半径固定 0.5、撞上掩膜像素量化抖动（1 px = 0.05）；改 `SHOOTER_SKIP_R = 0.56` 后 **12 条全过，全程 0.01** |
 | `events.rs` 的 33 个判别值 | **缺独立验证**（`docs/07` §2 的顺序假设在 `0x1bc000` 那段上不成立，`docs/96` §7） |
 | 协议事件 | 实现 33 个，**缺 24 个名字**（`docs/96`），其中四个 `*ModeInfo` 广播最要紧 |
-| ~~AI 时间预算 / 精英 5~~ | ✅ **已解**：终止 = 代数到顶 **∨ 25 s 墙钟**（`docs/93`，每代开头查一次、截断无标记）；精英 = 每代前 **20%**，字面量 5 = 每槽 1 克隆 + 4 工厂子代（`docs/95`）。⚠️ 仍未做：把 25 s 上限写进 `aigen::evolve` |
+| ~~AI 时间预算 / 精英 5~~ | ✅ **已解**：终止 = 代数到顶 **∨ 25 s 墙钟**（`docs/93`，每代开头查一次、截断无标记）；精英 = 每代前 **20%**，字面量 5 = 每槽 1 克隆 + 4 工厂子代（`docs/95`）。⚠️ 仍未做：把 25 s 上限写进 `graphwar_function_evolutionator::evolve` |
 | 界面与脚本 | 子 agent 做台账中（`docs/92`） |
 
 ## 4. 我错在哪（方法论）
@@ -302,7 +302,7 @@ GW2 是否同构**未定**，需要自己查。两种可能：
 > **2026-11 结案（`94`）**：**是 A，不是 B**。生成器 `0x5ef020` 全程只读一次模式参数
 > （`0x5ef0c7 and $0x1,%bpl`），85 格权重表里**第 17–20 这 4 格**产出的 tag 不是常量而是
 > `mode & 1`：DiffEq → tag `1`（`y`），Normal → tag `0`（`x`）。
-> ⇒ **Normal 从头到尾不产生 `y` token，没有东西可"裁"**，所以 `src/aigen.rs` 的双表实现正确。
+> ⇒ **Normal 从头到尾不产生 `y` token，没有东西可"裁"**，所以 `src/graphwar_function_evolutionator.rs` 的双表实现正确。
 > 见 [`94`](94-var-mode-trim.md)。
 
 **行为影响**：
@@ -326,7 +326,7 @@ GW2 是否同构**未定**，需要自己查。两种可能：
 不是靠"推测只影响绘制"，而是靠**函数签名**：
 
 ```rust
-// src/path.rs —— 采样器的全部输入
+// src/graphwar_path_calculator.rs —— 采样器的全部输入
 pub fn calculate(tokens, x0, y0, step, flip, mode) -> Vec<(f64, f64)>
 //                                                 ↑ 只有 Normal/Ode
 ```

@@ -3063,7 +3063,7 @@ func _test_net_real_server() -> void:
 ##   * 弹道复算的"点序列 = 服务端那条"可以用一条**固定**的 `FunctionPoints` 钉死。
 ##
 ## 缺 `serve_match` 时 A 段整段 skip（显式打印原因），B 段照样跑。
-## 联机用例的**关卡种子**（固定值，见 `src/serverloop.rs::run` 的 `GW2_MATCH_SEED`）。
+## 联机用例的**关卡种子**（固定值，见 `src/graphwar_game_server.rs::run` 的 `GW2_MATCH_SEED`）。
 ##
 ## 为什么钉死：真服务端的关卡种子默认来自 `seed_from_os()`，所以每局障碍布局都不同。
 ## 实测 30 个种子里有 8 个会**有障碍压住射手**（开局位置固定 x=±10，生成器不看这两个点），
@@ -3095,7 +3095,7 @@ func _test_play_online() -> void:
 ## `m = 1/2/3` 给三种鼓法。这样每一族曲线都**必然穿过目标**，只需再问两件事：
 ## 内核的掩膜有没有把它挡下、它有没有顺手打到别人。
 ##
-## 预演用的是**服务端那条规则**（掩膜判停 + 士兵半径 0.5 判死，`src/settle.rs::resolve_points`），
+## 预演用的是**服务端那条规则**（掩膜判停 + 士兵半径 0.5 判死，`src/graphwar_shot_calculator/settle.rs::resolve_points`），
 ## 数据也全是服务端广播的 —— 这等于客户端本来就会做的本地预览，不是作弊。
 ## 采样口径：服务端按弦长 0.5 结算（`src/game.rs::fire`），内核按 0.01；这里每 50 点取 1，
 ## 让预演贴近服务端那一份（`docs/139` §4 记了这条近似）。
@@ -3251,9 +3251,9 @@ func _first_dead_entity(session: GwNetSession) -> int:
 
 ## 本用例的"开局那一批到了"判据。
 ##
-## **不用** `_server_started()`：那个要求 `AddObstacle > 0`，而 `levelgen::generate()` 的
+## **不用** `_server_started()`：那个要求 `AddObstacle > 0`，而 `graphwar_level_generator::generate()` 的
 ## `n = trunc(normal()*7 + 15)` 在 `min_count = 0` 时有约 1.6% 会落到 0 个障碍
-## （`src/levelgen.rs:87`；`docs/139` §7 记了这一条 —— 既有用例 `_test_net_real_server`
+## （`src/graphwar_level_generator.rs:89`；`docs/139` §7 记了这一条 —— 既有用例 `_test_net_real_server`
 ## 用的是旧判据，本轮不动它）。这里只要求"士兵都到了 + 轮到谁说了"。
 func _play_online_started(session: GwNetSession) -> bool:
 	return session.count_of("SoldierInfo") >= 4 and session.count_of("TurnInfo") >= 1
@@ -3270,8 +3270,8 @@ func _test_play_online_real_server() -> void:
 	# ---- 先找一局**打得出去**的 ----
 	#
 	# 为什么可能打不出去：服务端的障碍是每局重抽的（`docs/62` §1），而开局位置是固定的
-	# （两队各 x=±10，`src/serverloop.rs`），障碍**不看**这两个点 ⇒ 偶尔会有障碍压住射手，
-	# 那样任何弹道在第一点就被掩膜判"挡住"（`src/settle.rs::resolve_points`），
+	# （两队各 x=±10，`src/graphwar_game_server.rs`），障碍**不看**这两个点 ⇒ 偶尔会有障碍压住射手，
+	# 那样任何弹道在第一点就被掩膜判"挡住"（`src/graphwar_shot_calculator/settle.rs::resolve_points`），
 	# 本地预演会如实告诉你 153 个候选全都 blocked。这种情况换一局（最多 4 次），
 	# 不在断言里制造随机失败（`docs/139` §6.2 记了这一条）。
 	var play = _screen("PlayScreen")
@@ -3384,7 +3384,7 @@ func _test_play_online_real_server() -> void:
 		"① 障碍数与服务端 `AddObstacle` 一致（界面 %d ／ 服务端 %d）"
 			% [obstacles.size(), server_obstacles.size()])
 	if server_obstacles.is_empty():
-		# 服务端这一局真的没下发障碍（`src/levelgen.rs:87` 的 n 可以钳到 0，约 1.6%）。
+		# 服务端这一局真的没下发障碍（`src/graphwar_level_generator.rs:89` 的 n 可以钳到 0，约 1.6%）。
 		# 不假装通过：显式 skip，并把理由打出来。
 		_skip("① 障碍来自服务端：本次服务端下发 0 个障碍（levelgen 的 n 钳到 0），这条无从判")
 	else:
@@ -3706,7 +3706,7 @@ func _test_play_flow() -> void:
 	var was_automation := bool(app_node.automation)
 	app_node.automation = false          # ← 真机时序（docs/143 §3）
 
-	# ---------------- 0. 回合轮转的**单元**断言（规则同 src/turn.rs，0x463da0） ----------------
+	# ---------------- 0. 回合轮转的**单元**断言（规则同 src/graphwar_turn_manager.rs，0x463da0） ----------------
 	var td := GwTurnDriver.new()
 	td.setup([{"player": 0, "soldiers": [0, 1]}])
 	var alive_all := func(i: int) -> bool: return true

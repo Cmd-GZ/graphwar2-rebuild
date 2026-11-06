@@ -114,7 +114,7 @@
 ⇒ **分派表 idx 11–16 给 `x`（6 个权重）、idx 17–20 给 `y`（4 个权重）；
 Normal 模式下那 10 个权重全给 `x`。`y'` 在两种模式下都不产生。**
 
-已实现为 `aigen::VarMode { Normal, DiffEq }` + `table(mode)`。
+已实现为 `graphwar_function_evolutionator::VarMode { Normal, DiffEq }` + `table(mode)`。
 
 ### replay 交叉验证（375 局真实对局）
 

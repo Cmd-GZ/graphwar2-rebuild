@@ -100,7 +100,7 @@ mod tests {
         let wire = to_wire(&msgs);
         assert_eq!(&wire[..2], &(msgs[0].len() as u16).to_be_bytes());
         // 能被自己的解码器读回
-        let (f, used) = crate::protocol::Frame::decode(&wire).unwrap();
+        let (f, used) = crate::_scaffold::protocol::Frame::decode(&wire).unwrap();
         assert_eq!(f.payload, msgs[0]);
         assert_eq!(used, wire.len());
     }
@@ -108,9 +108,9 @@ mod tests {
 
 /// 对 `TickRequest` 的应答。
 ///
-/// 实测：`current_tick = base_tick + round(经过毫秒 * 60 / 1000)`（见 `crate::tick`）。
+/// 实测：`current_tick = base_tick + round(经过毫秒 * 60 / 1000)`（见 `crate::graphwar_tick_handler`）。
 pub fn on_tick_request(base_tick: i64, base_ms: i64, now_ms: i64) -> String {
-    let t = crate::tick::tick_at(base_tick, base_ms, now_ms);
+    let t = crate::graphwar_tick_handler::tick_at(base_tick, base_ms, now_ms);
     format!(r#"{{"TickReply":{{"current_tick":{}}}}}"#, t)
 }
 

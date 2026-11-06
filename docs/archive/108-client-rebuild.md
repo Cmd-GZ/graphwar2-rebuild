@@ -278,12 +278,12 @@ MainMenu
 | # | 项 | 我们的做法 | 原版状态 | 影响的界面 |
 |---|---|---|---|---|
 | 1 | ~~弹道~~ | ✅ **已消除**：`GW2Rebuild.path_calculate` 已暴露并被客户端使用，`source=kernel`，等弦长 0.01（`docs/116`） | 等弦长 0.01 二分采样 | PlayScreen |
-| 2 | ~~命中/致死~~ | ✅ **已消除**：`GW2Rebuild.hit_test` 走 `settle::resolve_points`（掩膜 + 数据字段半径），旧 0.8 近似已删（`docs/120`）。⚠️ 残留：原版按实体 id 排除射手，`game.rs::fire` 仍有一条 1e-12 位置排除（`docs/122`） | 掩膜逐点采样、穿过即死、友军也会死 | PlayScreen |
+| 2 | ~~命中/致死~~ | ✅ **已消除**：`GW2Rebuild.hit_test` 走 `graphwar_shot_calculator::settle::resolve_points`（掩膜 + 数据字段半径），旧 0.8 近似已删（`docs/120`）。⚠️ 残留：原版按实体 id 排除射手，`game.rs::fire` 仍有一条 1e-12 位置排除（`docs/122`） | 掩膜逐点采样、穿过即死、友军也会死 | PlayScreen |
 | 3 | ~~关卡数据~~ | ✅ **已消除**：21 关标题 / 描述 / 参数（障碍模式、`min_count`、士兵数、目标数、Bot 难度、回合上限）**全部解出**，并与 385 份回放交叉验证 21/21（`docs/118`）。⚠️ 客户端已接入（`docs/125`）；**仅障碍物仍不画**（公式有、原版的随机流没有） | 硬编码在 `level_info()`（`0x4ad380`） | Campaign / JoinLevelPopUp |
 | 4 | ~~关卡解锁~~ | ✅ **规则已还原**：`campaign.save` = 单行 `level_<n>`（0 基、**无尾换行**、只增不减、启动不创建），写点在 `0x4183b0`；客户端是否已接入见 `docs/124` | 同左（`docs/118` 附录 A） | Campaign |
 | 5 | **Bot 分队** | 第 1 个 Bot 去对面（team 1），之后按人数奇偶 | 未观测 | GameSetup |
 | 6 | **Bot 名字 ↔ 难度** | 固定把 `ChatGPT/Wolfram/Alpha Zordon/Multivac/Deep Blue/Deep Thought` 依次给 0..5 档 | **对应关系未观测**（`docs/92` §4.6 明写），且名字池与难度不是 1:1 | AddBotPopUp |
-| 7 | **网络** | 没有网络层：`join_join_ip` 只校验 `host:port`，然后模拟"连接中→断开" | 真实 TCP 握手已复原（`docs/33`、`src/protocol.rs`），未接进界面 | LanLobby / 三个连接弹窗 |
+| 7 | **网络** | 没有网络层：`join_join_ip` 只校验 `host:port`，然后模拟"连接中→断开" | 真实 TCP 握手已复原（`docs/33`、`src/_scaffold/protocol.rs`），未接进界面 | LanLobby / 三个连接弹窗 |
 | 8 | **公网房间列表** | 5 条静态占位（`US Room 1/3/4`、`EU Room 1/2`，名字照抄观测） | 来源未知（`docs/92` §8） | LanLobby |
 | 9 | **聊天** | 只显示在本地，不发网络包 | 走协议（`docs/24`） | ChatPopUp |
 | 10 | **回放** | 列 `user://replays/` 的文件名；不解析、不播放 | 格式已观测（`docs/78`），播放界面未观测 | ReplayLobby / PlayScreen |
@@ -417,10 +417,10 @@ GameSetup 的最小宽度顶到 1700+ px，界面直接被推出 1280×720。代
 | 真实杀伤规则 | 🔶 占位 | 见 §7 #2 |
 | 21 关的关卡数据 | ❌ **未知** | 关卡布局/目标/通关条件从未被观测（`docs/103`） |
 | 回放解析与播放 | ❌ | 格式见 `docs/78`；播放界面从未被观测（`docs/92` §8） |
-| 联机（建房/加房/握手/聊天协议） | ❌ | 协议已复原（`docs/24`/`33`/`src/protocol.rs`），界面侧未接 |
+| 联机（建房/加房/握手/聊天协议） | ❌ | 协议已复原（`docs/24`/`33`/`src/_scaffold/protocol.rs`），界面侧未接 |
 | 段位、皮肤解锁、内购 | ❌ | 内购 Linux 端没有；段位数据未知（玩家行 `RankIcon` 是空占位） |
-| AI 决策（Bot 怎么选函数） | ❌ | 在 Rust（`src/aigen.rs`）；本项目 Bot 只是"站着挨打"的实体 |
-| 同时回合制的真实结算顺序 | 🔶 | 现在是"本轮所有弹道按发射顺序结算"；真实规则见 `docs/86`/`src/settle.rs` |
+| AI 决策（Bot 怎么选函数） | ❌ | 在 Rust（`src/graphwar_function_evolutionator.rs`）；本项目 Bot 只是"站着挨打"的实体 |
+| 同时回合制的真实结算顺序 | 🔶 | 现在是"本轮所有弹道按发射顺序结算"；真实规则见 `docs/86`/`src/graphwar_shot_calculator/settle.rs` |
 | 音频 | ❌ | `.pck` 里一个音频文件损坏；资产不入库 |
 | 9 条 `theme_override` 的完整复刻 | 🔶 | 只做了字号，没做 4 个 `StyleBoxFlat` |
 | 原版 858 节点级的逐节点复刻 | ❌ | 见 §8.4：本项目是"同名关键控件 + 等价布局"，不是节点级克隆 |

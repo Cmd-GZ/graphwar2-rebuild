@@ -11,9 +11,9 @@
 //! * 传入只含障碍的掩膜（`plane::empty_mask()` + 逐个 `rasterize`）；
 //! * 传入**除射手本人以外**的士兵（射手不会打死自己，这一点由调用方保证）。
 
-use crate::path::Mode;
+use crate::graphwar_path_calculator::Mode;
 use crate::plane::is_occupied;
-use crate::shot::shot_points;
+use crate::graphwar_shot_calculator::shot_points;
 
 /// 参与结算的士兵。
 #[derive(Debug, Clone, Copy, PartialEq)]

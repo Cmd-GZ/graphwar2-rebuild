@@ -10,7 +10,7 @@
 |---|---|---|
 | `55-level-generator-closed.md` | 公式闭合：`0x5625b0` 是 ziggurat 标准正态采样器 | [`archive/55-level-generator-closed.md`](archive/55-level-generator-closed.md) |
 | `56-levelgen-replay-complete.md` | 端到端重放 13/13 障碍逐位预测成功 | [`archive/56-levelgen-replay-complete.md`](archive/56-levelgen-replay-complete.md) |
-| `61-levelgen-rust.md` | `src/levelgen.rs` 的实现与边界 | [`archive/61-levelgen-rust.md`](archive/61-levelgen-rust.md) |
+| `61-levelgen-rust.md` | `src/graphwar_level_generator.rs` 的实现与边界 | [`archive/61-levelgen-rust.md`](archive/61-levelgen-rust.md) |
 | `103-disk-levelgen.md` | `0x4ea6dc` 的定性（**不是**关卡生成器） | [`archive/103-disk-levelgen.md`](archive/103-disk-levelgen.md) |
 | `51-obstacle-emit-chain.md` | 从"生成"到"发送"的调用链 | [`archive/51-obstacle-emit-chain.md`](archive/51-obstacle-emit-chain.md) |
 | `40-level-generator.md` | **已被推翻**（"OS 熵"结论，见 §7） | [`archive/40-level-generator.md`](archive/40-level-generator.md) |
@@ -316,7 +316,7 @@ iVar7 = 0x10;                                   /* 16：同上，但 */
 
 ### 5.1 实现
 
-`src/levelgen.rs`：
+`src/graphwar_level_generator.rs`：
 
 ```rust
 pub fn normal(next: &mut dyn FnMut() -> u64) -> f64   // ziggurat 标准正态
@@ -324,7 +324,7 @@ pub fn generate(next: &mut dyn FnMut() -> u64, min_count: i32) -> Vec<Obstacle>
 ```
 
 公式与常量全部来自 `11-levelgen.md`/`11-levelgen.md`；ziggurat 的两张表由
-`src/levelgen_tables.rs` 承载，**从 `.rodata` 原样导出**
+`src/graphwar_level_generator/tables.rs` 承载，**从 `.rodata` 原样导出**
 （`ZIG_NORM_X` @ `0x25b428`、`ZIG_NORM_F` @ `0x25ac20` 起）。
 
 ### 5.2 验证：逐位复现
@@ -400,6 +400,6 @@ GW+0x90ab4f   ← 线程入口
 |---|---|
 | 公式与 ziggurat 表 | `analysis/` 侧脚本 + `.rodata` 两张表地址（§2.1） |
 | 13/13 逐位重放 | `tools/capture_rand_values.js`（hook `0x47f700` 取 `next_u64` 返回值）+ 真实 `AddObstacle` 报文 |
-| Rust 侧逐位对照 | `cargo test --offline`（`src/levelgen.rs` 的单测：`generate` 13/13、`generate_center` 4 个真值样本） |
+| Rust 侧逐位对照 | `cargo test --offline`（`src/graphwar_level_generator.rs` 的单测：`generate` 13/13、`generate_center` 4 个真值样本） |
 | 客户端方法 | `GW2Rebuild.level_obstacles(level_index, seed)`（[`16-client.md`](16-client.md)） |
 | 圆盘式的否定 | `tools/` 下的反汇编检查脚本，见 `archive/103-disk-levelgen.md` §7 |

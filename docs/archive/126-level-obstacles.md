@@ -20,14 +20,14 @@
 | 项 | 结果 | 档位 |
 |---|---|---|
 | 新内核方法 | `GW2Rebuild.level_obstacles(level_index: int, seed: int) -> Dictionary{ok, obstacles, error}` | 逐位验证（§5.3 的注册日志 + GDScript 实调成功） |
-| 生成本体 | **复用** `src/levelgen.rs` 既有实现（`generate` 13/13 逐位、`generate_center`），本文件没有第二份公式 | 逐位验证（单测 `agrees_with_levelgen_entry_point_bit_for_bit` / `seeded_entry_reuses_the_verified_generators`） |
-| 21 关参数表 | `src/levelgen.rs::LEVEL_OBSTACLE_PARAMS`，逐条抄自 `docs/118` §7.1（每行注释带该关的闭包预设地址） | 逐位验证 + 运行时（`docs/118` 原文的 `C`+`R` 双源）；本文再加一条"照文档重抄一遍"的测试 |
+| 生成本体 | **复用** `src/graphwar_level_generator.rs` 既有实现（`generate` 13/13 逐位、`generate_center`），本文件没有第二份公式 | 逐位验证（单测 `agrees_with_levelgen_entry_point_bit_for_bit` / `seeded_entry_reuses_the_verified_generators`） |
+| 21 关参数表 | `src/graphwar_level_generator::LEVEL_OBSTACLE_PARAMS`，逐条抄自 `docs/118` §7.1（每行注释带该关的闭包预设地址） | 逐位验证 + 运行时（`docs/118` 原文的 `C`+`R` 双源）；本文再加一条"照文档重抄一遍"的测试 |
 | **障碍真的画出来了** | 是。黑色实心圆，半径 = 生成器给的 `r`（棋盘单位），逐像素与原版真帧对齐（§4） | 观测（截图 + 像素取样） |
 | **子弹真的被墙挡住** | 是。端到端手测：`x/10` 在 `first_hit=4480` 撞墙，`stop=(24.00, −0.90)`，画出来的点序列 = `4480+1` 点（§5.4） | 观测 + 逐位验证（单测 `generated_obstacles_actually_block_a_shot`） |
 | `cargo test --offline` | **272 → 287**（+15，全绿） | — |
 | `bash client/run.sh selftest` | **146 passed, 0 failed**（条数不变，**未改任何断言**） | — |
 | `bash client/run.sh dump` | `@@KERNEL available=1 hit_test=1 methods=ping,path_calculate,hit_test,level_obstacles,…` | 逐位验证 |
-| 内核改动 | `src/levelgen.rs`（参数表 + 入口）、`src/api.rs`（新方法）、`src/gdext.rs`（**+1 行**注册） | — |
+| 内核改动 | `src/graphwar_level_generator.rs`（参数表 + 入口）、`src/_scaffold/api.rs`（新方法）、`src/_scaffold/gdext.rs`（**+1 行**注册） | — |
 | 客户端改动 | `core_bridge.gd`（+52/−0）、`play_screen.gd`（+92/−7）、`plane_view.gd`（+51/−2）、`join_level_pop_up.gd`（+14/−0，父 agent 追加的弹窗配色） | — |
 | 仍未定 | **客户端自生成 vs 服务端广播**的取舍（§6.1）、障碍被摧毁的洞、我方士兵/靶子位置、三条"用户口述"的开火表现（§6.3） | — |
 
@@ -77,7 +77,7 @@ GW2Rebuild.level_obstacles(level_index: int, seed: int) -> Dictionary
 
 ## 2. 参数来源与种子语义
 
-### 2.1 21 关参数表（`src/levelgen.rs::LEVEL_OBSTACLE_PARAMS`）
+### 2.1 21 关参数表（`src/graphwar_level_generator::LEVEL_OBSTACLE_PARAMS`）
 
 `docs/118` §7.1 的「障碍（模式 / 数量）」列，21 行全抄进代码，每行注释都带该关的
 **闭包预设地址**（`C` 短码，`.data.rel.ro` 里可指认）：
@@ -111,12 +111,12 @@ GW2Rebuild.level_obstacles(level_index: int, seed: int) -> Dictionary
 `n = trunc(normal()*7 + 15)`，`n <= min_count` 时钳到 `min_count`。
 
 三条防"改错表"的测试：
-* `levelgen::tests::level_params_match_docs_118_table` —— 期望值是**照文档原文重抄一遍**的
+* `graphwar_level_generator::tests::level_params_match_docs_118_table` —— 期望值是**照文档原文重抄一遍**的
   21 项 `(模式, min_count)`，与常量表逐条比对；
-* `api::obstacle_tests::all_21_levels_generate_and_match_the_table` —— 走 API 实跑：
+* `_scaffold::api::obstacle_tests::all_21_levels_generate_and_match_the_table` —— 走 API 实跑：
   无障碍关必须 0 个、中心式必须 1 个且 `(0,0)`/`r∈[3,8)`、散布式必须 `≥ min_count`；
-* `api::obstacle_tests::agrees_with_levelgen_entry_point_bit_for_bit` —— API 产出与
-  `levelgen::obstacles_from_seed` **逐位**相同（反"API 里又写了一遍公式"）。
+* `_scaffold::api::obstacle_tests::agrees_with_levelgen_entry_point_bit_for_bit` —— API 产出与
+  `graphwar_level_generator::obstacles_from_seed` **逐位**相同（反"API 里又写了一遍公式"）。
 
 ### 2.2 **种子语义**（本轮最要紧的一条，务必读）
 
@@ -133,9 +133,9 @@ GW2Rebuild.level_obstacles(level_index: int, seed: int) -> Dictionary
 * 原版那一条 ChaCha 流**我们没有**（每局随机的 key，抓包里只有它跑过的那一次）。
   所以"给定原版种子复现历史布局"**做不到**；
 * 因此 `seed` 是**调用方的输入**：同 `(level_index, seed)` ⇒ 逐位相同，换 `seed` ⇒ 换一局。
-* 种子 → ChaCha key 的展开是**我们自定的**（`levelgen::seed_key`，splitmix64 摊成 4×u64），
+* 种子 → ChaCha key 的展开是**我们自定的**（`graphwar_level_generator::seed_key`，splitmix64 摊成 4×u64），
   证据等级 **自定**：它保证"同种子同结果、不同种子不同结果"，并避开 `seed=0` 得到全零 key。
-  用同款 ChaCha12（`src/rng.rs`，`docs/53`）只是为了"随机流的形态与原版一致"，
+  用同款 ChaCha12（`src/_scaffold/rng.rs`，`docs/53`）只是为了"随机流的形态与原版一致"，
   **不代表**数值能对上任何一份历史抓包。
 * 我们的流从**第 0 个** `next_u64` 开始。若将来真的拿到某局原版的 key，需要先丢弃 3 个
   再调 `obstacles_from_seed`（注释里写明了）。
@@ -251,20 +251,20 @@ draw_circle(board_to_screen(o.pos), _scale() * o.size, COL_OBSTACLE, true, -1.0,
 
 | 测试 | 钉住什么 |
 |---|---|
-| `levelgen::level_params_match_docs_118_table` | 21 关参数 = `docs/118` §7.1 原文 |
-| `levelgen::every_level_generates_through_the_seeded_entry` | 21 关全生成得出来；界/下限/有限性 |
-| `levelgen::seeded_generation_is_reproducible_and_seed_dependent` | 同种子逐位、换种子换布局 |
-| `levelgen::seeded_entry_reuses_the_verified_generators` | 入口 = 既有已验证生成器（无第二份公式） |
-| `levelgen::scatter_counts_vary_with_the_seed` | 个数是随机变量（不是常数） |
-| `levelgen::out_of_range_level_has_no_params` / `degenerate_seeds_are_safe` | 边界与退化种子不 panic |
-| `api::obstacle_tests::result_shape_is_exactly_the_contract` | `{ok, obstacles, error}` + 扁平 f64 逐位 |
-| `api::obstacle_tests::all_21_levels_generate_and_match_the_table` | 走 API 的 21 关全表 |
-| `api::obstacle_tests::obstacle_free_levels_return_an_empty_ok_list` | "无碍"≠"失败" |
-| `api::obstacle_tests::out_of_range_level_is_rejected` | `bad_level_index` |
-| `api::obstacle_tests::same_seed_is_bit_identical_and_new_seed_changes_the_layout` | 种子语义 |
-| `api::obstacle_tests::degenerate_seeds_are_safe` | `seed ∈ {0, −1, i64::MIN/MAX}` 不崩 |
-| `api::obstacle_tests::agrees_with_levelgen_entry_point_bit_for_bit` | API ↔ 生成器逐位 |
-| `api::obstacle_tests::generated_obstacles_actually_block_a_shot` | **墙真的挡子弹**（撞点 = 圆与直线的几何交点 ±0.25；拿掉障碍就飞到底） |
+| `graphwar_level_generator::level_params_match_docs_118_table` | 21 关参数 = `docs/118` §7.1 原文 |
+| `graphwar_level_generator::every_level_generates_through_the_seeded_entry` | 21 关全生成得出来；界/下限/有限性 |
+| `graphwar_level_generator::seeded_generation_is_reproducible_and_seed_dependent` | 同种子逐位、换种子换布局 |
+| `graphwar_level_generator::seeded_entry_reuses_the_verified_generators` | 入口 = 既有已验证生成器（无第二份公式） |
+| `graphwar_level_generator::scatter_counts_vary_with_the_seed` | 个数是随机变量（不是常数） |
+| `graphwar_level_generator::out_of_range_level_has_no_params` / `degenerate_seeds_are_safe` | 边界与退化种子不 panic |
+| `_scaffold::api::obstacle_tests::result_shape_is_exactly_the_contract` | `{ok, obstacles, error}` + 扁平 f64 逐位 |
+| `_scaffold::api::obstacle_tests::all_21_levels_generate_and_match_the_table` | 走 API 的 21 关全表 |
+| `_scaffold::api::obstacle_tests::obstacle_free_levels_return_an_empty_ok_list` | "无碍"≠"失败" |
+| `_scaffold::api::obstacle_tests::out_of_range_level_is_rejected` | `bad_level_index` |
+| `_scaffold::api::obstacle_tests::same_seed_is_bit_identical_and_new_seed_changes_the_layout` | 种子语义 |
+| `_scaffold::api::obstacle_tests::degenerate_seeds_are_safe` | `seed ∈ {0, −1, i64::MIN/MAX}` 不崩 |
+| `_scaffold::api::obstacle_tests::agrees_with_levelgen_entry_point_bit_for_bit` | API ↔ 生成器逐位 |
+| `_scaffold::api::obstacle_tests::generated_obstacles_actually_block_a_shot` | **墙真的挡子弹**（撞点 = 圆与直线的几何交点 ±0.25；拿掉障碍就飞到底） |
 
 ### 5.2 客户端自检
 
@@ -360,14 +360,14 @@ bash client/run.sh dump | grep @@KERNEL
 现在：**客户端**在进关时按 `(关卡, 种子)` 自己调内核生成障碍。
 
 * 这**不是**原版行为。原版是**权威一方**开局生成、把障碍作为 `AddObstacle` 事件发给对局各方
-  （`docs/30`/`docs/48` 的抓包里能看到 `AddObstacle`；`src/protocol.rs` 里已有这条事件的解析）。
+  （`docs/30`/`docs/48` 的抓包里能看到 `AddObstacle`；`src/_scaffold/protocol.rs` 里已有这条事件的解析）。
   客户端自己生成只是在"我们还没有服务端广播"时的**代打**。
 * 危害很具体：**同一个对局里两边客户端的障碍可能不一致**（种子各自抽），
   于是同一发弹道在两边算出的停点不同 —— 联机对战会直接错位。
 * 正确的接法（未做）：服务端广播的 `AddObstacle` 一到，`play_screen` 用**服务端那批**覆盖
   `_obstacles`（`obstacles` 是 `Array[{pos, size}]`，与 `level_obstacles()` 的返回同形，
   换源不需要改绘制/判定代码）；`level_obstacles` 退化成"单机练习/断线兜底"。
-* 为什么本轮不做：`AddObstacle` 的**事件字段顺序与语义**属于别的 agent 的 `src/protocol.rs`
+* 为什么本轮不做：`AddObstacle` 的**事件字段顺序与语义**属于别的 agent 的 `src/_scaffold/protocol.rs`
   范围，且客户端还没有接收服务端事件流的那条通路。**登记在此，不擅自接**。
 
 ### 6.2 障碍的其它未定项
@@ -379,7 +379,7 @@ bash client/run.sh dump | grep @@KERNEL
 | 3 | 障碍的层级（障碍在士兵/弹道之上还是之下） | 画在弹道与士兵**之下** | 原版真帧里弹道不会与障碍重叠（撞点即停）， Soldiers 也没有与障碍重叠的样本 |
 | 4 | 障碍的抗锯齿参数 | 用 `antialiased=true` 复现"半覆盖边缘" | 原版是 Rust 侧自绘，AA 的具体采样规则未取证（只对齐了"有半覆盖像素"这个观测） |
 | 5 | 我方士兵 / 靶子的位置 | **仍是我们的自定值**（`_spawn_position` / `_target_positions`） | 原版由关卡生成器随机放置，坐标未解；与障碍无关，但同属"平面上的东西从哪来" |
-| 6 | 服务端侧 | `src/game.rs` / `serverloop.rs` **没有**接这条生成（本轮没碰那几个文件） | 谁在服务端调 `obstacles_from_seed`、事件怎么广播 |
+| 6 | 服务端侧 | `src/game.rs` / `graphwar_game_server.rs` **没有**接这条生成（本轮没碰那几个文件） | 谁在服务端调 `obstacles_from_seed`、事件怎么广播 |
 
 ### 6.3 **三条"用户口述、未实现"的开火表现**（父 agent 明确要求只登记，本轮不动手）
 

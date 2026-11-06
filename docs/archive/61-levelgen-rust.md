@@ -2,7 +2,7 @@
 
 ## 1. 实现
 
-`src/levelgen.rs`：
+`src/graphwar_level_generator.rs`：
 
 ```rust
 pub fn normal(next: &mut dyn FnMut() -> u64) -> f64   // ziggurat 标准正态
@@ -10,7 +10,7 @@ pub fn generate(next: &mut dyn FnMut() -> u64, min_count: i32) -> Vec<Obstacle>
 ```
 
 公式与常量全部来自 `docs/55`/`docs/56`；ziggurat 的两张表由
-`src/levelgen_tables.rs` 承载，**从 `.rodata` 原样导出**
+`src/graphwar_level_generator/tables.rs` 承载，**从 `.rodata` 原样导出**
 （`ZIG_NORM_X` @ `0x25b428`、`ZIG_NORM_F` @ `0x25ac20` 起）。
 
 ## 2. 验证：逐位复现

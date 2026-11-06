@@ -3,7 +3,7 @@
 use gw2_rebuild::events::{
     Event, GameInfo, DISPATCH_NAME_TAGS, GAME_INFO_FIELD_COUNT, NAMED_VARIANT_COUNT,
 };
-use gw2_rebuild::life::{LifeState, Status};
+use gw2_rebuild::graphwar_life_manager::{LifeState, Status};
 
 /// 名字 → 判别值全表（`docs/114` §3，逐条来自 `0x3d38f0`）。
 /// 每行左边是 `.rodata`/立即数里重建出的名字，右边是该分支 `mov $N,%ebx`

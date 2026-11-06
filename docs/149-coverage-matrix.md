@@ -5,15 +5,15 @@
 ## 0. 一句话总账
 
 ```
-原版可归属函数 488 个，分布在 70 个模块（58 个 graphwar_*.rs 占 431、12 个非 graphwar 游戏模块占 57）；我们已实现 138 个函数，其中 逐位 98 / 观测 40 / 推断 0；未做 265；完全未知的模块 22 个（graphwar 里 15 个）。
+原版可归属函数 488 个，分布在 70 个模块（58 个 graphwar_*.rs 占 431、12 个非 graphwar 游戏模块占 57）；我们已实现 161 个函数，其中 逐位 98 / 观测 63 / 推断 0；未做 242；完全未知的模块 22 个（graphwar 里 15 个）。
 ```
 
 拆成两个口径（下面的数字全部由脚本算出，重跑即复现）：
 
 | 口径 | 模块数 | 可归属函数 | 已实现 | 逐位 | 观测 | 推断 | 未做 | 未知模块 |
 |---|---|---|---|---|---|---|---|---|
-| 58 个 `graphwar_*.rs` | 58 | 431 | 130 | 91 | 39 | 0 | 234 | 15 |
-| 12 个非 graphwar 的游戏模块 | 12 | 57 | 8 | 7 | 1 | 0 | 31 | 7 |
+| 58 个 `graphwar_*.rs` | 58 | 431 | 140 | 91 | 49 | 0 | 224 | 15 |
+| 12 个非 graphwar 的游戏模块 | 12 | 57 | 21 | 7 | 14 | 0 | 18 | 7 |
 
 还有 `weak_caller.rs`（40 个归属函数）按 `docs/02` §9 判为第三方依赖库，单独一行留在 TSV 里备查，**不计入**任何合计。
 
@@ -88,19 +88,19 @@
 | `graphwar_entity_effect_manager.rs` | 3 | 4 | — | 0 | 未知 |
 | `graphwar_event.rs` | 0 | 0 | `src/events.rs` | 2 | 观测 |
 | `graphwar_event_handler.rs` | 2 | 4 | `src/events.rs` | 2 | 观测 |
-| `graphwar_function_evolutionator.rs` | 16 | 25 | `src/aigen.rs` | 88 | 观测 |
+| `graphwar_function_evolutionator.rs` | 16 | 25 | `src/graphwar_function_evolutionator.rs` | 88 | 观测 |
 | `graphwar_function_input.rs` | 13 | 33 | — | 0 | 未做 |
 | `graphwar_function_manager.rs` | 7 | 12 | `src/game.rs` | 70 | 观测 |
 | `graphwar_game_client.rs` | 36 | 59 | — | 0 | 未做 |
 | `graphwar_game_recorder.rs` | 2 | 4 | — | 0 | 未知 |
-| `graphwar_game_server.rs` | 3 | 86 | `src/server.rs+src/serverloop.rs` | 23 | 逐位 |
+| `graphwar_game_server.rs` | 3 | 86 | `src/graphwar_game_server.rs+src/server.rs` | 23 | 逐位 |
 | `graphwar_game_state_manager.rs` | 33 | 207 | `src/game.rs+src/turnstate.rs` | 76 | 逐位 |
 | `graphwar_graphics_manager.rs` | 6 | 8 | — | 0 | 未知 |
 | `graphwar_lan_broadcaster_v6.rs` | 4 | 4 | — | 0 | 未做 |
 | `graphwar_lan_vbox.rs` | 11 | 19 | — | 0 | 未知 |
-| `graphwar_level_generator.rs` | 4 | 26 | `src/levelgen.rs+src/levelgen_tables.rs` | 28 | 逐位 |
+| `graphwar_level_generator.rs` | 4 | 26 | `src/graphwar_level_generator.rs+src/graphwar_level_generator/tables.rs` | 28 | 逐位 |
 | `graphwar_level_manager.rs` | 40 | 590 | — | 0 | 未做 |
-| `graphwar_life_manager.rs` | 9 | 12 | `src/life.rs` | 7 | 逐位 |
+| `graphwar_life_manager.rs` | 9 | 12 | `src/graphwar_life_manager.rs` | 7 | 逐位 |
 | `graphwar_lobby_control.rs` | 1 | 6 | — | 0 | 未做 |
 | `graphwar_local_player_manager.rs` | 3 | 15 | — | 0 | 未做 |
 | `graphwar_logger.rs` | 2 | 2 | — | 0 | 未做 |
@@ -110,27 +110,27 @@
 | `graphwar_name_manager.rs` | 3 | 3 | — | 0 | 未做 |
 | `graphwar_nodes.rs` | 11 | 1 | — | 0 | 未做 |
 | `graphwar_obstacle_manager.rs` | 8 | 14 | `src/plane.rs` | 17 | 逐位 |
-| `graphwar_path_calculator.rs` | 1 | 9 | `src/path.rs` | 2 | 逐位 |
+| `graphwar_path_calculator.rs` | 1 | 9 | `src/graphwar_path_calculator.rs` | 2 | 逐位 |
 | `graphwar_plane.rs` | 10 | 19 | `src/plane.rs` | 17 | 逐位 |
 | `graphwar_plane_pos_manager.rs` | 6 | 9 | `src/plane.rs` | 17 | 观测 |
-| `graphwar_play_screen_control.rs` | 10 | 64 | — | 0 | 未做 |
+| `graphwar_play_screen_control.rs` | 10 | 64 | `src/graphwar_play_screen_control.rs` | 8 | 观测 |
 | `graphwar_player_manager.rs` | 3 | 6 | — | 0 | 未知 |
 | `graphwar_player_screen_control.rs` | 8 | 22 | — | 0 | 未知 |
 | `graphwar_rank_manager.rs` | 4 | 4 | — | 0 | 未做 |
 | `graphwar_remote_event_handler.rs` | 3 | 171 | `src/events.rs` | 2 | 观测 |
 | `graphwar_replay_control.rs` | 2 | 9 | — | 0 | 未做 |
-| `graphwar_replay_player.rs` | 5 | 18 | `src/replay.rs` | 53 | 观测 |
+| `graphwar_replay_player.rs` | 5 | 18 | `src/graphwar_replay_player.rs` | 53 | 观测 |
 | `graphwar_root_node.rs` | 23 | 178 | — | 0 | 未做 |
 | `graphwar_server_broker_handler.rs` | 3 | 5 | — | 0 | 未做 |
 | `graphwar_server_connection_handler.rs` | 6 | 24 | `src/server.rs` | 7 | 逐位 |
 | `graphwar_setup_control.rs` | 21 | 70 | — | 0 | 未做 |
-| `graphwar_shot_calculator.rs` | 1 | 12 | `src/settle.rs+src/shot.rs` | 23 | 逐位 |
+| `graphwar_shot_calculator.rs` | 1 | 12 | `src/graphwar_shot_calculator.rs+src/graphwar_shot_calculator/settle.rs` | 23 | 逐位 |
 | `graphwar_soldier_manager.rs` | 4 | 5 | — | 0 | 未知 |
 | `graphwar_target_manager.rs` | 3 | 4 | — | 0 | 未做 |
 | `graphwar_team_manager.rs` | 7 | 10 | — | 0 | 未知 |
 | `graphwar_texture_loader.rs` | 1 | 1 | — | 0 | 未知 |
-| `graphwar_tick_handler.rs` | 2 | 3 | `src/tick.rs` | 9 | 逐位 |
-| `graphwar_turn_manager.rs` | 14 | 45 | `src/turn.rs` | 60 | 逐位 |
+| `graphwar_tick_handler.rs` | 2 | 3 | `src/graphwar_tick_handler.rs` | 9 | 逐位 |
+| `graphwar_turn_manager.rs` | 14 | 45 | `src/graphwar_turn_manager.rs` | 60 | 逐位 |
 | `graphwar_video_writer.rs` | 3 | 4 | — | 0 | 未知 |
 
 ### 2.2 非 `graphwar_` 前缀的游戏模块
@@ -140,14 +140,14 @@
 | `axis_drawer.rs` | 6 | 3 | — | 0 | 未做 |
 | `button_manager.rs` | 2 | 3 | — | 0 | 未知 |
 | `effect_drawer.rs` | 11 | 17 | — | 0 | 未做 |
-| `entity_drawer.rs` | 14 | 36 | — | 0 | 未做 |
+| `entity_drawer.rs` | 14 | 36 | `src/entity_drawer.rs` | 11 | 观测 |
 | `function_button_manager.rs` | 2 | 3 | — | 0 | 未知 |
 | `function_drawer.rs` | 1 | 1 | — | 0 | 未知 |
 | `function_history_recorder.rs` | 1 | 3 | — | 0 | 未知 |
-| `math_function.rs` | 7 | 15 | `src/function/mod.rs+src/function/to_text.rs` | 43 | 逐位 |
+| `math_function.rs` | 7 | 15 | `src/math_function.rs+src/math_function/to_text.rs` | 43 | 逐位 |
 | `obstacle_drawer.rs` | 2 | 7 | — | 0 | 未知 |
 | `player_showcase.rs` | 10 | 18 | — | 0 | 未知 |
-| `polish_notation_converter.rs` | 1 | 2 | `src/function/to_text.rs` | 16 | 观测 |
+| `polish_notation_converter.rs` | 1 | 2 | — | 0 | 未做 |
 | `server_broker_request_connection.rs` | 0 | 1 | — | 0 | 未知 |
 
 完整的 evidence（每行一句话的依据）在 `docs/coverage-matrix.tsv`，那张表是本脚本的唯一真源，本页的表格由它渲染。
@@ -183,19 +183,20 @@
 
 | 位置 | 为什么它不是复原 |
 |---|---|
-| `src/api.rs` | 内核 → GDScript 的对外 API；原版没有对应模块（它直接是 Godot 模块） |
-| `src/capi.rs` | C ABI，纯为把我们自己的实现暴露出去做对拍；原版无此物 |
-| `src/replaydiff.rs` | 回放**消息级**对拍器；原版没有这种工具模块 |
-| `src/diffconv.rs` | 上一条的收敛层；同上 |
-| `src/replay_inflate.rs` | 手写 DEFLATE/gzip；原版用的是第三方 crate，不是游戏模块 |
-| `src/rng.rs` | ChaCha12 的重写；原版是 rand_chacha crate，不是游戏模块 |
-| `src/gdext.rs` | GDExtension 入口脚手架（原版的入口在 Godot 模块侧，不在这 58 个文件里） |
-| `src/gdext_class.rs` | 同上：classdb_register_extension_class4 的封装 |
-| `src/broker.rs` | **我们自己的一台 broker 服务端**；原版只有连 broker 的客户端，没有服务端 |
-| `src/protocol.rs` | 报文编解码装配层；原版没有同名模块，编解码分散在各 handler 里 |
+| `src/_scaffold/api.rs` | 内核 → GDScript/JSON 的对外 API；原版把这件事交给 Godot 模块反射，没有这一层 |
+| `src/_scaffold/capi.rs` | C ABI，纯为把我们自己的实现暴露出去做对拍；原版无此物 |
+| `src/_scaffold/replaydiff.rs` | 回放**消息级**对拍器；原版没有这种工具模块 |
+| `src/_scaffold/diffconv.rs` | 上一条的收敛层；同上 |
+| `src/_scaffold/replay_inflate.rs` | 手写 DEFLATE/gzip；原版用的是第三方 crate，不是游戏模块 |
+| `src/_scaffold/rng.rs` | ChaCha12 的重写；原版是 rand_chacha crate，不是游戏模块 |
+| `src/_scaffold/gdext.rs` | GDExtension 入口脚手架（原版的入口在 Godot 模块侧，不在这 58+12 个文件里） |
+| `src/_scaffold/gdext_class.rs` | 同上：classdb_register_extension_class4 的封装 |
+| `src/_scaffold/broker.rs` | **我们自己的一台 broker 服务端**；原版只有连 broker 的客户端，没有服务端 |
+| `src/_scaffold/protocol.rs` | 报文编解码装配层；原版没有同名模块，编解码分散在各 handler 里 |
+| `src/_scaffold/ai_explain.rs` | AI 决策链解释器（工具）；不引入新行为，只把已对过地址的零件按原版顺序跑一遍 |
 | `client/` | 整个 Godot 客户端是照 .tscn 与截图重写的仿制品，**不是**原版源码（AGENTS §0.4） |
 
-合计 **11 处**。其中 `src/broker.rs` 和 `client/` 最容易误判：前者是我们自己写的服务端（原版只有连 broker 的客户端），后者整个是仿制品。
+合计 **12 处**。其中 `src/_scaffold/broker.rs` 和 `client/` 最容易误判：前者是我们自己写的服务端（原版只有连 broker 的客户端），后者整个是仿制品。
 
 ## 5. 抽查：三个模块的函数数是手数出来的
 `--check` 会重算并断言下面三个数没漂。
@@ -238,5 +239,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（32 个文件、873 条 `fn`） | `e7f2ea8fdd9424e90d71b16fdee75b35d118afa02e7dc48caa388c35b72698da` |
+| `src/` 树（33 个文件、873 条 `fn`） | `be21875c586fdebcc6488c1e90d593066ca281605c1a279c7962940a52b418ed` |
 

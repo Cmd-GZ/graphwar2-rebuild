@@ -327,7 +327,7 @@ else:
 **缺了半步复检**（`mid2`/`chord2`），因此也缺了 `hi = mid2`。以本文 §5 为准。
 
 ODE 模式**没有**这段复检（`0x3c2840` 在容差满足时直接接受），
-所以 `path.rs`/`graphwar_curve.py` 的 `ode` 分支无需改动。【逐位：`0x3c27ee ja 3c2840` 后无 mid2】
+所以 `graphwar_path_calculator.rs`/`graphwar_curve.py` 的 `ode` 分支无需改动。【逐位：`0x3c27ee ja 3c2840` 后无 mid2】
 
 ---
 
@@ -380,7 +380,7 @@ hi2  接受 mid=-1.174402651902936  chord=0.500351212189173  ← 真二进制值
   Python 的 `ln <= ln2` 在 `ln2` 为 NaN 时得 `False` ⇒ 会走接受。**这是唯一的第二处差异**，
   属 §9.1 的边界，**未实测**（标【推断】）。
 
-### 7.2 `gw2-rebuild/src/path.rs`（第 92–95 行）
+### 7.2 `gw2-rebuild/src/graphwar_path_calculator.rs`（第 92–95 行）
 
 ```rust
                 if chord <= chord2 {   // 92
@@ -485,7 +485,7 @@ objdump -d --no-show-raw-insn --start-address=0x3c2530 --stop-address=0x3c2b5d \
 
 > **2026-11 复核：两边都已改成 `not (L > L2)`，与 `jbe` 同构。**
 > 依据：父仓库 `graphwar_curve.py` 第 475 行 `if not (ln > ln2):`、
-> 本仓库 `src/path.rs` 第 94 行 `if !(chord > chord2) {`。原文"建议按 §7.1 一起改掉"**已执行**。
+> 本仓库 `src/graphwar_path_calculator.rs` 第 94 行 `if !(chord > chord2) {`。原文"建议按 §7.1 一起改掉"**已执行**。
 
 - 汇编行为：**逐位验证（读指令）**；
 - 这条差异在真游戏里是否真的发生、影响多大：**仍未实测**（现有 24 例没触发）——

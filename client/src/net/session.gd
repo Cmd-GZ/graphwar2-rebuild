@@ -66,7 +66,7 @@ var my_player_id := -1
 ## 加入后是否立刻发 `GameStartRequest`。
 ##
 ## **偏离，已记录**：真游戏里开局是**房主**按 Start 触发的（房主的客户端发这条）。
-## 我们的服务端是台"等客户端来开局"的 harness（`src/serverloop.rs`），所以本客户端
+## 我们的服务端是台"等客户端来开局"的 harness（`src/graphwar_game_server.rs`），所以本客户端
 ## 连上自己的服务端后**自己发**这一条，否则对局永远不开始。关掉它就连真服务器。
 var auto_start := true
 ## 加入时是否发 `NewPlayerRequest`（原版会；我们的服务端忽略它）。

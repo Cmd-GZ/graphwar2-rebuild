@@ -26,7 +26,7 @@
 掩膜（逐字节）、修正常数（93/93 逐字符）、同时回合制结算（152/152、时刻判决 38:0）、
 **协议 73/73**（13 个强类型 + 10 个原样透传；判别值 72 个实测值）、
 服务端（真实 TCP 跑完整一局）+ 射手轮转 + 按士兵的 AI 进化（25 s 预算在这条路径上生效）、
-**broker 协议还原并实现**（`src/broker.rs`）、**关卡生成两种模式**（散布逐位复现 13/13；中心模式 4 个真值样本）、
+**broker 协议还原并实现**（`src/_scaffold/broker.rs`）、**关卡生成两种模式**（散布逐位复现 13/13；中心模式 4 个真值样本）、
 **战役 21 关数据全部解出**（21/21 标题与描述、每关参数，385 份回放交叉验证 21/21）、
 **玩家颜色**（两张 6 色队色表，1358/1358 零例外）、
 **AI 全链路**（参数表 / 权重含 `VarMode` / 长度 / 适应度 / 精英=前 20% / 单父代工厂 /
@@ -37,7 +37,7 @@
 自检 **245 条断言**：有资产时全绿；缺资产时约 10 条 skip（逐条报原因），每条 skip 显式报原因。
 **弹道与命中已走内核**：`client/gw2rebuild.gdextension` 已提交（`.so` gitignored），
 `GW2Rebuild.path_calculate`（等弦长采样）与 `GW2Rebuild.hit_test`（掩膜命中，
-判定本体与 `settle::resolve_points` 同一函数体），界面状态行显示 `判定来源：kernel`——
+判定本体与 `graphwar_shot_calculator::settle::resolve_points` 同一函数体），界面状态行显示 `判定来源：kernel`——
 拔掉 `.so` 才退到 `preview`（`16-client.md`、`16-client.md`）。
 
 ⚠️ **新增脚本或 `.gdextension` 之后必须先 `godot --headless --path client --import`**，
@@ -64,9 +64,9 @@
 目标"打不全就全部复原"（`10-campaign.md`，标为推断）、玩家页/弹窗像素对齐（`16-client.md`/`16-client.md`）。
 
 **内核侧仍缺（都是实现追赶结论，不是继续挖）**：
-~~① `src/turn.rs` 的"每玩家 `Vec<soldier_id>` + 游标轮转"~~ ✅ 已实现（`13-ai.md`）
+~~① `src/graphwar_turn_manager.rs` 的"每玩家 `Vec<soldier_id>` + 游标轮转"~~ ✅ 已实现（`13-ai.md`）
 ~~② `aigen` 缺"回合先定 soldier_id、AI 只为它进化"这一层~~ ✅ 已实现（`13-ai.md`）
-   ✅ **已接进 `game.rs::Match::begin_next_turn` 与 `serverloop.rs::advance`**（`14-turn.md`）：
+   ✅ **已接进 `game.rs::Match::begin_next_turn` 与 `graphwar_game_server::advance`**（`14-turn.md`）：
    轮转定射手 → 只为它进化（25 s 预算生效）→ `decision.broadcast()` 决定发不发；
    端到端 TCP 测试断言"首发射手 = `soldiers[1]`""跳过死者""每回合都进化过"。
 ~~③ 第 0 代初始种群生成路径未还原~~ ✅ **已解**（`13-ai.md`）：没有独立初始化函数；
@@ -135,7 +135,7 @@ XDG_DATA_HOME=$PWD/.godot-data XDG_CACHE_HOME=$PWD/.godot-cache XDG_CONFIG_HOME=
 | 构建 / 加载 / 类注册 / 打包 | 真 Godot 4.7.2 跑通；`.pck` 能从包启动 |
 | 资源还原 | 692 文件 md5 全符 |
 | 网络协议 + 编解码 | 46 种消息；序列化**逐字节一致** |
-| 弹道与命中结算 `settle::resolve` | 整关回放（4 发 / 6 发）误差 < 采样步；致死集合逐发一致 |
+| 弹道与命中结算 `graphwar_shot_calculator::settle::resolve` | 整关回放（4 发 / 6 发）误差 < 采样步；致死集合逐发一致 |
 | 命中与生命 | 穿过即死、不挡弹道；**无血量 / 有友军误伤 / 按弹道先后**（`15-target-life.md`） |
 | 回合状态机 | 6 状态 7 事件，13 次迁移逐个相同 |
 | tick 时钟 | 60 Hz；`end_of_turn_tick = 回合开始 tick + 时长`，六档实测 |
@@ -199,8 +199,8 @@ hook **`0x47f700`**（取随机 u64）即可读状态：`arg0` 是状态指针�
 - **⚠️ 有两种函数模式**：`NormalFunction`（y=f(x)）与 `DiffEqFunction`（y'=f(x,y)）。
   权重表只在变量槽位上不同：Normal 下 10 个权重全给 `x`；
   **DiffEq 下 `x` 6 个 + `y` 4 个**（实测 6.83% / 4.86%，`archive/ai/71` §5.0）。
-  `y'` 两种模式都不产生。Rust 侧已用 `aigen::VarMode` 区分
-- **token 权重表已从二进制直读**（`archive/ai/71`，`src/aigen.rs`）：
+  `y'` 两种模式都不产生。Rust 侧已用 `graphwar_function_evolutionator::VarMode` 区分
+- **token 权重表已从二进制直读**（`archive/ai/71`，`src/graphwar_function_evolutionator.rs`）：
   `idx = random % 85`，区间权重
   `const 11 | x 10 | + 10 | - 5 | * 11 | / 7 | ^ 2 | sqrt 1 | log 1 | ln 1 | exp 6 | abs 7 | sin 7 | cos 5 | tan 1`，
   常数 = `N(0,1) × 10.2`。**运行时 40 万样本逐项吻合到小数点后第二位**
@@ -216,7 +216,7 @@ hook **`0x47f700`**（取随机 u64）即可读状态：`arg0` 是状态指针�
 - **随机函数长度**（`archive/ai/76`，已从二进制读死）：**`trunc(N(0,1) × 5.0 + 10.0)`**
   （`0x4ef08e` mulsd 5.0、`0x4ef096` addsd 10.0、`0x4ef0b2` cvttsd2si；
   中间的 `maxsd/minsd` 是 ±2³¹ 的溢出保护，不是语义上下限）。
-  已实现为 `aigen::random_length`
+  已实现为 `graphwar_function_evolutionator::random_length`
 - **适应度**（`archive/ai/74`）：`命中×2e6 − 1e6 − V²/100 − (V>limit?5e7:0)`，
   **`V` = 该函数的 token 数**（运行时 12/12 命中栈上 `[rsp+440]` 的向量）；
   **常规对局里没有友军惩罚项**（`X` 是采样步长 0.5/0.01，与它相乘的掩膜累加器恒为 0）
@@ -247,13 +247,13 @@ hook **`0x47f700`**（取随机 u64）即可读状态：`arg0` 是状态指针�
 | 资源 / 音频 / 本地化 | 资源 692 文件 md5 全符；**音频只有 1 个 `sounds/humm.wav`**（无音乐、无音效库）；包里**无** `.translation`/`.csv` ⇒ 无本地化资源，文本硬编码在场景/脚本里。是否有音频系统**未确认** |
 | ~~`AxisMode` / `TimeMode` 是否参与判定~~ | ✅ **已结案：不参与任何判定**（`88` §17：采样器/掩膜/结算/开火链签名里都没有这两个参数，AI 上下文构造也没有）。口述阶段的"把握较低"（§14/§16.3）已被签名证据取代 |
 | ~~AI 的时间预算 / "精英 5" 的用途~~ | ✅ **已解**：终止 = 代数到顶 **∨ 25 s 墙钟**（`13-ai.md`，每代开头查一次，截断无标记）；精英 = 每代前 **20%**，字面量 5 = 每槽 1 克隆 + 4 工厂子代（`13-ai.md`） |
-| `aigen::evolve` 的 25 s 上限 | **未实现**（只按代数循环 ⇒ 难度 6 多算、结果依机器速度，`13-ai.md` §5.4）。另：`src/aigen.rs` 里 `Params.elite` 这个字段名与注释已与 `13-ai.md` 不符（本任务禁改 `src/`） |
+| `graphwar_function_evolutionator::evolve` 的 25 s 上限 | **未实现**（只按代数循环 ⇒ 难度 6 多算、结果依机器速度，`13-ai.md` §5.4）。另：`src/graphwar_function_evolutionator.rs` 里 `Params.elite` 这个字段名与注释已与 `13-ai.md` 不符（本任务禁改 `src/`） |
 
 ## 7. 正在进行：AI 与关卡
 
 已达成：算法、适应度、六档参数、机器人名单、**token 权重表**、**变异算子**、
 **随机函数长度**、**V 的语义**、**每代构成**，并已落成
-**结构还原版 AI**（`src/aigen.rs`：`params`/`random_length`/`mutate`/`crossover`/
+**结构还原版 AI**（`src/graphwar_function_evolutionator.rs`：`params`/`random_length`/`mutate`/`crossover`/
 `next_generation`/`evolve`/`fitness`/`initial_population`，18 条测试含端到端"6 代学会命中"）。
 
 剩余：
@@ -268,7 +268,7 @@ hook **`0x47f700`**（取随机 u64）即可读状态：`arg0` 是状态指针�
    真实对局 **0 次调用**。散布生成器在真对局里**被调用过**（`06` §14.4 的 hook 计数 `levelgen 1+1`），
    逐位复现 13/13（`61`）；中心单障碍有 4 个真值样本（`103`）。
 5. AI 的终止条件与精英机制**已解**（`13-ai.md`：代数到顶 ∨ 25 s 墙钟；`13-ai.md`：精英 = 前 20%）；
-   **仍未做**：把 25 s 上限写进 `aigen::evolve`（`AxisMode`/`TimeMode` 已由 `88` §17 结案，不参与判定）。
+   **仍未做**：把 25 s 上限写进 `graphwar_function_evolutionator::evolve`（`AxisMode`/`TimeMode` 已由 `88` §17 结案，不参与判定）。
 
 **批量提取真实函数文本**已打通：`tools/ocr_functions.py`（用户装了 `tesseract-data-eng`）。
 
@@ -298,7 +298,7 @@ hook **`0x47f700`**（取随机 u64）即可读状态：`arg0` 是状态指针�
 
 * 速度：**0.29 单位/tick**（75/82 发能配上爆炸事件，p10~p90 = 0.255~0.300）；
   同一回合所有发的 `active_tick` 完全相同（13/13）。
-* **不改物理**：`settle::resolve` 的"每发独立算"就是对的。
+* **不改物理**：`graphwar_shot_calculator::settle::resolve` 的"每发独立算"就是对的。
   要改的是**事件生成**：多发同时结算时死亡要按到达 tick 排序、每个受害者只报一次。
 * 顺带发现的两个缺陷（与结算顺序无关，`14-turn.md` §9）：**9.1 已修复、9.2 已撤回**。
   1. **采样器"提前终止"**（实况步长 **0.01** 下 **19/82（23%）** 的曲线被截断；
@@ -336,12 +336,12 @@ else:
 ```
 
 * 一句话：**复检不通过时 `lo` 回基点 `x`、`hi` 砍到 `mid2`**。
-  （历史）两份实现（`graphwar_curve.py` / `path.rs`）曾都只做了 `lo = x`，**漏了 `hi = mid2`**
+  （历史）两份实现（`graphwar_curve.py` / `graphwar_path_calculator.rs`）曾都只做了 `lo = x`，**漏了 `hi = mid2`**
   ⇒ 拒绝后区间宽一倍 ⇒ 从第 4 点起走另一条轨迹（`06-verification.md` §26 的三方对照）。**现已双双补上。**
 * 计数器：**`ebx`**，`0x3c293f` 置 100，`0x3c2955 dec`，`0x3c2957 je` 直接返回（= 早停）。
   首次进入绕过 `dec`，所以恰好 100 轮。
 * ODE 分支**没有**这段复检（`0x3c2840` 直接接受），不要一起改。
-* 改法（**已完成**）：`graphwar_curve.py` 第 471–473 行、`path.rs` 第 92–95 行各加一行 `hi = mid2`，
+* 改法（**已完成**）：`graphwar_curve.py` 第 471–473 行、`graphwar_path_calculator.rs` 第 92–95 行各加一行 `hi = mid2`，
   并把判据写成 `not (ln > ln2)` / `!(chord > chord2)`（`jbe` 遇 NaN 成立）。
 * **验证已做完**（`06-verification.md` §32 记录）：
   - `analysis/gwemu.py` oracle 24 个用例，**24/24 整条点序列逐位相等**（原实现 17/24），
@@ -361,7 +361,7 @@ else:
 | # | 结论 | 可验证性 |
 |---|---|---|
 | 1 | **没有 `y''` 模式** ⇒ 上下箭头设发射角、发射角轮盘在 GW2 **都不存在** | 与 `AGENTS.md` 的"只有一阶"一致；`YButton` 有控件但两模式都 disabled（`16-client.md`） |
-| 2 | **回合超时 = 跳过该玩家** | 未独立验证；影响 `src/serverloop.rs` |
+| 2 | **回合超时 = 跳过该玩家** | 未独立验证；影响 `src/graphwar_game_server.rs` |
 | 3 | **Normal 模式写 `y` 不判非法，等价于 0** | ✅ 与我们的 parser（永远接受 `y`）+ 反汇编（`y'` 恒 0）一致；用户已实测 |
 | 4 | **士兵朝向 = 队伍**：`x<0` 朝右、`x>0` 朝左 | ✅ 与 `10-campaign.md` 的 773 个位置样本一致；朝向本身未在节点树里观测到 |
 | 5 | **等待界面与 GW1 完全不同**：**没有倒计时**，房主点 Start **立即开始** | 与 `16-client.md` 的 `lan_lobby`/`GameSetup` 台账一致（Start 就直接进 PlayScreen） |
@@ -444,12 +444,12 @@ else:
 ## 9. 文件地图与常用命令
 
 ```
-src/function/   文法与求值        src/protocol.rs  46 种消息 + 序列化
-src/path.rs     采点              src/settle.rs    命中与致死结算
+src/math_function/   文法与求值        src/_scaffold/protocol.rs  46 种消息 + 序列化
+src/graphwar_path_calculator.rs     采点              src/graphwar_shot_calculator/settle.rs    命中与致死结算
 src/plane.rs    坐标/掩膜/光栅化   src/game.rs      Match（一回合报文序列）
-src/shot.rs     修正+开火原语      src/turnstate.rs 回合状态机
-src/tick.rs     60Hz + 回合时长    src/levelgen.rs  关卡生成（含 ziggurat）
-src/rng.rs      ChaCha12          src/serverloop.rs 服务端循环
+src/graphwar_shot_calculator.rs     修正+开火原语      src/turnstate.rs 回合状态机
+src/graphwar_tick_handler.rs     60Hz + 回合时长    src/graphwar_level_generator.rs  关卡生成（含 ziggurat）
+src/_scaffold/rng.rs      ChaCha12          src/graphwar_game_server.rs 服务端循环
 src/server.rs   握手/状态同步      src/gdext*.rs    Godot 扩展
 tests/          events / evidence / golden / live_hits / plane / server_match
 tools/          pck_extract / mask_check / simulate_check / hook_* / capture_* / predict_obstacles

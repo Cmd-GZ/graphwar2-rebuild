@@ -153,7 +153,7 @@ var _logic_settled := false
 var _effects: GwEffectLayer = null
 ## 本轮收到/发出的效果事件流水（诊断与自检用；不影响绘制）。
 var _fx_log: Array = []
-## 回合轮转（`docs/143` §6）。规则同 `src/turn.rs`（`0x463da0`）。
+## 回合轮转（`docs/143` §6）。规则同 `src/graphwar_turn_manager.rs`（`0x463da0`）。
 var _turn_driver := GwTurnDriver.new()
 ## 当前射手在 `_soldiers` 里的下标（`_active` 是**玩家**下标，两个编号都在用）。
 var _active_soldier_idx := 0
@@ -661,7 +661,7 @@ func begin_match() -> void:
 				"player": pi,
 				"color": colors[pi],
 			})
-	# 回合轮转：每玩家一张士兵表（`docs/143` §6，规则同 `src/turn.rs`）。
+	# 回合轮转：每玩家一张士兵表（`docs/143` §6，规则同 `src/graphwar_turn_manager.rs`）。
 	_reset_turn_driver()
 	_active = 0
 	if not _soldiers.is_empty():
@@ -750,7 +750,7 @@ func _refresh_plane() -> void:
 
 # ---------------------------------------------------------------- 障碍（docs/126）
 
-## 本局的障碍列表。**生成在内核里**（`src/levelgen.rs` 的既有实现，公式逐位验证过），
+## 本局的障碍列表。**生成在内核里**（`src/graphwar_level_generator.rs` 的既有实现，公式逐位验证过），
 ## 本界面只负责把结果存起来、画出来、并原样交给 `hit_test`。
 ##
 ## 种子语义（`docs/126` §2.2）：
@@ -966,7 +966,7 @@ func fire() -> void:
 ## 把一发（或同时回合的一批）弹道交给结算，然后走**回合结算**（`docs/131` §2、§4）。
 ##
 ## 同时回合制下只有"所有还活着的人都打过"才结算一次（`docs/86`）——那一批算**一个**回合。
-## 顺序与原版语料一致的那部分：`docs/84`/`docs/86` 的结算本体仍在 `src/settle.rs`。
+## 顺序与原版语料一致的那部分：`docs/84`/`docs/86` 的结算本体仍在 `src/graphwar_shot_calculator/settle.rs`。
 func _commit_shot(shot: Dictionary) -> void:
 	var app_node := app()
 	if app_node == null:
@@ -975,7 +975,7 @@ func _commit_shot(shot: Dictionary) -> void:
 	# 但**不立刻生效**：哪一发什么时候落地由弹道自己的 tick 决定（`docs/65`）。
 	shot["judged"] = _judge_shots([shot])
 	if int(app_node.state.turn_mode) == GwModes.Turn.SIMULTANEOUS:
-		# 同时回合：先全部记下，轮完再结算（真实结算在 src/settle.rs，docs/86）。
+		# 同时回合：先全部记下，轮完再结算（真实结算在 src/graphwar_shot_calculator/settle.rs，docs/86）。
 		# ⚠️ 这一支**没有**接逐 tick 时序（见 `docs/143` §9 "未做"）：整批一落地就算完。
 		_shot_queue.append(shot)
 		if _all_alive_players_shot():
@@ -1070,7 +1070,7 @@ func _advance_presentation() -> void:
 ## 为什么按点序号而不是按时间：`LifeQueuedDeath{tick}` 与 `EffectInfo.start_tick`
 ## 相等（`docs/65` §1 两例），而弹道点是采样器给的（`docs/04`）⇒ "到那个点"就是
 ## "到那个 tick"。`point` 由 `_first_point_within()` 算，与内核判死的规则是同一条
-## （`src/settle.rs`：点落在半径内）。
+## （`src/graphwar_shot_calculator/settle.rs`：点落在半径内）。
 func _apply_kills_up_to(reveal: int) -> void:
 	if _pending_kills.is_empty() and _pending_target_kills.is_empty():
 		return
@@ -1316,7 +1316,7 @@ func _shot_owners() -> Array:
 
 ## 命中判定 —— 走**内核的掩膜规则**（`docs/120`）。
 ##
-## 真实规则在 `src/settle.rs::resolve_points`（`docs/30` 的真对局回放）：
+## 真实规则在 `src/graphwar_shot_calculator/settle.rs::resolve_points`（`docs/30` 的真对局回放）：
 ## 障碍光栅化进 1000×600 掩膜决定弹道停在哪；士兵与**靶子**都**不**挡弹道，只在
 ## "弹道点落在半径内"时判死（`PosInfo.radius` 恒 0.5）。
 ## 射手本人不参与致死（`settle` 的约定：子弹从自己身上出发）。
@@ -1391,7 +1391,7 @@ func _judge_shots(shots: Array) -> Dictionary:
 
 ## 弹道点序列里**第一个**落进 `radius` 的点序号。
 ##
-## 与内核判死是同一条规则（`src/settle.rs::resolve_points`：点落在半径内即死），
+## 与内核判死是同一条规则（`src/graphwar_shot_calculator/settle.rs::resolve_points`：点落在半径内即死），
 ## 只是内核把它当内部细节（`SoldierHit.point` 没有出现在返回的 Dictionary 里），
 ## 所以这里按同一个判据再算一次序号。找不到（不该发生）⇒ 取最后一点。
 func _first_point_within(pts: PackedVector2Array, pos: Vector2, radius: float) -> int:
@@ -1439,7 +1439,7 @@ func _active_soldier() -> Dictionary:
 			if int(s2.get("entity_id", -1)) == _online_soldier:
 				return s2
 		return {}
-	# 本地：射手由回合轮转（`GwTurnDriver`，规则同 `src/turn.rs`）**指定到具体士兵**。
+	# 本地：射手由回合轮转（`GwTurnDriver`，规则同 `src/graphwar_turn_manager.rs`）**指定到具体士兵**。
 	# 旧实现是"该玩家的第一个活着的士兵"，多士兵关卡里第二个士兵永远轮不到（docs/143 §6.2）。
 	if _active_soldier_idx >= 0 and _active_soldier_idx < _soldiers.size():
 		var cur: Dictionary = _soldiers[_active_soldier_idx]
@@ -1456,7 +1456,7 @@ func _active_soldier() -> Dictionary:
 ## ① 多士兵关卡里那个玩家永远只用第一个士兵（`Level 3` 的描述明写
 ##    "At each turn you will shoot from a different one"，**观测**）；
 ## ② 轮到 Bot 之后什么都不发生，要人类再按一次 Fire 才"动一下"（用户实测的"卡住"）。
-## 现在改用 `GwTurnDriver`（规则同 `src/turn.rs`，`0x463da0` 逐位），
+## 现在改用 `GwTurnDriver`（规则同 `src/graphwar_turn_manager.rs`，`0x463da0` 逐位），
 ## 轮到 AI 就给它一个思考倒计时（`_tick_bot_turn()`），到点由 AI 自己开火。
 func _next_turn(advance: bool) -> void:
 	if not advance:
@@ -1502,7 +1502,7 @@ func _load_active_function() -> void:
 func _check_match_over() -> void:
 	if _replay_mode:
 		return
-	# 联机：胜负由**服务端**判（它发 `EndingGame`，`src/serverloop.rs`；本界面只收）。
+	# 联机：胜负由**服务端**判（它发 `EndingGame`，`src/graphwar_game_server.rs`；本界面只收）。
 	# 本地这套 `GwLevelRules` 是"单机/战役"的规则，拿去判联机局会出现两个真相源。
 	if _online_mode:
 		return
@@ -2217,7 +2217,7 @@ func _online_tick(delta: float) -> void:
 	_update_timer_label()
 
 ## 联机开火：**只发两条请求**，弹道与服务端算。判定/生死/回合全在服务端
-## （`src/serverloop.rs`；`docs/134` §7.1 第 3 条）。
+## （`src/graphwar_game_server.rs`；`docs/134` §7.1 第 3 条）。
 func _fire_online(expr: String, soldier: Dictionary) -> void:
 	if _online_session == null:
 		_status("联机会话已断（socket 关了），这一发没有发出去")
@@ -2355,7 +2355,7 @@ func _alive_soldier_count() -> int:
 ## 必然给出同一条曲线。**方向由服务端数据定**：`end_x` 落在起点哪一侧就往哪一侧飞
 ## （不是按队伍猜 —— 抓包里 `docs/24` §6.3 那两个样本的方向正是这样定下来的）。
 ##
-## 修正（`f(x) + c`）由内核按 `c = y0 - f(x0)` 自己算（`src/api.rs::calculate_path`），
+## 修正（`f(x) + c`）由内核按 `c = y0 - f(x0)` 自己算（`src/_scaffold/api.rs::calculate_path`），
 ## 与 `Match::fire` 用的是同一个 `correction()`。`corrected_function`（三位小数的文本）
 ## 只拿来当**交叉证据**写进诊断，不参与计算：它被四舍五入过，用它反而会引入误差。
 func _draw_online_shot(owner_id: int, start: Vector2, end_x: float) -> void:
@@ -2383,7 +2383,7 @@ func _draw_online_shot(owner_id: int, start: Vector2, end_x: float) -> void:
 		return
 	var pts: PackedVector2Array = result.points
 	# 只画到服务端说的 `end_x`：服务端的停点 = 它那条点序列的最后一点
-	# （`src/settle.rs::resolve_points`），而采样器确定性 ⇒ 到同一个 x 之前的点序列
+	# （`src/graphwar_shot_calculator/settle.rs::resolve_points`），而采样器确定性 ⇒ 到同一个 x 之前的点序列
 	# 就是服务端那条轨迹。服务端按 0.5 的弦长采样、内核按 0.01，所以停点最多差一个弦长
 	# （`docs/139` §4 记了这一条）。
 	var cut := _truncate_path_at_x(pts, end_x, direction)

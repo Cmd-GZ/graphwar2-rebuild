@@ -17,14 +17,14 @@ class_name GwReplayPlayer
 ## ## 局面规则（**推断**，口径 = `tools/replay_state.py`，逐项列在 `docs/133` §3）
 ##
 ## 只有那 15 类事件改局面，其余只进事件流（不猜副作用）。
-## `canonical()` 与内核 `src/replay.rs::ReplayState::canonical` **逐字符同格式**，
+## `canonical()` 与内核 `src/graphwar_replay_player.rs::ReplayState::canonical` **逐字符同格式**，
 ## 用于三端对拍（Python 参考 / Rust 内核 / 本文件）。
 
 ## tick 时钟（`docs/35` §2）。
 const TICKS_PER_SECOND := 60
 
 var file: GwReplayFile = null
-## 当前局面。键与 `src/replay.rs::ReplayState` 一一对应。
+## 当前局面。键与 `src/graphwar_replay_player.rs::ReplayState` 一一对应。
 var state := {}
 var cursor := 0
 var tick := 0.0
@@ -168,7 +168,7 @@ func step_back_event() -> int:
 
 # ---------------------------------------------------------------- 局面累加
 
-## 应用一条事件到局面。规则表见 `docs/133` §3（与 `src/replay.rs::ReplayState::apply` 同序）。
+## 应用一条事件到局面。规则表见 `docs/133` §3（与 `src/graphwar_replay_player.rs::ReplayState::apply` 同序）。
 func apply_event(ev: Dictionary) -> void:
 	var d: Dictionary = ev.data
 	match String(ev.kind):

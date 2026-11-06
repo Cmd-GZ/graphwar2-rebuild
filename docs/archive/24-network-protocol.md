@@ -2,7 +2,7 @@
 
 来源：在真实对局进程里 hook `libc` 的 `sendto/recvfrom/send/recv`
 （`tools/capture_net.js`），抓到**真实报文**；样本原样入库为
-`fixtures/protocol.jsonl`（29 条），`src/protocol.rs` 的测试直接吃这些帧。
+`fixtures/protocol.jsonl`（29 条），`src/_scaffold/protocol.rs` 的测试直接吃这些帧。
 
 ## 1. 传输层（观测）
 
@@ -74,7 +74,7 @@
 
 ## 4. 已实现的部分
 
-`src/protocol.rs`：
+`src/_scaffold/protocol.rs`：
 
 - `Frame::encode` / `Frame::decode`：`u16` 大端长度 + 负载；
 - `parse_message`：取出类型名与内层对象（带**花括号配平**校验，半截帧拒绝）；
@@ -187,7 +187,7 @@
 ```
 
 `4.638` / `10.990` 正是各自的 `start_y`，证实修正是 `f(x) + c` 且**以文本形式拼接**；
-`src/shot.rs::corrected_text` 复刻了这个格式（三位小数），并有针对这两个真实样本的测试。
+`src/graphwar_shot_calculator::corrected_text` 复刻了这个格式（三位小数），并有针对这两个真实样本的测试。
 
 ### 6.3 用真实弹道对拍
 
@@ -255,7 +255,7 @@ https://graphwar.com/graphwar_II_ip.txt    （出现两次：broker 与崩溃上
 
 **2026-11-06 补充（`docs/115`）**：broker 协议**已经还原**（与对局同一套帧，`u16` 大端长度 + JSON；
 会话 = 客户端先发 `VersionInfo{version,system}`，broker 逐条推 `GameInfo{game_info}`），
-并已实现 `src/broker.rs`。但发现一件更要紧的事：
+并已实现 `src/_scaffold/broker.rs`。但发现一件更要紧的事：
 
 > **`--broker_address` 在这个构建里完全不生效**（6 组受控实验：snake / kebab / `=` /
 > 加必填端口 / 非法值 / 干净 argv 全都无效；二进制里也没有任何 `cmdline` 方法名串）。

@@ -1,4 +1,4 @@
-# 77 · 结构还原版 AI（`src/aigen.rs`）
+# 77 · 结构还原版 AI（`src/graphwar_function_evolutionator.rs`）
 
 ## 1. 它是什么
 
@@ -52,14 +52,14 @@ pub fn next_generation(pop, params, next, score) -> Vec<Individual>
 
 ## 5. 适应度已接上（本轮新增）
 
-`aigen::fitness(tokens, &ScoringContext)` 实现了 `docs/74` 的公式：
+`graphwar_function_evolutionator::fitness(tokens, &ScoringContext)` 实现了 `docs/74` 的公式：
 
 ```rust
 score = 命中数 × 2e6 − 1e6 − V²/100 − (V > limit ? 5e7 : 0)
 ```
 
-- **命中判定**与 `settle::resolve` 完全一致（穿过即死、不挡弹道；障碍挡停）；
-- 路径用 `path::calculate` 直接吃 token（不需要先渲染成文本）；
+- **命中判定**与 `graphwar_shot_calculator::settle::resolve` 完全一致（穿过即死、不挡弹道；障碍挡停）；
+- 路径用 `graphwar_path_calculator::calculate` 直接吃 token（不需要先渲染成文本）；
 - `V` = token 数，`limit` 来自 [`Params`]；
 - 步长用 `ScoringContext.step`（粗评 0.5 / 精评 0.01）。
 

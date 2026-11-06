@@ -58,7 +58,7 @@ for i, tok in tokens:
 
 ## 4. 我们之前的实现错在哪
 
-`aigen::repair` 原来**只补常数叶子**，而游戏是 50/34/16 的混合。
+`graphwar_function_evolutionator::repair` 原来**只补常数叶子**，而游戏是 50/34/16 的混合。
 后果：交叉产生的子代会系统性地**缺少变量**，搜索行为与真实 AI 不一致。
 
 已改正，并加了测试 `repair_fills_with_the_documented_mix`

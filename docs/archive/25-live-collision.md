@@ -25,7 +25,7 @@
 ## 2. 做法
 
 1. 用 `src/plane.rs::rasterize` 把 17 个障碍和 4 名士兵画进 1000×600 掩膜；
-2. 用 `src/shot.rs::shot_points` 从抓到的起点、用抓到的函数文本（`0.00`）重算轨迹；
+2. 用 `src/graphwar_shot_calculator::shot_points` 从抓到的起点、用抓到的函数文本（`0.00`）重算轨迹；
 3. 沿轨迹逐点查 `is_occupied`，跳过开火者自身 0.5 半径内的点；
 4. 与抓到的 `QueueDestroyObstacle` 位置比较。
 
@@ -132,5 +132,5 @@ y0 - f(-x0)  = -8.461 - (-23.96) = +15.50     ← 符合
 | 231 | `0.00` | `(-11.753, -5.862)` | `2.853` | `2.718` | 0.135 |
 | 234 | `(-1.65/(-8.04/x))` | `(17.628, -12.392)` | `-24.550` | `-24.533` | 0.018 |
 
-**6 发全部小于采样步长 0.5**，用的是 `settle::resolve`（掩膜只放障碍、士兵单独做致死判定）。
+**6 发全部小于采样步长 0.5**，用的是 `graphwar_shot_calculator::settle::resolve`（掩膜只放障碍、士兵单独做致死判定）。
 测试：`tests/live_hits.rs::replays_every_shot_of_the_death_level`。

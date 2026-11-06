@@ -397,7 +397,7 @@ mov $N,%ebx
 ### 7.3 没有变的东西（重要）
 
 **线格式一个字都没动。** 线上是 serde 外部标签 JSON（`{"NameInfo":{…}}`），
-380 份 replay 佐证判别值不上线（`docs/96` §4）。`src/protocol.rs` 一行未改。
+380 份 replay 佐证判别值不上线（`docs/96` §4）。`src/_scaffold/protocol.rs` 一行未改。
 本次是**内部保真**。
 
 ---

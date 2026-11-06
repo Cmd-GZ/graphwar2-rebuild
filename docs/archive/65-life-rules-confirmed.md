@@ -19,7 +19,7 @@
 | 伤害数值 / 血量规则？ | **没有观测到**，判定模型是二值的 | §1 |
 
 > 证据来源的诚实说明：这三条**核心结论来自用户在真游戏里的实际操作观察**，不是我方仪器抓到的报文。
-> 我方仪器多次尝试都拿不到样本（原因见 §5），但我们的实现（`src/settle.rs` / `src/game.rs`）
+> 我方仪器多次尝试都拿不到样本（原因见 §5），但我们的实现（`src/graphwar_shot_calculator/settle.rs` / `src/game.rs`）
 > 本来就与这三条一致，两个来源相互印证。
 
 用户另补充：士兵不会出现在同一位置；GW2 有相当部分逻辑源自 GW1。
@@ -75,7 +75,7 @@ Setup → WaitingForFunctions → CalculatingResults → SynchronizingResults �
 
 ## 4. 与我们的实现对照（原 `65` §2）
 
-| 结论 | `src/settle.rs` / `src/game.rs` 的做法 | 一致？ |
+| 结论 | `src/graphwar_shot_calculator/settle.rs` / `src/game.rs` 的做法 | 一致？ |
 |---|---|---|
 | 无血量 | 只有 `killed: Vec<i64>`，命中即加入 | ✅ |
 | 友军致死 | `Match::fire` 只排除**射手本人**（同位置判等），队友照常参与判定 | ✅ |

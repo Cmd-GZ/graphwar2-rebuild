@@ -1,4 +1,4 @@
-//! `src/ai_explain.rs` 的验收。
+//! `src/_scaffold/ai_explain.rs` 的验收。
 //!
 //! ⚠️ 按 `AGENTS.md` §0.2：这些断言是**回归保护**，不是复原证据。
 //! 真正决定行为对错的是二进制（地址都写在 `docs/147` 与代码注释里）。
@@ -8,10 +8,10 @@
 //! 2. **难度真的会改决策** —— 难度值改档 ⇒ 参数改、过程改、结果改；
 //! 3. **机制本身对** —— 友军算负分、障碍截断弹道、粗评/精评会分歧。
 
-use gw2_rebuild::ai_explain::{
+use gw2_rebuild::_scaffold::ai_explain::{
     self, evaluate, is_friendly, Entity, Settings, Situation, TEAM_UNKNOWN,
 };
-use gw2_rebuild::aigen::{difficulty_params, params, VarMode, DIST_SENTINEL};
+use gw2_rebuild::graphwar_function_evolutionator::{difficulty_params, params, VarMode, DIST_SENTINEL};
 use gw2_rebuild::{Function, Token};
 
 fn const_fn(v: f64) -> Vec<Token> {
@@ -59,7 +59,7 @@ fn different_seed_can_change_the_decision() {
 // 2. 难度
 // ---------------------------------------------------------------------------
 
-/// 逐条对应 `0x3e3d95`–`0x3e45a3` 的分档（见 `aigen::difficulty_params`）。
+/// 逐条对应 `0x3e3d95`–`0x3e45a3` 的分档（见 `graphwar_function_evolutionator::difficulty_params`）。
 #[test]
 fn difficulty_bands_match_the_binary() {
     // (难度值, 代数, 种群, 上限)

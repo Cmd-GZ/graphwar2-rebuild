@@ -2,8 +2,8 @@ extends RefCounted
 class_name GwGameState
 ## 一局对战的界面侧状态（**不是**规则引擎）。
 ##
-## 规则引擎在 Rust 内核 `src/` 里：开火/采样 `src/path.rs`、修正 `src/shot.rs`、
-## 杀伤 `src/life.rs`、回合与结算 `src/turn.rs`/`src/settle.rs`、关卡生成 `src/levelgen.rs`。
+## 规则引擎在 Rust 内核 `src/` 里：开火/采样 `src/graphwar_path_calculator.rs`、修正 `src/graphwar_shot_calculator.rs`、
+## 杀伤 `src/graphwar_life_manager.rs`、回合与结算 `src/graphwar_turn_manager.rs`/`src/graphwar_shot_calculator/settle.rs`、关卡生成 `src/graphwar_level_generator.rs`。
 ## 本类只保存"界面上看得见的选择"，并通过 `core_bridge.gd` 把要算的东西递过去。
 
 enum Kind { LAN, CAMPAIGN, REPLAY }

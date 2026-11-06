@@ -155,7 +155,7 @@ s = 种群 / per_slot            （50→10、100→20 … 即 20%）
 | 项 | 状态 |
 |---|---|
 | ~~"精英 5" 的用途~~ | **已解**（`docs/95`）：不存在固定 5 个；精英 = 每代**前 20%**（`s = 种群/5`），全部克隆；字面量 5 是**每槽个体数**（1 克隆 + 4 工厂子代） |
-| ~~是否有**时间预算**~~ | **已解**（`docs/93`）：**有**，墙钟 **25 s**（`CLOCK_MONOTONIC`），每代开头查一次；超时与跑满**共用出口** ⇒ 调用方拿不到"被截断"信号。难度 6（1000 代 × 250）实测**跑不完**，难度 ≤5 跑满。⚠️ `src/aigen.rs::evolve` 尚未实现这个上限 |
+| ~~是否有**时间预算**~~ | **已解**（`docs/93`）：**有**，墙钟 **25 s**（`CLOCK_MONOTONIC`），每代开头查一次；超时与跑满**共用出口** ⇒ 调用方拿不到"被截断"信号。难度 6（1000 代 × 250）实测**跑不完**，难度 ≤5 跑满。⚠️ `src/graphwar_function_evolutionator::evolve` 尚未实现这个上限 |
 
 ## 8.4 谁决定"用哪个士兵开火"：**AI 不参与**（`docs/98`）
 
@@ -184,12 +184,12 @@ AI 只是被喂"这回合的射手是谁"，**为那一个士兵跑一次进化*
 **仍未确定**（`docs/98` §6）：`computer_player_manager` 的 map 键是 player 还是 soldier、
 游标初值、`Vec<soldier_id>` 的填充顺序（若来自 HashMap 遍历则每局不同）、两模式下的发射时序。
 
-~~**对实现的缺口**：`src/turn.rs` 需要实现这套轮转；`src/aigen.rs` 缺"回合系统先定
+~~**对实现的缺口**：`src/graphwar_turn_manager.rs` 需要实现这套轮转；`src/graphwar_function_evolutionator.rs` 缺"回合系统先定
 soldier_id、AI 只为它进化"这一层。~~
 
-**已实现**（`docs/109`）：`turn::PlayerTurns` 三态轮转 + `TurnManager::begin_turn`；
-`aigen::SoldierEvolver::evolve_soldier` 按士兵建槽、每回合覆盖重算、`with_budget` 接 25 s。
-⚠️ **但都还没有调用点**——`game.rs` / `serverloop.rs` 仍走旧路径（服务端接线暂缓）。
+**已实现**（`docs/109`）：`graphwar_turn_manager::PlayerTurns` 三态轮转 + `TurnManager::begin_turn`；
+`graphwar_function_evolutionator::SoldierEvolver::evolve_soldier` 按士兵建槽、每回合覆盖重算、`with_budget` 接 25 s。
+⚠️ **但都还没有调用点**——`game.rs` / `graphwar_game_server.rs` 仍走旧路径（服务端接线暂缓）。
 
 ## 8.5 ⏱ 时间预算：**墙钟 25 秒**（`docs/93`）
 
@@ -255,7 +255,7 @@ soldier_id、AI 只为它进化"这一层。~~
 
 ## 9. 实现
 
-`src/aigen.rs`（21 条测试），含 `VarMode`、`table(mode)`、`repair`、`crossover`、`evolve`。
+`src/graphwar_function_evolutionator.rs`（21 条测试），含 `VarMode`、`table(mode)`、`repair`、`crossover`、`evolve`。
 
 ## 10. 验证到什么程度
 

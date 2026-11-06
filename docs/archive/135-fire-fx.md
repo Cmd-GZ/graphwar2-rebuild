@@ -94,7 +94,7 @@
 
 | 键 | 效果 | 为什么这么定 |
 |---|---|---|
-| `0`–`9`、`.`、`(`、`)`、`+`、`-`、`*`、`/`、`^` | 插入该字符 | 文法（`src/function/mod.rs::lex`）认得这些记号 —— **逐位验证** |
+| `0`–`9`、`.`、`(`、`)`、`+`、`-`、`*`、`/`、`^` | 插入该字符 | 文法（`src/math_function::lex`）认得这些记号 —— **逐位验证** |
 | 字母 `a`–`z` / `A`–`Z` | 插入**小写**字符 | 词法器先 `to_lowercase()` 再切词 —— **逐位验证** |
 | `π`（输入法上屏） | 插入 `π` | `lex` 把 `pi`/`π` 都换成 `n`（= π）—— **逐位验证** |
 | `√` | 插入 `sqrt(` | 屏上键 `√` 的 `input_text` 就是 `sqrt(`（`docs/92` §4.10）；裸 `√` 会被词法器**跳过** |
@@ -197,7 +197,7 @@
 
 | 量 | 值 | 是什么 | 档位 |
 |---|---|---|---|
-| 采样步长（弦长） | `0.01` | **空间离散化**：一条曲线被折成多少个点（`0.01` 是 `src/path.rs` 的 `step`，`AGENTS.md` 硬事实 + `cargo test` 逐位验证） | **逐位验证** |
+| 采样步长（弦长） | `0.01` | **空间离散化**：一条曲线被折成多少个点（`0.01` 是 `src/graphwar_path_calculator.rs` 的 `step`，`AGENTS.md` 硬事实 + `cargo test` 逐位验证） | **逐位验证** |
 | tick 频率 | `60 /s` | **时间**：门钟走多快 | **观测**（`docs/35`） |
 | 每 tick 弧长 | `0.29 单位` | **播放速率**：弹丸一 tick 飞多远 | **推断**（`docs/86`） |
 
@@ -350,13 +350,13 @@ bash client/run.sh shots <dir>  # 17 张；PlayScreen/PlayScreenCampaign/PlayScr
 | 原版键盘 = 输入框聚焦后接管（`LineEdit` 子类 + `gui_input`） | **观测** | 恢复出的 `play_screen.tscn:764-772` 属性 + `.so` 字符串池（`gui_input`、`set_caret_column`、`insert_text_at_caret`、`src/graphwar_function_input.rs:519`） |
 | 原版会不会自动 `grab_focus` | **未知** | 真机按键日志/焦点 dump |
 | 我们的屏幕级接管、过滤规则、回车=开火 | **自定** | 同上 |
-| 文法认得的字符集（`x y y' + - * / ^ sqrt log ln exp abs sin cos tan`、`pi/π/n`=π） | **逐位验证** | `src/function/mod.rs::lex` + 上游 `cargo test` |
+| 文法认得的字符集（`x y y' + - * / ^ sqrt log ln exp abs sin cos tan`、`pi/π/n`=π） | **逐位验证** | `src/math_function::lex` + 上游 `cargo test` |
 | 光圈**存在** | **用户口述** | 原版真帧（准备发射那一刻） |
 | 光圈半径/颜色/线宽/起始弧度/**闭合时长**/插值 | **自定** | 同上（逐帧真帧能量出这些量） |
 | "准备好" = 函数非空 | **推断** | 真帧 + 报文时间线（闭合发生在 `FunctionFire` 之前还是之后） |
 | tick 频率 60/s | **观测** | `docs/35` §2（113 个 `TickReply`） |
 | 每 tick 0.29 单位 | **推断** | `docs/86` §6/§7；缺逐 tick 位置观测（要 hook） |
-| 协议按 tick 建模（`active_tick`/`start_tick`/`tick`） | **逐位验证** | `docs/46`/`docs/43` 的报文序列 + `src/protocol.rs` 的逐字节测试 |
+| 协议按 tick 建模（`active_tick`/`start_tick`/`tick`） | **逐位验证** | `docs/46`/`docs/43` 的报文序列 + `src/_scaffold/protocol.rs` 的逐字节测试 |
 | 死亡发生在到达 tick | **观测（强）** | `docs/86` §6（151/152，残差中位 −0.4 tick） |
 | 我们这一版"结算仍在开火时" | **自定（取舍）** | §3.4 给了改法与代价 |
 

@@ -16,7 +16,7 @@ class_name GwReplayFile
 ##
 ## ## 解压为什么在客户端做
 ##
-## 内核侧（`src/replay.rs`）有同一份规则的可执行版本（`cargo test` 覆盖，另有 C ABI
+## 内核侧（`src/graphwar_replay_player.rs`）有同一份规则的可执行版本（`cargo test` 覆盖，另有 C ABI
 ## `gw2_replay_state_at` 供 ctypes 对拍）。客户端读文件走 Godot 自带的
 ## `PackedByteArray.decompress(..., FileAccess.COMPRESSION_GZIP)`，**不重复实现 DEFLATE**。
 ##

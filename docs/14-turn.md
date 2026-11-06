@@ -83,7 +83,7 @@ Setup
 ### 3.3 实现
 
 ```rust
-// src/tick.rs
+// src/graphwar_tick_handler.rs
 pub fn turn_duration_ticks(time_mode: &str) -> Option<i64>
 pub fn end_of_turn_tick(turn_start_tick: i64, time_mode: &str) -> Option<i64>
 ```
@@ -208,9 +208,9 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 
 ### 6.3 对实现的影响（**没有改物理**）
 
-* `src/settle.rs::resolve`、`src/path.rs`、`src/plane.rs`、`src/shot.rs` **不需要改**：
+* `graphwar_shot_calculator::settle::resolve`、`src/graphwar_path_calculator.rs`、`src/plane.rs`、`src/graphwar_shot_calculator.rs` **不需要改**：
   "每发独立算"正是现在的行为，而真游戏的死亡集合也确实是并集。
-* **要改的是事件生成**（`src/settle.rs::events` / `src/game.rs::Match::fire`）：
+* **要改的是事件生成**（`graphwar_shot_calculator::settle::events` / `src/game.rs::Match::fire`）：
   现在每发各自产出 `LifeQueuedDeath`，如果以后要做"一个回合多发同时结算"，
   需要 (a) 先算完所有发的弹道与命中，(b) 把 (到达 tick, 受害者) 按 tick 排序，
   (c) **每个受害者只产出一次死亡事件**，(d) 同一受害者被多发的其余命中直接丢弃。
@@ -281,11 +281,11 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 
 | 层 | 类型 / 函数 | 做什么 |
 |---|---|---|
-| 收集 | `turn::RoundCollection<T>` | 公告名单 → 攒提交 → **攒齐或超时**即可结算；顺序 = 公告顺序 |
+| 收集 | `graphwar_turn_manager::RoundCollection<T>` | 公告名单 → 攒提交 → **攒齐或超时**即可结算；顺序 = 公告顺序 |
 | 收集 | `game::Match::begin_simultaneous_turn` | 每人一条 `TurnInfo` + **一条** `EndOfTurnInfo` + **一条** `WaitingForFunctions`；返回每人的 `TurnStart`（含 AI 进化结果） |
 | 结算 + 广播 | `game::Match::fire_batch(&[Submission])` | 一次产出**整个结算批**；`fire()` 现在是它的 `N = 1` 特例 |
-| 几何 | `settle::ShotOutcome.hits: Vec<Hit>` | 每次命中带 `arc`（沿弹道弧长）与 `index`，用来给死亡块排序 |
-| 接线 | `serverloop::start_sim_round` / `resolve_sim_round` | `Config::turn_mode = "SimultaneousTurns"` 时走这条路；`tests/sim_turns.rs` 有一条真 TCP e2e |
+| 几何 | `graphwar_shot_calculator::settle::ShotOutcome.hits: Vec<Hit>` | 每次命中带 `arc`（沿弹道弧长）与 `index`，用来给死亡块排序 |
+| 接线 | `graphwar_game_server::start_sim_round` / `resolve_sim_round` | `Config::turn_mode = "SimultaneousTurns"` 时走这条路；`tests/sim_turns.rs` 有一条真 TCP e2e |
 
 `SequentialTurns` 一个字节都没变：`Match::fire` 改成 `fire_batch(&[一发])` 之后，
 单发批的报文种类序列、`effect_id` 序号、坐标与之前**完全相同**
@@ -330,7 +330,7 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 
 **残余的 A 类**只有一层：**`TurnInfo` 那组本身的顺序**来自玩家表的 HashMap 迭代序
 （`12-rng.md` §1.1 已实测：钉住 `getrandom(16)` 后跨进程一致）。本实现不碰它——
-`begin_simultaneous_turn` **照抄调用方给的 `players` 顺序**，接线层（`serverloop`）给的是
+`begin_simultaneous_turn` **照抄调用方给的 `players` 顺序**，接线层（`graphwar_game_server`）给的是
 `Config::player_order` 或玩家表的构造顺序。所以：
 
 * **批内分组与顺序：规则已定，130/130 复现**；
@@ -368,7 +368,7 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 
 > `13-ai.md` §6.1 留的尾巴（"规则已实现并可测 ≠ 端到端走新规则"）补上了：
 > 回合开始走 `TurnManager::begin_turn`（三态），**先定射手、再只为它**跑一次
-> `SoldierEvolver::evolve_soldier`，**25 s 预算默认接上**；`serverloop` 的
+> `SoldierEvolver::evolve_soldier`，**25 s 预算默认接上**；`graphwar_game_server` 的
 > "谁下一个开火"不再由它自己算。
 > 仍然没接的：`token → 文本`（AI 的函数上不了线）、回合超时的**检测**、游标初值的**配置入口**。
 
@@ -385,7 +385,7 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 > 证据口径：本节全部是 **观测**（能指到 vaddr / `.rodata` 串）或显式 **未知**。
 > 没有"逐位"级结论——逐位对拍的对象是采样器/求值器这类纯函数。
 > 地址一律 **ELF vaddr**；Ghidra/REA 地址 = 本地址 + `0x100000`。
-> 实现落在 `src/play_control.rs`，回归用例在 `tests/play_control.rs`。
+> 实现落在 `src/graphwar_play_screen_control.rs`，回归用例在 `tests/play_control.rs`。
 
 ### 9.1 模块全景：10 个函数与它们之间的直接调用
 
@@ -501,7 +501,7 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 
 ⚠️ **未知**：**"哪种结局显示哪条"没解出来**。缺的证据：`0x3da130` 里那几个分支的
 **输入**——是 `GameStateInfo` 的字段、`TurnCountInfo` 的计数、还是
-`player_manager` 的队号。所以 `src/play_control.rs` 只把 6 条字面量与枚举写死，
+`player_manager` 的队号。所以 `src/graphwar_play_screen_control.rs` 只把 6 条字面量与枚举写死，
 **不实现选择逻辑**。
 
 #### 与 `game_state_manager` 的 `state = 6` 怎么衔接 —— **未知**
@@ -539,7 +539,7 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 
 ⇒ 语义（**推断**，方向唯一）：`0x3d9b50` = **回放视图**（对局控件关、回放控件开），
 `0x3d9e40` = **对局视图**（对局控件开、回放控件关）。
-实现：`src/play_control.rs::UiMode::{Play, Replay}` + `widget_flags()`。
+实现：`src/graphwar_play_screen_control.rs::UiMode::{Play, Replay}` + `widget_flags()`。
 
 ⚠️ **推断**的部分：`*0x9ba978` 收一个 `bool`，作用于刚取到的节点——但成员名
 （`set_visible` / `set_disabled` / `set_process`）**没有**从二进制确认。
@@ -547,7 +547,7 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 
 ### 9.8 进了 Rust 的部分 / 仍是未知
 
-| 进 `src/play_control.rs` | 判据地址 |
+| 进 `src/graphwar_play_screen_control.rs` | 判据地址 |
 |---|---|
 | `UiMode::{Play, Replay}` + `widget_flags()` + `widgets()` + `flag_of()` | `0x3d9b50` / `0x3d9e40`（§9.7 全表） |
 | `SUBSCRIBED_SIGNALS` + `subscribed_remote_events()` | `0x3dc98b` / `0x3dca26`（connect 实参） |
@@ -566,8 +566,8 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 6. **函数指针派发**：本节所有"没有引用 X"都是**直接调用**口径，
    未用 `tools/ptr_slots.py` 复查 `play_screen_control` 的函数有没有被塞进表里。
 
-> 本轮**没有**改 `client/`、`src/path.rs`、`src/protocol.rs`、`src/game.rs`。
-> 只新增 `src/play_control.rs`、`tests/play_control.rs`，`src/lib.rs` 加一行 `pub mod`，
+> 本轮**没有**改 `client/`、`src/graphwar_path_calculator.rs`、`src/_scaffold/protocol.rs`、`src/game.rs`。
+> 只新增 `src/graphwar_play_screen_control.rs`、`tests/play_control.rs`，`src/lib.rs` 加一行 `pub mod`，
 > 以及本节。
 
 ---

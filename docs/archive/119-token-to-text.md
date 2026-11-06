@@ -14,13 +14,13 @@
 
 ## 0. 为什么这个函数是"AI 上不了线"的最后一块
 
-`aigen` 进化出来的是 **token**（[`src/aigen.rs`](../src/aigen.rs) 的 `FunctionSlot.tokens`），
+`aigen` 进化出来的是 **token**（[`src/graphwar_function_evolutionator.rs`](../src/graphwar_function_evolutionator.rs) 的 `FunctionSlot.tokens`），
 而协议 `FunctionInfo.function` / `corrected_function` 是**文本**
 （`{"FunctionInfo":{"owner_id":234,"function":"0.00","corrected_function":"0.00 + 4.638"}}`）。
 中间那一步就是 `0x4ec160`。`docs/109` §6-H、`docs/117` §4/§6 都把它列为唯一的缺口。
 
-本文只补**这一块**，不接线：`src/serverloop.rs` / `src/game.rs` / `src/turn.rs` /
-`src/aigen.rs` / `src/protocol.rs` 一行未改（见 §8）。
+本文只补**这一块**，不接线：`src/graphwar_game_server.rs` / `src/game.rs` / `src/graphwar_turn_manager.rs` /
+`src/graphwar_function_evolutionator.rs` / `src/_scaffold/protocol.rs` 一行未改（见 §8）。
 
 ---
 
@@ -160,7 +160,7 @@ sin(x)     0.00     (-1.06*x)     (-23.81*x)     tan(sin((-0.12*x)))     abs((-3
 
 ### 3.5 括号的真相：`FunctionInfo.corrected_function` 的 `+ c` 不是它
 
-`"0.00 + 4.638"` 里的 `+ 4.638` 是**另一处**字符串拼接（`src/shot.rs::corrected_text`，
+`"0.00 + 4.638"` 里的 `+ 4.638` 是**另一处**字符串拼接（`src/graphwar_shot_calculator::corrected_text`，
 `docs/24` §6.2、`docs/05`），`to_text` 不负责它。`to_text(parse("0.00")) == "0.00"` 才是本函数的输出。
 
 ---
@@ -238,7 +238,7 @@ g.call(0x4EC160, [out, v, pos])
 | 行/列 | `0x95feb8` = **285 : 28** |
 
 ⇒ 原作者的 token→文本 在 **`src/math_function.rs:285`** 这个文件里，与 `Function` 枚举、
-`parse`、`eval` 同属"数学函数"这一层（**这也是我们把它放进 `src/function/` 的依据**，见 §6.1）。
+`parse`、`eval` 同属"数学函数"这一层（**这也是我们把它放进 `src/math_function/` 的依据**，见 §6.1）。
 
 括号 token（18/19）**不可能**出现在 `parse` 的产物里（`flatten` 只写 `Const` 与运算符），
 所以线上这条 panic 走不到；但我们的实现仍然不 panic（§6.3）。
@@ -300,7 +300,7 @@ g.call(0x4EC160, [out, v, pos])
 
 ### 6.1 放在哪，为什么
 
-**`src/function/to_text.rs`**，由 [`src/function/mod.rs`](../src/function/mod.rs) re-export：
+**`src/math_function/to_text.rs`**，由 [`src/math_function.rs`](../src/math_function.rs) re-export：
 
 ```rust
 pub fn to_text(tokens: &[Token]) -> String        // 与 parse 对称（parse 也不返回 Result）
@@ -314,7 +314,7 @@ pub fn is_printable(tag: Function) -> bool
 1. **它是 `parse` 的逆运算**。两个方向放同一个模块，`docs/03` 的文法表和这份格式表才不会漂。
 2. **二进制里它就在"数学函数"这一层**：panic 的 `Location` 是 `src/math_function.rs:285`（§4.6），
    不是 `graphwar_event.rs`。
-3. 不动 `src/turn.rs` / `src/aigen.rs` / `src/protocol.rs` / `src/game.rs` / `src/serverloop.rs`
+3. 不动 `src/graphwar_turn_manager.rs` / `src/graphwar_function_evolutionator.rs` / `src/_scaffold/protocol.rs` / `src/game.rs` / `src/graphwar_game_server.rs`
    / `src/gdext*.rs` / `client/`（本次约束）。接线留给下一步。
 
 `docs/02` 的模块映射表把 `0x4ed670`（解析）记在 `graphwar_function_input.rs` 名下；
@@ -342,7 +342,7 @@ pub fn is_printable(tag: Function) -> bool
 
 ### 7.1 测试（新增 14 条，总数 242 → **256**）
 
-`src/function/to_text.rs` 单测 7 条：叶子/函数、二元必带括号、负号不带括号、
+`src/math_function/to_text.rs` 单测 7 条：叶子/函数、二元必带括号、负号不带括号、
 常量的 8 种边界、缺操作数、括号不 panic、多余 token 不消费。
 
 `tests/to_text.rs` 集成 7 条：
@@ -379,14 +379,14 @@ cargo test --offline --test to_text
 
 | 文件 | 动作 |
 |---|---|
-| `src/function/to_text.rs` | **新增**（实现 + 7 条单测） |
-| `src/function/mod.rs` | 加 3 行：`mod to_text;` + `pub use` |
+| `src/math_function/to_text.rs` | **新增**（实现 + 7 条单测） |
+| `src/math_function.rs` | 加 3 行：`mod to_text;` + `pub use` |
 | `tests/to_text.rs` | **新增**（7 条集成测试） |
 | `fixtures/to_text.tsv`、`fixtures/to_text_roundtrip.tsv` | **新增**（真二进制生成） |
 | `tools/gen_to_text_fixture.py` | **新增**（夹具生成器，含抓包不动点自检） |
 | `docs/119-token-to-text.md` | **新增**（本文） |
 
-**没动**：`src/turn.rs`、`src/aigen.rs`、`src/protocol.rs`、`src/game.rs`、`src/serverloop.rs`、
+**没动**：`src/graphwar_turn_manager.rs`、`src/graphwar_function_evolutionator.rs`、`src/_scaffold/protocol.rs`、`src/game.rs`、`src/graphwar_game_server.rs`、
 `src/gdext*.rs`、`client/`、`docs/INDEX.md`、`docs/HANDOVER.md`、任何已有夹具。
 
 ---
@@ -405,11 +405,11 @@ cargo test --offline --test to_text
 
 ## 10. 给下一步的接口说明
 
-`game.rs` / `serverloop.rs` 接线时只需要：
+`game.rs` / `graphwar_game_server.rs` 接线时只需要：
 
 ```rust
-let text = gw2_rebuild::function::to_text(&slot.tokens);        // AI 的函数文本
-let corrected = gw2_rebuild::shot::corrected_text(&text, x0, y0, flip);  // 已有
+let text = gw2_rebuild::math_function::to_text(&slot.tokens);        // AI 的函数文本
+let corrected = gw2_rebuild::graphwar_shot_calculator::corrected_text(&text, x0, y0, flip);  // 已有
 ```
 
 `to_text` 对空 token 返回 `""`，与开局那条空 `FunctionInfo` 一致

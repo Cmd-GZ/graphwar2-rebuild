@@ -428,7 +428,7 @@ mod("graphwar_event_handler.rs", "graphwar", ("src/events.rs",), "观测",
     "docs/114：0x3d38f0 的「事件名 → 判别值」表逐条解出（四道自校验）；事件枚举与分派已落码")
 mod("graphwar_event.rs", "graphwar", ("src/events.rs",), "观测",
     "docs/114：72 个判别值实测；但 serde 键序只在 41 行抓包上同序，仍是推断（docs/96 §9.1）")
-mod("graphwar_function_evolutionator.rs", "graphwar", ("src/aigen.rs",), "观测",
+mod("graphwar_function_evolutionator.rs", "graphwar", ("src/graphwar_function_evolutionator.rs",), "观测",
     "docs/AI.md：权重/长度/装配/交叉/变异/适应度全部从反汇编 + 40 万次运行时抽样得出；无逐字节对拍")
 mod("graphwar_function_input.rs", "graphwar", (), "未做",
     "13 个归属函数（行号到 ≥519）；docs/02 §1 把解析器 0x4ed670 记在它名下，但 0x4ed670 体内"
@@ -441,7 +441,7 @@ mod("graphwar_game_client.rs", "graphwar", (), "未做",
     "归属函数最多的模块；只有 docs/archive 10/13 的调用形态观测，src/ 无实现")
 mod("graphwar_game_recorder.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（对局录制），无地址级观测、无实现")
-mod("graphwar_game_server.rs", "graphwar", ("src/server.rs", "src/serverloop.rs"), "逐位",
+mod("graphwar_game_server.rs", "graphwar", ("src/graphwar_game_server.rs", "src/server.rs"), "逐位",
     "docs/43/46：一回合 12 条报文与抓包逐字节一致；docs/62 真实 TCP 跑到 EndingGame")
 mod("graphwar_game_state_manager.rs", "graphwar", ("src/game.rs", "src/turnstate.rs"), "逐位",
     "docs/41：6 状态 7 事件、13 次迁移在真实对局里逐个相同")
@@ -451,11 +451,11 @@ mod("graphwar_lan_broadcaster_v6.rs", "graphwar", (), "未做",
     "docs/07/24：局域网广播报文已抓包；docs/134 里只有 client/ GDScript 侧，src/ 无实现")
 mod("graphwar_lan_vbox.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（局域网列表 UI），无地址级观测、无实现")
-mod("graphwar_level_generator.rs", "graphwar", ("src/levelgen.rs", "src/levelgen_tables.rs"), "逐位",
+mod("graphwar_level_generator.rs", "graphwar", ("src/graphwar_level_generator.rs", "src/graphwar_level_generator/tables.rs"), "逐位",
     "docs/61/56：障碍 x/y/r 的 to_bits() 全等，13/13 逐位复现；docs/55 公式闭合")
 mod("graphwar_level_manager.rs", "graphwar", (), "未做",
     "锚点最密的模块（590 个 Location / 40 个函数）；只有 docs/118 §2 的入口观测，src/ 无实现")
-mod("graphwar_life_manager.rs", "graphwar", ("src/life.rs",), "逐位",
+mod("graphwar_life_manager.rs", "graphwar", ("src/graphwar_life_manager.rs",), "逐位",
     "docs/65：穿过即死/友军致死/无血量在真实对局与回放里逐个相同；docs/41 状态迁移一致")
 mod("graphwar_lobby_control.rs", "graphwar", (), "未做",
     "docs/112 只读出它与战役/名字模块的调用关系；界面在 client/ GDScript，src/ 无实现")
@@ -475,8 +475,10 @@ mod("graphwar_nodes.rs", "graphwar", (), "未做",
     "docs/112 有结构观测；src/ 无实现")
 mod("graphwar_obstacle_manager.rs", "graphwar", ("src/plane.rs",), "逐位",
     "只覆盖掩膜部分：0x4f15b0 光栅化与 is_occupied 与真二进制逐字节 / 300 随机点一致"
-    "（docs/39/08），摧毁 = 挖 r=0.5 洞；障碍的生成与生命周期未落 src/")
-mod("graphwar_path_calculator.rs", "graphwar", ("src/path.rs",), "逐位",
+    "（docs/39/08），摧毁 = 挖 r=0.5 洞；障碍的生成与生命周期未落 src/。"
+    "⚠ 文件级归属未定：class_probe 给出的本模块锚函数是 0x3c64c0/0x3f00b0/0x3f2480/0x3f27d0，"
+    "0x4f15b0 不在其中（docs/02 §17.1 记录了这处冲突，不强行圆）")
+mod("graphwar_path_calculator.rs", "graphwar", ("src/graphwar_path_calculator.rs",), "逐位",
     "docs/91：补上 hi=mid2 后 24/24 用例整条点序列与真二进制逐位相等。注意：采样器 "
     "0x3c2530 本体无 panic 锚 ⇒ 只归属到 1 个辅助函数，orig_funcs 远小于模块规模")
 mod("graphwar_plane_pos_manager.rs", "graphwar", ("src/plane.rs",), "观测",
@@ -488,26 +490,28 @@ mod("graphwar_player_manager.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（玩家），无地址级观测、无实现")
 mod("graphwar_player_screen_control.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（玩家界面），无地址级观测；界面在 client/ GDScript")
-mod("graphwar_play_screen_control.rs", "graphwar", (), "未做",
-    "docs/13(archive) 有调用观测；界面逻辑在 client/ GDScript（仿制），src/ 无实现")
+mod("graphwar_play_screen_control.rs", "graphwar", ("src/graphwar_play_screen_control.rs",), "观测",
+    "docs/14-turn.md §9 逐函数规格（10 个可归属函数 / 64 个锚）；界面视图仍在 client/ GDScript（仿制），"
+    "但控制器本体已落在 src/graphwar_play_screen_control.rs。旧行写「未做」与 src/lib.rs/文件头冲突 ⇒ 按代码更正")
 mod("graphwar_rank_manager.rs", "graphwar", (), "未做",
     "docs/112 §5：RankInfo 判别值 67、结构观测；段位算法在本模块内算不出来（负结果）")
 mod("graphwar_remote_event_handler.rs", "graphwar", ("src/events.rs",), "观测",
     "docs/110/96：远端事件名与判别值已解；我方 events.rs 实现枚举 + 编解码，无逐字节对拍")
 mod("graphwar_replay_control.rs", "graphwar", (), "未做",
-    "docs/133 的回放播放器在 client/ GDScript；src/replay.rs 只做文件解析，不含这个控制器")
-mod("graphwar_replay_player.rs", "graphwar", ("src/replay.rs",), "观测",
+    "docs/133 的回放播放器在 client/ GDScript；src/graphwar_replay_player.rs 只做文件解析与推进，"
+    "不含这个控制器（文件里的 ReplayPlayer 时钟是我方自定模型，见 docs/02 §17.4）")
+mod("graphwar_replay_player.rs", "graphwar", ("src/graphwar_replay_player.rs",), "观测",
     "docs/136/142：消息级对拍 400 份回放里 71 份完全一致 ⇒ 已实现但未到逐位")
 mod("graphwar_root_node.rs", "graphwar", (), "未做",
     "主场景节点；docs/125 只有调用形态观测，src/ 无实现")
 mod("graphwar_server_broker_handler.rs", "graphwar", (), "未做",
-    "原模块是**客户端侧**的 broker 处理器，未做；src/broker.rs 是我们自建的 broker 服务端，"
+    "原模块是**客户端侧**的 broker 处理器，未做；src/_scaffold/broker.rs 是我们自建的 broker 服务端，"
     "不是它的复原（见 docs/115）")
 mod("graphwar_server_connection_handler.rs", "graphwar", ("src/server.rs",), "逐位",
     "docs/33：新连接的状态同步与真实客户端逐字节一致")
 mod("graphwar_setup_control.rs", "graphwar", (), "未做",
     "docs/137 有像素级观测；界面在 client/ GDScript，src/ 无实现")
-mod("graphwar_shot_calculator.rs", "graphwar", ("src/settle.rs", "src/shot.rs"), "逐位",
+mod("graphwar_shot_calculator.rs", "graphwar", ("src/graphwar_shot_calculator.rs", "src/graphwar_shot_calculator/settle.rs"), "逐位",
     "docs/86 §14：82 发并集 152/152、漏报 0、时刻判决 38:0；docs/122 按 id 排除射手是"
     "指令级。注意：0x3c2bc0 那个 12 KB 主函数**没有逐条还原**，逐位的是行为不是函数体")
 mod("graphwar_soldier_manager.rs", "graphwar", (), "未知",
@@ -519,22 +523,24 @@ mod("graphwar_team_manager.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（队伍），无地址级观测、无实现")
 mod("graphwar_texture_loader.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（贴图加载），无地址级观测、无实现")
-mod("graphwar_tick_handler.rs", "graphwar", ("src/tick.rs",), "逐位",
+mod("graphwar_tick_handler.rs", "graphwar", ("src/graphwar_tick_handler.rs",), "逐位",
     "docs/35：113 个真实样本，TickReply 逐字节一致")
-mod("graphwar_turn_manager.rs", "graphwar", ("src/turn.rs",), "逐位",
+mod("graphwar_turn_manager.rs", "graphwar", ("src/graphwar_turn_manager.rs",), "逐位",
     "docs/98/117：射手轮转 = Vec<soldier_id> + 游标，在真实 TCP 上断言「首发射手 = soldiers[1]」"
     "「跳过死者」；docs/41 状态迁移逐个相同")
 mod("graphwar_video_writer.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（录像导出），无地址级观测、无实现")
 
 # ---- 非 graphwar_ 前缀：同样是原版 src/ 里的文件，但只有 math_function 等少数是真游戏模块 ----
-mod("math_function.rs", "other", ("src/function/mod.rs", "src/function/to_text.rs"), "逐位",
+mod("math_function.rs", "other", ("src/math_function.rs", "src/math_function/to_text.rs"), "逐位",
     "docs/03：90 例文法 + 70 条真值夹具与真二进制对拍。**解析器 0x4ed670 的 panic 锚就落在这个"
     "文件上**（math_function.rs:75）⇒ 函数语言的解析器属于本模块，不属于 graphwar_function_input")
-mod("polish_notation_converter.rs", "other", ("src/function/to_text.rs",), "观测",
-    "docs/119：token → 文本 0x4ec160 的逐 case 未全解；我方 to_text.rs 只覆盖已解出的部分")
-mod("entity_drawer.rs", "other", (), "未做",
-    "docs/02 §2 确认是游戏自己的实体绘制模块；docs/140 有画法观测，绘制在 client/ GDScript")
+mod("polish_notation_converter.rs", "other", (), "未做",
+    "2026-11 更正：本模块的锚函数是 0x4f57d0（:36:52 / :116:55，tools/class_probe.py），**不是** 0x4ec160。0x4ec160 的 panic 分支引的是 math_function.rs:285:28（docs/119 §4.6）⇒ 我方 to_text.rs 归 math_function.rs；本模块未实现")
+mod("entity_drawer.rs", "other", ("src/entity_drawer.rs",), "观测",
+    "EntityDrawer::draw = 0x4b2890（GOT 槽 + .rela.dyn 定位 draw_arc×3/draw_polygon×3）；每条常量的 .rodata 槽与"
+    "指令地址都在 src/entity_drawer.rs 的注释里（多数是逐位（立即数））。只覆盖 draw 一个函数，本模块另有 13 个"
+    "锚函数未做；且我方只还原到\"图元清单\"层，不复现 gdext 调用。旧行写「未做」与 src/ 现状冲突 ⇒ 按代码更正（docs/02 §17.2）")
 mod("effect_drawer.rs", "other", (), "未做",
     "docs/02 §2 确认是游戏自己的特效绘制模块；src/ 无实现")
 mod("axis_drawer.rs", "other", (), "未做",
@@ -584,16 +590,17 @@ SPOT_CHECKS = [
 # 第六步：我们自造的、原版没有的东西（D2）
 # ---------------------------------------------------------------------------
 SELF_MADE = [
-    ("src/api.rs", "内核 → GDScript 的对外 API；原版没有对应模块（它直接是 Godot 模块）"),
-    ("src/capi.rs", "C ABI，纯为把我们自己的实现暴露出去做对拍；原版无此物"),
-    ("src/replaydiff.rs", "回放**消息级**对拍器；原版没有这种工具模块"),
-    ("src/diffconv.rs", "上一条的收敛层；同上"),
-    ("src/replay_inflate.rs", "手写 DEFLATE/gzip；原版用的是第三方 crate，不是游戏模块"),
-    ("src/rng.rs", "ChaCha12 的重写；原版是 rand_chacha crate，不是游戏模块"),
-    ("src/gdext.rs", "GDExtension 入口脚手架（原版的入口在 Godot 模块侧，不在这 58 个文件里）"),
-    ("src/gdext_class.rs", "同上：classdb_register_extension_class4 的封装"),
-    ("src/broker.rs", "**我们自己的一台 broker 服务端**；原版只有连 broker 的客户端，没有服务端"),
-    ("src/protocol.rs", "报文编解码装配层；原版没有同名模块，编解码分散在各 handler 里"),
+    ("src/_scaffold/api.rs", "内核 → GDScript/JSON 的对外 API；原版把这件事交给 Godot 模块反射，没有这一层"),
+    ("src/_scaffold/capi.rs", "C ABI，纯为把我们自己的实现暴露出去做对拍；原版无此物"),
+    ("src/_scaffold/replaydiff.rs", "回放**消息级**对拍器；原版没有这种工具模块"),
+    ("src/_scaffold/diffconv.rs", "上一条的收敛层；同上"),
+    ("src/_scaffold/replay_inflate.rs", "手写 DEFLATE/gzip；原版用的是第三方 crate，不是游戏模块"),
+    ("src/_scaffold/rng.rs", "ChaCha12 的重写；原版是 rand_chacha crate，不是游戏模块"),
+    ("src/_scaffold/gdext.rs", "GDExtension 入口脚手架（原版的入口在 Godot 模块侧，不在这 58+12 个文件里）"),
+    ("src/_scaffold/gdext_class.rs", "同上：classdb_register_extension_class4 的封装"),
+    ("src/_scaffold/broker.rs", "**我们自己的一台 broker 服务端**；原版只有连 broker 的客户端，没有服务端"),
+    ("src/_scaffold/protocol.rs", "报文编解码装配层；原版没有同名模块，编解码分散在各 handler 里"),
+    ("src/_scaffold/ai_explain.rs", "AI 决策链解释器（工具）；不引入新行为，只把已对过地址的零件按原版顺序跑一遍"),
     ("client/", "整个 Godot 客户端是照 .tscn 与截图重写的仿制品，**不是**原版源码（AGENTS §0.4）"),
 ]
 
@@ -866,7 +873,7 @@ def render_md(rows, spot_rows, totals, grand, meta):
     for path, why in SELF_MADE:
         A("| `%s` | %s |" % (path, why))
     A("")
-    A("合计 **%d 处**。其中 `src/broker.rs` 和 `client/` 最容易误判：前者是我们自己写的"
+    A("合计 **%d 处**。其中 `src/_scaffold/broker.rs` 和 `client/` 最容易误判：前者是我们自己写的"
       "服务端（原版只有连 broker 的客户端），后者整个是仿制品。\n" % len(SELF_MADE))
     A("## 5. 抽查：三个模块的函数数是手数出来的\n")
     A("`--check` 会重算并断言下面三个数没漂。\n")

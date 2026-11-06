@@ -99,53 +99,45 @@ pub const E: f64 = std::f64::consts::E;
 // 模块状态
 // ---------------------------------------------------------------------------
 //
-// ✅ 已验证（逐位对拍）
-//    - function::parse   文本 -> 前缀 token       @0x4ed670  docs/03-function-language.md
-//    - function::eval    前缀 token -> f64        @0x4eb9d0  docs/03-function-language.md
-//    - path::calculate   点序列采样               @0x3c2530  docs/04-path-sampling.md
-//    - shot::*           修正常数与端到端         @0x3c5f70  docs/05-shot-pipeline.md
+// 文件 ↔ 原版模块的完整对照表在 docs/02-module-map.md §17（**别在这里另抄一份**，
+// 抄两份必然过期）。这里只留一句口径：
 //
-// ⬜ 待逆向（见 docs/02-module-map.md）
-//    - plane（坐标语义）、turn（回合）、life（生命）、level（关卡）、ai、net
+//     文件名 = 原版模块名；指不到原版模块的，全部在 src/_scaffold/（我方自造）。
+//
+// 核心算法入口（均与真二进制逐位对拍）：
+//
+//     math_function::parse                  文本 -> 前缀 token   @0x4ed670  docs/03-function-language.md
+//     math_function::eval                   前缀 token -> f64    @0x4eb9d0  docs/03-function-language.md
+//     graphwar_path_calculator::calculate   点序列采样           @0x3c2530  docs/04-path-sampling.md
+//     graphwar_shot_calculator::correction  修正常数             @0x3c5f70  docs/05-shot-pipeline.md
 //
 // 说明：原程序还有一趟常量折叠（@0x4eb830），但它不改变数值结果，
 // 现有对拍中解析产物已与该行为相容，故本 crate 暂未单列该步骤。
 
-pub mod function;
-pub mod path;
+// ---- 复原层：每个文件都必须能指到原版模块（docs/02-module-map.md §17）----
+pub mod math_function;
+pub mod graphwar_path_calculator;
 pub mod plane;
 /// 原版 `entity_drawer.rs` 的图元级复原（`EntityDrawer::draw` = vaddr `0x4b2890`）。
 pub mod entity_drawer;
 pub mod events;
-pub mod life;
-pub mod gdext;
-pub mod protocol;
-pub mod turn;
-pub mod settle;
+pub mod graphwar_life_manager;
+pub mod graphwar_turn_manager;
 pub mod server;
-pub mod tick;
+pub mod graphwar_tick_handler;
 pub mod game;
-pub mod levelgen;
-pub mod serverloop;
-pub mod rng;
-pub mod aigen;
-pub mod ai_explain;
-mod levelgen_tables;
+pub mod graphwar_level_generator;
+pub mod graphwar_game_server;
+pub mod graphwar_function_evolutionator;
 pub mod turnstate;
-/// 房间列表服务器（broker）：见 `docs/115-broker.md`。
-pub mod broker;
-pub mod capi;
-pub mod gdext_class;
-pub mod api;
-pub mod shot;
+pub mod graphwar_shot_calculator;
 // 回放播放器（docs/133）：gzip + JSONL 读取、按 tick 还原局面、播放时钟。
-pub mod replay;
-pub mod replay_inflate;
-/// 回放消息级对拍（`docs/136-replay-diff.md`）。**只读**回放，不改任何既有模块。
-pub mod replaydiff;
-/// 回放对拍**收敛**层（`docs/142-diff-converge.md`）：模式感知的预测器 + 分歧归因。
-/// 只新增，不改 `replaydiff` / `game` / `settle` / `protocol`。
-pub mod diffconv;
+pub mod graphwar_replay_player;
 /// 对局界面控制器 `graphwar_play_screen_control.rs`（10 个可归属函数）。
 /// 逐函数规格见 `docs/14-turn.md` §9；本模块只放**已被反汇编证据支持**的部分。
-pub mod play_control;
+pub mod graphwar_play_screen_control;
+
+// ---- 我方自造：桥接层 / 工具层 / 装配层（原版没有对应物）----
+/// ⚠ **不是原版的东西**：GDExtension / C ABI 外壳、报文装配、对拍工具、ChaCha12 重写。
+/// 目录里有 `README.md` 逐条说明来源；索引见 `docs/02-module-map.md` §17.3。
+pub mod _scaffold;

@@ -2,7 +2,7 @@
 //!
 //! 端口 42970 是游戏 `--broker_address` 帮助文本里的示例值（观测，见 docs/115）。
 //! 想用原版客户端连它：**只在本机**，并把客户端指到 `127.0.0.1:42970`。
-use gw2_rebuild::broker::{spawn, Config, DEFAULT_PORT};
+use gw2_rebuild::_scaffold::broker::{spawn, Config, DEFAULT_PORT};
 use std::time::Duration;
 
 fn main() {

@@ -12,7 +12,7 @@
 //!
 //! 退出码：0 = 跑完（无论有没有分歧）；2 = 目录不存在 / 一份都没读到。
 //! ```
-use gw2_rebuild::replaydiff::{
+use gw2_rebuild::_scaffold::replaydiff::{
     class_name, default_corpus_dir, run_dir, CorpusReport, DiffClass, Policy, Replay,
 };
 use std::collections::BTreeMap;
@@ -331,12 +331,12 @@ fn trim(s: &str) -> String {
 }
 
 fn jstr(s: &str) -> String {
-    gw2_rebuild::replaydiff::wire::quote(s)
+    gw2_rebuild::_scaffold::replaydiff::wire::quote(s)
 }
 
 /// 精细追踪一份回放：逐批打印"回放的种类序列 / 我方的种类序列 / 差异 / 死亡 / 挖洞"。
 fn trace_file(path: &std::path::Path, _show: usize) {
-    use gw2_rebuild::replaydiff::{
+    use gw2_rebuild::_scaffold::replaydiff::{
         compare_batch, split_batches, Inputs, Policy, Predictor, Replay,
     };
     let Ok(r) = Replay::load(path) else {
@@ -363,7 +363,7 @@ fn trace_file(path: &std::path::Path, _show: usize) {
         for s in &b.shots {
             println!("   shot owner={} x0={:.6} y0={:.6} flip={} text={:?}", s.owner, s.x0, s.y0, s.flip, trim(&s.text));
         }
-        let kinds = |ms: &[gw2_rebuild::replaydiff::Msg]| ms
+        let kinds = |ms: &[gw2_rebuild::_scaffold::replaydiff::Msg]| ms
             .iter()
             .map(|m| if m.kind == "EffectInfo" {
                 format!("Effect/{}", m.get_str("effect_type").unwrap_or_default())
@@ -384,7 +384,7 @@ fn trace_file(path: &std::path::Path, _show: usize) {
         let mut destroy = Vec::new();
         for m in &r.msgs[b.end + 1..b.tail_end] {
             if m.kind == "LifeInfo" {
-                let alive = matches!(m.get("alive").map(|v| v.kind.clone()), Some(gw2_rebuild::replaydiff::Kind::Bool(true)));
+                let alive = matches!(m.get("alive").map(|v| v.kind.clone()), Some(gw2_rebuild::_scaffold::replaydiff::Kind::Bool(true)));
                 if !alive { deaths.push(m.get_i64("entity_id").unwrap_or(-1)); }
             }
             if m.kind == "DestroyObstacle" {
@@ -397,8 +397,8 @@ fn trace_file(path: &std::path::Path, _show: usize) {
         println!("   死亡 我方={:?} 回放={:?}", p.killed, deaths);
         // 几何探针：用回放声明的状态建掩膜，按真服务端步长 0.01 再算一次
         {
-            use gw2_rebuild::replaydiff::{Inputs, StateMask};
-            use gw2_rebuild::settle::{resolve, Target};
+            use gw2_rebuild::_scaffold::replaydiff::{Inputs, StateMask};
+            use gw2_rebuild::graphwar_shot_calculator::settle::{resolve, Target};
             let inputs = Inputs::scan(&r, b.start);
             let mut sm = StateMask::new();
             sm.apply(&r.msgs[..b.start]);
@@ -411,7 +411,7 @@ fn trace_file(path: &std::path::Path, _show: usize) {
             tg.sort_by_key(|t| t.id);
             for shot in &b.shots {
                 let out = resolve(&shot.text, shot.x0, shot.y0, 0.01, shot.flip,
-                                  gw2_rebuild::path::Mode::Normal, sm.mask(), &tg);
+                                  gw2_rebuild::graphwar_path_calculator::Mode::Normal, sm.mask(), &tg);
                 println!("   probe01 stop=({:.6}, {:.6}) blocked={} killed={:?} 目标={:?}",
                          out.stop.0, out.stop.1, out.blocked, out.killed,
                          tg.iter().map(|t| (t.id, (t.x * 1000.0).round() / 1000.0, (t.y * 1000.0).round() / 1000.0)).collect::<Vec<_>>());

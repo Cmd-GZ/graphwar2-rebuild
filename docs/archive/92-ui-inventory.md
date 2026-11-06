@@ -24,7 +24,7 @@
 | 控件节点（启动态全树） | 858 个节点 / 283 个 `GraphwarButton` / 25 个 `Label` / 4 个 `LineEdit` | `boot_all_screens` 快照 |
 | 挂到活动节点上的脚本 | 46 个（`.gdc` 共 105 个，其中 51 个非插件） | `@@N` 第 5 段 |
 | `.gdc` 反编译 | **无可用反编译器**（离线检索无 gdsdecomp/GDRE/pip 包）；但我们解开了 `GDSC` 容器与**字符串池**（105/105） | §2 |
-| 本仓库对界面的实现 | **0 个控件**——本仓库是 Rust 逻辑库（`GW2Rebuild` RefCounted），没有 Godot 客户端 | `src/gdext_class.rs` |
+| 本仓库对界面的实现 | **0 个控件**——本仓库是 Rust 逻辑库（`GW2Rebuild` RefCounted），没有 Godot 客户端 | `src/_scaffold/gdext_class.rs` |
 
 **最重要的一条结论（推翻了 `docs/88` §11–§12 的判断）**：
 
@@ -185,9 +185,9 @@ GraphwarRootNode                        [GraphwarRootNode]  (Rust)
 | 控件 | 类型 | 文本/图标 | 作用 | 本仓库 |
 |---|---|---|---|---|
 | `MainMenu/MarginContainer/VBoxContainer/MarginContainer/Label` | Label | `Graphwar II` | 标题（`minsize=(64,0)`，字号由 `TitleSize.gd` 调） | ❌ |
-| `.../HBoxContainer/MarginContainer/VBoxContainer/PlayButton` | GraphwarButton | `Campaign` | **观测**：点它 → `Campaign.visible=1` | ❌ 控件；关卡生成 逻辑✅ `src/levelgen.rs` |
+| `.../HBoxContainer/MarginContainer/VBoxContainer/PlayButton` | GraphwarButton | `Campaign` | **观测**：点它 → `Campaign.visible=1` | ❌ 控件；关卡生成 逻辑✅ `src/graphwar_level_generator.rs` |
 | `.../VBoxContainer/CharacterButton` | GraphwarButton | `Player\n` | **观测**：点它 → `PlayerScreen.visible=1` | ❌ |
-| `.../MarginContainer2/VBoxContainer2/LocalButton` | GraphwarButton | `Battle` | **观测**：点它 → `LanLobby.visible=1` | ❌（联机 逻辑✅ `src/server.rs`/`protocol.rs`） |
+| `.../MarginContainer2/VBoxContainer2/LocalButton` | GraphwarButton | `Battle` | **观测**：点它 → `LanLobby.visible=1` | ❌（联机 逻辑✅ `src/server.rs`/`_scaffold/protocol.rs`） |
 | `.../VBoxContainer2/ReplayButton` | GraphwarButton | `Replays` | **观测**：点它 → `ReplayLobby.visible=1` | ❌（回放格式 观测✅ `docs/78`） |
 | `.../VBoxContainer2/MarginContainer3/VersionLabel` | Label | `2.0.60` | 版本号（硬编码在场景里；`VersionLabel.gd` 只管字号） | ❌ |
 | `.../VBoxContainer/AdContainer` | MarginContainer | — `AdContainer.gd` | 广告位（我们 harness 里是桩 `Ad_holder.gd`） | ❌ |
@@ -201,7 +201,7 @@ GraphwarRootNode                        [GraphwarRootNode]  (Rust)
 | 控件 | 类型 | 文本/图标 | 作用 | 本仓库 |
 |---|---|---|---|---|
 | `Campaign/MarginContainer/VBoxContainer/HBoxContainer/MarginContainer/Label` | Label | `CAMPAIGN` | 标题 | ❌ |
-| `.../VBoxContainer/Control/level_0 … level_20` | GraphwarButton ×**21** | `0`…`20` | **观测**：`level_0` 按下 → `JoinLevelPopUp.visible=1`（进关卡预览）。**推断**：每个按钮一个关卡；21 关与用户口述"21 关（0–20）"一致。**缺**：锁定态（`lock.svg` 存在但本进程全部可点，因为本地存档是新的/未锁定状态未知） | ❌ 控件；关卡生成 逻辑✅ `src/levelgen.rs`（**只有两种模式**，见 `docs/103`） |
+| `.../VBoxContainer/Control/level_0 … level_20` | GraphwarButton ×**21** | `0`…`20` | **观测**：`level_0` 按下 → `JoinLevelPopUp.visible=1`（进关卡预览）。**推断**：每个按钮一个关卡；21 关与用户口述"21 关（0–20）"一致。**缺**：锁定态（`lock.svg` 存在但本进程全部可点，因为本地存档是新的/未锁定状态未知） | ❌ 控件；关卡生成 逻辑✅ `src/graphwar_level_generator.rs`（**只有两种模式**，见 `docs/103`） |
 | `Campaign/.../Control` | Control | — `CampaingLevelsButtons.gd` | **观测（字符串池）**：这 21 个按钮**是脚本运行时 new 出来的**（`GraphwarButton.new()` + `set_name("level_"+str(i))` + `add_child`），不是场景里摆好的 | ❌ |
 | `.../HBoxContainer/ExitButtonContainer/{ClipButton,LongPressButton}` | GraphwarButton ×2 | icon=`return.svg` | 返回（`ClipButton` 按下无反应，`LongPressButton` 是长按返回；见 §4.11 的同类验证） | ❌ |
 
@@ -251,8 +251,8 @@ GraphwarRootNode                        [GraphwarRootNode]  (Rust)
 | `.../HBoxContainer/MarginContainer4/GhostButton` | GraphwarButton | `         `（空白占位） | 标题占位（`LanLobbyTitle.gd`） | ❌ |
 | `.../VBoxContainer/MarginContainer/HBoxContainer/MarginContainer/GameIpLabel` | Label | **`198.18.0.1:36071`** 等（每个进程不同） | **观测：这就是 `game_ip_label`——本机房间的 IP:端口**，`docs/88` §10 里标"未查"的一项，现已拿到 | ❌ 控件；端口/握手 观测✅ `docs/33` |
 | `.../OptionsContainer/AxisModeButton` | GraphwarButton | icon=`axis_option_?.svg` | 坐标轴模式，点击循环（§6） | ❌ 控件；对物理无影响 推断✅（`docs/88` §14） |
-| `.../OptionsContainer/FunctionModeButton` | GraphwarButton | icon=`fx_option.svg`⇄`dx_dy_option.svg` | 函数模式 `NormalFunction`⇄`DiffEqFunction`，点击切换 | ❌ 控件；**逻辑✅** `src/path.rs`（RK4）、`src/aigen.rs`（变量权重） |
-| `.../OptionsContainer/TurnModeButton` | GraphwarButton | icon=`turns_sequential.svg`⇄`turns_simultaneous.svg` | 回合模式，点击切换 | ❌ 控件；**逻辑✅** `src/turn.rs`+`src/settle.rs`（含同时回合结算 `docs/86`） |
+| `.../OptionsContainer/FunctionModeButton` | GraphwarButton | icon=`fx_option.svg`⇄`dx_dy_option.svg` | 函数模式 `NormalFunction`⇄`DiffEqFunction`，点击切换 | ❌ 控件；**逻辑✅** `src/graphwar_path_calculator.rs`（RK4）、`src/graphwar_function_evolutionator.rs`（变量权重） |
+| `.../OptionsContainer/TurnModeButton` | GraphwarButton | icon=`turns_sequential.svg`⇄`turns_simultaneous.svg` | 回合模式，点击切换 | ❌ 控件；**逻辑✅** `src/graphwar_turn_manager.rs`+`src/graphwar_shot_calculator/settle.rs`（含同时回合结算 `docs/86`） |
 | `.../OptionsContainer/TurnTimeButton` | GraphwarButton | icon=`turn_30s/1m/2m/3m/5m/inf.svg` | 回合时限，点击循环（§6） | ❌ 控件；只影响思考时间 |
 | `.../OptionsContainer/AddBotButton` | GraphwarButton | icon=`add_bot_option.svg` | **观测**：→ `AddBotPopUp.visible=1` | ❌ |
 | `.../MarginContainer/HBoxContainer/StartButton` | GraphwarButton | ` Start ` | **观测**：→ `PlayScreen.visible=1`。**注意**：不加 Bot 直接 Start 会静默无操作（`docs/22` §5.1） | ❌ 控件；开局/回合状态机 **逻辑✅** `src/turnstate.rs` |
@@ -262,7 +262,7 @@ GraphwarRootNode                        [GraphwarRootNode]  (Rust)
 | └ `.../HBoxContainer/MarginContainer/PlayerNameLabel` | Label | `user` / `Deep Blue` / `Alpha Zordon` / `ChatGPT` / `Multivac` / `Deep Thought` / `Skynet` / `Agent Smith` | 玩家名 | ❌ |
 | └ `.../HBoxContainer/RankIcon` | TextureRect | 玩家 `ranks/rank_0.svg`；Bot `hats/no_hat.svg`（空） | 段位图标 | ❌ |
 | └ `.../HBoxContainer/AspectRatioContainer/RemovePlayerButton` | GraphwarButton | icon=`x.svg` | 踢出玩家 | ❌ |
-| └ `.../HBoxContainer/AspectRatioContainer2/AddSoldierButton` | GraphwarButton | icon=`plus.svg` | 该玩家**加一个士兵**（多士兵=多命） | ❌ 控件；多士兵生命 **逻辑✅** `src/life.rs` |
+| └ `.../HBoxContainer/AspectRatioContainer2/AddSoldierButton` | GraphwarButton | icon=`plus.svg` | 该玩家**加一个士兵**（多士兵=多命） | ❌ 控件；多士兵生命 **逻辑✅** `src/graphwar_life_manager.rs` |
 | └ `.../HBoxContainer/AspectRatioContainer3/RemoveSoldierButton` | GraphwarButton | icon=`minus.svg` | 减一个士兵 | ❌ |
 | └ `.../HBoxContainer/AspectRatioContainer4/ChangeTeamButton` | GraphwarButton | icon=`arrow_right.svg`（Team1）/`arrow_left.svg`（Team2） | 换队 | ❌ |
 | └ `.../HBoxContainer/SoldierIconContainer/MarginContainer…5` | MarginContainer ×5（`SoldierIconMarginContainer.gd`） | 每个槽 4 个 `TextureRect`：`SkinIcon`=`skins/yellow.svg` 或 `skins/bot_N.svg`、`FaceIcon`=`faces/regular_eyes.svg`/`no_face.svg`、`HatIcon`=`hats/soldier_helmet.svg`/`no_hat.svg`、`EmptyIcon`=`empty_soldier.svg` | **观测**：每个士兵一个槽（**5 个槽**⇒每玩家最多 5 个士兵），空槽显示 `empty_soldier.svg` | ❌ 控件；皮肤系统 `rsc/skins|faces|hats` |
@@ -278,7 +278,7 @@ GraphwarRootNode                        [GraphwarRootNode]  (Rust)
 
 | 控件 | 类型 | 文本/图标 | 作用 | 本仓库 |
 |---|---|---|---|---|
-| `AddBotPopUp/.../VBoxContainer/OptionsContainer/AspectRatioContainer/AddBotButton` | GraphwarButton | icon=`skins/bot_0.svg` | 难度档 0 | ❌ 控件；**六档参数表 逻辑✅** `AI.md` §1 / `src/aigen.rs` |
+| `AddBotPopUp/.../VBoxContainer/OptionsContainer/AspectRatioContainer/AddBotButton` | GraphwarButton | icon=`skins/bot_0.svg` | 难度档 0 | ❌ 控件；**六档参数表 逻辑✅** `AI.md` §1 / `src/graphwar_function_evolutionator.rs` |
 | `.../OptionsContainer/AspectRatioContainer2/AddBotButton` | GraphwarButton | icon=`skins/bot_1.svg` | 难度档 1 | 同上 |
 | `.../OptionsContainer/AspectRatioContainer4/AddBotButton` | GraphwarButton | icon=`skins/bot_2.svg` | 难度档 2（**本文件的默认点击目标**） | 同上 |
 | `.../OptionsContainer2/AspectRatioContainer/AddBotButton` | GraphwarButton | icon=`skins/bot_3.svg` | 难度档 3 | 同上 |
@@ -300,7 +300,7 @@ GraphwarRootNode                        [GraphwarRootNode]  (Rust)
 | `JoinIpPopUp/.../HBoxContainer/MarginContainer/Label` | Label | `Ip:` | 提示 | ❌ |
 | `.../HBoxContainer/MarginContainer2/JoinIpIpLineEdit` | LineEdit | 空；我们写入过 `10.255.255.1`、`10.255.255.1:12345`、`127.0.0.1:1` | IP 输入（**必须带端口**） | ❌ |
 | `.../HBoxContainer3/MarginContainer/GraphwarButton` | GraphwarButton | ` Cancel ` | 取消 | ❌ |
-| `.../HBoxContainer3/MarginContainer2/GraphwarButton` | GraphwarButton | `  Join  ` | **观测**：按下 `127.0.0.1:1` → 2 s 内出现 `DisconnectedPopUp`；按下 `10.255.255.1:12345` → 2 s 内出现 `ConnectingPopUp`。**只写 `10.255.255.1`（无端口）时毫无反应**（120 s 超时）⇒ 端口必填，格式 `host:port` | ❌ 控件；握手 **逻辑✅/观测** `docs/33`、`src/protocol.rs` |
+| `.../HBoxContainer3/MarginContainer2/GraphwarButton` | GraphwarButton | `  Join  ` | **观测**：按下 `127.0.0.1:1` → 2 s 内出现 `DisconnectedPopUp`；按下 `10.255.255.1:12345` → 2 s 内出现 `ConnectingPopUp`。**只写 `10.255.255.1`（无端口）时毫无反应**（120 s 超时）⇒ 端口必填，格式 `host:port` | ❌ 控件；握手 **逻辑✅/观测** `docs/33`、`src/_scaffold/protocol.rs` |
 | `.../MarginContainer2/ExitButtonContainer/{ClipButton,LongPressButton}` | GraphwarButton | icon=`return.svg` | 关闭 | ❌ |
 
 ### 4.8 ConnectingPopUp（连接中）
@@ -332,10 +332,10 @@ GraphwarRootNode                        [GraphwarRootNode]  (Rust)
 
 | 控件 | 类型 | 文本/图标 | 作用 | 本仓库 |
 |---|---|---|---|---|
-| `PlayScreen/.../PlayMainHBox/LeftControls/LeftButtonGrid` | GridContainer `ButtonGrid.gd` | **18 个** `GraphwarButton` | **左键盘**：`C` `π` `e` `1`…`9` `0` `.` `(` + 三个控制键（icon=`arrow_left_bar.svg` / `arrow_left.svg` / `delete_left.svg`） | ❌ 控件；函数文法 **逻辑✅** `src/function/` |
-| `.../RightControls/RightButtonGrid` | GridContainer `ButtonGrid.gd` | **18 个** `GraphwarButton` | **右键盘**：`abs` `ln` `√` `sin` `cos` `tan` `*` `/` `exp` `+` `-` `^` `x` `y`(disabled) `)` + icon=`delete_right.svg` / `arrow_right.svg` / `arrow_right_bar.svg` | ❌ 控件；文法 **逻辑✅** `src/function/` |
+| `PlayScreen/.../PlayMainHBox/LeftControls/LeftButtonGrid` | GridContainer `ButtonGrid.gd` | **18 个** `GraphwarButton` | **左键盘**：`C` `π` `e` `1`…`9` `0` `.` `(` + 三个控制键（icon=`arrow_left_bar.svg` / `arrow_left.svg` / `delete_left.svg`） | ❌ 控件；函数文法 **逻辑✅** `src/math_function/` |
+| `.../RightControls/RightButtonGrid` | GridContainer `ButtonGrid.gd` | **18 个** `GraphwarButton` | **右键盘**：`abs` `ln` `√` `sin` `cos` `tan` `*` `/` `exp` `+` `-` `^` `x` `y`(disabled) `)` + icon=`delete_right.svg` / `arrow_right.svg` / `arrow_right_bar.svg` | ❌ 控件；文法 **逻辑✅** `src/math_function/` |
 | `.../RightButtonGrid/YButton` | GraphwarButton | `y`，**永远 `disabled`** | **观测**：Normal 与 DiffEq 两种模式下都 disabled。**推断**：与"`y'` 是死特性、DiffEq 只生成 x/y 权重"有关，但**为什么 `y` 也不给按**未知 | ❌ |
-| `.../RightControls/HBoxContainer/FireContainer/FireButton` | GraphwarButton | ` Fire! ` | 开火。**`docs/26` 观测**：`emit_signal("pressed")` 真的发出 `FunctionFireRequest`，随后 `shot_calc/calculate_path` 计数上升（本文件只观测到按钮存在且未 `disabled`，**没有重复验证开火**） | ❌ 控件；**开火链路 逻辑✅** `src/shot.rs`/`path.rs` |
+| `.../RightControls/HBoxContainer/FireContainer/FireButton` | GraphwarButton | ` Fire! ` | 开火。**`docs/26` 观测**：`emit_signal("pressed")` 真的发出 `FunctionFireRequest`，随后 `shot_calc/calculate_path` 计数上升（本文件只观测到按钮存在且未 `disabled`，**没有重复验证开火**） | ❌ 控件；**开火链路 逻辑✅** `src/graphwar_shot_calculator.rs`/`graphwar_path_calculator.rs` |
 | `.../FireContainer/ClipButton` | GraphwarButton | ` Fire! `（同文本，带 `AnimationRect` 子节点） | 开火按钮的动画层（点击用 `FireButton`） | ❌ |
 | `.../LeftControls/LeftTopButtonsContainer/ExitButtonContainer/{ClipButton,LongPressButton}` | GraphwarButton ×2 | icon=`return.svg` | 退出对局（**长按**才出确认框，见 §4.11） | ❌ |
 | `.../LeftTopButtonsContainer/MarginContainer/ShowExtraButtons` | GraphwarButton `ShowExtraButtons.gd` | icon 由脚本 `set_button_icon(load(...))` 切换（`hide_extra_buttons.svg`/`show_extra_buttons.svg`） | **观测（字符串池）**：切换"附加按钮区"显示，`set_show_extra_buttons(...)` 联动 `plane_container`/`view_function_pad` | ❌ |
@@ -346,12 +346,12 @@ GraphwarRootNode                        [GraphwarRootNode]  (Rust)
 | `.../PlaneContainer/GamePlane/PlaneContainer/GraphwarPlane` | GraphwarPlane（Rust） | — | 战场（Rust 自绘）。子节点：`@AxisDrawer@N`、`@EntityDrawer@N`、`@EffectDrawer@N`、`@Line2D@N` | ❌ 控件；**坐标/掩膜 逻辑✅** `src/plane.rs` |
 | `GraphwarPlane/@EntityDrawer@N/@Sprite2D@N` | Sprite2D | `texture=res://skins/yellow.svg`、`faces/regular_eyes.svg`、`hats/soldier_helmet.svg`；Bot 用 `skins/bot_N.svg`、`faces/no_face.svg`、`hats/no_hat.svg` | **观测**：每个士兵 3 个 Sprite2D（皮肤/脸/帽） | ❌ |
 | `GraphwarPlane/@EntityDrawer@N/<name_label 实例>` | RichTextLabel（`scene=res://name_label.tscn`） | 名字文本（bbcode，观测到空串时是未填） | 士兵头顶名字 | ❌ |
-| `GraphwarPlane/@Line2D@N` | Line2D | — | **观测**：开火后出现（`scene_file_path` 为空 ⇒ **不是** `line_2d.tscn` 实例，而是运行时新建/由 Rust 建） | ❌ 控件；弹道 **逻辑✅** `src/path.rs` |
-| `PlayScreen/.../VBoxContainer/HBoxContainer2/GraphwarFunctionInput` | GraphwarFunctionInput（Rust） | `text` = 当前函数串，如 `(1.44*(cos(x)+x))`、`log(exp((12.10/(-19.42/x))))`、`sin((-1.20+x))` | 函数输入框（Rust 自绘，无 LineEdit 子节点）。**观测**：`text` 属性可读 ⇒ 能读到场上显示的函数 | ❌ 控件；解析 **逻辑✅** `src/function/` |
+| `GraphwarPlane/@Line2D@N` | Line2D | — | **观测**：开火后出现（`scene_file_path` 为空 ⇒ **不是** `line_2d.tscn` 实例，而是运行时新建/由 Rust 建） | ❌ 控件；弹道 **逻辑✅** `src/graphwar_path_calculator.rs` |
+| `PlayScreen/.../VBoxContainer/HBoxContainer2/GraphwarFunctionInput` | GraphwarFunctionInput（Rust） | `text` = 当前函数串，如 `(1.44*(cos(x)+x))`、`log(exp((12.10/(-19.42/x))))`、`sin((-1.20+x))` | 函数输入框（Rust 自绘，无 LineEdit 子节点）。**观测**：`text` 属性可读 ⇒ 能读到场上显示的函数 | ❌ 控件；解析 **逻辑✅** `src/math_function/` |
 | `.../HBoxContainer2/FxContainer/FxLabel` | Label | ` f(x) = `（DiffEq 时同位置显示 `dx/dy` 图标） | 函数前缀提示 | ❌ |
 | `.../FxContainer/AspectRatioContainer/FxTextureButton` | GraphwarButton | icon `fx_option.svg`（Normal）/`dx_dy_option.svg`（DiffEq） | **观测**：模式指示图标 | ❌ |
 | `.../HBoxContainer2/TimerContainer/TimerLabel` | Label | `02:59`、`01:59`、`00:04`、`00:00` | 回合倒计时。**观测**：按 2 次 `TurnTimeButton` ⇒ 起始 `02:59`（3 分钟档）、按 1 次 ⇒ `01:59`（2 分钟档）；见 §6 | ❌ 控件；时钟 **观测✅** `docs/35` |
-| `.../HBoxContainer2/OffsetContainer/OffsetLabel` | Label | Normal：` + 2.515 `、` + 0.919 `；**DiffEq：空** | 修正常数显示。**观测**：DiffEq 模式下为空（`+c` 修正不显示/不适用） | ❌ 控件；修正 **逻辑✅** `src/shot.rs` |
+| `.../HBoxContainer2/OffsetContainer/OffsetLabel` | Label | Normal：` + 2.515 `、` + 0.919 `；**DiffEq：空** | 修正常数显示。**观测**：DiffEq 模式下为空（`+c` 修正不显示/不适用） | ❌ 控件；修正 **逻辑✅** `src/graphwar_shot_calculator.rs` |
 | `.../HBoxContainer2/GraphwarFunctionInput`（同上） | — | — | — | — |
 | `PlayScreen/.../VBoxContainer/PlayMainHBox/PlaneContainer/GamePlane/PlaneContainer/VBoxContainer/HBoxContainer/ViewFunctionsLabel` | RichTextLabel `ViewFunctionsLabel.gd` | `[outline_size=4][outline_color=black][color=green]player 1: f(x) = 3x+234[/color]…` | 顶部"各玩家当前函数"列表 | ❌ |
 | `.../RightControls/HBoxContainer/FireContainer/ClipButton` | — | — | （同上，动画层） | ❌ |
@@ -396,7 +396,7 @@ GraphwarRootNode                        [GraphwarRootNode]  (Rust)
 | 控件 | 类型 | 文本 | 作用 | 本仓库 |
 |---|---|---|---|---|
 | `EndGamePopUp/.../VBoxContainer/SelfVictoryLabel` | Label | **`YOU lOST`**（游戏原文如此，小写 l） | 自己的胜负 | ❌ |
-| `.../VBoxContainer/TeamVictoryLabel` | Label | `Team 2 Victory!` | 获胜方 | ❌ 控件；胜负判定 **逻辑✅** `src/settle.rs`、`docs/86` |
+| `.../VBoxContainer/TeamVictoryLabel` | Label | `Team 2 Victory!` | 获胜方 | ❌ 控件；胜负判定 **逻辑✅** `src/graphwar_shot_calculator/settle.rs`、`docs/86` |
 | `.../VBoxContainer/HBoxContainer/VictoryPlayerContainer1 … 10` | MarginContainer ×10 | 每个槽 3 个 `TextureRect`：`SkinIcon`（观测 `skins/bot_5.svg`）、`FaceIcon`（`faces/no_face.svg`）、`HatIcon`（`hats/no_hat.svg`） | 胜利方士兵展示（**10 个槽**⇒最多展示 10 个士兵） | ❌ |
 | `.../MarginContainer2/ExitButtonContainer/{ClipButton,LongPressButton}` | GraphwarButton | icon=`return.svg` | 关闭 | ❌ |
 

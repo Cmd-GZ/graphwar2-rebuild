@@ -19,7 +19,7 @@
 | 问题 | 结论 | 级别 |
 |---|---|---|
 | 回放文件长什么样 | gzip + JSONL，每行 `{"event":{"<事件名>":{…}},"tick":N}` | **观测**（400 份实文件） |
-| 事件名/字段名和网络协议是同一套吗 | 是。解析直接复用 `src/protocol.rs` 的 `parse_message` 与 `get_*` | **观测 + 逐位验证** |
+| 事件名/字段名和网络协议是同一套吗 | 是。解析直接复用 `src/_scaffold/protocol.rs` 的 `parse_message` 与 `get_*` | **观测 + 逐位验证** |
 | 一局有多少事件 | 真实语料 400 份、**103 104** 条；单局 2 … 1471 条（另有 2 份空回放） | **观测** |
 | 播放按什么推进 | **按 tick**（不是按墙钟/按事件）。60 tick/秒 | **观测**（`docs/35`）+ 我们自定的取整规则 |
 | 回放的弹道点序列在哪 | **没有**。只有 `FunctionPoints{start_x,start_y,end_x}` | **观测**（400 份里 0 例带点序列） |
@@ -29,7 +29,7 @@
 | 播放/暂停/进度 | **我们自定**（原版无观测） | 自定，显式标注 |
 | 能播了吗 | 能。真实回放读、解析、按 tick 播、死亡事件生效、弹道由内核重算 | **逐位验证**（§5） |
 
-**新增文件**：`src/replay.rs`（格式/局面/播放器/对拍 ABI）、`src/replay_inflate.rs`
+**新增文件**：`src/graphwar_replay_player.rs`（格式/局面/播放器/对拍 ABI）、`src/_scaffold/replay_inflate.rs`
 （纯 Rust gzip+DEFLATE）、`client/src/play/replay_file.gd`（客户端读文件）、
 `client/src/play/replay_player.gd`（tick 播放器 + 局面还原）、`docs/133`（本文）。
 **改动文件**（都是"只加"或删占位，没有改既有语义）：`client/src/screens/play_screen.gd`
@@ -37,7 +37,7 @@
 `client/src/screens/replay_lobby.gd`（列表数据源）、
 `client/src/app/app.gd`（**只删**两处"回放未实现"占位）、
 `src/lib.rs`（**两行** `pub mod`）、`client/tools/selftest.gd`（只新增断言）。
-微分方程模式的**内核侧**（`src/api.rs` / `src/gdext.rs` / `core_bridge.gd`）由另一条分支
+微分方程模式的**内核侧**（`src/_scaffold/api.rs` / `src/_scaffold/gdext.rs` / `core_bridge.gd`）由另一条分支
 `agent/ode-api` 交付、已进 main，见 `docs/138` —— 本文只负责"回放里怎么用它"，
 **不重复实现**。
 
@@ -99,11 +99,11 @@ user://replays/<unix 时间戳>      ← 文件名没有扩展名
 ```
 
 1. 从 `"event"` 后面取出**花括号配平**的那一段（字符串里的花括号不算）；
-2. 这一段交给 `protocol::parse_message()` —— **和网络报文同一个解析器**，
+2. 这一段交给 `_scaffold::protocol::parse_message()` —— **和网络报文同一个解析器**，
    得到 `{kind: "FunctionInfo", body: "…"}`；
 3. `tick` 只从 event 对象**之后**取（否则会把 `active_tick` / `start_tick` 当成它）。
 
-字段读取一律走 `protocol::get_str / get_int / get_f64 / get_bool / get_color`。
+字段读取一律走 `_scaffold::protocol::get_str / get_int / get_f64 / get_bool / get_color`。
 **协议里没有的字段不猜**：`ReplayEvent.body` 保存载荷的原始 JSON 内部原文
 （不含最外层花括号，与 `RawMessage.body` 同一种切法），客户端侧则是整份
 JSON 字典原样保留 —— 两条路都保证"未知事件也能透传"。
@@ -111,7 +111,7 @@ JSON 字典原样保留 —— 两条路都保证"未知事件也能透传"。
 ### 2.4 解压为什么自己写（内核侧）
 
 `Cargo.toml` 的 `[dependencies]` 是**空的**，`cargo test --offline` 才在任何机器上能跑；
-加 `flate2` 就要联网 + 改 `Cargo.lock`。所以 `src/replay_inflate.rs` 自己实现
+加 `flate2` 就要联网 + 改 `Cargo.lock`。所以 `src/_scaffold/replay_inflate.rs` 自己实现
 DECODER：stored / 固定 Huffman / 动态 Huffman 三种块 + `FEXTRA/FNAME/FCOMMENT/FHCRC`
 四种可选头 + 可拼接 member。**不校验** gzip 尾部的 CRC32/ISIZE（解压失败由 DEFLATE
 结构自身报错，回放不是校验场景）。
@@ -249,7 +249,7 @@ GwCore.calculate_path(expr, Vector2(start_x, start_y), dir, mode)       # ← �
 ```
 
 **为什么要有 `mode`**：`DiffEqFunction` 局（400 份真实回放里 **320 局**）的 `f` 是
-`dy/dx`，要走 `src/path.rs` 的 RK4（`Mode::Ode`）；既有的
+`dy/dx`，要走 `src/graphwar_path_calculator.rs` 的 RK4（`Mode::Ode`）；既有的
 `GW2Rebuild.path_calculate` 只跑 `Mode::Normal` —— 拿普通模式去画一条导数曲线，
 **看起来能画、其实是错的线**。
 
@@ -266,11 +266,11 @@ mode: "normal"（y = f(x)）/ "ode"（dy/dx = f(x, y)），大小写与两侧空
 
 | 位置 | 说明 |
 |---|---|
-| `src/api.rs::calculate_path_mode()` | `"normal"` 分支**直接转调** `calculate_path` ⇒ 与原契约结构上等价；`"ode"` 走 `calculate_path_ode()` |
-| `src/api.rs::parse_mode()` | 只认 `normal` / `ode`（`trim` + `eq_ignore_ascii_case`）；**不做整数重载** —— `PropertyInfo` 把第 5 个参数声明成 `String`，GDScript 传整数会被引擎先拒 |
+| `src/_scaffold/api.rs::calculate_path_mode()` | `"normal"` 分支**直接转调** `calculate_path` ⇒ 与原契约结构上等价；`"ode"` 走 `calculate_path_ode()` |
+| `src/_scaffold/api.rs::parse_mode()` | 只认 `normal` / `ode`（`trim` + `eq_ignore_ascii_case`）；**不做整数重载** —— `PropertyInfo` 把第 5 个参数声明成 `String`，GDScript 传整数会被引擎先拒 |
 | `client/src/core/core_bridge.gd::calculate_path()` | 第 4 个参数 `mode: String = "normal"`（默认值 ⇒ **既有三参数调用点一个字都不用改**） |
 
-**修正常数的口径**：只有 `normal` 加修正（`src/shot.rs::shot_points` 的既有规则）。
+**修正常数的口径**：只有 `normal` 加修正（`src/graphwar_shot_calculator::shot_points` 的既有规则）。
 `ode` 下内核返回的 `offset` 是 **`NaN`** ⇒ `GwCore.format_offset()` 出空串，
 正好是原版 DiffEq 局右下角不显示修正文本的样子（`docs/92` §4.10、`docs/138`）。
 这是**观测**：微分方程回放的 `FunctionInfo{function:"y+0.1", corrected_function:"y+0.1"}`
@@ -310,7 +310,7 @@ tick 边界（2168 活 / 2169 死）、规范串格式、播放器 tick 推进�
 | 实现 | 位置 | 它证明了什么 |
 |---|---|---|
 | Python 参考 | `tools/replay_state.py` 的循环（口径来源） | 规则本身 |
-| Rust 内核 | `src/replay.rs`（`cargo test` 覆盖） | 复原实现与参考一致 |
+| Rust 内核 | `src/graphwar_replay_player.rs`（`cargo test` 覆盖） | 复原实现与参考一致 |
 | GDScript 客户端 | `client/src/play/replay_player.gd`（自检断言） | 真正播放的那一份也一致 |
 
 规范串格式（三端同一份代码长度 ≤ 20 行，**没有任何浮点精度容差**）：

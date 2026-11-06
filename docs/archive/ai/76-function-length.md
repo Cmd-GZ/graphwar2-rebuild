@@ -47,7 +47,7 @@ hook 生成器入口 `0x4ef020` 的进出，同时在 token 分派点 `0x4ef2b0`
   （表达式提前合法就停），但正态取负时又会按最短合法式处理（实测最小 2），
   两个效应叠加。
 
-Rust 侧已实现为 `aigen::random_length`，并有测试核对均值 ≈ 9.5、标准差 ≈ 5、
+Rust 侧已实现为 `graphwar_function_evolutionator::random_length`，并有测试核对均值 ≈ 9.5、标准差 ≈ 5、
 能取到负值。
 
 ### 2.6 **两种函数模式共用同一条长度公式**（`docs/71` §5.0 的 DiffEq 模式）

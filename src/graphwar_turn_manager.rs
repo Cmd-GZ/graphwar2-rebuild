@@ -44,7 +44,7 @@
 //!
 //! `0x454950`（`graphwar_life_manager.rs`）返回**一个字节**，查不到时返回 **2**
 //! （`docs/98` §1.3）；调用方只认最低位，所以 `0`（死）与 `2`（未上场/查不到）
-//! 都算"不能开火"。这条规则落在 [`crate::life::is_alive_byte`]。
+//! 都算"不能开火"。这条规则落在 [`crate::graphwar_life_manager::is_alive_byte`]。
 //!
 //! ## 3. `flip` 由**队伍**决定，不看坐标（`docs/105`）
 //!
@@ -76,7 +76,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::life::{is_alive_byte, LifeState, Status, MISSING_STATE};
+use crate::graphwar_life_manager::{is_alive_byte, LifeState, Status, MISSING_STATE};
 
 /// "没有射手"的哨兵 id。
 ///
@@ -119,8 +119,8 @@ impl Team {
 
     /// 开火方向翻转位。**由队伍决定**，与坐标无关（`docs/105`，773 个位置样本 0 例外）。
     ///
-    /// `flip = false` ⇒ 朝 `+x`；`flip = true` ⇒ 朝 `-x`（与 `path::calculate` /
-    /// `shot::correction` 的 `flip` 参数同义）。
+    /// `flip = false` ⇒ 朝 `+x`；`flip = true` ⇒ 朝 `-x`（与 `graphwar_path_calculator::calculate` /
+    /// `graphwar_shot_calculator::correction` 的 `flip` 参数同义）。
     pub const fn flip(self) -> bool {
         match self {
             Team::One => false,

@@ -1,6 +1,6 @@
-use gw2_rebuild::function::parse;
-use gw2_rebuild::path::{calculate, Mode};
-use gw2_rebuild::shot::{correction, shifted_tokens};
+use gw2_rebuild::math_function::parse;
+use gw2_rebuild::graphwar_path_calculator::{calculate, Mode};
+use gw2_rebuild::graphwar_shot_calculator::{correction, shifted_tokens};
 fn main() {
     let text = "abs(cos((-1.43*x)))*8.65";
     for &step in &[0.5f64, 0.1, 0.01] {

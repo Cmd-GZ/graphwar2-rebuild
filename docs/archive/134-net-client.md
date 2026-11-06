@@ -80,7 +80,7 @@
 在任何机器上只依赖仓库里的字节做对拍。**抄写一个空格都没动**。
 
 自检里有一条"构造器 ↔ 黄金样本"的互锁：`GwWireSamples.broadcast(...)` 按
-`src/protocol.rs::Broadcast::to_json` 的键序拼出来的默认样本，必须与 `BROADCAST_1`
+`src/_scaffold/protocol.rs::Broadcast::to_json` 的键序拼出来的默认样本，必须与 `BROADCAST_1`
 **逐字节相同**。任何一边漂了都会红。
 
 ---
@@ -143,7 +143,7 @@ idle → connecting ──TCP 连上──→ handshaking ──7 条状态同�
 | 加入后发 `NewPlayerRequest{connection_id}` | 原版加入时发（`docs/24` §3） | **观测**（消息存在）／**自定**（我们的服务端忽略它） |
 | 加入后**自动**发 `GameStartRequest` | 真游戏是**房主**按 Start 才发；我们的服务端是"等客户端来开局"的 harness | **自定**（`auto_start`，可关） |
 | 收到的事件落到 `room` 模型：房间名/四个模式串/玩家表/实体坐标/生死/障碍/回合/函数原文 | `docs/24` §3–§6 的字段 | **观测** |
-| `EndingGame` = 正常结束，**不弹**断线框 | `src/serverloop.rs` 发完就关 socket | **观测** |
+| `EndingGame` = 正常结束，**不弹**断线框 | `src/graphwar_game_server.rs` 发完就关 socket | **观测** |
 
 房间模型 `session.room`（PlayScreen 侧将来要读的就是它）：
 
@@ -443,7 +443,7 @@ bash client/run.sh
 ### 8.3 broker（Global 页）
 
 ```bash
-# 终端 A：我们自己的 broker（src/broker.rs）
+# 终端 A：我们自己的 broker（src/_scaffold/broker.rs）
 cargo run --offline --example serve_broker -- 127.0.0.1:42970
 # 终端 B：让客户端去连它（默认空 = 不连任何 broker）
 GW2_BROKER_ADDR=127.0.0.1:42970 bash client/run.sh

@@ -48,14 +48,14 @@
 
 ## 5. 修早停：第一个尝试被否证
 
-**实验**：`path.rs` 里半步复检失败时把 `lo = x` 改成 `lo = mid`（想让区间收缩）。
+**实验**：`graphwar_path_calculator.rs` 里半步复检失败时把 `lo = x` 改成 `lo = mid`（想让区间收缩）。
 
 **结果**：更糟——`step=0.5` 下整条曲线只剩 **4 个点**（原本 401），
 `step=0.01` 下 305 点（原本 5624）。
 
 > ⚠️ **过程事故**：当时用 `cp /tmp/path.bak` 回滚，但这台机器的 `/tmp` 是
 > **per-command tmpfs**，备份文件已经不存在，回滚没生效；紧接着的
-> `git add -A` 把**坏掉的 path.rs 一起提交了**。已由后续提交 `feff80d` 修复
+> `git add -A` 把**坏掉的 graphwar_path_calculator.rs 一起提交了**。已由后续提交 `feff80d` 修复
 > （恢复 `lo = x`，验证 step=0.5 回到 401 点）。
 > **教训**：实验性改动先 `git stash` 或备份到 `.rea-work/`，绝不能用 `/tmp`。
 
@@ -84,7 +84,7 @@
 |---|---|
 | `examples/replay_compare.rs` | `step: 0.5` |
 | `tests/live_hits.rs` | `shot_points(..., 0.5, ...)` |
-| `src/aigen.rs` 测试 | `ScoringContext { step: 0.5 }` |
+| `src/graphwar_function_evolutionator.rs` 测试 | `ScoringContext { step: 0.5 }` |
 
 所以这不是"发现实况是 0.01"，而是**我没读权威清单、自己写错了一个常量，
 然后用它跑了一整轮对比**。
@@ -196,9 +196,9 @@ calculate(&shifted_tokens(&toks,c), x0, y0, 0.01, false, Mode::Normal); // 2078 
 2. 用该路径跑本文档 §8 的最小复现（`step=0.5` 期望 **70 点、末点 (3.236, 5.368)**），
    确认 oracle 与我们的实现一致（此时 oracle 尚不能提供"正确答案"）；
 3. 再跑 §9 里被截断的那些样本（17 发），用 oracle 得到**真值终点**；
-4. 对比后判断游戏在未收敛时的行为，再改 `path.rs`。
+4. 对比后判断游戏在未收敛时的行为，再改 `graphwar_path_calculator.rs`。
 
-**在拿到 oracle 真值之前，不要动 `path.rs`**——子 agent 已试过三个变体，全部复现不出游戏终点。
+**在拿到 oracle 真值之前，不要动 `graphwar_path_calculator.rs`**——子 agent 已试过三个变体，全部复现不出游戏终点。
 
 ## 11. ✅ oracle 打通：真二进制在此 case 上**从不早停**
 
@@ -226,14 +226,14 @@ x0,y0 = (-1.3401100016801577, 7.565109751327434)
 
 ## 12. 修法方向
 
-`path.rs` 在二分 100 次未收敛时 `return pts`。真二进制**不会**放弃 ⇒ 它必定有兜底。
+`graphwar_path_calculator.rs` 在二分 100 次未收敛时 `return pts`。真二进制**不会**放弃 ⇒ 它必定有兜底。
 接下来用这个 oracle 做对照实验：在示例里模拟"未收敛时接受当前最优候选"等变体，
 用 **npts 与末点**同时对齐 (401, 24.8098, 9.8719) 和 (20001, 23.2128, 6.4176) 两行，
 **两条都对上才算修好**（单看一条会拟合错）。
 
 ## 13. 兜底规则：三个变体都让**点数完全对上**，但末点对不上
 
-在 `path.rs` 里试了三种"未收敛时不放弃"的兜底：
+在 `graphwar_path_calculator.rs` 里试了三种"未收敛时不放弃"的兜底：
 
 | 变体 | step=0.5 | step=0.01 |
 |---|---|---|
@@ -337,7 +337,7 @@ unicorn 在二分循环内 hook），对比两边在第 4 点上接受的是哪�
 
 ### 下一步（更精确的观测手段）
 
-在 `path.rs` 里打印接受时那一刻的 `lo/hi/mid/chord/迭代次数`，
+在 `graphwar_path_calculator.rs` 里打印接受时那一刻的 `lo/hi/mid/chord/迭代次数`，
 再在 oracle 侧用 unicorn **hook 二分循环**读同一组值——**逐次对照第 4 个点的迭代轨迹**。
 单看"接受哪个点"已经不够了，必须看**两边的 lo/hi 收缩序列**。
 
@@ -351,7 +351,7 @@ oracle P1 0.490234375000000 0.098046875000000   ← 每一位都相同
 （前 6 点全部逐位一致）
 ```
 
-⇒ **`path::calculate` 的二分循环与真二进制完全一致**。
+⇒ **`graphwar_path_calculator::calculate` 的二分循环与真二进制完全一致**。
 这几轮怀疑的"接受时机/兜底规则"都不是问题所在。
 
 ## 22. 因此分歧只可能来自两处
@@ -396,7 +396,7 @@ oracle O4 -1.174402651902936 5.572682412856905   ← 差 5.7e-5
 
 ## 25. 下一步（唯一没试过的观测）
 
-在 `path.rs` 里，当 `accepted` 时打印该次二分的**全部迭代**：
+在 `graphwar_path_calculator.rs` 里，当 `accepted` 时打印该次二分的**全部迭代**：
 `i, lo, hi, mid, chord, |chord-step|, 是否满足容差`。
 把第 4 点的这一串打印出来，就能看到我们是在第几次、以多大误差接受的；
 再对照 oracle 的接受点（`-1.174402651902936`）反推它那次的中间量，
@@ -407,7 +407,7 @@ oracle O4 -1.174402651902936 5.572682412856905   ← 差 5.7e-5
 | 实现 | 点数 | 第 4 点 |
 |---|---|---|
 | **父仓库 `graphwar_curve.py`** | **70** | (-1.174459633943341, 5.573383096793182) |
-| 本仓库 Rust `path::calculate` | **70** | **完全相同（15 位小数）** |
+| 本仓库 Rust `graphwar_path_calculator::calculate` | **70** | **完全相同（15 位小数）** |
 | **真二进制（unicorn）** | **401** | (-1.174402651902936, 5.572682412856905) |
 
 ⇒ **我的 Rust 是忠实复刻，分歧源自父仓库的参考实现**。
@@ -425,7 +425,7 @@ oracle O4 -1.174402651902936 5.572682412856905   ← 差 5.7e-5
 1. 在父仓库 `graphwar_curve.py` 的 `calculate_path` 里做同样的一轮迭代观测（打印 lo/hi/chord），
    与真二进制对照，定出容差边界的判据差异；
 2. 修好后**先跑父仓库的 `difftest.py` 704 例**确保没退化，再把该 case 加进用例集；
-3. 最后同步到 `gw2-rebuild/src/path.rs`。
+3. 最后同步到 `gw2-rebuild/src/graphwar_path_calculator.rs`。
 
 ## 28. 父仓库究竟错在哪：**接受判据落在真值两侧**
 
@@ -465,7 +465,7 @@ oracle O4 -1.174402651902936 5.572682412856905   ← 差 5.7e-5
 
 ## 29. 精确指向的可疑行，以及两个取值的实测
 
-可疑代码（`graphwar_curve.py` 的 normal 分支、`path.rs` 同构）：
+可疑代码（`graphwar_curve.py` 的 normal 分支、`graphwar_path_calculator.rs` 同构）：
 
 ```python
 mid2 = (x + mid) * HALF
@@ -511,7 +511,7 @@ if ln <= ln2:
 
 **一句话**：`0x3c2a4d jbe 0x3c2955`（复检不通过）之后，汇编把 `lo` 重置回基点 `x`，
 同时把 `hi` 砍到 `mid2 = (x+mid)/2`。改法见 `docs/91` §7（`graphwar_curve.py` 第 471–473 行、
-`path.rs` 第 92–95 行各加一行）。
+`graphwar_path_calculator.rs` 第 92–95 行各加一行）。
 
 ## 32. ✅ 已修复：`hi = mid2`（子 agent 读汇编定论）
 
@@ -531,7 +531,7 @@ if ln <= ln2:
 | 项 | 结果 |
 |---|---|
 | 父仓库 `graphwar_curve.py` | 已补 `hi = mid2`，判据改为 `not (ln > ln2)`（`jbe` 遇 NaN 也成立） |
-| `gw2-rebuild/src/path.rs` | 同步修复 |
+| `gw2-rebuild/src/graphwar_path_calculator.rs` | 同步修复 |
 | 目标点 P4 | **-1.174402651902936**（与真二进制逐位相同） |
 | 点数/末点 | **401 / (24.8098, 9.8719)**、**20001 / (23.2128, 6.4176)** |
 | 父仓库 difftest | **768 例全过**（原 704 + 新增回归用例 64） |

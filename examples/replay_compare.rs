@@ -1,11 +1,11 @@
 //! 拿 replay 还原出来的真实局面，比较"真游戏发射的函数"与"我们自己 AI 找到的最优"。
 //!
 //! 用法: `cargo run --release --example replay_compare -- <state.txt> <等级>`
-use gw2_rebuild::aigen::{self, Individual, ScoringContext, VarMode};
-use gw2_rebuild::function::parse;
+use gw2_rebuild::graphwar_function_evolutionator::{self, Individual, ScoringContext, VarMode};
+use gw2_rebuild::math_function::parse;
 use gw2_rebuild::plane::{empty_mask, rasterize};
-use gw2_rebuild::rng::ChaCha12;
-use gw2_rebuild::settle::Target;
+use gw2_rebuild::_scaffold::rng::ChaCha12;
+use gw2_rebuild::graphwar_shot_calculator::settle::Target;
 use std::io::BufRead;
 
 /// 取轨迹上 x 最接近 target 的点的 y。
@@ -90,21 +90,21 @@ fn main() {
     }
     println!("掩膜自检: {}/{} 个障碍中心被正确标记", centers_ok, obstacles.len());
 
-    let p = aigen::params(level);
+    let p = graphwar_function_evolutionator::params(level);
     let real_tokens = parse(&func);
     let ctx = ScoringContext {
         x0: shooter.0, y0: shooter.1, flip, step: gw2_rebuild::SERVER_STEP,
         mask: &mask, targets: &targets, limit: p.limit,
     };
-    let real_score = aigen::fitness(&real_tokens, &ctx);
+    let real_score = graphwar_function_evolutionator::fitness(&real_tokens, &ctx);
 
     println!("局面: {} 个障碍、{} 个目标、射手在 ({:.2}, {:.2}) flip={}",
              obstacles.len(), targets.len(), shooter.0, shooter.1, flip);
     println!("真游戏函数 ({} token): {}", real_tokens.len(), func);
     {
         // 顺便报出"我们的物理预测这一发打死几个人"
-        use gw2_rebuild::path::{calculate, Mode};
-        use gw2_rebuild::shot::{correction, shifted_tokens};
+        use gw2_rebuild::graphwar_path_calculator::{calculate, Mode};
+        use gw2_rebuild::graphwar_shot_calculator::{correction, shifted_tokens};
         if !real_tokens.is_empty() {
             let c = correction(&real_tokens, shooter.0, shooter.1, flip);
             let shifted = shifted_tokens(&real_tokens, c);
@@ -126,13 +126,13 @@ fn main() {
 
     // 几何校验：用真实函数算弹道，看停止点是否与 replay 记录的 end_x 一致
     if let Some(end_x_real) = real_end_x {
-        use gw2_rebuild::path::{calculate, Mode};
-        use gw2_rebuild::shot::{correction, shifted_tokens};
+        use gw2_rebuild::graphwar_path_calculator::{calculate, Mode};
+        use gw2_rebuild::graphwar_shot_calculator::{correction, shifted_tokens};
         let c = correction(&real_tokens, shooter.0, shooter.1, flip);
         let shifted = shifted_tokens(&real_tokens, c);
         let step: f64 = std::env::var("GW2_STEP").ok().and_then(|v| v.parse().ok()).unwrap_or(gw2_rebuild::SERVER_STEP);
         let pts = calculate(&shifted, shooter.0, shooter.1, step, flip, Mode::Normal);
-        // ⚠️ 必须沿路径查掩膜：撞到第一个被占据的点就停（和 settle::resolve 一致）
+        // ⚠️ 必须沿路径查掩膜：撞到第一个被占据的点就停（和 graphwar_shot_calculator::settle::resolve 一致）
         // ALT_STOP: 三种查询方式各算一次停点，比较谁更贴近真实终点
         let q_trunc = |x: f64, y: f64| gw2_rebuild::plane::is_occupied(&mask, x, y);
         let q_round = |x: f64, y: f64| {
@@ -193,10 +193,10 @@ fn main() {
     key[..8].copy_from_slice(&0x5EED_1234_5678_9ABCu64.to_le_bytes());
     let mut rng = ChaCha12::from_seed(&key);
     let mut next = move || rng.next_u64();
-    let pop: Vec<Individual> = aigen::initial_population(&p, mode, &mut next);
+    let pop: Vec<Individual> = graphwar_function_evolutionator::initial_population(&p, mode, &mut next);
     // 两阶段评分（docs/97）：粗评 0.5 全部、精评 0.01 只跑前 3 名
     let mut score = |t: &[gw2_rebuild::Token], phase| ctx.evaluate(t, phase);
-    let out = aigen::evolve(pop, &p, mode, &mut next, &mut score);
+    let out = graphwar_function_evolutionator::evolve(pop, &p, mode, &mut next, &mut score);
     let best = &out[0];
     println!("我们的模型 ({} 代 × {} 种群) 最优 = {:.0}（{} token）",
              p.generations, p.population, best.score, best.tokens.len());

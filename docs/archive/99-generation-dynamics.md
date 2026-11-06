@@ -361,7 +361,7 @@ for (gen = 0; gen != 代数; gen++) {
 
 ---
 
-## 7. 我们实现还缺什么（`src/aigen.rs::evolve` 视角）
+## 7. 我们实现还缺什么（`src/graphwar_function_evolutionator::evolve` 视角）
 
 1. **父代模型要换**（①）：删掉 `a = next()%len` / `b = next()%len`；改成
    `for slot in 0..s { parent = survivors[slot].clone(); push(parent); for _ in 0..4 { push(factory(parent)) } }`。

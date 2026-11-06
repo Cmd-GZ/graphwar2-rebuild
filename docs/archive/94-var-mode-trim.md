@@ -2,7 +2,7 @@
 
 > 只读静态分析（Ghidra 12.1.4 + objdump），**未改动任何代码，未跑 `cargo test`**。
 > 本条回答的问题是：`FunctionMode` 到底在"生成 token 时"就分开，还是"先生成含 `y` 的
-> 流、再按模式删掉/替换 `y`"？——因为这决定了 `src/aigen.rs` 的双表实现是否正确。
+> 流、再按模式删掉/替换 `y`"？——因为这决定了 `src/graphwar_function_evolutionator.rs` 的双表实现是否正确。
 
 ## 1. 结论
 
@@ -28,7 +28,7 @@
 ⇒ **Normal 模式从头到尾不产生 `y` token，因此没有东西可"裁"。**
 `y` 和 `x` 是同一个 4 格槽位在两种模式下的两种取值，不是"先造出来再改"。
 
-**对实现的影响：`src/aigen.rs` 的双表实现不用改，而且比"同位置替换"更强——它连区间边界都和二进制逐格相同（见 §9.1）。**
+**对实现的影响：`src/graphwar_function_evolutionator.rs` 的双表实现不用改，而且比"同位置替换"更强——它连区间边界都和二进制逐格相同（见 §9.1）。**
 
 ## 2. 先纠正一个前提：`0x5ef2b0` 不是独立函数
 
@@ -281,7 +281,7 @@ Normal 下这两处都等于 0。
 
 ### 9.1 不用改，而且双表与二进制**逐格**等价
 
-`src/aigen.rs` 现在是两张表 + 累计权重线性扫描。把两张表的**累计区间**列出来：
+`src/graphwar_function_evolutionator.rs` 现在是两张表 + 累计权重线性扫描。把两张表的**累计区间**列出来：
 
 | 下标区间 | `TABLE_NORMAL` 给 | `TABLE_DIFFEQ` 给 | 二进制 `FUN_005ef020` 给 |
 |---|---|---|---|
@@ -307,13 +307,13 @@ DiffEq 表在 `[17,21)` 给 `VarY`，正好等于 `mode & 1 == 1`。
 
 若哪天有人把实现改成"先生成 85 格随机流、再按模式删掉 `y`"，那就**错了**：
 会同时改变 token 数、arity 装配点和最终 `V`（长度惩罚）——而真二进制不会。
-`src/aigen.rs:812` 的 `normal_mode_never_emits_y` 测试正好守住这条，不用动。
+`src/graphwar_function_evolutionator.rs:812` 的 `normal_mode_never_emits_y` 测试正好守住这条，不用动。
 
 ### 9.3 附注：一处**与本题无关**的抽样宽度差异（**未改，不建议在本轮改**）
 
 二进制每个 token 是**一次 `u32` 抽样**（`0x4ef193 mov 0x10(%r13,%rcx,4),%r12d`，
-`rand_chacha` 式 64 个 u32 的块缓冲）；而 `src/aigen.rs` 的 `next` 是
-`r.next_u64()`（`src/aigen.rs:462`），`src/rng.rs:80` 的 `next_u64` 一次吃掉
+`rand_chacha` 式 64 个 u32 的块缓冲）；而 `src/graphwar_function_evolutionator.rs` 的 `next` 是
+`r.next_u64()`（`src/graphwar_function_evolutionator.rs:462`），`src/_scaffold/rng.rs:80` 的 `next_u64` 一次吃掉
 ChaCha 的**两个 32 位字**。所以即使从同一个种子出发，我们的 token 抽取值也会和
 二进制不同。
 

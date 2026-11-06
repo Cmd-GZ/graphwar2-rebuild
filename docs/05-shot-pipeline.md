@@ -78,7 +78,7 @@ FunctionPointsEvent {
 点序列 ──逐点 is_occupied──> 首个命中序号
 ```
 
-Rust 侧：`src/shot.rs::simulate`；C ABI：`gw2_simulate(...)`。
+Rust 侧：`src/graphwar_shot_calculator::simulate`；C ABI：`gw2_simulate(...)`。
 
 ### 6.1 为什么敢拼
 
@@ -127,13 +127,13 @@ RESULT: PASS
 
 ```
 ① 输入文本           "sin(x)"
-      │  03-function-language.md     函数语言          ✅ 逐位验证   src/function/
+      │  03-function-language.md     函数语言          ✅ 逐位验证   src/math_function/
       ▼
 ② 前缀 token 列表     [(SIN,0),(X,0)]
-      │  05-shot-pipeline.md     修正常数 c        ✅ 逐位验证   src/shot.rs
+      │  05-shot-pipeline.md     修正常数 c        ✅ 逐位验证   src/graphwar_shot_calculator.rs
       ▼
 ③ 带修正的 token      [(ADD,0),(CONST,c)] ++ tokens
-      │  04-path-sampling.md     等弦长采点        ✅ 逐位验证   src/path.rs
+      │  04-path-sampling.md     等弦长采点        ✅ 逐位验证   src/graphwar_path_calculator.rs
       ▼
 ④ 点序列（游戏单位）  [(x0,y0),(x1,y1),...]
       │  08-plane.md §4  坐标变换          👁 观测      src/plane.rs
@@ -142,7 +142,7 @@ RESULT: PASS
       │  08-plane.md §6  掩膜点测试        👁 观测      src/plane.rs
       ▼
 ⑥ 命中 / 未命中        mask[py*1000+px] != 0xFF
-      │  02 §13.1    排队死亡          👁 结构      src/life.rs
+      │  02 §13.1    排队死亡          👁 结构      src/graphwar_life_manager.rs
       ▼
 ⑦ 生命状态            (存活表, 排队表)
       │  41 §3       回合推进          🔶 结构（时间基准未解）
@@ -245,7 +245,7 @@ tick_handler ─> target_manager（周期性）
 | 非法 `mode` | `ok:false, error:"bad_arguments"`（**沿用**既有错误码，不新造） | **逐位验证**（单测） |
 | 返回结构 | 与 `path_calculate` **同形**：`{ok, points, offset, error}`（`RESULT_KEYS` 四个键，顺序相同） | **逐位验证**（复用 `result_pairs`，无第二份整形） |
 | ODE 采样器本身 | `dy/dx = f(x, y)`，一阶 RK4；第三个变量（`y'`）恒 `0` | **逐位验证**（224 条 path 夹具里 **112 条是 ODE**：56 条 `flip=0` + 56 条 `flip=1`，`tests/golden.rs::path_matches_binary`） |
-| RK4 的 **`y` 反馈** | `k2/k3/k4` 用 `y + k·h/2` 回代（`src/path.rs`） | **推断**（按 `04-path-sampling.md` §2 的反编译阅读实现；**没有**真值夹具覆盖，见 §8.2） |
+| RK4 的 **`y` 反馈** | `k2/k3/k4` 用 `y + k·h/2` 回代（`src/graphwar_path_calculator.rs`） | **推断**（按 `04-path-sampling.md` §2 的反编译阅读实现；**没有**真值夹具覆盖，见 §8.2） |
 | ODE 下修正常数 | **不做**（与 `shot_points` 的 `apply_correction && mode == Mode::Normal` 一致） | **逐位验证**（单测与 `shot_points(…, Mode::Ode, false)` 逐点相等） |
 | ODE 下 `offset` | **恒 `NaN`**（成功也是），理由见 §3 | **自定**（原版内部这个数没有人观测到；界面那行字为空是**观测**，§3） |
 | `mode="normal"` | 与 `path_calculate` **逐位相同**（直接委托，不是第二份实现） | **逐位验证**（单测逐位对拍 + 结构上委托） |
@@ -261,7 +261,7 @@ tick_handler ─> target_manager（周期性）
 1. **`offset` 在 ODE 下是 `NaN`，不是 `0.0`**。用 `0.0` 会让界面右下角显示 `+ 0.000`，
    而原版 DiffEq 局那行字是**空**的（`16-client.md` §4.10 观测，`play_screen.gd:786` 也照此置空）。
 2. **ODE 不做修正常数**。谁在 API 层补一个 `c = y0 − f(±x0)`，整条微分方程弹道就平移
-   —— `src/shot.rs::shot_points` 那行判断（`apply_correction && mode == Mode::Normal`）
+   —— `src/graphwar_shot_calculator::shot_points` 那行判断（`apply_correction && mode == Mode::Normal`）
    已经把这件事钉死了。
 3. **`mode` 是字符串参数**。`PropertyInfo` 声明成 `String`；传整数会被**引擎先拒**
    （`16-client.md` §3.7 同形实测），所以内核侧不做整数重载（那段代码永远走不到）。

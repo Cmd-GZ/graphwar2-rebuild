@@ -4,13 +4,13 @@
 //! （证明这条规则不是"怎么写都算过"）。语料相关的那条在没有语料时会打印原因跳过，
 //! 不静默通过（和 `tests/replay_diff.rs::real_corpus_smoke_if_present` 同一约定）。
 
-use gw2_rebuild::diffconv::{
+use gw2_rebuild::_scaffold::diffconv::{
     corrected_function, death_effect_type, explosion_point, mode_of, strict_policy,
     unbalanced_brackets, ConvPredictor,
 };
-use gw2_rebuild::path::Mode;
-use gw2_rebuild::replaydiff::{default_corpus_dir, Msg, Policy};
-use gw2_rebuild::settle::Target;
+use gw2_rebuild::graphwar_path_calculator::Mode;
+use gw2_rebuild::_scaffold::replaydiff::{default_corpus_dir, Msg, Policy};
+use gw2_rebuild::graphwar_shot_calculator::settle::Target;
 
 /// 回放里的一行 `FunctionInfo` / `EffectInfo` 原文，按同一口径解析。
 fn kinds(msgs: &[String]) -> Vec<String> {
@@ -63,7 +63,7 @@ fn diffeq_corrected_function_has_no_suffix() {
 
 /// Normal 局：函数原文 + `" ± c.ddd"`（运算符带符号，`docs/127`）。
 ///
-/// 真值：抓包帧 234 / 231 / 182（`src/shot.rs` 的同一批样本）。
+/// 真值：抓包帧 234 / 231 / 182（`src/graphwar_shot_calculator.rs` 的同一批样本）。
 #[test]
 fn normal_corrected_function_appends_signed_suffix() {
     assert_eq!(
@@ -134,7 +134,7 @@ fn explosion_point_is_the_corrected_text_at_end_x() {
     assert!((sampler_stop.1 - py).abs() > 1e-5);
 }
 
-/// `flip` 时采样器内部用 `-x`，回代也要取反（`path::calculate` 的 `px = -mid`）。
+/// `flip` 时采样器内部用 `-x`，回代也要取反（`graphwar_path_calculator::calculate` 的 `px = -mid`）。
 ///
 /// 真值：回放 `1782641987` —— `function = "sin(x)"`、`corrected = "sin(x) - 6.101"`、
 /// `start_x = 14.559477538378344`（Team2 ⇒ flip=true）、`end_x = 8.746977538378527`、
@@ -292,7 +292,7 @@ fn real_corpus_replays_that_are_byte_identical() {
             eprintln!("跳过 {name}：语料里没有这一份");
             continue;
         }
-        let r = gw2_rebuild::diffconv::run_file(&p, &policy, 8);
+        let r = gw2_rebuild::_scaffold::diffconv::run_file(&p, &policy, 8);
         assert!(r.scored_batches > 0, "{name} 应该有结算批");
         assert!(r.clean, "{name} 应当完全一致，逐批成因：{:?}", r.causes);
     }

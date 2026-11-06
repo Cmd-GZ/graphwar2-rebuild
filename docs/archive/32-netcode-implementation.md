@@ -2,7 +2,7 @@
 
 协议在 `docs/24` 已经还原；这一层把它变成**能跑、能对拍**的代码。
 
-## 1. 已实现（`src/protocol.rs`）
+## 1. 已实现（`src/_scaffold/protocol.rs`）
 
 | 能力 | API |
 |---|---|

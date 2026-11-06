@@ -13,10 +13,10 @@
 //! | `single_shot_is_byte_identical_to_fire` | 重构没有改变 `SequentialTurns` | **逐位验证** |
 //! | `collection_*` | 收集阶段：攒齐 / 超时 / 重复 / 不在名单 | **观测**（`docs/141` §1、§4） |
 use gw2_rebuild::game::{Match, Submission};
-use gw2_rebuild::protocol::parse_message;
+use gw2_rebuild::_scaffold::protocol::parse_message;
 use gw2_rebuild::server::RoomState;
-use gw2_rebuild::settle::Target;
-use gw2_rebuild::turn::{RoundCollection, SubmitResult};
+use gw2_rebuild::graphwar_shot_calculator::settle::Target;
+use gw2_rebuild::graphwar_turn_manager::{RoundCollection, SubmitResult};
 
 fn room(turn_mode: &str) -> RoomState {
     RoomState {
@@ -41,7 +41,7 @@ fn kinds_sub(msgs: &[String]) -> Vec<String> {
         .map(|m| {
             let r = parse_message(m).expect("应为合法消息");
             if r.kind == "EffectInfo" {
-                let t = gw2_rebuild::protocol::get_str(&r, "effect_type").unwrap_or_default();
+                let t = gw2_rebuild::_scaffold::protocol::get_str(&r, "effect_type").unwrap_or_default();
                 format!("EffectInfo/{t}")
             } else {
                 r.kind
@@ -55,7 +55,7 @@ fn ints(msgs: &[String], kind: &str, field: &str) -> Vec<i64> {
     msgs.iter()
         .filter_map(|m| parse_message(m))
         .filter(|r| r.kind == kind)
-        .filter_map(|r| gw2_rebuild::protocol::get_int(&r, field))
+        .filter_map(|r| gw2_rebuild::_scaffold::protocol::get_int(&r, field))
         .collect()
 }
 
@@ -318,7 +318,7 @@ fn blocked_shot_does_not_stop_the_other() {
         .filter_map(|m| parse_message(m))
         .find(|r| r.kind == "QueueDestroyObstacle")
         .expect("应有队列挖洞");
-    let py = gw2_rebuild::protocol::get_f64(&qdo, "pos_y").unwrap();
+    let py = gw2_rebuild::_scaffold::protocol::get_f64(&qdo, "pos_y").unwrap();
     assert!((py + 4.0).abs() < 1.0, "挖洞点应在 A 那条线（y≈-4）上，实际 {py}");
 }
 
@@ -418,7 +418,7 @@ fn empty_announcement_is_immediately_complete() {
 /// ③ 结算批的分组与顺序就是上面那几条测试钉住的形状。
 #[test]
 fn a_full_simultaneous_round_runs_all_three_phases() {
-    use gw2_rebuild::turn::Team;
+    use gw2_rebuild::graphwar_turn_manager::Team;
 
     let mut m = field(vec![tgt(10, -8.0, -4.0), tgt(11, 8.0, 4.0)], vec![]);
     m.register_player(7, Team::One, &[10]);
@@ -526,13 +526,13 @@ mod tcp {
     }
 
     pub fn start_server(
-        cfg: gw2_rebuild::serverloop::Config,
+        cfg: gw2_rebuild::graphwar_game_server::Config,
     ) -> (std::net::SocketAddr, std::thread::JoinHandle<()>) {
         let l = TcpListener::bind(&cfg.addr).expect("bind");
         let addr = l.local_addr().unwrap();
         let h = std::thread::spawn(move || {
             let mut sock = l.accept().expect("accept").0;
-            gw2_rebuild::serverloop::serve_stream(&mut sock, &cfg).ok();
+            gw2_rebuild::graphwar_game_server::serve_stream(&mut sock, &cfg).ok();
         });
         (addr, h)
     }
@@ -549,7 +549,7 @@ mod tcp {
 ///   `FunctionInfo` / `FunctionPoints` / `FunctionActive` 各 N 条。
 #[test]
 fn simultaneous_round_over_tcp_emits_one_grouped_batch() {
-    use gw2_rebuild::serverloop::{Config, FIRST_PLAYER_ID};
+    use gw2_rebuild::graphwar_game_server::{Config, FIRST_PLAYER_ID};
     use std::io::Write;
     use std::net::TcpStream;
     use tcp::*;
@@ -578,8 +578,8 @@ fn simultaneous_round_over_tcp_emits_one_grouped_batch() {
         .filter_map(|m| {
             let r = parse_message(m)?;
             Some((
-                gw2_rebuild::protocol::get_int(&r, "player_id")?,
-                gw2_rebuild::protocol::get_int(&r, "soldier_id")?,
+                gw2_rebuild::_scaffold::protocol::get_int(&r, "player_id")?,
+                gw2_rebuild::_scaffold::protocol::get_int(&r, "soldier_id")?,
             ))
         })
         .collect();

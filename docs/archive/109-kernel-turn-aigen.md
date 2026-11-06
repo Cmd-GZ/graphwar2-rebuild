@@ -12,9 +12,9 @@
 ## 0. 一句话
 
 > `docs/98` 的两条实现缺口补上了：
-> ① `src/turn.rs` 从**队伍交替**（`alternating_order`，调用方给顺序）改成
+> ① `src/graphwar_turn_manager.rs` 从**队伍交替**（`alternating_order`，调用方给顺序）改成
 > **每玩家 `Vec<soldier_id>` + 游标**的轮转（先自增再取、`& 1` 判活、全灭发 0）；
-> ② `src/aigen.rs` 加了**按士兵**的一层：回合系统先定 `soldier_id`，AI 只为它跑一次进化，
+> ② `src/graphwar_function_evolutionator.rs` 加了**按士兵**的一层：回合系统先定 `soldier_id`，AI 只为它跑一次进化，
 > 结果写进**这个士兵自己的**函数槽，**每回合重算、不共享**。
 > 顺带：`flip` 由**队伍**决定（接口里没有坐标参数）、回合超时 = 跳过该玩家（**用户口述**，做成显式分支）。
 
@@ -24,19 +24,19 @@
 
 | 文件 | 改动 | 依据 |
 |---|---|---|
-| `src/turn.rs` | **重写**：`Team` / `PlayerTurns` / `TurnManager` / `TurnDecision` / `EmptyRoster`；删掉 `alternating_order` | `docs/98` §1.2、§2、§7；`docs/105`；objdump（见 §2.2） |
-| `src/life.rs` | 新增 `MISSING_STATE = 2` 与 `is_alive_byte()`（`& 1` 才是活）+ 2 条测试 | `docs/98` §1.3（`0x454950` / `0x463fbb`） |
-| `src/aigen.rs` | 新增"按士兵的进化层"：`FunctionSlot` / `SoldierFunctions` / `SoldierTurn` / `SoldierEvolver` + 6 条测试 | `docs/98` §3、§7 第 3 条 |
+| `src/graphwar_turn_manager.rs` | **重写**：`Team` / `PlayerTurns` / `TurnManager` / `TurnDecision` / `EmptyRoster`；删掉 `alternating_order` | `docs/98` §1.2、§2、§7；`docs/105`；objdump（见 §2.2） |
+| `src/graphwar_life_manager.rs` | 新增 `MISSING_STATE = 2` 与 `is_alive_byte()`（`& 1` 才是活）+ 2 条测试 | `docs/98` §1.3（`0x454950` / `0x463fbb`） |
+| `src/graphwar_function_evolutionator.rs` | 新增"按士兵的进化层"：`FunctionSlot` / `SoldierFunctions` / `SoldierTurn` / `SoldierEvolver` + 6 条测试 | `docs/98` §3、§7 第 3 条 |
 | `docs/109-kernel-turn-aigen.md` | 本文 | — |
 | `docs/INDEX.md` | 加一行（§1.4 联机/回合 那张表） | 仓库约定 |
 | `docs/47-turn-order-random.md` | §7 就地加一句"接口已换"的注（原句指向的 `alternating_order` 已不存在） | 防死引用 |
 
-`src/` 之外**没有**动别的代码：`game.rs`、`protocol.rs`、`serverloop.rs` 均未改，
+`src/` 之外**没有**动别的代码：`game.rs`、`_scaffold/protocol.rs`、`graphwar_game_server.rs` 均未改，
 所以既有 21 条验收测试（`tests/`）一行没动也全绿（§5）。
 
 ---
 
-## 2. `src/turn.rs`：轮转模型
+## 2. `src/graphwar_turn_manager.rs`：轮转模型
 
 ### 2.1 数据结构
 
@@ -125,7 +125,7 @@ objdump -d --start-address=0x463da0 --stop-address=0x464780 libgraphwarrust.so
 
 ### 2.5 存活判定
 
-`life.rs` 新增：
+`graphwar_life_manager.rs` 新增：
 
 ```rust
 pub const MISSING_STATE: u8 = 2;                     // 0x454950 查不到时的返回值
@@ -134,7 +134,7 @@ pub const fn is_alive_byte(state: u8) -> bool { state & 1 != 0 }
 
 * `0`（死）与 `2`（查不到 / 未上场）**都不可开火**（`docs/98` §1.3）；
 * 任意奇数都算活——这是 `test $0x1` 的实际语义，不是"只有 1"；
-* `turn::life_state_of(&LifeState)` 把 `Alive/Dead/没记录` 映射成 `1/0/2`。
+* `graphwar_turn_manager::life_state_of(&LifeState)` 把 `Alive/Dead/没记录` 映射成 `1/0/2`。
 
 ### 2.6 `flip` 由队伍决定
 
@@ -143,7 +143,7 @@ pub const fn is_alive_byte(state: u8) -> bool { state & 1 != 0 }
 
 **不用坐标比大小猜**这件事由**类型**保证：`TurnManager` / `PlayerTurns` / `Team` 的
 **任何接口里都没有坐标参数**，所以"用起点与终点 x 比大小"在结构上不可能出现。
-AI 侧拿到的是 `TurnDecision::flip()`，直接填进 `aigen::ScoringContext.flip`。
+AI 侧拿到的是 `TurnDecision::flip()`，直接填进 `graphwar_function_evolutionator::ScoringContext.flip`。
 
 ### 2.7 回合超时 = 跳过该玩家（**用户口述**）
 
@@ -169,10 +169,10 @@ TurnManager::begin_turn(player_id, life_state, timed_out /* bool */)
 
 | 旧 API（`main`） | 新 API | 说明 |
 |---|---|---|
-| `turn::alternating_order(teams, start_team, rounds) -> Vec<i64>` | **删除**。改用 `PlayerTurns::next_shooter*` + `TurnManager::begin_turn` | 全仓库**只有 `turn.rs` 自己的测试**调用它（`grep` 过：`src/`、`tests/`、`examples/` 里没有别的调用点），所以删除不影响任何生产代码 |
+| `graphwar_turn_manager::alternating_order(teams, start_team, rounds) -> Vec<i64>` | **删除**。改用 `PlayerTurns::next_shooter*` + `TurnManager::begin_turn` | 全仓库**只有 `graphwar_turn_manager.rs` 自己的测试**调用它（`grep` 过：`src/`、`tests/`、`examples/` 里没有别的调用点），所以删除不影响任何生产代码 |
 | （无） | `Team`、`PlayerTurns`、`TurnManager`、`TurnDecision`、`SkipReason`、`EmptyRoster`、`SOLDIER_ID_NONE`、`life_state_of` | 新增 |
-| （无） | `life::MISSING_STATE`、`life::is_alive_byte` | 新增 |
-| （无） | `aigen::{FunctionSlot, SoldierFunctions, SoldierTurn, SoldierEvolver}` | 新增；**没有改动**既有 `aigen` API（`evolve` / `evolve_with_budget` / `next_generation` / `ScoringContext` 签名一字未动） |
+| （无） | `graphwar_life_manager::MISSING_STATE`、`graphwar_life_manager::is_alive_byte` | 新增 |
+| （无） | `graphwar_function_evolutionator::{FunctionSlot, SoldierFunctions, SoldierTurn, SoldierEvolver}` | 新增；**没有改动**既有 `aigen` API（`evolve` / `evolve_with_budget` / `next_generation` / `ScoringContext` 签名一字未动） |
 
 ### 3.2 旧测试怎么办
 
@@ -191,14 +191,14 @@ TurnManager::begin_turn(player_id, life_state, timed_out /* bool */)
 
 ### 3.3 对 `docs/47` §7 的影响
 
-`docs/47` §7 原句是"`src/turn.rs::alternating_order` 保持'调用方给顺序'的接口"。
+`docs/47` §7 原句是"`src/graphwar_turn_manager::alternating_order` 保持'调用方给顺序'的接口"。
 该函数已删，所以在那句后面就地加了一行注（指向本文），避免死引用。
 **`docs/47` 的核心结论不变**：玩家出场顺序仍不可复现，仍由调用方给——`TurnManager`
 这一层只是**不再冒充**"顺序"这件事。
 
 ---
 
-## 4. `src/aigen.rs`：按士兵的进化层
+## 4. `src/graphwar_function_evolutionator.rs`：按士兵的进化层
 
 ### 4.1 三个硬结论（`docs/98` §3，replay 观测）
 
@@ -244,7 +244,7 @@ let out = evolver.evolve_soldier(&mut slots, soldier_id, turn_no, pop, &mut next
 ### 4.4 典型调用链（与真链路对齐）
 
 ```text
-turn_manager（src/turn.rs）        选好 soldier_id，给出 flip（来自队伍）
+turn_manager（src/graphwar_turn_manager.rs）        选好 soldier_id，给出 flip（来自队伍）
    ↓
 computer_player_manager（未实现）  取该士兵的局面
    ↓
@@ -277,9 +277,9 @@ server_match 1
 
 | 模块 | 条数 | 覆盖 |
 |---|---|---|
-| `turn.rs` | 19（原本 5 条，删/改写后净 +14） | 轮转顺序（先自增）、**三局 replay 逐发复刻**、跳死人、全灭 `Some(0)`、`Some(0)` vs `None` 的广播差别、单士兵、空队（两种策略）、`flip` 由队伍、抓包序列可达、**超时跳过**、未知玩家、状态字节 `& 1`、`LifeState` 适配、`soldier_id=0` 拒绝入表 |
-| `life.rs` | 2 | 生命表往返；`MISSING_STATE == 2` 与"只有最低位算活" |
-| `aigen.rs` | 6 | 开局空槽；**两士兵互不干扰**；**同一士兵下一回合重算（覆盖）**；槽里是第 0 名；预算接到 25 s；`soldier_id` 来自调用方 |
+| `graphwar_turn_manager.rs` | 19（原本 5 条，删/改写后净 +14） | 轮转顺序（先自增）、**三局 replay 逐发复刻**、跳死人、全灭 `Some(0)`、`Some(0)` vs `None` 的广播差别、单士兵、空队（两种策略）、`flip` 由队伍、抓包序列可达、**超时跳过**、未知玩家、状态字节 `& 1`、`LifeState` 适配、`soldier_id=0` 拒绝入表 |
+| `graphwar_life_manager.rs` | 2 | 生命表往返；`MISSING_STATE == 2` 与"只有最低位算活" |
+| `graphwar_function_evolutionator.rs` | 6 | 开局空槽；**两士兵互不干扰**；**同一士兵下一回合重算（覆盖）**；槽里是第 0 名；预算接到 25 s；`soldier_id` 来自调用方 |
 
 三条 replay 测试是**直接用 `docs/98` §2 的真值**当断言（不是自己推的例子）：
 
@@ -323,10 +323,10 @@ server_match 1
 
 * `src/game.rs::begin_turn(player_id, soldier_id, ...)` 仍由**调用方**给 `soldier_id`
   （它只负责拼报文），没有改成从 `TurnManager` 取；
-* `src/serverloop.rs`（自建客户端联机用的 harness 服务端）里的
+* `src/graphwar_game_server.rs`（自建客户端联机用的 harness 服务端）里的
   `current = Some((p.player_id, p.soldier_id))` 来自 harness 自己的玩家表，
   不是轮转算出来的；
-* `src/aigen.rs` 的进化也还没有被任何回合推进调用（此前就没人调用 `evolve`）。
+* `src/graphwar_function_evolutionator.rs` 的进化也还没有被任何回合推进调用（此前就没人调用 `evolve`）。
 
 不改的理由：`HANDOVER.md` §7.11.2 把**服务端接线**列为"暂缓"（等协议补全），
 而改 `game.rs` 的签名会牵动 `tests/server_match.rs` 等验收测试。
@@ -340,9 +340,9 @@ server_match 1
 
 | 位置 | 现在的说法 | 合并后应改成 |
 |---|---|---|
-| `docs/00-status.md` §0 "内核侧仍缺 ① ②" | "`src/turn.rs` 还没实现…""`aigen` 缺…" | 已实现，见 `109` |
+| `docs/00-status.md` §0 "内核侧仍缺 ① ②" | "`src/graphwar_turn_manager.rs` 还没实现…""`aigen` 缺…" | 已实现，见 `109` |
 | `docs/HANDOVER.md` §0 同两条 | 同上 | 同上 |
-| `docs/AI.md` §8.4 末段"对实现的缺口" | "`src/turn.rs` 需要实现这套轮转…" | 改成"已实现，见 `109`" |
+| `docs/AI.md` §8.4 末段"对实现的缺口" | "`src/graphwar_turn_manager.rs` 需要实现这套轮转…" | 改成"已实现，见 `109`" |
 | `docs/98` §7 的伪代码注释 | `if n == 0 { return None; } // 不发 TurnInfo` | 与 §1.4 冲突已记在本文 §2.4；`98` 是结论文档，未改 |
 | `docs/47` §7 | "`alternating_order` 保持…" | 已就地加注（指向本文） |
 
