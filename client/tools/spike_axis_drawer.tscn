@@ -1,0 +1,12 @@
+[gd_scene format=3]
+
+; 最小验证场景：**只有**一个节点，类型是 Rust 侧注册的扩展类 `AxisDrawer`。
+;
+; 这个文件存在的意义是证明"场景加载器按名解析扩展类"这一条路径：
+; `type="AxisDrawer"` 要求场景加载时 `ClassDB` 里已经有这个类（`ClassDB.instantiate`）。
+; 下面那行属性则证明注册的属性带 `PROPERTY_USAGE_STORAGE`，能被场景写进去。
+;
+; 判据见 `client/tools/spike_class_check.gd`（`bash client/run.sh spike-class`）。
+
+[node name="AxisDrawer" type="AxisDrawer"]
+axis_mode = 3

@@ -23,8 +23,10 @@ type FnSetInstance =
     unsafe extern "C" fn(obj: *mut c_void, class_name: *const c_void, instance: *mut c_void);
 type FnMemAlloc = unsafe extern "C" fn(bytes: usize) -> *mut c_void;
 
-type CreateInstance2 = Option<unsafe extern "C" fn(*mut c_void, u8) -> *mut c_void>;
-type FreeInstance = Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>;
+/// `GDExtensionClassCreateInstance2`（4.2 起带 `p_notify_postinitialize`）。
+pub type CreateInstance2 = Option<unsafe extern "C" fn(*mut c_void, u8) -> *mut c_void>;
+/// `GDExtensionClassFreeInstance`。
+pub type FreeInstance = Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>;
 
 /// `GDExtensionClassCreationInfo4`（字段顺序严格照头文件）。
 #[repr(C)]
@@ -55,7 +57,9 @@ pub struct CreationInfo4 {
 }
 
 impl CreationInfo4 {
-    fn empty() -> Self {
+    /// 全零的 `CreationInfo4`：只填 `is_exposed` / `create_instance_func` /
+    /// `free_instance_func` 就能注册一个空壳类。别的类（`axis_drawer_class.rs`）也用这一份。
+    pub fn empty() -> Self {
         CreationInfo4 {
             is_virtual: 0,
             is_abstract: 0,
@@ -216,7 +220,7 @@ pub struct ClassMethodInfo {
     pub default_arguments: *const c_void,
 }
 
-type CallFunc = Option<
+pub type CallFunc = Option<
     unsafe extern "C" fn(
         method_userdata: *mut c_void,
         instance: *mut c_void,

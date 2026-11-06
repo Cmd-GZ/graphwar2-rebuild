@@ -5090,3 +5090,220 @@ pub mod graphwar_game_info;
 `graphwar_game_info.rs` 只做 `pub use crate::events::{GameInfo, …}` —— **没有搬结构体**：
 `docs/02-module-map.md` §17.4 的规矩是"一个文件混了多个原版模块而边界无证据时不猜不搬"，
 本轮只登记归属依据（serde impl 路径），搬迁留给专门一轮。
+
+## 35. 技术验证（spike）：`AxisDrawer` 真的注册成了 Godot 节点类
+
+**一句话**：注册、三条实例化路径、属性读写、方法调用 + 复原逻辑执行，**全部通了**；
+**但它还不会画** —— 虚方法表（`_draw`）一个都没接。这是"用重建源码跑起游戏"的第一个门槛，
+本轮它过了；第二个门槛（虚方法表）是下一个任务。
+
+> 本节所有结论都标了档位。`cargo test` / `client/run.sh selftest` 只算**回归保护**，
+> 不是复原证据（`AGENTS.md` §0.2）。
+
+### 35.1 本轮动了哪些文件
+
+| 文件 | 增/改 | 内容 |
+|---|---|---|
+| `src/_scaffold/axis_drawer_class.rs` | **新增 800 行**（代码 503 / 文档注释 119 / 空行 66 / 单测 112） | 类注册 + `axis_mode` 属性 + 4 个方法 + 两条「数线」观测点 + 8 条单测 |
+| `src/_scaffold/gdext.rs` | +29 / −6 | `SCENE` 级别多注册一个类；`WANTED` 诊断表补上新接口；文件头「当前能力」按现状改写（原文写「还没有注册任何类」，已过时） |
+| `src/_scaffold/gdext_class.rs` | +8 / −4 | `CreationInfo4::empty()` 与三个回调类型别名改 `pub`（给新文件复用），**无行为改动** |
+| `src/_scaffold/mod.rs` | +1 | `pub mod axis_drawer_class;` |
+| `client/tools/spike_class_check.gd` | **新增 139 行** | 验收脚本（23 条断言），headless 跑 |
+| `client/tools/spike_axis_drawer.tscn` | **新增 12 行** | 最小场景：一个节点 `type="AxisDrawer"` + `axis_mode = 3` |
+
+`client/` 下**只新增这两个验证文件**，没有改任何既有 `.gd` / `.tscn` / `run.sh`。
+
+### 35.2 a) 能不能注册成功 —— **能**（观测）
+
+```text
+$ Godot_v4.7.2-stable_linux.x86_64 --headless --path client \
+      --script res://tools/spike_class_check.gd
+[gw2-rebuild] axis api resolve: class4=true method=true property=true construct=true \
+    set_instance=true sn_new=true from_ctor=true to_ctor=true get_type=true
+[gw2-rebuild] registered class AxisDrawer (parent Control)
+[gw2-rebuild] registered AxisDrawer members: axis_mode (property), \
+    set_axis_mode/get_axis_mode/axis_line_count/axis_line_count_formula (methods)
+      before load: GW2Rebuild=true AxisDrawer=true
+ok   ClassDB.class_exists("AxisDrawer")
+ok   对照组：单例 GW2Rebuild 仍在（没有被这次改动弄坏）
+ok   ClassDB.instantiate("AxisDrawer") 非空
+ok   实例能当 Control 用（父类正确）
+ok   inst.is_class("AxisDrawer") 为真
+      engine facts: get_class()=AxisDrawer is_class(Control)=true
+      property axis_mode: type=2 usage=6
+ok   get_property_list() 里有 axis_mode
+ok   axis_mode 默认值 = 0（NoAxis；我方选择，非二进制证据）
+ok   set/get axis_mode=3 往返一致
+ok   axis_mode=0 -> 枚举 0 条 / 公式 0 条（期望 0）
+ok   axis_mode=1 -> 枚举 2 条 / 公式 2 条（期望 2）
+ok   axis_mode=2 -> 枚举 20 条 / 公式 20 条（期望 20）
+ok   axis_mode=3 -> 枚举 102 条 / 公式 102 条（期望 102）
+ok   axis_mode=200（越界）→ 20 条（原版分支）
+ok   载入 res://tools/spike_axis_drawer.tscn
+ok   场景能实例化出节点
+ok   场景节点是 Control
+ok   场景节点 is_class(AxisDrawer)
+ok   .tscn 里的 axis_mode=3 生效（102 条线）
+      add_child 后立刻查: root.is_inside_tree=false node.is_inside_tree=false
+ok   节点能挂进场景树（Node 生命周期可用）
+ok   AxisDrawer.new() 非空
+ok   AxisDrawer.new() 出来的是 Control
+ok   新实例的 axis_mode=2 → 20 条
+[gw2-rebuild] AxisDrawer 实例被引擎回收（free_instance）
+SPIKE 23 passed, 0 failed        # 退出码 0
+```
+
+四条实例化/调用路径都过：`ClassDB.instantiate`、`.tscn` 场景加载器、GDScript 的
+`AxisDrawer.new()`、以及 `free_instance`（引擎回收时会回调我们）。
+
+**两个必须先知道的坑（本轮各踩一次）**：
+
+1. **`--import` 是前置条件**。第一次跑时 `AxisDrawer.new()` 直接报
+   `Parse Error: Identifier "AxisDrawer" not declared in the current scope` ——
+   因为 `client/.godot/extension_list.cfg` 还不存在，`--script` 模式下扩展**根本没被加载**
+   （`AGENTS.md` 里「改了但没生效」第 1 条）。`--import` 之后同一份脚本立刻通过。
+2. **`--script` 模式的 `_initialize()` 跑在 `SceneTree` 根节点进树之前**：那一刻
+   `add_child` 只记录父子关系，`is_inside_tree()` 仍是 false，要等一帧（脚本里
+   `await process_frame` 之后再断言）。这是引擎时序，不是我们的 bug。
+
+**两条引擎事实（观测，省得下一个人再猜）**：
+
+* 对扩展类，`Object.get_class()` 返回**扩展类名**（`"AxisDrawer"`），不是原生父类（`"Control"`）；
+  `is_class("Control")` 同时为真。
+* `godot --headless --import` 期间**编辑器也会实例化一次**这个类
+  （日志：`[gw2-rebuild] AxisDrawer 实例化成功 (object=0x430e56c0, notify_postinitialize=1)`）
+  ⇒ `create_instance` 必须无副作用、可重入，注册必须幂等。
+
+### 35.3 b) 从「纯逻辑」到「真节点」，一个类要补什么
+
+按本轮实测（`axis_drawer_class.rs` 的 503 行代码）拆块，**没有一块是那个类专有的逻辑**，
+全是 gdext 宏平时替我们生成的东西：
+
+| # | 块 | 实测行数 | 具体是什么 |
+|---|---|---|---|
+| 1 | 接口表 | ~75 | 9 个 `get_proc_address` 名字 + 用 `usize` 存的表（`static OnceLock` 要 `Send + Sync`） |
+| 2 | 类注册 | ~45 | `CreationInfo4`（**160 字节**，字段序有单测钉住）+ `create_instance`（`classdb_construct_object("Control")` 造真 Control，再 `object_set_instance` 挂 `Box<Instance>`）+ `free_instance` |
+| 3 | 方法表 | ~110 | 4 个方法：每个要 `StringName`×(1+参数+返回)、`PropertyInfo` 数组、14 字段的 `ClassMethodInfo`，再加一个 `call_func` |
+| 4 | 属性表 | ~75 | `classdb_register_extension_class_property` + `PropertyInfo`；**setter/getter 必须先注册成方法**（顺序不能反） |
+| 5 | Variant 读写 | ~50 | 读参数走 `get_variant_to_type_constructor`、写返回走 `from_type_constructor`；**不许**自己猜 `Variant` 的布局 |
+| 6 | 回调壳 | ~150 | `catch_unwind` + 空指针/参数个数检查（每个方法 20–40 行） |
+
+⇒ **一个「1 属性 + 4 方法、不画东西」的类 ≈ 500 行**。其中约 300 行与具体类无关，
+12 个类必须抽成公共模块（接口表 / Variant 读写 / 注册辅助），否则就是 6 000 行重复。
+
+抽出去之后，每加一个类的**边际**成本（推断，按本轮结构外推）：
+
+* 类 + 实例结构 + 构造/析构：**~60 行**
+* 每个方法：**~20 行**（一个 `call_func` + 一条 `add_method`）
+* 每个属性：**~10 行**
+* 每个虚方法：**~40–80 行**（**未实测**，见 §35.5 风险 1）
+
+按 `docs/18` §6.5 的 12 类 / 25 个暴露方法：**~1 200–1 800 行**能到「全部能实例化、属性可读写、
+暴露方法可调用」，**不含**虚方法表。
+
+### 35.4 c) 继续手写 `_scaffold/gdext*.rs`，还是换官方 gdext？
+
+三条**观测**先摆出来：
+
+1. **手写绑定够用**：类的注册、属性、方法、三条实例化路径，只用
+   `gdextension_interface.h` 的 9 个函数就打通了，`Cargo.toml` 仍是**零依赖**，
+   `cargo build --offline` 照旧可跑。
+2. **原版就是 gdext 构建的**：`libgraphwarrust.so` 的 `.rodata` 里有
+   `/home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/registry/class.rs`
+   这类 `panic::Location` 字符串，配合 `docs/18` §6.5 的
+   `Initialize godot-rust (API v4.6.stable.official, runtime v4.7.2…)`。
+   也就是说 `IControl` / `GodotClass` / `ImplementsGodotVirtual` / `ImplementsGodotApi`
+   这些 trait impl **是 gdext 宏的产物**（`477501f` 是 gdext 的 git checkout 提交号前缀，
+   具体 tag 未知——**未知**）。
+3. **本机没有 gdext**：`~/.cargo/registry/cache/*/` 里没有 `godot`/`gdext` 任何版本
+   （`ls ~/.cargo/registry/cache/*/ | grep -ci godot` = **0**），`CARGO_HOME` 下只有 target 目录。
+   换 gdext 要联网，或把 ~50–100 MB 依赖 vendored 进仓库——`cargo build --offline` 那条
+   「零依赖」性质当场消失。
+
+**判断（推断，理由即上三条）**：
+
+* **要「源码级还原」就必须走 gdext。** 项目的终点是同一套文件 / 模块 / trait impl
+  （`AGENTS.md` §0）。原版每个类上面是 `#[derive(GodotClass)]` + `#[godot_api]`，
+  手写绑定产出不了这些 impl 名字，**结构上只会离原文更远**：还原度这一项上，
+  手写绑定是减法，不是替代品。
+* **要「离线、可读、能跑」就先留手写。** 它已经把最难的第一步（真类 + 真场景实例化）打通，
+  客户端现有全部断言都建立在它之上。
+* **体积/依赖/可维护性三笔账**（推断）：
+  * 依赖：手写 **0** vs gdext **vendored 数十 MB + 首次编译数分钟**；
+  * 体积：手写 debug `.so` 18.5 MB（未 strip，含全部复原模块）；gdext 版本会更大（生成绑定），
+    但 release 可接受；
+  * 可维护性：手写 **~500 行/类且全是裸指针**，gdext 大约 **20–40 行/类**
+    （`#[export]` 属性 + `impl IControl::draw`），差一个数量级。
+
+**建议给下一轮的做法**：把这个 spike 当成「手写路线的可行性证明」，
+**虚方法表（`_draw`）单独开一轮评估**；一旦决定要做 `_draw`，
+就**同一轮把 gdext 引进来**（vendored + `--offline` 仍可验证），
+而不是继续手写虚方法表——那是 12 个类 × 每个 40–80 行裸指针代码，且没有任何类型兜底。
+
+### 35.5 d) 做 12 个类，最容易翻车的地方
+
+按「翻车概率 × 修起来的代价」排序：
+
+| # | 风险 | 为什么 | 能先做什么 |
+|---|---|---|---|
+| 1 | **虚方法表**（`get_virtual_func` + `get_virtual_call_data_func` + `call_virtual_with_data_func`） | `docs/02` §18.3 A 表里 **12 个类全部**带 `ImplementsGodotVirtual` ⇒ 每个类都有虚方法要接（`AxisDrawer` / `EntityDrawer` / `EffectDrawer` 是 `draw`，`GraphwarPlane` 还有 `on_resized`）。ptrcall 参数是裸指针（`Transform2D*` / `Rect2*` / `Color*` / `Ref<Texture2D>*`），签名错一个字节就是段错误，**没有类型检查兜底** | 只做一个 `AxisDrawer::draw`，用截图/selftest 证；成了再谈其余 |
+| 2 | **原生父类选错** | 父类决定 `classdb_construct_object` 造什么。A 表的 trait impl 列已经把 11 个类钉住了（见下表），但 **`GraphwarAdSwitch` 没有 `I*` 列** ⇒ 它的父类只能算**未知**，得单独查 | 每个类先落一行「父类 + 证据」再动手 |
+| 3 | **属性表对不上原版字段** | 属性名/类型/默认值错 ⇒ `.tscn` 里的值写进去没人读。本轮 `axis_mode` 只到「`self+0x18` 是 `u8` 判别值」这一层**推断**，默认值更是我方选择 | 用 `panic::Location` + 反编译逐字段恢复（`docs/16` §15/§16/§26 已有部分规格） |
+| 4 | **StringName / Variant 生命周期与 ABI 布局** | `PropertyInfo.class_name` / `hint_string` 传 NULL **直接段错误**（`docs/116` §3.3 踩过）；`PropertyInfo` 在 x86-64 上是 **48 字节**（有两处 4 字节填充），本轮第一次就按 40 字节写错了，靠单测抓出来；每次 `create_instance` 建的 StringName 不缓存就是泄漏 | 新类必须带 ABI 布局单测（本轮的 `creation_info4_layout_matches_header` / `property_info_layout`） |
+| 5 | **`NOTIFICATION_POSTINITIALIZE` 没发** | 官方 gdext 在 `notify_postinitialize=1` 时会补发，我们没做。对挂了脚本、或自己有 `notification_func` 的类可能有可观测差异 | 先在文档标**未知**；等有类挂脚本再处理 |
+| 6 | **重复注册 / 编辑器也实例化** | `--import` 期间编辑器真的造了一次实例（§35.2）。注册必须幂等；`deinitialize` 要不要 `classdb_unregister_extension_class` 还没定（本轮没做） | 注册函数加「已注册就直接返回」的守卫；默认构造别碰资源 |
+| 7 | **`RefCounted` 派生类的引用计数** | 12 个类里若父类落到 `RefCounted`，还得接 `reference_func` / `unreference_func`，否则可能双重释放 | 先定父类（风险 2），再决定要不要接引用回调 |
+| 8 | **构建/加载的三个静默坑** | ① 新增 `.gd`/`.tscn` 后不 `--import` ⇒ 扩展**静默不加载**；② `cargo build` 后不覆盖 `client/libgw2_rebuild.so` ⇒ 跑的是**旧内核**；③ 用 `CARGO_TARGET_DIR` 时 `examples/serve_match` 也要在那里，否则 selftest 的联机段会 skip | 验收命令写进 §35.6，别靠记忆 |
+
+**12 个类的父类（`docs/02` §18.3 A 表的 `gdext trait impl` 列，观测）**：
+
+| 类 | 父类 | 依据 |
+|---|---|---|
+| `AxisDrawer` / `EffectDrawer` / `EntityDrawer` / `GraphwarLongPressAnimation` / `GraphwarPlane` / `GraphwarSetupControl` / `PlayerShowcase` | `Control` | 都带 `IControl` |
+| `GraphwarButton` | `Button` | `IButton` |
+| `GraphwarFunctionInput` | `LineEdit` | `ILineEdit` |
+| `GraphwarLanVBox` | `VBoxContainer` | `IVBoxContainer` |
+| `GraphwarRootNode` | `Node` | `INode` |
+| `GraphwarAdSwitch` | **未知** | 只有 `ImplementsGodotApi` / `ImplementsGodotVirtual`，没有 `I*` 列 |
+
+### 35.6 怎么复跑（照抄就能过）
+
+```text
+# 1) 编译内核并覆盖进 client/（不覆盖就是在跑旧 .so）
+export CARGO_HOME=/home/user/MyProject/gw2/.cargo-home
+export CARGO_TARGET_DIR=$PWD/../.cargo-home/target
+cargo build --offline
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+
+# 2) 首次（以及每次新增 .gd / .tscn 之后）必须先扫一遍，
+#    否则 .godot/extension_list.cfg 里没有扩展，--script 模式下扩展不会被加载
+export XDG_DATA_HOME=$PWD/.godot-data XDG_CACHE_HOME=$PWD/.godot-cache XDG_CONFIG_HOME=$PWD/.godot-config
+/home/user/MyProject/gw2/tools/Godot_v4.7.2-stable_linux.x86_64 --headless --path client --import
+
+# 3) 验收：23 条断言，退出码 0
+/home/user/MyProject/gw2/tools/Godot_v4.7.2-stable_linux.x86_64 --headless --path client \
+    --script res://tools/spike_class_check.gd
+```
+
+`client/run.sh` 没有为它加子命令（本轮不允许改 `run.sh`）；上面三条就是完整步骤。
+
+### 35.7 本轮**没做**的（未做 / 未知，别当成做完了）
+
+* **虚方法表**：类**不画任何东西**。`AxisDrawer::draw` 的三次原语
+  （`draw_set_transform` / `draw_rect` / `draw_line`×N）一条都没发。
+* `NOTIFICATION_POSTINITIALIZE`、`classdb_unregister_extension_class`、信号注册、
+  `RefCounted` 的 `reference/unreference`：全没做。
+* `axis_mode` 的**默认值**（我方取 0）与**原版字段名**：**推断 / 我方选择**，不是二进制证据。
+* 另外 11 个类：一个都还没注册。
+
+### 35.8 回归（回归保护，不是复原证据）
+
+```text
+cargo build --offline        → 绿（3 条 warning 是既有模块的，与本节无关）
+cargo test  --offline        → lib 457 passed / 0 failed
+                               总计 1448 passed / 0 failed
+bash client/run.sh selftest  → SELFTEST 694 passed, 0 failed
+```
+
+基线取自 `9ee40e46`：lib **449**（任务书里写的 442 是更早的 master）、总计 **1440**。
+本轮新增的 8 条单测全部在新文件里，**既有断言一条都没改、没删**。
