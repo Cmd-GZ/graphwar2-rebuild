@@ -53,6 +53,13 @@
 //! 修正文本的运算符**带符号**（`c >= 0` 写 `" + "`、`c < 0` 写 `" - "`；抓包帧 143/182/203），
 //! 由 `graphwar_shot_calculator::corrected_text` 复用 `correction_text` 产出（`docs/127` §5 第 1 条，已修）。
 //!
+//! ## 原版函数边界（`docs/14` §11）
+//!
+//! 本文件是原版 `graphwar_game_state_manager.rs` 的**运行实体那一半**：`impl Match`
+//! 里每个方法组前面有一条 `// 原版边界：…` 横幅，写明对应的原版函数名 + x86 地址
+//! （45 个可归属函数逐个落表）。同模块的状态枚举 / 超时判据 / 胜方字节在
+//! `src/turnstate.rs`（那份文件的 §11 分工表见 `docs/14` §11.7）。
+//!
 //! **没接的**（都写在 `docs/117` §6 / `docs/127` §6）：回合超时的**检测**没有证据，
 //! 本层只把 `timed_out` 当输入参数；游标初值取 `PlayerTurns::new` 的 0
 //! （`TurnManager::add_player` 没有 index 入口，见 `docs/98` §6-B）；
@@ -64,7 +71,7 @@ use crate::plane::{empty_mask, rasterize};
 use crate::_scaffold::protocol::{emit_effect_info, emit_function_points, emit_life_queued_death};
 use crate::_scaffold::rng::ChaCha12;
 use crate::server::RoomState;
-use crate::graphwar_shot_calculator::settle::{resolve, Target};
+use crate::graphwar_shot_calculator::settle::{resolve, ShotOutcome, Target};
 use crate::graphwar_tick_handler::tick_at;
 use crate::graphwar_turn_manager::{self, TurnDecision, TurnManager};
 
@@ -238,8 +245,13 @@ pub enum EndingReason {
     TurnLimit,
 }
 
-/// 结束判定的结果。`winner` 的取值照真值写进 `[self+0x11f]` 的那个字节：
-/// `Some(0)` = Team1、`Some(1)` = Team2、`None` = 两边都没活实体（真值里的 `2`）。
+/// 结束判定的结果。
+///
+/// `winner` 存的是**实体队伍号**（`set_team` 记进去的那个 u8），不是真值
+/// `[self+0x11f]` 里的那个**序号字节**。两者只在"队伍号恰好是 0/1"时才同值：
+/// 真值那个字节由 `set_state` 的 `EndingGame` 分支算出（0=`Team1`、1=`Team2`、
+/// 2=没人），公式已落成 [`crate::turnstate::winner_byte`]（`docs/14` §11.4）。
+/// `None` 对应真值的 `2`（两边都没活实体）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ending {
     pub reason: EndingReason,
@@ -247,6 +259,16 @@ pub struct Ending {
 }
 
 impl Match {
+    // ─────────────────────────────────────────────────────────────────────
+    // 原版边界：`GraphwarGameStateManager::new`（`0x477bc0`，992 字节）
+    // 我方：`Match::new`。真值在这个函数里还做了 7 次
+    // `GraphwarEventHandler::subscribe_to_event`（事件名逐条在 `.rodata`：
+    // `new_connection_event` / `entity_removed_event` / `tick_event` /
+    // `connection_removed_event` / `function_points_event` /
+    // `skin_graphics_info_event` / `chat_message_event`），也就是 arm64 上那 7 个
+    // `subscribe_to_events_event_handler::{{closure}}`；我们**没有事件总线**，
+    // 这一段没有对应物（`docs/14` §11.7）。
+    // ─────────────────────────────────────────────────────────────────────
     pub fn new(
         room: RoomState,
         obstacles: Vec<(f64, f64, f64)>,
@@ -342,6 +364,15 @@ impl Match {
     ///
     /// 副作用：每个士兵各开一格空函数槽（`docs/98` §3.1）、登记队伍（供全灭判定）、
     /// 初始化为"活着"（`life_manager` 那张表）。
+    // ─────────────────────────────────────────────────────────────────────
+    // 原版边界：`request_new_player`（`0x4739c0`）/ `add_soldier_to_player`（`0x474a10`）
+    // 我方：`Match::register_player` —— 它是这两个原版函数的**接线形态**：
+    // 原版 `request_new_player` 调 `TeamManager::add_to_team` +
+    // `ColorManager::add_team_color`（`0x3c17d0` / `0x464d10`，行号锚 282–292）；
+    // 原版 `add_soldier_to_player` 再调 `TeamManager::get_team` 与三个图形设置
+    // （`set_hat/face/skin_graphics`，行号锚 503–538）。我们只做队伍 + 函数槽 +
+    // 生命表这三件事，图形侧在 `graphwar_graphics_manager`（`docs/14` §11.7）。
+    // ─────────────────────────────────────────────────────────────────────
     pub fn register_player(&mut self, player_id: i64, team: graphwar_turn_manager::Team, soldiers: &[i64]) {
         for id in soldiers {
             self.set_team(*id, team.id());
@@ -368,6 +399,15 @@ impl Match {
     /// （`docs/HANDOVER` §7.10 第 2 条，**未独立验证**）——本方法只把它当输入，
     /// 传输成 `SkipReason::TurnTimeout`，不替游戏决定"游标推不推进""此时
     /// `TurnInfo` 是否已广播"（`docs/109` §2.7 的三件事，仍是**未知**）。
+    // ─────────────────────────────────────────────────────────────────────
+    // 原版边界：`queue_end_turn_trigger`（`0x4759f0`）→ `TurnManager::next_turn`（`0x463da0`）
+    // 我方：`Match::begin_next_turn` / `begin_simultaneous_turn`。
+    // 原版推进轮转的地方就是 `queue_end_turn_trigger` 里那一次
+    // `TurnManager::next_turn`（`0x4759f0` 的直接调用表），随后
+    // `set_state(WaitingForFunctions)` 把 `TurnInfo`/`EndOfTurnInfo`/`GameStateInfo`
+    // 发出去。我们的三态判决 + AI 进化是**接线层**，原版没有对应函数
+    // （`docs/117` §4）。
+    // ─────────────────────────────────────────────────────────────────────
     pub fn begin_next_turn(
         &mut self,
         player_id: i64,
@@ -476,6 +516,14 @@ impl Match {
     ///
     /// ⚠️ 它**不是单射**（`docs/119` §5.3）：π 写成 `3.14`、负常量写成 `neg` 的文本形态、
     /// 缺操作数的空位在文本里不存在。这三条都是真二进制行为，不在这里修。
+    // ─────────────────────────────────────────────────────────────────────
+    // 原版边界：`handle_function_points`（`0x4758b0`）/ `request_update_function`（`0x475f50`）
+    // 我方：`Match::ai_function_text` / `ai_submit_info` / `evolve_for_soldier`。
+    // 原版 `request_update_function` 把提交的原文写进函数表
+    // （`TurnManager::get_current_turn_soldiers` + `FunctionManager::set_function`，
+    // 行号锚 635–642）；`handle_function_points` 只做转发（无调用，锚 1129/1135）。
+    // 我们**不存**提交（收集阶段在 `graphwar_game_server`），这里只有 AI 侧。
+    // ─────────────────────────────────────────────────────────────────────
     pub fn ai_function_text(&self, soldier_id: i64) -> Option<String> {
         self.functions.tokens(soldier_id).map(crate::math_function::to_text)
     }
@@ -562,6 +610,11 @@ impl Match {
     }
 
     /// 当前时刻的 tick。
+    // ─────────────────────────────────────────────────────────────────────
+    // 原版边界：`graphwar_tick_handler` 的换算（不是本模块的函数）
+    // `tick_now` 属于 tick_handler（`docs/35`）；留在 `Match` 上是因为原版
+    // `handle_tick`/`fire_functions` 两处都直接读同一个 tick。
+    // ─────────────────────────────────────────────────────────────────────
     pub fn tick_now(&self, now_ms: i64) -> i64 {
         tick_at(self.tick_base.0, self.tick_base.1, now_ms)
     }
@@ -585,6 +638,14 @@ impl Match {
     //   ③ 存活位在生命表里（靶子有 `LifeInfo`），胜负判定数的正是生命表里的活实体。
 
     /// 造一个靶子（真值 `0x46f310`）：登记 id、**写队伍**、初始 `alive = true`。
+    // ─────────────────────────────────────────────────────────────────────
+    // 原版边界：`add_target`（`0x46f310`，896 字节）
+    // 我方：`Match::add_target` / `kill_target` / `restore_target` / `set_all_alive`。
+    // 真值 `add_target` 的直接调用：`TeamManager::add_to_team`（写队伍）、
+    // `GraphicsManager::set_skin_graphics`（写外观）、再 4 次模块存取器；行号锚
+    // 593:109 … 603:31。**队伍是入参**（`docs/150`：127/127 个靶子都是
+    // `TeamInfo{Team2}`，不是写死 Team2）。
+    // ─────────────────────────────────────────────────────────────────────
     pub fn add_target(&mut self, id: i64, team: u8) {
         self.targets.insert(id, true);
         self.set_team(id, team);
@@ -615,6 +676,32 @@ impl Match {
         }
     }
 
+    /// 原版 `GraphwarGameStateManager::set_all_alive`（**`0x470b70`**，832 字节）。
+    ///
+    /// 真值在这一个函数里调了 **两次** `LifeManager::set_alive`（`0x454b40` ×2），
+    /// 行号锚 607:105 … 616:26 全在同一个函数体内：两趟循环把两类实体各刷一遍
+    /// （士兵一趟、靶子一趟；`docs/14` §11.5）。它不发任何报文，只翻存活位。
+    ///
+    /// 本实现的两趟：
+    ///
+    /// * 靶子：把 [`Match::targets`] 全部翻回 `true`；
+    /// * 生命表：把 `Match::life` 里每一个**记得的** id 设回 `Status::Alive`。
+    ///
+    /// **已知差异**（不是行为改动，是模型边界）：我们被打死的**士兵**会被
+    /// [`Match::execute_results`] 从 `self.soldiers` 摘掉（站位丢了），所以这里能复活
+    /// 的只有靶子和生命表里的状态位，复活不了士兵实体。真值里实体表是独立的
+    /// `soldier_manager`，`set_alive(true)` 不重建实体，所以那边也一样只翻存活位。
+    pub fn set_all_alive(&mut self) {
+        for alive in self.targets.values_mut() {
+            *alive = true;
+        }
+        // `LifeState.alive` 是公开表（`docs/112` §2.1 的形状），这里只读键、再翻状态位。
+        let ids: Vec<u32> = self.life.alive.keys().copied().collect();
+        for id in ids {
+            self.life.set(id, Status::Alive, None);
+        }
+    }
+
     /// 靶子总数（`graphwar_target_manager` 的那张集合）。
     pub fn targets_total(&self) -> usize {
         self.targets.len()
@@ -628,6 +715,33 @@ impl Match {
     /// 这个 id 是不是靶子。
     pub fn is_target(&self, id: i64) -> bool {
         self.targets.contains_key(&id)
+    }
+
+    /// 原版 `GraphwarGameStateManager::get_alive_teams`（**`0x473520`**，640 字节）。
+    ///
+    /// 返回值就是 `set_state(EndingGame)` 用的那两个位（`0x478133` 的 `test al,1` /
+    /// `test dl,1`）：`(Team1 有活体, Team2 有活体)`。真值的实现是
+    ///
+    /// ```text
+    /// LifeManager::get_all_entities   (0x453c60)  枚举**生命表**里的全部实体
+    ///   → LifeManager::get_alive      (0x454950)  逐个问存活
+    ///     → TeamManager::get_team     (0x3c2120)  取队伍，置对应位
+    /// ```
+    ///
+    /// 也就是说它数的是**生命表里的活实体**（士兵 **和** 靶子 —— 靶子有 `LifeInfo`，
+    /// 玩家实体没有），与 [`Match::team_has_survivor`] 同一条判据（`docs/150` §Q2）。
+    ///
+    /// 队伍编号用 `graphwar_turn_manager::Team::id()`（`1`/`2`）——真值那两位也是
+    /// `Team1`/`Team2`，不是任意 u8。
+    // ─────────────────────────────────────────────────────────────────────
+    // 原版边界：`get_alive_teams`（`0x473520`，640 字节）
+    // 我方：`Match::get_alive_teams`（逐位同构）/ `team_has_survivor`（判据本身）。
+    // 真值枚举**生命表**取活实体，再按队伍置两个位；行号锚 867:105 … 876:50。
+    // ─────────────────────────────────────────────────────────────────────
+    pub fn get_alive_teams(&self) -> (bool, bool) {
+        let t1 = self.team_has_survivor(graphwar_turn_manager::Team::One.id());
+        let t2 = self.team_has_survivor(graphwar_turn_manager::Team::Two.id());
+        (t1, t2)
     }
 
     /// **某队还有没有存活实体**（在场士兵 ∪ 存活靶子）。
@@ -653,9 +767,38 @@ impl Match {
     ///
     /// 报文形状是**观测**：语料里 21 条全是 `{"TurnLimitInfo":{"turn_limit":N}}`
     /// （N ∈ {1,5,6,10}），没有第二条字段。
+    // ─────────────────────────────────────────────────────────────────────
+    // 原版边界：`set_turn_limit`（`0x472400`，112 字节）/ `set_turn_count`（x86 内联）
+    // 真值 `set_turn_limit` 只有 4 条赋值 + 一次 `add_event`：
+    // `mov [rdi+0xc8], esi` / `mov [rdi+0xcc], edx`（`0x472405`/`0x47240b`），
+    // 事件 tag `0x39`（`0x472433`）。⇒ 它是 **(标志, 上限)** 两个 u32 入参的 setter，
+    // 报文里只出现 `turn_limit` 一个字段（`docs/123` §5.1）。
+    // ─────────────────────────────────────────────────────────────────────
     pub fn set_turn_limit(&mut self, limit: i64) -> Vec<String> {
         self.turn_limit = Some(limit);
         vec![format!(r#"{{"TurnLimitInfo":{{"turn_limit":{limit}}}}}"#)]
+    }
+
+    /// 原版 `GraphwarGameStateManager::set_turn_count`（x86 **无独立体**，见下）。
+    ///
+    /// 证据链（`docs/14` §11.6）：
+    ///
+    /// * arm64 2.0.60 有**独立**符号 `GraphwarGameStateManager::set_turn_count`
+    ///   （`0x4a8460`，`0x7c` 字节），紧邻 `set_turn_limit`（`0x4a84dc`，同样 `0x7c`），
+    ///   两个函数体形状一致：写字段 + `GraphwarEventQueue::add_event` 一次；
+    /// * x86 上它**被内联掉了**：它的 panic 锚在 0x3e2830 / 0x46f690 / 0x4759f0 三处
+    ///   （`fixtures/name_to_addr.tsv` 的"歧义"行给的候选正好是这三个），
+    ///   没有剩下任何一处独立函数体 —— 所以表里它只能是"未知地址"。
+    ///
+    /// 语义按 arm64 的体 + `queue_end_turn_trigger` 的报文（`docs/45`）落地：
+    /// 写 `turn_count`，再发一条 `TurnCountInfo`。上限/结束判定**不**在这里
+    /// （那在 [`Match::ending`] 与 [`Match::end_turn`]）。
+    pub fn set_turn_count(&mut self, count: i64) -> Vec<String> {
+        self.turn_count = count;
+        vec![format!(
+            r#"{{"TurnCountInfo":{{"turn_count":{}}}}}"#,
+            self.turn_count
+        )]
     }
 
     /// 这一局结束了吗？`None` = 继续。
@@ -669,8 +812,18 @@ impl Match {
     /// 0x475a88  test dl,1  je END               ; ③ Team2 没有活实体
     /// ```
     ///
-    /// 胜方（`0x475bfb`–`0x475c14` 写进 `[self+0x11f]` 的那个字节）：
-    /// `0`=Team1、`1`=Team2、`2`=没人（两边都没活实体）。
+    /// 胜方（`[self+0x11f]` 那个字节的真实算法在 `set_state` `0x478133`–`0x478236`，
+    /// 逐行落成 [`crate::turnstate::winner_byte`]）：`0`=Team1、`1`=Team2、
+    /// `2`=没人（两边都没活实体）。
+    ///
+    /// ⚠️ 本方法返回的 `winner` 是**实体队伍号**（`Some(team)`），不等于那个序号字节；
+    /// 换算与"可达输入上等价"的论证见 `docs/14` §11.4 与 [`Ending`] 的文档。
+    // ─────────────────────────────────────────────────────────────────────
+    // 原版边界：`set_state`（`0x4780c0`）的结束分支 + `queue_end_turn_trigger`（`0x4759f0`）
+    // 我方：`Match::ending`。真值在 `set_state(EndingGame)` 里算胜方字节
+    // （`0x478133`–`0x478236`，见 `turnstate::winner_byte` 的表），
+    // 两个结束入口（回合上限 / 某队全灭）在 `queue_end_turn_trigger` 里。
+    // ─────────────────────────────────────────────────────────────────────
     pub fn ending(&self) -> Option<Ending> {
         let limit_hit = matches!(self.turn_limit, Some(n) if self.turn_count >= n);
         let wiped_any = self
@@ -708,6 +861,13 @@ impl Match {
     /// 开始一个回合：`TurnInfo` -> `EndOfTurnInfo` -> `GameStateInfo(WaitingForFunctions)`。
     ///
     /// 顺序照真实抓包（`docs/43`）。
+    // ─────────────────────────────────────────────────────────────────────
+    // 原版边界：`start_game`（`0x46f690`）与 `queue_end_turn_trigger` 共用的报文组
+    // 我方：`Match::begin_turn`（`TurnInfo` → `EndOfTurnInfo` → `GameStateInfo`）。
+    // 真值 `start_game` 的直接调用里有 `TurnManager::next_turn` 与
+    // `FunctionManager::set_function`，行号锚 191–255 与 572–625；
+    // 报文顺序本身来自抓包（`docs/43`），不是从反汇编读出来的。
+    // ─────────────────────────────────────────────────────────────────────
     pub fn begin_turn(&mut self, player_id: i64, soldier_id: i64, now_ms: i64, time_mode: &str) -> Vec<String> {
         let start_tick = self.tick_now(now_ms);
         self.turn_start_tick = start_tick;
@@ -725,6 +885,12 @@ impl Match {
     /// 依据真实抓包：`{"TurnCountInfo":{"turn_count":4}}` 之后紧跟
     /// `{"GameStateInfo":{"game_state":"EndingGame"}}`（`docs/45`）；回合上限也走同一条出口
     /// （`0x4759f0` 里 ①②③ 全都跳到 `0x475bac`）。
+    // ─────────────────────────────────────────────────────────────────────
+    // 原版边界：`queue_end_turn_trigger`（`0x4759f0`，1376 字节）
+    // 我方：`Match::end_turn`。真值这个函数：
+    // `get_alive_teams` ×2 / `LifeManager::get_alive` / `set_alive` /
+    // `TurnManager::next_turn` / `set_state`（直接调用表），行号锚 839–906。
+    // ─────────────────────────────────────────────────────────────────────
     pub fn end_turn(&mut self) -> Vec<String> {
         self.turn_count += 1;
         let mut out = vec![format!(
@@ -738,6 +904,11 @@ impl Match {
     }
 
     /// 推进到 `now_tick`，返回所有到期的 `DestroyObstacle`。
+    // ─────────────────────────────────────────────────────────────────────
+    // 原版边界：`handle_tick`（`0x470840`，816 字节）
+    // 我方：`Match::tick`（到期的 `DestroyObstacle`）+ `Match::handle_tick`（原版名）。
+    // 真值的三段职责见 `Match::handle_tick` 的文档与 `docs/14` §11.3。
+    // ─────────────────────────────────────────────────────────────────────
     pub fn tick(&mut self, now_tick: i64) -> Vec<String> {
         let mut due = Vec::new();
         let mut i = 0;
@@ -751,6 +922,28 @@ impl Match {
         due
     }
 
+    /// 原版 `GraphwarGameStateManager::handle_tick`（**`0x470840`**，816 字节）。
+    ///
+    /// 真值这一个函数干三件事（反汇编见 `docs/14` §11.3）：
+    ///
+    /// 1. **把 tick 事件转给订阅者**（`0x470880`–`0x470989`：取订阅者表，逐个
+    ///    `call [vtable+0x20]`，然后释放）—— 我们**没有**事件总线，这一段没搬；
+    /// 2. **回合截止 ⇒ 自动开火**（`0x470989`–`0x4709f1`）：`state == WaitingForFunctions`
+    ///    ∧ `now_tick >= TurnManager::get_end_of_turn_tick()` ∧ `[self+0x11c] != 0`
+    ///    ⇒ `fire_functions`。这条判据已落成纯函数
+    ///    [`crate::turnstate::should_auto_fire`]（**未接线**：我们仍由调用方决定开火，
+    ///    因为 `Match` 上没有 `[+0x11c]` 那一位）；
+    /// 3. **时间上限到期 ⇒ 回 `Setup`**（`0x470a04`–`0x470a61`）：`[self+0xc0] == 1`
+    ///    ∧ `now_tick > [self+0xc4]` ∧ `[self+0x11c] != 0` ⇒ 清 `[+0xc0]`、
+    ///    `state = 1`（`Setup`）、推一条事件。**未落地**：`[+0xc0]`/`[+0xc4]` 这对
+    ///    (标志, 截止 tick) 只在 `set_lock` 一族里见过写点，语义仍是推断。
+    ///
+    /// 本方法因此只做**已落地的那部分**：把 [`Match::tick`] 的到期动作走一遍。
+    /// 加它不是为了多一层壳，而是让"原版 `handle_tick` 该在这里"这件事在代码里可见。
+    pub fn handle_tick(&mut self, now_tick: i64) -> Vec<String> {
+        self.tick(now_tick)
+    }
+
     /// 处理一次开火，返回要广播的消息（顺序见模块注释）。
     ///
     /// `owner_id` 是开火实体；`function_text` 是**未修正**的函数原文
@@ -758,6 +951,12 @@ impl Match {
     ///
     /// 这是 [`Match::fire_batch`] 的 `N = 1` 特例：单发批的报文种类序列与
     /// 逐发实现**逐字节相同**，所以 `SequentialTurns` 的行为没有被这次重构改动。
+    // ─────────────────────────────────────────────────────────────────────
+    // 原版边界：`fire_functions`（`0x470eb0`）+ `execute_results`（`0x472470`）
+    // 我方：`Match::fire` → `fire_batch` → {`fire_functions`, `execute_results`}。
+    // 边界就是这么切的：前一半算弹道（原版 5456 字节），后一半广播 + 落地
+    // （原版 4272 字节，四个调用点与我们的四类报文一一对应）。
+    // ─────────────────────────────────────────────────────────────────────
     pub fn fire(
         &mut self,
         owner_id: i64,
@@ -802,8 +1001,33 @@ impl Match {
     /// 顺序**，把那个不可复现的置换留在接线层。
     pub fn fire_batch(&mut self, shots: &[Submission<'_>], now_ms: i64) -> Vec<String> {
         let now_tick = self.tick_now(now_ms);
+        // 原版这里也是两段：`fire_functions`（0x470eb0）算完每一发的弹道，
+        // 再调 `execute_results`（0x472470）广播。我们的切法与之对齐（docs/14 §11）。
+        let outcomes = self.fire_functions(shots);
+        self.execute_results(shots, &outcomes, now_tick)
+    }
 
-        // ---- 收集阶段已经结束；这里是结算阶段 ----
+    /// 原版 `GraphwarGameStateManager::fire_functions`（**`0x470eb0`**，5456 字节）。
+    ///
+    /// 真值在这一段里做的事（`analysis` 的直接调用表，`docs/14` §11）：
+    ///
+    /// ```text
+    /// TurnManager::get_current_turn_soldiers   取这一回合该开火的人
+    /// PlanePosManager::get_position            取每人的起点
+    /// TeamManager::get_team                    取朝向（`Team::flip`）
+    /// FunctionManager::get_function_text       取提交的函数原文
+    /// （算弹道）
+    /// FunctionManager::set_function_points     写回终点
+    /// → GraphwarGameStateManager::execute_results
+    /// ```
+    ///
+    /// 它的三个输入在真值里是从**函数表**现取的；我们的 `Submission` 由调用方给
+    /// （收集阶段的产物）。这条差别就是 `request_update_function` 尚未落地的部分
+    /// （`docs/14` §11 的"未实现"行）。
+    ///
+    /// 本方法**只算几何、不改任何状态**：真值在这一段里写的是 `FunctionPoints`
+    /// （`set_function_points`），而我们的报文在 [`Match::execute_results`] 里统一发。
+    pub fn fire_functions(&self, shots: &[Submission<'_>]) -> Vec<ShotOutcome> {
         // ① 几何并行：先把每一发的弹道都算完，用的是**批开始时**的士兵表与掩膜。
         //    谁被打死**不影响**别人的弹道（士兵本就不挡弹道，`docs/30`）。
         let mut outcomes = Vec::with_capacity(shots.len());
@@ -833,6 +1057,28 @@ impl Match {
             ));
         }
 
+        outcomes
+    }
+
+    /// 原版 `GraphwarGameStateManager::execute_results`（**`0x472470`**，4272 字节）。
+    ///
+    /// 真值在这一段里直接调了四个东西（`analysis` 的直接调用表，`docs/14` §11）：
+    ///
+    /// ```text
+    /// FunctionManager::set_function_active_tick     ← 我们发 FunctionActive
+    /// LifeManager::set_queued_death                 ← 我们发 LifeQueuedDeath
+    /// ObstacleManager::queue_destroy_obstacle       ← 我们发 QueueDestroyObstacle
+    /// PlanePosManager::get_position                 ← 我们发 EffectInfo 的坐标
+    /// ```
+    ///
+    /// 四个都对得上，所以 `0x472470` 的行为边界就是本方法：**一次齐射的广播 + 落地**。
+    /// 报文顺序与分组见 [`Match::fire_batch`] 的文档（`docs/141` §2–§4）。
+    pub fn execute_results(
+        &mut self,
+        shots: &[Submission<'_>],
+        outcomes: &[ShotOutcome],
+        now_tick: i64,
+    ) -> Vec<String> {
         // ② 合并死亡：按 (弧长, 发序号, 士兵 id) 升序；同一士兵只留最早到达的那一发。
         //    同一回合所有弹丸的 `active_tick` 相同（13/13 回合），所以弧长序 == 到达时刻序。
         let mut merged: Vec<(f64, usize, i64)> = Vec::new();
@@ -880,7 +1126,7 @@ impl Match {
 
         // ③ 挖洞块（回放不记录 `QueueDestroyObstacle`，位置**无证据**；沿用单发实现的
         //    "死亡之后、`FunctionActive` 之前"，这样 N=1 时与原实现逐字节相同）
-        for out in &outcomes {
+        for out in outcomes {
             if !out.blocked {
                 continue;
             }
