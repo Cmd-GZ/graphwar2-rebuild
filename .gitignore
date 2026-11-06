@@ -37,3 +37,8 @@ __pycache__/
 
 # 子 agent 若误在仓库内建了工作区
 .agent-work/
+
+# Godot 运行时目录（selftest / --import 会把它们建在这里）
+.godot-cache/
+.godot-config/
+.godot-data/
