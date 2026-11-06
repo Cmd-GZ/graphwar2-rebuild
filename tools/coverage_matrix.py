@@ -563,8 +563,26 @@ mod("player_showcase.rs", "other", (), "未知",
     "非 graphwar_ 前缀；除模块名外没有任何观测")
 mod("server_broker_request_connection.rs", "other", (), "未知",
     "非 graphwar_ 前缀；docs/115 只覆盖 broker 线格式，这个连接对象本身没看过")
-mod("weak_caller.rs", "dep", (), "未知",
-    "docs/02 §9 判为第三方依赖库（不是游戏代码），不计入总账；本表只留一行备查")
+mod("backtracer.rs", "other", (), "未做",
+    "2024 版符号表：graphwarrust::backtracer 4 个 direct 符号（自带回溯器，不是外部 crate）")
+mod("function_token.rs", "other", (), "未做",
+    "2024 版符号表：graphwarrust::function_token 1 个符号 + 类型 FunctionToken")
+mod("graphwar_event_queue.rs", "graphwar", (), "未做",
+    "2024 版符号表：graphwarrust::graphwar_event_queue 2 个符号 + 类型 GraphwarEventQueue；"
+    "docs/ 里此前完全没有记录")
+mod("graphwar_game_info.rs", "graphwar", (), "未做",
+    "2024 版符号表：graphwar_game_info 独立模块（GameInfo **不在** graphwar_event.rs，"
+    "旧文档把它当成 event 的一部分是错的）")
+mod("graphwar_player_config.rs", "graphwar", (), "未做",
+    "2024 版符号表：graphwar_player_config 8 个 direct 符号；docs/ 里此前完全没有记录")
+mod("graphwar_replay_reader.rs", "graphwar", (), "未做",
+    "2024 版符号表：graphwar_replay_reader 2 个符号；与 graphwar_replay_player 是两个模块")
+mod("graphwar_stream_buffer.rs", "graphwar", (), "未做",
+    "2024 版符号表：graphwar_stream_buffer 2 个符号；旧文档只在 2024 版字符串里见过这个名字")
+mod("weak_caller.rs", "other", (), "未做",
+    "**旧判定已推翻**：2024 版符号表里有 graphwarrust::weak_caller 的 27 个 direct 符号"
+    "（签名形如 fn(&Weak<..>,..)），是 **crate 内模块**，不是第三方依赖（docs/02 §18）。"
+    "旧依据 docs/02 §9 作废")
 
 SCOPE_ORDER = {"graphwar": 0, "other": 1, "dep": 2}
 STATUS_ORDER = ["逐位", "观测", "推断", "未做", "未知"]
