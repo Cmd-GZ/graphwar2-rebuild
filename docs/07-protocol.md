@@ -81,7 +81,9 @@ call <serialize_field 单态> ; 同一单态 ⇒ 同一值类型
 ### 3.3 全表（74 条，按判别值升序；查找请按名字）
 
 `str\|null` = `Option<String>`，`i64\|null` = `Option<i64>`，`enum(str)` = 枚举但**线上是字符串**
-（取值集合见 `docs/02`/`src/events.rs` 同名枚举）。
+（**完整**取值集合见 §5.2，已穷举，不再只是"已知取值"）。
+
+判别值一列现在**没有 `—`**：`63 = GameHeartbeat`、`65 = VersionInfo` 由 §5.1 定死。
 
 | `Tick` | `0` | `current_tick`: i64 | 逐位（无抓包） |
 | `TickRequest` | `1` | （空体 `{}`） | 逐位 + 观测（2 行） |
@@ -146,7 +148,9 @@ call <serialize_field 单态> ; 同一单态 ⇒ 同一值类型
 | `NameInfo` | `60` | `entity_id`: i64, `name`: str | 逐位 + 观测（3 行） |
 | `ColorInfo` | `61` | `entity_id`: i64, `color`: `{r,g,b}` | 逐位 + 观测（3 行） |
 | `GameInfo` | `62` | `game_info`: `GameInfo` | 逐位 + 观测（3 行） |
+| `GameHeartbeat` | `63` | （空体 `{}`） | 逐位 + 逐位（arm64 跳转表，§5.1） |
 | `GameRemoved` | `64` | `game_address`: str（地址） | 逐位（无抓包） |
+| `VersionInfo` | `65` | `version`: str, `system`: str | 逐位 + 观测（1 行）+ 逐位（arm64 跳转表，§5.1） |
 | `RankRequest` | `66` | `entity_id`: i64, `rank`: i64\|null | 逐位 + 观测（3 行） |
 | `RankInfo` | `67` | `entity_id`: i64, `rank`: i64\|null | 逐位 + 观测（3 行） |
 | `LockRequest` | `68` | `lock`: bool | 逐位（无抓包） |
@@ -155,8 +159,6 @@ call <serialize_field 单态> ; 同一单态 ⇒ 同一值类型
 | `ChatMessage` | `71` | `entity_id`: i64, `message`: str | 逐位（无抓包） |
 | `BanConnectionRequest` | `72` | `player_connection_id`: i64, `leader_connection_id`: i64 | 逐位（无抓包） |
 | `ClearBansRequest` | `73` | （空体 `{}`） | 逐位（无抓包） |
-| `GameHeartbeat` | — | （空体 `{}`） | 逐位（无抓包） |
-| `VersionInfo` | — | `version`: str, `system`: str | 逐位 + 观测（1 行） |
 
 ### 3.4 三个负载结构体（嵌在上面的字段里）
 
@@ -212,26 +214,189 @@ cargo test --offline --test wire_format                              # 与抓包
 `Team 1 Victory!` / `Team 2 Victory!` / `YOU WON` / `YOU DID NOT WIN` —— 胜负是**按队伍**结算的，
 与 §3.2 的队伍事件一致。
 
-## 5. 明确未知（本轮之后剩下的）
+## 5. 判别值与枚举取值（缺口 A / B，**本轮已闭合**）
 
-之前这里列的"线格式未证实""字段顺序未证实"**已经解决**，留档见 §3.2。现在真正未知的是：
+之前这里挂着两条"未知"：`VersionInfo` / `GameHeartbeat` 的判别值（§5.1），
+以及各线上字符串枚举的**完整**取值集合（§5.2）。两条现在都**穷举**掉了，
+下面是做法与判据；真正剩下的未知在 §5.3。
+
+复现（两个脚本都是 stdlib only，`--verify` 不自洽退出码 1）：
+
+```bash
+../.venv/bin/python tools/wire_enums.py        --verify   # 缺口 B（x86 目标版）
+../.venv/bin/python tools/event_tags_arm64.py  --verify   # 缺口 A（arm64 未 strip 版）
+```
+
+两个脚本都会把**被分析文件的 sha256** 打出来，结论绑定到具体字节：
+
+| 工件 | sha256 | 来源 |
+|---|---|---|
+| `libgraphwarrust.so`（x86-64，stripped） | `9a538115…cabed187` | `.reference/steam/2026-08-28/`（= Steam 2026-08-28 版，`MANIFEST.tsv` 第 4 行） |
+| `libgraphwarrust.so`（arm64，**未 strip**） | `8a612e95…` | `Graphwar II_1.0.apks` → `split_config.arm64_v8a.apk` |
+
+下文所有 `0x…` 都是 **ELF 虚地址**（= REA/Ghidra 地址 − `0x100000`），
+x86 与 arm64 各自一套、不要混用。
+
+### 5.1 缺口 A：`63 = GameHeartbeat`、`65 = VersionInfo`
+
+**先说结论的唯一性判据**：`enum GraphwarEvent` 的**声明顺序**就是判别值，
+而 serde 的 `VARIANTS: &[&str; 74]` 是**按声明顺序**排的全部变体名 —— 所以
+「`VARIANTS[63]` 是谁」这个问句本身就有唯一答案。难点只是**找到那张表**。
+两条**互相独立**的证据给出同一张表、同一个位置：
+
+| # | 证据 | 内容 | 档 |
+|---|---|---|---|
+| ① | x86 目标版 `.data.rel.ro` **`0x961608`** 的 `VARIANTS` | 74 项；`[62]=GameInfo`，**`[63]=GameHeartbeat`**，`[64]=GameRemoved`，**`[65]=VersionInfo`**，`[66]=RankRequest`；且 `docs/07` §7 那 **72 条解出的判别值逐个落在同名格上（72/72）** | 逐位 |
+| ② | arm64 未 strip 版 `GraphwarEvent::serialize`（`0x4695ac`）的**判别值跳转表** | 表在 `0x19e770`（u16，单位 4 B，臂区基址 `0x4695e4`）；`[63]` 臂 `0x4698e4` → 写长度 **13** 的 `"GameHeartbeat"`（`.rodata 0x19f207`），`[65]` 臂 `0x4699bc` → 写长度 **11** 的 `"VersionInfo"`（`0x19f21f`）；整表 **74 格**，`[74]` 起填充为 0（绕回第 0 臂） | 逐位 |
+
+为什么 ① 里的"位置 = 判别值"不是假设？三条一起看：
+
+* serde derive 对枚举生成的 `deserialize_enum(NAME, VARIANTS, V)` **就是**按声明顺序拿
+  `VARIANTS` 建 `__Field::__field0..__fieldN`，而 `serialize_*_variant(NAME, N, ...)`
+  的 `N` 用的是同一个下标 —— 两者由同一个 `syn` 遍历产出，**不存在只改一个的可能**；
+* ① 上 72 条**已知**判别值（本来是走完全不同的路径 `0x3d38f0` 的名字分派表解出来的）
+  在这张表里**逐个同格**，包括那些"看起来会错"的（`PlayerInfo`=13、`FunctionPoints`=37、
+  `ColorInfo`=61）—— 若是巧合，72 条同时巧合的概率是 0；
+* ② 的下标**不是**"表里的位置"，而是运行期从 `Event` 的 tag word 算出来的**真判别值**
+  （`eor x11,x10,#0x8000000000000000` 把 `tag` 还原成 `N`），因此 ② 与 ① 的机制完全不同。
+
+⇒ 缺口 A 不是"两个候选之一"，是**定死的**：`GameHeartbeat = 63`、`VersionInfo = 65`。
+`src/events.rs` 里"候选对应是推断"那句话可以删了（本轮未改该文件，见 §5.4）。
+
+**顺带更正一处旧结论**：`enum Event` 不是"**≥ 75** 个变体"，是**恰好 74 个**（`0..=73`）——
+① 的 `N` 是 `mov ecx, 0x4a`（=74）这个立即数，② 的跳转表只有 74 格、第 75 格起是填充。
+所以 `0x3d3660` 那个 `0x800000000000004a`（=74）**不在** `GraphwarEvent` 的判别值空间里，
+它的语义仍是未知（`docs/112` §10.2 判为 `HashMap` key，本轮未复核）。
+
+#### 5.1.1 为什么旧路子找不到它们（留档）
+
+旧文档说"全 `.text` 里找不到 materialise 它们常量的地方"，指的是
+`0x8000000000000000 | N` 在**构造点**的三种编码形态（`or` / `add` / `lea`）。
+缺号的两条**恰好没有构造点**：`GameHeartbeat` 只在"心跳"里被发，`VersionInfo` 也只在
+建连握手时发 —— 都在别的 crate 路径上，本库里只有**序列化实现**与**名字**。
+所以"扫不到常量"是对的，但**结论**（"所以不知道"）是错的：判别值不必从构造点拿，
+`Serialize` 的跳转表下标本身就是它。
+
+### 5.2 缺口 B：7 个线上枚举的**完整**取值集合
+
+| 枚举 | 线上字段 | 个数 | 判别值 → 名字（= 声明顺序） |
+|---|---|---|---|
+| `AxisMode` | `axis_mode` | 4 | 0 `NoAxis` · 1 `OnlyMain` · 2 `EveryFive` · 3 `EveryUnit` |
+| `FunctionMode` | `function_mode` | 2 | 0 `NormalFunction` · 1 `DiffEqFunction` |
+| `TurnMode` | `turn_mode` | 2 | 0 `SequentialTurns` · 1 `SimultaneousTurns` |
+| `TimeMode` | `time_mode` | 6 | 0 `Timer30s` · 1 `Timer1m` · 2 `Timer2m` · 3 `Timer3m` · 4 `Timer5m` · 5 `TimerInf` |
+| `GraphwarGameState` | `game_state` | 8 | 0 `Connecting` · 1 `Setup` · 2 `WaitingForFunctions` · 3 `CalculatingResults` · 4 `SynchronizingResults` · 5 `ExecutingResults` · 6 `EndingGame` · 7 `Disconnected` |
+| `GraphwarTeam` | `team` | 2 | 0 `Team1` · 1 `Team2` |
+| `EffectType` | `effect_type` | 4 | 0 `ExplosionEffect` · 1 `DeathEffect` · 2 `SparkEffect` · 3 `AshEffect` |
+
+#### 5.2.1 穷尽性判据（这是"为什么就这些"的全部理由）
+
+`#[derive(Deserialize)]` 对枚举会生成 `deserialize_enum("AxisMode", VARIANTS, V)`，
+其中 `VARIANTS: &'static [&'static str]` 是**全部**变体名、**按声明顺序**。
+认不出来时走 `Error::unknown_variant(值, VARIANTS)`，那条错误路径把 `VARIANTS`
+**地址与长度都写成了立即数**：
+
+```text
+lea  r8, [rip + VARIANTS]     ; 4c 8d 05 <disp32>   （或 lea rdx, …）
+mov  ecx, N                   ; b9 <imm32>          N = 变体个数
+call <unknown_variant>
+```
+
+所以判据是**结构性的、可穷举的**，不是"抓到过这几个"：
+
+1. **闭集**：全 `.text` 扫这个指令形状，命中**恰好 8 张表** —— `GraphwarEvent` 一张，
+   加上表里这 7 个值枚举各一张。**没有第 9 张**，所以本二进制里没有别的 serde 枚举。
+   这个形状是 `serde` + `serde_json` 对枚举的**固定**代码生成，漏一个就说明漏了一个 enum。
+   （旁证：若按「`.data.rel.ro` 里连续 (指针,长度) 对」去扫，能扫出 64 段 `&[&str]`，
+   其中 62 段落在 `chrono` / `regex` / `reqwest` / `neli` 的依赖代码里，
+   全都**不在**上面这个指令形状上 —— 它们不是 serde 枚举。）
+2. **个数由代码给**：每张表的 `N` 是 `mov ecx, N` 的立即数，不是数出来的。
+3. **内容由重定位给**：表元素是 `(&'static str, len)`，指针在 `.rela.dyn` 的
+   `R_X86_64_RELATIVE` 里（**文件里是 0**，直接读文件读出来是空 —— 这也是旧文档
+   在 `.rodata` 里找不全的原因之一）。`len` 是精确长度，不靠 NUL 终止。
+4. **顺序 = 判别值**：`VARIANTS` 是声明顺序，`__Field::__fieldN` 与
+   `serialize_*_variant(_, N, _)` 用同一个 N。
+
+#### 5.2.2 校准点：`GameState` 必须能复现
+
+方法有效性的硬判据：`GraphwarGameState` 的真值此前已由三条独立线索记为
+`.data.rel.ro 0x9586d0` 的 `[&str; 8]`，**字节长 10/5/19/18/20/16/10/12**
+（`docs/14` §11、`src/turnstate.rs`）。本方法解出来**一字不差**：
+
+```
+0x9586d0 N=8  Connecting(10) Setup(5) WaitingForFunctions(19) CalculatingResults(18)
+              SynchronizingResults(20) ExecutingResults(16) EndingGame(10) Disconnected(12)
+```
+
+⇒ 长度、顺序、地址三项全中，方法可信。`tools/wire_enums.py --verify` 把它写成硬断言。
+
+⚠️ 这 7 组取值本轮**只落在文档与本工具里**，没有写进 `src/`：见 §5.4。
+
+#### 5.2.3 与 arm64 版交叉（判别值顺序的独立复核）
+
+x86 版是 stripped，拿不到符号；arm64 版有符号，可以直接读 `Serialize` 的实现，
+**它的顺序不经过 `VARIANTS`**（是 `ldrb` 拿判别值 + `adrp/add` 拿名字字面量）：
+
+| 枚举 | arm64 证据 | 决定性指令 |
+|---|---|---|
+| `GraphwarGameState` | `0x4a52f4` | `ldrb w8,[x0]` 后 8 路分派，各臂 `(ptr,len)` 长度 10/5/19/18/20/16/10/12 |
+| `AxisMode` | `0x4b07b4`（`visit_str`） | 6/8/9 字节比较，回填 `__field` 下标 0..3 |
+| `TimeMode` | `0x4b08cc`（`visit_str`） | 同上，下标 0..5（`Timer1m/2m/3m/5m` 用 `add w13,w10,#0x10/0x20/0x40,lsl #12` 折叠成同一模板） |
+| `EffectType` | `0x415f00`（`visit_str`） | 同上，下标 0..3 |
+| `FunctionMode` | `0x470014` | `tst w21,#1` + `csel x2, DiffEqFunction, NormalFunction, ne` |
+| `TurnMode` | `0x479310` | `tbz w21,#0` → `SequentialTurns`，否则 `SimultaneousTurns` |
+| `GraphwarTeam` | `0x478574` | `cmp w10,#0` + `csel x2, Team2, Team1, ne` |
+
+7 个枚举**逐个与 x86 的 `VARIANTS` 顺序一致**（`tools/wire_enums.py --verify` 校验集合，
+`tools/event_tags_arm64.py` 用同一套符号锚定手法校验 `GraphwarEvent`）。
+反过来，`GraphwarEvent` 的 74 条在 arm64 上是 **72/72 与 x86 名字分派表同值**（§5.1），
+两套证据互为对方的校准点。
+
+#### 5.2.4 顺带说明 `Subscribe.subscribed_event_type`
+
+这个字段是 **`str`，不是枚举**（`Serialize` 侧走 `String` 单态 `0x3cb250`），
+所以它**没有** `VARIANTS` 表 —— 它收的是 §7 那套 **snake_case 事件名**
+（`tick_event` / `name_info_event` …，正是 `0x3d38f0` 比较的那 72 条）。
+取值集合 = §7.2 全表左列；这一条是**推断**（有分派代码与字段同源，但没有抓到过
+带该字段的真实报文），缺的证据是**一条 `Subscribe` 报文**。
+
+### 5.3 仍然未知（本轮之后剩下的）
 
 - **语义**：字段名与顺序是定死的，但"这个值是什么意思"仍有没定的：
-  `Subscribe.subscribed_event_type` 的取值集合、`GameInfo.game_state` 的取值集合、
   `address` / `game_address` 的具体地址格式（线上观测为字符串，如 `"[::1]:43717"` /
   `"69.164.213.144:35981"`）。
-- **`VersionInfo` / `GameHeartbeat` 的判别值**：两者都有 `Serialize` 实现和线上名字，
-  但全 `.text` 里找不到 materialise 它们的常量（正是 §7.3 的 63 / 65 缺号）。
-  它们**不上线**所以不影响第三方；只影响 `src/events.rs` 的枚举完整性。
-  候选对应是**推断**（`src/events.rs` 模块文档同此）。
 - **`EventInfo{tick,event}` 是否上线**：结构体读出来了（§3.4），但没观测到它作为
   报文键出现，也没有抓包 —— 用途**未知**。
 - **权威端在哪里**：`graphwar_game_server.rs` 看起来是房间内权威端，但"谁判定命中/死亡"
   尚未证实。
-- **枚举取值**：`axis_mode` / `turn_mode` / `time_mode` / `function_mode` / `team` /
-  `effect_type` 的**完整**取值集合由各自枚举的 `Serialize` 决定，本轮只定了"线上是字符串"
-  与已知的几个值（§3.4 的变体名表在 `.rodata` `0x9626f0` / `0x962900` / `0x957d40`），
-  没有逐个字段做"哪些值合法"的穷举。
+- **`0x800000000000004a`（=74）是什么 key**：见 §5.1 末尾，它是某个 `HashMap` 的 key，
+  但**不是** `GraphwarEvent` 的判别值。
+
+### 5.4 `src/` 侧为什么一处没改（交下一轮，一次改完）
+
+本轮的结论**全部落在文档与工具里**，`src/` 一个字节都没动。这**不是漏做**，是两处硬约束：
+
+1. **`src/events.rs` 不在本轮允许改的范围内。** 它的模块文档还写着
+   "63/65 的候选是 `GameHeartbeat` / `VersionInfo`，**属推断**" 和
+   "`enum Event` **至少有 75 个变体**"——按 §5.1 这两句都该改成
+   **74 个变体、63 = `GameHeartbeat`、65 = `VersionInfo`，逐位**。
+2. **改 `src/` 任何文件都会让 `docs/coverage-matrix.tsv` 的 `src_tree_sha256` 变**，
+   于是 `tools/coverage_matrix.py --check` 要求**同一个提交里**重跑生成器、
+   一起提交 `docs/coverage-matrix.tsv` 与 `docs/149-coverage-matrix.md`。
+   （本轮试过只加一条纯注释：`--check` 立刻失败，差异就是那一行 `src_tree_sha256`。）
+
+⇒ 下一轮把这几件事**当一个原子提交**做完：
+
+| 要改的 | 改成什么 |
+|---|---|
+| `src/events.rs` | 枚举补 `GameHeartbeat = 63`、`VersionInfo = 65` 两个变体；模块文档改成"74 个变体、逐位" |
+| `tests/events.rs` | 「名字 → 判别值」全表加这两条 |
+| `src/_scaffold/protocol.rs` | `WIRE_SPEC` 里这两条的 `tag: None` → `Some(63)` / `Some(65)`（`docs/07` §3.3 已按此写）；再加一张 `WIRE_VALUE_ENUMS` 常量表承载 §5.2 那 7 组 |
+| `tests/wire_format.rs` | `tag_column_agrees_with_events_rs` 的"只有 2 个没有判别值"断言随之失效，改成 0 个 |
+| `docs/coverage-matrix.tsv`、`docs/149-coverage-matrix.md` | 重跑 `python3 tools/coverage_matrix.py` 生成 |
+
+**判据不变**：改了以后 `cargo test` 必须仍全绿；这两个判别值是**逐位**，不是推断。
+
 
 ---
 
@@ -383,7 +548,7 @@ cargo test --offline --test wire_format                              # 与抓包
 | 自校验 ④（排序数组）| `.rodata` `0x1bf537` 那 32 条名字按本次解出的判别值**严格递增**（13,14,15,19,23,…60）→ **32/32**（§4.4） | **观测** |
 | 那些数字是什么 | **`enum Event` 的判别值**（tag word 的低位）。**不是** handler 下标 | **逐位验证** |
 | `src/events.rs` 旧编号 | **错**。不是"差一个常数"，`PlayerInfo` 10→**13**、`FunctionPoints` 31→**37** | **逐位验证** |
-| `enum Event` 有多大 | **≥ 75 个变体**（`0..=73` 之外 74 也被用过）。具名 **72** 个 | 推断（缺：63/65/74 的分派分支或构造点） |
+| `enum Event` 有多大 | **恰好 74 个变体**（判别值 `0..=73`，全部具名；见 §5.1） | **逐位**（§5.1 ① 的 `N = 0x4a` 立即数 + ② 的 74 格跳转表）。旧写的「≥75 个变体 / 具名 72 个」**已作废** |
 | 线格式 | **完全没变**：线上仍是外部标签 JSON，判别值不上线（`07-protocol.md` §4，380 份 replay） | **观测**（沿用上游结论） |
 
 改动落地：`src/events.rs`（枚举重写 = 72 变体 + 实测值 + 名字对照表）、
@@ -462,9 +627,9 @@ cargo test --offline --test wire_format                              # 与抓包
 | 60 | `name_info_event` | 15 | `0x3d3fd1` | `0x3d4071` | `0x3d4baf` | `0x8000…\|3c` |
 | 61 | `color_info_event` | 16 | `0x3d3f9c` | `0x3d3fb7` | `0x3d3fc7` | — |
 | 62 | `game_info_event` | 15 | `0x3d3fd1` | `0x3d408b` | `0x3d4c50` | — |
-| **63** | *缺号* | — | — | — | — | — |
+| **63** | `game_heartbeat_event`（`0x3d38f0` 里**没有分支**，故本表前五列皆无；值由 §5.1 独立定出） | — | — | — | — | — |
 | 64 | `game_removed_event` | 18 | `0x3d3c7e` | `0x3d3d3a` | `0x3d4ab2` | `0x8000…\|40` |
-| **65** | *缺号* | — | — | — | — | — |
+| **65** | `version_info_event`（`0x3d38f0` 里**没有分支**，故本表前五列皆无；值由 §5.1 独立定出） | — | — | — | — | — |
 | 66 | `rank_request_event` | 18 | `0x3d3c7e` | `0x3d3d69` | `0x3d4b21` | — |
 | 67 | `rank_info_event` | 15 | `0x3d3fd1` | `0x3d40a5` | `0x3d4c57` | — |
 | 68 | `lock_request_event` | 18 | `0x3d3c7e` | `0x3d3d98` | `0x3d4bc3` | — |
@@ -544,7 +709,7 @@ cargo test --offline --test wire_format                              # 与抓包
 |---|---|
 | 取值集合 | `{0..=73} \ {63,65}`，共 72 个 |
 | 单调 | 与 `.rodata` 里那段「按判别值排序」的名字串（`0x1bf537`，§4.4）**完全同序** |
-| 缺号 | 只有 63、65；且全 `.text` 扫 `0x8000…\|63` / `…\|65` 的三种编码形态**一次都没有** |
+| 缺号 | 只有 63、65；且全 `.text` 扫 `0x8000…\|63` / `…\|65` 的三种编码形态**一次都没有**。⇒ 这只能说明「没有构造点」，**不能**推出「值未知」—— 两条的值已由 §5.1 定死（63 = `GameHeartbeat`、65 = `VersionInfo`） |
 
 枚举判别值天然是"声明序号"（这里因为 `0x8000…` 基址而写成 `0x8000… + 声明序号`），
 所以"成组相邻 + 只缺两个号"完全符合；而 handler 下标没有理由这样成组
