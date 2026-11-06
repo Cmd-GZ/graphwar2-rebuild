@@ -187,8 +187,10 @@ pub struct LevelModes {
     pub axis: AxisMode,
     /// `+0x3b`。21/21 恒为 `5`。
     ///
-    /// **推断**：判为"时间档 5"。依据是运行时 `TimeModeInfo` 21/21 都是 `TimerInf`（同向），
-    /// 但**没有**"5 == TimerInf 枚举值"的直接证据。所以这里保留原始字节，不写成枚举。
+    /// **逐位**（2026-11-07 升档）：判为"时间档 5 = `TimerInf`"。
+    /// 直接证据：`graphwar_setup_control` 的时间档名字表第 11 项就是字面量 `"TimerInf"`
+    /// （`docs/10 §7` 第 6 条 + `docs/16 §16.1` 的逐字节复核），而判别值 5 与它同表对齐。
+    /// 旁证：运行时 `TimeModeInfo` 21/21 都是 `TimerInf`（同向）。
     pub time_byte: u8,
 }
 

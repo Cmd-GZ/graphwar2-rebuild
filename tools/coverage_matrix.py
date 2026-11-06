@@ -511,8 +511,9 @@ mod("graphwar_server_broker_handler.rs", "graphwar", (), "未做",
     "不是它的复原（见 docs/115）")
 mod("graphwar_server_connection_handler.rs", "graphwar", ("src/server.rs",), "逐位",
     "docs/33：新连接的状态同步与真实客户端逐字节一致")
-mod("graphwar_setup_control.rs", "graphwar", (), "未做",
-    "docs/137 有像素级观测；界面在 client/ GDScript，src/ 无实现")
+mod("graphwar_setup_control.rs", "graphwar", ("src/graphwar_setup_control.rs",), "观测",
+    "70 锚 -> 37 函数（矩阵的 21 是压平口径）；四格模式/时间档/玩家条目/Start-Cancel 已落码（docs/16 §16），"
+    "18 个 gdext 薄壳与 3 个事件回呼语义未知")
 mod("graphwar_shot_calculator.rs", "graphwar", ("src/graphwar_shot_calculator.rs", "src/graphwar_shot_calculator/settle.rs"), "逐位",
     "docs/86 §14：82 发并集 152/152、漏报 0、时刻判决 38:0；docs/122 按 id 排除射手是"
     "指令级。注意：0x3c2bc0 那个 12 KB 主函数**没有逐条还原**，逐位的是行为不是函数体")
