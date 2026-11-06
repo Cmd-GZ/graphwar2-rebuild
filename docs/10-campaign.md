@@ -1130,3 +1130,115 @@ cargo test --offline --test graphwar_level_manager
 
 测试里写死的是**本文档的表**（`DOC_TABLE` / `MODE_IMM32` / `DESC_LEN`），不是代码的输出——
 所以它是"代码对文档"，而文档对二进制那一步靠上面的脚本与 §4 的 `R` 列。
+
+## 13. 队伍与士兵：`graphwar_team_manager` / `graphwar_soldier_manager`（本轮新解）
+
+> 本篇之前只写"队伍决定 `flip`"（`archive/105-team-sides.md`）与"颜色怎么分"（§10），
+> **没有**写"队伍是怎么分出来的"。这一节补上。两个模块此前属于"完全未知"的
+> 22 个模块，现在有了函数清单、数据结构、事件与三条规则。
+> 实现落在 `src/graphwar_team_manager.rs` / `src/graphwar_soldier_manager.rs`，
+> 验收在 `tests/graphwar_team_manager.rs` / `tests/graphwar_soldier_manager.rs`。
+> 地址一律 **vaddr**（Ghidra = vaddr + `0x100000`）。
+
+### 13.1 一句话结论
+
+**分队规则只有一条：进人少的那队，平手进 Team1。** 没有队长、没有选边、
+没有"每队 5 人"的容量约束——满房上限是**整房 10 人**，5v5 是这条规则在满房时的
+**结果**。士兵那一层只维护 `士兵 → 主人` 两列，**不管轮转**；轮转名单在
+`graphwar_turn_manager` 自己那份 `Vec<soldier_id>` 里，两份表靠共同的
+`entity_removed_event` 流保持一致。
+
+### 13.2 `graphwar_team_manager`：7 个函数，全部定位
+
+| 函数 | vaddr | 职责 | 等级 |
+|---|---|---|---|
+| `add_to_team(player_id, team)` | `0x3c17d0` | 上锁、写表、广播 `TeamInfo` | 观测 |
+| `remove_from_team(player_id)` | `0x3c1980` | 上锁、删表、**删到了才**广播 `RemoveTeam` | 观测 |
+| （分队判定，本文叫 `pick_team`） | `0x3c1b40` | 数两队人数，返回新玩家该进哪队 | 观测 |
+| `send_all_info_events()` | `0x3c1cf0` | 整表重发 `TeamInfo`（给新连接） | 观测 |
+| `handle_entity_removed_event(ev)` | `0x3c1f40` | 断言 tag=14 → `remove_from_team` | 观测 |
+| `new(...)` | `0x3c1fc0` | 订阅 `new_connection_event` / `entity_removed_event` | 观测 |
+| `get_team(player_id)` | `0x3c2120` | 查表；**查不到返回 2**（`Option` 的 niche） | 观测 |
+
+表是 `Mutex<HashMap<u32, GraphwarTeam>>`：`+0x10` 锁字、`+0x14` poison、
+`+0x18` ctrl、`+0x20` bucket_mask、`+0x30` len、`+0x38` `RandomState`。
+**桶步长 8**（键 `u32` 在桶首、值 `u8` 在桶 `+4`）⇒ `GraphwarTeam` 占 1 字节。
+`RandomState` ⇒ **遍历序每进程随机**，`send_all_info_events` 的发送顺序不可复现。
+
+`GraphwarTeam` 只有两个变体，变体名 `Team1` / `Team2` 在 `.rodata` 里**紧邻**
+（`0x1be2c0` / `0x1be2c5`，serde 派生名）。判别值 `Team1 = 0` / `Team2 = 1`
+是**推断**：靠 §10 那张颜色表的 `team_key = 0 → Team1 / 1 → Team2`
+（1358 样本 0 例外）与本节的算术自洽，**没有**直接读到枚举布局。
+
+### 13.3 分队算术（照抄，不抄结论）
+
+`0x3c1b40` 遍历整表累加两个量，出口 `cmp`/`setb` 写回一个字节：
+
+```text
+sum     = Σ (team as u32)          // 在 0/1 上 = #Team2
+flipped = Σ ((team as u32) ^ 1)    // 在 0/1 上 = #Team1
+进 Team2  ⟺  sum < flipped         // ⟺ #Team2 < #Team1
+```
+
+⇒ **空表 `0 < 0` 为假 ⇒ 第一个人进 Team1**；之后严格交替（1,2,1,2,…），
+人数差永远 ≤ 1。实现里 `TeamTable::pick_team_from` 就是这个式子，
+测试对 `0..12 × 0..12` 的 144 组人数穷举。
+
+**调用点**（观测，`0x4739c0` = `graphwar_player_manager` 的
+`new_connection_event`）：`game_state[0x120] == 1` 才分队；`player_count >= 10`
+直接放弃（**整房上限 10**）；实体号取自全局自增计数器 `0xac10c0`；
+`players.insert(entity, conn)` → 广播 `PlayerInfo`(13) → `pick_team()` →
+`add_to_team(entity, team)` → 颜色层用**同一个** `team` 值查池子。
+
+⇒ 攻略层面的因果链：**人数平衡 → 队伍键 → 颜色池 → 侧别（`flip`）**。
+这也是 §10 "55 次换色全部伴随换队"的机制解释。
+
+### 13.4 `graphwar_soldier_manager`：表是两列，管"谁的"，不管"谁先"
+
+| 函数 | vaddr | 职责 | 等级 |
+|---|---|---|---|
+| `add_soldier` | **x86 未定**（arm64 `0x49d2fc` / 144 B） | 写一行 | 符号观测 / 地址未知 |
+| `send_all_info_events()` | `0x455570` | 整表重发 `SoldierInfo`(15) | 观测 |
+| `get_soldiers_from_owner` | `0x455660`（推断） | 按主人取士兵 | 推断 |
+| `handle_entity_removed_event(ev)` | `0x4556d0` | 断言 tag=14 → 级联 | 观测 |
+| （级联实现） | `0x444fd0` | 值命中即播 `EntityRemoved` | 观测 |
+| `new(...)` | `0x455760` | 订阅同上两条 | 观测 |
+
+表是 `Mutex<HashMap<u32, u32>>`，**桶步长也是 8**：重发时每个桶**整 8 字节搬进
+事件载荷**（`local_70 = *(u64*)bucket`），所以事件字段顺序就是 `(键, 值)`。
+极性按级联方向判为 **`soldier_id → owner_id`**（推断，§13.5）。
+
+### 13.5 级联：玩家没了 ⇒ 他的士兵各发一条 `entity_removed`
+
+`0x4556d0` 把活交给 `0x444fd0`，后者遍历整表：**比值**，命中就把**键**作为
+`entity_removed_event`（tag `0x8000…000e`）再播一次。
+
+* 键=士兵、值=主人 ⇒ "玩家被删 ⇒ 他的士兵也各发一条删除"，语义成立；
+  反过来（键=主人、值=士兵）会变成"士兵死了 ⇒ 玩家被删"，不成立。
+* 攻略含义：**玩家退房后他的士兵是"实体消失"，不是"变成尸体"**。
+* 级联里**没有 `erase`**（只发事件），所以表不会在这一次变短。
+* 级联发出去的事件回来时值不匹配（值仍是玩家号）⇒ 不会自激（**推断**，读码未跑）。
+
+### 13.6 与轮转（`graphwar_turn_manager`）的衔接
+
+| | `soldier_manager` | `turn_manager` |
+|---|---|---|
+| 表 | `HashMap<u32, u32>`（士兵 → 主人） | `HashMap<u32, (Vec<u32>, usize)>`（玩家 → 名单 + 游标） |
+| 桶步长 | **8** | **`0x28` = 40** |
+| 谁写 | `add_soldier` / 级联 | 建局时按创建顺序 push |
+| 用途 | "这个士兵是谁的"、整表重发给新连接 | "下一个谁开火" |
+
+⇒ **轮转不查 `soldier_manager`**：`0x463da0` 只调 `life_manager` 判活，
+一次都没调本模块。所以"从 `soldier_manager` 里删掉一个士兵"**不会**自动把它从
+轮转名单里摘掉；两份表的一致性靠**三个 manager 都订阅的那条
+`entity_removed_event`** 维持（队伍表删行、士兵表级联、轮转表删行，各干各的）。
+
+### 13.7 仍未确定
+
+| # | 未知 | 缺什么 |
+|---|---|---|
+| A | `add_soldier` 的 x86 地址 | `fixtures/name_to_addr.tsv` 的两个候选 `0x3e2830` / `0x474a10` **都不是它**（前者是 `remote_event_handler` 的大分发器，后者在 `game_state_manager` 里建玩家；arm64 长度是它的十几倍） |
+| B | `add_soldier` 是否广播 `SoldierInfo` | 没读到体；实现默认广播（与 `send_all_info_events` 同形），标推断 |
+| C | `get_soldiers_from_owner` 的返回形态 | 名字是复数，但两列表一次查找只出一个 `u32`；若源码是扫描，函数体应远大于 92 B。**冲突未解** |
+| D | 键值极性的**直接**证据 | 只有级联方向这一条间接证据 |
+| E | `GraphwarTeam` 判别值 0/1 的**直接**证据 | 同 §13.2 |
