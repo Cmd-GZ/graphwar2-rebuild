@@ -7,14 +7,14 @@
 # tool_version: 1
 # binary_sha256: 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
 # funcstarts_sha256: b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a
-# src_tree_sha256: d3632b73740c6f3de1202d876f710898a2c6681d8b54c142f6fbf2ef27028911
+# src_tree_sha256: 9bcb4e35b20c24421f7656e0b2eecf2b49dae67815f5d98e4534abee7363e312
 # funcstarts_n: 13263
 # src_modules: 246
 # loc_structs: 2042
 # attributed_funcs: 527
 # contested_funcs: 86
 # src_files: 45
-# src_fns: 1164
+# src_fns: 1245
 module	scope	orig_funcs	contested	anchors	ours_file	ours_funcs	status	evidence
 graphwar_ad_switch.rs	graphwar	6	0	3	src/graphwar_ad_switch.rs	21	观测	6 条全是 gdext 惰性注册驱动；两个 getter trampoline + owned(+0x18) 已钉死
 graphwar_audio_control.rs	graphwar	7	1	16		0	未做	docs/111：SoundHandler / -15f / -5f / 32767 归一化已还原，但没接进 src/（client/ 是仿制）
@@ -41,7 +41,7 @@ graphwar_game_server.rs	graphwar	3	1	86	src/graphwar_game_server.rs+src/server.r
 graphwar_game_state_manager.rs	graphwar	33	10	207	src/game.rs+src/turnstate.rs	76	逐位	docs/41：6 状态 7 事件、13 次迁移在真实对局里逐个相同
 graphwar_graphics_manager.rs	graphwar	6	0	8		0	未知	只有 docs/02 一行（图形资源管理），无地址级观测、无实现
 graphwar_lan_broadcaster_v6.rs	graphwar	4	0	4		0	未做	docs/07/24：局域网广播报文已抓包；docs/134 里只有 client/ GDScript 侧，src/ 无实现
-graphwar_lan_vbox.rs	graphwar	11	1	19		0	未知	只有 docs/02 一行（局域网列表 UI），无地址级观测、无实现
+graphwar_lan_vbox.rs	graphwar	11	1	19	src/graphwar_lan_vbox.rs	37	观测	13 个 FUNC 全登记；process = 0x4f90b0（唯一锚，16 个三元组）。**不消费任何事件**——每帧直读两张表（LAN 广播器 +0x128/+0x1a0 或 broker +0x240/+0x248）；行节点 = 新场景实例 + 按 SocketAddr 缓存复用；Join 走 mpmc 通道下一帧才连；**没有排序**（HashMap 迭代序）（docs/09 §10）
 graphwar_level_generator.rs	graphwar	4	1	26	src/graphwar_level_generator.rs+src/graphwar_level_generator/tables.rs	28	逐位	docs/61/56：障碍 x/y/r 的 to_bits() 全等，13/13 逐位复现；docs/55 公式闭合
 graphwar_level_manager.rs	graphwar	40	14	590	src/graphwar_level_manager.rs	20	观测	锚点最密（590 个 Location / 40 个函数）；LEVELS[21]+SETUPS[21]+campaign.save 逐位（docs/10 §12），40 个锚函数里 26 个已还原、14 个仅分类；level_info/campaign.save 簇无锚，落地时可能要搬去 campaign_control
 graphwar_life_manager.rs	graphwar	9	0	12	src/graphwar_life_manager.rs	7	逐位	docs/65：穿过即死/友军致死/无血量在真实对局与回放里逐个相同；docs/41 状态迁移一致
@@ -90,7 +90,7 @@ function_history_recorder.rs	other	1	0	3		0	未知	非 graphwar_ 前缀；除模
 function_token.rs	other	0	0	0		0	未做	2024 版符号表：graphwarrust::function_token 1 个符号 + 类型 FunctionToken
 math_function.rs	other	7	0	15	src/math_function.rs+src/math_function/to_text.rs	43	逐位	docs/03：90 例文法 + 70 条真值夹具与真二进制对拍。**解析器 0x4ed670 的 panic 锚就落在这个文件上**（math_function.rs:75）⇒ 函数语言的解析器属于本模块，不属于 graphwar_function_input
 obstacle_drawer.rs	other	2	1	7		0	未知	非 graphwar_ 前缀；除模块名外没有一条能指到地址或报文的观测
-player_showcase.rs	other	10	0	18		0	未知	非 graphwar_ 前缀；除模块名外没有任何观测
+player_showcase.rs	other	10	0	18	src/player_showcase.rs	44	观测	10 个函数全解：ready 0x4e6480 / on_text_change 0x4efd70 / process 0x4e68f0 / draw 0x4e5400 + 6 个 gdext 生成物。**三次 draw_texture_rect_full**（皮肤→脸→帽），与颜色/段位无关；读根节点 +0x16a8 的 GraphwarPlayerConfig（名字+0x00/皮肤+0x60/脸+0x78/帽+0x90/变更计数+0xa8），process 轮询计数才重画（docs/16 §25）
 polish_notation_converter.rs	other	1	0	2		0	未做	2026-11 更正：本模块的锚函数是 0x4f57d0（:36:52 / :116:55，tools/class_probe.py），**不是** 0x4ec160。0x4ec160 的 panic 分支引的是 math_function.rs:285:28（docs/119 §4.6）⇒ 我方 to_text.rs 归 math_function.rs；本模块未实现
 server_broker_request_connection.rs	other	0	0	1		0	未知	非 graphwar_ 前缀；docs/115 只覆盖 broker 线格式，这个连接对象本身没看过
 weak_caller.rs	other	39	0	2		0	未做	**旧判定已推翻**：2024 版符号表里有 graphwarrust::weak_caller 的 27 个 direct 符号（签名形如 fn(&Weak<..>,..)），是 **crate 内模块**，不是第三方依赖（docs/02 §18）。旧依据 docs/02 §9 作废

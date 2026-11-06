@@ -3078,3 +3078,345 @@ alpha = max(1.0 + t/(−60.0), 0.0)            // 0x4bbb40 ucvtf / 44 fdiv / 48 
 
 `tests/entity_drawer.rs`：既有 11 个测试**一条未改**，新增 8 个（共 19）。
 按 `AGENTS.md` §0.2，这些条数**是回归保护，不是复原证据**。
+
+---
+
+## 25. `player_showcase.rs` 规格（本轮新增：4 个方法体 / 10 个函数 / 三层贴图 + 档案字段）
+
+> **本节解决什么**：`player_showcase` 是 12 个 GDExtension 类里**名字最容易被想歪**的一个
+> ——"showcase"听着像主菜单的装饰，实际是**玩家名片预览**：一行名字输入框 + 三层贴图
+> （皮肤 / 脸 / 帽子）拼出来的头像。本节把它的**10 个函数、18 个 panic 锚、
+> 4 个方法体、档案字段偏移、三次绘制的五个实参**全部钉下来。
+>
+> **地址口径**：一律 **ELF 虚地址**（`objdump` 口径）。Ghidra/REA 地址 = 本值 + `0x100000`（只加一次）。
+> 引用的 **arm64** 地址只用于**定名**（2.0.60 的 Android 构建没 strip），绝不当 x86 用。
+> 落码：`src/player_showcase.rs`；验收：`tests/player_showcase.rs`（22 条，全部是回归保护）。
+
+### 25.1 一页结论
+
+| 项 | 结果 | 档位 |
+|---|---|---|
+| 它是什么 | **角色外观预览**：`PlayerNameLineEdit`（名字）+ 皮肤/脸/帽子三层贴图 | **观测** |
+| 方法体 | 只有 **4 个**：`ready` / `on_text_change` / `process` / `draw`（其余 6 个是 gdext 生成物） | **观测**（arm64 `.symtab`） |
+| 画什么 | 三次 `CanvasItem::draw_texture_rect_full`，**不是**多边形 / `draw_circle` / `draw_rect` | **观测** |
+| 分层顺序 | **皮肤 → 脸 → 帽子**（后画的压在上面） | **观测**（三次绘制与三次取图配对） |
+| 矩形 | `Rect2(0, 0, Control::get_size())` —— 铺满整个控件矩形，**不居中、不裁成正方形** | **观测**（x86 `0x4e5cc3`/`0x4e5ccf`/`0x4e5cd8`） |
+| 颜色 | `modulate` 恒为 `.rodata 0x19ed00` = `Color{1,1,1,1}`；`tile=false`、`transpose=false` | **观测** |
+| 跟 `graphwar_color_manager` 的关系 | **没有关系**（有界否定，见 §23.9） | **观测** |
+| 它读的档案 | 根节点 `+0x16a8` 的 `GraphwarPlayerConfig`：名字 `+0x00`、皮肤 `+0x60`、脸 `+0x78`、帽 `+0x90`、变更计数 `+0xa8` | **观测**（字段名是推断） |
+| 它读的贴图源 | 根节点 `+0x16a0` 的 `GraphwarTextureLoader`：三张 HashMap 在 `+0x158`/`+0x188`/`+0x1b8`（间距 `0x30`） | **观测** |
+| 它自己的状态 | **只有一个 `u32`**：上次看到的变更计数，偏移 `+0x18` | **观测**（字段名推断） |
+| 还缺什么 | `__default_virtual_call` / `class_id` 的 x86 地址；两个 `#[godot_api]` 块各注册了什么；`ready` 为什么取两次同一个节点 | 未知（§23.11） |
+
+### 25.2 名字从哪来：TSV 的 7 行里有 4 行是硬锚
+
+```bash
+awk -F'\t' '$1=="player_showcase"' fixtures/name_to_addr.tsv
+```
+
+| 方法 | x86 | TSV 判定 | 本节处理 |
+|---|---|---|---|
+| `draw` | `0x4e5400` | 唯一锚（**7 个**双向唯一 Location，展示锚 `src/player_showcase.rs:72:129`） | **采用** |
+| `ready` | `0x4e6480` | 唯一锚（4 个，`:18:129`） | **采用** |
+| `process` | `0x4e68f0` | 唯一锚（2 个，`:59:133`） | **采用** |
+| `on_text_change` | `0x4efd70` | 唯一锚（2 个，`:31:129`） | **采用** |
+| `__register_constants` | 4 候选 | 歧义 | 定到 **`0x4e12e0`**（§23.3，**推断**） |
+| `__default_virtual_call` | — | 未知 | 不落地 |
+| `class_id` | — | 未知 | 不落地 |
+
+**两条"未知"是真未知，不是没找**：这两个函数**一个 `panic::Location` 都不引用**
+（`__default_virtual_call` 是 156 字节的薄壳，`class_id` 是 56 字节的 `once` 读取），
+`src/player_showcase.rs` 的 18 个 Location 已经**全部**被另外 10 个函数占满
+（21 条指令级引用点 = `fixtures/module_map.tsv` 的 `refs=21`，`functions=10` 也对得上）
+⇒ 这两个函数只能靠跨架构指纹落，本轮**没有**做（登记在 `src` 的 `UNKNOWNS` 与冲突表里）。
+
+**为什么 4 条"唯一锚"可信**：`Location` 是编译期常量 `{file, line: u32, col: u32}`（24 字节），
+与指令集无关。两侧的 `(file,line,col)` 集合**逐条相同**（`only-arm` / `only-x86` 都为空），
+于是 10 个函数在两侧是**双射**——不是靠"函数大小相近"配的。
+⚠️ 顺便记一条反例：`draw` 的 x86/arm64 字节比是 **1.59**（3264/2652），
+远高于别处记的 1.03–1.07；原因很明确：**x86 把三个取贴图函数内联进了 `draw`**
+（`0x4e5717..0x4e5c69` 三段 inlined SwissTable 查表），arm64 则保留成 `bl`。
+所以"大小相近"既不是必要条件也不是充分条件。
+
+### 25.3 10 个函数（**观测**；x86 地址 + 两侧字节数 + 角色）
+
+| # | x86 | Ghidra 跨度 | 真实字节 | arm64 | arm B | 角色 | 锚 |
+|---|---|---|---|---|---|---|---|
+| 1 | `0x4e1160` | 384 | — | `0x43c1bc` | 400 | `__register_methods` | `27:1` |
+| 2 | `0x4e12e0` | 384 | — | `0x43c34c` | 400 | `__register_constants`〔推断：左右序〕 | `27:1` |
+| 3 | `0x4e5400` | 4224 | **3264** | `0x43fe7c` | 2652 | **`IControl::draw`** | 7 条 |
+| 4 | `0x4e6480` | 1136 | — | `0x4408d8` | 1108 | **`IControl::ready`** | 4 条 |
+| 5 | `0x4e68f0` | 656 | — | `0x440d2c` | 656 | **`IControl::process`** | 2 条 |
+| 6 | `0x4e87d0` | 416 | — | `0x442adc` | 428 | `__inner_init` | `27:1` |
+| 7 | `0x4e8970` | 432 | — | `0x442e80` | 448 | `__inner_init` | `27:1` |
+| 8 | `0x4e8b20` | 592 | — | `0x443040` | 512 | `__inner_init` | `37:1` |
+| 9 | `0x4e8d70` | 528 | — | `0x442c88` | 504 | `#[derive(GodotClass)]` 生成 | `9:10` |
+| 10 | `0x4efd70` | 672 | — | `0x448d10` | 704 | **`on_text_change`** | 2 条 |
+
+两处**必须记住的坑**：
+
+* **`0x4e5400` 的真实边界是 `0x4e60bf`**（收尾 `ret` 在 `0x4e60be`），
+  `0x4e60bf..0x4e6476` 是**外置冷路径**（`lea "Upcast failed…"(47)` + `core::result::unwrap_failed`），
+  Ghidra 因为后面没有新起点把这 240 字节并进了 `draw` 的跨度 ⇒ **跨度 ≠ 函数体**。
+* `__register_constants` 那 4 个候选（`0x4e1160`/`0x4e12e0`/`0x4e87d0`/`0x4e8970`）**全部是真函数**，
+  它们是**同一个** `#[godot_api]` 块的 4 个生成物。两个 `__register_*` 的 x86 跨度都是 384、
+  arm64 都是 400 ⇒ **大小区分不开**，只能按 arm64 符号表的地址序对应 ⇒ 记 **推断**。
+
+### 25.4 18 个 Location → panic 种类（**本节最强的一条证据**）
+
+每个 `(line, col)` 通向一个**具体的 panic 出口**，而 panic 的种类能从被调符号直接读出来
+（`core::option::unwrap_failed` / `core::cell::panic_already_borrowed` /
+`core::cell::panic_already_mutably_borrowed` / `core::result::unwrap_failed`）。
+⇒ `(line, col)` → "这一行在干什么"是**可证**的，不是从行号猜的：
+
+| `(line:col)` | 引用指令（x86） | 归属 | panic 种类 | 说明 |
+|---|---|---|---|---|
+| `9:10` | `0x4e8f00` | `0x4e8d70` | 样板 unwrap | `#[derive(GodotClass)]`（col 10 = `GodotClass` 的 G） |
+| `18:129` | `0x4e67d7` | `0x4e6480` | `Option::unwrap` | 取 `"GraphwarRootNode"` |
+| `21:132` | `0x4e684d` | `0x4e6480` | `Option::unwrap` | 取 `"PlayerNameLineEdit"` |
+| `22:47` | `0x4e685c` | `0x4e6480` | **共享**借用冲突 | 读档案名字 |
+| `27:1`×4 | `0x4e125b`/`0x4e13db`/`0x4e88ed`/`0x4e8aa1` | 1/2/6/7 | 样板 unwrap | `#[godot_api]` 块 A |
+| `31:129` | `0x4eff14` | `0x4efd70` | `Option::unwrap` | `on_text_change` 取 root |
+| `33:23` | `0x4eff61` | `0x4efd70` | **独占**借用冲突 | `bind_mut()`（计数置 `-1`） |
+| `37:1` | `0x4e8ce6` | `0x4e8b20` | 样板 unwrap | `#[godot_api]` 块 B |
+| `52:132` | `0x4e686b` | `0x4e6480` | `Option::unwrap` | **第二次**取名字输入框（连线用） |
+| `59:133` | `0x4e6ad8` | `0x4e68f0` | `Option::unwrap` | `process` 取 root（列比另外三处多 4） |
+| `62:41` | `0x4e6b1d` | `0x4e68f0` | **共享**借用冲突 | 读档案计数 |
+| `72:129` | `0x4e60f4` | `0x4e5400` | `Option::unwrap` | `draw` 取 root（**在冷路径里**） |
+| `76:38`/`77:38`/`78:37` | `0x4e618e`/`0x4e55f0`/`0x4e619d` | `0x4e5400` | 共享借用 | 皮肤 / 脸 / 帽子的 `String` clone |
+| `80:39`/`81:39`/`82:38` | `0x4e61ac`/`0x4e61bb`/`0x4e61ca` | `0x4e5400` | 共享借用 | 三个取贴图调用 |
+
+**列号签名是本节最漂亮的一条判别式**：两组三行里，**第三行都比同组另两行少 1 列**
+（`78:37` 对 `76:38`/`77:38`；`82:38` 对 `80:39`/`81:39`）。
+少 1 的原因可证：`hat`(3) 比 `skin`/`face`(4) 少一个字符，
+`get_hat_texture`(15) 比 `get_skin_texture`/`get_face_texture`(16) 也少一个字符。
+⇒ "78 行是帽子、82 行是取帽子贴图"是**推出来的**。这条被写进
+`borrow_column_signature()` / `group_column_shortfall()` 并由测试对拍
+（`hat_lines_are_one_column_shorter`）。
+
+⚠️ 唯一一条 `Result::unwrap`（消息 47 字节 = `"Upcast failed. This is a bug; please report it."`）
+用的是 **gdext 自己文件**里的 Location（x86 `.data.rel.ro 0x853ce8`），
+所以本文件的 18 个 Location 里**一条都没有**这个种类（`check_rtti` 的失败口）。
+
+### 25.5 `ready`（`0x4e6480`，1136 B）
+
+```text
+44092c  self.base()                      → Gd<PlayerShowcase>
+44095c  get_node_by_name(:<root>, "GraphwarRootNode", 16).expect(…)
+44097c  root.bind()                      → 共享借用（cell+0x10 +1）
+4409b4  self.base()                       （重建一遍 Gd）
+440a24  get_node_by_name::<LineEdit>(…, "PlayerNameLineEdit", 18).expect(…)   ← 第一次
+440a38  check_rtti("upcast_ref", 10)     ← gdext 固定的 10 字节串，**不是**类名
+440a5c  ldp x1,x2,[cell+0x20]            ← 档案名字的 (ptr,len)
+440a6c  LineEdit::set_text(名字)
+440b04  get_node_by_name::<LineEdit>(…, "PlayerNameLineEdit", 18).expect(…)   ← 第二次
+440b40  Callable::from_object_method(self, "on_text_change", 14)
+440b58  Object::connect(编辑框, "text_changed", 12, callable)
+```
+
+* 三条字面量在 `.rodata` 里**首尾相接**：`0x1c42ed`(18) → `0x1c42ff`(14) → `0x1c430d`(12)。
+* **取两次同一个节点是事实**（两个不同的 `get_node_by_name::<LineEdit>` + 两个不同的
+  Option unwrap Location `21:132` / `52:132`），不是抄错；**为什么**取两次未知（§23.11）。
+* `.expect()` 失败 = **panic**（原版没有"找不到节点就静默跳过"的路径）。
+
+### 25.6 `on_text_change`（`0x4efd70`，672 B）
+
+```text
+448d9c  get_node_by_name(:<root>, "GraphwarRootNode", 16).expect(…)
+448dbc  root.bind_mut()                  → **独占**借用（cell+0x10 = -1）
+448e08  String::from(GString)            ← 新名字
+448e14  释放 载荷+0x00 的旧 String（__rust_dealloc）
+448e30  写 载荷+0x00 的 (cap,ptr,len)
+448e3c  GraphwarPlayerConfig::save(&载荷.名字)
+448e40  [载荷+0xa8] += 1                 ← **变更计数 +1**（在 save 之后）
+```
+
+⇒ **先存档、再加计数**：`save()` 拿到的已经是新名字，但计数在返回之后才变，
+所以同一帧的 `process` 还看不到变化。
+
+### 25.7 `process`（`0x4e68f0`，656 B）
+
+```text
+440d6c  CanvasItem::is_visible_in_tree()  ; false ⇒ **直接返回**（连档案都不碰）
+440de0  get_node_by_name(:<root>, "GraphwarRootNode", 16).expect(…)
+440e00  root.bind()                       → 共享借用
+440e48  w21 = [载荷+0xa8]                 ← 档案的变更计数
+440e4c  w8  = [self+0x18]                 ← 自己的上一份
+440e50  cmp / b.eq → 相等就结束
+440e64  base_mut() + CanvasItem::queue_redraw()
+440e8c  [self+0x18] = w21                 ← **重画之后**才写回
+```
+
+⇒ 本类**只有一个 `u32` 字段（`+0x18`）**。初值 `0` 与 `GraphwarPlayerConfig::new`
+里 `str wzr,[sp,#0xa8]` 一致 ⇒ 刚进场景不重画。
+计数在三个地方被 `+1`：`on_text_change`、`set_skin`、`set_face`、`set_hat`
+（后三个在 `graphwar_player_config.rs`，不在本模块）⇒ **任何外观变化都会让预览重画**。
+
+### 25.8 `draw`（`0x4e5400`，真实 3264 B）
+
+```text
+4e5488  get_node_by_name(:<root>, "GraphwarRootNode", 16).expect(…)   （锚 72:129）
+        root.bind()                       → 三次 String clone（皮肤/脸/帽，锚 76/77/78）
+        loader.bind()                     → 三次取贴图（锚 80/81/82）
+4e5cbd  Control::get_size()               → (s0,s1)
+4e5cc3  Rect2.position = (0,0)            ← 原点清零，**不居中**
+4e5ccf  Rect2.size     = (s0,s1)          ← 铺满整个控件矩形
+4e5d2d  modulate = .rodata 0x19ed00 = Color{1,1,1,1}
+4e5d77  draw_texture_rect_full(#1)  皮肤   tile=false(ecx=0) transpose=false(r9d=0)   [GOT 9bc248]
+4e5ea9  draw_texture_rect_full(#2)  脸     同上
+4e5faf  draw_texture_rect_full(#3)  帽子   同上
+```
+
+五个实参逐个可指（arm64 同形，`0x4402b0`/`0x44037c`/`0x440444`）：
+
+| 实参 | 值 | 判据 |
+|---|---|---|
+| `texture` | `Some(t)` 才画 | `Option` 的 tag 判别（arm64 `cmp x24,#1`） |
+| `rect` | `Rect2(0, 0, get_size())` | 上面的 `4e5cc3`/`4e5ccf` |
+| `tile` | `false` | `xor ecx,ecx` / `mov w3,wzr` |
+| `modulate` | `Color{1,1,1,1}` | `.rodata 0x19ed00` / `fmov v0.4s,#1.0` |
+| `transpose` | `false` | `xor r9d,r9d` / `mov w5,wzr` |
+
+⚠️ `0x19ed00` 与 §18.7（`GraphwarLongPressAnimation::draw` 第 2 次绘制）**同一个地址**
+—— 两个模块共用一个"白"。
+缺贴图的那层**不画、也不补占位图元**（`draw` 里没有 `draw_rect`/`draw_circle`/`draw_string`）。
+
+### 25.9 它读谁：根节点的两个"持有单元"，以及它跟颜色表**无关**
+
+`GraphwarRootNode` 上两个**指针→单元**字段（单元 = `RcInner{strong,weak,RefCell{borrow,value}}`，
+所以 `[单元]`=强引用计数、`[单元+0x10]`=借用计数、`[单元+0x18]`=载荷）：
+
+| 偏移 | 内容 | 写者（全 `.text` 唯一） | 谁读 |
+|---|---|---|---|
+| `+0x16a0` | `Rc<RefCell<GraphwarTextureLoader>>`（贴图缓存） | `<GraphwarRootNode as INode>::init`（arm64 `0x39a44c`） | 本模块 `draw`；另有 `EntityDrawer::draw`、`GraphwarSetupControl`、`GraphwarFunctionInput`、`GraphwarLanVBox`、`GraphwarPlayerScreenControl::skin_button_pressed` |
+| `+0x16a8` | `Rc<RefCell<GraphwarPlayerConfig>>`（玩家档案） | 同一个 `init`（arm64 `0x39a450`） | 本模块 4 个方法；`GraphwarRootNode` 的 `process_button_pressed`/`purchase_confirmed`/`purchase_denied` |
+
+判据是**穷举写点**：`.text` 里 `str [+0x16a0]` / `str [+0x16a8]` **各只有一条**，
+都在 `<GraphwarRootNode as INode>::init`（arm64 `0x399dd0`）里。
+
+⚠️ **就地更正**：本节第一稿把这两条 `str` 记成 `GraphwarRootNode::ready`——
+原因是扫描脚本把过长的 trait impl 符号名截断到 95 字符，`…::re_expor` 之后看不见了。
+按符号边界复核（`ranges_from_symtab` 的前驱起点）后是 **`INode::init`**，
+语义也更合理：两个单元在节点构造时建好，`ready` 不可能是唯一写者。
+
+**`GraphwarPlayerConfig` 的布局**（档位：偏移=观测，字段名=推断）：
+
+| 偏移 | 类型 | 内容 | 证据 |
+|---|---|---|---|
+| `+0x00` | `String` | **名字** | `on_text_change` 覆盖 `+0x00..0x18`；`ready` 把 `+0x08`/`+0x10` 当 `(ptr,len)` |
+| `+0x18` | `String` | "原始"皮肤（`lock()` 写 `yellow`） | `lock()` 里 `str x8,[x19,#0x18]` |
+| `+0x30` | `String` | "原始"脸（`lock()` 写 `regular_eyes`） | 同上，12 字节字面量 |
+| `+0x48` | `String` | "原始"帽（`lock()` 写 `soldier_helmet`） | 同上，14 字节字面量 |
+| `+0x60` | `String` | **皮肤**（当前） | `set_skin` 的 `ldr x1,[x21,#0x60]!` + `str q0,[x21]` |
+| `+0x78` | `String` | **脸** | `draw` 的第二个 `(ptr,len)` 对 |
+| `+0x90` | `String` | **帽子** | `draw` 的第三个 `(ptr,len)` 对 |
+| `+0xa8` | `u32` | **变更计数器**（`new` 清 0；四处 `+1`；`process` 轮询） | arm64 `0x448e40..0x448e54` |
+| `+0xac` | `bool` | 锁定/标记位（`lock()` 写 0，`set_skin` 读它） | `ldrb w8,[x0,#0xac]` |
+
+**`Rust String` 在本二进制里是 `(cap, ptr, len)`**（24 字节）——**不是**常见的 `(ptr, cap, len)`：
+* 释放序：`on_text_change` 里 `ldr x1,[x19,#0x18]!`（非零才释放）+ `ldr x0,[x20,#0x20]`
+  → `__rust_dealloc(x0, x1, 1)` ⇒ `x1` 是 size/cap、`x0` 是 ptr；
+* 使用序：`ready` 把 `+0x08`/`+0x10` 当 `(ptr,len)` 传给 `set_text`。
+若照搬常见布局，`skin` 的 `len` 会被读成 `cap`。
+
+**三个默认外观名**（`GraphwarPlayerConfig::new` 的字面量，arm64 `0x39152c..0x3915a4`）：
+
+```text
+skin = "yellow"           (6)
+face = "regular_eyes"     (12)
+hat  = "soldier_helmet"   (14)
+```
+
+**`GraphwarTextureLoader` 三张表**（间距 `0x30`，每张一个 `HashMap<String, Gd<Texture2D>>`）：
+
+| 外观 | getter（arm64） | 表控制字节 | hasher | 桶/掩码 |
+|---|---|---|---|---|
+| 皮肤 | `get_skin_texture` `0x40c1cc` | `+0x168` | `+0x170` | `+0x150` |
+| 脸 | `get_face_texture` `0x40c0a4` | `+0x198` | `+0x1a0` | `+0x180` |
+| 帽子 | `get_hat_texture` `0x40bf7c` | `+0x1c8` | `+0x1d0` | `+0x1b0` |
+
+### 25.9.1 与 `graphwar_color_manager` 的关系：**没有**（有界否定）
+
+本模块 10 个函数的**具名被调者穷举**如下（arm64 `.symtab` 逐条给出，`CALLEES`）：
+`get_node_by_name` / `RawGd::bind` / `RawGd::bind_mut` / `Gd::from_obj_sys_weak` /
+`Gd::owned_cast` / `RawGd::check_rtti` / `Control::get_size` /
+`CanvasItem::draw_texture_rect_full` / `CanvasItem::is_visible_in_tree` /
+`CanvasItem::queue_redraw` / `GraphwarTextureLoader::get_skin_texture` /
+`GraphwarPlayerConfig::save`。
+
+* 里面**没有**任何 `GraphwarColor` / 颜色表 / 队色 / 段位函数；
+* 三次绘制的 `modulate` 是**纯白常量**（`0x19ed00`），不做任何乘法；
+* 玩家颜色 / 段位的落点是 `graphwar_player_screen_control` 等别的模块，
+  **不经过** `player_showcase`。
+
+⇒ "玩家名片按玩家颜色染色"这个猜想在本构建里**没有证据**；如果要染色，
+染色发生在该控件的 GDScript 侧（场景里给 `modulate`），Rust 侧不参与。
+
+### 25.10 与 `client/` 仿制实现的出入（**登记，不改 `client/`**）
+
+⚠️ 按 `AGENTS.md` §0 第 4 条：`client/` 是**改写**，不是原版源码；下面只登记差异，
+**本轮不动 `client/`**。
+
+| # | `client/src/play/player_showcase.gd` | 原版（本节证据） | 影响 |
+|---|---|---|---|
+| 1 | `side = min(size.x, size.y)`，再**居中**成正方形 | `Rect2(0,0,get_size())`——**不裁、不居中** | 容器非 1:1 时两者不同。原版靠外层 `AspectRatioContainer` 保证方形（与 `docs/129` §1.3 的 46.875% 实测一致）；缺的证据：原版 `.tscn` 里这个容器是否恒为 1:1 |
+| 2 | `draw_texture_rect(tex, rect, false)`（4 参） | `draw_texture_rect_full(tex, rect, false, WHITE, false)`（5 参） | **等价**（默认 modulate 就是白、transpose=false），但 API 不同 |
+| 3 | `set_look(int(p.skin), int(p.face), int(p.hat))`，图标名 `skin_%d` | 原版用**字符串键**（`"yellow"`/`"regular_eyes"`/`"soldier_helmet"`）查三张 HashMap | 客户端的"整数下标 → 名字"映射是**自造**的（映射表在 `docs/17-resources.md`，与本模块无关） |
+| 4 | 由 GDScript 显式 `_showcase.queue_redraw()` | 原版 `process` **轮询变更计数**（`+0x18` vs 档案 `+0xa8`）+ 可见性闸门 | 原版连 `set_skin/set_face/set_hat` 也会自动触发重画；客户端靠调用点自觉 |
+| 5 | 名字输入框在 `player_screen.gd` 里**动态创建**（`LineEdit.new()`，`max_length = 12`） | 原版按**名字**从根节点找 `PlayerNameLineEdit`（`get_node_by_name`），且它自己 `connect("text_changed")` → **Rust** 的 `on_text_change` → 写档案 + `save()` | 客户端把"改名"写进 GDScript；原版写进 `GraphwarPlayerConfig` 并落盘。`max_length = 12` 在 Rust 侧**没有**证据 |
+| 6 | 找不到节点只报错 | `.expect()` ⇒ **panic** | 原版没有"优雅降级"这条路 |
+
+真正需要**改 `client/`** 的两条（留给后续轮次，不在本轮范围）：
+第 1 条（改成铺满整个矩形）与第 4 条（改成让 Rust 侧轮询计数器）。
+
+### 25.11 本节没解出来的（照实写）
+
+| 缺口 | 缺什么证据 |
+|---|---|
+| `__default_virtual_call`（arm64 156 B）与 `class_id`（arm64 `0x438088`，56 B）的 x86 地址 | 两条都**不引用任何 Location**；`class_id` 的 `CLASS_ID` 静态槽（arm64 `0x8b40b0`）在 x86 的地址也没解 |
+| 两个 `#[godot_api]` 块（行 27 / 行 37）各注册了什么 | 块 27 有 4 个生成物（2 个 `__register_*` + 2 个 `__inner_init`），块 37 只有 1 个；哪一个是 `#[func]`、哪一个是 `#[signal]`/属性，静态分不出（缺：注册闭包写进 `.data.rel.ro` 的 `(名字,len)` 表项） |
+| `ready` 为什么**取两次** `PlayerNameLineEdit` | 两个 unwrap 是事实；中间那 30 行源码（行 23–51）里到底是什么，静态只能看到"取 → set_text → 再取 → connect" |
+| `draw` 里 6 个借用点与源码行的**一一对应** | 能证明两组各三次、且每组第三行是帽子（列号少 1）；但"哪一次借用配哪一行"缺（x86 把 `bind` 内联后没有独立调用点） |
+| 类名字面量 `PlayerShowcase` 的 `.rodata` 地址与长度 | 注册闭包里没有可自校验的 `(类名ptr, 类名len)` 立即数对；`check_rtti` 拿到的 10 字节串是 gdext 固定的 `"upcast_ref"`，**不是**类名 |
+| 四个字段的**源码标识符** | 偏移与读写指令都钉住了；名字是按 `set_skin/set_face/set_hat` 与默认字面量推的。`+0x18`/`+0x30`/`+0x48` 三槽的语义也未定 |
+| 原版 `.tscn` 里 `PlayerShowcase` 外层是不是恒 1:1 的 `AspectRatioContainer` | 缺 `.tscn` 文本（`AspectRatioContainer` 只在客户端仿制品里出现过） |
+
+### 25.12 复现（不依赖本节结论，任何人可重跑）
+
+```bash
+SO=.reference/steam/2026-08-28/libgraphwarrust.so          # sha256 9a538115…
+ARM=.rea-work/apk/arm64/lib/arm64-v8a/libgraphwarrust.so   # 2.0.60，**未 strip**
+
+# 1) 真名与真边界（x86 被 strip，arm64 没有）
+readelf -sW $ARM | c++filt | grep player_showcase
+
+# 2) 10 个函数 + 18 个 Location 的双射（工具自己做两侧一对一判定）
+../.venv/bin/python tools/name_bridge.py module player_showcase
+
+# 3) 四个方法体逐条（x86 用 objdump；arm64 要 llvm-objdump 才有符号名）
+objdump -d -M intel --start-address=0x4e5400 --stop-address=0x4e60bf $SO
+llvm-objdump -d --no-show-raw-insn --demangle \
+  --start-address=0x43fe7c --stop-address=0x4408d8 $ARM
+
+# 4) 「写者唯一」：扫 .text 里 disp ∈ {0x16a0,0x16a8} 的写指令
+#    → 各 1 条，都在 <GraphwarRootNode as INode>::init（arm64 0x39a44c / 0x39a450）
+```
+
+### 25.13 落码清单
+
+| 原版 | 落在 `src/player_showcase.rs` | 覆盖程度 | 档位 |
+|---|---|---|---|
+| 10 个函数（名/地址/两侧字节/角色/锚） | `OrigFn` / `FUNCTIONS` / `function_at` / `by_role` / `total_anchor_sites` | 10 条（跨度为 Ghidra 起点表，`draw` 另给真实 3264） | 观测 |
+| arm64 真名与真边界 | `ARM64_SYMS` / `arm_sym` / `arm_size_of` / `arm_of` / `ARM64_VIRTUAL_FN` | 12 + 3 条 | 观测 |
+| 18 个 Location → panic 种类 | `LocAnchor` / `LOCATIONS` / `locations_of` / `borrow_sites_of` / `borrow_column_signature` | 21 条指令级引用点、18 条去重 | 观测 |
+| 节点名 / 方法名 / 信号名 | `NODE_ROOT`…`SIGNAL_TEXT_CHANGED_LEN` / `LITERAL_RUN` / `literal_pair_ok` / `node_name_ok` | 4 条 `(ptr,len)` 全自校验 | 观测 |
+| 根节点两个持有单元 | `ROOT_PLAYER_CONFIG` / `ROOT_TEXTURE_LOADER` / `ROOT_UNIT_WRITERS` / `root_unit_writer` | 写者唯一 | 观测 |
+| 档案布局与 `String` 三字序 | `CFG_*` / `StringLayout` / `DEFAULT_*` / `UNIT_PAYLOAD` / `UNIT_BORROW` | 偏移全给，字段名推断 | 观测 / 推断 |
+| `ready` / `on_text_change` / `process` / `draw` | `READY_PLAN` / `on_text_change_effect` / `Showcase` / `ProcessOutcome` / `DrawCall` / `draw_plan` / `DRAW_ORDER` | 四个方法体的判定与算术全覆盖 | 观测（引擎 API 名 = 观测，见 §23.8） |
+| 与颜色表无关 | `CALLEES` / `touches_color_manager` | 有界否定 | 观测 |
+| TSV 冲突 | `NAME_BRIDGE_CONFLICTS` / `conflict` | 3 条 | 观测 / 推断 |
+| 未知 | `UNKNOWNS`（6 条）/ `DOC_SECTIONS` / `REPRO` | — | 未知 |
+
+`tests/player_showcase.rs`（22 条）的断言都是**回归保护**；每条右侧的真值要么是
+指令立即数、要么是 `.rodata` 比特、要么是 arm64 `.symtab` 真名。
+本轮 `cargo test --offline`：lib **339**、总计 **645**（+22），doctest 0 条通过。

@@ -448,8 +448,8 @@ mod("graphwar_graphics_manager.rs", "graphwar", (), "未知",
     "只有 docs/02 一行（图形资源管理），无地址级观测、无实现")
 mod("graphwar_lan_broadcaster_v6.rs", "graphwar", (), "未做",
     "docs/07/24：局域网广播报文已抓包；docs/134 里只有 client/ GDScript 侧，src/ 无实现")
-mod("graphwar_lan_vbox.rs", "graphwar", (), "未知",
-    "只有 docs/02 一行（局域网列表 UI），无地址级观测、无实现")
+mod("graphwar_lan_vbox.rs", "graphwar", ("src/graphwar_lan_vbox.rs",), "观测",
+    "13 个 FUNC 全登记；process = 0x4f90b0（唯一锚，16 个三元组）。**不消费任何事件**——每帧直读两张表（LAN 广播器 +0x128/+0x1a0 或 broker +0x240/+0x248）；行节点 = 新场景实例 + 按 SocketAddr 缓存复用；Join 走 mpmc 通道下一帧才连；**没有排序**（HashMap 迭代序）（docs/09 §10）")
 mod("graphwar_level_generator.rs", "graphwar", ("src/graphwar_level_generator.rs", "src/graphwar_level_generator/tables.rs"), "逐位",
     "docs/61/56：障碍 x/y/r 的 to_bits() 全等，13/13 逐位复现；docs/55 公式闭合")
 mod("graphwar_level_manager.rs", "graphwar", ("src/graphwar_level_manager.rs",), "观测",
@@ -558,8 +558,8 @@ mod("function_button_manager.rs", "other", (), "未知",
     "非 graphwar_ 前缀；除模块名外没有任何观测")
 mod("function_history_recorder.rs", "other", (), "未知",
     "非 graphwar_ 前缀；除模块名外没有任何观测")
-mod("player_showcase.rs", "other", (), "未知",
-    "非 graphwar_ 前缀；除模块名外没有任何观测")
+mod("player_showcase.rs", "other", ("src/player_showcase.rs",), "观测",
+    "10 个函数全解：ready 0x4e6480 / on_text_change 0x4efd70 / process 0x4e68f0 / draw 0x4e5400 + 6 个 gdext 生成物。**三次 draw_texture_rect_full**（皮肤→脸→帽），与颜色/段位无关；读根节点 +0x16a8 的 GraphwarPlayerConfig（名字+0x00/皮肤+0x60/脸+0x78/帽+0x90/变更计数+0xa8），process 轮询计数才重画（docs/16 §25）")
 mod("server_broker_request_connection.rs", "other", (), "未知",
     "非 graphwar_ 前缀；docs/115 只覆盖 broker 线格式，这个连接对象本身没看过")
 mod("backtracer.rs", "other", (), "未做",
