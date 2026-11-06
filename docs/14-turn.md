@@ -745,3 +745,281 @@ Ghidra 签名：undefined FUN_004db3e0(long param_1, undefined4 param_2, undefin
 ⚠️ **不要**给 `[+0x1705]==6` 编一个语义 —— 本轮只证到"被比较"，语义仍是 **未知**（见 `docs/16` §15.3 的警告）。
 
 ---
+
+## 11. `graphwar_game_state_manager.rs`：45 个可归属函数 ↔ 地址 ↔ 我方实现
+
+> **本节解决什么问题**：对局状态机（`docs/41`）、回合计数与结束（`docs/45`）、
+> 同时回合制（`docs/86`/`docs/141`）、胜负判定（`docs/150`）这四件事早就逐位对拍过，
+> 但实现一直按"运行实体 / 迁移表"摊在 `src/game.rs` 与 `src/turnstate.rs` 两个文件里，
+> **不是原版的函数边界**。本节把 45 个原版函数逐个落到地址上，说明分别对应我方哪段代码，
+> 并把能补的补掉（`docs/02` §17.4 把这两个文件登记为"混装（待拆）"）。
+>
+> 证据口径：地址一律 **ELF vaddr**；Ghidra/REA 地址 = 本地址 + `0x100000`。
+> 函数边界取自 `analysis/funcstarts_ghidra_va.pkl`；被调者多重集、`.rodata` 串、
+> `panic::Location` 都从 `analysis/insns.pkl` / `xrefs.pkl` 现算。
+> **arm64 2.0.60 未 strip**（`.symtab` 里有真名与长度）用作交叉校验：x86 尺寸与 arm64
+> 尺寸的比值在 0.61–1.19 之间，凡偏出这个区间的归属一律**否掉**（见 §11.1 第 2 条）。
+
+### 11.1 先纠正三处归属（本轮新发现）
+
+1. **`report_fired_function` 不在 `0x3e2830`。** 旧表（`fixtures/name_to_addr.tsv` 的
+   `唯一锚` 行）把它钉在 `0x3e2830`，但那个地址是
+   `GraphwarRemoteEventHandler::handle_server_remote_event`（**12512 字节**、51 个直接调用、
+   23 个各模块 manager 的 setter 全在里面），而 arm64 上 `report_fired_function` 只有
+   **236 字节**（`0x4ab5dc`，体内只有一次 `GraphwarEventQueue::add_event`）。
+   **53 倍**的尺寸差不可能是同一个函数 ⇒ 旧归属是"一行内联进来的 `Location`"造成的
+   单锚误并。结论：`report_fired_function` 在 x86 上**没有独立函数体**（被内联进
+   `0x3e2830` 与 `request_fire_function` 两条路径）。
+2. **尺寸比是判归属的硬门槛。** 34 条有 x86 地址的行里，33 条能与 arm64 对上，比值
+   落在 **0.61–1.19**（`queue_end_turn_trigger` 的 arm64 只剩闭包，1376/1420 = 0.97，
+   同区间）；唯一例外就是上面那条 **53 倍**。以后新归属先进这道闸。
+3. **三个 serde 函数与 `set_turn_count` 本轮反而解出来了**（旧表全标"未知/歧义"）：
+
+   | 名字 | x86 | 判定依据 |
+   |---|---|---|
+   | `serialize` | **`0x46f020`**（160 B） | 取 `[rdi]` 判别字节 → 查 `.rodata 0x1c17c0` 的 **8 项**跳表 → 每组 `(ptr,len)` → 调 `serialize_str`（`0x3bdf00`） |
+   | `deserialize` | **`0x46f0c0`**（592 B） | 同一组 8 个变体名的第二张跳表在 `.rodata 0x1c17e0`；体内 4 个调用全落在 JSON 解析器 `0x37bd70/0x37f440/0x37f7f0/0x37ca10` 上 |
+   | `visit_str` | **`0x47a930`**（432 B） | `lea rcx,[rdx-5]; cmp rcx,0xf`（长度 5..=20）+ `.rodata 0x1c1814` 的 **16 项**按长度跳表，然后逐项 `xor`/`pcmpeqb` 比字节，命中后写判别字节 |
+   | `set_turn_count` | **未知（x86 内联）** | arm64 有独立体 `0x4a8460`（124 B，与 `set_turn_limit` 同形同长）；x86 上它的 panic 锚只剩三处调用点（`0x3e2830`/`0x46f690`/`0x4759f0`），也就是旧表给的三个"歧义候选"——三个都是**别人** |
+
+   地址顺序也是独立旁证：arm64 的 `serialize`(0x4a52f4) → `deserialize`(0x4a53e8) →
+   `add_target`(0x4a5704) 与 x86 的 `0x46f020` → `0x46f0c0` → `0x46f310` **同序**，
+   三段尺寸比分别为 0.66 / 0.74 / 0.83。
+
+### 11.2 45 行对照表（核心交付物）
+
+`锚` 列：`唯一` = 双向唯一 `panic::Location`；`消去` = 无一对一锚，按"一名一址"消去后唯一；
+`内联` = x86 上没有独立体；`结构` = 无 `Location`，靠结构（跳表 / 变体名 / 顺序 / 尺寸比）判定。
+`我方` 列的位置都是本仓文件 + 条目名。
+
+| # | 原版函数（`GraphwarGameStateManager::` 省） | x86 | x86 字节 | arm64 字节 | 锚 | 它干什么（证据） | 我方 |
+|---|---|---|---|---|---|---|---|
+| 1 | `serialize` | `0x46f020` | 160 | 244 | 结构 | `GraphwarGameState` 8 变体名之一，`serialize_str`（§11.1-3） | 未实现（`turnstate::GameState::as_str` 是同一组名字） |
+| 2 | `deserialize` | `0x46f0c0` | 592 | 796 | 结构 | 同上，走 JSON 反序列化器 | 未实现（`GameState::from_str` 等价） |
+| 3 | `visit_str` | `0x47a930` | 432 | 652 | 结构 | 按长度跳表 + 逐字节比出变体 | `turnstate::GameState::from_str` |
+| 4 | `add_target` | `0x46f310` | 896 | 1076 | 唯一 | `TeamManager::add_to_team` + `set_skin_graphics` + 4 次模块存取器（行号 593–603） | **`game::Match::add_target`** ✅同名 |
+| 5 | `start_game` | `0x46f690` | 4528 | 3996 | 唯一 | `get_team`×2 / `set_function` / `TurnManager::next_turn`（191–255、572–625） | 部分：`Match::new` + `begin_turn` |
+| 6 | `handle_tick` | `0x470840` | 816 | 784 | 唯一 | tick 事件转发 + **回合截止⇒自动开火** + 时间上限⇒回 `Setup`（§11.3） | **`Match::handle_tick`** / `tick` / `turnstate::should_auto_fire` ✅新增 |
+| 7 | `set_all_alive` | `0x470b70` | 832 | 892 | 唯一 | `LifeManager::set_alive` ×2（两类实体各一趟，607–616） | **`Match::set_all_alive`** ✅新增 |
+| 8 | `fire_functions` | `0x470eb0` | 5456 | 4864 | 唯一 | 取当前回合士兵 → 位置/队伍/函数原文 → 算弹道 → `set_function_points` → **调 `execute_results`** | **`Match::fire_functions`** ✅新增边界 |
+| 9 | `set_turn_count` | 未知（内联） | — | 124 | 内联 | `str w1,[x0,#0x118]` + `add_event`（tag `0x3a` = 58） | **`Match::set_turn_count`** ✅新增 |
+| 10 | `set_turn_limit` | `0x472400` | 112 | 124 | 消去 | `mov [rdi+0xc8],esi` / `[rdi+0xcc],edx` + `add_event`（tag `0x39` = 57） | **`Match::set_turn_limit`** ✅同名 |
+| 11 | `execute_results` | `0x472470` | 4272 | 3712 | 唯一 | `set_function_active_tick` / `set_queued_death` / `queue_destroy_obstacle` / `get_position` | **`Match::execute_results`** ✅新增边界 |
+| 12 | `get_alive_teams` | `0x473520` | 640 | 680 | 唯一 | 枚举**生命表** → `get_alive` → `get_team`，返回 `(Team1,Team2)` 两位（867–876） | **`Match::get_alive_teams`** ✅新增 |
+| 13 | `remove_all_players` | `0x4737a0` | 544 | 532 | 唯一 | 一次模块存取器 + 释放；485–486、554 | 未实现（清空玩家入口） |
+| 14 | `request_new_player` | `0x4739c0` | 832 | 1356 | 消去 | `add_to_team` + `add_team_color`（282–292） | 部分：`Match::register_player` |
+| 15 | `handle_chat_message` | `0x473d00` | 336 | 380 | 唯一 | 无直接调用，只做转发（锚 1187:18） | 未实现（无事件总线） |
+| 16 | `request_change_team` | `0x473e50` | 848 | 936 | 唯一 | `add_to_team`×2 + `get_team` + `add_team_color`（306–323） | 未实现（`set_team` 只有实体级） |
+| 17 | `handle_graphics_info` | `0x4741a0` | 752 | 784 | 唯一 | 写外观三件套（1147–1154） | 未实现（图形侧属 `graphwar_graphics_manager`） |
+| 18 | `setup_and_start_game` | `0x474490` | 1408 | 1184 | 唯一 | `get_team`×2 + `LevelGenerator::generate_level_custom` → `start_game`（458–474） | 未实现（关卡生成在 `graphwar_level_generator`） |
+| 19 | `add_soldier_to_player` | `0x474a10` | 2736 | 2856 | 唯一 | `get_team`/`add_to_team` + `set_hat/face/skin_graphics`（503–538） | 部分：`Match::register_player` |
+| 20 | `report_fired_function` | 未知（内联） | — | 236 | 内联 | 一次 `EventQueue::add_event`（arm64 `0x4ab5dc`） | 未实现（我方 `FunctionActive` 在 `execute_results` 里发） |
+| 21 | `request_fire_function` | `0x4754c0` | 208 | 224 | 唯一 | 调 `fire_functions` + `0x3caa20`（HashMap 泛型实例，不是方法，见 §11.8-6）；锚 655:111 | 部分：`Match::fire`（我们没有"请求→校验"两段） |
+| 22 | `request_remove_player` | `0x475590` | 800 | 812 | 唯一 | 334–340、554 | 未实现 |
+| 23 | `handle_function_points` | `0x4758b0` | 320 | 300 | 唯一 | 无直接调用，只做转发（1129/1135） | 部分：报文由 `execute_results` 发 |
+| 24 | `queue_end_turn_trigger` | `0x4759f0` | 1376 | 1420（closure） | 唯一 | `get_alive_teams`×2 + `get_alive` + `set_alive` + `next_turn` + `set_state`（839–906） | **`Match::end_turn`** + `Match::ending` |
+| 25 | `request_update_function` | `0x475f50` | 976 | 916 | 唯一 | `get_current_turn_soldiers` + `FunctionManager::set_function`（635–642） | 未实现（收集阶段在 `graphwar_game_server`） |
+| 26 | `set_player_num_soldiers` | `0x476320` | 400 | 460 | 唯一 | 转调 `add_soldier_to_player` / `remove_soldier_from_player`（370–371） | 未实现 |
+| 27 | `request_axis_mode_change` | `0x4764b0` | 320 | 380 | 唯一 | 写轴模式 + 一条 info（393–395） | 未实现（`RoomState.axis_mode` 是静态串） |
+| 28 | `request_time_mode_change` | `0x4765f0` | 320 | 384 | 唯一 | 同上（426–428） | 未实现（`time_mode` 是 `begin_turn` 入参） |
+| 29 | `request_turn_mode_change` | `0x476730` | 256 | 332 | 唯一 | `TurnManager::get_turn_mode` + `set_turn_mode`（415–417） | 未实现（`docs/117` §6：写死 `SequentialTurns`） |
+| 30 | `remove_soldier_from_player` | `0x476830` | 496 | 528 | 唯一 | 544–559 | 未实现 |
+| 31 | `handle_entity_removed_event` | `0x476a20` | 1824 | 1648 | 唯一 | `get_alive` + `get_position` + **`fire_functions`**（1064–1086） | 部分：死亡落地在 `execute_results` 尾部 |
+| 32 | `handle_new_connection_event` | `0x477140` | 720 | 740 | 唯一 | 1031–1048 | 未实现 |
+| 33 | `request_function_mode_change` | `0x477410` | 304 | 368 | 唯一 | 写函数模式 + 一条 info（404–406） | 未实现 |
+| 34 | `handle_connection_removed_event` | `0x477540` | 1440 | 1300 | 唯一 | 调 **`execute_results`** 一次（1096–1114）；"掉线者按已提交处理"是**推断** | 未实现 |
+| 35–41 | `subscribe_to_events_event_handler` ×7 | 内联进 `0x477bc0` | — | 7×48 | 内联 | 7 个 `GraphwarEventHandler::subscribe_to_event`（事件名见 §11.7） | 未实现（无事件总线） |
+| 42 | `new` | `0x477bc0` | 992 | 1004 | 唯一 | 建表 + 7 次订阅（116–118） | **`Match::new`** |
+| 43 | `set_lock` | `0x477fa0` | 112 | 124 | 消去 | 一个字节 + 一条 info（454） | 未实现 |
+| 44 | `set_name` | `0x478010` | 176 | 196 | 消去 | 写名字 + 一条 info（203） | 未实现（`RoomState.room_name` 静态） |
+| 45 | `set_state` | `0x4780c0` | 560 | 652 | 唯一 | `mov [rdi+0x120], sil` + 一条 `GameStateInfo`（tag `0x1e` = 30，与 `src/events.rs` 一致）+ **按状态分支**（§11.4） | `turnstate::GameState` / `next_state` / `winner_byte` |
+
+合计：**45 行 = 34 个有 x86 地址 + 4 个内联（`set_turn_count`、`report_fired_function`、
+7 个订阅闭包算 1 组）+ 3 个 serde（本轮新解出）**。
+按"我方有没有对应实现"分：**同名或逐位同构 10 条**（`add_target` / `handle_tick` /
+`set_all_alive` / `fire_functions` / `execute_results` / `get_alive_teams` / `set_turn_count` /
+`set_turn_limit` / `queue_end_turn_trigger`→`end_turn`+`ending` / `new`）、
+**部分或等价 7 条**（`visit_str`→`from_str`、`start_game`、`request_new_player`、
+`add_soldier_to_player`、`request_fire_function`、`handle_function_points`、
+`handle_entity_removed_event`）、**未实现 28 条**。
+
+### 11.3 `handle_tick`：回合超时的**检测点**在这里
+
+`docs/117` §6 记着"回合超时的**检测**没有证据"。现在有了：检测就在 `0x470840`。
+这个函数干三件事，第三件是回 `Setup`：
+
+```text
+① 0x470880–0x470989  tick 事件转发：取订阅者表，逐个 call [vtable+0x20]，再释放
+② 0x470989–0x4709f1  cmp BYTE [self+0x120], 2      ; state == WaitingForFunctions（判别值 2）
+                     call TurnManager::get_end_of_turn_tick (0x462ec0)
+                     cmp  eax, 1                    ; 取到截止 tick
+                     cmp  now_tick, end             ; now_tick >= end_of_turn_tick
+                     cmp  BYTE [self+0x11c], 0      ; "有人在等"标志
+                     → call fire_functions (0x470eb0)
+③ 0x470a04–0x470a61  cmp DWORD [self+0xc0], 1       ; 另一对 (标志, 截止 tick)
+                     cmp now_tick, [self+0xc4]      ; now_tick > 截止
+                     cmp BYTE [self+0x11c], 0
+                     → [self+0xc0] = 0; state = 1 (Setup); 推一条事件
+```
+
+② 判的是**时钟**，不是"谁按了按钮"：`end_of_turn_tick`（`docs/42` 的回合截止时刻）
+一到，就把当前回合士兵已提交的函数打出去 —— 也就是**超时即按已提交内容结算**。
+它有三个合取项（状态 / 截止 tick / `[+0x11c]`），一项都不能省。
+
+arm64 侧的偏移与 x86 完全一致，可以互相印证（`0x4a6bd0 ldrb w8,[x19,#0x120]`、
+`0x4a6c2c`/`0x4a6c68 ldrb w8,[x19,#0x11c]`、`0x4a6c7c strb w8,[x19,#0x120]`）。
+
+落成代码：`turnstate::should_auto_fire(state, now_tick, end_of_turn_tick, waiting)`（纯函数，
+真值表在 `tests/graphwar_game_state_manager.rs`）。**没有接线**：`Match` 上没有 `[+0x11c]`
+那一位，开火仍由调用方在收集阶段决定（`docs/117` §6 的其余两条尾巴不受影响）。
+
+③ 那一对 `[+0xc0]`/`[+0xc4]` 与 `set_turn_limit` 写的 `[+0xc8]`/`[+0xcc]` 是**两对**不同字段
+（前者只在这条分支里读，写点还没找到）⇒ ③ 的**语义仍是推断**，只记结构，不实现。
+
+### 11.4 胜负字节：`set_state(EndingGame)` 内部的四行表
+
+`docs/150` 已经把"某队没有存活实体"这条判据钉死了；本节补的是**胜方那个字节**
+（`[self+0x11f]`）到底怎么算出来 —— 它在 `set_state` 里，不在 `queue_end_turn_trigger` 里：
+
+```text
+0x478136  call get_alive_teams        ; 返回 (al = Team1 有活体, dl = Team2 有活体)
+0x47813b  test al,1
+0x47813d  je   0x47822f               ; Team1 死 → al = 2 - (dl&1)
+0x478143  xor  eax,eax
+0x478145  test dl,1
+0x478148  je   0x478236               ; Team2 死 → 写 0（Team1 赢）
+0x47814e  cmp  DWORD [rbx+0xc8],1     ; 设过回合上限？
+0x478155  adc  al,1                   ; CF = ([+0xc8] < 1) ⇒ 设过上限写 1，否则写 2
+0x478236  mov  BYTE [rbx+0x11f],al
+```
+
+| `Team1` 有活体 | `Team2` 有活体 | 设过上限 | 字节 | 含义 |
+|---|---|---|---|---|
+| 否 | 否 | — | `2` | 没人赢 |
+| 否 | 是 | — | `1` | `Team2` |
+| 是 | 否 | — | `0` | `Team1` |
+| 是 | 是 | 否 | `2` | 没人赢 |
+| 是 | 是 | 是 | `1` | `Team2` |
+
+⚠️ 注意这一列是**"设过上限"**（`[+0xc8]` 是 `set_turn_limit` 的第一个入参），
+**不是"上限已用尽"**。两者只在"两边都还有人却进了 `EndingGame`"这一种收场上分叉，
+而那种收场只可能由上限触发 ⇒ 我方 `Match::ending` 用 `turn_count >= limit` 判，
+在**可达输入上逐例一致**（`ending_agrees_with_the_winner_table_on_reachable_inputs`）。
+
+落成代码：`turnstate::winner_byte(t1_alive, t2_alive, turn_limit_set) -> u8`。
+我方 `Ending.winner` 存的是**实体队伍号**（`set_team` 记的 u8），原版这个字节是
+**队伍序号**（0/1/2）—— 换算关系见两者的文档，别混。
+
+### 11.5 三个判定点：`get_alive_teams` / `set_all_alive` / `add_target`
+
+* **`get_alive_teams`（`0x473520`）** 数的是**生命表里的活实体**：
+  `get_all_entities`(0x453c60) → 逐个 `get_alive`(0x454950) → `get_team`(0x3c2120)。
+  士兵与靶子同表（靶子有 `LifeInfo`，玩家实体没有），所以打靶关与对战关**同一条规则**
+  （与 `docs/150` §Q2 一致）。我方 `team_has_survivor` 是同一个判据的两种枚举方式，
+  新加的 `Match::get_alive_teams` 把它收成原版那两位。
+* **`set_all_alive`（`0x470b70`）** 体内**两次** `LifeManager::set_alive`、零报文：
+  两类实体各刷一趟存活位。我方 `Match::set_all_alive` 两趟（靶子表 + 生命表）；
+  **差异**：我们被打死的士兵会被 `execute_results` 从 `self.soldiers` 摘掉（站位丢了），
+  复活不了 —— 真值那边 `set_alive(true)` 也只是翻存活位、不重建实体，所以行为面一致。
+* **`add_target`（`0x46f310`）** 的直接调用是 `TeamManager::add_to_team`（写队伍）+
+  `GraphicsManager::set_skin_graphics`（写外观）+ 4 次模块存取器；
+  **队伍是入参**（`docs/150`：127/127 个靶子都是 `TeamInfo{Team2}`，但那是调用方给的）。
+  我方 `add_target` 只有"靶子表 + 队伍"两件事（外观属别的模块）。
+
+### 11.6 `set_turn_count` / `set_turn_limit`：两个同形 setter
+
+arm64 上这两个函数**紧挨着、同样 124 字节、体内同样只有一次 `add_event`**（§11.1-3）。
+x86 上只剩 `set_turn_limit`（`0x472400`，112 字节）：
+
+```text
+0x472405  mov DWORD [rdi+0xc8], esi     ; 第一个 u32 入参 = "设过上限"标志
+0x47240b  mov DWORD [rdi+0xcc], edx     ; 第二个 u32 入参 = 上限本身
+0x472433  movabs rax, 0x8000000000000039  ; 事件 tag 0x39 = 57
+0x472447  call [GOT 0x9bac80]            ; EventQueue::add_event
+```
+
+⇒ 它是 **(标志, 上限)** 两个 u32 的 setter，报文里只出现 `turn_limit` 一个字段
+（语料 21 条全是 `{"TurnLimitInfo":{"turn_limit":N}}`，`docs/123` §5.1）。
+
+**两侧一起看就闭环了**（arm64 的字段偏移与 x86 相同）：
+
+```text
+set_turn_count 0x4a8470  str  w1, [x0, #0x118]      ; turn_count
+               0x4a8480  mov  x9, #0x3a             ; tag 58
+               0x4a8488  str  w1, [sp, #0x10]       ; payload = 计数
+               0x4a84a0  bl   EventQueue::add_event
+
+set_turn_limit 0x4a84f0  stp  w1, w2, [x0, #0xc8]   ; (标志, 上限) 两个 u32
+               0x4a8508  mov  x8, #0x39             ; tag 57
+               0x4a8500  stp  w1, w2, [sp, #0x10]   ; payload = 两个 u32
+```
+
+两个 tag 与**本仓自己的** `src/events.rs` 完全一致：`TurnLimitInfo = 57`、
+`TurnCountInfo = 58`（另 `GameStateInfo = 30` = `set_state` 的 `0x1e`）。这条交叉校验
+不依赖任何反编译文字：一边是二进制里的立即数，一边是我们按抓包排出来的 tag 表。
+⇒ `set_turn_count` 的 payload 就是 `turn_count` 一个字段。
+
+**上限/结束判定不在这两个 setter 里**（在 `queue_end_turn_trigger` 与 `ending`）。
+我方两条都按这个形状落地。
+
+### 11.7 我方按原版边界归位后的分工
+
+重组**只挪位置、不改行为**（既有断言一条没动）。两个文件现在这样分工：
+
+| 文件 | 负责的原版函数 | 说明 |
+|---|---|---|
+| `src/game.rs` | `new`(42) / `add_target`(4) / `set_all_alive`(7) / `get_alive_teams`(12) / `set_turn_limit`(10) / `set_turn_count`(9) / `handle_tick`(6) / `fire_functions`(8) / `execute_results`(11) / `queue_end_turn_trigger`(24) / `start_game`(5，部分) | 运行实体 `Match`。每段代码前面有一条 `// 原版边界：…` 横幅，写明原版函数名 + 地址 + 我方条目名 |
+| `src/turnstate.rs` | `GraphwarGameState`（1/2/3 的枚举侧）+ `set_state`(45) 的状态字节与胜方字节 + `handle_tick`(6) 的超时判据 | 状态枚举（8 变体）、迁移表（我方模型，非原版函数）、`should_auto_fire`、`winner_byte` |
+
+新增的原版名入口（都不改既有行为，全部有成对的测试）：
+
+| 新增 | 原版 | 一句话 |
+|---|---|---|
+| `Match::set_all_alive` | `0x470b70` | 两趟翻存活位 |
+| `Match::get_alive_teams` | `0x473520` | `(Team1 有活体, Team2 有活体)` |
+| `Match::set_turn_count` | arm64 `0x4a8460`（x86 内联） | 写计数 + `TurnCountInfo` |
+| `Match::handle_tick` | `0x470840` | 原版名的入口（已落地的到期动作） |
+| `Match::fire_functions` | `0x470eb0` | 前一半：纯几何（只算弹道，不改状态） |
+| `Match::execute_results` | `0x472470` | 后一半：合并死亡 + 广播 + 落地 |
+| `turnstate::GameState::{Connecting, Disconnected}` + `VARIANTS` + `index` | 变体表 `0x9586d0` | 枚举补齐 8 个变体，判别值 `0..=7` |
+| `turnstate::should_auto_fire` | `0x470989`–`0x4709ec` | 超时判据（纯函数，未接线） |
+| `turnstate::winner_byte` | `0x478133`–`0x478236` | 胜方字节四行表 |
+
+`fire_batch` 现在是 `fire_functions` + `execute_results` 的**顺序复合**（`N=1` 时与
+`fire` 逐字节相同，`one_shot_fire_is_a_one_element_batch` 钉住这条）。
+
+`new` 里那 7 个订阅的事件名（`.rodata` `0x1c18ad` 起，逐条 `lea` 立即数）：
+`new_connection_event`、`entity_removed_event`、`tick_event`、`connection_removed_event`、
+`function_points_event`、`skin_graphics_info_event`、`chat_message_event`。
+这 7 条正好对上 arm64 里 7 个 `subscribe_to_events_event_handler::{{closure}}`（每个 48 字节）
+⇒ 订阅函数本身在 x86 上被内联进 `new`，没有独立体。
+
+### 11.8 仍然未知 / 未实现
+
+1. **`set_turn_count` 的 x86 地址**：只能证明它被内联（§11.1-3），**没有**地址；
+   旧表给的三个候选全是别人的函数体。
+2. **`report_fired_function` 的 x86 地址**：同上。它在 arm64 上只做"把'已开火'塞进事件队列"，
+   在 x86 上被内联进 `0x3e2830`（远端事件派发器）。
+3. **`handle_tick` 的第 ③ 段**（`[+0xc0]`/`[+0xc4]` ⇒ 回 `Setup`）：只读到**结构**，
+   字段语义（是不是"整局时间上限"）**没有写点证据** ⇒ 推断，不实现。
+4. **`[+0x11c]` 那一位**（"有人在等"）：`handle_tick` 的三段都要它，但写点未定位
+   ⇒ `should_auto_fire` 只把它当入参。
+5. **29 条"未实现"**（§11.2 表里）：绝大多数是**事件总线 / 房间设置 / 图形 / 关卡生成**
+   的接线，落在别的原版模块（`graphwar_event_handler`、`graphwar_graphics_manager`、
+   `graphwar_level_generator`、`graphwar_player_manager` …），不属于本模块的"状态机内核"。
+6. **`0x3caa20`**：被 `module_funcs.tsv` 归到本模块，但它是 **HashMap 探测的泛型实例**
+   （SIMD 比较 + 两个 `panic::Location` 落在 658/660 行，即 `request_fire_function` 的行段内）
+   ⇒ 不是原版方法，不该进本模块的函数名单。本表不含它。
+
+### 11.9 复现
+
+```text
+# 45 条真名（fixtures/name_to_addr.tsv，join_kind 列就是可信度）
+awk -F'\t' '$1=="graphwar_game_state_manager"' fixtures/name_to_addr.tsv
+
+# 尺寸交叉校验（arm64 有真名与长度，x86 用 Ghidra 边界）
+nm -C -S --defined-only .rea-work/apk/arm64/lib/arm64-v8a/libgraphwarrust.so | grep game_state_manager
+
+# 单条函数的直接调用表 / 串 / Location 行号（本仓库之外的分析索引）
+../.venv/bin/python tools/callers.py 0x470840
+```
