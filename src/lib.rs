@@ -129,6 +129,7 @@ pub mod game;
 pub mod graphwar_level_generator;
 pub mod graphwar_game_server;
 pub mod graphwar_function_evolutionator;
+pub mod graphwar_setup_control;
 pub mod graphwar_root_node;
 pub mod graphwar_level_manager;
 pub mod graphwar_game_client;
