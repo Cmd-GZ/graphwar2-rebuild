@@ -2167,3 +2167,194 @@ computer_player / color / rank 各 1 处（模块名来自归属表，具体 `ca
 
 `tests/graphwar_game_client.rs` 的断言都是**回归保护**；每条右侧的真值要么是
 指令立即数、要么是 `.rodata` 字节，测试里逐条注明了地址。
+
+---
+
+## 21. `axis_drawer.rs` / `effect_drawer.rs` 规格（本轮新增：坐标轴网格 + 特效状态机）
+
+> **本篇解决什么问题**：这两个模块是**纯绘制**的，判据只有两种——"调了哪些引擎方法"
+> 和"传了什么常量"。本节把两者都钉到指令地址；凡是钉不住的，§21.5 明写未知。
+>
+> **方法名来源**：`fixtures/name_to_addr.tsv`（`panic::Location` 跨架构 join）给出
+> `EffectDrawer::{draw, ready, process}` 与 `EffectData::new` / `step_effect`；
+> 本轮在此之上**直接用 arm64 2.0.60 的 `.symtab`**（`readelf -sW`）补齐了 x86 侧
+> 没有 Location 锚的那几个函数（`step_effect`、两个 `ready` 闭包、`EffectData::new`）。
+> 两侧都是 **2.0.60**（arm64 sha256 `8a612e95…`，x86 sha256 `9a538115…`）。
+
+### 21.1 函数清单（x86 虚地址；Ghidra = +`0x100000`）
+
+| 模块 | arm64 符号（`.symtab`，2.0.60） | arm64 vaddr / size | x86 vaddr / size | 档位 |
+|---|---|---|---|---|
+| `axis_drawer` | `<AxisDrawer as IControl>::draw` | `0x43b400` / 1492 | **`0x4e05b0`** / `0x670` | 观测 |
+| `effect_drawer` | `<EffectDrawer as IControl>::draw` | `0x43c578` / 3356 | **`0x4e1520`** / `0x1090` | 观测 |
+| `effect_drawer` | `<EffectDrawer as IControl>::ready` | `0x43d294` / 1204 | **`0x4e25b0`** / `0x480` | 观测 |
+| `effect_drawer` | `ready::{{closure}}`（`tick_event`） | `0x43d930` / 708 | **`0x4e2a30`** / `0x320` | 观测 |
+| `effect_drawer` | `ready::{{closure}}`（`effect_info_event`） | `0x43d748` / 488 | **`0x4e2d50`** / `0x230` | 观测 |
+| `effect_drawer` | `<EffectDrawer as IControl>::process` | `0x43dbf4` / 3004 | **`0x4e2f80`** / `0xb50` | 观测 |
+| `effect_drawer` | `EffectDrawer::step_effect` | `0x444d2c` / 992 | **`0x4eb450`** / `0x3cc` | 观测 |
+| `effect_drawer` | `EffectData::new` | `0x44486c` / 1216 | **未知** | 仅 arm64 名字 |
+
+两处**容易读错的地方**：
+
+1. `fixtures/name_to_addr.tsv` 里 `effect_drawer` 有 **3 行 `ready`**（`0x4e25b0`/
+   `0x4e2a30`/`0x4e2d50`）——那不是三个 `ready` 方法，而是 `ready` 本体 +
+   它注册的两个闭包（桥表把 `{{closure}}` 后缀剥掉了）。
+2. `step_effect`（`0x4eb450`）的跳表分支在 Ghidra 里被切成了 8 个"函数"
+   （`0x4eb52e`/`0x4eb559`/`0x4eb57d`/`0x4eb5ef`/`0x4eb65b`/…）。
+   **它们都在 `step_effect` 体内**：从 `0x4eb450` 到共同出口 `0x4eb81c`。
+   判据：跳表 `0x1c3bec` 的项直接落在这些地址上。
+
+### 21.2 `AxisDrawer::draw`（`0x4e05b0`）画什么
+
+一次 `draw` 只有三种原语，**没有 `draw_string`、没有贴图、没有圆**：
+
+| # | 原语 | 实参 | 指令 |
+|---|---|---|---|
+| 1 | `draw_set_transform` | `pos = size × 0.5`、`rotation = 0`、`scale = (W/50, −W/50)` | `0x4e0630..0x4e0667`（槽 `0x9bc018`） |
+| 2 | `draw_rect` | `rect = (-25,-15,50,30)`、`color = (1,1,1,1)`、`filled = true`、`width = -1`、`aa = false` | `0x4e069f..0x4e06ca`（槽 `0x9bc028`） |
+| 3 | `draw_line` × N | 见下 | `0x4e0775` `0x4e0815` `0x4e089f` `0x4e0944` `0x4e09c6` `0x4e0a74` `0x4e0b02` `0x4e0b62` |
+
+`scale` 的两个分量**都除以 50**（`xmm3 = size.x/50`，`xmm4 = −xmm3`）⇒ 一个棋盘单位在
+x、y 上等长（正方形格子），y 方向翻过来。这一点值得单独记：原版**不是**按控件高宽
+分别拉伸，而是各向同性，所以 50:30 的棋盘只有在 5:3 的控件里才铺满。
+
+`draw_line` 由 `self+0x18` 的 `axis_mode: u8` 控制（三条比较：`cmp al,3` / `cmp al,2` /
+`test al,al`）：
+
+| `axis_mode` | 细网格（1 单位，`0.9` 灰，宽 `0.05`） | 粗网格（5 单位，`0.7` 灰，宽 `0.05`） | 主轴（`0.2` 深灰，宽 `0.075`） | 合计 `draw_line` |
+|---|---|---|---|---|
+| `0` NoAxis | — | — | — | **0** |
+| `1` OnlyMain | — | — | x=0、y=0 | **2** |
+| `2` EveryFive | — | 左边界 + 竖直 `-20..=25`（10）+ 下边界 + 水平 `-10..=15`（6）= **18** | 2 | **20** |
+| `3` EveryUnit | 竖直 `-25..=25`（51）+ 水平 `-15..=15`（31）= **82** | 18 | 2 | **102** |
+
+细节（都会被断言）：
+
+* 细网格**包含** x/y 为 5 的倍数的位置，也**包含** 0——那几条会被后画的粗线、
+  轴线覆盖，但原版**确实发了**（没有 `if x % 5 != 0` 这种跳过）。
+* 粗网格把**左边界 `x=-25`** 与**下边界 `y=-15`** 单独画一次，循环体从 `-20`/`-10`
+  起（`mov $0xffffffe8` / `mov $0xfffffff2` 之后 `lea ebx,[rax+4]`）。上/右边界没有。
+* 主轴**先竖后横**（`0x4e0b02` → `0x4e0b62`）。
+* 所有 `draw_line` 的 `antialiased` 都是 `false`（每个调用点前 `xor %edx,%edx`）。
+
+### 21.3 `EffectDrawer`：图元、相位、时长
+
+**图元**（`draw` = `0x4e1520`）：`draw_set_transform` ×1 + 每个元素按相位选一种：
+
+| 相位 | 图元 | 半径 | 颜色（r,g,b） | alpha |
+|---|---|---|---|---|
+| 0 | `draw_circle` | `0.05` | `(0.6, 0.6, 0.1)` | `max(0,(1−t)×0.9)` |
+| 1 | `draw_polygon` | — | `(0.6, 0.6, 0.1)` | `max(0,(1−t/0.9)×0.9)` |
+| 2 | `draw_circle` | `0.06` | `(0.7, 0.7, 0.0)` | 同上式 |
+| 3 | `draw_circle` | `0.06` | `(0.7, 0.7, 0.0)` | 同上式 |
+| 4 | `draw_line` | — | `(0.9, 0.9, 0.1)` | 同上式 |
+| 5 | `draw_line` | — | `(0.9, 0.9, 0.1)` | 同上式 |
+| 6 | `draw_circle` | `0.06` | `(0.1, 0.1, 0.1)` | 固定 `0.7` |
+
+相位表来自 `draw` 里的相对跳表 `0x1c3b8c`（`movsxd rax,[r13+rax*4]; add rax,r13;
+jmp rax` @ `0x4e1932`）：**表里只有 7 项落在本函数内**，第 8 项起跳到 `0x4ea6af`
+等别处的地址 ⇒ 相位枚举 7 个值。所有圆/线的 `filled = true`、`width = -1`、
+`antialiased = false`。
+
+**元素布局**（`EffectData`，stride `0x30` = 48 字节，`lea r15,[rax+rax*2]` 其中
+`rax = len<<4` @ `0x4eb471`）：
+
+| 偏移 | 内容 | 依据 |
+|---|---|---|
+| `+0x00` | 位置 `(f64, f64)` | `movupd xmm0,[rbx]` @ `0x4eb566`；`movsd` @ `0x4e19cc` |
+| `+0x10` | 速度 `(f64, f64)` | `movupd xmm1,[rbx+0x10]` @ `0x4eb56a`；撞障碍后整体清零 @ `0x4eb592` |
+| `+0x20` | `start_tick: u32` | `mov ecx,[r14+rbp+0x20]` @ `0x4e1950` |
+| `+0x24` | `duration_ticks: u32` | `mov eax,[r14+rbp+0x24]` @ `0x4e1955` |
+| `+0x28` | 相位 `u8`（0..=6） | `movzx eax,byte [r14+rax+0x28]` @ `0x4e1932` |
+| `+0x2c` | **未知 4 字节** | 未见访问 |
+
+**时长与时间单位**（本节最硬的一条新结论）：
+
+| 量 | 值 | 槽 / 指令 |
+|---|---|---|
+| tick/秒 | `60.0` | 槽 `0x19f918`，`mulsd` @ `0x4eb481` |
+| 物理子步 | **`1/600` s**（`0x3f5b4e81b4e81b4f`） | 槽 `0x19ed20`/`0x19ed28`/`0x19f9f0`；`mulpd` @ `0x4eb56f`；**全二进制只有 `step_effect` 用这个常量** |
+| 子步循环条件 | `delta > acc`（f64，不是 tick 计数） | `ucomisd`/`ja` @ `0x4eb628` |
+| 相位推进 | `+0x258` = **600 tick** | `add eax,0x258` @ `0x4eb4c2`/`0x4eb530`；arm64 `add wN,wN,#0x258` |
+| `tick_event` 的 delta | `1/60` s | 槽 `0x19f2a8`，`0x4e2a30` 引用 |
+| 元素存活 | `now <= start + duration` | `cmp edx,r15d; jb 跳过` @ `0x4e195c` |
+
+⇒ **"爆炸动画播多久"由元素自己的 `duration_ticks` 决定**（tick 单位，60 tick = 1 秒）；
+`step_effect` 推进的 600 tick 是**相位**节拍（10 秒），不是整段特效的寿命。
+`duration_ticks` 的**具体取值**在 `EffectData::new` 里，x86 侧没定位到（§21.5）。
+
+**接线**：`ready`（`0x4e25b0`）用 `GraphwarBackend::subscribe_to_event` 订阅两个事件，
+名字字面量就在指令里：
+
+```text
+0x4e2802  lea rsi,[0x1c4225]  mov edx,0x11  ; "effect_info_event"
+0x4e2893  lea rsi,[0x1c4236]  mov edx,0xa   ; "tick_event"
+```
+
+两张闭包 vtable 的实参函数指针（`.rela.dyn` 的 `R_X86_64_RELATIVE` addend）：
+`0x95fb70 → 0x4e2d50`（`effect_info_event`）、`0x95fb98 → 0x4e2a30`（`tick_event`，
+它调 `step_effect`）。
+
+`process`（`0x4e2f80`）里没有绘制，只有：`Instant::now` → 取当前 tick
+（`get_module` 后 `[module+0x58]`）→ `Vec::retain` 丢掉过期元素 →
+`CanvasItem::queue_redraw` → `Instant::elapsed`，若 `> 0x3b9aca00`（**1e9 ns = 1 秒**）
+则 `_print` 打一行 `src/effect_drawer.rs:507`（槽 `0x1c4240`，24 字节）。
+
+### 21.4 与 `client/` 仿制实现的出入（**不改 client，只登记**）
+
+`client/src/game/effect_layer.gd` 是照协议枚举猜的；拿到代码后**有六处对不上**：
+
+| 项 | 原版（观测） | `client` 当前 | 结论 |
+|---|---|---|---|
+| 半径 | `0.05` / `0.06` **棋盘单位**（≈ W/50×0.05 px） | `RADIUS_UNITS` = `0.7 … 1.6` | **差 1 个数量级**：原版是"小点"，不是大团 |
+| 时长 | `duration_ticks`（tick 计，60 tick = 1 s）+ 相位 600 tick | `LIFETIME` = 0.30–0.90 **秒** | 原版是 tick 制；且相位节拍 = 10 s |
+| 颜色 | `(0.6,0.6,0.1)` / `(0.7,0.7,0)` / `(0.9,0.9,0.1)` / `(0.1,0.1,0.1)`，alpha 上限 `0.9` | 自定义暖色四组 | 全部替换 |
+| 图元 | `draw_circle` ×4 + `draw_polygon` ×1 + `draw_line` ×2 | `draw_arc` + `draw_circle` + `draw_line` + `draw_rect` | 原版**没有 `draw_arc`、没有 `draw_rect`** |
+| 种类数 | `draw` 的相位枚举 **7 个**（协议 4 种 → 内部 7 相位） | 4 种（= 协议枚举） | 协议 4 种是**事件**的分类，不是绘制分支 |
+| 运动 | 元素带**速度**，`step_effect` 按 `1/600 s` 积分，撞障碍速度清零 | 无速度、只计时 | 原版特效是**会动**的粒子 |
+| 驱动 | `tick_event` 闭包推进；`process` 只 `retain` + `queue_redraw` | `_process(delta)` 里累计 `age` | 推进时钟不是帧间隔，是 tick |
+
+坐标轴一侧**基本对得上**（`client/src/play/plane_view.gd::_draw_grid` 的四档含义、
+三种灰阶 `0.9/0.7/0.2` 与白底都与二进制一致），只有三处细节差：
+
+| 项 | 原版 | `client` |
+|---|---|---|
+| 细网格是否跳过 5 的倍数与 0 | **不跳过**（照发，被上层覆盖） | 跳过（`fmod(x,5)` 与 `x≈0` 时不画） |
+| 粗网格边界 | 左边界 `x=-25` + 下边界 `y=-15` 各一条 | 无边界线（边界由 `_draw_border` 另画） |
+| 线宽 | `0.05` / `0.075` **世界单位**（随缩放变） | `unit` / `unit*2` **画布像素**（不随缩放变） |
+
+`0.05` 世界单位在 `W=1600` 时是 `1600/50×0.05 = 1.6 px`，`0.075` 是 `2.4 px` —— 与
+`client` 的 1/2 px 同量级但不同源；控件尺寸不是 1600 时两者会越差越远。
+
+### 21.5 诚实清单（没解出来的）
+
+1. **`EffectData::new` 的 x86 地址与字段初值**。arm64 里它只被 `effect_info_event`
+   闭包调用且已内联，x86 没有 `call rel32` 指向它；arm64 版用了 `rand::random` 和 π
+   ⇒ 它是**带随机初值**的构造函数。`duration_ticks` 的真实取值只能从这里拿。
+2. **相位 1（`draw_polygon`）的顶点公式**。只读到两组点各乘 `0.2`（槽 `0x19c460`）后
+   进 `PackedVector2Array`；逐点的三角函数与排布未复原，`src/effect_drawer.rs` 里
+   `Primitive::Polygon` 的 `points` **故意留空**。
+3. **相位 4/5（`draw_line`）的端点**。颜色/线宽已定，端点几何公式未逐条读；代码里
+   `from`/`to` 都填 `center`，只是占位，不代表原版。
+4. **`draw` 里 `self+0x1f8` 的位掩码语义**（`and 0x101` / `test 0x10000` /
+   `cmp 0x1000000` @ `0x4e175f..0x4e1783`）：它决定 `scale.y` 的正负。推断与 y 轴朝向
+   / 函数模式有关，未证。
+5. **`EffectData` 的 `+0x2c`** 那 4 字节：未见任何读写。
+6. **`AxisMode` 判别值**：`0=NoAxis … 3=EveryUnit` 是从代码行为（0 一条线都不画、
+   3 画最细网格）反推的；`client/src/app/modes.gd` 的 `AXIS_LABELS` 独立给出同一顺序，
+   但两者都不是"读到了枚举定义"。
+
+### 21.6 落码清单
+
+| 原版 | 落在 | 覆盖程度 | 档位 |
+|---|---|---|---|
+| `AxisDrawer::draw` `0x4e05b0` | `src/axis_drawer.rs`：`axis_primitives` / `line_count` / `AxisMode` + 16 条常量 | 三种原语、四种模式、每条线的坐标与颜色宽度 | 观测 |
+| `EffectDrawer::draw` `0x4e1520` | `src/effect_drawer.rs`：`frame_primitives` / `effect_primitive` / `Phase` / 12 条常量 | 7 个相位的图元、半径、颜色、alpha | 观测（相位 1 的顶点、相位 4/5 的端点 = 未知） |
+| `EffectDrawer::step_effect` `0x4eb450` | `step_effects` / `ticks_for_delta` | 1/600 子步积分、撞障碍清零、`0x5b` 相位推进 | 观测（各相位分支的细节 = 推断） |
+| `EffectDrawer::ready` `0x4e25b0` | `SUBSCRIBED_EVENTS` / `READY_SUBSCRIPTIONS` | 两个事件名 + 两张 vtable | 观测 |
+| `EffectDrawer::process` `0x4e2f80` | `PROCESS_STEPS` / `TIME_PROBE_*` | 五步 + 1 s 探针阈值 | 观测 |
+| `EffectData` 布局 | `effect_data_offset` / `EFFECT_STRIDE` | 0x30 字节里已证的 5 个字段 | 观测 |
+| `EffectData::new` | **未落码**（只留 `EffectData::new` 作为显式构造） | — | 未知 |
+
+`tests/axis_drawer.rs`（11 条）与 `tests/effect_drawer.rs`（14 条）的断言都是
+**回归保护**；右侧真值要么是 `.rodata` 字节、要么是指令立即数，测试里逐条注明了地址。
