@@ -420,10 +420,10 @@ mod("graphwar_crash_reporter.rs", "graphwar", (), "未知",
     "全二进制**没有一个** panic 锚落在这个文件上，也没有任何地址级观测")
 mod("graphwar_draw_util.rs", "graphwar", (), "未做",
     "docs/140：准备圈/弹道画法已从机器码扒出；绘制落 client/ GDScript，src/ 无实现")
-mod("graphwar_effect_manager.rs", "graphwar", (), "未知",
-    "全仓库 0 处提及：无锚点之外的信息、无观测、无实现")
-mod("graphwar_entity_effect_manager.rs", "graphwar", (), "未知",
-    "全仓库 0 处提及：只有名字，没有行为证据")
+mod("graphwar_effect_manager.rs", "graphwar", ("src/graphwar_effect_manager.rs",), "观测",
+    "5（含 EffectType::deserialize）：EffectType 4 个取值已穷举（ExplosionEffect/DeathEffect/SparkEffect/AshEffect）（docs/16 §32）")
+mod("graphwar_entity_effect_manager.rs", "graphwar", ("src/graphwar_entity_effect_manager.rs",), "观测",
+    "3 + 内联 add_entity_effect。登记表 = u32->u8 的 entity_effect_map（全库唯一，桶距 8）；**死亡特效照抄出生登记**：execute_results 用 effect_type=map[entity_id]，查不到就一条都不发（0x4a8c38）=> Ash/Death 的分界在出生登记处，正是 docs/141 那 19 例的成因（docs/16 §32）")
 mod("graphwar_event_handler.rs", "graphwar", ("src/events.rs",), "观测",
     "docs/114：0x3d38f0 的「事件名 → 判别值」表逐条解出（四道自校验）；事件枚举与分派已落码")
 mod("graphwar_event.rs", "graphwar", ("src/events.rs",), "观测",
@@ -438,8 +438,8 @@ mod("graphwar_function_manager.rs", "graphwar", ("src/game.rs",), "观测",
 mod("graphwar_game_client.rs", "graphwar", ("src/graphwar_game_client.rs",), "观测",
     "36 个函数分 8 类（docs/16 §17）：8 种请求事件判别值 11/12/16/17/18/19/20/21 + 0x48 记录形状 + "
     "add_bot_0..5 -> 3/10/25/100/250/1000 + 0x517690 的 3 订阅名/14 manager；6 个入口函数语义未知")
-mod("graphwar_game_recorder.rs", "graphwar", (), "未知",
-    "只有 docs/02 一行（对局录制），无地址级观测、无实现")
+mod("graphwar_game_recorder.rs", "graphwar", ("src/graphwar_game_recorder.rs",), "观测",
+    "3：订 32 条服务端广播事件（24 条 *_info_event + 8 条不带 info 的；*_request_event 一条不订）；GameStateInfo==6 EndingGame 上升沿落盘 user://replays/<unix 秒>（gzip + 每行 {event,tick}），==1 Setup 且上一条是 6 时清缓冲（docs/16 §32）")
 mod("graphwar_game_server.rs", "graphwar", ("src/graphwar_game_server.rs", "src/server.rs"), "逐位",
     "docs/43/46：一回合 12 条报文与抓包逐字节一致；docs/62 真实 TCP 跑到 EndingGame")
 mod("graphwar_game_state_manager.rs", "graphwar", ("src/game.rs", "src/turnstate.rs"), "逐位",
@@ -509,9 +509,8 @@ mod("graphwar_rank_manager.rs", "graphwar", ("src/graphwar_rank_manager.rs",), "
     "4 函数。段位**只从远端事件进**（RemoteEventHandler::handle_{client,server}_remote_event 各一处 set_rank），模块内零换算；RankInfo(67) = 三个 dword（+8 标志 / +0xc 段位 / +0x10 player_id）；66 由 local_player_manager 发（推断）（docs/10 §14）")
 mod("graphwar_remote_event_handler.rs", "graphwar", ("src/events.rs",), "观测",
     "docs/110/96：远端事件名与判别值已解；我方 events.rs 实现枚举 + 编解码，无逐字节对拍")
-mod("graphwar_replay_control.rs", "graphwar", (), "未做",
-    "docs/133 的回放播放器在 client/ GDScript；src/graphwar_replay_player.rs 只做文件解析与推进，"
-    "不含这个控制器（文件里的 ReplayPlayer 时钟是我方自定模型，见 docs/02 §17.4）")
+mod("graphwar_replay_control.rs", "graphwar", ("src/graphwar_replay_control.rs",), "观测",
+    "4：回放控制；时钟字段仍未解（docs/16 §32.7）")
 mod("graphwar_replay_player.rs", "graphwar", ("src/graphwar_replay_player.rs",), "观测",
     "docs/136/142：消息级对拍 400 份回放里 71 份完全一致 ⇒ 已实现但未到逐位")
 mod("graphwar_root_node.rs", "graphwar", ("src/graphwar_root_node.rs",), "观测",
@@ -530,20 +529,19 @@ mod("graphwar_shot_calculator.rs", "graphwar", ("src/graphwar_shot_calculator.rs
     "指令级。注意：0x3c2bc0 那个 12 KB 主函数**没有逐条还原**，逐位的是行为不是函数体")
 mod("graphwar_soldier_manager.rs", "graphwar", ("src/graphwar_soldier_manager.rs",), "观测",
     "5/6 定位：HashMap<u32,u32>（士兵→主人）。只管「谁的」，**轮转不查它**（turn_manager 自持 Vec<soldier_id>）；entity_removed 时比值命中就发键 => 玩家没了士兵跟着消失（docs/10 §13）")
-mod("graphwar_target_manager.rs", "graphwar", (), "未做",
-    "docs/123：重置规则形状已钉住（翻 alive + 广播 LifeInfo）但判定点未知，397 份回放 0 次"
-    "部分命中 ⇒ 无真值；docs/131 §4 的落地在 client/（自述为推断），src/ 只有 Target 数据结构")
+mod("graphwar_target_manager.rs", "graphwar", ("src/graphwar_target_manager.rs",), "观测",
+    "3 + 内联 add_target。**只是 HashSet<u32>：无 alive 字段、唯一写操作是 remove**。「打不全就全部复原」的判定点**不在这里**（见 game_state_manager 那条）（docs/16 §32）")
 mod("graphwar_team_manager.rs", "graphwar", ("src/graphwar_team_manager.rs",), "观测",
     "7/7 定位：Mutex<HashMap<u32, GraphwarTeam>>（桶步长 8，值 1 字节）。**唯一分队规则 0x3c1b40：进人少的队、平手进 Team1**；无队长/选边/每队容量，上限整房 10 人（docs/10 §13）")
-mod("graphwar_texture_loader.rs", "graphwar", (), "未知",
-    "只有 docs/02 一行（贴图加载），无地址级观测、无实现")
+mod("graphwar_texture_loader.rs", "other", ("src/graphwar_texture_loader.rs",), "观测",
+    "**4，不是 1**（旧记 1 是 Location 口径下限：三个 getter 从不 panic）。三张 HashMap<String,_> @ +0x150/+0x180/+0x1b0（步长 0x30、表项 0x28），按名字 memcmp，21KB 饿汉加载；唯一构造点 0x39a328 在 GraphwarRootNode 的 INode impl 里（docs/16 §31/§32）")
 mod("graphwar_tick_handler.rs", "graphwar", ("src/graphwar_tick_handler.rs",), "逐位",
     "docs/35：113 个真实样本，TickReply 逐字节一致")
 mod("graphwar_turn_manager.rs", "graphwar", ("src/graphwar_turn_manager.rs",), "逐位",
     "docs/98/117：射手轮转 = Vec<soldier_id> + 游标，在真实 TCP 上断言「首发射手 = soldiers[1]」"
     "「跳过死者」；docs/41 状态迁移逐个相同")
-mod("graphwar_video_writer.rs", "graphwar", (), "未知",
-    "只有 docs/02 一行（录像导出），无地址级观测、无实现")
+mod("graphwar_video_writer.rs", "graphwar", ("src/graphwar_video_writer.rs",), "观测",
+    "3：**真的是录视频**——openh264::Encoder + minimp4（60 fps，轨道名 Graphwar Clip），FileAccess 一次写盘；尺寸向上取偶。本仓只做结构，不产 MP4（无 openh264 依赖）（docs/16 §32）")
 
 # ---- 非 graphwar_ 前缀：同样是原版 src/ 里的文件，但只有 math_function 等少数是真游戏模块 ----
 mod("math_function.rs", "other", ("src/math_function.rs", "src/math_function/to_text.rs"), "逐位",
