@@ -976,7 +976,7 @@ impl Default for Policy {
                 "QueueDestroyObstacle",
                 "DestroyObstacle",
             ],
-            produced_effects: &["ExplosionEffect", "DeathEffect"],
+            produced_effects: &["ExplosionEffect", "DeathEffect", "SparkEffect", "AshEffect"],
             unobserved_kinds: &["LifeQueuedDeath", "QueueDestroyObstacle"],
             collapse_duplicates: true,
         }
@@ -1196,6 +1196,10 @@ pub struct Inputs {
     pub pos: std::collections::BTreeMap<i64, (f64, f64)>,
     pub team: std::collections::BTreeMap<i64, String>,
     pub alive: std::collections::BTreeMap<i64, bool>,
+    /// 靶子（`TargetInfo`，tag 23）⇒ 出生登记 `SparkEffect`
+    pub targets: Vec<i64>,
+    /// 皮肤名（`SkinGraphicsInfo`，tag 51，`entity_id -> graphics_str`）⇒ `bot_` 前缀改成 `AshEffect`
+    pub skins: Vec<(i64, String)>,
 }
 
 impl Inputs {
@@ -1212,6 +1216,8 @@ impl Inputs {
         let mut pos = std::collections::BTreeMap::new();
         let mut team = std::collections::BTreeMap::new();
         let mut alive = std::collections::BTreeMap::new();
+        let mut targets: Vec<i64> = Vec::new();
+        let mut skins: Vec<(i64, String)> = Vec::new();
         for m in &r.msgs[..upto.min(r.msgs.len())] {
             match m.kind.as_str() {
                 "AxisModeInfo" => room.axis_mode = m.get_str("axis_mode").unwrap_or(room.axis_mode),
@@ -1237,6 +1243,16 @@ impl Inputs {
                         team.insert(id, m.get_str("team").unwrap_or_default());
                     }
                 }
+                "TargetInfo" => {
+                    if let Some(id) = m.get_i64("target_id") {
+                        targets.push(id);
+                    }
+                }
+                "SkinGraphicsInfo" => {
+                    if let Some(id) = m.get_i64("entity_id") {
+                        skins.push((id, m.get_str("graphics_str").unwrap_or_default()));
+                    }
+                }
                 "LifeInfo" => {
                     if let Some(id) = m.get_i64("entity_id") {
                         alive.insert(id, m.get("alive").and_then(|v| match v.kind {
@@ -1248,7 +1264,7 @@ impl Inputs {
                 _ => {}
             }
         }
-        Inputs { room, obstacles, pos, team, alive }
+        Inputs { room, obstacles, pos, team, alive, targets, skins }
     }
 }
 
@@ -1296,12 +1312,22 @@ impl Predictor {
             .get(first_batch_start)
             .map(|m| m.tick)
             .unwrap_or(1);
-        let model = Match::new(
-            inputs.room,
-            inputs.obstacles,
+        let mut model = Match::new(
+            inputs.room.clone(),
+            inputs.obstacles.clone(),
             soldiers,
             (base_tick, 0),
         );
+        // ── 把"出生登记"喂进去（2026-11-07）：死亡特效照抄登记表，查不到就一条都不发。
+        // 不喂这两样，回放对拍器里每个实体都走"出生时还没有皮肤"⇒ 全 DeathEffect，
+        // 与旧实现逐字节相同，问题问不出来。见 `docs/16-client.md` §37.5。
+        // 靶子是 **Team2**（`docs/150`：打靶关的胜负 = Team2 全灭），u8 编码 1。
+        for id in inputs.targets.iter() {
+            model.add_target(*id, 1);
+        }
+        for (id, g) in inputs.skins.iter() {
+            model.note_skin_graphics(*id, g);
+        }
         Ok(Predictor { model, policy })
     }
 

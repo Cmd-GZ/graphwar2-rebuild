@@ -275,6 +275,15 @@ fn declared_exclusions_are_really_excluded() {
     assert!(compare_msg(&c, &d, &policy).is_empty(), "effect_id 绝对值按口径不比");
 
     // (c) 「我方不产」的消息被排除并计数，而不是算成失败
+    //
+    // ⚠️ 2026-11-07：默认 `Policy` 的 `produced_effects` 已从 2 类放宽到 **4 类**
+    // （`AshEffect` / `SparkEffect` 现在**是**我方产的，见 `docs/16` §37）。
+    // 这一小段要测的是"排除机制"本身，所以**局部**收窄到只产 `ExplosionEffect`，
+    // 不能再用全局默认值——否则测的是"我们现在产不产 Ash"，不是排除机制。
+    let policy = Policy {
+        produced_effects: &["ExplosionEffect"],
+        ..policy.clone()
+    };
     let obs = vec![
         Msg::parse_wire(r#"{"GameStateInfo":{"game_state":"CalculatingResults"}}"#).unwrap(),
         Msg::parse_wire(r#"{"EffectInfo":{"effect_id":5,"pos_x":1.0,"pos_y":2.0,"effect_type":"AshEffect","start_tick":7}}"#).unwrap(),
