@@ -1844,3 +1844,637 @@ Linux x86-64 :  地址    ↔  它引用的 (file,line,col) 集合
 `x86_addr` 是 **ELF 虚地址**，Ghidra/REA 地址 = 该值 + `0x100000`（只加一次）；
 `join_kind` ∈ `唯一锚 / 歧义 / 次级证据 / 未知`，其中 `唯一锚` 的 `evidence` 会写明
 是「直接唯一」还是「消去法唯一」。
+## 21. 327 个原版函数的真名索引（按模块）
+
+> 由 `fixtures/name_to_addr.tsv` 汇总；`唯一锚` 行才有 x86 地址。
+> 生成依据见 §20（Android 2.0.60 arm64 的 `.symtab` × `panic::Location` × Linux 2.0.60）。
+> **地址口径**：下表是 ELF 虚地址，Ghidra/REA 地址 = 该值 + `0x100000`。
+
+### effect_drawer（5 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `draw` | `EffectDrawer` | `0x4e1520` | `src/effect_drawer.rs:356` |
+| `ready` | `EffectDrawer` | `0x4e25b0` | `src/effect_drawer.rs:479` |
+| `ready` | `EffectDrawer` | `0x4e2a30` | `src/effect_drawer.rs:291` |
+| `ready` | `EffectDrawer` | `0x4e2d50` | `src/effect_drawer.rs:456` |
+| `process` | `EffectDrawer` | `0x4e2f80` | `src/effect_drawer.rs:250` |
+
+### entity_drawer（8 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `draw` | `EntityDrawer` | `0x4b2890` | `src/entity_drawer.rs:244` |
+| `ready` | `EntityDrawer` | `0x4b4130` | `src/entity_drawer.rs:532` |
+| `process` | `EntityDrawer` | `0x4b4b60` | `src/entity_drawer.rs:60` |
+| `update_sprite` | `EntityDrawer` | `0x4b9530` | `src/entity_drawer.rs:192` |
+| `get_entity_hat_sprite` | `EntityDrawer` | `0x4b9e70` | `src/entity_drawer.rs:369` |
+| `get_entity_name_label` | `EntityDrawer` | `0x4ba4a0` | `src/entity_drawer.rs:398` |
+| `get_entity_face_sprite` | `EntityDrawer` | `0x4bb0a0` | `src/entity_drawer.rs:346` |
+| `get_entity_skin_sprite` | `EntityDrawer` | `0x4bb6b0` | `src/entity_drawer.rs:323` |
+
+### function_button_manager（2 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `new` | `FunctionButtonManager` | `0x3f0270` | `src/function_button_manager.rs:28` |
+| `new` | `FunctionButtonManager` | `0x3f06b0` | `src/function_button_manager.rs:33` |
+
+### function_drawer（1 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `update_function` | `FunctionDrawer` | `0x498c70` | `src/function_drawer.rs:45` |
+
+### function_history_recorder（1 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `handle_function_fire_event` | `FunctionHistoryRecorder` | `0x3f0e40` | `src/function_history_recorder.rs:66` |
+
+### graphwar_audio_control（5 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `game_state_event` | `GraphwarAudioControl` | `0x4bef20` | `src/graphwar_audio_control.rs:351` |
+| `effect_info_event` | `GraphwarAudioControl` | `0x4bf090` | `src/graphwar_audio_control.rs:328` |
+| `new` | `GraphwarAudioControl` | `0x4bf550` | `src/graphwar_audio_control.rs:245` |
+| `process` | `GraphwarAudioControl` | `0x4bfe10` | `src/graphwar_audio_control.rs:170` |
+| `set_muted` | `GraphwarAudioControl` | `0x4c11d0` | `src/graphwar_audio_control.rs:362` |
+
+### graphwar_backend（5 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `button_pressed` | `GraphwarBackend` | `0x514a10` | `src/graphwar_game_client.rs:186` |
+| `subscribe_to_event` | `GraphwarBackend` | `0x514b40` | `src/graphwar_backend.rs:344` |
+| `resubscribe_to_events` | `GraphwarBackend` | `0x514d80` | `src/graphwar_backend.rs:350` |
+| `start_client_to_replay` | `GraphwarBackend` | `0x514f20` | `src/graphwar_backend.rs:173` |
+| `process` | `GraphwarBackend` | `0x515dc0` | `src/graphwar_backend.rs:79` |
+
+### graphwar_campaign_control（1 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `show_hide_campaign_levels` | `GraphwarCampaignControl` | `0x418820` | `src/graphwar_campaign_control.rs:94` |
+
+### graphwar_client_connection_handler（7 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `disconnect` | `GraphwarClientConnectionHandler` | `0x4592d0` | `src/graphwar_client_connection_handler.rs:150` |
+| `forward_event` | `GraphwarClientConnectionHandler` | `0x459690` | `src/graphwar_client_connection_handler.rs:255` |
+| `get_connection_state` | `GraphwarClientConnectionHandler` | `0x459840` | `src/graphwar_client_connection_handler.rs:161` |
+| `handle_connected_to_server` | `GraphwarClientConnectionHandler` | `0x459950` | `src/graphwar_client_connection_handler.rs:249` |
+| `new` | `GraphwarClientConnectionHandler` | `0x4599f0` | `src/graphwar_client_connection_handler.rs:65` |
+| `tick` | `GraphwarClientConnectionHandler` | `0x459f20` | `src/graphwar_client_connection_handler.rs:190` |
+| `connect` | `GraphwarClientConnectionHandler` | `0x45a340` | `src/graphwar_client_connection_handler.rs:124` |
+
+### graphwar_color_manager（5 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `set_color` | `GraphwarColorManager` | `0x3e2830` | `src/graphwar_color_manager.rs:114` |
+| `add_team_color` | `GraphwarColorManager` | `0x464d10` | `src/graphwar_color_manager.rs:92` |
+| `send_all_info_events` | `GraphwarColorManager` | `0x465460` | `src/graphwar_color_manager.rs:124` |
+| `handle_entity_removed_event` | `GraphwarColorManager` | `0x465570` | `src/graphwar_color_manager.rs:134` |
+| `new` | `GraphwarColorManager` | `0x465620` | `src/graphwar_color_manager.rs:46` |
+
+### graphwar_computer_player_manager（5 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `handle_tick` | `GraphwarComputerPlayerManager` | `0x4785f0` | `src/graphwar_computer_player_manager.rs:221` |
+| `add_computer_player` | `GraphwarComputerPlayerManager` | `0x478fc0` | `src/graphwar_computer_player_manager.rs:195` |
+| `handle_turn_info_event` | `GraphwarComputerPlayerManager` | `0x479520` | `src/graphwar_computer_player_manager.rs:276` |
+| `handle_entity_removed_event` | `GraphwarComputerPlayerManager` | `0x47a520` | `src/graphwar_computer_player_manager.rs:331` |
+| `new` | `GraphwarComputerPlayerManager` | `0x47a720` | `src/graphwar_computer_player_manager.rs:84` |
+
+### graphwar_draw_util（1 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `get_team_overview` | `GraphwarDrawUtil` | `0x4be6e0` | `src/graphwar_draw_util.rs:28` |
+
+### graphwar_effect_manager（1 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `tick` | `GraphwarEffectManager` | `0x519d80` | `src/graphwar_effect_manager.rs:103` |
+
+### graphwar_entity_effect_manager（3 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `subscribe_to_events_event_handler` | `GraphwarEntityEffectManager` | `0x4782f0` | `src/graphwar_entity_effect_manager.rs:67` |
+| `subscribe_to_events_event_handler` | `GraphwarEntityEffectManager` | `0x4783f0` | `src/graphwar_entity_effect_manager.rs:77` |
+| `new` | `GraphwarEntityEffectManager` | `0x478490` | `src/graphwar_entity_effect_manager.rs:35` |
+
+### graphwar_event_handler（2 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `process_events` | `GraphwarEventHandler` | `0x3d3630` | `src/graphwar_event_handler.rs:467` |
+| `subscribe_to_event` | `GraphwarEventHandler` | `0x3d38f0` | `src/graphwar_event_handler.rs:396` |
+
+### graphwar_function_evolutionator（4 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `score_function` | `GraphwarFunctionEvolutionator` | `0x51a750` | `src/graphwar_function_evolutionator.rs:306` |
+| `calculate_functions` | `GraphwarFunctionEvolutionator` | `0x51b440` | `src/graphwar_function_evolutionator.rs:106` |
+| `calculate_functions_old` | `GraphwarFunctionEvolutionator` | `0x51d080` | `src/graphwar_function_evolutionator.rs:203` |
+| `new` | `GraphwarFunctionEvolutionator` | `0x51eb90` | `src/graphwar_function_evolutionator.rs:67` |
+
+### graphwar_function_input（7 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `force_update_cb` | `GraphwarFunctionInput` | `0x4f2200` | `src/graphwar_function_input.rs:327` |
+| `move_caret_left` | `GraphwarFunctionInput` | `0x4f3210` | `src/graphwar_function_input.rs:253` |
+| `move_caret_right` | `GraphwarFunctionInput` | `0x4f3910` | `src/graphwar_function_input.rs:145` |
+| `delete_token_at_caret` | `GraphwarFunctionInput` | `0x4f44c0` | `src/graphwar_function_input.rs:97` |
+| `delete_token_after_caret` | `GraphwarFunctionInput` | `0x4f4a60` | `src/graphwar_function_input.rs:198` |
+| `ready` | `GraphwarFunctionInput` | `0x4fd1b0` | `src/graphwar_function_input.rs:508` |
+| `process` | `GraphwarFunctionInput` | `0x4fd4a0` | `src/graphwar_function_input.rs:521` |
+
+### graphwar_function_manager（7 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `get_function` | `GraphwarFunctionManager` | `0x455b60` | `src/graphwar_function_manager.rs:165` |
+| `set_function` | `GraphwarFunctionManager` | `0x455e30` | `src/graphwar_function_manager.rs:152` |
+| `get_function_text` | `GraphwarFunctionManager` | `0x4565f0` | `src/graphwar_function_manager.rs:169` |
+| `set_function_points` | `GraphwarFunctionManager` | `0x456810` | `src/graphwar_function_manager.rs:192` |
+| `set_function_active_tick` | `GraphwarFunctionManager` | `0x456b80` | `src/graphwar_function_manager.rs:181` |
+| `get_active_functions_on_tick` | `GraphwarFunctionManager` | `0x456df0` | `src/graphwar_function_manager.rs:208` |
+| `get_active_functions_on_tick_no_fade` | `GraphwarFunctionManager` | `0x456f80` | `src/graphwar_function_manager.rs:213` |
+
+### graphwar_game_client（11 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `disconnect` | `GraphwarGameClient` | `0x516370` | `src/graphwar_game_client.rs:118` |
+| `fire_function` | `GraphwarGameClient` | `0x516510` | `src/graphwar_game_client.rs:152` |
+| `request_add_bot` | `GraphwarGameClient` | `0x516970` | `src/graphwar_game_client.rs:152` |
+| `update_function` | `GraphwarGameClient` | `0x516ad0` | `src/graphwar_game_client.rs:152` |
+| `wait_for_players` | `GraphwarGameClient` | `0x516fd0` | `src/graphwar_game_client.rs:101` |
+| `send_chat_message` | `GraphwarGameClient` | `0x5172d0` | `src/graphwar_game_client.rs:152` |
+| `request_lock_change` | `GraphwarGameClient` | `0x517490` | `src/graphwar_game_client.rs:152` |
+| `new` | `GraphwarGameClient` | `0x517690` | `src/graphwar_game_client.rs:53` |
+| `tick` | `GraphwarGameClient` | `0x518240` | `src/graphwar_game_client.rs:139` |
+| `connect` | `GraphwarGameClient` | `0x518320` | `src/graphwar_game_client.rs:93` |
+| `process` | `GraphwarGameClient` | `0x518400` | `src/graphwar_game_client.rs:130` |
+
+### graphwar_game_recorder（2 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `subscribe_to_events` | `GraphwarGameRecorder` | `0x3d4fa0` | `src/graphwar_game_recorder.rs:107` |
+| `save_game` | `GraphwarGameRecorder` | `0x3d5740` | `src/graphwar_game_recorder.rs:150` |
+
+### graphwar_game_server（3 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `subscribe_to_room_info_updates` | `GameServerData` | `0x44e8f0` | `src/graphwar_game_server.rs:264` |
+| `start` | `GraphwarGameServer` | `0x44f990` | `src/graphwar_game_server.rs:130` |
+| `game_server_thread` | `_` | `0x4500c0` | `src/graphwar_game_server.rs:219` |
+
+### graphwar_game_state_manager（34 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `report_fired_function` | `GraphwarGameStateManager` | `0x3e2830` | `src/graphwar_game_state_manager.rs:677` |
+| `add_target` | `GraphwarGameStateManager` | `0x46f310` | `src/graphwar_game_state_manager.rs:593` |
+| `start_game` | `GraphwarGameStateManager` | `0x46f690` | `src/graphwar_game_state_manager.rs:191` |
+| `handle_tick` | `GraphwarGameStateManager` | `0x470840` | `src/graphwar_game_state_manager.rs:256` |
+| `set_all_alive` | `GraphwarGameStateManager` | `0x470b70` | `src/graphwar_game_state_manager.rs:607` |
+| `fire_functions` | `GraphwarGameStateManager` | `0x470eb0` | `src/graphwar_game_state_manager.rs:256` |
+| `set_turn_limit` | `GraphwarGameStateManager` | `0x472400` | `src/graphwar_game_state_manager.rs:182` |
+| `execute_results` | `GraphwarGameStateManager` | `0x472470` | `src/graphwar_game_state_manager.rs:256` |
+| `get_alive_teams` | `GraphwarGameStateManager` | `0x473520` | `src/graphwar_game_state_manager.rs:867` |
+| `remove_all_players` | `GraphwarGameStateManager` | `0x4737a0` | `src/graphwar_game_state_manager.rs:485` |
+| `request_new_player` | `GraphwarGameStateManager` | `0x4739c0` | `src/graphwar_game_state_manager.rs:282` |
+| `handle_chat_message` | `GraphwarGameStateManager` | `0x473d00` | `src/graphwar_game_state_manager.rs:1187` |
+| `request_change_team` | `GraphwarGameStateManager` | `0x473e50` | `src/graphwar_game_state_manager.rs:306` |
+| `handle_graphics_info` | `GraphwarGameStateManager` | `0x4741a0` | `src/graphwar_game_state_manager.rs:1147` |
+| `setup_and_start_game` | `GraphwarGameStateManager` | `0x474490` | `src/graphwar_game_state_manager.rs:458` |
+| `add_soldier_to_player` | `GraphwarGameStateManager` | `0x474a10` | `src/graphwar_game_state_manager.rs:503` |
+| `request_fire_function` | `GraphwarGameStateManager` | `0x4754c0` | `src/graphwar_game_state_manager.rs:655` |
+| `request_remove_player` | `GraphwarGameStateManager` | `0x475590` | `src/graphwar_game_state_manager.rs:334` |
+| `handle_function_points` | `GraphwarGameStateManager` | `0x4758b0` | `src/graphwar_game_state_manager.rs:1129` |
+| `queue_end_turn_trigger` | `GraphwarGameStateManager` | `0x4759f0` | `src/graphwar_game_state_manager.rs:191` |
+| `request_update_function` | `GraphwarGameStateManager` | `0x475f50` | `src/graphwar_game_state_manager.rs:635` |
+| `set_player_num_soldiers` | `GraphwarGameStateManager` | `0x476320` | `src/graphwar_game_state_manager.rs:370` |
+| `request_axis_mode_change` | `GraphwarGameStateManager` | `0x4764b0` | `src/graphwar_game_state_manager.rs:393` |
+| `request_time_mode_change` | `GraphwarGameStateManager` | `0x4765f0` | `src/graphwar_game_state_manager.rs:426` |
+| `request_turn_mode_change` | `GraphwarGameStateManager` | `0x476730` | `src/graphwar_game_state_manager.rs:415` |
+| `remove_soldier_from_player` | `GraphwarGameStateManager` | `0x476830` | `src/graphwar_game_state_manager.rs:544` |
+| `handle_entity_removed_event` | `GraphwarGameStateManager` | `0x476a20` | `src/graphwar_game_state_manager.rs:1064` |
+| `handle_new_connection_event` | `GraphwarGameStateManager` | `0x477140` | `src/graphwar_game_state_manager.rs:203` |
+| `request_function_mode_change` | `GraphwarGameStateManager` | `0x477410` | `src/graphwar_game_state_manager.rs:404` |
+| `handle_connection_removed_event` | `GraphwarGameStateManager` | `0x477540` | `src/graphwar_game_state_manager.rs:494` |
+| `new` | `GraphwarGameStateManager` | `0x477bc0` | `src/graphwar_game_state_manager.rs:116` |
+| `set_lock` | `GraphwarGameStateManager` | `0x477fa0` | `src/graphwar_game_state_manager.rs:454` |
+| `set_name` | `GraphwarGameStateManager` | `0x478010` | `src/graphwar_game_state_manager.rs:203` |
+| `set_state` | `GraphwarGameStateManager` | `0x4780c0` | `src/graphwar_game_state_manager.rs:223` |
+
+### graphwar_graphics_manager（6 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `set_hat_graphics` | `GraphwarGraphicsManager` | `0x468a50` | `src/graphwar_graphics_manager.rs:78` |
+| `set_face_graphics` | `GraphwarGraphicsManager` | `0x468b60` | `src/graphwar_graphics_manager.rs:69` |
+| `set_skin_graphics` | `GraphwarGraphicsManager` | `0x468c70` | `src/graphwar_graphics_manager.rs:60` |
+| `send_all_info_events` | `GraphwarGraphicsManager` | `0x468d80` | `src/graphwar_graphics_manager.rs:88` |
+| `handle_entity_removed_event` | `GraphwarGraphicsManager` | `0x469220` | `src/graphwar_graphics_manager.rs:108` |
+| `new` | `GraphwarGraphicsManager` | `0x469390` | `src/graphwar_graphics_manager.rs:38` |
+
+### graphwar_lan_broadcaster_v6（4 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `set_room_info` | `GraphwarLanBroadcasterV6` | `0x4572c0` | `src/graphwar_lan_broadcaster_v6.rs:141` |
+| `new` | `GraphwarLanBroadcasterV6` | `0x457480` | `src/graphwar_lan_broadcaster_v6.rs:35` |
+| `start` | `GraphwarLanBroadcasterV6` | `0x457600` | `src/graphwar_lan_broadcaster_v6.rs:59` |
+| `process` | `GraphwarLanBroadcasterV6` | `0x457790` | `src/graphwar_lan_broadcaster_v6.rs:86` |
+
+### graphwar_lan_vbox（1 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `process` | `GraphwarLanVBox` | `0x4f90b0` | `src/graphwar_lan_vbox.rs:90` |
+
+### graphwar_level_generator（4 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `place_entity` | `GraphwarLevelGenerator` | `0x465a70` | `src/graphwar_level_generator.rs:208` |
+| `generate_level` | `GraphwarLevelGenerator` | `0x4661a0` | `src/graphwar_level_generator.rs:94` |
+| `generate_terrain` | `GraphwarLevelGenerator` | `0x466c40` | `src/graphwar_level_generator.rs:179` |
+| `generate_level_custom` | `GraphwarLevelGenerator` | `0x466d20` | `src/graphwar_level_generator.rs:49` |
+
+### graphwar_level_manager（40 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `setup_level` | `GraphwarLevelManager` | `0x499740` | `src/graphwar_level_manager.rs:121` |
+| `setup_level_0` | `GraphwarLevelManager` | `0x49e570` | `src/graphwar_level_manager.rs:148` |
+| `setup_level_0` | `GraphwarLevelManager` | `0x49e650` | `src/graphwar_level_manager.rs:153` |
+| `setup_level_1` | `GraphwarLevelManager` | `0x49e880` | `src/graphwar_level_manager.rs:223` |
+| `setup_level_1` | `GraphwarLevelManager` | `0x49eab0` | `src/graphwar_level_manager.rs:218` |
+| `setup_level_2` | `GraphwarLevelManager` | `0x49eb90` | `src/graphwar_level_manager.rs:293` |
+| `setup_level_2` | `GraphwarLevelManager` | `0x49f1c0` | `src/graphwar_level_manager.rs:286` |
+| `setup_level_3` | `GraphwarLevelManager` | `0x49f370` | `src/graphwar_level_manager.rs:379` |
+| `setup_level_4` | `GraphwarLevelManager` | `0x49f510` | `src/graphwar_level_manager.rs:409` |
+| `setup_level_4` | `GraphwarLevelManager` | `0x49fea0` | `src/graphwar_level_manager.rs:441` |
+| `setup_level_5` | `GraphwarLevelManager` | `0x4a04d0` | `src/graphwar_level_manager.rs:501` |
+| `setup_level_5` | `GraphwarLevelManager` | `0x4a0db0` | `src/graphwar_level_manager.rs:540` |
+| `setup_level_6` | `GraphwarLevelManager` | `0x4a1310` | `src/graphwar_level_manager.rs:581` |
+| `setup_level_6` | `GraphwarLevelManager` | `0x4a1cd0` | `src/graphwar_level_manager.rs:615` |
+| `setup_level_7` | `GraphwarLevelManager` | `0x4a2430` | `src/graphwar_level_manager.rs:689` |
+| `setup_level_7` | `GraphwarLevelManager` | `0x4a2dc0` | `src/graphwar_level_manager.rs:721` |
+| `setup_level_8` | `GraphwarLevelManager` | `0x4a33f0` | `src/graphwar_level_manager.rs:782` |
+| `setup_level_8` | `GraphwarLevelManager` | `0x4a3df0` | `src/graphwar_level_manager.rs:817` |
+| `setup_level_9` | `GraphwarLevelManager` | `0x4a43a0` | `src/graphwar_level_manager.rs:879` |
+| `setup_level_9` | `GraphwarLevelManager` | `0x4a4c80` | `src/graphwar_level_manager.rs:918` |
+| `setup_level_10` | `GraphwarLevelManager` | `0x4a5390` | `src/graphwar_level_manager.rs:995` |
+| `setup_level_11` | `GraphwarLevelManager` | `0x4a5940` | `src/graphwar_level_manager.rs:1099` |
+| `setup_level_12` | `GraphwarLevelManager` | `0x4a5e80` | `src/graphwar_level_manager.rs:1168` |
+| `setup_level_12` | `GraphwarLevelManager` | `0x4a6020` | `src/graphwar_level_manager.rs:1175` |
+| `setup_level_13` | `GraphwarLevelManager` | `0x4a63d0` | `src/graphwar_level_manager.rs:1258` |
+| `setup_level_14` | `GraphwarLevelManager` | `0x4a6980` | `src/graphwar_level_manager.rs:1320` |
+| `setup_level_14` | `GraphwarLevelManager` | `0x4a73b0` | `src/graphwar_level_manager.rs:1362` |
+| `setup_level_15` | `GraphwarLevelManager` | `0x4a78f0` | `src/graphwar_level_manager.rs:1403` |
+| `setup_level_15` | `GraphwarLevelManager` | `0x4a8320` | `src/graphwar_level_manager.rs:1445` |
+| `setup_level_16` | `GraphwarLevelManager` | `0x4a8860` | `src/graphwar_level_manager.rs:1488` |
+| `setup_level_16` | `GraphwarLevelManager` | `0x4a91b0` | `src/graphwar_level_manager.rs:1521` |
+| `setup_level_16` | `GraphwarLevelManager` | `0x4a93e0` | `src/graphwar_level_manager.rs:1516` |
+| `setup_level_17` | `GraphwarLevelManager` | `0x4a94c0` | `src/graphwar_level_manager.rs:1555` |
+| `setup_level_17` | `GraphwarLevelManager` | `0x4a9f00` | `src/graphwar_level_manager.rs:1590` |
+| `setup_level_18` | `GraphwarLevelManager` | `0x4aa640` | `src/graphwar_level_manager.rs:1664` |
+| `setup_level_18` | `GraphwarLevelManager` | `0x4aafc0` | `src/graphwar_level_manager.rs:1704` |
+| `setup_level_19` | `GraphwarLevelManager` | `0x4ab500` | `src/graphwar_level_manager.rs:1744` |
+| `setup_level_19` | `GraphwarLevelManager` | `0x4abf00` | `src/graphwar_level_manager.rs:1785` |
+| `setup_level_20` | `GraphwarLevelManager` | `0x4ac440` | `src/graphwar_level_manager.rs:1826` |
+| `setup_level_20` | `GraphwarLevelManager` | `0x4ace40` | `src/graphwar_level_manager.rs:1867` |
+
+### graphwar_life_manager（9 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `get_death_tick` | `GraphwarLifeManager` | `0x453a60` | `src/graphwar_life_manager.rs:118` |
+| `get_all_entities` | `GraphwarLifeManager` | `0x453c60` | `src/graphwar_life_manager.rs:139` |
+| `set_queued_death` | `GraphwarLifeManager` | `0x453de0` | `src/graphwar_life_manager.rs:123` |
+| `handle_tick_event` | `GraphwarLifeManager` | `0x454020` | `src/graphwar_life_manager.rs:175` |
+| `send_all_info_events` | `GraphwarLifeManager` | `0x454120` | `src/graphwar_life_manager.rs:144` |
+| `handle_entity_removed_event` | `GraphwarLifeManager` | `0x454420` | `src/graphwar_life_manager.rs:154` |
+| `new` | `GraphwarLifeManager` | `0x454790` | `src/graphwar_life_manager.rs:76` |
+| `get_alive` | `GraphwarLifeManager` | `0x454950` | `src/graphwar_life_manager.rs:114` |
+| `set_alive` | `GraphwarLifeManager` | `0x454b40` | `src/graphwar_life_manager.rs:109` |
+
+### graphwar_lobby_control（1 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `new` | `GraphwarLobbyControl` | `0x3ef990` | `src/graphwar_lobby_control.rs:28` |
+
+### graphwar_local_player_manager（3 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `handle_player_info` | `GraphwarLocalPlayerManager` | `0x519f40` | `src/graphwar_local_player_manager.rs:107` |
+| `handle_connected_to_server` | `GraphwarLocalPlayerManager` | `0x51a570` | `src/graphwar_local_player_manager.rs:76` |
+| `handle_entity_removed_event` | `GraphwarLocalPlayerManager` | `0x51a610` | `src/graphwar_local_player_manager.rs:146` |
+
+### graphwar_logger（1 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `new` | `GraphwarLogger` | `0x44dd60` | `src/graphwar_logger.rs:44` |
+
+### graphwar_long_press_animation（1 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `draw` | `GraphwarLongPressAnimation` | `0x4d8100` | `src/graphwar_long_press_animation.rs:52` |
+
+### graphwar_mode_manager（2 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `set_time_mode` | `GraphwarModeManager` | `0x518530` | `src/graphwar_mode_manager.rs:113` |
+| `send_all_info_events` | `GraphwarModeManager` | `0x5185a0` | `src/graphwar_mode_manager.rs:132` |
+
+### graphwar_name_manager（3 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `send_all_info_events` | `GraphwarNameManager` | `0x518f10` | `src/graphwar_name_manager.rs:69` |
+| `handle_entity_removed_event` | `GraphwarNameManager` | `0x519030` | `src/graphwar_name_manager.rs:79` |
+| `set_name` | `GraphwarNameManager` | `0x519350` | `src/graphwar_name_manager.rs:57` |
+
+### graphwar_obstacle_manager（8 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `draw_circle` | `GraphwarObstacleData` | `0x3f11e0` | `src/graphwar_obstacle_manager.rs:89` |
+| `is_obstacle` | `GraphwarObstacleManager` | `0x3f15b0` | `src/graphwar_obstacle_manager.rs:89` |
+| `add_obstacle` | `GraphwarObstacleManager` | `0x3f17a0` | `src/graphwar_obstacle_manager.rs:258` |
+| `clear_obstacles` | `GraphwarObstacleManager` | `0x3f19a0` | `src/graphwar_obstacle_manager.rs:252` |
+| `destroy_obstacle` | `GraphwarObstacleManager` | `0x3f1b30` | `src/graphwar_obstacle_manager.rs:263` |
+| `handle_tick_event` | `GraphwarObstacleManager` | `0x3f1d30` | `src/graphwar_obstacle_manager.rs:295` |
+| `queue_destroy_obstacle` | `GraphwarObstacleManager` | `0x3f20f0` | `src/graphwar_obstacle_manager.rs:269` |
+| `new` | `GraphwarObstacleManager` | `0x3f2360` | `src/graphwar_obstacle_manager.rs:208` |
+
+### graphwar_path_calculator（1 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `calculate_paths` | `GraphwarPathCalculator` | `0x467530` | `src/graphwar_path_calculator.rs:45` |
+
+### graphwar_plane（5 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `draw` | `GraphwarPlane` | `0x4b5df0` | `src/graphwar_plane.rs:84` |
+| `init` | `GraphwarPlane` | `0x4b7380` | `src/obstacle_drawer.rs:37` |
+| `ready` | `GraphwarPlane` | `0x4b7a70` | `src/graphwar_plane.rs:218` |
+| `process` | `GraphwarPlane` | `0x4b83f0` | `src/graphwar_plane.rs:254` |
+| `obstacle_partial_update_event` | `GraphwarPlane` | `0x4be3e0` | `src/graphwar_plane.rs:174` |
+
+### graphwar_plane_pos_manager（6 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `get_position` | `GraphwarPlanePosManager` | `0x3c62b0` | `src/graphwar_plane_pos_manager.rs:116` |
+| `set_position` | `GraphwarPlanePosManager` | `0x3c64c0` | `src/graphwar_plane_pos_manager.rs:111` |
+| `get_all_positions` | `GraphwarPlanePosManager` | `0x3c66a0` | `src/graphwar_plane_pos_manager.rs:120` |
+| `send_all_info_events` | `GraphwarPlanePosManager` | `0x3c6a10` | `src/graphwar_plane_pos_manager.rs:133` |
+| `handle_entity_removed_event` | `GraphwarPlanePosManager` | `0x3c6b40` | `src/graphwar_plane_pos_manager.rs:142` |
+| `new` | `GraphwarPlanePosManager` | `0x3c6d30` | `src/graphwar_plane_pos_manager.rs:81` |
+
+### graphwar_play_screen_control（9 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `add_tie_icon` | `GraphwarPlayScreenControl` | `0x3d9000` | `src/graphwar_play_screen_control.rs:265` |
+| `enable_replay_buttons` | `GraphwarPlayScreenControl` | `0x3d9b50` | `src/graphwar_play_screen_control.rs:591` |
+| `disable_replay_buttons` | `GraphwarPlayScreenControl` | `0x3d9e40` | `src/graphwar_play_screen_control.rs:605` |
+| `update_end_game_pop_up` | `GraphwarPlayScreenControl` | `0x3da130` | `src/graphwar_play_screen_control.rs:119` |
+| `add_player_victory_icon` | `GraphwarPlayScreenControl` | `0x3db3e0` | `src/graphwar_play_screen_control.rs:233` |
+| `update_names_button_texture` | `GraphwarPlayScreenControl` | `0x3dc470` | `src/graphwar_play_screen_control.rs:625` |
+| `update_view_function_button_texture` | `GraphwarPlayScreenControl` | `0x3dc630` | `src/graphwar_play_screen_control.rs:619` |
+| `new` | `GraphwarPlayScreenControl` | `0x3dc7f0` | `src/graphwar_play_screen_control.rs:71` |
+| `process` | `GraphwarPlayScreenControl` | `0x3dcbb0` | `src/graphwar_play_screen_control.rs:275` |
+
+### graphwar_player_manager（3 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `send_all_info_events` | `GraphwarPlayerManager` | `0x455160` | `src/graphwar_player_manager.rs:91` |
+| `handle_entity_removed_event` | `GraphwarPlayerManager` | `0x455250` | `src/graphwar_player_manager.rs:120` |
+| `new` | `GraphwarPlayerManager` | `0x455410` | `src/graphwar_player_manager.rs:36` |
+
+### graphwar_player_screen_control（8 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `load_items` | `GraphwarPlayerScreenControl` | `0x4f57d0` | `src/graphwar_player_screen_control.rs:113` |
+| `hat_button_pressed` | `GraphwarPlayerScreenControl` | `0x4f77a0` | `src/graphwar_player_screen_control.rs:131` |
+| `face_button_pressed` | `GraphwarPlayerScreenControl` | `0x4f7870` | `src/graphwar_player_screen_control.rs:127` |
+| `skin_button_pressed` | `GraphwarPlayerScreenControl` | `0x4f7940` | `src/graphwar_player_screen_control.rs:118` |
+| `update_buttons_background` | `GraphwarPlayerScreenControl` | `0x4f8050` | `src/graphwar_player_screen_control.rs:230` |
+| `lock` | `GraphwarPlayerScreenControl` | `0x4f8850` | `src/graphwar_player_screen_control.rs:252` |
+| `unlock` | `GraphwarPlayerScreenControl` | `0x4f8990` | `src/graphwar_player_screen_control.rs:268` |
+| `pending` | `GraphwarPlayerScreenControl` | `0x4f8ad0` | `src/graphwar_player_screen_control.rs:260` |
+
+### graphwar_rank_manager（4 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `send_all_info_events` | `GraphwarRankManager` | `0x454d80` | `src/graphwar_rank_manager.rs:73` |
+| `handle_entity_removed_event` | `GraphwarRankManager` | `0x454e80` | `src/graphwar_rank_manager.rs:83` |
+| `new` | `GraphwarRankManager` | `0x454f30` | `src/graphwar_rank_manager.rs:33` |
+| `set_rank` | `GraphwarRankManager` | `0x455090` | `src/graphwar_rank_manager.rs:61` |
+
+### graphwar_remote_event_handler（3 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `handle_client_remote_event` | `GraphwarRemoteEventHandler` | `0x3dee00` | `src/graphwar_remote_event_handler.rs:143` |
+| `handle_server_remote_event` | `GraphwarRemoteEventHandler` | `0x3e2830` | `src/graphwar_remote_event_handler.rs:444` |
+| `is_leader` | `GraphwarRemoteEventHandler` | `0x3e5910` | `src/graphwar_remote_event_handler.rs:135` |
+
+### graphwar_replay_control（1 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `process` | `GraphwarReplayScreenControl` | `0x4c6f40` | `src/graphwar_replay_control.rs:100` |
+
+### graphwar_replay_player（8 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `toggle_pause` | `GraphwarReplayPlayer` | `0x3d6080` | `src/graphwar_replay_player.rs:244` |
+| `inject_events` | `GraphwarReplayPlayer` | `0x3d61a0` | `src/graphwar_replay_player.rs:210` |
+| `go_to_next_checkpoint` | `GraphwarReplayPlayer` | `0x3d68b0` | `src/graphwar_replay_player.rs:181` |
+| `go_to_first_checkpoint` | `GraphwarReplayPlayer` | `0x3d6a40` | `src/graphwar_replay_player.rs:151` |
+| `go_to_previous_checkpoint` | `GraphwarReplayPlayer` | `0x3d6bb0` | `src/graphwar_replay_player.rs:162` |
+| `pause` | `GraphwarReplayPlayer` | `0x3d7270` | `src/graphwar_replay_player.rs:249` |
+| `process` | `GraphwarReplayPlayer` | `0x3d7380` | `src/graphwar_replay_player.rs:78` |
+| `is_paused` | `GraphwarReplayPlayer` | `0x3d7630` | `src/graphwar_replay_player.rs:256` |
+
+### graphwar_root_node（10 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `ready` | `GraphwarRootNode` | `0x3a2e10` | `src/graphwar_root_node.rs:1302` |
+| `ready` | `GraphwarRootNode` | `0x3a5660` | `src/graphwar_root_node.rs:1338` |
+| `process` | `GraphwarRootNode` | `0x3a5760` | `src/graphwar_root_node.rs:635` |
+| `purchase_denied` | `GraphwarRootNode` | `0x3afb00` | `src/graphwar_root_node.rs:892` |
+| `check_save_level` | `GraphwarRootNode` | `0x3afcf0` | `src/graphwar_root_node.rs:656` |
+| `purchase_confirmed` | `GraphwarRootNode` | `0x3afe90` | `src/graphwar_root_node.rs:868` |
+| `get_media_storage_path` | `GraphwarRootNode` | `0x3b00d0` | `src/graphwar_root_node.rs:904` |
+| `process_button_pressed` | `GraphwarRootNode` | `0x3b0830` | `src/graphwar_root_node.rs:225` |
+| `request_permissions_result` | `GraphwarRootNode` | `0x3b4ec0` | `src/graphwar_root_node.rs:861` |
+| `from_arg_matches_mut` | `Args` | `0x3bd640` | `/home/lucas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/clap_builder-4.5.11/src/parser/error.rs:32` |
+
+### graphwar_server_broker_handler（2 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `stop` | `GraphwarServerBrokerHandler` | `0x4586d0` | `src/graphwar_server_broker_handler.rs:90` |
+| `process` | `GraphwarServerBrokerHandler` | `0x4588d0` | `src/graphwar_server_broker_handler.rs:98` |
+
+### graphwar_server_connection_handler（6 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `forward_event` | `GraphwarServerConnectionHandler` | `0x45a560` | `src/graphwar_server_connection_handler.rs:350` |
+| `handle_clear_bans_request_event` | `GraphwarServerConnectionHandler` | `0x45a6b0` | `src/graphwar_server_connection_handler.rs:247` |
+| `handle_connection_removed_event` | `GraphwarServerConnectionHandler` | `0x45a7b0` | `src/graphwar_server_connection_handler.rs:224` |
+| `forward_connection_specific_event` | `GraphwarServerConnectionHandler` | `0x45aab0` | `src/graphwar_server_connection_handler.rs:326` |
+| `handle_ban_connection_request_event` | `GraphwarServerConnectionHandler` | `0x45ad30` | `src/graphwar_server_connection_handler.rs:233` |
+| `tick` | `GraphwarServerConnectionHandler` | `0x45b020` | `src/graphwar_server_connection_handler.rs:206` |
+
+### graphwar_setup_control（14 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `clear_state` | `GraphwarSetupControl` | `0x4c1ae0` | `src/graphwar_texture_loader.rs:145` |
+| `update_name` | `GraphwarSetupControl` | `0x4c1e40` | `src/graphwar_setup_control.rs:178` |
+| `update_rank` | `GraphwarSetupControl` | `0x4c2140` | `src/graphwar_setup_control.rs:187` |
+| `on_text_change` | `GraphwarSetupControl` | `0x4c27f0` | `src/graphwar_setup_control.rs:462` |
+| `is_leader_local` | `GraphwarSetupControl` | `0x4c2b90` | `src/graphwar_setup_control.rs:310` |
+| `update_soldiers` | `GraphwarSetupControl` | `0x4c2ef0` | `src/graphwar_setup_control.rs:202` |
+| `on_chat_submitted` | `GraphwarSetupControl` | `0x4c44b0` | `src/graphwar_setup_control.rs:494` |
+| `force_title_update` | `GraphwarSetupControl` | `0x4c4850` | `src/graphwar_setup_control.rs:474` |
+| `connect_entry_buttons` | `GraphwarSetupControl` | `0x4c4c20` | `src/graphwar_setup_control.rs:257` |
+| `ready` | `GraphwarSetupControl` | `0x4cf670` | `src/graphwar_setup_control.rs:652` |
+| `ready` | `GraphwarSetupControl` | `0x4d1f10` | `src/graphwar_setup_control.rs:728` |
+| `ready` | `GraphwarSetupControl` | `0x4d2600` | `src/graphwar_setup_control.rs:793` |
+| `ready` | `GraphwarSetupControl` | `0x4d2f70` | `src/graphwar_setup_control.rs:772` |
+| `process` | `GraphwarSetupControl` | `0x4d3180` | `src/graphwar_setup_control.rs:100` |
+
+### graphwar_shot_calculator（1 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `calculate_shot_results` | `GraphwarShotCalculator` | `0x3c2bc0` | `src/graphwar_shot_calculator.rs:181` |
+
+### graphwar_soldier_manager（3 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `send_all_info_events` | `GraphwarSoldierManager` | `0x455570` | `src/graphwar_soldier_manager.rs:87` |
+| `handle_entity_removed_event` | `GraphwarSoldierManager` | `0x4556d0` | `src/graphwar_soldier_manager.rs:105` |
+| `new` | `GraphwarSoldierManager` | `0x455760` | `src/graphwar_soldier_manager.rs:35` |
+
+### graphwar_target_manager（3 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `subscribe_to_events_event_handler` | `GraphwarTargetManager` | `0x465780` | `src/graphwar_target_manager.rs:74` |
+| `subscribe_to_events_event_handler` | `GraphwarTargetManager` | `0x465870` | `src/graphwar_target_manager.rs:84` |
+| `new` | `GraphwarTargetManager` | `0x465910` | `src/graphwar_target_manager.rs:35` |
+
+### graphwar_team_manager（6 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `add_to_team` | `GraphwarTeamManager` | `0x3c17d0` | `src/graphwar_team_manager.rs:89` |
+| `remove_from_team` | `GraphwarTeamManager` | `0x3c1980` | `src/graphwar_team_manager.rs:96` |
+| `send_all_info_events` | `GraphwarTeamManager` | `0x3c1cf0` | `src/graphwar_team_manager.rs:127` |
+| `handle_entity_removed_event` | `GraphwarTeamManager` | `0x3c1f40` | `src/graphwar_team_manager.rs:139` |
+| `new` | `GraphwarTeamManager` | `0x3c1fc0` | `src/graphwar_team_manager.rs:63` |
+| `get_team` | `GraphwarTeamManager` | `0x3c2120` | `src/graphwar_team_manager.rs:103` |
+
+### graphwar_tick_handler（4 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `get_time_to_tick` | `GraphwarTickHandler` | `0x519450` | `/rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/time.rs:201` |
+| `get_fractional_tick` | `GraphwarTickHandler` | `0x519530` | `/rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/time.rs:201` |
+| `handle_connected_to_server_event` | `GraphwarTickHandler` | `0x519630` | `src/graphwar_tick_handler.rs:125` |
+| `tick` | `GraphwarTickHandler` | `0x519840` | `src/graphwar_tick_handler.rs:76` |
+
+### graphwar_turn_manager（13 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `get_current_turn_players` | `GraphwarTurnData` | `0x4627c0` | `src/graphwar_turn_manager.rs:80` |
+| `get_current_turn_soldiers` | `GraphwarTurnData` | `0x4628d0` | `src/graphwar_turn_manager.rs:98` |
+| `get_turn_mode` | `GraphwarTurnManager` | `0x462c10` | `src/graphwar_turn_manager.rs:172` |
+| `set_turn_mode` | `GraphwarTurnManager` | `0x462d20` | `src/graphwar_turn_manager.rs:159` |
+| `get_end_of_turn_tick` | `GraphwarTurnManager` | `0x462ec0` | `src/graphwar_turn_manager.rs:406` |
+| `send_all_info_events` | `GraphwarTurnManager` | `0x462fe0` | `src/graphwar_turn_manager.rs:410` |
+| `set_end_of_turn_tick` | `GraphwarTurnManager` | `0x463170` | `src/graphwar_turn_manager.rs:366` |
+| `get_current_turn_players` | `GraphwarTurnManager` | `0x463340` | `src/graphwar_turn_manager.rs:336` |
+| `get_current_turn_soldiers` | `GraphwarTurnManager` | `0x463460` | `src/graphwar_turn_manager.rs:340` |
+| `handle_entity_removed_event` | `GraphwarTurnManager` | `0x463580` | `src/graphwar_turn_manager.rs:423` |
+| `new` | `GraphwarTurnManager` | `0x463790` | `src/graphwar_turn_manager.rs:133` |
+| `set_turn` | `GraphwarTurnManager` | `0x4638f0` | `src/graphwar_turn_manager.rs:379` |
+| `next_turn` | `GraphwarTurnManager` | `0x463da0` | `src/graphwar_turn_manager.rs:261` |
+
+### graphwar_video_writer（3 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `write_video` | `GraphwarVideoWriter` | `0x4f0610` | `src/graphwar_video_writer.rs:154` |
+| `new` | `GraphwarVideoWriter` | `0x4f0bb0` | `src/graphwar_video_writer.rs:61` |
+| `add_frame` | `GraphwarVideoWriter` | `0x4f0e20` | `src/graphwar_video_writer.rs:125` |
+
+### math_function（5 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `remove_offset` | `MathFunction` | `0x4eb86a` | `src/math_function.rs:52` |
+| `to_string_recursive` | `MathFunction` | `0x4eccb3` | `src/math_function.rs:285` |
+| `new` | `MathFunction` | `0x4ed670` | `src/math_function.rs:75` |
+| `mutate_fine_tune` | `FunctionRandomizer` | `0x4ee720` | `src/math_function.rs:452` |
+| `mutate_function` | `FunctionRandomizer` | `0x748000` | `/rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/slice/index.rs:1020` |
+
+### obstacle_drawer（1 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `update` | `ObstacleDrawer` | `0x3ee190` | `src/obstacle_drawer.rs:51` |
+
+### player_showcase（4 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `draw` | `PlayerShowcase` | `0x4e5400` | `src/player_showcase.rs:72` |
+| `ready` | `PlayerShowcase` | `0x4e6480` | `src/player_showcase.rs:18` |
+| `process` | `PlayerShowcase` | `0x4e68f0` | `src/player_showcase.rs:59` |
+| `on_text_change` | `PlayerShowcase` | `0x4efd70` | `src/player_showcase.rs:31` |
+
+### polish_notation_converter（1 个）
+
+| 方法 | 类型 | x86 地址 | 源位置 |
+|---|---|---|---|
+| `reorder_recursive` | `PolishNotationConverter` | `0x4f5450` | `src/polish_notation_converter.rs:36` |
+
+**合计 327 个**（去重后；不含 `歧义` 171 与 `未知` 260，那两类见 TSV）。
