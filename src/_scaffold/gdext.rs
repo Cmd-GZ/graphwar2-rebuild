@@ -23,12 +23,20 @@
 //!
 //! `GDExtensionBool` 是 `uint8_t`；`GDExtensionInitializationLevel` 是 `int32`。
 //!
-//! ## 当前能力
+//! ## 当前能力（2026-11 更新）
 //!
-//! 本入口**只完成注册骨架**：填写初始化结构、在 `SCENE` 级别被调用、
-//! 并记录 `get_proc_address` 以便后续按名取接口。它**还没有注册任何类**
-//! （`classdb_register_extension_class2` 等尚未接入），所以加载后游戏里看不到新节点。
-//! 这一点是有意标注的：能加载 ≠ 功能完整。
+//! 本入口在 `SCENE` 级别注册两类东西：
+//!
+//! * **单例类** `GW2Rebuild`（父类 `RefCounted`）：`ping` / `path_calculate` /
+//!   `path_calculate_mode` / `hit_test` / `level_obstacles`，即算法出口；
+//! * **真节点类** `AxisDrawer`（父类 `Control`）：`axis_mode` 属性 + 4 个方法，
+//!   带 `create_instance_func`，能被 `ClassDB.instantiate` 与 `.tscn` 实例化。
+//!   这是"12 个 GDExtension 类能不能重建"的技术验证，见 `axis_drawer_class.rs`
+//!   与 `docs/16` §35。
+//!
+//! 仍然**没有**的能力：虚方法表（`_draw` / `_notification` 等一个都没接管）、
+//! 类注册注销（`classdb_unregister_extension_class`）、`NOTIFICATION_POSTINITIALIZE`。
+//! 能注册 ≠ 功能完整。
 
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
@@ -82,17 +90,28 @@ pub fn deinitialize_calls() -> usize {
     DEINIT_CALLS.load(Ordering::Relaxed)
 }
 
-/// 初始化时要向 Godot 请求的接口函数名（按注册一个类的最小集合）。
+/// 初始化时要向 Godot 请求的接口函数名（按"注册一个类 + 一个真节点类"的最小集合）。
+///
+/// 这份表的用处只有诊断：真正干活时每个模块自己去 `get_proc_address` 取一遍
+/// （`gdext_class.rs` / `axis_drawer_class.rs` / `api.rs`）。这里列出来是为了让
+/// "引擎到底给了哪些接口"能在 `initialize` 的日志里一眼看到。
 pub const WANTED: &[&str] = &[
     "classdb_register_extension_class2",
+    "classdb_register_extension_class4",
     "classdb_register_extension_class_method",
+    "classdb_register_extension_class_property",
     "classdb_register_extension_class_integer_constant",
+    "classdb_construct_object",
     "object_set_instance",
     "object_get_instance_binding",
+    "get_variant_from_type_constructor",
+    "get_variant_to_type_constructor",
+    "variant_get_type",
     "mem_alloc",
     "mem_free",
     "print_error",
     "string_name_new_with_latin1_chars",
+    "string_new_with_utf8_chars",
 ];
 
 static REQUESTED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
@@ -147,6 +166,10 @@ unsafe extern "C" fn on_initialize(_userdata: *mut c_void, level: i32) {
                     let _ = crate::_scaffold::api::register_hit_test_method(get, lib);
                     let _ = crate::_scaffold::api::register_level_obstacles_method(get, lib);
                 }
+                // 真节点类（父类 `Control`）的 spike，见 `docs/16` §35。
+                // 与上面那个单例走同一条 `get_proc_address` 通道，但它有
+                // `create_instance_func`，所以能被 `ClassDB.instantiate` / `.tscn` 造出来。
+                let _ = crate::_scaffold::axis_drawer_class::register_axis_drawer_class(get, lib);
             }
         }
     }

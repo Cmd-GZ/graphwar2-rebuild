@@ -26,6 +26,7 @@
 
 pub mod ai_explain;
 pub mod api;
+pub mod axis_drawer_class;
 pub mod broker;
 pub mod capi;
 pub mod diffconv;
