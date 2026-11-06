@@ -1118,3 +1118,178 @@ TCP 连到 <ip>:<port>  ->  发 {"NewConnectionRequest":{"major_version":"2.0","
 * ⚠️ 按 `AGENTS.md` §0.2，`tests/graphwar_client_connection_handler.rs` 与
   `tests/graphwar_backend.rs` 的通过**只是回归保护，不是复原证据**；
   本节所有结论的证据是上面的地址、`.symtab` 记录与 `.relro`/`.rodata` 字节。
+
+## 12. 联机/流这一组的收尾：帧层 / 回放读取 / LAN 广播 / broker 两件（2026-11）
+
+本节收掉五个模块 —— `graphwar_stream_buffer` / `graphwar_replay_reader` /
+`graphwar_lan_broadcaster_v6` / `graphwar_server_broker_handler` /
+`server_broker_request_connection`。其中**三个的 `panic::Location` 锚数为 0**
+（`graphwar_stream_buffer`、`graphwar_replay_reader`、
+`server_broker_request_connection`），所以对位方法换成**别的东西**，见 §12.1。
+
+### 12.1 无锚模块怎么对位（方法，之后还会用）
+
+| 手法 | 用在谁 | 判据 |
+|---|---|---|
+| **唯一字面量 join** | `graphwar_stream_buffer`、`graphwar_replay_reader` | 某条串在**整份 x86 `.so` 里只被 N 个函数引用**，arm64 侧同一串只在 M 个函数里出现，N=M 且语义可分辨 ⇒ 配对。`"Message too large"` 1↔1；`"user://replays/"` 2↔2 |
+| **被调者指纹 + 锚点排除** | `server_broker_request_connection` | 它唯一"已对位"的被调者是 `GraphwarStreamBuffer::read_event`（x86 `0x3d86a0`）；全 `.text` 调它的只有 3 个函数，另外 2 个各有自己的 `src` 锚 ⇒ 剩下的那个就是它 |
+| **不行就不给地址** | 两个 `get_game_info`、broker 的 `new` | 既无锚、又无可判等字面量、尺寸又小 ⇒ x86 列写"无锚"，**不猜** |
+
+⚠️ **尺寸比闸（0.61–1.19）不是判据，是排除器**：本轮有 3 处**出闸但已判等**的配对
+（`write_event` 1.456、`load_game` 1.469、broker `process` 1.226）。出闸的一律在表里注明
+**靠什么判等**，不许只写"尺寸不符所以未知"。
+
+### 12.2 `graphwar_stream_buffer`（2 个函数）——**它就是帧层**
+
+| 函数 | arm64 | x86 | 比 |
+|---|---|---|---|
+| `read_event`  | `0x45c51c` / 764  | `0x3d86a0` / 832  | 1.089 |
+| `write_event` | `0x45c818` / 1044 | `0x3d89e0` / 1520 | 1.456（靠字面量判等） |
+
+x86 `0x3d89e0` **就是 §6 里"broker 连接用的写入函数"**（`cmp $0xffff` + `rol $0x8`），
+所以这个帧层是**对局 / 服务端 / broker 三条 TCP 通道共用**的，不是哪一条私有：
+
+| 方向 | 调用方（arm64） |
+|---|---|
+| `write_event` | `GraphwarRemoteEventHandler::handle_client_remote_event`(`0x3e3ad0`)、`GraphwarClientConnectionHandler::{disconnect,forward_event}`(`0x48a8a0`/`0x48ac54`)、`GraphwarServerConnectionHandler::{forward_event,forward_connection_specific_event}`(`0x48badc`/`0x48c02c`) |
+| `read_event` | `ServerBrokerRequestConnectionClient::process`(`0x3ea0cc`)、`GraphwarClientConnectionHandler::tick`(`0x48b468`)、`GraphwarServerConnectionHandler::tick`(`0x48c644`) |
+
+**问题 (a) 的答案**：它不是"TCP 拆包缓冲"，**内部没有字节队列**——它靠
+`TcpStream::peek` 前瞻，整帧没到之前**一个字节都不消费**：
+
+```text
+write_event(&self, ev):  serialize → u16 大端(len) write_all(2) → write_all(len)
+read_event(&self):       peek(2) → len=大端 → len>0x1000 报错
+                       → peek(len+2)（不足 ⇒ Ok(None)，不消费）
+                       → read_exact(len+2) → 负载 = buf[2..] → serde_json
+```
+
+`push/read` 语义因此是：**写侧"整帧一次推出去"（两段 `write_all`，限长 `0xffff`）、
+读侧"整帧一次取走"（`read_exact(len+2)`，限长 `0x1000`）**，中间没有部分帧状态。
+⇒ 顺带结掉 §11.7 第 4 条：`0x…4a` = `Ok(None)` = **"整帧未到"**，不是 EOF；
+EOF 走 peek 返回 0 字节那条（`Err("Connection Lost")`）。
+
+错误串（`.rodata`，长度取自指令里的 `mov w,#len`）：
+`"Message too large"`(17) / `"Connection Lost"`(15) / `"Failed to serialize event."`(26) /
+`"Failed to write to tcp_stream."`(30) / `"Failed to write to tcp_stream. Message too long."`(48)。
+⚠️ `"Connection Lost"` 在 x86 构建里**逐字节搜不到**——两版这条消息不同（差异**未知**）。
+
+### 12.3 `graphwar_replay_reader`（2 个函数）——**问题 (b)**
+
+| 函数 | arm64 | x86 | 比 |
+|---|---|---|---|
+| `load_games` | `0x3da190` / 480  | `0x3d76f0` / 608  | 1.267 |
+| `load_game`  | `0x3da370` / 1612 | `0x3d5740` / 2368 | 1.469 |
+
+**答案 (b)：文件归 `replay_reader`，时钟归 `replay_player`。**
+
+| | `graphwar_replay_reader` | `graphwar_replay_player` |
+|---|---|---|
+| 读文件 | **是**：`FileAccess::open(path, 1)` + `get_buffer()` + `RefCounted::unreference()` | 不碰 |
+| 解压 | **是**：`flate2::gz::bufread::GzDecoder` + `io::append_to_string`（整份解成 `String`） | 不碰 |
+| 拆行/解 JSON | **是**：`StrSearcher` 逐行 + `serde_json` → `graphwar_game_recorder::EventInfo` | 消费 `Vec<EventInfo>` |
+| 推进 tick | **不碰**（被调者里**没有任何时间/tick 函数**） | **是**：`tick += floor(dt*60*speed)` |
+
+* 目录字面量 `"user://replays/"`，**15 字节、自带结尾斜杠**（arm64 `.rodata 0x19bdef` +
+  `mov w1,#0xf`；x86 `0x1bf7d7` + `mov $0xf`）。拼名不插分隔符；
+* `load_games` 用**静态** `DirAccess::get_files_at`，结果是 `Vec<String>`（元素 8 字节 =
+  `GString` 大小：arm64 `lsl x23,x21,#3`，x86 `mov $0x8,%r14d`）；
+* `load_game` **坏行跳过、不中断**（`Result` 被 `drop` 后回到循环头）。
+
+### 12.4 `graphwar_lan_broadcaster_v6`（5 个函数，4 个有 x86 对位）
+
+| 函数 | arm64 | x86 | 比 |
+|---|---|---|---|
+| `get_game_info` | `0x3ddce8` / 460  | **无锚** | — |
+| `set_room_info` | `0x3ddeb4` / 432  | `0x4572c0` / 448  | 1.037 |
+| `new`           | `0x3de064` / 312  | `0x457480` / 384  | 1.231（超闸，但有**唯一锚** `:35:51`） |
+| `start`         | `0x3de19c` / 372  | `0x457600` / 400  | 1.075 |
+| `process`       | `0x3de310` / 2040 | `0x457790` / 2208 | 1.082 |
+
+**问题 (c) 的两个答案：**
+
+1. **广播周期 = 1 秒**（§11 里没写）。`process` 的时间闸是
+   `Instant::now() - self.last_broadcast > Duration::from_secs(1)`
+   （`0x3de7b8`/`0x3de7c4` 求差，`0x3de7c8`/`0x3de7cc`/`0x3de7d4` 三段比较合成 `> 1s`；
+   正好 1.000 s **不发**）。`new` 把 `Instant::now()` 写进 `+0x48`/`+0x50` ⇒ 起表后
+   第一帧也是 1 秒后才发。**不是每帧发**。
+2. **收到的一方按"发送方 `SocketAddr`"去重 + 10 秒过期**。房间表
+   `HashMap<SocketAddr, (GameInfo, Instant)>` 在 `+0x78`（桶步长 `0x78` = 120 B，
+   与 §10 里 vbox 记的同一常量互证）；`GameInfo` 解析成功后 `insert` 到**发送方地址**这个键上
+   ⇒ 同一个 host 连发只留一条（后写覆盖），不同 host 同房名则**两条**。
+   每帧扫表、`Instant::now() - entry.instant` 的 `secs >= 10` 就删（`0x3de6e4 cmp x0,#0xa`）
+   ⇒ TTL **10 秒**（host 掉线后最长 10 秒仍在别人的列表里，**推断**）。
+
+另外两条新事实：
+
+* **广播里的 `address` 恒为 `[::1]:<port>`**：`set_room_info` 内部
+  `IpAddr::from_str("::1")`（arm64 `0x3ddf08`；x86 字面量 `::1` 在 `0x4572ee`）。
+  这给 §1.1 那 385 个 `"[::1]:35245"` 样本提供了**成因**（当时只记"观测"）；
+* **帧边界 = UDP 数据报边界**：收侧 `recv_from` 到 **1000 字节**栈缓冲
+  （`mov w2,#0x3e8`），`str::from_utf8` → `serde_json` → 插表；发侧 `send_to` 一条
+  序列化好的 JSON，**不追加 `\n`、不追加 NUL**。⇒ §11.5 说的"换行分帧"应理解为
+  "面向行的文本协议"，本构建里并不真的发换行（**观测**：`GameInfo::serialize` 之后
+  直接 `send_to`）。
+
+结构：总长 **`0xc0`**（`start_lan_broadcaster` 整块拷 6×32 字节到 `backend+0x110`），
+socket fd 在 `+0xb8`（**`-1` = 还没 bind**，`new` 写死），组播地址副本在 `+0xa8`，
+表在 `+0x78`（`ctrl` / `mask` / `growth` / `items` / `hasher` 依次 `+0x78`/`+0x80`/`+0x88`/`+0x90`/`+0x98`）。
+⚠️ §10 里 vbox 读的 `+0x1a0` **不是**这张表 ⇒ vbox 读的是另一张（**未知**）。
+
+### 12.5 `graphwar_server_broker_handler`（5 个函数 + 1 个线程体）
+
+| 函数 | arm64 | x86 | 比 | 判据 |
+|---|---|---|---|---|
+| `get_game_info` | `0x489b98` / 460  | **无锚** | — | 无锚、无字面量 ⇒ 不给 |
+| `new`           | `0x489d64` / 236  | **无锚** | — | 同上 |
+| `stop`          | `0x489e50` / 344  | `0x4586d0` / 288 | 0.837 | 唯一锚 `:90:52` |
+| `start`         | `0x489fa8` / 208  | `0x4587f0` / 224 | 1.077 | **推断**：夹在 stop/process 之间 + 尺寸 |
+| `process`       | `0x48a078` / 2088 | `0x4588d0` / 2560 | 1.226（超闸） | 4 个锚命中 **3** 个 |
+| `start::{{closure}}` | `0x48e130` / 1984 | `0x437ce0` / 1344 | 0.677 | 两个文件的 `Location` 同时命中（见 §12.6） |
+
+* 三个字段：房间表 `HashMap<SocketAddr, GameInfo>`（桶步长同 `0x78`）、
+  `Mutex<Option<ServerBrokerRequestConnectionClient>>`、线程 `JoinHandle`
+  （`0x48a020` 一拿到就 `drop` ⇒ **分离线程**）；
+* `process` 一帧：`lock()` → `client.process()` → 事件按 `GameInfo`/`GameRemoved`
+  分别 `insert` / `remove_entry`（两张符号都在）→ 落尾 `drop_in_place<time_probe::TimeProbe>`；
+* `TimeProbe` 的打印阈值常量 **`0.005`**（`0x179fa0`，`ldr d1,[x8,#0xfa0]`）⇒
+  "耗时 > 5 ms 才打印"是原版**留在里面的计时日志**（**推断**）；
+* **表键是房间地址**（`GameInfo.address`），与 LAN 那一路的"发送方地址"**不同**；
+* 本模块**没有** TTL 扫描（无 `Instant::now - entry.instant`）⇒ Global 一路的过期
+  完全依赖 broker 推 `GameRemoved`（该报文**从未抓到**，形状来自序列化代码）⇒ **未知**。
+
+### 12.6 `server_broker_request_connection`（**只有 1 个函数**）
+
+| 函数 | arm64 | x86 | 比 | 判据 |
+|---|---|---|---|---|
+| `process` | `0x3ea0cc` / 688 | `0x3e5a80` / 816 | 1.186 | 被调者指纹（§12.1 第 2 行） |
+
+它是**房主连 broker 的那条客户端连接**（`Mutex<Option<…Client>>` 里，符号可证），
+`process` 就干一件事：循环 `GraphwarStreamBuffer::read_event` 把已到的整帧榨成
+`Vec<GraphwarEvent>`（`Ok(None)`/`WouldBlock` 即停，其它 `Err` 打日志后停）。
+
+⚠️ **"连上 + `set_nonblocking` + 写第一帧"没有独立符号**：它被内联进
+`GraphwarServerBrokerHandler::start` 起的**线程体**（arm64 `0x48e130` = x86 `0x437ce0`）。
+证据是那个函数里**同时**出现
+`src/graphwar_server_broker_handler.rs:60:55` 与
+`src/server_broker_request_connection.rs:66:42` 两条 `Location`，外加字面量
+`"Cannot set non-blocking"` 与一次 `GraphwarStreamBuffer::write_event`。
+⇒ `fixtures/module_funcs.tsv` 把 `0x437ce0` 记到 `graphwar_server_broker_handler.rs`
+是**对的一半**：它同时属于两个文件。**"谁持有它"不能反推"它在哪个模块"**，这就是活例。
+
+第一帧（**推断**，抓包一侧）：`{"VersionInfo":{"version":"2.0.60","system":"linux"}}`，
+版本串逐字节可知（`0x4693c0` 里 `mov w9,#0x2e32`=`"2."`、`mov w9,#0x3036`=`"60"`）。
+
+### 12.7 实现与验收
+
+* `src/graphwar_stream_buffer.rs` / `graphwar_replay_reader.rs` /
+  `graphwar_lan_broadcaster_v6.rs` / `graphwar_server_broker_handler.rs` /
+  `server_broker_request_connection.rs`：常量 + 纯判定函数 + 无 IO 的状态机骨架
+  （socket / 文件 / 线程全部由调用方注入）。
+* 验收在 `tests/graphwar_stream_buffer.rs`、`tests/graphwar_replay_reader.rs`、
+  `tests/graphwar_lan_broadcaster_v6.rs`、`tests/graphwar_server_broker_handler.rs`、
+  `tests/server_broker_request_connection.rs`，用 `#[path]` 把源码编进测试二进制
+  ⇒ **`src/lib.rs` 不需要改**也能跑（与 `tests/graphwar_replay_control.rs` 同一手法）。
+* ⚠️ 按 `AGENTS.md` §0.2：这些测试通过**只是回归保护，不是复原证据**。
+  本节全部结论的证据是上面列出的地址、`.symtab` 名字/尺寸、`.rodata` 字面量与
+  `panic::Location` 键集。
