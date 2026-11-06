@@ -721,6 +721,12 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 > 而原版是 **58 个 `graphwar_*.rs` + 12 个非 `graphwar_` 模块**。文件名言不达意，读者就得自己猜
 > 对应关系。本节把对应关系写成表，并把能定为 1:1 的**用原版名重命名**（`git mv`，历史可 `--follow`）。
 
+> ⚠️ **本节所有模块名都是从 `.rodata` 残留串反推的。**
+> 2026-11 拿到了 **2024-07-30 版未 strip 的符号表**，从中读出 78 个模块、165 个类型、290 个方法名，
+> 并解出本节「未知」档 22 个模块里的 21 个真身。**名字以 [`§18`](#18-权威名字清单2024-07-30-版未-strip-的符号表2026-11) 为准**；
+> 本节 §17.1/§17.2/§17.4 里有 5 处归属被 §18.7 更正（`weak_caller` / `graphwar_crash_reporter` /
+> `GameInfo` / `FunctionRandomizer` / `graphwar_replay_player`），本节的表**暂时保留原样**以免与其他分支冲突。
+
 **这张表只回答"哪个文件对哪个模块"，不回答"还原到什么程度"**——证据档位（逐位/观测/推断/未知）
 仍以 [`149-coverage-matrix.md`](149-coverage-matrix.md) 与各专题文档为准。
 
@@ -1336,7 +1342,7 @@ function/mod|function/to_text)\.rs' --include='*.md' --include='*.rs' --include=
 | 5 | `FunctionRandomizer`（`adjust_tokens` / `mutate_function` / `mutate_fine_tune` / `create_random_region`）在 **`math_function` 模块**里，锚 `math_function.rs:452:44` | 符号路径 + Location | `观测` | `docs/AI`/§17.2 把"token 级随机化"记在 `graphwar_function_evolutionator` 下；实际那个模块只有 `score_function` 一个方法（1 个 direct 函数）。分工要重划 |
 | 6 | `graphwar_level_manager` 有 `setup_level_0` … `setup_level_20`，**正好 21 个** | 符号名（`_0`…`_4` 只剩闭包，本体被内联） | `观测` | 与 `docs/10` 从数据表反推的 `SETUPS[21]` **互相印证**（两条独立证据） |
 | 7 | `graphwar_event` 有 **72 个变体** + `GraphwarEvent` 本体 = 73 个类型 | 符号名 | `观测` | 与 `docs/114` 的「72 个具名变体」**逐个数量相同**（本轮只对了数量，没逐个对名字——那是一件值得单独做的事） |
-| 8 | `graphwar_replay_player` 有 `go_to_first_checkpoint` / `go_to_next_checkpoint` / `go_to_previous_checkpoint` / `inject_events` / `is_paused` / `pause` / `toggle_pause` / `process` / `new` = **9 个方法** | 符号名 | `观测` | §17.4 说「播放时钟是我们为了让客户端能播而设计的，原版没有对应函数」—— **这句现在被推翻了**：原版确实有暂停/检查点跳转。我方 `ReplayPlayer` 应该按这 9 个名字重划，而不是登记成"自定模型" |
+| 8 | `graphwar_replay_player` 有 `go_to_first_checkpoint` / `go_to_next_checkpoint` / `go_to_previous_checkpoint` / `inject_events` / `is_paused` / `pause` / `toggle_pause` / `process` / `new` = **9 个方法** | 符号名 | `观测` | §17.4 说「播放时钟是我们为了让客户端能播而设计的，原版没有对应函数」—— **这句在 2024 版上被推翻了**：`GraphwarReplayPlayer` 本身就是个带动画时钟的对象，有 `pause` / `toggle_pause` / `is_paused` 和三个 checkpoint 跳转。我方 `ReplayPlayer` 应改成按这 9 个名字组织（2.0.60 是否同名属 `推断`，但同一文件里同名方法大概率没改） |
 | 9 | `graphwar_shot_calculator` 的 4 个方法是 `calculate_function` / `calculate_corrected_function` / `calculate_function_offset_str` / `calculate_shot_results` | 符号名 | `观测` | "修正"（`docs/05` 的 `c = y0 − f(±x0)`）是**独立方法** `calculate_corrected_function`；"`_offset_str`"说明还有一条生成函数文本的路径 |
 | 10 | 本仓库最长的原版源文件是 `graphwar_level_manager.rs`（≥1,888 行），不是 `graphwar_root_node.rs` | Location 行跨度 | `观测`（下界） | 排工时的优先级应该按行数×函数数，不是按 `docs/149` 的 anchors 排序 |
 
