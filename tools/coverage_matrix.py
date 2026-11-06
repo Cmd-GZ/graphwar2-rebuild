@@ -557,16 +557,16 @@ mod("effect_drawer.rs", "other", ("src/effect_drawer.rs",), "观测",
     "tick 制 60 tick = 1 秒，物理子步 1/600 s，相位推进 600 tick；与 client/ 有 10 处出入（docs/16 §21）")
 mod("axis_drawer.rs", "other", ("src/axis_drawer.rs",), "观测",
     "3 个 pub fn / 24 常量：四档轴模式与全部数值逐条登记（docs/16 §21）")
-mod("obstacle_drawer.rs", "other", (), "未知",
-    "非 graphwar_ 前缀；除模块名外没有一条能指到地址或报文的观测")
-mod("function_drawer.rs", "other", (), "未知",
-    "非 graphwar_ 前缀；除模块名外没有任何观测")
-mod("button_manager.rs", "other", (), "未知",
-    "非 graphwar_ 前缀；除模块名外没有任何观测")
-mod("function_button_manager.rs", "other", (), "未知",
-    "非 graphwar_ 前缀；除模块名外没有任何观测")
-mod("function_history_recorder.rs", "other", (), "未知",
-    "非 graphwar_ 前缀；除模块名外没有任何观测")
+mod("obstacle_drawer.rs", "other", ("src/obstacle_drawer.rs",), "观测",
+    "2 函数（update + 落在 GraphwarPlane::init 的那条）。**脏矩形由 graphwar_plane 决定并持有**；ObstacleDrawer::update 连矩形参数都没有，只把障碍光栅化成 Image -> ImageTexture -> Sprite2D，每帧被 GraphwarPlane::process 调 2 次（docs/16 §36）")
+mod("function_drawer.rs", "other", ("src/function_drawer.rs",), "观测",
+    "5 方法（x86 落 4，唯一锚 0x498c70 = update_function）。**自己不画图元**：持 HashMap<i32(player id), (Gd<Line2D>, 已写入点数)>，GraphwarPlane::init 建 3 个并 add_child；update_function 仅在 new_len > 已写入数时，对 points[written..new_len] 逐点 Line2D::add_point（16B/点，两个 f64）=> **增量追加，不是整条重画**；变短时一点不加（docs/16 §36）")
+mod("button_manager.rs", "other", ("src/button_manager.rs",), "观测",
+    "3 函数（9936 B 的 new + 两份 find_buttons 单态化）；地址只钉住 0x3a2e10（docs/16 §36）")
+mod("function_button_manager.rs", "other", ("src/function_button_manager.rs",), "观测",
+    "3 函数：函数输入键盘的**按键分发器**——按钮把自带 &str 交进来，闭包分发给 8 个 GraphwarFunctionInput 方法；按钮文本来自场景（Rust 里 0 个函数名字面量）（docs/16 §36）")
+mod("function_history_recorder.rs", "other", ("src/function_history_recorder.rs",), "观测",
+    "3 函数：**无上限、无预留、不去重**（推送就是 Vec::push）；上下键在两份二进制里都没有落点（ui_up/ui_down 各 0 处、无箭头键码）=> **只写不读，消费者未知**（docs/16 §36）")
 mod("player_showcase.rs", "other", ("src/player_showcase.rs",), "观测",
     "10 个函数全解：ready 0x4e6480 / on_text_change 0x4efd70 / process 0x4e68f0 / draw 0x4e5400 + 6 个 gdext 生成物。**三次 draw_texture_rect_full**（皮肤→脸→帽），与颜色/段位无关；读根节点 +0x16a8 的 GraphwarPlayerConfig（名字+0x00/皮肤+0x60/脸+0x78/帽+0x90/变更计数+0xa8），process 轮询计数才重画（docs/16 §25）")
 mod("server_broker_request_connection.rs", "other", ("src/server_broker_request_connection.rs",), "观测",

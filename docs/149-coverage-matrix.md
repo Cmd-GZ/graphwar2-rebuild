@@ -5,7 +5,7 @@
 ## 0. 一句话总账
 
 ```
-原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 430、16 个非 graphwar 游戏模块占 97）；我们已实现 480 个函数，其中 逐位 88 / 观测 392 / 推断 0；未做 39；完全未知的模块 5 个（graphwar 里 0 个）。
+原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 430、16 个非 graphwar 游戏模块占 97）；我们已实现 488 个函数，其中 逐位 88 / 观测 400 / 推断 0；未做 39；完全未知的模块 0 个（graphwar 里 0 个）。
 ```
 
 拆成两个口径（下面的数字全部由脚本算出，重跑即复现）：
@@ -13,7 +13,7 @@
 | 口径 | 模块数 | 可归属函数 | 已实现 | 逐位 | 观测 | 推断 | 未做 | 未知模块 |
 |---|---|---|---|---|---|---|---|---|
 | 58 个 `graphwar_*.rs` | 62 | 430 | 430 | 81 | 349 | 0 | 0 | 0 |
-| 16 个非 graphwar 的游戏模块 | 16 | 97 | 50 | 7 | 43 | 0 | 39 | 5 |
+| 16 个非 graphwar 的游戏模块 | 16 | 97 | 58 | 7 | 51 | 0 | 39 | 0 |
 
 还有 `weak_caller.rs`（40 个归属函数）按 `docs/02` §9 判为第三方依赖库，单独一行留在 TSV 里备查，**不计入**任何合计。
 
@@ -143,16 +143,16 @@
 |---|---|---|---|---|---|
 | `axis_drawer.rs` | 6 | 3 | `src/axis_drawer.rs` | 12 | 观测 |
 | `backtracer.rs` | 0 | 0 | `src/backtracer.rs` | 2 | 观测 |
-| `button_manager.rs` | 2 | 3 | — | 0 | 未知 |
+| `button_manager.rs` | 2 | 3 | `src/button_manager.rs` | 7 | 观测 |
 | `effect_drawer.rs` | 11 | 17 | `src/effect_drawer.rs` | 19 | 观测 |
 | `entity_drawer.rs` | 14 | 36 | `src/entity_drawer.rs` | 19 | 观测 |
-| `function_button_manager.rs` | 2 | 3 | — | 0 | 未知 |
-| `function_drawer.rs` | 1 | 1 | — | 0 | 未知 |
-| `function_history_recorder.rs` | 1 | 3 | — | 0 | 未知 |
+| `function_button_manager.rs` | 2 | 3 | `src/function_button_manager.rs` | 6 | 观测 |
+| `function_drawer.rs` | 1 | 1 | `src/function_drawer.rs` | 10 | 观测 |
+| `function_history_recorder.rs` | 1 | 3 | `src/function_history_recorder.rs` | 11 | 观测 |
 | `function_token.rs` | 0 | 0 | `src/function_token.rs` | 9 | 观测 |
 | `graphwar_texture_loader.rs` | 1 | 1 | `src/graphwar_texture_loader.rs` | 7 | 观测 |
 | `math_function.rs` | 7 | 15 | `src/math_function.rs+src/math_function/to_text.rs` | 43 | 逐位 |
-| `obstacle_drawer.rs` | 2 | 7 | — | 0 | 未知 |
+| `obstacle_drawer.rs` | 2 | 7 | `src/obstacle_drawer.rs` | 4 | 观测 |
 | `player_showcase.rs` | 10 | 18 | `src/player_showcase.rs` | 44 | 观测 |
 | `polish_notation_converter.rs` | 1 | 2 | `src/polish_notation_converter.rs` | 6 | 观测 |
 | `server_broker_request_connection.rs` | 0 | 1 | `src/server_broker_request_connection.rs` | 10 | 观测 |
@@ -168,7 +168,7 @@
 
 另外还有 **7 个模块一个 panic 锚都没有**（连「它有没有函数」都答不出来）：`graphwar_crash_reporter.rs`、`graphwar_event.rs`、`graphwar_event_queue.rs`、`graphwar_game_info.rs`、`graphwar_player_config.rs`、`graphwar_replay_reader.rs`、`graphwar_stream_buffer.rs`。
 它们的 `orig_funcs` 是 0，**不代表模块为空**，只代表这个方法对它们完全失效。
-非 graphwar 前缀里还有 5 个未知模块（`obstacle_drawer` / `function_drawer` / `button_manager` / `function_button_manager` / `function_history_recorder` / `player_showcase` / `server_broker_request_connection`），它们的共同点是**连「是不是游戏代码」都只有名字可依**。
+非 graphwar 前缀里还有 0 个未知模块（`obstacle_drawer` / `function_drawer` / `button_manager` / `function_button_manager` / `function_history_recorder` / `player_showcase` / `server_broker_request_connection`），它们的共同点是**连「是不是游戏代码」都只有名字可依**。
 
 ## 4. 我们自造的、原版没有的东西（问题 2）
 这一栏**不算复原**，列出来是为了别把「能跑」当「还原了」。
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（85 个文件、1718 条 `fn`） | `a3798965ab9299f86d05187fea3b35d4a0fa143a713887a5251290095c1b387f` |
+| `src/` 树（91 个文件、1788 条 `fn`） | `31bdf35957338e2b36baa0e03e6d3d6ac2ee52307e53fec1d177fb14ba2d26e0` |
 

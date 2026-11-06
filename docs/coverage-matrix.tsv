@@ -7,14 +7,14 @@
 # tool_version: 1
 # binary_sha256: 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
 # funcstarts_sha256: b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a
-# src_tree_sha256: a3798965ab9299f86d05187fea3b35d4a0fa143a713887a5251290095c1b387f
+# src_tree_sha256: 31bdf35957338e2b36baa0e03e6d3d6ac2ee52307e53fec1d177fb14ba2d26e0
 # funcstarts_n: 13263
 # src_modules: 246
 # loc_structs: 2042
 # attributed_funcs: 527
 # contested_funcs: 86
-# src_files: 85
-# src_fns: 1718
+# src_files: 91
+# src_fns: 1788
 module	scope	orig_funcs	contested	anchors	ours_file	ours_funcs	status	evidence
 graphwar_ad_switch.rs	graphwar	6	0	3	src/graphwar_ad_switch.rs	21	观测	6 条全是 gdext 惰性注册驱动；两个 getter trampoline + owned(+0x18) 已钉死
 graphwar_audio_control.rs	graphwar	7	1	16	src/graphwar_audio_control.rs	21	观测	9 函数 + 4 订阅闭包。订阅 effect_info(44，按 +0x20 的 u8 四臂落三槽) / soldier_info(15) / entity_removed(14) / game_state_info(30)；槽 +0x80/90/a0/b0/c0 = explosion/squash/spark/pop/unpop，音量 -15/-15/-15/0/-5 dB；state==1 清待播队列（docs/16 §30）
@@ -80,16 +80,16 @@ graphwar_turn_manager.rs	graphwar	14	1	45	src/graphwar_turn_manager.rs	60	逐位
 graphwar_video_writer.rs	graphwar	3	0	4	src/graphwar_video_writer.rs	8	观测	3：**真的是录视频**——openh264::Encoder + minimp4（60 fps，轨道名 Graphwar Clip），FileAccess 一次写盘；尺寸向上取偶。本仓只做结构，不产 MP4（无 openh264 依赖）（docs/16 §32）
 axis_drawer.rs	other	6	0	3	src/axis_drawer.rs	12	观测	3 个 pub fn / 24 常量：四档轴模式与全部数值逐条登记（docs/16 §21）
 backtracer.rs	other	0	0	0	src/backtracer.rs	2	观测	panic 钩子写 user://crash_log.txt；两侧都**没有** Backtrace::capture（名字误导）（docs/16 §33）
-button_manager.rs	other	2	0	3		0	未知	非 graphwar_ 前缀；除模块名外没有任何观测
+button_manager.rs	other	2	0	3	src/button_manager.rs	7	观测	3 函数（9936 B 的 new + 两份 find_buttons 单态化）；地址只钉住 0x3a2e10（docs/16 §36）
 effect_drawer.rs	other	11	3	17	src/effect_drawer.rs	19	观测	7 个 pub fn / 36 常量：draw_circle×4 + polygon×1 + line×2 + 一次 draw_set_transform，半径 0.05/0.06；tick 制 60 tick = 1 秒，物理子步 1/600 s，相位推进 600 tick；与 client/ 有 10 处出入（docs/16 §21）
 entity_drawer.rs	other	14	6	36	src/entity_drawer.rs	19	观测	10 个函数全解：draw/ready/process/update_sprite/update_name_label/draw_offset_triangle/get_entity_{hat,name_label,face,skin}。**士兵/靶子不是图元而是子节点**——3 个 Sprite2D（skin/face/hat 贴图）+ 1 个 RichTextLabel（res://name_label.tscn），懒建缓存于 4 张 HashMap，由 process 每帧摆位置；draw() 只画准星（3 弧 + 3 箭头）。docs/16 §24
-function_button_manager.rs	other	2	0	3		0	未知	非 graphwar_ 前缀；除模块名外没有任何观测
-function_drawer.rs	other	1	0	1		0	未知	非 graphwar_ 前缀；除模块名外没有任何观测
-function_history_recorder.rs	other	1	0	3		0	未知	非 graphwar_ 前缀；除模块名外没有任何观测
+function_button_manager.rs	other	2	0	3	src/function_button_manager.rs	6	观测	3 函数：函数输入键盘的**按键分发器**——按钮把自带 &str 交进来，闭包分发给 8 个 GraphwarFunctionInput 方法；按钮文本来自场景（Rust 里 0 个函数名字面量）（docs/16 §36）
+function_drawer.rs	other	1	0	1	src/function_drawer.rs	10	观测	5 方法（x86 落 4，唯一锚 0x498c70 = update_function）。**自己不画图元**：持 HashMap<i32(player id), (Gd<Line2D>, 已写入点数)>，GraphwarPlane::init 建 3 个并 add_child；update_function 仅在 new_len > 已写入数时，对 points[written..new_len] 逐点 Line2D::add_point（16B/点，两个 f64）=> **增量追加，不是整条重画**；变短时一点不加（docs/16 §36）
+function_history_recorder.rs	other	1	0	3	src/function_history_recorder.rs	11	观测	3 函数：**无上限、无预留、不去重**（推送就是 Vec::push）；上下键在两份二进制里都没有落点（ui_up/ui_down 各 0 处、无箭头键码）=> **只写不读，消费者未知**（docs/16 §36）
 function_token.rs	other	0	0	0	src/function_token.rs	9	观测	16B token {tag,value} + 字符串表；tag 20=无效、`(`=18 `)`=19、**ˆ(U+02C6) 也是 ^**（新发现）（docs/16 §33）
 graphwar_texture_loader.rs	other	1	0	1	src/graphwar_texture_loader.rs	7	观测	**4，不是 1**（旧记 1 是 Location 口径下限：三个 getter 从不 panic）。三张 HashMap<String,_> @ +0x150/+0x180/+0x1b0（步长 0x30、表项 0x28），按名字 memcmp，21KB 饿汉加载；唯一构造点 0x39a328 在 GraphwarRootNode 的 INode impl 里（docs/16 §31/§32）
 math_function.rs	other	7	0	15	src/math_function.rs+src/math_function/to_text.rs	43	逐位	docs/03：90 例文法 + 70 条真值夹具与真二进制对拍。**解析器 0x4ed670 的 panic 锚就落在这个文件上**（math_function.rs:75）⇒ 函数语言的解析器属于本模块，不属于 graphwar_function_input
-obstacle_drawer.rs	other	2	1	7		0	未知	非 graphwar_ 前缀；除模块名外没有一条能指到地址或报文的观测
+obstacle_drawer.rs	other	2	1	7	src/obstacle_drawer.rs	4	观测	2 函数（update + 落在 GraphwarPlane::init 的那条）。**脏矩形由 graphwar_plane 决定并持有**；ObstacleDrawer::update 连矩形参数都没有，只把障碍光栅化成 Image -> ImageTexture -> Sprite2D，每帧被 GraphwarPlane::process 调 2 次（docs/16 §36）
 player_showcase.rs	other	10	0	18	src/player_showcase.rs	44	观测	10 个函数全解：ready 0x4e6480 / on_text_change 0x4efd70 / process 0x4e68f0 / draw 0x4e5400 + 6 个 gdext 生成物。**三次 draw_texture_rect_full**（皮肤→脸→帽），与颜色/段位无关；读根节点 +0x16a8 的 GraphwarPlayerConfig（名字+0x00/皮肤+0x60/脸+0x78/帽+0x90/变更计数+0xa8），process 轮询计数才重画（docs/16 §25）
 polish_notation_converter.rs	other	1	0	2	src/polish_notation_converter.rs	6	观测	**是活代码**：唯一调用者 0x4edd1f（在 MathFunction::new 0x4ed670 内），另有两条自递归。分词产物是**中缀**且含 tag 18/19 括号；括号/优先级/补 CONST 0 全在这里=> docs/03 §13「解析器自己就做分词」只对了一半。原版正则 77B、优先级表 18 项已逐字节拿到（docs/16 §33）
 server_broker_request_connection.rs	other	0	0	1	src/server_broker_request_connection.rs	10	观测	1/1；process 的 x86 0x3e5a80 是推断（调用指纹+相邻性，非唯一锚）（docs/09 §12）

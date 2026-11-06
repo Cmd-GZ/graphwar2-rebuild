@@ -5307,3 +5307,260 @@ bash client/run.sh selftest  → SELFTEST 694 passed, 0 failed
 
 基线取自 `9ee40e46`：lib **449**（任务书里写的 442 是更早的 master）、总计 **1440**。
 本轮新增的 8 条单测全部在新文件里，**既有断言一条都没改、没删**。
+
+---
+
+## 36. 最后 8 个可归属函数：5 个**非 `graphwar_` 前缀**的小模块（本轮新增）
+
+> 这一节收掉进度尺上最后一批"一直被漏在任务书之外"的东西：
+> `function_drawer` / `function_history_recorder` / `function_button_manager` /
+> `button_manager` / `obstacle_drawer`。五个模块合计 **8 个**可归属函数
+> （`1 + 1 + 2 + 2 + 2`），口径与 `docs/coverage-matrix.tsv` 一致。
+>
+> **地址口径**：`x86` 一律 **ELF 虚地址**（`objdump` 口径），Ghidra/REA 地址 = 本值 + `0x100000`；
+> `arm64` 是 **2.0.60 的 Android 构建**，**只用于定名**，绝不当 x86 地址用。
+> 唯一的例外是 `procedure_callers`/`procedure_callees` 返回的地址（Ghidra 口径），本节逐处标注。
+> 落码：`src/{function_drawer,function_history_recorder,function_button_manager,button_manager,obstacle_drawer}.rs`；
+> 验收：`tests/last_five.rs`（**回归保护，不是复原证据**）。
+
+### 36.0 一页结论
+
+| 模块 | 函数（arm64 2.0.60 真名） | x86 落地 | 档位 |
+|---|---|---|---|
+| `function_drawer` | `remove_function` / `update_function` / `update_transform` / `update_function_fade` / `draw`（5） | **4/5**（只有 `update_function` 带 Location；`draw` 未落地） | 观测（1 个唯一锚）+ 观测（3 个被调者多重集）+ 未知（1 个） |
+| `function_history_recorder` | `new` / `handle_function_fire_event` / 订阅闭包（3） | **1/3** | 观测 |
+| `function_button_manager` | `find_buttons` / `new` / `new::{{closure}}`（3） | **2/3** | 观测（Location + 被调者 8/8 + 首尾相接） |
+| `button_manager` | `find_buttons` / `new`（arm64 无符号）/ `new::{{closure}}`（3） | **2/3**（角色口径 2，见 36.2 的孪生说明） | 观测 1 + 未知 1 |
+| `obstacle_drawer` | `update`（1）+ 一条 Location 落在 `GraphwarPlane::init` 体内 | **2/2** | 观测 |
+
+四条"任务问的答案"各占一小节：**a** → §36.3，**b** → §36.4，**c** → §36.5，**d** → §36.6。
+
+### 36.1 名字从哪来：**Android 2.0.60 优先，并与 2024-07-30 对账**
+
+两份未 strip 的构建都带完整 `.symtab`。按 `docs/02` §18 的补注，**优先 Android**（与逆向目标同版本）：
+
+```text
+for so in android-2.0.60/libgraphwarrust.so 2024-07-30/libgraphwarrust.so; do
+  readelf -sW .reference/steam/$so | awk '$4=="FUNC"' \
+    | c++filt --format rust | grep -E 'graphwarrust::(function_drawer|function_history_recorder|
+        function_button_manager|button_manager|obstacle_drawer)::'
+done
+```
+
+本批 5 个模块在 **2.0.60（arm64）** 里的源级符号数：
+
+| 模块 | 源级方法 | 另有 `drop_in_place<…>` |
+|---|---|---|
+| `function_drawer` | **5** | 2（各 104 B） |
+| `function_history_recorder` | **3** | 5（含 `Vec<FunctionData>` 124 B ×2） |
+| `function_button_manager` | **3** | 2 |
+| `button_manager` | **2**（`new` 被内联，只剩 `find_buttons` + 闭包） | 3 |
+| `obstacle_drawer` | **1** | 3（各 268 B） |
+
+**两版不一致只有一处，而且方向明确**：
+
+| 名字 | 2024-07-30（x86，未 strip） | 2.0.60（arm64，未 strip） | 结论 |
+|---|---|---|---|
+| `FunctionDrawer::clear_functions` | **有** | **无** | 以 2.0.60 为准 ⇒ 2.0.60 里不存在（连内联落点都没观测到）→ **未知** |
+| `FunctionDrawer::set_z_index` | **有** | **无** | 以 2.0.60 为准；但 `CanvasItem::set_z_index` 的调用**还在**，在 `update_function` 的"建节点"分支里（arm64 `0x390d04`）⇒ 最可能**被内联** → **推断** |
+
+> 口径提醒：`docs/02` §18 那张"权威名字清单"的标题写的是"2024-07-30 版"，
+> 那是因为当时手上只有那份**同架构**文件。**"与 2.0.60 是否一致"这个问题，Android 版更权威。**
+> 本节按这条规矩执行，并把上面两行差异记在这里。
+
+### 36.2 八个函数的地址表（全部 **观测**）
+
+| 模块 | 方法 | arm64 2.0.60 | B | x86 vaddr | B | 比值 | 怎么配上的 |
+|---|---|---|---|---|---|---|---|
+| `function_drawer` | `remove_function` | `0x390a2c` | 276 | `0x498b70` | 256 | 0.93 | 被调者：`queue_free` + `RawTable::remove_entry` |
+| | `update_function` | `0x390b40` | 848 | **`0x498c70`** | 992 | 1.17 | **Location 唯一锚** + 6 个被调者逐个相同 |
+| | `update_transform` | `0x390e90` | 528 | `0x499050` | 608 | 1.15 | 被调者：`set_width`×2 / `set_scale`×2 / `set_joint_mode`×2 |
+| | `update_function_fade` | `0x3910a0` | 276 | `0x4992b0` | 272 | 0.99 | 被调者：`set_default_color`×1 |
+| | `draw` | `0x3911b4` | 560 | **未知** | — | — | x86 未定位（有界否定见 §36.3 末） |
+| `function_history_recorder` | `handle_function_fire_event` | `0x49d71c` | 596 | **`0x3f0e40`** | 483 | 0.81 | 3 个 Location 键 + `String::clone`/`grow_one` |
+| `function_button_manager` | `new` | `0x42464c` | 924 | **`0x3f0270`** | 1088 | 1.18 | 2 个 Location 键 + 被调者 |
+| | `new::{{closure}}` | `0x4249e8` | 2040 | **`0x3f06b0`** | 1936 | 0.95 | 8 个 `GraphwarFunctionInput` 方法逐个相同 |
+| `button_manager` | `new`（内联体） | 无符号 | — | **`0x3a2e10`** | 9936 | 不适用 | 2 个 Location 键 + **唯一**调用者 `0x52fdf0`（Ghidra 口径） |
+| `obstacle_drawer` | `update` | `0x422590` | 4688 | **`0x3ee190`** | 5216 | 1.11 | 6 个 Location 键 + `create_from_data`×2 / `rustc_entry`×3 |
+| | （Location 落在）`GraphwarPlane::init` | `0x4bd73c` | 1336 | **`0x4b7380`** | 1776 | — | `obstacle_drawer.rs:37:97` 双向唯一（§26.2） |
+
+比值闸（`0.61–1.19`）**只对"同源方法"用**：`GraphwarPlane::init` 那条是**跨文件**的行归属
+（同一函数体里带着两个源文件的 Location），不参与比值判定；`button_manager::new` 的 arm64
+对照物被内联，也没有比值。
+
+**7 个 `panic::Location` 槽（`function_drawer` 1 / `function_history_recorder` 3 /
+`function_button_manager` 3 / `button_manager` 3 / `obstacle_drawer` 7）逐个落在哪个函数，
+写在各自 `src/*.rs` 的 `LOCATIONS` 常量里**，一列 `(line, col, 结构体地址, 引用它的函数)`。
+
+**`button_manager` 的"2 个"与重扫出的"3 个引用者"**：`:29:26` 那个 Location（槽 `0x951660`）
+被**两个** x86 函数共用（`0x3aae60` 64 B / `0x3b70b0` 144 B），arm64 侧对应
+`new::{{closure}}`（96 B）与 `drop_in_place<…{{closure}}>`（28 B）—— **哪一个是本体没定**
+（64/144 都不像 28，也都不像 96）。所以：**角色口径 2 个**（`new` + 闭包），
+**地址只钉 `0x3a2e10` 一个**，孪生关系记在 `tests/last_five.rs::eight_functions_and_the_twins` 里。
+
+### 36.3 **a) `function_drawer` 是怎么把曲线画上屏幕的**
+
+**答**：它自己不画 —— 它**持有 `Line2D` 子节点**，每个玩家 id 一条；`GraphwarPlane::draw`
+每帧把"本 tick 生效的函数"喂给它，它**只把新增的那几个点** `add_point` 进去。
+
+1. **子节点**：`GraphwarPlane::init`（`0x4b7380`）建 **3 个** `FunctionDrawer` 并 `add_child`
+   （arm64 侧 `Gd::default_instance`×3 / `ExAddChild::new`×3 / `Node::add_child_full`×3；
+   x86 侧 `0x4db030`×3 —— §26.3）。**这 3 个各管什么，未知**（没有证据能指到）。
+   `FunctionDrawer` 自己是 `HashMap<i32, (Gd<Line2D>, usize)>`（`self+0x20`，hashbrown）：
+   key = player id（i32），value 第二项是**已写入点数**。
+2. **`add_point` 的调用时机**：只在 `update_function`（`0x498c70`）里，而它由
+   `GraphwarPlane::draw`（`0x4b5df0`）每帧调一次 —— 同帧还取了
+   `graphwar_tick_handler::get_fractional_tick`（`0x519530`）与
+   `graphwar_function_manager::get_active_functions_on_tick`（`0x456df0`）（§26.4）。
+   ⇒ **曲线随 tick 生长**，是"开火后逐帧画出弹道"的形态（§26.4 那条**推断**在本轮得到加强）。
+3. **点数**（§26.4 缺的那条证据，本轮补上）：`0x498d5a` 先比 `new_len` 与"已写入数"，
+   **不大于就直接 return**；`0x498f51`/`0x498f60` 各 `<<4` ⇒ 步长 **16 字节/点**；
+   `0x498f90`/`0x498f95` 读 `[p]` 与 `[p+8]` 两个 **f64**（`x`、`y`），`cvtsd2ss` 后
+   调 `0x498fab` 的 `Line2D::add_point(Vector2, -1)`（`esi = 0xffffffff` ⇒ 追加到末尾）。
+   ⇒ **每次调用只 `add_point` 出 `new_len - written` 个点，是增量追加，不是整条重画**；
+   函数变短（`new_len <= written`）时**一个点都不加**，曲线不会缩 —— 要缩得靠
+   `remove_function` 重建（`0x498b70`，体内 `queue_free`）。
+4. `color` 只在**首次建节点**时用一次（`r9d` 的 `&0xff` / `>>8` / `>>0x10` ÷ 255.0 →
+   `Color(r,g,b,1)`），随后 `set_default_color`（`0x9bbf90`）+ `set_z_index`。
+   `update_function_fade`（`0x4992b0`）再单独改颜色（淡出）。
+5. **曲线不是图元**：全库 `add_point` 只有一个调用点（`0x498fab`），而 7 个绘画图元的
+   调用点里没有一个是本模块（§26.4 的有界穷举）。
+
+**`draw` 为什么没落地（有界否定）**：arm64 `FunctionDrawer::draw`（560 B）被调者是
+`Line2D::get_point_count` + `Line2D::get_point_position` + `CanvasItem::draw_circle_full`
+（各 1 处，在循环里）。x86 侧 `draw_circle` 的 GOT 槽 `0x9bbfc0` 全 `.text` 只有 **9** 个
+调用点：**5 个在 `0x4993c0`**（那个函数还引用 `"Write a function of x to hit the target"`，
+更像函数输入框的绘制）、**4 个在 `EffectDrawer::draw`**（§26.4）。
+**没有一个**是"循环里 1 次"的形态 ⇒ x86 侧这个 `draw` 要么被内联进 `GraphwarPlane::draw`、
+要么不存在。**结论：未知，不强行落地。**
+
+### 36.4 **b) `function_history_recorder` 的容量与去重**
+
+| 问题 | 结论 | 档位 |
+|---|---|---|
+| 存多少条 | **没有上限，也没有预留容量**：`new`（arm64 `0x49d9a0`）只 `__rust_alloc(0x48,8)` 造 `RcInner` + `__rust_alloc(8,8)` 造 `WeakCaller`，**没有任何 `0x20*N` 的缓冲区**；推送走 `Vec::push` 语义（x86 侧 `len==cap` 时调 grow，arm64 侧直接 `RawVec::grow_one`）⇒ 从 0 涨、按需翻倍 | **观测** |
+| 重复的函数会去重吗 | **不会**。推送路径上**没有**任何"拿新文本和已有条目比"的循环；唯一带键的查找是 `HashMap<i32,_>`（键 = **player id**，不是文本），且只用来取那个 `u32`。⇒ 同一玩家连发同一函数，历史里就是两条 | **观测** |
+| 上下键怎么翻 | **本模块里没有**（3 个函数：`new` 只建对象+订阅、`handle_…` 只 push、闭包只 `WeakCaller::call`）。全库也**没有** `Vec<FunctionData>` 的读取点符号（只有 `drop_in_place`）。两份二进制的 `.rodata` 里 **`"ui_up"` / `"ui_down"` 各 0 处**；`GraphwarFunctionInput::process`（arm64 `0x4547a0`，5888 B）与 `gui_input`（`0x455ea0`，1404 B）里**一个箭头键码立即数（`0x4000xx`）都没有** | **未知** |
+
+一条历史记录的布局（**逐位**，x86 `0x3f0e40` 的推送块）：
+
+```text
+FunctionData { text: String (24 B) , color: u32 (+0x18) , player: i32 (+0x1c) }  = 32 B
+事件闸：*event == 0x8000_0000_0000_0023（即 -0x7fffffffffffffdd）；event+0x20 == i64::MIN ⇒ 直接 return
+```
+
+⇒ **诚实的说法**：这个历史**只写不读**（至少在本版观测不到读者）。缺的证据是一次
+真机按键 + `LineEdit.text` 的变化；候选落点只剩 `GraphwarFunctionInput::{process,gui_input,force_update_cb}`
+（都没读完）。**不把"上下键翻历史"写成结论。**
+
+### 36.5 **c) `function_button_manager` 是干什么的**
+
+**答**：它是**函数输入键盘的按键分发器**，不是"sin/sqrt 快捷插入"那么窄。
+
+* `find_buttons`（arm64 `0x424494`，440 B）：`Node::get_children_full` → `AnyArray::len` →
+  `FromGodot::from_variant` → `Gd::owned_cast`，**递归**（体内 `bl` 到自己，`0x4245cc`）；
+  非按钮节点**不终止递归**。
+* `new`（`0x42464c` ↔ x86 `0x3f0270`）：收按钮，然后给每个按钮挂一个
+  **`Box<dyn FnMut(&str)>`**（drop glue 符号见 `src/function_button_manager.rs`）。
+* `new::{{closure}}`（`0x4249e8` ↔ x86 `0x3f06b0`）：**整个闭包只调这 8 个**
+  `GraphwarFunctionInput` 方法 —— `clear` / `insert_text_at_caret` /
+  `delete_token_at_caret` / `delete_token_after_caret` /
+  `move_caret_left` / `move_caret_right` / `move_caret_home` / `move_caret_end`
+  （另有 3 处 `assert_failed::<usize,usize>`）。
+* **按钮文本从哪来**：**不来自本模块的字符串字面量**。闭包入参是 `&str`（按钮把自己的字符串
+  交进来）；x86 `0x3f06b0` 引用的字符串**总共 11 条**，逐个列出后**没有一条**是函数名
+  （没有 `sin`/`sqrt`/`log`/`pi`），只有 `called \`Result::unwrap()\`…` 与类名
+  `graphwarrust::graphwar_function_input::GraphwarFunctionInput`（cast 用）。
+  ⇒ **按钮的文本/名字来自场景**（`Graphwar.pck` 里的 `.tscn` 节点），Rust 侧只按文本分发。
+
+> ⚠️ **反例（本轮踩到并记下来）**：Ghidra 把 x86 `0x3f0792` / `0x3b1622` 引用的两段字节认成
+> 字符串 `"e_view_functions"`（`0x19cd70`）与 `"toggle_view_func"`（`0x19ceef`），
+> 看上去像"信号名/按钮名"。逐指令看，那两条都是 **`pcmpeqb xmm1, [rip-…]`** —— 用的是
+> **16 字节 SIMD 常量**，只是恰好落在字符串池里；`0x19ceef` 处真实字节是
+> `b"toggle_view_funcy"`（17 字节，第 18 字节 `\0`）。
+> ⇒ **"谁引用了某个字符串"不能当"代码里写着这个名字"用**；`strings` × `xref` 组合会骗人。
+
+### 36.6 **d) `obstacle_drawer` 与 `graphwar_plane` 的脏矩形怎么配合**
+
+**答**：**脏矩形由 `graphwar_plane` 决定并持有，`obstacle_drawer` 只是消费者** ——
+它连一个矩形参数都没有，只 `Control::get_size()` 拿整张平面的尺寸。
+
+* `ObstacleDrawer::update`（`0x3ee190` ↔ arm64 `0x422590`）**不用任何绘图图元**：把障碍
+  **光栅化进一张 CPU 侧 `Image`**（`PackedArray<u8>::op_push_back` / `ffi_index_mut` 填字节），
+  再 `ImageTexture::create_from_image`（字面量 `0x1bfc0f`）+ `ImageTexture::update`
+  （`0x1bfc20`），`Sprite2D::set_texture`（`0x1bfc8c`，cast 目标字面量 `Sprite2D` `0x19fb58`），
+  节点是自己 `ExAddChild::new` + `add_child_full` 建的，按 `Control::get_size()` 设
+  `Node2D::set_position` / `set_scale`。障碍数据来自 `GraphwarObstacleManager` 的
+  `Mutex<GraphwarObstacleData>`（体内有 `MutexGuard<GraphwarObstacleData>` 与
+  `PoisonError<…>` 的 drop glue）。
+* **谁决定重画哪块**：`GraphwarPlane::obstacle_partial_update_event`（x86 `0x4be3e0`）
+  收到障碍事件后把矩形塞进平面自己的字段（§26.3 / §26.7 的落码：`PixelRect` /
+  `obstacle_rect`）。本模块 6 个 Location（`:51 :62 :92 :113 :120 :128`）**没有一个**在做
+  矩形运算 —— 全是 `unwrap`/断言类失败路径。
+* **每帧调几次**：`GraphwarPlane::process`（`0x4b83f0`）每帧调 `update` **2 次**（§26.3，观测）。
+  **为什么是 2 次 —— 未知**；每次体内 `Image::create_from_data` 出现 2 次
+  （arm64 `0x422780` / `0x422d1c`），`hashbrown::rustc_entry` 出现 3 次（按 key 缓存节点）。
+* ⇒ **"只重画那一块"这个更强的说法，本轮没有逐条读到 —— 标未知**。
+  **缺的证据**：对 `update` 的两次入参做运行时抓取（谁能逐帧量 `Sprite2D.texture` 的尺寸就能定案）。
+
+### 36.7 本轮**没**解决的（照实写）
+
+1. `FunctionDrawer::draw` 的 x86 落点（有界否定见 §36.3 末）—— **未知**。
+2. `FunctionDrawer` 那 3 个子节点各管什么 —— **未知**（只确证"建了 3 个"）。
+3. `FunctionHistoryRecorder` 的读者 / 上下键 —— **未知**（§36.4）。
+4. `FunctionButtonManager` 闭包里那 3 处 `assert_failed::<usize,usize>` 比较的是什么 ——
+   **推断**（token 下标与文本偏移对齐），缺逐条读。
+5. `ButtonManager::new` 里除 `FunctionButtonManager` 外的 53 个被调者：其中 9 个集中在
+   `0x4a0810–0x4ae320` 这一簇，**推断**是兄弟管理器，但**一个 Location 锚都没有** ⇒ 不定名。
+   `button_manager` 的 `:29:26` 孪生（`0x3aae60` / `0x3b70b0`）哪个是闭包本体 —— **未知**。
+6. `ObstacleDrawer::update` 每帧两次的语义差别 —— **未知**（§36.6）。
+7. `function_drawer` 的 `clear_functions`（2024 版有、2.0.60 无）连内联落点都没观测到 —— **未知**。
+
+### 36.8 复现（不依赖本节结论，任何人可重跑）
+
+```text
+# A. 两侧符号（真名的唯一来源；**Android 优先**）
+readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so | awk '$4=="FUNC"' \
+  | c++filt --format rust | grep -E 'graphwarrust::(function_drawer|button_manager|obstacle_drawer)::'
+
+# B. 五个模块的 Location 全扫（只读 .so，不需要 Ghidra）
+../.venv/bin/python tools/loc_xrefs.py loc src/function_drawer.rs
+../.venv/bin/python tools/loc_xrefs.py loc src/obstacle_drawer.rs
+#    → 输出 (file:line:col, 槽地址, 引用它的函数)；本节的 LOCATIONS 表就是它的副本
+
+# C. a 问的那 6 条指令（增量追加 + 唯一 add_point 调用点）
+objdump -d --no-show-raw-insn -M intel --start-address=0x498f44 --stop-address=0x498fb0 \
+        .reference/steam/2026-08-28/libgraphwarrust.so
+#    0x498f51/0x498f60 的 shl 0x4 = 步长 16；0x498f90/0x498f95 的 movsd = 两个 f64；
+#    0x498fa6 的 esi=0xffffffff；0x498fab 的 call [0x9bbf98] = Line2D::add_point
+
+# D. 方法名 → GOT 槽（判断"这个函数调了哪个 Godot 方法"）
+#    字面量 set_default_color 0x29f3c5 → 包装 0x8b7a70 → 槽 0x9bbf90
+#    set_position 0x29db01 → 0x891e00 → 0x9bc090；set_scale 0x29daa8 → 0x892b50 → 0x9bb238
+#    set_joint_mode 0x29f3a8 → 0x8b74f0 → 0x9bbfa8；set_width 0x29f346 → 0x8b7fe0 → 0x9bbfa0
+```
+
+### 36.9 落码清单（**`src/lib.rs` 待父 agent 接线**）
+
+```text
+src/function_drawer.rs            原版 src/function_drawer.rs
+src/function_history_recorder.rs  原版 src/function_history_recorder.rs
+src/function_button_manager.rs    原版 src/function_button_manager.rs
+src/button_manager.rs             原版 src/button_manager.rs
+src/obstacle_drawer.rs            原版 src/obstacle_drawer.rs
+tests/last_five.rs                5 个模块的验收
+```
+
+**需要加进 `src/lib.rs` 的 5 行**（顺序无所谓）：
+
+```text
+pub mod function_drawer;
+pub mod function_history_recorder;
+pub mod function_button_manager;
+pub mod button_manager;
+pub mod obstacle_drawer;
+```
+
+**接线之前 `tests/last_five.rs` 也能跑**：它用 `#[path = "../src/<模块>.rs"]` 直接编译这 5 个源文件
+（五个模块彼此**零依赖**，只用了 `std`，所以不需要在测试 crate 根上重导出任何东西）。
+接线之后同一份断言仍然成立（会多跑一遍）。
