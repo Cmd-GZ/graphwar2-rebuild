@@ -36,6 +36,15 @@
  *        frida -f ./Graphwar.x86_64 -l tools/frida_point_array.js --runtime=v8
  *
  * 只**观测**：不改内存、不改逻辑、不打补丁。
+ *
+ * ── 2026-11-07 独立复现轮的三处修正（全部只读，见 docs/06 §35.8.7）──────────────
+ *  ① `hooks` 补上**真的**去读函数指针槽 `0x9bac98`（README 一直这么写，代码里原来是空的），
+ *     并换算成 `gw+<RVA>`；这是"两个调用点都走同一个槽、槽 = 0x3c2530"的自证材料。
+ *  ② `calculate_function` 的 `onLeave` 补记**返回值本身** `[rax, rax+0x18)` 与 `xmm0/xmm1` 全 16 字节。
+ *     原脚本只记 `xmm0` 低 8 字节，于是"返回值就是这个队列元素（ptr 同一个）"**没法用本脚本重放**。
+ *  ③ 队列元素的 dump 判据由 `pv.compare(base) > 0`（假设点数组一定在模块基址之上）改成
+ *     "该地址落在**可读映射**里"。原判据在点数组落到 glibc brk 堆（低位地址，实测 `0x41679010`）时
+ *     会**静默跳过整条点数组**、一条 `classify` 都不出。跳过的元素现在显式记 `skipped`。
  */
 'use strict';
 
@@ -144,10 +153,49 @@ function dumpPoints(p, len, tag, lenOff) {
   return o;
 }
 
+/** 这个地址是不是落在**可读**的映射里（判"能不能当指针用来 dump"，不看堆布局） */
+function readable(p) {
+  try {
+    if (!p || p.isNull()) return false;
+    const r = Process.findRangeByAddress(p);
+    return !!(r && r.protection && r.protection.charAt(0) === 'r');
+  } catch (e) { return false; }
+}
+
+/** 安全读：地址不在可读映射里就返回 null（宁可缺一条证据，也不要把整个钩子打挂） */
+function safeRead(p, n) {
+  try {
+    if (!p || p.isNull()) return null;
+    const r = Process.findRangeByAddress(p);
+    if (!r || !r.protection || r.protection.charAt(0) !== 'r') return null;
+    return bytesHex(p, n);
+  } catch (e) { return null; }
+}
+
+/** 小端 8 字节十六进制 → 大端十六进制（为了和 rawitems 里的字段直接对照） */
+function leToBe(h) {
+  if (!h || h.length !== 16) return null;
+  return h.match(/../g).reverse().join('');
+}
+
 function install(base) {
   BASE = base;
   const mod = Process.findModuleByAddress(base);
   const res = { type: 'hooks', base: hx(base), size: mod.size, hooks: [] };
+  // ── 2026-11-07 独立复现轮追加（**只读，不改内存**）────────────────────────────
+  // README 原本就写着 "`hooks` = 下断结果 + 指针槽 `0x9bac98` 前后 16 个字的运行时取值"，
+  // 但代码里没有这一项；而 §35.4 的"唯一入口"和两个 `call *0x9bac98(%rip)` 调用点
+  // 都要靠它才能自证。补上之后这条证据就能从仓库里一条命令重放。
+  try {
+    const slot = mod.base.add(0x9bac98);
+    const raw = safeRead(slot, 16);
+    const tgt = raw ? ptr('0x' + leToBe(raw.substr(0, 16))) : null;
+    res.slot_9bac98 = {
+      addr: hx(slot), raw: raw,
+      target: tgt ? hx(tgt) : null,
+      target_rva: tgt ? rvaOf(tgt) : null,
+    };
+  } catch (e) { res.slot_9bac98 = { error: String(e) }; }
 
   function hookFn(name, rva) {
     try {
@@ -169,10 +217,27 @@ function install(base) {
             if (yout) ST.yMap.set(yout, (ST.yMap.get(yout) || 0) + 1);
             if (yout && this.xin) ST.pairMap.set(this.xin + '|' + yout, this.ret);
           }
+          // ── 2026-11-07 独立复现轮追加（**只读，不改内存**）──────────────────────
+          // 为什么要加：§35.4 第 1 条证据是"`calculate_function` 的**返回值**就是队列元素
+          // （ptr 同一个）"。可是原脚本只记 `xmm0` 的**低 8 字节**，JSONL 里根本没有返回值
+          // 的指针 —— 也就是说那条证据无法用仓库里的脚本重放出来。
+          // 这里把**完整返回值**记下来：本函数 0x20 字节的记录是**返回值在内存里**的
+          // （onLeave 时 `rax == rdi` = 调用方给的隐藏 sret 指针），所以直接读 `[rax]`。
+          // 同时记 xmm0/xmm1 全 16 字节，用来复核 §35.4 里"xmm0 低 16 字节 = {kind, ptr}"。
+          let sret = null, xmmAll = null;
+          if (name === 'calculate_function') {
+            try {
+              if (retval && !retval.isNull()) sret = safeRead(retval, 0x20);
+            } catch (e) { }
+            try {
+              xmmAll = { xmm0: abHex(c.xmm0), xmm1: abHex(c.xmm1) };
+            } catch (e) { }
+          }
           // 只抽样回传（全量 20 万行会把 JSONL 撑到几十 MB；统计已在进程内做完）
           const recursive = this.ret && /^gw\+4eb(9|a|b)/.test(this.ret) && this.ret !== 'gw+4eb' ;
           if (!recursive) {
-            const row = [this.s, this.t, this.ret, hx(retval), yout, this.xin, this.r.rdi, this.r.rsi, this.r.rdx, this.r.rcx, this.bt];
+            const row = [this.s, this.t, this.ret, hx(retval), yout, this.xin, this.r.rdi, this.r.rsi, this.r.rdx, this.r.rcx, this.bt,
+                         sret, xmmAll];
             (name === 'evaluate' ? ST.evalRows : ST.samplerRows).push(row);
             if (ST.evalRows.length > 4000) ST.evalRows.shift();
           }
@@ -215,7 +280,17 @@ function install(base) {
             for (const off of [0x10, 0x18]) {
               let lenv = null;
               try { lenv = it.add(off).readU32(); } catch (e) { }
-              if (lenv > 0 && pv && !pv.isNull() && pv.compare(base) > 0) out.items.push(dumpPoints(pv, lenv, tag, '0x' + off.toString(16)));
+              // 2026-11-07 独立复现轮修正：原来的判据是 `pv.compare(base) > 0`
+              // （假设点数组一定落在模块基址**之上**）。这个假设不成立 ——
+              // 一发的 Vec 缓冲在 glibc 的 brk 堆上时指针会是 0x416xxxxx 这种低位地址，
+              // 于是**整条点数组被静默跳过、classify 一条都不出**（实测 run3 就是这样丢的）。
+              // 改成"这个地址落在可读映射里"，语义正确且不再依赖堆的布局。
+              if (lenv > 0 && pv && !pv.isNull() && readable(pv)) {
+                out.items.push(dumpPoints(pv, lenv, tag, '0x' + off.toString(16)));
+              } else if (lenv > 0) {
+                out.items.push({ tag: hx(tag), ptr: hx(pv), len: lenv, lenOff: '0x' + off.toString(16),
+                                 skipped: 'not a readable mapping' });
+              }
             }
           }
         }

@@ -50,7 +50,11 @@ CLICKS = [
     (4.0, 'mousemove 243 224 click 1'),    # campaign 列表里唯一的关卡节点
     (4.0, 'mousemove 1072 1009 click 1'),  # Level 0 弹窗 Start
     (7.0, 'mousemove 1000 1048 click 1'),  # f(x)= 输入框
-    (0.6, 'type --delay 120 "sin(x)+3"'),
+    # ★ 必须先全选再打字：单击只是把**光标放进去**，直接 type 会**接在旧文本后面**。
+    #   2026-11-07 独立复现轮实测：`--extra-shot` 想打 `x/2`，实际打进去的是
+    #   `sin(x)+3x/2`（真机曲线与 `sin(x)+3x/2` 逐位吻合 929/929，见 docs/06 §35.8）。
+    (0.3, 'key --clearmodifiers ctrl+a'),
+    (0.3, 'type --delay 120 "sin(x)+3"'),
     (1.2, 'mousemove 1855 50 mousedown 1'),  # Fire!（长按才开火）
     (2.0, 'mouseup 1'),
 ]
@@ -140,7 +144,9 @@ def main():
             if args.extra_shot:
                 time.sleep(10)
                 xdo(args.display, 'mousemove 1000 1048 click 1')
-                time.sleep(0.6)
+                time.sleep(0.4)
+                xdo(args.display, 'key --clearmodifiers ctrl+a')   # 先清空，否则会接在旧文本后面
+                time.sleep(0.3)
                 xdo(args.display, 'type --delay 120 "x/2"')
                 time.sleep(1.2)
                 xdo(args.display, 'mousemove 1855 50 mousedown 1')

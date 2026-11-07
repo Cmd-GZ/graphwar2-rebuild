@@ -7,7 +7,9 @@
 | `frida_point_array.js` | Frida 探针：挂 `execute_results` / 开火队列 / `calculate_function` / 求值器，在**进程内**判定"写进去的 y 与求值器返回值是否逐位相同" |
 | `frida_point_array.py` | 驱动：用 frida `spawn` 拉起真游戏 → 载入上面那个脚本 → 用 `xdotool` 点进对局并长按开火 → 把消息写成 JSONL |
 
-结论见 [`docs/06-verification.md` §33](../docs/06-verification.md)。
+结论见 [`docs/06-verification.md` §35](../docs/06-verification.md)。
+**独立复现那一轮（同文件 §35.8）**记下了这两支脚本被改的三处（全部**只读**、不改游戏内存）、
+以及入库样本 [`../fixtures/frida_point_array_sample.jsonl`](../fixtures/frida_point_array_sample.jsonl)。
 
 ## 地址对应的构建（**必须**随版本看）
 
@@ -60,20 +62,24 @@ Xvfb :92 -screen 0 1920x1160x24 -listen tcp -ac &
 (534, 629)   主菜单 Campaign
 (243, 224)   关卡列表里唯一的节点
 (1072,1009)  Level 0 弹窗上的 Start
-(1000,1048)  f(x) = 输入框（然后 xdotool type "sin(x)+3"）
+(1000,1048)  f(x) = 输入框（**先 `ctrl+a` 全选**，再 `xdotool type "sin(x)+3"`）
 (1855, 50)   Fire!  ← **长按**：mousedown; sleep 2; mouseup
 ```
 
 ⚠ `FireButton` 在 `play_screen.tscn` 里带 `long_press_input_text = "fire"`，**单击不动**。
 
+⚠ **点输入框只是把光标放进去**。不先 `ctrl+a` 就打字，新文本会**接在旧文本后面**
+（2026-11-07 实测：想打 `x/2`，实际生效 `sin(x)+3x/2`）。所以 `CLICKS` 与 `--extra-shot`
+都在打字前插了一步 `key --clearmodifiers ctrl+a`。
+
 ## 输出（JSONL，每行一条 `send()`）
 
 | type | 内容 |
 |---|---|
-| `hooks` | 下断结果 + 指针槽 `0x9bac98` 前后 16 个字的运行时取值（核对"采样器是谁"） |
+| `hooks` | 下断结果 + **函数指针槽 `0x9bac98` 的运行时取值**（`slot_9bac98.target_rva`，核对"采样器是谁"） |
 | `exec_enter` | `execute_results` 入口：`self`、精确调用栈、此前求值/采样计数 |
-| `exec_queue` | **主证据**：队列原文、每个元素的 `kind/ptr/len`、点数组 head/tail/`yhash`、`classify` |
-| `evals` / `samplers` | 求值器/采样器的抽样行：精确返回地址、入参、返回值位模式 |
+| `exec_queue` | **主证据**：队列原文、每个元素的 `kind/ptr/len`、点数组 head/tail/`yhash`、`classify`；不可读的指针显式记 `skipped` |
+| `evals` / `samplers` | 求值器/采样器的抽样行：精确返回地址、入参、返回值位模式。`samplers` 行**尾部多两项**：`[11]` = `calculate_function` 的返回记录 `[rax, rax+0x18)`（`{kind, ptr, len}`），`[12]` = `{xmm0, xmm1}` 全 16 字节 |
 | `reallocs` | `realloc(size ≥ 16 KB)` 且调用方在 `.so` 内的调用栈（`Vec` 扩容点） |
 | `beat` | 心跳：已抓多少次求值/采样/结算 |
 
