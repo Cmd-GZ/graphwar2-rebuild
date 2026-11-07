@@ -4134,10 +4134,10 @@ fire 驱动，同一份 401 快照
 | `Y` · `Normal` | 46 | 31 | 67% |
 | `X` · `DiffEq` | 37 | 28 | 76% |
 | `X` · `Normal` | 29 | 14 | 48% |
-| **全部 `DiffEq`**（基线） | 515 | 382 | 74% |
-| **全部 `Normal`**（基线） | 565 | 310 | 55% |
+| **全部 `DiffEq`**（基线） | 515 | 376 | 73% |
+| **全部 `Normal`**（基线） | 565 | 320 | 57% |
 
-⇒ 残差**偏向**落在"最后一个点是被越界检查挡下来的那一支"（89% vs 74%），
+⇒ 残差**偏向**落在"最后一个点是被越界检查挡下来的那一支"（89% vs 73%），
 但不是全部。下一轮的地毯式搜索应该**只看这一支**：`pts[len-1]` 入列之后、报文之前，
 有没有一步会重写它。（`Y` 的 `DiffEq` 那一半 `|y| > 14.9` 的有 71/114 —— y 越界比 x 越界更集中。）
 
@@ -4157,8 +4157,12 @@ R=<ws>/.agent-work/replay-snapshot
 cargo run --release --offline --example replay_attrib -- --dir $R --drive fire --policy default --json f.jsonl
 $PY tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire
 cargo run --release --offline --example posy_mech  -- --dir $R --json mech.jsonl     # 既有探针
-$PY tools/bit_exact_attrib.py --json f.jsonl     # 与 mech.jsonl 按 (file,batch) 对齐做 §39.3 那张表
+$PY tools/explpos_attrib.py --attrib f.jsonl --mech mech.jsonl   # ★ 本节 39.3 / 39.6b 两张表
 ```
+
+`tools/explpos_attrib.py` 是本节新增（**只加不改**）：两份 JSONL 单看各缺一半
+（`f.jsonl` 有桶没模式，`mech.jsonl` 有模式没桶），脚本按 `(file, batch)` 对齐后直接打表，
+所以以上每个数都能一条命令重算。
 
 ### 39.8 护栏
 
