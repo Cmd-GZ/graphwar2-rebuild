@@ -1293,3 +1293,27 @@ socket fd 在 `+0xb8`（**`-1` = 还没 bind**，`new` 写死），组播地址�
 * ⚠️ 按 `AGENTS.md` §0.2：这些测试通过**只是回归保护，不是复原证据**。
   本节全部结论的证据是上面列出的地址、`.symtab` 名字/尺寸、`.rodata` 字面量与
   `panic::Location` 键集。
+
+## 12. 角色划分补一条：`EffectInfo.pos` 传到线上的是"位置"，不是"算好的爆炸点"（2026-11-08，`dispatch/26`）
+
+§8.1 记着"服务器只广播起点和终点 x（`FunctionPoints`），不广播轨迹本身 ⇒ 轨迹由各客户端重算"。
+本节补上另一半，并纠正一种读法：
+
+1. **`EffectInfo`(44) / `QueueDestroyObstacle`(42) 里的坐标是权威端自己算出来的**，
+   不是从别的客户端收来的。生产者在 `GraphwarGameStateManager::execute_results`，
+   读的是**它自己进程里的点数组**（`0x472865 movdqu xmm0,[rdx+rcx-0x10]`，见
+   [`06-verification.md`](06-verification.md) §36.2）。
+2. **所以"从线上收到的 `pos_y`"不是"不可复现的外来值"**：它是同一套代码用同一套输入
+   算出来的数，接收方（与我们的内核）本来就该逐位算得一样。
+3. **反证是量化过的**：末位残差率在**战役单机**回放（无远端）是 28.7%（175/609），
+   在联机房间回放是 24.4%（81/332）——**有没有远端没有影响**（
+   `$PY tools/posy_source_attrib.py --dir <R> --conv conv.jsonl`）。
+   ⇒ 第四轮报告 §3 ③ 提出的"那 154 批是别的机器算的"这条假设**证伪**。
+4. **真正走了"线上位置"那条路的只有非爆炸特效**：`DeathEffect` / `SparkEffect` / `AshEffect`
+   的 `pos` 有 96.8% / 100% / 100% 逐位等于某个实体的 `PosInfo`（点位表），而
+   `ExplosionEffect` 只有 4.3%。⇒ 那张点位表**确实**由
+   `RemoteEventHandler::handle_server_remote_event` 写入（§33.4 的静态结论），
+   但爆炸点不在它上面。
+
+⚠️ 仍然未知（不影响上面四条）：联机房里"跑 `execute_results` 的是房主还是每个客户端各跑一份"
+没有回放对能证明（缺一份"同一发、两个客户端各录一次"的回放）。

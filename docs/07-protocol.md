@@ -811,3 +811,34 @@ EffectInfo(effect_type = ExplosionEffect)
 
 若弹道**被障碍挡住**，还会有一条 `QueueDestroyObstacle`（位置 = 停止点）。
 
+
+## 10. `EffectInfo`(44) 的两个生产者：`effect_type` 决定 `pos` 的来源（2026-11-08，`dispatch/26`）
+
+> 本节补的是 §3.3 / §5.2 只写到"取值集合"的那一段：**`effect_type` 不只是个名字，
+> 它把 `pos` 的语义一分为二**。完整取证与复跑命令见
+> [`06-verification.md`](06-verification.md) §36。
+
+### 10.1 线上字段不变，语义分两路（逐指令）
+
+| 站点 | 指令 | `effect_type` | `pos` 来源 |
+|---|---|---|---|
+| **A** `0x4729d6` | `0x472948 mov byte [rsp+0x84], 0` | **恒为 0 = `ExplosionEffect`** | `0x472865 movdqu xmm0,[rdx+rcx-0x10]` = **本进程点数组的末元素** |
+| B `0x472e4d` | `0x472d75 movzx eax,byte [rcx+r8*8-4]` → `0x472e2e` | 记录里的一个字节（`Death`/`Spark`/`Ash`） | `[rsp+0xc0]` = 点位表（`PlanePosManager`，**线上写侧**） |
+
+`EffectType` 的 0 = `ExplosionEffect` 见 §5.2（x86 `VARIANTS` + arm64 `visit_str` 双证）。
+
+### 10.2 从报文本身就能分出是哪一路（**可复跑**）
+
+```bash
+$PY tools/posy_source_attrib.py --dir <回放目录>     # 退出码 0 = 正对照成立
+```
+
+| `effect_type` | `pos` 逐位等于某个实体 `PosInfo.pos` | 判读 |
+|---|---|---|
+| `ExplosionEffect` | 4.3%（55/1290） | 站点 A：**客户端自己算的点** |
+| `DeathEffect` | 96.8%（519/536） | 站点 B：点位表 |
+| `SparkEffect` / `AshEffect` | 100% / 100% | 站点 B |
+
+⇒ **协议结论**：`EffectInfo` 这条报文里 `pos` 有两种语义，
+"线上收到的坐标"**不等于**"别人算好的爆炸点"。爆炸点是**发送方自己点数组的最后一个采样点**，
+接收方要逐位复现它（这就是 `docs/06` §36 要回答的"为什么差 1 ulp"）。
