@@ -2710,3 +2710,210 @@ cargo test --offline
 | 1 | 154 批 1 ulp **到底是什么**（§32.5 已排除求值器/常数/取 x） | 点数组 `[x19+0x30..0x40]` 的**填充者**（§25.4 的空白）；以及回放那份构建的 `pos_x/pos_y` 是在哪一步与"曲线点"分开算的 | **未知** |
 | 2 | 真解析器的**完整规则**在极端文本上的残留（`…-e^(…)+NaN` 那 1 发差一处结合） | 那类文本里 `NaN` 被词法器拆成 `n`(π)+跳过字符，真解析器的算子优先级在那种流上怎么走；影响 1/1290 发、且两边求值都是 NaN | **观测**（13 条探针 + 全量对拍） |
 | 3 | `fixtures/eval.tsv` 之外，是否还有**别的**夹具被 python-math-oracle 污染 | `path.tsv` 已核对"一字未变"；其它夹具不是求值器生成的 | **推断**（`path/parse` 已做正对照） |
+
+---
+
+## 33. 点数组的**填充者**找到了；`y` 在写入路径上**逐位未动**（2026-11-08，`dispatch/20`）
+
+> 本节接手 §32.5 / §25.4 的空白：「`[x19+0x30..0x40]` 那个 `Vec<(f64,f64)>` 是谁 push 的」。
+> 结论用的是**新的证据源**：`android-2.0.60` 的 `.symtab`（**24600 个带尺寸的符号，未 strip**，
+> 名字是符号表原文）与 `windows/graphwarrust-2.0.60.dll` 的 COFF 符号表。
+> 两份都是 **2.0.60**，与 arm64 逆向目标是**同一个版本**——名字不是跨版本猜的。
+
+### 33.1 一句话（三条）
+
+1. **填充者 = `GraphwarFunctionManager::set_function_points`**（arm64 **`0x489278`** / x86-64 **`0x456810`**），
+   它把一个 `Vec<(f64,f64)>` 的**三段头**（`cap/ptr/len`）搬进 `HashMap<u32, _>` 的桶里；
+   点本身由 **`GraphwarShotCalculator::calculate_function`**（arm **`0x3b5374`** / x86 **`0x3c2530`**）`push` 出来，
+   经 `calculate_shot_results`（arm `0x3b5770` / x86 `0x3c2bc0`）→ `GraphwarGameStateManager::fire_functions`
+   （arm `0x4a7160` / x86 `0x470eb0`，写 `self.results` 的 `+0x30..+0x40`）→ 才到 `set_function_points`。
+2. **1 ulp 不在这一步**（**反证**，逐跳）：从采样器返回到 `self.results` 再到 `HashMap` 再到
+   `execute_results` 取 `points[len-1]`，**每一跳都是 16/24/32 字节的搬运，没有一条 `addsd/subsd/mulsd/divsd`**。
+   ⇒ 写进点数组的 `y` 与采样器返回值**逐位相同**。
+3. **"同坐标不同序号"**：队列条目里两个 u32 是 `GraphwarShotResult.id`（`+0x18`）与采样序号 `X`（`+0x1c`）；
+   外层循环 over `X`、内层 over **结果记录**，`flags[]` 按**结果**索引 ⇒ **每个结果记录最多排一次队**。
+   ⇒ 两条坐标逐位相同的报文只能来自**两条点表逐位相同的结果记录**（不同 `id`），
+   **不是** §31.5 猜的"两个不同点序号上的同坐标点"。
+
+### 33.2 `[x19+0x30..0x40]` 到底是什么
+
+`self.results: Vec<GraphwarShotResult>`，元素 **32 B**，布局由**写指令**反推（不猜类型）：
+
+| 偏移 | 字段 | 证据（arm64） | 证据（x86-64） |
+|---|---|---|---|
+| `+0x00` | `points.cap` | `0x3b5870 stp x27, x10, [x8]` | 只在释放/扩容时用（`shl $0x4` 算 `cap*16`） |
+| `+0x08` | `points.ptr` | 同上（`stp` 的第二个寄存器） | `0x3c37d9 mov 0x8(%r14,%r13,1),%rdx` → `0x3c37e2 movupd (%rdx,%r12,1)` |
+| `+0x10` | `points.len` | `0x3b5884 str x9, [x8, #0x10]` | `0x3c37d2 cmp %r12,0x10(%r14,%r13,1)` |
+| `+0x18` | `id: u32` | `0x3b5890 str w28, [x8, #0x18]` | `0x3c38a3 mov 0x18(%r14,%r13,1),%r14d` |
+| `+0x1c` | `flag: u8` | `0x3b5894 strb w10, [x8, #0x1c]` | — |
+
+类型名是**符号表原文**：`core::ptr::drop_in_place<alloc::vec::Vec<graphwarrust::graphwar_shot_calculator::GraphwarShotResult>>`
+与 `…<alloc::vec::into_iter::IntoIter<…::FunctionResult>>`（都在 `calculate_shot_results` 的 `bl` 目标里）。
+`Vec` 在本构建里的字段序是 **`(cap, ptr, len)`**（`stur q0,[x22,#0x30]` 写 16 B = cap+ptr、`stur x8,[x22,#0x40]` 写 len），
+这正解释了 `execute_results` 为什么用 `+0x38` 当 ptr、`+0x40` 当 len（§32.5 写的"`+0x30..0x40`"是同一字段，只是起点）。
+
+### 33.3 逐跳：谁 push、谁搬、有没有算术
+
+`tools/point_array_chain.py hop --arch arm|x86` 直接复现下表。
+
+| # | 谁 | arm64 | x86-64 | 这一跳的指令 | 有算术吗 |
+|---|---|---|---|---|---|
+| 1 | `calculate_function` push 点 | `0x3b5374` | `0x3c2530` | arm `stp d9, d12, [x8]`；x86 `movsd %xmm0,(%rax,%rcx,1)` + `movsd %xmm0,0x8(%rax,%rcx,1)`（push 走 GOT 槽 `0x9baca0`） | **是**（这一步就是采样器） |
+| 2 | 打包成 `GraphwarShotResult` | `0x3b5770` | `0x3c2bc0` | arm `0x3b5870 stp x27,x10,[x8]` / `str x9,[x8,#0x10]` / `str w28,[x8,#0x18]` | **否**（只写 cap/ptr/len/id） |
+| 3 | 整条 Vec 搬进 `self.results` | `0x4a7160` | `0x470eb0` | arm `0x4a79f8 stur q0,[x22,#0x30]` + `0x4a79f0 stur x8,[x22,#0x40]`；x86 `0x471a15/0x471a1c movups` | **否**（24 B 头） |
+| 4 | 深拷贝点表 → `set_function_points` | 同上 | 同上 | arm `0x4a7ac8 ldp q0,q1 / 0x4a7ad4 stp q0,q1`（32 B/次）；x86 同形 | **否**（块拷贝） |
+| 5 | 存进 `HashMap` 桶 | `0x489278` | `0x456810` | arm `0x489478 str q0,[x22]` + `0x48947c str x8,[x22,#0x10]`；x86 `0x456a2b movups (%rbx),%xmm0` + `0x456a2e movups %xmm0,(%r15)` | **否**（24 B 头） |
+| 6 | 取 `points[len-1]` 当爆炸点 | `0x4a8558` | `0x472470` | arm `0x4a891c ldp d9, d8, [x8, #-0x10]`；x86 `0x4724cc/0x4724dd` 取 len×32 | **否**（只读两个 f64） |
+
+**第 1 跳里 `y` 是怎么来的（这一跳是唯一的算术，也是唯一可能的偏差源）**：
+
+```text
+arm64 0x3b5618  bl 0x4452d4   MathFunction::evaluate_recursive(self=x21, x=d8, y=0.0, z=0.0, &mut scratch)
+arm64 0x3b561c  fmov d12, d0  ; d12 = f(x)
+arm64 0x3b56f4  stp  d9, d12, [x8]   ; ★ point = (±x, f(x))，y 就是求值器的返回值本身
+```
+
+* 同一函数里还有**第二条**路径：`0x3b5404 tbz w22, #0x0` 跳到 `0x3b55c8` 是 Normal（`y = f(x)`），
+  不跳则走 `0x3b5504`–`0x3b5518` 的 **RK4**：`fmov d1,#6 / fdiv d1,d12,d1 / fadd d0,d9,d0` 即
+  `y_{n+1} = y_n + (step/6)(k1+2k2+2k3+k4)`，点是 `stp d8, d13, [x8]`（`0x3b55b4`）。
+  选哪条由 `w22`（`calculate_shot_results` 传的 `[mod+0x32]`，即**函数模式**）的最低位决定
+  ——这就是 §30.4 说的"内核没有 Ode 开火路径"在二进制里的样子。
+* 采样点**不在均匀 x 网格上**：`0x3b551c`–`0x3b5538` 每次用 `Vector2D::length`（`0x7ac7b4`）
+  量上一段弧长，与 `h` 比，`|len-h| < 1e-3` 才收（容差字面量 `0x19fc78 = 0.001`；
+  步长 `h` 来自 `fire_functions` 的 `movabs 0x3f847ae147ae147b = 0.01`）。
+
+⇒ **`y` 与"采样器返回值"逐位相同，且这就是求值器的输出**；§32.5 的"写 y 这一步"到此**排除**。
+
+### 33.4 `②` 的正面结论：残差更可能在**另一条 pos 生产者**上
+
+`execute_results` 里有**两处** `add_effect`（§25.4 已钉），第二处的 `pos` 来自
+`GraphwarPlanePosManager::get_position`（arm **`0x3b7f58`**，名字是符号表原文）。
+把它的读写两侧都扫一遍（`tools/point_array_chain.py pos`，正对照：必须命中两个已知调用点）：
+
+```text
+get_position（arm 0x3b7f58）：35 个 bl 调用点，其中与开火有关的只有两个
+  0x4a72dc  in GraphwarGameStateManager::fire_functions
+  0x4a8b40  in GraphwarGameStateManager::execute_results      ← 就是 §25.4 的第 ② 处 add_effect
+  另有 0x3dcbe8 / 0x3dcce0 in GraphwarPathCalculator::calculate_paths（**客户端**动画路径）
+
+set_position（arm 0x3b8160）**只有两个**调用点：
+  0x3db4d8  in GraphwarLevelGenerator::place_entity
+  0x3e76ec  in GraphwarRemoteEventHandler::handle_server_remote_event   ← 来自**线上**
+```
+
+⚠ 写侧里**没有一处**在弹道计算里（`calculate_function` / `calculate_shot_results` / `fire_functions` 都不写它）。
+
+⇒ **这一张位置表不由弹道计算写入，而是由"远端事件"写入**。也就是说：
+那 154 批里若有落在第 2 个 `add_effect` 上的，`pos_y` 是一个**别的机器/别的构建算出来再从网上收来**的 f64
+——与"本机采样器在这条文本上的求值"本来就不是同一次运算，1 ulp 完全合法。
+这与 §32.5 的不可能性证明（`obs` 不是 `fl(x+c)` 对任何 `x` 的结果）**相容**，而"求值器最后一位不同"不相容。
+
+顺带量到一件与 §25.2 口径有关的事：`pos_x == end_x`（逐位）在 **1290 发里只有 1050 发**
+（`posy_probe` 的 `obs_expl_x` vs `obs_end_x`，见 33.6）。⇒ §25.2 的"逐位相同"是**一个子集**的陈述，
+不能当成"两处 add_effect 的 pos 都等于曲线末点"。
+**这一条本身仍未知**：哪 154 批走的是哪一处 `add_effect`。
+
+### 33.5 `③` 同坐标不同序号：**两条结果记录**，不是两个点序号
+
+挖洞队列的写入点在 `calculate_shot_results`（x86 `0x3c38e4`–`0x3c38fe`，逐条 objdump 可复现）：
+
+```text
+3c3755  xor %ecx,%ecx                 ; X = 0                 ← 外层的"采样序号"
+3c3770  mov 0x38(%rsp),%rcx / inc %rcx ; X += 1
+3c378d  mov %rcx,0x38(%rsp)           ; ★ 本轮的 X（报文 tick 由它派生）
+3c3798  xor %r13d,%r13d / xor %r15d,%r15d   ; 内层：结果记录偏移 / 下标
+3c37aa  add $0x20,%r13 / inc %r15     ; 下一个结果记录（32 B/条）
+3c37c6  cmpb $0x0,(%rax,%r15,1)       ; ★ flags[] 按**结果下标 r15** 索引
+3c37d2  cmp 0x10(%r14,%r13,1),%r12    ; 结果.length vs X → 到尾巴就 flags[i]=1 退出
+3c37de  shl $0x4,%r12 / 3c37e2 movupd (%rdx,%r12,1),%xmm0   ; ★ 取 points[X]（X 在内层共享！）
+3c388e  cmpb $0xff,(%rax,%rdi,1)      ; 掩膜单点查表（§31.4）== 0xFF → 这个点没挖到，换下一条结果
+3c38e4  mov %rdx,(%rax,%rcx,1)        ; 条目 +0x00 = tag 0x8000000000000000
+3c38ee  movdqu %xmm0,0x8(%rax,%rcx,1) ; 条目 +0x08 = (x, y)  ← 直接来自 points[X]
+3c38a3  mov 0x18(%r14,%r13,1),%r14d   ; 条目 +0x18 = **GraphwarShotResult.id**
+3c38fe  mov %edx,0x1c(%rax,%rcx,1)    ; 条目 +0x1c = X
+```
+
+⇒ **`序号` 有两种可能读法，且都不是"同一结果里的两个点"**：
+`+0x18` 是**结果记录 id**（`GraphwarShotResult.id`），`+0x1c` 是**采样序号 X**。
+关键在于 **`flags[]` 是按结果记录索引的**（`r15` 与 `r13+=0x20` 同步走），而 `X` 在内层是**共享**的：
+
+* 同一 `X`、两条点表逐位相同的结果 ⇒ 坐标逐位相同、`X` 相同（tick 相同）、`id` 不同 ⇒ **同坐标不同序号**；
+* 这正好对上 §31.5 实测的"**92/162 连 tick 都相同**"。
+
+⇒ **修正 §31.5 的猜想**：那里写"只能来自两个**不同点序号**上坐标逐位相同的点"，前提是
+`flags[]` 按点序号索引；实测它是**按结果记录**索引的，`X` 在内层只有一个值。
+所以重复坐标的来源是**同一批里两条点表逐位相同的结果记录**（不同 `id`），不是同一条曲线上的重复点。
+**仍是推断的部分**：那两条记录为什么点表逐位相同（两条 `GraphwarShotResult` 天然来自
+`calculate_shot_results` 对 `get_current_turn_soldiers` 的逐兵循环 + 一份 id 数组
+`0x3b58ac ldr w28,[x21],#0x4`）；"同一条函数被两个兵各算一遍"这一点**未证**。
+
+### 33.6 复现（全部只读语料/二进制）
+
+```bash
+export PY=<ws>/.reference/venv/bin/python
+# ① 名字 + 地址（arm64 .symtab 原文）+ 字段偏移 + 正对照（17 条断言，必须全 OK）
+$PY tools/point_array_chain.py sym
+$PY tools/point_array_chain.py fields
+$PY tools/point_array_chain.py check          # 退出码必须 0
+# ② 逐跳判据指令
+$PY tools/point_array_chain.py hop --arch arm
+$PY tools/point_array_chain.py hop --arch x86
+# ③ set_position / get_position 的读写两侧（arm64 全 .text 的 BL 立即数扫描，带正对照）
+$PY tools/point_array_chain.py pos            # 退出码必须 0
+# ④ pos_x 与 end_x 的逐位比较（1290 发）
+$CARGO_TARGET_DIR/release/examples/posy_probe --dir $R --json /tmp/posy.jsonl
+python3 - <<'EOF'
+import json,struct
+b=lambda x:struct.unpack('<Q',struct.pack('<d',float(x)))[0]
+r=[json.loads(l) for l in open('/tmp/posy.jsonl')]
+print(sum(1 for x in r if b(x['obs_expl_x'])==b(x['obs_end_x'])), "/", len(r))
+EOF
+```
+
+**正对照（`check` 子命令就是这套）**：17 条断言里 5 条是 arm64 符号表、12 条是 x86 指令形态，
+其中 3 条互为独立交叉（`0x3c2530` 里必须出现**求值器 `4eb9d0`**、`0x470eb0` 里必须出现
+`0.01` 字面量与 `call 456810`/`call 472470`）。§32 已经逐位对拍过 `0x4eb9d0`，
+所以"我在 `calculate_function` 里认出了求值器调用"这件事本身是可验证的，不是形状相似。
+
+### 33.7 两处旧文档错的更正
+
+1. **§25.4 的"x86 `0x472470` 不是这个函数（是 hashbrown 探测循环）"是错的。**
+   `objdump -d --start-address=0x472470` 出来的是 `push %rbp … lea 0xe8(%rdi) → call`（= `hashbrown clear`）
+   → `lea 0xe0(%rbp) → call`（= `get_module_wk`）→ `movabs 0x7fff…` → `mov 0x40(%rbp),%rsi` +
+   `mov 0x38(%rbp),%rcx` + `shl $0x5`，与 arm64 `0x4a8558` **逐条对应**。
+   `fixtures/name_to_addr.tsv` 的 22 个 `panic::Location` 唯一锚也是这么指的。
+   ⇒ 那一行的"审计更正"应作废（当时可能把 `.text` 的 VA↔文件偏移算错了）。
+2. **§25.2 的"`pos_x` 与 `end_x` 逐位相同"是子集陈述**：1290 发里 1050 发成立（33.4）。
+
+### 33.8 验收（本分支 `agent/point-array-filler`）
+
+`src/` **零改动**（本节只是取证），所以三轴数字与基线**逐个相同**（自己复算，不看报告）：
+
+| 轴 | 指标 | 值 | 命令 |
+|---|---|---|---|
+| `fire` | 内容命中 | **331 / 1080** | `replay_attrib --drive fire --policy default --json f.jsonl` |
+| `batch` | 内容命中 | **355 / 1080** | `replay_attrib --drive batch --policy default --json b.jsonl` |
+| `batch_conv` | 内容命中 | **633 / 1080** | `batch_conv --policy strict` |
+| `batch_conv` | 种类序列 | **1075 / 1080** | 同上 |
+
+```text
+cargo test --offline                        1559 passed / 0 failed
+python3 tools/coverage_matrix.py --check    OK
+python3 tools/point_array_chain.py check    17/17 OK（退出码 0）
+```
+
+延迟段（`batch` 轴）死亡集合 215/379、挖洞点 140/262 —— 未经本分支触碰；
+`src/` 零改动时它们是同一棵树的同一批二进制，故未重跑，接管者按 `tools/bit_exact_attrib.py` 复核。
+
+### 33.9 仍未确定的（诚实清单，可直接接手）
+
+| # | 事项 | 缺什么 | 档 |
+|---|---|---|---|
+| 1 | 154 批 1 ulp **落在哪一处 `add_effect`** | 每条 `EffectInfo(Explosion)` 是 `execute_results` 的 ①（`points[len-1]`）还是 ②（`PlanePosManager::get_position`）产的——需要在 `0x4a89ec` / `0x4a8cb0`（arm）各下一次断点，或对拍时把两条都算出来比 | **未知** |
+| 2 | `PlanePosManager` 的位置**谁先算** | 只有 `place_entity` 与 `handle_server_remote_event` 写它；后者消费的 `ServerRemoteEvent` 里那对 f64 是**哪个客户端**算的、用的哪份构建 | **未知** |
+| 3 | 两条点表逐位相同的结果记录**从哪来** | `GraphwarShotResult.id` 数组（`0x3b58ac ldr w28,[x21],#0x4`）的上游：是一次开火里**逐兵**一份，还是逐函数一份 | **推断**（有地址、未证） |
+| 4 | `calculate_corrected_function` / `add_offset` 是否改变求值路径 | 它产出的 `MathFunction` 与印刷文本是否**同一条 token 流**；若是"给常数加偏移再求值"，就是**双舍入**（§32.5 的奇偶性证明只排除了**一次**加法，排不掉两次） | **未知** |
+
+> 第 4 条是本节留给下一轮最值钱的一条：§32.5 的不可能性证明假设的是**一次** `fl(x+c)`。
+> 若点数组用的是"加过 offset 的 token 流"，`fl(fl(x+a)+b)` 的**双舍入**能造出那个"落在格点之间"的值，
+> 而这条路径**不在** §32 的对拍范围内（那里比的是"给定文本 + 给定 x"）。
