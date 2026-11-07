@@ -6,18 +6,28 @@
 
 函数边界以 Ghidra 为准（见 `02-module-map.md` §12），换算 `REA 地址 = 虚地址 + 0x100000`。
 
-| 虚地址 | REA 地址 | 规模 | 特征 | 初判 |
+| 虚地址 | REA 地址 | 规模 | 特征 | 身份 |
 |---|---|---|---|---|
-| `0x4b2260` | `0x5b2260` | 85 行 | 5 个调用 | 待定 |
-| `0x4b23e0` | `0x5b23e0` | 79 行 | 5 个调用 | 待定 |
-| `0x4b5df0` | `0x5b5df0` | **960 行** | 53 个调用，含 `30.0` / `50.0` | **平面主例程** |
-| `0x4b7a70` | `0x5b7a70` | 261 行 | 27 个调用 | 待定 |
-| `0x4b83f0` | `0x5b83f0` | 164 行 | 18 个调用 | 待定 |
-| `0x4bc490` | `0x5bc490` | 145 行 | 10 个调用 | 待定 |
-| `0x4bc6b0` | `0x5bc6b0` | 86 行 | 8 个调用 | 待定 |
-| `0x4bc860` | `0x5bc860` | 152 行 | 9 个调用 | 待定 |
-| `0x4bcab0` | `0x5bcab0` | 85 行 | 7 个调用 | `_INIT_9`：Rust lazy static 初始化 |
-| `0x4be3e0` | — | — | — | Ghidra 未产出（外部/无体） |
+| `0x4b2260` | `0x5b2260` | 85 行 | 5 个调用 | **`ImplementsGodotApi::__register_methods`**（注册胶水）|
+| `0x4b23e0` | `0x5b23e0` | 79 行 | 5 个调用 | **`ImplementsGodotApi::__register_constants`**（注册胶水）|
+| `0x4b5df0` | `0x5b5df0` | **960 行** | 53 个调用，含 `30.0` / `50.0` | **`GraphwarPlane::draw`**（`src/graphwar_plane.rs:84`，9 个双向唯一锚）|
+| `0x4b7a70` | `0x5b7a70` | 261 行 | 27 个调用 | **`GraphwarPlane::ready`**（`:218`，4 个锚）|
+| `0x4b83f0` | `0x5b83f0` | 164 行 | 18 个调用 | **`GraphwarPlane::process`**（`:254`，2 个锚）|
+| `0x4bc490` | `0x5bc490` | 145 行 | 10 个调用 | 属 `graphwar_plane.rs`（Location `:33:10`）；**方法名未定** |
+| `0x4bc6b0` | `0x5bc6b0` | 86 行 | 8 个调用 | **`_::__init::__inner_init`（a）**（注册胶水）|
+| `0x4bc860` | `0x5bc860` | 152 行 | 9 个调用 | 属 `graphwar_plane.rs`（Location `:179:1`）；**方法名未定** |
+| `0x4bcab0` | `0x5bcab0` | 85 行 | 7 个调用 | **`_::__init::__inner_init`（b）** + `_INIT_9`：Rust lazy static 初始化 |
+| `0x4be3e0` | — | — | — | Ghidra 未产出（外部/无体）；`GraphwarPlane::obstacle_partial_update_event`（`:174`）|
+
+> **七行"待定"已全部结案（2026-11，`docs/151` §2.2）**。两条互相独立的证据：
+> ① `fixtures/name_to_addr.tsv` 的**双向唯一** `(file,line,col)` 锚给出 `draw`/`ready`/`process`；
+> ② 从 `.so` 自己复算 `panic::Location`（`tools/addr_probe.py locs`）：三个算法方法各带**不同**行号
+> （`:84`/`:218`/`:254`），而四个胶水函数**都只带 `src/graphwar_plane.rs:68:1`**——那是 gdext 生成的
+> `ImplementsGodotApi` / `_::__init` 那一层 `impl` 的锚。arm64 `.symtab` 里 `graphwar_plane` 的胶水
+> 符号正好**四个**且按地址序对位：`0x4b8e60 __register_methods`、`0x4b8ff0 __register_constants`、
+> `0x4c2000` / `0x4c21c0` `_::__init::__inner_init`。
+> ⚠ **方法级仍是推断**：`__register_methods` 与 `__register_constants` 的**具体配对**只有"地址序"
+> 一条间接依据（`docs/151` §3.5）。胶水函数不进复原分母。
 
 ## 2. 已观测：棋盘尺寸
 
@@ -202,7 +212,8 @@ inner[+0x10] = 锁字, +0x14 = 毒标志, +0x20 = 数据指针, +0x28 = 长度
 所以它不是我们已对拍的那条纯算法，而是**带环境判定的另一条路径**。
 
 > ⚠ **本节原写"它不调用 `calculate_path`（`0x4c2530`）"，这句自相矛盾**：
-> `0x4c2530`（Ghidra）= ELF `0x3c2530` 是**采样器**（1,680 B，**零** Location 锚、名字未知），
+> `0x4c2530`（Ghidra）= ELF `0x3c2530` 是**采样器**（1,680 B，**零** Location 锚、名字未知；
+> 另：它**零直接调用**，唯一入口是函数指针槽 `0x9bac98`，见 `docs/151` §2.5），
 > 而 `calculate_path`/`calculate_paths` 这个名字在 2.0.60 上锚到的是 **`0x467530` 自己**
 > （`02-module-map.md` §20.5 / §20.7 第 3、4 条）。⇒ 准确写法是"**不调用采样器 `0x3c2530`**"。
 > 身份与用途见 §5.6、§5.7。
@@ -467,7 +478,8 @@ void f(double x, double y, double size, long mask_ptr, ulong mask_len, byte fill
    子弹那一路的扫描仍是"采样弦长 `0.01` + 逐点查掩膜"（§5.4），没有 0.5 单位步长的证据。
 8. ~~`0x567530` 与 `0x4c2530` 的关系~~ → **已答**：`0x567530`(Ghidra) = `0x467530` =
    `GraphwarPathCalculator::calculate_paths`（9 个锚，§5.6），关卡构造专用；
-   `0x4c2530`(Ghidra) = `0x3c2530` 是**采样器**（1,680 B，零 Location 锚、名字未知），
+   `0x4c2530`(Ghidra) = `0x3c2530` 是**采样器**（1,680 B，零 Location 锚、名字未知；
+   零直接调用，只经函数指针槽 `0x9bac98` 被调 —— `docs/151` §2.5），
    **开火时真正用的是它**——它经函数指针槽 `0x9bac98` 被间接调用
    （`05-shot-pipeline.md` §1；本轮的槽表复核再次确认）。
 

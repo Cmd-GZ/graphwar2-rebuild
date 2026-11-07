@@ -355,7 +355,11 @@ LifeInfo {entity_id: 1099, alive: false}
 （这也解释了为什么它需要一个集合 + 一个输出 Vec：每个新连接一个自己的待发队列。）
 
 等级：`0x465910` 的两个字符串与长度 = **逐位验证**；
-"`0x9bac88` = subscribe_event" = **推断**（缺：`0x9bac88` 槽的 addend 未解析到具名函数）；
+~~"`0x9bac88` = subscribe_event" = **推断**（缺：`0x9bac88` 槽的 addend 未解析到具名函数）；~~
+**✅ 已结案（`docs/151` §2.4）**：`0x9bac88` 的 `R_X86_64_RELATIVE` addend = **`0x3d38f0`**，
+即 `tools/event_tags.py` 解出来的**事件名 → 判别值分派器**（25 项长度跳表 + 72 条名字），
+**不是** `subscribe_event`。所以这里真正发生的是「先把名字解析成 tag，再走订阅」；
+订阅读的是 `0x9bac80`（`0x3d3530` 事件队列 sink，`docs/02` §15.2.8）。
 "`0x43e390` 是 insert" = **推断**（形状是 `HashSet::insert`，未逐条核）。
 
 #### 4.2.5 `graphwar_target_manager.rs` 是个**很小的模块**

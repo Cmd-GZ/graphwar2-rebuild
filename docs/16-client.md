@@ -1932,7 +1932,7 @@ cargo test --offline --test graphwar_setup_control
 | 1 | **请求事件构造** | **16** | 把 `{tag=0x8000…\|判别值, +0x8=i32}` 这条 0x48 字节的 `Event` push 进 `[[self]+0x1f8]` 的 `Vec`（`+0x18`） | 判别值立即数 `0x4d8a4b` 等 16 处；`call *0x9bac80`（`0x3d3530` = `Vec::push`）；槽位 `0x95eff0…0x95f330` 成对；调用者 `graphwar_setup_control.rs` 的 `0x4c4c20`/`0x4cf670`，其体内有 `ChangeTeamButton`/`RemovePlayerButton`/`AddSoldierButton`/`RemoveSoldierButton` |
 | 2 | **连接与后端** | 5 | `0x515590`/`0x5175b0` 构造 `Event` **#22 `game_name_request_event`**；`0x515590`/`0x5159a0` 直接 `call` `graphwar_backend.rs`；`0x516370`/`0x518320` 直接 `call` `graphwar_client_connection_handler.rs` | `0x5157d3` / `0x51763e` 的 `movabs $0x8000000000000016`（判别值 22）；直接 `call` 目标：`0x514d80`(`graphwar_backend.rs`，两处 `0x5156eb`/`0x515aa5`)、`0x4592d0` 与 `0x45a340`(`graphwar_client_connection_handler.rs`，`0x5163c7`/`0x518377`) |
 | 3 | **状态查询** | 4 | 一律「取 `+0x40` 句柄 → `incq 0x10` → 调内层一次 → `decq`」，内层是 `0x46aa50`/`0x46aea0`/`0x46b180` | `0x516450`/`0x5164b0`/`0x518240`/`0x518400` 的开头 8 条指令；`0x518240` 的槽被 `graphwar_replay_player` `0x3d61a0` 读走 |
-| 4 | **对局内动作** | 3 | `0x516510`（`fire` 的落地：调 `turn_manager` 一族 `0x46b740`/`0x46c430`/`0x46b460`/`0x463340`，再 push 一条 `Event`）；`0x516ad0`（收到一段字节后投给客户端）；`0x516fd0` 未定 | `0x514acd` 调 `0x516510`；`0x3a559c`（root_node `0x3a54e0`：`memcpy` 进 `+0xf8` 缓冲后转给 `0x516ad0`） |
+| 4 | **对局内动作** | 3 | `0x516510`（`fire` 的落地：调 `turn_manager` 一族 `0x46b740`/`0x46c430`/`0x46b460`/`0x463340`，再 push 一条 `Event`）；`0x516ad0`（收到一段字节后投给客户端）；`0x516fd0` **语义未定，但归属已定 = 本模块**（`src/graphwar_game_client.rs`，6 个 Location 锚，`docs/151` §2.2 附带）| `0x514acd` 调 `0x516510`；`0x3a559c`（root_node `0x3a54e0`：`memcpy` 进 `+0xf8` 缓冲后转给 `0x516ad0`） |
 | 5 | **setup 回调** | 3 | `0x516970` = `add_bot_N` 的取值器（六个立即数）；`0x5172d0`/`0x517490` 的槽只被 `graphwar_setup_control` 读 | 六个 `mov $N,%esi`（§17.6）；槽 `0x9bc128`/`0x9bc160` 的使用者 `0x4c44b0`/`0x4d1e00`/`0x4d88b0` |
 | 6 | **回放 / 远端** | 3 | `0x3d6080`/`0x3d7380`/`0x3d7630` 体内**同时**引用本模块与 `graphwar_replay_player.rs` 的 Location；`0x3d7380` 还直接 `call` `graphwar_remote_event_handler.rs` 两次 | 归属表 `contested`；`0x3d7380` 的 call 目标 |
 | 7 | **命令入口** | 1 | `0x514a10`：根节点命令总线的**兜底分支**，只认 `start_game`/`fire` | §17.4 |
@@ -2118,7 +2118,7 @@ computer_player / color / rank 各 1 处（模块名来自归属表，具体 `ca
 | `0x516370` | 槽被 `0x3a5760`/`0x3b7ac0`/`0x5147f0`/`0x525f60` | 帧状态机 + 本模块 |
 | `0x517690` | 槽被 `graphwar_backend` `0x514f20` + 本模块 `0x515590`/`0x5159a0` | 装配（§17.7） |
 | `0x518240` | 槽被 `graphwar_replay_player` `0x3d61a0` + 本模块 `0x518400` | 状态查询 |
-| `0x518320`/`0x518400`/`0x516fd0` | 槽（见 `ENTRY_POINTS`） | 状态查询 / 未定 |
+| `0x518320`/`0x518400`/`0x516fd0` | 槽（见 `ENTRY_POINTS`） | 状态查询 / `0x516fd0` 语义未定（归属 = 本模块，6 个 Location 锚）|
 
 **否定结论（省一类死路）**：本模块 36 个函数里**没有**任何屏名（15 个）、
 任何命令总线的 `input_text` 键（12 条）、任何 `set_visible`/`get_node` 字面量。
@@ -2136,7 +2136,7 @@ computer_player / color / rank 各 1 处（模块名来自归属表，具体 `ca
 | `0x3d6080`/`0x3d7380`/`0x3d7630` | contested（同时引用本模块与 `graphwar_replay_player.rs`）⇒ 归属本身有歧义 |
 | 命令总线的**全部**键 | 已 12（§15.6）+ 8（§17.6：`exit_play`/`add_bot_0..5`/`save_clip`）；`0x3b0830` 是 0x4690 字节、131 KB 反编译，**未穷举** |
 | 屏表的插入点 / `[+0x1668]` 的 Rust 类型 | 与 §15.9、§15.10.6 同一缺口 |
-| 本模块与 `graphwar_server_connection_handler.rs` / `graphwar_game_server.rs` 的边界 | `0x51xxxx` 一带还有一批无锚函数（`0x5147b0`/`0x5147f0`/`0x5148a0` 等）与 `0x51a570`（`docs/07` §7.3.4 提到）**归属未定**；本轮没有把它们算进 36 |
+| 本模块与 `graphwar_server_connection_handler.rs` / `graphwar_game_server.rs` 的边界 | `0x51xxxx` 一带还有一批无锚函数（`0x5147b0`/`0x5147f0`/`0x5148a0` 等）与 `0x51a570`（`docs/07` §7.3.4 提到）**归属未定**；本轮没有把它们算进 36。**2026-11 复核（`docs/151` §2.2 附带）**：`locs` 逐个投票后 —— `0x51a570`（`0x97` B）= **`graphwar_local_player_manager.rs`**（2 个锚）；`0x516fd0`/`0x518320`/`0x518400`/`0x516450`/`0x5164b0`/`0x518240`/`0x5172d0`/`0x517490` = **`graphwar_game_client.rs`**（各 2–6 个锚）；`0x5147b0`（`0x40` B）/`0x5147f0`（`0x6e` B）/`0x5148a0`（`0x161` B）**零锚**，仍定不了（`docs/151` §3.4）|
 
 ### 17.10 进度口径（按 `AGENTS.md` §0 第 2 条）
 
@@ -4185,7 +4185,16 @@ godot/gdext/alloc/panic 那些基础被调者已滤掉，只留说明业务的�
 
 档位：地址/包装 = **观测**；"槽 ↔ 成员名"= **推断（强）**，缺的证据是 `0x8ab200` 体内
 那条 `object_method_bind_ptrcall` 的 method bind 名字。
-（`0x9baa10` 是**另一个**槽，本节没碰，仍按未知处理。）
+（`0x9baa10` 是**另一个**槽，本节没碰 —— **2026-11 解出（`docs/151` §2.4）**：它是
+`R_X86_64_GLOB_DAT` 的 **`bcmp@GLIBC_2.2.5`**（libc 的 `memcmp`），**根本不是 gdext 成员**，
+所以"可见性 setter 候选"这个方向从一开始就是错的。）
+
+⚠️ **本轮对 `0x9ba978` 的独立复核，结论是"没有加强也没有推翻"**：`readelf -r` 读出
+addend = `0x8ab200`（与本节一致），但 `0x8ab200` 体内**没有** `set_visible` 字面量 ——
+它引用的是 `validated_objectarray_to_variant`（`0x19d710`）。`.rodata` 里**确实**有
+`set_visible`（`0x29f00c`，紧邻 `visible` / `set_modulate`），但**没有任何指令直接引用它**
+（`tools/addr_probe.py callers 0x29f00c` = 0）：名字表与调用点之间还隔着一层初始化时按名取指针的循环。
+⇒ 本节"`set_visible`"仍然只靠 arm64 侧 `bl` 那一条证据，挡位维持**推断（强）**。
 
 ### 26.5 结构体：`+0x00` 是档案，`+0x10/+0x18` 是查找起点
 
