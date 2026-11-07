@@ -1023,3 +1023,210 @@ nm -C -S --defined-only .rea-work/apk/arm64/lib/arm64-v8a/libgraphwarrust.so | g
 # 单条函数的直接调用表 / 串 / Location 行号（本仓库之外的分析索引）
 ../.venv/bin/python tools/callers.py 0x470840
 ```
+
+
+## 12. 挖洞点 = 爆炸点（`DestroyObstacle` 的位置语义）
+
+> 这一节回答 `docs/06-verification.md` §24.7 那根"挖洞点轴"的机制问题
+> （`dispatch/14-hole-axis`）：延迟段 291 个可比批里我方只有 66 个命中，225 个不命中，
+> 其中 **200 例"我方这个点在该回放的任何 `DestroyObstacle` 里都不存在"**。
+> **结论：一根坐标轴的问题，不是机制分叉** —— 我方拿"采样停点"当挖洞点，
+> 原版拿"爆炸点"当挖洞点；两者 x 逐位相同，只差 y。
+
+### 12.1 观测（逐位，全语料，不依赖我方任何模型）
+
+```text
+回放里 DestroyObstacle 的 (pos_x,pos_y) 与**同一结算批**的
+EffectInfo(ExplosionEffect) 的 (pos_x,pos_y) **逐位相同**：503 / 503
+```
+
+401 份可解回放、全部 `DestroyObstacle`（**503 条**）一条不差。**等级：观测（逐位）**。
+
+> 顺带一条结构差异：503 条里有 **162 处**是"同一份回放、同一坐标发了两条"
+> （179 处 1 条 + 162 处 2 条 = 341 个不同坐标），即**一次挖洞可能发 2 条完全相同的
+> `DestroyObstacle`**；我方每条只发 1 条。命中率口径只看"点在不在集合里"，
+> 不受这条影响，但它是**另一个**未定性（为什么会重复，未知）。
+
+⇒ 原版挖洞用的点是**客户端画爆炸图案的那个点**，不是弹道算出来的采样停点。
+两者的关系（一个批次 1782640836 批#1 的实例）：
+
+| 量 | 值 |
+|---|---|
+| `FunctionPoints.end_x`（回放的弹道停点，只发布 x） | `21.50120415902081` |
+| 我方采样停点（`settle::resolve` 的 `stop`） | `(21.50120415902081, -7.964500098012195e-05)` |
+| 回放 `ExplosionEffect` = `DestroyObstacle` | `(21.50120415902081, 0.0)` |
+| 该发修正文本 | `… + 9.311` |
+
+x 相同（都是 `end_x`），y 差 8e-5。原因是修正文本里的常数**只印 3 位小数**
+（`corrected_function`），客户端/服务端拿**印出来的文本**在 `x = end_x` 处重算了一次 y；
+我方 `stop` 是**原始文本**采样出来的 y。这个差正是 §24.2 `Y2` 类
+（3 位小数常数回代）的同一个量，只是这次落在挖洞点上。
+
+### 12.2 200 例的四类分桶（互斥，加总 == 200）
+
+口径与 `docs/06-verification.md` §24.7 完全一致（`bit_exact_attrib.py` 的
+`destroy_checked / destroy_ok`，逐文件重置、点按 `repr` 逐位比）。
+分母：225 个不命中批 = **25 例末位差（0 < d ≤ 1e-12，不算"点位不存在"）** + **200 例**。
+
+| 类 | 定义（可复算） | 例数 |
+|---|---|---|
+| a) 我方多挖了 | 我方挖洞点在**全文件**任何 `DestroyObstacle` 的 0.5 之外 | **0** |
+| b) 位置对但时间不对 | 我方挖洞点逐位等于文件里某条 `DestroyObstacle`，但不在本批延迟窗口 | **0** |
+| c) 把不该挖的障碍当可挖 | 挖洞点不在回放关卡的任何障碍里（画布边界除外）**且**没有对应销毁点 | **0** |
+| d) 其它 | 剩下的 | **200** |
+|  | 合计 | **200** ✅ |
+
+d) 的子因（同一套工具输出）：
+
+| 子因 | 例数 | 含义 |
+|---|---|---|
+| d1 | **192** | 我方**爆炸点**逐位 == 本批窗口 `DestroyObstacle` —— 纯"参照点用错"（拿停点当挖洞点） |
+| d2 | 4 | 爆炸点与销毁点差 ≤ 0.02（掩膜边界差一两个采样点，0.01/步） |
+| d3 | 4 | 差 > 0.02（真几何分歧：0.031 / 0.047 / 0.056 / 0.49） |
+
+⇒ **主因 = d1（192 / 200 = 96%）**：回放**挖了**这个洞、位置也**对**、时间也**对**，
+只是我方发出去的点用了采样 y。a)/b)/c) 三类**一例都没有** —— 这三类的旁证在
+`tools/hole_axis_attrib.py` 的输出里（200 例里"挖洞点→全文件销毁点"的最大距离
+只有 0.4931，没有任何一例 > 0.5）。
+
+### 12.3 每类 3 个样本（坐标 + tick）
+
+`a)/b)/c)` 均为 0 例 → 无样本；下表给 d 的三个子因各 3 个（`tools/hole_axis_attrib.py` 直接复现）：
+
+| 子因 | 回放/批 | 回放弹道停点 `end_x` | 我方停点 | 我方挖洞点（= 爆炸点） | 回放 `DestroyObstacle`@tick |
+|---|---|---|---|---|---|
+| d1 | `1782640836` #1 | `21.50120415902081` | `(…, -7.9645e-05)` | `(21.50120415902081, 0.0)` | `(21.50120415902081, 0.0)` @3834 |
+| d1 | `1782641987` #0 | `4.354012878988948` | `(…, 13.9208899130673)` | `(4.354012878988948, 13.920934976301991)` | 同左 @35058 |
+| d1 | `1782641987` #1 | `17.499171559312664` | `(…, -4.875e-04)` | `(17.499171559312664, 0.0)` | 同左 @38384 |
+| d2 | `1782646337` #0 | `-6.322417849086799` | `(-6.324605349086797, -0.9087028206628336)` | `(-6.324605349086797, -0.9091835182922221)` | `(-6.322417849086799, -0.9011605629508884)` @17591 |
+| d2 | `1782760054` #0 | —（DiffEq 局不发布） | `(11.139536214933742, 1.7555053360198483)` | 同停点 | `(11.139536214933742, 1.7555053360225297)` @188632 |
+| d2 | `1783010723` #0 | — | `(-0.6203154930872411, -7.957330328004617)` | `(-0.6203154930872411, -7.957208451610688)` | `(-0.6204717430872412, -7.958302201610689)` @63810 |
+| d3 | `1782674270` #1 | — | `(13.197677340163356, -5.00034948477338)` | `(13.197677340163356, -5.0)` | `(13.244552340163349, -5.0)` @32135 |
+| d3 | `1782677943` #1 | — | `(17.020271404337663, -8.99998211076159)` | `(17.020271404337663, -9.000197346015902)` | `(17.051521404337663, -9.0214236391402)` @25405 |
+| d3 | `1782761135` #0 | — | `(4.202802029801951, 7.843e-05)` | `(4.202802029801951, -2.8e-14)` | `(4.259052029801953, -2.7e-13)` @6037 |
+
+（d2/d3 的 x 差 0.031~0.056 = **3~6 个采样点**，全在障碍边缘：我方掩膜在
+`r+1` 像素的抗锯齿环上判"占用"，比原版的圆边界早/晚几个采样点。）
+
+### 12.4 二进制：`queue_destroy_obstacle` 的入队路径
+
+`execute_results`（`0x472470`–`0x47351a`）**不是在遍历弹道点，而是在排空一个事件队列**：
+
+```text
+0x4727c0  mov rax, rbx / add rbx, 0x20      ; 每条记录 0x20 字节
+0x4727d0  mov rbp, [rax]                    ; +0x00 判别值
+0x4727e1  mov r15d, [rax+0x8]               ; +0x08 两个 u32（变体 0 当"点数组指针"用）
+0x4727e5  mov r12d, [rax+0xc]
+0x472804  movsxd rcx, [rip-0x2b100b + rdx*4] ; 跳表 @0x1c1800
+0x472812  jmp rcx
+```
+
+跳表实测（`tools/` 里没有专用脚本，用 capstone 读 0x1c1800 的 32 位偏移）：
+
+| 表项 | 判别值 | 处理块 | 干什么 |
+|---|---|---|---|
+| idx 0 | 小整数 | `0x472814` | 死亡块：`points[idx-1]` → `0x456b80`（`set_queued_death`）+ 死效 |
+| idx 1 | `0x8000000000000000` | **`0x472c61`** | **挖洞块**：`(u32,u32) + (x,y)` → `queue_destroy_obstacle` |
+| idx 2 | `0x8000000000000001` | `0x472a53` | （本轮未展开） |
+| idx 3/4 | `0x8000000000000002/3` | `0x4727c0` | 跳过 |
+
+挖洞块读的记录与实参（`0x472c61`–`0x472d19`）：
+
+```text
+记录（0x20 字节）: +0x00 判别值 | +0x08 f64 pos_x | +0x10 f64 pos_y | +0x18 u64（语义未知）
+
+0x472c65  mov [rsp+0x130], r15d      ; r15d = 记录 +0x08（pos_x 的低半）
+0x472c6d  mov [rsp+0x134], r12d      ; r12d = 记录 +0x0c（pos_x 的高半）
+0x472c75  movdqu xmm0, [rax]         ; rax = 记录 +0x10 → 16 字节 (pos_y, 那个 u64)
+0x472c81  movdqu [rsp+0x138], xmm0   ; 于是 rsp+0x130 = (pos_x, pos_y, u64) 24 字节
+0x472ce6  mov eax, 0x88888889 / imul r13 / shr r13, 0x24 / lea edx,[r12+r13] / add edx, 0x3c
+                                     ; edx(tick) = [模块+0x58] + X/30 + 60，X = 那个 u64 的高 dword
+0x472d05  add rdi, 0x18              ; 第 1 实参 = ObstacleManager 的字段
+0x472d09  lea rsi, [rsp+0x130]       ; 第 2 实参 = &(pos_x, pos_y, u64)
+0x472d11  movq xmm0, [rip-0x2d3649]  ; 第 4 实参 = 常量 @0x19F6D0 = **0.5**
+0x472d19  call 0x3f20f0              ; ObstacleManager::queue_destroy_obstacle
+```
+
+> ⚠️ 这里顺带改正 `docs/06-verification.md` §24.6(b) 的一处读法：那个魔术数
+> `0x88888889 / shr 0x24` 是**除以 30**，不是除以 60（0..20000 逐个验过，只有 30 全对）。
+> 该式同时用在死亡块（`0x472aad`）和挖洞块上，即两处 tick 都是
+> `[模块+0x58] + X/30 + 60`；`X` 与 `[模块+0x58]` 的语义**本轮未定**（见 §12.6）。
+> `[模块+0x58]` 那个模块由 `0x46d040` 取（`execute_results` 里的两处都用它），
+> 返回的是 `Option<&T>`（`test rax,rax; je …` 判空）。
+
+被调函数 `ObstacleManager::queue_destroy_obstacle` = **`0x3f20f0`**（vaddr；`.text` 段
+`file = vaddr - 0x1000`）：
+
+```text
+0x3f20f0  push rbp/r15/r14/r13/r12/rbx; sub rsp,0x68     ; (self, &(pos_x,pos_y,…), tick:u32, radius:f64)
+0x3f211c  call 0x47dec0                                  ; SwissTable 哈希，键 = edx 那个 u32 = tick
+0x3f217b  cmp dword [rbp-0x20], ebx                      ; 键比较
+0x3f224b  movups xmm1, [r15]                             ; 值里的 (pos_x,pos_y) 一对 f64
+0x3f2279  movsd xmm0, [rsp+8] / movsd [rax+rcx*8+0x10], xmm0   ; 值 = (pos_x,pos_y,radius)
+0x3f22a3  movups [rsp+0x28], xmm1                        ; 事件载荷: pos_x,pos_y (16 B)
+0x3f22a8  movsd [rsp+0x38], xmm0                         ;           radius    (8 B)
+0x3f22ae  mov [rsp+0x40], ebx                            ;           tick      (4 B)
+0x3f22b2  movabs rax, 0x800000000000002a                 ; **tag 42** = queue_destroy_obstacle
+0x3f22c6  call qword [rip+0x5c89b4]                      ; 事件队列 add_event
+```
+
+⇒ **入队条件（观测，指令级）**：`execute_results` 的事件队列里出现
+"判别值 `0x8000000000000000`"（挖洞变体）的记录，就调用一次
+`queue_destroy_obstacle(&mut <ObstacleManager 字段>, &(pos_x, pos_y, …), tick, **0.5**)`，
+并把 `(pos_x,pos_y,0.5,tick)` 作为 tag 42 事件推进队列。
+**`pos_x/pos_y` 就是那发的爆炸点**（§12.1 的 503/503），不是采样停点 —— 也就是说
+"往哪挖"这件事在原版里**没有独立算式**，是直接复用爆炸点。
+
+**未定**：这条记录是谁生产的（`calculate_paths` 一侧没追）。因此"撞什么算撞"这一层
+（掩膜判据 vs 圆判据、`r+1` 抗锯齿环算不算）本轮没有指令级证据，见 §12.6。
+
+### 12.5 落地修正与前后数字
+
+`src/game.rs`：新增 `hole_point()`（`diff_eq` 局直接返回停点；其余局按
+`to_text(parse(f))` + 补括号 + 3 位小数后缀重算 y，与
+`_scaffold::diffconv::explosion_point` 同一条规则），`execute_results` 的挖洞块
+（`QueueDestroyObstacle` / 掩膜挖洞 / 延迟的 `DestroyObstacle`）**三处都改用它**。
+
+| 口径 | before | after | 复现 |
+|---|---|---|---|
+| **真实代码路径**（`--drive batch`，`Match::execute_results` 发的报文） | **1 / 259** | **134 / 259**（51.7%） | 见 §12.7 第 2 步 |
+| 收敛层口径（`--drive conv`，§24.7 那根轴的同一 291 分母） | **66 / 291** | **198 / 291**（68.0%） | 见 §12.7 第 3 步 |
+| 不命中 225 批 → 四类 | — | a 0 / b 0 / c 0 / d 200 | 见 §12.7 第 3 步 |
+
+`cargo test --offline` 1514 通过（基线 1512 + 本次新增 2 条：
+`game::tests::hole_point_is_the_explosion_point_not_the_sampled_stop`、
+`game::tests::queued_and_expired_destroy_points_are_identical`）；
+`python3 tools/coverage_matrix.py --check` OK。
+
+### 12.6 仍然未知 / 缺什么证据
+
+| # | 未定 | 缺什么 | 等级 |
+|---|---|---|---|
+| 1 | 挖洞事件（判别值 `0x8000…0`）的**生产者** | 顺着事件队列的 `Vec` 写入点反查（`calculate_paths` 一侧），或 frida 在 `0x472c61` 断点抓一次真实撞障碍的记录 | **未知** |
+| 2 | `tick = [模块+0x58] + X/30 + 60` 里三项的语义（尤其 `X` 是点序号、距离还是时间） | 同一批里同时抓到 `active_tick`、`ExplosionEffect.start_tick`、`DestroyObstacle` tick 三者 + 该发点数 | **未知**（`DelayDestroy = 165` 仍是抓包经验值） |
+| 3 | d2/d3 那 8 例的边界差 | 逐像素掩膜对照（`docs/142` §4 的 ring/fill 工具） | **未知** |
+| 4 | 反方向（回放挖了、我方没撞） | 本轴只比"我方 blocked 且有销毁点"的批；反向要先有"漏挖"的探针 | **未知** |
+
+### 12.7 复现（三份产物 + 三条命令）
+
+```bash
+export CARGO_HOME=<ws>/.reference/cargo-home
+export CARGO_TARGET_DIR=<ws>/.agent-work/<你的工作区>/target      # 私有 target，别串味
+R=<ws>/.reference/replays/gw2-replays-snapshot/replays             # 只读语料
+
+# 1) 我方逐发几何（停点 / 爆炸点 / 挖洞点），产出 hole.jsonl
+cargo run --release --offline --example hole_axis_probe -- --dir $R --json $OUT/hole.jsonl
+
+# 2) 真实代码路径的"延迟段挖洞点命中"（Match::execute_results 的报文 → 1/259 → 134/259）
+cargo run --release --offline --example replay_attrib -- \
+    --dir $R --drive batch --policy strict --json $OUT/batch.jsonl
+python3 tools/bit_exact_attrib.py --json $OUT/batch.jsonl
+
+# 3) §24.7 那根轴的同一 291 分母 + 200 例四类分桶 + 每类样本
+cargo run --release --offline --example replay_attrib -- \
+    --dir $R --drive conv --policy strict --json $OUT/conv.jsonl
+python3 tools/hole_axis_attrib.py --conv $OUT/conv.jsonl --hole $OUT/hole.jsonl --dir $R
+```
+
+`tools/hole_axis_attrib.py` 会先打印"口径对齐：66 / 291"（对不上就说明口径漂了），
+再打印 `before/after`、四类计数（带 `== 200` 的加总校验）、d 的三个子因、每子因 3 个样本。
