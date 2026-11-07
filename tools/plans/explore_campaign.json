@@ -1,0 +1,6 @@
+{"settle": 14, "steps": [
+  ["shot", "00_mainmenu"],
+  ["click", 534, 629, "Campaign"],
+  ["wait", 4],
+  ["shot", "01_campaign"]
+]}

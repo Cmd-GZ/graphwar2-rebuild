@@ -23,30 +23,33 @@
 //!
 //! # 22 条注册序（`Wired::ALL`，与 [`SLOTS`] 一一对应）
 //!
-//! | # | 原版类型 | `size_of::<M>()` | arm64 `<Type>::new` | 我方类型 | 档位 |
-//! |---|---|---|---|---|---|
-//! | 1 | `GraphwarTickHandler` | 72 | `0x40b528` | [`TickHandlerSlot`]（内含 [`GraphwarTickHandler`]） | 类型**观测**；字段布局未按字节复原（§43） |
-//! | 2 | `GraphwarClientConnectionHandler` | 112 | `0x48b048` | —（空占位） | 类型**观测**；无实现 |
-//! | 3 | `GraphwarLocalPlayerManager` | 64 | 内联（`0x409eac` 处 `alloc 0x58`） | [`GraphwarLocalPlayerManager`] | 类型**观测** |
-//! | 4 | `GraphwarPlayerManager` | 72 | `0x49d170` | [`GraphwarPlayerManager`] | 类型**观测** |
-//! | 5 | `GraphwarSoldierManager` | 72 | `0x49d590` | [`SoldierTable`] | 类型**观测** |
-//! | 6 | `GraphwarPlanePosManager` | 24 | `0x3b89a0` | —（空占位） | 类型**观测**；无实现 |
-//! | 7 | `GraphwarGameStateManager` | 296 | `0x4ade6c` | [`Match`] | 类型**观测** |
-//! | 8 | `GraphwarFunctionManager` | 32 | 内联（arm64 `0x419c80` / x86 `0x5236e0`，由 `0x40a158` / `0x517b9f` 调用） | [`FunctionManagerSlot`]：`layout` = 原版 32 字节布局（**任务 22 解开**，4 字段）+ `table` = 我方行为表 | 类型**观测**；布局**观测**（§45） |
-//! | 9 | `GraphwarTargetManager` | 72 | `0x3dae34` | [`GraphwarTargetManager`] | 类型**观测** |
-//! | 10 | `GraphwarTeamManager` | 32 | `0x49960c` | [`TeamTable`] | 类型**观测** |
-//! | 11 | `GraphwarLifeManager` | 72 | `0x4977b8` | [`LifeState`] | 类型**观测** |
-//! | 12 | `GraphwarObstacleManager` | 80 | `0x426300` | [`ObstacleManagerSlot`]：`layout` = 原版 80 字节布局（**任务 22 解开**，5 字段）+ `table` = 我方行为表 | 类型**观测**；布局**观测**（§45） |
-//! | 13 | `GraphwarTurnManager` | 32 | `0x49adf8` | [`TurnManager`] | 类型**观测** |
-//! | 14 | `GraphwarEffectManager` | 72 | `0x40bc0c` | [`GraphwarEffectManager`] | 类型**观测** |
-//! | 15 | `GraphwarModeManager` | 32 | `0x498090` | [`GraphwarModeManager`] | 类型**观测** |
-//! | 16 | `GraphwarGraphicsManager` | 168 | `0x49e394` | [`GraphwarGraphicsManager`] | 类型**观测** |
-//! | 17 | `GraphwarEntityEffectManager` | 72 | `0x3e9f40` | [`GraphwarEntityEffectManager`] | 类型**观测** |
-//! | 18 | `GraphwarComputerPlayerManager` | 72 | `0x4b02a4` | [`ComputerPlayers`] | 类型**观测** |
-//! | 19 | `FunctionHistoryRecorder` | 48 | `0x49d9a0` | [`History`] | 类型**观测** |
-//! | 20 | `GraphwarNameManager` | 72 | `0x40af68` | [`GraphwarNameManager`] | 类型**观测** |
-//! | 21 | `GraphwarColorManager` | 120 | `0x49cbe8` | [`GraphwarColorManager`] | 类型**观测** |
-//! | 22 | `GraphwarRankManager` | 72 | `0x498d2c` | [`GraphwarRankManager`] | 类型**观测** |
+//! 「档位」一列 = **槽位复原档位**（本节下一节有判据；字符串就是
+//! [`Wired::status`] / `module_slot_status()` 的返回值）；「证据」一列是**类型/布局**的档位。
+//!
+//! | # | 原版类型 | `size_of::<M>()` | arm64 `<Type>::new` | 我方类型 | 档位 | 证据 |
+//! |---|---|---|---|---|---|---|
+//! | 1 | `GraphwarTickHandler` | 72 | `0x40b528` | [`TickHandlerSlot`]（内含 [`GraphwarTickHandler`]） | `wired` | 类型**观测**；布局**部分观测**（4 个偏移有指令证据） |
+//! | 2 | `GraphwarClientConnectionHandler` | 112 | `0x48b048` | —（只有 [`HandlerField`](crate::graphwar_client_connection_handler::HandlerField) 偏移表，没有结构体） | `layout` | 类型**观测**；布局**逐字段观测**（`docs/16` §47.2） |
+//! | 3 | `GraphwarLocalPlayerManager` | 64 | 内联（`0x409eac` 处 `alloc 0x58`） | [`GraphwarLocalPlayerManager`] | `assembled` | 类型**观测** |
+//! | 4 | `GraphwarPlayerManager` | 72 | `0x49d170` | [`GraphwarPlayerManager`] | `assembled` | 类型**观测** |
+//! | 5 | `GraphwarSoldierManager` | 72 | `0x49d590` | [`SoldierTable`] | `assembled` | 类型**观测** |
+//! | 6 | `GraphwarPlanePosManager` | 24 | `0x3b89a0` | —（空标记） | `stub` | 类型**观测**；布局**未知** |
+//! | 7 | `GraphwarGameStateManager` | 296 | `0x4ade6c` | [`Match`] | `assembled` | 类型**观测** |
+//! | 8 | `GraphwarFunctionManager` | 32 | 内联（arm64 `0x419c80` / x86 `0x5236e0`，由 `0x40a158` / `0x517b9f` 调用） | [`FunctionManagerSlot`]：`layout` = 原版 32 字节布局（**任务 22 解开**，4 字段）+ `table` = 我方行为表 | `layout` | 类型**观测**；布局**逐字段观测**（`docs/16` §46） |
+//! | 9 | `GraphwarTargetManager` | 72 | `0x3dae34` | [`GraphwarTargetManager`] | `wired` | 类型**观测** |
+//! | 10 | `GraphwarTeamManager` | 32 | `0x49960c` | [`TeamTable`] | `assembled` | 类型**观测** |
+//! | 11 | `GraphwarLifeManager` | 72 | `0x4977b8` | [`LifeState`] | `wired` | 类型**观测** |
+//! | 12 | `GraphwarObstacleManager` | 80 | `0x426300` | [`ObstacleManagerSlot`]：`layout` = 原版 80 字节布局（**任务 22 解开**，5 字段）+ `table` = 我方行为表 | `wired` | 类型**观测**；布局**逐字段观测**（`docs/16` §46） |
+//! | 13 | `GraphwarTurnManager` | 32 | `0x49adf8` | [`TurnManager`] | `assembled` | 类型**观测** |
+//! | 14 | `GraphwarEffectManager` | 72 | `0x40bc0c` | [`GraphwarEffectManager`] | `assembled` | 类型**观测** |
+//! | 15 | `GraphwarModeManager` | 32 | `0x498090` | [`GraphwarModeManager`] | `assembled` | 类型**观测** |
+//! | 16 | `GraphwarGraphicsManager` | 168 | `0x49e394` | [`GraphwarGraphicsManager`] | `assembled` | 类型**观测** |
+//! | 17 | `GraphwarEntityEffectManager` | 72 | `0x3e9f40` | [`GraphwarEntityEffectManager`] | `assembled` | 类型**观测** |
+//! | 18 | `GraphwarComputerPlayerManager` | 72 | `0x4b02a4` | [`ComputerPlayers`] | `assembled` | 类型**观测** |
+//! | 19 | `FunctionHistoryRecorder` | 48 | `0x49d9a0` | [`History`] | `assembled` | 类型**观测** |
+//! | 20 | `GraphwarNameManager` | 72 | `0x40af68` | [`GraphwarNameManager`] | `assembled` | 类型**观测** |
+//! | 21 | `GraphwarColorManager` | 120 | `0x49cbe8` | [`GraphwarColorManager`] | `assembled` | 类型**观测** |
+//! | 22 | `GraphwarRankManager` | 72 | `0x498d2c` | [`GraphwarRankManager`] | `assembled` | 类型**观测** |
 //!
 //! **顺序的档位是"逐位"**：两个二进制里 22 条调用的
 //! `size_of::<RefCell<M>>` 序列完全相同
@@ -58,30 +61,50 @@
 //! —— 全 `.text` 扫下来，这 3 个的 `add_module` 调用点只在
 //! `game_server_thread`（20 条，含前两个）与 `GraphwarBackend::start_*`（各 1 条）里）。
 //!
-//! # `Wired` 的两档：真类型 / 桩（**2026-11 任务 19 就地更正过一句**）
+//! # 槽位复原档位（**四档判据 + 词表**，2026-11 任务 28 定；代码与断言共用这一套词）
 //!
-//! * [`SlotKind::RealType`]（**17** 个）：容器里装的是**本仓库已有的复原类型**
-//!   （各自模块里那个结构体）。**行为不完整**——本文件只做"构造 + 注册 + 接线"，
-//!   不把它们的业务逻辑写完。
-//! * [`SlotKind::Stub`]（**5** 个：`TickHandler` / `ClientConnectionHandler` /
-//!   `PlanePosManager` / `FunctionManager` / `ObstacleManager`）：这 5 个原版型在仓库里
-//!   **没有按字节复原的结构体**（`client_connection_handler` 只有常量偏移表；
-//!   `graphwar_plane_pos_manager` 连文件都没有）。它们在 [`Wired::status`] 里如实报
-//!   `"stub"`（**不是** `"assembled"`），`module_impl_type` 仍是 `"—"`。
+//! 起因（`AGENTS.md` §0.6 就地更正）：任务 19 / 22 把事实推进了两步，但档位字符串停在
+//! 旧口径上（"`stub` = 零行为 / 结构未复原"），**先后误导过两轮报告**。病根是**一个词
+//! 承担了两条轴**：结构（原版字段布局解没解）和行为（接没接容器 / 事件流 / 交互断言）。
+//! 现在拆开判、合成**一个**字符串，取值只能是下面四个之一：
 //!
-//! ⚠️ **上一轮那句"零行为的空占位"已经过期**（`AGENTS.md` §0.6 就地更正）：
-//! 任务 19 给其中 **3 个**（`TickHandler` / `FunctionManager` / `ObstacleManager`）补上了
-//! **接线层 + 事件层**，它们现在**能交互**（[`RootWiring::interaction_selftest`]）。
-//! 档位**没变**，理由是硬的：原版那 72 / 32 / 80 字节的**字段布局**仍未复原
-//! （`TickHandler` 只落了有地址证据的几个字段，另两个**一个字段都没解**），
-//! 而且 `stub` / `—` 这两个值上一轮已经进了 `assemble_check.gd` 的逐槽断言。
-//! ⇒ 读法：**`stub` = "原版结构未复原"，不再等于"零行为"**；能不能交互要另测。
+//! | 档位 | 判据（**按序判断，第一个命中者为准**） | 现值 |
+//! |---|---|---|
+//! | [`SLOT_WIRED`] | 已接容器 **+** 已接事件流 **+** 有最小交互断言（[`RootWiring::interaction_selftest`] 覆盖这一槽） | **4** |
+//! | [`SLOT_LAYOUT`] | 原版字段布局**已逐字段解出**（有证据档），但**不满足** `wired` | **2** |
+//! | [`SLOT_ASSEMBLED`] | 容器里装的是**我方复原类型**（`our_type` 非 `—`，能按类型取回并调用），但**不满足**上面两条 | **15** |
+//! | [`SLOT_STUB`] | 以上都不是：**我方形状占位**，原版字段布局**未知** | **1** |
+//!
+//! ```text
+//! 结构轴：stub（布局未知） ──→ layout（布局逐字段解出）
+//! 行为轴：assembled（装上我方复原类型） ──→ wired（+ 事件流 + 最小交互断言）
+//! 一个槽只报**它达到的更高那一档**；两条轴都到顶 = wired（4 + 2 + 15 + 1 = 22）。
+//! ⇒ "结构已解但行为未做" = layout；"结构也没解" = stub —— 这两个词的分工就是本轮要根治的模糊。
+//! ```
+//!
+//! 三条读法（每条都有反例撑着，别合并省略）：
+//!
+//! 1. **`wired` 不要求布局逐字段解出**：`GraphwarTickHandler` 三件齐但字段只落到有地址证据的
+//!    4 个偏移，它就是 `wired`；布局那一轴单独记在 §3 的事实表与各 manager 文件的文档块里，
+//!    **不**并进档位字符串。
+//! 2. **`layout` 不等于"零行为"**：`GraphwarFunctionManager` 布局全解、容器能取回、6 条交互断言
+//!    都在跑，但**发方向的事件流没接**（原版 3 个 `set_*` 各发一条 `FunctionInfo` 类事件，
+//!    我方 [`FunctionTable`] 一条都不发）⇒ 它停在 `layout`；`ClientConnectionHandler` 才是
+//!    "布局全解、行为一行没写"。
+//! 3. **`assembled` 不等于"复原了"**：这 15 个只有"类型 + 部分行为 + 按类型可调"，
+//!    原版布局多数**没逐字段解出**，事件流也没接全。
+//!
+//! ⚠️ 与本文件里的 [`SlotKind`] **不是一回事**：`SlotKind` 回答"容器里放的是原版模块类型本身、
+//! 还是 `_scaffold` 的包装"（**容器类型来源**的二分类，17 / 5，
+//! `container_real_manager_count()` / `container_stub_manager_count()` 报的就是这两个数）；
+//! 档位回答"这一槽离原版还有多远"。**两者别混着引用**，`SlotKind::Stub` 的 5 个里现在
+//! 有 2 个是 `wired`、2 个是 `layout`、1 个是 `stub`。
 //!
 //! # 与原版的差别（逐条，别当成"已复原"）
 //!
-//! | 项 | 原版 | 本文件 | 档位 |
+//! | 项 | 原版 | 本文件 | 证据档 |
 //! |---|---|---|---|
-//! | 注册几个 | `GraphwarGameClient::new` **22** 条 `add_module` | **22**（17 真类型 + 5 桩；其中 3 个桩本轮可交互） | 22 是**逐位**（§41）；17/5 是我方现状 |
+//! | 注册几个 | `GraphwarGameClient::new` **22** 条 `add_module` | **22**（档位 4 `wired` + 2 `layout` + 15 `assembled` + 1 `stub`；容器类型来源 17 + 5） | 22 是**逐位**（§41）；档位是我方现状 |
 //! | 注册顺序 | 22 条的调用序 | **同序**（[`Wired::ALL`] / [`SLOTS`]） | **逐位**（两架构尺寸序列相等） |
 //! | 谁在装 | `GraphwarGameClient::new`（客户端对象） | 本文件（`GraphwarRootNode` 调的 `assemble_demo`） | 装载者**不同**，容器语义相同 |
 //! | 各 manager 是否**共享**实例 | `GameStateManager` 内部是否也持 `TurnManager`：**未解** | **不共享**：容器里是各自独立实例；`Match` 自带一个内部 `TurnManager` / `LifeState` / `GraphwarEntityEffectManager` | 独立性是**我方形状**；原版是否共享 `未知` |
@@ -108,7 +131,8 @@
 //! RootWiring::function_manager() / obstacle_manager()   # 任务 19 那 5 个
 //! RootWiring::interaction_selftest() -> Vec<(&str, String)>   # 5 个各一次最小交互（幂等）
 //! RootWiring::interaction_selftest_strings() -> Vec<String>   # "名字=值"
-//! slot_status(&str) -> "assembled" | "stub" | "placeholder" | "unknown"
+//! slot_status(&str) -> "wired" | "layout" | "assembled" | "stub" | "placeholder" | "unknown"
+//! SLOT_WIRED / SLOT_LAYOUT / SLOT_ASSEMBLED / SLOT_STUB / SLOT_PLACEHOLDER / SLOT_UNKNOWN / SLOT_TIERS
 //! ```
 //!
 //! 引擎那一侧（`GraphwarRootNode`）只调用这些，**不碰 `HashMap` 的内部**。
@@ -174,7 +198,8 @@ pub enum Wired {
     /// `GraphwarTickHandler`（72 字节）⇔ [`TickHandlerSlot`]（内含
     /// `graphwar_tick_handler::GraphwarTickHandler`，任务 19 补的接线层）。
     TickHandler,
-    /// `GraphwarClientConnectionHandler`（112 字节）。**空占位**。
+    /// `GraphwarClientConnectionHandler`（112 字节）⇔ [`ClientConnectionHandlerSlot`]。
+    /// 档位 `layout`（112 B 布局逐字段解出、行为 0 行，`docs/16` §47.2）。
     ClientConnectionHandler,
     /// `GraphwarLocalPlayerManager`（64 字节）⇔ [`GraphwarLocalPlayerManager`]。
     LocalPlayerManager,
@@ -182,7 +207,8 @@ pub enum Wired {
     PlayerManager,
     /// `GraphwarSoldierManager`（72 字节）⇔ [`SoldierTable`]。
     SoldierManager,
-    /// `GraphwarPlanePosManager`（24 字节）。**空占位**（逻辑在 `src/plane.rs` 的自由函数里）。
+    /// `GraphwarPlanePosManager`（24 字节）⇔ [`PlanePosManagerSlot`]（**空标记**，
+    /// 24 B 布局未知；逻辑在 `src/plane.rs` 的自由函数里）。档位 `stub`。
     PlanePosManager,
     /// `GraphwarGameStateManager`（296 字节）⇔ [`Match`]（那个模块的"运行实体那一半"）。
     GameStateManager,
@@ -220,23 +246,31 @@ pub enum Wired {
     RankManager,
 }
 
-/// 一个槽的两种档位（**这是本层自己的分类**，不是原版的东西）。
+/// 槽的**容器类型来源**（二分类，`docs/16` §41.2 的既有口径）。
+///
+/// ⚠️ **这不是复原档位**——档位看 [`Wired::status`]（`wired` / `layout` / `assembled` / `stub`，
+/// 判据在本文件顶部的模块文档）。两者正交：`SlotKind::Stub` 的 5 个槽里现在有 2 个档位是
+/// `wired`、2 个是 `layout`、1 个是 `stub`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotKind {
-    /// 容器里装的是本仓库已有的复原类型（行为可能不完整，但类型是真的）。
+    /// 容器里装的是**原版模块文件里的类型本身**（`our_type` 指向 `graphwar_*::T`，17 个）。
+    /// 行为可能不完整，但类型是真的；`container_real_manager_count()` 报这个数。
     RealType,
-    /// 容器里装的是**桩**：原版这一型的**结构体没有复原**（字段布局未知/未解）。
+    /// 容器里装的是**本文件（`_scaffold`）为这一型造的包装/占位**（原版那里是裸的
+    /// `Rc<RefCell<M>>`，我们没有那个类型，才造了包装），5 个；
+    /// `container_stub_manager_count()` 报这个数。
     ///
-    /// ⚠️ 2026-11 任务 19 起，桩**不一定零行为**：`TickHandler` / `FunctionManager` /
-    /// `ObstacleManager` 三个已有接线层与事件层（能交互），
-    /// `ClientConnectionHandler` / `PlanePosManager` 仍是零行为。
-    /// 判据：能不能交互看 [`RootWiring::interaction_selftest`]，不看这个枚举。
+    /// ⚠️ **2026-11 任务 22 / 28 就地更正**：其中 3 个包装里**已经装了东西**——
+    /// [`TickHandlerSlot`] 里是 [`GraphwarTickHandler`]，[`FunctionManagerSlot`] /
+    /// [`ObstacleManagerSlot`] 里是**原版布局**（`观测`，`docs/16` §46）+ 我方行为表；
+    /// 另 2 个（[`ClientConnectionHandlerSlot`] / [`PlanePosManagerSlot`]）仍是纯标记。
+    /// ⇒ "Stub = 零行为 / 结构未复原"**两条都不再成立**；这一槽做到哪一档看 [`Wired::status`]。
     Stub,
 }
 
 /// 一个注册槽的台账（[`SLOTS`] 的元素）。
 ///
-/// `size` / `arm64_new` 是**原版的数**；`our_type` 是**我方**的类型路径（`—` = 空占位）。
+/// `size` / `arm64_new` 是**原版的数**；`our_type` 是**我方**的类型路径（`"—"` = 里面什么都没有）。
 #[derive(Debug, Clone, Copy)]
 pub struct Slot {
     /// 本层的枚举。
@@ -250,9 +284,13 @@ pub struct Slot {
     /// arm64 2.0.60 里 `<Type>::new` 的地址；`0` = 该型构造在调用点**被内联**
     /// （`LocalPlayerManager` / `FunctionManager` 两个，见 [`Slot::new_note`]）。
     pub arm64_new: u32,
-    /// 我方类型路径（`"graphwar_turn_manager::TurnManager"` 之类）；空占位为 `"—"`。
+    /// 这一槽**里面装的我方类型**路径（`graphwar_turn_manager::TurnManager` 之类）。
+    ///
+    /// `kind() == Stub` 的包装槽写**包装里面**的那个类型（包装本身是 `_scaffold` 的），
+    /// 因为读这一列的人想知道"能不能调到一个真类型"；`"—"` = 里面什么都没有
+    /// （纯标记：`ClientConnectionHandler` / `PlanePosManager` 两个）。
     pub our_type: &'static str,
-    /// 真类型 / 空占位。
+    /// 容器类型来源（原版模块类型 / `_scaffold` 包装）——**不是档位**，见 [`SlotKind`]。
     pub kind: SlotKind,
 }
 
@@ -286,7 +324,7 @@ impl Slot {
 pub const SLOTS: [Slot; Wired::COUNT] = [
     Slot { wired: Wired::TickHandler, type_name: "GraphwarTickHandler",
            module_path: "graphwar_tick_handler", size: 72, arm64_new: 0x40b528,
-           our_type: "—", kind: SlotKind::Stub },
+           our_type: "graphwar_tick_handler::GraphwarTickHandler", kind: SlotKind::Stub },
     Slot { wired: Wired::ClientConnectionHandler, type_name: "GraphwarClientConnectionHandler",
            module_path: "graphwar_client_connection_handler", size: 112, arm64_new: 0x48b048,
            our_type: "—", kind: SlotKind::Stub },
@@ -308,7 +346,7 @@ pub const SLOTS: [Slot; Wired::COUNT] = [
            our_type: "game::Match", kind: SlotKind::RealType },
     Slot { wired: Wired::FunctionManager, type_name: "GraphwarFunctionManager",
            module_path: "graphwar_function_manager", size: 32, arm64_new: 0,
-           our_type: "—", kind: SlotKind::Stub },
+           our_type: "graphwar_function_manager::GraphwarFunctionManager", kind: SlotKind::Stub },
     Slot { wired: Wired::TargetManager, type_name: "GraphwarTargetManager",
            module_path: "graphwar_target_manager", size: 72, arm64_new: 0x3dae34,
            our_type: "graphwar_target_manager::GraphwarTargetManager", kind: SlotKind::RealType },
@@ -320,7 +358,7 @@ pub const SLOTS: [Slot; Wired::COUNT] = [
            our_type: "graphwar_life_manager::LifeState", kind: SlotKind::RealType },
     Slot { wired: Wired::ObstacleManager, type_name: "GraphwarObstacleManager",
            module_path: "graphwar_obstacle_manager", size: 80, arm64_new: 0x426300,
-           our_type: "—", kind: SlotKind::Stub },
+           our_type: "graphwar_obstacle_manager::GraphwarObstacleManager", kind: SlotKind::Stub },
     Slot { wired: Wired::TurnManager, type_name: "GraphwarTurnManager",
            module_path: "graphwar_turn_manager", size: 32, arm64_new: 0x49adf8,
            our_type: "graphwar_turn_manager::TurnManager", kind: SlotKind::RealType },
@@ -356,23 +394,63 @@ pub const SLOTS: [Slot; Wired::COUNT] = [
            our_type: "graphwar_rank_manager::GraphwarRankManager", kind: SlotKind::RealType },
 ];
 
-/// 槽位状态：**已装配 · 真类型**（容器里按类型查得到，且这一型有复原实现）。
+// ---------------------------------------------------------------------------
+// 2b. 档位字符串（**四档 + 两个"这里没有这个槽"的答案**；判据见模块文档顶部那一节）
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 这一组字符串是**对外契约**：`graphwar_root_node_class::module_slot_status()` 原样返回它们，
+// `client/tools/assemble_check.gd` 逐槽断言它们。改这里就必须**同批**改那个脚本——
+// 任务 28 处理的正是"上一轮只改了注释、字符串没改"留下的坑。
+
+/// 档位：**已接容器 + 已接事件流 + 有最小交互断言**（三件齐）。
+///
+/// "事件流已接"= 订阅/发两个方向都按原版逐条对照过（原版没有的就该是零条，零条也算对照过）；
+/// "有最小交互断言"= [`RootWiring::interaction_selftest`] 覆盖这一槽。
+pub const SLOT_WIRED: &str = "wired";
+/// 档位：**原版字段布局已逐字段解出**（有证据档），但**不满足** [`SLOT_WIRED`]
+/// （事件流没接全 / 没有最小交互断言）。
+pub const SLOT_LAYOUT: &str = "layout";
+/// 档位：容器里装的是**我方复原类型**（能按类型取回并调用），但**不满足**上面两条。
 pub const SLOT_ASSEMBLED: &str = "assembled";
-/// 槽位状态：**已装配 · 空占位**（容器里查得到，但装的是零行为的占位类型）。
+/// 档位：**我方形状占位**——原版这一型的**字段布局未知**，容器里也没有能表达它的类型。
 pub const SLOT_STUB: &str = "stub";
-/// 槽位状态：**占位**（原版 25 型里有它，但**这个装配点不注册**它，容器里没有键）。
+/// **不是档位**：原版 25 型里有它，但**这个装配点不注册**它（客户端 22 条 `add_module` 里没有）。
 pub const SLOT_PLACEHOLDER: &str = "placeholder";
-/// 槽位状态：**未知**（原版 25 型里也没有这个名字）。
+/// **不是档位**：原版 25 型里也没有这个名字。
 pub const SLOT_UNKNOWN: &str = "unknown";
+
+/// 一个槽可能报的四档，**由高到低**（顺序 = 判据的判断序；给断言/文档遍历用）。
+pub const SLOT_TIERS: [&str; 4] = [SLOT_WIRED, SLOT_LAYOUT, SLOT_ASSEMBLED, SLOT_STUB];
+
+/// 四档的**现值计数**（顺序同 [`SLOT_TIERS`]；合计 = [`Wired::COUNT`] = 22）。
+///
+/// 改任何一槽的档位必须**同批**改这里、[`Wired::status`] 与
+/// `client/tools/assemble_check.gd` 的 `WIRED_TIER`（任务 28 的病根就是只有一处改）。
+pub const WIRED_TIER_COUNT: usize = 4;
+/// 见 [`WIRED_TIER_COUNT`]。
+pub const LAYOUT_TIER_COUNT: usize = 2;
+/// 见 [`WIRED_TIER_COUNT`]。
+pub const ASSEMBLED_TIER_COUNT: usize = 15;
+/// 见 [`WIRED_TIER_COUNT`]。
+pub const STUB_TIER_COUNT: usize = 1;
+
+// 编译期闸：四档计数必须正好铺满 22 个槽（改名/加槽时先红这里，别等断言的数字对不上）
+const _: () = assert!(
+    WIRED_TIER_COUNT + LAYOUT_TIER_COUNT + ASSEMBLED_TIER_COUNT + STUB_TIER_COUNT == Wired::COUNT,
+    "四档计数必须合计 22"
+);
 
 impl Wired {
     /// 本层装了几个（**= 原版 `GraphwarGameClient::new` 的 22 条 `add_module`**）。
     pub const COUNT: usize = 22;
 
-    /// 其中"我方有真类型"的个数。
+    /// 其中"容器里装的是原版模块类型本身"的个数（[`SlotKind::RealType`]；
+    /// `container_real_manager_count()` 报这个数。**不是**档位 `assembled` 的个数）。
     pub const REAL_COUNT: usize = 17;
 
-    /// 其中"空占位"的个数（= 25 型里没有复原实现的那 5 个）。
+    /// 其中"容器类型是 `_scaffold` 包装/标记"的个数（[`SlotKind::Stub`]；
+    /// `container_stub_manager_count()` 报这个数。⚠️ **不是**档位 `stub` 的个数，
+    /// 档位 `stub` 现在只有 1 个）。
     pub const STUB_COUNT: usize = Wired::COUNT - Wired::REAL_COUNT;
 
     /// 全部 22 个，顺序 = **原版注册序**（`docs/16-client.md` §41 的表）。
@@ -457,7 +535,7 @@ impl Wired {
         }
     }
 
-    /// 这一槽在**本层**的档位：真类型 / 空占位。
+    /// 这一槽的**容器类型来源**（真类型 / `_scaffold` 包装）——**不是档位**，见 [`SlotKind`]。
     pub const fn kind(self) -> SlotKind {
         match self {
             Wired::TickHandler
@@ -469,12 +547,32 @@ impl Wired {
         }
     }
 
-    /// 静态槽位状态（[`SLOT_ASSEMBLED`] / [`SLOT_STUB`]）——**这是"表里说装了什么"**，
-    /// 运行时判据是 [`RootWiring::has`] / [`RootWiring::retrievable`]。
+    /// 这一槽的**复原档位**（[`SLOT_WIRED`] / [`SLOT_LAYOUT`] / [`SLOT_ASSEMBLED`] / [`SLOT_STUB`]）。
+    ///
+    /// 判据（**按序，第一个命中者为准**；全表与逐槽理由在模块文档"槽位复原档位"一节）：
+    ///
+    /// 1. `wired` —— 容器 + 事件流 + 最小交互断言三件齐：
+    ///    `TickHandler`（订 1 发 2，4 条断言）/ `TargetManager`（订 2 发 1，5 条）/
+    ///    `LifeManager`（订 3 发 2，5 条）/ `ObstacleManager`（订 1 发 4，7 条）；
+    /// 2. `layout` —— 原版布局逐字段解出、但没到 `wired`：
+    ///    `ClientConnectionHandler`（112 B 的 9 个偏移全解，行为 0 行）/
+    ///    `FunctionManager`（32 B / 4 字段全解，容器 + 6 条交互断言都在，但**发方向**
+    ///    的事件流没接：原版 3 个 `set_*` 各发一条 `FunctionInfo` 类事件，我方的
+    ///    [`FunctionTable`] 一条都不发）；
+    /// 3. `assembled` —— 容器里是我方复原类型（其余 15 个）；
+    /// 4. `stub` —— 都不是：`PlanePosManager`（24 B 布局未知、连文件都没有）。
+    ///
+    /// ⚠️ 这是**静态台账**（"这一槽做到哪一档"），不看容器；"真的装进去了没有"是运行时判据
+    /// [`RootWiring::has`] / [`RootWiring::retrievable`]，两者在 `assemble_check.gd` 里分别断言。
     pub const fn status(self) -> &'static str {
-        match self.kind() {
-            SlotKind::RealType => SLOT_ASSEMBLED,
-            SlotKind::Stub => SLOT_STUB,
+        match self {
+            Wired::TickHandler
+            | Wired::TargetManager
+            | Wired::LifeManager
+            | Wired::ObstacleManager => SLOT_WIRED,
+            Wired::ClientConnectionHandler | Wired::FunctionManager => SLOT_LAYOUT,
+            Wired::PlanePosManager => SLOT_STUB,
+            _ => SLOT_ASSEMBLED,
         }
     }
 
@@ -507,7 +605,10 @@ pub fn is_module_type_name(name: &str) -> bool {
     graphwar_module_container::find(name).is_some()
 }
 
-/// 四态槽位判据（**纯静态**，不看容器）：装配表 → `assembled`/`stub`；25 型台账 → `placeholder`。
+/// 槽位判据（**纯静态**，不看容器）：在装配表里 → [`Wired::status`] 的四档之一；
+/// 只在原版 25 型台账里 → `placeholder`；两处都没有 → `unknown`。
+///
+/// 运行时那一侧（"真的装进去了没有"）是 [`RootWiring::has_name`] / [`RootWiring::retrievable_name`]。
 pub fn slot_status(name: &str) -> &'static str {
     match Wired::from_type_name(name) {
         Some(w) => w.status(),
@@ -517,49 +618,56 @@ pub fn slot_status(name: &str) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
-// 3. 5 个 `SlotKind::Stub` 槽
+// 3. `SlotKind::Stub` 的 5 个槽：**逐槽事实表**（布局解没解 / 事件流接没接 / 有没有交互断言）
 // ---------------------------------------------------------------------------
 //
-// ⚠️ **2026-11 任务 19 就地更正（`AGENTS.md` §0.6）**：上一轮这 5 个叫"零行为的空占位"。
-// 本轮给其中 **3 个**（`TickHandler` / `FunctionManager` / `ObstacleManager`）补上了
-// **接线层 + 事件层**：它们现在**能交互**（构造 → 注册 → 取回 → 调一个入口 → 读回真值）。
+// ⚠️ **2026-11 任务 28 就地更正（`AGENTS.md` §0.6）**：任务 19 与 22 的结论都已经写进代码，
+// 但档位字符串停在旧口径上（"`stub` = 零行为 / 结构未复原"），**先后误导过两轮报告**。
+// 本节按模块文档的四档判据把这 5 个槽逐个重判，字符串与 `client/tools/assemble_check.gd`
+// 的逐槽断言**同批**改（上一轮就是因为"断言在禁区"只改注释，才留下这个坑）。
 //
-// 但它们的档位**仍然是 `Stub`**，理由（两条，都是硬的）：
+// | 槽（原版尺寸） | 原版字段布局 | 事件流（订阅 / 发） | 最小交互断言 | 档位 | 差什么才能上一档 |
+// |---|---|---|---|---|---|
+// | `GraphwarTickHandler`（72 B） | **部分**：`+0x00..0x0f` 壁钟、`+0x28` 1e9 ns、`+0x38` 事件队列、`+0x40` `current_tick` 有指令证据，其余是我方形状 | 订 **1**（`connected_to_server_event`）/ 发 **2**（`TickEvent`、`TickRequest`）——与原版一致 | **4** 条 | `wired` | 布局：`get_fractional_tick`/`get_time_to_tick` 的算式（§44.7 仍列未知） |
+// | `GraphwarClientConnectionHandler`（112 B） | **逐字段全解**：`HandlerField` 9 条偏移 + `SIZE = 0x70 = 112`，与 §41.2 的 vtable size 对上（`观测`） | **未接**（订阅名/处理器/`forward_event` 的 24 个事件名都有证据，代码里一条没接） | **0** 条 | `layout` | 行为：`connect`/`tick`/`disconnect`/`forward_event` 的状态机没落码（4 状态表只有纯函数） |
+// | `GraphwarPlanePosManager`（24 B） | **未知**：连 `src/graphwar_plane_pos_manager.rs` 都没有；已知常量（`px = 20x + 500`）以自由函数落在 `plane.rs` | **未接** | **0** 条 | `stub` | 结构：24 B 的字段布局一条都没解 |
+// | `GraphwarFunctionManager`（32 B） | **逐字段全解**：4 字段，三构建偏移序列相同（§46.2） | 订 **0**（正面证据：原版也不订阅）/ 发 **0**，而原版 3 个 `set_*` 各发 1 条 `FunctionInfo` 类事件 ⇒ **发方向未接** | **6** 条 | `layout` | 事件流：把 `FunctionInfo`/`FunctionActive` 写进 [`FunctionTable::outbox`]（并核对载荷 `(id, 文本, tick)`） |
+// | `GraphwarObstacleManager`（80 B） | **逐字段全解**：5 字段，三构建偏移序列相同（§46.3） | 订 **1**（`tick_event`）/ 发 **4**（`AddObstacle`/`DestroyObstacle`/`QueueDestroyObstacle`/`ClearObstacles`）——与原版一致 | **7** 条 | `wired` | 行为：`draw_circle` 写什么值、`queue_destroy_obstacle` 的到期加法（§46.8） |
 //
-// 1. **原版的 72 / 32 / 80 字节结构体仍然没复原** —— ⚠️ **2026-11-08 任务 22 起这条要分开读**：
-//    * `GraphwarTickHandler`(72 B)：字段按指令读出来（见 `graphwar_tick_handler.rs` 的文档块）；
-//    * `GraphwarFunctionManager`(32 B / 4 字段) 与 `GraphwarObstacleManager`(80 B / 5 字段)：
-//      **布局已解**（`docs/16` §46，档位 观测；arm64 / x86 Linux / Windows DLL **三向偏移序列逐条相同**，
-//      并各有编译期 `size_of` 断言 + 逐字段 `offset_of!` 单测）。
-//      ⇒ 这两型的 `stub` 现在**只剩"行为未实现"一条理由**，"结构未复原"已不成立；
-// 2. 静态台账 `Wired::status()` / `module_impl_type` 的"`stub` / `—`"是**上一轮已经
-//    进断言**的口径（`assemble_check.gd` 的 22×4 逐槽断言里有它），本轮**不改既有断言**。
+// 三条要点（都是本轮才显式化的）：
 //
-// ⇒ 读法：`stub` 现在表示"**原版结构未复原**"，**不再**表示"零行为"。
-// 判据也分了两档：`stub` 只看静态台账，**能不能交互**要另测（
-// [`RootWiring::interaction_selftest`] 与 `assemble_check.gd` 的 `manager_probe_*`）。
+// 1. **"事件流已接"包含"原版也是零条"**：`FunctionManager` 不订阅是**正面证据**（§44.3 有正对照），
+//    所以订阅方向算接对；但它**发**的那 3 条原版有、我方没有 ⇒ 停在 `layout`，不是 `wired`。
+// 2. **`layout` 不等于"零行为"**：`FunctionManager` 的 6 条交互断言都在跑；
+//    真正"布局全解、行为 0 行"的是 `ClientConnectionHandler`。
+// 3. **`wired` 不要求布局全解**：`TickHandler` 的字段只落到有地址证据的 4 个偏移，三件齐就是 `wired`。
 
-/// 空占位：原版 `GraphwarClientConnectionHandler`（112 字节）。
+/// 空标记：原版 `GraphwarClientConnectionHandler`（112 字节），档位 **`layout`**。
 ///
-/// `src/graphwar_client_connection_handler.rs` 只有字段偏移表（`HandlerField`）与事件枚举，
-/// 没有那个 `RefCell` 里的结构体 ⇒ **本轮仍是零行为**（不在这 5 个的第一批里）。
+/// `src/graphwar_client_connection_handler.rs` 有**逐字段的偏移表**（
+/// [`HandlerField`](crate::graphwar_client_connection_handler::HandlerField)：9 条偏移 +
+/// `SIZE = 0x70 = 112`）与全部函数/订阅点，但**没有**那个 `RefCell` 里的结构体、也没有一行行为
+/// ⇒ 结构已解、行为未做，这正是 `layout` 这一档要表达的现状。
 pub struct ClientConnectionHandlerSlot;
 
-/// 空占位：原版 `GraphwarPlanePosManager`（24 字节）。
+/// 空标记：原版 `GraphwarPlanePosManager`（24 字节），档位 **`stub`**。
 ///
-/// 该模块**没有** `src/graphwar_plane_pos_manager.rs`；已知的东西（`px = 20x + 500` 之类）
-/// 以自由函数形式落在 `src/plane.rs` / `src/graphwar_plane.rs` ⇒ **本轮仍是零行为**。
+/// 该模块**没有** `src/graphwar_plane_pos_manager.rs`，24 字节的字段布局**一条都没解**；
+/// 已知的东西（`px = 20x + 500` 之类）以自由函数形式落在 `src/plane.rs` /
+/// `src/graphwar_plane.rs` ⇒ 容器里没有能表达它的对象。
 pub struct PlanePosManagerSlot;
 
-/// 接线层：原版 `GraphwarTickHandler`（72 字节）的容器槽。
+/// 接线层：原版 `GraphwarTickHandler`（72 字节）的容器槽，档位 **`wired`**。
 ///
-/// 里面装的是 [`GraphwarTickHandler`]——本轮在**原版模块文件**（`src/graphwar_tick_handler.rs`）
-/// 里补的类型，字段只落有地址证据的那几个。事件的接法见那个文件的文档块。 （`观测`）
+/// 里面装的是 [`GraphwarTickHandler`]——在**原版模块文件**（`src/graphwar_tick_handler.rs`）
+/// 里补的类型，字段只落有地址证据的那几个（`+0x00..0x0f` / `+0x28` / `+0x38` / `+0x40`，`观测`）。
+/// 事件流：订 `connected_to_server_event` 1 条、发 `TickEvent` / `TickRequest` 2 条（`观测`）；
+/// 交互断言 4 条（[`RootWiring::interaction_selftest`] 的 `tick.*`）。
 pub struct TickHandlerSlot(pub GraphwarTickHandler);
 
-/// 接线层：原版 `GraphwarFunctionManager`（32 字节）的容器槽。
+/// 接线层：原版 `GraphwarFunctionManager`（32 字节）的容器槽，档位 **`layout`**。
 ///
-/// ⚠️ **2026-11 任务 22 就地更正**（`AGENTS.md` §0.6）：上一轮这里写「原版那个 32 字节结构体
+/// ⚠️ **2026-11 任务 22 就地更正**（`AGENTS.md` §0.6）：任务 19 时这里写「原版那个 32 字节结构体
 /// 的字段一个都没解（`未知`）」。**已解**：`+0x00` 弱自句柄 / `+0x08` 事件队列 `Rc` /
 /// `+0x10` 容器 `Weak` / `+0x18` `Arc<Mutex<GraphwarFunctionData>>`，
 /// 逐偏移有三份构建（arm64 / x86 Linux / Windows DLL）的一致指令证据，
@@ -567,12 +675,17 @@ pub struct TickHandlerSlot(pub GraphwarTickHandler);
 ///
 /// 本槽因此装两样东西，**故意分开命名**：
 ///
-/// * [`layout`](Self::layout)：原版的真布局（本轮解出来的）；
+/// * [`layout`](Self::layout)：原版的真布局（任务 22 解出来的；本层的 [`skeleton`] 构造只有布局，
+///   不含原版 `new` 的订阅与发事件）；
 /// * [`table`](Self::table)：我方的最小函数槽表 [`FunctionTable`]（**不是**原版的类型），
 ///   容器里那些"能交互"的验收（`manager_probe_selftest`）读的是它。
 ///
-/// 档位字符串仍是 `"stub"`（`assemble_check.gd` 的逐槽断言在禁区，本轮不能改它）——
-/// 现在它表示"**行为**未复原"，**不再**表示"结构未知"。
+/// **为什么不是 `wired`**（任务 28 重判）：订阅方向与原版一致（0 条，正面证据），
+/// 交互断言 6 条也在跑，但**发方向没接**——原版 `set_function` / `set_function_points` /
+/// `set_function_active_tick` 各发一条 `FunctionInfo` 类事件（`docs/16` §46.0 的就地更正 2），
+/// 我方 [`FunctionTable`] 的 `outbox` 一条都不写。补齐这一条就能升到 `wired`。
+///
+/// [`skeleton`]: GraphwarFunctionManager::skeleton
 pub struct FunctionManagerSlot {
     /// 原版 32 字节布局（任务 22 解开；见 `src/graphwar_function_manager.rs`）。
     pub layout: GraphwarFunctionManager,
@@ -580,19 +693,21 @@ pub struct FunctionManagerSlot {
     pub table: FunctionTable,
 }
 
-/// 接线层：原版 `GraphwarObstacleManager`（80 字节）的容器槽。
+/// 接线层：原版 `GraphwarObstacleManager`（80 字节）的容器槽，档位 **`wired`**。
 ///
 /// 掩膜/挖洞/延迟销毁的**纯逻辑**在 `src/plane.rs`（`rasterize` / `is_occupied` /
 /// `empty_mask`，`docs/39`）与 `src/game.rs` 的 `DESTROY_DELAY_TICKS`（实测 165 tick，
-/// `docs/44`）；本槽的 [`ObstacleTable`] 只是把**同一批纯函数**接成"按类型取回的对象"。
+/// `docs/44`）；本槽的 [`ObstacleTable`] 把**同一批纯函数**接成"按类型取回的对象"，
+/// 并按原版发出 4 种事件（[`ObstacleTable::add_obstacle`] 等）。
 ///
-/// ⚠️ **2026-11 任务 22 就地更正**：上一轮这里写「原版 80 字节结构体的字段布局**未解**」。
+/// ⚠️ **2026-11 任务 22 就地更正**：任务 19 时这里写「原版 80 字节结构体的字段布局**未解**」。
 /// **已解**：`+0x00` 弱自句柄 / `+0x08` 事件队列 `Rc` / `+0x10` 容器 `Weak` /
 /// `+0x18` `Arc<Mutex<GraphwarObstacleData>>`（1000×600 字节网格）/
 /// `+0x20` `HashMap<u32, Vec<[f64; 3]>>`（48 B），共 **5 个字段 = 80 字节**；
 /// 硬闸与证据见 [`graphwar_obstacle_manager`]（`观测`）。
 ///
-/// 与函数槽同理：`layout` 是真布局，`table` 是我方行为表；档位字符串仍是 `"stub"`。
+/// `layout` 是真布局，`table` 是我方行为表；档位 `wired` 的依据：订 1 发 4 与原版一致，
+/// 交互断言 7 条（`obstacle.*`）。
 pub struct ObstacleManagerSlot {
     /// 原版 80 字节布局（任务 22 解开；见 `src/graphwar_obstacle_manager.rs`）。
     pub layout: GraphwarObstacleManager,
@@ -633,6 +748,12 @@ pub struct ObstacleManagerSlot {
 /// * ⇒ 本表的 `outbox` **不再声明"恒空"**：它现在只装"我方探针显式写进去的东西"，
 ///   **不**代表原版不发事件。
 ///
+/// ⚠️ **2026-11 任务 28 就地更正**：上面这条更正只把**注释**改对了，**代码没接**——
+/// 原版那 3 条 `FunctionInfo` 类事件我方一条都没写进 `outbox`。这一条正是
+/// [`FunctionManagerSlot`] 的档位停在 `layout` 而不是 `wired` 的原因（见那个槽的文档）。
+/// 要升档就把 `set_function` / `set_function_points` / `set_function_active_tick` 的
+/// 发事件补齐（载荷按 §46.0：`set_function` 是 `(id, 文本, tick)`）。
+///
 /// ⇒ 所以 `subscribed` 恒空是"正面证据"（真的不订阅），
 /// 正对照见 `addr_probe.py dis 0x454790`（life）等四个 manager 的 `new`，
 /// 同一条命令能看到它们的 `subscribe` 调用。
@@ -644,9 +765,11 @@ pub struct FunctionTable {
     active_tick: HashMap<u32, u32>,
     /// `set_function_points` 写进去的终点（`FunctionPoints.end_x/end_y`）。
     points: HashMap<u32, (f64, f64)>,
-    /// 订阅名（恒空，见上面的类型文档）。
+    /// 订阅名（恒空 = 原版这一型也不订阅，**正面证据**，见上面的类型文档）。
     pub subscribed: Vec<&'static str>,
-    /// 发件箱（恒空，见上面的类型文档）。
+    /// 发件箱。**原版会发**（3 个 `set_*` 各一条 `FunctionInfo` 类事件），
+    /// 我方**还没接**发方向（档位因此是 `layout`，见 [`FunctionManagerSlot`]）；
+    /// 这里只装探针显式写进去的东西。
     pub outbox: Vec<Event>,
 }
 
@@ -735,12 +858,13 @@ impl FunctionTable {
         self.slots.is_empty()
     }
 
-    /// 取走发件箱（恒空：该模块不发事件，见类型文档）。
+    /// 取走发件箱。⚠️ 我方**还没接**发方向（原版会发，见类型文档与 [`FunctionManagerSlot`]），
+    /// 所以这里现在恒空；"恒空"是**我方缺陷**，不是原版行为。
     pub fn take_outbox(&mut self) -> Vec<Event> {
         std::mem::take(&mut self.outbox)
     }
 
-    /// 发件箱里有几条（恒 0）。
+    /// 发件箱里有几条（现在恒 0 = 发方向未接，见类型文档）。
     pub fn outbox_len(&self) -> usize {
         self.outbox.len()
     }
@@ -988,7 +1112,9 @@ impl RootWiring {
     ///
     /// 每一槽都走原版的形状 `Rc::new(RefCell::new(<M as>::new(…)))` + `add_module::<M>`；
     /// 17 个的 `new` 是各自模块里**已有**的实现，本函数不再写第二份逻辑。
-    /// 5 个空占位（[`SlotKind::Stub`]）只构造一个零行为的值。
+    /// 5 个包装槽（[`SlotKind::Stub`]）构造我们自己的值：2 个是纯标记
+    /// （`ClientConnectionHandler` / `PlanePosManager`），3 个装了真东西
+    /// （`TickHandler` 是原版模块里的类型，另两个是原版布局 + 我方行为表）。
     ///
     /// 演示数据见 [`DEMO_SOLDIERS`] / [`DEMO_PLAYERS`] / [`demo_room`] /
     /// [`DEMO_LOCAL_PROFILE`]（**我方选择**）。
@@ -1000,7 +1126,7 @@ impl RootWiring {
         //    我方用**抓包基准**（`fixtures/ticks.tsv` 那条 60 Hz 公式的两个基准）代进去。
         add(&mut c, TickHandlerSlot(GraphwarTickHandler::new(0, 0)));
 
-        // ② GraphwarClientConnectionHandler —— 空占位。
+        // ② GraphwarClientConnectionHandler —— 空标记（档位 layout：布局全解、行为未做）。
         add(&mut c, ClientConnectionHandlerSlot);
 
         // ③ GraphwarLocalPlayerManager —— 本机玩家（配置四个字段我方给空串）。
@@ -1029,7 +1155,7 @@ impl RootWiring {
         }
         add(&mut c, soldiers);
 
-        // ⑥ GraphwarPlanePosManager —— 空占位。
+        // ⑥ GraphwarPlanePosManager —— 空标记（档位 stub：24 B 布局未知）。
         add(&mut c, PlanePosManagerSlot);
 
         // ⑦ GraphwarGameStateManager —— 我方 = `game::Match`（运行实体那一半）。
@@ -1238,12 +1364,16 @@ impl RootWiring {
         self.registered().into_iter().map(|w| w.type_name()).collect()
     }
 
-    /// 装配序里"我方有真类型"的几个。
+    /// 装配序里"容器里装的是原版模块类型本身"的几个（[`SlotKind::RealType`]，17 个）。
+    ///
+    /// ⚠️ **不是**档位 `assembled` 的那 15 个；档位看 [`Wired::status`]。
     pub fn real_managers(&self) -> Vec<Wired> {
         self.registered().into_iter().filter(|w| w.kind() == SlotKind::RealType).collect()
     }
 
-    /// 装配序里"空占位"的几个。
+    /// 装配序里"容器类型是 `_scaffold` 包装/标记"的几个（[`SlotKind::Stub`]，5 个）。
+    ///
+    /// ⚠️ **不是**档位 `stub` 的那 1 个：这 5 个的档位分别是 2 `wired` + 2 `layout` + 1 `stub`。
     pub fn stub_managers(&self) -> Vec<Wired> {
         self.registered().into_iter().filter(|w| w.kind() == SlotKind::Stub).collect()
     }
@@ -1282,8 +1412,10 @@ impl RootWiring {
 
     /// `get_module::<TickHandler>()`（原版 arm64 `0x4a0ab4`）。
     ///
-    /// 容器里的类型是 [`TickHandlerSlot`]（槽的类型名**没有**变、`stub` 档位也没变），
+    /// 容器里的类型是 [`TickHandlerSlot`]（槽的类型名**没有**变），
     /// 里面是 [`GraphwarTickHandler`]（原版模块文件里的那个类型）。
+    /// 档位是 `wired`（任务 28 重判：订 1 发 2 与原版一致 + 4 条交互断言）；
+    /// 但 `SlotKind` 仍是 `Stub`（容器类型是 `_scaffold` 包装）——两件事别混。
     pub fn tick_handler(&self) -> Option<Rc<RefCell<TickHandlerSlot>>> {
         self.container.borrow().get_module::<TickHandlerSlot>()
     }
@@ -1528,39 +1660,125 @@ mod tests {
         );
     }
 
-    /// 没装的原版型一律 `placeholder`；装了的分两档（真类型 / 空占位）。
+    /// 没装的原版型一律 `placeholder`；装了的报四档之一（[`SLOT_TIERS`]）。
+    ///
+    /// ⚠️ 任务 28 前这条断言写的是「装了的分两档（真类型 / 空占位）」——那正是
+    /// "结构解没解"与"行为接没接"被一个词混起来的来源（见模块文档"槽位复原档位"）。
     #[test]
     fn unwired_module_types_are_placeholders() {
         // 客户端**不**注册的那 3 型（25 − 22）：服务端 / backend 才装
         assert_eq!(slot_status("GraphwarBanList"), SLOT_PLACEHOLDER);
         assert_eq!(slot_status("GraphwarServerConnectionHandler"), SLOT_PLACEHOLDER);
         assert_eq!(slot_status("GraphwarGameRecorder"), SLOT_PLACEHOLDER);
-        // 空占位的 5 型
-        assert_eq!(slot_status("GraphwarTickHandler"), SLOT_STUB);
-        assert_eq!(slot_status("GraphwarObstacleManager"), SLOT_STUB);
-        // 真类型
-        assert_eq!(slot_status("GraphwarTurnManager"), SLOT_ASSEMBLED);
+        // 四档各举一个（"结构已解但行为未做" vs "结构都没解"就是 layout vs stub）
+        assert_eq!(slot_status("GraphwarTickHandler"), SLOT_WIRED, "容器+事件流+交互断言三件齐");
+        assert_eq!(
+            slot_status("GraphwarClientConnectionHandler"),
+            SLOT_LAYOUT,
+            "112 B 布局逐字段解出、行为 0 行 ⇒ 结构已解但行为未做"
+        );
+        assert_eq!(
+            slot_status("GraphwarFunctionManager"),
+            SLOT_LAYOUT,
+            "布局全解，但发方向的事件流没接"
+        );
+        assert_eq!(
+            slot_status("GraphwarPlanePosManager"),
+            SLOT_STUB,
+            "24 B 布局未知 ⇒ 结构都没解"
+        );
+        assert_eq!(slot_status("GraphwarTurnManager"), SLOT_ASSEMBLED, "我方复原类型，未接事件流");
         // 胡编的名字
         assert_eq!(slot_status("nonsense"), SLOT_UNKNOWN);
         assert_eq!(slot_status("graphwar_turn_manager"), SLOT_UNKNOWN, "只认类型名，不认模块名");
-        // 25 型里 22 个是本层的槽（17 真 + 5 空），3 个是 placeholder
-        let assembled = graphwar_module_container::MODULES
-            .iter()
-            .filter(|m| slot_status(m.name) == SLOT_ASSEMBLED)
-            .count();
-        let stubs = graphwar_module_container::MODULES
-            .iter()
-            .filter(|m| slot_status(m.name) == SLOT_STUB)
-            .count();
+        // 25 型里 22 个是本层的槽（四档合计 22），3 个是 placeholder
+        let mut tally = [0usize; SLOT_TIERS.len()];
+        for m in graphwar_module_container::MODULES {
+            if let Some(i) = SLOT_TIERS.iter().position(|t| *t == slot_status(m.name)) {
+                tally[i] += 1;
+            }
+        }
+        assert_eq!(
+            tally,
+            [WIRED_TIER_COUNT, LAYOUT_TIER_COUNT, ASSEMBLED_TIER_COUNT, STUB_TIER_COUNT],
+            "四档计数（wired / layout / assembled / stub）"
+        );
+        assert_eq!(tally.iter().sum::<usize>(), Wired::COUNT);
         let placeholders = graphwar_module_container::MODULES
             .iter()
             .filter(|m| slot_status(m.name) == SLOT_PLACEHOLDER)
             .count();
-        assert_eq!(assembled, Wired::REAL_COUNT);
-        assert_eq!(stubs, Wired::STUB_COUNT);
         assert_eq!(placeholders, 3);
-        assert_eq!(assembled + stubs, Wired::COUNT);
         assert_eq!(graphwar_module_container::MODULES.len(), 25);
+    }
+
+    /// 档位表逐槽钉死（顺序 = 注册序）：每个槽的取值都不许漂，且必须落在四个词里。
+    ///
+    /// 这一条是 `client/tools/assemble_check.gd` 里 `WIRED_TIER` 的机器可读版；
+    /// 两边任何一边改了、另一边没改，都会红一处（任务 28 的病根就是只有一边改）。
+    #[test]
+    fn slot_tiers_are_the_four_word_vocabulary() {
+        let tiers: Vec<&str> = Wired::ALL.iter().map(|w| w.status()).collect();
+        assert_eq!(
+            tiers,
+            vec![
+                SLOT_WIRED,     // 1  TickHandler（订 1 发 2 + 4 条交互）
+                SLOT_LAYOUT,    // 2  ClientConnectionHandler（布局全解，行为 0 行）
+                SLOT_ASSEMBLED, // 3  LocalPlayerManager
+                SLOT_ASSEMBLED, // 4  PlayerManager
+                SLOT_ASSEMBLED, // 5  SoldierManager
+                SLOT_STUB,      // 6  PlanePosManager（布局未知）
+                SLOT_ASSEMBLED, // 7  GameStateManager
+                SLOT_LAYOUT,    // 8  FunctionManager（布局全解，发方向未接）
+                SLOT_WIRED,     // 9  TargetManager（订 2 发 1 + 5 条）
+                SLOT_ASSEMBLED, // 10 TeamManager
+                SLOT_WIRED,     // 11 LifeManager（订 3 发 2 + 5 条）
+                SLOT_WIRED,     // 12 ObstacleManager（订 1 发 4 + 7 条）
+                SLOT_ASSEMBLED, // 13 TurnManager
+                SLOT_ASSEMBLED, // 14 EffectManager
+                SLOT_ASSEMBLED, // 15 ModeManager
+                SLOT_ASSEMBLED, // 16 GraphicsManager
+                SLOT_ASSEMBLED, // 17 EntityEffectManager
+                SLOT_ASSEMBLED, // 18 ComputerPlayerManager
+                SLOT_ASSEMBLED, // 19 FunctionHistoryRecorder
+                SLOT_ASSEMBLED, // 20 NameManager
+                SLOT_ASSEMBLED, // 21 ColorManager
+                SLOT_ASSEMBLED, // 22 RankManager
+            ]
+        );
+        // 每个返回值都必须是词表里的四个之一（不许出现旧口径"真类型/空占位"这种编外值）
+        for w in Wired::ALL {
+            assert!(
+                SLOT_TIERS.contains(&w.status()),
+                "{} 报了词表外的档位 {}",
+                w.type_name(),
+                w.status()
+            );
+            assert_eq!(slot_status(w.type_name()), w.status(), "静态台账与 slot_status 必须同源");
+        }
+        // 5 个 `SlotKind::Stub` 槽：**不再全是 stub**（这正是任务 28 要修的那件事）
+        let former_stubs: Vec<&str> = [
+            Wired::TickHandler,
+            Wired::ClientConnectionHandler,
+            Wired::PlanePosManager,
+            Wired::FunctionManager,
+            Wired::ObstacleManager,
+        ]
+        .iter()
+        .map(|w| w.status())
+        .collect();
+        assert_eq!(former_stubs, vec![SLOT_WIRED, SLOT_LAYOUT, SLOT_STUB, SLOT_LAYOUT, SLOT_WIRED]);
+        assert_eq!(former_stubs.iter().filter(|t| **t == SLOT_STUB).count(), 1, "只剩 1 个真 stub");
+        // 结构轴与行为轴不是同一个问题：ClientConnectionHandler 结构解了、PlanePosManager 没解；
+        // 而 LifeManager 结构（原版 72 B 布局）没解也能是 wired；TickHandler 反过来是
+        // SlotKind::Stub（容器是包装）却 wired —— 两件事不许混。
+        assert_ne!(
+            slot_status("GraphwarClientConnectionHandler"),
+            slot_status("GraphwarPlanePosManager")
+        );
+        assert_eq!(slot_status("GraphwarLifeManager"), SLOT_WIRED);
+        assert_eq!(Wired::LifeManager.kind(), SlotKind::RealType);
+        assert_eq!(Wired::TickHandler.kind(), SlotKind::Stub, "容器类型来源 ≠ 档位");
     }
 
     /// 空容器：22 个都查不到（这一条是"按类型断言"的反面——数量 0，但不是靠数量判的）。
