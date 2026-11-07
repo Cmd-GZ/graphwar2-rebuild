@@ -916,6 +916,20 @@ print(len({r['file'] for r in L if r.get('batch', -1) >= 0}))
 > 分组接进收敛层之后：种类序列 **1074 / 1080**、内容 **595 / 1080**、
 > 多发批骨架 128 / 130、**单发批 946 / 950 一条没变**（§25.4）。
 
+> ⚠ **2026-11-07 深夜审计 —— 本表是 §24 当轮的读数，现行基线已不同。**
+> 同一份 401 份定格快照、同一台机器、三根轴分开跑（命令见 README「对拍现在多准」）的**现行**读数：
+>
+> | 指标 | `fire` | `batch` | `batch_conv`（收敛层） |
+> |---|---|---|---|
+> | 内容命中 | **325 / 1080** | **346 / 1080** | **595 / 1080** |
+> | 种类序列 | **819 / 1080** | **919 / 1080** | **1074 / 1080** |
+>
+> 延迟段（`batch` 轴）：死亡集合 **215 / 379**、挖洞点 **140 / 262**。
+> 审计说明：原表记 `fire` 21 / 818、`batch` 21 / 918、`conv` 568 / 945（当轮值），
+> 实测已变为 325 / 819、346 / 919、595 / 1074；`conv` 的 1074 与 §25 一致，`fire`/`batch` 的**内容命中**
+> 是这一段涨得最多的（`+304` / `+325`）。**报数字必须带轴名**（`AGENTS.md` §C）——
+> 1074 属 `batch_conv`，**不是** `batch` 轴的数。
+
 ### 24.5 四类机制：**依据与判别式**（都能复算）
 
 **① `E1`：回放的 `end_x` 是「碰撞点的前一个采样点」**（95 批 / 表 B 18.6%）— **观测**
@@ -1454,7 +1468,7 @@ cargo run --release --offline --example replay_attrib -- --dir $R --drive conv  
 python3 tools/bit_exact_attrib.py --json $OUT/conv.jsonl | head -12               # Y 应仍是 170 批
 
 # 4) 回归
-cargo test --offline                       # 1512 passed / 0 failed
+cargo test --offline                       # 1520 passed / 0 failed（审计：本节原记 1512，2026-11-07 复测 1520）
 python3 tools/coverage_matrix.py --check   # OK
 ```
 
@@ -1749,7 +1763,7 @@ python3 tools/bit_exact_attrib.py --json $OUT/base.jsonl --check-baseline
 **回归**：
 
 ```text
-cargo test --offline                 1516 passed / 0 failed   （基线 1512 + 本节新增 4 条 diffconv 单元测试）
+cargo test --offline                 1520 passed / 0 failed   （**历史**：当轮记 1516 = 基线 1512 + 本节新增 4 条；2026-11-07 复测 1520）
 python3 tools/coverage_matrix.py --check   OK（527/527 可归属、78 模块；src 106 文件 2265 fn）
 ```
 
