@@ -5979,3 +5979,329 @@ cargo test --offline                          # lib 457 / 总计 1488
 cargo test --offline --features gdext-bindings # lib 463（457 + 本类 6 条）/ 总计 1494
 bash client/run.sh selftest                   # 694 passed（默认 feature 的 .so）
 ```
+
+---
+
+## 39. 三个"要信号接线"的类成了真节点 + **自造 `#[signal]` 的结论**（2026-11：155 条 headless 断言全过）
+
+**一句话**：`GraphwarButton`（`Button`）/ `GraphwarFunctionInput`（`LineEdit`）/
+`GraphwarSetupControl`（`Control`）三个类都注册成了**真 Godot 节点类**，headless 实测
+**155 条断言全过**；本节把 §38.6 留的那个「**自造 `#[signal]` 未验**」结案 ——
+**能**，而且三种"信号/回调"机制逐条给了**能/不能 + 证据**：
+
+| # | 机制 | 结论 | 一条证据 |
+|---|---|---|---|
+| 1 | **自造 `#[signal]`**（`#[signal] fn long_press_finished();` + GDScript `connect`） | **能** | `ok 自造信号 long_press_finished 在 get_signal_list 里`、`ok 机制 1：GDScript 收到自造信号 input_selected("X")` |
+| 2 | **连引擎原生信号**（`self.base_mut().connect(…)`） | **能**（三种形态） | `ok ready 把 pressed 连到了自己的同名方法（is_connected 为真）`、`ok ready 连上了 3 条子节点信号（实际 3）` |
+| 3 | **外部注册闭包表**（原版 `Vec<Box<dyn FnMut(&str)>>`） | **Rust 侧能原样用；GDScript 交不进来** | `ok 机制 3 原版形态：Box<dyn FnMut(&str)> 收到 "X"` vs `ok subscribe() 的参数类型是 Callable` |
+
+> 档位（`AGENTS.md` §0.3）：**观测** = 本轮 headless 真跑出来的输出；**推断** = 有依据未证；
+> **未知** = 没解出来。`cargo test` / `selftest` 的条数**只是回归保护**，不是复原证据。
+
+### 39.1 本轮动了哪些文件
+
+| 文件 | 增/改 | 内容 |
+|---|---|---|
+| `src/_scaffold/graphwar_button_class.rs` | **新增 619 行**（代码 326 / 接线代码 268 / 其中单测 58） | `GraphwarButton : Button`，3 条原生信号接线 + 两张回调表 + 2 个自造信号 |
+| `src/_scaffold/graphwar_function_input_class.rs` | **新增 545 行**（代码 309 / 接线代码 262 / 单测 47） | `GraphwarFunctionInput : LineEdit`，3 条原生信号（**第 3 条连不上，见 §39.5**）+ 28 条折叠 + `fire` 回调 |
+| `src/_scaffold/graphwar_setup_control_class.rs` | **新增 750 行**（代码 465 / 接线代码 383 / 单测 82） | `GraphwarSetupControl : Control`，**连子节点**的 3 条信号 + 四格模式 + 玩家条目 + 4 个自造信号 |
+| `src/_scaffold/mod.rs` | **+8**（3 行 `pub mod` + 2 行注释） | 三个类都在 `#[cfg(feature = "gdext-bindings")]` 下 |
+| `client/tools/signal_classes_check.gd` | **新增 579 行**（代码 402 / 注释 100 / 空行 77） | 155 条断言的验收脚本 |
+| `docs/16-client.md` | +本节 | — |
+
+`src/graphwar_button.rs` / `src/graphwar_function_input.rs` / `src/graphwar_setup_control.rs`
+**一行没动**（仍然零引擎依赖）；`src/lib.rs` 没动；`client/` 下既有 `.gd` / `.tscn` /
+`run.sh` 一个没改；**没有**新增 `docs/*.md`。
+
+### 39.2 a) 三个类都能注册 + 实例化（观测）
+
+```text
+$ cargo build --release --features gdext-bindings
+$ cp $CARGO_TARGET_DIR/release/libgw2_rebuild.so client/libgw2_rebuild.so
+$ godot --headless --path client --import
+$ godot --headless --path client --script res://tools/signal_classes_check.gd
+Initialize godot-rust (API v4.6.stable.official, runtime v4.7.2.stable.official, safeguards balanced)
+
+ok   ClassDB.class_exists("GraphwarButton")
+ok   ClassDB.class_exists("GraphwarFunctionInput")
+ok   ClassDB.class_exists("GraphwarSetupControl")
+--- A. GraphwarButton ---
+ok   GraphwarButton 能实例化且是 Button
+      btn.get_class() = GraphwarButton
+ok   is_class("BaseButton") 为真（父类正确）
+--- B. GraphwarFunctionInput ---
+ok   GraphwarFunctionInput 能实例化且是 LineEdit
+ok   GraphwarFunctionInput 是 LineEdit                       # 17 个方法与 1 个属性逐一断言
+--- C. GraphwarSetupControl ---
+ok   GraphwarSetupControl 能实例化且是 Control
+SIGNAL_CLASSES 155 passed, 0 failed        # 退出码 0
+```
+
+三个类**各自**的"和原版对不对得上"（脚本里逐条断言，这里摘关键）：
+
+```text
+ok   ready 把 pressed 连到了自己的同名方法（is_connected 为真）      # 原版 SIGNAL_LINKS 第 1 条
+ok   ready 把 button_up 连到了自己的同名方法（is_connected 为真）
+ok   ready 把 button_down 连到了自己的同名方法（is_connected 为真）
+ok   dispatch_log == "X|S"（先点一下的 input_text，后长按的 long_press_input_text；实际 "X|S"）
+ok   long_press_emit_count() == 1（一次性，只发一次）
+ok   再等 2 帧仍是 1 次（不重复派发）
+ok   去空格后的表达式 == "sin(x)"（实际 "sin(x)"）
+ok   PI 与 π 原样保留（π→n 在 MathFunction::new 里，不在输入框）
+ok   â（0xE2）折成 "a"（实际 "a"）
+ok   上标 ²（0xB2）折成 "2"（实际 "2"）
+ok   '^' 在条件为真时插入 "^"（实际 "^"）
+ok   时限循环到 Timer2m ⇒ 标签 01:59（实际 "01:59"）
+ok   第 6 个士兵加不进去（饱和在 5）
+ok   没有玩家时**不发** start_requested（原版是纯静默，不给提示）
+```
+
+⇒ 三个类的**取值/时序**都是从 `src/graphwar_*.rs` 里调出来的同一份纯逻辑
+（`ButtonState` / `strip_spaces` / `intent_for_key` / `SetupOptions` / `PlayerEntry`），
+本层一行算式都没复制。**这一点能证明**"纯逻辑 → 节点 + 信号"这条链路通了；
+**不能**证明原版 UI 长什么样（子节点是替身、图标是路径字符串、聊天日志只有一行）。
+
+### 39.3 b) **三种机制逐条（本节的核心）**
+
+#### 39.3.1 机制 1：自造 `#[signal]` —— **能**（观测）
+
+四件事全验过：**注册**、**带参**、**GDScript `connect`**、**两条发射路径**。
+
+```text
+ok   自造信号 long_press_finished 在 get_signal_list 里
+ok   自造信号 input_selected 在 get_signal_list 里
+ok   基类 BaseButton 的 pressed/button_up/button_down 三条信号还在     # 没被顶掉
+ok   自造信号 input_selected 带 1 个 String 参数（实际 1）
+ok   GDScript connect("long_press_finished", cb) 返回 OK（0）
+ok   GDScript connect("input_selected", cb) 返回 OK（0）
+ok   机制 1：GDScript 收到自造信号 input_selected("X")
+ok   机制 1：GDScript 收到长按信号 1 次（实际 1）
+ok   GDScript connect("options_changed", cb) 返回 OK（4 个 int 参数）
+ok   GDScript 收到 options_changed(3, 0, 0, 2)（实际 [[3, 0, 0, 2]]）
+```
+
+两条发射路径**都对**，写法不同（本仓库两个类各用一种，方便以后挑）：
+
+| 写法 | 代码 | 出处 | 结论 |
+|---|---|---|---|
+| **类型安全生成器** | `self.signals().input_selected().emit(&payload)` | `graphwar_button_class.rs` / `graphwar_setup_control_class.rs` | **能**（`WithUserSignals::signals(&mut self)` 要 `&mut self`） |
+| **裸 `emit_signal`** | `self.base_mut().emit_signal("expression_changed", &[payload.to_variant()])` | `graphwar_function_input_class.rs` | **能**，而且**返回 `Error`**（可以记账，`emit_errors()` 是空的） |
+
+三条**坑**（都不报错、只静默出错的那种）：
+
+1. **带参数的信号要传引用**。gdext 把信号参数生成成 `impl AsArg<T>`，`GString` 的 `Pass` 是
+   `ByRef` ⇒ `emit(payload)` 编译不过（`E0271: expected ByValue, found ByRef`），必须
+   `emit(&payload)`。`i64` 参数没这个问题。
+2. **生成器借的是 `&mut self`** ⇒ 发信号那一刻**不能再读 `self` 的字段**。所有要发的值
+   必须先算成局部变量（本文件里 `let axis = …; let function = …;` 四行就是为了这个）。
+3. **自造信号名不能与基类已有信号同名**。`BaseButton` 已经有 `pressed` / `button_up` /
+   `button_down` / `toggled` ⇒ 本类自造的两个只能叫 `long_press_finished` /
+   `input_selected`。**但信号名与自己的方法名同名是允许的** —— 原版就是这么用的
+   （`connect("pressed", Callable::from_object_method(self, "pressed"))`，信号名与处理函数名
+   是**同一个 `&str`**），本轮实测这套写法在 gdext 上照跑（`is_connected` 三条全真）。
+
+#### 39.3.2 机制 2：连引擎原生信号 —— **能**（观测；三种形态都验了）
+
+| 形态 | 谁连谁 | 证据 |
+|---|---|---|
+| ① 连**自己**的、**同名**方法 | `self.base_mut().connect("pressed", callable(self,"pressed"))`（原版 `GraphwarButton::ready`） | `ok ready 把 pressed 连到了自己的同名方法（is_connected 为真）` ×3 |
+| ② 连**自己**的、**不同名**方法 | `connect("text_changed", callable(self,"on_text_change"))`（原版 `GraphwarFunctionInput::ready`） | `ok ready 把 text_changed 连到了 on_text_change（is_connected 为真）` |
+| ③ 连**别人的**信号（子节点） | `find_child("RoomNameLineEdit") → node.connect("text_changed", callable(self,"on_text_change"))`（原版 `GraphwarSetupControl` 的 `FN_SETUP_WIRING`） | `ok ready 连上了 3 条子节点信号（实际 3；缺失: "")` + 三条 `is_connected` |
+
+判据一律用 `Object.is_connected(信号名, Callable(节点, 方法名))` —— 它比"计数变了"硬：
+计数可能因为别的原因变，`is_connected` 直接问引擎"这条边在不在"。
+
+另外**虚方法**（不是信号）也验了：`_gui_input` / `_process` / `_ready` 都是**引擎自己调的**
+（`ok _process 虚方法被引擎调到（3 次）`）。而 `_gui_input` 这条路本轮**第一次真的被驱动了**：
+
+```text
+      Input.parse_input_event(ê) : gui_input_call_count 0 -> 1, text="eê"
+ok   机制 2'：_gui_input 虚方法**被引擎真的派发了**（Input.parse_input_event ⇒ 0 -> 1）
+```
+
+⇒ **headless 里可以造真输入**：`Input.parse_input_event(InputEventKey)` → 主循环 →
+`Viewport` → `gui_input`。这条以前只在 `entity_drawer_check.gd` 里靠"等两帧"间接验过
+`_process`，现在**键盘事件**也能造。
+
+⚠️ 但注意 `text="eê"`：我们折出来的 `e` 与**基类 `LineEdit` 自己插的 `ê`** 都在。
+⇒ GDExtension 覆写 `_gui_input` **不是**"替换基类的处理"，基类照样处理同一次按键。
+原版插完字之后有没有 `accept_event()` / `set_input_as_handled()` **没有证据**
+（`FN_GUI_INPUT` 只解到"插入 + `call("force_update_cb")`"）⇒ 原版**大概也双插**，
+这一条登记为**未知**，别当成"我们多插了一个"。
+
+#### 39.3.3 机制 3：外部注册闭包表 —— **一半能**（这是本轮最需要如实说的一条）
+
+原版 `GraphwarButton` 用的是 `Vec<Box<dyn FnMut(&str)>>`（`+0x38/+0x40/+0x48`），
+`GraphwarFunctionInput` 用的是**一个** `dyn` 回调（`[self+0x68]`，按名字调 `"fire"`）。
+它们**都不是** Godot 的 `connect`。
+
+| 问题 | 结论 | 证据 |
+|---|---|---|
+| **这个类型在 gdext 的类里能不能原样写** | **能** | 字段就是 `subscribers: Vec<Box<dyn FnMut(&str)>>` / `fire_native: Option<Box<dyn FnMut(&str)>>`，编译通过、运行时真的被调到：`ok 机制 3 原版形态：Box<dyn FnMut(&str)> 收到 "X"` |
+| **GDScript 能不能往里塞闭包** | **不能** | `ok subscribe() 的参数类型是 Callable —— GDScript 交给它的只能是 Callable`；`ok subscribe_native_probe() **没有参数** —— 闭包只能在 Rust 侧构造` |
+| **Godot 侧看不看得见这张表** | **看不见** | `ok Vec<Box<dyn FnMut(&str)>> **不在**属性表里（不是 #[export]，Godot 侧不可见）` |
+| **替代方案** | `Vec<Callable>` / `Option<Callable>`，`callable.call(&[text.to_variant()])` | `ok 机制 3 替代方案：GDScript 的 Callable 收到 "X"`、`… 收到**带空格的原文**（实际 " s in ( x ) "）` |
+
+**为什么交不进来**（三条，都是可核对的硬事实，不是推测）：
+
+1. 跨 FFI 的**只有 `Variant`**。`Variant` 的类型表是 Godot 定义的固定枚举
+   （`Callable` / `Signal` / `Rid` / 内建类型 / `Object`），**没有**"任意 Rust 闭包"这一项
+   ⇒ 一个 `Box<dyn FnMut(&str)>` 没有任何一条路能被 GDScript 构造出来。
+2. gdext 的 `#[func]` 参数必须实现 `GodotConvert`；`Box<dyn FnMut>` 不实现，也**不该**
+   实现（`FnMut` 要 `&mut` 收，跨语言调用的生命周期没有对应的 Godot 语义）。
+3. 反过来，GDScript 里能给的**唯一**"可调用物"就是 `Callable`（方法 / lambda / 内建方法）。
+
+**三个必须知道的限制**（都实测过，不是听说的）：
+
+* **闭包不能捕获 `Gd<Self>`**。`reentrancy_probe()` 在 `#[func](&mut self)` 里对同一实例再
+  要一次 `bind_mut()`，实测：
+  ```text
+        reentrancy_probe() = panic: Gd<T>::bind_mut() failed, already bound;
+        T = ...GraphwarButton. Details: cannot borrow while accessible mutable borrow exists.
+  ok   闭包捕获 Gd<Self> 再 bind_mut() 会 panic（被 catch_unwind 接住）
+  ```
+  所以本文件的探针闭包捕获的是 `Rc<RefCell<Vec<String>>>` 这一层间接。
+  （**这条 panic 被 `catch_unwind` 抓住了**，进程没死 —— 那个 `#[func]` 的返回值就是证据。）
+* **表的长度不归引擎管**。`Vec` 只说 Rust 侧有几个，`+0x48` 那个"长度"要自己同步
+  （`state.subscribers = subscribers.len() + callables.len()`）。
+* **`Callable` 不能当 `#[export]` 属性**（gdext 的 `impl_property_by_godot_convert!` 对
+  `Callable`/`Signal`/`Rid` 只生成 `SimpleVar`、**不生成 `Export`**，见
+  `godot-core-0.5.5/src/registry/property/mod.rs` 的 `no_export` 分支）⇒ 想暴露给编辑器
+  只能用 `#[var]`。§38.6 说「`GString` 属性没验过」，本轮**验了：能**（`ok 属性 input_text
+  往返一致（"X"）`），`bool` 也能（`ok 属性 caret_condition 往返一致（true）`）。
+
+#### 39.3.4 机制 3 在 `GraphwarSetupControl` 里**不存在**（照实说）
+
+纯逻辑文件里 `FnMut` / `Box<dyn>` 命中 **0 处**（`grep` 可复核）。原版这一屏只有
+3 个 `get_node` + 3 条 `connect`（`FN_SETUP_WIRING`），所以本类的接线**全走机制 2**，
+本文件**没有**为它编一张回调表。
+
+### 39.4 c) 每个类"真实接线代码"多少行
+
+先给实测分类（`python` 数的：非空非注释行 = 代码；`mod tests` 之后算单测）：
+
+| 文件 | 总行 | 代码 | 其中**接线**（不含单测） | 其中单测 | `//!` + `///` + `//` |
+|---|---|---|---|---|---|
+| `graphwar_button_class.rs` | 619 | 326 | **268** | 58 | 226 |
+| `graphwar_function_input_class.rs` | 545 | 309 | **262** | 47 | 180 |
+| `graphwar_setup_control_class.rs` | 750 | 465 | **383** | 82 | 206 |
+| `entity_drawer_class.rs`（§38 的模板，对照） | 677 | 291 | **~155**（§38.3 的口径） | 60 | 330 |
+
+**能推广的结论**：
+
+* **注册 / 属性表 / 方法表 / 虚方法表 / 信号表一律 0 行**（gdext 宏全包）。本轮新增了
+  「信号」这一项 —— `#[signal]` 也只占 **1 行**，注册、参数类型、生成器全是宏产物。
+* 三个类的接线代码比模板的 155 行**多**，原因不是"接线更复杂"，而是：
+  ① 每个类都带**一批单行观测点**（`ready_call_count()` / `pressed_call_count()` /
+  `wired_count()` …）：三个类合计 **81 个 `#[func]`，其中 34 个是观测点**
+  （`*_count` / `*_captured` / `*_log` 三类，`grep` 可复核）——
+  这是 §38 定的规矩（没有计数分不清"引擎没回调"和"回调了但没干活"），不是业务代码；
+  ② `GraphwarSetupControl` 多出**替身子节点**（`build_stub_children`，30 行）与
+  四格/玩家条目的 `#[func]` 搬运（约 120 行）。
+* **纯逻辑仍然一行没复制**：`ButtonState`（4 个判定）、`strip_spaces`、`COMPOSED_FOLDS`、
+  `intent_for_key`、`SetupOptions` / `TimeMode::next` / `PlayerEntry` / `start_action`
+  **全部**从 `src/graphwar_*.rs` 调过来。
+
+### 39.5 d) 本轮新踩的坑 + **两个新发现**
+
+**坑（都实测过）**
+
+1. **`#[export]` 没有 setter 钩子**（gdext 生成的是直接字段访问）。GDScript 改
+   `long_press_input_text` 之后，状态机自己那份拷贝**不会变** ⇒ 第一版当场红了
+   （`FAIL long_press_input_text 为空时 process 不派发`）。修法：每次读之前
+   `sync_from_properties()`（`process` 每帧一次）。**这是"导出属性 + Rust 侧镜像状态"
+   这类类的通用坑。**
+2. **`Node::find_child` 的 `owned` 默认是 `true`**（Godot 4.6 的默认参数），而代码里
+   `add_child` 建出来的节点 `owner` 是 **null** ⇒ 直接 `find_child(name)` **永远找不到**。
+   必须 `find_child_ex(name).owned(false).done()`。gdext 把默认参数生成成
+   `…_ex()` builder（`recursive` 也是默认 `true`），**不看文档就会静默返回 None**。
+3. **单测里不能碰 `GString`**。`GString::from("x")` 要调引擎的构造函数，`cargo test` 下直接
+   panic：`Godot binding accessed before initialization or after deinitialization`
+   （`godot-ffi-0.5.5/src/binding/single_threaded.rs:170`）。⇒ 纯 Rust 的那一半（`join_text`）
+   必须返回 `String`，到 `#[func]` 边界才 `GString::from`。本轮为此改过一次代码。
+4. **虚方法不能用 `Object.call("_gui_input", …)` 从 GDScript 调**：
+   ```text
+   SCRIPT ERROR: Invalid call. Nonexistent function '_gui_input (via call)' in base 'GraphwarFunctionInput'.
+   ```
+   而且**当前函数被整个中断**（后面 40 条断言一条都没跑，第一次跑就栽在这里）⇒ 这类实验
+   必须**单独一个函数**、放在**全部断言之后**（脚本里的 `_probe_virtual_call()`）。
+   顺带一条冷知识：**`_gui_input` 在 `get_method_list()` 里、但 `has_method()` 是 false**
+   （虚方法进方法表、不进"可按名调用"的名字表）。
+5. **`signal` 是 GDScript 关键字**：`for signal in [...]` 直接 `Parse Error: Expected loop
+   variable name after "for"`。改叫 `sig_name`。
+6. **`--import` + `cp .so` 两个静默陷阱照旧**（`AGENTS.md` 那三条）。本轮还多一条
+   **环境坑**：`client/run.sh` 用 `$here/../..` 找 `tools/Godot_…`，在
+   `.agent-work/<topic>/repo` 这种**深一层**的克隆里会指错 ⇒ 跑 selftest 要
+   `GODOT=/path/to/Godot_…`（见 §39.7）。
+
+**发现 1（原版的缺陷，不是我们的笔误）：`size_changed` 在 Godot 4.6/4.7 上**不是**信号**
+
+`GraphwarFunctionInput::ready` 的第 3 条连接指向 `size_changed`。三条核过：
+
+1. `.rodata` 字面量**确实是** `size_changed`（`0x1c46d2`，12 字节；紧挨
+   `"gui_input"` 与 `"text_submitted"`，逐字节读出来的），处理函数 `on_size_changed`
+   （`0x1c444f`，15 字节）也在；
+2. 本机 Godot 4.7.2 的 `Control`/`LineEdit` **没有**这条信号（只有 `resized` /
+   `size_flags_changed` / `minimum_size_changed`；gdext 生成的 `control.rs` 里也查不到
+   `size_changed`）；
+3. 实测 connect 结果：
+   ```text
+   ERROR: In Object of type 'GraphwarFunctionInput': Attempt to connect nonexistent signal 'size_changed' …
+   ok   ready 只连上 2 条（第 3 条 size_changed 在 Godot 4.6+ 上没有这条信号）
+        size_changed 的连接结果: "size_changed: ERR_INVALID_PARAMETER"（wired=2）
+   ```
+
+⇒ **原版这条 `connect` 在 4.x 上必然失败**，`on_size_changed` 在原版里**大概永远不会被调到**。
+**推断**（缺证据）：这是从 Godot 3 迁移到 4 时的残留（Godot 3 的 `Control` 有
+`NOTIFICATION_SIZE_CHANGED`，Godot 4 改成了 `resized`）。缺的证据：原版运行时的
+stderr（要能在 Android 上抓到那条 `Attempt to connect nonexistent signal` 才算观测）。
+本文件**照抄原版**（连 `size_changed`、失败就记进 `connect_errors()`），没有擅自改成
+`resized` —— 改了就不是复原了。要让它真能工作，改法只有一行（`resized`），但那属于
+**我方修订**，得单独登记。
+
+**发现 2：headless 里 `Input.parse_input_event` 能驱动 `gui_input`，但会和基类双插**
+
+见 §39.3.2 末尾（`text="eê"`）。这一条的价值是：**以后所有"键盘/鼠标驱动"的类都能在
+`--script` 里真验**，不用只靠 `simulate_key` 这种自己造的口子。
+
+### 39.6 三个类各自"没做/未知"的清单（照实写）
+
+| 类 | 没做 / 未知 |
+|---|---|
+| `GraphwarButton` | 动画节点（`AnimationRect` → `GraphwarLongPressAnimation`）的**两个 `Instant` 字段没写**（那个类还没节点实现）；只 `find_child` 记住"有没有"，**故意不持句柄**（§38.4 坑 2 的野句柄） |
+| `GraphwarFunctionInput` | `size_changed` 连不上（见上）；token 边界（`move_caret_*` / `delete_token_*` 的 N）**未解**，没实现；`process` 里与 `graphwar_game_client` 的数据流**没接**；`'^'` 的附加条件仍用 `#[export] caret_condition` 显式代替（语义**未知**） |
+| `GraphwarSetupControl` | 11 个 `get_node` 里只建 3 个替身；**18 个 gdext 薄壳 + 6 个虚方法胶水 + 3 个事件回调的语义仍然未知**（`src/graphwar_setup_control.rs` 模块头那两张表，本文件**不声称**还原了它们）；4 个模式按钮**按证据不连** `pressed`（原版就没连）；玩家列表 5 个行构件只做数据层，不建行节点 |
+
+### 39.7 复现（五分钟）+ 回归条数
+
+```text
+# 1) 打开 feature 构建（默认关闭 ⇒ 关着时 crate 仍然零依赖）
+export CARGO_HOME=<工作区>/.cargo-home CARGO_TARGET_DIR=<工作区>/target
+cargo build --release --features gdext-bindings --offline
+cp $CARGO_TARGET_DIR/release/libgw2_rebuild.so client/libgw2_rebuild.so
+
+# 2) 必须先 import（否则扩展静默不加载，脚本连类都认不出来）
+export XDG_DATA_HOME=$PWD/.godot-data XDG_CACHE_HOME=$PWD/.godot-cache XDG_CONFIG_HOME=$PWD/.godot-config
+godot --headless --path client --import
+
+# 3) 验收（155 条断言，退出码 0）
+godot --headless --path client --script res://tools/signal_classes_check.gd
+# SELFTEST 风格的汇总行：SIGNAL_CLASSES 155 passed, 0 failed
+
+# 4) 回归保护（三条硬要求）
+cargo test --offline                            # lib 457 / 总计 1499（**与本轮之前逐条相同**）
+cargo test --offline --features gdext-bindings   # lib 481（= 457 默认 + 6 §38 + 18 本节）/ 总计 1523
+# selftest 要**默认 feature** 的 .so ⇒ 重编一次再 cp：
+cargo build --release --offline
+cp $CARGO_TARGET_DIR/release/libgw2_rebuild.so client/libgw2_rebuild.so
+bash client/run.sh selftest                      # SELFTEST 618 passed, 0 failed, 2 skipped
+```
+
+⚠️ **selftest 的条数说明（不许含糊）**：本节实测 **618 passed / 0 failed / 2 skipped**
+（2 条 skip = 没编译 `examples/serve_match`）。为了确认"这不是本轮弄坏的"，另开一份
+**同 commit（`79a7645e`）的干净克隆**、同一份 `client/assets/`、同一个默认 feature 的 `.so`
+跑同一句，结果**逐字相同**（618 / 0 / 2）。§35 / §38 / `docs/HANDOVER.md` 里写的
+**694 passed** 在本环境**复现不出来** —— 差的那 76 条没有一条依赖 `src/`（干净的 master
+就是 618），所以是**文档里的数过期了**（`AGENTS.md` §0.6 那种情况），本轮按实测更正为
+618 并说明口径；谁的环境里能跑到 694，请把当时的 `client/assets/` 与
+`examples/serve_match` 一起记下来再改回去。
