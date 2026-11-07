@@ -8,6 +8,15 @@
 > 原版的界面控制器是 Rust 模块（在 `.so` 里）。所以"看起来对"**不是**复原证据；
 > 客户端自检条数也只是**回归保护**，不是复原证据。
 
+> ⚠️ **条数口径（2026-11-07 深夜审计，先读）**：本篇按**轮次**记录，各节里的
+> `cargo test` / `selftest` 条数（`1488` / `1494` / `1499` / `1512` / `1584` / `1586` …）
+> 都是**那一轮当场的读数**，**不是现行基线**。
+> **现行基线**（本机 2026-11-07 深夜复测）：`cargo test --offline` **1520**、
+> `--features gdext-bindings` **1595**（lib 464 / 539，见 README 表格）、`bash client/run.sh selftest`
+> **694**（前置条件 = `client/assets/` + `examples/serve_match` + 用 `run.sh` 的默认 `XDG_*`；
+> 缺资产的机器是 **591 / 2 / 23**，补了 `serve_match` 是 **667 / 2 / 21` —— 旧文里的 `606` 复现不出来）。
+> 复原进度**不看这些条数**（`AGENTS.md` §0.2）。
+
 > **本篇合并自**：
 
 | 原文件 | 内容 | 归档 |
@@ -5984,8 +5993,8 @@ godot --headless --path client --import
 godot --headless --path client --script res://tools/entity_drawer_check.gd
 
 # 4) 回归保护（与本节无关的两条硬要求）
-cargo test --offline                          # lib 457 / 总计 1488
-cargo test --offline --features gdext-bindings # lib 463（457 + 本类 6 条）/ 总计 1494
+cargo test --offline                          # lib 457 / 总计 1488（当轮；现行 1520）
+cargo test --offline --features gdext-bindings # lib 463（457 + 本类 6 条）/ 总计 1494（当轮；现行 1595）
 bash client/run.sh selftest                   # 694 passed（默认 feature 的 .so）
 ```
 
@@ -7687,7 +7696,7 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so   # 不覆
 
 | 命令 | 结果 |
 |---|---|
-| `cargo test --offline` | lib **457** / 总计 **1512**，全绿（与 §38 的 1512 **一位不差**） |
+| `cargo test --offline` | lib **457** / 总计 **1512**（当轮；现行 1520），全绿（与 §38 的 1512 **一位不差**） |
 | `cargo test --offline --features gdext-bindings` | lib **529** / 总计 **1584**，全绿 |
 | `python3 tools/coverage_matrix.py --check` | **OK**（改了 `src/`，两个生成物一起提交） |
 | `assemble_check.gd` | **183 passed / 0 failed**（§38 的 86 条 → 183） |
@@ -7853,8 +7862,8 @@ grep -a -c line_instance_id client/libgw2_rebuild.so                    # 3
     # CURVE_ON_SCREEN 96 passed, 0 failed / EXIT=0
 "$GODOT" --headless --path client --script res://tools/function_drawer_check.gd   # 132 passed（未回归）
 "$GODOT" --headless --path client --script res://tools/draw_classes_check.gd      # 235 passed（未回归）
-cargo test --offline                              # 1512 passed（基线）
-cargo test --offline --features gdext-bindings     # 1586 passed（含本批 3 条单测）
+cargo test --offline                              # 1512 passed（当轮基线；现行 1520）
+cargo test --offline --features gdext-bindings     # 1586 passed（当轮；现行 1595。含本批 3 条单测）
 python3 tools/coverage_matrix.py --check           # OK
 ```
 

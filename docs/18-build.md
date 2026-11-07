@@ -391,21 +391,72 @@ export CARGO_HOME=/path/.cargo-home CARGO_TARGET_DIR=$CARGO_HOME/target   # ✗
 打开时只关掉手写入口模块；`gdext_class.rs` / `axis_drawer_class.rs` / `capi.rs` 照旧编译，
 只是没人调（类不会注册）。这是**唯一**为兼容性做的让步。
 
-### 10.3 a) feature 关闭时：一切照旧（实测）
+### 10.3 a) 两种 feature 各跑一遍（2026-11-07 深夜本机复测）
 
 ```text
 $ cargo test --offline
-  64 个 test 二进制；lib 457 passed / 总计 1488 passed / 0 failed
+  65 个测试二进制（lib 464 + 64 个集成）+ 1 个 doc-test；总计 1520 passed / 0 failed
 $ cargo test --offline --features gdext-bindings
-  64 个 test 二进制；lib 457 passed / 总计 1488 passed / 0 failed
+  65 个测试二进制（lib 539 + 64 个集成）+ 1 个 doc-test；总计 1595 passed / 0 failed
 $ cargo tree | wc -l
   1                       # 仍然零依赖（只有 gw2-rebuild 自己）
 $ bash client/run.sh selftest
-  SELFTEST 694 passed, 0 failed
+  SELFTEST 694 passed, 0 failed        # 前置条件见 §10.3.1，缺一样就不是这个数
 ```
 
-两种 feature 的条数**完全相同**是巧合：feature 打开时手写 `gdext.rs` 的 4 条单测被
-`#[cfg]` 掉、`gdext_mod.rs` 又补了 4 条。
+> **审计（2026-11-07 深夜）**：本节原记「`64 个 test 二进制；lib 457 / 总计 1488 / 0 failed`、
+> 两种 feature 的条数**完全相同是巧合**」。**实测现在是默认 1520 / gdext 1595**（lib 464 / 539），
+> 两者**并不相同** ⇒ "完全相同是巧合"那句解释**作废**（它是早期只有 4 条 `gdext_mod` 单测时的现象）。
+> 现在的差来自：feature 打开时手写 `gdext.rs` 的入口不编译，而 `gdext_mod.rs` 与各 `*_class.rs`
+> 补进更多单测。**条数是回归保护，不是复原进度**（`AGENTS.md` §0.2）。
+
+### 10.3.1 `selftest` 的两个口径：**694 需要什么前置条件**（2026-11-07 深夜，本机四组实测）
+
+一句话：**694 不是版本号，是"前置条件全齐"的读数**；缺一样就落到别的数上，四个数都实测过：
+
+| `client/assets/` | 编了 `examples/serve_match` | 结果 | 差在哪 |
+|---|---|---|---|
+| ✅ | ✅ | **694 passed / 0 failed** | **完整口径**。gdext 版与手写版 `.so` **都**给 694（sha256 `3a1f28a1…` / `85b1cf3b…`）⇒ 换绑定层对客户端透明 |
+| ✅ | ❌ | **618 passed / 0 failed / 2 skipped** | 少的 76 条 = 两条联机套件**整段 skip**（`联机端到端` / `联机 PlayScreen`） |
+| ❌ | ✅ | **667 passed / 2 failed / 21 skipped** | 21 条 skip = 10 条图标/字体/设置 + 11 条音频 |
+| ❌ | ❌ | **591 passed / 2 failed / 23 skipped** | 在上面基础上再 +2 条联机 skip |
+
+两条恒等式把三个前置条件钉死：**694 = 618 + 76**、**667 = 591 + 76**。
+
+**694 的三个前置条件**：
+
+1. **`client/assets/` 齐备** —— 用**你自己的** `Graphwar.pck` 解（`tools/extract_assets.py` + `client/src/audio/extract_audio.py`），
+   两个脚本的默认 pck 路径是**仓库根的上一级**，在子目录/克隆里跑要显式 `--pck <你的 Graphwar.pck>`；
+   **音频必须"先解、再 `--import`"**（顺序反了 `GwAudio` 仍报缺资产，**11 条**音频类断言全变 SKIP）。
+2. **`cargo build --offline --example serve_match`** —— 缺它少 76 条（`618` 而不是 `694`）。
+3. 用 `run.sh` 自己的 `XDG_DATA_HOME/CACHE/CONFIG` 默认值。**手改会把 `user://replays` 指到空目录**，
+   回放列表那条断言直接红（历史记录里的 `693 passed, 1 failed` 就是这么来的）。
+
+**没有 `client/assets/` 时应该期待什么数**：
+
+* **`failed == 2`，且这 2 条逐字固定**（本机四组里重复出现，与 `.so` 版本无关）：
+  1. `点 Skins 页的第 -1 号皮肤 ⇒ Faces/Hats 42 格立刻换成它（实际 42）`
+     —— 皮肤图标取不到 ⇒ 找不到可点的格子 ⇒ `target` 停在 **`-1`**；
+     括号里的"实际 42"是**格数**，不是"通过"（`target >= 0` 那一半没过）。
+  2. `Cancel = 194 宽 / Start = 218 宽（真帧；实际 184 / 167）` —— 缺字体资产 ⇒ 量出来 184 / 167。
+* 这两条**不是回归**：用未改动基线对拍过（`530/2/25`，两条**逐字相同**）⇒ **基线自带 + 依赖真资产**。
+* **`passed` 数会随客户端版本漂移**（历史文档里的 `606 / 2 / 23` 是旧版本读数，
+  当前 HEAD 复现不出来：实测是 `591/2/23` 或 `667/2/21`）⇒ **别拿 `passed` 当判据**，
+  判据只有"`failed == 2` 且就是上面这两条" + "skip 里全是资产/联机"。
+* 退出码：`failed > 0` 时 `run.sh selftest` **返回 1**（`694`/`618` 时返回 0）。
+
+**复跑（三分钟）**：
+
+```bash
+export CARGO_HOME=<WS>/.cargo-home CARGO_TARGET_DIR=<WS>/.agent-work/<topic>/target
+python3 tools/extract_assets.py --pck <你的 Graphwar.pck>        # → client/assets/
+python3 client/src/audio/extract_audio.py --pck <你的 Graphwar.pck>   # 音频先解
+cargo build --offline --example serve_match                     # 缺它 694 → 618
+cargo build --release --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/release/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --import                      # 解完资产必须再 import 一次
+bash client/run.sh selftest                                     # 期望 SELFTEST 694 passed, 0 failed
+```
 
 ### 10.4 b) feature 打开时：5 个方法 + 真节点类都活着（headless 实测）
 
@@ -531,7 +582,8 @@ bash client/run.sh selftest
 ### 10.8 这条线到什么程度（成立 / 不成立）
 
 **成立（实测/观测）**：类名与方法契约不变；`_draw` 虚方法真的被引擎调到；同一份脚本对
-两份绑定都过；feature 关闭时零依赖、条数与 master 一致、selftest 694 不变。
+两份绑定都过；feature 关闭时零依赖、`selftest` **694 不变**（两份 `.so` 都实测过，
+**前提是 §10.3.1 那三条前置条件**）。
 
 **不成立 / 没做**：
 
@@ -687,7 +739,8 @@ Android 真要出 APK 还缺 `client/export_presets.cfg` + Android SDK + JDK。
 
 ### 11.9 回归
 
-改了 `src/` ⇒ 本机默认 target 重跑 `cargo test --offline`：**lib 457 / 总计 1499**、0 failed、
-1 ignored（与基线一致）；重跑 `tools/coverage_matrix.py` 后 `--check` **OK**，
+改了 `src/` ⇒ 本机默认 target 重跑 `cargo test --offline`：**lib 464 / 总计 1520**、0 failed、
+1 ignored（与基线一致）（**审计**：本节原记「lib 457 / 总计 1499」，2026-11-07 深夜复测 464 / 1520）；
+重跑 `tools/coverage_matrix.py` 后 `--check` **OK**，
 两个生成物一起提交（差异只有 `src_tree_sha256` 与 `src_fns 2171 → 2175`，
 归属 527、逐位 88 / 观测 439 **不变**）。
