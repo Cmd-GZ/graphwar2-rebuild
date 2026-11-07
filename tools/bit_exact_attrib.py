@@ -228,16 +228,21 @@ def main(argv):
           f" ({pct(d['destroy_ok'], d['destroy_checked'])})")
 
     if args.check_baseline:
-        print("\n== 对任务书基线的校验（401→403 份定格快照）==")
+        print("\n== 对护栏基线的校验（401 份定格快照）==")
         kind_seq = sum(1 for r in rows if r["kind_seq_ok"])
+        # 护栏值：**会随实现改进而变**，改这里必须同时写明"哪一轮改成什么"。
+        # 2026-11-08（第三轮合并后，master 43579c07）实测：
+        #   结算批 1080 ｜ 内容命中 331 ｜ 种类序列 819
+        #   死亡集合 215/379 ｜ 挖洞点 **fire 轴 139/262**（batch 轴是 140/262，两者不同）
+        # 历史：第一轮任务书基线是 21 / 818 / 211/379 / 1/259（当时还没修 09/10/14 那批）。
         want = {
             "结算批数": (total, 1080),
-            "结算批内容命中": (total - len(fails), 21),
-            "消息种类序列命中": (kind_seq, 818),
-            "延迟段死亡集合命中": (d["deaths_ok"], 211),
+            "结算批内容命中": (total - len(fails), 331),
+            "消息种类序列命中": (kind_seq, 819),
+            "延迟段死亡集合命中": (d["deaths_ok"], 215),
             "延迟段死亡集合分母": (d["deaths_checked"], 379),
-            "延迟段挖洞点命中": (d["destroy_ok"], 1),
-            "延迟段挖洞点分母": (d["destroy_checked"], 259),
+            "延迟段挖洞点命中": (d["destroy_ok"], 139),
+            "延迟段挖洞点分母": (d["destroy_checked"], 262),
         }
         bad = 0
         for k, (got, exp) in want.items():

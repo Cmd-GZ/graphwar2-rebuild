@@ -58,6 +58,31 @@
 | 一元负号与 `^` | `-x^2` = `(-x)^2`，因为负号比 `^` 松 |
 | `log` | 是 **log10**；自然对数是 `ln` |
 
+### 3.1 `^` 的**输入可达性**：Steam 运行时下这个键打不出来
+
+原版的启动脚本（Steam depot 3066841 自带 `start_graphwar.sh`，逐字节见下）明确写着：
+
+```bash
+# Steam (Steam Linux Runtime / pressure-vessel) forces LC_ALL=C, which breaks
+# X11 dead-key composition (e.g. typing ^ via the circumflex dead key) even
+# though the game runs fine with a normal locale outside of Steam.
+unset LC_ALL
+export LC_CTYPE=C.UTF-8
+exec "$DIR/Graphwar.x86_64" "$@"
+```
+
+⇒ **在 Steam 里直接启动（不经过这个 wrapper）时，`^` 因为 `LC_ALL=C` 破坏了 X11 dead-key
+组合而打不出来**；作者用这个 wrapper 才修好。
+
+对分析的意义（不是引擎行为，是**玩家可达性**）：
+
+- `x^2` 这种写法在**未经 wrapper 的 Steam 启动**下输入困难 ⇒ 实战录像里幂函数少见，
+  不代表引擎不支持，而是**输入路径**的问题（等价写法：`x*x`、`pow`... —— 注意 `pow` **不是**函数，
+  见 §2，只能靠 `^`）；
+- 复现"玩家怎么输入"这类行为时，**必须先确认是哪种启动方式**，否则会把环境问题误判成游戏行为。
+
+证据档：**观测**（来自发行版自带的 shell 脚本原文；脚本 340 字节、sha256 `a2c27ff9…`）。
+
 ## 4. 隐式乘法
 
 任意相邻的"可结束"与"可开始"单元之间自动插入 `*`：

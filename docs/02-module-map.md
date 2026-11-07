@@ -3366,8 +3366,267 @@ awk -F'\t' '$5=="none"{split($6,a,";why=");split(a[2],b,";");print b[1]}' fixtur
   456 个逐字节相同的函数），只是这 444 条里一条都不落进去。如果以后有人质疑"分类是我硬凑的"，
   把判据跑一遍即可（§36.6 第 5 条 + `bsig`）。
 
+## 37. 换一份**同架构**符号表：Windows 2.0.60 的 `graphwarrust.dll` 把可定名函数从 325 提到 351（2026-11，接 §20）
 
-## 37. 三向符号匹配：Windows ×2 + Android + Linux —— 天花板确实是 2,034，天花板之外只值 ≈42 个（2026-11）
+### 37.0 一句话
+
+§20 的名字来自 **Android arm64** 的 `.symtab`，桥是 `panic::Location` 的
+`(file,line,col)` —— **跨架构**，而且只有 520 个逻辑名。
+本节换成 **同版本（2.0.60）、同指令集（x86-64）、带 COFF 符号表**的 Windows DLL：
+
+* **先证明是同一份源码**：`src/*.rs` 的 `(file,line,col)` 三元组
+  Windows **2,051** / Linux **2,035** / **交集 2,034**（§20 那个 2,035 在这里被独立复现）；
+* 名字从 520 → **822** 个逻辑名（`module/type/method` 口径与 `name_to_addr.tsv` 相同）；
+* 可定名的 Linux 地址：Android **325** → Windows **333** → **两者并集 351**（+26）。
+
+分母是 **527** 个「引用了 `src/*.rs` Location」的函数（`tools/coverage_matrix.py --check`
+独立打出同一个 527）。⇒ 覆盖率 **351 / 527 = 66.6%**。
+
+**必须一并记住的负面结论**：`2,035` 是 **Location 的个数，不是函数的个数**。
+2,035 个三元组只被 **527** 个函数引用（大函数平均带 3.9 个），
+所以「理论天花板 2,035 个函数」这个说法是错的，真天花板是 527。
+
+### 37.1 物证
+
+| 项 | 值 | 档位 |
+|---|---|---|
+| 文件 | `.reference/steam/windows-2.0.60/graphwarrust.dll` | `观测` |
+| 大小 / sha256 | 41,259,197 B / `ab490af6686122487656966997c4bae396098dd18fb4af67213d4f5236b69fb8` | `观测` |
+| 头 | `pei-x86-64`，`ImageBase = 0x180000000`，11 节，COFF 符号记录 147,444 | `观测` |
+| `.text` | `0x14b50b8` = 21,713,080 B；线性反汇编 **4,473,993** 条指令 | `观测` |
+| `.reloc` | 38,355 条 `IMAGE_REL_BASED_DIR64`（type 10）+ 189 条 ABSOLUTE（type 0） | `观测` |
+| `Location` 结构体 | **6,285**（唯一三元组 5,464） | `观测` |
+| 其中 `src/*.rs` | **2,056** 个结构体 / **2,051** 个三元组 / 73 个文件 | `观测` |
+| 备用差分 | `.reference/steam/windows-early2026/graphwarrust.dll`（35 MB，sha `05c1830b…`） | `观测` |
+
+### 37.2 先验版本，再谈名字
+
+`(file,line,col)` 是编译期常量，与指令集无关，所以它是**唯一能跨构建稳定对齐的键**。
+两侧各算一遍，直接对拍：
+
+```
+Windows src/*.rs 三元组 2,051     Linux 2,035
+交集 2,034       仅 Windows 17    仅 Linux 1
+```
+
+* **仅 Linux 的 1 个**：`src/graphwar_target_manager.rs:35:24`。
+* **仅 Windows 的 17 个**：分布在 `graphwar_game_server.rs` / `graphwar_game_client.rs` /
+  `server_broker_*.rs` / `graphwar_name_manager.rs` 等 11 个文件里，是 `#[cfg]` 分支差异。
+
+差值 1 → 2,035 个里 2,034 个逐字相同。**这不是「差不多」，这是同一份源码**；
+`docs/02` §20.1 用 Android 侧得到的结论，在 Windows 侧独立复现了一次。
+
+⇒ **没有发现「DLL 与本目标不同版本」的证据**。反过来，若哪天换了 DLL 而交集掉到
+1,900 以下，那就是版本不符 —— 这个数是版本判据，别当装饰。
+
+### 37.3 PE 上 Location 的形态与 ELF 不同（这一步必须自己验，不能照搬 §20）
+
+| | ELF（`loc_xrefs.py`） | PE（本工具） |
+|---|---|---|
+| 存放 | `.data.rel.ro` | `.rdata` / `.data` |
+| `file_ptr` 落盘值 | `R_X86_64_RELATIVE` 的 **addend**（= 目标虚地址） | **`ImageBase + RVA` 的 8 字节绝对常量** |
+| 改基址靠 | `.rela.dyn` | `.reloc` 的 `IMAGE_REL_BASED_DIR64` |
+| `{file,len,line,col}` | 24 字节 | 24 字节（**同构**） |
+
+结构体本身没变，变的只是「`+0` 那个 8 字节怎么读」。验的办法是**反向用重定位表**：
+`.reloc` 里每一条 DIR64 的地址就是一个「落盘的是绝对地址」的槽，
+于是 Location 的首字段必然在其中。
+
+这不是优化，是**主路径**：`.reloc` 对「落盘值是绝对地址」的槽是**穷尽且可证**的
+（链接器必须为每一个需要改基址的槽发一条 DIR64），而盲扫只是启发式。
+本版两条路径的**结果完全一致**（下文数字，`win_names.py` 的两个分支都实跑过）：
+
+| | `.reloc` 路径 | 盲扫（8 字节对齐 + 自校验） |
+|---|---|---|
+| 全部 Location 结构体 | 6,285 | 6,285（差集 0 / 0） |
+| `src/` 结构体 | 2,056 | 2,056 |
+| `src/` 三元组 | 2,051 | 2,051 |
+
+⇒ 本版**盲扫并不漏**。选 `.reloc` 当主路径的理由只有两条：可证穷尽、不依赖对齐假设；
+盲扫保留为 `.reloc` 被剥掉时的兜底（`find_locations` 里 `if not dir64:` 那一支）。
+⚠️ 这一条**初稿写错过一次**：初版说「盲扫只找到 1,046 个，漏掉一半」，那是脚手架里
+字面量边界用「向后走路径字符」判断导致的**测法错误**，不是二进制的事实。
+改成两侧同口径（`len` 与正向可打印长度严格相等 + 同一套 `line/col` 窗口）后差集为 0。
+
+### 37.4 COFF 符号的 `Value` 是**节内偏移**，不是 RVA（一个静默平移 4 KB 的坑）
+
+`objdump -t` 里第一条 `_ZN12graphwarrust…` 的 value 是 `0x2b120`。两种读法：
+
+* 当 RVA 读 → `ImageBase + 0x2b120` → 文件偏移 `0x2a520` → 字节 `48 85 d2 0f 84 …`
+  （一条 `test rdx,rdx`，**不是函数头**）；
+* 当节内偏移读 → `ImageBase + .text.VirtualAddress(0x1000) + 0x2b120`
+  → 文件偏移 `0x2b520` → 字节 `41 57 41 56 57 55 53 48 81 ec 98 00 00 00`
+  （`push r15;push r14;push r12;push r13;push rbx;sub rsp,0x98`，**标准 Rust 序言**）。
+
+独立佐证：符号 value 落在 `.pdata` 的 `BeginAddress` 上的只有 **34 / 1,018**；
+加上 `.text` 的 RVA 之后是 **910 / 1,018**。⇒ 节内偏移，正确。
+
+这个错**不报任何异常**，只会让所有地址整体偏 4 KB，然后 join 全空。
+所以 `win_names.py stats` 把「命名函数落在函数起点上」当成常驻自检打印出来
+（现在是 1,317 / 1,317）。
+
+### 37.5 `.pdata` **不穷尽**：leaf 函数没有 `RUNTIME_FUNCTION`
+
+x64 的 unwinding 表只覆盖「需要栈展开信息」的函数；**纯 leaf 函数可以没有条目**。
+本 DLL：`.pdata` 48,853 条，覆盖 `.text` 的 **96.5%**；另有 **6,429** 个 `.text`
+函数符号的地址**不在**任何 `.pdata` 起点上 —— 其中 106 个是 `graphwarrust` 的具名函数
+（大多是 `{{closure}}`）。
+
+拿 `.pdata` 单独当边界，这 106 个函数引用的 Location 会被算到**前一个**函数头上，
+「Windows 侧唯一引用」的判定就被污染。所以边界取
+**`.pdata` 起点 ∪ `.text` 函数符号（`ty == 0x20`）地址**，并集 **55,282**。
+
+这是为了与 Linux 侧对齐：`loc_xrefs.py` 用的是 `.eh_frame` FDE，Rust 在 ELF 上给所有
+函数（含 leaf）都发 FDE，本来就是穷尽的。
+（实测：并集口径与 `.pdata` 口径下 tier-1 结果**完全一致**（334 个函数 / 332 个地址，
+`|S(W)| == |T(L)|` 精确一致率同为 95.5%），所以这个改动只提高正确性、不制造数字。）
+
+### 37.6 名字过滤：用 `_ZN12graphwarrust` 前缀会**静默丢掉 59 个函数**
+
+GDExtension 的 trait impl 名字长这样：
+
+```
+_ZN133_$LT$graphwarrust..axis_drawer..AxisDrawer$u20$as$u20$godot_core..obj..traits..cap..ImplementsGodotApi$GT$18__register_methods…
+```
+
+注意 crate 名在这里是 `graphwarrust..`，**没有长度前缀**（`12`）。
+只按 `_ZN12graphwarrust` 前缀过滤会漏掉 **59** 个函数，
+其中 **25 个**是本工具**唯一**能钉住的地址 —— 收益凭空少 25 个。
+
+最终判据（`win_names.is_game_name`，两侧**完全相同**）：
+
+| 类 | 形态 | 收 | 理由 |
+|---|---|---|---|
+| A | `_ZN12graphwarrust…` | ✅ | crate 内直接路径 |
+| B | `_ZN<len>_$LT$graphwarrust..Type…$GT$…` | ✅ | **显式 impl 在游戏类型上**的 trait 方法（GDExtension 虚拟） |
+| C | `core::ptr::drop_in_place<…graphwarrust::…>` | ❌ | 库函数恰好以游戏类型为泛型实参，编译器生成的胶水，不是原版源码函数 |
+
+C 类有 327 个名。实测把它算进来**不会多钉住任何地址**（A+B 与「包含 graphwarrust」
+两种口径的 tier-1 都是 334 / 332），只会污染名字集合 —— 而 `parse_name` 对 C 类只能给出
+`(module, type, None)`，写进夹具就是虚报。
+
+### 37.7 两级 join
+
+**`唯一锚`（硬配对）**：某个三元组在 Windows 侧只被一个函数引用、在 Linux 侧也只被一个
+函数引用。判据与 `name_bridge.py` 同一套（**两侧必须同一套规则**，否则一对一会被人为破坏）。
+这一级**不看名字**，所以它同时是下一级的独立裁判。
+
+**`集合锚`（集合互最佳）**：单个三元组经常被内联共享，但**一组**三元组的重叠可以唯一。
+四条全中才取：① Linux 侧重叠数严格唯一最大；② 反向也成立（互为最佳，剔掉多对一）；
+③ 重叠 ≥ 2；④ 与 `唯一锚` 冲突的降级为 `歧义`，**不静默取一个**。
+
+结果：`唯一锚 334` + `集合锚 1` + `歧义 2` + `无一对一锚 214` = 551 行。
+自检：**集合锚与唯一锚的重叠配对 0 个不一致**（本版两者只交叠 0 个，因为集合锚
+在唯一锚覆盖处都被唯一锚先接走了 —— 这条自检的效力因此有限，**记为 `推断`**）。
+
+> 三级证据的原话：`唯一锚` / `集合锚` 都是 `观测`（可指到反汇编地址）；
+> 「集合锚的精度」只有间接自检，**不给 `逐位`**。
+
+### 37.8 量化（全部可用 §37.11 的一条命令复跑）
+
+| 指标 | 值 |
+|---|---|
+| Windows 游戏符号 | 1,402 个 raw → **822** 个逻辑名（`module/type/method`）→ 1,317 个函数地址 |
+| 引用了 `src/*.rs` Location 的命名函数 | **551**（其余 766 个无锚） |
+| Windows 落地 | 297 个逻辑名（36.1%）/ **333 个 Linux 地址** |
+| 分母（`coverage_matrix --check` 独立复核） | **527** |
+| Windows 覆盖率 | 333 / 527 = **63.2%** |
+| §20（Android）已有 | 326 行 `唯一锚` / **325 个地址** |
+| **并集** | **351 个地址 = 66.6%**（+26；Android 独有 18，Windows 独有 26） |
+| Windows 独有逻辑名 | **255** 个，其中落地 **4** 个；**单独钉住**（Android 钉不到）的地址 **3** 个 |
+
+**「名字落地前后」按两种口径都给**（避免口径歧义）：
+
+* `唯一锚` **行数**（与 `name_to_addr.tsv` 的 326 同口径）：326 → **334**；
+* 可定名 **Linux 地址**：325 → **351（并集）**。
+
+**Windows 独有名字落了 4 个 —— 这个数小，原因要写清楚**：Windows 比 Android 多出的
+255 个名字，绝大多数落在 `graphwar_event` 的 serde 派生、`__register_methods` 这类
+**没有 panic 点**的包装函数上；而能不能落地只取决于「它引不引用 `src/*.rs` Location」。
+⇒ **增量主要不是来自「新名字」，而是来自「同一批名字在 x86-64 上钉得更准」**：
+Android 侧 171 行「歧义」里有一大批是 arm64 内联形态造成的，Windows 侧收敛了。
+
+### 37.9 冲突逐条（7 条，**0 条无法解释**）
+
+两侧都钉住、但名字不一致的 Linux 地址共 **7** 个（一致 **300** 个）。逐条给证据 ——
+证据是「谁的三元组集合把 Linux 侧这个函数的集合覆盖得更全」：
+
+| Linux 地址 | Android 名 | Windows 名 | Linux 引用三元组 | 裁决 |
+|---|---|---|---|---|
+| `0x3a2e10` | `GraphwarRootNode::ready` | `ready` (14/17) + `ButtonManager::new` (2/17) | 17 | Windows 是**超集**：`ButtonManager::new` 在 Linux 上被内联进 `ready` |
+| `0x3e2830` | `handle_server_remote_event` + `set_color` + `report_fired_function` | `handle_server_remote_event` (89/103) | 103 | Windows 更收敛；Android 那 2 个是 arm64 侧的内联见证 |
+| `0x4500c0` | `game_server_thread` | `game_server_thread` (66/76) + `GraphwarServerConnectionHandler::new` (4/76) | 76 | Windows 是**超集**，`new` 被内联 |
+| `0x45b020` | `GraphwarServerConnectionHandler::tick` | `…::subscribe_to_events_event_handler` **8/8** | 8 | **集合相等** ⇒ Windows 名是定义点 |
+| `0x465780` | `GraphwarTargetManager::subscribe_to_events_event_handler` | `…::send_all_info_events` **1/1** | 1 | 集合相等 |
+| `0x465870` | `GraphwarTargetManager::subscribe_to_events_event_handler` | `…::handle_entity_removed_event` **1/1** | 1 | 集合相等 |
+| `0x519d80` | `GraphwarEffectManager::tick` | `…::subscribe_to_events_event_handler` **2/2** | 2 | 集合相等 |
+
+两类，都不是「谁错了」：
+
+1. **内联见证（3 条）**：Windows 侧一个地址上出现两个名字 —— 说明在 Linux 上
+   小的那个被内联进了大的。这是**信息**，不是冲突。
+2. **容器名（4 条，4 条全部 `集合相等`）**：Linux 函数引用的三元组集合与 Windows 侧
+   某一个函数的集合**完全相等** ⇒ Linux 上那个函数就是 Windows 那个函数；
+   Android 给出的名字是**内联容器**（arm64 上把被调函数内联进来了）。
+
+⇒ 本节的口径：**同一地址多名字 = 内联见证，保留全部名字，不挑一个**。
+夹具里 `linux_addr` 一列因此允许一行多地址、也允许多行同地址（见 §37.10 限制 3）。
+
+### 37.10 还缺什么（`未知`）
+
+1. **527 里有 176 个仍定不了名**（351 已覆盖）。原因分三类，都不在「符号表」这一侧：
+   ① Linux 上那个函数引用的 Location，在 Windows 上被**无名函数**引用（Windows 侧
+   591 个引用 `src/` Location 的函数里 40 个没有任何 graphwarrust 符号）；
+   ② Windows 上对应函数被内联进更大的函数，三元组归属变了；
+   ③ 互最佳不成立（本版反向诊断：527 个里有 **342** 个存在唯一互最佳伙伴，
+   其中 **333** 个伙伴有名字 —— 与落地 333 个地址同量级，两条独立链路互相印证）。
+2. **`无一对一锚` 214 个 Windows 命名函数**仍是 `未知`：它们的 Location 全部被共享。
+   用「独有字符串 + 函数大小 + 调用邻居」兜底会落到 `推断` 档，本节**没做**，
+   留作下一步（`name_bridge.py` 的 `次级证据` 那一档可以复用）。
+3. **夹具 `fixtures/windows_name_to_addr.tsv` 一行 ≠ 一个 Linux 函数**：
+   一行是一个 Windows 命名函数，`linux_addr` 可能是多个（`歧义` 行为空）。
+   消费方应当按 `linux_addr` 反向聚合，**不要假设 1:1**。
+4. **`windows-early2026` 那份（sha `05c1830b…`）没有跑完**：它是更老的构建
+   （35 MB vs 41 MB），本来作为版本差分用；本节只用到 2.0.60 那一份。
+5. **没做 PE 侧的函数体级对拍**（大小 / 指令序列）。Windows 与 Linux 的 x86-64 指令
+   可以逐条比，但涉及重定位、常量池、`__chkstk` 差异，是另一个工具的工作量。
+
+**一个必须举出来的例子（否则会被反复问）**：**求值器 `0x4eb9d0` 仍然没有名字。**
+它只引用一个 Location `src/math_function.rs:184:24`，而这一行在 Windows 侧被
+**3 个**函数同时引用 —— `MathFunction::evaluate_token` / `evaluate_recursive` /
+`simplify_recursive`（三者都把那一行的 panic 点内联了）。于是 `|W| = 3`，
+一对一不成立，**换任何一份符号表都一样**。夹具里这 3 个落在 `无一对一锚`
+（Android 侧 `evaluate_token` / `evaluate_recursive` 同样只能到 `歧义`）。
+采样器 `0x3c2530` / 修正 `0x3c5f70` 更彻底：**一个 Location 都不引用**，
+不在 527 这个分母里，名字无从谈起。
+
+反过来，**`AGENTS.md` 记的 parser 入口 `0x4ed670` 被稳稳定名**：本工具独立得到
+`math_function::MathFunction::new`（`唯一锚`，match `1/1`），
+与 §20 用 Android 表得到的 `name_to_addr.tsv` 里那一条**逐字相同** ——
+这是两条互不相干的链路在同一地址上的一致，可作为整条管线的端到端自检。
+
+### 37.11 一条命令复现
+
+```bash
+# 0) Linux 侧的 Location 表（约 40 s，只读目标 .so）
+.venv/bin/python tools/loc_xrefs.py dump locs > /tmp/linux_locs.tsv
+
+# 1) 全部验收数字（Location 数 / 交集 / 落地 / 与 Android 比 / 冲突逐条带证据）
+.venv/bin/python tools/win_names.py report --linux-locs /tmp/linux_locs.tsv
+
+# 2) 生成夹具（不要手改）
+.venv/bin/python tools/win_names.py bridge --linux-locs /tmp/linux_locs.tsv
+```
+
+`win_names.py` 缺省 `--dll` 是 `.reference/steam/windows-2.0.60/graphwarrust.dll`
+（环境变量 `GW2_WIN_DLL` 可换）；`--cache FILE` 把 60 s 的全量反汇编结果落盘复用
+（缓存里带 identity **和 schema 版本**：改了事实口径会失效，不会拿旧结论冒充新结论）。
+`report` 里的「Linux 侧分母 527」与 `tools/coverage_matrix.py --check` 打出的
+「原版可归属函数 527 个」是**同一条独立链路上的同一个数**。
+
+---
+
+## 38. 三向符号匹配：Windows ×2 + Android + Linux —— 天花板确实是 2,034，天花板之外只值 ≈42 个（2026-11）
 
 > 接 §20（Location 桥）与 §36（多候选裁决）。上一轮只用 **Android×Linux** 两向；
 > 本节把同一份数据加到**四向**（Linux 目标 / Android 2.0.60 / Windows 2.0.60 / Windows early2026）。
@@ -3375,7 +3634,7 @@ awk -F'\t' '$5=="none"{split($6,a,";why=");split(a[2],b,";");print b[1]}' fixtur
 > 产物：`fixtures/name_to_addr_v2.tsv`（990 行，**新增**，`fixtures/name_to_addr.tsv` 未动）；
 > 本节的每个数字都能用 §37.9 的命令复算。
 
-### 37.0 一句话结论 + 四问四答
+### 38.0 一句话结论 + 四问四答
 
 **Windows 2.0.60 与 Linux 目标是同一版本**：`src/*.rs` 的 `panic::Location` 三元组 2,035 个里
 **2,034 个三方同时存在**（99.95%）。于是"同 ISA + 有 COFF 名字"的第二来源可用，
@@ -3391,7 +3650,7 @@ awk -F'\t' '$5=="none"{split($6,a,";why=");split(a[2],b,";");print b[1]}' fixtur
 ⚠ **天花板之外没有任何一条被写进夹具当名字**。`name_to_addr_v2.tsv` 里
 「未知」的 635 行是硬边界，不是没算。
 
-### 37.1 方法：一份代码吃四种构建
+### 38.1 方法：一份代码吃四种构建
 
 | 构建 | 格式 / ISA | 函数宇宙（口径写死） | 名字来源 | Location 载体 |
 |---|---|---|---|---|
@@ -3403,7 +3662,7 @@ awk -F'\t' '$5=="none"{split($6,a,";why=");split(a[2],b,";");print b[1]}' fixtur
 四种构建走**同一套**特征抽取与同一套「什么算引用了一个 Location」的规则
 （首址 / `+8`(len) / `+16`(line,col) 三者都算，`LocHit.lookup`）——规则不对称会人为制造假歧义（§20.2 第 2 条）。
 
-### 37.2 PE 的 `panic::Location` **不是** ELF 那一套（本节最容易翻车的地方）
+### 38.2 PE 的 `panic::Location` **不是** ELF 那一套（本节最容易翻车的地方）
 
 任务书要求「自己判断，别照搬 ELF 的假设」——实测结论：
 
@@ -3427,7 +3686,7 @@ awk -F'\t' '$5=="none"{split($6,a,";why=");split(a[2],b,";");print b[1]}' fixtur
 * Windows 侧 std 的路径更长，`MAX_STR` 卡 128 会整片丢掉 std 的 Location（本工具用 300）；
   这只影响"总 Location 数"，不影响 `src/*.rs` 的交集。
 
-### 37.3 ① 三方 Location 数与交集（同版本的自证）
+### 38.3 ① 三方 Location 数与交集（同版本的自证）
 
 | 构建 | 函数 | Location 结构体 | 去重 `(file,line)` | `src/` 结构体 | 被引用的 `src/` 键 |
 |---|---|---|---|---|---|
@@ -3461,7 +3720,7 @@ broker（LAN 服务端）在 Windows 构建里多留了几个 panic 点、Linux 
 **`0x465910`**（= `GraphwarTargetManager::new`，与 §36.5 记的真值一致）。Windows 2.0.60 里
 这个键**连结构体都没有**——同一份源码在两个目标上的内联结果不同，属正常。
 
-### 37.4 ② 名字落地：唯一锚 326 行 / 299 键 → **317 键**（+18），另有 30 个跨版本锚单列
+### 38.4 ② 名字落地：唯一锚 326 行 / 299 键 → **317 键**（+18），另有 30 个跨版本锚单列
 
 | 来源 | 唯一名 | 落地数 | 说明 |
 |---|---|---|---|
@@ -3520,7 +3779,7 @@ broker（LAN 服务端）在 Windows 构建里多留了几个 panic 点、Linux 
 （按"去哈希全串"口径是 **420**）。差别的根源是"唯一名"的定义（`name_key` 三元组 vs 全串），
 见 §37.7 第 3 条。落地比例（约 2%）在两种口径下都一样低。
 
-### 37.5 ③ 冲突清单
+### 38.5 ③ 冲突清单
 
 **（1a）一个源函数的多条唯一键指向两个不同的 Linux 地址：4 条**（`report` 逐条打印）。全部列出：
 
@@ -3565,7 +3824,7 @@ GraphwarSetupControl::ready::{{closure}}          android 0x4d1f10  vs win 0x4d2
 或 `{{closure}}` 与母函数共用锚点——**不是**"两个真名抢一个地址"。
 真正需要人工复核的只有 4 条（上一行的"多键指向不同地址"）。
 
-### 37.6 ④ 天花板之外：上限估计 **≈42 个**，正对照留出半 96.3%
+### 38.6 ④ 天花板之外：上限估计 **≈42 个**，正对照留出半 96.3%
 
 **做法**（不改任何既有结论，只做"能不能再定名"的估计）：
 query = Linux 目标函数，候选池 = **1,206 个有 `graphwarrust` 名字的 Windows 函数**
@@ -3621,7 +3880,7 @@ query = Linux 目标函数，候选池 = **1,206 个有 `graphwarrust` 名字的
 2. **阈值是在调参半上挑的**，虽然留出半复核了，但 `SIZE_WIN`/权重这些超参在整个真值集上被看过一眼，
    独立性比 Location 那条链弱一档。
 
-### 37.7 与既有文档 / 夹具冲突的地方（逐条，就地说明）
+### 38.7 与既有文档 / 夹具冲突的地方（逐条，就地说明）
 
 1. **§36.4 说 `MathFunction::remove_offset` 的真值是 `0x4eb830` → 本工具判 `0x4eb86a`（`观测`）**。
    证据：三方来源（android + win2.0.60 + early2026）一致地把该名字的 2 个双向唯一键
@@ -3645,7 +3904,7 @@ query = Linux 目标函数，候选池 = **1,206 个有 `graphwarrust` 名字的
 4. **§18/§20 的 2,035 与本节一致**（Linux 2,035 / Android 2,035），本节没有推翻它，
    只是补了 Windows 2.0.60 的 2,051 与三方交集 2,034。
 
-### 37.8 局限（`未知`，别当结论）
+### 38.8 局限（`未知`，别当结论）
 
 * **两份 Windows 构建的函数数差 1.2 万**（51,985 / 43,096），Linux 只有 13,263 ——
   Linux 侧 LTO/ICF 把大量函数合并/内联掉了。结构相似度只在"尺寸接近"的那个子集里可用
@@ -3659,7 +3918,7 @@ query = Linux 目标函数，候选池 = **1,206 个有 `graphwarrust` 名字的
   本节不裁决（§36 的 `modblock`/`score` 规则能裁一部分，本节没引入，避免与 §36 的口径打架）。
 * **上限估计 42 没有逐条人工复核**。要落成名字，得对那 44 条（margin≥0.30 的单射）逐条看反汇编。
 
-### 37.9 怎么复算（不依赖本节，任何人可重跑）
+### 38.9 怎么复算（不依赖本节，任何人可重跑）
 
 ```bash
 # 0) 卡座：capstone 在仓库 .reference/venv 里；四份构建都在 .reference/ 下（只读）
@@ -3691,7 +3950,7 @@ awk -F'\t' 'NR>6{print $8}' fixtures/name_to_addr_v2.tsv | sort | uniq -c
 特征缓存落在 `.agent-work/threeway/cache/`（gitignore），key 里带 `CACHE_VERSION`
 （本节为 `tw-v3`）——**改了抽取逻辑必须同时抬版本号**，否则会静默吃旧缓存（§36.0 的坑）。
 
-### 37.10 产物：`fixtures/name_to_addr_v2.tsv` 的列
+### 38.10 产物：`fixtures/name_to_addr_v2.tsv` 的列
 
 ```text
 module  type  method  x86_addr  src_file  src_line  src_col  join_kind  sources  evidence
