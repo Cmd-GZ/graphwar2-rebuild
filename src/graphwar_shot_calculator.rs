@@ -48,7 +48,15 @@ pub fn shot_points(
 ) -> Vec<(f64, f64)> {
     let mut toks = parse(text);
     if toks.is_empty() {
-        return Vec::new();
+        // 空函数文本（在线回放里真的出现过：`function == ""`）在 **Normal** 局没有弹道可言，
+        // 保持早退。但 `Mode::Ode` 局里"导数恒 0"是合法语义（水平直线），空 token 树交给
+        // `calculate` 就是这条直线 —— 2026-11-08 任务 29 的普查里 4 批（`1782764906` #0/#1/#5、
+        // `1783342151` #2）正是这样，早退会让整条弹道消失（`end_x = 0.0`）。
+        // 闸门写成 `mode != Mode::Ode` ⇒ Normal 的早退逐字保留（实测 Normal 355/331 一条不动）。
+        // 档位：**推断** —— "空 = 导数 0"是从这 4 批的改善反推的，不是从二进制读出来的。
+        if mode != Mode::Ode {
+            return Vec::new();
+        }
     }
     if apply_correction && mode == Mode::Normal {
         let c = correction(&toks, x0, y0, flip);

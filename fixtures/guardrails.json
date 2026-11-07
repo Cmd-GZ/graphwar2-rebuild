@@ -11,22 +11,22 @@
   "axes": {
     "fire": {
       "batches": 1080,
-      "content_ok": 643,
+      "content_ok": 647,
       "kind_seq_ok": 1075,
       "deaths_ok": 366,
       "deaths_checked": 385,
-      "destroy_ok": 206,
-      "destroy_checked": 293,
+      "destroy_ok": 207,
+      "destroy_checked": 294,
       "cmd": "cargo run --release --offline --example replay_attrib -- --dir <快照> --drive fire --policy default --json f.jsonl"
     },
     "batch": {
       "batches": 1080,
-      "content_ok": 643,
+      "content_ok": 647,
       "kind_seq_ok": 1075,
       "deaths_ok": 366,
       "deaths_checked": 385,
-      "destroy_ok": 206,
-      "destroy_checked": 293,
+      "destroy_ok": 207,
+      "destroy_checked": 294,
       "cmd": "cargo run --release --offline --example replay_attrib -- --dir <快照> --drive batch --policy default --json b.jsonl"
     },
     "batch_conv": {

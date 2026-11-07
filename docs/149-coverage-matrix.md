@@ -133,7 +133,7 @@
 | `graphwar_stream_buffer.rs` | 0 | 0 | `src/graphwar_stream_buffer.rs` | 22 | 观测 |
 | `graphwar_target_manager.rs` | 3 | 4 | `src/graphwar_target_manager.rs` | 12 | 观测 |
 | `graphwar_team_manager.rs` | 7 | 10 | `src/graphwar_team_manager.rs` | 24 | 观测 |
-| `graphwar_tick_handler.rs` | 2 | 3 | `src/graphwar_tick_handler.rs` | 22 | 逐位 |
+| `graphwar_tick_handler.rs` | 2 | 3 | `src/graphwar_tick_handler.rs` | 36 | 逐位 |
 | `graphwar_turn_manager.rs` | 14 | 45 | `src/graphwar_turn_manager.rs` | 60 | 逐位 |
 | `graphwar_video_writer.rs` | 3 | 4 | `src/graphwar_video_writer.rs` | 8 | 观测 |
 
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（109 个文件、2481 条 `fn`） | `c2c6a31ea90767c96c16493b8d653eb75438252994499c5907c8f37bc219ce5f` |
+| `src/` 树（109 个文件、2504 条 `fn`） | `9a2039270ddf93ca0949a40c849de63228e191b88128d0c0017b2f96cba1c3ff` |
 

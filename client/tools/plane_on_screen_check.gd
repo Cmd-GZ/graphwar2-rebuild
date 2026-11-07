@@ -18,8 +18,16 @@ extends SceneTree
 ## 3. 曲线逐 tick 长出来：**本脚本一次 `feed_functions` 都不调**，点数只由 `_draw` 里的
 ##    原版喂点循环（`0x4b6339` → `0x4b69ec`）产生 ⇒ 点数增长本身就是"`_draw` 被调到"的证据；
 ## 4. 最终 `Line2D.get_point_count()` **== 喂进去的点数**（本轮的验收口径）；
-## 5. `Line2D` 被摆到棋盘坐标系（`update_transform`）：点 (x,y) → (500+20x, 300-20y)，
-##    且这条线**在视口内**（不是画到屏幕外）。
+## 5. `Line2D` 被摆到棋盘坐标系（`update_transform`，x86 `0x4b6147`）：**实参不再是自选的
+##    常量**，而是照原版逐指令算出来的 `x = w/2`、`y = h/2`、`scale = w/50`
+##    （`docs/16-client.md` §48.2）；本脚本按 `plane.size` 反推期望值再断言，
+##    并核对 Rust 侧 `last_transform()` / `transform_total()`；
+## 5b. tick 是**内核算的**（`GraphwarTickHandler::get_fractional_tick`，`0x519530`），
+##    不是场景注入一个 f64：`fractional_tick()` 必须读回 `advance_to(t)` 给的那个数；
+## 5c. 队色两张表（`init_team_colors`，x86 `0x4650a3`–`0x465297`）与 `flip` 的真值表
+##    （`get_team_overview` 的位组合，`0x4b600d`–`0x4b6029`）也在这里对拍；
+## 5d. `board_fill = true` 时棋盘内部多一条**白底** `draw_rect`（原版在 `AxisDrawer::draw`，
+##    `0x4e069f`）——默认关，所以别的验收脚本的"每次 `_draw` 1 条 `draw_rect`"不受影响。
 ##
 ## 期望的揭示点数**不调** Rust 的 `revealed_points()`，而是照反汇编算式在 GDScript 里
 ## 独立重写（`0x4b67a0`–`0x4b6812`）；常量 `30.0`（`.rodata 0x19ef90`）也写死在这里，
@@ -35,9 +43,13 @@ const KERNEL := "GW2Rebuild"
 
 ## 原版每 tick 揭示的点数（`.rodata 0x19ef90` = f64 30.0）。
 const POINTS_PER_TICK := 30.0
-## 棋盘换到画布的换算（`graphwar_plane::to_pixel`）：`px = 20x + 500`、`py = 300 - 20y`。
-const PX_PER_UNIT := 20.0
-const PIXEL_OFFSET := Vector2(500.0, 300.0)
+## 棋盘宽（单位）：`draw_rect` 的 `Rect2(-25,-15,50,30)`（`.rodata 0x19cc20`）第 3 个分量，
+## 也是 `update_transform` 里那个 `divss` 的除数（f32 50.0 = `.rodata 0x1b9fc8`，`0x4b6104`）。
+## ⇒ 棋盘单位 → 像素的换算**不是常量**，是 `plane.size.x / 50`（§48.2）。
+const BOARD_WIDTH_UNITS := 50.0
+const BOARD_HEIGHT_UNITS := 30.0
+## 期望的棋盘像素尺寸（`.tscn` 里 `offset_right = 1000` / `offset_bottom = 600`）。
+const BOARD_PIXELS := Vector2(1000.0, 600.0)
 ## 真帧量测出来的弹道色 `#7D6800`（`docs/16-client.md` §12.2 ⑫），打包成 `0x00RRGGBB`（低字节 = R）。
 const TEAM_COLOR := 0x00_00_68_7D
 
@@ -147,13 +159,18 @@ func _initialize() -> void:
 		return
 	ok(plane.get_class() == PLANE, "那个节点是 Rust 扩展类（get_class() == %s）" % PLANE)
 	ok(plane.is_class("Control"), "GraphwarPlane 是 Control（%s）" % plane.get_class())
-	ok(absf(float(plane.get("board_scale")) - PX_PER_UNIT) < 1e-6,
-		".tscn 里的 board_scale = 20.0 读回来了（%s）" % str(plane.get("board_scale")))
+	# `board_scale` 现在只是"尺寸还没定下来时的兜底"，原版没有这个属性（§48.2）
+	ok(absf(float(plane.get("board_scale")) - 20.0) < 1e-6,
+		".tscn 里的 board_scale = 20.0 读回来了（%s；现在只当兜底用）" % str(plane.get("board_scale")))
 	ok(bool(plane.get("flip_y")), ".tscn 里的 flip_y = true 读回来了")
+	ok(bool(plane.get("mirror_x")) == false, "mirror_x（= 原版 flip 位）默认 false")
 	var names := _method_names(plane)
 	for w in ["draw_call_count", "drawn_rect_total", "set_function_points", "feed_functions",
-			"function_point_total", "function_drawer_count", "process_call_count"]:
+			"function_point_total", "function_drawer_count", "process_call_count",
+			"transform_total", "last_transform", "integer_tick_now", "flip_from_overview_bits",
+			"team_color_pool"]:
 		ok(names.has(w), "GraphwarPlane 的方法 %s() 存在" % w)
+	ok(plane.get("board_fill") == false, "board_fill 默认关（不影响别的脚本的 draw_rect 计数）")
 
 	# 3) 进树 → 真的 `_ready` / `_draw` 路径
 	root.add_child(scene)
@@ -187,10 +204,30 @@ func _initialize() -> void:
 	ok(line.default_color.is_equal_approx(Color(
 		125.0 / 255.0, 104.0 / 255.0, 0.0, 1.0)),
 		"Line2D.default_color == #7D6800（真帧量测的队色，低字节 = R）")
-	ok(line.position.is_equal_approx(PIXEL_OFFSET),
-		"Line2D.position == (500, 300)（= PIXEL_OFFSET）")
-	ok(line.scale.is_equal_approx(Vector2(PX_PER_UNIT, -PX_PER_UNIT)),
-		"Line2D.scale == (20, -20)（棋盘 y 向上 ⇒ 取负）")
+	# 原版实参（`0x4b60c9`–`0x4b6104`）：position = size × 0.5、scale = size.x / 50，y 分量取负。
+	var plane_size: Vector2 = plane.size
+	var derived_s: float = plane_size.x / BOARD_WIDTH_UNITS
+	ok(plane_size.is_equal_approx(BOARD_PIXELS),
+		"平面尺寸 == %s（.tscn 的 offset_right/offset_bottom）" % str(BOARD_PIXELS))
+	ok(line.position.is_equal_approx(plane_size * 0.5),
+		"Line2D.position == size/2 = %s（原版 0x4b6039/0x4b604f 的 ×0.5）"
+		% str(plane_size * 0.5))
+	ok(is_equal_approx(derived_s, 20.0),
+		"派生缩放 size.x/50 == 20.0（与旧的自选常量数值巧合相等，但现在**是算出来的**）")
+	ok(line.scale.is_equal_approx(Vector2(derived_s, -derived_s)),
+		"Line2D.scale == (size.x/50, -size.x/50) = %s（原版 0x4b6104 divss 50.0 + 0x19e880 取负；"
+		% str(Vector2(derived_s, -derived_s))
+		+ "x 分量由 mirror_x 决定 = %s）" % str(bool(plane.get("mirror_x"))))
+	ok(int(plane.call("transform_total")) >= 1,
+		"平面自己调过 update_transform（0x4b6147，%d 次）" % int(plane.call("transform_total")))
+	var lt: Dictionary = plane.call("last_transform")
+	ok(is_equal_approx(float(lt.get("x", -1)), plane_size.x * 0.5)
+		and is_equal_approx(float(lt.get("y", -1)), plane_size.y * 0.5)
+		and is_equal_approx(float(lt.get("s", -1)), derived_s)
+		and bool(lt.get("flip", true)) == bool(plane.get("mirror_x"))
+		and bool(lt.get("flip_y", false)) == bool(plane.get("flip_y")),
+		"last_transform == {x=%s, y=%s, s=%s, flip=%s}（照 0x4b6147 的实参；flip = 原版镜像位）"
+		% [str(lt.get("x", -1)), str(lt.get("y", -1)), str(lt.get("s", -1)), str(lt.get("flip", false))])
 	ok(is_equal_approx(line.width, 0.125),
 		"Line2D.width == 0.125（.rodata 0x1baff8 的逐位常量；scale=20 ⇒ 2.5 像素）")
 
@@ -208,6 +245,11 @@ func _initialize() -> void:
 		"**tick 1.0：Line2D.get_point_count() == %d**" % line.get_point_count())
 	ok(int(drawer.call("point_count", player_id)) == want1,
 		"FunctionDrawer.point_count(%d) == %d" % [player_id, want1])
+	# tick 源：`get_fractional_tick`（0x519530）在**内核里**算，场景只是把时钟摆过去。
+	ok(is_equal_approx(float(plane.call("fractional_tick")), 1.0),
+		"fractional_tick() 读回 1.0（内核 get_fractional_tick 的整数边界 ⇒ 逐位相等）")
+	ok(int(plane.call("integer_tick_now")) == 1,
+		"integer_tick_now() == 1（原版 M+0x40 的 u32 tick，不是 f64 取整）")
 	ok(int(plane.call("function_point_total")) == want1,
 		"平面的喂点累计 == %d（来自 `_draw`，脚本没手动喂）" % want1)
 
@@ -229,6 +271,37 @@ func _initialize() -> void:
 		"value 里的已写入数跟着涨（%d）" % int(drawer.call("written", player_id)))
 	ok(int(drawer.call("add_point_total")) == int(line.get_point_count()),
 		"add_point 调用次数 == Line2D 点数（%d）" % int(drawer.call("add_point_total")))
+
+	# 5c) 队色两张表（`init_team_colors`，x86 `0x4650a3`–`0x465297`）+ flip 真值表
+	print("--- 队色两张表 / flip 位组合")
+	var pool0: PackedColorArray = plane.call("team_color_pool", 0)
+	var pool1: PackedColorArray = plane.call("team_color_pool", 1)
+	ok(pool0.size() == 6 and pool1.size() == 6, "两个队各 6 色（%d / %d）" % [pool0.size(), pool1.size()])
+	var want_t1 := [[186, 42, 32], [238, 114, 0], [125, 104, 0], [122, 160, 0], [149, 5, 62], [234, 0, 219]]
+	var want_t2 := [[107, 0, 234], [17, 0, 108], [21, 83, 221], [0, 203, 163], [0, 116, 26], [2, 85, 63]]
+	var table_ok := true
+	for i in range(6):
+		var c0 := pool0[i]
+		var c1 := pool1[i]
+		if int(round(c0.r * 255.0)) != want_t1[i][0] or int(round(c0.g * 255.0)) != want_t1[i][1] \
+				or int(round(c0.b * 255.0)) != want_t1[i][2]:
+			table_ok = false
+		if int(round(c1.r * 255.0)) != want_t2[i][0] or int(round(c1.g * 255.0)) != want_t2[i][1] \
+				or int(round(c1.b * 255.0)) != want_t2[i][2]:
+			table_ok = false
+	ok(table_ok, "12 个分量逐个 == init_team_colors 的两张 6 色表")
+	ok(pool0[2].is_equal_approx(Color(125.0 / 255.0, 104.0 / 255.0, 0.0, 1.0)),
+		"TEAM1[2] == #7D6800（真帧量测的那个弹道色，队色表里的一员）")
+	ok((plane.call("team_color_pool", 2) as PackedColorArray).is_empty(),
+		"没有的队号 ⇒ 空池（原版 add_team_color 走随机兜底）")
+	var flip_cases := [[0, false], [1, false], [0x100, true], [0x101, false], [0x10000, false],
+		[0x1000000, true], [0x1010000, false], [0x1000100, true], [0x1000101, true]]
+	var flip_ok := true
+	for cs in flip_cases:
+		if bool(plane.call("flip_from_overview_bits", int(cs[0]))) != bool(cs[1]):
+			flip_ok = false
+			print("      flip flags=0x%x ⇒ 期望 %s" % [int(cs[0]), str(cs[1])])
+	ok(flip_ok, "flip = (flags>=2^24 && !bit16) || ((flags&0x101)==0x100) 的 9 个真值点")
 
 	# 6) 揭完：点数 == 喂进去的点数（本轮验收口径）
 	print("--- 揭完（tick = final_tick）")
@@ -268,8 +341,9 @@ func _initialize() -> void:
 
 	# 8) 这条线真的被摆到棋盘坐标系里（不是画在原点附近的一团，也不是屏幕外）
 	var vp := root.get_viewport().get_visible_rect()
-	var board_w := 50.0 * PX_PER_UNIT
-	var board_h := 30.0 * PX_PER_UNIT
+	# 棋盘像素尺寸 = 单位数 × (size.x/50)（原版：这个缩放**只和宽有关**，各向同性）
+	var board_w := BOARD_WIDTH_UNITS * derived_s
+	var board_h := BOARD_HEIGHT_UNITS * derived_s
 	for k in [0, total / 2, total - 1]:
 		var lp: Vector2 = line.get_point_position(k)
 		var canvas := _board_to_canvas(lp, line, plane)
@@ -297,6 +371,21 @@ func _initialize() -> void:
 		var p1 := _board_to_canvas(line.get_point_position(total - 1), line, plane)
 		ok(vp.has_point(p0) and vp.has_point(p1),
 			"整条曲线落在可见视口内（首 %s / 末 %s）" % [str(p0), str(p1)])
+
+	# 8b) `board_fill = true` ⇒ 每次 `_draw` 多一条**白底** `draw_rect`（原版在 AxisDrawer）
+	var rects_before := int(plane.call("drawn_rect_total"))
+	var draws_now := int(plane.call("draw_call_count"))
+	plane.set("board_fill", true)
+	plane.queue_redraw()
+	await process_frame
+	await process_frame
+	var rects_after := int(plane.call("drawn_rect_total"))
+	var draws_after := int(plane.call("draw_call_count"))
+	ok(draws_after > draws_now, "board_fill 打开后 `_draw` 又被调了（%d → %d）" % [draws_now, draws_after])
+	ok(rects_after - rects_before == 2 * (draws_after - draws_now),
+		"board_fill=true ⇒ 每次 `_draw` 2 条 draw_rect（框 + 白底）：%d → %d"
+		% [rects_before, rects_after])
+	plane.set("board_fill", false)
 
 	# 9) 场景报告（贴数字用）
 	var rep: Dictionary = scene.call("report")

@@ -51,14 +51,116 @@ const RIGHT_KEYS := [
 ## 原版 `PlaneContainer/AspectRatioContainer.ratio = 1.6667`（= 50:30）。
 const BOARD_ASPECT := 50.0 / 30.0
 
+# ---------------------------------------------------------------- 真节点（6 个 Rust 扩展类，docs/16 §48）
+#
+# 战场**不再由 GDScript 自绘**：`client/src/play/plane_view.gd`（`GwPlaneView`）与
+# `client/src/play/fire_fx.gd`（`GwFireFx`）已删除，六个节点位置换成了 `.so` 里的
+# GDExtension 类（`ClassDB.instantiate`，与 `client/src/core/core_bridge.gd` 同一条路径）：
+#
+# ```text
+# PlaneCanvas (Control, 1000×600 画布)
+#   └ GraphwarPlane            ← 棋盘框（`_draw`：draw_set_transform + draw_rect，§43）
+#       ├ FunctionDrawer ×3     ← 曲线（每 player 一条 Line2D；平面 `_draw` 里的喂点循环）
+#       ├ AxisDrawer            ← 白底 + 网格（`axis_primitives`，§35）
+#       ├ ObstacleDrawer        ← 障碍掩膜贴图（`ObstacleDrawer::update`，§45）
+#       ├ EntityDrawer          ← 士兵 / 名字（每实体 3 sprite + 1 标签，§33）
+#       ├ EffectDrawer          ← 爆炸/火花（`frame_primitives`，§34）
+#       └ EffectLayer           ← 只剩"按种类记账 + 派给 EffectDrawer"的适配层
+# ```
+#
+# **画布模型是我方选择**（§43.6(d) 第 3 条：原版那次 `draw_set_transform` 的三个实参没解出来）：
+# 六个类各自按"自己控件的尺寸"换算（`size.x/50`、`size/2`、`size.x/1000`），所以本屏把它们
+# 统一摆在 **1000×600 的固定画布**上（`graphwar_plane::CANVAS_W/H` = 内核常数），再由
+# `Control.scale` 缩放到 `AspectRatioContainer` 给的那块 5:3 矩形。这样六个类的换算落在
+# **同一个坐标系**里，且与 `client/tools/plane_on_screen.tscn` 的摆法逐值相同。
+
+## 画布尺寸（`src/plane.rs::CANVAS_W/CANVAS_H`，逐位；= 50×30 棋盘 × 20 px/单位）。
+const CANVAS_SIZE := Vector2(1000.0, 600.0)
+## `graphwar_plane::PX_PER_UNIT`（= CANVAS_W / BOARD_W = 1000/50）。
+const PX_PER_UNIT := 20.0
+## `graphwar_plane::PIXEL_OFFSET`（`to_pixel` 的加法项，逐位）：`px = 20x + 500`、`py = 300 - 20y`。
+const PIXEL_OFFSET := Vector2(500.0, 300.0)
+## `FunctionDrawer::update_transform` 的两个实参里我们自己选的那一对（§42.5 第 4 条：原版实参未解）。
+## `scale = (20, -20)` 就是 `to_pixel` 的换算；`set_width(0.125)`（逐位）在它下面 = 2.5 px 宽。
+const CURVE_SCALE := Vector2(20.0, -20.0)
+## 每 tick 露几个点（`graphwar_plane_class::REVEAL_POINTS_PER_TICK` = `.rodata 0x19ef90` = 30.0）。
+## 这里只用来算"几 tick 揭完"；**判定**在 Rust 侧（`revealed_points()`）。
+const CURVE_POINTS_PER_TICK := 30.0
+## tick 频率（**观测**，`docs/35` §2：113 个 `TickReply` 样本拟合出 60 ticks/秒）。
+## 原版这个数由 `GraphwarTickHandler::get_fractional_tick`（`0x519530`）给，那个模块还没接 ⇒
+## 本屏按帧间隔自己推（`advance_shot_for_test()` 是给自检的确定性入口）。
+const CURVE_TICKS_PER_SECOND := 60.0
+
+## 靶子的实体 id 从 1000 起（士兵用它在 `_soldiers` 里的下标）。`EntityDrawer` 只认
+## i32 id，没有"种类"概念 ⇒ 两个编号空间靠这个基数分开。
+const TARGET_ID_BASE := 1000
+## 阵亡士兵的"死了多少刻"（`EntityDrawer.set_entity_dead_ticks` → `death_alpha = 1 - t/60`）。
+## 45 刻 = alpha 0.25。**自定值**：原版淡出曲线逐位在 `entity_drawer::death_alpha` 里，
+## 但"画面上死人是多淡"取决于 `LifeQueuedDeath.tick` 与实际时刻之差，本屏没有那个 tick 源。
+const ENTITY_DEAD_TICKS := 45
+
+## 图层顺序（`CanvasItem.z_index`，子节点按 z 从小到大画）。同 z 时按加入顺序。
+const Z_AXIS := -1          # AxisDrawer 的白底 + 网格在棋盘框**之下**（框是平面的 `_draw`）
+const Z_OBSTACLE := 1
+const Z_CURVE := 2
+const Z_ENTITY := 3
+const Z_FX := 4
+
+## 玩家颜色表（`docs/102` §1.1，逐条从 `.so` 的调色板表解出）：
+## Team1 暖色 / Team2 冷色，各 6 个，分配算法是"随机起点 + 线性探测"。
+## 它原来住在 `GwPlaneView` 里；那个类删掉之后**唯一**的两个消费者（`assign_colors()` 与
+## 回放的缺省色）都在本文件，数字一个字没动（`docs/16` §48.4）。
+const TEAM_COLORS := [
+	[Color8(186, 42, 32), Color8(238, 114, 0), Color8(125, 104, 0),
+		Color8(122, 160, 0), Color8(149, 5, 62), Color8(234, 0, 219)],
+	[Color8(107, 0, 234), Color8(17, 0, 108), Color8(21, 83, 221),
+		Color8(0, 203, 163), Color8(0, 116, 26), Color8(2, 85, 63)],
+]
+
+## 玩家颜色分配（`docs/102` §1.2 的真规则：本队 6 色表里随机起点、线性探测、取第一个没人用的）。
+## 确定性 RNG：同一局每次配色一致（原版是真 RNG 抽的，我们这一版没有那条 Rng）。
+static func assign_colors(team_keys: Array[int], seed_value: int) -> Array[Color]:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value
+	var used: Array[Color] = []
+	var out: Array[Color] = []
+	for team in team_keys:
+		var pool: Array = TEAM_COLORS[clampi(team, 0, 1)]
+		var n := pool.size()
+		var base := int(rng.randi() % n)
+		var picked: Color = pool[base]
+		for k in n:
+			var c: Color = pool[(base + k) % n]
+			if not used.has(c):
+				picked = c
+				break
+		used.append(picked)
+		out.append(picked)
+	return out
+
 ## 顶栏三个「查看函数」档位（原版三张图，`docs/121` §4.3：`view_single_function` 在
 ## `.tscn`/`.so` 里都没有引用点，但图标确实存在；顺序按语义排 single→recent→all）。
 const VIEW_MODES := ["view_single_function", "view_recent_functions", "view_all_functions"]
 
-var _plane: GwPlaneView
+## 真 `GraphwarPlane`（`src/_scaffold/graphwar_plane_class.rs`）。类型是 `Control`：
+## 它是**运行时注册**的扩展类，GDScript 里写 `GraphwarPlane` 会在解析期就要求扩展已加载。
+var _plane: Control = null
+## 1000×600 的画布宿主（`AspectRatioContainer` 铺给它的那块 5:3 矩形）；六个真节点都在这层里。
+var _canvas: Control = null
+var _axis: Control = null            ## 真 `AxisDrawer`（网格 + 白底）
+var _entities: Control = null        ## 真 `EntityDrawer`（士兵 / 名字 / 靶子）
+var _fx: Control = null              ## 真 `EffectDrawer`（特效）
+var _obstacle_layer: Control = null  ## 真 `ObstacleDrawer`（障碍掩膜贴图）
+## 已经 spawn 过的实体 id（`EntityDrawer` 没有"列出 id"的接口 ⇒ 这边记一份）。
+var _drawn_entities := {}
+## 装不上真节点时的原因（headless 与 `--dump` 要能分清"扩展没加载"和"逻辑没走"）。
+var _nodes_error := ""
+## 当前那条曲线（= 原版 `GraphwarFunctionManager` 里那条 `FunctionEntry`）。
+var _curve_player := -1
+var _curve_total := 0
+var _curve_tick := 0.0
+var _curve_final_tick := 0.0
 var _input: GwFunctionInput
-## 开火表现（`docs/135`）：准备光圈 + 弹道按 tick 推进。挂在棋盘上，自己 `_process`。
-var _fire_fx: GwFireFx
 var _timer_label: Label
 var _offset_label: Label
 var _fx_button: GwButton
@@ -87,12 +189,12 @@ var _muted := false
 var _running := false
 var _soldiers: Array[Dictionary] = []          # {name, team, pos, alive, is_bot, skin, player, color}
 ## 本局的障碍：每项 `{pos: Vector2, size: float}`（`size` = 半径，棋盘单位）。
-## 来自内核 `level_obstacles()`（`docs/126`）；**同一个数组**既给 `_plane.set_obstacles()`
+## 来自内核 `level_obstacles()`（`docs/126`）；**同一个数组**既给 `_set_obstacles()`
 ## 画，也给 `GwCore.hit_test()` 判 —— 画的和判的必须是同一批圆。
 var _obstacles: Array = []
-## 本局的靶子集合（`docs/131`）。**同一个集合**既给 `_plane.set_targets()` 画，
+## 本局的靶子集合（`docs/131`）。**同一个集合**既给 `_sync_entities()` 画，
 ## 也给 `GwCore.hit_test()` 判 —— 画的和判的必须是同一批靶子。
-## 之前这里只有 `_plane.set_targets(...)`（纯绘制），靶子**根本没进命中判定**，
+## 之前这里只有靶子绘制（纯绘制），靶子**根本没进命中判定**，
 ## 于是打靶关的胜负永远由"两队士兵存活数"决定 ⇒ 第一发就通关（`docs/131` §1）。
 var _targets := GwTargetSet.new()
 ## 本局的胜负规则（`docs/131` §2）：打靶关 / 对战关 / 两者都有。
@@ -298,20 +400,27 @@ func build() -> void:
 	_plane_aspect.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	game_plane.add_child(_plane_aspect)
 
-	_plane = GwPlaneView.new()
-	_plane_aspect.add_child(_plane)
+	# ---- 战场：六个**真** GDExtension 节点（docs/16 §48；原来这里是 `GwPlaneView` + `GwFireFx`） ----
+	#
+	# 画布宿主：`AspectRatioContainer` 会把它铺成 5:3 的矩形 ⇒ 它就是"棋盘在屏幕上的那块地方"。
+	# 裁剪也交给它（等价于原版棋盘外的部分看不见；`docs/126` §4.2 对旧控件量过同一条）。
+	_canvas = Control.new()
+	_canvas.name = "PlaneCanvas"
+	_canvas.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_canvas.clip_contents = true
+	_canvas.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_canvas.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_plane_aspect.add_child(_canvas)
+	_canvas.resized.connect(_fit_canvas)
+	_install_plane_nodes()
 
-	# 开火表现（`docs/135`）：光圈 + 弹道逐 tick 揭示。**挂在棋盘上当子节点**，
-	# 自己 `_process`；棋盘上的东西仍由 `GwPlaneView` 画，分工不变。
-	_fire_fx = GwFireFx.new()
-	_fire_fx.plane = _plane
-	_fire_fx.state_provider = fire_fx_state
-	_plane.add_child(_fire_fx)
-	# 效果层挂在 `_fire_fx` **之后** ⇒ 画在弹道之上（子节点按加入顺序绘制）。
-	# 它只画 `EffectInfo` 那四种效果，不碰弹道也不碰准备圈（`docs/143` §1）。
+	# 效果层：**只剩适配**（种类记账 + 派给真 `EffectDrawer`）。名字保留 `EffectLayer`，
+	# 因为自检按名字找它（`docs/143` §1）。
 	_effects = GwEffectLayer.new()
-	_effects.plane = _plane
-	_plane.add_child(_effects)
+	_effects.name = "EffectLayer"
+	_effects.bind(_fx)
+	if _plane != null:
+		_plane.add_child(_effects)
 
 	var overlay := GwUI.vbox("VBoxContainer", 2, _plane_aspect)
 	overlay.alignment = BoxContainer.ALIGNMENT_BEGIN
@@ -634,7 +743,7 @@ func begin_match() -> void:
 	var teams: Array[int] = []
 	for p in st.players:
 		teams.append(int(p.team))
-	var colors := GwPlaneView.assign_colors(teams, int(level.get("seed", 1)) + 1)
+	var colors := assign_colors(teams, int(level.get("seed", 1)) + 1)
 	for pi in st.players.size():
 		var p: Dictionary = st.players[pi]
 		_functions[pi] = ""
@@ -668,7 +777,7 @@ func begin_match() -> void:
 		_active = int(_soldiers[0].player)
 	_time_left = float(GwModes.turn_seconds(st.time_mode))
 	_running = true
-	_plane.set_axis_mode(int(st.axis_mode))
+	_set_axis_mode(int(st.axis_mode))
 	_refresh_mode_indicators()
 	_refresh_plane()
 	_load_active_function()
@@ -692,8 +801,8 @@ func begin_match() -> void:
 	if _layout_override.has("obstacles"):
 		_obstacles = (_layout_override["obstacles"] as Array).duplicate()
 	_targets.setup(positions)
-	_plane.set_targets(_targets.alive_positions())
-	_plane.set_obstacles(_obstacles)
+	_sync_entities()
+	_set_obstacles(_obstacles)
 	# 胜负规则（`docs/131` §2）：战役关按 `docs/118` §7.1 的"目标数 / Bot 数"两列分类；
 	# 非战役对局没有靶子也没有回合上限，只有"对方全灭"这一条。
 	_rules = (GwLevelRules.for_campaign(level, _human_team())
@@ -708,7 +817,7 @@ func end_match() -> void:
 	if _replay_bar != null:
 		_replay_bar.visible = false
 	_set_replay_input_enabled(true)
-	_plane.clear_path()
+	_clear_curve()
 	_reset_shot_state()
 	_online_teardown()
 
@@ -735,18 +844,365 @@ func _target_positions(level_index: int, count: int) -> Array:
 		out.append(Vector2(x, y))
 	return out
 
+## 画面上"靶子在哪"的**唯一**来源。
+##
+## 战役/联机：`GwTargetSet` 里还活着的那些（`target_id` 就是稳定 id）。
+## 回放：回放播放器自己的 `target_positions()`（那是一张位置表，**没有 id**）⇒
+## 用下标当 id。两边的 id 都落在 `TARGET_ID_BASE` 之上，士兵的 id（下标）不会撞。
+func _view_targets() -> Array:
+	var out := []
+	if _replay_mode:
+		var positions: Array = (_replay.target_positions() if _replay != null else [])
+		for i in positions.size():
+			out.append({"id": TARGET_ID_BASE + i, "pos": positions[i]})
+		return out
+	for t in _targets.entities():
+		out.append({"id": TARGET_ID_BASE + int(t["target_id"]), "pos": t["pos"]})
+	return out
+
+## 局面 → 画面。旧实现在这里调仿制控件 `set_soldiers()/set_show_names()`；
+## 现在整棵树由真 `EntityDrawer` 持有（见 `_sync_entities()`），本函数只做同步 + 重画。
 func _refresh_plane() -> void:
-	var list: Array[Dictionary] = []
-	for s in _soldiers:
-		# 联机：阵亡的士兵**不上场**。服务端开火时就把死者从 `Soldiers` 里 retain 掉
-		# （`src/game.rs::fire`），所以"服务端还有这个人"与"画面上还有这个人"是同一件事；
-		# 本地局仍按老样子画成灰 + 叉（那套行为一个字没动）。
-		if _online_mode and not bool(s.get("alive", true)):
-			continue
-		list.append(s)
-	_plane.set_soldiers(list)
-	_plane.set_show_names(_show_names)
+	_sync_entities()
+	if _plane != null:
+		_plane.queue_redraw()
+
+# ---------------------------------------------------------------- 六个真节点（docs/16 §48）
+
+## 装 6 个真 GDExtension 节点。`ClassDB.instantiate` 与 `client/src/core/core_bridge.gd`
+## 走同一条路径：**运行时按名取类**，所以扩展没加载时这里是 `null` + 一条明确错误，
+## 而不是解析期就崩。
+func _install_plane_nodes() -> void:
+	_plane = _make_node("GraphwarPlane")
+	if _plane == null:
+		return
+	_plane.name = "GraphwarPlane"
+	_canvas.add_child(_plane)
+	_plane.position = Vector2.ZERO
+	_plane.size = CANVAS_SIZE
+	_plane.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# `#[export]` 属性：`board_scale` / `flip_y`（与 `plane_on_screen.tscn` 同值）。
+	_plane.set("board_scale", PX_PER_UNIT)
+	_plane.set("flip_y", true)
+
+	# ① 3 个 `FunctionDrawer`：原版在 `init` 里建，本类在 `ready`；显式调一次（幂等），
+	#    这样 `set_function_points()` 当场就有节点可喂（§40）。
+	_plane.call("build_children")
+	for fd in _plane.get_children():
+		if String(fd.get_class()) == "FunctionDrawer":
+			var drawer := fd as Control
+			drawer.size = CANVAS_SIZE
+			drawer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			drawer.z_index = Z_CURVE
+
+	# ② `AxisDrawer`：白底 + 网格。`z_as_relative = false` + `z_index = -1` ⇒ 画在
+	#    棋盘框**之下**（框是平面自己的 `_draw`，引擎先画父再画子）。
+	_axis = _make_node("AxisDrawer")
+	if _axis != null:
+		_axis.name = "AxisDrawer"
+		_plane.add_child(_axis)
+		_axis.size = CANVAS_SIZE
+		_axis.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_axis.z_as_relative = false
+		_axis.z_index = Z_AXIS
+		_axis.set("axis_mode", int(GwModes.AXIS_DEFAULT))
+
+	# ③ `ObstacleDrawer`：由平面建（原版这一层是平面的字段，`§45.5` 说明为什么不自动建）。
+	_plane.call("build_obstacle_drawer")
+	for ch in _plane.get_children():
+		if String(ch.get_class()) == "ObstacleDrawer":
+			_obstacle_layer = ch as Control
+	if _obstacle_layer != null:
+		_obstacle_layer.size = CANVAS_SIZE
+		_obstacle_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_obstacle_layer.z_index = Z_OBSTACLE
+
+	# ④ `EntityDrawer`：士兵 / 名字 / 靶子。
+	_entities = _make_node("EntityDrawer")
+	if _entities != null:
+		_entities.name = "EntityDrawer"
+		_plane.add_child(_entities)
+		_entities.size = CANVAS_SIZE
+		_entities.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_entities.z_index = Z_ENTITY
+
+	# ⑤ `EffectDrawer`：特效。`flip_y = true` 与棋盘 y 向上一致
+	#    （`effect_drawer::draw_transform` 的第二个实参就是它）。
+	_fx = _make_node("EffectDrawer")
+	if _fx != null:
+		_fx.name = "EffectDrawer"
+		_plane.add_child(_fx)
+		_fx.size = CANVAS_SIZE
+		_fx.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_fx.z_index = Z_FX
+		_fx.set("flip_y", true)
+	_fit_canvas()
+
+## 按类名造一个扩展类节点；扩展没加载时返回 `null` 并记下原因。
+func _make_node(cls: String) -> Control:
+	if not ClassDB.class_exists(cls):
+		_nodes_error = "%s 不在 ClassDB（GDExtension 没加载：先 cargo build --features gdext-bindings → cp 覆盖 client/*.so → --import）" % cls
+		push_error("[gw2] " + _nodes_error)
+		return null
+	var node: Object = ClassDB.instantiate(cls)
+	if node == null:
+		_nodes_error = "ClassDB.instantiate(%s) 返回空" % cls
+		push_error("[gw2] " + _nodes_error)
+		return null
+	return node as Control
+
+## 把 1000×600 的画布缩放进 `AspectRatioContainer` 给的那块 5:3 矩形。
+##
+## 为什么是"缩放整个平面"而不是"把尺寸告诉六个类"：六个类的换算各自硬编码了除数和中心
+## （`/50`、`size/2`、`/1000`），改尺寸会让它们互相错开；缩一个父节点则**一处**解决问题。
+func _fit_canvas() -> void:
+	if _plane == null or _canvas == null:
+		return
+	var box := _canvas.size
+	if box.x <= 1.0 or box.y <= 1.0:
+		return
+	var f := minf(box.x / CANVAS_SIZE.x, box.y / CANVAS_SIZE.y)
+	_plane.scale = Vector2(f, f)
+
+## 真节点装上了没有（`null` = 扩展没加载；诊断/自检用）。
+func plane_nodes_ready() -> bool:
+	return _plane != null and _axis != null and _entities != null and _fx != null
+
+func plane_nodes_error() -> String:
+	return _nodes_error
+
+# ---------------------------------------------------------------- 曲线（真 FunctionDrawer）
+
+## 把一条弹道交给**真平面**：`set_function_points()`（原版 `GraphwarFunctionManager::
+## set_function_points`，`0x456810`）+ `set_fractional_tick()`（原版 `GraphwarTickHandler::
+## get_fractional_tick`，`0x519530`）+ `feed_functions()`（原版 `GraphwarPlane::draw` 尾部
+## 那段循环，`0x4b6339`–`0x4b6a13`）。
+##
+## `points` 是**棋盘坐标**（`x ∈ [-25,25]`）。颜色的打包口径是 `0x00RRGGBB`（低字节 = R，
+## `FunctionDrawer::color_from_packed` 的三条 shift）。
+func _set_curve(points: PackedVector2Array, color: Color, player_id: int) -> void:
+	_curve_player = player_id
+	_curve_total = points.size()
+	_curve_tick = 0.0
+	_curve_final_tick = ceilf(float(_curve_total) / CURVE_POINTS_PER_TICK)
+	if _plane == null or _curve_total < 1:
+		return
+	var flat := PackedFloat64Array()
+	flat.resize(_curve_total * 2)
+	for i in _curve_total:
+		flat[i * 2] = points[i].x
+		flat[i * 2 + 1] = points[i].y
+	_plane.call("set_function_points", player_id, flat, 0, _packed_color(color))
+	# 起飞 tick（原版 `GraphwarFunctionManager` 的 value+0x74）取 0 —— **我方选择**：
+	# 那个模块还没有 `src/` 文件。`is_active_function` 要求 `active_tick < tick`（严格），
+	# 所以正常对局从第 1 个 tick 开始长；回放里这一发**已经打完了**，只是重画出来
+	# ⇒ 直接给到"揭完"那个 tick（没有 tick 动画可放）。
+	_curve_tick = (_curve_final_tick if _replay_mode else 1.0)
+	_plane.call("set_fractional_tick", _curve_tick)
+	_feed_curve()
+
+## 喂一次点 + 摆一次 `Line2D` 的变换。
+##
+## `feed_functions()` 平时由平面的 `_draw` 调（原版就是这样），这里**再显式调一次**：
+## headless 下不保证每帧都进 `_draw`，自检要的是确定的揭示点数。
+## `update_transform()` 只对**已经建出来**的 `Line2D` 生效 ⇒ 每次喂完都要补一次。
+func _feed_curve() -> void:
+	if _plane == null:
+		return
+	_plane.call("feed_functions")
+	for fd in _plane.get_children():
+		if String(fd.get_class()) == "FunctionDrawer":
+			fd.call("update_transform", PIXEL_OFFSET.x, PIXEL_OFFSET.y, CURVE_SCALE, false)
 	_plane.queue_redraw()
+
+## 按秒推进曲线（`ticks = 秒 × 60`），到"揭完"那个 tick 就停住（不越过后面的淡出窗口）。
+func _advance_curve(seconds: float) -> void:
+	if _plane == null or _curve_total < 2:
+		return
+	if _curve_tick >= _curve_final_tick:
+		return
+	_curve_tick = minf(_curve_tick + seconds * CURVE_TICKS_PER_SECOND, _curve_final_tick)
+	_plane.call("set_fractional_tick", _curve_tick)
+	_feed_curve()
+
+## 画到第几个点 —— **读 `Line2D` 本身**（原版 `FunctionDrawer` 的 value 里那个"已写入数"，
+## `docs/16` §40.3a），不是我们这边另记的账。
+func _curve_reveal() -> int:
+	if _plane == null or _curve_player < 0:
+		return 0
+	for fd in _plane.get_children():
+		if String(fd.get_class()) == "FunctionDrawer":
+			return maxi(0, int(fd.call("point_count", _curve_player)))
+	return 0
+
+## 已经揭到末端（= 旧 `GwFireFx.shot_state()["finished"]`）。
+func _curve_finished() -> bool:
+	if _curve_total < 2:
+		return true
+	return _curve_reveal() >= _curve_total
+
+## 清掉曲线（一发结算完 / 换局）。
+##
+## **两件事都要做**（实测踩过）：
+## 1. `clear_function_points()` 只清平面里那张登记表，**不**删 `Line2D`；
+## 2. `Line2D` 是 `FunctionDrawer` 的私有表（`lines: BTreeMap`）里的，只有
+##    `remove_function`（原版 `0x498b70`：`queue_free` + 删表）能删它。
+##
+## 只做第 1 步的后果不是"看着没删"，而是**下一条曲线画不出来**：同一 player id 再
+## `update_function` 时那一侧还记着"已写入 N 点"，`append_window` 判 `new_len <= N`
+## 直接 return（`0x498d5a` 的 `ja`）⇒ 新曲线一个点都不加，旧线还留在屏幕上。
+## 平面的 `_draw` 里那条 `remove_function`（`0x4b6418`）只在"这条函数已经离开活跃窗口"
+## 时才跑，而这里登记表已经空了 ⇒ 必须自己调。
+func _clear_curve() -> void:
+	var player_id := _curve_player
+	_curve_total = 0
+	_curve_player = -1
+	_curve_tick = 0.0
+	_curve_final_tick = 0.0
+	if _plane == null:
+		return
+	_plane.call("clear_function_points")
+	if player_id >= 0:
+		for fd in _plane.get_children():
+			if String(fd.get_class()) == "FunctionDrawer":
+				fd.call("remove_function", player_id)
+	_plane.queue_redraw()
+
+## 棋盘上那条曲线**实际画出来的点**（读 `Line2D`，棋盘坐标）。诊断/自检用。
+func plane_points() -> PackedVector2Array:
+	var out := PackedVector2Array()
+	if _plane == null or _curve_player < 0:
+		return out
+	for fd in _plane.get_children():
+		if String(fd.get_class()) != "FunctionDrawer":
+			continue
+		var lid := int(fd.call("line_instance_id", _curve_player))
+		if lid == 0:
+			continue
+		var line: Object = instance_from_id(lid)
+		if line == null:
+			continue
+		var n := int(line.call("get_point_count"))
+		for i in n:
+			out.append(line.call("get_point_position", i))
+		return out
+	return out
+
+## `Color` → `0x00RRGGBB`（`FunctionDrawer::color_from_packed` 的逆：低字节 = R）。
+static func _packed_color(c: Color) -> int:
+	return (clampi(int(round(c.r * 255.0)), 0, 255)
+		| (clampi(int(round(c.g * 255.0)), 0, 255) << 8)
+		| (clampi(int(round(c.b * 255.0)), 0, 255) << 16))
+
+# ---------------------------------------------------------------- 网格 / 障碍 / 名字
+
+## 网格档位（`AxisMode` 的 4 档，`docs/118` §7.1）：0 = 没有、1 = 只主轴、2 = 每 5、3 = 每 1。
+func _set_axis_mode(v: int) -> void:
+	if _axis == null:
+		return
+	_axis.set("axis_mode", clampi(v, 0, 3))
+	# `#[export]` 字段改值不会自己重画（gdext 不替我们发 `queue_redraw`）。
+	_axis.queue_redraw()
+
+## 障碍：清空掩膜再一个个光栅化（`plane::rasterize`，与 `GraphwarObstacleManager::
+## add_obstacle`（`0x3f17a0`）同构，已 unicorn 对拍）。贴图由平面每帧刷 2 次
+## （`ObstacleDrawer::update`，`0x3ee190`）。
+##
+## ⚠️ **坐标要传棋盘单位**，不要自己换成像素：`plane::raster_params()`
+## （`0x3f17a0` 那条光栅化路径的入口）自己就做那次换算 ——
+## `px = x*1000/50 + 500`、`py = y*1000/50 + 300`、`r = size*1000/50`。
+## （本轮踩过：先换成像素再传，等于换了两次 ⇒ 圆心被推到 (10500, 6300)、半径 800，
+## 一个像素都画不出来。自检里"注入 1 个障碍 ⇒ 掩膜里有像素"那条就是为它加的。）
+func _set_obstacles(list: Array) -> void:
+	_obstacles = list
+	if _obstacle_layer == null:
+		return
+	_obstacle_layer.call("clear_obstacles")
+	for o in list:
+		var p: Vector2 = o.get("pos", Vector2.ZERO)
+		var r: float = float(o.get("size", 0.0))
+		_obstacle_layer.call("add_obstacle", float(p.x), float(p.y), r)
+
+## 名字开关（`toggle_names`）。真 `EntityDrawer` 没有这个开关 ⇒ 用**空文本**表达"不显示"：
+## 它每帧 `relayout()` 会把标签的 `visible` 按死亡 alpha 重写，从外面改 `visible` 会被覆盖。
+func _set_show_names(v: bool) -> void:
+	_show_names = v
+	_sync_entities()
+
+## 一条**只读**的战场快照：每个字段都从真节点读回来（自检 / `--dump` 诊断用）。
+##
+## 键名沿用旧 `GwPlaneView` 的那几个（`path_points` / `soldiers` / `targets` / `obstacles`），
+## 值改成真节点的口径：`soldiers`/`targets` 是 `EntityDrawer` 里的**实体数**，
+## `path_points` 是 `Line2D` 上**已经画出来**的点数，另外附上各自的"原样"计数。
+func plane_state() -> Dictionary:
+	var curve := plane_points()
+	var entity_count := (int(_entities.call("entity_count")) if _entities != null else -1)
+	var occupied := (int(_obstacle_layer.call("occupied_pixels")) if _obstacle_layer != null else -1)
+	return {
+		"nodes_ready": plane_nodes_ready(),
+		# 画布宿主被 `AspectRatioContainer` 铺了多大的矩形、平面按多比缩 —— 两个都读到才说明
+		# `_fit_canvas()` 真的跑过（headless 视口 64×64，比例仍应 > 0）。
+		"canvas_size": (_canvas.size if _canvas != null else Vector2.ZERO),
+		"plane_scale": (_plane.scale if _plane != null else Vector2.ZERO),
+		"nodes_error": _nodes_error,
+		"path_points": curve.size(),
+		"path_reveal": _curve_reveal(),
+		"path_total": _curve_total,
+		"path_player": _curve_player,
+		"path_tick": _curve_tick,
+		"soldiers": entity_count,
+		"soldier_count": _soldiers.size(),
+		"targets": _view_targets().size(),
+		"entities": entity_count,
+		"obstacles": _obstacles.size(),
+		"obstacle_pixels": occupied,
+		"axis_mode": (int(_axis.get("axis_mode")) if _axis != null else -1),
+		"axis_lines": (int(_axis.call("axis_line_count")) if _axis != null else -1),
+		"effects": (_fx.call("effect_count") if _fx != null else -1),
+		"fx_draws": (_fx.call("draw_call_count") if _fx != null else -1),
+		"plane_draws": (_plane.call("draw_call_count") if _plane != null else -1),
+		"obstacle_updates": (_plane.call("obstacle_drawer_updates") if _plane != null else -1),
+		"function_drawers": (_plane.call("function_drawer_count") if _plane != null else -1),
+		"show_names": _show_names,
+	}
+
+##
+## 实体的 id 约定（`EntityDrawer` 只认 i32 id，没有"种类"）：士兵 = 它在 `_soldiers` 里的
+## 下标；靶子 = `TARGET_ID_BASE + target_id`。名字标签 = 士兵名（`_show_names` 为假时给空串
+## —— `EntityDrawer` 没有"隐藏名字"的开关，空文本是唯一不打架的做法：
+## 它每帧 `relayout()` 会把 `visible` 按死亡 alpha 重写，从外面改 `visible` 会被覆盖）。
+##
+## 阵亡：`set_entity_dead_ticks(id, ENTITY_DEAD_TICKS)` ⇒ 标签与名字按 `death_alpha` 淡出；
+## 联机的死者**整个撤掉**（服务端 `Match::fire` 就把死者 retain 掉了，`docs/139`）。
+func _sync_entities() -> void:
+	if _entities == null:
+		return
+	var want := {}
+	for i in _soldiers.size():
+		var s: Dictionary = _soldiers[i]
+		var alive := bool(s.get("alive", true))
+		if _online_mode and not alive:
+			continue
+		want[i] = {
+			"pos": s.pos,
+			"name": (String(s.name) if _show_names else ""),
+			"dead": (-1 if alive else ENTITY_DEAD_TICKS),
+		}
+	for t in _view_targets():
+		want[int(t["id"])] = {"pos": t["pos"], "name": "", "dead": -1}
+	# 先删：`EntityDrawer` 的句柄与节点同生共死（`remove_entity` 里 `queue_free`）。
+	for id in _drawn_entities.keys():
+		if not want.has(id):
+			_entities.call("remove_entity", id)
+			_drawn_entities.erase(id)
+	# 再建/重摆：`spawn_entity` 幂等（同 id 只重摆位置），名字与死亡刻跟着更新。
+	for id in want:
+		var e: Dictionary = want[id]
+		var p: Vector2 = e["pos"]
+		_entities.call("spawn_entity", id, p.x, p.y)
+		_entities.call("set_entity_name", id, String(e["name"]))
+		_entities.call("set_entity_dead_ticks", id, int(e["dead"]))
+		_drawn_entities[id] = true
 
 # ---------------------------------------------------------------- 障碍（docs/126）
 
@@ -825,65 +1281,20 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		key_input(cmd)
 	get_viewport().set_input_as_handled()
 
-## 开火表现的状态源（`docs/135` §2.2）：**谁该开火、他准备好没有**。
+# ---------------------------------------------------------------- 准备圈：本轮**丢了**（诚实的缺口）
 ##
-## `GwFireFx` 每帧拉一次，本函数不写任何对局状态。两个模式的口径：
-## * **顺序回合**（`TurnInfo{player_id, soldier_id}`，`docs/46`）：只有当前该开火的那个
-##   士兵有光圈 —— 也就是 `_active_soldier()`（射手轮转的真规则在
-##   `docs/98`：每玩家一张士兵表 + 游标，我们这一版取"该玩家的第一个活着的士兵"）。
-## * **同时回合**（`docs/86` §6）：每个还没提交函数、且自己还有活着的士兵的玩家，
-##   各显示一个光圈；提交过的（已经在 `_shot_queue` 里）熄灭。
+## 旧实现在这里有一个 `fire_fx_state()`：给 `GwFireFx` 供"谁该开火、准备好没有"，
+## 由仿制控件画出准备圈。**这一套随 `fire_fx.gd` 一起删掉了**，原因与剩余缺口：
 ##
-## "准备好"= **函数非空**（`strip_edges()` 后）。这条是**推断**：原版光圈"闭合"到底
-## 对应"函数非空"还是"按了 Fire"，没有观测（`docs/135` §2.3）。
-func fire_fx_state() -> Dictionary:
-	var state := {"running": _running, "rings": []}
-	if not _running:
-		return state
-	# 联机：光圈只跟**服务端的 `TurnInfo`** 走（一个回合只有一个射手，
-	# 而且"该不该我开火"由服务端说，不由本地队伍算）。同时回合制在联机里没接，
-	# 所以这里不做 `_shot_owners()` 那一套（`docs/139` §7 记为未做）。
-	if _online_mode:
-		var shooter_o := _active_soldier()
-		if not shooter_o.is_empty() and bool(shooter_o.get("alive", true)):
-			state["rings"] = [{
-				"index": _soldiers.find(shooter_o),
-				"pos": shooter_o.pos,
-				"color": shooter_o.get("color", GwThemeFactory.COL_ACCENT),
-				"ready": _online_can_fire()
-					and String(_functions.get(_active, "")).strip_edges() != "",
-			}]
-		return state
-	var app_node := app()
-	if app_node == null:
-		return state
-	var simultaneous := int(app_node.state.turn_mode) == GwModes.Turn.SIMULTANEOUS
-	var rings: Array = []
-	if simultaneous:
-		var fired := _shot_owners()
-		for i in _soldiers.size():
-			var s: Dictionary = _soldiers[i]
-			if not bool(s.alive) or fired.has(int(s.player)):
-				continue
-			rings.append({
-				"index": i,
-				"pos": s.pos,
-				"color": s.get("color", GwThemeFactory.COL_ACCENT),
-				"ready": String(_functions.get(int(s.player), "")).strip_edges() != "",
-			})
-	else:
-		var shooter := _active_soldier()
-		if not shooter.is_empty() and bool(shooter.alive):
-			var i2 := _soldiers.find(shooter)
-			rings.append({
-				"index": i2,
-				"pos": shooter.pos,
-				"color": shooter.get("color", GwThemeFactory.COL_ACCENT),
-				"ready": String(_functions.get(int(shooter.player), "")).strip_edges() != "",
-			})
-	state["rings"] = rings
-	return state
-
+## * 原版的准备圈是 **`EntityDrawer::draw`** 里 3 次 `draw_arc` + 3 个外凸箭头画的
+##   （`0x4b2890`，`docs/140` §2 逐条立即数）；本项目的 `EntityDrawer` 节点类
+##   **没有实现 `_draw`**（`entity_drawer_class.rs` 对照表："`draw` 没实现"）
+##   ⇒ 六个真节点里**没有任何一个**会画它；
+## * 想补上，要动的是 `src/_scaffold/entity_drawer_class.rs` 的 `_draw`
+##   （纯逻辑侧的算术 `entity_drawer::ring_primitives` 已经复原了），而本任务
+##   不许改其它 `*_class.rs` 的**行为** ⇒ 记成缺口，不在这里再造一个 GDScript 假圈。
+##
+## `docs/16` §48.5 第 2 条是这条缺口的正式记录。
 func _on_function_text_changed(new_text: String) -> void:
 	_functions[_active] = new_text
 	if not _suppress_offset_clear:
@@ -942,13 +1353,10 @@ func fire() -> void:
 	# `drawn.impact` 停住，**不要**在这里写死"一次画完整条 = 本回合结束"。
 	var drawn := _clip_to_obstacle(pts)
 	var impact: Vector2 = drawn.impact
-	_plane.path_color = active_soldier.get("color", GwThemeFactory.COL_ACCENT)
-	_plane.set_path(drawn.points, impact, true)
-	# tick 动画（`docs/135` §3）：沿**同一条** `drawn.points` 逐 tick 揭示，
-	# 撞点就是它的最后一点。`shot.points` 仍是全量 ⇒ "画到哪"与"飞到哪"是两件事，
-	# 与回合结算**没有**耦合（结算仍在下面 `_commit_shot`，见 §3.4 的取舍说明）。
-	if _fire_fx != null:
-		_fire_fx.play(drawn.points)
+	# 曲线交给真平面：原版 `GraphwarFunctionManager::set_function_points` + `FunctionDrawer`。
+	# 逐 tick 揭示**由 Rust 侧算**（`revealed_points()`：30 点/tick），本屏只推 tick。
+	# `shot.points` 仍是全量 ⇒ "画到哪"与"飞到哪"是两件事，与回合结算没有耦合。
+	_set_curve(drawn.points, active_soldier.get("color", GwThemeFactory.COL_ACCENT), _active)
 	# 修正常数（`docs/24` §6.2 的样本格式：`+ 4.638` / `- 8.315`，三位小数、符号后一个空格）。
 	# DiffEq 模式下原版 OffsetLabel 为空（观测）。
 	_offset_label.text = GwCore.format_offset(float(result.offset)) if int(app_node.state.function_mode) == 0 else ""
@@ -1020,8 +1428,7 @@ func _reset_shot_state() -> void:
 	_fx_log.clear()
 	if _effects != null:
 		_effects.clear()
-	if _fire_fx != null:
-		_fire_fx.play(PackedVector2Array())    # 空序列 ⇒ 立刻 finished，不再推动画
+	_clear_curve()                    # 曲线 + tick 一起归零（幂等）
 
 ## 把 `_soldiers` 摊成"每玩家一张士兵表"，交给回合轮转（`docs/143` §6）。
 func _reset_turn_driver() -> void:
@@ -1056,13 +1463,13 @@ func _begin_shot(shot: Dictionary) -> void:
 func _advance_presentation() -> void:
 	if _pending_shot.is_empty():
 		return
-	if _fire_fx == null:
+	if _plane == null:
 		_on_shot_arrived()
 		return
-	var st: Dictionary = _fire_fx.shot_state()
+	# 揭示点数**读 `Line2D`**（原版 `FunctionDrawer` 的 value 里那个"已写入数"）。
 	if not _logic_settled:
-		_apply_kills_up_to(int(st.get("reveal", 0)))
-	if bool(st.get("finished", false)):
+		_apply_kills_up_to(_curve_reveal())
+	if _curve_finished():
 		_on_shot_arrived()
 
 ## 落地"弹道已经走到的那一段"里的击杀。`reveal` = 已揭示的点数。
@@ -1123,7 +1530,7 @@ func _on_shot_arrived() -> void:
 		_spawn_effect("ExplosionEffect", judged.get("stop", Vector2.ZERO))
 	_note_shot_status()
 	# 打完就**清掉曲线**（`docs/143` §2：原版一发结算完不再留线，用户实测）。
-	_plane.clear_path()
+	_clear_curve()
 	_pending_shot = {}
 	_shot_in_flight = false
 	if String(shot.get("phase", "local")) == "online":
@@ -1155,17 +1562,16 @@ func _spawn_effect(kind: String, pos: Vector2) -> void:
 func flush_shot() -> bool:
 	if _pending_shot.is_empty():
 		return false
-	if _fire_fx != null:
-		_fire_fx.advance_seconds(1000000.0)
+	_advance_curve(1000000.0)          # 推到"揭完"那个 tick（Rust 侧夹住上限，不会越界）
 	_apply_kills_up_to(1 << 30)
 	_on_shot_arrived()
 	return true
 
 ## 自检入口：按**秒**推进弹道，走与 `_process` 完全相同的那条路（可复现）。
 func advance_shot_for_test(seconds: float) -> void:
-	if _fire_fx == null:
+	if _plane == null:
 		return
-	_fire_fx.advance_seconds(seconds)
+	_advance_curve(seconds)
 	_advance_presentation()
 
 # ---------------------------------------------------------------- AI 的回合（docs/143 §6）
@@ -1220,10 +1626,7 @@ func bot_take_turn() -> bool:
 		return false
 	var pts: PackedVector2Array = result.points
 	var drawn := _clip_to_obstacle(pts)
-	_plane.path_color = shooter.get("color", GwThemeFactory.COL_ACCENT)
-	_plane.set_path(drawn.points, drawn.impact, true)
-	if _fire_fx != null:
-		_fire_fx.play(drawn.points)
+	_set_curve(drawn.points, shooter.get("color", GwThemeFactory.COL_ACCENT), int(shooter.player))
 	_status("AI（%s）开火：f(x) = %s ／ **自定**的一发（原版 AI 是进化器，docs/143 §6.4）"
 		% [String(shooter.get("name", "Bot")), expr])
 	var shot := {"points": pts, "drawn": drawn.points, "team": int(shooter.team),
@@ -1423,10 +1826,10 @@ func _resolve_shots(shots: Array) -> void:
 	_apply_kills_up_to(1 << 30)
 	_note_shot_status()
 
-## 靶子的绘制入口：`GwPlaneView.set_targets()` 只收 `Array[Vector2]`（它只管画），
-## 所以"靶子被打掉 / 被复原"在界面上表现为这个数组少一项 / 多一项。
+## 靶子的绘制入口：真 `EntityDrawer` 里的实体表是**唯一**的画布来源，
+## 所以"靶子被打掉 / 被复原"在界面上表现为那个实体被 `remove_entity` / 重新 `spawn`。
 func _refresh_targets() -> void:
-	_plane.set_targets(_targets.alive_positions())
+	_sync_entities()
 
 func _active_soldier() -> Dictionary:
 	var app_node := app()
@@ -1597,7 +2000,7 @@ func level_state() -> Dictionary:
 		"turn_driver": _turn_driver.snapshot(),
 		"bot_think_left": _bot_think_left,
 		"status": _status_text,
-		"path_points": (_plane.path_points.size() if _plane != null else -1),
+		"path_points": _curve_reveal(),
 	}
 
 ## 自检用：把**随机**布局钉住。原版靶子与障碍都是每局随机生成的
@@ -1628,10 +2031,7 @@ func apply_external_shot(points: PackedVector2Array, shooter_player: int,
 		return false
 	if animate:
 		var drawn := _clip_to_obstacle(points)
-		_plane.path_color = shooter.get("color", GwThemeFactory.COL_ACCENT)
-		_plane.set_path(drawn.points, drawn.impact, true)
-		if _fire_fx != null:
-			_fire_fx.play(drawn.points)
+		_set_curve(drawn.points, shooter.get("color", GwThemeFactory.COL_ACCENT), shooter_player)
 		var shot := {"points": points, "drawn": drawn.points, "team": int(shooter.team),
 			"shooter": shooter_player, "soldier": shooter, "phase": "local"}
 		shot["judged"] = _judge_shots([shot])
@@ -1683,7 +2083,7 @@ func _begin_replay(path: String) -> void:
 	_turns_used = 0
 	_last_verdict = {}
 	_reset_shot_state()
-	_plane.clear_path()
+	_clear_curve()
 	_set_replay_input_enabled(false)
 	_replay_left.visible = true
 	_replay_right.visible = true
@@ -1713,7 +2113,7 @@ func _begin_replay(path: String) -> void:
 		app_node.state.function_mode = int(mi.function)
 		app_node.state.turn_mode = int(mi.turn)
 		app_node.state.time_mode = int(mi.time)
-	_plane.set_axis_mode(int(app_node.state.axis_mode) if app_node != null else GwModes.AXIS_DEFAULT)
+	_set_axis_mode(int(app_node.state.axis_mode) if app_node != null else GwModes.AXIS_DEFAULT)
 	_refresh_mode_indicators()
 	# 回放不做胜负判定（录像自己会发 `GameStateInfo{EndingGame}`），这里只占位。
 	_rules = GwLevelRules.for_versus(0)
@@ -1779,14 +2179,14 @@ func _realize_replay_state() -> void:
 func _replay_draw_last_shot() -> void:
 	var shots: Array = _replay.state.shots if _replay != null else []
 	if shots.is_empty():
-		_plane.clear_path()
+		_clear_curve()
 		_replay_shot_status = "还没有开火记录"
 		return
 	_replay_draw_shot(shots[shots.size() - 1])
 
 func _replay_sync_layout() -> void:
 	_obstacles = _replay.obstacles_for_view()
-	_plane.set_obstacles(_obstacles)
+	_set_obstacles(_obstacles)
 
 ## 士兵与靶子：**同一个局面对象**既给 `_plane` 画，也给"谁死了"用。
 func _replay_sync_actors() -> void:
@@ -1808,10 +2208,7 @@ func _replay_sync_actors() -> void:
 			"player": 0,
 		})
 	_soldiers = list
-	_plane.set_soldiers(list)
-	_plane.set_targets(_replay.target_positions())
-	_plane.set_show_names(_show_names)
-	_plane.queue_redraw()
+	_sync_entities()
 
 ## `SkinGraphicsInfo.graphics_str`（如 `face_paint_2`）→ `GwIcons.SKINS` 的下标。
 ## 名字对不上就退回 0（不编造皮肤）。**观测**：这三类字符串就是原版资产的文件名
@@ -1831,7 +2228,7 @@ func _replay_color(a: Dictionary) -> Color:
 	if c is Color:
 		return c
 	var team := clampi(int(a.get("team", 0)), 0, 1)
-	return GwPlaneView.TEAM_COLORS[team][0]
+	return TEAM_COLORS[team][0]
 
 ## 画一发的弹道：**用内核按（起点 + 函数文本 + 队伍方向）重算**。
 ##
@@ -1847,7 +2244,7 @@ func _replay_draw_shot(d: Dictionary) -> void:
 	if expr == "":
 		expr = String(_replay.state.functions.get(owner, ""))
 	if expr == "":
-		_plane.clear_path()
+		_clear_curve()
 		_replay_shot_status = "这一发没有函数文本（owner %d）" % owner
 		return
 	var team := _replay.team_index(owner)
@@ -1865,15 +2262,14 @@ func _replay_draw_shot(d: Dictionary) -> void:
 	var result := GwCore.calculate_path(expr, start, direction, mode)
 	var replay_corrected := String(d.get("corrected", ""))
 	if not bool(result.ok):
-		_plane.clear_path()
+		_clear_curve()
 		_replay_shot_status = "内核算不出这一发（%s）／ 函数 %s" % [String(result.note), expr]
 		return
 	var drawn := _clip_to_obstacle(result.points)
-	_plane.path_color = _replay_color({
+	_set_curve(drawn.points, _replay_color({
 		"color": _replay.state.colors.get(int(_replay.file.soldier_owner.get(owner, -1)), null),
 		"team": maxi(0, team),
-	})
-	_plane.set_path(drawn.points, drawn.impact, true)
+	}), owner)
 	# 修正常数：只有 Normal 有。ODE 下内核给的是 `NaN` ⇒ `format_offset()` 出空串，
 	# 正好是原版 DiffEq 局右下角不显示修正文本的样子（`docs/92` §4.10、`docs/138`）。
 	_offset_label.text = GwCore.format_offset(float(result.offset))
@@ -2027,15 +2423,15 @@ func _begin_online(app_node) -> void:
 	_last_verdict = {}
 	_reset_shot_state()
 	_time_left = 0.0
-	_plane.clear_path()
-	_plane.set_targets([])            # 服务端的 `Match` 里只有士兵，没有靶子（docs/117）
+	_clear_curve()
+	_sync_entities()                  # 服务端的 `Match` 里只有士兵，没有靶子（docs/117）
 	_rebuild_pid_index(room)
 	_build_online_soldiers(room, app_node)
 	_build_online_obstacles(room)
 	_apply_online_turn(room)
 	# 胜负规则只做占位：联机局由服务端判（`_check_match_over()` 的联机分支直接返回）。
 	_rules = GwLevelRules.for_versus(_human_team())
-	_plane.set_axis_mode(int(app_node.state.axis_mode))
+	_set_axis_mode(int(app_node.state.axis_mode))
 	_refresh_mode_indicators()
 	_refresh_plane()
 	_load_active_function()
@@ -2114,7 +2510,7 @@ func _build_online_soldiers(room: Dictionary, app_node) -> void:
 	for pid in _pid_index:
 		var p: Dictionary = players.get(pid, {})
 		teams.append(int(p.get("team", 0)))
-	var colors := GwPlaneView.assign_colors(teams, 1)
+	var colors := assign_colors(teams, 1)
 	var entities: Dictionary = room.get("entities", {})
 	var ids := entities.keys()
 	ids.sort()                  # 服务端的下发顺序不保证；固定顺序让自检可复现
@@ -2128,7 +2524,7 @@ func _build_online_soldiers(room: Dictionary, app_node) -> void:
 			# 让"下标"这件事永远有定义（`docs/139` §4）。
 			_pid_index[pid] = _pid_index.size()
 			teams.append(int(e.get("team", 0)))
-			colors = GwPlaneView.assign_colors(teams, 1)
+			colors = assign_colors(teams, 1)
 		var pi := int(_pid_index[pid])
 		# 生死：会话模型里的 `alive` 优先；但 `LifeQueuedDeath` 不会被 `GwNetSession` 落进
 		# `entities`（它只认 `LifeInfo`），所以再用本界面记下的那份广播覆盖一次
@@ -2157,7 +2553,7 @@ func _online_player_name(pi: int, pid: int, app_node) -> String:
 
 ## 障碍：`AddObstacle` 下发的 `{pos_x, pos_y, radius}`，顺序即服务端顺序。
 ## 形状与 `GwCore.level_obstacles()` 的产物一致（`{pos: Vector2, size: 半径}`），
-## 因为 `GwPlaneView.set_obstacles()` 与 `GwCore.hit_test()` 都吃这一种。
+## 因为 `_set_obstacles()` 与 `GwCore.hit_test()` 都吃这一种。
 func _build_online_obstacles(room: Dictionary) -> void:
 	var list: Array = []
 	for o in (room.get("obstacles", []) as Array):
@@ -2166,7 +2562,7 @@ func _build_online_obstacles(room: Dictionary) -> void:
 			"size": float(o.get("r", 0.0)),
 		})
 	_obstacles = list
-	_plane.set_obstacles(_obstacles)
+	_set_obstacles(_obstacles)
 
 ## 回合：`turn{player_id, soldier_id}` 决定**谁是射手**（`_active` 是玩家下标，
 ## `_online_soldier` 是实体 id —— 两套编号都在用，别混）。
@@ -2377,7 +2773,7 @@ func _draw_online_shot(owner_id: int, start: Vector2, end_x: float) -> void:
 		direction = -1.0
 	var result := GwCore.calculate_path(expr, start, direction)
 	if not bool(result.ok):
-		_plane.clear_path()
+		_clear_curve()
 		_online_shot_status = "内核算不出这一发（%s）／ 函数 %s" % [String(result.note), expr]
 		_status(_online_shot_status)
 		return
@@ -2390,11 +2786,8 @@ func _draw_online_shot(owner_id: int, start: Vector2, end_x: float) -> void:
 	if cut.size() < 2:
 		cut = pts
 	var impact: Vector2 = cut[cut.size() - 1]
-	_plane.path_color = (shooter.get("color", GwThemeFactory.COL_ACCENT)
-		if not shooter.is_empty() else GwThemeFactory.COL_ACCENT)
-	_plane.set_path(cut, impact, true)
-	if _fire_fx != null:
-		_fire_fx.play(cut)          # 与本地开火同一条 tick 动画（docs/135）
+	_set_curve(cut, (shooter.get("color", GwThemeFactory.COL_ACCENT)
+		if not shooter.is_empty() else GwThemeFactory.COL_ACCENT), owner_id)
 	# 这一发也要走"在飞"状态（`docs/143` §4）：服务端在 `ExecutingResults` 期间同样不收
 	# 新的 `FunctionFire`，本地不能比它更宽松。**不**做本地结算（生死/回合在服务端）。
 	_pending_shot = {"phase": "online", "owner": owner_id, "stop": impact,
@@ -2480,8 +2873,11 @@ func online_state() -> Dictionary:
 		"players": _pid_index.size(),
 		"soldiers": soldiers,
 		"alive_soldiers": _alive_soldier_count(),
-		"drawn_soldiers": _plane.soldiers.size() if _plane != null else -1,
-		"drawn_points": _plane.path_points.size() if _plane != null else -1,
+		# `drawn_soldiers` = `EntityDrawer` 里的实体数；`drawn_points` = **交给平面的**点数
+		# （= 这一发复算出来的全量，不是"已经揭示到第几个"——揭示另有 `revealed_points`）。
+		"drawn_soldiers": (int(_entities.call("entity_count")) if _entities != null else -1),
+		"drawn_points": _curve_total,
+		"revealed_points": _curve_reveal(),
 		"obstacles": obstacles,
 		"effects": _online_effects.size(),
 		"lives": _online_lives.duplicate(),
@@ -2495,6 +2891,10 @@ func online_state() -> Dictionary:
 # ---------------------------------------------------------------- 每帧
 
 func _process(delta: float) -> void:
+	# 曲线的 tick 在**任何模式**下都推进：原版是 `GraphwarTickHandler::get_fractional_tick`
+	# （`0x519530`）每帧喂给 `GraphwarPlane::draw` 的喂点循环，那个模块还没接 ⇒ 本屏按帧间隔推
+	# （`docs/16` §43.6(d) 第 2 条就是这条缺口；`advance_shot_for_test()` 是自检的确定性入口）。
+	_advance_curve(delta)
 	if _replay_mode:
 		_replay_tick(delta)
 		return
@@ -2548,7 +2948,7 @@ func _toggle_extra_buttons() -> void:
 
 func toggle_names() -> void:
 	_show_names = not _show_names
-	_plane.set_show_names(_show_names)
+	_set_show_names(_show_names)
 	_names_button.icon = GwIcons.get_icon("view_names" if _show_names else "hide_names")
 
 ## 原版 `toggle_view_functions`：三张图标 = 三种「查看函数」档位。
