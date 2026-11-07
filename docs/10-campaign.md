@@ -1611,3 +1611,150 @@ objdump -d --start-address=0x464d10 --stop-address=0x46500c <x86>/libgraphwarrus
 # 5) 名字写入口：全量扫 bl 0x40b190（set_name）⇒ 只有 0x3e4f50 / 0x3e707c
 # 6) 5 连发：arm64 0x4115d0 里 add x8, x25, #0x2e/0x25/0x27/0x29/0x35（x25 = tag 13）
 ```
+
+## 16. 21 关参数表落码 + 客户端清占位（2026-11-07）
+
+> 本节对应 `dispatch/04-campaign-data.md`（P1，分支 `agent/campaign-data`）。
+> **数据没有新增一行**：权威数值就是 §4 的主表。本节记的是
+> ① 它落到哪个函数、② 与 §4 的上游 `docs/archive/118-campaign-data.md` §7 怎么钉住、
+> ③ 客户端那份副本怎么保证不漂、④ 本轮发现的**三处口径差异**（都不是数字冲突）。
+>
+> **就地更正 §1 的一句话**：§1 末尾写"要精确复刻每关的障碍/敌人布局，只能靠人补（§7 表格）"
+> —— 这句话在 2026-11-06 的 §12 之后**已经过期**：21 关的六项参数全部从二进制解出、
+> 并与 385 份回放 21/21 对上，**不需要人补任何一格**（§7 表尾那句话也是这个意思）。
+> 保留原文不动是为了留痕，以本节为准。
+
+### 16.1 一句话结论
+
+§4 的 21 行参数表已落进 **`src/graphwar_campaign_control.rs::LEVEL_INFO`**
+（形状照抄 `level_info()` = `0x4ad380` 的 21 分支 `match`：每关 = key/标题/描述/模式四字节
++ 障碍预设/`min_count`/士兵/目标/Bot/回合上限），配 `level_info()` / `level_info_by_key()`
+两个查询接口与 21×7 的逐字段验收；`client/src/app/campaign.gd` 的占位项已清空，
+客户端表与内核表由 `cargo test --test campaign_data` **逐字节**钉住。
+
+### 16.2 索引表（关号 = `index` + 1，别混）
+
+| 关 | `index`（`level_n`） | 标题 | 障碍 | `min_count` | 士兵 | 目标 | Bot 难度值 / `bot_N` | 回合上限 | 模式 func/turn/axis |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 0 | `Level 0` | 无障碍 | — | 1 | 1 | — | 无上限 | 0 / 0 / 3 |
+| 2 | 1 | `Level 1` | 无障碍 | — | 1 | 1 | — | 5 | 0 / 0 / 3 |
+| 3 | 2 | `Level 2` | 中心单障碍 | — | 1 | 1 | — | 5 | 0 / 0 / 3 |
+| 4 | 3 | `Level 3` | 中心单障碍 | — | 2 | 3 | — | 10 | 0 / 0 / 3 |
+| 5 | 4 | `Level 4` | 散布式 | **15** | 1 | 1 | — | 10 | 0 / 0 / 3 |
+| 6 | 5 | `Level 5` | 散布式 | **5** | 2 | 0 | **3** / `bot_0` | 无上限 | 0 / 0 / 3 |
+| 7 | 6 | `Level 6` | 散布式 | **10** | 1 | 2 | — | 6 | 0 / 0 / 3 |
+| 8 | 7 | `Level 7` | 散布式 | **6** | 1 | 1 | — | **1** | 0 / 0 / 3 |
+| 9 | 8 | `Level 8` | 散布式 | **10** | 1 | 3 | — | 6 | 0 / 0 / 3 |
+| 10 | 9 | `Level 9` | 散布式 | **5** | 3 | 0 | **25** / `bot_2` | 无上限 | 0 / 0 / 3 |
+| 11 | 10 | `Level 10` | 散布式 | **10** | 1 | 2 | — | 6 | 0 / 0 / **2** |
+| 12 | 11 | `Level 11` | 散布式 | **5** | 3 | 0 | **50** / `bot_3` | 无上限 | 0 / **1** / **2** |
+| 13 | 12 | `Level 12` | 中心单障碍 | — | 1 | 1 | — | 5 | 0 / 0 / **1** |
+| 14 | 13 | `Level 13` | 散布式 | **10** | 1 | 2 | — | 5 | 0 / 0 / **1** |
+| 15 | 14 | `Level 14` | 散布式 | **5** | 4 | 0 | **100** / `bot_3` | 无上限 | 0 / **1** / **1** |
+| 16 | 15 | `Level 15` | 散布式 | **10** | 5 | 0 | **250** / `bot_4` | 无上限 | 0 / 0 / **0** |
+| 17 | 16 | `Level 16` | 无障碍 | — | 1 | 1 | — | 无上限 | **1** / 0 / 3 |
+| 18 | 17 | `Level 17` | 散布式 | **10** | 1 | 2 | — | 6 | **1** / 0 / 3 |
+| 19 | 18 | `Level 18` | 散布式 | **10** | 3 | 0 | **100** / `bot_3` | 无上限 | **1** / 0 / 3 |
+| 20 | 19 | `Level 19` | 散布式 | **10** | 4 | 0 | **100** / `bot_3` | 无上限 | **1** / 0 / **1** |
+| 21 | 20 | `Level 20` | 散布式 | **15** | 5 | 0 | **250** / `bot_4` | 无上限 | **1** / 0 / **0** |
+
+* 「—」= 该列不适用：`min_count` 只对**散布式**有意义（`无`/`中心` 一律 0；中心式"恰好 1 颗"
+  由生成本体保证）；Bot 只有 8 关有（关 6/10/12/15/16/19/20/21），其余 13 关是打靶关。
+* 「Bot 难度值 / `bot_N`」是**两个不同的量**：前者是 `bot_added_event` 载荷里的立即数
+  （3/25/50/100/250），后者是运行时 `SkinGraphicsInfo` 的皮肤号，**两者不同向**（§4、118 §12.4）。
+* 这张表是 §4 主表的**索引视图**，数值与 §4 **逐格相同**，不引入任何新数据。
+
+### 16.3 与 `docs/archive/118-campaign-data.md` §7 的一致性声明
+
+| 层 | 做法 | 结果 |
+|---|---|---|
+| 文本 | 把 `118 §7.1` 主表与本文 §4 主表**逐行做字符串比对**（21 行） | **0 处不同**（21/21 相同）⇒ 本轮**不存在**"两处数字冲突、以哪份为准"的问题 |
+| 文本 | 把 `118 §4.2` 描述表与本文 §3 描述表逐行比对 | 21/21 相同（含原版拼写 `writting`） |
+| 代码 | `tests/campaign_data.rs` 把 `118 §7.1` 的 21 行**独立再抄一遍**，逐关逐字段断言 `LEVEL_INFO` 与之相等 | 21 关 × 7 参数全过，且 7 个参数各自的命中数 == 21 |
+
+**证据档（逐参数，短码沿用 118 §7.1）**：
+
+| 参数 | 字段 | 依据 | 档 |
+|---|---|---|---|
+| 障碍模式 | `obstacles` | `C` = `.data.rel.ro` 闭包记录地址（`0x95a350`…`0x95deb0`）+ `R` = 385 份回放 21/21 | **逐位 + 运行时** |
+| `min_count` | `min_count` | `C`（预设 thunk 里 `esi=15/5/10/6`）+ `R`（关 11/18/20 出现过恰好 10、关 5/21 恰好 15） | **逐位 + 运行时** |
+| 士兵数 | `soldiers` | `S` = 开场臂立即数 `edx=N` → `0x476320(mgr, player, N)`；`R` 同值 | **逐位 + 运行时** |
+| 目标数 | `targets` | `S` = `0x46f310(team)` 的调用次数；`R` 同值 | **逐位 + 运行时** |
+| Bot 难度 | `bot.difficulty` / `bot.tier` | `S`（`bot_added_event` 载荷第 3 个 u32）+ `R`（`bot_N` 皮肤、Bot 名字随机） | **逐位 + 运行时**；⚠️ 与 `docs/AI.md` 六档表的映射是**推断**，且关 12 的 `50` 对不上任何一列（§6、118 §12.4，**不圆**） |
+| 回合上限 | `turn_limit` | `S` = `turn_limit_info` 载荷 `(1, N)` 的 `N`；`R` = 运行时 `TurnLimitInfo` 21/21 | **逐位 + 运行时** |
+| 标题 + 描述 | `title` / `description` | 21 条 `movabs`/`mov dword` 拼串 + `.rodata` 21 段首尾相接；长度 = `mov qword [rsp+0x38], len` 立即数 21/21 | **逐位** |
+| 模式四字节 | `modes.mode_word` | 21 条 `mov dword [rsp+0x58], imm32`（`0x4ad4dd`…`0x4aefdf`） | **逐位**（`axis` 的方向另由运行时 21/21 佐证） |
+
+> ⚠️ 按 `AGENTS.md` §0.2：`cargo test` 全绿是**回归保护**，不是复原证据。
+> 上表的"逐位"指**能指到反汇编地址/字节**，与本轮新增的测试条数无关。
+
+### 16.4 代码位置（`src/graphwar_campaign_control.rs`）
+
+| 项 | 是什么 | 对应原版 |
+|---|---|---|
+| `LEVEL_INFO: [CampaignLevel; 21]` | 21 关全表（每行注释注明来自 118 §7.1 哪一行、用到的 `S`/`C`/`R`） | `level_info()` = `0x4ad380` |
+| `level_info(index)` | 按**下标**（0 基）查；越界 `None` | 同上（21 分支 `match`） |
+| `level_info_by_key("level_5")` | 按**命令键**查 | `0x499740` 的 21 条键比较 |
+| `CampaignLevel` / `ObstacleMode` / `BotOpponent` / `LevelModes` | 记录与子结构的形状 | `0x442aa0` 造的记录（`+0x30` 那个 u32 **未知，不建模**） |
+| `LevelModes::function/turn/axis/time` | 把 `mode_word` 拆成 4 个字节 | `+0x38..+0x3b`（§3） |
+| `CAMPAIGN_SAVE_PATH` / `parse_level_key` / `encode_save` | 读写 `campaign.save` | `0x1bfe28` / `0x417ef0` / `0x4183b0` |
+| `save_action` / `save_level` / `refresh_index` | 单调判定 / 该写的串 / 刷新下标 | `0x4183b0`（§12.4 的补正版极性）/ `0x418820` |
+| `CampaignSave` | 存档的内存模型（`last_cleared`、`text()`、`text_after_clearing()`、`highest_playable_level()`） | `0x418170` + `0x4183b0` |
+| `CampaignProgress` / `get_level_as_int` | 既有接口（**行为未变**；`get_level_as_int` 现在严格按 `split('_').last()`） | `0x392cc0` / `0x417ef0` |
+
+**验收**（`tests/campaign_data.rs`，13 条）：`all_21_levels_match_docs_118_s7_field_by_field`、
+`mode_bytes_agree_with_the_documented_reading`、`the_eight_opponent_levels_have_no_targets_and_one_bot`、
+`level_lookup_is_by_index_and_by_key`、`the_original_typo_writting_is_preserved`、
+`table_matches_level_manager_copy`、`parse_level_key_is_split_then_strict_parse`、
+`encode_save_has_no_trailing_newline_and_is_zero_based`、`save_action_has_three_branches`、
+`refresh_index_adds_one_and_clamps_at_twenty`、`campaign_save_is_monotonic_and_not_created_at_startup`、
+`campaign_progress_resets_to_zero_on_a_bad_file`、`client_campaign_table_matches_the_kernel_table`。
+
+> **重复副本**：`graphwar_level_manager.rs` 里还有一份 `LEVELS` / `SETUPS` / `campaign.save` 簇
+> （§12.6 记着它是**临时**落点、等 `campaign_control.rs` 落地时必须搬走）。本轮只允许改
+> `campaign_control.rs`，所以**两份并存**；`table_matches_level_manager_copy` 逐字段钉住
+> 两份相等（含 `graphwar_level_generator.rs` 的第三份 `LEVEL_OBSTACLE_PARAMS`），
+> 删旧副本留给下一次能改 `level_manager.rs` 的任务。
+
+### 16.5 客户端：`client/src/app/campaign.gd`
+
+* 占位项 **已清空**（`grep -c PLACEHOLDER client/src/app/campaign.gd` == **0**）；
+  `GwCampaign.level(i)` 不再返回 `placeholder` 键。
+* 表仍是**照抄同一份**（内核没有把 21 关表暴露成 GDExtension 方法，客户端拿不到）
+  ⇒ 用测试钉：`client_campaign_table_matches_the_kernel_table` 读 `.gd` 源码，
+  逐条比对 **标题 / 描述（逐字节）/ axis / function / turn / time / soldiers / targets /
+  `bot_tier` / `turn_limit` / `obstacle_min` / 障碍模式**。改客户端不改内核（或反之）⇒ 立刻红。
+* 一处**归一化**：`CENTER` 的 `obstacle_min` 由 `1` 改成 **`0`**（与内核
+  `min_count` / `level_generator::ObstacleParams::min_count` 同一约定：非散布式不记 `min_count`，
+  "恰好 1 颗"由生成本体保证）。没有别的客户端文件读这个键（`app.gd` / `play_screen.gd`
+  只用 `title/description/axis/function/turn/time/soldiers/targets/bot_tier/turn_limit/index/seed`）。
+* 客户端**不存** Bot 的"难度值"（3/25/50/100/250）：界面只用 `bot_N` 皮肤号，
+  难度值是给电脑玩家管理器的立即数，权威在内核 `BotOpponent::difficulty`。
+
+### 16.6 本轮发现的三处口径差异（都不是数字冲突）
+
+| # | 差异 | 现状 | 本轮怎么处理 | 定死还缺什么 |
+|---|---|---|---|---|
+| 1 | **`+0x3b` 时间档的证据档** | `118 §4.3`/§8-6：**推断 → 观测**；本文 §7 第 6 条：**观测**（"仍缺 5 = TimerInf 枚举值的直接证据"）；`graphwar_level_manager.rs` 的 `LevelModes::time_byte` 注释：**逐位**（依据 `graphwar_setup_control` 的时间档名字表第 11 项） | 代码里**就低不就高**取 **观测**，三份说法都写在 `LevelModes::time()` 的注释里 | 二进制（本轮不带）：`graphwar_setup_control` 时间档名字表那 11 项的字面量地址 + 判别值表的对齐方式 |
+| 2 | **解锁语义**：`level_<n>` 是"解锁到 n（含）"还是"最后通关的那一关（下一关要 +1）" | `118 §5.1`/§12.5 与 `level_manager::is_unlocked` 的写法是 `level <= n`（**下一关不解锁**）；`118` 附录 A 的用户实测（打完第 1 关写 `level_0`）+ `0x418820(self, n+1)` + 客户端 `store.gd::highest_unlocked_level()`（`clamp(n+1,0,20)`）指向**下一关可玩** | 两条语义**并存但分开命名**：`CampaignSave::last_cleared`（= 附录 A 的事实）+ `highest_playable_level()`（`n+1`，标**推断**）；`CampaignProgress::is_level_visible` **原样不动**（既有验收在用）；两处都在注释里写清档位 | 真机/二进制观测 `0x418820` 到底把哪个节点属性改了（`docs/10` §5.3 记的就是这条） |
+| 3 | **中心单障碍的 `min_count` 记法** | 客户端曾记 `1`，内核/`level_generator`/§7.2 记为不适用（0） | 统一为 0（见 §16.5） | — （纯记法统一，不影响行为） |
+
+### 16.7 复现与验收
+
+```bash
+# 1) 21 关 × 7 参数的逐字段验收（不读二进制，纯回归保护）
+cargo test --offline --test campaign_data
+
+# 2) 全量回归（条数会随测试增加而变，别当进度）
+cargo test --offline
+
+# 3) 客户端占位清空
+grep -c PLACEHOLDER client/src/app/campaign.gd      # 必须 == 0
+
+# 4) 覆盖率生成物（改了 src/ 就要重跑，并与代码一起提交）
+python3 tools/coverage_matrix.py
+python3 tools/coverage_matrix.py --check            # OK
+
+# 5) 回到二进制复核 21 关参数（需要仓库根目录的原版 .so）
+GW2_SO=../libgraphwarrust.so ../.venv/bin/python tools/campaign_params.py --tsv
+```
