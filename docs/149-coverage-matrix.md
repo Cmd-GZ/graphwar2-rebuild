@@ -5,7 +5,7 @@
 ## 0. 一句话总账
 
 ```
-原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 430、16 个非 graphwar 游戏模块占 97）；我们已实现 527 个函数，其中 逐位 88 / 观测 439 / 推断 0；未做 0；完全未知的模块 0 个（graphwar 里 0 个）。
+原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 430、16 个 scope=other 的模块占 97）；我们已实现 527 个函数，其中 逐位 88 / 观测 439 / 推断 0；未做 0；完全未知的模块 0 个（graphwar 里 0 个）。
 ```
 
 拆成两个口径（下面的数字全部由脚本算出，重跑即复现）：
@@ -13,9 +13,9 @@
 | 口径 | 模块数 | 可归属函数 | 已实现 | 逐位 | 观测 | 推断 | 未做 | 未知模块 |
 |---|---|---|---|---|---|---|---|---|
 | 58 个 `graphwar_*.rs` | 62 | 430 | 430 | 81 | 349 | 0 | 0 | 0 |
-| 16 个非 graphwar 的游戏模块 | 16 | 97 | 97 | 7 | 90 | 0 | 0 | 0 |
+| 16 个 `scope=other` 的模块（15 个不带 `graphwar_` 前缀 + `graphwar_texture_loader.rs`） | 16 | 97 | 97 | 7 | 90 | 0 | 0 | 0 |
 
-还有 `weak_caller.rs`（40 个归属函数）按 `docs/02` §9 判为第三方依赖库，单独一行留在 TSV 里备查，**不计入**任何合计。
+`weak_caller.rs` 在上表里算进 **scope=`other`** 那一档（39 个 `orig_funcs`，TSV 里单列一行）。**审计 2026-11-08 更正**：旧文写「40 个归属函数 …… **不计入**任何合计」，两处都不对——① 表值是 **39**（`docs/coverage-matrix.tsv` 的 `orig_funcs` 列，另 1 个符号查明是内联进 `GraphwarGameRecorder` 的方法，不是本模块的函数）；② 它**确实**计入 `other` 的 97 与总数的 527（430 + 97 = 527）。它也不是第三方依赖：`docs/02` §34 已按符号表判它是 crate 内模块（`graphwarrust::weak_caller`），只是文件名不带 `graphwar_` 前缀。
 
 ### 0.1 这个分母有多大、有多可信
 
@@ -84,8 +84,8 @@
 | `graphwar_computer_player_manager.rs` | 5 | 27 | `src/graphwar_computer_player_manager.rs` | 30 | 观测 |
 | `graphwar_crash_reporter.rs` | 0 | 0 | `src/graphwar_crash_reporter.rs` | 2 | 观测 |
 | `graphwar_draw_util.rs` | 1 | 4 | `src/graphwar_draw_util.rs` | 1 | 观测 |
-| `graphwar_effect_manager.rs` | 1 | 3 | `src/graphwar_effect_manager.rs` | 10 | 观测 |
-| `graphwar_entity_effect_manager.rs` | 3 | 4 | `src/graphwar_entity_effect_manager.rs` | 11 | 观测 |
+| `graphwar_effect_manager.rs` | 1 | 3 | `src/graphwar_effect_manager.rs` | 16 | 观测 |
+| `graphwar_entity_effect_manager.rs` | 3 | 4 | `src/graphwar_entity_effect_manager.rs` | 17 | 观测 |
 | `graphwar_event.rs` | 0 | 0 | `src/events.rs` | 2 | 观测 |
 | `graphwar_event_handler.rs` | 2 | 4 | `src/events.rs` | 2 | 观测 |
 | `graphwar_event_queue.rs` | 0 | 0 | `src/graphwar_event_queue.rs` | 5 | 观测 |
@@ -107,7 +107,7 @@
 | `graphwar_local_player_manager.rs` | 3 | 15 | `src/graphwar_local_player_manager.rs` | 12 | 观测 |
 | `graphwar_logger.rs` | 2 | 2 | `src/graphwar_logger.rs` | 4 | 观测 |
 | `graphwar_long_press_animation.rs` | 7 | 7 | `src/graphwar_long_press_animation.rs` | 11 | 观测 |
-| `graphwar_mode_manager.rs` | 2 | 6 | `src/graphwar_mode_manager.rs` | 7 | 观测 |
+| `graphwar_mode_manager.rs` | 2 | 6 | `src/graphwar_mode_manager.rs` | 15 | 观测 |
 | `graphwar_module_container.rs` | 20 | 1 | `src/graphwar_module_container.rs` | 17 | 观测 |
 | `graphwar_name_manager.rs` | 3 | 3 | `src/graphwar_name_manager.rs` | 10 | 观测 |
 | `graphwar_nodes.rs` | 11 | 1 | `src/graphwar_nodes.rs` | 17 | 观测 |
@@ -117,7 +117,7 @@
 | `graphwar_plane_pos_manager.rs` | 6 | 9 | `src/plane.rs` | 16 | 观测 |
 | `graphwar_play_screen_control.rs` | 10 | 64 | `src/graphwar_play_screen_control.rs` | 8 | 观测 |
 | `graphwar_player_config.rs` | 0 | 0 | `src/graphwar_player_config.rs` | 8 | 观测 |
-| `graphwar_player_manager.rs` | 3 | 6 | `src/graphwar_player_manager.rs` | 12 | 观测 |
+| `graphwar_player_manager.rs` | 3 | 6 | `src/graphwar_player_manager.rs` | 19 | 观测 |
 | `graphwar_player_screen_control.rs` | 8 | 22 | `src/graphwar_player_screen_control.rs` | 19 | 观测 |
 | `graphwar_rank_manager.rs` | 4 | 4 | `src/graphwar_rank_manager.rs` | 11 | 观测 |
 | `graphwar_remote_event_handler.rs` | 3 | 171 | `src/events.rs` | 2 | 观测 |
@@ -132,9 +132,9 @@
 | `graphwar_soldier_manager.rs` | 4 | 5 | `src/graphwar_soldier_manager.rs` | 15 | 观测 |
 | `graphwar_stream_buffer.rs` | 0 | 0 | `src/graphwar_stream_buffer.rs` | 22 | 观测 |
 | `graphwar_target_manager.rs` | 3 | 4 | `src/graphwar_target_manager.rs` | 12 | 观测 |
-| `graphwar_team_manager.rs` | 7 | 10 | `src/graphwar_team_manager.rs` | 24 | 观测 |
+| `graphwar_team_manager.rs` | 7 | 10 | `src/graphwar_team_manager.rs` | 31 | 观测 |
 | `graphwar_tick_handler.rs` | 2 | 3 | `src/graphwar_tick_handler.rs` | 36 | 逐位 |
-| `graphwar_turn_manager.rs` | 14 | 45 | `src/graphwar_turn_manager.rs` | 60 | 逐位 |
+| `graphwar_turn_manager.rs` | 14 | 45 | `src/graphwar_turn_manager.rs` | 70 | 逐位 |
 | `graphwar_video_writer.rs` | 3 | 4 | `src/graphwar_video_writer.rs` | 8 | 观测 |
 
 ### 2.2 非 `graphwar_` 前缀的游戏模块
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（109 个文件、2522 条 `fn`） | `a320fca5e1b65bc1f3eff12425405a293cafeb8d55a1d1f1b2e5c4581728ca5d` |
+| `src/` 树（109 个文件、2571 条 `fn`） | `efcbb96c7fec85853a5a9cc60bdc24112037a8b1ada672cadc395646f16d05f8` |
 

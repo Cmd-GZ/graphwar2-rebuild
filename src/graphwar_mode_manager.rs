@@ -47,6 +47,8 @@
 //! 注意 `0x4b07a0` 上**三个** `__FieldVisitor::expecting` 是同一地址（`14` 字节的
 //! 同一个函数体）——链接器把三个枚举的同形小函数合并了，别误读成"只有一个枚举"。
 
+use crate::events::Event;
+
 /// `axis_mode`（`docs/07` §5.2，判别值 = 声明顺序，`逐位`）。
 ///
 /// 语义：坐标轴网格画多密。`OnlyMain` 只画主轴，`EveryUnit` 每格都画。
@@ -112,12 +114,47 @@ impl TimeMode {
 ///
 /// `TurnMode` 故意**不在这里**（见模块文档）。加进来会与
 /// `graphwar_turn_manager` 形成两个真相，而机器码里没有第二个副本。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+///
+/// # 事件流（任务 40 补，`wired` 的第二件）
+///
+/// `new`（x86 `0x5186c0`）**只订阅 1 条**（`观测`）：
+///
+/// ```text
+/// 0x518753  lea rsi,'new_connection_event' / 0x518761 mov edx,0x14
+/// 0x51875a  lea r8, slot 0x9626c8 (+0x20 = 0x9626e8 → 跳板 0x5186a0 → 0x5185a0 send_all_info_events)
+/// 0x51876c  call [slot 0x9bac88] -> 0x3d38f0          ; subscribe_to_event
+/// ```
+///
+/// ⚠️ 这与 `docs/16` §41 的"15 号槽 `assembled`"相比**多一条新事实**：
+/// 该模块订阅的是 `new_connection_event`（不是四个 `*_mode_change_request`），
+/// 也就是说"收到新连接就把三个模式重播一遍"，**不**从服务器遥控里订阅模式变更。
+///
+/// `new` 同时给出 32 字节布局（`观测`，`0x5186ff`–`0x51870b`，管理体基址 = `rax+0x18`）：
+/// `+0x00` 弱自句柄 / `+0x08` 事件队列 `Rc` / `+0x10` 容器 `Weak` /
+/// `+0x18` `word 0x0301`（= 两个模式字节 `0x01/0x03`，第三个 `+0x1a = 0`）。
+/// 本类型只保留"三个模式"的语义，`+0x00..0x10` 那三个借用字段**不复原**（我方形状）。
+///
+/// 发方向 3 条（`观测`，arm64 `0x497dc8` / `0x497ec0` / `0x497e44` + `0x497f3c`）：
+/// `AxisModeInfo`(45) / `FunctionModeInfo`(46) / `TimeModeInfo`(48)。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GraphwarModeManager {
     pub axis_mode: AxisMode,
     pub function_mode: FunctionMode,
     pub time_mode: TimeMode,
+    /// 订阅名（`new` 的那一条，`观测`）。
+    pub subscribed: Vec<&'static str>,
+    /// 发件箱（判别值；载荷见 [`ModeInfoEvent`]）。
+    pub outbox: Vec<Event>,
 }
+
+impl Default for GraphwarModeManager {
+    fn default() -> Self {
+        Self::new(AxisMode::default(), FunctionMode::default(), TimeMode::default())
+    }
+}
+
+/// `new` 订阅的那一条（`0x518753` 的 `lea rsi` + `mov edx, 0x14`）。
+pub const SUBSCRIBED_EVENTS: [&str; 1] = ["new_connection_event"];
 
 /// `send_all_info_events` 一次吐哪三个事件（判别值取自 `docs/07` §4）。
 ///
@@ -133,26 +170,63 @@ pub enum ModeInfoEvent {
     TimeModeInfo(TimeMode),
 }
 
+impl ModeInfoEvent {
+    /// 这条事件在发件箱里对应的判别值（`docs/07` §3.3 的 45 / 46 / 48）。
+    pub const fn event(self) -> Event {
+        match self {
+            ModeInfoEvent::AxisModeInfo(_) => Event::AxisModeInfo,
+            ModeInfoEvent::FunctionModeInfo(_) => Event::FunctionModeInfo,
+            ModeInfoEvent::TimeModeInfo(_) => Event::TimeModeInfo,
+        }
+    }
+}
+
 impl GraphwarModeManager {
     pub fn new(axis_mode: AxisMode, function_mode: FunctionMode, time_mode: TimeMode) -> Self {
-        Self { axis_mode, function_mode, time_mode }
+        Self {
+            axis_mode,
+            function_mode,
+            time_mode,
+            subscribed: SUBSCRIBED_EVENTS.to_vec(),
+            outbox: Vec::new(),
+        }
+    }
+
+    /// `new_connection_event` 的处理（跳板 `0x5186a0` → `0x5185a0`）：三个模式全量重播。
+    pub fn handle_new_connection_event(&mut self) -> [ModeInfoEvent; 3] {
+        let events = self.send_all_info_events();
+        self.outbox.extend(events.iter().map(|e| e.event()));
+        events
+    }
+
+    /// 取走发件箱。
+    pub fn take_outbox(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// 发件箱里有几条。
+    pub fn outbox_len(&self) -> usize {
+        self.outbox.len()
     }
 
     /// 对应 `0x497dc8`。原版落值后**立即** `add_event`，不校验。
     pub fn set_axis_mode(&mut self, mode: AxisMode) -> ModeInfoEvent {
         self.axis_mode = mode;
+        self.outbox.push(Event::AxisModeInfo);
         ModeInfoEvent::AxisModeInfo(mode)
     }
 
     /// 对应 `0x497ec0`。
     pub fn set_function_mode(&mut self, mode: FunctionMode) -> ModeInfoEvent {
         self.function_mode = mode;
+        self.outbox.push(Event::FunctionModeInfo);
         ModeInfoEvent::FunctionModeInfo(mode)
     }
 
     /// 对应 `0x497e44`。
     pub fn set_time_mode(&mut self, mode: TimeMode) -> ModeInfoEvent {
         self.time_mode = mode;
+        self.outbox.push(Event::TimeModeInfo);
         ModeInfoEvent::TimeModeInfo(mode)
     }
 
@@ -163,5 +237,57 @@ impl GraphwarModeManager {
             ModeInfoEvent::FunctionModeInfo(self.function_mode),
             ModeInfoEvent::TimeModeInfo(self.time_mode),
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 订阅方向：`new`（`0x5186c0`）只订一条 `new_connection_event`。
+    #[test]
+    fn new_registers_the_single_observed_subscription() {
+        let m = GraphwarModeManager::new(AxisMode::EveryUnit, FunctionMode::NormalFunction, TimeMode::Timer1m);
+        assert_eq!(m.subscribed, vec!["new_connection_event"]);
+        assert_eq!(SUBSCRIBED_EVENTS.len(), 1, "`0x51876c` 只有一条 subscribe 调用点");
+        assert_eq!(m.outbox_len(), 0);
+        // `Default` 与 `new` 同一个形状（否则 `default()` 会静默丢掉订阅）
+        assert_eq!(GraphwarModeManager::default().subscribed, m.subscribed);
+    }
+
+    /// 发方向：三个 setter 各发一条（45 / 46 / 48），落值都能读回。
+    #[test]
+    fn setters_write_back_and_emit() {
+        let mut m = GraphwarModeManager::default();
+        m.set_axis_mode(AxisMode::EveryFive);
+        assert_eq!(m.axis_mode, AxisMode::EveryFive);
+        assert_eq!(m.outbox, vec![Event::AxisModeInfo]);
+        m.set_function_mode(FunctionMode::DiffEqFunction);
+        assert_eq!(m.function_mode, FunctionMode::DiffEqFunction);
+        assert_eq!(m.outbox.last(), Some(&Event::FunctionModeInfo));
+        m.set_time_mode(TimeMode::Timer3m);
+        assert_eq!(m.time_mode, TimeMode::Timer3m);
+        assert_eq!(m.outbox.last(), Some(&Event::TimeModeInfo));
+        assert_eq!(m.outbox_len(), 3);
+        // 判别值与 `docs/07` §3.3 全表的 45 / 46 / 48 一致
+        assert_eq!(
+            (Event::AxisModeInfo.wire_tag(), Event::FunctionModeInfo.wire_tag(), Event::TimeModeInfo.wire_tag()),
+            (45, 46, 48)
+        );
+        assert_eq!(m.take_outbox().len(), 3);
+        assert_eq!(m.outbox_len(), 0);
+    }
+
+    /// `new_connection_event` 的处理 = 三个模式全量重播（跳板 `0x5186a0` → `0x5185a0`）。
+    #[test]
+    fn new_connection_replays_three_modes() {
+        let mut m = GraphwarModeManager::new(AxisMode::OnlyMain, FunctionMode::NormalFunction, TimeMode::TimerInf);
+        let replayed = m.handle_new_connection_event();
+        assert_eq!(replayed.len(), 3);
+        assert_eq!(replayed[0], ModeInfoEvent::AxisModeInfo(AxisMode::OnlyMain));
+        assert_eq!(replayed[1], ModeInfoEvent::FunctionModeInfo(FunctionMode::NormalFunction));
+        assert_eq!(replayed[2], ModeInfoEvent::TimeModeInfo(TimeMode::TimerInf));
+        assert_eq!(m.outbox_len(), 3, "重播也要进发件箱");
+        assert_eq!(m.axis_mode, AxisMode::OnlyMain, "重播不改表");
     }
 }
