@@ -185,16 +185,27 @@ inner[+0x10] = 锁字, +0x14 = 毒标志, +0x20 = 数据指针, +0x28 = 长度
 
 ### 5.5 谁在调用掩膜测试（观测）
 
-`0x4f15b0`（Ghidra）的直接调用者只有三个：
+`0x4f15b0`（Ghidra；名字 = `GraphwarObstacleManager::is_obstacle`）的直接调用者**有 7 个**（2026-11 复扫全部可执行段的 `call rel32`；
+本行原写"只有三个"，实测漏了 4 个 `setup_level_*`）：
 
 | Ghidra 地址 | 虚地址 | 模块 | 说明 |
 |---|---|---|---|
-| `0x565a70` | `0x465a70` | `graphwar_level_generator.rs` | 生成关卡时避免重叠放置 |
-| `0x567530` | `0x467530` | `graphwar_path_calculator.rs` | **路径侧也要查掩膜** |
+| `0x565a70` | `0x465a70` | `graphwar_level_generator.rs` | 生成关卡时避免重叠放置（由关卡开场驱动 `0x466d20` 调） |
+| `0x567530` | `0x467530` | `graphwar_path_calculator.rs` | **`calculate_paths`**（§5.6 定名）；路径侧也要查掩膜 |
+| `0x59eb90` | `0x49eb90` | `graphwar_level_manager.rs` | `setup_level_2`（唯一锚） |
+| `0x59fea0` | `0x49fea0` | `graphwar_level_manager.rs` | `setup_level_4`（唯一锚） |
+| `0x5a2dc0` | `0x4a2dc0` | `graphwar_level_manager.rs` | `setup_level_7`（唯一锚） |
+| `0x5a6020` | `0x4a6020` | `graphwar_level_manager.rs` | `setup_level_12`（唯一锚）；**只**查掩膜，不调 `calculate_paths` |
 | `0x5eb57d` | `0x4eb57d` | 未归属 | 位于某函数体内，未单独命名 |
 
-`0x567530` 值得注意：它**不调用** `calculate_path`（`0x4c2530`），却调用掩膜测试，
-说明它不是我们已对拍的那条纯算法，而是**带环境判定的另一条路径**。
+`0x567530` 值得注意：它**不调用采样器 `0x3c2530`**（Ghidra `0x4c2530`），却调用掩膜测试，
+所以它不是我们已对拍的那条纯算法，而是**带环境判定的另一条路径**。
+
+> ⚠ **本节原写"它不调用 `calculate_path`（`0x4c2530`）"，这句自相矛盾**：
+> `0x4c2530`（Ghidra）= ELF `0x3c2530` 是**采样器**（1,680 B，**零** Location 锚、名字未知），
+> 而 `calculate_path`/`calculate_paths` 这个名字在 2.0.60 上锚到的是 **`0x467530` 自己**
+> （`02-module-map.md` §20.5 / §20.7 第 3、4 条）。⇒ 准确写法是"**不调用采样器 `0x3c2530`**"。
+> 身份与用途见 §5.6、§5.7。
 
 它内部的一处采样很有信息量（观测，`0x567530` 偏移附近）：
 
@@ -208,47 +219,164 @@ cVar10 = FUN_004f15b0(plVar11 + 3, &local_78);
 若 `idx` 是 0.5 单位网格的编号，则 `idx*0.5 + 0.25` 正好是该格中心
 （50×30 的棋盘 → 100×60 个格）。换算回像素就是每格 10 px。
 
-**这提示碰撞扫描的步长可能是 0.5 游戏单位（10 px），而不是曲线自身的 0.01 弦长。**
+~~**这提示碰撞扫描的步长可能是 0.5 游戏单位（10 px），而不是曲线自身的 0.01 弦长。**~~
+→ **已否证（2026-11）**：这个 0.5 格是**关卡构造侧**的枚举（§5.6 的"连带更正"、§7 第 7 条），
+子弹那一路仍是"弦长 `0.01` + 逐点查掩膜"。
 
 > 状态：**推断，未证实**。`0x567530` 有 952 行且 Ghidra 标注
 > `non_contiguous: true`（热冷代码分离），本次没有逐行读完，
 > 所以"0.5 单位扫描"只能算由这一处除法/偏移推出的假设，需要单独验证。
 
-### 5.6 `0x567530` 的性质（推断，未证实）
+### 5.6 `0x567530` 的身份：**就是 `GraphwarPathCalculator::calculate_paths`**（裁定 A）
 
-继续看它的内部特征：
+> **口径先说清**：本文件里 `0x5xxxxx` 是 **Ghidra/REA 地址**、`0x4xxxxx` 是 **ELF 虚地址**，
+> 恒差 `0x100000`。所以 **Ghidra `0x567530` = ELF `0x467530`**（§5.5 的表格就是这么换算的）。
+> 上一版本节把它当成一个"未定名的通视检查"来推语义——**身份这一步就错了**：
+> `0x467530` 从一开始就是本模块的 `calculate_paths`，不存在"另一个函数"。
 
-| 观测 | 含义 |
-|---|---|
-| 全函数只有**一处**量化式 `0.5*idx + 0.25` | 栅格枚举只在一个地方做 |
-| 出现 `0x646f72616e646f6d`（XOR 常量） | Rust `HashMap` 的 SipHash key（"random…"），说明它在查表/缓存 |
-| 调用掩膜点测试，但**不调用** `calculate_path` | 它不是"算曲线"，而是"查通视" |
-| 952 行、`non_contiguous` | 热冷分离，主体逻辑偏大 |
+**要裁的只有两选一**：**A** = 文档的 `0x567530` 只是 Ghidra 记法，指的就是 ELF `0x467530`；
+**B** = 文档描述的是另一个函数、地址抄错了（那 7 个调用者只是同时调用两者）。
+**裁定：A**，下面两条证据各自独立成立：
 
-**推断**：它更像一个**线段通视检查**（line of sight）——把一条线段按 0.5 单位的栅格
-枚举出经过的格子中心，逐格查掩膜，回答"这两点之间有没有障碍"。
+**两条独立证据**
 
-### 5.7 上一轮的用途推断被推翻（自我更正）
-
-上一轮我写过"服务于 AI 选弹道"。查了调用者之后，这个说法**不成立**：
-
-| 调用者（Ghidra） | 虚地址 | 模块 |
+| # | 证据 | 档位 |
 |---|---|---|
-| `0x5661a0` | `0x4661a0` | `graphwar_level_generator.rs` |
-| `0x5a0db0` | `0x4a0db0` | `graphwar_level_manager.rs` |
-| `0x5a4c80` | `0x4a4c80` | `graphwar_level_manager.rs` |
-| `0x5a5940` | `0x4a5940` | `graphwar_level_manager.rs` |
-| `0x5a73b0` | `0x4a73b0` | `graphwar_level_manager.rs` |
-| `0x5a8320` | `0x4a8320` | `graphwar_level_manager.rs` |
-| `0x5aafc0` | `0x4aafc0` | `graphwar_level_manager.rs` |
+| ① **名字锚** | `graphwar_path_calculator.rs` 自己的 **9 个** `panic::Location` 锚**全部**落在 `0x467530` 体内（`45:108 / 49:38 / 59:108 / 60:113 / 65:45 / 66:48 / 86:37 / 86:70 / 105:71`，全在 `+0x1138` 起的冷 panic 块）；x86 与 arm64 两侧锚集合逐个相同，arm64 符号表里该模块**只有** `GraphwarPathCalculator::calculate_paths` 一个符号（4,812 B / x86 5,408 B） | `观测` |
+| ② **内部特征** | 本节旧表列的**四项观测全部命中的是 `0x467530`**（见下表 + 逐条反汇编）；且全 `.text` 里**同时**引用 `0.5`(`0x19ca70`) 与 `0.25`(`0x19c920`) 的函数**只有 `0x467530` 一个** ⇒ 假设 B（"描述的是另一个函数"）在二进制里没有候选 | `观测` |
 
-**7 个调用者全部落在关卡生成/关卡管理**，没有一个是 `computer_player_manager`。
-所以它服务的是**关卡构造与校验**（例如：新生成的地图上两点间是否通视、
-士兵是否被障碍围死），而不是 AI 选弹道。
+**§5.5 引的那段 Ghidra 伪码，在 `0x467530` 上的逐条对应**（capstone 直读字节，`0x467bde` 起）：
 
-保留的部分：它确实是通视检查（调用掩膜点测试、按栅格枚举、不调用采点算法）。
-撤回的部分：消费者是谁。教训同上——**调用关系才是定用途的证据**，
-仅凭函数内部特征猜用途会猜错。
+```
+0x467bde  cvtdq2pd xmm0, xmm0          ; (double)(i32,i32) 打包格坐标  ← local_48 / local_48>>32
+0x467be6  mulpd    xmm0, [0x19ca70]    ; * 0.5    ← 全函数唯一一次引用 0.5
+0x467bee  addpd    xmm0, [0x19c920]    ; + 0.25   ← 全函数唯一一次引用 0.25
+0x467bf6  movapd   [rsp+0x150], xmm0
+0x467bff  lea      rsi, [rsp+0x150]    ; &local_78
+0x467c07  call     0x3f15b0            ; = Ghidra 0x4f15b0，掩膜单点测试
+0x467c2b  test     al, al
+0x467c2d  jne      0x468360            ; 命中 → 走另一支
+```
+
+⇒ `cVar10 = FUN_004f15b0(plVar11 + 3, &local_78)` 就是上面这几条指令。**地址从来没错，错的是身份判断。**
+
+**内部特征复核（保留什么、更正什么）**
+
+| 观测（本次复扫） | 保留 / 更正 |
+|---|---|
+| 全函数**唯一**一处 `0.5*idx + 0.25`（`0.5`、`0.25` 各只被引用 1 次） | **保留**（原观测正确） |
+| 四个 SipHash 初始常量全在：`0x736f6d6570736575 / 0x646f72616e646f6d / 0x6c7967656e657261 / 0x7465646279746573`（各 4 次） | **保留**，但含义要收敛：能证的是"**内联的 `HashMap` 默认 hasher（SipHash-1-3）在此函数里**"，"查表/缓存"仍属推断 |
+| 调用掩膜点测试 `0x3f15b0`，**1 处**（`0x467c07`） | **保留** |
+| **不**调用采样器 `0x3c2530` | **保留**（原句把它叫 `calculate_path`，见 §5.5 的 ⚠） |
+| 952 行、`non_contiguous` | **改为实测**：**5,408 B / 1,229 条指令**，冷块从 `+0x1138` 起（9 个锚都在那里） |
+| 引用的浮点常量 | 只有 `0.25`、`0.5`、`±2147483648`（`i32` 饱和上下界）；**没有** `0.001 / 6.0 / 15.0 / 25.0 / 200.0`（与 `02` §20.6 一致 ⇒ 采样核心没被内联进来） |
+
+**它到底算什么（推断，不选边）**：被调者的形状是清楚的——
+
+| 被调者 | 次数 | 大小 | 名字（`name_to_addr.tsv`） | 作用 |
+|---|---|---|---|---|
+| `0x3f15b0` | 1 | 496 B | **`GraphwarObstacleManager::is_obstacle`** | 掩膜单点测试（已与真二进制对拍，§5.3） |
+| `0x3c62b0` | 2 | 528 B | **`GraphwarPlanePosManager::get_position`** | 读一个平面坐标 |
+| `0x3c66a0` | 2 | 880 B | **`GraphwarPlanePosManager::get_all_positions`** | 一次读全部平面坐标 |
+| `0x46c9e0` / `0x46ebe0` | 2 / 1 | 544 B | 未命名（`graphwar_module_container.rs`，锚在第 30 行） | 取模块句柄；入口处 `test rax,rax; je 0x4686db`，而 `0x4686db` 正是 `45:108` 那个锚 ⇒ 一次带 `expect` 的取模块 |
+| `0x43fd40` / `0x440280` / `0x4421a0` | 1 / 1 / 4 | 416 / 528 / 400 B | 未命名；全 `.text` **各只有本函数**一个调用者 | 本函数私有辅助（格集合 / 容器一类） |
+| `0x94b340` | 1 | 144 B | —（4,703 个调用者） | panic / unwind 胶水 |
+
+两种读法**都是推断**，本轮不选边（缺的证据写在段末）：
+
+- **(a) 线段通视**（原读法）：把两点间线段按 0.5 格枚举，逐格查掩膜。
+- **(b) 格上连通/可达**（本次新增候选）：被枚举的格坐标是从一个 **8 字节步长的数组**里
+  按索引读出来的（`movsd xmm0,[rcx+rbx*8-8]` + `cvtdq2pd`，元素就是打包的两个 `i32`），
+  **不是** Bresenham 沿线段增量算的；它同时要 `get_all_positions`（单位在哪）和
+  `is_obstacle`（格上有没有障碍），还带一个内联 `HashMap`，而且"**每个关卡 `setup_*` 各调一次**"
+  （§5.7）——更像在格图上做一次**连通/可达**计算（洪水填充 / 连通分量一类），
+  而不是回答"这两点通不通"。
+
+**要定案缺什么**：把 `0x467c2d` 两支之后的循环读完（那个数组是谁填的、`HashMap` 的 key 是什么）。
+本轮只逐条读了入口 + 量化点 + 冷块，**没有**逐条读完全部 1,229 条指令，所以不选边。
+
+> 连带更正：§5.5 末尾"碰撞扫描的步长可能是 0.5 游戏单位（10 px）"这个推论**不成立**，
+> 理由见 §7 第 7 条——这个 0.5 格是**关卡构造侧**的枚举，不对局内子弹的碰撞扫描负责。
+
+
+### 5.7 谁在调用它：**17 个调用点，全部是关卡构造**（旧表的 7 行作废）
+
+用 capstone 扫**全部可执行段**（`.text` / `__lcxx_override` / `.plt`）的 `call rel32`，
+指向 ELF `0x467530` 的指令**共 17 条**，落在 **17 个不同函数**里；`jmp rel32`（尾调用）**0 条**。
+把每个函数起点喂给 `LocXrefs.locs_of_func()`，取所引用 `panic::Location` 的**文件名众数**
+即模块（17 个函数的众数票都是**单一文件全票**，没有分裂）：
+
+| # | 调用点 | 函数起点 | 名字（`name_to_addr.tsv`，均为**双向唯一锚**） | 模块 | `src/文件.rs:行` |
+|---|---|---|---|---|---|
+| 1 | `0x466207` | `0x4661a0` | `GraphwarLevelGenerator::generate_level` | `graphwar_level_generator.rs` | `:94` |
+| 2 | `0x49ee5f` | `0x49eb90` | `GraphwarLevelManager::setup_level_2` | `graphwar_level_manager.rs` | `:293` |
+| 3 | `0x4a014f` | `0x49fea0` | `setup_level_4` | `graphwar_level_manager.rs` | `:441` |
+| 4 | `0x4a0e1a` | `0x4a0db0` | `setup_level_5` | `graphwar_level_manager.rs` | `:540` |
+| 5 | `0x4a1e44` | `0x4a1cd0` | `setup_level_6` | `graphwar_level_manager.rs` | `:615` |
+| 6 | `0x4a306f` | `0x4a2dc0` | `setup_level_7` | `graphwar_level_manager.rs` | `:721` |
+| 7 | `0x4a3f5d` | `0x4a3df0` | `setup_level_8` | `graphwar_level_manager.rs` | `:817` |
+| 8 | `0x4a4cea` | `0x4a4c80` | `setup_level_9` | `graphwar_level_manager.rs` | `:918` |
+| 9 | `0x4a54fd` | `0x4a5390` | `setup_level_10` | `graphwar_level_manager.rs` | `:995` |
+| 10 | `0x4a59aa` | `0x4a5940` | `setup_level_11` | `graphwar_level_manager.rs` | `:1099` |
+| 11 | `0x4a653d` | `0x4a63d0` | `setup_level_13` | `graphwar_level_manager.rs` | `:1258` |
+| 12 | `0x4a741a` | `0x4a73b0` | `setup_level_14` | `graphwar_level_manager.rs` | `:1362` |
+| 13 | `0x4a838a` | `0x4a8320` | `setup_level_15` | `graphwar_level_manager.rs` | `:1445` |
+| 14 | `0x4aa074` | `0x4a9f00` | `setup_level_17` | `graphwar_level_manager.rs` | `:1590` |
+| 15 | `0x4ab02a` | `0x4aafc0` | `setup_level_18` | `graphwar_level_manager.rs` | `:1704` |
+| 16 | `0x4abf6a` | `0x4abf00` | `setup_level_19` | `graphwar_level_manager.rs` | `:1785` |
+| 17 | `0x4aceaa` | `0x4ace40` | `setup_level_20` | `graphwar_level_manager.rs` | `:1867` |
+
+**分布**：`graphwar_level_manager.rs` **16** / `graphwar_level_generator.rs` **1** / 其它 **0**。
+`graphwar_game_state_manager` / `graphwar_shot_calculator` / `graphwar_game_server` /
+`graphwar_computer_player_manager` / `graphwar_plane` 一个都没有。
+
+**裁定（本篇最该被引用的一句）**：**对局路径（开火 → 弹道 → 命中 → 回合）不经过它，
+不需要为实现弹道/命中而复原它。** 它是**关卡构造/校验**专用：
+`generate_level` 生成关卡时调一次；21 关的 `setup_level_N` 里 **16 关**各调一次
+（漏掉的是 **0 / 1 / 3 / 12 / 16** 这 5 关——其中 `setup_level_12`（`0x4a6020`）是
+**直接查掩膜**、不走本函数，见 §5.5 的表）。
+
+> 两件事先说清，免得被误读：
+> ① 「不在对局路径上」≠「不属于复原范围」——按 `AGENTS.md` §0 第 1 条，关卡构造本身就是源码，
+>    这 17 个调用者全在复原分母里。本条只回答"**要不要为弹道/命中实现它**"：不要。
+> ② 「直接调用只有关卡侧」必须再排一次**间接派发**才算结论，见下。
+
+#### 它会不会被间接调用？（三种取址形态都查了，**没有**）
+
+`AGENTS.md` 警告过：Rust 大量函数指针派发，"直接调用为零 ≠ 没被使用"。所以除了 `call rel32`，
+取址的三条路也全查了（本版 `.rela.dyn` 的 **24,501** 条 `R_X86_64_RELATIVE` 逐条扫）：
+
+| 取址形态 | `0x467530` 命中数 |
+|---|---|
+| `R_X86_64_RELATIVE` 槽（vtable / `Box<dyn Fn>` / 函数指针表）的 addend | **0** |
+| `lea r,[rip+X]`、`mov r64, imm64`（`.text` + `__lcxx_override` + `.plt`） | **0** |
+| `call rel32` / `jmp rel32` 立即数 | **17 / 0** |
+
+**正对照**（证明"0 命中"不是方法失灵）——同一遍扫描里，真正走函数指针的东西**都**在槽表里：
+
+| 函数 | 槽 |
+|---|---|
+| 采样器 `0x3c2530` | `0x9bac98`（与 `05-shot-pipeline.md` §1 记的地址一致） |
+| 开火结算 `0x3c2bc0` | `0x9bacb0` |
+| `generate_level` `0x4661a0` | `0x957fc8`（旁边 `0x957fc0` 是 32 B thunk `0x47b4b0` 的槽，thunk 体内 `call 0x4661a0`） |
+
+⇒ 函数指针形态在这份 `.so` 里是**可观测的**，而 `calculate_paths` 一个槽都没有：
+它**只**能被上表那 17 条 `call` 调用，没有第四种入口。
+
+**复跑方式**（本轮新增脚本，一条命令重算上表）：
+
+```bash
+../.venv/bin/python tools/los_callers.py 0x467530            # 调用者 → 模块 / 名字
+../.venv/bin/python tools/los_callers.py 0x467530 --callees  # 被调者 → 模块
+```
+
+**保留的部分**：它确实是"带环境判定的代码"（查掩膜 + 读平面坐标），不是纯算法。
+**撤回的部分**两条：① **身份**——它就是 `calculate_paths` 自己，不是"另一条路径"；
+② **规模与消费者**——不是"7 个调用者、语义笼统的通视检查"，而是
+"17 个调用者、全部是 `setup_level_N` / `generate_level` 的关卡构造"。
+教训再加一条：**先查名字锚点，再谈用途**——§5.5 把一个有 9 个锚的函数当"未命名函数"推语义，
+后面每一句都跟着错，连"它不调用 `calculate_path`"都成了循环论证。
+
 
 ### 5.8 这条结论的分量
 
@@ -333,9 +461,15 @@ void f(double x, double y, double size, long mask_ptr, ulong mask_len, byte fill
 5. 子弹动画：点序列（`04-path-sampling.md`）如何映射到屏幕，按索引还是按弧长推进。
 6. ~~命中判定是否就是"点落进 ±r 方框"~~ → **已否证**：真实机制是 §6 的位图查表。
    方框（§4）只是另一处用途（UI/高亮），不是判定器。
-7. **碰撞扫描步长**：`0x567530` 出现 `0.5*idx + 0.25`，疑似 0.5 单位网格（10 px）。
-   若成立，则子弹可能"穿过"比 10 px 更薄的障碍——需要用真二进制或游戏内实验验证。
-8. `0x567530` 与 `0x4c2530` 的关系：哪个才是开火时真正使用的那条路径？
+7. ~~**碰撞扫描步长是不是 0.5 单位**~~ → **已否证（2026-11）**：`0x567530` 的
+   `0.5*idx + 0.25` 属于**关卡构造侧**的格枚举（`calculate_paths`，§5.6），
+   而且它**不在对局路径上**（§5.7 的 17 个调用者全是 `setup_level_N` / `generate_level`）。
+   子弹那一路的扫描仍是"采样弦长 `0.01` + 逐点查掩膜"（§5.4），没有 0.5 单位步长的证据。
+8. ~~`0x567530` 与 `0x4c2530` 的关系~~ → **已答**：`0x567530`(Ghidra) = `0x467530` =
+   `GraphwarPathCalculator::calculate_paths`（9 个锚，§5.6），关卡构造专用；
+   `0x4c2530`(Ghidra) = `0x3c2530` 是**采样器**（1,680 B，零 Location 锚、名字未知），
+   **开火时真正用的是它**——它经函数指针槽 `0x9bac98` 被间接调用
+   （`05-shot-pipeline.md` §1；本轮的槽表复核再次确认）。
 
 ## 8. 方法学备忘（踩过的坑）
 

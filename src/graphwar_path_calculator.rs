@@ -1,9 +1,18 @@
 //! 点序列采样：等弦长二分追赶。
 //!
-//! 对应二进制：`src/graphwar_path_calculator.rs` `@0x3c2530`
-//! （Ghidra/REA 地址 `0x4c2530`）。算法见 `docs/04-path-sampling.md`。
+//! 对应二进制：**采样器** `@0x3c2530`（Ghidra/REA 地址 `0x4c2530`）。
+//! 算法见 `docs/04-path-sampling.md`。
 //!
 //! 移植自上游已验证的 `graphwar_curve.py::calculate_path`。
+//!
+//! ⚠ **名字归属（别被文件名骗）**：本文件用的是原版模块名
+//! `graphwar_path_calculator.rs`，但 2.0.60 上该模块的 **9 个** `panic::Location` 锚
+//! **全部**落在 `0x467530` = `GraphwarPathCalculator::calculate_paths`（5,408 B），
+//! **不是**这里的 `0x3c2530`。`0x3c2530` 的全函数体**零** Location 锚，所以它的符号名
+//! 至今是 `未知`；本文件装它是因为**行为**（`hi = mid2` 修好后 24/24 用例整条点序列
+//! 逐位相等）与上游参考实现一致，**不是因为名字**。
+//! `calculate_paths` 本体则只被关卡构造调用（`setup_level_N` ×16 + `generate_level` ×1，
+//! 局内开火/弹道路径零调用），见 `docs/08-plane.md` §5.6–§5.7 与 `docs/02-module-map.md` §20.5。
 
 use crate::math_function::{eval, hypot};
 use crate::{Token, LENGTH_TOL, MAX_ABS_X, MAX_ABS_Y, TOTAL_LEN};

@@ -111,7 +111,7 @@
 | 25 s 墙钟截断 / 多客户端竞态 | **B 类**：本质不由输入决定，只能定退化口径 | [`06`](06-verification.md) §17 |
 | 目标「打不全就全部复原」的**判定点** | **未知**：形状已钉住（只能翻 alive + 广播 `LifeInfo`；不重建实体、不恢复障碍洞），但哪一刻、什么条件没找到；397 份回放里 **0 次部分命中** | [`15`](05-shot-pipeline.md) §4 |
 | 音效 ↔ 事件的映射 | **未知**：播放链路、音量、静音都逐位；"哪个事件放哪个音"证不到 | [`17`](17-resources.md) §5 |
-| 通视检查 `0x567530` | 语义定为"关卡用的通视检查"，但没有调用点证明对局里用到 | [`02`](02-module-map.md) |
+| ~~通视检查 `0x567530`~~ → **`calculate_paths`（已定名）** | `0x567530`(Ghidra) = `0x467530` = `GraphwarPathCalculator::calculate_paths`（9 个 Location 锚；旧文档的"通视检查"只是语义猜测）。**对局不用**：17 个直接调用点全部是关卡构造（`setup_level_N` ×16 + `generate_level` ×1），`game_state`/`shot_calculator`/`game_server`/`computer_player_manager`/`plane` 零调用；函数指针三条取址形态（RELATIVE 槽 / `lea` / `imm64`）全 0 命中。⇒ **弹道与命中不需要实现它** | [`08`](08-plane.md) §5.6–5.7 |
 | 掩膜的持有者与生命周期 | 未知（带锁结构，不知谁在何时重建） | [`08`](08-plane.md) §7 |
 | 段位怎么算 | `rank_manager` 里算不出来（无除法/取模/阈值表）；`RankInfo` 字段数 2 vs 3 **未收敛** | [`02`](02-module-map.md) §15 |
 | 弹道用什么原语画 | `draw_polyline` 字符串在 `.so` 里根本不存在 | [`16`](06-verification.md) §12 |
