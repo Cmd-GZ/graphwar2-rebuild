@@ -8830,15 +8830,15 @@ python3 tools/check_doc_refs.py                       # OK（本节的小节号�
 
 | 档位 | 判据（**按序判断，第一个命中者为准**） | 现值 |
 |---|---|---|
-| `wired` | 已接容器 **+** 已接事件流 **+** 有最小交互断言（`RootWiring::interaction_selftest` 覆盖这一槽） | **4** |
+| `wired` | 已接容器 **+** 已接事件流 **+** 有最小交互断言（`RootWiring::interaction_selftest` 覆盖这一槽） | **4** → **10**（§50） |
 | `layout` | 原版字段布局**已逐字段解出**（有证据档），但**不满足** `wired` | **2** |
-| `assembled` | 容器里装的是**我方复原类型**（能按类型取回并调用），但**不满足**上面两条 | **15** |
+| `assembled` | 容器里装的是**我方复原类型**（能按类型取回并调用），但**不满足**上面两条 | **15** → **9**（§50） |
 | `stub` | 以上都不是：**我方形状占位**，原版字段布局**未知** | **1** |
 
 ```text
 结构轴：stub（布局未知） ──→ layout（布局逐字段解出）
 行为轴：assembled（装上我方复原类型） ──→ wired（+ 事件流 + 最小交互断言）
-一个槽只报**它达到的更高那一档**；两条轴都到顶 = wired（4 + 2 + 15 + 1 = 22）。
+一个槽只报**它达到的更高那一档**；两条轴都到顶 = wired（任务 40 起：10 + 2 + 9 + 1 = 22）。
 ⇒ "结构已解但行为未做" = layout；"结构都没解" = stub —— 这就是本轮要根治的那个模糊。
 ```
 
@@ -8884,11 +8884,14 @@ python3 tools/check_doc_refs.py                       # OK（本节的小节号�
 
 ### 47.3 22 个槽的档位（现值）
 
+> ⚠️ **任务 40 已改**（§50）：`wired` 4 → **10**、`assembled` 15 → **9**。下表是任务 28 当时的
+> 快照，保留作对照；**现值请看 §50.8**。
+
 | 档位 | 槽 | 依据 |
 |---|---|---|
-| `wired`（4） | `TickHandler` / `TargetManager` / `LifeManager` / `ObstacleManager` | §44.2 的订阅/发事件表 + `interaction_selftest` 的 4 / 5 / 5 / 7 条 |
+| `wired`（4 → **10**） | `TickHandler` / `TargetManager` / `LifeManager` / `ObstacleManager`（§44.2）+ 任务 40 的 6 个（§50.2） | §44.2 / §50.2 的订阅/发事件表 + `interaction_selftest` 的 4 / 5 / 5 / 7 条与 6 / 6 / 7 / 5 / 7 / 7 条 |
 | `layout`（2） | `ClientConnectionHandler`（§47.2）/ `FunctionManager`（§46.2） | 布局逐字段解出，行为没做完 |
-| `assembled`（15） | 其余 15 个（`LocalPlayerManager` / `PlayerManager` / `SoldierManager` / `GameStateManager` / `TeamManager` / `TurnManager` / `EffectManager` / `ModeManager` / `GraphicsManager` / `EntityEffectManager` / `ComputerPlayerManager` / `FunctionHistoryRecorder` / `NameManager` / `ColorManager` / `RankManager`） | 容器里是我方复原类型，但没接事件流 / 没有最小交互断言 |
+| `assembled`（15 → **9**） | 任务 40 之后剩 `LocalPlayerManager` / `SoldierManager` / `GameStateManager` / `GraphicsManager` / `ComputerPlayerManager` / `FunctionHistoryRecorder` / `NameManager` / `ColorManager` / `RankManager` | 容器里是我方复原类型，但没接事件流 / 没有最小交互断言（`GameStateManager` 的理由见 §50.4） |
 | `stub`（1） | `PlanePosManager` | 布局未知 |
 
 `SlotKind`（容器类型来源）仍是 **17 + 5 = 22**，一行没变；两个轴的对应关系见 §47.1 末尾那段。
@@ -9476,3 +9479,221 @@ spike_class_check   23 passed, 0 failed
 | 特效时长 | **我方选择** | 原版只给 `start_tick`；`retain` 的判据是**推断** |
 | 障碍坐标换算 | **观测** | 掩膜是 1000×600 画布像素（`plane::CANVAS_W/H`），棋盘单位 → 像素走 `px = 20x + 500`、`py = 300 − 20y`、`r_px = 20r`（`to_pixel` 的同一套数） |
 | `--headless` 下的画面对不对 | **测不到** | 视口 64×64、没有渲染器；像素级只能靠有限窗口截图（`docs/16` §43.5 的办法），本轮**没做**截图 |
+
+## 50. 第二批 6 个 manager 接上容器 + 事件流 + 最小交互（2026-11，任务 40）
+
+**一句话**：§44 让 5 个 manager 从"有键"到"能交互"，§47 把档位词表定成四档。本节把
+**另外 6 个**（`turn` / `player` / `team` / `mode` / `entity_effect` / `effect`）按同一口径接上：
+**容器 + 事件流（订阅/发两个方向都指到指令）+ 一次最小交互**，档位从 `assembled` 抬到 **`wired`**。
+`assemble_check.gd` 从 **203 条扩到 213 条**，新增的 10 条里有 38 个"交互后读回"的值
+（与 `root_wiring.rs` 的单测**逐字相同**）。
+
+> 档位口径同 §42 / §44 / §47：**逐位** = 与真二进制逐字节/逐位对拍；**观测** = 能指到反汇编地址 /
+> 指令级读写；**推断** = 有依据未证；**未知** = 没解出来。`cargo test` / `assemble_check.gd` 的条数
+> **只是回归保护**，不是复原证据。
+
+### 50.0 先说"没做到"的部分（免得被下面那张表误导）
+
+| 项 | 现状 | 档位 |
+|---|---|---|
+| `GraphwarGameStateManager`（296 B）的**事件层** | **没接**：容器里装的是 `game::Match`，它的字段全在 `src/game.rs`，本轮该文件是**禁区**（有人正在 `execute_results` 上干活）⇒ 这一槽**留在 `assembled`** | 缺：`Match` 的 7 条订阅 + 发方向落进 `src/game.rs` |
+| `Match` 的 7 条订阅（`new_connection_event` / `entity_removed_event` / `tick_event` / `connection_removed_event` / `function_points_event` / `skin_graphics_info_event` / `chat_message_event`） | 名字**已有证据**（`docs/14` §11.7 的 `.rodata` 逐条 `lea`，`0x477bc0`，`fixtures/name_to_addr.tsv` 里 7 行 `subscribe_to_events_event_handler`），但**代码没接** | 订阅名 `观测`，接线 `未知`（禁区） |
+| `turn_manager::send_all_info_events` 的**载荷** | **我方形状**：`0x462fe0` 能确证"加锁遍历 + 一条 `add_event`"，载荷构造没解（它**不**调 `get_current_turn_players`/`get_current_turn_soldiers`） | **推断**（见 §50.7） |
+| 6 个 manager 各自的**原版字段布局** | 只有 `ModeManager` 这一轮新解到 32 B（`+0x00/0x08/0x10` 三个借用字段 + `+0x18` 两个模式字节）；其余 5 个**仍是我方形状** | 结构轴 `未知`/`部分观测`（**不**因升到 `wired` 而变成"布局已复原"，见 §47.1 读法 1） |
+| 每条订阅**闭包函数体**的逐指令语义 | 只有 `entity_effect`（§46 已有的 `:67:30` / `:77:18`）与 `player`（§3/§4 的 `逐位`）跳到"处理器 = `send_all_info_events` / `handle_entity_removed_event`"这一层 | 处理器**绑定** `观测`；闭包体内**逐条**语义多数 `未知` |
+
+### 50.1 本轮动了哪些文件
+
+| 文件 | 增/改 | 内容 |
+|---|---|---|
+| `src/graphwar_turn_manager.rs` | +接线层 | `SUBSCRIBED_EVENTS`（2 条）+ `subscribed` / `outbox` + `begin_turn` 发 `TurnInfo`(43) + `handle_entity_removed_event` + `send_all_info_events` / `handle_new_connection_event` + `take_outbox` / `outbox_len` + 5 条单测（轮转/判决/分队算术**一行没动**） |
+| `src/graphwar_player_manager.rs` | +接线层 | `subscribed` / `outbox` + `add_player`/级联各发一条 + `handle_new_connection_event` + `take_outbox` / `outbox_len` + 3 条单测（`SUBSCRIPTIONS` 常量原来就有，**这次真的用上了**） |
+| `src/graphwar_team_manager.rs` | +接线层 | `subscribed` / `outbox`（`Vec<TeamEventKind>`，理由见 §50.7 第 1 条）+ `handle_new_connection_event` + `take_outbox` / `outbox_len` + 3 条单测（`pick_team_from` 的算术**一行没动**） |
+| `src/graphwar_mode_manager.rs` | +接线层 | `SUBSCRIBED_EVENTS`（1 条）+ `subscribed` / `outbox` + 三个 setter 各发一条 + `handle_new_connection_event` + `ModeInfoEvent::event()` + `take_outbox` / `outbox_len` + 3 条单测；`Copy` 派生**去掉**（`Vec` 不是 `Copy`），`Default` 改成手工（否则 `default()` 会静默丢订阅） |
+| `src/graphwar_entity_effect_manager.rs` | +接线口 | `handle_new_connection_event`（= `send_all_info_events` 的同义入口）+ `take_outbox` / `outbox_len` + 3 条单测（`outbox` / `subscribed` / 两个处理器原来就有） |
+| `src/graphwar_effect_manager.rs` | +接线口 | `handle_tick_event(tag, now)`（判别值闸 0）+ `take_outbox` / `outbox_len` + `Default` 改手工 + 2 条单测（`tick` / 寿命 3600 **一行没动**） |
+| `src/_scaffold/root_wiring.rs` | 改 | 2 个新取回口（`effect_manager` / `entity_effect_manager`）+ `interaction_selftest` 追加 38 条 + `Wired::status()` 6 个槽 → `wired` + 四档计数 4/2/15/1 → **10/2/9/1** + 3 条新单测 + 文档表同步 |
+| `client/tools/assemble_check.gd` | +10 条 | `WIRED_TIER` 6 个槽 + `TIER_TALLY` + `expected_probe` 27 → **65** 条 + 10 条单值/事件流断言 |
+| `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` | 重跑（**派生**） | `src_fns` **2504 → 2553**、`src_tree_sha256` 跟着变；**527/527 行与每模块数字一行未变** |
+| `docs/16-client.md` | +本节 | — |
+
+❌ `src/game.rs` / `src/lib.rs` / `client/src/**` / 除这 6 个之外的 manager / 任何既有断言 **一行没动**。
+既有 27 条交互读数**一个字都没改**（新 38 条是**追加**在末尾），所以 §44 的验收串仍然原样全绿。
+
+### 50.2 6 个 manager：订阅什么、发什么（全部 `观测`，x86 2026-08-28）
+
+复算工具：`../.venv/bin/python tools/addr_probe.py dis <vaddr>`（本机 capstone，离线）+ `callers <vaddr>`。
+每条订阅的判据是**三件事同时成立**：`new` 里 `lea rsi,'<名字>'`、`mov edx,<len>`
+（= `strlen`）、`call [slot 0x9bac88] -> 0x3d38f0`（`GraphwarEventHandler::subscribe_to_event`）；
+处理器判据是"`lea r8` 那个槽 `+0x20` 指向的跳板 → 哪个函数"。
+
+| manager | 原版 `new` | 订阅（按调用序，名字 / len / 调用点） | 处理器 | 发出的事件（tag） | 交互条数 | 档位 before → after |
+|---|---|---|---|---|---|---|
+| `graphwar_turn_manager` | `0x463790` | `new_connection_event` /`0x14`/ `0x463815`；`entity_removed_event` /`0x14`/ `0x463866` | `0x462fe0` / `0x463580` | `TurnInfo`(**43**)：`next_turn` `0x46406b`–`0x464072`（活射手）/ `0x464016`–`0x464021`（`{p,0}`） | **6** | `assembled` → **`wired`** |
+| `graphwar_player_manager` | `0x455410` | `new_connection_event` /`0x14`/ `0x455495`；`entity_removed_event` /`0x14`/ `0x4554e6` | `0x455160` / `0x455250` | `PlayerInfo`(**13**)（`add_player` / `send_all_info_events`）、`ConnectionRemoved`(**6**)（级联）——与模块文档 §3/§4 的 `逐位` 结论一致 | **6** | `assembled` → **`wired`** |
+| `graphwar_team_manager` | `0x3c1fc0` | `new_connection_event` /`0x14`/ `0x3c2045`；`entity_removed_event` /`0x14`/ `0x3c2096` | `0x3c1cf0` / `0x3c1f40` | `TeamInfo`(**24**)（`add_to_team` / `send_all_info_events`）、`RemoveTeam`(**25**)（**删到了才发**，`0x3c1a08` 的 `cmp dl,2`） | **7** | `assembled` → **`wired`** |
+| `graphwar_mode_manager` | `0x5186c0` | **只一条** `new_connection_event` /`0x14`/ `0x51876c` | `0x5185a0`（跳板 `0x5186a0`） | `AxisModeInfo`(**45**) / `FunctionModeInfo`(**46**) / `TimeModeInfo`(**48**)（三个 setter 各一条 + `send_all_info_events` 三条） | **5** | `assembled` → **`wired`** |
+| `graphwar_entity_effect_manager` | `0x478490` | `new_connection_event` /`0x14`/ `0x478515`；`entity_removed_event` /`0x14`/ `0x478566` | `0x4782f0` / `0x4783f0`（§46 已有） | `EntityEffectInfo`(**56**)（`add_entity_effect` / 整表重播；`handle_entity_removed_event` **不发**） | **7** | `assembled` → **`wired`** |
+| `graphwar_effect_manager` | `0x519ba0` | **只一条** `tick_event` /`0xa`/ `0x519ca5` | 体内（无独立跳板） | `EffectInfo`(**44**)（`add_effect`）；`tick` **不发**（模块文档 §4） | **7** | `assembled` → **`wired`** |
+
+上表的地址串（可直接复跑，逐条与 `addr_probe.py` 的输出对得上）：
+
+```text
+# TurnManager::new 0x463790 的两条 subscribe（名字 / len / 调用点）
+0x4637fc  lea rsi @0x1c18ad 'new_connection_event…'   0x46380a mov edx,0x14   0x463815 call subscribe
+0x46384d  lea rsi @0x1c18c1 'entity_removed_event…'   0x46385b mov edx,0x14   0x463866 call subscribe
+          r8 = 0x957be8 → +0x20 = 0x957c08 = 跳板 0x463750 → 0x462fe0 send_all_info_events
+          r8 = 0x957c10 → +0x20 = 0x957c30 = 跳板 0x463770 → 0x463580 handle_entity_removed_event
+# PlayerManager::new 0x455410
+0x45547c  0x1c0eef 'new_connection_event…'   0x45548a edx,0x14   0x455495 call   → 跳板 0x4553d0 → 0x455160
+0x4554cd  0x1c0e12 'entity_removed_event…'   0x4554db edx,0x14   0x4554e6 call   → 跳板 0x4553f0 → 0x455250
+# TeamManager::new 0x3c1fc0
+0x3c202c  0x1be298 'new_connection_event…'   0x3c203a edx,0x14   0x3c2045 call   → 跳板 0x3c1fa0 → 0x3c1cf0
+0x3c207d  0x1be2ac 'entity_removed_event…'   0x3c208b edx,0x14   0x3c2096 call   → 跳板 0x3c1f80 → 0x3c1f40
+# ModeManager::new 0x5186c0
+0x518753  0x1c63fb 'new_connection_event…'   0x518761 edx,0x14   0x51876c call   → 跳板 0x5186a0 → 0x5185a0
+# EntityEffectManager::new 0x478490
+0x4784fc  0x1c18ad 'new_connection_event…'   0x47850a edx,0x14   0x478515 call   → 闭包 0x4782f0
+0x47854d  0x1c18c1 'entity_removed_event…'   0x47855b edx,0x14   0x478566 call   → 闭包 0x4783f0
+# EffectManager::new 0x519ba0（**只一条**）
+0x519c8c  0x1c6513 'tick_event…'             0x519c9a edx,0xa    0x519ca5 call
+```
+
+两条**新事实**（相对 §41 / §47 的台账）：
+
+1. **`ModeManager` 只有 1 条订阅、而且是 `new_connection_event`**，不是四个
+   `*_mode_change_request`。也就是说这个模块"收到新连接就把三个模式重播一遍"，
+   **不**订阅模式变更——与模块文档那句"权威在服务器"是同一件事的两面：
+   写入走 `GraphwarRemoteEventHandler::handle_server_remote_event`，订阅只服务"补发"。
+2. **`TurnManager` 的 `entity_removed_event` 删的是整条玩家记录，不发任何事件**。
+   `0x463580` 体内没有 `add_event`（那槽 `0x9bac80` 在这 960 字节里**一次都没出现**），
+   删到的值按 **4 字节元素**的 `Vec` 释放（`0x46362e shl rsi,2` / `0x463632 mov edx,4`）
+   ⇒ 值里那个 `Vec<soldier_id>` 跟着整条记录一起没了，**不是**"从某个 Vec 里摘掉一个士兵"。
+
+### 50.3 落码：容器里现在装的是什么
+
+```text
+TurnManager                 # graphwar_turn_manager.rs（原类型 + 接线层）
+GraphwarPlayerManager       # graphwar_player_manager.rs（原类型 + 接线层）
+TeamTable                   # graphwar_team_manager.rs（原类型 + 接线层）
+GraphwarModeManager         # graphwar_mode_manager.rs（原类型 + 接线层；32 B 布局本轮新解）
+GraphwarEntityEffectManager # graphwar_entity_effect_manager.rs（原类型；outbox/subscribed 原来就有）
+GraphwarEffectManager       # graphwar_effect_manager.rs（原类型；outbox/subscribed 原来就有）
+```
+
+新增的取回口（都走 `get_module::<M>()`，不是查表）：`effect_manager()` / `entity_effect_manager()`；
+另外 4 个的取回口**§41 就有**（`turn_manager()` / `player_manager()` / `team_manager()` / `mode_manager()`），
+本轮只是把它们**真用起来**（此前只有一条"取回来读一个字段"的断言）。
+
+`ModeManager` 的 32 字节布局（`观测`，`0x5186ff`–`0x51870b`，管理体基址 = `rax+0x18`）：
+
+```text
++0x00 弱自句柄（Rc 盒基址）      +0x08 事件队列 Rc        +0x10 容器 Weak
++0x18 word 0x0301（两个模式字节 0x01 / 0x03）    +0x1a 0（第三字节）
+合计 0x1b = 27 → 补齐 32，与 §41.2 的 vtable size **一字不差**
+```
+
+⚠️ 本层只保留"三个模式"的语义，`+0x00 / +0x08 / +0x10` 那三个借用字段**不复原**（我方形状）。
+
+### 50.4 为什么 `GameStateManager` 这一轮没升档（**禁区**）
+
+`Wired::GameStateManager` 在容器里装的是 **`game::Match`**（`src/game.rs`），而任务书 §5 的 ❌
+明确写着"不许改 `src/game.rs`"（有人正在 `execute_results` 上干活）。核对结果：
+
+```text
+$ grep -n "outbox\|subscribed" src/game.rs      →  零命中
+```
+
+`Match` 既没有订阅表也没有发件箱，往它身上加"读 7 条订阅 / 写发件箱"**必须改 `src/game.rs`**。
+两条退路都被否定：
+
+* **在 `root_wiring` 里加一层壳**（`GameStateSlot { layout: Match, table: … }`）——会改掉容器里的类型，
+  `container_game_state_soldiers()` / `assemble_check.gd` 的既有断言全部要跟着改（禁区：既有断言）；
+* **另起一张旁表**——那不是"这一槽接了事件流"，只是把假数据换个地方放，属于"把猜测写成行为"。
+
+⇒ `GameStateManager` **明确留在 `assembled`**，缺的东西写在 §50.0 第 1–2 行。
+替补进本轮名单的是 **`graphwar_effect_manager`**（同样 72 B、同样 `assembled`、订阅 1 条 `tick_event`
+有 `0x519ca5` 的指令证据、发 `EffectInfo`(44) 有模块文档 §3 的 `逐位` 结论）。
+
+### 50.5 headless 那侧：38 条新交互读数
+
+`manager_probe_selftest()`（§44.5 的**我方自造**观测口）现在返回 **65 条**
+（`27 + 38`），既有 27 条的**字符串一个字都没变**（新 38 条追加在末尾）：
+
+```text
+turn.soldier=9023  turn.flip=false  turn.emitted=1  turn.subs=2  turn.removed=true  turn.present_after=false
+player.conn=9025  player.emitted=1  player.subs=2  player.replayed=3  player.cascade=true  player.outbox=5
+team.added=Team2  team.counts=1,2  team.pick=Team1  team.subs=2  team.replayed=3  team.removed=1  team.outbox=5
+mode.axis=2  mode.replayed=3  mode.restored=true  mode.outbox=5  mode.subs=1
+entity_effect.kind=1  entity_effect.emitted=1  entity_effect.subs=2  entity_effect.replayed=1
+entity_effect.removed=true  entity_effect.after=true  entity_effect.outbox=2
+effect.kind=0  effect.emitted=1  effect.subs=1  effect.due_early=0  effect.due_at=1  effect.gone=true  effect.outbox=1
+```
+
+三条设计约束（都写进了代码注释）：
+
+1. **幂等**：固定 id（`9021` / `9024` / `9026` / `9027` / `9028`）+ 末尾把临时记录删掉 / 复位
+   ⇒ 连调两次返回**同一串**（`assemble_check.gd` 就是这么比的）。
+   `TurnManager` 那条特别处理：`begin_turn` 会**推进游标**，所以末尾用
+   `handle_entity_removed_event` 把那条玩家记录删掉，第二次调用仍从游标 0 开始 ⇒ 读数相同。
+2. **不碰别人的表**：`Match` / `LifeState` / `TargetManager` / `ObstacleManager` / `FunctionTable` / `TickHandler`
+   一个字都没动；新 6 个用的都是**临时 id**（`9021`–`9028`），调度完就删。
+3. **值是真算的**：`root_wiring.rs` 的 `the_new_read_back_values_track_the_written_state`
+   换输入（换射手名单 / 换模式 / 换 `start_tick`），读回值跟着变 ⇒ 不是 `return` 常量。
+
+### 50.6 验收（本节实测）
+
+```bash
+export CARGO_HOME=<WS>/.cargo-home CARGO_TARGET_DIR=<WS>/.agent-work/mgr2/target
+cargo test --offline
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/assemble_check.gd
+```
+
+| 命令 | 本节实测 | 基线（master `c798eccf`） |
+|---|---|---|
+| `cargo test --offline` | **1620**，全绿 | **1585**（本节 **+35**）。构成：新增单测 **19** 条（`turn` 5 / `team` 3 / `player` 3 / `mode` 3 / `effect` 2 / `entity_effect` 3）+ 它们在 `#[path]` 集成测试里被**重复编入**的 16 条（`cargo test` 按目标分别计数：`effect` 3 份、`mode` 2 份、`team`/`player`/`entity_effect` 各 2 份）。另 3 条 `root_wiring` 的只在 `--features gdext-bindings` 下跑，**不计入**这 35 |
+| `assemble_check.gd` | **213 passed / 0 failed**，退出码 0 | **203**（本节净 +10） |
+| `plane_on_screen_check.gd` | **96 passed** | 96（未动） |
+| `obstacle_drawer_check.gd` | **116 passed** | 116（未动） |
+| `function_drawer_check.gd` | **132 passed** | 132（未动） |
+| `entity_drawer_check.gd` | **72 passed** | 72（未动） |
+| `python3 tools/coverage_matrix.py --check` | 需重跑（`src_fns` 变）→ 已重跑：`src_fns` **2504 → 2553**，527 行未变 | OK |
+
+**三条驱动轴（分开跑、分开报，`AGENTS.md` 合并纪律 C；快照 = `.agent-work/replay-snapshot`，
+401 个文件 / 286 个可读 / 1080 个结算批）**：
+
+| 轴 | 命令 | 本节实测 | `fixtures/guardrails.json` | 判 |
+|---|---|---|---|---|
+| `fire` | `replay_attrib --drive fire --policy default` | 批次 1080；内容 **647**；种类序列 **1075**；死亡 **366/385**；挖洞 **207/294** | 1080 / 647 / 1075 / 366 / 385 / 207 / 294 | **7/7 一致** |
+| `batch` | `replay_attrib --drive batch --policy default` | 批次 1080；内容 **647**；种类序列 **1075**；死亡 **366/385**；挖洞 **207/294** | 同上 | **7/7 一致** |
+| `batch_conv` | `batch_conv --policy strict` | 本节**没跑**（本轮零几何改动；上一轮 §49 的记录是 1074/595） | 633 / 1075 | 未复核 |
+
+⇒ 本节只动"接线层"（订阅表 / 发件箱 / 取回口 / 断言），**一条几何、弹道、结算代码都没碰**，
+两条轴逐数字不动，符合"接线层不该动几何"的预期。
+
+### 50.7 仍是推断 / 未知（诚实清单）
+
+| 项 | 档位 | 缺什么证据 |
+|---|---|---|
+| `TurnManager::send_all_info_events`（`0x462fe0`）的**载荷** | **推断**（明确标"我方形状"） | 该函数里只有一条 `add_event`（`0x46306a`）可确证；载荷构造没解，而且它**不**调用 `get_current_turn_players`(`0x463340`) / `get_current_turn_soldiers`(`0x463460`)（`addr_probe.py callers` 两处都没有 `0x462fe0` 的调用点）⇒ 本层按"每人一条 `TurnInfo{player, 当前射手}`"发，**别当证据用** |
+| `TeamManager` 的发件箱用 `Vec<TeamEventKind>`（`u16` 判别值）而不是 `Vec<Event>` | **我方选择**（有硬约束） | `tests/graphwar_team_manager.rs` 用 `#[path]` **单独**把本文件编进测试二进制（不带 `src/events.rs`），它的文件头约定"只依赖 `std`"。为一行 `use` 去改那个文件不值得；判别值是同一个数（24 / 25）。另外 5 个的测试带 `events.rs`，所以它们用 `Vec<Event>` |
+| `TurnManager::handle_entity_removed_event` 的 key 空间 | **推断** | 二进制把 `event+8` 直接当本表 key 用（`0x4635a5`），"实体 id = player_id"这条与 `graphwar_player_manager` §5 的同一个推断同源 |
+| 6 个 manager 各自订阅**闭包体内**的逐条语义 | 部分 `观测` | `entity_effect`（§46 已有 `:67:30` / `:77:18`）与 `player`（§3/§4 `逐位`）到了"处理器 = 谁"这一层；`turn` / `team` / `mode` 只到"跳板 → 哪个函数"，闭包体内的边界检查/载荷拼接没逐条读 |
+| `ModeManager` 的 `+0x18` 两个模式字节 | **部分观测** | `word 0x0301` 是**初值**（`0x51870b`），两个字节与 `AxisMode`/`FunctionMode`/`TimeMode` 三个枚举谁对谁**没逐条核**（本层按语义放三个字段，不按字节摆） |
+| `GraphwarGameStateManager` 的 7 条订阅落码 | **未知**（禁区） | 见 §50.4：`src/game.rs` 不许改 |
+| `batch_conv` 轴 | **未复核** | 本轮没跑；本轮零几何改动，理由与 §49 相同 |
+
+### 50.8 22 个槽的档位（任务 40 之后）
+
+| 档位 | 槽 | 依据 |
+|---|---|---|
+| `wired`（**10**） | `TickHandler` / `TargetManager` / `LifeManager` / `ObstacleManager`（§44.2）+ `TurnManager` / `PlayerManager` / `TeamManager` / `ModeManager` / `EntityEffectManager` / `EffectManager`（§50.2） | 订阅/发事件两个方向都指到指令 + `interaction_selftest` 各自的 4/5/5/7 与 6/6/7/5/7/7 条 |
+| `layout`（2） | `ClientConnectionHandler`（§47.2）/ `FunctionManager`（§46.2） | 布局逐字段解出，行为没做完 |
+| `assembled`（**9**） | `LocalPlayerManager` / `SoldierManager` / **`GameStateManager`（§50.4）** / `GraphicsManager` / `ComputerPlayerManager` / `FunctionHistoryRecorder` / `NameManager` / `ColorManager` / `RankManager` | 容器里是我方复原类型，但没接事件流 / 没有最小交互断言 |
+| `stub`（1） | `PlanePosManager` | 24 B 布局未知 |
+
+`SlotKind`（容器类型来源）仍是 **17 + 5 = 22**，一行没变。
+`interaction_selftest` 覆盖 **11 / 22** 个槽（§44 的 5 + 本节的 6）。

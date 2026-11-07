@@ -76,6 +76,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::events::Event;
 use crate::graphwar_life_manager::{is_alive_byte, LifeState, Status, MISSING_STATE};
 
 /// "没有射手"的哨兵 id。
@@ -340,11 +341,40 @@ pub struct PlayerEntry {
 /// **不**建模玩家出场顺序：`docs/47` 已判定那是 HashMap 迭代序（OS 熵播种的 SipHash），
 /// 不可确定性复现，必须由调用方给。这里只用 `BTreeMap` 保证**玩家之间的遍历顺序确定**，
 /// 免得同一个测试两次跑出两种顺序。
+///
+/// # 事件流（任务 40 补，`wired` 的第二件）
+///
+/// `new`（x86 `0x463790`，`src/graphwar_turn_manager.rs:133` 的锚点）**订阅 2 条**（`观测`）：
+///
+/// ```text
+/// 0x4637fc  lea rsi,'new_connection_event' / 0x46380a mov edx,0x14 / 0x463815 call subscribe
+///           r8 = slot 0x957be8 (+0x20 = 0x957c08 → 跳板 0x463750 → 0x462fe0 send_all_info_events)
+/// 0x46384d  lea rsi,'entity_removed_event' / 0x46385b mov edx,0x14 / 0x463866 call subscribe
+///           r8 = slot 0x957c10 (+0x20 = 0x957c30 → 跳板 0x463770 → 0x463580 handle_entity_removed_event)
+/// ```
+///
+/// 发方向：`next_turn`（`0x463da0`）在"有活着的射手"分支发 `TurnInfo{player_id, soldier_id}`
+/// （`0x46406b`–`0x464072`，见模块注释 §1 的表），全灭/空队分支发 `TurnInfo{player, 0}`
+/// （`0x464016`–`0x464021`）——本文档开头那张表是**逐条指令**的证据，本节只把它接进发件箱。
+///
+/// `handle_entity_removed_event`（`0x463580`）**不发**任何事件（体内没有 `add_event`
+/// 那槽 `0x9bac80` 的调用）：它断言 tag = 14（`0x46367f mov esi,0xe`），
+/// 取 `event+8` 当 key（`0x4635a5`），lock 后 `hash(self+0x40)` + `remove_entry`，
+/// 删到的值按 **4 字节元素**的 `Vec` 释放（`0x46362e shl rsi,2` / `0x463632 mov edx,4`）
+/// ⇒ **整条玩家记录被删掉**（值里的 `Vec<soldier_id>` 一起释放），
+/// 不是"从某个 Vec 里摘一个士兵"（`观测`）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnManager {
     players: BTreeMap<i64, PlayerEntry>,
     empty_roster: EmptyRoster,
+    /// 订阅名（`new` 的两条，顺序 = 调用序，`观测`）。
+    pub subscribed: Vec<&'static str>,
+    /// 发件箱（判别值；载荷由 [`TurnDecision`] 返回）。
+    pub outbox: Vec<Event>,
 }
+
+/// `new`（`0x463790`）订阅的两条事件名。
+pub const SUBSCRIBED_EVENTS: [&str; 2] = ["new_connection_event", "entity_removed_event"];
 
 impl Default for TurnManager {
     fn default() -> Self {
@@ -354,7 +384,60 @@ impl Default for TurnManager {
 
 impl TurnManager {
     pub fn new() -> Self {
-        Self { players: BTreeMap::new(), empty_roster: EmptyRoster::default() }
+        Self {
+            players: BTreeMap::new(),
+            empty_roster: EmptyRoster::default(),
+            subscribed: SUBSCRIBED_EVENTS.to_vec(),
+            outbox: Vec::new(),
+        }
+    }
+
+    /// `handle_entity_removed_event`（`0x463580`）：把该 id 的玩家记录整条删掉。
+    ///
+    /// 返回"真删到了"，对齐二进制里 `HashMap::remove` 的 `Option` 判别（`0x463659 cmp eax,2`）。
+    /// **不发事件**（见类型文档）。id 空间按 `player_id` 用——这条与
+    /// `graphwar_player_manager` 的同一处推断同源（实体删 = 该玩家退出）。
+    pub fn handle_entity_removed_event(&mut self, entity_id: i64) -> bool {
+        self.players.remove(&entity_id).is_some()
+    }
+
+    /// `send_all_info_events`（`0x462fe0`）：把当前玩家表整表重播一遍。
+    ///
+    /// ⚠️ **载荷是我方形状（`推断`）**：`0x462fe0` 里能确证的是"加锁遍历表 + 一条
+    /// `add_event`（`0x46306a`）"，但**载荷构造没解**——它**不**调用
+    /// `get_current_turn_players`(`0x463340`) / `get_current_turn_soldiers`(`0x463460`)
+    /// （`addr_probe.py callers` 两个地址都没有 `0x462fe0` 的调用点）。
+    /// 本实现按"每人一条 `TurnInfo{player_id, 该玩家当前射手}`"发，**别当证据用**。
+    pub fn send_all_info_events(&mut self) -> Vec<TurnDecision> {
+        // 先拍快照再写发件箱（同一个 `&mut self` 里不能边遍历边 push）
+        let snapshot: Vec<(i64, i64, bool)> = self
+            .players
+            .iter()
+            .map(|(&player_id, entry)| {
+                (player_id, entry.turns.current().unwrap_or(SOLDIER_ID_NONE), entry.team.flip())
+            })
+            .collect();
+        let mut out = Vec::with_capacity(snapshot.len());
+        for (player_id, soldier_id, flip) in snapshot {
+            self.outbox.push(Event::TurnInfo);
+            out.push(TurnDecision::Announce { player_id, soldier_id, flip });
+        }
+        out
+    }
+
+    /// `new_connection_event` 的处理（跳板 `0x463750` → `0x462fe0`）：整表重播。
+    pub fn handle_new_connection_event(&mut self) -> Vec<TurnDecision> {
+        self.send_all_info_events()
+    }
+
+    /// 取走发件箱。
+    pub fn take_outbox(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// 发件箱里有几条。
+    pub fn outbox_len(&self) -> usize {
+        self.outbox.len()
     }
 
     /// 换掉"空士兵表"的策略（默认 [`EmptyRoster::AnnounceZero`]，理由见模块注释 §1）。
@@ -410,14 +493,16 @@ impl TurnManager {
             return TurnDecision::Skip { player_id, reason: SkipReason::TurnTimeout };
         }
         match entry.turns.next_shooter_by_state(state) {
-            Some(soldier_id) => TurnDecision::Announce { player_id, soldier_id, flip },
+            Some(soldier_id) => {
+                self.outbox.push(Event::TurnInfo);
+                TurnDecision::Announce { player_id, soldier_id, flip }
+            }
             None => match policy {
                 // 观测（0x463fd0）：空表也发 {player, 0}。
-                EmptyRoster::AnnounceZero => TurnDecision::Announce {
-                    player_id,
-                    soldier_id: SOLDIER_ID_NONE,
-                    flip,
-                },
+                EmptyRoster::AnnounceZero => {
+                    self.outbox.push(Event::TurnInfo);
+                    TurnDecision::Announce { player_id, soldier_id: SOLDIER_ID_NONE, flip }
+                }
                 EmptyRoster::Skip => TurnDecision::Skip { player_id, reason: SkipReason::NoSoldiers },
             },
         }
@@ -871,5 +956,81 @@ mod tests {
     #[should_panic(expected = "全灭")]
     fn zero_is_rejected_as_a_soldier_id() {
         let _ = PlayerTurns::new(vec![1, 0]);
+    }
+}
+
+#[cfg(test)]
+mod event_flow_tests {
+    use super::*;
+
+    /// 订阅方向：`new`（`0x463790`）订阅的就是那两条。
+    #[test]
+    fn new_registers_the_two_observed_subscriptions() {
+        let tm = TurnManager::new();
+        assert_eq!(tm.subscribed, vec!["new_connection_event", "entity_removed_event"]);
+        assert_eq!(SUBSCRIBED_EVENTS.len(), 2);
+        assert_eq!(TurnManager::default().subscribed, tm.subscribed);
+        assert_eq!(tm.outbox_len(), 0);
+    }
+
+    /// 发方向：`begin_turn` 落到 `Announce` 就发一条 `TurnInfo`(43)；`Skip` 一条都不发。
+    #[test]
+    fn begin_turn_emits_turn_info_only_when_announcing() {
+        let mut tm = TurnManager::new();
+        tm.add_player(1, Team::One, vec![1, 2]);
+        let alive = |_id: i64| 1u8;
+        // 观测（0x463f40–0x463f58）：先自增再取 ⇒ 第一次拿到 soldiers[1] = 2
+        let decided = tm.begin_turn(1, alive, false);
+        assert_eq!(decided, TurnDecision::Announce { player_id: 1, soldier_id: 2, flip: false });
+        assert_eq!(tm.outbox, vec![Event::TurnInfo]);
+        assert_eq!(Event::TurnInfo.wire_tag(), 43);
+        // 超时 ⇒ Skip，不发
+        let _ = tm.take_outbox();
+        let skipped = tm.begin_turn(1, alive, true);
+        assert_eq!(skipped.skip_reason(), Some(SkipReason::TurnTimeout));
+        assert_eq!(tm.outbox_len(), 0, "超时跳过不发 TurnInfo");
+        // 未知玩家 ⇒ Skip，不发
+        let _ = tm.begin_turn(99, alive, false);
+        assert_eq!(tm.outbox_len(), 0);
+    }
+
+    /// 全灭：`AnnounceZero` 策略下发的是 `{player, 0}`（观测 0x464016–0x464021）。
+    #[test]
+    fn empty_roster_still_announces_zero() {
+        let mut tm = TurnManager::new();
+        tm.add_player(1, Team::Two, vec![7]);
+        let dead = |_id: i64| 0u8;
+        let decided = tm.begin_turn(1, dead, false);
+        assert_eq!(decided, TurnDecision::Announce { player_id: 1, soldier_id: 0, flip: true });
+        assert_eq!(tm.outbox, vec![Event::TurnInfo]);
+    }
+
+    /// `entity_removed_event`（`0x463580`）：整条玩家记录被删，**不发**事件。
+    #[test]
+    fn entity_removed_drops_the_player_entry_without_emitting() {
+        let mut tm = TurnManager::new();
+        tm.add_player(1, Team::One, vec![1, 2]);
+        tm.add_player(2, Team::Two, vec![3]);
+        assert!(tm.handle_entity_removed_event(1));
+        assert!(tm.player(1).is_none());
+        assert!(tm.player(2).is_some(), "只删命中的那一条");
+        assert!(!tm.handle_entity_removed_event(1), "再删一次返回 false（Option 的 None 支）");
+        assert!(!tm.handle_entity_removed_event(99));
+        assert_eq!(tm.outbox_len(), 0, "0x463580 体内没有 add_event");
+    }
+
+    /// `new_connection_event`（跳板 `0x463750` → `0x462fe0`）：每人一条重播。
+    ///
+    /// ⚠️ 载荷是**我方形状**（`发送` 的载荷未解），所以这条只钉"每人一条 + 进发件箱"。
+    #[test]
+    fn new_connection_replays_one_turn_info_per_player() {
+        let mut tm = TurnManager::new();
+        tm.add_player(1, Team::One, vec![1, 2]);
+        tm.add_player(2, Team::Two, vec![3]);
+        let replayed = tm.handle_new_connection_event();
+        assert_eq!(replayed.len(), 2);
+        assert_eq!(tm.outbox_len(), 2);
+        assert!(tm.outbox.iter().all(|e| *e == Event::TurnInfo));
+        assert_eq!(replayed[0].soldier_id(), Some(1), "还没转过 ⇒ 游标在 0，current() 是 soldiers[0]");
     }
 }

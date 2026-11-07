@@ -31,20 +31,20 @@
 //! | 1 | `GraphwarTickHandler` | 72 | `0x40b528` | [`TickHandlerSlot`]（内含 [`GraphwarTickHandler`]） | `wired` | 类型**观测**；布局**部分观测**（4 个偏移有指令证据） |
 //! | 2 | `GraphwarClientConnectionHandler` | 112 | `0x48b048` | —（只有 [`HandlerField`](crate::graphwar_client_connection_handler::HandlerField) 偏移表，没有结构体） | `layout` | 类型**观测**；布局**逐字段观测**（`docs/16` §47.2） |
 //! | 3 | `GraphwarLocalPlayerManager` | 64 | 内联（`0x409eac` 处 `alloc 0x58`） | [`GraphwarLocalPlayerManager`] | `assembled` | 类型**观测** |
-//! | 4 | `GraphwarPlayerManager` | 72 | `0x49d170` | [`GraphwarPlayerManager`] | `assembled` | 类型**观测** |
+//! | 4 | `GraphwarPlayerManager` | 72 | `0x49d170` | [`GraphwarPlayerManager`] | `wired` | 类型**观测**；事件流**指令级**（任务 40，§50） |
 //! | 5 | `GraphwarSoldierManager` | 72 | `0x49d590` | [`SoldierTable`] | `assembled` | 类型**观测** |
 //! | 6 | `GraphwarPlanePosManager` | 24 | `0x3b89a0` | —（空标记） | `stub` | 类型**观测**；布局**未知** |
 //! | 7 | `GraphwarGameStateManager` | 296 | `0x4ade6c` | [`Match`] | `assembled` | 类型**观测** |
 //! | 8 | `GraphwarFunctionManager` | 32 | 内联（arm64 `0x419c80` / x86 `0x5236e0`，由 `0x40a158` / `0x517b9f` 调用） | [`FunctionManagerSlot`]：`layout` = 原版 32 字节布局（**任务 22 解开**，4 字段）+ `table` = 我方行为表 | `layout` | 类型**观测**；布局**逐字段观测**（`docs/16` §46） |
 //! | 9 | `GraphwarTargetManager` | 72 | `0x3dae34` | [`GraphwarTargetManager`] | `wired` | 类型**观测** |
-//! | 10 | `GraphwarTeamManager` | 32 | `0x49960c` | [`TeamTable`] | `assembled` | 类型**观测** |
+//! | 10 | `GraphwarTeamManager` | 32 | `0x49960c` | [`TeamTable`] | `wired` | 类型**观测**；事件流**指令级**（任务 40，§50） |
 //! | 11 | `GraphwarLifeManager` | 72 | `0x4977b8` | [`LifeState`] | `wired` | 类型**观测** |
 //! | 12 | `GraphwarObstacleManager` | 80 | `0x426300` | [`ObstacleManagerSlot`]：`layout` = 原版 80 字节布局（**任务 22 解开**，5 字段）+ `table` = 我方行为表 | `wired` | 类型**观测**；布局**逐字段观测**（`docs/16` §46） |
-//! | 13 | `GraphwarTurnManager` | 32 | `0x49adf8` | [`TurnManager`] | `assembled` | 类型**观测** |
-//! | 14 | `GraphwarEffectManager` | 72 | `0x40bc0c` | [`GraphwarEffectManager`] | `assembled` | 类型**观测** |
-//! | 15 | `GraphwarModeManager` | 32 | `0x498090` | [`GraphwarModeManager`] | `assembled` | 类型**观测** |
+//! | 13 | `GraphwarTurnManager` | 32 | `0x49adf8` | [`TurnManager`] | `wired` | 类型**观测**；事件流**指令级**（任务 40，§50） |
+//! | 14 | `GraphwarEffectManager` | 72 | `0x40bc0c` | [`GraphwarEffectManager`] | `wired` | 类型**观测**；事件流**指令级**（任务 40，§50） |
+//! | 15 | `GraphwarModeManager` | 32 | `0x498090` | [`GraphwarModeManager`] | `wired` | 类型**观测**；布局**新解**（32 B，§50） |
 //! | 16 | `GraphwarGraphicsManager` | 168 | `0x49e394` | [`GraphwarGraphicsManager`] | `assembled` | 类型**观测** |
-//! | 17 | `GraphwarEntityEffectManager` | 72 | `0x3e9f40` | [`GraphwarEntityEffectManager`] | `assembled` | 类型**观测** |
+//! | 17 | `GraphwarEntityEffectManager` | 72 | `0x3e9f40` | [`GraphwarEntityEffectManager`] | `wired` | 类型**观测**；事件流**指令级**（任务 40，§50） |
 //! | 18 | `GraphwarComputerPlayerManager` | 72 | `0x4b02a4` | [`ComputerPlayers`] | `assembled` | 类型**观测** |
 //! | 19 | `FunctionHistoryRecorder` | 48 | `0x49d9a0` | [`History`] | `assembled` | 类型**观测** |
 //! | 20 | `GraphwarNameManager` | 72 | `0x40af68` | [`GraphwarNameManager`] | `assembled` | 类型**观测** |
@@ -70,15 +70,15 @@
 //!
 //! | 档位 | 判据（**按序判断，第一个命中者为准**） | 现值 |
 //! |---|---|---|
-//! | [`SLOT_WIRED`] | 已接容器 **+** 已接事件流 **+** 有最小交互断言（[`RootWiring::interaction_selftest`] 覆盖这一槽） | **4** |
+//! | [`SLOT_WIRED`] | 已接容器 **+** 已接事件流 **+** 有最小交互断言（[`RootWiring::interaction_selftest`] 覆盖这一槽） | **10** |
 //! | [`SLOT_LAYOUT`] | 原版字段布局**已逐字段解出**（有证据档），但**不满足** `wired` | **2** |
-//! | [`SLOT_ASSEMBLED`] | 容器里装的是**我方复原类型**（`our_type` 非 `—`，能按类型取回并调用），但**不满足**上面两条 | **15** |
+//! | [`SLOT_ASSEMBLED`] | 容器里装的是**我方复原类型**（`our_type` 非 `—`，能按类型取回并调用），但**不满足**上面两条 | **9** |
 //! | [`SLOT_STUB`] | 以上都不是：**我方形状占位**，原版字段布局**未知** | **1** |
 //!
 //! ```text
 //! 结构轴：stub（布局未知） ──→ layout（布局逐字段解出）
 //! 行为轴：assembled（装上我方复原类型） ──→ wired（+ 事件流 + 最小交互断言）
-//! 一个槽只报**它达到的更高那一档**；两条轴都到顶 = wired（4 + 2 + 15 + 1 = 22）。
+//! 一个槽只报**它达到的更高那一档**；两条轴都到顶 = wired（**10** + 2 + **9** + 1 = 22）。
 //! ⇒ "结构已解但行为未做" = layout；"结构也没解" = stub —— 这两个词的分工就是本轮要根治的模糊。
 //! ```
 //!
@@ -91,8 +91,9 @@
 //!    都在跑，但**发方向的事件流没接**（原版 3 个 `set_*` 各发一条 `FunctionInfo` 类事件，
 //!    我方 [`FunctionTable`] 一条都不发）⇒ 它停在 `layout`；`ClientConnectionHandler` 才是
 //!    "布局全解、行为一行没写"。
-//! 3. **`assembled` 不等于"复原了"**：这 15 个只有"类型 + 部分行为 + 按类型可调"，
-//!    原版布局多数**没逐字段解出**，事件流也没接全。
+//! 3. **`assembled` 不等于"复原了"**：剩下这 **9** 个只有"类型 + 部分行为 + 按类型可调"，
+//!    原版布局多数**没逐字段解出**，事件流也没接全（任务 40 之后 6 个升到 `wired`，
+//!    见 §50；`GameStateManager` 因为事件层在 `src/game.rs`（禁区）仍停在 `assembled`）。
 //!
 //! ⚠️ 与本文件里的 [`SlotKind`] **不是一回事**：`SlotKind` 回答"容器里放的是原版模块类型本身、
 //! 还是 `_scaffold` 的包装"（**容器类型来源**的二分类，17 / 5，
@@ -104,7 +105,7 @@
 //!
 //! | 项 | 原版 | 本文件 | 证据档 |
 //! |---|---|---|---|
-//! | 注册几个 | `GraphwarGameClient::new` **22** 条 `add_module` | **22**（档位 4 `wired` + 2 `layout` + 15 `assembled` + 1 `stub`；容器类型来源 17 + 5） | 22 是**逐位**（§41）；档位是我方现状 |
+//! | 注册几个 | `GraphwarGameClient::new` **22** 条 `add_module` | **22**（档位 10 `wired` + 2 `layout` + 9 `assembled` + 1 `stub`；容器类型来源 17 + 5） | 22 是**逐位**（§41）；档位是我方现状 |
 //! | 注册顺序 | 22 条的调用序 | **同序**（[`Wired::ALL`] / [`SLOTS`]） | **逐位**（两架构尺寸序列相等） |
 //! | 谁在装 | `GraphwarGameClient::new`（客户端对象） | 本文件（`GraphwarRootNode` 调的 `assemble_demo`） | 装载者**不同**，容器语义相同 |
 //! | 各 manager 是否**共享**实例 | `GameStateManager` 内部是否也持 `TurnManager`：**未解** | **不共享**：容器里是各自独立实例；`Match` 自带一个内部 `TurnManager` / `LifeState` / `GraphwarEntityEffectManager` | 独立性是**我方形状**；原版是否共享 `未知` |
@@ -146,7 +147,7 @@ use crate::function_history_recorder::History;
 use crate::game::{Match, DESTROY_DELAY_TICKS};
 use crate::graphwar_color_manager::GraphwarColorManager;
 use crate::graphwar_computer_player_manager::ComputerPlayers;
-use crate::graphwar_effect_manager::GraphwarEffectManager;
+use crate::graphwar_effect_manager::{EffectType, GraphwarEffectManager};
 use crate::graphwar_entity_effect_manager::GraphwarEntityEffectManager;
 use crate::graphwar_graphics_manager::GraphwarGraphicsManager;
 use crate::graphwar_life_manager::{
@@ -161,7 +162,9 @@ use crate::graphwar_rank_manager::GraphwarRankManager;
 use crate::graphwar_shot_calculator::settle::Target;
 use crate::graphwar_soldier_manager::SoldierTable;
 use crate::graphwar_target_manager::GraphwarTargetManager;
-use crate::graphwar_team_manager::TeamTable;
+use crate::graphwar_team_manager::{
+    GraphwarTeam, TeamTable, EVENT_REMOVE_TEAM, EVENT_TEAM_INFO,
+};
 use crate::graphwar_tick_handler::{GraphwarTickHandler, TICKS_PER_SECOND};
 use crate::graphwar_turn_manager::{Team, TurnManager};
 use crate::math_function;
@@ -424,13 +427,15 @@ pub const SLOT_TIERS: [&str; 4] = [SLOT_WIRED, SLOT_LAYOUT, SLOT_ASSEMBLED, SLOT
 
 /// 四档的**现值计数**（顺序同 [`SLOT_TIERS`]；合计 = [`Wired::COUNT`] = 22）。
 ///
+/// 任务 40 起：**10** wired（任务 19 的 4 + 任务 40 的 6）/ 2 layout / **9** assembled / 1 stub。
+///
 /// 改任何一槽的档位必须**同批**改这里、[`Wired::status`] 与
 /// `client/tools/assemble_check.gd` 的 `WIRED_TIER`（任务 28 的病根就是只有一处改）。
-pub const WIRED_TIER_COUNT: usize = 4;
+pub const WIRED_TIER_COUNT: usize = 10;
 /// 见 [`WIRED_TIER_COUNT`]。
 pub const LAYOUT_TIER_COUNT: usize = 2;
 /// 见 [`WIRED_TIER_COUNT`]。
-pub const ASSEMBLED_TIER_COUNT: usize = 15;
+pub const ASSEMBLED_TIER_COUNT: usize = 9;
 /// 见 [`WIRED_TIER_COUNT`]。
 pub const STUB_TIER_COUNT: usize = 1;
 
@@ -552,14 +557,18 @@ impl Wired {
     /// 判据（**按序，第一个命中者为准**；全表与逐槽理由在模块文档"槽位复原档位"一节）：
     ///
     /// 1. `wired` —— 容器 + 事件流 + 最小交互断言三件齐：
-    ///    `TickHandler`（订 1 发 2，4 条断言）/ `TargetManager`（订 2 发 1，5 条）/
+    ///    任务 19 的 4 个：`TickHandler`（订 1 发 2，4 条断言）/ `TargetManager`（订 2 发 1，5 条）/
     ///    `LifeManager`（订 3 发 2，5 条）/ `ObstacleManager`（订 1 发 4，7 条）；
+    ///    任务 40 的 6 个：`TurnManager`（订 2 发 1，6 条）/ `PlayerManager`（订 2 发 2，6 条）/
+    ///    `TeamManager`（订 2 发 2，7 条）/ `ModeManager`（订 1 发 3，5 条）/
+    ///    `EntityEffectManager`（订 2 发 1，7 条）/ `EffectManager`（订 1 发 1，7 条）；
     /// 2. `layout` —— 原版布局逐字段解出、但没到 `wired`：
     ///    `ClientConnectionHandler`（112 B 的 9 个偏移全解，行为 0 行）/
     ///    `FunctionManager`（32 B / 4 字段全解，容器 + 6 条交互断言都在，但**发方向**
     ///    的事件流没接：原版 3 个 `set_*` 各发一条 `FunctionInfo` 类事件，我方的
     ///    [`FunctionTable`] 一条都不发）；
-    /// 3. `assembled` —— 容器里是我方复原类型（其余 15 个）；
+    /// 3. `assembled` —— 容器里是我方复原类型（其余 9 个，含 `GameStateManager`：
+    ///    它的事件层在 `src/game.rs`，本轮是禁区 ⇒ 停在 `assembled`，见 `docs/16` §50.4）；
     /// 4. `stub` —— 都不是：`PlanePosManager`（24 B 布局未知、连文件都没有）。
     ///
     /// ⚠️ 这是**静态台账**（"这一槽做到哪一档"），不看容器；"真的装进去了没有"是运行时判据
@@ -569,7 +578,14 @@ impl Wired {
             Wired::TickHandler
             | Wired::TargetManager
             | Wired::LifeManager
-            | Wired::ObstacleManager => SLOT_WIRED,
+            | Wired::ObstacleManager
+            // 任务 40 的第二批 6 个：容器 + 事件流（订阅/发两个方向都指到指令）+ 最小交互断言
+            | Wired::TurnManager
+            | Wired::PlayerManager
+            | Wired::TeamManager
+            | Wired::ModeManager
+            | Wired::EntityEffectManager
+            | Wired::EffectManager => SLOT_WIRED,
             Wired::ClientConnectionHandler | Wired::FunctionManager => SLOT_LAYOUT,
             Wired::PlanePosManager => SLOT_STUB,
             _ => SLOT_ASSEMBLED,
@@ -1442,9 +1458,22 @@ impl RootWiring {
         self.container.borrow().get_module::<ObstacleManagerSlot>()
     }
 
-    // ---- 一次最小交互：5 个 manager 各走一遍"从容器取回 → 写 → 读回" ----
+    // ---- 本轮（任务 40）第二批 6 个：按类型取回 ----
 
-    /// **5 个 manager 的最小交互自检**：每个都"从容器按类型取回 → 调一个入口 → 读回真值"。
+    /// `get_module::<EffectManager>()`（原版 arm64 `0x4a10c4`）。
+    pub fn effect_manager(&self) -> Option<Rc<RefCell<GraphwarEffectManager>>> {
+        self.container.borrow().get_module::<GraphwarEffectManager>()
+    }
+
+    /// `get_module::<EntityEffectManager>()`（原版 arm64 `0x4a22a4`）。
+    pub fn entity_effect_manager(&self) -> Option<Rc<RefCell<GraphwarEntityEffectManager>>> {
+        self.container.borrow().get_module::<GraphwarEntityEffectManager>()
+    }
+
+    // ---- 一次最小交互：11 个 manager 各走一遍"从容器取回 → 写 → 读回" ----
+
+    /// **11 个 manager 的最小交互自检**（任务 19 的 5 个 + 任务 40 的 6 个）：
+    /// 每个都"从容器按类型取回 → 调一个入口 → 读回真值"。
     ///
     /// 返回值是 `(名字, 值)`；**每一条的值都是那次交互真算出来的**，没有一条是常量返回：
     /// 判据写在各条的注释里（读回来的表就是被写的那张表）。
@@ -1570,6 +1599,160 @@ impl RootWiring {
             let _ = tick.0.take_outbox();
         }
 
+        // ⑥ TurnManager（任务 40）：`begin_turn`(0x463da0) → `Announce` → 发 `TurnInfo`(43)
+        //
+        // 幂等手法：末尾把这一条玩家记录删掉（`0x463580` 的同一入口），下次从游标 0 重来。
+        if let Some(turn) = self.turn_manager() {
+            let mut turn = turn.borrow_mut();
+            let _ = turn.take_outbox();
+            // 固定 id 的临时玩家（`add_player` 是覆盖 ⇒ 重复调用不会长表）
+            turn.add_player(9021, Team::One, vec![9022, 9023]);
+            let alive = |_id: i64| 1u8;
+            let decided = turn.begin_turn(9021, alive, false);
+            out.push((
+                "turn.soldier",
+                match decided.soldier_id() {
+                    Some(s) => s.to_string(),
+                    None => "none".to_string(),
+                },
+            ));
+            out.push((
+                "turn.flip",
+                match decided.flip() {
+                    Some(f) => f.to_string(),
+                    None => "none".to_string(),
+                },
+            ));
+            out.push(("turn.emitted", turn.outbox_len().to_string()));
+            out.push(("turn.subs", turn.subscribed.len().to_string()));
+            out.push(("turn.removed", turn.handle_entity_removed_event(9021).to_string()));
+            out.push(("turn.present_after", turn.player(9021).is_some().to_string()));
+            let _ = turn.take_outbox();
+        }
+
+        // ⑦ PlayerManager：`add_player` → `connection_of` 读回；级联一条 `ConnectionRemoved`(6)
+        if let Some(player) = self.player_manager() {
+            let mut player = player.borrow_mut();
+            let _ = player.take_outbox();
+            player.add_player(9024, 9025);
+            out.push((
+                "player.conn",
+                match player.connection_of(9024) {
+                    Some(c) => c.to_string(),
+                    None => "none".to_string(),
+                },
+            ));
+            out.push(("player.emitted", player.outbox_len().to_string()));
+            out.push(("player.subs", player.subscribed.len().to_string()));
+            // 整表重播：演示数据 2 人 + 这一条 = 3 条
+            let replayed = player.handle_new_connection_event().len();
+            out.push(("player.replayed", replayed.to_string()));
+            // 该连接只有它一个人 ⇒ 删它要级联
+            out.push((
+                "player.cascade",
+                player.handle_entity_removed_event(9024).is_some().to_string(),
+            ));
+            out.push(("player.outbox", player.outbox_len().to_string()));
+            let _ = player.take_outbox();
+        }
+
+        // ⑧ TeamManager：`add_to_team` → `get_team` 读回；`pick_team`(0x3c1b40) 的分队规则
+        if let Some(team) = self.team_manager() {
+            let mut team = team.borrow_mut();
+            let _ = team.take_outbox();
+            team.add_to_team(9026, GraphwarTeam::Team2);
+            out.push((
+                "team.added",
+                match team.get_team(9026) {
+                    Some(t) => match t {
+                        GraphwarTeam::Team1 => "Team1".to_string(),
+                        GraphwarTeam::Team2 => "Team2".to_string(),
+                    },
+                    None => "none".to_string(),
+                },
+            ));
+            let (t1, t2) = team.counts();
+            out.push(("team.counts", format!("{t1},{t2}")));
+            out.push((
+                "team.pick",
+                match team.pick_team() {
+                    GraphwarTeam::Team1 => "Team1".to_string(),
+                    GraphwarTeam::Team2 => "Team2".to_string(),
+                },
+            ));
+            out.push(("team.subs", team.subscribed.len().to_string()));
+            let replayed = team.handle_new_connection_event().len();
+            out.push(("team.replayed", replayed.to_string()));
+            out.push(("team.removed", team.handle_entity_removed_event(9026).len().to_string()));
+            out.push(("team.outbox", team.outbox_len().to_string()));
+            let _ = team.take_outbox();
+        }
+
+        // ⑨ ModeManager：`set_axis_mode`(0x497dc8) 落值 + 发 `AxisModeInfo`(45)；末尾复位
+        if let Some(mode) = self.mode_manager() {
+            let mut mode = mode.borrow_mut();
+            let _ = mode.take_outbox();
+            let before = mode.axis_mode;
+            mode.set_axis_mode(AxisMode::EveryFive);
+            out.push(("mode.axis", (mode.axis_mode as u8).to_string()));
+            let replayed = mode.handle_new_connection_event().len();
+            out.push(("mode.replayed", replayed.to_string()));
+            // 复位：这一条没有副作用，第二次调用读到的还是同一串
+            mode.set_axis_mode(before);
+            out.push(("mode.restored", (mode.axis_mode == before).to_string()));
+            out.push(("mode.outbox", mode.outbox_len().to_string()));
+            out.push(("mode.subs", mode.subscribed.len().to_string()));
+            let _ = mode.take_outbox();
+        }
+
+        // ⑩ EntityEffectManager：出生登记 → 死亡结算读回同一格（`f2f9b437` 那条）
+        if let Some(entity_effect) = self.entity_effect_manager() {
+            let mut e = entity_effect.borrow_mut();
+            let _ = e.take_outbox();
+            e.register_soldier(9027, None);
+            out.push((
+                "entity_effect.kind",
+                match e.get(9027) {
+                    Some(t) => t.code().to_string(),
+                    None => "none".to_string(),
+                },
+            ));
+            out.push(("entity_effect.emitted", e.outbox_len().to_string()));
+            out.push(("entity_effect.subs", e.subscribed.len().to_string()));
+            let replayed = e.handle_new_connection_event().len();
+            out.push(("entity_effect.replayed", replayed.to_string()));
+            let removed = e
+                .handle_entity_removed_event(Event::EntityRemoved.wire_tag(), 9027)
+                .is_ok();
+            out.push(("entity_effect.removed", removed.to_string()));
+            out.push(("entity_effect.after", e.get(9027).is_none().to_string()));
+            out.push(("entity_effect.outbox", e.outbox_len().to_string()));
+            let _ = e.take_outbox();
+        }
+
+        // ⑪ EffectManager：`add_effect` → `EffectInfo`(44)；`tick_event` 到期回收（不发声）
+        if let Some(effect) = self.effect_manager() {
+            let mut f = effect.borrow_mut();
+            let _ = f.take_outbox();
+            f.add_effect(9028, (3.0, -4.0), EffectType::Explosion, 1000);
+            out.push((
+                "effect.kind",
+                match f.get(9028) {
+                    Some(d) => d.effect_type.code().to_string(),
+                    None => "none".to_string(),
+                },
+            ));
+            out.push(("effect.emitted", f.outbox_len().to_string()));
+            out.push(("effect.subs", f.subscribed.len().to_string()));
+            let early = f.handle_tick_event(Event::TickEvent.wire_tag(), 4599).map(|v| v.len()).unwrap_or(0);
+            out.push(("effect.due_early", early.to_string()));
+            let due = f.handle_tick_event(Event::TickEvent.wire_tag(), 4600).map(|v| v.len()).unwrap_or(0);
+            out.push(("effect.due_at", due.to_string()));
+            out.push(("effect.gone", f.get(9028).is_none().to_string()));
+            out.push(("effect.outbox", f.outbox_len().to_string()));
+            let _ = f.take_outbox();
+        }
+
         out
     }
 
@@ -1687,7 +1870,16 @@ mod tests {
             SLOT_STUB,
             "24 B 布局未知 ⇒ 结构都没解"
         );
-        assert_eq!(slot_status("GraphwarTurnManager"), SLOT_ASSEMBLED, "我方复原类型，未接事件流");
+        assert_eq!(
+            slot_status("GraphwarTurnManager"),
+            SLOT_WIRED,
+            "任务 40：订 2（new_connection / entity_removed）+ 发 TurnInfo(43) + 交互断言"
+        );
+        assert_eq!(
+            slot_status("GraphwarGameStateManager"),
+            SLOT_ASSEMBLED,
+            "容器里是 `game::Match`，事件层在 `src/game.rs`（本轮禁区）⇒ 停在 assembled"
+        );
         // 胡编的名字
         assert_eq!(slot_status("nonsense"), SLOT_UNKNOWN);
         assert_eq!(slot_status("graphwar_turn_manager"), SLOT_UNKNOWN, "只认类型名，不认模块名");
@@ -1725,20 +1917,20 @@ mod tests {
                 SLOT_WIRED,     // 1  TickHandler（订 1 发 2 + 4 条交互）
                 SLOT_LAYOUT,    // 2  ClientConnectionHandler（布局全解，行为 0 行）
                 SLOT_ASSEMBLED, // 3  LocalPlayerManager
-                SLOT_ASSEMBLED, // 4  PlayerManager
+                SLOT_WIRED,     // 4  PlayerManager（订 2 发 2 + 6 条交互，任务 40）
                 SLOT_ASSEMBLED, // 5  SoldierManager
                 SLOT_STUB,      // 6  PlanePosManager（布局未知）
                 SLOT_ASSEMBLED, // 7  GameStateManager
                 SLOT_LAYOUT,    // 8  FunctionManager（布局全解，发方向未接）
                 SLOT_WIRED,     // 9  TargetManager（订 2 发 1 + 5 条）
-                SLOT_ASSEMBLED, // 10 TeamManager
+                SLOT_WIRED,     // 10 TeamManager（订 2 发 2 + 7 条交互，任务 40）
                 SLOT_WIRED,     // 11 LifeManager（订 3 发 2 + 5 条）
                 SLOT_WIRED,     // 12 ObstacleManager（订 1 发 4 + 7 条）
-                SLOT_ASSEMBLED, // 13 TurnManager
-                SLOT_ASSEMBLED, // 14 EffectManager
-                SLOT_ASSEMBLED, // 15 ModeManager
+                SLOT_WIRED,     // 13 TurnManager（订 2 发 1 + 6 条交互，任务 40）
+                SLOT_WIRED,     // 14 EffectManager（订 1 发 1 + 7 条交互，任务 40）
+                SLOT_WIRED,     // 15 ModeManager（订 1 发 3 + 5 条交互，任务 40）
                 SLOT_ASSEMBLED, // 16 GraphicsManager
-                SLOT_ASSEMBLED, // 17 EntityEffectManager
+                SLOT_WIRED,     // 17 EntityEffectManager（订 2 发 1 + 7 条交互，任务 40）
                 SLOT_ASSEMBLED, // 18 ComputerPlayerManager
                 SLOT_ASSEMBLED, // 19 FunctionHistoryRecorder
                 SLOT_ASSEMBLED, // 20 NameManager
@@ -1894,7 +2086,7 @@ mod tests {
         assert_eq!(b.len(), Wired::COUNT);
     }
 
-    // ---- 任务 19：5 个 manager 的"一次最小交互后取回正确值"（**证据主体**）----
+    // ---- 任务 19 的 5 个 + 任务 40 的 6 个："一次最小交互后取回正确值"（**证据主体**）----
     //
     // ⚠️ 这 5 条断言证明的是"装配好的对象能交互、读回来的是真表里的值"，
     // **不**证明原版行为。原版每个入口的证据在各 manager 文件的文档块与
@@ -1903,7 +2095,8 @@ mod tests {
     // headless 那一侧（`client/tools/assemble_check.gd` 的 `manager_probe_selftest`）
     // 读的是同一个 [`RootWiring::interaction_selftest`]，**两边数字必须一致**。
 
-    /// 期望值：`interaction_selftest()` 的完整输出（27 条，顺序即 5 个 manager 的序）。
+    /// 期望值：`interaction_selftest()` 的完整输出（**65 条**，顺序即 11 个 manager 的序：
+    /// 任务 19 的 5 个 27 条在前、任务 40 的 6 个 38 条在后——前 27 条一个字都没动）。
     fn expected_selftest() -> Vec<(&'static str, String)> {
         [
             // ① LifeManager
@@ -1938,6 +2131,50 @@ mod tests {
             ("tick.event_tag", "0"),
             ("tick.at_500ms", "30"),
             ("tick.subs", "1"),
+            // ⑥ TurnManager（任务 40）：begin_turn → Announce → TurnInfo(43)
+            ("turn.soldier", "9023"),
+            ("turn.flip", "false"),
+            ("turn.emitted", "1"),
+            ("turn.subs", "2"),
+            ("turn.removed", "true"),
+            ("turn.present_after", "false"),
+            // ⑦ PlayerManager：add_player → connection_of；级联 ConnectionRemoved(6)
+            ("player.conn", "9025"),
+            ("player.emitted", "1"),
+            ("player.subs", "2"),
+            ("player.replayed", "3"),
+            ("player.cascade", "true"),
+            ("player.outbox", "5"),
+            // ⑧ TeamManager：add_to_team → get_team；pick_team(0x3c1b40)
+            ("team.added", "Team2"),
+            ("team.counts", "1,2"),
+            ("team.pick", "Team1"),
+            ("team.subs", "2"),
+            ("team.replayed", "3"),
+            ("team.removed", "1"),
+            ("team.outbox", "5"),
+            // ⑨ ModeManager：set_axis_mode(0x497dc8) → AxisModeInfo(45)；末尾复位
+            ("mode.axis", "2"),
+            ("mode.replayed", "3"),
+            ("mode.restored", "true"),
+            ("mode.outbox", "5"),
+            ("mode.subs", "1"),
+            // ⑩ EntityEffectManager：出生登记 → 死亡结算读回同一格
+            ("entity_effect.kind", "1"),
+            ("entity_effect.emitted", "1"),
+            ("entity_effect.subs", "2"),
+            ("entity_effect.replayed", "1"),
+            ("entity_effect.removed", "true"),
+            ("entity_effect.after", "true"),
+            ("entity_effect.outbox", "2"),
+            // ⑪ EffectManager：add_effect → EffectInfo(44)；tick_event 到期回收不发声
+            ("effect.kind", "0"),
+            ("effect.emitted", "1"),
+            ("effect.subs", "1"),
+            ("effect.due_early", "0"),
+            ("effect.due_at", "1"),
+            ("effect.gone", "true"),
+            ("effect.outbox", "1"),
         ]
         .into_iter()
         .map(|(k, v)| (k, v.to_string()))
@@ -1980,8 +2217,9 @@ mod tests {
         let first = wiring.interaction_selftest_strings();
         let second = wiring.interaction_selftest_strings();
         assert_eq!(first, second, "重复调用必须给出同一串 名字=值");
-        assert_eq!(first.len(), 27);
+        assert_eq!(first.len(), 65);
         assert_eq!(first[0], "life.alive=1");
+        assert_eq!(first[64], "effect.outbox=1");
     }
 
     /// 取回来的值不是常量：换一个输入，读回来的就变了（防"probe 直接 return 常量"）。
@@ -2061,5 +2299,141 @@ mod tests {
     /// `entity_removed_event` 的判别值（14）——测试里直接写字面量会被抄错，这里从 life 那边取。
     fn life_manager_entity_removed_tag() -> u16 {
         ENTITY_REMOVED_EVENT_TAG
+    }
+
+    // ---- 任务 40：第二批 6 个 manager（容器 + 事件流 + 最小交互）----
+
+    /// 6 个都能**按类型**取回，且取回来的是各自的类型（空容器上取不回来）。
+    #[test]
+    fn the_six_new_managers_are_retrievable_by_type() {
+        let wiring = RootWiring::assemble_demo();
+        assert!(wiring.turn_manager().is_some(), "TurnManager 取不回来");
+        assert!(wiring.player_manager().is_some(), "PlayerManager 取不回来");
+        assert!(wiring.team_manager().is_some(), "TeamManager 取不回来");
+        assert!(wiring.mode_manager().is_some(), "ModeManager 取不回来");
+        assert!(wiring.entity_effect_manager().is_some(), "EntityEffectManager 取不回来");
+        assert!(wiring.effect_manager().is_some(), "EffectManager 取不回来");
+
+        let empty = RootWiring::empty();
+        assert!(empty.turn_manager().is_none());
+        assert!(empty.player_manager().is_none());
+        assert!(empty.team_manager().is_none());
+        assert!(empty.mode_manager().is_none());
+        assert!(empty.entity_effect_manager().is_none());
+        assert!(empty.effect_manager().is_none());
+
+        // 同一个 `Rc`：两次取回是同一对象
+        let a = wiring.effect_manager().unwrap();
+        let b = wiring.effect_manager().unwrap();
+        assert!(Rc::ptr_eq(&a, &b));
+    }
+
+    /// **事件流是真接上的**：每个 manager 取回后都记着原版 `new` 的那几条订阅，
+    /// 且调一次入口之后发件箱里真的多了那条判别值（不是恒空 / 不是常量）。
+    ///
+    /// 订阅名与条数逐条来自 `docs/16` §50 的指令证据表；这里只钉"接上了"。
+    #[test]
+    fn the_six_new_managers_have_a_live_event_flow() {
+        let wiring = RootWiring::assemble_demo();
+
+        // 订阅方向：名字与条数
+        {
+            let turn = wiring.turn_manager().unwrap();
+            let mut t = turn.borrow_mut();
+            assert_eq!(t.subscribed, vec!["new_connection_event", "entity_removed_event"]);
+            let _ = t.take_outbox();
+            t.add_player(9101, Team::One, vec![9102, 9103]);
+            let _ = t.begin_turn(9101, |_| 1u8, false);
+            assert_eq!(t.outbox, vec![Event::TurnInfo], "begin_turn 发 TurnInfo(43)");
+            assert!(t.handle_entity_removed_event(9101));
+            assert_eq!(t.outbox_len(), 1, "0x463580 不发事件");
+        }
+        {
+            let player = wiring.player_manager().unwrap();
+            let mut p = player.borrow_mut();
+            assert_eq!(p.subscribed, vec!["new_connection_event", "entity_removed_event"]);
+            let _ = p.take_outbox();
+            p.add_player(9104, 9105);
+            assert_eq!(p.outbox, vec![Event::PlayerInfo]);
+            assert_eq!(p.handle_entity_removed_event(9104).map(|c| c.connection_id), Some(9105));
+            assert_eq!(p.outbox.last(), Some(&Event::ConnectionRemoved), "级联发 (6)");
+        }
+        {
+            let team = wiring.team_manager().unwrap();
+            let mut t = team.borrow_mut();
+            assert_eq!(t.subscribed, vec!["new_connection_event", "entity_removed_event"]);
+            let _ = t.take_outbox();
+            t.add_to_team(9106, GraphwarTeam::Team1);
+            assert_eq!(t.outbox, vec![EVENT_TEAM_INFO as u16], "TeamInfo(24)");
+            t.remove_from_team(9106);
+            assert_eq!(t.outbox.last(), Some(&(EVENT_REMOVE_TEAM as u16)), "RemoveTeam(25)");
+        }
+        {
+            let mode = wiring.mode_manager().unwrap();
+            let mut m = mode.borrow_mut();
+            assert_eq!(m.subscribed, vec!["new_connection_event"]);
+            let _ = m.take_outbox();
+            m.set_time_mode(TimeMode::Timer5m);
+            assert_eq!(m.outbox, vec![Event::TimeModeInfo], "TimeModeInfo(48)");
+            // 复位成演示初值（后面别的断言还要读它）
+            m.set_time_mode(TimeMode::Timer1m);
+            let _ = m.take_outbox();
+            m.take_outbox();
+        }
+        {
+            let ee = wiring.entity_effect_manager().unwrap();
+            let mut e = ee.borrow_mut();
+            assert_eq!(e.subscribed, vec!["new_connection_event", "entity_removed_event"]);
+            let _ = e.take_outbox();
+            e.register_soldier(9107, None);
+            assert_eq!(e.outbox, vec![Event::EntityEffectInfo], "EntityEffectInfo(56)");
+        }
+        {
+            let ef = wiring.effect_manager().unwrap();
+            let mut f = ef.borrow_mut();
+            assert_eq!(f.subscribed, vec!["tick_event"]);
+            let _ = f.take_outbox();
+            f.add_effect(9108, (0.0, 0.0), EffectType::Spark, 0);
+            assert_eq!(f.outbox, vec![Event::EffectInfo], "EffectInfo(44)");
+            // tick 只回收、不发事件
+            let _ = f.take_outbox();
+            assert_eq!(f.handle_tick_event(Event::TickEvent.wire_tag(), 3600), Ok(vec![9108]));
+            assert_eq!(f.outbox_len(), 0, "tick 不发事件");
+        }
+    }
+
+    /// 6 个的新增读数**跟着输入变**（防"probe 直接 return 常量"）。
+    #[test]
+    fn the_new_read_back_values_track_the_written_state() {
+        let wiring = RootWiring::assemble_demo();
+
+        // TurnManager：换单人名单 ⇒ 第一次 begin_turn 拿到的就是那一个
+        {
+            let turn = wiring.turn_manager().unwrap();
+            let mut t = turn.borrow_mut();
+            t.add_player(9110, Team::Two, vec![9111]);
+            let decided = t.begin_turn(9110, |_| 1u8, false);
+            assert_eq!(decided.soldier_id(), Some(9111));
+            assert_eq!(decided.flip(), Some(true), "Team2 朝 -x（flip = true）");
+            assert!(t.handle_entity_removed_event(9110));
+        }
+        // ModeManager：换一个模式，读回来的就是那个
+        {
+            let mode = wiring.mode_manager().unwrap();
+            let mut m = mode.borrow_mut();
+            let before = m.axis_mode;
+            m.set_axis_mode(AxisMode::OnlyMain);
+            assert_eq!(m.axis_mode, AxisMode::OnlyMain);
+            m.set_axis_mode(before);
+            assert_eq!(m.axis_mode, before);
+        }
+        // EffectManager：换 start_tick，到期时刻跟着变
+        {
+            let ef = wiring.effect_manager().unwrap();
+            let mut f = ef.borrow_mut();
+            f.add_effect(9112, (1.0, 1.0), EffectType::Death, 40);
+            assert_eq!(f.handle_tick_event(Event::TickEvent.wire_tag(), 3639), Ok(vec![]));
+            assert_eq!(f.handle_tick_event(Event::TickEvent.wire_tag(), 3640), Ok(vec![9112]));
+        }
     }
 }

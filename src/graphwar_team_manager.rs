@@ -140,6 +140,17 @@
 
 use std::collections::HashMap;
 
+/// 发件箱里记的**判别值**（线上 tag 的低 8 位，`u16` 与 `Event::wire_tag()` 同宽）。
+///
+/// ⚠️ 这里**不**用 `crate::events::Event`，理由只有一条、而且是硬约束：
+/// `tests/graphwar_team_manager.rs` 用 `#[path = "../src/graphwar_team_manager.rs"]`
+/// **单独**把本文件编进测试二进制（不带 `src/events.rs`），那个文件的文件头写着
+/// "三条源码文件都只依赖 `std`，因此这种引法是合法的"。
+/// 同一个模块的兄弟（`graphwar_player_manager` / `graphwar_effect_manager` /
+/// `graphwar_entity_effect_manager`）的测试**带**了 `events.rs`，所以它们用 `Vec<Event>`；
+/// 本模块用 `Vec<TeamEventKind>`，**判别值是同一个数**（[`EVENT_TEAM_INFO`] / [`EVENT_REMOVE_TEAM`]）。
+pub type TeamEventKind = u16;
+
 /// `GraphwarTeam` 的两支。
 ///
 /// 判别值 `Team1 = 0` / `Team2 = 1` 是**推断**（见模块文档 §3）；
@@ -240,15 +251,69 @@ impl TeamEvent {
 }
 
 /// `player_id → GraphwarTeam` 那张表（原版在 `Mutex` 里，这里由调用方决定锁）。
-#[derive(Debug, Default, Clone)]
+///
+/// # 事件流（任务 40 补，`wired` 的第二件）
+///
+/// `new`（x86 `0x3c1fc0`）**订阅 2 条**，两个 `call [slot 0x9bac88] -> 0x3d38f0`
+/// （= `GraphwarEventHandler::subscribe_to_event`）：
+///
+/// ```text
+/// 0x3c202c  lea rsi,'new_connection_event'  / 0x3c203a mov edx,0x14 / 0x3c2045 call subscribe
+///           r8 = slot 0x9528c0 (+0x20 = 0x9528e0 → 跳板 0x3c1fa0 → 0x3c1cf0 send_all_info_events)
+/// 0x3c207d  lea rsi,'entity_removed_event'  / 0x3c208b mov edx,0x14 / 0x3c2096 call subscribe
+///           r8 = slot 0x9528e8 (+0x20 = 0x952908 → 跳板 0x3c1f80 → 0x3c1f40 handle_entity_removed_event)
+/// ```
+///
+/// （`观测`。跳板由 `addr_probe.py callers 0x3c1cf0` / `0x3c1f40` 给出：
+/// `0x3c1fb2` 与 `0x3c1f92` 各一条 `lea rsi` 指向那两个函数。）
+///
+/// 发方向两条，都在 setter 体内（`观测`，见各方法的文档）：
+/// `TeamInfo`(24) / `RemoveTeam`(25)。发件箱用 `Vec<Event>` 承接原版的
+/// `GraphwarEventQueue::add_event`——**只记判别值**，载荷仍由 [`TeamEvent`] 返回，
+/// 两者分工与 `GraphwarEntityEffectManager` 一致。
+#[derive(Debug, Clone)]
 pub struct TeamTable {
     teams: HashMap<u32, GraphwarTeam>,
+    /// 订阅名（`new` 的两条 `subscribe`，顺序 = 调用序，`观测`）。
+    pub subscribed: Vec<&'static str>,
+    /// 发件箱（判别值；载荷见 [`TeamEvent`]）。
+    pub outbox: Vec<TeamEventKind>,
+}
+
+impl Default for TeamTable {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TeamTable {
-    /// 空表。第一个进房的人会拿到 [`GraphwarTeam::Team1`]（见 [`Self::pick_team`]）。
+    /// 空表 + 两条订阅。第一个进房的人会拿到 [`GraphwarTeam::Team1`]（见 [`Self::pick_team`]）。
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            teams: HashMap::new(),
+            subscribed: SUBSCRIBED_EVENTS.iter().map(|(name, _)| *name).collect(),
+            outbox: Vec::new(),
+        }
+    }
+
+    /// `new_connection_event` 的处理（跳板 `0x3c1fa0` → `0x3c1cf0`，
+    /// 见 [`TeamTable`] 的类型文档）：**整表重播**。
+    ///
+    /// 返回值 = 重播出去的载荷（顺序 = `HashMap` 迭代序，原版同样不可复现）。
+    pub fn handle_new_connection_event(&mut self) -> Vec<TeamEvent> {
+        let events = self.send_all_info_events();
+        self.outbox.extend(events.iter().map(|_| TeamEventKind::from(EVENT_TEAM_INFO)));
+        events
+    }
+
+    /// 取走发件箱（与原版 `GraphwarEventQueue` 的"取空"同口径）。
+    pub fn take_outbox(&mut self) -> Vec<TeamEventKind> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// 发件箱里有几条。
+    pub fn outbox_len(&self) -> usize {
+        self.outbox.len()
     }
 
     /// `add_to_team`（`0x3c17d0`）：写表并广播 `TeamInfo`。
@@ -257,6 +322,7 @@ impl TeamTable {
     /// 所以广播时表里已经有这条了。同名玩家重复调用是**覆盖**（`HashMap::insert`）。
     pub fn add_to_team(&mut self, player_id: u32, team: GraphwarTeam) -> Vec<TeamEvent> {
         self.teams.insert(player_id, team);
+        self.outbox.push(TeamEventKind::from(EVENT_TEAM_INFO));
         vec![TeamEvent::TeamInfo { player_id, team }]
     }
 
@@ -266,7 +332,10 @@ impl TeamTable {
     /// （`cmp %dl,0x2` / `je`，`0x3c1a08`），`None` 那支直接跳到解锁返回。
     pub fn remove_from_team(&mut self, player_id: u32) -> Vec<TeamEvent> {
         match self.teams.remove(&player_id) {
-            Some(_) => vec![TeamEvent::RemoveTeam { player_id }],
+            Some(_) => {
+                self.outbox.push(TeamEventKind::from(EVENT_REMOVE_TEAM));
+                vec![TeamEvent::RemoveTeam { player_id }]
+            }
             None => Vec::new(),
         }
     }
@@ -458,5 +527,52 @@ mod tests {
         for (name, len) in SUBSCRIBED_EVENTS {
             assert_eq!(name.len(), len, "{name}");
         }
+    }
+
+    // ---- 任务 40：事件流（订阅方向 + 发方向）----
+
+    /// 订阅方向：`new` 之后 `subscribed` 就是 `0x3c1fc0` 里那两条（顺序 = 调用序）。
+    #[test]
+    fn new_registers_the_two_observed_subscriptions() {
+        let table = TeamTable::new();
+        assert_eq!(table.subscribed, vec!["new_connection_event", "entity_removed_event"]);
+        // `Default` 与 `new` 必须同一个形状（否则 `TeamTable::default()` 会静默丢订阅）
+        assert_eq!(TeamTable::default().subscribed, table.subscribed);
+        assert_eq!(table.outbox_len(), 0);
+    }
+
+    /// 发方向：写表 → `TeamInfo`(24)；删表 → `RemoveTeam`(25)；存档重播 → 每人一条 (24)。
+    ///
+    /// 期望的判别值不是数出来的，是 `docs/07` §3.3 全表里的那两个行号（24 / 25）。
+    #[test]
+    fn outbox_tracks_the_two_emitters() {
+        let mut table = TeamTable::new();
+        table.add_to_team(7, GraphwarTeam::Team1);
+        assert_eq!(table.outbox, vec![u16::from(EVENT_TEAM_INFO)]);
+        assert_eq!(table.outbox[0], 24, "TeamInfo 的判别值见 docs/07 §3.3 全表");
+        // 再删一次不存在的：不发
+        assert!(table.remove_from_team(7).len() == 1);
+        assert_eq!(table.outbox, vec![u16::from(EVENT_TEAM_INFO), u16::from(EVENT_REMOVE_TEAM)]);
+        assert_eq!(table.outbox[1], 25);
+        assert!(table.remove_from_team(7).is_empty(), "删不到就不发");
+        assert_eq!(table.outbox_len(), 2, "删不到的那次不许往发件箱里塞");
+        assert_eq!(table.take_outbox().len(), 2);
+        assert_eq!(table.outbox_len(), 0, "取空之后是 0");
+    }
+
+    /// `new_connection_event` 的处理 = 整表重播（跳板 `0x3c1fa0` → `0x3c1cf0`）。
+    #[test]
+    fn new_connection_replays_the_whole_table() {
+        let mut table = TeamTable::new();
+        table.add_to_team(1, GraphwarTeam::Team1);
+        table.add_to_team(2, GraphwarTeam::Team2);
+        let _ = table.take_outbox();
+        let replayed = table.handle_new_connection_event();
+        assert_eq!(replayed.len(), 2, "两个人 ⇒ 重播两条");
+        assert!(replayed.iter().all(|e| e.discriminant_low() == EVENT_TEAM_INFO));
+        assert_eq!(table.outbox_len(), 2, "重播也要进发件箱");
+        // 重播不改表
+        assert_eq!(table.get_team(1), Some(GraphwarTeam::Team1));
+        assert_eq!(table.counts(), (1, 1));
     }
 }

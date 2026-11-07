@@ -332,4 +332,74 @@ impl GraphwarEntityEffectManager {
     pub fn death_effect_of(&self, entity_id: u32) -> Option<EffectType> {
         self.get(entity_id)
     }
+
+    /// `new_connection_event` 的处理（跳板/闭包 `0x4782f0`，`观测`——见模块文档 §3 的
+    /// "遍历整表逐条广播 `EntityEffectInfo`"那一行）：整表重播。
+    ///
+    /// 与 [`Self::send_all_info_events`] 是同一件事；这个名字只是为了与其它四个 manager
+    /// 的接线口同名（容器层 `interaction_selftest` 按同一套形状调）。
+    pub fn handle_new_connection_event(&mut self) -> Vec<EntityEffectInfo> {
+        self.send_all_info_events()
+    }
+
+    /// 取走发件箱。
+    pub fn take_outbox(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// 发件箱里有几条。
+    pub fn outbox_len(&self) -> usize {
+        self.outbox.len()
+    }
+}
+
+#[cfg(test)]
+mod event_flow_tests {
+    use super::*;
+
+    /// 订阅方向：`new`（`0x478490`）的两条 `subscribe`（`0x478515` / `0x478566`）。
+    #[test]
+    fn new_registers_the_two_observed_subscriptions() {
+        let m = GraphwarEntityEffectManager::new();
+        assert_eq!(m.subscribed, vec!["new_connection_event", "entity_removed_event"]);
+        assert_eq!(m.outbox_len(), 0);
+    }
+
+    /// 发方向：出生登记发 `EntityEffectInfo`(56)；`entity_removed` 删表**不发**。
+    ///
+    /// 死亡特效照抄出生登记（`docs/16` §46 那条 `f2f9b437`）：登记什么，死亡结算就
+    /// `death_effect_of` 读回什么。
+    #[test]
+    fn registration_is_read_back_by_death_settlement() {
+        let mut m = GraphwarEntityEffectManager::new();
+        m.register_soldier(9007, None); // 空皮肤 ⇒ DeathEffect
+        assert_eq!(m.get(9007), Some(EffectType::Death));
+        assert_eq!(m.death_effect_of(9007), Some(EffectType::Death));
+        assert_eq!(m.outbox.last(), Some(&Event::EntityEffectInfo));
+        assert_eq!(Event::EntityEffectInfo.wire_tag(), 56);
+        // 后到的 bot_ 皮肤会把登记改写成 AshEffect
+        assert!(m.apply_skin_graphics(9007, "bot_2"));
+        assert_eq!(m.death_effect_of(9007), Some(EffectType::Ash));
+        // entity_removed（tag 14）删表项；判别值不对 ⇒ Err
+        assert_eq!(m.handle_entity_removed_event(13, 9007), Err(()));
+        assert_eq!(m.handle_entity_removed_event(ENTITY_REMOVED_TAG, 9007), Ok(()));
+        assert_eq!(m.death_effect_of(9007), None);
+        // 删表不发事件（两条 outbox 都是那两次 add_entity_effect 留下的）
+        assert_eq!(m.outbox.len(), 2);
+        let _ = m.take_outbox();
+        assert_eq!(m.outbox_len(), 0);
+    }
+
+    /// `new_connection_event` = 整表重播（闭包 `0x4782f0`）。
+    #[test]
+    fn new_connection_replays_the_whole_table() {
+        let mut m = GraphwarEntityEffectManager::new();
+        m.register_target(9008);
+        let _ = m.take_outbox();
+        let replayed = m.handle_new_connection_event();
+        assert_eq!(replayed.len(), 1);
+        assert_eq!(replayed[0], EntityEffectInfo { entity_id: 9008, effect_type: EffectType::Spark });
+        assert_eq!(m.outbox_len(), 1, "重播也要进发件箱");
+        assert_eq!(m.get(9008), Some(EffectType::Spark), "重播不改表");
+    }
 }
