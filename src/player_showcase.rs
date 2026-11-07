@@ -1158,7 +1158,7 @@ pub type Color = [f32; 4];
 /// 纯白：`.rodata 0x19ed00`。档位：**观测**（x86 `0x4e5d2d`
 /// `movdqa xmm0,[rip…] # 19ed00`；arm64 `0x440284` `fmov v0.4s,#1.0`）。
 ///
-/// ⚠️ 与 `docs/16-client.md` §18.7 里 `GraphwarLongPressAnimation::draw` 第 2 次绘制
+/// ⚠️ 与 `docs/16-client.md` §19.7 里 `GraphwarLongPressAnimation::draw` 第 2 次绘制
 /// **同一个地址**（`0x19ed00`）—— 两个模块共用一个"白"。
 pub const DRAW_COLOR_RODATA: u64 = 0x19ed00;
 
@@ -1362,9 +1362,9 @@ pub const UNKNOWNS: [&str; 6] = [
 
 /// 本模块依赖的文档小节（**不要另抄一份**）。
 pub const DOC_SECTIONS: [&str; 3] = [
-    "docs/16-client.md §23（本模块逐函数规格；本节）",
+    "docs/16-client.md §22（本模块逐函数规格；本节）",
     "docs/02-module-map.md §18（模块权威清单 / GDExtension 类表）",
-    "docs/16-client.md §18.7（`0x19ed00` = Color{1,1,1,1}，与长按动画共用）",
+    "docs/16-client.md §19.7（`0x19ed00` = Color{1,1,1,1}，与长按动画共用）",
 ];
 
 // ---------------------------------------------------------------------------

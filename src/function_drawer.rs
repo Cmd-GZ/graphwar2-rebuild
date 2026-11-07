@@ -4,7 +4,7 @@
 //!
 //! 一个控制器（`Gd<Control>` 派生，`GraphwarPlane::init` 会建 **3 个**实例并 `add_child`），
 //! 自己不画任何图元：它**持有 `Line2D` 子节点**，每个"玩家 id"一条线。
-//! 曲线是**节点**，不是 `draw_line` —— 这与 `docs/16-client.md` §26.4 的结论一致，
+//! 曲线是**节点**，不是 `draw_line` —— 这与 `docs/16-client.md` §23.4 的结论一致，
 //! 本节把那条结论里"缺的证据"（`add_point` 循环的上界与步长）补齐了，见 §「`update_function` 全解」。
 //!
 //! # 名字与地址（arm64 2.0.60 未 strip；arm64 地址只用于定名，绝不当 x86 用）
@@ -75,7 +75,7 @@
 //! + `CanvasItem::draw_circle_full`（各 1 处，在循环里）+ 两组 gdext cast。
 //! x86 侧 `draw_circle` 的 GOT 槽 `0x9bbfc0` 在整份 `.text` 只有 9 个调用点，
 //! 其中 5 个在 `0x4993c0`（那个函数还引用 `"Write a function of x to hit the target"`
-//! 这句话，更像函数输入框的绘制），4 个在 `EffectDrawer::draw`（`docs/16-client.md` §26.4）。
+//! 这句话，更像函数输入框的绘制），4 个在 `EffectDrawer::draw`（`docs/16-client.md` §23.4）。
 //! **没有一个**是"每组 1 次 + 循环"的形态 ⇒ x86 侧这个 `draw` 要么被内联进
 //! `GraphwarPlane::draw`（`0x4b5df0`），要么就没了。**结论：未知，不强行落地。**
 //!
@@ -190,7 +190,7 @@ pub const ADD_POINT_CALL_SITE: u32 = 0x0049_8fab;
 
 /// `GraphwarPlane::init`（x86 `0x4b7380`）建 **3 个** `FunctionDrawer` 并 `add_child`。
 ///
-/// 真值：`docs/16-client.md` §26.3（arm64 侧 `Gd::default_instance`×3、
+/// 真值：`docs/16-client.md` §23.3（arm64 侧 `Gd::default_instance`×3、
 /// `ExAddChild::new`×3、`Node::add_child_full`×3；x86 侧 `0x4db030`×3）。
 /// **这 3 个各自负责什么，未知**（推测是 3 层/3 组，但没有任何证据能指到）。
 pub const CHILDREN_PER_PLANE: usize = 3;

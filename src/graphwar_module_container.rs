@@ -36,7 +36,7 @@
 //!   把它们写成"根节点模块容器里的模块槽"，**那个措辞要按本节更正**——
 //!   容器里没有槽）；
 //! * `+0x16a0` / `+0x16a8` 是 `GraphwarRootNode` 的 `GraphwarTextureLoader` /
-//!   `GraphwarPlayerConfig`（`docs/16-client.md` §15 / §25）；
+//!   `GraphwarPlayerConfig`（`docs/16-client.md` §15 / §22）；
 //! * `GraphwarRootNode` 里真正通往容器的那条链是
 //!   `root+0x1668`（某个 manager 的 `Rc<RefCell<_>>`）→ 该 manager `+0x238`
 //!   （`Rc<RefCell<GraphwarModuleContainer>>`）→ `.borrow().get_module::<X>()`

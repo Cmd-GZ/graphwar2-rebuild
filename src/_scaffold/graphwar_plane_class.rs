@@ -2,7 +2,7 @@
 //!
 //! # 为什么会有这一份
 //!
-//! 原版的 `GraphwarPlane` 是**棋盘本体**（`docs/16-client.md` §26）：它自己只画**一个空心黑框**
+//! 原版的 `GraphwarPlane` 是**棋盘本体**（`docs/16-client.md` §23）：它自己只画**一个空心黑框**
 //! （`draw_set_transform` ×1 + `draw_rect` ×1，`Rect2(-25,-15,50,30)`、黑、宽 `0.2`、
 //! **不填充**），曲线**不在**它里面画——它 `init` 里建 **3 个 `FunctionDrawer` 子节点**，
 //! 弹道是 `Line2D` 子节点，由那些子节点画（§26.4 的**有界否定**：`draw_line` 在本类里 0 次）。
@@ -19,7 +19,7 @@
 //! # 本切片**只**做三件本类自己的事（`FunctionDrawer` 已由 §42 的节点类补上）
 //!
 //! 1. **建 3 个子节点**（`init` 观测）——它们现在是**真的 `FunctionDrawer`**
-//!    （`src/_scaffold/function_drawer_class.rs`，`docs/16-client.md` §42）；
+//!    （`src/_scaffold/function_drawer_class.rs`，`docs/16-client.md` §38）；
 //! 2. **脏矩形**：`obstacle_partial_update_event` 的纯数据版 + 每帧冲刷；
 //! 3. **画棋盘框**：`draw_set_transform` + `draw_rect`，常量全取 `graphwar_plane::BOARD_*`。
 //!
@@ -31,7 +31,7 @@
 //! | 项 | 原版 | 本文件 | 档位 |
 //! |---|---|---|---|
 //! | 子节点 | `init` 里 `Gd::default_instance::<FunctionDrawer>()` ×3 + `Node::add_child` ×3 | 同样 3 个 `FunctionDrawer`（`FunctionDrawer::new_alloc()`）——**不再是 `Control` 占位**（§42） | **观测**（个数 / 类名） |
-//! | 子节点的名字 | 没 `set_name` ⇒ 引擎自动名 `@FunctionDrawer@N`（`docs/16` §2.1.10 的 dump 里同族的 `@AxisDrawer@N` / `@EntityDrawer@N` 都是自动名） | 也没 `set_name` ⇒ 自动名 `@FunctionDrawer@N`。**运行时观测**的值是 `@FunctionDrawer@N`（`docs/16` §42.2） | 原版**观测**；本类**不伪造**那个名字 |
+//! | 子节点的名字 | 没 `set_name` ⇒ 引擎自动名 `@FunctionDrawer@N`（`docs/16` §2.1.10 的 dump 里同族的 `@AxisDrawer@N` / `@EntityDrawer@N` 都是自动名） | 也没 `set_name` ⇒ 自动名 `@FunctionDrawer@N`。**运行时观测**的值是 `@FunctionDrawer@N`（`docs/16` §38.2） | 原版**观测**；本类**不伪造**那个名字 |
 //! | 建子节点的时机 | `init` | **`ready`**（`#[func] build_children()` 也能手动调）。理由：gdext 的 `init` 里 `Base` 还没构造完（`InitState::Uninitialized`），`base_mut()` 用不了 | 原版**观测**；时机差是**gdext 约束** |
 //! | `draw` 的图元 | `draw_set_transform` ×1（槽 `0x9bc018`）+ `draw_rect` ×1（槽 `0x9bc028`）；`draw_line` **0** 次 | 同 | **逐位**（常量槽）/ **观测**（调用点） |
 //! | `draw_set_transform` 的**实参** | 只确证了 GOT 槽，**实参没读到** | 用 `to_pixel` 那套换算当默认值（`PIXEL_OFFSET` / `PX_PER_UNIT`），两个导出属性可改 | 原版**未知**；默认值是**我方选择** |
@@ -76,7 +76,7 @@
 //!   process_call_count() / obstacle_update_total() / resized_call_count() / ready_call_count() -> int
 //! ```
 //!
-//! # 写这种类必须知道的几条（`docs/16-client.md` §38.4 实测过，这里只记与本类有关的）
+//! # 写这种类必须知道的几条（`docs/16-client.md` §34.4 实测过，这里只记与本类有关的）
 //!
 //! 1. **`Gd<Node>` 不保活**：子节点归父节点所有，`add_child` 之后把 `Gd` 丢掉是安全的；
 //!    反过来"父节点被回收而手里还留着 `Gd`"就成了野句柄（碰一下就 `1337` + 卡死）。
@@ -276,7 +276,7 @@ impl GraphwarPlane {
         // `init_children` 把闭包返回的 id 依次记进 `plane.function_drawers`（纯逻辑的意图结构）。
         self.plane.init_children(|_class_name| {
             // 原版这里是 `Gd::default_instance::<FunctionDrawer>()`；现在是**真的**
-            // `FunctionDrawer` 节点类（`docs/16-client.md` §42）。
+            // `FunctionDrawer` 节点类（`docs/16-client.md` §38）。
             let child = FunctionDrawer::new_alloc();
             let node = child.clone().upcast::<Node>();
             parent.add_child(&node);

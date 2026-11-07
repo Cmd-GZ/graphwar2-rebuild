@@ -1,6 +1,6 @@
 //! 原版 `src/graphwar_draw_util.rs` —— **不画东西的"绘制工具"**。
 //!
-//! ## 定性（2026-11-07，`docs/16-client.md` §33.6，`观测`）
+//! ## 定性（2026-11-07，`docs/16-client.md` §30.6，`观测`）
 //!
 //! 2.0.60 arm64 符号表里本模块**只有一个函数**：
 //! `GraphwarDrawUtil::get_team_overview`（`0x4c3b38`，1548 字节）。
@@ -40,7 +40,7 @@
 //!
 //! `0x4be6e0`，`src/graphwar_draw_util.rs:28:53 / 30:51 / 31:41 / 33:42` 四个
 //! `panic::Location` 锚全部落在它身上（`tools/loc_xrefs.py` 单次扫描，
-//! 见 `docs/16-client.md` §27）。同一函数体的锚里还有两条
+//! 见 `docs/16-client.md` §24）。同一函数体的锚里还有两条
 //! `src/graphwar_game_client.rs:152:22/152:49` —— 那是**泛型被两边内联**造成的
 //! （`docs/02-module-map.md` §18.2 的"7 个不一致"之一），不改变归属。
 
@@ -62,7 +62,7 @@ pub struct TeamOverviewEntry {
 ///
 /// 原版没有把结果做成 `Vec`（函数返回的是借用/守卫的组合，1548 字节里
 /// 有 8 次 `Rc::drop_slow`），本 crate 用 `Vec` 表达"取出来的一份拷贝"，
-/// 差异已在 `docs/16-client.md` §33.6 标注为 `推断`。
+/// 差异已在 `docs/16-client.md` §30.6 标注为 `推断`。
 pub fn get_team_overview(
     players: &[(u64, u8)],
     team_colors: &[u8],

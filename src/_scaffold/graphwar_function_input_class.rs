@@ -16,7 +16,7 @@
 //!
 //! 预处理与折叠表**只有一份**，仍然在纯逻辑文件里；本文件不复制任何字符表。
 //!
-//! # 本轮要验的三种机制（结论见 `docs/16-client.md` §39）
+//! # 本轮要验的三种机制（结论见 `docs/16-client.md` §35）
 //!
 //! | # | 机制 | 原版形态 | 本文件怎么用 |
 //! |---|---|---|---|
@@ -77,7 +77,7 @@
 //! 3. **`Callable` 不能当 `#[export]` 属性**：gdext 的 `impl_property_by_godot_convert!`
 //!    对 `Callable`/`Signal`/`Rid` 只生成 `SimpleVar`、**不生成 `Export`**
 //!    （`godot-core-0.5.5/src/registry/property/mod.rs` 的 `no_export` 分支）；
-//!    想把它暴露给编辑器只能加 `#[var]` 而不是 `#[export]`。见 `docs/16-client.md` §39.6。
+//!    想把它暴露给编辑器只能加 `#[var]` 而不是 `#[export]`。见 `docs/16-client.md` §35.6。
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -186,7 +186,7 @@ impl ILineEdit for GraphwarFunctionInput {
                 // ⚠️ **实测**：`size_changed` 在 Godot 4.6/4.7 的 `Control`/`LineEdit` 上
                 // **不是信号**（只有 `resized`）⇒ 这一条必然 `ERR_INVALID_PARAMETER`。
                 // 原版的字面量确实是 `size_changed`（`.rodata 0x1c46d2`，12 字节，逐字节核过），
-                // 所以这是**原版自己的**问题，不是本文件的笔误。见 `docs/16-client.md` §39.5。
+                // 所以这是**原版自己的**问题，不是本文件的笔误。见 `docs/16-client.md` §35.5。
                 godot_warn!("GraphwarFunctionInput::ready 连接 {signal} 失败: {err:?}");
                 self.connect_errors.push(format!("{signal}: {err:?}"));
             }
@@ -194,7 +194,7 @@ impl ILineEdit for GraphwarFunctionInput {
     }
 
     /// `_process`：原版 `0x4fd4a0`（6.4 KB）里**已确认**的那部分 —— 两次
-    /// `call("force_update_cb")`。与 `game_client` 的数据流（`docs/16` §16 的未知项）**没接**。
+    /// `call("force_update_cb")`。与 `game_client` 的数据流（`docs/16` §17 的未知项）**没接**。
     fn process(&mut self, _delta: f64) {
         self.process_calls += 1;
         self.force_update_cb();
@@ -251,7 +251,7 @@ impl GraphwarFunctionInput {
 
     /// 原版 `on_text_submitted`（导出方法，`0x427070`）：把文本**原样**交给 `"fire"` 回调。
     ///
-    /// 原版这条路上**没有任何字符串变换**（`docs/16` §16：`0x4f4250` 只做
+    /// 原版这条路上**没有任何字符串变换**（`docs/16` §17：`0x4f4250` 只做
     /// `[rdi+0x68]` 取值 + `call *0x20`）⇒ 传 `" s in ( x ) "` 就收到带空格的原文。
     #[func]
     fn on_text_submitted(&mut self, new_text: GString) {
@@ -283,7 +283,7 @@ impl GraphwarFunctionInput {
     /// 原版 `force_update_cb`（导出方法，`0x4f2200`）：读引擎文本 → **去空格** → 变了就发信号。
     ///
     /// 返回去空格之后的结果。原版这一步之后还"送路径计算 + 与 game_client 对账"
-    /// （`docs/16` §16 的角色描述），那两件**没接**。
+    /// （`docs/16` §17 的角色描述），那两件**没接**。
     #[func]
     fn force_update_cb(&mut self) -> GString {
         self.force_update_calls += 1;

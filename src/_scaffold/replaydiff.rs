@@ -1320,7 +1320,7 @@ impl Predictor {
         );
         // ── 把"出生登记"喂进去（2026-11-07）：死亡特效照抄登记表，查不到就一条都不发。
         // 不喂这两样，回放对拍器里每个实体都走"出生时还没有皮肤"⇒ 全 DeathEffect，
-        // 与旧实现逐字节相同，问题问不出来。见 `docs/16-client.md` §37.5。
+        // 与旧实现逐字节相同，问题问不出来。见 `docs/16-client.md` §33.5。
         // 靶子是 **Team2**（`docs/150`：打靶关的胜负 = Team2 全灭），u8 编码 1。
         for id in inputs.targets.iter() {
             model.add_target(*id, 1);

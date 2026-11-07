@@ -1,6 +1,6 @@
 //! 原版 `src/polish_notation_converter.rs` —— **中缀 → 波兰（前缀）那一趟**。
 //!
-//! ## 这个模块不是死代码（2026-11-07 结案，`docs/16-client.md` §33.1）
+//! ## 这个模块不是死代码（2026-11-07 结案，`docs/16-client.md` §30.1）
 //!
 //! 唯一带符号的函数是 `PolishNotationConverter::reorder_recursive`
 //! （x86-64 目标 `0x4f5450`，arm64 2.0.60 `0x44db78`，324 字节）。它有**两个**调用点，

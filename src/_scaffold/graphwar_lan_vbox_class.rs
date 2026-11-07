@@ -185,7 +185,7 @@ impl GraphwarLanVBox {
     ///
     /// 原版 `process` 第 ② 步只有一句 `is_visible_in_tree()`（arm64 `0x450dd8`）。
     /// 这里多一条**我方约定**：**树外当可见**。理由 = 复刻 `entity_drawer_class` 那批实测到的
-    /// 坑（`docs/16` §37.4 第 3 条）：`--script` 模式下节点先建、后进树，若树外一律判"不可见"，
+    /// 坑（`docs/16` §33.4 第 3 条）：`--script` 模式下节点先建、后进树，若树外一律判"不可见"，
     /// 验收脚本第一帧一行都建不出来，测的就不是投影逻辑了。
     fn sync_model_visibility_from_engine(&mut self) {
         let base = self.base();
@@ -258,7 +258,7 @@ impl IVBoxContainer for GraphwarLanVBox {
     /// 由 GDScript 用 [`GraphwarLanVBox::update_game_list`] 显式驱动。
     ///
     /// 不写 `set_process(true)`：Godot 4.7 对实现了该虚方法的扩展类自动开
-    /// （`docs/16` §37.4 第 5 条，本轮三份类**再次**实测到同一结论）。
+    /// （`docs/16` §33.4 第 5 条，本轮三份类**再次**实测到同一结论）。
     fn process(&mut self, _delta: f64) {
         self.process_calls += 1;
         let drained = self.model.drain_join_requests();
@@ -337,7 +337,7 @@ impl GraphwarLanVBox {
         }
 
         // ④ 源表里已经没有的地址：`queue_free` 后丢掉句柄（句柄与节点必须同生共死，
-        //    否则下一次 `upcast_ref` 会 1337 并卡死进程，`docs/16` §37.4 第 2 条）
+        //    否则下一次 `upcast_ref` 会 1337 并卡死进程，`docs/16` §33.4 第 2 条）
         for addr in plan.stale.iter() {
             if let Some(mut row) = self.rows.remove(addr) {
                 row.root.queue_free();

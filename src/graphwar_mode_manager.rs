@@ -1,6 +1,6 @@
 //! 原版 `src/graphwar_mode_manager.rs` —— **三套"模式"的持有者**。
 //!
-//! ## 一句话结论（2026-11-07，`docs/16-client.md` §33.4）
+//! ## 一句话结论（2026-11-07，`docs/16-client.md` §30.4）
 //!
 //! `GraphwarModeManager` 拿的是 **`AxisMode` / `FunctionMode` / `TimeMode` 三套**，
 //! **`TurnMode` 不在这个模块里** —— 它在 `graphwar_turn_manager`
@@ -34,7 +34,7 @@
 //!    **服务器**回 `AxisModeInfo`(45) 等才落值。所以权威在服务器，本模块是**副本**。
 //! 2. **同一个值还有第二个副本**：`GraphwarSetupControl` 的按钮图标
 //!    （`AxisModeButton`/`TimeModeButton` …）由 `GraphwarTextureLoader::get_time_mode_texture`
-//!    按模式挑 `res://turn_30s.svg` 这一类贴图（`docs/16-client.md` §31）。
+//!    按模式挑 `res://turn_30s.svg` 这一类贴图（`docs/16-client.md` §28）。
 //! 3. **第 4 套模式在主人在别处**，见上。
 //!
 //! ## 原版函数清单（arm64 符号，`观测`）
@@ -95,7 +95,7 @@ impl TimeMode {
         }
     }
 
-    /// 界面上那张图标的资源名（`docs/16-client.md` §31 的 `.rodata` 实测值）。
+    /// 界面上那张图标的资源名（`docs/16-client.md` §28 的 `.rodata` 实测值）。
     pub const fn icon(self) -> &'static str {
         match self {
             TimeMode::Timer30s => "res://turn_30s.svg",

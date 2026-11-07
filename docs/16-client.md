@@ -1894,20 +1894,20 @@ cargo test --offline --test graphwar_setup_control
 > 关键几条另外用 `objdump` 逐指令核过（判据里的指令地址就是核过的那些）。
 > 落码：`src/graphwar_game_client.rs`（纯逻辑层）+ `tests/graphwar_game_client.rs`。
 
-### 16.1 一页结论
+### 17.1 一页结论
 
 | 项 | 结果 | 档位 |
 |---|---|---|
 | 可归属函数 | **36**（`tools/coverage_matrix.py` 口径），其中 **19** 条同时引用别的模块的 Location（`contested`），**68** 条函数体内引用到本模块的 Location | 观测（脚本可复现） |
 | 分类 | **8 类**：请求事件构造 16、连接/后端 5、状态查询 4、对局内动作 3、setup 回调 3、回放/远端 3、命令入口 1、事件装配 1 | 观测（类别名是推断） |
-| 模块干什么 | 客户端侧**把动作变成 `Event` 投进发送队列** + **把 14 个 manager 与 3 个事件名接起来** | 推断（依据见 §16.4–§16.7） |
+| 模块干什么 | 客户端侧**把动作变成 `Event` 投进发送队列** + **把 14 个 manager 与 3 个事件名接起来** | 推断（依据见 §17.4–§17.7） |
 | 命令入口 `0x514a10` | 只认两条键：`start_game`（投 `Event` #31）、`fire`（转 `0x516510`）；其余立即返回 | **观测**（立即数逐条量到） |
 | 8 种请求事件 | 判别值 **11/12/16/17/18/19/20/21**，每种**两份实例化**（共 16 个函数），载荷是一个 i32 | **观测**（立即数 + 槽位相邻） |
 | `add_bot_0..5` | 六条键 → `0x516970` 收到 **3/10/25/100/250/1000** | **观测**（六个 `mov $N,%esi`） |
 | `0x517690` | 订阅 **3** 个事件名 + 装配 **14** 个 manager | **观测**（3 条 `lea`+长度立即数 + 14 个 `call`） |
 | 屏名 / 命令总线 12 条键 | **不在本模块**（在 `graphwar_root_node.rs`，§15） | 观测（否定） |
 
-### 16.2 36 这个数怎么来的（可复现）
+### 17.2 36 这个数怎么来的（可复现）
 
 口径与 `tools/coverage_matrix.py` 完全一致：`core::panic::Location` 的
 `(file, line, col)` 从 `.rela.dyn` 的 `R_X86_64_RELATIVE`（addend = 文件名字面量）
@@ -1925,7 +1925,7 @@ cargo test --offline --test graphwar_setup_control
   那是**同一套 `module_funcs.tsv` 口径**；§17 又写 **36/59**。
   ⇒ 同一份文档里两个数来自两套口径，**36 是这套脚本的口径**，本节一律用 36。
 
-### 16.3 分类：8 类（每类一句话 + 证据）
+### 17.3 分类：8 类（每类一句话 + 证据）
 
 | # | 类 | 个数 | 一句话 | 证据（地址 / 调用者 / 字符串） |
 |---|---|---|---|---|
@@ -1933,16 +1933,16 @@ cargo test --offline --test graphwar_setup_control
 | 2 | **连接与后端** | 5 | `0x515590`/`0x5175b0` 构造 `Event` **#22 `game_name_request_event`**；`0x515590`/`0x5159a0` 直接 `call` `graphwar_backend.rs`；`0x516370`/`0x518320` 直接 `call` `graphwar_client_connection_handler.rs` | `0x5157d3` / `0x51763e` 的 `movabs $0x8000000000000016`（判别值 22）；直接 `call` 目标：`0x514d80`(`graphwar_backend.rs`，两处 `0x5156eb`/`0x515aa5`)、`0x4592d0` 与 `0x45a340`(`graphwar_client_connection_handler.rs`，`0x5163c7`/`0x518377`) |
 | 3 | **状态查询** | 4 | 一律「取 `+0x40` 句柄 → `incq 0x10` → 调内层一次 → `decq`」，内层是 `0x46aa50`/`0x46aea0`/`0x46b180` | `0x516450`/`0x5164b0`/`0x518240`/`0x518400` 的开头 8 条指令；`0x518240` 的槽被 `graphwar_replay_player` `0x3d61a0` 读走 |
 | 4 | **对局内动作** | 3 | `0x516510`（`fire` 的落地：调 `turn_manager` 一族 `0x46b740`/`0x46c430`/`0x46b460`/`0x463340`，再 push 一条 `Event`）；`0x516ad0`（收到一段字节后投给客户端）；`0x516fd0` 未定 | `0x514acd` 调 `0x516510`；`0x3a559c`（root_node `0x3a54e0`：`memcpy` 进 `+0xf8` 缓冲后转给 `0x516ad0`） |
-| 5 | **setup 回调** | 3 | `0x516970` = `add_bot_N` 的取值器（六个立即数）；`0x5172d0`/`0x517490` 的槽只被 `graphwar_setup_control` 读 | 六个 `mov $N,%esi`（§16.6）；槽 `0x9bc128`/`0x9bc160` 的使用者 `0x4c44b0`/`0x4d1e00`/`0x4d88b0` |
+| 5 | **setup 回调** | 3 | `0x516970` = `add_bot_N` 的取值器（六个立即数）；`0x5172d0`/`0x517490` 的槽只被 `graphwar_setup_control` 读 | 六个 `mov $N,%esi`（§17.6）；槽 `0x9bc128`/`0x9bc160` 的使用者 `0x4c44b0`/`0x4d1e00`/`0x4d88b0` |
 | 6 | **回放 / 远端** | 3 | `0x3d6080`/`0x3d7380`/`0x3d7630` 体内**同时**引用本模块与 `graphwar_replay_player.rs` 的 Location；`0x3d7380` 还直接 `call` `graphwar_remote_event_handler.rs` 两次 | 归属表 `contested`；`0x3d7380` 的 call 目标 |
-| 7 | **命令入口** | 1 | `0x514a10`：根节点命令总线的**兜底分支**，只认 `start_game`/`fire` | §16.4 |
-| 8 | **事件装配** | 1 | `0x517690`：3 个事件名订阅 + 14 个 manager 逐个装配 | §16.7 |
+| 7 | **命令入口** | 1 | `0x514a10`：根节点命令总线的**兜底分支**，只认 `start_game`/`fire` | §17.4 |
+| 8 | **事件装配** | 1 | `0x517690`：3 个事件名订阅 + 14 个 manager 逐个装配 | §17.7 |
 
 分类的可执行版本在 `src/graphwar_game_client.rs` 的 `ORIG_FUNCS`（36 条，带
 `vaddr`/`size`/`anchors`/`also_in`），测试断言 8 类之和 = 36、
 类名与条数与上表一致。
 
-### 16.4 `0x514a10`：命令入口（**观测**，逐条立即数）
+### 17.4 `0x514a10`：命令入口（**观测**，逐条立即数）
 
 签名 `fn(&self, name: &str)`（`rdx` = 长度）。先比长度、再比字节：
 
@@ -1963,7 +1963,7 @@ cargo test --offline --test graphwar_setup_control
 | 键 | 指令 | 做什么 |
 |---|---|---|
 | `start_game` | `514a50` 取 `[self+0x1e0]`；空则返回。`514a73` 组 `0x800000000000001f`；`514a84` `call *0x9bac80`（`0x3d3530`） | 把 `Event` #31 `game_start_request_event` push 进该对象的 `Vec`（`r14+0x18`） |
-| `fire` | `514a96` `lea 0xe0(%rdi),%rsi`；`514aa6` `call *0x9ba8f0`（`0x91e260` = `Clone::clone`）；`514acd` `call *0x9bc450`（**`0x516510`**），`rdi=&[self+0x1e0]` | 克隆 `[self+0xe0]` 后交给 `0x516510`（语义未解，§16.9） |
+| `fire` | `514a96` `lea 0xe0(%rdi),%rsi`；`514aa6` `call *0x9ba8f0`（`0x91e260` = `Clone::clone`）；`514acd` `call *0x9bc450`（**`0x516510`**），`rdi=&[self+0x1e0]` | 克隆 `[self+0xe0]` 后交给 `0x516510`（语义未解，§17.9） |
 
 **谁调它**（槽 `0x9ba890` 的 5 个引用点，全部是 `call *0x9ba890`）：
 `0x3b2266`（`graphwar_root_node` 命令总线 `0x3b0830` 的**兜底分支**，见下）、
@@ -1986,7 +1986,7 @@ cargo test --offline --test graphwar_setup_control
 `0x516ad0` 都是从这个偏移取出来的）。字段↔模块的对应关系据此收窄一条，**但**
 `[+0x1668]` 的确切 Rust 类型仍未证（缺：`upcast_ref` 的目标类名，与 §15.9 同一个缺口）。
 
-### 16.5 8 种请求事件 × 2 份实例化 = 16 个函数（**观测**）
+### 17.5 8 种请求事件 × 2 份实例化 = 16 个函数（**观测**）
 
 16 个 0xb0–0x140 字节的函数，每个只做一件事。以 `0x4d8a00` 为例（其余同形；
 唯一例外是 `0x4d96e0`，它多一次对 `graphwar_setup_control.rs` 的 `0x4d1f10` 调用，语义未定）：
@@ -2034,7 +2034,7 @@ B 组的 8 张被 `0x4cf670`（同模块）引用；`0x4c4c20` 体内逐条 `lea
 ⚠️ 8 个判别值**不含** 13/14/15（`player_info`/`entity_removed`/`soldier_info`）——
 那三个是**广播（info）**不是**请求（request）**，与「这些都叫 `*_request_event`」一致。
 
-### 16.6 `add_bot_0..add_bot_5`：命令总线转给本模块的 6 条键（**观测**）
+### 17.6 `add_bot_0..add_bot_5`：命令总线转给本模块的 6 条键（**观测**）
 
 `graphwar_root_node.rs` 的命令总线 `0x3b0830` 里有 6 条键共用一个模板：
 `movabs $0x5f746f625f646461`（`"add_bot_"`）+ 第 9 字节与 `'0'..'5'` 异或比较
@@ -2064,9 +2064,9 @@ call *0x9baaa0                 ; = 0x516970
 ⚠️ 顺带解出的**命令总线新键**（补 `docs/16` §15.6 的 12 条，判据同样是
 `movabs`+`xor` 立即数）：`exit_play`(`0x3b1914`→`0x3b2cc9`)、
 `add_bot_0..5`（上表）、`save_clip`(`0x3b19d8`→`0x3b19f9`)。
-**仍未穷举**（§16.9）。
+**仍未穷举**（§17.9）。
 
-### 16.7 `0x517690`：事件装配（**观测**）：3 个名字 + 14 个 manager
+### 17.7 `0x517690`：事件装配（**观测**）：3 个名字 + 14 个 manager
 
 0xbb0 字节。它对 3 个事件名各做一次「分配闭包环境 → 订阅」：
 
@@ -2100,7 +2100,7 @@ computer_player / color / rank 各 1 处（模块名来自归属表，具体 `ca
 ⇒ **推断**：这是客户端的「一次性装配」入口（订阅 3 个事件 + 把 14 个 manager 挂上）。
 缺的证据：`0x469xxx`–`0x46bxxx` 那族胶水（取句柄，每个 8-16 条指令）没有锚，不敢起名。
 
-### 16.8 委派入口表：外部怎么进本模块（**观测**）
+### 17.8 委派入口表：外部怎么进本模块（**观测**）
 
 `call rel32` 与 `.rela.dyn` 指针槽的引用点合起来给出下面这张表（完整版在
 `src/graphwar_game_client.rs` 的 `ENTRY_POINTS`，测试断言每条入口都在 36 条清单里、
@@ -2108,22 +2108,22 @@ computer_player / color / rank 各 1 处（模块名来自归属表，具体 `ca
 
 | 目标 | 调用者 | 是什么 |
 |---|---|---|
-| `0x514a10` | `0x3b2266` + 4 个蹦床 | 命令总线兜底分支（§16.4） |
+| `0x514a10` | `0x3b2266` + 4 个蹦床 | 命令总线兜底分支（§17.4） |
 | `0x515590` | `0x3b2b84`、`0x3b363a` | 总线里 `JoinLevelPopUp` 那条路（先 `0x5148a0` 收串再调本函数） |
 | `0x5159a0` | `0x3b3333`、`0x4f923c` | 总线 + `graphwar_lan_vbox` |
-| `0x516970` | 六个（§16.6） | `add_bot_0..5` |
+| `0x516970` | 六个（§17.6） | `add_bot_0..5` |
 | `0x516ad0` | `0x3a559c`（root `0x3a54e0`）、`0x3b6f9b` | 字节到达：`memcpy` 进 `+0xf8` 缓冲后转发 |
 | `0x516450` | `0x3b1c93` | 总线 `save_clip` 附近 |
 | `0x5164b0` | `0x3a707a`（在 `0x3a5760` 内）、`0x3b3f6c` | 帧状态机 |
 | `0x516370` | 槽被 `0x3a5760`/`0x3b7ac0`/`0x5147f0`/`0x525f60` | 帧状态机 + 本模块 |
-| `0x517690` | 槽被 `graphwar_backend` `0x514f20` + 本模块 `0x515590`/`0x5159a0` | 装配（§16.7） |
+| `0x517690` | 槽被 `graphwar_backend` `0x514f20` + 本模块 `0x515590`/`0x5159a0` | 装配（§17.7） |
 | `0x518240` | 槽被 `graphwar_replay_player` `0x3d61a0` + 本模块 `0x518400` | 状态查询 |
 | `0x518320`/`0x518400`/`0x516fd0` | 槽（见 `ENTRY_POINTS`） | 状态查询 / 未定 |
 
 **否定结论（省一类死路）**：本模块 36 个函数里**没有**任何屏名（15 个）、
 任何命令总线的 `input_text` 键（12 条）、任何 `set_visible`/`get_node` 字面量。
 ⇒ 切屏与命令总线**不在这里**，在 `graphwar_root_node.rs`（§15）。
-本模块只有 `.rodata` 字面量 3 条（§16.7 的三个事件名）+ 若干 panic 串。
+本模块只有 `.rodata` 字面量 3 条（§17.7 的三个事件名）+ 若干 panic 串。
 
 ### 17.9 没解出来的（诚实清单）
 
@@ -2134,26 +2134,26 @@ computer_player / color / rank 各 1 处（模块名来自归属表，具体 `ca
 | `0x516fd0` / `0x5172d0` / `0x517490` / `0x516450` / `0x5164b0` / `0x518240` / `0x518400` | 内层 `0x46aa50`/`0x46aea0`/`0x46b180` 未解（它们都做一次按名查表，键字面量 `0x19cdc0`/`0x19d8c0`/`0x19e1d0` 在 `.rodata` 里是**非 ASCII**数据，不是名字；未定它们是散列表还是别的常量表） |
 | `0x515590`/`0x5159a0`/`0x5175b0` | 只知道「构造 `game_name_request_event`」与「调 `graphwar_backend.rs`」；`JoinLevelPopUp` 那条路的 `&str` 语义（`[root+0x16f8]`/`[root+0x16fa]`）未定 |
 | `0x3d6080`/`0x3d7380`/`0x3d7630` | contested（同时引用本模块与 `graphwar_replay_player.rs`）⇒ 归属本身有歧义 |
-| 命令总线的**全部**键 | 已 12（§15.6）+ 8（§16.6：`exit_play`/`add_bot_0..5`/`save_clip`）；`0x3b0830` 是 0x4690 字节、131 KB 反编译，**未穷举** |
+| 命令总线的**全部**键 | 已 12（§15.6）+ 8（§17.6：`exit_play`/`add_bot_0..5`/`save_clip`）；`0x3b0830` 是 0x4690 字节、131 KB 反编译，**未穷举** |
 | 屏表的插入点 / `[+0x1668]` 的 Rust 类型 | 与 §15.9、§15.10.6 同一缺口 |
 | 本模块与 `graphwar_server_connection_handler.rs` / `graphwar_game_server.rs` 的边界 | `0x51xxxx` 一带还有一批无锚函数（`0x5147b0`/`0x5147f0`/`0x5148a0` 等）与 `0x51a570`（`docs/07` §7.3.4 提到）**归属未定**；本轮没有把它们算进 36 |
 
-### 16.10 进度口径（按 `AGENTS.md` §0 第 2 条）
+### 17.10 进度口径（按 `AGENTS.md` §0 第 2 条）
 
 | 口径 | 数 | 说明 |
 |---|---|---|
 | 原版可归属函数（本模块） | **36** | `coverage_matrix.py`，可复现 |
 | 有**完整真值表**（能照着写） | **17** | 16 个请求事件构造器 + `0x514a10` 的两条键 |
 | 只到「它跟谁打交道」 | **9** | `0x516970`（六个立即数）、`0x517690`（3 名字 + 14 manager）、`0x515590`/`0x5175b0`（#22）、`0x516370`/`0x518320`（调 conn_handler）、`0x516ad0`、`0x516510` |
-| 只到「调用图一级」 | **10** | §16.9 第 3 行那 7 个 + 3 个 contested |
-| `cargo test` 条数 | 见 §16.11 | **回归保护，不是复原证据** |
+| 只到「调用图一级」 | **10** | §17.9 第 3 行那 7 个 + 3 个 contested |
+| `cargo test` 条数 | 见 §17.11 | **回归保护，不是复原证据** |
 
 ⚠️ `docs/coverage-matrix.tsv` 本模块那一行**仍然是 `未做`**：那是
 `tools/coverage_matrix.py` 的**生成物**（`status` 由脚本里的手写表 `M` 决定），
 本轮没有改它的三个允许文件之外的东西。下一轮把它改成 `观测`（并同步
 `ours_file`/`ours_funcs`）需要重跑那个脚本。
 
-### 16.11 落码清单
+### 17.11 落码清单
 
 | 原版 | 落在 | 覆盖程度 | 档位 |
 |---|---|---|---|
@@ -2170,10 +2170,10 @@ computer_player / color / rank 各 1 处（模块名来自归属表，具体 `ca
 
 ---
 
-## 21. `axis_drawer.rs` / `effect_drawer.rs` 规格（本轮新增：坐标轴网格 + 特效状态机）
+## 18. `axis_drawer.rs` / `effect_drawer.rs` 规格（本轮新增：坐标轴网格 + 特效状态机）
 
 > **本篇解决什么问题**：这两个模块是**纯绘制**的，判据只有两种——"调了哪些引擎方法"
-> 和"传了什么常量"。本节把两者都钉到指令地址；凡是钉不住的，§21.5 明写未知。
+> 和"传了什么常量"。本节把两者都钉到指令地址；凡是钉不住的，§18.5 明写未知。
 >
 > **方法名来源**：`fixtures/name_to_addr.tsv`（`panic::Location` 跨架构 join）给出
 > `EffectDrawer::{draw, ready, process}` 与 `EffectData::new` / `step_effect`；
@@ -2181,7 +2181,7 @@ computer_player / color / rank 各 1 处（模块名来自归属表，具体 `ca
 > 没有 Location 锚的那几个函数（`step_effect`、两个 `ready` 闭包、`EffectData::new`）。
 > 两侧都是 **2.0.60**（arm64 sha256 `8a612e95…`，x86 sha256 `9a538115…`）。
 
-### 21.1 函数清单（x86 虚地址；Ghidra = +`0x100000`）
+### 18.1 函数清单（x86 虚地址；Ghidra = +`0x100000`）
 
 | 模块 | arm64 符号（`.symtab`，2.0.60） | arm64 vaddr / size | x86 vaddr / size | 档位 |
 |---|---|---|---|---|
@@ -2204,7 +2204,7 @@ computer_player / color / rank 各 1 处（模块名来自归属表，具体 `ca
    **它们都在 `step_effect` 体内**：从 `0x4eb450` 到共同出口 `0x4eb81c`。
    判据：跳表 `0x1c3bec` 的项直接落在这些地址上。
 
-### 21.2 `AxisDrawer::draw`（`0x4e05b0`）画什么
+### 18.2 `AxisDrawer::draw`（`0x4e05b0`）画什么
 
 一次 `draw` 只有三种原语，**没有 `draw_string`、没有贴图、没有圆**：
 
@@ -2237,7 +2237,7 @@ x、y 上等长（正方形格子），y 方向翻过来。这一点值得单独
 * 主轴**先竖后横**（`0x4e0b02` → `0x4e0b62`）。
 * 所有 `draw_line` 的 `antialiased` 都是 `false`（每个调用点前 `xor %edx,%edx`）。
 
-### 21.3 `EffectDrawer`：图元、相位、时长
+### 18.3 `EffectDrawer`：图元、相位、时长
 
 **图元**（`draw` = `0x4e1520`）：`draw_set_transform` ×1 + 每个元素按相位选一种：
 
@@ -2281,7 +2281,7 @@ jmp rax` @ `0x4e1932`）：**表里只有 7 项落在本函数内**，第 8 项�
 
 ⇒ **"爆炸动画播多久"由元素自己的 `duration_ticks` 决定**（tick 单位，60 tick = 1 秒）；
 `step_effect` 推进的 600 tick 是**相位**节拍（10 秒），不是整段特效的寿命。
-`duration_ticks` 的**具体取值**在 `EffectData::new` 里，x86 侧没定位到（§21.5）。
+`duration_ticks` 的**具体取值**在 `EffectData::new` 里，x86 侧没定位到（§18.5）。
 
 **接线**：`ready`（`0x4e25b0`）用 `GraphwarBackend::subscribe_to_event` 订阅两个事件，
 名字字面量就在指令里：
@@ -2300,7 +2300,7 @@ jmp rax` @ `0x4e1932`）：**表里只有 7 项落在本函数内**，第 8 项�
 `CanvasItem::queue_redraw` → `Instant::elapsed`，若 `> 0x3b9aca00`（**1e9 ns = 1 秒**）
 则 `_print` 打一行 `src/effect_drawer.rs:507`（槽 `0x1c4240`，24 字节）。
 
-### 21.4 与 `client/` 仿制实现的出入（**不改 client，只登记**）
+### 18.4 与 `client/` 仿制实现的出入（**不改 client，只登记**）
 
 `client/src/game/effect_layer.gd` 是照协议枚举猜的；拿到代码后**有六处对不上**：
 
@@ -2326,7 +2326,7 @@ jmp rax` @ `0x4e1932`）：**表里只有 7 项落在本函数内**，第 8 项�
 `0.05` 世界单位在 `W=1600` 时是 `1600/50×0.05 = 1.6 px`，`0.075` 是 `2.4 px` —— 与
 `client` 的 1/2 px 同量级但不同源；控件尺寸不是 1600 时两者会越差越远。
 
-### 21.5 诚实清单（没解出来的）
+### 18.5 诚实清单（没解出来的）
 
 1. **`EffectData::new` 的 x86 地址与字段初值**。arm64 里它只被 `effect_info_event`
    闭包调用且已内联，x86 没有 `call rel32` 指向它；arm64 版用了 `rand::random` 和 π
@@ -2344,7 +2344,7 @@ jmp rax` @ `0x4e1932`）：**表里只有 7 项落在本函数内**，第 8 项�
    3 画最细网格）反推的；`client/src/app/modes.gd` 的 `AXIS_LABELS` 独立给出同一顺序，
    但两者都不是"读到了枚举定义"。
 
-### 21.6 落码清单
+### 18.6 落码清单
 
 | 原版 | 落在 | 覆盖程度 | 档位 |
 |---|---|---|---|
@@ -2361,32 +2361,32 @@ jmp rax` @ `0x4e1932`）：**表里只有 7 项落在本函数内**，第 8 项�
 
 ---
 
-## 18. `graphwar_button.rs` / `graphwar_long_press_animation.rs` 规格（本轮新增：2.0.60 arm64 符号表定名 + 6 个方法体 + `draw` 全解）
+## 19. `graphwar_button.rs` / `graphwar_long_press_animation.rs` 规格（本轮新增：2.0.60 arm64 符号表定名 + 6 个方法体 + `draw` 全解）
 
 > **本节解决什么**：这两个模块是全库**最难定位**的两个 GDExtension 类 ——
 > `fixtures/name_to_addr.tsv` 给 `graphwar_button` 的 5 行全是 `歧义`/`未知`，
-> 且它的候选地址**经反汇编核对全是错的**（§18.2）。
+> 且它的候选地址**经反汇编核对全是错的**（§19.2）。
 > 本节把它们的**真名、x86 地址、方法分派表、状态机、`draw` 的每一步算术**全部钉下来。
 >
 > **地址口径**：一律 **ELF 虚地址**（`objdump` 口径）。Ghidra/REA 地址 = 本值 + `0x100000`（只加一次）。
 > 落码：`src/graphwar_button.rs` + `src/graphwar_long_press_animation.rs`；
 > 验收：`tests/graphwar_button.rs`（18 条）+ `tests/graphwar_long_press_animation.rs`（12 条）。
 
-### 18.1 一页结论
+### 19.1 一页结论
 
 | 项 | 结果 | 档位 |
 |---|---|---|
 | 新杠杆 | **同版本（2.0.60）arm64 `.so` 没 strip**：`.reference/x/arm64/lib/arm64-v8a/libgraphwarrust.so` 有完整 `.symtab` | 观测 |
 | `GraphwarButton` 的方法 | `init`/`ready`/`process`（`IButton` 虚函数）+ **`button_down`/`button_up`/`pressed`**（`#[func]`，`ready` 里连到同名信号） | **观测**（arm64 真名 + x86 指令） |
-| 它的导出属性 | **2 个**：`input_text`、`long_press_input_text`（每个一对 getter/setter，见 §18.6） | 观测（`.rodata` 名字对） |
+| 它的导出属性 | **2 个**：`input_text`、`long_press_input_text`（每个一对 getter/setter，见 §19.6） | 观测（`.rodata` 名字对） |
 | 它的状态 | `+0x60/+0x68` 按下时刻；`+0x50/+0x58` 阈值 `0.5 s`；`+0x88/+0x90` 两个 GString；`+0x40/+0x48` 订阅者 `Vec`；`+0x18` 动画节点判别位 | 观测（偏移）+ 推断（字段名） |
-| `GraphwarLongPressAnimation` 的方法 | **2.0.60 只有 `draw`**（2024 版有 5 个，见 §18.8 更正） | **观测**（arm64 `.symtab` 全长搜索） |
+| `GraphwarLongPressAnimation` 的方法 | **2.0.60 只有 `draw`**（2024 版有 5 个，见 §19.8 更正） | **观测**（arm64 `.symtab` 全长搜索） |
 | 它的状态 | `+0x18` secs / `+0x20` nanos，哨兵 `1e9` = 「没在动画」 | 观测 |
 | 动画参数 | `angle = elapsed × 4π`，`angle > 2π` 结束 ⇒ **0.5 s**；两次绘制（黑 `{0,0,0,1}` + 白 `{1,1,1,1}`） | **观测**（逐指令 + `.rodata` 比特） |
 | 两个模块的接缝 | `button_down` 写 LPA 的 `+0x18/+0x20`（启动），`button_up` 写哨兵（停止） | **观测**（两侧指令都核过） |
-| 还缺什么 | 3 次取值 / 2 次绘制的 **godot API 名**（GOT 槽）；4 个属性存取器的**函数体**；订阅者由谁 `push` | 未知（§18.10） |
+| 还缺什么 | 3 次取值 / 2 次绘制的 **godot API 名**（GOT 槽）；4 个属性存取器的**函数体**；订阅者由谁 `push` | 未知（§19.10） |
 
-### 18.2 名字从哪来；以及 `name_to_addr.tsv` 的 5 条候选**全错**（冲突登记）
+### 19.2 名字从哪来；以及 `name_to_addr.tsv` 的 5 条候选**全错**（冲突登记）
 
 ```bash
 awk -F'\t' '$1=="graphwar_button"' fixtures/name_to_addr.tsv
@@ -2399,10 +2399,10 @@ TSV 对这两个模块只给了 **2 条可用信息**：
   （`src/graphwar_long_press_animation.rs:52:55`，4 个双向唯一锚）—— **本条正确，本节采用**；
 * 两个模块的 `__register_constants` 各 4 个候选（button：`0x4e0e60`/`0x4e0fe0`/`0x4e8230`/`0x4e83d0`；
   LPA：`0x4bd650`/`0x4bda50`/`0x4d7bc0`/`0x4d7d40`）—— **这 8 个地址全部正确**，
-  它们是 gdext 样板簇（§18.3 表末行），只是 TSV 分不出是哪一个。
+  它们是 gdext 样板簇（§19.3 表末行），只是 TSV 分不出是哪一个。
 
 其余 **5 行（`button_down`/`button_up`/`ready`/`process`/`init`）的候选地址全部错误**。
-否掉的判据（可复跑，见 §18.11）：
+否掉的判据（可复跑，见 §19.11）：
 
 | 方法 | TSV 候选 | 反汇编事实 |
 |---|---|---|
@@ -2425,7 +2425,7 @@ readelf -sW .reference/x/arm64/lib/arm64-v8a/libgraphwarrust.so | c++filt | grep
 # <GraphwarButton as …::IButton>::process                      @0x43ef84 (336 B)
 ```
 
-### 18.3 x86 定位表（**观测**；每条都给判据）
+### 19.3 x86 定位表（**观测**；每条都给判据）
 
 这 6 个方法**一个 panic 锚都没有**（`src/graphwar_button.rs` 只有 14/83/111 三处，
 全被 gdext 样板占用）⇒ 只能靠**跨架构指纹**：
@@ -2454,7 +2454,7 @@ readelf -sW .reference/x/arm64/lib/arm64-v8a/libgraphwarrust.so | c++filt | grep
 `graphwar_long_press_animation.rs`：10:10 / 17:1 / 31:1 / 52:55 / 52:86 / 53:56 / 53:87），
 因为 `core::panic::Location` 是编译期常量、与指令集无关。
 
-### 18.4 方法名 ↔ 分派表（**观测**）
+### 19.4 方法名 ↔ 分派表（**观测**）
 
 gdext 的 `#[func]` 与属性存取器**不产生 Rust 符号**，而是「按名字分派」：
 每个入口是一个小函数，体内 `lea` 出 `(类名, 方法名)` 两对 `&str`
@@ -2479,10 +2479,10 @@ gdext 的 `#[func]` 与属性存取器**不产生 Rust 符号**，而是「按�
 
 * `0x4e4ac0`（640 B）= **属性表**（`__register_exports`）：成对给出
   `input_text` ↔ `get_input_text`/`set_input_text`、
-  `long_press_input_text` ↔ `get_long_press_input_text`/`set_long_press_input_text`（§18.6）；
+  `long_press_input_text` ↔ `get_long_press_input_text`/`set_long_press_input_text`（§19.6）；
 * `0x5009f0`（368 B）= 三个信号方法名的**分派器**（长度关 + 前 8 字节立即数比较）。
 
-### 18.5 `GraphwarButton` 状态机（**观测**：偏移 + 立即数；字段名是推断）
+### 19.5 `GraphwarButton` 状态机（**观测**：偏移 + 立即数；字段名是推断）
 
 `init`（`0x4e3e00`，写初值段 `0x4e3e5a`–`0x4e3eb3`）逐字段写出：
 
@@ -2490,7 +2490,7 @@ gdext 的 `#[func]` 与属性存取器**不产生 Rust 符号**，而是「按�
 |---|---|---|---|
 | `+0x18` | `0` | 动画节点判别位（`Some`=1） | `button_down` 的 `0x4ef3aa`、`button_up` 的 `0x4ef6b1` |
 | `+0x38/+0x40/+0x48` | `{0, 8}` / `0` | 订阅者 `Vec<Box<dyn FnMut(&str)>>`（cap=0、悬垂 8、len=0） | `pressed`、`process` |
-| `+0x50` | `0` | 阈值 `Duration.secs` | —（本模块无读者，§18.10） |
+| `+0x50` | `0` | 阈值 `Duration.secs` | —（本模块无读者，§19.10） |
 | `+0x58` | **`0x1dcd6500`** | 阈值 `Duration.nanos` = **500 ms** | —（同上） |
 | `+0x60` | （`Instant.secs`） | 按下时刻 | — |
 | `+0x68` | **`0x3b9aca00`** | → 换成「没按下」哨兵 `nanos = 1e9` | `process` 的 `0x4e42c9` |
@@ -2523,9 +2523,9 @@ pressed     (0x4ef560)
 
 ⇒ **点一下发 `input_text`；按住不放发 `long_press_input_text` 且只发一次。**
 `process` **没有**读 `0.5 s` 阈值（它只判「还按着」）；阈值的消费者是长按动画
-（`elapsed > 0.5`，§18.8）〔推断：两者是同一个 0.5 s〕。
+（`elapsed > 0.5`，§19.8）〔推断：两者是同一个 0.5 s〕。
 
-### 18.6 `ready`：3 条信号 + 1 次按名找节点（**观测**）
+### 19.6 `ready`：3 条信号 + 1 次按名找节点（**观测**）
 
 ```text
 0x4e3f4e  lea "pressed"      + 0x4e3f5d  len 7   → Callable::from_object_method → connect
@@ -2551,7 +2551,7 @@ pressed     (0x4ef560)
 
 ⚠️ 这两组存取器的**函数体未解**（只经名字分派，静态拿不到函数指针）。
 
-### 18.7 `GraphwarLongPressAnimation::draw`（`0x4d8100`，1232 B，**全解**）
+### 19.7 `GraphwarLongPressAnimation::draw`（`0x4d8100`，1232 B，**全解**）
 
 唯一锚（4 个，两两成对）：`52:55`+`52:86`、`53:56`+`53:87`
 ⇒ 源码第 52、53 行各有**两个** `.expect()`；二进制里对应 4 条 panic 出口
@@ -2598,22 +2598,22 @@ pressed     (0x4ef560)
 **被调用的 godot API 名未知**（`call *[0x9bc020]` 与 3 次取值全是 GOT 槽，
 静态解析不到符号）⇒ 本节只说「两次绘制 + 这些实参」，不猜它们是 `draw_rect` 还是别的。
 
-### 18.8 就地更正三条
+### 19.8 就地更正三条
 
 1. **`docs/02-module-map.md` §16.3 给本模块的锚地址是旧值**：那行写
    `:52:56`/`:52:86`/`:53:56`/`:53:87` → `0x4d9500`。**实测是 `0x4d8100`**
    （4 个 Location 的引用者只有它一个；`0x4d9500` 是
-   `time_mode_change_request_event` 的实例化 B，见 §16.5）。以本节为准。
+   `time_mode_change_request_event` 的实例化 B，见 §17.5）。以本节为准。
    同一行的列号也差 1：实测 `52:55`（不是 `52:56`）与 `53:56`/`53:87`。
 2. **`docs/02` §18.5 C 表记本模块有 5 个方法**（`draw, process, ready, start, stop`）——
    那是**2024** 版符号表。**2.0.60 的 arm64 `.symtab` 只有 `draw`**
    （`grep -c` 全长搜索，`start`/`stop`/`ready`/`process` 为 0）；
    `trait impl` 也只有 `IControl`（不是 `IButton`）。
-3. **`fixtures/name_to_addr.tsv` 对 `graphwar_button` 的 5 行候选全部错误**（§18.2 表），
+3. **`fixtures/name_to_addr.tsv` 对 `graphwar_button` 的 5 行候选全部错误**（§19.2 表），
    本节以反汇编为准并已把冲突登记进 `src/graphwar_button.rs::NAME_BRIDGE_CONFLICTS`。
-   同表里两个模块的 `__register_constants` 4 候选地址是**正确的**（= §18.3 的样板簇）。
+   同表里两个模块的 `__register_constants` 4 候选地址是**正确的**（= §19.3 的样板簇）。
 
-### 18.9 跨模块接缝：谁驱动长按动画（**观测**）
+### 19.9 跨模块接缝：谁驱动长按动画（**观测**）
 
 | 写入方 | 指令 | 写的字段 |
 |---|---|---|
@@ -2624,7 +2624,7 @@ pressed     (0x4ef560)
 `GraphwarButton::ready` 用 `"AnimationRect"` 这个名字把节点找出来并 cast 成本类型
 ⇒ 场景里长按动画节点的名字就是 `AnimationRect`（[推断] 缺的证据是 `.tscn` 文本）。
 
-### 18.10 本节没解出来的（照实写）
+### 19.10 本节没解出来的（照实写）
 
 | 缺口 | 缺什么证据 |
 |---|---|
@@ -2635,7 +2635,7 @@ pressed     (0x4ef560)
 | `GraphwarButton` 的 `+0x50/+0x58`（`0.5 s` 阈值）的读者 | 本模块 6 个方法里没有读它；需要找到把阈值交给 LPA 的那条指令 |
 | `init` 里 `[self+0x00]`/`[+0x10..0x18]`/`[+0x28..0x38]`/`[+0x70..0x88]` 的字段名 | 写了但没读到 ⇒ 未知 |
 
-### 18.11 复现（不依赖本节，任何人可重跑）
+### 19.11 复现（不依赖本节，任何人可重跑）
 
 ```bash
 SO=.reference/steam/2026-08-28/libgraphwarrust.so          # sha256 9a538115…
@@ -2658,7 +2658,7 @@ objdump -d -M intel --start-address=0x4ef390 --stop-address=0x4ef860 $SO
 objdump -d -M intel --start-address=0x4d8100 --stop-address=0x4d85d0 $SO
 ```
 
-### 18.12 落码清单（`src/` 两个文件）
+### 19.12 落码清单（`src/` 两个文件）
 
 | 原版 | 落在 | 覆盖程度 | 档位 |
 |---|---|---|---|
@@ -2677,13 +2677,13 @@ objdump -d -M intel --start-address=0x4d8100 --stop-address=0x4d85d0 $SO
 
 ---
 
-## 22. `graphwar_ad_switch.rs` 规格（本轮新增：2 个 getter / 1 个字段 / 6 个函数）
+## 20. `graphwar_ad_switch.rs` 规格（本轮新增：2 个 getter / 1 个字段 / 6 个函数）
 
 落码：`src/graphwar_ad_switch.rs`；验收：`tests/graphwar_ad_switch.rs`。
 地址口径：**ELF 虚地址**（Ghidra = +`0x100000`）；凡是引自 `docs/19-android.md`
 的地址都是 **Android arm64**，下表逐条标了。
 
-### 22.1 它不是联机层
+### 20.1 它不是联机层
 
 `docs/02-module-map.md` §14.4 曾把 `graphwar_backend`(6) 与 `graphwar_ad_switch`(7)
 一起归到"广告 / 后端"堆里，**这个归类已被 `docs/19-android.md` 更正**：
@@ -2693,7 +2693,7 @@ objdump -d -M intel --start-address=0x4d8100 --stop-address=0x4d85d0 $SO
 本模块只做一件事：给 GDScript 提供**两个只读判据**（开关 + AdMob 单元 id），
 自己**不碰**任何 UI、不发任何请求。
 
-### 22.2 两个导出方法
+### 20.2 两个导出方法
 
 | 方法 | 名字字面量 | 长度 | 注册闭包 A / B | trampoline A / B | 档位 |
 |---|---|---|---|---|---|
@@ -2708,7 +2708,7 @@ objdump -d -M intel --start-address=0x4d8100 --stop-address=0x4d85d0 $SO
 上只说"每个方法各一份 ptrcall + varcall，方法体内联在 `handle_fallible_call` 里"），
 所以本仓库的代码里按 A/B 记，不硬指。
 
-### 22.3 唯一的字段：`owned`，偏移 `+0x18`
+### 20.3 唯一的字段：`owned`，偏移 `+0x18`
 
 档位：**逐位（arm64）+ 推断（"该字节就是 owned"）**：
 
@@ -2729,7 +2729,7 @@ objdump -d -M intel --start-address=0x4d8100 --stop-address=0x4d85d0 $SO
 `movb $0x0,(%r15)` 写返回槽，但它是"借用成功"分支的常量写，不是取反本身。
 缺的证据：x86 上 `ldrb/eor` 那一对的地址（arm64 侧已有）。
 
-### 22.4 38 字节的 AdMob 单元 id
+### 20.4 38 字节的 AdMob 单元 id
 
 `.rodata` `0x1c43ff`，长度 **38**（arm64 侧 `docs/19` §3.0.3 记的是 `0x19dd6c`，
 长度同为 38）：
@@ -2745,7 +2745,7 @@ ca-app-pub-3940256099942544/6300978111
 所以"游戏靠广告赚钱"在 Linux 构建里**没有证据**；真正的闸门是
 `are_ads_enabled()`，而它的初值是"不显示广告"。
 
-### 22.5 六个函数（全部是 gdext 惰性注册驱动）
+### 20.5 六个函数（全部是 gdext 惰性注册驱动）
 
 `docs/19-android.md` §3.0.3 记「全二进制只有 6 条 `FUNC` 符号」；x86 侧用
 `panic::Location` 归属也正好 **6 个**，数量一致：
@@ -2766,7 +2766,7 @@ Location 只落在 `7:10`、`14:1`、`45:1` 三行，与 `docs/02-module-map.md`
 `graphwar_ad_switch.rs` 行范围 `7–45` 一致 ⇒ **原版这个文件极短**（一个字段 +
 两个 getter + 一个 `#[godot_api]` impl）。
 
-### 22.6 与广告视图的关系
+### 20.6 与广告视图的关系
 
 本模块**不**创建/销毁广告视图。两条 `call_deferred` 的名字（`create_ad_view` 字面量
 `0x1bd9c1`、`destroy_ad_view` `0x1bd9cf`）由 `0x3af850` 发出，触发条件见 §15 的闸门表；
@@ -2776,7 +2776,7 @@ Location 只落在 `7:10`、`14:1`、`45:1` 三行，与 `docs/02-module-map.md`
 ⇒ 链路是：**买断（GDScript 回调改 `owned`）→ 命令 / `0x3af850` → `create|destroy_ad_view`**，
 中间**不经过**本模块的任何函数。
 
-### 22.7 落码清单
+### 20.7 落码清单
 
 | 原版 | 落在 | 覆盖程度 | 档位 |
 |---|---|---|---|
@@ -2789,9 +2789,9 @@ Location 只落在 `7:10`、`14:1`、`45:1` 三行，与 `docs/02-module-map.md`
 | 广告链在别处 | `AD_VIEW_CHAIN` | 一条指针 | 观测（§15） |
 | 未知 | `UNKNOWNS`（3 条） | x86 取反位置 / 6 张表的归属 / 字段名本身 | 未知 |
 
-## 24. `entity_drawer.rs` 全量规格（本轮新增：从 1 个函数补到 10 个；士兵到底在哪画）
+## 21. `entity_drawer.rs` 全量规格（本轮新增：从 1 个函数补到 10 个；士兵到底在哪画）
 
-### 24.0 一句话
+### 21.0 一句话
 
 `EntityDrawer` 的 **10 个有源级名字的方法**全部落到 x86 地址并解出算术；
 **士兵/靶子不是 `draw()` 画的**——它们是一具实体的 **3 个 `Sprite2D` 子节点
@@ -2799,7 +2799,7 @@ Location 只落在 `7:10`、`14:1`、`45:1` 三行，与 `docs/02-module-map.md`
 `draw()` 只负责画**瞄准用的三段弧 + 三个箭头**。这与 `src/entity_drawer.rs` 上一轮
 「`draw` 里没有 `draw_texture_rect`」的结论**不冲突**，是把那个空洞填上了。
 
-### 24.1 名字从哪来，地址怎么钉的
+### 21.1 名字从哪来，地址怎么钉的
 
 * **名字**：2.0.60 Android arm64 **未 strip** 的 `.symtab`
   （`.rea-work/apk/arm64/lib/arm64-v8a/libgraphwarrust.so`，18,793 个 `FUNC`）。
@@ -2820,7 +2820,7 @@ Location 只落在 `7:10`、`14:1`、`45:1` 三行，与 `docs/02-module-map.md`
      `get_entity_name_label` 2 次、`update_sprite` **3** 次、`update_name_label` **2** 次。
      一次比对同时钉死 6 个地址，而不是 6 个独立猜测。
 
-### 24.2 地址表（**观测**；x86 虚地址，Ghidra = `+0x100000`）
+### 21.2 地址表（**观测**；x86 虚地址，Ghidra = `+0x100000`）
 
 | 源级名 | arm64 | arm64 B | x86 vaddr | x86 B | 比值 |
 |---|---|---|---|---|---|
@@ -2844,7 +2844,7 @@ Location 只落在 `7:10`、`14:1`、`45:1` 三行，与 `docs/02-module-map.md`
 > **`未知`**（全函数体不引用任何 `panic::Location`）。本节把这两个补上了；
 > `init` / `__register_constants` 那两行仍是 `歧义`，本轮**没有替人选**。
 
-### 24.3 最重要的一条：士兵/靶子在哪画
+### 21.3 最重要的一条：士兵/靶子在哪画
 
 **结论：`EntityDrawer` 自己有一棵子节点树，士兵是"贴图子节点"，不是 `draw()` 的图元。**
 
@@ -2877,9 +2877,9 @@ self.<map>.insert(entity_id, sp.clone());
 
 > ⇒ 上一轮 `src/entity_drawer.rs` 开头写的"**不含** `draw_texture_rect` 与 `draw_line`，
 > 所以士兵贴图与弹道由别的函数画"这句**对**，但**后半句不完整**：士兵贴图不是"别的函数用
-> `draw_texture_rect` 画"，而是**根本不用 `draw()`，用子节点**。弹道仍然不归本模块（见 §24.10）。
+> `draw_texture_rect` 画"，而是**根本不用 `draw()`，用子节点**。弹道仍然不归本模块（见 §21.10）。
 
-### 24.4 `ready`（`0x4b4130`）：1 个信号 + 6 个后端事件
+### 21.4 `ready`（`0x4b4130`）：1 个信号 + 6 个后端事件
 
 顺序（arm64 `0x4bab44`，逐调用）:
 
@@ -2901,7 +2901,7 @@ self.<map>.insert(entity_id, sp.clone());
 （6 条在 `.rodata` 里**首尾相接**：arm64 `0x1a1391/…/0x1a13f2`，长度合计 = 区段长。）
 6 个 `Gd::cast` + 6 个 `subscribe_to_event` + 2 个 `Gd::from_obj_sys_weak` 一一对应。
 
-### 24.5 `process`（`0x4b4b60`）：每帧的子节点驱动
+### 21.5 `process`（`0x4b4b60`）：每帧的子节点驱动
 
 ```text
 "show_names" = <某模块对象 +0xa1 的 bool>        // ldrb w9,[x27,#0xa1] @0x4bb748（身份未知）
@@ -2947,10 +2947,10 @@ CanvasItem::queue_redraw()    // 0x7e6da0
 `process` 里 **5 次 `set_visible` 全是 `false`**（藏）——这一点与"`process` 负责显示"的
 直觉相反，值得记下来。
 
-### 24.6 `update_sprite`（`0x4b9530`）：棋盘单位 → 控件像素
+### 21.6 `update_sprite`（`0x4b9530`）：棋盘单位 → 控件像素
 
 入参：`Control::get_size()` 的 `(w,h)`、`get_team_overview()` 的 packed 色、
-`Texture2D::get_width()`、棋盘 `(x,y)`。设 `k = w/50`、`s = ±1`（§24.7 的镜像判据）：
+`Texture2D::get_width()`、棋盘 `(x,y)`。设 `k = w/50`、`s = ±1`（§21.7 的镜像判据）：
 
 ```text
 position = ( w/2 + s·k·x ,  h/2 − k·y )
@@ -2974,7 +2974,7 @@ flip_h   = x > 0.0
 
 `scale.y` 天然为负 ⇒ Godot 屏幕 y 向下、棋盘 y 向上，和 `position.y` 里的减号是同一个翻转。
 
-### 24.7 名字标签：`update_name_label`（`0x4b9810`）与死亡淡出
+### 21.7 名字标签：`update_name_label`（`0x4b9810`）与死亡淡出
 
 镜像判据（`update_sprite` 与 `update_name_label` **各算一遍、算式相同**）：
 
@@ -3010,9 +3010,9 @@ alpha = max(1.0 + t/(−60.0), 0.0)            // 0x4bbb40 ucvtf / 44 fdiv / 48 
 ```
 
 `−60.0` 是 **`f64`** 位型 `0xC04E000000000000`（`mov x8,#-0x3fb2000000000000` @`0x4bb850`），
-与 §24.6 那个 `f32` `−60.0`（`0xC2700000`）**不是同一条常量**，只是数值相等。
+与 §21.6 那个 `f32` `−60.0`（`0xC2700000`）**不是同一条常量**，只是数值相等。
 
-### 24.8 `draw_offset_triangle`（`0x4b9a70`）＝ `draw()` 里的箭头
+### 21.8 `draw_offset_triangle`（`0x4b9a70`）＝ `draw()` 里的箭头
 
 **这就是上一轮代码里那个"匿名包装 `0x4b9a70`"的真名。** 它画一个图元：
 
@@ -3029,7 +3029,7 @@ alpha = max(1.0 + t/(−60.0), 0.0)            // 0x4bbb40 ucvtf / 44 fdiv / 48 
 ⇒ 既有 `arrow_head` / `arrow_primitives` 的**几何与着色结论一条都不用改**，
 本轮只是把名字补上，并把 `arrow_primitives(inp) == 3 × offset_triangle(...)` 写成断言。
 
-### 24.9 与既有 `draw` 结论有无冲突
+### 21.9 与既有 `draw` 结论有无冲突
 
 **没有。** 逐条对账：
 
@@ -3045,7 +3045,7 @@ alpha = max(1.0 + t/(−60.0), 0.0)            // 0x4bbb40 ucvtf / 44 fdiv / 48 
 唯一需要"改口"的是措辞：那句话把"别的函数画"暗示成"别处也是 `draw_*` 图元"，
 实际是"**根本不是图元，是节点**"。已在 `src/entity_drawer.rs` 的模块头就地改写。
 
-### 24.10 诚实清单（**未知**）
+### 21.10 诚实清单（**未知**）
 
 1. `process` 里"要不要画名字"那个 `bool` 取自某个模块对象的 `+0xa1`
    （`ldrb w9,[x27,#0xa1]` @arm64 `0x4bb748`）——**哪个模块、字段真名 = 未知**。
@@ -3061,7 +3061,7 @@ alpha = max(1.0 + t/(−60.0), 0.0)            // 0x4bbb40 ucvtf / 44 fdiv / 48 
    直接调用表里也没有画线原语 ⇒ 仍在别的模块（`graphwar_plane` / `graphwar_effect_manager`
    候选，**本轮未证，不替人选**）。
 
-### 24.11 落码清单
+### 21.11 落码清单
 
 | 原版 | 落在 `src/entity_drawer.rs` | 覆盖程度 | 档位 |
 |---|---|---|---|
@@ -3081,7 +3081,7 @@ alpha = max(1.0 + t/(−60.0), 0.0)            // 0x4bbb40 ucvtf / 44 fdiv / 48 
 
 ---
 
-## 25. `player_showcase.rs` 规格（本轮新增：4 个方法体 / 10 个函数 / 三层贴图 + 档案字段）
+## 22. `player_showcase.rs` 规格（本轮新增：4 个方法体 / 10 个函数 / 三层贴图 + 档案字段）
 
 > **本节解决什么**：`player_showcase` 是 12 个 GDExtension 类里**名字最容易被想歪**的一个
 > ——"showcase"听着像主菜单的装饰，实际是**玩家名片预览**：一行名字输入框 + 三层贴图
@@ -3092,7 +3092,7 @@ alpha = max(1.0 + t/(−60.0), 0.0)            // 0x4bbb40 ucvtf / 44 fdiv / 48 
 > 引用的 **arm64** 地址只用于**定名**（2.0.60 的 Android 构建没 strip），绝不当 x86 用。
 > 落码：`src/player_showcase.rs`；验收：`tests/player_showcase.rs`（22 条，全部是回归保护）。
 
-### 25.1 一页结论
+### 22.1 一页结论
 
 | 项 | 结果 | 档位 |
 |---|---|---|
@@ -3102,13 +3102,13 @@ alpha = max(1.0 + t/(−60.0), 0.0)            // 0x4bbb40 ucvtf / 44 fdiv / 48 
 | 分层顺序 | **皮肤 → 脸 → 帽子**（后画的压在上面） | **观测**（三次绘制与三次取图配对） |
 | 矩形 | `Rect2(0, 0, Control::get_size())` —— 铺满整个控件矩形，**不居中、不裁成正方形** | **观测**（x86 `0x4e5cc3`/`0x4e5ccf`/`0x4e5cd8`） |
 | 颜色 | `modulate` 恒为 `.rodata 0x19ed00` = `Color{1,1,1,1}`；`tile=false`、`transpose=false` | **观测** |
-| 跟 `graphwar_color_manager` 的关系 | **没有关系**（有界否定，见 §23.9） | **观测** |
+| 跟 `graphwar_color_manager` 的关系 | **没有关系**（有界否定，见 §22.9） | **观测** |
 | 它读的档案 | 根节点 `+0x16a8` 的 `GraphwarPlayerConfig`：名字 `+0x00`、皮肤 `+0x60`、脸 `+0x78`、帽 `+0x90`、变更计数 `+0xa8` | **观测**（字段名是推断） |
 | 它读的贴图源 | 根节点 `+0x16a0` 的 `GraphwarTextureLoader`：三张 HashMap 在 `+0x158`/`+0x188`/`+0x1b8`（间距 `0x30`） | **观测** |
 | 它自己的状态 | **只有一个 `u32`**：上次看到的变更计数，偏移 `+0x18` | **观测**（字段名推断） |
-| 还缺什么 | `__default_virtual_call` / `class_id` 的 x86 地址；两个 `#[godot_api]` 块各注册了什么；`ready` 为什么取两次同一个节点 | 未知（§23.11） |
+| 还缺什么 | `__default_virtual_call` / `class_id` 的 x86 地址；两个 `#[godot_api]` 块各注册了什么；`ready` 为什么取两次同一个节点 | 未知（§22.11） |
 
-### 25.2 名字从哪来：TSV 的 7 行里有 4 行是硬锚
+### 22.2 名字从哪来：TSV 的 7 行里有 4 行是硬锚
 
 ```bash
 awk -F'\t' '$1=="player_showcase"' fixtures/name_to_addr.tsv
@@ -3120,7 +3120,7 @@ awk -F'\t' '$1=="player_showcase"' fixtures/name_to_addr.tsv
 | `ready` | `0x4e6480` | 唯一锚（4 个，`:18:129`） | **采用** |
 | `process` | `0x4e68f0` | 唯一锚（2 个，`:59:133`） | **采用** |
 | `on_text_change` | `0x4efd70` | 唯一锚（2 个，`:31:129`） | **采用** |
-| `__register_constants` | 4 候选 | 歧义 | 定到 **`0x4e12e0`**（§23.3，**推断**） |
+| `__register_constants` | 4 候选 | 歧义 | 定到 **`0x4e12e0`**（§22.3，**推断**） |
 | `__default_virtual_call` | — | 未知 | 不落地 |
 | `class_id` | — | 未知 | 不落地 |
 
@@ -3138,7 +3138,7 @@ awk -F'\t' '$1=="player_showcase"' fixtures/name_to_addr.tsv
 （`0x4e5717..0x4e5c69` 三段 inlined SwissTable 查表），arm64 则保留成 `bl`。
 所以"大小相近"既不是必要条件也不是充分条件。
 
-### 25.3 10 个函数（**观测**；x86 地址 + 两侧字节数 + 角色）
+### 22.3 10 个函数（**观测**；x86 地址 + 两侧字节数 + 角色）
 
 | # | x86 | Ghidra 跨度 | 真实字节 | arm64 | arm B | 角色 | 锚 |
 |---|---|---|---|---|---|---|---|
@@ -3162,7 +3162,7 @@ awk -F'\t' '$1=="player_showcase"' fixtures/name_to_addr.tsv
   它们是**同一个** `#[godot_api]` 块的 4 个生成物。两个 `__register_*` 的 x86 跨度都是 384、
   arm64 都是 400 ⇒ **大小区分不开**，只能按 arm64 符号表的地址序对应 ⇒ 记 **推断**。
 
-### 25.4 18 个 Location → panic 种类（**本节最强的一条证据**）
+### 22.4 18 个 Location → panic 种类（**本节最强的一条证据**）
 
 每个 `(line, col)` 通向一个**具体的 panic 出口**，而 panic 的种类能从被调符号直接读出来
 （`core::option::unwrap_failed` / `core::cell::panic_already_borrowed` /
@@ -3198,7 +3198,7 @@ awk -F'\t' '$1=="player_showcase"' fixtures/name_to_addr.tsv
 用的是 **gdext 自己文件**里的 Location（x86 `.data.rel.ro 0x853ce8`），
 所以本文件的 18 个 Location 里**一条都没有**这个种类（`check_rtti` 的失败口）。
 
-### 25.5 `ready`（`0x4e6480`，1136 B）
+### 22.5 `ready`（`0x4e6480`，1136 B）
 
 ```text
 44092c  self.base()                      → Gd<PlayerShowcase>
@@ -3216,10 +3216,10 @@ awk -F'\t' '$1=="player_showcase"' fixtures/name_to_addr.tsv
 
 * 三条字面量在 `.rodata` 里**首尾相接**：`0x1c42ed`(18) → `0x1c42ff`(14) → `0x1c430d`(12)。
 * **取两次同一个节点是事实**（两个不同的 `get_node_by_name::<LineEdit>` + 两个不同的
-  Option unwrap Location `21:132` / `52:132`），不是抄错；**为什么**取两次未知（§23.11）。
+  Option unwrap Location `21:132` / `52:132`），不是抄错；**为什么**取两次未知（§22.11）。
 * `.expect()` 失败 = **panic**（原版没有"找不到节点就静默跳过"的路径）。
 
-### 25.6 `on_text_change`（`0x4efd70`，672 B）
+### 22.6 `on_text_change`（`0x4efd70`，672 B）
 
 ```text
 448d9c  get_node_by_name(:<root>, "GraphwarRootNode", 16).expect(…)
@@ -3234,7 +3234,7 @@ awk -F'\t' '$1=="player_showcase"' fixtures/name_to_addr.tsv
 ⇒ **先存档、再加计数**：`save()` 拿到的已经是新名字，但计数在返回之后才变，
 所以同一帧的 `process` 还看不到变化。
 
-### 25.7 `process`（`0x4e68f0`，656 B）
+### 22.7 `process`（`0x4e68f0`，656 B）
 
 ```text
 440d6c  CanvasItem::is_visible_in_tree()  ; false ⇒ **直接返回**（连档案都不碰）
@@ -3252,7 +3252,7 @@ awk -F'\t' '$1=="player_showcase"' fixtures/name_to_addr.tsv
 计数在三个地方被 `+1`：`on_text_change`、`set_skin`、`set_face`、`set_hat`
 （后三个在 `graphwar_player_config.rs`，不在本模块）⇒ **任何外观变化都会让预览重画**。
 
-### 25.8 `draw`（`0x4e5400`，真实 3264 B）
+### 22.8 `draw`（`0x4e5400`，真实 3264 B）
 
 ```text
 4e5488  get_node_by_name(:<root>, "GraphwarRootNode", 16).expect(…)   （锚 72:129）
@@ -3277,11 +3277,11 @@ awk -F'\t' '$1=="player_showcase"' fixtures/name_to_addr.tsv
 | `modulate` | `Color{1,1,1,1}` | `.rodata 0x19ed00` / `fmov v0.4s,#1.0` |
 | `transpose` | `false` | `xor r9d,r9d` / `mov w5,wzr` |
 
-⚠️ `0x19ed00` 与 §18.7（`GraphwarLongPressAnimation::draw` 第 2 次绘制）**同一个地址**
+⚠️ `0x19ed00` 与 §19.7（`GraphwarLongPressAnimation::draw` 第 2 次绘制）**同一个地址**
 —— 两个模块共用一个"白"。
 缺贴图的那层**不画、也不补占位图元**（`draw` 里没有 `draw_rect`/`draw_circle`/`draw_string`）。
 
-### 25.9 它读谁：根节点的两个"持有单元"，以及它跟颜色表**无关**
+### 22.9 它读谁：根节点的两个"持有单元"，以及它跟颜色表**无关**
 
 `GraphwarRootNode` 上两个**指针→单元**字段（单元 = `RcInner{strong,weak,RefCell{borrow,value}}`，
 所以 `[单元]`=强引用计数、`[单元+0x10]`=借用计数、`[单元+0x18]`=载荷）：
@@ -3335,7 +3335,7 @@ hat  = "soldier_helmet"   (14)
 | 脸 | `get_face_texture` `0x40c0a4` | `+0x198` | `+0x1a0` | `+0x180` |
 | 帽子 | `get_hat_texture` `0x40bf7c` | `+0x1c8` | `+0x1d0` | `+0x1b0` |
 
-### 25.9.1 与 `graphwar_color_manager` 的关系：**没有**（有界否定）
+### 22.9.1 与 `graphwar_color_manager` 的关系：**没有**（有界否定）
 
 本模块 10 个函数的**具名被调者穷举**如下（arm64 `.symtab` 逐条给出，`CALLEES`）：
 `get_node_by_name` / `RawGd::bind` / `RawGd::bind_mut` / `Gd::from_obj_sys_weak` /
@@ -3352,7 +3352,7 @@ hat  = "soldier_helmet"   (14)
 ⇒ "玩家名片按玩家颜色染色"这个猜想在本构建里**没有证据**；如果要染色，
 染色发生在该控件的 GDScript 侧（场景里给 `modulate`），Rust 侧不参与。
 
-### 25.10 与 `client/` 仿制实现的出入（**登记，不改 `client/`**）
+### 22.10 与 `client/` 仿制实现的出入（**登记，不改 `client/`**）
 
 ⚠️ 按 `AGENTS.md` §0 第 4 条：`client/` 是**改写**，不是原版源码；下面只登记差异，
 **本轮不动 `client/`**。
@@ -3369,7 +3369,7 @@ hat  = "soldier_helmet"   (14)
 真正需要**改 `client/`** 的两条（留给后续轮次，不在本轮范围）：
 第 1 条（改成铺满整个矩形）与第 4 条（改成让 Rust 侧轮询计数器）。
 
-### 25.11 本节没解出来的（照实写）
+### 22.11 本节没解出来的（照实写）
 
 | 缺口 | 缺什么证据 |
 |---|---|
@@ -3381,7 +3381,7 @@ hat  = "soldier_helmet"   (14)
 | 四个字段的**源码标识符** | 偏移与读写指令都钉住了；名字是按 `set_skin/set_face/set_hat` 与默认字面量推的。`+0x18`/`+0x30`/`+0x48` 三槽的语义也未定 |
 | 原版 `.tscn` 里 `PlayerShowcase` 外层是不是恒 1:1 的 `AspectRatioContainer` | 缺 `.tscn` 文本（`AspectRatioContainer` 只在客户端仿制品里出现过） |
 
-### 25.12 复现（不依赖本节结论，任何人可重跑）
+### 22.12 复现（不依赖本节结论，任何人可重跑）
 
 ```bash
 SO=.reference/steam/2026-08-28/libgraphwarrust.so          # sha256 9a538115…
@@ -3402,7 +3402,7 @@ llvm-objdump -d --no-show-raw-insn --demangle \
 #    → 各 1 条，都在 <GraphwarRootNode as INode>::init（arm64 0x39a44c / 0x39a450）
 ```
 
-### 25.13 落码清单
+### 22.13 落码清单
 
 | 原版 | 落在 `src/player_showcase.rs` | 覆盖程度 | 档位 |
 |---|---|---|---|
@@ -3412,7 +3412,7 @@ llvm-objdump -d --no-show-raw-insn --demangle \
 | 节点名 / 方法名 / 信号名 | `NODE_ROOT`…`SIGNAL_TEXT_CHANGED_LEN` / `LITERAL_RUN` / `literal_pair_ok` / `node_name_ok` | 4 条 `(ptr,len)` 全自校验 | 观测 |
 | 根节点两个持有单元 | `ROOT_PLAYER_CONFIG` / `ROOT_TEXTURE_LOADER` / `ROOT_UNIT_WRITERS` / `root_unit_writer` | 写者唯一 | 观测 |
 | 档案布局与 `String` 三字序 | `CFG_*` / `StringLayout` / `DEFAULT_*` / `UNIT_PAYLOAD` / `UNIT_BORROW` | 偏移全给，字段名推断 | 观测 / 推断 |
-| `ready` / `on_text_change` / `process` / `draw` | `READY_PLAN` / `on_text_change_effect` / `Showcase` / `ProcessOutcome` / `DrawCall` / `draw_plan` / `DRAW_ORDER` | 四个方法体的判定与算术全覆盖 | 观测（引擎 API 名 = 观测，见 §23.8） |
+| `ready` / `on_text_change` / `process` / `draw` | `READY_PLAN` / `on_text_change_effect` / `Showcase` / `ProcessOutcome` / `DrawCall` / `draw_plan` / `DRAW_ORDER` | 四个方法体的判定与算术全覆盖 | 观测（引擎 API 名 = 观测，见 §22.8） |
 | 与颜色表无关 | `CALLEES` / `touches_color_manager` | 有界否定 | 观测 |
 | TSV 冲突 | `NAME_BRIDGE_CONFLICTS` / `conflict` | 3 条 | 观测 / 推断 |
 | 未知 | `UNKNOWNS`（6 条）/ `DOC_SECTIONS` / `REPRO` | — | 未知 |
@@ -3423,7 +3423,7 @@ llvm-objdump -d --no-show-raw-insn --demangle \
 
 ---
 
-## 26. `graphwar_plane.rs` 规格（最后一个 GDExtension 类）+ 悬案结案：**弹道不是 `draw_line` 画的**
+## 23. `graphwar_plane.rs` 规格（最后一个 GDExtension 类）+ 悬案结案：**弹道不是 `draw_line` 画的**
 
 > **本节解决两件事**：① 12 个 GDExtension 类里最后一个 `GraphwarPlane` 的**全部方法落到地址**；
 > ② 悬了很久的「弹道（`draw_line`）到底在哪个模块画」——结论是**没有任何模块用 `draw_line` 画弹道**，
@@ -3434,7 +3434,7 @@ llvm-objdump -d --no-show-raw-insn --demangle \
 > 落码：`src/graphwar_plane.rs`（新，占位→实现）＋ `src/plane.rs`（只搬走 1 个函数）；
 > 验收：`tests/graphwar_plane.rs`（18 条，全部是回归保护）。
 
-### 26.0 一页结论
+### 23.0 一页结论
 
 | 项 | 结果 | 档位 |
 |---|---|---|
@@ -3442,13 +3442,13 @@ llvm-objdump -d --no-show-raw-insn --demangle \
 | 源级方法数 | **8 个**方法（`draw` / `init` / `ready` / `process` / `on_resized` / `clear_state` / `update_entities` / `obstacle_partial_update_event`）+ **2 个** `ready::{{closure}}`；其余是 gdext 样板 | **观测**（arm64 `.symtab`） |
 | 落到 x86 地址 | 8 个方法 **8/8**（5 个 `唯一锚`、3 个靠「调用者集合 + 首尾相接」）；1 个闭包；gdext 入口 6 个（其中 4 个只到**推断**） | 观测 / 推断（逐条标） |
 | `draw` 画什么 | **两个**图元：`draw_set_transform` ×1 + `draw_rect` ×1（`Rect2(-25,-15,50,30)`、黑、`filled=false`、宽 `0.2`） | **逐位**（常量槽逐个给了地址） |
-| 弹道在哪画 | **不在本类、也不在任何 `draw_*` 图元里**——是 `Line2D` 子节点 | **观测**（穷举 + 有界否定，§26.4） |
+| 弹道在哪画 | **不在本类、也不在任何 `draw_*` 图元里**——是 `Line2D` 子节点 | **观测**（穷举 + 有界否定，§23.4） |
 | `plane.rs` 搬走了什么 | 只搬 `to_pixel`（1 个函数），`plane.rs` 保留 `pub use` 再导出 ⇒ 既有断言一行未改 | 观测（归属锚） |
-| 未知 | 实体 tag `0x28`/`0x29` 的语义、`draw` 里 5 个无锚被调者、`on_resized` 的三个 setter、字段真名 | **未知**（§26.5） |
+| 未知 | 实体 tag `0x28`/`0x29` 的语义、`draw` 里 5 个无锚被调者、`on_resized` 的三个 setter、字段真名 | **未知**（§23.5） |
 
-### 26.1 名字从哪来，地址怎么钉的（三类指纹，可逐条复核）
+### 23.1 名字从哪来，地址怎么钉的（三类指纹，可逐条复核）
 
-> ⚠️ **2026-11-07 撤回**：本节曾把 `tools/class_probe.py` 的归属错误归因为「`analysis/xrefs.pkl` 与 `.so` 不是同一次扫描 / pkl 已过期」。**这个判断是错的**，已在 §27.1 更正：
+> ⚠️ **2026-11-07 撤回**：本节曾把 `tools/class_probe.py` 的归属错误归因为「`analysis/xrefs.pkl` 与 `.so` 不是同一次扫描 / pkl 已过期」。**这个判断是错的**，已在 §24.1 更正：
 > 实测 `xrefs.pkl` 与本版 `.so` **逐条一致**（5301/5301 个 Location 的引用指令集合完全相同），
 > 真因是 `class_probe` 把**已经是虚地址**的引用点又过了一遍 `off2va()` ⇒ 整体 `+0x1000`。
 > 本节其余内容（三类指纹、逐条复核方法）仍然有效。
@@ -3484,7 +3484,7 @@ arm64 侧同样相接：`0x4c3308`+256 = `0x4c3408`，`0x4c3408`+900 = `0x4c378c
 > ⇒ 结论：**pkl 那一套（`docs/140`/`149` 时点的 `class_probe`）对本版 `.so` 已经过期**，
 > 引用它的旧表要按本节重核。
 
-### 26.2 地址表（**观测**；x86 虚地址，Ghidra = `+0x100000`）
+### 23.2 地址表（**观测**；x86 虚地址，Ghidra = `+0x100000`）
 
 | 源级名 | x86 vaddr | x86 span | arm64 | arm64 B | 判据 |
 |---|---|---|---|---|---|
@@ -3512,7 +3512,7 @@ gdext 入口（不是原版写的方法，是 `#[gdextension]` 生成的样板�
 > `docs/08` §3 当年记的「`0x4bcab0` 是 Rust lazy static 初始化」= 这一族 `_::__init::__inner_init`
 > （`std::sync::OnceLock::initialize` + `Mutex` + panic 路径）。**归属对了，名字现在有了**。
 
-### 26.3 四个方法体（**观测**）
+### 23.3 四个方法体（**观测**）
 
 **`init`（`0x4b7380`）**：建 **3 个 `FunctionDrawer`** 并 `add_child`。
 arm64 侧 `Gd::default_instance` ×3、`ExAddChild::new` ×3、`Node::add_child_f…` ×3；
@@ -3530,7 +3530,7 @@ GraphwarBackend::subscribe_to_event ×3 (0x44b7f0)    ; 名字首尾相接：
   clear_obstacles_event   0x1c2b5a 长 19
 ```
 
-`ready` 体内还直接调了一次 `on_resized`（`0x4bddb0`）—— 两侧相同，这也是 §26.1 第 3 类的锚。
+`ready` 体内还直接调了一次 `on_resized`（`0x4bddb0`）—— 两侧相同，这也是 §23.1 第 3 类的锚。
 
 **`process`（`0x4b83f0`）**：每帧 `ObstacleDrawer::update`（`0x3ee190`）**2 次** +
 `GraphwarDrawUtil::get_team_overview`（`0x4be6e0`）**1 次**。没有别的游戏内调用。
@@ -3572,10 +3572,10 @@ draw_rect(Rect2(-25,-15,50,30), Color(0,0,0,1), false, 0.2, false)
 
 **`on_resized`（`0x4bddb0`）**：`Control::set_*` ×3 + `get_*` ×1（都走 GOT 槽，方法名未解），
 288 B，无其它调用。**`clear_state`（`0x4bded0`）**：`Node::queue_free` ×2 + `HashMap/Vec` 清理，
-并引用 `EntityDrawer` / `EffectDrawer` 两个类名（用途见 §26.5）。
+并引用 `EntityDrawer` / `EffectDrawer` 两个类名（用途见 §23.5）。
 **`update_entities`（`0x4be270`）**：与 `clear_state` 同型但只 `queue_free` ×1。
 
-### 26.4 悬案结案：**弹道不是 `draw_line` 画的**（有界穷举）
+### 23.4 悬案结案：**弹道不是 `draw_line` 画的**（有界穷举）
 
 **做法**：把 `CanvasItem` 的每个绘图方法名（`.rodata` 的方法名字面量）→ 包装函数 → `.got` 槽
 的全链条解出来，然后**穷举** `.text` 里所有对该槽的调用，**两种形态都算**：
@@ -3621,14 +3621,14 @@ draw_rect(Rect2(-25,-15,50,30), Color(0,0,0,1), false, 0.2, false)
 而 `0x498c70` / `0x499050` / `0x4992b0` **三个都被 `GraphwarPlane::draw`（`0x4b5df0`）调用**。
 ⇒ 平面的 `draw` 每帧把"当前 tick 的函数"喂给 `FunctionDrawer`，后者往自己的 `Line2D` 里
 `add_point`；曲线是**节点**，不是图元。这与 `entity_drawer` 那条"士兵不是图元、是子节点"
-（§24.3）是同一个设计取向。
+（§21.3）是同一个设计取向。
 
 > **推断（未证）**：`update_function` 的入参里有 `get_fractional_tick`（`0x519530`）与
 > `get_active_functions_on_tick`（`0x456df0`）⇒ 曲线长度随 tick 增长，像是**开火动画**
 > 而不是静态预览。**缺的证据**：`add_point` 那处循环的上界与步长没逐条读；
 > 也没有运行时帧对拍（谁能逐帧量 Line2D 的 `points` 就能定案）。
 
-### 26.5 本节没解出来的（照实写）
+### 23.5 本节没解出来的（照实写）
 
 1. 实体 tag **`0x28` / `0x29`** 各是哪一类（士兵 / 障碍 / 靶子）：`0x4be3e0` 只做枚举判别
    （niche 优化形态），没有类型名字面量可比。
@@ -3640,9 +3640,9 @@ draw_rect(Rect2(-25,-15,50,30), Color(0,0,0,1), false, 0.2, false)
 5. `clear_state` 引用 `EntityDrawer` / `EffectDrawer` 类名的用途（只是 `cast` 目标？还是清子节点？）。
 6. `GraphwarPlane` 的**字段真名与偏移**：只确证了那个 `Vec` 的三个槽 `+0x50`(cap) / `+0x58`(ptr) /
    `+0x60`(len)。
-7. 曲线到底是不是**弹道**（开火轨迹）：见 §26.4 末尾的「推断」。
+7. 曲线到底是不是**弹道**（开火轨迹）：见 §23.4 末尾的「推断」。
 
-### 26.6 复现（不依赖本节结论，任何人可重跑）
+### 23.6 复现（不依赖本节结论，任何人可重跑）
 
 ```text
 # ① 两侧的 Location 键集（本节的指纹 1）
@@ -3668,7 +3668,7 @@ for a in (0x4bddb0,0x4bded0,0x4be270):
 PY
 ```
 
-### 26.7 落码清单
+### 23.7 落码清单
 
 | 原版东西 | 落在 | 覆盖 | 档位 |
 |---|---|---|---|
@@ -3686,16 +3686,16 @@ PY
 本轮 `cargo test --offline`：lib **361**、总计 **707**（+27），doctest 阶段 0 条通过（本仓库无 Rust doctest，
 文档里的 shell 一律用 ```` ```text ```` 围栏）。
 
-## 27. 工具修订：`class_probe.py` 的归属列已修复（新扫描器 `tools/loc_xrefs.py`）+ 需要重核的旧结论
+## 24. 工具修订：`class_probe.py` 的归属列已修复（新扫描器 `tools/loc_xrefs.py`）+ 需要重核的旧结论
 
-> 本节回答三件事：① §26.1 对 `class_probe` 的**归因是错的**——不是 pkl 过期，是代码把
+> 本节回答三件事：① §23.1 对 `class_probe` 的**归因是错的**——不是 pkl 过期，是代码把
 > `off2va()` 套在已经是虚地址的引用点上；② 归属链路已换成**只读目标 `.so` 的独立扫描器**，
 > 一条命令复算、并拿 327 个唯一锚与 `fixtures/module_funcs.tsv` 双向交叉验证；
 > ③ 全库范围内**哪些旧结论要重核**（4 处确定冲突 + 1 处可结案 + 2 条 TSV 地址 + 1 条标注）。
 >
 > **地址口径**：本节一律 **ELF 虚地址**（`objdump` 口径）。Ghidra/REA 地址 = 本值 + `0x100000`（只加一次）。
 
-### 27.0 一页结论
+### 24.0 一页结论
 
 | 项 | 结果 | 档位 |
 |---|---|---|
@@ -3709,9 +3709,9 @@ PY
 | 归属变化规模 | 5301 个 Location 里 **5019 个（94.7%）** 的函数归属变了；只有 282 个「碰巧对」（函数体 > `0x1000` 字节，右漂仍落在同一函数内） | **逐位** |
 | 要重核的旧结论 | 4 处**冲突**、1 处**可结案**、2 条 TSV 地址、1 条标注；另有 **13 个模块**没有 fixture 兜底 | 27.4 |
 
-### 27.1 真因：不是 pkl 过期，是 `off2va()` 套错了一次（**更正 §26.1**）
+### 24.1 真因：不是 pkl 过期，是 `off2va()` 套错了一次（**更正 §23.1**）
 
-§26.1 写的是「`analysis/*.pkl` 与 2026-08-28 这份 `.so` 不是同一次构建 ⇒ 过时」。
+§23.1 写的是「`analysis/*.pkl` 与 2026-08-28 这份 `.so` 不是同一次构建 ⇒ 过时」。
 **这条归因是错的**，三条反证：
 
 1. 上游 `libgraphwarrust.so` 与 `.reference/steam/2026-08-28/libgraphwarrust.so`
@@ -3719,7 +3719,7 @@ PY
 2. `xrefs.pkl` 里那一跳**本来就是对的**：
    `xrefs.pkl[0x95e4f8] == [(0x4b6dc5, 'rip', 'lea', 'rdi, [rip + 0x4a772c]')]`，
    而 `0x4b6dc5` 正是 `src/graphwar_plane.rs:274:129` 在整份 `.text` 里的**唯一**引用点
-   （与 §26.1 自己的「重扫可自证」一句完全对上——那句话其实已经推翻了「pkl 过期」）。
+   （与 §23.1 自己的「重扫可自证」一句完全对上——那句话其实已经推翻了「pkl 过期」）。
 3. 5301 个 Location 的引用指令集合，与新扫描器**逐条相同**（无一条多、无一条少）。
 
 真因在 `class_probe.py` 自己身上：`xrefs.pkl` 的 `insn_addr` 已经是**虚地址**
@@ -3734,7 +3734,7 @@ def funcs_ref_slot(self, slot):
         f  = self.func_of(va)
 ```
 
-三例复算（`+0x1000` 后再落到 Ghidra 函数表上，与 §26.1 记录的症状**完全一致**）：
+三例复算（`+0x1000` 后再落到 Ghidra 函数表上，与 §23.1 记录的症状**完全一致**）：
 
 | Location | 引用指令 | 正确函数 | v1 算成 `+0x1000` | v1 归属 |
 |---|---|---|---|---|
@@ -3743,9 +3743,9 @@ def funcs_ref_slot(self, slot):
 | `:68:1`（`0x95e280`） | `0x4b235b` / `0x4b24db` / `0x4bc7cd` / `0x4bcbe1` | **`0x4b2260` / `0x4b23e0` / `0x4bc6b0` / `0x4bcab0`** | `0x4b335b` / `0x4b34db` / `0x4bd7cd` / `0x4bdbe1` | `0x4b2890` / `0x4bd650` / `0x4bda50`（4 个塌成 3 个） |
 
 > `docs/16` §16.1.1 当时的判断**是对的**（就是 `off2va` 平移 `0x1000`，且指出
-> `module_map.py` 没这个 bug、fixture 可信）。§26.1 是后来的回退，本节把它改回来。
+> `module_map.py` 没这个 bug、fixture 可信）。§23.1 是后来的回退，本节把它改回来。
 
-### 27.2 新扫描器：`tools/loc_xrefs.py`（一条命令复现）
+### 24.2 新扫描器：`tools/loc_xrefs.py`（一条命令复现）
 
 ```text
 ../.venv/bin/python tools/loc_xrefs.py stats        # 判据逐形态计数 + 目标 sha256 + 自检
@@ -3794,7 +3794,7 @@ def funcs_ref_slot(self, slot):
 | 与 `analysis/xrefs.pkl` 对打（pkl 只当对照） | 5301 / 5301 个 Location 的引用指令集合**完全相同** |
 | 与 `fixtures/module_funcs.tsv` 对打（`module_map.py` 生成，本来就对） | 544 行 / 56 模块**逐条相同**（函数地址集合逐一相等） |
 
-### 27.3 交叉验证：`fixtures/name_to_addr.tsv` 的 327 个唯一锚
+### 24.3 交叉验证：`fixtures/name_to_addr.tsv` 的 327 个唯一锚
 
 `check-tsv` 的判据：TSV 每行断言「`x86_addr` 这个函数引用了 `src_file:src_line`」；
 本工具独立算「`(file,line)` → 函数」，检查该行是否落进 `x86_addr` 的 Location 集合。
@@ -3814,7 +3814,7 @@ def funcs_ref_slot(self, slot):
 ⇒ 结论：**324/327 = 99.1% 一致**，且 3 条例外都能指到「函数边界口径」或「TSV 标注」，
 没有一条指向「谁引用了这个 Location」这一跳。**这一跳现在可信。**
 
-### 27.4 需要重核的旧结论（清单）
+### 24.4 需要重核的旧结论（清单）
 
 **（a）先看规模**：v1 的 `+0x1000` 平移让 **5019/5301（94.7%）** 个 Location 的函数归属
 发生变化，只有 282 个因为「函数体 > 4096 字节」而碰巧落在同一个函数里。
@@ -3831,9 +3831,9 @@ def funcs_ref_slot(self, slot):
 | 3 | `docs/02` §17.4（`polish_notation_converter.rs` 行）、`docs/coverage-matrix.tsv` 第 94 行 | 「本模块的锚函数是 `0x4f57d0`（`:36:52` / `:116:55`）」 | **`0x4f5450`**（引用指令 `0x4f5789` / `0x4f577c`；`+0x1000` 后正好落到 `0x4f57d0`） | **冲突** |
 | 4 | `docs/14`（`0x3dcbf4` 那一节） | 「`class_probe` 记的 Location 结构体锚点是 **233/234/235/236/239/244/250/256**（8 个）」 | 该函数是 **`0x3dcbb0`**，真实 Location 行 **18 个**：`275 278 292 307 310 345 350 351 352 353 354 363 364 365 527 530 535 544`。括号里那 8 个是 v1 归给它的 **17** 行里的一段 —— 逐条对得上，属 v1 artifact | **冲突** |
 | 5 | `docs/03` §13.2（「⚠ 一处**工具**冲突」） | 「`97:63` 被 v1 归给 `0x4f57d0`；真正引用指令 `0x4f4974` 落在 `0x4f44c0` 体内（REA 核实）」 | 本工具：`graphwar_function_input.rs:97:63` → **`0x4f44c0`**。v1 会给 `0x4f57d0` | **一致**（当时手工纠对了，可删掉这处「工具冲突」） |
-| 6 | `docs/16` §16.1.1 | 真因 = `off2va` 平移 `0x1000`；fixture 可信、`funcs:` 列不可信 | 完全相同 | **一致**（本条是正确诊断，§26.1 是回退） |
-| 7 | `docs/16` §26.1 | 真因 = 「pkl 与 `.so` 不是同一次扫描」「pkl 已过期」 | **错**：pkl 与 `9a538115…` 逐条相符，真因是 `off2va` | **冲突（要改）** |
-| 8 | `docs/16` §26.2 的地址表（`draw 0x4b5df0` / `ready 0x4b7a70` / 4 个 gdext 入口 …） | 全表 | 本工具逐条复核：**全部一致**（那张表是手算 + REA 得出的，不是 `class_probe` 输出） | **一致** |
+| 6 | `docs/16` §16.1.1 | 真因 = `off2va` 平移 `0x1000`；fixture 可信、`funcs:` 列不可信 | 完全相同 | **一致**（本条是正确诊断，§23.1 是回退） |
+| 7 | `docs/16` §23.1 | 真因 = 「pkl 与 `.so` 不是同一次扫描」「pkl 已过期」 | **错**：pkl 与 `9a538115…` 逐条相符，真因是 `off2va` | **冲突（要改）** |
+| 8 | `docs/16` §23.2 的地址表（`draw 0x4b5df0` / `ready 0x4b7a70` / 4 个 gdext 入口 …） | 全表 | 本工具逐条复核：**全部一致**（那张表是手算 + REA 得出的，不是 `class_probe` 输出） | **一致** |
 | 9 | `src/graphwar_function_input.rs:172`、`src/graphwar_plane.rs:23`、`src/graphwar_setup_control.rs:32` | 「不要直接引用 `class_probe` 的归属」 | 结论对。但 `graphwar_plane.rs:23` 的**理由**（「pkl 与本版 `.so` 不是同一次构建」）要改成「v1 的 `off2va` 平移 `+0x1000`，已在 v2 修复」 | **结论一致 / 措辞需改** |
 | 10 | `fixtures/module_funcs.tsv`（544 行 / 56 模块）、`docs/coverage-matrix.tsv` 的**模块行** | `module_map.py` 生成 | 本工具**逐条相同** | **一致**（不受影响） |
 | 11 | `fixtures/name_to_addr.tsv`（327 唯一锚） | 地址来自 `name_bridge.py` + Ghidra 边界 | 324 一致；`0x4eb86a`→`0x4eb830`、`0x4eccb3`→`0x4ec160`；`0x748000` 行的 `join_kind` 与证据不符 | **2 条地址 + 1 条标注** |
@@ -3846,12 +3846,12 @@ def funcs_ref_slot(self, slot):
 
 | 模块 | 锚函数数 | 备注 |
 |---|---|---|
-| `entity_drawer.rs` | **14** | `docs/16` §24 记的是 10 个（按 arm64 符号表 + REA 做的）；本工具多出 6 个地址（`0x4b1f60 0x4b20e0 0x4bbcc0 0x4bbee0 0x4bc090 0x4bc240`）在 §24 里**两种地址口径都没出现** ⇒ 清单可补，**但不判冲突**（§24 用名字而非地址记） |
-| `player_showcase.rs` | **10** | 与 `docs/16` §25 列出的地址**完全一致** |
-| `effect_drawer.rs` | **11** | `docs/16` §21 覆盖其中若干；6 个地址（`0x4e02b0 0x4e0430 0x4e7870 0x4e7a20 0x4e7bc0 0x4e7e10`）未出现 ⇒ 清单可补 |
+| `entity_drawer.rs` | **14** | `docs/16` §21 记的是 10 个（按 arm64 符号表 + REA 做的）；本工具多出 6 个地址（`0x4b1f60 0x4b20e0 0x4bbcc0 0x4bbee0 0x4bc090 0x4bc240`）在 §21 里**两种地址口径都没出现** ⇒ 清单可补，**但不判冲突**（§21 用名字而非地址记） |
+| `player_showcase.rs` | **10** | 与 `docs/16` §22 列出的地址**完全一致** |
+| `effect_drawer.rs` | **11** | `docs/16` §18 覆盖其中若干；6 个地址（`0x4e02b0 0x4e0430 0x4e7870 0x4e7a20 0x4e7bc0 0x4e7e10`）未出现 ⇒ 清单可补 |
 | `math_function.rs` | **7** | 见上表第 2 行（`0x4eb830` / `0x4ec160` …） |
 | `weak_caller.rs` | **40** | gdext 侧模块，非游戏源码 |
-| `axis_drawer.rs` | 6 | 6 个地址（`0x4dcd70 0x4dcef0 0x4e70c0 0x4e7260 0x4e7470 0x4e76c0`）在 `docs/16` §21 里两种口径都未出现 ⇒ 清单可补 |
+| `axis_drawer.rs` | 6 | 6 个地址（`0x4dcd70 0x4dcef0 0x4e70c0 0x4e7260 0x4e7470 0x4e76c0`）在 `docs/16` §18 里两种口径都未出现 ⇒ 清单可补 |
 | `button_manager.rs` | 3 | |
 | `function_button_manager.rs` | 2 | |
 | `obstacle_drawer.rs` | 2 | |
@@ -3864,7 +3864,7 @@ def funcs_ref_slot(self, slot):
 > **观测（可复算）**，不替那些章节改结论。谁要写进 `docs/02` 的矩阵，请按
 > `dump locs` 重算并保留本节的命令。
 
-### 27.5 本轮同时修的第二个同类小坑（`classes` 列）
+### 24.5 本轮同时修的第二个同类小坑（`classes` 列）
 
 `classes` 子命令在「字面量 → 引用它的函数」这一跳也套了 `off2va()`
 （`f = self.func_of(self.off2va(off[0]) or 0)`），同一个 `+0x1000`，而且 `or 0`
@@ -3872,18 +3872,18 @@ def funcs_ref_slot(self, slot):
 `docs/16` §16.1.1 说的「`literals` 列不受影响」是对的，但 `classes` 列**受影响**，
 本轮一并修好（`classes` 现在能给出 12 个类型名 × 正确函数集合）。
 
-### 27.6 验证结果
+### 24.6 验证结果
 
 | 命令 | 结果 |
 |---|---|
 | `../.venv/bin/python tools/loc_xrefs.py check-tsv` | 324/327 一致，3 条例外已逐条解释（27.3） |
-| `../.venv/bin/python tools/class_probe.py module graphwar_plane` | `:68:1` → 4 个 gdext 入口、`:274:129` → `0x4b5df0`、`:218:129` → `0x4b7a70`（与 `docs/16` §26.2 一致）；行数 175→232（19 个 Location 不变，`funcs` 段 21→22，多出的是线索 A 修好后新增的字面量行） |
+| `../.venv/bin/python tools/class_probe.py module graphwar_plane` | `:68:1` → 4 个 gdext 入口、`:274:129` → `0x4b5df0`、`:218:129` → `0x4b7a70`（与 `docs/16` §23.2 一致）；行数 175→232（19 个 Location 不变，`funcs` 段 21→22，多出的是线索 A 修好后新增的字面量行） |
 | `cargo test --offline` | **全绿**（本轮未改 `src/`） |
 | `python3 tools/coverage_matrix.py --check` | **红**，但**与本轮改动无关**：master 上（干净工作树）同样是红的，且差异行号相同（`docs/coverage-matrix.tsv` 第 10 行、`docs/149` 第 247 行）。实测差异**只有表头 2 行**：`src_files: 46` vs 重算 `47`、`src_tree_sha256` 变化 —— 上一个提交 `c7107934` 新增了 `src/graphwar_module_container.rs` 却没重跑生成器；**96 行模块行逐行相同**。修它要重生成 `docs/coverage-matrix.tsv` + `docs/149-coverage-matrix.md`，不在本轮可改文件范围内 |
 
-## 28. `graphwar_nodes.rs` 规格（本轮新增：从"零锚点未知模块"到 11 个归一化函数 + 40 个节点名）
+## 25. `graphwar_nodes.rs` 规格（本轮新增：从"零锚点未知模块"到 11 个归一化函数 + 40 个节点名）
 
-### 28.0 一页结论
+### 25.0 一页结论
 
 * 这个模块**不造节点**。它是全客户端**唯一的"按名字/按类型找节点"入口**：
   调用方给一个节点名字符串，它从**场景根**开始递归找，找到后**上抛成 `Gd<T>`**。
@@ -3902,7 +3902,7 @@ def funcs_ref_slot(self, slot):
 
 ⇒ `get_node_by_name` 只是**薄壳**（先 `get_tree().get_root()`），遍历孩子的是 `_rec`。
 
-### 28.1 分母：11 怎么来的（可复现，三条判据串起来）
+### 25.1 分母：11 怎么来的（可复现，三条判据串起来）
 
 1. `src/graphwar_nodes.rs` 在整份 `.so` 里**只有一个** `panic::Location`：
    `.data.rel.ro` 的 `0x951678` = `{file_len 21, line 8, col 62}`，`file` 指针的
@@ -3921,7 +3921,7 @@ def funcs_ref_slot(self, slot):
 缺的是"某个 x86 函数 ↔ 某个 `::h<hash>`"的一对一锚（本模块的 Location 只有一个，
 天然做不到）。三条旁证：同一 Location、同形（都是 `upcast_ref` + 一个类型专属尾巴）、同数量。
 
-### 28.2 11 个函数体长什么样（x86 逐指令）
+### 25.2 11 个函数体长什么样（x86 逐指令）
 
 每个都是 ~0x100 字节的同一个骨架：
 
@@ -3957,7 +3957,7 @@ else:         panic(0x951678)             ; = src/graphwar_nodes.rs:8:62
   都可以直接判成"一次 `Gd` 的 clone/cast/upcast"，不必再逐个反编译。
   落码：`src/graphwar_nodes.rs` 的 `GdOp` / `GD_OP_WRAPPER_A` / `GD_OP_WRAPPER_B`。
 
-### 28.3 它按什么键索引：40 个节点名（**这一节最实用**）
+### 25.3 它按什么键索引：40 个节点名（**这一节最实用**）
 
 判据 = 每个调用点前的 `lea rcx,[rip+X]` + 紧随的 `mov r8d,<len>`；共 **80** 个调用点。
 长度是 `.rodata` 字面量的真实字节数，可逐条复核。
@@ -4000,7 +4000,7 @@ else:         panic(0x951678)             ; = src/graphwar_nodes.rs:8:62
 | `0x3ab890` | `PlayerListContainer` |
 | `0x3ab0a0` | **未读出**（3 个调用点全在 `GraphwarRootNode` 的命令总线 `0x3b0830` 里，配对窗口被挤掉） |
 
-### 28.4 谁在用它（调用方全表，**观测**）
+### 25.4 谁在用它（调用方全表，**观测**）
 
 | 单态化 | 直接调用点 | 调用方（去重） |
 |---|---|---|
@@ -4021,7 +4021,7 @@ else:         panic(0x951678)             ; = src/graphwar_nodes.rs:8:62
 （找不到名字就 panic），而 `get_node_by_name_rec` / `get_node_by_type_rec` 返回
 `Option` / `Vec`，不 panic。
 
-### 28.5 落码清单（`src/graphwar_nodes.rs`）
+### 25.5 落码清单（`src/graphwar_nodes.rs`）
 
 | 项 | 内容 | 档位 |
 |---|---|---|
@@ -4048,7 +4048,7 @@ else:         panic(0x951678)             ; = src/graphwar_nodes.rs:8:62
 5. **`0x9bb310` / `0x9bb318`（`0x4068f0` 内部两个槽）的引擎侧成员名** —— 需要运行时读 GOT。
 6. **`0x3ab0a0` 的 3 个实参名字**。
 
-### 28.6 复现（不依赖本节结论，任何人可重跑）
+### 25.6 复现（不依赖本节结论，任何人可重跑）
 
 ```text
 # ① 本模块的 Location 只有一条
@@ -4066,9 +4066,9 @@ objdump -d --start-address=0x3aaea0 --stop-address=0x3ab990 \
 #    对 11 个入口各自的 call 点，回看 lea rcx,[rip+X] 与紧邻的 mov r8d,<len>
 ```
 
-## 29. `graphwar_player_screen_control.rs` 规格（本轮新增：8 个函数全定位；**它就是写 `GraphwarPlayerConfig` 的地方**）
+## 26. `graphwar_player_screen_control.rs` 规格（本轮新增：8 个函数全定位；**它就是写 `GraphwarPlayerConfig` 的地方**）
 
-### 29.0 一页结论
+### 26.0 一页结论
 
 1. **回答了本轮的核心问题：是。** 玩家页三个外观按钮的回调分别调
    `GraphwarPlayerConfig::set_skin` / `set_face` / `set_hat` —— 这条在 arm64 `.symtab`
@@ -4081,9 +4081,9 @@ objdump -d --start-address=0x3aaea0 --stop-address=0x3ab990 \
    （`docs/14-turn.md` §9.3 与本文 §15.9 曾登记为"需要运行时读 GOT"）。
 5. `docs/coverage-matrix.tsv` 里这一格的 `status` 本轮仍写 `未知`/`未做` ——
    因为那张表的 `M` 字典在 `tools/coverage_matrix.py` 里手写，
-   改它不在本轮可改文件范围内（见 §29.7）。
+   改它不在本轮可改文件范围内（见 §26.7）。
 
-### 29.1 分母：8 个函数 + 22 个锚（`fixtures/name_to_addr.tsv` 的 8 条 `唯一锚`）
+### 26.1 分母：8 个函数 + 22 个锚（`fixtures/name_to_addr.tsv` 的 8 条 `唯一锚`）
 
 | # | 函数 | x86 vaddr | size | 锚（`src/graphwar_player_screen_control.rs:line:col`） |
 |---|---|---|---|---|
@@ -4110,7 +4110,7 @@ objdump -d --start-address=0x3aaea0 --stop-address=0x3ab990 \
 `252:107/255:113`（`lock`）、`268:107/271:113`（`unlock`）、`260:107/263:113`（`pending`）。
 `load_items` 占 9 条（自己 `113` + 三个被内联 loader 各 2 条）。
 
-### 29.2 三个按钮改档案（**本节最强的一条证据**，两条独立路径）
+### 26.2 三个按钮改档案（**本节最强的一条证据**，两条独立路径）
 
 | 回调 | x86 | arm64 具名被调者 | 改哪个字段（偏移） | x86 setter（槽的 addend） |
 |---|---|---|---|---|
@@ -4127,7 +4127,7 @@ objdump -d --start-address=0x3aaea0 --stop-address=0x3ab990 \
           inc dword ptr [rbx+0xa8]         ; 变更计数器 +1
 ```
 
-`+0x48` / `+0x90` / `+0xa8` / `+0xac` 与 §25.9 的 `GraphwarPlayerConfig` 布局表
+`+0x48` / `+0x90` / `+0xa8` / `+0xac` 与 §22.9 的 `GraphwarPlayerConfig` 布局表
 **逐字段吻合**（那一节是从 `GraphwarPlayerConfig::lock` 与 `draw` 反推的，
 本节是从三个 setter 反推的 —— 两条独立路径给出同一张表）。
 `set_face`（`0x417d50`）写 `+0x78`，`set_skin`（`0x417e20`）写 `+0x60`，同形。
@@ -4136,7 +4136,7 @@ objdump -d --start-address=0x3aaea0 --stop-address=0x3ab990 \
 （`call *[slot]`），槽被 `R_X86_64_RELATIVE` 静态写入，addend 就是入口 —— 所以语义确定；
 但"为什么没内联"（`#[godot_api]` 方法表？`OnceLock` 初始化？）**未知**。
 
-### 29.3 每个函数的具名被调者（arm64 `.symtab`，逐条解出）
+### 26.3 每个函数的具名被调者（arm64 `.symtab`，逐条解出）
 
 godot/gdext/alloc/panic 那些基础被调者已滤掉，只留说明业务的：
 
@@ -4158,7 +4158,7 @@ godot/gdext/alloc/panic 那些基础被调者已滤掉，只留说明业务的�
 `Array::len`、`Gd::owned_cast`、`construct_engine_object`、`FromGodot::from_variant`）
 ⇒ 它负责"把新按钮插进 VBox 的合适位置"。
 
-### 29.4 `lock` / `pending` / `unlock`：只有可见性（**观测**，逐指令）
+### 26.4 `lock` / `pending` / `unlock`：只有可见性（**观测**，逐指令）
 
 | 函数 | `SkinBlock` | `PendingBlock` | `%esi` 来源 |
 |---|---|---|---|
@@ -4171,7 +4171,7 @@ godot/gdext/alloc/panic 那些基础被调者已滤掉，只留说明业务的�
 **没有任何**对 `+0x16a8`（档案）的读写 ⇒ 它们不改进度，只改界面。
 
 ⚠️ 注意**同名不同物**：`GraphwarPlayerConfig::lock()`（档案模块）会写默认外观
-（`yellow` / `regular_eyes` / `soldier_helmet`，§25.9），而
+（`yellow` / `regular_eyes` / `soldier_helmet`，§22.9），而
 `GraphwarPlayerScreenControl::lock()`（本节）只翻可见性。两个 `lock` 别混。
 
 **就地更正一条旧"未知"**：§15.9 / `docs/14-turn.md` §9.3 把 `0x9ba978`、`0x9baa10`
@@ -4187,7 +4187,7 @@ godot/gdext/alloc/panic 那些基础被调者已滤掉，只留说明业务的�
 那条 `object_method_bind_ptrcall` 的 method bind 名字。
 （`0x9baa10` 是**另一个**槽，本节没碰，仍按未知处理。）
 
-### 29.5 结构体：`+0x00` 是档案，`+0x10/+0x18` 是查找起点
+### 26.5 结构体：`+0x00` 是档案，`+0x10/+0x18` 是查找起点
 
 8 个函数的第一个实参 `%rdi` 指同一个结构体，两个字段区被用到（**偏移观测 / 字段名推断**）：
 
@@ -4196,15 +4196,15 @@ godot/gdext/alloc/panic 那些基础被调者已滤掉，只留说明业务的�
 | `+0x00` | `Rc<RefCell<GraphwarPlayerConfig>>` | `mov %rbp,(%rdi)` → `[%rbp+0x10]` 借用计数检查（`cmp …,0` + `jne panic_already_borrowed`）、`[%rbp+0x18]` = 载荷；三个 `set_*` 与 `lock`/`pending` 都直接对它操作 |
 | `+0x10` / `+0x18` | 一个**两字宽**句柄，两半各自做非零检查，作为 `get_node_by_name` 的查找起点 | `lock`/`unlock`/`pending` 只读这两处；`skin_button_pressed` 用它找 `GraphwarRootNode` |
 
-与 §25.9 **不冲突**：根节点 `+0x16a8` 持有同一个 `Rc` 的一份克隆，本模块把这个克隆
+与 §22.9 **不冲突**：根节点 `+0x16a8` 持有同一个 `Rc` 的一份克隆，本模块把这个克隆
 **缓存在自己身上**（`+0x00`），所以"写档案"这条路径不必每次都从根节点取。
 
 `skin_button_pressed` 里还有一条值得记的：它**同时也读** `GraphwarRootNode + 0x16a0`
 （`0x4f7a60: mov %rcx,(%rdx+0x16a0)` + `0x4f7a70: mov %r14,(%rdx+0x16a0)`）——
-即"改完外观还要拿贴图缓存去刷按钮底色"，与 §25.9 那张表里
+即"改完外观还要拿贴图缓存去刷按钮底色"，与 §22.9 那张表里
 "`+0x16a0` 的读者包含 `GraphwarPlayerScreenControl::skin_button_pressed`"一致。
 
-### 29.6 `load_items`：三个 loader 已被内联
+### 26.6 `load_items`：三个 loader 已被内联
 
 arm64 `.symtab` 里 `GraphwarPlayerScreenControl` 共 14 个符号，其中
 `load_skins` / `load_faces` / `load_hats` **只剩** `::{{closure}}`（各 52 字节）：
@@ -4225,7 +4225,7 @@ arm64 `.symtab` 里 `GraphwarPlayerScreenControl` 共 14 个符号，其中
 ⚠️ **推断**：行号 `135 < 156 < 183` 与 `SkinsVbox` / `FacesVbox` / `HatsVbox` 的**先后**
 还需要逐段对齐才能定死（本轮只做到"三个块各占一段、且紧邻对应的 `get_node_by_name`"）。
 
-### 29.7 落码清单（`src/graphwar_player_screen_control.rs`）
+### 26.7 落码清单（`src/graphwar_player_screen_control.rs`）
 
 | 项 | 内容 | 档位 |
 |---|---|---|
@@ -4248,17 +4248,17 @@ arm64 `.symtab` 里 `GraphwarPlayerScreenControl` 共 14 个符号，其中
 2. **`+0x10/+0x18` 两字宽句柄的确切类型** —— 只知道两半各自做非零检查、被当作查找起点。
    `Gd<T>` 在 gdext 里是 1 字宽，所以 2 字宽**不是**单个 `Gd`；
    缺的证据：`.text` 里找不到唯一写点（可能是 `Base<Node>` + 一个 `InstanceId` 之类的组合）。
-3. **三个 setter 为什么走间接调用**（语义不受影响，见 §29.2 的注）。
+3. **三个 setter 为什么走间接调用**（语义不受影响，见 §26.2 的注）。
 4. **`0x9bb7c0`（`skin_button_pressed` 里那条间接调用，addend `0x8cac40`）是什么** ——
    它在 `RawGd::bind` 之后被调用、返回 3 个 `dword` 判别值之一
    （`cmp dword ptr [rsp+0x48], 3`），最可能是 `GraphwarTextureLoader` 的一个方法，**未证**。
 5. **改完外观谁来 `save()`** —— `GraphwarPlayerConfig::save()` 在
-   `player_showcase::on_text_change` 里被直接调用（§25.6），但本模块三个 setter 之后
+   `player_showcase::on_text_change` 里被直接调用（§22.6），但本模块三个 setter 之后
    **没有** `save` 调用 ⇒ 改外观不立即落盘，落盘靠别处（可能在切屏/退出时）。
    缺的证据：没找到那个唯一时机。
-6. **§29.6 的行号与三个 Vbox 的先后**。
+6. **§26.6 的行号与三个 Vbox 的先后**。
 
-### 29.8 复现
+### 26.8 复现
 
 ```text
 # ① 8 条唯一锚（名字 ↔ x86 地址）
@@ -4278,19 +4278,19 @@ objdump -d --start-address=0x417c70 --stop-address=0x417e20 ../libgraphwarrust.s
 #    再用 arm64 反汇编查每个符号的 bl 目标（本轮脚本：解析 .symtab + capstone ARM64）
 ```
 
-### 29.9 与 `client/` 仿制实现的出入（**登记，不改 `client/`**）
+### 26.9 与 `client/` 仿制实现的出入（**登记，不改 `client/`**）
 
 按 `AGENTS.md` §0 第 4 条，这里只登记差异：
 
 | # | `client/src/screens/player_screen.gd` | 原版（本节证据） | 影响 |
 |---|---|---|---|
 | 1 | 皮肤/脸/帽子点选只改 GDScript 里的本地变量 | Rust 侧 `GraphwarPlayerConfig::set_skin/set_face/set_hat` 直接写档案（`+0x60/+0x78/+0x90`）并 `+0xa8` 变更计数 | 仿制品**没有档案**，所以"关掉游戏再进来外观丢了"这类问题在它身上不存在，也就测不出来 |
-| 2 | `SkinBlock` / `PendingBlock` 在桌面端恒 `visible = false` | 原版由 `lock()`/`pending()`/`unlock()` **按内购状态**切换（三张表见 §29.4） | 仿制品只做了"桌面端不显示"这一个特例 |
-| 3 | 按钮图标/底色在 GDScript 里直接设 | 原版走 `GraphwarTextureLoader::get_skin_texture` + `update_buttons_background`（§29.3） | 仿制品没有贴图缓存这一层 |
+| 2 | `SkinBlock` / `PendingBlock` 在桌面端恒 `visible = false` | 原版由 `lock()`/`pending()`/`unlock()` **按内购状态**切换（三张表见 §26.4） | 仿制品只做了"桌面端不显示"这一个特例 |
+| 3 | 按钮图标/底色在 GDScript 里直接设 | 原版走 `GraphwarTextureLoader::get_skin_texture` + `update_buttons_background`（§26.3） | 仿制品没有贴图缓存这一层 |
 
 ---
 
-## 30. `graphwar_audio_control.rs` 规格（本轮新增：**音效 ↔ 游戏事件**已解；`docs/111` §5.1 的未知项结案）
+## 27. `graphwar_audio_control.rs` 规格（本轮新增：**音效 ↔ 游戏事件**已解；`docs/111` §5.1 的未知项结案）
 
 > 方法的取舍：`docs/111` 已经把"资源清单 / 损坏判定 / 播放 API / 音量常量"做实，
 > 唯一没做的是 **§5.1「每个音效对应哪个游戏事件」**（当时标注"缺 `0x4bfe10` 内 match 臂的解码"）。
@@ -4298,7 +4298,7 @@ objdump -d --start-address=0x417c70 --stop-address=0x417e20 ../libgraphwarrust.s
 > + 跨架构尺寸比闸（0.61–1.19）把 9 个函数全部定名，并把那条 match 解干净。
 > 代码落在 `src/graphwar_audio_control.rs`，验收在 `tests/graphwar_audio_control.rs`。
 
-### 30.1 一页结论
+### 27.1 一页结论
 
 | # | 结论 | 等级 |
 |---|---|---|
@@ -4313,7 +4313,7 @@ objdump -d --start-address=0x417c70 --stop-address=0x417e20 ../libgraphwarrust.s
 | 9 | `docs/111` §5.3 悬着的 `+0xd1` 就是 `set_hidden_muted` 写的那个字节 | **逐位** |
 | 10 | 结构体 **0xf0 = 240 字节**（构造助手 `alloc(0xf0,8)`），队列元素 **0x18 = 24 字节** | **逐位** |
 
-### 30.2 函数清单（arm64 名字是符号名，不是猜的）
+### 27.2 函数清单（arm64 名字是符号名，不是猜的）
 
 | 函数 | x86 vaddr / 字节 | arm64 vaddr / 字节 | 源码行 | 职责 |
 |---|---|---|---|---|
@@ -4339,7 +4339,7 @@ x86 的 5 个锚（`:170 / :245 / :328 / :351 / :362`）来自 `fixtures/name_to
   ——arm64 侧 6 个调用点（`effect_info_event` ×4、`soldier_info_event` ×1、`entity_removed_event` ×1）
   与文档里"6 次 `set_stream`"逐一对上，**这个名字可以收口了**。
 
-### 30.3 四条订阅与"调用链闭合"
+### 27.3 四条订阅与"调用链闭合"
 
 ```
 new: Box::new(8) ──> 闭包壳 ──> vtable(0x85b0f8/20/48/70) ──[+0x18]──> call_mut ──> 处理方法
@@ -4354,7 +4354,7 @@ new: Box::new(8) ──> 闭包壳 ──> vtable(0x85b0f8/20/48/70) ──[+0x1
 
 ⚠️ 方法名叫 `game_state_event`，**订阅的事件名是 `game_state_info_event`**（30，多 `_info`）。
 
-### 30.4 事件 → 音效（`docs/111` §5.1 的答案）
+### 27.4 事件 → 音效（`docs/111` §5.1 的答案）
 
 | 资源槽 | 文件 | 载入顺序 | 触发事件 | 音量 |
 |---|---|---|---|---|
@@ -4383,7 +4383,7 @@ new: Box::new(8) ──> 闭包壳 ──> vtable(0x85b0f8/20/48/70) ──[+0x1
 载荷 `+0x1c` 的 u32 原样带进记录的值字段。
 `soldier_info_event` / `entity_removed_event` **不校验判别值**（两侧都是），值恒 0。
 
-### 30.5 队列 / 清空 / 静音 / `humm`
+### 27.5 队列 / 清空 / 静音 / `humm`
 
 * **队列**：`Vec<EffectAudioData>` 在 `self+0x00`，字段序 **cap / ptr / len** = `+0x00/+0x08/+0x10`；
   元素 **0x18 字节**（`mov w8,#0x18; madd x8, len, x8, ptr`）：
@@ -4398,16 +4398,16 @@ new: Box::new(8) ──> 闭包壳 ──> vtable(0x85b0f8/20/48/70) ──[+0x1
   （`set_mix_rate(16000.0f)`、`set_buffer_length(0.1f)`）→ `push_buffer`，
   归一化 `32767.0f`；一帧样本预算 `16000 × 0.1 = 1600`。这条路径**不经过**那 5 个资源槽。
 
-### 30.6 与 `docs/111` 的差异（就地改正）
+### 27.6 与 `docs/111` 的差异（就地改正）
 
 | # | `docs/111` 原文 | 本轮实测 |
 |---|---|---|
 | 1 | §4.5 "`humm` 那一路是 -5.0 dB" | **错**：`-5.0f` 在 `entity_removed_event`（`0xc0` 槽）里，对应 `unpop.mp3`；`humm` 走 generator，不是这 5 个槽之一 |
 | 2 | §4.4 把 `0x4c01b9`(set_stream) / `0x4c0cba`(play) 记在 `new` 名下 | **错位**：`0x4bfe10` 起 5052 字节是 `process`，这两条落在 `process` 里（`new` 只到 `0x4bfdf0` 一带） |
 | 3 | §5.3 "`+0xd1` 由谁写、语义未定" | **结案**：`set_hidden_muted` 写它；与 `+0xd0` 相或后设 Master 总线 |
-| 4 | §5.1 "音效 ↔ 事件 未知" | **结案**：见 §30.4 表 |
+| 4 | §5.1 "音效 ↔ 事件 未知" | **结案**：见 §27.4 表 |
 
-### 30.7 仍未确定
+### 27.7 仍未确定
 
 | # | 项 | 缺什么 |
 |---|---|---|
@@ -4415,7 +4415,7 @@ new: Box::new(8) ──> 闭包壳 ──> vtable(0x85b0f8/20/48/70) ──[+0x1
 | B | `EffectAudioData` 记录的**播放时机** | `process` 里 `play()` 的调用点没有逐指令闭合（`docs/111` §4.4 的地址错位也在这条上）⇒ **推断** |
 | C | `tear.mp3` / `humm_2` / `humm_b` / `shepard_2` 的引用 | 仍是负结果（`docs/111` §5.2），本轮没有新证据 |
 
-### 30.8 复现
+### 27.8 复现
 
 ```text
 # 名字与尺寸（arm64 未 strip）
@@ -4428,13 +4428,13 @@ readelf --debug-dump=frames <x86>/libgraphwarrust.so     # .eh_frame 的 FDE
 
 ---
 
-## 31. `graphwar_graphics_manager.rs` 规格 + **`GraphwarTextureLoader` 到底在哪**（本轮新增：`docs/02` §686 那条"未知"结案）
+## 28. `graphwar_graphics_manager.rs` 规格 + **`GraphwarTextureLoader` 到底在哪**（本轮新增：`docs/02` §686 那条"未知"结案）
 
 > 任务是把 `graphwar_graphics_manager`（"22 个完全未知"之一）解出来，
 > 并回答 `GraphwarTextureLoader` 的宿主是不是它。**答案：不是**——两者是两个模块。
 > 代码落在 `src/graphwar_graphics_manager.rs`，验收在 `tests/graphwar_graphics_manager.rs`。
 
-### 31.1 一页结论
+### 28.1 一页结论
 
 | # | 结论 | 等级 |
 |---|---|---|
@@ -4448,7 +4448,7 @@ readelf --debug-dump=frames <x86>/libgraphwarrust.so     # .eh_frame 的 FDE
 | 8 | **按名字（`String`）索引**，不是按编号：hash 表 + 逐字节 `memcmp` | **逐位** |
 | 9 | 由 `GraphwarRootNode`（`impl INode`）里的**唯一**构造点 `0x39a328` 建一次；`new` **21212 字节** ⇒ 饿汉式一次性加载 | **观测** |
 
-### 31.2 `graphwar_graphics_manager`：6 个函数
+### 28.2 `graphwar_graphics_manager`：6 个函数
 
 | 函数 | x86 vaddr | arm64 vaddr / 字节 | 源码行 |
 |---|---|---|---|
@@ -4462,7 +4462,7 @@ readelf --debug-dump=frames <x86>/libgraphwarrust.so     # .eh_frame 的 FDE
 6 个方法名 + 6 个 `panic::Location` 锚双向唯一（`fixtures/name_to_addr.tsv`），
 `subscribe_to_events_event_handler` 内联进 `new`（两个闭包 `0x49e338`/`0x49e368`）。
 
-### 31.3 数据形状（逐位）
+### 28.3 数据形状（逐位）
 
 三个 setter 骨架完全同形，差别只有三处常量：
 
@@ -4486,7 +4486,7 @@ set_X_graphics(self, player_id: u32, name: &str)
 皮肤直接用 `0x8000…33`；脸 `add x19, x9, #2`；帽子 `orr x27, x9, #4`。
 （`0x33 | 2 == 0x33`，所以脸那一支**只能**是加法——编译器混用 `add` / `orr` 反而把基数钉死了。）
 
-### 31.4 外观数据从哪来（观测，arm64 全量 `bl` 扫描）
+### 28.4 外观数据从哪来（观测，arm64 全量 `bl` 扫描）
 
 | 调用点 | 所在函数 |
 |---|---|
@@ -4497,7 +4497,7 @@ set_X_graphics(self, player_id: u32, name: &str)
 
 ⇒ 名字**只从远端事件**进来（`*_graphics_info_event`），本机不生成。
 
-### 31.5 `GraphwarTextureLoader` 的宿主（问题的正面答案）
+### 28.5 `GraphwarTextureLoader` 的宿主（问题的正面答案）
 
 arm64 `.symtab` 的模块段直接写着答案：
 
@@ -4542,17 +4542,17 @@ _ZN12graphwarrust23graphwar_texture_loader21GraphwarTextureLoader16get_skin_text
 | face | `add_player_victory_icon`、`PlayerShowcase`、`load_items`、`EntityDrawer::get_entity_face_sprite`、`update_soldiers` |
 | hat | `add_player_victory_icon`、`PlayerShowcase`、`load_items`、`EntityDrawer::get_entity_hat_sprite` |
 
-`EntityDrawer::get_entity_{skin,face,hat}_sprite` 三个**函数名本身**就是 §24/§25
+`EntityDrawer::get_entity_{skin,face,hat}_sprite` 三个**函数名本身**就是 §21/§22
 "`EntityDrawer` 从 loader 取三张贴图"的正面证据。
 
-### 31.6 两处需要提醒后来者的歧义
+### 28.6 两处需要提醒后来者的歧义
 
 | # | 项 | 现状 |
 |---|---|---|
-| A | §24/§25 记的"`PlayerShowcase` 自己有三张 `HashMap`（`+0x168/+0x198/+0x1c8`，间距 0x30）" | 这三个偏移**正好等于 loader 三张表的 `items` 字段**（`+0x150+0x18` / `+0x180+0x18` / `+0x1b0+0x18`）。两种读法都能解释字节：① 那是 `get_*_texture` 内联后的表访问被误记成 PlayerShowcase 的字段（**推断**）；② PlayerShowcase 另有一套同形缓存表（**未证**）。**本节不选边** |
+| A | §21/§22 记的"`PlayerShowcase` 自己有三张 `HashMap`（`+0x168/+0x198/+0x1c8`，间距 0x30）" | 这三个偏移**正好等于 loader 三张表的 `items` 字段**（`+0x150+0x18` / `+0x180+0x18` / `+0x1b0+0x18`）。两种读法都能解释字节：① 那是 `get_*_texture` 内联后的表访问被误记成 PlayerShowcase 的字段（**推断**）；② PlayerShowcase 另有一套同形缓存表（**未证**）。**本节不选边** |
 | B | `docs/02` §1187 列了 6 个方法（多 `get_chat_texture` / `get_time_mode_texture`） | arm64 `.symtab` 里**只有 4 个**（`new` + 3 个 getter）。缺的两个要么被内联/合并，要么旧表多列 ⇒ **未知** |
 
-### 31.7 复现
+### 28.7 复现
 
 ```text
 nm -S --defined-only <arm64>/libgraphwarrust.so | grep graphwar_texture_loader
@@ -4561,22 +4561,22 @@ nm -S --defined-only <arm64>/libgraphwarrust.so | grep graphwar_texture_loader
 # 构造点：全量反汇编里 bl 0x40c2f4 只有一个（0x39a328，在 GraphwarRootNode 的 INode impl 里）
 ```
 
-## 32. 靶子 / 特效 / 录像 / 回放 七模块（本轮新增：`docs/123` 的判定点结案 + `video_writer` 不是"猜错的名字"）
+## 29. 靶子 / 特效 / 录像 / 回放 七模块（本轮新增：`docs/123` 的判定点结案 + `video_writer` 不是"猜错的名字"）
 
 > 任务：`graphwar_{target,entity_effect,effect}_manager` / `graphwar_game_recorder` /
 > `graphwar_video_writer` / `graphwar_replay_control` / `graphwar_texture_loader`。
 > 代码落在同名 `src/*.rs`，验收在 `tests/` 同名文件。
-> ⚠️ 本节**只**回答已经能指到地址的部分；推断一律标出来，未知一律列在 §32.7。
+> ⚠️ 本节**只**回答已经能指到地址的部分；推断一律标出来，未知一律列在 §29.7。
 
-### 32.1 一页结论
+### 29.1 一页结论
 
 | # | 结论 | 等级 |
 |---|---|---|
 | 1 | `target_manager` 是**一张 `HashSet<u32>`**（桶距 4、值类型 `()`），只有 3 个可归属函数 + 被内联的 `add_target` | **逐位** |
 | 2 | 它**没有** alive 字段、**没有**任何重置分支 ⇒ `docs/123` §2.5「不在目标管理器里」在指令级成立 | **逐位** |
 | 3 | 「打不全就全部复原」的判定点在 **`GameStateManager::queue_end_turn_trigger::{{closure}}`**（arm64 `0x4abc00`）：**回合末**、两队都还有人活着、`self[+0x11d]==1` ⇒ 遍历 `target_manager` 的集合并 `life_manager.set_alive(id, true, 0)` | **观测** |
-| 4 | 死亡特效**不是死亡时判定的**：`execute_results` 拿 `entity_effect_map[entity_id]` 当类型、拿**会话级自增计数器**当 `effect_id`（**§37.6 改正了旧稿的「实体 id」**）；**查不到就一条都不发** | **逐位** |
-| 5 | ⇒ `AshEffect` / `DeathEffect` 的分界在**实体出生登记**（`EntityEffectInfo`），这解释了 `docs/141` 的 19 例；**登记规则已解到指令**（士兵看皮肤 `bot_` 前缀、靶子恒 `Spark`）——见 §37 | **逐位** |
+| 4 | 死亡特效**不是死亡时判定的**：`execute_results` 拿 `entity_effect_map[entity_id]` 当类型、拿**会话级自增计数器**当 `effect_id`（**§33.6 改正了旧稿的「实体 id」**）；**查不到就一条都不发** | **逐位** |
+| 5 | ⇒ `AshEffect` / `DeathEffect` 的分界在**实体出生登记**（`EntityEffectInfo`），这解释了 `docs/141` 的 19 例；**登记规则已解到指令**（士兵看皮肤 `bot_` 前缀、靶子恒 `Spark`）——见 §33 | **逐位** |
 | 6 | `effect_manager`：登记 + 广播 `EffectInfo`(44)；`tick` 只回收 **`start_tick + 3600 <= now`** 的记录，不发事件 | **逐位** |
 | 7 | `EffectType` 四变体判别值 `0..3` = `ExplosionEffect/DeathEffect/SparkEffect/AshEffect`（`.rodata 0x19caf8` 首尾相接） | **逐位** |
 | 8 | `game_recorder` 录 **32 条**服务端广播事件（`{"event":…,"tick":N}` 逐行），**`GameStateInfo==EndingGame`** 时落盘到 **`user://replays/<unix 秒>`**（gzip，flate2） | **逐位** |
@@ -4584,7 +4584,7 @@ nm -S --defined-only <arm64>/libgraphwarrust.so | grep graphwar_texture_loader
 | 10 | `texture_loader` 是 **4 个方法不是 1 个**（矩阵那个 1 是 `panic::Location` 口径的下限）；三张 `HashMap<String, Gd<Texture2D>>` @ `+0x150/+0x180/+0x1b0`，**119 条** `res://*.svg` | **逐位** |
 | 11 | `replay_control`：列表**异步**加载（`mpmc` 通道 + 后台线程 `load_game`），四个模式按钮 + `set_button_icon`，`process` 按 tick 推进并重放几何 | **观测** |
 
-### 32.2 (a) 靶子重置的判定点
+### 29.2 (a) 靶子重置的判定点
 
 `docs/123` §3.2 列了三条候选、全部出局；本轮的答案在**另一处**：
 
@@ -4603,19 +4603,19 @@ GameStateManager::queue_end_turn_trigger::{{closure}}   arm64 0x4abc00 (0x58c)
   `set_alive` 的全部调用点是 5 个，其中唯一带条件的就是这个闭包；
 * 与 `docs/123` §0 的①③④⑤完全一致：**翻 alive + 广播 + 不重建实体 + 不恢复障碍洞**；
 * 三个条件里的 `self[+0x11d]`（u8）是**推断**为「一発で全部」关卡的标志位，
-  `+0xc8/+0xcc` 与 `(w23 & 1) == 0` 的用意**未定**（见 §32.7）。
+  `+0xc8/+0xcc` 与 `(w23 & 1) == 0` 的用意**未定**（见 §29.7）。
 
 **`target_manager` 里没有这条规则**：它连「谁死了」都不存 —— 表项 4 字节、
 值类型 `()`，三个可归属函数里唯一写操作是 `remove(&entity_id)`。
 
-### 32.3 (b) 死亡时发哪个特效
+### 29.3 (b) 死亡时发哪个特效
 
 `GraphwarGameStateManager::execute_results` 里有两处 `EffectInfo`（44）的生产点：
 
 | 生产点 | `effect_id` | `effect_type` | 语义 |
 |---|---|---|---|
 | `0x4a89ec` | **自增计数器**（`ldxr/stxr`） | **恒 0** = `ExplosionEffect` | 弹道停止/命中的爆炸 |
-| `0x4a8cb0` | **同一个自增计数器**（`0x4a8c68` 的 `ldxr w23,[x28]`）〔§37.6 改正：旧稿误记成「实体 id」〕 | **`entity_effect_map[entity_id]`** | 死亡 |
+| `0x4a8cb0` | **同一个自增计数器**（`0x4a8c68` 的 `ldxr w23,[x28]`）〔§33.6 改正：旧稿误记成「实体 id」〕 | **`entity_effect_map[entity_id]`** | 死亡 |
 
 第二处的查表就是 `GraphwarEntityEffectManager` 的 `HashMap<u32, EffectType>`（桶距 8，
 键 `u32` 在 +0、值 `u8` 在 +4）：`hash_one(+0x50, &entity_id)` → 键比较
@@ -4625,10 +4625,10 @@ GameStateManager::queue_end_turn_trigger::{{closure}}   arm64 0x4abc00 (0x58c)
 ⇒ **分界条件**：这个实体**出生时**被 `EntityEffectInfo` 登记成什么，死亡就发什么；
 没登记就什么都不发。任何 `unwrap_or(DeathEffect)` 都会让 `docs/141` 那 19 例继续错。
 
-**登记规则在 §37 解完了**（士兵：皮肤 `bot_*` ⇒ `Ash`、否则 `Death`；靶子：`Spark`；
+**登记规则在 §33 解完了**（士兵：皮肤 `bot_*` ⇒ `Ash`、否则 `Death`；靶子：`Spark`；
 迟到的 `SkinGraphicsInfo{bot_*}` 会改写），那里还有 6 个写入点的地址与数据侧 899/953 的复核。
 
-### 32.4 (c) 录像写什么、何时写、写到哪
+### 29.4 (c) 录像写什么、何时写、写到哪
 
 ```text
 new       : 32 条订阅 = 24 条 *_info_event + 8 条同样单向广播的
@@ -4649,7 +4649,7 @@ save_game : DirAccess::make_dir_recursive_absolute("user://replays/", 15)
 写侧（反汇编 + flate2 的 `panic::Location`）与读侧（`src/graphwar_replay_player.rs`
 解析 400 份真实回放）**逐字吻合**。
 
-### 32.5 (d) `video_writer` 到底是什么
+### 29.5 (d) `video_writer` 到底是什么
 
 **是录像导出，不是别的东西被我们猜错名字。** 被调者符号名把链路钉死：
 
@@ -4666,7 +4666,7 @@ save_game : DirAccess::make_dir_recursive_absolute("user://replays/", 15)
 存 `+0x14e8/+0x14ec`（原始）与 `+0x14f0/+0x14f4`（取偶）。`minimp4` 自己的
 `panic::Location` 也出现在 `write_video` 的 Location 表里 ⇒ 依赖是函数级确认的。
 
-### 32.6 七个模块的函数清单
+### 29.6 七个模块的函数清单
 
 | 模块 | arm64 方法数 | 可归属（x86 锚） | 本轮落码 |
 |---|---|---|---|
@@ -4681,7 +4681,7 @@ save_game : DirAccess::make_dir_recursive_absolute("user://replays/", 15)
 `coverage-matrix` 里记的「1 个可归属函数」= `panic::Location` 口径的**下限**，
 不是模块规模：`texture_loader` 的 3 个 getter 一次都不 panic，所以数不到。
 
-### 32.7 未定项（都带地址，可直接接手）
+### 29.7 未定项（都带地址，可直接接手）
 
 | # | 未定 | 已知 |
 |---|---|---|
@@ -4694,7 +4694,7 @@ save_game : DirAccess::make_dir_recursive_absolute("user://replays/", 15)
 | 7 | `texture_loader` 里 `ranks/` 与 UI 图标的查询入口 | 加载了 50 张（22 徽章 + 28 图标），**没有任何按名字取它们的方法** |
 | 8 | 士兵出生时登记的实体特效类型 | 回放侧可统计，代码侧未定位构造点 ⇒ 不给默认值 |
 
-### 32.8 复现
+### 29.8 复现
 
 ```text
 ARM=.rea-work/apk/arm64/lib/arm64-v8a/libgraphwarrust.so
@@ -4706,21 +4706,21 @@ nm -S --defined-only $ARM | grep -E "graphwar_(target|entity_effect|effect)_mana
 # 纹理表：0x40bf7c/0x40c0a4/0x40c1cc 里 ldr [x0,#0x1c8/0x198/0x168] + add x0,x0,#0x1d0/0x1a0/0x170
 ```
 
-## 33. 最后一批杂项小模块：11 个"至今没定性的东西"逐条结案（本轮新增）
+## 30. 最后一批杂项小模块：11 个"至今没定性的东西"逐条结案（本轮新增）
 
 本节处理的是 `docs/02-module-map.md` §18.4 / §17.5 里那批**可归属函数 0~2 个**的模块。
 它们每个都不大，但每一个都曾经是"我们知道名字、不知道它是什么"的空白。
 **0 个可归属 ≠ 没内容**：`graphwar_game_info` 一整个结构体、`graphwar_event_queue`
 全游戏的发件箱，都在这批里。
 
-### 33.0 证据链与新工具（读结论前先看这一节）
+### 30.0 证据链与新工具（读结论前先看这一节）
 
 本轮**没有**用 Ghidra 伪代码下任何结论，只有三类证据：
 
 | 代号 | 来源 | 怎么复核 |
 |---|---|---|
 | **A** | **2.0.60 arm64 未 strip 版**的 `.symtab`（`graphwar_crash_reporter` 等 0 锚模块**只在这里有名字**） | `nm -C -S --defined-only $ARM \| grep graphwarrust::<模块>::` |
-| **B** | **arm64 `bl` 图**：把 `.text` 按 `bl` 目标聚成 caller/callee（符号表给了函数边界，不需要 FDE） | 见本节 §33.10 的复现命令 |
+| **B** | **arm64 `bl` 图**：把 `.text` 按 `bl` 目标聚成 caller/callee（符号表给了函数边界，不需要 FDE） | 见本节 §30.10 的复现命令 |
 | **C** | **x86-64 目标**的 `panic::Location` 锚 + `.rodata` 字面量直引 | `../.venv/bin/python tools/loc_xrefs.py loc src/<模块>.rs` |
 
 **为什么必须用 A**：x86 目标被 strip，`docs/02.md` §17 的模块名是从 `.rodata` 残留的
@@ -4739,9 +4739,9 @@ graphwar_crash_reporter           8                    8
 ⇒ 这 5 个模块在 x86 目标上**没有任何字符串可用作搜索键**，只能靠 arm64 的符号名 + 行为指纹
 搬回来。这也解释了为什么它们长期停在"未做"：**不是没做，是没有入口**。
 
-（`graphwar_crash_reporter` 的 8 份是唯一的异常值：其它模块各 1 份。它见 §33.3。）
+（`graphwar_crash_reporter` 的 8 份是唯一的异常值：其它模块各 1 份。它见 §30.3。）
 
-### 33.1 `polish_notation_converter` —— **活代码，而且是解析器的后半段**（旧结论要改）
+### 30.1 `polish_notation_converter` —— **活代码，而且是解析器的后半段**（旧结论要改）
 
 **问题 a 的答案：活的，删了 `sin(x)^2` 的语义就没了。唯一调用者是 `MathFunction::new`。**
 
@@ -4771,7 +4771,7 @@ x86 目标 `0x4f5450`（`src/polish_notation_converter.rs:36:52` / `116:55` 两�
 `FunctionToken::new` 的单字节跳转表里 `'('` → 18、`')'` → 19）。这两个 tag 在
 `docs/03` 的 `0..=17` 表里**没有**，因为它们是**中间表示专用**、转换完就消失。
 
-#### 33.1.1 原版正则（**第一次逐字节拿到**，`逐位`）
+#### 30.1.1 原版正则（**第一次逐字节拿到**，`逐位`）
 
 `.rodata` 里 77 字节，arm64 `0x19dcb4` 与 x86 `0x1c4347` **逐字节相同**：
 
@@ -4797,7 +4797,7 @@ str::replace("π",  "n")     （0x19dcb2 len=2，字节 CF 80）
 再由 `FunctionToken::new` 的**单字节**表映射成 `CONST(π)`。`FunctionToken::new` 里残留的
 `"pi"` 那一臂（`0x3c0dea`）是**死臂**。
 
-#### 33.1.2 算法：递归找"这一层的根"，**不是** shunting-yard
+#### 30.1.2 算法：递归找"这一层的根"，**不是** shunting-yard
 
 一个操作符栈都没有。`reorder_recursive(&mut self, start, end)`（`end` **闭区间**）：
 
@@ -4832,7 +4832,7 @@ tag  0  1  2   3  4   5   6  7   8   9 10 11 12 13 14 15 16  17
 （`逐位`，单字节跳转表）。⇒ `-x` 在词法层就是 `(- x)` 两个 token，靠"缺左操作数补 `CONST 0`"
 变成 `(- 0 x)`。tag 5 的产生点**本轮未定位**（`未知`；候选 `FunctionRandomizer::mutate_fine_tune`）。
 
-#### 33.1.3 结构体布局（`逐位`，两架构一致；`repr(Rust)` 被重排过）
+#### 30.1.3 结构体布局（`逐位`，两架构一致；`repr(Rust)` 被重排过）
 
 ```text
 +0x00 input.cap   +0x08 input.ptr   +0x10 input.len
@@ -4843,7 +4843,7 @@ tag  0  1  2   3  4   5   6  7   8   9 10 11 12 13 14 15 16  17
 依赖 `function_token`，不是泛型。**没有 `new` 符号**：结构体在 `MathFunction::new` 里就地构造，
 所以本模块符号数 = 1。
 
-### 33.2 `function_token` —— **就是那个 16 字节 token，外加一张字符串表**
+### 30.2 `function_token` —— **就是那个 16 字节 token，外加一张字符串表**
 
 `FunctionToken` = `{ tag: u64, value: f64 }`，与 `docs/03` §2 的编码、本 crate 的
 `Token`/`Function` **同一个东西**。本模块**唯一多出来的**是
@@ -4871,12 +4871,12 @@ tag  0  1  2   3  4   5   6  7   8   9 10 11 12 13 14 15 16  17
 
 tag **20 = 无效**。因为正则封闭，这一档**不可达**（`逐位` + 推理）。
 
-### 33.3 `graphwar_crash_reporter` —— **崩溃日志的上报端**（**问题 b 的答案**）
+### 30.3 `graphwar_crash_reporter` —— **崩溃日志的上报端**（**问题 b 的答案**）
 
 **它是什么**：不是"崩溃时抓栈"，而是**把上次留下的崩溃日志发去收集服务器**的组件。
 上报（`graphwar_crash_reporter`）与落盘（`backtracer`）**是两个模块**。
 
-三个函数（`逐位` arm64 符号表；0 个 `Location` 锚，所以 x86 只能靠指纹，见 §33.8）：
+三个函数（`逐位` arm64 符号表；0 个 `Location` 锚，所以 x86 只能靠指纹，见 §30.8）：
 
 | 符号 | arm64 | 字节 |
 |---|---|---|
@@ -4924,19 +4924,19 @@ tag **20 = 无效**。因为正则封闭，这一档**不可达**（`逐位` + �
 `clear_report`（`逐位`）= **把日志 truncate 成空**：`bl std::fs::write::inner` 之后紧跟
 `chrono::Utc::now` + `format_inner`（写失败才拼错误串），时间格式 `%Y-%m-%d %H:%M:%S`。
 
-### 33.4 `backtracer` —— **panic 钩子 → 崩溃日志落盘**（**问题 e 前半的答案**）
+### 30.4 `backtracer` —— **panic 钩子 → 崩溃日志落盘**（**问题 e 前半的答案**）
 
 **它是什么**：`Backtracer::install_panic_log_hook`（arm64 `0x4becec`，876 字节）
 + 它的闭包（`0x4bf058`，960 字节，**钩子本体**）+ 两个静态量
 `CRASH_LOG_PATH`（`0x8b4380`）与 `OS_NAME`（`0x8b43a0`）。
-**它不上报**（那是 §33.3），只往 `user://crash_log.txt` 追加。
+**它不上报**（那是 §30.3），只往 `user://crash_log.txt` 追加。
 
 **有界否定**：arm64/x86 两侧，本模块的 `bl` 目标里**没有** `Backtrace::capture`。
 ⇒ **名字误导**：它不抓栈，只写日志。这是本轮之前没人验证过的一点。
 
 `OS_NAME` 的**取值**未读出（`未知`）；用途**推断**为区分 Android/Linux/Windows 三份构建。
 
-### 33.5 `graphwar_event_queue` —— **它不是 manager，是全游戏的发件箱**（**问题 c 的答案**）
+### 30.5 `graphwar_event_queue` —— **它不是 manager，是全游戏的发件箱**（**问题 c 的答案**）
 
 **为什么不在 25 个 manager 的注册表里**（`观测`）：
 
@@ -4961,7 +4961,7 @@ tag **20 = 无效**。因为正则封闭，这一档**不可达**（`逐位` + �
 被内联进各 `tick` / 走函数指针槽 / 真的只有关卡生成主动冲刷。
 要定死需要 `tools/ptr_slots.py` 那类间接派发扫描，**本轮未做**。
 
-### 33.6 `graphwar_mode_manager` —— **3 套模式，不是 4 套**（**问题 d 的答案**）
+### 30.6 `graphwar_mode_manager` —— **3 套模式，不是 4 套**（**问题 d 的答案**）
 
 **它是不是"当前模式的唯一真相"？不是。**
 
@@ -4984,7 +4984,7 @@ tag **20 = 无效**。因为正则封闭，这一档**不可达**（`逐位` + �
 `0x4b07a0` 上**三个** `__FieldVisitor::expecting` 是同一地址（14 字节的同一函数体）——
 链接器把三个枚举的同形小函数合并了，别误读成"只有一个枚举"。
 
-### 33.7 剩下 5 个：logger / draw_util / player_config / campaign_control / game_info
+### 30.7 剩下 5 个：logger / draw_util / player_config / campaign_control / game_info
 
 | 模块 | 一句话定性 | 证据 |
 |---|---|---|
@@ -4994,11 +4994,11 @@ tag **20 = 无效**。因为正则封闭，这一档**不可达**（`逐位` + �
 | `graphwar_campaign_control` | 4 个函数；存的是**字符串**、`get_level_as_int` 再用 `StrSearcher` 抠数字；`show_hide_campaign_levels` 用 `GraphwarNodes::get_node_by_name` + `<u32>::_fmt` 拼节点名按键显隐 | `逐位`/`观测` |
 | `graphwar_game_info` | **`GameInfo` 的家在这里，不在 `graphwar_event.rs`**（serde impl 路径 `graphwarrust::graphwar_game_info::_::<impl Serialize for …::GameInfo>`）；0 个可归属函数是因为两个 impl 都在 `_::` 匿名模块下；两条进出口：`serialize` ← `GraphwarLanBroadcasterV6::process`，`visit_str` ← `serde_json::deserialize_struct` ⇒ **LAN 发现是 JSON**，且它是 `GameInfoEvent`（判别值 62）的新类型载荷 | `观测` + `逐位` |
 
-`graphwar_player_config` 的字段偏移沿用 §29 的观测（名字 `+0x00`、皮肤 `+0x60`、脸 `+0x78`、
+`graphwar_player_config` 的字段偏移沿用 §26 的观测（名字 `+0x00`、皮肤 `+0x60`、脸 `+0x78`、
 帽 `+0x90`、变更计数 `+0xa8`）。`+0x10..0x60` 那 80 字节是**解锁表**，
 正好解释 8 个函数里为什么有 2 个专管 `lock`/`unlock`。
 
-### 33.8 这 6 个 0 锚模块在 x86 目标上的落点（**证据等级不同，别一锅端**）
+### 30.8 这 6 个 0 锚模块在 x86 目标上的落点（**证据等级不同，别一锅端**）
 
 | 模块 | x86 候选 | 等级 | 依据 |
 |---|---|---|---|
@@ -5016,11 +5016,11 @@ tag **20 = 无效**。因为正则封闭，这一档**不可达**（`逐位` + �
 `0x5185a0` 的 `calls` 表为空（`callers: NONE`）——它只在**函数指针表**里被用到，
 这正是 `AGENTS.md` 说的"直接调用为零不代表没被使用"。
 
-### 33.9 仍然未知（本轮**没**解决的）
+### 30.9 仍然未知（本轮**没**解决的）
 
 | # | 未知 | 缺什么 |
 |---|---|---|
-| 1 | `neg`（tag 5）的产生点 | 词法器不产它（§33.1.2）；候选 `FunctionRandomizer::mutate_fine_tune` 未逐条读 |
+| 1 | `neg`（tag 5）的产生点 | 词法器不产它（§30.1.2）；候选 `FunctionRandomizer::mutate_fine_tune` 未逐条读 |
 | 2 | `crash_reporter` 那 8 条 `\x01[\xc0&]` 串为什么不是 `Location` 结构 | 需要解 `format_args!` 的提升常量（`Arguments`）布局，本仓库没有该扫描器 |
 | 3 | `event_queue::send_buffer` 为什么只有 1 个直接调用者 | 需要 `tools/ptr_slots.py` 类间接派发扫描 |
 | 4 | `backtracer::OS_NAME` 的取值 | 静态量内容未读出 |
@@ -5029,7 +5029,7 @@ tag **20 = 无效**。因为正则封闭，这一档**不可达**（`逐位` + �
 | 7 | `campaign_control::show_hide_campaign_levels` 的节点名模板 | 格式化串未逐字节还原 |
 | 8 | `GameInfo` 9 个字段里哪 4 个走 `serialize_field`、哪些走 map | `serialize` 的 1264 字节未逐条对齐 |
 
-### 33.10 复现命令
+### 30.10 复现命令
 
 ```text
 ARM=.rea-work/apk/arm64/lib/arm64-v8a/libgraphwarrust.so
@@ -5051,7 +5051,7 @@ nm -C -S --defined-only $ARM | grep -E "graphwarrust::(polish_notation_converter
 #    bt 掩码 0x3fe27 / 0xffe27 / 0xe0007
 ```
 
-### 33.11 本轮新增的文件（**`src/lib.rs` 待父 agent 接线**）
+### 30.11 本轮新增的文件（**`src/lib.rs` 待父 agent 接线**）
 
 新增源码（每个都能指到原版模块，`AGENTS.md` §4 合规）：
 
@@ -5094,7 +5094,7 @@ pub mod graphwar_game_info;
 `docs/02-module-map.md` §17.4 的规矩是"一个文件混了多个原版模块而边界无证据时不猜不搬"，
 本轮只登记归属依据（serde impl 路径），搬迁留给专门一轮。
 
-## 35. 技术验证（spike）：`AxisDrawer` 真的注册成了 Godot 节点类
+## 31. 技术验证（spike）：`AxisDrawer` 真的注册成了 Godot 节点类
 
 **一句话**：注册、三条实例化路径、属性读写、方法调用 + 复原逻辑执行，**全部通了**；
 **但它还不会画** —— 虚方法表（`_draw`）一个都没接。这是"用重建源码跑起游戏"的第一个门槛，
@@ -5103,7 +5103,7 @@ pub mod graphwar_game_info;
 > 本节所有结论都标了档位。`cargo test` / `client/run.sh selftest` 只算**回归保护**，
 > 不是复原证据（`AGENTS.md` §0.2）。
 
-### 35.1 本轮动了哪些文件
+### 31.1 本轮动了哪些文件
 
 | 文件 | 增/改 | 内容 |
 |---|---|---|
@@ -5116,7 +5116,7 @@ pub mod graphwar_game_info;
 
 `client/` 下**只新增这两个验证文件**，没有改任何既有 `.gd` / `.tscn` / `run.sh`。
 
-### 35.2 a) 能不能注册成功 —— **能**（观测）
+### 31.2 a) 能不能注册成功 —— **能**（观测）
 
 ```text
 $ Godot_v4.7.2-stable_linux.x86_64 --headless --path client \
@@ -5177,7 +5177,7 @@ SPIKE 23 passed, 0 failed        # 退出码 0
   （日志：`[gw2-rebuild] AxisDrawer 实例化成功 (object=0x430e56c0, notify_postinitialize=1)`）
   ⇒ `create_instance` 必须无副作用、可重入，注册必须幂等。
 
-### 35.3 b) 从「纯逻辑」到「真节点」，一个类要补什么
+### 31.3 b) 从「纯逻辑」到「真节点」，一个类要补什么
 
 按本轮实测（`axis_drawer_class.rs` 的 503 行代码）拆块，**没有一块是那个类专有的逻辑**，
 全是 gdext 宏平时替我们生成的东西：
@@ -5199,12 +5199,12 @@ SPIKE 23 passed, 0 failed        # 退出码 0
 * 类 + 实例结构 + 构造/析构：**~60 行**
 * 每个方法：**~20 行**（一个 `call_func` + 一条 `add_method`）
 * 每个属性：**~10 行**
-* 每个虚方法：**~40–80 行**（**未实测**，见 §35.5 风险 1）
+* 每个虚方法：**~40–80 行**（**未实测**，见 §31.5 风险 1）
 
 按 `docs/18` §6.5 的 12 类 / 25 个暴露方法：**~1 200–1 800 行**能到「全部能实例化、属性可读写、
 暴露方法可调用」，**不含**虚方法表。
 
-### 35.4 c) 继续手写 `_scaffold/gdext*.rs`，还是换官方 gdext？
+### 31.4 c) 继续手写 `_scaffold/gdext*.rs`，还是换官方 gdext？
 
 三条**观测**先摆出来：
 
@@ -5243,7 +5243,7 @@ SPIKE 23 passed, 0 failed        # 退出码 0
 就**同一轮把 gdext 引进来**（vendored + `--offline` 仍可验证），
 而不是继续手写虚方法表——那是 12 个类 × 每个 40–80 行裸指针代码，且没有任何类型兜底。
 
-### 35.5 d) 做 12 个类，最容易翻车的地方
+### 31.5 d) 做 12 个类，最容易翻车的地方
 
 按「翻车概率 × 修起来的代价」排序：
 
@@ -5251,12 +5251,12 @@ SPIKE 23 passed, 0 failed        # 退出码 0
 |---|---|---|---|
 | 1 | **虚方法表**（`get_virtual_func` + `get_virtual_call_data_func` + `call_virtual_with_data_func`） | `docs/02` §18.3 A 表里 **12 个类全部**带 `ImplementsGodotVirtual` ⇒ 每个类都有虚方法要接（`AxisDrawer` / `EntityDrawer` / `EffectDrawer` 是 `draw`，`GraphwarPlane` 还有 `on_resized`）。ptrcall 参数是裸指针（`Transform2D*` / `Rect2*` / `Color*` / `Ref<Texture2D>*`），签名错一个字节就是段错误，**没有类型检查兜底** | 只做一个 `AxisDrawer::draw`，用截图/selftest 证；成了再谈其余 |
 | 2 | **原生父类选错** | 父类决定 `classdb_construct_object` 造什么。A 表的 trait impl 列已经把 11 个类钉住了（见下表），但 **`GraphwarAdSwitch` 没有 `I*` 列** ⇒ 它的父类只能算**未知**，得单独查 | 每个类先落一行「父类 + 证据」再动手 |
-| 3 | **属性表对不上原版字段** | 属性名/类型/默认值错 ⇒ `.tscn` 里的值写进去没人读。本轮 `axis_mode` 只到「`self+0x18` 是 `u8` 判别值」这一层**推断**，默认值更是我方选择 | 用 `panic::Location` + 反编译逐字段恢复（`docs/16` §15/§16/§26 已有部分规格） |
+| 3 | **属性表对不上原版字段** | 属性名/类型/默认值错 ⇒ `.tscn` 里的值写进去没人读。本轮 `axis_mode` 只到「`self+0x18` 是 `u8` 判别值」这一层**推断**，默认值更是我方选择 | 用 `panic::Location` + 反编译逐字段恢复（`docs/16` §15/§16/§23 已有部分规格） |
 | 4 | **StringName / Variant 生命周期与 ABI 布局** | `PropertyInfo.class_name` / `hint_string` 传 NULL **直接段错误**（`docs/116` §3.3 踩过）；`PropertyInfo` 在 x86-64 上是 **48 字节**（有两处 4 字节填充），本轮第一次就按 40 字节写错了，靠单测抓出来；每次 `create_instance` 建的 StringName 不缓存就是泄漏 | 新类必须带 ABI 布局单测（本轮的 `creation_info4_layout_matches_header` / `property_info_layout`） |
 | 5 | **`NOTIFICATION_POSTINITIALIZE` 没发** | 官方 gdext 在 `notify_postinitialize=1` 时会补发，我们没做。对挂了脚本、或自己有 `notification_func` 的类可能有可观测差异 | 先在文档标**未知**；等有类挂脚本再处理 |
-| 6 | **重复注册 / 编辑器也实例化** | `--import` 期间编辑器真的造了一次实例（§35.2）。注册必须幂等；`deinitialize` 要不要 `classdb_unregister_extension_class` 还没定（本轮没做） | 注册函数加「已注册就直接返回」的守卫；默认构造别碰资源 |
+| 6 | **重复注册 / 编辑器也实例化** | `--import` 期间编辑器真的造了一次实例（§31.2）。注册必须幂等；`deinitialize` 要不要 `classdb_unregister_extension_class` 还没定（本轮没做） | 注册函数加「已注册就直接返回」的守卫；默认构造别碰资源 |
 | 7 | **`RefCounted` 派生类的引用计数** | 12 个类里若父类落到 `RefCounted`，还得接 `reference_func` / `unreference_func`，否则可能双重释放 | 先定父类（风险 2），再决定要不要接引用回调 |
-| 8 | **构建/加载的三个静默坑** | ① 新增 `.gd`/`.tscn` 后不 `--import` ⇒ 扩展**静默不加载**；② `cargo build` 后不覆盖 `client/libgw2_rebuild.so` ⇒ 跑的是**旧内核**；③ 用 `CARGO_TARGET_DIR` 时 `examples/serve_match` 也要在那里，否则 selftest 的联机段会 skip | 验收命令写进 §35.6，别靠记忆 |
+| 8 | **构建/加载的三个静默坑** | ① 新增 `.gd`/`.tscn` 后不 `--import` ⇒ 扩展**静默不加载**；② `cargo build` 后不覆盖 `client/libgw2_rebuild.so` ⇒ 跑的是**旧内核**；③ 用 `CARGO_TARGET_DIR` 时 `examples/serve_match` 也要在那里，否则 selftest 的联机段会 skip | 验收命令写进 §31.6，别靠记忆 |
 
 **12 个类的父类（`docs/02` §18.3 A 表的 `gdext trait impl` 列，观测）**：
 
@@ -5269,7 +5269,7 @@ SPIKE 23 passed, 0 failed        # 退出码 0
 | `GraphwarRootNode` | `Node` | `INode` |
 | `GraphwarAdSwitch` | **未知** | 只有 `ImplementsGodotApi` / `ImplementsGodotVirtual`，没有 `I*` 列 |
 
-### 35.6 怎么复跑（照抄就能过）
+### 31.6 怎么复跑（照抄就能过）
 
 ```text
 # 1) 编译内核并覆盖进 client/（不覆盖就是在跑旧 .so）
@@ -5290,7 +5290,7 @@ export XDG_DATA_HOME=$PWD/.godot-data XDG_CACHE_HOME=$PWD/.godot-cache XDG_CONFI
 
 `client/run.sh` 没有为它加子命令（本轮不允许改 `run.sh`）；上面三条就是完整步骤。
 
-### 35.7 本轮**没做**的（未做 / 未知，别当成做完了）
+### 31.7 本轮**没做**的（未做 / 未知，别当成做完了）
 
 * **虚方法表**：类**不画任何东西**。`AxisDrawer::draw` 的三次原语
   （`draw_set_transform` / `draw_rect` / `draw_line`×N）一条都没发。
@@ -5299,7 +5299,7 @@ export XDG_DATA_HOME=$PWD/.godot-data XDG_CACHE_HOME=$PWD/.godot-cache XDG_CONFI
 * `axis_mode` 的**默认值**（我方取 0）与**原版字段名**：**推断 / 我方选择**，不是二进制证据。
 * 另外 11 个类：一个都还没注册。
 
-### 35.8 回归（回归保护，不是复原证据）
+### 31.8 回归（回归保护，不是复原证据）
 
 ```text
 cargo build --offline        → 绿（3 条 warning 是既有模块的，与本节无关）
@@ -5313,7 +5313,7 @@ bash client/run.sh selftest  → SELFTEST 694 passed, 0 failed
 
 ---
 
-## 36. 最后 8 个可归属函数：5 个**非 `graphwar_` 前缀**的小模块（本轮新增）
+## 32. 最后 8 个可归属函数：5 个**非 `graphwar_` 前缀**的小模块（本轮新增）
 
 > 这一节收掉进度尺上最后一批"一直被漏在任务书之外"的东西：
 > `function_drawer` / `function_history_recorder` / `function_button_manager` /
@@ -5326,7 +5326,7 @@ bash client/run.sh selftest  → SELFTEST 694 passed, 0 failed
 > 落码：`src/{function_drawer,function_history_recorder,function_button_manager,button_manager,obstacle_drawer}.rs`；
 > 验收：`tests/last_five.rs`（**回归保护，不是复原证据**）。
 
-### 36.0 一页结论
+### 32.0 一页结论
 
 | 模块 | 函数（arm64 2.0.60 真名） | x86 落地 | 档位 |
 |---|---|---|---|
@@ -5336,9 +5336,9 @@ bash client/run.sh selftest  → SELFTEST 694 passed, 0 failed
 | `button_manager` | `find_buttons` / `new`（arm64 无符号）/ `new::{{closure}}`（3） | **2/3**（角色口径 2，见 36.2 的孪生说明） | 观测 1 + 未知 1 |
 | `obstacle_drawer` | `update`（1）+ 一条 Location 落在 `GraphwarPlane::init` 体内 | **2/2** | 观测 |
 
-四条"任务问的答案"各占一小节：**a** → §36.3，**b** → §36.4，**c** → §36.5，**d** → §36.6。
+四条"任务问的答案"各占一小节：**a** → §32.3，**b** → §32.4，**c** → §32.5，**d** → §32.6。
 
-### 36.1 名字从哪来：**Android 2.0.60 优先，并与 2024-07-30 对账**
+### 32.1 名字从哪来：**Android 2.0.60 优先，并与 2024-07-30 对账**
 
 两份未 strip 的构建都带完整 `.symtab`。按 `docs/02` §18 的补注，**优先 Android**（与逆向目标同版本）：
 
@@ -5371,7 +5371,7 @@ done
 > 那是因为当时手上只有那份**同架构**文件。**"与 2.0.60 是否一致"这个问题，Android 版更权威。**
 > 本节按这条规矩执行，并把上面两行差异记在这里。
 
-### 36.2 八个函数的地址表（全部 **观测**）
+### 32.2 八个函数的地址表（全部 **观测**）
 
 | 模块 | 方法 | arm64 2.0.60 | B | x86 vaddr | B | 比值 | 怎么配上的 |
 |---|---|---|---|---|---|---|---|
@@ -5379,13 +5379,13 @@ done
 | | `update_function` | `0x390b40` | 848 | **`0x498c70`** | 992 | 1.17 | **Location 唯一锚** + 6 个被调者逐个相同 |
 | | `update_transform` | `0x390e90` | 528 | `0x499050` | 608 | 1.15 | 被调者：`set_width`×2 / `set_scale`×2 / `set_joint_mode`×2 |
 | | `update_function_fade` | `0x3910a0` | 276 | `0x4992b0` | 272 | 0.99 | 被调者：`set_default_color`×1 |
-| | `draw` | `0x3911b4` | 560 | **未知** | — | — | x86 未定位（有界否定见 §36.3 末） |
+| | `draw` | `0x3911b4` | 560 | **未知** | — | — | x86 未定位（有界否定见 §32.3 末） |
 | `function_history_recorder` | `handle_function_fire_event` | `0x49d71c` | 596 | **`0x3f0e40`** | 483 | 0.81 | 3 个 Location 键 + `String::clone`/`grow_one` |
 | `function_button_manager` | `new` | `0x42464c` | 924 | **`0x3f0270`** | 1088 | 1.18 | 2 个 Location 键 + 被调者 |
 | | `new::{{closure}}` | `0x4249e8` | 2040 | **`0x3f06b0`** | 1936 | 0.95 | 8 个 `GraphwarFunctionInput` 方法逐个相同 |
 | `button_manager` | `new`（内联体） | 无符号 | — | **`0x3a2e10`** | 9936 | 不适用 | 2 个 Location 键 + **唯一**调用者 `0x52fdf0`（Ghidra 口径） |
 | `obstacle_drawer` | `update` | `0x422590` | 4688 | **`0x3ee190`** | 5216 | 1.11 | 6 个 Location 键 + `create_from_data`×2 / `rustc_entry`×3 |
-| | （Location 落在）`GraphwarPlane::init` | `0x4bd73c` | 1336 | **`0x4b7380`** | 1776 | — | `obstacle_drawer.rs:37:97` 双向唯一（§26.2） |
+| | （Location 落在）`GraphwarPlane::init` | `0x4bd73c` | 1336 | **`0x4b7380`** | 1776 | — | `obstacle_drawer.rs:37:97` 双向唯一（§23.2） |
 
 比值闸（`0.61–1.19`）**只对"同源方法"用**：`GraphwarPlane::init` 那条是**跨文件**的行归属
 （同一函数体里带着两个源文件的 Location），不参与比值判定；`button_manager::new` 的 arm64
@@ -5401,22 +5401,22 @@ done
 （64/144 都不像 28，也都不像 96）。所以：**角色口径 2 个**（`new` + 闭包），
 **地址只钉 `0x3a2e10` 一个**，孪生关系记在 `tests/last_five.rs::eight_functions_and_the_twins` 里。
 
-### 36.3 **a) `function_drawer` 是怎么把曲线画上屏幕的**
+### 32.3 **a) `function_drawer` 是怎么把曲线画上屏幕的**
 
 **答**：它自己不画 —— 它**持有 `Line2D` 子节点**，每个玩家 id 一条；`GraphwarPlane::draw`
 每帧把"本 tick 生效的函数"喂给它，它**只把新增的那几个点** `add_point` 进去。
 
 1. **子节点**：`GraphwarPlane::init`（`0x4b7380`）建 **3 个** `FunctionDrawer` 并 `add_child`
    （arm64 侧 `Gd::default_instance`×3 / `ExAddChild::new`×3 / `Node::add_child_full`×3；
-   x86 侧 `0x4db030`×3 —— §26.3）。**这 3 个各管什么，未知**（没有证据能指到）。
+   x86 侧 `0x4db030`×3 —— §23.3）。**这 3 个各管什么，未知**（没有证据能指到）。
    `FunctionDrawer` 自己是 `HashMap<i32, (Gd<Line2D>, usize)>`（`self+0x20`，hashbrown）：
    key = player id（i32），value 第二项是**已写入点数**。
 2. **`add_point` 的调用时机**：只在 `update_function`（`0x498c70`）里，而它由
    `GraphwarPlane::draw`（`0x4b5df0`）每帧调一次 —— 同帧还取了
    `graphwar_tick_handler::get_fractional_tick`（`0x519530`）与
-   `graphwar_function_manager::get_active_functions_on_tick`（`0x456df0`）（§26.4）。
-   ⇒ **曲线随 tick 生长**，是"开火后逐帧画出弹道"的形态（§26.4 那条**推断**在本轮得到加强）。
-3. **点数**（§26.4 缺的那条证据，本轮补上）：`0x498d5a` 先比 `new_len` 与"已写入数"，
+   `graphwar_function_manager::get_active_functions_on_tick`（`0x456df0`）（§23.4）。
+   ⇒ **曲线随 tick 生长**，是"开火后逐帧画出弹道"的形态（§23.4 那条**推断**在本轮得到加强）。
+3. **点数**（§23.4 缺的那条证据，本轮补上）：`0x498d5a` 先比 `new_len` 与"已写入数"，
    **不大于就直接 return**；`0x498f51`/`0x498f60` 各 `<<4` ⇒ 步长 **16 字节/点**；
    `0x498f90`/`0x498f95` 读 `[p]` 与 `[p+8]` 两个 **f64**（`x`、`y`），`cvtsd2ss` 后
    调 `0x498fab` 的 `Line2D::add_point(Vector2, -1)`（`esi = 0xffffffff` ⇒ 追加到末尾）。
@@ -5427,17 +5427,17 @@ done
    `Color(r,g,b,1)`），随后 `set_default_color`（`0x9bbf90`）+ `set_z_index`。
    `update_function_fade`（`0x4992b0`）再单独改颜色（淡出）。
 5. **曲线不是图元**：全库 `add_point` 只有一个调用点（`0x498fab`），而 7 个绘画图元的
-   调用点里没有一个是本模块（§26.4 的有界穷举）。
+   调用点里没有一个是本模块（§23.4 的有界穷举）。
 
 **`draw` 为什么没落地（有界否定）**：arm64 `FunctionDrawer::draw`（560 B）被调者是
 `Line2D::get_point_count` + `Line2D::get_point_position` + `CanvasItem::draw_circle_full`
 （各 1 处，在循环里）。x86 侧 `draw_circle` 的 GOT 槽 `0x9bbfc0` 全 `.text` 只有 **9** 个
 调用点：**5 个在 `0x4993c0`**（那个函数还引用 `"Write a function of x to hit the target"`，
-更像函数输入框的绘制）、**4 个在 `EffectDrawer::draw`**（§26.4）。
+更像函数输入框的绘制）、**4 个在 `EffectDrawer::draw`**（§23.4）。
 **没有一个**是"循环里 1 次"的形态 ⇒ x86 侧这个 `draw` 要么被内联进 `GraphwarPlane::draw`、
 要么不存在。**结论：未知，不强行落地。**
 
-### 36.4 **b) `function_history_recorder` 的容量与去重**
+### 32.4 **b) `function_history_recorder` 的容量与去重**
 
 | 问题 | 结论 | 档位 |
 |---|---|---|
@@ -5456,7 +5456,7 @@ FunctionData { text: String (24 B) , color: u32 (+0x18) , player: i32 (+0x1c) } 
 真机按键 + `LineEdit.text` 的变化；候选落点只剩 `GraphwarFunctionInput::{process,gui_input,force_update_cb}`
 （都没读完）。**不把"上下键翻历史"写成结论。**
 
-### 36.5 **c) `function_button_manager` 是干什么的**
+### 32.5 **c) `function_button_manager` 是干什么的**
 
 **答**：它是**函数输入键盘的按键分发器**，不是"sin/sqrt 快捷插入"那么窄。
 
@@ -5483,7 +5483,7 @@ FunctionData { text: String (24 B) , color: u32 (+0x18) , player: i32 (+0x1c) } 
 > `b"toggle_view_funcy"`（17 字节，第 18 字节 `\0`）。
 > ⇒ **"谁引用了某个字符串"不能当"代码里写着这个名字"用**；`strings` × `xref` 组合会骗人。
 
-### 36.6 **d) `obstacle_drawer` 与 `graphwar_plane` 的脏矩形怎么配合**
+### 32.6 **d) `obstacle_drawer` 与 `graphwar_plane` 的脏矩形怎么配合**
 
 **答**：**脏矩形由 `graphwar_plane` 决定并持有，`obstacle_drawer` 只是消费者** ——
 它连一个矩形参数都没有，只 `Control::get_size()` 拿整张平面的尺寸。
@@ -5497,29 +5497,29 @@ FunctionData { text: String (24 B) , color: u32 (+0x18) , player: i32 (+0x1c) } 
   `Mutex<GraphwarObstacleData>`（体内有 `MutexGuard<GraphwarObstacleData>` 与
   `PoisonError<…>` 的 drop glue）。
 * **谁决定重画哪块**：`GraphwarPlane::obstacle_partial_update_event`（x86 `0x4be3e0`）
-  收到障碍事件后把矩形塞进平面自己的字段（§26.3 / §26.7 的落码：`PixelRect` /
+  收到障碍事件后把矩形塞进平面自己的字段（§23.3 / §23.7 的落码：`PixelRect` /
   `obstacle_rect`）。本模块 6 个 Location（`:51 :62 :92 :113 :120 :128`）**没有一个**在做
   矩形运算 —— 全是 `unwrap`/断言类失败路径。
-* **每帧调几次**：`GraphwarPlane::process`（`0x4b83f0`）每帧调 `update` **2 次**（§26.3，观测）。
+* **每帧调几次**：`GraphwarPlane::process`（`0x4b83f0`）每帧调 `update` **2 次**（§23.3，观测）。
   **为什么是 2 次 —— 未知**；每次体内 `Image::create_from_data` 出现 2 次
   （arm64 `0x422780` / `0x422d1c`），`hashbrown::rustc_entry` 出现 3 次（按 key 缓存节点）。
 * ⇒ **"只重画那一块"这个更强的说法，本轮没有逐条读到 —— 标未知**。
   **缺的证据**：对 `update` 的两次入参做运行时抓取（谁能逐帧量 `Sprite2D.texture` 的尺寸就能定案）。
 
-### 36.7 本轮**没**解决的（照实写）
+### 32.7 本轮**没**解决的（照实写）
 
-1. `FunctionDrawer::draw` 的 x86 落点（有界否定见 §36.3 末）—— **未知**。
+1. `FunctionDrawer::draw` 的 x86 落点（有界否定见 §32.3 末）—— **未知**。
 2. `FunctionDrawer` 那 3 个子节点各管什么 —— **未知**（只确证"建了 3 个"）。
-3. `FunctionHistoryRecorder` 的读者 / 上下键 —— **未知**（§36.4）。
+3. `FunctionHistoryRecorder` 的读者 / 上下键 —— **未知**（§32.4）。
 4. `FunctionButtonManager` 闭包里那 3 处 `assert_failed::<usize,usize>` 比较的是什么 ——
    **推断**（token 下标与文本偏移对齐），缺逐条读。
 5. `ButtonManager::new` 里除 `FunctionButtonManager` 外的 53 个被调者：其中 9 个集中在
    `0x4a0810–0x4ae320` 这一簇，**推断**是兄弟管理器，但**一个 Location 锚都没有** ⇒ 不定名。
    `button_manager` 的 `:29:26` 孪生（`0x3aae60` / `0x3b70b0`）哪个是闭包本体 —— **未知**。
-6. `ObstacleDrawer::update` 每帧两次的语义差别 —— **未知**（§36.6）。
+6. `ObstacleDrawer::update` 每帧两次的语义差别 —— **未知**（§32.6）。
 7. `function_drawer` 的 `clear_functions`（2024 版有、2.0.60 无）连内联落点都没观测到 —— **未知**。
 
-### 36.8 复现（不依赖本节结论，任何人可重跑）
+### 32.8 复现（不依赖本节结论，任何人可重跑）
 
 ```text
 # A. 两侧符号（真名的唯一来源；**Android 优先**）
@@ -5543,7 +5543,7 @@ objdump -d --no-show-raw-insn -M intel --start-address=0x498f44 --stop-address=0
 #    set_joint_mode 0x29f3a8 → 0x8b74f0 → 0x9bbfa8；set_width 0x29f346 → 0x8b7fe0 → 0x9bbfa0
 ```
 
-### 36.9 落码清单（**`src/lib.rs` 待父 agent 接线**）
+### 32.9 落码清单（**`src/lib.rs` 待父 agent 接线**）
 
 ```text
 src/function_drawer.rs            原版 src/function_drawer.rs
@@ -5568,15 +5568,15 @@ pub mod obstacle_drawer;
 （五个模块彼此**零依赖**，只用了 `std`，所以不需要在测试 crate 根上重导出任何东西）。
 接线之后同一份断言仍然成立（会多跑一遍）。
 
-## 37. 实体特效登记表：`AshEffect` / `DeathEffect` / `SparkEffect` **在出生时定死**（本轮新增：`docs/141` 那 19 例的机制解）
+## 33. 实体特效登记表：`AshEffect` / `DeathEffect` / `SparkEffect` **在出生时定死**（本轮新增：`docs/141` 那 19 例的机制解）
 
 > 任务：`docs/141` §4.4 记着「37 个失败的多发批里，19 个是死亡块**整块**是 `AshEffect`」，
-> 并把它归成"我方没有 Ash 发射器"。§32 已经把分界推到"实体出生登记"，
-> 但**士兵到底登记什么**当时是空的（§32.7 列为未知）。
+> 并把它归成"我方没有 Ash 发射器"。§29 已经把分界推到"实体出生登记"，
+> 但**士兵到底登记什么**当时是空的（§29.7 列为未知）。
 > 本轮把 6 个写入点逐个解到指令，并落成 `src/graphwar_entity_effect_manager.rs` +
-> `src/game.rs` 的真实行为；同时**改正 §32.3 的一处错**（见 §37.6）。
+> `src/game.rs` 的真实行为；同时**改正 §29.3 的一处错**（见 §33.6）。
 
-### 37.1 一页结论
+### 33.1 一页结论
 
 | # | 结论 | 等级 |
 |---|---|---|
@@ -5585,12 +5585,12 @@ pub mod obstacle_drawer;
 | 3 | **靶子出生**（`add_target`，`0x4a5704`）恒登记 **`SparkEffect`(2)**（`mov w2, #0x2`），并把皮肤写成 `"target"` | **逐位** |
 | 4 | **迟到的皮肤**（`handle_graphics_info`，`0x4aa304`）收到 `SkinGraphicsInfo{bot_*}` 时，会把受影响实体**改写**成 `AshEffect`；非 `bot_` 前缀**什么都不做** | **逐位** |
 | 5 | 与**队伍无关**：判定里没有 `get_team` 的结果参与（`0x4aac40` 那次 `get_team` 只用来写 `flip`/颜色） | **逐位** |
-| 6 | 死亡结算**照抄表**、查不到**一条都不发**；`effect_id` 仍是**会话级自增计数器**（**改正 §32.3**，见 §37.6） | **逐位** |
+| 6 | 死亡结算**照抄表**、查不到**一条都不发**；`effect_id` 仍是**会话级自增计数器**（**改正 §29.3**，见 §33.6） | **逐位** |
 | 7 | 数据侧独立复核：全语料 953 条死亡 `EffectInfo` 里 899 条按坐标唯一对上实体，**536/536 `DeathEffect`、363/363 `AshEffect`、54/54 `SparkEffect` 全等于该实体的登记值** | **观测** |
 | 8 | `src/game.rs` 已按此改：`Match::new`/`add_target` 做出生登记、`note_skin_graphics` 做迟到改写、`execute_results` 查表（查不到不发） | **逐位** |
-| 9 | **对拍口径没变**：`replaydiff::Predictor` 不喂 `SkinGraphicsInfo`，所以 `docs/141` 的 401 份数字**一位不动**（§37.5 有实测与原因） | **观测** |
+| 9 | **对拍口径没变**：`replaydiff::Predictor` 不喂 `SkinGraphicsInfo`，所以 `docs/141` 的 401 份数字**一位不动**（§33.5 有实测与原因） | **观测** |
 
-### 37.2 6 个写入点（这张表的全部写者）
+### 33.2 6 个写入点（这张表的全部写者）
 
 `entity_effect_map` 是 `HashMap<u32 /*entity_id*/, EffectType /*u8*/>`（桶距 8，唯一）。
 它的 `insert` monomorphization 是 `hashbrown::map::HashMap::insert::hd46922447724ee7`
@@ -5611,7 +5611,7 @@ pub mod obstacle_drawer;
 `GraphwarEventQueue::add_event`（`0x3d7a40`）→ `HashMap::insert(key=entity_id, value=ty)`。
 **事件载荷里的类型字节与 `insert` 的值是两个独立立即数**，同分支里两者一致 ⇒ 不是看错。
 
-### 37.3 士兵：`bot_` 前缀（`0x4ab060`–`0x4ab270`）
+### 33.3 士兵：`bot_` 前缀（`0x4ab060`–`0x4ab270`）
 
 皮肤名取自 `GraphicsManager` 的 `HashMap<u32 /*player_id*/, String>`（桶距 `0x20`，
 `0x4aac8c`–`0x4aad48` 查表），命中就 `String::clone` 进一个 `Cow<str>` 槽
@@ -5636,7 +5636,7 @@ pub mod obstacle_drawer;
 **这与队伍无关**：同一条路径上唯一的 `get_team(player_id)`（`0x4aac40`）结果被
 `and w2, w8, #0x1` 送进 `flip`/颜色，没有进入登记的任何一个分支。
 
-### 37.4 靶子与"迟到的皮肤"
+### 33.4 靶子与"迟到的皮肤"
 
 * `add_target` 在 `0x4a583c`–`0x4a5858` 现场拼出 6 个字节 `target`（`0x7465` + `0x6174`/`0x6772`
   两个立即数），交给 `set_skin_graphics`，然后在 `0x4a589c`/`0x4a58d0` 两处写 `2`。
@@ -5648,21 +5648,21 @@ pub mod obstacle_drawer;
 
 ```text
 tick 20  SkinGraphicsInfo{881,"bot_0"}
-tick 20  EntityEffectInfo{880,"AshEffect"} / {881,"AshEffect"} ×2 趟   ← §37.2 写点 5
+tick 20  EntityEffectInfo{880,"AshEffect"} / {881,"AshEffect"} ×2 趟   ← §33.2 写点 5
 tick 3464 EffectInfo{885, AshEffect} / {886, AshEffect}                ← 这两人死时的死亡块
 ```
 
 ⇒ 一个玩家开局时若还没选皮肤（登记 `DeathEffect`），等 `bot_N` 的 `SkinGraphicsInfo`
 到了，他名下实体的登记会被**改写**；死亡时发的就是这个改写后的值。
 
-### 37.5 落码与**对拍口径**（数字一位没动，原因是硬约束）
+### 33.5 落码与**对拍口径**（数字一位没动，原因是硬约束）
 
 `src/` 的改动（都在允许范围内）：
 
 * `graphwar_entity_effect_manager`：新增 `BOT_SKIN_PREFIX`/`TARGET_SKIN`、
   `register_soldier`/`register_target`/`apply_skin_graphics` 三个**登记点**投影；
 * `game::Match`：`new` 给入参士兵做出生登记（此刻没有皮肤 ⇒ `DeathEffect`）、
-  `add_target` 登记 `Spark`、新增 `note_skin_graphics`（§37.4 那次改写）、
+  `add_target` 登记 `Spark`、新增 `note_skin_graphics`（§33.4 那次改写）、
   新增 `entity_effect_of` / `handle_entity_removed`；
   `execute_results` 的死亡块改成**查表**，`None` ⇒ **连 `EffectInfo` 都不发**。
 
@@ -5705,9 +5705,9 @@ tick 3464 EffectInfo{885, AshEffect} / {886, AshEffect}                ← 这�
 多出的 4 个是"死亡块里 Ash 与 Death 混排"的批）。剩下的差距是死亡集合漏报与爆炸点，
 不在本节范围。
 
-### 37.6 **改正 §32.3**：死亡那条的 `effect_id` 是**计数器**，不是实体 id
+### 33.6 **改正 §29.3**：死亡那条的 `effect_id` 是**计数器**，不是实体 id
 
-§32.3 的表格把 `0x4a8cb0` 那处写成"`effect_id` = 实体 id"。本轮逐指令复核后**改成计数器**：
+§29.3 的表格把 `0x4a8cb0` 那处写成"`effect_id` = 实体 id"。本轮逐指令复核后**改成计数器**：
 
 ```text
 0x4a8c50  ldurb w21, [x13, #-0x4]      ; effect_type ← 表值（u8）
@@ -5720,7 +5720,7 @@ tick 3464 EffectInfo{885, AshEffect} / {886, AshEffect}                ← 这�
 0x4a8cbc  sturb w21, [x29, #-0x40]          ; EffectInfo +0x20 = effect_type
 ```
 
-事件基址 `x29-0x60` 与 §32 的 72 字节布局逐字段对上（`+0x00` tag /
+事件基址 `x29-0x60` 与 §29 的 72 字节布局逐字段对上（`+0x00` tag /
 `+0x08`,`+0x10` 坐标 / `+0x18` `effect_id` / `+0x1c` `start_tick` / `+0x20` 类型）；
 `w23` 在 `0x4a8c68` 被 `ldxr` **覆盖**，所以它此刻只能是计数器。
 回放侧同结论：`1782640836` 一批里死者是 877/881/880，三条死亡 `EffectInfo` 的
@@ -5728,7 +5728,7 @@ tick 3464 EffectInfo{885, AshEffect} / {886, AshEffect}                ← 这�
 
 ⇒ 我们原来的 `self.next_effect_id` 自增是**对的**；错的是"类型写死 `DeathEffect`"。
 
-### 37.7 未知
+### 33.7 未知
 
 | # | 未确定 | 缺什么 | 等级 |
 |---|---|---|---|
@@ -5738,7 +5738,7 @@ tick 3464 EffectInfo{885, AshEffect} / {886, AshEffect}                ← 这�
 
 ---
 
-## 38. `EntityDrawer` 成了真 Godot 节点（2026-11：第一个垂直切片，72 条 headless 断言全过）
+## 34. `EntityDrawer` 成了真 Godot 节点（2026-11：第一个垂直切片，72 条 headless 断言全过）
 
 **一句话**：`src/_scaffold/entity_drawer_class.rs` 在 `gdext-bindings` feature 下把
 `entity_drawer.rs` 的**纯逻辑**挂成 `Control` 子类 `EntityDrawer`；`spawn_entity(id, x, y)`
@@ -5749,7 +5749,7 @@ tick 3464 EffectInfo{885, AshEffect} / {886, AshEffect}                ← 这�
 > 档位（`AGENTS.md` §0.3）：**观测** = 这轮 headless 真跑出来的输出；**推断** = 有依据未证；
 > **未知** = 没解出来。`cargo test` / `selftest` 的条数**只是回归保护**，不是复原证据。
 
-### 38.1 本轮动了哪些文件
+### 34.1 本轮动了哪些文件
 
 | 文件 | 增/改 | 内容 |
 |---|---|---|
@@ -5761,7 +5761,7 @@ tick 3464 EffectInfo{885, AshEffect} / {886, AshEffect}                ← 这�
 `src/entity_drawer.rs` **一行没动**（仍然零引擎依赖）；`src/lib.rs` 没动；`client/` 下既有
 `.gd` / `.tscn` / `run.sh` 一个没改。
 
-### 38.2 a) 能不能建成 —— **能**（观测）
+### 34.2 a) 能不能建成 —— **能**（观测）
 
 ```text
 $ cargo build --release --features gdext-bindings
@@ -5832,7 +5832,7 @@ ENTITY_DRAWER 72 passed, 0 failed        # 退出码 0
 **这张表能证明的是**「纯逻辑 → 节点树」这条链路通了；**不能**证明士兵长什么样
 （贴图是纯色方块、名字文本是脚本给的、`_draw` 的准星没画）。
 
-### 38.3 b) 一个「建 4 个子节点 + 接纯逻辑」的类多少行
+### 34.3 b) 一个「建 4 个子节点 + 接纯逻辑」的类多少行
 
 先给总数，再给能推广到别的类的拆分：
 
@@ -5850,7 +5850,7 @@ ENTITY_DRAWER 72 passed, 0 failed        # 退出码 0
 
 **能推广的结论**：
 
-* **注册、属性表、方法表、虚方法表一律 0 行**（gdext 宏全包）。对比 §35.3 的手写绑定：
+* **注册、属性表、方法表、虚方法表一律 0 行**（gdext 宏全包）。对比 §31.3 的手写绑定：
   同一个「1 属性 + 4 方法、不画东西」的类要 **~500 行**手工 ABI 搬运。
 * 真正与「建 4 个子节点 + 接纯逻辑」有关的**代码**只有 **~155 行**
   （`spawn_entity` 49 + `relayout` 52 + `remove_entity` 11 + `texture_for` 8 + 两个造物函数 ~35）。
@@ -5858,7 +5858,7 @@ ENTITY_DRAWER 72 passed, 0 failed        # 退出码 0
 * 剩下 136 行代码是**观测点与文档**：9 个方法的 doc、5 条坑的说明、被照抄的原版常量注释。
 * 换成 6 条单测（107 行）之后，「类里有没有偷藏第二份算术」这件事有回归保护。
 
-### 38.4 c) 踩到的坑（每条都是本轮实测，不是听说）
+### 34.4 c) 踩到的坑（每条都是本轮实测，不是听说）
 
 1. **`Gd<Node>` 不保活，也不负责释放。** `godot-core` 的 `RawGd::drop` 注释写死：
    「If the held object is manually-managed, **nothing happens**」。节点归**父节点**所有
@@ -5893,7 +5893,7 @@ ENTITY_DRAWER 72 passed, 0 failed        # 退出码 0
    新增 `.gd` 后不 `--import`，Godot 静默不加载；`cargo build` 之后不 `cp` 到 `client/`，
    跑的是旧内核。本轮两次都先 `--import` 再断言，才没有出现「改了没生效」的假阴性。
 
-### 38.5 原版节点树的证据（本轮新用到的两条，都不是猜的）
+### 34.5 原版节点树的证据（本轮新用到的两条，都不是猜的）
 
 1. **`docs/16` §2.1.10 的运行时 dump**：`GraphwarPlane/@EntityDrawer@N/@Sprite2D@N`、
    `GraphwarPlane/@EntityDrawer@N/<name_label 实例>`；`ShowNames` 那一行还观测到
@@ -5914,9 +5914,9 @@ ENTITY_DRAWER 72 passed, 0 failed        # 退出码 0
 * `GraphwarTextureLoader`（本类用程序生成贴图顶替）、`GraphwarPlane` 谁来 `add_child` 本类；
 * 名字文本从哪来（原版走名字管理器 / backtracer，不归本模块）。
 
-### 38.6 d) 剩下 10 个类能不能照这个模板批量做 —— **能，但要认清三类差异**
+### 34.6 d) 剩下 10 个类能不能照这个模板批量做 —— **能，但要认清三类差异**
 
-名单按 `docs/18` §6.5 的 12 个 GDExtension 类：减去已落地的 `AxisDrawer`（§35，能注册 + `_draw`）
+名单按 `docs/18` §6.5 的 12 个 GDExtension 类：减去已落地的 `AxisDrawer`（§31，能注册 + `_draw`）
 与本节 `EntityDrawer`，**实剩 10 个**（任务书说 11 个，是把 `EntityDrawer` 自己也算进去的数）。
 
 基类与虚方法一列来自 `src/*.rs` 各文件头 + `docs/02` §17 的 `TRAIT_IMPLS`（**观测**）：
@@ -5936,7 +5936,7 @@ ENTITY_DRAWER 72 passed, 0 failed        # 退出码 0
 
 **能批量做的三个理由**（本轮实测支撑）：
 
-1. 注册 / 属性 / 方法 / 虚方法全由宏生成（§35.3 那 500 行手工 ABI 已经不需要了）；
+1. 注册 / 属性 / 方法 / 虚方法全由宏生成（§31.3 那 500 行手工 ABI 已经不需要了）；
 2. 「读引擎值 → 调纯逻辑 → 写回节点」这个循环本轮跑通了两次（`_draw` 的 §10 + 子节点的本节），
    剩下 10 个类的算式同样在 `src/*.rs` 里现成躺着（10 个类里有 **4 个**只需再加一个 `fn draw`）；
 3. 验收脚本可以**照抄 `entity_drawer_check.gd` 的 14 个段落**（类/方法/属性 → 子节点/类型 →
@@ -5957,9 +5957,9 @@ ENTITY_DRAWER 72 passed, 0 failed        # 退出码 0
 **一个要忍住的诱惑**：不要为了「少踩坑」把 4 张 `HashMap` 合成一个公共 helper。
 原版 `EntityDrawer` 就是 4 张表（字段偏移 `+0xa8/+0xc0/…`，名字仍是**推断**），
 本节的 `EntityNodes` 已经是**一次化简**（4 个句柄塞一个结构）；下一轮迁 `player_showcase`
-时应先按 `docs/16` §25 的证据决定要不要拆回去。
+时应先按 `docs/16` §22 的证据决定要不要拆回去。
 
-### 38.7 复现（三分钟）
+### 34.7 复现（三分钟）
 
 ```text
 # 1) 打开 feature 构建（默认关闭 ⇒ 关着时 crate 仍然零依赖）
@@ -5980,7 +5980,7 @@ cargo test --offline --features gdext-bindings # lib 463（457 + 本类 6 条）
 bash client/run.sh selftest                   # 694 passed（默认 feature 的 .so）
 ```
 
-## 39. 三个「基类不是 `Control`」的类成了真节点（2026-11：`Node` / `VBoxContainer` / 基类未定）
+## 35. 三个「基类不是 `Control`」的类成了真节点（2026-11：`Node` / `VBoxContainer` / 基类未定）
 
 **一句话**：`src/_scaffold/` 下新增三份绑定外壳，把 `graphwar_root_node`（基类 **`Node`**）、
 `graphwar_lan_vbox`（基类 **`VBoxContainer`**）、`graphwar_ad_switch`（基类**仍未定**，按 `Node` 落）
@@ -5991,7 +5991,7 @@ bash client/run.sh selftest                   # 694 passed（默认 feature 的 
 > **推断** = 有依据未证（同行写清缺什么）；**未知** = 没解出来。
 > `cargo test` / `selftest` 的条数**只是回归保护**，不是复原证据。
 
-### 39.0 这一节回答的三个问题
+### 35.0 这一节回答的三个问题
 
 | # | 问题 | 结论 | 档位 |
 |---|---|---|---|
@@ -5999,7 +5999,7 @@ bash client/run.sh selftest                   # 694 passed（默认 feature 的 
 | 2 | **`GraphwarAdSwitch` 到底是不是 Godot 类？** | **是**（6 条 arm64 `.symtab` 证据，见 39.4）。**但基类定不出来** —— 缺的正是「它一个虚方法都没覆写」 | 观测（是）/ 未知（基类） |
 | 3 | **`GraphwarRootNode` 能不能只做骨架？** | **能**：装配部分不做，但「持有子对象 → 转发一次调用」两条链路都通了（`purchase_confirmed` → `Ad_holder`、`show_screen` → 15 个屏的 `set_visible`） | 观测（headless） |
 
-### 39.1 本轮动了哪些文件
+### 35.1 本轮动了哪些文件
 
 | 文件 | 增/改 | 行数 | 内容 |
 |---|---|---|---|
@@ -6014,11 +6014,11 @@ bash client/run.sh selftest                   # 694 passed（默认 feature 的 
 （仍然零引擎依赖）；`src/lib.rs`、其它 `src/*.rs`、既有 `client/*.gd`、`docs/INDEX.md`、
 `docs/HANDOVER.md` **都没碰**。
 
-### 39.2 问题 1：换基类要改什么（**实测**，不是推理）
+### 35.2 问题 1：换基类要改什么（**实测**，不是推理）
 
 三份文件是**同一个模板**的三个实例。逐项对照如下（左 = 本批真正改动的全部内容）：
 
-| 项 | `Control`（§38 的 `EntityDrawer`） | `Node`（`GraphwarRootNode` / `GraphwarAdSwitch`） | `VBoxContainer`（`GraphwarLanVBox`） |
+| 项 | `Control`（§34 的 `EntityDrawer`） | `Node`（`GraphwarRootNode` / `GraphwarAdSwitch`） | `VBoxContainer`（`GraphwarLanVBox`） |
 |---|---|---|---|
 | 虚方法 trait | `impl IControl` | **`impl INode`** | **`impl IVBoxContainer`** |
 | 基类字段 | `base: Base<Control>` | **`base: Base<Node>`** | **`base: Base<VBoxContainer>`** |
@@ -6040,7 +6040,7 @@ bash client/run.sh selftest                   # 694 passed（默认 feature 的 
    `set_owned` / `get_owned`，自己再写一个 `pub fn set_owned` 会 **`E0592` 重复定义**
    （本轮踩到，改名 `write_owned`）。同理 `Base<…>` 字段必须叫 `base`。
 
-### 39.3 12 个类的基类对照表（**本轮新产物**，arm64 2.0.60 `.symtab`）
+### 35.3 12 个类的基类对照表（**本轮新产物**，arm64 2.0.60 `.symtab`）
 
 `docs/02-module-map.md` §18.3 只列到「哪 11 个类有 Godot 基类 impl」。本轮把**基类名**取出来了：
 gdext 把 `impl I<Base>` 的路径写进了符号名，所以 `grep 'gen::classes'` 一试即得。
@@ -6073,7 +6073,7 @@ readelf -sW libgraphwarrust.so | c++filt | grep "gen::classes" \
 
 最后一行就是本批最难的一条，见 39.4。
 
-### 39.4 问题 2：`GraphwarAdSwitch` 到底是不是 Godot 类
+### 35.4 问题 2：`GraphwarAdSwitch` 到底是不是 Godot 类
 
 #### 结论一：**是**（档位：观测）. 6 条 arm64 `.symtab` 证据
 
@@ -6109,7 +6109,7 @@ class_id() 这个函数被内联/裁掉了 ≠ impl GodotClass 不存在
 
 一个类的基类在这份 `.symtab` 里**只有一个出口**：`<T as I<Base>>` 这族符号（39.3 那张表）。
 它**只在类覆写了至少一个虚方法时才生成** —— 而 `GraphwarAdSwitch` **一个都没覆写**
-（`docs/16` §22.5：6 个函数全是惰性注册驱动，没有独立方法体；本批也复核了：
+（`docs/16` §20.5：6 个函数全是惰性注册驱动，没有独立方法体；本批也复核了：
 它连 `ready` / `process` 都没有）。一个空的 `impl INode for GraphwarAdSwitch {}` 与
 「不写这个 impl」编出来的机器码是同一件事 ⇒ **符号表里不存在能区分基类的东西**。
 
@@ -6135,7 +6135,7 @@ class_id() 这个函数被内联/裁掉了 ≠ impl GodotClass 不存在
 
 理由三条（也写进了 `graphwar_ad_switch_class.rs` 的文件头）：
 
-* 模块文档 [`graphwar_ad_switch`] 与 `docs/02` §16.2 / `docs/16` §22 一直写 `Node`（同样是**推断**）；
+* 模块文档 [`graphwar_ad_switch`] 与 `docs/02` §16.2 / `docs/16` §20 一直写 `Node`（同样是**推断**）；
 * 实例布局能对上「`base` 字段在最前」的写法：`owned` 在 `+0x18`
   （**逐位（arm64）**，`docs/19` §2.10），而 gdext 的 `Base<T>` 是 24 字节
   ⇒ 源码形状就是 `struct GraphwarAdSwitch { base: Base<…>, owned: bool }`；
@@ -6145,7 +6145,7 @@ class_id() 这个函数被内联/裁掉了 ≠ impl GodotClass 不存在
 
 ⇒ **它需要注册**（不是纯 Rust 模块），基类按 `Node` 落、档位 **推断**。
 
-### 39.5 问题 3：`GraphwarRootNode` 只做骨架也能转发
+### 35.5 问题 3：`GraphwarRootNode` 只做骨架也能转发
 
 建出来的子节点树（headless 实测，`build_scene_graph()` 幂等）：
 
@@ -6173,7 +6173,7 @@ GraphwarRootNode                         ← 本类（Node）
 （只解到 12 条）、25 个 manager 的**真实**装配（只建同名空 `Node` 占位）、两个
 `Rc<RefCell<T>>`（`+0x1668` / `+0x16c8`）、`GraphwarTextureLoader`（`+0x16a0`）。
 
-### 39.6 三个类各自的行为清单（原版 vs 本文件 vs 档位）
+### 35.6 三个类各自的行为清单（原版 vs 本文件 vs 档位）
 
 | 类 | 原版 | 本文件 | 档位 |
 |---|---|---|---|
@@ -6181,7 +6181,7 @@ GraphwarRootNode                         ← 本类（Node）
 | `GraphwarLanVBox` | `VBoxContainer`；每帧把源表投影成行（`load`+`instantiate`+`add_child` 一次），复用行只刷字段，源表没有的行 `queue_free`；**不排序**；Join 走内部 `mpmc` 通道、下一帧才连 | 同一套判据（`LanVBox::sync_rows` + `plan_frame`），但**源表由 GDScript 传**；行节点手工造（`Control` + `RoomName` 标签 + `JoinButton` 按钮）；4 个模式图标没画 | 判据/时序观测；行节点造法是我方选择 |
 | `GraphwarRootNode` | 装配屏表 + 2 个控制器 + 贴图加载器 + 一批 manager；`0x3af850` 切屏与广告；`0x3a5760` 状态机；`0x3b0830` 命令总线 | 只做「3 个 holder + 15 个屏 + 25 个占位槽」的形状，与 `0x3af850` 的转发；`ready` / `process` 计数**不猜行为** | 形状与切屏观测；状态机/总线**未做** |
 
-### 39.7 验收：`client/tools/base_classes_check.gd`（**117 条断言，0 失败**）
+### 35.7 验收：`client/tools/base_classes_check.gd`（**117 条断言，0 失败**）
 
 ```text
 $ cargo build --release --features gdext-bindings --offline
@@ -6241,7 +6241,7 @@ BASE_CLASSES 117 passed, 0 failed                  # 退出码 0
 | `GraphwarRootNode` **只做骨架也能转发**：`purchase_confirmed` → 子对象字段；`show_screen` → 15 个真节点的 `set_visible` | **观测** | `Ad_holder.owned == true` + `ScreensControl/Campaign.visible == true` |
 | `_ready` / `_process` 在 `Node` 与 `VBoxContainer` 两种基类下都真的被引擎调到 | **观测** | `ready=1 process=2` / `process=2`；**没有**任何 `set_process(true)` |
 
-### 39.8 回归保护（与本节无关的两条硬要求）
+### 35.8 回归保护（与本节无关的两条硬要求）
 
 ```text
 cargo test --offline                            # lib 457 passed / 总计 1499 passed / 0 failed
@@ -6252,11 +6252,11 @@ bash client/run.sh selftest                      # SELFTEST 694 passed, 0 failed
 * `457 → 475` 的差 = `-4`（`_scaffold::gdext` 的手写入口在打开 feature 时不编译）
   `+22`（`entity_drawer_class` 6 + `gdext_mod` 4 + 本批 12）；
 * `selftest` 的 694 在**两份 .so 下都跑过**：默认 feature 的手写绑定一份、本批的
-  `gdext-bindings` 一份 —— 都是 `694 passed, 0 failed`（换绑定层对客户端透明，§38 的结论再次成立）；
-* ⚠️ §38.7 里记的「总计 1488 / lib 463」是**上一轮**的数；本轮实测是 **1499 / 475**，
+  `gdext-bindings` 一份 —— 都是 `694 passed, 0 failed`（换绑定层对客户端透明，§34 的结论再次成立）；
+* ⚠️ §34.7 里记的「总计 1488 / lib 463」是**上一轮**的数；本轮实测是 **1499 / 475**，
   差的是别的批次加进来的测试，不是本批。条数**不是进度**（`AGENTS.md` §0.2）。
 
-### 39.9 仍未解 / 下一步
+### 35.9 仍未解 / 下一步
 
 1. **`GraphwarAdSwitch` 的基类**（本节最大未决项）：缺 39.4 那两条证据之一。
 2. **`GraphwarRootNode` 的 `process` 主体**（`0x3a5760`，20288 B / 339 条比较 / 64 个直接调用目标）
@@ -6273,11 +6273,11 @@ bash client/run.sh selftest                      # SELFTEST 694 passed, 0 failed
 
 ---
 
-## 40. 三个"要信号接线"的类成了真节点 + **自造 `#[signal]` 的结论**（2026-11：155 条 headless 断言全过）
+## 36. 三个"要信号接线"的类成了真节点 + **自造 `#[signal]` 的结论**（2026-11：155 条 headless 断言全过）
 
 **一句话**：`GraphwarButton`（`Button`）/ `GraphwarFunctionInput`（`LineEdit`）/
 `GraphwarSetupControl`（`Control`）三个类都注册成了**真 Godot 节点类**，headless 实测
-**155 条断言全过**；本节把 §38.6 留的那个「**自造 `#[signal]` 未验**」结案 ——
+**155 条断言全过**；本节把 §34.6 留的那个「**自造 `#[signal]` 未验**」结案 ——
 **能**，而且三种"信号/回调"机制逐条给了**能/不能 + 证据**：
 
 | # | 机制 | 结论 | 一条证据 |
@@ -6289,12 +6289,12 @@ bash client/run.sh selftest                      # SELFTEST 694 passed, 0 failed
 > 档位（`AGENTS.md` §0.3）：**观测** = 本轮 headless 真跑出来的输出；**推断** = 有依据未证；
 > **未知** = 没解出来。`cargo test` / `selftest` 的条数**只是回归保护**，不是复原证据。
 
-### 40.1 本轮动了哪些文件
+### 36.1 本轮动了哪些文件
 
 | 文件 | 增/改 | 内容 |
 |---|---|---|
 | `src/_scaffold/graphwar_button_class.rs` | **新增 619 行**（代码 326 / 接线代码 268 / 其中单测 58） | `GraphwarButton : Button`，3 条原生信号接线 + 两张回调表 + 2 个自造信号 |
-| `src/_scaffold/graphwar_function_input_class.rs` | **新增 545 行**（代码 309 / 接线代码 262 / 单测 47） | `GraphwarFunctionInput : LineEdit`，3 条原生信号（**第 3 条连不上，见 §40.5**）+ 28 条折叠 + `fire` 回调 |
+| `src/_scaffold/graphwar_function_input_class.rs` | **新增 545 行**（代码 309 / 接线代码 262 / 单测 47） | `GraphwarFunctionInput : LineEdit`，3 条原生信号（**第 3 条连不上，见 §36.5**）+ 28 条折叠 + `fire` 回调 |
 | `src/_scaffold/graphwar_setup_control_class.rs` | **新增 750 行**（代码 465 / 接线代码 383 / 单测 82） | `GraphwarSetupControl : Control`，**连子节点**的 3 条信号 + 四格模式 + 玩家条目 + 4 个自造信号 |
 | `src/_scaffold/mod.rs` | **+8**（3 行 `pub mod` + 2 行注释） | 三个类都在 `#[cfg(feature = "gdext-bindings")]` 下 |
 | `client/tools/signal_classes_check.gd` | **新增 579 行**（代码 402 / 注释 100 / 空行 77） | 155 条断言的验收脚本 |
@@ -6304,7 +6304,7 @@ bash client/run.sh selftest                      # SELFTEST 694 passed, 0 failed
 **一行没动**（仍然零引擎依赖）；`src/lib.rs` 没动；`client/` 下既有 `.gd` / `.tscn` /
 `run.sh` 一个没改；**没有**新增 `docs/*.md`。
 
-### 40.2 a) 三个类都能注册 + 实例化（观测）
+### 36.2 a) 三个类都能注册 + 实例化（观测）
 
 ```text
 $ cargo build --release --features gdext-bindings
@@ -6352,9 +6352,9 @@ ok   没有玩家时**不发** start_requested（原版是纯静默，不给提�
 本层一行算式都没复制。**这一点能证明**"纯逻辑 → 节点 + 信号"这条链路通了；
 **不能**证明原版 UI 长什么样（子节点是替身、图标是路径字符串、聊天日志只有一行）。
 
-### 40.3 b) **三种机制逐条（本节的核心）**
+### 36.3 b) **三种机制逐条（本节的核心）**
 
-#### 39.3.1 机制 1：自造 `#[signal]` —— **能**（观测）
+#### 36.3.1 机制 1：自造 `#[signal]` —— **能**（观测）
 
 四件事全验过：**注册**、**带参**、**GDScript `connect`**、**两条发射路径**。
 
@@ -6391,7 +6391,7 @@ ok   GDScript 收到 options_changed(3, 0, 0, 2)（实际 [[3, 0, 0, 2]]）
    （`connect("pressed", Callable::from_object_method(self, "pressed"))`，信号名与处理函数名
    是**同一个 `&str`**），本轮实测这套写法在 gdext 上照跑（`is_connected` 三条全真）。
 
-#### 39.3.2 机制 2：连引擎原生信号 —— **能**（观测；三种形态都验了）
+#### 36.3.2 机制 2：连引擎原生信号 —— **能**（观测；三种形态都验了）
 
 | 形态 | 谁连谁 | 证据 |
 |---|---|---|
@@ -6420,7 +6420,7 @@ ok   机制 2'：_gui_input 虚方法**被引擎真的派发了**（Input.parse_
 （`FN_GUI_INPUT` 只解到"插入 + `call("force_update_cb")`"）⇒ 原版**大概也双插**，
 这一条登记为**未知**，别当成"我们多插了一个"。
 
-#### 39.3.3 机制 3：外部注册闭包表 —— **一半能**（这是本轮最需要如实说的一条）
+#### 36.3.3 机制 3：外部注册闭包表 —— **一半能**（这是本轮最需要如实说的一条）
 
 原版 `GraphwarButton` 用的是 `Vec<Box<dyn FnMut(&str)>>`（`+0x38/+0x40/+0x48`），
 `GraphwarFunctionInput` 用的是**一个** `dyn` 回调（`[self+0x68]`，按名字调 `"fire"`）。
@@ -6458,16 +6458,16 @@ ok   机制 2'：_gui_input 虚方法**被引擎真的派发了**（Input.parse_
 * **`Callable` 不能当 `#[export]` 属性**（gdext 的 `impl_property_by_godot_convert!` 对
   `Callable`/`Signal`/`Rid` 只生成 `SimpleVar`、**不生成 `Export`**，见
   `godot-core-0.5.5/src/registry/property/mod.rs` 的 `no_export` 分支）⇒ 想暴露给编辑器
-  只能用 `#[var]`。§38.6 说「`GString` 属性没验过」，本轮**验了：能**（`ok 属性 input_text
+  只能用 `#[var]`。§34.6 说「`GString` 属性没验过」，本轮**验了：能**（`ok 属性 input_text
   往返一致（"X"）`），`bool` 也能（`ok 属性 caret_condition 往返一致（true）`）。
 
-#### 39.3.4 机制 3 在 `GraphwarSetupControl` 里**不存在**（照实说）
+#### 36.3.4 机制 3 在 `GraphwarSetupControl` 里**不存在**（照实说）
 
 纯逻辑文件里 `FnMut` / `Box<dyn>` 命中 **0 处**（`grep` 可复核）。原版这一屏只有
 3 个 `get_node` + 3 条 `connect`（`FN_SETUP_WIRING`），所以本类的接线**全走机制 2**，
 本文件**没有**为它编一张回调表。
 
-### 40.4 c) 每个类"真实接线代码"多少行
+### 36.4 c) 每个类"真实接线代码"多少行
 
 先给实测分类（`python` 数的：非空非注释行 = 代码；`mod tests` 之后算单测）：
 
@@ -6476,7 +6476,7 @@ ok   机制 2'：_gui_input 虚方法**被引擎真的派发了**（Input.parse_
 | `graphwar_button_class.rs` | 619 | 326 | **268** | 58 | 226 |
 | `graphwar_function_input_class.rs` | 545 | 309 | **262** | 47 | 180 |
 | `graphwar_setup_control_class.rs` | 750 | 465 | **383** | 82 | 206 |
-| `entity_drawer_class.rs`（§38 的模板，对照） | 677 | 291 | **~155**（§38.3 的口径） | 60 | 330 |
+| `entity_drawer_class.rs`（§34 的模板，对照） | 677 | 291 | **~155**（§34.3 的口径） | 60 | 330 |
 
 **能推广的结论**：
 
@@ -6486,14 +6486,14 @@ ok   机制 2'：_gui_input 虚方法**被引擎真的派发了**（Input.parse_
   ① 每个类都带**一批单行观测点**（`ready_call_count()` / `pressed_call_count()` /
   `wired_count()` …）：三个类合计 **81 个 `#[func]`，其中 34 个是观测点**
   （`*_count` / `*_captured` / `*_log` 三类，`grep` 可复核）——
-  这是 §38 定的规矩（没有计数分不清"引擎没回调"和"回调了但没干活"），不是业务代码；
+  这是 §34 定的规矩（没有计数分不清"引擎没回调"和"回调了但没干活"），不是业务代码；
   ② `GraphwarSetupControl` 多出**替身子节点**（`build_stub_children`，30 行）与
   四格/玩家条目的 `#[func]` 搬运（约 120 行）。
 * **纯逻辑仍然一行没复制**：`ButtonState`（4 个判定）、`strip_spaces`、`COMPOSED_FOLDS`、
   `intent_for_key`、`SetupOptions` / `TimeMode::next` / `PlayerEntry` / `start_action`
   **全部**从 `src/graphwar_*.rs` 调过来。
 
-### 40.5 d) 本轮新踩的坑 + **两个新发现**
+### 36.5 d) 本轮新踩的坑 + **两个新发现**
 
 **坑（都实测过）**
 
@@ -6523,7 +6523,7 @@ ok   机制 2'：_gui_input 虚方法**被引擎真的派发了**（Input.parse_
 6. **`--import` + `cp .so` 两个静默陷阱照旧**（`AGENTS.md` 那三条）。本轮还多一条
    **环境坑**：`client/run.sh` 用 `$here/../..` 找 `tools/Godot_…`，在
    `.agent-work/<topic>/repo` 这种**深一层**的克隆里会指错 ⇒ 跑 selftest 要
-   `GODOT=/path/to/Godot_…`（见 §40.7）。
+   `GODOT=/path/to/Godot_…`（见 §36.7）。
 
 **发现 1（原版的缺陷，不是我们的笔误）：`size_changed` 在 Godot 4.6/4.7 上**不是**信号**
 
@@ -6552,18 +6552,18 @@ stderr（要能在 Android 上抓到那条 `Attempt to connect nonexistent signa
 
 **发现 2：headless 里 `Input.parse_input_event` 能驱动 `gui_input`，但会和基类双插**
 
-见 §40.3.2 末尾（`text="eê"`）。这一条的价值是：**以后所有"键盘/鼠标驱动"的类都能在
+见 §36.3.2 末尾（`text="eê"`）。这一条的价值是：**以后所有"键盘/鼠标驱动"的类都能在
 `--script` 里真验**，不用只靠 `simulate_key` 这种自己造的口子。
 
-### 40.6 三个类各自"没做/未知"的清单（照实写）
+### 36.6 三个类各自"没做/未知"的清单（照实写）
 
 | 类 | 没做 / 未知 |
 |---|---|
-| `GraphwarButton` | 动画节点（`AnimationRect` → `GraphwarLongPressAnimation`）的**两个 `Instant` 字段没写**（那个类还没节点实现）；只 `find_child` 记住"有没有"，**故意不持句柄**（§38.4 坑 2 的野句柄） |
+| `GraphwarButton` | 动画节点（`AnimationRect` → `GraphwarLongPressAnimation`）的**两个 `Instant` 字段没写**（那个类还没节点实现）；只 `find_child` 记住"有没有"，**故意不持句柄**（§34.4 坑 2 的野句柄） |
 | `GraphwarFunctionInput` | `size_changed` 连不上（见上）；token 边界（`move_caret_*` / `delete_token_*` 的 N）**未解**，没实现；`process` 里与 `graphwar_game_client` 的数据流**没接**；`'^'` 的附加条件仍用 `#[export] caret_condition` 显式代替（语义**未知**） |
 | `GraphwarSetupControl` | 11 个 `get_node` 里只建 3 个替身；**18 个 gdext 薄壳 + 6 个虚方法胶水 + 3 个事件回调的语义仍然未知**（`src/graphwar_setup_control.rs` 模块头那两张表，本文件**不声称**还原了它们）；4 个模式按钮**按证据不连** `pressed`（原版就没连）；玩家列表 5 个行构件只做数据层，不建行节点 |
 
-### 40.7 复现（五分钟）+ 回归条数
+### 36.7 复现（五分钟）+ 回归条数
 
 ```text
 # 1) 打开 feature 构建（默认关闭 ⇒ 关着时 crate 仍然零依赖）
@@ -6581,7 +6581,7 @@ godot --headless --path client --script res://tools/signal_classes_check.gd
 
 # 4) 回归保护（三条硬要求）
 cargo test --offline                            # lib 457 / 总计 1499（**与本轮之前逐条相同**）
-cargo test --offline --features gdext-bindings   # lib 481（= 457 默认 + 6 §38 + 18 本节）/ 总计 1523
+cargo test --offline --features gdext-bindings   # lib 481（= 457 默认 + 6 §34 + 18 本节）/ 总计 1523
 # selftest 要**默认 feature** 的 .so ⇒ 重编一次再 cp：
 cargo build --release --offline
 cp $CARGO_TARGET_DIR/release/libgw2_rebuild.so client/libgw2_rebuild.so
@@ -6600,7 +6600,7 @@ bash client/run.sh selftest
 ```
 
 2026-11-07 18:20 在本仓库实测确认：先把 `serve_match` 编出来，同一份 `client/`、同一个
-默认 feature 的 `.so`，得到的就是 **694 passed, 0 failed**。所以 §35 / §38 / `docs/HANDOVER.md`
+默认 feature 的 `.so`，得到的就是 **694 passed, 0 failed**。所以 §31 / §34 / `docs/HANDOVER.md`
 里写的 694 **没有过期**；需要补的是**这条前置条件**，而不是改数字。
 
 另外两个会把条数弄错的环境陷阱（都实测过）：
@@ -6612,7 +6612,7 @@ bash client/run.sh selftest
 
 ---
 
-## 41. 四个「只多一个 `_draw`」的类成了真 Godot 节点（2026-11：第二～第五个垂直切片，235 条 headless 断言全过）
+## 37. 四个「只多一个 `_draw`」的类成了真 Godot 节点（2026-11：第二～第五个垂直切片，235 条 headless 断言全过）
 
 **一句话**：`EffectDrawer` / `GraphwarLongPressAnimation` / `GraphwarPlane` / `PlayerShowcase`
 在 `gdext-bindings` 下各成了一个 `Control` 子类；`_draw` / `_process` 里发出的每一个图元、
@@ -6620,10 +6620,10 @@ bash client/run.sh selftest
 `BOARD_*` / `draw_plan` / `step_effects` / `Showcase::tick`），四个类**没有第二份算术**。
 headless 实测 **235 条断言全过**（退出码 0）。
 
-> 档位同 §38：**观测** = 这轮 headless 真跑出来的输出；**推断** = 有依据未证；
+> 档位同 §34：**观测** = 这轮 headless 真跑出来的输出；**推断** = 有依据未证；
 > **未知** = 没解出来。`cargo test` / `selftest` 的条数**只是回归保护**，不是复原证据。
 
-### 41.1 本轮动了哪些文件
+### 37.1 本轮动了哪些文件
 
 | 文件 | 增/改 | 行数 | 内容 |
 |---|---|---|---|
@@ -6639,7 +6639,7 @@ headless 实测 **235 条断言全过**（退出码 0）。
 `src/player_showcase.rs` / `src/graphwar_player_config.rs` **一行没动**（仍然零引擎依赖）；
 `src/lib.rs` 没动；`client/` 下既有 `.gd` / `.tscn` / `run.sh` 一个没改。
 
-### 41.2 四个类各自「真的画出东西了吗」—— 都画了（**观测**）
+### 37.2 四个类各自「真的画出东西了吗」—— 都画了（**观测**）
 
 四个 `ClassDB.class_exists` / `instantiate` / `is_class("Control")` 全过（每个类一条），
 下面是**每个类最要紧的那一条**：
@@ -6704,7 +6704,7 @@ DRAW_CLASSES 235 passed, 0 failed        # 退出码 0
 **不能**证明这些类长得对：贴图是程序生成的纯色、多边形顶点仍未复原、棋盘上没有曲线和士兵、
 `GraphwarRootNode` / `FunctionDrawer` / `ObstacleDrawer` / `GraphwarBackend` 四个类都还不存在。
 
-### 41.3 一处**就地更正**：那两次绘制是 `draw_arc`，不是「两层矩形」
+### 37.3 一处**就地更正**：那两次绘制是 `draw_arc`，不是「两层矩形」
 
 `src/graphwar_long_press_animation.rs` 的 §0 写「画**两层矩形**（黑底 + 白层）」，
 §6 把被调 API 记成**未知**（`call *[0x9bc020]`）。本轮按仓库已有的 GOT 槽表把它落定：
@@ -6719,20 +6719,20 @@ DRAW_CLASSES 235 passed, 0 failed        # 退出码 0
 这件事本身也只有在**弧**上才有意义 ⇒「两层矩形」那句应当作废（本轮**不改**纯逻辑文件，
 只在本节记录；下次动那个文件时请连同 §0 / §6 一起改）。
 
-### 41.4 两处**按证据**与任务书不同（改了什么、为什么）
+### 37.4 两处**按证据**与任务书不同（改了什么、为什么）
 
 任务书给这一批的四条指引里，有两条与观测不符。照 `AGENTS.md` §0.3 / §0.6 的规矩**按证据做、
 就地写明**：
 
 **(a) 多边形是 `draw_polygon`，不是 `draw_colored_polygon`。**
-`docs/16` §21 + GOT 槽表：`draw_polygon | 0x29ef97 | — | 0x9bc238 | 1 | EffectDrawer::draw ×1（0x4e1d8f）`，
+`docs/16` §18 + GOT 槽表：`draw_polygon | 0x29ef97 | — | 0x9bc238 | 1 | EffectDrawer::draw ×1（0x4e1d8f）`，
 全 `.text` 只有这一个调用点；实参是 `(PackedVector2Array, PackedColorArray)`，
-而 §21 记到「颜色 = packed/255，**3 份同色**」⇒ 颜色是**每个顶点一份**的数组。
+而 §18 记到「颜色 = packed/255，**3 份同色**」⇒ 颜色是**每个顶点一份**的数组。
 `draw_colored_polygon` 只吃**一个** `Color`，形状对不上。
 ⇒ 本类调 `draw_polygon`，并把纯逻辑那 1 个颜色按**顶点数**复制（顶点数由调用方给，不硬编码 3）。
 
 **(b) `PlayerShowcase` 原版**没有** 3 个 `Sprite2D` + 1 个标签。**
-那是**兄弟类 `EntityDrawer`** 的形状（§24：「士兵不是 `draw()` 画的，是 3 个 `Sprite2D` + 1 个
+那是**兄弟类 `EntityDrawer`** 的形状（§21：「士兵不是 `draw()` 画的，是 3 个 `Sprite2D` + 1 个
 `RichTextLabel` 子节点」）。`PlayerShowcase` 的 `draw` 是三次 `draw_texture_rect_full` 画在
 **自己身上**（arm64 `0x4402b0` / `0x44037c` / `0x440444`），`ready` 里只**取**（不建）一个
 `PlayerNameLineEdit`。
@@ -6741,7 +6741,7 @@ DRAW_CLASSES 235 passed, 0 failed        # 退出码 0
 验收脚本照样断言「3 个 `Sprite2D` + 1 个 `Label`」。
 这样「默认跑起来 == 原版形状」，而「任务书要的形状」也有可断言的方法。
 
-### 41.5 每个类多少行 —— 「接引擎」的代码只有 864 行里的三分之一
+### 37.5 每个类多少行 —— 「接引擎」的代码只有 864 行里的三分之一
 
 | 文件 | 总行 | **类本体代码** | 单测代码 | 注释 | 空行 |
 |---|---|---|---|---|---|
@@ -6751,12 +6751,12 @@ DRAW_CLASSES 235 passed, 0 failed        # 退出码 0
 | `player_showcase_class.rs` | 665 | **289** | 75 | 206 | 62 |
 | **合计** | **2236** | **864** | 300 | 758 | 196 |
 
-对比 §38.3 的 `EntityDrawer`（677 行 / 本体代码 291）：**这四个类加起来 864 行**，
-平均每个 216 行——比 §38 那一个还小，因为**注册、属性表、方法表、虚方法表一律 0 行**
+对比 §34.3 的 `EntityDrawer`（677 行 / 本体代码 291）：**这四个类加起来 864 行**，
+平均每个 216 行——比 §34 那一个还小，因为**注册、属性表、方法表、虚方法表一律 0 行**
 （gdext 宏全包），真正要手写的只有「把纯逻辑的返回值搬进 `draw_*` / `add_child` / `connect`」。
 四类的纯逻辑（相位跳表、角度算式、棋盘常量、档案偏移、绘制顺序）**一行没写**——全在 `src/*.rs` 里。
 
-### 41.6 本轮新踩的坑（每条都是实测，不是听说）
+### 37.6 本轮新踩的坑（每条都是实测，不是听说）
 
 1. **`step_effects` 会**在验收脚本背后**改相位**。`STATE_TERMINAL_MASK = 0x5b` ⇒ 相位
    0/1/3/4/6 是终态，**2 和 5 不是**；`_process` 每帧调 `step`，只要 `start_tick <= elapsed`
@@ -6773,7 +6773,7 @@ DRAW_CLASSES 235 passed, 0 failed        # 退出码 0
    原版这条链是用户输入驱动的，headless 断言的只能是「连线存在且回调正确」。**
 4. **`base_mut()` 的独占借用连 `&self` 的方法都挡。** `PlayerShowcase::_draw` 里先
    `let mut base = self.base_mut();` 再在循环里调 `self.texture_for(..)`（`&self`）⇒ `E0502`。
-   解法：贴图在 `base_mut()` **之前**一次性取成 `Vec`。这是 §38.4 第 6 条（`E0499`）的孪生坑——
+   解法：贴图在 `base_mut()` **之前**一次性取成 `Vec`。这是 §34.4 第 6 条（`E0499`）的孪生坑——
    那次是 `&mut self` 方法，这次连 `&self` 都不行。
 5. **`Gd::instance_id()` 返回 `InstanceId`（`.to_i64()`），没有 `Object::get_instance_id()`。**
    gdext 0.5 里 `Gd<T>` 上的是 `instance_id()`；`get_instance_id()` 是 C++ 侧的名字，编译不过。
@@ -6789,7 +6789,7 @@ DRAW_CLASSES 235 passed, 0 failed        # 退出码 0
    `缺资产`（10 条 audio 断言全变 SKIP，`SELFTEST 686 passed`）；解完**再跑一次** `--import`
    才是 694。/tmp 之外的产物与 `.godot/` 都进了 gitignore，不会污染提交。
 
-### 41.7 复现（三分钟）
+### 37.7 复现（三分钟）
 
 ```text
 # 1) 打开 feature 构建（默认关闭 ⇒ 关着时 crate 仍然零依赖）
@@ -6810,7 +6810,7 @@ cargo test --offline --features gdext-bindings  # lib 488（457 − 手写 gdext
 bash client/run.sh selftest                    # 694 passed（默认 feature 的 .so；别覆盖 XDG_DATA_HOME）
 ```
 
-### 41.8 还没做 / 未知（诚实清单）
+### 37.8 还没做 / 未知（诚实清单）
 
 * **多边形顶点公式**（`effect_drawer` 模块 §5）：只读到两组点各乘 `0.2`。本类**不发明**顶点，
   由调用方给；`polygon_skipped_total` 就是「欠了多少几何」的计数器。
@@ -6828,10 +6828,10 @@ bash client/run.sh selftest                    # 694 passed（默认 feature 的
 * **`PlayerShowcase` 的贴图加载器**：`GraphwarTextureLoader`（根节点 `+0x16a0`）没有，本类用
   程序生成的纯色 `ImageTexture`；`save()` 也不写盘（headless 验收不该有副作用）。
 * **`GraphwarRootNode`**：`PlayerShowcase::ready` 第 1 步真的会失败（`root_lookup_failures`），
-  原因是**那棵树里没有那个节点**——类本身在 §39 那一轮就做出来了（`ClassDB.class_exists("GraphwarRootNode")`
-  一直为真）。本条原文写的"因为那个类还没做"是误记，已在 §42.9 就地更正。
+  原因是**那棵树里没有那个节点**——类本身在 §35 那一轮就做出来了（`ClassDB.class_exists("GraphwarRootNode")`
+  一直为真）。本条原文写的"因为那个类还没做"是误记，已在 §38.9 就地更正。
 
-## 42. `GraphwarRootNode` 真装配：3 个 manager 进容器、Setup 屏 → Game 屏、3 个假士兵（2026-11：86 条 headless 断言全过）
+## 38. `GraphwarRootNode` 真装配：3 个 manager 进容器、Setup 屏 → Game 屏、3 个假士兵（2026-11：86 条 headless 断言全过）
 
 **一句话**：此前 12 个 GDExtension 类是**孤立节点**——`GraphwarRootNode` 里那 25 个模块槽
 全是空 `Node` 占位，容器的 `add_module` 一次都没被调过。本节把**能开一局的最小集合**
@@ -6840,11 +6840,11 @@ bash client/run.sh selftest                    # 694 passed（默认 feature 的
 **Game 屏**（`PlayScreen`）= `GraphwarPlane` + 它的子节点 `EntityDrawer` + **3 个假实体**
 （每个 3 个 `Sprite2D` + 1 个 `RichTextLabel`）。headless 实测 **86 条断言全过**（退出码 0）。
 
-> 档位同 §38/§41：**观测** = 这轮 headless 真跑出来的输出 / 能指到 `docs/02` §22 的指令级证据；
+> 档位同 §34/§37：**观测** = 这轮 headless 真跑出来的输出 / 能指到 `docs/02` §22 的指令级证据；
 > **推断** = 有依据未证；**未知** = 没解出来。`cargo test` / `selftest` 的条数**只是回归保护**，
 > 不是复原证据（`AGENTS.md` §0.2）。
 
-### 42.1 本轮动了哪些文件
+### 38.1 本轮动了哪些文件
 
 | 文件 | 增/改 | 行数 | 内容 |
 |---|---|---|---|
@@ -6858,7 +6858,7 @@ bash client/run.sh selftest                    # 694 passed（默认 feature 的
 `src/graphwar_*.rs` 的纯逻辑文件、`src/lib.rs`、其它 `*_class.rs`、`client/src/**`、
 `client/*.tscn`、任何既有断言**一行没改**。
 
-### 42.2 「按类型查到 3 个」到底查的是什么（本节的核心）
+### 38.2 「按类型查到 3 个」到底查的是什么（本节的核心）
 
 容器是 `HashMap<TypeId, Rc<dyn Any>>`（1 字段 / 48 字节，`docs/02` §22.1 的**否定结论**：
 **没有** `+0xNN` 偏移、**没有** 25 个字段）。所以"装配"只有一个动作：
@@ -6906,13 +6906,13 @@ ok   GraphwarNotARealManager 的槽位状态 = unknown（原版 25 型里也没�
 尺寸序列，没有做 22 条逐型对齐。原版是否让 `GameStateManager` 与容器里的 `TurnManager`
 **共享**同一个实例：**未知**（我方 `Match` 自带一个内部 `TurnManager`，容器里的是另一个）。
 
-### 42.3 两张屏：Setup 屏 → Game 屏（切换仍然走 `0x3af850` 的决策表）
+### 38.3 两张屏：Setup 屏 → Game 屏（切换仍然走 `0x3af850` 的决策表）
 
 没有新增切屏逻辑：`show_screen(name)` 一直是 `graphwar_root_node::apply_show_screen`
 （`0x3af850` 的纯逻辑版，§15）。本节只是把两条屏的内容换成了真节点：
 
 ```text
-ScreensControl/GameSetup   → GraphwarSetupControl（§39 那个类；四格 / 玩家表 / Start）
+ScreensControl/GameSetup   → GraphwarSetupControl（§35 那个类；四格 / 玩家表 / Start）
 ScreensControl/PlayScreen  → Control 容器
     └── GraphwarPlane                 ← 有名字（原版 dump 里就叫这个）
         └── @EntityDrawer@N           ← **不** set_name（原版也没命名，§2.1.10 的 dump）
@@ -6934,7 +6934,7 @@ ok   visible_screens() == [PlayScreen]（实际 ["PlayScreen"]）
 ok   Setup 屏是 GraphwarSetupControl（真节点类，不是空 Control）
 ```
 
-### 42.4 Game 屏里的棋盘与 3 个假实体
+### 38.4 Game 屏里的棋盘与 3 个假实体
 
 ```text
 ok   Game 屏里 GraphwarPlane 恰好 1 个（实际 1）
@@ -6955,7 +6955,7 @@ ok   贴图子节点是引擎自动名 @Sprite2D@N（原版 dump 如此，实际
 * 这 3 个假实体与容器里 `GraphwarGameStateManager` 的那 3 个 `Target` 是**同一份数据**
   （`root_wiring::DEMO_SOLDIERS`），所以"容器里 3 个士兵"和"屏上 3 个士兵"能对上号。
 
-### 42.5 每帧：Plane 的 `_draw` 真的被调到
+### 38.5 每帧：Plane 的 `_draw` 真的被调到
 
 ```text
       plane: draw=1 rect=1 process=1 ready=1
@@ -6971,9 +6971,9 @@ ok   进树后棋盘有 4 个子节点（3 个 FunctionDrawer 占位 + 我们的
 `_draw` 只在"该重画"时才来（`CanvasItem` 的语义），所以 2 帧后计数仍是 1 ——
 脚本断言的是"**被调到过**（≥1）且计数只增不减"，不是"每帧 +1"。
 棋盘进树后补上的 3 个 `@Control@N` 是 `GraphwarPlane::ready` 建的
-`FunctionDrawer` **占位**（§41.8 的欠账，本轮没动）。
+`FunctionDrawer` **占位**（§37.8 的欠账，本轮没动）。
 
-### 42.6 与原版的差别（逐条，别当成"已复原"）
+### 38.6 与原版的差别（逐条，别当成"已复原"）
 
 | 项 | 原版 | 本轮 | 档位 |
 |---|---|---|---|
@@ -6986,16 +6986,16 @@ ok   进树后棋盘有 4 个子节点（3 个 FunctionDrawer 占位 + 我们的
 | 屏尺寸 | `.tscn` 的容器布局（`PlayScreen/.../PlaneContainer`） | 写死 `1600×900`（= `client/project.godot` 的视口） | **我方选择** |
 | 3 个士兵的坐标 / 名字 / 队伍 | `SoldierInfo` / `TeamInfo` / 名字管理器 | 写死（`DEMO_SOLDIERS` / `DEMO_PLAYERS`） | **我方选择**（假数据） |
 | 房间状态 6 字段 | `GameInfo` 抓包 | `demo_room()`，6 个取值照搬 `tests/graphwar_game_state_manager.rs` | 取值**观测**（抓包夹具） |
-| 棋盘的 `_draw` | 1 个 `draw_set_transform` + 1 个 `draw_rect` | 同（§41 已做） | **逐位**（常量槽） |
-| 3 个贴图的像素 | pck 里的真皮肤 / 脸 / 帽子 | 程序生成纯色 `ImageTexture`（§38 的选择） | **我方选择** |
+| 棋盘的 `_draw` | 1 个 `draw_set_transform` + 1 个 `draw_rect` | 同（§37 已做） | **逐位**（常量槽） |
+| 3 个贴图的像素 | pck 里的真皮肤 / 脸 / 帽子 | 程序生成纯色 `ImageTexture`（§34 的选择） | **我方选择** |
 
-### 42.7 仍是占位 / 未知（诚实清单）
+### 38.7 仍是占位 / 未知（诚实清单）
 
 * **剩下 19 个 manager 一个都没装**：容器里只有 3 个键；`GraphwarModuleContainer` 节点下的
   **25 个空 `Node`** 仍然是占位（`module_slot_status()` 回答的是**容器**里装没装，不是节点树）。
 * **`PlayScreenControl` / `SetupControl` 的大部分行为**：本轮只把 `GraphwarSetupControl`
-  那个类挂上去（它自己按 §40 的结论只连 3 条信号），四格模式的**按钮点击**原版就没连
-  （§40 的 `pressed` 未知项）。
+  那个类挂上去（它自己按 §36 的结论只连 3 条信号），四格模式的**按钮点击**原版就没连
+  （§36 的 `pressed` 未知项）。
 * **`GraphwarRootNode` 的两跳链**（`+0x1668` / `+0x16c8` 的控制器、`+0x16a0` 的贴图加载器）
   **未解**，本轮把容器直接挂根节点，是**替代形状**。
 * **事件总线**：3 个 manager 的订阅（`new_connection_event` / `tick_event` …）一条都没接——
@@ -7004,7 +7004,7 @@ ok   进树后棋盘有 4 个子节点（3 个 FunctionDrawer 占位 + 我们的
 * **回合推进 / 开火**：容器里的 `TurnManager` 与 `Match` 内部那个是**两个实例**，本轮不驱动
   回合（`Match::begin_next_turn` 没有被节点层调用）。
 
-### 42.8 复现（三分钟）+ 回归条数
+### 38.8 复现（三分钟）+ 回归条数
 
 ```text
 export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=$CARGO_HOME/target
@@ -7032,16 +7032,16 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
 `Cancel = 194 宽 / Start = 218 宽（真帧；实际 184 / 167）`（字体宽）。缺 `client/assets/` 时
 拿不到 694 条是**预期**，本节只报实测数字。
 
-### 42.9 就地更正（`§41.8` 的最后一条）
+### 38.9 就地更正（`§37.8` 的最后一条）
 
-`§41.8` 写「**`GraphwarRootNode`**：`PlayerShowcase::ready` 第 1 步真的会失败
-（`root_lookup_failures`），**因为那个类还没做**」——**后半句是错的**（`docs/16` §39 那一轮
+`§37.8` 写「**`GraphwarRootNode`**：`PlayerShowcase::ready` 第 1 步真的会失败
+（`root_lookup_failures`），**因为那个类还没做**」——**后半句是错的**（`docs/16` §35 那一轮
 就把 `GraphwarRootNode` 这个类做出来了，`ClassDB.class_exists("GraphwarRootNode")` 一直为真）。
 `PlayerShowcase` 那一步查的是**场景里的节点实例**（`get_node` 一路上溯），
 而验收脚本里根本没把 `GraphwarRootNode` 放进那棵树 ⇒ 它照样找不到。前半句（会失败）不变，
 原因改成「**那棵树里没有那个节点**」。本节已按 `AGENTS.md` §0.6 就地更正。
 
-## 45. 用 `recovered-src/` 的 105 个原版 `.gd` 换视图层：清点 + 一个最小试验（2026-11，P3 调研）
+## 39. 用 `recovered-src/` 的 105 个原版 `.gd` 换视图层：清点 + 一个最小试验（2026-11，P3 调研）
 
 > **本篇解决什么问题**：`AGENTS.md` §0 第 4 条给的方向是"**视图层改用反编译出的原版 `.gd`**"。
 > 本节回答**换得动吗、能换几个、代价多大、先做哪个**，并附一个已经在 headless 里跑通的最小试验。
@@ -7050,14 +7050,14 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
 > `recovered-src/**` **一行没动**（试验用的副本由 `cp` 产生，验收脚本每次都验"逐字节相同"）。
 >
 > 档位沿用四档，**推断与观测分开写**：本节凡是"数"都来自 headless 真跑或文件枚举（**观测**）；
-> "要不要换""代价多大"是**推断**，缺的证据都写在 §45.9。
+> "要不要换""代价多大"是**推断**，缺的证据都写在 §39.9。
 
-### 45.1 一页结论
+### 39.1 一页结论
 
 | 项 | 结果 | 证据 |
 |---|---|---|
 | `.gd` 总数 | **105** = **52 个游戏脚本**（`recovered-src/` 根） + **53 个插件脚本**（`addons/`） | **观测**（文件枚举；`addons/admob/` 52 + `addons/android_IAPP/` 1） |
-| **现在就能直接换** | **40 个**（820 行）＝ **39 个零错误** + **1 个有 3 条引擎报错但功能正常** | **观测**：headless 挂树后按 stderr 归属；C 段对副作用逐条断言（§45.3） |
+| **现在就能直接换** | **40 个**（820 行）＝ **39 个零错误** + **1 个有 3 条引擎报错但功能正常** | **观测**：headless 挂树后按 stderr 归属；C 段对副作用逐条断言（§39.3） |
 | **要等 PlayScreen 装配** | **5 个**（149 行） | **观测**：`_ready` 直接报 `Node not found: PlaneContainer` 等 |
 | **不能换** | **60 个**（3241 行）＝ 平台桥 **6** + 空文件 **1** + 插件 **53** | **观测**：`Ad_holder.gd` 解析失败；8 个原生类不在 `ClassDB`；PCK 里 **0 个** `.so` |
 | 最小试验 | 原版 `AdContainer.gd`（19 行，**一个字节没改**）在我们注册的节点上跑通 | **观测**：`RECOVERED_VIEW 57 passed, 0 failed`，退出码 0 |
@@ -7071,9 +7071,9 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
 2. **换不到行为**：这 40 个一共 820 行，**没有一行是按钮按下去干什么**（那在 Rust 里，
    `play_screen_control` 等模块）。换它们只把**字号/最小尺寸的算式**从"我们猜的"变成"原版的"。
 3. **原版 `.gd` 的另一半价值是接口规格书**：`AdContainer.gd` 用两行代码（`.ad_loaded` / `.ad_size`）
-   就点名了我们 `GraphwarAdSwitch` 缺的两个成员——这比反汇编更快、更准（**观测**，见 §45.5）。
+   就点名了我们 `GraphwarAdSwitch` 缺的两个成员——这比反汇编更快、更准（**观测**，见 §39.5）。
 
-### 45.2 105 个 `.gd` 的构成（先把分母钉死）
+### 39.2 105 个 `.gd` 的构成（先把分母钉死）
 
 | 组成 | 数 | 是什么 | 证据 |
 |---|---:|---|---|
@@ -7085,13 +7085,13 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
 > 与 `docs/20` §5.1 "105 个脚本里**没有一个是屏幕控制器**"那句对得上：52 个游戏脚本里
 > **没有** `play_screen` / `lan_lobby` / `player_screen` 这些名字的控制器，全是小控件。
 
-### 45.3 逐文件结论表 · A：**现在就能直接换**（40 个 / 820 行）
+### 39.3 逐文件结论表 · A：**现在就能直接换**（40 个 / 820 行）
 
 判据（**观测**）：下面每个文件都在 `client/tools/recovered_view_check.gd` 的 B/C 段里
 `load()` → `new()` → 挂进场景树 → 等两帧，C 段对可观测副作用做了断言
 （字号 / `custom_minimum_size` / theme constant / 子节点数），并且 **stderr 里没有一条
 `SCRIPT ERROR` 指向它**。**唯一例外**是 `PlayerTabContainer.gd`：它有 3 条
-`ERROR: Parameter "child" is null.`（`set_tab_title` 在页签注册前被调，见 §45.9 第 2 条），
+`ERROR: Parameter "child" is null.`（`set_tab_title` 在页签注册前被调，见 §39.9 第 2 条），
 标题照样写进去了 —— 所以它算 ✅，但**不能**算"零错误"。
 
 | 文件 | 类型 | 依赖什么节点 | 能不能直接用 |
@@ -7131,16 +7131,16 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
 | `ShopButtonsSize.gd`（38） | 视图（递归改子节点最小尺寸） | 自己的子树 | ✅ |
 | `OptionsContainer.gd`（13） | 视图（`0.25×父高`） | 自己的父节点尺寸 | ✅ 观测：父高 400 ⇒ `custom_minimum_size.y = 100` |
 | `ResizeContainer.gd`（17） | 视图（铺满视口） | 视口 | ✅ 观测：`= 视口尺寸` |
-| `PlayerTabContainer.gd`（20） | 视图（三个页签标题） | 需要 **3 个子节点**（页签） | ✅ 观测：标题逐字符等于原版（含 U+2009）；⚠️ 见 §45.9 第 2 条 |
+| `PlayerTabContainer.gd`（20） | 视图（三个页签标题） | 需要 **3 个子节点**（页签） | ✅ 观测：标题逐字符等于原版（含 U+2009）；⚠️ 见 §39.9 第 2 条 |
 | `ChatBox.gd`（21） | 视图（点一下把焦点给输入框） | `../ChatLineEdit`（**只在 `_gui_input`**，`_ready` 不碰） | ✅ 挂树零错误；点一下才需要那个兄弟节点 |
-| `CampaingLevelsButtons.gd`（57） | 视图（**运行时造 21 个按钮**） | 无（自己 `new()` 我们注册的 `GraphwarButton`） | ✅ **观测**：见 §45.5.2 |
+| `CampaingLevelsButtons.gd`（57） | 视图（**运行时造 21 个按钮**） | 无（自己 `new()` 我们注册的 `GraphwarButton`） | ✅ **观测**：见 §39.5.2 |
 | `UnlockButton.gd`（11） | 视图（空 `_ready`，**基类是我们注册的 `GraphwarButton`**） | 无 | ✅ |
 | `ViewFunctionsLabel.gd`（25） | 视图（字号+格子尺寸） | 自己的子节点 | ✅ |
 
 > 合计 **40 个 / 820 行**。其中 **27 个**出现 `add_theme_font_size_override`（**观测**），
 > **32 个**连 `get_tree().root.size_changed`（**观测**，与 `docs/20` §5.1 "32 处"一致）。
 
-### 45.4 逐文件结论表 · B/C/D：**要等装配 / 不能换**（65 个）
+### 39.4 逐文件结论表 · B/C/D：**要等装配 / 不能换**（65 个）
 
 #### B1：要等 `PlayScreen` 装配 —— **5 个 / 149 行**（❌）
 
@@ -7150,7 +7150,7 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
 | `ViewFunctionPad.gd`（27） | 同上 | 同上 + `PlaneContainer/ExtraOptionsVBox/ExtraOptionsHBox` | ❌ 同一句错误（第 4 行） |
 | `ExtraOptionsHBox.gd`（44） | 同上（`item_rect_changed` 驱动） | `../../../LeftControls/LeftTopButtonsContainer`、`../../../PlaneContainer` | ❌ 观测：`Invalid access to property 'item_rect_changed' on null`（第 8 行） |
 | `ShowExtraButtons.gd`（38） | 视图（**基类是 `GraphwarButton`**，切图标） | `../../../../PlaneContainer` 及其 3 个子路径 + `res://show_extra_buttons.svg` / `hide_extra_buttons.svg`（**资产不在库里**） | ❌ 观测：第 9 行同一个 null 错误；另外 2 个 SVG 也不在仓库里 |
-| `AdContainer.gd`（19） | 视图（广告位高度 = 广告实际高度） | `/root/GraphwarRootNode/Ad_holder` + 它的 `ad_loaded` 信号 / `ad_size` 属性 | ❌ **但只差 2 个成员**：见 §45.5.3，补齐后原样可用 |
+| `AdContainer.gd`（19） | 视图（广告位高度 = 广告实际高度） | `/root/GraphwarRootNode/Ad_holder` + 它的 `ad_loaded` 信号 / `ad_size` 属性 | ❌ **但只差 2 个成员**：见 §39.5.3，补齐后原样可用 |
 
 #### B2：平台桥 —— **6 个 / 491 行**（🚫 桌面/headless 永远用不上）
 
@@ -7197,12 +7197,12 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
    **`.so` 出现 0 次**（`grep -c '\.so' recovered-src/MANIFEST.tsv` → `0`）。
    它们是 Android/iOS 侧的原生库，随 APK/AAB 分发，**不在本仓库能触达的范围内**。
 
-### 45.5 最小试验：原版 `.gd` 挂在我们注册的节点上，headless 跑通
+### 39.5 最小试验：原版 `.gd` 挂在我们注册的节点上，headless 跑通
 
 脚本：`client/tools/recovered_view_check.gd`（**57 条断言，退出码 0**）。
 原件副本：`client/tools/recovered/*.gd`（52 个，**逐字节等于** `recovered-src/`，A 段每次验）。
 
-#### 45.5.1 先说结论：57 条断言里最要紧的 6 行
+#### 39.5.1 先说结论：57 条断言里最要紧的 6 行
 
 ```text
 ok   A：52/52 个副本与 recovered-src 原文件**逐字节相同**
@@ -7214,7 +7214,7 @@ ok   E：AdMob / IAP 的 8 个原生类一个都不在 ClassDB 里（实际在�
 RECOVERED_VIEW 57 passed, 0 failed
 ```
 
-#### 45.5.2 旗舰：原版 `CampaingLevelsButtons.gd` 驱动**我们注册的** `GraphwarButton`
+#### 39.5.2 旗舰：原版 `CampaingLevelsButtons.gd` 驱动**我们注册的** `GraphwarButton`
 
 原版这 57 行里有一句 `GraphwarButton.new()`（关卡按钮是**运行时造**的，`docs/16` §2.1.2 记过）。
 试验证据（**观测**）：
@@ -7231,7 +7231,7 @@ ok   ★ `input_text` 也照原样写进去了（首 level_0 / 末 level_20）
 `add_theme_font_size_override()` / **`input_text`（我们自造的 `#[export]`）** 全部对得上。
 这条比"能 load"强得多：它证明**原版脚本能把命令键灌进我们的按钮**（`input_text` 就是 §1 说的"界面与内核的协议"）。
 
-#### 45.5.3 `AdContainer.gd` 三步：原样 → 有节点无成员 → 补 2 个成员
+#### 39.5.3 `AdContainer.gd` 三步：原样 → 有节点无成员 → 补 2 个成员
 
 这是本任务最有决策价值的一段：**原版脚本自己写明了它要 Rust 节点类提供什么**。
 
@@ -7244,7 +7244,7 @@ ok   ★ `input_text` 也照原样写进去了（首 level_0 / 末 level_20）
 ⇒ 结论（**观测**）：`AdContainer.gd` 换不过去**不是**"还缺一整个类"，而是**缺 1 个 signal + 1 个 property**。
 这两个成员的名字、类型、语义**全部由原版 `.gd` 自己给出**，不需要再反汇编。
 
-### 45.6 「能直接用」的 40 个到底换来了什么
+### 39.6 「能直接用」的 40 个到底换来了什么
 
 **换来的**（**观测**，逐文件读原文）：
 
@@ -7262,13 +7262,13 @@ ok   ★ `input_text` 也照原样写进去了（首 level_0 / 末 level_20）
   按下 `Campaign` 之后干什么，仍然在 Rust 的 `play_screen_control` 里。
 * **界面不会"变成原版样子"**：40 个脚本只改**字号 / 最小尺寸 / theme constant**；
   外观来自 `.tscn` + `.tres`（主题/字体）+ 149 个 `.svg`，那些要么没入库（资产），
-  要么需要整项目换 `.tscn`（那是另一件事，见 §45.7 第 5 条）。
+  要么需要整项目换 `.tscn`（那是另一件事，见 §39.7 第 5 条）。
 
-### 45.7 工作量估计与先后顺序（**推断**，括号里写缺什么证据）
+### 39.7 工作量估计与先后顺序（**推断**，括号里写缺什么证据）
 
 | 批次 | 内容 | 估工 | 缺的证据/前提 |
 |---|---|---|---|
-| **P0（立即做）** | 给 `GraphwarAdSwitch` 补 `signal ad_loaded` + `var ad_size`；把 `GraphwarRootNode` 做成 autoload（原版就挂在 `/root/GraphwarRootNode`） | **0.5 人日** | 证据已经齐（§45.5.3）；`log()` 也建议一起补（6 个平台桥都要它，**推断** 它是 `print()` 的包装，缺证据：arm64 上那个方法的函数体） |
+| **P0（立即做）** | 给 `GraphwarAdSwitch` 补 `signal ad_loaded` + `var ad_size`；把 `GraphwarRootNode` 做成 autoload（原版就挂在 `/root/GraphwarRootNode`） | **0.5 人日** | 证据已经齐（§39.5.3）；`log()` 也建议一起补（6 个平台桥都要它，**推断** 它是 `print()` 的包装，缺证据：arm64 上那个方法的函数体） |
 | **P0（同上）** | `AdContainer.gd` 原样换上去（**观测**：`recovered-src/*.tscn` 里 **12 个场景**各挂 1 个 —— 每个屏都有广告位：main_menu / campaign / lan_lobby / GameSetup / player_screen / replay_lobby / 6 个弹窗） | 含在上面 | 需要那 12 个屏的 `AdContainer` 节点真存在（我们现在只有 `GwUI.ad_slot()` 桩） |
 | **P1（半天～1 人日）** | 把 40 个里的 **37** 个纯插入布局脚本挂到现有容器上，删掉 `GwUI` 里那套自造缩放（另 3 个要顺带补结构：`PlayerTabContainer` 要 3 个页签子节点、`ChatBox` 要兄弟 `../ChatLineEdit`、`CampaingLevelsButtons` 要替掉 `campaign.gd` 现造的按钮） | **0.5–1 人日** | 我们的节点**类和名字已经对得上**（`main_menu.gd` 就是 `MarginContainer/VBoxContainer/MarginContainer/Label`，**观测**）；风险是 `maxi(10,…)` 删掉后小窗口字号会变小——**推断** 原版就是会变小 |
 | **P2（等装配）** | 5 个 `PlaneContainer` 系的（`ExtraOptionPad` / `ViewFunctionPad` / `ExtraOptionsHBox` / `ShowExtraButtons`） | 等 `PlayScreen` Rust 装配 | 缺 `PlayMainHBox` / `PlaneContainer` / `LeftControls` 这棵树 |
@@ -7283,7 +7283,7 @@ ok   ★ `input_text` 也照原样写进去了（首 level_0 / 末 level_20）
 4. **插件与平台桥不换**，在 `client/` 里保留桩（现状）即可；
 5. **不要**在本阶段做"整项目换 `.tscn`"——那是与"控制器迁回 Rust"绑定的大工程。
 
-### 45.8 复现（三分钟）
+### 39.8 复现（三分钟）
 
 ```text
 # 1) 构建带 12 个节点类的扩展（默认 feature 里没有它们）
@@ -7291,7 +7291,7 @@ export CARGO_HOME=<工作区>/.reference/cargo-home CARGO_TARGET_DIR=$CARGO_HOME
 cargo build --features gdext-bindings --offline
 cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
 
-# 2) 新增 .gd 后必须先 import（否则静默不加载，见 §41.6 第 3 条）
+# 2) 新增 .gd 后必须先 import（否则静默不加载，见 §37.6 第 3 条）
 export XDG_DATA_HOME=.../.godot-data XDG_CACHE_HOME=.../.godot-cache XDG_CONFIG_HOME=.../.godot-config
 godot --headless --path client --import
 
@@ -7306,12 +7306,12 @@ grep -oE 'recovered/[A-Za-z_0-9]+\.gd' err.log | sort -u     # 12 个
 `err.log` 里被点名的正好 **12 个**（**观测**）：`Ad_holder` / `AdContainer` / `ExtraOptionPad` /
 `ExtraOptionsHBox` / `ShowExtraButtons` / `ViewFunctionPad` / `IAP_holder` / `IAP_IOS` /
 `android_iap` / `IOS_album_holder` / `Android_mediastore_holder` / `PlayerTabContainer`。
-⇒ `52 − 12 = 40` 个"零错误"。§45.3 的 ✅ 表恰好也是 40 行，但**不是同一个集合**：
+⇒ `52 − 12 = 40` 个"零错误"。§39.3 的 ✅ 表恰好也是 40 行，但**不是同一个集合**：
 它在零错误那 40 个里**去掉 `ExtraOptionsVbox.gd`**（它在零错误里，可是空文件、`new()` 不是 Node，
 挂不上节点 ⇒ 归 B3）、**加上 `PlayerTabContainer.gd`**（它在那 12 个里，但只是 3 条引擎报错，
 功能正常）。39 + 1 = 40，两份清单可以逐条对齐。
 
-### 45.9 未知与诚实清单
+### 39.9 未知与诚实清单
 
 1. **`root.log()` 到底是什么**：6 个平台桥 + `GraphwarRootNode` 的 15 个屏切换都在调它。
    现在我们**没有**这个方法（**观测**：`GraphwarRootNode` 的方法表里没有 `log`）。
@@ -7329,19 +7329,19 @@ grep -oE 'recovered/[A-Za-z_0-9]+\.gd' err.log | sort -u     # 12 个
 6. **本节的 40/5/60 是"能不能跑"，不是"该不该换"**：`AdContainer.gd` 在 ✅/❌ 之间反复
    （原样 ❌、补 2 个成员后 ✅），计数按**原样**算。若 P0 做完，这个数会变成 **41 / 4 / 60**。
 
-## 43. `FunctionDrawer` 成了真 Godot 节点 —— 棋盘上那 3 个占位子节点换成真类（2026-11：§36 之后唯一的缺口）
+## 40. `FunctionDrawer` 成了真 Godot 节点 —— 棋盘上那 3 个占位子节点换成真类（2026-11：§32 之后唯一的缺口）
 
 **一句话**：`FunctionDrawer` 在 `gdext-bindings` 下成了一个 `Control` 子类——每个 player id 一条
 `Line2D` 子节点，`update_function` **只把 `points[已写入数..len]` 逐点 `add_point`**；
 `GraphwarPlane` 的 3 个子节点从 `@Control@N` **占位**换成了真的 `@FunctionDrawer@N`。
 headless 实测 **132 条断言全过**（退出码 0）。追加判定本身一行没写在本类里——它调的是
-`src/function_drawer.rs` 的 `append_window`（§36.3 那条 `0x498d5a` 的 `ja`）。
+`src/function_drawer.rs` 的 `append_window`（§32.3 那条 `0x498d5a` 的 `ja`）。
 
-> 档位同 §38：**逐位** = 与真二进制逐字节/逐位对拍；**观测** = 能指到反汇编地址/指令级读写；
+> 档位同 §34：**逐位** = 与真二进制逐字节/逐位对拍；**观测** = 能指到反汇编地址/指令级读写；
 > **推断** = 有依据未证；**未知** = 没解出来。`cargo test` / 本脚本的条数**只是回归保护**，
 > 不是复原证据。
 
-### 42.1 本轮动了哪些文件
+### 40.1 本轮动了哪些文件
 
 | 文件 | 增/改 | 行数 | 内容 |
 |---|---|---|---|
@@ -7355,7 +7355,7 @@ headless 实测 **132 条断言全过**（退出码 0）。追加判定本身一
 `src/function_drawer.rs`（纯逻辑）、`src/lib.rs`、其它 `*_class.rs`、`client/src/**`、`client/*.tscn`
 **一行没动**；本类没有第二份追加算术。
 
-### 42.2 验收：132 条 headless 断言全过（**观测**）
+### 40.2 验收：132 条 headless 断言全过（**观测**）
 
 ```text
 ClassDB.class_exists("FunctionDrawer")                     ⇒ true（能 instantiate、is_class("Control")）
@@ -7385,9 +7385,9 @@ GraphwarPlane.build_children() ⇒ 3 个 FunctionDrawer(@FunctionDrawer@7/8/9)  
 | 边界（空数组 / 超 i32 的 id）+ `FunctionDrawer.new()` | 12 | 空数组**也会建节点**（原版建节点在长度判定之前） |
 | `GraphwarPlane` 的 3 个子节点 | 19 | 3 个全是 `FunctionDrawer`，进树后 `ready` 不重建、已喂的点不丢 |
 
-### 42.3 本轮新读出来的证据（**指令级 / 逐位**；其中推断处已逐条标出）
+### 40.3 本轮新读出来的证据（**指令级 / 逐位**；其中推断处已逐条标出）
 
-**(a) HashMap 的 value 是 **40 B 三元组** `(Gd<Line2D>, Color, usize)`，不是 §36.3 写的二元组。**
+**(a) HashMap 的 value 是 **40 B 三元组** `(Gd<Line2D>, Color, usize)`，不是 §32.3 写的二元组。**
 `0x498f13`–`0x498f36` 的插入块（bucket 步长 48 B = 4 B key + 4 B pad + 40 B value）：
 
 ```text
@@ -7428,10 +7428,10 @@ objdump -s --start-address=0x1baff0 --stop-address=0x1bb000 .reference/steam/202
 **(f) 建节点时的 `z_index` 来自 `[self+0x40]`，**不是常量**（观测）。**
 `0x498c93` 的 `mov r12, rdi` ⇒ `r12 = self`；`0x498dee` 的 `mov r14d, [r12+0x40]` → `0x498e49` 的
 `mov esi, r14d` → `call *0x9bb028`（`set_z_index`）。⇒ 这个字段就是 2024 符号表里有、2.0.60 里
-**被内联掉的 `FunctionDrawer::set_z_index`** 的宿主（§36.1 那条推断因此更站得住）。
-**字段初值未知** ⇒ 本类不设 z_index（`Line2D` 保持默认 0），见 §43.5。
+**被内联掉的 `FunctionDrawer::set_z_index`** 的宿主（§32.1 那条推断因此更站得住）。
+**字段初值未知** ⇒ 本类不设 z_index（`Line2D` 保持默认 0），见 §40.5。
 
-**(g) 布局更正（不改旧节，按 §41.3 的做法记在这里）：纯逻辑说 map 在 `self+0x20`，本轮按指令读到
+**(g) 布局更正（不改旧节，按 §37.3 的做法记在这里）：纯逻辑说 map 在 `self+0x20`，本轮按指令读到
 的是 `self+0x00`。**
 `0x498cb9` / `0x498cbd` 的 `mov r14,[r12]` / `mov rax,[r12+8]` 是 hashbrown 的 **ctrl 指针 /
 bucket_mask**（随后 `[r14+rdx]` 的 `pcmpeqb` 组扫描；`[r12+0x10]` 在插入时递减 = `growth_left`、
@@ -7447,7 +7447,7 @@ bucket_mask**（随后 `[r14+rdx]` 的 `pcmpeqb` 组扫描；`[r12+0x10]` 在插
 `shr 0x10` + `movzx`（第三字节）→ 车道 2，再 `divps` 除以 `255.0`（`0x19c7c0`），车道 3 取常量槽
 `0x19cf70` 的 `1.0`。⇒ `0xff0000` 解出来是**蓝**（r=0, g=0, b=1）——验收脚本与 Rust 单测都钉了这一条。
 
-### 42.4 两处**按证据**与任务书不同（改了什么、为什么）
+### 40.4 两处**按证据**与任务书不同（改了什么、为什么）
 
 **(a) "颜色/宽度取自 `src/function_drawer.rs` 里已有常量" —— 这个前提不成立。**
 纯逻辑模块里**没有**颜色常量、也**没有**宽度常量（它的常量只有 `POINT_STRIDE` / `POINT_X_OFFSET` /
@@ -7456,7 +7456,7 @@ bucket_mask**（随后 `[r14+rdx]` 的 `pcmpeqb` 组扫描；`[r12+0x10]` 在插
 * **颜色在原版里是入参**（`update_function` 的 `r9d`，`GraphwarPlane::draw` 用
   `get_team_overview` 的队色填它）⇒ 本类把它做成 `update_function(player_id, points, color)` 的
   第三个参数，**只在建节点时用一次**，不给默认值（默认值就是发明）；
-* **宽度是 `update_transform` 里的常量** ⇒ 从 `.rodata` 逐位读出 **0.125**（见 §43.3b），
+* **宽度是 `update_transform` 里的常量** ⇒ 从 `.rodata` 逐位读出 **0.125**（见 §40.3b），
   写在 `LINE_WIDTH` 里带地址。
 
 **(b) `new_len` 不再是独立入参。**
@@ -7464,24 +7464,24 @@ bucket_mask**（随后 `[r14+rdx]` 的 `pcmpeqb` 组扫描；`[r12+0x10]` 在插
 （`function_drawer.rs:45:38`，槽 `0x95a270`）。本类取 `new_len = points.len()` ⇒ 那条 panic
 分支**按构造不可达**（不变量交给类型）。**不是**删证据：`append_window` 仍是唯一的判定。
 
-### 42.5 还没做 / 未知（诚实清单）
+### 40.5 还没做 / 未知（诚实清单）
 
 * **棋盘上还是画不出曲线**：3 个子节点是真的 `FunctionDrawer` 了，但 `GraphwarPlane::draw` 里
   那个 `0x456df0`（`graphwar_function_manager::get_active_functions_on_tick`）**没有接**——
   没有东西喂函数点。本类只是"能喂就会画"。
-* **`z_index` 的初值未知**（§43.3f）：本类不设。缺的证据是 `self+0x60` 的写入点（`init` 里）。
+* **`z_index` 的初值未知**（§40.3f）：本类不设。缺的证据是 `self+0x60` 的写入点（`init` 里）。
 * **`FunctionDrawer::draw`（arm64 `0x3911b4`）x86 侧仍未定位** ⇒ 本类**不实现 `_draw`**
-  （§36.3 的有界否定照旧成立）。
+  （§32.3 的有界否定照旧成立）。
 * **`update_transform` 三个入参的含义未知**：`x`/`y`/`scale` 是按被调者 `set_position` / `set_scale`
   的用法起的名字，真正传什么由 `GraphwarPlane::draw` 决定，本切片没接。
-* **3 个 `FunctionDrawer` 各管什么仍是未知**（§36.7 第 2 条没有被本轮推翻，也没有被加强）。
+* **3 个 `FunctionDrawer` 各管什么仍是未知**（§32.7 第 2 条没有被本轮推翻，也没有被加强）。
 * **`add_point_total()` 是我方计数**，不是引擎侧钩子；"增量"的硬证据是 `get_point_count()` 与
   `get_point_position(0..9)` 那几条，脚本里另有对照断言防止空过。
-* **过期登记（不改旧节，按 §41.3 的做法记在这里）**：§41.8 那条"`FunctionDrawer` / `ObstacleDrawer`
+* **过期登记（不改旧节，按 §37.3 的做法记在这里）**：§37.8 那条"`FunctionDrawer` / `ObstacleDrawer`
   类还不存在，3 个子节点是 `Control` 占位"对 `FunctionDrawer` 已经过期——本类存在了；
-  `ObstacleDrawer` 仍不存在。§36.3 那句 `HashMap<i32, (Gd<Line2D>, usize)>` 应读作 §43.3a 的三元组。
+  `ObstacleDrawer` 仍不存在。§32.3 那句 `HashMap<i32, (Gd<Line2D>, usize)>` 应读作 §40.3a 的三元组。
 
-### 42.6 复现（三分钟）
+### 40.6 复现（三分钟）
 
 ```text
 # 1) 打开 feature 构建
@@ -7498,7 +7498,7 @@ godot --headless --path client --import
 # 4) 验收（132 条断言，退出码 0）
 godot --headless --path client --script res://tools/function_drawer_check.gd
 
-# 5) 回归保护（本条分支的实测数，§41.7 那组 488/1530 是更早提交的快照）
+# 5) 回归保护（本条分支的实测数，§37.7 那组 488/1530 是更早提交的快照）
 cargo test --offline                            # lib 457 / 总计 1499
 cargo test --offline --features gdext-bindings  # lib 522 / 总计 1564（基线 518/1560 + 本批 4 条单测）
 python3 tools/coverage_matrix.py --check        # OK（本次重跑只动了 src_files/src_fns/src_tree_sha256）

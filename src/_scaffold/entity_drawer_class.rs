@@ -2,7 +2,7 @@
 //!
 //! # 为什么会有这一份
 //!
-//! 原版的 `EntityDrawer` 是一个 **`Control` 子类**（`docs/16-client.md` §24）：它自己**不画士兵**，
+//! 原版的 `EntityDrawer` 是一个 **`Control` 子类**（`docs/16-client.md` §21）：它自己**不画士兵**，
 //! 而是给每个实体建 **4 个子节点**——3 个 `Sprite2D`（皮肤 / 脸 / 帽子）+ 1 个 `RichTextLabel`（名字）——
 //! 每帧由 `process` 调 `update_sprite` / `update_name_label` 摆位置。
 //!
@@ -61,7 +61,7 @@
 //!
 //! 最后三个计数是**观测点**：没有它们，headless 里分不清"引擎没回调"和"回调了但没干活"。
 //!
-//! # 写这种类必须知道的五条（**本轮全部实测**，`docs/16-client.md` §37.4）
+//! # 写这种类必须知道的五条（**本轮全部实测**，`docs/16-client.md` §33.4）
 //!
 //! 1. **`Gd<Node>` 不保活。** `RawGd::drop` 的文档写死了"手动管理的对象什么也不做"
 //!    （`godot-core/src/obj/raw_gd.rs`）⇒ 缓存句柄既不会延长寿命、也不会代替 `free`。
@@ -96,7 +96,7 @@ use crate::entity_drawer::{self, EntityChildNode, Vec2 as BoardVec2};
 // 1. 程序生成贴图（替代原版从 pck 取的皮肤 / 脸 / 帽子）
 // ---------------------------------------------------------------------------
 
-/// 程序生成贴图的默认边长（像素）。8×8 是**我方选择**（原版贴图尺寸在 pck 里，见 `docs/16` §24）。
+/// 程序生成贴图的默认边长（像素）。8×8 是**我方选择**（原版贴图尺寸在 pck 里，见 `docs/16` §21）。
 pub const DEFAULT_TEXTURE_SIZE: i32 = 8;
 
 /// 默认队伍色：纯红（打包 `u32` 的低字节 = R ⇒ `0x000000ff`）。
@@ -169,7 +169,7 @@ fn layer_color(texture_method: &str) -> (f32, f32, f32, f32) {
 /// 名字标签的初始尺寸 = `recovered-src/name_label.tscn` 的 `offset_right` / `offset_bottom`。
 ///
 /// 那个文件的根节点没有写 anchor ⇒ 四个 anchor 全是默认 0、四个 offset 里只有 right/bottom
-/// 有值 ⇒ 控件左上角在 `(0, 0)`、尺寸 `25 × 40`。**观测（pck 回收资源，`docs/16` §24 提到的
+/// 有值 ⇒ 控件左上角在 `(0, 0)`、尺寸 `25 × 40`。**观测（pck 回收资源，`docs/16` §21 提到的
 /// `res://name_label.tscn`）**
 pub const NAME_LABEL_SIZE: (f32, f32) = (25.0, 40.0);
 
@@ -249,7 +249,7 @@ pub struct EntityDrawer {
 
     /// 打包队伍色（低字节 = R）。默认 [`DEFAULT_TEAM_COLOR`]。
     ///
-    /// 原版这个颜色来自 `GraphwarDrawUtil::get_team_overview`（`docs/16` §24 的镜像判据）；
+    /// 原版这个颜色来自 `GraphwarDrawUtil::get_team_overview`（`docs/16` §21 的镜像判据）；
     /// 本切片**由调用方给**——队伍管理还没接进来。
     #[export]
     team_color: i64,
@@ -317,7 +317,7 @@ impl IControl for EntityDrawer {
     }
 
     /// `_process`：原版每帧调 `update_sprite` ×3 + `update_name_label` ×2 并做死亡淡出
-    /// （`docs/16-client.md` §24）。这里收敛成一次 [`Self::relayout`] ——
+    /// （`docs/16-client.md` §21）。这里收敛成一次 [`Self::relayout`] ——
     /// 摆位置的算术仍然来自 `entity_drawer::sprite_transform` / `name_label_layout`。
     fn process(&mut self, _delta: f64) {
         self.process_calls += 1;
