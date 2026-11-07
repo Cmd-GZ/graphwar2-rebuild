@@ -80,8 +80,8 @@ const WIRED_TIER := [
 	"wired",
 	# 5  SoldierManager
 	"assembled",
-	# 6  PlanePosManager      24 B 布局未知（连文件都没有）
-	"stub",
+	# 6  PlanePosManager      24 B / 3 字段全解 + 订 2 发 1 处理 1 + 9 条交互（任务 36，§52）
+	"wired",
 	# 7  GameStateManager
 	"assembled",
 	# 8  FunctionManager      32 B / 4 字段全解，容器 + 6 条交互都在，但**发方向**事件流没接
@@ -108,9 +108,9 @@ const WIRED_TIER := [
 	"assembled", "assembled", "assembled", "assembled", "assembled",
 ]
 ## 四档现值计数（顺序固定：wired / layout / assembled / stub；合计 = 22）。
-const TIER_TALLY := {"wired": 10, "layout": 2, "assembled": 9, "stub": 1}
+const TIER_TALLY := {"wired": 11, "layout": 2, "assembled": 9, "stub": 0}
 ## 容器里**什么都没有**的两个槽（纯标记）：只有它们的 `manager_impl_type()` 回 `"—"`。
-const EMPTY_IMPL := ["GraphwarClientConnectionHandler", "GraphwarPlanePosManager"]
+const EMPTY_IMPL := ["GraphwarClientConnectionHandler"]
 ## 容器类型是 `_scaffold` 包装/标记的 5 个（`SlotKind::Stub`，**不是**档位 `stub`）；
 ## `container_stub_manager_count()` 数的就是这一组（`docs/16` §41.2 的既有口径，17 + 5 = 22）。
 const PACKAGED := [
@@ -121,7 +121,7 @@ const PACKAGED := [
 const PACKAGED_TIER := {
 	"GraphwarTickHandler": "wired",
 	"GraphwarClientConnectionHandler": "layout",
-	"GraphwarPlanePosManager": "stub",
+	"GraphwarPlanePosManager": "wired",
 	"GraphwarFunctionManager": "layout",
 	"GraphwarObstacleManager": "wired",
 }
@@ -365,13 +365,17 @@ func _initialize() -> void:
 		# ⑪ EffectManager：add_effect → EffectInfo(44)；tick_event 到期回收不发声
 		"effect.kind=0", "effect.emitted=1", "effect.subs=1", "effect.due_early=0",
 		"effect.due_at=1", "effect.gone=true", "effect.outbox=1",
+		# ⑫ PlanePosManager（任务 36）：set_position → get_position → 全量重播 → 删除
+		"plane_pos.empty=true", "plane_pos.position=1.5,-2.5,0.5", "plane_pos.tag=true",
+		"plane_pos.emitted=1", "plane_pos.all=1", "plane_pos.replayed=1",
+		"plane_pos.removed=true", "plane_pos.after=true", "plane_pos.subs=2",
 	]
 	var probe: PackedStringArray = root_node.call("manager_probe_selftest")
 	print("      manager_probe_selftest() 给出 %d 条（期望 %d 条）" % [probe.size(), expected_probe.size()])
 	ok(probe == PackedStringArray(expected_probe),
-		"11 个 manager 的最小交互结果 == 65 条 名字=值（实际 %s）" % probe)
+		"12 个 manager 的最小交互结果 == 74 条 名字=值（实际 %s）" % probe)
 	ok(probe.size() == expected_probe.size(),
-		"交互条数 == 65（11 个 manager：5+5+7+6+4 + 6+6+7+5+7+7）")
+		"交互条数 == 74（12 个 manager：5+5+7+6+4 + 6+6+7+5+7+7 + 9）")
 
 	# 逐个 manager 各取一条最关键的值再查一遍（单条查询口）
 	ok(String(root_node.call("manager_probe", "life.alive")) == "1",
@@ -410,16 +414,29 @@ func _initialize() -> void:
 	ok(String(root_node.call("manager_probe", "effect.due_at")) == "1",
 		"EffectManager：start_tick=1000 ⇒ 4600 tick 到期回收（3600 是 EFFECT_LIFETIME_TICKS）")
 
+	# —— 任务 36 的 PlanePosManager：24 B 布局 + 位置表 + `PosInfo` 事件流 ——
+	#
+	# Rust 侧的对照单测：`graphwar_plane_pos_manager::tests::*`（size_of/offset_of 硬闸、
+	# 事件 tag 26/14）与 `root_wiring::tests::the_plane_pos_slot_holds_the_real_type_and_tracks_writes`。
+	ok(String(root_node.call("manager_probe", "plane_pos.position")) == "1.5,-2.5,0.5",
+		"PlanePosManager：set_position(id, [1.5,-2.5,0.5]) 之后 get_position(id) 读回同一组 3 个 f64")
+	ok(String(root_node.call("manager_probe", "plane_pos.tag")) == "true",
+		"PlanePosManager：set_position 发的事件 tag 就是 pos_info_event(26)")
+	ok(String(root_node.call("manager_probe", "plane_pos.subs")) == "2",
+		"PlanePosManager：订阅 2 条（new_connection_event / entity_removed_event，原版 new 内联）")
+	ok(String(root_node.call("manager_probe", "plane_pos.after")) == "true",
+		"PlanePosManager：handle_entity_removed_event(tag 14) 之后那一格真的没了")
+
 	# 反面对照（任务 28 重判）：这 5 个 `SlotKind::Stub` 槽的档位**跟着事实走**，
 	# 不再是清一色 `stub`——"能交互"不等于"复原了原版结构"，两件事分开记（§43 / §47）：
 	#   TickHandler / ObstacleManager = wired（三件齐）
 	#   ClientConnectionHandler / FunctionManager = layout（布局逐字段解出，行为没做完）
-	#   PlanePosManager = stub（24 B 布局未知）
+	#   PlanePosManager = wired（任务 36：24 B / 3 字段全解 + 事件流两方向 + 9 条交互，§52）
 	for type_name in PACKAGED:
 		ok(String(root_node.call("module_slot_status", type_name)) == PACKAGED_TIER[type_name],
 			"%s 的档位 = %s（不再是清一色 stub）" % [type_name, PACKAGED_TIER[type_name]])
-	ok(int(tally["stub"]) == 1,
-		"22 个槽里只剩 1 个真 stub（PlanePosManager），不是 5 个")
+	ok(int(tally["stub"]) == 0,
+		"22 个槽里**一个真 stub 都不剩**（最后一个 PlanePosManager 任务 36 升 wired），不是 5 个")
 
 	# 幂等：连调两次必须给出同一串（probe 不许把状态改歪）
 	var probe_again: PackedStringArray = root_node.call("manager_probe_selftest")
