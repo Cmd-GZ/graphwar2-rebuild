@@ -3103,3 +3103,169 @@ cargo run --release --offline -q --example diffconv_parity -- --dir $R --max-sam
 > **每批之前的模式 == 第一批之前的模式，0 例外**。96 份回放全文里出现过两种取值，但那些切换
 > 都落在**最后一批之后**（换局的设置广播）。⇒ `Match::new` 那一次初始化就够覆盖全语料；
 > `Predictor` 的时刻表是"按事件语义写对"，不是"靠它拿分"。
+
+## 35. **运行时**抓到点数组的填充者：`calculate_function`；写进去的 y 与求值器**逐位相同**（2026-11-07，`dispatch/25`）
+
+> 任务书：[`25-frida-point-array.md`](../dispatch/25-frida-point-array.md)。**本节全部是运行时观测**
+> （frida 17.26.1 挂在真游戏 `Graphwar II` Linux 2.0.60 进程里），不是静态推断。
+> 脚本：[`tools/frida_point_array.js`](../tools/frida_point_array.js)（下断）+ [`tools/frida_point_array.py`](../tools/frida_point_array.py)（驱动）。
+>
+> 前置：§25.4（点数组 8 字节布局）、§25.5 第 2 条（"填充者未知"）、§26.2（arm64 逐指令）、§32.9 第 1 行。
+
+### 35.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 游戏跑起来了吗 | **跑起来了**：Linux **2.0.60**（Steam 版，`libgraphwarrust.so` sha256 `9a538115…`），Xvfb + frida 拉起，进到 campaign 对局并**开了炮** | **观测** |
+| ② | 点数组的填充者 | **`calculate_function`，x86-64 ELF RVA `0x3c2530`**（FDE `[0x3c2530,0x3c2bb9)`，本构建）。它自己 `push` 出 `Vec<(f64,f64)>` 并把它当返回值交给调用方；调用方（`gw+0x3e2d3b`，`graphwar_remote_event_handler.rs` 里那个大函数 `0x3e2830`）把这个 0x20 字节记录**原样**放进开火队列 `[GSM+0x38+i*0x20]` | **观测** |
+| ③ | 写进去的 y 与采样器/求值器返回值 | **逐位相同**：`3588/3588`（run5）、`4062/4062`（复跑）、`4482/4482`（run4）——`exact = n-1`、`ulp1 = 0`。**唯一不来自求值的点是第 0 点**（炮口/出生点）。⇒ **1 ulp 不在这一步** | **逐位**（真机内存 vs 真机求值器返回值） |
+| ④ | 同坐标不同序号的"序号" | **未观测到样本**（缺什么见 §35.6） | **未知** |
+
+### 35.1 怎么跑起来的（命令 + 版本 + 日志）
+
+构建与二进制（**地址都相对这一份**）：
+
+```text
+构建      Graphwar II Linux 2.0.60（Steam）
+          .reference/game/{Graphwar.x86_64, Graphwar.pck, libgraphwarrust.so}
+sha256    9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187  libgraphwarrust.so
+          ⇒ 与逆向目标**逐字节相同**，所以本节所有 RVA 都是"目标二进制"的地址
+引擎      Godot 4.7.stable.official.5b4e0cb0f + godot-rust (API v4.6, runtime v4.7)
+```
+
+跑法（两个坑，都实测）：
+
+1. **`/tmp` 是逐命令 tmpfs** ⇒ `Xvfb` 的 `/tmp/.X11-unix` 跨命令不可见。改成 **TCP 监听**
+   （`Xvfb :92 -listen tcp -ac`），后续任何命令都能用 `DISPLAY=127.0.0.1:92` 连上。
+2. **Xvfb 直接起会 core dump**（`libEGL_nvidia` → `swrast_dri` 段错误）。加
+   `__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json` +
+   `LIBGLX_VENDOR_LIBRARY_NAME=mesa` + `LIBGL_ALWAYS_SOFTWARE=1` 后正常（llvmpipe）。
+3. Vulkan 不可用 ⇒ Godot 自己回落到 OpenGL 3（日志原文见下）。
+
+```bash
+# ① Xvfb（TCP，1920x1160 —— 与真帧管线同尺寸）
+Xvfb :92 -screen 0 1920x1160x24 -listen tcp -ac &
+# ② frida 拉起真游戏 + 下断 + 点菜单 + 长按开火（同一个 PID 命名空间里做完）
+.reference/venv/bin/python tools/frida_point_array.py --out /abs/run.jsonl --display 127.0.0.1:92
+```
+
+游戏自己的输出（**原文**，`[stderr]`）：
+
+```text
+Initialize godot-rust (API v4.6.stable.official, runtime v4.7.stable.official, safeguards balanced)
+Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
+WARNING: Your video card drivers seem not to support the required Vulkan version, switching to OpenGL 3.
+...
+src/graphwar_function_input.rs:519: dt:0.010279712      ← 对局里每帧打的 debug 行
+src/entity_drawer.rs:585: dt:0.008586611
+src/effect_drawer.rs:507: dt:0.048114464
+```
+
+真帧（1920×1160 根窗口截图，逐帧看过，**不入库**，一条命令可重放）：
+主菜单四项 + 右下角版本号 **`2.0.60`**；`Battle` → LAN 大厅（`Create Game`/`Join IP`）；
+`Campaign` → 关卡节点 → `Level 0 / Write a function of x to hit the target` → `Start` →
+对局界面（左键区数字/函数键盘、右侧 `Fire!`、底部 `f(x) =` 输入框）；输入 `sin(x)+3` 后
+**长按** `Fire!` 2 s，图上出现正弦曲线并开始播放弹道。
+
+⚠ **`Fire!` 是长按按钮**（`play_screen.tscn` 里 `FireButton.long_press_input_text = "fire"`）：
+单击只按下不动，必须 `mousedown; sleep 2; mouseup`。踩过一次（前两炮"没反应"就是这个）。
+
+### 35.2 下断地址：**本构建**逐条核对过（并更正 §25.4 的一句话）
+
+`tools/addr_probe.py fde <rva>`（`.eh_frame`，`--so` 指到 `.reference/game/libgraphwarrust.so`）：
+
+| RVA | FDE 范围 | 是什么 | 怎么核的 |
+|---|---|---|---|
+| `0x472470` | `[0x472470, 0x473513)` | `execute_results` | 序言 `push rbp/r15/r14/r13/r12/rbx` + `sub rsp,0x148`，与 §25.4 记的一致 |
+| `0x4724cc` | 同上（体内） | 开火队列预扫第一条指令 `mov 0x40(%rbp),%rsi` | 停在这里读 `rbp`=self 与 `[self+0x38/+0x40/+0x48]` |
+| `0x3c2530` | `[0x3c2530, 0x3c2bb9)` | `calculate_function` | 函数指针槽 `0x9bac98` **运行时**读出来 = `base+0x3c2530`（旧文档的"唯一入口"成立） |
+| `0x4eb9d0` | `[0x4eb9d0, 0x4ebbe0)` | 求值器（`src/math_function.rs`） | 递归自调用点 `gw+4eba49/4eba6b/4eba91` |
+
+📌 **更正 §25.4 的"`0x472470` 别再照着用"**：那句话对 **2026-08-28 那份 x86** 成立；
+在 **Linux 2.0.60（sha256 `9a538115…`）** 这份上，`0x472470` **就是** `execute_results`，
+`.eh_frame` 给的函数体 4260 B，与 arm64 的 3712 B 同量级同形状（本条 **观测**）。
+
+### 35.3 开火队列在 x86 上的实际布局（与 arm64 记的差 8 字节）
+
+`execute_results` 体内 `0x4724cc` 处停下，`rbp` = GSM：
+
+```text
+[self+0x38] = 队列 ptr        [self+0x40] = 队列 len(u32)     [self+0x48] = cap(u32)
+元素步长 0x20（函数体里 shl $0x5），元素布局（真机内存 dump，四次抓取一致）：
+  +0x00 kind(u64)      例：0x8000000000000001 / 0x8000000000000002 / 0x1000 / 0x2000
+  +0x08 pts.ptr
+  +0x10 len(u64)       ← 点数组长度（函数体 `mov 0x10(%rdx),%edi` 用的就是它，再 ÷30 算 start_tick）
+  +0x18 = 230 (u64)    ← **四次抓都是 230**，与 len 无关，**不是 cap**（cap < len 不可能）
+```
+
+⇒ §25.4 记的 arm64 `[x19+0x30/+0x38/+0x40]` 与这里的 `+0x38/+0x40/+0x48` **差 8 字节**。
+是不是同一结构的不同基址 —— **未知**（缺：arm64 那份的同一处运行时 dump）。
+
+### 35.4 填充者 = `calculate_function`（RVA `0x3c2530`）：四条独立证据
+
+一炮打出去，点数组有 **3221 / 3589 / 4063 / 4483 / 4847** 个点（每次不同，取决于打在哪儿），
+x 步长恒 **0.00875**（世界坐标）。
+
+1. **返回值就是这个队列元素**：`calculate_function` 在 `onLeave` 时 `xmm0` 低 16 字节 =
+   `{kind=0x1000, ptr=0x7f294c144860}`，而同一发在 `execute_results` 里读出的队列元素 =
+   `{kind=0x1000, ptr=0x7f294c144860, len=3221, 230}` —— **ptr 同一个**。
+2. **`Vec` 扩容的调用栈落在它体内**（`realloc` 探针，size ≥ 16 KB，调用方在 `.so` 内）：
+   ```text
+   realloc(16384) → gw+460fff ← gw+460c5a ← gw+4ebb48 ← **gw+3c2b23** ← gw+3c30c7   (第 1 次调用)
+   realloc(32768) → 同上                                            ← gw+3c30c7
+   realloc(65536) → 同上                                            ← gw+3c30c7
+   realloc(16384) → 同上                                            ← **gw+3e2d3b** （进队列的那一次）
+   ```
+   `gw+0x3c2b23` ∈ `[0x3c2530, 0x3c2bb9)` = `calculate_function` 体内。
+3. **逐点的求值调用点也在它体内**：求值器的**精确返回地址**直方图（一次开火，run5）：
+   ```text
+   gw+3c2995 : 18222      ← calculate_function 体内（每点一次）
+   gw+3c2a21 :  7178      ← 同上（另一条采样臂）
+   gw+4eba49/4eba6b/4eba91 : 50804/50804/25408   ← 求值器**自递归**
+   gw+3c602f : 11
+   ```
+4. **写进去的每个点都来自这里**：见 §35.5 的 `pairWho` 全 = `gw+3c2995`。
+
+调用者：一次开火里 `calculate_function` 被调 **2 次**——
+`gw+0x3c30c7`（客户端/绘制侧）与 `gw+0x3e2d3b`（`src/graphwar_remote_event_handler.rs` 的
+`0x3e2830` 大函数，**这一份的返回值进了开火队列**）。⇒ 一句话：
+**`calculate_function` 生产点数组，`graphwar_remote_event_handler` 那个开火分支把它原样入队。**
+
+### 35.5 1 ulp 判定：写进去的 y 与求值器返回值**逐位相同**
+
+做法（全部在游戏进程里算，`xmm0` 只取低 8 字节 = 一个 f64 的位模式）：
+把求值器每次返回的 y 与 (x,y) 对收进两张表；等 `execute_results` 里的点数组出现时逐点回查。
+
+| 抓取 | 点数组 len | `exact`（y 逐位相同） | `ulp1`（差 ±1 ulp） | `miss` | `(x,y)` 双位命中 & 来自谁 |
+|---|---|---|---|---|---|
+| run4 | 4483 | **4482** | **0** | 1 | 4482，全 = `gw+3c2995` |
+| run5 | 3589 | **3588** | **0** | 1 | 3588，全 = `gw+3c2995` |
+| run_final（用交付脚本复跑） | 4063 | **4062** | **0** | 1 | 4062，全 = `gw+3c2995` |
+
+* 三次的 `miss` **都是同一个点：`i = 0`**。它是炮口/出生点（世界坐标 `(-11.394271926113204,
+  -12.600201435480562)`，下一个点 x = 前一个 + 0.00875），**不是一次求值**，所以查不到天经地义。
+* ⇒ **y 从求值器到点数组这一步一个 bit 都没变**。§25.5 / §32.9 里"1 ulp 可能在这一步"的假设
+  **被运行时否掉**；残留要么在求值之前（文本/常数/取 x），要么在点数组之后（取末点 → 报文）。
+
+### 35.6 ④「同坐标不同序号的序号从哪来」：**没取到样本**
+
+* 本轮只打通了 **campaign Level 0**（"写一条 f(x) 打到目标"）：**场上没有任何 obstacle**，
+  `execute_results` 里那条 `DestroyObstacle` 分支根本不会走。
+* 想取样需要**带障碍物的对局**：`Battle → Create Game` 的 LAN 大厅里 Team 2 是空的，
+  `+` 按钮点了只高亮、没有增员（`Start` 于是不生效）。**缺：**大厅加机器人/第二个玩家的
+  正确点击路径（或一份带 `DestroyObstacle` 的存档/关卡）。
+* 现在能说的只有静态那条（**观测**，arm64）：两处 `EffectInfo` 的 id 来自 `ldxr/stxr` 的
+  **全局原子计数器自增**（§25.4）。**障碍物实体 id 是不是同一个计数器 —— 未知**，没证据。
+
+### 35.7 复跑与数据
+
+```bash
+Xvfb :92 -screen 0 1920x1160x24 -listen tcp -ac &                 # 要 mesa-only 的 EGL/GLX 变量
+.reference/venv/bin/python tools/frida_point_array.py --out /abs/run.jsonl --display 127.0.0.1:92
+# ↑ 自动：spawn 真游戏 → 挂钩 → 点 Campaign/关卡/Start → 输入 sin(x)+3 → 长按 Fire! → 抓 exec_queue
+```
+
+输出是 JSONL：`hooks`（下断结果 + 指针槽内容）、`exec_enter`、`exec_queue`
+（队列原文 + 点数组 head/tail/`yhash` + `classify`）、`evals`、`samplers`、`reallocs`、`beat`。
+`classify` 里的 `exact/ulp1/miss/pairWho` 就是 §35.5 那张表。
+原始 JSONL 留在 `.agent-work/`（可丢弃，**不入库**）；本节数字都能用上面这一条命令重新生成。
