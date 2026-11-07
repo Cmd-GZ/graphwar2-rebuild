@@ -24,7 +24,7 @@
 use crate::graphwar_path_calculator::Mode;
 use crate::plane::empty_mask;
 use crate::_scaffold::replaydiff::{
-    compare_batch, split_batches, BatchVerdict, Inputs, Msg, Policy, Replay, StateMask,
+    compare_batch, split_batches, BatchVerdict, Inputs, Msg, Policy, Replay, ShotInput, StateMask,
 };
 use crate::graphwar_shot_calculator::settle::{resolve, Target};
 
@@ -99,6 +99,13 @@ pub fn unbalanced_brackets(text: &str) -> usize {
 ///
 /// DiffEq（`Mode::Ode`）不走这条：那时 y 不是一个纯函数值，回代无意义，
 /// 实测停点自己就是逐位相同的（376/550）。
+///
+/// **非有限值（NaN / ±inf）一律回退到停点**。理由不是"好看"：±inf 写进报文会变成
+/// `"pos_y":-inf` —— **不是合法 JSON**，下游（`Msg::parse_wire`）整条丢掉，
+/// 于是这一批在种类序列上"少一条 `ExplosionEffect`"。语料里恰好 1 批
+/// （`1787655980` 第 1 批，回放的 `pos_y` 是有限的 11.36 而我们的求值给 `-inf`），
+/// 见 `docs/06-verification.md` §25.7。回退值本身**不是真值**（真值未知），
+/// 只是"别发出一个不是数字的坐标"。
 pub fn explosion_point(corrected: &str, stop: (f64, f64), flip: bool, mode: Mode) -> (f64, f64) {
     if mode != Mode::Normal {
         return stop;
@@ -109,7 +116,7 @@ pub fn explosion_point(corrected: &str, stop: (f64, f64), flip: bool, mode: Mode
     }
     let x = if flip { -stop.0 } else { stop.0 };
     let y = crate::math_function::eval(&toks, x, 0.0, 0.0);
-    if y.is_nan() {
+    if !y.is_finite() {
         return stop;
     }
     (stop.0, y)
@@ -177,6 +184,9 @@ impl ConvPredictor {
 
     /// 与 `Match::fire` 一模一样的一条报文流（顺序见 `docs/43`），只有
     /// 采样模式与修正文本换成回放给的规则。
+    ///
+    /// **它就是 `N = 1` 的 [`ConvPredictor::fire_batch`]**：报文逐字节相同
+    /// （`mod tests::single_shot_is_byte_identical_to_fire_batch` 钉住）。
     pub fn fire(
         &mut self,
         owner_id: i64,
@@ -186,88 +196,186 @@ impl ConvPredictor {
         flip: bool,
         now_tick: i64,
     ) -> (Vec<String>, ShotOutcome) {
-        let others: Vec<Target> = self
-            .soldiers
-            .iter()
-            .filter(|t| !(t.id == owner_id) && !((t.x - x0).abs() < 1e-12 && (t.y - y0).abs() < 1e-12))
-            .copied()
-            .collect();
-
-        let outcome = resolve(
-            function_text,
+        let shot = ShotInput {
+            owner: owner_id,
             x0,
             y0,
-            crate::SERVER_STEP,
             flip,
-            self.mode,
-            &self.mask,
-            &others,
-        );
-        let corrected = corrected_function(function_text, x0, y0, flip, self.mode);
+            text: function_text.to_string(),
+        };
+        let (msgs, mut outs) = self.fire_batch(std::slice::from_ref(&shot), now_tick);
+        (msgs, outs.remove(0))
+    }
 
-        let mut msgs = vec![
-            crate::_scaffold::protocol::emit_game_state("CalculatingResults"),
-            crate::_scaffold::protocol::emit_function_info(owner_id, function_text, Some(&corrected)),
-            crate::_scaffold::protocol::emit_function_points(owner_id, x0, y0, outcome.stop.0),
-            crate::_scaffold::protocol::emit_game_state("SynchronizingResults"),
-        ];
+    /// **一次结算批**：同时回合制的一个事务（`docs/141` §1–§3），报文顺序
+    ///
+    /// ```text
+    /// GameStateInfo(CalculatingResults)
+    /// FunctionInfo(owner_i, 原文, 修正后) × N     ← 按类型分组，顺序 = 批内发序
+    /// FunctionPoints(owner_i, 起点, end_x) × N    ← 同一顺序
+    /// GameStateInfo(SynchronizingResults)
+    /// [EffectInfo(死亡/灰烬/火花)] × D            ← 按弹丸**飞行时间**（弧长）升序
+    /// [QueueDestroyObstacle] × B                 ← 回放不记录，位置无证据
+    /// (FunctionActive(owner_i) + EffectInfo(Explosion)) × N   ← 每发一对，同一顺序
+    /// GameStateInfo(ExecutingResults)
+    /// ```
+    ///
+    /// 与 [`ConvPredictor::fire`] 的差别只有两条，都是 `docs/141` 里 130 个真多发包
+    /// 130/130 对上的规则：
+    ///
+    /// 1. **报文按类型分组**（逐发各开一个窗口的话，`GameStateInfo` 会是 3N 条而不是 3 条；
+    ///    归因表里 `S` 123 + `SD` 7 = 130 = 全部多发批，症状都是这一条）；
+    /// 2. **几何并行**：每一发都对着**批开始那一刻**的士兵表算（`docs/141` §2.1，
+    ///    死亡集合恰好等于"逐发独立"的并集，152/152）；谁死不改变别人的弹道。
+    ///
+    /// 死亡块里同一名士兵**只出现一次**，归属**最早到达**的那一发：同一回合所有弹丸的
+    /// `active_tick` 相同（13/13 回合），所以"谁先到"⇔"谁的弧长更短"，
+    /// 排序键取 `(弧长, 发序号, 士兵 id)`；全体并列的兜底纯为确定性，
+    /// 真游戏在"两发同时到达"时怎么判仍是 **未知**（`docs/141` §5 第 5 条）。
+    ///
+    /// `N = 1` 时本函数与 [`ConvPredictor::fire`] 逐字节相同 ⇒ 单发批**不可能**变差。
+    pub fn fire_batch(
+        &mut self,
+        shots: &[ShotInput],
+        now_tick: i64,
+    ) -> (Vec<String>, Vec<ShotOutcome>) {
+        // ---- 结算阶段 ----
+        // ① 几何并行：先按批开始那一刻的士兵表把每一发算完，再动状态。
+        //    目标表的排除规则与 `fire` 逐字节一致（射手本人 + 起点重合者）。
+        let mut resolved = Vec::with_capacity(shots.len());
+        for s in shots {
+            let others: Vec<Target> = self
+                .soldiers
+                .iter()
+                .filter(|t| {
+                    !(t.id == s.owner) && !((t.x - s.x0).abs() < 1e-12 && (t.y - s.y0).abs() < 1e-12)
+                })
+                .copied()
+                .collect();
+            resolved.push(resolve(
+                &s.text,
+                s.x0,
+                s.y0,
+                crate::SERVER_STEP,
+                s.flip,
+                self.mode,
+                &self.mask,
+                &others,
+            ));
+        }
+        let corrected: Vec<String> = shots
+            .iter()
+            .map(|s| corrected_function(&s.text, s.x0, s.y0, s.flip, self.mode))
+            .collect();
 
-        for id in &outcome.killed {
-            msgs.push(crate::_scaffold::protocol::emit_life_queued_death(*id, now_tick));
-            if let Some(t) = self.soldiers.iter().find(|t| t.id == *id) {
-                self.next_effect_id += 1;
-                let et = death_effect_type(self.skin.get(id).map(|s| s.as_str()));
-                msgs.push(crate::_scaffold::protocol::emit_effect_info(
-                    self.next_effect_id,
-                    t.x,
-                    t.y,
-                    et,
-                    now_tick,
-                ));
+        // ② 合并死亡：按 (弧长, 发序号, 士兵 id) 升序，同一士兵只留最早到达的那一发。
+        let mut merged: Vec<(f64, usize, i64)> = Vec::new();
+        for (si, out) in resolved.iter().enumerate() {
+            for h in &out.hits {
+                merged.push((h.arc, si, h.id));
             }
         }
-        if !outcome.killed.is_empty() {
-            self.soldiers.retain(|t| !outcome.killed.contains(&t.id));
+        merged.sort_by(|a, b| {
+            a.0.partial_cmp(&b.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.1.cmp(&b.1))
+                .then(a.2.cmp(&b.2))
+        });
+        let mut deaths: Vec<i64> = Vec::with_capacity(merged.len());
+        for (_, _, id) in &merged {
+            if !deaths.contains(id) {
+                deaths.push(*id);
+            }
         }
 
-        if outcome.blocked {
+        // ---- 广播阶段 ----
+        let mut msgs = vec![crate::_scaffold::protocol::emit_game_state("CalculatingResults")];
+        // ③ 前缀按类型分组（`docs/141` §3.1 ①②）
+        for (s, c) in shots.iter().zip(corrected.iter()) {
+            msgs.push(crate::_scaffold::protocol::emit_function_info(
+                s.owner,
+                &s.text,
+                Some(c),
+            ));
+        }
+        for (s, out) in shots.iter().zip(resolved.iter()) {
+            msgs.push(crate::_scaffold::protocol::emit_function_points(
+                s.owner, s.x0, s.y0, out.stop.0,
+            ));
+        }
+        msgs.push(crate::_scaffold::protocol::emit_game_state("SynchronizingResults"));
+
+        // ④ 死亡块：顺序 = 到达时刻；特效类型照抄**出生登记**（[`death_effect_type`]）
+        for id in &deaths {
+            msgs.push(crate::_scaffold::protocol::emit_life_queued_death(*id, now_tick));
+            let Some(t) = self.soldiers.iter().find(|t| t.id == *id) else {
+                continue;
+            };
+            self.next_effect_id += 1;
+            let et = death_effect_type(self.skin.get(id).map(|s| s.as_str()));
+            msgs.push(crate::_scaffold::protocol::emit_effect_info(
+                self.next_effect_id,
+                t.x,
+                t.y,
+                et,
+                now_tick,
+            ));
+        }
+
+        // ⑤ 挖洞块（回放不记录 `QueueDestroyObstacle`，位置**无证据**；沿用单发实现的
+        //    "死亡之后、`FunctionActive` 之前"）
+        for out in resolved.iter() {
+            if !out.blocked {
+                continue;
+            }
             msgs.push(format!(
                 r#"{{"QueueDestroyObstacle":{{"pos_x":{},"pos_y":{},"radius":0.5,"tick":{}}}}}"#,
-                outcome.stop.0, outcome.stop.1, now_tick
+                out.stop.0, out.stop.1, now_tick
             ));
-            crate::plane::rasterize(&mut self.mask, outcome.stop.0, outcome.stop.1, 0.5, 0xFF);
+            crate::plane::rasterize(&mut self.mask, out.stop.0, out.stop.1, 0.5, 0xFF);
             self.pending_destroy.push((
                 now_tick + DESTROY_DELAY_TICKS,
                 format!(
                     r#"{{"DestroyObstacle":{{"pos_x":{},"pos_y":{},"radius":0.5}}}}"#,
-                    outcome.stop.0, outcome.stop.1
+                    out.stop.0, out.stop.1
                 ),
             ));
         }
 
-        msgs.push(crate::_scaffold::protocol::emit_function_active(owner_id, now_tick));
-        self.next_effect_id += 1;
-        let (ex, ey) = explosion_point(&corrected, outcome.stop, flip, self.mode);
-        msgs.push(crate::_scaffold::protocol::emit_effect_info(
-            self.next_effect_id,
-            ex,
-            ey,
-            "ExplosionEffect",
-            now_tick,
-        ));
+        // ⑥ 每发一对 `FunctionActive` + `EffectInfo(Explosion)`，顺序与前缀相同
+        for ((s, out), c) in shots.iter().zip(resolved.iter()).zip(corrected.iter()) {
+            msgs.push(crate::_scaffold::protocol::emit_function_active(s.owner, now_tick));
+            self.next_effect_id += 1;
+            let (ex, ey) = explosion_point(c, out.stop, s.flip, self.mode);
+            msgs.push(crate::_scaffold::protocol::emit_effect_info(
+                self.next_effect_id,
+                ex,
+                ey,
+                "ExplosionEffect",
+                now_tick,
+            ));
+        }
         msgs.push(crate::_scaffold::protocol::emit_game_state("ExecutingResults"));
 
-        (
-            msgs,
-            ShotOutcome {
-                owner: owner_id,
-                function: function_text.to_string(),
-                corrected,
-                stop: outcome.stop,
-                blocked: outcome.blocked,
-                killed: outcome.killed,
-            },
-        )
+        // ---- 状态落地（报文里的坐标/类型都来自批开始时的快照）----
+        if !deaths.is_empty() {
+            self.soldiers.retain(|t| !deaths.contains(&t.id));
+        }
+
+        let outs = shots
+            .iter()
+            .zip(resolved.into_iter())
+            .zip(corrected.into_iter())
+            .map(|((s, r), c)| ShotOutcome {
+                owner: s.owner,
+                function: s.text.clone(),
+                corrected: c,
+                stop: r.stop,
+                blocked: r.blocked,
+                killed: r.killed,
+            })
+            .collect();
+        (msgs, outs)
     }
 
     /// 到期的 `DestroyObstacle`（与 `Match::tick` 同义）。
@@ -556,7 +664,12 @@ pub fn geom_exact(g: &ShotGeom) -> bool {
 pub enum Cause {
     /// 全对
     Clean,
-    /// 结算批里 ≥2 发（同时回合制按类型分组发 N 发）—— 已知未实现的层
+    /// **多发批的老症状**：逐发各开一个结算窗口 ⇒ `GameStateInfo` 是 3N 条而不是 3 条。
+    ///
+    /// 2026-11-07 第二轮接线（`docs/06` §25）之前，这一档把**所有** ≥2 发的批都吞了；
+    /// 现在只在**种类计数确实差 `GameStateInfo`** 时才算（与
+    /// `tools/bit_exact_attrib.py` 的 `S` 桶同一条判据），否则落到下面的字段级归因 ——
+    /// 否则"结构已对、值还错"的多发批会被误报成结构问题。
     MultiShot,
     /// `FunctionInfo.corrected_function` 文本
     Corrected,
@@ -577,7 +690,7 @@ pub enum Cause {
 pub fn cause_name(c: &Cause) -> &'static str {
     match c {
         Cause::Clean => "完全一致",
-        Cause::MultiShot => "多发批（按类型分组，未实现）",
+        Cause::MultiShot => "多发批结构（逐发窗口未分组，GameStateInfo 3N 条）",
         Cause::Corrected => "corrected_function 文本",
         Cause::EndX => "FunctionPoints.end_x",
         Cause::PosX => "爆炸点 pos_x",
@@ -588,14 +701,28 @@ pub fn cause_name(c: &Cause) -> &'static str {
     }
 }
 
+/// 种类序列差里 `GameStateInfo` 的条数差（我方 − 回放）。
+///
+/// `> 0` ⇒ 就是"逐发各开一个窗口"那个老症状（`docs/141` §1 的 `S` 桶）。
+fn state_gap(v: &BatchVerdict) -> i64 {
+    for d in &v.diffs {
+        if d.path.contains("块的种类") {
+            let c = |t: &str| t.matches("GameStateInfo").count() as i64;
+            return c(&d.ours) - c(&d.observed);
+        }
+    }
+    0
+}
+
 fn classify(v: &BatchVerdict, multi: bool) -> Cause {
     if v.content_ok && v.order_ok {
         return Cause::Clean;
     }
-    if multi {
+    // 只有"种类计数确实差 GameStateInfo"的多发批才算结构问题（第二轮接线后应为 0）
+    if multi && state_gap(v) > 0 {
         return Cause::MultiShot;
     }
-    // 单发批：按字段路径归因
+    // 结构已对的批（含接线后的多发批）：按字段路径归因
     for d in &v.diffs {
         if d.path.contains("corrected_function") {
             return Cause::Corrected;
@@ -712,14 +839,13 @@ pub fn run_file(path: &std::path::Path, policy: &Policy, max_diffs: usize) -> Fi
         }
         res.scored_batches += 1;
         let tick = replay.msgs[b.start].tick;
+        // 一个结算批 = 一个事务（`docs/141` §3）：**一次** `fire_batch` 产出整批。
+        // 旧写法是逐发 `fire` 再把报文拼起来 —— 那是归因表里 `S` 桶 123 批的全部内容。
+        let (wire, _outs) = pred.fire_batch(&b.shots, tick);
         let mut ours: Vec<Msg> = Vec::new();
-        for (shot_i, shot) in b.shots.iter().enumerate() {
-            let _ = shot_i;
-            let (wire, _o) = pred.fire(shot.owner, &shot.text, shot.x0, shot.y0, shot.flip, tick);
-            for w in &wire {
-                if let Ok(m) = Msg::parse_wire(w) {
-                    ours.push(m);
-                }
+        for w in &wire {
+            if let Ok(m) = Msg::parse_wire(w) {
+                ours.push(m);
             }
         }
         let observed: Vec<Msg> = replay.msgs[b.start..=b.end].to_vec();
@@ -790,5 +916,141 @@ mod tests {
         // 回放 1782642986 的原文与真值
         let got = corrected_function("5/155sin(4exp(4*6cos(", 0.0, 6.055, false, Mode::Normal);
         assert!(got.starts_with("5/155sin(4exp(4*6cos()))"), "got = {got}");
+    }
+
+    /// 非有限值不是坐标：`±inf` 会写成非法 JSON（`"pos_y":-inf`），回退到停点。
+    #[test]
+    fn non_finite_explosion_point_falls_back_to_stop() {
+        let stop = (2.0, 3.5);
+        // `1/(0)` 在 x=0 处求值是 +inf
+        assert_eq!(explosion_point("1/(0)", stop, false, Mode::Normal), stop);
+        assert_eq!(explosion_point("-1/(0)", stop, false, Mode::Normal), stop);
+        // 负样本：有限值照常回代，不回退
+        let (x, y) = explosion_point("0.00", stop, false, Mode::Normal);
+        assert_eq!(x, stop.0);
+        assert_eq!(y, 0.0);
+    }
+
+    // -----------------------------------------------------------------------
+    // 多发批结构（`docs/141` §3）：分组规则 + "N = 1 逐字节不变"
+    // -----------------------------------------------------------------------
+
+    /// 两个士兵：1 号在原点、7 号在 **(0, 10)** —— 两条 `y = 常数` 的弹道都不穿过对方
+    /// （距离 10 > 半径 0.5），所以这批**一发都打不死**，可以干净地钉报文结构。
+    fn two_soldiers() -> ConvPredictor {
+        ConvPredictor::new(
+            &[],
+            vec![
+                Target { id: 1, x: 0.0, y: 0.0, radius: 0.5 },
+                Target { id: 7, x: 0.0, y: 10.0, radius: 0.5 },
+            ],
+            Mode::Normal,
+        )
+    }
+
+    fn kinds(wire: &[String]) -> Vec<String> {
+        wire.iter()
+            .map(|w| {
+                let m = Msg::parse_wire(w).expect("我方 emitter 产出了非法 JSON");
+                if m.kind == "EffectInfo" {
+                    format!("EffectInfo/{}", m.get_str("effect_type").unwrap_or_default())
+                } else {
+                    m.kind.clone()
+                }
+            })
+            .collect()
+    }
+
+    /// **单发批逐字节不变**：`fire` ≡ `fire_batch(N=1)`。
+    ///
+    /// 这是"接线不许让单发批变差"的**机械化保证**（不是"跑一遍看着没变"）：
+    /// `fire` 现在就是这个函数的一发特例。
+    #[test]
+    fn single_shot_is_byte_identical_to_fire_batch() {
+        let text = "0.00";
+        let (a, oa) = two_soldiers().fire(1, text, 0.0, 0.0, false, 100);
+        let shot = ShotInput { owner: 1, x0: 0.0, y0: 0.0, flip: false, text: text.into() };
+        let (b, ob) = two_soldiers().fire_batch(&[shot], 100);
+        assert_eq!(a, b, "N=1 的报文必须逐字节相同");
+        assert_eq!(oa.stop, ob[0].stop);
+        assert_eq!(oa.killed, ob[0].killed);
+        assert_eq!(oa.corrected, ob[0].corrected);
+    }
+
+    /// 两发一批：**前缀按类型分组、后缀每发一对**（`docs/141` §3.1）。
+    #[test]
+    fn two_shot_batch_is_grouped_by_type() {
+        let shots = vec![
+            ShotInput { owner: 1, x0: 0.0, y0: 0.0, flip: false, text: "0.00".into() },
+            ShotInput { owner: 7, x0: 0.0, y0: 10.0, flip: true, text: "0.00".into() },
+        ];
+        let (wire, outs) = two_soldiers().fire_batch(&shots, 100);
+        assert_eq!(outs.len(), 2);
+        let k = kinds(&wire);
+        assert_eq!(
+            k,
+            vec![
+                "GameStateInfo",
+                "FunctionInfo",
+                "FunctionInfo",
+                "FunctionPoints",
+                "FunctionPoints",
+                "GameStateInfo",
+                "FunctionActive",
+                "EffectInfo/ExplosionEffect",
+                "FunctionActive",
+                "EffectInfo/ExplosionEffect",
+                "GameStateInfo",
+            ],
+            "= docs/141 §3.1 的分组：前缀按类型连排、后缀每发一对"
+        );
+        // 负样本：逐发各开一个窗口的老写法有 **6** 条 `GameStateInfo`（3/发）
+        let mut old = Vec::new();
+        for s in &shots {
+            let (w, _) = two_soldiers().fire(s.owner, &s.text, s.x0, s.y0, s.flip, 100);
+            old.extend(kinds(&w));
+        }
+        assert_eq!(old.iter().filter(|x| x.as_str() == "GameStateInfo").count(), 6);
+        assert_ne!(old, k);
+    }
+
+    /// 死亡块**按飞行时间**排、同一士兵只出现一次（`docs/141` §2.2）。
+    #[test]
+    fn death_block_follows_flight_time() {
+        // 两条弹道都扫过 7 号：发 0 从 1 号出发（先 9 后 7）、发 1 从 9 号出发（先到 7）
+        let mut p = ConvPredictor::new(
+            &[],
+            vec![
+                Target { id: 1, x: 0.0, y: 0.0, radius: 0.5 },
+                Target { id: 9, x: 1.0, y: 0.0, radius: 0.5 },
+                Target { id: 7, x: 15.0, y: 0.0, radius: 0.5 },
+            ],
+            Mode::Normal,
+        );
+        let shots = vec![
+            ShotInput { owner: 1, x0: 0.0, y0: 0.0, flip: false, text: "0.00".into() },
+            ShotInput { owner: 9, x0: 1.0, y0: 0.0, flip: false, text: "0.00".into() },
+        ];
+        let (wire, outs) = p.fire_batch(&shots, 100);
+        // 几何并行：两发都对着批开始的士兵表算，谁死不影响别人
+        assert_eq!(outs[0].killed, vec![9, 7]);
+        assert_eq!(outs[1].killed, vec![7]);
+        let mut death_effects: Vec<(f64, f64)> = Vec::new();
+        for w in &wire {
+            let m = Msg::parse_wire(w).unwrap();
+            if m.kind == "EffectInfo" && m.get_str("effect_type").as_deref() == Some("DeathEffect") {
+                death_effects.push((
+                    m.get_f64("pos_x").unwrap_or(f64::NAN),
+                    m.get_f64("pos_y").unwrap_or(f64::NAN),
+                ));
+            }
+        }
+        // 7 号被两发都扫过 ⇒ 只死一次；死者位置来自**批开始**的快照（x = 15，不是 1）
+        assert_eq!(death_effects.len(), 2, "9 号与 7 号各一条");
+        assert_eq!(death_effects[0].0, 1.0);
+        assert_eq!(death_effects[1].0, 15.0);
+        // 状态落地：两名死者都从士兵表里移除
+        assert_eq!(p.soldiers.len(), 1);
+        assert_eq!(p.soldiers[0].id, 1);
     }
 }
