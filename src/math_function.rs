@@ -329,9 +329,13 @@ pub fn parse(text: &str) -> Vec<Token> {
 // 3. 求值
 // ---------------------------------------------------------------------------
 
-/// `sqrt`：负数得 NaN（不是报错）。
+/// `sqrt`：**就是 `sqrtsd`**（二进制 `0x4ebb26`：`xorps xmm0,xmm0` + `sqrtsd`）。
+///
+/// 不要特判负数：`sqrtsd` 对负数给的是**负 NaN**（`fff8000000000000`），
+/// 而 `f64::NAN` 是正 NaN（`7ff8000000000000`）。逐位对拍 `docs/06` §30：
+/// `sqrt(-1) → fff8000000000000`。
 fn m_sqrt(x: f64) -> f64 {
-    if x >= 0.0 { x.sqrt() } else { f64::NAN }
+    x.sqrt()
 }
 
 /// 弦长：游戏用的是 `sqrt(a*a + b*b)`，不是真正的 `hypot`。
@@ -339,16 +343,13 @@ pub(crate) fn m_hypot(a: f64, b: f64) -> f64 {
     m_sqrt(a * a + b * b)
 }
 
-/// 除法：除零走符号规则而不是 panic。
+/// 除法：**就是 `divsd`**（二进制 `0x4ebb4e`：`divsd xmm5,xmm3`）。
+///
+/// 过去的特判（`b == 0` 时自己拼 `±inf` / `NaN`）是照搬上游 Python 参照实现
+/// （Python 除零要抛异常，必须自己拼）；IEEE 的 `divsd` 本来就给
+/// `1/0 = +inf`、`1/-0 = -inf`、`0/0 = -NaN`，逐位比特判更准
+/// （特判把 `0/0` 拼成**正** NaN，而 `divsd` 给 `fff8000000000000`）。
 fn m_div(a: f64, b: f64) -> f64 {
-    if b == 0.0 {
-        if a == 0.0 || a.is_nan() {
-            return f64::NAN;
-        }
-        // 量值取 inf、符号跟 a；再乘上 b 的符号（对应 Python 的
-        // math.copysign(inf, a) * math.copysign(1.0, b)）
-        return f64::INFINITY.copysign(a) * 1.0f64.copysign(b);
-    }
     a / b
 }
 
@@ -357,18 +358,20 @@ fn m_pow(a: f64, b: f64) -> f64 {
     a.powf(b)
 }
 
-/// `log10`：**0 走 NaN**，不是 -inf。
+/// `log10`：**就是 libm 的 `log10`**（二进制 tag 10 → GOT `0x9bc270` = `log10`）。
 ///
-/// 实测真二进制：`log(0) = NaN`、`log(-0.0) = NaN`、`log(1e-320) = -320.000004…`，
-/// 所以判据是 `v <= 0` 而非 `v < 0`。上游 Python 参照实现过去在这里给 `-inf`，
-/// 属于已知偏差；本 crate 一律以二进制为准。
+/// ⚠️ 2026-11 更正（`docs/06` §30，unicorn 逐位）：`log(0) = -inf`、`log(-0.0) = -inf`、
+/// `log(-1) = NaN`。旧版本这里写的是「`v <= 0` → NaN」，来源是
+/// `analysis/emu.py` 把导入映射到 **python 的 `math`**——python 对 `log10(0)`
+/// 是**抛异常**、被 `_safe` 兜成 NaN；真 libm 是**返回 `-inf`**。
+/// 也就是说那一条是 **oracle 的假象**，不是二进制的行为。
 pub(crate) fn m_log10(v: f64) -> f64 {
-    if v <= 0.0 { f64::NAN } else { v.log10() }
+    v.log10()
 }
 
-/// 自然对数：同 [`m_log10`]，0 走 NaN。
+/// 自然对数：同 [`m_log10`]（tag 11 → GOT `0x9bbec0` = libm `log`）。
 pub(crate) fn m_ln(v: f64) -> f64 {
-    if v <= 0.0 { f64::NAN } else { v.ln() }
+    v.ln()
 }
 
 /// 前缀序列求值。`dy` 在游戏里永远传 0。

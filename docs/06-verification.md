@@ -2029,3 +2029,267 @@ cargo run --release --offline --example kseq_text  -- --dir $R --file 1782676398
 | 2 | `1782675586#0` 我们多发 1 个死者（184743，`d = 0.42 < radius 0.5`） | 真值的致死半径/判据（现在全体士兵都按 0.5 算） | **未知** |
 | 3 | 2 发 DiffEq 的 `corrected_function` 真值**既不补括号也不加后缀**，而 `game.rs` 恒按 Normal 加后缀 | `Match::fire` 的"按模式分"（收敛层 `diffconv` 已做，`game.rs` 没做） | **未知**（`docs/06` §28.9 第 4 条的同一件事） |
 | 4 | `hole_point` 里同一个模式（多余的 `)` 会让"按印刷文本回代"丢掉常数） | — | 实测**改掉它整份 401 回放 0 行差异**（md5 相同），所以**没改**（无证据的改动不做）；等有独立证据再动 |
+
+## 30. 求值器与二进制**逐位一致**；154 批 1 ulp 残差**不在**求值器里（2026-11-07，`dispatch/15`）
+
+> 任务书：`dispatch/15-eval-unicorn.md`（P0）——"用 unicorn 对拍 `evaluate_recursive`，解掉最后 1 ulp"。
+> 本节回答三件事：**对拍台怎么搭**、**求值器到底差在哪**（答案：不再差）、
+> **那 154 批 1 ulp 是什么**（答案：不是求值器，且给出反证）。
+> 顺带把 §25.2/§25.5 的 16 批"纯序列化格式差"打到 **0**。
+> ⚠️ 任务书说"最大 §27，你用 §28"；本提交时文件里 §28/§29 已被并行任务占了，所以本节用 **§30**
+> （同号冲突按任务书约定由协调者合并）。
+
+### 30.1 一句话结论（五条）
+
+1. **对拍台搭好了、可复跑**：`tools/eval_oracle.py`（unicorn 直调 `0x4ed670` 解析 + `0x4eb9d0` 求值）
+   ＋ `examples/eval_oracle.rs`（把我方 `parse`/`eval` 的 token 与结果逐发导出）。
+   逐发比较是**端到端**的（真解析器 + 真求值器，不吃我方 token），比"喂同一串 token"更硬。
+2. **求值器有 3 处真偏差，已修**（`src/math_function.rs`），全部是"照搬上游 python 参照实现"留下的：
+   `log(0)`/`ln(0)` 给 `NaN`（真二进制 **-inf**）、`0/0` 与 `sqrt(-1)` 的 NaN **符号位**不同。
+   修完 `--sweep` 的 17 条边角语义**逐位一致**。
+3. **`fixtures/eval.tsv` 有 3 行真值是错的**（`log(0)`、`ln(0)`、`ln(-2)`），根因是
+   `analysis/emu.py` 把数学导入映射到 **python 的 `math`**（定义域外**抛异常**→ 兜成 NaN），
+   不是 libm（**返回值**）。已改 `tools/gen_fixtures.py`（换成 `ctypes` 调 `libm.so.6`）并重生成；
+   `path.tsv` / `parse.tsv` **一字未变**（正对照：说明或旧夹具的其它部分本来就是对的）。
+4. **那 154 批 1 ulp **不是**求值器**：残留里挑的 **8/8** 条最小复现，真二进制给的值与我方**逐位相同**，
+   而回放观测值比**两者**都差 **±1 ulp**。另外给出**不可能性证明**：`x + 35.910` 这类"一次加法"里，
+   把 x 与常数各扫 ±3000 ulp 都到不了观测值（§30.5）。
+   ⇒ 任务书"H1'求值器最后一次舍入不同'"这条前提，**被证伪**（与第二轮另外 5 条同一种性质）。
+5. **16 批序列化格式差 → 0**：`emit_*` 的 f64 打印改成 ryu 语义（`{:?}` + `e-5` 那一档补定点），
+   `posy_attrib.py` 的"纯序列化格式"从 **16 批降到 0 批**；`fire` 内容命中 **325 → 331**、
+   `batch` **346 → 355**、`batch_conv` 内容 **595 → 615**（种类序列 **1074 不退**）。
+
+### 30.2 对拍台（地址级事实先钉死）
+
+`evaluate_recursive` 的**签名与四个跳转目标**（`objdump -d` 于
+`steam/2026-08-28/libgraphwarrust.so`，sha256 `9a538115…`）：
+
+```text
+0x4eb9d0  push r15/r14/rbx; sub rsp,0x40
+          movapd xmm4,xmm0          ; x
+          mov    rax,[rsi]          ; i = *pos
+          cmp    rax,[rdi+0x10]     ; i vs len      （rdi = &Vec<Token>，字段 {cap@0,ptr@8,len@0x10}）
+          jae    0x4ebb78           ; 越界 -> 0.0
+          mov    rcx,[rdi+0x8]      ; tokens
+          mov    rax,[rcx+rdx]      ; tag（16 字节/token：{tag:u64, value:f64}）
+0x4eba0b  bt 0x1fe20,rax          ; 一元算子集合 {5,9,10,11,12,13,14,15,16}
+0x4eba16  bt 0xe0007,rax          ; 叶子集合   {0,1,2,17,18,19}
+          ... else 两次递归（4eba44 / 4eba66）= 二元 {3,4,6,7,8}
+0x4ebab7  lea rcx,0x1c3c6c; movsxd rax,[rcx+rax*4]; add rax,rcx; jmp rax   ; 18 项跳转表
+```
+
+跳转表 `0x1c3c6c`（18 项 `int32` 相对偏移）解出来的 **每个 tag 的真实指令**：
+
+| tag | 记号 | 目标 | 实际运算 | 与我方实现 |
+|---|---|---|---|---|
+| 0 / 1 / 2 | `x` / `y` / `y'` | `0x4ebb78` / `0x4ebacb` / `0x4ebb2f` | 直接返回 `xmm4/xmm1/xmm2` | 一致 |
+| 3 / 4 / 6 / 7 | `+ - * /` | `0x4ebb48` / `0x4ebb0d` / `0x4ebb70` / `0x4ebb4e` | `addsd` / `subsd` / `mulsd` / `divsd` | **`/` 曾不一致**（§30.3） |
+| 5 | `neg` | `0x4ebb5c` | `xorpd` 符号掩码 `0x19e690` | 一致（`-x`） |
+| 8 | `^` | `0x4ebb95` | `jmp [0x9bc278]` = **libm `pow`** | 一致（`powf` → `pow`） |
+| 9 | `sqrt` | `0x4ebb26` | `xorps xmm0,xmm0` + `sqrtsd` | **曾不一致**（§30.3） |
+| 10 | `log` | `0x4ebb82` | `jmp [0x9bc270]` = libm **`log10`** | **曾不一致**（§30.3） |
+| 11 | `ln` | `0x4ebafa` | `jmp [0x9bbec0]` = libm `log` | **曾不一致**（§30.3） |
+| 12 | `exp` | `0x4ebb13` | `jmp [0x9bbeb8]` = libm `exp` | 一致 |
+| 13 | `abs` | `0x4ebb66` | `andpd` 掩码 `0x19c050` | 一致（`.abs()`） |
+| 14 / 15 / 16 | `sin`/`cos`/`tan` | `0x4ebae7` / `0x4ebb35` / `0x4ebad4` | libm `sin`/`cos`/`tan` | 一致 |
+| 17 | `const` | `0x4ebb54` | `movsd xmm0,[r15+8]` | 一致 |
+| 18 / 19 | `(` / `)` | `0x4ebcb7` | **落到 panic 路径**（`cmp rax,0x11; ja`） | 我方把它们留在 token 流里但求值不到（真实解析器把它们**删掉**，见 §30.7） |
+
+`GOT 槽 → 符号`（`.rela.dyn` 的 `R_X86_64_RELATIVE`/`GLOB_DAT` 解析，`NEEDED libm.so.6`）：
+`0x9bc258=tan`、`0x9bc260=sin`、`0x9bc268=cos`、`0x9bc270=log10`、`0x9bc278=pow`、
+`0x9bbeb8=exp`、`0x9bbec0=log`。
+
+### 30.3 三处真偏差（已修）：`log`/`ln` 的定义域、`div`/`sqrt` 的 NaN 符号
+
+`tools/eval_oracle.py --sweep`（真二进制直调，`0x4eb9d0`）实测：
+
+| 表达式 | 真二进制 | 我方（修前） | 判据 |
+|---|---|---|---|
+| `log(0)` | **-inf** `fff0000000000000` | `NaN` `7ff8000000000000` | libm `log10` |
+| `log(-0.0)` | **-inf** | `NaN` | libm `log10` |
+| `log(-1)` | `NaN` `7ff8000000000000` | `NaN` | ✓ |
+| `ln(0)` | **-inf** `fff0000000000000` | `NaN` | libm `log` |
+| `ln(-2)` | `NaN` `fff8000000000000` | `NaN` `7ff8…` | **符号位不同** |
+| `sqrt(-1)` | `NaN` `fff8000000000000` | `NaN` `7ff8…` | `sqrtsd` 给负 NaN |
+| `sqrt(-0.0)` | `-0.0` | `-0.0` | ✓ |
+| `0/0` | `NaN` `fff8000000000000` | `NaN` `7ff8…` | `divsd` |
+| `1/0` / `1/-0.0` | `+inf` / `-inf` | 一致 | ✓ |
+
+> ⚠️ **旧结论作废**：`docs/03` §11 曾写"`log(0) = NaN`，判据是 `v <= 0`，
+> 上游 Python 给 -inf 是偏差，已按二进制修正"。**这条是反的**——
+> 二进制的 `log` 就是 libm `log10`（GOT `0x9bc270`），`log10(±0) = -inf`。
+> 当初"实测"用的是同一个 `analysis/emu.py`，而它把导入映射到 python 的 `math`：
+> `math.log10(0)` **抛 ValueError**，被 `_safe` 兜成 `NaN` ⇒ 记下来的是 **oracle 的假象**。
+> 本节的值来自 `ctypes` 直调 `libm.so.6`，与二进制里的同一份 `libm` 同一个符号。
+
+修法（`src/math_function.rs`，全部是"去掉特判、直接用硬件/libm 指令"，反而更短）：
+
+```rust
+fn m_sqrt(x: f64) -> f64 { x.sqrt() }          // sqrtsd；负数 -> 负 NaN
+fn m_div(a: f64, b: f64) -> f64 { a / b }      // divsd；0/0 -> 负 NaN，1/0 -> inf
+pub(crate) fn m_log10(v: f64) -> f64 { v.log10() }
+pub(crate) fn m_ln(v: f64) -> f64 { v.ln() }
+```
+
+**副作用（已重建真值）**：`fixtures/eval.tsv` 由 `tools/gen_fixtures.py` 生成，其 oracle 用的
+`emu.MATH`＝python `math`，所以 3 行本来就是错的。修 `gen_fixtures.py`（`install_libm()` 换成
+`ctypes` 调 `libm.so.6`）后重生成，`git diff fixtures/` **只有这 3 行**：
+
+```diff
+-log  10:…;0:…  0.0 0.0 0.0  7ff8000000000000   →   fff0000000000000   (-inf)
+-ln   11:…;0:…  0.0 0.0 0.0  7ff8000000000000   →   fff0000000000000
+-ln   11:…;0:… -2.0 3.0 0.0  7ff8000000000000   →   fff8000000000000   (NaN 的符号位)
+```
+
+`path.tsv`（224 例）、`parse.tsv`（37 例）**完全没变** —— 这是"libm 换法没有副作用"的正对照。
+
+`EXP` 这条**没改**（它本来就调 libm `exp`，`exp(1000) = +inf` 一直是对的）；只有
+python-math-oracle 会把 `exp` 溢出记成 NaN，真值夹具里恰好没有这种行。
+
+### 30.4 全量对拍：求值器**零差异**（可复跑）
+
+```bash
+WS=<仓库根>; export EMU=$WS/.reference/analysis-repo
+export CARGO_HOME=$WS/.reference/cargo-home CARGO_TARGET_DIR=$WS/.agent-work/cg/target15
+R=$WS/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline --example eval_oracle -- --dir $R --json $OUT/evalcases.jsonl
+$WS/.reference/venv/bin/python tools/eval_oracle.py --cases $OUT/evalcases.jsonl
+```
+
+| 步 | 结果（1290 发） |
+|---|---|
+| `tokens_ok`（真解析器的 tag 序列 == 我方） | **1280** |
+| `const_differ`（同一个 tag 上 CONST 的值不同） | **0** |
+| `eval_ok`（真求值器 == 我方，**逐位**） | **1280** |
+| `eval_differ` | **0** |
+| `tokens_differ`（**解析**层面不同，见 §30.7） | **8** |
+| `empty`（回放里 `corrected_function` 为空） | 2 |
+
+⇒ **求值器（`0x4eb9d0`）在我方所有回放文本 + 真实 x 上逐位一致（1280/1280，0 差异）**；
+剩下的差异全部在**解析器**一侧（§30.7 的 8 发"多余 `)`"），与"最后 1 ulp"无关。
+
+⚠️ oracle 侧的**必须**：`analysis/emu.py` 的 `alloc()` 是只进不退的 bump allocator，
+逐发跑要在每行前把 `heap_ptr` 放回堆底，否则第 ~470 行起就
+`RuntimeError('emulated heap exhausted')`（第一版脚本正是这么翻车的：821 条假 `parse_err`）。
+`tools/eval_oracle.py::reset_heap` 做这件事。
+
+### 30.5 154 批 1 ulp：**不是**求值器（8/8 反证 + 不可能性证明）
+
+从 `Y` 桶（`tools/posy_attrib.py` 的 154 批）里挑最小复现，三方对照
+（`tools/eval_oracle.py --repro`，真二进制 vs 我方 vs 回放观测）：
+
+| `corrected_function` | x | 真二进制 | 我方 | 回放 `pos_y` | 差 |
+|---|---|---|---|---|---|
+| `x + 35.910` | -20.911460745133482 | `402dff408986d908` | `402dff408986d908` | `402dff408986d909` | **+1 ulp** |
+| `x + 11.649` | 3.3506886740401742 | `402dffd731a25e49` | 同左 | `402dffd731a25e4a` | +1 |
+| `-0.29(x)^2 + 10.691` | 6.322417849086799 | `bfecd64ead4a3560` | 同左 | `bfecd64ead4a355f` | -1 |
+| `sqrt(abs(175-x^2)-1) - 0.112` | 13.19090509020422 | `bfbb7268730d6e4e` | 同左 | `bfbb7268730d6e4d` | -1 |
+| `-x + 2.457` | 17.455988098017656 | `c02dff7b5e34287c` | 同左 | `c02dff7b5e34287d` | +1 |
+| `sin(x6cos(5)) - 10.615` | -1.0476229930439582 | `c0272f6480bfc54d` | 同左 | `c0272f6480bfc54e` | +1 |
+| `1/(100(x-10)) + 6.282` | 9.99952991831176 | `c02dfb57096fa9b4` | 同左 | `c02dfb57096fa9b3` | -1 |
+| `sqrt(4-4sin(x)^2) + 0.221` | 24.992373421336396 | `40019c527cf1ad1f` | 同左 | `40019c527cf1ad20` | +1 |
+
+**8/8：真二进制 == 我方（逐位），回放比两者都差 ±1 ulp。** 差的方向有正有负，不是系统性偏置。
+
+**不可能性证明（`x + 35.910` 这一条，纯算术，可手算复核）**：
+`x = -20.911460745133482`（`c034e9557dcbefa4`）、`c = fl("35.910")`（`4041f47ae147ae14`），
+两者都是 f64。`x + c` 的**精确实数值**恰好是 `obs - 1 ulp(obs)`，也就是说
+**精确和本身就在 f64 网格上**（`ulp(x) = 2 ulp(obs)`）。于是：
+
+* 改 `x`：任何邻近 f64 都差 ≥ `1 ulp(x) = 2 ulp(obs)` ⇒ 结果只能取到 `…515` / `…517` 这类**偶数跳**；
+* 改 `c`：`1 ulp(c) = 4 ulp(obs)` ⇒ 跳得更远；
+* 两者同时改：`Δ = (2k + 4m)·ulp(obs)`，**偶数**，而 `obs` 与 `fl(x+c)` 相差 **奇数**（1）。
+* 暴力复核：`x` 扫 ±3000 ulp × `c` 扫 ±3000 ulp，**0 命中**（脚本内联在 §30.5 的推导里；
+  `x+35.910` 的 `fl` 序列是 `…508 / …511 / …515 / …518 / …522`，`obs=…516` 落在**格点之间**）。
+
+⇒ 观测值**不可能**是"任一 f64 的 x 与任一 ±3000 ulp 的常数做过一次正确舍入加法"的结果。
+剩下的解释只有"这个 y 不是这条文本的一次求值"（细节来源见 §25.4 的空白：点数组的填充者未定位），
+或"报文里的十进制不是最短往返"（但那与 `end_x` 逐位吻合的事实矛盾）。
+**这一条仍是未知**，但"求值器最后一位不同"这条解释**已被排除**。
+
+### 30.6 16 批序列化格式差 → **0**（`emit_*` 的 f64 改成 ryu 语义）
+
+`src/_scaffold/protocol.rs` 新增 `emit_f64()`，`emit_function_points` / `emit_effect_info` 用它：
+
+* `format!("{}")`（`Display`）**不能用**：整数值丢 `.0`（`15` vs `15.0`）、**永不**用指数记法
+  （`2.638231208698597e-62` 打成 66 位小数）——这正是 §25.2 那 16 批的两种形态。
+* `format!("{:?}")`（`Debug`）是**最短往返**，且定/指数分界与 ryu 只差**一档**：
+  十进制点落在 `kk == -4`（`|v| ∈ [1e-5, 1e-4)`）时 ryu 用**定点**，`Debug` 用指数。
+  实测：只换成 `{:?}` 时 16 批 → **1 批**（`-4.3453289208041886e-5` vs `-0.000043453289208041886`），
+  补上 `fixed_for_small()` 后 → **0 批**。
+* 非有限值写 `null`（serde_json 不接受 `NaN`/`inf`）。
+
+护栏（`src/_scaffold/protocol.rs::emit_f64_tests`，3 条）：
+`ryu_fixtures_roundtrip` 把 `fixtures/protocol*.jsonl`（**真实抓包**，ryu 写的）里
+**每一个**浮点字面量重新格式化后逐字节比对；`ryu_known_divergences` 钉住 6 条已知分叉 +
+`e-5` 那一档；`emit_message_uses_ryu` 钉住整条报文。
+
+| 指标（`tools/posy_attrib.py`，`conv` 轴） | 修前 | 修后 |
+|---|---|---|
+| 纯序列化格式（值同、字节不同） | **16 批** | **0 批** |
+| 数值末位差（`Y` 桶另一半） | 154 批 | 154 批（未动，见 §30.5） |
+| 失败批（1080 分母） | 511 | 495 |
+
+### 30.7 附带发现：**真解析器对"多余的 `)`"是跳过，不是截断**（§29.7 第 1 行的答案）
+
+§29.7 第 1 行把"真解析器遇到没有配对的 `)` 怎么处理"标成**未知**，并说明我方 `parse` 是**截断**、
+只在 `game.rs` 里绕开。`tools/eval_oracle.py` 直调 `0x4ed670` 给出了答案：
+
+| 文本 | 真解析器 tag 序列 | 含义 |
+|---|---|---|
+| `x)` | `[0]` | 多余 `)` 被**丢掉** |
+| `x)+1` | `[3,0,17]` | `ADD(x, 1)` —— **没有**截断，继续解析 |
+| `2+(x))` | `[3,17,0]` | `ADD(2, x)` |
+| `(x)+1)` | `[3,0,17]` | 尾部多余 `)` 丢掉 |
+| `sin(x))` | `[14,0]` | ✓ |
+| `)` / `()` | `[]` | 空 |
+| `(x` | `[0]` | 缺 `)` 也照样解析 |
+
+⇒ 规则是 **"无主的 `)` 直接被跳过，解析继续"**，不是"丢掉整段尾部"。如实记录：
+**我方 `parse` 目前仍是截断**（本次**没有**动它 —— 它影响的是 8/1290 发"括号不平衡"的文本，
+属于 `game.rs` 已绕开的那一类，改动需要单独一轮逐位回归，见 §30.9 第 2 行）。
+
+**这 8 发就是 §30.4 表里的 `tokens_differ`，逐条核对**：全 1290 发里
+`#(` < `#)`（多右括号）的**恰好 8 发**，其余 1280 发括号平衡、解析逐 tag 相同。
+例：`14/(1+exp(100*(x-19)^2)))+24/(1+exp(100*(x-24)^2)) - 4.323`
+（`(`×6 / `)`×7）—— 真解析器给 27 个 token 的 `SUB(ADD(…), CONST)`，
+我方在第 7 个字符处的那个 `)` 上收工，只给 12 个 token 的 `DIV(14, …)`。
+
+### 30.8 验收（本分支 `agent/eval-unicorn`，同一份 401 回放快照，三条轴分开跑）
+
+```bash
+export CARGO_HOME=$WS/.reference/cargo-home CARGO_TARGET_DIR=$WS/.agent-work/cg/target15
+R=$WS/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive fire  --policy default --json $OUT/f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive batch --policy default --json $OUT/b.jsonl
+cargo run --release --offline -q --example batch_conv --dir $R --policy strict
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive conv --policy strict --json $OUT/c.jsonl
+cargo run --release --offline -q --example posy_probe    -- --dir $R --json $OUT/p.jsonl
+python3 tools/posy_attrib.py --conv $OUT/c.jsonl --probe $OUT/p.jsonl
+cargo test --offline
+```
+
+| 指标 | 轴 | 修前 | 修后 |
+|---|---|---|---|
+| 内容命中 | **fire**（`Match::fire`） | 325 / 1080 | **331 / 1080** |
+| 内容命中 | **batch**（`Match::fire_batch`） | 346 / 1080 | **355 / 1080** |
+| 内容命中 | **batch_conv**（收敛层，驱动 B） | 595 / 1080 | **615 / 1080** |
+| 种类序列 | **batch_conv**（驱动 B） | 1074 / 1080 | **1074 / 1080**（不退） |
+| 内容命中 | **conv**（`replay_attrib --drive conv --policy strict`） | 569 / 1080 | **585 / 1080** |
+| 纯序列化格式批 | conv | 16 | **0** |
+| `cargo test --offline` | — | **1520** passed | **1535** passed（+15，见下） |
+| `python3 tools/coverage_matrix.py --check` | — | OK | OK（`src` 函数数 +2，已重跑生成器） |
+
+`+15` 的构成：新增 3 条 `emit_f64` 护栏 × **5 个 test 二进制** ——
+`lib.rs` 一次，外加 `graphwar_lan_broadcaster_v6` / `graphwar_replay_reader` /
+`graphwar_server_broker_handler` / `server_broker_request_connection` 四个集成测试
+用 `#[path = "../src/_scaffold/protocol.rs"]` 把该文件编进来（所以它的 `#[cfg(test)]`
+在每个二进制里都跑一遍）。基线 1520 是我在同一棵树上 `git stash` 后**自己复算**的。
+
+### 30.9 仍未确定的（诚实清单）
+
+| # | 事项 | 缺什么 | 档 |
+|---|---|---|---|
+| 1 | 154 批 1 ulp **到底是什么**（§30.5 已排除求值器/常数/取 x） | 点数组 `[x19+0x30..0x40]` 的**填充者**（§25.4 的空白）；以及回放那份构建的 `pos_x/pos_y` 是在哪一步与"曲线点"分开算的 | **未知** |
+| 2 | 真解析器的**完整规则**（跳过无主 `)` 之后的算子结合、`(` 缺配时的边界） | 只做了 7 条探针（§30.7）；要落地得把我方 `parse` 的循环改成"跳过无主右括号"再跑全量逐位回归 | **观测**（探针级） |
+| 3 | `fixtures/eval.tsv` 之外，是否还有**别的**夹具被 python-math-oracle 污染 | `path.tsv` 已核对"一字未变"；其它夹具不是求值器生成的 | **推断**（`path/parse` 已做正对照） |

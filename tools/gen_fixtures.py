@@ -23,8 +23,34 @@ sys.path.insert(0, os.path.join(ROOT, "analysis"))
 sys.path.insert(0, ROOT)
 
 import graphwar_curve as pc          # noqa: E402
+import emu                           # noqa: E402
 from gwemu import Gw                 # noqa: E402
 from unicorn.x86_const import UC_X86_REG_XMM0   # noqa: E402
+
+
+def install_libm():
+    """把 emu 的数学导入换成 **真 libm**（`libm.so.6`），而不是 python 的 `math`。
+
+    为什么必须换（2026-11，`docs/06-verification.md` §30）：
+
+    `analysis/emu.py` 把二进制的动态导入 `log`/`log10`/`exp`/`sin`… 映射到
+    python 的 `math` 模块，而 python 对**定义域外**入参是**抛异常**、外包一层
+    `_safe` 变成 `NaN`；真 libm 是**返回值**（`log(0) = -inf`、`exp(1000) = inf`）。
+    于是旧夹具把 `log(0)` 记成了 `7ff8000000000000`（NaN）——那是 oracle 的假象，
+    不是二进制的行为。逐位复核见 `docs/06-verification.md` §30。
+
+    只覆盖 `emu.MATH` 里存在的名字；`pow` 走 `emu._do_import` 的独立分支
+    （python 的 `a ** b` 对 float 就是 libm `pow`，溢出返回 inf），不受影响。
+    """
+    import ctypes
+    libm = ctypes.CDLL("libm.so.6", use_errno=True)
+    for name in list(emu.MATH):
+        fn = getattr(libm, name, None)
+        if fn is None:
+            continue
+        fn.restype = ctypes.c_double
+        fn.argtypes = [ctypes.c_double]
+        emu.MATH[name] = (lambda f: (lambda v: f(ctypes.c_double(v))))(fn)
 
 
 def call_eval(g, toks, x, y, dy):
@@ -156,6 +182,7 @@ def gen_path(g):
 
 
 def main():
+    install_libm()
     print("映射真二进制…")
     g = Gw()
     gen_parse()

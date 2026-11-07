@@ -1627,23 +1627,37 @@ mod tests {
         assert!(m.tick(queued_at + DESTROY_DELAY_TICKS + 100).is_empty(), "不应重复发出");
     }
 
+    /// 从一条 `FunctionPoints` 报文里取 `end_x`。
+    ///
+    /// ⚠️ 不要用 `strip_prefix` 卡死浮点写法：线上格式是 serde_json/ryu
+    /// （`"start_x":10.0`），而本仓库曾经用 `format!("{}")` 打成 `10`。
+    /// 这里按**字段名**取，两种写法都吃得下（`docs/06` §30）。
+    fn end_x_of(msg: &str) -> Option<f64> {
+        const KEY: &str = "\"end_x\":";
+        let at = msg.find(KEY)? + KEY.len();
+        msg[at..]
+            .split([',', '}'])
+            .next()?
+            .trim()
+            .parse::<f64>()
+            .ok()
+    }
+
     #[test]
     fn blocked_shot_punches_a_hole_in_the_mask() {
         let mut m = Match::new(room(), vec![(-5.0, 0.0, 1.0)], vec![], (0, 0));
         let first = m.fire(1, "0.00", 10.0, 0.0, true, 0);
         let stop_x = first
             .iter()
-            .find_map(|s| s.strip_prefix(r#"{"FunctionPoints":{"owner_id":1,"start_x":10,"start_y":0,"end_x":"#))
-            .and_then(|r| r.split('}').next())
-            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|s| s.starts_with(r#"{"FunctionPoints":{"owner_id":1,"#))
+            .find_map(|s| end_x_of(s))
             .expect("应能解析终点");
         // 同一发再打一次：洞口已经挖开，应飞得更远
         let second = m.fire(1, "0.00", 10.0, 0.0, true, 1000);
         let stop2 = second
             .iter()
-            .find_map(|s| s.strip_prefix(r#"{"FunctionPoints":{"owner_id":1,"start_x":10,"start_y":0,"end_x":"#))
-            .and_then(|r| r.split('}').next())
-            .and_then(|v| v.parse::<f64>().ok())
+            .filter(|s| s.starts_with(r#"{"FunctionPoints":{"owner_id":1,"#))
+            .find_map(|s| end_x_of(s))
             .unwrap();
         assert!(stop2 < stop_x, "挖洞后应飞得更远（{stop2} 应小于 {stop_x}）");
     }
