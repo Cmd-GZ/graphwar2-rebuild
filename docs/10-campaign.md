@@ -1186,7 +1186,10 @@ cargo test --offline --test graphwar_level_manager
 
 ### 13.3 分队算术（照抄，不抄结论）
 
-`0x3c1b40` 遍历整表累加两个量，出口 `cmp`/`setb` 写回一个字节：
+`0x3c1b40` 遍历整表累加两个量，出口 `cmp`/`setg` 写回一个字节
+（**审计更正**（[`152`](152-audit-of-merged-claims.md) §1-A）：本节原写 `setb`，实测
+`0x3c1c1c cmp %r8d,%eax` + `0x3c1c1f setg %al` ⇒ 判的是 `Σ(team^1) > Σteam`（**有符号**）。
+人数是小非负整数时 `setg` ≡ `setb`，**下面的结论一字不改**，错的只是条件码的名字）：
 
 ```text
 sum     = Σ (team as u32)          // 在 0/1 上 = #Team2
