@@ -9288,7 +9288,7 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
 
 | 项 | 现状 | 档位 |
 |---|---|---|
-| **准备圈**（`docs/140` 那三弧 + 三箭头） | **画面上没有**：原版由 `EntityDrawer::draw`（`0x4b2890`）画，本项目的 `EntityDrawer` 节点类 `_draw` 没实现（§33 对照表）⇒ 删掉 `fire_fx.gd` 之后**没有任何节点会画它** | 缺口（几何证据仍在 `tests/entity_drawer.rs`） |
+| **准备圈**（`docs/140` 那三弧 + 三箭头） | **绘制已补（§50），触发仍未接**：`EntityDrawer::draw`（`0x4b2890`）那 6 条图元现在由 `_draw` 真的发出去（3 `draw_arc` + 3 `draw_polygon`），但只有 `set_ring()` 填过的实体才画，而播放屏还没人调它 ⇒ **画面上仍然没有** | 绘制=**观测**（118 条断言）；触发=缺口 |
 | **士兵/靶子的真贴图** | `EntityDrawer` 用的是**程序生成的 8×8 纯色**（皮肤/脸/帽子三块方块），不是 pck 里的 `skins/*`、`faces/*`、`hats/*` | 缺口（§33 对照表早就记了） |
 | **tick 源** | 原版 `GraphwarTickHandler::get_fractional_tick`（`0x519530`）没接 ⇒ 播放屏按**帧间隔**自己推 | 缺口（§43.6(d) 第 2 条） |
 | 点的生产者 | 仍由播放屏把内核算出的弹道 `set_function_points()` 进去（`0x3e44d4` 归属仍未证） | 缺口（§43.6(d) 第 1 条） |
@@ -9358,11 +9358,14 @@ PlaneContainer (AspectRatioContainer, ratio = 50:30, STRETCH_FIT)   ← 原版�
 
 ### 49.5 缺口诚实清单（8 条，按"画面上看得见的影响"排序）
 
-1. **准备圈没有了**（最显眼的一条）。原版是 `EntityDrawer::draw` 的 3 次 `draw_arc` + 3 个外凸
-   箭头（`0x4b2890`，`docs/140` §2 逐条立即数），本项目的 `EntityDrawer` 节点类
-   **没有实现 `_draw`**。补它要动 `src/_scaffold/entity_drawer_class.rs` 的**行为**，
-   本轮任务不许（`dispatch/31` §5 的禁区）⇒ 记在这里，**不在 GDScript 里再造一个假圈**。
-   几何证据没丢：`tests/entity_drawer.rs` 的 `arcs_carry_the_exact_draw_arc_arguments`
+1. **准备圈：绘制补上了（§50），触发还没接**（最显眼的一条）。原版是 `EntityDrawer::draw`
+   的 3 次 `draw_arc` + 3 个外凸箭头（`0x4b2890`，`docs/140` §2 逐条立即数）。
+   §50 之后 `EntityDrawer` 的 `_draw` 就照那 6 条图元发（`client/tools/entity_drawer_check.gd`
+   72 → **118** 条断言，含"关掉准备态就不画"），**但画面上仍然看不到**：
+   `_draw` 只画 `set_ring()` 填进 `prep` 表的实体，而播放屏还没人调它 —— 原版填这张表的是
+   `ready` 里订的 `pos_info_event`（`GraphwarBackend` 没接），而任务 33 的允许改动清单
+   **不含播放屏逻辑** ⇒ 触发留到 §50.6 那三行改法。几何证据没丢：
+   `tests/entity_drawer.rs` 的 `arcs_carry_the_exact_draw_arc_arguments`
    （10 折点 / 0.3 带宽 / 关 AA / `0x00687d`）与 `open_ring_is_narrower_than_closed_ring`
    （张开 60° / 闭合 123°）仍在 `cargo test` 里跑。
 2. **士兵与靶子的贴图是纯色方块**（`EntityDrawer` 的程序生成贴图，§33 对照表"我方选择"）。
@@ -9474,7 +9477,7 @@ spike_class_check   23 passed, 0 failed
 |---|---|---|
 | "六个类都**在画**" | **观测** | 引擎回调计数（`draw_call_count` / `drawn_*_total` / `occupied_pixels` / `plane_draws`），本轮实测非零 |
 | 六个类**画得与原版一致** | **未知** | 没有本轮的截图对拍：① 准备圈缺失（§49.5 第 1 条）；② 士兵贴图是纯色方块；③ 画布模型（1000×600 + 缩放）是**我方选择**，原版那次 `draw_set_transform` 的实参没解；④ 队色表没接 |
-| 准备圈的几何 | **观测**（在 Rust 侧） | `tests/entity_drawer.rs` 的两条测试；**画面上没有** |
+| 准备圈的几何 | **观测** | `tests/entity_drawer.rs` 的两条测试；**§50 之后**这 6 条图元已经由 `_draw` 真的发到引擎（`entity_drawer_check.gd` 118 条断言），但**画面上仍然没有**（触发没接，§50.0 第 1 条） |
 | 名字 → 相位那张表 | **我方选择** | 原版 `EffectInfo` 判别值 → `EffectData.phase` 的映射没有任何证据 |
 | 特效时长 | **我方选择** | 原版只给 `start_tick`；`retain` 的判据是**推断** |
 | 障碍坐标换算 | **观测** | 掩膜是 1000×600 画布像素（`plane::CANVAS_W/H`），棋盘单位 → 像素走 `px = 20x + 500`、`py = 300 − 20y`、`r_px = 20r`（`to_pixel` 的同一套数） |
@@ -9697,3 +9700,158 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
 
 `SlotKind`（容器类型来源）仍是 **17 + 5 = 22**，一行没变。
 `interaction_selftest` 覆盖 **11 / 22** 个槽（§44 的 5 + 本节的 6）。
+
+## 51. `EntityDrawer::draw` 补上了：准备圈的 3 段弧 + 3 个外凸箭头真的发到了引擎（2026-11，任务 33）
+
+**一句话**：`src/_scaffold/entity_drawer_class.rs` 的 `_draw` 从"一个 `draw_*` 都不调"变成
+"**每具准备态士兵发 6 条图元**"——3 次 `draw_arc`（三段弧）+ 3 次 `draw_polygon`（外凸箭头），
+实参逐条对 `docs/archive/140-plane-visual.md` §2 的立即数；验收脚本
+`client/tools/entity_drawer_check.gd` **72 → 118** 条断言。
+**但"用户能在屏幕上看见准备圈"仍然没做到**——卡的是**触发**，不是绘制，见 §50.0 第 1 条。
+
+### 51.0 先说没做到的（免得被下面那张表误导）
+
+| # | 项 | 现状 | 档位 |
+|---|---|---|---|
+| 1 | **画面上能看见准备圈** | **不能**。`_draw` 只画 `prep` 表里的实体（= 调过 `set_ring()` 的），而**播放屏一处都没调它**：原版填这张表的是 `ready` 里订的 `pos_info_event`（`GraphwarBackend` 没接），任务 33 的允许改动清单**不含播放屏逻辑** ⇒ 触发留到 §50.6 那三行改法 | **缺口**（绘制侧是观测） |
+| 2 | `PosInfo` 的**单位** | `docs/140` §2.2 只读到"来自士兵坐标"，`[rsp+0xb0]/[rsp+0xa8]` 是不是已是画布像素**没证**。本类按**棋盘坐标**处理：复用 `sprite_transform` 那条投影（`k = size.x/50`）+ 半径乘同一个 `k` | **推断**（差一条证据；换 `k = 1.0` 就改完） |
+| 3 | 环与箭头的**颜色来源** | 原版从哈希表取打包 RGB（`0x4b347a` 的三字节）；本类用导出属性 `team_color` | **我方接线**（队色表没接，§49.5 第 7 条） |
+| 4 | 弧与箭头**是否互斥** | `entity_drawer::entity_primitives` 两处分支条件（`0x4b32e2 test %r14b` / `0x4b34c3 test %bl`）的哈希表语义**没解**⇒ 本类按"同一具士兵两组都画"发 | **未知**（`tests/entity_drawer.rs` 早就这么记着） |
+| 5 | 驱动量 `V` 是什么时钟 | `0x4b2e10 call 0x519530`（`get_fractional_tick`）的返回值；本类由调用方给 | **观测**（算式）/ **我方接线**（谁每帧喂它） |
+| 6 | `z_index` | 环画在 `EntityDrawer` **自己的** canvas item 上、三个 `Sprite2D` 是它的子节点 ⇒ 环在士兵**下面**（与原版同一棵树、同一种关系）；`z_index` 初值仍**未知**（§43.6(d) 第 6 条） | 结构=**观测**；`z_index`=**未知** |
+
+### 51.1 本轮动了哪些文件
+
+| 文件 | 改了什么 |
+|---|---|
+| `src/_scaffold/entity_drawer_class.rs` | `IControl::draw` 实现（6 条图元）；`prep` 表 + `PrepRing`；`set_ring` / `set_ring_base` / `clear_ring_base` / `clear_ring` / `ring_count`；观测口 `draw_call_count` / `drawn_arc_total` / `drawn_polygon_total` / `last_arc_count` / `last_arc` / `last_polygon`；纯函数 `ring_center_px` / `ring_canvas_scale`；`process` 末尾 `queue_redraw()`；`remove_entity` 顺手清 `prep`；**3 条新单测** |
+| `client/tools/entity_drawer_check.gd` | 新增第 13 节（准备圈）**46 条**断言 + `wanted` 方法表 +11 条（72 → 118） |
+| `client/src/screens/play_screen.gd` | **只改那段注释**："准备圈丢了"→"几何已复原、触发还没接（附最小改法）" |
+| `client/tools/selftest.gd` | 同上，对应说明就地更新（**断言条数不变**） |
+| `docs/16-client.md` | 本节 + §49.0 / §49.5 第 1 条 / §49.8"准备圈的几何"那一行就地更正 |
+| `docs/coverage-matrix.tsv` + `docs/149-coverage-matrix.md` | 生成物（`src/` 变了必须重跑）：`src_fns` 2504 → **2522**，树哈希随之变 |
+
+**没动的**：`src/entity_drawer.rs` 的算术（一个字没改）、`src/game.rs`、其它 `*_class.rs`、
+`client/src/**` 的其它逻辑、`dispatch/`、`fixtures/guardrail*.json`。
+
+### 51.2 为什么是这 6 条图元（地址链沿用 `docs/140` 的观测，本轮没重新扒）
+
+| 原语 | 原版调用点 | 包装 / GOT 槽 | 本类 |
+|---|---|---|---|
+| `draw_arc` ×3 | `0x4b366c` / `0x4b36fd` / `0x4b378a`（全在 `EntityDrawer::draw` = `0x4b2890` 内） | 包装 `0x8abca0` ← GOT 槽 **`0x9bc020`**（`R_X86_64_RELATIVE` 写入） | `base.draw_arc_ex(...).width(0.3).antialiased(false).done()` |
+| `draw_polygon` ×3 | `0x4b30b7` / `0x4b30e8` / `0x4b3119`（三次 `call 0x4b9a70` = `draw_offset_triangle`） | `0x4b9a70` 末尾 `lea "draw_polygon"(0x1c2bad)` + `call 0x3a01a0`（gdext 通用 `call` 通道） | `base.draw_polygon(&points, &colors)`（3 个顶点 / 3 份同色） |
+
+`Primitive` 只有 `Arc` 与 `Polygon` 两个变体 ⇒ **`draw_polyline` / `draw_colored_polygon` 一条都用不上**
+（原版也没在这条路径上用它们：`"draw_polyline"` 这个字符串在整份 `.so` 里**不存在**，`docs/140` §4.5）。
+
+顺序取 [`entity_drawer::entity_primitives`] 的返回值 = **箭头在前、弧在后**（代码地址序）。
+
+### 51.3 `_draw` 里只有两步是"接线"，算术一个字没动
+
+```text
+                        ┌─ entity_drawer::entity_primitives(EntityRingInput) ─┐   ← 已复原的算术
+A_i = V/120 + {0, 2π/3, 4π/3}                                               │
+H   = min(π/6 + (V−map[i])/60, 1.07337748998)                               │
+r   = f32(pos_radius) × 1.5f32                                              │
+P_k = C + {r, r+0.5, r+0.5}·(cos, sin)(θ ∓ 6°)                              │
+                        └────────────────────────────────────────────────────┘
+                                   ↓  本文件只加两步
+① 坐标：center_px = ring_center_px(size, packed, board)   ← 直接复用 sprite_transform 的 position
+        r_px      = r × ring_canvas_scale(size)           （k = size.x / 50）
+② 颜色：Color::from_packed_rgb(team_color)
+```
+
+* **角度不做镜像**（`team_mirror` 的符号只进投影的 `x`）：原版 `draw_arc` 的起止角就是
+  `A_i ∓ H`，证据里没有镜像那一步（**观测**：`subsd` / `addsd` 之后直接 `cvtsd2ss`）。
+  本类不替它加。
+* 三段的 A 相差 `2π/3` ⇒ 只要 `A0` 是对称的（`V = 0`），镜像前后是同一组弧；`V ≠ 0` 时
+  两者差一个相位，这条差异在 §50.6 里登记为**未知**（原版有没有在别处补镜像，没证据）。
+
+### 51.4 验收脚本里新增的 46 条断言（**这一段代替截图**；`--headless` 没有渲染器）
+
+契约（`entity_drawer_check.gd` 第 13 节）·控件 `500×300`、棋盘 `(5, 5)`、`pos_radius = 2.0`：
+
+| 断言 | 实测值 | 对应立即数 |
+|---|---|---|
+| 没调 `set_ring` 时**一条都不发** | `drawn_arc_total` 不变 | `prep` 空表（原版哈希表为空） |
+| 每次 `_draw` 发 **3 条 `draw_arc`** | `arcs_delta == 3 × draws_delta` | `0x4b366c/0x4b36fd/0x4b378a` |
+| 每次 `_draw` 发 **3 个 `draw_polygon`** | `polys_delta == 3 × draws_delta` | 三次 `call 0x4b9a70` |
+| 圆心 | `(300.0, 100.0)` | 棋盘 `(5,5)` 的投影，`k = 10` |
+| 半径 | `30.0` | `pos_radius × 1.5 × k`（槽 `0x1b9b98` = `1.5f32`） |
+| 第 1 条弧 start / end | `−0.52359879016876` / `+0.52359879016876` | `A0 ∓ H`，`H = π/6`（槽 `0x19f2e8`） |
+| 第 2 / 3 条弧中分角 | `2.0943951023931953` / `4.1887902047863905` | 槽 `0x19f9e8` / `0x19fbf8` |
+| 折点数 | `10` | `mov $0xa,%esi` |
+| 线宽 | `0.30000001192093` | 槽 `0x1bb2b4` = f32 `0x3e99999a` |
+| 抗锯齿 | `0.0`（false） | `xor %ecx,%ecx` |
+| 颜色 | `(0.49019607901573, 0.40784314274788, 0.0, 1.0)` = `#7D6800` | `from_packed_rgb(0x00687d)`（低字节 = R） |
+| 张开态单段张角 | `2×π/6` = 60°（三段合计 180°，画面上是断开的） | `0x4b3594 addsd` |
+| 闭合态单段张角 | `2×1.07337748998` = 123°（三段合计 369° ⇒ 必成整圈） | `0x4b359c minsd` |
+| 闭合态中分角 | `0.5` | `V/120`（槽 `0x19f620` = `120.0`） |
+| 箭头尖端 | `(330.0, 100.0)`，距圆心 `30` px | `P0 = C + r·(cos θ, sin θ)`（`0x4b9b13`） |
+| 箭头底边两点 | 距圆心 `35` px（`r + 0.5`） | 槽 `0x19f6d0` = `0.5` |
+| 箭头底边张角 | `12°` | 槽 `0x19fb68` / `0x19fc80` = `±0.20943951023931953` |
+| **关掉准备态**（`clear_ring`）之后 | 弧与多边形都不再增加、`last_arc_count() == 0` | `prep` 表删除（原版两处 `test` 分支，语义未知） |
+
+⇒ **"画面上有没有圈"这条，用上表第 2–3 行（每次 `_draw` 恰好 3 弧 + 3 多边形）与
+圆心/半径/角度那几行代替截图**：`_draw` 被引擎调到过（`draw_call_count` 每帧 +1），
+每次调用的实参就是这些数。**截不到图不等于没画**，但也不等于"画得像原版"（§50.6）。
+
+### 51.5 验收（本节实测，可从干净树重跑）
+
+```text
+export CARGO_HOME=<WS>/.reference/cargo-home CARGO_TARGET_DIR=<WS>/.agent-work/cg/target33
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so   # 不覆盖就还在跑旧内核
+grep -a -c line_instance_id client/libgw2_rebuild.so                    # 3
+"$GODOT" --headless --path client --import                              # 新增 .gd/bindings 后必须重扫
+"$GODOT" --headless --path client --script res://tools/entity_drawer_check.gd   # 118 / 0（基线 72）
+cargo build --offline --example serve_match
+export HOME=<假 HOME>                       # selftest 读 $HOME，不走 XDG_DATA_HOME
+mkdir -p $HOME/.local/share/godot/app_userdata/Graphwar
+cp -r <replays 快照>/replays $HOME/.local/share/godot/app_userdata/Graphwar/
+"$GODOT" --headless --path client -- --selftest                         # 709 / 0
+python3 tools/coverage_matrix.py                                        # 生成物重生成
+python3 tools/coverage_matrix.py --check                                # OK
+python3 tools/check_doc_refs.py                                         # 退出码 0
+```
+
+| 口径 | 改前（`CG@e846c15` + `3d1e504`） | 改后 | 退没退 |
+|---|---|---|---|
+| `entity_drawer_check` | 72 passed / 0 failed | **118 passed / 0 failed** | +46，全是准备圈 |
+| `assemble_check` | 203 | **203** / 0 | 没退 |
+| `plane_on_screen_check` | 96 | **96** / 0 | 没退 |
+| `obstacle_drawer_check` | 116 | **116** / 0 | 没退 |
+| `function_drawer_check` | 132 | **132** / 0 | 没退 |
+| `draw_classes_check` | 235 | **235** / 0 | 没退 |
+| `curve_on_screen_check` | 96 | **96** / 0 | 没退 |
+| `selftest`（assets + 回放样本 + `serve_match`） | 709 / 0 failed | **709 / 0 failed** | 没退（断言条数不变） |
+| `cargo test --offline` | 1585 | **1585** / 0 | 没退（`_scaffold` 只在 `gdext-bindings` 下编译） |
+| `cargo test --offline --features gdext-bindings` | 1669 | **1672** / 0 | +3（新单测） |
+| `coverage_matrix --check` | OK | **OK**（`src_fns` 2504 → 2522） | — |
+| `check_doc_refs.py` | rc = 0 | **rc = 0** | — |
+
+### 51.6 仍是推断 / 未知 + 下一步
+
+**触发接线：已做**（2026-11-08，**协调者接力**，任务 33 的允许清单不含播放屏逻辑）。
+
+`play_screen.gd` 的 `_sync_entities()` 末尾现在会填 `prep` 表：只给"本回合行动的士兵"一条
+（`set_ring(id, p.x, p.y, GwCore.SOLDIER_HIT_RADIUS, _curve_tick)` + 首次出现时 `set_ring_base`），
+其余实体 `clear_ring(id)`；`_ring_base` 表记每具士兵的起始量。
+
+⚠️ 这条接的是**我方选择**，不是观测到的原版路径，三处都是选定的：
+- **谁填表**：原版是 `GraphwarBackend` 的 `pos_info_event`（还没接）⇒ 这里按回合状态代填；
+- **`pos_radius`**：用 `GwCore.SOLDIER_HIT_RADIUS` = 0.5（`PosInfo.radius` 恒 0.5，`docs/131`）；
+  若证实 `PosInfo` 的第 3 个 f64 已是像素，则 `k` 要换成 1.0（见 §50.0）；
+- **`V`**：用播放屏的 `_curve_tick`（同一个喂给 `GraphwarPlane.set_fractional_tick` 的时钟）。
+
+自检加了 3 条端到端断言（`selftest` 709 → **712**）：`EntityDrawer` 在树里、`prep` 表里恰 1 条、
+`set_ring`/`clear_ring` 两个接线口都在。
+
+| 项 | 档位 | 缺什么证据 |
+|---|---|---|
+| 触发（谁在什么时候把士兵标成准备态） | **未知** | `pos_info_event` 的载荷语义 / `draw` 里两处 `test` 分支的条件；本轮只做出"填了就画"的机制 |
+| `PosInfo` 三个 f64 的**单位** | **未知** | 需要运行时读 `pos_info_event` 的真值（`docs/140` §3.1 那 14% 与它同源） |
+| `pos_radius` 的**物理含义** | **未知** | `docs/140` §0 第 ⑧ 条：环半径只能从"实测外径/内径 = 1.4240"反解到 `R/W = 2.859` |
+| 弧/箭头两组分支是否互斥、`V` 的相位是否要镜像 | **未知** | 哈希表语义；本类按"都画、不镜像"实现 |
+| 画出来的样子与原版是否**逐像素**一致 | **未知** | `--headless` 视口 64×64、无渲染器，本轮**没做**有限窗口截图（§43.5 的办法） |
+| `z_index` / 队色表 / 淡出 | **未知** | §43.6(d) 第 4–7 条，与本轮无关，仍然缺 |

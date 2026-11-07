@@ -33,10 +33,10 @@
       "batches": 1080,
       "content_ok": 637,
       "kind_seq_ok": 1075,
-      "deaths_ok": null,
-      "deaths_checked": null,
-      "destroy_ok": null,
-      "destroy_checked": null,
+      "deaths_ok": 347,
+      "deaths_checked": 385,
+      "destroy_ok": 207,
+      "destroy_checked": 294,
       "cmd": "cargo run --release --offline --example batch_conv -- --dir <快照> --policy strict --drive batch"
     }
   }

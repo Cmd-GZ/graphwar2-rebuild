@@ -18,10 +18,17 @@ extends SceneTree
 ##    `autowrap_mode` / 初始尺寸 25×40），文本与不透明度跟着 `set_entity_name` /
 ##    `set_entity_dead_ticks` 走；
 ## 6. 进树之后 `_ready` / `_process` / `resized` **真的被引擎调到**，尺寸变了会重摆；
-## 7. `remove_entity()` 的 `queue_free` 真的释放了那 4 个节点。
+## 7. **准备圈真的发出去了**（§50）：`set_ring()` 之后每次 `_draw` 发 **3 条 `draw_arc` +
+##    3 个 `draw_polygon`**，逐条对 `docs/archive/140-plane-visual.md` §2 的立即数
+##    （半径 = `pos_radius×1.5×k`、起止角 `A_i ∓ H`、10 折点、线宽 0.3、关 AA、
+##    中分角 2π/3 与 4π/3、箭头尖端在 `r`、底边在 `r+0.5`、张 12°），
+##    **关掉准备态（`clear_ring`）之后一条都不发**；
+## 8. `remove_entity()` 的 `queue_free` 真的释放了那 4 个节点。
 ##
 ## 与 `client/tools/gdext_check.gd` 的分工：那个测「换绑定层对客户端透明」，这个测
-## 「`EntityDrawer` 能不能长出节点树」。
+## 「`EntityDrawer` 能不能长出节点树 + 把准星画出来」。
+## 与 `client/tools/draw_classes_check.gd` 的分工：那个用计数验"发了几个图元"，
+## 这里连**实参**一起钉（`last_arc()` / `last_polygon()`）。
 ##
 ## 这是**验收工具**，不是游戏逻辑（与 `selftest.gd` 一样放在 `tools/` 下，不进运行时路径）。
 
@@ -34,6 +41,39 @@ const W := 500.0
 const H := 300.0
 const TEAM_COLOR := 0xff
 
+## 准备圈那几条**立即数**（`docs/archive/140-plane-visual.md` §2，逐条 objdump 得来的）。
+##
+## ```text
+## 0x19f620 = 120.0                     A0 = V/120
+## 0x19f9e8 = 2.0943951023931953        A1 = A0 + 2π/3
+## 0x19fbf8 = 4.1887902047863905        A2 = A0 + 4π/3
+## 0x19f2e8 = 0.5235987755982988        H 的下限 π/6
+## 0x19f0a8 = 1.0733774899765125        H 的封顶（≈61.5°）
+## 0x1b9b98 = 1.5f32                    r = pos_radius × 1.5
+## 0x1bb2b4 = 0.3f32                    线宽
+## mov $0xa,%esi                        每段 10 折点
+## xor %ecx,%ecx                        关抗锯齿
+## 0x19f6d0 = 0.5                      箭头外沿 r + 0.5
+## 0x19fb68 / 0x19fc80 = ±0.20943951023931953   箭头张角 ±6°
+## ```
+const HALF_ANGLE_MIN := 0.5235987755982988
+const HALF_ANGLE_MAX := 1.0733774899765125
+const SEGMENT_STEP := 2.0943951023931953
+const SEGMENT_STEP2 := 4.1887902047863905
+const RADIUS_SCALE := 1.5
+const ARC_WIDTH := 0.3
+const ARC_POINTS := 10
+const ARROW_RADIUS_DELTA := 0.5
+const ARROW_HALF_SPREAD := 0.20943951023931953
+
+## 准备圈的队伍色：`#7D6800` 打包成 `u32`（低字节 = R）⇒ `0x00687d`。
+## 这就是 `docs/16-client.md` §49.5 第 1 条点名的那个玩家色，`team_mirror` 判据为 false（不翻面）。
+const RING_COLOR := 0x00687d
+
+## `PosInfo` 的第 3 个 f64（**未标定的半径量**）。取 2.0 是为了让画出来的半径
+## = 2×1.5×(500/50) = **30 px**，与"箭头外沿 35 px"一起好手算。
+const RING_POS_RADIUS := 2.0
+
 var _checks := 0
 var _failures: PackedStringArray = []
 
@@ -44,6 +84,11 @@ func ok(cond: bool, what: String) -> void:
 	else:
 		_failures.append(what)
 		print("FAIL %s" % what)
+
+## 浮点比较：`is_equal_approx` 的相对容差随量级变，角度的绝对值又小
+## ⇒ 这里用固定的绝对容差（f32 → f64 的误差量级是 1e-8）。
+func _near(a: float, b: float, eps: float = 1e-5) -> bool:
+	return absf(a - b) <= eps
 
 ## `entity_drawer::sprite_transform` 的 GDScript 版（**独立重算，不调 Rust**）。
 ##
@@ -118,6 +163,10 @@ func _initialize() -> void:
 		"spawn_entity", "remove_entity", "entity_count", "relayout",
 		"set_entity_name", "set_entity_dead_ticks",
 		"ready_call_count", "process_call_count", "resized_call_count",
+		# 准备圈（`_draw`）的输入口与观测口（§50）
+		"set_ring", "set_ring_base", "clear_ring_base", "clear_ring", "ring_count",
+		"draw_call_count", "drawn_arc_total", "drawn_polygon_total",
+		"last_arc_count", "last_arc", "last_polygon",
 	]
 	var names := PackedStringArray()
 	for m in drawer.get_method_list():
@@ -268,7 +317,122 @@ func _initialize() -> void:
 	ok(ready_calls >= 1, "_ready 被引擎调到（%d 次）" % ready_calls)
 	ok(process_calls >= 1, "_process 被引擎调到（%d 次；实测不用 set_process，Godot 4.7 自己开）" % process_calls)
 
-	# 13) 尺寸变了 ⇒ `resized` ⇒ 重摆（k 从 10 变 20）
+	# 13) 准备圈：`_draw` 真的把 3 段弧 + 3 个外凸箭头发出来了（`0x4b2890`，§50）
+	#
+	# 原版在 `EntityDrawer::draw` 里对**每一具**准备态士兵发 6 条图元：
+	# 3 次 `draw_polygon`（箭头，`0x4b30b7`/`0x4b30e8`/`0x4b3119`，都经 `0x4b9a70`）
+	# + 3 次 `draw_arc`（弧，`0x4b366c`/`0x4b36fd`/`0x4b378a`，经 GOT 槽 `0x9bc020`）。
+	# 这里验的正是"那 6 条真的发到了引擎，而且实参就是那几条立即数"。
+	var draws_before: int = int(drawer.call("draw_call_count"))
+	var arcs_before: int = int(drawer.call("drawn_arc_total"))
+	var polys_before: int = int(drawer.call("drawn_polygon_total"))
+
+	ok(int(drawer.call("ring_count")) == 0, "还没有准备态实体 ⇒ ring_count() == 0")
+	await process_frame
+	await process_frame
+	print("      _draw 累计 %d 次（+%d）" % [int(drawer.call("draw_call_count")),
+		int(drawer.call("draw_call_count")) - draws_before])
+	ok(int(drawer.call("draw_call_count")) > draws_before, "_draw 被引擎调到（每帧 queue_redraw ⇒ 每帧一次）")
+	ok(int(drawer.call("drawn_arc_total")) == arcs_before,
+		"**没有准备态 ⇒ 一条 draw_arc 都不发**（`_draw` 只看 prep 表）")
+	ok(int(drawer.call("drawn_polygon_total")) == polys_before,
+		"没有准备态 ⇒ 一个 draw_polygon 都不发")
+
+	# 13.1 打开准备态：棋盘 (5,5)、pos_radius = 2.0、V = 0、base 查不到（⇒ H 恒 π/6）
+	drawer.set("team_color", RING_COLOR)
+	drawer.call("set_ring", 0, 5.0, 5.0, RING_POS_RADIUS, 0.0)
+	ok(int(drawer.call("ring_count")) == 1, "set_ring(0, 5, 5, 2.0, 0.0) ⇒ ring_count() == 1")
+
+	draws_before = int(drawer.call("draw_call_count"))
+	arcs_before = int(drawer.call("drawn_arc_total"))
+	polys_before = int(drawer.call("drawn_polygon_total"))
+	await process_frame
+	await process_frame
+	var draws_delta: int = int(drawer.call("draw_call_count")) - draws_before
+	var arcs_delta: int = int(drawer.call("drawn_arc_total")) - arcs_before
+	var polys_delta: int = int(drawer.call("drawn_polygon_total")) - polys_before
+	print("      _draw +%d 次 ⇒ draw_arc +%d、draw_polygon +%d（期望 3 倍 / 3 倍）"
+		% [draws_delta, arcs_delta, polys_delta])
+	ok(draws_delta >= 1, "准备态下 _draw 被调到（+%d 次）" % draws_delta)
+	ok(arcs_delta == 3 * draws_delta, "每次 _draw 发 3 条 draw_arc（一具士兵三段弧）")
+	ok(polys_delta == 3 * draws_delta, "每次 _draw 发 3 个 draw_polygon（一具士兵三个外凸箭头）")
+	ok(int(drawer.call("last_arc_count")) == 3, "最近一次 _draw 的弧条数 == 3")
+
+	# 13.2 逐条对立即数。控件 500×300 ⇒ k = 500/50 = 10；
+	#      圆心 = (250 + 10·5, 150 − 10·5) = (300, 100)（与 sprite 同一条投影）。
+	var k: float = W / 50.0
+	var center := Vector2(W * 0.5 + k * 5.0, H * 0.5 - k * 5.0)
+	print("      期望圆心 %s，半径 %.3f" % [center, RING_POS_RADIUS * RADIUS_SCALE * k])
+
+	var a0: PackedFloat64Array = drawer.call("last_arc", 0)
+	print("      arc0 = %s" % [a0])
+	ok(a0.size() == 12,
+		"last_arc(0) 返回 12 个数：cx, cy, r, start, end, 折点, 线宽, AA, r, g, b, a")
+	ok(_near(a0[0], center.x) and _near(a0[1], center.y),
+		"第 1 条 draw_arc 的圆心 == (%.1f, %.1f)（棋盘 (5,5) 的投影，k=10）" % [center.x, center.y])
+	ok(_near(a0[2], RING_POS_RADIUS * RADIUS_SCALE * k),
+		"半径 == pos_radius×1.5×k == 30 px（1.5 = 槽 0x1b9b98）")
+	ok(_near(a0[3], -HALF_ANGLE_MIN) and _near(a0[4], HALF_ANGLE_MIN),
+		"第 1 条弧 start/end == ∓π/6（A0 − H / A0 + H：subsd 0x4b3620 / addsd 0x4b362c）")
+	ok(int(a0[5]) == ARC_POINTS, "point_count == 10（mov $0xa,%esi @0x4b3655/0x4b36e6/0x4b3773）")
+	ok(_near(a0[6], ARC_WIDTH), "width == 0.3（f32 0x3e99999a，槽 0x1bb2b4）")
+	ok(a0[7] == 0.0, "antialiased == false（xor %ecx,%ecx）")
+	ok(_near(a0[8], 0x7d / 255.0) and _near(a0[9], 0x68 / 255.0)
+			and _near(a0[10], 0.0) and _near(a0[11], 1.0),
+		"颜色 == #7D6800（team_color 0x00687d 按「低字节 = R」展开，alpha 1.0）")
+
+	var a1: PackedFloat64Array = drawer.call("last_arc", 1)
+	var a2: PackedFloat64Array = drawer.call("last_arc", 2)
+	ok(_near((a1[3] + a1[4]) * 0.5, SEGMENT_STEP),
+		"第 2 条弧的中分角 == 2π/3 = 2.0943951023931953（槽 0x19f9e8）")
+	ok(_near((a2[3] + a2[4]) * 0.5, SEGMENT_STEP2),
+		"第 3 条弧的中分角 == 4π/3 = 4.1887902047863905（槽 0x19fbf8）")
+	ok(_near(a0[3] + 2.0 * HALF_ANGLE_MIN, a0[4]),
+		"张开态单段张角 == 2×π/6 = 60°（三段合计 180°，画面上是断开的）")
+	# 13.3 箭头：3 个顶点，尖端在 r、底边两点在 r+0.5、张 12°
+	var p0: PackedVector2Array = drawer.call("last_polygon", 0)
+	print("      arrow0 = %s" % [p0])
+	ok(p0.size() == 3, "第 1 个箭头是 3 顶点多边形（原版走 draw_polygon）")
+	ok(_near(p0[0].x, center.x + k * RING_POS_RADIUS * RADIUS_SCALE)
+			and _near(p0[0].y, center.y),
+		"尖端 == 圆心 + 30 px（θ = A0 = 0 ⇒ 落在 +x 方向）")
+	ok(_near(p0[0].distance_to(center), RING_POS_RADIUS * RADIUS_SCALE * k),
+		"尖端在半径 r 上（30 px = 3.0 棋盘单位 × k）")
+	ok(_near(p0[1].distance_to(center), (RING_POS_RADIUS * RADIUS_SCALE + ARROW_RADIUS_DELTA) * k),
+		"底边两点在 r + 0.5 上（35 px = 3.5 × k；0.5 是槽 0x19f6d0）")
+	ok(_near(absf((p0[1] - center).angle_to(p0[2] - center)), 2.0 * ARROW_HALF_SPREAD),
+		"底边张角 == 2×6° = 12°（槽 0x19fb68 / 0x19fc80）")
+
+	# 13.4 闭合：base 命中 ⇒ H = min(π/6 + (V−base)/60, 61.5°)，V = 60 ⇒ 封顶
+	ok(bool(drawer.call("set_ring_base", 0, 0.0)) == true,
+		"set_ring_base(0, 0.0) 命中哈希表（0x4b34e6 的 je 不跳）⇒ true")
+	drawer.call("set_ring", 0, 5.0, 5.0, RING_POS_RADIUS, 60.0)
+	await process_frame
+	await process_frame
+	var c0: PackedFloat64Array = drawer.call("last_arc", 0)
+	print("      闭合态 arc0 = %s" % [c0])
+	ok(_near(c0[4] - c0[3], 2.0 * HALF_ANGLE_MAX),
+		"闭合态单段张角 == 2×61.5° = 123°（H 被 minsd 封顶到 1.0733774899765125）")
+	ok(_near((c0[3] + c0[4]) * 0.5, 60.0 / 120.0),
+		"中分角 == V/120 == 0.5（槽 0x19f620 = 120.0）")
+	ok(_near(c0[2], RING_POS_RADIUS * RADIUS_SCALE * k), "半径与 V 无关（仍是 30 px）")
+
+	# 13.5 关掉准备态：一条都不再发（"该有的分支判断"）
+	arcs_before = int(drawer.call("drawn_arc_total"))
+	polys_before = int(drawer.call("drawn_polygon_total"))
+	ok(bool(drawer.call("clear_ring", 0)) == true, "clear_ring(0) 返回 true（之前在准备态）")
+	ok(int(drawer.call("ring_count")) == 0, "clear_ring 之后 ring_count() == 0")
+	ok(bool(drawer.call("clear_ring", 0)) == false, "再 clear_ring(0) 返回 false（不报错）")
+	await process_frame
+	await process_frame
+	ok(int(drawer.call("drawn_arc_total")) == arcs_before, "**关掉准备态之后不再发 draw_arc**")
+	ok(int(drawer.call("drawn_polygon_total")) == polys_before, "关掉准备态之后不再发 draw_polygon")
+	ok(int(drawer.call("last_arc_count")) == 0, "last_arc_count() 回到 0")
+
+	# 恢复队色：后面两段按 `TEAM_COLOR` 手算 sprite 位置（这里只影响镜像位，两个值都不翻面）
+	drawer.set("team_color", TEAM_COLOR)
+
+	# 14) 尺寸变了 ⇒ `resized` ⇒ 重摆（k 从 10 变 20）
 	control.set_size(Vector2(W * 2.0, H * 2.0))
 	await process_frame
 	var resized_calls: int = int(drawer.call("resized_call_count"))
@@ -278,7 +442,7 @@ func _initialize() -> void:
 	ok(kids[0].position.is_equal_approx(want3["position"]),
 		"控件放大到 1000×600 ⇒ 位置重摆成 (600, 200)")
 
-	# 14) 回收：queue_free 整棵树，子节点跟着走
+	# 15) 回收：queue_free 整棵树，子节点跟着走
 	var child_of_doomed: Node = kids[0]
 	control.queue_free()
 	await process_frame

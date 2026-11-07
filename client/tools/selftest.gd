@@ -918,6 +918,14 @@ func _test_play_screen() -> void:
 		fire_button.emit_signal("pressed")
 		await _frames(2)
 	var plane := play.find_child("GraphwarPlane", true, false) as Control
+	# 准备圈的**触发**：`_sync_entities()` 现在代 `pos_info_event` 填 `prep` 表（**我方接线**，
+	# `docs/16` §50.6）⇒ 有行动士兵时表里恰 1 条，没有时 0 条。
+	var ent := play.find_child("EntityDrawer", true, false)
+	_expect(ent != null, "真节点：播放屏里有 EntityDrawer")
+	var ring_n := (int(ent.call("ring_count")) if ent != null else -1)
+	_expect(ring_n == 1, "准备圈：当前行动士兵在 prep 表里有且只有 1 条（实际 %d）" % ring_n)
+	_expect(ent != null and ent.has_method("set_ring") and ent.has_method("clear_ring"),
+		"准备圈：EntityDrawer 暴露 set_ring / clear_ring（接线口在）")
 	_expect(plane != null, "有 GraphwarPlane")
 	var pool_pts: PackedVector2Array = play.call("plane_points")
 	_expect(pool_pts.size() > 1, "开火后 `Line2D` 上的弹道点数 > 1（实际 %d）" % pool_pts.size())
@@ -1846,11 +1854,15 @@ func _test_fire_fx() -> void:
 	# `GwFireFx`。那两个类**本轮删掉了**（`docs/16` §48.1），所以断言**换主语不减法**：
 	# 同样验"画出来的东西对不对"，只是主语从 GDScript 控件换成 Rust 扩展类。
 	#
-	# 准备圈本身**没有替身**：原版是 `EntityDrawer::draw`（`0x4b2890`）画的，而本项目的
-	# `EntityDrawer` 节点类 `_draw` 还没实现（§33 对照表）⇒ 画面上没有准备圈。
-	# 它的几何证据仍在 Rust 侧：`tests/entity_drawer.rs` 的
-	# `arcs_carry_the_exact_draw_arc_arguments`（10 折点 / 0.3 带宽 / 关 AA / `#7D6800`）
-	# 与 `open_ring_is_narrower_than_closed_ring`（张开 60° / 闭合 123°）。
+	# 准备圈：**绘制已经实现了**（`docs/16` §50）。原版是 `EntityDrawer::draw`（`0x4b2890`）
+	# 里 3 次 `draw_arc` + 3 个外凸箭头；现在 `EntityDrawer` 的 `_draw` 就照那 6 条图元发，
+	# 断言在 `client/tools/entity_drawer_check.gd`（72 → 118 条：半径/起止角/线宽/折点/关 AA/
+	# 中分角 2π/3 与 4π/3/箭头尖端在 r、底边在 r+0.5、张 12°/关掉准备态就不画）。
+	# **触发也接上了**（2026-11-08 协调者接力）：`_sync_entities()` 按回合状态代
+	# `pos_info_event` 填 `prep` 表 —— 只给本回合行动的士兵一条、其余 `clear_ring`。
+	# ⚠️ 这是**我方接线**而非观测到的原版路径（原版填表的是 backend 的 `pos_info_event`，
+	# 那条链路还没接）；`pos_radius` 用 `GwCore.SOLDIER_HIT_RADIUS`(0.5)、`V` 用 `_curve_tick`，
+	# 两者都是**选定的**，见 `docs/16` §50.6。下面两条断言验"表里真有 1 条"。
 	var plane := play.find_child("GraphwarPlane", true, false) as Control
 	_expect(plane != null, "真节点：播放屏里有 GraphwarPlane")
 	_expect(plane != null and plane.is_class("GraphwarPlane"),
