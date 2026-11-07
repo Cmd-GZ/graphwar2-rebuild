@@ -1,5 +1,5 @@
 extends SceneTree
-## `GraphwarRootNode` **真装配**的验收脚本（`docs/16-client.md` §42）。
+## `GraphwarRootNode` **真装配**的验收脚本（`docs/16-client.md` §38）。
 ##
 ## ```text
 ## cargo build --features gdext-bindings
@@ -10,7 +10,7 @@ extends SceneTree
 ##
 ## 它验证的是「**容器真的装进了 3 个 manager、两张屏真的挂上了真节点类**」这几句，
 ## 不验证 manager / 棋盘 / 绘制器的**算术**（那些各自有脚本：`entity_drawer_check.gd`
-## §38、`draw_classes_check.gd` §41、`signal_classes_check.gd` §40、`base_classes_check.gd` §39）：
+## §34、`draw_classes_check.gd` §37、`signal_classes_check.gd` §36、`base_classes_check.gd` §35）：
 ##
 ## 1. `ClassDB.class_exists("GraphwarRootNode")` + 能实例化成 `Node`；
 ## 2. **按类型**在容器里查到 3 个 manager（`GraphwarGameStateManager` /
@@ -40,7 +40,7 @@ const SETUP_SCREEN := "GameSetup"
 const GAME_SCREEN := "PlayScreen"
 const PLANE_NAME := "GraphwarPlane"
 
-## `GraphwarRootNode` 上属于 §42 的那批方法（容器观测口 + 装配口）。
+## `GraphwarRootNode` 上属于 §38 的那批方法（容器观测口 + 装配口）。
 const CONTAINER_METHODS := [
 	"wiring_done", "container_module_count", "container_has_module",
 	"container_module_names", "wired_manager_count", "assembled_manager_total",
@@ -83,7 +83,7 @@ func _initialize() -> void:
 		return
 
 	# ------------------------------------------------------------------
-	# 1) 实例化 + 父类 + §42 的方法表
+	# 1) 实例化 + 父类 + §38 的方法表
 	# ------------------------------------------------------------------
 	var root_node: Node = ClassDB.instantiate(ROOT_CLASS)
 	ok(root_node != null and root_node is Node, "%s 能实例化且是 Node" % ROOT_CLASS)
@@ -175,7 +175,7 @@ func _initialize() -> void:
 		_finish()
 		return
 
-	# Setup 屏挂的是**真节点类**（`docs/16` §39 的 `GraphwarSetupControl`）
+	# Setup 屏挂的是**真节点类**（`docs/16` §35 的 `GraphwarSetupControl`）
 	ok(setup_screen.is_class("GraphwarSetupControl"),
 		"Setup 屏是 GraphwarSetupControl（真节点类，不是空 Control）")
 	print("      setup=%s game=%s" % [setup_screen.get_class(), game_screen.get_class()])
@@ -262,7 +262,7 @@ func _initialize() -> void:
 	root.add_child(root_node)
 	# ⚠️ `--script` 模式下 `_initialize()` 跑在第一帧**之前**：这一刻 `root`（那个
 	# `Window`）自己还没 `inside_tree`（实测），所以这里只能断言"父子关系已建立"，
-	# `is_inside_tree()` 放到第一帧之后再验（`docs/16` §42 的踩坑清单）。
+	# `is_inside_tree()` 放到第一帧之后再验（`docs/16` §38 的踩坑清单）。
 	ok(root_node.get_parent() == root, "根节点挂到了场景树根下（get_parent() == root）")
 	await process_frame
 	await process_frame

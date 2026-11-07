@@ -53,7 +53,7 @@ fn judgement_2_buttons_write_config_fields() {
     assert_eq!(field_of_callback(FN_FACE_BUTTON_PRESSED), Some(ConfigField::Face));
     assert_eq!(field_of_callback(FN_HAT_BUTTON_PRESSED), Some(ConfigField::Hat));
 
-    // 字段偏移与 `docs/16` §25.9 的布局表逐条相同。
+    // 字段偏移与 `docs/16` §22.9 的布局表逐条相同。
     let expect = [
         (ConfigField::Skin, 0x60u32, "yellow", "set_skin"),
         (ConfigField::Face, 0x78, "regular_eyes", "set_face"),

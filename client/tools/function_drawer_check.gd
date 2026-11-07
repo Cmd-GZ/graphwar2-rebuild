@@ -1,5 +1,5 @@
 extends SceneTree
-## `FunctionDrawer` 真节点验收脚本（`docs/16-client.md` §42）。
+## `FunctionDrawer` 真节点验收脚本（`docs/16-client.md` §40）。
 ##
 ## ```text
 ## cargo build --features gdext-bindings
@@ -375,9 +375,9 @@ func _initialize() -> void:
 		print("      GDExtensionManager.load_extension(%s) -> %d" % [EXTENSION_PATH, err])
 
 	ok(ClassDB.class_exists("GW2Rebuild"), "对照组：单例 GW2Rebuild 仍在")
-	ok(ClassDB.class_exists("AxisDrawer"), "对照组：AxisDrawer 仍在（§35）")
-	ok(ClassDB.class_exists("EntityDrawer"), "对照组：EntityDrawer 仍在（§38）")
-	ok(ClassDB.class_exists("EffectDrawer"), "对照组：EffectDrawer 仍在（§41）")
+	ok(ClassDB.class_exists("AxisDrawer"), "对照组：AxisDrawer 仍在（§31）")
+	ok(ClassDB.class_exists("EntityDrawer"), "对照组：EntityDrawer 仍在（§34）")
+	ok(ClassDB.class_exists("EffectDrawer"), "对照组：EffectDrawer 仍在（§37）")
 
 	var drawer: Object = _check_class(FD, [
 		"update_function", "remove_function", "update_transform", "update_function_fade",

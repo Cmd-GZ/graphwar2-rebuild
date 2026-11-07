@@ -60,7 +60,7 @@ graphwar_plane_pos_manager.rs	graphwar	6	0	9	src/plane.rs	16	观测	docs/140：p
 graphwar_play_screen_control.rs	graphwar	10	3	64	src/graphwar_play_screen_control.rs	8	观测	docs/14-turn.md §9 逐函数规格（10 个可归属函数 / 64 个锚）；界面视图仍在 client/ GDScript（仿制），但控制器本体已落在 src/graphwar_play_screen_control.rs。旧行写「未做」与 src/lib.rs/文件头冲突 ⇒ 按代码更正
 graphwar_player_config.rs	graphwar	0	0	0	src/graphwar_player_config.rs	8	观测	PlayerShowcase 读的 config（名字+0x00/皮肤+0x60/脸+0x78/帽+0x90/变更计数+0xa8）；存档分隔符未解（docs/16 §33）
 graphwar_player_manager.rs	graphwar	3	0	6	src/graphwar_player_manager.rs	12	观测	4/4（旧记 3，add_player 在 x86 被内联、arm64 有独立符号）：player_id -> connection_id；该连接最后一人被删时级联 ConnectionRemoved(6)（docs/10 §15）
-graphwar_player_screen_control.rs	graphwar	8	0	22	src/graphwar_player_screen_control.rs	19	观测	8/8：**就是写 GraphwarPlayerConfig 的地方**——set_skin/set_face/set_hat 三条具名 bl 直证，三个 setter 写 +0x60/+0x78/+0x90 且 inc dword [+0xa8]，与 docs/16 §25.9 布局逐字段吻合（§29）
+graphwar_player_screen_control.rs	graphwar	8	0	22	src/graphwar_player_screen_control.rs	19	观测	8/8：**就是写 GraphwarPlayerConfig 的地方**——set_skin/set_face/set_hat 三条具名 bl 直证，三个 setter 写 +0x60/+0x78/+0x90 且 inc dword [+0xa8]，与 docs/16 §22.9 布局逐字段吻合（§29）
 graphwar_rank_manager.rs	graphwar	4	0	4	src/graphwar_rank_manager.rs	11	观测	4 函数。段位**只从远端事件进**（RemoteEventHandler::handle_{client,server}_remote_event 各一处 set_rank），模块内零换算；RankInfo(67) = 三个 dword（+8 标志 / +0xc 段位 / +0x10 player_id）；66 由 local_player_manager 发（推断）（docs/10 §14）
 graphwar_remote_event_handler.rs	graphwar	3	1	171	src/events.rs	2	观测	docs/110/96：远端事件名与判别值已解；我方 events.rs 实现枚举 + 编解码，无逐字节对拍
 graphwar_replay_control.rs	graphwar	2	0	9	src/graphwar_replay_control.rs	6	观测	4：回放控制；时钟字段仍未解（docs/16 §32.7）
