@@ -1,0 +1,19 @@
+# guard_rails.tsv —— 由 tools/bit_exact_attrib.py --write-guardrails 生成，**不要手改**
+# 重算：--write-guardrails --axis fire|batch   只校验：--check-baseline --axis ...
+# 口径：401 份定格快照；fire 轴 = replay_attrib --drive fire --policy default；
+#       batch 轴 = replay_attrib --drive batch --policy default
+# axis	metric	value
+fire	结算批数	1080
+fire	结算批内容命中	608
+fire	消息种类序列命中	947
+fire	延迟段死亡集合命中	366
+fire	延迟段死亡集合分母	385
+fire	延迟段挖洞点命中	205
+fire	延迟段挖洞点分母	293
+batch	结算批数	1080
+batch	结算批内容命中	643
+batch	消息种类序列命中	1075
+batch	延迟段死亡集合命中	366
+batch	延迟段死亡集合分母	385
+batch	延迟段挖洞点命中	206
+batch	延迟段挖洞点分母	293
