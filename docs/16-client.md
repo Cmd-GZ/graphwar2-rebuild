@@ -9266,3 +9266,204 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
 （本次就是在文件偏移 `0x4640d1` 搜到 `mov word […],0x72ee`，对应 vaddr **`0x4650d1`**）。
 `.rodata` 在第一个段里，`offset == vaddr`（`.rodata 0x19f7f8` 直接读就对）。
 `tools/addr_probe.py` 打印的与 `@0x…` 解析的都是 **vaddr**，两者不要混。
+
+## 49. 六个真 GDExtension 节点挂进播放屏：`plane_view.gd` / `fire_fx.gd` 删除（2026-11，任务 31）
+
+**一句话**：播放屏（`client/src/screens/play_screen.gd`）的战场不再由 GDScript 自绘 ——
+**棋盘框 / 曲线 / 士兵 / 网格 / 障碍 / 特效** 六样东西现在分别由 `GraphwarPlane` /
+`FunctionDrawer` / `EntityDrawer` / `AxisDrawer` / `ObstacleDrawer` / `EffectDrawer`
+六个 **Rust 扩展类**画，两个仿制 `.gd`（`plane_view.gd` 527 行、`fire_fx.gd` 261 行）删除。
+
+**这是"客户端迁回 Rust"的第一刀**（`AGENTS.md` §0 第 4 条那条路的第一个落地点），
+**不是**"客户端复原完了"：§49.5 列了 8 条还缺的，其中**准备圈在画面上已经没有了**。
+
+### 49.0 先说没做到的（免得被下面那张表误导）
+
+| 项 | 现状 | 档位 |
+|---|---|---|
+| **准备圈**（`docs/140` 那三弧 + 三箭头） | **画面上没有**：原版由 `EntityDrawer::draw`（`0x4b2890`）画，本项目的 `EntityDrawer` 节点类 `_draw` 没实现（§33 对照表）⇒ 删掉 `fire_fx.gd` 之后**没有任何节点会画它** | 缺口（几何证据仍在 `tests/entity_drawer.rs`） |
+| **士兵/靶子的真贴图** | `EntityDrawer` 用的是**程序生成的 8×8 纯色**（皮肤/脸/帽子三块方块），不是 pck 里的 `skins/*`、`faces/*`、`hats/*` | 缺口（§33 对照表早就记了） |
+| **tick 源** | 原版 `GraphwarTickHandler::get_fractional_tick`（`0x519530`）没接 ⇒ 播放屏按**帧间隔**自己推 | 缺口（§43.6(d) 第 2 条） |
+| 点的生产者 | 仍由播放屏把内核算出的弹道 `set_function_points()` 进去（`0x3e44d4` 归属仍未证） | 缺口（§43.6(d) 第 1 条） |
+| 队色表 / 淡出 / `z_index` / `FunctionDrawer::draw` | 与 §43.6(d) 第 4–7 条**一模一样**，没有变化 | 缺口 |
+
+### 49.1 本轮动了哪些文件
+
+| 文件 | 动作 | 说明 |
+|---|---|---|
+| `client/src/screens/play_screen.gd` | 改（+698/−？） | 6 个真节点接线的本体；44 处 `_plane.*` 全部改到真节点 API；新增 `_sync_entities()` / `_set_curve()` / `_advance_curve()` / `plane_points()` / `plane_state()` 等 |
+| `client/src/game/effect_layer.gd` | 改（自绘 → 适配，211 行里删掉 ~120 行） | 不再 `draw_arc`/`draw_circle`；坐标映射整段删除，改成 `EffectDrawer.spawn_effect()` + `retain_alive()` |
+| `client/src/play/plane_view.gd`（`GwPlaneView`，527 行） | **删除** | 六个位置全被真类接管 |
+| `client/src/play/fire_fx.gd`（`GwFireFx`，261 行） | **删除** | 曲线揭示改用 `GraphwarPlane` 的 30 点/tick；准备圈**没有替身**（§49.5 第 1 条） |
+| `client/src/play/plane_view.gd.uid` | **删除** | 上面那个脚本的 uid 存根（脚本没了，存根也就没了） |
+| `client/tools/selftest.gd` | 改（44 条断言换主语 + 4 条新增，净 **+15** 条） | 详见 §49.7；**没有删断言**，只换主语；新增的 4 条是"网格/实体/障碍真的被引擎画过"与"画布真的被容器铺开" |
+| `src/**` | **一个字没动** | 六个节点类上一轮就都在（§33 / §35 / §34 / §43 / §45），本轮只接线 ⇒ `cargo test` 不用重跑新逻辑（仍是 1569），`coverage_matrix.py` 也不用重生成 |
+
+### 49.2 现在播放屏里的节点树（以及"画布模型"这条我方选择）
+
+```text
+PlaneContainer (AspectRatioContainer, ratio = 50:30, STRETCH_FIT)   ← 原版同名同参数
+ └ PlaneCanvas (Control)                     ← 拿到容器铺的 5:3 矩形；clip_contents = true
+     └ GraphwarPlane  (size 1000×600, scale = fit)   ← ① 棋盘框（`_draw` 的 draw_set_transform + draw_rect）
+         ├ @FunctionDrawer@N ×3  (z=2)       ← ③ 曲线（每 player 一条 Line2D，平面 `_draw` 里喂点）
+         ├ AxisDrawer            (z=-1)      ← ④ 白底 + 网格（`axis_primitives`）
+         ├ ObstacleDrawer        (z=1)       ← ⑥ 障碍掩膜贴图（`update` 每帧 2 次）
+         ├ EntityDrawer          (z=3)       ← ⑤ 士兵 / 名字 / 靶子（每实体 3 sprite + 1 标签）
+         ├ EffectDrawer          (z=4)       ← ② 特效（`frame_primitives`）
+         └ EffectLayer           (适配层)     ← 只记账 + 派给 EffectDrawer，**不画**
+```
+
+**画布模型是"我方选择"**（`§43.6(d)` 第 3 条：原版 `draw_set_transform` 的三个实参没解出来）：
+六个类各自按**自己控件的尺寸**换算 —— `axis_drawer` / `effect_drawer` 用 `size/50` 与
+`size/2`，`entity_drawer` 用 `size.x/50` + `size/2`，`obstacle_drawer` 用 `size/1000` +
+`size/2`，`graphwar_plane` 用固定的 `PX_PER_UNIT = 20` 与 `PIXEL_OFFSET = (500,300)`。
+要把它们摆进同一个坐标系，只有一种不改 Rust 的做法：**把它们全放到 1000×600 的固定画布上**
+（`src/plane.rs::CANVAS_W/H`，也是 `obstacle_drawer` 掩膜、`axis_drawer` 白底、`to_pixel()`
+共同的那块画布），再用 `Control.scale` 把整块画布缩放进 `AspectRatioContainer` 给的矩形。
+⇒ 播放屏只做**一处**缩放（`_fit_canvas()`），六个类内部一个数都不用改。
+`--headless` 的视口是 64×64，缩放比会很小，但断言全部是"点数 / 条数 / 像素数"这类
+**不依赖窗口尺寸**的量（§49.7 的口径），所以 headless 能验。
+
+**z 序也是我方选择**（`GraphwarPlane` 的 `z_index` 初值是 `未知`，§40.3f）：`AxisDrawer`
+用 `z_as_relative = false` + `z_index = -1` 画在棋盘框**之下**（否则它那张 1000×600 白底会
+盖住平面的黑框 —— 引擎先画父再画子）；其余四层按"障碍 < 曲线 < 士兵 < 特效"排。
+
+### 49.3 `effect_layer.gd`：从"自绘"变成"适配"（附一张**我方选择**的映射表）
+
+| 项 | 旧（自绘） | 新（适配真节点） |
+|---|---|---|
+| 形状 | 手画环/火舌/实心圆/十字/方点（**自定**） | `effect_drawer::frame_primitives` 的四类图元（半径 0.05/0.06、四组基色、`max(0,(1−t)·0.9)`，全是 `.so` 立即数） |
+| 坐标 | 靠 `plane.board_to_screen()` 换算 | **整段删除**：`EffectDrawer` 自己发 `draw_set_transform(size/2, 0, (size.x/50, ∓))`（`draw_transform`，逐位） |
+| 寿命 | 自定秒数（`LIFETIME`） | `duration_ticks`（旧的秒数 ×60 **搬过来**，因为原版时长无证据）+ 调用方每帧 `retain_alive()`（判据**推断**，所以节点类故意没自己跑） |
+| 名字 → 相位 | 四种名字各有一套自定形状 | **映射表**（`PHASE_FOR_KIND`）：`ExplosionEffect`→2 `CircleLargeA`、`DeathEffect`→6 `CircleDark`、`SparkEffect`→0 `CircleSmall`、`AshEffect`→4 `LineA` ——**我方选择**：原版是 `EffectInfo` 判别值（0..3 的跳表）进 `EffectData`，而 `Phase` 有 **7** 档，两者是不是同一个编号**没有任何证据** |
+| 多边形 / 线段 | 会画 | 多边形顶点未复原 ⇒ 跳过（`polygon_skipped_total` 计数）；线段端点未复原 ⇒ 退化线段 |
+
+⚠️ 附带一个**真的观测**：`EffectDrawer` 的 `step_effects` 会把相位 `CircleLargeA(2)` 推进成
+`CircleLargeB(3)`（其余推进成 `CircleDark(6)`），所以"刚 spawn 时的相位"和"两帧后的相位"
+**本来就不同** —— 自检里那条断言因此必须**当刻**读（§49.7 的踩坑记录）。
+
+### 49.4 `TEAM_COLORS` / `assign_colors()` 搬到播放屏（数字一个字没动）
+
+`GwPlaneView.TEAM_COLORS`（`docs/102` §1.1 从 `.so` 调色板表解出的 2×6 色表）与
+`assign_colors()`（随机起点 + 线性探测）**唯一**的两个消费者都在 `play_screen.gd`
+（开局配色、联机配色、回放的缺省色）。类删掉之后整块搬到播放屏，**六个数一个都没改**，
+自检里 `TEAM_COLORS[0][2] == #7D6800` 那条断言也照旧成立（只是主语从 `GwPlaneView` 换成播放屏）。
+
+### 49.5 缺口诚实清单（8 条，按"画面上看得见的影响"排序）
+
+1. **准备圈没有了**（最显眼的一条）。原版是 `EntityDrawer::draw` 的 3 次 `draw_arc` + 3 个外凸
+   箭头（`0x4b2890`，`docs/140` §2 逐条立即数），本项目的 `EntityDrawer` 节点类
+   **没有实现 `_draw`**。补它要动 `src/_scaffold/entity_drawer_class.rs` 的**行为**，
+   本轮任务不许（`dispatch/31` §5 的禁区）⇒ 记在这里，**不在 GDScript 里再造一个假圈**。
+   几何证据没丢：`tests/entity_drawer.rs` 的 `arcs_carry_the_exact_draw_arc_arguments`
+   （10 折点 / 0.3 带宽 / 关 AA / `0x00687d`）与 `open_ring_is_narrower_than_closed_ring`
+   （张开 60° / 闭合 123°）仍在 `cargo test` 里跑。
+2. **士兵与靶子的贴图是纯色方块**（`EntityDrawer` 的程序生成贴图，§33 对照表"我方选择"）。
+   真贴图要 `GraphwarTextureLoader`（三张 `HashMap<String, Texture2D>`）那一层，没接。
+   靶子**还能看见**，但长得和士兵一样（`EntityDrawer` 没有"种类"概念，靠 id 区分：
+   士兵 = `_soldiers` 下标，靶子 = `1000 + target_id`）。
+3. **点的生产者仍是我方注入**（§43.6(d) 第 1 条没变）。
+4. **tick 源仍是我方推**（`get_fractional_tick` 没接）：`_advance_curve()` 按帧间隔推
+   `60 tick/s`，`advance_shot_for_test()` 是自检的确定性入口。
+5. **`update_transform` 的两个实参**（`position=(500,300)` / `scale=(20,-20)`）仍是**我方选择**，
+   与 `plane_on_screen.tscn` 逐值相同（§43.6(d) 第 3 条没变）。
+6. **淡出没接**（`get_function_fade_on_tick` 无 x86 落点，走 GOT 槽 `0x9bbd08`）。
+7. **队色表没接**（`GraphwarDrawUtil::get_team_overview`，`0x4be6e0` 的两张表）。
+   于是 `EntityDrawer.team_color` 用默认值（`0x0000ff`，镜像判据 = 不翻转），
+   曲线颜色仍由播放屏把玩家的 `Color` 打包成 `0x00RRGGBB` 传进去。
+8. **三处注释还写着旧类名**（`client/src/core/core_bridge.gd` 第 59 行、`client/src/game/target_set.gd`
+   第 75 行、`client/src/play/replay_player.gd` 第 364 行都提到 `GwPlaneView.xxx`）。那三个文件
+   不在本任务的允许改动清单里 ⇒ 没动，下一轮顺手改。
+
+### 49.6 就地把 §43.6 那张表的过期行改掉（改了什么）
+
+| 位置 | 原文（过期） | 现在 |
+|---|---|---|
+| §43.6 抬头 | "**本轮没动它**——本任务只证明真类能在场景里画出来" | 加了一句"本节已被 §48 执行完"，正文保留（记录当时缺什么） |
+| §43.6 (a) 表 | 两行只有"换成什么"，没有现状 | 加"现状"列：**两行都已删除**；`fire_fx` 那行注明**准备圈没有替身** |
+| §43.6 (b) 表头 | "（现在 1 个都没有）" | "（写本节时 1 个都没有；**§48 之后 6 个全挂上了**）"，并加"现状"列 |
+| §43.6 (b) 第 6 行 | "**类还不存在**（§40.5 / §42.5 第 7 条）" | 就地注明**写的时候已经过期**（第四轮任务 23 做出了该类，§45 有 116 条断言），现状"已挂" |
+| §43.6 (c) | 三件"要改的" | 标"三件都改完了" |
+| §43.6 (d) 7 条 | 纯缺口清单 | 每条后面加"→ §48 之后是什么状态"：第 7 条的**网格**已经由 `AxisDrawer` 画出来（白底 + 线），只有**队色表**仍缺 |
+| §43.7 第 1 条 | "客户端播放屏仍是仿制品" | 见下方 §49.6b 的就地更正 |
+
+**§49.6b（就地更正 §43.7）**：§43.7 第 1 条写"客户端播放屏仍是仿制品、§42.5 第 5 条那句
+'客户端还没用真类'对播放屏仍然成立" —— **从 §48 起这句话对六个绘制位置不再成立**
+（棋盘框/曲线/士兵/网格/障碍/特效都来自 Rust 类），**但整屏仍是仿制品**（
+`play_screen.gd` 的流程/时序/输入/回合仍是我们写的，`AGENTS.md` §0 第 4 条的判断不变）。
+
+### 49.7 验收（本节实测，可从干净树重跑）
+
+```text
+export CARGO_HOME=<WS>/.reference/cargo-home CARGO_TARGET_DIR=<WS>/.agent-work/cg/target31
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so   # 不覆盖就还在跑旧内核
+cargo build --offline --example serve_match                             # 自检的两个联机用例要它
+export HOME=<假 HOME>                      # selftest 读 $HOME，不走 XDG_DATA_HOME
+mkdir -p $HOME/.local/share/godot/app_userdata/Graphwar
+cp -r <replays 快照>/replays $HOME/.local/share/godot/app_userdata/Graphwar/
+"$GODOT" --headless --path client --import                              # 删了 .gd 必须重扫
+"$GODOT" --headless --path client -- --selftest
+```
+
+| 口径 | 改前（`CG@1877049`，同一台机同一份 .so） | 改后 |
+|---|---|---|
+| selftest（**有** assets + 回放样本 + `serve_match`） | **694 passed / 0 failed** | **709 passed / 0 failed**（+15） |
+| selftest（**无** assets：`GW2_ASSET_DIR=res://no_assets`） | 675 passed / **2 failed** / 10 skipped | 690 passed / **2 failed** / 10 skipped |
+| 两条 FAIL 的身份 | `点 Skins 页的 -1 号皮肤…`、`Cancel = 194 宽 / Start = 218 宽` | **同两条**（既有问题，不是本批引入） |
+| `cargo test --offline` | 1569 passed / 0 failed（1 ignored） | **1569 / 0**（`src/` 一个字没动） |
+
+`client/tools/` 那九个 headless 脚本（改后实测，一个都没退）：
+
+```text
+gdext_check         24 passed, 0 failed
+assemble_check     203 passed, 0 failed
+plane_on_screen     76 passed, 0 failed
+obstacle_drawer    116 passed, 0 failed
+function_drawer    132 passed, 0 failed
+draw_classes       235 passed, 0 failed
+curve_on_screen     96 passed, 0 failed
+entity_drawer       72 passed, 0 failed
+base_classes       117 passed, 0 failed
+signal_classes     155 passed, 0 failed
+spike_class_check   23 passed, 0 failed
+```
+
+**"6 个节点都挂上了"在自检里怎么验的**（`selftest.gd` 的 `_test_fire_fx` ② 那一段）：
+`ClassDB.class_exists` ×6 + `plane_state()` 六个字段全部**从真节点读回来**
+（`function_drawers`=3、`axis_lines`=102、`plane_draws`>0、`entities`=士兵+靶子、
+`obstacle_updates`>0、`fx_draws`>0）+ 四个网格档位 0/2/20/102 + 一个实体 4 个子节点 +
+`Line2D` 线宽 `0.125`（逐位常量）+ **三个"引擎真回调过"的计数**
+（`AxisDrawer.draw_call_count` / `EntityDrawer.process_call_count` / `EffectDrawer.draw_call_count`）
++ **一次真注入**（注入 1 个障碍 ⇒ 掩膜里 11310 个像素被占）
++ **画布真的被容器铺开**（headless 下实测 `canvas = (124.0, 74.4)`、`plane.scale = (0.124, 0.124)`，
+  两个数正好是 5:3 与 `124/1000`）。
+**一条都不是"看代码猜的"**：每条都是引擎回调的计数或真节点里的真值。
+
+**两个本轮踩到的坑（写下来省下一轮的时间）**：
+
+1. `GraphwarPlane.clear_function_points()` **不删 `Line2D`**（它只清平面自己那张登记表）。
+   只调它的后果不是"看着没删"，而是**下一条曲线一个点都画不出来**：同一 player id 再
+   `update_function` 时 `FunctionDrawer` 还记着"已写入 N 点"，`append_window` 判
+   `new_len <= N` 直接 return（`0x498d5a` 的 `ja`）。必须再对那个 `FunctionDrawer`
+   调 `remove_function`（原版 `0x498b70`：`queue_free` + 删表）。
+   平面的 `_draw` 里那条 `remove_function`（`0x4b6418`）只在"函数离开活跃窗口"时跑。
+2. `EffectDrawer` 的相位会自己往前走（2 → 3、其余 → 6，`step_effects` 的"到期换相位"），
+   所以"spawn 时的相位"必须**当刻**读；隔两帧读到 3 是**对的**，不是 bug。
+3. `ObstacleDrawer.add_obstacle(x, y, radius)` 收的是**棋盘单位**，不是画布像素 ——
+   `plane::raster_params()`（`0x3f17a0` 那条路径的入口）自己就做那次换算
+   （`px = x*20 + 500`、`r = size*20`）。本轮第一版在播放屏里**又换了一次**，
+   圆心被推到 (10500, 6300) ⇒ 一个像素都画不出来（自检条数上表现为 1 条 FAIL，
+   肉眼看是"障碍整个消失"）。
+
+### 49.8 仍是推断 / 未知（诚实清单）
+
+| 项 | 档位 | 缺什么 |
+|---|---|---|
+| "六个类都**在画**" | **观测** | 引擎回调计数（`draw_call_count` / `drawn_*_total` / `occupied_pixels` / `plane_draws`），本轮实测非零 |
+| 六个类**画得与原版一致** | **未知** | 没有本轮的截图对拍：① 准备圈缺失（§49.5 第 1 条）；② 士兵贴图是纯色方块；③ 画布模型（1000×600 + 缩放）是**我方选择**，原版那次 `draw_set_transform` 的实参没解；④ 队色表没接 |
+| 准备圈的几何 | **观测**（在 Rust 侧） | `tests/entity_drawer.rs` 的两条测试；**画面上没有** |
+| 名字 → 相位那张表 | **我方选择** | 原版 `EffectInfo` 判别值 → `EffectData.phase` 的映射没有任何证据 |
+| 特效时长 | **我方选择** | 原版只给 `start_tick`；`retain` 的判据是**推断** |
+| 障碍坐标换算 | **观测** | 掩膜是 1000×600 画布像素（`plane::CANVAS_W/H`），棋盘单位 → 像素走 `px = 20x + 500`、`py = 300 − 20y`、`r_px = 20r`（`to_pixel` 的同一套数） |
+| `--headless` 下的画面对不对 | **测不到** | 视口 64×64、没有渲染器；像素级只能靠有限窗口截图（`docs/16` §43.5 的办法），本轮**没做**截图 |
