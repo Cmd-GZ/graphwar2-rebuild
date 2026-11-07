@@ -6588,14 +6588,27 @@ cp $CARGO_TARGET_DIR/release/libgw2_rebuild.so client/libgw2_rebuild.so
 bash client/run.sh selftest                      # SELFTEST 618 passed, 0 failed, 2 skipped
 ```
 
-⚠️ **selftest 的条数说明（不许含糊）**：本节实测 **618 passed / 0 failed / 2 skipped**
-（2 条 skip = 没编译 `examples/serve_match`）。为了确认"这不是本轮弄坏的"，另开一份
-**同 commit（`79a7645e`）的干净克隆**、同一份 `client/assets/`、同一个默认 feature 的 `.so`
-跑同一句，结果**逐字相同**（618 / 0 / 2）。§35 / §38 / `docs/HANDOVER.md` 里写的
-**694 passed** 在本环境**复现不出来** —— 差的那 76 条没有一条依赖 `src/`（干净的 master
-就是 618），所以是**文档里的数过期了**（`AGENTS.md` §0.6 那种情况），本轮按实测更正为
-618 并说明口径；谁的环境里能跑到 694，请把当时的 `client/assets/` 与
-`examples/serve_match` 一起记下来再改回去。
+⚠️ **selftest 的条数说明（2026-11-07 第二次更正，这次是 694 对的）**：
+
+`618 passed / 0 failed / **2 skipped**` 与 `694 passed / 0 failed` **不是矛盾，是前置条件不同**——
+差的 76 条全在那 2 个被 skip 的套件里，而它们 skip 的唯一原因是**没编 `examples/serve_match`**：
+
+```text
+bash client/run.sh selftest
+  → 没编 example：SELFTEST 618 passed, 0 failed, 2 skipped
+  → 先 cargo build --offline --example serve_match，再跑：SELFTEST 694 passed, 0 failed
+```
+
+2026-11-07 18:20 在本仓库实测确认：先把 `serve_match` 编出来，同一份 `client/`、同一个
+默认 feature 的 `.so`，得到的就是 **694 passed, 0 failed**。所以 §35 / §38 / `docs/HANDOVER.md`
+里写的 694 **没有过期**；需要补的是**这条前置条件**，而不是改数字。
+
+另外两个会把条数弄错的环境陷阱（都实测过）：
+
+* **不要覆盖 `XDG_DATA_HOME`**（例如指到仓库内的 `.godot-data`）——那会把 `user://replays`
+  指到空目录，回放相关套件会红（历史记录里出现过 693/1）；
+* 依赖 `client/assets/`（用户自己的 `Graphwar.pck` 解出来的）与 `extract_audio.py --import`
+  的步骤，缺了也会有套件降级成 skip。
 
 ---
 
