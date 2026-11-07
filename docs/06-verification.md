@@ -819,6 +819,12 @@ cd .. && .venv/bin/python analysis/difftest.py         # 768 例（原 704 + 64 
 写成"403 份回放 / 2 份 `Replay::load` 失败 / 119 份没有结算批"，是**口径错**（2+119≠117），
 已改正；**归因表、地址级证据、收益估计一个字都没变**（它们的分母是"批"，不是"文件"）。
 
+> ⚠️ **本表是 `fire` 驱动的"修前"基线**（2026-11-07 之前）。[§25](#25-爆炸点-pos_y坐标来源逐指令定死末位差拆成两桶2026-11-07dispatch09)
+> 改掉爆炸点常量口径之后，同一份快照上 `fire` 驱动的读数是
+> **内容命中 324 / 1080、种类序列 818 / 1080、死亡集合 209 / 379、挖洞点 138 / 258**，
+> 所以 `tools/bit_exact_attrib.py --check-baseline` 现在会报 4 项不一致 —— 那是**工具里写死的旧基线**
+> （它的表头就写着"任务书基线"，本轮不允许改 `tools/`）。要复现下面这张表，先 `git stash` 掉 §25 的改动。
+
 **工具那行 `文件 286（读失败 117）` 的可复算分解**（三个数必须这样加）：
 
 ```text
@@ -1068,3 +1074,207 @@ cargo run --release --offline --example replay_endx_probe -- --dir $R --file 178
 | 3 | 挖洞点为何与我方停点无关（200 个"点不存在"） | 一条真实挖洞的 `QueueDestroyObstacle` 地址级追踪 | **未知** |
 | 4 | `E2` 25 批的真几何分歧（掩膜 ring/fill 还是碰撞判据） | 逐发掩膜对照（`docs/142` §4 的 ring/fill 口径已有工具） | **未知** |
 | 5 | `K` 1 批 + `C` 14 批 | 逐例看 | **未知** |
+
+## 25. 爆炸点 `pos_y`：坐标来源逐指令定死，末位差拆成两桶（2026-11-07，`dispatch/09`）
+
+> 任务书：[`dispatch/09-fx-explosion-y.md`](../dispatch/09-fx-explosion-y.md)。归因桶 = §24.4 的 `Y`
+> （收敛层 170 批 / 33.2%）＋ `Y2`（6 批）。本节**推翻任务书的两个前提**（见 §25.1）并给出落地修正。
+>
+> **反汇编口径**：逐指令证据一律引 **arm64 Android 2.0.60 `libgraphwarrust.so`**
+> （`.reference/steam/android-2.0.60/`，**未 strip**，`readelf -sW` 直接给符号，地址 = `st_value`）。
+> x86-64 那份（`2026-08-28/`）是 stripped，同一段代码在 `0x472470`（`execute_results`）里，
+> 指令形态一致但符号不可读，所以本节不引它的地址。
+
+### 25.1 一句话（两个前提被推翻）
+
+1. **爆炸点不是"停点经过某种变换"，就是点序列的最后一个元素**：
+   `EffectInfo(Explosion)` 的 `pos_x/pos_y` = `pts[len-1].x/.y`，**没有投影、没有取整、没有翻转**
+   （arm64 `0x4a8918`/`0x4a891c` → `0x4a89b4`/`0x4a89f0`，见 §25.2）。⇒ 任务书"y 经过了某次变换"**不成立**。
+2. **这 170 批不是一个机制**：176 个爆炸点里 **124 个是 DiffEq（Ode）模式的 RK4 积分值**、
+   **52 个是 Normal 模式的求值值**（按批前最后一个 `FunctionModeInfo` 判，见 §25.7）。
+   旧 §24.5③ 把它当成单一"求值器末位"问题，所以怎么找都对不上。
+3. 顺手推翻旧 §24.5③ 的一句话：**`pos_y` 的差不是同向的**。
+   176 条 `pos_y` diff 里 `ours<obs` **105**、`ours>obs` **55**、逐位相同 **16**
+   （旧文"符号全部同向，154/154 我方 > 回放"复现不出来；应该是把两个桶混在一起算的）。
+
+**落地结果**：`fire` 驱动内容命中 **21 → 324 / 1080**（种类序列 **818 → 818**，结构一条没动），
+`batch` 驱动 **21 → 341**；延迟段挖洞点 **1/259 → 138/258**（副作用，见 §25.6）。
+
+### 25.2 坐标来源 = 点序列最后一个元素（**观测**，逐指令）
+
+`GraphwarGameStateManager::execute_results`（arm64 **`0x4a8558`**，3712 B）里那段"逐项处理开火队列"：
+
+```text
+004a87ec  ldr   x27,[x26],#0x20      ; 队列项 tag（步长 0x20）
+004a8800-004a8818                    ; tag - 0x8000000000000001 → 索引 0/1/2
+004a88e8  orr   x22,x23,x20,lsl#32   ; 索引 0：指针由两个 u32 半拼回（pts）
+004a88ec  ldr   x20,[x8,#0x10]       ; n = 点数
+004a8918  add   x8,x22,x20,lsl#4     ; &pts[n]（元素 16 B = 一对 f64）
+004a891c  ldp   d9,d8,[x8,#-0x10]    ; ★ d9 = pts[n-1].x，d8 = pts[n-1].y
+004a895c  bl    set_function_active_tick        ; FunctionActive
+004a898c-004a8998                    ; start_tick = active_tick + n/60（除 60 用 0x88888889 魔术数）
+004a89b4  stp   d9,d8,[x29,#-0x60]   ; ★ effect 记录的 (pos_x,pos_y)
+004a89b8  sturb wzr,[x29,#-0x4c]     ; effect_type = 0 = ExplosionEffect
+004a89e8  mov   x8,#0x2c
+004a89ec  movk  x8,#0x8000,lsl#48    ; tag 44 = EffectInfo（任务书给的地址指的就是这里）
+004a89f0  stp   d9,d8,[x29,#-0x58]   ; ★ 事件载荷用**同一对** d9/d8
+```
+
+⇒ ① 事件里的 `pos_x/pos_y` 与 effect 表里的坐标**同源同值**；② `start_tick` 里出现 `n/60`
+说明这个数组就是**整条弹道的采样点**（≈4700 点 × 60 fps），不是"只有端点"的表。
+同一函数里的第二处生产点（死亡）用的是另一条路：`0x4a8b40 bl get_position`（`GraphwarPlanePosManager::get_position`）
+→ `0x4a8b50 ldp d8,d9,[sp,#0x80]` → `0x4a8cb4 stp d8,d9,[x29,#-0x58]`，与 `0x4a8c50 ldurb w21,[x13,#-4]`
+（`entity_effect_map` 查表，查不到就 `0x4a8c38` 跳过）—— 与 `docs/16` §29.3(b) 一致。
+
+### 25.3 真值轨迹用的是**印出来的三位小数修正常数**（**观测** + 数值侧独立验证）
+
+* `GraphwarShotCalculator::calculate_corrected_function`（**`0x3b79a8`**）= 原文 + 补齐未闭合的 `)`
+  （`0x28`/`0x29` 计数，`0x3b7ba8` 那段写 `)`）+ 偏移串；
+* `GraphwarShotCalculator::calculate_function_offset_str`（**`0x3b7c70`**）逐条：
+
+```text
+003b7cf8  bl    MathFunction::new               ; 解析函数文本
+003b7cfc  ldr   d0,[x20]                        ; x0
+003b7d0c  fcsel d0, -x0, x0, flip!=0            ; flip ? -x0 : x0
+003b7d20  bl    MathFunction::evaluate_recursive; f(∓x0)
+003b7d24/28     ldr d1,[x20,#8] ; fsub d0,d1,d0 ; c = y0 - f(∓x0)
+003b7d2c  fcmp  d0,#0
+003b7d38-003b7d60  fabs + format(0x82fa28) + 补 " - "(strh 0x2d20)  ; c < 0
+003b7dbc-003b7df8  format         + 补 " + "(strh 0x2b20)          ; c >= 0
+```
+
+  ⇒ 文本里的常量是 **3 位小数**（`" - 6.861"`）。三位这个数字在 `.rodata` 的格式描述符里没有逐字节解出来
+  （`0x179468` 是 `format` 的 pieces/args 结构），但**回放的 `corrected_function` 逐字节吻合 1079/1080 批**，
+  这一条是**观测**级；我们 `graphwar_shot_calculator::correction_text` 的 `{:.3}` 与此一致。
+* 调用序（**观测**）：`GraphwarGameStateManager::fire_functions` 内先 **`0x4a7458 bl calculate_corrected_function`**，
+  再 **`0x4a798c bl calculate_shot_results`**，而 `calculate_shot_results` 在 **`0x3b5b0c`** 调采样器
+  `calculate_function` ⇒ **采样发生在"修正文本"造出来之后**。
+* **推断**（缺的证据写明）：采样器拿到的那棵树是从**修正文本**建出来的
+  （`MathFunction::new` 的两处调用在 `GraphWarFunctionManager::set_function` 的 `0x488b28`/`0x488b74`），
+  但"树 → 采样器"这一跳没有点对点证到（`calculate_shot_results` 内部零 `evaluate` 调用，树是从函数管理器取的，
+  取的是哪一棵没逐指令确认）。
+* **数值侧独立支持**（52 个 Normal 样本，`pairs.json` 见 §25.9 的复现手法）：
+  「全精度 `c` 平移」的 y 有 **47/52** 与回放差 **1e-6~5e-4**；
+  「三位小数文本回代」的 y 有 **5/52 逐位相同、40/52 恰差 1 ulp**。⇒ 常量确实是三位小数那一版。
+
+### 25.4 采样器与 RK4 的具体算术（**观测**，本轮新解）
+
+`GraphwarShotCalculator::calculate_function`（arm64 **`0x3b5374`**，1020 B）：
+
+| 项 | 地址 | 内容 |
+|---|---|---|
+| 点数预算 | `0x3b53cc`/`0x3b53ec`/`0x3b53f8` | `mov x8,#0x4069000000000000`（**200.0**）`fdiv`(step) → `fcvtzs` → `max(n,1)` |
+| 首点 | `0x3b53e4` | `stp d11,d9` = `(x0,y0)` |
+| 求值用的 x | `0x3b53f0` | `fcsel d8, -x0, x0, flip` |
+| 边界 | `0x3b5560`/`0x3b5578` | `fmov #25.0` / `fmov #15.0`（`|x|>25` 或 `|y|>15` 就停） |
+| Normal 分支 | `0x3b55c8`–`0x3b5618` | 逐点 `evaluate_recursive`（一个中点求值 + 一个复检求值，`0x3b5618`/`0x3b5664`） |
+| Ode 分支 | `0x3b5408`/`0x3b54f4`–`0x3b5518` | RK4（下面是它的**确切**结合顺序） |
+
+```text
+h2  = mid - x                       ; 0x3b547c，mid = (x + (x+step)) * 0.5
+y2  = y + (k1*h2)*0.5               ; 0x3b5480 → 0x3b5488
+x2  = x + h2*0.5                    ; 0x3b5484 → 0x3b548c
+y3  = y + (k2*h2)*0.5               ; 0x3b54ac → 0x3b54b4
+y4  = y + h2*k3                     ; 0x3b54d4 → 0x3b54e0
+sum = ((k1 + 2*k2) + 2*k3) + k4     ; 0x3b54f8..0x3b5510，**左结合**（`fadd d2,d3,d2` 的顺序）
+y'  = y + (h2/6) * sum              ; 0x3b5500 先算 h2/6，再 0x3b5514 乘，0x3b5518 加
+```
+
+⇒ 与我们的 `src/graphwar_path_calculator.rs` 的 `Mode::Ode` 分支**逐条同序**（含 `(h/6)` 先算、
+`k1 + 2k2 + 2k3 + k4` 左结合、`(k1*h)*0.5`）。**所以 DiffEq 那 124 个不是公式错**，
+残差只能来自 `evaluate_recursive`（右端函数求值）的末位 —— 与 §25.8 的未知项同源。
+
+### 25.5 落地修正（`src/game.rs::fire_functions`）
+
+旧实现把**原文**交给 `settle::resolve_owned`，后者内部按 `shifted_tokens`（**全精度** `c`）平移；
+真值是"**先造修正文本、再让采样器对那串文本求值**"（§25.3）。改成：
+
+```rust
+let corrected = graphwar_shot_calculator::corrected_text(text, x0, y0, flip);
+let points = graphwar_shot_calculator::shot_points(&corrected, x0, y0, SERVER_STEP, flip, Mode::Normal, /*apply_correction=*/false);
+settle::resolve_points_owned(&mask, &targets, &points, Some(owner));
+```
+
+只动了这一处（`execute_results` 一个字没改：它本来就用"最后一个采样点"当爆炸点，与 §25.2 一致）。
+
+### 25.6 before / after（**同一份 401 回放 / 1080 批快照**）
+
+| 驱动 | 内容命中 | 消息种类序列命中 | 备注 |
+|---|---|---|---|
+| `fire`（任务书基线） before | **21 / 1080** | **818 / 1080** | 复现 §24.2 的 7 个数全部一致 |
+| `fire` after | **324 / 1080** | **818 / 1080** | 结构零变化 ⇒ 这次只修了"值" |
+| `batch` before / after | 21 → **341** | 918 → **915** | 4 批少判死者（见 §25.8），1 批新增 |
+| `conv`（收敛层） before / after | 568 → **568** | 945 → 945 | **不动**：它的爆炸点在 `_scaffold/diffconv.rs`，不在本任务的允许改文件里 |
+
+延迟段（另一根轴）：死亡集合 **211/379 → 209/379**；挖洞点 **1/259 → 138/258**（53.5%）。
+挖洞点这一项是**副作用**：位置来自同一条弹道，轨迹一改就大面积命中——`docs/06` §24.7 里
+"挖洞点为何与我方停点无关（200 例点位不存在）"的问题因此从 200 例缩到 ~120 例（**观测**，未逐例复盘）。
+
+修正后的归因表（`fire`，失败 756 批）：`C` 368 / `D` 132 / `S` 91 / **`Y` 52** / `E1` 46 / `SD` 39 / `X` 28。
+**`Y2`（332 批）整桶清零**，新出现的 `Y` 52 批就是 §25.7 那 52 个 ±1 ulp 的爆炸点。
+
+### 25.7 差值形态分组（176 个爆炸点 / 170 批，`conv` 收敛层）
+
+| 分组 | 条数 | 判据 | 机制 |
+|---|---|---|---|
+| **DiffEq（Ode）** | **124** | 批前最后一个 `FunctionModeInfo` = `DiffEqFunction` | `pos_y` = RK4 积分值，**不能回代**；§25.4 的公式与我们同序 ⇒ 残差在求值器末位 |
+| **Normal** | **52** | 同上 = `NormalFunction` | `pos_y` = `f(end_x)`；用"修正文本回代"重算：**5 逐位相同、40 恰 1 ulp**（26 偏低 / 14 偏高）、7 例特例（NaN、极大常量） |
+
+`pos_y` 的 ulp 直方图（`ours - observed`，176 条 diff 逐条）：`-1`:72、`-2`:22、`+1`:45、
+`-3`:5、`0`:16、`-4`:2、`+2`:1、`+3`:1、`|u|≥8`:12。
+**符号不同向**（105 负 / 55 正 / 16 零）⇒ 排除"同一条式子的系统性偏差"，也排除"我方一律取整偏大"。
+
+5 个代表样本（`end_x` 已确认 `obs_x == end_x` 逐位相同）：
+
+| 回放 #批 | 模式 | 函数原文 | `end_x` | 我方 `pos_y` | 回放 `pos_y` | Δulp |
+|---|---|---|---|---|---|---|
+| `1782676871` #3 | Normal | `1/(6-x)`（文本 `… - 6.861`） | `-5.9542382857185725` | `14.991328211529705` | `14.991328211529703` | +1 |
+| `1782927404` #0 | Normal | `x`（文本 `x + 12.981`） | `2.0172735861302553` | `14.998273586130255` | `14.998273586130257` | −1 |
+| `1793874543` #25 | Normal | `sin(x)`（`+ 11.437`） | `0.45076283631408426` | `11.001347698764203` | `11.001347698764205` | −1 |
+| `1793874543` #46 | Normal | `(x*-0.26)`（`+ 10.734`） | `1.3457628363140568` | `11.083898337441655` | `11.083898337441656` | −1 |
+| `1783342447` #2 | DiffEq | `tan(-2x)` | `22.775784224310193` | `9.187486940569265` | `9.187486940569263` | +1 |
+
+**规律**：同一 `x`（逐位相同）下差 1 ulp，且函数里只有四则运算的样本（`x + 12.981`）也差 1 ulp
+⇒ 与 libm 无关；差量在 `c` 的 1 ulp 量级，指向"常量/求值末位"而不是"取了另一个点"。
+任务书里的示例 `我方 6.11832353472057 / 回放 6.118000000000002` 属于 `Y2`（三位小数舍入，
+已由 §25.5 修掉），**不是** `Y` 这一桶。
+
+### 25.8 未知清单（接管时从这里开始）
+
+| # | 未定 | 缺什么 | 等级 |
+|---|---|---|---|
+| 1 | 剩下 **52 批 ±1 ulp**（Normal）的确切来源 | 原版 `MathFunction::evaluate_recursive`（`0x4452d4`）在这些**确切输入**上的输出。unicorn 可跑，但要按 72 B 的树布局喂进去（本轮没做，别猜 libm） | **未知** |
+| 2 | DiffEq 那 124 条的末位 | 同上（右端函数求值的末位会累积进积分值） | **未知** |
+| 3 | `batch` 驱动 4 批种类序列由对变错（`1782675382#0`、`1782675586#0`、`1782676398#0`、`1783429569#3`，都少判死者） | 轨迹只移了 <1e-3 就翻面 ⇒ 致死判据在阈值上；要逐例看 `d <= radius` 的临界值 | **未知**（净 −3，已在 §25.6 如实登记） |
+| 4 | `conv` 驱动不涨 | 它的爆炸点算法在 `_scaffold/diffconv.rs`（实验脚手架），要接得改那里、或让 conv 走 `game.rs` | 范围问题，非未知 |
+
+### 25.9 复现（干净树，逐条命令）
+
+```bash
+export CARGO_HOME=<ws>/.reference/cargo-home
+export CARGO_TARGET_DIR=<ws>/.agent-work/cg/target09     # 单独一行；并行时必须私有
+R=<ws>/.reference/replays/gw2-replays-snapshot/replays
+OUT=<ws>/.agent-work/out                                # /tmp 是逐命令 tmpfs，别放中间产物
+
+# 1) before（先 `git stash` 掉本次改动）→ 21 / 818
+cargo run --release --offline --example replay_attrib -- --dir $R --drive fire --policy default --json $OUT/fire_before.jsonl
+python3 tools/bit_exact_attrib.py --json $OUT/fire_before.jsonl --check-baseline   # 7 个数全部 OK
+
+# 2) after → 324 / 818
+cargo run --release --offline --example replay_attrib -- --dir $R --drive fire --policy default --json $OUT/fire_after.jsonl
+python3 -c "import json;R=[json.loads(l) for l in open('$OUT/fire_after.jsonl')];R=[r for r in R if r.get('batch',-1)>=0];print(sum(r['content_ok'] for r in R), sum(r['kind_seq_ok'] for r in R))"
+python3 tools/bit_exact_attrib.py --json $OUT/fire_after.jsonl                    # 分类表；Y2 应为 0
+
+# 3) batch / conv 两个驱动（before 用 stash，after 用工作树）
+cargo run --release --offline --example replay_attrib -- --dir $R --drive batch --policy default --json $OUT/batch.jsonl
+cargo run --release --offline --example replay_attrib -- --dir $R --drive conv  --policy strict  --json $OUT/conv.jsonl
+python3 tools/bit_exact_attrib.py --json $OUT/conv.jsonl | head -12               # Y 应仍是 170 批
+
+# 4) 回归
+cargo test --offline                       # 1512 passed / 0 failed
+python3 tools/coverage_matrix.py --check   # OK
+```
+
+§25.7 的"按模式分组 + ulp 直方图"由一次性脚本从 `$OUT/conv.jsonl` + 回放
+（`gzip` 的 JSONL，`FunctionInfo.corrected_function` / `FunctionPoints.end_x` / `EffectInfo.pos_y`）
+算出来，口径写在上表里，**没有**新的入库工具。

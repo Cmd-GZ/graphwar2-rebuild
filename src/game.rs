@@ -77,7 +77,7 @@ use crate::plane::{empty_mask, rasterize};
 use crate::_scaffold::protocol::{emit_effect_info, emit_function_points, emit_life_queued_death};
 use crate::_scaffold::rng::ChaCha12;
 use crate::server::RoomState;
-use crate::graphwar_shot_calculator::settle::{resolve_owned, ShotOutcome, Target};
+use crate::graphwar_shot_calculator::settle::{resolve_points_owned, ShotOutcome, Target};
 use crate::graphwar_tick_handler::tick_at;
 use crate::graphwar_turn_manager::{self, TurnDecision, TurnManager};
 
@@ -1114,15 +1114,32 @@ impl Match {
             // 步长用**实况 SERVER_STEP（0.01）**，不是 0.5。
             // `docs/136` 的几何探针给出：同一批回放，step=0.01 时 `end_x` 逐位相同 605/739；
             // step=0.5 只有 27/739。
-            outcomes.push(resolve_owned(
-                s.function_text,
+            //
+            // **采样器吃的是「修正后函数文本」而不是「原文 + 全精度修正常数」**（2026-11 修，
+            // `docs/06` §25）。依据（arm64 2.0.60 逐指令）：
+            //   * `calculate_corrected_function`（`0x3b79a8`）= 原文 + 补齐 `)` + 偏移串；
+            //   * `calculate_function_offset_str`（`0x3b7c70`）= `c = y0 - f(∓x0)`，按 **`{:.3}`**
+            //     印成 `" - 6.861"`（`0x3b7d2c` 起：`fcmp`/`fabs` → `format` → 补 `" + "`/`" - "`）；
+            //   * 采样器 `calculate_function`（`0x3b5374`）拿到的树就是这串文本解析出来的，
+            //     所以轨迹里的常量是**印出来的三位小数**，不是全精度 `c`。
+            // 旧实现走 `resolve_owned(原文, …)`，内部按 `shifted_tokens`（全精度 `c`）平移，
+            // 与真值差 3 位小数的舍入量（1e-6~1e-3）—— 正是归因表 `Y2` 那一桶。
+            let corrected = crate::graphwar_shot_calculator::corrected_text(
+                s.function_text, s.x0, s.y0, s.flip,
+            );
+            let points = crate::graphwar_shot_calculator::shot_points(
+                &corrected,
                 s.x0,
                 s.y0,
                 crate::SERVER_STEP,
                 s.flip,
                 crate::graphwar_path_calculator::Mode::Normal,
+                false,
+            );
+            outcomes.push(resolve_points_owned(
                 &self.mask,
                 &targets,
+                &points,
                 Some(s.owner_id),
             ));
         }
