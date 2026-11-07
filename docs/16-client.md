@@ -8,14 +8,18 @@
 > 原版的界面控制器是 Rust 模块（在 `.so` 里）。所以"看起来对"**不是**复原证据；
 > 客户端自检条数也只是**回归保护**，不是复原证据。
 
-> ⚠️ **条数口径（2026-11-07 深夜审计，先读）**：本篇按**轮次**记录，各节里的
-> `cargo test` / `selftest` 条数（`1488` / `1494` / `1499` / `1512` / `1584` / `1586` …）
+> ⚠️ **条数口径（2026-11-07 深夜审计 / 2026-11-08 复核，先读）**：本篇按**轮次**记录，各节里的
+> `cargo test` / `selftest` 条数（`1488` / `1494` / `1499` / `1512` / `1520` / `1584` / `1586` / `1595` …）
 > 都是**那一轮当场的读数**，**不是现行基线**。
-> **现行基线**（本机 2026-11-07 深夜复测）：`cargo test --offline` **1520**、
-> `--features gdext-bindings` **1595**（lib 464 / 539，见 README 表格）、`bash client/run.sh selftest`
-> **694**（前置条件 = `client/assets/` + `examples/serve_match` + 用 `run.sh` 的默认 `XDG_*`；
-> 缺资产的机器是 **591 / 2 / 23**，补了 `serve_match` 是 **667 / 2 / 21` —— 旧文里的 `606` 复现不出来）。
-> 复原进度**不看这些条数**（`AGENTS.md` §0.2）。
+> **现行基线**：
+> `cargo test --offline` **1585 / 0 failed**、`--features gdext-bindings` **1669 / 0 failed**
+> —— 这两条是**本轮审计实测**（69 个测试二进制含 doc-tests，`grep '^test result'` 逐行求和）；
+> `bash client/run.sh selftest` **709 / 0 failed** —— 这条是**转引** §49.7（本轮未复跑：要 Godot + 已编 `.so` + `--import`）。
+> selftest 的前置条件 = `client/assets/` + `examples/serve_match` + 用 `run.sh` 的默认 `XDG_*`；
+> 缺资产的机器是 **591 / 2 / 23**、补了 `serve_match` 是 **667 / 2 / 21** —— 这一档是 2026-11-07
+> **当轮**读数，本次未复测（旧文里的 `606` 复现不出来）。
+> ⚠️ **审计 2026-11-08 改了这里**：原记「1520 / 1595 / 694」，实测已是 **1585 / 1669 / 709**
+> （selftest 的 +15 来自 §49.7）。复原进度**不看这些条数**（`AGENTS.md` §0.2）。
 
 > **本篇合并自**：
 
@@ -9418,7 +9422,7 @@ cp -r <replays 快照>/replays $HOME/.local/share/godot/app_userdata/Graphwar/
 ```text
 gdext_check         24 passed, 0 failed
 assemble_check     203 passed, 0 failed
-plane_on_screen     76 passed, 0 failed
+plane_on_screen     96 passed, 0 failed
 obstacle_drawer    116 passed, 0 failed
 function_drawer    132 passed, 0 failed
 draw_classes       235 passed, 0 failed
@@ -9428,6 +9432,11 @@ base_classes       117 passed, 0 failed
 signal_classes     155 passed, 0 failed
 spike_class_check   23 passed, 0 failed
 ```
+
+> ⚠️ **审计 2026-11-08**：本清单原记 `plane_on_screen 76`，与同一份文档 §48.5 的
+> 「`plane_on_screen_check.gd` 96 / 0（基线 76）」矛盾；按 §48.5（+`plane.size` 反推变换断言那一批）
+> 改成 **96**。⚠️ 这一格是**转引**（§48.5 + 现行 master 实测值），**本次审计没有复跑 headless**
+> （需要 Godot + 已编 `.so` + `--import`），所以标 **观测（转引）** 而不是本机复测。
 
 **"6 个节点都挂上了"在自检里怎么验的**（`selftest.gd` 的 `_test_fire_fx` ② 那一段）：
 `ClassDB.class_exists` ×6 + `plane_state()` 六个字段全部**从真节点读回来**

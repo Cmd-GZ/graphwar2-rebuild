@@ -363,10 +363,14 @@ PY
 cd <你 clone 的 gw2-rebuild>          # 本文在一份隔离开的克隆上跑，`.agent-work/` 用完即删
 export CARGO_HOME=$W/.cargo-home CARGO_TARGET_DIR=$W/.agent-work/winrule/target
 cargo test --offline                       # 373 passed（含 tests/win_rule.rs 的 10 条）
+                                          # ⚠️ 审计 2026-11-08：373 是本文写作时的**当轮读数**；
+                                          #    现行 1585 / 0 failed（2026-11-08 审计实测，69 个测试二进制）
 cargo build --offline && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
 "$GODOT" --headless --path client --import
 CARGO_TARGET_DIR=$CARGO_TARGET_DIR bash client/run.sh selftest    # 658 passed, 0 failed
+                                          # ⚠️ 审计 2026-11-08：658 是**当轮**读数；现行 709 / 0
+                                          #    （前置同 §：assets + serve_match，见 docs/16 §49.7）
 ```
 
 > ⚠️ `selftest` 的两条联机断言只有在 `CARGO_TARGET_DIR` 指向**已构建**的
-> `examples/serve_match` 时才会跑；不给就是 `658 passed, 2 skipped`。
+> `examples/serve_match` 时才会跑；不给就是 `658 passed, 2 skipped`（当轮口径；现行"全齐"是 709）。

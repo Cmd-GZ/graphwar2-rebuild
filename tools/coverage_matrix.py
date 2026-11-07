@@ -791,14 +791,18 @@ def render_md(rows, spot_rows, totals, grand, meta):
     A("拆成两个口径（下面的数字全部由脚本算出，重跑即复现）：\n")
     A("| 口径 | 模块数 | 可归属函数 | 已实现 | 逐位 | 观测 | 推断 | 未做 | 未知模块 |")
     A("|---|---|---|---|---|---|---|---|---|")
-    for name, t in (("58 个 `graphwar_*.rs`", g), ("%d 个非 graphwar 的游戏模块" % o["modules"], o)):
+    for name, t in (("58 个 `graphwar_*.rs`", g), ("%d 个 `scope=other` 的模块（15 个不带 `graphwar_` 前缀 + `graphwar_texture_loader.rs`）" % o["modules"], o)):
         A("| %s | %d | %d | %d | %d | %d | %d | %d | %d |"
           % (name, t["modules"], t["attributed"], t["implemented"],
              t["by_status"]["逐位"], t["by_status"]["观测"], t["by_status"]["推断"],
              t["by_status"]["未做"], t["unknown_modules"]))
     A("")
-    A("还有 `weak_caller.rs`（40 个归属函数）按 `docs/02` §9 判为第三方依赖库，"
-      "单独一行留在 TSV 里备查，**不计入**任何合计。\n")
+    A("`weak_caller.rs` 在上表里算进 **scope=`other`** 那一档（39 个 `orig_funcs`，TSV 里单列一行）。"
+      "**审计 2026-11-08 更正**：旧文写「40 个归属函数 …… **不计入**任何合计」，两处都不对——"
+      "① 表值是 **39**（`docs/coverage-matrix.tsv` 的 `orig_funcs` 列，另 1 个符号查明是内联进 "
+      "`GraphwarGameRecorder` 的方法，不是本模块的函数）；② 它**确实**计入 `other` 的 97 与总数的 527"
+      "（430 + 97 = 527）。它也不是第三方依赖：`docs/02` §34 已按符号表判它是 crate 内模块"
+      "（`graphwarrust::weak_caller`），只是文件名不带 `graphwar_` 前缀。\n")
     A("### 0.1 这个分母有多大、有多可信\n")
     A("| 事实 | 值 |")
     A("|---|---|")
@@ -1078,7 +1082,7 @@ def main(argv):
 
 def grand_line(grand):
     return ("原版可归属函数 %d 个，分布在 %d 个模块（58 个 graphwar_*.rs 占 %d、"
-            "%d 个非 graphwar 游戏模块占 %d）；我们已实现 %d 个函数，其中 逐位 %d / 观测 %d / "
+            "%d 个 scope=other 的模块占 %d）；我们已实现 %d 个函数，其中 逐位 %d / 观测 %d / "
             "推断 %d；未做 %d；完全未知的模块 %d 个（graphwar 里 %d 个）。"
             % (grand["attributed"], grand["modules"],
                grand["graphwar"]["attributed"], grand["other"]["modules"],

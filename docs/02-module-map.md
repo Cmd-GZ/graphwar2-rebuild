@@ -760,6 +760,18 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 
 每个表里的行**按状态分组**（`一一对应` → `混装（待拆）` → `未实现`），组内按模块名排序。
 
+> 🔴 **审计 2026-11-08：§17.1 最后一组「`未实现`」（44 行）与 §17.2 里的「`未实现`」行已经整体过期，
+> 别当进度读。**
+> 它们写的是 `src/` 大规模改名/落码**之前**的状态（那时不少界面向的文件还挂在 `game.rs` / `shot.rs` 这类自造名下）。
+> 现在 **这 44 个模块 + §17.2 的 15 个模块在 `src/` 里全部有同名文件**（本轮逐个 `test -f` 验证，59/59 存在：
+> `graphwar_campaign_control.rs` / `graphwar_color_manager.rs` / `graphwar_audio_control.rs` /
+> `graphwar_graphics_manager.rs` / `graphwar_draw_util.rs` … 全部存在），
+> 且 `python3 tools/coverage_matrix.py --check` 的总账是 **527 / 527 已实现、未做 0、未知模块 0**。
+> ⇒ **进度一律以 [`149-coverage-matrix.md`](149-coverage-matrix.md) 为准**；那一组的「`未实现`」标签
+> 只是**历史**（保留原样是为了不丢"当时判断"的轨迹，也是 `AGENTS.md` §0.6 说的
+> "把已做完的写成没做"那类虚报的样本）。
+> 每一行的**依据列**（锚点 / 文档 / 已解出的判据）仍然有效，仍可当该模块的入口读。
+
 ### 17.1 58 个 `graphwar_*.rs`
 
 | 原版模块（函数/锚点） | 我们的文件 | 依据（锚点 / 函数名 / 文档） | 状态 |
@@ -775,7 +787,7 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 | `src/graphwar_level_manager.rs` | 原版 `graphwar_level_manager.rs` + **可能属于 `graphwar_campaign_control.rs`** 的 `level_info`(`0x4ad380`) 与 `campaign.save` 簇(`0x417ef0`/`0x418170`/`0x4183b0`) | 这三处**都没有 Location 锚**；`docs/10` §12.6 | 无锚 ⇒ 归属只能靠调用形态，证据不足。暂时承载并登记，等 `graphwar_campaign_control.rs` 有锚点再决定搬不搬 |
 | `graphwar_level_generator.rs`（4/26） | `src/graphwar_level_generator.rs` + `src/graphwar_level_generator/tables.rs` | 锚点 26 个（0x466d20/0x467530 等）；`docs/55/56/61`（障碍 x/y/r 的 `to_bits()` 13/13 逐位）、`docs/103/126`（种子语义）。原文件 `levelgen.rs` + `levelgen_tables.rs`（ziggurat 表）——**同一个原版文件，我方按"逻辑 / 常量表"拆成两份**，主文件用原版名，表放同名目录 | `一一对应` |
 | `graphwar_shot_calculator.rs`（1/12） | `src/graphwar_shot_calculator.rs` + `src/graphwar_shot_calculator/settle.rs` | 锚点 12 个（0x3c5f70 修正常数、0x3c62b0 等）；`docs/05`（修正 `c = y0 − f(±x0)`）、`docs/86 §14`（82 发并集 152/152）、`docs/122`（按 id 排除射手）。原文件 `shot.rs` + `settle.rs`——**同一个原版文件**（0x3c2bc0 主函数 + 0x3c5f70 修正），我方按主题拆两份。⚠ **本节原写「`0x3c2bc0` 本体没有 panic 锚」，该条已被 §20 证否**：它有 **13 个 `src/*.rs` 锚**（12 个 `graphwar_shot_calculator.rs` + 1 个 `graphwar_obstacle_manager.rs`），其中 **11 个双向唯一**⇒ 本函数已由锚点定名为 `GraphwarShotCalculator::calculate_shot_results`（`观测`，§20.5）；"settle 属于本模块"不再只靠 `docs/86` 的行为证据 | `一一对应` |
-| `graphwar_event.rs`（0/0） | `src/events.rs` | `enum Event` 72 个具名变体 + `GameInfo`（`docs/114`：判别值逐条解出、两道自校验；`docs/07 §3.1` 9 个字段）。⚠ 本模块**零锚点**（纯数据），对应关系靠职责与 `docs/114`。同文件还收了 event_handler 的名字表 → 见 §17.4 | `混装（待拆）` |
+| `graphwar_event.rs`（0/0） | `src/events.rs` | `enum Event` **74** 个具名变体（**审计 2026-11-08**：原记 72；`docs/07` §5.1 已用 arm64 跳转表把 74 格全部具名）+ `GameInfo`（`docs/114`：判别值逐条解出、两道自校验；`docs/07 §3.1` 9 个字段）。⚠ 本模块**零锚点**（纯数据），对应关系靠职责与 `docs/114`。同文件还收了 event_handler 的名字表 → 见 §17.4 | `混装（待拆）` |
 | `graphwar_event_handler.rs`（2/4） | `src/events.rs` | 只落了一张表：`DISPATCH_NAME_TAGS` + `from_dispatch_name`（从 `0x3d38f0` 逐字节解出的"事件名 → 判别值"，`docs/114` §3）。⚠ `0x3d3630`（用常量 key 订阅 `HashMap<u64,_>`）**未实现**，所以本模块**没有** handler 行为，只有数据 | `混装（待拆）` |
 | `graphwar_remote_event_handler.rs`（3/171） | `src/events.rs` | 只落了枚举与名字表（同上）。本模块 171 个锚点是全二进制第三密，我方**未实现**其分发/订阅行为；旧矩阵把 `events.rs` 记成它的实现，口径偏宽 —— 本轮按"没有 handler 代码"重记 | `混装（待拆）` |
 | `graphwar_game_state_manager.rs`（33/207） | `src/game.rs` + `src/turnstate.rs` | `docs/41`（6 状态 7 事件、13 次迁移在真实对局里逐个相同）、`docs/150`（胜负判定）。两个我方文件都属本模块，但 `game.rs` 还含 function_manager 的内容 → 见 §17.4 | `混装（待拆）` |
@@ -825,10 +837,15 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 | `graphwar_texture_loader.rs`（1/1） | — | `docs/02 §16.3`：`0x4d3180` 一对多复用 ⇒ 归属天然有歧义；无实现 | `未实现` |
 | `graphwar_video_writer.rs`（3/4） | — | `docs/02 §16.3`：3 个锚，无字符串线索 | `未实现` |
 
-### 17.2 12 个非 `graphwar_` 模块（`other` 作用域）
+### 17.2 非 `graphwar_` 模块（`other` 作用域）
 
-这 12 个文件名不带 `graphwar_` 前缀，但**是游戏自己的模块**（§9 提醒过：`entity_drawer.rs` /
-`effect_drawer.rs` 虽无前缀，确实是游戏代码）。
+> ⚠️ **审计 2026-11-08**：标题原写「**12** 个」，但 `docs/coverage-matrix.tsv` 里 `scope=other` 是 **16** 行
+> = 下表 12 个 + `backtracer.rs` / `function_token.rs` / `graphwar_texture_loader.rs`（这三个表中缺）+ `weak_caller.rs`。
+> 注意 **`graphwar_texture_loader.rs` 是带 `graphwar_` 前缀的**，所以"非 `graphwar_`"这个说法本身不准确；
+> 准确的口径是 **`scope=other` 的 16 个模块**（`docs/149` 表里那 16 行、合计 97 个可归属函数）。
+
+下表这 12 个文件名不带 `graphwar_` 前缀，但**是游戏自己的模块**（§9 提醒过：`entity_drawer.rs` /
+`effect_drawer.rs` 虽无前缀，确实是游戏代码）。缺的 3 个见 [`149-coverage-matrix.md`](149-coverage-matrix.md)。
 
 | 原版模块（函数/锚点） | 我们的文件 | 依据（锚点 / 函数名 / 文档） | 状态 |
 |---|---|---|---|
@@ -845,7 +862,7 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 | `player_showcase.rs`（10/18） | — | 除模块名外没有任何观测（`PlayerShowcase` 类名见 `docs/02 §16.2`） | `未实现` |
 | `server_broker_request_connection.rs`（0/1） | — | `docs/115` 只覆盖 broker 线格式；这个连接对象本身没看过 | `未实现` |
 
-> `weak_caller.rs`（`dep`，39 个函数）是第三方依赖库，不算游戏代码，本表不列。
+> `weak_caller.rs`（39 个函数）不在上表里。~~它是第三方依赖库，不算游戏代码~~ —— **审计 2026-11-08 更正**：这条旧判据已被 **§34** 推翻（符号表里 `graphwarrust::weak_caller` 的 27 个 direct 符号 ⇒ **crate 内模块**，不是第三方），所以它的 39 个可归属函数**要计入**总账（`docs/149` 的 scope=`other` 一档 97 个里就含它；430 + 97 = 527）。旧口径 `dep` / 40 个函数均已作废。
 
 ### 17.3 我方自造（`src/_scaffold/`，无原版对应）
 

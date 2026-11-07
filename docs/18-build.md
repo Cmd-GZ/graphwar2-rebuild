@@ -395,24 +395,33 @@ export CARGO_HOME=/path/.cargo-home CARGO_TARGET_DIR=$CARGO_HOME/target   # ✗
 
 ```text
 $ cargo test --offline
-  65 个测试二进制（lib 464 + 64 个集成）+ 1 个 doc-test；总计 1520 passed / 0 failed
+  69 个测试二进制（含 doc-tests）；总计 1585 passed / 0 failed
 $ cargo test --offline --features gdext-bindings
-  65 个测试二进制（lib 539 + 64 个集成）+ 1 个 doc-test；总计 1595 passed / 0 failed
+  69 个测试二进制（含 doc-tests）；总计 1669 passed / 0 failed
 $ cargo tree | wc -l
   1                       # 仍然零依赖（只有 gw2-rebuild 自己）
 $ bash client/run.sh selftest
-  SELFTEST 694 passed, 0 failed        # 前置条件见 §10.3.1，缺一样就不是这个数
+  SELFTEST 709 passed, 0 failed        # 前置条件见 §10.3.1，缺一样就不是这个数
 ```
+
+> ⚠️ **审计 2026-11-08 改了这一段**：原记「65 个二进制（lib 464 / 539）、总计 **1520** / **1595**、
+> `SELFTEST 694`」。现按本机复测替换：`cargo test --offline` = **1585**、`--features gdext-bindings`
+> = **1669**（两条轴都是 69 个二进制、0 failed，逐二进制求和），`selftest` 按 `docs/16` §49.7 = **709**。
+> 复跑命令：`cargo test --offline 2>&1 | grep '^test result'`（求和 `ok\. N` 即得总数）。
+> lib/集成的**拆分数**本次没记（`cargo test` 只在每行给总数）；要逐二进制清单跑 `cargo test -- --list`。
 
 > **审计（2026-11-07 深夜）**：本节原记「`64 个 test 二进制；lib 457 / 总计 1488 / 0 failed`、
 > 两种 feature 的条数**完全相同是巧合**」。**实测现在是默认 1520 / gdext 1595**（lib 464 / 539），
 > 两者**并不相同** ⇒ "完全相同是巧合"那句解释**作废**（它是早期只有 4 条 `gdext_mod` 单测时的现象）。
+> （**当轮读数**：这段的 1520 / 1595 是 2026-11-07 的值；**现行 1585 / 1669**，见上一段审计注。）
 > 现在的差来自：feature 打开时手写 `gdext.rs` 的入口不编译，而 `gdext_mod.rs` 与各 `*_class.rs`
 > 补进更多单测。**条数是回归保护，不是复原进度**（`AGENTS.md` §0.2）。
 
 ### 10.3.1 `selftest` 的两个口径：**694 需要什么前置条件**（2026-11-07 深夜，本机四组实测）
 
-一句话：**694 不是版本号，是"前置条件全齐"的读数**；缺一样就落到别的数上，四个数都实测过：
+一句话：**694 不是版本号，是"前置条件全齐"的读数**；缺一样就落到别的数上，四个数都实测过
+（⚠️ **审计 2026-11-08**：下面的 694 是 2026-11-07 的**当轮**基数，"全齐"档现已涨到 **709**
+＝ 694 + 15（`docs/16` §49.7）；其余三档没有跟着复测，**仍按当轮值记**，不要当成现行读数）：
 
 | `client/assets/` | 编了 `examples/serve_match` | 结果 | 差在哪 |
 |---|---|---|---|
@@ -421,7 +430,7 @@ $ bash client/run.sh selftest
 | ❌ | ✅ | **667 passed / 2 failed / 21 skipped** | 21 条 skip = 10 条图标/字体/设置 + 11 条音频 |
 | ❌ | ❌ | **591 passed / 2 failed / 23 skipped** | 在上面基础上再 +2 条联机 skip |
 
-两条恒等式把三个前置条件钉死：**694 = 618 + 76**、**667 = 591 + 76**。
+两条恒等式把三个前置条件钉死：**694 = 618 + 76**、**667 = 591 + 76**（当轮基数；现行"全齐"= 709）。
 
 **694 的三个前置条件**：
 
