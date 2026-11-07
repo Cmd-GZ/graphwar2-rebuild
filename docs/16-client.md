@@ -7032,7 +7032,7 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
 | `cargo test --offline --features gdext-bindings` | lib **524** / 总计 **1560**，全绿（`root_wiring` 的 6 条单测只在有 feature 时编译） |
 | `python3 tools/coverage_matrix.py --check` | **OK**（改 `src/` 后必须重跑生成器，两个生成物一起提交） |
 | `base_classes_check` / `draw_classes_check` / `entity_drawer_check` / `signal_classes_check` | **117 / 235 / 72 / 155** 条，全过（既有断言一条没改） |
-| `bash client/run.sh selftest`（缺 `client/assets/`） | **606 passed / 2 failed / 23 skipped** |
+| `bash client/run.sh selftest`（缺 `client/assets/`） | **606 passed / 2 failed / 23 skipped**（前置条件：当前 `CARGO_TARGET_DIR` 里**已构建** `examples/serve_match`；没编时是 **530 / 2 / 25**，少的就是联机那 2 条 —— 两条数都对，别当成口径打架） |
 
 ⚠️ **selftest 那 2 条失败不是本轮引入的**（这是**观测**，不是推断）：把本轮 3 个 `src/` 文件
 `git stash` 掉、重编 `.so` 再跑一次，结果**逐字相同**（`606 passed, 2 failed, 23 skipped`，
