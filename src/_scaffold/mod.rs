@@ -34,9 +34,13 @@ pub mod diffconv;
 // 3 个 `Sprite2D` + 1 个 `RichTextLabel` 的子节点树。只在 `gdext-bindings` 下编译。
 #[cfg(feature = "gdext-bindings")]
 pub mod entity_drawer_class;
+// `EffectDrawer` 的真节点类（`docs/16-client.md` §40）：把 `effect_drawer.rs` 的图元清单落到
+// 真的 `draw_circle` / `draw_polygon` / `draw_line` 上。只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod effect_drawer_class;
 // 三个「基类不是 Control」的类：`GraphwarRootNode`（`Node`）、`GraphwarLanVBox`
 // （`VBoxContainer`）、`GraphwarAdSwitch`（基类未定，按 `Node` 落）。用同一套模板，
-// 只有虚方法块不同（`docs/16-client.md` 本轮新增的那一节）。只在 `gdext-bindings` 下编译。
+// 只有虚方法块不同（`docs/16-client.md` §39）。只在 `gdext-bindings` 下编译。
 #[cfg(feature = "gdext-bindings")]
 pub mod graphwar_ad_switch_class;
 #[cfg(feature = "gdext-bindings")]
@@ -51,6 +55,15 @@ pub mod gdext_class;
 // 官方 gdext 版的绑定层骨架（`docs/18-build.md` §10）。默认不编译，不引入任何依赖。
 #[cfg(feature = "gdext-bindings")]
 pub mod gdext_mod;
+// `GraphwarPlane` 的真节点类（§40）：3 个占位子节点 + 脏矩形队列 + 棋盘框。
+#[cfg(feature = "gdext-bindings")]
+pub mod graphwar_plane_class;
+// `GraphwarLongPressAnimation` 的真节点类（§40）：两次 `draw_arc` + `_process` 推进相位。
+#[cfg(feature = "gdext-bindings")]
+pub mod long_press_animation_class;
+// `PlayerShowcase` 的真节点类（§40）：读档案 + 三层 `draw_texture_rect` + 计数器闸门。
+#[cfg(feature = "gdext-bindings")]
+pub mod player_showcase_class;
 pub mod protocol;
 pub mod replay_inflate;
 pub mod replaydiff;
