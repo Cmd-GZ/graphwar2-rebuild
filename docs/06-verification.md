@@ -3269,3 +3269,208 @@ Xvfb :92 -screen 0 1920x1160x24 -listen tcp -ac &                 # 要 mesa-onl
 （队列原文 + 点数组 head/tail/`yhash` + `classify`）、`evals`、`samplers`、`reallocs`、`beat`。
 `classify` 里的 `exact/ulp1/miss/pairWho` 就是 §35.5 那张表。
 原始 JSONL 留在 `.agent-work/`（可丢弃，**不入库**）；本节数字都能用上面这一条命令重新生成。
+
+## 36. 「爆炸点 `pos_y` 来自网络」= **证伪**；1 ulp 残差按来源拆成三份（2026-11-08，`dispatch/26`）
+
+> 本节接手第四轮报告 §3 ③ / §33.4 / §33.9 的三条未知：
+> 「那 154 批 1 ulp 会不会是**别的机器算完、从网上收来的 f64**」。
+> 结论：**不是**。两条互相独立的证据（一条逐指令、一条载荷统计，都不依赖对方的假设），
+> 外加一条**定量**的反证：残差率与"有没有远端"无关。
+>
+> 起点 `CG@0ea7729`，分支 `agent/pos-y-from-network`，私有 `CARGO_TARGET_DIR`，同一份 401 回放快照。
+
+### 36.1 一句话（五条）
+
+1. **证伪。** 爆炸点 `(pos_x, pos_y)` 是**客户端自己点数组的末元素**（站点 A，`0x472865`→`0x47286b`），
+   不是点位表里那个由线上写入的位置 ⇒ 「`pos_y` 是网络字段」**不成立**。
+2. **载荷级判别**（新增、可复跑）：`EffectInfo` 的四种 `effect_type` 里，只有**非爆炸**的三种
+   `pos` 逐位等于某个实体的 `PosInfo.pos`（`DeathEffect` 519/536 = 96.8%、`SparkEffect` 54/54、
+   `AshEffect` 363/363 = 100%，**这三类就是正对照**）；`ExplosionEffect` 只有 **55/1290 = 4.3%**
+   （重合的都是"弹道正好落在某个士兵身上"）。⇒ 两种生产者**从载荷上就能分开**。
+3. **定量反证**：末位残差率在**战役单机**（`GameNameInfo = "Level N"`，无远端）是
+   **175/609 = 28.7%**，在**联机房间**是 **81/332 = 24.4%** —— 有没有远端**没有影响**。
+   「另一台机器算出来的数」解释不了单机里那 175 批。
+4. **1 ulp 不是"同一份代码差一位"这一件事**：按可指认的量拆开（`Normal` 740 发），
+   498 发逐位相同、**43 发是我方最后采样点的 `x` 差 1–2 ulp（y 是它的下游）**、
+   **46 发是回放自己那条点的 `(x,y)` 不自洽**、153 发两个都不是。
+   ⇒ **不许再把 `Y` 桶当成一个机制**（§25.3 的三条否证仍然有效，但分母被本节拆了）。
+5. **不变的东西**：三轴护栏一个没退（§36.8），`src/` **零改动**。
+
+### 36.2 静态：`ExplosionEffect` 只能是站点 A（逐指令，自己 objdump 复验）
+
+`EffectType` 的 **0 = `ExplosionEffect`**（`docs/07` §5.2：x86 `VARIANTS` 顺序 + arm64
+`visit_str` 两套独立证据）。而 tag 44 的两个生产点（§31.3）里：
+
+| 站点 | `effect_type` 怎么写 | 指令 |
+|---|---|---|
+| **A** `0x4729d6` | **常量 0** | `0x472948  mov byte ptr [rsp + 0x84], 0` |
+| B `0x472e4d` | 记录里的一个字节 | `0x472d75  movzx eax, byte ptr [rcx + r8*8 - 4]` → `0x472e2e mov byte ptr [rsp + 0x90], al` |
+
+⇒ 只有 A 能产出 `effect_type = 0`；B 产出的是另外三种（载荷证据见 §36.3）。
+
+**A 的 `pos` 从哪来**（这是本节的核心两条指令）：
+
+```text
+0x472859  mov   rcx, r13
+0x47285c  shl   rcx, 4                    ; r13 = 点数，步长 16 B = 一个 (f64,f64) 点
+0x472860  mov   rdx, qword ptr [rsp + 8]  ; 点数组 ptr
+0x472865  movdqu xmm0, xmmword ptr [rdx + rcx - 0x10]   ; ★ points[len-1]
+0x47286b  movdqa xmmword ptr [rsp + 0xf0], xmm0         ; ← 后面写进 EffectInfo 的 pos
+```
+
+点数组的填充链已经钉死（§33.3 六跳、`dispatch/25` 真机四证）：`calculate_function` → … →
+`self.results` → `HashMap` → A 读末元素，**每一跳都是 16/24/32 B 搬运，零算术**。
+⇒ **`pos` 的数值在生产它的那个进程里就地算出来**，没有任何反序列化路径参与。
+
+⚠️ 这一条**不能**独自证伪"服务端下发"：若 `execute_results` 跑在**权威端**（联机房的房主）
+而回放录在**另一个客户端**，值仍然"过了线"。所以还需要 §36.3 / §36.4 那两条。
+
+### 36.3 载荷级判别：点位表 vs 点数组（**新判据**，带正对照）
+
+**为什么这是一个判据**：点位表（`GraphwarPlanePosManager`）的写侧**只有两处**
+（§33.4，`set_position` 全 `.text` 两个 `bl`）：`LevelGenerator::place_entity` 与
+`RemoteEventHandler::handle_server_remote_event`——**后者就是线上入口**。
+⇒ 如果爆炸点走了"服务端下发"这条路，它就必须**落在点位表上**；落在点位表上就意味着
+`(pos_x,pos_y)` 逐位等于**某个实体的 `PosInfo`**。
+
+```bash
+$PY tools/posy_source_attrib.py --dir $R         # 退出码 0 = 正对照全部成立
+```
+
+| `effect_type` | `pos` 逐位等于某个 `PosInfo.pos` | 条数 | 判读 |
+|---|---|---|---|
+| `ExplosionEffect` | **55 / 1290 = 4.3%** | 1290 | 站点 A：客户端点数组 |
+| `DeathEffect` | **519 / 536 = 96.8%** | 536 | 站点 B：点位表（**有**线上写侧） |
+| `SparkEffect` | **54 / 54 = 100%** | 54 | 站点 B |
+| `AshEffect` | **363 / 363 = 100%** | 363 | 站点 B |
+
+**正对照（`AGENTS.md` 合并纪律 A.4）**：如果这个比法不灵，非爆炸的那三类也不会命中。
+它们全部 ≥96.8% ⇒ **比法有效**，那么 `ExplosionEffect` 的 4.3% 就是一个**有意义的负结论**。
+（4.3% 里的 55 条是巧合：弹道端点正好落在某个士兵的 `PosInfo` 上，即"打中了"。）
+
+⇒ **"点位表 = 线上写的那张表"这条路确实存在，而爆炸点不在上面。**
+
+### 36.4 第二条独立证据：残差率与"有没有远端"无关
+
+回放类别由 `GameNameInfo` 决定（**不猜**）：
+
+* `campaign`：出现过 `Level N`（战役关卡，单机/AI；`TimeModeInfo = TimerInf`、场上有 `target`）；
+* `online`：出现过房间名（`US Room 1` / `EU Room 3` / `2v2` …）；
+* `unknown`：只有默认名 `Graphwar Game`。
+
+```bash
+$PY tools/posy_source_attrib.py --dir $R --conv conv.jsonl      # conv.jsonl 见 §36.7
+```
+
+| 回放类别 | 份数 | 结算批 | 末位差批 | 末位差率 |
+|---|---|---|---|---|
+| `campaign`（无远端） | 205 | 609 | **175** | **28.7%** |
+| `online`（有远端） | 151 | 332 | **81** | **24.4%** |
+| `unknown` | 45 | 139 | 35 | 25.2% |
+
+**读法**：如果那一批 `pos_y` 是"另一台机器算出来的 f64"，那么**只有联机回放**才该有残差，
+单机回放（同一台机器、同一个进程、同一份代码）应当 0。实测**反过来了**：单机 28.7% > 联机 24.4%。
+⇒ 「外来值」不是解释；残差在**任何**回放里都以 ~1/4 的比例出现。
+
+### 36.5 数值侧：`pos_x` 能逐位相同、`pos_y` 差 1 ulp 的**分解**
+
+`Normal` 局（`y = f(x) + c`，740 发；`DiffEq` 局 `y` 来自 RK4 积分，本节的"回代"判据对它不适用）：
+
+| 组 | 判据 | 条数 | 说明 |
+|---|---|---|---|
+| 逐位相同 | 我方值 = 回放值 | **498**（67.3%） | — |
+| 我方 `x` 差 | 回放 `y == f(回放的 x)`，而我方 `x` 差 1–2 ulp | **43**（5.8%） | **`y` 的差是 `x` 的下游** |
+| 回放 `(x,y)` 不自洽 | 我方 `x` 能算出回放的 `y`，但回放的 `y ≠ f(回放的 x)` | **46**（6.2%） | 原版那条点的两个坐标**不是同一个 `x` 上算的** |
+| 都不解释 | 三个候选 `x` 都不给回放值 | 153（20.7%） | 几何/文本层面（极端函数占多数） |
+
+判据工具（**新增**，只加不改）：`examples/posy_mech.rs`
+
+```bash
+$CARGO_TARGET_DIR/release/examples/posy_mech --dir $R --json mech.jsonl
+```
+
+它对每发算同一份打印文本在**三个不同 `x`** 上的值（回放 `end_x` / 我方采样停点 /
+**回放自己的 `pos_x`**），以及对**所有常数各挪 ±1 ulp**的值，逐位比 `pos_y`：
+
+| 候选 | 逐位命中（`Normal` 740 发） | 结论 |
+|---|---|---|
+| `eval(文本, end_x)` | 532 | 不是我们现在交付的那个（见下） |
+| `eval(文本, 我方采样停点)` | **544** | **= 现行交付口径**（`game::hole_point` 用 `stop.0`） |
+| `eval(文本, 回放的 pos_x)` | 541 | 回放那条点在多数情况下是自洽的 |
+| 常数各 **+1 ulp** / **−1 ulp**（在两种 `x` 上） | 79 / 61 / 75 / 68 | **否掉**"常数整体偏 1 ulp" |
+
+**由此得到三条可检验的判据**（全部已在上面跑过，不是设想）：
+
+* **M1「取哪个 `x`」**：把交付口径从 `stop.0` 换成 `end_x` 会**变差**（544→532）；
+  换回放的 `pos_x` 也不会更好（541）。⇒ `x` 的取法**基本已经对了**，
+  余下 43 发是"我方最后采样点的 `x` 差 1–2 ulp"，那是**采样器几何**的账，不是求值器的。
+* **M2「常数 `c` 的最后一位」**：±1 ulp 整体平移**只命中 10%**（75/68）⇒ 不是系统性偏移，
+  只可能是**逐个值不同**的 residue（十进制→double 的那一步）。**判据**：反汇编
+  `calculate_corrected_function` / `add_offset`（arm64 `.symtab` 有名字），
+  看偏移量是 `f64` 本身还是"3 位小数文本再解析"；再把 `c` 的十进制→double 结果逐位对一遍。
+* **M3「libm 最后一位」**：二进制**自己不实现** `exp/log/sin/cos/tan/pow/log10`
+  （`objdump -T libgraphwarrust.so` 里是 `UND (GLIBC_2.2.5)`），glibc 的 libm 按 CPU
+  走 **IFUNC**（FMA/AVX 变体）⇒ **同一份二进制换台机器，超越函数的最后一位会变**。
+  **判据**：把求值器的 `exp` 换成另一个 IFUNC 变体，只应影响含超越函数的发。
+  **今天测到的是反证**：把 `Normal` 740 发按"函数里有没有超越函数"拆开，
+  "被 `x` 取法解释"的比例是 **75.1%（纯 `+-*/`）vs 76.6%（含超越函数）**——一样 ⇒
+  **M3 不是主因**（它最多解释一个子集）。
+* **M4「x87 双舍入 / FMA 收缩」**：对**一次加法**这一类（`fn = "x"`、`"-x"`）
+  **在数学上不可能**产生差异：两个 double 的和用 64 位尾数的 x87 也能**精确**表示
+  （再舍到 double 是一次正确舍入），FMA 又需要乘法。⇒ 那 23 发"纯 `+-*/`、`x` 逐位相同、
+  仍差 1 ulp"（含 `fn="x"` 的 4 发）**不是浮点环境问题**，只能来自**被加的那个常数**。
+
+### 36.6 所以下一步改什么（/ 为什么不该改）
+
+| # | 建议 | 依据 | 本轮做没做 |
+|---|---|---|---|
+| 1 | **不要**把爆炸点改到点位表（站点 B）上 | §36.3：站点 B 的 `pos` 是实体位置，爆炸点不是 | 不做（会砸掉 1290 发） |
+| 2 | **不要**再用"求值器最后一位"解释 `Y` 桶 | §32.5 已证 + §36.5 的分组 | — |
+| 3 | 该改的是**采样器最后一点的 `x`**（43 发 = 5.8%）与**偏移常数的十进制→double**（M2） | §36.5 | 未改：`hole_point`/采样器不在本任务允许清单里（只允许 `src/game.rs` 一小段），且改之前要先拿到 M2 的反汇编证据 |
+| 4 | `Y` 桶的门槛值**不要**再当成"一个 bug 的进度条" | 它至少是三份（§36.5 表） | 文档层面已改：本节 |
+
+### 36.7 复现（全部只读语料/二进制）
+
+```bash
+export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=<你的私有目录>
+export PY=<ws>/.reference/venv/bin/python
+R=<ws>/.reference/replays/gw2-replays-snapshot/replays
+
+# ① 静态两条指令（站点 A 的 pos = points[len-1]；effect_type = 常量 0）
+$PY tools/addr_probe.py dis 0x472840 --length 0x40
+$PY tools/addr_probe.py dis 0x472940 --length 0x18
+$PY tools/addr_probe.py dis 0x472d70 --length 0x18     # 站点 B 的 effect_type 来自记录字节
+
+# ② 载荷判别 + 类别拆分（退出码 0 = 正对照成立）
+$CARGO_TARGET_DIR/release/examples/replay_attrib --dir $R --drive conv --policy strict --json conv.jsonl
+$PY tools/posy_source_attrib.py --dir $R --conv conv.jsonl
+
+# ③ 机制判别（三个 x + 常数 ±1 ulp）
+$CARGO_TARGET_DIR/release/examples/posy_mech --dir $R --json mech.jsonl
+
+# ④ libm 是外部的（不是游戏自己实现的）
+objdump -T <ws>/.reference/steam/2026-08-28/libgraphwarrust.so | grep -E 'UND.*(exp|log|sin|cos|tan|pow)'
+```
+
+### 36.8 验收（本分支，同一棵树自己复算）
+
+| 轴 | 指标 | 值 | 命令 |
+|---|---|---|---|
+| `fire` | 内容命中 | **608 / 1080** | `replay_attrib --drive fire --policy default` |
+| `batch` | 内容命中 | **643 / 1080** | `replay_attrib --drive batch --policy default` |
+| `batch_conv` | 种类序列 / 内容 | **1075 / 1080 · 633 / 1080** | `batch_conv --policy strict` |
+| 延迟段（`batch`） | 死亡集合 / 挖洞点 | **366 / 385 · 206 / 293** | `$PY tools/bit_exact_attrib.py --json b.jsonl` |
+| `cargo test --offline` | 通过/失败 | **1569 / 0**（1 ignored） | — |
+| `coverage_matrix --check` | — | **OK**（527 个函数、逐位 88 / 观测 439） | — |
+
+⚠️ 本任务书写的是"挖洞点 205/293"，**实测 206/293**（与第四轮报告 §2 一致）。
+按 `AGENTS.md` §0.6 记在这里：**不是本节改出来的**，是任务书的数字早了一步。
+
+### 36.9 仍未确定的（诚实清单）
+
+| # | 未定 | 缺什么 | 档 |
+|---|---|---|---|
+| 1 | 那 46 发"回放 `(x,y)` 不自洽"的成因 | 原版那条点在**拼装**时用哪个 `x` 算 `y`（`calculate_function` 里 `stp d9,d12` 之前有没有对 `x` 做过第二次舍入） | **推断**（判据已给出） |
+| 2 | 偏移常数 `c` 的十进制→double 是否逐位正确（M2） | `calculate_corrected_function` / `add_offset` 的逐指令 | **未知** |
+| 3 | 153 发"三个 `x` 都不解释" | 多数是极端函数（`999999999999999x`）；要逐发定位得先有 §36.9#1 的答案 | **未知** |
+| 4 | 联机回放的 `EffectInfo` 是不是**权威端**算的（房主 vs 加入者） | 一份"同一发、两个客户端各录一份"的回放对（本快照里没有） | **未知**（但不影响本节结论：单机里也有 28.7%） |
