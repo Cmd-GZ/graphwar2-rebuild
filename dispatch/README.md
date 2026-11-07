@@ -410,3 +410,38 @@ E1 127（end_x 小差，含 Ode 局几何差）
 X   91（回放自身 pos_x ≠ 其 end_x）
 C   14 ｜ E2 11 ｜ D 5
 ```
+
+---
+
+# 第八轮（2026-11-08 凌晨）
+
+## 先认一件事（写给下一个合并的人）
+
+第七轮我（协调方）**没读报告就合了**，而报告 §2 的标题就是「33：绘制做了，但**画面上什么都没变**」。
+后来是靠用户问「第七轮验了吗」才回去读的。⇒ `AGENTS.md` 合并纪律 **3b** 就是为这个写的：
+**先读 §5 遗留 + §6 建议，再合并。** 只跑四件套不算验完。
+
+## 新任务
+
+| # | 分支 | 主题 | 优先级 | 依据 |
+|---|---|---|---|---|
+| 35 | `agent/residual-407` | 把 34 号那套折叠复算**跑到 407 批上** | **P0** | 报告 §6-1：目前唯一「有机制、可复算」的入口；**DiffEq/Ode 114 发一发未覆盖** |
+| 36 | `agent/plane-pos-manager` | 解 `PlanePosManager`(24 B) —— 最后一个 `stub` | P1 | 报告 §6-4；它连 `src/` 文件都没有 |
+| 37 | `agent/texture-loader` | 士兵/靶子不该是纯色方块 | P1 | 报告 §6-3 |
+
+## 当前护栏（master，以 `fixtures/guardrails.json` 为准）
+
+```
+fire 647 / 1075 ｜ batch 647 / 1075 ｜ batch_conv 637 / 1075
+死亡 366 / 385（漏报 0）｜ 挖洞 207 / 294
+cargo test --offline 1620
+headless：entity_drawer 118 / assemble 213 / plane_on_screen 96 / obstacle 116 / function_drawer 132
+```
+
+## 第七轮留下的、还没人接的
+
+```
+准备圈的**输入端**   现在用 _sync_entities 代 pos_info_event 接线（能看见，但链路是代偿）
+pos_radius 语义     PosInfo.radius 恒 0.5，第 3 个 f64 的标定未做（docs/140 §3.1 那 14%）
+「越界停」          未动
+```
