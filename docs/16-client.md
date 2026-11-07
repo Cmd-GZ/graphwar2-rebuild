@@ -6829,3 +6829,291 @@ bash client/run.sh selftest                    # 694 passed（默认 feature 的
   程序生成的纯色 `ImageTexture`；`save()` 也不写盘（headless 验收不该有副作用）。
 * **`GraphwarRootNode`**：`PlayerShowcase::ready` 第 1 步真的会失败（`root_lookup_failures`），
   因为那个类还没做。
+
+## 45. 用 `recovered-src/` 的 105 个原版 `.gd` 换视图层：清点 + 一个最小试验（2026-11，P3 调研）
+
+> **本篇解决什么问题**：`AGENTS.md` §0 第 4 条给的方向是"**视图层改用反编译出的原版 `.gd`**"。
+> 本节回答**换得动吗、能换几个、代价多大、先做哪个**，并附一个已经在 headless 里跑通的最小试验。
+>
+> **产出是决策依据，不是产品代码**：试验脚本只在 `client/tools/` 下，`client/src/**`、`client/*.tscn`、
+> `recovered-src/**` **一行没动**（试验用的副本由 `cp` 产生，验收脚本每次都验"逐字节相同"）。
+>
+> 档位沿用四档，**推断与观测分开写**：本节凡是"数"都来自 headless 真跑或文件枚举（**观测**）；
+> "要不要换""代价多大"是**推断**，缺的证据都写在 §45.9。
+
+### 45.1 一页结论
+
+| 项 | 结果 | 证据 |
+|---|---|---|
+| `.gd` 总数 | **105** = **52 个游戏脚本**（`recovered-src/` 根） + **53 个插件脚本**（`addons/`） | **观测**（文件枚举；`addons/admob/` 52 + `addons/android_IAPP/` 1） |
+| **现在就能直接换** | **40 个**（820 行）＝ **39 个零错误** + **1 个有 3 条引擎报错但功能正常** | **观测**：headless 挂树后按 stderr 归属；C 段对副作用逐条断言（§45.3） |
+| **要等 PlayScreen 装配** | **5 个**（149 行） | **观测**：`_ready` 直接报 `Node not found: PlaneContainer` 等 |
+| **不能换** | **60 个**（3241 行）＝ 平台桥 **6** + 空文件 **1** + 插件 **53** | **观测**：`Ad_holder.gd` 解析失败；8 个原生类不在 `ClassDB`；PCK 里 **0 个** `.so` |
+| 最小试验 | 原版 `AdContainer.gd`（19 行，**一个字节没改**）在我们注册的节点上跑通 | **观测**：`RECOVERED_VIEW 57 passed, 0 failed`，退出码 0 |
+| 换 `AdContainer.gd` 的唯一障碍 | **2 个成员**：`signal ad_loaded` + `var ad_size: Vector2i`（`GraphwarAdSwitch` 上没有） | **观测**：D③ 段补齐这 2 个成员后原版脚本原样可用 |
+| 结论 | 视图层可以换，**但换来的不是"行为"，是"布局公式"**（40 个里 27 个出现 `add_theme_font_size_override`，其余只干最小尺寸/内边距） | **观测**（逐文件读原文） |
+
+三句话：
+
+1. **能换，而且比想的简单**：52 个游戏脚本里有 40 个是"**只看自己子节点 + 视口宽度**"的布局脚本，
+   挂在任何容器上都能跑——不需要 `PlayScreen`、不需要联机层、不需要资产。
+2. **换不到行为**：这 40 个一共 820 行，**没有一行是按钮按下去干什么**（那在 Rust 里，
+   `play_screen_control` 等模块）。换它们只把**字号/最小尺寸的算式**从"我们猜的"变成"原版的"。
+3. **原版 `.gd` 的另一半价值是接口规格书**：`AdContainer.gd` 用两行代码（`.ad_loaded` / `.ad_size`）
+   就点名了我们 `GraphwarAdSwitch` 缺的两个成员——这比反汇编更快、更准（**观测**，见 §45.5）。
+
+### 45.2 105 个 `.gd` 的构成（先把分母钉死）
+
+| 组成 | 数 | 是什么 | 证据 |
+|---|---:|---|---|
+| `recovered-src/*.gd` | **52** | 挂在 25 个游戏场景上的**小控件脚本**（`AdContainer.gd`、`VersionLabel.gd`、`CampaingLevelsButtons.gd` …） | **观测**：`find recovered-src -maxdepth 1 -name '*.gd' \| wc -l` |
+| `recovered-src/addons/admob/**` | **52** | AdMob 插件（`class_name AdError` 那批 + 7 个 `sample/` + 编辑器插件 `admob.gd`） | **观测** |
+| `recovered-src/addons/android_IAPP/` | **1** | `AndroidIAPP.gd`（Google Play 结算插件） | **观测** |
+| **合计** | **105** | | 与 `docs/20-source-recovery.md` §2.1 的 105 个 `.gdc` 一致 |
+
+> 与 `docs/20` §5.1 "105 个脚本里**没有一个是屏幕控制器**"那句对得上：52 个游戏脚本里
+> **没有** `play_screen` / `lan_lobby` / `player_screen` 这些名字的控制器，全是小控件。
+
+### 45.3 逐文件结论表 · A：**现在就能直接换**（40 个 / 820 行）
+
+判据（**观测**）：下面每个文件都在 `client/tools/recovered_view_check.gd` 的 B/C 段里
+`load()` → `new()` → 挂进场景树 → 等两帧，C 段对可观测副作用做了断言
+（字号 / `custom_minimum_size` / theme constant / 子节点数），并且 **stderr 里没有一条
+`SCRIPT ERROR` 指向它**。**唯一例外**是 `PlayerTabContainer.gd`：它有 3 条
+`ERROR: Parameter "child" is null.`（`set_tab_title` 在页签注册前被调，见 §45.9 第 2 条），
+标题照样写进去了 —— 所以它算 ✅，但**不能**算"零错误"。
+
+| 文件 | 类型 | 依赖什么节点 | 能不能直接用 |
+|---|---|---|---|
+| `VersionLabel.gd`（18 行） | 视图（字号） | 自己的子节点 | ✅ 观测：`font_size = int(视口宽/60)` |
+| `LanLobbyTitle.gd`（19） | 视图（字号） | 自己的子节点 | ✅ 观测：`/30` |
+| `LanLobbyFontResize.gd`（19） | 视图（字号） | 自己的子节点 | ✅ `/40` |
+| `MainMenuButtonResize.gd`（18） | 视图（字号） | 自己的子节点 | ✅ `/30` |
+| `UnlockButtonSize.gd`（19） | 视图（字号） | 自己的子节点 | ✅ `/30` |
+| `GameSetupPlayerEntry.gd`（19） | 视图（字号） | 自己的子节点 | ✅ `/40` |
+| `RoomName.gd`（19） | 视图（字号） | 自己的子节点 | ✅ `/30` |
+| `ExitButtonContainer.gd`（19） | 视图（字号） | 自己的子节点 | ✅ `/30`（场景里用了 14 次） |
+| `TimerContainer.gd`（21） | 视图（字号） | 自己的子节点 | ✅ `/30` |
+| `FireContainer.gd`（21） | 视图（字号+最小宽） | 自己的子节点 | ✅ 观测：`custom_minimum_size.x = 视口宽×0.07` |
+| `FxContainer.gd`（21） | 视图（字号） | 自己的子节点 | ✅ `/60` |
+| `OffsetContainer.gd`（21） | 视图（字号+最小宽） | 自己的子节点 | ✅ `×0.09` + `/60` |
+| `LobbyButtonContainer.gd`（18） | 视图（字号+最小宽） | 自己的子节点 | ✅ `×0.2` + `/30` |
+| `TitleSize.gd`（18） | 视图（字号+最小宽） | 自己的子节点 | ✅ 观测：`/8`（主菜单标题） |
+| `CampaingButtonSize.gd`（19） | 视图（字号） | 自己的子节点 | ✅ `/15` |
+| `ChatContainer.gd`（18） | 视图（字号） | 自己的子节点 | ✅ `/50` |
+| `LevelDescriptionScrollContainer.gd`（18） | 视图（字号） | 自己的子节点 | ✅ `/40` |
+| `TurnLimitText.gd`（18） | 视图（字号） | 自己的子节点 | ✅ `/20` |
+| `IpPopUpMargin.gd`（25） | 视图（字号+四边 10px） | 自己的子节点 | ✅ 观测：`margin_* = 10` + `/40` |
+| `HBoxContainer.gd`（25） | 视图（字号+格子尺寸） | 自己的子节点 | ✅ 观测：`×0.05` + `/30` |
+| `ViewFunctionsLabel.gd`（25） | 视图（字号+格子尺寸） | 自己的子节点 | ✅ `/10` |
+| `ButtonGrid.gd`（26） | 视图（字号+格子尺寸） | 自己的子节点 | ✅ 观测：子节点 `custom_minimum_size = 视口宽×0.05` |
+| `LevelTitleLabel.gd`（15） | 视图（**自己的**字号） | 无 | ✅ 观测：给自己写 `/30` |
+| `OffsetLabel.gd`（17） | 视图（自己的最小宽） | 自己的子节点 | ✅ |
+| `SoldierIconMarginContainer.gd`（15） | 视图（负 margin） | 无 | ✅ 观测：`margin = -视口宽/100`（64 px 视口下截断成 0，断言退化成"覆盖存在"） |
+| `HBoxVictoryIcon.gd`（13） | 视图（负 separation） | 无 | ✅ 观测：`separation = -视口宽/10` |
+| `ShowcaseMarginContainer.gd`（14） | 视图（四边 5px） | 无 | ✅ `_ready` 只写 4 个 theme constant |
+| `LevelTitleContainer.gd`（11） | 视图（空 `_ready`） | 无 | ✅ |
+| `endgame_pop_up.gd`（9） | 视图（空 `_ready`） | 无 | ✅ |
+| `PlayerNameLineEdit.gd`（1） | 视图（只有 `extends LineEdit`） | 无 | ✅ |
+| `MarginContainer.gd`（50） | 视图（安全区内边距） | `DisplayServer` 安全区 | ✅ 观测：`_process` 里比对 `get_display_safe_area()` |
+| `MarginContainerPopUpBack.gd`（35） | 视图（同上） | `DisplayServer` 安全区 | ✅ |
+| `ShopButtonsSize.gd`（38） | 视图（递归改子节点最小尺寸） | 自己的子树 | ✅ |
+| `OptionsContainer.gd`（13） | 视图（`0.25×父高`） | 自己的父节点尺寸 | ✅ 观测：父高 400 ⇒ `custom_minimum_size.y = 100` |
+| `ResizeContainer.gd`（17） | 视图（铺满视口） | 视口 | ✅ 观测：`= 视口尺寸` |
+| `PlayerTabContainer.gd`（20） | 视图（三个页签标题） | 需要 **3 个子节点**（页签） | ✅ 观测：标题逐字符等于原版（含 U+2009）；⚠️ 见 §45.9 第 2 条 |
+| `ChatBox.gd`（21） | 视图（点一下把焦点给输入框） | `../ChatLineEdit`（**只在 `_gui_input`**，`_ready` 不碰） | ✅ 挂树零错误；点一下才需要那个兄弟节点 |
+| `CampaingLevelsButtons.gd`（57） | 视图（**运行时造 21 个按钮**） | 无（自己 `new()` 我们注册的 `GraphwarButton`） | ✅ **观测**：见 §45.5.2 |
+| `UnlockButton.gd`（11） | 视图（空 `_ready`，**基类是我们注册的 `GraphwarButton`**） | 无 | ✅ |
+| `ViewFunctionsLabel.gd`（25） | 视图（字号+格子尺寸） | 自己的子节点 | ✅ |
+
+> 合计 **40 个 / 820 行**。其中 **27 个**出现 `add_theme_font_size_override`（**观测**），
+> **32 个**连 `get_tree().root.size_changed`（**观测**，与 `docs/20` §5.1 "32 处"一致）。
+
+### 45.4 逐文件结论表 · B/C/D：**要等装配 / 不能换**（65 个）
+
+#### B1：要等 `PlayScreen` 装配 —— **5 个 / 149 行**（❌）
+
+| 文件 | 类型 | 依赖什么节点 | 能不能直接用 |
+|---|---|---|---|
+| `ExtraOptionPad.gd`（21） | 视图（按棋盘余高决定显隐） | `find_parent("*PlayMainHBox")` → `PlaneContainer` / `LeftControls/LeftTopButtonsContainer` | ❌ 观测：`Cannot call method 'get_node' on a null value`（`_ready` 第 4 行） |
+| `ViewFunctionPad.gd`（27） | 同上 | 同上 + `PlaneContainer/ExtraOptionsVBox/ExtraOptionsHBox` | ❌ 同一句错误（第 4 行） |
+| `ExtraOptionsHBox.gd`（44） | 同上（`item_rect_changed` 驱动） | `../../../LeftControls/LeftTopButtonsContainer`、`../../../PlaneContainer` | ❌ 观测：`Invalid access to property 'item_rect_changed' on null`（第 8 行） |
+| `ShowExtraButtons.gd`（38） | 视图（**基类是 `GraphwarButton`**，切图标） | `../../../../PlaneContainer` 及其 3 个子路径 + `res://show_extra_buttons.svg` / `hide_extra_buttons.svg`（**资产不在库里**） | ❌ 观测：第 9 行同一个 null 错误；另外 2 个 SVG 也不在仓库里 |
+| `AdContainer.gd`（19） | 视图（广告位高度 = 广告实际高度） | `/root/GraphwarRootNode/Ad_holder` + 它的 `ad_loaded` 信号 / `ad_size` 属性 | ❌ **但只差 2 个成员**：见 §45.5.3，补齐后原样可用 |
+
+#### B2：平台桥 —— **6 个 / 491 行**（🚫 桌面/headless 永远用不上）
+
+| 文件 | 类型 | 依赖什么节点 | 能不能直接用 |
+|---|---|---|---|
+| `Ad_holder.gd`（66） | 平台桥（AdMob） | `AdView` / `AdSize` / `AdPosition` / `AdRequest` / `AdListener` / `LoadAdError` / `MobileAds` **7 个原生类** + `/root/GraphwarRootNode` | 🚫 **观测**：`load()` 直接**解析失败**（10 条 Parse Error），是 52 个里唯一连编译都过不去的 |
+| `IAP_holder.gd`（33） | 平台桥（内购转发） | `$IAP_Android` / `$IAP_IOS` 两个子节点 | 🚫 观测：`Invalid access to property 'purchase_confirmed' on null instance` |
+| `IAP_IOS.gd`（94） | 平台桥（iOS 内购） | `InAppStore` 单例 + `root.log()` | 🚫 观测：`Attempt to call function 'log' in base 'null instance'` |
+| `android_iap.gd`（254） | 平台桥（Google Play 结算） | `AndroidIAPP` 单例 + `root.log()` | 🚫 观测：`await create_timer(1)` 之后 `run_iapp_billing()` 报同一句 |
+| `IOS_album_holder.gd`（22） | 平台桥（存相册） | `AlbumIOS` 单例 + `root.log()` | 🚫 观测：`Node not found: "/root/GraphwarRootNode"` |
+| `Android_mediastore_holder.gd`（22） | 平台桥（存相册） | `GodotAndroidMediaStorePlugin` 单例 + `root.log()` | 🚫 同上 |
+
+> 这 6 个的共同点：**都要 `root.log()`**（`/root/GraphwarRootNode` 上的一个方法，我们没实现），
+> 而且都只在 `Engine.has_singleton(...)` 为真时才干活 ⇒ 在 Linux/headless 上它们**无事可做**。
+> **推断**（缺证据：原版 APK 里这些插件的 `.so` 行为）：它们的完整语义只能在真机上验证。
+
+#### B3：空文件 —— **1 个 / 1 行**（🚫）
+
+| 文件 | 类型 | 依赖什么节点 | 能不能直接用 |
+|---|---|---|---|
+| `ExtraOptionsVbox.gd`（1 行，只有换行） | —— | 无 `extends` ⇒ 是 `RefCounted` 脚本 | 🚫 **观测**：`new()` 出来的不是 `Node`，挂不到任何节点上；25 个场景里也**没有**引用它 |
+
+#### B4：插件 —— **53 个 / 2749 行**（🚫 永远不能换）
+
+| 目录 | 数 | 是什么 | 能不能直接用 |
+|---|---:|---|---|
+| `addons/admob/admob.gd` + `version_helper.gd` | 2 | AdMob 的**编辑器插件**（`extends EditorPlugin`） | 🚫 编辑器插件，运行时不存在 |
+| `addons/admob/sample/` | 7 | 插件自带的 7 个示例（Banner / Interstitial / Rewarded / Ump …） | 🚫 示例，不是游戏的界面 |
+| `addons/admob/src/api/` | 9 | `AdView` / `MobileAds` / `InterstitialAd*` / `RewardedAd*` 的 GDScript 外壳 | 🚫 外壳而已，真正的类在原生插件里 |
+| `addons/admob/src/api/core/` | 11 | `AdRequest` / `AdSize` / `AdError` / `ResponseInfo` … 的值类型 | 🚫 同上（`class_name` 只是 TypeScript 式的包装） |
+| `addons/admob/src/api/listeners/` | 7 | 回调对象（`AdListener` / `FullScreenContentCallback` …） | 🚫 同上 |
+| `addons/admob/src/core/` | 1 | `MobileSingletonPlugin.gd`（自检单例是否在） | 🚫 同上 |
+| `addons/admob/src/mediation/` | 1 | `MediationExtras.gd` | 🚫 同上 |
+| `addons/admob/src/mediation/extras/{adcolony,meta,vungle}/` | 2 + 1 + 4 | 三家广告聚合的 extras | 🚫 同上 |
+| `addons/admob/src/ump/{api,core}/` | 3 + 4 | 欧盟同意书（UMP） | 🚫 同上 |
+| `addons/android_IAPP/AndroidIAPP.gd` | 1 | Google Play 结算的 GDScript 外壳 | 🚫 原生插件不在包里 |
+| **合计** | **53** | | |
+
+**为什么是"永远"**（两条都是**观测**）：
+
+1. `ClassDB` 里**一个都没有**：`MobileAds` / `AdView` / `AdSize` / `AdPosition` / `AdRequest` /
+   `AdListener` / `AndroidIAPP` / `InAppStore` —— 8 个全不在（`recovered_view_check.gd` E 段）。
+2. **这些插件的二进制不在 PCK 里**：`recovered-src/MANIFEST.tsv` 的 692 个文件里
+   **`.so` 出现 0 次**（`grep -c '\.so' recovered-src/MANIFEST.tsv` → `0`）。
+   它们是 Android/iOS 侧的原生库，随 APK/AAB 分发，**不在本仓库能触达的范围内**。
+
+### 45.5 最小试验：原版 `.gd` 挂在我们注册的节点上，headless 跑通
+
+脚本：`client/tools/recovered_view_check.gd`（**57 条断言，退出码 0**）。
+原件副本：`client/tools/recovered/*.gd`（52 个，**逐字节等于** `recovered-src/`，A 段每次验）。
+
+#### 45.5.1 先说结论：57 条断言里最要紧的 6 行
+
+```text
+ok   A：52/52 个副本与 recovered-src 原文件**逐字节相同**
+ok   B：51/52 个原版脚本能在 Godot 4.7.2 里**解析**
+ok   ★ CampaingLevelsButtons.gd 造了 21 个按钮（实际 21）
+ok   ★ 21 个全是**我们注册的** GraphwarButton
+ok   D③：`ad_loaded` 抬起 ⇒ 原版 `_update_size()` 把 custom_minimum_size 写成 (320.0, 50.0)（期望 (320, 50)）
+ok   E：AdMob / IAP 的 8 个原生类一个都不在 ClassDB 里（实际在：）
+RECOVERED_VIEW 57 passed, 0 failed
+```
+
+#### 45.5.2 旗舰：原版 `CampaingLevelsButtons.gd` 驱动**我们注册的** `GraphwarButton`
+
+原版这 57 行里有一句 `GraphwarButton.new()`（关卡按钮是**运行时造**的，`docs/16` §2.1.2 记过）。
+试验证据（**观测**）：
+
+```text
+ok   ★ CampaingLevelsButtons.gd 造了 21 个按钮（实际 21）
+ok   ★ 21 个全是**我们注册的** GraphwarButton
+ok   ★ 21 个都进了场景树（child_count = 21）
+ok   ★ 名字是原版的 `level_0` … `level_20`（首 level_0 / 末 level_20）
+ok   ★ `input_text` 也照原样写进去了（首 level_0 / 末 level_20）
+```
+
+⇒ 「**原版视图脚本 + 我们注册的节点类**」这条接缝是通的：`set_name()` / `text` /
+`add_theme_font_size_override()` / **`input_text`（我们自造的 `#[export]`）** 全部对得上。
+这条比"能 load"强得多：它证明**原版脚本能把命令键灌进我们的按钮**（`input_text` 就是 §1 说的"界面与内核的协议"）。
+
+#### 45.5.3 `AdContainer.gd` 三步：原样 → 有节点无成员 → 补 2 个成员
+
+这是本任务最有决策价值的一段：**原版脚本自己写明了它要 Rust 节点类提供什么**。
+
+| 步 | 环境 | 结果 | 证据 |
+|---|---|---|---|
+| ① | 什么都不给（`/root/GraphwarRootNode` 不存在） | `_ready` 第 8 行炸 | **观测**：`Invalid access to property 'ad_loaded' on a base object of type 'null instance'` |
+| ② | 用**我们注册的** `GraphwarRootNode` 建骨架（它自己会造 `Ad_holder = GraphwarAdSwitch`） | 节点找到了，**成员没有** | **观测**：`Ad_holder` 的类就是 `GraphwarAdSwitch`；它有 `are_ads_enabled()`，**没有** `ad_loaded` / `ad_size`；`_ready` 报 `Invalid access to property 'ad_loaded' on a base object of type 'GraphwarAdSwitch'` |
+| ③ | 同一个节点换成 `client/tools/recovered_ad_holder_stub.gd`（`extends GraphwarAdSwitch` + 补那 2 个成员） | **原版脚本一行不改，跑通** | **观测**：`ad_loaded` 一抬 ⇒ `custom_minimum_size == (320, 50)`；`visibility_changed` 一抬 ⇒ `(640, 100)` |
+
+⇒ 结论（**观测**）：`AdContainer.gd` 换不过去**不是**"还缺一整个类"，而是**缺 1 个 signal + 1 个 property**。
+这两个成员的名字、类型、语义**全部由原版 `.gd` 自己给出**，不需要再反汇编。
+
+### 45.6 「能直接用」的 40 个到底换来了什么
+
+**换来的**（**观测**，逐文件读原文）：
+
+| 项 | 原版 | 我们现在（`client/src/screens/`） |
+|---|---|---|
+| 字号公式 | `add_theme_font_size_override("font_size", screen.x / N)`，N 逐控件写死（8/10/15/20/30/40/50/60） | 各屏 `FONT_DIVISOR` + `meta("font_divisor")`，**N 基本对得上**（`main_menu.gd` 就写了 8/30/60） |
+| **有没有下限** | **没有**：52 个脚本里 `maxi` / `max(` 出现 **0** 次 | 有：`maxi(10, int(width / font_divisor))`（`screen.gd`），**这是本项目自加的** |
+| 触发方式 | 32 个连 `get_tree().root.size_changed`，另有 9 个连 `resized` | 同样是 `size_changed`，**但按屏重算**（`screen.gd` 递归） |
+| 最小尺寸 | 逐控件乘固定系数（0.05 / 0.07 / 0.09 / 0.2 / 0.24 / 1.0 …） | 一部分有、一部分是 `GwUI` 里的间距常量 |
+
+**没换来的**（同样是**观测**）：
+
+* **没有任何按钮行为**：40 个文件里没有一处 `connect("pressed", ...)` 之后做业务（只有
+  `ShowExtraButtons.gd` / `ChatBox.gd` 两处是切换图标 / 抢焦点，且都在 ❌ 或需要兄弟节点的那一档）。
+  按下 `Campaign` 之后干什么，仍然在 Rust 的 `play_screen_control` 里。
+* **界面不会"变成原版样子"**：40 个脚本只改**字号 / 最小尺寸 / theme constant**；
+  外观来自 `.tscn` + `.tres`（主题/字体）+ 149 个 `.svg`，那些要么没入库（资产），
+  要么需要整项目换 `.tscn`（那是另一件事，见 §45.7 第 5 条）。
+
+### 45.7 工作量估计与先后顺序（**推断**，括号里写缺什么证据）
+
+| 批次 | 内容 | 估工 | 缺的证据/前提 |
+|---|---|---|---|
+| **P0（立即做）** | 给 `GraphwarAdSwitch` 补 `signal ad_loaded` + `var ad_size`；把 `GraphwarRootNode` 做成 autoload（原版就挂在 `/root/GraphwarRootNode`） | **0.5 人日** | 证据已经齐（§45.5.3）；`log()` 也建议一起补（6 个平台桥都要它，**推断** 它是 `print()` 的包装，缺证据：arm64 上那个方法的函数体） |
+| **P0（同上）** | `AdContainer.gd` 原样换上去（**观测**：`recovered-src/*.tscn` 里 **12 个场景**各挂 1 个 —— 每个屏都有广告位：main_menu / campaign / lan_lobby / GameSetup / player_screen / replay_lobby / 6 个弹窗） | 含在上面 | 需要那 12 个屏的 `AdContainer` 节点真存在（我们现在只有 `GwUI.ad_slot()` 桩） |
+| **P1（半天～1 人日）** | 把 40 个里的 **37** 个纯插入布局脚本挂到现有容器上，删掉 `GwUI` 里那套自造缩放（另 3 个要顺带补结构：`PlayerTabContainer` 要 3 个页签子节点、`ChatBox` 要兄弟 `../ChatLineEdit`、`CampaingLevelsButtons` 要替掉 `campaign.gd` 现造的按钮） | **0.5–1 人日** | 我们的节点**类和名字已经对得上**（`main_menu.gd` 就是 `MarginContainer/VBoxContainer/MarginContainer/Label`，**观测**）；风险是 `maxi(10,…)` 删掉后小窗口字号会变小——**推断** 原版就是会变小 |
+| **P2（等装配）** | 5 个 `PlaneContainer` 系的（`ExtraOptionPad` / `ViewFunctionPad` / `ExtraOptionsHBox` / `ShowExtraButtons`） | 等 `PlayScreen` Rust 装配 | 缺 `PlayMainHBox` / `PlaneContainer` / `LeftControls` 这棵树 |
+| **不做** | 53 个插件 + 6 个平台桥 | 0 | 原生 `.so` 不在包里（**观测**），桌面端无意义 |
+| **另立项** | 整项目换 `.tscn` + `.tres`（31 + 22 个） | 远超本任务 | 要和 Rust 控制器同时换，否则节点路径全变 |
+
+**建议的先后顺序**（一句话版）：
+
+1. **补 `ad_loaded` + `ad_size`**（半天）→ 立刻多换 1 个、并且把 `GraphwarRootNode` 的 autoload 位置定死；
+2. **换这批布局脚本**（半天～1 天）→ 纯收益：字号/最小尺寸回归原版，删掉一段自造逻辑；
+3. **等 `PlayScreen` 装配完**再换那 4 个棋盘布局脚本；
+4. **插件与平台桥不换**，在 `client/` 里保留桩（现状）即可；
+5. **不要**在本阶段做"整项目换 `.tscn`"——那是与"控制器迁回 Rust"绑定的大工程。
+
+### 45.8 复现（三分钟）
+
+```text
+# 1) 构建带 12 个节点类的扩展（默认 feature 里没有它们）
+export CARGO_HOME=<工作区>/.reference/cargo-home CARGO_TARGET_DIR=$CARGO_HOME/target
+cargo build --features gdext-bindings --offline
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+
+# 2) 新增 .gd 后必须先 import（否则静默不加载，见 §41.6 第 3 条）
+export XDG_DATA_HOME=.../.godot-data XDG_CACHE_HOME=.../.godot-cache XDG_CONFIG_HOME=.../.godot-config
+godot --headless --path client --import
+
+# 3) 验收（57 条断言，退出码 0）
+godot --headless --path client --script res://tools/recovered_view_check.gd
+
+# 4) "哪些文件真的报错"由 stderr 归属（错误行自带脚本路径）：
+godot --headless --path client --script res://tools/recovered_view_check.gd 2>err.log
+grep -oE 'recovered/[A-Za-z_0-9]+\.gd' err.log | sort -u     # 12 个
+```
+
+`err.log` 里被点名的正好 **12 个**（**观测**）：`Ad_holder` / `AdContainer` / `ExtraOptionPad` /
+`ExtraOptionsHBox` / `ShowExtraButtons` / `ViewFunctionPad` / `IAP_holder` / `IAP_IOS` /
+`android_iap` / `IOS_album_holder` / `Android_mediastore_holder` / `PlayerTabContainer`。
+⇒ `52 − 12 = 40` 个"零错误"。§45.3 的 ✅ 表恰好也是 40 行，但**不是同一个集合**：
+它在零错误那 40 个里**去掉 `ExtraOptionsVbox.gd`**（它在零错误里，可是空文件、`new()` 不是 Node，
+挂不上节点 ⇒ 归 B3）、**加上 `PlayerTabContainer.gd`**（它在那 12 个里，但只是 3 条引擎报错，
+功能正常）。39 + 1 = 40，两份清单可以逐条对齐。
+
+### 45.9 未知与诚实清单
+
+1. **`root.log()` 到底是什么**：6 个平台桥 + `GraphwarRootNode` 的 15 个屏切换都在调它。
+   现在我们**没有**这个方法（**观测**：`GraphwarRootNode` 的方法表里没有 `log`）。
+   **推断** 它是带前缀的 `print()`；**缺** arm64 上那个方法的函数体（地址未定名）。
+2. **`PlayerTabContainer.gd` 的 3 条引擎错误是不是原版也有**：我们复现出
+   `ERROR: Parameter "child" is null.`（`set_tab_title` 在页签注册前被调）。
+   原版同样在 `_ready` 里这么写，**推断** 原版也会打这 3 条；**缺** 原版 APK 的 stderr。
+3. **headless 的视口只有 64×64**（**观测**：设 `root.size = (1600,900)`，下一帧被 dummy
+   DisplayServer 改回 64×64）⇒ 所有字号断言验的是**公式**，不是 1600×900 下的绝对值。
+4. **`ShowExtraButtons.gd` 还缺 2 个 SVG**（`show_extra_buttons.svg` / `hide_extra_buttons.svg`）：
+   资产按约定不入库（`client/assets/` 由使用者自己从 PCK 解），所以这个文件即使装配完成也要先有资产。
+5. **"零 `SCRIPT ERROR`"不等于"行为正确"**：它只说明 `_ready` 跑到底了。
+   40 个里的 34 个只有"字号/最小尺寸"这一条行为，**C 段断言的就是这一条**；
+   `MarginContainer.gd` / `ShopButtonsSize.gd` 的完整分支（安全区非零、嵌套容器）**没有覆盖**。
+6. **本节的 40/5/60 是"能不能跑"，不是"该不该换"**：`AdContainer.gd` 在 ✅/❌ 之间反复
+   （原样 ❌、补 2 个成员后 ✅），计数按**原样**算。若 P0 做完，这个数会变成 **41 / 4 / 60**。

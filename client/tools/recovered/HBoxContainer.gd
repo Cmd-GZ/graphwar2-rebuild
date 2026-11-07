@@ -1,0 +1,25 @@
+extends HBoxContainer
+
+
+func _ready():
+
+	get_tree().root.size_changed.connect(_on_viewport_size_changed)
+
+	update_child_sizes()
+
+
+
+func _process(_delta):
+	pass
+
+func _on_viewport_size_changed():
+	update_child_sizes()
+
+func update_child_sizes():
+	var screen_size = get_viewport_rect().size
+	var desired_size = Vector2(screen_size.x * 0.15 / 3.0, screen_size.x * 0.15 / 3.0)
+	var font_size = screen_size.x / 30
+
+	for node in get_children():
+		node.custom_minimum_size = desired_size
+		node.add_theme_font_size_override("font_size", font_size)
