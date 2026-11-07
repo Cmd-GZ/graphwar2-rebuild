@@ -34,6 +34,15 @@ pub mod diffconv;
 // 3 个 `Sprite2D` + 1 个 `RichTextLabel` 的子节点树。只在 `gdext-bindings` 下编译。
 #[cfg(feature = "gdext-bindings")]
 pub mod entity_drawer_class;
+// 三个「基类不是 Control」的类：`GraphwarRootNode`（`Node`）、`GraphwarLanVBox`
+// （`VBoxContainer`）、`GraphwarAdSwitch`（基类未定，按 `Node` 落）。用同一套模板，
+// 只有虚方法块不同（`docs/16-client.md` 本轮新增的那一节）。只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod graphwar_ad_switch_class;
+#[cfg(feature = "gdext-bindings")]
+pub mod graphwar_lan_vbox_class;
+#[cfg(feature = "gdext-bindings")]
+pub mod graphwar_root_node_class;
 // 手写入口与 gdext 入口都导出 `gdext_rust_init`，一个 .so 里只能有一个：
 // 打开 `gdext-bindings` 时用官方 gdext 那份（`gdext_mod.rs`），关掉手写这份。
 #[cfg(not(feature = "gdext-bindings"))]
