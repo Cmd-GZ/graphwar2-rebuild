@@ -9872,8 +9872,8 @@ python3 tools/check_doc_refs.py                                         # 退出
 
 | # | 项 | 现状 | 档位 |
 |---|---|---|---|
-| 1 | **谁给名字**（`skin`/`face`/`hat`） | 原版是 `ready` 里订的三个 graphics 事件（51/53/55）写进 `HashMap<i32, String>`（`+0x30`）；本类**没有事件通道**，改由调用方 `set_entity_look()` 给，默认值 = 玩家档案的三条默认字面量 ⇒ **播放屏没有一处调它**（`client/src/**` 不在允许改动清单里） | 原版链路=**观测**；"谁喂"=缺口 |
-| 2 | **靶子**的外观 | `res://skins/target.svg` 就在皮肤表里（`SKINS` 数组第 6 个）。本类按实体 id 建节点 ⇒ 给靶子调 `set_entity_look(id, "target", "no_face", "no_hat")` 就对；**但"哪个实体是靶子"由播放屏决定**（`kind=="target"`），这一层没动 ⇒ 目前所有实体都用玩家默认三件套 | 贴图=**观测**；分类=缺口 |
+| 1 | **谁给名字**（`skin`/`face`/`hat`） | 原版是 `ready` 里订的三个 graphics 事件（51/53/55）写进 `HashMap<i32, String>`（`+0x30`）；本类**没有事件通道**，改由调用方 `set_entity_look()` 给，默认值 = 玩家档案的三条默认字面量。**播放屏已接上**（2026-11-08 协调者接力）：`_sync_entities()` 里对 `id ≥ TARGET_ID_BASE` 的实体调 `set_entity_look(id,"target","no_face","no_hat")`，士兵走默认三件套 | 原版链路=**观测**；"谁喂"=**我方接线**（不是观测到的原版路径） |
+| 2 | **靶子**的外观 | `res://skins/target.svg` 就在皮肤表里（`SKINS` 数组第 6 个）。播放屏现在按 **id ≥ `TARGET_ID_BASE`(1000)** 判靶子并显式设 `target/no_face/no_hat`（**我方接线**）。⚠️ 自检那局**没有靶子**，所以这条只跑了代码路径、未在本局触发（自检里是 1 条 `SKIP`，不是静默通过） | 贴图=**观测**；"哪个是靶子"=**我方接线** |
 | 3 | 贴图本体从哪来 | 仓库里**不放任何图片**（`AGENTS.md` 硬规矩 3）。真贴图 = 使用者自己 pck 解出的 `client/assets/**.ctex`（gitignore）；缺了就退化 | **观测**（`.ctex` 头 `GST2` 读出的尺寸） |
 | 4 | 三张表**共享**那一层 | 原版是 `GraphwarRootNode +0x16a0` 上的**一个** `Rc<RefCell<GraphwarTextureLoader>>`（`INode::init` arm64 `0x39a44c` 构造，6 个模块共用）；本类每实例一份 | **我方化简**（根节点还没接这一层） |
 | 5 | `ranks/`（22）与 28 个 UI 图标 | loader 的 `new` **也加载它们**，但**没有任何 getter**按名字取（模块文档 §5 = 未知）⇒ 本轮只接三张有 getter 的表 | `new` 里加载=**观测**；查询入口=**未知** |

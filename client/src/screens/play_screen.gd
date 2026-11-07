@@ -1208,6 +1208,14 @@ func _sync_entities() -> void:
 		_entities.call("set_entity_name", id, String(e["name"]))
 		_entities.call("set_entity_dead_ticks", id, int(e["dead"]))
 		_drawn_entities[id] = true
+		# ---- 外观（`docs/16` §52）：原版由 `set_{skin,face,hat}_graphics` 的 51/53/55 事件喂
+		# `EntityDrawer` 的 `HashMap<i32,String>`；那条链路（`GraphwarGraphicsManager`）还没接，
+		# 所以这里按实体种类代填。默认三件套 `yellow/regular_eyes/soldier_helmet` 是
+		# `GraphwarPlayerConfig::new` 的字面量（arm64 `0x39152c..0x3915a4`），士兵不用显式设。
+		# 靶子得显式设成 `target/no_face/no_hat`（`res://skins/target.svg` 在表里）。
+		# ⚠️ 这是**我方接线**，原版是 graphics 事件驱动的（`docs/16` §52.0）。
+		if id >= TARGET_ID_BASE:
+			_entities.call("set_entity_look", id, "target", "no_face", "no_hat")
 	# ---- 准备圈：**填 `prep` 表**（`docs/16` §50.6）----
 	#
 	# 原版 `EntityDrawer::draw`（`0x4b2890`）只画 `prep` 哈希表里的实体，而填表的是
