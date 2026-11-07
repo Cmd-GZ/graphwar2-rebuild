@@ -9,9 +9,21 @@
 //! | `fire` 恒用 `graphwar_path_calculator::Mode::Normal` | `FunctionModeInfo = DiffEqFunction` 的批必须走 `Mode::Ode` | 550 发的几何整条错 |
 //! | `graphwar_shot_calculator::corrected_text` 恒加后缀 | **Normal** 加 `" ± c.ddd"`，**DiffEq 不加**（`corrected_function == function`，550/550 零例外） | 550 发全错 |
 //!
-//! 本模块**不改内核**（`game.rs` / `graphwar_shot_calculator/settle.rs` / `_scaffold/protocol.rs` 一字未动）：它自己按
+//! 本模块**不改内核**（`game.rs` 一字未动）：它自己按
 //! `fire` 的顺序拼报文，只是把上面两条换成回放给的真值。**报文顺序、字段名、
 //! 浮点写法全部复用 `protocol::emit_*`**，所以"逐字节"这条口径没有变松。
+//!
+//! **坐标计算不在本模块**（第三轮工程债，`docs/06-verification.md` §30）：
+//! 修正文本两串 / 点序列 / 停止点 / 致死 / 爆炸点全部走内核的那**一个**入口
+//! [`crate::graphwar_shot_calculator::settle::resolve_shot`]。之前这里自己算过一遍、
+//! 与 `game.rs` 那一份并存，已经导致过"同一批数据两条路径结论不同"（`docs/142` §5）。
+//! 合并时还查出**第二处**反向分歧：挖洞点这里用采样停点、内核用回代爆炸点（§30.4），
+//! 现在也走内核（回放 503/503 条 `DestroyObstacle` ≡ 同批爆炸点）。
+//! 现在本模块只剩三样**驱动**职责：采样模式、皮肤表、报文装配。
+//!
+//! 一致性由 `tests/diffconv_kernel_consistency.rs` 逐位钉住（点序列 / stop / killed /
+//! effect 序列；401 份快照上 565 批 740 发 6119 条报文全同，唯一已知差异是
+//! `EffectInfo(ExplosionEffect).pos_y`，见 §30.5）。
 //!
 //! 为什么另起一份而不是给 `Match::fire` 加参数：`fire` 的报文序列已经被
 //! `tests/replay_diff.rs` 与端到端测试钉住，而同一时刻有别人在改 `game.rs` 的
@@ -26,7 +38,7 @@ use crate::plane::empty_mask;
 use crate::_scaffold::replaydiff::{
     compare_batch, split_batches, BatchVerdict, Inputs, Msg, Policy, Replay, ShotInput, StateMask,
 };
-use crate::graphwar_shot_calculator::settle::{resolve, Target};
+use crate::graphwar_shot_calculator::settle::{resolve_shot, ShotGeometry, Target};
 
 /// `QueueDestroyObstacle` → `DestroyObstacle` 的延迟（与 `game.rs` 同一个常量）。
 pub use crate::game::DESTROY_DELAY_TICKS;
@@ -45,45 +57,29 @@ pub fn mode_of(function_mode: &str) -> Mode {
 
 /// 修正文本的**唯一**规则（逐发真值见 `docs/142` §3.2）。
 ///
+/// 规则本体在**内核**：[`crate::graphwar_shot_calculator::settle::corrected_text`]；
+/// 本函数只是"取发出的那一串"的历史投影（`tests/diff_conv.rs` 用它）。
+///
 /// * `Mode::Ode`（DiffEq 局）：`corrected_function == function`，**不加后缀**
 ///   —— 全语料 550/550 零例外（回放实读）。
 /// * `Mode::Normal`：`to_text(parse(function)) + " ± c.ddd"`。736/740 是
 ///   `function + suffix` 的字面拼接，剩下 4 条是空函数（`" + 3.333"`）；
 ///   另有 11 条函数**括号没闭合**，真值补了右括号（例：
-///   `5/155sin(4exp(4*6cos(` → `5/155sin(4exp(4*6cos())) + 6.055`），
-///   所以先过一遍 [`crate::math_function::to_text`]。
+///   `5/155sin(4exp(4*6cos(` → `5/155sin(4exp(4*6cos())) + 6.055`）。
 pub fn corrected_function(text: &str, x0: f64, y0: f64, flip: bool, mode: Mode) -> String {
-    match mode {
-        Mode::Ode => text.to_string(),
-        Mode::Normal => {
-            let toks = crate::math_function::parse(text);
-            format!(
-                "{}{}{}",
-                text,
-                ")".repeat(unbalanced_brackets(text)),
-                crate::graphwar_shot_calculator::correction_text(&toks, x0, y0, flip)
-            )
-        }
-    }
+    crate::graphwar_shot_calculator::settle::corrected_text(text, x0, y0, flip, mode).emitted
 }
 
 /// 字符串里没闭合的 `(` 个数（`(` 减 `)`, 下限 0）。
 ///
-/// 真游戏发的是 `to_text(parse(function)) + 后缀`，而它的 `to_text` **原样保留**
-/// 输入文本（740 条 Normal 里 736 条是 `function + 后缀` 的字面拼接），唯一的差别
-/// 是**没闭合的括号会被补齐**（11 条，例 `5/155sin(4exp(4*6cos(` →
-/// `5/155sin(4exp(4*6cos()))`）。本项目的 `math_function::to_text` 会重新加括号
-/// （`to_text(parse("(40)*(1/(...))")) != "(40)*(1/(...))"`），所以不能直接用它。
+/// 规则本体在**内核**（同一份实现）。为什么不能直接用 `math_function::to_text`：
+/// 真游戏的 `to_text` **原样保留**输入文本（740 条 Normal 里 736 条是
+/// `function + 后缀` 的字面拼接），唯一的差别是**没闭合的括号会被补齐**（11 条，
+/// 例 `5/155sin(4exp(4*6cos(` → `5/155sin(4exp(4*6cos()))`），而本项目的
+/// `math_function::to_text` 会重新加括号
+/// （`to_text(parse("(40)*(1/(...))")) != "(40)*(1/(...))"`）。
 pub fn unbalanced_brackets(text: &str) -> usize {
-    let mut depth: i64 = 0;
-    for ch in text.chars() {
-        match ch {
-            '(' => depth += 1,
-            ')' => depth = (depth - 1).max(0),
-            _ => {}
-        }
-    }
-    depth.max(0) as usize
+    crate::graphwar_shot_calculator::settle::unbalanced_brackets(text)
 }
 
 /// 爆炸点：**普通模式下它不是采样器的停点**。
@@ -94,32 +90,11 @@ pub fn unbalanced_brackets(text: &str) -> usize {
 /// 而我们采样器的停点 y 只有 **33/739**。⇒ 真游戏的爆炸点是"拿印刷版修正函数
 /// 文本在 `end_x` 处求一遍"，不是采样器的最后一个采样点。
 ///
-/// 为什么 `±x`：`flip` 时采样器内部用 `-x`，点序列里的 x 是取反回来的
-/// （`graphwar_path_calculator::calculate` 的 `px = if flip { -mid } else { mid }`），所以回代也要取反。
-///
-/// DiffEq（`Mode::Ode`）不走这条：那时 y 不是一个纯函数值，回代无意义，
-/// 实测停点自己就是逐位相同的（376/550）。
-///
-/// **非有限值（NaN / ±inf）一律回退到停点**。理由不是"好看"：±inf 写进报文会变成
-/// `"pos_y":-inf` —— **不是合法 JSON**，下游（`Msg::parse_wire`）整条丢掉，
-/// 于是这一批在种类序列上"少一条 `ExplosionEffect`"。语料里恰好 1 批
-/// （`1787655980` 第 1 批，回放的 `pos_y` 是有限的 11.36 而我们的求值给 `-inf`），
-/// 见 `docs/06-verification.md` §25.7。回退值本身**不是真值**（真值未知），
-/// 只是"别发出一个不是数字的坐标"。
+/// 规则本体在**内核**：[`crate::graphwar_shot_calculator::settle::explosion_point`]
+/// （`game::hole_point` 是同一条规则的另一份实现，两边由 `settle` 的单元测试钉住；
+/// 空函数那一例是**已知分歧**，见该测试）。
 pub fn explosion_point(corrected: &str, stop: (f64, f64), flip: bool, mode: Mode) -> (f64, f64) {
-    if mode != Mode::Normal {
-        return stop;
-    }
-    let toks = crate::math_function::parse(corrected);
-    if toks.is_empty() {
-        return stop;
-    }
-    let x = if flip { -stop.0 } else { stop.0 };
-    let y = crate::math_function::eval(&toks, x, 0.0, 0.0);
-    if !y.is_finite() {
-        return stop;
-    }
-    (stop.0, y)
+    crate::graphwar_shot_calculator::settle::explosion_point(corrected, stop, flip, mode)
 }
 
 /// 我方的一发预测（顺便留下几何量给归因用）。
@@ -207,6 +182,33 @@ impl ConvPredictor {
         (msgs, outs.remove(0))
     }
 
+    /// **一次结算批**的几何：逐发调内核的那**一个**入口（`settle::resolve_shot`）。
+    ///
+    /// 纯函数（不改状态），所以"报文里的坐标来自哪里"可以单独测：
+    /// `tests/diffconv_kernel_consistency.rs` 拿它的 `points/stop/killed/explosion`
+    /// 与 `game::Match::fire_functions` 的产**逐位**比。
+    ///
+    /// 射手本人的排除**不在本层**：内核只比 id（`docs/122` §4），
+    /// 所以这里把整张士兵表原样递下去、`owner` 也一起递。
+    pub fn plan(&self, shots: &[ShotInput]) -> Vec<ShotGeometry> {
+        shots
+            .iter()
+            .map(|s| {
+                resolve_shot(
+                    &s.text,
+                    s.x0,
+                    s.y0,
+                    crate::SERVER_STEP,
+                    s.flip,
+                    self.mode,
+                    &self.mask,
+                    &self.soldiers,
+                    Some(s.owner),
+                )
+            })
+            .collect()
+    }
+
     /// **一次结算批**：同时回合制的一个事务（`docs/141` §1–§3），报文顺序
     ///
     /// ```text
@@ -241,32 +243,10 @@ impl ConvPredictor {
     ) -> (Vec<String>, Vec<ShotOutcome>) {
         // ---- 结算阶段 ----
         // ① 几何并行：先按批开始那一刻的士兵表把每一发算完，再动状态。
-        //    目标表的排除规则与 `fire` 逐字节一致（射手本人 + 起点重合者）。
-        let mut resolved = Vec::with_capacity(shots.len());
-        for s in shots {
-            let others: Vec<Target> = self
-                .soldiers
-                .iter()
-                .filter(|t| {
-                    !(t.id == s.owner) && !((t.x - s.x0).abs() < 1e-12 && (t.y - s.y0).abs() < 1e-12)
-                })
-                .copied()
-                .collect();
-            resolved.push(resolve(
-                &s.text,
-                s.x0,
-                s.y0,
-                crate::SERVER_STEP,
-                s.flip,
-                self.mode,
-                &self.mask,
-                &others,
-            ));
-        }
-        let corrected: Vec<String> = shots
-            .iter()
-            .map(|s| corrected_function(&s.text, s.x0, s.y0, s.flip, self.mode))
-            .collect();
+        //    坐标**全部**来自内核（[`ConvPredictor::plan`]），本层不做任何算式。
+        let geoms = self.plan(shots);
+        let resolved: Vec<_> = geoms.iter().map(|g| g.outcome.clone()).collect();
+        let corrected: Vec<String> = geoms.iter().map(|g| g.corrected.emitted.clone()).collect();
 
         // ② 合并死亡：按 (弧长, 发序号, 士兵 id) 升序，同一士兵只留最早到达的那一发。
         let mut merged: Vec<(f64, usize, i64)> = Vec::new();
@@ -324,29 +304,38 @@ impl ConvPredictor {
 
         // ⑤ 挖洞块（回放不记录 `QueueDestroyObstacle`，位置**无证据**；沿用单发实现的
         //    "死亡之后、`FunctionActive` 之前"）
-        for out in resolved.iter() {
-            if !out.blocked {
+        //
+        //    位置的**证据**在 `DestroyObstacle` 那侧：挖洞点 = **爆炸点**，不是采样停点
+        //    （`docs/14-turn.md` §12：全语料 503/503 条 `DestroyObstacle` 与同批
+        //    `EffectInfo(ExplosionEffect)` 逐位相同）。这条规则在内核里
+        //    （`game::hole_point` / [`settle::explosion_point`]），本层**不再自己用停点**
+        //    —— 旧写法这里发的是 `out.stop`，与内核的 ③ 互为镜像，属于本轮合并掉的
+        //    第二处坐标分歧（`docs/06-verification.md` §30.4）。
+        for (_, g) in shots.iter().zip(geoms.iter()) {
+            if !g.outcome.blocked {
                 continue;
             }
+            let (hx, hy) = g.explosion;
             msgs.push(format!(
                 r#"{{"QueueDestroyObstacle":{{"pos_x":{},"pos_y":{},"radius":0.5,"tick":{}}}}}"#,
-                out.stop.0, out.stop.1, now_tick
+                hx, hy, now_tick
             ));
-            crate::plane::rasterize(&mut self.mask, out.stop.0, out.stop.1, 0.5, 0xFF);
+            crate::plane::rasterize(&mut self.mask, hx, hy, 0.5, 0xFF);
             self.pending_destroy.push((
                 now_tick + DESTROY_DELAY_TICKS,
                 format!(
                     r#"{{"DestroyObstacle":{{"pos_x":{},"pos_y":{},"radius":0.5}}}}"#,
-                    out.stop.0, out.stop.1
+                    hx, hy
                 ),
             ));
         }
 
         // ⑥ 每发一对 `FunctionActive` + `EffectInfo(Explosion)`，顺序与前缀相同
-        for ((s, out), c) in shots.iter().zip(resolved.iter()).zip(corrected.iter()) {
+        for (s, g) in shots.iter().zip(geoms.iter()) {
             msgs.push(crate::_scaffold::protocol::emit_function_active(s.owner, now_tick));
             self.next_effect_id += 1;
-            let (ex, ey) = explosion_point(c, out.stop, s.flip, self.mode);
+            // 爆炸点来自内核（`settle::explosion_point`，`Mode::Ode` 时就是停点）
+            let (ex, ey) = g.explosion;
             msgs.push(crate::_scaffold::protocol::emit_effect_info(
                 self.next_effect_id,
                 ex,
@@ -364,15 +353,14 @@ impl ConvPredictor {
 
         let outs = shots
             .iter()
-            .zip(resolved.into_iter())
-            .zip(corrected.into_iter())
-            .map(|((s, r), c)| ShotOutcome {
+            .zip(geoms.into_iter())
+            .map(|(s, g)| ShotOutcome {
                 owner: s.owner,
                 function: s.text.clone(),
-                corrected: c,
-                stop: r.stop,
-                blocked: r.blocked,
-                killed: r.killed,
+                corrected: g.corrected.emitted,
+                stop: g.outcome.stop,
+                blocked: g.outcome.blocked,
+                killed: g.outcome.killed,
             })
             .collect();
         (msgs, outs)
@@ -582,13 +570,14 @@ pub fn probe_file(path: &std::path::Path) -> Vec<ShotGeom> {
             .collect();
 
         for (shot_i, shot) in b.shots.iter().enumerate() {
-            let _ = shot_i;
+            // 我方几何：**一次**内核调用（点序列 / stop / killed / 爆炸点都在里面）。
+            // 旧写法在这里把同一条弹道采样了 **5 次**（`resolve` 一次、`pts` 一次、
+            // `h2`/`h2_n`/`our_n` 各一次），这正是"两处各算一遍"的温床。
             let targets: Vec<Target> = alive
                 .iter()
-                .filter(|id| **id != shot.owner)
                 .filter_map(|id| pos.get(id).map(|(x, y)| Target { id: *id, x: *x, y: *y, radius: 0.5 }))
                 .collect();
-            let r = resolve(
+            let g = resolve_shot(
                 &shot.text,
                 shot.x0,
                 shot.y0,
@@ -597,10 +586,31 @@ pub fn probe_file(path: &std::path::Path) -> Vec<ShotGeom> {
                 mode,
                 mask.mask(),
                 &targets,
+                Some(shot.owner),
             );
-            let pts = crate::graphwar_shot_calculator::shot_points(&shot.text, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true);
-            let tail: Vec<(f64, f64)> = pts.iter().rev().take(4).rev().copied().collect();
-            let n_points = pts.len();
+            let tail: Vec<(f64, f64)> = g
+                .outcome
+                .points
+                .iter()
+                .rev()
+                .take(4)
+                .rev()
+                .copied()
+                .collect();
+            let n_points = g.outcome.points.len();
+            // H1/H2 是对**回放自己那条 `corrected_function`** 的假设检验（输入来自回放，
+            // 不是我们的坐标）：H1 = 回代求值，H2 = 整条重采样。各算一次，共用结果。
+            let obs_t = obs_corrected.get(shot_i).cloned().unwrap_or_default();
+            let obs_xe = obs_end_x.get(&shot.owner).copied().unwrap_or(f64::NAN);
+            let h2_pts = crate::graphwar_shot_calculator::shot_points(
+                &obs_t,
+                shot.x0,
+                shot.y0,
+                crate::SERVER_STEP,
+                shot.flip,
+                mode,
+                true,
+            );
             out.push(ShotGeom {
                 file: name.clone(),
                 batch: idx,
@@ -609,41 +619,34 @@ pub fn probe_file(path: &std::path::Path) -> Vec<ShotGeom> {
                 mode: if mode == Mode::Ode { "DiffEq" } else { "Normal" },
                 turn_mode: turn_mode.clone(),
                 function: shot.text.clone(),
-                stop_x: r.stop.0,
-                stop_y: r.stop.1,
-                blocked: r.blocked,
-                end_x: obs_end_x.get(&shot.owner).copied().unwrap_or(f64::NAN),
+                stop_x: g.outcome.stop.0,
+                stop_y: g.outcome.stop.1,
+                blocked: g.outcome.blocked,
+                end_x: obs_xe,
                 expl_x: obs_expl.get(&shot.owner).map(|v| v.0).unwrap_or(f64::NAN),
                 expl_y: obs_expl.get(&shot.owner).map(|v| v.1).unwrap_or(f64::NAN),
                 n_points,
                 tail,
-                killed: r.killed.clone(),
+                killed: g.outcome.killed.clone(),
                 obs_death_effects,
                 obs_died: obs_died.clone(),
-                corrected_ours: corrected_function(&shot.text, shot.x0, shot.y0, shot.flip, mode),
-                corrected_obs: obs_corrected.get(shot_i).cloned().unwrap_or_default(),
+                corrected_ours: g.corrected.emitted.clone(),
+                corrected_obs: obs_t.clone(),
                 flip: shot.flip,
                 h1_y: {
-                    let t = obs_corrected.get(shot_i).cloned().unwrap_or_default();
-                    let xe = obs_end_x.get(&shot.owner).copied().unwrap_or(f64::NAN);
-                    if t.is_empty() {
+                    if obs_t.is_empty() {
                         f64::NAN
                     } else {
-                        let toks = crate::math_function::parse(&t);
-                        crate::math_function::eval(&toks, if shot.flip { -xe } else { xe }, 0.0, 0.0)
+                        let toks = crate::math_function::parse(&obs_t);
+                        crate::math_function::eval(&toks, if shot.flip { -obs_xe } else { obs_xe }, 0.0, 0.0)
                     }
                 },
                 h2: {
-                    let t = obs_corrected.get(shot_i).cloned().unwrap_or_default();
-                    let pts = crate::graphwar_shot_calculator::shot_points(&t, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true);
-                    let last = pts.last().copied().unwrap_or((f64::NAN, f64::NAN));
+                    let last = h2_pts.last().copied().unwrap_or((f64::NAN, f64::NAN));
                     (last.0, last.1)
                 },
-                h2_n: {
-                    let t = obs_corrected.get(shot_i).cloned().unwrap_or_default();
-                    crate::graphwar_shot_calculator::shot_points(&t, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true).len()
-                },
-                our_n: crate::graphwar_shot_calculator::shot_points(&shot.text, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true).len(),
+                h2_n: h2_pts.len(),
+                our_n: n_points,
             });
         }
     }

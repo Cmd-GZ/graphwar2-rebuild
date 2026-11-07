@@ -161,6 +161,188 @@ pub fn resolve_points_owned(
     ShotOutcome { points: points.to_vec(), stop, blocked, killed, hits }
 }
 
+// ===========================================================================
+// 坐标计算：**唯一**一份实现（`docs/06-verification.md` §30）
+// ===========================================================================
+//
+// 这一节把"函数原文 → 报文里所有坐标"的规则收成**一个入口**：
+//
+// ```text
+// 原文 ──corrected_text──▶ (发出串, 采样串)
+//                             │              │
+//                             │              └─shot_points─▶ 点序列
+//                             │                                  │
+//                             │                        resolve_points_owned
+//                             │                                  ▼
+//                             └─────explosion_point──────  stop / blocked / killed / hits
+//                                                        （爆炸点 = 挖洞点）
+// ```
+//
+// **为什么要收**（工程债，`docs/142` §5 点名的"跨任务结构债"）：
+// `game::Match` 与 `_scaffold::diffconv::ConvPredictor` 曾经各写一份坐标计算，
+// 于是同一个分歧要先猜"是驱动错了还是内核错了"。现在驱动层只剩"驱动"：
+// 它调 [`resolve_shot`]，自己**不碰任何算式**。
+//
+// 两处规则各自的证据在 `docs/06-verification.md` §25（修正文本按 3 位小数印出来
+// 再解析回去采样）与 §29（多出来的 `)` 要去掉、缺的要补齐）。本节的函数**不改**
+// 既有 [`resolve`] / [`resolve_points_owned`] 的语义，只是把"两串文本 + 采样 + 爆炸点"
+// 这条流水线也变成内核的一部分（`只加不改`）。
+
+/// 一条函数原文对应的**两串**修正文本（`docs/06-verification.md` §29）。
+///
+/// 为什么必须是两串：真值发出去的 `corrected_function` 是 `原文 + ")"×缺 + " ± c.ddd"`，
+/// **只补不删**；而采样器吃的那一串必须把**没有配对**的 `)` 去掉 —— 我方
+/// `math_function::parse` 遇到它会在原地截断，把追加的修正常数一起丢掉。
+#[derive(Debug, Clone, PartialEq)]
+pub struct CorrectedText {
+    /// 报文里发出去的那一串（`FunctionInfo.corrected_function`）。
+    pub emitted: String,
+    /// 采样器吃的那一串（喂给 [`crate::graphwar_shot_calculator::shot_points`]，不修正）。
+    pub sampled: String,
+}
+
+/// 括号缺口：`(` 减 `)`，下限 0（多出来的 `)` 记成 0）。
+pub fn unbalanced_brackets(text: &str) -> usize {
+    let mut depth: i64 = 0;
+    for ch in text.chars() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = (depth - 1).max(0),
+            _ => {}
+        }
+    }
+    depth.max(0) as usize
+}
+
+/// 括号的两种处理：`(只补不删, 去掉没有配对的 ) 再补齐)`。
+fn balanced_texts(text: &str) -> (String, String) {
+    let mut depth = 0i64;
+    let mut stripped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '(' => {
+                depth += 1;
+                stripped.push(ch);
+            }
+            ')' => {
+                if depth > 0 {
+                    depth -= 1;
+                    stripped.push(ch);
+                }
+                // depth == 0 ⇒ 这条 `)` 没有配对：真解析器当噪声跳过，
+                // 我方 `parse` 会在这里截断（`docs/06` §29）。
+            }
+            _ => stripped.push(ch),
+        }
+    }
+    let mut closed = String::from(text);
+    let mut samplable = stripped;
+    for _ in 0..depth {
+        closed.push(')');
+        samplable.push(')');
+    }
+    (closed, samplable)
+}
+
+/// 修正文本（两串）。
+///
+/// * `Mode::Ode`（DiffEq 局）：`corrected_function == function`，**不加后缀**
+///   —— 回放 550/550 零例外，所以两串都等于原文；
+/// * `Mode::Normal`：`to_text(parse(function)) + " ± c.ddd"`，其中 `c = y0 - f(±x0)`
+///   按 **3 位小数**印出来，**采样器吃的就是印出来的文本**（`docs/06` §25：
+///   这是 `end_x` 从 27/739 修到 605/739 的那一条）。
+pub fn corrected_text(text: &str, x0: f64, y0: f64, flip: bool, mode: Mode) -> CorrectedText {
+    match mode {
+        Mode::Ode => CorrectedText {
+            emitted: text.to_string(),
+            sampled: text.to_string(),
+        },
+        Mode::Normal => {
+            let (closed, samplable) = balanced_texts(text);
+            // `c` 由**补完括号、去掉多余 `)`** 的树算：真解析器看的就是整条表达式。
+            let suffix = crate::graphwar_shot_calculator::correction_text(
+                &crate::math_function::parse(&samplable),
+                x0,
+                y0,
+                flip,
+            );
+            CorrectedText {
+                emitted: format!("{closed}{suffix}"),
+                sampled: format!("{samplable}{suffix}"),
+            }
+        }
+    }
+}
+
+/// 爆炸点（= 挖洞点）：拿**发出去的**那一串在 `x = ±stop.x` 处再求一次值。
+///
+/// 证据（`docs/06` §24、`docs/14` §12）：回放里 503/503 条 `DestroyObstacle` 的坐标与
+/// 同一批 `EffectInfo(ExplosionEffect)` **逐位相同**；而它与采样停点的 y 最多差 ~5e-4，
+/// 因为停点用**原文**采样，爆炸点用**印刷版修正文本**（常数只有 3 位小数）回代。
+///
+/// * `Mode::Ode`：`corrected == function`，回代无意义，爆炸点就是停点；
+/// * 非有限值（NaN / ±inf）**一律回退到停点**：`±inf` 写进报文是 `"pos_y":-inf`，
+///   不是合法 JSON，下游整条丢掉（`docs/06` §25.7）。回退值本身**不是**真值。
+pub fn explosion_point(
+    emitted: &str,
+    stop: (f64, f64),
+    flip: bool,
+    mode: Mode,
+) -> (f64, f64) {
+    if mode == Mode::Ode {
+        return stop;
+    }
+    let toks = crate::math_function::parse(emitted);
+    if toks.is_empty() {
+        return stop;
+    }
+    // 修正文本写在射手自己的坐标系里，`flip` 的射手要把 x 取反再代。
+    let x = if flip { -stop.0 } else { stop.0 };
+    let y = crate::math_function::eval(&toks, x, 0.0, 0.0);
+    if y.is_finite() {
+        (stop.0, y)
+    } else {
+        stop
+    }
+}
+
+/// 一次开火的**全部几何**：点序列 + 停止点 / 致死 + 两串修正文本 + 爆炸点。
+///
+/// 驱动的报文只需要从这里取字段，**不需要**（也不允许）自己再算一遍。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShotGeometry {
+    /// 点序列 / 停止点 / 阻挡 / 致死（[`resolve_points_owned`] 的产物）。
+    pub outcome: ShotOutcome,
+    /// 两串修正文本。
+    pub corrected: CorrectedText,
+    /// 爆炸点 = 挖洞点（[`explosion_point`]）。
+    pub explosion: (f64, f64),
+}
+
+/// 内核里**唯一**的"一条函数原文 → 全部坐标"入口。
+///
+/// `mask` 只应包含障碍；`targets` 可以**包含射手本人**（`owner` 会在内核里被排除，
+/// 只比 id，不比位置 —— 见 [`resolve_points_owned`] 的文档与 `docs/122` §4）。
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_shot(
+    text: &str,
+    x0: f64,
+    y0: f64,
+    step: f64,
+    flip: bool,
+    mode: Mode,
+    mask: &[u8],
+    targets: &[Target],
+    owner: Option<i64>,
+) -> ShotGeometry {
+    let corrected = corrected_text(text, x0, y0, flip, mode);
+    // `apply_correction = false`：修正已经以**文本**形式在里面了（3 位小数那一版）。
+    let points = shot_points(&corrected.sampled, x0, y0, step, flip, mode, false);
+    let outcome = resolve_points_owned(mask, targets, &points, owner);
+    let explosion = explosion_point(&corrected.emitted, outcome.stop, flip, mode);
+    ShotGeometry { outcome, corrected, explosion }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +381,136 @@ mod tests {
         let t = Target { id: 3, x: 0.0, y: 20.0, radius: 0.5 };
         let r = resolve("0.00", 10.0, 0.0, 0.5, true, Mode::Normal, &m, &[t]);
         assert!(r.killed.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // 坐标计算只有一份（`docs/06-verification.md` §30）
+    //
+    // 下面两条**机械**地把新入口钉在 `game.rs` 那两份既有实现上：
+    // 谁改动其中一边而另一边没跟上，这里立刻红。等 `game.rs` 下次被它的
+    // 负责人动到时，应当改成直接调本节，那时这两条就成了恒等式（可以删）。
+    // -----------------------------------------------------------------------
+
+    /// 原文样本全部来自只读语料（名字即回放 id），覆盖四种括号形态。
+    const CORPUS_TEXTS: &[(&str, f64, f64, bool)] = &[
+        // 普通：0 常数、负常数
+        ("0.00", 1.651220991201045, 4.638020825690482, false),
+        ("x", -13.429861913415694, -3.686102115928783, false),
+        // 缺 `)` 3 个（回放 1782642986）
+        ("5/155sin(4exp(4*6cos(", 0.0, 6.055, false),
+        // 多 1 个 `)`（回放 1782675382#0）
+        (
+            "14/(1+exp(100*(x-19)^2)))+24/(1+exp(100*(x-24)^2))",
+            22.908325288230134,
+            -4.32330978206142,
+            true,
+        ),
+        // 空函数（真值只发后缀）
+        ("", -13.429861913415694, -3.686102115928783, false),
+        // 幂 / 三角函数混排
+        ("sin(3x)+x^2/4", 5.5, -1.25, true),
+    ];
+
+    #[test]
+    fn corrected_text_is_the_same_rule_as_the_kernel_copy() {
+        for (text, x0, y0, flip) in CORPUS_TEXTS {
+            let c = corrected_text(text, *x0, *y0, *flip, Mode::Normal);
+            // `game.rs` 私有的两份实现（`pub(crate)`）：发出的串与采样的串。
+            assert_eq!(c.emitted, crate::game::corrected_function_text(text, *x0, *y0, *flip));
+            assert_eq!(c.sampled, crate::game::sampling_function_text(text, *x0, *y0, *flip));
+        }
+    }
+
+    #[test]
+    fn diffeq_corrected_text_has_no_suffix() {
+        for (text, _x0, _y0, _flip) in CORPUS_TEXTS {
+            let c = corrected_text(text, 3.0, 4.0, false, Mode::Ode);
+            assert_eq!(c.emitted, *text, "DiffEq 局不加后缀（回放 550/550）");
+            assert_eq!(c.sampled, *text);
+        }
+    }
+
+    #[test]
+    fn explosion_point_is_the_same_rule_as_the_kernel_copy() {
+        // `game::hole_point(diff_eq, 原文, x0, y0, flip, stop)` 是既有实现。
+        let stops = [(0.0, 0.0), (12.5, 3.25), (-4.5, -14.75)];
+        for (text, x0, y0, flip) in CORPUS_TEXTS {
+            // 空函数是**已知分歧**（见下一条测试），这里只比非空原文。
+            if text.is_empty() {
+                continue;
+            }
+            for stop in stops {
+                let emitted = corrected_text(text, *x0, *y0, *flip, Mode::Normal).emitted;
+                let p = explosion_point(&emitted, stop, *flip, Mode::Normal);
+                let q = crate::game::hole_point(false, text, *x0, *y0, *flip, stop);
+                assert_eq!(p.0.to_bits(), q.0.to_bits(), "{text} @ {stop:?}");
+                assert_eq!(p.1.to_bits(), q.1.to_bits(), "{text} @ {stop:?}");
+                // DiffEq 局：两边都不重算
+                assert_eq!(
+                    explosion_point(text, stop, *flip, Mode::Ode),
+                    crate::game::hole_point(true, text, *x0, *y0, *flip, stop)
+                );
+            }
+        }
+    }
+
+    /// **已知分歧**（不是 bug 掩盖，写成断言是为了它不许再偷偷变）：空函数。
+    ///
+    /// `game::hole_point` 在**原文**解析为空时直接返回停点；本节按"拿发出去的
+    /// 那一串（`" - 3.686"`）在 `end_x` 处求值"处理，于是 y = 常数。
+    /// 后者与"客户端看到的就是印出来的那行字"一致，也是本轮**沿用**的收敛层
+    /// 现有行为（语料里 4 发）。要改的是 `game.rs` 那一侧（不在本任务范围）。
+    #[test]
+    fn empty_function_is_a_documented_divergence_with_game_rs() {
+        let (x0, y0, flip) = (-13.429861913415694, -3.686102115928783, false);
+        let stop = (2.0, 3.5);
+        let emitted = corrected_text("", x0, y0, flip, Mode::Normal).emitted;
+        assert_eq!(emitted, " - 3.686");
+        // 本节：回代 = 常数
+        assert_eq!(explosion_point(&emitted, stop, flip, Mode::Normal), (2.0, -3.686));
+        // game.rs：原文为空 ⇒ 停点
+        assert_eq!(crate::game::hole_point(false, "", x0, y0, flip, stop), stop);
+    }
+
+    /// 非有限值不是坐标：`1/(0)` 的回代是 `±inf`，必须回退到停点。
+    #[test]
+    fn explosion_point_falls_back_on_non_finite_values() {
+        let stop = (2.0, 3.5);
+        assert_eq!(explosion_point("1/(0)", stop, false, Mode::Normal), stop);
+        assert_eq!(explosion_point("-1/(0)", stop, false, Mode::Normal), stop);
+        // 负样本：有限值照常回代
+        assert_eq!(explosion_point("0.00", stop, false, Mode::Normal), (2.0, 0.0));
+    }
+
+    /// [`resolve_shot`] 的几何与"手工拼积木"逐位相同（点序列 / stop / killed）。
+    #[test]
+    fn resolve_shot_geometry_is_the_composition_of_its_parts() {
+        let mut m = empty_mask();
+        // 障碍在 +x 一侧，弹道打完 7 号之后撞上它
+        rasterize(&mut m, 5.0, 0.0, 1.0, 0x00);
+        let targets = [
+            Target { id: 9, x: 1.0, y: 0.0, radius: 0.5 },
+            Target { id: 7, x: 3.0, y: 0.0, radius: 0.5 },
+        ];
+        let g = resolve_shot(
+            "0.00",
+            0.0,
+            0.0,
+            crate::SERVER_STEP,
+            false,
+            Mode::Normal,
+            &m,
+            &targets,
+            Some(9),
+        );
+        let c = corrected_text("0.00", 0.0, 0.0, false, Mode::Normal);
+        let pts = shot_points(&c.sampled, 0.0, 0.0, crate::SERVER_STEP, false, Mode::Normal, false);
+        assert_eq!(g.outcome.points, pts, "点序列必须来自 shot_points，不许另算");
+        assert_eq!(g.outcome.killed, vec![7], "射手 9 号被内核排除，7 号命中");
+        assert!(g.outcome.blocked, "弹道应撞上 +x 的障碍");
+        assert!(g.outcome.stop.0 > 3.5 && g.outcome.stop.0 < 5.0, "停点={:?}", g.outcome.stop);
+        assert_eq!(g.explosion.0.to_bits(), g.outcome.stop.0.to_bits());
+        assert_eq!(g.explosion.1.to_bits(), 0.0_f64.to_bits(), "常数函数 ⇒ 爆炸点 y = 0");
     }
 }
 

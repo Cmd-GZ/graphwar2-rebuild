@@ -2029,3 +2029,152 @@ cargo run --release --offline --example kseq_text  -- --dir $R --file 1782676398
 | 2 | `1782675586#0` 我们多发 1 个死者（184743，`d = 0.42 < radius 0.5`） | 真值的致死半径/判据（现在全体士兵都按 0.5 算） | **未知** |
 | 3 | 2 发 DiffEq 的 `corrected_function` 真值**既不补括号也不加后缀**，而 `game.rs` 恒按 Normal 加后缀 | `Match::fire` 的"按模式分"（收敛层 `diffconv` 已做，`game.rs` 没做） | **未知**（`docs/06` §28.9 第 4 条的同一件事） |
 | 4 | `hole_point` 里同一个模式（多余的 `)` 会让"按印刷文本回代"丢掉常数） | — | 实测**改掉它整份 401 回放 0 行差异**（md5 相同），所以**没改**（无证据的改动不做）；等有独立证据再动 |
+
+## 30. 把收敛层的**坐标计算**并回内核（第三轮工程债 #16，2026-11-07）
+
+> 起因：下游第二轮报告 §5 点名的"跨任务结构债"——`src/_scaffold/diffconv.rs` 的
+> `ConvPredictor` 与内核（`src/game.rs` / `graphwar_shot_calculator` / `graphwar_path_calculator`）
+> **各算一遍坐标**，并且已经真的导致过"同一批回放、两条路径得出不同结论"。
+> 双份实现本身就是 bug 源：对拍一出现分歧，先得怀疑"是驱动错了还是内核错了"。
+>
+> 结论：收敛层里 **9 处**重复计算全部改成调内核（新增 1 个内核入口，**只加不改**）；
+> 两条路径在语料上**逐位相同**（可执行的断言，样本见 §30.5）；
+> 五条护栏数字**一个都没退**，`batch_conv` 轴反而 **595 → 612**（种类 **1074 → 1075**）。
+
+### 30.1 先说清"两条路径"是谁
+
+| 路径 | 代码 | 报文装配 | 采样模式 |
+|---|---|---|---|
+| **内核**（A） | `src/game.rs::Match::fire_functions` / `fire_batch` | `src/game.rs::execute_results` | 恒 `Mode::Normal`（`docs/06` §29.7 第 3 条记着这个缺口） |
+| **收敛层**（B） | `src/_scaffold/diffconv.rs::ConvPredictor` | 自己拼（同序、同 `protocol::emit_*`） | **跟回放的 `FunctionModeInfo`** |
+
+两层的报文序列本来就**故意**不同（B 只为把"模式感知"验出来），
+所以"合并"合的是**坐标**，不是报文装配：B 的 `plan()` 现在就是
+`settle::resolve_shot()` 的投影，一行算式都没有。
+
+### 30.2 清单：9 处重复计算 → 现在调谁（旧行号 = `02fdfe21`）
+
+`grep -n "shot_points\|calculate\|eval\|points" src/_scaffold/diffconv.rs` 起手，逐条核过：
+
+| # | 旧位置 | 原来算什么 | 问题 | 现在调 |
+|---|---|---|---|---|
+| 1 | `corrected_function` L55–68 | 修正文本（**发出去**的那一串） | 与 `game.rs::corrected_function_text` 同规则、两份实现；且用 `parse(原文)` 算 `c`，遇到多余的 `)` 会截断 | `settle::corrected_text(..).emitted` |
+| 2 | `unbalanced_brackets` L77–87 | 括号补齐 | 与 `game.rs::balanced_texts` 重复 | `settle::unbalanced_brackets` |
+| 3 | `explosion_point` L109–123 | 爆炸点 = 修正文本在 `±end_x` 回代 | 与 `game.rs::hole_point` 同规则、两份实现；`flip` 取反、非有限回退也各写一遍 | `settle::explosion_point` |
+| 4 | `fire_batch` L247–254 | 目标表过滤 | 重实现"排除射手"，还**多一条**二进制里没有的 `1e-12` 位置重合排除（`docs/122` §4 已删过这条） | 整张士兵表 + `owner` 一起递内核，内核只比 id |
+| 5 | `fire_batch` L255–265 | `settle::resolve(&原文, …)` | 采样的是**原文 + 全精度修正**，而真值采样的是**印成 3 位小数的修正文本**（`docs/06` §25：这一条让 `end_x` 从 27/739 修到 605/739） | `settle::resolve_shot`（内核规则） |
+| 6 | `fire_batch` L266–269 | 再算一遍修正文本 | 同一条输入在同一批里算两次 | `ShotGeometry.corrected` |
+| 7 | `fire_batch` ⑤ L327–343 | 挖洞点 = `out.stop`（**采样停点**） | 与内核 `hole_point` **正好相反**；证据在全语料 503/503 条 `DestroyObstacle` ≡ 同批 `EffectInfo(Explosion)`（`docs/14-turn.md` §12） | `ShotGeometry.explosion`（见 §30.4） |
+| 8 | `probe_file` L591 + L601 + L646 | `resolve(...)`、`shot_points(原文)`、`our_n` | **同一条弹道采样 3 次**（两次结果一样，第三次只为取长度） | 一次 `resolve_shot`，`n_points/tail/our_n` 从同一个 `points` 取 |
+| 9 | `probe_file` L626–635 + L636–645 | `h1_y` 回代求值；`h2`/`h2_n` 各采样一次 | 同一条**回放文本**采样 2 次 + 回代 1 次 | `h1_y` 用 `math_function::eval`（内核原语，输入是回放文本）；`h2`/`h2_n` **共用一次** `shot_points` |
+
+其中 **5 处**（#6、#8 的两处、#9 的两处）是"同一条输入算 2~3 遍"——纯粹的无用功，
+也是两份实现最容易漂的地方。
+
+### 30.3 新增的内核入口（`settle.rs`，**只加不改**）
+
+`git diff src/graphwar_shot_calculator/settle.rs` 的**删除行数 = 0**（既有语义一字未动）：
+
+| 新增 | 是什么 |
+|---|---|
+| `CorrectedText { emitted, sampled }` | 一条函数原文对应的**两串**修正文本（`docs/06` §29：发出串只补括号、采样串去掉多余的 `)`） |
+| `unbalanced_brackets(&str) -> usize` | `(` 减 `)`，下限 0 |
+| `corrected_text(text, x0, y0, flip, mode) -> CorrectedText` | `Mode::Ode` ⇒ 原文原样（550/550 零例外）；`Mode::Normal` ⇒ 括号处理 + `" ± c.ddd"`（`c` 由**补齐后**的树算） |
+| `explosion_point(emitted, stop, flip, mode) -> (f64, f64)` | 爆炸点 / 挖洞点：拿发出去的那串在 `±end_x` 回代，非有限回退停点 |
+| `ShotGeometry { outcome, corrected, explosion }` | 一发的**全部几何**（点序列 / stop / blocked / killed / hits / 两串文本 / 爆炸点） |
+| `resolve_shot(text, x0, y0, step, flip, mode, mask, targets, owner)` | **唯一**入口：两串文本 → `shot_points` → `resolve_points_owned` → `explosion_point` |
+
+为什么要放在**内核**而不是模板层：`game.rs` 那三份私有实现
+（`corrected_function_text` / `sampling_function_text` / `hole_point`）就是规则的既有参考，
+新入口用**单元测试**钉在它们上面（`settle.rs` 的 `mod tests`）：
+
+| 测试 | 钉住的东西 |
+|---|---|
+| `corrected_text_is_the_same_rule_as_the_kernel_copy` | 6 条语料原文上，`emitted`/`sampled` 与 `game::corrected_function_text`/`sampling_function_text` **逐字节相同** |
+| `explosion_point_is_the_same_rule_as_the_kernel_copy` | 5 条原文 × 3 个停点上与 `game::hole_point` **逐位相同**（`to_bits()`） |
+| `empty_function_is_a_documented_divergence_with_game_rs` | **已知分歧**写成断言：空函数时 `hole_point` 直接回停点，本节按"拿发出去的那串回代"给常数（语料 4 发，沿用收敛层既有行为） |
+| `resolve_shot_geometry_is_the_composition_of_its_parts` | 几何 == `shot_points` + `resolve_points_owned` 的组合（点序列逐点相等） |
+
+### 30.4 合并时抓到的**第二处**坐标分歧：挖洞点
+
+把 #7 对齐之前，两条路径的挖洞点/爆炸点**互为镜像**（实测 `1782675586#0`）：
+
+| 报文 | 收敛层（旧） | 内核 |
+|---|---|---|
+| `QueueDestroyObstacle.pos_y` | **11.97**（采样停点） | **6.0**（回代爆炸点） |
+| `EffectInfo(ExplosionEffect).pos_y` | **6.0**（回代爆炸点） | **11.97**（采样停点） |
+
+两边各自内部自洽、彼此相反，而回放说 `DestroyObstacle` ≡ `EffectInfo(Explosion)`（503/503）。
+按证据（`docs/14-turn.md` §12：挖洞点 = 爆炸点）把 #7 对齐到内核规则后，
+收敛层这一侧的挖洞点指标从 **66/291** 变成 **205/293**（`replay_attrib --drive conv --policy strict`
+的延迟段，自跑，命令见 §30.6），死亡集合同时 **362/385 → 366/385**。
+
+### 30.5 一致性验证（本任务的核心验收）
+
+`tests/diffconv_kernel_consistency.rs`。比的是**两条独立代码路径**，不是"同一函数调两次"：
+
+| 断言 | 怎么比 |
+|---|---|
+| ① **点序列** | `ConvPredictor::plan()` 的 `outcome.points` vs `Match::fire_functions()` 的 `points`：长度 + 每点 `(x.to_bits(), y.to_bits())` |
+| ② **stop / blocked** | `stop.x/.y` 的 `to_bits()` + `blocked` |
+| ③ **killed** | `id` 序列 + 每个命中的 `(arc.to_bits(), index)`（同时回合制按弧长排死亡，弧长必须逐位） |
+| ④ **effect 序列** | 两侧 `fire_batch` 的报文逐条比：`kind` + 除 `tick`/`effect_id` 外**每个字段的原始文本**；唯一的已知差异是 `EffectInfo(ExplosionEffect).pos_y`（内核发停点、收敛层发回代点，`game.rs` 的 `Y`/`Y2` 轴），并且**两侧各自**都必须等于自己那条规则的输出 |
+
+**样本**（自跑，401 份定格快照；两种档位都跑过）：
+
+```text
+全量（GW2_CONSISTENCY_FILES=0）：
+  回放 145 份 / 结算批 565 / 发 740 / 报文 6119 条      逐位、逐条相同
+  跳过 DiffEq 141 份（内核恒 Normal，两侧规格本不同） / 读不了 115 份
+  Explosion.pos_y 已知差异 20 条（其余 6099 条全同）
+
+默认（排序后前 60 份，`cargo test` 走的就是这一档）：
+  回放 60 份 / 结算批 120 / 发 172 / 报文 1452 条
+  跳过 DiffEq 5 份 / 读不了 11 份；Explosion.pos_y 已知差异 12 条
+```
+
+跑法：
+
+```bash
+export CARGO_HOME=<ws>/.cargo-home CARGO_TARGET_DIR=<私有>
+export GW2_REPLAY_DIR=<ws>/.agent-work/replay-snapshot      # 401 份定格快照
+cargo test --offline --test diffconv_kernel_consistency -- --nocapture
+GW2_CONSISTENCY_FILES=0 cargo test --offline --test diffconv_kernel_consistency -- --nocapture  # 全量
+```
+
+默认只取排序后的**前 60 份**（控制 `cargo test` 时长）；语料目录不存在时**跳过并打印原因**，
+另有一条**合成用例**不依赖语料（两士兵 + 一障碍 + 一发），所以 CI 上永远不会"什么都没比"。
+
+### 30.6 护栏数字（before/after，**每条都自己跑过**）
+
+```bash
+export CARGO_HOME=<ws>/.cargo-home CARGO_TARGET_DIR=<本 worktree 私有>
+R=<ws>/.agent-work/replay-snapshot
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive conv  --policy strict  --json c.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir $R --policy strict
+python3 tools/bit_exact_attrib.py --json b.jsonl | tail -4     # 延迟段（死亡集合 / 挖洞点）
+```
+
+| 轴 | 指标 | before | after | 判定 |
+|---|---|---|---|---|
+| `fire` | 内容命中 / 种类序列（分母 1080） | **325 / 819** | **325 / 819** | 不动 ✅ |
+| `batch` | 内容命中 / 种类序列 | **346 / 919** | **346 / 919** | 不动 ✅ |
+| `batch_conv` | 内容命中 / 种类序列 | **595 / 1074** | **612 / 1075** | +17 / +1 ✅ |
+| `batch` | 死亡集合 / 挖洞点 | **215/379**、**140/262** | **215/379**、**140/262** | 不动 ✅ |
+| （参考）`conv` | 内容 / 种类序列 | 569 / 946 | **585 / 947** | +16 / +1 |
+| （参考）`conv` | 死亡集合 / 挖洞点 | 362/385、66/291 | **366/385**、**205/293** | +4 / +139 |
+
+`fire`/`batch` 两轴**逐位不动**是必须的：这一次只改了收敛层和 `settle.rs` 的**新增**入口，
+`game.rs` 一字未动，所以内核那两条轴的 input→output 映射没变。
+
+### 30.7 仍未合并的（诚实清单）
+
+| # | 事项 | 缺什么 | 档 |
+|---|---|---|---|
+| 1 | `game.rs` 里那三份**私有副本**（`corrected_function_text` / `sampling_function_text` / `hole_point`）还在 | `game.rs` 是别人的地盘（任务书明令不许改结算逻辑）。现在由 §30.3 的单元测试**钉住**两边一致；等它下一次被改动，应改成直接调 `settle` | **已知债** |
+| 2 | `execute_results` ④ 的 `ExplosionEffect` 仍发**采样停点**（收敛层发回代点） | `game.rs` 的 `Y`/`Y2` 轴（§25/§26），不在本任务范围。§30.5 把这条差异写成了断言（20 条），改它时会立刻暴露 | **已知债** |
+| 3 | `Match::fire_functions` 恒 `Mode::Normal`，DiffEq 局没有内核路径 | `game.rs` 的 `fire` 按模式分（§29.7 第 3 条）；所以 §30.5 只比 Normal 局的 145 份 | **已知债** |
+| 4 | 死亡块排序 + 报文装配在两边各一份（`execute_results` vs `fire_batch`） | 不是坐标，本任务没并。要并得先把 `execute_results` 从 `Match` 的状态里拆出来 | **未知** |
+| 5 | 空函数的爆炸点（§30.3 的分歧） | 真值到底是"回代常数"还是"停点"（语料 4 发，`ExplosionEffect.pos_y` 与两者都不全等） | **未知** |

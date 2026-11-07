@@ -7,14 +7,14 @@
 # tool_version: 1
 # binary_sha256: 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
 # funcstarts_sha256: b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a
-# src_tree_sha256: af14abad58d22fe700c541eca9674c389cf0a7448d651a16ad8954d867e87a79
+# src_tree_sha256: 7312c8e61e9d39d048f14a8d9e6e71ee1ab9d0d4fa43d0b16d9c8a3ac19c6892
 # funcstarts_n: 13263
 # src_modules: 246
 # loc_structs: 2042
 # attributed_funcs: 527
 # contested_funcs: 86
 # src_files: 106
-# src_fns: 2311
+# src_fns: 2323
 module	scope	orig_funcs	contested	anchors	ours_file	ours_funcs	status	evidence
 graphwar_ad_switch.rs	graphwar	6	0	3	src/graphwar_ad_switch.rs	21	观测	6 条全是 gdext 惰性注册驱动；两个 getter trampoline + owned(+0x18) 已钉死
 graphwar_audio_control.rs	graphwar	7	1	16	src/graphwar_audio_control.rs	21	观测	9 函数 + 4 订阅闭包。订阅 effect_info(44，按 +0x20 的 u8 四臂落三槽) / soldier_info(15) / entity_removed(14) / game_state_info(30)；槽 +0x80/90/a0/b0/c0 = explosion/squash/spark/pop/unpop，音量 -15/-15/-15/0/-5 dB；state==1 清待播队列（docs/16 §30）
@@ -70,7 +70,7 @@ graphwar_root_node.rs	graphwar	23	3	178	src/graphwar_root_node.rs	57	观测	Scre
 graphwar_server_broker_handler.rs	graphwar	3	1	5	src/graphwar_server_broker_handler.rs	19	观测	6/6（含线程体；get_game_info/new 无锚不给地址）。Global 一路无 TTL 扫描——疑靠 GameRemoved，该报文从未抓到（docs/09 §12）
 graphwar_server_connection_handler.rs	graphwar	6	0	24	src/server.rs	7	逐位	docs/33：新连接的状态同步与真实客户端逐字节一致
 graphwar_setup_control.rs	graphwar	21	8	70	src/graphwar_setup_control.rs	48	观测	70 锚 -> 37 函数（矩阵的 21 是压平口径）；四格模式/时间档/玩家条目/Start-Cancel 已落码（docs/16 §16），18 个 gdext 薄壳与 3 个事件回呼语义未知
-graphwar_shot_calculator.rs	graphwar	1	1	12	src/graphwar_shot_calculator.rs+src/graphwar_shot_calculator/settle.rs	25	逐位	docs/86 §14：82 发并集 152/152、漏报 0、时刻判决 38:0；docs/122 按 id 排除射手是指令级。注意：0x3c2bc0 那个 12 KB 主函数**没有逐条还原**，逐位的是行为不是函数体
+graphwar_shot_calculator.rs	graphwar	1	1	12	src/graphwar_shot_calculator.rs+src/graphwar_shot_calculator/settle.rs	36	逐位	docs/86 §14：82 发并集 152/152、漏报 0、时刻判决 38:0；docs/122 按 id 排除射手是指令级。注意：0x3c2bc0 那个 12 KB 主函数**没有逐条还原**，逐位的是行为不是函数体
 graphwar_soldier_manager.rs	graphwar	4	0	5	src/graphwar_soldier_manager.rs	15	观测	5/6 定位：HashMap<u32,u32>（士兵→主人）。只管「谁的」，**轮转不查它**（turn_manager 自持 Vec<soldier_id>）；entity_removed 时比值命中就发键 => 玩家没了士兵跟着消失（docs/10 §13）
 graphwar_stream_buffer.rs	graphwar	0	0	0	src/graphwar_stream_buffer.rs	22	观测	2/2：**不是 TCP 拆包队列**——内部无字节队列，靠 TcpStream::peek 前瞻：写侧 u16 大端(len)+两段 write_all（限 0xffff）；读侧 peek 2 -> 校验 <=0x1000 -> peek(len+2) 不足即 Ok(None) **一个字节都不消费** -> read_exact 整帧取走。顺带结掉 docs/09 §11.7#4：0x…4a 是「整帧未到」，不是 EOF（docs/09 §12）
 graphwar_target_manager.rs	graphwar	3	0	4	src/graphwar_target_manager.rs	9	观测	3 + 内联 add_target。**只是 HashSet<u32>：无 alive 字段、唯一写操作是 remove**。「打不全就全部复原」的判定点**不在这里**（见 game_state_manager 那条）（docs/16 §32）
