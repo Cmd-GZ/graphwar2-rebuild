@@ -1,4 +1,4 @@
-# 05 · `CG/crossbuild`：Windows / Android 编译验证
+# 05 · `agent/crossbuild`：Windows / Android 编译验证
 
 **优先级 P2。完全独立，不需要二进制。**
 

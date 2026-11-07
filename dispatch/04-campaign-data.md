@@ -1,4 +1,4 @@
-# 04 · `CG/campaign-data`：21 关参数表落码
+# 04 · `agent/campaign-data`：21 关参数表落码
 
 **优先级 P1。数据任务，不需要二进制。**
 

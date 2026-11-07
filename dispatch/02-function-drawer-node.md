@@ -1,4 +1,4 @@
-# 02 · `CG/function-drawer-node`：`FunctionDrawer` 节点化
+# 02 · `agent/function-drawer-node`：`FunctionDrawer` 节点化
 
 **优先级 P0。** 补上"12 个类之外、但棋盘必须有"的那一块。
 
