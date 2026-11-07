@@ -26,6 +26,11 @@ Ghidra 边界下 `graphwar_life_manager.rs` 有 **9 个函数**，全部反编�
 
 另外还反编译出 3 个 33 行的极小函数（`0x554730/750/770`），它们不带模块锚，归属未知。
 
+> **2026-11 已被 `docs/151` §2.7 取代**：这一簇是**三方 X.509/CRL 栈**（`webpki`/`rustls` 一类）
+> 的 panic/`format_args!` 助手（`lea` 的全是 `revocation_date` / `reason_code` / `KeyCompromise` /
+> `BorrowedCertRevocationList` 等证书词汇），**不是游戏模块**；且 `0x554730`/`0x554750`
+> **不是函数起点**（FDE 给出所属函数 `0x5546c0..0x554762`），只有 `0x554770` 是。
+
 ## 2. 谁在驱动它（观测）
 
 用 `tools/callers.py`（纯本地索引）算出的外部调用者：
