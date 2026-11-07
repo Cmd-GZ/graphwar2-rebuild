@@ -6829,3 +6829,178 @@ bash client/run.sh selftest                    # 694 passed（默认 feature 的
   程序生成的纯色 `ImageTexture`；`save()` 也不写盘（headless 验收不该有副作用）。
 * **`GraphwarRootNode`**：`PlayerShowcase::ready` 第 1 步真的会失败（`root_lookup_failures`），
   因为那个类还没做。
+
+## 42. `FunctionDrawer` 成了真 Godot 节点 —— 棋盘上那 3 个占位子节点换成真类（2026-11：§36 之后唯一的缺口）
+
+**一句话**：`FunctionDrawer` 在 `gdext-bindings` 下成了一个 `Control` 子类——每个 player id 一条
+`Line2D` 子节点，`update_function` **只把 `points[已写入数..len]` 逐点 `add_point`**；
+`GraphwarPlane` 的 3 个子节点从 `@Control@N` **占位**换成了真的 `@FunctionDrawer@N`。
+headless 实测 **132 条断言全过**（退出码 0）。追加判定本身一行没写在本类里——它调的是
+`src/function_drawer.rs` 的 `append_window`（§36.3 那条 `0x498d5a` 的 `ja`）。
+
+> 档位同 §38：**逐位** = 与真二进制逐字节/逐位对拍；**观测** = 能指到反汇编地址/指令级读写；
+> **推断** = 有依据未证；**未知** = 没解出来。`cargo test` / 本脚本的条数**只是回归保护**，
+> 不是复原证据。
+
+### 42.1 本轮动了哪些文件
+
+| 文件 | 增/改 | 行数 | 内容 |
+|---|---|---|---|
+| `src/_scaffold/function_drawer_class.rs` | **新增** | **532**（类本体代码 216 / 单测 60 / 注释 219 / 空行 37） | `FunctionDrawer : Control`；每 id 一条 `Line2D`；4 个真方法（`update_function` / `remove_function` / `update_transform` / `update_function_fade`）+ 6 个计数 |
+| `src/_scaffold/mod.rs` | +5 | — | `#[cfg(feature = "gdext-bindings")] pub mod function_drawer_class;` + 3 行注释 |
+| `src/_scaffold/graphwar_plane_class.rs` | 改 | +34/−15 | `Control::new_alloc()` → `FunctionDrawer::new_alloc()`；文件头对照表与契约里"占位 / `@Control@N`"的说法就地改掉 |
+| `client/tools/function_drawer_check.gd` | **新增** | **420**（代码 314 / 注释 65 / 空行 41） | headless 验收脚本（132 条断言） |
+| `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` | 重跑 | 1 行 | `src_files` 104→**105**、`src_fns` 2171→**2193**、`src_tree_sha256` 跟着变；**527/527 与每模块行一行没变** |
+| `docs/16-client.md` | +本节 | — | — |
+
+`src/function_drawer.rs`（纯逻辑）、`src/lib.rs`、其它 `*_class.rs`、`client/src/**`、`client/*.tscn`
+**一行没动**；本类没有第二份追加算术。
+
+### 42.2 验收：132 条 headless 断言全过（**观测**）
+
+```text
+ClassDB.class_exists("FunctionDrawer")                     ⇒ true（能 instantiate、is_class("Control")）
+第一次喂 10 点 ⇒ 返回 10；Line2D.get_point_count() == 10    ⇒ 10
+再喂 12 点（**前 10 个点与第一批全不同**）⇒ 返回 2          ⇒ 点数 12、add_point 次数 12（= 10+2）
+   第 0/9 点仍是**第一批**的值、第 10/11 点是第二批 ⇒ 没有重画整条曲线
+再喂 5 点（变短）⇒ 返回 0；点数仍 12、add_point 次数仍 12    ⇒ 一个点都没加
+GraphwarPlane.build_children() ⇒ 3 个 FunctionDrawer(@FunctionDrawer@7/8/9)  ⇒ 不再是 @Control@N
+```
+
+`add_point` 的调用次数用的是本类自己的 `add_point_total()`（**我方**计数，Godot 的
+`Line2D::add_point` 没有信号可连）⇒ 它只说明"我们调了几次"；**证明增量的是另外两条**：
+① `Line2D.get_point_count()` 从 10 只涨到 12；② `get_point_position(0..9)` 仍是**第一批**喂进去
+的点（若整条重画，前 10 个点会变成第二批的值）。脚本里还专门加了一条对照断言
+（"第二批前 10 个点确实与第一批不同"），否则这两条会空过。
+
+其余断言的分布（同一份脚本）：
+
+| 组 | 条数 | 关键一条 |
+|---|---|---|
+| 类注册 / 方法表 / 对照组 | 23 | `FunctionDrawer.get_class() == "FunctionDrawer"`、15 个方法都在 |
+| 增量追加（10 → 12 → 5） | 34 | 见上 |
+| 多玩家（id 1 / id 2 互不干扰） | 10 | id 2 的颜色按"低字节=R"解出来是**蓝**（`0xff0000` ⇒ `(0,0,1,1)`） |
+| `remove_function` + 重建 | 14 | 重建出来的是**新** `Line2D`（instance id 变），点数从 0 重新长 |
+| `update_function_fade` | 8 | value 里 `Color` 的 alpha 与 `Line2D.default_color.a` 同时变 0.25，r/g/b 不动 |
+| `update_transform` | 12 | 宽度 **0.125**、接点 **2**、`flip=true` ⇒ 缩放 **取负** |
+| 边界（空数组 / 超 i32 的 id）+ `FunctionDrawer.new()` | 12 | 空数组**也会建节点**（原版建节点在长度判定之前） |
+| `GraphwarPlane` 的 3 个子节点 | 19 | 3 个全是 `FunctionDrawer`，进树后 `ready` 不重建、已喂的点不丢 |
+
+### 42.3 本轮新读出来的证据（**指令级 / 逐位**；其中推断处已逐条标出）
+
+**(a) HashMap 的 value 是 **40 B 三元组** `(Gd<Line2D>, Color, usize)`，不是 §36.3 写的二元组。**
+`0x498f13`–`0x498f36` 的插入块（bucket 步长 48 B = 4 B key + 4 B pad + 40 B value）：
+
+```text
+0x498f17  mov [bucket+0x08], r11      ; Gd<Line2D> 的指针
+0x498f1c  mov [bucket+0x10], r10      ; Gd<Line2D> 的 instance id
+0x498f21  movdqa xmm0, [rsp+0x30]     ; 建节点时用 r9d 拼出来的 Color
+0x498f27  movdqu [bucket+0x18], xmm0  ; Color（16 B；alpha 在 +0x24）
+0x498f2d  mov [bucket+0x28], 0x0      ; usize 已写入数 = 0
+```
+
+多出来的 `Color` 就是 `update_function_fade` 要改的那一份，下面 (e) 是它的读者。
+
+**(b) `Line2D::set_width` 的实参是 **0.125**（逐位）。**
+`update_transform`（`0x499050`）的两个调用点 `0x49911c` / `0x49921c` 都是
+`movss xmm0, [rip-…] # 1baff8`，而 `.rodata 0x1baff8` 的 4 字节是 `00 00 00 3e`：
+
+```text
+objdump -s --start-address=0x1baff0 --stop-address=0x1bb000 .reference/steam/2026-08-28/libgraphwarrust.so
+ 1baff0 63616c6c 4e6f6e65 0000003e 504f5354  callNone...>POST
+```
+
+⇒ `0x3e000000` = **0.125f32**。这正是任务书说"宽度取自纯逻辑常量"的那一项——**纯逻辑里没有这个常量**
+（`src/function_drawer.rs` 只记了"`set_width`×2"），所以它落在
+`src/_scaffold/function_drawer_class.rs::LINE_WIDTH` 里、带着地址，而不是我方挑的数。
+
+**(c) `set_joint_mode` 的实参是 **2**（`LINE_JOINT_ROUND`，观测）。**
+`0x499158` / `0x49925a` 的 `mov esi, 0x2`，紧跟 `call *0x9bbfa8`。
+
+**(d) `update_transform` 的 `flip` 分支：`set_scale(两个分量都取负)`（逐位）。**
+`0x499080` 载入掩码 `0x19e880`（16 字节全是 `00 00 00 80` = **-0.0**），`0x49908e` 用 `pxor` 把
+`xmm2`（那个 `Vector2`）的符号位翻过来；`esi != 0` 的分支用取负后的值，`esi == 0` 的分支用原值
+（`0x499235`）。⇒ 签名按被调者的用法读作 `update_transform(x: f32, y: f32, scale: Vector2, flip: bool)`。
+
+**(e) `update_function_fade` 改的是 value 里那份 `Color` 的 alpha。**
+`0x499377` 的 `movss [bucket+0x24], xmm0`（`cvtsd2ss` 之后）⇒ 正好是 value 里 `Color` 的第 4 个 f32；
+`0x499391` 把整份 `Color` 读回来、`0x4993a3` 调 `set_default_color`（槽 `0x9bbf90`）。
+
+**(f) 建节点时的 `z_index` 来自 `[self+0x40]`，**不是常量**（观测）。**
+`0x498c93` 的 `mov r12, rdi` ⇒ `r12 = self`；`0x498dee` 的 `mov r14d, [r12+0x40]` → `0x498e49` 的
+`mov esi, r14d` → `call *0x9bb028`（`set_z_index`）。⇒ 这个字段就是 2024 符号表里有、2.0.60 里
+**被内联掉的 `FunctionDrawer::set_z_index`** 的宿主（§36.1 那条推断因此更站得住）。
+**字段初值未知** ⇒ 本类不设 z_index（`Line2D` 保持默认 0），见 §42.5。
+
+**(g) 布局更正（不改旧节，按 §41.3 的做法记在这里）：纯逻辑说 map 在 `self+0x20`，本轮按指令读到
+的是 `self+0x00`。**
+`0x498cb9` / `0x498cbd` 的 `mov r14,[r12]` / `mov rax,[r12+8]` 是 hashbrown 的 **ctrl 指针 /
+bucket_mask**（随后 `[r14+rdx]` 的 `pcmpeqb` 组扫描；`[r12+0x10]` 在插入时递减 = `growth_left`、
+`[r12+0x18]` 递增 = `items`）；`0x498c9e` 的 `lea r15,[rdi+0x20]` 交给 `0x47dec0` 的是 **hash state**
+（那个函数从 `[rdi]` 读 16 字节、再 SipHash 一个 4 字节 key）。⇒ `self+0x00` = `RawTable`、
+`self+0x20` = `RandomState`、`self+0x40` = `z_index`。
+偏移本身是**观测**（指令级）；`0x47dec0` 的符号名**未知**（形状像 `hash_one`，所以"它是 hash state"
+是**推断**）。`src/function_drawer.rs` 里那句 `self+0x20` 与
+`src/_scaffold/function_drawer_class.rs::FunctionDrawer::lines` 的文档注释已按本节改正。
+
+**(h) 建节点时的颜色字节序是"低字节 = R"（观测）。**
+`0x498d74`–`0x498da1`：`movzx ecx, bl`（低字节）→ Color 车道 0、`movzx eax, bh`（次字节）→ 车道 1、
+`shr 0x10` + `movzx`（第三字节）→ 车道 2，再 `divps` 除以 `255.0`（`0x19c7c0`），车道 3 取常量槽
+`0x19cf70` 的 `1.0`。⇒ `0xff0000` 解出来是**蓝**（r=0, g=0, b=1）——验收脚本与 Rust 单测都钉了这一条。
+
+### 42.4 两处**按证据**与任务书不同（改了什么、为什么）
+
+**(a) "颜色/宽度取自 `src/function_drawer.rs` 里已有常量" —— 这个前提不成立。**
+纯逻辑模块里**没有**颜色常量、也**没有**宽度常量（它的常量只有 `POINT_STRIDE` / `POINT_X_OFFSET` /
+`POINT_Y_OFFSET` / `ADD_POINT_INDEX` / `ADD_POINT_SLOT` / `ADD_POINT_CALL_SITE` /
+`CHILDREN_PER_PLANE` 与地址表）。按证据：
+* **颜色在原版里是入参**（`update_function` 的 `r9d`，`GraphwarPlane::draw` 用
+  `get_team_overview` 的队色填它）⇒ 本类把它做成 `update_function(player_id, points, color)` 的
+  第三个参数，**只在建节点时用一次**，不给默认值（默认值就是发明）；
+* **宽度是 `update_transform` 里的常量** ⇒ 从 `.rodata` 逐位读出 **0.125**（见 §42.3b），
+  写在 `LINE_WIDTH` 里带地址。
+
+**(b) `new_len` 不再是独立入参。**
+原版是 `r8` 一个单独长度，且 `new_len > points.len()` 会走切片越界 panic
+（`function_drawer.rs:45:38`，槽 `0x95a270`）。本类取 `new_len = points.len()` ⇒ 那条 panic
+分支**按构造不可达**（不变量交给类型）。**不是**删证据：`append_window` 仍是唯一的判定。
+
+### 42.5 还没做 / 未知（诚实清单）
+
+* **棋盘上还是画不出曲线**：3 个子节点是真的 `FunctionDrawer` 了，但 `GraphwarPlane::draw` 里
+  那个 `0x456df0`（`graphwar_function_manager::get_active_functions_on_tick`）**没有接**——
+  没有东西喂函数点。本类只是"能喂就会画"。
+* **`z_index` 的初值未知**（§42.3f）：本类不设。缺的证据是 `self+0x60` 的写入点（`init` 里）。
+* **`FunctionDrawer::draw`（arm64 `0x3911b4`）x86 侧仍未定位** ⇒ 本类**不实现 `_draw`**
+  （§36.3 的有界否定照旧成立）。
+* **`update_transform` 三个入参的含义未知**：`x`/`y`/`scale` 是按被调者 `set_position` / `set_scale`
+  的用法起的名字，真正传什么由 `GraphwarPlane::draw` 决定，本切片没接。
+* **3 个 `FunctionDrawer` 各管什么仍是未知**（§36.7 第 2 条没有被本轮推翻，也没有被加强）。
+* **`add_point_total()` 是我方计数**，不是引擎侧钩子；"增量"的硬证据是 `get_point_count()` 与
+  `get_point_position(0..9)` 那几条，脚本里另有对照断言防止空过。
+* **过期登记（不改旧节，按 §41.3 的做法记在这里）**：§41.8 那条"`FunctionDrawer` / `ObstacleDrawer`
+  类还不存在，3 个子节点是 `Control` 占位"对 `FunctionDrawer` 已经过期——本类存在了；
+  `ObstacleDrawer` 仍不存在。§36.3 那句 `HashMap<i32, (Gd<Line2D>, usize)>` 应读作 §42.3a 的三元组。
+
+### 42.6 复现（三分钟）
+
+```text
+# 1) 打开 feature 构建
+export CARGO_HOME=<工作区>/.cargo-home CARGO_TARGET_DIR=<工作区>/target
+cargo build --features gdext-bindings
+
+# 2) 覆盖客户端 .so（不覆盖就还在跑旧内核）
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+
+# 3) 必须先 import（否则扩展静默不加载，脚本连类都认不出来）
+export XDG_DATA_HOME=$PWD/.godot-data XDG_CACHE_HOME=$PWD/.godot-cache XDG_CONFIG_HOME=$PWD/.godot-config
+godot --headless --path client --import
+
+# 4) 验收（132 条断言，退出码 0）
+godot --headless --path client --script res://tools/function_drawer_check.gd
+
+# 5) 回归保护（本条分支的实测数，§41.7 那组 488/1530 是更早提交的快照）
+cargo test --offline                            # lib 457 / 总计 1499
+cargo test --offline --features gdext-bindings  # lib 522 / 总计 1564（基线 518/1560 + 本批 4 条单测）
+python3 tools/coverage_matrix.py --check        # OK（本次重跑只动了 src_files/src_fns/src_tree_sha256）
+```
