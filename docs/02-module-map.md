@@ -4217,3 +4217,429 @@ md5sum /tmp/s{0,1,3,7}.tsv                       # 四份必须相同（§39.7�
 * §37.0 的「Android 520 个逻辑名」→ 实测 **574**（unified）/ 584（coarse）（§39.2）。
 * §38.10 的「v1 的 759 行」→ 现在 **743 行**（§39.3c）；
   §38.10 的 `未知 635 行` / `行数 990` → **625 / 980**（地址档位一行未变，见 §39.8 那一行）。
+
+---
+
+## 40. 无名函数的归属：179 个「有 `Location` 但三份符号表都没名字」的函数 —— 138 个能给出源函数名，41 个只能到角色/未知（2026-11，接 §37 / §38 / §39）
+
+> **编号说明**：任务书（`dispatch/30-unnamed-176.md`）预分配的是 §38，但 §38 / §39 已被并行任务占用，
+> 本节取 **§40**（冲突由协调者合并）。
+> **工具**：`tools/unnamed_attrib.py`（`build` / `list` / `control` / `attrib` / `probe`）；
+> **夹具**：`fixtures/unnamed_attrib.tsv`（**新增**，179 行，本节表格由它生成）。
+
+### 40.0 一句话结论 + 四问四答
+
+**527 个可归属函数里已经有名字的 348 个（§37 / §38 / §39 的并集），剩下 179 个没有任何一份符号表认得。**
+本节不猜名字，只做三件事：把每个无名函数的**模块**钉死（`Location` 的 `file` 直接给出）、
+在**同模块、同 `Location` 键**的 Windows 有名函数里按**结构**排序找源函数、
+再用**地址级正对照**量出这套排序到底准不准。结论：**138 个能给出源函数名（推断）、41 个只能写未知**；
+其中 94 个是「单态化族」——**源函数名可信，缺的只是类型参数**。
+
+| 问题 | 结论 | 档位 |
+|---|---|---|
+| **(a) 模块** | **179 个全部有模块**（`Location.file` 的 stem，多文件按锚点数取多数、与 `coverage_matrix.attribute` 同规则）；分布在 **27 个模块**（`weak_caller` 39 / `graphwar_module_container` 20 / `graphwar_game_client` 20 最多） | **观测** |
+| **(b) 对应另一个构建的哪个函数** | **138 个**给出了 Windows 2.0.60 的对应函数（其中 **20 个**是 1:1、**94 个**是单态化族、**24 个**是「二选一」的注册样板）；**41 个**没有（其中 **39 个**的真对应体在 Windows 侧**本身就没有名字**） | **推断**（准确率见 §40.3） |
+| **(c) 角色** | 24 个「二选一」的注册样板仍写得出角色（「该类的 GDExtension 注册样板之一」）；41 个未知里，**16 个**能写「最接近的有名候选 `X`」、**7 个**能写「被已定名的 `Y` 调用」、**11 个**有字符串证据，其余只能写「对应 Windows 无名函数 `0x…`」 | **推断**（族级）+ **未知**（个体） |
+| **(d) 任务书的 176 差在哪** | **176 = 527 − 351**，但那个 351 里有 **6 个地址根本不在 527 内**（它们不引用任何 `src/*.rs` Location）；把分子与分母统一后是 **527 − 348 = 179**。所以本文给 **179**（包含任务书的 176 个），逐条见 §40.1 与 §40.7 | **观测** |
+
+### 40.1 分母：527 / 348 / 179 —— 以及任务书的「176」差在哪
+
+`527` 是「引用了 `src/*.rs` 的 `panic::Location`」的函数数（Ghidra 起点表口径，
+`tools/unnamed_attrib.py list` 与 `tools/coverage_matrix.py --check` 两条独立链路打同一个数）。
+
+「有名字」取**三份夹具的全集**（口径最宽 = 对"还没名字"最保守：宁可少数，不可把已有名字的算进无名）：
+
+| 来源 | 可定名地址（全部） | 其中落在 527 内 |
+|---|---|---|
+| `fixtures/name_to_addr.tsv`（Android arm64 `.symtab` 桥过来的，含 1 条 `消去法`） | 325 个地址 | **319** |
+| `fixtures/windows_name_to_addr.tsv`（Windows 2.0.60 锚，`唯一锚` + `集合锚`） | 333 个地址 | **331** |
+| 上面两者的并集（= §37.8 那个 **351**） | 351 个地址 | **345** |
+| `fixtures/name_to_addr_v2.tsv`（三向，`唯一锚` 310 + `跨版本锚` 27）补进来之后 | 354 个地址 | **348** |
+| **⇒ 527 − 348** | | **179 个无名** |
+
+**那 6 个「有名字但不在 527 内」的地址，逐个列出来**（它们**不引用任何 `src/*.rs` 的 `Location`**，
+所以根本不是"可归属函数"，§37.8 的 351 把它们算进分子了）：
+
+| 地址 | 夹具给的名字 | 它实际引用的 `Location` | 判断 |
+|---|---|---|---|
+| `0x3bd640` | `graphwar_root_node::Args::from_arg_matches_mut` | `clap_builder-4.5.11/src/parser/error.rs:32` | 第三方（clap） |
+| `0x519450` | `graphwar_tick_handler::GraphwarTickHandler::get_time_to_tick` | `core/src/time.rs:201`（std） | 第三方（std） |
+| `0x519530` | `…::get_fractional_tick` | `core/src/time.rs:201`（std） | 第三方（std） |
+| `0x4eb830` | `math_function::MathFunction::remove_offset` | **一个 `Location` 都没有** | 靠人工裁决/内联注记落地 |
+| `0x4ec160` | `math_function::MathFunction::to_string_recursive` | **一个 `Location` 都没有** | 同上 |
+| `0x748000` | `math_function::FunctionRandomizer::mutate_function` | **25 个全在 `miniz_oxide-0.7.4/src/inflate/core.rs`** | **推断：这行 v1 结论可疑**（缺一次人工反汇编复核） |
+
+⇒ 任务书的 **176 = 527 − 351**；把 351 换成交集 345 得 **182**；再把 v2 的三向落地并进来得
+**179**。本节按 **179** 干活（它包含任务书的 176 个），差异全部登记在 §40.7。
+
+### 40.2 判据：五条，**没有一条是「名字像」**
+
+`AGENTS.md` §0.3 与第五轮 `prefix-fix` 的教训是同一条：名字相似度不是证据。本节的判据只有结构：
+
+| 代号 | 判据 | 为什么它是结构而不是名字 |
+|---|---|---|
+| **K** | 两个函数引用**同一个** `panic::Location` 三元组 `(file,line,col)` | 三元组是编译期常量，跨构建 / 跨 ISA 都不变（§20.2） |
+| **M** | 候选名属于 `Location.file` 对应的**同一个模块**（文件名 = 模块名） | 模块由同一份三元组的 `file` 字段给出，不由名字给出 |
+| **S** | 结构相似度 = 尺寸 log 比 + 助记符直方图余弦 + 整数常量 Jaccard + f64/f32 常量 Jaccard + 字符串前缀 Jaccard | 只用字节形态，**不读名字、不读地址、不读 `Location` 键** |
+| **E** | 消去：某候选名**已经唯一落在别的 Linux 地址**上 ⇒ 本函数上降权 0.15 | 「一个名字只对应一个地址」，与 v1 夹具的 `消去法` 同源 |
+| **N** | 调用邻域：调用者 / 被调者有已定名的函数 | 调用图是结构（只作证据，不参与打分） |
+
+候选池只放 **Windows 2.0.60**：同版本、同 ISA（x86-64）、带 COFF 名字。Android 是 arm64，
+助记符直方图与 x86 不可比，所以**不参与**结构排序（它的名字经 `fixtures/name_to_addr.tsv` 早已并入名字集合）。
+
+**特征消融（调参半，`control --ablate`）—— 两个负结论要一起读：**
+
+| 变体 | top-1 | Δ |
+|---|---|---|
+| 基线（尺寸 .5 / 指令数 .5 / 直方图 1.0 / 整数常量 1.0 / f64 1.0 / f32 .5 / 字符串 .5） | 157/176 = 89.2% | — |
+| 去掉直方图 | 156/176 = 88.6% | **−0.6** |
+| 只用尺寸 | 153/176 = 86.9% | **−2.3** |
+| 去掉 f64 / f32 / 字符串 / 整数常量 | 157/176（不变） | **0.0** |
+| 加「被调者条数」 | 157/176（不变） | 0.0 |
+| 不做模块过滤 | 157/176（不变） | 0.0 |
+
+⇒ **只有「直方图 + 尺寸」在真出力**；f64/f32/字符串/整数常量对 top-1 **没有贡献**（它们仍然写进证据串，
+因为那是**人读的证据**，但不要声称它们提升了准确率）。「被调者条数」与 TWM §37.6 的结论一致：不帮忙。
+「模块过滤」在这里也是零增益 —— 因为 **K 判据本身已经把候选锁在同一批 `Location` 上**，模块几乎自动一致。
+
+### 40.3 正对照：**地址级 98.8% / 100%**（这才是匹配器的准确率）
+
+正对照的真值**不能**用名字：v1 夹具（`name_bridge`）与 `sym_match.name_key` 是两套 `parse_name`，
+同一函数会被写成不同的 `(module,type,method)`。所以真值改用**地址**：`windows_name_to_addr.tsv` 的
+`func_va` + `name_to_addr_v2.tsv` evidence 列的 `win_addr=` ⇒「这个 Linux 地址对应的 Windows 函数是哪个」，
+共 **337 个**（全在 527 内）。这才是"同一个函数"的定义，与名字怎么拼无关。
+
+按地址 hash 分半：**调参半定权重与阈值，留出半只报数**（`AGENTS.md` 合并纪律 A4）。
+
+| 半 | 目标 | 有候选 | top-1 | top-3 | 「真身无名」闸门误报 |
+|---|---|---|---|---|---|
+| 调参半 | 174 | **173** | **171/173 = 98.8%** | 173/173 = 100% | **0 / 173** |
+| 留出半 | 163 | **160** | **160/160 = 100%** | 160/160 = 100% | **0 / 160** |
+
+分桶精度（调参半 / 留出半）：候选=1 → **136/136** 与 **134/134**（全中）；候选=2 → 11/11 与 5/5；
+候选=3 → 7/7 与 3/3；候选≥4 → 17/19（89.5%）与 18/18。⇒ **多候选才是唯一会出错的地方**。
+
+**名字级正对照（任务书要求的口径）也给，并解释差在哪：**
+
+| 半 | 目标 | top-1 | top-3 | 名字级失败里，**Windows 地址其实对上了**的 |
+|---|---|---|---|---|
+| 调参半 | 178 | 157/176 = **89.2%** | 159/176 = 90.3% | 17 / 19 |
+| 留出半 | 170 | 146/166 = **88.0%** | 146/166 = 88.0% | 20 / 20 |
+
+⇒ 名字级 89.2% 与地址级 98.8% 的差 **几乎全部来自两套 `name_key` 解析的口径差**（留出半 20 个失败里
+20 个的 Windows 函数是完全对的）。真正的匹配错误：调参半 **2/173**、留出半 **0/160**。
+
+**`margin` 桶没有区分度**（`margin≥0.3` 占了 165/176，精度 89.7%），所以本节**没有**用 margin 当门槛，
+改用两个**分布口径**的阈值（都在调参半上定）：
+
+| 阈值 | 取值 | 依据（调参半） | 代价 |
+|---|---|---|---|
+| `GATE_RATIO`（候选 size 比窗口） | **[1/3, 3]** | 正确配对 ratio 的 p1 / p99 = **0.57 / 1.51**（留出半 0.81 / 2.14），取整并放宽 | 漏掉 **2/335** 个真配对（0.6%） |
+| `MIN_SCORE`（结构相似度下限） | **1.0** | 正确配对 score 中位数 **2.37**、p5 1.48、min 0.57 | **会否掉 4/173 个真配对（2.3%）**，是**保守方向**的取舍（宁可少给名字） |
+| `TIE_EPS`（打平） | **0.05** | 正对照里没有出现"打平却误判" | — |
+
+### 40.4 结果：桶分布 + 模块分布
+
+**179 个逐条落在 5 个桶里**（决策规则**先写死再看结果**，见 `tools/unnamed_attrib.py::decide`）：
+
+| 桶 | 判据 | 个数 | 档位 | 能给出的东西 |
+|---|---|---|---|---|
+| **A 个体** | 结构最优有名，且该 Windows 函数只被本函数认领（1:1） | **20** | 推断 | 具体函数名 |
+| **B 族** | 结构最优有名，但同键下 Linux 侧有 k 个同构函数（单态化族） | **94** | 推断 | **源函数名可信，类型参数未知** |
+| **C 族歧义** | 两个**不同名字**同分（差 < 0.05） | **24** | 推断 | 「这两个之一」，名字不唯一 |
+| **D 无名字** | 不筛名字时最优的 Windows 函数**本身没有名字** | **39** | 未知 | 只能写「对应 Windows 无名函数 + 调用邻域」 |
+| **低分** | 结构相似度 < 1.0（形状不像） | **2** | 未知 | — |
+| **合计** | | **179** | **推断 138 / 未知 41** | |
+
+**模块 × 桶**（每行相加 = 该模块的无名函数数）：
+
+| 模块 | 合计 | A 个体 | B 族 | C 族歧义 | D 无名字 | 低分 |
+|---|---|---|---|---|---|---|
+| `weak_caller` | 39 | 2 | 37 | 0 | 0 | 0 |
+| `graphwar_module_container` | 20 | 0 | 20 | 0 | 0 | 0 |
+| `graphwar_game_client` | 20 | 10 | 2 | 0 | 8 | 0 |
+| `graphwar_function_evolutionator` | 12 | 0 | 0 | 0 | **12** | 0 |
+| `graphwar_root_node` | 12 | 3 | 2 | 2 | 5 | 0 |
+| `graphwar_nodes` | 11 | 0 | 11 | 0 | 0 | 0 |
+| `graphwar_lan_vbox` | 8 | 1 | 2 | 2 | 3 | 0 |
+| `graphwar_setup_control` | 6 | 1 | 2 | 2 | 1 | 0 |
+| 9 个 GDExtension 类（`axis_drawer`/`effect_drawer`/`entity_drawer`/`graphwar_ad_switch`/`graphwar_button`/`graphwar_function_input`/`graphwar_long_press_animation`/`graphwar_plane`/`player_showcase`） | 各 4 | 0 | 2 | 2 | 0 | 0 |
+| `math_function` | 3 | 1 | 0 | 0 | 0 | 2 |
+| `button_manager` | 2 | 1 | 0 | 0 | 1 | 0 |
+| `graphwar_audio_control` | 2 | 0 | 0 | 0 | 2 | 0 |
+| `graphwar_backend` | 2 | 1 | 0 | 0 | 1 | 0 |
+| `graphwar_client_connection_handler` / `graphwar_game_state_manager` / `graphwar_logger` / `graphwar_play_screen_control` / `graphwar_replay_control` / `graphwar_soldier_manager` | 各 1 | 0 | 0 | 0 | 1 | 0 |
+| **合计** | **179** | **20** | **94** | **24** | **39** | **2** |
+
+**B 族（94 个）的构成**（同一族的成员拿到**同一个**源函数名，缺的只是类型参数）：
+
+| 族 | 个数 | 该键下 Linux 侧 / Windows 侧的引用数 |
+|---|---|---|
+| `weak_caller::WeakCaller::call` | 21 | 24 / 24 |
+| `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 20 | 20 / 20 |
+| `weak_caller::WeakCaller::call_0` | 16 | 16 / 16 |
+| `graphwar_nodes::GraphwarNodes::get_node_by_name` | 11 | 12 / 12 |
+| `_::__init::__inner_init`（12 个类的 gdext 初始化样板，**每类 2 个**） | 24 | 每类 4 / 4 |
+| `graphwar_game_client::GraphwarGameClient::get_module` | 2 | — |
+
+**这一栏与 §34 的结果互相独立却完全吻合**：§34 用**两个 `Location` 锚的行号**
+（`weak_caller.rs:11:28` / `17:28`）把 40 个归属函数分成 **16 + 24**（16 个 `call_0`、23 个 `call` + 1 个内联调用者）；
+本节用 **Windows 结构匹配**把 39 个无名函数分成 **16 个 `call_0` + 23 个 `call`**（21 个 B 族 + 2 个 A 个体）。
+两条互不相干的判据落到同一个划分上 —— 这是本节的端到端自检。
+
+### 40.5 三个负结论（不写清楚会被后人当成"没做完"）
+
+1. **`__register_methods` 与 `__register_constants` 在结构上分不开。**
+   24 个 C 族歧义行 = **12 个类 × 2**。这两个函数在 Windows 侧：`0x1801ca9c0`（367 B，95 条指令）
+   与 `0x1801cab30`（367 B，95 条指令），**只有 51/367 个字节不同**，尺寸、指令直方图、调用数（9）、
+   字符串集**全部相同**；Linux 侧对应的两个函数也是同尺寸、同直方图。⇒ 用本节的特征集**无法**判定，
+   只能写「该类的 GDExtension 注册样板之一」。要分开它们需要**逐指令序列对齐**（另一个工具的工作量）。
+2. **「单态化族」不是"没认出来"，是"名字对、类型参数缺"。**
+   例：`WeakCaller::call` 在 Linux 有 24 个、Windows 有 24 个，都引用 `weak_caller.rs:17:28`；
+   21 个无名函数（本节 B 族）全部落在同一个 Windows 符号上。逐字节比函数体：**21 个 sha1 各不相同**
+   （`4e8262f7…` / `7d20eedc…` / …），所以不是同一段代码的拷贝，而是**同一泛型函数的 21 个单态化**。
+   名字可信、**类型参数没有证据**（`name_key` 的 `module/type/method` 三列不带泛型实参）。
+3. **「真身无名」闸门是可靠的**：不筛名字重排一遍，若最优的 Windows 函数没有名字，就判未知。
+   在 333 个「真值确实有名」的对照上，这条闸门**一次都没有误报**（0/173、0/160）。
+   反过来它解释了 §37.10 的例子：求值器 `0x4eb9d0` 不在本节的分母里（它**一个 `src/` `Location` 都不引用**，
+   `probe 0x4eb9d0` 打出 `locs=[]`），而 `math_function.rs:184:24` 那 3 个函数里，
+   `0x4ebbe0`（1277 B）被定到 `simplify_recursive`（1429 B，ratio 1.12，次名差 2.26），
+   另两个（133 B / 120 B，ratio 2.16 / 2.39，score 0.50 / 0.45）落到「低分」桶 —— 它们是冷片段，
+   本节**不**给名字。
+
+### 40.6 逐条明细（179 行）
+
+> 每一行都能用 `tools/unnamed_attrib.py probe <addr>` 复算；表格由
+> `tools/unnamed_attrib.py attrib --write` 生成的 `fixtures/unnamed_attrib.tsv` 渲染，**不要手改**。
+> 证据栏的 `score` 是 §40.2 的结构相似度，`size A/B` 是「Linux 尺寸 / 候选 Windows 尺寸」，
+> `hist` 是指令直方图余弦，`共享键 n/m` 是「两个函数共同引用的 `Location` 数 / 本函数引用的总数」，
+> `次名差` 是第一与第二候选的分数差。
+| linux_addr | 模块（from Location） | 候选角色 | 证据 | 档位 |
+|---|---|---|---|---|
+| `0x3a54e0` | `graphwar_root_node` | `graphwar_root_node::GraphwarRootNode::ready::{{closure}}` | 【A 个体】score=1.81；size 256/254=0.99；hist=0.99；共享键 1/1（集合相等）；次名差 0.42 | 推断 |
+| `0x3a55e0` | `graphwar_root_node` | `graphwar_root_node::GraphwarRootNode::ready::{{closure}}` | 【A 个体】score=1.48；size 64/70=1.09；hist=0.74；共享键 1/1（集合相等）；次名差 0.76 | 推断 |
+| `0x3a5620` | `graphwar_root_node` | `graphwar_root_node::GraphwarRootNode::ready::{{closure}}` | 【A 个体】score=1.48；size 64/70=1.09；hist=0.74；共享键 1/1（集合相等）；次名差 0.76 | 推断 |
+| `0x3aa6a0` | `graphwar_root_node` | `graphwar_root_node::GraphwarRootNode::__register_constants 或 graphwar_root_node::GraphwarRootNode::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：graphwar_root_node::GraphwarRootNode::__register_constants、graphwar_root_node::GraphwarRootNode::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x3aa820` | `graphwar_root_node` | `graphwar_root_node::GraphwarRootNode::__register_constants 或 graphwar_root_node::GraphwarRootNode::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：graphwar_root_node::GraphwarRootNode::__register_constants、graphwar_root_node::GraphwarRootNode::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x3aae60` | `button_manager` | `button_manager::ButtonManager::new::{{closure}}` | 【A 个体】score=1.65；size 64/72=1.12；hist=0.85；共享键 1/1（集合相等）；次名差 0.81 | 推断 |
+| `0x3aaea0` | `graphwar_nodes` | `graphwar_nodes::GraphwarNodes::get_node_by_name` | 【B 族】score=2.02；size 256/255=1.00；hist=0.97；共享键 1/1（集合相等）；该键下 Linux 侧 12 个函数（其中 11 个无名）↔ Windows 侧 12 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_lobby_control::GraphwarLobbyControl::new;graphwar_setup_control::GraphwarSetupControl::ready 调用；字符串 upcast_refUpcast,Upcast failed. T | 推断 |
+| `0x3aafa0` | `graphwar_nodes` | `graphwar_nodes::GraphwarNodes::get_node_by_name` | 【B 族】score=2.02；size 256/255=1.00；hist=0.97；共享键 1/1（集合相等）；该键下 Linux 侧 12 个函数（其中 11 个无名）↔ Windows 侧 12 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_setup_control::GraphwarSetupControl::process;graphwar_player_screen_control::GraphwarPlayerScreenControl::load_items 调用；字符串 upcast_refUpcast,Upcast failed. T | 推断 |
+| `0x3ab0a0` | `graphwar_nodes` | `graphwar_nodes::GraphwarNodes::get_node_by_name` | 【B 族】score=1.87；size 240/255=1.06；hist=0.85；共享键 1/1（集合相等）；该键下 Linux 侧 12 个函数（其中 11 个无名）↔ Windows 侧 12 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_root_node::GraphwarRootNode::process_button_pressed 调用；字符串 upcast_refUpcast,Upcast failed. T | 推断 |
+| `0x3ab190` | `graphwar_nodes` | `graphwar_nodes::GraphwarNodes::get_node_by_name` | 【B 族】score=2.02；size 256/255=1.00；hist=0.97；共享键 1/1（集合相等）；该键下 Linux 侧 12 个函数（其中 11 个无名）↔ Windows 侧 12 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_play_screen_control::GraphwarPlayScreenControl::enable_replay_buttons;graphwar_play_screen_control::GraphwarPlayScreenControl::disable_replay_buttons 调用；字符串 upcast_refUpcast,Upcast failed. T | 推断 |
+| `0x3ab290` | `graphwar_nodes` | `graphwar_nodes::GraphwarNodes::get_node_by_name` | 【B 族】score=2.02；size 256/255=1.00；hist=0.97；共享键 1/1（集合相等）；该键下 Linux 侧 12 个函数（其中 11 个无名）↔ Windows 侧 12 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_root_node::GraphwarRootNode::process;graphwar_setup_control::GraphwarSetupControl::process 调用；字符串 upcast_refUpcast,Upcast failed. T | 推断 |
+| `0x3ab390` | `graphwar_nodes` | `graphwar_nodes::GraphwarNodes::get_node_by_name` | 【B 族】score=2.02；size 256/255=1.00；hist=0.97；共享键 1/1（集合相等）；该键下 Linux 侧 12 个函数（其中 11 个无名）↔ Windows 侧 12 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_campaign_control::GraphwarCampaignControl::show_hide_campaign_levels;graphwar_function_input::GraphwarFunctionInput::force_update_cb 调用；字符串 upcast_refUpcast,Upcast failed. T | 推断 |
+| `0x3ab490` | `graphwar_nodes` | `graphwar_nodes::GraphwarNodes::get_node_by_name` | 【B 族】score=2.02；size 256/255=1.00；hist=0.97；共享键 1/1（集合相等）；该键下 Linux 侧 12 个函数（其中 11 个无名）↔ Windows 侧 12 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_root_node::GraphwarRootNode::process_button_pressed;graphwar_setup_control::GraphwarSetupControl::ready 调用；字符串 upcast_refUpcast,Upcast failed. T | 推断 |
+| `0x3ab590` | `graphwar_nodes` | `graphwar_nodes::GraphwarNodes::get_node_by_name` | 【B 族】score=2.02；size 256/255=1.00；hist=0.97；共享键 1/1（集合相等）；该键下 Linux 侧 12 个函数（其中 11 个无名）↔ Windows 侧 12 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 entity_drawer::EntityDrawer::draw;entity_drawer::EntityDrawer::ready 调用；字符串 upcast_refUpcast,Upcast failed. T | 推断 |
+| `0x3ab690` | `graphwar_nodes` | `graphwar_nodes::GraphwarNodes::get_node_by_name` | 【B 族】score=2.02；size 256/255=1.00；hist=0.97；共享键 1/1（集合相等）；该键下 Linux 侧 12 个函数（其中 11 个无名）↔ Windows 侧 12 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_lobby_control::GraphwarLobbyControl::new 调用；字符串 upcast_refUpcast,Upcast failed. T | 推断 |
+| `0x3ab790` | `graphwar_nodes` | `graphwar_nodes::GraphwarNodes::get_node_by_name` | 【B 族】score=2.02；size 256/255=1.00；hist=0.97；共享键 1/1（集合相等）；该键下 Linux 侧 12 个函数（其中 11 个无名）↔ Windows 侧 12 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_play_screen_control::GraphwarPlayScreenControl::new;graphwar_setup_control::GraphwarSetupControl::ready 调用；字符串 upcast_refUpcast,Upcast failed. T | 推断 |
+| `0x3ab890` | `graphwar_nodes` | `graphwar_nodes::GraphwarNodes::get_node_by_name` | 【B 族】score=2.02；size 256/255=1.00；hist=0.97；共享键 1/1（集合相等）；该键下 Linux 侧 12 个函数（其中 11 个无名）↔ Windows 侧 12 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_setup_control::GraphwarSetupControl::process 调用；字符串 upcast_refUpcast,Upcast failed. T | 推断 |
+| `0x3b5910` | `graphwar_root_node` | `graphwar_root_node::_::__init::__inner_init` | 【B 族】score=2.41；size 432/426=0.99；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.03；字符串 called `Result:: | 推断 |
+| `0x3b5ce0` | `graphwar_root_node` | `graphwar_root_node::_::__init::__inner_init` | 【B 族】score=2.41；size 432/426=0.99；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.08；字符串 called `Result:: | 推断 |
+| `0x3b6c70` | `graphwar_logger` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x180044ed0`，size 比 1.03，hist=0.98，共享键 1/1）；— | 未知 |
+| `0x3b6e00` | `graphwar_root_node` | `graphwar_root_node::GraphwarRootNode::ready::{{closure}}` | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1801d8e50`，size 比 0.97，hist=0.75，共享键 1/1）；次名差 0.98；最接近的**有名**候选 `graphwar_root_node::GraphwarRootNode::ready::{{closure}}`（score=0.52，比无名那个低 0.98） | 未知 |
+| `0x3b6ed0` | `graphwar_root_node` | `graphwar_root_node::GraphwarRootNode::ready::{{closure}}` | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1801d8f20`，size 比 0.96，hist=0.98，共享键 1/1）；次名差 0.74；最接近的**有名**候选 `graphwar_root_node::GraphwarRootNode::ready::{{closure}}`（score=1.14，比无名那个低 0.74） | 未知 |
+| `0x3b7020` | `graphwar_root_node` | `graphwar_root_node::GraphwarRootNode::ready::{{closure}}` | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1801d8b00`，size 比 0.97，hist=0.75，共享键 1/1）；次名差 0.98；最接近的**有名**候选 `graphwar_root_node::GraphwarRootNode::ready::{{closure}}`（score=0.52，比无名那个低 0.98） | 未知 |
+| `0x3b70b0` | `button_manager` | `button_manager::ButtonManager::new::{{closure}}` | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1801126d0`，size 比 0.99，hist=0.81，共享键 1/1）；次名差 0.84；最接近的**有名**候选 `button_manager::ButtonManager::new::{{closure}}`（score=0.77，比无名那个低 0.84） | 未知 |
+| `0x3bfdd0` | `graphwar_audio_control` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x180118970`，size 比 1.00，hist=0.99，共享键 1/1）；被 graphwar_audio_control::GraphwarAudioControl::new 调用；字符串 called `Result:: | 未知 |
+| `0x3caa20` | `graphwar_game_state_manager` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x180126480`，size 比 0.37，hist=0.96，共享键 2/2）；被 graphwar_game_state_manager::GraphwarGameStateManager::request_fire_function 调用 | 未知 |
+| `0x3d10e0` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.64；size 240/217=0.90；hist=0.93；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d11d0` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d12c0` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d13b0` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.85；size 224/217=0.97；hist=0.94；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d1490` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d1580` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d1670` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d1760` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d1850` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d1940` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d1a30` | `weak_caller` | `weak_caller::WeakCaller::call` | 【A 个体】score=2.52；size 240/214=0.89；hist=0.88；共享键 1/1（集合相等）；次名差 0.96 | 推断 |
+| `0x3d1b20` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d1c10` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d1d00` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d1df0` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d1ee0` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d1fd0` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d20c0` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d21b0` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d22a0` | `weak_caller` | `weak_caller::WeakCaller::call` | 【A 个体】score=1.53；size 160/154=0.96；hist=0.81；共享键 1/1（集合相等）；次名差 0.18 | 推断 |
+| `0x3d2340` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d2430` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d2520` | `weak_caller` | `weak_caller::WeakCaller::call` | 【B 族】score=1.56；size 240/217=0.90；hist=0.88；共享键 1/1（集合相等）；该键下 Linux 侧 24 个函数（其中 21 个无名）↔ Windows 侧 24 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.04 | 推断 |
+| `0x3d2610` | `weak_caller` | `weak_caller::WeakCaller::call_0` | 【B 族】score=1.83；size 224/204=0.91；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 16 个函数（其中 16 个无名）↔ Windows 侧 16 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00 | 推断 |
+| `0x3d26f0` | `weak_caller` | `weak_caller::WeakCaller::call_0` | 【B 族】score=1.83；size 224/204=0.91；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 16 个函数（其中 16 个无名）↔ Windows 侧 16 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00 | 推断 |
+| `0x3d27d0` | `weak_caller` | `weak_caller::WeakCaller::call_0` | 【B 族】score=1.83；size 224/204=0.91；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 16 个函数（其中 16 个无名）↔ Windows 侧 16 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00 | 推断 |
+| `0x3d28b0` | `weak_caller` | `weak_caller::WeakCaller::call_0` | 【B 族】score=1.83；size 224/204=0.91；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 16 个函数（其中 16 个无名）↔ Windows 侧 16 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00 | 推断 |
+| `0x3d2990` | `weak_caller` | `weak_caller::WeakCaller::call_0` | 【B 族】score=1.83；size 224/204=0.91；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 16 个函数（其中 16 个无名）↔ Windows 侧 16 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00 | 推断 |
+| `0x3d2a70` | `weak_caller` | `weak_caller::WeakCaller::call_0` | 【B 族】score=1.83；size 224/204=0.91；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 16 个函数（其中 16 个无名）↔ Windows 侧 16 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00 | 推断 |
+| `0x3d2b50` | `weak_caller` | `weak_caller::WeakCaller::call_0` | 【B 族】score=1.83；size 224/204=0.91；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 16 个函数（其中 16 个无名）↔ Windows 侧 16 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00 | 推断 |
+| `0x3d2c30` | `weak_caller` | `weak_caller::WeakCaller::call_0` | 【B 族】score=1.83；size 224/204=0.91；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 16 个函数（其中 16 个无名）↔ Windows 侧 16 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00 | 推断 |
+| `0x3d2d10` | `weak_caller` | `weak_caller::WeakCaller::call_0` | 【B 族】score=1.83；size 224/204=0.91；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 16 个函数（其中 16 个无名）↔ Windows 侧 16 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00 | 推断 |
+| `0x3d2df0` | `weak_caller` | `weak_caller::WeakCaller::call_0` | 【B 族】score=1.83；size 224/204=0.91；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 16 个函数（其中 16 个无名）↔ Windows 侧 16 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00 | 推断 |
+| `0x3d2ed0` | `weak_caller` | `weak_caller::WeakCaller::call_0` | 【B 族】score=1.83；size 224/204=0.91；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 16 个函数（其中 16 个无名）↔ Windows 侧 16 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00 | 推断 |
+| `0x3d2fb0` | `weak_caller` | `weak_caller::WeakCaller::call_0` | 【B 族】score=1.83；size 224/204=0.91；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 16 个函数（其中 16 个无名）↔ Windows 侧 16 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00 | 推断 |
+| `0x3d3090` | `weak_caller` | `weak_caller::WeakCaller::call_0` | 【B 族】score=1.83；size 224/204=0.91；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 16 个函数（其中 16 个无名）↔ Windows 侧 16 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00 | 推断 |
+| `0x3d3170` | `weak_caller` | `weak_caller::WeakCaller::call_0` | 【B 族】score=1.83；size 224/204=0.91；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 16 个函数（其中 16 个无名）↔ Windows 侧 16 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00 | 推断 |
+| `0x3d3250` | `weak_caller` | `weak_caller::WeakCaller::call_0` | 【B 族】score=1.83；size 224/204=0.91；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 16 个函数（其中 16 个无名）↔ Windows 侧 16 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00 | 推断 |
+| `0x3d3330` | `weak_caller` | `weak_caller::WeakCaller::call_0` | 【B 族】score=1.83；size 224/204=0.91；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 16 个函数（其中 16 个无名）↔ Windows 侧 16 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00 | 推断 |
+| `0x41a9d0` | `graphwar_function_evolutionator` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1801af570`，size 比 1.02，hist=0.94，共享键 1/1）；次名差 0.37 | 未知 |
+| `0x41ab40` | `graphwar_function_evolutionator` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1801af8b0`，size 比 1.02，hist=0.94，共享键 1/1）；次名差 0.37 | 未知 |
+| `0x41b500` | `graphwar_function_evolutionator` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1801b02c0`，size 比 1.01，hist=0.93，共享键 1/1）；次名差 0.35；被 graphwar_function_evolutionator::GraphwarFunctionEvolutionator::calculate_functions 调用 | 未知 |
+| `0x41b720` | `graphwar_function_evolutionator` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1801b0150`，size 比 1.01，hist=0.93，共享键 1/1）；次名差 0.35；被 graphwar_function_evolutionator::GraphwarFunctionEvolutionator::calculate_functions_old 调用 | 未知 |
+| `0x41b880` | `graphwar_function_evolutionator` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1801b0a70`，size 比 0.99，hist=0.98，共享键 1/1）；次名差 0.32 | 未知 |
+| `0x41bdf0` | `graphwar_function_evolutionator` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1801b0500`，size 比 0.99，hist=0.98，共享键 1/1）；次名差 0.32 | 未知 |
+| `0x426430` | `graphwar_root_node` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1800acdc0`，size 比 1.08，hist=1.00，共享键 2/2）；次名差 0.59；调用 graphwar_player_screen_control::GraphwarPlayerScreenControl::pending；字符串 graphwarrust::gr,;attempted to ac,called `Result:: | 未知 |
+| `0x433c00` | `graphwar_root_node` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1800af490`，size 比 1.04，hist=1.00，共享键 2/2）；次名差 0.43；调用 graphwar_player_screen_control::GraphwarPlayerScreenControl::pending；字符串 godot_core::priv,/home/lucas/.car,graphwarrust::gr | 未知 |
+| `0x438880` | `graphwar_client_connection_handler` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x180186800`，size 比 0.99，hist=0.98，共享键 4/4）；字符串 called `Result::,Cannot set clien | 未知 |
+| `0x444fd0` | `graphwar_soldier_manager` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1800f84c0`，size 比 1.06，hist=1.00，共享键 1/1）；被 graphwar_soldier_manager::GraphwarSoldierManager::handle_entity_removed_event+graphwar_soldier_manager::GraphwarSoldierManager::handle_entity_removed_event::panic_cold_explicit 调用 | 未知 |
+| `0x4600e0` | `graphwar_function_evolutionator` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x180067620`，size 比 1.06，hist=1.00，共享键 1/1）；次名差 1.72 | 未知 |
+| `0x4602f0` | `graphwar_function_evolutionator` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x180067510`，size 比 1.06，hist=1.00，共享键 1/1）；次名差 1.72 | 未知 |
+| `0x46c5a0` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_color_manager::GraphwarColorManager::set_color+graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function;graphwar_local_player_manager::GraphwarLocalPlayerManager::handle_player_info+graphwar_local_player_manager::GraphwarLocalPlayerManager::handle_player_info::panic_cold_explicit 调用 | 推断 |
+| `0x46c7c0` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_remote_event_handler::GraphwarRemoteEventHandler::handle_client_remote_event;graphwar_color_manager::GraphwarColorManager::set_color+graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function 调用 | 推断 |
+| `0x46c9e0` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_color_manager::GraphwarColorManager::set_color+graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function;graphwar_level_generator::GraphwarLevelGenerator::place_entity 调用 | 推断 |
+| `0x46cc00` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_color_manager::GraphwarColorManager::set_color+graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function;graphwar_game_state_manager::GraphwarGameStateManager::execute_results 调用 | 推断 |
+| `0x46ce20` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_color_manager::GraphwarColorManager::set_color+graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function;graphwar_game_state_manager::GraphwarGameStateManager::start_game+graphwar_turn_manager::GraphwarTurnManager::initialize_turns 调用 | 推断 |
+| `0x46d040` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_game_recorder::GraphwarGameRecorder::save_event+graphwar_game_recorder::GraphwarGameRecorder::subscribe_to_events;graphwar_remote_event_handler::GraphwarRemoteEventHandler::handle_client_remote_event 调用 | 推断 |
+| `0x46d260` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_remote_event_handler::GraphwarRemoteEventHandler::handle_client_remote_event;graphwar_server_connection_handler::GraphwarServerConnectionHandler::handle_clear_bans_request_event 调用 | 推断 |
+| `0x46d480` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_remote_event_handler::GraphwarRemoteEventHandler::handle_client_remote_event;graphwar_color_manager::GraphwarColorManager::set_color+graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function 调用 | 推断 |
+| `0x46d6a0` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_color_manager::GraphwarColorManager::set_color+graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function;graphwar_turn_manager::GraphwarTurnManager::next_turn 调用 | 推断 |
+| `0x46d8c0` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_remote_event_handler::GraphwarRemoteEventHandler::handle_client_remote_event;graphwar_color_manager::GraphwarColorManager::set_color+graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function 调用 | 推断 |
+| `0x46dae0` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_color_manager::GraphwarColorManager::set_color+graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function;graphwar_game_state_manager::GraphwarGameStateManager::add_target 调用 | 推断 |
+| `0x46dd00` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_color_manager::GraphwarColorManager::set_color+graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function;graphwar_game_state_manager::GraphwarGameStateManager::request_new_player 调用 | 推断 |
+| `0x46df20` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_remote_event_handler::GraphwarRemoteEventHandler::handle_client_remote_event;graphwar_color_manager::GraphwarColorManager::set_color+graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function 调用 | 推断 |
+| `0x46e140` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_color_manager::GraphwarColorManager::set_color+graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function;graphwar_turn_manager::GraphwarTurnManager::next_turn 调用 | 推断 |
+| `0x46e360` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_remote_event_handler::GraphwarRemoteEventHandler::handle_client_remote_event;graphwar_color_manager::GraphwarColorManager::set_color+graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function 调用 | 推断 |
+| `0x46e580` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_remote_event_handler::GraphwarRemoteEventHandler::handle_client_remote_event;graphwar_color_manager::GraphwarColorManager::set_color+graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function 调用 | 推断 |
+| `0x46e7a0` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_color_manager::GraphwarColorManager::set_color+graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function;graphwar_level_generator::GraphwarLevelGenerator::place_entity 调用 | 推断 |
+| `0x46e9c0` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_color_manager::GraphwarColorManager::set_color+graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function;graphwar_game_state_manager::GraphwarGameStateManager::start_game+graphwar_turn_manager::GraphwarTurnManager::initialize_turns 调用 | 推断 |
+| `0x46ebe0` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_color_manager::GraphwarColorManager::set_color+graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function;graphwar_level_generator::GraphwarLevelGenerator::place_entity 调用 | 推断 |
+| `0x46ee00` | `graphwar_module_container` | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` | 【B 族】score=1.83；size 544/526=0.97；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 20 个函数（其中 20 个无名）↔ Windows 侧 20 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_color_manager::GraphwarColorManager::set_color+graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function;graphwar_level_generator::GraphwarLevelGenerator::generate_level_custom 调用 | 推断 |
+| `0x481140` | `graphwar_function_evolutionator` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x180082960`，size 比 1.01，hist=0.99，共享键 1/1）；次名差 0.40 | 未知 |
+| `0x481870` | `graphwar_function_evolutionator` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x180081ae0`，size 比 1.01，hist=0.99，共享键 1/1）；次名差 0.40 | 未知 |
+| `0x4825b0` | `graphwar_function_evolutionator` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1800830b0`，size 比 0.98，hist=1.00，共享键 1/1）；次名差 1.36；字符串 mid > lenVAR_XVA | 未知 |
+| `0x482c20` | `graphwar_function_evolutionator` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x180083710`，size 比 0.98，hist=1.00，共享键 1/1）；次名差 1.36；字符串 mid > lenVAR_XVA | 未知 |
+| `0x4b1f60` | `entity_drawer` | `entity_drawer::EntityDrawer::__register_constants 或 entity_drawer::EntityDrawer::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：entity_drawer::EntityDrawer::__register_constants、entity_drawer::EntityDrawer::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4b20e0` | `entity_drawer` | `entity_drawer::EntityDrawer::__register_constants 或 entity_drawer::EntityDrawer::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：entity_drawer::EntityDrawer::__register_constants、entity_drawer::EntityDrawer::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4b2260` | `graphwar_plane` | `graphwar_plane::GraphwarPlane::__register_constants 或 graphwar_plane::GraphwarPlane::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：graphwar_plane::GraphwarPlane::__register_constants、graphwar_plane::GraphwarPlane::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4b23e0` | `graphwar_plane` | `graphwar_plane::GraphwarPlane::__register_constants 或 graphwar_plane::GraphwarPlane::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：graphwar_plane::GraphwarPlane::__register_constants、graphwar_plane::GraphwarPlane::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4b88d0` | `graphwar_setup_control` | `graphwar_setup_control::GraphwarSetupControl::__register_constants 或 graphwar_setup_control::GraphwarSetupControl::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：graphwar_setup_control::GraphwarSetupControl::__register_constants、graphwar_setup_control::GraphwarSetupControl::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4b8a50` | `graphwar_setup_control` | `graphwar_setup_control::GraphwarSetupControl::__register_constants 或 graphwar_setup_control::GraphwarSetupControl::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：graphwar_setup_control::GraphwarSetupControl::__register_constants、graphwar_setup_control::GraphwarSetupControl::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4bbee0` | `entity_drawer` | `entity_drawer::_::__init::__inner_init` | 【B 族】score=2.41；size 432/426=0.99；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.02；字符串 called `Result:: | 推断 |
+| `0x4bc090` | `entity_drawer` | `entity_drawer::_::__init::__inner_init` | 【B 族】score=2.40；size 432/426=0.99；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.11；字符串 called `Result:: | 推断 |
+| `0x4bc6b0` | `graphwar_plane` | `graphwar_plane::_::__init::__inner_init` | 【B 族】score=2.41；size 432/426=0.99；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.02；字符串 called `Result:: | 推断 |
+| `0x4bcab0` | `graphwar_plane` | `graphwar_plane::_::__init::__inner_init` | 【B 族】score=2.40；size 432/426=0.99；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.11；字符串 called `Result:: | 推断 |
+| `0x4bce80` | `graphwar_setup_control` | `graphwar_setup_control::_::__init::__inner_init` | 【B 族】score=2.40；size 432/426=0.99；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.11；字符串 called `Result:: | 推断 |
+| `0x4bd280` | `graphwar_setup_control` | `graphwar_setup_control::_::__init::__inner_init` | 【B 族】score=2.41；size 432/426=0.99；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.02；字符串 called `Result:: | 推断 |
+| `0x4bd650` | `graphwar_long_press_animation` | `graphwar_long_press_animation::_::__init::__inner_init` | 【B 族】score=2.42；size 432/423=0.98；hist=0.96；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.03；字符串 called `Result:: | 推断 |
+| `0x4bda50` | `graphwar_long_press_animation` | `graphwar_long_press_animation::_::__init::__inner_init` | 【B 族】score=2.44；size 432/423=0.98；hist=0.96；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.10；字符串 called `Result:: | 推断 |
+| `0x4c5b50` | `graphwar_game_client` | `graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}` | 【A 个体】score=1.76；size 176/173=0.98；hist=0.89；共享键 2/2（集合相等）；次名差 0.69 | 推断 |
+| `0x4c5c00` | `graphwar_game_client` | `graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}` | 【A 个体】score=1.76；size 176/173=0.98；hist=0.89；共享键 2/2（集合相等）；次名差 0.69 | 推断 |
+| `0x4c5cb0` | `graphwar_game_client` | `graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}` | 【A 个体】score=1.76；size 176/173=0.98；hist=0.89；共享键 2/2（集合相等）；次名差 0.69 | 推断 |
+| `0x4c5d60` | `graphwar_game_client` | `graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}` | 【A 个体】score=1.76；size 176/173=0.98；hist=0.89；共享键 2/2（集合相等）；次名差 0.69 | 推断 |
+| `0x4d1ca0` | `graphwar_game_client` | `graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}` | 【A 个体】score=1.32；size 176/166=0.94；hist=0.68；共享键 2/2（集合相等）；次名差 0.23 | 推断 |
+| `0x4d1d50` | `graphwar_game_client` | `graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}` | 【A 个体】score=1.32；size 176/166=0.94；hist=0.68；共享键 2/2（集合相等）；次名差 0.23 | 推断 |
+| `0x4d1e00` | `graphwar_setup_control` | `graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}` | 【A 个体】score=1.48；size 96/102=1.06；hist=0.68；共享键 1/1（集合相等）；次名差 0.81 | 推断 |
+| `0x4d1e60` | `graphwar_game_client` | `graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}` | 【A 个体】score=1.32；size 176/166=0.94；hist=0.68；共享键 2/2（集合相等）；次名差 0.23 | 推断 |
+| `0x4d2550` | `graphwar_game_client` | `graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}` | 【A 个体】score=1.32；size 176/166=0.94；hist=0.68；共享键 2/2（集合相等）；次名差 0.23 | 推断 |
+| `0x4d7bc0` | `graphwar_long_press_animation` | `graphwar_long_press_animation::GraphwarLongPressAnimation::__register_constants 或 graphwar_long_press_animation::GraphwarLongPressAnimation::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：graphwar_long_press_animation::GraphwarLongPressAnimation::__register_constants、graphwar_long_press_animation::GraphwarLongPressAnimation::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4d7d40` | `graphwar_long_press_animation` | `graphwar_long_press_animation::GraphwarLongPressAnimation::__register_constants 或 graphwar_long_press_animation::GraphwarLongPressAnimation::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：graphwar_long_press_animation::GraphwarLongPressAnimation::__register_constants、graphwar_long_press_animation::GraphwarLongPressAnimation::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4d88b0` | `graphwar_setup_control` | `graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}` | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1800e3640`，size 比 0.99，hist=0.87，共享键 1/1）；次名差 0.90；最接近的**有名**候选 `graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}`（score=0.82，比无名那个低 0.90） | 未知 |
+| `0x4d8a00` | `graphwar_game_client` | `graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}` | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1800e2f60`，size 比 0.96，hist=0.88，共享键 2/2）；次名差 0.84；最接近的**有名**候选 `graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}`（score=0.85，比无名那个低 0.84） | 未知 |
+| `0x4d8d30` | `graphwar_game_client` | `graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}` | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1800e3440`，size 比 0.96，hist=0.88，共享键 2/2）；次名差 0.84；最接近的**有名**候选 `graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}`（score=0.85，比无名那个低 0.84） | 未知 |
+| `0x4d8ff0` | `graphwar_game_client` | `graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}` | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1800e3a60`，size 比 0.99，hist=0.99，共享键 2/2）；次名差 0.87；最接近的**有名**候选 `graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}`（score=1.05，比无名那个低 0.87） | 未知 |
+| `0x4d9270` | `graphwar_game_client` | `graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}` | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1800e3c20`，size 比 0.96，hist=0.88，共享键 2/2）；次名差 0.84；最接近的**有名**候选 `graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}`（score=0.85，比无名那个低 0.84） | 未知 |
+| `0x4d9370` | `graphwar_game_client` | `graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}` | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1800e3340`，size 比 0.96，hist=0.88，共享键 2/2）；次名差 0.84；最接近的**有名**候选 `graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}`（score=0.85，比无名那个低 0.84） | 未知 |
+| `0x4d9500` | `graphwar_game_client` | `graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}` | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1800e3d20`，size 比 0.98，hist=0.99，共享键 2/2）；次名差 0.87；最接近的**有名**候选 `graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}`（score=1.04，比无名那个低 0.87） | 未知 |
+| `0x4d95f0` | `graphwar_game_client` | `graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}` | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1800e2e70`，size 比 0.98，hist=0.99，共享键 2/2）；次名差 0.87；最接近的**有名**候选 `graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}`（score=1.04，比无名那个低 0.87） | 未知 |
+| `0x4d96e0` | `graphwar_game_client` | `graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}` | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1800e3970`，size 比 0.74，hist=0.98，共享键 2/2）；次名差 0.29；调用 graphwar_setup_control::GraphwarSetupControl::ready；最接近的**有名**候选 `graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}`（score=0.90，比无名那个低 0.29） | 未知 |
+| `0x4dcd70` | `axis_drawer` | `axis_drawer::AxisDrawer::__register_constants 或 axis_drawer::AxisDrawer::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：axis_drawer::AxisDrawer::__register_constants、axis_drawer::AxisDrawer::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4dcef0` | `axis_drawer` | `axis_drawer::AxisDrawer::__register_constants 或 axis_drawer::AxisDrawer::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：axis_drawer::AxisDrawer::__register_constants、axis_drawer::AxisDrawer::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4dec00` | `graphwar_lan_vbox` | `graphwar_lan_vbox::GraphwarLanVBox::update_game_list::{{closure}}` | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x180045140`，size 比 0.60，hist=0.90，共享键 1/1）；次名差 0.13；字符串 cannot have more；最接近的**有名**候选 `graphwar_lan_vbox::GraphwarLanVBox::update_game_list::{{closure}}`（score=0.85，比无名那个低 0.13） | 未知 |
+| `0x4e02b0` | `effect_drawer` | `effect_drawer::EffectDrawer::__register_constants 或 effect_drawer::EffectDrawer::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：effect_drawer::EffectDrawer::__register_constants、effect_drawer::EffectDrawer::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4e0430` | `effect_drawer` | `effect_drawer::EffectDrawer::__register_constants 或 effect_drawer::EffectDrawer::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：effect_drawer::EffectDrawer::__register_constants、effect_drawer::EffectDrawer::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4e0e60` | `graphwar_button` | `graphwar_button::GraphwarButton::__register_constants 或 graphwar_button::GraphwarButton::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：graphwar_button::GraphwarButton::__register_constants、graphwar_button::GraphwarButton::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4e0fe0` | `graphwar_button` | `graphwar_button::GraphwarButton::__register_constants 或 graphwar_button::GraphwarButton::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：graphwar_button::GraphwarButton::__register_constants、graphwar_button::GraphwarButton::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4e1160` | `player_showcase` | `player_showcase::PlayerShowcase::__register_constants 或 player_showcase::PlayerShowcase::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：player_showcase::PlayerShowcase::__register_constants、player_showcase::PlayerShowcase::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4e12e0` | `player_showcase` | `player_showcase::PlayerShowcase::__register_constants 或 player_showcase::PlayerShowcase::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：player_showcase::PlayerShowcase::__register_constants、player_showcase::PlayerShowcase::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4e3b00` | `graphwar_lan_vbox` | `graphwar_lan_vbox::GraphwarLanVBox::__register_constants 或 graphwar_lan_vbox::GraphwarLanVBox::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：graphwar_lan_vbox::GraphwarLanVBox::__register_constants、graphwar_lan_vbox::GraphwarLanVBox::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4e3c80` | `graphwar_lan_vbox` | `graphwar_lan_vbox::GraphwarLanVBox::__register_constants 或 graphwar_lan_vbox::GraphwarLanVBox::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：graphwar_lan_vbox::GraphwarLanVBox::__register_constants、graphwar_lan_vbox::GraphwarLanVBox::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4e5100` | `graphwar_ad_switch` | `graphwar_ad_switch::GraphwarAdSwitch::__register_constants 或 graphwar_ad_switch::GraphwarAdSwitch::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：graphwar_ad_switch::GraphwarAdSwitch::__register_constants、graphwar_ad_switch::GraphwarAdSwitch::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4e5280` | `graphwar_ad_switch` | `graphwar_ad_switch::GraphwarAdSwitch::__register_constants 或 graphwar_ad_switch::GraphwarAdSwitch::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：graphwar_ad_switch::GraphwarAdSwitch::__register_constants、graphwar_ad_switch::GraphwarAdSwitch::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4e6dc0` | `graphwar_function_input` | `graphwar_function_input::GraphwarFunctionInput::__register_constants 或 graphwar_function_input::GraphwarFunctionInput::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：graphwar_function_input::GraphwarFunctionInput::__register_constants、graphwar_function_input::GraphwarFunctionInput::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4e6f40` | `graphwar_function_input` | `graphwar_function_input::GraphwarFunctionInput::__register_constants 或 graphwar_function_input::GraphwarFunctionInput::__register_methods` | 【C 族歧义】**2 个候选名同分**（差 < 0.05）：graphwar_function_input::GraphwarFunctionInput::__register_constants、graphwar_function_input::GraphwarFunctionInput::__register_methods；score=2.36；size 384/367=0.96；hist=0.96；共享键 1/1（集合相等）；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4e70c0` | `axis_drawer` | `axis_drawer::_::__init::__inner_init` | 【B 族】score=2.43；size 416/423=1.02；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.03；字符串 called `Result:: | 推断 |
+| `0x4e76c0` | `axis_drawer` | `axis_drawer::_::__init::__inner_init` | 【B 族】score=2.39；size 432/423=0.98；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.10；字符串 called `Result:: | 推断 |
+| `0x4e7870` | `effect_drawer` | `effect_drawer::_::__init::__inner_init` | 【B 族】score=2.39；size 432/423=0.98；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.10；字符串 called `Result:: | 推断 |
+| `0x4e7a20` | `effect_drawer` | `effect_drawer::_::__init::__inner_init` | 【B 族】score=2.43；size 416/423=1.02；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.03；字符串 called `Result:: | 推断 |
+| `0x4e8230` | `graphwar_button` | `graphwar_button::_::__init::__inner_init` | 【B 族】score=2.40；size 416/426=1.02；hist=0.94；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4e83d0` | `graphwar_button` | `graphwar_button::_::__init::__inner_init` | 【B 族】score=2.40；size 432/426=0.99；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.11；字符串 called `Result:: | 推断 |
+| `0x4e87d0` | `player_showcase` | `player_showcase::_::__init::__inner_init` | 【B 族】score=2.40；size 416/426=1.02；hist=0.94；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4e8970` | `player_showcase` | `player_showcase::_::__init::__inner_init` | 【B 族】score=2.40；size 432/426=0.99；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.11；字符串 called `Result:: | 推断 |
+| `0x4e91d0` | `graphwar_lan_vbox` | `graphwar_lan_vbox::_::__init::__inner_init` | 【B 族】score=2.39；size 432/423=0.98；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.10；字符串 called `Result:: | 推断 |
+| `0x4e9590` | `graphwar_lan_vbox` | `graphwar_lan_vbox::_::__init::__inner_init` | 【B 族】score=2.43；size 416/423=1.02；hist=0.95；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.03；字符串 called `Result:: | 推断 |
+| `0x4e9730` | `graphwar_ad_switch` | `graphwar_ad_switch::_::__init::__inner_init` | 【B 族】score=2.40；size 432/426=0.99；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.11；字符串 called `Result:: | 推断 |
+| `0x4e9af0` | `graphwar_ad_switch` | `graphwar_ad_switch::_::__init::__inner_init` | 【B 族】score=2.40；size 416/426=1.02；hist=0.94；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4e9ee0` | `graphwar_function_input` | `graphwar_function_input::_::__init::__inner_init` | 【B 族】score=2.40；size 416/426=1.02；hist=0.94；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；字符串 called `Result:: | 推断 |
+| `0x4ea2d0` | `graphwar_function_input` | `graphwar_function_input::_::__init::__inner_init` | 【B 族】score=2.40；size 432/426=0.99；hist=0.98；共享键 1/1（集合相等）；该键下 Linux 侧 4 个函数（其中 2 个无名）↔ Windows 侧 4 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.11；字符串 called `Result:: | 推断 |
+| `0x4eb94b` | `math_function` | — | 【低分】结构相似度只有 0.50（低于下限 1.00，正对照正确配对中位数 2.36）；最接近的有名候选 `math_function::MathFunction::evaluate_token`（size 比 2.16）；score=0.50；size 133/288=2.16；hist=0.50；共享键 1/1（集合相等） | 未知 |
+| `0x4ebb68` | `math_function` | — | 【低分】结构相似度只有 0.45（低于下限 1.00，正对照正确配对中位数 2.36）；最接近的有名候选 `math_function::MathFunction::evaluate_token`（size 比 2.39）；score=0.45；size 120/288=2.39；hist=0.45；共享键 1/1（集合相等） | 未知 |
+| `0x4ebbe0` | `math_function` | `math_function::MathFunction::simplify_recursive` | 【A 个体】score=2.70；size 1277/1429=1.12；hist=0.99；共享键 1/1（集合相等）；次名差 2.26；被 graphwar_function_evolutionator::GraphwarFunctionEvolutionator::calculate_functions;graphwar_function_evolutionator::GraphwarFunctionEvolutionator::calculate_functions_old 调用 | 推断 |
+| `0x4f01c0` | `graphwar_lan_vbox` | `graphwar_lan_vbox::GraphwarLanVBox::update_game_list::{{closure}}` | 【A 个体】score=1.89；size 240/240=1.00；hist=0.95；共享键 1/1（集合相等）；次名差 0.67 | 推断 |
+| `0x500070` | `graphwar_lan_vbox` | `graphwar_lan_vbox::GraphwarLanVBox::update_game_list::{{closure}}` | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x180045140`，size 比 1.00，hist=0.97，共享键 1/1）；次名差 0.78；最接近的**有名**候选 `graphwar_lan_vbox::GraphwarLanVBox::update_game_list::{{closure}}`（score=1.16，比无名那个低 0.78） | 未知 |
+| `0x5005b0` | `graphwar_lan_vbox` | `graphwar_lan_vbox::GraphwarLanVBox::update_game_list::{{closure}}` | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x180045140`，size 比 0.53，hist=0.91，共享键 1/1）；次名差 0.19；字符串 on_text_changete；最接近的**有名**候选 `graphwar_lan_vbox::GraphwarLanVBox::update_game_list::{{closure}}`（score=0.85，比无名那个低 0.19） | 未知 |
+| `0x5153f0` | `graphwar_backend` | `graphwar_backend::GraphwarBackend::subscribe_to_event_with_id::{{closure}}` | 【A 个体】score=1.90；size 272/271=1.00；hist=0.95；共享键 1/1（集合相等）；次名差 0.44 | 推断 |
+| `0x5159a0` | `graphwar_game_client` | `graphwar_backend::GraphwarBackend::start_client_to_remote_server` | 【A 个体】score=1.79；size 400/390=0.98；hist=0.92；共享键 1/1（集合相等）；次名差 1.08；调用 graphwar_backend::GraphwarBackend::resubscribe_to_events | 推断 |
+| `0x516450` | `graphwar_game_client` | `graphwar_game_client::GraphwarGameClient::get_module` | 【B 族】score=1.68；size 96/101=1.05；hist=0.79；共享键 2/2（集合相等）；该键下 Linux 侧 45 个函数（其中 2 个无名）↔ Windows 侧 65 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_root_node::GraphwarRootNode::process_button_pressed 调用 | 推断 |
+| `0x5164b0` | `graphwar_game_client` | `graphwar_game_client::GraphwarGameClient::get_module` | 【B 族】score=1.68；size 96/101=1.05；hist=0.79；共享键 2/2（集合相等）；该键下 Linux 侧 45 个函数（其中 2 个无名）↔ Windows 侧 65 个函数 —— 单态化族，源函数名可信、**类型参数未知**；次名差 0.00；被 graphwar_root_node::GraphwarRootNode::process;graphwar_root_node::GraphwarRootNode::process_button_pressed 调用 | 推断 |
+| `0x5175b0` | `graphwar_game_client` | `graphwar_game_client::GraphwarGameClient::request_game_name_change` | 【A 个体】score=1.65；size 224/215=0.96；hist=0.89；共享键 1/1（集合相等） | 推断 |
+| `0x520100` | `graphwar_backend` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x18013c880`，size 比 0.33，hist=0.86，共享键 1/1）；— | 未知 |
+| `0x522070` | `graphwar_play_screen_control` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x180140ee0`，size 比 0.95，hist=0.99，共享键 5/5）；被 graphwar_play_screen_control::GraphwarPlayScreenControl::new 调用；字符串 cloneinit_ref() ,TimerLabelViewFu,ViewFunctionButt | 未知 |
+| `0x523410` | `graphwar_replay_control` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x18013f860`，size 比 0.77，hist=0.97，共享键 1/1）；字符串 cloneinit_ref() ,ReplaysContainer | 未知 |
+| `0x5238c0` | `graphwar_audio_control` | — | 【D 无名字】结构最优的 Windows 对应体**没有名字**（`0x1801405b0`，size 比 0.89，hist=0.98，共享键 1/1）；被 graphwar_audio_control::GraphwarAudioControl::new 调用；字符串 cloneinit_ref() ,MuteButtonExplos | 未知 |
+
+### 40.7 就地更正（按 `AGENTS.md` §0.6，**不改 §37 正文，登记在这里**）
+
+本节只许"追加一节"（任务书 §5），所以 §37 / §38 的旧数字**一个字都没有动**，
+但它们现在该怎么读，记在这里：
+
+| 旧说法（出处） | 复算结果 | 证据 |
+|---|---|---|
+| 「可定名的 Linux 地址 **351** 个 = 66.6%」（§37.0 / §37.8 / §39.0 ②） | 那个 351 是**两份夹具的地址并集**，其中 **6 个不在 527 内**（§40.1 表）；落在分母上的只有 **345** ⇒ **345/527 = 65.5%**，不是 66.6% | `unnamed_attrib.py list` + §40.1 表 |
+| 「527 里有 **176** 个仍定不了名」（§37.10 第 1 条 / 任务书） | 把 v2 的三向落地（`唯一锚` 310 + `跨版本锚` 27）并进来后，可定名 **348** ⇒ 无名 **179**（**+3**） | 同上 |
+| 「`0x748000` = `FunctionRandomizer::mutate_function`」（`fixtures/name_to_addr.tsv` 的 `消去法` 行） | 该地址引用的 25 个 `Location` **全在 `miniz_oxide`**，与 `FunctionRandomizer` 无关 ⇒ **推断：这行结论可疑**（缺一次人工反汇编复核） | `probe` / `loc_xrefs.py func 0x748000` |
+| 「求值器 `0x4eb9d0` 只引用 `math_function.rs:184:24`，所以定不了名」（§37.10） | 本节 `probe 0x4eb9d0` 打出 **`locs=[]`**：它**一个 `src/` `Location` 都不引用**，因此**不在 527 这个分母里**（这是两条不同的事实：它确实没有名字，但理由不是"锚被三个函数共享"） | `unnamed_attrib.py probe 0x4eb9d0` |
+
+**没有改的**：`fixtures/` 里既有的五个夹具、`docs/02` 的其它任何行、`src/`、`client/`、`dispatch/`。
+
+### 40.8 还缺什么（`未知` 的 41 个，逐类说清缺什么）
+
+1. **D 桶 39 个：结构最优的对应体在 Windows 侧没有符号。**
+   39 行指向 **37 个不同的无名 Windows 函数**（`0x180045140` 被 3 行共用；其余 1:1）。
+   注意它们**不是**"键下只有无名函数"：其中 16 行的同键候选里**有**有名函数，
+   但结构上明显更差（证据栏写了差多少）。要给出名字，缺的是**第三种来源**：另一个带符号表的
+   同版本构建（macOS 或 Linux 未 strip 版），或者人工逆向。本节**不**用"最像"硬凑。
+2. **低分 2 个（`0x4eb94b` / `0x4ebb68`）：`math_function.rs:184:24` 的冷片段。**
+   它们只有 133 B / 120 B，与三个候选（288 / 683 / 1429 B）的 size 比 2.16 / 2.39，score 0.50 / 0.45。
+   要定名，缺的是**函数边界复核**（Ghidra 起点表把冷块切了出来，它可能不是独立源码函数）
+   + 调用者上下文分析。
+3. **C 桶 24 个：名字二选一。** 缺的是逐指令序列对齐（见 §40.5 第 1 条）。
+4. **B 桶 94 个：类型参数。** `name_key` 的三列不带泛型实参，所以
+   `WeakCaller::call::<T>` 的 `T` 只能从**调用点传入的 fn 项地址**反推（§34.7 第 4 条给了办法：
+   x86 上 `lea rsi,[rip+…]` 的地址查 `fixtures/name_to_addr.tsv`）。本节**没有**做这一步。
+5. **`0x748000` 那条 v1 结论**（§40.7）：缺一次人工复核，本节只标"可疑"。
+6. **名字仍然不是"逐位验证"**：本节的一切都是**结构推断**（K/M/S/E），
+   没有任何一条与源码逐位对拍 —— 本项目目前也**没有**可对拍的源码。
+
+### 40.9 一条命令复算
+
+```bash
+$PY tools/unnamed_attrib.py build                  # 扫 Linux + Windows（首次约 55 s，之后读缓存）
+$PY tools/unnamed_attrib.py list                   # 527 / 348 / 179 + 模块分布 + 地址清单（-v）
+$PY tools/unnamed_attrib.py control --ablate       # 两个正对照（地址级 / 名字级）+ 分桶精度 + 消融
+$PY tools/unnamed_attrib.py attrib --write         # 写 fixtures/unnamed_attrib.tsv（179 行）
+$PY tools/unnamed_attrib.py attrib --table         # 打印本节 §40.6 那张表
+$PY tools/unnamed_attrib.py probe 0x3a54e0 0x4eb9d0  # 单条复核：候选、分数、常量、字符串
+```
+
+`$PY` = 仓库 `.reference/venv/bin/python`（要有 capstone 5.x）。缓存键带 `SCHEMA=ua-v2`：
+改了特征口径就必须抬版本号，否则会静默吃旧缓存（`sym_match` §36.0 踩过这个坑）。
+**本节没有一个数字来自"跑测试"**：`cargo test` 是回归保护，不是复原证据（`AGENTS.md` §0.2）。
