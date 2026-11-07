@@ -43,6 +43,15 @@ pub mod graphwar_ad_switch_class;
 pub mod graphwar_lan_vbox_class;
 #[cfg(feature = "gdext-bindings")]
 pub mod graphwar_root_node_class;
+
+// 三个"要信号接线"的类（`docs/16-client.md` §39）：`Button` / `LineEdit` / `Control` 子类，
+// 验自造 `#[signal]`、连引擎原生信号、外部注册闭包表这三条路。同样只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod graphwar_button_class;
+#[cfg(feature = "gdext-bindings")]
+pub mod graphwar_function_input_class;
+#[cfg(feature = "gdext-bindings")]
+pub mod graphwar_setup_control_class;
 // 手写入口与 gdext 入口都导出 `gdext_rust_init`，一个 .so 里只能有一个：
 // 打开 `gdext-bindings` 时用官方 gdext 那份（`gdext_mod.rs`），关掉手写这份。
 #[cfg(not(feature = "gdext-bindings"))]
