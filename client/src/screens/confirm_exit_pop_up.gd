@@ -30,7 +30,7 @@ func _ready() -> void:
 	super()
 
 func build() -> void:
-	var frame := GwUI.frame(self)
+	var frame := GwUI.frame(self, 0, "")   # 原版这几个弹窗的根节点没有脚本（见 docs/16 §40）
 	var bands: VBoxContainer = frame.vbox
 
 	# 竖直三段带（原版 VBoxContainer 的三个 `[v=3]` 子项，各占 1/3）。底部那个 0 高的
@@ -56,12 +56,14 @@ func build() -> void:
 	_grow_spacer(content, "MarginContainer2", 1.0)
 
 	var label_row := GwUI.hbox("HBoxContainer", GwUI.SEPARATION, content)
-	var label_box := GwUI.margin("MarginContainer", 10, label_row)   # `IpPopUpMargin.gd`
+	var label_box := GwUI.margin("MarginContainer", 10)
 	label_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var label := GwUI.label("Are you sure you want to exit?", 0, HORIZONTAL_ALIGNMENT_CENTER)
 	label.name = "Label"
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label_box.add_child(label)
+	GwViews.attach(label_box, "IpPopUpMargin.gd")   # margin 10 + 子节点字号 = 宽/40
+	label_row.add_child(label_box)
 
 	_grow_spacer(content, "MarginContainer", 1.0)
 
@@ -78,8 +80,10 @@ func build() -> void:
 
 	# 返回键：原版是**根节点**上的 `MarginContainer2`（挂 `MarginContainerPopUpBack.gd`）。
 	# 那个脚本只在"窗口超出屏幕安全区"时才写 margin（桌面 = 0），所以它恒在 (0,0)。
-	var overlay := GwUI.margin("MarginContainer2", 0, self)
+	var overlay := GwUI.margin("MarginContainer2", 0)
 	overlay.add_child(GwUI.exit_pair(GwCommands.CANCEL_EXIT_PLAY))
+	GwViews.attach(overlay, "MarginContainerPopUpBack.gd")   # 安全区；桌面下 margin 全 0
+	add_child(overlay)
 
 # ---------------------------------------------------------------- 原版骨架的小工具
 
@@ -104,8 +108,14 @@ func _grow_spacer(parent: Container, node_name: String, ratio: float) -> MarginC
 	m.size_flags_stretch_ratio = ratio
 	return m
 
-## `IpPopUpMargin.gd` 包一层：margin 全 10，**不**参与弹性分配（字号由本屏除数给）。
+## 原版 `IpPopUpMargin.gd` 包一层：margin 全 10、子节点字号 = 宽/40，**不**参与弹性分配。
+## 脚本在**进树前**挂，所以 `_ready` 会跑；原来那句 `font_divisor = 40` 已删。
 func _ip_margin(parent: HBoxContainer, node_name: String) -> MarginContainer:
-	var m := GwUI.margin(node_name, 10, parent)
+	var m := GwUI.margin(node_name, 10)
 	m.size_flags_horizontal = Control.SIZE_FILL
+	GwViews.attach(m, "IpPopUpMargin.gd")
+	parent.add_child(m)
+	# 子节点是调用方**随后**加的 ⇒ 原版 `_ready` 那一刻还看不见它们（margin 10 已经设好了）。
+	# 这里 deferred 调原版自己的 `update_child_sizes()` 把字号补上 —— 同一个函数，只是触发者是我们。
+	m.call_deferred("update_child_sizes")
 	return m

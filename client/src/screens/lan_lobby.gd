@@ -87,8 +87,10 @@ var _row_labels := {}     # key -> {"name": Label, "players": Label}
 ## 当前在画哪一页（"local" / "global"）。`_process` 的重投影要用它。
 var _mode := "local"
 
+## 字号全部由原版脚本自己算（`client/src/views/`）：表头/房间行 `LanLobbyFontResize.gd`（宽/40）、
+## Local/Global `LanLobbyTitle.gd`（宽/30）、底栏 `LobbyButtonContainer.gd`（宽×0.2 + 宽/30）、
+## 返回键 `ExitButtonContainer.gd`（宽/30）。所以本屏不再设 `font_divisor`。
 func _ready() -> void:
-	font_divisor = 40        # LanLobbyFontResize.gd: 宽/40（返回/Local/Global/底部是 /30）
 	super()
 	set_process(true)
 
@@ -101,21 +103,25 @@ func build() -> void:
 	top.add_child(GwUI.exit_pair(GwCommands.EXIT_LAN_LOBBY))
 	# 原版 [返回][Local][Global] 横向铺满整行，Local / Global 各占剩余宽度的一半
 	# （真帧：Local 文字 516..664、Global 1385..1566，各自半区居中）。
-	var local_holder := GwUI.margin("ShowLocalContainer", 0, top)
+	# 顺序要紧：**先建子节点 → 挂原版脚本 → 最后 add_child**。原版脚本的 `_ready` 在节点
+	# 进树时跑一次，那时 `get_children()` 必须已经有内容，否则它算的是空集（静默什么都没做）。
+	var local_holder := GwUI.margin("ShowLocalContainer", 0)
 	local_holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	local_holder.set_meta("font_divisor", 30)      # `LanLobbyTitle.gd`
 	_local_button = GwButton.make("Local", GwCommands.SHOW_LOCAL)
 	_local_button.name = "ShowLocalButton"
 	_local_button.toggle_mode = true
 	_local_button.button_pressed = true
 	local_holder.add_child(_local_button)
-	var global_holder := GwUI.margin("ShowGlobalContainer", 0, top)
+	GwViews.attach(local_holder, "LanLobbyTitle.gd")      # 字号 = 宽/30（原版脚本自己算）
+	top.add_child(local_holder)
+	var global_holder := GwUI.margin("ShowGlobalContainer", 0)
 	global_holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	global_holder.set_meta("font_divisor", 30)
 	_global_button = GwButton.make("Global", GwCommands.SHOW_GLOBAL)
 	_global_button.name = "ShowGlobalButton"
 	_global_button.toggle_mode = true
 	global_holder.add_child(_global_button)
+	GwViews.attach(global_holder, "LanLobbyTitle.gd")     # 字号 = 宽/30
+	top.add_child(global_holder)
 
 	# --- 表头 ---
 	var header := GwUI.hbox("HBoxContainer", GwUI.SEPARATION, vbox)
@@ -124,8 +130,10 @@ func build() -> void:
 	header.add_child(_header_cell("ModeContainer", "GameMode", "Game Mode", 1.0))
 	# 第四格在 `.tscn` 里是一个**全透明主题**的 " Join " 按钮（字号 48）：只为把 Join 列的
 	# 宽度撑出来，屏幕上什么都看不见（Theme_hffrm 的 font_color alpha = 0、五个 stylebox 全空）。
-	var join_head := GwUI.margin("JoinButtonContainer", 0, header)
+	var join_head := GwUI.margin("JoinButtonContainer", 0)
 	join_head.size_flags_horizontal = Control.SIZE_FILL
+	GwViews.attach(join_head, "LanLobbyFontResize.gd")   # 字号 = 宽/40
+	header.add_child(join_head)
 	var ghost := GwButton.make(" Join ")
 	ghost.name = "GraphwarButton"
 	ghost.disabled = true
@@ -146,11 +154,7 @@ func build() -> void:
 
 	# --- 底部：建房 / 加 IP ---
 	var bottom := GwUI.margin("MarginContainer", 0, vbox)
-	var bottom_row := GwUI.hbox("HBoxContainer", GwUI.SEPARATION, bottom)
-	# `LobbyButtonContainer.gd`：**每个**子节点（两个弹性垫片也算）宽度 = 屏宽×0.2，
-	# 字号 = 宽/30。这正是 " Join IP " 384 px 宽的来源。
-	bottom_row.set_meta("font_divisor", 30)
-	bottom_row.set_meta("lobby_button_ratio", 0.2)
+	var bottom_row := GwUI.hbox("HBoxContainer", GwUI.SEPARATION)
 	_bottom_row = bottom_row
 	var pad := GwUI.margin("MarginContainer", 0, bottom_row)
 	pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -162,6 +166,11 @@ func build() -> void:
 	bottom_row.add_child(join)
 	var pad2 := GwUI.margin("MarginContainer2", 0, bottom_row)
 	pad2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# 四个子节点都齐了再挂 `LobbyButtonContainer.gd`、最后进树：它给**每个**子节点（两个弹性
+	# 垫片也算）宽度 = 屏宽×0.2、字号 = 宽/30 —— 这就是 " Join IP " 384 px 宽的来源。
+	# 我们不再自己算（原来的 `_apply_lobby_button_widths()` 已删）。
+	GwViews.attach(bottom_row, "LobbyButtonContainer.gd")
+	bottom.add_child(bottom_row)
 
 	vbox.add_child(GwUI.ad_slot())
 
@@ -173,18 +182,8 @@ func _header_cell(node_name: String, label_name: String, text_: String, ratio: f
 	l.name = label_name
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	m.add_child(l)
+	GwViews.attach(m, "LanLobbyFontResize.gd")   # 表头：字号 = 宽/40
 	return m
-
-## `LobbyButtonContainer.gd::update_child_sizes` 的等价物：
-## 给这一行的每个子节点设 `custom_minimum_size.x = 屏宽 × ratio`。
-func _apply_lobby_button_widths(row: HBoxContainer) -> void:
-	var ratio := float(row.get_meta("lobby_button_ratio", 0.2))
-	var width := get_viewport_rect().size.x
-	if width <= 0.0:
-		return
-	for c in row.get_children():
-		if c is Control:
-			(c as Control).custom_minimum_size = Vector2(width * ratio, 0.0)
 
 func on_enter() -> void:
 	var app_node := app()
@@ -298,15 +297,14 @@ func _rebuild_list(mode: String) -> void:
 	_row_labels.clear()
 	for w in _wanted_rows(mode):
 		var row := _room_entry(String(w["name"]), String(w["players"]), String(w["address"]))
+		# 行里的四个容器各挂一个原版脚本；它们是在**进树**时由各自的 `_ready` 算字号的，
+		# 所以必须在 `add_child()` 之前挂好 —— 这也正是原版 `.tscn` 的时序。
 		_list.add_child(row)
 		_row_keys.append(String(w["key"]))
 		_row_labels[String(w["key"])] = {
 			"name": row.find_child("RoomName", true, false),
 			"players": row.find_child("PlayerCount", true, false),
 		}
-	# 行是运行时建的 ⇒ 字号必须在这里重新套一遍（`apply_font_scale()` 只在 `_ready` 跑过，
-	# 那时这些节点还不存在；漏掉这一步的话四行会停在主题默认的 24 号字，真帧是 48）。
-	apply_font_scale()
 
 ## 一条房间条目（`game_room_entry.tscn`，20 节点）：
 ##   HBoxContainer
@@ -329,6 +327,7 @@ func _room_entry(room_name: String, players: String, address: String = "") -> HB
 	row.add_child(name_scroll)
 	var name_m := GwUI.margin("NameContainer", 0, name_scroll)
 	name_m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	GwViews.attach(name_m, "LanLobbyFontResize.gd")
 	var name_label := GwUI.label(room_name, 0, HORIZONTAL_ALIGNMENT_CENTER)
 	name_label.name = "RoomName"
 	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -337,6 +336,7 @@ func _room_entry(room_name: String, players: String, address: String = "") -> HB
 	var players_m := GwUI.margin("PlayersContainer", 0, row)
 	players_m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	players_m.size_flags_stretch_ratio = 0.1
+	GwViews.attach(players_m, "LanLobbyFontResize.gd")
 	var count := GwUI.label(players, 0, HORIZONTAL_ALIGNMENT_CENTER)
 	count.name = "PlayerCount"
 	count.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -344,6 +344,7 @@ func _room_entry(room_name: String, players: String, address: String = "") -> HB
 
 	var mode_m := GwUI.margin("ModeContainer", 0, row)
 	mode_m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	GwViews.attach(mode_m, "LanLobbyFontResize.gd")
 	var options := GwUI.hbox("OptionsContainer", GwUI.SEPARATION, mode_m)
 	options.size_flags_stretch_ratio = 0.5
 	# 这两个垫片在 `.tscn` 里是 `size_flags_horizontal = 3`（EXPAND）的 MarginContainer，
@@ -374,6 +375,7 @@ func _room_entry(room_name: String, players: String, address: String = "") -> HB
 
 	var join_m := GwUI.margin("JoinButtonContainer", 0, row)
 	join_m.size_flags_horizontal = Control.SIZE_FILL
+	GwViews.attach(join_m, "LanLobbyFontResize.gd")
 	var join := GwButton.make(" Join ")
 	join.name = "JoinButton"
 	join.set_meta("room_address", address)
@@ -388,13 +390,6 @@ func _room_entry(room_name: String, players: String, address: String = "") -> HB
 		join.pressed.connect(_on_join_pressed.bind(address))
 	join_m.add_child(join)
 	return row
-
-func apply_font_scale() -> void:
-	super()
-	if not _built:
-		return
-	if _bottom_row != null:
-		_apply_lobby_button_widths(_bottom_row)
 
 ## 点房间条目的 ` Join `。
 ##

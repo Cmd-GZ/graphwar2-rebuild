@@ -97,7 +97,6 @@ func build() -> void:
 	_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_tabs.clip_tabs = false
 	_tabs.add_theme_constant_override("side_margin", 10)   # graphwar_theme.tres
-	body.add_child(_tabs)
 
 	_rebuild_cell_size()
 	_build_skins_page()
@@ -105,6 +104,10 @@ func build() -> void:
 	_build_hats_page()
 	for i in TAB_TITLES.size():
 		_tabs.set_tab_title(i, String(TAB_TITLES[i]))
+	# 原版 `PlayerTabContainer.gd` 自己写三个页签标题（含 U+2009）并按 安全区宽/30 设字号。
+	# 它的 `_ready` 要能 `set_tab_title(0..2)`，所以**必须**在三个页签都在、且进树之前挂。
+	GwViews.attach(_tabs, "PlayerTabContainer.gd")
+	body.add_child(_tabs)
 
 	_build_right_column(body)
 
@@ -280,7 +283,7 @@ func _build_right_column(body: Node) -> void:
 	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	var name_row := GwUI.hbox("HBoxContainer2", GwUI.SEPARATION, right)
-	var name_m := GwUI.margin("MarginContainer", 0, name_row)
+	var name_m := GwUI.margin("MarginContainer", 0)
 	# `player_screen.tscn` 里这个 MarginContainer **没有** size_flags ⇒ 只占最小宽度；
 	# 旁边那个 `MarginContainer2` 才有 `size_flags_horizontal = 3`（吃满剩下的宽度）。
 	# `GwUI.margin()` 默认给 EXPAND_FILL，不改的话标签会和输入框各占一半 → 输入框右移。
@@ -291,22 +294,28 @@ func _build_right_column(body: Node) -> void:
 	if title_font != null:
 		name_label.add_theme_font_override("font", title_font)
 	name_m.add_child(name_label)
+	GwViews.attach(name_m, "LanLobbyTitle.gd")   # 字号 = 宽/30
+	name_row.add_child(name_m)
 
 	# `IpPopUpMargin.gd`：四边 margin 10，**子节点字号 = 宽/40**（本屏其余文字是 /30）。
-	var edit_m := GwUI.margin("MarginContainer2", 10, name_row)
+	var edit_m := GwUI.margin("MarginContainer2", 10)
 	edit_m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	edit_m.set_meta("font_divisor", 40)
 	_name_edit = LineEdit.new()
 	_name_edit.name = "PlayerNameLineEdit"
+	GwViews.attach(_name_edit, "PlayerNameLineEdit.gd")   # 原版这个 LineEdit 就是空壳脚本
 	_name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	# `player_screen.tscn` 静态值就是 12（原版存档里名字也只有 12 字符上限）。
 	_name_edit.max_length = 12
 	_name_edit.text_changed.connect(_on_name_changed)
 	edit_m.add_child(_name_edit)
+	GwViews.attach(edit_m, "IpPopUpMargin.gd")   # 四边 10 + 子节点字号 = 宽/40
+	name_row.add_child(edit_m)
 
 	# `ShowcaseMarginContainer.gd`：四边 margin 5。
-	var showcase_m := GwUI.margin("MarginContainer", 5, right)
+	var showcase_m := GwUI.margin("MarginContainer", 5)
 	showcase_m.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	GwViews.attach(showcase_m, "ShowcaseMarginContainer.gd")   # 四边 margin 5
+	right.add_child(showcase_m)
 	var aspect := AspectRatioContainer.new()
 	aspect.name = "AspectRatioContainer"
 	aspect.ratio = 1.0
@@ -347,7 +356,7 @@ func _build_skin_block() -> MarginContainer:
 	ad_note.size_flags_stretch_ratio = 3.0
 	ad_note.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	v.add_child(ad_note)
-	var unlock_row := GwUI.hbox("HBoxContainer", GwUI.SEPARATION, v)
+	var unlock_row := GwUI.hbox("HBoxContainer", GwUI.SEPARATION)
 	unlock_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var left_pad := GwUI.margin("MarginContainer", 0, unlock_row)
 	left_pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -359,6 +368,9 @@ func _build_skin_block() -> MarginContainer:
 	var right_pad := GwUI.margin("MarginContainer2", 0, unlock_row)
 	right_pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	right_pad.size_flags_stretch_ratio = 0.3
+	# 三个子节点（左垫片 / Unlock / 右垫片）齐了再挂原版 `UnlockButtonSize.gd`（字号 = 宽/30）
+	GwViews.attach(unlock_row, "UnlockButtonSize.gd")
+	v.add_child(unlock_row)
 	var bottom_pad := GwUI.margin("MarginContainer2", 0, v)
 	bottom_pad.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	bottom_pad.size_flags_stretch_ratio = 0.2

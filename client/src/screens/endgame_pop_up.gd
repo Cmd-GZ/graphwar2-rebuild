@@ -80,18 +80,24 @@ func build() -> void:
 	content.add_child(_self_label)
 
 	# 图标行：`alignment = 1`（居中）+ `[v=3]`；空格子静态 `visible = false`
-	_icons_row = GwUI.hbox("HBoxContainer", GwUI.SEPARATION, content)
+	_icons_row = GwUI.hbox("HBoxContainer", GwUI.SEPARATION)
 	_icons_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_icons_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	for i in VICTORY_SLOTS:
 		_slots.append(_victory_slot(_icons_row, i))
+	# 原版 `endgame_pop_up.tscn` 这一行挂 `HBoxVictoryIcon.gd`：separation = −视口宽/10
+	# （胜利者头像互相叠进去）。五个格子都在了再挂、最后进树。
+	GwViews.attach(_icons_row, "HBoxVictoryIcon.gd")
+	content.add_child(_icons_row)
 
 	_team_label = GwUI.label("", 0, HORIZONTAL_ALIGNMENT_CENTER)
 	_team_label.name = "TeamVictoryLabel"
 	content.add_child(_team_label)
 
-	var overlay := GwUI.margin("MarginContainer2", 0, self)
+	var overlay := GwUI.margin("MarginContainer2", 0)
 	overlay.add_child(GwUI.exit_pair(GwCommands.EXIT_PLAY))
+	GwViews.attach(overlay, "MarginContainerPopUpBack.gd")   # 安全区；桌面下 margin 全 0
+	add_child(overlay)
 
 ## 一个胜利者格子：`AspectRatioContainer`（`stretch_mode = 1` = 高度控宽度）
 ## → `MarginContainer` → skin / face / hat 三层 `TextureRect`。

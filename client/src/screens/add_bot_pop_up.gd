@@ -39,15 +39,21 @@ func _ready() -> void:
 	super()
 
 func build() -> void:
-	var frame := GwUI.frame(self)
+	var frame := GwUI.frame(self, 0, "")   # 原版这几个弹窗的根节点没有脚本（见 docs/16 §40）
 	var bands: VBoxContainer = frame.vbox
 
 	# 第一条带：返回键（原版放在 VBox 的第一段里，而不是像其它 5 个弹窗那样挂根节点）
-	var back_band := _band(bands, "MarginContainer", 1.0)
+	var back_band := GwUI.hbox("MarginContainer", GwUI.SEPARATION)
+	back_band.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	back_band.size_flags_stretch_ratio = 1.0
 	var back_row := GwUI.hbox("HBoxContainer", GwUI.SEPARATION, back_band)
 	back_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	back_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	back_row.add_child(GwUI.exit_pair(GwCommands.CANCEL_ADD_BOT))
+	# 注：原版这个位置（`MarginContainer/VBoxContainer/MarginContainer`）挂的是
+	# `MarginContainerPopUpBack.gd`，但它的基类是 **MarginContainer**，而我们这条带建成了
+	# HBoxContainer（代码里每条带都是 HBox）⇒ 类型不符、挂不上，**登记跳过**（docs/16 §40）。
+	bands.add_child(back_band)
 
 	# 中间带：面板（ratio 10 : 上下两条带各 1）
 	var panel_band := _band(bands, "HBoxContainer2", 10.0)
@@ -102,9 +108,11 @@ func _options_row(content: VBoxContainer, node_name: String, first_tier: int) ->
 func _build_cancel_row(content: VBoxContainer) -> void:
 	var row := GwUI.hbox("HBoxContainer3", GwUI.SEPARATION, content)
 	_grow_spacer(row, "MarginContainer3", 1.0)
-	var shell := GwUI.margin("MarginContainer", 10, row)
+	var shell := GwUI.margin("MarginContainer", 10)
 	shell.size_flags_horizontal = Control.SIZE_FILL
 	shell.add_child(GwButton.make(" Cancel ", GwCommands.CANCEL_ADD_BOT))
+	GwViews.attach(shell, "IpPopUpMargin.gd")   # margin 10 + 字号 = 宽/40
+	row.add_child(shell)
 	_grow_spacer(row, "MarginContainer4", 1.0)
 
 # ---------------------------------------------------------------- 原版骨架的小工具

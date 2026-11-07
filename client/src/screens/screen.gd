@@ -82,6 +82,11 @@ func apply_font_scale() -> void:
 	_apply_size_recursive(self, current_font_size(), width)
 
 func _apply_size_recursive(node: Node, size: int, width: float) -> void:
+	# 原版视图脚本（`client/src/views/*.gd`）驱动的子树**整棵跳过**：字号由原版自己算。
+	# 原版 105 个脚本里 `maxi`/`max(` 出现 0 次 ⇒ 没有下限，我们那套 `maxi(10, 宽/N)` 是自加的
+	# （`docs/16` §39.6）。两边都写就会变成"谁后连 size_changed 谁赢"，等于没换。
+	if GwViews.owns(node):
+		return
 	var local_size := size
 	var div := int(node.get_meta("font_divisor", 0)) if node.has_meta("font_divisor") else 0
 	if div > 0 and width > 0.0:
@@ -108,7 +113,11 @@ func build_header(parent: Node, title_text: String, exit_cmd: String,
 	var exit := GwUI.exit_pair(exit_cmd)
 	exit.name = "ExitButtonContainer"
 	row.add_child(exit)
-	var m := GwUI.margin("MarginContainer", 0, row)
+	var m := GwUI.margin("MarginContainer", 0)
 	m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var lbl := GwUI.title(title_text, m, use_title_font)
+	# 标题外层挂**原版** `LanLobbyTitle.gd`（字号 = 宽/30）：campaign / player_screen /
+	# replay_lobby 三个 `.tscn` 的标题容器都是它（节点路径见 `docs/16` §40）。
+	GwViews.attach(m, "LanLobbyTitle.gd")
+	row.add_child(m)
 	return {"row": row, "title": lbl, "exit": exit}
