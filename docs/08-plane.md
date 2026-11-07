@@ -541,3 +541,34 @@ fill=0xFF :  8 次   ← 擦除！
 
 这也解释了 `QueueDestroyObstacle.radius` **恒为 0.5**——它就是洞的半径。
 
+
+## 11. 命中判据的地址面：`is_obstacle` 与它的两处内联（2026-11-07，`dispatch/17`）
+
+§5 说"命中判定不是几何，是位图查表"，本节把那条结论落到指令上，并划清"谁用这个判据"。
+
+**独立函数**：`GraphwarObstacleManager::is_obstacle` = x86 **`0x3f15b0`–`0x3f179c`**
+（arm64 `0x425474`–`0x425684`，未 strip，符号名直接给）。判决就两条指令：
+
+```text
+0x3f1697  cmp byte ptr [rax + rdi], 0xff     ; rax = 掩膜基址, rdi = row*1000 + col
+0x3f169b  setne al                            ; != 0xFF ⇒ 命中
+```
+
+越界（`col > 999` / `row > 599`）在 `0x3f166b` / `0x3f1673` 处提前 `ja 0x3f169e` 返回 **1**，
+即**画布外算命中** —— 与 `plane::is_occupied` 的 `if !in_canvas { return true }` 同义。
+
+**对局链没有调用它，是内联的**：全 `.text` 扫"`mulsd 1000 / divsd 50 / addsd 500|300`"三元组，
+只命中 7 处 —— `calculate_shot_results`（`0x3c2bc0`）里 6 处（三对 x/y：`0x3c37ee`+`0x3c3831`、
+`0x3c39b6`+`0x3c39f6`、`0x3c4eab`+`0x3c4eeb`），加 `GraphwarPlane::obstacle_partial_update_event`
+（`0x4be3e0`）里 1 处（`0x4be425`，画笔/擦除的坐标换算，不是碰撞判据）。
+⇒ **弹道撞不撞障碍只看掩膜**；`is_obstacle` 的直接调用点（x86 `addr_probe.py callers 0x3f15b0`，
+共 9 处）**没有一处**在射击链里：`0x465a70`×3（关卡生成）、**`0x467530` = `calculate_paths`**×1、
+`0x49eb90/0x49fea0/0x4a2dc0/0x4a6020/0x4eb450` 各 1（关卡/实体/绘制侧）。
+arm64 侧同一结论（符号名直接可读）：`place_entity`×3、`calculate_paths`×1、
+`setup_level_2/4/7/12`、`effect_drawer::step_effect`×1 —— **对局不经过它**。
+
+⚠️ 口径：`src/plane.rs` 的注释把这两个函数写成 `0x4f11e0` / `0x4f15b0`（**Ghidra** 口径），
+与本节 `0x3f11e0` / `0x3f15b0`（**ELF** 口径）是同一对函数，差 `0x100000`。别当两处。
+
+重复报文（"一次挖洞发 2 条"）的成因、以及我方内核"只发 1 条"的差异登记，见
+[`docs/06-verification.md`](06-verification.md) §30.5–§30.6。

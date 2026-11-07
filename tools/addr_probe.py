@@ -44,7 +44,7 @@ import sys
 from collections import Counter
 
 from capstone import Cs, CS_ARCH_X86, CS_MODE_64
-from capstone.x86 import X86_OP_MEM, X86_OP_IMM, X86_REG_RIP
+from capstone.x86 import X86_OP_MEM, X86_OP_IMM, X86_OP_REG, X86_REG_RIP
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUB = os.path.dirname(HERE)
@@ -373,9 +373,108 @@ def cmd_jt(ctx, a, base=None, owner=None):
         n += 1
     c = Counter(entries)
     print("entries: %d   distinct targets: %d" % (len(entries), len(c)))
+    print("-- 按表序（先看这段：`idx` 与判别值的对应全靠顺序，聚合会把顺序丢掉）--")
+    for i, t in enumerate(entries[:24]):
+        print("  idx %-2d -> %#x" % (i, t))
+    if len(entries) > 24:
+        print("  ...（共 %d 项）" % len(entries))
     for t, k in sorted(c.items(), key=lambda kv: (-kv[1], kv[0])):
         print("  %#x  x%d" % (t, k))
     return 0
+
+
+# ---------------------------------------------------------------- 事件 tag 的生产点
+# `GraphwarEvent` 的线上判别值一律是 `0x8000000000000000 | n`（n = 0..73，
+# 见 tools/event_tags_arm64.py / docs/06 §24.6(c)）。**它几乎不是 `movabs` 出来的**：
+# LLVM 对 i64::MIN+n 有两种写法，两种都踩过坑 ——
+#
+#   ① `movabs r, 0x7fffffffffffffff` + `add r, n+1`（n+1 ≤ 63 时常用）
+#   ② `movabs r, 0x7fffffffffffffff` + `inc r`         ← tag 恰好 0x8000…0 时
+#   ③ `movabs r, 0x8000…|n` 直写                          ← 少数（如 tag 42）
+#
+# 只扫 ③ 会得出「EffectInfo 的生产者查不动」的错结论（上一轮就是这样：全 `.text`
+# 只有 2 处 `movabs 0x8000…2c`，且都是消费者）。本命令把三种形态一起扫，
+# 并给出每个生产点落在哪个函数里。
+#
+# 正对照（自带，扫不到就说明扫法坏了）：
+#   tag 42 = `0x800000000000002a` 必须命中 0x3f20f0（`GraphwarObstacleManager::queue_destroy_obstacle`）
+#   tag 41 = `0x8000000000000029` 必须命中 0x3f1b30（`GraphwarObstacleManager::destroy_obstacle`）
+#   tag 44 = `0x800000000000002c` 必须同时命中生产点（execute_results）与 2 个消费者
+TAG_SENTINEL = 0x7fffffffffffffff
+
+
+def _tag_of_reg(ins_list, i, reg, span=60):
+    """从 `movabs reg, i64::MAX` 出发，往后找第一次改 reg 的 `add/inc/lea`，还原 tag。"""
+    for j in range(i + 1, min(i + span, len(ins_list))):
+        y = ins_list[j]
+        if y.regs_write and reg in y.regs_write:
+            return None
+        if y.operands and y.operands[0].type == X86_OP_REG and y.operands[0].reg == reg:
+            if y.mnemonic == "add" and len(y.operands) == 2 and y.operands[1].type == X86_OP_IMM:
+                imm = y.operands[1].imm
+                if 0 < imm < 74:
+                    return (0x8000000000000000 + imm - 1, y.address)
+            if y.mnemonic == "inc":
+                return (0x8000000000000000, y.address)
+    return None
+
+
+def cmd_tags(ctx, only=None, show_uses=False):
+    """扫全 `.text`：`0x8000000000000000|n` 的三种 materialize 形态 + 直写 movabs。"""
+    found = {}          # tag -> [(site, tag_site, kind)]
+    for lo, hi in ctx.exec_ranges:
+        ins_list = dis_list(ctx, lo, hi)
+        for i, ins in enumerate(ins_list):
+            if ins.mnemonic != "movabs" or len(ins.operands) != 2:
+                continue
+            d, s = ins.operands
+            if d.type != X86_OP_REG or s.type != X86_OP_IMM:
+                continue
+            v = s.imm & 0xFFFFFFFFFFFFFFFF
+            if v == TAG_SENTINEL:
+                got = _tag_of_reg(ins_list, i, d.reg)
+                if got:
+                    found.setdefault(got[0], []).append((ins.address, got[1], "MAX+n"))
+            elif v >> 32 == 0x80000000:
+                found.setdefault(v, []).append((ins.address, ins.address, "movabs"))
+    print("== 全 .text 的 `0x8000…|n` materialize 点（三种形态）：%d 个 tag ==" % len(found))
+    for tag in sorted(found):
+        n = tag & 0x7FFFFFFF
+        sites = found[tag]
+        if only is not None and n != only:
+            continue
+        if only is None and n > 73:      # `GraphwarEvent` 只有 0..=73；更大的值是 Vec 容量哨兵之类的噪声
+            continue
+        print("\n tag %-3d %#018x   %d 处" % (n, tag, len(sites)))
+        owners = Counter(ctx.owner(a) for a, _, _ in sites)
+        for o, k in sorted(owners.items(), key=lambda kv: -kv[1]):
+            addrs = " ".join("%#x" % a for a, _, _ in sites if ctx.owner(a) == o)
+            loc = ""
+            if o:
+                ex = ctx.fde_extent(o)
+                locs = _owner_loc(ctx, o, ex[1] if ex else o + 0x400)
+                loc = ("  " + locs) if locs else ""
+            print("   in %#x  x%-2d %s%s" % (o or 0, k, addrs, loc))
+    # 正对照
+    ok42 = any(ctx.owner(a) == 0x3f20f0 for a, _, _ in found.get(0x800000000000002a, []))
+    ok41 = any(ctx.owner(a) == 0x3f1b30 for a, _, _ in found.get(0x8000000000000029, []))
+    print("\n== 正对照 ==")
+    print("  tag 42 @0x3f20f0 (queue_destroy_obstacle): %s" % ("OK" if ok42 else "**失败**"))
+    print("  tag 41 @0x3f1b30 (destroy_obstacle)      : %s" % ("OK" if ok41 else "**失败**"))
+    return 0 if (ok42 and ok41) else 1
+
+
+def _owner_loc(ctx, start, end):
+    """函数里出现次数最多的 `src/*.rs`（panic::Location 投票），用于模块归属。"""
+    votes = Counter()
+    for ins in dis_list(ctx, start, end):
+        for op in ins.operands:
+            if op.type == X86_OP_MEM and op.mem.base == X86_REG_RIP:
+                t = ins.address + ins.size + op.mem.disp
+                loc = maybe_location(ctx, t)
+                if loc:
+                    votes[loc.split(":")[0]] += 1
+    return ", ".join("%s x%d" % (f, n) for f, n in votes.most_common(2))
 
 
 def main(argv):
@@ -397,6 +496,9 @@ def main(argv):
     p = sub.add_parser("jt"); p.add_argument("va")
     p.add_argument("--owner", default=None, help="只保留落在该函数 FDE 范围内的目标")
     p.set_defaults(fn=lambda c, x: cmd_jt(c, int(x.va, 16), None, x.owner))
+    p = sub.add_parser("tags", help="扫全 .text 的事件 tag 生产点（三种 materialize 形态）")
+    p.add_argument("--only", type=lambda s: int(s, 0), default=None, help="只看某个判别值 n")
+    p.set_defaults(fn=lambda c, x: cmd_tags(c, x.only))
     args = ap.parse_args(argv)
     return args.fn(Ctx(args.so), args)
 
