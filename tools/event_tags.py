@@ -17,7 +17,10 @@
 是 LLVM 用两条已有串的重叠片段拼出来的，见 docs/114 §4）。
 
 命中分支把判别值写进 `%ebx`，其中一部分分支还会先拼一个 `Event` 前缀
-（tag word `0x8000000000000000 | N` 在 `+0`）再调 `0x3e6830` 补 payload。
+（tag word `0x8000000000000000 | N` 在 `+0`）再调 `0x3e6830`。
+
+⚠ `0x3e6830` **不是**"补 payload"：它是 `Event` 的**析构（drop glue）**——零次写回 `(%rdi)`，
+69 项跳表里 50 项直接 `ret`，其余臂只 dealloc 载荷（`docs/151` §2.1）。
 
 用法：
     ../.venv/bin/python tools/event_tags.py            # 表 + 自检

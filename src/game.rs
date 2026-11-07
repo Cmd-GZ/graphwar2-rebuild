@@ -276,6 +276,85 @@ pub(crate) fn hole_point(
 }
 
 // ---------------------------------------------------------------------------
+// 修正文本：补齐括号 / 去掉多余右括号（`docs/06` §29）
+// ---------------------------------------------------------------------------
+
+/// 括号平衡：返回 `(真值发出的串, 我方采样器能吃的串)`。
+///
+/// **为什么要有两个串**（`docs/06` §29，4 批种类序列由对变错的根因）：
+///
+/// * 真值的修正文本 = `原文 + ")"×缺 + " ± c.ddd"`（回放 `corrected_function` 逐字节核对，
+///   `docs/142` §2.2 的 739/739）—— 只**补**括号，从不删。所以**发出去的**必须是它。
+/// * 但我方 `math_function::parse` 遇到**没有配对**的 `)` 时会**就地截断**（`expr()` 直接返
+///   回已建好的子树，后面的记号全丢）。真解析器不截断：`1782675382#0` 的原文
+///   `14/(1+exp(100*(x-19)^2)))+24/(...)` 用"去掉多余 `)` + 补 `")`"的文本采样，端点
+///   `(-24.99612783676475, -4.323)` 与回放 `EffectInfo(Explosion)` **逐位相同**。
+///   而若照原文采样，`+24/(...)` **和追加的修正常数**一起被丢掉 —— 曲线不经过 `(x0,y0)`
+///   （`|y0 − f(x0)| ≈ 4.3 ≫ step 0.01`），采样器第一步就收敛不了，弹道退化成 1 个点。
+///
+/// 所以：**采样**用"补齐 + 去掉多余 `)`"的串，**报文**用"只补齐"的串。
+fn balanced_texts(text: &str) -> (String, String) {
+    let mut depth = 0i64;
+    let mut stripped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '(' => {
+                depth += 1;
+                stripped.push(ch);
+            }
+            ')' => {
+                if depth > 0 {
+                    depth -= 1;
+                    stripped.push(ch);
+                }
+                // depth == 0 ⇒ 这条 `)` 没有配对：真解析器当噪声跳过去，我方 parse 会截断。
+            }
+            _ => stripped.push(ch),
+        }
+    }
+    let mut closed = String::from(text);
+    let mut samplable = stripped;
+    for _ in 0..depth {
+        closed.push(')');
+        samplable.push(')');
+    }
+    (closed, samplable)
+}
+
+/// 真值**发出去**的 `corrected_function`：`原文 + ")"×缺 + " ± c.ddd"`。
+///
+/// `c` 由**补完括号的树**算（真解析器看的就是整条表达式，不会被多余的 `)` 截断）。
+pub(crate) fn corrected_function_text(
+    function_text: &str,
+    x0: f64,
+    y0: f64,
+    flip: bool,
+) -> String {
+    let (closed, samplable) = balanced_texts(function_text);
+    let toks = crate::math_function::parse(&samplable);
+    format!(
+        "{closed}{}",
+        crate::graphwar_shot_calculator::correction_text(&toks, x0, y0, flip)
+    )
+}
+
+/// **采样器**吃的修正文本：与 [`corrected_function_text`] 同一条规则，但把多余的 `)`
+/// 去掉（理由见 [`balanced_texts`] 的文档）。
+pub(crate) fn sampling_function_text(
+    function_text: &str,
+    x0: f64,
+    y0: f64,
+    flip: bool,
+) -> String {
+    let (_, samplable) = balanced_texts(function_text);
+    let toks = crate::math_function::parse(&samplable);
+    format!(
+        "{samplable}{}",
+        crate::graphwar_shot_calculator::correction_text(&toks, x0, y0, flip)
+    )
+}
+
+// ---------------------------------------------------------------------------
 // 同时回合制：一发的提交（收集阶段的产物）
 // ---------------------------------------------------------------------------
 
@@ -1193,9 +1272,11 @@ impl Match {
             //     所以轨迹里的常量是**印出来的三位小数**，不是全精度 `c`。
             // 旧实现走 `resolve_owned(原文, …)`，内部按 `shifted_tokens`（全精度 `c`）平移，
             // 与真值差 3 位小数的舍入量（1e-6~1e-3）—— 正是归因表 `Y2` 那一桶。
-            let corrected = crate::graphwar_shot_calculator::corrected_text(
-                s.function_text, s.x0, s.y0, s.flip,
-            );
+            //
+            // **括号处理**（2026-11 第二次修，`docs/06` §29）：原文的括号既可能少
+            // （要补 `)`）也可能多（多出来的 `)` 会让我方 `parse` 截断、把追加的常数一起丢掉）。
+            // 采样串与报文串因此不是同一个串，见 [`balanced_texts`]。
+            let corrected = sampling_function_text(s.function_text, s.x0, s.y0, s.flip);
             let points = crate::graphwar_shot_calculator::shot_points(
                 &corrected,
                 s.x0,
@@ -1267,10 +1348,12 @@ impl Match {
         // ① 按类型分组的前缀
         let mut msgs = vec![crate::_scaffold::protocol::emit_game_state("CalculatingResults")];
         for s in shots {
+            // 发出去的是**只补括号、不删**的那一串（回放 `corrected_function` 逐字节同形）；
+            // 采样用的另一串见 [`balanced_texts`]。
             msgs.push(crate::_scaffold::protocol::emit_function_info(
                 s.owner_id,
                 s.function_text,
-                Some(&crate::graphwar_shot_calculator::corrected_text(s.function_text, s.x0, s.y0, s.flip)),
+                Some(&corrected_function_text(s.function_text, s.x0, s.y0, s.flip)),
             ));
         }
         for (s, out) in shots.iter().zip(outcomes.iter()) {
@@ -1365,6 +1448,44 @@ impl Match {
 mod tests {
     use super::*;
     use crate::_scaffold::protocol::{get_f64, get_int, get_str, parse_message};
+
+    /// 真值的括号规则（回放 1291 发里的 8 多 / 11 缺，`docs/06` §29.4）：
+    /// * **发出去**的串只补括号、从不删（多出来的 `)` 原样保留）；
+    /// * **采样**用的串把没有配对的 `)` 去掉 —— 否则我方 `parse` 在那里截断，
+    ///   追加的修正常数被整段丢掉，弹道退化成 1 个点。
+    #[test]
+    fn bracket_balancing_splits_emitted_and_sampled_text() {
+        // 缺 `)`：两个串都是"补到平衡"（真值 11/11 这么做）
+        let (closed, samplable) = balanced_texts("5/155sin(4exp(4*6cos(");
+        assert_eq!(closed, "5/155sin(4exp(4*6cos()))");
+        assert_eq!(samplable, closed);
+
+        // 多 `)`：发出去的串**逐字符不变**（回放 `corrected_function` 就是这样），
+        // 采样串去掉那一个多余的 `)`。样本原文来自 `1782675382#0`。
+        let (closed, samplable) =
+            balanced_texts("14/(1+exp(100*(x-19)^2)))+24/(1+exp(100*(x-24)^2))");
+        assert_eq!(closed, "14/(1+exp(100*(x-19)^2)))+24/(1+exp(100*(x-24)^2))");
+        assert_eq!(samplable, "14/(1+exp(100*(x-19)^2))+24/(1+exp(100*(x-24)^2))");
+
+        // 采样串真的能走过第一步：`(x0, y0)` 被修正常数接上了。
+        let fn_text = "14/(1+exp(100*(x-19)^2)))+24/(1+exp(100*(x-24)^2))";
+        let (x0, y0, flip) = (22.908325288230134_f64, -4.32330978206142_f64, true);
+        let sampled = sampling_function_text(fn_text, x0, y0, flip);
+        let pts = crate::graphwar_shot_calculator::shot_points(
+            &sampled,
+            x0,
+            y0,
+            crate::SERVER_STEP,
+            flip,
+            crate::graphwar_path_calculator::Mode::Normal,
+            false,
+        );
+        assert!(pts.len() > 100, "弹道不该退化成 {} 个点", pts.len());
+        // 端点与回放 `EffectInfo(ExplosionEffect)` 逐位相同（`docs/06` §29.4）
+        let end = *pts.last().unwrap();
+        assert_eq!(end.0.to_bits(), (-24.99612783676475_f64).to_bits());
+        assert_eq!(end.1.to_bits(), (-4.323_f64).to_bits());
+    }
 
     pub(super) fn room() -> RoomState {
         RoomState {

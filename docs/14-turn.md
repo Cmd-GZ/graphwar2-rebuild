@@ -441,9 +441,13 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 它们走 `0x3d5260` 那条名字表（另有模块收），本模块只是被 `root_node` 的
 `0x3a5760` / `0x3b0830` **主动调用**（§9.1 调用图）。
 
-⚠️ **未知**：`0x9ba978` / `0x9bb030` 这两个 GOT 槽**没有**解出 gdext 引擎侧的成员名
-（`set_visible`? `connect`?）。
-缺的证据：运行时读 GOT 槽指向的引擎函数指针符号（Frida / 调试器）。
+⚠️ **槽已解、成员名未解**（2026-11 复核，`docs/151` §2.4）：
+
+* `0x9ba978` → `R_X86_64_RELATIVE` addend **`0x8ab200`**（gdext 生成的方法包装，
+  与 `draw_arc` 的包装 `0x8abca0` 同一段）。成员名见 `docs/16` §23.6（`CanvasItem::set_visible`，推断强）。
+* `0x9bb030` → addend **`0x514b40`**，那是**游戏自己的函数**（落在客户端 `0x514xxx` 段），
+  **不是** gdext 引擎成员 —— 原文把它和 `0x9ba978` 并列成"引擎侧成员名未解"，口径是错的。
+  使用者：`0x3dc9a1`、`0x3dca3c`、`0x4b436d`、`0x4b4428`、`0x4b44e3`、`0x4b4595` …
 本节的"`connect`"是依据"串名 + 长度 + 紧跟 callable 实参"三点做出的**强推断**，不是逐位结论。
 
 ### 9.3 弹道什么时候清掉（问题 3）——**否定证据**
@@ -542,8 +546,11 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 实现：`src/graphwar_play_screen_control.rs::UiMode::{Play, Replay}` + `widget_flags()`。
 
 ⚠️ **推断**的部分：`*0x9ba978` 收一个 `bool`，作用于刚取到的节点——但成员名
-（`set_visible` / `set_disabled` / `set_process`）**没有**从二进制确认。
-缺的证据：该 GOT 槽指向的引擎函数指针符号。
+（`set_visible` / `set_disabled` / `set_process`）**没有**从 x86 侧直接确认。
+槽的 addend 已实测 = **`0x8ab200`**（`docs/151` §2.4）；成员名靠 `docs/16` §23.6 的
+arm64 侧 `bl` 证据，档位**推断（强）**。
+⚠️ 顺带更正：同一句里被并列的 `0x9baa10`（`docs/16` §15.9）**不是** GOT 槽里的引擎成员，
+它是 `R_X86_64_GLOB_DAT` 的 **`bcmp@GLIBC_2.2.5`**（libc）。
 
 ### 9.8 进了 Rust 的部分 / 仍是未知
 

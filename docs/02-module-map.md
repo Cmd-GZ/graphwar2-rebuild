@@ -250,7 +250,14 @@ Ghidra 边界下 **9 个函数**，全部反编译成功：
 | `0x454950` | 167 行 | 存活判定（`&1` 为真才算活，`AI.md` §8.4） |
 | `0x454b40` | 104 行 | 入口迹象 |
 
-另有 3 个 33 行的极小函数（`0x554730/750/770`）不带模块锚，归属未知。
+~~另有 3 个 33 行的极小函数（`0x554730/750/770`）不带模块锚，归属未知。~~
+**✅ 已结案（2026-11，`docs/151` §2.7）**：这一簇**不是游戏代码**，是**三方 X.509/CRL 栈**
+（`webpki`/`rustls` 一类）的 panic/`format_args!` 助手 —— 它们 `lea` 的全是证书词汇
+（`revocation_date` / `reason_code` / `invalidity_date` / `KeyCompromise` / `CaCompromise` /
+`signed_data` / `BorrowedCertRevocationList` / `next_update` @`0x1c94bc`–`0x1c971f`）。
+而且 **`0x554730` / `0x554750` 根本不是函数起点**：`.eh_frame` FDE 给出这两处所属函数是
+`0x5546c0..0x554762`；只有 `0x554770`（`0x554770..0x554826`）是起点。
+⇒ **不进复原分母**（AGENTS §4：指不到 `graphwar_*.rs` 的一律不算原版模块）。
 
 外部调用者（`tools/callers.py`，只覆盖直接调用）：
 
@@ -572,7 +579,7 @@ SIMD 内联把 20 行 C 展开成 60 行位运算，`SUB161(...)`/`auVar` 满屏
 | vaddr | 名字（本文暂定） | 为什么必须知道它 | 证据 |
 |---|---|---|---|
 | `0x3d3530` | **事件入队 sink** | 本批 8 个模块共 12 处 `call [0x9bac80]` 全部指向它。`tools/ptr_slots.py` 实测 **113 个使用者**，覆盖 team/life/obstacle/turn/color/mode/… 几乎所有 manager ⇒ 它是全局唯一的"发事件"出口 | 逐位（无条件拷贝 0x48 字节） |
-| `0x3e6830` | 事件骨架加工（`0x140` B） | `0x3d38f0` 的每个分支在置 `ebx` 前都 `call 0x3e6830(rdi=rsp)` | 未知 |
+| `0x3e6830` | **`Event` 的析构（drop glue）**——不是"事件骨架加工" | `0x3d38f0` 的每个分支在置 `ebx` 前都 `call 0x3e6830(rdi=rsp)`，收尾把手上那个 `Event` 丢掉。**真长度 `0xd5`（`0x3e6830..0x3e6905`，FDE），不是 `0x140`**：Ghidra 把隔壁 `0x3e6910` 并了进来，`archive/112` 记的"自身调 `0x3e6600`/`0x3e6370`"其实是 `0x3e6910` 的调用 | **观测**（`docs/151` §2.1：零次写回 `(%rdi)`；69 项跳表 50 项 = `pop rbx; ret`；其余臂只 `jmp *0x9ba5a0` → `dealloc` `0x528070`） |
 | `0x418170` / `0x4183b0` | 存档读写 | `user://campaign.save` 的**真正**使用者 | 观测 |
 
 ---
@@ -763,7 +770,7 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 | `graphwar_life_manager.rs`（9/12） | `src/graphwar_life_manager.rs` | 锚点 9 个（0x454b40…0x455b60，`docs/02 §13.1` 那张独立表逐个相同；0x454950 是 `&1` 存活判定）；`docs/65`（穿过即死/友军致死，真实对局与回放逐个相同）。原文件 `life.rs` | `一一对应` |
 | `graphwar_path_calculator.rs`（1/9） | `src/graphwar_path_calculator.rs` | 采样器 `0x3c2530`（`docs/04`）+ `docs/91`（补 `hi = mid2` 后 24/24 用例整条点序列逐位相等）。⚠ 采样器本体**没有** panic 锚（**§20 复核结论不变**：`0x3c2530` 1,680 B 全函数体 0 个 Location 引用）；但「本模块只归属到 1 个辅助函数（0x469630/0x4696d0）」已被 **§20 更正**——本模块自己的 9 个 Location 锚**全部**落在 **`0x467530`**（= `calculate_paths`，5,408 B），`0x469630`/`0x4696d0` 只是 160 B 的 panic/drop 胶水。⇒ 「采样器 `0x3c2530` 属于本模块」仍是文档级归属，**不是**锚点归属（§20.5 / §20.7 第 2 条）。原文件 `path.rs` | `一一对应` |
 | `graphwar_replay_player.rs`（5/18） | `src/graphwar_replay_player.rs` | 锚点 5 个（0x3d6d70、0x3d7380、0x3d76f0 写 `user://replays/`）；`docs/133` §2（gzip+JSONL 格式）、`docs/136/142`（400 份回放消息级对拍，71 份完全一致）。原文件 `replay.rs`。⚠ 文件内 `ReplayPlayer`（播放时钟）是我方自定模型，见 §17.4 | `一一对应` |
-| `graphwar_tick_handler.rs`（2/3） | `src/graphwar_tick_handler.rs` | `docs/35`（113 个 `TickReply` 样本逐字节）+ `docs/42`（TimeMode → 回合时长）。原文件 `tick.rs`。⚠ **待核实**：本模块的锚函数是 0x51a610 / 0x51a750 / 0x3d76f0（后两个与回放写盘同址、`contested` 与 replay_player 共有），与本文件实现的"60Hz tick 时钟 + 时长表"**没有函数级对应**；现在的对应来自矩阵旧行与模块名，属**推断** | `一一对应（⚠待核实）` |
+| `graphwar_tick_handler.rs`（2/3） | `src/graphwar_tick_handler.rs` | `docs/35`（113 个 `TickReply` 样本逐字节）+ `docs/42`（TimeMode → 回合时长）。原文件 `tick.rs`。⚠ **待核实**：本模块的锚函数是 0x51a610 / 0x51a750 / 0x3d76f0（后两个与回放写盘同址、`contested` 与 replay_player 共有），与本文件实现的"60Hz tick 时钟 + 时长表"**没有函数级对应**；现在的对应来自矩阵旧行与模块名，属**推断**。**2026-11 复核（`tools/addr_probe.py locs`，`docs/151` 第 27 条）⇒ 核实失败**：`0x51a750`（`0xcf0` B）体内 5 条 `panic::Location` 全指 `src/graphwar_function_evolutionator.rs`（⇒ 它是**进化器**的函数，不可能是 tick_handler）；`0x51a610`（`0xd6` B）只有 1 条且指 `src/graphwar_local_player_manager.rs`；`0x3d76f0`（`0x254` B）**零** Location。三个锚都撑不住本行，函数级定位要重找 | `⚠核实失败（锚不属本模块）` |
 
 | `src/graphwar_level_manager.rs` | 原版 `graphwar_level_manager.rs` + **可能属于 `graphwar_campaign_control.rs`** 的 `level_info`(`0x4ad380`) 与 `campaign.save` 簇(`0x417ef0`/`0x418170`/`0x4183b0`) | 这三处**都没有 Location 锚**；`docs/10` §12.6 | 无锚 ⇒ 归属只能靠调用形态，证据不足。暂时承载并登记，等 `graphwar_campaign_control.rs` 有锚点再决定搬不搬 |
 | `graphwar_level_generator.rs`（4/26） | `src/graphwar_level_generator.rs` + `src/graphwar_level_generator/tables.rs` | 锚点 26 个（0x466d20/0x467530 等）；`docs/55/56/61`（障碍 x/y/r 的 `to_bits()` 13/13 逐位）、`docs/103/126`（种子语义）。原文件 `levelgen.rs` + `levelgen_tables.rs`（ziggurat 表）——**同一个原版文件，我方按"逻辑 / 常量表"拆成两份**，主文件用原版名，表放同名目录 | `一一对应` |
@@ -776,7 +783,7 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 | `graphwar_game_server.rs`（3/86） | `src/graphwar_game_server.rs` + `src/server.rs` | `docs/43/46`（一回合 12 条报文与抓包逐字节）、`docs/62`（真实 TCP 跑到 EndingGame）、`docs/117`（回合推进接线）。原文件 `serverloop.rs`（主循环）+ `server.rs`（首包同步，与 server_connection_handler 共有） | `混装（待拆）` |
 | `graphwar_server_connection_handler.rs`（6/24） | `src/server.rs` | `docs/33`（新连接 7 条状态同步逐字节一致）；`docs/112` §15.3 指出建事件名数组的 `0x4500c0` 就在本模块。⚠ `server.rs` 里还有 `on_tick_request`（tick 应答）→ 见 §17.4 | `混装（待拆）` |
 | `graphwar_plane.rs`（10/19） | `src/plane.rs` | `docs/08/39`（掩膜光栅化与 `is_occupied` 逐字节 / 300 随机点一致）；`px = x*1000/50 + 500` 来自 `0x4be3e0`。⚠ 同文件还含 plane_pos_manager 与（疑似的）obstacle_manager 内容 → §17.4 | `混装（待拆）` |
-| `graphwar_plane_pos_manager.rs`（6/9） | `src/plane.rs` | `docs/140`：`px = 20x + 500` 由常量反查得出。⚠ 本模块的锚函数在 `0x3c7330…0x3c7cb0`（与 path_calculator / shot_calculator 同区段），与 `plane.rs` 里那条换算**没有**做过函数级对齐 ⇒ "plane.rs 属于本模块"是**推断** | `混装（待拆）` |
+| `graphwar_plane_pos_manager.rs`（6/9） | `src/plane.rs` | `docs/140`：`px = 20x + 500` 由常量反查得出。⚠ 本模块的锚函数在 `0x3c7330…0x3c7cb0`（与 path_calculator / shot_calculator 同区段），与 `plane.rs` 里那条换算**没有**做过函数级对齐 ⇒ "plane.rs 属于本模块"是**推断**。**2026-11 复核（`docs/151` 第 28 条）**：`0x3c7330` 只有 `0x2f`（47）字节、`0x3c7cb0` 是 `0x8d9` B，**两者都零 `panic::Location`** ⇒ 函数级对齐仍然做不到，缺的是非锚证据（结构/体量/常量指纹） | `混装（待拆，锚无效）` |
 | `graphwar_obstacle_manager.rs`（8/10） | `src/plane.rs`（只有掩膜部分） | **2026-11-07 更正（`docs/16` §24.4 第 1/1b 行）**：本模块的锚函数是 **10 个** —— `0x3c2bc0 0x3ee190 0x3f11e0 0x3f15b0 0x3f17a0 0x3f19a0 0x3f1b30 0x3f1d30 0x3f20f0 0x3f2360`（= `fixtures/module_funcs.tsv` 本模块 10 行）。旧文那 4 个（`0x3c64c0/0x3f00b0/0x3f2480/0x3f27d0`）是 `class_probe` v1 的 `+0x1000` 平移 artifact。**旧「两处证据冲突」可结案**：`0x4f15b0` 是 Ghidra 口径，其 ELF 虚地址 `0x3f15b0` **就是**本模块锚函数之一；所谓冲突是地址空间混用 + v1 平移共同造成的。`docs/08/39` 覆盖的光栅化 / `is_occupied`（摧毁 = 挖 r=0.5 洞）不变。障碍的生成与生命周期仍未落码 | `混装（待拆）` |
 | `graphwar_ad_switch.rs`（6/3） | — | `docs/19`/`docs/132`：判据只有 `are_ads_enabled() = !owned`；AdMob 在 `.gdc` 插件侧 | `未实现` |
 | `graphwar_audio_control.rs`（7/16） | — | `docs/111`：SoundHandler / `-15f` / `-5f` / 32767 归一化已还原，但没接进 `src/`（`client/` 是仿制） | `未实现` |
@@ -947,7 +954,7 @@ function/mod|function/to_text)\.rs' --include='*.md' --include='*.rs' --include=
 
 | 我们现在写的 | 物证给出的真名 |
 |---|---|
-| 采样器 `0x3c2530`（"语义已知、名字未知"） | 名字确是 `GraphwarPathCalculator::calculate_paths`，**但它不在 `0x3c2530`**——§20 把这个名字锚到 **`0x467530`**；`0x3c2530` 全函数体 **0 个 Location 引用**，用锚点无法定名（仍是 `未知`） |
+| 采样器 `0x3c2530`（"语义已知、名字未知"） | 名字确是 `GraphwarPathCalculator::calculate_paths`，**但它不在 `0x3c2530`**——§20 把这个名字锚到 **`0x467530`**；`0x3c2530` 全函数体 **0 个 Location 引用**，用锚点无法定名（仍是 `未知`）。**补充（`docs/151` §2.5，观测）**：它**零 `call rel32`**，唯一入口是 `.data.rel.ro` 的函数指针槽 **`0x9bac98`**（`R_X86_64_RELATIVE` addend = `0x3c2530`），全库只有 2 处使用：`0x3c30c1`（在 `0x3c2bc0` 体内）与 `0x3e2d35`（在 `0x3e2830` 体内）⇒ 复查任何"采样器没被调用"的结论前，先看这个槽 |
 | 开火结算 `0x3c2bc0`（12 KB，"没有逐条还原"） | `GraphwarShotCalculator::calculate_shot_results` —— §20 已用 **11 个双向唯一锚**把它**落到地址上**（`观测`），不再只是名字级推断 |
 | `SETUPS[21]`（`docs/10` 从数据表反推的 21 关） | `setup_level_0` … `setup_level_20`（21 个，一个不多一个不少） |
 
@@ -1658,7 +1665,8 @@ GW2_OLD=2026-08-19 GW2_NEW=2026-08-27 ../.venv/bin/python tools/measure.py   # �
 `0x48`→`0x30`、`0x50`→`0x38`），所以准确的说法是：
 ⇒ **（观测）** 这条函数**没有增删或替换任何一条指令**，只有地址与栈帧排布变了；
 弹道修正的**指令形态**没变。**（未知）** 栈帧排布的变化是否对应局部变量集合的微调，本轮无法判定。
-采样器 `0x3c2530`（§18 用 2024 符号表定名为 `GraphwarPathCalculator::calculate_paths`——⚠ **§20 更正**：这个名字在 2.0.60 上锚到的是 **`0x467530`**，不是 `0x3c2530`；`0x3c2530` 零 Location 锚，名字仍是 `未知`。本节"没有同尺寸对应物"说的是 `0x3c2530` 这个**名字未知**的函数，与 `0x467530` 无关）在 08-27 侧**没有
+采样器 `0x3c2530`（§18 用 2024 符号表定名为 `GraphwarPathCalculator::calculate_paths`——⚠ **§20 更正**：这个名字在 2.0.60 上锚到的是 **`0x467530`**，不是 `0x3c2530`；`0x3c2530` 零 Location 锚，名字仍是 `未知`（另：它**零直接调用**，只经函数指针槽 `0x9bac98` 被调，
+见 `docs/151` §2.5）。本节"没有同尺寸对应物"说的是 `0x3c2530` 这个**名字未知**的函数，与 `0x467530` 无关）在 08-27 侧**没有
 同等大小的对应函数**（最接近的是 08-27 的 `0x4e18e0`，1,717 字节，形态相似度 0.859），
 ⇒ **（未知）** 采样器这一版是否被改过——被重排/内联差异盖住了，本轮的静态口径分辨不出来。
 **不要把这一条写成"采样器没变"**。
@@ -1786,7 +1794,7 @@ Linux x86-64 :  地址    ↔  它引用的 (file,line,col) 集合
 | 函数 | 有锚吗 | 能否定名 |
 |---|---|---|
 | 开火结算 **`0x3c2bc0`** | **有，13 个**（11 个双向唯一） | **能** → `GraphwarShotCalculator::calculate_shot_results`（`观测`） |
-| 采样器 **`0x3c2530`** | **没有，0 个**（1,680 B 全函数体零 Location 引用） | **不能** → 名字仍是 `未知` |
+| 采样器 **`0x3c2530`** | **没有，0 个**（1,680 B 全函数体零 Location 引用） | **不能** → 名字仍是 `未知`。可达性已结案（`docs/151` §2.5）：**零 `call rel32`**，唯一入口是函数指针槽 `0x9bac98`，使用者只有 `0x3c30c1`、`0x3e2d35` 两处 |
 
 所以 `docs/00-status.md` 说「求值器 `0x4eb9d0`、采样器 `0x3c2530` 全函数体零 Location 引用」
 **是对的**（`0x4eb9d0` 复核也是 0 个）——但 **`0x3c2bc0` 不是**，见 §20.7 第 1 条。

@@ -403,10 +403,24 @@ r = u * 5.0 + 3.0     位置恒为 (0, 0)     恰好 1 颗
 #### 「`level_n` = 解锁到 n」是**推断**，缺什么写清楚
 
 已证：文件只存这一个数；写入是单调的（只增大）；写完后用 `n+1` 去调按钮刷新函数。
-**未证**：`0x418820` 到底把按钮改成什么样（`disabled=false`？换图？），
-以及「解锁」是「可以点」还是「可以看描述」。
-⇒ 缺的证据：`0x418820` 里那几个 Godot 节点访问器（`0x3ab390` / `0x4068f0` / `0x407630`）
-落到哪个属性。**这一条留作推断**。
+
+**✅ 2026-11 补证（`docs/151` §2.3，观测）**：`0x418820` 的**谓词**已经逐条读出——
+
+```asm
+0x41886c  cmp  ebp, 0x14          ; i 上界钳在 20（21 个按钮）
+0x4188bf  ...  edx=0xa            ; 把 i 按十进制格式化进 6 字节缓冲（按钮名里带 i）
+0x418a10  cmp  ebp, [rsp+0x34]    ; [rsp+0x34] = 第二个实参
+0x418a14  setbe sil               ; bool = (i <= 实参)，无符号
+0x418a1b  call *0x9ba978          ; 给该节点设这个 bool
+```
+
+而存档写完之后那一处调用是 `inc %edx; mov %edx,%esi; call 0x418820`（`0x4186d2..0x4186d9`）
+⇒ **实参确实是 `n+1`**。所以清完第 n 关，`0…n+1` 号按钮进入同一状态，
+**第 n+1 关与已解锁的关卡同类** ⇒ §11 第 2 条按"下一关可玩"收口，档位升到**观测**。
+
+**仍未证**：那个 bool 属性叫什么（`visible`？`disabled` 取反？其它？）。
+极性上可以排除"`disabled = i<=n`"（那会让 0…n 号不可点，与用户实测矛盾），但排除不了别的
+"true = 可用"属性。缺的证据见 `docs/151` §3.2（一张 gdext 接口名 ↔ GOT 槽 的全表）。
 
 ---
 
@@ -528,7 +542,7 @@ r8  = 0x95b010         # 闭包 B 的 vtable
 | 6 | 模式 `byte3 = 0x05` | **推断 → 观测** | 运行时 `TimeModeInfo` 恒为 `TimerInf`（21/21），与 `0x05` 同向；仍缺"5 = TimerInf 枚举值"的直接证据 |
 | 7 | `axis` 的方向（3=最密） | ✅ **逐位 + 运行时**（§7.1 注、§12.5） | — |
 | 8 | `store_string` 是否带 `\n` | **推断** | 缺 `0x4183b0` 调用方构造字符串的那几条指令（附录 A 已用用户实验旁证：带 `\n` 会让进度归零） |
-| 9 | `0x418820(self, n+1)` 改的是什么属性 | **推断** | §5.3 |
+| 9 | `0x418820(self, n+1)` 改的是什么属性 | **谓词已观测 / 属性名仍推断** | §5.3 + `docs/151` §2.3：`bool = (i <= n+1)`，`i` 取遍 0…20（`setbe` 逐位）；属性名缺 gdext 槽名表 |
 | 10 | `player.config` 的 5 个字段名逐条对到 `match` 分支 | **推断** | 只证了分隔符 `:`（长度 1）+ 写者会写 `\n` |
 | 11 | `local_ip.config` 里 `1` 的语义 | **未知** | `0x4d3180` 里该值的用途 |
 | 12 | `start_level` / `cancel_level` / `exit_campaign` 的分派侧 | **未知** | 三个串在二进制里 0 命中，但确实写在 `.tscn` 的 `input_text` 里 |
@@ -1107,7 +1121,7 @@ fn assign(manager, entity_id: u32, team_key: u8) {      // team_key = 0 → Team
 | `LEVELS[21]` | `level_<n>` 键 / `Level <n>` 标题 / `.rodata` 描述原文 / `description_len` / 模式四元组 | **逐位**（21 条 `mov qword [rsp+0x38], len` + 21 条 `mov dword [rsp+0x58], imm32`；描述串在 `.rodata` 首尾相接，长度 21/21 相符） |
 | `SETUPS[21]` | `start_fn` / `preset_fn` / `preset`(+`min_count`) / `second_fn` / 士兵数 / 目标数 / Bot 难度 / 回合上限 | **逐位**（闭包记录 + 立即数）+ **运行时**（385 份回放，§4 的 `R` 列 21/21） |
 | `campaign.save` | `CAMPAIGN_SAVE_PATH` / `parse_level_key` / `decode_save` / `encode_save` / `save_action` / `save_level` / `refresh_index` | **逐位**（0x417ef0 / 0x418170 / 0x4183b0）；`refresh_index` 的钳位是**观测**（`cmp ebp, 0x14`） |
-| `is_unlocked` | `level_<n>` ⇒ 已解锁到 n（含 n） | **推断**（缺 `0x418820` 的属性落点，§5） |
+| `is_unlocked` | `level_<n>` ⇒ 已解锁到 n（含 n）；刷新按钮那一侧是 `bool = (i <= n+1)` ⇒ **下一关也可玩** | **观测**（谓词 `setbe` + 调用点 `n+1`，`docs/151` §2.3）；属性名仍是推断 |
 | `generate_obstacles` | 按关选生产者：`None` / `generate_center` / `generate(min_count)` | **逐位**（预设本体 + `11-levelgen.md` §5.2 的 13/13 逐位复现） |
 | 未做 | 13 个开场臂的函数体（8～10 次设置调用的操作数含义）、20 个第二闭包的语义、`+0x30` 那个 u32、`+0x3b` 的枚举名 | 见 §12.3 与 §7 |
 
@@ -1172,7 +1186,10 @@ cargo test --offline --test graphwar_level_manager
 
 ### 13.3 分队算术（照抄，不抄结论）
 
-`0x3c1b40` 遍历整表累加两个量，出口 `cmp`/`setb` 写回一个字节：
+`0x3c1b40` 遍历整表累加两个量，出口 `cmp`/`setg` 写回一个字节
+（**审计更正**（[`152`](152-audit-of-merged-claims.md) §1-A）：本节原写 `setb`，实测
+`0x3c1c1c cmp %r8d,%eax` + `0x3c1c1f setg %al` ⇒ 判的是 `Σ(team^1) > Σteam`（**有符号**）。
+人数是小非负整数时 `setg` ≡ `setb`，**下面的结论一字不改**，错的只是条件码的名字）：
 
 ```text
 sum     = Σ (team as u32)          // 在 0/1 上 = #Team2
