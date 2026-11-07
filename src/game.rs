@@ -351,6 +351,17 @@ fn balanced_texts(text: &str) -> (String, String) {
 /// 真值**发出去**的 `corrected_function`：`原文 + ")"×缺 + " ± c.ddd"`。
 ///
 /// `c` 由**补完括号的树**算（真解析器看的就是整条表达式，不会被多余的 `)` 截断）。
+///
+/// ⚠️ **别把 `x0` 挪 1 ulp 来"修" `C` 桶**（试过，已否）。`docs/06` §42：
+/// 真值那个 `calculate_function_offset_str`（x86-64 `0x3c5f70`）就是
+/// `y0 − f(flip ? −x0 : x0)`，把它在 unicorn 里按**报文里的 `start_x`** 调一遍，
+/// 输出与我们这里**逐字节相同**（含 `C` 桶那 14 批）。所以少的东西不在这一步，
+/// 而在**调用方传进来的那个 Point**：那 14 批的 `c` 只有把 point.x 挪 1 ulp
+/// 向零才复现得出来，可是另有 7 批（`c` 巨大、对 x 同样敏感 1 ulp 的）证明
+/// 那些批的 point.x **就是** `start_x`。⇒ 两条 x 生产路径之差按发而异，
+/// 不能写成 `f(x0)` 这样的规则；硬写会在 12 批上赚、在 7 批上赔（实测 647→652，
+/// `C` 14→7 但多出 7 个新不符）。缺的证据：喂给 `0x3c5f70` 的那个 Point 的生产者
+/// （该函数的调用点是**指针派发**，`.text` 里没有 `call rel32` 指向它）。
 pub(crate) fn corrected_function_text(
     function_text: &str,
     x0: f64,
