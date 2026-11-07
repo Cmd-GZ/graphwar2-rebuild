@@ -9,7 +9,9 @@
 //! cargo run --release --example replay_attrib -- \
 //!     --dir <语料> --drive fire|conv --policy default|strict --json out.jsonl
 //!
-//!   --drive fire   `replaydiff::Predictor`（每发一次 `Match::fire`）—— 与 `replay_diff` 逐位同口径
+//!   --drive fire   `replaydiff::Predictor`（**批内 ≥2 发**一次 `Match::fire_batch`，单发批仍
+//!                  走 `Match::fire`）—— 与 `replay_diff` 逐位同口径。2026-11-08 起口径变了，
+//!                  见 `docs/06-verification.md` §39
 //!   --drive conv   `diffconv::ConvPredictor`（模式感知 + 修正文本 + 爆炸点回代 + 皮肤特效）
 //!   --policy default  `Policy::default()`（Ash/Spark 单侧排除）
 //!   --policy strict   `diffconv::strict_policy()`（四类特效两侧对称比）
@@ -234,7 +236,9 @@ fn main() {
             None
         };
         // 驱动 C：`Match::fire_batch`（一个批产出一整个结算批，`docs/141` §3 的分组）。
-        // 与 `Predictor` 的唯一区别就是**按批**而不是按发调 —— 用来量"分组"这一项值多少。
+        // 2026-11-08 之后它与 `fire` 轴**都**按批结算，剩下的唯一差别是**模式时刻表**：
+        // 本驱动用建局时读到的模式（不动），`Predictor` 按 `FunctionModeInfo` 逐批更新。
+        // ⇒ 两条轴的差 = "局中改模式"这一项（`docs/06` §39）。
         let mut model_batch = if drive == "batch" {
             let soldiers: Vec<Target> = inputs
                 .pos
