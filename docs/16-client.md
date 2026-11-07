@@ -7503,3 +7503,185 @@ cargo test --offline                            # lib 457 / 总计 1499
 cargo test --offline --features gdext-bindings  # lib 522 / 总计 1564（基线 518/1560 + 本批 4 条单测）
 python3 tools/coverage_matrix.py --check        # OK（本次重跑只动了 src_files/src_fns/src_tree_sha256）
 ```
+
+## 41. 容器里从 **3 个到 22 个**：`GraphwarGameClient::new` 的注册序**逐条定死**（2026-11）
+
+> 本节做的是 `docs/02` §22.4 留下的那条尾巴：「22 条 `add_module` 的调用序两侧逐位相同，
+> 但**哪一条对应哪个型**没做跨架构对齐」。§38 只装了 3 个，而且顺序是**我方挑的**。
+> 本节把 22 条的**型**与**序**一起钉到指令上，然后把 22 个全装进容器。
+>
+> 一句话：**22 条全部定死（档位 `观测`；顺序 `逐位`）**，
+> 22 个全部装配进去（**17 个是我方复原类型 + 5 个是零行为空占位**）。
+
+### 41.1 四问四答
+
+| 问题 | 结论 | 档位 |
+|---|---|---|
+| 22 条各是哪个型？ | **22/22 全部有名字**：每条调用点前一条 `bl` 就是 `<Type>::new`（arm64 `.symtab` 原文，未 strip） | **观测** |
+| 顺序对不对？ | 22 条的 `size_of::<RefCell<M>>` 序列在两架构上**逐字相同**（`80,120,72,80,80,32,304,40,80,40,80,88,40,80,40,176,80,80,56,80,128,80`） | **逐位** |
+| 有没有漏/多？ | 全 `.text` 扫下来进 25 个 `add_module` 单态化的调用点**恰好 44 条** = 客户端 22 + 服务端线程 20 + `GraphwarBackend::start_*` 1 + 1；并集 = 25 | **观测** |
+| 有没有重复型？ | 22 条**没有重复型**；客户端不注册的正好是 `GraphwarBanList` / `GraphwarServerConnectionHandler` / `GraphwarGameRecorder`（服务端与 backend 才装） | **观测** |
+
+⚠️ 与 §38.7 的关系：那里写「剩下 19 个 manager 一个都没装」——**本节已过期它**，
+改成「22 个全装，其中 5 个是空占位」。旧句不删，按 `AGENTS.md` §0.6 就地标明。
+
+### 41.2 22 条注册序（逐条证据）
+
+`size` = `size_of::<M>()`（= `dyn Any` vtable 的 size 字 − 8，`docs/02` §22.3）；
+`arm64 new` = 那个 `<Type>::new` 的地址；`arm64 vt` = `add_module` 里 `adrp/add` 拼出来的
+vtable 地址；`arm64 add` / `x86 add` = 该型的 `add_module` 单态化。
+
+| # | 原版类型（arm64 `.symtab`） | `size` | arm64 `new` | arm64 vtable | arm64 `add` | x86 `add` | 我方装配的类型 | 档位 |
+|---|---|---|---|---|---|---|---|---|
+| 1 | `GraphwarTickHandler` | 72 | `0x40b528` | `0x858b28` | `0x49e870` | `0x469810` | ——（空占位 `TickHandlerSlot`） | 型 `观测` |
+| 2 | `GraphwarClientConnectionHandler` | 112 | `0x48b048` | `0x858d68` | `0x49f758` | `0x469950` | ——（空占位） | 型 `观测` |
+| 3 | `GraphwarLocalPlayerManager` | 64 | 内联（`0x409eac` `alloc(0x58,8)`） | `0x858cc8` | `0x49f334` | `0x4694f0` | `graphwar_local_player_manager::GraphwarLocalPlayerManager` | 型 `观测` |
+| 4 | `GraphwarPlayerManager` | 72 | `0x49d170` | `0x858ca8` | `0x49f260` | `0x469f90` | `graphwar_player_manager::GraphwarPlayerManager` | 型 `观测` |
+| 5 | `GraphwarSoldierManager` | 72 | `0x49d590` | `0x858c88` | `0x49f18c` | `0x46a170` | `graphwar_soldier_manager::SoldierTable` | 型 `观测` |
+| 6 | `GraphwarPlanePosManager` | 24 | `0x3b89a0` | `0x858c48` | `0x49efe4` | `0x46a0d0` | ——（空占位） | 型 `观测` |
+| 7 | `GraphwarGameStateManager` | 296 | `0x4ade6c` | `0x858c08` | `0x49ee3c` | `0x46a210` | `game::Match` | 型 `观测` |
+| 8 | `GraphwarFunctionManager` | 32 | 内联（`Rc::new_cyclic_in` `0x40a158`） | `0x858b68` | `0x49ea18` | `0x469db0` | ——（空占位） | 型 `观测` |
+| 9 | `GraphwarTargetManager` | 72 | `0x3dae34` | `0x858ce8` | `0x49f408` | `0x46a350` | `graphwar_target_manager::GraphwarTargetManager` | 型 `观测` |
+| 10 | `GraphwarTeamManager` | 32 | `0x49960c` | `0x858d08` | `0x49f4dc` | `0x469770` | `graphwar_team_manager::TeamTable` | 型 `观测` |
+| 11 | `GraphwarLifeManager` | 72 | `0x4977b8` | `0x858b88` | `0x49eaec` | `0x469b30` | `graphwar_life_manager::LifeState` | 型 `观测` |
+| 12 | `GraphwarObstacleManager` | 80 | `0x426300` | `0x858d88` | `0x49f82c` | `0x46a3f0` | ——（空占位） | 型 `观测` |
+| 13 | `GraphwarTurnManager` | 32 | `0x49adf8` | `0x858da8` | `0x49f900` | `0x46a030` | `graphwar_turn_manager::TurnManager` | 型 `观测` |
+| 14 | `GraphwarEffectManager` | 72 | `0x40bc0c` | `0x858c68` | `0x49f0b8` | `0x469630` | `graphwar_effect_manager::GraphwarEffectManager` | 型 `观测` |
+| 15 | `GraphwarModeManager` | 32 | `0x498090` | `0x858aa8` | `0x49e520` | `0x469a90` | `graphwar_mode_manager::GraphwarModeManager` | 型 `观测` |
+| 16 | `GraphwarGraphicsManager` | 168 | `0x49e394` | `0x858b48` | `0x49e944` | `0x4698b0` | `graphwar_graphics_manager::GraphwarGraphicsManager` | 型 `观测` |
+| 17 | `GraphwarEntityEffectManager` | 72 | `0x3e9f40` | `0x858ba8` | `0x49ebc0` | `0x469d10` | `graphwar_entity_effect_manager::GraphwarEntityEffectManager` | 型 `观测` |
+| 18 | `GraphwarComputerPlayerManager` | 72 | `0x4b02a4` | `0x858ac8` | `0x49e5f4` | `0x469e50` | `graphwar_computer_player_manager::ComputerPlayers` | 型 `观测` |
+| 19 | `FunctionHistoryRecorder` | 48 | `0x49d9a0` | `0x858be8` | `0x49ed68` | `0x469bd0` | `function_history_recorder::History` | 型 `观测` |
+| 20 | `GraphwarNameManager` | 72 | `0x40af68` | `0x858bc8` | `0x49ec94` | `0x46a2b0` | `graphwar_name_manager::GraphwarNameManager` | 型 `观测` |
+| 21 | `GraphwarColorManager` | 120 | `0x49cbe8` | `0x858ae8` | `0x49e6c8` | `0x469590` | `graphwar_color_manager::GraphwarColorManager` | 型 `观测` |
+| 22 | `GraphwarRankManager` | 72 | `0x498d2c` | `0x858c28` | `0x49ef10` | `0x469ef0` | `graphwar_rank_manager::GraphwarRankManager` | 型 `观测` |
+
+**三条互证**（每一条都能单独复算，见 §41.3）：
+
+1. **调用点的 `bl <Type>::new`**：arm64 未 strip，符号名直接给出型（20 条如此；
+   3 号与 8 号的 `new` 被内联/放进 `Rc::new_cyclic` 闭包，见下）；
+2. **`add_module` 里的 vtable 第 0 字**：`.data.rel.ro` 的 `R_AARCH64_RELATIVE` addend
+   → `drop_in_place<RefCell<module::Type>>` 的符号名；第 1 字 = `size_of::<RefCell<M>>()`
+   （= 上表 `size` + 8）；
+3. **两架构的尺寸序列**：x86 是 stripped（没名字），但 vtable 的 size 字是**数据字节**，
+   22 个读出来与 arm64 逐个相等 ⇒ 位置不会错。
+
+**LLVM 合并 drop glue 的坑（`docs/02` §22.2 预告过，这里实锤）**：4 号 `GraphwarPlayerManager`
+与 5 号 `GraphwarSoldierManager` 的 vtable 第 0 字**都指向**
+`drop_in_place<RefCell<GraphwarRankManager>>`（与 22 号同一个函数）。
+所以**drop glue 名不能单独定名**——必须用调用点的 `<Type>::new` 复核。
+反过来，3 号与 8 号的 `new` 不可见（3 号在调用点内联：`0x409eac` 处
+`alloc(0x58, 8)`，`0x58 − 0x18 = 64` = 它的 `size`；8 号走 `Rc::new_cyclic_in`），
+这两条就**只能靠 drop glue + size**：两者的 drop glue 名唯一，尺寸也唯一。
+
+### 41.3 复算（三条命令，都不依赖本仓库的脚本）
+
+```text
+# (1) 22 条「构造函数 → add_module」对：arm64 未 strip，名字直接给
+llvm-objdump -d --no-show-raw-insn --demangle \
+  --start-address=0x409c70 --stop-address=0x40a9bc \
+  <arm64 2.0.60>/libgraphwarrust.so | grep -E "bl\s+0x" | grep -E "add_module|::new"
+#   → 22 条 add_module；其中 20 条的前一条正是 `::new`，1 条前一条是 `Rc::new_cyclic_in`
+#     （8 号），1 条前面什么都没有（3 号，构造被内联进调用点）
+
+# (2) 每条 add_module 的 vtable（第 0 字 = drop glue 名，第 1 字 = size_of::<RefCell<M>>）
+llvm-objdump -d --no-show-raw-insn --start-address=0x49e520 --stop-address=0x49f9d4 \
+  <arm64 so> | grep -E "adrp|add .*x3"
+readelf -rW <arm64 so> | grep <vtable 地址>      # → drop_in_place<RefCell<..::Type>>
+
+# (3) x86 侧（stripped）：22 条调用序 + vtable size 字，与 arm64 逐字比对
+#     调用点 = 0x4694f0 + k*160（k = 0..24）里的 22 个；每条里的 lea rip+disp 给 vtable
+#     → size 字读出 [80,120,72,80,80,32,304,40,80,40,80,88,40,80,40,176,80,80,56,80,128,80]
+```
+
+**这也回答了「要不要用 `tools/sym_match.py` 的尺寸比闸 0.61–1.19」**：
+**不需要**。那个闸是给**没有名字**的单态化做候选筛选用的（`docs/02` §18/§36）；
+这里 arm64 有名字、且两架构的尺寸**完全相等**（不是比值），比闸强一档。
+
+**全 `.text` 的完整性扫**（防"22 条只是我以为的 22 条"）：把 `.text` 一次性反汇编，
+统计所有 `call` 进那 25 个 `add_module` 地址的调用点 ⇒ **44 条**，
+按地址聚成两簇：`0x45035d..0x45143f` 共 20 条（服务端线程，含 `BanList` / `ServerConnectionHandler`）、
+`0x515658..0x517ee6` 共 24 条（其中 2 条是 `GraphwarBackend::start_*` 各注册一次
+`GraphwarGameRecorder`，其余 22 条就是客户端）。22 + 20 − 18（交集）+ 1 = 25，与 §22.4 一致。
+
+### 41.4 落码：22 个槽 = 17 个真类型 + 5 个空占位
+
+`src/_scaffold/root_wiring.rs` 里：
+
+* `Wired`（22 个变体，**顺序 = 上表**）+ `SLOTS: [Slot; 22]`（逐条台账：
+  原名 / 模块名 / `size` / arm64 `new` / 我方类型 / 档位）；
+* `RootWiring::assemble_demo()` 按上表顺序 22 次
+  `container.add_module(Rc::new(RefCell::new(<M>::new(…))))`；
+* 判据从"数个数"升级成两档：
+  `has()`（`HashMap::contains_key(&TypeId::of::<M>())`）与
+  `retrievable()`（真走 `get_module::<M>()`：`hash_one` → 探测 → `Any::type_id` →
+  `Rc::downcast`，`docs/02` §22.5 的那条路径）。
+
+**5 个空占位**（`SlotKind::Stub`，`module_slot_status()` 如实回 `"stub"`，**不是** `"assembled"`）：
+`TickHandler` / `ClientConnectionHandler` / `PlanePosManager` / `FunctionManager` / `ObstacleManager`。
+理由逐个可查：`src/graphwar_tick_handler.rs` 只有 `tick_at` 一个自由函数；
+`graphwar_client_connection_handler.rs` 只有 `HandlerField` 偏移表；
+`graphwar_plane_pos_manager` / `graphwar_function_manager` / `graphwar_obstacle_manager`
+**连文件都没有**（逻辑分别散在 `src/plane.rs` / `src/game.rs` 的自由函数里）。
+按 `AGENTS.md` §0 第 3 条，**不把别的模块的类型冒充成它们**
+（例如 `SoldierFunctions` 属 `graphwar_function_evolutionator`，不属 `function_manager`）。
+
+**"装进去"不等于"能跑"**：22 个里的 17 个是**空表/默认值**，本轮没接任何事件订阅，
+也没驱动任何 manager。`docs/02` §34 的 `WeakCaller`（各 manager 的弱自句柄）一条都没接。
+
+### 41.5 验收（`client/tools/assemble_check.gd`：86 → **183** 条）
+
+```text
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/assemble_check.gd   # 183 passed, 0 failed
+```
+
+脚本总数 **86 → 183（净 +97）**。断言组现在是：
+
+| 断言组 | 现在 | 原来 | 判据 |
+|---|---|---|---|
+| 6 个新观测口存在 | 6 | 0 | `container_module_live` / `container_live_count` / `container_real_manager_count` / `container_stub_manager_count` / `manager_slot_size` / `manager_impl_type` |
+| 容器总数与分档 | 6 | 3 | `container_module_count()==22`、`wired_manager_count()==22`、`container_live_count()==22`、`assembled_manager_total()==22`、真类型 17、空占位 5 |
+| **逐槽 4 条 × 22** | 88 | 6 | 键在（`contains`）/ **取回**（`get_module` downcast）/ 槽位状态（`assembled` \| `stub`）/ `impl_type` 与档位一致 |
+| 注册序 + 尺寸序列 | 3 | 1 | `container_module_names()` == 22 个名字（原版序）；`manager_slot_size()` 22 个 == §41.2 的 `size` 列；胡编名字 ⇒ `-1` |
+| 客户端不注册的 3 型 | 6 | 2 | 每个：`contains == false` + `module_slot_status == "placeholder"` |
+
+净增 = (6−0) + (6−3) + (88−6) + (3−1) + (6−2) = **97**。
+既有断言**一条没删**：3 条 `== 3` 只是随范围改成 `== 22`，3 型 × 2 条逐槽断言扩成 22 型 × 4 条。
+
+⚠️ 按 `AGENTS.md` §0.2：**这 183 条是回归保护，不是复原证据**。本节的证据是 §41.3 那三条命令。
+
+### 41.6 仍是推断 / 未知（诚实清单）
+
+| 项 | 档位 | 缺什么 |
+|---|---|---|
+| 17 个 manager 的**行为** | 未做 | 本轮只"构造 + 注册"（任务书 §4）；空表不会自己动 |
+| 5 个空占位的**类型本身** | 未知 | 这 5 个型在本仓库没有可构造的类型；要补的是它们各自的结构体（`tick_handler` 连字段偏移都没有） |
+| 各 `new` 的**实参**来自哪 | 部分 `未知` | 例如 `GraphwarGameStateManager::new` 的 4 个实参在 `0x4ade6c` 里，本轮没有逐参数解；我方用演示数据 |
+| `GameStateManager` 内部是否**也持** `TurnManager` | 未知 | 与 §38 同一条；容器里是两个独立实例 |
+| 21 号之前那 3 条 `subscribe_to_event` | 观测到调用 | `0x409f24/0x409f70/0x409fbc` 三次订阅发生在 3 号 `add_module` 之前；订阅的是谁、订阅了什么事件**未解** |
+| `size` 与**我方类型**尺寸的关系 | 必然不等 | 例：`Match` 远大于 296；结构没有按字节复原，本轮**不**做尺寸对拍 |
+| 22 条里第 3 号、第 8 号的 `new` | 内联 | 只能靠 vtable 的 drop glue 与 size 定名（两者都唯一）；**没有**独立的构造函数名 |
+
+### 41.7 复现 + 回归条数（本节实测）
+
+```text
+export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=<ws>/.agent-work/<你的>/target
+export GODOT=<ws>/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so   # 不覆盖就还在跑旧内核
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/assemble_check.gd # 183 passed, 0 failed
+```
+
+| 命令 | 结果 |
+|---|---|
+| `cargo test --offline` | lib **457** / 总计 **1512**，全绿（与 §38 的 1512 **一位不差**） |
+| `cargo test --offline --features gdext-bindings` | lib **529** / 总计 **1584**，全绿 |
+| `python3 tools/coverage_matrix.py --check` | **OK**（改了 `src/`，两个生成物一起提交） |
+| `assemble_check.gd` | **183 passed / 0 failed**（§38 的 86 条 → 183） |
+
+⚠️ 本节**没有**改任何既有断言：`assemble_check.gd` 原有的 86 条全部保留
+（只有 `== 3` 那几处随范围改成 `== WIRED.size()`，断言的**意图**不变）。

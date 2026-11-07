@@ -10,7 +10,7 @@
 //!    `call_deferred("create_ad_view"|"destroy_ad_view")`；
 //! 3. **状态机**：`0x3a5760`（20288 字节、339 条比较、64 个直接调用目标）+ 命令总线 `0x3b0830`。
 //!
-//! **本文件做三件事**（第 1 条只做了"3 个 manager"那一小块，见下）：
+//! **本文件做三件事**（第 1 条只做了"22 个 manager 的装配"那一小块，见下）：
 //!
 //! * 建出 `_ready` 里真的 `get_node` 过的那 3 个 holder（[`READY_NODES`]，**观测**）：
 //!   `ScreensControl` / `IAP_holder` / `Ad_holder`，其中 `ScreensControl` 下挂 15 个屏节点、
@@ -21,10 +21,10 @@
 //!   把一次调用**转发给子对象** `Ad_holder`（arm64 `0x3a658c` / `0x3a61b0` 就是写那个
 //!   `+0x18` 字节的两条指令）。
 //!
-//! # §42 新增：真装配（`GameStateManager` → `TurnManager` → `PlayerManager`）
+//! # 真装配：**22 个 manager 按原版注册序进容器**（`docs/16-client.md` §41）
 //!
 //! 原版容器里 **22 条 `add_module`**（`GraphwarGameClient::new`，`docs/02` §22.4）；
-//! 本类现在装 **3 个**（能开一局的最小集合），装配器在 [`super::root_wiring`]：
+//! 本类现在把这 **22 个全装上**，装配器在 [`super::root_wiring`]：
 //!
 //! ```text
 //! GraphwarRootNode（本类）
@@ -40,8 +40,12 @@
 //!
 //! * 容器 = `Rc<RefCell<GraphwarModuleContainer>>`，键是 **`TypeId`**（`docs/02` §22.1），
 //!   取回走 `get_module::<M>()`；**没有任何 `+0xNN` 偏移**；
-//! * 按类型逐个可查：`container_has_module("GraphwarTurnManager")` 之类；
-//!   没装的 22 型如实回 `placeholder`（[`GraphwarRootNode::module_slot_status`]）；
+//! * 按类型逐个可查：`container_has_module("GraphwarTurnManager")` 之类，
+//!   还能再走一档 `container_module_live(...)`（真 downcast 回来）；
+//!   22 型里 17 个装的是**复原类型**（回 `assembled`），5 个是**零行为的空占位**
+//!   （回 `stub`，见 [`super::root_wiring::SlotKind`]）；客户端**不**注册的那 3 型
+//!   （`GraphwarBanList` / `GraphwarServerConnectionHandler` / `GraphwarGameRecorder`）
+//!   如实回 `placeholder`（[`GraphwarRootNode::module_slot_status`]）；
 //! * 屏里的 3 个假实体与容器里 `GameStateManager` 的 3 个 `Target` **是同一份数据**
 //!   （[`super::root_wiring::DEMO_SOLDIERS`]）。
 //!
@@ -51,7 +55,8 @@
 //! |---|---|
 //! | `0x3a5760`（20288 B 状态机）的主体 | 原版形状本身没解出来（可能是 `_process` + 大量内联），不猜 |
 //! | `0x3b0830`（命令总线）的**全部**键 | 只解到 12 条（[`crate::graphwar_root_node::Command`]），131 KB 反编译没过完 |
-//! | **剩下 19 个 manager** 的装配 | 本轮只做 3 个（任务书 §要做什么）；那 19 型没有可 `new` 的实现，节点槽仍是**空 `Node` 占位** |
+//! | **17 个 manager 的行为** | 本轮只做"构造 + 注册"（任务书 §4 明令不实现行为）；容器里是**空表**，没人驱动它们 |
+//! | **5 个 manager 的类型本身** | `TickHandler` / `ClientConnectionHandler` / `PlanePosManager` / `FunctionManager` / `ObstacleManager` 在本仓库没有可构造的类型 ⇒ 装的是**空占位**（`stub`），节点槽仍是**空 `Node`** |
 //! | 两个 `Rc<RefCell<T>>`（`+0x1668` / `+0x16c8`） | 那两个控制器的类型与生命周期未解（`docs/16` §15.3 只给了偏移） |
 //! | `GraphwarTextureLoader`（`+0x16a0`） | 模块存在（`docs/16` §28），但节点层还没有 |
 //!
@@ -257,7 +262,7 @@ pub struct GraphwarRootNode {
     /// `Ad_holder` 那个子对象（**推断**它是 [`GraphwarAdSwitch`]）。
     ad_holder: Option<Gd<GraphwarAdSwitch>>,
 
-    /// **已装配的模块容器**（3 个 manager，见 [`super::root_wiring`]）。
+    /// **已装配的模块容器**（22 个 manager，顺序 = 原版注册序，见 [`super::root_wiring`]）。
     ///
     /// 原版这条链是 `root+0x1668`（某个 manager 的 `Rc<RefCell<_>>`）→ 该 manager `+0x238`
     /// （`Rc<RefCell<GraphwarModuleContainer>>`）→ `.borrow().get_module::<X>()`
@@ -298,7 +303,7 @@ impl GraphwarRootNode {
             return self.child_slot_count();
         }
 
-        // ⓪ **模块容器装配**（`docs/16` §38）：3 个 manager 按 `TypeId` 进容器。
+        // ⓪ **模块容器装配**（`docs/16` §41）：22 个 manager 按原版注册序、按 `TypeId` 进容器。
         //    先于建屏做，因为 Game 屏里的 3 个假实体与容器里 `GameStateManager` 的
         //    3 个 `Target` 是同一份数据（[`DEMO_SOLDIERS`]）。
         if self.wiring.is_none() {
@@ -660,7 +665,8 @@ impl GraphwarRootNode {
         }
     }
 
-    /// 按类型查**成立**的那几个名字，顺序 = 我们的注册序（`GameStateManager → TurnManager → PlayerManager`）。
+    /// 按类型查**成立**的那几个名字，顺序 = **原版注册序**（`docs/16-client.md` §41.2 的
+    /// 22 条：`GraphwarTickHandler` → … → `GraphwarRankManager`）。
     #[func]
     fn container_module_names(&mut self) -> PackedStringArray {
         self.ensure_scene_graph();
@@ -731,22 +737,23 @@ impl GraphwarRootNode {
         }
     }
 
-    /// 某个槽位的状态：`"assembled"`（容器里按类型查得到）/ `"placeholder"`（原版有这一型，
-    /// 我们没装）/ `"unknown"`（原版 25 型里也没有这个名字）。
+    /// 某个槽位的状态：`"assembled"`（容器里按类型查得到，且这一型有**复原类型**）/
+    /// `"stub"`（容器里查得到，但装的是**零行为的空占位**）/ `"placeholder"`（原版有这一型，
+    /// 本层没装）/ `"unknown"`（原版 25 型里也没有这个名字）。
     ///
-    /// 前两档的判据是**运行时的**（[`super::root_wiring::RootWiring::has_name`]），
-    /// 不是静态表：装失败就掉回 `placeholder`。
+    /// 判据是**运行时的**（[`super::root_wiring::RootWiring::has`]），不是静态表：
+    /// 装失败就掉回 `placeholder`。
     #[func]
     fn module_slot_status(&mut self, type_name: GString) -> GString {
         self.ensure_scene_graph();
         let name = type_name.to_string();
-        let assembled = self
-            .wiring
-            .as_ref()
-            .map(|w| w.has_name(&name))
-            .unwrap_or(false);
-        if assembled {
-            return GString::from(root_wiring::SLOT_ASSEMBLED);
+        if let Some(which) = Wired::from_type_name(&name) {
+            let assembled = self.wiring.as_ref().map(|w| w.has(which)).unwrap_or(false);
+            return GString::from(if assembled {
+                which.status()
+            } else {
+                root_wiring::SLOT_PLACEHOLDER
+            });
         }
         if root_wiring::is_module_type_name(&name) {
             GString::from(root_wiring::SLOT_PLACEHOLDER)
@@ -755,7 +762,75 @@ impl GraphwarRootNode {
         }
     }
 
-    /// 本层装了几个 manager（= `Wired::COUNT`，**3**；剩下 19 型没装）。
+    /// **按类型取回**（`get_module::<M>()` 真的 downcast 成功吗）。
+    ///
+    /// 比 [`GraphwarRootNode::container_has_module`] 强一档：那一支只查
+    /// `HashMap::contains_key(&TypeId::of::<M>())`，这一支走完整的取回路径
+    /// （`hash_one` → 探测 → `Any::type_id` 比对 → `Rc::downcast`，`docs/02` §22.5）。
+    #[func]
+    fn container_module_live(&mut self, type_name: GString) -> bool {
+        self.ensure_scene_graph();
+        match self.wiring.as_ref() {
+            Some(w) => w.retrievable_name(&type_name.to_string()),
+            None => false,
+        }
+    }
+
+    /// 22 个槽里"能取回活对象"的个数（[`GraphwarRootNode::container_module_live`] 的计数版）。
+    #[func]
+    fn container_live_count(&mut self) -> i64 {
+        self.ensure_scene_graph();
+        match self.wiring.as_ref() {
+            Some(w) => Wired::ALL.into_iter().filter(|x| w.retrievable(*x)).count() as i64,
+            None => -1,
+        }
+    }
+
+    /// 22 个槽里"我方有真复原类型"的个数（`docs/16` §41.2 的 17）。
+    #[func]
+    fn container_real_manager_count(&mut self) -> i64 {
+        self.ensure_scene_graph();
+        match self.wiring.as_ref() {
+            Some(w) => w.real_managers().len() as i64,
+            None => -1,
+        }
+    }
+
+    /// 22 个槽里"空占位"的个数（`docs/16` §41.2 的 5）。
+    #[func]
+    fn container_stub_manager_count(&mut self) -> i64 {
+        self.ensure_scene_graph();
+        match self.wiring.as_ref() {
+            Some(w) => w.stub_managers().len() as i64,
+            None => -1,
+        }
+    }
+
+    /// 这一槽的原版 `size_of::<M>()`（`docs/02` §22.3；**两架构相同**，vtable size 字 − 8）。
+    ///
+    /// 22 个数按注册序连起来就是 §41.2 那串
+    /// `80,120,72,80,80,32,304,40,80,40,80,88,40,80,40,176,80,80,56,80,128,80`（+8 之后）。
+    /// 未知名字 ⇒ `-1`。
+    #[func]
+    fn manager_slot_size(&mut self, type_name: GString) -> i64 {
+        match Wired::from_type_name(&type_name.to_string()) {
+            Some(w) => w.slot().size as i64,
+            None => -1,
+        }
+    }
+
+    /// 这一槽装的是**我方的哪个类型**（`graphwar_turn_manager::TurnManager` 之类）；
+    /// 空占位回 `"—"`；未知名字回空串。
+    #[func]
+    fn manager_impl_type(&mut self, type_name: GString) -> GString {
+        match Wired::from_type_name(&type_name.to_string()) {
+            Some(w) => GString::from(w.slot().our_type),
+            None => GString::new(),
+        }
+    }
+
+    /// 本层装了几个 manager（= `Wired::COUNT`，**22** = 原版 `GraphwarGameClient::new`
+    /// 的 `add_module` 条数；其中 17 个真类型 + 5 个空占位）。
     #[func]
     fn assembled_manager_total(&self) -> i64 {
         Wired::COUNT as i64
