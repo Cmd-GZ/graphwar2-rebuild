@@ -158,13 +158,10 @@ use crate::Token;
 // `lib.rs` 一旦允许改，把下面两行换成 crate 根的
 // `pub mod graphwar_function_manager;` / `pub mod graphwar_obstacle_manager;`，
 // 再把本文件里的路径改成 `crate::graphwar_function_manager::…`，那两个文件**一行都不用改**。
-#[path = "../graphwar_function_manager.rs"]
-pub mod graphwar_function_manager;
-#[path = "../graphwar_obstacle_manager.rs"]
-pub mod graphwar_obstacle_manager;
-
-use graphwar_function_manager::GraphwarFunctionManager;
-use graphwar_obstacle_manager::GraphwarObstacleManager;
+// 2026-11-08：`src/lib.rs` 的禁区已解除，两个模块改在 crate 根 `pub mod`
+// （见 `src/lib.rs` 末尾的注释与 `docs/16` §46.8）。这里只留 import。
+use crate::graphwar_function_manager::GraphwarFunctionManager;
+use crate::graphwar_obstacle_manager::GraphwarObstacleManager;
 
 // ---------------------------------------------------------------------------
 // 1. 装哪 22 个、按什么序（名字是 `graphwar_module_container::MODULES` 的原文）
