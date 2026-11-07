@@ -1514,3 +1514,160 @@ python3 tools/coverage_matrix.py --check   # OK
 §26.7 的"按模式分组 + ulp 直方图"由一次性脚本从 `$OUT/conv.jsonl` + 回放
 （`gzip` 的 JSONL，`FunctionInfo.corrected_function` / `FunctionPoints.end_x` / `EffectInfo.pos_y`）
 算出来，口径写在上表里，**没有**新的入库工具。
+
+## 27. `FunctionPoints.end_x` 的取值点：逐指令定死 = `pts[len-1]`（2026-11-07，`dispatch/11`）
+
+> 任务书：[`dispatch/11-endx-sample-point.md`](../dispatch/11-endx-sample-point.md)（P1，任务书口径"失败 95 批"，
+> 那是 §26 修前的 `conv` 归因；**当前 `fire` 基线里这一桶是 `E1` 46 批**，见 §27.4）。
+> 本节**推翻任务书的前提**"`end_x` 取 `pts[n-2]`"，并给出一次**被实测否决的改法**的完整数据。
+>
+> **反汇编口径**同 §26：arm64 Android 2.0.60 `libgraphwarrust.so`（未 strip，地址 = `st_value`）。
+
+### 27.1 一句话
+
+1. **`end_x` = 送进 `set_function_points` 那条点序列的最后一个元素 `pts[len-1].x`**，
+   不是倒数第二个（arm64 **`0x489420`/`0x489428`**，§27.2）。⇒ 任务书"取 `pts[n-2]`"**不成立**。
+2. 同一条点序列、同一个 `len` 也喂给 `execute_results` 的爆炸点（`0x4a88ec`/`0x4a8918`/`0x4a891c`）
+   ⇒ **在报文构造这一层，`end_x` 与 `EffectInfo(Explosion).pos_x` 必然是同一点**（§26.2 的结论不变）。
+3. 回放里这两条报文确实**有时差一个采样点**（1290 发里 240 发，§27.3），但差别在**点序列本身**
+   （哪一步停），不在"取哪个下标"。按"退一格"去改报文，整局对拍 **324 → 229**、`E1` **46 → 162**
+   （§27.4，实测，已回退）。
+4. **采样器一个字没改**（`docs/04` 的 24/24 逐位基线未动）。
+
+### 27.2 逐指令：`end_x` 就是 `pts[len-1]`（**观测**）
+
+生产点 `GraphwarFunctionManager::set_function_points`（arm64 **`0x489278`**，884 B）：
+
+```text
+004893a8  cmp   w8,#0x2                      ; 状态判断
+00489400  ldr   x8,[x19,#0x10]               ; len = 传入点序列的长度
+00489404  cbz   x8, 0x48945c                 ; len==0 ⇒ 一条报文都不发
+00489414  ldr   x9,[x19,#0x8]                ; ptr
+00489420  add   x8,x9,x8,lsl#4               ; &pts[len]
+00489424  ldr   q0,[x9]                      ; ★ start = pts[0]（16 B = 一对 f64）
+00489428  ldur  d1,[x8,#-0x10]               ; ★ end_x = pts[len-1].x（**最后一个**）
+0048942c  mov   x8,#0x25                     ; tag 37 = FunctionPoints
+00489434  movk  x8,#0x8000,lsl#48
+00489430  stur  q0,[sp,#0x10]                ; 载荷 +0x08 = start_x/start_y
+0048943c  str   d1,[sp,#0x20]                ; 载荷 +0x18 = end_x
+00489438  str   w22,[sp,#0x28]               ; 载荷 +0x20 = owner_id
+0048944c  bl    GraphwarEventQueue::add_event
+```
+
+同文件全 `.text` 里 tag 37 的**生产者只有两处**（`0x48942c`、`0x4abad4`
+`handle_function_points` 的转发路径），本地路径就是上面这一处。
+
+这条点序列是谁给的 —— `GraphwarGameStateManager::fire_functions`（**`0x4a7160`**）：
+
+```text
+004a7a2c  ldr   x24,[x8,#0x10]     ; len = 队列项 +0x10
+004a7a38  lsl   x20,x24,#4         ; 分配 len*16
+004a7a50  ldr   x23,[x8,#0x8]      ; ptr = 队列项 +0x8
+004a7ac8/4a7af0                    ; 逐点 clone（16 B/点）
+004a7b28  stp   x24,x21,[x29,#-0x68]  ; 传参结构 (len, ptr, cap=len)
+004a7b3c  bl    set_function_points
+```
+
+同一批的爆炸点走的是**同一个队列项、同一个 `len`**（`execute_results` `0x4a8558`）：
+
+```text
+004a87ec  ldr   x27,[x26],#0x20    ; 队列项 tag（步长 0x20）
+004a88e8  orr   x22,x23,x20,lsl#32 ; 变体 0：pts 指针由两半 u32 拼回（项 +0x8）
+004a88ec  ldr   x20,[x8,#0x10]     ; n = 项 +0x10（与上面 `0x4a7a2c` 同一字段）
+004a8918  add   x8,x22,x20,lsl#4   ; &pts[n]
+004a891c  ldp   d9,d8,[x8,#-0x10]  ; ★ pts[n-1] → effect 记录 + 载荷（同 §26.2）
+```
+
+⇒ **两处取的是同一个下标**。所以"差一个"不可能来自"取 `pts[n-2]`"。
+
+### 27.3 那 240 发的差从哪来（**观测**，回放自身的两条报文对比）
+
+先把"回放的 `end_x`"和"同一发的爆炸点"直接比（不经过我方实现），全语料 1290 发：
+
+| 关系 | 条数 |
+|---|---|
+| `end_x` 与 `pos_x` **逐位相同** | **1050**（81.4%） |
+| 差 `< 5e-4` | 136（含 1e-16 量级的 ulp 差） |
+| 差 `∈ [5e-4, 5e-3)` | 25 |
+| 差 `≥ 5e-3`（≈ **一个采样步**） | 79 |
+
+差值的量级都是**采样步的二进制分数**（`15/16`、`3/4`、`1/64`…；5 条例外是实际步长本身不是 0.01 造成的），
+即"**相邻两个采样点**"的距离，而不是别的量。
+
+再看这 240 发在我方点列上的位置（用 `examples/replay_endx_probe.rs` 的点列，1290 发）：
+
+| 回放 `end_x` 落在 | 条数 | 说明 |
+|---|---|---|
+| 我方 `pts[M-1]`（**末点**，逐位） | **773** | 我方现在的取值就是对的 |
+| 我方 `pts[M-2]`（倒数第二，逐位） | **103** | "差一个"的全在这一桶 |
+| 更靠前（我方点列没截断，真值被障碍截断） | 361 + 53 | 探针不带掩膜，属预期 |
+| **能用的边界停止样本** | 876 | 773 / 103 |
+
+那 103 发里，回放爆炸点 `pos_x` 与我方 `pts[M-1].x` **只差 1~800 ulp**、`pos_y` 常逐位相同
+（是"同一个点的另一次计算"，不是另一个点）。⇒ 真相的形状是：
+
+* 绝大多数发：点序列末元素 = 停点，`end_x == pos_x`（逐位）；
+* 少数发：点序列**少一个元素**，`end_x` 退一格，而停点是**另算的一个点**（所以差 ulp）。
+
+"什么时候会少那一个元素"**没有定论**（§27.6）。
+
+### 27.4 被实测否决的改法：`blocked` 时 `end_x` 退一格
+
+`E1` 的 46 批里 **7 批是 `blocked`（撞障碍）**，且这 7 批的形状一致：
+
+```text
+回放 FunctionPoints.end_x = 我方「阻挡点之前那个采样点」（逐位）
+回放 EffectInfo.pos_x     = 我方「阻挡点」（差 1~8 ulp）
+```
+
+照这个改（`src/game.rs::execute_results` 里 `blocked ⇒ 取阻挡点前一点`）后实测：
+
+| 量 | before | after（退一格） |
+|---|---|---|
+| `fire` 内容命中 | **324 / 1080** | **229 / 1080**（−95） |
+| `E1` | 46 | **162** |
+| 逐批对照 | — | **丢 95 批 / 得 0 批**，95 批**全部**是 `blocked` |
+
+⇒ 对绝大多数 `blocked` 批次，回放的 `end_x` **就是阻挡点本身**（那 7 批是另一回事）。
+**这个改法已回退，入库的是"不改" + 一个把它钉死的测试**
+（`tests/live_hits.rs::end_x_and_explosion_x_are_the_same_sample_point`：
+自由飞行与撞障碍两种情况都断言 `end_x == pos_x`，且 `end_x` = 阻挡点本身 / 点列末点）。
+
+### 27.5 顺手更正 §26.2 的两处（**观测**）
+
+1. **`start_tick = active_tick + n/60` 应为 `n/30`**：
+   `0x4a898c/0x4a8990` 的魔术数 `0x88888889` 配 `0x4a8998` 的 `lsr #36` 是 **÷30**
+   （`0x88888889 / 2^36 = 1/30`；若按 ÷60 算，`n = 60` 会得 2 而不是 1）。
+   数值侧：1290 发里 **895 发** 满足 `爆炸 start_tick − FunctionActive.active_tick == 点列长 // 30`，
+   其余的是被障碍截断（点列比真实长）—— 按 ÷60 一条都对不上。
+2. `FunctionActive.active_tick = [函数管理器 +0x58] + 0x3c`（`0x4a8940 add w24,w21,#0x3c`，60 tick = 1 s），
+   不是 §26.2 暗示的"当前 tick"。这条只影响 tick 数值，不影响坐标。
+
+### 27.6 未知清单（接管时从这里开始）
+
+| # | 未定 | 缺什么 | 等级 |
+|---|---|---|---|
+| 1 | 那 103 发（≈12% 的边界停止）为什么点序列**少一个元素** | 边界/障碍的"停点"是**另算**的（差 ulp 说明是重算而非拷贝），而点序列少一个 —— 需要 `calculate_shot_results`（`0x3b5770`）里"停点"的完整写法（本次只确认了它不来自队列项 `+0x8/+0x10`） | **未知** |
+| 2 | 那 7 个 `blocked` 的 `E1` 为什么与另外 95 个 `blocked` 行为相反 | 同上：可能是"落在采样点上 vs 落在两点之间"的碰撞粒度（差值分别是整步 / 整步 / 3.9e-4…）；要 `is_occupied` 那侧的逐指令对照（掩膜 1 px = 0.05 单位） | **未知** |
+| 3 | 逐个点的末位（±1 ulp） | 与 §26.8 #1 同源：`MathFunction::evaluate_recursive`（`0x4452d4`）在这些确切输入上的输出 | **未知** |
+
+### 27.7 复现（干净树）
+
+```bash
+export CARGO_HOME=<ws>/.reference/cargo-home
+export CARGO_TARGET_DIR=<ws>/.agent-work/cg/target11     # 私有 target
+R=<ws>/.reference/replays/gw2-replays-snapshot/replays
+OUT=<ws>/.agent-work/out11                               # /tmp 是逐命令 tmpfs
+
+# 1) 基线（= §26 之后的口径）：324 / 1080，E1 46
+cargo run --release --offline --example replay_attrib -- --dir $R --drive fire --policy default --json $OUT/fire.jsonl
+python3 tools/bit_exact_attrib.py --json $OUT/fire.jsonl
+
+# 2) 单发点列探针（§27.3 的"end_x 落在我方第几个点"就是这么来的）
+cargo run --release --offline --example replay_endx_probe -- --dir $R --file 1782641987 --tail 6
+```
+
+§27.3 的两张表由一次性脚本算：回放按 `gzip` 的 JSONL 顺序取 `FunctionPoints.end_x` 与
+`EffectInfo(ExplosionEffect).pos_x` 逐发配对（同一份回放里两者条数相等才计），
+点列侧用 `replay_endx_probe` 的输出（每发打印 `点 M` + 末尾 6 个点 + `end_x 命中 idx`），
+按 `idx == M-1 / M-2` 分桶。**没有**新的入库工具；入库的只有上面那个测试。
