@@ -1276,6 +1276,15 @@ impl Inputs {
 pub struct Predictor {
     model: Match,
     pub policy: Policy,
+    /// 回放里的 `FunctionModeInfo` 时刻表：`(报文下标, 模式)`，按出现顺序。
+    ///
+    /// 为什么不是"建模型时读一次"：**模式是可以在局中改的**（`FunctionModeInfo` 是设置广播，
+    /// 语料里 125 份回放在同一文件里出现过两种取值）。二进制里写它的是 46 号事件的处理器
+    /// （`0x3e2b1b`），读它的是**每次开火**（`0x4717b8`）⇒ 输入流喂到哪一批，
+    /// 开火就该用那一刻的模式（`docs/06` §33.3）。
+    mode_schedule: Vec<(usize, crate::graphwar_mode_manager::FunctionMode)>,
+    /// 已经喂进模型的表项游标。
+    mode_cursor: usize,
 }
 
 /// 一批的预测结果。
@@ -1328,11 +1337,39 @@ impl Predictor {
         for (id, g) in inputs.skins.iter() {
             model.note_skin_graphics(*id, g);
         }
-        Ok(Predictor { model, policy })
+        // `FunctionModeInfo` 的**时刻表**（全文件扫一遍）。模型建好时用的是
+        // "第一批之前"的那个值（`Inputs::scan` 已经把它放进 `room.function_mode`），
+        // 之后的每一条按报文下标在 [`Predictor::predict`] 里补齐。
+        let mut mode_schedule = Vec::new();
+        for (i, m) in r.msgs.iter().enumerate() {
+            if m.kind == "FunctionModeInfo" {
+                if let Some(s) = m.get_str("function_mode") {
+                    let fm = crate::game::function_mode_of(&s);
+                    // 同值连续出现不必重复入表（只是省几条比较）
+                    if mode_schedule.last().map(|e: &(usize, _)| e.1) != Some(fm) {
+                        mode_schedule.push((i, fm));
+                    }
+                }
+            }
+        }
+        Ok(Predictor { model, policy, mode_schedule, mode_cursor: 0 })
+    }
+
+    /// 把模型的状态对齐到"第 `upto` 条报文之前"：目前只有函数模式这一项会随报文变。
+    fn sync_mode(&mut self, upto: usize) {
+        while let Some((idx, fm)) = self.mode_schedule.get(self.mode_cursor).copied() {
+            if idx >= upto {
+                break;
+            }
+            self.model.set_function_mode(fm);
+            self.mode_cursor += 1;
+        }
     }
 
     /// 预测一批：按回放里 `FunctionPoints` 的顺序逐发调用 `Match::fire`。
     pub fn predict(&mut self, batch: &Batch, obs_start_tick: i64) -> BatchPrediction {
+        // 本批之前到达的 `FunctionModeInfo` 先喂进去（模式是输入、不是常量）
+        self.sync_mode(batch.start);
         // 把 tick 基准挪到本批，令 `now_tick ≈ 回放信封 tick`（tick 值本身不比）
         self.model.tick_base = (obs_start_tick, 0);
         let mut msgs = Vec::new();

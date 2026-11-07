@@ -357,7 +357,7 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 | 6 | 弹丸飞行速度 | 只知道中位 ≈0.29 单位/tick（p10~p90 0.255~0.300）；**排序不需要它**，只有"绝对时刻"才需要 | **推断** |
 | 7 | `active_tick` 的取值 | 观测到"同批所有发相同"，但绝对值来自哪个时钟没解；实现里用 `now_tick` | **推断** |
 | 8 | 回合开头那两条 `FunctionInfo("", null) × 全部士兵` 与 `TurnCountInfo` | 只观测到形状，没有发射器；本轮**没有实现**（不在批窗口内，不影响对拍口径） | **未知** |
-| 9 | `DiffEq` 模式的同时回合制 | `Match::fire_batch` 与 `fire` 一样硬编码 `Mode::Normal`；515 个 DiffEq 批本轮仍未覆盖 | **未知** |
+| 9 | ~~`DiffEq` 模式的同时回合制~~ **已结（2026-11-08，`docs/06` §33）** | 原文写「`Match::fire_batch` 与 `fire` 一样硬编码 `Mode::Normal`；515 个 DiffEq 批本轮仍未覆盖」。**该缺口已补**：`Match` 有了 `function_mode`（`FunctionModeInfo`(46) 的落值对象，开火时现读），`fire_functions` / `execute_results` 按 `sampling_mode()` 选采样器与文本规则。DiffEq 515 批 / 550 发现在**在分母里**：两条路径逐位对拍 550/550 全同；对回放内容 `batch` 轴 288 / 515 批（55.9%）。剩下的 227 批不是模式问题（`docs/06` §33.4） | **观测 + 逐位**（`docs/06` §33） |
 
 ---
 

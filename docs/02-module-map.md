@@ -3623,3 +3623,352 @@ Android 侧 171 行「歧义」里有一大批是 arm64 内联形态造成的，
 （缓存里带 identity **和 schema 版本**：改了事实口径会失效，不会拿旧结论冒充新结论）。
 `report` 里的「Linux 侧分母 527」与 `tools/coverage_matrix.py --check` 打出的
 「原版可归属函数 527 个」是**同一条独立链路上的同一个数**。
+
+---
+
+## 38. 三向符号匹配：Windows ×2 + Android + Linux —— 天花板确实是 2,034，天花板之外只值 ≈42 个（2026-11）
+
+> 接 §20（Location 桥）与 §36（多候选裁决）。上一轮只用 **Android×Linux** 两向；
+> 本节把同一份数据加到**四向**（Linux 目标 / Android 2.0.60 / Windows 2.0.60 / Windows early2026）。
+> 工具：`tools/three_way_match.py`（`build` / `report` / `verify` / `ablate` / `probe` / `key` / `nm`）；
+> 产物：`fixtures/name_to_addr_v2.tsv`（990 行，**新增**，`fixtures/name_to_addr.tsv` 未动）；
+> 本节的每个数字都能用 §37.9 的命令复算。
+
+### 38.0 一句话结论 + 四问四答
+
+**Windows 2.0.60 与 Linux 目标是同一版本**：`src/*.rs` 的 `panic::Location` 三元组 2,035 个里
+**2,034 个三方同时存在**（99.95%）。于是"同 ISA + 有 COFF 名字"的第二来源可用，
+但它**没有把天花板抬起来，也没有把天花板之外变成可用**：
+
+| 问题 | 结论 | 档位 |
+|---|---|---|
+| **(a) 三方 Location 数** | Linux **2,035** / Android **2,035** / Win 2.0.60 **2,051**（被引用 2,049）/ Win early2026 **2,011**；三方交集 **2,034**，只在 Linux 侧 **0**、只在 Windows 侧 **17** | **观测** |
+| **(b) 名字落地** | 唯一名并集 990 → 同版本来源落地 **317 个名字键**（v1 是 326 行 / 299 键 ⇒ 净 **+18**）；另有 **30 个**只有 early2026 支持，单列「跨版本锚」**不进**唯一锚计数 | **观测**（每个都写出票数与键） |
+| **(c) 冲突** | 同版本来源互相矛盾的 **8 个键**（不给地址）；**262 个** Location 键被 ≥2 个不同名字引用（gdext 样板占多数）；**33 个** Linux 地址被 ≥2 个名字认领 | **观测** |
+| **(d) 天花板之外** | 12,736 个无锚函数里，结构最近邻能给出"高置信 + 单射"的只有 **44 个**；正对照留出半准确率 **96.3%** ⇒ 上限估计 **≈42 个**。匹配器本身没坏：真值 top-10 命中 **81.9%**、互为 top-1 命中 **100%**（留出半 n=26~38），随机基线 0.31% | **观测**（准确率）+ **推断**（42 这个数） |
+
+⚠ **天花板之外没有任何一条被写进夹具当名字**。`name_to_addr_v2.tsv` 里
+「未知」的 635 行是硬边界，不是没算。
+
+### 38.1 方法：一份代码吃四种构建
+
+| 构建 | 格式 / ISA | 函数宇宙（口径写死） | 名字来源 | Location 载体 |
+|---|---|---|---|---|
+| Linux 2026-08-28（**目标**） | ELF x86-64，stripped | **Ghidra 起点表** 13,263（与 `name_to_addr.tsv` 同口径，换了表就两边比的不是同一批函数） | ❌ 无 | `.data.rel.ro` + `R_X86_64_RELATIVE` addend |
+| Android 2.0.60 | ELF arm64 | `.symtab` FUNC 12,609 | ✅ 621 唯一名 | 同上（`R_AARCH64_RELATIVE`） |
+| **Windows 2.0.60** | PE32+ x86-64（MinGW/GNU ld） | **`.pdata` 的 `RUNTIME_FUNCTION`** 48,853 条 + 未被覆盖的 COFF FUNC 符号 ⇒ 51,985 | ✅ **871 唯一名**（1,206 个函数） | `.rdata`/`.data`，**绝对 VA** + `.reloc` 的 `DIR64` 门控 |
+| Windows early2026 | 同上 | 43,096 | ✅ 876 唯一名 | 同上 |
+
+四种构建走**同一套**特征抽取与同一套「什么算引用了一个 Location」的规则
+（首址 / `+8`(len) / `+16`(line,col) 三者都算，`LocHit.lookup`）——规则不对称会人为制造假歧义（§20.2 第 2 条）。
+
+### 38.2 PE 的 `panic::Location` **不是** ELF 那一套（本节最容易翻车的地方）
+
+任务书要求「自己判断，别照搬 ELF 的假设」——实测结论：
+
+| | ELF（Linux / Android） | **PE（两份 DLL）** |
+|---|---|---|
+| 指针槽里存的是什么 | **0**（真值只在 `R_*_RELATIVE` 的 addend 里） | **已经是绝对 VA**（`ImageBase 0x180000000` + RVA，磁盘上就写好了） |
+| 对应物 | `R_X86_64_RELATIVE` / `R_AARCH64_RELATIVE` | `.reloc` 里的 `IMAGE_REL_BASED_DIR64`（type 10），38,355 个槽 |
+| 结构体布局 | 24 字节 `{ptr, len(u64), line(u32), col(u32)}` | **完全相同**（`core::panic::Location` 的布局与 ISA 无关） |
+
+判定五件套（`Pe.locations()`）：① 槽在 `.reloc` 的 DIR64 表里；② ptr 落在 `.rdata`；
+③ `4 < len ≤ 300`；④ `ptr` 处 len 字节全可打印 ASCII **且以 `.rs` 结尾**；⑤ `1 ≤ line < 10^5`、`1 ≤ col < 2000`。
+
+**自校验（这是"不是裸扫撞上的"的证据）**：2.0.60 扫出 **6,284** 个 Location 结构体，
+其中 **0 个**不在 `.reloc` 表里；early2026 扫出 **6,037** 个，同样 **0 个**不在。
+随机 8 字节同时满足"在 reloc 表 + 指向 `.rdata` + 长度像字符串 + 是 `.rs` + 行列合理"的概率极低。
+
+另外两个必须写下来的 PE 细节：
+
+* Windows 侧的 `rustc`/`cargo` 路径用反斜杠（`...\\library\\core\\src\\str\\pattern.rs`），
+  而**游戏自己的 `src/*.rs` 用正斜杠**，与 ELF 侧逐字符相同 ⇒ `src/` 前缀可以直接当跨构建的 join 键。
+* Windows 侧 std 的路径更长，`MAX_STR` 卡 128 会整片丢掉 std 的 Location（本工具用 300）；
+  这只影响"总 Location 数"，不影响 `src/*.rs` 的交集。
+
+### 38.3 ① 三方 Location 数与交集（同版本的自证）
+
+| 构建 | 函数 | Location 结构体 | 去重 `(file,line)` | `src/` 结构体 | 被引用的 `src/` 键 |
+|---|---|---|---|---|---|
+| linux（目标） | 13,263 | 5,300 | 4,666 | 2,042 | **2,035** |
+| android 2.0.60 | 12,609 | 5,223 | 4,599 | 2,040 | **2,035** |
+| win 2.0.60 | 51,985 | 6,284 | 5,463 | 2,056 | 2,049 |
+| win early2026 | 43,096 | 6,037 | 5,191 | 2,011 | 2,009 |
+
+```text
+linux ∩ android      = 2,035      ← 上一轮就是这个数（§20.3）
+linux ∩ win(2.0.60)  = 2,034
+android ∩ win(2.0.60)= 2,034
+linux ∩ android ∩ win= 2,034      ← 三方交集；任务书说"应接近 2,035"，差 1
+只在 linux 侧        = 0
+只在 win 侧          = 17
+linux ∩ win(early2026)= 1,176     ← 57.8%，早一版
+```
+
+**结论（`观测`）：Windows 2.0.60 与 Linux 目标同版本**，不是"接近"而是 2,034/2,035。
+**"版本不一致"这条判据也是实测过的**：把 early2026 当来源，交集立刻掉到 1,176（57.8%）——
+如果哪天拿到的是错版本的 DLL，`report` 的第一张表会立刻显示出来，不需要猜。
+
+**那 17 个"只在 Windows 侧"的键不是版本差异**（`观测`）：按文件归类，
+**9 个落在 `src/server_broker_*.rs`**（`server_broker_http_handler` /
+`provider_connection`×3 / `request_connection` / `room_provider_handler`×2 / `room_request_handler`×2），
+其余在 `graphwar_game_server.rs`×3、`function_history_recorder.rs`、`graphwar_effect_manager.rs`、
+`graphwar_game_client.rs`、`graphwar_name_manager.rs`、`graphwar_player_screen_control.rs` 各 1。
+broker（LAN 服务端）在 Windows 构建里多留了几个 panic 点、Linux 侧被内联/删掉了。
+
+**唯一一个"只在 Linux 侧"的键**是 `src/graphwar_target_manager.rs:35:24`，引用它的只有
+**`0x465910`**（= `GraphwarTargetManager::new`，与 §36.5 记的真值一致）。Windows 2.0.60 里
+这个键**连结构体都没有**——同一份源码在两个目标上的内联结果不同，属正常。
+
+### 38.4 ② 名字落地：唯一锚 326 行 / 299 键 → **317 键**（+18），另有 30 个跨版本锚单列
+
+| 来源 | 唯一名 | 落地数 | 说明 |
+|---|---|---|---|
+| **win 2.0.60** | 871 | **313** | 同 ISA 同版本，最强 |
+| android 2.0.60 | 621 | 317 | 跨 ISA 同版本 |
+| win early2026 | 876 | 240 | **不同版本**，只作交叉校验 |
+| 并集 | 990 | 355（有条目） | 去重后见下 |
+
+落地来源组合（每个名字键只算一次）：`android+win+win_old` **202** / `android+win` **103** /
+`win_old` 30 / `win` 6 / `android+win_old` 6 / `android` 6 / `win+win_old` 2。
+
+⇒ **同版本来源支持且互不矛盾 = 317 个名字键**（= 202+103+6+6+6+2 − 8 个矛盾）。
+
+| 与 v1（`fixtures/name_to_addr.tsv`）对账 | 数 |
+|---|---|
+| v1 唯一锚 | **326 行 / 299 个名字键** |
+| 本工具独立复现 v1 的名字键 | **278 / 299（93.0%）** |
+| 其中地址与 v1 完全相同 | 270 |
+| 其中地址与 v1 不同 | 8（逐条见 §37.7） |
+| 本工具新落地（v1 里是歧义/未知） | **77** |
+| v1 有、本工具没落地 | 21（其中 **10 条**是 v1 的「消去法」锚——本节**不做消去**；其余 11 条是规则差） |
+| **⇒ 唯一锚（同版本口径）** | **299 键 → 317 键（净 +18）**；行口径 326 → 317 |
+
+**外部真值逐项复核（不依赖本节，`观测`）**：拿 §18/§20/§36 已经独立定过的四条名字，
+用 `key` 子命令把「某个 Location 键在四种构建里各被哪个函数引用」打出来：
+
+| 校验用的 Location 键 | linux | win 2.0.60 | 该键在 Windows 侧的符号名 | 与旧文档一致？ |
+|---|---|---|---|---|
+| `src/graphwar_path_calculator.rs:86:37`（§20.5 的 9 个锚之一） | **0x467530** | 0x18004d490 | `GraphwarPathCalculator::calculate_paths` | ✅ §18/§20.5/§36.5 |
+| `src/graphwar_path_calculator.rs:45:108` | **0x467530** | 0x18004d490 | 同上 | ✅ |
+| `src/graphwar_shot_calculator.rs:181:59` | **0x3c2bc0** | 0x18011d640（该函数共 **13** 个 `src` 锚） | `GraphwarShotCalculator::calculate_shot_results` | ✅ §20.5/§36 |
+| `src/math_function.rs:75:10` | **0x4ed670** | 0x18002ead0 | `MathFunction::new` | ✅ §18/§20.5 |
+| `src/graphwar_target_manager.rs:35:24` | **0x465910** | **0 个**（Windows 侧连这个 Location 都没有） | — | ✅ 与 §36.5 的真值 `0x465910` 一致 |
+
+前四条四向一致（`android` / `win` / `win_old` 的符号名逐字符相同，只有 `::h…` 后缀不同）；
+第五条正好落在"唯一一个只在 Linux 侧"的键上，**Windows 帮不上忙、Android 帮得上**——
+这也说明三向不是冗余，是互补。
+
+**"Windows 独有"那批为什么几乎落不了（`观测`，逐条归因）**：
+
+| 口径 | 名字数 | 落地 |
+|---|---|---|
+| `win − android` | **257** | **6（2.3%）** |
+| `win − android − win_old` | 48 | 3 |
+| `win − win_old` | 110 | 7 |
+
+257 个的归因（可复算，`report` 会打印）：
+
+| 原因 | 条数 | 判据 |
+|---|---|---|
+| ① 函数体**零** `src` Location | **212** | 这 212 个 Windows 函数的 `locrefs` 里没有一个 `src/*.rs` 键 ⇒ 这条路**永远**定不了名 |
+| ② 有键但没有一个双向唯一 | **40** | 某一侧多重数 >1（Windows 侧 23,348 个函数引用 Location、Linux 侧只有 3,107，比例本来就不同） |
+| ③ 有双向唯一键（应当已落地） | 5 | 落地了 6 行（有重名） |
+
+⚠ 「206」这个数我**没复现出来**：本工具口径下 `win − android` 是 **257 个名字键**
+（按"去哈希全串"口径是 **420**）。差别的根源是"唯一名"的定义（`name_key` 三元组 vs 全串），
+见 §37.7 第 3 条。落地比例（约 2%）在两种口径下都一样低。
+
+### 38.5 ③ 冲突清单
+
+**（1a）一个源函数的多条唯一键指向两个不同的 Linux 地址：4 条**（`report` 逐条打印）。全部列出：
+
+```text
+win     <GraphwarPlane as IControl>::draw              9 票 → 0x4b5df0 | 1 票 → 0x456df0
+win     GraphwarAudioControl::process                  9 票 → 0x4bfe10 | 1 票 → 0x456f80
+win_old GraphwarLevelManager::setup_level             83 票 → 0x499740 | 22 票 → 0x49f510
+android GraphwarGameStateManager::request_new_player   8 票 → 0x4739c0 | 1 票 → 0x3c1b40
+```
+
+成因（`推断`）：键集里混进了"被内联进来的别人的 panic 点"——例如 `GraphwarPlane::draw`
+的键里有一条 `src/graphwar_function_manager.rs:208:37`，那条属于另一个模块的函数。
+票数 9:1 也**不自动选**：本节按「宁缺勿错」记歧义。
+
+**(1b) 最终记「歧义」不给地址的名字键：8 个**，全部是 `{{closure}}` / `__inner_init` 这类
+"同一个源函数在 Linux 侧被拆成两份"的情形（与 §36.7 说的拆分同类）：
+
+```text
+entity_drawer::_::__init::__inner_init        android 0x4bc240  vs  win 0x4bbcc0
+graphwar_lan_vbox::_::__init::__inner_init    android 0x4e9380  vs  win 0x4e8f80
+graphwar_plane::_::__init::__inner_init       android 0x4bc490  vs  win 0x4bc860
+player_showcase::_::__init::__inner_init      android 0x4e8b20  vs  win 0x4e8d70
+GraphwarLevelManager::setup_level_0::{{closure}}   android 0x49e570  vs win 0x49e650
+GraphwarLevelManager::setup_level_12::{{closure}}  android 0x4a5e80  vs win 0x4a6020
+GraphwarLevelManager::setup_level_16::{{closure}}  android 0x4a91b0  vs win 0x4a93e0
+GraphwarSetupControl::ready::{{closure}}          android 0x4d1f10  vs win 0x4d2f70
+```
+
+两条同版本来源各执一词、而两侧都"双向唯一"——这说明 Linux 里这两个地址**都**引用了
+同一个键，`(1,1)` 唯一性在这个键上本来就不成立，属于真正的两难。
+
+**(2) 同一个 `src` Location 键被 ≥2 个不同名字引用：262 个键**（`观测`）。三个成因，都不是错：
+
+| 成因 | 例 |
+|---|---|
+| **gdext 样板共用一行**：`__register_methods` / `__register_constants` / `_::__init::__inner_init` 全指向 `src/<X>.rs:<行>:1` | `src/axis_drawer.rs:27:1`、`src/graphwar_button.rs:83:1`…（6 个类） |
+| 递归/互递归共用一行 | `src/math_function.rs:184:24` ← `evaluate_recursive` / `evaluate_token` / `simplify_recursive` |
+| trait 默认实现被多个 impl 共用 | `src/graphwar_game_client.rs:152:49` ← 4 个 `*Drawer::{draw,process,ready}` |
+
+**(3) 同一个 Linux 地址被 ≥2 个名字认领：33 个地址**（`观测`）。绝大多数是
+`X::handle_entity_removed_event` 与它的 `::panic_cold_explicit`（同一个冷块被两条符号指到）、
+或 `{{closure}}` 与母函数共用锚点——**不是**"两个真名抢一个地址"。
+真正需要人工复核的只有 4 条（上一行的"多键指向不同地址"）。
+
+### 38.6 ④ 天花板之外：上限估计 **≈42 个**，正对照留出半 96.3%
+
+**做法**（不改任何既有结论，只做"能不能再定名"的估计）：
+query = Linux 目标函数，候选池 = **1,206 个有 `graphwarrust` 名字的 Windows 函数**
+（只有它们能携带名字）。打分只用**与地址无关**的四个量：
+`log 尺寸`、`log 指令数`、**助记符直方图 cosine**、**整数常量集合 Jaccard**；
+候选窗口 = 尺寸比 `[0.5, 2.0]`。**完全不看 Location、不看名字。**
+
+**正对照**：真值来自 Location（330 对，两侧都一对一），匹配器看不见它；真值按名字键 sha1
+**分半**，窗口/权重/阈值只在调参半定，留出半只报数。
+
+| | n | top-1 | 真值在 top-10 | 互为 top-1 | margin≥0.30 准确率 | 互为 top-1 时准确率 |
+|---|---|---|---|---|---|---|
+| 调参半 | 175 | 47.4% | 81.7% | 38.9% | **96.3%**（n=27） | **100%**（n=25） |
+| **留出半** | 155 | 40.0% | **81.9%** | 30.3% | **96.3%**（n=27） | **100%**（n=26） |
+| 随机基线 | — | ≈1/322 = **0.31%** | — | — | — | — |
+
+⇒ 匹配器**是工作的**（比随机高 130 倍，真值 82% 落在候选集里），
+"高置信"档（领先次名 ≥0.30）在留出半上 96.3%，"互为 top-1"档 **100%**。
+
+**消融（`ablate`，调参半上的 top-1）——把"任务书点名的被调者多重集"这条负结果写下来**：
+
+| 变体 | top-1 | Δ |
+|---|---|---|
+| 全量（默认权重） | 47.4% | — |
+| 去掉 `hist` | 34.3% | **−13.1%** ← 主力 |
+| 去掉 `const` | 35.4% | **−12.0%** ← 第二主力 |
+| 去掉 `size` | 46.9% | −0.6%（窗口已经用了尺寸） |
+| 去掉 `insn` | 52.6% | +5.1%（但高置信档准确率 96.3%→92.0%，见下） |
+| **加「被调者多重集」（按实测 0.38 归一）** | **39.4%** | **−8.0%** |
+
+**被调者多重集为什么救不了**（`观测`）：两个构建的「被调者数」之比中位数是 **0.38**
+（Linux 侧更少，因为 LTO/ICF 把子调用内联进去了；p25 0.27 / p75 0.50），不归一化会系统性
+把正确答案打低分；归一化后仍然掉 8 个百分点。**它是跨构建最不可比的一项**，不是没试。
+
+`insn` 的取舍：去掉它 top-1 更好（52.6%），但 margin≥0.30 的准确率从 **96.3% 掉到 92.0%**。
+本节的产出是"高置信档能落地多少"，所以我们**保留** `insn`——这是在调参半上做的选择，留出半只用来复核。
+
+**天花板之外的实际数字**（Linux 12,736 个无 `src` Location 的函数）：
+
+| 阈值 | 有 top-1 候选 | 单射（该 Windows 名只被一个 Linux 函数认领） |
+|---|---|---|
+| margin ≥ 0.05 | 3,244 | 60 |
+| margin ≥ 0.10 | 1,287 | 52 |
+| margin ≥ 0.20 | 409 | 45 |
+| **margin ≥ 0.30** | 201 | **44** |
+
+⇒ **上限估计 = 44 × 96.3% ≈ 42 个**（天花板 2,035 之外的"可能再定名"）。
+**这就是"不硬凑"的答案**：不是 11,468，也不是 1,287，而是**几十个**，并且每个都得再验。
+
+**两条必须写明的偏差**：
+1. **选择偏差**：正对照的真值函数都带 Location（代码形态更独特），而 12,736 个无锚函数里
+   大量是纯数学 / 闭包 / `drop_in_place` shim ⇒ 42 这个数**偏乐观**，真实只会更少。
+2. **阈值是在调参半上挑的**，虽然留出半复核了，但 `SIZE_WIN`/权重这些超参在整个真值集上被看过一眼，
+   独立性比 Location 那条链弱一档。
+
+### 38.7 与既有文档 / 夹具冲突的地方（逐条，就地说明）
+
+1. **§36.4 说 `MathFunction::remove_offset` 的真值是 `0x4eb830` → 本工具判 `0x4eb86a`（`观测`）**。
+   证据：三方来源（android + win2.0.60 + early2026）一致地把该名字的 2 个双向唯一键
+   （`src/math_function.rs:52:43`、`53:43`）指向 **`0x4eb86a`**（182 字节 / 53 条指令 / 4 条间接调用）。
+   而 `0x4eb830` 只有 **58 字节 / 19 条指令 / 0 个 Location 引用**（`probe 0x4eb830 0x4eb86a`）。
+   §36.4 那句是走 `sym_match` 裁决时写的，那句自己也说"候选集里不含真值"——**以本节为准**。
+2. **v1 夹具里 8 条地址与三方证据不一致**（其余 270 条一致）。两类：
+   * v1 记录的是"拆分后的两个地址"（如 `setup_level_4` 有 `0x49f510`/`0x49fea0`，三方证据只支持 `0x49f510`，
+     22 票）；本节只给票数最高的那一个地址。
+   * `setup_level_10/11/12/13` 在 v1 里分别是 `0x4a5390`/`0x4a5940`/`0x4a6020`/`0x4a63d0`，
+     而 **early2026** 的同名函数一致指向 `0x499740` —— 这正是 §37.4 把跨版本单列的原因
+     （early2026 的行号与 2.0.60 不同，`setup_level_10` 在旧版本里带的 25 个键落到另一个函数上）。
+   * 21 个 v1 唯一锚本工具**没复现**（如 `graphwar_level_manager::GraphwarLevelManager::setup_level_0..3`、
+     `graphwar_tick_handler::GraphwarTickHandler::tick`）：其中 10 条是 v1 的「消去法唯一」
+     （§20.3 记 16 条消去法锚），本节**不做消去**，只认双向唯一；其余 11 条是抽取规则差
+     （口径差：本节的 arm64 引用规则比 `name_bridge.py` 窄，带锚函数 **1,571 vs 1,722**；
+     差的是哪几种寻址形态本节**没逐条分离**，`未知`。同一套规则放到 x86 侧两侧一致：3,107）。
+3. **「Windows 独有 206 个」这个数没能复现**：本工具口径 `win − android` = **257 个名字键**
+   （"去哈希全串"口径 = **420**）。两种口径下落地率都只有 **2% 量级**（6 / 257；若按全串口径
+   落地 6 个 / 420）。原因是硬的（212/257 函数体内零 `src` Location），不随口径变。
+4. **§18/§20 的 2,035 与本节一致**（Linux 2,035 / Android 2,035），本节没有推翻它，
+   只是补了 Windows 2.0.60 的 2,051 与三方交集 2,034。
+
+### 38.8 局限（`未知`，别当结论）
+
+* **两份 Windows 构建的函数数差 1.2 万**（51,985 / 43,096），Linux 只有 13,263 ——
+  Linux 侧 LTO/ICF 把大量函数合并/内联掉了。结构相似度只在"尺寸接近"的那个子集里可用
+  （正对照的 size 比中位数 1.01、p10 0.96、p90 1.10，说明**能对上的那批几乎等长**；
+  对不上的根本没进候选窗口）。这个不对称的成因（ICF？`-C opt-level` 不同？）**没有证据**，不写。
+* **PE 的 `.pdata` 只覆盖 `.text` 的 88.6%**（0x8f1fc/12 = 48,853 条，覆盖 0x13fb914 / 0x14b50b8）。
+  剩下的 11.4% 用 COFF FUNC 符号补（7,213 个符号落在已覆盖的函数体内、被并入），
+  漏网的极可能是没有 unwind 信息的叶子函数。**没有逐条核对**。
+* **Windows 侧 212 个"零 Location"名字**（§37.4）是硬边界：它们不是"没算出来"，是**没有键**。
+* **`{{closure}}` 与母函数、`panic_cold_explicit` 与本体共用锚点**导致 33 个地址多名字——
+  本节不裁决（§36 的 `modblock`/`score` 规则能裁一部分，本节没引入，避免与 §36 的口径打架）。
+* **上限估计 42 没有逐条人工复核**。要落成名字，得对那 44 条（margin≥0.30 的单射）逐条看反汇编。
+
+### 38.9 怎么复算（不依赖本节，任何人可重跑）
+
+```bash
+# 0) 卡座：capstone 在仓库 .reference/venv 里；四份构建都在 .reference/ 下（只读）
+export PY=/…/.reference/venv/bin/python
+
+# 1) 全量扫描 + 写夹具（首次约 2 分钟：反汇编 13,263 + 12,609 + 51,985 + 43,096 个函数）
+$PY tools/three_way_match.py build
+
+# 2) ①②③④ 的全部数字（约 45 秒，缓存命中后）
+$PY tools/three_way_match.py report
+
+# 3) 正对照：调参半 / 留出半 + 阈值选择 + 天花板之外的上限估计
+$PY tools/three_way_match.py verify
+
+# 4) 特征消融（调参半）
+$PY tools/three_way_match.py ablate
+
+# 5) 单条复核
+$PY tools/three_way_match.py probe 0x3c2bc0 0x4eb830 0x4eb86a      # 某地址在四种构建里的样子
+$PY tools/three_way_match.py key src/graphwar_shot_calculator.rs:86:37
+$PY tools/three_way_match.py nm calculate_shot_results
+
+# 6) 只看夹具（不需要 capstone）
+awk -F'\t' 'NR>6{print $8}' fixtures/name_to_addr_v2.tsv | sort | uniq -c
+```
+
+输入路径可用 `--linux / --android / --win / --win-old / --funcstarts` 或环境变量
+`GW2_LINUX_SO` / `GW2_ARM64_SO` / `GW2_WIN_DLL` / `GW2_WIN_OLD_DLL` / `GW2_FUNCSTARTS` 覆盖。
+特征缓存落在 `.agent-work/threeway/cache/`（gitignore），key 里带 `CACHE_VERSION`
+（本节为 `tw-v3`）——**改了抽取逻辑必须同时抬版本号**，否则会静默吃旧缓存（§36.0 的坑）。
+
+### 38.10 产物：`fixtures/name_to_addr_v2.tsv` 的列
+
+```text
+module  type  method  x86_addr  src_file  src_line  src_col  join_kind  sources  evidence
+```
+
+* `x86_addr`：Linux 2.0.60 的 **ELF 虚地址**；Ghidra/REA 地址 = 该值 + `0x100000`（只加一次）。
+  空 = 没落地。
+* `join_kind` ∈
+  **`唯一锚`**（同版本来源支持且互不矛盾，**317 行**）/
+  **`跨版本锚`**（只有 early2026 支持，**30 行**，不进唯一锚计数）/
+  **`歧义`**（同版本来源矛盾，**8 行**）/
+  **`未知`**（无锚，**635 行**）。
+* `sources`：这个名字在哪些构建的符号表里出现（`win`/`win_old`/`android` 的组合）。
+* `evidence`：`votes=该地址拿到的双向唯一键数;keys=其中前 4 个键;src=真正落地它的来源;xver=early2026 是否一致;win_addr=Windows 侧地址`。
+* 行数 990 = 990 个**名字键**（`(module,type,method)` 去重）。与 v1 的 759 行不是同一分母：
+  v1 的 326 行唯一锚只有 299 个名字键（同一名字的多行是"拆分/消去"产物）。
+
+**可复现性（这次是验过的，不是"应该没问题"）**：删掉缓存冷启动重建一次（1 分 42 秒）
+与缓存命中重跑的夹具 **md5 完全相同**（`43aeb67c70d3f7affd8ded181b00be0e`），
+另外两个 `PYTHONHASHSEED`（0 / 7）也相同。§36.0 那条"入库夹具不能由入库工具复现"的坑，
+本节**没有**再踩：`CACHE_VERSION=tw-v3` 与夹具一起提交，抽取逻辑一改就必须抬版本号。

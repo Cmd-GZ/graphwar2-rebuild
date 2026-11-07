@@ -141,6 +141,12 @@ pub mod graphwar_entity_effect_manager;
 pub mod graphwar_effect_manager;
 pub mod graphwar_game_recorder;
 pub mod graphwar_video_writer;
+// 这两个模块的**字段布局**是 2026-11-08 任务 22 解出来的（32 B / 4 字段、80 B / 5 字段，
+// 三向交叉验证：arm64 2.0.60 / x86 Linux 2.0.60 / Windows 2.0.60 DLL）。
+// 任务书当时把 `src/lib.rs` 列为禁区，所以先用 `#[path]` 临时挂在 `_scaffold::root_wiring` 下；
+// 现在挂回 crate 根（`docs/16` §46.8 的迁移步骤就是这么写的，两个文件一行没改）。
+pub mod graphwar_function_manager;
+pub mod graphwar_obstacle_manager;
 pub mod graphwar_replay_control;
 pub mod function_drawer;
 pub mod function_history_recorder;

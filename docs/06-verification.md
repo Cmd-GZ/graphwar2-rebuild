@@ -2710,3 +2710,562 @@ cargo test --offline
 | 1 | 154 批 1 ulp **到底是什么**（§32.5 已排除求值器/常数/取 x） | 点数组 `[x19+0x30..0x40]` 的**填充者**（§25.4 的空白）；以及回放那份构建的 `pos_x/pos_y` 是在哪一步与"曲线点"分开算的 | **未知** |
 | 2 | 真解析器的**完整规则**在极端文本上的残留（`…-e^(…)+NaN` 那 1 发差一处结合） | 那类文本里 `NaN` 被词法器拆成 `n`(π)+跳过字符，真解析器的算子优先级在那种流上怎么走；影响 1/1290 发、且两边求值都是 NaN | **观测**（13 条探针 + 全量对拍） |
 | 3 | `fixtures/eval.tsv` 之外，是否还有**别的**夹具被 python-math-oracle 污染 | `path.tsv` 已核对"一字未变"；其它夹具不是求值器生成的 | **推断**（`path/parse` 已做正对照） |
+
+---
+
+## 33. 点数组的**填充者**找到了；`y` 在写入路径上**逐位未动**（2026-11-08，`dispatch/20`）
+
+> 本节接手 §32.5 / §25.4 的空白：「`[x19+0x30..0x40]` 那个 `Vec<(f64,f64)>` 是谁 push 的」。
+> 结论用的是**新的证据源**：`android-2.0.60` 的 `.symtab`（**24600 个带尺寸的符号，未 strip**，
+> 名字是符号表原文）与 `windows/graphwarrust-2.0.60.dll` 的 COFF 符号表。
+> 两份都是 **2.0.60**，与 arm64 逆向目标是**同一个版本**——名字不是跨版本猜的。
+
+### 33.1 一句话（三条）
+
+1. **填充者 = `GraphwarFunctionManager::set_function_points`**（arm64 **`0x489278`** / x86-64 **`0x456810`**），
+   它把一个 `Vec<(f64,f64)>` 的**三段头**（`cap/ptr/len`）搬进 `HashMap<u32, _>` 的桶里；
+   点本身由 **`GraphwarShotCalculator::calculate_function`**（arm **`0x3b5374`** / x86 **`0x3c2530`**）`push` 出来，
+   经 `calculate_shot_results`（arm `0x3b5770` / x86 `0x3c2bc0`）→ `GraphwarGameStateManager::fire_functions`
+   （arm `0x4a7160` / x86 `0x470eb0`，写 `self.results` 的 `+0x30..+0x40`）→ 才到 `set_function_points`。
+2. **1 ulp 不在这一步**（**反证**，逐跳）：从采样器返回到 `self.results` 再到 `HashMap` 再到
+   `execute_results` 取 `points[len-1]`，**每一跳都是 16/24/32 字节的搬运，没有一条 `addsd/subsd/mulsd/divsd`**。
+   ⇒ 写进点数组的 `y` 与采样器返回值**逐位相同**。
+3. **"同坐标不同序号"**：队列条目里两个 u32 是 `GraphwarShotResult.id`（`+0x18`）与采样序号 `X`（`+0x1c`）；
+   外层循环 over `X`、内层 over **结果记录**，`flags[]` 按**结果**索引 ⇒ **每个结果记录最多排一次队**。
+   ⇒ 两条坐标逐位相同的报文只能来自**两条点表逐位相同的结果记录**（不同 `id`），
+   **不是** §31.5 猜的"两个不同点序号上的同坐标点"。
+
+### 33.2 `[x19+0x30..0x40]` 到底是什么
+
+`self.results: Vec<GraphwarShotResult>`，元素 **32 B**，布局由**写指令**反推（不猜类型）：
+
+| 偏移 | 字段 | 证据（arm64） | 证据（x86-64） |
+|---|---|---|---|
+| `+0x00` | `points.cap` | `0x3b5870 stp x27, x10, [x8]` | 只在释放/扩容时用（`shl $0x4` 算 `cap*16`） |
+| `+0x08` | `points.ptr` | 同上（`stp` 的第二个寄存器） | `0x3c37d9 mov 0x8(%r14,%r13,1),%rdx` → `0x3c37e2 movupd (%rdx,%r12,1)` |
+| `+0x10` | `points.len` | `0x3b5884 str x9, [x8, #0x10]` | `0x3c37d2 cmp %r12,0x10(%r14,%r13,1)` |
+| `+0x18` | `id: u32` | `0x3b5890 str w28, [x8, #0x18]` | `0x3c38a3 mov 0x18(%r14,%r13,1),%r14d` |
+| `+0x1c` | `flag: u8` | `0x3b5894 strb w10, [x8, #0x1c]` | — |
+
+类型名是**符号表原文**：`core::ptr::drop_in_place<alloc::vec::Vec<graphwarrust::graphwar_shot_calculator::GraphwarShotResult>>`
+与 `…<alloc::vec::into_iter::IntoIter<…::FunctionResult>>`（都在 `calculate_shot_results` 的 `bl` 目标里）。
+`Vec` 在本构建里的字段序是 **`(cap, ptr, len)`**（`stur q0,[x22,#0x30]` 写 16 B = cap+ptr、`stur x8,[x22,#0x40]` 写 len），
+这正解释了 `execute_results` 为什么用 `+0x38` 当 ptr、`+0x40` 当 len（§32.5 写的"`+0x30..0x40`"是同一字段，只是起点）。
+
+### 33.3 逐跳：谁 push、谁搬、有没有算术
+
+`tools/point_array_chain.py hop --arch arm|x86` 直接复现下表。
+
+| # | 谁 | arm64 | x86-64 | 这一跳的指令 | 有算术吗 |
+|---|---|---|---|---|---|
+| 1 | `calculate_function` push 点 | `0x3b5374` | `0x3c2530` | arm `stp d9, d12, [x8]`；x86 `movsd %xmm0,(%rax,%rcx,1)` + `movsd %xmm0,0x8(%rax,%rcx,1)`（push 走 GOT 槽 `0x9baca0`） | **是**（这一步就是采样器） |
+| 2 | 打包成 `GraphwarShotResult` | `0x3b5770` | `0x3c2bc0` | arm `0x3b5870 stp x27,x10,[x8]` / `str x9,[x8,#0x10]` / `str w28,[x8,#0x18]` | **否**（只写 cap/ptr/len/id） |
+| 3 | 整条 Vec 搬进 `self.results` | `0x4a7160` | `0x470eb0` | arm `0x4a79f8 stur q0,[x22,#0x30]` + `0x4a79f0 stur x8,[x22,#0x40]`；x86 `0x471a15/0x471a1c movups` | **否**（24 B 头） |
+| 4 | 深拷贝点表 → `set_function_points` | 同上 | 同上 | arm `0x4a7ac8 ldp q0,q1 / 0x4a7ad4 stp q0,q1`（32 B/次）；x86 同形 | **否**（块拷贝） |
+| 5 | 存进 `HashMap` 桶 | `0x489278` | `0x456810` | arm `0x489478 str q0,[x22]` + `0x48947c str x8,[x22,#0x10]`；x86 `0x456a2b movups (%rbx),%xmm0` + `0x456a2e movups %xmm0,(%r15)` | **否**（24 B 头） |
+| 6 | 取 `points[len-1]` 当爆炸点 | `0x4a8558` | `0x472470` | arm `0x4a891c ldp d9, d8, [x8, #-0x10]`；x86 `0x4724cc/0x4724dd` 取 len×32 | **否**（只读两个 f64） |
+
+**第 1 跳里 `y` 是怎么来的（这一跳是唯一的算术，也是唯一可能的偏差源）**：
+
+```text
+arm64 0x3b5618  bl 0x4452d4   MathFunction::evaluate_recursive(self=x21, x=d8, y=0.0, z=0.0, &mut scratch)
+arm64 0x3b561c  fmov d12, d0  ; d12 = f(x)
+arm64 0x3b56f4  stp  d9, d12, [x8]   ; ★ point = (±x, f(x))，y 就是求值器的返回值本身
+```
+
+* 同一函数里还有**第二条**路径：`0x3b5404 tbz w22, #0x0` 跳到 `0x3b55c8` 是 Normal（`y = f(x)`），
+  不跳则走 `0x3b5504`–`0x3b5518` 的 **RK4**：`fmov d1,#6 / fdiv d1,d12,d1 / fadd d0,d9,d0` 即
+  `y_{n+1} = y_n + (step/6)(k1+2k2+2k3+k4)`，点是 `stp d8, d13, [x8]`（`0x3b55b4`）。
+  选哪条由 `w22`（`calculate_shot_results` 传的 `[mod+0x32]`，即**函数模式**）的最低位决定
+  ——这就是 §30.4 说的"内核没有 Ode 开火路径"在二进制里的样子。
+* 采样点**不在均匀 x 网格上**：`0x3b551c`–`0x3b5538` 每次用 `Vector2D::length`（`0x7ac7b4`）
+  量上一段弧长，与 `h` 比，`|len-h| < 1e-3` 才收（容差字面量 `0x19fc78 = 0.001`；
+  步长 `h` 来自 `fire_functions` 的 `movabs 0x3f847ae147ae147b = 0.01`）。
+
+⇒ **`y` 与"采样器返回值"逐位相同，且这就是求值器的输出**；§32.5 的"写 y 这一步"到此**排除**。
+
+### 33.4 `②` 的正面结论：残差更可能在**另一条 pos 生产者**上
+
+`execute_results` 里有**两处** `add_effect`（§25.4 已钉），第二处的 `pos` 来自
+`GraphwarPlanePosManager::get_position`（arm **`0x3b7f58`**，名字是符号表原文）。
+把它的读写两侧都扫一遍（`tools/point_array_chain.py pos`，正对照：必须命中两个已知调用点）：
+
+```text
+get_position（arm 0x3b7f58）：35 个 bl 调用点，其中与开火有关的只有两个
+  0x4a72dc  in GraphwarGameStateManager::fire_functions
+  0x4a8b40  in GraphwarGameStateManager::execute_results      ← 就是 §25.4 的第 ② 处 add_effect
+  另有 0x3dcbe8 / 0x3dcce0 in GraphwarPathCalculator::calculate_paths（**客户端**动画路径）
+
+set_position（arm 0x3b8160）**只有两个**调用点：
+  0x3db4d8  in GraphwarLevelGenerator::place_entity
+  0x3e76ec  in GraphwarRemoteEventHandler::handle_server_remote_event   ← 来自**线上**
+```
+
+⚠ 写侧里**没有一处**在弹道计算里（`calculate_function` / `calculate_shot_results` / `fire_functions` 都不写它）。
+
+⇒ **这一张位置表不由弹道计算写入，而是由"远端事件"写入**。也就是说：
+那 154 批里若有落在第 2 个 `add_effect` 上的，`pos_y` 是一个**别的机器/别的构建算出来再从网上收来**的 f64
+——与"本机采样器在这条文本上的求值"本来就不是同一次运算，1 ulp 完全合法。
+这与 §32.5 的不可能性证明（`obs` 不是 `fl(x+c)` 对任何 `x` 的结果）**相容**，而"求值器最后一位不同"不相容。
+
+顺带量到一件与 §25.2 口径有关的事：`pos_x == end_x`（逐位）在 **1290 发里只有 1050 发**
+（`posy_probe` 的 `obs_expl_x` vs `obs_end_x`，见 33.6）。⇒ §25.2 的"逐位相同"是**一个子集**的陈述，
+不能当成"两处 add_effect 的 pos 都等于曲线末点"。
+**这一条本身仍未知**：哪 154 批走的是哪一处 `add_effect`。
+
+### 33.5 `③` 同坐标不同序号：**两条结果记录**，不是两个点序号
+
+挖洞队列的写入点在 `calculate_shot_results`（x86 `0x3c38e4`–`0x3c38fe`，逐条 objdump 可复现）：
+
+```text
+3c3755  xor %ecx,%ecx                 ; X = 0                 ← 外层的"采样序号"
+3c3770  mov 0x38(%rsp),%rcx / inc %rcx ; X += 1
+3c378d  mov %rcx,0x38(%rsp)           ; ★ 本轮的 X（报文 tick 由它派生）
+3c3798  xor %r13d,%r13d / xor %r15d,%r15d   ; 内层：结果记录偏移 / 下标
+3c37aa  add $0x20,%r13 / inc %r15     ; 下一个结果记录（32 B/条）
+3c37c6  cmpb $0x0,(%rax,%r15,1)       ; ★ flags[] 按**结果下标 r15** 索引
+3c37d2  cmp 0x10(%r14,%r13,1),%r12    ; 结果.length vs X → 到尾巴就 flags[i]=1 退出
+3c37de  shl $0x4,%r12 / 3c37e2 movupd (%rdx,%r12,1),%xmm0   ; ★ 取 points[X]（X 在内层共享！）
+3c388e  cmpb $0xff,(%rax,%rdi,1)      ; 掩膜单点查表（§31.4）== 0xFF → 这个点没挖到，换下一条结果
+3c38e4  mov %rdx,(%rax,%rcx,1)        ; 条目 +0x00 = tag 0x8000000000000000
+3c38ee  movdqu %xmm0,0x8(%rax,%rcx,1) ; 条目 +0x08 = (x, y)  ← 直接来自 points[X]
+3c38a3  mov 0x18(%r14,%r13,1),%r14d   ; 条目 +0x18 = **GraphwarShotResult.id**
+3c38fe  mov %edx,0x1c(%rax,%rcx,1)    ; 条目 +0x1c = X
+```
+
+⇒ **`序号` 有两种可能读法，且都不是"同一结果里的两个点"**：
+`+0x18` 是**结果记录 id**（`GraphwarShotResult.id`），`+0x1c` 是**采样序号 X**。
+关键在于 **`flags[]` 是按结果记录索引的**（`r15` 与 `r13+=0x20` 同步走），而 `X` 在内层是**共享**的：
+
+* 同一 `X`、两条点表逐位相同的结果 ⇒ 坐标逐位相同、`X` 相同（tick 相同）、`id` 不同 ⇒ **同坐标不同序号**；
+* 这正好对上 §31.5 实测的"**92/162 连 tick 都相同**"。
+
+⇒ **修正 §31.5 的猜想**：那里写"只能来自两个**不同点序号**上坐标逐位相同的点"，前提是
+`flags[]` 按点序号索引；实测它是**按结果记录**索引的，`X` 在内层只有一个值。
+所以重复坐标的来源是**同一批里两条点表逐位相同的结果记录**（不同 `id`），不是同一条曲线上的重复点。
+**仍是推断的部分**：那两条记录为什么点表逐位相同（两条 `GraphwarShotResult` 天然来自
+`calculate_shot_results` 对 `get_current_turn_soldiers` 的逐兵循环 + 一份 id 数组
+`0x3b58ac ldr w28,[x21],#0x4`）；"同一条函数被两个兵各算一遍"这一点**未证**。
+
+### 33.6 复现（全部只读语料/二进制）
+
+```bash
+export PY=<ws>/.reference/venv/bin/python
+# ① 名字 + 地址（arm64 .symtab 原文）+ 字段偏移 + 正对照（17 条断言，必须全 OK）
+$PY tools/point_array_chain.py sym
+$PY tools/point_array_chain.py fields
+$PY tools/point_array_chain.py check          # 退出码必须 0
+# ② 逐跳判据指令
+$PY tools/point_array_chain.py hop --arch arm
+$PY tools/point_array_chain.py hop --arch x86
+# ③ set_position / get_position 的读写两侧（arm64 全 .text 的 BL 立即数扫描，带正对照）
+$PY tools/point_array_chain.py pos            # 退出码必须 0
+# ④ pos_x 与 end_x 的逐位比较（1290 发）
+$CARGO_TARGET_DIR/release/examples/posy_probe --dir $R --json /tmp/posy.jsonl
+python3 - <<'EOF'
+import json,struct
+b=lambda x:struct.unpack('<Q',struct.pack('<d',float(x)))[0]
+r=[json.loads(l) for l in open('/tmp/posy.jsonl')]
+print(sum(1 for x in r if b(x['obs_expl_x'])==b(x['obs_end_x'])), "/", len(r))
+EOF
+```
+
+**正对照（`check` 子命令就是这套）**：17 条断言里 5 条是 arm64 符号表、12 条是 x86 指令形态，
+其中 3 条互为独立交叉（`0x3c2530` 里必须出现**求值器 `4eb9d0`**、`0x470eb0` 里必须出现
+`0.01` 字面量与 `call 456810`/`call 472470`）。§32 已经逐位对拍过 `0x4eb9d0`，
+所以"我在 `calculate_function` 里认出了求值器调用"这件事本身是可验证的，不是形状相似。
+
+### 33.7 两处旧文档错的更正
+
+1. **§25.4 的"x86 `0x472470` 不是这个函数（是 hashbrown 探测循环）"是错的。**
+   `objdump -d --start-address=0x472470` 出来的是 `push %rbp … lea 0xe8(%rdi) → call`（= `hashbrown clear`）
+   → `lea 0xe0(%rbp) → call`（= `get_module_wk`）→ `movabs 0x7fff…` → `mov 0x40(%rbp),%rsi` +
+   `mov 0x38(%rbp),%rcx` + `shl $0x5`，与 arm64 `0x4a8558` **逐条对应**。
+   `fixtures/name_to_addr.tsv` 的 22 个 `panic::Location` 唯一锚也是这么指的。
+   ⇒ 那一行的"审计更正"应作废（当时可能把 `.text` 的 VA↔文件偏移算错了）。
+2. **§25.2 的"`pos_x` 与 `end_x` 逐位相同"是子集陈述**：1290 发里 1050 发成立（33.4）。
+
+### 33.8 验收（本分支 `agent/point-array-filler`）
+
+`src/` **零改动**（本节只是取证），所以三轴数字与基线**逐个相同**（自己复算，不看报告）：
+
+| 轴 | 指标 | 值 | 命令 |
+|---|---|---|---|
+| `fire` | 内容命中 | **331 / 1080** | `replay_attrib --drive fire --policy default --json f.jsonl` |
+| `batch` | 内容命中 | **355 / 1080** | `replay_attrib --drive batch --policy default --json b.jsonl` |
+| `batch_conv` | 内容命中 | **633 / 1080** | `batch_conv --policy strict` |
+| `batch_conv` | 种类序列 | **1075 / 1080** | 同上 |
+
+```text
+cargo test --offline                        1559 passed / 0 failed
+python3 tools/coverage_matrix.py --check    OK
+python3 tools/point_array_chain.py check    17/17 OK（退出码 0）
+```
+
+延迟段（`batch` 轴）死亡集合 215/379、挖洞点 140/262 —— 未经本分支触碰；
+`src/` 零改动时它们是同一棵树的同一批二进制，故未重跑，接管者按 `tools/bit_exact_attrib.py` 复核。
+
+### 33.9 仍未确定的（诚实清单，可直接接手）
+
+| # | 事项 | 缺什么 | 档 |
+|---|---|---|---|
+| 1 | 154 批 1 ulp **落在哪一处 `add_effect`** | 每条 `EffectInfo(Explosion)` 是 `execute_results` 的 ①（`points[len-1]`）还是 ②（`PlanePosManager::get_position`）产的——需要在 `0x4a89ec` / `0x4a8cb0`（arm）各下一次断点，或对拍时把两条都算出来比 | **未知** |
+| 2 | `PlanePosManager` 的位置**谁先算** | 只有 `place_entity` 与 `handle_server_remote_event` 写它；后者消费的 `ServerRemoteEvent` 里那对 f64 是**哪个客户端**算的、用的哪份构建 | **未知** |
+| 3 | 两条点表逐位相同的结果记录**从哪来** | `GraphwarShotResult.id` 数组（`0x3b58ac ldr w28,[x21],#0x4`）的上游：是一次开火里**逐兵**一份，还是逐函数一份 | **推断**（有地址、未证） |
+| 4 | `calculate_corrected_function` / `add_offset` 是否改变求值路径 | 它产出的 `MathFunction` 与印刷文本是否**同一条 token 流**；若是"给常数加偏移再求值"，就是**双舍入**（§32.5 的奇偶性证明只排除了**一次**加法，排不掉两次） | **未知** |
+
+> 第 4 条是本节留给下一轮最值钱的一条：§32.5 的不可能性证明假设的是**一次** `fl(x+c)`。
+> 若点数组用的是"加过 offset 的 token 流"，`fl(fl(x+a)+b)` 的**双舍入**能造出那个"落在格点之间"的值，
+> 而这条路径**不在** §32 的对拍范围内（那里比的是"给定文本 + 给定 x"）。
+
+## 34. 内核开火路径补上 `Mode`：DiffEq 515 批 / 550 发**从"不可比"变成"可比"**（2026-11-08，`dispatch/21`）
+
+> 任务书：[`dispatch/21-diffeq-fire-path.md`](../dispatch/21-diffeq-fire-path.md)。
+> 这一节结掉的是 `dispatch/reports/CG-round3` §7 与本文 §30.4 / §30.9 第 1 条那笔账：
+> `game.rs::fire_functions` 写死 `Mode::Normal` ⇒ 微分方程局（DiffEq）的开火走 `y = f(x)` 采样器
+> ⇒ **515 批 / 550 发根本不是"不一致"，是没法比**。
+>
+> 起点 `c99c8b5`，分支 `agent/diffeq-fire-path`，私有 `CARGO_TARGET_DIR`，同一份 401 回放快照。
+
+### 34.1 一句话（四条）
+
+1. **二进制里模式不是"开火时的入参"**，是「本局设置」里的一个字节：`FunctionModeInfo`(46) 的处理器写它，
+   **每次开火现读**，再原样塞进结算 config 的 `+0x39`，结算函数把它转给采样器的第 7 个实参
+   （整条链逐指令见 §34.2）。
+2. `Match` 因此长了一个字段 `function_mode: FunctionMode`（`graphwar_mode_manager` 那个，2 态、`repr(u8)`）
+   + `set_function_mode*`；`fire_functions` / `execute_results` 都按 `self.sampling_mode()` 走。
+3. **DiffEq 轴从"不可比"变成"可比"**：两条路径（内核 K / 收敛层 C）的逐位对拍分母
+   从 **740 发（只有 Normal）** 变成 **1290 发**，**DiffEq 550 / 550 逐位全同**（§34.4）。
+4. 对回放内容（才是"能不能对上原版"）：`batch` 轴 DiffEq 内容命中 **0 → 288 / 515 批（55.9%）**、
+   种类序列 **359 → 515 / 515**；`fire` 轴 **0 → 277 / 515**。**Normal 三轴护栏一条没退**。
+
+### 34.2 模式怎么传到采样器（**观测：逐指令，自己 objdump 复验**）
+
+x86-64 `2026-08-28`（`.reference/steam/2026-08-28/libgraphwarrust.so`，vaddr）：
+
+```text
+0x470eb0  GraphwarGameStateManager::fire_functions（5456 B）
+  0x471791  call 0x46e140             ; 模块容器按 16 字节 key 取「本局设置」模块
+  0x4717b8  movzbl 0x32(%rax),%r14d   ; ★ 模块 +0x32 = function_mode（2 态字节）
+  0x4717ef  movb $0x1,0x80(%rsp)      ; config+0x38 = 1
+  0x4717f7  movabs $0x3f847ae147ae147b ; config+0x00 = 0.01（服务端步长）
+  0x471806  mov %r14b,0x81(%rsp)      ; ★ config+0x39 = function_mode
+  0x47180e  movw $0x1,0x82(%rsp)      ; config+0x3a = 1
+  0x471825  call *0x9bacb0            ; = 0x3c2bc0 calculate_shot_results
+
+0x3c2bc0  graphwar_shot_calculator（12 KB）
+  0x3c2d18  movzbl 0x39(%rax),%eax    ; 读回 config+0x39
+  0x3c2d1c  mov %al,0x198(%rsp)       ; 溢出到栈槽
+  0x3c3091  movzbl 0x198(%rsp),%ecx   ; ★ 作为采样器第 7 实参（%ecx）
+  0x3c30c1  call *0x9bac98            ; = 0x3c2530 弦长采样器
+
+0x3c2530  采样器
+  0x3c2541  mov %ecx,%r15d            ; 第 7 实参 = mode
+  0x3c254a  mov %edx,%ebp             ; 第 6 实参 = flip（后面 test %bpl,%bpl 取反 x）
+  0x3c25f5  test %r15b,%r15b
+  0x3c25f8  je   0x3c2923             ; ★ mode == 0 ⇒ Normal 分支；非 0 ⇒ 落到 0x3c25fe（RK4）
+```
+
+* **极性**：`0 = NormalFunction`、`非 0 = DiffEqFunction`。三条互证：`docs/07` §5.2 的枚举判别值、
+  图标索引（`fx_option.svg` = 0 / `dx_dy_option.svg` = 1，`0x4c94a3`/`0x4c9529`）、
+  以及 `ctx+0x5c == 0` 才加修正常数（`0x51bbaa`）。
+* **谁写这个字节**：`FunctionModeInfo`(46) 的分支 `0x3e2b1b`（`mov BYTE PTR [r15+0x32],bpl`；
+  同族 45/47/48 = axis/turn/time，`docs/archive/110` §2.3）。⇒ **模式是事件的落值对象，开火时读**，
+  同一局里可以变（`Match::set_function_mode` 就是这条的落地）。
+* **实参排布**：`(rdi=out, rsi=tokens, xmm0/1/2=x0,y0,step, edx=flip, ecx=mode)`——与
+  `src/graphwar_path_calculator.rs::calculate` 的 Rust 签名逐位同构，所以**采样算法一个字节都没改**。
+
+**正对照（本文的两条"只此一处"结论，按 `AGENTS.md` 合并纪律 A.4 做）**：
+
+| 结论 | 扫描 | 结果 |
+|---|---|---|
+| `config+0x39` 在 `0x3c2bc0` 里**只被读一次、只转给采样器一次** | `objdump … \| grep '0x198(%rsp)'` | 5 处命中：1 次写（`0x3c2d1c`）、1 次读转采样器（`0x3c3091`）、3 次是**同一栈槽后来被当 8 字节量复用**（`0x3c3cd0`/`0x3c3db1`/`0x3c3f79`，都在 `0x3c3xxx` 段） |
+| 采样器函数指针槽 `0x9bac98` 只有 2 个使用者 | `objdump -d \| grep '0x9bac98'` | 恰好 2 条：`0x3c30c1`（开火结算体内）、`0x3e2d35`（客户端预览，`docs/151` §2.5 同结论） |
+
+### 34.3 改了什么（**集中、可解释**：一个字段 + 四个新函数 + 三处函数体 + 两处接线）
+
+| 文件 | 位置 | 改法 | 为什么在这里 |
+|---|---|---|---|
+| `src/game.rs` | `struct Match` | **新增字段** `function_mode: FunctionMode` | 二进制里它就挂在"本局设置"模块上，谁开火谁读（§34.2） |
+| `src/game.rs` | `Match::new` | 1 行：从 `room.function_mode` 初始化 | `RoomState::function_mode` 就是 46 号事件的字符串，落地路径不变 |
+| `src/game.rs` | 新增 `function_mode_of` / `sampling_mode` | 字符串→枚举、枚举→采样器 `Mode` | 全仓库只有这一份映射（`diffconv::mode_of` 改成转调） |
+| `src/game.rs` | 新增 `corrected_function_text_mode` / `sampling_function_text_mode` | `Normal` = 原两个函数；`Ode` = **原文照发** | 修正常数 `c = y0 − f(∓x0)` 对 `dy/dx` 无意义（§34.5 的两条证据） |
+| `src/game.rs` | `Match::fire_functions` | 采样串与采样模式都按 `self.sampling_mode()`（**原来写死 `Mode::Normal`**） | 这就是那条"不可比"的根 |
+| `src/game.rs` | `Match::execute_results` | ① 发出的 `corrected_function` 按模式；③ 挖洞点 `hole_point(mode == Ode, …)`（原来直接比 `room.function_mode` 字符串） | 同一个模式，两处读取口径必须一致 |
+| `src/game.rs` | 新增 `Match::function_mode` / `sampling_mode` / `set_function_mode` / `set_function_mode_wire` | getter + 46 号事件的落点（同时同步 `room.function_mode`） | 线上字符串取 `MODE_NAME_TABLE[0..2]`（**逐位**那张表），不再抄一份 match |
+| `src/_scaffold/replaydiff.rs` | `Predictor` | 新增 `mode_schedule`（全文件的 46 号事件时刻表）+ `sync_mode`；`predict` 开头多一行 | 模式是**输入流**的一环，不是常量：喂到哪一批就该用那一刻的值 |
+| `src/_scaffold/diffconv.rs` | `mode_of` / `corrected_function` / `sampling_text` | 全部改成**转调内核**（`docs/06` §30 的同一条纪律） | 同一条规则不许有第二份实现 |
+| `src/_scaffold/diffconv.rs` | `parity_file` | 删掉 `if diff_eq { continue }`，改成**计入分母**并给内核 `set_function_mode_wire` | 这就是"不可比"那道闸 |
+| `src/_scaffold/diffconv.rs` | `Parity` | 新增 `diff_eq_shots_identical`；`summary()` **分轴印**（Normal / DiffEq） | 分母 740→1290 后，混着印会把"Ode 轴刚开始比"读成"Normal 变差" |
+| `examples/diffconv_parity.rs` | 打印 | **只改两行文字**（删掉"DiffEq 不可比"这句已变成假话的说明，改成两句统计） | 断言/口径/退出码一字未动 |
+| `tests/diffconv_parity.rs` | 注释 + 一条断言 | 注释改口径；**新增**一条防空转断言（`diff_eq_shots > 0 && < shots`） | 原文那条 `diff_eq_batches > 0` **保留原样**且仍然成立 |
+| `src/game.rs`（`mod tests`） | 新增 4 条单测 | 模式来源/极性、RK4 换采样器、原文照发、挖洞点=停点 | 自写断言只作回归锁，**不构成复原证据** |
+
+**没动的**：`src/graphwar_path_calculator.rs`（采样算法，`Mode::Ode` 早就实现了）、`*_class.rs`、
+`client/**`、`src/lib.rs`、`dispatch/`、既有测试断言。`graphwar_shot_calculator::shot_points` 签名也没变
+（`apply_correction` 那条正交开关照旧传 `false`）。
+
+### 34.4 DiffEq 轴的数字（**分轴、带轴名、命令都能粘**）
+
+```bash
+R=<快照>/replays ; OUT=<本次工作目录>
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive fire  --policy default --json $OUT/f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive batch --policy default --json $OUT/b.jsonl
+cargo run --release --offline -q --example batch_conv    -- --dir $R --policy strict
+cargo run --release --offline -q --example diffconv_parity -- --dir $R --max-samples 6
+```
+
+**① 三条护栏轴（改前 / 改后都是同一台机器、同一份 401 回放快照上自己跑的）**
+
+| 轴 | 指标 | 改前（`c99c8b5`） | 改后 |
+|---|---|---|---|
+| `fire` | 内容命中（全 1080 批） | 331 / 1080 | **608 / 1080** |
+| `fire` | 其中 Normal | 331 / 565 | 331 / 565（**未退**） |
+| `fire` | 其中 **DiffEq** | **0 / 515** | **277 / 515** |
+| `batch` | 内容命中（全 1080 批） | 355 / 1080 | **643 / 1080** |
+| `batch` | 其中 Normal | 355 / 565 | 355 / 565（**未退**） |
+| `batch` | 其中 **DiffEq** | **0 / 515** | **288 / 515**（55.9%） |
+| `batch` | DiffEq 种类序列 | 359 / 515 | **515 / 515**（100%） |
+| `batch_conv` | 种类序列 | 1075 / 1080 | 1075 / 1080（**未退**） |
+| `batch_conv` | 内容命中 | 633 / 1080 | 633 / 1080（**未退**：收敛层本来就按模式走） |
+| 延迟段（**batch 轴**） | 死亡集合 | 215 / 379 | **366 / 385**（多报 19 / 漏报 0 / 错人 0） |
+| 延迟段（**batch 轴**） | 挖洞点 | 140 / 262 | **206 / 293** |
+| `cargo test --offline` | 通过条数 | 1559 | **1563**（+4 单测） |
+| `python3 tools/coverage_matrix.py --check` | — | OK | OK（改了 `src/` ⇒ 已重跑生成器，两个生成物一起提交） |
+
+⚠️ 延迟段的**分母变了**（379→385、262→293），不是口径放宽：DiffEq 批原来算不出"可比对象"
+（弹道整条错 ⇒ 既不杀人也撞不到障碍），现在产出了，于是进了分母。分子同时涨（+151 / +66）。
+
+**② 两条路径的逐位对拍（`diffconv_parity`，K = 内核 / C = 收敛层）**
+
+```text
+改后：文件 286；结算批 1080（Normal 565 / DiffEq 515）；发 1290（Normal 740 / DiffEq 550）
+      点序列/stop/blocked/killed/修正文本 逐位全同 1290 / 1290（100.0%）
+      分轴 Normal 740 / 740（100.0%）、DiffEq 550 / 550（100.0%）
+      挖洞点（两边都调 game::hole_point）：逐位相同 348 / 348
+      爆炸点（内核 ④ 仍用 stop，收敛层用 hole_point）：相同 1278 / 1290
+```
+
+改前：**DiffEq 515 批 / 550 发被 `continue` 掉，分母 740 发**（§30.4 / §30.5 的记录；本次没有为
+"改前"再复跑一遍旧代码，只复跑了改后）。所以这一条的正向变化是**分母**：740 → 1290，
+而新加进来的 550 发**一发不差**。
+
+**③ DiffEq 轴还剩什么（`batch` 轴，515 批，`tools/bit_exact_attrib.py` 互斥分桶）**
+
+```text
+内容命中 288 / 515（55.9%）；失败 227 批
+  Y  爆炸点 y 末位差（求值器末位）      124 批（54.6%，独占 124）
+  E1 end_x 差一个采样点                52 批（22.9%）
+  X  爆炸点 x 末位差（pos_x ≠ end_x）   43 批（18.9%，独占 23）
+  E2 end_x 真分歧（几何）               8 批（ 3.5%）
+```
+
+⇒ **真正的"几何算错"只有 8 批（1.6%）**；`end_x`（弹道终点 x）逐位相同的 **455 / 515（88.3%）**；
+`pos_y` 的差 **1 ulp 占 101 批**、2 ulp 29 批——与 Normal 轴那 106 批 1 ulp 是**同一类残差**
+（§32.5 已把求值器排除干净，来源仍是**未知**）。`C`（修正文本）桶**已经清零**
+（改前那 2 批就是 §34.5 的括号证据）。
+
+### 34.5 顺手钉死的一件事：DiffEq 局**连补括号都不做**
+
+`corrected_function` 在 Normal 局是 `原文 + ")"×缺 + " ± c.ddd"`；在 DiffEq 局是**原文逐字节**。
+第一版实现把"补括号"当成与模式无关的 `to_text` 性质（**推断**），结果 2 批报 `C` 类：
+
+| 回放 | 我方（补完括号） | 回放（真值） |
+|---|---|---|
+| `1782760485` #0 | `…cos(2588))))))))))))))))`（补 16 个） | `…cos(2588`（**一个都没补**） |
+| `1783013297` #0 | `sin(ln(abs((sin(558)cos(559)))))`（补 3 个） | `sin(ln(abs((sin(558)cos(559))` |
+
+⇒ 微分方程局里"算修正常数 + 重印函数串"这一步**整个被跳过**（补括号是这个重印的副产物），
+所以采样器吃的也是原文。这就是 `corrected_function_text_mode` / `sampling_function_text_mode`
+两个 `Mode::Ode` 分支都返回 `function_text.to_string()` 的依据（**观测**：回放实读 2/2，加上
+550/550 的 `corrected_function == function`）。改动前后这 2 批由 `C` 变成命中。
+
+### 34.6 正对照：证明"可比"不是"把比较放宽了"
+
+| 检查 | 做法 | 结果 |
+|---|---|---|
+| 口径没松 | `compare_batch` / `Policy` / 投影 / 折叠 / 归一化 / leave-one-out：**一行未改**（本次没有碰 `replaydiff` 的比对层，只在 `Predictor` 里加了模式同步） | `git diff` 里比对函数零改动 |
+| 提升来自哪 | 只换采样模式、文本规则不动：`fire` DiffEq 0 → **276**、`batch` 0 → **287**；再把文本规则改成"Ode 原文照发"：**+1 / +1** | 287+1=288（`batch`） |
+| 不是"少比了" | `batch_conv` 的 1080 分母、`diffconv_parity` 的 1290 分母都**没变小**；`tests/diffconv_parity.rs` 新增 `diff_eq_shots > 0 && < shots` 防空转断言 | 全绿 |
+| Normal 没被动 | `fire` Normal 331/565、`batch` Normal 355/565、`batch_conv` 1075/633 —— 与改前**逐数相同** | 未退 |
+| 模式不是"猜"的 | `function_mode` 的取值集合与极性可指到 `docs/07` §5.2（`逐位`）+ §34.2 的两条指令 | — |
+
+### 34.7 仍未确定的（诚实清单）
+
+| # | 事项 | 缺什么 | 档 |
+|---|---|---|---|
+| 1 | DiffEq 轴 **124 批 `pos_y` 1~3 ulp** 的来源 | 与 Normal 轴 §32.5 那个空白同一个入口：点数组的**填充者**。本节只证明"不是模式选错"（把模式改回 Normal 就整条弹道错，不是末位差） | **未知** |
+| 2 | DiffEq 轴 **52 批 `E1`**（`end_x` 差一个采样点）与 **8 批 `E2`** | 采样器的二分收敛在 Ode 分支上与真值差一个点；`docs/04` §10.4 说 Ode **没有**半步复检（`0x3c2840` 观测），所以不是"少了一段代码"这么简单 | **未知** |
+| 3 | `graphwar_mode_manager::FunctionMode` 的**类型归属** | 二进制里那个模块的 Rust 类型名是 TypeId 哈希，`type_name` 不存在（`docs/archive/110` §2.5 第 1 条）。本字段用它是因为**语义与 2 态形状**对得上 | **推断（强）** |
+| 4 | 一局里**中途改模式**对已发出的弹道有没有影响 | 语料里 **0 / 1080 批** 的"批前最后一个 46 号事件"与"第一批之前那个"不同（本次实测，见下），所以这条路径**在现有语料上不可观测**；`Predictor::mode_schedule` 按"开火时读"实现，但**没有被任何样本检验过** | **推断** |
+
+> 第 4 条的实测（可复跑：对 403 份回放逐行扫 `FunctionModeInfo` / `CalculatingResults`）：
+> **每批之前的模式 == 第一批之前的模式，0 例外**。96 份回放全文里出现过两种取值，但那些切换
+> 都落在**最后一批之后**（换局的设置广播）。⇒ `Match::new` 那一次初始化就够覆盖全语料；
+> `Predictor` 的时刻表是"按事件语义写对"，不是"靠它拿分"。
+
+## 35. **运行时**抓到点数组的填充者：`calculate_function`；写进去的 y 与求值器**逐位相同**（2026-11-07，`dispatch/25`）
+
+> 任务书：[`25-frida-point-array.md`](../dispatch/25-frida-point-array.md)。**本节全部是运行时观测**
+> （frida 17.26.1 挂在真游戏 `Graphwar II` Linux 2.0.60 进程里），不是静态推断。
+> 脚本：[`tools/frida_point_array.js`](../tools/frida_point_array.js)（下断）+ [`tools/frida_point_array.py`](../tools/frida_point_array.py)（驱动）。
+>
+> 前置：§25.4（点数组 8 字节布局）、§25.5 第 2 条（"填充者未知"）、§26.2（arm64 逐指令）、§32.9 第 1 行。
+
+### 35.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 游戏跑起来了吗 | **跑起来了**：Linux **2.0.60**（Steam 版，`libgraphwarrust.so` sha256 `9a538115…`），Xvfb + frida 拉起，进到 campaign 对局并**开了炮** | **观测** |
+| ② | 点数组的填充者 | **`calculate_function`，x86-64 ELF RVA `0x3c2530`**（FDE `[0x3c2530,0x3c2bb9)`，本构建）。它自己 `push` 出 `Vec<(f64,f64)>` 并把它当返回值交给调用方；调用方（`gw+0x3e2d3b`，`graphwar_remote_event_handler.rs` 里那个大函数 `0x3e2830`）把这个 0x20 字节记录**原样**放进开火队列 `[GSM+0x38+i*0x20]` | **观测** |
+| ③ | 写进去的 y 与采样器/求值器返回值 | **逐位相同**：`3588/3588`（run5）、`4062/4062`（复跑）、`4482/4482`（run4）——`exact = n-1`、`ulp1 = 0`。**唯一不来自求值的点是第 0 点**（炮口/出生点）。⇒ **1 ulp 不在这一步** | **逐位**（真机内存 vs 真机求值器返回值） |
+| ④ | 同坐标不同序号的"序号" | **未观测到样本**（缺什么见 §35.6） | **未知** |
+
+### 35.1 怎么跑起来的（命令 + 版本 + 日志）
+
+构建与二进制（**地址都相对这一份**）：
+
+```text
+构建      Graphwar II Linux 2.0.60（Steam）
+          .reference/game/{Graphwar.x86_64, Graphwar.pck, libgraphwarrust.so}
+sha256    9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187  libgraphwarrust.so
+          ⇒ 与逆向目标**逐字节相同**，所以本节所有 RVA 都是"目标二进制"的地址
+引擎      Godot 4.7.stable.official.5b4e0cb0f + godot-rust (API v4.6, runtime v4.7)
+```
+
+跑法（两个坑，都实测）：
+
+1. **`/tmp` 是逐命令 tmpfs** ⇒ `Xvfb` 的 `/tmp/.X11-unix` 跨命令不可见。改成 **TCP 监听**
+   （`Xvfb :92 -listen tcp -ac`），后续任何命令都能用 `DISPLAY=127.0.0.1:92` 连上。
+2. **Xvfb 直接起会 core dump**（`libEGL_nvidia` → `swrast_dri` 段错误）。加
+   `__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json` +
+   `LIBGLX_VENDOR_LIBRARY_NAME=mesa` + `LIBGL_ALWAYS_SOFTWARE=1` 后正常（llvmpipe）。
+3. Vulkan 不可用 ⇒ Godot 自己回落到 OpenGL 3（日志原文见下）。
+
+```bash
+# ① Xvfb（TCP，1920x1160 —— 与真帧管线同尺寸）
+Xvfb :92 -screen 0 1920x1160x24 -listen tcp -ac &
+# ② frida 拉起真游戏 + 下断 + 点菜单 + 长按开火（同一个 PID 命名空间里做完）
+.reference/venv/bin/python tools/frida_point_array.py --out /abs/run.jsonl --display 127.0.0.1:92
+```
+
+游戏自己的输出（**原文**，`[stderr]`）：
+
+```text
+Initialize godot-rust (API v4.6.stable.official, runtime v4.7.stable.official, safeguards balanced)
+Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
+WARNING: Your video card drivers seem not to support the required Vulkan version, switching to OpenGL 3.
+...
+src/graphwar_function_input.rs:519: dt:0.010279712      ← 对局里每帧打的 debug 行
+src/entity_drawer.rs:585: dt:0.008586611
+src/effect_drawer.rs:507: dt:0.048114464
+```
+
+真帧（1920×1160 根窗口截图，逐帧看过，**不入库**，一条命令可重放）：
+主菜单四项 + 右下角版本号 **`2.0.60`**；`Battle` → LAN 大厅（`Create Game`/`Join IP`）；
+`Campaign` → 关卡节点 → `Level 0 / Write a function of x to hit the target` → `Start` →
+对局界面（左键区数字/函数键盘、右侧 `Fire!`、底部 `f(x) =` 输入框）；输入 `sin(x)+3` 后
+**长按** `Fire!` 2 s，图上出现正弦曲线并开始播放弹道。
+
+⚠ **`Fire!` 是长按按钮**（`play_screen.tscn` 里 `FireButton.long_press_input_text = "fire"`）：
+单击只按下不动，必须 `mousedown; sleep 2; mouseup`。踩过一次（前两炮"没反应"就是这个）。
+
+### 35.2 下断地址：**本构建**逐条核对过（并更正 §25.4 的一句话）
+
+`tools/addr_probe.py fde <rva>`（`.eh_frame`，`--so` 指到 `.reference/game/libgraphwarrust.so`）：
+
+| RVA | FDE 范围 | 是什么 | 怎么核的 |
+|---|---|---|---|
+| `0x472470` | `[0x472470, 0x473513)` | `execute_results` | 序言 `push rbp/r15/r14/r13/r12/rbx` + `sub rsp,0x148`，与 §25.4 记的一致 |
+| `0x4724cc` | 同上（体内） | 开火队列预扫第一条指令 `mov 0x40(%rbp),%rsi` | 停在这里读 `rbp`=self 与 `[self+0x38/+0x40/+0x48]` |
+| `0x3c2530` | `[0x3c2530, 0x3c2bb9)` | `calculate_function` | 函数指针槽 `0x9bac98` **运行时**读出来 = `base+0x3c2530`（旧文档的"唯一入口"成立） |
+| `0x4eb9d0` | `[0x4eb9d0, 0x4ebbe0)` | 求值器（`src/math_function.rs`） | 递归自调用点 `gw+4eba49/4eba6b/4eba91` |
+
+📌 **更正 §25.4 的"`0x472470` 别再照着用"**：那句话对 **2026-08-28 那份 x86** 成立；
+在 **Linux 2.0.60（sha256 `9a538115…`）** 这份上，`0x472470` **就是** `execute_results`，
+`.eh_frame` 给的函数体 4260 B，与 arm64 的 3712 B 同量级同形状（本条 **观测**）。
+
+### 35.3 开火队列在 x86 上的实际布局（与 arm64 记的差 8 字节）
+
+`execute_results` 体内 `0x4724cc` 处停下，`rbp` = GSM：
+
+```text
+[self+0x38] = 队列 ptr        [self+0x40] = 队列 len(u32)     [self+0x48] = cap(u32)
+元素步长 0x20（函数体里 shl $0x5），元素布局（真机内存 dump，四次抓取一致）：
+  +0x00 kind(u64)      例：0x8000000000000001 / 0x8000000000000002 / 0x1000 / 0x2000
+  +0x08 pts.ptr
+  +0x10 len(u64)       ← 点数组长度（函数体 `mov 0x10(%rdx),%edi` 用的就是它，再 ÷30 算 start_tick）
+  +0x18 = 230 (u64)    ← **四次抓都是 230**，与 len 无关，**不是 cap**（cap < len 不可能）
+```
+
+⇒ §25.4 记的 arm64 `[x19+0x30/+0x38/+0x40]` 与这里的 `+0x38/+0x40/+0x48` **差 8 字节**。
+是不是同一结构的不同基址 —— **未知**（缺：arm64 那份的同一处运行时 dump）。
+
+### 35.4 填充者 = `calculate_function`（RVA `0x3c2530`）：四条独立证据
+
+一炮打出去，点数组有 **3221 / 3589 / 4063 / 4483 / 4847** 个点（每次不同，取决于打在哪儿），
+x 步长恒 **0.00875**（世界坐标）。
+
+1. **返回值就是这个队列元素**：`calculate_function` 在 `onLeave` 时 `xmm0` 低 16 字节 =
+   `{kind=0x1000, ptr=0x7f294c144860}`，而同一发在 `execute_results` 里读出的队列元素 =
+   `{kind=0x1000, ptr=0x7f294c144860, len=3221, 230}` —— **ptr 同一个**。
+2. **`Vec` 扩容的调用栈落在它体内**（`realloc` 探针，size ≥ 16 KB，调用方在 `.so` 内）：
+   ```text
+   realloc(16384) → gw+460fff ← gw+460c5a ← gw+4ebb48 ← **gw+3c2b23** ← gw+3c30c7   (第 1 次调用)
+   realloc(32768) → 同上                                            ← gw+3c30c7
+   realloc(65536) → 同上                                            ← gw+3c30c7
+   realloc(16384) → 同上                                            ← **gw+3e2d3b** （进队列的那一次）
+   ```
+   `gw+0x3c2b23` ∈ `[0x3c2530, 0x3c2bb9)` = `calculate_function` 体内。
+3. **逐点的求值调用点也在它体内**：求值器的**精确返回地址**直方图（一次开火，run5）：
+   ```text
+   gw+3c2995 : 18222      ← calculate_function 体内（每点一次）
+   gw+3c2a21 :  7178      ← 同上（另一条采样臂）
+   gw+4eba49/4eba6b/4eba91 : 50804/50804/25408   ← 求值器**自递归**
+   gw+3c602f : 11
+   ```
+4. **写进去的每个点都来自这里**：见 §35.5 的 `pairWho` 全 = `gw+3c2995`。
+
+调用者：一次开火里 `calculate_function` 被调 **2 次**——
+`gw+0x3c30c7`（客户端/绘制侧）与 `gw+0x3e2d3b`（`src/graphwar_remote_event_handler.rs` 的
+`0x3e2830` 大函数，**这一份的返回值进了开火队列**）。⇒ 一句话：
+**`calculate_function` 生产点数组，`graphwar_remote_event_handler` 那个开火分支把它原样入队。**
+
+### 35.5 1 ulp 判定：写进去的 y 与求值器返回值**逐位相同**
+
+做法（全部在游戏进程里算，`xmm0` 只取低 8 字节 = 一个 f64 的位模式）：
+把求值器每次返回的 y 与 (x,y) 对收进两张表；等 `execute_results` 里的点数组出现时逐点回查。
+
+| 抓取 | 点数组 len | `exact`（y 逐位相同） | `ulp1`（差 ±1 ulp） | `miss` | `(x,y)` 双位命中 & 来自谁 |
+|---|---|---|---|---|---|
+| run4 | 4483 | **4482** | **0** | 1 | 4482，全 = `gw+3c2995` |
+| run5 | 3589 | **3588** | **0** | 1 | 3588，全 = `gw+3c2995` |
+| run_final（用交付脚本复跑） | 4063 | **4062** | **0** | 1 | 4062，全 = `gw+3c2995` |
+
+* 三次的 `miss` **都是同一个点：`i = 0`**。它是炮口/出生点（世界坐标 `(-11.394271926113204,
+  -12.600201435480562)`，下一个点 x = 前一个 + 0.00875），**不是一次求值**，所以查不到天经地义。
+* ⇒ **y 从求值器到点数组这一步一个 bit 都没变**。§25.5 / §32.9 里"1 ulp 可能在这一步"的假设
+  **被运行时否掉**；残留要么在求值之前（文本/常数/取 x），要么在点数组之后（取末点 → 报文）。
+
+### 35.6 ④「同坐标不同序号的序号从哪来」：**没取到样本**
+
+* 本轮只打通了 **campaign Level 0**（"写一条 f(x) 打到目标"）：**场上没有任何 obstacle**，
+  `execute_results` 里那条 `DestroyObstacle` 分支根本不会走。
+* 想取样需要**带障碍物的对局**：`Battle → Create Game` 的 LAN 大厅里 Team 2 是空的，
+  `+` 按钮点了只高亮、没有增员（`Start` 于是不生效）。**缺：**大厅加机器人/第二个玩家的
+  正确点击路径（或一份带 `DestroyObstacle` 的存档/关卡）。
+* 现在能说的只有静态那条（**观测**，arm64）：两处 `EffectInfo` 的 id 来自 `ldxr/stxr` 的
+  **全局原子计数器自增**（§25.4）。**障碍物实体 id 是不是同一个计数器 —— 未知**，没证据。
+
+### 35.7 复跑与数据
+
+```bash
+Xvfb :92 -screen 0 1920x1160x24 -listen tcp -ac &                 # 要 mesa-only 的 EGL/GLX 变量
+.reference/venv/bin/python tools/frida_point_array.py --out /abs/run.jsonl --display 127.0.0.1:92
+# ↑ 自动：spawn 真游戏 → 挂钩 → 点 Campaign/关卡/Start → 输入 sin(x)+3 → 长按 Fire! → 抓 exec_queue
+```
+
+输出是 JSONL：`hooks`（下断结果 + 指针槽内容）、`exec_enter`、`exec_queue`
+（队列原文 + 点数组 head/tail/`yhash` + `classify`）、`evals`、`samplers`、`reallocs`、`beat`。
+`classify` 里的 `exact/ulp1/miss/pairWho` 就是 §35.5 那张表。
+原始 JSONL 留在 `.agent-work/`（可丢弃，**不入库**）；本节数字都能用上面这一条命令重新生成。

@@ -15,11 +15,11 @@
 //! 比的是**中间结果**，不是"报文对上回放"：**点序列**（逐坐标 `to_bits`）/ **stop** /
 //! **blocked** / **killed**（含顺序）/ 命中弧长 / 修正文本。另单列挖洞点与爆炸点。
 //!
-//! ⚠️ **DiffEq 批不参与**：内核开火路径把 `Mode::Normal` 写死（`src/game.rs` 的
-//! `fire_functions`），DiffEq 局在内核里没有开火路径 ⇒ 不可比，只计数（见 §30.4）。
-//! 这不是"近似通过"：那是**内核缺功能**，不是收敛层算错。
+//! ⚠️ **DiffEq 批 2026-11-08 起计入分母**（`docs/06` §33）：内核开火路径补上了
+//! `Mode`（`game::Match::fire_functions` 读 `self.sampling_mode()`），两条路径在 Ode 局
+//! 也走同一套坐标。此前这里是"只计数、不比"，那正是 515 批 / 550 发"不可比"的那一段。
 //!
-//! 退出码：Normal 轴有任何一处不一致 ⇒ `1`（可直接当断言用）。
+//! 退出码：任何一处不一致 ⇒ `1`（可直接当断言用）。
 use gw2_rebuild::_scaffold::diffconv::{parity_file, Parity};
 use gw2_rebuild::_scaffold::replaydiff::default_corpus_dir;
 
@@ -80,11 +80,16 @@ fn main() {
         p.explosion_equal, p.explosion_compared
     );
     println!(
-        "  DiffEq 批 {} / {} 发：**内核没有 Ode 开火路径**（`fire_functions` 写死 `Mode::Normal`）⇒ 不可比，不计入分母",
+        "  DiffEq 批 {} / {} 发：**已计入上面的分母**（内核开火路径补了 `Mode`，`docs/06` §33）",
         p.diff_eq_batches, p.diff_eq_shots
     );
     if p.mismatches_total == 0 && p.shots_identical == p.shots {
-        println!("  结论：Normal 轴 {} 发**逐位全同**，没有一处不一致", p.shots);
+        println!(
+            "  结论：{} 发（Normal {} + DiffEq {}）**逐位全同**，没有一处不一致",
+            p.shots,
+            p.normal_shots(),
+            p.diff_eq_shots
+        );
     } else {
         println!(
             "  结论：**不一致 {} 处**（{}/{} 发全同）",
