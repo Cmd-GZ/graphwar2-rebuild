@@ -1,5 +1,5 @@
 extends SceneTree
-## `GraphwarRootNode` **真装配**的验收脚本（`docs/16-client.md` §38）。
+## `GraphwarRootNode` **真装配**的验收脚本（`docs/16-client.md` §38 → §41 扩到 22 个）。
 ##
 ## ```text
 ## cargo build --features gdext-bindings
@@ -8,14 +8,16 @@ extends SceneTree
 ## godot --headless --path client --script res://tools/assemble_check.gd
 ## ```
 ##
-## 它验证的是「**容器真的装进了 3 个 manager、两张屏真的挂上了真节点类**」这几句，
+## 它验证的是「**容器真的按原版顺序装进了 22 个 manager、两张屏真的挂上了真节点类**」这几句，
 ## 不验证 manager / 棋盘 / 绘制器的**算术**（那些各自有脚本：`entity_drawer_check.gd`
 ## §34、`draw_classes_check.gd` §37、`signal_classes_check.gd` §36、`base_classes_check.gd` §35）：
 ##
 ## 1. `ClassDB.class_exists("GraphwarRootNode")` + 能实例化成 `Node`；
-## 2. **按类型**在容器里查到 3 个 manager（`GraphwarGameStateManager` /
-##    `GraphwarTurnManager` / `GraphwarPlayerManager`），**不是按数量**：
-##    同一时刻查 `GraphwarBanList` 必须是 `false`，`container_module_count()` 才是 3；
+## 2. **按类型**在容器里查到 **22** 个 manager（顺序 = 原版 `GraphwarGameClient::new`
+##    的注册序，`docs/16-client.md` §41.2），**不是按数量**：同一时刻查
+##    `GraphwarBanList`（客户端**不**注册的那 3 型之一）必须是 `false`；
+##    每个槽还要过 `container_module_live()`（真 downcast 回来）与
+##    `manager_slot_size()`（原版 `size_of::<M>()`，22 个数逐字对）；
 ## 3. 取回容器里的对象**再读一次**（士兵 3 个 / 玩家 1 有 2 兵、玩家 2 有 1 兵 / 玩家表 2 行）
 ##    —— 证明 `get_module` 拿到的是活对象，不是"表里有个键"；
 ## 4. **切屏**：`show_screen("GameSetup")` / `show_screen("PlayScreen")` 之后
@@ -30,9 +32,33 @@ const ROOT_CLASS := "GraphwarRootNode"
 const EXTENSION_PATH := "res://gw2rebuild.gdextension"
 
 ## 容器的**类型名**（`graphwar_module_container::MODULES` 的原文，不是我们起的别名）。
-const WIRED := ["GraphwarGameStateManager", "GraphwarTurnManager", "GraphwarPlayerManager"]
-## 一个**没装**的原版类型（25 型台账里有它、容器里没有）：用它证明"按类型"而不是"按数量"。
-const NOT_WIRED := "GraphwarBanList"
+##
+## 顺序 = **原版 `GraphwarGameClient::new` 的注册序**（arm64 `0x409c70` / x86 `0x517690`
+## 的 22 条 `add_module`；`docs/16-client.md` §41.2）。两架构的
+## `size_of::<RefCell<M>>` 序列逐位相同，所以这个顺序不是我们排的。
+const WIRED := [
+	"GraphwarTickHandler", "GraphwarClientConnectionHandler", "GraphwarLocalPlayerManager",
+	"GraphwarPlayerManager", "GraphwarSoldierManager", "GraphwarPlanePosManager",
+	"GraphwarGameStateManager", "GraphwarFunctionManager", "GraphwarTargetManager",
+	"GraphwarTeamManager", "GraphwarLifeManager", "GraphwarObstacleManager",
+	"GraphwarTurnManager", "GraphwarEffectManager", "GraphwarModeManager",
+	"GraphwarGraphicsManager", "GraphwarEntityEffectManager", "GraphwarComputerPlayerManager",
+	"FunctionHistoryRecorder", "GraphwarNameManager", "GraphwarColorManager",
+	"GraphwarRankManager",
+]
+## 每个槽的**原版 `size_of::<M>()`**（vtable size 字 − 8；两架构相同，`docs/02` §22.3）。
+## 这一串与注册序配对后就是 §41.2 的"逐位"证据：错一位就会红。
+const WIRED_SIZE := [
+	72, 112, 64, 72, 72, 24, 296, 32, 72, 32, 72, 80, 32, 72, 32, 168, 72, 72, 48, 72, 120, 72,
+]
+## 其中**没有复原类型、只放了零行为空占位**的 5 个（`module_slot_status` 回 `stub`）。
+const STUBBED := [
+	"GraphwarTickHandler", "GraphwarClientConnectionHandler", "GraphwarPlanePosManager",
+	"GraphwarFunctionManager", "GraphwarObstacleManager",
+]
+## 客户端**不**注册的那 3 型（25 − 22；服务端线程 / backend 才装）：
+## 容器里查不到，`module_slot_status` 必须是 `placeholder`。
+const NOT_WIRED := ["GraphwarBanList", "GraphwarServerConnectionHandler", "GraphwarGameRecorder"]
 ## 一个连 25 型台账里都没有的名字。
 const NONSENSE := "GraphwarNotARealManager"
 
@@ -46,6 +72,9 @@ const CONTAINER_METHODS := [
 	"container_module_names", "wired_manager_count", "assembled_manager_total",
 	"container_game_state_soldiers", "container_turn_manager_soldiers",
 	"container_player_manager_players", "module_slot_status",
+	# §41 新增的 6 个观测口
+	"container_module_live", "container_live_count", "container_real_manager_count",
+	"container_stub_manager_count", "manager_slot_size", "manager_impl_type",
 ]
 
 var _checks := 0
@@ -106,27 +135,66 @@ func _initialize() -> void:
 	ok(bool(root_node.call("wiring_done")), "wiring_done() —— 容器已装配")
 
 	var count: int = int(root_node.call("container_module_count"))
-	print("      容器模块数 = %d；按类型成立的 = %d" % [count, int(root_node.call("wired_manager_count"))])
-	ok(count == 3, "container_module_count() == 3（实际 %d）" % count)
-	ok(int(root_node.call("wired_manager_count")) == 3, "wired_manager_count() == 3（**按类型查**出来的）")
-	ok(int(root_node.call("assembled_manager_total")) == 3, "assembled_manager_total() == 3（本层装了 3 个）")
+	print("      容器模块数 = %d；按类型成立的 = %d；能取回的 = %d；真类型 %d + 空占位 %d"
+		% [count, int(root_node.call("wired_manager_count")),
+			int(root_node.call("container_live_count")),
+			int(root_node.call("container_real_manager_count")),
+			int(root_node.call("container_stub_manager_count"))])
+	ok(count == WIRED.size(), "container_module_count() == %d（实际 %d）" % [WIRED.size(), count])
+	ok(int(root_node.call("wired_manager_count")) == WIRED.size(),
+		"wired_manager_count() == %d（**按类型查**出来的）" % WIRED.size())
+	ok(int(root_node.call("container_live_count")) == WIRED.size(),
+		"container_live_count() == %d（每个槽都能 `get_module` 取回）" % WIRED.size())
+	ok(int(root_node.call("assembled_manager_total")) == WIRED.size(),
+		"assembled_manager_total() == %d（= 原版 22 条 add_module）" % WIRED.size())
+	# 17 真类型 + 5 空占位 = 22（§41.2 的分档；不是"22 个都复原了"）
+	ok(int(root_node.call("container_real_manager_count")) == WIRED.size() - STUBBED.size(),
+		"真复原类型 == %d（22 − 5 个空占位）" % (WIRED.size() - STUBBED.size()))
+	ok(int(root_node.call("container_stub_manager_count")) == STUBBED.size(),
+		("空占位 == %d（TickHandler / ClientConnectionHandler / PlanePosManager / "
+			+ "FunctionManager / ObstacleManager）") % STUBBED.size())
 
 	# —— 核心：**按类型**逐条查（不是数一个总数）——
+	#   每个槽三条：键在（contains）/ 取回（get_module downcast）/ 槽位档位。
 	for type_name in WIRED:
 		ok(bool(root_node.call("container_has_module", type_name)),
 			"容器里按类型查得到 %s" % type_name)
-	# —— 反面：没装的类型 / 胡编的名字一律查不到 ——
-	ok(not bool(root_node.call("container_has_module", NOT_WIRED)),
-		"没装的 %s 查不到（⇒ 判据是类型，不是数量）" % NOT_WIRED)
-	ok(not bool(root_node.call("container_has_module", NONSENSE)),
-		"胡编的名字 %s 查不到" % NONSENSE)
+		ok(bool(root_node.call("container_module_live", type_name)),
+			"容器里能 **取回** %s（get_module downcast 成功）" % type_name)
+		var want_status := "stub" if STUBBED.has(type_name) else "assembled"
+		var got_status := String(root_node.call("module_slot_status", type_name))
+		ok(got_status == want_status,
+			"%s 的槽位状态 = %s（实际 %s）" % [type_name, want_status, got_status])
+		var impl_type := String(root_node.call("manager_impl_type", type_name))
+		if want_status == "stub":
+			ok(impl_type == "—", "%s 是空占位（impl_type = —，实际 %s）" % [type_name, impl_type])
+		else:
+			ok(impl_type != "" and impl_type != "—",
+				"%s 装的是复原类型（impl_type = %s）" % [type_name, impl_type])
 
+	# —— 注册序（逐位证据的运行时版本）：22 个名字 + 22 个原版 size ——
 	var names: PackedStringArray = root_node.call("container_module_names")
 	print("      container_module_names() = %s" % names)
 	ok(names == PackedStringArray(WIRED),
-		"container_module_names() == 注册序的 3 个原版类型名（实际 %s）" % names)
+		"container_module_names() == 原版注册序的 22 个类型名（实际 %s）" % names)
+	var sizes := []
+	for type_name in WIRED:
+		sizes.append(int(root_node.call("manager_slot_size", type_name)))
+	ok(sizes == WIRED_SIZE,
+		"22 个 size_of::<M>() == 两架构逐位相同的那串数（实际 %s）" % [sizes])
+	ok(int(root_node.call("manager_slot_size", NONSENSE)) == -1,
+		"胡编的名字没有 size（-1）")
 
-	# 25 型台账 / 22 个注册点 / 3 个已装配 —— 三个数**不是一回事**
+	# —— 反面：客户端不注册的 3 型 / 胡编的名字一律查不到 ——
+	for type_name in NOT_WIRED:
+		ok(not bool(root_node.call("container_has_module", type_name)),
+			"客户端不注册的 %s 查不到（⇒ 判据是类型，不是数量）" % type_name)
+		ok(String(root_node.call("module_slot_status", type_name)) == "placeholder",
+			"%s 的槽位状态 = placeholder（原版 25 型里有它，客户端这一处不装）" % type_name)
+	ok(not bool(root_node.call("container_has_module", NONSENSE)),
+		"胡编的名字 %s 查不到" % NONSENSE)
+
+	# 25 型台账 / 22 个注册点 / 22 个已装配 —— 前两个数**不是一回事**
 	ok(int(root_node.call("manager_slot_count")) == 25, "manager_slot_count() == 25（原版模块类型数）")
 	ok(int(root_node.call("manager_registration_count")) == 22,
 		"manager_registration_count() == 22（GraphwarGameClient::new 的注册点）")
@@ -147,12 +215,7 @@ func _initialize() -> void:
 	ok(int(root_node.call("container_player_manager_players")) == 2,
 		"取回 PlayerManager ⇒ player_id → connection_id 表有 2 行")
 
-	# —— 槽位状态：3 个 assembled、其余 placeholder、胡编的 unknown ——
-	for type_name in WIRED:
-		ok(String(root_node.call("module_slot_status", type_name)) == "assembled",
-			"%s 的槽位状态 = assembled" % type_name)
-	ok(String(root_node.call("module_slot_status", NOT_WIRED)) == "placeholder",
-		"%s 的槽位状态 = placeholder（**如实标**：没装）" % NOT_WIRED)
+	# —— 槽位状态的最后一档：胡编的名字 ——
 	ok(String(root_node.call("module_slot_status", NONSENSE)) == "unknown",
 		"%s 的槽位状态 = unknown（原版 25 型里也没有）" % NONSENSE)
 
@@ -307,8 +370,8 @@ func _initialize() -> void:
 	# 装配是幂等的：再调一次不会重建容器/屏
 	var built2: int = int(root_node.call("build_scene_graph"))
 	ok(built2 == 4, "二次 build_scene_graph() 还是 4 个直接子节点（幂等）")
-	ok(int(root_node.call("container_module_count")) == 3,
-		"二次装配后容器里仍是 3 个（没有重复注册）")
+	ok(int(root_node.call("container_module_count")) == WIRED.size(),
+		"二次装配后容器里仍是 %d 个（没有重复注册）" % WIRED.size())
 	ok(screens_control.get_child_count() == 15, "二次装配后屏数仍是 15")
 
 	# ------------------------------------------------------------------
