@@ -89,6 +89,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
+import rust_sym  # noqa: E402  「哪条符号属于 graphwarrust」的唯一判据
 
 DEFAULT_DLL_REL = os.path.join(
     ".reference", "steam", "windows-2.0.60", "graphwarrust.dll")
@@ -96,29 +97,32 @@ DEFAULT_DLL = os.path.join(REPO, DEFAULT_DLL_REL)
 
 # 匹配 crate 的**裸**名字。不要用 `_ZN12graphwarrust` 前缀：GDExtension 的 trait impl
 # 名字形如 `_ZN133_$LT$graphwarrust..axis_drawer..AxisDrawer$u20$as$u20$godot_core..X$GT$…`，
-# 里面 crate 名**没有长度前缀**。只用前缀过滤会静默丢掉 59 个函数（本版实测），
-# 其中 25 个是本工具唯一能钉住的 —— 全被丢掉就等于收益凭空消失 25 个地址。
-CRATE = "graphwarrust"
-
-# 「属于游戏自己的函数」的判据 —— 两侧必须**完全相同**（见 android_symbol_names）。
+# 里面 crate 名**没有长度前缀**。只按前缀过滤会丢 59 个函数（本版实测，见
+# `fixtures/name_crate_audit.tsv`），其中 25 个是本工具唯一能钉住的 —— 等于收益凭空消失。
 #
-#   A  `_ZN12graphwarrust…`                    crate 内的直接路径
-#   B  `_ZN<len>_$LT$graphwarrust..Type…$GT$…` 显式 `impl` 在游戏类型上的 trait 方法
-#                                              （GDExtension 的 `__register_methods` 等）
+# 「属于游戏自己的函数」的判据**只有一份实现**：`tools/rust_sym.py`。
+# 这里保留 `is_game_name` 这个名字是给本文件的旧调用点用，实现直接转发。
+#
+# 判据不是「mangled 里有 graphwarrust 这个子串」，而是**按 legacy mangling 的长度前缀
+# 切段**、再看路径首段的 crate：
+#
+#   A  `_ZN12graphwarrust…`                       crate 内的直接路径（首段 = crate 名）
+#   B  `_ZN<len>_$LT$graphwarrust..Type…$GT$…`    显式 `impl` 在游戏类型上的 trait 方法
+#                                                 （GDExtension 的 `__register_methods` 等；
+#                                                 crate 名**没有长度前缀**，前缀过滤会整类丢掉）
 #
 # **刻意排除** C 类：`core::ptr::drop_in_place<…graphwarrust::…>` 这类
-# 「库函数恰好以游戏类型为泛型实参」的实例化。它们是编译器生成的胶水，不是原版源码里的
-# 函数；`parse_name` 对它们只能给出 `(module, type, None)`，写进夹具就是虚报。
-# 本版实测：C 类有 327 个名，加进来不会多钉住任何地址（A+B 与「包含 graphwarrust」
-# 两种口径的 tier-1 结果同为 334 个函数 / 332 个地址），只会污染名字集合。
-_IMPL_ON_GAME = re.compile(r"^_ZN\d+_\$LT\$graphwarrust\.\.")
+# 「库函数恰好以游戏类型为泛型实参」的实例化 —— 它的首段 crate 是 `core`，不是游戏。
+# 它们是编译器生成的胶水，不是原版源码里的函数；`parse_name` 对它们只能给出
+# `(module, type, None)` 或带残渣的 method，写进夹具就是虚报。
+# 本版实测：C 类有 304 个符号，加进来不会多钉住任何地址，只会污染名字集合
+# （见 `fixtures/name_crate_audit.tsv` 与 docs/02 §39）。
+CRATE = "graphwarrust"
 
 
 def is_game_name(name):
-    """该符号是不是「游戏自己的函数」（见上面 A/B 判据）。"""
-    if name.startswith("_ZN12graphwarrust"):
-        return True
-    return bool(_IMPL_ON_GAME.match(name))
+    """该符号是不是「游戏自己的函数」（判据实现见 `tools/rust_sym.py`）。"""
+    return rust_sym.is_game_name(name, CRATE)
 
 # Rust 的 legacy mangling 尾巴 `17h<16 hex>E`：同一逻辑函数在不同单态化下哈希不同。
 # 归一化掉它，两侧（arm64 / x86-64 / PE / ELF）才能按「同一个名字」对齐。

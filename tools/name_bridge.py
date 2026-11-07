@@ -60,6 +60,11 @@ import struct
 import subprocess
 import sys
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import rust_sym  # noqa: E402  「哪条符号属于 graphwarrust」的唯一判据（结构解析，非子串）
+
 # ---------------------------------------------------------------- 常量
 
 X86_RELATIVE = 8        # R_X86_64_RELATIVE
@@ -398,11 +403,41 @@ def clean_method(segs):
 def parse_name(d):
     """`graphwarrust::<module>::<Type>::<method>` → (module, type, method, is_closure)。
 
-    三种形态都要吃：direct / `<impl …>` / 泛型实参。
+    三种形态都要吃（c++filt 的三种输出，见 `tools/rust_sym.py` 的判据表）：
+
+    * **direct**  `graphwarrust::mod::Type::method`
+    * **impl-head** `<graphwarrust::mod::Type as Trait>::method`
+      —— GDExtension 的 trait impl。crate 名在这条符号的 mangled 形态里**没有长度前缀**，
+      所以「前缀过滤」会把它整类丢掉；这里按 `<SELF as TRAIT>` 的 SELF 取路径。
+    * **嵌套 impl**  `graphwarrust::mod::_::<impl Trait for graphwarrust::Type>::method`
+      —— `#[derive(Serialize)]` 那一类，crate 首段仍是 `graphwarrust`，走进第三条分支。
+
+    调用方必须先按 `rust_sym.is_game_name(mangled)` 把**符号**筛过一遍；
+    `parse_name` 只负责把一条已知属于本 crate 的名字切成三列，不再兼职做 crate 判定
+    （旧版靠「demangle 后文本里有没有 `graphwarrust::`」隐式筛选，会把
+    `core::ptr::drop_in_place<graphwarrust::X>` 这类胶水也算进来）。
     """
     d = HASH_SUFFIX.sub("", d)
     is_closure = CLOSURE in d
-    if d.startswith("graphwarrust::") and "<impl " not in d:
+    # 形态 B：`<SELF as TRAIT>::tail`
+    head = rust_sym.impl_head_tail(d)
+    if head and "<impl " not in head[0]:
+        # 注意 `...::_::<impl Trait for graphwarrust::T>` 这种**嵌套 impl** 不在这里解：
+        # 它的外层 `<...>` 是一条路径、末段才是匿名 impl 块，按老规则（下面第三条分支）
+        # 得到 `type='_'`，与 `fixtures/name_to_addr.tsv` 的既有列一致。
+        self_ty, tail = head
+        segs = [s for s in rust_sym.split_top(rust_sym.split_top(self_ty, " as ")[0], "::")
+                if s]
+        if len(segs) < 2 or segs[0] != rust_sym.DEFAULT_CRATE:
+            return None
+        module = segs[1]
+        owner = segs[2].split("<")[0] if len(segs) > 2 and segs[2][:1].isupper() else None
+        rest = [s for s in rust_sym.split_top(tail, "::") if s]
+        if CLOSURE in rest:
+            rest = rest[:rest.index(CLOSURE)]
+        method = clean_method(rest) or owner
+        return module, owner, method, is_closure
+    if d.startswith(rust_sym.DEFAULT_CRATE + "::") and "<impl " not in d:
         segs = split_top(d)
         if len(segs) < 3:
             return None
@@ -415,6 +450,7 @@ def parse_name(d):
             rest = rest[1:]
         method = clean_method(rest) or owner
         return module, owner, method, is_closure
+    # 形态 C（嵌套 impl）：路径首段已是本 crate，`<impl …>` 出现在中段。
     m = re.search(r"graphwarrust::([A-Za-z0-9_]+)::([A-Za-z0-9_]+)", d)
     if not m:
         return None
@@ -464,12 +500,19 @@ def build(arm64_path, x86_path, funcstarts_path):
          f"/{len(src_all_a)})，x86-64 {len(touched_b)} (src {len(src_touched_b)}/{len(src_all_b)})")
 
     # ② 函数边界
-    syms_a = a.func_symbols()
+    #
+    # ⚠️ 边界用**全部** `.symtab` 符号（`ranges_from_symtab` 直接读 elf），名字只用
+    # **本 crate** 的符号。两件事必须分开：边界是「这段字节属于哪个函数」的事实，
+    # 与「这个函数叫什么名字」无关；混在一起会让一个非游戏符号把相邻函数切错。
+    syms_all = a.func_symbols()
+    syms_a = [(n, addr, sz) for (n, addr, sz) in syms_all if rust_sym.is_game_name(n)]
     rng_a = ranges_from_symtab(a)
     rng_b = ranges_from_funcstarts(funcstarts_path, b)
     starts_a = sorted(rng_a)
     starts_b = sorted(rng_b)
     warn(f"函数 arm64(symtab) {len(starts_a)} / x86-64(ghidra) {len(starts_b)}")
+    warn(f"符号 arm64 全部 {len(syms_all)} → graphwarrust 自己的 {len(syms_a)}"
+         f"（判据见 tools/rust_sym.py；不是子串匹配）")
 
     # ③ 函数 → {(file,line,col)}
     #
@@ -493,13 +536,21 @@ def build(arm64_path, x86_path, funcstarts_path):
             anch_b[f].add(loc_b[lv])
 
     # ④ join：只接受双向唯一
+    #
+    # ⚠️ **必须排序**：`anch_a[f]` 是 set，元素是 `(file,line,col)` 字符串元组，
+    # 其迭代顺序受 Python 的 per-process hash 随机化影响。而 ⑤ 的消去法是
+    # **顺序敏感**的贪心（「只剩一个候选」是在当时已占用的集合上判定的），
+    # 于是同一份输入换个进程就能给出不同的地址。2026-11 实测：`PYTHONHASHSEED`
+    # 0/1/2/3/4 下 `save_game` 分别落到 0x50b130 / 0x508aba / 0x508aba /
+    # 0x3d5740 / 0x3d5740 —— 同一份二进制、同一个工具，三种答案。
+    # 这里把所有「顺序会泄漏到结果」的迭代都钉死成字典序/数值序。
     owner_a = collections.defaultdict(set)  # key -> {arm64 func}
     owner_b = collections.defaultdict(set)
-    for f, s in anch_a.items():
-        for k in s:
+    for f, s in sorted(anch_a.items()):
+        for k in sorted(s):
             owner_a[k].add(f)
-    for f, s in anch_b.items():
-        for k in s:
+    for f, s in sorted(anch_b.items()):
+        for k in sorted(s):
             owner_b[k].add(f)
 
     unique = {}
@@ -534,7 +585,7 @@ def build(arm64_path, x86_path, funcstarts_path):
     for _round in range(20):
         changed = False
         # 规则 1：某个锚的两侧未定候选都只剩 1 个
-        for k in shared:
+        for k in sorted(shared):
             A = [f for f in owner_a[k] if f not in assign]
             B = {f for f in owner_b[k] if f not in used_b}
             if len(A) == 1 and len(B) == 1:
@@ -544,7 +595,7 @@ def build(arm64_path, x86_path, funcstarts_path):
                 propagated[fa] = fb
                 changed = True
         # 规则 2：某个 arm64 函数的所有未定候选地址只剩 1 个
-        for fa in anch_a:
+        for fa in sorted(anch_a):
             if fa in assign or not keys_a[fa]:
                 continue
             B = {b for k in keys_a[fa] for b in owner_b.get(k, ()) if b not in used_b}
@@ -555,7 +606,7 @@ def build(arm64_path, x86_path, funcstarts_path):
                 propagated[fa] = fb
                 changed = True
         # 规则 3：某个 x86 函数的所有未定候选名字只剩 1 个（反向，同样只求唯一）
-        for fb in anch_b:
+        for fb in sorted(anch_b):
             if fb in used_b or not keys_b[fb]:
                 continue
             A = {a for k in keys_b[fb] for a in owner_a.get(k, ()) if a not in assign}
@@ -569,10 +620,16 @@ def build(arm64_path, x86_path, funcstarts_path):
             break
 
     # ⑤ 名字
+    #
+    # `syms_a` 已经过 `rust_sym.is_game_name` 筛选（②），所以这里每一条都是本 crate 的
+    # 符号；`sym_form` 只记录**它是哪种 mangling 形态**（provenance，不参与配对）：
+    #   direct      = `_ZN12graphwarrust…` 直接路径
+    #   impl-head   = `_ZN<len>_$LT$graphwarrust..T$u20$as$u20$Trait$GT$…`（没有长度前缀）
+    #   nested-impl = `_ZN12graphwarrust…<impl Trait for graphwarrust::T>…`
     names = demangle([n for n, _a, _s in syms_a])
     sym_info = {}
     for (mangled, addr, size), d in zip(syms_a, names):
-        sym_info[addr] = (d, size)
+        sym_info[addr] = (d, size, rust_sym.form_label(mangled), mangled)
 
     return dict(a=a, b=b, loc_a=loc_a, loc_b=loc_b, ra=ra, rb=rb,
                 rng_a=rng_a, rng_b=rng_b, starts_a=starts_a, starts_b=starts_b,
@@ -651,7 +708,7 @@ def main():
                     print(f"    {f}:{l}:{c}  arm64_owners={len(na)} x86_owners={len(nb)}"
                           f"  unique={len(na) == 1 and len(nb) == 1}")
                     for x in sorted(na):
-                        d = st["sym_info"].get(x, ("?", 0))[0]
+                        d = st["sym_info"].get(x, ("?", 0, "?", ""))[0]
                         print(f"        arm64 {hex(x)} {d}")
             else:
                 print("  anchors: 0")
@@ -663,7 +720,7 @@ def main():
 
     if o.cmd == "conflicts":
         for fa, c in st["conflicts"].items():
-            d = st["sym_info"].get(fa, ("?", 0))[0]
+            d = st["sym_info"].get(fa, ("?", 0, "?", ""))[0]
             print(f"{hex(fa)} {d}")
             for fb, n in c.most_common():
                 print(f"    {hex(fb)}  votes={n}")
@@ -677,7 +734,7 @@ def main():
                 continue
             print("\t".join(str(r[k]) for k in
                             ("module", "type", "method", "x86_addr", "src_file",
-                             "src_line", "join_kind", "evidence")))
+                             "src_line", "join_kind", "sym_form", "evidence")))
         return
 
     # build
@@ -689,12 +746,20 @@ def main():
         f.write("# 由 tools/name_bridge.py build 生成，不要手改。\n")
         f.write("# x86_addr 是 Linux 2.0.60 的 ELF 虚地址；Ghidra/REA 地址 = 该值 + 0x100000。\n")
         f.write("# 名字来自 Android 2.0.60 arm64 的 .symtab，经 panic::Location 的 (file,line) join 到 x86。\n")
+        f.write("# 手工裁决（%d 条）已内建在 name_bridge.py 的 MANUAL_FIXES 里，`build` 直接产出本文件：\n"
+                % len(MANUAL_FIXES))
+        for k in sorted(MANUAL_FIXES):
+            f.write("#   %s::%s::%s @ %s:%s\n" % k)
+        f.write("# sym_form = 名字来自哪种 mangling 形态（direct / impl-head / nested-impl；判据见 tools/rust_sym.py）。\n")
+        f.write("# 只统计 `graphwarrust` 自己的符号：`_ZN12graphwarrust…`（direct）、"
+                "`_ZN<len>_$LT$graphwarrust..T$u20$as$u20$Trait$GT$…`（impl-head，crate 名没有长度前缀）、"
+                "以及 `graphwarrust::…<impl Trait for graphwarrust::T>…`（nested-impl）。\n")
         f.write("\t".join(("module", "type", "method", "x86_addr", "src_file",
-                           "src_line", "join_kind", "evidence")) + "\n")
+                           "src_line", "join_kind", "sym_form", "evidence")) + "\n")
         for r in rows:
             f.write("\t".join(str(r[k]) for k in
                               ("module", "type", "method", "x86_addr", "src_file",
-                               "src_line", "join_kind", "evidence")) + "\n")
+                               "src_line", "join_kind", "sym_form", "evidence")) + "\n")
     warn(f"写出 {out_path}：{len(rows)} 行")
     tally = collections.Counter(r["join_kind"] for r in rows)
     warn("  " + ", ".join(f"{k}={v}" for k, v in tally.most_common()))
@@ -805,6 +870,61 @@ def best_anchor(st, fa, module):
     return (src[0] if src else ("", "", "")), False
 
 
+# ---------------------------------------------------------------- 手工裁决
+#
+# `build` 的输出**曾经**要靠人手改：这两条地址是工具算错、又被独立证据推翻的，
+# 手工改正后只留在夹具的注释里 —— 于是「重跑 build」必然把裁决覆盖掉（谁重跑谁背锅）。
+# 2026-11 把它们搬进来：**生成即可复现**，且每条都写清为什么推翻工具值。
+#
+# 键 = (module, type, method, src_file, src_line)；值 = 覆盖项。
+MANUAL_FIXES = {
+    # 0x4eb86a **不是指令边界**：它落在 `0x4eb868 add eax,-3` 中间。
+    # 该函数（`MathFunction::remove_offset`）的入口是 0x4eb830（objdump 可验）。
+    ("math_function", "MathFunction", "remove_offset",
+     "src/math_function.rs", "52"): dict(
+        x86_addr="0x4eb830",
+        evidence="2 个双向唯一 (file,line,col) 锚；展示锚 src/math_function.rs:52:43"
+                 "（工具原值 0x4eb86a 不是指令边界 —— 落在 0x4eb868 `add eax,-3` 中间）"),
+    # 已被内联进 0x4ec160（该 .text 区间只有一个函数体）。
+    ("math_function", "MathFunction", "to_string_recursive",
+     "src/math_function.rs", "285"): dict(
+        x86_addr="0x4ec160",
+        evidence="1 个双向唯一（该函数已被内联进 0x4ec160） (file,line,col) 锚；"
+                 "展示锚 src/math_function.rs:285:28"),
+    # ⚠️ 工具值随 PYTHONHASHSEED 漂移（0x508aba / 0x50b130 / 0x3d5740 三种都出现过，
+    #    见 build() ④ 的排序注释）。**只有 0x3d5740 有三份独立证据**：
+    #    Windows 侧唯一锚 2/2（fixtures/windows_name_to_addr.tsv）、
+    #    sym_match 的 unique 候选、name_to_addr_v2 的三方一致裁决。
+    ("graphwar_game_recorder", "GraphwarGameRecorder", "save_game",
+     "src/graphwar_game_recorder.rs", "150"): dict(
+        x86_addr="0x3d5740",
+        evidence="消去法唯一：无直接一对一锚，按「一个名字只对应一个地址」消去后只剩 "
+                 "0x3d5740；展示锚 src/graphwar_game_recorder.rs:150:81"
+                 "（工具消去法给的是 0x508aba，与 Windows 侧唯一锚 2/2、sym_match、v2 三方冲突，"
+                 "按独立证据取 0x3d5740）"),
+    # 这一行本来就写着「消去法唯一」，`join_kind` 列却标成 `唯一锚` —— 分档写错了。
+    ("math_function", "FunctionRandomizer", "mutate_function",
+     "/rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/slice/index.rs",
+     "1020"): dict(join_kind="消去法"),
+}
+
+
+def apply_manual_fixes(rows):
+    """把 `MANUAL_FIXES` 应用到行上；返回实际命中的键（供写盘时记账）。"""
+    hit = []
+    for r in rows:
+        # `src_line` 在行里是 int（来自 Location 元组），而 MANUAL_FIXES 的键写成字符串
+        # （夹具里那一列就是文本）。这里统一成 str，否则裁决**永远命不中**且不报错
+        # ——2026-11 就因为这个类型不一致，第一次跑出来的文件看起来「裁决没生效」。
+        k = (r["module"], r["type"], r["method"], r["src_file"], str(r["src_line"]))
+        fix = MANUAL_FIXES.get(k)
+        if not fix:
+            continue
+        r.update(fix)
+        hit.append(k)
+    return hit
+
+
 def rows_for_tsv(st):
     """一行 = 一个 arm64 函数（名字）在最优证据下的 x86 地址。"""
     sym_info = st["sym_info"]
@@ -815,7 +935,7 @@ def rows_for_tsv(st):
     rows = []
     # 先按 arm64 函数聚合：它拿到哪些唯一锚、指向哪个 x86 地址
     for fa, info in sorted(sym_info.items()):
-        d, size = info
+        d, size, form, _raw = info
         parsed = parse_name(d)
         if not parsed:
             continue
@@ -893,6 +1013,12 @@ def rows_for_tsv(st):
                          x86_addr="", src_file="", src_line="",
                          join_kind="歧义" if amb else "未知", evidence=why,
                          _closure=is_closure, _size=size, _a=fa))
+    # provenance：这一行的名字来自哪种 mangling 形态（不参与配对，只用于复盘）
+    for r in rows:
+        info = sym_info.get(r["_a"])
+        r["sym_form"] = info[2] if info else "-"
+    hit = apply_manual_fixes(rows)
+    st["manual_fix_hits"] = hit
     return rows
 
 
