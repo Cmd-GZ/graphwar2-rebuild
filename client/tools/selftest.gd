@@ -926,6 +926,25 @@ func _test_play_screen() -> void:
 	_expect(ring_n == 1, "准备圈：当前行动士兵在 prep 表里有且只有 1 条（实际 %d）" % ring_n)
 	_expect(ent != null and ent.has_method("set_ring") and ent.has_method("clear_ring"),
 		"准备圈：EntityDrawer 暴露 set_ring / clear_ring（接线口在）")
+	# 外观（`docs/16` §44）：原版按 **String 名字**取贴图，不是纯色。士兵走默认三件套
+	# `yellow/regular_eyes/soldier_helmet`（`GraphwarPlayerConfig::new` 的字面量）；靶子由
+	# `_sync_entities()` 代填 `target/no_face/no_hat`。**我方接线**：原版是 51/53/55 事件驱动的。
+	var look0: Array = Array(ent.call("entity_look", 0))
+	_expect(look0 == ["yellow", "regular_eyes", "soldier_helmet"],
+		"外观：士兵默认三件套 = yellow/regular_eyes/soldier_helmet（实际 %s）" % [look0])
+	var tex0 := String(ent.call("sprite_texture_path", 0, 0))
+	_expect(tex0.ends_with("skins/yellow.ctex"),
+		"外观：皮肤层贴图来自真资源（实际 %s）" % tex0)
+	var drawn: Dictionary = play.get("_drawn_entities")
+	var n_tgt := 0
+	for eid in drawn:
+		if int(eid) >= 1000:
+			n_tgt += 1
+			var tl: Array = Array(ent.call("entity_look", int(eid)))
+			_expect(tl.size() == 3 and String(tl[0]) == "target",
+				"外观：靶子 id %d 的皮肤是 target（实际 %s）" % [eid, [tl]])
+	if n_tgt == 0:
+		_skip("外观：本局没有靶子（id ≥ 1000）⇒ 靶子那条接线只做了代码路径，未在本局触发")
 	_expect(plane != null, "有 GraphwarPlane")
 	var pool_pts: PackedVector2Array = play.call("plane_points")
 	_expect(pool_pts.size() > 1, "开火后 `Line2D` 上的弹道点数 > 1（实际 %d）" % pool_pts.size())

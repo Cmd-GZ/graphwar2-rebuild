@@ -12,7 +12,10 @@ extends SceneTree
 ##
 ## 1. 类注册成 `Control` 子类，9 个方法都在，两个导出属性可读写；
 ## 2. `spawn_entity()` 之后**子节点个数 == 4**，类型是 3 个 `Sprite2D` + 1 个 `RichTextLabel`；
-## 3. 三个 `Sprite2D.texture` 都非空、都是 `Texture2D`、三层互不相同（程序生成的 `ImageTexture`）；
+## 3. 三个 `Sprite2D.texture` 都非空、都是 `Texture2D`、三层互不相同；**贴图链接上了**（§51）：
+##    名字（`yellow` / `regular_eyes` / `soldier_helmet`）→ `GraphwarTextureLoader` 三张表 →
+##    `res://skins|faces|hats/<名>.svg` → **`res://assets/<dir>/<名>.ctex`**（本机有 assets 时）；
+##    **没有 assets 的机器优雅退化成程序生成的纯色 `ImageTexture`**（这一条在任何机器上都要断言）；
 ## 4. 位置 / 缩放 / 翻面 == `entity_drawer::sprite_transform` 的手算期望（§37.3 那张表）；
 ## 5. 名字标签的属性 == `recovered-src/name_label.tscn`（`fit_content` / `scroll_active` /
 ##    `autowrap_mode` / 初始尺寸 25×40），文本与不透明度跟着 `set_entity_name` /
@@ -23,7 +26,10 @@ extends SceneTree
 ##    （半径 = `pos_radius×1.5×k`、起止角 `A_i ∓ H`、10 折点、线宽 0.3、关 AA、
 ##    中分角 2π/3 与 4π/3、箭头尖端在 `r`、底边在 `r+0.5`、张 12°），
 ##    **关掉准备态（`clear_ring`）之后一条都不发**；
-## 8. `remove_entity()` 的 `queue_free` 真的释放了那 4 个节点。
+## 8. `remove_entity()` 的 `queue_free` 真的释放了那 4 个节点；
+## 9. 贴图三态（第 16 组）：**有 assets** ⇒ `texture.resource_path = res://assets/…ctex`、
+##    每层按**自己**贴图的宽度算缩放（`no_face` 是 128、皮肤 512）；**没有 assets**
+##    （`assets_root = ""`）⇒ 纯色兜底 + `missing_assets()` 点名缺什么；**名字不在表里** ⇒ 同样兜底。
 ##
 ## 与 `client/tools/gdext_check.gd` 的分工：那个测「换绑定层对客户端透明」，这个测
 ## 「`EntityDrawer` 能不能长出节点树 + 把准星画出来」。
@@ -167,6 +173,9 @@ func _initialize() -> void:
 		"set_ring", "set_ring_base", "clear_ring_base", "clear_ring", "ring_count",
 		"draw_call_count", "drawn_arc_total", "drawn_polygon_total",
 		"last_arc_count", "last_arc", "last_polygon",
+		# 贴图链（`GraphwarTextureLoader` 三张表，§51）
+		"set_entity_look", "entity_look", "sprite_texture_path",
+		"texture_stats", "missing_assets", "assets_available",
 	]
 	var names := PackedStringArray()
 	for m in drawer.get_method_list():
@@ -212,18 +221,51 @@ func _initialize() -> void:
 	ok(String(kids[3].name).begins_with("RichTextLabel"),
 		"子节点 3 叫 RichTextLabel*（= name_label.tscn 的根节点名；同名冲突时引擎会加 @N）")
 
-	# 5) 贴图：程序生成的 ImageTexture，非空、是 Texture2D、三层不同
+	# 5) 贴图：**名字 → `GraphwarTextureLoader` 三张表 → res://…svg → client/assets/**.ctex**（§51）
+	#
+	# 原版 `ready` 订了 skin/face/hat 三个 graphics 事件，名字进 `HashMap<i32, String>`（+0x30），
+	# `get_entity_skin_sprite`（x86 0x4bb6b0）拿名字去 loader 的皮肤表（+0x150）查 `Gd<Texture2D>`。
+	# 本机有 client/assets/ ⇒ 真 `.ctex`（皮肤/脸/帽子都是 512×512）；没有 ⇒ 纯色兜底。
+	var asset_mode: bool = bool(drawer.call("assets_available"))
+	print("      assets_available = %s（assets_root = %s）"
+		% [asset_mode, String(drawer.get("assets_root"))])
+	ok(asset_mode == FileAccess.file_exists("res://assets/MANIFEST.tsv"),
+		"assets_available() 与 GwAssets 同判据（<root>/MANIFEST.tsv 在不在）")
+	var expected_paths := [
+		"res://assets/skins/yellow.ctex",
+		"res://assets/faces/regular_eyes.ctex",
+		"res://assets/hats/soldier_helmet.ctex",
+	]
 	var textures: Array = []
 	for i in range(3):
 		var tex: Variant = kids[i].texture
 		ok(tex != null, "子节点 %d 的 texture 非空" % i)
 		ok(tex is Texture2D, "子节点 %d 的 texture 是 Texture2D" % i)
 		if tex is Texture2D:
-			ok(int(tex.get_width()) == 8 and int(tex.get_height()) == 8,
-				"子节点 %d 的贴图是 8×8（%d×%d）" % [i, tex.get_width(), tex.get_height()])
 			textures.append(tex.get_instance_id())
+			ok(String(drawer.call("sprite_texture_path", 0, i)) == String(tex.resource_path),
+				"子节点 %d：sprite_texture_path(0, %d) == 贴图的 resource_path" % [i, i])
+			if asset_mode:
+				ok(String(tex.resource_path) == expected_paths[i],
+					"子节点 %d 的贴图来自 %s（实际 \"%s\"）" % [i, expected_paths[i], tex.resource_path])
+				ok(int(tex.get_width()) == 512 and int(tex.get_height()) == 512,
+					"子节点 %d 的真贴图是 512×512（pck 里的 .ctex 就是 512²）" % i)
+			else:
+				ok(String(tex.resource_path) == "",
+					"子节点 %d 是纯色兜底（ImageTexture 没有 resource_path）" % i)
+				ok(int(tex.get_width()) == 8 and int(tex.get_height()) == 8,
+					"子节点 %d 的兜底贴图是 8×8（texture_size）" % i)
 		else:
 			textures.append(-1)
+			ok(false, "子节点 %d 的 text 不是 Texture2D，后面几条贴图断言无从验起" % i)
+	# 统计口：本机要么 3 张全来自磁盘、要么 3 张全退化（同一个实例只 spawn 过一个实体）
+	var stats: PackedInt64Array = drawer.call("texture_stats")
+	if asset_mode:
+		ok(int(stats[0]) == 3 and int(stats[1]) == 0 and int(stats[2]) == 0,
+			"texture_stats() = [3 加载, 0 退化, 0 缺失]（实际 %s）" % [stats])
+	else:
+		ok(int(stats[0]) == 0 and int(stats[1]) == 3 and int(stats[2]) == 3,
+			"没资产 ⇒ texture_stats() = [0, 3, 3]（实际 %s）" % [stats])
 	# 三个 sprite 的两个原版常量
 	ok(kids[0].flip_v == true and kids[1].flip_v == true and kids[2].flip_v == true,
 		"三个 Sprite2D 都 flip_v = true（entity_drawer::SPRITE_FLIP_V）")
@@ -235,15 +277,22 @@ func _initialize() -> void:
 		"三层贴图互不相同（皮肤 / 脸 / 帽子）")
 
 	# 6) 位置 / 缩放 / 翻面 == 手算期望（§37.3）
-	var want: Dictionary = expect_sprite(Vector2(W, H), TEAM_COLOR, 8, 5.0, 5.0)
+	#
+	# ⚠️ `tex_w` 不是常数：原版 `update_sprite` 读**这一层自己**的 `Texture2D::get_width()`
+	# 算 `unit = 128/tex_w`。有 assets 时皮肤是 512（⇒ unit = 0.25），没 assets 时是兜底的 8。
+	var tex_w0: int = int(kids[0].texture.get_width())
+	print("      皮肤层贴图宽度 tex_w = %d（unit = 128/%d = %f）"
+		% [tex_w0, tex_w0, 128.0 / float(tex_w0)])
+	var want: Dictionary = expect_sprite(Vector2(W, H), TEAM_COLOR, tex_w0, 5.0, 5.0)
 	print("      sprite0 position=%s scale=%s flip_h=%s"
 		% [kids[0].position, kids[0].scale, kids[0].flip_h])
 	print("      期望   position=%s scale=%s flip_h=%s"
 		% [want["position"], want["scale"], want["flip_h"]])
 	ok(kids[0].position.is_equal_approx(want["position"]),
-		"位置 == (300, 100)（k=10: 250+10·5, 150−10·5）")
+		"位置 == (300, 100)（k=10: 250+10·5, 150−10·5；与 tex_w 无关）")
 	ok(kids[0].scale.is_equal_approx(want["scale"]),
-		"缩放 == (16/60, −160/60)（unit = 128/8）")
+		"缩放 == ((1/60)·(128/%d), (10/−60)·(128/%d))（读出的是这一层自己的 tex_w）"
+		% [tex_w0, tex_w0])
 	ok(kids[0].flip_h == true, "x > 0 ⇒ flip_h = true")
 	ok(kids[1].position.is_equal_approx(kids[0].position)
 			and kids[2].position.is_equal_approx(kids[0].position),
@@ -437,12 +486,120 @@ func _initialize() -> void:
 	await process_frame
 	var resized_calls: int = int(drawer.call("resized_call_count"))
 	ok(resized_calls >= 1, "resized 信号真的连上了（on_resized 被调到 %d 次）" % resized_calls)
-	var want3: Dictionary = expect_sprite(Vector2(W * 2.0, H * 2.0), TEAM_COLOR, 8, 5.0, 5.0)
+	var want3: Dictionary = expect_sprite(Vector2(W * 2.0, H * 2.0), TEAM_COLOR, tex_w0, 5.0, 5.0)
 	print("      放大后 sprite0 position=%s（期望 %s）" % [kids[0].position, want3["position"]])
 	ok(kids[0].position.is_equal_approx(want3["position"]),
 		"控件放大到 1000×600 ⇒ 位置重摆成 (600, 200)")
 
-	# 15) 回收：queue_free 整棵树，子节点跟着走
+	# 15) 贴图链的三种取法（§51）——**三种都要验**，因为"有 assets"不是所有机器都成立
+	#
+	# ```text
+	# 16.1 有 assets：名字 → loader 表 → res://assets/**.ctex；每层按**自己**的 tex_w 算缩放
+	# 16.2 没有 assets（assets_root = ""）：优雅退化成纯色，不崩
+	# 16.3 名字不在 GraphwarTextureLoader 的表里：同样退化，且 missing_assets() 点名
+	# ```
+	#
+	# 这几种都建**新实例**，不碰上面那个 `drawer`（它的子节点索引被前面几组断言钉死了）。
+
+	# 15.1 bot 的外观：真机 dump 里 Bot 用 `skins/bot_2.svg` + `faces/no_face.svg` + `hats/no_hat.svg`
+	#      （`docs/16-client.md` §2.1.10，**观测**）。注意三者宽度不同：512 / 128 / 512。
+	var bot: Object = EntityDrawer.new()
+	ok(bot != null, "EntityDrawer.new() 还能建第二个实例（贴图验收用）")
+	if bot != null:
+		var bc: Control = bot
+		bc.set_size(Vector2(W, H))
+		ok(int(bot.call("spawn_entity", 0, 5.0, 5.0)) == 4, "bot 实例 spawn_entity(0, 5, 5) == 4")
+		ok(bool(bot.call("set_entity_look", 0, "bot_2", "no_face", "no_hat")) == true,
+			"set_entity_look(0, \"bot_2\", \"no_face\", \"no_hat\") == true")
+		var look: PackedStringArray = bot.call("entity_look", 0)
+		ok(look.size() == 3 and String(look[0]) == "bot_2" and String(look[1]) == "no_face"
+				and String(look[2]) == "no_hat",
+			"entity_look(0) 往返一致（%s）" % [look])
+		if asset_mode:
+			ok(String(bot.call("sprite_texture_path", 0, 0)) == "res://assets/skins/bot_2.ctex",
+				"bot 的皮肤层 = res://assets/skins/bot_2.ctex")
+			ok(String(bot.call("sprite_texture_path", 0, 1)) == "res://assets/faces/no_face.ctex",
+				"bot 的脸层 = res://assets/faces/no_face.ctex")
+			ok(String(bot.call("sprite_texture_path", 0, 2)) == "res://assets/hats/no_hat.ctex",
+				"bot 的帽子层 = res://assets/hats/no_hat.ctex")
+			var b0: Sprite2D = bc.get_child(0)
+			var b1: Sprite2D = bc.get_child(1)
+			ok(int(b0.texture.get_width()) == 512 and int(b1.texture.get_width()) == 128,
+				"bot 皮肤 512×512、脸 no_face 128×128（pck 里就是这样，%d/%d）"
+				% [b0.texture.get_width(), b1.texture.get_width()])
+			# `update_sprite` 的 `unit = 128/tex_w` 是**每层自己的**贴图宽度 ⇒ 两层的 scale 不同
+			var want_b0: Dictionary = expect_sprite(Vector2(W, H), TEAM_COLOR, 512, 5.0, 5.0)
+			var want_b1: Dictionary = expect_sprite(Vector2(W, H), TEAM_COLOR, 128, 5.0, 5.0)
+			ok(b0.scale.is_equal_approx(want_b0["scale"]),
+				"皮肤层缩放按 tex_w = 512 算（unit = 128/512）")
+			ok(b1.scale.is_equal_approx(want_b1["scale"]),
+				"脸层缩放按 tex_w = 128 算（unit = 128/128）⇒ 与皮肤层不同，%s vs %s"
+				% [b0.scale, b1.scale])
+			ok(not b0.scale.is_equal_approx(b1.scale), "两层 scale 不同（各读自己的贴图宽度）")
+		bc.free()
+
+	# 15.2 没有 assets 的机器：`assets_root = ""` 就是同一件事（不读盘）
+	var noassets: Object = EntityDrawer.new()
+	ok(noassets != null, "第三个实例（模拟没有 assets 的机器）")
+	if noassets != null:
+		var nc: Control = noassets
+		nc.set_size(Vector2(W, H))
+		noassets.set("assets_root", "")
+		ok(bool(noassets.call("assets_available")) == false,
+			"assets_root = \"\" ⇒ assets_available() == false（等价于没有 client/assets/）")
+		ok(int(noassets.call("spawn_entity", 0, 5.0, 5.0)) == 4,
+			"**没有 assets 也照样 spawn**（4 个子节点，不崩）")
+		var fb_paths_ok := true
+		var fb_sizes_ok := true
+		for i in range(3):
+			var sp: Sprite2D = nc.get_child(i)
+			var t: Variant = sp.texture
+			if t == null or not (t is Texture2D) or String(t.resource_path) != "":
+				fb_paths_ok = false
+			elif int(t.get_width()) != 8 or int(t.get_height()) != 8:
+				fb_sizes_ok = false
+		ok(fb_paths_ok, "没资产 ⇒ 三层都是纯色兜底（texture 非空、resource_path 为空）")
+		ok(fb_sizes_ok, "没资产 ⇒ 兜底贴图 8×8（texture_size 默认值）")
+		var st2: PackedInt64Array = noassets.call("texture_stats")
+		ok(int(st2[0]) == 0 and int(st2[1]) == 3,
+			"没资产 ⇒ texture_stats() = [0 加载, 3 退化]（实际 %s）" % [st2])
+		var miss2: PackedStringArray = noassets.call("missing_assets")
+		ok(miss2.size() == 3 and miss2.has("skins/yellow")
+				and miss2.has("faces/regular_eyes") and miss2.has("hats/soldier_helmet"),
+			"没资产 ⇒ missing_assets() 点名缺哪三个（%s）" % [miss2])
+		# 换外观也照样退化，而且不会崩
+		ok(bool(noassets.call("set_entity_look", 0, "bot_2", "no_face", "no_hat")) == true,
+			"没资产时 set_entity_look 仍然返回 true")
+		ok(String(noassets.call("sprite_texture_path", 0, 2)) == "",
+			"没资产 + 换外观 ⇒ 帽子层仍是纯色（resource_path 为空）")
+		var st3: PackedInt64Array = noassets.call("texture_stats")
+		ok(int(st3[1]) == 6, "没资产 + 换外观 ⇒ 退化计数涨到 6（三张默认 + 三张新名字）")
+		nc.free()
+
+	# 15.3 名字不在 loader 的表里（不是资产问题，是名字错）
+	var odd: Object = EntityDrawer.new()
+	ok(odd != null, "第四个实例（验「名字不在表里」）")
+	if odd != null:
+		var oc: Control = odd
+		oc.set_size(Vector2(W, H))
+		odd.set("assets_root", String(drawer.get("assets_root")))
+		ok(int(odd.call("spawn_entity", 0, 5.0, 5.0)) == 4, "第四个实例也能 spawn")
+		ok(bool(odd.call("set_entity_look", 0, "no_such_skin", "regular_eyes", "soldier_helmet")) == true,
+			"set_entity_look 接受表里没有的名字（不崩）")
+		ok(String(odd.call("sprite_texture_path", 0, 0)) == "",
+			"表里没有的名字 ⇒ 皮肤层退化成纯色")
+		var miss3: PackedStringArray = odd.call("missing_assets")
+		ok(miss3.has("skins/no_such_skin"),
+			"missing_assets() 里点名 skins/no_such_skin（%s）" % [miss3])
+		if asset_mode:
+			ok(String(odd.call("sprite_texture_path", 0, 1)) == "res://assets/faces/regular_eyes.ctex"
+					and String(odd.call("sprite_texture_path", 0, 2)) == "res://assets/hats/soldier_helmet.ctex",
+				"只有皮肤那一层退化，脸/帽子仍是真贴图")
+		ok(bool(odd.call("set_entity_look", 99, "yellow", "no_face", "no_hat")) == false,
+			"set_entity_look 对不存在的实体返回 false")
+		oc.free()
+
+	# 16) 回收：queue_free 整棵树，子节点跟着走
 	var child_of_doomed: Node = kids[0]
 	control.queue_free()
 	await process_frame

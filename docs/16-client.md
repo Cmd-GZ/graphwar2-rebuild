@@ -7905,3 +7905,414 @@ python3 tools/bit_exact_attrib.py --json b.jsonl
    `GraphwarButton` 之间 —— 要么把命令派发下沉进扩展类，要么承认视图层用我们的按钮。
    这条与"控制器迁回 Rust"是同一件事。
 5. **`selftest` 里 709 那个数**要查清（本机两处都是 636）；`batch_conv` 的 633 → 637 也要追一下差在哪 4 批。
+
+## 44. 士兵/靶子不再是纯色方块：`GraphwarTextureLoader` 三张表接上 `client/assets/` 的真贴图（2026-11，任务 37）
+
+> ⚠️ 任务书写的是"用 §51"，但 §51 已被任务 33（`EntityDrawer::draw`）占用 ⇒ 本节是 **§44**。
+
+**一句话**：`EntityDrawer` 的三个 `Sprite2D` 从"程序生成的 8×8 纯色 `ImageTexture`"变成
+"**按名字查 `GraphwarTextureLoader` 的三张表 → `res://skins|faces|hats/<名>.svg` →
+`res://assets/<dir>/<名>.ctex` 的真贴图**"；取不到（没有 assets / 名字不在表里）才退回纯色。
+验收脚本 `client/tools/entity_drawer_check.gd` **118 → 160** 条断言，两个方向都钉住。
+
+### 44.0 先说没做到的（免得被下面那张表误导）
+
+| # | 项 | 现状 | 档位 |
+|---|---|---|---|
+| 1 | **谁给名字**（`skin`/`face`/`hat`） | 原版是 `ready` 里订的三个 graphics 事件（51/53/55）写进 `HashMap<i32, String>`（`+0x30`）；本类**没有事件通道**，改由调用方 `set_entity_look()` 给，默认值 = 玩家档案的三条默认字面量。**播放屏已接上**（2026-11-08 协调者接力）：`_sync_entities()` 里对 `id ≥ TARGET_ID_BASE` 的实体调 `set_entity_look(id,"target","no_face","no_hat")`，士兵走默认三件套 | 原版链路=**观测**；"谁喂"=**我方接线**（不是观测到的原版路径） |
+| 2 | **靶子**的外观 | `res://skins/target.svg` 就在皮肤表里（`SKINS` 数组第 6 个）。播放屏现在按 **id ≥ `TARGET_ID_BASE`(1000)** 判靶子并显式设 `target/no_face/no_hat`（**我方接线**）。⚠️ 自检那局**没有靶子**，所以这条只跑了代码路径、未在本局触发（自检里是 1 条 `SKIP`，不是静默通过） | 贴图=**观测**；"哪个是靶子"=**我方接线** |
+| 3 | 贴图本体从哪来 | 仓库里**不放任何图片**（`AGENTS.md` 硬规矩 3）。真贴图 = 使用者自己 pck 解出的 `client/assets/**.ctex`（gitignore）；缺了就退化 | **观测**（`.ctex` 头 `GST2` 读出的尺寸） |
+| 4 | 三张表**共享**那一层 | 原版是 `GraphwarRootNode +0x16a0` 上的**一个** `Rc<RefCell<GraphwarTextureLoader>>`（`INode::init` arm64 `0x39a44c` 构造，6 个模块共用）；本类每实例一份 | **我方化简**（根节点还没接这一层） |
+| 5 | `ranks/`（22）与 28 个 UI 图标 | loader 的 `new` **也加载它们**，但**没有任何 getter**按名字取（模块文档 §5 = 未知）⇒ 本轮只接三张有 getter 的表 | `new` 里加载=**观测**；查询入口=**未知** |
+| 6 | `get_chat_texture` / `get_time_mode_texture` | `docs/02` 列过这两个名字，arm64 `.symtab` 里**没有**这两个符号 ⇒ 本轮不实现（`docs/02` §1187 的旧账，仍然**未知**） | **未知** |
+
+### 44.1 原版到底按什么名字取图（**这是本任务①的答案**）
+
+**答案：按 `String` 名字，不按玩家 id、不按队色、不按编号。** 三类贴图各有一张
+`HashMap<String, Gd<Texture2D>>`，键是资源名本身（`"yellow"` / `"regular_eyes"` / `"soldier_helmet"`）。
+
+完整链路（每一跳都能指到地址；x86 = Linux `2026-08-28/libgraphwarrust.so` 的 vaddr，Ghidra 再加 `0x100000`）：
+
+| # | 跳 | 地址 / 证据 | 档位 |
+|---|---|---|---|
+| 1 | 玩家档案的三条**默认**外观名 | `GraphwarPlayerConfig::new` 的字面量 `yellow` / `regular_eyes` / `soldier_helmet`，arm64 `0x39152c..0x3915a4`（`src/player_showcase.rs` 的 `DEFAULT_SKIN/FACE/HAT` 已落码） | **观测** |
+| 2 | 名字进"哪个玩家"的索引 | `GraphwarGraphicsManager::set_skin_graphics` x86 `0x468c70` / `set_face_graphics` `0x468b60` / `set_hat_graphics` `0x468a50`：写 `HashMap<u32 player_id, String>`（`+0x18` / `+0x48` / `+0x78`，间距 `0x30`），并发 `*_graphics_info_event`（判别值 **51 / 53 / 55**） | **观测**（`src/graphwar_graphics_manager.rs` §2） |
+| 3 | 名字进 `EntityDrawer` | `EntityDrawer::ready` x86 `0x4b4130` 订 6 个事件，其中第 4/5/6 个就是 `skin|face|hat_graphics_info_event`（`.rodata` `0x1c2a95..0x1c2af6`） | **观测** |
+| 4 | 名字 → 这个实体的贴图 | `get_entity_skin_sprite` x86 **`0x4bb6b0`**（arm64 `0x4c1068`）：先按**实体 id** 在自己的 `HashMap<i32, String>`（`+0x30`，表项步长 `0x20`、键在 `-0x20`、串在 `-0x10/-0x8`）里取名字 —— 本轮反汇编复核：`cmp -0x20(%r8),%r12d` 比 id、`mov -0x10(%r8),%rsi` / `-0x8(%r8),%rdx` 取 `(ptr,len)` | **观测** |
+| 5 | 名字 → `Gd<Texture2D>` | 紧接着 `cmpq $0x0,0x168(%r13)`（= 表 `+0x150` 的 `items` 槽）→ `mov 0x150(%r13),%rdx` / `0x158(%r13),%rcx`（桶/控制字节）→ `lea 0x170(%r13)` 当 hasher ⇒ **这就是内联进来的 `get_skin_texture`**（表 `+0x150`，`+0x170` 是 hasher）；脸/帽子同形：`+0x180/+0x1a0`、`+0x1b0/+0x1d0`，arm64 三份 getter = `0x40c1cc` / `0x40c0a4` / `0x40bf7c`（各 296 B） | **观测** |
+| 6 | 谁把这些贴图装进三张表 | `GraphwarTextureLoader::new`（arm64 `0x40c2f4`，**21212 B**；x86 侧 `0x4d3180` 是**推断**，见 `src/graphwar_texture_loader.rs` §1）：119 次「名字 + `res://...svg`」成对出现，全部装进表 | **观测**（arm64 符号）/ **推断**（x86 地址） |
+| 7 | 装到节点上 | 三个 `get_entity_*_sprite` 里：`Sprite2D::new_gd()` → `set_texture` → `texture_filter = 4`（arm64 `0x4bfe10`）→ `flip_v = true`（arm64 `0x4bfe30`）→ `add_child` → 存进 `HashMap<i32, Gd<Sprite2D>>` | **观测** |
+| 8 | 真机上长什么样 | 节点树 dump：`GraphwarPlane/@EntityDrawer@N/@Sprite2D@N.texture = res://skins/yellow.svg` / `faces/regular_eyes.svg` / `hats/soldier_helmet.svg`；Bot 用 `skins/bot_N.svg` / `faces/no_face.svg` / `hats/no_hat.svg` | **观测**（§2.1.10） |
+
+⇒ **"原版就是纯色 + 名字"这个假设被证否**：原版画的是真贴图（第 8 条是运行时 dump，不是推断）。
+本轮据此把纯色降级成**兜底**。
+
+### 44.2 三类贴图各自怎么来 / `client/assets/` 里缺什么（**不修，只列**）
+
+`new` 的名字表现在落在 `src/graphwar_texture_loader.rs`（`SKINS` 23 / `FACES` 17 / `HATS` 28），
+`path_of()` 拼出 `res://<dir>/<名>.svg`。本机 `client/assets/`（= 使用者 pck 解出来的 148 个资产）对照：
+
+| 表 | 名字数 | assets 里有 | **缺** | 多出来的（loader 表里没有） |
+|---|---|---|---|---|
+| `res://skins/` | 23 | 25 | **0** | `cyan`、`reference` |
+| `res://faces/` | 17 | 18 | **0** | `reference` |
+| `res://hats/` | 28 | 28 | **0** | — |
+| `res://ranks/` | 22 | 22 | **0** | — |
+| UI 图标（`res://*.svg`） | 28 | 全部在 | **0** | `basic_soldier`、`empty_soldier`、`add_bot_option` 等控件图 |
+
+⇒ **三张表 68 个名字一个不缺**。两个注意点：
+
+1. **`bot_0`…`bot_5` 同时出现在 skins 与 faces 两张表里**（同名不同图）⇒ 缓存键必须是
+   `(种类, 名字)`，光用名字会串表（本类的 `textures: BTreeMap<(u8, String), Gd<Texture2D>>`）。
+2. 原版 `.rodata` 里那条笔误 `res://hats//no_hat.svg`（双斜杠）**不修**；`HATS` 表按名字去重后
+   `no_hat` 只剩一条正常路径，所以我们的候选路径里不会出现双斜杠。
+
+### 44.3 接上了什么（`src/_scaffold/entity_drawer_class.rs`）
+
+```text
+名字（EntityLook: skin/face/hat）
+  → crate::graphwar_texture_loader::{get_skin_texture,get_face_texture,get_hat_texture}   ← 原版三张表（纯逻辑）
+  → path_of(): res://skins|faces|hats/<名>.svg
+  → asset_candidates(): res://assets/<dir>/<名>.{ctex,png,webp,svg}                       ← 本客户端（.ctex 是 pck 解出的容器）
+  → FileAccess::file_exists → ResourceLoader::load → try_cast::<Texture2D>()
+  → Sprite2D::set_texture（+ texture_filter=4 / flip_v=true，两个原版常量）
+  → 任一步失败 ⇒ solid_texture(texture_size=8, layer_color)：**纯色兜底 + push_warning 点名缺什么**
+```
+
+新增的 `#[func]`（全是**观测口/接线口**，不是原版方法）：
+
+| 方法 | 干什么 | 谁会用 |
+|---|---|---|
+| `set_entity_look(id, skin, face, hat) -> bool` | 改这个实体的三张外观名，并重贴三张图 + 重摆（`tex_w` 变了） | 播放屏（未接）/ 验收脚本 |
+| `entity_look(id) -> PackedStringArray` | 读回三条名字 | 断言 |
+| `sprite_texture_path(id, layer) -> String` | 该层贴图的 `resource_path`（**兜底 = 空串**） | 断言"真贴图 vs 纯色" |
+| `texture_stats() -> PackedInt64Array` | `[加载成功, 退化纯色, 缺失名字数]` | 断言 |
+| `missing_assets() -> PackedStringArray` | 缺哪些（`"skins/yellow"` 这种，去重保序） | 断言 + 报给用户 |
+| `assets_available() -> bool` | `<assets_root>/MANIFEST.tsv` 在不在（**与 `client/src/ui/assets.gd::available()` 同判据**） | 断言 / 诊断 |
+
+导出的 `assets_root`（默认 `res://assets`）是**我方接线**：设成空串 = "这台机器没有 assets"，
+验收脚本靠它在**任何**机器上都能验退化分支（原版没有这个属性——贴图由根节点上那**一个** loader 统一加载）。
+
+### 44.4 `update_sprite` 那条 `unit = 128/tex_w` 现在真的起作用了
+
+原版 `update_sprite`（x86 `0x4b9530`）对**每一层**读**它自己**贴图的宽度：
+
+```text
+scale = ( (s/60)·(128/tex_w) , (k/−60)·(128/tex_w) )       k = size.x/50、s = 队伍镜像符号 ±1
+```
+
+以前三层都是 8×8 纯色 ⇒ `unit` 恒 16 ⇒ 这条"每层各读各的"**从来没有被测到过**。
+现在真贴图宽度不一样（皮肤 512、`faces/no_face` 128、帽子 512），三层 `scale` 就**必须**不同：
+`512 ⇒ unit 0.25`、`128 ⇒ unit 1.0`。§44.5 第 15.1 组就是钉这一条。
+
+> 尺寸来源：`.ctex` 头 `GST2` 的 `width/height`（`skins/*`、`faces/*`（除 `no_face`）、`hats/*` = 512²；
+> `faces/no_face`、`ranks/*`、`basic_soldier`、`empty_soldier` = 128²）。**观测**（读二进制头，不是猜）。
+
+### 44.5 断言：`entity_drawer_check.gd` 118 → **160**（+42）
+
+| 组 | 验什么 | 条数 |
+|---|---|---|
+| 3（改） | 三个 `texture` 非空 / 是 `Texture2D`；`sprite_texture_path` 与 `texture.resource_path` 一致 | 9 |
+| 3（分支） | **有 assets**：三条路径 = `res://assets/{skins/yellow,faces/regular_eyes,hats/soldier_helmet}.ctex`、都 512×512；**没有**：`resource_path` 为空、8×8 | 6 |
+| 3（统计） | `texture_stats()` = `[3,0,0]`（有 assets）/ `[0,3,3]`（没有） | 1 |
+| 15.1 | Bot 外观 `bot_2`/`no_face`/`no_hat`：三条路径、两条宽度 512/128、**两层 `scale` 不同**（各读自己的 `tex_w`） | 10 |
+| 15.2 | **没有 assets**（`assets_root=""`）：`assets_available()==false`、照样 spawn 4 个、三层纯色 8×8、`resource_path` 空、`missing_assets()` 点名三个、换外观仍退化且不崩 | 9 |
+| 15.3 | **名字不在表里**：`no_such_skin` ⇒ 皮肤层退化但脸/帽仍真贴图、`missing_assets()` 点名、不存在的 id 返回 false | 6 |
+
+两个方向都被钉住（**任务书②**）：
+
+* **能取到** ⇒ `texture != null`、`is Texture2D`、`resource_path = res://assets/**.ctex`（真 `.ctex`，512²）；
+* **取不到** ⇒ `texture != null`（仍是 `ImageTexture`）、`resource_path == ""`、8×8、日志里点名缺什么。
+
+缺资产时的日志（**不是**红字错误，是 `push_warning`，且**每个名字只打一次**）：
+
+```text
+WARNING: EntityDrawer: 没有资产目录（assets_root 为空）⇒ skins/yellow 退化成纯色；把 assets_root 设回 "res://assets" 再跑 tools/extract_assets.py 就能拿回真贴图
+WARNING: EntityDrawer: 缺少贴图资产 ranks/rank_0（res://assets 下没有 ranks/rank_0.ctex/png/webp/svg）⇒ 退化成纯色
+WARNING: EntityDrawer: 名字 "no_such_skin" 不在 GraphwarTextureLoader 的 skins 表里（退化成纯色）
+```
+
+### 44.6 回归（本轮实测，命令可复跑）
+
+| 项 | before | after | 命令 |
+|---|---|---|---|
+| `entity_drawer_check.gd` | 118 | **160** | `godot --headless --path client --script res://tools/entity_drawer_check.gd` |
+| `assemble_check.gd` | 213 | **213** | 同上换脚本 |
+| `plane_on_screen_check.gd` | 96 | **96** | 同上 |
+| `obstacle_drawer_check.gd` | 116 | **116** | 同上 |
+| `selftest`（四前置齐） | 712 | **712** | `godot --headless --path client -- --selftest` |
+| `cargo test --offline` | 1620 | **1620** | 本文件整个不参与编译（`gdext-bindings` 才编）⇒ 条数不变 |
+| `cargo test --offline --features gdext-bindings` | — | **+5 条**（`asset_candidates_only_swap_the_extension` / `every_table_name_maps_to_candidates` / `default_look_is_the_player_config_triple` / `texture_kind_matches_the_three_loader_tables`） | — |
+| `python3 tools/coverage_matrix.py` | `src_fns` 2571 | **2588** | 生成物：`docs/coverage-matrix.tsv` + `docs/149-coverage-matrix.md` |
+
+### 44.7 本轮没解决的（诚实清单）
+
+| 项 | 档位 | 缺什么证据 |
+|---|---|---|
+| **谁在什么时候调 `set_entity_look`** | **未知** | `graphics_info_event` 的载荷语义已知（`player_id` + 名字），但"实体 id ↔ 玩家 id"要在播放屏那侧接（`client/src/**` 不在本轮允许改动清单） |
+| 原版 `new` 里 **load 失败**时的默认贴图 | **未知** | `21212 B` 里只看出"逐个 `load` 后插表"，失败分支没解 ⇒ 我们用纯色兜底（**我方选择**，不是原版行为） |
+| `ranks/` 与 28 个 UI 图标的查询入口 | **未知** | 模块文档 §5：没有 getter，存储位置没证 |
+| `get_chat_texture` / `get_time_mode_texture` | **未知** | arm64 `.symtab` 没有这两个符号（`docs/02` §1187 的旧账） |
+| `texture_filter = 4` 的**语义** | **推断** | 数值是观测（`mov w1,#0x4`）；"4 == `LINEAR_WITH_MIPMAPS`" 是查 Godot 文档 |
+| 画出来与原版**逐像素**一致 | **未知** | headless 无渲染器；本轮的断言只到"贴图是哪张、尺寸多少、`scale` 算得对不对" |
+
+## 45. 最后一个 `stub` 解开了：`GraphwarPlanePosManager`（24 B / 3 字段）——它**不是**坐标换算，是位置表（2026-11，任务 36）
+
+> 本节对应 `dispatch/36-plane-pos-manager.md`（分支 `agent/plane-pos-manager`）。
+> ⚠️ **小节号就地更正**：任务书写"`docs/16` 现在最大 §50，你用 §51"。**§51 已经被任务 33 用掉了**
+> （`EntityDrawer::draw` 的 3 段弧），所以本节是 **§44**。
+
+**一句话**：§47.2 / §47.3 / §47.7 三处「`PlanePosManager` 24 B 布局**未知**、连文件都没有」从本节起
+**作废**——三个字段逐条落到指令上，**三份构建（arm64 2.0.60 / x86 Linux 2.0.60 / Windows 2.0.60 DLL）
+的偏移序列逐条相同**；布局与**已复原的行为**（位置表 + `PosInfo` 事件的两个方向）写进
+`src/graphwar_plane_pos_manager.rs`（**原版模块名**），`size_of == 24` 由**编译期硬闸**与逐字段
+`offset_of!` 单测钉死 ⇒ 容器里**一个 `stub` 都不剩**（`stub` **1 → 0**）。
+
+> 档位口径同 §42 / §44 / §46：**逐位** = 与真二进制逐字节/逐位对拍；**观测** = 能指到反汇编
+> 地址 / 指令级读写；**推断** = 有依据但未证；**未知** = 没解出来。
+> `cargo test` / `assemble_check.gd` 的条数**只是回归保护**，不是复原证据。
+
+### 45.0 先说"没做到"的，以及**两条被证伪的任务书前提**
+
+| 项 | 现在 | 档位 |
+|---|---|---|
+| 24 B 的**字段布局** | **全部解开**（3 字段，见 §45.2） | **观测**（三构建交叉验证） |
+| 内层 `GraphwarPlanePosData`（48 B） | **解开**：一张 `HashMap<u32, 24 B POD>`（§45.4） | **观测**（尺寸/偏移/桶步长） |
+| 位置表 + 事件的**两个方向** | **已落码**并逐条对拍（§45.3 / §45.6） | **观测** |
+| 值类型的**精确写法**（`[f64;3]` vs 元组 vs 命名结构体） | 仍是**推断**（24 B POD 是观测） | **推断**（缺"有人把这三份当 f64 算"的指令） |
+| `get_all_positions` 的**顺序** | **未知**（= `RawTable` 散列序，原版没有排序调用） | **未知** |
+| 订阅的**注册**（`&mut GraphwarEventHandler`） | **没接**：本 crate 没有 `GraphwarEventHandler` 的实现 ⇒ 订阅名以常量 `SUBSCRIBED` 记录 + 单测钉死 | 我方差异 |
+
+**就地更正 1（前提被证伪，`AGENTS.md` §0.6）**：任务书 §1 写「它的用途…`PlanePos` 的坐标换算
+（世界坐标 ↔ 像素）——`GraphwarPlane` 的 `update_transform` 三实参就是它在管」。**这条是错的**：
+
+* `FunctionDrawer::update_transform`（`0x499050`）**全 `.text` 只有 1 个调用点**：`0x4b6147`，
+  在 **`GraphwarPlane::draw`（`0x4b5df0`）** 体内；三个实参是**就地算出来的**——
+  `0x4b60ce call 0x8925f0`（`Control::get_size()` → w/xmm0、h/xmm1）→ `0x4b60f6 mulss xmm1,xmm0(0.5)`
+  （y = h/2）→ `0x4b6100 mulss xmm0,xmm2(w)`（x = w/2）→ `0x4b6104 divss xmm2,50.0`（scale = w/50）；
+  `flip` 来自 `0x4b60e3 call 0x4be6e0`（`get_team_overview`）的位组合。**这一段里没有一次
+  `PlanePosManager` 调用**。
+* **正对照**（证明不是"扫法坏了"）：同一条 `addr_probe.py callers` 对 `get_position`（`0x3c62b0`）
+  给出 **35** 个调用点（`EntityDrawer::draw` `0x4b2890`、`0x4b4b60` 都在列），
+  `GraphwarPlane::draw`（`0x4b5df0`）**不在**这 35 个里。
+* ⇒ 32 号（§48.2）那三个实参**本来就是原版值**（`w/2`、`h/2`、`w/50`），**不需要**改；
+  `client/src/**` 与 `_scaffold/graphwar_plane_class.rs` 本轮**一行没动**。
+
+**就地更正 2（模块用途）**：它**不是**"坐标换算"，是**位置表**：`HashMap<u32, 24 B POD>`
+（键 = 实体 id，值 = `(pos_x, pos_y, radius)`）+ `PosInfo` 事件的入/出两端。
+`px = 20x + 500` 那条换算属于 **`graphwar_plane.rs`**（`obstacle_partial_update_event` `0x4be3e0`，
+锚 `src/graphwar_plane.rs:174:18`），与本节无关——`docs/02` §17.1 那一行也一并改正了。
+
+**就地更正 3（符号数）**：`docs/02` §17 的模块表写本模块 **9** 个符号；`readelf -sW` 实测 **8**
+（6 个公开方法 + 2 个闭包）。多出来的 1 个是把 `GraphwarPlanePosData` 的某个**内联副本**算进去了。
+
+### 45.1 本轮动了哪些文件
+
+| 文件 | 增/改 | 内容 |
+|---|---|---|
+| `src/graphwar_plane_pos_manager.rs` | **新增** | 模块文档（方法表 / 24 B 布局表 / 事件流 / 内层 48 B / 更正 / 未知）+ `GraphwarPlanePosManager` / `GraphwarPlanePosData` + **6 条 `const` 硬闸**（尺寸 3 + 偏移 3）+ **5 条单测** |
+| `src/lib.rs` | **+1 行** | `pub mod graphwar_plane_pos_manager;`（任务书 §5 允许的那一行） |
+| `src/_scaffold/root_wiring.rs` | 改 | ①第 6 槽 `PlanePosManagerSlot`（空标记 → `PlanePosManagerSlot(Rc<RefCell<GraphwarPlanePosManager>>)`）；②`our_type` 从 `—` 改成真类型；③档位 `stub` → `wired`；④四档计数 `10/2/9/1` → **`11/2/9/0`**；⑤`plane_pos_manager()` 取回口；⑥`interaction_selftest` 加第 ⑫ 段 **9 条**；⑦单测：改 3 条（四档表 / 反面档位 / 幂等条数 65→74）、加 1 条（槽里是真类型 + 换输入读回跟着变）；⑧§3 逐槽事实表那一行按新事实重写 |
+| `client/tools/assemble_check.gd` | 改 | ①`WIRED_TIER[6]` = `wired`；②`TIER_TALLY` `{11,2,9,0}`；③`EMPTY_IMPL` 只剩 `ClientConnectionHandler`；④`PACKAGED_TIER` 第 6 项 = `wired`；⑤`expected_probe` **65 → 74** 条；⑥"只剩 1 个真 stub" → **"一个都不剩（0）"**；⑦**新增 4 条** `plane_pos.*` 专项断言。**既有 213 条一条没删**（六处是等价替换） |
+| `docs/02-module-map.md` | 改 | §17.1 归属行（混装待拆 → **已有独立实现**）、§17 符号数 9 → 8、方法表补 arm64 地址 + 内层 3 个 + 2 个闭包 |
+| `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` | 重跑 | `src_files` 109→**110**、`src_fns` 2571→**2590**、`src_tree_sha256` 跟着变；**527/527 与每模块行一行没变** |
+| `docs/16-client.md` | +本节 | — |
+
+❌ **没动**：`src/game.rs`、别的 manager 的行为、`client/src/**`、`dispatch/`、
+`fixtures/guardrails.json`、`src/_scaffold/graphwar_plane_class.rs`（更正 1 证否了"三实参来自它"，
+所以那个文件**不该改**）、`src/_scaffold/graphwar_root_node_class.rs`（禁区；里面两处旧注释
+仍写着"`stub` = 零行为的空占位"与"只剩 1 个 stub"，是 `*_class.rs` 的老账，见 §45.8）。
+
+### 45.2 `GraphwarPlanePosManager` = **24 字节 / 3 字段**（`观测`）
+
+| 偏移 | 宽 | 类型 | 证据（指令地址；三构建见 §45.5） | 档位 |
+|---|---|---|---|---|
+| `+0x00` | 8 | `Weak<RefCell<GraphwarPlanePosManager>>` | 构造点把 **`RcBox` 指针本身**写进该槽：arm64 `0x4199a0` `stp xzr, x20, [x20, #0x10]`（第 2 字 = `RcBox+0x18` = `m+0x00`）、x86 `0x523356` `mov [r14+0x18], r14`；`new` 里 `Weak::clone`（`cmn`/`ldr [x+8]`/`adds`/`str`）塞进两条订阅闭包：arm64 `0x3b89d0`–`0x3b89ec`、x86 `0x3c6d5f`–`0x3c6d69`（`cmp r15,-1` / `inc [r15+8]`）；析构 = 弱计数 `-1`，归零 `dealloc(ptr, 0x30, 8)`：arm64 `0x4b306c`–`0x4b30b0`、DLL `0x180064139`–`0x180064168` | **观测** |
+| `+0x08` | 8 | `Rc<RefCell<GraphwarEventQueue>>` | `set_position` 读它 → `+0x10` 是 `RefCell` 借用位（写 `-1`）→ `+0x18` 当 `&mut GraphwarEventQueue` 传给 `add_event`：arm64 `0x3b8200` `ldr x20,[x20,#8]` → `0x3b8234` `bl 0x3d7a40`（`.symtab` 名 = `GraphwarEventQueue::add_event`）；x86 `0x3c656b` `mov r14,[r14+8]` → `0x3c65ad`（GOT `0x9bac80` → `0x3d3530`）；`send_all_info_events` 同（arm64 `0x3b869c`）。析构做**非原子** `-1` + `Rc::drop_slow`（arm64 `0x4b308c` → `0x41a4b8`；DLL `0x180064149` `decq` → `0x1801431a0`）⇒ 是 `Rc` 不是 `Arc` | **观测** |
+| `+0x10` | 8 | `Arc<Mutex<GraphwarPlanePosData>>` | **4 个数据方法的第一句**都是读它：arm64 `0x3b7f70`（get_position）/ `0x3b8180`（set_position）/ `0x3b83xx`（get_all_positions）/ `0x3b87c4`（handle_entity_removed_event）；x86 `0x3c62c3` `mov r12,[rsi+0x10]` / `0x3c64e8` / `0x3c66ae` / `0x3c6b69`。`ArcInner` = `{strong@0, weak@8, Mutex@0x10}`，锁字 `+0x10`、中毒位 `+0x14`、数据 `+0x18`；析构做**原子** `-1` + `Arc::drop_slow`（arm64 `0x4b30cc` `ldxr/stlxr` → `0x45f358`；DLL `0x180064176` `lock decq` → `0x18007f540`）⇒ 是 `Arc` | **观测** |
+
+**尺寸的两条独立证据**（都不依赖 §22.3 的 vtable 表）：
+
+1. `RcBox<RefCell<GraphwarPlanePosManager>>` 的分配常量 = **`0x30` = 48 = 24 + 24**
+   （arm64 `0x419900` `mov w0,#0x30`，错误路径 `0x4199dc` 的 `handle_alloc_error(0x30)`；
+   x86 `0x523269` `mov edi,0x30`；DLL `0x180141347` `mov $0x30,%ecx`）；
+2. **释放侧**同一个常量：arm64 `0x4b30a8` `mov w1,#0x30; mov w2,#8; bl __rust_dealloc`、
+   DLL `0x18006415d` `mov $0x30,%edx`。构造与释放两条路都指 `0x30` ⇒ `size_of::<M>() = 24`。
+
+### 45.3 事件流：订 2 / 发 1 / 处理 1（`观测`）
+
+```text
+new(event_handler: &mut GraphwarEventHandler, event_queue: Rc<RefCell<GraphwarEventQueue>>)
+    -> Rc<RefCell<GraphwarPlanePosManager>>                    arm64 0x3b89a0 / x86 0x3c6d30 / DLL 0x1800da460
+  ├─ Rc::new_cyclic_in(...)      arm64 0x3b89bc / x86 0x3c6d3f / DLL 0x1800da46d
+  │    └─ 闭包体（构造 M）: arm64 0x4198e0（412 B）/ x86 0x523250 / DLL 0x180141330
+  ├─ subscribe_to_events_event_handler(&mut event_handler)   ← **内联在 new 里**，两条订阅：
+  │    ├─ "new_connection_event"  → send_all_info_events        闭包走 WeakCaller::call_0
+  │    └─ "entity_removed_event"  → handle_entity_removed_event 闭包走 WeakCaller::call
+  └─ Rc 强计数 +1 后返回         arm64 0x3b8a84–0x3b8a90
+```
+
+| 方向 | 事件 | tag | 证据 |
+|---|---|---|---|
+| **订** 1 | `new_connection_event` | 5 | `.rodata` arm64 `0x19b2ac`（`x2 = 0x14` = 20 B）/ x86 `0x1be298`；`0x3b8a2c` / x86 `0x3c6db2` 都调 `GraphwarEventHandler::subscribe_to_event`（arm64 `0x486bc8` 有 `.symtab` 名） |
+| **订** 2 | `entity_removed_event` | 14 | arm64 `0x19b2c0` / x86 `0x1be2ac`；`0x3b8a80` / x86 `0x3c6e03` |
+| **发** | `pos_info_event` | **26** | arm64 `0x3b8214` `mov x8,#0x1a; 0x3b8218 movk x8,#0x8000,lsl #48`（`set_position`）、`0x3b86a0/0x3b86ac`（`send_all_info_events`）；x86 `0x3c659f` `add r12,0x1b`（r12 = `0x7fff…ffff`） |
+| **处理** | `entity_removed_event` | **14** | arm64 `0x3b87b4` `mov x9,#0xe; movk #0x8000,lsl #48`（不等就 `panic!("explicit panic")`，字符串 `0x19b29e` 14 B）；x86 `0x3c6b58` `lea rax,[r13+0xf]` |
+
+**哪条订阅接哪个处理器**（x86 `.data.rel.ro` 的**重定位 addend**，`readelf -r` 直读，不是猜）：
+
+```text
+第 1 次 subscribe（"new_connection_event"）描述符 0x952b70
+     reloc 0x952b88 -> 0x3c7170 ... 0x3c7189 lea -> 0x3c6a10  send_all_info_events
+     reloc 0x952b90 -> 0x3c6d10 ... 0x3c6d1f lea -> 0x3c6a10  同上
+第 2 次 subscribe（"entity_removed_event"）描述符 0x952b98
+     reloc 0x952bb0 -> 0x3c71e0 ... 0x3c71fc lea -> 0x3c6b40  handle_entity_removed_event
+     reloc 0x952bb8 -> 0x3c6cf0 ... 0x3c6d02 lea -> 0x3c6b40  同上
+```
+
+`PosInfo` 的**载荷**（两架构一致）：`{ tag@+0, pos[0..2]@+8, pos[2]@+0x18, id@+0x20 }`
+（arm64 `0x3b821c`–`0x3b8224`；x86 `0x3c658b`–`0x3c659b`）。⇒ 值 = `(pos_x, pos_y, radius)`，
+键 = `entity_id`，与线格式 `{"PosInfo":{"entity_id":..,"pos_x":..,"pos_y":..,"radius":..}}`
+（`src/_scaffold/protocol.rs`，来自真实报文）逐字段对齐。
+
+### 45.4 内层 `GraphwarPlanePosData` = 48 B = 一张 `HashMap<u32, 24 B POD>`（`观测`）
+
+`ArcInner<Mutex<GraphwarPlanePosData>>` 的分配常量 **`0x48` = 72 = 16 + 8 + 48**
+（arm64 `0x419988`、x86 `0x52330d`、DLL 释放路径 `0x180141470`）⇒ 内层 **48 B**。
+
+| 偏移 | 是什么 | 证据 |
+|---|---|---|
+| `+0x00` | `RawTable.ctrl` | arm64 `0x3b7fdc` `ldp x9,x8,[x22,#0x18]`（x9 = ctrl = Data+0x00） |
+| `+0x08` | `RawTable.bucket_mask` | 同上（x8 = Data+0x08） |
+| `+0x10` | `RawTable.growth_left` | `RawTable` 既有布局（同 §46.4 口径，未单独观测） |
+| `+0x18` | `RawTable.items` | arm64 `0x3b7fb4` `ldr x8,[x22,#0x30]` + `cbz`；x86 `0x3c630c` `cmp qword [r12+0x30],0` |
+| `+0x20` | `RandomState`（16 B） | arm64 `0x3b7fc0` `add x0,x22,#0x38` → `bl BuildHasher::hash_one`；x86 `0x3c6318` → `0x47dec0` |
+
+**桶步长 = 32**（键 4 B → 对齐 8，值 24 B）：arm64 `0x3b8008` `sub x13,x9,x13,lsl #5`、
+`0x3b800c` `ldur w14,[x13,#-0x20]`（键 u32）、`0x3b805c`+`0x3b8058`（值 16 + 8 = 24 B）；
+x86 `0x3c6377` `shl r10,5`、`0x3c6381` `cmp ebp,[r9-0x20]`、`0x3c63c3`+`0x3c63bb`。
+
+**值没有析构**（`insert` / `remove_entry` 之后一条 drop 都没有：arm64 `0x3b81dc`–`0x3b81ec`、
+`0x3b8828` 之后直接解锁）⇒ 值是 POD，不是 `Vec`/`String`。
+**`GraphwarPlanePosData::new`** 只在 DLL 有独立副本 `0x1800cd770`，而且**被 LLVM 与
+`GraphwarTeamData::new` 合并成同一份**（两个型都是"空 HashMap"）：`0x1800cd778` 读
+`RandomState::new::KEYS` 那个 `thread_local` → `0x1800cd7a6` `movups %xmm0,0x20(%rsi)`
+（`k0/k1` 落在 **+0x20**），空表常量写 `+0x10` / `+0x00`。
+
+### 45.5 三向交叉验证：偏移序列逐条相同
+
+| 偏移 / 常量 | arm64 2.0.60 | x86 Linux 2.0.60 | Windows 2.0.60 DLL |
+|---|---|---|---|
+| `+0x00` 弱自句柄（构造写入） | `0x4199a0` | `0x523356` | `0x1801413xx`（同形 `stp`/`mov`） |
+| `+0x00` `Weak` 析构 | `0x4b306c` | `drop_in_place<RefCell<M>>`（`0x4a5…` 区段） | `0x180064139` |
+| `+0x08` 事件队列（读） | `0x3b8200` / `0x3b869c` | `0x3c656b` / `0x3c6a..` | `0x1800d9…` / `0x1800da1…` |
+| `+0x08` `Rc` 析构 | `0x4b308c` | —（同一 glue） | `0x180064149` |
+| `+0x10` `Arc` （4 个方法第一句） | `0x3b7f70` / `0x3b8180` / `0x3b83xx` / `0x3b87c4` | `0x3c62c3` / `0x3c64e8` / `0x3c66ae` / `0x3c6b69` | `0x1800d9b…` / `0x1800d9d…` / `0x1800d9f…` / `0x1800da2…` |
+| `+0x10` `Arc` 析构（原子） | `0x4b30cc` | —（同一 glue） | `0x180064176` |
+| `RcBox` 大小 `0x30` | `0x419900` | `0x523269` | `0x180141347`（+ 释放侧 `0x18006415d`） |
+| `ArcInner` 大小 `0x48` | `0x419988` | `0x52330d` | `0x180141470`（释放侧） |
+| 发 `PosInfo`(26) | `0x3b8214` / `0x3b86ac` | `0x3c659f` | 同一常量（`0x800000000000001a`） |
+| 收 `EntityRemoved`(14) | `0x3b87b4` | `0x3c6b58` | —（同 tag） |
+| 桶步长 32 / 键 u32 | `0x3b8008` / `0x3b800c` | `0x3c6377` / `0x3c6381` | — |
+| 订阅名 2 条（各 20 B） | `0x19b2ac` / `0x19b2c0` | `0x1be298` / `0x1be2ac` | 同两条（`0x1800da4c6` 起） |
+
+**"不一致"的一处要解释**：x86 Linux 侧 `new` 的构造体是独立函数 `0x523250`
+（`Rc::new_cyclic_in` 的单态化），而 arm64 侧它在 `0x4198e0`、DLL 侧在 `0x180141330`——
+**函数边界不同、偏移序列相同**，所以不影响结论。这也是"只按函数地址对齐会配错函数"的例子
+（`AGENTS.md` §0 第 5 条）。
+
+复算命令（三条，互不依赖）：
+
+```text
+readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so | grep graphwar_plane_pos_manager
+grep -E "graphwar_plane_pos_manager" fixtures/name_to_addr.tsv
+objdump -t .reference/windows/graphwarrust-2.0.60.dll | grep GraphwarPlanePos   # VA = 0x180001000 + 值
+```
+
+⚠️ **COFF `Value` 是节内偏移**：`new` 的 0xd9460 → `0x1800da460`；本节最初把 `0xcc770`
+算成 `0x1800c1770`（错），正确的是 `0x1800cd770` —— 少加/多加 0x1000 会**安静地**读到别的函数。
+
+### 45.6 落码：布局 + 行为进原版模块文件，`size_of` 有硬闸
+
+1. **`src/graphwar_plane_pos_manager.rs`**（原版模块名，`AGENTS.md` 硬规矩 4）：
+
+   ```rust
+   pub struct GraphwarPlanePosManager {
+       pub self_weak: Weak<RefCell<GraphwarPlanePosManager>>,   // +0x00
+       pub event_queue: Rc<RefCell<GraphwarEventQueue>>,        // +0x08
+       pub data: Arc<Mutex<GraphwarPlanePosData>>,              // +0x10
+   }
+   const _: () = assert!(std::mem::size_of::<GraphwarPlanePosManager>() == 24);
+   const _: () = assert!(std::mem::size_of::<GraphwarPlanePosData>() == 48);
+   const _: () = assert!(std::mem::offset_of!(GraphwarPlanePosManager, event_queue) == 0x08);  // 三处
+   ```
+
+   单测 5 条：布局（尺寸 + 三个 `offset_of!`）、内层 48 B（含 `(u32,[f64;3])` = 32 的桶步长）、
+   事件 tag（26/14 + 与 `graphwar_life_manager` 的同名常量同值）、写读回/全表/删除、
+   弱自句柄指向自己、`Arc` 强计数。
+2. **行为**：`new`（`Rc::new_cyclic` 形状照原版，返回 `Rc<RefCell<Self>>`）、`get_position`、
+   `set_position`（先解锁再发事件，逐指令同序）、`get_all_positions`、`send_all_info_events`、
+   `handle_entity_removed_event`（只认 tag 14；原版 panic，我方返回 `Err`）。
+3. **容器槽**：`PlanePosManagerSlot`（空标记）→ `PlanePosManagerSlot(Rc<RefCell<GraphwarPlanePosManager>>)`，
+   `SlotKind` 仍是 `Stub`（容器类型是 `_scaffold` 包装，与 `TickHandlerSlot` 同一口径 ⇒
+   `container_stub_manager_count()` 仍报 5、`container_real_manager_count()` 仍报 17，**这两个数没动**）。
+   `our_type` 从 `"—"` 变成 `graphwar_plane_pos_manager::GraphwarPlanePosManager`
+   ⇒ `assemble_check.gd` 的 `EMPTY_IMPL` 只剩 `ClientConnectionHandler`。
+4. **档位**：`stub` → **`wired`**（容器 + 订 2 发 1 处理 1 都指到指令 + 9 条交互断言）。
+   四档计数 `10/2/9/1` → **`11/2/9/0`**，**22 个槽里一个 `stub` 都不剩**。
+
+### 45.7 验收（本节实测，可从干净树重跑）
+
+| 命令 | 本节实测 | 改前（`CG@3f2d82d`，同一条命令/同一构建目录） |
+|---|---|---|
+| `cargo test --offline` | **1625**，全绿 | **1620**（本节 +5：新模块 5 条单测） |
+| `cargo test --offline --features gdext-bindings` | **1716**，全绿 | **1710**（+5 单测 +1 `root_wiring` 新单测；这个基线是按"1716 − 6"推的，不是单跑出来的） |
+| `python3 tools/coverage_matrix.py --check` | **OK**（527 / 527 一行未变；`src_files` 109→110、`src_fns` 2571→2590） | OK |
+| `python3 tools/check_doc_refs.py` | **OK** | OK |
+| `assemble_check.gd` | **217 passed / 0 failed**，退出码 0 | **213** |
+| `entity_drawer_check.gd` | **118** | 118 |
+| `plane_on_screen_check.gd` | **96** | 96 |
+| `obstacle_drawer_check.gd` | **116** | 116 |
+| `curve_on_screen_check.gd` / `draw_classes_check.gd` / `function_drawer_check.gd` | **96 / 235 / 132** | 96 / 235 / 132 |
+
+**`assemble_check` 的 `+4` 构成**（既有 213 条一条没删，六处是**等价替换**）：
+`plane_pos.position` / `plane_pos.tag` / `plane_pos.subs` / `plane_pos.after` 各 1 条。
+被替换的六处：`WIRED_TIER[6]`、`TIER_TALLY` 的四档计数、`EMPTY_IMPL`、`PACKAGED_TIER[6]`、
+"只剩 1 个真 stub"（1 → **0**）、`expected_probe` 的 65 → 74 与两条文案。
+
+⚠️ 三条驱动轴（`fire` / `batch` / `batch_conv`）与延迟段**本节没跑也不该动**：本轮只加一个
+**新 manager 槽**、没有碰任何几何/弹道/状态机代码（`cargo test` 默认轴 1620 → 1625 全是新单测
+可以佐证）；三条轴的数字以协调者合并后的四件套为准。
+
+### 45.8 仍是推断 / 未知（诚实清单）
+
+| 项 | 档位 | 缺什么证据 |
+|---|---|---|
+| 值类型的**精确写法** | **推断**（`[f64;3]`） | 24 B POD 是**观测**（无析构 + 步长 32）；但没有任何一处把三份当 f64 参与算术（全程只搬），"是 `[f64;3]` 而不是任意 24 B POD"缺铁证 |
+| 三个 f64 的**语义**（`pos_x`/`pos_y`/`radius`） | **推断** | 依据是载荷与线格式 `PosInfo` 的字段逐一对应（真实报文）；没有点对点的数值验证 |
+| `get_all_positions` 的**顺序** | **未知** | 就是 `RawTable` 迭代序（散列序），原版无排序调用；跨进程不确定 |
+| 订阅**注册**这一层 | **我方差异** | 本 crate 没有 `GraphwarEventHandler`，订阅名以常量 `SUBSCRIBED` 记录 + 单测钉死；`new` 不去注册 |
+| 谁调 `set_position` | **观测**（`graphwar_remote_event_handler` `0x3e2830` 内 `0x3e3347`；另一个 `0x465a70`，`locs` 投 `graphwar_level_generator.rs`） | — |
+| **消费方**（本管理器 → 画面） | **观测**（`get_all_positions` 的调用点里有 `EntityDrawer::draw` `0x4b2890`、`0x4b4b60`；§51.0 第 1 条另证：原版填"准备态表"的就是 `pos_info_event`） | `src/_scaffold/entity_drawer_class.rs` 目前用自己那套坐标，**没接**本表 ⇒ "准备圈的位置真的来自这里"只到"原版是这么读的"这一层 |
+| `graphwar_root_node_class.rs` 的**两处旧注释** | 过期未改 | 那是 `*_class.rs`（合并纪律 A-1 的禁区）；`module_slot_status()` 的"`stub` = 零行为的空占位"与 `container_stub_manager_count()` 的"空占位"仍带旧口径。函数名也别按档位读：它数的是 `SlotKind::Stub` = **5**，不是档位 `stub` = **0** |
+
+### 45.9 复现（干净树）
+
+```text
+export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=<ws>/.agent-work/<你的>/target36
+cargo test --offline                                   # 1625，全绿
+cargo test --offline --features gdext-bindings         # 1716，全绿
+python3 tools/coverage_matrix.py                       # 重跑生成物（改了 src/ 必须跑）
+python3 tools/coverage_matrix.py --check               # OK
+python3 tools/check_doc_refs.py                        # OK
+cargo build --offline --features gdext-bindings        # 客户端内核
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+grep -a -c line_instance_id client/libgw2_rebuild.so    # 必须是 3（判据：.so 真的是新的）
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/assemble_check.gd   # 217 passed, 0 failed
+```
+
+**结构断言在哪儿**：`src/graphwar_plane_pos_manager.rs` 顶部 6 条 `const _: () = assert!(…)`
+（3 条尺寸：manager 24 / data 48 / `HashMap<u32,[f64;3]>` 48；3 条偏移：`0x00`/`0x08`/`0x10`），以及文末 `mod tests`
+的 `layout_matches_the_original_24_bytes` / `inner_data_is_one_hashmap_of_48_bytes`
+（逐字段 `offset_of!`）。
