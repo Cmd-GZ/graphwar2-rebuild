@@ -3631,7 +3631,8 @@ Android 侧 171 行「歧义」里有一大批是 arm64 内联形态造成的，
 > 接 §20（Location 桥）与 §36（多候选裁决）。上一轮只用 **Android×Linux** 两向；
 > 本节把同一份数据加到**四向**（Linux 目标 / Android 2.0.60 / Windows 2.0.60 / Windows early2026）。
 > 工具：`tools/three_way_match.py`（`build` / `report` / `verify` / `ablate` / `probe` / `key` / `nm`）；
-> 产物：`fixtures/name_to_addr_v2.tsv`（990 行，**新增**，`fixtures/name_to_addr.tsv` 未动）；
+> 产物：`fixtures/name_to_addr_v2.tsv`（**980** 行；原 990 行 —— §39.9 收紧名字判据后去掉了 10 行
+> 「编译器胶水」的假名字，**它们本来就没有地址**，`唯一锚` 317 行一行未变）；
 > 本节的每个数字都能用 §37.9 的命令复算。
 
 ### 38.0 一句话结论 + 四问四答
@@ -3648,7 +3649,7 @@ Android 侧 171 行「歧义」里有一大批是 arm64 内联形态造成的，
 | **(d) 天花板之外** | 12,736 个无锚函数里，结构最近邻能给出"高置信 + 单射"的只有 **44 个**；正对照留出半准确率 **96.3%** ⇒ 上限估计 **≈42 个**。匹配器本身没坏：真值 top-10 命中 **81.9%**、互为 top-1 命中 **100%**（留出半 n=26~38），随机基线 0.31% | **观测**（准确率）+ **推断**（42 这个数） |
 
 ⚠ **天花板之外没有任何一条被写进夹具当名字**。`name_to_addr_v2.tsv` 里
-「未知」的 635 行是硬边界，不是没算。
+「未知」的 625 行是硬边界，不是没算（§39.9 收紧判据前是 635 行）。
 
 ### 38.1 方法：一份代码吃四种构建
 
@@ -3962,13 +3963,247 @@ module  type  method  x86_addr  src_file  src_line  src_col  join_kind  sources 
   **`唯一锚`**（同版本来源支持且互不矛盾，**317 行**）/
   **`跨版本锚`**（只有 early2026 支持，**30 行**，不进唯一锚计数）/
   **`歧义`**（同版本来源矛盾，**8 行**）/
-  **`未知`**（无锚，**635 行**）。
+  **`未知`**（无锚，**625 行**）。
 * `sources`：这个名字在哪些构建的符号表里出现（`win`/`win_old`/`android` 的组合）。
 * `evidence`：`votes=该地址拿到的双向唯一键数;keys=其中前 4 个键;src=真正落地它的来源;xver=early2026 是否一致;win_addr=Windows 侧地址`。
-* 行数 990 = 990 个**名字键**（`(module,type,method)` 去重）。与 v1 的 759 行不是同一分母：
-  v1 的 326 行唯一锚只有 299 个名字键（同一名字的多行是"拆分/消去"产物）。
+* 行数 **980** = 980 个**名字键**（`(module,type,method)` 去重）。与 v1 的 **743** 行不是同一分母：
+  v1 的 327 行带地址（326 唯一锚 + 1 消去法）只有 **300** 个名字键（同一名字的多行是"拆分/消去"产物）。
 
 **可复现性（这次是验过的，不是"应该没问题"）**：删掉缓存冷启动重建一次（1 分 42 秒）
-与缓存命中重跑的夹具 **md5 完全相同**（`43aeb67c70d3f7affd8ded181b00be0e`），
+与缓存命中重跑的夹具 **md5 完全相同**（`956eae05119f3703e5dcc7c6d320c88d`，`tw-v4` 冷/热两跑一致），
 另外两个 `PYTHONHASHSEED`（0 / 7）也相同。§36.0 那条"入库夹具不能由入库工具复现"的坑，
 本节**没有**再踩：`CACHE_VERSION=tw-v3` 与夹具一起提交，抽取逻辑一改就必须抬版本号。
+
+## 39. 符号名判据统一：什么叫「这条符号是 `graphwarrust` 的函数」（2026-11）
+
+> 接 §20（Location 桥）/ §35（无锚配对）/ §37（Windows 符号表）/ §38（三向匹配）。
+> 工具：`tools/rust_sym.py`（判据唯一实现）、`tools/name_crate_audit.py`（普查夹具）、
+> `tools/name_accuracy_check.py`（正对照）；
+> 产物：`fixtures/name_crate_audit.tsv`（**新增**）、`fixtures/name_to_addr.tsv`（多一列 `sym_form`）。
+
+### 39.0 一句话 + 四问四答
+
+判据从「mangled 里有 `graphwarrust` 这个子串 / 以 `_ZN12graphwarrust` 开头」改成
+**按 legacy mangling 的十进制长度前缀切段、取路径首段的 crate**（§39.1）。
+改完之后每个构建能认出的名字都变多了，但**已交付的两项指标一个都没变** —— 原因见 §39.4，
+这不是失败，而是「上一轮已经把该补的补上了，而 `name_bridge`/`sym_match` 用的是**更宽**的判据」。
+
+| 问题 | 结论 | 档位 |
+|---|---|---|
+| **(①) 判据是什么** | `_ZN<len><elem>…17h<hex>E` 按长度前缀切段；路径首段（或 `<SELF as TRAIT>` 的 SELF 首段）= crate 名；等于 `graphwarrust` 才算。**不是子串匹配** | `观测`（结构可证，反例见 §39.1） |
+| **(②) 三个构建各多认出多少** | 前缀口径 → 统一判据：Android **465 → 574**（+109）/ Windows 2.0.60 **647 → 823**（+176）/ Windows early2026 **659 → 775**（+116）；**目标 Linux 0 → 0**（被 strip，没有符号表，名字只能从上面三个构建桥过来） | `观测`（`fixtures/name_crate_audit.tsv` ① 段） |
+| **(③) 唯一锚 / 可定名地址** | **334 → 334**；**351 / 527 = 66.6% → 351 / 527 = 66.6%** | `观测` |
+| **(④) 正对照** | 从 351 里随机 30 条（seed 20261107）：**入口 30/30、锚归属/溯源 30/30、两侧名字一致 26/26**；换 seed 抽 50 条：入口 50/50、归属 50/50、两侧一致 44/45（唯一不一致 = §39.5 已列冲突 `0x456df0`） | `观测` |
+| **(⑤) 冲突** | 跨构建地址级冲突 **7** 条（逐条列在 §39.5）；`name_bridge` 内部硬矛盾 **9** 条；Windows 侧「同一 Location 多名字」**54** 个三元组 | `观测` |
+
+### 39.1 判据：结构解析，不是子串
+
+rustc 的 legacy mangling（`-C symbol-mangling-version=legacy`，本版二进制用的就是它）是
+**带长度前缀**的路径编码：
+
+```text
+_ZN <elem> <elem> … 17h<16 hex> E         每个 <elem> = <十进制长度><该长度的字节>
+```
+
+长度前缀让「段的边界」可以**证**出来，于是「属于哪个 crate」= **路径首段**：
+
+| 形态 | 例 | crate |
+|---|---|---|
+| `direct` | `_ZN12graphwarrust22graphwar_game_recorder…` | `graphwarrust`（`12` 之后恰好 12 字节） |
+| `impl-head` | `_ZN133_$LT$graphwarrust..axis_drawer..AxisDrawer$u20$as$u20$godot_core..X$GT$…` | `graphwarrust` —— **crate 名没有长度前缀**，整数段 `133` 数的是整个 `_$LT$…$GT$` |
+| `nested-impl` | `_ZN12graphwarrust17graphwar_event…$LT$impl$u20$serde..Serialize$u20$for$u20$…$GT$…` | `graphwarrust`（derive 的匿名 impl 出现在中段） |
+| `other-crate` | `_ZN4core3ptr…drop_in_place$LT$…graphwarrust..X…$GT$…` | `core` —— **排除** |
+
+**为什么不能用子串**（不是洁癖，是两个方向都会错）：
+
+* 「以 `_ZN12graphwarrust` 开头」会把 `impl-head` **整类丢掉**（crate 名前面没有 `12`）；
+* 「正文里有 `graphwarrust`」会把 `core::ptr::drop_in_place<…graphwarrust::X…>` 收进来，
+  再让 `parse_name` 从**泛型实参**里抠出一个 `(module, type, method)` —— 那个「名字」不是源码里的函数。
+  本版这类符号：Android **304** 个、Windows 2.0.60 **327** 个（`fixtures/name_crate_audit.tsv` ② 段）。
+
+判据实现只有一份：`tools/rust_sym.py::classify / crate_of / is_game_name / form_label`；
+`name_bridge.py` / `win_names.py` / `three_way_match.py` / `sym_match.py` 全部转发到它。
+
+### 39.2 三个构建各多认出多少名字
+
+`fixtures/name_crate_audit.tsv` ① 段（数字可直接复算，见 §39.8）：
+
+| 构建 | 符号 | 游戏自有 | 其中 direct | impl-head | nested-impl | 逻辑名 prefix | 逻辑名 unified | 逻辑名 coarse |
+|---|---|---|---|---|---|---|---|---|
+| Android 2.0.60（arm64 `.symtab`） | 17,875 | **970** | 740 | 230 | 13 | 465 | **574** | 584 |
+| Windows 2.0.60（COFF `.text`） | 77,510 | **1,402** | 1,018 | 384 | 95 | 647 | **823** | 834 |
+| Windows early2026 | 56,430 | 1,447 | 1,009 | 438 | 93 | 659 | 775 | 784 |
+| **Linux 2026-08-28（目标）** | 131 | **0** | 0 | 0 | 0 | 0 | 0 | 0 |
+
+* 「逻辑名」= 哈希归一后的 `(module, type, method)` 唯一键数。
+* 目标本身 **0 个名字**（stripped，`.symtab` 只剩 131 个非 FUNC 条目）——它的名字永远是
+  「从另外两个构建经 `panic::Location` 桥过来」的结果，所以 ② 段对它的增量恒为 0；
+  真正变化的是**可定名地址**（§39.4）。
+* 上一轮 §37.0 写的「Android 520 个逻辑名」是旧口径的估计，实测是 574（unified）/ 584（coarse）。
+
+### 39.3 「多出来的名字」逐条来源
+
+**（a）前缀口径丢掉的那一整类**：Android 109 / Windows 176（early2026 116）个名字键
+全部来自 `impl-head` 与 `nested-impl`（GDExtension 的 `__register_methods`、`class_id`、
+`INode::ready`、`INode::process`、`IUserClass::…`、以及 `#[derive]` 的
+`serialize`/`deserialize`）。**这些是原版源码里的函数**，不是胶水。
+证据：`fixtures/name_crate_audit.tsv` ① 段 `keys_missed_by_prefix` 列；逐条符号可用
+`readelf -sW` + `rust_sym.form_label` 复算。
+
+**（b）结构解析救回的**：**1 条**（`fixtures/name_crate_audit.tsv` ③ 段）
+
+| 构建 | 名字键 | 符号 | 落地址 |
+|---|---|---|---|
+| Windows 2.0.60 | `(GraphwarExtension, _, on_stage_init)` | `_ZN86_$LT$graphwarrust..GraphwarExtension$u20$as$u20$godot_core..init..ExtensionLibrary$GT$13on_stage_init17hbb4cce76204560b0E` | **否** |
+
+为什么旧版丢：自类型直接在 crate 根（`graphwarrust::GraphwarExtension`），**没有 `<module>` 段**，
+而旧 `parse_name` 的兜底正则要求 `graphwarrust::X::Y` 两段 ⇒ 匹配不到 ⇒ 整条符号返回 `None`。
+新解析按 `<SELF as TRAIT>` 结构取 SELF，给出 `(GraphwarExtension, _, on_stage_init)`。
+它**没有 Location 锚**（Windows 侧不引用任何 `src/*.rs` 常量），所以落地地址 **+0**。
+
+**（c）收紧后被去掉的**：Android **10** 个键 / Windows **11** 个键（`fixtures/name_crate_audit.tsv` ② 段
+逐条列出，含示例 mangled）。全部是 `other-crate` 胶水产生的假名字 —— 12 个里 2 个与真名字撞键
+（`graphwar_root_node::GraphwarRootNode::ready`、`graphwar_setup_control::GraphwarSetupControl::ready`），
+所以去重后是 10。**它们落地 0 个地址**（② 段 `lands_addr` 列全 0）：`name_to_addr.tsv` 因此少了
+15 行「未知」，而带地址的行一行没少。
+
+### 39.4 为什么 334 / 351 没变（负结论 + 它成立的证据）
+
+先把三个数拆开：
+
+| 指标 | 构成 | 本轮 |
+|---|---|---|
+| **唯一锚 334** | `fixtures/windows_name_to_addr.tsv` 里 `join_kind=唯一锚` 的行数（332 个不同地址，2 个地址被两个函数共享） | **334（不变）** |
+| **Android 可定名地址 325** | `fixtures/name_to_addr.tsv` 里带地址的行（326 唯一锚 + 1 消去法 = 327 行 / 325 个地址） | **325（不变）** |
+| **Windows 可定名地址 333** | 唯一锚 332 + 集合锚 1 | **333（不变）** |
+| **并集** | 325 ∪ 333（交集 307，Android 独有 18） | **351（不变）** |
+
+**为什么不变**（三条，缺一条这个负结论就不成立）：
+
+1. **「前缀判据」的缺口上一轮已经补进 `win_names.py` 了**。§37.0 的 325 → 351（+26）
+   正是补这个缺口的结果：假如仍用 `_ZN12graphwarrust` 前缀，`fixtures/windows_name_to_addr.tsv`
+   里会有 **26 个已交付名字 / 26 个地址**认不出来（`fixtures/name_crate_audit.tsv` ④ 段）。
+   ⇒ 上一轮「可能多钉住 25 个」的估计**成立**，而且**已经兑现**（本轮只是把它写成可复用判据并复算）。
+2. **`name_bridge.py` / `sym_match.py` 用的从来不是前缀判据，而是更宽的「含子串」**。
+   所以本轮把判据换成 unified 只会**去掉**胶水假名字（§39.3c），不会增加名字 —— 实测也是 0 增量。
+   ④ 段还给出同一件事的另一面：若真的把前缀判据用到 Android 侧，会丢 **28 个已交付地址**。
+3. **多出来的那 1 个名字没有锚**（§39.3b），所以不产生地址。
+
+**这就是负结论的正对照**：不是「扫不出来」，而是「扫出来了但落地不了」，并且**同一套扫描在
+已知真值上是准的**（§39.6 的正对照：入口 30/30、锚归属 30/30、两侧一致 26/26）。
+
+### 39.5 冲突（同 Location / 同地址不同名）—— 一律列出，不静默取一个
+
+**（a）跨构建、地址级冲突 7 条**（`win_names.py report` ⑤ 段；Android 名 × Windows 名）：
+
+| Linux 地址 | Android 名 | Windows 名 | 解释 |
+|---|---|---|---|
+| `0x3a2e10` | `root_node::ready` | `root_node::ready` + `button_manager::ButtonManager::new` | Windows 侧该函数**内联了** `ButtonManager::new`（17 个 src 三元组里 2 个属于 button_manager）⇒ 一个函数体两个来源名 |
+| `0x3e2830` | `color_manager::set_color` + `game_state_manager::report_fired_function` + `remote_event_handler::handle_server_remote_event` | `remote_event_handler::handle_server_remote_event` | Android 侧三个名字共用同一批锚：该函数是**内联容器**（103 个 src 三元组，3 个模块的文件都在里面） |
+| `0x4500c0` | `game_server::game_server_thread` | 同上 + `server_connection_handler::new` | 同上（76 个三元组，66 个属 game_server） |
+| `0x45b020` | `server_connection_handler::tick` | `server_connection_handler::subscribe_to_events_event_handler` | **集合完全相等**（8/8）⇒ 两个名字在两侧指同一段代码；这是「定义点 vs 内联容器」的典型，不是错名 |
+| `0x465780` | `target_manager::subscribe_to_events_event_handler` | `target_manager::send_all_info_events` | 同上（1/1） |
+| `0x465870` | `target_manager::subscribe_to_events_event_handler` | `target_manager::handle_entity_removed_event` | 同上（1/1） |
+| `0x519d80` | `effect_manager::tick` | `effect_manager::subscribe_to_events_event_handler` | 同上（2/2） |
+
+一致 **300** / 不一致 **7**。
+
+**（b）`name_bridge` 内部硬矛盾 9 条**（同一个 arm64 函数被双向唯一锚指向多个 x86 地址 ⇒ 该函数在
+x86 侧被拆开）。`name_bridge.py conflicts` 直接打出，代表例：
+
+* `graphwar_game_recorder::GraphwarGameRecorder::save_game`（arm64 `0x3d8184`）→
+  `0x508aba`（2 票）/ `0x3d5740`（2 票）/ `0x50b130`（1 票）。**三票之差的消去法**，见 §39.7；
+  独立证据（Windows 侧唯一锚 2/2、`sym_match` 的 unique 候选、`name_to_addr_v2` 三方一致）都指向
+  **`0x3d5740`**，夹具按证据取它。
+* 其余 8 条里 7 条是 `?`（无游戏名字的胶水函数），只有 `graphwar_game_state_manager::request_new_player`
+  有名字（`0x4739c0` 8 票 vs `0x3c1b40` 1 票）—— 夹具按 §20 的规则**不给地址**（保持「歧义」）。
+
+**（c）同 Location 多名字（不是冲突，是共用锚）**：Windows 侧 54 个三元组被 ≥2 个函数引用。
+这属于内联的常态，不影响 join（唯一性是在**两侧**同时判定的）。
+
+### 39.6 正对照（`tools/name_accuracy_check.py`）
+
+抽已知真值，四项独立检查：`entry`（地址必须是 Ghidra 函数起点）、`anchor`（该函数引用的
+Location 里必须有 `src/<module>.rs`；若只引用依赖 crate 的 Location，则改查「夹具展示的那个锚
+是否真在该函数的引用集合里」）、`cross`（两个构建都钉住时名字键必须相交）、`stable`：
+
+```text
+$ .venv/bin/python tools/name_accuracy_check.py --sample 30
+可定名地址（两侧并集）：351 个（android 325 / windows 333）
+准确率：入口 30/30 = 100.0%；锚归属/溯源 30/30 = 100.0%（其中 src 模块匹配 29、仅依赖 Location 溯源 1）
+两侧都钉住的 26 个里，名字一致 26 = 100.0%（不一致 0）
+
+$ .venv/bin/python tools/name_accuracy_check.py --sample 50 --seed 7
+准确率：入口 50/50 = 100.0%；锚归属/溯源 50/50 = 100.0%（其中 src 模块匹配 50、仅依赖 Location 溯源 0）
+两侧都钉住的 44 个里，名字一致 44 = 100.0%（不一致 0）
+```
+
+唯一一条「仅依赖 Location 溯源」的样本：`0x519450`（`graphwar_tick_handler::GraphwarTickHandler::get_time_to_tick`），
+它只引用 `library/core/src/time.rs:201` 与 `:1181` —— 归属靠「两侧都唯一引用这两个 std Location」，
+**不是**靠 `src/*.rs` 的模块文件。这一档在夹具里本来就写的是 dependency 路径（`src_file` 列），没有虚报成模块锚。
+
+### 39.7 顺带修掉一个真 bug：工具输出曾随 `PYTHONHASHSEED` 变
+
+`name_bridge.py` 的消去法（§20.5）是**顺序敏感**的贪心：某一步「只剩一个候选」是在**当时已占用**
+的地址集合上判定的。而 ④ 的 `owner_a/owner_b` 是按 `for k in s`（`s` 是 `(file,line,col)` 字符串
+元组的 **set**）插入的 ⇒ Python 的 per-process 哈希随机化会改变 `shared` 的顺序 ⇒ 不同的「只剩一个」。
+
+实测（同一份二进制、同一个命令，只换 `PYTHONHASHSEED`）：
+
+```text
+seed=0  save_game=0x50b130      seed=3  save_game=0x3d5740
+seed=1  save_game=0x508aba      seed=4  save_game=0x3d5740
+seed=2  save_game=0x508aba
+```
+
+影响 **6 行**（`assign` 621 条里的 6 条），其中 `save_game` 一行正是夹具里那条手工裁决。
+修法：把「顺序会泄漏到结果」的迭代全部钉成字典序/数值序（`sorted(anch_a.items())`、
+`for k in sorted(s)`、`for fa in sorted(anch_a)` …）。修后 4 个 seed 的输出 **md5 完全相同**。
+
+**顺带**：夹具里的 4 条手工裁决（它们的"为什么要改"逐条写在 `docs/16-client.md` §27.4 的审计表里）（`remove_offset` `0x4eb86a→0x4eb830`、`to_string_recursive`
+`0x4eccb3→0x4ec160`、`save_game`→`0x3d5740`、`mutate_function` 的 `join_kind`）原来只写在注释里，
+**重跑 `build` 就会被覆盖**。现在内建为 `name_bridge.py::MANUAL_FIXES`，`build` 直接产出与入库
+夹具一致的 743 行（`git diff` 只剩「去掉 15 行胶水 + 加一列 `sym_form`」）。
+
+第一次实现时踩的坑：`MANUAL_FIXES` 的键把 `src_line` 写成字符串，而行里是 `int` ⇒ 裁决**静默不命中**。
+现在统一 `str()`，并在 `apply_manual_fixes` 里写明为什么。
+
+### 39.8 夹具与工具变更清单（都能一键复算）
+
+| 文件 | 变更 |
+|---|---|
+| `tools/rust_sym.py` | **新增**：判据唯一实现（`classify`/`crate_of`/`is_game_name`/`form_label`/`impl_head_tail`） |
+| `tools/name_crate_audit.py` | **新增**：三口径普查 → `fixtures/name_crate_audit.tsv` |
+| `tools/name_accuracy_check.py` | **新增**：正对照（§39.6） |
+| `tools/name_bridge.py` | 符号名来源改用 `rust_sym`；`parse_name` 增补 `<SELF as TRAIT>` 分支；④ 迭代排序（§39.7）；`MANUAL_FIXES`；夹具加 `sym_form` 列 |
+| `tools/win_names.py` | `is_game_name` 转发到 `rust_sym`（行为不变：Windows 仍是 1,402 raw / 823 逻辑名 / 334 唯一锚） |
+| `tools/sym_match.py` | `parse_name` 增补 `<SELF as TRAIT>` 分支 + 胶水符号不出名字键；**符号宇宙**保持「提到本 crate」（配对表不是名字表，见函数 docstring）；夹具 **1,300 行不变**（重建后 md5 与入库一致 `db252b8d…`） |
+| `tools/three_way_match.py` | 名字筛选改用 `rust_sym`；`CACHE_VERSION` `tw-v3 → tw-v4` |
+| `fixtures/name_to_addr.tsv` | 758 → **743** 行（去掉 15 行胶水假名字，带地址行一行没少）；**新增 `sym_form` 列**（`direct` 637 / `impl-head` 93 / `nested-impl` 13） |
+| `fixtures/name_crate_audit.tsv` | **新增**（四段：普查 / 胶水键 / 结构解析救回 / prefix-only 的 what-if） |
+| `fixtures/windows_name_to_addr.tsv` | **未改**（重建逐字节相同） |
+| `fixtures/name_to_addr_v2.tsv` | 990 → **980** 行：去掉 10 行胶水假名字、新增 1 行 `GraphwarExtension::on_stage_init`，**两边都没有地址**；`唯一锚 317 / 跨版本锚 30 / 歧义 8` 三档行数**一行未变**，只有 `未知` 635→625（§39.9）。`tw-v4` 冷/热两跑 md5 一致 |
+
+复算命令：
+
+```bash
+$PY tools/name_crate_audit.py                    # 写 fixtures/name_crate_audit.tsv（约 10 s）
+$PY tools/name_bridge.py build                   # 写 fixtures/name_to_addr.tsv（约 20 s）
+$PY tools/win_names.py bridge                    # 写 fixtures/windows_name_to_addr.tsv（约 90 s）
+$PY tools/sym_match.py build                     # 写 fixtures/sym_match.tsv（约 30 s）
+$PY tools/name_accuracy_check.py --sample 30     # 正对照（约 25 s）
+for s in 0 1 3 7; do PYTHONHASHSEED=$s $PY tools/name_bridge.py build --out /tmp/s$s.tsv; done
+md5sum /tmp/s{0,1,3,7}.tsv                       # 四份必须相同（§39.7）
+```
+
+### 39.9 对既有章节的影响（就地更正）
+
+* §35.1(b)(c) 的 `unique 655 + weak 78 / multi 63 / split 35 / merge 25` 与入库夹具**不符**：
+  按 `fixtures/sym_match.tsv` 实数应为 **unique 681 / weak 81 / multi 37 / none 444 / split 33 / merge 24**
+  （和仍是 1,300）。改用与 §35 同一口径的算式：
+  唯一匹配 **762**（unique 681 + weak 81）、落地 **819/1300 = 63.0%**（681+81+33+24）。
+  这几行是更早一次 build 的数字，本轮复算时发现并就地改正
+  （`cargo test` 的 `fixture_has_1300_rows` 只锁行数，锁不住分布）。
+* §37.0 的「Android 520 个逻辑名」→ 实测 **574**（unified）/ 584（coarse）（§39.2）。
+* §38.10 的「v1 的 759 行」→ 现在 **743 行**（§39.3c）；
+  §38.10 的 `未知 635 行` / `行数 990` → **625 / 980**（地址档位一行未变，见 §39.8 那一行）。

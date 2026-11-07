@@ -359,6 +359,7 @@ graphwar_level_manager	GraphwarLevelManager	setup_level_16::{{closure}}					歧�
 graphwar_plane		_::__init::__inner_init					歧义	android+win+win_old	同版本来源互相矛盾（同 Location 落到不同地址）：android:0x4bc490;win:0x4bc860
 graphwar_setup_control	GraphwarSetupControl	ready::{{closure}}					歧义	android+win+win_old	同版本来源互相矛盾（同 Location 落到不同地址）：android:0x4d1f10;win:0x4d2f70
 player_showcase		_::__init::__inner_init					歧义	android+win+win_old	同版本来源互相矛盾（同 Location 落到不同地址）：android:0x4e8b20;win:0x4e8d70
+GraphwarExtension		on_stage_init					未知	win	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚
 axis_drawer	AxisDrawer	__before_ready					未知	win	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚
 axis_drawer	AxisDrawer	__default_virtual_call::virtual_fn					未知	android+win	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚
 axis_drawer	AxisDrawer	__register_constants					未知	android+win	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚
@@ -518,7 +519,6 @@ graphwar_campaign_control	GraphwarCampaignControl	get_level_as_int					未知	an
 graphwar_campaign_control	GraphwarCampaignControl	load_current_level					未知	win+win_old	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_campaign_control	GraphwarCampaignControl	save_current_level					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_client_connection_handler	GraphwarClientConnectionHandler	subscribe_to_events_event_handler::{{closure}}					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
-graphwar_client_connection_handler	GraphwarClientConnectionHandler	{{closure}}>::{{closure}}					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_color_manager	GraphwarColorManager	get_color					未知	win+win_old	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_color_manager	GraphwarColorManager	init_team_colors					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_color_manager	GraphwarColorManager	subscribe_to_events_event_handler::{{closure}}					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
@@ -529,11 +529,9 @@ graphwar_color_manager	_	visit_str					未知	win_old	Windows early2026 的函�
 graphwar_computer_player_manager	GraphwarComputerPlayerManager	computer_function_thread					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_computer_player_manager	GraphwarComputerPlayerManager	is_computer_player					未知	win+win_old	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_computer_player_manager	GraphwarComputerPlayerManager	subscribe_to_events_event_handler::{{closure}}					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
-graphwar_computer_player_manager	GraphwarComputerPlayerManager	{{closure}}>::{{closure}}					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_crash_reporter	GraphwarCrashReporter	clear_report					未知	android	arm64 函数没有 src/*.rs 的 Location 锚
 graphwar_crash_reporter	GraphwarCrashReporter	resolve_default_address					未知	android	arm64 函数没有 src/*.rs 的 Location 锚
 graphwar_crash_reporter	GraphwarCrashReporter	send_pending_report					未知	android+win	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚
-graphwar_crash_reporter	GraphwarCrashReporter	{{closure}}>::{{closure}}					未知	android+win	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚
 graphwar_draw_util	GraphwarDrawUtil	is_reversed					未知	win_old	Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_draw_util	GraphwarDrawUtil	set_plane_transform					未知	win_old	Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_effect_manager	GraphwarEffectManager	add_effect					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
@@ -550,7 +548,6 @@ graphwar_entity_effect_manager	GraphwarEntityEffectManager	set_entity_effect				
 graphwar_event	FunctionInfoEvent	clone					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_event	GraphwarEvent	clone					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_event	GraphwarEvent	deserialize					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
-graphwar_event	GraphwarEvent	drop::Dropper<graphwarrust::graphwar_event::GraphwarEvent>>					未知	win+win_old	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_event	GraphwarEvent	make_new_connection_request_event					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_event	GraphwarEvent	serialize					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_event	VersionInfoEvent	clone					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
@@ -564,7 +561,6 @@ graphwar_event_queue	GraphwarEventQueue	add_event					未知	android+win+win_old
 graphwar_event_queue	GraphwarEventQueue	clear_buffer					未知	win+win_old	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_event_queue	GraphwarEventQueue	get_event					未知	win+win_old	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_event_queue	GraphwarEventQueue	send_buffer					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
-graphwar_function_evolutionator	FunctionResult	send::{{closure}}					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_function_input		_::__init::__inner_init::{{closure}}					未知	android+win	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚
 graphwar_function_input	GraphwarFunctionInput	__before_ready					未知	win	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚
 graphwar_function_input	GraphwarFunctionInput	__default_virtual_call::virtual_fn					未知	android+win	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚
@@ -590,7 +586,6 @@ graphwar_function_input	GraphwarFunctionInput	set_button_callback					未知	win
 graphwar_function_input	GraphwarFunctionInput	set_update_callback					未知	win	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚
 graphwar_function_input	GraphwarFunctionInput	to_gd					未知	win+win_old	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_function_input	GraphwarFunctionInput	update_sizes					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
-graphwar_function_manager	FunctionState	clone_from_impl::{{closure}}					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_function_manager	GraphwarFunctionData	clear_functions					未知	win+win_old	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_function_manager	GraphwarFunctionData	get_corrected_function_text					未知	win+win_old	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_function_manager	GraphwarFunctionData	get_function					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
@@ -625,7 +620,6 @@ graphwar_game_info	_	deserialize					未知	win+win_old	Windows 2.0.60 的函数
 graphwar_game_info	_	expecting					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_game_info	_	serialize					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_game_info	_	visit_str					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
-graphwar_game_recorder	EventInfo	send::{{closure}}					未知	android+win	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚
 graphwar_game_recorder	GraphwarGameRecorder	new					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_game_recorder	_	deserialize					未知	win+win_old	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_game_recorder	_	expecting					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
@@ -638,7 +632,6 @@ graphwar_game_server	GraphwarGameServer	reset_modes					未知	win+win_old	Windo
 graphwar_game_server	GraphwarGameServer	set_name					未知	win+win_old	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_game_server	GraphwarGameServer	setup_level					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_game_server	GraphwarGameServer	stop					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
-graphwar_game_server	GraphwarGameServer	{{closure}}>::{{closure}}					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_game_state_manager	GraphwarGameState	fmt					未知	win+win_old	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_game_state_manager	GraphwarGameStateManager	get_disconnect_reason					未知	win+win_old	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_game_state_manager	GraphwarGameStateManager	handle_chat_message::panic_cold_explicit					未知	win_old	Windows early2026 的函数没有 src/*.rs 的 Location 锚
@@ -685,7 +678,6 @@ graphwar_lan_vbox	GraphwarLanVBox	init					未知	android+win+win_old	arm64 函�
 graphwar_lan_vbox	GraphwarLanVBox	set_room_source					未知	win+win_old	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_lan_vbox	GraphwarLanVBox	to_gd					未知	win+win_old	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_lan_vbox	GraphwarLanVBox	update_game_list::{{closure}}					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
-graphwar_lan_vbox	GraphwarLanVBox	{{closure}}::{{closure}}					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_level_generator	GraphwarLevelGenerator	generate_level					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_level_manager	GraphwarLevelManager	get_level_data					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_level_manager	GraphwarLevelManager	new					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
@@ -857,7 +849,6 @@ graphwar_server_broker_handler	GraphwarServerBrokerHandler	get_game_info					未
 graphwar_server_broker_handler	GraphwarServerBrokerHandler	new					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_server_broker_handler	GraphwarServerBrokerHandler	process_events::panic_cold_explicit					未知	win_old	Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_server_broker_handler	GraphwarServerBrokerHandler	start					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
-graphwar_server_broker_handler	GraphwarServerBrokerHandler	{{closure}}>::{{closure}}					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_server_connection_handler	GraphwarServerConnectionHandler	forward_connection_specific_event::panic_cold_explicit					未知	win_old	Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_server_connection_handler	GraphwarServerConnectionHandler	get_client_id					未知	win	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚
 graphwar_server_connection_handler	GraphwarServerConnectionHandler	handle_connection_removed_event::panic_cold_explicit					未知	win_old	Windows early2026 的函数没有 src/*.rs 的 Location 锚
@@ -933,7 +924,6 @@ graphwar_turn_manager	GraphwarTurnData	new					未知	win+win_old	Windows 2.0.60
 graphwar_turn_manager	GraphwarTurnManager	get_data					未知	win_old	Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_turn_manager	GraphwarTurnManager	is_on_turn					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_turn_manager	GraphwarTurnManager	subscribe_to_events_event_handler::{{closure}}					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
-graphwar_turn_manager	TurnHolder	clone_from_impl::{{closure}}					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_turn_manager	TurnMode	fmt					未知	win+win_old	Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_turn_manager	_	deserialize					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚
 graphwar_turn_manager	_	expecting					未知	android+win+win_old	arm64 函数没有 src/*.rs 的 Location 锚；Windows 2.0.60 的函数没有 src/*.rs 的 Location 锚；Windows early2026 的函数没有 src/*.rs 的 Location 锚

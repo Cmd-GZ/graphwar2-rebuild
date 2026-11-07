@@ -1,0 +1,67 @@
+# 由 tools/name_crate_audit.py 生成，不要手改（重跑会覆盖）。
+# 判据（唯一实现在 tools/rust_sym.py，**不是**子串匹配）：legacy mangling
+#   `_ZN<len><elem><elem>…17h<hex>E` 逐段按**十进制长度前缀**切分，
+# 取路径首段（或 `<SELF as TRAIT>` 的 SELF 首段）作为 crate 名。
+#   direct      `_ZN12graphwarrust…`                    首段就是 crate 名
+#   impl-head   `_ZN<len>_$LT$graphwarrust..T$u20$as$u20$Trait$GT$…`
+#               crate 名**没有长度前缀**（GDExtension 的 trait impl）——
+#               只用 `_ZN12graphwarrust` 前缀会把这一整类丢掉（本表主题 #1）
+#   nested-impl `graphwarrust::…<impl Trait for graphwarrust::T>…`（derive）
+#   other-crate 正文提到 graphwarrust、但首段 crate 不是它
+#               （`core::ptr::drop_in_place<…graphwarrust::X…>` 这类编译器胶水）
+# 三口径：prefix_only = `_ZN12graphwarrust` 字面前缀；unified = 本判据；
+#         coarse = mangled 正文含 `graphwarrust`（name_bridge/sym_match 改动前的隐含行为）。
+# names_* = 该口径下能切出的 (module,type,method) 唯一键数。
+
+# ===== ① 每构建符号普查 =====
+build	format	symbols	game_total	sym_prefix_only	sym_impl_head	sym_nested_impl	sym_other_crate	sym_unparsable	names_prefix_only	names_unified	names_coarse	keys_missed_by_prefix	keys_coarse_only	keys_recovered_by_parse	note
+android-2.0.60	elf-arm64	17875	970	740	230	13	304	3050	465	574	584	109	10	0	名字来源（未 strip，.symtab）
+windows-2.0.60	pe-x86_64	77510	1402	1018	384	95	327	5193	647	823	834	176	11	1	名字来源（COFF 符号表）
+windows-early2026	pe-x86_64	56430	1447	1009	438	93	456	3057	659	775	784	116	9	0	上一版，仅作对照
+linux-2026-08-28	elf-x86_64	131	0	0	0	0	0	131	0	0	0	0	0	0	**目标**（被 strip，应 0 个名字）
+
+# ===== ② 粗口径独有的名字键（「含 graphwarrust」会凭空多出来的名字）=====
+# 全部来自 other-crate 符号：parse_name 从泛型实参里抠出来的，不是源码里的方法名。
+# build	module	type	method	symbols	example_mangled	lands_addr(1=已交付夹具里有地址)
+android-2.0.60	graphwar_client_connection_handler	GraphwarClientConnectionHandler	{{closure}}>	1	_ZN4core3ptr227drop_in_place$LT$std..thread..lifecycle..spawn_unchecked$LT$graphwarrust..graphwar_client_connection_handler..GraphwarClientConnectionHandler..connect..$u7b$$u7b$closure$u7d$$u7d$$C$$LP$$RP$$GT$..$u7b$$u7b$closure$u7d$$u7d$$GT$17h35b5fb21ae41c8f9E	0
+android-2.0.60	graphwar_computer_player_manager	GraphwarComputerPlayerManager	{{closure}}>	1	_ZN4core3ptr238drop_in_place$LT$std..thread..lifecycle..spawn_unchecked$LT$graphwarrust..graphwar_computer_player_manager..GraphwarComputerPlayerManager..handle_turn_info_event..$u7b$$u7b$closure$u7d$$u7d$$C$$LP$$RP$$GT$..$u7b$$u7b$closure$u7d$$u7d$$GT$17h0fe722be6608f4c2E	0
+android-2.0.60	graphwar_crash_reporter	GraphwarCrashReporter	{{closure}}>	1	_ZN4core3ptr218drop_in_place$LT$std..thread..lifecycle..spawn_unchecked$LT$graphwarrust..graphwar_crash_reporter..GraphwarCrashReporter..send_pending_report..$u7b$$u7b$closure$u7d$$u7d$$C$$LP$$RP$$GT$..$u7b$$u7b$closure$u7d$$u7d$$GT$17hed16c538baab6ddeE	0
+android-2.0.60	graphwar_function_evolutionator	FunctionResult	send	1	_ZN4core3ptr206drop_in_place$LT$core..option..Option$LT$std..sync..mpmc..zero..Channel$LT$alloc..vec..Vec$LT$graphwarrust..graphwar_function_evolutionator..FunctionResult$GT$$GT$..send..$u7b$$u7b$closure$u7d$$u7d$$GT$$GT$17h323b67da9309bffdE	0
+android-2.0.60	graphwar_function_manager	FunctionState	clone_from_impl	1	_ZN4core3ptr339drop_in_place$LT$hashbrown..scopeguard..ScopeGuard$LT$$LP$usize$C$$RF$mut$u20$hashbrown..raw..RawTable$LT$$LP$u32$C$graphwarrust..graphwar_function_manager..FunctionState$RP$$GT$$RP$$C$hashbrown..raw..RawTable$LT$$LP$u32$C$graphwarrust..graphwar_function_manager..FunctionState$RP$$GT$..clone_from_impl..$u7b$$u7b$closure$u7d$$u7d$$GT$$GT$17h3ba89707450b1fc8E	0
+android-2.0.60	graphwar_game_recorder	EventInfo	send	1	_ZN4core3ptr192drop_in_place$LT$core..option..Option$LT$std..sync..mpmc..zero..Channel$LT$alloc..vec..Vec$LT$graphwarrust..graphwar_game_recorder..EventInfo$GT$$GT$..send..$u7b$$u7b$closure$u7d$$u7d$$GT$$GT$17h4ec824f81027a692E	0
+android-2.0.60	graphwar_game_server	GraphwarGameServer	{{closure}}>	1	_ZN4core3ptr198drop_in_place$LT$std..thread..lifecycle..spawn_unchecked$LT$graphwarrust..graphwar_game_server..GraphwarGameServer..start..$u7b$$u7b$closure$u7d$$u7d$$C$$LP$$RP$$GT$..$u7b$$u7b$closure$u7d$$u7d$$GT$17ha7807197e2197a6cE	0
+android-2.0.60	graphwar_lan_vbox	GraphwarLanVBox	{{closure}}	1	_ZN4core3ptr273drop_in_place$LT$graphwarrust..graphwar_lan_vbox..GraphwarLanVBox..update_game_list$LT$std..collections..hash..map..Iter$LT$core..net..socket_addr..SocketAddr$C$graphwarrust..graphwar_game_info..GameInfo$GT$$GT$..$u7b$$u7b$closure$u7d$$u7d$..$u7b$$u7b$closure$u7d$$u7d$$GT$17haf3d4e860040c55bE	0
+android-2.0.60	graphwar_server_broker_handler	GraphwarServerBrokerHandler	{{closure}}>	1	_ZN4core3ptr217drop_in_place$LT$std..thread..lifecycle..spawn_unchecked$LT$graphwarrust..graphwar_server_broker_handler..GraphwarServerBrokerHandler..start..$u7b$$u7b$closure$u7d$$u7d$$C$$LP$$RP$$GT$..$u7b$$u7b$closure$u7d$$u7d$$GT$17hb452fd5d56a30c0cE	0
+android-2.0.60	graphwar_turn_manager	TurnHolder	clone_from_impl	1	_ZN4core3ptr325drop_in_place$LT$hashbrown..scopeguard..ScopeGuard$LT$$LP$usize$C$$RF$mut$u20$hashbrown..raw..RawTable$LT$$LP$u32$C$graphwarrust..graphwar_turn_manager..TurnHolder$RP$$GT$$RP$$C$hashbrown..raw..RawTable$LT$$LP$u32$C$graphwarrust..graphwar_turn_manager..TurnHolder$RP$$GT$..clone_from_impl..$u7b$$u7b$closure$u7d$$u7d$$GT$$GT$17h8a4648b0d93b853fE	0
+windows-2.0.60	graphwar_client_connection_handler	GraphwarClientConnectionHandler	{{closure}}>	1	_ZN4core3ptr227drop_in_place$LT$std..thread..lifecycle..spawn_unchecked$LT$graphwarrust..graphwar_client_connection_handler..GraphwarClientConnectionHandler..connect..$u7b$$u7b$closure$u7d$$u7d$$C$$LP$$RP$$GT$..$u7b$$u7b$closure$u7d$$u7d$$GT$17he8db83b0bbfbb83eE	0
+windows-2.0.60	graphwar_computer_player_manager	GraphwarComputerPlayerManager	{{closure}}>	1	_ZN4core3ptr238drop_in_place$LT$std..thread..lifecycle..spawn_unchecked$LT$graphwarrust..graphwar_computer_player_manager..GraphwarComputerPlayerManager..handle_turn_info_event..$u7b$$u7b$closure$u7d$$u7d$$C$$LP$$RP$$GT$..$u7b$$u7b$closure$u7d$$u7d$$GT$17hbcca482891fcccc4E	0
+windows-2.0.60	graphwar_crash_reporter	GraphwarCrashReporter	{{closure}}>	1	_ZN4core3ptr218drop_in_place$LT$std..thread..lifecycle..spawn_unchecked$LT$graphwarrust..graphwar_crash_reporter..GraphwarCrashReporter..send_pending_report..$u7b$$u7b$closure$u7d$$u7d$$C$$LP$$RP$$GT$..$u7b$$u7b$closure$u7d$$u7d$$GT$17h4d1ab7ddf986678bE	0
+windows-2.0.60	graphwar_event	GraphwarEvent	drop::Dropper<graphwarrust::graphwar_event::GraphwarEvent>>	1	_ZN4core3ptr180drop_in_place$LT$$LT$alloc..collections..vec_deque..VecDeque$LT$T$C$A$GT$$u20$as$u20$core..ops..drop..Drop$GT$..drop..Dropper$LT$graphwarrust..graphwar_event..GraphwarEvent$GT$$GT$17hc9ae857408328f98E.llvm.1647876658004297523	0
+windows-2.0.60	graphwar_function_evolutionator	FunctionResult	send	1	_ZN4core3ptr206drop_in_place$LT$core..option..Option$LT$std..sync..mpmc..zero..Channel$LT$alloc..vec..Vec$LT$graphwarrust..graphwar_function_evolutionator..FunctionResult$GT$$GT$..send..$u7b$$u7b$closure$u7d$$u7d$$GT$$GT$17h6ed17c3359a95d66E	0
+windows-2.0.60	graphwar_function_manager	FunctionState	clone_from_impl	1	_ZN4core3ptr339drop_in_place$LT$hashbrown..scopeguard..ScopeGuard$LT$$LP$usize$C$$RF$mut$u20$hashbrown..raw..RawTable$LT$$LP$u32$C$graphwarrust..graphwar_function_manager..FunctionState$RP$$GT$$RP$$C$hashbrown..raw..RawTable$LT$$LP$u32$C$graphwarrust..graphwar_function_manager..FunctionState$RP$$GT$..clone_from_impl..$u7b$$u7b$closure$u7d$$u7d$$GT$$GT$17hc8048714f5f82e9fE	0
+windows-2.0.60	graphwar_game_recorder	EventInfo	send	1	_ZN4core3ptr192drop_in_place$LT$core..option..Option$LT$std..sync..mpmc..zero..Channel$LT$alloc..vec..Vec$LT$graphwarrust..graphwar_game_recorder..EventInfo$GT$$GT$..send..$u7b$$u7b$closure$u7d$$u7d$$GT$$GT$17h056c74de25ac0f6dE	0
+windows-2.0.60	graphwar_game_server	GraphwarGameServer	{{closure}}>	1	_ZN4core3ptr198drop_in_place$LT$std..thread..lifecycle..spawn_unchecked$LT$graphwarrust..graphwar_game_server..GraphwarGameServer..start..$u7b$$u7b$closure$u7d$$u7d$$C$$LP$$RP$$GT$..$u7b$$u7b$closure$u7d$$u7d$$GT$17h57c9fa012e13d7ddE	0
+windows-2.0.60	graphwar_lan_vbox	GraphwarLanVBox	{{closure}}	1	_ZN4core3ptr273drop_in_place$LT$graphwarrust..graphwar_lan_vbox..GraphwarLanVBox..update_game_list$LT$std..collections..hash..map..Iter$LT$core..net..socket_addr..SocketAddr$C$graphwarrust..graphwar_game_info..GameInfo$GT$$GT$..$u7b$$u7b$closure$u7d$$u7d$..$u7b$$u7b$closure$u7d$$u7d$$GT$17h26f9f6d260f1cf32E	0
+windows-2.0.60	graphwar_server_broker_handler	GraphwarServerBrokerHandler	{{closure}}>	1	_ZN4core3ptr217drop_in_place$LT$std..thread..lifecycle..spawn_unchecked$LT$graphwarrust..graphwar_server_broker_handler..GraphwarServerBrokerHandler..start..$u7b$$u7b$closure$u7d$$u7d$$C$$LP$$RP$$GT$..$u7b$$u7b$closure$u7d$$u7d$$GT$17hf2718e1d08badc05E	0
+windows-2.0.60	graphwar_turn_manager	TurnHolder	clone_from_impl	1	_ZN4core3ptr325drop_in_place$LT$hashbrown..scopeguard..ScopeGuard$LT$$LP$usize$C$$RF$mut$u20$hashbrown..raw..RawTable$LT$$LP$u32$C$graphwarrust..graphwar_turn_manager..TurnHolder$RP$$GT$$RP$$C$hashbrown..raw..RawTable$LT$$LP$u32$C$graphwarrust..graphwar_turn_manager..TurnHolder$RP$$GT$..clone_from_impl..$u7b$$u7b$closure$u7d$$u7d$$GT$$GT$17h8ad22b9d1ac80a7fE	0
+windows-early2026	graphwar_client_connection_handler	GraphwarClientConnectionHandler	{{closure}}>	1	_ZN4core3ptr226drop_in_place$LT$std..thread..Builder..spawn_unchecked_$LT$graphwarrust..graphwar_client_connection_handler..GraphwarClientConnectionHandler..connect..$u7b$$u7b$closure$u7d$$u7d$$C$$LP$$RP$$GT$..$u7b$$u7b$closure$u7d$$u7d$$GT$17hd62e10cdd8c0932fE	0
+windows-early2026	graphwar_computer_player_manager	GraphwarComputerPlayerManager	{{closure}}>	1	_ZN4core3ptr237drop_in_place$LT$std..thread..Builder..spawn_unchecked_$LT$graphwarrust..graphwar_computer_player_manager..GraphwarComputerPlayerManager..handle_turn_info_event..$u7b$$u7b$closure$u7d$$u7d$$C$$LP$$RP$$GT$..$u7b$$u7b$closure$u7d$$u7d$$GT$17h2da6f6ee6fb4b97eE	0
+windows-early2026	graphwar_event	GraphwarEvent	drop::Dropper<graphwarrust::graphwar_event::GraphwarEvent>>	1	_ZN4core3ptr180drop_in_place$LT$$LT$alloc..collections..vec_deque..VecDeque$LT$T$C$A$GT$$u20$as$u20$core..ops..drop..Drop$GT$..drop..Dropper$LT$graphwarrust..graphwar_event..GraphwarEvent$GT$$GT$17h59fc05a6a3b52ea6E.llvm.660145325607784462	0
+windows-early2026	graphwar_function_evolutionator	FunctionResult	send	1	_ZN4core3ptr206drop_in_place$LT$core..option..Option$LT$std..sync..mpmc..zero..Channel$LT$alloc..vec..Vec$LT$graphwarrust..graphwar_function_evolutionator..FunctionResult$GT$$GT$..send..$u7b$$u7b$closure$u7d$$u7d$$GT$$GT$17h7bdceb267346b3c7E	0
+windows-early2026	graphwar_function_manager	FunctionState	clone_from_impl	1	_ZN4core3ptr339drop_in_place$LT$hashbrown..scopeguard..ScopeGuard$LT$$LP$usize$C$$RF$mut$u20$hashbrown..raw..RawTable$LT$$LP$u32$C$graphwarrust..graphwar_function_manager..FunctionState$RP$$GT$$RP$$C$hashbrown..raw..RawTable$LT$$LP$u32$C$graphwarrust..graphwar_function_manager..FunctionState$RP$$GT$..clone_from_impl..$u7b$$u7b$closure$u7d$$u7d$$GT$$GT$17h78a8b81a25b494cdE	0
+windows-early2026	graphwar_game_server	GraphwarGameServer	{{closure}}>	1	_ZN4core3ptr197drop_in_place$LT$std..thread..Builder..spawn_unchecked_$LT$graphwarrust..graphwar_game_server..GraphwarGameServer..start..$u7b$$u7b$closure$u7d$$u7d$$C$$LP$$RP$$GT$..$u7b$$u7b$closure$u7d$$u7d$$GT$17h156f8f1776d17112E	0
+windows-early2026	graphwar_lan_vbox	GraphwarLanVBox	{{closure}}	1	_ZN4core3ptr273drop_in_place$LT$graphwarrust..graphwar_lan_vbox..GraphwarLanVBox..update_game_list$LT$std..collections..hash..map..Iter$LT$core..net..socket_addr..SocketAddr$C$graphwarrust..graphwar_game_info..GameInfo$GT$$GT$..$u7b$$u7b$closure$u7d$$u7d$..$u7b$$u7b$closure$u7d$$u7d$$GT$17h9dcdc818c7104b56E	0
+windows-early2026	graphwar_server_broker_handler	GraphwarServerBrokerHandler	{{closure}}>	1	_ZN4core3ptr216drop_in_place$LT$std..thread..Builder..spawn_unchecked_$LT$graphwarrust..graphwar_server_broker_handler..GraphwarServerBrokerHandler..start..$u7b$$u7b$closure$u7d$$u7d$$C$$LP$$RP$$GT$..$u7b$$u7b$closure$u7d$$u7d$$GT$17hd0e84a879f860d78E	0
+windows-early2026	graphwar_turn_manager	TurnHolder	clone_from_impl	1	_ZN4core3ptr325drop_in_place$LT$hashbrown..scopeguard..ScopeGuard$LT$$LP$usize$C$$RF$mut$u20$hashbrown..raw..RawTable$LT$$LP$u32$C$graphwarrust..graphwar_turn_manager..TurnHolder$RP$$GT$$RP$$C$hashbrown..raw..RawTable$LT$$LP$u32$C$graphwarrust..graphwar_turn_manager..TurnHolder$RP$$GT$..clone_from_impl..$u7b$$u7b$closure$u7d$$u7d$$GT$$GT$17h5d361b51c04c2228E	0
+
+# ===== ③ 结构解析救回的名字（旧正则返回 None、新解析给得出）=====
+# 形态：`<graphwarrust::Type as Trait>::method` —— 自类型直接在 crate 根、没有
+# `<module>` 段，旧正则兜底 `graphwarrust::X::Y` 匹配不到 ⇒ 整个符号被丢弃。
+# build	module	type	method	symbols	example_mangled	lands_addr
+windows-2.0.60	GraphwarExtension	_	on_stage_init	1	_ZN86_$LT$graphwarrust..GraphwarExtension$u20$as$u20$godot_core..init..ExtensionLibrary$GT$13on_stage_init17hbb4cce76204560b0E	0
+
+# ===== ④ 若只用 prefix_only，已交付夹具会消失多少（what-if）=====
+# 只统计「已交付且带地址」的行；k∈unified 且 k∉prefix_only 才算前缀口径的损失。
+# side	delivered_named_rows	lost_names	lost_addrs
+android	327	22	28
+windows	337	20	26

@@ -1,5 +1,8 @@
 # 由 tools/sym_match.py build 生成，不要手改（重跑会覆盖）。
 # 每行一个 arm64 符号（名字来自 Android 2.0.60 未 strip 的 .symtab，共 1,300 个）。
+# 宇宙口径：**提到 `graphwarrust` 的符号**（`rust_sym.mentions_crate`），故意比 `rust_sym.is_game_name` 宽 ——
+# 本表是**配对表**不是名字表：编译器胶水（`drop_in_place<…graphwarrust::X…>`）在两侧也是真函数，配对有价值。
+# 名字**键**只从游戏自有符号取（`parse_name` 里的 crate 闸），所以胶水符号不会产出 (module,type,method)。见 docs/02 §39.5。
 # 地址一律是**本架构的 ELF 虚地址**；Ghidra/REA 地址 = 该值 + 0x100000。
 # x86_candidates 为空 = 无候选；逗号分隔多个 = 多候选（全部列出，不挑一个）。
 # confidence: unique=≥2 类独立证据 / weak=只有 1 类 / multi / none /
