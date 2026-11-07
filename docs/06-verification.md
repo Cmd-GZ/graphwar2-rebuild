@@ -2029,3 +2029,204 @@ cargo run --release --offline --example kseq_text  -- --dir $R --file 1782676398
 | 2 | `1782675586#0` 我们多发 1 个死者（184743，`d = 0.42 < radius 0.5`） | 真值的致死半径/判据（现在全体士兵都按 0.5 算） | **未知** |
 | 3 | 2 发 DiffEq 的 `corrected_function` 真值**既不补括号也不加后缀**，而 `game.rs` 恒按 Normal 加后缀 | `Match::fire` 的"按模式分"（收敛层 `diffconv` 已做，`game.rs` 没做） | **未知**（`docs/06` §28.9 第 4 条的同一件事） |
 | 4 | `hole_point` 里同一个模式（多余的 `)` 会让"按印刷文本回代"丢掉常数） | — | 实测**改掉它整份 401 回放 0 行差异**（md5 相同），所以**没改**（无证据的改动不做）；等有独立证据再动 |
+
+## 30. 事件生产者的三条路与"撞什么算撞"（2026-11-07，`dispatch/17`）
+
+> 这一节回答第二轮报告 §7 遗留清单里的两条（"撞障碍判据"、"一次挖洞发 2 条"），
+> 并把上一轮那条**"`EffectInfo` 的生产者查不动"** 就地改写成"查得动，但换的是路子"。
+
+### 30.1 一句话（三条）
+
+1. **`EffectInfo`(tag 44) 有且只有 2 个生产点，都在 `execute_results` 里**：
+   x86 `0x4729be`（tag 构造）/ `0x4729d6`（`add_event` 发件箱）/ `0x472e35` / `0x472e4d`，
+   模块 `src/graphwar_game_state_manager.rs`。上一轮找不到它们，是因为**扫错了常数**（见 §30.2）。
+2. **`DestroyObstacle` 一侧是两个 tag，别混**：tag **41**（线上名 `DestroyObstacle`）的唯一生产者是
+   `GraphwarObstacleManager::destroy_obstacle` = x86 **`0x3f1b30`**；tag **42**（线上名
+   `QueueDestroyObstacle`，即"排一次挖洞"）的唯一生产者是 `queue_destroy_obstacle` = x86 **`0x3f20f0`**。
+   两者同在 `src/graphwar_obstacle_manager.rs`。
+3. **"撞什么算撞" = 掩膜单点查表**，判据逐指令在 §30.4：`mask[trunc(y*1000/50+300)*1000 + trunc(x*1000/50+500)] != 0xFF`，
+   **画布外一律算撞**。二进制里没有几何判据（不是圆/环相交）。
+
+### 30.2 为什么上一轮"查不动"：tag 的**三种** materialize 形态
+
+`GraphwarEvent` 的线上判别值是 `0x8000000000000000 | n`。它在 x86 里有三种写法，**只扫第一种会漏掉生产者**：
+
+| 形态 | 长什么样 | 例子 |
+|---|---|---|
+| ① `movabs` 直写 | `movabs rax, 0x8000…2c` | tag 42 的 `0x3f22b2` |
+| ② `MAX + add` | `movabs rdx, 0x7fffffffffffffff` + `add rdx, n+1` | **tag 44 的两处生产点**：`0x4729be` + `0x4729c8 (add rax,0x2d)` |
+| ③ `MAX + inc` | `movabs rdx, 0x7fffffffffffffff` + `inc rdx` | **tag 41 的生产点**：`0x3f1baf` + `0x3f1c09`…（注意中间隔了 22 条指令） |
+| ④ 直写 0 形态 | 目标 tag 恰为 `0x8000…0` 时 | `calculate_shot_results` 的挖洞指令：`0x3c38d7` + `0x3c38e1 (inc rdx)` |
+
+⇒ 上一轮只扫 ①，所以"全 `.text` 只有 2 处 `movabs 0x8000…2c` 且都是消费者"是**对的**，
+但结论"生产者查不动"是**错的** —— 生产者用形态 ②。
+
+工具已补：`tools/addr_probe.py tags [--only N]`（全 `.text` 一次扫三种形态，
+并**自带正对照**：tag 42 必须命中 `0x3f20f0`、tag 41 必须命中 `0x3f1b30`，不命中就返回 1）。
+
+```bash
+../.venv/bin/python tools/addr_probe.py tags           # 全部 tag → 生产点 + 模块（panic::Location 投票）
+../.venv/bin/python tools/addr_probe.py tags --only 44
+```
+
+⚠️ `--only 0` 不可用：`0x8000…0` 在依赖 crate 里是 `i64::MIN`/`Option` 哨兵，全 `.text` 有 2000+ 处，
+**这个常数本身没有区分度**；挖洞指令那条记录是靠**形状**认出来的（§30.3 第 3 行）。
+
+### 30.3 生产者清单（`x86-64 2026-08-28`，ELF 虚地址；括号里是 Ghidra 地址）
+
+| tag | 线上名 | 构造点 | `add_event` 调用 | 模块（证据） | 等级 |
+|---|---|---|---|---|---|
+| **44** | `EffectInfo` | `0x4729be`（`movabs 0x7fff…`）+ `0x4729c8`（`add rax,0x2d`） | `0x4729d6` | `graphwar_game_state_manager.rs`（`locs` 23 票，函数 `execute_results`=`0x472470`） | **观测** |
+| **44** | `EffectInfo` | `0x472e35` + `0x472e3f` | `0x472e4d` | 同上 | **观测** |
+| **42** | `QueueDestroyObstacle` | `0x3f22b2`（`movabs 0x8000…2a`） | `0x3f22c6` | `graphwar_obstacle_manager.rs:269`（唯一锚） | **观测** |
+| **41** | `DestroyObstacle` | `0x3f1baf`+`0x3f1c09`（`MAX+0x2a`） | `0x3f1c17` | `graphwar_obstacle_manager.rs`（`locs` 2 票，函数 `destroy_obstacle`=`0x3f1b30`） | **观测** |
+| — | （挖洞**指令**，非线上报文） | `0x3c38d7`+`0x3c38e1`（`MAX+inc`→`0x8000…0`） | 写 `Vec`（`0x3c38e4`…`0x3c38fe`） | `graphwar_shot_calculator.rs`（`calculate_shot_results`=`0x3c2bc0`） | **观测** |
+
+`EffectInfo` 的两个生产点**实参不同**（这是"两个生产点"而不是"同一处两次"的证据）：
+
+| | 站点 | `pos`（`+0x08..0x18`）来源 | `effect_type`（`+0x20`） | `start_tick`（`+0x1c`） |
+|---|---|---|---|---|
+| A | `0x4729d6` | `[rsp+0xf0]` = 队列记录所指点表的**最后一个点**（`0x47286b`） | **常量 0**（`0x472948 mov byte [rsp+0x90], 0`） | `[管理器+0x58] + X/30 + 60` |
+| B | `0x472e4d` | `[rsp+0xc0]`（16 字节） | **记录里的一个字节**（`0x472d75 → 0x472e2e`） | 记录里的一个 u32（`0x472dc2`） |
+
+两处都从同一个全局原子计数器取 `effect_id`（`lock xadd dword [0x9c10c0], …`，`0x472930` / `0x472d9f`），
+`effect_type` 在 `+0x20` 上是**一个字节**——与 `docs/16` §33.6 的 72 字节布局、以及两个消费者
+（`0x4bf09b` 音频 `GraphwarAudioControl::effect_info_event`=`0x4bf090`、
+`0x4e2dd4` `EffectDrawer::ready`=`0x4e2d50`，都在 `[rsi+0x20]` 上按 `effect_type` 分派）互相印证。
+
+**跨架构旁证（arm64 未 strip）**：`GraphwarGameStateManager::execute_results` 里
+`0x2c + 0x8000<<48` 的 `movz/movk` 有 4 处（`0x4a87b8`/`0x4a89e8`/`0x4a8cac`/`0x4a8e00`），
+其中前两处与 x86 的两个生产点一一对应（第 3 处落在同一个内联块里，第 4 处紧跟
+`strb w8,[x19,#0x120]`＝游戏状态 5，是**同一段代码的另一条臂**）。⇒ arm64 侧**不作为**"3 个生产者"的证据。
+
+### 30.4 "撞什么算撞"：判据逐指令
+
+**独立函数**（可被 unicorn/frida 直接调用）：`GraphwarObstacleManager::is_obstacle` = x86 **`0x3f15b0`–`0x3f179c`**。
+
+```text
+0x3f15fc  movsd  xmm0, [0x19fbd0]      ; 1000.0
+0x3f160c  movsd  xmm2, [0x19faa8]      ; 50.0
+0x3f1618  addsd  xmm1, [0x19f838]      ; + 500.0            ← x 轴偏移
+0x3f164e  addsd  xmm0, [0x19f1f0]      ; + 300.0            ← y 轴偏移
+           ...   cvttsd2si → (col, row)，与 arm64 0x4254d8…0x425550 同构
+0x3f166b  cmp    ecx, 0x3e7            ; col > 999 ?
+0x3f1671  ja     0x3f169e              ;   ⇒ **算撞**（越界=x）
+0x3f1673  cmp    edx, 0x257            ; row > 599 ?
+0x3f1679  ja     0x3f169e              ;   ⇒ **算撞**（越界=y）
+0x3f1697  cmp    byte ptr [rax + rdi], 0xff   ; mask[row*1000+col]
+0x3f169b  setne  al                    ; ← **判据就这一条**：!= 0xFF 即"撞"
+```
+
+**对局路径里是内联的**（`is_obstacle` 没有出现在射击链的调用图上，上一轮"三方共用"的猜测据此可以关掉）：
+全 `.text` 扫"`mulsd 1000 / divsd 50 / addsd 500|300`"这个三元组，只命中 **7 处**：
+
+| 函数 | 处 | 干什么 |
+|---|---|---|
+| `calculate_shot_results` `0x3c2bc0` | `0x3c37ee`+`0x3c3831`（**A**）、`0x3c39b6`+`0x3c39f6`（**B**）、`0x3c4eab`+`0x3c4eeb`（**C**） | A = 挖洞指令的判据；C = 逐点**计数**（见下） |
+| `GraphwarPlane::obstacle_partial_update_event` `0x4be3e0` | `0x3be425` | 画笔/擦除用的坐标换算，不是碰撞判据 |
+
+A 处的判决（`0x3c3863`–`0x3c3892`）：
+
+```text
+0x3c3863  cmp  eax, 0x3e7     ; col > 999
+0x3c3868  ja   0x3c3898       ;  ⇒ 撞
+0x3c386a  cmp  ecx, 0x257     ; row > 599
+0x3c3870  ja   0x3c3898       ;  ⇒ 撞
+0x3c3876  imul ecx, ecx, 0x3e8
+0x3c387e  add  rdi, rcx       ; idx = row*1000 + col
+0x3c388e  cmp  byte ptr [rax + rdi], 0xff
+0x3c3892  je   0x3c37aa       ; == 0xFF ⇒ 不撞，继续下一个点
+```
+
+⇒ **我方 `src/plane.rs::is_occupied` 的判据已经逐条对上**（越界算撞、`!= EMPTY`），这一层**不需要改**。
+唯一的坑是**地址口径**：`plane.rs` 的注释把 `is_obstacle` 写成 `0x4f15b0`（Ghidra 口径），
+与本节 `0x3f15b0`（ELF 口径）是同一个函数，**两个数差 `0x100000`**，读文档时不要当成两个函数。
+
+### 30.5 "一次挖洞发 2 条"的成因
+
+**结论：不是两条不同实参 —— 是"同一个坐标排了两次队，各自发了一条"。** 四段证据，全部可复算：
+
+1. **报文逐位相同**：401 份回放 503 条 `DestroyObstacle`，162 组重复的 `(pos_x,pos_y,radius)`
+   三字段**逐位相同**（`repr` 相等），从无 3 条以上；
+2. **紧邻**：162 组里 **154 组**在消息流里**紧挨着**（下标差 1），7 组差 2，1 组差 14；
+3. **一半连 tick 都相同**：`92/162` 两条的消息 tick 相同；其余差值 1…13、21、23、42、44、464
+   （= 两条的**预约 tick** 不同：`tick = [管理器+0x58] + X/30 + 60`，`X` = 采样点序号，见下）；
+4. **机制链**（两条指令级）：
+
+```text
+queue_destroy_obstacle 0x3f20f0   : 往 [管理器+0x40] 的 HashMap<tick, Vec<(x,y,r)>> 里追加一条
+        （桶存在就 append：0x3f224b；不存在就新建：0x3f230e→0x3f21c6）
+handle_tick_event      0x3f1d30   : 到这个 tick 时按 key 取出整个桶，**逐条**调 destroy_obstacle
+        0x3f1d99 test rax,rax / 0x3f1db0 循环（stride 0x18）/ 0x3f1dd0 call 0x3f1b30
+destroy_obstacle       0x3f1b30   : draw_circle(mask, x, y, r(=0.5), 0xFF) 擦洞
+        0x3f1baa call 0x3f11e0     ; GraphwarObstacleData::draw_circle
+        + push 一条 tag 41（0x3f1c17）   ⇒ **一条队列条目 = 一条线上报文**
+```
+
+⇒ "两条相同报文" ⇔ "排了两次队"。排队点在生产侧：`calculate_shot_results`（`0x3c2bc0`）里
+对**每个采样点**做 §30.4 的掩膜测试，命中就往结果 `Vec` 追加一条挖洞指令
+（`0x3c38e4` 写 tag、`0x3c38ee` 写 `(x,y)`、`0x3c38f4`/`0x3c38fe` 写 `(u32 记录字段, u32 点序号)`），
+**不 break**，并用一个"该点已处理"的字节数组防重（`0x3c37c6 cmp byte [flags+r15],0`）。
+⇒ 两条相同坐标的条目，只能来自**两个不同点序号上坐标逐位相同的点**（同一序号被标志位挡住了）。
+
+**仍未知**（诚实登记）：为什么两个不同序号的点坐标会逐位相同。候选（都未证）：
+点表尾部重复（采样在撞点处补了一个重复点）、或同一发的结果在批里出现两次。
+缺的证据：那一发的**点表 + 两个点序号**——unicorn 直接调 `0x3c2bc0`（需造 0x20 字节的入参记录）
+或 frida 在 `0x3c38e4` 断点抓一次 `1782640836` 的第 2 发。
+
+### 30.6 与我方内核的差异（**这一处没改**，理由写在下面）
+
+| 行为 | 原版（观测） | 我方（`src/graphwar_shot_calculator/settle.rs:154`） |
+|---|---|---|
+| 判据 | `is_occupied` 同构 | 同构 ✅ |
+| 遇撞后 | **不 break**：整批的**每个**命中点各排一次队 ⇒ N 条 | `break` + **只发 1 条** `QueueDestroyObstacle` |
+
+⇒ 我方**结构上不可能**发出第 2 条（这也解释了为什么 341 个坐标我方只发 341 条）。
+**不改的原因**：要改成"每个命中点各发一条"，必须先知道上面那条未知（重复坐标从哪来），
+否则会把"1 条"变成"命中点个数条"，直接动延迟段挖洞点的分母（140/262）与批内容命中（325/1080）；
+在没有逐位证据的情况下这是**用回归风险换一个猜**。⇒ 登记为已知差异，等 §30.5 的证据。
+
+### 30.7 两处顺手的更正（都在本节之前写下的东西里）
+
+1. **`calculate_shot_results` 的 x86 地址是 `0x3c2bc0`，不是 `0x3b5770`**
+   （第二轮报告 §7 与 `docs/16` §29.3(b) 的表述沿用了 arm64 的 `0x3b5770`）。
+   x86 `0x3b5770` 属于 `src/graphwar_root_node.rs`。桥：`fixtures/name_to_addr.tsv`
+   第 83 行（`唯一锚`，22 个双向唯一锚，函数大小 `0x308d`）。
+   ⇒ 遗留清单里"`end_x` 那 103 发"那条，接手时请从 `0x3c2bc0` 起。
+2. **`execute_results` 的跳表**（`0x1c1800`，直接按序读 5 项，本节点过一遍）：
+   `idx0 → 0x472814`（tag ≥ 0：死亡块）、`idx1 → 0x472c61`（tag `0x8000…0`：挖洞块）、
+   `idx2 → 0x472a53`（tag `0x8000…1`）、`idx3/4 → 0x4727c0`（跳过，tag `0x8000…2/3`）；
+   哨兵 `0x8000…4` 在进入分派前就被拦下（`0x4727d3`）。idx = `tag - 0x8000…0 + 1`（负 tag）或 0（非负）。
+   `docs/14` §12.4 那张表**是对的**（idx1 = 挖洞块），本节把它连同"为什么 idx 这么算"一起钉住。
+
+### 30.8 复现（三套命令，全部只读语料）
+
+```bash
+export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=<你的私有目录>
+export PY=<ws>/.reference/venv/bin/python
+R=<ws>/.reference/replays/gw2-replays-snapshot/replays
+
+# 1) 生产者表（自带正对照；不命中就返回 1）
+$PY tools/addr_probe.py tags
+$PY tools/addr_probe.py tags --only 44      # 2 生产 + 2 消费者
+
+# 2) 判据逐指令
+$PY tools/addr_probe.py dis 0x3f1660 --length 0x50      # is_obstacle 的判决 + setne
+$PY tools/addr_probe.py dis 0x3c3856 --length 0x40      # 内联版（A 处）的判决
+$PY tools/addr_probe.py jt 0x1c1800 --owner 0x472470    # 按表序打印 5 项（顺序别丢）
+
+# 3) 重复报文的数据面（下表的数就是它出来的：不需要编译任何东西）
+$PY tools/destroy_dup_attrib.py --dir $R
+```
+
+`tools/arm64_sym.py`（本轮新增）是 arm64 侧的符号表入口（`find/mod/at/callers/bl/const/dis`），
+用来给 x86 侧"这个函数是谁"提供**未 strip** 的独立证据；本节的 arm64 地址全部它给的。
+
+### 30.9 未知清单（可直接接手）
+
+| # | 未定 | 缺什么 | 档 |
+|---|---|---|---|
+| 1 | 两个不同点序号上坐标为何逐位相同（"2 条"的最终成因） | 那一发的点表 + 两个序号（unicorn 调 `0x3c2bc0` / frida 断 `0x3c38e4`） | **未知** |
+| 2 | `calculate_shot_results` 里 `0x8000…1` / `…2` / `…3` 三种指令各自的语义 | `0x472a53`（idx2 块）逐指令；`…2/…3` 在 `execute_results` 里被直接跳过，说明是**本地**中间结果 | **推断** |
+| 3 | `destroy_obstacle` 的 `radius` 参数是否恒为 0.5 | 语料 503 条 `radius` 全 0.5（观测）；`0x472d11` 侧是常量 `0x19f6d0=0.5`，但 `handle_tick_event` 用的是桶里存的 r | **观测**（r 来自排队入参） |
+| 4 | `QueueDestroyObstacle`(42) 为什么在 401 份回放里 **0 条** | 发送侧的过滤点（`send_buffer` 的挑拣规则，`tools/arm64_sym.py find 'send_buffer'` 是入口） | **未知** |
