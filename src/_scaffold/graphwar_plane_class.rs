@@ -47,9 +47,10 @@
 //! | `clear_state` / `update_entities` | 两个方法存在（`0x4bded0` / `0x4be270`），语义未解 | **不实现**（`UNKNOWNS` 第 5 条：`clear_state` 引用 `EntityDrawer` / `EffectDrawer` 类名的用途未知） | **未知** |
 //! | 曲线的点从哪来 | `GraphwarFunctionManager` 里存的采样点（bucket+0x58/+0x60），由 `set_function_points`（`0x456810`）写入 | **本类自己存一份**（`FunctionEntry`）+ 调用方注入；那个模块还没有 `src/` 文件 | 原版**观测**；存储是**替身**（§41.4） |
 //! | 曲线的上场速率 | `new_len = min(len, trunc(30*(fractional_tick - active_tick)))`，`30.0` = `.rodata 0x19ef90` | 同（[`revealed_points`]） | **逐位**（常量）/ **观测**（算式） |
-//! | tick 从哪来 | 每帧从 `GraphwarTickHandler` 读（u32 tick + `get_fractional_tick` `0x519530`） | 调用方 [`GraphwarPlane::set_fractional_tick`] | 原版**观测**；接线**未做**（没有 tick handler 模块） |
+//! | tick 从哪来 | 每帧从 `GraphwarTickHandler` 读：u32 tick（`0x4b6317` 的 `mov 0x58(%rbp),%ebx`）+ `get_fractional_tick`（`0x4b631a` → `0x519530`） | **本类自己持有一个 [`GraphwarTickHandler`]**，调它的 `get_fractional_tick()`；[`GraphwarPlane::set_fractional_tick`] 只是把这台虚拟时钟摆到指定读数的**接线口** | 算式**观测**（`docs/16-client.md` §48.1）；时钟摆位是**我方接线** |
 //! | 淡出 | `update_function_fade`（`0x4b6a0e`），alpha = `get_function_fade_on_tick` 的返回 | **没接**：那个函数**没有 x86 落点**（走 GOT 槽 `0x9bbd08`），算式未知 | **未知** |
-//! | `update_transform`（位置/宽度/缩放） | `0x4b6147`，实参解出一半（见 §41.5） | **没接** | **未知**（解出的部分自相矛盾，别照抄） |
+//! | `update_transform`（位置/宽度/缩放） | `0x4b6147`：`x = w/2`、`y = h/2`、`scale = w/50`（f32 50.0 = `.rodata 0x1b9fc8`）、`flip` = `get_team_overview` 的位组合 | **接上了**（[`GraphwarPlane::apply_update_transform`]）：最终两个分量 = `flip ? (-s,-s) : (s,-s)`，与 `draw_set_transform` 同一套 | **观测**（§48.2 逐指令） |
+//! | 棋盘内部的底色 | **不是平面画的**：`GraphwarPlane::draw` 只有空心黑框；白底在 `AxisDrawer::draw`（`0x4e069f`–`0x4e06ca`）的 `draw_rect(filled=true, (1,1,1,1))` | [`GraphwarPlane::board_fill`] 导出属性（**默认关**）：打开就照 AxisDrawer 的实参补画那块白底 | 原版**观测**；由平面代画是**我方接线**（`AxisDrawer` 节点还没实现 `draw`） |
 //! | 每帧重画的来源 | `process` 里没有 `queue_redraw` 的直接调用（未解） | `_process` 里"**还有该喂没喂的点**（应喂 > 已喂）就 `queue_redraw`"（§43 修的：原来按"应喂 < 全长"判，最后一小段永远喂不进去） | **我方选择** |
 //!
 //! ⇒ 这个类证明的是「**子节点意图 / 脏矩形 / 棋盘框常量 / 喂点路径**能真的落到引擎上」，
@@ -73,7 +74,9 @@
 //! ```text
 //! GraphwarPlane : Control
 //!   @export board_scale : float = 20.0    # 棋盘单位 → 像素（PX_PER_UNIT = 1000/50）
-//!   @export flip_y      : bool  = true    # 棋盘 y 向上、画布 y 向下 ⇒ 默认取负
+//!   @export flip_y      : bool  = true    # 棋盘 y 向上、画布 y 向下 ⇒ 默认取负（原版**永远**取负）
+//!   @export mirror_x    : bool  = false   # 原版的 `flip`（镜像 x）= get_team_overview 的位组合
+//!   @export board_fill  : bool  = false   # 打开就补画 AxisDrawer 的白色棋盘底（原版在 0x4e069f）
 //!
 //!   build_children() -> int                       # 建 3 个 FunctionDrawer 子节点（幂等），返回个数
 //!   function_drawer_count() -> int                # 纯逻辑记下的子节点数（FUNCTION_DRAWER_CHILDREN）
@@ -116,7 +119,9 @@ use godot::prelude::*;
 
 use super::function_drawer_class::FunctionDrawer;
 use super::obstacle_drawer_class::ObstacleDrawer;
+use crate::graphwar_color_manager::{GraphwarColor, TEAM1_COLORS, TEAM2_COLORS, TEAM_POOL_LEN};
 use crate::graphwar_plane::{self as gp, PixelRect};
+use crate::graphwar_tick_handler::{GraphwarTickHandler, NANOS_PER_SECOND, NANOS_PER_TICK};
 
 /// 默认的棋盘缩放：`PX_PER_UNIT = CANVAS_W / BOARD_W = 1000 / 50 = 20`。
 ///
@@ -150,9 +155,104 @@ pub const UPDATE_FUNCTION_CALL_SITE: u32 = 0x004b_69ec;
 /// （同一个 `draw` 里，"不在场了"的那几条要删掉）。
 pub const REMOVE_FUNCTION_CALL_SITE: u32 = 0x004b_6418;
 
-/// `FunctionDrawer::update_transform`（`0x499050`）的唯一调用点（`0x4b6147`）——
-/// **本轮仍未接**：三个实参只解出一半，见 `docs/16-client.md` §41.5。
+/// `FunctionDrawer::update_transform`（`0x499050`）的**唯一**调用点：`0x4b6147`
+/// （在 `GraphwarPlane::draw` 里；`callers 0x499050` = 1，**不在** `ready` `0x4b7a70` 里）。
+///
+/// 三个实参照 `docs/16-client.md` §48.2；本类由 [`GraphwarPlane::apply_update_transform`] 落地。
 pub const UPDATE_TRANSFORM_CALL_SITE: u32 = 0x004b_6147;
+
+// ---------------------------------------------------------------------------
+// 棋盘变换：`update_transform`（0x4b6147）与 `draw_set_transform`（0x4b607d）的实参
+// ---------------------------------------------------------------------------
+
+/// 棋盘宽（单位）：`draw_rect` 的 `Rect2(-25,-15,50,30)`（`.rodata 0x19cc20`）第 3 个分量，
+/// 也是 `divss` 的那个除数（f32 **50.0** = `.rodata 0x1b9fc8`，`0x4b6104` / `0x4e0639`）。
+pub const BOARD_WIDTH_UNITS: f32 = 50.0;
+
+/// 棋盘高（单位）：同一个 `Rect2` 的第 4 个分量（f32 **30.0** = `.rodata 0x1ba12c`，
+/// 与 `0.5` 挤在同一个 8 字节池 `0x1ba128` 里）。
+pub const BOARD_HEIGHT_UNITS: f32 = 30.0;
+
+/// f32 **0.5**（`.rodata 0x1ba128` 的低 4 字节）：`0x4b6031`/`0x4b603f`/`0x4b604f` 的 `mulss`，
+/// 也出现在 `AxisDrawer::draw`（`0x4e064b`）——两处都是“半宽半高”。
+pub const HALF: f32 = 0.5;
+
+/// `get_team_overview`（`0x4be6e0`）→ `flip`：**逐位**翻自 `0x4b600d`–`0x4b6029`
+/// （`draw_set_transform` 的 x 分量）与 `0x4b610c`–`0x4b6129`（`update_transform` 的 `esi`）——
+/// 两处是同一个表达式：
+///
+/// ```text
+/// 4b6012  cmp  ebp,0x1000000 ; setae cl      ; cl = (flags >= 2^24)
+/// 4b601b  test ebp,0x10000   ; sete  dl      ; dl = !(flags & 2^16)
+/// 4b6024  and  dl,cl                         ; A  = (flags >= 2^24) && !bit16
+/// 4b600d  and  eax,0x101                     ; eax = flags & 0x101
+/// 4b605c  cmp  eax,0x100                     ; B  = ((flags & 0x101) == 0x100)
+/// 4b6129  or   dl,al                         ; flip = A | B
+/// ```
+pub fn flip_from_overview_bits(flags: u32) -> bool {
+    let a = flags >= 0x0100_0000 && (flags & 0x0001_0000) == 0;
+    let b = (flags & 0x0000_0101) == 0x0000_0100;
+    a || b
+}
+
+/// `update_transform`（`0x4b6147`）/ `draw_set_transform`（`0x4b607d`）的实参：**位置 + 一个标量**。
+///
+/// ```text
+/// 4b60c9  call get_size()            ; xmm0 = w, xmm1 = h（槽 0x9bb000 = Control::get_size）
+/// 4b60d4  movss [rsp+8],xmm0         ; w
+/// 4b60da  movss [rsp+0x10],xmm1      ; h
+/// 4b60f0  movss xmm1,[rsp+0x10] ; 4b60f6 mulss xmm1,0.5   ; y = h*0.5  （arg2）
+/// 4b60fa  movss xmm2,[rsp+8]    ; 4b6104 divss xmm2,50.0  ; s = w/50   （arg3，**f32 标量**）
+/// 4b6100  mulss xmm0,xmm2(0.5)                          ; x = w*0.5  （arg1）
+/// ```
+///
+/// ⇒ 返回 `((x, y), s)`。**`s` 是标量**：`update_transform` 内部用 `pxor` 与 `.rodata
+/// 0x19e880`（四个 `-0.0`）把它的符号位翻出来当 y 分量（`0x499088`/`0x499092` 存两份、
+/// `0x499232`–`0x499241` 各取一份喂 `set_scale` 的两个 f32）⇒ `set_scale` 实际收到
+/// `flip ? (-s,-s) : (s,-s)`，**不是** `Vector2(w/50, 0)`。旧文（§42.5 第 4 条）说的
+/// “自相矛盾”就是把它当成了 `Vector2` 的 y 分量。
+pub fn board_transform_args(size: Vector2) -> ((f32, f32), f32) {
+    let (w, h) = (size.x, size.y);
+    let s = if w > 0.0 { w / BOARD_WIDTH_UNITS } else { 0.0 };
+    ((w * HALF, h * HALF), s)
+}
+
+/// 由标量 `s`、原版 `flip`、我方 `flip_y` 得到**最终**的两个分量。
+///
+/// 逐指令（`0x4b6001`–`0x4b6063`）：
+///
+/// ```text
+/// xmm4 = -s                                   ; 0x4b6001 的 pxor，**永远取负**
+/// xmm1 = flip ? -s : +s                       ; 0x4b6029 的 test dl（flip = A|B）
+/// xmm3 = ((flags&0x101)==0x100) ? -s : xmm1   ; 0x4b6059–0x4b6063
+/// ⇒ scale = (xmm3, xmm4) = (flip ? -s : s, **-s**)
+/// ```
+///
+/// ⇒ **x 分量受 `flip` 控制（镜像），y 分量永远取负**（棋盘 y 向上、画布 y 向下）。
+/// 原版没有"y 是否取负"的开关；本类的 `flip_y` 是**我方**属性（默认 `true` = 原版行为），
+/// 只为让复现工具能关掉它。
+pub fn board_scale_xy(s: f32, flip: bool, flip_y: bool) -> (f32, f32) {
+    let sx = if flip { -s } else { s };
+    let sy = if flip_y { -s } else { s };
+    (sx, sy)
+}
+
+/// 棋盘内部的白底：**原版在 `AxisDrawer::draw` 里画**（`0x4e069f`–`0x4e06ca`）：
+///
+/// ```text
+/// 4e069f  movaps xmm0,[0x19cc20]   ; Rect2(-25,-15,50,30)
+/// 4e06ab  lea    rdx,[0x19ed00]    ; Color(1,1,1,1)
+/// 4e06b7  movss  xmm0,[0x1b9d08]   ; width = -1.0f32
+/// 4e06c2  mov    ecx,1             ; filled = true
+/// 4e06c7  xor    r8d,r8d           ; antialiased = false
+/// 4e06ca  call   *0x9bc028         ; CanvasItem::draw_rect
+/// ```
+///
+/// 平面自己**不**画它：`0x4b61ab` 那次是 `filled=false` 的空心黑框（见 `graphwar_plane::BOARD_*`）。
+pub const BOARD_FILL_COLOR: (f32, f32, f32, f32) = (1.0, 1.0, 1.0, 1.0);
+
+/// `AxisDrawer::draw` 那次 `draw_rect` 的宽度实参：f32 `-1.0`（`.rodata 0x1b9d08`）。
+pub const BOARD_FILL_WIDTH: f32 = -1.0;
 
 /// 每 tick "露"出多少个点（**逐位**）：`.rodata 0x19ef90` 的 8 字节是
 /// `00 00 00 00 00 00 3e 40` = f64 **30.0**，调用点 `0x4b67ba` 的 `mulsd [0x19ef90]`：
@@ -281,8 +381,27 @@ pub struct GraphwarPlane {
     board_scale: f64,
 
     /// 是否把 y 轴翻过来（棋盘 y 向上、Godot 画布 y 向下）。
+    ///
+    /// ⚠️ 原版的 `flip` **不是**一个属性：它是 `get_team_overview`（`0x4be6e0`）返回的那
+    /// 4 个位算出来的（见 [`flip_from_overview_bits`]，指令 `0x4b600d`–`0x4b6029`）。
+    /// 本类还没有那条游戏状态接线 ⇒ 用这个导出属性当替身（**我方选择**）。
     #[export]
     flip_y: bool,
+
+    /// **原版的 `flip`**（镜像 x）：`get_team_overview`（`0x4be6e0`）返回的 4 个位算出来的
+    /// （[`flip_from_overview_bits`]，指令 `0x4b600d`–`0x4b6029`）。
+    ///
+    /// 本类还没有游戏状态接线 ⇒ 用这个导出属性当替身（**我方选择**，默认 `false` = 不镜像）。
+    #[export]
+    mirror_x: bool,
+
+    /// 打开就照 `AxisDrawer::draw` 的实参把棋盘内部填成**白底**（`0x4e069f`–`0x4e06ca`）。
+    ///
+    /// **默认关**的理由：原版这块底不是平面画的，而我们别的验收脚本按
+    /// “每次 `_draw` 发 1 条 `draw_rect`”断言（`draw_classes_check.gd` / `assemble_check.gd`）；
+    /// 打开会变成 2 条。⇒ 做成显式开关，播放屏要白底时置真。
+    #[export]
+    board_fill: bool,
 
     /// 纯逻辑的**意图结构**：3 个 `FunctionDrawer` 的 `NodeRef` + 脏矩形队列 + ready 标志。
     ///
@@ -324,13 +443,23 @@ pub struct GraphwarPlane {
     /// （与 `src/function_drawer.rs::CurveStore` 同一个理由）。
     functions: std::collections::BTreeMap<i32, FunctionEntry>,
 
-    /// 当前 tick（原版 `GraphwarTickHandler::get_fractional_tick`，x86 `0x519530`，调用点
-    /// `0x4b631a`）。小数部分参与"露几个点"，整数部分参与"还在不在场"（`0x4b6317` 的
-    /// `mov 0x58(%rbp),%ebx` 是同一个 tick handler 上的 u32 字段）。
+    /// tick 源：**本类自己持有**一个 [`GraphwarTickHandler`]。
     ///
-    /// ⚠️ 原版是**每帧从 tick handler 模块读**；本切片没有那个模块 ⇒ 由调用方
-    /// [`GraphwarPlane::set_fractional_tick`] 推进（见 §41.5）。
-    fractional_tick: f64,
+    /// 原版 `draw` 每帧从它读两样东西：`0x4b6317` 的 `mov 0x58(%rbp),%ebx`（u32 tick，
+    /// 喂 `get_active_functions_on_tick`）与 `0x4b631a` 的 `call 0x519530`
+    /// （`get_fractional_tick`，f64，参与 `new_len`）。那个对象在游戏状态里
+    /// （`draw` 里 `mov r14,[r12+0x238]` 借出来的 `Ref<GraphwarTickHandler>`）；本类还没有
+    /// 那条接线 ⇒ 自己 `new` 一个（`base = 0`，`now` 用 [`GraphwarPlane::set_fractional_tick`] 摆）。
+    ///
+    /// 算式是**逐条复原**的 [`GraphwarTickHandler::get_fractional_tick`]（`0x519530`），
+    /// 不再由场景注入一个 f64（旧实现是 `fractional_tick: f64`，`docs/16-client.md` §48.1）。
+    tick_source: GraphwarTickHandler,
+
+    /// 本类调过几次 `update_transform`（原版 `0x4b6147`：每次 `_draw` 一次）。
+    transform_total: i64,
+
+    /// 上一次 `update_transform` 的实参 `(x, y, s, flip)`（**我方计数**，验收用）。
+    last_transform: (f64, f64, f64, bool),
 
     /// 累计调了几次 `FunctionDrawer::update_function`（**我方计数**）。
     function_write_total: i64,
@@ -349,6 +478,8 @@ impl IControl for GraphwarPlane {
             base,
             board_scale: DEFAULT_BOARD_SCALE,
             flip_y: true,
+            board_fill: false,
+            mirror_x: false,
             // 纯逻辑的 `new()` = `Default::default()`：3 个 id 表 + 空脏队列 + ready=false。
             plane: gp::GraphwarPlane::new(),
             obstacle_drawer: None,
@@ -361,7 +492,9 @@ impl IControl for GraphwarPlane {
             flushed_total: 0,
             dirty_redraws: 0,
             functions: std::collections::BTreeMap::new(),
-            fractional_tick: 0.0,
+            tick_source: GraphwarTickHandler::new(0, 0),
+            transform_total: 0,
+            last_transform: (0.0, 0.0, 0.0, false),
             function_write_total: 0,
             function_point_total: 0,
             removed_function_total: 0,
@@ -440,22 +573,32 @@ impl IControl for GraphwarPlane {
     fn draw(&mut self) {
         self.draw_calls += 1;
 
-        let scale = self.board_scale as f32;
-        let scale_y = if self.flip_y { -scale } else { scale };
+        // 原版 `0x4b60c9` 的 `Control::get_size()`（槽 `0x9bb000` = `0x8925f0`），
+        // 随后 `0x4b60d4`/`0x4b60da` 把两个 f32 落到栈上。见 [`board_transform_args`]。
+        let size = self.base().get_size();
+        let ((x, y), s) = board_transform_args(size);
+        // **我方兜底**（原版无此分支）：尺寸还没定下来（树外 / 第一次 `_draw` 之前
+        // `get_size()` 可能是 0）时退回导出属性，否则 `_transform` 会把整条线缩成 0。
+        let s = if s > 0.0 { s } else { self.board_scale as f32 };
+        // 原版 `flip`（镜像 x）来自 `get_team_overview` 的位组合；本类还没有那条接线 ⇒
+        // 用导出属性 `mirror_x` 当替身（**我方选择**）。`flip_y` 是另一件事（y 取负，
+        // 原版**永远**取负），只为本类复现工具留的开关。
+        let flip = self.mirror_x;
+        let (sx, sy) = board_scale_xy(s, flip, self.flip_y);
+        let draw_fill = self.board_fill;
+        let mut extra_rects = 0i64;
 
         {
             let mut base = self.base_mut();
-            // 实参**未知**（原版只确证了槽）；默认值来自 `to_pixel` 的换算（`PIXEL_OFFSET`）。
-            base.draw_set_transform_ex(Vector2::new(
-                gp::PIXEL_OFFSET.0 as f32,
-                gp::PIXEL_OFFSET.1 as f32,
-            ))
-            .rotation(0.0)
-            .scale(Vector2::new(scale, scale_y))
-            .done();
+            // 实参来自原版 `draw_set_transform`（`0x4b607d`，槽 `0x9bc018`）：
+            // `pos = size × 0.5`、`rotation = 0`、`scale = flip ? (-s,-s) : (s,-s)`，`s = size.x/50`。
+            base.draw_set_transform_ex(Vector2::new(x, y))
+                .rotation(0.0)
+                .scale(Vector2::new(sx, sy))
+                .done();
 
             // 四个常量全部来自 `graphwar_plane::BOARD_*`（逐位：`.rodata 0x19cc20` / `0x19cf70`
-            // / `0x1ba598`，两个 `xor` 给的 `false`）。
+            // / `0x1ba598`，两个 `xor` 给的 `false`）——原版 `0x4b61ab` 就画这一条**空心黑框**。
             let rect = Rect2::new(
                 Vector2::new(gp::BOARD_RECT.0, gp::BOARD_RECT.1),
                 Vector2::new(gp::BOARD_RECT.2, gp::BOARD_RECT.3),
@@ -471,8 +614,36 @@ impl IControl for GraphwarPlane {
                 .width(gp::BOARD_WIDTH)
                 .antialiased(gp::BOARD_ANTIALIASED)
                 .done();
+
+            // 【**我方接线**，默认关】棋盘内部的白底：原版由 `AxisDrawer::draw` 画
+            // （它是**子节点**，引擎按"父自绘 → 子自绘"的顺序 ⇒ 白底会盖住黑框靠内的那一半；
+            // 这里照同一个顺序，不额外调 z_index）
+            // （`0x4e069f`–`0x4e06ca`，filled=true / Color(1,1,1,1) / width=-1 / aa=false）。
+            // `AxisDrawer` 节点还没有 `draw`（`src/_scaffold/axis_drawer_class.rs` 明写“没接管
+            // `draw`”）⇒ 播放屏要“不再是工程底色”时把 `board_fill` 置真。
+            if draw_fill {
+                let fill = Rect2::new(
+                    Vector2::new(gp::BOARD_RECT.0, gp::BOARD_RECT.1),
+                    Vector2::new(gp::BOARD_RECT.2, gp::BOARD_RECT.3),
+                );
+                let c = Color::from_rgba(
+                    BOARD_FILL_COLOR.0,
+                    BOARD_FILL_COLOR.1,
+                    BOARD_FILL_COLOR.2,
+                    BOARD_FILL_COLOR.3,
+                );
+                base.draw_rect_ex(fill, c)
+                    .filled(true)
+                    .width(BOARD_FILL_WIDTH)
+                    .antialiased(false)
+                    .done();
+                extra_rects += 1;
+            }
         }
-        self.rect_total += 1;
+        self.rect_total += 1 + extra_rects;
+
+        // 原版 `0x4b6147`：画完框就摆曲线容器（**在**喂点循环 `0x4b6339` 之前）。
+        self.apply_update_transform((x, y), s, flip);
 
         // 原版 `draw` 在画完棋盘框之后（`0x4b61ab` 之后）紧接着就是那一段喂点循环
         // （`0x4b6339` → `0x4b69ec`）。本类放在这里，位置与原版一致。
@@ -595,24 +766,108 @@ impl GraphwarPlane {
     // 函数曲线：喂点（原版 `GraphwarPlane::draw` 尾部那段循环，`0x4b6339` → `0x4b69ec`）
     // -----------------------------------------------------------------------
 
-    /// 推进到某个 tick（小数部分参与"露几个点"，整数部分参与"还在不在场"）。
+    /// 把本类的**虚拟时钟**摆到 `get_fractional_tick() == tick` 的那一刻（**我方接线口**）。
     ///
-    /// 原版是每帧自己从 `GraphwarTickHandler` 读两样东西：`0x4b6317` 的 `mov 0x58(%rbp),%ebx`
-    /// （u32 tick，喂给 `get_active_functions_on_tick`）与 `0x4b631a` 的
-    /// `call 0x519530` = `get_fractional_tick`（f64，参与 `new_len`）。本切片没有那个模块 ⇒
-    /// 由调用方喂一个 f64，整数 tick 取 `trunc()`。
+    /// 原版没有这个方法：它每帧直接从游戏状态里的 `GraphwarTickHandler` 读
+    /// （`0x4b6317` 的 u32 tick + `0x4b631a` 的 `get_fractional_tick`）。本类还没有那条
+    /// 接线 ⇒ 握住一个自己的 `GraphwarTickHandler`，用这个入口推进它：
     ///
-    /// 返回设置后的值。
+    /// ```text
+    /// n   = trunc(tick)                     ; ⇒ tick_source.current_tick（原版 M+0x40）
+    /// sub = tick - n                        ; ⇒ 累加器之外的那点时间
+    /// accum = n × 16_666_666 ns             ; ⇒ 原版 M+0x10/+0x18（`tick()` 每次加的量）
+    /// now   = accum + round(sub × 0.016666666 × 1e9)   ; ⇒ 写进原版 M+0x20/+0x28
+    /// ```
+    ///
+    /// 因为 [`GraphwarTickHandler::get_fractional_tick`] 就是
+    /// `tick + ((now-base)-accum) / 0.016666666`，所以**整数 tick 读回来逐位相等**
+    /// （`now - accum == 0` ⇒ 小数部分恰好 0.0）——验收脚本按整数 tick 断言不会因浮点抖动变红。
+    ///
+    /// 返回读回的 `get_fractional_tick()`。
     #[func]
     fn set_fractional_tick(&mut self, tick: f64) -> f64 {
-        self.fractional_tick = if tick.is_finite() { tick } else { 0.0 };
-        self.fractional_tick
+        let t = if tick.is_finite() { tick.max(0.0) } else { 0.0 };
+        let n = t.trunc();
+        let sub = t - n;
+        let n_u32 = n.min(u32::MAX as f64) as u32;
+        self.tick_source.current_tick = n_u32;
+        self.tick_source.elapsed_nanos = n_u32 as u64 * NANOS_PER_TICK as u64;
+        let sub_nanos = (sub * crate::graphwar_tick_handler::tick_seconds()
+            * NANOS_PER_SECOND as f64)
+            .round()
+            .max(0.0) as u64;
+        let now = self.tick_source.elapsed_nanos + sub_nanos;
+        self.tick_source.set_now(
+            now / NANOS_PER_SECOND as u64,
+            (now % NANOS_PER_SECOND as u64) as u32,
+        );
+        self.fractional_tick()
     }
 
-    /// 现在的 tick（`set_fractional_tick` 设进去的那个）。
+    /// 现在的 tick = **原版 `GraphwarTickHandler::get_fractional_tick`（`0x519530`）的读数**。
     #[func]
     fn fractional_tick(&self) -> f64 {
-        self.fractional_tick
+        self.tick_source.get_fractional_tick()
+    }
+
+    /// 原版 `draw` 里那个 u32 tick（`0x4b6317` 的 `mov 0x58(%rbp),%ebx` = `M+0x40`）。
+    #[func]
+    fn integer_tick_now(&self) -> i64 {
+        self.tick_source.current_tick as i64
+    }
+
+    /// 累计调过几次 `update_transform`（原版 `0x4b6147`）。
+    #[func]
+    fn transform_total(&self) -> i64 {
+        self.transform_total
+    }
+
+    /// 上一次 `update_transform` 的实参：`{x, y, s, flip}`（**我方计数**，验收用）。
+    #[func]
+    fn last_transform(&self) -> VarDictionary {
+        let (x, y, s, flip) = self.last_transform;
+        let mut d = VarDictionary::new();
+        d.set("x", x);
+        d.set("y", y);
+        d.set("s", s);
+        d.set("flip", flip);
+        d.set("flip_y", self.flip_y);
+        let (sx, sy) = board_scale_xy(s as f32, flip, self.flip_y);
+        d.set("scale_x", sx as f64);
+        d.set("scale_y", sy as f64);
+        d
+    }
+
+    /// `get_team_overview`（`0x4be6e0`）→ `flip`：把纯函数 [`flip_from_overview_bits`] 暴露出来，
+    /// 好让 GDScript 侧按反汇编真值表对拍（`0x4b600d`–`0x4b6029`）。
+    #[func]
+    fn flip_from_overview_bits(&self, flags: i64) -> bool {
+        flip_from_overview_bits(flags as u32)
+    }
+
+    /// 队色池（**逐位**）：`init_team_colors`（x86 `0x465070` / arm64 `0x49c660`）里的两张 6 色表。
+    ///
+    /// 原版是 `HashMap<u8, Vec<GraphwarColor>>`（键 = 队号 0/1）；本方法按队号取那一池，
+    /// 返回 6 个 `Color`（`GraphwarColor` 三字节 = r,g,b，alpha 恒 1）。
+    /// 表本体在 [`crate::graphwar_color_manager`]（`TEAM1_COLORS` / `TEAM2_COLORS`）。
+    #[func]
+    fn team_color_pool(&self, team: i64) -> PackedColorArray {
+        let pool: &[GraphwarColor; TEAM_POOL_LEN] = match team {
+            0 => &TEAM1_COLORS,
+            1 => &TEAM2_COLORS,
+            _ => return PackedColorArray::new(), // 原版没有这个队 ⇒ `add_team_color` 走随机兜底
+        };
+        let mut out = PackedColorArray::new();
+        for c in pool {
+            let (r, g, b) = c.triple();
+            out.push(Color::from_rgba(
+                r as f32 / 255.0,
+                g as f32 / 255.0,
+                b as f32 / 255.0,
+                1.0,
+            ));
+        }
+        out
     }
 
     /// 注入一条函数的采样点。
@@ -727,7 +982,7 @@ impl GraphwarPlane {
             return -1;
         };
         let tick = self.integer_tick();
-        let ftick = self.fractional_tick;
+        let ftick = self.fractional_tick();
 
         // ① 已经不在场的：`remove_function`（`0x4b6418`）。
         let stale: Vec<i32> = self
@@ -893,16 +1148,54 @@ impl GraphwarPlane {
 
 /// 不走 `#[godot_api]` 的内部小工具（`#[godot_api]` 块里只能放 `#[func]` / signal / constant）。
 impl GraphwarPlane {
-    /// 整数 tick：原版是 `[tick_handler+0x58]` 的 u32（`0x4b6317`）。本类从同一个 f64 取整数部分。
+    /// 整数 tick：原版是 `[tick_handler+0x58]` 的 **u32**（`0x4b6317` 的 `mov 0x58(%rbp),%ebx`
+    /// = `GraphwarTickHandler` 的 `M+0x40`，`tick()` 里 `inc` 的那个计数）——
+    /// 所以这里读 [`GraphwarTickHandler::current_tick`]，**不**从 f64 取整（`tick 177.9` 时
+    /// 两者都是 177，但 177.9 的 f64 取整依赖浮点，原版没有这一步）。
     fn integer_tick(&self) -> i64 {
-        let t = self.fractional_tick.trunc();
-        if t <= 0.0 {
-            0
-        } else if t >= u32::MAX as f64 {
-            u32::MAX as i64
+        self.tick_source.current_tick as i64
+    }
+
+    /// 原版 `update_transform`（`0x4b6147`）的落地：把 `(x, y, s, flip)` 交给每个
+    /// `FunctionDrawer`（原版的目标是 `self+0x80` 那个绘制器；本类是 3 个里的第 0 个 —— §42.4）。
+    ///
+    /// ⚠️ **喂给 [`FunctionDrawer::update_transform`] 的 `scale` 是“预取负”过的**：
+    /// 原版 `0x499232`–`0x499241` 把 `s` 与 `-s` 分别当两个 f32 喂 `set_scale`
+    /// （`xmm0 = [rsp+0x20]` 原值 / `xmm1 = [rsp+0x10]` 取负那份），而本类的 `FunctionDrawer`
+    /// （另一个文件）拿到 `flip` 为真时**两个分量都取负**、为假时原样用。
+    /// ⇒ 想得到 `flip ? (-s,-s) : (s,-s)`，就得传 `flip ? (s,s) : (s,-s)`。
+    ///
+    /// 返回动了几条线（3 个绘制器加起来）。
+    fn apply_update_transform(&mut self, (x, y): (f32, f32), s: f32, flip: bool) -> i64 {
+        // 目标值 = [`board_scale_xy`]；`FunctionDrawer` 的 `flip` 分支会把两个分量都取负，
+        // 所以 `flip` 为真时先喂"反的那份"，它取负之后就正好是目标值。
+        let (sx, sy) = board_scale_xy(s, flip, self.flip_y);
+        let scale = if flip {
+            Vector2::new(-sx, -sy)
         } else {
-            t as i64
+            Vector2::new(sx, sy)
+        };
+        let n = self.plane.function_drawers.len() as i32;
+        let mut touched = 0i64;
+        for i in 0..n {
+            if let Some(mut d) = self.function_drawer(i) {
+                // `update_transform` 是 `function_drawer_class.rs` 的 `#[func]`（非 `pub`）
+                // ⇒ 只能走动态调用（与 GDScript 侧同一条路）。
+                let _ = d.call(
+                    "update_transform",
+                    &[
+                        (x as f64).to_variant(),
+                        (y as f64).to_variant(),
+                        scale.to_variant(),
+                        flip.to_variant(),
+                    ],
+                );
+                touched += 1;
+            }
         }
+        self.transform_total += 1;
+        self.last_transform = (x as f64, y as f64, s as f64, flip);
+        touched
     }
 
     /// 第 `index` 个 `FunctionDrawer` 子节点（原版 `init` 建 3 个）。
@@ -930,7 +1223,7 @@ impl GraphwarPlane {
         let tick = self.integer_tick();
         self.functions.values().any(|e| {
             is_active_function(tick, e.active_tick, e.points.len())
-                && revealed_points(self.fractional_tick, e.active_tick, e.points.len()) > e.fed
+                && revealed_points(self.fractional_tick(), e.active_tick, e.points.len()) > e.fed
         })
     }
 }

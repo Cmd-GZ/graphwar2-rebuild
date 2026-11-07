@@ -187,9 +187,69 @@ mod end_of_turn_tests {
 //                      不看事件载荷，直接往队列里发 tag 1（`TickRequest`）
 // ```
 //
-// **没有解出来的**（`未知`）：`get_fractional_tick`（0x519530）与
-// `get_time_to_tick`（0x519450）的算式——两个函数都有落点，但体内公式没逐条读；
-// 所以本类型**不**声称实现了那两个入口（缺的证据：逐指令读那两个函数）。
+// ## `get_fractional_tick`（`0x519530`）与 `get_time_to_tick`（`0x519450`）：已逐条解出
+//
+// 两个函数读的是**同一组字段**（`self` = `M`，72 字节）；先看 `get_fractional_tick` 的全文
+// （`tools/addr_probe.py dis 0x519530`，`0x519530`–`0x5195f2` 是函数体，其余是下溢 panic 分支）：
+//
+// ```text
+// 519534  mov  esi,[rdi+0x28]        ; esi = M+0x28（"now" 的纳秒分量）
+// 519537  cmp  esi,0x3b9aca00        ; == 1e9 ?  ⇒ 这是**哨兵值**（合法纳秒 < 1e9）
+// 51953d  jne  519555                ; 有覆盖值 ⇒ 用 (M+0x20, M+0x28) 当"现在"
+// 51953f  call *0x9ba8f8 (0x8f3a10)  ; 否则 SystemTime::now() → (rax=secs, edx=nanos)
+// 519545  mov  r8,[rbx]              ; base.secs   = M+0x00
+// 519548  mov  ecx,[rbx+8]           ; base.nanos  = M+0x08
+// 51955f  call *0x9baf28 (0x90cdd0)  ; Duration::checked_sub(now, base) → (rax,rdx)
+// 519565  sub  rax,[rbx+0x10]        ; - accum.secs  = M+0x10   （jb ⇒ panic "overflow when
+// 519588  sub  edx,ecx               ; - accum.nanos = M+0x18     subtracting durations"）
+// 5195a9  ...                        ; secs → f64（punpckldq 0x43300000/0x45300000 那一套）
+// 5195ce  divsd xmm2,[0x19eff8]      ; nanos / 1e9
+// 5195d6  addsd xmm2,xmm1            ; + secs        ⇒ 秒（f64）
+// 5195da  divsd xmm2,[0x19f7f8]      ; / 0.016666666  ⇒ 不足一 tick 的小数部分
+// 5195e2  mov  eax,[rbx+0x40]        ; M+0x40 = u32 tick
+// 5195ed  addsd xmm0,xmm2            ; tick + 小数部分  ← 返回值
+// ```
+//
+// ⇒ **算式**（`elapsed = (now - base) - accum`）：
+//
+// ```text
+// get_fractional_tick() = tick as f64 + elapsed.as_secs_f64() / 0.016666666
+// ```
+//
+// 其中 `0.016666666`（`.rodata 0x19f7f8` = `0x3f911111059d0921`）**不是** `1/60`
+// （`1/60` 的位型是 `0x3f91111111111111`），而是 `f64(16_666_666) / 1e9`
+// ——与 `tick()` 每次累加的 `NANOS_PER_TICK` **同一个数**（见 [`tick_seconds`]）。
+//
+// `get_time_to_tick`（`0x519450`）反过来算**离下一个 tick 还有多久**：
+//
+// ```text
+// 51947f  call checked_sub(now, base)
+// 51948f  cmp  edi,0x3a9c79d6         ; accum.nanos >= 1e9 - 16666666 ⇒ 加一 tick 要进位
+// 5194b2  add  edi,0xfe502a           ; accum += 16666666 ns（= NANOS_PER_TICK）
+// 5194ab  sub  rax,rcx                ; 再减掉 (now - base)
+// 5194f2  ret                         ; 返回 (rax=secs, edx=nanos) 的 Duration
+// get_time_to_tick() = (accum + 1 tick) - (now - base)
+// ```
+//
+// **字段归属**（`new` 的写法 + 上面两处读取，72 = `0x48` 字节全对得上）：
+//
+// | 偏移 | 内容 | 证据 |
+// |---|---|---|
+// | `+0x00`/`+0x08` | `base: SystemTime`（构造时刻） | `0x5196df`/`0x5196e3` 写入；`0x519545` 读 |
+// | `+0x10`/`+0x18` | `accum: Duration`（`tick()` 每次 +16 666 666 ns） | `0x519871`/`0x519875` 写；`0x519565` 读 |
+// | `+0x20`/`+0x28` | `now` 的**覆盖值**；`+0x28 == 1e9` 表示"没设" | `0x5196f5` 只写 `+0x28 = 1e9`（`+0x20` 从不初始化 ⇒ 哨兵为真时也不读）；`0x519555` 读 |
+// | `+0x30` | 自身指针（`0x5196fc` 的 `mov [rbx+0x48],rbx`） | 观测；用途未知 |
+// | `+0x38` | `Rc<RefCell<GraphwarEventQueue>>` | `0x519700` |
+// | `+0x40` | `u32 tick`（`tick()` 里 `inc`，`TickEvent` 的载荷） | `0x51987d` 写；`0x5195e2` 读 |
+//
+// ⚠️ **本节就地更正两处旧推断**：
+// 1. 旧文把 `+0x28` 的 `1e9` 读成"一秒的纳秒数"；`0x519537` 的 `cmp …/jne` 表明它是
+//    **"now 覆盖值无效"的哨兵**（合法纳秒 < 1e9，所以 1e9 可当"空"）。
+// 2. 旧文说这两个函数的算式"未解"——现在解出来了，见上。
+//
+// 唯一的**我方取舍**：原版下溢走 `panic!("overflow when subtracting durations")`；
+// 本实现**不 panic**（panic 穿过 gdext FFI 会 abort 整个进程），下溢时按"刚过 tick 边界"
+// 给 `0.0` 的小数部分。这条对 `tick()` 的正常时序（`now ≥ base + accum`）没有影响。
 
 /// 本模块唯一订阅的事件名（`new` 末尾那条 `subscribe` 的字面量，长度 `0x19`）。
 pub const SUBSCRIPTION: &'static str = "connected_to_server_event";
@@ -206,16 +266,68 @@ pub const NANOS_PER_SECOND: u32 = 1_000_000_000;
 /// 每多少个 tick 再发一条 `TickRequest`（`tick` 里那个"判 60 整除"的分支）。
 pub const TICKS_PER_REQUEST: u32 = 60;
 
-/// `GraphwarTickHandler` 的我方形状（**只落有地址证据的字段**）。
+/// `get_fractional_tick` 里那个除数的**位型**：`.rodata 0x19f7f8` = `0x3f911111059d0921`
+/// = f64 **0.016666666**（`0x5195da` 的 `divsd xmm2,[0x19f7f8]`）。
 ///
-/// * `elapsed_nanos` ⇐ 原版 `M+0x10`(secs) / `M+0x18`(nanos) 那一对 `Duration` 累加器；
+/// 它**不是** `1/60`（`0x3f91111111111111`），而是 `f64(16_666_666) / 1e9`
+/// ——与 [`NANOS_PER_TICK`] 同源。逐位证：`tick_seconds().to_bits() == TICK_SECONDS_BITS`。
+pub const TICK_SECONDS_BITS: u64 = 0x3f91_1111_059d_0921;
+
+/// 一 tick 的秒数（f64）。**算式不是 `1.0/60.0`**：原版是 `16_666_666 as f64 / 1e9 as f64`，
+/// 两条路径的最后一位不同（见 [`TICK_SECONDS_BITS`]）。
+pub fn tick_seconds() -> f64 {
+    NANOS_PER_TICK as f64 / NANOS_PER_SECOND as f64
+}
+
+/// 一对 `(u64 secs, u32 nanos)` 的 `Duration` 减法：`a - b`，下溢返回 `None`。
+///
+/// 原版走的是 `core::time::Duration::checked_sub`（`0x90cdd0`），下溢的落点是
+/// `panic!("overflow when subtracting durations")`（`.rodata 0x1c649f`，长 `0x23`）。
+pub fn duration_sub(a: (u64, u32), b: (u64, u32)) -> Option<(u64, u32)> {
+    let (mut secs, mut nanos) = a;
+    if secs < b.0 {
+        return None;
+    }
+    secs -= b.0;
+    if nanos < b.1 {
+        if secs == 0 {
+            return None;
+        }
+        secs -= 1;
+        nanos += NANOS_PER_SECOND;
+    }
+    let nanos = nanos - b.1;
+    if nanos >= NANOS_PER_SECOND {
+        // 与原版 `0x519598`（`add edx, 0xc4653600` = -1e9 + inc rax）同一套归一化。
+        secs = secs.checked_add(1)?;
+        Some((secs, nanos - NANOS_PER_SECOND))
+    } else {
+        Some((secs, nanos))
+    }
+}
+
+/// `GraphwarTickHandler` 的我方形状（**字段按 `M` 的偏移逐个对上**，见文件头那张表）。
+///
+/// * `base_secs`/`base_nanos` ⇐ 原版 `M+0x00`/`M+0x08`（构造时刻的 `SystemTime`）；
+/// * `elapsed_nanos` ⇐ 原版 `M+0x10`(secs) / `M+0x18`(nanos) 那一对 `Duration` 累加器
+///   （这里合成一个 u64 纳秒数，**语义相同、形状不同**）；
+/// * `frozen_now` ⇐ 原版 `M+0x20`/`M+0x28`（`now` 的覆盖值；`None` = `+0x28` 的哨兵 `1e9`）；
 /// * `current_tick` ⇐ 原版 `M+0x40`（`tick` 里 `inc`、并作为 `TickEvent` 的载荷发出去）；
 /// * `base_tick` / `base_ms` ⇐ **我方**为接 [`tick_at`]（抓包拟合出来的那条公式）加的两个基准，
 ///   原版在这里放的是 `SystemTime::now()`；两者语义等价、形状不同（**我方选择**）。
 #[derive(Debug, Clone)]
 pub struct GraphwarTickHandler {
-    /// 累计走掉的纳秒（原版那一对 `Duration` 字段）。
+    /// 原版 `M+0x00`/`M+0x08`：构造时刻（`base: SystemTime`）。
+    pub base_secs: u64,
+    pub base_nanos: u32,
+    /// 累计走掉的纳秒（原版那一对 `Duration` 字段，`M+0x10`/`M+0x18`）。
     pub elapsed_nanos: u64,
+    /// `now` 的覆盖值（原版 `M+0x20`/`M+0x28`；`None` ⇔ `+0x28` 的哨兵 `1_000_000_000`）。
+    ///
+    /// 原版唯一的写点是 `new` 里那句 `mov dword [rbx+0x40], 0x3b9aca00`（= `M+0x28`）
+    /// ——**只写哨兵、从不写值**，所以本字段只由测试/接线层用 [`GraphwarTickHandler::set_now`]
+    /// 设。**没有**观测到原版哪个函数把它设成真时间（`未知`）。
+    pub frozen_now: Option<(u64, u32)>,
     /// 走到第几个 tick（原版 `M+0x40`，从 0 起）。
     pub current_tick: u32,
     /// [`tick_at`] 的基准 tick / 基准毫秒（**我方形状**）。
@@ -234,18 +346,58 @@ impl Default for GraphwarTickHandler {
 }
 
 impl GraphwarTickHandler {
-    /// `new`（x86 `0x519690`）：累加器与 tick 计数都从 0 起，记下唯一那条订阅名。
+    /// `new`（x86 `0x519690`）：`base = SystemTime::now()`、累加器与 tick 计数都从 0 起、
+    /// `+0x28` 写哨兵 `1e9`、记下唯一那条订阅名。
     ///
-    /// `base_tick` / `base_ms` 是**我方**给 [`tick_at`] 的基准（原版是 `SystemTime::now()`）。
+    /// `base_tick` / `base_ms` 是**我方**给 [`tick_at`] 的基准（原版是 `SystemTime::now()`）；
+    /// 本构造把它们同时当成 `base`（`base_ms` → `(secs, nanos)`），好让"基准"只有一个来源。
     pub fn new(base_tick: i64, base_ms: i64) -> Self {
         Self {
+            base_secs: base_ms.div_euclid(1000).max(0) as u64,
+            base_nanos: (base_ms.rem_euclid(1000) * 1_000_000) as u32,
             elapsed_nanos: 0,
+            frozen_now: None,
             current_tick: 0,
             base_tick,
             base_ms,
             outbox: Vec::new(),
             subscribed: vec![SUBSCRIPTION],
         }
+    }
+
+    /// 原版 `M+0x10`/`M+0x18` 那一对：累加器拆成 `(secs, nanos)`。
+    pub fn accum(&self) -> (u64, u32) {
+        (
+            self.elapsed_nanos / NANOS_PER_SECOND as u64,
+            (self.elapsed_nanos % NANOS_PER_SECOND as u64) as u32,
+        )
+    }
+
+    /// "现在"：有覆盖值就用覆盖值（原版 `M+0x20`/`M+0x28` 路径），否则走系统时钟
+    /// （原版 `0x51953f` 的 `call *0x9ba8f8` = `SystemTime::now()`）。
+    pub fn now(&self) -> (u64, u32) {
+        if let Some(t) = self.frozen_now {
+            return t;
+        }
+        match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => (d.as_secs(), d.subsec_nanos()),
+            // 系统时钟早于 1970（不会发生）⇒ 与 `base` 齐平，`get_fractional_tick` 退化成整数 tick
+            Err(_) => (self.base_secs, self.base_nanos),
+        }
+    }
+
+    /// 设 `now` 的覆盖值（写原版 `M+0x20`/`M+0x28`；`nanos` 必须 < 1e9）。
+    ///
+    /// 档位：**我方接线**——观察到的是"哨兵 = 1e9 ⇒ 取系统时钟"，把这一对设成真时间的
+    /// 写入者在原版里**没有找到**（`未知`）。
+    pub fn set_now(&mut self, secs: u64, nanos: u32) {
+        debug_assert!(nanos < NANOS_PER_SECOND, "原版哨兵 1e9 表示'没设'");
+        self.frozen_now = Some((secs, nanos.min(NANOS_PER_SECOND - 1)));
+    }
+
+    /// 清掉覆盖值 ⇒ 回到系统时钟（写回原版 `M+0x28` 的哨兵 `1e9`）。
+    pub fn clear_now(&mut self) {
+        self.frozen_now = None;
     }
 
     /// `tick`（x86 `0x519840`）：累加 `NANOS_PER_TICK` 纳秒、`current_tick += 1`，
@@ -262,6 +414,49 @@ impl GraphwarTickHandler {
         self.current_tick
     }
 
+    /// `get_fractional_tick`（x86 `0x519530`，调用点 `0x4b631a`）：
+    ///
+    /// ```text
+    /// elapsed = (now - base) - accum          ; Duration 两次 checked_sub（0x51955f / 0x519565）
+    /// return tick as f64 + elapsed.as_secs_f64() / 0.016666666
+    /// ```
+    ///
+    /// `0.016666666` = `.rodata 0x19f7f8`（见 [`tick_seconds`]）。
+    ///
+    /// 原版下溢走 `panic!`；本实现给 0（见文件头最后一段）。
+    pub fn get_fractional_tick(&self) -> f64 {
+        let (now_s, now_ns) = self.now();
+        let elapsed = duration_sub((now_s, now_ns), (self.base_secs, self.base_nanos))
+            .and_then(|d| duration_sub(d, self.accum()));
+        let (secs, nanos) = elapsed.unwrap_or((0, 0));
+        let secs_f = secs as f64 + nanos as f64 / NANOS_PER_SECOND as f64;
+        self.current_tick as f64 + secs_f / tick_seconds()
+    }
+
+    /// `get_time_to_tick`（x86 `0x519450`）：离**下一个** tick 边界还有多久。
+    ///
+    /// ```text
+    /// return (accum + NANOS_PER_TICK) - (now - base)
+    /// ```
+    ///
+    /// 结构照原版：`0x51948f` 判 `accum.nanos >= 1e9 - 16666666` 的进位、
+    /// `0x5194b2` 加 `0xfe502a`、`0x5194ab` 减 `(now - base)`、下溢落 `panic`（这里给 0）。
+    pub fn get_time_to_tick(&self) -> (u64, u32) {
+        let (now_s, now_ns) = self.now();
+        let d = duration_sub((now_s, now_ns), (self.base_secs, self.base_nanos));
+        let target = self
+            .elapsed_nanos
+            .saturating_add(NANOS_PER_TICK as u64);
+        let target = (
+            target / NANOS_PER_SECOND as u64,
+            (target % NANOS_PER_SECOND as u64) as u32,
+        );
+        match d.and_then(|d| duration_sub(target, d)) {
+            Some(t) => t,
+            None => (0, 0),
+        }
+    }
+
     /// `handle_connected_to_server_event`（x86 `0x519630`）：**不看**事件载荷，
     /// 直接发一条 `TickRequest`（判别值 1）。
     pub fn handle_connected_to_server_event(&mut self) {
@@ -276,8 +471,10 @@ impl GraphwarTickHandler {
 
     /// 累计时间换成的"tick 数"（含小数）：`elapsed_nanos / 1e9 * 60`。
     ///
-    /// ⚠️ 这是**我方**从两个常量算出来的派生量，**不是**原版
-    /// `get_fractional_tick`（`0x519530`）的复现——那个函数的算式**未解**。
+    /// ⚠️ 这是**我方**从两个常量算出来的派生量（**只看累加器**，不看系统时钟）；
+    /// 原版的 [`GraphwarTickHandler::get_fractional_tick`]（`0x519530`）读的是
+    /// `(now - base) - accum`。两者在"`now` 刚好落在 tick 边界"时相等。
+    /// 保留它只为旧接线（`root_wiring`）不炸；新代码请用 `get_fractional_tick()`。
     pub fn elapsed_tick_units(&self) -> f64 {
         self.elapsed_nanos as f64 / NANOS_PER_SECOND as f64 * TICKS_PER_SECOND as f64
     }
@@ -352,5 +549,94 @@ mod handler_tests {
         assert_eq!(h.tick_at_now(500), 35);
         assert_eq!(h.tick_at_now(0), 5);
         assert_eq!(tick_at(0, 0, 1000), 60);
+    }
+
+    // -----------------------------------------------------------------
+    // `get_fractional_tick`（0x519530）/ `get_time_to_tick`（0x519450）
+    // -----------------------------------------------------------------
+
+    /// **逐位**：除数就是 `.rodata 0x19f7f8` 那 8 个字节，不是 `1.0/60.0`。
+    #[test]
+    fn divisor_is_the_bit_exact_rodata_constant() {
+        assert_eq!(tick_seconds().to_bits(), TICK_SECONDS_BITS);
+        assert_eq!(TICK_SECONDS_BITS, 0x3f91_1111_059d_0921);
+        // 与 1/60 差在最后几位 —— 光看十进制 0.016666666 是看不出来的
+        assert_ne!(tick_seconds().to_bits(), (1.0f64 / 60.0).to_bits());
+        assert!((tick_seconds() - 1.0 / 60.0).abs() < 1e-8);
+        // 也等于「一 tick 的纳秒数 / 一秒的纳秒数」
+        assert_eq!(tick_seconds(), 16_666_666.0f64 / 1_000_000_000.0f64);
+    }
+
+    /// 恰好踩在 tick 边界 ⇒ 小数部分为 0（`(now-base) - accum == 0`）。
+    #[test]
+    fn fractional_tick_is_integral_on_the_boundary() {
+        let mut h = GraphwarTickHandler::new(0, 0);
+        for _ in 0..7 {
+            h.tick();
+        }
+        // now == base + accum（base 是 0，accum = 7 × 16666666 ns）
+        h.set_now(0, h.elapsed_nanos as u32);
+        assert_eq!(h.get_fractional_tick(), 7.0);
+    }
+
+    /// 半个 tick 之后 ⇒ `.5`；`tick_seconds()` 与 `NANOS_PER_TICK` 同源，所以这里能精确到 1e-9。
+    #[test]
+    fn fractional_tick_reports_the_sub_tick_part() {
+        let mut h = GraphwarTickHandler::new(0, 0);
+        h.tick();
+        let accum = h.elapsed_nanos as u32; // 16_666_666
+        for (extra, want) in [
+            (0u32, 1.0f64),
+            (8_333_333, 1.5),
+            (16_666_666, 2.0), // 一整个 tick 之后（注意：这里**没有**真的调 tick()）
+        ] {
+            h.set_now(0, accum + extra);
+            let got = h.get_fractional_tick();
+            assert!(
+                (got - want).abs() < 1e-6,
+                "extra={extra} ⇒ 期望 {want}，得到 {got}"
+            );
+        }
+    }
+
+    /// `get_time_to_tick` = `(accum + 1 tick) - (now - base)`：边界上正好一 tick，半 tick 后剩一半。
+    #[test]
+    fn time_to_tick_counts_down_to_the_next_boundary() {
+        let mut h = GraphwarTickHandler::new(0, 0);
+        h.tick();
+        let accum = h.elapsed_nanos as u32;
+        h.set_now(0, accum);
+        assert_eq!(h.get_time_to_tick(), (0, NANOS_PER_TICK));
+        h.set_now(0, accum + NANOS_PER_TICK / 2);
+        let (s, ns) = h.get_time_to_tick();
+        assert_eq!(s, 0);
+        assert!((ns as i64 - (NANOS_PER_TICK / 2) as i64).abs() <= 1, "剩 {ns} ns");
+    }
+
+    /// 覆盖值的进出：`set_now` / `clear_now`（原版 `M+0x28` 的哨兵 1e9）。
+    #[test]
+    fn now_override_is_the_1e9_sentinel() {
+        let mut h = GraphwarTickHandler::new(0, 0);
+        assert_eq!(h.frozen_now, None, "构造后 == 哨兵（读系统时钟）");
+        h.set_now(12, 34);
+        assert_eq!(h.now(), (12, 34));
+        let want = 12.0 / tick_seconds();
+        let got = h.get_fractional_tick();
+        assert!((got / want - 1.0).abs() < 1e-6, "got {got}, want {want}");
+        h.clear_now();
+        assert_eq!(h.frozen_now, None);
+    }
+
+    /// 下溢（`now < base + accum`）⇒ 不 panic，小数部分给 0（原版会 panic，见文件头）。
+    #[test]
+    fn underflow_gives_zero_instead_of_panicking() {
+        let mut h = GraphwarTickHandler::new(0, 0);
+        for _ in 0..5 {
+            h.tick();
+        }
+        h.set_now(0, 0); // 回到累加器起点之前
+        assert_eq!(h.get_fractional_tick(), 5.0);
+        // 5 tick 的累加器 + 一 tick，全部还算"没走"
+        assert_eq!(h.get_time_to_tick(), (0, 5 * NANOS_PER_TICK + NANOS_PER_TICK));
     }
 }
