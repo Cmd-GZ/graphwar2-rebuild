@@ -6596,3 +6596,223 @@ bash client/run.sh selftest                      # SELFTEST 618 passed, 0 failed
 就是 618），所以是**文档里的数过期了**（`AGENTS.md` §0.6 那种情况），本轮按实测更正为
 618 并说明口径；谁的环境里能跑到 694，请把当时的 `client/assets/` 与
 `examples/serve_match` 一起记下来再改回去。
+
+---
+
+## 41. 四个「只多一个 `_draw`」的类成了真 Godot 节点（2026-11：第二～第五个垂直切片，235 条 headless 断言全过）
+
+**一句话**：`EffectDrawer` / `GraphwarLongPressAnimation` / `GraphwarPlane` / `PlayerShowcase`
+在 `gdext-bindings` 下各成了一个 `Control` 子类；`_draw` / `_process` 里发出的每一个图元、
+每一次状态推进，**实参全部来自 `src/*.rs` 的纯逻辑**（`frame_primitives` / `draw_frame` /
+`BOARD_*` / `draw_plan` / `step_effects` / `Showcase::tick`），四个类**没有第二份算术**。
+headless 实测 **235 条断言全过**（退出码 0）。
+
+> 档位同 §38：**观测** = 这轮 headless 真跑出来的输出；**推断** = 有依据未证；
+> **未知** = 没解出来。`cargo test` / `selftest` 的条数**只是回归保护**，不是复原证据。
+
+### 41.1 本轮动了哪些文件
+
+| 文件 | 增/改 | 行数 | 内容 |
+|---|---|---|---|
+| `src/_scaffold/effect_drawer_class.rs` | **新增** | 592（类本体代码 239 / 单测 76 / 注释 196 / 空行 49） | 7 个相位 → `draw_circle` / `draw_polygon` / `draw_line`；`step` 走 `step_effects` |
+| `src/_scaffold/long_press_animation_class.rs` | **新增** | 484（155 / 85 / 179 / 40） | 两次 `draw_arc`；`_process` + `advance` 推进相位；越过 2π 自己写哨兵 |
+| `src/_scaffold/graphwar_plane_class.rs` | **新增** | 495（181 / 64 / 177 / 45） | 3 个占位子节点 + 棋盘框 `draw_rect` + 脏矩形队列 + `resized` |
+| `src/_scaffold/player_showcase_class.rs` | **新增** | 665（289 / 75 / 206 / 62） | 读档案 + 3×`draw_texture_rect` + 计数器闸门 + `text_changed` 连线 |
+| `src/_scaffold/mod.rs` | +12 | — | 4 个 `#[cfg(feature = "gdext-bindings")] pub mod` + 注释 |
+| `client/tools/draw_classes_check.gd` | **新增** | 570（235 条断言） | headless 验收脚本 |
+| `docs/16-client.md` | +本节 | — | — |
+
+`src/effect_drawer.rs` / `src/graphwar_long_press_animation.rs` / `src/graphwar_plane.rs` /
+`src/player_showcase.rs` / `src/graphwar_player_config.rs` **一行没动**（仍然零引擎依赖）；
+`src/lib.rs` 没动；`client/` 下既有 `.gd` / `.tscn` / `run.sh` 一个没改。
+
+### 41.2 四个类各自「真的画出东西了吗」—— 都画了（**观测**）
+
+四个 `ClassDB.class_exists` / `instantiate` / `is_class("Control")` 全过（每个类一条），
+下面是**每个类最要紧的那一条**：
+
+```text
+--- EffectDrawer
+ok   相位 0：_draw 被引擎调到（2 次）
+ok   相位 0：每次 _draw 发 1 条 draw_set_transform（2/2）
+ok   相位 0：每次 _draw 发 1 个 draw_circle（2/2）
+ok   相位 4：每次 _draw 发 1 条 draw_line（3/3）
+ok   相位 1：顶点未复原 ⇒ 每次 _draw 记一次 skipped（3/3）
+ok   7 个相位分档：圆 4 个（0/2/3/6）、线 2 个（4/5）、多边形 1 个（1）—— 实际 4/2/1
+ok   给了 3 个顶点之后真的调了 draw_polygon（3 次，_draw 共 6 次）
+ok   每次 _draw 要么画多边形、要么记 skipped，二者之和 == _draw 次数
+ok   step(1.0) 推进 60 tick / 相位 2 到期后推进到 3（CircleLargeA → B）
+
+--- GraphwarLongPressAnimation
+      angle = 1.256637（期望 0.1·4π = 1.256637）
+      draw +3, arc +6（期望 2 倍）
+ok   运行中每次 _draw 发 2 条 draw_arc（+6 = 2×3）
+ok   没 press 时一条 draw_arc 都不发（原版 0x4d8115）
+ok   越过 2π 之后 finished_count ≥ 1（哨兵已写）
+ok   结束之后再 _draw 也不发弧了（nanos == 1e9 直接返回）
+
+--- GraphwarPlane
+      子节点: Control(@Control@12), Control(@Control@13), Control(@Control@14)
+ok   子节点个数 == 3（实际 3）            # 幂等：进树之后 `ready` 没有重复建
+      脏矩形 = [570, 370, 630, 430]（期望 [570, 370, 630, 430]）
+      plane draw=2 rect=2 process=2 obstacle_updates=4 ready=1
+ok   每次 _draw 发 1 条 draw_rect（2/2）
+ok   每帧刷 2 次障碍绘制器（4 次 / 2 帧）
+ok   `resized` 连上了（on_resized 被调到 1 次）
+
+--- PlayerShowcase
+      ready 的 6 步: 取 GraphwarRootNode, 从档案读名字（共享借用）, 取 PlayerNameLineEdit,
+                     LineEdit::set_text(名字), 再取 PlayerNameLineEdit, text_changed → on_text_change
+      showcase draw=1 texture_rects=3 process=2
+ok   第 1 步找不到 GraphwarRootNode（本类没有那个节点；原版这里会 .expect() 失败）
+ok   ready 第 4 步把档案里的名字灌进了控件（"Bob"）
+ok   ready 第 6 步把 text_changed 连到了 on_text_change
+ok   每次 _draw 发 3 条 draw_texture_rect（3 = 3×1）
+ok   计数器变了 ⇒ _process 请求重画（1 次）
+ok   touches_rank() == false（不读段位 / 队色，有界否定）
+      demo 子节点: sprites=yellow, regular_eyes, soldier_helmet label=1
+DRAW_CLASSES 235 passed, 0 failed        # 退出码 0
+```
+
+> 上面是**节选**：省掉了每个类的 11～21 条「方法 X() 存在」（19 + 11 + 16 + 21 = 66 条）。
+> 逐字全文用 39.7 的命令重跑即可。
+
+五条结论（每条都指到上面某一行）：
+
+| 结论 | 档位 | 证据 |
+|---|---|---|
+| 四个类都注册成 `Control` 子类，方法表齐全 | **观测** | 4×(class_exists + instantiate + is_class) + 66 条「方法存在」 |
+| `EffectDrawer` 的 7 个相位各发**恰好**一条图元，多边形在缺顶点时**不调** | **观测** | `4/2/1` 分档 + `skipped == draws` + 占位顶点后 `draw_polygon` 真被调 |
+| 长按动画每次 `_draw` 发 **2 条** `draw_arc`，越过 2π 后自己停 | **观测** | `arc +6 = 2×3` + `finished_count ≥ 1` + 停后再 `_draw` 不发弧 |
+| 棋盘类建 **3 个**子节点、每帧刷 2 次、脏矩形进出、`resized` 真连上 | **观测** | `子节点 == 3` / `obstacle_updates=4 (2 帧)` / `flushed_total ≥ 1` / `on_resized +1` |
+| 名片读档案 + 三层贴图 + 计数器闸门 + 信号连线 | **观测** | 三个默认外观名 + `3×draw` + `redraw_request_count` + `text_changed` 连线 |
+
+**这张表能证明的是**「纯逻辑 → 引擎调用」这条链通了（四类各一种：图元 / 每帧相位 / 子节点 + 脏矩形 / 档案 + 信号）；
+**不能**证明这些类长得对：贴图是程序生成的纯色、多边形顶点仍未复原、棋盘上没有曲线和士兵、
+`GraphwarRootNode` / `FunctionDrawer` / `ObstacleDrawer` / `GraphwarBackend` 四个类都还不存在。
+
+### 41.3 一处**就地更正**：那两次绘制是 `draw_arc`，不是「两层矩形」
+
+`src/graphwar_long_press_animation.rs` 的 §0 写「画**两层矩形**（黑底 + 白层）」，
+§6 把被调 API 记成**未知**（`call *[0x9bc020]`）。本轮按仓库已有的 GOT 槽表把它落定：
+
+| # | 证据 | 内容 | 档位 |
+|---|---|---|---|
+| 1 | 槽 → 包装 | `draw_arc` 字面量 `0x19f9d0` → 包装 `0x8abca0` → GOT 槽 **`0x9bc020`**（`R_X86_64_RELATIVE` 写入） | **观测** |
+| 2 | 调用点 | 全 `.text` 引用 `0x9bc020` 的 `call *…(%rip)` 只有 **5** 条：`EntityDrawer::draw` `0x4b2890` ×3 + `GraphwarLongPressAnimation::draw` `0x4d8100` ×2（`0x4d8485` 黑 / `0x4d84ed` 白） | **观测** |
+| 3 | 形参对齐 | 6 个 f32（`xmm0..xmm5`）+ 1 个 int（`esi = 0x1e` = 30）+ 1 个颜色指针（`rdx`）+ 1 个 bool（`ecx = 0`）——与 `draw_arc(center, radius, start_angle, end_angle, point_count, color, width, antialiased)` 的形参表**逐槽对齐** | **观测**（个数/类型）/ **推断**（哪一槽是哪个形参） |
+
+`draw_rect` 的实参是 4 个 f32 + 颜色 + 2 个标量，装不进 6 个 f32 槽；而「旋转角从 0 走到 2π」
+这件事本身也只有在**弧**上才有意义 ⇒「两层矩形」那句应当作废（本轮**不改**纯逻辑文件，
+只在本节记录；下次动那个文件时请连同 §0 / §6 一起改）。
+
+### 41.4 两处**按证据**与任务书不同（改了什么、为什么）
+
+任务书给这一批的四条指引里，有两条与观测不符。照 `AGENTS.md` §0.3 / §0.6 的规矩**按证据做、
+就地写明**：
+
+**(a) 多边形是 `draw_polygon`，不是 `draw_colored_polygon`。**
+`docs/16` §21 + GOT 槽表：`draw_polygon | 0x29ef97 | — | 0x9bc238 | 1 | EffectDrawer::draw ×1（0x4e1d8f）`，
+全 `.text` 只有这一个调用点；实参是 `(PackedVector2Array, PackedColorArray)`，
+而 §21 记到「颜色 = packed/255，**3 份同色**」⇒ 颜色是**每个顶点一份**的数组。
+`draw_colored_polygon` 只吃**一个** `Color`，形状对不上。
+⇒ 本类调 `draw_polygon`，并把纯逻辑那 1 个颜色按**顶点数**复制（顶点数由调用方给，不硬编码 3）。
+
+**(b) `PlayerShowcase` 原版**没有** 3 个 `Sprite2D` + 1 个标签。**
+那是**兄弟类 `EntityDrawer`** 的形状（§24：「士兵不是 `draw()` 画的，是 3 个 `Sprite2D` + 1 个
+`RichTextLabel` 子节点」）。`PlayerShowcase` 的 `draw` 是三次 `draw_texture_rect_full` 画在
+**自己身上**（arm64 `0x4402b0` / `0x44037c` / `0x440444`），`ready` 里只**取**（不建）一个
+`PlayerNameLineEdit`。
+⇒ 本类**默认路径 = 证据**（`_draw` 里三次 `draw_texture_rect`）；任务书要的那个形状以
+`build_demo_children()` 提供（**显式 opt-in**、文档与代码里都标**非原版**、默认不建），
+验收脚本照样断言「3 个 `Sprite2D` + 1 个 `Label`」。
+这样「默认跑起来 == 原版形状」，而「任务书要的形状」也有可断言的方法。
+
+### 41.5 每个类多少行 —— 「接引擎」的代码只有 864 行里的三分之一
+
+| 文件 | 总行 | **类本体代码** | 单测代码 | 注释 | 空行 |
+|---|---|---|---|---|---|
+| `effect_drawer_class.rs` | 592 | **239** | 76 | 196 | 49 |
+| `long_press_animation_class.rs` | 484 | **155** | 85 | 179 | 40 |
+| `graphwar_plane_class.rs` | 495 | **181** | 64 | 177 | 45 |
+| `player_showcase_class.rs` | 665 | **289** | 75 | 206 | 62 |
+| **合计** | **2236** | **864** | 300 | 758 | 196 |
+
+对比 §38.3 的 `EntityDrawer`（677 行 / 本体代码 291）：**这四个类加起来 864 行**，
+平均每个 216 行——比 §38 那一个还小，因为**注册、属性表、方法表、虚方法表一律 0 行**
+（gdext 宏全包），真正要手写的只有「把纯逻辑的返回值搬进 `draw_*` / `add_child` / `connect`」。
+四类的纯逻辑（相位跳表、角度算式、棋盘常量、档案偏移、绘制顺序）**一行没写**——全在 `src/*.rs` 里。
+
+### 41.6 本轮新踩的坑（每条都是实测，不是听说）
+
+1. **`step_effects` 会**在验收脚本背后**改相位**。`STATE_TERMINAL_MASK = 0x5b` ⇒ 相位
+   0/1/3/4/6 是终态，**2 和 5 不是**；`_process` 每帧调 `step`，只要 `start_tick <= elapsed`
+   就换相位（2→3、5→6）。实测现象：给相位 5 建一个元素、等两帧，**3 次 `_draw` 里只有 1 次
+   发 `draw_line`**（后两次元素已经变成相位 6 的圆）。
+   ⇒ 要断言「**某个相位**画什么」，必须让 `start_tick` 落在**未来**
+   （`set_now_tick(1e6)` → `spawn_effect` → `set_now_tick(0)`），否则测的是相位推进。
+2. **`60.0 × (1.0 / 60.0)` 在 f64 里截断后是 1 tick，不是 0。** 单测里按「略小于 1」写过一次
+   `assert_eq!(ticks_for_delta(1.0/60.0), 0)`，红了；`ticks_for_delta(1.0/600.0)` 才是 0。
+   ⇒「一帧等于几 tick」由浮点舍入决定，别用整除猜。
+3. **Godot 4.7 的 `LineEdit.set_text()` 不发 `text_changed`**（属性 `text = ...` 也一样）。
+   实测：`edit.text = "Carol"` 之后 `on_text_change` 一次都没被调到。headless 里没有键盘，
+   要验「信号连对了」只能 `edit.emit_signal("text_changed", "Carol")`。**这条要记住：
+   原版这条链是用户输入驱动的，headless 断言的只能是「连线存在且回调正确」。**
+4. **`base_mut()` 的独占借用连 `&self` 的方法都挡。** `PlayerShowcase::_draw` 里先
+   `let mut base = self.base_mut();` 再在循环里调 `self.texture_for(..)`（`&self`）⇒ `E0502`。
+   解法：贴图在 `base_mut()` **之前**一次性取成 `Vec`。这是 §38.4 第 6 条（`E0499`）的孪生坑——
+   那次是 `&mut self` 方法，这次连 `&self` 都不行。
+5. **`Gd::instance_id()` 返回 `InstanceId`（`.to_i64()`），没有 `Object::get_instance_id()`。**
+   gdext 0.5 里 `Gd<T>` 上的是 `instance_id()`；`get_instance_id()` 是 C++ 侧的名字，编译不过。
+6. **`PackedStringArray::push` 吃 `&GString`**（`AsArg<GString>` 的 `Pass` 是 `ByRef`）；
+   直接传 `GString` 会 `E0271: <GString as ToGodot>::Pass == ByValue` 不满足。
+7. **`draw_polygon` 少于 3 个顶点会打印引擎错误**（`CanvasItem::draw_polygon` 的
+   `ERR_FAIL_COND_MSG`）。顶点没复原时**不要**「调一下看它抱不抱怨」——本类改成
+   `points.len() < 3` 就跳过并记 `polygon_skipped_total`。
+8. **跑 `selftest` 时不要覆盖 `XDG_DATA_HOME`。** 实测：手工 `export XDG_DATA_HOME=...` 之后
+   `user://replays` 指到了一个含 `client/` 文件的目录，回放列表那条断言直接红
+   （`SELFTEST 693 passed, 1 failed`）；用 `run.sh` 自己的默认值就是 **694 / 0**。
+9. **音频资产必须「先解、再 import」。** 先 `--import` 后解音频，`GwAudio` 仍然报
+   `缺资产`（10 条 audio 断言全变 SKIP，`SELFTEST 686 passed`）；解完**再跑一次** `--import`
+   才是 694。/tmp 之外的产物与 `.godot/` 都进了 gitignore，不会污染提交。
+
+### 41.7 复现（三分钟）
+
+```text
+# 1) 打开 feature 构建（默认关闭 ⇒ 关着时 crate 仍然零依赖）
+export CARGO_HOME=<工作区>/.cargo-home CARGO_TARGET_DIR=<工作区>/target
+cargo build --release --features gdext-bindings --offline
+cp $CARGO_TARGET_DIR/release/libgw2_rebuild.so client/libgw2_rebuild.so
+
+# 2) 必须先 import（否则扩展静默不加载，脚本连类都认不出来）
+export XDG_DATA_HOME=$PWD/.godot-data XDG_CACHE_HOME=$PWD/.godot-cache XDG_CONFIG_HOME=$PWD/.godot-config
+godot --headless --path client --import
+
+# 3) 验收（235 条断言，退出码 0）
+godot --headless --path client --script res://tools/draw_classes_check.gd
+
+# 4) 回归保护（三条硬要求，缺一样都跑不到文档里的数字）
+cargo test --offline                           # lib 457 / 总计 1499
+cargo test --offline --features gdext-bindings  # lib 488（457 − 手写 gdext 的 4 + 本批 35）/ 总计 1530
+bash client/run.sh selftest                    # 694 passed（默认 feature 的 .so；别覆盖 XDG_DATA_HOME）
+```
+
+### 41.8 还没做 / 未知（诚实清单）
+
+* **多边形顶点公式**（`effect_drawer` 模块 §5）：只读到两组点各乘 `0.2`。本类**不发明**顶点，
+  由调用方给；`polygon_skipped_total` 就是「欠了多少几何」的计数器。
+* **`draw_line` 的端点**（相位 4/5）：纯逻辑给的是 `from == to == center` 的退化线段；
+  原版端点未复原，本类照发（每次 `_draw` 真的调一次 `draw_line`）。
+* **`EffectDrawer` 的 tick 从哪来**：原版读 `GraphwarModuleContainer` 那个模块的 `+0x58`，
+  本类自己数（`step(delta)`）。
+* **障碍**：`step_effects` 的 `is_obstacle` 恒 `false`——`GraphwarObstacleManager` 还没接。
+* **`ready` 的 11 个后端事件**（`EffectDrawer` 2 个 + `GraphwarPlane` 3 个 + `EntityDrawer` 6 个）
+  一个都没订：要 `GraphwarBackend` 到节点层。
+* **`GraphwarLongPressAnimation` 的三次取值**：API 名与语义仍**未知**；本类用
+  `get_position()` / `get_size()` 顶前两对，`n` / `c` 做成导出属性。
+* **`GraphwarPlane` 的曲线 / 障碍 / 士兵**：一个都没有。`FunctionDrawer` / `ObstacleDrawer` 类
+  还不存在，3 个子节点是 `Control` **占位**（自动名 `@Control@N`，名字里的类名就是"还缺什么"）。
+* **`PlayerShowcase` 的贴图加载器**：`GraphwarTextureLoader`（根节点 `+0x16a0`）没有，本类用
+  程序生成的纯色 `ImageTexture`；`save()` 也不写盘（headless 验收不该有副作用）。
+* **`GraphwarRootNode`**：`PlayerShowcase::ready` 第 1 步真的会失败（`root_lookup_failures`），
+  因为那个类还没做。
