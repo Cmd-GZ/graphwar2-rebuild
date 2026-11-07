@@ -26,7 +26,10 @@
 //! | 名字标签的 `theme` | 内联 `Theme` + `StyleBoxFlat`（bg/border 全 alpha 0） | 同值重建 | **观测**（`recovered-src/name_label.tscn`） |
 //! | `ready` | 连 `resized` 信号 + 订 **6 个**后端事件 | 只连 `resized`；6 个事件**未接**（`GraphwarBackend` 还没有） | 信号名/方法名是**观测**（原版常量）；事件订阅**未做** |
 //! | `process` | 每帧 `update_sprite` ×3、`update_name_label` ×2、死亡淡出、4 次 `HashMap::retain` | 每帧重摆所有实体（`relayout`）；`retain` 的判据仍是 `entity_drawer::UNKNOWNS` 第 2 条 | 布局是**观测**；清理判据**未知** |
-//! | `draw` | 三段弧 + 三个箭头（准星） | **没实现**（`_draw` 一个 `draw_*` 都不调） | 准星几何是**观测**（`entity_drawer::ring_primitives`），但本切片只做子节点 |
+//! | `draw` | 三段弧 + 三个箭头（准星）；角度 / 线宽 / 折点 / 抗锯齿全是立即数 | **实现了**：`entity_drawer::entity_primitives` 的 6 条图元 → 3 次 `draw_polygon`（箭头）+ 3 次 `draw_arc`（弧） | 准星几何 **观测**（`docs/archive/140-plane-visual.md` §2 逐条立即数）；坐标单位是**推断**（见下两行） |
+//! | 准备圈的**输入** | `draw` 从两张哈希表取中心的 x/y、半径、时钟 `V`、`map[i]`（栈槽 `[rsp+0xb0]/[rsp+0xa8]`、`[rsp+0x90]`，`map[i]` 在 `0x4b34d3`–`0x4b35ae` 那段读） | 调用方用 `set_ring()` / `set_ring_base()` 给 | 原版**观测**（`0x4b2e94`–`0x4b35b4`）；本类**我方接线**（`GraphwarBackend` 的 `pos_info_event` 没接） |
+//! | 准备圈的**坐标** | `PosInfo` 的第 1/2/3 个 f64 是否已是画布像素：**未知** | 按 [`ring_center_px`] 那条棋盘 → 像素投影（`k = size.x / 50`，与 sprite 同一条算式），半径乘同一个 `k` | **推断**（缺"PosInfo 的单位"这一条证据） |
+//! | 准备圈的**颜色** | 哈希表里的打包 RGB（`0x4b347a`） | 导出属性 `team_color`（`relayout` 也用它） | **我方接线**（队色表 `get_team_overview` 没接，`docs/16-client.md` §49.5 第 7 条） |
 //! | 子节点命名 | 3 个 sprite 是引擎自动名 `@Sprite2D@N`；名字标签是场景根名 `RichTextLabel`；本类自己挂在 `GraphwarPlane` 下时也是自动名 `@EntityDrawer@N` | 同：sprite **不命名**、名字标签叫 `RichTextLabel` | **观测**（`docs/16` §2.1.10 的节点树 dump） |
 //!
 //! ⇒ 这个类解决的是"**能不能真的建出一棵节点树、并把纯逻辑算出来的位置写进去**"，
@@ -56,10 +59,25 @@
 //!   relayout() -> void                                 # 手动跑一遍「摆位置」
 //!   set_entity_name(id: int, name: String) -> void
 //!   set_entity_dead_ticks(id: int, ticks: int) -> float  # 走 entity_drawer::death_alpha，返回 alpha
+//!
+//!   # ---- 准备圈（`draw`，vaddr 0x4b2890）----
+//!   set_ring(id: int, x: float, y: float, pos_radius: float, v: float) -> void
+//!   set_ring_base(id: int, base: float) -> bool   # 哈希表命中 ⇒ H 走 min(π/6+(V−base)/60, 61.5°)
+//!   clear_ring_base(id: int) -> bool              # 查不到 ⇒ H 恒 π/6（0x4b34e6 je 0x4b35b4）
+//!   clear_ring(id: int) -> bool                   # 这具士兵**不在**准备态 ⇒ 它的环一个图元都不发
+//!   ring_count() -> int
+//!
 //!   ready_call_count() / process_call_count() / resized_call_count() -> int
+//!   draw_call_count() -> int                      # `_draw` 被引擎调到几次
+//!   drawn_arc_total() / drawn_polygon_total() -> int
+//!   last_arc_count() -> int                       # 最近一次 `_draw` 发了几条弧（一具士兵 = 3）
+//!   last_arc(i: int) -> PackedFloat64Array        # 12 个数：cx, cy, r, start, end, 折点数, 线宽, AA, r, g, b, a
+//!   last_polygon(i: int) -> PackedVector2Array    # 箭头顶点（画布像素）
 //! ```
 //!
-//! 最后三个计数是**观测点**：没有它们，headless 里分不清"引擎没回调"和"回调了但没干活"。
+//! 计数与 `last_*` 是**观测点**：没有它们，headless 里分不清"引擎没回调 `_draw`"和
+//! "回调了但一个图元都没发"，也钉不住"发出去的半径/角度/线宽是不是那几条立即数"。
+//! `last_arc` 返回的是 **f32 加宽成 f64** 的值——即引擎真正收到的数，不是我们内部的 f64。
 //!
 //! # 写这种类必须知道的五条（**本轮全部实测**，`docs/16-client.md` §33.4）
 //!
@@ -235,6 +253,94 @@ struct EntityNodes {
 }
 
 // ---------------------------------------------------------------------------
+// 3.5  准备圈（`EntityDrawer::draw`，vaddr `0x4b2890`）
+// ---------------------------------------------------------------------------
+//
+// 纯逻辑那一侧**已经复原完了**，一条算术都不在本文件里：
+//
+//   0x4b2e94..0x4b2ee4  A_i = V/120 + {0, 2π/3, 4π/3}      → entity_drawer::segment_angles
+//   0x4b34d3..0x4b35ae  H = min(π/6 + (V−map[i])/60, 61.5°) → entity_drawer::half_angle
+//   0x4b35ba/0x4b35be   r = f32(pos_radius) × 1.5f32        → entity_drawer::drawn_radius
+//   0x4b9a70            r += 0.5、θ ∓ 6°、3 个顶点           → entity_drawer::arrow_head
+//   0x4b366c/…/0x4b378a 3 次 `draw_arc`（10 折点 / 0.3 宽 / 关 AA） → entity_drawer::ring_primitives
+//
+// 本文件只做**两件**纯接线的事，两件都标了档位：
+//
+// 1. **坐标**：棋盘坐标 → 控件像素。原版 `draw` 里 `[rsp+0xb0]/[rsp+0xa8]` 是不是已经是像素
+//    **未知**（`docs/140` §2.2 只读到"来自士兵坐标"）；这里复用 [`ring_center_px`]
+//    —— 也就是 `sprite_transform` 那条**同一份**投影（`k = size.x/50`、y 轴翻转、镜像符号）。
+//    半径按**同一个 `k`** 放大（假设 `pos_radius` 与中心的 x/y 同单位，因为它们同属一个 `PosInfo`）。
+//    **推断**：若哪天证出 `PosInfo` 已经是像素，把这里的 `k` 换成 1.0 即可，算术一个字不用动。
+// 2. **颜色**：原版从哈希表取打包 RGB；这里用导出属性 `team_color`（**我方接线**）。
+
+/// 一具士兵一次 `_draw` 发出的图元条数：**3 个箭头（`draw_polygon`）+ 3 段弧（`draw_arc`）**。
+///
+/// 顺序取 [`entity_drawer::entity_primitives`]（= 代码地址序：箭头 `0x4b30b7`/`0x4b30e8`/`0x4b3119`
+/// 在前，弧 `0x4b366c`/`0x4b36fd`/`0x4b378a` 在后）。**观测**
+pub const RING_PRIMITIVES_PER_ENTITY: usize = 6;
+
+/// 棋盘坐标 → **控件像素**：`(size.x/2 + s·k·x, size.y/2 − k·y)`。
+///
+/// 直接把 [`entity_drawer::sprite_transform`] 的 `position` 拿来用 ——
+/// 这样"环心落在士兵身上"靠的是**同一条**算式，而不是本文件里第二份投影
+/// （`tex_width` 只影响 `scale`，不影响 `position`，所以随便传 1）。
+///
+/// 档位：投影本身是**观测**（`0x4b9679` 的 `divss [0x1b9fc8]=50.0` 等）；
+/// **"准备圈的坐标也走这条投影"是推断**（见上）。
+pub fn ring_center_px(size: BoardVec2, packed: u32, board: BoardVec2) -> BoardVec2 {
+    entity_drawer::sprite_transform(size, packed, 1, board.x, board.y).position
+}
+
+/// 棋盘单位 → 控件像素的比例 `k = size.x / 50`（与 [`ring_center_px`] 里那个 `k` 同一个）。
+///
+/// 半径用它放大：`r_px = drawn_radius(pos_radius) × k`。**推断**（同 [`ring_center_px`] 的说明）。
+pub fn ring_canvas_scale(size: BoardVec2) -> f64 {
+    (size.x as f32 / entity_drawer::PIXELS_PER_UNIT_DIVISOR) as f64
+}
+
+/// 把纯逻辑的 [`entity_drawer::Color`]（RGBA 四个 f32）搬成 Godot 的 `Color`。
+fn color_of(c: entity_drawer::Color) -> Color {
+    Color::from_rgba(c.r, c.g, c.b, c.a)
+}
+
+/// 一具士兵的「准备态」输入 = 原版 `draw` 从两张哈希表里读到的东西。
+///
+/// 字段与 `docs/140` §2 的栈槽一一对应：`board` = `[rsp+0xb0]/[rsp+0xa8]`、
+/// `pos_radius` = `[rsp+0x90] → [rsp+0x60]`、`v` = `0x4b2e10` 的返回值、
+/// `base` = `map[i]`（`0x4b3586` 的 `subsd`）。
+///
+/// **原版是 `HashMap<i32, …>`**；这里用 `BTreeMap`（遍历顺序稳定，断言可复现）。
+struct PrepRing {
+    /// 棋盘坐标 `(x, y)`（与 [`EntityDrawer::spawn_entity`] 同口径）。
+    board: BoardVec2,
+    /// `PosInfo` 的第 3 个 f64 —— **未标定的半径量**（乘 1.5 才是画出来的半径）。
+    pos_radius: f64,
+    /// 驱动张开/闭合的时间量 `V`（`0x4b2e10 call 0x519530` 的返回值）。
+    v: f64,
+    /// 哈希表里该士兵的起始量；`None` ⇒ `H` 恒 `π/6`（`0x4b34e6 je 0x4b35b4`）。
+    base: Option<f64>,
+}
+
+/// 一次 `draw_arc` 的实参 —— **已经转成 f32**（= 引擎真正收到的数），留给验收脚本对拍。
+///
+/// 槽位顺序照 `CanvasItem::draw_arc(center, radius, start_angle, end_angle, point_count,
+/// color, width, antialiased)`；这正是 x86 包装 `0x8abca0` 的形参表：
+/// `xmm0,xmm1 = center` / `xmm2 = radius` / `xmm3 = start` / `xmm4 = end` /
+/// `esi = point_count` / `rdx = &Color` / `xmm5 = width` / `ecx = antialiased`。
+/// **观测**（`docs/140` §2.2）
+#[derive(Clone, Copy, Debug)]
+struct ArcRecord {
+    center: (f32, f32),
+    radius: f32,
+    start_angle: f32,
+    end_angle: f32,
+    point_count: i32,
+    width: f32,
+    antialiased: bool,
+    color: (f32, f32, f32, f32),
+}
+
+// ---------------------------------------------------------------------------
 // 4. 类本体（注册 + 虚方法 + 属性 + 方法）
 // ---------------------------------------------------------------------------
 
@@ -267,6 +373,23 @@ pub struct EntityDrawer {
     /// 因为我们还没有 `GraphwarTextureLoader` 这个节点。
     textures: BTreeMap<&'static str, Gd<Texture2D>>,
 
+    /// 准备态：实体 id → 这一帧的 `PosInfo` + 时钟 `V`。
+    ///
+    /// `_draw` **只画这张表里的实体**（原版 `draw` 也只遍历自己那两张哈希表）。
+    /// 空表 ⇒ 一个绘制图元都不发 —— 这就是"关掉准备态就不画"的那条分支。
+    prep: BTreeMap<i64, PrepRing>,
+
+    /// `_draw` 被引擎调用过几次（观测点）。
+    draw_calls: i64,
+    /// 累计发出的 `draw_arc` 条数（观测点）。
+    arc_total: i64,
+    /// 累计发出的 `draw_polygon` 个数（观测点）。
+    polygon_total: i64,
+    /// 最近一次 `_draw` 发出的弧实参（**引擎真正收到的 f32 值**）。
+    last_arcs: Vec<ArcRecord>,
+    /// 最近一次 `_draw` 发出的箭头顶点（**画布像素**）。
+    last_polys: Vec<Vec<Vector2>>,
+
     /// `_ready` 被调用过几次（观测点）。
     ready_calls: i64,
     /// `_process` 被调用过几次（观测点）。
@@ -284,6 +407,12 @@ impl IControl for EntityDrawer {
             texture_size: DEFAULT_TEXTURE_SIZE as i64,
             entities: BTreeMap::new(),
             textures: BTreeMap::new(),
+            prep: BTreeMap::new(),
+            draw_calls: 0,
+            arc_total: 0,
+            polygon_total: 0,
+            last_arcs: Vec::new(),
+            last_polys: Vec::new(),
             ready_calls: 0,
             process_calls: 0,
             resized_calls: 0,
@@ -319,9 +448,145 @@ impl IControl for EntityDrawer {
     /// `_process`：原版每帧调 `update_sprite` ×3 + `update_name_label` ×2 并做死亡淡出
     /// （`docs/16-client.md` §21）。这里收敛成一次 [`Self::relayout`] ——
     /// 摆位置的算术仍然来自 `entity_drawer::sprite_transform` / `name_label_layout`。
+    ///
+    /// 末尾那句 `queue_redraw()` 是**准备圈**要的：`_draw` 只在引擎认为"这块画布脏了"时才来，
+    /// 而准备圈的驱动量 `V` 每帧都在变（原版 `draw` 也是每帧重算角度）。
+    /// 子节点（sprite / 标签）不受影响：它们自己有自己的 `NOTIFICATION_DRAW`。
     fn process(&mut self, _delta: f64) {
         self.process_calls += 1;
         self.relayout();
+        self.base_mut().queue_redraw();
+    }
+
+    /// `_draw`：原版 `EntityDrawer::draw`（vaddr `0x4b2890`，5984 B）里**准星那一段**。
+    ///
+    /// 原版对**每一具**准备态士兵发 6 条图元：3 次 `draw_polygon`（`0x4b30b7` / `0x4b30e8` /
+    /// `0x4b3119`，各自经 `0x4b9a70`）画外凸箭头、3 次 `draw_arc`（`0x4b366c` / `0x4b36fd` /
+    /// `0x4b378a`，经 GOT 槽 `0x9bc020`）画三段弧。本函数逐条照发，顺序也照代码地址序。
+    ///
+    /// ```text
+    /// 图元来源：entity_drawer::entity_primitives(EntityRingInput)
+    ///           = arrow_primitives (3 × Polygon)  ++  ring_primitives (3 × Arc)
+    /// 实参来源：Arc{radius,start,end,point_count,width,antialiased}  ← 全是立即数（docs/140 §2）
+    /// 本文件新增的两步（都是接线，不是算术）：
+    ///   center   棋盘坐标 → 画布像素  = ring_center_px(…)
+    ///   radius   × k（k = size.x/50）= ring_canvas_scale(…)
+    /// ```
+    ///
+    /// ⚠️ **要画东西得先有准备态**：`prep` 空表时这里一条图元都不发（原版也只看自己的哈希表）。
+    /// 谁来填这张表 = 还没接的 `pos_info_event`（`entity_drawer::READY_EVENTS` 第 1 个）。
+    fn draw(&mut self) {
+        self.draw_calls += 1;
+
+        // ① 先把这一帧要发的图元**全部算成实参**：纯逻辑（`entity_primitives`）+ 投影。
+        //    `self.base_mut()` 会独占借用 `&mut self`，那段里碰不到 `self.xxx`（`E0499`）。
+        let size = self.base().get_size();
+        let control_size = BoardVec2::new(size.x as f64, size.y as f64);
+        let packed = self.team_color as u32;
+        let scale = ring_canvas_scale(control_size);
+        let ring_color = entity_drawer::Color::from_packed_rgb(packed);
+
+        let mut arcs: Vec<ArcRecord> = Vec::new();
+        let mut polys: Vec<(Vec<Vector2>, Color)> = Vec::new();
+
+        for prep in self.prep.values() {
+            let center_px = ring_center_px(control_size, packed, prep.board);
+            let input = entity_drawer::EntityRingInput {
+                center: prep.board,
+                pos_radius: prep.pos_radius,
+                v: prep.v,
+                base: prep.base,
+                color: ring_color,
+            };
+
+            for prim in entity_drawer::entity_primitives(input) {
+                match prim {
+                    entity_drawer::Primitive::Arc {
+                        radius,
+                        start_angle,
+                        end_angle,
+                        point_count,
+                        color: arc_color,
+                        width,
+                        antialiased,
+                        ..
+                    } => {
+                        arcs.push(ArcRecord {
+                            center: (center_px.x as f32, center_px.y as f32),
+                            // `radius` 已经是 `f32(pos_radius) × 1.5f32`，这里只差棋盘→像素那一乘。
+                            radius: (radius * scale) as f32,
+                            // 角度**不改**：原版直接送 `A_i ∓ H`（`subsd`/`addsd` 之后 cvtsd2ss）。
+                            start_angle: start_angle as f32,
+                            end_angle: end_angle as f32,
+                            point_count: point_count as i32,
+                            width: width as f32,
+                            antialiased,
+                            color: (arc_color.r, arc_color.g, arc_color.b, arc_color.a),
+                        });
+                    }
+                    entity_drawer::Primitive::Polygon { points, colors } => {
+                        // 顶点在棋盘坐标里算（`r`、`r+0.5`、`θ∓6°`），逐点投影到画布像素。
+                        let pts: Vec<Vector2> = points
+                            .iter()
+                            .map(|p| {
+                                let q = ring_center_px(control_size, packed, *p);
+                                Vector2::new(q.x as f32, q.y as f32)
+                            })
+                            .collect();
+                        let c = colors.first().copied().unwrap_or(ring_color);
+                        polys.push((pts, color_of(c)));
+                    }
+                }
+            }
+        }
+
+        // ② 逐条发出去。计数在局部变量里累计，`base` 的作用域结束后再写回字段。
+        let mut arc_n = 0i64;
+        let mut poly_n = 0i64;
+        {
+            let mut base = self.base_mut();
+            for a in &arcs {
+                // 后三个参数在 Godot 4 有默认值 ⇒ gdext 生成的是 `draw_arc_ex` builder。
+                // 这里三个都显式给：`width` 是 0.3、`antialiased` 是 false —— 都是立即数。
+                base.draw_arc_ex(
+                    Vector2::new(a.center.0, a.center.1),
+                    a.radius,
+                    a.start_angle,
+                    a.end_angle,
+                    a.point_count,
+                    Color::from_rgba(a.color.0, a.color.1, a.color.2, a.color.3),
+                )
+                .width(a.width)
+                .antialiased(a.antialiased)
+                .done();
+                arc_n += 1;
+            }
+
+            for (pts, c) in &polys {
+                // `CanvasItem::draw_polygon` 少于 3 个顶点会打印引擎错误 ⇒ 顶点不足就不调
+                // （`arrow_head` 恒给 3 个，这条防御只在几何被改坏时才生效）。
+                if pts.len() < 3 {
+                    continue;
+                }
+                let mut pv = PackedVector2Array::new();
+                for p in pts {
+                    pv.push(*p);
+                }
+                // 原版每个箭头 push **同一个颜色 3 份**（`0x4b9c3c`/`0x4b4c5c`/`0x4b4c76`），
+                // 所以份数 = 顶点数（**观测**）。
+                let mut cv = PackedColorArray::new();
+                for _ in 0..pts.len() {
+                    cv.push(*c);
+                }
+                base.draw_polygon(&pv, &cv);
+                poly_n += 1;
+            }
+        }
+
+        self.arc_total += arc_n;
+        self.polygon_total += poly_n;
+        self.last_arcs = arcs;
+        self.last_polys = polys.into_iter().map(|(p, _)| p).collect();
     }
 }
 
@@ -405,6 +670,9 @@ impl EntityDrawer {
     ///
     /// 用 `queue_free`（延迟到本帧末）而不是 `free`：`free` 在信号/物理回调里是危险的，
     /// 而 `remove_entity` 完全可能被这类回调调到。⇒ 调用方**要等一帧**才看得到子节点消失。
+    ///
+    /// 顺手把它的准备态也删掉：实体没了还在画环没有意义（原版 `entity_removed_event`
+    /// 那条路径也会把哈希表里那一项去掉；**具体时机未知**，这里取"同一刻"）。
     #[func]
     fn remove_entity(&mut self, id: i64) -> bool {
         let Some(entity) = self.entities.remove(&id) else {
@@ -414,6 +682,9 @@ impl EntityDrawer {
             sprite.clone().upcast::<Node>().queue_free();
         }
         entity.name_label.clone().upcast::<Node>().queue_free();
+        if self.prep.remove(&id).is_some() {
+            self.base_mut().queue_redraw();
+        }
         true
     }
 
@@ -530,6 +801,169 @@ impl EntityDrawer {
     #[func]
     fn ready_call_count(&self) -> i64 {
         self.ready_calls
+    }
+
+    // -----------------------------------------------------------------------
+    // 准备圈（`_draw` 的输入与观测口）
+    // -----------------------------------------------------------------------
+
+    /// 把一具士兵标成「准备态」，给出这一帧的 `PosInfo` + 时钟 `V`。
+    ///
+    /// 参数口径与原版 `draw` 读到的一致：
+    ///
+    /// * `x` / `y` —— **棋盘坐标**（与 [`Self::spawn_entity`] 同一个口径；`draw` 里那两个栈槽
+    ///   `[rsp+0xb0]` / `[rsp+0xa8]` 的单位**未知**，本类按棋盘坐标处理，见文件头对照表）；
+    /// * `pos_radius` —— `PosInfo` 的第 3 个 f64（**未标定**：乘 1.5 才是画出来的半径）；
+    /// * `v` —— 驱动张开/闭合的那个时间量（`0x4b2e10 call 0x519530` 的返回值，原版**不知道是什么时钟**）。
+    ///
+    /// 同一个 `id` 再调一次 = 更新 `x/y/radius/V`（`base` 保留，除非用
+    /// [`Self::clear_ring_base`] 清掉）——原版那两张哈希表也是"每帧覆盖"。
+    #[func]
+    fn set_ring(&mut self, id: i64, x: f64, y: f64, pos_radius: f64, v: f64) {
+        // 更新时**保留**已有的 base：原版 `map[i]` 是"该士兵的起始量"，不随每帧调用而变。
+        let base = self.prep.get(&id).and_then(|p| p.base);
+        self.prep.insert(
+            id,
+            PrepRing {
+                board: BoardVec2::new(x, y),
+                pos_radius,
+                v,
+                base,
+            },
+        );
+        self.base_mut().queue_redraw();
+    }
+
+    /// 对应 `0x4b34e0`–`0x4b34e6` 的**查表命中**：哈希表里有这具士兵的起始量
+    /// ⇒ `H = min(π/6 + (V − base)/60, 1.0733774899765125)`。
+    ///
+    /// 没标成准备态（没调过 [`Self::set_ring`]）时返回 `false` 且什么也不做。
+    #[func]
+    fn set_ring_base(&mut self, id: i64, base: f64) -> bool {
+        let ok = match self.prep.get_mut(&id) {
+            Some(prep) => {
+                prep.base = Some(base);
+                true
+            }
+            None => false,
+        };
+        if ok {
+            self.base_mut().queue_redraw();
+        }
+        ok
+    }
+
+    /// 对应 `0x4b34e6 je 0x4b35b4`：**查不到** ⇒ `H` 恒为 `π/6`（60° 单段）。
+    #[func]
+    fn clear_ring_base(&mut self, id: i64) -> bool {
+        let ok = match self.prep.get_mut(&id) {
+            Some(prep) => {
+                prep.base = None;
+                true
+            }
+            None => false,
+        };
+        if ok {
+            self.base_mut().queue_redraw();
+        }
+        ok
+    }
+
+    /// 把这具士兵从准备态里删掉 ⇒ 它的环与箭头**一个图元都不再发**。
+    ///
+    /// 返回"之前是否在准备态"。这就是"关掉准备态就不画"的那个开关
+    /// （原版靠 `draw` 里 `test %r14b,%r14b` / `test %bl,%bl` 两处分支实现，语义**未知**）。
+    #[func]
+    fn clear_ring(&mut self, id: i64) -> bool {
+        let removed = self.prep.remove(&id).is_some();
+        if removed {
+            self.base_mut().queue_redraw();
+        }
+        removed
+    }
+
+    /// 现在有几具士兵处于准备态（`_draw` 只画这些）。
+    #[func]
+    fn ring_count(&self) -> i64 {
+        self.prep.len() as i64
+    }
+
+    /// `_draw` 被引擎调用过几次（观测点）。
+    #[func]
+    fn draw_call_count(&self) -> i64 {
+        self.draw_calls
+    }
+
+    /// 累计发出过几条 `draw_arc`（观测点）。
+    #[func]
+    fn drawn_arc_total(&self) -> i64 {
+        self.arc_total
+    }
+
+    /// 累计发出过几个 `draw_polygon`（箭头，观测点）。
+    #[func]
+    fn drawn_polygon_total(&self) -> i64 {
+        self.polygon_total
+    }
+
+    /// 最近一次 `_draw` 发了几条弧（一具准备态士兵恒 `3`）。
+    #[func]
+    fn last_arc_count(&self) -> i64 {
+        self.last_arcs.len() as i64
+    }
+
+    /// 最近一次 `_draw` 的第 `index` 条弧的**全部实参**，按 `draw_arc` 的形参序：
+    ///
+    /// ```text
+    /// [cx, cy, radius, start_angle, end_angle, point_count, width, antialiased, r, g, b, a]
+    /// ```
+    ///
+    /// 都是 **f32 加宽成 f64**的值 = 引擎真正收到的数。越界返回空数组。
+    #[func]
+    fn last_arc(&self, index: i64) -> PackedFloat64Array {
+        let mut out = PackedFloat64Array::new();
+        let Ok(index) = usize::try_from(index) else {
+            return out;
+        };
+        let Some(a) = self.last_arcs.get(index) else {
+            return out;
+        };
+        for v in [
+            a.center.0 as f64,
+            a.center.1 as f64,
+            a.radius as f64,
+            a.start_angle as f64,
+            a.end_angle as f64,
+            a.point_count as f64,
+            a.width as f64,
+            if a.antialiased { 1.0 } else { 0.0 },
+            a.color.0 as f64,
+            a.color.1 as f64,
+            a.color.2 as f64,
+            a.color.3 as f64,
+        ] {
+            out.push(v);
+        }
+        out
+    }
+
+    /// 最近一次 `_draw` 的第 `index` 个箭头多边形的顶点（**画布像素**）。
+    ///
+    /// 3 个顶点，按原版 push 顺序：尖端（半径 `r` 上）、底边（半径 `r+0.5`、`θ−6°`）、
+    /// 底边（`θ+6°`）。越界返回空数组。
+    #[func]
+    fn last_polygon(&self, index: i64) -> PackedVector2Array {
+        let mut out = PackedVector2Array::new();
+        let Ok(index) = usize::try_from(index) else {
+            return out;
+        };
+        let Some(points) = self.last_polys.get(index) else {
+            return out;
+        };
+        for p in points {
+            out.push(*p);
+        }
+        out
     }
 
     /// `_process` 被引擎调用过几次。
@@ -673,5 +1107,90 @@ mod tests {
         );
         assert!((0.0..=120.0).contains(&layout.position.x), "{:?}", layout);
         assert_eq!(layout.modulate.a, 1.0);
+    }
+
+    /// 准备圈的投影就是 sprite 那条投影（本文件**没有第二份**棋盘→像素算式）。
+    ///
+    /// 控件 `500×300`、不翻面、棋盘 `(5, 5)` ⇒ `k = 10` ⇒ `(250 + 50, 150 − 50) = (300, 100)`，
+    /// 与 [`sprite_transform_matches_the_hand_computed_expectation`] 那两个数**必须一样**。
+    #[test]
+    fn ring_projection_reuses_the_sprite_projection() {
+        let size = BoardVec2::new(500.0, 300.0);
+        let center = ring_center_px(size, DEFAULT_TEAM_COLOR as u32, BoardVec2::new(5.0, 5.0));
+        assert!((center.x - 300.0).abs() < 1e-4, "x={}", center.x);
+        assert!((center.y - 100.0).abs() < 1e-4, "y={}", center.y);
+        assert!((ring_canvas_scale(size) - 10.0).abs() < 1e-9);
+    }
+
+    /// 一具准备态士兵发 **6** 条图元：先 3 个箭头（`Polygon`）、再 3 段弧（`Arc`），
+    /// 且弧的实参就是 `docs/140` §2 的那几条立即数（10 折点 / 0.3 宽 / 关 AA / `∓H`）。
+    ///
+    /// 这条测试钉的是"脚手架**没有**偷偷改算术"：它把
+    /// [`entity_drawer::entity_primitives`] 原样跑一遍，逐条对形参。
+    #[test]
+    fn ring_issues_three_arrows_then_three_arcs_with_the_immediate_values() {
+        let input = entity_drawer::EntityRingInput {
+            center: BoardVec2::new(5.0, 5.0),
+            pos_radius: 2.0,
+            v: 0.0,
+            base: None,
+            color: entity_drawer::Color::from_packed_rgb(0x0068_7d),
+        };
+        let prims = entity_drawer::entity_primitives(input);
+        assert_eq!(prims.len(), RING_PRIMITIVES_PER_ENTITY);
+
+        let h = entity_drawer::HALF_ANGLE_MIN_RAD; // base 查不到 ⇒ 恒 π/6
+        let angles = entity_drawer::segment_angles(0.0);
+        let radius = entity_drawer::drawn_radius(2.0);
+
+        for (i, prim) in prims.iter().enumerate() {
+            match prim {
+                entity_drawer::Primitive::Polygon { points, colors } => {
+                    assert!(i < 3, "箭头必须都在弧之前（代码地址序）：i={i}");
+                    assert_eq!(points.len(), 3);
+                    assert_eq!(colors.len(), 3, "同一个颜色 3 份（0x4b9c3c/0x4b4c5c/0x4b4c76）");
+                    // 尖端在 `r` 上、底边两点在 `r + 0.5` 上
+                    let d0 = (points[0].x - 5.0).hypot(points[0].y - 5.0);
+                    let d1 = (points[1].x - 5.0).hypot(points[1].y - 5.0);
+                    assert!((d0 - radius).abs() < 1e-12, "d0={d0} r={radius}");
+                    assert!(
+                        (d1 - (radius + entity_drawer::ARROW_RADIUS_DELTA)).abs() < 1e-12,
+                        "d1={d1}"
+                    );
+                }
+                entity_drawer::Primitive::Arc {
+                    radius: r,
+                    start_angle,
+                    end_angle,
+                    point_count,
+                    width,
+                    antialiased,
+                    ..
+                } => {
+                    assert!(i >= 3, "弧必须在箭头之后：i={i}");
+                    assert_eq!(*point_count, entity_drawer::ARC_POINT_COUNT); // 10
+                    assert_eq!(*width, entity_drawer::ARC_WIDTH as f64); // 0.3f32 加宽
+                    assert!(!*antialiased); // 关 AA
+                    assert_eq!(*r, radius); // f32(pos_radius) × 1.5f32
+                    let a = angles[i - 3];
+                    assert_eq!(*start_angle, a - h); // subsd @0x4b3620
+                    assert_eq!(*end_angle, a + h); // addsd @0x4b362c
+                }
+            }
+        }
+    }
+
+    /// 闭合态封顶：`V` 再大，`H` 也只到 `1.0733774899765125`（≈61.5°，单段 123°）。
+    #[test]
+    fn closed_ring_caps_at_the_documented_half_angle() {
+        assert_eq!(
+            entity_drawer::half_angle(60.0, Some(0.0)),
+            entity_drawer::HALF_ANGLE_MAX_RAD
+        );
+        // 张开：`V == base` ⇒ H 就是 π/6（单段 60°）
+        assert_eq!(
+            entity_drawer::half_angle(0.0, Some(0.0)),
+            entity_drawer::HALF_ANGLE_MIN_RAD
+        );
     }
 }

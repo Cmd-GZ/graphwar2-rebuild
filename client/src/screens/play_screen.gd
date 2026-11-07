@@ -1281,20 +1281,28 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		key_input(cmd)
 	get_viewport().set_input_as_handled()
 
-# ---------------------------------------------------------------- 准备圈：本轮**丢了**（诚实的缺口）
+# ---------------------------------------------------------------- 准备圈：几何已复原，**触发还没接**
 ##
-## 旧实现在这里有一个 `fire_fx_state()`：给 `GwFireFx` 供"谁该开火、准备好没有"，
-## 由仿制控件画出准备圈。**这一套随 `fire_fx.gd` 一起删掉了**，原因与剩余缺口：
+## 原版的准备圈是 **`EntityDrawer::draw`**（vaddr `0x4b2890`）里 3 次 `draw_arc` +
+## 3 个外凸箭头画的（`docs/140` §2 逐条立即数）。**这一段已经落地**：
+## `src/_scaffold/entity_drawer_class.rs` 的 `_draw` 把 `entity_drawer::entity_primitives`
+## 的 6 条图元逐条发成 `draw_arc` / `draw_polygon`（`docs/16` §50；
+## `client/tools/entity_drawer_check.gd` 有 46 条断言钉住半径 / 起止角 / 线宽 / 折点 / 箭头顶点）。
 ##
-## * 原版的准备圈是 **`EntityDrawer::draw`** 里 3 次 `draw_arc` + 3 个外凸箭头画的
-##   （`0x4b2890`，`docs/140` §2 逐条立即数）；本项目的 `EntityDrawer` 节点类
-##   **没有实现 `_draw`**（`entity_drawer_class.rs` 对照表："`draw` 没实现"）
-##   ⇒ 六个真节点里**没有任何一个**会画它；
-## * 想补上，要动的是 `src/_scaffold/entity_drawer_class.rs` 的 `_draw`
-##   （纯逻辑侧的算术 `entity_drawer::ring_primitives` 已经复原了），而本任务
-##   不许改其它 `*_class.rs` 的**行为** ⇒ 记成缺口，不在这里再造一个 GDScript 假圈。
+## **但画面上暂时仍然看不到它**，卡的是**触发**而不是绘制：
 ##
-## `docs/16` §48.5 第 2 条是这条缺口的正式记录。
+## * `_draw` 只画 **`prep` 表里**的实体（原版也只遍历自己那两张 `HashMap`）。这张表要由
+##   调用方填 —— `EntityDrawer.set_ring(id, x, y, pos_radius, v)`（配 `set_ring_base`）。
+##   原版填它的是 `ready` 里订的 `pos_info_event`（`entity_drawer::READY_EVENTS` 第 1 个），
+##   而 `GraphwarBackend` 还没接到节点层 ⇒ **本文件里也没有任何一处调 `set_ring`**。
+## * 补它的最小改法（**下一轮**，本轮任务书不许动本文件的逻辑）：在 `_sync_entities()`
+##   的循环里只对"当前行动的那具士兵"调
+##   `_entities.call("set_ring", id, p.x, p.y, radius, v)`，其余实体
+##   `_entities.call("clear_ring", id)`；`v` 取 tick 源（`get_fractional_tick`，§48 已接）。
+##   `pos_radius` 是 `PosInfo` 的第 3 个 f64，**语义仍未标定**（`docs/140` §3.1 那 14% 的缺口）。
+## * 先删掉的 `fire_fx.gd` 那条"假圈"路**不要再造一遍**：圈必须由 `EntityDrawer::draw` 画。
+##
+## `docs/16` §49.5 第 1 条与 §50 是这条缺口的正式记录。
 func _on_function_text_changed(new_text: String) -> void:
 	_functions[_active] = new_text
 	if not _suppress_offset_clear:

@@ -1846,11 +1846,13 @@ func _test_fire_fx() -> void:
 	# `GwFireFx`。那两个类**本轮删掉了**（`docs/16` §48.1），所以断言**换主语不减法**：
 	# 同样验"画出来的东西对不对"，只是主语从 GDScript 控件换成 Rust 扩展类。
 	#
-	# 准备圈本身**没有替身**：原版是 `EntityDrawer::draw`（`0x4b2890`）画的，而本项目的
-	# `EntityDrawer` 节点类 `_draw` 还没实现（§33 对照表）⇒ 画面上没有准备圈。
-	# 它的几何证据仍在 Rust 侧：`tests/entity_drawer.rs` 的
-	# `arcs_carry_the_exact_draw_arc_arguments`（10 折点 / 0.3 带宽 / 关 AA / `#7D6800`）
-	# 与 `open_ring_is_narrower_than_closed_ring`（张开 60° / 闭合 123°）。
+	# 准备圈：**绘制已经实现了**（`docs/16` §50）。原版是 `EntityDrawer::draw`（`0x4b2890`）
+	# 里 3 次 `draw_arc` + 3 个外凸箭头；现在 `EntityDrawer` 的 `_draw` 就照那 6 条图元发，
+	# 断言在 `client/tools/entity_drawer_check.gd`（72 → 118 条：半径/起止角/线宽/折点/关 AA/
+	# 中分角 2π/3 与 4π/3/箭头尖端在 r、底边在 r+0.5、张 12°/关掉准备态就不画）。
+	# ⚠️ **画面上仍然看不到**，卡的是**触发**：`_draw` 只画 `set_ring()` 填进去的实体，
+	# 而播放屏还没人调它（`pos_info_event` 没接，本轮任务书不许动播放屏的逻辑）
+	# ⇒ 自检里也就没有"播放屏真的画出准备圈"这条断言。见 `docs/16` §49.5 第 1 条 / §50.6。
 	var plane := play.find_child("GraphwarPlane", true, false) as Control
 	_expect(plane != null, "真节点：播放屏里有 GraphwarPlane")
 	_expect(plane != null and plane.is_class("GraphwarPlane"),
