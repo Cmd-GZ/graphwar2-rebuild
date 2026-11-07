@@ -220,8 +220,11 @@ impl FunctionDrawer {
     ///
     /// `color` 只在**建节点**时用（原版 `r9d` 也只在那里用一次）；之后想改走
     /// [`FunctionDrawer::update_function_fade`]。
+    ///
+    /// ⚠️ `pub` 是为了让 `GraphwarPlane`（`graphwar_plane_class.rs`）直接调——原版唯一的调用者
+    /// 就是它（`0x4b69ec`，`docs/16-client.md` §41）。GDScript 侧照样能 `call("update_function", …)`。
     #[func]
-    fn update_function(&mut self, player_id: i64, points: PackedVector2Array, color: i64) -> i64 {
+    pub fn update_function(&mut self, player_id: i64, points: PackedVector2Array, color: i64) -> i64 {
         let Ok(id) = i32::try_from(player_id) else {
             // 原版的 key 是 i32（`0x498caa` 之后按 dword 比较）⇒ 越界不在契约里，拒绝而不是截断。
             self.rejected_call_total += 1;
@@ -292,8 +295,10 @@ impl FunctionDrawer {
     /// 删一条曲线：`Node::queue_free` + 从表里删（原版 `0x498b70`）。
     ///
     /// 返回是否真删了。**必须两件事一起做**：只 `queue_free` 不删表 ⇒ 下次 `add_point` 碰野句柄。
+    ///
+    /// ⚠️ `pub` 同上：原版唯一的调用者是 `GraphwarPlane::draw`（`0x4b6418`）。
     #[func]
-    fn remove_function(&mut self, player_id: i64) -> bool {
+    pub fn remove_function(&mut self, player_id: i64) -> bool {
         let Ok(id) = i32::try_from(player_id) else {
             self.rejected_call_total += 1;
             return false;
