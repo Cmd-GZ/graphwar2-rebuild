@@ -115,6 +115,7 @@ use godot::classes::{Control, IControl, Node};
 use godot::prelude::*;
 
 use super::function_drawer_class::FunctionDrawer;
+use super::obstacle_drawer_class::ObstacleDrawer;
 use crate::graphwar_plane::{self as gp, PixelRect};
 
 /// 默认的棋盘缩放：`PX_PER_UNIT = CANVAS_W / BOARD_W = 1000 / 50 = 20`。
@@ -289,6 +290,17 @@ pub struct GraphwarPlane {
     /// 本类只存 id（文件头第 1 条）。
     plane: gp::GraphwarPlane,
 
+    /// 障碍层（`ObstacleDrawer`，`docs/16-client.md` §45）。**默认不建**，按需
+    /// [`GraphwarPlane::build_obstacle_drawer`]。
+    ///
+    /// 原版这一层是**平面的一个普通字段**（`obstacle_drawer.rs:37:97` 的 Location 落在
+    /// `GraphwarPlane::init` 里）；本类把它落成子节点，所以留一个 `Gd` 句柄——它与节点同生共死
+    /// （文件头第 1 条：句柄不能比节点活得久）。
+    ///
+    /// ⚠️ **为什么不自动建**：既有验收脚本断言过平面的子节点数（`draw_classes_check.gd`
+    /// 的 `3`、`assemble_check.gd` 的 `1`/`4`）。自动建会打破它们 ⇒ 改成显式调用。
+    obstacle_drawer: Option<Gd<ObstacleDrawer>>,
+
     /// `_draw` 被引擎调用过几次。
     draw_calls: i64,
     /// 累计发出过几条 `draw_rect`（恒 `draw_calls`，除非 `_draw` 中途返回）。
@@ -339,6 +351,7 @@ impl IControl for GraphwarPlane {
             flip_y: true,
             // 纯逻辑的 `new()` = `Default::default()`：3 个 id 表 + 空脏队列 + ready=false。
             plane: gp::GraphwarPlane::new(),
+            obstacle_drawer: None,
             draw_calls: 0,
             rect_total: 0,
             process_calls: 0,
@@ -387,6 +400,16 @@ impl IControl for GraphwarPlane {
 
         let (updates, _reads_team) = self.plane.process_plan();
         self.obstacle_update_total += updates as i64;
+
+        // 原版 `process` 每帧真的把 `ObstacleDrawer::update` 刷 **2** 次（`process_plan()` 的
+        // `2`）。本类照做——**有障碍层就真刷**，没有就只有计数（§45）。同一帧刷 2 次是原版
+        // 观测到的事实，不是我们的节流；为什么 2 次仍然**未知**。
+        if let Some(drawer) = self.obstacle_drawer.clone() {
+            let plane: Gd<Control> = self.to_gd().upcast::<Control>();
+            for _ in 0..updates {
+                drawer.clone().bind_mut().update(plane.clone());
+            }
+        }
 
         let flushed = self.plane.partial_updates.len() as i64;
         if flushed > 0 {
@@ -493,6 +516,43 @@ impl GraphwarPlane {
     #[func]
     fn function_drawer_count(&self) -> i64 {
         self.plane.function_drawers.len() as i64
+    }
+
+    // -----------------------------------------------------------------------
+    // 障碍层（`ObstacleDrawer`，`docs/16-client.md` §45）
+    // -----------------------------------------------------------------------
+
+    /// 建障碍层：一个 [`ObstacleDrawer`] 子节点。幂等：已经有了就直接返回 `1`。
+    ///
+    /// 返回：平面上现在有几个 `ObstacleDrawer` 子节点（`0` / `1`）。
+    ///
+    /// **为什么是显式调用而不是 `ready` 里自动建**：见字段 `obstacle_drawer` 的注释
+    /// （既有脚本断言过子节点数）。建完由 [`GraphwarPlane::process`] 每帧刷 2 次。
+    #[func]
+    fn build_obstacle_drawer(&mut self) -> i64 {
+        if self.obstacle_drawer.is_some() {
+            return 1;
+        }
+        let drawer = ObstacleDrawer::new_alloc();
+        let node = drawer.clone().upcast::<Node>();
+        self.base_mut().add_child(&node);
+        self.obstacle_drawer = Some(drawer);
+        1
+    }
+
+    /// 障碍层建了吗（`0` / `1`）。
+    #[func]
+    fn obstacle_drawer_count(&self) -> i64 {
+        i64::from(self.obstacle_drawer.is_some())
+    }
+
+    /// 障碍层自己记的 `update` 次数（**由那一侧计数**，用来证明"平面真的在每帧驱动它"）。
+    #[func]
+    fn obstacle_drawer_updates(&self) -> i64 {
+        match self.obstacle_drawer.clone() {
+            Some(drawer) => drawer.bind().update_call_count(),
+            None => 0,
+        }
     }
 
     /// 棋盘坐标 → 像素（`graphwar_plane::to_pixel`：`x*1000/50 + 500`、`y*1000/50 + 300`）。
