@@ -3944,3 +3944,42 @@ PY
 （`self` 只留 `server_side`/`client_side` 两个角色标签，由**调用点**判定，不看地址）。
 原始 frida JSONL、截图、`user://` 都在 `.agent-work/` 里（**可丢弃、不入库**）：
 本节每个数字都能用 §37.1 那三条命令重新生成。
+
+## 38. 名字判据的自检口径：`rust_sym` + 普查 + 正对照（2026-11）
+
+> 背景与结论见 `docs/02` §39。本节只写**怎么验**。
+> 一句话：名字判据（哪些符号算 `graphwarrust` 自己的函数）改动之后，**不能只看
+> 「重跑一遍还是这个数」**，必须同时给三条互不依赖的证据。
+
+### 38.1 三条必跑的检查
+
+| # | 验什么 | 命令 | 通过标准 |
+|---|---|---|---|
+| 1 | **判据本身**：结构解析对不对（不是子串） | `.venv/bin/python tools/name_crate_audit.py` | 三段都自洽：`sym_direct + sym_impl_head + sym_nested_impl == game_total`；目标构建 0 个名字；`keys_coarse_only` 里的键 `lands_addr` 全 0 |
+| 2 | **交付物不受损**：改判据没有改错已交付的名字→地址 | `.venv/bin/python tools/name_bridge.py build` + `git diff --stat fixtures/name_to_addr.tsv` | 带地址的行数不变（325 个地址），diff 只有「去掉胶水假名字 + 新增列」 |
+| 3 | **正对照**：随机抽已知真值，逐条查入口/锚归属/两侧一致 | `.venv/bin/python tools/name_accuracy_check.py --sample 30` | 入口 100%、锚归属/溯源 100%、两侧一致 100%（不一致的必须能对上 `docs/02` §39.5 的冲突清单） |
+
+### 38.2 可重复性（这条曾经是坏的）
+
+`name_bridge.py` 的消去法是顺序敏感的贪心，旧版按 `set` 迭代 ⇒ 输出随 `PYTHONHASHSEED` 变
+（同一命令三种答案）。任何「确切数」都必须先过这一关：
+
+```bash
+for s in 0 1 3 7; do PYTHONHASHSEED=$s $PY tools/name_bridge.py build --out /tmp/n$s.tsv; done
+md5sum /tmp/n{0,1,3,7}.tsv      # 四份必须相同
+```
+
+`fixtures/sym_match.tsv` 也一样：重建后必须与入库一致（`md5 = db252b8d135eb879f6a77e26b06becc9`）。
+
+### 38.3 夹具各自的「宇宙」不同——别拿一个数去对另一个
+
+| 夹具 | 宇宙 | 行数 | 判据 |
+|---|---|---|---|
+| `name_to_addr.tsv` | Android 的**游戏自有**符号（`rust_sym.is_game_name`） | 743 | 名字表 |
+| `windows_name_to_addr.tsv` | Windows 的**游戏自有**符号 | 551 | 名字表 |
+| `sym_match.tsv` | Android 里**提到**本 crate 的符号（`mentions_crate`，含编译器胶水） | 1,300 | **配对表**（§35），胶水也是真函数 |
+| `name_crate_audit.tsv` | 三口径并排（prefix_only / unified / coarse） | 4 行 + 逐键清单 | 普查 |
+
+`sym_match.tsv` 的 1,300 是**刻意的**：它的任务是「没有 Location 锚的函数怎么配对」，
+把 330 个胶水函数踢掉会让 §35 的分母与 `tests/sym_match.rs` 的宇宙断言同时失效；
+而它的**名字键**仍然只从游戏自有符号取（`parse_name` 里的 crate 闸），两者不要混为一谈。

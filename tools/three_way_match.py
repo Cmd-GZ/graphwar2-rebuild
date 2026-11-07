@@ -59,10 +59,13 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 import sym_match as SM                       # noqa: E402  Elf / demangle / name_key / parse_name
+import rust_sym                              # noqa: E402  「哪条符号属于 graphwarrust」的唯一判据
 
 # 缓存里存的是**完整扫描结果**，所以反汇编/解析逻辑一改就必须抬版本号，
 # 否则会静默吃旧缓存（sym_match §36.0 踩过这个坑，这里一开始就带着版本号）。
-CACHE_VERSION = "tw-v3"
+# tw-v4：名字筛选从「含 graphwarrust / 以 _ZN 开头」收紧为 rust_sym.is_game_name
+#        （见 docs/02 §39）。缓存的 `names` 字段因此必须重算。
+CACHE_VERSION = "tw-v4"
 
 DEFAULT_LINUX = os.path.join(SM.GW2, ".reference/steam/2026-08-28/libgraphwarrust.so")
 DEFAULT_ANDROID = os.path.join(SM.GW2, ".reference/steam/android-2.0.60/libgraphwarrust.so")
@@ -561,7 +564,13 @@ class Side:
         raw = []
         for va, f in self.universe.items():
             for n in (f.get("name") or ()):
-                if "graphwarrust" in n or n.startswith("_ZN"):
+                # 判据只有一份：`rust_sym.is_game_name`（按长度前缀切段 → 路径首段的 crate）。
+                # 旧口径是 `"graphwarrust" in n or n.startswith("_ZN")`，会把
+                # `core::ptr::drop_in_place<…graphwarrust::X…>` 这类编译器胶水也当成游戏函数，
+                # 再用 `parse_name` 从泛型实参里抠出一个「名字」。
+                # 实测（本版）：这些胶水产生的 12 个名字键在 name_to_addr_v2.tsv 里**一个都没落地**，
+                # 所以收紧判据不改变 v2 的任何地址（见 docs/02 §39.4）。
+                if rust_sym.is_game_name(n):
                     raw.append((va, n))
         if not raw:
             return {}

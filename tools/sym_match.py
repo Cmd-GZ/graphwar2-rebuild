@@ -99,6 +99,9 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+import rust_sym  # noqa: E402  「哪条符号属于 graphwarrust」的唯一判据（结构解析，非子串）
 
 # ---------------------------------------------------------------- 常量
 
@@ -405,10 +408,36 @@ def parse_name(d):
 
     与 `tools/name_bridge.py::parse_name` **行为一致**是刻意的：本工具的名字键必须和
     ground truth 的 `(module, type, method)` 三列同口径，否则 `--verify` 比的是两套不同的
-    名字，结论没有意义。规则本身来自 legacy Rust mangling 的形状。
+    名字，结论没有意义。规则本身来自 legacy Rust mangling 的形状：
+
+    * direct       `graphwarrust::mod::Type::method`
+    * impl-head    `<graphwarrust::mod::Type as Trait>::method`（crate 名无长度前缀）
+    * 嵌套 impl    `graphwarrust::mod::_::<impl Trait for graphwarrust::Type>::method`
+
+    调用方须先用 `rust_sym.is_game_name(mangled)` 把符号筛过一遍（见 `graphwar_symbols`）。
     """
     d = HASH_SUFFIX.sub("", d)
     is_closure = CLOSURE in d
+    # 形态 B：`<graphwarrust::mod::Type as Trait>::method`（GDExtension 的 trait impl）。
+    # crate 名在 mangled 形态里**没有长度前缀**，所以必须按 `<SELF as TRAIT>` 结构解，
+    # 不能靠 `graphwarrust::` 子串——旧版走的是下面的正则兜底，能对是巧合。
+    head = rust_sym.impl_head_tail(d)
+    if head and "<impl " not in head[0]:
+        # 注意 `...::_::<impl Trait for graphwarrust::T>` 这种**嵌套 impl** 不在这里解：
+        # 它的外层 `<...>` 是一条路径、末段才是匿名 impl 块，按老规则（下面第三条分支）
+        # 得到 `type='_'`，与 `fixtures/name_to_addr.tsv` 的既有列一致。
+        self_ty, tail = head
+        segs = [x for x in rust_sym.split_top(rust_sym.split_top(self_ty, " as ")[0], "::")
+                if x]
+        if len(segs) < 2 or segs[0] != rust_sym.DEFAULT_CRATE:
+            return None
+        module = segs[1]
+        owner = segs[2].split("<")[0] if len(segs) > 2 and segs[2][:1].isupper() else None
+        rest = [x for x in rust_sym.split_top(tail, "::") if x]
+        if CLOSURE in rest:
+            rest = rest[:rest.index(CLOSURE)]
+        method = clean_method(rest) or owner
+        return module, owner, method, is_closure
     if d.startswith("graphwarrust::") and "<impl " not in d:
         segs = split_top(d)
         if len(segs) < 3:
@@ -1983,6 +2012,12 @@ COLS = ("arm64_name", "arm64_addr", "arm64_size", "x86_candidates", "confidence"
 BANNER = (
     "# 由 tools/sym_match.py build 生成，不要手改（重跑会覆盖）。\n"
     "# 每行一个 arm64 符号（名字来自 Android 2.0.60 未 strip 的 .symtab，共 1,300 个）。\n"
+    "# 宇宙口径：**提到 `graphwarrust` 的符号**（`rust_sym.mentions_crate`），"
+    "故意比 `rust_sym.is_game_name` 宽 ——\n"
+    "# 本表是**配对表**不是名字表：编译器胶水（`drop_in_place<…graphwarrust::X…>`）"
+    "在两侧也是真函数，配对有价值。\n"
+    "# 名字**键**只从游戏自有符号取（`parse_name` 里的 crate 闸），"
+    "所以胶水符号不会产出 (module,type,method)。见 docs/02 §39.5。\n"
     "# 地址一律是**本架构的 ELF 虚地址**；Ghidra/REA 地址 = 该值 + 0x100000。\n"
     "# x86_candidates 为空 = 无候选；逗号分隔多个 = 多候选（全部列出，不挑一个）。\n"
     "# confidence: unique=≥2 类独立证据 / weak=只有 1 类 / multi / none /\n"
@@ -2000,12 +2035,26 @@ def has_capstone():
 
 
 def graphwar_symbols(arm64_path):
-    """`.symtab` 里名字含 `graphwar` 的全部已定义 FUNC → [(addr, 去 hash 的 demangle)]。"""
+    """`.symtab` 里**提到本 crate** 的已定义 FUNC → [(addr, 去 hash 的 demangle)]。
+
+    ## 这个宇宙为什么**故意**比 `rust_sym.is_game_name` 宽
+
+    本工具不是「名字表」，是**配对表**：它要把 arm64 与 x86 两侧**没有 Location 锚**的函数
+    对上（§35）。`core::ptr::drop_in_place<…graphwarrust::X…>` 这类编译器胶水在这个意义上
+    仍是**真函数**（两侧都有函数体），把它们踢出去会让配对表少 330 行、并且让
+    `tests/sym_match.rs` 的宇宙断言（1,300）与 §35 的统计全部失效。
+    ⇒ 本工具的口径是「提到 `graphwarrust` 的符号」，由 `rust_sym.mentions_crate` 显式命名，
+    **不是** `"graphwar" in n` 这种随手写的子串。名字**是否可信**另由 `parse_name` +
+    `rust_sym` 决定（见下），两者不要混为一谈。
+
+    真正用「游戏自有」判据的是 `name_bridge.py` / `win_names.py` / `three_way_match.py`
+    （它们的产物是**名字**，不是配对）。
+    """
     elf = Elf(arm64_path)
     tex = elf.sec[".text"]
     lo, hi = tex["addr"], tex["addr"] + tex["size"]
     syms = [(n, a) for n, a, _s in elf.func_symbols()
-            if lo <= a < hi and "graphwar" in n]
+            if lo <= a < hi and rust_sym.mentions_crate(n)]
     syms.sort(key=lambda r: (r[1], r[0]))
     dem = demangle([n for n, _a in syms])
     return [(a, HASH_SUFFIX.sub("", d)) for (_n, a), d in zip(syms, dem)]
