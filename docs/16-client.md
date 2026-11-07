@@ -7512,3 +7512,365 @@ cargo test --offline                            # lib 457 / 总计 1499
 cargo test --offline --features gdext-bindings  # lib 522 / 总计 1564（基线 518/1560 + 本批 4 条单测）
 python3 tools/coverage_matrix.py --check        # OK（本次重跑只动了 src_files/src_fns/src_tree_sha256）
 ```
+
+## 41. 容器里从 **3 个到 22 个**：`GraphwarGameClient::new` 的注册序**逐条定死**（2026-11）
+
+> 本节做的是 `docs/02` §22.4 留下的那条尾巴：「22 条 `add_module` 的调用序两侧逐位相同，
+> 但**哪一条对应哪个型**没做跨架构对齐」。§38 只装了 3 个，而且顺序是**我方挑的**。
+> 本节把 22 条的**型**与**序**一起钉到指令上，然后把 22 个全装进容器。
+>
+> 一句话：**22 条全部定死（档位 `观测`；顺序 `逐位`）**，
+> 22 个全部装配进去（**17 个是我方复原类型 + 5 个是零行为空占位**）。
+
+### 41.1 四问四答
+
+| 问题 | 结论 | 档位 |
+|---|---|---|
+| 22 条各是哪个型？ | **22/22 全部有名字**：每条调用点前一条 `bl` 就是 `<Type>::new`（arm64 `.symtab` 原文，未 strip） | **观测** |
+| 顺序对不对？ | 22 条的 `size_of::<RefCell<M>>` 序列在两架构上**逐字相同**（`80,120,72,80,80,32,304,40,80,40,80,88,40,80,40,176,80,80,56,80,128,80`） | **逐位** |
+| 有没有漏/多？ | 全 `.text` 扫下来进 25 个 `add_module` 单态化的调用点**恰好 44 条** = 客户端 22 + 服务端线程 20 + `GraphwarBackend::start_*` 1 + 1；并集 = 25 | **观测** |
+| 有没有重复型？ | 22 条**没有重复型**；客户端不注册的正好是 `GraphwarBanList` / `GraphwarServerConnectionHandler` / `GraphwarGameRecorder`（服务端与 backend 才装） | **观测** |
+
+⚠️ 与 §38.7 的关系：那里写「剩下 19 个 manager 一个都没装」——**本节已过期它**，
+改成「22 个全装，其中 5 个是空占位」。旧句不删，按 `AGENTS.md` §0.6 就地标明。
+
+### 41.2 22 条注册序（逐条证据）
+
+`size` = `size_of::<M>()`（= `dyn Any` vtable 的 size 字 − 8，`docs/02` §22.3）；
+`arm64 new` = 那个 `<Type>::new` 的地址；`arm64 vt` = `add_module` 里 `adrp/add` 拼出来的
+vtable 地址；`arm64 add` / `x86 add` = 该型的 `add_module` 单态化。
+
+| # | 原版类型（arm64 `.symtab`） | `size` | arm64 `new` | arm64 vtable | arm64 `add` | x86 `add` | 我方装配的类型 | 档位 |
+|---|---|---|---|---|---|---|---|---|
+| 1 | `GraphwarTickHandler` | 72 | `0x40b528` | `0x858b28` | `0x49e870` | `0x469810` | ——（空占位 `TickHandlerSlot`） | 型 `观测` |
+| 2 | `GraphwarClientConnectionHandler` | 112 | `0x48b048` | `0x858d68` | `0x49f758` | `0x469950` | ——（空占位） | 型 `观测` |
+| 3 | `GraphwarLocalPlayerManager` | 64 | 内联（`0x409eac` `alloc(0x58,8)`） | `0x858cc8` | `0x49f334` | `0x4694f0` | `graphwar_local_player_manager::GraphwarLocalPlayerManager` | 型 `观测` |
+| 4 | `GraphwarPlayerManager` | 72 | `0x49d170` | `0x858ca8` | `0x49f260` | `0x469f90` | `graphwar_player_manager::GraphwarPlayerManager` | 型 `观测` |
+| 5 | `GraphwarSoldierManager` | 72 | `0x49d590` | `0x858c88` | `0x49f18c` | `0x46a170` | `graphwar_soldier_manager::SoldierTable` | 型 `观测` |
+| 6 | `GraphwarPlanePosManager` | 24 | `0x3b89a0` | `0x858c48` | `0x49efe4` | `0x46a0d0` | ——（空占位） | 型 `观测` |
+| 7 | `GraphwarGameStateManager` | 296 | `0x4ade6c` | `0x858c08` | `0x49ee3c` | `0x46a210` | `game::Match` | 型 `观测` |
+| 8 | `GraphwarFunctionManager` | 32 | 内联（`Rc::new_cyclic_in` `0x40a158`） | `0x858b68` | `0x49ea18` | `0x469db0` | ——（空占位） | 型 `观测` |
+| 9 | `GraphwarTargetManager` | 72 | `0x3dae34` | `0x858ce8` | `0x49f408` | `0x46a350` | `graphwar_target_manager::GraphwarTargetManager` | 型 `观测` |
+| 10 | `GraphwarTeamManager` | 32 | `0x49960c` | `0x858d08` | `0x49f4dc` | `0x469770` | `graphwar_team_manager::TeamTable` | 型 `观测` |
+| 11 | `GraphwarLifeManager` | 72 | `0x4977b8` | `0x858b88` | `0x49eaec` | `0x469b30` | `graphwar_life_manager::LifeState` | 型 `观测` |
+| 12 | `GraphwarObstacleManager` | 80 | `0x426300` | `0x858d88` | `0x49f82c` | `0x46a3f0` | ——（空占位） | 型 `观测` |
+| 13 | `GraphwarTurnManager` | 32 | `0x49adf8` | `0x858da8` | `0x49f900` | `0x46a030` | `graphwar_turn_manager::TurnManager` | 型 `观测` |
+| 14 | `GraphwarEffectManager` | 72 | `0x40bc0c` | `0x858c68` | `0x49f0b8` | `0x469630` | `graphwar_effect_manager::GraphwarEffectManager` | 型 `观测` |
+| 15 | `GraphwarModeManager` | 32 | `0x498090` | `0x858aa8` | `0x49e520` | `0x469a90` | `graphwar_mode_manager::GraphwarModeManager` | 型 `观测` |
+| 16 | `GraphwarGraphicsManager` | 168 | `0x49e394` | `0x858b48` | `0x49e944` | `0x4698b0` | `graphwar_graphics_manager::GraphwarGraphicsManager` | 型 `观测` |
+| 17 | `GraphwarEntityEffectManager` | 72 | `0x3e9f40` | `0x858ba8` | `0x49ebc0` | `0x469d10` | `graphwar_entity_effect_manager::GraphwarEntityEffectManager` | 型 `观测` |
+| 18 | `GraphwarComputerPlayerManager` | 72 | `0x4b02a4` | `0x858ac8` | `0x49e5f4` | `0x469e50` | `graphwar_computer_player_manager::ComputerPlayers` | 型 `观测` |
+| 19 | `FunctionHistoryRecorder` | 48 | `0x49d9a0` | `0x858be8` | `0x49ed68` | `0x469bd0` | `function_history_recorder::History` | 型 `观测` |
+| 20 | `GraphwarNameManager` | 72 | `0x40af68` | `0x858bc8` | `0x49ec94` | `0x46a2b0` | `graphwar_name_manager::GraphwarNameManager` | 型 `观测` |
+| 21 | `GraphwarColorManager` | 120 | `0x49cbe8` | `0x858ae8` | `0x49e6c8` | `0x469590` | `graphwar_color_manager::GraphwarColorManager` | 型 `观测` |
+| 22 | `GraphwarRankManager` | 72 | `0x498d2c` | `0x858c28` | `0x49ef10` | `0x469ef0` | `graphwar_rank_manager::GraphwarRankManager` | 型 `观测` |
+
+**三条互证**（每一条都能单独复算，见 §41.3）：
+
+1. **调用点的 `bl <Type>::new`**：arm64 未 strip，符号名直接给出型（20 条如此；
+   3 号与 8 号的 `new` 被内联/放进 `Rc::new_cyclic` 闭包，见下）；
+2. **`add_module` 里的 vtable 第 0 字**：`.data.rel.ro` 的 `R_AARCH64_RELATIVE` addend
+   → `drop_in_place<RefCell<module::Type>>` 的符号名；第 1 字 = `size_of::<RefCell<M>>()`
+   （= 上表 `size` + 8）；
+3. **两架构的尺寸序列**：x86 是 stripped（没名字），但 vtable 的 size 字是**数据字节**，
+   22 个读出来与 arm64 逐个相等 ⇒ 位置不会错。
+
+**LLVM 合并 drop glue 的坑（`docs/02` §22.2 预告过，这里实锤）**：4 号 `GraphwarPlayerManager`
+与 5 号 `GraphwarSoldierManager` 的 vtable 第 0 字**都指向**
+`drop_in_place<RefCell<GraphwarRankManager>>`（与 22 号同一个函数）。
+所以**drop glue 名不能单独定名**——必须用调用点的 `<Type>::new` 复核。
+反过来，3 号与 8 号的 `new` 不可见（3 号在调用点内联：`0x409eac` 处
+`alloc(0x58, 8)`，`0x58 − 0x18 = 64` = 它的 `size`；8 号走 `Rc::new_cyclic_in`），
+这两条就**只能靠 drop glue + size**：两者的 drop glue 名唯一，尺寸也唯一。
+
+### 41.3 复算（三条命令，都不依赖本仓库的脚本）
+
+```text
+# (1) 22 条「构造函数 → add_module」对：arm64 未 strip，名字直接给
+llvm-objdump -d --no-show-raw-insn --demangle \
+  --start-address=0x409c70 --stop-address=0x40a9bc \
+  <arm64 2.0.60>/libgraphwarrust.so | grep -E "bl\s+0x" | grep -E "add_module|::new"
+#   → 22 条 add_module；其中 20 条的前一条正是 `::new`，1 条前一条是 `Rc::new_cyclic_in`
+#     （8 号），1 条前面什么都没有（3 号，构造被内联进调用点）
+
+# (2) 每条 add_module 的 vtable（第 0 字 = drop glue 名，第 1 字 = size_of::<RefCell<M>>）
+llvm-objdump -d --no-show-raw-insn --start-address=0x49e520 --stop-address=0x49f9d4 \
+  <arm64 so> | grep -E "adrp|add .*x3"
+readelf -rW <arm64 so> | grep <vtable 地址>      # → drop_in_place<RefCell<..::Type>>
+
+# (3) x86 侧（stripped）：22 条调用序 + vtable size 字，与 arm64 逐字比对
+#     调用点 = 0x4694f0 + k*160（k = 0..24）里的 22 个；每条里的 lea rip+disp 给 vtable
+#     → size 字读出 [80,120,72,80,80,32,304,40,80,40,80,88,40,80,40,176,80,80,56,80,128,80]
+```
+
+**这也回答了「要不要用 `tools/sym_match.py` 的尺寸比闸 0.61–1.19」**：
+**不需要**。那个闸是给**没有名字**的单态化做候选筛选用的（`docs/02` §18/§36）；
+这里 arm64 有名字、且两架构的尺寸**完全相等**（不是比值），比闸强一档。
+
+**全 `.text` 的完整性扫**（防"22 条只是我以为的 22 条"）：把 `.text` 一次性反汇编，
+统计所有 `call` 进那 25 个 `add_module` 地址的调用点 ⇒ **44 条**，
+按地址聚成两簇：`0x45035d..0x45143f` 共 20 条（服务端线程，含 `BanList` / `ServerConnectionHandler`）、
+`0x515658..0x517ee6` 共 24 条（其中 2 条是 `GraphwarBackend::start_*` 各注册一次
+`GraphwarGameRecorder`，其余 22 条就是客户端）。22 + 20 − 18（交集）+ 1 = 25，与 §22.4 一致。
+
+### 41.4 落码：22 个槽 = 17 个真类型 + 5 个空占位
+
+`src/_scaffold/root_wiring.rs` 里：
+
+* `Wired`（22 个变体，**顺序 = 上表**）+ `SLOTS: [Slot; 22]`（逐条台账：
+  原名 / 模块名 / `size` / arm64 `new` / 我方类型 / 档位）；
+* `RootWiring::assemble_demo()` 按上表顺序 22 次
+  `container.add_module(Rc::new(RefCell::new(<M>::new(…))))`；
+* 判据从"数个数"升级成两档：
+  `has()`（`HashMap::contains_key(&TypeId::of::<M>())`）与
+  `retrievable()`（真走 `get_module::<M>()`：`hash_one` → 探测 → `Any::type_id` →
+  `Rc::downcast`，`docs/02` §22.5 的那条路径）。
+
+**5 个空占位**（`SlotKind::Stub`，`module_slot_status()` 如实回 `"stub"`，**不是** `"assembled"`）：
+`TickHandler` / `ClientConnectionHandler` / `PlanePosManager` / `FunctionManager` / `ObstacleManager`。
+理由逐个可查：`src/graphwar_tick_handler.rs` 只有 `tick_at` 一个自由函数；
+`graphwar_client_connection_handler.rs` 只有 `HandlerField` 偏移表；
+`graphwar_plane_pos_manager` / `graphwar_function_manager` / `graphwar_obstacle_manager`
+**连文件都没有**（逻辑分别散在 `src/plane.rs` / `src/game.rs` 的自由函数里）。
+按 `AGENTS.md` §0 第 3 条，**不把别的模块的类型冒充成它们**
+（例如 `SoldierFunctions` 属 `graphwar_function_evolutionator`，不属 `function_manager`）。
+
+**"装进去"不等于"能跑"**：22 个里的 17 个是**空表/默认值**，本轮没接任何事件订阅，
+也没驱动任何 manager。`docs/02` §34 的 `WeakCaller`（各 manager 的弱自句柄）一条都没接。
+
+### 41.5 验收（`client/tools/assemble_check.gd`：86 → **183** 条）
+
+```text
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/assemble_check.gd   # 183 passed, 0 failed
+```
+
+脚本总数 **86 → 183（净 +97）**。断言组现在是：
+
+| 断言组 | 现在 | 原来 | 判据 |
+|---|---|---|---|
+| 6 个新观测口存在 | 6 | 0 | `container_module_live` / `container_live_count` / `container_real_manager_count` / `container_stub_manager_count` / `manager_slot_size` / `manager_impl_type` |
+| 容器总数与分档 | 6 | 3 | `container_module_count()==22`、`wired_manager_count()==22`、`container_live_count()==22`、`assembled_manager_total()==22`、真类型 17、空占位 5 |
+| **逐槽 4 条 × 22** | 88 | 6 | 键在（`contains`）/ **取回**（`get_module` downcast）/ 槽位状态（`assembled` \| `stub`）/ `impl_type` 与档位一致 |
+| 注册序 + 尺寸序列 | 3 | 1 | `container_module_names()` == 22 个名字（原版序）；`manager_slot_size()` 22 个 == §41.2 的 `size` 列；胡编名字 ⇒ `-1` |
+| 客户端不注册的 3 型 | 6 | 2 | 每个：`contains == false` + `module_slot_status == "placeholder"` |
+
+净增 = (6−0) + (6−3) + (88−6) + (3−1) + (6−2) = **97**。
+既有断言**一条没删**：3 条 `== 3` 只是随范围改成 `== 22`，3 型 × 2 条逐槽断言扩成 22 型 × 4 条。
+
+⚠️ 按 `AGENTS.md` §0.2：**这 183 条是回归保护，不是复原证据**。本节的证据是 §41.3 那三条命令。
+
+### 41.6 仍是推断 / 未知（诚实清单）
+
+| 项 | 档位 | 缺什么 |
+|---|---|---|
+| 17 个 manager 的**行为** | 未做 | 本轮只"构造 + 注册"（任务书 §4）；空表不会自己动 |
+| 5 个空占位的**类型本身** | 未知 | 这 5 个型在本仓库没有可构造的类型；要补的是它们各自的结构体（`tick_handler` 连字段偏移都没有） |
+| 各 `new` 的**实参**来自哪 | 部分 `未知` | 例如 `GraphwarGameStateManager::new` 的 4 个实参在 `0x4ade6c` 里，本轮没有逐参数解；我方用演示数据 |
+| `GameStateManager` 内部是否**也持** `TurnManager` | 未知 | 与 §38 同一条；容器里是两个独立实例 |
+| 21 号之前那 3 条 `subscribe_to_event` | 观测到调用 | `0x409f24/0x409f70/0x409fbc` 三次订阅发生在 3 号 `add_module` 之前；订阅的是谁、订阅了什么事件**未解** |
+| `size` 与**我方类型**尺寸的关系 | 必然不等 | 例：`Match` 远大于 296；结构没有按字节复原，本轮**不**做尺寸对拍 |
+| 22 条里第 3 号、第 8 号的 `new` | 内联 | 只能靠 vtable 的 drop glue 与 size 定名（两者都唯一）；**没有**独立的构造函数名 |
+
+### 41.7 复现 + 回归条数（本节实测）
+
+```text
+export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=<ws>/.agent-work/<你的>/target
+export GODOT=<ws>/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so   # 不覆盖就还在跑旧内核
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/assemble_check.gd # 183 passed, 0 failed
+```
+
+| 命令 | 结果 |
+|---|---|
+| `cargo test --offline` | lib **457** / 总计 **1512**，全绿（与 §38 的 1512 **一位不差**） |
+| `cargo test --offline --features gdext-bindings` | lib **529** / 总计 **1584**，全绿 |
+| `python3 tools/coverage_matrix.py --check` | **OK**（改了 `src/`，两个生成物一起提交） |
+| `assemble_check.gd` | **183 passed / 0 failed**（§38 的 86 条 → 183） |
+
+⚠️ 本节**没有**改任何既有断言：`assemble_check.gd` 原有的 86 条全部保留
+（只有 `== 3` 那几处随范围改成 `== WIRED.size()`，断言的**意图**不变）。
+
+## 42. 曲线真的画出来了：`0x456df0` 是**取值器**不是绘制，喂点的是 `GraphwarPlane::draw`（2026-11，任务 13）
+
+**一句话**：`0x456df0` 是 `GraphwarFunctionManager::get_active_functions_on_tick`，签名
+`fn(&self, tick: u32) -> Vec<u32>`——**它一个图元都不画**，只把"本 tick 还在场的 player id"挑出来；
+真正往 `Line2D` 里塞点的是 `GraphwarPlane::draw`，调用点 `0x4b69ec`（全二进制**唯一**一个
+`FunctionDrawer::update_function` 调用点）。本轮把那段循环接进
+`src/_scaffold/graphwar_plane_class.rs`，headless 实测 `Line2D.get_point_count()` =
+**60 → 90 → 100**（进树走 `_draw` 时 **30**），新脚本 **96 条断言全过**（退出码 0）。
+
+> 档位口径同 §40：**逐位** = 与真二进制逐字节/逐位对拍；**观测** = 能指到反汇编地址/指令级读写；
+> **推断** = 有依据未证；**未知** = 没解出来。`cargo test` / 本脚本的条数**只是回归保护**。
+
+### 42.1 本轮动了哪些文件
+
+| 文件 | 增/改 | 行数 | 内容 |
+|---|---|---|---|
+| `src/_scaffold/graphwar_plane_class.rs` | 改 | +468/−2 | 喂点循环 `feed_functions()`（`_draw` 里调）+ 活跃谓词 + `new_len` 算式 + 最小函数存储 + 3 条单测 |
+| `src/_scaffold/function_drawer_class.rs` | 改 | +8/−2 | `update_function` / `remove_function` 加 `pub`（让棋盘类直接调，**行为一行没变**）+ 注释 |
+| `client/tools/curve_on_screen_check.gd` | **新增** | 400 | headless 验收脚本（**96 条断言**） |
+| `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` | 重跑 | 2 行 | `src_fns` 2257→**2277**、`src_tree_sha256` 跟着变；**527/527 与每模块行一行没变** |
+| `docs/16-client.md` | +本节 | — | — |
+
+`src/function_drawer.rs` / `src/graphwar_plane.rs`（纯逻辑）、`src/lib.rs`、`src/_scaffold/mod.rs`、
+别的 `*_class.rs`、`client/src/**`、`dispatch/` **一行没动**；既有断言一条未改
+（`function_drawer_check.gd` 132 条、`draw_classes_check.gd` 235 条，复跑仍全过）。
+
+### 42.2 `0x456df0` 到底是什么（**观测**；`docs/02` §15.2.1 那行"推断"就地升级）
+
+| 项 | 值 | 判据 |
+|---|---|---|
+| 名字 | `GraphwarFunctionManager::get_active_functions_on_tick` | `fixtures/name_to_addr.tsv:435`，唯一锚 `src/graphwar_function_manager.rs:208:37` |
+| 大小 | `0x190` | 到 `0x456f80`（同族 `..._no_fade`）的距离 |
+| 签名 | `fn(&self, tick: u32) -> Vec<u32>` | `rdi` = sret 输出槽、`rsi` = self、`edx` = tick（`0x456dff` 把它存进 `0xc(%rsp)`） |
+| 返回什么 | 命中者的 **4 字节 player id** 组成的 `Vec` | `0x3be619` 的 `mov -0x78(%rcx),%eax` = bucket+0 的 key，随后 `mov %ecx,(%rax)` 写进新分配的 4 字节槽 |
+| 谁调它 | **只有** `0x4b6339`（`GraphwarPlane::draw` 体内） | 见 §42.3 的一条命令 |
+
+体内三件事（`0x456df0`–`0x456e8f`）：**锁**（`0x456e12` 的 `lock cmpxchg` 一条 Mutex，state 在
+`[self+0x18]` 那个 `Arc` 的 `+0x10`）→ **遍历**（`RawTable` 的 ctrl 在 `+0x18`、bucket_mask 在
+`+0x20`，与 `FunctionDrawer` 的表同一个 hashbrown 形态）→ **收 id**（`0x456e8f` 调 `0x3be540`，
+把命中的 id 逐个 push 进 `rdi` 指的 Vec）。
+
+过滤逻辑被内联在 `0x3be540` 里，而 `0x3be540` 在整份 `.text` **只有一个调用者**（`0x456e8f`）
+⇒ 那段谓词**确定为**本函数的。三条（bucket 步长 `0x78`，key 在 `+0x00`）：
+
+```text
+0x3be5e6  cmpl $0x1,-0x8(%rbp,%rcx,1)        ; (value+0x70) == 1 —— 字段语义未知
+0x3be5f0  cmp  %r13,-0x28(%rcx) / je skip    ; (value+0x50) != 0x8000_0000_0000_0000（i64::MIN）
+0x3be5f6  mov  %eax,%edx / sub -0x4(%rcx),%edx   ; edx = tick - active_tick（u32，value+0x74）
+0x3be5fb  jbe  skip                          ; tick <= active_tick ⇒ 不在场（**严格**大于）
+0x3be5fd  mov  -0x18(%rcx),%rdi              ; rdi = points.len()（value+0x60）
+0x3be601  lea (%rdx,%rdx,1),%r8d / shl $5,%edx / sub %r8d,%edx
+                                             ; edx = 30 * d（30 = .rodata 0x19ef90）
+0x3be60b  add  $0x708,%edi                   ; points.len() + 1800
+0x3be611  cmp  %edi,%edx / jae skip          ; 30*d >= len+1800 ⇒ 不在场
+```
+
+⇒ 一条曲线"在场"的窗口 = 揭示期（`len/30` 个 tick）+ **1800/30 = 60 tick** 的尾巴
+（那 60 tick 就是淡出窗，对应 `get_function_fade_on_tick`；那个函数**没有 x86 落点**，见 §42.5）。
+
+### 42.3 谁调 `update_function`、什么时候、传什么（**观测**，全 `.text` 唯一）
+
+```text
+objdump -d .reference/steam/2026-08-28/libgraphwarrust.so | grep -E 'call +(456df0|498c70|498b70|499050|4992b0) <'
+  4b6147  call 499050      ; FunctionDrawer::update_transform     ← 在 GraphwarPlane::draw
+  4b6339  call 456df0      ; get_active_functions_on_tick         ← 唯一调用点
+  4b6418  call 498b70      ; FunctionDrawer::remove_function      ← 唯一调用点
+  4b69ec  call 498c70      ; FunctionDrawer::update_function      ← **唯一调用点**
+  4b6a0e  call 4992b0      ; FunctionDrawer::update_function_fade ← 唯一调用点
+```
+
+**⇒ 结论：原版只有 `GraphwarPlane::draw`（`0x4b5df0`）喂点。** 顺序与实参（`0x4b6317`–`0x4b6a13`）：
+
+| # | 地址 | 干什么 | 实参从哪来 |
+|---|---|---|---|
+| 1 | `0x4b6317` | `mov 0x58(%rbp),%ebx` | 整数 tick（tick handler 上的 **u32** 字段） |
+| 2 | `0x4b631a` | `call 0x519530` = `get_fractional_tick` | 返回 f64，存 `0x130(%rsp)` |
+| 3 | `0x4b6339` | `get_active_functions_on_tick(&mut out, self, tick)` | out = `0xe0(%rsp)`；随后按 4 字节步长遍历它（`0x4b6562` 的 `mov (%r14),%ebp`） |
+| 4 | `0x4b65d9` | 在函数管理器里按 id 查一条 | bucket 步长 `0x78`；点数组 = **`Vec<(f64,f64)>`**（ptr `+0x58`、len `+0x60`） |
+| 5 | `0x4b67a0`–`0x4b6812` | `new_len = min(len, trunc(30*(fractional_tick - active_tick)))` | `30.0` = `.rodata 0x19ef90`（逐位） |
+| 6 | `0x4b69ec` | `update_function(id, points, len, new_len, color)` | `rdi`=绘制器 `self+0x80`、`esi`=id、`rdx`=点指针、`rcx`=len、`r8`=new_len、`r9d`=颜色 |
+| 7 | `0x4b69fe` | `call *0x9bbd08`（`get_function_fade_on_tick`？） | `(self+0x18, id, tick)`，返回值直接进下一步 |
+| 8 | `0x4b6a0e` | `update_function_fade(id)` | 参数 = 上一步的返回值 |
+| 9 | `0x4b6418` | `remove_function(id)` | 遍历"另一个集合"，不在某个 `HashSet` 里就删 |
+
+两个附带结论：
+
+* **三次 `FunctionDrawer` 调用都打在同一个绘制器上**：`0x4b6132` 的 `lea 0x80(%rax),%rdi`
+  把 `self+0x80` 存进 `0x90(%rsp)`，`0x4b69d4` / `0x4b6a04` 都从那里取。
+* **颜色是入参、每帧重查**：`0x4b6825` / `0x4b68f3` 两次 hashbrown 查表（key = player id，
+  值取 3 个字节拼 `r9d`），两张表分别来自 `get_team_overview`（`0x4be6e0`）在 `0x4b5fd3` /
+  `0x4b60e3` 的两次返回值（该函数全二进制 7 个直接调用者，`draw` 里 2 个）。
+
+### 42.4 落码：本类怎么接的
+
+| 原版 | 本类 | 档位 |
+|---|---|---|
+| `get_active_functions_on_tick` 的三条谓词 | `is_active_function()`（第 3 条；第 1/2 条见 §42.5） | **观测** |
+| `new_len = min(len, trunc(30*(frac-active)))` | `revealed_points()`，`30.0` 逐位 | **逐位**（常量）/ **观测**（算式） |
+| `update_function(id, points, len, new_len, color)` | `FunctionDrawer::update_function(id, points[..new_len], color)` | 传前缀**等价**（`append_window` 仍是唯一判定，同 §40.4b） |
+| `remove_function(id)`（`0x4b6418`） | 不在场就删表 + `remove_function` | **观测**（调用点）/ 集合形状**推断** |
+| 每帧喂 | `draw()` 末尾调 `feed_functions()`（位置与原版一致：画完棋盘框之后） | **观测** |
+| 喂给哪个 `FunctionDrawer` | 固定第 0 个子节点 | **推断**（"`self+0x80` 是 3 个里的第一个"没有直接证据） |
+| 让 `_draw` 每帧跑 | `_process` 里"有曲线正在揭示就 `queue_redraw()`" | **我方选择**（原版 `process` 无此调用，见 §42.5） |
+
+**替身（必须写清，别当成复原）**：`GraphwarFunctionManager` **还没有 `src/` 文件**
+（`docs/coverage-matrix.tsv` 第 36 行把它算进 `src/game.rs`），而本轮只许改这两个 `*_class.rs`
+⇒ 棋盘类里先放一份"最小函数存储 + 入口"，方法名照原版的语义起：
+
+```text
+GraphwarPlane.set_function_points(id, points, active_tick, color) -> 存下的点数
+    # 覆盖 GraphwarFunctionManager::set_function_points(0x456810) + set_function_active_tick(0x456b80) + 队色
+GraphwarPlane.set_fractional_tick(tick) -> tick
+    # 覆盖 GraphwarTickHandler::get_fractional_tick(0x519530) 的读取（原版每帧自己读）
+GraphwarPlane.feed_functions() -> 本帧追加的点数
+    # = 原版 draw 尾部那段循环；headless 直接调它（`_draw` 在 headless 下不一定被调）
+```
+`points` 是**扁平 f64 数组** `[x0,y0,x1,y1,…]`：原版的点就是两个 f64（16 B/点），
+用 `PackedVector2Array` 会在入口就掉到 f32。
+
+### 42.5 还没做 / 未知（诚实清单）
+
+1. **点的生产者没复原**。`set_function_points`（`0x456810`）的调用者是 `0x3e44d4`
+   （落在一个 70 项跳转表的事件分派函数里，前面 `0x3e44aa` 先调 `0x3cae50` 把点表按 x 区间
+   就地压实；**那个函数的模块归属未证**——`fixtures/module_map.tsv` 只给出
+   `graphwar_game_state_manager.rs` 的锚区间 `0x3caa20..0x4ac440`，落在区间内不等于归属）
+   与 `0x471a88`；**谁算出那张原始点表**没继续挖。
+   ⇒ 现在点必须由调用方注入，**这是本轮最大的缺口**（比"喂点"本身更靠上游）。
+2. **`get_function_fade_on_tick` 没有 x86 落点**：`0x4b69fe` 走的是 GOT 槽 `0x9bbd08`（方法指针
+   调用），alpha 的算式未知 ⇒ `update_function_fade` **没接**（不发明一个淡出曲线）。
+3. **谓词第 1/2 条没做**：`value+0x70 == 1` 与 `value+0x50 != i64::MIN` 两个字段的语义未知
+   （可能是 `FunctionState` 的某个变体与一个 `Option`），本类不猜。
+4. **`update_transform`（`0x4b6147`）仍未接**——已解出的部分：`x = 0.5*w`、`y = 0.5*h`
+   （`w`/`h` = `Control::get_size()` 的两个返回值，`0x4b60d4`/`0x4b60da`），scale 的 x 分量 =
+   `w/50`（`.rodata 0x1b9fc8` = `50.0f32`，与棋盘宽 50 个单位一致），`flip` 位来自
+   `get_team_overview` 返回值的若干位（`0x4b6111`–`0x4b6129`，语义未知）。
+   **但**：`0x4b60fa` 是 `movss 0x8(%rsp),%xmm2`（`MOVSS` 会清高 lane）+ `0x4b6104` 的
+   `divss` 只动低 lane ⇒ 按调用点读出来的 `Vector2(w/50, 0)` 会把线压扁，与"线要看得见"矛盾
+   ⇒ **这个 `Vector2` 的构造没解全**（很可能还有一处 `unpcklps`/`xmm3` 或内存构造没看到）。
+   缺的证据：**运行时帧对拍**（真机上量 `Line2D.scale` / `Line2D.position` 的真值）。
+   ⇒ 曲线现在画在子节点的默认变换下（位置 0、缩放 1、宽 0.125），**位置/粗细都还不对**。
+5. **客户端还没用真类**：`client/src/play/plane_view.gd` 是照 `.tscn` 重写的 GDScript 仿制品
+   （自己 `draw_line`），`GraphwarPlane` 目前只在 `client/tools/*.gd` 里被实例化
+   ⇒ **真机上眼前仍然看不到 Rust 侧的曲线**，要等播放屏改用真类（不在本轮允许改的文件里）。
+6. `_process` 里"揭示中就 `queue_redraw`"是我方补的（原版 `process` = `ObstacleDrawer::update` ×2
+   + `get_team_overview`，没有该调用）⇒ **谁让平面每帧重画未解**。
+7. `ObstacleDrawer` 仍不存在；`FunctionDrawer::draw`（arm64 `0x3911b4`）x86 侧仍未定位（§40.5 照旧）。
+
+### 42.6 验收（可从干净树重跑）
+
+```text
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so   # 不覆盖就还在跑旧内核
+grep -a -c line_instance_id client/libgw2_rebuild.so                    # 3
+"$GODOT" --headless --path client --import                              # 新增 .gd 后必须
+"$GODOT" --headless --path client --script res://tools/curve_on_screen_check.gd ; echo "EXIT=$?"
+    # CURVE_ON_SCREEN 96 passed, 0 failed / EXIT=0
+"$GODOT" --headless --path client --script res://tools/function_drawer_check.gd   # 132 passed（未回归）
+"$GODOT" --headless --path client --script res://tools/draw_classes_check.gd      # 235 passed（未回归）
+cargo test --offline                              # 1512 passed（基线）
+cargo test --offline --features gdext-bindings     # 1586 passed（含本批 3 条单测）
+python3 tools/coverage_matrix.py --check           # OK
+```
+
+headless 实测的 `Line2D.get_point_count()`（`points.len() = 100`、`active_tick = 10`）：
+
+| 场景 | 追加 | `get_point_count()` |
+|---|---|---|
+| `fractional_tick = 12.0` ⇒ 期望 `trunc(30*2)=60` | 60 | **60** |
+| `fractional_tick = 13.0` ⇒ 期望 `trunc(30*3)=90` | 30（只补增量） | **90** |
+| `fractional_tick = 14.0` ⇒ 期望封顶 100（120>100） | 10 | **100** |
+| 同一个 tick 再喂 | 0 | 100 |
+| `tick = 73`（d=63）⇒ `30*63=1890 < 1900` 仍在场 | 0 | 100 |
+| `tick = 74`（d=64）⇒ `30*64=1920 >= 1900` 出队 ⇒ `remove_function` | 0 | 线被删（`function_count() == 0`） |
+| **进树**（`_process` 请求重画 ⇒ `_draw` 里喂）`tick=11`、`active=10` | 30 | **30** |
+
+「进树 ⇒ 30」那一条是本轮唯一**走完整条路径**的断言：`_process` 请求重画 → 引擎调 `_draw` →
+`draw()` 里 `feed_functions()` → `FunctionDrawer::update_function` → `Line2D::add_point`。
+期望值在 GDScript 里按反汇编算式**独立重写**（不调 Rust 的 `revealed_points`），
+常量 `30.0` / `1800` 也写死在脚本里 ⇒ Rust 那边改常量脚本会红。

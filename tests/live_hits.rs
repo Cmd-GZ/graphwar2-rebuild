@@ -579,3 +579,87 @@ fn paired_replay_reproduces_exact_kill_sets() {
         assert_eq!(&kills[..], *expect_kills, "第 {i} 发致死集合与抓包不符（函数 {text}）");
     }
 }
+
+// ---------------------------------------------------------------------------
+// `end_x` 的取值点（`docs/06` §27）
+// ---------------------------------------------------------------------------
+
+/// **`FunctionPoints.end_x` 与 `EffectInfo(Explosion).pos_x` 是同一个采样点**：
+/// 两条报文在二进制里都取**同一条点序列的最后一个元素**
+/// （arm64 `0x489428` `ldur d1,[x8,#-0x10]` / `0x4a891c` `ldp d9,d8,[x8,#-0x10]`，
+/// 同一个 `len` = 队列项 `+0x10`）。
+///
+/// 撞障碍时那条点序列的末元素**就是阻挡点**，不是阻挡点之前那个 ——
+/// 改成"退一格"会让整局对拍 324 → 229（`docs/06` §27.4），所以这里把两点都钉住。
+#[test]
+fn end_x_and_explosion_x_are_the_same_sample_point() {
+    use gw2_rebuild::game::Match;
+    use gw2_rebuild::graphwar_path_calculator::Mode;
+    use gw2_rebuild::graphwar_shot_calculator::settle::Target;
+    use gw2_rebuild::graphwar_shot_calculator::{corrected_text, shot_points};
+    use gw2_rebuild::server::RoomState;
+    use gw2_rebuild::_scaffold::protocol::{get_f64, get_str, parse_message};
+
+    fn room() -> RoomState {
+        RoomState {
+            room_name: "Graphwar Game".into(),
+            game_state: "Setup".into(),
+            axis_mode: "EveryUnit".into(),
+            function_mode: "NormalFunction".into(),
+            turn_mode: "SequentialTurns".into(),
+            time_mode: "Timer1m".into(),
+        }
+    }
+
+    // (障碍, 是否该被挡)：障碍放在修正后曲线 `y = 0.4x + 4.8` 上（x=0 处 y=4.8）
+    let cases: [(Vec<(f64, f64, f64)>, bool); 2] =
+        [(vec![], false), (vec![(0.0, 4.8, 2.0)], true)];
+
+    for (obstacles, must_block) in cases {
+        let mut mask = empty_mask();
+        for (x, y, r) in &obstacles {
+            rasterize(&mut mask, *x, *y, *r, 0x00);
+        }
+        let soldiers = vec![Target { id: 7, x: -12.0, y: 0.0, radius: 0.5 }];
+        let mut m = Match::new(room(), obstacles.clone(), soldiers, (5, 0));
+        let (text, x0, y0, flip) = ("0.4x", -12.0, 0.0, false);
+        let msgs = m.fire(7, text, x0, y0, flip, 1000);
+
+        let mut end_x = None;
+        let mut expl = None;
+        let mut destroyed = false;
+        for msg in &msgs {
+            let Some(p) = parse_message(msg) else { continue };
+            match p.kind.as_str() {
+                "FunctionPoints" => end_x = Some(get_f64(&p, "end_x").unwrap()),
+                "QueueDestroyObstacle" => destroyed = true,
+                "EffectInfo" if get_str(&p, "effect_type").as_deref() == Some("ExplosionEffect") => {
+                    expl = Some(get_f64(&p, "pos_x").unwrap());
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(destroyed, must_block, "这一发的阻挡结果与夹具不符（障碍 {obstacles:?}）");
+        let end_x = end_x.expect("缺 FunctionPoints");
+        let expl = expl.expect("缺 ExplosionEffect");
+        assert_eq!(
+            end_x.to_bits(),
+            expl.to_bits(),
+            "end_x({end_x}) 与爆炸点 pos_x({expl}) 必须是同一个采样点",
+        );
+
+        // 同一个采样点 = 点序列里**第一个被障碍占据的那个点**（没撞障碍时就是最后一个点）。
+        let corrected = corrected_text(text, x0, y0, flip);
+        let pts = shot_points(&corrected, x0, y0, gw2_rebuild::SERVER_STEP, flip, Mode::Normal, false);
+        let want = pts
+            .iter()
+            .find(|&&(px, py)| is_occupied(&mask, px, py))
+            .map(|p| p.0)
+            .unwrap_or_else(|| pts.last().expect("点序列不能为空").0);
+        assert_eq!(
+            end_x.to_bits(),
+            want.to_bits(),
+            "end_x 必须取「阻挡点」本身（{want}），不是它前一个采样点",
+        );
+    }
+}

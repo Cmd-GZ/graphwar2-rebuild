@@ -77,7 +77,7 @@ use crate::plane::{empty_mask, rasterize};
 use crate::_scaffold::protocol::{emit_effect_info, emit_function_points, emit_life_queued_death};
 use crate::_scaffold::rng::ChaCha12;
 use crate::server::RoomState;
-use crate::graphwar_shot_calculator::settle::{resolve_owned, ShotOutcome, Target};
+use crate::graphwar_shot_calculator::settle::{resolve_points_owned, ShotOutcome, Target};
 use crate::graphwar_tick_handler::tick_at;
 use crate::graphwar_turn_manager::{self, TurnDecision, TurnManager};
 
@@ -205,6 +205,75 @@ pub struct TurnStart {
 ///
 /// 三次配对样本为 163.9 / 164.0 / 167.0 tick，取 165。
 pub const DESTROY_DELAY_TICKS: i64 = 165;
+
+/// **挖洞点 = 爆炸点**，不是弹道的采样停点（`docs/14-turn.md` §12）。
+///
+/// 观测（逐位，全语料）：回放里 **503 / 503** 条 `DestroyObstacle` 的 `(pos_x,pos_y)`
+/// 与**同一批**的 `EffectInfo(ExplosionEffect)` 坐标**逐位相同**。也就是说原版挖洞用的
+/// 是客户端画爆炸图案的那个点，而不是弹道算出来的停点。
+///
+/// 两者的关系：`x` 相同（都等于 `FunctionPoints.end_x`），`y` 不同 ——
+/// 停点是**原始文本**采样出来的 y，而爆炸点是拿**修正文本**（常数只印 3 位小数，
+/// `corrected_text`）在 `x = end_x` 处**重算**的 y，最多差 ~5e-4
+/// （`docs/06-verification.md` §24 的 `Y2` 类就是这个差）。
+/// 用停点当挖洞点会让 200 例"我方挖洞点在回放里不存在"
+/// （`dispatch/14-hole-axis`：x 逐位相同、只差 y）。
+///
+/// ⚠️ `execute_results` 的 ④（`EffectInfo(ExplosionEffect)`）**当前仍用 `out.stop`**，
+/// 那是 `Y` 类（爆炸点 y 末位差，170 批）那根轴，不在本次改动范围内；两处若都用
+/// 本函数，我方报文才与原版"挖洞点 ≡ 爆炸点"的自洽关系一致。
+///
+/// `diff_eq = true`（`DiffEqFunction` 局）时**不重算**、直接返回停点：
+/// 那种局 `corrected_function == function`（不加后缀），爆炸点就是停点本身
+/// （`_scaffold::diffconv::explosion_point` 是同一条规则；§24.7 那 291 个可比批里
+/// **92 批是 DiffEq**，其中 26 批落在 225 个不命中里）。
+pub(crate) fn hole_point(
+    diff_eq: bool,
+    function_text: &str,
+    x0: f64,
+    y0: f64,
+    flip: bool,
+    stop: (f64, f64),
+) -> (f64, f64) {
+    if diff_eq {
+        return stop;
+    }
+    let toks = crate::math_function::parse(function_text);
+    if toks.is_empty() {
+        return stop;
+    }
+    // 原版发出去的修正文本 = `to_text(parse(function))` + 带符号常量的 3 位小数后缀。
+    // `to_text` 原样保留输入文本，唯一的改动是**补齐没闭合的括号**（11 条，实测），
+    // 所以这里先补括号再接后缀（与 `_scaffold::diffconv::corrected_function` 同一条规则）。
+    let mut printed = String::from(function_text);
+    let mut depth = 0i64;
+    for ch in function_text.chars() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = (depth - 1).max(0),
+            _ => {}
+        }
+    }
+    for _ in 0..depth {
+        printed.push(')');
+    }
+    printed.push_str(&crate::graphwar_shot_calculator::correction_text(
+        &toks, x0, y0, flip,
+    ));
+    let printed_toks = crate::math_function::parse(&printed);
+    if printed_toks.is_empty() {
+        return stop;
+    }
+    // 客户端拿**印出来的**文本重算爆炸点：`x = ±end_x`，
+    // 修正文本写在射手自己的坐标系里，`flip` 的射手要把 x 取反再代。
+    let x = if flip { -stop.0 } else { stop.0 };
+    let y = crate::math_function::eval(&printed_toks, x, 0.0, 0.0);
+    if y.is_finite() {
+        (stop.0, y)
+    } else {
+        stop
+    }
+}
 
 // ---------------------------------------------------------------------------
 // 同时回合制：一发的提交（收集阶段的产物）
@@ -1114,15 +1183,32 @@ impl Match {
             // 步长用**实况 SERVER_STEP（0.01）**，不是 0.5。
             // `docs/136` 的几何探针给出：同一批回放，step=0.01 时 `end_x` 逐位相同 605/739；
             // step=0.5 只有 27/739。
-            outcomes.push(resolve_owned(
-                s.function_text,
+            //
+            // **采样器吃的是「修正后函数文本」而不是「原文 + 全精度修正常数」**（2026-11 修，
+            // `docs/06` §25）。依据（arm64 2.0.60 逐指令）：
+            //   * `calculate_corrected_function`（`0x3b79a8`）= 原文 + 补齐 `)` + 偏移串；
+            //   * `calculate_function_offset_str`（`0x3b7c70`）= `c = y0 - f(∓x0)`，按 **`{:.3}`**
+            //     印成 `" - 6.861"`（`0x3b7d2c` 起：`fcmp`/`fabs` → `format` → 补 `" + "`/`" - "`）；
+            //   * 采样器 `calculate_function`（`0x3b5374`）拿到的树就是这串文本解析出来的，
+            //     所以轨迹里的常量是**印出来的三位小数**，不是全精度 `c`。
+            // 旧实现走 `resolve_owned(原文, …)`，内部按 `shifted_tokens`（全精度 `c`）平移，
+            // 与真值差 3 位小数的舍入量（1e-6~1e-3）—— 正是归因表 `Y2` 那一桶。
+            let corrected = crate::graphwar_shot_calculator::corrected_text(
+                s.function_text, s.x0, s.y0, s.flip,
+            );
+            let points = crate::graphwar_shot_calculator::shot_points(
+                &corrected,
                 s.x0,
                 s.y0,
                 crate::SERVER_STEP,
                 s.flip,
                 crate::graphwar_path_calculator::Mode::Normal,
+                false,
+            );
+            outcomes.push(resolve_points_owned(
                 &self.mask,
                 &targets,
+                &points,
                 Some(s.owner_id),
             ));
         }
@@ -1214,22 +1300,33 @@ impl Match {
 
         // ③ 挖洞块（回放不记录 `QueueDestroyObstacle`，位置**无证据**；沿用单发实现的
         //    "死亡之后、`FunctionActive` 之前"，这样 N=1 时与原实现逐字节相同）
-        for out in outcomes {
+        //
+        //    位置的**证据**在 `DestroyObstacle` 那侧：挖洞点 = 爆炸点，不是采样停点
+        //    （[`hole_point`]，全语料 503/503 逐位）。
+        for (s, out) in shots.iter().zip(outcomes.iter()) {
             if !out.blocked {
                 continue;
             }
+            let (hx, hy) = hole_point(
+                self.room.function_mode == "DiffEqFunction",
+                s.function_text,
+                s.x0,
+                s.y0,
+                s.flip,
+                out.stop,
+            );
             msgs.push(format!(
                 r#"{{"QueueDestroyObstacle":{{"pos_x":{},"pos_y":{},"radius":0.5,"tick":{}}}}}"#,
-                out.stop.0, out.stop.1, now_tick
+                hx, hy, now_tick
             ));
             // 真实游戏：在命中点用 fill=0xFF、半径 0.5 挖洞（docs/39）
-            rasterize(&mut self.mask, out.stop.0, out.stop.1, 0.5, 0xFF);
+            rasterize(&mut self.mask, hx, hy, 0.5, 0xFF);
             // 真正的删除要延后：实测 ≈165 tick 之后才发 DestroyObstacle
             self.pending_destroy.push((
                 now_tick + DESTROY_DELAY_TICKS,
                 format!(
                     r#"{{"DestroyObstacle":{{"pos_x":{},"pos_y":{},"radius":0.5}}}}"#,
-                    out.stop.0, out.stop.1
+                    hx, hy
                 ),
             ));
         }
@@ -1267,7 +1364,7 @@ impl Match {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::_scaffold::protocol::{get_int, get_str, parse_message};
+    use crate::_scaffold::protocol::{get_f64, get_int, get_str, parse_message};
 
     pub(super) fn room() -> RoomState {
         RoomState {
@@ -1428,6 +1525,51 @@ mod tests {
             .and_then(|v| v.parse::<f64>().ok())
             .unwrap();
         assert!(stop2 < stop_x, "挖洞后应飞得更远（{stop2} 应小于 {stop_x}）");
+    }
+
+    /// **挖洞点 = 爆炸点**，不是采样停点（`docs/14-turn.md` §12）。
+    ///
+    /// 真值来自回放 1782640836 批#1：`FunctionPoints.end_x = 21.50120415902081`，
+    /// 该批的 `DestroyObstacle` / `ExplosionEffect` 都是 `(21.50120415902081, 0.0)`；
+    /// 我方采样停点是 `(21.50120415902081, -7.964500098012195e-05)`（差在 y）。
+    #[test]
+    fn hole_point_is_the_explosion_point_not_the_sampled_stop() {
+        let text = "(-9.311)*(1/((1+exp(-42*(x-(-16))))*(1+exp(42*(x-(25))))))\
+                    +(4+2.2sin(6x))*(1/((1+exp(-42*(x-(5))))*(1+exp(42*(x-(10))))))";
+        let stop = (21.50120415902081, -7.964500098012195e-05);
+        let p = hole_point(false, text, -17.890807559723125, 9.31092035499902, false, stop);
+        assert_eq!(p.0, stop.0, "x 不变（= end_x）");
+        assert_eq!(p.1, 0.0, "y 是修正文本（+ 9.311）在 end_x 处重算的值");
+        // DiffEq 局不重算：`corrected_function == function`，爆炸点就是停点
+        assert_eq!(hole_point(true, text, 0.0, 0.0, false, stop), stop);
+    }
+
+    /// 排队点与到期点必须是**同一个点**（原版 503/503 逐位相同），
+    /// 且该点与采样停点的 y 不同 —— 后者正是"我方挖洞点在回放里不存在"的原因。
+    #[test]
+    fn queued_and_expired_destroy_points_are_identical() {
+        let mut m = Match::new(room(), vec![(-5.0, 0.0, 1.0)], vec![], (0, 0));
+        // 起点 y 取一个"印出来会被截断"的值：0.123456 ⇒ 修正文本 `" + 0.123"`。
+        // 弹道是常数 `0.00 + c`，所以整条线都在 y=0.123456，必然撞上 (-5,0) 半径 1 的障碍。
+        let msgs = m.fire(1, "0.00", 10.0, 0.123456, true, 0);
+        let q = msgs
+            .iter()
+            .find(|s| s.starts_with(r#"{"QueueDestroyObstacle""#))
+            .expect("撞障碍应排队销毁");
+        let q = parse_message(q).expect("合法 JSON");
+        let due = m.tick(60 + DESTROY_DELAY_TICKS);
+        let d = due
+            .iter()
+            .find(|s| s.starts_with(r#"{"DestroyObstacle""#))
+            .expect("到期应删除");
+        let d = parse_message(d).expect("合法 JSON");
+        let (qx, qy) = (get_f64(&q, "pos_x").unwrap(), get_f64(&q, "pos_y").unwrap());
+        let (dx, dy) = (get_f64(&d, "pos_x").unwrap(), get_f64(&d, "pos_y").unwrap());
+        assert_eq!((qx, qy), (dx, dy), "排队点与到期点必须是同一点");
+        // 挖洞点 y = 印出来的修正文本（`" + 0.123"`）算出来的 0.123；
+        // 采样停点 y = 0.123456。两者差 4.56e-4 —— 正是那 200 例的成因。
+        assert_eq!(qy, 0.123, "y 应是印出来的修正文本算的：{qy}");
+        assert!((qy - 0.123456).abs() > 1e-5, "不能是采样停点：{qy}");
     }
 
     /// 友军误伤（用户游戏内实测：会致死），且按弹道**先后顺序**结算。

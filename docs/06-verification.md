@@ -819,6 +819,13 @@ cd .. && .venv/bin/python analysis/difftest.py         # 768 例（原 704 + 64 
 写成"403 份回放 / 2 份 `Replay::load` 失败 / 119 份没有结算批"，是**口径错**（2+119≠117），
 已改正；**归因表、地址级证据、收益估计一个字都没变**（它们的分母是"批"，不是"文件"）。
 
+
+> ⚠️ **本表是 `fire` 驱动的"修前"基线**（2026-11-07 之前）。[§26](#26-爆炸点-pos_y坐标来源逐指令定死末位差拆成两桶2026-11-07dispatch09)
+> 改掉爆炸点常量口径之后，同一份快照上 `fire` 驱动的读数是
+> **内容命中 324 / 1080、种类序列 818 / 1080、死亡集合 209 / 379、挖洞点 138 / 258**，
+> 所以 `tools/bit_exact_attrib.py --check-baseline` 现在会报 4 项不一致 —— 那是**工具里写死的旧基线**
+> （它的表头就写着"任务书基线"，本轮不允许改 `tools/`）。要复现下面这张表，先 `git stash` 掉 §26 的改动。
+
 **工具那行 `文件 286（读失败 117）` 的可复算分解**（三个数必须这样加）：
 
 ```text
@@ -904,6 +911,10 @@ print(len({r['file'] for r in L if r.get('batch', -1) >= 0}))
 > `batch` 驱动那一行的意思是：**把分组接上以后种类序列从 818 涨到 918（+100）**，
 > 但内容命中仍是 21 —— 因为 `game.rs` 还没有"修正文本按模式分 / 爆炸点回代"这两条。
 > 两条修法分居两个模块，谁也替不了谁。
+>
+> ⚠ **2026-11-07 第二轮已接线**（见 **§25**）：本表 `conv` 那一行是**接线前**的值。
+> 分组接进收敛层之后：种类序列 **1074 / 1080**、内容 **595 / 1080**、
+> 多发批骨架 128 / 130、**单发批 946 / 950 一条没变**（§25.4）。
 
 ### 24.5 四类机制：**依据与判别式**（都能复算）
 
@@ -1018,6 +1029,14 @@ queue_destroy_obstacle=42   effect_info=44   skin_graphics_info=51   entity_effe
 任何一条 `DestroyObstacle` 里都不存在"**（逐文件扫过，不是窗口/时序问题）；
 基线几何探针的档位也一致：`dx > 5e-2` 107/259、`dy > 5e-2` 105/259。
 **机制未知**：最可能是"挖洞点不是停点"（与 `E1`/`X` 同源的"原版有第二个点"），但没验。
+
+> ✅ **2026-11-07 夜已结案（任务 14，见 [`docs/14-turn.md`](14-turn.md) §12）**：
+> **挖洞点 = 爆炸点**，不是"机制问题"而是一根坐标轴——401 份回放里 **503/503** 条
+> `DestroyObstacle` 的坐标与同批 `ExplosionEffect` **逐位相同**；我方拿的是**原始文本**采样的
+> 停点 y，原版用**修正文本**（常数只印 3 位小数）在 `x = end_x` 处重算的 y。
+> 200 例的四类归因是 `a/b/c = 0`、**`d = 200`**（其中 d1 192 = 纯参照点错，d2/d3 各 4 = 掩膜边界差 3~6 点）。
+> 修正后命中：真实路径 **1/259 → 134/259**，收敛层 **66/291 → 198/291**。
+> 另：本节上文的 `0x88888889 / >>36` 是 **÷30**，不是 ÷60（已在 §25 的代码块处更正）。
 
 ### 24.8 如果只修一类：收益排序（**独占批数**，都是可加的）
 
@@ -1221,3 +1240,602 @@ python3 tools/posy_attrib.py --conv $OUT/conv.jsonl --probe $OUT/posy.jsonl
 3. 复现口径别退：`tools/posy_attrib.py` 的 0/154 表是**回归护栏**——谁要是把
    `explosion_point` 改成取相邻点或改结合顺序，这张表会立刻显示"命中数变成十几"，
    那是撞上了平坦段，不是修好了。
+
+---
+
+---
+
+## 26. 爆炸点 `pos_y`：坐标来源逐指令定死，末位差拆成两桶（2026-11-07，`dispatch/09`）
+
+> 任务书：[`dispatch/09-fx-explosion-y.md`](../dispatch/09-fx-explosion-y.md)。归因桶 = §24.4 的 `Y`
+> （收敛层 170 批 / 33.2%）＋ `Y2`（6 批）。本节**推翻任务书的两个前提**（见 §26.1）并给出落地修正。
+>
+> **反汇编口径**：逐指令证据一律引 **arm64 Android 2.0.60 `libgraphwarrust.so`**
+> （`.reference/steam/android-2.0.60/`，**未 strip**，`readelf -sW` 直接给符号，地址 = `st_value`）。
+> x86-64 那份（`2026-08-28/`）是 stripped，同一段代码在 `0x472470`（`execute_results`）里，
+> 指令形态一致但符号不可读，所以本节不引它的地址。
+
+### 28.1 一句话（两个前提被推翻）
+
+1. **爆炸点不是"停点经过某种变换"，就是点序列的最后一个元素**：
+   `EffectInfo(Explosion)` 的 `pos_x/pos_y` = `pts[len-1].x/.y`，**没有投影、没有取整、没有翻转**
+   （arm64 `0x4a8918`/`0x4a891c` → `0x4a89b4`/`0x4a89f0`，见 §26.2）。⇒ 任务书"y 经过了某次变换"**不成立**。
+2. **这 170 批不是一个机制**：176 个爆炸点里 **124 个是 DiffEq（Ode）模式的 RK4 积分值**、
+   **52 个是 Normal 模式的求值值**（按批前最后一个 `FunctionModeInfo` 判，见 §26.7）。
+   旧 §24.5③ 把它当成单一"求值器末位"问题，所以怎么找都对不上。
+3. 顺手推翻旧 §24.5③ 的一句话：**`pos_y` 的差不是同向的**。
+   176 条 `pos_y` diff 里 `ours<obs` **105**、`ours>obs` **55**、逐位相同 **16**
+   （旧文"符号全部同向，154/154 我方 > 回放"复现不出来；应该是把两个桶混在一起算的）。
+
+**落地结果**：`fire` 驱动内容命中 **21 → 324 / 1080**（种类序列 **818 → 818**，结构一条没动），
+`batch` 驱动 **21 → 341**；延迟段挖洞点 **1/259 → 138/258**（副作用，见 §26.6）。
+
+### 28.2 坐标来源 = 点序列最后一个元素（**观测**，逐指令）
+
+`GraphwarGameStateManager::execute_results`（arm64 **`0x4a8558`**，3712 B）里那段"逐项处理开火队列"：
+
+```text
+004a87ec  ldr   x27,[x26],#0x20      ; 队列项 tag（步长 0x20）
+004a8800-004a8818                    ; tag - 0x8000000000000001 → 索引 0/1/2
+004a88e8  orr   x22,x23,x20,lsl#32   ; 索引 0：指针由两个 u32 半拼回（pts）
+004a88ec  ldr   x20,[x8,#0x10]       ; n = 点数
+004a8918  add   x8,x22,x20,lsl#4     ; &pts[n]（元素 16 B = 一对 f64）
+004a891c  ldp   d9,d8,[x8,#-0x10]    ; ★ d9 = pts[n-1].x，d8 = pts[n-1].y
+004a895c  bl    set_function_active_tick        ; FunctionActive
+004a898c-004a8998                    ; start_tick = active_tick + n/30（除 30 用 0x88888889 魔术数）
+                                     ; ⚠️ 2026-11-07 夜更正（任务 14，docs/14 §12.4）：
+                                     ; 0x88888889 >> 36 = ÷30，不是 ÷60；0..20000 逐个验过。
+                                     ; 原写"n/60"是读错了除数的位宽。
+004a89b4  stp   d9,d8,[x29,#-0x60]   ; ★ effect 记录的 (pos_x,pos_y)
+004a89b8  sturb wzr,[x29,#-0x4c]     ; effect_type = 0 = ExplosionEffect
+004a89e8  mov   x8,#0x2c
+004a89ec  movk  x8,#0x8000,lsl#48    ; tag 44 = EffectInfo（任务书给的地址指的就是这里）
+004a89f0  stp   d9,d8,[x29,#-0x58]   ; ★ 事件载荷用**同一对** d9/d8
+```
+
+⇒ ① 事件里的 `pos_x/pos_y` 与 effect 表里的坐标**同源同值**；② `start_tick` 里出现 `n/60`
+说明这个数组就是**整条弹道的采样点**（≈4700 点 × 60 fps），不是"只有端点"的表。
+同一函数里的第二处生产点（死亡）用的是另一条路：`0x4a8b40 bl get_position`（`GraphwarPlanePosManager::get_position`）
+→ `0x4a8b50 ldp d8,d9,[sp,#0x80]` → `0x4a8cb4 stp d8,d9,[x29,#-0x58]`，与 `0x4a8c50 ldurb w21,[x13,#-4]`
+（`entity_effect_map` 查表，查不到就 `0x4a8c38` 跳过）—— 与 `docs/16` §29.3(b) 一致。
+
+### 28.3 真值轨迹用的是**印出来的三位小数修正常数**（**观测** + 数值侧独立验证）
+
+* `GraphwarShotCalculator::calculate_corrected_function`（**`0x3b79a8`**）= 原文 + 补齐未闭合的 `)`
+  （`0x28`/`0x29` 计数，`0x3b7ba8` 那段写 `)`）+ 偏移串；
+* `GraphwarShotCalculator::calculate_function_offset_str`（**`0x3b7c70`**）逐条：
+
+```text
+003b7cf8  bl    MathFunction::new               ; 解析函数文本
+003b7cfc  ldr   d0,[x20]                        ; x0
+003b7d0c  fcsel d0, -x0, x0, flip!=0            ; flip ? -x0 : x0
+003b7d20  bl    MathFunction::evaluate_recursive; f(∓x0)
+003b7d24/28     ldr d1,[x20,#8] ; fsub d0,d1,d0 ; c = y0 - f(∓x0)
+003b7d2c  fcmp  d0,#0
+003b7d38-003b7d60  fabs + format(0x82fa28) + 补 " - "(strh 0x2d20)  ; c < 0
+003b7dbc-003b7df8  format         + 补 " + "(strh 0x2b20)          ; c >= 0
+```
+
+  ⇒ 文本里的常量是 **3 位小数**（`" - 6.861"`）。三位这个数字在 `.rodata` 的格式描述符里没有逐字节解出来
+  （`0x179468` 是 `format` 的 pieces/args 结构），但**回放的 `corrected_function` 逐字节吻合 1079/1080 批**，
+  这一条是**观测**级；我们 `graphwar_shot_calculator::correction_text` 的 `{:.3}` 与此一致。
+* 调用序（**观测**）：`GraphwarGameStateManager::fire_functions` 内先 **`0x4a7458 bl calculate_corrected_function`**，
+  再 **`0x4a798c bl calculate_shot_results`**，而 `calculate_shot_results` 在 **`0x3b5b0c`** 调采样器
+  `calculate_function` ⇒ **采样发生在"修正文本"造出来之后**。
+* **推断**（缺的证据写明）：采样器拿到的那棵树是从**修正文本**建出来的
+  （`MathFunction::new` 的两处调用在 `GraphWarFunctionManager::set_function` 的 `0x488b28`/`0x488b74`），
+  但"树 → 采样器"这一跳没有点对点证到（`calculate_shot_results` 内部零 `evaluate` 调用，树是从函数管理器取的，
+  取的是哪一棵没逐指令确认）。
+* **数值侧独立支持**（52 个 Normal 样本，`pairs.json` 见 §26.9 的复现手法）：
+  「全精度 `c` 平移」的 y 有 **47/52** 与回放差 **1e-6~5e-4**；
+  「三位小数文本回代」的 y 有 **5/52 逐位相同、40/52 恰差 1 ulp**。⇒ 常量确实是三位小数那一版。
+
+### 28.4 采样器与 RK4 的具体算术（**观测**，本轮新解）
+
+`GraphwarShotCalculator::calculate_function`（arm64 **`0x3b5374`**，1020 B）：
+
+| 项 | 地址 | 内容 |
+|---|---|---|
+| 点数预算 | `0x3b53cc`/`0x3b53ec`/`0x3b53f8` | `mov x8,#0x4069000000000000`（**200.0**）`fdiv`(step) → `fcvtzs` → `max(n,1)` |
+| 首点 | `0x3b53e4` | `stp d11,d9` = `(x0,y0)` |
+| 求值用的 x | `0x3b53f0` | `fcsel d8, -x0, x0, flip` |
+| 边界 | `0x3b5560`/`0x3b5578` | `fmov #25.0` / `fmov #15.0`（`|x|>25` 或 `|y|>15` 就停） |
+| Normal 分支 | `0x3b55c8`–`0x3b5618` | 逐点 `evaluate_recursive`（一个中点求值 + 一个复检求值，`0x3b5618`/`0x3b5664`） |
+| Ode 分支 | `0x3b5408`/`0x3b54f4`–`0x3b5518` | RK4（下面是它的**确切**结合顺序） |
+
+```text
+h2  = mid - x                       ; 0x3b547c，mid = (x + (x+step)) * 0.5
+y2  = y + (k1*h2)*0.5               ; 0x3b5480 → 0x3b5488
+x2  = x + h2*0.5                    ; 0x3b5484 → 0x3b548c
+y3  = y + (k2*h2)*0.5               ; 0x3b54ac → 0x3b54b4
+y4  = y + h2*k3                     ; 0x3b54d4 → 0x3b54e0
+sum = ((k1 + 2*k2) + 2*k3) + k4     ; 0x3b54f8..0x3b5510，**左结合**（`fadd d2,d3,d2` 的顺序）
+y'  = y + (h2/6) * sum              ; 0x3b5500 先算 h2/6，再 0x3b5514 乘，0x3b5518 加
+```
+
+⇒ 与我们的 `src/graphwar_path_calculator.rs` 的 `Mode::Ode` 分支**逐条同序**（含 `(h/6)` 先算、
+`k1 + 2k2 + 2k3 + k4` 左结合、`(k1*h)*0.5`）。**所以 DiffEq 那 124 个不是公式错**，
+残差只能来自 `evaluate_recursive`（右端函数求值）的末位 —— 与 §26.8 的未知项同源。
+
+### 28.5 落地修正（`src/game.rs::fire_functions`）
+
+旧实现把**原文**交给 `settle::resolve_owned`，后者内部按 `shifted_tokens`（**全精度** `c`）平移；
+真值是"**先造修正文本、再让采样器对那串文本求值**"（§26.3）。改成：
+
+```rust
+let corrected = graphwar_shot_calculator::corrected_text(text, x0, y0, flip);
+let points = graphwar_shot_calculator::shot_points(&corrected, x0, y0, SERVER_STEP, flip, Mode::Normal, /*apply_correction=*/false);
+settle::resolve_points_owned(&mask, &targets, &points, Some(owner));
+```
+
+只动了这一处（`execute_results` 一个字没改：它本来就用"最后一个采样点"当爆炸点，与 §26.2 一致）。
+
+### 28.6 before / after（**同一份 401 回放 / 1080 批快照**）
+
+| 驱动 | 内容命中 | 消息种类序列命中 | 备注 |
+|---|---|---|---|
+| `fire`（任务书基线） before | **21 / 1080** | **818 / 1080** | 复现 §24.2 的 7 个数全部一致 |
+| `fire` after | **324 / 1080** | **818 / 1080** | 结构零变化 ⇒ 这次只修了"值" |
+| `batch` before / after | 21 → **341** | 918 → **915** | 4 批少判死者（见 §26.8），1 批新增 |
+| `conv`（收敛层） before / after | 568 → **568** | 945 → 945 | **不动**：它的爆炸点在 `_scaffold/diffconv.rs`，不在本任务的允许改文件里 |
+
+延迟段（另一根轴）：死亡集合 **211/379 → 209/379**；挖洞点 **1/259 → 138/258**（53.5%）。
+挖洞点这一项是**副作用**：位置来自同一条弹道，轨迹一改就大面积命中——`docs/06` §24.7 里
+"挖洞点为何与我方停点无关（200 例点位不存在）"的问题因此从 200 例缩到 ~120 例（**观测**，未逐例复盘）。
+
+修正后的归因表（`fire`，失败 756 批）：`C` 368 / `D` 132 / `S` 91 / **`Y` 52** / `E1` 46 / `SD` 39 / `X` 28。
+**`Y2`（332 批）整桶清零**，新出现的 `Y` 52 批就是 §26.7 那 52 个 ±1 ulp 的爆炸点。
+
+### 28.7 差值形态分组（176 个爆炸点 / 170 批，`conv` 收敛层）
+
+| 分组 | 条数 | 判据 | 机制 |
+|---|---|---|---|
+| **DiffEq（Ode）** | **124** | 批前最后一个 `FunctionModeInfo` = `DiffEqFunction` | `pos_y` = RK4 积分值，**不能回代**；§26.4 的公式与我们同序 ⇒ 残差在求值器末位 |
+| **Normal** | **52** | 同上 = `NormalFunction` | `pos_y` = `f(end_x)`；用"修正文本回代"重算：**5 逐位相同、40 恰 1 ulp**（26 偏低 / 14 偏高）、7 例特例（NaN、极大常量） |
+
+`pos_y` 的 ulp 直方图（`ours - observed`，176 条 diff 逐条）：`-1`:72、`-2`:22、`+1`:45、
+`-3`:5、`0`:16、`-4`:2、`+2`:1、`+3`:1、`|u|≥8`:12。
+**符号不同向**（105 负 / 55 正 / 16 零）⇒ 排除"同一条式子的系统性偏差"，也排除"我方一律取整偏大"。
+
+5 个代表样本（`end_x` 已确认 `obs_x == end_x` 逐位相同）：
+
+| 回放 #批 | 模式 | 函数原文 | `end_x` | 我方 `pos_y` | 回放 `pos_y` | Δulp |
+|---|---|---|---|---|---|---|
+| `1782676871` #3 | Normal | `1/(6-x)`（文本 `… - 6.861`） | `-5.9542382857185725` | `14.991328211529705` | `14.991328211529703` | +1 |
+| `1782927404` #0 | Normal | `x`（文本 `x + 12.981`） | `2.0172735861302553` | `14.998273586130255` | `14.998273586130257` | −1 |
+| `1793874543` #25 | Normal | `sin(x)`（`+ 11.437`） | `0.45076283631408426` | `11.001347698764203` | `11.001347698764205` | −1 |
+| `1793874543` #46 | Normal | `(x*-0.26)`（`+ 10.734`） | `1.3457628363140568` | `11.083898337441655` | `11.083898337441656` | −1 |
+| `1783342447` #2 | DiffEq | `tan(-2x)` | `22.775784224310193` | `9.187486940569265` | `9.187486940569263` | +1 |
+
+**规律**：同一 `x`（逐位相同）下差 1 ulp，且函数里只有四则运算的样本（`x + 12.981`）也差 1 ulp
+⇒ 与 libm 无关；差量在 `c` 的 1 ulp 量级，指向"常量/求值末位"而不是"取了另一个点"。
+任务书里的示例 `我方 6.11832353472057 / 回放 6.118000000000002` 属于 `Y2`（三位小数舍入，
+已由 §26.5 修掉），**不是** `Y` 这一桶。
+
+### 28.8 未知清单（接管时从这里开始）
+
+| # | 未定 | 缺什么 | 等级 |
+|---|---|---|---|
+| 1 | 剩下 **52 批 ±1 ulp**（Normal）的确切来源 | 原版 `MathFunction::evaluate_recursive`（`0x4452d4`）在这些**确切输入**上的输出。unicorn 可跑，但要按 72 B 的树布局喂进去（本轮没做，别猜 libm） | **未知** |
+| 2 | DiffEq 那 124 条的末位 | 同上（右端函数求值的末位会累积进积分值） | **未知** |
+| 3 | `batch` 驱动 4 批种类序列由对变错（`1782675382#0`、`1782675586#0`、`1782676398#0`、`1783429569#3`，都少判死者） | 轨迹只移了 <1e-3 就翻面 ⇒ 致死判据在阈值上；要逐例看 `d <= radius` 的临界值 | **未知**（净 −3，已在 §26.6 如实登记） |
+| 4 | `conv` 驱动不涨 | 它的爆炸点算法在 `_scaffold/diffconv.rs`（实验脚手架），要接得改那里、或让 conv 走 `game.rs` | 范围问题，非未知 |
+
+### 28.9 复现（干净树，逐条命令）
+
+```bash
+export CARGO_HOME=<ws>/.reference/cargo-home
+export CARGO_TARGET_DIR=<ws>/.agent-work/cg/target09     # 单独一行；并行时必须私有
+R=<ws>/.reference/replays/gw2-replays-snapshot/replays
+OUT=<ws>/.agent-work/out                                # /tmp 是逐命令 tmpfs，别放中间产物
+
+# 1) before（先 `git stash` 掉本次改动）→ 21 / 818
+cargo run --release --offline --example replay_attrib -- --dir $R --drive fire --policy default --json $OUT/fire_before.jsonl
+python3 tools/bit_exact_attrib.py --json $OUT/fire_before.jsonl --check-baseline   # 7 个数全部 OK
+
+# 2) after → 324 / 818
+cargo run --release --offline --example replay_attrib -- --dir $R --drive fire --policy default --json $OUT/fire_after.jsonl
+python3 -c "import json;R=[json.loads(l) for l in open('$OUT/fire_after.jsonl')];R=[r for r in R if r.get('batch',-1)>=0];print(sum(r['content_ok'] for r in R), sum(r['kind_seq_ok'] for r in R))"
+python3 tools/bit_exact_attrib.py --json $OUT/fire_after.jsonl                    # 分类表；Y2 应为 0
+
+# 3) batch / conv 两个驱动（before 用 stash，after 用工作树）
+cargo run --release --offline --example replay_attrib -- --dir $R --drive batch --policy default --json $OUT/batch.jsonl
+cargo run --release --offline --example replay_attrib -- --dir $R --drive conv  --policy strict  --json $OUT/conv.jsonl
+python3 tools/bit_exact_attrib.py --json $OUT/conv.jsonl | head -12               # Y 应仍是 170 批
+
+# 4) 回归
+cargo test --offline                       # 1512 passed / 0 failed
+python3 tools/coverage_matrix.py --check   # OK
+```
+
+§26.7 的"按模式分组 + ulp 直方图"由一次性脚本从 `$OUT/conv.jsonl` + 回放
+（`gzip` 的 JSONL，`FunctionInfo.corrected_function` / `FunctionPoints.end_x` / `EffectInfo.pos_y`）
+算出来，口径写在上表里，**没有**新的入库工具。
+
+## 27. `FunctionPoints.end_x` 的取值点：逐指令定死 = `pts[len-1]`（2026-11-07，`dispatch/11`）
+
+> 任务书：[`dispatch/11-endx-sample-point.md`](../dispatch/11-endx-sample-point.md)（P1，任务书口径"失败 95 批"，
+> 那是 §26 修前的 `conv` 归因；**当前 `fire` 基线里这一桶是 `E1` 46 批**，见 §27.4）。
+> 本节**推翻任务书的前提**"`end_x` 取 `pts[n-2]`"，并给出一次**被实测否决的改法**的完整数据。
+>
+> **反汇编口径**同 §26：arm64 Android 2.0.60 `libgraphwarrust.so`（未 strip，地址 = `st_value`）。
+
+### 27.1 一句话
+
+1. **`end_x` = 送进 `set_function_points` 那条点序列的最后一个元素 `pts[len-1].x`**，
+   不是倒数第二个（arm64 **`0x489420`/`0x489428`**，§27.2）。⇒ 任务书"取 `pts[n-2]`"**不成立**。
+2. 同一条点序列、同一个 `len` 也喂给 `execute_results` 的爆炸点（`0x4a88ec`/`0x4a8918`/`0x4a891c`）
+   ⇒ **在报文构造这一层，`end_x` 与 `EffectInfo(Explosion).pos_x` 必然是同一点**（§26.2 的结论不变）。
+3. 回放里这两条报文确实**有时差一个采样点**（1290 发里 240 发，§27.3），但差别在**点序列本身**
+   （哪一步停），不在"取哪个下标"。按"退一格"去改报文，整局对拍 **324 → 229**、`E1` **46 → 162**
+   （§27.4，实测，已回退）。
+4. **采样器一个字没改**（`docs/04` 的 24/24 逐位基线未动）。
+
+### 27.2 逐指令：`end_x` 就是 `pts[len-1]`（**观测**）
+
+生产点 `GraphwarFunctionManager::set_function_points`（arm64 **`0x489278`**，884 B）：
+
+```text
+004893a8  cmp   w8,#0x2                      ; 状态判断
+00489400  ldr   x8,[x19,#0x10]               ; len = 传入点序列的长度
+00489404  cbz   x8, 0x48945c                 ; len==0 ⇒ 一条报文都不发
+00489414  ldr   x9,[x19,#0x8]                ; ptr
+00489420  add   x8,x9,x8,lsl#4               ; &pts[len]
+00489424  ldr   q0,[x9]                      ; ★ start = pts[0]（16 B = 一对 f64）
+00489428  ldur  d1,[x8,#-0x10]               ; ★ end_x = pts[len-1].x（**最后一个**）
+0048942c  mov   x8,#0x25                     ; tag 37 = FunctionPoints
+00489434  movk  x8,#0x8000,lsl#48
+00489430  stur  q0,[sp,#0x10]                ; 载荷 +0x08 = start_x/start_y
+0048943c  str   d1,[sp,#0x20]                ; 载荷 +0x18 = end_x
+00489438  str   w22,[sp,#0x28]               ; 载荷 +0x20 = owner_id
+0048944c  bl    GraphwarEventQueue::add_event
+```
+
+同文件全 `.text` 里 tag 37 的**生产者只有两处**（`0x48942c`、`0x4abad4`
+`handle_function_points` 的转发路径），本地路径就是上面这一处。
+
+这条点序列是谁给的 —— `GraphwarGameStateManager::fire_functions`（**`0x4a7160`**）：
+
+```text
+004a7a2c  ldr   x24,[x8,#0x10]     ; len = 队列项 +0x10
+004a7a38  lsl   x20,x24,#4         ; 分配 len*16
+004a7a50  ldr   x23,[x8,#0x8]      ; ptr = 队列项 +0x8
+004a7ac8/4a7af0                    ; 逐点 clone（16 B/点）
+004a7b28  stp   x24,x21,[x29,#-0x68]  ; 传参结构 (len, ptr, cap=len)
+004a7b3c  bl    set_function_points
+```
+
+同一批的爆炸点走的是**同一个队列项、同一个 `len`**（`execute_results` `0x4a8558`）：
+
+```text
+004a87ec  ldr   x27,[x26],#0x20    ; 队列项 tag（步长 0x20）
+004a88e8  orr   x22,x23,x20,lsl#32 ; 变体 0：pts 指针由两半 u32 拼回（项 +0x8）
+004a88ec  ldr   x20,[x8,#0x10]     ; n = 项 +0x10（与上面 `0x4a7a2c` 同一字段）
+004a8918  add   x8,x22,x20,lsl#4   ; &pts[n]
+004a891c  ldp   d9,d8,[x8,#-0x10]  ; ★ pts[n-1] → effect 记录 + 载荷（同 §26.2）
+```
+
+⇒ **两处取的是同一个下标**。所以"差一个"不可能来自"取 `pts[n-2]`"。
+
+### 27.3 那 240 发的差从哪来（**观测**，回放自身的两条报文对比）
+
+先把"回放的 `end_x`"和"同一发的爆炸点"直接比（不经过我方实现），全语料 1290 发：
+
+| 关系 | 条数 |
+|---|---|
+| `end_x` 与 `pos_x` **逐位相同** | **1050**（81.4%） |
+| 差 `< 5e-4` | 136（含 1e-16 量级的 ulp 差） |
+| 差 `∈ [5e-4, 5e-3)` | 25 |
+| 差 `≥ 5e-3`（≈ **一个采样步**） | 79 |
+
+差值的量级都是**采样步的二进制分数**（`15/16`、`3/4`、`1/64`…；5 条例外是实际步长本身不是 0.01 造成的），
+即"**相邻两个采样点**"的距离，而不是别的量。
+
+再看这 240 发在我方点列上的位置（用 `examples/replay_endx_probe.rs` 的点列，1290 发）：
+
+| 回放 `end_x` 落在 | 条数 | 说明 |
+|---|---|---|
+| 我方 `pts[M-1]`（**末点**，逐位） | **773** | 我方现在的取值就是对的 |
+| 我方 `pts[M-2]`（倒数第二，逐位） | **103** | "差一个"的全在这一桶 |
+| 更靠前（我方点列没截断，真值被障碍截断） | 361 + 53 | 探针不带掩膜，属预期 |
+| **能用的边界停止样本** | 876 | 773 / 103 |
+
+那 103 发里，回放爆炸点 `pos_x` 与我方 `pts[M-1].x` **只差 1~800 ulp**、`pos_y` 常逐位相同
+（是"同一个点的另一次计算"，不是另一个点）。⇒ 真相的形状是：
+
+* 绝大多数发：点序列末元素 = 停点，`end_x == pos_x`（逐位）；
+* 少数发：点序列**少一个元素**，`end_x` 退一格，而停点是**另算的一个点**（所以差 ulp）。
+
+"什么时候会少那一个元素"**没有定论**（§27.6）。
+
+### 27.4 被实测否决的改法：`blocked` 时 `end_x` 退一格
+
+`E1` 的 46 批里 **7 批是 `blocked`（撞障碍）**，且这 7 批的形状一致：
+
+```text
+回放 FunctionPoints.end_x = 我方「阻挡点之前那个采样点」（逐位）
+回放 EffectInfo.pos_x     = 我方「阻挡点」（差 1~8 ulp）
+```
+
+照这个改（`src/game.rs::execute_results` 里 `blocked ⇒ 取阻挡点前一点`）后实测：
+
+| 量 | before | after（退一格） |
+|---|---|---|
+| `fire` 内容命中 | **324 / 1080** | **229 / 1080**（−95） |
+| `E1` | 46 | **162** |
+| 逐批对照 | — | **丢 95 批 / 得 0 批**，95 批**全部**是 `blocked` |
+
+⇒ 对绝大多数 `blocked` 批次，回放的 `end_x` **就是阻挡点本身**（那 7 批是另一回事）。
+**这个改法已回退，入库的是"不改" + 一个把它钉死的测试**
+（`tests/live_hits.rs::end_x_and_explosion_x_are_the_same_sample_point`：
+自由飞行与撞障碍两种情况都断言 `end_x == pos_x`，且 `end_x` = 阻挡点本身 / 点列末点）。
+
+### 27.5 顺手更正 §26.2 的两处（**观测**）
+
+1. **`start_tick = active_tick + n/60` 应为 `n/30`**：
+   `0x4a898c/0x4a8990` 的魔术数 `0x88888889` 配 `0x4a8998` 的 `lsr #36` 是 **÷30**
+   （`0x88888889 / 2^36 = 1/30`；若按 ÷60 算，`n = 60` 会得 2 而不是 1）。
+   数值侧：1290 发里 **895 发** 满足 `爆炸 start_tick − FunctionActive.active_tick == 点列长 // 30`，
+   其余的是被障碍截断（点列比真实长）—— 按 ÷60 一条都对不上。
+2. `FunctionActive.active_tick = [函数管理器 +0x58] + 0x3c`（`0x4a8940 add w24,w21,#0x3c`，60 tick = 1 s），
+   不是 §26.2 暗示的"当前 tick"。这条只影响 tick 数值，不影响坐标。
+
+### 27.6 未知清单（接管时从这里开始）
+
+| # | 未定 | 缺什么 | 等级 |
+|---|---|---|---|
+| 1 | 那 103 发（≈12% 的边界停止）为什么点序列**少一个元素** | 边界/障碍的"停点"是**另算**的（差 ulp 说明是重算而非拷贝），而点序列少一个 —— 需要 `calculate_shot_results`（`0x3b5770`）里"停点"的完整写法（本次只确认了它不来自队列项 `+0x8/+0x10`） | **未知** |
+| 2 | 那 7 个 `blocked` 的 `E1` 为什么与另外 95 个 `blocked` 行为相反 | 同上：可能是"落在采样点上 vs 落在两点之间"的碰撞粒度（差值分别是整步 / 整步 / 3.9e-4…）；要 `is_occupied` 那侧的逐指令对照（掩膜 1 px = 0.05 单位） | **未知** |
+| 3 | 逐个点的末位（±1 ulp） | 与 §26.8 #1 同源：`MathFunction::evaluate_recursive`（`0x4452d4`）在这些确切输入上的输出 | **未知** |
+
+### 27.7 复现（干净树）
+
+```bash
+export CARGO_HOME=<ws>/.reference/cargo-home
+export CARGO_TARGET_DIR=<ws>/.agent-work/cg/target11     # 私有 target
+R=<ws>/.reference/replays/gw2-replays-snapshot/replays
+OUT=<ws>/.agent-work/out11                               # /tmp 是逐命令 tmpfs
+
+# 1) 基线（= §26 之后的口径）：324 / 1080，E1 46
+cargo run --release --offline --example replay_attrib -- --dir $R --drive fire --policy default --json $OUT/fire.jsonl
+python3 tools/bit_exact_attrib.py --json $OUT/fire.jsonl
+
+# 2) 单发点列探针（§27.3 的"end_x 落在我方第几个点"就是这么来的）
+cargo run --release --offline --example replay_endx_probe -- --dir $R --file 1782641987 --tail 6
+```
+
+§27.3 的两张表由一次性脚本算：回放按 `gzip` 的 JSONL 顺序取 `FunctionPoints.end_x` 与
+`EffectInfo(ExplosionEffect).pos_x` 逐发配对（同一份回放里两者条数相等才计），
+点列侧用 `replay_endx_probe` 的输出（每发打印 `点 M` + 末尾 6 个点 + `end_x 命中 idx`），
+按 `idx == M-1 / M-2` 分桶。**没有**新的入库工具；入库的只有上面那个测试。
+
+---
+
+## 28. 多发批结构接线（2026-11-07 第二轮）：**逐发窗口 → 一次事务**
+
+> 任务书：[`dispatch/10-multi-shot-wiring.md`](../dispatch/10-multi-shot-wiring.md)。
+> 上一轮（§24.4）把它记成 "`S` 123 批 + `SD` 7 批 / 接线即得 / 内容预计 ≥594"；
+> 本节把它**接上**，并给出三个数（总 / 多发批 / 单发批）。
+> 证据档位沿用仓库约定；本节所有比例的分母都是**结算批**（1080），不是文件。
+
+### 28.1 一句话与三个数
+
+> 多发批的差别**不是"少了一条报文"，而是"窗口开了 N 个"**：我们原来**每发各开一个**
+> `CalculatingResults…ExecutingResults` 窗口（一批 3N 条 `GameStateInfo`），
+> 真回放是**一个**窗口（3 条）、前缀**按类型连排**、后缀**每发一对**。
+> 接上之后：种类序列 **946 → 1074 / 1080**、多发批 **0/130 → 128/130**、
+> **单发批 946/950 一条没变**；内容命中 569 → 595。
+
+| 指标 | 接线前（逐发 `fire`） | 接线后（按批 `fire_batch`） | 差 |
+|---|---|---|---|
+| 消息种类序列命中（1080 批） | **946** (87.6%) | **1074** (99.4%) | **+128** |
+| ├ 多发批（≥2 发，**130** 批） | **0** (0.0%) | **128** (98.5%) | **+128** |
+| └ 单发批（**950** 批） | **946** (99.6%) | **946** (99.6%) | **0** |
+| 内容命中（1080 批） | **569** (52.7%) | **595** (55.1%) | **+26** |
+| ├ 多发批 | 0 | 26 (20.0%) | +26 |
+| └ 单发批 | 569 (59.9%) | 569 (59.9%) | **0** |
+| 完全一致的回放（有结算批的 282 份） | 71 | **83** | +12 |
+| 失败批（`tools/bit_exact_attrib.py`） | 511 | **485** | −26 |
+
+**逐批对照：变好 128 批、变差 0 批**（`--drive both` 会把"变差"的批直接列出来，为空）。
+
+> 表里两列的语料与代码**完全相同**，只差驱动方式（这是"before/after"唯一合法的读法）。
+> 任务书里的 before **945 / 内容 568** 是**上一轮代码**的数；本轮另修了一处
+> `explosion_point` 的非有限值回退（§25.7，1 批），所以两列都比任务书各 +1。
+
+### 28.2 那条修正的语义：**合并窗口 + 重排**，不新增任何消息种类
+
+规则来源是归档里的同时回合制三段流程 [`docs/archive/141-sim-turns.md`](archive/141-sim-turns.md)
+§1–§3（**观测**：130 个真多发包 **130/130** 对上分组与顺序）。落到报文上是三处差别：
+
+```text
+我方（接线前，N = 3，每发一个窗口）
+  Calc | Finfo₁ | Fpts₁ | Sync | [死效₁] | FActive₁ | Expl₁ | Exec
+  Calc | Finfo₂ | Fpts₂ | Sync | [死效₂] | FActive₂ | Expl₂ | Exec
+  Calc | Finfo₃ | Fpts₃ | Sync | [死效₃] | FActive₃ | Expl₃ | Exec
+真回放（N = 3，一个事务）
+  Calc | Finfo₁ Finfo₂ Finfo₃ | Fpts₁ Fpts₂ Fpts₃ | Sync | [死效块] |
+  FActive₁ Expl₁ FActive₂ Expl₂ FActive₃ Expl₃ | Exec
+```
+
+| # | 改的是 | 判定写在哪（源码） | 证据 |
+|---|---|---|---|
+| 1 | **窗口数 3N → 3**：`CalculatingResults` / `SynchronizingResults` / `ExecutingResults` 各**一条** | `fire_batch` 只在这三个位置各 push 一次 | 观测（130/130；归因表里 `S` 123 + `SD` 7 = **130 = 全部多发批**，它们的种类计数都多出 `GameStateInfo`） |
+| 2 | **前缀按类型分组**：N 条 `FunctionInfo` 连排、再 N 条 `FunctionPoints` 连排，两组顺序都 = 批内发序 | 两个 `for` 循环分别遍历 `shots`（发序 = 回放里 `FunctionPoints` 的顺序） | 观测（130/130） |
+| 3 | **后缀每发一对**：`FunctionActive(owner_i)` 紧跟 `EffectInfo(Explosion)`，交替 N 次 | 一个 `zip` 循环 | 观测（130/130） |
+
+**"补哪一条"——本规则一条都不补。** 批内消息**种类计数**除 `GameStateInfo` 外逐条相等
+（`examples/replay_attrib.rs` 导出的 `bm_equal` / `kind_multiset_equal` 就是这条判据）。
+任务书里"回放多一条 `EffectInfo/SparkEffect`"是**另一根轴**：那条由**死亡集合**与
+**出生登记表**（`docs/16` §37：皮肤 `bot_` ⇒ `AshEffect`、靶子 ⇒ `SparkEffect`）决定，
+不是分组规则；§25.6 里剩下的 6 批全是它。
+
+另外两条与"分组"同批落地的规则（都来自 `docs/archive/141` §2）：
+
+* **几何并行**：每一发都对着**批开始那一刻**的士兵表算（152/152，观测）；谁死都不改变别人的弹道 ⇒
+  接线后多发批的 `killed` 不再依赖"上一发把谁打死了"；
+* **死亡块按飞行时间排**：排序键 `(弧长, 发序号, 士兵 id)`，弧长取自
+  `graphwar_shot_calculator::settle::ShotOutcome.hits[].arc`；同一士兵**只留最早到达**的那一发。
+  同批所有弹丸 `active_tick` 相同（13/13 回合）⇒ 弧长序 = 到达时刻序，**不需要**知道弹速。
+  真并列怎么判仍是 **未知**（`docs/archive/141` §5 第 5 条），这里的三元组兜底只是确定性。
+
+> 档位说明：**"规则是什么"是观测**（130/130 真回放）；**"我们照它实现了"是实现，不构成复原证据**——
+> 判定仍然只看真回放（本节所有数字都是与真回放逐批比出来的）。
+
+### 28.3 接在哪：**只接驱动**，一行游戏逻辑没动
+
+| 文件 | 改了什么 |
+|---|---|
+| `src/_scaffold/diffconv.rs` | 新增 `ConvPredictor::fire_batch(&[ShotInput], tick)`（**整批**报文）；`fire(...)` 改成它的 **N = 1 特例**；`run_file` 的预测路径由"逐发 `fire` + 拼接"换成"**每批一次** `fire_batch`"；`Cause::MultiShot` 的判据收紧成"种类计数**确实**差 `GameStateInfo`"（否则"结构已对、值还错"的多发批会被误报成结构问题）；`explosion_point` 的 NaN 判据放宽成"非有限值"（§25.7） |
+| `examples/batch_conv.rs` | **新增**（既有工具**一行没改**）：`--drive fire\|batch\|both`，同一份语料、同一个 `compare_batch`、同一个 `ConvPredictor`，**只换驱动**；JSONL 与 `replay_attrib` 同格式，可直接喂 `tools/bit_exact_attrib.py` |
+| `docs/coverage-matrix.tsv`、`docs/149-coverage-matrix.md` | 生成物重跑（`src/` 变了：2257 → 2265 条 `fn`） |
+
+**刻意没动的两处**（写清理由，免得下一个人以为漏了）：
+
+1. **`replaydiff::Predictor::predict`（逐发 `Match::fire`）保持原样。**
+   它是 `tools/bit_exact_attrib.py --check-baseline` 钉住的**冻结基线**
+   （种类序列 818、内容 21、延迟段 211/379 与 1/259）。把它也改成按批，
+   §24.2 那 7 个数会一起变，那条验收就再也核不了对。所以仓库里现在**两条驱动并存**：
+   `Predictor`（逐发）= §24 的历史基线，只在 `--drive fire` 出现；
+   `ConvPredictor::fire_batch`（按批）= 当前最好的驱动，`diff_conv` / `batch_conv` 用它。
+2. **`src/game.rs` 的结算逻辑**（`Match::fire_batch` / `execute_results`）**一字未动**——
+   那是任务 09 的地盘，而且它已经按 `docs/archive/141` §3 实现了同一套分组（`--drive batch` 走的就是它）。
+
+`examples/replay_attrib.rs` 本轮**只许加不许改**（任务书允许清单），所以它里面的 `--drive conv`
+仍是逐发的；新增的 `batch_conv --drive fire` 与它**逐字节相同**（§25.4 的第一条校验）。
+
+### 28.4 量化与复现（干净树可重跑）
+
+```bash
+export CARGO_HOME=<ws>/.reference/cargo-home
+export CARGO_TARGET_DIR=<本 worktree 的私有 target>   # 共用 target 会跨 worktree 串味
+export R=<ws>/.reference/replays/gw2-replays-snapshot/replays        # 只读语料
+OUT=<ws>/.agent-work/<会话>/out                                      # `/tmp` 是逐命令 tmpfs
+
+# ① 一次跑两种驱动 + 逐批对照（"变好/变差"各多少批，"变差"的会被列出来）
+cargo run --release --offline --example batch_conv -- \
+    --dir $R --drive both --policy strict --json $OUT/batch.jsonl
+
+# ② 只跑一边：①=接线前、②=接线后
+cargo run --release --offline --example batch_conv -- --dir $R --drive fire  --policy strict --json $OUT/fire.jsonl
+cargo run --release --offline --example batch_conv -- --dir $R --drive batch --policy strict --json $OUT/batch.jsonl
+
+# ③ 接线后的归因分桶（`S` / `SD` / `K` 三桶应当清零）
+python3 tools/bit_exact_attrib.py --json $OUT/batch.jsonl
+
+# ④ 冻结基线仍然自洽（这条**必须**还是 818 / 21 / 211 / 1）
+cargo run --release --offline --example replay_attrib -- --dir $R --drive fire --policy default --json $OUT/base.jsonl
+python3 tools/bit_exact_attrib.py --json $OUT/base.jsonl --check-baseline
+```
+
+**两条口径校验**（"before/after 来自同一套记账"，不靠人工看）：
+
+1. `batch_conv --drive fire --policy strict` 的 JSONL 与
+   `replay_attrib --drive conv --policy strict` 的产物**逐字节相同**（`diff` 为空）——
+   本轮的 `fire` 就是把 `fire_batch` 按 N = 1 调一次，账本代码是 `replay_attrib` 的逐行副本；
+2. `--drive both` 的逐批对照直接按 `(kind_seq_ok, content_ok)` 比较**同一个批**，
+   列出"变差"的批（本次 0 个）。
+
+**回归**：
+
+```text
+cargo test --offline                 1516 passed / 0 failed   （基线 1512 + 本节新增 4 条 diffconv 单元测试）
+python3 tools/coverage_matrix.py --check   OK（527/527 可归属、78 模块；src 106 文件 2265 fn）
+```
+
+新增的 4 条单元测试（`src/_scaffold/diffconv.rs` 的 `mod tests`）：
+
+| 测试 | 钉住的东西 |
+|---|---|
+| `single_shot_is_byte_identical_to_fire_batch` | `fire` ≡ `fire_batch(N=1)`，报文**逐字节**相同 |
+| `two_shot_batch_is_grouped_by_type` | 两发一批的完整种类序列 = §25.2 那张图；负样本：逐发窗口会有 6 条 `GameStateInfo` |
+| `death_block_follows_flight_time` | 同一士兵一批只死一次、死者坐标来自**批开始**的快照、状态在报文之后落地 |
+| `non_finite_explosion_point_falls_back_to_stop` | `±inf` 不写进报文（§25.7） |
+
+### 28.5 要不要"按条件接"？—— **不需要**，判据是"N = 1 恒等"
+
+任务书提醒："如果接线后某些单发批反而变差，说明规则不该无条件应用"。实测**没有**变差的批，
+而且这不是运气 —— 这条规则对 N = 1 是**结构上的恒等**：
+
+1. **代码上恒等**：`fire(...)` 现在只做一件事——把一发包成 `ShotInput` 交给 `fire_batch`，
+   取回唯一那个 `ShotOutcome`。两条路不可能分家（`single_shot_is_byte_identical_to_fire_batch`）。
+2. **三条规则在 N = 1 时退化**：窗口 1 = 1；前缀 N = 1 无分组；后缀 1 对；
+   死亡块只有一发，`(弧长, 发序号, 士兵 id)` 在**一发内**就是 `settle` 的"经过顺序"（同一发内弧长单调不减）。
+3. **语料上恒等**：950 个单发批的 `kind_seq_ok` / `content_ok` **逐批**前后相同（946 / 569），
+   逐批对照"变差 0 批、变好 128 批"。
+4. **几何那一条也不影响单发批**：几何并行的差别只在于"用哪一刻的士兵表"，
+   一发时批开始那一刻就是唯一那一刻。
+
+⇒ 唯一值得设条件的情形（"单发也会变"）**不存在**，所以不设开关。
+**判据留在代码里而不是留在文档里**：`fire` 不允许有自己的实现，只能调 `fire_batch`；
+谁以后想加"只对多发生效"的开关，必须先推翻上面 4 条。
+
+### 28.6 剩下的 **6 批**种类序列失败：**没有一个是分组错**
+
+| 现象 | 批 | 成因 | 归到哪根轴 |
+|---|---|---|---|
+| 单发，我方**少**一条死效（回放 `LifeInfo` 说 1316 死了、我方 `killed=[]`） | 1（`1782641048` #0） | 死亡集合**漏报** | 几何/掩膜（§24.5 ①④） |
+| 单发，我方**多**一条 `DeathEffect` | 2（`1782673653` #1、`1782927404` #1） | 死亡集合**多报** | 同上 |
+| 单发，我方**多**一条 `AshEffect` | 1（`1787655342` #1） | 同上（`bot_` 皮肤） | 同上 |
+| 多发 3 发，我方多一条 `DeathEffect` | 1（`1782675099` #0） | 同上 | 同上 |
+| 多发 2 发，我方多一条 `DeathEffect` | 1（`1782928065` #1） | 同上 | 同上 |
+
+⇒ 分组这条轴的**残差为 0**：130 个多发批的**骨架** 128 个全对，另 2 个错在"死亡集合"上、不在分组上。
+多发批里还有 102 个"种类序列已对、内容还错"的批 —— 那是 §24.5 的 `Y` / `E1` / `X` / `E2` 四条几何轴，
+`docs/141` §4.6 早就把这三条排成"下一步的收益"，本节没有动它们。
+
+### 28.7 顺手修的一处：`explosion_point` 不写非有限值
+
+`1787655980` 第 1 批原来是这样坏的：我方那条爆炸报文长成
+
+```json
+{"EffectInfo":{"effect_id":237,"pos_x":-19.210168751748913,"pos_y":-inf,"effect_type":"ExplosionEffect","start_tick":18776}}
+```
+
+`-inf` **不是合法 JSON** ⇒ `Msg::parse_wire` 整条丢掉 ⇒ 比较器眼里我方"少一条 `ExplosionEffect`"，
+这一批的种类序列白挂。真因是 `explosion_point` 只挡了 `NaN`、没挡 `±inf`
+（回放那边这个值是有限的 **11.36**，我方回代却溢出）。
+
+改法：`!y.is_finite()` 时回退到停点（`pos_y ≈ 11.3607`）。**这不是真值**——真值是 11.3608 那一档进
+`Y` 桶——只是"不要发出一个不是数字的坐标"。影响正好 1 批：
+种类序列 **945 → 946**（逐发）/ **1073 → 1074**（按批），内容命中 **568 → 569** / **594 → 595**
+（本节 §25.1 表里两列都是**修完之后**的数，所以两边都比任务书的 before 各 +1）。
+
+> 顺带暴露一个**既有工具的口径洞**：`examples/replay_attrib.rs` 的 conv 分支把解析不了的报文
+> **静默丢掉、不计数**（`invalid` 只填 `Predictor` 那条路），所以这条坏报文在旧工具里是隐形的。
+> 新工具照实计数；`--drive fire` 与旧工具仍**逐字节相同**，因为修完之后两边都没有非法报文了。
+
+### 28.8 归因表的前后（`tools/bit_exact_attrib.py`，互斥分桶）
+
+| 桶 | 接线前 | 接线后 | 说明 |
+|---|---|---|---|
+| `Y` 爆炸点 y 末位差 | 170 | **196** | 结构不再挡着，这些批的 y 差露出来了 |
+| `S` 多发批结构 | **123** | **0** | 本节修掉 |
+| `E1` `end_x` 差一个采样点 | 95 | **127** | 同上（露出来） |
+| `X` 爆炸点 x 末位差 | 67 | **91** | 同上 |
+| `E2` `end_x` 真分歧 | 25 | **39** | 同上 |
+| `C` `corrected_function` 文本 | 14 | **18** | 同上 |
+| `SD` 多发批结构 + 死效块 | **7** | **0** | 本节修掉 |
+| `Y2` 爆炸点 y 中等差 | 6 | 8 | 同上 |
+| `D` 死效块数量 | 4 | 6 | 同上 |
+| **合计（失败批）** | **511** | **485** | −26 |
+
+> `K`（未定性）这一档**两列都是 0**：上一版归因表里那 1 批 `K` 就是 §25.7 的 `-inf`，
+> 修掉之后它进了 `Y` 桶。所以 `485` 与 `511` 的差 **26 全部**是"从 `S`/`SD` 变成了完全一致"，
+> 没有一处是靠重新分桶挪出来的。
+
+> 读法：**总失败批只降了 26，不是 128**。因为"结构错"会把**同一个批**的字段差异全挡住
+> （种类序列一错就 `return`，不再做块内比对），所以 128 个批只是**从 `S`/`SD` 挪到了别的桶**，
+> 真正变成"完全一致"的是其中 **26** 批（= §24.4 里 `S` 桶的"独占 26"）。
+> 这也解释了为什么别的桶全都变大：**账本没变，只是盖子掀开了**。
+
+### 28.9 本轮**未**确定 / 未做的（诚实清单）
+
+| # | 事项 | 缺什么 | 档 |
+|---|---|---|---|
+| 1 | 任务书"`diffconv` 里已经修好"这句**不成立**：`diffconv.rs` 里只有 `Cause::MultiShot` 这个**归因标签**，没有分组实现；分组在 `src/game.rs::Match::fire_batch`（`docs/archive/141` §3） | — | 观测（本轮读了两个文件并对照） |
+| 2 | 任务书"种类序列 818 → 918"是**另一根轴**（`Match::fire` → `Match::fire_batch`，默认口径），本轮复跑**逐数复现**（818 / 918）；收敛层这一轴是 946 → 1074 | — | 观测 |
+| 3 | 两发**真并列**到达同一士兵时谁赢 | 真回放里没有并列（最小间隔 4.0 tick，`docs/archive/141` §5） | **未知**（实现用 `(弧长, 发序号, id)` 兜底） |
+| 4 | `EffectInfo(爆炸)` 的 x 与 `end_x` 为什么是两个数（`X` 91 批） | 生产者地址（§24.6(d)1） | **未知** |
+| 5 | §25.7 那个 `-inf` 的**真值**（回放是 11.3608 档） | 原版求值器在同样输入上的逐位输出 | **未知**（当前回退到停点，只是不发非法 JSON） |
+| 6 | `AshEffect` 与 `DeathEffect` 混排时"发哪一个" | `EffectInfo` 发射路径复核（`docs/16` §37 已解"按皮肤"，未解"同批混排"） | **推断**（`docs/archive/141` §3.3 记的仍是未知） |
