@@ -371,3 +371,42 @@ cargo test --offline  1569
 
 **两件的共同前提**：gdext 构建三步（build `--features gdext-bindings` → `cp` 进 `client/` → `--import`），
 缺一步就会拿旧 `.so` 验出假结果。
+
+---
+
+# 第七轮（2026-11-08 凌晨）
+
+## 一条**约定变更**（结构性，防止再出错）
+
+CG 侧的交接文档从 `docs/HANDOVER.md` **迁到 `dispatch/HANDOVER-CG.md`**。
+`docs/HANDOVER.md` 在 CG 上**保持与 master 一致**，不再改。
+
+理由：master 那份被 CG 版**静默覆盖三次**（`a8788b61` / 第四轮 / 第六轮）——
+git 判定「我方未改、对方全改」时不报冲突、直接取对方。
+分开之后 `master..CG` 的差异只剩 `dispatch/` 一个目录，**结构性不会再撞**。
+
+## 新任务
+
+| # | 分支 | 主题 | 优先级 | 依据 |
+|---|---|---|---|---|
+| 33 | `agent/entity-drawer-draw` | 补 `EntityDrawer::draw`（`0x4b2890`）—— **准备圈回到画面上** | **P0** | 第六轮报告 §8 第 1 条；用户能直接看见的回退。**算术现成**（`entity_drawer::ring_primitives`），缺的只是接引擎调用 |
+| 34 | `agent/ptr-pair-probe` | 运行时抓 `(ptr, n)` 两处读数，判掉 407 批残差的方向 | **P0** | `docs/06 §40.7` 的入口；也是**唯一没被否证**的假设（每发两次 `calculate_function`） |
+
+## 当前护栏（master `a4ad8d86`，以 `fixtures/guardrails.json` 为准）
+
+```
+fire 647 / 1075   ｜ batch 647 / 1075   ｜ batch_conv 633 / 1075
+死亡 366 / 385（漏报 0）｜ 挖洞 207 / 294
+cargo test --offline  1585
+headless：assemble 203 / plane_on_screen 96 / obstacle 116 / function_drawer 132 / entity_drawer 72
+selftest 709 / 0 failed（本机 assets）
+```
+
+## 剩余失败 433 批的成分
+
+```
+Y  189（爆炸点 y 末位差，≤1e-9）
+E1 127（end_x 小差，含 Ode 局几何差）
+X   91（回放自身 pos_x ≠ 其 end_x）
+C   14 ｜ E2 11 ｜ D 5
+```
