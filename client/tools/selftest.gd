@@ -917,21 +917,21 @@ func _test_play_screen() -> void:
 	if fire_button != null:
 		fire_button.emit_signal("pressed")
 		await _frames(2)
-	var plane := play.find_child("GraphwarPlane", true, false) as GwPlaneView
+	var plane := play.find_child("GraphwarPlane", true, false) as Control
 	_expect(plane != null, "有 GraphwarPlane")
-	_expect(plane != null and plane.path_points.size() > 1,
-		"开火后弹道点数 > 1（实际 %d）" % (plane.path_points.size() if plane != null else -1))
+	var pool_pts: PackedVector2Array = play.call("plane_points")
+	_expect(pool_pts.size() > 1, "开火后 `Line2D` 上的弹道点数 > 1（实际 %d）" % pool_pts.size())
 	var status := play.find_child("StatusLabel", true, false) as Label
 	print("DEBUG status dim=%s" % (status.text if status != null else "<null>"))
 	var offset_label := play.find_child("OffsetLabel", true, false) as Label
 	_expect(offset_label != null and offset_label.text.strip_edges() != "",
 		"修正常数已显示（实际 '%s'）" % (offset_label.text if offset_label != null else "<null>"))
 
-	# 显示开关
-	var before := plane.show_names
+	# 显示开关（真 `EntityDrawer` 没有这个开关 ⇒ 用"名字文本清空"表达，见 `_set_show_names()`）
+	var before := bool(play.call("plane_state").get("show_names", true))
 	_command("toggle_names")
 	await _frames(1)
-	_expect(plane.show_names != before, "toggle_names 生效")
+	_expect(bool(play.call("plane_state").get("show_names", true)) != before, "toggle_names 生效")
 	_command("toggle_names")
 
 	# 退出确认链
@@ -1543,11 +1543,10 @@ func _test_level_rules() -> void:
 	var pre: Dictionary = play.call("level_state")
 	_expect(int(pre["targets"]["total"]) == 1 and int(pre["targets"]["alive"]) == 1,
 		"① 开局：1 个靶子在场（实际 %s）" % str(pre["targets"]))
-	var plane := play.find_child("GraphwarPlane", true, false) as GwPlaneView
-	_expect(plane != null and plane.soldiers.size() == 1
-		and is_equal_approx(float(plane.soldiers[0]["pos"].y), -5.1),
-		"① 前提：射手在 y = −5.1（实际 %s）"
-			% str(plane.soldiers[0]["pos"] if plane != null and plane.soldiers.size() > 0 else "?"))
+	var shooter_now: Dictionary = play.call("level_state").get("active_soldier", {})
+	_expect(not shooter_now.is_empty() and is_equal_approx(float(shooter_now.get("y", 99.0)), -5.1),
+		"① 前提：射手在 y = −5.1（实际 (%.2f, %.2f)）"
+			% [float(shooter_now.get("x", 99.0)), float(shooter_now.get("y", 99.0))])
 	var won_before := bool(app_node.last_result.get("human_won", false))
 	var team_before := int(app_node.last_result.get("winner_team", -1))
 	_fire_function(play, "0")
@@ -1600,10 +1599,9 @@ func _test_level_rules() -> void:
 	_expect(String(partial["verdict"].get("reason", "playing")) != "targets_cleared",
 		"② 部分命中 ⇒ 绝不判 targets_cleared（实际 %s）" % str(partial["verdict"]))
 	_expect(int(partial["turns_used"]) == 1, "② 部分命中仍算一个回合（turns_used = 1）")
-	var plane6 := play.find_child("GraphwarPlane", true, false) as GwPlaneView
-	_expect(plane6 != null and plane6.targets.size() == 2,
-		"② 画出来的靶子也回来了（GwPlaneView.targets = %d 项）"
-			% (plane6.targets.size() if plane6 != null else -1))
+	var ps6: Dictionary = play.call("plane_state")
+	_expect(int(ps6.get("targets", -1)) == 2,
+		"② 画出来的靶子也回来了（`EntityDrawer` 里靶子实体 = %d 个）" % int(ps6.get("targets", -1)))
 
 	# ---------------- 5. ③ 对战关：对方全灭 ⇒ 通关 ----------------
 	# LAN 局：1 人 + 1 Bot，各 1 个士兵，分别在 (−18, −5.1) 与 (18, −5.1)。
@@ -1842,199 +1840,232 @@ func _test_fire_fx() -> void:
 	_expect(input.text == "sin(x",
 		"键盘：End + 退格 ⇒ 'sin(x'（实际 '%s'）" % input.text)
 
-	# ---------------- ② 准备光圈：可见性/闭合跟着状态走 ----------------
-	var plane := play.find_child("GraphwarPlane", true, false) as GwPlaneView
-	var fx := play.find_child("FireFx", true, false) as GwFireFx
-	_expect(plane != null, "光圈：有 GraphwarPlane")
-	_expect(fx != null, "光圈：有 FireFx（开火表现节点，挂在棋盘上）")
-	if plane == null or fx == null:
-		return
-	input.text = ""                    # 函数空 ⇒ 未准备
-	fx.advance_seconds(0.0)            # 与 _process 同一条路径，只是步长为 0（可复现）
-	_expect(plane.ready_rings.size() == 1,
-		"光圈：顺序回合 + 1 个士兵 ⇒ 恰好 1 个光圈（实际 %d）" % plane.ready_rings.size())
-	var ring: Dictionary = plane.ready_rings[0] if plane.ready_rings.size() > 0 else {}
-	_expect(not ring.is_empty() and ring.get("pos", Vector2.ZERO) == plane.soldiers[0]["pos"],
-		"光圈：画在**当前该开火的士兵**身上（%s）" % str(ring.get("pos", "?")))
-	_expect(not bool(ring.get("ready", true)) and float(ring.get("progress", -1.0)) <= 0.001,
-		"光圈：函数为空 ⇒ **开环**（progress=0、ready=false，实际 %.3f）"
-			% float(ring.get("progress", -1.0)))
-	_expect(float(ring.get("coverage", 0.0)) > 0.05,
-		"光圈：开环也看得见（露出一小段弧 coverage=%.2f，**自定**）"
-			% float(ring.get("coverage", 0.0)))
-	# **真值修正（`docs/140` §5.2，用户实测）**：原版是**点了 Fire / 按了回车之后**圈才闭合，
-	# **不是**"输入框非空"。所以下面这两条断言原来的期望值是反的 —— 现在按真值改写：
-	# 函数非空但没开火 ⇒ **仍然是开的**。断言条数不变（改的是期望值，不是删断言）。
-	input.text = "sin(x)"              # 函数非空，但**还没开火**
-	fx.advance_seconds(GwFireFx.RING_CLOSE_SECONDS)
-	ring = plane.ready_rings[0] if plane.ready_rings.size() > 0 else {}
-	_expect(not bool(ring.get("ready", true)) and float(ring.get("progress", -1.0)) <= 0.001,
-		"光圈：**函数非空也不算准备好**（原版要点 Fire 才闭合；progress=%.3f）"
-			% float(ring.get("progress", -1.0)))
-	_expect(is_equal_approx(float(ring.get("coverage", 0.0)), 0.5),
-		"光圈：没开火时只覆盖张开态的 180°（=3 段 × 60°，coverage=%.2f）"
-			% float(ring.get("coverage", 0.0)))
-	# 开火（= `FireFx.play()`，由 `PlayScreen.fire()` 调用）⇒ 当场那个圈闭合。
-	# 这里直接喂一条 50 单位长（≈2.9 s @0.29 单位/tick）的假弹道，好在半程处停住观察。
-	var long_path := PackedVector2Array()
-	for k in 101:
-		long_path.append(Vector2(float(k) * 0.5, 0.0))
-	fx.play(long_path)
-	fx.advance_seconds(GwFireFx.RING_CLOSE_SECONDS * 0.5)
-	ring = plane.ready_rings[0] if plane.ready_rings.size() > 0 else {}
-	_expect(float(ring.get("progress", -1.0)) > 0.4 and float(ring.get("progress", -1.0)) < 0.6,
-		"光圈：**开火后**闭合动画走到半程（progress≈0.5，实际 %.3f）"
-			% float(ring.get("progress", -1.0)))
-	fx.advance_seconds(GwFireFx.RING_CLOSE_SECONDS)
-	ring = plane.ready_rings[0] if plane.ready_rings.size() > 0 else {}
-	_expect(bool(ring.get("ready", false)) and float(ring.get("progress", -1.0)) >= 0.999,
-		"光圈：**开火 ⇒ 闭合**（progress=1、ready=true，实际 %.3f）"
-			% float(ring.get("progress", -1.0)))
-	_expect(is_equal_approx(float(ring.get("coverage", 0.0)), 1.0),
-		"光圈：闭合后覆盖整圈（coverage=%.2f）" % float(ring.get("coverage", 0.0)))
-	_expect(fx.pinned_count() == 1,
-		"光圈：开火那一帧把圈**钉住**（闭合态一直画到弹道飞完；钉住 %d 个）" % fx.pinned_count())
+	# ---------------- ② 六个**真 GDExtension 节点**（`docs/16` §48） ----------------
+	#
+	# 这一段原来是"准备光圈 + 准备圈几何 + 弹道线宽"，验的是仿制控件 `GwPlaneView` /
+	# `GwFireFx`。那两个类**本轮删掉了**（`docs/16` §48.1），所以断言**换主语不减法**：
+	# 同样验"画出来的东西对不对"，只是主语从 GDScript 控件换成 Rust 扩展类。
+	#
+	# 准备圈本身**没有替身**：原版是 `EntityDrawer::draw`（`0x4b2890`）画的，而本项目的
+	# `EntityDrawer` 节点类 `_draw` 还没实现（§33 对照表）⇒ 画面上没有准备圈。
+	# 它的几何证据仍在 Rust 侧：`tests/entity_drawer.rs` 的
+	# `arcs_carry_the_exact_draw_arc_arguments`（10 折点 / 0.3 带宽 / 关 AA / `#7D6800`）
+	# 与 `open_ring_is_narrower_than_closed_ring`（张开 60° / 闭合 123°）。
+	var plane := play.find_child("GraphwarPlane", true, false) as Control
+	_expect(plane != null, "真节点：播放屏里有 GraphwarPlane")
+	_expect(plane != null and plane.is_class("GraphwarPlane"),
+		"真节点：它是 Rust 扩展类，不是 GDScript 仿制品")
+	for cls in ["GraphwarPlane", "FunctionDrawer", "EntityDrawer", "AxisDrawer",
+			"EffectDrawer", "ObstacleDrawer"]:
+		_expect(ClassDB.class_exists(cls), "真节点：ClassDB 里有 %s" % cls)
+	# 播放屏**没有 `class_name`**（它是 `GwScreen` 的子类，由 `main.gd` 按路径加载）⇒
+	# 常量要从脚本自己的常量表读，不能写 `PlayScreen.XXX`。
+	var consts: Dictionary = play.get_script().get_script_constant_map()
+	var pts_per_tick := float(consts.get("CURVE_POINTS_PER_TICK", -1.0))
+	var ticks_per_second := float(consts.get("CURVE_TICKS_PER_SECOND", -1.0))
+	var px_per_unit := float(consts.get("PX_PER_UNIT", -1.0))
+	var pixel_offset = consts.get("PIXEL_OFFSET", Vector2.ZERO)
+	var ps: Dictionary = play.call("plane_state")
+	_expect(bool(ps.get("nodes_ready", false)),
+		"真节点：六个位置都装上了真类（%s）" % String(ps.get("nodes_error", "")))
+	var canvas_box: Vector2 = ps.get("canvas_size", Vector2.ZERO)
+	var plane_scale: Vector2 = ps.get("plane_scale", Vector2.ZERO)
+	_expect(canvas_box.x > 1.0 and canvas_box.y > 1.0 and plane_scale.x > 0.0,
+		"真节点：画布拿到容器铺的矩形 %s、平面按 %s 缩放（`_fit_canvas()` 真跑过）"
+			% [str(canvas_box), str(plane_scale)])
+	print("[gw2/selftest] 画布 %s / 平面 scale %s" % [str(canvas_box), str(plane_scale)])
+	_expect(int(ps.get("function_drawers", -1)) == 3,
+		"真节点：平面下有 3 个 FunctionDrawer（原版 `init` 建 3 个，`0x4b5df0` 只喂第 0 个）")
+	_expect(int(ps.get("plane_draws", 0)) > 0,
+		"真节点：平面 `_draw` 真被引擎调过（%d 次）⇒ 棋盘框是 Rust 画的"
+			% int(ps.get("plane_draws", 0)))
+	_expect(int(plane.call("drawn_rect_total")) == int(plane.call("draw_call_count")),
+		"真节点：每次 `_draw` 恰好发 1 条 `draw_rect`（棋盘框，`0x4b61ab`）")
+	_expect(int(ps.get("axis_lines", -1)) == 102,
+		"真节点：AxisDrawer 最密档画 102 条线（§35 的 0/2/20/102；实际 %d）"
+			% int(ps.get("axis_lines", -1)))
+	# 四个档位各验一次（`AxisMode` 的真值：0 = 无、1 = 主轴、2 = 每 5、3 = 每 1）
+	var axis := plane.get_node_or_null("AxisDrawer") as Control
+	_expect(axis != null, "真节点：网格是独立的 AxisDrawer 子节点")
+	if axis != null:
+		play.call("_set_axis_mode", 0)
+		_expect(int(axis.call("axis_line_count")) == 0, "网格：档位 0 ⇒ 一条线都没有")
+		play.call("_set_axis_mode", 1)
+		_expect(int(axis.call("axis_line_count")) == 2, "网格：档位 1 ⇒ 2 条（x=0 / y=0 主轴）")
+		play.call("_set_axis_mode", 2)
+		_expect(int(axis.call("axis_line_count")) == 20, "网格：档位 2 ⇒ 20 条（每 5 格）")
+		play.call("_set_axis_mode", 3)
+		_expect(int(axis.call("axis_line_count")) == int(axis.call("axis_line_count_formula")),
+			"网格：枚举法与闭式公式同值（`axis_primitives` 与 `line_count` 互证）")
+		_expect(int(axis.call("draw_call_count")) > 0,
+			"网格：AxisDrawer 的 `_draw` 真被引擎调过（%d 次）⇒ 白底 + 网格是 Rust 画的"
+				% int(axis.call("draw_call_count")))
+	# 士兵 / 靶子：EntityDrawer 里真正有几个实体
+	_expect(int(ps.get("entities", -1)) == int(ps.get("soldier_count", -2)) + int(ps.get("targets", -1)),
+		"真节点：EntityDrawer 的实体数 = 士兵数 + 靶子数（%d = %d + %d）"
+			% [int(ps.get("entities", -1)), int(ps.get("soldier_count", -1)), int(ps.get("targets", -1))])
+	var entities := plane.get_node_or_null("EntityDrawer") as Control
+	_expect(entities != null, "真节点：士兵层是独立的 EntityDrawer 子节点")
+	if entities != null:
+		# 一个实体 = 3 个 sprite（皮肤/脸/帽子）+ 1 个名字标签（§33）
+		var per_entity := 0
+		if entities.get_child_count() > 0:
+			per_entity = entities.get_child_count() / maxi(1, int(entities.call("entity_count")))
+		_expect(per_entity == 4,
+			"真节点：每个实体 4 个子节点（3×Sprite2D + 1×RichTextLabel，实际 %d）" % per_entity)
+		_expect(int(entities.call("process_call_count")) > 0,
+			"真节点：EntityDrawer 的 `_process` 真在跑（%d 次，每帧重摆）"
+				% int(entities.call("process_call_count")))
+	# 名字开关：真节点没有这个开关 ⇒ 用空文本表达（`EntityDrawer` 每帧重写 visible，改不了）
+	_expect(bool(ps.get("show_names", false)), "名字：默认开着（`plane_state().show_names`）")
+	_command("toggle_names")
+	await _frames(1)
+	var ps_off: Dictionary = play.call("plane_state")
+	_expect(not bool(ps_off.get("show_names", true)), "名字：`toggle_names` 之后关掉")
+	if entities != null and entities.get_child_count() > 0:
+		var label := entities.get_child(entities.get_child_count() - 1) as RichTextLabel
+		_expect(label == null or String(label.text) == "",
+			"名字：关掉之后那个 RichTextLabel 的文本是空的（实际 '%s'）"
+				% (String(label.text) if label != null else "<null>"))
+	_command("toggle_names")
+	await _frames(1)
+	# 障碍层：掩膜 + 贴图（`ObstacleDrawer::update`，`0x3ee190`）
+	var obs: Object = null
+	for ch in plane.get_children():
+		if String(ch.get_class()) == "ObstacleDrawer":
+			obs = ch
+	_expect(obs != null, "真节点：障碍层是 ObstacleDrawer（`build_obstacle_drawer` 建的）")
+	_expect(int(ps.get("obstacle_pixels", -1)) == 0,
+		"障碍：这一关没有障碍 ⇒ 掩膜是空的（实际 %d 像素被占）" % int(ps.get("obstacle_pixels", -1)))
+	_expect(int(ps.get("obstacle_updates", 0)) > 0,
+		"障碍：平面每帧把 `ObstacleDrawer::update` 刷了 %d 次（原版 2 次/帧）"
+			% int(ps.get("obstacle_updates", 0)))
+	_expect(obs == null or int(obs.call("child_count")) == 1,
+		"障碍：掩膜贴图挂在**一个** Sprite2D 上（`update` 的 ⑤ 步，`0x423224` 只调一次）")
+	# 障碍层真的画得出来：注入 1 个障碍 ⇒ 掩膜里有像素（`plane::rasterize` 真跑了）
+	play = _begin_campaign_for_test(0, [], [{"pos": Vector2(0.0, 0.0), "size": 2.0}])
+	await _frames(2)
+	var ps_obs: Dictionary = play.call("plane_state")
+	_expect(int(ps_obs.get("obstacle_pixels", 0)) > 0,
+		"障碍：注入 1 个障碍 ⇒ 掩膜里 %d 个像素被占（`rasterize` 是内核那份实现）"
+			% int(ps_obs.get("obstacle_pixels", 0)))
+	# 特效：真 EffectDrawer 真的建了元素、真的进了 `_draw`
+	var fx_node := plane.get_node_or_null("EffectDrawer") as Control
+	_expect(fx_node != null, "真节点：特效层是独立的 EffectDrawer 子节点")
+	var fx_layer := play.find_child("EffectLayer", true, false) as GwEffectLayer
+	_expect(fx_layer != null and fx_layer.drawer == fx_node,
+		"特效：`EffectLayer` 已经绑定到真 EffectDrawer（适配层不再自绘）")
+	if fx_node != null:
+		var before_fx := int(fx_node.call("effect_count"))
+		play.call("_spawn_effect", "ExplosionEffect", Vector2(3.0, 2.0))
+		# 相位要在**当刻**读：`step_effects` 会把 `CircleLargeA`(2) 推进成 `CircleLargeB`(3)
+		# （`effect_drawer::step_effects` 的"到期换相位"，2→3 / 其余→6），隔几帧就已经变了。
+		var newest := int(fx_node.call("effect_count")) - 1
+		_expect(int(fx_node.call("effect_phase", newest)) == int(GwEffectLayer.PHASE_FOR_KIND["ExplosionEffect"]),
+			"特效：名字 → 相位是我方选择，但**真的**照那张表派过去了（当刻相位 %d）"
+				% int(fx_node.call("effect_phase", newest)))
+		await _frames(2)
+		_expect(int(fx_node.call("effect_count")) == before_fx + 1,
+			"特效：`ExplosionEffect` ⇒ 真节点多 1 个元素（%d → %d）"
+				% [before_fx, int(fx_node.call("effect_count"))])
+		_expect(int(fx_node.call("draw_call_count")) > 0,
+			"特效：EffectDrawer 的 `_draw` 真被调过（%d 次）" % int(fx_node.call("draw_call_count")))
+		_expect(int(fx_node.call("drawn_circle_total")) > 0,
+			"特效：真发过 `draw_circle`（%d 个，半径/颜色取自 `.so` 立即数）"
+				% int(fx_node.call("drawn_circle_total")))
+	# 曲线：真 FunctionDrawer 建了 Line2D，且**在画布坐标系里**（`update_transform`）
+	var fd: Object = null
+	for ch in plane.get_children():
+		if String(ch.get_class()) == "FunctionDrawer":
+			fd = ch
+			break
+	_expect(fd != null, "真节点：曲线载体是 FunctionDrawer 子节点")
+	_expect(int(GwEffectLayer.LIFETIME_TICKS["ExplosionEffect"]) > 0,
+		"特效：时长仍是我方选择（原版 `EffectInfo` 只带 start_tick），表里有值")
+	_expect(is_equal_approx(pts_per_tick, 30.0),
+		"曲线：每 tick 30 点（`.rodata 0x19ef90`，Rust 侧 `REVEAL_POINTS_PER_TICK`）")
+	_expect(is_equal_approx(px_per_unit, 20.0)
+		and pixel_offset == Vector2(500.0, 300.0),
+		"曲线：画布换算是 `px = 20x + 500` / `py = 300 − 20y`（`graphwar_plane::to_pixel`）")
 
-	# ---------------- ②b 准备圈的**几何**：直接从 `EntityDrawer::draw` 的立即数复算===
-	# 这一段验的不是"常数抄对了"，而是**几何能被独立复算**：段数、半张角、缺口、
-	# 方位角、旋转量与"同源驱动"的关系、外凸箭头扇区顶点。出处见 `docs/140` §2。
-	_expect(GwPlaneView.RING_SEGMENTS == 3,
-		"准备圈：**3 段**（objdump：`A_i = A0 + i·2.09439510239` 取 i=0,1,2 ⇒ 步长正好 120°）")
-	# ① 准备前是**分离的 3 段**，不是 1 段连续弧
-	var half_open := GwPlaneView.ring_half_span(0.0)
-	var half_closed := GwPlaneView.ring_half_span(1.0)
-	_expect(absf(rad_to_deg(half_open) - 30.0) < 1e-4,
-		"准备圈：张开态半张角 = π/6 = 30°（立即数 `0x19f2e8 = 0.523598775598`；实际 %.4f°）"
-			% rad_to_deg(half_open))
-	_expect(absf(rad_to_deg(half_closed) - 61.5) < 0.05,
-		"准备圈：闭合态半张角封顶 61.5°（立即数 `1.07337748998` rad；实际 %.4f°）"
-			% rad_to_deg(half_closed))
-	# 张开：3 段 × 60° = 180° ⇒ 缺口 180°（**明显是分开的**）
-	_expect(absf(3.0 * 2.0 * rad_to_deg(half_open) - 180.0) < 1e-3,
-		"准备圈：准备前 3 段各 60°、合计 180° ⇒ 缺口还剩 180°（分开的 3 段）")
-	# 闭合：3 段 × 123° = 369° > 360° ⇒ 首尾**重叠**，一定闭合
-	_expect(3.0 * 2.0 * rad_to_deg(half_closed) > 360.0,
-		"准备圈：闭合态 3 段 × 123° = %.1f° > 360° ⇒ **首尾重叠成整圈**"
-			% (3.0 * 2.0 * rad_to_deg(half_closed)))
-	_expect(is_equal_approx(float(ring.get("coverage", 0.0)), 1.0),
-		"准备圈：闭合后覆盖钳到 1.0（coverage=%.2f）" % float(ring.get("coverage", 0.0)))
-	# ② 方位角 = A0 + 120°·i；张开态整组回退，回退角**不是独立参数**
-	var az_ready := [0, 1, 2].map(func(i): return rad_to_deg(GwPlaneView.ring_segment_azimuth(i, 1.0)))
-	var az_open := [0, 1, 2].map(func(i): return rad_to_deg(GwPlaneView.ring_segment_azimuth(i, 0.0)))
-	_expect(absf(az_ready[0] - 60.0) < 1e-4 and absf(az_ready[1] - 180.0) < 1e-4
-		and absf(az_ready[2] - 300.0) < 1e-4,
-		"准备圈：闭合态方位 60°/180°/300°（**真帧实测 60.5°/180.2°/300.5°**；实际 %s）"
-			% str(az_ready))
-	_expect(absf((az_ready[0] - az_open[0]) - 15.75) < 1e-4,
-		"准备圈：张开态整组回退 15.75°（真帧实测 +15°；实际 %.2f°）" % (az_ready[0] - az_open[0]))
-	_expect(absf(GwPlaneView.RING_SPIN_DEG
-		- (GwPlaneView.RING_HALF_DEG_MAX - GwPlaneView.RING_HALF_DEG_MIN) * 0.5) < 1e-6,
-		"准备圈：回退角 = (Hmax−Hmin)/2 —— 原版 `A0 = V/120`、`dH = dV/60` ⇒ `dA0 = dH/2`，"
-		+ "**转与合拢是同一个 V 驱动的**（不是两套动画）")
-	# ③ 颜色：真帧取样 #7D6800 **就在**调色板里，且环用的就是该士兵的玩家色
-	var sampled := Color8(125, 104, 0)          # 两张裁图的主导非白/非灰颜色，逐像素数出来的
-	var palette_hit := false
-	for team in GwPlaneView.TEAM_COLORS:
-		for c in team:
-			if c == sampled:
-				palette_hit = true
-	_expect(palette_hit,
-		"准备圈：真帧取样色 #7D6800 **是调色板里的一员**（TEAM_COLORS[*] 命中）")
-	var ring_col: Color = ring.get("color", Color(1, 0, 1))
-	_expect(ring_col == plane.soldiers[0]["color"],
-		"准备圈：环的颜色 = 该士兵的**玩家色**（本局为 %s；真帧那一局恰好抽到 #7D6800）"
-			% ring_col.to_html(false))
-	_expect(GwPlaneView.TEAM_COLORS[0][2] == sampled,
-		"准备圈：真帧取样色正是 TEAM_COLORS[0][2]（环/箭头/名字/弹道同色）")
-	# ④ 尺寸：宽高比逐位对上（R 本身取自运行时 PosInfo，只有比例能静态验）
-	_expect(absf(GwPlaneView.RING_WIDTH_UNITS - 0.3) < 1e-6,
-		"准备圈：环带宽 0.3（`draw_arc` 的 width 立即数 `0x3e99999a` = 0x1bb2b4）")
-	_expect(absf(GwPlaneView.RING_RADIUS_UNITS / GwPlaneView.RING_WIDTH_UNITS - 2.859) < 0.002,
-		"准备圈：R/W = 2.859（真帧 外径/内径 = 22.57/15.85 = 1.4240 反解；实际 %.4f）"
-			% (GwPlaneView.RING_RADIUS_UNITS / GwPlaneView.RING_WIDTH_UNITS))
-	var ratio := (GwPlaneView.RING_RADIUS_UNITS + GwPlaneView.RING_WIDTH_UNITS * 0.5) \
-		/ (GwPlaneView.RING_RADIUS_UNITS - GwPlaneView.RING_WIDTH_UNITS * 0.5)
-	_expect(absf(ratio - 1.4240) < 0.002,
-		"准备圈：由 R/W 反算的 外径/内径 = %.4f，对得上真帧实测的 1.4240" % ratio)
-	_expect(GwPlaneView.RING_ARC_POINTS == 10 and not GwPlaneView.RING_ARC_ANTIALIASED,
-		"准备圈：每段只折 10 个点、**关抗锯齿**（`mov $0xa,%esi` / `xor %ecx,%ecx`）")
-	_expect(GwFireFx.RING_OPEN_ALPHA == 1.0,
-		"准备圈：张开态**不透明**（真帧准备态 #7D6800 精确色 934 px，没有半透明）")
-	# 外凸箭头：顶点都落在 [环外径, 尖端] 内、方位在 ±9° 内
-	var barb_pts := GwPlaneView.ring_barb_polygon(Vector2.ZERO, 0.0, 100.0, 20.0, 150.0)
-	var barb_ok := barb_pts.size() >= 12
-	var r_min := 1e9
-	var r_max := -1e9
-	for p in barb_pts:
-		var rr: float = Vector2(p).length()
-		r_min = minf(r_min, rr)
-		r_max = maxf(r_max, rr)
-		barb_ok = barb_ok and absf(Vector2(p).angle()) <= deg_to_rad(GwPlaneView.RING_BARB_HALF_DEG) + 1e-4
-	_expect(barb_ok and absf(r_max - 150.0) < 1e-3 and absf(r_min - 110.0) < 1e-3,
-		"准备圈：外凸箭头是扇区（顶点 %.0f~%.0f = 环外径 110 / 尖端 150，角宽 ±%.0f°）"
-			% [r_min, r_max, GwPlaneView.RING_BARB_HALF_DEG])
-	_expect(GwPlaneView.RING_BARB_TIP_UNITS > GwPlaneView.RING_RADIUS_UNITS + GwPlaneView.RING_WIDTH_UNITS * 0.5,
-		"准备圈：箭头**凸出环外径**（尖端 %.3f > 外径 %.3f）"
-			% [GwPlaneView.RING_BARB_TIP_UNITS,
-				GwPlaneView.RING_RADIUS_UNITS + GwPlaneView.RING_WIDTH_UNITS * 0.5])
-	# 弹道线宽：实测 2.83 px ⇒ 2.2 画布 px（原来 3.0，粗 1.35×）
-	_expect(absf(GwPlaneView.PATH_WIDTH_CANVAS_PX - 2.2) < 1e-6,
-		"弹道：线宽 2.2 画布 px（真帧 45° 斜线横向跨 4 px ⇒ 4·sin45° = 2.83 px 垂直线宽）")
-
-	# 对局结束后**不该还留着光圈**
-	play.call("end_match")
-	fx.advance_seconds(0.2)
-	_expect(plane.ready_rings.is_empty(),
-		"光圈：对局结束 ⇒ 光圈全部消失（实际 %d 个）" % plane.ready_rings.size())
-
-	# ---------------- ③ 弹道按 tick 推进 ----------------
-	# 先把这两条的"档位"钉住：tick 频率是**观测**，每 tick 弧长是**推断**（`docs/135` §3.1）。
-	_expect(is_equal_approx(GwFireFx.TICKS_PER_SECOND, 60.0) and GwFireFx.TICKS_PER_SECOND == 60.0,
+	# ---------------- ③ 弹道按 tick 揭示（**判定在 Rust 侧**） ----------------
+	#
+	# 旧实现是 GDScript 按"弧长 ÷ 0.29 单位/tick"自己数点（`GwFireFx`）。现在是原版那条算式：
+	# `new_len = min(len, 30×(fractional_tick − active_tick))`（`0x4b67a0`–`0x4b6812`），
+	# 由 `GraphwarPlane` 在 `_draw` 的喂点循环里算，本屏只**推 tick**。
+	# 旧断言里的 0.29 是"推断"（`docs/86` §6），这里顺手把它与真算式对上：
+	# 30 点/tick × 内核采样弦长 0.01 = **0.30 单位/tick**，与观测的 0.29 中位数一致。
+	_expect(is_equal_approx(ticks_per_second, 60.0),
 		"tick：60 ticks/秒（**观测**，docs/35：113 个 TickReply 样本拟合）")
-	_expect(is_equal_approx(GwFireFx.SPEED_UNITS_PER_TICK, 0.29),
-		"tick：0.29 棋盘单位/tick（**推断**，docs/86 §6：active_tick 与爆炸 start_tick 之差）")
+	_expect(absf(pts_per_tick * 0.01 - 0.29) < 0.02,
+		"tick：30 点/tick × 0.01 弦长 = %.2f 单位/tick，对上 docs/86 §6 的 0.29（推断）"
+			% (pts_per_tick * 0.01))
 
 	play = _begin_campaign_for_test(0, [Vector2(12.0, 2.0)], [])   # 靶子不在弹道线上
 	await _frames(1)
 	app_node.close_all_popups()
-	plane = play.find_child("GraphwarPlane", true, false) as GwPlaneView
-	fx = play.find_child("FireFx", true, false) as GwFireFx
 	_fire_function(play, "0")
-	var s0: Dictionary = fx.shot_state()
-	_expect(int(s0["total_points"]) == plane.path_points.size() and int(s0["total_points"]) > 500,
-		"tick：推进用的是 **shot.points 全量**（%d 点，未截断）" % int(s0["total_points"]))
-	_expect(bool(s0["playing"]) and int(s0["reveal"]) >= 1
-		and int(s0["reveal"]) < int(s0["total_points"]),
-		"tick：开火瞬间只揭示起点，**不是一次画完**（reveal=%d / %d）"
-			% [int(s0["reveal"]), int(s0["total_points"])])
-	var counts := [int(s0["reveal"])]
+	var flying: Dictionary = play.call("plane_state")
+	var total := int(flying.get("path_total", 0))
+	_expect(total > 500, "tick：喂给平面的是 **shot.points 全量**（%d 点，未截断）" % total)
+	_expect(int(flying.get("path_reveal", 0)) > 0 and int(flying.get("path_reveal", 0)) < total,
+		"tick：开火瞬间只露出第一段（%d / %d 点），不是一次画完"
+			% [int(flying.get("path_reveal", 0)), total])
+	_expect(int(flying.get("path_reveal", 0))
+		== int(min(float(total), floor(pts_per_tick * float(flying.get("path_tick", 0.0))))),
+		"tick：揭示点数 = floor(30 × 分数 tick)（tick=%.3f ⇒ %d 点，`0x4b67c2` 的 cvttsd2si）"
+			% [float(flying.get("path_tick", 0.0)), int(flying.get("path_reveal", 0))])
+	var counts := [int(flying.get("path_reveal", 0))]
 	for i in 3:
-		fx.advance_seconds(0.25)
-		counts.append(int(fx.shot_state()["reveal"]))
+		play.call("advance_shot_for_test", 0.25)
+		await _frames(1)
+		counts.append(int(play.call("plane_state").get("path_reveal", 0)))
 	_expect(counts[1] > counts[0] and counts[2] > counts[1] and counts[3] > counts[2],
 		"tick：揭示点数随时间**严格单调增**（%s）" % str(counts))
-	# 0.25 s = 15 tick × 0.29 单位/tick = 4.35 单位；采样步长（弦长）0.01 ⇒ 约 435 点。
-	var expected := int(round(0.25 * GwFireFx.TICKS_PER_SECOND
-		* GwFireFx.SPEED_UNITS_PER_TICK / 0.01))
-	_expect(absi(counts[1] - expected) <= 40,
-		"tick：0.25 s 后揭示约 %d 点（弧长 ÷ 0.01 弦长；实际 %d）" % [expected, counts[1]])
-	_expect(plane.path_reveal == counts[3],
-		"tick：棋盘上的 `path_reveal` = 状态里的揭示点数（%d）" % plane.path_reveal)
+	# 0.25 s = 15 tick × 30 点/tick = 450 点。**下界**而不是等号：这 3 次 `await _frames(1)`
+	# 里 `_process` 也按真实帧间隔推 tick（原版由 tick handler 每帧喂，本屏没有那个模块）。
+	var floor_025 := int(pts_per_tick * 15.0)
+	_expect(counts[1] - counts[0] >= floor_025,
+		"tick：0.25 s 至少揭示 %d 点（15 tick × 30 点/tick；实际 +%d，累计 %d）"
+			% [floor_025, counts[1] - counts[0], counts[1]])
+	var drawn_pts: PackedVector2Array = play.call("plane_points")
+	_expect(drawn_pts.size() == counts[3],
+		"tick：`Line2D` 上的点数 == 状态里的揭示点数（%d）" % drawn_pts.size())
 	# 步长为 0 时不许倒退（单调性对任意步长成立）
-	fx.advance_seconds(0.0)
-	_expect(int(fx.shot_state()["reveal"]) == counts[3],
+	play.call("advance_shot_for_test", 0.0)
+	_expect(int(play.call("plane_state").get("path_reveal", 0)) == counts[3],
 		"tick：零步长不倒退（仍是 %d）" % counts[3])
-	# 走完全程 ⇒ 到 `drawn.impact`（撞点就是序列最后一点）收尾，且不再增加
-	fx.advance_seconds(600.0)
-	var done: Dictionary = fx.shot_state()
-	_expect(int(done["reveal"]) == int(done["total_points"]) and not bool(done["playing"]),
-		"tick：飞完 ⇒ 揭示点数 = 全量（reveal=%d / total=%d，playing=%s）"
-			% [int(done["reveal"]), int(done["total_points"]), str(done["playing"])])
-	_expect(is_equal_approx(float(done["arc"]), float(done["total_arc"])),
-		"tick：收尾条件是「走到弹道末端」（arc=%.3f / total=%.3f）"
-			% [float(done["arc"]), float(done["total_arc"])])
-	_expect(plane.path_points.size() == int(done["total_points"]),
-		"tick：动画跑完后 `shot.points` 仍是全量（%d 点，没被截断）" % plane.path_points.size())
+	var line: Object = null
+	if fd != null:
+		var lid := int(fd.call("line_instance_id", 0))
+		if lid != 0:
+			line = instance_from_id(lid)
+	_expect(line != null, "曲线：FunctionDrawer 下真的建了一条 `Line2D`（`0x498e93` 的 add_child）")
+	_expect(line != null and is_equal_approx(float(line.get("width")), 0.125),
+		"曲线：线宽 = 0.125（逐位常量；scale 20 下 = 2.5 px，真帧量到 2.83 px）")
+	# **只推 tick**（不动结算流水线）⇒ 曲线应当一路长到全量，且 tick 停在"揭完"那一点
+	# （不越过后面 60 tick 的淡出窗口，`ACTIVE_TAIL_POINTS = 1800`）。
+	play.call("_advance_curve", 600.0)
+	var done: Dictionary = play.call("plane_state")
+	_expect(int(done.get("path_reveal", 0)) == int(done.get("path_total", -1))
+		and int(done.get("path_total", 0)) > 500,
+		"tick：揭完 ⇒ 揭示点数 = 全量（reveal=%d / total=%d）"
+			% [int(done.get("path_reveal", 0)), int(done.get("path_total", -1))])
+	_expect(float(done.get("path_tick", -1.0)) <= float(total) / pts_per_tick + 1.0,
+		"tick：推进到 `ceil(len/30)` 就停住（tick=%.2f，不再往前跑进 60 tick 的淡出窗口）"
+			% float(done.get("path_tick", -1.0)))
+	var full_pts: PackedVector2Array = play.call("plane_points")
+	_expect(full_pts.size() == total, "tick：揭完后曲线是**全量**（%d 点，没被截断）" % full_pts.size())
+	_expect(full_pts.size() > 1 and absf(float(full_pts[full_pts.size() - 1].x)) > 1.0,
+		"tick：最后一个点真的落在棋盘上（x = %.3f）"
+			% (float(full_pts[full_pts.size() - 1].x) if full_pts.size() > 0 else 0.0))
+	# 再让**整条流水线**跑完 ⇒ `_on_shot_arrived()` 把曲线清掉（`docs/143` §2：原版一发结算完
+	# 不再留线）。这一步同时验"清干净"：`Line2D` 真被 `remove_function` 删了，不是只清登记表。
+	play.call("advance_shot_for_test", 600.0)
+	await _frames(1)
+	_expect(int(play.call("plane_state").get("path_points", -1)) == 0,
+		"tick：结算落地后曲线被清掉（`Line2D` 点数 = %d；旧实现一直留到下一次发射）"
+			% int(play.call("plane_state").get("path_points", -1)))
 
 	# ---------------- ① 键盘：回车 = 提交 = 开火（与 Fire 按钮同一条链） ----------------
 	play = _begin_campaign_for_test(0, [Vector2(12.0, 2.0)], [])
@@ -2047,8 +2078,9 @@ func _test_fire_fx() -> void:
 	var turns1 := int(play.call("level_state")["turns_used"])
 	_expect(turns1 == turns0 + 1,
 		"键盘：回车提交 ⇒ 真的开火了（turns_used %d → %d）" % [turns0, turns1])
-	_expect(plane.path_points.size() > 1,
-		"键盘：回车开火后棋盘上真的有弹道（%d 点）" % plane.path_points.size())
+	_expect((play.call("plane_points") as PackedVector2Array).size() > 1,
+		"键盘：回车开火后棋盘上真的有弹道（%d 点）"
+			% (play.call("plane_points") as PackedVector2Array).size())
 
 	# ---------------- 收尾：把随机布局的钉子拔掉 ----------------
 	play.call("clear_layout_override")
@@ -2223,20 +2255,21 @@ func _test_replay_player() -> void:
 		"回放模式下 fire() 不改变局面（暂停时逐字符相同）")
 
 	# 死亡事件：靶子在 2169 那一拍从棋盘上消失
-	var plane := play.find_child("GraphwarPlane", true, false) as GwPlaneView
+	var plane := play.find_child("GraphwarPlane", true, false) as Control
 	_expect(plane != null, "回放模式里还是同一个 GraphwarPlane")
 	if plane != null:
 		play.call("replay_seek_for_test", 2168)
-		_expect(plane.targets.size() == 1,
-			"tick 2168 靶子画在棋盘上（实际 %d 个）" % plane.targets.size())
+		_expect(int(play.call("plane_state").get("targets", -1)) == 1,
+			"tick 2168 靶子画在棋盘上（实际 %d 个）" % int(play.call("plane_state").get("targets", -1)))
 		play.call("replay_seek_for_test", 2169)
-		_expect(plane.targets.size() == 0,
-			"tick 2169 靶子被打掉、从棋盘上消失（实际 %d 个）" % plane.targets.size())
+		_expect(int(play.call("plane_state").get("targets", -1)) == 0,
+			"tick 2169 靶子被打掉、从棋盘上消失（实际 %d 个）" % int(play.call("plane_state").get("targets", -1)))
 		# 弹道：回放不带点序列 ⇒ 用内核按（起点 + 函数文本 + 队伍方向）重算
 		play.call("replay_seek_for_test", 550)
-		_expect(plane.path_points.size() > 1,
+		var rp: PackedVector2Array = play.call("plane_points")
+		_expect(rp.size() > 1,
 			"tick 550 的弹道由内核重算出来（%d 点／状态：%s）"
-			% [plane.path_points.size(), String(play.call("replay_state").get("shot_status", ""))])
+			% [rp.size(), String(play.call("replay_state").get("shot_status", ""))])
 		var offset_label := play.find_child("OffsetLabel", true, false) as Label
 		var off := String(offset_label.text).replace(" ", "") if offset_label != null else ""
 		_expect(off == "-3.694",
@@ -3659,15 +3692,15 @@ func _test_replay_ode() -> void:
 
 	# 第一发（tick 212）：弹道由内核 ODE 重算出来
 	play.call("replay_seek_for_test", DIFFEQ_FIRST_SHOT_TICK)
-	var plane := play.find_child("GraphwarPlane", true, false) as GwPlaneView
+	var plane := play.find_child("GraphwarPlane", true, false) as Control
 	_expect(plane != null, "有 GraphwarPlane")
 	if plane == null:
 		return
-	_expect(plane.path_points.size() > 100,
-		"DiffEq 局的弹道由内核 ODE 重算出来（%d 点）" % plane.path_points.size())
+	var dq: PackedVector2Array = play.call("plane_points")
+	_expect(dq.size() > 100, "DiffEq 局的弹道由内核 ODE 重算出来（%d 点）" % dq.size())
 	var lastx := 0.0
-	if plane.path_points.size() > 0:
-		lastx = float(plane.path_points[plane.path_points.size() - 1].x)
+	if dq.size() > 0:
+		lastx = float(dq[dq.size() - 1].x)
 	_expect(absf(lastx - DIFFEQ_FIRST_SHOT_END_X) < 0.001,
 		"重算弹道最后一点 x = 录像 end_x %.6f（实际 %.6f）" % [DIFFEQ_FIRST_SHOT_END_X, lastx])
 	var status := String(play.call("replay_state").get("shot_status", ""))
@@ -3678,9 +3711,11 @@ func _test_replay_ode() -> void:
 
 	# 死亡事件：靶子 3683 在 tick 1291 阵亡
 	play.call("replay_seek_for_test", 1290)
-	_expect(plane.targets.size() == 1, "tick 1290 靶子还在（实际 %d 个）" % plane.targets.size())
+	_expect(int(play.call("plane_state").get("targets", -1)) == 1,
+		"tick 1290 靶子还在（实际 %d 个）" % int(play.call("plane_state").get("targets", -1)))
 	play.call("replay_seek_for_test", 1291)
-	_expect(plane.targets.size() == 0, "tick 1291 靶子被打掉（实际 %d 个）" % plane.targets.size())
+	_expect(int(play.call("plane_state").get("targets", -1)) == 0,
+		"tick 1291 靶子被打掉（实际 %d 个）" % int(play.call("plane_state").get("targets", -1)))
 	play.call("end_match")
 	await _frames(2)
 	app_node.state.reset_lan()
@@ -3738,9 +3773,11 @@ func _test_play_flow() -> void:
 	if app_node.audio != null:
 		app_node.audio.played.connect(func(s: String, slot: String) -> void:
 			sounds.append({"sound": s, "slot": slot}))
-	var plane := play.find_child("GraphwarPlane", true, false) as GwPlaneView
+	var plane := play.find_child("GraphwarPlane", true, false) as Control
 	var fx_layer := play.find_child("EffectLayer", true, false) as GwEffectLayer
 	_expect(fx_layer != null, "① 棋盘上有特效层 `GwEffectLayer`（docs/143 §1）")
+	_expect(fx_layer != null and fx_layer.drawer != null,
+		"① 特效层已经绑到**真** `EffectDrawer` 节点（§48.3：适配层不再自绘）")
 
 	_flow_fire(play, "0")
 	var flying: Dictionary = play.call("level_state")
@@ -3882,11 +3919,12 @@ func _test_play_flow() -> void:
 	var ai_shot: Dictionary = play.call("level_state")
 	_expect(bool(ai_shot["in_flight"]) and int(ai_shot["shot_points"]) > 1,
 		"⑥ AI 那一发真的上了棋盘（%d 点）" % int(ai_shot["shot_points"]))
-	var ai_plane := play.find_child("GraphwarPlane", true, false) as GwPlaneView
-	_expect(ai_plane != null and ai_plane.path_points.size() > 1
-		and float(ai_plane.path_points[0].x) > 17.0,
+	var ai_plane := play.find_child("GraphwarPlane", true, false) as Control
+	var ai_pts: PackedVector2Array = play.call("plane_points")
+	_expect(ai_plane != null and ai_pts.size() > 1
+		and float(ai_pts[0].x) > 17.0,
 		"⑥ AI 那一发的起点在**它自己**的士兵处（x = %.2f ≈ 18）"
-			% (float(ai_plane.path_points[0].x) if ai_plane != null and ai_plane.path_points.size() > 0 else -999.0))
+			% (float(ai_pts[0].x) if ai_pts.size() > 0 else -999.0))
 	play.call("advance_shot_for_test", 10.0)
 	var after_ai: Dictionary = play.call("level_state")
 	_expect(not bool(after_ai["in_flight"]), "⑥ AI 那发也结算了")
