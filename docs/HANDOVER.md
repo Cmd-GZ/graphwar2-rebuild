@@ -19,12 +19,15 @@
 进行中      第六轮 29–32（4 份），见 §7
 
 护栏（2026-11-08 凌晨实测；**以 fixtures/guardrails.json 为准**）
-  fire       内容 608/1080 ｜ 种类 947/1080
-  batch      内容 643/1080 ｜ 种类 1075/1080
-  batch_conv 内容 633/1080 ｜ 种类 1075/1080
-  延迟段     死亡 366/385 ｜ 挖洞 fire 205 · batch 206（分母 293）
-  cargo test 1569 / 0 failed ｜ --features gdext-bindings 1653 / 0 failed
+  fire       内容 612/1080 ｜ 种类 947/1080
+  batch      内容 647/1080 ｜ 种类 1075/1080
+  batch_conv 内容 637/1080 ｜ 种类 1075/1080
+  延迟段     死亡 366/385 ｜ 挖洞 206(fire) · 207(batch)（分母 293·294）
+  cargo test 1575 / 0 failed ｜ --features gdext-bindings 1659 / 0 failed
   selftest   694 / 0 failed（四前置全齐时；见 §5）
+
+⚠️ 写护栏用什么：`python3 tools/bit_exact_attrib.py --json <jsonl> --update-baseline --axis fire|batch|batch_conv`
+（**不是** `--write-guardrails`，那是我自己那版临时改法的参数，已废弃）。
 ```
 
 ## 1. 环境（**都在 `.reference/`，已 gitignore；工作区外只读**）
