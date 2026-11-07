@@ -8549,3 +8549,224 @@ EOF
 `entity_drawer_check` 72 / `function_drawer_check` 132 / `draw_classes_check` 235 /
 `curve_on_screen_check` 96 / `plane_on_screen_check` 76 / `signal_classes_check` 155 /
 `assemble_check` 199 / `spike_class_check` 23 / `recovered_view_check` 57，**`0 failed` ×11**。
+
+## 46. 两个"字段一个都没解"的管理器解开了：`GraphwarFunctionManager`（32 B / 4 字段）与 `GraphwarObstacleManager`（80 B / 5 字段）（2026-11，任务 22）
+
+**一句话**：§44.0 那两行「`GraphwarFunctionManager` / `GraphwarObstacleManager` 的字段**一个都没解**」
+本节**作废**——两个结构体的每个字段都落到了指令上，而且**三份构建（arm64 2.0.60 / x86 Linux
+2.0.60 / Windows 2.0.60 DLL）的偏移序列逐条相同**；布局写进
+`src/graphwar_function_manager.rs` / `src/graphwar_obstacle_manager.rs`，
+`size_of` 分别由 **编译期硬闸** 与单测断言为 **32 / 80**。
+
+> 档位口径同 §42 / §44：**逐位** = 与真二进制逐字节/逐位对拍；**观测** = 能指到反汇编地址 /
+> 指令级读写；**推断** = 有依据未证；**未知** = 没解出来。
+> `cargo test` / `assemble_check.gd` 的条数**只是回归保护**，不是复原证据。
+
+### 46.0 先说"没做到"的，以及两条就地更正
+
+| 项 | 现在 | 档位 |
+|---|---|---|
+| 两个结构体的**字段布局** | **全部解开**（4 字段 / 5 字段，见 §46.2 / §46.3） | **观测**（三构建交叉验证） |
+| 它们的**行为** | 仍未复原：`FunctionState` 的字段语义、到期 tick 的加法、`draw_circle` 写什么值 | **未知** / **推断**（见 §46.8） |
+| 容器槽里的**档位字符串** | **仍然是 `"stub"`**，`module_impl_type` 仍然是 `"—"` | 我方口径（见 §46.6 第 3 条：那两处进的是 `assemble_check.gd` 的既有断言，本轮不许改） |
+
+**就地更正 1（`AGENTS.md` §0.6）**：§44.0 / §44.7 写「两个管理器的字段**一个都没解**」。**已解**，
+本节起那两行过期；`src/_scaffold/root_wiring.rs` 的两个槽已从"我方形状"换成"**原版布局 + 我方行为表**"。
+
+**就地更正 2（更重要，是一条**错的负结论**）**：§44.2 / §44.3 写
+「`function_manager` 的四个 `set_*` 体内**零条** `GraphwarEventQueue::add_event`（`0x3d3530`）
+⇒ 它**不发事件**」。**这条是错的**，而且是 `AGENTS.md`「间接调用与函数归属」第 1 条那个坑的复发：
+`add_event` 在 x86 上是**经 GOT 槽 `0x9bac80` 的间接调用**，只扫 `call rel32` 直调会漏。
+
+```text
+x86 0x455e30 set_function             0x45638f  call qword [rip+..] slot 0x9bac80 -> 0x3d3530
+x86 0x456810 set_function_points      0x4569e1  同上
+x86 0x456b80 set_function_active_tick 0x456ce1  同上
+arm64 0x488a9c set_function           0x488e30  bl 0x3d7a40   ; .symtab 名 = GraphwarEventQueue::add_event
+```
+
+`set_function` 发的是 **tag `0x23` = 35 = `FunctionInfo`**（arm64 `0x488e18`
+`mov x8, #0x23; movk x8, #0x8000, lsl #48`，载荷 = `(id, 文本, tick)`）——这条与
+**本仓自己的 `docs/02-module-map.md:524`**（「`0x455e30` … 再发事件 tag 35」）一致，
+也就是说 §44 那条结论当时就和 docs/02 冲突。**结论改为**：`function_manager` **不订阅**（这条仍成立，
+有正对照），但它**会发** `FunctionInfo` / `FunctionActive` 这类事件，共 3 个 `set_*` 各一条。
+
+### 46.1 本轮动了哪些文件
+
+| 文件 | 增/改 | 内容 |
+|---|---|---|
+| `src/graphwar_function_manager.rs` | **新增** | 模块文档（方法表 / 32 B 布局表 / 内层 48 B / 更正）+ `GraphwarFunctionManager` / `GraphwarFunctionData` / `FunctionState` + **3 条 `const` 硬闸** + 3 条单测 |
+| `src/graphwar_obstacle_manager.rs` | **新增** | 同上（80 B / 5 字段 / 内层 24 B 网格 + 索引式）+ 硬闸 + 3 条单测 |
+| `src/_scaffold/root_wiring.rs` | 改 | ①`#[path]` 把上面两个原版模块文件挂进 crate（`lib.rs` 在禁区，见 §46.6）；②两个槽 `XxxSlot(表)` → `XxxSlot { layout, table }`；③20 处 `.0` → `.table`（探针 18 处 + 单测 2 处）；④§44 那条错结论就地更正 |
+| `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` | 重跑 | `src_files` 106→**108**、`src_fns` 2420→**2432**、`src_tree_sha256` 跟着变；**527/527 与每模块行一行没变** |
+| `docs/16-client.md` | +本节 | — |
+
+❌ `src/lib.rs` / 任何 `*_class.rs` / `client/**` / `src/game.rs` / `src/plane.rs` / 既有测试断言
+**一行没动**；`tools/`（含 `coverage_matrix.py` 的模块归属表）**没动**（见 §46.8 最后一行）。
+
+### 46.2 `GraphwarFunctionManager` = **32 字节 / 4 字段**（`观测`）
+
+| 偏移 | 宽 | 类型 | 证据（指令地址；三构建见 §46.5） | 档位 |
+|---|---|---|---|---|
+| `+0x00` | 8 | `Weak<RefCell<GraphwarFunctionManager>>` | 构造点把 **`RcBox` 指针本身**写进该槽：arm64 `0x419d44` `stp xzr, x19, [x19, #0x10]`（第 2 字 = `RcBox+0x18` = `m+0x00`）、x86 `0x5237f3` `mov [rbx+0x18], rbx`、DLL `0x18013f476`；析构交给 `drop_in_place<Weak<RefCell<GraphwarFunctionManager>>>`（arm64 `0x419df0`、DLL `0x18013f4f9`） | **观测** |
+| `+0x08` | 8 | `Rc<RefCell<GraphwarEventQueue>>` | `set_function` 读它 → `+0x10` 是 `RefCell` 借用位 → `+0x18` 当 `&mut GraphwarEventQueue` 传给 `add_event`（arm64 `0x488dc4`→`0x488e30`；x86 `0x4562e8`→`0x45638f`）；`set_function_active_tick` 同（arm64 `0x489708`、x86 `0x456ce1`）；构造点第二字；析构做 `Rc` 强计数 `-1` / `drop_slow` | **观测** |
+| `+0x10` | 8 | `Weak<RefCell<GraphwarModuleContainer>>` | `set_function` 把 `self+0x10` 当 `&Weak` 传给 `GraphwarModuleContainer::get_module_wk`（arm64 `0x488ac0` `add x0,x0,#0x10` → `bl 0x4a34c4`，该函数第一句就是 `ldr x20,[x0]` + `cmn x20,#1` 的 `Weak` 哨兵判定；x86 `0x455e5a` → `call 0x46d040`）；析构 `drop_in_place<Weak<RefCell<GraphwarModuleContainer>>>`（arm64 `0x419dcc`、DLL `0x18013f4e2`） | **观测** |
+| `+0x18` | 8 | `Arc<Mutex<GraphwarFunctionData>>` | **7 个方法的第一句**都是读这个槽（arm64 `0x488814`/`0x488c48`/`0x489068`/`0x489298`/`0x489608`/`0x48986c`/`0x489a0c`；x86 `0x455b74`/`0x456604`/`0x45682b`/`0x456b9e`/`0x456e03`/`0x456f93`）；`ArcInner` = `{strong@0, weak@8, Mutex@0x10}`，锁字 `+0x10`、中毒位 `+0x14`、数据 `+0x18`（arm64 `ldaxr w9,[x+0x10]` / `ldrb w8,[x+0x14]`；x86 `lock cmpxchg dword [x+0x10]`）；析构 `Arc::drop_slow` | **观测** |
+
+**尺寸的两条独立证据**（都不依赖 §41 的 vtable 表）：
+
+1. `RcBox<RefCell<GraphwarFunctionManager>>` 的分配常量是 **`0x38` = 56 = 24 + 32**
+   （arm64 `0x419ca4`、x86 `0x523704`、DLL `0x18013f381`；DLL 错误路径
+   `0x18013f4a2` 的 `handle_alloc_error(size=0x38)` 对得上）；
+2. §41.2 的 `dyn Any` vtable 第 1 字 = `size_of::<RefCell<M>>()` = **40 = 32 + 8**（两架构逐字相同）。
+
+**构造在哪儿**（`观测`）：原版**没有** `GraphwarFunctionManager::new` 的独立符号——构造整个被内联进
+`Rc::…::new_cyclic_in`：arm64 `0x419c80`（416 B，由 `GraphwarGameClient::new` 在 `0x40a158` 调用）、
+x86 `0x5236e0`（208 B，由 `0x517b9f` 调用、紧接 `add_module::<GraphwarFunctionManager>` `0x469db0`）、
+DLL `0x18013f360`（DLL 里 `new` `0x1800d9ab0` 只是个 16 B 的 `jmp` thunk）。
+三份构建的字段写入顺序完全一致 ⇒
+`new(event_queue: Rc<RefCell<GraphwarEventQueue>>, container: Weak<RefCell<GraphwarModuleContainer>>)`，
+弱自句柄由 `Rc::new_cyclic` 的 `&Weak` 直接给出。
+（§41.2 表里「arm64 `new` = `0x40a158`」其实是**调用点**，构造体是 `0x419c80`——本节一并更正。）
+
+### 46.3 `GraphwarObstacleManager` = **80 字节 / 5 字段**（`观测`）
+
+| 偏移 | 宽 | 类型 | 证据（指令地址；三构建见 §46.5） | 档位 |
+|---|---|---|---|---|
+| `+0x00` | 8 | `Weak<RefCell<GraphwarObstacleManager>>` | `new` 里做 `Weak::clone`：`cmn x21,#-1`（`Weak::new` 哨兵）→ `ldr x8,[x21,#8]`/`adds`/`str`（弱计数 +1）→ 塞进 `tick_event` 的订阅闭包：arm64 `0x42633c`–`0x42635c`、x86 `0x3f2399`–`0x3f23a3`（`cmp r15,-1` / `inc [r15+8]`）、DLL `0x1801047f8`–`0x180104806`。构造点写 `RcBox` 指针：arm64 `0x419b70`、DLL `0x18013f634`；析构 `drop_in_place<Weak<RefCell<GraphwarObstacleManager>>>`（`0x416ff8` / DLL `0x18013c480`） | **观测** |
+| `+0x08` | 8 | `Rc<RefCell<GraphwarEventQueue>>` | 4 个入口都读它、`+0x10` 是 `RefCell` 借用位、`+0x18` 传给 `add_event`：arm64 `0x42572c`（add）/`0x4258d4`（clear）/`0x425adc`（destroy）/`0x42620c`（queue_destroy）；x86 `0x3f184b`/`0x3f1a05`/`0x3f1bde`/`0x3f2245`；DLL `0x180103b6f` 等。构造点第二实参 | **观测** |
+| `+0x10` | 8 | `Weak<RefCell<GraphwarModuleContainer>>` | `new` 的第三个实参（arm64 `x21`→`RcBox+0x28`；x86 `r15`→`[rbx+0x28]`；DLL `%rbx`）；析构 `drop_in_place<Weak<RefCell<GraphwarModuleContainer>>>`（arm64 `0x419c2c`、DLL `0x18013f6e7`） | **观测** |
+| `+0x18` | 8 | `Arc<Mutex<GraphwarObstacleData>>` | 每个方法第一句都读它（arm64 `0x425488`/`0x4256a8`/`0x425888`/`0x425a58`；x86 `0x3f15bc`/`0x3f17b4`/`0x3f19b1`/`0x3f1b44`）；锁字 `+0x10`、中毒位 `+0x14`、数据 `+0x18`（数据里 `ptr@+0x20`、`len@+0x28`）；`drop_in_place<ArcInner<Mutex<GraphwarObstacleData>>>` 存在（DLL `0x18013c810`） | **观测** |
+| `+0x20` | 48 | `HashMap<u32, Vec<[f64; 3]>>`（待销毁队列） | `RawTable`：`ctrl@+0x20`、`bucket_mask@+0x28`、`growth_left@+0x30`、`items@+0x38` + `RandomState@+0x40`（16 B）。决定性指令：arm64 `0x425c50` `add x0,x0,#0x40` → `BuildHasher::hash_one`(`0x3ec7f0`)、`0x425c68` `add x0,x19,#0x20` → `RawTable::remove_entry`(`0x3c6620`)；x86 `0x3f2110`/`0x3f2128`；DLL `0x18010455f`/`0x180104577`。键 4 字节、值 `Vec<[f64;3]>`（插入走 `RawVec::grow_one`、元素 24 B；析构 `dealloc(ptr, 24*cap)`） | **观测** |
+
+尺寸的独立证据：`RcBox<RefCell<GraphwarObstacleManager>>` 的分配常量 **`0x68` = 104 = 24 + 80**
+（arm64 `0x419aa4`、DLL `0x18013f562` + 错误路径 `size=0x68`）；且 `+0x20 + 48 = 0x50 = 80` 自洽。
+
+`new` 的签名（`观测`）：`new(&mut GraphwarEventHandler, Rc<RefCell<GraphwarEventQueue>>,
+Weak<RefCell<GraphwarModuleContainer>>) -> Rc<RefCell<Self>>`——第一个实参用来
+`subscribe_to_event("tick_event", len 0xa, 闭包)`（arm64 `0x4263a0`、x86 `0x3f23f0` 经 GOT `0x9bac88`）：
+这是这个管理器**唯一**一条订阅（与 §44.2 一致）。
+
+### 46.4 两个内层数据类型也被顺带钉死了
+
+| 类型 | 大小 | 是什么 | 证据 | 档位 |
+|---|---|---|---|---|
+| `GraphwarFunctionData` | **48 B** | 一张 `HashMap<u32, FunctionState>`（没有别的字段） | `ArcInner<Mutex<…>>` 分配 `0x48` = 72 = 16+8+48（arm64 `0x419d2c`、x86 `0x5237aa`、DLL `0x18013f42e`）；4 组字段偏移 = `ctrl@0`/`bucket_mask@8`/`growth_left@0x10`/`items@0x18` + `RandomState@0x20`；drop glue 名 `hashbrown::raw::RawTable<(u32, FunctionState)>` | **观测** |
+| `FunctionState` | **112 B**（`推断`） | 上表的**值**；字段语义未知 | 由 bucket 步长 `0x78`（§42.2 已测）反推：`size_of::<(u32, FunctionState)>() = align_up(8+S, 8) = 120` ⇒ `S = 112`（`S` 含 `f64`/`Vec` ⇒ `align = 8` ⇒ 8 的倍数） | **推断** |
+| `GraphwarObstacleData` | **24 B** | 一张 **1000×600 = 600000 字节**的网格（`0xff` = 空） | `ArcInner<Mutex<…>>` 分配 `0x30` = 48 = 16+8+24；`new` 里 `__rust_alloc(0x927c0, 1)` + `memset(0xff, 600000)`，然后写 `cap=0x927c0`/`ptr`/`len=0x927c0`（DLL `0x180103895`–`0x1801038a0`）；索引式见下 | **观测** |
+
+网格索引式（`观测`，arm64 `is_obstacle` `0x4254c4`–`0x425534`，常量全是双精度）：
+
+```text
+x = trunc(1000.0 * p.x / 50.0 + 500.0)    合法区间 [0, 999]   (cmp #0x3e7)
+y = trunc(1000.0 * p.y / 50.0 + 300.0)    合法区间 [0, 599]   (cmp #0x257)
+index = y * 1000 + x                      (mul w9, w9, #1000)
+有障碍 ⇔ grid[index] != 0xff              (x86 `cmp byte ptr [rax+rcx], 0xff`)
+```
+
+⇒ 600000 = 1000 × 600 与 24 字节的 `Vec<u8>` 形状（本工具链内存序 `cap@0/ptr@8/len@0x10`，
+`cap == len == 600000`）完全对得上。
+
+### 46.5 三向交叉验证：偏移序列逐条相同（这是本节最硬的一层）
+
+| 偏移 | arm64 2.0.60 | x86 Linux 2.0.60 | Windows 2.0.60 DLL |
+|---|---|---|---|
+| `FunctionManager +0x00` 存 `RcBox` 指针 | `0x419d44` | `0x5237f3` | `0x18013f476` |
+| `+0x08` 事件队列 | `0x488dc4`（用）/ `0x419d58`（写） | `0x4562e8` / `0x5237f7` | `0x1800d997b` / `0x18013f47a` |
+| `+0x10` 容器 `Weak` | `0x488ac0`（用）/ `0x419d58`（写） | `0x455e5a` / `0x5237fb` | `0x18013f47e` |
+| `+0x18` `Arc<Mutex<…>>` | `0x488814` …（7 处） | `0x455b74` …（6 处） | `0x1800d8940` …（5 处） |
+| `RcBox` 大小 56 | `0x419ca4` | `0x523704` | `0x18013f381`（+错误路径 `0x18013f4a2`） |
+| `ObstacleManager +0x00` 弱自句柄 | `0x42633c`–`0x42635c` | `0x3f2399`–`0x3f23a3` | `0x1801047f8`–`0x180104806` |
+| `+0x08` 事件队列 | `0x42572c` 等 4 处 | `0x3f184b` 等 4 处 | `0x180103b6f` 等 4 处 |
+| `+0x18` `Arc<Mutex<…>>` | `0x425488` 等 4 处 | `0x3f15bc` 等 4 处 | `0x1801038d9` 等 4 处 |
+| `+0x20` 哈希表 `ctrl` / `+0x40` hasher | `0x425c68` / `0x425c50` | `0x3f2128` / `0x3f2110` | `0x180104577` / `0x18010455f` |
+| `RcBox` 大小 104 | `0x419aa4` | （内联，`0x3f2372` 调 `0x523020`） | `0x18013f562` |
+
+**"不一致"的唯一一处要解释**：x86 Linux 侧两个 `new`（`0x5236e0` / `0x3f2360`→`0x523020`）都是
+**内联后的独立函数**（没有符号名），而 DLL 那份还留着 `GraphwarFunctionManager::new` /
+`GraphwarObstacleManager::new` 的符号——**函数边界不同，偏移序列相同**，所以不影响结论；
+反过来，这也正是"只按函数地址对齐会配错函数"的例子（`AGENTS.md` §0 第 5 条）。
+
+复算命令（三条，互不依赖；`$PY` 有 capstone）：
+
+```text
+# ① arm64 未 strip：类型名 + 大小 + 方法名
+readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so | grep -E "graphwar_(function|obstacle)_manager"
+# ② x86 Linux（同名落点来自 fixtures/name_to_addr.tsv）
+grep -E "graphwar_(function|obstacle)_manager" fixtures/name_to_addr.tsv
+$PY tools/addr_probe.py dis 0x455e30      # set_function：add rdi,0x10 = 容器 Weak
+$PY tools/addr_probe.py dis 0x3f2360      # ObstacleManager::new：cmp r15,-1 / inc [r15+8] = Weak
+# ③ Windows DLL（同版本、同 ISA、COFF 符号表在；VA = 0x180000000 + 0x1000 + 符号值）
+objdump -t .reference/windows/graphwarrust-2.0.60.dll | grep -E "Graphwar(Function|Obstacle)Manager"
+```
+
+### 46.6 落码：布局进原版模块文件、`size_of` 有硬闸
+
+1. **两个原版模块文件**新增：`src/graphwar_function_manager.rs`（4 字段 + 3 条 `const` 硬闸 +
+   3 条单测）与 `src/graphwar_obstacle_manager.rs`（5 字段 + 2 条硬闸 + 3 条单测）。
+   硬闸是**编译期**的，改错一个字段类型就编不过：
+
+   ```rust
+   const _: () = assert!(std::mem::size_of::<GraphwarFunctionManager>() == 32);
+   const _: () = assert!(std::mem::size_of::<GraphwarFunctionData>() == 48);
+   const _: () = assert!(std::mem::size_of::<GraphwarObstacleManager>() == 80);
+   const _: () = assert!(std::mem::size_of::<GraphwarObstacleData>() == 24);
+   ```
+
+   单测再逐字段断言 `offset_of!`（`0x00/0x08/0x10/0x18` 与 `0x00/0x08/0x10/0x18/0x20`）。
+2. **`src/lib.rs` 在禁区**（任务书 §5 的 ❌）⇒ 这两个文件暂时由
+   `src/_scaffold/root_wiring.rs` 用 `#[path = "../graphwar_function_manager.rs"] pub mod …`
+   挂进 crate。这是**临时通道**，`lib.rs` 一放开就换成 crate 根的 `pub mod`，两个文件一行都不用改。
+3. **容器槽**：`FunctionManagerSlot(FunctionTable)` → `FunctionManagerSlot { layout, table }`，
+   `ObstacleManagerSlot(ObstacleTable)` → `ObstacleManagerSlot { layout, table }`；
+   `layout` 是原版布局，`table` 是我方行为表（探针/验收仍读它）。
+   槽的档位字符串**仍报 `"stub"`**、`module_impl_type` **仍报 `"—"`**——因为那两处进的是
+   `client/tools/assemble_check.gd` 的既有断言（5 条 `stub` + 1 条 `container_stub_manager_count == 5`），
+   而 `client/**` 本轮在禁区。⇒ **读法**：这两个槽的 `stub` 现在只表示"**行为**未复原"，
+   "结构未知"那层已经消掉；要改字符串必须与 `assemble_check.gd` 一起改（**留给协调者**）。
+
+### 46.7 验收（本节实测，可从干净树重跑）
+
+| 命令 | 本节实测 | 基线（`CG@c99c8b5`，同一条命令/同一构建目录） |
+|---|---|---|
+| `cargo test --offline` | **1559**，全绿 | **1559**（一位不差；新模块挂在 `gdext-bindings` 下，默认轴不动） |
+| `cargo test --offline --features gdext-bindings` | **1644**，全绿 | **1638**（本节 +6：两个模块各 3 条） |
+| `python3 tools/coverage_matrix.py --check` | **OK**（527 / 527 一行未变；`src_files` 106→108、`src_fns` 2420→2432） | OK |
+
+**三条护栏（三条驱动轴分开跑、分开报；`AGENTS.md` 合并纪律 C）**：
+
+| 轴 | 命令 | 本节实测 | 护栏（任务书 §3） |
+|---|---|---|---|
+| `fire` | `cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive fire --policy default --json .work/guard/f.jsonl` | 内容命中 **331 / 1080**（文件 286、读失败 117） | **331**（一位不差） |
+| `batch` | `… --drive batch --policy default --json .work/guard/b.jsonl` | 内容命中 **355 / 1080** | **355**（一位不差） |
+| `batch_conv` | `cargo run --release --offline -q --example batch_conv -- --dir <快照> --policy strict` | 内容命中 **633 / 1080**；种类 **1075 / 1080**（多发批 128/130 + 单发批 947/950） | **633 / 1075**（一位不差） |
+
+⇒ 本节只加"布局结构体 + 槽的字段"，**一行几何/弹道代码都没碰**，三条轴逐数字不动。
+
+### 46.8 仍是推断 / 未知（诚实清单）
+
+| 项 | 档位 | 缺什么证据 |
+|---|---|---|
+| `FunctionState`（112 B）的**字段语义** | **未知** | 只有 §42.2 那三条谓词（`+0x50` 与 `i64::MIN` 比、`+0x70 == 1`、`+0x74` = `active_tick`(u32)、`+0x58/+0x60` = 点数组 ptr/len）；没有逐字段定名 |
+| `FunctionState` 的**精确大小** | **推断**（112 B） | 缺"一次性 `memcpy`/`drop` 整结构"或 `size_of` 常量；只能由 bucket 步长 `0x78` 反推 |
+| `GraphwarFunctionManager +0x00` 弱自句柄**谁在用** | **未知** | 7 个方法**没有一处**读 `m+0x00`，本模块又**不订阅**事件（构造体内无 `subscribe`）⇒ "谁替它订阅"未观测到；字段本身的存在有三构建证据 |
+| `draw_circle` 往网格里**写的值** | **推断**（非 `0xff`） | 660 字节函数体里的 `strb` 常量没逐条读 |
+| 网格坐标换算的**语义**（`1000/50`、`+500`、`+300`） | **观测**（常量与算式）/ **推断**（"棋盘 50 单位 → 1000 像素"） | 缺一份真帧量测（棋盘像素宽到底是不是 1000） |
+| `Vec<[f64;3]>` 三个 f64 的**顺序** | **推断**（`x, y, r`） | `is_destruction_queued` 只做逐分量 `ucomisd`；`draw_circle` 的入参顺序未证 |
+| `queue_destroy_obstacle` 的**到期 tick 算法** | **未知** | 键是 tick（`handle_tick_event` 用 tick 直接 `remove_entry`，**观测**），但 `now + ?` 那个加法没解（§44.7 照旧） |
+| 两个槽的 `stub` / `—` 字符串 | **过期但未改** | `assemble_check.gd` 的 6 条断言在禁区；需与 `graphwar_root_node_class.rs` 同批改 |
+| `tools/coverage_matrix.py` 的**模块归属表** | 未改（`tools/` 不在本轮允许清单） | 表里这两个模块仍写 `src/game.rs` / `src/plane.rs`；本轮新增的两个文件只影响 `src_files`/`src_fns` 总数，**每模块的 527 行一行没动**。下一轮把 `ours` 加上这两个文件即可 |
+
+### 46.9 复现（干净树）
+
+```text
+export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=<ws>/.agent-work/<你的>/target
+cargo test --offline                                  # 1559，全绿
+cargo test --offline --features gdext-bindings        # 1644，全绿（含本节 6 条）
+python3 tools/coverage_matrix.py --check              # OK
+python3 tools/check_doc_refs.py                       # OK（本节的小节号连续）
+```
+
+**结构断言在哪儿**：`src/graphwar_function_manager.rs` / `src/graphwar_obstacle_manager.rs`
+末尾的 `mod tests`（`layout_matches_the_original_32_bytes` / `layout_matches_the_original_80_bytes`
+逐字段 `offset_of!`），以及两个文件顶部**编译期**的 `const _: () = assert!(…)`。

@@ -32,11 +32,11 @@
 //! | 5 | `GraphwarSoldierManager` | 72 | `0x49d590` | [`SoldierTable`] | 类型**观测** |
 //! | 6 | `GraphwarPlanePosManager` | 24 | `0x3b89a0` | —（空占位） | 类型**观测**；无实现 |
 //! | 7 | `GraphwarGameStateManager` | 296 | `0x4ade6c` | [`Match`] | 类型**观测** |
-//! | 8 | `GraphwarFunctionManager` | 32 | 内联（`Rc::new_cyclic_in` `0x40a158`） | [`FunctionManagerSlot`]（内含 [`FunctionTable`]，**我方形状**） | 类型**观测**；原版结构**未知**（§43） |
+//! | 8 | `GraphwarFunctionManager` | 32 | 内联（arm64 `0x419c80` / x86 `0x5236e0`，由 `0x40a158` / `0x517b9f` 调用） | [`FunctionManagerSlot`]：`layout` = 原版 32 字节布局（**任务 22 解开**，4 字段）+ `table` = 我方行为表 | 类型**观测**；布局**观测**（§45） |
 //! | 9 | `GraphwarTargetManager` | 72 | `0x3dae34` | [`GraphwarTargetManager`] | 类型**观测** |
 //! | 10 | `GraphwarTeamManager` | 32 | `0x49960c` | [`TeamTable`] | 类型**观测** |
 //! | 11 | `GraphwarLifeManager` | 72 | `0x4977b8` | [`LifeState`] | 类型**观测** |
-//! | 12 | `GraphwarObstacleManager` | 80 | `0x426300` | [`ObstacleManagerSlot`]（内含 [`ObstacleTable`]，**我方形状**） | 类型**观测**；原版结构**未知**（§43） |
+//! | 12 | `GraphwarObstacleManager` | 80 | `0x426300` | [`ObstacleManagerSlot`]：`layout` = 原版 80 字节布局（**任务 22 解开**，5 字段）+ `table` = 我方行为表 | 类型**观测**；布局**观测**（§45） |
 //! | 13 | `GraphwarTurnManager` | 32 | `0x49adf8` | [`TurnManager`] | 类型**观测** |
 //! | 14 | `GraphwarEffectManager` | 72 | `0x40bc0c` | [`GraphwarEffectManager`] | 类型**观测** |
 //! | 15 | `GraphwarModeManager` | 32 | `0x498090` | [`GraphwarModeManager`] | 类型**观测** |
@@ -146,6 +146,27 @@ use crate::server::RoomState;
 use crate::Token;
 
 // ---------------------------------------------------------------------------
+// 0. 两个**原版模块文件**的挂载（任务 22）
+// ---------------------------------------------------------------------------
+//
+// `GraphwarFunctionManager`（32 字节）与 `GraphwarObstacleManager`（80 字节）的**字段布局**
+// 本轮解出来了，落在**原版模块名对应的文件**里：
+// `src/graphwar_function_manager.rs` / `src/graphwar_obstacle_manager.rs`。
+//
+// ⚠️ 但本轮 `src/lib.rs` 在禁区（任务书 §5 的 ❌），那两个文件没法从 crate 根 `pub mod` 进来。
+// 所以这里用 `#[path]` 把它们挂到 `_scaffold::root_wiring` 下面——**这是临时通道，不是设计**：
+// `lib.rs` 一旦允许改，把下面两行换成 crate 根的
+// `pub mod graphwar_function_manager;` / `pub mod graphwar_obstacle_manager;`，
+// 再把本文件里的路径改成 `crate::graphwar_function_manager::…`，那两个文件**一行都不用改**。
+#[path = "../graphwar_function_manager.rs"]
+pub mod graphwar_function_manager;
+#[path = "../graphwar_obstacle_manager.rs"]
+pub mod graphwar_obstacle_manager;
+
+use graphwar_function_manager::GraphwarFunctionManager;
+use graphwar_obstacle_manager::GraphwarObstacleManager;
+
+// ---------------------------------------------------------------------------
 // 1. 装哪 22 个、按什么序（名字是 `graphwar_module_container::MODULES` 的原文）
 // ---------------------------------------------------------------------------
 
@@ -168,8 +189,8 @@ pub enum Wired {
     PlanePosManager,
     /// `GraphwarGameStateManager`（296 字节）⇔ [`Match`]（那个模块的"运行实体那一半"）。
     GameStateManager,
-    /// `GraphwarFunctionManager`（32 字节）⇔ [`FunctionManagerSlot`]（内含我方形状的
-    /// [`FunctionTable`]；原版结构未复原）。
+    /// `GraphwarFunctionManager`（32 字节）⇔ [`FunctionManagerSlot`]（**原版布局已复原**，
+    /// 任务 22；外加我方行为表 [`FunctionTable`]）。
     FunctionManager,
     /// `GraphwarTargetManager`（72 字节）⇔ [`GraphwarTargetManager`]。
     TargetManager,
@@ -177,8 +198,8 @@ pub enum Wired {
     TeamManager,
     /// `GraphwarLifeManager`（72 字节）⇔ [`LifeState`]。
     LifeManager,
-    /// `GraphwarObstacleManager`（80 字节）⇔ [`ObstacleManagerSlot`]（内含我方形状的
-    /// [`ObstacleTable`]，掩膜纯逻辑复用 `src/plane.rs`；原版结构未复原）。
+    /// `GraphwarObstacleManager`（80 字节）⇔ [`ObstacleManagerSlot`]（**原版布局已复原**，
+    /// 任务 22；外加我方行为表 [`ObstacleTable`]，掩膜纯逻辑复用 `src/plane.rs`）。
     ObstacleManager,
     /// `GraphwarTurnManager`（32 字节）⇔ [`TurnManager`]。
     TurnManager,
@@ -539,20 +560,46 @@ pub struct TickHandlerSlot(pub GraphwarTickHandler);
 
 /// 接线层：原版 `GraphwarFunctionManager`（32 字节）的容器槽。
 ///
-/// ⚠️ **原版那个 32 字节结构体的字段一个都没解**（`未知`），所以这里**不假冒类型名**：
-/// 装的是我方的最小函数槽表 [`FunctionTable`]（`AGENTS.md` §0 第 3 条：不把别的模块的类型
-/// 冒充成它）。函数槽的真实归宿（原版 `GraphwarFunctionManager` vs `Match` 里的
-/// `SoldierFunctions`）**仍未定**——`SoldierFunctions` 属 `graphwar_function_evolutionator`，
-/// 本槽**不**拿它充数。
-pub struct FunctionManagerSlot(pub FunctionTable);
+/// ⚠️ **2026-11 任务 22 就地更正**（`AGENTS.md` §0.6）：上一轮这里写「原版那个 32 字节结构体
+/// 的字段一个都没解（`未知`）」。**已解**：`+0x00` 弱自句柄 / `+0x08` 事件队列 `Rc` /
+/// `+0x10` 容器 `Weak` / `+0x18` `Arc<Mutex<GraphwarFunctionData>>`，
+/// 逐偏移有三份构建（arm64 / x86 Linux / Windows DLL）的一致指令证据，
+/// 布局与 `size_of == 32` 的硬闸在 [`graphwar_function_manager`] 里（`观测`）。
+///
+/// 本槽因此装两样东西，**故意分开命名**：
+///
+/// * [`layout`](Self::layout)：原版的真布局（本轮解出来的）；
+/// * [`table`](Self::table)：我方的最小函数槽表 [`FunctionTable`]（**不是**原版的类型），
+///   容器里那些"能交互"的验收（`manager_probe_selftest`）读的是它。
+///
+/// 档位字符串仍是 `"stub"`（`assemble_check.gd` 的逐槽断言在禁区，本轮不能改它）——
+/// 现在它表示"**行为**未复原"，**不再**表示"结构未知"。
+pub struct FunctionManagerSlot {
+    /// 原版 32 字节布局（任务 22 解开；见 `src/graphwar_function_manager.rs`）。
+    pub layout: GraphwarFunctionManager,
+    /// 我方行为表（探针/验收读它）。**不是**原版的类型。
+    pub table: FunctionTable,
+}
 
 /// 接线层：原版 `GraphwarObstacleManager`（80 字节）的容器槽。
 ///
 /// 掩膜/挖洞/延迟销毁的**纯逻辑**在 `src/plane.rs`（`rasterize` / `is_occupied` /
 /// `empty_mask`，`docs/39`）与 `src/game.rs` 的 `DESTROY_DELAY_TICKS`（实测 165 tick，
 /// `docs/44`）；本槽的 [`ObstacleTable`] 只是把**同一批纯函数**接成"按类型取回的对象"。
-/// 原版 80 字节结构体的字段布局**未解**，故同样不冒充类型名。
-pub struct ObstacleManagerSlot(pub ObstacleTable);
+///
+/// ⚠️ **2026-11 任务 22 就地更正**：上一轮这里写「原版 80 字节结构体的字段布局**未解**」。
+/// **已解**：`+0x00` 弱自句柄 / `+0x08` 事件队列 `Rc` / `+0x10` 容器 `Weak` /
+/// `+0x18` `Arc<Mutex<GraphwarObstacleData>>`（1000×600 字节网格）/
+/// `+0x20` `HashMap<u32, Vec<[f64; 3]>>`（48 B），共 **5 个字段 = 80 字节**；
+/// 硬闸与证据见 [`graphwar_obstacle_manager`]（`观测`）。
+///
+/// 与函数槽同理：`layout` 是真布局，`table` 是我方行为表；档位字符串仍是 `"stub"`。
+pub struct ObstacleManagerSlot {
+    /// 原版 80 字节布局（任务 22 解开；见 `src/graphwar_obstacle_manager.rs`）。
+    pub layout: GraphwarObstacleManager,
+    /// 我方行为表（探针/验收读它）。**不是**原版的类型。
+    pub table: ObstacleTable,
+}
 
 // ---------------------------------------------------------------------------
 // 3b. 两个"我方形状"的表（**不是**原版的类型）
@@ -563,17 +610,32 @@ pub struct ObstacleManagerSlot(pub ObstacleTable);
 /// `get_function_text` `0x4565f0`、`set_function_active_tick` `0x456b80`、
 /// `set_function_points` `0x456810`、`get_active_functions_on_tick` `0x456df0`）。
 ///
-/// **实证到的两条**（x86 2026-08-28，`观测`）：
+/// **实证到的三条**（`观测`）：
 ///
 /// * 这个模块**没有** `subscribe_to_events_event_handler`（`docs/02` §18.5 的方法表），
-///   构造路径（`0x5236e0`，`GraphwarClient::new` 在 `0x517b9f` 调它、紧接着
-///   `add_module::<GraphwarFunctionManager>` `0x469db0`）体内**没有任何**
+///   构造路径（arm64 `0x419c80` / x86 `0x5236e0`，`GraphwarClient::new` 在 `0x517b9f` 调它、
+///   紧接着 `add_module::<GraphwarFunctionManager>` `0x469db0`）体内**没有任何**
 ///   `EventHandler::subscribe`（`0x3d38f0`）调用；
-/// * 四个 `set_*` 体内**没有** `GraphwarEventQueue::add_event`（`0x3d3530`）调用
-///   ⇒ 它**不发事件**（发 `FunctionInfo` / `FunctionActive` 的是 GameStateManager）。
+/// * ⚠️ **2026-11 任务 22 就地更正（`AGENTS.md` §0.6）**：上一轮这里写「四个 `set_*` 体内
+///   **没有** `GraphwarEventQueue::add_event`（`0x3d3530`）⇒ 它**不发事件**」。**这条是错的**，
+///   而且是 `AGENTS.md`「间接调用」那个坑的复发：`add_event` 在 x86 上是**经 GOT 槽
+///   `0x9bac80` 的间接调用**，只扫 `call rel32` 会漏：
 ///
-/// ⇒ 所以 `subscribed` / `outbox` 这两个字段在这里**恒空**，是"正面证据"，
-/// 不是"没接线"：正对照见 `addr_probe.py dis 0x454790`（life）等四个 manager 的 `new`，
+///   ```text
+///   x86 0x455e30 set_function            0x45638f  call qword [rip+..] slot 0x9bac80 -> 0x3d3530
+///   x86 0x456810 set_function_points     0x4569e1  同上
+///   x86 0x456b80 set_function_active_tick 0x456ce1 同上
+///   arm64 0x488a9c set_function          0x488e30  bl 0x3d7a40（.symtab 名 = add_event）
+///   ```
+///
+///   `set_function` 发的是 **tag `0x23` = 35 = `FunctionInfo`**（arm64 `0x488e18`
+///   `mov x8,#0x23; movk x8,#0x8000,lsl #48`，载荷 = `(id, 文本, tick)`），
+///   与 `docs/02-module-map.md:524` 对 `0x455e30` 的既有记载一致。
+/// * ⇒ 本表的 `outbox` **不再声明"恒空"**：它现在只装"我方探针显式写进去的东西"，
+///   **不**代表原版不发事件。
+///
+/// ⇒ 所以 `subscribed` 恒空是"正面证据"（真的不订阅），
+/// 正对照见 `addr_probe.py dis 0x454790`（life）等四个 manager 的 `new`，
 /// 同一条命令能看到它们的 `subscribe` 调用。
 #[derive(Debug)]
 pub struct FunctionTable {
@@ -982,10 +1044,17 @@ impl RootWiring {
         }
         add(&mut c, game);
 
-        // ⑧ GraphwarFunctionManager —— 接线层：我方最小函数槽表（原版 32 字节结构未解）。
-        //    `subscribed` / `outbox` 恒空是**正面证据**（该模块不订阅、不发事件），
-        //    见 `FunctionTable` 的类型文档。
-        add(&mut c, FunctionManagerSlot(FunctionTable::new()));
+        // ⑧ GraphwarFunctionManager —— **原版 32 字节布局**（任务 22 解开）+ 我方行为表。
+        //    布局 = `src/graphwar_function_manager.rs`（4 个字段、`size_of == 32` 有编译期硬闸）。
+        //    `subscribed` 恒空是**正面证据**（该模块不订阅）；`outbox` 不再声明"恒空"
+        //    （`set_*` **会**发 `FunctionInfo`，见 `FunctionTable` 的类型文档与本轮更正）。
+        add(
+            &mut c,
+            FunctionManagerSlot {
+                layout: GraphwarFunctionManager::skeleton(),
+                table: FunctionTable::new(),
+            },
+        );
 
         // ⑨ GraphwarTargetManager —— `id → alive` 那张表（空表，演示没有靶子）。
         add(&mut c, GraphwarTargetManager::new());
@@ -1007,8 +1076,16 @@ impl RootWiring {
         //    `new` 对应原版 x86 `0x454790`：建两张表 + 三条 `subscribe`）。
         add(&mut c, LifeState::new());
 
-        // ⑫ GraphwarObstacleManager —— 接线层：掩膜 + 排队销毁（纯逻辑在 `plane.rs`）。
-        add(&mut c, ObstacleManagerSlot(ObstacleTable::new()));
+        // ⑫ GraphwarObstacleManager —— **原版 80 字节布局**（任务 22 解开）+ 我方行为表。
+        //    布局 = `src/graphwar_obstacle_manager.rs`（5 个字段、`size_of == 80` 有编译期硬闸；
+        //    内层 `GraphwarObstacleData` 是 1000×600 的字节网格 = 600000 B）。
+        add(
+            &mut c,
+            ObstacleManagerSlot {
+                layout: GraphwarObstacleManager::skeleton(),
+                table: ObstacleTable::new(),
+            },
+        );
 
         // ⑬ GraphwarTurnManager —— 直接 `TurnManager::new()` + 2 个玩家。
         let mut turns = TurnManager::new();
@@ -1222,12 +1299,14 @@ impl RootWiring {
         self.container.borrow().get_module::<GraphwarTargetManager>()
     }
 
-    /// `get_module::<FunctionManager>()`（原版 arm64 `0x4a1834`）。装的是 [`FunctionManagerSlot`]。
+    /// `get_module::<FunctionManager>()`（原版 arm64 `0x4a1834`）。装的是 [`FunctionManagerSlot`]：
+    /// `slot.layout` = 原版 32 字节布局，`slot.table` = 我方行为表。
     pub fn function_manager(&self) -> Option<Rc<RefCell<FunctionManagerSlot>>> {
         self.container.borrow().get_module::<FunctionManagerSlot>()
     }
 
-    /// `get_module::<ObstacleManager>()`（原版 arm64 `0x4a14d4`）。装的是 [`ObstacleManagerSlot`]。
+    /// `get_module::<ObstacleManager>()`（原版 arm64 `0x4a14d4`）。装的是 [`ObstacleManagerSlot`]：
+    /// `slot.layout` = 原版 80 字节布局，`slot.table` = 我方行为表。
     pub fn obstacle_manager(&self) -> Option<Rc<RefCell<ObstacleManagerSlot>>> {
         self.container.borrow().get_module::<ObstacleManagerSlot>()
     }
@@ -1295,51 +1374,51 @@ impl RootWiring {
         // ③ ObstacleManager：`add_obstacle` → `is_obstacle` → 排队销毁 → 到期挖洞
         if let Some(obstacle) = self.obstacle_manager() {
             let mut obstacle = obstacle.borrow_mut();
-            obstacle.0.clear_obstacles();
-            obstacle.0.add_obstacle(0.0, 0.0, 1.0);
-            out.push(("obstacle.hit_after_add", obstacle.0.is_obstacle(0.0, 0.0).to_string()));
-            out.push(("obstacle.hit_far", obstacle.0.is_obstacle(20.0, 12.0).to_string()));
-            obstacle.0.queue_destroy_obstacle(0, 0.0, 0.0, 1.0);
-            out.push(("obstacle.pending", obstacle.0.pending_len().to_string()));
-            let early = obstacle.0.handle_tick_event(TICK_EVENT_TAG, 164).map(|v| v.len()).unwrap_or(0);
+            obstacle.table.clear_obstacles();
+            obstacle.table.add_obstacle(0.0, 0.0, 1.0);
+            out.push(("obstacle.hit_after_add", obstacle.table.is_obstacle(0.0, 0.0).to_string()));
+            out.push(("obstacle.hit_far", obstacle.table.is_obstacle(20.0, 12.0).to_string()));
+            obstacle.table.queue_destroy_obstacle(0, 0.0, 0.0, 1.0);
+            out.push(("obstacle.pending", obstacle.table.pending_len().to_string()));
+            let early = obstacle.table.handle_tick_event(TICK_EVENT_TAG, 164).map(|v| v.len()).unwrap_or(0);
             out.push(("obstacle.due_164", early.to_string()));
-            let due = obstacle.0.handle_tick_event(TICK_EVENT_TAG, 165).map(|v| v.len()).unwrap_or(0);
+            let due = obstacle.table.handle_tick_event(TICK_EVENT_TAG, 165).map(|v| v.len()).unwrap_or(0);
             out.push(("obstacle.due_165", due.to_string()));
-            out.push(("obstacle.hit_after_destroy", obstacle.0.is_obstacle(0.0, 0.0).to_string()));
-            out.push(("obstacle.subs", obstacle.0.subscribed.len().to_string()));
-            let _ = obstacle.0.take_outbox();
+            out.push(("obstacle.hit_after_destroy", obstacle.table.is_obstacle(0.0, 0.0).to_string()));
+            out.push(("obstacle.subs", obstacle.table.subscribed.len().to_string()));
+            let _ = obstacle.table.take_outbox();
         }
 
         // ④ FunctionManager：`set_function`(0x455e30) → `get_function_text`(0x4565f0)
         if let Some(function) = self.function_manager() {
             let mut function = function.borrow_mut();
-            function.0.set_function(9003, vec![Token::op(crate::Function::VarX)]);
+            function.table.set_function(9003, vec![Token::op(crate::Function::VarX)]);
             out.push((
                 "function.text",
-                function.0.get_function_text(9003).unwrap_or_else(|| "none".to_string()),
+                function.table.get_function_text(9003).unwrap_or_else(|| "none".to_string()),
             ));
-            function.0.set_function_active_tick(9003, 100);
+            function.table.set_function_active_tick(9003, 100);
             out.push((
                 "function.active_tick",
-                match function.0.active_tick_of(9003) {
+                match function.table.active_tick_of(9003) {
                     Some(t) => t.to_string(),
                     None => "none".to_string(),
                 },
             ));
             out.push((
                 "function.active_at_101",
-                function.0.get_active_functions_on_tick(101).len().to_string(),
+                function.table.get_active_functions_on_tick(101).len().to_string(),
             ));
             out.push((
                 "function.active_at_100",
-                function.0.get_active_functions_on_tick(100).len().to_string(),
+                function.table.get_active_functions_on_tick(100).len().to_string(),
             ));
             out.push((
                 "function.active_at_200",
-                function.0.get_active_functions_on_tick(200).len().to_string(),
+                function.table.get_active_functions_on_tick(200).len().to_string(),
             ));
-            out.push(("function.subs", function.0.subscribed.len().to_string()));
-            let _ = function.0.take_outbox();
+            out.push(("function.subs", function.table.subscribed.len().to_string()));
+            let _ = function.table.take_outbox();
         }
 
         // ⑤ TickHandler：`tick()`(0x519840) 推进计数并发 TickEvent
@@ -1724,7 +1803,7 @@ mod tests {
         let obstacle = wiring.obstacle_manager().expect("ObstacleManager 取不回来");
         {
             let mut o = obstacle.borrow_mut();
-            let o = &mut o.0;
+            let o = &mut o.table;
             o.clear_obstacles();
             assert!(!o.is_obstacle(10.0, 5.0));
             o.add_obstacle(10.0, 5.0, 2.0);
@@ -1739,7 +1818,7 @@ mod tests {
         let function = wiring.function_manager().expect("FunctionManager 取不回来");
         {
             let mut f = function.borrow_mut();
-            let f = &mut f.0;
+            let f = &mut f.table;
             f.set_function(9014, vec![Token::constant(2.0)]);
             assert_eq!(f.get_function_text(9014).as_deref(), Some("2.00"),
                 "常数项按 to_text 的两位小数写出来（1032/1032 对拍过的那个函数）");
