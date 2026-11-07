@@ -91,12 +91,12 @@
 | `graphwar_event_queue.rs` | 0 | 0 | `src/graphwar_event_queue.rs` | 5 | 观测 |
 | `graphwar_function_evolutionator.rs` | 16 | 25 | `src/graphwar_function_evolutionator.rs` | 88 | 观测 |
 | `graphwar_function_input.rs` | 13 | 33 | `src/graphwar_function_input.rs` | 41 | 观测 |
-| `graphwar_function_manager.rs` | 7 | 12 | `src/game.rs` | 79 | 观测 |
+| `graphwar_function_manager.rs` | 7 | 12 | `src/game.rs` | 82 | 观测 |
 | `graphwar_game_client.rs` | 36 | 59 | `src/graphwar_game_client.rs` | 10 | 观测 |
 | `graphwar_game_info.rs` | 0 | 0 | `src/graphwar_game_info.rs` | 0 | 观测 |
 | `graphwar_game_recorder.rs` | 2 | 4 | `src/graphwar_game_recorder.rs` | 14 | 观测 |
 | `graphwar_game_server.rs` | 3 | 86 | `src/graphwar_game_server.rs+src/server.rs` | 23 | 逐位 |
-| `graphwar_game_state_manager.rs` | 33 | 207 | `src/game.rs+src/turnstate.rs` | 88 | 逐位 |
+| `graphwar_game_state_manager.rs` | 33 | 207 | `src/game.rs+src/turnstate.rs` | 91 | 逐位 |
 | `graphwar_graphics_manager.rs` | 6 | 8 | `src/graphwar_graphics_manager.rs` | 18 | 观测 |
 | `graphwar_lan_broadcaster_v6.rs` | 4 | 4 | `src/graphwar_lan_broadcaster_v6.rs` | 20 | 观测 |
 | `graphwar_lan_vbox.rs` | 11 | 19 | `src/graphwar_lan_vbox.rs` | 37 | 观测 |
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（106 个文件、2257 条 `fn`） | `775092376aa4af479d1ffe780542ad1ff0b6e43f5dd37817a8f8fa7e459eeca1` |
+| `src/` 树（106 个文件、2260 条 `fn`） | `2b3461d13b0c6a3cfefce52f858b4acbce8d02f205932a4032aa293ba8139694` |
 
