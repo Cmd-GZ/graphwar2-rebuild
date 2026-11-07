@@ -7800,9 +7800,16 @@ objdump -d .reference/steam/2026-08-28/libgraphwarrust.so | grep -E 'call +(456d
 
 * **三次 `FunctionDrawer` 调用都打在同一个绘制器上**：`0x4b6132` 的 `lea 0x80(%rax),%rdi`
   把 `self+0x80` 存进 `0x90(%rsp)`，`0x4b69d4` / `0x4b6a04` 都从那里取。
-* **颜色是入参、每帧重查**：`0x4b6825` / `0x4b68f3` 两次 hashbrown 查表（key = player id，
-  值取 3 个字节拼 `r9d`），两张表分别来自 `get_team_overview`（`0x4be6e0`）在 `0x4b5fd3` /
-  `0x4b60e3` 的两次返回值（该函数全二进制 7 个直接调用者，`draw` 里 2 个）。
+* **颜色是入参、每帧重查**：`0x4b6825` / `0x4b68f3` 两次 hashbrown 查表（第二张表的值取
+  3 个字节拼 `r9d`）。
+  ⚠️ **2026-11 就地更正（§48.3）**：这句原来接着写"两张表分别来自 `get_team_overview`
+  （`0x4be6e0`）在 `0x4b5fd3`/`0x4b60e3` 的两次返回值"——**是错的**（当时是推断）。
+  `get_team_overview` 返回的是 **`u32` 的 4 个布尔位**（`0x4beb95`–`0x4bebb6` 的拼装），
+  只喂 [`flip`] 那一个判定；两张颜色表本身是**游戏状态里两个 `HashMap`**
+  （`0x4b6825` 的表：key `u32` → value `u32`；`0x4b68f3` 的表：key `u32` → value
+  **3 字节 `GraphwarColor`**，bucket stride 8 = 4+3+padding），由 `0x46a770` / `0x46b5d0`
+  两个借用器从 `[r12+0x238]` 那个对象里借出来。队色池本体在
+  `init_team_colors`（x86 **`0x465070`**）里，见 §48.3。
 
 ### 42.4 落码：本类怎么接的
 
@@ -7843,15 +7850,13 @@ GraphwarPlane.feed_functions() -> 本帧追加的点数
    调用），alpha 的算式未知 ⇒ `update_function_fade` **没接**（不发明一个淡出曲线）。
 3. **谓词第 1/2 条没做**：`value+0x70 == 1` 与 `value+0x50 != i64::MIN` 两个字段的语义未知
    （可能是 `FunctionState` 的某个变体与一个 `Option`），本类不猜。
-4. **`update_transform`（`0x4b6147`）仍未接**——已解出的部分：`x = 0.5*w`、`y = 0.5*h`
-   （`w`/`h` = `Control::get_size()` 的两个返回值，`0x4b60d4`/`0x4b60da`），scale 的 x 分量 =
-   `w/50`（`.rodata 0x1b9fc8` = `50.0f32`，与棋盘宽 50 个单位一致），`flip` 位来自
-   `get_team_overview` 返回值的若干位（`0x4b6111`–`0x4b6129`，语义未知）。
-   **但**：`0x4b60fa` 是 `movss 0x8(%rsp),%xmm2`（`MOVSS` 会清高 lane）+ `0x4b6104` 的
-   `divss` 只动低 lane ⇒ 按调用点读出来的 `Vector2(w/50, 0)` 会把线压扁，与"线要看得见"矛盾
-   ⇒ **这个 `Vector2` 的构造没解全**（很可能还有一处 `unpcklps`/`xmm3` 或内存构造没看到）。
-   缺的证据：**运行时帧对拍**（真机上量 `Line2D.scale` / `Line2D.position` 的真值）。
-   ⇒ 曲线现在画在子节点的默认变换下（位置 0、缩放 1、宽 0.125），**位置/粗细都还不对**。
+4. ~~**`update_transform`（`0x4b6147`）仍未接**~~ ⇒ **已解出并接上（2026-11，§48.2）**。
+   第三实参**不是 `Vector2`，是一个 `f32` 标量** `s = w/50`：被调者用 `pxor` 与
+   `.rodata 0x19e880`（四个 `-0.0`）把 `s` 的符号位翻出来当"第二个分量"
+   （`0x499088`/`0x499092` 存两份，`0x499232`–`0x499241` 各取一份喂 `set_scale` 的
+   两个 f32）⇒ `set_scale` 收到 `flip ? (-s,-s) : (s,-s)`。
+   旧文说"`MOVSS` 清高 lane ⇒ `Vector2(w/50,0)` 会把线压扁、构造没解全"——那个矛盾**不存在**，
+   是把标量当成了 `Vector2` 的 y 分量。三个实参与 `flip` 位见 §48.2（逐指令）。
 5. **客户端还没用真类**：`client/src/play/plane_view.gd` 是照 `.tscn` 重写的 GDScript 仿制品
    （自己 `draw_line`），`GraphwarPlane` 目前只在 `client/tools/*.gd` 里被实例化
    ⇒ **真机上眼前仍然看不到 Rust 侧的曲线**，要等播放屏改用真类（不在本轮允许改的文件里）。
@@ -8084,16 +8089,33 @@ SCREENSHOT_TOP_COLORS ["0e251c=147761", "000000=1594", "7d6800=645"]
 **（d）还差的 7 个东西**（缺证据，不是缺代码）
 
 1. **点的生产者**（§42.5 第 1 条）：`set_function_points`（`0x456810`）的写入者 `0x3e44d4`
-   归属未证 ⇒ 本轮只能由场景注入；
-2. **tick 源**：`GraphwarTickHandler::get_fractional_tick`（`0x519530`）+ u32 tick 字段
-   还没接（本轮由场景推）；
-3. **`update_transform` 的三个实参**（§42.5 第 4 条）：本轮按 `to_pixel` 摆的
-   `position=(500,300)` / `scale=(20,-20)`，是**我方选择**，不是原版实参；
-4. **淡出**：`get_function_fade_on_tick` 没有 x86 落点（走 GOT 槽 `0x9bbd08`）⇒ 没接；
-5. **`z_index` 初值未知**（§40.3f）；
-6. **`FunctionDrawer::draw`**（arm64 `0x3911b4`）x86 侧仍未定位（不影响曲线：曲线是 `Line2D`）；
-7. **棋盘底色/网格/队色表**（`get_team_overview`，`0x4be6e0` 的两张表）没接 ⇒ 截图里棋盘内部
-   是工程底色，只有那条空心黑框 + 曲线。
+   归属未证 ⇒ 本轮只能由场景注入；**（仍在，本任务未碰）**
+2. ~~**tick 源**~~ ⇒ **已接（§48.1）**：`get_fractional_tick`（`0x519530`）的算式逐条解出并落进
+   `graphwar_tick_handler::GraphwarTickHandler`（`tick + ((now-base)-accum)/0.016666666`），
+   `GraphwarPlane` 自己持有一个 tick handler 并按帧调它（`0x4b6317` 的 u32 tick 取 `M+0x40`）。
+   剩下的**只是接线**：原版那个对象在游戏状态里（`draw` 里 `mov r14,[r12+0x238]`），
+   本类还没从那儿取 ⇒ 自己 `new` 一个 + `set_fractional_tick()` 当摆钟口（**我方**）；
+3. ~~**`update_transform` 的三个实参**~~ ⇒ **已解出并接上（§48.2）**：
+   `x = w/2`、`y = h/2`、`scale = w/50`（f32 标量，`.rodata 0x1b9fc8`）、
+   `flip` = `get_team_overview` 的位组合（`(flags≥2^24 && !bit16) || ((flags&0x101)==0x100)`）。
+   最终 `set_scale` 的两个分量 = `flip ? (-s,-s) : (s,-s)`。**不再是我方选择**；
+   唯一还是我方的是 `flip` 的来源（拿导出属性 `mirror_x` 顶替那个位组合）；
+4. **淡出**：`get_function_fade_on_tick` 没有 x86 落点（走 GOT 槽 `0x9bbd08`）⇒ 没接；**（仍在）**
+5. **`z_index` 初值未知**（§40.3f）；**（仍在）**
+6. **`FunctionDrawer::draw`**（arm64 `0x3911b4`）x86 侧仍未定位（不影响曲线：曲线是 `Line2D`）；**（仍在）**
+7. ~~**棋盘底色/网格/队色表**（`get_team_overview`，`0x4be6e0` 的两张表）~~ ⇒ **表解出来了，
+   归属也纠正了（§48.3）**：
+   * `get_team_overview`（`0x4be6e0`）返回的是 **`u32` 的 4 个布尔位**（bit 0/8/16/24），
+     **不是两张表**；`draw` 里两处调用（`0x4b5fd3`/`0x4b60e3`）只用它算 `flip`；
+   * 真正的"两张表" = `init_team_colors`（x86 **`0x465070`**，arm64 `0x49c660`）里的
+     **两个 6 色 `Vec<GraphwarColor>`**（键 = 队号 0/1），12 个颜色在 x86
+     `0x4650a3`–`0x465297` 逐条 `mov word` + `mov byte` 落库，与 `docs/10` §15.3 的 arm64
+     复算**一字不差**；表已落在 `src/graphwar_color_manager.rs` 的
+     `TEAM1_COLORS`/`TEAM2_COLORS`，本类用 `team_color_pool(team)` 暴露出来（验收断言 12 个分量）；
+   * **棋盘内部的白底不是队色**：它是 `AxisDrawer::draw` 的 `draw_rect(filled=true,
+     Color(1,1,1,1), rect(-25,-15,50,30))`（`0x4e069f`–`0x4e06ca`）。
+     `AxisDrawer` 节点还没实现 `draw` ⇒ 本类加了导出属性 `board_fill`（**默认关**）
+     照那组实参补画白底；**播放屏要"不再是工程底色"就得把它置真**（或等 AxisDrawer 补 `draw`）。
 
 ### 43.7 还没做 / 未知（诚实清单）
 
@@ -8104,8 +8126,10 @@ SCREENSHOT_TOP_COLORS ["0e251c=147761", "000000=1594", "7d6800=645"]
 * **`fed` 是第二份记账**：原版在 `FunctionDrawer` 的 value 里（§40.3a），本类在棋盘侧又记一份。
   两份**不会分叉**（都只由 `update_function` 的追加决定），但这是"本类没有 `FunctionDrawer`
   的 Rust 入口"造成的重复；等 `FunctionDrawer` 的访问器公开后应删掉这一份。
-* **截图里的棋盘内部没有网格/底色**（原版有；`AxisDrawer` 与 `GraphwarPlane::draw` 的
-  `draw_set_transform` 实参都还没定死）。
+* ~~**截图里的棋盘内部没有网格/底色**（原版有；`AxisDrawer` 与 `GraphwarPlane::draw` 的
+  `draw_set_transform` 实参都还没定死）~~ ⇒ **实参定死了（§48.2）**，底色也定位了
+  （`AxisDrawer::draw` 的白底矩形，§48.3）；但 `AxisDrawer` 节点仍没实现 `draw`，
+  所以那张截图里**仍然**没有网格；底色现在可以由 `GraphwarPlane.board_fill = true` 补上。
 * **`--headless` 的视口是 64×64**（不是 1600×900）：任何"像素位置"类断言在 headless 下
   只能测到"棋盘坐标系里对不对"，测不到"窗口里对不对"；后者靠 §43.5 的截图。
 
@@ -8944,3 +8968,301 @@ grep -a -c line_instance_id client/libgw2_rebuild.so          # 必须是 3（�
 | `PlanePosManager` 的**字段布局** | **未知** | 24 字节结构体的偏移一条都没有；`px = 20x + 500` 只在 `plane.rs` 的自由函数里 |
 | 15 个 `assembled` 的**原版布局** | 多数**未知** | 本节只逐槽核了 5 个原桩 + §46 的两个；其余按 §41.6 的既有结论（我方类型尺寸与原版不等）判"没逐字段解出" |
 | 档位本身的**判据强度** | **我方口径** | 档位是**静态台账**，只说"做到哪一档"，**不说**行为对不对；行为正确性仍只能由真二进制决定（`AGENTS.md` §0 第 2/5 条） |
+## 48. 播放屏那 3 个"可解"缺口的证据补齐：tick 算式 / `update_transform` 三实参 / 两张颜色表（2026-11，任务 32）
+
+> 本节对应 `dispatch/32-play-screen-evidence-gaps.md`（分支 `agent/play-screen-gaps`）。
+> §43.6(d) 的 7 个缺口里**3 个是"证据缺"**：本节把它们补上，并**就地改正**了两条旧推断
+> （§42.3 那句"两张表来自 `get_team_overview`"、§42.5 第 4 条那句"`Vector2(w/50,0)` 自相矛盾"）。
+> 剩下 4 个（点生产者归属 / 淡出的 GOT 槽 / `z_index` 初值 / `FunctionDrawer::draw`）**没动**。
+
+### 48.0 一页结论
+
+| # | 缺口 | 结论 | 算式 / 内容 | 落地位置 | 档位 |
+|---|---|---|---|---|---|
+| 1 | tick 源 | **解出** | `fractional = tick + ((now − base) − accum) / 0.016666666`，`0.016666666` = `.rodata 0x19f7f8` = `f64(16_666_666)/1e9`（**不是** `1/60`） | `graphwar_tick_handler::GraphwarTickHandler::get_fractional_tick`（`0x519530`）；`GraphwarPlane` 自己持有并每帧读 | **观测**（逐指令）+ **逐位**（除数位型） |
+| 1b | 连带的 `get_time_to_tick` | **解出**（顺带） | `(accum + 1 tick) − (now − base)` | 同文件 `get_time_to_tick`（`0x519450`） | **观测** |
+| 2 | `update_transform` 三实参 | **解出** | `x = w/2`、`y = h/2`、`scale = s = w/50`（f32 标量）+ `flip` 位；被调者自己拼成 `flip ? (−s,−s) : (s,−s)` | `GraphwarPlane::apply_update_transform`（调用点 `0x4b6147`） | **观测**（逐指令） |
+| 3 | `get_team_overview` 返回什么 | **解出，且旧说法被否** | **`u32` 的 4 个布尔位**（bit 0/8/16/24），只用于 `flip`；**不是**两张表 | `GraphwarPlane::flip_from_overview_bits` | **观测** |
+| 3b | 两张表（队色） | **解出** | 两个 6 色池（队号 0/1），12 个 `(r,g,b)`，见 §48.3 表 | 表本来就在 `src/graphwar_color_manager.rs`（`TEAM1_COLORS`/`TEAM2_COLORS`）；本节补 **x86 观测**与 `team_color_pool()` 出口 | **逐位**（12 条 `mov word`+`mov byte`） |
+| 3c | 棋盘内部底色 | **解出归属** | **不是平面画的**：`AxisDrawer::draw` 的 `draw_rect(filled=true, Color(1,1,1,1), rect(−25,−15,50,30))` | `GraphwarPlane.board_fill`（导出属性，**默认关**）照那组实参补画 | 原版**观测**；"由平面代画"是**我方接线** |
+
+**一句话**：三个缺口都解出来了，而且都是**逐指令**级别的；唯一还是"我方"的只剩**接线**
+（tick handler 的对象还在游戏状态里没接过来、`flip` 用一个导出属性顶替、白底由平面代画）。
+
+### 48.1 缺口 1：`get_fractional_tick`（`0x519530`）的算式
+
+函数体 `0x519530`–`0x5195f2`（其余分支是两条下溢 `panic`，`.rodata 0x1c649f` / `0x1c63b4`）。
+`self` = `M`（72 B，`new` = `0x519690` 分配 `0x60` = 16 B Rc 头 + 8 B + 72 B）：
+
+```text
+519534  mov  esi,[rdi+0x28]        ; M+0x28 = "now" 的纳秒分量
+519537  cmp  esi,0x3b9aca00        ; == 1e9 ? ⇒ **哨兵**（合法纳秒 < 1e9）
+51953d  jne  519555                ; 有覆盖值 ⇒ now = (M+0x20, M+0x28)
+51953f  call *0x9ba8f8 (0x8f3a10)  ; 否则 SystemTime::now() → (rax=secs, edx=nanos)
+519545  mov  r8,[rbx]              ; base.secs  = M+0x00
+519548  mov  ecx,[rbx+8]           ; base.nanos = M+0x08
+51955f  call *0x9baf28 (0x90cdd0)  ; Duration::checked_sub(now, base)
+519565  sub  rax,[rbx+0x10]        ; − accum.secs  = M+0x10    （jb ⇒ panic 0x1c649f）
+519588  sub  edx,ecx               ; − accum.nanos = M+0x18
+5195a9  …                          ; secs(u64) → f64：punpckldq 0x19c780 / subpd 0x19c000 那套
+5195ce  divsd xmm2,[0x19eff8]      ; nanos / 1e9   （0x19eff8 = f64 1e9）
+5195d6  addsd xmm2,xmm1            ; + secs        ⇒ 秒
+5195da  divsd xmm2,[0x19f7f8]      ; / 0.016666666 ⇒ 不足一 tick 的小数部分
+5195e2  mov  eax,[rbx+0x40]        ; M+0x40 = u32 tick
+5195ed  addsd xmm0,xmm2            ; tick + 小数部分 ← 返回值（f64）
+```
+
+**算式**（`elapsed = (now − base) − accum`）：
+
+```text
+get_fractional_tick() = tick as f64 + elapsed.as_secs_f64() / 0.016666666
+```
+
+* `0.016666666` 的 8 字节 `.rodata 0x19f7f8` = `0x3f911111059d0921` = **`f64(16_666_666) / 1e9`**，
+  **不是** `1/60`（`1/60` = `0x3f91111111111111`）。它与 `tick()` 每次累加的
+  `NANOS_PER_TICK = 0xfe502a = 16 666 666` **同源**。⇒ 单测 `divisor_is_the_bit_exact_rodata_constant`
+  直接钉位型（`tick_seconds().to_bits()`）。
+* `accum` 每 `tick()` 加 `16 666 666 ns`（`0x51986c` 的 `add eax,0xfe502a`），所以
+  `elapsed` 是"**这一 tick 已经走了多久**"。
+* 下溢（`now < base + accum`）在原版是 `panic!`；本实现给 `0.0`（gdext FFI 里 panic = abort）。
+
+**顺带解出的 `get_time_to_tick`（`0x519450`）**：`(accum + 1 tick) − (now − base)`，
+进位判据 `0x51948f` 的 `cmp edi,0x3a9c79d6`（= `1e9 − 16 666 666`）。
+
+**字段归属（72 B 全对上；`new` 的写点 + 上面两处读点）**
+
+| 偏移 | 内容 | 指令 |
+|---|---|---|
+| `+0x00`/`+0x08` | `base: SystemTime` | 写 `0x5196df`/`0x5196e3`；读 `0x519545`/`0x519548` |
+| `+0x10`/`+0x18` | `accum: Duration`（每 tick +16 666 666 ns） | 写 `0x519871`/`0x519875`（`tick` 里）；读 `0x519565` |
+| `+0x20`/`+0x28` | `now` 的**覆盖值**；`+0x28 == 1e9` = "没设" | `0x5196f5` 只写哨兵；读 `0x519555` |
+| `+0x30` | 自身指针（用途未知） | `0x5196fc` 的 `mov [rbx+0x48],rbx` |
+| `+0x38` | `Rc<RefCell<GraphwarEventQueue>>` | `0x519700` |
+| `+0x40` | `u32 tick` | 写 `0x51987d`；读 `0x5195e2` / `0x4b6317`（`draw` 里） |
+
+⇒ **就地更正**（旧代码注释把 `+0x28` 的 `1e9` 读成"一秒的纳秒数"）：`0x519537` 的
+`cmp …/jne` 表明它是**"now 覆盖值无效"的哨兵**。
+
+**落地**：`src/graphwar_tick_handler.rs` 的 `GraphwarTickHandler::get_fractional_tick` /
+`get_time_to_tick` / `now()` / `set_now()` / `clear_now()`（`frozen_now: Option<(u64,u32)>`
+⇔ `M+0x20/+0x28`），以及 `GraphwarPlane` 侧：
+
+```text
+GraphwarPlane::fractional_tick()   -> tick_source.get_fractional_tick()      # 原版 0x4b631a
+GraphwarPlane::integer_tick_now()  -> tick_source.current_tick as i64        # 原版 0x4b6317 (M+0x40)
+GraphwarPlane::set_fractional_tick(t)                                        # **我方**摆钟口
+    n = trunc(t)；accum = n×16 666 666 ns；now = accum + round(frac × 0.016666666 × 1e9)
+    ⇒ 整数 t 读回来**逐位相等**（验收脚本按整数 tick 断言，不会因浮点抖动变红）
+```
+
+⚠️ **仍是接线不是复原**：原版那个 `GraphwarTickHandler` 在游戏状态里
+（`draw` 里 `mov r14,[r12+0x238]` 借出来的 `Ref`，`0x4b61e5`–`0x4b631a`），本类还没有那条线
+⇒ 自己 `new` 一个。`src/_scaffold/root_wiring.rs` 里那句"`get_fractional_tick`/`get_time_to_tick`
+的算式（§44.7 仍列未知）"**已过期**，但那个文件不在本任务的允许改动清单里，留给下一个改它的任务。
+
+### 48.2 缺口 2：`update_transform` 的三个实参（逐指令）
+
+**先纠正任务书的一个地址**：调用点在 **`GraphwarPlane::draw`（`0x4b5df0`）体内 `0x4b6147`**，
+**不在** `ready`（`0x4b7a70`）里。正对照：`callers 0x499050` = **1**（只有 `0x4b6147`），
+同一套扫法对 `update_function`（`0x498c70`）给出唯一调用点 `0x4b69ec`，与 §42.3 一致。
+
+调用点逐指令（`0x4b60a0`–`0x4b6147`）：
+
+```text
+4b60a0  mov  rdi,[rax+0x70]  ; 4b60a4 call 0x44ac60（拿 Gd 句柄）→ 4b60c9 前一路 upcast
+4b60c9  call *0x9bb000 (0x8925f0)  ; Control::get_size() → xmm0 = w, xmm1 = h
+4b60d4  movss [rsp+8],xmm0         ; w
+4b60da  movss [rsp+0x10],xmm1      ; h
+4b60e3  call 0x4be6e0              ; get_team_overview(...) → eax = **u32 的 4 个位**
+4b60e8  movss xmm0,[0x1ba128]      ; 0.5f32（同一个 8 字节池的下一个 f32 是 30.0）
+4b60f0  movss xmm1,[rsp+0x10] ; 4b60f6 mulss xmm1,xmm0    ; **arg2 y = h × 0.5**
+4b60fa  movss xmm2,[rsp+8]    ; 4b6104 divss xmm2,[0x1b9fc8]  ; **arg3 scale = w / 50.0**
+4b6100  mulss xmm0,xmm2(=0.5)                              ; **arg1 x = w × 0.5**
+4b610c–4b6129   flip 位组合（见下）
+4b6132  lea  rdi,[rax+0x80]        ; 被调者 = 平面上的函数绘制器
+4b6139  movzx esi,dl               ; **arg4 flip（bool）**
+4b6147  call 0x499050              ; FunctionDrawer::update_transform
+```
+
+`flip` 的位组合（两处同一个表达式：`0x4b6111`–`0x4b6129` 给 `esi`，`0x4b600d`–`0x4b6029`
+给 `draw_set_transform` 的 x 分量）：
+
+```text
+A = (flags >= 0x1000000) && !(flags & 0x10000)     ; 4b6012 setae / 4b601b sete / 4b6024 and
+B = ((flags & 0x101) == 0x100)                     ; 4b600d and / 4b605c cmp / 4b6129 or
+flip = A || B
+```
+
+**被调者（`0x499050`）怎么用这三个实参**（这是"第三实参不是 `Vector2`"的证据）：
+
+```text
+49905e  movd  [rsp+0xc],xmm1      ; 存 y
+499064  movss [rsp+8],xmm0        ; 存 x
+499080  movdqa xmm0,[0x19e880]    ; 四个 -0.0 的符号掩膜
+499088  movdqa [rsp+0x20],xmm2    ; 原值那份（低 32 位 = s）
+49908e  pxor  xmm0,xmm2
+499092  movdqa [rsp+0x10],xmm0    ; 取负那份
+4990ef/4990f5  set_position([rsp+8],[rsp+0xc])          ; 两个 f32
+499114/49911c  set_width(0.125f32 @0x1baff8)
+499135  movdqa xmm0,[rsp+0x10]    ; **flip 分支**：取负那份
+49913b  movdqa xmm1,xmm0
+49913f  call *0x9bb238            ; set_scale(xmm0, xmm1) ⇒ (-s,-s)
+499235  movdqa xmm0,[rsp+0x20]    ; **非 flip 分支**：xmm0 = 原值（s）
+49923b  movdqa xmm1,[rsp+0x10]    ;                  xmm1 = 取负（-s）
+499241  call *0x9bb238            ; set_scale ⇒ (s,-s)
+```
+
+gdext 的 `Vector2` 在这里是**两个 f32、各占一个 xmm**（`set_position` 的包装 `0x892890`
+开头就是 `movss [rsp+0xc],xmm1; movss [rsp+8],xmm0`，`set_scale` 的 `0x892b50` 同样）。
+⇒ `update_transform(x: f32, y: f32, scale: f32, flip: bool)`，**`scale` 是标量**，
+y 分量的负号是被调者自己加的。
+
+**同一套换算也出现在 `draw_set_transform`（`0x4b607d`）**：`pos = size×0.5`、`rotation = 0`、
+`scale = (flip ? −s : s, −s)`（`0x4b6001` 的 `pxor` 给 y、`0x4b6059`–`0x4b6063` 选 x）。
+⇒ 曲线上那 3 个 `Line2D` 与棋盘框**共用**一个变换。
+
+**旁证**：`AxisDrawer::draw`（`0x4e05b0`）用的是**同一个**算式，只是没有 `flip`
+（`0x4e0639` `divss 50.0`、`0x4e064b` `0.5`、`0x4e0648` 取负）⇒ `scale = (s, −s)`。
+
+**⇒ 原来那组 `position=(500,300)` / `scale=(20,−20)` 的数值恰好就是原版值**
+（1000×600 的平面 ⇒ `w/2 = 500`、`w/50 = 20`），但**来源从"我方选择"变成"算出来的"**。
+`client/tools/plane_on_screen_check.gd` 已改成按 `plane.size` 反推期望值再断言。
+
+⚠️ 还是我方的两处：
+1. `flip` 的来源（原版 = `get_team_overview` 的位组合；本类没有游戏状态 ⇒ 导出属性 `mirror_x`，
+   默认 `false` = 不镜像；另有一个导出属性 `flip_y`（默认 `true`）只管"y 是否取负"，
+   原版**永远取负**，那个开关只为复现工具留）；
+2. 喂给 `FunctionDrawer::update_transform` 的 `scale` 得先"反着取负"
+   （那个文件本轮不许改：它在 `flip` 为真时把**两个**分量都取负 ⇒ 想得到 `(−s,−s)`
+   就得传 `(s,s)`）。
+
+### 48.3 缺口 3：`get_team_overview` 返回什么 + 两张表 + 棋盘底色
+
+**(a) `get_team_overview`（`0x4be6e0`）返回 `u32` 的 4 个布尔位，不是表。**
+函数尾部 `0x4beb95`–`0x4bebb6` 就是拼装：
+
+```text
+4beb95  movzx eax,[rsp+0x38] ; shl eax,0x18        ; bit 24
+4beb9d  movzx ecx,[rsp+4]    ; shl ecx,0x10        ; bit 16
+4beba7  movzx edx,[rsp+8]    ; shl edx,8           ; bit 8
+4bebb1  movzx eax,[rsp+0xc]                        ; bit 0
+4bebb6  or    eax,edx   ⇒ eax = (b38<<24)|(b4<<16)|(b8<<8)|(bc)
+```
+
+四个字节在 `0x4be83e`/`0x4be847`/`0x4be84f`/`0x4be857` 清零，循环体里被置
+`0`/`1`（`0x4be870`–`0x4be888`、`0x4bead4`–`0x4beaee`）。
+**⇒ `draw` 里两次调用（`0x4b5fd3` / `0x4b60e3`）拿到的只是一个 4 字节标志字**，
+第二次的 `eax` 就是 `flip` 的位组合（§48.2）。**§42.3 那句"两张表来自它的两次返回值"
+是错的，已就地更正。**
+
+它内部在干什么（形状，**语义未知**）：从 `[rdi+0x40]` 的 `Rc<RefCell<…>>` 借 4 个东西
+（`0x46c430` / `0x46b460` / `0x46b8b0` / `0x46b740`），遍历里面一个 `Vec<u32>`
+（元素 4 字节、`lea rax,[rax*4]`），再按 `0x78` 的 bucket 步长查表（与函数管理器同一个步长）
+⇒ **推断**：逐个玩家看队/在场情况，汇总成 4 个"是不是"结论。缺的证据：那 4 个借用器
+各自指向哪个字段、以及 4 个位各叫什么。
+
+**(b) 真正的"两张表" = `init_team_colors` 的两个 6 色池。**
+容器是 `HashMap<u8, Vec<GraphwarColor>>`（键 = 队号 0/1，`GraphwarColor` = **3 字节 r,g,b**）。
+x86 侧**不是内联**（`docs/10` §15.2 记的"内联"要改成这个地址）：**`0x465070`–`0x46545e`（1006 B）**，
+12 个颜色在 `0x4650a3`–`0x465297` 用 `mov word [r+3k], 0xRG` + `mov byte [r+3k+2], 0xBB` 落库：
+
+| 队 | 地址（每个 2 条指令） | 6 个 `(r,g,b)` |
+|---|---|---|
+| 0（Team1） | `0x4650a6/aa`、`0x4650cd/d1`、`0x4650f5/f9`、`0x465124/28`、`0x46514f/53`、`0x465176/7a` | `(186,42,32) (238,114,0) (125,104,0) (122,160,0) (149,5,62) (234,0,219)` |
+| 1（Team2） | `0x4651b4/b8`、`0x4651de/e2`、`0x465209/0d`、`0x46523c/40`、`0x46526a/6e`、`0x465293/97` | `(107,0,234) (17,0,108) (21,83,221) (0,203,163) (0,116,26) (2,85,63)` |
+
+逐位读数：`0x2aba`+`0x20` = (186,42,32)；`0x72ee`+`0x00` = (238,114,0)；`0x687d`+`0x00`
+= **`(125,104,0)` = `#7D6800`**（就是真帧量测出来的那个弹道色，`docs/16` §12.2 ⑫）；
+`0xa07a`+0 = (122,160,0)；`0x0595`+`0x3e` = (149,5,62)；`0x00ea`+`0xdb` = (234,0,219)；
+第二池 `0x006b`+`0xea`、`0x0011`+`0x6c`、`0x5315`+`0xdd`、`0xcb00`+`0xa3`、`0x7400`+`0x1a`、
+`0x5502`+`0x3f`。与 `docs/10` §15.3 的 arm64（`0x49c660`）复算**一字不差** ⇒ 档位从"arm64 逐位"
+升级成**两架构互证**。
+
+**表本来就有**（`src/graphwar_color_manager.rs` 的 `TEAM1_COLORS` / `TEAM2_COLORS`，`TEAM_POOL_LEN = 6`）；
+本节新加的只是**出口**：`GraphwarPlane::team_color_pool(team) -> PackedColorArray`
+（`0..=1` 给 6 个，别的队号给空 = 原版 `add_team_color` 的随机兜底），
+验收脚本逐个分量对拍 12 个数。
+
+**(c) `draw` 里那个"颜色"是怎么查出来的**（§42.3 的表结构，这里补形状）：
+
+```text
+4b681d  mov rax,[rsp+0xd0]        ; 表 1（HashMap<u32,u32>）
+4b6842  call 0x47dec0             ; hash(key = player id)
+4b68a3  cmp ebp,[r10-8]           ; 比 key
+4b68de  mov r15d,[rcx+r8*8-4]     ; value = 表1[player id]（4 字节）⇒ 当表 2 的 key
+4b68eb  mov rax,[rsp+0xc8]        ; 表 2
+4b69a7  movzx eax,[rcx+r8*8-4]    ; 3 个**字节**：r
+4b69ad  movzx edx,[rcx+r8*8-3]    ;                  g
+4b69b3  movzx ecx,[rcx+r8*8-2]    ;                  b
+4b69be–4b69d1  r9d = (b<<16)|(g<<8)|r      ; = update_function 的颜色实参
+```
+
+⇒ 表 2 是 `HashMap<u32, GraphwarColor>`（bucket 8 = 4 字节 key + 3 字节值 + padding），
+与 `GraphwarColorManager` 的 `used` 表形状一致（`used_map` 的键 = entity id）。
+**推断（未证）**：表 1 = "player id → entity/队"，表 2 = 颜色管理器的占用表；
+两个表的来源是两个借用器 `0x46a770`（→ `[rsp+0xd0]`）与 `0x46b5d0`（→ `[rsp+0xc8]`），
+对象是 `draw` 里 `mov r12,[…+0x238]` 的那个游戏状态。缺的证据：那两个字段的**归属**。
+
+**(d) 棋盘内部的底色：不是队色，也不在平面里。**
+`GraphwarPlane::draw` 只有那一条**空心黑框**（`Rect2(−25,−15,50,30)`、`Color(0,0,0,1)`、
+`width = 0.2`、`filled = false`，`0x4b617d`–`0x4b61ab`）。**白底在 `AxisDrawer::draw`**：
+
+```text
+4e069f  movaps xmm0,[0x19cc20]   ; Rect2(-25,-15,50,30)
+4e06ab  lea    rdx,[0x19ed00]    ; Color(1,1,1,1)
+4e06b7  movss  xmm0,[0x1b9d08]   ; width = -1.0
+4e06c2  mov    ecx,1             ; filled = true
+4e06c7  xor    r8d,r8d           ; antialiased = false
+4e06ca  call   *0x9bc028         ; draw_rect
+```
+
+⇒ **"棋盘内部是工程底色"的真正原因是 `AxisDrawer` 节点还没实现 `draw`**
+（`src/_scaffold/axis_drawer_class.rs` 文件头明写"没接管 `draw`"），不是缺一张颜色常量表。
+本类给了导出属性 `board_fill`（**默认关**）：置真就在同一套变换下补画那块白底。
+**默认关的理由**：其它验收脚本按"每次 `_draw` 1 条 `draw_rect`"断言
+（`draw_classes_check.gd` / `assemble_check.gd`），打开会变 2 条。
+
+### 48.4 落了哪些文件
+
+| 文件 | 改了什么 |
+|---|---|
+| `src/graphwar_tick_handler.rs` | 新增 `tick_seconds()`（+`TICK_SECONDS_BITS` = `0x3f911111059d0921`）、`duration_sub()`、`get_fractional_tick()`、`get_time_to_tick()`、`now/set_now/clear_now`、`accum()`；字段按 `M+0x00..0x48` 重排；文件头补 `0x519530`/`0x519450` 的逐指令算式表；**6 条新单测** |
+| `src/_scaffold/graphwar_plane_class.rs` | `tick_source: GraphwarTickHandler`（不再存 `fractional_tick: f64`）；`_draw` 按 `size` 派生 `position`/`scale` 并调 `apply_update_transform`（`0x4b6147`）；新导出属性 `mirror_x`（= 原版 `flip`）、`board_fill`；纯函数 `flip_from_overview_bits` / `board_transform_args` / `board_scale_xy`；新方法 `transform_total` / `last_transform` / `integer_tick_now` / `team_color_pool` |
+| `client/tools/plane_on_screen_check.gd` | 变换断言改成**按 `plane.size` 反推**（+`last_transform()` 对拍）；新增 tick 源、两张队色表、`flip` 真值表（9 个点）、`board_fill` 打开后每次 `_draw` 2 条 `draw_rect` 的断言（76 → **96** 条） |
+| `docs/16-client.md` | 本节 + §42.3 / §42.5 第 4 条 / §43.6(d) 的第 2/3/7 条 / §43.7 就地更正 |
+
+### 48.5 验收（本分支实测，可从干净树重跑）
+
+```text
+cargo test --offline                       # 1575 passed / 0 failed（基线 1569 + 6 条新单测）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/plane_on_screen_check.gd   # 96 / 0（基线 76）
+"$GODOT" --headless --path client --script res://tools/obstacle_drawer_check.gd   # 116 / 0（不退）
+"$GODOT" --headless --path client --script res://tools/assemble_check.gd          # 203 / 0（不退）
+"$GODOT" --headless --path client --script res://tools/draw_classes_check.gd      # 235 / 0（不退）
+"$GODOT" --headless --path client --script res://tools/curve_on_screen_check.gd   # 96 / 0（不退）
+```
+
+### 48.6 仍是推断 / 未知（诚实清单）
+
+| 项 | 档位 | 缺什么证据 |
+|---|---|---|
+| `get_team_overview` 那 4 个位**各是什么** | **推断** | 只证了"4 个布尔位 + `flip` 的位组合"；4 个位对应哪个判定、`0x46c430`/`0x46b460`/`0x46b8b0`/`0x46b740` 四个借用器指向哪些字段都没解 |
+| `draw` 里两张 `HashMap` 的**归属** | **推断** | 形状是观测（表 2 的值是 3 字节 `GraphwarColor`）；哪个模块的字段、`0x46a770`/`0x46b5d0` 借的是谁，未证 |
+| `GraphwarTickHandler` 的 `M+0x20/+0x28`（now 覆盖值）**谁写** | **未知** | 全二进制只观测到 `new` 写哨兵 `1e9`；原版可能从不写它（那就永远走系统时钟） |
+| `M+0x30`（自身指针）**用途** | **未知** | 只观测到 `new` 里写 `rbx` |
+| tick handler 的**对象来源** | **我方接线** | 原版从游戏状态借（`mov r14,[r12+0x238]`），本类自己 `new`；接过来要先复原那个 `Ref` 的所有者 |
+| `flip` 的来源 | **我方替换** | 原版 = `get_team_overview` 的位组合；本类用导出属性 `mirror_x` 顶替（默认 `false`） |
+| 棋盘白底由谁画 | 原版**观测** / 本类**我方接线** | 原版在 `AxisDrawer::draw`；那个节点没实现 `draw`，本类用 `board_fill` 代画。**网格线仍然没有**（`AxisDrawer` 的 102 条 `draw_line` 还没接） |
+| 剩下 4 个缺口 | **未动** | 点生产者 `0x456810` 的写入者 `0x3e44d4` 归属、`get_function_fade_on_tick` 只有 GOT 槽 `0x9bbd08`、`z_index` 初值、`FunctionDrawer::draw` x86 未定位 |
+
+### 48.7 一个踩过的坑（**地址空间**，下一个做反汇编的人会用到）
+
+`libgraphwarrust.so` 的两个 `PT_LOAD` 里，`.text` 段的 **`p_offset` = `0x37a940` 而
+`p_vaddr` = `0x37b940`（差 `0x1000`）**，第一个（R）段才是 `offset == vaddr`。
+⇒ 用 Python 直接按**文件偏移**搜字节时，`.text` 里的命中要 **+0x1000** 才是文档/工具里的 vaddr
+（本次就是在文件偏移 `0x4640d1` 搜到 `mov word […],0x72ee`，对应 vaddr **`0x4650d1`**）。
+`.rodata` 在第一个段里，`offset == vaddr`（`.rodata 0x19f7f8` 直接读就对）。
+`tools/addr_probe.py` 打印的与 `@0x…` 解析的都是 **vaddr**，两者不要混。
