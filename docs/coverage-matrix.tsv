@@ -7,20 +7,20 @@
 # tool_version: 1
 # binary_sha256: 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
 # funcstarts_sha256: b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a
-# src_tree_sha256: 581caeb68aee7c2dc991350e2159537f37b2d7e36f285a97f753f392790aaaa6
+# src_tree_sha256: d40687f708c71a363fbb963b9a0c31b96ae1508ac5e1a42a191f9e71fbdae1e9
 # funcstarts_n: 13263
 # src_modules: 246
 # loc_structs: 2042
 # attributed_funcs: 527
 # contested_funcs: 86
 # src_files: 104
-# src_fns: 2171
+# src_fns: 2191
 module	scope	orig_funcs	contested	anchors	ours_file	ours_funcs	status	evidence
 graphwar_ad_switch.rs	graphwar	6	0	3	src/graphwar_ad_switch.rs	21	观测	6 条全是 gdext 惰性注册驱动；两个 getter trampoline + owned(+0x18) 已钉死
 graphwar_audio_control.rs	graphwar	7	1	16	src/graphwar_audio_control.rs	21	观测	9 函数 + 4 订阅闭包。订阅 effect_info(44，按 +0x20 的 u8 四臂落三槽) / soldier_info(15) / entity_removed(14) / game_state_info(30)；槽 +0x80/90/a0/b0/c0 = explosion/squash/spark/pop/unpop，音量 -15/-15/-15/0/-5 dB；state==1 清待播队列（docs/16 §30）
 graphwar_backend.rs	graphwar	6	1	12	src/graphwar_backend.rs	6	观测	**18 个方法**（旧文记 15，偏少）。LAN 与 broker 是两个独立字段**（+0x110 组播 ff02::1 / +0x228 broker），开房时一起装；「看哪一路」在 GraphwarLanVBox::show_global，不在这层（docs/09 §11）
 graphwar_button.rs	graphwar	6	0	3	src/graphwar_button.rs	13	观测	6/6 方法全解（init/ready/process/button_down/pressed/button_up）+16 条名字分派入口；docs/16 §18
-graphwar_campaign_control.rs	graphwar	1	0	1	src/graphwar_campaign_control.rs	3	观测	定性完成；get_current_level 返回 Option 给 local_player_manager 的 RankRequest 用（docs/16 §33）
+graphwar_campaign_control.rs	graphwar	1	0	1	src/graphwar_campaign_control.rs	23	观测	定性完成；get_current_level 返回 Option 给 local_player_manager 的 RankRequest 用（docs/16 §33）
 graphwar_client_connection_handler.rs	graphwar	8	0	16	src/graphwar_client_connection_handler.rs	8	观测	11 FUNC（8 方法 + 3 订阅闭包 + 连接线程）。ConnectionState 4 个变体（0/1/2/3），**与 GameState(8) 是两套**，唯一交点：失败时 set_state(7)。本机地址是 [::1]:port（**不是 127.0.0.1**）；远端只认 IP 字面量、**无 DNS**；connect_timeout 30s、**无重连**、**不发也不订阅心跳**（docs/09 §11）
 graphwar_color_manager.rs	graphwar	4	0	6	src/graphwar_color_manager.rs	26	观测	7/7（含 GraphwarColor::serialize）：两张 6 色表就是 init_team_colors 里的字面量；分配 = **队号选池** -> rand::random::<u64>()%6 起点 -> +1 线性探测跳过 used -> 6 个全占则 (r%180,g%180,b%180)。**不是进房顺序、不是 player_id 取模**（docs/10 §15）
 graphwar_computer_player_manager.rs	graphwar	5	0	27	src/graphwar_computer_player_manager.rs	30	观测	6/7 定位：HashMap<u32,BotData>（步长 0x78）+ SoldierBotData（0x58）。**不是掉线托管**：唯一入口是 bot_added_event(10)；level 阈值 4/11/26/101/251，精英数=种群/5，limit=5/5/10/15/25/200（docs/13 §25）

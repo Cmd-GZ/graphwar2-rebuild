@@ -2,14 +2,22 @@ extends RefCounted
 class_name GwCampaign
 ## 战役：21 关（0..20）——**全部来自二进制的真数据**。
 ##
-## 数据来源（逐条可核对，详见 `docs/125-playscreen.md`）：
+## ⚠️ 这张表是**内核同名表的客户端副本**：权威定义在
+## `src/graphwar_campaign_control.rs::LEVEL_INFO`（= 原版 `level_info()`，`0x4ad380`）。
+## 两份由 `cargo test --test campaign_data` 的
+## `client_campaign_table_matches_the_kernel_table` **逐字节**钉住（标题 21、描述 21、
+## 模式 4 项、士兵/目标/Bot 档/回合上限/障碍模式与 `min_count` 全部逐项比对）——
+## 改这里而不改内核，测试会立刻红。21 关数据已全部落地（`docs/118` §7），无占位项。
+##
+## 数据来源（逐条可核对，详见 `docs/10-campaign.md` §16 与 `docs/archive/118-campaign-data.md`）：
 ##
 ## | 字段 | 来源 | 证据等级 |
 ## |---|---|---|
 ## | `title` | `docs/118` §4.1：21/21 都是 `Level 0`..`Level 20`（`.rodata` 两种编码） | 逐位 |
 ## | `description` | `docs/118` §4.2：`.rodata` 逐字节 21 段（含原版的拼写错误 `writting`） | 逐位 |
 ## | `axis/function/turn/time` | `docs/118` §4.3：每关 `mov dword [rsp+0x58], imm32`，4 字节按 `+0x38..+0x3b` 拆分 | 逐位 |
-## | `soldiers / targets / bot_tier / turn_limit / obstacles` | `docs/118` §7.1 全参数表（`S`=立即数、`C`=闭包预设、`R`=385 份 replay 运行时真值） | 逐位 + 运行时 |
+## | `soldiers / targets / turn_limit / obstacles / obstacle_min` | `docs/118` §7.1 全参数表（`S`=立即数、`C`=闭包预设、`R`=385 份 replay 运行时真值） | 逐位 + 运行时 |
+## | `bot_tier` | `docs/118` §7.1 的 `R` 列 = 运行时 `bot_N` **皮肤号**（0..4） | 逐位 + 运行时 |
 ##
 ## `time` 恒为 5 ⇒ `GwModes.TimeLimit.INF`（∞）。这**同时解释**了三件事：
 ## `join_level_pop_up` 第 4 个按钮用 `turn_inf.svg`、战役对局里 `TimerLabel` 一片空白
@@ -20,7 +28,6 @@ class_name GwCampaign
 ## 用 ChaCha 抽，见 `docs/102` §1；这里取确定性值，只为"同一关每次一样"）。
 
 const LEVEL_COUNT := 21
-const PLACEHOLDER := false     # 21 关数据已全部落地（docs/118 §7），不再是占位
 
 ## 8 列 × 4 行（观测公式：`screen_size.x / 8`、`screen_size.y / 4`，
 ## 见 `docs/101` §4.1 的真源码）。21 个按钮按 8 列折行，16:9 下实际 7+7+7。
@@ -37,17 +44,23 @@ enum Obstacles { NONE, CENTER, SCATTER }
 ##   `function` 0=f(x) 1=微分方程
 ##   `turn`     0=sequential 1=simultaneous
 ##   `time`     恒 5 = INF（= `turn_inf.svg`）
-##   `soldiers` 我方士兵数；`targets` 靶子数；`bot_tier` 敌方 Bot 难度档（-1 = 无对手）
+##   `soldiers` 我方士兵数；`targets` 靶子数；`bot_tier` 敌方 Bot 的 `bot_N` 皮肤号（-1 = 无对手）
 ##   `turn_limit` 回合上限，0 = 无上限
-##   `obstacles`/`obstacle_min` 障碍模式与 `min_count`（散布式是随机变量，`min_count` 只是下界）
+##   `obstacles`/`obstacle_min` 障碍模式与散布式的个数下界 `min_count`
+##              （非散布式一律 0：`CENTER` 的"恰好 1 颗"由生成本体保证，
+##               与 `graphwar_level_generator::ObstacleParams::min_count` 的约定一致）
+##
+## ⚠️ 这里**没有** Bot 的"难度值"（3/25/50/100/250）：那是 `bot_added_event` 载荷里给
+## 电脑玩家管理器用的立即数，只有内核需要（`graphwar_campaign_control::BotOpponent::difficulty`）。
+## 界面只用到皮肤号，所以客户端不多存一份。
 const LEVELS := [
 	{"title": "Level 0", "axis": 3, "function": 0, "turn": 0, "time": 5, "soldiers": 1, "targets": 1, "bot_tier": -1, "turn_limit": 0, "obstacles": Obstacles.NONE, "obstacle_min": 0,
 		"description": "Write a function of x to hit the target."},
 	{"title": "Level 1", "axis": 3, "function": 0, "turn": 0, "time": 5, "soldiers": 1, "targets": 1, "bot_tier": -1, "turn_limit": 5, "obstacles": Obstacles.NONE, "obstacle_min": 0,
 		"description": "A constant is always added to your function. You can see it on the bottom right corner of the screen. It makes sure the function is shot by your soldier."},
-	{"title": "Level 2", "axis": 3, "function": 0, "turn": 0, "time": 5, "soldiers": 1, "targets": 1, "bot_tier": -1, "turn_limit": 5, "obstacles": Obstacles.CENTER, "obstacle_min": 1,
+	{"title": "Level 2", "axis": 3, "function": 0, "turn": 0, "time": 5, "soldiers": 1, "targets": 1, "bot_tier": -1, "turn_limit": 5, "obstacles": Obstacles.CENTER, "obstacle_min": 0,
 		"description": "There are obstacles in the cartesian plane that don't let your function go through. Try to make a function that goes around them."},
-	{"title": "Level 3", "axis": 3, "function": 0, "turn": 0, "time": 5, "soldiers": 2, "targets": 3, "bot_tier": -1, "turn_limit": 10, "obstacles": Obstacles.CENTER, "obstacle_min": 1,
+	{"title": "Level 3", "axis": 3, "function": 0, "turn": 0, "time": 5, "soldiers": 2, "targets": 3, "bot_tier": -1, "turn_limit": 10, "obstacles": Obstacles.CENTER, "obstacle_min": 0,
 		"description": "You now have multiple soldiers in your team. At each turn you will shoot from a different one."},
 	{"title": "Level 4", "axis": 3, "function": 0, "turn": 0, "time": 5, "soldiers": 1, "targets": 1, "bot_tier": -1, "turn_limit": 10, "obstacles": Obstacles.SCATTER, "obstacle_min": 15,
 		"description": "Try going around a plane with more obstacles."},
@@ -65,7 +78,7 @@ const LEVELS := [
 		"description": "Hit all targets in a single shot to destroy them. The finer grid lines are gone."},
 	{"title": "Level 11", "axis": 2, "function": 0, "turn": 1, "time": 5, "soldiers": 3, "targets": 0, "bot_tier": 3, "turn_limit": 0, "obstacles": Obstacles.SCATTER, "obstacle_min": 5,
 		"description": "Play against an opponent on a plane with fewer grid lines. You and the opponent are also firing simultaneously."},
-	{"title": "Level 12", "axis": 1, "function": 0, "turn": 0, "time": 5, "soldiers": 1, "targets": 1, "bot_tier": -1, "turn_limit": 5, "obstacles": Obstacles.CENTER, "obstacle_min": 1,
+	{"title": "Level 12", "axis": 1, "function": 0, "turn": 0, "time": 5, "soldiers": 1, "targets": 1, "bot_tier": -1, "turn_limit": 5, "obstacles": Obstacles.CENTER, "obstacle_min": 0,
 		"description": "Most grid lines are gone. Try hitting a target."},
 	{"title": "Level 13", "axis": 1, "function": 0, "turn": 0, "time": 5, "soldiers": 1, "targets": 2, "bot_tier": -1, "turn_limit": 5, "obstacles": Obstacles.SCATTER, "obstacle_min": 10,
 		"description": "Destroy two targets in a single shot."},
@@ -97,7 +110,6 @@ static func level(index: int) -> Dictionary:
 	var out := row.duplicate(true)
 	out["index"] = i
 	out["seed"] = level_seed(i)
-	out["placeholder"] = PLACEHOLDER
 	return out
 
 
