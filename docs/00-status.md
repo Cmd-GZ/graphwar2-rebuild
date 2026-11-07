@@ -22,10 +22,15 @@
 > 复现：`python3 tools/coverage_matrix.py`（`--check` 只校验不重写）。
 
 ```
-原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 431、15 个非 graphwar 占 96）
-   已实现 281（逐位 98 / 观测 183 / 推断 0）｜ 未做 161 ｜ 完全未知模块 22（graphwar 里 15）
+原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 430、16 个非 graphwar 占 97）
+   已实现 527（逐位 88 / 观测 439 / 推断 0）｜ 未做 0 ｜ 完全未知模块 0
 归属率 527 / 13263 个 Ghidra 函数 = 4.0%（硬上限：纯计算函数没有 panic 就没有锚）
 ```
+
+> **2026-11-07 夜更正**：这段长期写着 `已实现 281（逐位 98 / 观测 183）｜ 未做 161 ｜ 完全未知模块 22`，
+> 与 `docs/coverage-matrix.tsv` 实测**不符**（该表 77 个模块行全部是 `观测`/`逐位`，`未做` 为 0）。
+> 分子 281 是 2026-11-06 21:27 那一版的值、此后再未更新（分母 527 在 `ea287fc` 已改对，分子没跟上）。
+> 现按 `python3 tools/coverage_matrix.py` 重算结果更正，与 `--check` 一致。
 
 ⚠️ **527 是可度量下限，不是模块规模**——求值器 `0x4eb9d0`、采样器 `0x3c2530` 全函数体零 Location 引用。
 
@@ -39,23 +44,29 @@
    但符号表里有 `graphwarrust::weak_caller` 的 27 个 direct 符号 ⇒ 它是 **crate 内模块**，
    那 39 个可归属函数应当计入 ⇒ 分母 +39。
 
-⇒ **`281/527 = 53.3%`** 是诚实数字；之前说的 `281/488 = 57.6%` 偏高。
+⇒ `527/527` 是当前口径（改分母那次之后，分子在 2026-11-06 深夜也补齐了）；
+更早的 `281/488 = 57.6%`、`281/527 = 53.3%` 都已作废——它们统计的是同一份代码的**半成品状态**。
 
-## 0.3 本轮（07:00 前后）新增
+## 0.3 本轮（2026-11-07 夜，8 份任务书）新增
 
-| 模块 | 产出 | 档位 |
-|---|---|---|
-| `entity_drawer.rs` | `src/entity_drawer.rs`（**只覆盖 `draw` 1/14 个归属函数**）：`EntityDrawer::draw` 只画两类图元（`draw_arc`×3 + 多边形×3），**不画士兵贴图/弹道**；弧半径 = `f32(radius)×1.5`、箭头 = 向心三角（∓12°、+0.5） | 观测（常量逐条带槽地址） |
-| `play_screen_control` | `src/graphwar_play_screen_control.rs`：回放/对局视图是一对互补的孪生函数；只订阅 `function_info_event` + `function_fire_event` ⇒ **`TurnInfo`/`GameStateInfo` 不经这层**；**弹道清除不在这层**（否定证据） | 观测 |
-| 15 个零锚点模块 | `docs/02` §16：定性 10 个（观测 3 / 推断 7），剩 5 个纯未知。**全库只有 12 个 GDExtension 类** ⇒ 那 15 个里只有 3 个是 Godot 类，其余是被节点调用的普通 Rust 模块 | 见 §16 |
+| # | 分支 | 产出 | 档位 |
+|---|---|---|---|
+| 01 | `agent/assemble-min` | `_scaffold/root_wiring.rs`：`GraphwarModuleContainer` 装载器（`TypeId`→`Rc<RefCell<M>>`）+ **真装配 3 个 manager**；Setup/Game 两屏、Game 屏挂 Plane + EntityDrawer + 3 假实体 | 观测（86 条 headless 断言） |
+| 02 | `agent/function-drawer-node` | `FunctionDrawer` 成真节点；`update_function` **增量追加**（132 条断言）；顺带更正 §32 的 map value 形状（40 B 三元组）与宽度常量 `0.125`（`.rodata 0x1baff8` 逐位） | 观测 + 逐位（常量） |
+| 03 | `agent/bit-exact-report` | 整局对拍剩余失败**归因表**（401 份回放，失败 512 批全部落桶）：爆炸点 y 末位差 170 / 多发批结构 123 / end_x 差一点 95 / …；**否证** "A 类熵是主因"（0 批） | 观测（`--check-baseline` 7 个数全一致） |
+| 04 | `agent/campaign-data` | 21 关参数表落进 `graphwar_campaign_control::LEVEL_INFO`，客户端 PLACEHOLDER 清零（13 条测试，21×7 逐字段） | 观测（数字与 118 §7.1 逐行相同） |
+| 05 | `agent/crossbuild` | Win x86_64 / Android arm64 **check+build 都成立**（便携 llvm-mingw + NDK）；修 2 处"编得过但静默做错事"（`/dev/urandom`、`$HOME` 拼路径） | 观测（wine 入口探针 PASS） |
+| 06 | `agent/name-match-review` | 唯一匹配 733 → 762；多候选 63 → 37；444 无候选归因（`icf 0 / tiny 172 / other 266 / inlined 6`）；修掉"夹具无法复现" | 观测 + 推断（每条带 `arbi=`） |
+| 07 | `agent/docs-renumber` | `docs/16` 编号 1..40 连续（242 处标题）、318 处交叉引用、`tools/check_doc_refs.py` 退出码 0 | 观测（脚本可重跑） |
+| 08 | `agent/viewport` | 105 个原版 `.gd` 清点：**40 可直接换 / 5 等装配 / 60 不能换**（52 游戏 + 53 插件）；最小试验 57 断言 | 观测（headless 实测） |
 
 ## 0.4 下一轮最高性价比（按"能不能指到证据"排）
 
-1. **`ptr_slots.py` 解 `0x3d5260` 的名字表** ⇒ 一次性定死"弹道什么时候清除"的落点（`play_control` 已排除本层）；
-2. **`0x3dcbb0`（0x2250 字节）**：`play_screen_control` 内最大函数，被 `root_node 0x3a5760` 直接调用，很可能是"回合推进 / game_state 分派"的真身；
-3. **`entity_drawer` 补暴露**：`src/_scaffold/api.rs`/`_scaffold/gdext.rs` 还没把新图元暴露给客户端（本轮禁止改 `client/`），
-   所以棋盘仍用旧近似画法；
-4. 5 个纯未知模块（effect_manager / entity_effect_manager / game_recorder / graphics_manager / video_writer）。
+1. **爆炸点 y 的末位差（170 批，占失败 33.2%）**——`docs/06` §24 实测的最大单项，修好预计 +176（68.9%）；
+2. **多发批结构接线（123 批）**——`diffconv` 里已修好、只是没接进驱动，接线后种类序列 818 → 918；
+3. **挖洞点轴**（延迟段 271 批里 200 例我方点在该回放的任何 `DestroyObstacle` 里都不存在）——机制**未知**，先定性；
+4. **`EffectInfo`(tag44) 的生产者**——全 `.text` 只有 2 处 `movabs` 且都是消费者，需换路子找（调用点/槽）；
+5. 剩余 19 个 manager 的装配，与 `PlayScreenControl` 节点化（01 只做了 3 个 + 替代形状）。
 
 ## 0.5 源码目录约定（2026-11 起，**看代码前先读这条**）
 
