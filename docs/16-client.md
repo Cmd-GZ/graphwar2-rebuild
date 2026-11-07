@@ -6828,4 +6828,215 @@ bash client/run.sh selftest                    # 694 passed（默认 feature 的
 * **`PlayerShowcase` 的贴图加载器**：`GraphwarTextureLoader`（根节点 `+0x16a0`）没有，本类用
   程序生成的纯色 `ImageTexture`；`save()` 也不写盘（headless 验收不该有副作用）。
 * **`GraphwarRootNode`**：`PlayerShowcase::ready` 第 1 步真的会失败（`root_lookup_failures`），
-  因为那个类还没做。
+  原因是**那棵树里没有那个节点**——类本身在 §39 那一轮就做出来了（`ClassDB.class_exists("GraphwarRootNode")`
+  一直为真）。本条原文写的"因为那个类还没做"是误记，已在 §42.9 就地更正。
+
+## 42. `GraphwarRootNode` 真装配：3 个 manager 进容器、Setup 屏 → Game 屏、3 个假士兵（2026-11：86 条 headless 断言全过）
+
+**一句话**：此前 12 个 GDExtension 类是**孤立节点**——`GraphwarRootNode` 里那 25 个模块槽
+全是空 `Node` 占位，容器的 `add_module` 一次都没被调过。本节把**能开一局的最小集合**
+（`GameStateManager` → `TurnManager` → `PlayerManager`）真装进 `GraphwarModuleContainer`，
+并把两张屏接上真节点类：**Setup 屏**（`GameSetup`）= `GraphwarSetupControl`，
+**Game 屏**（`PlayScreen`）= `GraphwarPlane` + 它的子节点 `EntityDrawer` + **3 个假实体**
+（每个 3 个 `Sprite2D` + 1 个 `RichTextLabel`）。headless 实测 **86 条断言全过**（退出码 0）。
+
+> 档位同 §38/§41：**观测** = 这轮 headless 真跑出来的输出 / 能指到 `docs/02` §22 的指令级证据；
+> **推断** = 有依据未证；**未知** = 没解出来。`cargo test` / `selftest` 的条数**只是回归保护**，
+> 不是复原证据（`AGENTS.md` §0.2）。
+
+### 42.1 本轮动了哪些文件
+
+| 文件 | 增/改 | 行数 | 内容 |
+|---|---|---|---|
+| `src/_scaffold/root_wiring.rs` | **新增** | 499（代码 149 / 单测 136 / 注释 162 / 空行 52） | 容器装载器：`TypeId` 注册/取回 + 3 个 manager 的装配 + 槽位三态判据 |
+| `src/_scaffold/graphwar_root_node_class.rs` | 改 | +318 / −11 | `ensure_scene_graph` 里装配容器；`GameSetup` / `PlayScreen` 换真内容；10 个 `#[func]` 观测口 |
+| `src/_scaffold/mod.rs` | +4 | — | `#[cfg(feature = "gdext-bindings")] pub mod root_wiring;` + 注释 |
+| `client/tools/assemble_check.gd` | **新增** | 335（86 条断言） | headless 验收脚本 |
+| `docs/16-client.md` | +本节 | — | — |
+| `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` | 重跑生成物 | — | `src_files` 104 → **105**、`src_fns` 2171 → **2209**（只这两个数变了；527 个可归属函数与档位分布一位没动） |
+
+`src/graphwar_*.rs` 的纯逻辑文件、`src/lib.rs`、其它 `*_class.rs`、`client/src/**`、
+`client/*.tscn`、任何既有断言**一行没改**。
+
+### 42.2 「按类型查到 3 个」到底查的是什么（本节的核心）
+
+容器是 `HashMap<TypeId, Rc<dyn Any>>`（1 字段 / 48 字节，`docs/02` §22.1 的**否定结论**：
+**没有** `+0xNN` 偏移、**没有** 25 个字段）。所以"装配"只有一个动作：
+
+```text
+container.add_module::<M>(Rc::new(RefCell::new(M::new(…))))
+        ↑ 键 = TypeId::of::<M>()，值 = 那个 Rc<RefCell<M>> 的胖指针
+container.get_module::<M>() -> Option<Rc<RefCell<M>>>
+        ↑ 命中后经 vtable 第 4 字调 Any::type_id，与 TypeId::of::<RefCell<M>>() 比
+```
+
+本节装的 3 个（类型名 = `graphwar_module_container::MODULES` 的**原文**）：
+
+| 容器里的键（原版类型名） | 我方等价类型 | 我方 `new` | 取回后这一轮真的读到了什么 |
+|---|---|---|---|
+| `GraphwarGameStateManager` | `crate::game::Match`（那个模块"运行实体那一半"） | `Match::new(room, obstacles, soldiers, tick_base)` | 3 个 `Target`（`soldiers.len() == 3`） |
+| `GraphwarTurnManager` | `graphwar_turn_manager::TurnManager` | `TurnManager::new()` | 玩家 1 = 2 个士兵、玩家 2 = 1 个、玩家 99 = `-1` |
+| `GraphwarPlayerManager` | `graphwar_player_manager::GraphwarPlayerManager` | `GraphwarPlayerManager::new()` | `player_id → connection_id` 2 行 |
+
+验收脚本**逐型**断言（`container_has_module("GraphwarTurnManager")` …），**不数总数**；
+同一时刻 `container_has_module("GraphwarBanList")` 必须是 `false`、`container_module_count()`
+才是 `3` —— 这一对正反断言就是"判据是 `TypeId` 而不是计数"的证据：
+
+```text
+ok   container_module_count() == 3（实际 3）
+ok   wired_manager_count() == 3（**按类型查**出来的）
+ok   容器里按类型查得到 GraphwarGameStateManager
+ok   容器里按类型查得到 GraphwarTurnManager
+ok   容器里按类型查得到 GraphwarPlayerManager
+ok   没装的 GraphwarBanList 查不到（⇒ 判据是类型，不是数量）
+ok   胡编的名字 GraphwarNotARealManager 查不到
+ok   取回 GameStateManager ⇒ 里面是 3 个假士兵（实际 3）
+ok   取回 TurnManager ⇒ 玩家 1 有 2 个士兵
+ok   取回 PlayerManager ⇒ player_id → connection_id 表有 2 行
+ok   GraphwarBanList 的槽位状态 = placeholder（**如实标**：没装）
+ok   GraphwarNotARealManager 的槽位状态 = unknown（原版 25 型里也没有）
+```
+
+槽位三态由 `module_slot_status(name)` 回答，判据是**运行时**的（`assembled` 只在
+`get_module::<M>()` 真能取回时给出）：`assembled`（3 个）/ `placeholder`（原版 25 型里
+有、我们没装的 22 个）/ `unknown`（原版台账里也没有的名字）。
+
+⚠️ **装配顺序**（`GameStateManager → TurnManager → PlayerManager`）是**我方选择**（= 任务书顺序），
+**不是**观测到的原版顺序：`docs/02` §22.4 只给出两侧 22 条 `add_module` 的**调用序相同**与
+尺寸序列，没有做 22 条逐型对齐。原版是否让 `GameStateManager` 与容器里的 `TurnManager`
+**共享**同一个实例：**未知**（我方 `Match` 自带一个内部 `TurnManager`，容器里的是另一个）。
+
+### 42.3 两张屏：Setup 屏 → Game 屏（切换仍然走 `0x3af850` 的决策表）
+
+没有新增切屏逻辑：`show_screen(name)` 一直是 `graphwar_root_node::apply_show_screen`
+（`0x3af850` 的纯逻辑版，§15）。本节只是把两条屏的内容换成了真节点：
+
+```text
+ScreensControl/GameSetup   → GraphwarSetupControl（§39 那个类；四格 / 玩家表 / Start）
+ScreensControl/PlayScreen  → Control 容器
+    └── GraphwarPlane                 ← 有名字（原版 dump 里就叫这个）
+        └── @EntityDrawer@N           ← **不** set_name（原版也没命名，§2.1.10 的 dump）
+```
+
+父子关系与命名都是**观测**（`docs/16` §2.1.10 的运行时节点树：
+`GraphwarPlane/@EntityDrawer@N/@Sprite2D@N`、`GraphwarPlane/@EntityDrawer@N/<name_label 实例>`）；
+"Game 屏 = `PlayScreen`"这一条也是**观测**（同一张表里战场挂在 `PlayScreen/.../GraphwarPlane`）。
+
+```text
+ok   show_screen(GameSetup) 遍历了 15 个屏（实际 15）
+ok   Setup 屏可见
+ok   Game 屏不可见（切屏互斥）
+ok   visible_screens() == [GameSetup]（实际 ["GameSetup"]）
+ok   show_screen(PlayScreen) 遍历了 15 个屏（实际 15）
+ok   Game 屏可见
+ok   Setup 屏不可见（切屏互斥）
+ok   visible_screens() == [PlayScreen]（实际 ["PlayScreen"]）
+ok   Setup 屏是 GraphwarSetupControl（真节点类，不是空 Control）
+```
+
+### 42.4 Game 屏里的棋盘与 3 个假实体
+
+```text
+ok   Game 屏里 GraphwarPlane 恰好 1 个（实际 1）
+ok   棋盘节点名 == GraphwarPlane（原版 dump 里的名字）
+ok   棋盘下 EntityDrawer 恰好 1 个（实际 1）
+ok   EntityDrawer 是 GraphwarPlane 的**子节点**（原版 dump 如此）
+ok   EntityDrawer 是引擎自动名 @EntityDrawer@N（原版没 set_name，实际 @EntityDrawer@19）
+ok   EntityDrawer 里有 3 个实体（实际 3）
+ok   3 个实体 × 4 个子节点 = 12（实际 12）
+ok   实体 1 的 4 个子节点 = 3 Sprite2D + 1 RichTextLabel（实际 3 sprite / label=true）
+ok   实体 1 的名字标签文本 == P1-1（实际 P1-1）        # 2/3 同理
+ok   贴图子节点是引擎自动名 @Sprite2D@N（原版 dump 如此，实际 @Sprite2D@2）
+```
+
+* **假实体**：id `1/2/3`、队伍一两人（`x ≤ 0`）/ 队伍二一人（`x ≥ 0`，照 `Team` 的观测判据）、
+  名字 `P1-1` / `P1-2` / `P2-1` —— 坐标与名字都是**我方选择**（原版的名字来自
+  `GraphwarNameManager` / backtracer，那条链不通）。
+* 这 3 个假实体与容器里 `GraphwarGameStateManager` 的那 3 个 `Target` 是**同一份数据**
+  （`root_wiring::DEMO_SOLDIERS`），所以"容器里 3 个士兵"和"屏上 3 个士兵"能对上号。
+
+### 42.5 每帧：Plane 的 `_draw` 真的被调到
+
+```text
+      plane: draw=1 rect=1 process=1 ready=1
+ok   棋盘在树里且可见（否则 _draw 不会被调）
+ok   Plane 的 _draw 被引擎调到（1 次）
+ok   每次 _draw 发 1 条 draw_rect（1/1）
+ok   Plane 的 _process 被引擎调到（1 次）
+ok   EntityDrawer._ready 被引擎调到（1 次）
+ok   EntityDrawer._process 被引擎调到（1 次）
+ok   进树后棋盘有 4 个子节点（3 个 FunctionDrawer 占位 + 我们的 EntityDrawer，实际 4）
+```
+
+`_draw` 只在"该重画"时才来（`CanvasItem` 的语义），所以 2 帧后计数仍是 1 ——
+脚本断言的是"**被调到过**（≥1）且计数只增不减"，不是"每帧 +1"。
+棋盘进树后补上的 3 个 `@Control@N` 是 `GraphwarPlane::ready` 建的
+`FunctionDrawer` **占位**（§41.8 的欠账，本轮没动）。
+
+### 42.6 与原版的差别（逐条，别当成"已复原"）
+
+| 项 | 原版 | 本轮 | 档位 |
+|---|---|---|---|
+| 装了几个 manager | `GraphwarGameClient::new` **22** 条 `add_module` | **3** | 22 是**观测**（`docs/02` §22.4）；3 是本轮范围 |
+| 注册顺序 | 22 条的调用序两侧逐位相同，逐型对齐**没做** | `GameStateManager → TurnManager → PlayerManager` | **我方选择** |
+| 容器挂在谁身上 | `root+0x1668`（某 manager 的 `Rc<RefCell<_>>`）→ 该 manager `+0x238`（容器）→ `.borrow().get_module::<X>()` | 容器直接挂在根节点的一个字段上 | 原版**观测**；链接方式不同，**容器语义相同** |
+| `Weak` 环 | 各 manager 持 `Weak<RefCell<GraphwarModuleContainer>>`（`get_module_wk` 的实参形态） | 3 个 manager **都不**反向持有容器，`get_module_wk` 这条路没接 | 原版**观测**；本层未用 |
+| `GraphwarGameStateManager` | 296 字节的原版结构 | 我方 `game::Match`（带 `RoomState` / `Vec` / AI 状态） | 结构**没有**按字节复原（与 296 一致与否未验证） |
+| `PlayScreen` 这一屏 | `play_screen_control`（Rust，模块在 `src/` 有纯逻辑） | 只是一个 `Control` 容器 | 控制器**未**节点化 |
+| 屏尺寸 | `.tscn` 的容器布局（`PlayScreen/.../PlaneContainer`） | 写死 `1600×900`（= `client/project.godot` 的视口） | **我方选择** |
+| 3 个士兵的坐标 / 名字 / 队伍 | `SoldierInfo` / `TeamInfo` / 名字管理器 | 写死（`DEMO_SOLDIERS` / `DEMO_PLAYERS`） | **我方选择**（假数据） |
+| 房间状态 6 字段 | `GameInfo` 抓包 | `demo_room()`，6 个取值照搬 `tests/graphwar_game_state_manager.rs` | 取值**观测**（抓包夹具） |
+| 棋盘的 `_draw` | 1 个 `draw_set_transform` + 1 个 `draw_rect` | 同（§41 已做） | **逐位**（常量槽） |
+| 3 个贴图的像素 | pck 里的真皮肤 / 脸 / 帽子 | 程序生成纯色 `ImageTexture`（§38 的选择） | **我方选择** |
+
+### 42.7 仍是占位 / 未知（诚实清单）
+
+* **剩下 19 个 manager 一个都没装**：容器里只有 3 个键；`GraphwarModuleContainer` 节点下的
+  **25 个空 `Node`** 仍然是占位（`module_slot_status()` 回答的是**容器**里装没装，不是节点树）。
+* **`PlayScreenControl` / `SetupControl` 的大部分行为**：本轮只把 `GraphwarSetupControl`
+  那个类挂上去（它自己按 §40 的结论只连 3 条信号），四格模式的**按钮点击**原版就没连
+  （§40 的 `pressed` 未知项）。
+* **`GraphwarRootNode` 的两跳链**（`+0x1668` / `+0x16c8` 的控制器、`+0x16a0` 的贴图加载器）
+  **未解**，本轮把容器直接挂根节点，是**替代形状**。
+* **事件总线**：3 个 manager 的订阅（`new_connection_event` / `tick_event` …）一条都没接——
+  本仓库没有 `GraphwarBackend`/`EventHandler`。`Match::new` 里那 7 个订阅点在 `src/game.rs`
+  的注释里已如实标注。
+* **回合推进 / 开火**：容器里的 `TurnManager` 与 `Match` 内部那个是**两个实例**，本轮不驱动
+  回合（`Match::begin_next_turn` 没有被节点层调用）。
+
+### 42.8 复现（三分钟）+ 回归条数
+
+```text
+export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=$CARGO_HOME/target
+export GODOT=<ws>/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cargo build --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/assemble_check.gd   # 86 passed, 0 failed
+```
+
+同轮回归（都在本轮实测）：
+
+| 命令 | 结果 |
+|---|---|
+| `cargo test --offline` | lib **457** / 总计 **1499**，全绿（与本轮之前**一位不差**） |
+| `cargo test --offline --features gdext-bindings` | lib **524** / 总计 **1560**，全绿（`root_wiring` 的 6 条单测只在有 feature 时编译） |
+| `python3 tools/coverage_matrix.py --check` | **OK**（改 `src/` 后必须重跑生成器，两个生成物一起提交） |
+| `base_classes_check` / `draw_classes_check` / `entity_drawer_check` / `signal_classes_check` | **117 / 235 / 72 / 155** 条，全过（既有断言一条没改） |
+| `bash client/run.sh selftest`（缺 `client/assets/`） | **606 passed / 2 failed / 23 skipped** |
+
+⚠️ **selftest 那 2 条失败不是本轮引入的**（这是**观测**，不是推断）：把本轮 3 个 `src/` 文件
+`git stash` 掉、重编 `.so` 再跑一次，结果**逐字相同**（`606 passed, 2 failed, 23 skipped`，
+同样两条 `FAIL`）。两条都依赖缺失的资产：
+`点 Skins 页的第 -1 号皮肤`（皮肤列表为空 ⇒ 下标 `-1`）与
+`Cancel = 194 宽 / Start = 218 宽（真帧；实际 184 / 167）`（字体宽）。缺 `client/assets/` 时
+拿不到 694 条是**预期**，本节只报实测数字。
+
+### 42.9 就地更正（`§41.8` 的最后一条）
+
+`§41.8` 写「**`GraphwarRootNode`**：`PlayerShowcase::ready` 第 1 步真的会失败
+（`root_lookup_failures`），**因为那个类还没做**」——**后半句是错的**（`docs/16` §39 那一轮
+就把 `GraphwarRootNode` 这个类做出来了，`ClassDB.class_exists("GraphwarRootNode")` 一直为真）。
+`PlayerShowcase` 那一步查的是**场景里的节点实例**（`get_node` 一路上溯），
+而验收脚本里根本没把 `GraphwarRootNode` 放进那棵树 ⇒ 它照样找不到。前半句（会失败）不变，
+原因改成「**那棵树里没有那个节点**」。本节已按 `AGENTS.md` §0.6 就地更正。

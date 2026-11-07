@@ -75,6 +75,10 @@ pub mod long_press_animation_class;
 #[cfg(feature = "gdext-bindings")]
 pub mod player_showcase_class;
 pub mod protocol;
+// 模块容器装载器 + 3 个 manager 的真装配（`docs/16-client.md` §42）：按 `TypeId` 把
+// `GameStateManager` / `TurnManager` / `PlayerManager` 装进 `GraphwarModuleContainer`。
+#[cfg(feature = "gdext-bindings")]
+pub mod root_wiring;
 pub mod replay_inflate;
 pub mod replaydiff;
 pub mod rng;
