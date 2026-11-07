@@ -869,6 +869,16 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 **为什么 `events.rs` 不在这里**：它是原版 `graphwar_event.rs` 的复原（72 个具名变体 + 判别值），
 不是桥接层。`game.rs` / `plane.rs` / `server.rs` / `turnstate.rs` 同理。
 
+> **`src/_scaffold/root_wiring.rs` / `graphwar_root_node_class.rs` 不在上表**：它们是
+> **22 个 manager 的装配器 + 它在 Godot 侧的观测口**（原版这两件事在 `GraphwarGameClient::new`
+> 与各节点的实现里，`docs/16` §41），不是"桥接 A 到 B"那一类，所以没有进 §17.3 的桥接清单。
+> 它们身上有一个**判据口径**要单独记住：**槽位复原档位** `wired` / `layout` / `assembled` / `stub`
+> （判据写在 `src/_scaffold/root_wiring.rs` 的模块文档，全表与逐槽理由在 `docs/16` §47）。
+> ⚠️ 别把它和 `SlotKind` 混起来：`SlotKind` 是**容器类型来源**（容器里直接装原版模块类型 = 17 个，
+> 装 `_scaffold` 包装 = 5 个，`container_real_manager_count()` / `container_stub_manager_count()`
+> 数的就是这两个），档位回答的是"这一槽离原版还有多远"（2026-11 任务 28 定）。
+> 读 `module_slot_status()` 的返回值时，`stub` 的是 **1** 个，而 `SlotKind::Stub` 的是 **5** 个。
+
 > ⚠️ **§8 与本节的"归属函数数"口径不同**：§8 那张表来自 `fixtures/module_map.tsv`（按"体内引用本模块"粗算，
 > `game_client` 记 **68**），本节来自 `docs/coverage-matrix.tsv`（按 `panic::Location` 锚，
 > `game_client` 记 **36**，19 个 contested 压平）。**两个都对，但回答的问题不同**：

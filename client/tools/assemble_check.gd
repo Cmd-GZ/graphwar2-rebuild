@@ -8,6 +8,19 @@ extends SceneTree
 ## godot --headless --path client --script res://tools/assemble_check.gd
 ## ```
 ##
+## 槽位状态查的是**复原档位**（四个词，判据在 `src/_scaffold/root_wiring.rs` 的模块文档
+## "槽位复原档位"一节，2026-11 任务 28 定）：
+##
+## ```text
+## wired      已接容器 + 已接事件流 + 有最小交互断言（三件齐）
+## layout     原版字段布局已逐字段解出，但没到 wired（事件流没接全 / 无交互断言）
+## assembled  容器里是我方复原类型，但没接事件流 / 没有最小交互断言
+## stub       我方形状占位：原版字段布局未知
+## ```
+##
+## ⚠️ `stub` 的旧读法（"零行为空占位"）**作废**：它现在只说"结构都没解"，与"能不能交互"无关。
+## 这四个词由 `module_slot_status()` 原样返回，与 `Wired::status()` 是同一套（不要各写一套）。
+##
 ## 它验证的是「**容器真的按原版顺序装进了 22 个 manager、两张屏真的挂上了真节点类**」这几句，
 ## 不验证 manager / 棋盘 / 绘制器的**算术**（那些各自有脚本：`entity_drawer_check.gd`
 ## §34、`draw_classes_check.gd` §37、`signal_classes_check.gd` §36、`base_classes_check.gd` §35）：
@@ -51,11 +64,55 @@ const WIRED := [
 const WIRED_SIZE := [
 	72, 112, 64, 72, 72, 24, 296, 32, 72, 32, 72, 80, 32, 72, 32, 168, 72, 72, 48, 72, 120, 72,
 ]
-## 其中**没有复原类型、只放了零行为空占位**的 5 个（`module_slot_status` 回 `stub`）。
-const STUBBED := [
+## 每个槽的**复原档位**（`module_slot_status()` 的原样返回值；顺序与 `WIRED` 一一对应）。
+##
+## 这是 `root_wiring.rs` 里 `Wired::status()` 的 GDScript 影印版：两边必须逐字相同，
+## 那边的单测 `slot_tiers_are_the_four_word_vocabulary` 与本脚本的 22 条逐槽断言互为对照。
+## 任务 28 的病根正是"只改了一边"（注释说改了、字符串还是旧的），所以这里**断言**也一起写死。
+const WIRED_TIER := [
+	# 1  TickHandler          订 1 发 2 与原版一致 + 4 条交互 ⇒ 三件齐
+	"wired",
+	# 2  ClientConnectionHandler  112 B 的 9 个偏移全解，行为 0 行
+	"layout",
+	# 3-5  LocalPlayerManager / PlayerManager / SoldierManager
+	"assembled", "assembled", "assembled",
+	# 6  PlanePosManager      24 B 布局未知（连文件都没有）
+	"stub",
+	# 7  GameStateManager
+	"assembled",
+	# 8  FunctionManager      32 B / 4 字段全解，容器 + 6 条交互都在，但**发方向**事件流没接
+	"layout",
+	# 9  TargetManager        订 2 发 1 + 5 条交互
+	"wired",
+	# 10 TeamManager
+	"assembled",
+	# 11 LifeManager          订 3 发 2 + 5 条交互
+	"wired",
+	# 12 ObstacleManager      订 1 发 4 + 7 条交互
+	"wired",
+	# 13-22 TurnManager / Effect / Mode / Graphics / EntityEffect / ComputerPlayer /
+	#       FunctionHistoryRecorder / Name / Color / Rank
+	"assembled", "assembled", "assembled", "assembled", "assembled",
+	"assembled", "assembled", "assembled", "assembled", "assembled",
+]
+## 四档现值计数（顺序固定：wired / layout / assembled / stub；合计 = 22）。
+const TIER_TALLY := {"wired": 4, "layout": 2, "assembled": 15, "stub": 1}
+## 容器里**什么都没有**的两个槽（纯标记）：只有它们的 `manager_impl_type()` 回 `"—"`。
+const EMPTY_IMPL := ["GraphwarClientConnectionHandler", "GraphwarPlanePosManager"]
+## 容器类型是 `_scaffold` 包装/标记的 5 个（`SlotKind::Stub`，**不是**档位 `stub`）；
+## `container_stub_manager_count()` 数的就是这一组（`docs/16` §41.2 的既有口径，17 + 5 = 22）。
+const PACKAGED := [
 	"GraphwarTickHandler", "GraphwarClientConnectionHandler", "GraphwarPlanePosManager",
 	"GraphwarFunctionManager", "GraphwarObstacleManager",
 ]
+## 上面那 5 个的档位（任务 28 逐个重判：**不再清一色 `stub`**）。
+const PACKAGED_TIER := {
+	"GraphwarTickHandler": "wired",
+	"GraphwarClientConnectionHandler": "layout",
+	"GraphwarPlanePosManager": "stub",
+	"GraphwarFunctionManager": "layout",
+	"GraphwarObstacleManager": "wired",
+}
 ## 客户端**不**注册的那 3 型（25 − 22；服务端线程 / backend 才装）：
 ## 容器里查不到，`module_slot_status` 必须是 `placeholder`。
 const NOT_WIRED := ["GraphwarBanList", "GraphwarServerConnectionHandler", "GraphwarGameRecorder"]
@@ -135,7 +192,7 @@ func _initialize() -> void:
 	ok(bool(root_node.call("wiring_done")), "wiring_done() —— 容器已装配")
 
 	var count: int = int(root_node.call("container_module_count"))
-	print("      容器模块数 = %d；按类型成立的 = %d；能取回的 = %d；真类型 %d + 空占位 %d"
+	print("      容器模块数 = %d；按类型成立的 = %d；能取回的 = %d；原版模块类型 %d + _scaffold 包装 %d"
 		% [count, int(root_node.call("wired_manager_count")),
 			int(root_node.call("container_live_count")),
 			int(root_node.call("container_real_manager_count")),
@@ -147,30 +204,55 @@ func _initialize() -> void:
 		"container_live_count() == %d（每个槽都能 `get_module` 取回）" % WIRED.size())
 	ok(int(root_node.call("assembled_manager_total")) == WIRED.size(),
 		"assembled_manager_total() == %d（= 原版 22 条 add_module）" % WIRED.size())
-	# 17 真类型 + 5 空占位 = 22（§41.2 的分档；不是"22 个都复原了"）
-	ok(int(root_node.call("container_real_manager_count")) == WIRED.size() - STUBBED.size(),
-		"真复原类型 == %d（22 − 5 个空占位）" % (WIRED.size() - STUBBED.size()))
-	ok(int(root_node.call("container_stub_manager_count")) == STUBBED.size(),
-		("空占位 == %d（TickHandler / ClientConnectionHandler / PlanePosManager / "
-			+ "FunctionManager / ObstacleManager）") % STUBBED.size())
+	# 17 + 5 = 22：17 个槽容器里直接装原版模块类型，5 个槽容器类型是 `_scaffold` 包装/标记
+	# （`SlotKind::RealType` / `SlotKind::Stub`，§41.2 的既有口径）。
+	# ⚠️ 这**不是档位**：档位是 4 wired + 2 layout + 15 assembled + 1 stub（见 `WIRED_TIER`）。
+	# 两个口子的函数名（尤其 `container_stub_manager_count`）是 §41 遗留措辞，函数在
+	# `graphwar_root_node_class.rs`（本轮禁区），`docs/16` §47.6 记了这条待改。
+	ok(int(root_node.call("container_real_manager_count")) == WIRED.size() - PACKAGED.size(),
+		"容器里直接装原版模块类型的槽 == %d（SlotKind::RealType，22 − 5 个包装）"
+			% (WIRED.size() - PACKAGED.size()))
+	ok(int(root_node.call("container_stub_manager_count")) == PACKAGED.size(),
+		("容器类型是 `_scaffold` 包装/标记的槽 == %d（SlotKind::Stub；"
+			+ "**不是**档位 stub 的那 1 个）") % PACKAGED.size())
+
+	# —— 档位（四个词）：这里断总数与词表，逐槽在下面那个 22 循环里断 ——
+	var tally := {"wired": 0, "layout": 0, "assembled": 0, "stub": 0}
+	var outside := []
+	for type_name in WIRED:
+		var got := String(root_node.call("module_slot_status", type_name))
+		if tally.has(got):
+			tally[got] = int(tally[got]) + 1
+		else:
+			outside.append("%s=%s" % [type_name, got])
+	print("      四档: %s（越界 %s）" % [tally, outside])
+	ok(int(tally["wired"]) == int(TIER_TALLY["wired"])
+		and int(tally["layout"]) == int(TIER_TALLY["layout"])
+		and int(tally["assembled"]) == int(TIER_TALLY["assembled"])
+		and int(tally["stub"]) == int(TIER_TALLY["stub"]),
+		"四档计数 == wired 4 / layout 2 / assembled 15 / stub 1（实际 %s）" % tally)
+	ok(int(tally["wired"]) + int(tally["layout"]) + int(tally["assembled"]) + int(tally["stub"])
+		== WIRED.size(), "四档合计 == %d（每个槽只报一档）" % WIRED.size())
+	ok(outside.is_empty(),
+		"22 个槽的档位都在四词词表里（越界：%s）" % [outside])
 
 	# —— 核心：**按类型**逐条查（不是数一个总数）——
-	#   每个槽三条：键在（contains）/ 取回（get_module downcast）/ 槽位档位。
-	for type_name in WIRED:
+	#   每个槽四条：键在（contains）/ 取回（get_module downcast）/ **复原档位** / impl_type。
+	for i in range(WIRED.size()):
+		var type_name: String = WIRED[i]
 		ok(bool(root_node.call("container_has_module", type_name)),
 			"容器里按类型查得到 %s" % type_name)
 		ok(bool(root_node.call("container_module_live", type_name)),
 			"容器里能 **取回** %s（get_module downcast 成功）" % type_name)
-		var want_status := "stub" if STUBBED.has(type_name) else "assembled"
+		var want_status: String = WIRED_TIER[i]
 		var got_status := String(root_node.call("module_slot_status", type_name))
 		ok(got_status == want_status,
-			"%s 的槽位状态 = %s（实际 %s）" % [type_name, want_status, got_status])
+			"%s 的档位 = %s（实际 %s）" % [type_name, want_status, got_status])
 		var impl_type := String(root_node.call("manager_impl_type", type_name))
-		if want_status == "stub":
-			ok(impl_type == "—", "%s 是空占位（impl_type = —，实际 %s）" % [type_name, impl_type])
-		else:
-			ok(impl_type != "" and impl_type != "—",
-				"%s 装的是复原类型（impl_type = %s）" % [type_name, impl_type])
+		var want_empty: bool = EMPTY_IMPL.has(type_name)
+		ok((impl_type == "—") == want_empty,
+			"%s 的 impl_type %s（实际 %s）" % [type_name,
+				"应为 —（容器里什么都没有）" if want_empty else "应为复原类型路径", impl_type])
 
 	# —— 注册序（逐位证据的运行时版本）：22 个名字 + 22 个原版 size ——
 	var names: PackedStringArray = root_node.call("container_module_names")
@@ -272,11 +354,16 @@ func _initialize() -> void:
 	ok(String(root_node.call("manager_probe", "tick.delta")) == "1",
 		"TickHandler：tick() 让 current_tick 恰好 +1")
 
-	# 反面对照：这 5 个槽的档位**仍然是 `stub`**（原版结构未复原），
-	# 所以"能交互"**不等于**"复原了原版类型"——两件事分开记（§43）。
-	for type_name in STUBBED:
-		ok(String(root_node.call("module_slot_status", type_name)) == "stub",
-			"%s 仍是 stub 档位（桩 = 原版结构未复原，不是「没接上」）" % type_name)
+	# 反面对照（任务 28 重判）：这 5 个 `SlotKind::Stub` 槽的档位**跟着事实走**，
+	# 不再是清一色 `stub`——"能交互"不等于"复原了原版结构"，两件事分开记（§43 / §47）：
+	#   TickHandler / ObstacleManager = wired（三件齐）
+	#   ClientConnectionHandler / FunctionManager = layout（布局逐字段解出，行为没做完）
+	#   PlanePosManager = stub（24 B 布局未知）
+	for type_name in PACKAGED:
+		ok(String(root_node.call("module_slot_status", type_name)) == PACKAGED_TIER[type_name],
+			"%s 的档位 = %s（不再是清一色 stub）" % [type_name, PACKAGED_TIER[type_name]])
+	ok(int(tally["stub"]) == 1,
+		"22 个槽里只剩 1 个真 stub（PlanePosManager），不是 5 个")
 
 	# 幂等：连调两次必须给出同一串（probe 不许把状态改歪）
 	var probe_again: PackedStringArray = root_node.call("manager_probe_selftest")

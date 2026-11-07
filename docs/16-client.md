@@ -6919,6 +6919,9 @@ ok   GraphwarNotARealManager 的槽位状态 = unknown（原版 25 型里也没�
 `get_module::<M>()` 真能取回时给出）：`assembled`（3 个）/ `placeholder`（原版 25 型里
 有、我们没装的 22 个）/ `unknown`（原版台账里也没有的名字）。
 
+> ⚠️ **§47 起作废这一段**：§41 已把槽位扩到 22 个，§47 起 `module_slot_status()` 报**四档**
+> （`wired` / `layout` / `assembled` / `stub`，判据见 §47.1），不再是三态。旧句保留备查。
+
 ⚠️ **装配顺序**（`GameStateManager → TurnManager → PlayerManager`）是**我方选择**（= 任务书顺序），
 **不是**观测到的原版顺序：`docs/02` §22.4 只给出两侧 22 条 `add_module` 的**调用序相同**与
 尺寸序列，没有做 22 条逐型对齐。原版是否让 `GameStateManager` 与容器里的 `TurnManager`
@@ -7636,6 +7639,11 @@ readelf -rW <arm64 so> | grep <vtable 地址>      # → drop_in_place<RefCell<.
   `Rc::downcast`，`docs/02` §22.5 的那条路径）。
 
 **5 个空占位**（`SlotKind::Stub`，`module_slot_status()` 如实回 `"stub"`，**不是** `"assembled"`）：
+
+> ⚠️ **§47 起作废这一段**：档位现在是四档，这 5 个槽的实际档位是
+> **`wired` / `layout` / `stub` / `layout` / `wired`**（`TickHandler` / `ClientConnectionHandler` /
+> `PlanePosManager` / `FunctionManager` / `ObstacleManager`），理由逐条见 §47.2。
+> `SlotKind::Stub` 仍在（那是"容器类型来源"的 5 个），但它**不是档位**。
 `TickHandler` / `ClientConnectionHandler` / `PlanePosManager` / `FunctionManager` / `ObstacleManager`。
 理由逐个可查：`src/graphwar_tick_handler.rs` 只有 `tick_at` 一个自由函数；
 `graphwar_client_connection_handler.rs` 只有 `HandlerField` 偏移表；
@@ -7676,7 +7684,7 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
 | 项 | 档位 | 缺什么 |
 |---|---|---|
 | 17 个 manager 的**行为** | 未做 | 本轮只"构造 + 注册"（任务书 §4）；空表不会自己动 |
-| 5 个空占位的**类型本身** | 未知 | 这 5 个型在本仓库没有可构造的类型；要补的是它们各自的结构体（`tick_handler` 连字段偏移都没有） |
+| 5 个空占位的**类型本身** | 未知 → ⚠️ **§47 已改** | §47 起的现状：3 个已可构造（两个 = §46 的原版布局 + 我方表，一个 = `graphwar_tick_handler.rs` 的 `GraphwarTickHandler`），`ClientConnectionHandler` 有**全偏移表**（§47.2），只剩 `PlanePosManager` 仍未知 |
 | 各 `new` 的**实参**来自哪 | 部分 `未知` | 例如 `GraphwarGameStateManager::new` 的 4 个实参在 `0x4ade6c` 里，本轮没有逐参数解；我方用演示数据 |
 | `GameStateManager` 内部是否**也持** `TurnManager` | 未知 | 与 §38 同一条；容器里是两个独立实例 |
 | 21 号之前那 3 条 `subscribe_to_event` | 观测到调用 | `0x409f24/0x409f70/0x409fbc` 三次订阅发生在 3 号 `add_module` 之前；订阅的是谁、订阅了什么事件**未解** |
@@ -8139,7 +8147,7 @@ python3 tools/coverage_matrix.py --check           # OK
 | `GraphwarFunctionManager`（32 字节）的**字段** | **一个都没解** | **未知** |
 | `GraphwarObstacleManager`（80 字节）的**字段** | **一个都没解** | **未知** |
 | `GraphwarTickHandler`（72 字节）的字段 | 只落了**有地址证据**的几个（见 §44.2），**没有**按字节复原 | 部分**观测** |
-| 这 3 个槽的档位 | **仍然是 `stub` / `impl_type = "—"`**（上一轮已经进了逐槽断言，本轮不改既有断言） | 我方口径 |
+| 这 3 个槽的档位 | **仍然是 `stub` / `impl_type = "—"`**（上一轮已经进了逐槽断言，本轮不改既有断言）→ ⚠️ **§47 已改**：`TickHandler` / `ObstacleManager` = `wired`，`FunctionManager` = `layout`，`impl_type` 报真类型路径 | 我方口径（§47.2 重判） |
 
 ⇒ **`stub` 的含义就地更正**：上一轮它是"**零行为**的空占位"，本节起它是
 "**原版结构未复原**"（其中 3 个现在**能交互**）。两件事分开验：
@@ -8154,7 +8162,7 @@ python3 tools/coverage_matrix.py --check           # OK
 | `src/graphwar_tick_handler.rs` | +类型 | `GraphwarTickHandler`（累加器 / `current_tick` / `tick()` / `handle_connected_to_server_event` / 接已有 `tick_at`）+ 5 条单测（两个自由函数**一行没动**） |
 | `src/_scaffold/root_wiring.rs` | 改 | 3 个槽从零字段变成带状态（`TickHandlerSlot(GraphwarTickHandler)` / `FunctionManagerSlot(FunctionTable)` / `ObstacleManagerSlot(ObstacleTable)`）+ 5 个按类型取回口 + `interaction_selftest` + 5 条单测 |
 | `src/_scaffold/graphwar_root_node_class.rs` | **+2 个 `#[func]`** | `manager_probe_selftest()` / `manager_probe(name)`——**我方自造**的只读观测口，原版**没有**（见 §44.5 的边界） |
-| `client/tools/assemble_check.gd` | +16 条 | 27 条交互值 + 幂等 + 反面（桩仍报 stub）+ 未知名字 |
+| `client/tools/assemble_check.gd` | +16 条 | 27 条交互值 + 幂等 + 反面（桩仍报 stub）+ 未知名字（⚠️ §47 起反面段断的是**四档**，5 个包装槽里 4 个不再是 `stub`） |
 | `docs/16-client.md` | +本节 | — |
 
 ❌ `src/game.rs` / 别的 manager / `client/src/**` / `src/lib.rs` / 任何既有断言 **一行没动**。
@@ -8275,7 +8283,7 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
 |---|---|---|
 | `cargo test --offline` | **1530**，全绿 | **1520**（本节 +10：`life_manager` 5 条 + `tick_handler` 5 条） |
 | `cargo test --offline --features gdext-bindings` | **1609**，全绿 | **1595**（本节 +14：上面 10 条 + `root_wiring` 4 条——那个模块挂在这个 feature 下） |
-| `assemble_check.gd` | **199 passed / 0 failed**，退出码 0 | **183**（§41；本节净 +16） |
+| `assemble_check.gd` | **199 passed / 0 failed**，退出码 0 | **183**（§41；本节净 +16）。⚠️ §47 起是 **203**（四档断言） |
 | `python3 tools/coverage_matrix.py --check` | **OK**（527 / 527 一行未变；`src_fns` 2311 → **2385**，`src_tree_sha256` 跟着变） | OK |
 
 **两条护栏（三条驱动轴，分开跑、分开报，`AGENTS.md` 合并纪律 C）**：
@@ -8568,7 +8576,7 @@ EOF
 |---|---|---|
 | 两个结构体的**字段布局** | **全部解开**（4 字段 / 5 字段，见 §46.2 / §46.3） | **观测**（三构建交叉验证） |
 | 它们的**行为** | 仍未复原：`FunctionState` 的字段语义、到期 tick 的加法、`draw_circle` 写什么值 | **未知** / **推断**（见 §46.8） |
-| 容器槽里的**档位字符串** | **仍然是 `"stub"`**，`module_impl_type` 仍然是 `"—"` | 我方口径（见 §46.6 第 3 条：那两处进的是 `assemble_check.gd` 的既有断言，本轮不许改） |
+| 容器槽里的**档位字符串** | **仍然是 `"stub"`**，`module_impl_type` 仍然是 `"—"` → ⚠️ **§47 已改**：`FunctionManager` = `layout`、`ObstacleManager` = `wired`，`module_impl_type` 报 `graphwar_*_manager::Graphwar*Manager` | 我方口径（§47.2） |
 
 **就地更正 1（`AGENTS.md` §0.6）**：§44.0 / §44.7 写「两个管理器的字段**一个都没解**」。**已解**，
 本节起那两行过期；`src/_scaffold/root_wiring.rs` 的两个槽已从"我方形状"换成"**原版布局 + 我方行为表**"。
@@ -8725,6 +8733,11 @@ objdump -t .reference/windows/graphwarrust-2.0.60.dll | grep -E "Graphwar(Functi
    而 `client/**` 本轮在禁区。⇒ **读法**：这两个槽的 `stub` 现在只表示"**行为**未复原"，
    "结构未知"那层已经消掉；要改字符串必须与 `assemble_check.gd` 一起改（**留给协调者**）。
 
+   ✅ **§47 已完成这件事**（协调者就是任务 28）：`root_wiring.rs` 与 `assemble_check.gd` 同批改，
+   档位词表换成四档，逐槽断言从 "assembled/stub" 改成 "wired/layout/assembled/stub"。
+   `container_stub_manager_count` 仍是 5，因为它数的是 `SlotKind::Stub`（容器类型来源），
+   **不是**档位 `stub`（现在 1 个）——两件不同的事，别混。
+
 ### 46.7 验收（本节实测，可从干净树重跑）
 
 | 命令 | 本节实测 | 基线（`CG@c99c8b5`，同一条命令/同一构建目录） |
@@ -8754,7 +8767,7 @@ objdump -t .reference/windows/graphwarrust-2.0.60.dll | grep -E "Graphwar(Functi
 | 网格坐标换算的**语义**（`1000/50`、`+500`、`+300`） | **观测**（常量与算式）/ **推断**（"棋盘 50 单位 → 1000 像素"） | 缺一份真帧量测（棋盘像素宽到底是不是 1000） |
 | `Vec<[f64;3]>` 三个 f64 的**顺序** | **推断**（`x, y, r`） | `is_destruction_queued` 只做逐分量 `ucomisd`；`draw_circle` 的入参顺序未证 |
 | `queue_destroy_obstacle` 的**到期 tick 算法** | **未知** | 键是 tick（`handle_tick_event` 用 tick 直接 `remove_entry`，**观测**），但 `now + ?` 那个加法没解（§44.7 照旧） |
-| 两个槽的 `stub` / `—` 字符串 | **过期但未改** | `assemble_check.gd` 的 6 条断言在禁区；需与 `graphwar_root_node_class.rs` 同批改 |
+| 两个槽的 `stub` / `—` 字符串 | **已改**（§47） | 档位改成四档（`layout` / `wired`）、`impl_type` 报真类型；只剩 `graphwar_root_node_class.rs` 的两处**注释**与 `container_stub_manager_count` 这个**函数名**还带旧口径（`*_class.rs` 是禁区，见 §47.6） |
 | `tools/coverage_matrix.py` 的**模块归属表** | 未改（`tools/` 不在本轮允许清单） | 表里这两个模块仍写 `src/game.rs` / `src/plane.rs`；本轮新增的两个文件只影响 `src_files`/`src_fns` 总数，**每模块的 527 行一行没动**。下一轮把 `ours` 加上这两个文件即可 |
 
 ### 46.9 复现（干净树）
@@ -8770,3 +8783,164 @@ python3 tools/check_doc_refs.py                       # OK（本节的小节号�
 **结构断言在哪儿**：`src/graphwar_function_manager.rs` / `src/graphwar_obstacle_manager.rs`
 末尾的 `mod tests`（`layout_matches_the_original_32_bytes` / `layout_matches_the_original_80_bytes`
 逐字段 `offset_of!`），以及两个文件顶部**编译期**的 `const _: () = assert!(…)`。
+
+## 47. `stub` 语义一次性改对：槽位复原档位 = `wired` / `layout` / `assembled` / `stub`（2026-11，任务 28）
+
+**一句话**：`stub` 一个词原来**同时**表示"我方只有占位"和"零行为"。任务 19 把 3 个桩接上了
+事件流与交互断言、任务 22 又把其中 2 个的**原版字段布局**解开了（§46），但**字符串没跟**，
+于是 §44 / §46 的报告一直在用错误的现状判断下一步（同一个坑踩了两轮）。本节把
+**结构**（原版字段布局解没解）与**行为**（容器 / 事件流 / 最小交互断言）拆成两条轴，
+定成**四个词**写进 `src/_scaffold/root_wiring.rs` 的模块文档，并**同批**改了
+`client/tools/assemble_check.gd` 的逐槽断言（**199 → 203 条**）——上一轮就是因为
+"断言在禁区"只改了注释，才留下这个坑。
+
+> 档位口径同 §42 / §44 / §46：**逐位** = 与真二进制逐字节/逐位对拍；**观测** = 能指到反汇编
+> 地址 / 指令级读写；**推断** = 有依据未证；**未知** = 没解出来。
+> `cargo test` / `assemble_check.gd` 的条数**只是回归保护**，不是复原证据。
+
+### 47.1 判据：四个词，代码与断言共用（原文在 `root_wiring.rs` 的模块文档）
+
+| 档位 | 判据（**按序判断，第一个命中者为准**） | 现值 |
+|---|---|---|
+| `wired` | 已接容器 **+** 已接事件流 **+** 有最小交互断言（`RootWiring::interaction_selftest` 覆盖这一槽） | **4** |
+| `layout` | 原版字段布局**已逐字段解出**（有证据档），但**不满足** `wired` | **2** |
+| `assembled` | 容器里装的是**我方复原类型**（能按类型取回并调用），但**不满足**上面两条 | **15** |
+| `stub` | 以上都不是：**我方形状占位**，原版字段布局**未知** | **1** |
+
+```text
+结构轴：stub（布局未知） ──→ layout（布局逐字段解出）
+行为轴：assembled（装上我方复原类型） ──→ wired（+ 事件流 + 最小交互断言）
+一个槽只报**它达到的更高那一档**；两条轴都到顶 = wired（4 + 2 + 15 + 1 = 22）。
+⇒ "结构已解但行为未做" = layout；"结构都没解" = stub —— 这就是本轮要根治的那个模糊。
+```
+
+三条读法（每条都有本轮的实际槽作反例，别合并省略）：
+
+1. **`wired` 不要求布局逐字段解出**：`GraphwarTickHandler` 三件齐，但字段只落到有地址证据的
+   4 个偏移（`+0x00..0x0f` 壁钟 / `+0x28` 1e9 ns / `+0x38` 事件队列 / `+0x40` `current_tick`），
+   它就是 `wired`；布局那一轴单独记在 §47.2 与各 manager 文件的文档块里，**不**并进档位字符串。
+2. **`layout` 不等于"零行为"**：`GraphwarFunctionManager` 布局全解（§46.2）、容器能取回、
+   6 条交互断言都在跑，但**发方向的事件流没接**（§46.0 的就地更正 2 证明原版 3 个 `set_*`
+   各发一条 `FunctionInfo` 类事件，我方 `FunctionTable` 一条都不发）⇒ 它停在 `layout`。
+   真正"布局全解、行为 0 行"的是 `GraphwarClientConnectionHandler`（§47.2）。
+3. **`assembled` 不等于"复原了"**：这 15 个只有"类型 + 部分行为 + 按类型可调"，原版布局多数
+   **没逐字段解出**，事件流也没接全。
+
+⚠️ **与本文件别处的 `SlotKind` 不是一回事**（这条最容易被误读）：`SlotKind` 是**容器类型来源**的
+二分类——`RealType`（容器里直接装原版模块类型，**17** 个）/ `Stub`（容器类型是 `_scaffold` 的
+包装或标记，**5** 个），`container_real_manager_count()` / `container_stub_manager_count()`
+报的就是这两个数（§41.2 的既有口径）。档位回答的是"这一槽离原版还有多远"。
+⇒ **`SlotKind::Stub` 的 5 个槽里，现在有 2 个档位是 `wired`、2 个是 `layout`、1 个是 `stub`**；
+"5 个 stub" 与 "1 个 stub" 指的是两件事，引用时必须写清是哪一个。
+
+### 47.2 5 个原 `stub` 槽的逐槽重判（任务书要求的那三条事实）
+
+| 槽（原版尺寸） | 原版字段布局 | 事件流（订阅 / 发） | 最小交互断言 | 档位 | 差什么才能上一档 |
+|---|---|---|---|---|---|
+| `GraphwarTickHandler`（72 B） | **部分**：4 个偏移有指令证据，其余我方形状 | 订 **1**（`connected_to_server_event`）/ 发 **2**（`TickEvent`、`TickRequest`）——与原版一致（§44.2） | **4** 条 | `wired` | 布局：`get_fractional_tick` / `get_time_to_tick` 的算式（§44.7 仍列未知） |
+| `GraphwarClientConnectionHandler`（112 B） | **逐字段全解**：`HandlerField` 9 条偏移 + `SIZE = 0x70 = 112`，与 §41.2 的 vtable size 对上（`src/graphwar_client_connection_handler.rs`，**观测**） | **未接**（订阅名 / 处理器 / `forward_event` 的 24 个请求事件名都有证据，代码里一条没接） | **0** 条 | `layout` | 行为：`connect` / `tick` / `disconnect` / `forward_event` 的状态机没落码（4 态只有纯函数 `tick_action` / `state_after_connect_attempt`） |
+| `GraphwarPlanePosManager`（24 B） | **未知**：连 `src/graphwar_plane_pos_manager.rs` 都没有；已知常量（`px = 20x + 500`）以自由函数落在 `plane.rs` | **未接** | **0** 条 | `stub` | 结构：24 B 的字段布局一条都没解 |
+| `GraphwarFunctionManager`（32 B） | **逐字段全解**：4 字段，三构建偏移序列逐条相同（§46.2） | 订 **0**（正面证据：原版也不订阅）/ 发 **0**，而原版 3 个 `set_*` 各 1 条 ⇒ **发方向未接** | **6** 条 | `layout` | 事件流：把 `FunctionInfo` 类事件写进 `FunctionTable::outbox`（tag `0x23` 已证，载荷 `(id, 文本, tick)` 只证了 tag） |
+| `GraphwarObstacleManager`（80 B） | **逐字段全解**：5 字段，三构建偏移序列逐条相同（§46.3） | 订 **1**（`tick_event`）/ 发 **4**（`AddObstacle` / `DestroyObstacle` / `QueueDestroyObstacle` / `ClearObstacles`）——与原版一致 | **7** 条 | `wired` | 行为：`draw_circle` 写什么值、`queue_destroy_obstacle` 的到期加法（§46.8） |
+
+两点补充：
+
+* **`ClientConnectionHandler` 为什么算 `layout` 而不是 `stub`**：它的 112 字节布局是**逐字段**夹出来的
+  （`new` 只读不写、`connect`/`tick`/`disconnect`/`forward_event` 各用固定偏移访问，交叉后没有空洞；
+  `SocketAddr` 占 `+0x08..0x28` 32 字节、`JoinHandle` 3 个字 `+0x50/0x58/0x60`、`Latch` `+0x68`），
+  总长 `0x70` 与 §41.2 的 vtable size 一个字不差 ⇒ **结构这一轴到底了，行为一行没写**。
+  这正是 `layout` 这个档位存在的理由。
+* **`FunctionManager` 的 "订 0 / 发 0" 不是"没查"**：订阅方向是**正面证据**（§44.3 那种正对照），
+  发方向是 §46.0 就地更正过的**真结论**（经 GOT 槽 `0x9bac80` 的间接 `add_event`）。
+  我方两条都没接（订阅本来就不该有），所以档位只能到 `layout`。
+
+### 47.3 22 个槽的档位（现值）
+
+| 档位 | 槽 | 依据 |
+|---|---|---|
+| `wired`（4） | `TickHandler` / `TargetManager` / `LifeManager` / `ObstacleManager` | §44.2 的订阅/发事件表 + `interaction_selftest` 的 4 / 5 / 5 / 7 条 |
+| `layout`（2） | `ClientConnectionHandler`（§47.2）/ `FunctionManager`（§46.2） | 布局逐字段解出，行为没做完 |
+| `assembled`（15） | 其余 15 个（`LocalPlayerManager` / `PlayerManager` / `SoldierManager` / `GameStateManager` / `TeamManager` / `TurnManager` / `EffectManager` / `ModeManager` / `GraphicsManager` / `EntityEffectManager` / `ComputerPlayerManager` / `FunctionHistoryRecorder` / `NameManager` / `ColorManager` / `RankManager`） | 容器里是我方复原类型，但没接事件流 / 没有最小交互断言 |
+| `stub`（1） | `PlanePosManager` | 布局未知 |
+
+`SlotKind`（容器类型来源）仍是 **17 + 5 = 22**，一行没变；两个轴的对应关系见 §47.1 末尾那段。
+
+### 47.4 落码：改了哪几处（**代码与断言同批**）
+
+| 文件 | 改了什么 |
+|---|---|
+| `src/_scaffold/root_wiring.rs` | ①模块文档新增"槽位复原档位"一节（判据 + 三条读法 + 与 `SlotKind` 的边界）；②22 行台账加**档位**列（原"档位"列改名"证据"，避免一个词两个意思）；③新增 `SLOT_WIRED` / `SLOT_LAYOUT` / `SLOT_TIERS` / 四档计数常量 + **编译期闸**（合计必须 22）；④`Wired::status()` 改成四档判据；⑤`SlotKind` 的文档重写成"容器类型来源"，并标明**不是档位**；⑥3 个包装槽的 `our_type` 从 `—` 改成里面真正的类型（`graphwar_tick_handler::GraphwarTickHandler` 等）；⑦`FunctionTable` 的发件箱注释更正（原版**会**发、我方**没接**，档位因此 `layout`）；⑧§3 换成逐槽事实表；⑨单测：改 1 条（`unwired_module_types_are_placeholders`）+ 新 1 条（`slot_tiers_are_the_four_word_vocabulary`，逐槽钉死四档） |
+| `client/tools/assemble_check.gd` | `STUBBED`（5 个名字）→ `WIRED_TIER`（22 个档位，与注册序一一对应）+ `TIER_TALLY` + `EMPTY_IMPL` + `PACKAGED` / `PACKAGED_TIER`；逐槽断言改查**四档**；`impl_type` 改断"只有两个纯标记是 `—`"；新增四档计数 / 合计 / 词表越界三条；5 个包装槽的反面段改成新档位 + "只剩 1 个真 stub" 一条 |
+| `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` | 重跑（`src/` 变了）：`src_fns` **2480 → 2481**（+1 = 新加的那条单测）、`src_tree_sha256` 跟着变；**527/527 行与每模块数字一行未变** |
+| `docs/16-client.md` | 本节 + §41.4 / §41.6 / §38 那几处过期措辞的就地标注（§47.6） |
+| `docs/02-module-map.md` | §17.3 加一段：`root_wiring.rs` 不在那张表里，档位判据落在哪、`SlotKind` 与档位的区别 |
+
+❌ **没动**：`src/lib.rs`、任何 `*_class.rs`、manager 的纯逻辑、`client/src/**`、`dispatch/`、
+`client/tools/` 下别的脚本、以及 `tools/bit_exact_attrib.py` 的基线（本轮它本来就是红的，见任务书 §3）。
+
+### 47.5 验收（本节实测，可从干净树重跑）
+
+```text
+export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=<ws>/.agent-work/<你的>/target28
+export GODOT=<ws>/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+grep -a -c line_instance_id client/libgw2_rebuild.so          # 必须是 3（判据：.so 真的是新的）
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/assemble_check.gd   # 203 passed, 0 failed
+```
+
+| 命令 | 本节实测 | 改前（`CG@0ea7729`） |
+|---|---|---|
+| `assemble_check.gd` | **203 passed / 0 failed**，退出码 0 | **199 passed / 0 failed** |
+| `obstacle_drawer_check.gd` | **116** passed | 116 |
+| `plane_on_screen_check.gd` | **76** passed | 76 |
+| `function_drawer_check.gd` | **132** passed | 132 |
+| `draw_classes_check.gd` | **235** passed | 235 |
+| `curve_on_screen_check.gd` | **96** passed | 96 |
+| `cargo test --offline` | **1569**，全绿 | **1569**（一位不差） |
+| `cargo test --offline --features gdext-bindings` | **1653**，全绿 | **1652**（+1 = 新单测） |
+| `python3 tools/coverage_matrix.py --check` | **OK**（527 / 527 一行未变；`src_fns` 2480 → 2481） | OK |
+| `python3 tools/check_doc_refs.py` | **OK** | OK |
+
+**新增 4 条的构成**：四档计数 1 + 四档合计 1 + 词表越界 1 + "只剩 1 个真 stub" 1。
+既有 199 条**一条没删**：22 条逐槽状态断言换了**词**（`assembled`/`stub` → 四档），
+22 条 `impl_type` 断言换了**判据**（原按档位、现在按"容器里有没有东西"），
+其余 155 条数字与判据**一字未动**。
+
+⚠️ 护栏三条轴（`fire` / `batch` / `batch_conv`）与延迟段**本节没跑也不该动**：
+本轮只改注释、档位字符串、断言脚本与生成物，**一行几何/弹道/状态机代码都没碰**
+（`cargo test` 1569 一位不差可以佐证默认轴没动）；三条轴的数字以协调者合并后的四件套为准。
+
+### 47.6 就地更正清单（哪几处旧说法从本节起作废）
+
+| 位置 | 旧说法 | 现在 |
+|---|---|---|
+| §41.4 | 「**5 个空占位**（`SlotKind::Stub`，`module_slot_status()` 如实回 `"stub"`，**不是** `"assembled"`）」 | 档位是 **2 `wired` + 2 `layout` + 1 `stub`**（§47.2） |
+| §41.4 | 「`graphwar_tick_handler.rs` 只有 `tick_at` 一个自由函数」「`plane_pos` / `function` / `obstacle` **连文件都没有**」 | 任务 19 起 `graphwar_tick_handler.rs` 有 `GraphwarTickHandler`；§46 起后两个**有文件、有原版布局**；只有 `plane_pos_manager` 仍无文件 |
+| §41.6 | 「5 个空占位的**类型本身** 未知 ⇒ 这 5 个型在本仓库没有可构造的类型」 | 3 个已可构造（两个是原版布局 + 我方表，一个是原版模块里的 `GraphwarTickHandler`），1 个有**全偏移表**（§47.2），1 个仍未知 |
+| §38（`module_slot_status` 那段） | 「槽位**三态**：`assembled`（3 个）/ `placeholder` / `unknown`」 | §41 起是 22 个槽；§47 起状态是**四档** |
+| §44.0 表 | 「这 3 个槽的档位 **仍然是 `stub` / `impl_type = "—"`**」 | `wired` / `wired` / `layout`，`impl_type` 报真类型路径 |
+| §44.1 表 | 「+16 条：… 反面（桩仍报 stub）」 | 反面段现在断的是**四档**（5 个包装槽里 4 个不再是 `stub`） |
+| §44.6 | 「5 条（5 个槽仍报 `stub`，反面）」 | **6 条**（5 条档位 + 1 条"只剩 1 个真 stub"） |
+| §46.0 表 | 「容器槽里的档位字符串 **仍然是 `"stub"`**、`module_impl_type` 仍然是 `"—"`」 | `FunctionManager` = `layout`、`impl_type` = `graphwar_function_manager::GraphwarFunctionManager`；`ObstacleManager` = `wired` |
+| §46.6 第 3 条 | 「槽的档位字符串**仍报 `"stub"`** … 要改字符串必须与 `assemble_check.gd` 一起改（**留给协调者**）」 | **本轮做完**（同批改了 `root_wiring.rs` + `assemble_check.gd`） |
+| §46.8 表末第二行 | 「两个槽的 `stub` / `—` 字符串：**过期但未改**」 | 已改（本节） |
+
+⚠️ **本轮仍没改的（禁区）**：`src/_scaffold/graphwar_root_node_class.rs` 里两处注释还写着旧口径——
+`module_slot_status()` 的「`stub`（容器里查得到，但装的是**零行为的空占位**）」与
+`container_stub_manager_count()` 的「空占位」。**函数名也别按档位读**：
+`container_stub_manager_count()` 数的仍是 `SlotKind::Stub` = **5**（容器类型是 `_scaffold` 包装），
+**不是**档位 `stub` 的 **1**。`*_class.rs` 是 `AGENTS.md` 合并纪律 A-1 的禁区，本轮没碰，
+下一轮放开时把那两处注释与两个函数名一起改（`assemble_check.gd` 那边已经把文案改成
+"SlotKind::Stub，不是档位 stub"，可以在那儿先读）。
+
+### 47.7 仍是推断 / 未知（诚实清单）
+
+| 项 | 档位 | 缺什么证据 |
+|---|---|---|
+| `FunctionManager` 的**发方向**事件流 | **未知**（原版**有**，我方**没接**） | 原版 3 个 `set_*` 各发一条（§46.0）；tag `0x23` 已证，`FunctionActive` 那两条与载荷另两段没逐字节核 |
+| `ClientConnectionHandler` 的**行为** | **未知** | 4 态状态机只有纯函数；`connect_timeout` / 连接线程 / `forward_event` 的线程与 socket 语义没落码 |
+| `PlanePosManager` 的**字段布局** | **未知** | 24 字节结构体的偏移一条都没有；`px = 20x + 500` 只在 `plane.rs` 的自由函数里 |
+| 15 个 `assembled` 的**原版布局** | 多数**未知** | 本节只逐槽核了 5 个原桩 + §46 的两个；其余按 §41.6 的既有结论（我方类型尺寸与原版不等）判"没逐字段解出" |
+| 档位本身的**判据强度** | **我方口径** | 档位是**静态台账**，只说"做到哪一档"，**不说**行为对不对；行为正确性仍只能由真二进制决定（`AGENTS.md` §0 第 2/5 条） |
