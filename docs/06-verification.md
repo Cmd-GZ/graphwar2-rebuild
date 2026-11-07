@@ -3474,3 +3474,188 @@ objdump -T <ws>/.reference/steam/2026-08-28/libgraphwarrust.so | grep -E 'UND.*(
 | 2 | 偏移常数 `c` 的十进制→double 是否逐位正确（M2） | `calculate_corrected_function` / `add_offset` 的逐指令 | **未知** |
 | 3 | 153 发"三个 `x` 都不解释" | 多数是极端函数（`999999999999999x`）；要逐发定位得先有 §36.9#1 的答案 | **未知** |
 | 4 | 联机回放的 `EffectInfo` 是不是**权威端**算的（房主 vs 加入者） | 一份"同一发、两个客户端各录一份"的回放对（本快照里没有） | **未知**（但不影响本节结论：单机里也有 28.7%） |
+
+## 37. **真机造了一个带障碍的对局**：一炮只产生 1 条挖洞指令；"两条报文"来自**两个 ObstacleManager 实例**（2026-11-07，`dispatch/27`）
+
+> 任务书：[`27-obstacle-room.md`](../dispatch/27-obstacle-room.md)（P1）。**本节全部是运行时观测**：
+> frida 17.26.1 挂在真游戏 `Graphwar II` Linux **2.0.60** 进程里（`libgraphwarrust.so` sha256
+> `9a538115…`，= 逆向目标那份），Xvfb + xdotool 驱动，**在 Campaign Level 2（中心单障碍）里打了 9 炮，其中 8 炮撞到障碍**。
+> 脚本：[`tools/obstacle_room.js`](../tools/obstacle_room.js)（下断）+
+> [`tools/gw2_drive.py`](../tools/gw2_drive.py)（驱动）+ [`tools/obstacle_room_extract.py`](../tools/obstacle_room_extract.py)（对齐入库）。
+> 样本：[`fixtures/obstacle_destroy_pairs.jsonl`](../fixtures/obstacle_destroy_pairs.jsonl)（8 条，文本）。
+
+### 37.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 带障碍的对局造出来了吗 | **造出来了**：Campaign `Level 2` = `AddObstacle (0,0) r∈{3.13, 4.41, 4.52}`（三局三值，`docs/10` §7 记的"中心单障碍 r∈[3,8)"对上）。9 炮里 **8 炮撞到障碍**（第 9 炮是按设计"可能打空"的探针），撞到的 8 炮**全部**触发挖洞 | **观测** |
+| ② | 两条 `DestroyObstacle` 的坐标是否逐位相同 | **8 组里 7 组逐位相同；1 组 y 差 1 ulp**（`bfbf092aa99f64ae` vs `…af`）。x 与 radius（0.5）**8/8 逐位相同** | **观测（逐位）** |
+| ③ | "序号"是什么字段 | 是挖洞指令记录 `+0x18` 那个 u64 的**高 32 位 = 采样点序号**；低 32 位 = **射手的 soldier entity_id**（本组 230/231，与点数组记录 `+0x18` 同一个值）。**线上 `DestroyObstacle`(tag 41) 报文里没有这个字段**（只有 `pos_x/pos_y/radius`） | **观测** |
+| ④ | 为什么"同点两号" | **不存在两个号**：一炮只产生 **1 条**挖洞指令、**1 个**点序号。两条报文来自**两个 `ObstacleManager` 实例各排一次队**（服务端 `execute_results` 的 tag-42 生产点 + 客户端 `graphwar_remote_event_handler` 的 tag-42 消费点），各自桶里都只有 **1 条** | **观测** |
+| ⑤ | 谁分配序号 | **不是分配的**：它就是点数组的下标，由 `calculate_shot_results` 在撞点处写出（`0x3c38fe mov [rax+rcx+0x1c], edx`），恒等于**被截断点数组的最后一个下标**（`len == idx+1`，8/8） | **观测（逐位）** |
+
+⇒ **§31.5 / §31.9 第 1 条那条"两个不同点序号上坐标为何逐位相同"的候选解释被运行时否掉**：
+那份语料里的重复报文不是"两个采样点"，而是**同一次挖洞被两条路径各发了一次**。详见 §37.5。
+
+### 37.1 怎么造出来的（可复跑）
+
+§35.6 记的卡点是"Campaign Level 0 场上没有障碍 / LAN 大厅加不了机器人"。本轮**绕开大厅**：
+
+1. **解锁关卡**：`user://` 已经重定向到一个可写目录，直接写
+   `XDG_DATA_HOME/godot/app_userdata/Graphwar/campaign.save` 内容为 `level_20`
+   （格式见 `docs/10` §2），进游戏后 Campaign 界面上 21 关全部可点。
+2. **进 Level 2**（`docs/10` §7 表：中心单障碍 / 1 士兵 / 1 靶 / 5 回合）：Campaign → `Level 2` → `Start`。
+3. **瞄准**：障碍恒在原点，士兵位置**每局随机**。实测弹道是 `y = f(x) + c`，`c` 由"曲线过炮口"
+   定（UI 上输入框右边那个 `+ 2.221` 就是 `c`，本轮截图逐个对过）。于是：
+   **先用 `f(x) = x` 打一发探针**，从点数组首点读出炮口 `(x_m, y_m)`，再取
+   `f(x) = (y_m/x_m)·x ⇒ c = 0`，弹道**必过原点** ⇒ 必撞障碍。按这套瞄的 5 炮 **5/5 命中**；
+   另外 3 炮是探针（`x` / `x/2`），命中 2 炮、打空 1 炮 —— 合计 9 炮 8 中。
+   （`tools/gw2_drive.py` 的 `calc_slope` / `type_tpl` 两个动作就是干这个的。）
+4. **抓**：frida 下 7 个断点（见 §37.2），xdotool 长按 `Fire!`（`long_press` 按钮，单击无效，§35.1），
+   每炮等 13 s，最后点返回箭头 + `Yes` 让游戏**优雅退出**（这样它才会把回放落到 `user://replays/<ts>`）。
+
+```bash
+export PY=<ws>/.reference/venv/bin/python
+cd <ws>/.agent-work/cg/wt-27                       # 本任务的工作区（可丢弃）
+printf 'level_20' > gamedata27/data/godot/app_userdata/Graphwar/campaign.save
+
+# 一局：进 Level 2 → 探针 → 按探针算斜率 → 连打 3 炮 → 退出（写回放）
+$PY tools/gw2_drive.py --js tools/obstacle_room.js \
+    --plan tools/plans/level2_clean.json \
+    --shots art/level2e --out art/level2e_run.jsonl
+
+# 对齐成可入库样本 + 自洽性闸门（5 条恒等式，不过就返回 1）
+$PY tools/obstacle_room_extract.py --frida art/level2e_run.jsonl --level "Level 2" \
+    --fired '["x","0.030708*x","0.030708*x"]' \
+    --replay gamedata27/data/godot/app_userdata/Graphwar/replays/<ts> \
+    --run-base 2 --out fixtures/obstacle_destroy_pairs.jsonl --append
+$PY tools/obstacle_room_extract.py --check --out fixtures/obstacle_destroy_pairs.jsonl
+# → [check] 8 条样本，0 条不满足恒等式
+```
+
+⚠ 两个新踩的坑（都比 §35.1 那三条更靠前）：
+
+* **Xvfb 自己也会撞 `libEGL_nvidia`**（不是只有游戏会）：不设
+  `__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json` +
+  `LIBGLX_VENDOR_LIBRARY_NAME=mesa` + `LIBGL_ALWAYS_SOFTWARE=1` 时，`Xvfb` **直接段错误退出**
+  （`_XSERVTransmkdir` 之后 `libEGL_nvidia → swrast_dri`）。这三个变量要给 **Xvfb 进程**也加上。
+* **回放只在优雅退出时落盘**：直接 `kill` 进程 ⇒ `user://replays/` 一个文件都没有；
+  点返回箭头 → `Yes` 之后立刻出现（本轮 `1794066262`，1517 B）。踩了两次才发现。
+
+### 37.2 下断的 7 个点（全部本构建逐条核对过）
+
+地址 = **x86-64 ELF 虚地址（RVA）**；`base` 用 `Process.enumerateModules()` 找 `libgraphwarrust`。
+
+| RVA | 是什么 | 实参（逐指令核过） |
+|---|---|---|
+| `0x3c2bc0` | `calculate_shot_results`（FDE `[0x3c2bc0,0x3c5c4d)`） | `rdi` = 返回 `Vec<Record0x20>` 的**隐式返回指针**（`0x3c2bd1 mov [rsp+0x1b8],rdi`）；`rsi` = 那发的结构体 |
+| `0x3c38e4` | 同上体内**写挖洞指令**的第一条指令 | 现场 `[rsp+0x70]`=(x,y)、`r14`=记录字段、`[rsp+0x38]`=序号 |
+| `0x3f20f0` | `queue_destroy_obstacle` | `rdi`=&mut self；`rsi`=&(x,y,u64)；`edx`=tick；`xmm0`=radius |
+| `0x3f1b30` | `destroy_obstacle`（= 发一条 tag 41） | `rdi`=&mut self；`rsi`=&(x,y)；`xmm0`=radius |
+| `0x3f1d99` | `handle_tick_event` 内：`rax` = 这个 tick 桶里的条目数（`rbx`=self） | — |
+| `0x3f11e0` | `GraphwarObstacleData::draw_circle` | `rdi`=掩膜数据；`edx`=颜色（`0` 建障碍 / `0xff` 挖洞）；`xmm0/xmm1/xmm2`=(x,y,r) |
+| `0x4724cc` | `execute_results` 内队列预扫 | `rbp`=GSM；队列 `{ptr@+0x38, ?@+0x40, ?@+0x48}`，步长 `0x20`（本节实测 `+0x40`=len、`+0x48`=cap） |
+
+### 37.3 一炮的完整记录（`fixtures/obstacle_destroy_pairs.jsonl` 的 `run3#shot3`，原文数字）
+
+```text
+障碍（add 时就地观测 + 回放里的报文一致）：AddObstacle {pos_x:0.0, pos_y:0.0, radius:4.516640192000594}
+炮口 = 士兵 230 的 PosInfo        = FunctionPoints.start_x/start_y = (-5.626074133450276, -0.1727650897248889)
+点数组（kind 0x1000）：len=180，首点 = 炮口，末点 = (-3.947949133450215, -0.12123362198998919)
+                      (x 步长 0.009375，**整数组没有重复点**：dupScan = 0 组)
+挖洞指令（结果 Vec 里**唯一**一条 tag 0x8000…0）：
+       x_bits=c00f95665af3858e  y_bits=bfbf092aa99f64ae
+       +0x18 = (u32 230, u32 179)   ← (射手 entity_id, 采样点序号) == (len-1)
+第 1 次排队（server_side，调用点 gw+472d1e = execute_results 的挖洞块）
+       tick=2856  x/y 与上面**逐位相同**  rec_field=230  rec_index=179  radius=0.5
+第 2 次排队（client_side，调用点 gw+3e36bf = graphwar_remote_event_handler(0x3e2830) 里的 tag-42 消费点）
+       tick=2856（**就是报文里那个 tick**）  x 逐位相同，**y = …af（差 1 ulp）**，第 3 槽位是 radius(=0.5) 不是 u64
+到期：两个管理器各自的桶里都只有 **1** 条（`0x3f1d99` 处 `rax=1`）
+发报文：`destroy_obstacle` 各调一次（`bt[0]=gw+3f1dd5` = handle_tick_event 的循环体）⇒ 两条 (x,y,r)
+回放（线上一侧）：**只有 1 条** `DestroyObstacle {pos_x:-3.947949133450215, pos_y:-0.1212336219899892, radius:0.5}` @tick 2856
+                  同批 `EffectInfo{effect_id:236, ExplosionEffect, pos 与它逐位相同}` @tick 2793
+                  `FunctionPoints{owner_id:230, end_x:-3.947949133450215}` @tick 2788
+```
+
+三条**结构**证据（都来自上面这份原文）：
+
+1. **"序号"是下标，不是被分配的**：`point_index == 点数组 len − 1`，8/8 成立；
+   同一发的点数组**没有重复点**（`dupScan` 组数 0/8）⇒ 序号不是"两个相同坐标的不同下标"。
+2. **两次排队来自两个对象，不是一个桶里两条**：两个 `self` 是不同指针（一个在 `.so` 堆上，一个是进程静态低地址）；
+   `handle_tick_event` 处两边 `rax`（桶内条目数）**都是 1**（6 次观测，`fixtures` 里 3 条带
+   `tick_buckets`）。⇒ §31.5 第 4 条记的"`handle_tick_event` 逐条调 `destroy_obstacle`"是**对的**，
+   但它解释的不是本现象：这里每条路径的桶里只有一条。
+3. **`pos` 的来源**：挖洞指令的 (x,y) 就是**点数组末点**（`[rsp+0x70]` 在 `0x3c37e8` 处由
+   `points[cursor]` 写入，逐位相同 8/8）。⇒ 一炮被障碍挡住时，弹道在撞点处被截断，
+   末点既是挖洞点、也是 `ExplosionEffect` 的点（`§12.1` 的 503/503 是这条的推论）。
+
+### 37.4 顺带把 `tick` 式子钉住（§12.6 第 2 条、§13 第 3 条的两个"未知"）
+
+`tick = [管理器+0x58] + 点序号/30 + 60`（§12.4 的式子）。三发带回放的样本**全部对上**，
+而且把 `[管理器+0x58]` 落实了：
+
+| 发 | 点序号 | 观测 tick | `FunctionPoints` 报文 tick | 反推 `[管理器+0x58]` |
+|---|---|---|---|---|
+| run3#1 | 164 | 740 | 672 | **675** = 672+3 |
+| run3#2 | 121 | 1762 | 1695 | **1698** = 1695+3 |
+| run3#3 | 179 | 2856 | 2788 | **2791** = 2788+3 |
+
+⇒ `tick = (开炮那一 tick + 3) + floor(点序号/30) + 60`，三发**同一个 +3 偏移**
+（`tools/obstacle_room_extract.py --check` 的第 ⑤ 条恒等式就是这条）。
+另有两条旁证：
+
+* 客户端侧排队的 `edx` **就是报文里那个 tick**（不是本地重算），所以两边 tick 相同；
+* `DelayDestroy` **不是常数**：本组三发从开炮到挖洞分别隔 68 / 67 / 68 tick
+  （= 3 + 序号/30 + 60，序号小 ⇒ 墙就在炮口旁边）；同一机制在更长的弹道上会更大
+  （`run2` 那三发是 114~? tick 量级）。⇒ §12.6 里"`DelayDestroy = 165` 是抓包经验值"要按
+  **"`60 + 3 + 点序号/30`"** 重读，不该当成常数。
+* 掩膜侧的自洽：连打三炮（同一条过原点的直线）时，撞点离原点依次是
+  `3.1155 → 2.6073 → 2.0896`（`run2`）与 `4.5213 → 4.4938 → 3.9498`（`run3`），
+  相邻差 ≈ **0.508 / 0.517** —— 正是报文里 `radius = 0.5` 那个洞的半径 ⇒
+  "挖洞点 = 掩膜上被刷掉的那个圆心"闭环了。
+
+### 37.5 修正本仓库的三条旧结论（都是"就地改正"，标清改了什么）
+
+| 旧说法 | 现在 | 依据 |
+|---|---|---|
+| §31.5 / §31.9#1：两条相同报文"只能来自两个不同点序号上坐标逐位相同的点" | **否**。一炮只出 1 条指令、1 个序号；重复来自**两条路径各自排队**（服务端 `execute_results` + 客户端 tag-42 消费点）。§31.5 自己的机制链（`queue_destroy_obstacle` 追加桶 → `handle_tick_event` 逐条发）**没变**，只是"桶里为什么有两条"的答案换成了"因为有两个桶/两个管理器，各自一条" | §37.3 的结构证据 1/2 |
+| §12.4 / §13：`u64` 字段"语义未知" | **已定**：`(u32 射手 soldier entity_id, u32 采样点序号)` | `rec_field == 点数组记录 +0x18 == 230/231`，`rec_index == len-1`（8/8） |
+| §35.6 ④"没取到样本" | **取到了**（8 组）。同时**新增一个未知**：8 组里 1 组的 y 差 1 ulp（§37.6 第 2 条） | `fixtures` |
+
+⚠ 一条**没有**被我改动的东西：`src/graphwar_shot_calculator/settle.rs:154` 现在仍是
+"遇撞 `break` + 只发 1 条"（§31.6 登记的已知差异）。本节的观测**支持"一炮只挖一个洞"**
+（点数组只到撞点为止、结果 Vec 里只有 1 条 tag 0x8000…0），也就是**我方"1 条"是对的**；
+"原版会发 2 条"是**同一次挖洞被两条路径各发一次**，不是"每个命中点各发一条"。
+⇒ 若要让报文条数也对上，正确做法是**建模两个 `ObstacleManager`**（服务端/客户端各一个），
+不是把 `break` 去掉。这条是**推断**（客户端那一侧在线上局里到底谁发给谁还没观测），
+证据缺口见 §37.6 第 1 条。
+
+### 37.6 仍未确定（诚实清单）与缺什么
+
+| # | 事项 | 缺什么 | 档 |
+|---|---|---|---|
+| 1 | 401 份**线上**回放里 162 组重复报文，是否同一机制（两管理器各一条） | **线上一侧的抓包**：本轮只做了 campaign（同一进程既是服务端又是客户端，`user://` 回放里**只有 1 条** tag 41）。要做：`examples/serve_broker` + 两个客户端，或在大厅里加机器人（`dispatch/25` 卡在这里） | **推断（强）** |
+| 2 | 1/8 那发 **y 差 1 ulp** 从哪来 | tag-42 报文载荷的**序列化点**（`(x,y,r,tick)` 写文本的那一处）。观测到的事实是：生产侧 `ae…`、客户端侧与线上都是 `af…`；`EffectInfo` 也是 `af…`。候选：文本回代 / `ExplosionEffect` 那一支的重算（§12.1 的"拿印出来的文本重算 y"）。**证据缺口**：在 `add_event` 之前把 tag-42 载荷 dump 出来 | **未知** |
+| 3 | `y = f(x) + c` 还是 `y = f(x − x_m) + y_m` | 两模型在**线性** f 上等价（本轮 8 发全是直线，分不开）。缺：一发非线性 f（如 `sin`）的点数组首几点 | **推断** |
+| 4 | 客户端侧那个 `ObstacleManager` 的**归属模块** | `self` 落在进程静态低地址（不是 `.so` 堆），本轮只按调用点 `gw+3e36bf`（`0x3e2830` 大函数 = `graphwar_remote_event_handler`）定性 | **推断** |
+
+### 37.7 数据与复跑
+
+```bash
+# 自洽性闸门（5 条恒等式；不满足返回 1）
+../.reference/venv/bin/python tools/obstacle_room_extract.py --check --out fixtures/obstacle_destroy_pairs.jsonl
+
+# 逐条看那 8 组"两条报文"的位模式
+../.reference/venv/bin/python - <<'PY'
+import json
+for l in open('fixtures/obstacle_destroy_pairs.jsonl'):
+    r=json.loads(l); v=r['verdict']
+    print(r['sample'], 'idx=%d'%r['destroy_instruction']['point_index'],
+          'x_eq=%s y_eq=%s y_ulp=%s'%(v['x_bits_equal'],v['y_bits_equal'],v['y_ulp_diff']))
+PY
+```
+
+样本 `fixtures/obstacle_destroy_pairs.jsonl` 是**文本**、20 KB、已去掉路径与指针
+（`self` 只留 `server_side`/`client_side` 两个角色标签，由**调用点**判定，不看地址）。
+原始 frida JSONL、截图、`user://` 都在 `.agent-work/` 里（**可丢弃、不入库**）：
+本节每个数字都能用 §37.1 那三条命令重新生成。

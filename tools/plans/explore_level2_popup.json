@@ -1,0 +1,7 @@
+{"settle": 14, "steps": [
+  ["click", 534, 629, "Campaign"],
+  ["wait", 3],
+  ["click", 719, 220, "Level 2 node"],
+  ["wait", 3],
+  ["shot", "02_level2_popup"]
+]}
