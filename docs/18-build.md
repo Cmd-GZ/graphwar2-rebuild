@@ -542,3 +542,152 @@ bash client/run.sh selftest
   gdext 无关，仍然留在 `_scaffold/`；
 - §8 的"下一步 1"（把 `parse`/`calculate` 暴露成带参数与返回值的方法）**已经过时**：
   那件事在 `docs/116`/`120`/`126`/`138` 里做完了，本节就是它的 gdext 版。
+
+## 11. 跨平台编译验证：Windows x86_64 / Android arm64（2026-11）
+
+### 11.1 结论
+
+```text
+target                      check   build   失败原因 / 备注
+x86_64-pc-windows-gnu       ✅      ✅      系统里没有 mingw-w64 ⇒ 用便携 llvm-mingw 链成功
+aarch64-linux-android       ✅      ✅      系统里没有 NDK     ⇒ 用便携 NDK r27c 链成功
+```
+
+`check` = `cargo check --target`（默认 feature 与 `--features gdext-bindings` **各一次**，都过），
+不经过链接器，所以它验的是"代码在目标平台上类型/API 成立"；`build` = `cargo build --release --target`。
+
+`check` 全过本身是个结论（**观测**）：`src/` 里**没有** `std::os::unix` 之类的平台专用 API
+（`grep -rn 'os::unix' src/` 零命中）；平台相关的只有 `std::os::raw::c_char` 三处，
+以及 `std::fs` / `std::net`（TCP）/ `std::env::temp_dir()` —— 都是标准库保证跨平台的用法。
+真正会"编得过但做错事"的两处在 §11.7 修掉。
+
+### 11.2 这台机器缺什么、怎么补（不装系统包、不要 root）
+
+| 缺的 | 补法（实测） |
+|---|---|
+| `x86_64-w64-mingw32-gcc` | 便携 **llvm-mingw 20240917（ucrt, ubuntu-20.04-x86_64，87,950,564 B）** 解到 `.reference/toolkits/`，把它的 `bin/` 放进 `PATH`。**这个可执行文件的名字正好是 rustc 给 `x86_64-pc-windows-gnu` 找的默认链接器名** ⇒ `Cargo.toml` 不用动、`CARGO_TARGET_..._LINKER` 也不用设 |
+| NDK 的 `aarch64-linux-android-clang` | 便携 **NDK r27c**（linux zip 663,987,688 B，解压 2.0 GB）⇒ 设 `CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=<ndk>/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang` |
+
+llvm-mingw 侧要打**两个软链**（工具链目录内的 hack，**不进仓库**）：rustc 给 windows-gnu 的尾部
+链接参数带 `-lgcc -lgcc_eh`，而 llvm-mingw 用 libunwind/clang_rt 顶掉 libgcc：
+
+```bash
+cd <llvm-mingw>/x86_64-w64-mingw32/lib
+ln -sf libunwind.a libgcc_eh.a
+ln -sf ../../lib/clang/19/lib/windows/libclang_rt.builtins-x86_64.a libgcc.a
+```
+
+**试过但不行的一条**：zig 0.13（47,082,308 B）的 `zig cc -target x86_64-windows-gnu` 当链接驱动 ——
+`-lgcc/-lgcc_eh` 它自带，但 rustc 会传 `-Wl,<tmp>/list.def`（cdylib 的导出表来源），
+zig 的驱动直接 `error: unsupported linker arg: .../list.def` ⇒ 链接失败。
+llvm-mingw 的 `x86_64-w64-mingw32-gcc` 把 `.def` 透传给 `ld.lld`，`ld.lld` 认这个文件，才成立。
+
+### 11.3 实测命令
+
+```bash
+export RUSTUP_HOME=<ws>/.reference/rustup CARGO_HOME=<ws>/.reference/cargo-home
+export CARGO_TARGET_DIR=$CARGO_HOME/target PATH=$CARGO_HOME/bin:$PATH
+LMW=<ws>/.reference/toolkits/llvm-mingw-20240917-ucrt-ubuntu-20.04-x86_64/bin
+NDK=<ws>/.reference/toolkits/android-ndk-r27c/toolchains/llvm/prebuilt/linux-x86_64/bin
+
+# ① check（不链接；两个 target × 两种 feature，共 4 次）
+PATH=$LMW:$PATH cargo check --target x86_64-pc-windows-gnu
+PATH=$LMW:$PATH cargo check --target x86_64-pc-windows-gnu --features gdext-bindings
+cargo check --target aarch64-linux-android                    # check 不链接，默认 PATH 就够
+cargo check --target aarch64-linux-android --features gdext-bindings
+
+# ② build（这一步才要链接器）
+PATH=$LMW:$PATH cargo build --release --target x86_64-pc-windows-gnu
+CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$NDK/aarch64-linux-android21-clang \
+  cargo build --release --target aarch64-linux-android
+```
+
+### 11.4 产物（实测）
+
+```text
+x86_64-pc-windows-gnu/release/gw2_rebuild.dll     2,787,328 B   PE32+ (DLL), x86-64
+aarch64-linux-android/release/libgw2_rebuild.so     826,992 B   ELF aarch64, for Android 21, NDK r27c
+```
+
+- **导出（观测）**：Windows 的 COFF 导出表 **14 条**，与 Android `.so` 的 14 个 `T` 符号
+  **同名同集合**（`gdext_rust_init` + 13 个 `gw2_*` C ABI）——两个平台对 Godot 的入口约定一致。
+- **导入（观测）**：DLL 只依赖系统 DLL —— `KERNEL32` / `ntdll` / `USERENV` / `WS2_32` /
+  `bcryptprimitives` / `api-ms-win-crt-*`；**没有** `libgcc_s_seh-1.dll`、`libwinpthread-1.dll`
+  这类要随包发的 mingw DLL ⇒ 目标机不用额外放 DLL。
+  代价：这套 sysroot 是 **UCRT** 口径 ⇒ 至少要 Windows 10（老系统要靠 UCRT 更新包；**未在真 Windows 上验**）。
+- **Android 依赖（观测）**：`NEEDED` 只有 `libdl.so` / `libm.so` / `libc.so`（都是 bionic 系统库），
+  没有 `libc++_shared.so`。
+
+### 11.5 入口契约在 Windows 上真的成立（观测，wine 11.21）
+
+本机有 wine，所以这次不止"编过了"：把 `gw2_rebuild.dll` 加载起来走一遍 Godot 的调用序列。
+
+```text
+ok   LoadLibrary(gw2_rebuild.dll) = 00006FFFFAEE0000
+ok   GetProcAddress(gdext_rust_init) = 00006FFFFAFA4CF0
+ok   entry returned 1 (expect 1)
+ok   minimum_initialization_level = 0 (expect 0)
+     initialize=00006FFFFAFA4690 deinitialize=00006FFFFAFA4AF0
+ok   counters entry=1 init=1 deinit=1
+RESULT: PASS
+```
+
+探针就是 Linux 版 `tools/gdext_probe.c` 的 Windows 版：`dlopen/dlsym` 换成 `LoadLibrary/GetProcAddress`，
+其余一样 —— 桩 `get_proc_address` → 调入口 → 检查返回 1 与 `minimum_initialization_level=0`
+→ 回调 `initialize`/`deinitialize` → 最后读 Rust 侧导出的
+`gw2_rebuild_{entry,initialize,deinitialize}_calls` 计数器。**计数器 1/1/1 才说明回调真的执行了**，
+不是"入口返回 1 就算过"。用 llvm-mingw 的 `x86_64-w64-mingw32-gcc` 编译探针即可。
+
+⚠ wine **不是** Windows：加载器与 UCRT 实现都有差异。这一步的档位是**观测（unix 上的 PE 加载器）**，
+**不**等于"在 Windows 上验过"（§11.8）。
+
+### 11.6 `.gdextension` 库名/路径核对
+
+| 条目 | 文件里写的 | 实际产物 | 一致 |
+|---|---|---|---|
+| `windows.{debug,release}.x86_64` | `res://gw2_rebuild.dll` | `gw2_rebuild.dll`（`[lib] name = "gw2_rebuild"`，Windows 无 `lib` 前缀） | ✅ |
+| `linux.{debug,release}.x86_64` | `res://libgw2_rebuild.so` | `libgw2_rebuild.so` | ✅ |
+| `android.{debug,release}.arm64` | `res://android/arm64-v8a/libgw2_rebuild.so` | `libgw2_rebuild.so`（`arm64-v8a/` 由 Godot 导出时铺） | ✅ |
+| `macos.{debug,release}` | `res://libgw2_rebuild.dylib` | 未编译（本机无 macOS target / Apple SDK） | 名字符合 Rust 惯例，**未验** |
+
+⇒ 这一项**没有要改的**（所以本轮没动 `client/gw2rebuild.gdextension`）。
+缺口（没做，不是错）：没有 `windows.arm64` / `linux.arm64` 条目（对应 target 也没装）；
+Android 真要出 APK 还缺 `client/export_presets.cfg` + Android SDK + JDK。
+
+### 11.7 修的两处平台问题（都在 `_scaffold/`，不改逻辑）
+
+1. **`src/_scaffold/rng.rs`：`/dev/urandom` 在 Windows 上不存在。**
+   原来 `seed_from_os()` 直接 `File::open("/dev/urandom")` —— Linux/Android 走通，**Windows 上必然
+   open 失败**，静默退化成"时间戳 + xorshift"种子（每局种子可预测）。
+   改法：熵源抽成 `os_entropy()`；`#[cfg(not(windows))]` 走 `/dev/urandom`（与原代码逐字相同），
+   `#[cfg(windows)]` 用 std 的 `RandomState`（k0/k1 由 OS 播种、每次 `new()` 递增）拼 32 字节；
+   **失败回退路径一个字没动**。
+   ⚠ 差异：Windows 上真正的 OS 熵只有 128 bit（不是 32 字节全熵）——**推断**，本机无 Windows 未实测；
+   要对齐成 32 字节全熵得换 `BCryptGenRandom`（要加 FFI + 链接 bcrypt）。
+2. **`src/_scaffold/replaydiff.rs`：`default_corpus_dir()` 用 `$HOME` 拼 unix 路径。**
+   Windows 上 `HOME` 通常不设 ⇒ 退化成 `./.local/share/...`，等于找不到回放。
+   改法：抽成 `godot_user_replays()`；`#[cfg(windows)]` 用
+   `%APPDATA%\Godot\app_userdata\Graphwar\replays`，`#[cfg(not(windows))]` 与原来那一行不差；
+   `GW2_REPLAY_DIR` 的覆盖优先级不变。
+   Windows 那条路径是 **推断**（Godot 4 `user://` 口径，本机无 Windows 桌面对拍）；
+   Android 的 `user://` 在应用私有目录、具体值 **未知**（要真机 `OS.get_user_data_dir()`），
+   所以 Android 上仍退化为相对路径 + 用 `GW2_REPLAY_DIR` 指定。
+
+这两处都是"跨平台能编、但会静默做错事"，**不是**编译错误 —— 改之前那 4 次 `check` 就已经全绿。
+
+### 11.8 做不了的（如实写）
+
+| 想验的 | 状态 | 缺什么 / 怎么补 |
+|---|---|---|
+| Windows 真机加载 DLL | ✗ | 没有 Windows 机器，只有 wine（§11.5）。要真验：一台 Win10+ 跑 `godot --headless --path client --import` 再看 `ClassDB` |
+| Android 真机 / 模拟器加载 `.so` | ✗ | 没有设备；`which qemu-aarch64` 零命中，且即便有 qemu-user 也跑不了 bionic 的动态链接。要真验：arm64 安卓机 + `adb`，或导出 APK 装上 |
+| Android APK 打包 | ✗ | 缺 `client/export_presets.cfg`、Android SDK、JDK（NDK 已有便携版） |
+| macOS `.dylib` | ✗ | 缺 macOS target + Apple SDK（本机也拿不到） |
+| `windows.arm64` / `linux.arm64` | ✗ | 对应 rustc target 没装，也没有 arm64 Windows/树莓派环境 |
+
+### 11.9 回归
+
+改了 `src/` ⇒ 本机默认 target 重跑 `cargo test --offline`：**lib 457 / 总计 1499**、0 failed、
+1 ignored（与基线一致）；重跑 `tools/coverage_matrix.py` 后 `--check` **OK**，
+两个生成物一起提交（差异只有 `src_tree_sha256` 与 `src_fns 2171 → 2175`，
+归属 527、逐位 88 / 观测 439 **不变**）。

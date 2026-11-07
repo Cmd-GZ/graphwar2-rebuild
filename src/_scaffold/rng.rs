@@ -5,6 +5,7 @@
 //!
 //! 服务端用它来生成关卡；种子从 `/dev/urandom` 取（与游戏的种子来源一致，见 `docs/57`）。
 
+#[cfg(not(windows))]
 use std::io::Read;
 
 const SIGMA: [u32; 4] = [0x6170_7865, 0x3320_646e, 0x7962_2d32, 0x6b20_6574];
@@ -114,13 +115,14 @@ impl ChaCha12 {
     }
 }
 
-/// 从 `/dev/urandom` 取 32 字节种子。失败时退回时间戳（不理想，但至少不 panic）。
+/// 从 OS 熵源取 32 字节种子。失败时退回时间戳（不理想，但至少不 panic）。
+///
+/// 熵源按平台选：`/dev/urandom` 是 unix 系（Linux / Android / macOS / BSD）的东西，
+/// **Windows 上没有这个文件**，照直写会静默退化成"时间戳种子"（能跑，但每局种子可预测）。
 pub fn seed_from_os() -> [u8; 32] {
     let mut seed = [0u8; 32];
-    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-        if f.read_exact(&mut seed).is_ok() {
-            return seed;
-        }
+    if os_entropy(&mut seed) {
+        return seed;
     }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -134,6 +136,38 @@ pub fn seed_from_os() -> [u8; 32] {
         chunk.copy_from_slice(&s.to_le_bytes());
     }
     seed
+}
+
+/// unix 系的 OS 熵源：`/dev/urandom`（Linux / Android / macOS / BSD 都提供）。
+///
+/// 证据档位：**观测** —— Linux 上逐字节读得通（`seed_from_os` 的单测走这条路径）；
+/// Android 的 `/dev/urandom` 存在是 bionic 的既定接口，但本机无真机，未实测。
+#[cfg(not(windows))]
+fn os_entropy(seed: &mut [u8; 32]) -> bool {
+    match std::fs::File::open("/dev/urandom") {
+        Ok(mut f) => f.read_exact(seed).is_ok(),
+        Err(_) => false,
+    }
+}
+
+/// Windows 没有 `/dev/urandom`，改用 std 自带的 `RandomState`（**不引入依赖、不写 FFI**）。
+///
+/// `RandomState::new()` 的键来自 OS（Windows 上由进程启动时的系统熵播种），
+/// 每次 `new()` 还会把 k0 递增，所以 4 次调用给出 4 个不同的 u64；拼成 32 字节。
+///
+/// ⚠ 与 `/dev/urandom` 的差别（**推断** —— 本机没有 Windows 环境，未实测）：
+/// 真正的 OS 熵只有 128 bit（`RandomState` 的 k0/k1），不是 32 字节全熵。
+/// 对"每局障碍布局不同"这个用途够用；若要逐位等价，得改成 `BCryptGenRandom`（要加 FFI + 链接 bcrypt）。
+#[cfg(windows)]
+fn os_entropy(seed: &mut [u8; 32]) -> bool {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    for (i, chunk) in seed.chunks_mut(8).enumerate() {
+        let mut h = RandomState::new().build_hasher();
+        h.write_usize(i);
+        chunk.copy_from_slice(&h.finish().to_le_bytes());
+    }
+    true
 }
 
 #[cfg(test)]
