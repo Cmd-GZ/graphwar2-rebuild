@@ -9,7 +9,7 @@
 协议       **74 / 74 全字段 + 74 / 74 判别值 + 7 个线上枚举全集**（已无未知）
 GDExtension 类   12 / 12 全部还原
 真名       327 个函数有原版方法名 + x86 地址（fixtures/name_to_addr.tsv）
-cargo      **1488 passed / 0 failed**（lib 457 / 51 个 test 二进制）
+cargo      **1520 passed / 0 failed**（lib 457；两条 feature 都绿）
 客户端自检   694 passed / 0 failed
 ```
 
@@ -47,7 +47,7 @@ cargo      **1488 passed / 0 failed**（lib 457 / 51 个 test 二进制）
 | 一个带 `_draw` 的类 | ~800 行，**且没有虚方法表** | **92 行**，虚方法表由宏生成 |
 | 源码保真 | ✗ 我们的发明 | ✅ 原版 `.rodata` 里有 `gdext-…/godot-core/src/registry/class.rs` |
 
-⇒ 骨架已按 **cargo feature `gdext-bindings`** 并入（**默认关闭**：零依赖、1488 绿、selftest 694）。
+⇒ 骨架已按 **cargo feature `gdext-bindings`** 并入（**默认关闭**：零依赖、1520 绿）。
 **12 个类迁移粗估 ~1200 行**，正在做第一个垂直切片（`EntityDrawer`）。
 ⚠️ 三个坑：不 `--import` 扩展静默不加载；`--script` 的 root 进树有时序；`GDExtensionPropertyInfo` 是 **48** 字节。
 
@@ -67,6 +67,53 @@ cargo      **1488 passed / 0 failed**（lib 457 / 51 个 test 二进制）
 | **音效 ↔ 事件** | 订阅 `effect_info`(44) / `soldier_info`(15) / `entity_removed`(14) / `game_state_info`(30)；槽 = explosion/squash/spark/pop/unpop，音量 −15/−15/−15/0/−5 dB | `docs/16` §30 |
 | **段位不用算** | 只从远端事件进，模块内零换算；`RankInfo`(67) = 三个 dword（标志 / 段位 / player_id） | `docs/10` §14 |
 | **客户端只认 IP 字面量** | 本机连 `[::1]:port`（**不是 127.0.0.1**）；远端 `SocketAddr::from_str` ⇒ **没有 DNS，域名连不上**；`connect_timeout(30s)`，**无重连** | `docs/09` §11 |
+
+### 0.0.0.2 对拍现在到底多准（**三条轴，报数必须带轴名**）
+
+同一份 **401 份定格快照**（`.agent-work/replay-snapshot/`，指纹见 `docs/06` §25）。
+三条驱动轴的数**完全不同**，混着比就是错的——上一轮就是因此把 1074 记到了 `batch` 上。
+
+| 指标 | `fire` | `batch` | `batch_conv`（收敛层） |
+|---|---|---|---|
+| 内容命中 | **325 / 1080** | **346 / 1080** | **595 / 1080** |
+| 种类序列 | **819 / 1080** | **919 / 1080** | **1074 / 1080** |
+
+另有两条延迟段指标（`batch` 轴）：死亡集合 **215 / 379**、挖洞点 **140 / 262**。
+
+复跑命令（**不给命令的数字一律当未验证**）：
+
+```bash
+export CARGO_HOME=<WS>/.cargo-home CARGO_TARGET_DIR=<WS>/.cargo-home/target
+cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir <快照> --policy strict
+```
+
+**当前最大的一块残差**：`Y` 桶（爆炸点 `pos_y`）的 154 批真末位差 —— 三个假设（取错 x / 相邻采点 /
+常数回代顺序）**已被数据全部否掉**，机制仍未知（`docs/06` §25）。下一轮的第一优先是
+用 unicorn 对拍 `evaluate_recursive`（任务书 15）。
+
+### 0.0.0.3 合并纪律（2026-11-07 事故后写死，**强制**）
+
+一句话：**不许只看 `cargo test` 绿就合并。**
+
+事故：下游报「种类序列 1074」，我解完冲突就合了。事后复算 —— 1074 属于 `batch_conv` 轴，
+`batch` 轴实为 915；而同一批改动里还夹着一个**真 bug**（函数原文括号不平衡 ⇒ 解析器截断
+⇒ 弹道退化成 1 个点 ⇒ 死亡特效整块消失），也是事后才查出来。
+
+完整清单见 `AGENTS.md` 的「合并纪律」一节（A 分支侧 5 条 / B master 侧四件套 /
+C 数字必须带轴 / D 明令禁止）。**这是本项目唯一一条针对"人"而不是针对"代码"的硬规矩。**
+
+### 0.0.0.4 本轮被审计推翻/修正的结论（别照旧文档抄）
+
+一份对抗性审计（`docs/152`）独立复算了 8 项已合并的结论：**一致 6 / 不一致 2**，另加 2 处推广错误。
+
+| 原说法 | 实测 |
+|---|---|
+| `0x3c1b40` 出口是 `setb` | **`setg`**（`0x3c1c1f`，字节 `0f 9f`）；语义等价，结论不变 |
+| `execute_results` 体到 `0x4a8e50` | 到 **`0x4a93d8`**（`.symtab` 3712 B；`0x4a8e50` 只是热路径 `ret`） |
+| `0x9baa10` 使用者全在 `0x3axxxx` | **267 条 `call *` + 56 条 `mov`，跨 153 个函数**；结论（`=bcmp`）仍成立 |
+| 「13 种格式原文」 | 实际只列了 12 种（漏 `7.6e-19` 那一对），已补 |
 
 ### 0.0.1 这一晚踩过并已写死的坑（别再犯）
 
