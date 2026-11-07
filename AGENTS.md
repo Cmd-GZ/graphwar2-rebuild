@@ -89,6 +89,57 @@ cargo test --offline                      # 全绿即可，别把条数当进度
 - **调用图会骗人**：Rust 大量用函数指针派发，直接调用为零**不代表**没被使用。
   写"未观测到调用"，并用 `tools/ptr_slots.py` 补查。
 
+## 合并纪律（2026-11-07 增补，**强制**）
+
+> 起因：一次真实事故。下游报「种类序列 1074」，我只看 `cargo test` 绿就合了；
+> 事后复算发现 **1074 属于另一条驱动轴**（`batch_conv`），而 `batch` 轴其实是 915。
+> 更糟的是同一批改动里还夹着一个**真 bug**（括号不平衡导致弹道退化成 1 个点），
+> 也是事后才查出来。⇒ 下面这套是**必须**跑的，不是建议。
+
+### A. 合并**前**，在分支侧验（少一条都不许合）
+
+1. **范围核对**：`git diff --name-only <merge-base>..<分支>` 对照任务书的"允许改的文件"。
+   碰禁区（`src/lib.rs`、别人的 `*_class.rs`、`client/src/**`、既有断言）就**退回**。
+2. **复现它报告的数字**（**自己跑，不看报告**）。数字对不上就先问，不许"大概是口径不同"。
+3. **读关键 diff**：至少读新增/改动的核心函数，不是只读 commit message。
+4. **抽查负结论**：凡是"扫不到 / 零调用 / 没有写入者"这类结论，
+   先做**正对照**证明自己的扫法有效（例：用已知的函数指针槽 `0x9bac98` 验扫描器）。
+5. **污染检查**：`git diff --stat` 看有没有二进制、大文件、`dispatch/` 之类残留。
+
+### B. 合并**后**，在 master 侧跑"四件套"
+
+```bash
+export CARGO_HOME=<WS>/.cargo-home CARGO_TARGET_DIR=<WS>/.cargo-home/target
+cargo test --offline                                  # ①
+cargo test --offline --features gdext-bindings        # ①
+python3 tools/coverage_matrix.py --check              # ②
+python3 tools/check_doc_refs.py                       # ②
+# ③ 护栏数字（见下），三条轴必须分开跑、分开报
+cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir <快照> --policy strict
+# ④ 涉及节点/客户端的改动：把 client/tools/*.gd 全跑一遍
+```
+
+### C. 数字必须带**轴名**与**可复跑命令**
+
+这个项目里有三条不同的驱动轴，**同一个指标在不同轴上完全不同**：
+
+| 轴 | 是什么 | 命令 |
+|---|---|---|
+| `fire` | 每发一次 `Match::fire`，与 `src/game.rs` 真实实现同口径 | `replay_attrib --drive fire --policy default` |
+| `batch` | `Match::fire_batch`，一个批产出一整个结算批 | `replay_attrib --drive batch --policy default` |
+| `batch_conv` | **收敛层** `ConvPredictor::fire_batch` | `batch_conv --policy strict` |
+
+**报数字只给数不给轴，等于没报。** 只给数字不给可复跑命令，**一律当未验证**。
+
+### D. 明令禁止
+
+- ❌ 「`cargo test` 绿了就合」
+- ❌ 「解完冲突直接 commit」
+- ❌ 「报告说 X，那就当 X」（**必须自己跑出来**）
+- ❌ 把别的 agent / 别的机子的结论直接写进文档而不复算
+
 ## 提交
 
 不要直接 `git push`（本机 ssh 配置有权限问题）：
