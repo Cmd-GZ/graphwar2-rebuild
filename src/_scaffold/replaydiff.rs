@@ -1183,7 +1183,7 @@ fn last_team_before(r: &Replay, upto: usize, entity: i64) -> Option<String> {
 // 6. 我方预测：用 `game::Match::fire` 产报文
 // ===========================================================================
 
-use crate::game::Match;
+use crate::game::{Match, Submission};
 use crate::server::RoomState;
 use crate::graphwar_shot_calculator::settle::Target;
 
@@ -1366,39 +1366,73 @@ impl Predictor {
         }
     }
 
-    /// 预测一批：按回放里 `FunctionPoints` 的顺序逐发调用 `Match::fire`。
+    /// 预测一批：**批内 ≥2 发**时一次 `Match::fire_batch`，单发批仍走 `Match::fire`。
+    ///
+    /// 判据是**批内的发数**（`batch.shots.len()`），**不是**"整份回放里有没有多发射击"：
+    /// 一个结算批就是一次收集 →**一次**结算 →**一次**广播（`docs/141` §3），窗口里
+    /// `GameStateInfo` 只有 3 条（`CalculatingResults` / `SynchronizingResults` /
+    /// `ExecutingResults`），前缀 `FunctionInfo`/`FunctionPoints` 按类型连排，
+    /// 后缀 `FunctionActive + EffectInfo(爆炸)` 每发一对。
+    ///
+    /// 旧实现**逐发**调 `fire`，等于把同一个批拆成 N 个"单发批"：多发批凭空多出
+    /// `3×(N−1)` 条 `GameStateInfo`，前后缀的分组/交替也不成形。`tools/bit_exact_attrib.py`
+    /// 里 `S`（多发批结构）与 `SD` 两桶就是这么来的（2026-11-08 前：126 + 4 批）——
+    /// 那是**驱动口径**的产物，不是内核错：内核只有 `fire_batch` 一条结算路径，
+    /// `Match::fire` 本身就是它的单元素特例（`src/game.rs`）。
+    ///
+    /// 单发批的行为**逐位不变**（`fire(f)` ≡ `fire_batch(&[f])`），所以这条分支只影响
+    /// `shots ≥ 2` 的批。`--drive batch` 走的是 `Match` 的另一套接线，不受影响。
     pub fn predict(&mut self, batch: &Batch, obs_start_tick: i64) -> BatchPrediction {
         // 本批之前到达的 `FunctionModeInfo` 先喂进去（模式是输入、不是常量）
         self.sync_mode(batch.start);
         // 把 tick 基准挪到本批，令 `now_tick ≈ 回放信封 tick`（tick 值本身不比）
         self.model.tick_base = (obs_start_tick, 0);
+        // ★ 口径开关：按**批内发数**选驱动。`>= 2` ⇒ 一次 `fire_batch`（一个批一次广播）。
+        let wire: Vec<String> = match batch.shots.len() {
+            0 => Vec::new(),
+            1 => {
+                let s = &batch.shots[0];
+                self.model.fire(s.owner, &s.text, s.x0, s.y0, s.flip, 0)
+            }
+            _ => {
+                let subs: Vec<Submission<'_>> = batch
+                    .shots
+                    .iter()
+                    .map(|s| Submission {
+                        owner_id: s.owner,
+                        function_text: &s.text,
+                        x0: s.x0,
+                        y0: s.y0,
+                        flip: s.flip,
+                    })
+                    .collect();
+                self.model.fire_batch(&subs, 0)
+            }
+        };
         let mut msgs = Vec::new();
         let mut invalid = Vec::new();
         let mut killed = Vec::new();
         let mut blocked_at = None;
-        for shot in &batch.shots {
-            let wire = self.model.fire(shot.owner, &shot.text, shot.x0, shot.y0, shot.flip, 0);
-            for w in &wire {
-                match Msg::parse_wire(w) {
-                    Ok(m) => {
-                        match m.kind.as_str() {
-                            "LifeQueuedDeath" => {
-                                if let Some(id) = m.get_i64("entity_id") {
-                                    killed.push(id);
-                                }
+        for w in &wire {
+            match Msg::parse_wire(w) {
+                Ok(m) => {
+                    match m.kind.as_str() {
+                        "LifeQueuedDeath" => {
+                            if let Some(id) = m.get_i64("entity_id") {
+                                killed.push(id);
                             }
-                            "QueueDestroyObstacle" => {
-                                blocked_at = Some((
-                                    m.get_f64("pos_x").unwrap_or(f64::NAN),
-                                    m.get_f64("pos_y").unwrap_or(f64::NAN),
-                                ));
-                            }
-                            _ => {}
                         }
-                        msgs.push(m);
+                        "QueueDestroyObstacle" => {
+                            blocked_at = Some((
+                                m.get_f64("pos_x").unwrap_or(f64::NAN),
+                                m.get_f64("pos_y").unwrap_or(f64::NAN),
+                            ));
+                        }
+                        _ => {}
                     }
-                    Err(_) => invalid.push(w.clone()),
+                    msgs.push(m);
                 }
+                Err(_) => invalid.push(w.clone()),
             }
         }
         BatchPrediction { msgs, invalid, killed, blocked_at }

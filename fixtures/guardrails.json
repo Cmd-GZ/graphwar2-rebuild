@@ -2,17 +2,20 @@
   "_comment": [
     "护栏值：整局对拍的三条驱动轴各自的期望值。--check-baseline 读这里，不再写死在代码里。",
     "改这里 = 承认实现变了。必须同时：① 在 docs/06 写清是哪一轮、改了什么、为什么；② 提交信息里带上 old→new。",
-    "轴不能混：同一指标在 fire / batch / batch_conv 上完全不同（1074 那次事故就是这么来的）。"
+    "轴不能混：同一指标在 fire / batch / batch_conv 上完全不同（1074 那次事故就是这么来的）。",
+    "⚠️ 2026-11-08 起 fire 轴**口径变了**：批内 ≥2 发改走一次 Match::fire_batch（docs/06 §39）。",
+    "   内容 608→643、种类序列 947→1075、S 桶 126→0。在这份快照上 fire 轴与 batch 轴**逐字节相同**——",
+    "   那不是抄错：两轴现在只差『模式时刻表』一项，而快照里没有『局中改模式』（首个结算批之后）。"
   ],
-  "_updated": "2026-11-08 凌晨，第四轮合并之后（master f5ff0a6d）",
+  "_updated": "2026-11-08，fire 轴按『批内发数』选驱动（docs/06 §39）；batch / batch_conv 未动",
   "axes": {
     "fire": {
       "batches": 1080,
-      "content_ok": 608,
-      "kind_seq_ok": 947,
+      "content_ok": 643,
+      "kind_seq_ok": 1075,
       "deaths_ok": 366,
       "deaths_checked": 385,
-      "destroy_ok": 205,
+      "destroy_ok": 206,
       "destroy_checked": 293,
       "cmd": "cargo run --release --offline --example replay_attrib -- --dir <快照> --drive fire --policy default --json f.jsonl"
     },
