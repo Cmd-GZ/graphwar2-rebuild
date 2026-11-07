@@ -173,6 +173,8 @@ fn starts_operand(t: &Token) -> bool {
 struct Parser {
     t: Vec<Token>,
     i: usize,
+    /// 当前所处的括号层数（`(` 进、`)` 出）。
+    depth: usize,
 }
 
 impl Parser {
@@ -187,9 +189,30 @@ impl Parser {
         v
     }
 
+    /// 丢掉**没有配对的** `)`（深度 0 时）。
+    ///
+    /// 真解析器（`0x4ed670`）就是这么干的 —— unicorn 直调实测（`docs/06` §30.7）：
+    ///
+    /// ```text
+    /// x)      -> [x]                  （多余 `)` 被吃掉）
+    /// x)+1    -> [ADD, VAR_X, CONST]  （**不是**截断，继续解析）
+    /// 2+(x))  -> [ADD, CONST, VAR_X]
+    /// (x)+1)  -> [ADD, VAR_X, CONST]
+    /// ```
+    ///
+    /// 旧实现遇到无主 `)` 就收工，于是 `14/(1+exp(100*(x-19)^2)))+24/…` 只剩第一项
+    /// （1290 发里 8 发真语料是这种"多一个右括号"的文本）。
+    /// **对括号平衡的文本这是恒等操作**（`skip` 一次都不触发）。
+    fn skip_stray_close(&mut self) {
+        while self.depth == 0 && matches!(self.peek().map(tag), Some(RightBracket)) {
+            self.take();
+        }
+    }
+
     fn expr(&mut self) -> Option<Box<Node>> {
         let mut left = self.term();
         loop {
+            self.skip_stray_close();
             let op = match self.peek() {
                 Some(t) if matches!(tag(t), Add | Sub) => tag(t),
                 _ => break,
@@ -215,6 +238,7 @@ impl Parser {
     fn term(&mut self) -> Option<Box<Node>> {
         let mut left = self.unary();
         loop {
+            self.skip_stray_close();
             let t = match self.peek() {
                 Some(t) => t,
                 None => break,
@@ -279,7 +303,9 @@ impl Parser {
             }
             LeftBracket => {
                 self.take();
+                self.depth += 1;
                 let node = self.expr();
+                self.depth -= 1;
                 if let Some(p) = self.peek() {
                     if tag(p) == RightBracket {
                         self.take();
@@ -316,7 +342,7 @@ pub fn parse(text: &str) -> Vec<Token> {
     if toks.is_empty() {
         return Vec::new();
     }
-    let mut p = Parser { t: toks, i: 0 };
+    let mut p = Parser { t: toks, i: 0, depth: 0 };
     let root = p.expr();
     let mut out = Vec::new();
     if let Some(root) = root {
@@ -329,9 +355,13 @@ pub fn parse(text: &str) -> Vec<Token> {
 // 3. 求值
 // ---------------------------------------------------------------------------
 
-/// `sqrt`：负数得 NaN（不是报错）。
+/// `sqrt`：**就是 `sqrtsd`**（二进制 `0x4ebb26`：`xorps xmm0,xmm0` + `sqrtsd`）。
+///
+/// 不要特判负数：`sqrtsd` 对负数给的是**负 NaN**（`fff8000000000000`），
+/// 而 `f64::NAN` 是正 NaN（`7ff8000000000000`）。逐位对拍 `docs/06` §30：
+/// `sqrt(-1) → fff8000000000000`。
 fn m_sqrt(x: f64) -> f64 {
-    if x >= 0.0 { x.sqrt() } else { f64::NAN }
+    x.sqrt()
 }
 
 /// 弦长：游戏用的是 `sqrt(a*a + b*b)`，不是真正的 `hypot`。
@@ -339,16 +369,13 @@ pub(crate) fn m_hypot(a: f64, b: f64) -> f64 {
     m_sqrt(a * a + b * b)
 }
 
-/// 除法：除零走符号规则而不是 panic。
+/// 除法：**就是 `divsd`**（二进制 `0x4ebb4e`：`divsd xmm5,xmm3`）。
+///
+/// 过去的特判（`b == 0` 时自己拼 `±inf` / `NaN`）是照搬上游 Python 参照实现
+/// （Python 除零要抛异常，必须自己拼）；IEEE 的 `divsd` 本来就给
+/// `1/0 = +inf`、`1/-0 = -inf`、`0/0 = -NaN`，逐位比特判更准
+/// （特判把 `0/0` 拼成**正** NaN，而 `divsd` 给 `fff8000000000000`）。
 fn m_div(a: f64, b: f64) -> f64 {
-    if b == 0.0 {
-        if a == 0.0 || a.is_nan() {
-            return f64::NAN;
-        }
-        // 量值取 inf、符号跟 a；再乘上 b 的符号（对应 Python 的
-        // math.copysign(inf, a) * math.copysign(1.0, b)）
-        return f64::INFINITY.copysign(a) * 1.0f64.copysign(b);
-    }
     a / b
 }
 
@@ -357,18 +384,20 @@ fn m_pow(a: f64, b: f64) -> f64 {
     a.powf(b)
 }
 
-/// `log10`：**0 走 NaN**，不是 -inf。
+/// `log10`：**就是 libm 的 `log10`**（二进制 tag 10 → GOT `0x9bc270` = `log10`）。
 ///
-/// 实测真二进制：`log(0) = NaN`、`log(-0.0) = NaN`、`log(1e-320) = -320.000004…`，
-/// 所以判据是 `v <= 0` 而非 `v < 0`。上游 Python 参照实现过去在这里给 `-inf`，
-/// 属于已知偏差；本 crate 一律以二进制为准。
+/// ⚠️ 2026-11 更正（`docs/06` §30，unicorn 逐位）：`log(0) = -inf`、`log(-0.0) = -inf`、
+/// `log(-1) = NaN`。旧版本这里写的是「`v <= 0` → NaN」，来源是
+/// `analysis/emu.py` 把导入映射到 **python 的 `math`**——python 对 `log10(0)`
+/// 是**抛异常**、被 `_safe` 兜成 NaN；真 libm 是**返回 `-inf`**。
+/// 也就是说那一条是 **oracle 的假象**，不是二进制的行为。
 pub(crate) fn m_log10(v: f64) -> f64 {
-    if v <= 0.0 { f64::NAN } else { v.log10() }
+    v.log10()
 }
 
-/// 自然对数：同 [`m_log10`]，0 走 NaN。
+/// 自然对数：同 [`m_log10`]（tag 11 → GOT `0x9bbec0` = libm `log`）。
 pub(crate) fn m_ln(v: f64) -> f64 {
-    if v <= 0.0 { f64::NAN } else { v.ln() }
+    v.ln()
 }
 
 /// 前缀序列求值。`dy` 在游戏里永远传 0。
@@ -413,3 +442,54 @@ fn ev(tokens: &[Token], i: &mut usize, x: f64, y: f64, dy: f64) -> f64 {
 }
 
 pub(crate) use m_hypot as hypot;
+
+#[cfg(test)]
+mod parser_tests {
+    use super::*;
+
+    fn tags(text: &str) -> Vec<u32> {
+        parse(text).iter().map(|t| t.tag as u32).collect()
+    }
+
+    /// 括号**平衡**的文本：解析结果与"遇到 `)` 就收工"的老实现完全一样。
+    #[test]
+    fn balanced_texts_are_unaffected() {
+        assert_eq!(tags("x"), vec![0]);
+        assert_eq!(tags("(x+1)(x-1)"), vec![6, 3, 0, 17, 4, 0, 17]);
+        assert_eq!(tags("sin(x)"), vec![14, 0]);
+        assert_eq!(tags("(((x)))"), vec![0]);
+        assert_eq!(tags("2+(x))"), vec![3, 17, 0]);
+    }
+
+    /// 无主的 `)`：**跳过、继续解析**（真解析器 `0x4ed670` 的实测值，`docs/06` §30.7）。
+    #[test]
+    fn stray_close_paren_is_skipped() {
+        assert_eq!(tags("x)"), vec![0]);
+        assert_eq!(tags("x)+1"), vec![3, 0, 17]);
+        assert_eq!(tags("(x)+1)"), vec![3, 0, 17]);
+        assert_eq!(tags("x)+2"), vec![3, 0, 17]);
+        assert_eq!(tags("sin(x))"), vec![14, 0]);
+        // 跳过之后仍然**隐式乘法**（真解析器：`x)2 -> [MUL, VAR_X, CONST]`）
+        assert_eq!(tags("x)2"), vec![6, 0, 17]);
+        assert_eq!(tags("sin(x))2"), vec![6, 14, 0, 17]);
+        assert_eq!(tags("x)*2"), vec![6, 0, 17]);
+        assert_eq!(tags("x)+"), vec![3, 0, 17]);
+        assert_eq!(tags("x))"), vec![0]);
+        assert_eq!(tags(")"), Vec::<u32>::new());
+        assert_eq!(tags("()"), Vec::<u32>::new());
+        assert_eq!(tags("(x"), vec![0]);
+    }
+
+    /// 真语料里的那一例（`1782675382#0`）：老实现只解析出第一项（12 个 token），
+    /// 真解析器给 27 个 token 的 `SUB(ADD(…), CONST)`。
+    #[test]
+    fn unbalanced_real_corpus_text_keeps_the_tail() {
+        let text = "14/(1+exp(100*(x-19)^2)))+24/(1+exp(100*(x-24)^2)) - 4.323";
+        let toks = parse(text);
+        assert_eq!(toks.len(), 27, "括号不平衡时不该截断");
+        assert_eq!(toks[0].tag, Sub, "根是 SUB");
+        assert_eq!(toks[1].tag, Add, "左子是 ADD");
+        assert_eq!(toks.last().unwrap().tag, Const);
+        assert_eq!(toks.last().unwrap().value, 4.323);
+    }
+}
