@@ -193,7 +193,11 @@ def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", required=True)
     ap.add_argument("--check-baseline", action="store_true",
-                    help="核对任务书基线（只有 fire 驱动 + 默认口径的 JSONL 才能对上）")
+                    help="核对护栏值（读 fixtures/guardrails.json；用 --axis 指定哪条轴）")
+    ap.add_argument("--axis", default="fire", choices=["fire", "batch", "batch_conv"],
+                    help="这条 JSONL 是哪条驱动轴（默认 fire）。轴不能混，混了必红。")
+    ap.add_argument("--update-baseline", action="store_true",
+                    help="把当前实测写回 fixtures/guardrails.json 对应轴（改基线必须在 docs/06 说明）")
     args = ap.parse_args(argv)
 
     rows = load(args.json)
@@ -227,30 +231,41 @@ def main(argv):
     print(f"挖洞点   {d['destroy_ok']} / {d['destroy_checked']}"
           f" ({pct(d['destroy_ok'], d['destroy_checked'])})")
 
-    if args.check_baseline:
-        print("\n== 对护栏基线的校验（401 份定格快照）==")
-        kind_seq = sum(1 for r in rows if r["kind_seq_ok"])
-        # 护栏值：**会随实现改进而变**，改这里必须同时写明"哪一轮改成什么"。
-        # 2026-11-08（第三轮合并后，master 43579c07）实测：
-        #   结算批 1080 ｜ 内容命中 331 ｜ 种类序列 819
-        #   死亡集合 215/379 ｜ 挖洞点 **fire 轴 139/262**（batch 轴是 140/262，两者不同）
-        # 历史：第一轮任务书基线是 21 / 818 / 211/379 / 1/259（当时还没修 09/10/14 那批）。
-        want = {
-            "结算批数": (total, 1080),
-            "结算批内容命中": (total - len(fails), 331),
-            "消息种类序列命中": (kind_seq, 819),
-            "延迟段死亡集合命中": (d["deaths_ok"], 215),
-            "延迟段死亡集合分母": (d["deaths_checked"], 379),
-            "延迟段挖洞点命中": (d["destroy_ok"], 139),
-            "延迟段挖洞点分母": (d["destroy_checked"], 262),
+    if args.update_baseline or args.check_baseline:
+        import json, os
+        gp = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "fixtures", "guardrails.json"))
+        cur = {
+            "batches": total,
+            "content_ok": total - len(fails),
+            "kind_seq_ok": sum(1 for r in rows if r["kind_seq_ok"]),
+            "deaths_ok": d["deaths_ok"],
+            "deaths_checked": d["deaths_checked"],
+            "destroy_ok": d["destroy_ok"],
+            "destroy_checked": d["destroy_checked"],
         }
+        if args.update_baseline:
+            g = json.load(open(gp, encoding="utf-8"))
+            g["axes"][args.axis].update(cur)
+            open(gp, "w", encoding="utf-8").write(json.dumps(g, ensure_ascii=False, indent=2) + "\n")
+            print(f"\n已把 {args.axis} 轴的实测写回 {gp}")
+            return 0
+        g = json.load(open(gp, encoding="utf-8"))
+        want = g["axes"][args.axis]
+        print(f"\n== 对护栏基线的校验（轴 = {args.axis}；值来自 fixtures/guardrails.json）==")
         bad = 0
-        for k, (got, exp) in want.items():
-            same = got == exp
+        for k, label in [("batches", "结算批数"), ("content_ok", "内容命中"),
+                         ("kind_seq_ok", "种类序列命中"), ("deaths_ok", "死亡集合命中"),
+                         ("deaths_checked", "死亡集合分母"), ("destroy_ok", "挖洞点命中"),
+                         ("destroy_checked", "挖洞点分母")]:
+            exp = want.get(k)
+            if exp is None:
+                print(f"  {label:<16} 实测 {cur[k]:>6}   基线 未设置（该轴未登记）")
+                continue
+            same = cur[k] == exp
             bad += 0 if same else 1
-            print(f"  {k:<24} 实测 {got:<6} 任务书 {exp:<6} {'OK' if same else '不一致'}")
-        print("  校验结果：", "全部一致" if bad == 0 else f"{bad} 项不一致")
-        ok = ok and bad == 0
+            print(f"  {label:<16} 实测 {cur[k]:>6}   基线 {exp:>6}   {'OK' if same else '不一致'}")
+        print(f"  校验结果： {'全部一致' if bad == 0 else f'{bad} 项不一致'}")
+        return 0 if bad == 0 else 1
 
     return 0 if ok else 1
 
