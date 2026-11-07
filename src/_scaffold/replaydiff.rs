@@ -1934,13 +1934,43 @@ pub struct Totals {
 }
 
 /// 回放目录的默认位置（`docs/78` §1）。
+///
+/// 优先级：`GW2_REPLAY_DIR`（跨平台都能用）→ 平台默认的 Godot `user://` 宿主目录。
 pub fn default_corpus_dir() -> std::path::PathBuf {
     if let Ok(d) = std::env::var("GW2_REPLAY_DIR") {
         return std::path::PathBuf::from(d);
     }
+    godot_user_replays()
+}
+
+/// Godot 4 的 `user://` 宿主目录（Linux 实测口径）：
+/// `$HOME/.local/share/godot/app_userdata/Graphwar/replays`。
+///
+/// Android 上 `HOME` 不设，且 Godot 把 `user://` 放在应用私有目录里；
+/// 具体路径 **未知**（要真机跑一次 `OS.get_user_data_dir()` 才有证据），
+/// 所以这条路在 Android 上退化成相对路径 —— 用 `GW2_REPLAY_DIR` 显式指定。
+#[cfg(not(windows))]
+fn godot_user_replays() -> std::path::PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
     std::path::PathBuf::from(home)
         .join(".local/share/godot/app_userdata/Graphwar/replays")
+}
+
+/// Windows 上 `HOME` 通常不设，`%APPDATA%\Godot\app_userdata\Graphwar` 才是 Godot 的 `user://`。
+///
+/// 证据档位：**推断** —— 取自 Godot 4 文档的 `user://` 口径，本机没有 Windows 桌面对拍；
+/// 缺的证据是"在 Windows 上跑一次 `OS.get_user_data_dir()` 看到的实际路径"。
+/// 拿不准时用 `GW2_REPLAY_DIR` 覆盖。
+#[cfg(windows)]
+fn godot_user_replays() -> std::path::PathBuf {
+    let base = std::env::var("APPDATA")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".into());
+    std::path::PathBuf::from(base)
+        .join("Godot")
+        .join("app_userdata")
+        .join("Graphwar")
+        .join("replays")
 }
 
 /// 跑一份回放：切批 → 逐批预测 → 逐条比 → 第一分歧。
