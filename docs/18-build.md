@@ -368,9 +368,9 @@ export CARGO_HOME=/path/.cargo-home CARGO_TARGET_DIR=$CARGO_HOME/target   # ✗
 | 结论 | 档位 | 证据 |
 |---|---|---|
 | 原版 `libgraphwarrust.so` 自己就是 gdext 编的 | **观测** | `.rodata` 里有 `/home/lucas/.cargo/git/checkouts/gdext-067f4b88e7bd088f/477501f/godot-core/src/registry/class.rs` |
-| 我们的手写层是**等价物**，但**虚方法表一个都没接** | **观测** | `docs/16` §35 原文"它还不会画"；`gdext.rs` 文件头也自己写了这条 |
+| 我们的手写层是**等价物**，但**虚方法表一个都没接** | **观测** | `docs/16` §31 原文"它还不会画"；`gdext.rs` 文件头也自己写了这条 |
 | 换成 gdext 后 `_draw` 真的被引擎调用 | **观测** | §10.4：`draw_call_count=1 drawn_line_total=102` |
-| 原版 `axis_drawer.rs` 的形状就是 `impl IControl … fn draw` | **推断** | arm64 `.symtab` 的符号名 `… as …IControl>::draw`（`docs/16` §21）+ 上面第一条；缺的是 x86 侧的 demangle 符号（stripped） |
+| 原版 `axis_drawer.rs` 的形状就是 `impl IControl … fn draw` | **推断** | arm64 `.symtab` 的符号名 `… as …IControl>::draw`（`docs/16` §18）+ 上面第一条；缺的是 x86 侧的 demangle 符号（stripped） |
 
 一句话：**源码级还原要的是"长得像原版"，而原版的绑定层是 gdext**。手写 ABI 证明了
 "能注册、能调"，但长不出 `impl IControl` 这种结构，也永远接不上虚方法表。

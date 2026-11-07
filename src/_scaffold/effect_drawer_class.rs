@@ -22,10 +22,10 @@
 //!
 //! | 项 | 原版 | 本文件 | 档位 |
 //! |---|---|---|---|
-//! | 图元的**种类与顺序** | `draw_set_transform` ×1、`draw_circle` ×4、`polygon` ×1、`draw_line` ×2（`docs/16` §21） | 同：直接遍历 [`effect_drawer::frame_primitives`] | **观测**（GOT 槽 + 全 `.text` 扫描） |
+//! | 图元的**种类与顺序** | `draw_set_transform` ×1、`draw_circle` ×4、`polygon` ×1、`draw_line` ×2（`docs/16` §18） | 同：直接遍历 [`effect_drawer::frame_primitives`] | **观测**（GOT 槽 + 全 `.text` 扫描） |
 //! | 半径 / 颜色 / 透明度 | 0.05 / 0.06、四组基色、`max(0,(1−t)·0.9)` | 同（取自 `effect_drawer` 的常量与函数） | **观测** |
 //! | 多边形**顶点** | 公式**未复原**（`effect_drawer` 模块文档 §5） | **不发明**顶点：纯逻辑给的 `points` 是空的 ⇒ 默认跳过；调用方用 [`EffectDrawer::set_polygon_placeholder`] 给才画 | 原版**未知**；给点才画是**我方选择** |
-//! | 多边形颜色份数 | 每个顶点一份、**3 份同色**（`docs/16` §21 的「3 份同色」） | 纯逻辑给 1 个颜色 ⇒ 按**顶点数**复制 N 份（`N` 由调用方定，不硬编码 3） | **观测**（3 份）/ 复制规则**推断** |
+//! | 多边形颜色份数 | 每个顶点一份、**3 份同色**（`docs/16` §18 的「3 份同色」） | 纯逻辑给 1 个颜色 ⇒ 按**顶点数**复制 N 份（`N` 由调用方定，不硬编码 3） | **观测**（3 份）/ 复制规则**推断** |
 //! | `draw_line` 的端点 | 公式**未复原**（`from == to == center`） | 照 `effect_primitive` 给的（退化线段：`draw_line` 照样被调到） | 端点**未知** |
 //! | 当前 tick | `process` 从 `GraphwarModuleContainer` 的模块读 `[module+0x58]` | **自己数**：`step(delta)` 用 `effect_drawer::ticks_for_delta` 推进 | 推进规则**逐位**；"谁来喂 tick"**未接** |
 //! | 撞障碍 | `0x4eb585` 调 `GraphwarObstacleManager::is_obstacle`；撞了 `vel = (0,0)` | 传 `|_| false`（= 场上没有障碍）——**没有任何障碍管理器** | 原版**观测**；本切片**缺失** |
@@ -70,7 +70,7 @@
 //!
 //! 后面那串计数是**观测点**：没有它们，headless 里分不清"引擎没调 `_draw`"和"调了但一个图元都没发"。
 //!
-//! # 写这种类必须知道的几条（`docs/16-client.md` §38.4 实测过，这里只记与本类有关的）
+//! # 写这种类必须知道的几条（`docs/16-client.md` §34.4 实测过，这里只记与本类有关的）
 //!
 //! 1. **`base_mut()` 是独占借用**（`WithBaseField::base_mut` 返回 `BaseMut<'_, Self>`，握着
 //!    `&mut self`）⇒ 循环里既画东西又改 `self.xxx` 编译不过（`E0499`）。本类的做法：

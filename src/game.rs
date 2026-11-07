@@ -694,7 +694,7 @@ impl Match {
     // `add_entity_effect(_, AshEffect)` 循环（`0x4aa410`–`0x4aa47c`）。
     // 我方：`Match::note_skin_graphics`。**没有接线**：本仓库没有事件总线，
     // `SkinGraphicsInfo` 由调用方逐条喂进来（回放对拍器的 `replaydiff::Predictor`
-    // 现在不喂，见 `docs/16-client.md` §37.5）。
+    // 现在不喂，见 `docs/16-client.md` §33.5）。
     // ─────────────────────────────────────────────────────────────────────
     pub fn note_skin_graphics(&mut self, id: i64, graphics_str: &str) -> bool {
         match u32::try_from(id) {

@@ -17,7 +17,7 @@
 //! | 项 | 名字 | 签名 | 证据档位 |
 //! |---|---|---|---|
 //! | 类 | `AxisDrawer` | 父类 `Control` | 观测（`.rodata` 类名 + `IControl` impl） |
-//! | 属性 | `axis_mode` | `int` | 推断（`self+0x18` 是 `u8` 判别值，见 `docs/16` §21） |
+//! | 属性 | `axis_mode` | `int` | 推断（`self+0x18` 是 `u8` 判别值，见 `docs/16` §18） |
 //! | 方法 | `get_axis_mode` / `set_axis_mode` | `() -> int` / `(int) -> void` | 属性的读写器 |
 //! | 方法 | `axis_line_count` | `() -> int` | 跑 [`crate::axis_drawer::axis_primitives`] 数 `Line` |
 //! | 方法 | `axis_line_count_formula` | `() -> int` | 跑闭式 [`crate::axis_drawer::line_count`] |
@@ -34,7 +34,7 @@
 //! * **没接管 `draw`**：虚方法表（`get_virtual_func` / `get_virtual_call_data_func` /
 //!   `call_virtual_with_data_func`）一个都没填，所以这个类现在**不画任何东西**。
 //!   要真画，得填虚方法表 + 用 `object_method_bind_ptrcall` 调 `CanvasItem::draw_line`
-//!   / `draw_rect` / `draw_set_transform_full`（`docs/16` §21 有原版的三次调用）。
+//!   / `draw_rect` / `draw_set_transform_full`（`docs/16` §18 有原版的三次调用）。
 //! * **没发 `NOTIFICATION_POSTINITIALIZE`**：`create_instance_func` 收到
 //!   `notify_postinitialize = 1` 时，官方 gdext 会补发这条通知；我们没做。它只对
 //!   "挂了脚本"或"自己有 `notification_func`"的类有可观测差异，对空壳 `Control` 无。
@@ -748,7 +748,7 @@ mod tests {
         assert_eq!(clamp_mode(i64::MAX), 255);
     }
 
-    /// 两个"数线"路径必须一致，且四个已知变体是 0 / 2 / 20 / 102（`docs/16` §21）。
+    /// 两个"数线"路径必须一致，且四个已知变体是 0 / 2 / 20 / 102（`docs/16` §18）。
     #[test]
     fn line_counts_match_formula() {
         let expected = [

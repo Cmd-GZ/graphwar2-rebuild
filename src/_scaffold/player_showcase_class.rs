@@ -2,7 +2,7 @@
 //!
 //! # 为什么会有这一份
 //!
-//! 原版的 `PlayerShowcase` 是**玩家名片预览**（`docs/16-client.md` §25）：四个方法
+//! 原版的 `PlayerShowcase` 是**玩家名片预览**（`docs/16-client.md` §22）：四个方法
 //! `ready` / `on_text_change` / `process` / `draw`，每件都能指到指令：
 //!
 //! | 方法 | 原版干什么 | 档位 |
@@ -23,7 +23,7 @@
 //!
 //! # ⚠️ 一处与任务书不同的地方（按证据改，并说明改了什么）
 //!
-//! 任务书要求「读配置 + 建 **3 个 `Sprite2D` + 1 个标签**」。按 `docs/16` §25 与
+//! 任务书要求「读配置 + 建 **3 个 `Sprite2D` + 1 个标签**」。按 `docs/16` §22 与
 //! `src/player_showcase.rs` 的观测，**原版没有这三个 `Sprite2D`**：它的 `draw` 是
 //! `draw_texture_rect_full` ×3 画在**自己**身上（`0x4402b0` / `0x44037c` / `0x440444`），
 //! 子节点只有 `ready` 里**取**（不是建）的那个 `PlayerNameLineEdit`。
@@ -86,7 +86,7 @@
 //!   process_call_count() / ready_call_count() / root_lookup_failures() -> int
 //! ```
 //!
-//! # 写这种类必须知道的几条（`docs/16-client.md` §38.4 实测过，这里只记与本类有关的）
+//! # 写这种类必须知道的几条（`docs/16-client.md` §34.4 实测过，这里只记与本类有关的）
 //!
 //! 1. **`Gd<Node>` 不保活**：`LineEdit` 子节点归**父节点**所有。本类在 `ready` 里建完就
 //!    先 `add_child`、再在同一个 `ready` 里**重新查找**（这也是原版第 5 步的形状），

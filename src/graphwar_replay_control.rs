@@ -43,7 +43,7 @@
 //! `AxisModeButton` `FunctionModeButton` `TurnModeButton` `TimeModeButton`
 //! `set_button_icon`。⇒ 每个回放条目的场景是 `res://replay_entry.tscn`，
 //! 条目的名字标签叫 `ReplayName`，四个模式按钮各一张图标（`set_button_icon`）。
-//! 图标资源不在这段里（`axis_option_N` 等在 `texture_loader` 的表里，`docs/16` §32）。
+//! 图标资源不在这段里（`axis_option_N` 等在 `texture_loader` 的表里，`docs/16` §29）。
 //!
 //! ## 4. 未知（**这条路很长，本文只做到「结构 + 依赖 + 按钮」**）
 //!

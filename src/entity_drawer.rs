@@ -21,7 +21,7 @@
 //! ⚠️ 定位这些原语**必须**走 GOT 槽 + `.rela.dyn`：包装函数没有 `call rel32` 调用者，
 //! 只看直接调用会得出"原版什么都不画"的错误结论。
 //!
-//! # 士兵/靶子**不在** `draw` 里（本轮补全，见 §2.2 与 `docs/16-client.md` §24）
+//! # 士兵/靶子**不在** `draw` 里（本轮补全，见 §2.2 与 `docs/16-client.md` §21）
 //!
 //! `draw` 里 `draw_texture_rect` 与 `draw_line` 的调用点数都是 **0**
 //! （同一张 GOT 表全量扫过）——这是对的，但**不代表**"士兵由别的函数用 `draw_*` 画"。
@@ -392,7 +392,7 @@ pub const NAME_LABEL_SCENE: &str = "res://name_label.tscn";
 ///
 /// ⇒ **`EntityDrawer::draw` 里没有 `draw_texture_rect` 不是漏，
 /// 士兵/靶子根本不是 `draw()` 画的**——是下面这 4 个 `CanvasItem` 子节点。
-/// 证据见 [`ENTITY_CHILD_NODES`] 与 `docs/16-client.md` §24。
+/// 证据见 [`ENTITY_CHILD_NODES`] 与 `docs/16-client.md` §21。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EntityChildNode {
     /// `Sprite2D`，贴图 = `GraphwarTextureLoader::get_skin_texture`
@@ -690,7 +690,7 @@ pub fn offset_triangle(center: Vec2, r: f64, theta: f64, color: Color) -> Primit
 // §2.7  诚实清单
 // ---------------------------------------------------------------------------
 
-/// 本模块**没解出来**的东西，照实登记（`docs/16-client.md` §24 同步）。
+/// 本模块**没解出来**的东西，照实登记（`docs/16-client.md` §21 同步）。
 ///
 /// * `process` 里"要不要画名字"的那个 `bool` 取自某个模块对象的 `+0xa1`
 ///   （`ldrb w9,[x27,#0xa1]` @ arm64 `0x4bb748`），**哪个模块 / 字段真名 = 未知**。

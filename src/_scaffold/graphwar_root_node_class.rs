@@ -1,6 +1,6 @@
 //! **不是原版的东西**：把复原的 [`crate::graphwar_root_node`] 挂成**真 Godot 节点类**的骨架。
 //!
-//! # 这一份：**骨架 + 3 个 manager 的真装配**（`docs/16-client.md` §42）
+//! # 这一份：**骨架 + 3 个 manager 的真装配**（`docs/16-client.md` §38）
 //!
 //! 原版 `GraphwarRootNode` 是主场景节点（`docs/16-client.md` §15），它干三件事：
 //!
@@ -53,7 +53,7 @@
 //! | `0x3b0830`（命令总线）的**全部**键 | 只解到 12 条（[`crate::graphwar_root_node::Command`]），131 KB 反编译没过完 |
 //! | **剩下 19 个 manager** 的装配 | 本轮只做 3 个（任务书 §要做什么）；那 19 型没有可 `new` 的实现，节点槽仍是**空 `Node` 占位** |
 //! | 两个 `Rc<RefCell<T>>`（`+0x1668` / `+0x16c8`） | 那两个控制器的类型与生命周期未解（`docs/16` §15.3 只给了偏移） |
-//! | `GraphwarTextureLoader`（`+0x16a0`） | 模块存在（`docs/16` §34），但节点层还没有 |
+//! | `GraphwarTextureLoader`（`+0x16a0`） | 模块存在（`docs/16` §28），但节点层还没有 |
 //!
 //! ⚠️ `GraphwarModuleContainer` 节点下的 25 个空 `Node` 名字**就是**原版类名
 //! （`GraphwarTurnManager` 之类），但它们仍然只是空节点——**真装配在 Rust 的容器里**，
@@ -298,7 +298,7 @@ impl GraphwarRootNode {
             return self.child_slot_count();
         }
 
-        // ⓪ **模块容器装配**（`docs/16` §42）：3 个 manager 按 `TypeId` 进容器。
+        // ⓪ **模块容器装配**（`docs/16` §38）：3 个 manager 按 `TypeId` 进容器。
         //    先于建屏做，因为 Game 屏里的 3 个假实体与容器里 `GameStateManager` 的
         //    3 个 `Target` 是同一份数据（[`DEMO_SOLDIERS`]）。
         if self.wiring.is_none() {
@@ -310,7 +310,7 @@ impl GraphwarRootNode {
         screens_control.set_name(&StringName::from(HOLDER_NAMES[0]));
         for screen in ALL_SCREENS {
             if screen == Screen::GameSetup {
-                // Setup 屏：**真节点类** `GraphwarSetupControl`（`docs/16` §39 那个类）。
+                // Setup 屏：**真节点类** `GraphwarSetupControl`（`docs/16` §35 那个类）。
                 // 原版这一屏在 `.tscn` 里，我们这里由这个类自己建替身子节点。
                 let mut node = GraphwarSetupControl::new_alloc();
                 node.set_name(&StringName::from(SETUP_SCREEN_NAME));
@@ -382,7 +382,7 @@ impl GraphwarRootNode {
     /// ```
     ///
     /// 3 个假实体走 [`EntityDrawer`] 的 `spawn_entity`（每个建 3 个 `Sprite2D` + 1 个
-    /// `RichTextLabel`，`docs/16` §38）；它们的 id / 坐标 / 名字来自
+    /// `RichTextLabel`，`docs/16` §34）；它们的 id / 坐标 / 名字来自
     /// [`super::root_wiring::DEMO_SOLDIERS`]（**我方选择**的假数据）。
     fn build_game_screen(&mut self, screen: &mut Gd<Control>) {
         let size = Vector2::new(VIEWPORT_SIZE.0, VIEWPORT_SIZE.1);
@@ -456,7 +456,7 @@ impl INode for GraphwarRootNode {
     /// `_process`（原版是 `0x3a5760` 那 20288 字节状态机的一部分，**形状未解**）。
     ///
     /// 骨架里只计数：**不猜**状态机做了什么（`graphwar_root_node` 的未知清单第 8 条）。
-    /// 不写 `set_process(true)`：Godot 4.7 自动开（`docs/16` §37.4 第 5 条，本轮再次实测）。
+    /// 不写 `set_process(true)`：Godot 4.7 自动开（`docs/16` §33.4 第 5 条，本轮再次实测）。
     fn process(&mut self, _delta: f64) {
         self.process_calls += 1;
     }

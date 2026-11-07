@@ -1,7 +1,7 @@
 //! 原版 `src/graphwar_campaign_control.rs` —— **战役模式的关卡进度 + `campaign.save`**
 //! + **21 关的参数表**（`level_info()` 的形状）。
 //!
-//! ## 定性（2026-11-07，`docs/16-client.md` §33.8，`观测`）
+//! ## 定性（2026-11-07，`docs/16-client.md` §30.8，`观测`）
 //!
 //! 4 个函数（2.0.60 arm64 符号表，名字与 `docs/02-module-map.md` §18.5 完全一致）：
 //!

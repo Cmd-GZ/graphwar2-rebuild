@@ -52,7 +52,7 @@
 //! ## 3. 为什么它不在 `graphics_manager` 里（回顾）
 //!
 //! `graphics_manager` 管的是 `player_id → 名字/脸/帽` **三张 id 表**（`+0x18/+0x48/+0x78`，
-//! `docs/16` §31）；本模块的三张表是**名字 → 贴图**，键类型不同（`String` vs `u32`）、
+//! `docs/16` §28）；本模块的三张表是**名字 → 贴图**，键类型不同（`String` vs `u32`）、
 //! 偏移不同、函数也不同。⇒ 独立模块，这个结论本轮用「键类型 + 偏移 + 方法名」三件事复核过。
 //!
 //! ## 4. 名字 → 路径全表（逐位，`.rodata` 逐条抠）
@@ -69,7 +69,7 @@
 //! | `res://`（UI 图标） | 28 | axis_option_0…3 fx_option dx_dy_option empty_set mute unmute play_option pause_option lock unlock turn_30s turn_1m turn_2m turn_3m turn_5m turn_inf turns_sequential turns_simultaneous no_chat view_chat no_chat_new_chat view_names hide_names view_recent_functions view_all_functions |
 //!
 //! **原版有一处笔误**：`res://hats//no_hat.svg`（双斜杠）与 `res://hats/no_hat.svg`
-//! **两条都在**（`docs/16` §32）。我们**不修**——修了就与真值不同。
+//! **两条都在**（`docs/16` §29）。我们**不修**——修了就与真值不同。
 //!
 //! ## 5. 未知
 //!

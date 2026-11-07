@@ -229,7 +229,7 @@ fn bad_hit(code: &'static str) -> api::HitOutcome {
 // 普通的方法覆写，虚方法派发由 gdext 的 `get_virtual_func` 表接管。
 //
 // 画什么仍然只有一份：`crate::axis_drawer::{AxisMode, axis_primitives}`（`AxisDrawer::draw`
-// = vaddr 0x4e05b0 的图元级复原，`docs/16` §21）。本类只负责把 `Primitive` 翻译成
+// = vaddr 0x4e05b0 的图元级复原，`docs/16` §18）。本类只负责把 `Primitive` 翻译成
 // `CanvasItem::draw_*` 调用。
 
 /// 坐标轴 / 网格节点。
@@ -341,7 +341,7 @@ impl IControl for AxisDrawer {
                 }
             }
         }
-        // `draw_string` 一次都没有 —— 原版这个类不画文字（`docs/16` §21）。
+        // `draw_string` 一次都没有 —— 原版这个类不画文字（`docs/16` §18）。
     }
 }
 
@@ -403,7 +403,7 @@ mod tests {
         assert_eq!(clamp_mode(1000), 255);
     }
 
-    /// 枚举法与公式法在 0/1/2/3 与越界值上一致（`docs/16` §21 的 0/2/20/102）。
+    /// 枚举法与公式法在 0/1/2/3 与越界值上一致（`docs/16` §18 的 0/2/20/102）。
     #[test]
     fn enumerated_line_count_matches_formula() {
         for (raw, expected) in [(0u8, 0usize), (1, 2), (2, 20), (3, 102), (200, 20)] {

@@ -5,7 +5,7 @@
 //! 原版的 `FunctionDrawer` 是一个 `Control` 子类（`graphwarrust::function_drawer::FunctionDrawer`），
 //! 它**自己不画任何图元**：`GraphwarPlane::init`（x86 `0x4b7380`）建 **3 个**它并 `add_child`，
 //! 它给每个 player id 建一条 `Line2D` 子节点，`update_function` 只把**新增的那几个点**
-//! `add_point` 进去（`docs/16-client.md` §36.3：全二进制唯一的 `add_point` 调用点 `0x498fab`）。
+//! `add_point` 进去（`docs/16-client.md` §32.3：全二进制唯一的 `add_point` 调用点 `0x498fab`）。
 //!
 //! `src/function_drawer.rs` 已经把「补哪些点」的纯逻辑复原出来了（`append_window` /
 //! `CurveStore`），但它按约定**不碰引擎**。本文件是那层薄壳：
@@ -155,7 +155,7 @@ pub struct FunctionDrawer {
     /// `[self+0x10]` / `[self+0x18]` = growth_left / items），`self+0x20` 是交给
     /// `0x47dec0`（SipHash）的 hash state，`[self+0x40]` 是 z_index。
     /// ⚠️ `src/function_drawer.rs` 的文档写的是"`self+0x20` 的 `HashMap`"——
-    /// 本轮按指令读到的表在 `self+0`（见 `docs/16-client.md` §42.3）。
+    /// 本轮按指令读到的表在 `self+0`（见 `docs/16-client.md` §38.3）。
     ///
     /// 换成 `BTreeMap` 只为**确定性**（与 [`function_drawer::CurveStore`] 同一个理由：
     /// 迭代顺序不参与任何判定）。key 是玩家 id，**没排序**也照样工作。

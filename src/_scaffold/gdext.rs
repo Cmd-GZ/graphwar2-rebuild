@@ -32,7 +32,7 @@
 //! * **真节点类** `AxisDrawer`（父类 `Control`）：`axis_mode` 属性 + 4 个方法，
 //!   带 `create_instance_func`，能被 `ClassDB.instantiate` 与 `.tscn` 实例化。
 //!   这是"12 个 GDExtension 类能不能重建"的技术验证，见 `axis_drawer_class.rs`
-//!   与 `docs/16` §35。
+//!   与 `docs/16` §31。
 //!
 //! 仍然**没有**的能力：虚方法表（`_draw` / `_notification` 等一个都没接管）、
 //! 类注册注销（`classdb_unregister_extension_class`）、`NOTIFICATION_POSTINITIALIZE`。
@@ -166,7 +166,7 @@ unsafe extern "C" fn on_initialize(_userdata: *mut c_void, level: i32) {
                     let _ = crate::_scaffold::api::register_hit_test_method(get, lib);
                     let _ = crate::_scaffold::api::register_level_obstacles_method(get, lib);
                 }
-                // 真节点类（父类 `Control`）的 spike，见 `docs/16` §35。
+                // 真节点类（父类 `Control`）的 spike，见 `docs/16` §31。
                 // 与上面那个单例走同一条 `get_proc_address` 通道，但它有
                 // `create_instance_func`，所以能被 `ClassDB.instantiate` / `.tscn` 造出来。
                 let _ = crate::_scaffold::axis_drawer_class::register_axis_drawer_class(get, lib);

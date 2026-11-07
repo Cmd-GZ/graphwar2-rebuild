@@ -319,7 +319,7 @@ pub fn orig_fn(vaddr: u32) -> Option<&'static OrigFn> {
     ORIG_FUNCS.iter().find(|f| f.vaddr == vaddr)
 }
 
-/// 某一类里有多少个函数（`docs/16` §16 的分类表就是这张表算出来的）。
+/// 某一类里有多少个函数（`docs/16` §17 的分类表就是这张表算出来的）。
 pub fn class_count(class: Class) -> usize {
     ORIG_FUNCS.iter().filter(|f| f.class == class).count()
 }

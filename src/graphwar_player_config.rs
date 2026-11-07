@@ -1,6 +1,6 @@
 //! 原版 `src/graphwar_player_config.rs` —— **玩家外观档案：名字 / 皮肤 / 脸 / 帽子**。
 //!
-//! ## 定性（2026-11-07，`docs/16-client.md` §33.7，`观测`）
+//! ## 定性（2026-11-07，`docs/16-client.md` §30.7，`观测`）
 //!
 //! 8 个函数，2.0.60 arm64 符号表全给出来了（`docs/02-module-map.md` §18.4 只记了
 //! 8 个方法的**名字**，这次把体量与调用关系也钉住了）：
@@ -31,7 +31,7 @@
 //! ⇒ 存档是**一个文本文件、一次性 `store_string` 写完整串**（不是 JSON 序列化：
 //! 本模块没有 serde 符号），格式未解（标 `未知`；`trim_matches` 说明按行/按分隔符切）。
 //!
-//! ## 字段偏移（上一轮 `docs/16-client.md` §29 从 `player_screen_control` 读出的）
+//! ## 字段偏移（上一轮 `docs/16-client.md` §26 从 `player_screen_control` 读出的）
 //!
 //! `PlayerShowcase` 读这份配置时用的偏移：名字 `+0x00`、皮肤 `+0x60`、
 //! 脸 `+0x78`、帽 `+0x90`、变更计数 `+0xa8`。
@@ -41,7 +41,7 @@
 //! ## `lock` 的调用者为什么是 `purchase_denied`
 //!
 //! 内购失败 ⇒ 把刚解锁的东西**锁回去**（`RootNode::purchase_denied` ← AdMob 插件回调，
-//! 见 `docs/16-client.md` §22 的 `graphwar_ad_switch`）。这条把"外观解锁"与
+//! 见 `docs/16-client.md` §20 的 `graphwar_ad_switch`）。这条把"外观解锁"与
 //! "内购"接上了，是本模块唯一的对外因果。
 
 /// 变更计数（`+0xa8`）的语义：**每次 `save` 之前**由 `set_*` 自增，
@@ -49,7 +49,7 @@
 /// 因为 `save` 只写一帧快照，且 `load` 里没有对应字段）。
 pub const CHANGE_COUNTER_OFFSET: usize = 0xa8;
 
-/// 原版字段偏移（`docs/16-client.md` §29，`观测`）。
+/// 原版字段偏移（`docs/16-client.md` §26，`观测`）。
 pub const NAME_OFFSET: usize = 0x00;
 pub const SKIN_OFFSET: usize = 0x60;
 pub const FACE_OFFSET: usize = 0x78;

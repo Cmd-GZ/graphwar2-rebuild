@@ -1,6 +1,6 @@
 //! 原版 `src/backtracer.rs` —— **panic 钩子 → 崩溃日志落盘**。
 //!
-//! ## 一句话（2026-11-07，`docs/16-client.md` §33.2）
+//! ## 一句话（2026-11-07，`docs/16-client.md` §30.2）
 //!
 //! 全模块只有 **1 个可归属函数**（+ 它的闭包）：
 //! `Backtracer::install_panic_log_hook`（arm64 `0x4becec`，876 字节）与
