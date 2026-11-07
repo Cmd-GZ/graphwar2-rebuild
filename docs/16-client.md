@@ -7874,3 +7874,240 @@ headless 实测的 `Line2D.get_point_count()`（`points.len() = 100`、`active_t
 `draw()` 里 `feed_functions()` → `FunctionDrawer::update_function` → `Line2D::add_point`。
 期望值在 GDScript 里按反汇编算式**独立重写**（不调 Rust 的 `revealed_points`），
 常量 `30.0` / `1800` 也写死在脚本里 ⇒ Rust 那边改常量脚本会红。
+
+## 43. 真 `GraphwarPlane` 进场景：5314 点的真实弹道由 `_draw` 一条条喂进 `Line2D`（2026-11，任务 18）
+
+**一句话**：新增 `client/tools/plane_on_screen.tscn`（一个 `Control` + 一个**真节点** `GraphwarPlane`）
++ 接线脚本 + 验收脚本，把**一条真实弹道**（内核 `GW2Rebuild.path_calculate("cos(x)", …)` 算出的
+**5314** 个点）按原版"每 tick 露 30 点"喂进棋盘的第 0 个 `FunctionDrawer`，曲线**真的画在屏幕上**。
+headless 实测 `Line2D.get_point_count()`：30 → 60 → … → 5310 → **5314 == 喂进去的点数**；
+`_draw` 被引擎调用 **7** 次、`draw_rect` 同样 7 次；Xvfb 截图里数出 **645** 个 `#7D6800`
+像素（真帧量测的弹道色）。**76 条断言全过**（退出码 0）。`client/src/**` 一行没动。
+
+> 档位口径同 §40 / §42：**逐位** = 与真二进制逐字节/逐位对拍；**观测** = 能指到反汇编地址 /
+> 真实报文 / 真机真帧；**推断** = 有依据未证；**未知** = 没解出来。
+> `cargo test` / 本脚本的条数**只是回归保护**，不是复原证据。
+
+### 43.1 本轮动了哪些文件
+
+| 文件 | 增/改 | 行数 | 内容 |
+|---|---|---|---|
+| `client/tools/plane_on_screen.tscn` | **新增** | 39 | 场景：`PlaneOnScreen`（Control）+ 子节点 `GraphwarPlane`（**`type="GraphwarPlane"`**，两个 `#[export]` 属性写成显式值） |
+| `client/tools/plane_on_screen.gd` | **新增** | 359 | 接线：取真实弹道 → `set_function_points` → 每帧推 tick；`update_transform` 把 `Line2D` 摆进棋盘坐标系；可选截图模式（`--shot=`） |
+| `client/tools/plane_on_screen_check.gd` | **新增** | 321 | headless 验收（**76 条断言**）：场景加载 / 类身份 / 点数 / 逐 tick 揭示 / `_draw` 次数 / 点的内容 / 屏幕位置 |
+| `src/_scaffold/graphwar_plane_class.rs` | 改 | +34/−6 | **必需**（理由见 §43.3）：`FunctionEntry` 加 `fed` 记账；`has_revealing_function()` 的判据从"应喂 < 全长"改成"应喂 > 已喂" |
+| `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` | 重跑 | 2 行 | 只动 `src_tree_sha256`（`src_fns` 2311 不变：本批没加 `fn`） |
+| `docs/16-client.md` | +本节 | — | — |
+
+`client/src/**`、`client/scenes/**`、`client/*.tscn`、`client/run.sh`、`src/function_drawer.rs` /
+`src/graphwar_plane.rs`（纯逻辑）、`src/lib.rs`、别的 `*_class.rs`、`src/game.rs` **一行没动**；
+既有断言一条未改（本轮复跑：`curve_on_screen_check.gd` 96、`function_drawer_check.gd` 132、
+`draw_classes_check.gd` 235、`entity_drawer_check.gd` 72、`base_classes_check.gd` 117、
+`signal_classes_check.gd` 155、`spike_class_check.gd` 23、`gdext_check.gd` 24、
+`assemble_check.gd` 183、`recovered_view_check.gd` 57，**全 0 失败**）。
+
+### 43.2 验收：76 条断言 + 数字（**观测**）
+
+```text
+$GODOT --headless --path client --script res://tools/plane_on_screen_check.gd
+  → PLANE_ON_SCREEN 76 passed, 0 failed / EXIT=0
+```
+
+**核心一条**（本轮验收口径）：
+
+```text
+喂进去的点数（内核弹道） = 5314
+Line2D.get_point_count() = 5314      ← 屏幕上真有的点数
+```
+
+逐 tick 的揭示（脚本里**一次 `feed_functions` 都不调**，点数只可能来自 `_draw` 里的喂点循环
+`0x4b6339` → `0x4b69ec`；期望值按反汇编算式在 GDScript 里独立重写，不调 Rust 的
+`revealed_points`）：
+
+| tick | 独立算式 `min(5314, trunc(30·t))` | 本帧追加 | `Line2D.get_point_count()` |
+|---|---|---|---|
+| 1 | 30 | 30 | **30** |
+| 2 | 60 | 30 | **60** |
+| 3 | 90 | 30 | **90** |
+| 10 | 300 | 210 | **300** |
+| 60 | 1800 | 1500 | **1800** |
+| 177 | 5310 | 3510 | **5310** |
+| 178 | 5314（`30·178 = 5340 > 5314` ⇒ 封顶） | 4 | **5314** |
+| 同一 tick 再喂 | — | 0 | 5314 |
+
+`_draw` 的计数（`draw_call_count()`，**我方计数点**——Godot 的 `_draw` 没有信号可连）：
+
+```text
+进树后第一次断言：1（这一轮；帧时序不同可能是 3）
+每推进一个 tick：+1（断言的是**严格增加**，不是固定值）
+最后一次 report()：draws=7  rects=7  writes=8  processes=16  reveal_redraws=6
+      ⇒ drawn_rect_total() == draw_call_count()（每次 `_draw` 都画了那条棋盘框）
+```
+
+点**内容**也钉住（不是只把计数凑上去）：第 0 / 2657 / 5313 个点与内核弹道（f32 化后）
+逐点相等；`Line2D.default_color == #7D6800`；`position == (500,300)`、`scale == (20,-20)`、
+`width == 0.125`；三个采样点按 `to_pixel + 翻 y` 落在 `(140,402)` / `(570.5,433.7)` /
+`(999.9,395.4)`，全在 1000×600 的棋盘内。
+
+断言分布（三组）：
+
+| 组 | 条数 | 关键一条 |
+|---|---|---|
+| 类/方法表/内核/场景加载/`.tscn` 属性 | 33 | `plane.get_class() == "GraphwarPlane"`、`kernel.ping() == "pong:gdext"`（不是预览折线） |
+| 逐 tick 揭示（30 → 60 → … → 5310） | 23 | 每次推进后 `Line2D` 点数 == 独立算式，且 `_draw` 次数 +1 |
+| 揭完 + 点内容 + 屏幕位置 | 20 | `get_point_count() == 5314 == fed_points`、首/中/末点与弹道逐点相等 |
+
+> ⚠️ `--headless` 下**没有真窗口**：`get_viewport_rect()` 只有 64×64（脚本里打印了），
+> 所以"整条曲线在可见区域内"那一条只在**有显示器**时断言；headless 断言的是
+> "按 `to_pixel` 落在棋盘坐标系里"（这一条与窗口大小无关）。截图证据见 §43.5。
+
+### 43.3 为什么改了 `graphwar_plane_class.rs`（**必需**，附一个真 bug）
+
+§42.5 第 6 条早就写着"**谁让平面每帧重画未解**"，本类补的是我方选择（`_process` 里
+"正在揭示就 `queue_redraw`"）。本轮把它接进场景后，**这条补丁自己露出了一个死角**：
+
+```text
+判据原来是   revealed_points(tick) < points.len()
+真实弹道 5314 点，tick 177 ⇒ revealed = 5310 < 5314  ⇒ 请求重画 ⇒ `_draw` 喂到 5310 ✓
+                tick 178 ⇒ revealed = 5314 == 5314  ⇒ **算"揭完"** ⇒ 不再请求重画
+⇒ 最后一帧的 `_draw` 永远不会来 ⇒ 剩下的 4 个点**永远喂不进去**
+⇒ 验收口径"Line2D 点数 == 喂进去的点数"卡在 5310（第一次跑就是红的：5310 vs 5314）
+```
+
+改法（两处，都带注释）：
+
+* `FunctionEntry` 加一个 **我方记账** 字段 `fed`：这个 id 已经通过 `update_function` 喂到第几点
+  （原版这个数在 `FunctionDrawer` 的 value 里，即 §40.3a 的 `bucket+0x28`；本类从
+  `FunctionDrawer::written()` **读不到**——那是 `#[func]`，Rust 侧没有入口）；
+* `has_revealing_function()` 改成"**应喂 > 已喂**"：只要还有该露而没露的点，就请一帧重画。
+
+档位：判据本身是**我方选择**（原版 `process` `0x4b83f0` 里没有 `queue_redraw`，§42.5 第 6 条
+照旧）；改的不是复原出来的行为，是我们自己那条补丁。**副作用为零**：`feed_functions()` 的
+返回值、`append_window` 的唯一判定、`update_function` 的入参形状一个都没变，
+`curve_on_screen_check.gd`（96 条，含"进树 ⇒ 30 点"那条）复跑仍全过。
+
+### 43.4 这条"真实弹道"的档位（**别当成原版真值**）
+
+| 项 | 值 | 档位 / 出处 |
+|---|---|---|
+| 函数文本 | `"cos(x)"` | **观测**：`fixtures/protocol_match.jsonl` 第 20 行 `{"FunctionUpdateRequest":{"player_id":232,"function":"cos(x)"}}`（第二轮真实抓包，166 帧去重成 109 条，见 `docs/09-network.md` §1.4） |
+| player id | `232` | **观测**：同一份抓包第 21 行 `{"FunctionFireRequest":{"player_id":232}}` |
+| 起点 / 方向 | `(-18, -5.1)` / `+1` | **我方选择**：抓包的开火报文**只有** player_id，坐标与方向在客户端（士兵位置）⇒ 没有报文证据 |
+| 点序列本身 | 5314 个点 | **推断**：由复原的 `graphwar_shot_calculator` / `graphwar_path_calculator` 算出（`cargo test` 与 C ABI 同口径），**不是**截下来的原版运行时点。缺的证据：原版 `GraphwarFunctionManager::set_function_points`（`0x456810`）的写入者 `0x3e44d4` 归属未证（§42.5 第 1 条照旧） |
+| 点精度 | f32（`PackedVector2Array`）→ f64 → `PackedVector2Array` | **观测**：窄化发生在内核 API 边界（`src/_scaffold/api.rs` 的 `v2()`），与 `FunctionDrawer` 里那两条 `cvtsd2ss` 是同一处掉队（§40.4b），不额外丢精度 |
+| 队色 | `0x0000687D`（= `#7D6800` = `Color8(125,104,0)`） | **观测**：真帧量测的弹道色（§12.2 ⑫，= `TEAM_COLORS[0][2]`）；打包时**低字节 = R**（§40.3h） |
+
+### 43.5 截图（可选证据，**怎么重新生成**）
+
+PNG 属于"二进制衍生内容"，**不入库**（`AGENTS.md` 三条硬规矩第 3 条）。想留图就放到 gitignored
+目录（例如 `.agent-work/` 或 `rsc/` 之外的自建目录），命令是：
+
+```text
+# 1) 构建 + 覆盖 .so + import（§42.6 那三步）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --import
+
+# 2) 抓一帧（需要 Xvfb / 显示器；headless 没有渲染器，拿不到图）
+xvfb-run -a "$GODOT" --path client --rendering-driver opengl3 \
+    res://tools/plane_on_screen.tscn -- --shot=<gitignored 目录>/plane_on_screen.png
+```
+
+本轮实测（Xvfb，`MODE_MAXIMIZED` ⇒ 窗口 2560×1566；棋盘 1000×600 居中）：
+
+```text
+SCREENSHOT path=…/plane_on_screen.png err=0 size=2560x1566 samples=150000 line_pixels=645 bg_pixels=147761
+SCREENSHOT_TOP_COLORS ["0e251c=147761", "000000=1594", "7d6800=645"]
+```
+
+* `samples` = 棋盘矩形内**每 2 像素**采一次（500×300 = 150000）；
+* `line_pixels=645` ⇒ 颜色距 `#7D6800` ≤ 0.12 的采样点（全分辨率约 4×645 ≈ 2580 像素）
+  —— 这就是"曲线真的被画到屏幕上"的像素级证据，不是只涨计数器；
+* `000000=1594` = `GraphwarPlane::draw` 画的那条棋盘框（空心黑框，`BOARD_*` 常量）；
+* `0e251c` = `project.godot` 的 `default_clear_color`（按位等于原版 `#0E251C`，观测记录在 §5.1 第 ② 行）。
+* 退出码：**Godot 自己退 0**；外层 `xvfb-run` 在 teardown 时会打
+  `kill: (…)- 没有那个进程` 并以 1 退出（它的老毛病，与本次运行无关）。
+  `ObjectDB instances leaked: DisplayServer / NativeMenu` 两条是引擎内部的，不是本场景的节点。
+
+### 43.6 要替换现有仿制品，得动什么（清单：**5 个 `.gd` / 6 个节点位置 / 7 个缺口**）
+
+现有播放屏的棋盘是 GDScript 仿制品（`client/src/screens/play_screen.gd` 自己 `new` 出来、
+自己 `draw_polyline`）。**本轮没动它**——本任务只证明真类能在场景里画出来。
+
+**（a）要删的 2 个 `.gd`**
+
+| 文件 | 行数 | 它替代的是哪个原版类 | 换成 |
+|---|---|---|---|
+| `client/src/play/plane_view.gd`（`GwPlaneView`） | 527 | `GraphwarPlane` + `AxisDrawer` + `EntityDrawer` + `ObstacleDrawer`（+ `FunctionDrawer`） | `GraphwarPlane`（本轮验过）+ 下面 (b) 的节点 |
+| `client/src/play/fire_fx.gd`（`GwFireFx`） | 261 | `GraphwarPlane::draw` 尾部的喂点循环（`0x4b6339`–`0x4b6a13`）+ 准备圈 | `GraphwarPlane.set_fractional_tick()` + Rust `_draw` 里的 30 点/tick（本轮验过） |
+
+**（b）要存在的 6 个节点位置**（现在 1 个都没有）
+
+| # | 原版 | 现在的仿制品在哪 | 状态 |
+|---|---|---|---|
+| 1 | `GraphwarPlane`（棋盘框 + 脏矩形 + 3 个 `FunctionDrawer`） | `GwPlaneView._draw` / `_draw_border` | **真类已存在**，本轮验过 |
+| 2 | `FunctionDrawer`（每个 player id 一条 `Line2D`） | `GwPlaneView._draw_path` + `path_reveal` | **真类已存在**，本轮验过 |
+| 3 | `EntityDrawer`（士兵 / 准备圈 / 名字） | `GwPlaneView._draw_soldiers` / `_draw_ready_rings` | 真类已存在（§33），**还没挂进播放屏** |
+| 4 | `AxisDrawer`（网格线） | `GwPlaneView._draw_grid` | 真类已存在，**还没挂** |
+| 5 | `EffectDrawer`（爆炸/火花） | `client/src/game/effect_layer.gd`（`GwEffectLayer`） | 真类已存在，**还没挂** |
+| 6 | `ObstacleDrawer`（障碍圆 + 脏矩形） | `GwPlaneView._draw_obstacles` | **类还不存在**（§40.5 / §42.5 第 7 条） |
+
+**（c）要改的 2 个 `.gd` + 1 个验收脚本**
+
+* `client/src/screens/play_screen.gd`（2610 行）：**44 处** `_plane.*` 调用（12 个方法/字段名：
+  `set_path`×5 / `clear_path`×8 / `set_targets`×6 / `set_obstacles`×4 / `set_soldiers`×2 /
+  `set_show_names`×3 / `set_axis_mode`×3 / `path_color`×5 / `path_points`×2 / `queue_redraw`×2 /
+  `add_child`×3 / `soldiers`×1）+ 3 处节点创建（`_plane = GwPlaneView.new()` 在第 301 行、
+  `_fire_fx` 第 306–309 行、`_effects` 第 311–314 行）；
+* `client/src/game/effect_layer.gd`：它靠 `plane.plane`/坐标换算画特效，换成 Rust 的
+  `EffectDrawer` 后这段映射要去掉；
+* `client/tools/selftest.gd`：**18 处**读 `plane.path_points` / `plane.path_reveal` 的断言
+  （回放/开火的既断言）要改成读 `GraphwarPlane` 的方法。
+
+**（d）还差的 7 个东西**（缺证据，不是缺代码）
+
+1. **点的生产者**（§42.5 第 1 条）：`set_function_points`（`0x456810`）的写入者 `0x3e44d4`
+   归属未证 ⇒ 本轮只能由场景注入；
+2. **tick 源**：`GraphwarTickHandler::get_fractional_tick`（`0x519530`）+ u32 tick 字段
+   还没接（本轮由场景推）；
+3. **`update_transform` 的三个实参**（§42.5 第 4 条）：本轮按 `to_pixel` 摆的
+   `position=(500,300)` / `scale=(20,-20)`，是**我方选择**，不是原版实参；
+4. **淡出**：`get_function_fade_on_tick` 没有 x86 落点（走 GOT 槽 `0x9bbd08`）⇒ 没接；
+5. **`z_index` 初值未知**（§40.3f）；
+6. **`FunctionDrawer::draw`**（arm64 `0x3911b4`）x86 侧仍未定位（不影响曲线：曲线是 `Line2D`）；
+7. **棋盘底色/网格/队色表**（`get_team_overview`，`0x4be6e0` 的两张表）没接 ⇒ 截图里棋盘内部
+   是工程底色，只有那条空心黑框 + 曲线。
+
+### 43.7 还没做 / 未知（诚实清单）
+
+* **客户端播放屏仍是仿制品**：本轮只证明"真类 + 真弹道 + 真喂点路径能画出来"（§43.6 是路线图）。
+  §42.5 第 5 条那句"客户端还没用真类"**对播放屏仍然成立**，只在这里补一条：
+  现在**存在**一个能跑的场景（`client/tools/plane_on_screen.tscn`），不再是"只能 headless 调方法"。
+* **`_process` 里那条重画策略仍是我方选择**（§43.3 改的是它的一个死角，不是复原它）。
+* **`fed` 是第二份记账**：原版在 `FunctionDrawer` 的 value 里（§40.3a），本类在棋盘侧又记一份。
+  两份**不会分叉**（都只由 `update_function` 的追加决定），但这是"本类没有 `FunctionDrawer`
+  的 Rust 入口"造成的重复；等 `FunctionDrawer` 的访问器公开后应删掉这一份。
+* **截图里的棋盘内部没有网格/底色**（原版有；`AxisDrawer` 与 `GraphwarPlane::draw` 的
+  `draw_set_transform` 实参都还没定死）。
+* **`--headless` 的视口是 64×64**（不是 1600×900）：任何"像素位置"类断言在 headless 下
+  只能测到"棋盘坐标系里对不对"，测不到"窗口里对不对"；后者靠 §43.5 的截图。
+
+### 43.8 复现（三分钟）+ 回归数字（本分支实测）
+
+```text
+export CARGO_HOME=<工作区>/.cargo-home CARGO_TARGET_DIR=<工作区>/target
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so   # 不覆盖就还在跑旧内核
+"$GODOT" --headless --path client --import                              # 新增 .gd/.tscn 后必须
+"$GODOT" --headless --path client --script res://tools/plane_on_screen_check.gd ; echo "EXIT=$?"
+    # PLANE_ON_SCREEN 76 passed, 0 failed / EXIT=0
+cargo test --offline                              # 1520 passed, 0 failed（基线同数）
+cargo test --offline --features gdext-bindings     # 1595 passed, 0 failed
+python3 tools/coverage_matrix.py --check           # OK
+```
+
+`bash client/run.sh selftest`（无 assets）：本环境 **530 passed / 2 failed / 25 skipped**
+（退出码 1）。⚠️ 任务书写的基线是 **606 / 2 / 23**，**这里复现不出来**：把
+`src/_scaffold/graphwar_plane_class.rs` 退回 `418319d`、重编 `.so` 再跑一遍，数字**逐字相同**
+（530/2/25）⇒ 差异来自环境（缺 `assets` / 缺回放样本：日志里 `SKIP 回放：约定的样本 … 不在`），
+**不是本批改动造成的**。两条 FAIL 也是既有的（Skins 页皮肤、Cancel/Start 按钮宽度）。
