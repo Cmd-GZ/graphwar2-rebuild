@@ -11,8 +11,8 @@
 > ⚠️ **条数口径（2026-11-07 深夜审计，先读）**：本篇按**轮次**记录，各节里的
 > `cargo test` / `selftest` 条数（`1488` / `1494` / `1499` / `1512` / `1584` / `1586` …）
 > 都是**那一轮当场的读数**，**不是现行基线**。
-> **现行基线**（本机 2026-11-07 深夜复测）：`cargo test --offline` **1520**、
-> `--features gdext-bindings` **1595**（lib 464 / 539，见 README 表格）、`bash client/run.sh selftest`
+> **现行基线**（本机复测，2026-11-07 深夜 + CG 第三轮合并后重算）：`cargo test --offline` **1559**、
+> `--features gdext-bindings` **1638**（lib 489 / 568，见 README 表格）、`bash client/run.sh selftest`
 > **694**（前置条件 = `client/assets/` + `examples/serve_match` + 用 `run.sh` 的默认 `XDG_*`；
 > 缺资产的机器是 **591 / 2 / 23**，补了 `serve_match` 是 **667 / 2 / 21` —— 旧文里的 `606` 复现不出来）。
 > 复原进度**不看这些条数**（`AGENTS.md` §0.2）。
@@ -5993,8 +5993,8 @@ godot --headless --path client --import
 godot --headless --path client --script res://tools/entity_drawer_check.gd
 
 # 4) 回归保护（与本节无关的两条硬要求）
-cargo test --offline                          # lib 457 / 总计 1488（当轮；现行 1520）
-cargo test --offline --features gdext-bindings # lib 463（457 + 本类 6 条）/ 总计 1494（当轮；现行 1595）
+cargo test --offline                          # 现行 lib 489 / 总计 1559（本节当轮是 457 / 1488）
+cargo test --offline --features gdext-bindings # 现行 lib 568 / 总计 1638（本节当轮是 463 / 1494）
 bash client/run.sh selftest                   # 694 passed（默认 feature 的 .so）
 ```
 
@@ -7862,8 +7862,8 @@ grep -a -c line_instance_id client/libgw2_rebuild.so                    # 3
     # CURVE_ON_SCREEN 96 passed, 0 failed / EXIT=0
 "$GODOT" --headless --path client --script res://tools/function_drawer_check.gd   # 132 passed（未回归）
 "$GODOT" --headless --path client --script res://tools/draw_classes_check.gd      # 235 passed（未回归）
-cargo test --offline                              # 1512 passed（当轮基线；现行 1520）
-cargo test --offline --features gdext-bindings     # 1586 passed（当轮；现行 1595。含本批 3 条单测）
+cargo test --offline                              # 1512 passed（当轮基线；现行 1559）
+cargo test --offline --features gdext-bindings     # 1586 passed（当轮；现行 1638。含本批 3 条单测）
 python3 tools/coverage_matrix.py --check           # OK
 ```
 
@@ -8288,6 +8288,10 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
 
 ⇒ 本节只动 `_scaffold/` 与 5 个 manager 的**接线层**，一条几何/弹道代码都没碰，
 三条轴逐数字不动，符合"接线层不该动几何"的预期。
+
+> 上表是 §44 的**当轮读数**（与 `CG@418319d` 基线逐数字相同，**数字原样保留**）。
+> 现行值见 `docs/06` §24.4 审计表：`fire` **331** / `batch` **355** / `batch_conv` **633**（内容命中），
+> `batch_conv` 种类序列 **1075**。
 
 **新增 16 条的构成**：2 条（两个新 `#[func]` 存在）+ 2 条（27 条整串 / 条数）+
 5 条（5 个 manager 各一条关键值）+ 5 条（5 个槽仍报 `stub`，反面）+ 2 条（幂等 / 未知名字）。

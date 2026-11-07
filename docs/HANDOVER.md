@@ -11,7 +11,7 @@
 协议       **74 / 74 全字段 + 74 / 74 判别值 + 7 个线上枚举全集**（已无未知）
 GDExtension 类   12 / 12 全部还原
 真名       327 个函数有原版方法名 + x86 地址（fixtures/name_to_addr.tsv）
-cargo      **1520 passed / 0 failed**（lib 464；`--features gdext-bindings` **1595**，lib 539）
+cargo      **1559 passed / 0 failed**（lib 489；`--features gdext-bindings` **1638**，lib 568）
 客户端自检   **694 passed / 0 failed**（前置：`client/assets/` + `examples/serve_match`；
            缺资产是 591 / 2 / 23 —— 两个口径见 README「客户端自检的两个口径」）
 ```
@@ -71,9 +71,9 @@ git diff --name-only master..CG
 ## 6. 当前状态（2026-11-08 凌晨）
 
 ```
-master @ 已并入本次更新；cargo 1520 passed / 0 failed
+master @ 已并入本次更新；cargo 1559 passed / 0 failed（`--features gdext-bindings` 1638）
 任务书：01–08（第一轮，已完成并合并）
         09–14（第二轮，已完成并合并；11 是负结果）
-        15–19（第三轮，待派发）
+        15–19（第三轮，**已完成并合并**：`a8788b61`，含 4 处手工裁决）
 下游：第二轮报告在 dispatch/reports/CG-round2-2026-11-07.md
 ```

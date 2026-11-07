@@ -405,7 +405,8 @@ $ bash client/run.sh selftest
 ```
 
 > **审计（2026-11-07 深夜）**：本节原记「`64 个 test 二进制；lib 457 / 总计 1488 / 0 failed`、
-> 两种 feature 的条数**完全相同是巧合**」。**实测现在是默认 1520 / gdext 1595**（lib 464 / 539），
+> 两种 feature 的条数**完全相同是巧合**」。**该轮实测默认 1520 / gdext 1595**（lib 464 / 539；
+> 那是**当轮读数**，现行是默认 **1559** / gdext **1638**，lib 489 / 568，见 README 表格），
 > 两者**并不相同** ⇒ "完全相同是巧合"那句解释**作废**（它是早期只有 4 条 `gdext_mod` 单测时的现象）。
 > 现在的差来自：feature 打开时手写 `gdext.rs` 的入口不编译，而 `gdext_mod.rs` 与各 `*_class.rs`
 > 补进更多单测。**条数是回归保护，不是复原进度**（`AGENTS.md` §0.2）。
@@ -739,7 +740,8 @@ Android 真要出 APK 还缺 `client/export_presets.cfg` + Android SDK + JDK。
 
 ### 11.9 回归
 
-改了 `src/` ⇒ 本机默认 target 重跑 `cargo test --offline`：**lib 464 / 总计 1520**、0 failed、
+改了 `src/` ⇒ 本机默认 target 重跑 `cargo test --offline`：**lib 464 / 总计 1520**（**当轮读数**；
+现行 lib 489 / 总计 **1559**）、0 failed、
 1 ignored（与基线一致）（**审计**：本节原记「lib 457 / 总计 1499」，2026-11-07 深夜复测 464 / 1520）；
 重跑 `tools/coverage_matrix.py` 后 `--check` **OK**，
 两个生成物一起提交（差异只有 `src_tree_sha256` 与 `src_fns 2171 → 2175`，

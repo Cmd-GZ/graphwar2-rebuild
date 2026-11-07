@@ -1211,7 +1211,7 @@ d) 的子因（同一套工具输出）：
 
 `cargo test --offline` 1514 通过（基线 1512 + 本次新增 2 条：
 `game::tests::hole_point_is_the_explosion_point_not_the_sampled_stop`、
-`game::tests::queued_and_expired_destroy_points_are_identical`；现行基线 **1520**，见 README）；
+`game::tests::queued_and_expired_destroy_points_are_identical`；现行基线 **1559**，见 README）；
 `python3 tools/coverage_matrix.py --check` OK。
 
 ### 12.6 仍然未知 / 缺什么证据
