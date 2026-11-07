@@ -526,10 +526,12 @@ pub fn slot_status(name: &str) -> &'static str {
 //
 // 但它们的档位**仍然是 `Stub`**，理由（两条，都是硬的）：
 //
-// 1. **原版的 72 / 32 / 80 字节结构体仍然没复原**：`GraphwarTickHandler` 的字段是本轮
-//    按指令读出来的（见 `graphwar_tick_handler.rs` 的文档块），
-//    `GraphwarFunctionManager` / `GraphwarObstacleManager` 的字段布局**一个都没解**
-//    （`name_to_addr.tsv` 只给到函数名与落点）；尺寸必然不等；
+// 1. **原版的 72 / 32 / 80 字节结构体仍然没复原** —— ⚠️ **2026-11-08 任务 22 起这条要分开读**：
+//    * `GraphwarTickHandler`(72 B)：字段按指令读出来（见 `graphwar_tick_handler.rs` 的文档块）；
+//    * `GraphwarFunctionManager`(32 B / 4 字段) 与 `GraphwarObstacleManager`(80 B / 5 字段)：
+//      **布局已解**（`docs/16` §46，档位 观测；arm64 / x86 Linux / Windows DLL **三向偏移序列逐条相同**，
+//      并各有编译期 `size_of` 断言 + 逐字段 `offset_of!` 单测）。
+//      ⇒ 这两型的 `stub` 现在**只剩"行为未实现"一条理由**，"结构未复原"已不成立；
 // 2. 静态台账 `Wired::status()` / `module_impl_type` 的"`stub` / `—`"是**上一轮已经
 //    进断言**的口径（`assemble_check.gd` 的 22×4 逐槽断言里有它），本轮**不改既有断言**。
 //
