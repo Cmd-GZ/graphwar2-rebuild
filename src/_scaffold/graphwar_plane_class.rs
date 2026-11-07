@@ -50,7 +50,7 @@
 //! | tick 从哪来 | 每帧从 `GraphwarTickHandler` 读（u32 tick + `get_fractional_tick` `0x519530`） | 调用方 [`GraphwarPlane::set_fractional_tick`] | 原版**观测**；接线**未做**（没有 tick handler 模块） |
 //! | 淡出 | `update_function_fade`（`0x4b6a0e`），alpha = `get_function_fade_on_tick` 的返回 | **没接**：那个函数**没有 x86 落点**（走 GOT 槽 `0x9bbd08`），算式未知 | **未知** |
 //! | `update_transform`（位置/宽度/缩放） | `0x4b6147`，实参解出一半（见 §41.5） | **没接** | **未知**（解出的部分自相矛盾，别照抄） |
-//! | 每帧重画的来源 | `process` 里没有 `queue_redraw` 的直接调用（未解） | `_process` 里"有曲线正在揭示就 `queue_redraw`" | **我方选择** |
+//! | 每帧重画的来源 | `process` 里没有 `queue_redraw` 的直接调用（未解） | `_process` 里"**还有该喂没喂的点**（应喂 > 已喂）就 `queue_redraw`"（§43 修的：原来按"应喂 < 全长"判，最后一小段永远喂不进去） | **我方选择** |
 //!
 //! ⇒ 这个类证明的是「**子节点意图 / 脏矩形 / 棋盘框常量 / 喂点路径**能真的落到引擎上」，
 //! **不是**"棋盘已经能玩"：曲线现在真的会往 `Line2D` 里长点（headless 实测点数 60→90→100），
@@ -244,6 +244,16 @@ struct FunctionEntry {
     active_tick: i64,
     /// 队色 `0x00RRGGBB`（原版由 `get_team_overview` 的两张表查出来；本类由调用方给，见 §41.5）。
     color: u32,
+    /// **我方记账**：这个 id 已经通过 `FunctionDrawer::update_function` 喂进去几个点。
+    ///
+    /// 原版这个数字也存在——在 `FunctionDrawer` 的 value 里（`usize` 已写入数，
+    /// `docs/16-client.md` §40.3a 的 `bucket+0x28`）。本类不从那边读，因为
+    /// `FunctionDrawer::written()` 是 `#[func]`（GDScript 侧的方法），Rust 侧拿不到；
+    /// 记一份是为了让 [`GraphwarPlane::has_revealing_function`] 能判断
+    /// "**还有该喂但没喂的点**"（§43 的验收：曲线要能揭到最后一个点）。
+    /// 曲线不会变短（`append_window`），所以这个数**只增不减**；同一 id 被重新注入点数组时
+    /// 归 0（重新对齐，不会造成重复追加——`append_window` 仍是唯一判定）。
+    fed: usize,
 }
 
 /// `PixelRect`（**角点**：`min_x/min_y/max_x/max_y`）→ `PackedInt32Array`。
@@ -392,7 +402,8 @@ impl IControl for GraphwarPlane {
         //
         // ⚠️ **证据缺口（推断）**：原版 `process`（`0x4b83f0`）里只有
         // `ObstacleDrawer::update` ×2 + `get_team_overview`，**没有** `queue_redraw` 的直接调用，
-        // 所以"谁让平面每帧重画"**没解出来**。本类按"正在揭示就重画"补上，档位：我方选择。
+        // 所以"谁让平面每帧重画"**没解出来**。本类按"还有该喂没喂的点就重画"补上
+        // （判据与那个死角见 `has_revealing_function` 的文档），档位：我方选择。
         if self.has_revealing_function() {
             self.reveal_redraws += 1;
             self.base_mut().queue_redraw();
@@ -588,6 +599,7 @@ impl GraphwarPlane {
                 points: pts,
                 active_tick,
                 color: (color as u32) & 0x00ff_ffff,
+                fed: 0,
             },
         );
         len
@@ -677,9 +689,10 @@ impl GraphwarPlane {
         for id in ids {
             let mut prefix = PackedVector2Array::new();
             let color;
+            let new_len;
             {
                 let entry = &self.functions[&id];
-                let new_len = revealed_points(ftick, entry.active_tick, entry.points.len());
+                new_len = revealed_points(ftick, entry.active_tick, entry.points.len());
                 for point in entry.points.iter().take(new_len) {
                     // 原版：`movsd` ×2 + `cvtsd2ss` ⇒ `add_point(Vector2, -1)`。
                     prefix.push(Vector2::new(point.0 as f32, point.1 as f32));
@@ -690,6 +703,10 @@ impl GraphwarPlane {
             // 而 `FunctionDrawer` 只补 `points[written..new_len]` ⇒ 传前缀是**等价**的
             // （§40.4b 已记过这条；`append_window` 仍是唯一判定）。
             appended += drawer.bind_mut().update_function(id as i64, prefix, color);
+            // 记账：本 id 现在"该喂到"哪一点（只增；曲线不会变短）。
+            if let Some(entry) = self.functions.get_mut(&id) {
+                entry.fed = entry.fed.max(new_len);
+            }
             self.function_write_total += 1;
         }
         self.function_point_total += appended;
@@ -836,13 +853,24 @@ impl GraphwarPlane {
         child.try_cast::<FunctionDrawer>().ok()
     }
 
-    /// 有没有曲线正处在"揭示中"（`new_len < points.len()` 且还在场）⇒ `_process` 要请求重画。
+    /// 还有"该喂但没喂"的点 ⇒ `_process` 要请求重画。
+    ///
+    /// **判据是"已喂 vs 应喂"，不是"应喂 < 全长"**。早先写的是后者
+    /// （`revealed_points(...) < points.len()`），它有一个真实的死角：当
+    /// `revealed_points` 第一次**恰好等于全长**时（`30*t >= len`，而 `len` 往往不是 30 的
+    /// 整数倍），这一帧已经算"揭完"⇒ `_process` 不再请求重画 ⇒ 引擎不会为它再调一次
+    /// `_draw` ⇒ **最后不足 30 个点永远喂不进去**（`docs/16-client.md` §43 里 5314 点的
+    /// 真实弹道就是卡在 5310）。改成比 [`FunctionEntry::fed`]（本 id 已喂到第几点）：
+    /// `应喂 > 已喂` 就必须再来一帧。
+    ///
+    /// ⚠️ 与 [`GraphwarPlane::process`] 里那条一样，这是**我方选择**：原版 `process`
+    /// （`0x4b83f0`）里**没有** `queue_redraw` 的直接调用，"谁让平面每帧重画"仍未解
+    /// （§42.5 第 6 条）。
     fn has_revealing_function(&self) -> bool {
         let tick = self.integer_tick();
         self.functions.values().any(|e| {
             is_active_function(tick, e.active_tick, e.points.len())
-                && revealed_points(self.fractional_tick, e.active_tick, e.points.len())
-                    < e.points.len()
+                && revealed_points(self.fractional_tick, e.active_tick, e.points.len()) > e.fed
         })
     }
 }

@@ -859,6 +859,62 @@ impl GraphwarRootNode {
     fn last_queried_screen(&self) -> GString {
         self.last_queried.clone()
     }
+
+    // ------------------------------------------------------------------
+    // ⚠️ 下面两个是**我方自造的观测口**（2026-11 任务 19），原版**没有**这两个方法。
+    //
+    // 为什么必须加：`RootWiring` 是 Rust 结构体，GDScript 只能调 `#[func]`；
+    // 在它之前，headless 侧**没有任何办法**触发一次 manager 交互（只能"数个数"）。
+    // 它们只做一件事：把 `RootWiring::interaction_selftest`（5 个 manager 各一次
+    // 最小交互，写 → 读回）**原样**交给验收脚本，**自己不返回任何常量**。
+    //
+    // 口径（`docs/16-client.md` §43）：
+    // * **只读**：不改变 22 个槽的注册、不碰 `Match` / `TurnManager` / `PlayerManager`
+    //   （那三个是别的断言在读的）；动的只有这 5 个 manager 自己表里的固定 id
+    //   （`9001..=9003`）与固定坐标，且每次调用末尾把发件箱取走；
+    // * **幂等**：连调两次返回**同一串** `名字=值`（验收脚本就是这么比的）；
+    // * **不是复原成果**：它证明的是"装配好的对象能交互"，不证明原版行为。
+    // ------------------------------------------------------------------
+
+    /// 5 个 manager 的"一次最小交互"结果，每条一个 `"名字=值"`（27 条）。
+    ///
+    /// 名字与期望值见 `docs/16-client.md` §43 的表；
+    /// Rust 侧的同一条断言是 `root_wiring.rs::tests::
+    /// one_minimal_interaction_per_manager_reads_back_the_written_value`。
+    #[func]
+    fn manager_probe_selftest(&mut self) -> PackedStringArray {
+        self.ensure_scene_graph();
+        match self.wiring.as_ref() {
+            Some(w) => {
+                let mut out = PackedStringArray::new();
+                for line in w.interaction_selftest_strings() {
+                    out.push(&GString::from(line.as_str()));
+                }
+                out
+            }
+            None => PackedStringArray::new(),
+        }
+    }
+
+    /// 单条查询：[`GraphwarRootNode::manager_probe_selftest`] 里那个 `"名字=值"` 的**值**。
+    ///
+    /// 未知名字 ⇒ 空串（不是 `"0"`，也不是 panic）。
+    #[func]
+    fn manager_probe(&mut self, name: GString) -> GString {
+        self.ensure_scene_graph();
+        let wanted = name.to_string();
+        match self.wiring.as_ref() {
+            Some(w) => match w
+                .interaction_selftest()
+                .into_iter()
+                .find(|(k, _)| *k == wanted.as_str())
+            {
+                Some((_, v)) => GString::from(v.as_str()),
+                None => GString::new(),
+            },
+            None => GString::new(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

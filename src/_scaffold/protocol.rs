@@ -746,6 +746,48 @@ mod broadcast_tests {
 // 消息序列化（只覆盖我们会主动生成的那些）
 // ---------------------------------------------------------------------------
 
+/// f64 → **serde_json / ryu 语义**的文本。
+///
+/// 为什么不能用 `format!("{}")`（`Display`）：它对整数值**丢掉 `.0`**（`15` vs `15.0`），
+/// 而且**永不**用指数记法——`2.638231208698597e-62` 会被写成 66 位小数。
+/// 回放/抓包是 serde_json 写的，所以逐字节比较时这 16 批全是"值同、字节不同"
+/// （`docs/06-verification.md` §25.2 / §30.6）。
+///
+/// 为什么 `{:?}`（`Debug`）几乎就够：它也是**最短往返**十进制，且定/指数分界与 ryu
+/// 只差**一档**——十进制点在 `kk == -4`（即 `|v| ∈ [1e-5, 1e-4)`）时 ryu 用**定点**
+/// （`-0.000043453289208041886`），而 `Debug` 用指数（`-4.3453289208041886e-5`）。
+/// 这一档由 [`fixed_for_small`] 补上；实测 16 批格式差先降到 1 批、补完归零（§30.6）。
+///
+/// 这不是"看着像"：`fixtures/protocol*.jsonl` 是真实抓包（ryu 写的）原文，
+/// 本模块的 `ryu_*` 测试把里面**每一个**浮点字面量重新格式化后逐字节比对。
+///
+/// 非有限值走 `null`：serde_json 不接受 `NaN`/`inf`，序列化成 `null`
+/// （本仓库解析侧也把 `null` 归到 `Kind::Null`）。
+pub fn emit_f64(v: f64) -> String {
+    if !v.is_finite() {
+        return "null".to_string();
+    }
+    let s = format!("{v:?}");
+    fixed_for_small(&s).unwrap_or(s)
+}
+
+/// `Debug` 的 `d.ddddde-5` → ryu 的定点写法 `0.0000ddddd`（只处理 `e-5` 这一档）。
+fn fixed_for_small(s: &str) -> Option<String> {
+    let (mant, exp) = s.split_once('e')?;
+    if exp != "-5" {
+        return None;
+    }
+    let (sign, mant) = match mant.strip_prefix('-') {
+        Some(m) => ("-", m),
+        None => ("", mant),
+    };
+    let digits: String = mant.chars().filter(|c| *c != '.').collect();
+    if digits.is_empty() {
+        return None;
+    }
+    Some(format!("{sign}0.0000{digits}"))
+}
+
 /// `{"TurnInfo":{"player_id":..,"soldier_id":..}}`
 pub fn emit_turn_info(player_id: i64, soldier_id: i64) -> String {
     format!(r#"{{"TurnInfo":{{"player_id":{},"soldier_id":{}}}}}"#, player_id, soldier_id)
@@ -758,11 +800,14 @@ pub fn emit_life_queued_death(entity_id: i64, tick: i64) -> String {
 
 /// `{"FunctionPoints":{"owner_id":..,"start_x":..,"start_y":..,"end_x":..}}`
 ///
-/// 浮点用 Rust 的最短往返表示（与抓包里的 `-16.405029008797804` 同形）。
+/// 浮点用 [`emit_f64`]（serde_json/ryu 语义），见那里为什么要用 `{:?}` 而不是 `{}`。
 pub fn emit_function_points(owner_id: i64, start_x: f64, start_y: f64, end_x: f64) -> String {
     format!(
         r#"{{"FunctionPoints":{{"owner_id":{},"start_x":{},"start_y":{},"end_x":{}}}}}"#,
-        owner_id, start_x, start_y, end_x
+        owner_id,
+        emit_f64(start_x),
+        emit_f64(start_y),
+        emit_f64(end_x)
     )
 }
 
@@ -770,7 +815,11 @@ pub fn emit_function_points(owner_id: i64, start_x: f64, start_y: f64, end_x: f6
 pub fn emit_effect_info(effect_id: i64, x: f64, y: f64, effect_type: &str, start_tick: i64) -> String {
     format!(
         r#"{{"EffectInfo":{{"effect_id":{},"pos_x":{},"pos_y":{},"effect_type":"{}","start_tick":{}}}}}"#,
-        effect_id, x, y, effect_type, start_tick
+        effect_id,
+        emit_f64(x),
+        emit_f64(y),
+        effect_type,
+        start_tick
     )
 }
 
@@ -845,6 +894,128 @@ mod emit_tests {
             );
             assert_eq!(got, line, "EffectInfo 序列化与抓包不一致");
         }
+    }
+}
+
+/// f64 打印的两条护栏（`docs/06` §30）。
+///
+/// * `ryu_fixtures_roundtrip`：**真实抓包原文**里的每一个浮点字面量，
+///   解析成 f64 再用 [`emit_f64`] 打回去，必须**逐字节**相同。
+///   （抓包是 serde_json/ryu 写的 ⇒ 这条把"布局规则"钉死在真值上。）
+/// * `ryu_known_divergences`：`Display`（`{}`）与 ryu **不一样**的那几类，
+///   逐条给出"旧写法 / 新写法"。这 6 条就是 §25.2 里 16 批格式差的原文对。
+#[cfg(test)]
+mod emit_f64_tests {
+    use super::*;
+
+    /// 从一条原始报文里扫出**字符串之外**的浮点字面量（含 `.` 或 `e`）。
+    fn float_literals(line: &str) -> Vec<String> {
+        let b = line.as_bytes();
+        let mut out = Vec::new();
+        let mut in_str = false;
+        let mut i = 0usize;
+        while i < b.len() {
+            let c = b[i];
+            if in_str {
+                if c == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if c == b'"' {
+                    in_str = false;
+                }
+                i += 1;
+                continue;
+            }
+            if c == b'"' {
+                in_str = true;
+                i += 1;
+                continue;
+            }
+            if c.is_ascii_digit() || c == b'-' {
+                let start = i;
+                while i < b.len()
+                    && (b[i].is_ascii_digit()
+                        || b[i] == b'.'
+                        || b[i] == b'-'
+                        || b[i] == b'+'
+                        || b[i] == b'e'
+                        || b[i] == b'E')
+                {
+                    i += 1;
+                }
+                let tok = &line[start..i];
+                if tok.contains('.') || tok.contains('e') || tok.contains('E') {
+                    out.push(tok.to_string());
+                }
+                continue;
+            }
+            i += 1;
+        }
+        out
+    }
+
+    #[test]
+    fn ryu_fixtures_roundtrip() {
+        let mut n = 0usize;
+        for text in [
+            include_str!("../../fixtures/protocol_match.jsonl"),
+            include_str!("../../fixtures/protocol_death.jsonl"),
+            include_str!("../../fixtures/protocol.jsonl"),
+        ] {
+            for line in text.lines() {
+                for lit in float_literals(line) {
+                    let v: f64 = lit.parse().expect("抓包里的浮点字面量应能解析");
+                    assert_eq!(emit_f64(v), lit, "抓包浮点原文 {lit} 往返不一致");
+                    n += 1;
+                }
+            }
+        }
+        assert!(n >= 20, "抓包夹具里的浮点字面量太少（{n}），这条护栏失去意义");
+    }
+
+    #[test]
+    fn ryu_known_divergences() {
+        // (值, 旧写法 `{}`, serde_json/ryu 写法)
+        let cases: [(f64, &str, &str); 6] = [
+            (0.0, "0", "0.0"),
+            (-9.0, "-9", "-9.0"),
+            (15.0, "15", "15.0"),
+            (2.638231208698597e-62, "0.00000000000000000000000000000000000000000000000000000000000002638231208698597", "2.638231208698597e-62"),
+            (1.7763568394002505e-15, "0.0000000000000017763568394002505", "1.7763568394002505e-15"),
+            (7.606517635480697e-19, "0.0000000000000000007606517635480697", "7.606517635480697e-19"),
+        ];
+        for (v, display, ryu) in cases {
+            assert_eq!(format!("{v}"), display, "旧写法（Display）变了？");
+            assert_eq!(emit_f64(v), ryu, "ryu 写法不一致：{v}");
+        }
+        // -0.0 / 极大值 / 指数阈值两侧
+        assert_eq!(emit_f64(-0.0), "-0.0");
+        assert_eq!(emit_f64(1e15), "1000000000000000.0");
+        assert_eq!(emit_f64(1e16), "1e16");
+        assert_eq!(emit_f64(0.0001), "0.0001");
+        // ⚠️ 这一档 ryu 用**定点**，Rust `Debug` 用指数（§30.6 唯一剩下的那 1 批）
+        assert_eq!(format!("{:?}", 0.00001), "1e-5");
+        assert_eq!(emit_f64(0.00001), "0.00001");
+        assert_eq!(format!("{:?}", -4.3453289208041886e-5), "-4.3453289208041886e-5");
+        assert_eq!(emit_f64(-4.3453289208041886e-5), "-0.000043453289208041886");
+        assert_eq!(emit_f64(-1.7763568394002505e-15), "-1.7763568394002505e-15");
+        // 非有限值：serde_json 不接受 NaN/inf，写 `null`
+        assert_eq!(emit_f64(f64::NAN), "null");
+        assert_eq!(emit_f64(f64::INFINITY), "null");
+    }
+
+    #[test]
+    fn emit_message_uses_ryu() {
+        // 整数值的 `end_x` / `pos_y` 必须带 `.0`
+        assert_eq!(
+            emit_function_points(7, 150.0, -9.0, 15.0),
+            r#"{"FunctionPoints":{"owner_id":7,"start_x":150.0,"start_y":-9.0,"end_x":15.0}}"#
+        );
+        assert_eq!(
+            emit_effect_info(3, 0.0, 15.0, "ExplosionEffect", 40),
+            r#"{"EffectInfo":{"effect_id":3,"pos_x":0.0,"pos_y":15.0,"effect_type":"ExplosionEffect","start_tick":40}}"#
+        );
     }
 }
 

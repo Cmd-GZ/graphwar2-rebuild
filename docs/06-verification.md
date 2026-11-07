@@ -2052,151 +2052,661 @@ cargo run --release --offline --example kseq_text  -- --dir $R --file 1782676398
 | 3 | 2 发 DiffEq 的 `corrected_function` 真值**既不补括号也不加后缀**，而 `game.rs` 恒按 Normal 加后缀 | `Match::fire` 的"按模式分"（收敛层 `diffconv` 已做，`game.rs` 没做） | **未知**（`docs/06` §28.9 第 4 条的同一件事） |
 | 4 | `hole_point` 里同一个模式（多余的 `)` 会让"按印刷文本回代"丢掉常数） | — | 实测**改掉它整份 401 回放 0 行差异**（md5 相同），所以**没改**（无证据的改动不做）；等有独立证据再动 |
 
-## 30. 把收敛层的**坐标计算**并回内核（第三轮工程债 #16，2026-11-07）
+## 30. 把 `diffconv` 的坐标计算**并回内核** + 两条路径的逐位一致性（2026-11-07，`dispatch/16-diffconv-merge`）
 
-> 起因：下游第二轮报告 §5 点名的"跨任务结构债"——`src/_scaffold/diffconv.rs` 的
-> `ConvPredictor` 与内核（`src/game.rs` / `graphwar_shot_calculator` / `graphwar_path_calculator`）
-> **各算一遍坐标**，并且已经真的导致过"同一批回放、两条路径得出不同结论"。
-> 双份实现本身就是 bug 源：对拍一出现分歧，先得怀疑"是驱动错了还是内核错了"。
+> 任务书：[`dispatch/16-diffconv-merge.md`](../dispatch/16-diffconv-merge.md)（P1，纯工程债）。
+> 点这个债的是 `dispatch/reports/CG-round2-2026-11-07.md` **§5**：`src/game.rs`（真实实现）与
+> `src/_scaffold/diffconv.rs`（收敛层）**各有一份**爆炸点/挖洞点算法，第二轮任务 09/14 只改了
+> `game.rs`、收敛层没跟上 ⇒ 同一批回放在两条路径上得出不同结论，以后每次对拍都得先怀疑
+> "是驱动错了还是内核错了"。
 >
-> 结论：收敛层里 **9 处**重复计算全部改成调内核（新增 1 个内核入口，**只加不改**）；
-> 两条路径在语料上**逐位相同**（可执行的断言，样本见 §30.5）；
-> 五条护栏数字**一个都没退**，`batch_conv` 轴反而 **595 → 612**（种类 **1074 → 1075**）。
+> ⚠️ 编号：任务书写"用 §28"，但本分支上 **§28（多发批结构接线）与 §29（1074/918→915 复核）已经存在**，
+> 所以本节用 **§30**（要 §28 的话得把既有两节整体挪号，不值）。
 
-### 30.1 先说清"两条路径"是谁
+### 30.1 一句话结论（四条）
 
-| 路径 | 代码 | 报文装配 | 采样模式 |
+1. **清单 = 7 条规则、11 处调用点**（§30.2）。其中 **9 处改成调内核同一个函数**、**1 处删掉**
+   （第三份采样）、**2 处保留**并标明是**假设探针**（H2：拿回放的文本重算，故意不同输入）。
+   收敛层现在**不再自己算任何一个坐标**。
+2. **核心验收过了，而且是逐位、全语料**：Normal 轴 **740 发 / 740 发**的点序列（逐坐标 `to_bits`）、
+   `stop`、`blocked`、`killed`（含顺序）、修正文本**全同**；挖洞点 **244 / 244** 逐位相同（§30.5）。
+   同一条断言在改之前是 **32 / 740**（§30.6 的正对照 ② —— 708 发的几何本来就**末位不同**）。
+3. **`DiffEq` 批（515 批 / 550 发）不可比，不并入分母**：内核开火路径把 `Mode::Normal` **写死**
+   （`src/game.rs::fire_functions`），DiffEq 局在内核里**没有**开火路径。这是**内核缺功能**，
+   不是"近似通过"（§30.4）。收敛层的 Ode 分派只能留在收敛层，理由是"内核那份不存在"。
+4. **回归全绿、且只升不降**：`fire` 内容 **325 / 1080**（未动，`src/game.rs` 一字未改）、
+   `batch_conv` 种类 **1074 → 1075**、内容 **595 → 612**（逐批 **变好 17 / 变差 0**）、
+   `cargo test --offline` **1525**（基线 1520，+5 条新断言）、`coverage_matrix --check` OK。
+
+### 30.2 清单：7 条规则、11 处调用点（改前 → 改后）
+
+| # | 位置（改前） | 它自己算的是什么 | 改后调的内核入口 |
 |---|---|---|---|
-| **内核**（A） | `src/game.rs::Match::fire_functions` / `fire_batch` | `src/game.rs::execute_results` | 恒 `Mode::Normal`（`docs/06` §29.7 第 3 条记着这个缺口） |
-| **收敛层**（B） | `src/_scaffold/diffconv.rs::ConvPredictor` | 自己拼（同序、同 `protocol::emit_*`） | **跟回放的 `FunctionModeInfo`** |
+| R1 | `corrected_function` 的函数体 + `unbalanced_brackets` | 修正文本：补 `)` + `± c.ddd` 后缀，**`c` 用原文解析的树** | `game::corrected_function_text`（`c` 用**去掉多余 `)` 的树**，`docs/06` §29） |
+| R2 | `settle::resolve` 内部（`shot_points(..., apply_correction=true)`） | 采样串：原文 + **全精度** `c`（`shifted_tokens`） | `game::sampling_function_text`（**印出来的三位小数**文本，`docs/06` §25） |
+| R3 | 同上 | 点序列：`calculate` + `SERVER_STEP` | `graphwar_shot_calculator::shot_points(…, apply_correction=false)` |
+| R4 | 同上 | 停点 / 阻断 / 致死 / 命中弧长 | `settle::resolve_points_owned` |
+| R5 | `fire_batch` ① 的 `others` 过滤器 | 射手排除**外加**一条 `1e-12` 位置排除 | 删掉：内核 `resolve_points_owned(owner)` **只比 id**（`docs/122` §4） |
+| R6 | `explosion_point(corrected, stop, …)` | 爆炸点：印出文本在 `±end_x` 处求值 + 非有限回退 | `game::hole_point`（产出路径） |
+| R7 | `fire_batch` ⑤ 的 `out.stop` | 挖洞点位置（**第一轮的老值**） | `game::hole_point`（挖洞点 ≡ 爆炸点，503/503 逐位） |
 
-两层的报文序列本来就**故意**不同（B 只为把"模式感知"验出来），
-所以"合并"合的是**坐标**，不是报文装配：B 的 `plan()` 现在就是
-`settle::resolve_shot()` 的投影，一行算式都没有。
+调用点（11）：
 
-### 30.2 清单：9 处重复计算 → 现在调谁（旧行号 = `02fdfe21`）
-
-`grep -n "shot_points\|calculate\|eval\|points" src/_scaffold/diffconv.rs` 起手，逐条核过：
-
-| # | 旧位置 | 原来算什么 | 问题 | 现在调 |
-|---|---|---|---|---|
-| 1 | `corrected_function` L55–68 | 修正文本（**发出去**的那一串） | 与 `game.rs::corrected_function_text` 同规则、两份实现；且用 `parse(原文)` 算 `c`，遇到多余的 `)` 会截断 | `settle::corrected_text(..).emitted` |
-| 2 | `unbalanced_brackets` L77–87 | 括号补齐 | 与 `game.rs::balanced_texts` 重复 | `settle::unbalanced_brackets` |
-| 3 | `explosion_point` L109–123 | 爆炸点 = 修正文本在 `±end_x` 回代 | 与 `game.rs::hole_point` 同规则、两份实现；`flip` 取反、非有限回退也各写一遍 | `settle::explosion_point` |
-| 4 | `fire_batch` L247–254 | 目标表过滤 | 重实现"排除射手"，还**多一条**二进制里没有的 `1e-12` 位置重合排除（`docs/122` §4 已删过这条） | 整张士兵表 + `owner` 一起递内核，内核只比 id |
-| 5 | `fire_batch` L255–265 | `settle::resolve(&原文, …)` | 采样的是**原文 + 全精度修正**，而真值采样的是**印成 3 位小数的修正文本**（`docs/06` §25：这一条让 `end_x` 从 27/739 修到 605/739） | `settle::resolve_shot`（内核规则） |
-| 6 | `fire_batch` L266–269 | 再算一遍修正文本 | 同一条输入在同一批里算两次 | `ShotGeometry.corrected` |
-| 7 | `fire_batch` ⑤ L327–343 | 挖洞点 = `out.stop`（**采样停点**） | 与内核 `hole_point` **正好相反**；证据在全语料 503/503 条 `DestroyObstacle` ≡ 同批 `EffectInfo(Explosion)`（`docs/14-turn.md` §12） | `ShotGeometry.explosion`（见 §30.4） |
-| 8 | `probe_file` L591 + L601 + L646 | `resolve(...)`、`shot_points(原文)`、`our_n` | **同一条弹道采样 3 次**（两次结果一样，第三次只为取长度） | 一次 `resolve_shot`，`n_points/tail/our_n` 从同一个 `points` 取 |
-| 9 | `probe_file` L626–635 + L636–645 | `h1_y` 回代求值；`h2`/`h2_n` 各采样一次 | 同一条**回放文本**采样 2 次 + 回代 1 次 | `h1_y` 用 `math_function::eval`（内核原语，输入是回放文本）；`h2`/`h2_n` **共用一次** `shot_points` |
-
-其中 **5 处**（#6、#8 的两处、#9 的两处）是"同一条输入算 2~3 遍"——纯粹的无用功，
-也是两份实现最容易漂的地方。
-
-### 30.3 新增的内核入口（`settle.rs`，**只加不改**）
-
-`git diff src/graphwar_shot_calculator/settle.rs` 的**删除行数 = 0**（既有语义一字未动）：
-
-| 新增 | 是什么 |
-|---|---|
-| `CorrectedText { emitted, sampled }` | 一条函数原文对应的**两串**修正文本（`docs/06` §29：发出串只补括号、采样串去掉多余的 `)`） |
-| `unbalanced_brackets(&str) -> usize` | `(` 减 `)`，下限 0 |
-| `corrected_text(text, x0, y0, flip, mode) -> CorrectedText` | `Mode::Ode` ⇒ 原文原样（550/550 零例外）；`Mode::Normal` ⇒ 括号处理 + `" ± c.ddd"`（`c` 由**补齐后**的树算） |
-| `explosion_point(emitted, stop, flip, mode) -> (f64, f64)` | 爆炸点 / 挖洞点：拿发出去的那串在 `±end_x` 回代，非有限回退停点 |
-| `ShotGeometry { outcome, corrected, explosion }` | 一发的**全部几何**（点序列 / stop / blocked / killed / hits / 两串文本 / 爆炸点） |
-| `resolve_shot(text, x0, y0, step, flip, mode, mask, targets, owner)` | **唯一**入口：两串文本 → `shot_points` → `resolve_points_owned` → `explosion_point` |
-
-为什么要放在**内核**而不是模板层：`game.rs` 那三份私有实现
-（`corrected_function_text` / `sampling_function_text` / `hole_point`）就是规则的既有参考，
-新入口用**单元测试**钉在它们上面（`settle.rs` 的 `mod tests`）：
-
-| 测试 | 钉住的东西 |
-|---|---|
-| `corrected_text_is_the_same_rule_as_the_kernel_copy` | 6 条语料原文上，`emitted`/`sampled` 与 `game::corrected_function_text`/`sampling_function_text` **逐字节相同** |
-| `explosion_point_is_the_same_rule_as_the_kernel_copy` | 5 条原文 × 3 个停点上与 `game::hole_point` **逐位相同**（`to_bits()`） |
-| `empty_function_is_a_documented_divergence_with_game_rs` | **已知分歧**写成断言：空函数时 `hole_point` 直接回停点，本节按"拿发出去的那串回代"给常数（语料 4 发，沿用收敛层既有行为） |
-| `resolve_shot_geometry_is_the_composition_of_its_parts` | 几何 == `shot_points` + `resolve_points_owned` 的组合（点序列逐点相等） |
-
-### 30.4 合并时抓到的**第二处**坐标分歧：挖洞点
-
-把 #7 对齐之前，两条路径的挖洞点/爆炸点**互为镜像**（实测 `1782675586#0`）：
-
-| 报文 | 收敛层（旧） | 内核 |
+| 调用点 | 规则 | 处置 |
 |---|---|---|
-| `QueueDestroyObstacle.pos_y` | **11.97**（采样停点） | **6.0**（回代爆炸点） |
-| `EffectInfo(ExplosionEffect).pos_y` | **6.0**（回代爆炸点） | **11.97**（采样停点） |
+| `fire_batch` ① `resolve(原文, …)` | R2/R3/R4 | 改为 `sampling_text` + `shot_points(…, false)` + `resolve_points_owned` |
+| `fire_batch` ① `others` 过滤 | R5 | 删（整张士兵表交内核） |
+| `fire_batch` ① `corrected_function` | R1 | 改为转调内核 |
+| `fire_batch` ⑤ 挖洞 `out.stop` | R7 | 改为 `hole_point` |
+| `fire_batch` ⑥ `explosion_point` | R6 | 改为 `hole_point` |
+| `probe_file` `resolve(原文, …)` | R2/R3/R4 | 同上（与预测器逐行同构） |
+| `probe_file` `shot_points(原文, true)`（pts / `tail` / `n_points`） | R2/R3 | 改为从 `ShotOutcome::points` 取（**少算一次**） |
+| `probe_file` `corrected_function`（`corrected_ours`） | R1 | 随 R1 转调内核 |
+| `probe_file` `shot_points(原文, true)`（`our_n`） | R2/R3 | **删**（第三份采样；现在 `our_n == n_points`） |
+| `probe_file` `shot_points(回放文本, true)`（`h2` / `h2_n`） | — | **保留**：H2 假设（拿**回放**的文本重算），输入本来就不同，不是重复计算 |
 
-两边各自内部自洽、彼此相反，而回放说 `DestroyObstacle` ≡ `EffectInfo(Explosion)`（503/503）。
-按证据（`docs/14-turn.md` §12：挖洞点 = 爆炸点）把 #7 对齐到内核规则后，
-收敛层这一侧的挖洞点指标从 **66/291** 变成 **205/293**（`replay_attrib --drive conv --policy strict`
-的延迟段，自跑，命令见 §30.6），死亡集合同时 **362/385 → 366/385**。
+留下的三样"没有内核对应物"的东西（都写明理由）：`mode_of`（回放字符串 → 采样模式）、
+`Mode` 分派（`Ode` 时采样原文、修正文本 = 原文）、`explosion_point`（吃**已印出**文本的旧签名助手，
+已不在产出路径上，用 §30.5 的等价性断言钉住它与 `game::hole_point` 逐位一致）。
 
-### 30.5 一致性验证（本任务的核心验收）
+### 30.3 为什么"并回内核"不会把收敛层变差（`Y` 类那处仍在）
 
-`tests/diffconv_kernel_consistency.rs`。比的是**两条独立代码路径**，不是"同一函数调两次"：
+`game::execute_results` 的 ④（`EffectInfo(ExplosionEffect)`）**当前仍写 `out.stop`**，
+而 ③（挖洞）已经用 `hole_point`（`docs/06` §24 的 `Y` 类、§26 的坐标来源）。收敛层现在
+**③④ 都用 `hole_point`**：
+* 这是照**内核的那条规则函数**走（不是照内核那份还没接线完的调用点走）；
+* 若为了"和内核一模一样"把 ④ 也降回 `out.stop`，收敛层内容会掉回 `Y` 桶（§24：170 批），
+  而回放侧的铁证是 **503/503 条 `DestroyObstacle` 与同批 `ExplosionEffect` 坐标逐位相同**；
+* 差多少是**量化**的：全语料 **20 / 740 发**（`§30.5` 的"爆炸点相同 720 / 740"），
+  这就是"内核 ④ 未接线"的剩余量，不是收敛层算错，也不能藏起来。
 
-| 断言 | 怎么比 |
+### 30.4 `DiffEq`：内核**没有** Ode 开火路径（内核缺口，本任务不许改 `game.rs`）
+
+`src/game.rs::fire_functions` 里写死的是：
+
+```rust
+let points = crate::graphwar_shot_calculator::shot_points(
+    &corrected, s.x0, s.y0, crate::SERVER_STEP, s.flip,
+    crate::graphwar_path_calculator::Mode::Normal,   // ← 写死
+    false,
+);
+```
+
+⇒ 对 DiffEq 房间，内核路径按 `y = f(x)` 采（错），收敛层按 RK4 采（对，`docs/142` §3）。
+两种结论不可能逐位相同，所以 **DiffEq 批不进分母**：全语料 **515 批 / 550 发**（Normal 是 565 批 / 740 发，
+合计 1080 批 / 1290 发）。这是本节唯一的"做不到"，性质是**内核缺功能**：
+`game.rs` 不在 `dispatch/16` 的允许改文件里，且 §29.7 第 3 条已经把它登记成**未知**
+（"`Match::fire` 的按模式分，收敛层已做、`game.rs` 没做"）。要让这条也变成"逐位"，下一步得在
+内核开火路径上加 `Mode` 入参 —— **另开任务**，不在本节。
+
+### 30.5 一致性断言怎么写（可复跑）
+
+对拍器就放在收敛层里（`src/_scaffold/diffconv.rs` 末尾）：`parity_file` / `parity_dir` / `Parity`。
+两条路径对**同一批回放**跑同一批：
+
+| 路径 | 是什么 |
 |---|---|
-| ① **点序列** | `ConvPredictor::plan()` 的 `outcome.points` vs `Match::fire_functions()` 的 `points`：长度 + 每点 `(x.to_bits(), y.to_bits())` |
-| ② **stop / blocked** | `stop.x/.y` 的 `to_bits()` + `blocked` |
-| ③ **killed** | `id` 序列 + 每个命中的 `(arc.to_bits(), index)`（同时回合制按弧长排死亡，弧长必须逐位） |
-| ④ **effect 序列** | 两侧 `fire_batch` 的报文逐条比：`kind` + 除 `tick`/`effect_id` 外**每个字段的原始文本**；唯一的已知差异是 `EffectInfo(ExplosionEffect).pos_y`（内核发停点、收敛层发回代点，`game.rs` 的 `Y`/`Y2` 轴），并且**两侧各自**都必须等于自己那条规则的输出 |
+| K | `game::Match::fire_functions`（只算几何、不改状态）+ `Match::fire_batch`（同一批真正结算一遍） |
+| C | `ConvPredictor::fire_batch` |
 
-**样本**（自跑，401 份定格快照；两种档位都跑过）：
-
-```text
-全量（GW2_CONSISTENCY_FILES=0）：
-  回放 145 份 / 结算批 565 / 发 740 / 报文 6119 条      逐位、逐条相同
-  跳过 DiffEq 141 份（内核恒 Normal，两侧规格本不同） / 读不了 115 份
-  Explosion.pos_y 已知差异 20 条（其余 6099 条全同）
-
-默认（排序后前 60 份，`cargo test` 走的就是这一档）：
-  回放 60 份 / 结算批 120 / 发 172 / 报文 1452 条
-  跳过 DiffEq 5 份 / 读不了 11 份；Explosion.pos_y 已知差异 12 条
-```
-
-跑法：
-
-```bash
-export CARGO_HOME=<ws>/.cargo-home CARGO_TARGET_DIR=<私有>
-export GW2_REPLAY_DIR=<ws>/.agent-work/replay-snapshot      # 401 份定格快照
-cargo test --offline --test diffconv_kernel_consistency -- --nocapture
-GW2_CONSISTENCY_FILES=0 cargo test --offline --test diffconv_kernel_consistency -- --nocapture  # 全量
-```
-
-默认只取排序后的**前 60 份**（控制 `cargo test` 时长）；语料目录不存在时**跳过并打印原因**，
-另有一条**合成用例**不依赖语料（两士兵 + 一障碍 + 一发），所以 CI 上永远不会"什么都没比"。
-
-### 30.6 护栏数字（before/after，**每条都自己跑过**）
+比的**不是**"报文对上回放"，而是**中间结果逐位**：`points`（逐坐标 `to_bits`，长度也要同）、
+`stop`、`blocked`、`killed`（**含顺序**）、`hits`（id/下标/弧长位）、修正文本（取 K 真正**发出去**的
+`FunctionInfo.corrected_function`）；另单列**挖洞点**与**爆炸点**报文坐标。
 
 ```bash
 export CARGO_HOME=<ws>/.cargo-home CARGO_TARGET_DIR=<本 worktree 私有>
-R=<ws>/.agent-work/replay-snapshot
-cargo run --release --offline -q --example replay_attrib -- --dir $R --drive fire  --policy default --json f.jsonl
-cargo run --release --offline -q --example replay_attrib -- --dir $R --drive batch --policy default --json b.jsonl
-cargo run --release --offline -q --example replay_attrib -- --dir $R --drive conv  --policy strict  --json c.jsonl
-cargo run --release --offline -q --example batch_conv   -- --dir $R --policy strict
-python3 tools/bit_exact_attrib.py --json b.jsonl | tail -4     # 延迟段（死亡集合 / 挖洞点）
+R=<ws>/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example diffconv_parity -- --dir $R --max-samples 5
 ```
 
-| 轴 | 指标 | before | after | 判定 |
-|---|---|---|---|---|
-| `fire` | 内容命中 / 种类序列（分母 1080） | **325 / 819** | **325 / 819** | 不动 ✅ |
-| `batch` | 内容命中 / 种类序列 | **346 / 919** | **346 / 919** | 不动 ✅ |
-| `batch_conv` | 内容命中 / 种类序列 | **595 / 1074** | **612 / 1075** | +17 / +1 ✅ |
-| `batch` | 死亡集合 / 挖洞点 | **215/379**、**140/262** | **215/379**、**140/262** | 不动 ✅ |
-| （参考）`conv` | 内容 / 种类序列 | 569 / 946 | **585 / 947** | +16 / +1 |
-| （参考）`conv` | 死亡集合 / 挖洞点 | 362/385、66/291 | **366/385**、**205/293** | +4 / +139 |
+实测（同一份 401 回放快照 / release / 私有 target）：
 
-`fire`/`batch` 两轴**逐位不动**是必须的：这一次只改了收敛层和 `settle.rs` 的**新增**入口，
-`game.rs` 一字未动，所以内核那两条轴的 input→output 映射没变。
+```text
+文件 286；Normal 结算批 565；发 740；点序列/stop/blocked/killed/修正文本 逐位全同 740 / 740（100.0%）
+挖洞点（两边都调 game::hole_point）：逐位相同 244 / 244
+爆炸点（内核 ④ 仍用 stop，收敛层用 hole_point）：相同 720 / 740
+DiffEq 批 515 / 550 发：不可比（内核写死 Mode::Normal）⇒ 不在分母
+结论：Normal 轴 740 发逐位全同，没有一处不一致（退出码 0）
+```
 
-### 30.7 仍未合并的（诚实清单）
+`cargo test` 里钉的是**固定样本**（5 份回放，覆盖 Normal 单发自由 / 单发撞障碍 / 撞障碍零死亡 /
+**11 批多发** / DiffEq），debug 下 0.32 s：
+
+```text
+cargo test --offline --test diffconv_parity -- --nocapture
+[样本] 文件 5；Normal 结算批 15；发 26；…逐位全同 26 / 26（100.0%）
+[样本] 挖洞点逐位相同 17 / 17；爆炸点相同 26 / 26
+[样本] DiffEq 批 3 / 6 发：不在分母
+```
+
+`GW2_PARITY_FULL=1 cargo test --offline --test diffconv_parity` 会跑全语料（同一份代码路径）。
+测试里另有两条"**反向**断言"（防空转）：样本必须**真的比过**挖洞点（`destroy_compared > 0`）、
+必须**真的把 DiffEq 计进不可比**（`diff_eq_batches > 0`）—— 否则"逐位相同"可能只是"没比较"。
+
+### 30.6 正对照：证明"原样就不同"这件事是真的（不是没比较）
+
+按 `AGENTS.md` 合并纪律 A.4，负结论要有正对照。这里做了两条**故意破坏**（改完立刻还原）：
+
+| 对照 | 怎么破坏 | 结果 |
+|---|---|---|
+| ① | 把 ⑤ 挖洞点改回第一轮的 `out.stop` | `挖洞点 242 / 244`、`不一致 1 处`（`1782675586 #0`）、退出码 **1** |
+| ② | 把采样改回"原文 + 全精度修正常数"（= 老 `settle::resolve` 那条路） | `逐位全同 32 / 740（4.3%）`、`不一致 1766 处`、退出码 **1** |
+| — | 现状（并回内核后） | `740 / 740`、`244 / 244`、退出码 **0** |
+
+对照 ② 同时回答了"这债到底有多贵"：**改之前，708 / 740 发 Normal 的弹道与内核差位**
+（不是"理论上可能"），这也正是 §5 说的"同一批数据两条路径不同结论"。
+
+### 30.7 回归数字（三条轴分开报，命令都能粘）
+
+```bash
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv    -- --dir $R --policy strict
+```
+
+| 轴 | 指标 | 改前（`CG@418319d`） | 改后 |
+|---|---|---|---|
+| `fire` | 内容命中 | 325 / 1080 | **325 / 1080**（未动：`src/game.rs` 一字未改） |
+| `batch` | 内容命中 | 346 / 1080 | **346 / 1080**（同上） |
+| `batch_conv` | 种类序列 | 1074 / 1080 | **1075 / 1080** |
+| `batch_conv` | 内容命中 | 595 / 1080 | **612 / 1080** |
+| `cargo test --offline` | 通过条数 | 1520 | **1525**（+3 单元 +2 集成） |
+
+逐批翻面（用 `batch_conv --json` 的 `content_ok` / `kind_seq_ok` 对位比）：
+**内容 变好 17 / 变差 0；种类 变好 1 / 变差 0**。变好的 17 批**全是 Normal**（16 个单发 + 1 个两发），
+即"采样串换成内核那条（印出来的三位小数）"直接换来的。
+
+### 30.8 这次改动对既有产物的影响（诚实清单）
+
+| 东西 | 变化 | 为什么 |
+|---|---|---|
+| `diffconv::ShotOutcome` | 新增 `points` / `sampling` / `hits` 三个字段 | 对拍要拿中间结果；只加字段，报文口径不变 |
+| `ShotGeom::our_n` | 现在**恒等于** `n_points` | 第三份采样（`shot_points(原文, true)`）删了。旧文档里比 `h2_n` vs `our_n` 的读法要按这条重读 |
+| `probe_file` 的 `stop_*` / `killed` / `blocked` / `n_points` / `tail` / `corrected_ours` | 变得与预测器**逐位同源** | 同一批内核入口（此前探针与预测器各算一次，可能不同） |
+| `explosion_point` / `unbalanced_brackets` | 仍在，语义未变，但**不在产出路径上** | `tests/diff_conv.rs` 与几个探针还在用；前者另有 `explosion_point_is_the_kernel_hole_point` 等价性断言（含"空函数早退"那条边界的说明） |
+| `replaydiff::Predictor::predict` | **一字未改** | `tools/bit_exact_attrib.py --check-baseline` 钉住的冻结基线（第二轮任务 10 刻意没动） |
+
+### 30.9 仍未确定的（诚实清单）
 
 | # | 事项 | 缺什么 | 档 |
 |---|---|---|---|
-| 1 | `game.rs` 里那三份**私有副本**（`corrected_function_text` / `sampling_function_text` / `hole_point`）还在 | `game.rs` 是别人的地盘（任务书明令不许改结算逻辑）。现在由 §30.3 的单元测试**钉住**两边一致；等它下一次被改动，应改成直接调 `settle` | **已知债** |
-| 2 | `execute_results` ④ 的 `ExplosionEffect` 仍发**采样停点**（收敛层发回代点） | `game.rs` 的 `Y`/`Y2` 轴（§25/§26），不在本任务范围。§30.5 把这条差异写成了断言（20 条），改它时会立刻暴露 | **已知债** |
-| 3 | `Match::fire_functions` 恒 `Mode::Normal`，DiffEq 局没有内核路径 | `game.rs` 的 `fire` 按模式分（§29.7 第 3 条）；所以 §30.5 只比 Normal 局的 145 份 | **已知债** |
-| 4 | 死亡块排序 + 报文装配在两边各一份（`execute_results` vs `fire_batch`） | 不是坐标，本任务没并。要并得先把 `execute_results` 从 `Match` 的状态里拆出来 | **未知** |
-| 5 | 空函数的爆炸点（§30.3 的分歧） | 真值到底是"回代常数"还是"停点"（语料 4 发，`ExplosionEffect.pos_y` 与两者都不全等） | **未知** |
+| 1 | DiffEq 局的内核开火路径（采样模式该从哪来） | `game.rs::fire_functions` 的 `Mode` 入参在二进制里怎么传（`docs/06` §29.7 第 3 条同一件事）；本任务不许改 `game.rs` | **未知** |
+| 2 | `game::execute_results` ④ 何时改用 `hole_point`（`Y` 类 20 / 740 发） | 与 ③ 同一条证据（503/503）已经指向"该改"，但那是内核侧接线任务 | **推断**（证据足，未接线） |
+| 3 | 两条路径"逐位相同"是否等价于"与原版逐位相同" | 本节只证明**内部一致**；与原版的一致性仍由 §24–§29 那几条轴分别计（`fire` 325 / `batch_conv` 612 就是余下的差） | **逐位**（仅对"两路径相等"这一命题） |
+
+## 31. 事件生产者的三条路与"撞什么算撞"（2026-11-07，`dispatch/17`）
+
+> 这一节回答第二轮报告 §7 遗留清单里的两条（"撞障碍判据"、"一次挖洞发 2 条"），
+> 并把上一轮那条**"`EffectInfo` 的生产者查不动"** 就地改写成"查得动，但换的是路子"。
+
+### 31.1 一句话（三条）
+
+1. **`EffectInfo`(tag 44) 有且只有 2 个生产点，都在 `execute_results` 里**：
+   x86 `0x4729be`（tag 构造）/ `0x4729d6`（`add_event` 发件箱）/ `0x472e35` / `0x472e4d`，
+   模块 `src/graphwar_game_state_manager.rs`。上一轮找不到它们，是因为**扫错了常数**（见 §31.2）。
+2. **`DestroyObstacle` 一侧是两个 tag，别混**：tag **41**（线上名 `DestroyObstacle`）的唯一生产者是
+   `GraphwarObstacleManager::destroy_obstacle` = x86 **`0x3f1b30`**；tag **42**（线上名
+   `QueueDestroyObstacle`，即"排一次挖洞"）的唯一生产者是 `queue_destroy_obstacle` = x86 **`0x3f20f0`**。
+   两者同在 `src/graphwar_obstacle_manager.rs`。
+3. **"撞什么算撞" = 掩膜单点查表**，判据逐指令在 §31.4：`mask[trunc(y*1000/50+300)*1000 + trunc(x*1000/50+500)] != 0xFF`，
+   **画布外一律算撞**。二进制里没有几何判据（不是圆/环相交）。
+
+### 31.2 为什么上一轮"查不动"：tag 的**三种** materialize 形态
+
+`GraphwarEvent` 的线上判别值是 `0x8000000000000000 | n`。它在 x86 里有三种写法，**只扫第一种会漏掉生产者**：
+
+| 形态 | 长什么样 | 例子 |
+|---|---|---|
+| ① `movabs` 直写 | `movabs rax, 0x8000…2c` | tag 42 的 `0x3f22b2` |
+| ② `MAX + add` | `movabs rdx, 0x7fffffffffffffff` + `add rdx, n+1` | **tag 44 的两处生产点**：`0x4729be` + `0x4729c8 (add rax,0x2d)` |
+| ③ `MAX + inc` | `movabs rdx, 0x7fffffffffffffff` + `inc rdx` | **tag 41 的生产点**：`0x3f1baf` + `0x3f1c09`…（注意中间隔了 22 条指令） |
+| ④ 直写 0 形态 | 目标 tag 恰为 `0x8000…0` 时 | `calculate_shot_results` 的挖洞指令：`0x3c38d7` + `0x3c38e1 (inc rdx)` |
+
+⇒ 上一轮只扫 ①，所以"全 `.text` 只有 2 处 `movabs 0x8000…2c` 且都是消费者"是**对的**，
+但结论"生产者查不动"是**错的** —— 生产者用形态 ②。
+
+工具已补：`tools/addr_probe.py tags [--only N]`（全 `.text` 一次扫三种形态，
+并**自带正对照**：tag 42 必须命中 `0x3f20f0`、tag 41 必须命中 `0x3f1b30`，不命中就返回 1）。
+
+```bash
+../.venv/bin/python tools/addr_probe.py tags           # 全部 tag → 生产点 + 模块（panic::Location 投票）
+../.venv/bin/python tools/addr_probe.py tags --only 44
+```
+
+⚠️ `--only 0` 不可用：`0x8000…0` 在依赖 crate 里是 `i64::MIN`/`Option` 哨兵，全 `.text` 有 2000+ 处，
+**这个常数本身没有区分度**；挖洞指令那条记录是靠**形状**认出来的（§31.3 第 3 行）。
+
+### 31.3 生产者清单（`x86-64 2026-08-28`，ELF 虚地址；括号里是 Ghidra 地址）
+
+| tag | 线上名 | 构造点 | `add_event` 调用 | 模块（证据） | 等级 |
+|---|---|---|---|---|---|
+| **44** | `EffectInfo` | `0x4729be`（`movabs 0x7fff…`）+ `0x4729c8`（`add rax,0x2d`） | `0x4729d6` | `graphwar_game_state_manager.rs`（`locs` 23 票，函数 `execute_results`=`0x472470`） | **观测** |
+| **44** | `EffectInfo` | `0x472e35` + `0x472e3f` | `0x472e4d` | 同上 | **观测** |
+| **42** | `QueueDestroyObstacle` | `0x3f22b2`（`movabs 0x8000…2a`） | `0x3f22c6` | `graphwar_obstacle_manager.rs:269`（唯一锚） | **观测** |
+| **41** | `DestroyObstacle` | `0x3f1baf`+`0x3f1c09`（`MAX+0x2a`） | `0x3f1c17` | `graphwar_obstacle_manager.rs`（`locs` 2 票，函数 `destroy_obstacle`=`0x3f1b30`） | **观测** |
+| — | （挖洞**指令**，非线上报文） | `0x3c38d7`+`0x3c38e1`（`MAX+inc`→`0x8000…0`） | 写 `Vec`（`0x3c38e4`…`0x3c38fe`） | `graphwar_shot_calculator.rs`（`calculate_shot_results`=`0x3c2bc0`） | **观测** |
+
+`EffectInfo` 的两个生产点**实参不同**（这是"两个生产点"而不是"同一处两次"的证据）：
+
+| | 站点 | `pos`（`+0x08..0x18`）来源 | `effect_type`（`+0x20`） | `start_tick`（`+0x1c`） |
+|---|---|---|---|---|
+| A | `0x4729d6` | `[rsp+0xf0]` = 队列记录所指点表的**最后一个点**（`0x47286b`） | **常量 0**（`0x472948 mov byte [rsp+0x90], 0`） | `[管理器+0x58] + X/30 + 60` |
+| B | `0x472e4d` | `[rsp+0xc0]`（16 字节） | **记录里的一个字节**（`0x472d75 → 0x472e2e`） | 记录里的一个 u32（`0x472dc2`） |
+
+两处都从同一个全局原子计数器取 `effect_id`（`lock xadd dword [0x9c10c0], …`，`0x472930` / `0x472d9f`），
+`effect_type` 在 `+0x20` 上是**一个字节**——与 `docs/16` §33.6 的 72 字节布局、以及两个消费者
+（`0x4bf09b` 音频 `GraphwarAudioControl::effect_info_event`=`0x4bf090`、
+`0x4e2dd4` `EffectDrawer::ready`=`0x4e2d50`，都在 `[rsi+0x20]` 上按 `effect_type` 分派）互相印证。
+
+**跨架构旁证（arm64 未 strip）**：`GraphwarGameStateManager::execute_results` 里
+`0x2c + 0x8000<<48` 的 `movz/movk` 有 4 处（`0x4a87b8`/`0x4a89e8`/`0x4a8cac`/`0x4a8e00`），
+其中前两处与 x86 的两个生产点一一对应（第 3 处落在同一个内联块里，第 4 处紧跟
+`strb w8,[x19,#0x120]`＝游戏状态 5，是**同一段代码的另一条臂**）。⇒ arm64 侧**不作为**"3 个生产者"的证据。
+
+### 31.4 "撞什么算撞"：判据逐指令
+
+**独立函数**（可被 unicorn/frida 直接调用）：`GraphwarObstacleManager::is_obstacle` = x86 **`0x3f15b0`–`0x3f179c`**。
+
+```text
+0x3f15fc  movsd  xmm0, [0x19fbd0]      ; 1000.0
+0x3f160c  movsd  xmm2, [0x19faa8]      ; 50.0
+0x3f1618  addsd  xmm1, [0x19f838]      ; + 500.0            ← x 轴偏移
+0x3f164e  addsd  xmm0, [0x19f1f0]      ; + 300.0            ← y 轴偏移
+           ...   cvttsd2si → (col, row)，与 arm64 0x4254d8…0x425550 同构
+0x3f166b  cmp    ecx, 0x3e7            ; col > 999 ?
+0x3f1671  ja     0x3f169e              ;   ⇒ **算撞**（越界=x）
+0x3f1673  cmp    edx, 0x257            ; row > 599 ?
+0x3f1679  ja     0x3f169e              ;   ⇒ **算撞**（越界=y）
+0x3f1697  cmp    byte ptr [rax + rdi], 0xff   ; mask[row*1000+col]
+0x3f169b  setne  al                    ; ← **判据就这一条**：!= 0xFF 即"撞"
+```
+
+**对局路径里是内联的**（`is_obstacle` 没有出现在射击链的调用图上，上一轮"三方共用"的猜测据此可以关掉）：
+全 `.text` 扫"`mulsd 1000 / divsd 50 / addsd 500|300`"这个三元组，只命中 **7 处**：
+
+| 函数 | 处 | 干什么 |
+|---|---|---|
+| `calculate_shot_results` `0x3c2bc0` | `0x3c37ee`+`0x3c3831`（**A**）、`0x3c39b6`+`0x3c39f6`（**B**）、`0x3c4eab`+`0x3c4eeb`（**C**） | A = 挖洞指令的判据；C = 逐点**计数**（见下） |
+| `GraphwarPlane::obstacle_partial_update_event` `0x4be3e0` | `0x3be425` | 画笔/擦除用的坐标换算，不是碰撞判据 |
+
+A 处的判决（`0x3c3863`–`0x3c3892`）：
+
+```text
+0x3c3863  cmp  eax, 0x3e7     ; col > 999
+0x3c3868  ja   0x3c3898       ;  ⇒ 撞
+0x3c386a  cmp  ecx, 0x257     ; row > 599
+0x3c3870  ja   0x3c3898       ;  ⇒ 撞
+0x3c3876  imul ecx, ecx, 0x3e8
+0x3c387e  add  rdi, rcx       ; idx = row*1000 + col
+0x3c388e  cmp  byte ptr [rax + rdi], 0xff
+0x3c3892  je   0x3c37aa       ; == 0xFF ⇒ 不撞，继续下一个点
+```
+
+⇒ **我方 `src/plane.rs::is_occupied` 的判据已经逐条对上**（越界算撞、`!= EMPTY`），这一层**不需要改**。
+唯一的坑是**地址口径**：`plane.rs` 的注释把 `is_obstacle` 写成 `0x4f15b0`（Ghidra 口径），
+与本节 `0x3f15b0`（ELF 口径）是同一个函数，**两个数差 `0x100000`**，读文档时不要当成两个函数。
+
+### 31.5 "一次挖洞发 2 条"的成因
+
+**结论：不是两条不同实参 —— 是"同一个坐标排了两次队，各自发了一条"。** 四段证据，全部可复算：
+
+1. **报文逐位相同**：401 份回放 503 条 `DestroyObstacle`，162 组重复的 `(pos_x,pos_y,radius)`
+   三字段**逐位相同**（`repr` 相等），从无 3 条以上；
+2. **紧邻**：162 组里 **154 组**在消息流里**紧挨着**（下标差 1），7 组差 2，1 组差 14；
+3. **一半连 tick 都相同**：`92/162` 两条的消息 tick 相同；其余差值 1…13、21、23、42、44、464
+   （= 两条的**预约 tick** 不同：`tick = [管理器+0x58] + X/30 + 60`，`X` = 采样点序号，见下）；
+4. **机制链**（两条指令级）：
+
+```text
+queue_destroy_obstacle 0x3f20f0   : 往 [管理器+0x40] 的 HashMap<tick, Vec<(x,y,r)>> 里追加一条
+        （桶存在就 append：0x3f224b；不存在就新建：0x3f230e→0x3f21c6）
+handle_tick_event      0x3f1d30   : 到这个 tick 时按 key 取出整个桶，**逐条**调 destroy_obstacle
+        0x3f1d99 test rax,rax / 0x3f1db0 循环（stride 0x18）/ 0x3f1dd0 call 0x3f1b30
+destroy_obstacle       0x3f1b30   : draw_circle(mask, x, y, r(=0.5), 0xFF) 擦洞
+        0x3f1baa call 0x3f11e0     ; GraphwarObstacleData::draw_circle
+        + push 一条 tag 41（0x3f1c17）   ⇒ **一条队列条目 = 一条线上报文**
+```
+
+⇒ "两条相同报文" ⇔ "排了两次队"。排队点在生产侧：`calculate_shot_results`（`0x3c2bc0`）里
+对**每个采样点**做 §31.4 的掩膜测试，命中就往结果 `Vec` 追加一条挖洞指令
+（`0x3c38e4` 写 tag、`0x3c38ee` 写 `(x,y)`、`0x3c38f4`/`0x3c38fe` 写 `(u32 记录字段, u32 点序号)`），
+**不 break**，并用一个"该点已处理"的字节数组防重（`0x3c37c6 cmp byte [flags+r15],0`）。
+⇒ 两条相同坐标的条目，只能来自**两个不同点序号上坐标逐位相同的点**（同一序号被标志位挡住了）。
+
+**仍未知**（诚实登记）：为什么两个不同序号的点坐标会逐位相同。候选（都未证）：
+点表尾部重复（采样在撞点处补了一个重复点）、或同一发的结果在批里出现两次。
+缺的证据：那一发的**点表 + 两个点序号**——unicorn 直接调 `0x3c2bc0`（需造 0x20 字节的入参记录）
+或 frida 在 `0x3c38e4` 断点抓一次 `1782640836` 的第 2 发。
+
+### 31.6 与我方内核的差异（**这一处没改**，理由写在下面）
+
+| 行为 | 原版（观测） | 我方（`src/graphwar_shot_calculator/settle.rs:154`） |
+|---|---|---|
+| 判据 | `is_occupied` 同构 | 同构 ✅ |
+| 遇撞后 | **不 break**：整批的**每个**命中点各排一次队 ⇒ N 条 | `break` + **只发 1 条** `QueueDestroyObstacle` |
+
+⇒ 我方**结构上不可能**发出第 2 条（这也解释了为什么 341 个坐标我方只发 341 条）。
+**不改的原因**：要改成"每个命中点各发一条"，必须先知道上面那条未知（重复坐标从哪来），
+否则会把"1 条"变成"命中点个数条"，直接动延迟段挖洞点的分母（140/262）与批内容命中（325/1080）；
+在没有逐位证据的情况下这是**用回归风险换一个猜**。⇒ 登记为已知差异，等 §31.5 的证据。
+
+### 31.7 两处顺手的更正（都在本节之前写下的东西里）
+
+1. **`calculate_shot_results` 的 x86 地址是 `0x3c2bc0`，不是 `0x3b5770`**
+   （第二轮报告 §7 与 `docs/16` §29.3(b) 的表述沿用了 arm64 的 `0x3b5770`）。
+   x86 `0x3b5770` 属于 `src/graphwar_root_node.rs`。桥：`fixtures/name_to_addr.tsv`
+   第 83 行（`唯一锚`，22 个双向唯一锚，函数大小 `0x308d`）。
+   ⇒ 遗留清单里"`end_x` 那 103 发"那条，接手时请从 `0x3c2bc0` 起。
+2. **`execute_results` 的跳表**（`0x1c1800`，直接按序读 5 项，本节点过一遍）：
+   `idx0 → 0x472814`（tag ≥ 0：死亡块）、`idx1 → 0x472c61`（tag `0x8000…0`：挖洞块）、
+   `idx2 → 0x472a53`（tag `0x8000…1`）、`idx3/4 → 0x4727c0`（跳过，tag `0x8000…2/3`）；
+   哨兵 `0x8000…4` 在进入分派前就被拦下（`0x4727d3`）。idx = `tag - 0x8000…0 + 1`（负 tag）或 0（非负）。
+   `docs/14` §12.4 那张表**是对的**（idx1 = 挖洞块），本节把它连同"为什么 idx 这么算"一起钉住。
+
+### 31.8 复现（三套命令，全部只读语料）
+
+```bash
+export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=<你的私有目录>
+export PY=<ws>/.reference/venv/bin/python
+R=<ws>/.reference/replays/gw2-replays-snapshot/replays
+
+# 1) 生产者表（自带正对照；不命中就返回 1）
+$PY tools/addr_probe.py tags
+$PY tools/addr_probe.py tags --only 44      # 2 生产 + 2 消费者
+
+# 2) 判据逐指令
+$PY tools/addr_probe.py dis 0x3f1660 --length 0x50      # is_obstacle 的判决 + setne
+$PY tools/addr_probe.py dis 0x3c3856 --length 0x40      # 内联版（A 处）的判决
+$PY tools/addr_probe.py jt 0x1c1800 --owner 0x472470    # 按表序打印 5 项（顺序别丢）
+
+# 3) 重复报文的数据面（下表的数就是它出来的：不需要编译任何东西）
+$PY tools/destroy_dup_attrib.py --dir $R
+```
+
+`tools/arm64_sym.py`（本轮新增）是 arm64 侧的符号表入口（`find/mod/at/callers/bl/const/dis`），
+用来给 x86 侧"这个函数是谁"提供**未 strip** 的独立证据；本节的 arm64 地址全部它给的。
+
+### 31.9 未知清单（可直接接手）
+
+| # | 未定 | 缺什么 | 档 |
+|---|---|---|---|
+| 1 | 两个不同点序号上坐标为何逐位相同（"2 条"的最终成因） | 那一发的点表 + 两个序号（unicorn 调 `0x3c2bc0` / frida 断 `0x3c38e4`） | **未知** |
+| 2 | `calculate_shot_results` 里 `0x8000…1` / `…2` / `…3` 三种指令各自的语义 | `0x472a53`（idx2 块）逐指令；`…2/…3` 在 `execute_results` 里被直接跳过，说明是**本地**中间结果 | **推断** |
+| 3 | `destroy_obstacle` 的 `radius` 参数是否恒为 0.5 | 语料 503 条 `radius` 全 0.5（观测）；`0x472d11` 侧是常量 `0x19f6d0=0.5`，但 `handle_tick_event` 用的是桶里存的 r | **观测**（r 来自排队入参） |
+| 4 | `QueueDestroyObstacle`(42) 为什么在 401 份回放里 **0 条** | 发送侧的过滤点（`send_buffer` 的挑拣规则，`tools/arm64_sym.py find 'send_buffer'` 是入口） | **未知** |
+
+## 32. 求值器与二进制**逐位一致**；154 批 1 ulp 残差**不在**求值器里（2026-11-07，`dispatch/15`）
+
+> 任务书：`dispatch/15-eval-unicorn.md`（P0）——"用 unicorn 对拍 `evaluate_recursive`，解掉最后 1 ulp"。
+> 本节回答三件事：**对拍台怎么搭**、**求值器到底差在哪**（答案：不再差）、
+> **那 154 批 1 ulp 是什么**（答案：不是求值器，且给出反证）。
+> 顺带把 §25.2/§25.5 的 16 批"纯序列化格式差"打到 **0**。
+> ⚠️ 任务书说"最大 §27，你用 §28"；本提交时文件里 §28/§29 已被并行任务占了，所以本节用 **§30**
+> （同号冲突按任务书约定由协调者合并）。
+
+### 32.1 一句话结论（六条）
+
+1. **对拍台搭好了、可复跑**：`tools/eval_oracle.py`（unicorn 直调 `0x4ed670` 解析 + `0x4eb9d0` 求值）
+   ＋ `examples/eval_oracle.rs`（把我方 `parse`/`eval` 的 token 与结果逐发导出）。
+   逐发比较是**端到端**的（真解析器 + 真求值器，不吃我方 token），比"喂同一串 token"更硬。
+2. **求值器有 3 处真偏差，已修**（`src/math_function.rs`），全部是"照搬上游 python 参照实现"留下的：
+   `log(0)`/`ln(0)` 给 `NaN`（真二进制 **-inf**）、`0/0` 与 `sqrt(-1)` 的 NaN **符号位**不同。
+   修完 `--sweep` 的 17 条边角语义**逐位一致**。
+3. **`fixtures/eval.tsv` 有 3 行真值是错的**（`log(0)`、`ln(0)`、`ln(-2)`），根因是
+   `analysis/emu.py` 把数学导入映射到 **python 的 `math`**（定义域外**抛异常**→ 兜成 NaN），
+   不是 libm（**返回值**）。已改 `tools/gen_fixtures.py`（换成 `ctypes` 调 `libm.so.6`）并重生成；
+   `path.tsv` / `parse.tsv` **一字未变**（正对照：说明或旧夹具的其它部分本来就是对的）。
+4. **真解析器对"无主的 `)`"是跳过、不是截断**（`docs/06` §29.7 第 1 行那个"未知"），
+   我方 `parse` 已按它**修好**（`src/math_function.rs`，`skip_stray_close`）：
+   全量 1290 发里"多右括号"的 **8 发**从"解析截断"变成"解析一致"（7 发逐 tag 相同，
+   剩 1 发只差一处结合、**两边求值都是 NaN**）。§29.7 那张表因此可以划掉第 1 行。
+5. **那 154 批 1 ulp **不是**求值器**：残留里挑的 **8/8** 条最小复现，真二进制给的值与我方**逐位相同**，
+   而回放观测值比**两者**都差 **±1 ulp**。另外给出**不可能性证明**：`x + 35.910` 这类"一次加法"里，
+   把 x 与常数各扫 ±3000 ulp 都到不了观测值（§32.5）。
+   ⇒ 任务书"H1'求值器最后一次舍入不同'"这条前提，**被证伪**（与第二轮另外 5 条同一种性质）。
+6. **16 批序列化格式差 → 0**：`emit_*` 的 f64 打印改成 ryu 语义（`{:?}` + `e-5` 那一档补定点），
+   `posy_attrib.py` 的"纯序列化格式"从 **16 批降到 0 批**；`fire` 内容命中 **325 → 331**、
+   `batch` **346 → 355**、`batch_conv` 内容 **595 → 615**（种类序列 **1074 不退**）。
+
+### 32.2 对拍台（地址级事实先钉死）
+
+`evaluate_recursive` 的**签名与四个跳转目标**（`objdump -d` 于
+`steam/2026-08-28/libgraphwarrust.so`，sha256 `9a538115…`）：
+
+```text
+0x4eb9d0  push r15/r14/rbx; sub rsp,0x40
+          movapd xmm4,xmm0          ; x
+          mov    rax,[rsi]          ; i = *pos
+          cmp    rax,[rdi+0x10]     ; i vs len      （rdi = &Vec<Token>，字段 {cap@0,ptr@8,len@0x10}）
+          jae    0x4ebb78           ; 越界 -> 0.0
+          mov    rcx,[rdi+0x8]      ; tokens
+          mov    rax,[rcx+rdx]      ; tag（16 字节/token：{tag:u64, value:f64}）
+0x4eba0b  bt 0x1fe20,rax          ; 一元算子集合 {5,9,10,11,12,13,14,15,16}
+0x4eba16  bt 0xe0007,rax          ; 叶子集合   {0,1,2,17,18,19}
+          ... else 两次递归（4eba44 / 4eba66）= 二元 {3,4,6,7,8}
+0x4ebab7  lea rcx,0x1c3c6c; movsxd rax,[rcx+rax*4]; add rax,rcx; jmp rax   ; 18 项跳转表
+```
+
+跳转表 `0x1c3c6c`（18 项 `int32` 相对偏移）解出来的 **每个 tag 的真实指令**：
+
+| tag | 记号 | 目标 | 实际运算 | 与我方实现 |
+|---|---|---|---|---|
+| 0 / 1 / 2 | `x` / `y` / `y'` | `0x4ebb78` / `0x4ebacb` / `0x4ebb2f` | 直接返回 `xmm4/xmm1/xmm2` | 一致 |
+| 3 / 4 / 6 / 7 | `+ - * /` | `0x4ebb48` / `0x4ebb0d` / `0x4ebb70` / `0x4ebb4e` | `addsd` / `subsd` / `mulsd` / `divsd` | **`/` 曾不一致**（§32.3） |
+| 5 | `neg` | `0x4ebb5c` | `xorpd` 符号掩码 `0x19e690` | 一致（`-x`） |
+| 8 | `^` | `0x4ebb95` | `jmp [0x9bc278]` = **libm `pow`** | 一致（`powf` → `pow`） |
+| 9 | `sqrt` | `0x4ebb26` | `xorps xmm0,xmm0` + `sqrtsd` | **曾不一致**（§32.3） |
+| 10 | `log` | `0x4ebb82` | `jmp [0x9bc270]` = libm **`log10`** | **曾不一致**（§32.3） |
+| 11 | `ln` | `0x4ebafa` | `jmp [0x9bbec0]` = libm `log` | **曾不一致**（§32.3） |
+| 12 | `exp` | `0x4ebb13` | `jmp [0x9bbeb8]` = libm `exp` | 一致 |
+| 13 | `abs` | `0x4ebb66` | `andpd` 掩码 `0x19c050` | 一致（`.abs()`） |
+| 14 / 15 / 16 | `sin`/`cos`/`tan` | `0x4ebae7` / `0x4ebb35` / `0x4ebad4` | libm `sin`/`cos`/`tan` | 一致 |
+| 17 | `const` | `0x4ebb54` | `movsd xmm0,[r15+8]` | 一致 |
+| 18 / 19 | `(` / `)` | `0x4ebcb7` | **落到 panic 路径**（`cmp rax,0x11; ja`） | 我方把它们留在 token 流里但求值不到（真实解析器把它们**删掉**，见 §32.7） |
+
+`GOT 槽 → 符号`（`.rela.dyn` 的 `R_X86_64_RELATIVE`/`GLOB_DAT` 解析，`NEEDED libm.so.6`）：
+`0x9bc258=tan`、`0x9bc260=sin`、`0x9bc268=cos`、`0x9bc270=log10`、`0x9bc278=pow`、
+`0x9bbeb8=exp`、`0x9bbec0=log`。
+
+### 32.3 三处真偏差（已修）：`log`/`ln` 的定义域、`div`/`sqrt` 的 NaN 符号
+
+`tools/eval_oracle.py --sweep`（真二进制直调，`0x4eb9d0`）实测：
+
+| 表达式 | 真二进制 | 我方（修前） | 判据 |
+|---|---|---|---|
+| `log(0)` | **-inf** `fff0000000000000` | `NaN` `7ff8000000000000` | libm `log10` |
+| `log(-0.0)` | **-inf** | `NaN` | libm `log10` |
+| `log(-1)` | `NaN` `7ff8000000000000` | `NaN` | ✓ |
+| `ln(0)` | **-inf** `fff0000000000000` | `NaN` | libm `log` |
+| `ln(-2)` | `NaN` `fff8000000000000` | `NaN` `7ff8…` | **符号位不同** |
+| `sqrt(-1)` | `NaN` `fff8000000000000` | `NaN` `7ff8…` | `sqrtsd` 给负 NaN |
+| `sqrt(-0.0)` | `-0.0` | `-0.0` | ✓ |
+| `0/0` | `NaN` `fff8000000000000` | `NaN` `7ff8…` | `divsd` |
+| `1/0` / `1/-0.0` | `+inf` / `-inf` | 一致 | ✓ |
+
+> ⚠️ **旧结论作废**：`docs/03` §11 曾写"`log(0) = NaN`，判据是 `v <= 0`，
+> 上游 Python 给 -inf 是偏差，已按二进制修正"。**这条是反的**——
+> 二进制的 `log` 就是 libm `log10`（GOT `0x9bc270`），`log10(±0) = -inf`。
+> 当初"实测"用的是同一个 `analysis/emu.py`，而它把导入映射到 python 的 `math`：
+> `math.log10(0)` **抛 ValueError**，被 `_safe` 兜成 `NaN` ⇒ 记下来的是 **oracle 的假象**。
+> 本节的值来自 `ctypes` 直调 `libm.so.6`，与二进制里的同一份 `libm` 同一个符号。
+
+修法（`src/math_function.rs`，全部是"去掉特判、直接用硬件/libm 指令"，反而更短）：
+
+```rust
+fn m_sqrt(x: f64) -> f64 { x.sqrt() }          // sqrtsd；负数 -> 负 NaN
+fn m_div(a: f64, b: f64) -> f64 { a / b }      // divsd；0/0 -> 负 NaN，1/0 -> inf
+pub(crate) fn m_log10(v: f64) -> f64 { v.log10() }
+pub(crate) fn m_ln(v: f64) -> f64 { v.ln() }
+```
+
+**副作用（已重建真值）**：`fixtures/eval.tsv` 由 `tools/gen_fixtures.py` 生成，其 oracle 用的
+`emu.MATH`＝python `math`，所以 3 行本来就是错的。修 `gen_fixtures.py`（`install_libm()` 换成
+`ctypes` 调 `libm.so.6`）后重生成，`git diff fixtures/` **只有这 3 行**：
+
+```diff
+-log  10:…;0:…  0.0 0.0 0.0  7ff8000000000000   →   fff0000000000000   (-inf)
+-ln   11:…;0:…  0.0 0.0 0.0  7ff8000000000000   →   fff0000000000000
+-ln   11:…;0:… -2.0 3.0 0.0  7ff8000000000000   →   fff8000000000000   (NaN 的符号位)
+```
+
+`path.tsv`（224 例）、`parse.tsv`（37 例）**完全没变** —— 这是"libm 换法没有副作用"的正对照。
+
+`EXP` 这条**没改**（它本来就调 libm `exp`，`exp(1000) = +inf` 一直是对的）；只有
+python-math-oracle 会把 `exp` 溢出记成 NaN，真值夹具里恰好没有这种行。
+
+### 32.4 全量对拍：求值器**零差异**（可复跑）
+
+```bash
+WS=<仓库根>; export EMU=$WS/.reference/analysis-repo
+export CARGO_HOME=$WS/.reference/cargo-home CARGO_TARGET_DIR=$WS/.agent-work/cg/target15
+R=$WS/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline --example eval_oracle -- --dir $R --json $OUT/evalcases.jsonl
+$WS/.reference/venv/bin/python tools/eval_oracle.py --cases $OUT/evalcases.jsonl
+```
+
+| 步 | 结果（1290 发，**解析器修好之后**） | 解析器修之前 |
+|---|---|---|
+| `tokens_ok`（真解析器的 tag 序列 == 我方） | **1287** | 1280 |
+| `const_differ`（同一个 tag 上 CONST 的值不同） | **0** | 0 |
+| `eval_ok`（真求值器 == 我方，**逐位**） | **1287** | 1280 |
+| `eval_differ` | **0** | 0 |
+| `tokens_differ`（**解析**层面不同，见 §32.7） | **1**（只差一处结合，两边求值都是 NaN） | 8 |
+| `empty`（回放里 `corrected_function` 为空） | 2 | 2 |
+
+⇒ **求值器（`0x4eb9d0`）在我方所有回放文本 + 真实 x 上逐位一致（1287/1287，0 差异）**；
+`tokens_differ` 那 1 发是 `…-e^(999(x-20.09)) + NaN` 这种乱七八糟的文本（`NaN` 被词法器当 `n`=π），
+两边都是 91 个 token、只差一处结合，**求值结果两边都是 NaN**（`fff8000000000000`）⇒ 数值上无差别。
+
+⚠️ oracle 侧的**必须**：`analysis/emu.py` 的 `alloc()` 是只进不退的 bump allocator，
+逐发跑要在每行前把 `heap_ptr` 放回堆底，否则第 ~470 行起就
+`RuntimeError('emulated heap exhausted')`（第一版脚本正是这么翻车的：821 条假 `parse_err`）。
+`tools/eval_oracle.py::reset_heap` 做这件事。
+
+### 32.5 154 批 1 ulp：**不是**求值器（8/8 反证 + 不可能性证明）
+
+从 `Y` 桶（`tools/posy_attrib.py` 的 154 批）里挑最小复现，三方对照
+（`tools/eval_oracle.py --repro`，真二进制 vs 我方 vs 回放观测）：
+
+| `corrected_function` | x | 真二进制 | 我方 | 回放 `pos_y` | 差 |
+|---|---|---|---|---|---|
+| `x + 35.910` | -20.911460745133482 | `402dff408986d908` | `402dff408986d908` | `402dff408986d909` | **+1 ulp** |
+| `x + 11.649` | 3.3506886740401742 | `402dffd731a25e49` | 同左 | `402dffd731a25e4a` | +1 |
+| `-0.29(x)^2 + 10.691` | 6.322417849086799 | `bfecd64ead4a3560` | 同左 | `bfecd64ead4a355f` | -1 |
+| `sqrt(abs(175-x^2)-1) - 0.112` | 13.19090509020422 | `bfbb7268730d6e4e` | 同左 | `bfbb7268730d6e4d` | -1 |
+| `-x + 2.457` | 17.455988098017656 | `c02dff7b5e34287c` | 同左 | `c02dff7b5e34287d` | +1 |
+| `sin(x6cos(5)) - 10.615` | -1.0476229930439582 | `c0272f6480bfc54d` | 同左 | `c0272f6480bfc54e` | +1 |
+| `1/(100(x-10)) + 6.282` | 9.99952991831176 | `c02dfb57096fa9b4` | 同左 | `c02dfb57096fa9b3` | -1 |
+| `sqrt(4-4sin(x)^2) + 0.221` | 24.992373421336396 | `40019c527cf1ad1f` | 同左 | `40019c527cf1ad20` | +1 |
+
+**8/8：真二进制 == 我方（逐位），回放比两者都差 ±1 ulp。** 差的方向有正有负，不是系统性偏置。
+
+**不可能性证明（`x + 35.910` 这一条，纯算术，可手算复核）**：
+`x = -20.911460745133482`（`c034e9557dcbefa4`）、`c = fl("35.910")`（`4041f47ae147ae14`），
+两者都是 f64。`x + c` 的**精确实数值**恰好是 `obs - 1 ulp(obs)`，也就是说
+**精确和本身就在 f64 网格上**（`ulp(x) = 2 ulp(obs)`）。于是：
+
+* 改 `x`：任何邻近 f64 都差 ≥ `1 ulp(x) = 2 ulp(obs)` ⇒ 结果只能取到 `…515` / `…517` 这类**偶数跳**；
+* 改 `c`：`1 ulp(c) = 4 ulp(obs)` ⇒ 跳得更远；
+* 两者同时改：`Δ = (2k + 4m)·ulp(obs)`，**偶数**，而 `obs` 与 `fl(x+c)` 相差 **奇数**（1）。
+* 暴力复核：`x` 扫 ±3000 ulp × `c` 扫 ±3000 ulp，**0 命中**（脚本内联在 §32.5 的推导里；
+  `x+35.910` 的 `fl` 序列是 `…508 / …511 / …515 / …518 / …522`，`obs=…516` 落在**格点之间**）。
+
+⇒ 观测值**不可能**是"任一 f64 的 x 与任一 ±3000 ulp 的常数做过一次正确舍入加法"的结果。
+剩下的解释只有"这个 y 不是这条文本的一次求值"（细节来源见 §25.4 的空白：点数组的填充者未定位），
+或"报文里的十进制不是最短往返"（但那与 `end_x` 逐位吻合的事实矛盾）。
+**这一条仍是未知**，但"求值器最后一位不同"这条解释**已被排除**。
+
+### 32.6 16 批序列化格式差 → **0**（`emit_*` 的 f64 改成 ryu 语义）
+
+`src/_scaffold/protocol.rs` 新增 `emit_f64()`，`emit_function_points` / `emit_effect_info` 用它：
+
+* `format!("{}")`（`Display`）**不能用**：整数值丢 `.0`（`15` vs `15.0`）、**永不**用指数记法
+  （`2.638231208698597e-62` 打成 66 位小数）——这正是 §25.2 那 16 批的两种形态。
+* `format!("{:?}")`（`Debug`）是**最短往返**，且定/指数分界与 ryu 只差**一档**：
+  十进制点落在 `kk == -4`（`|v| ∈ [1e-5, 1e-4)`）时 ryu 用**定点**，`Debug` 用指数。
+  实测：只换成 `{:?}` 时 16 批 → **1 批**（`-4.3453289208041886e-5` vs `-0.000043453289208041886`），
+  补上 `fixed_for_small()` 后 → **0 批**。
+* 非有限值写 `null`（serde_json 不接受 `NaN`/`inf`）。
+
+护栏（`src/_scaffold/protocol.rs::emit_f64_tests`，3 条）：
+`ryu_fixtures_roundtrip` 把 `fixtures/protocol*.jsonl`（**真实抓包**，ryu 写的）里
+**每一个**浮点字面量重新格式化后逐字节比对；`ryu_known_divergences` 钉住 6 条已知分叉 +
+`e-5` 那一档；`emit_message_uses_ryu` 钉住整条报文。
+
+| 指标（`tools/posy_attrib.py`，`conv` 轴） | 修前 | 修后 |
+|---|---|---|
+| 纯序列化格式（值同、字节不同） | **16 批** | **0 批** |
+| 数值末位差（`Y` 桶另一半） | 154 批 | 154 批（未动，见 §32.5） |
+| 失败批（1080 分母） | 511 | 495 |
+
+### 32.7 附带发现：**真解析器对"多余的 `)`"是跳过，不是截断**（§29.7 第 1 行的答案）
+
+§29.7 第 1 行把"真解析器遇到没有配对的 `)` 怎么处理"标成**未知**，并说明我方 `parse` 是**截断**、
+只在 `game.rs` 里绕开。`tools/eval_oracle.py` 直调 `0x4ed670` 给出了答案：
+
+| 文本 | 真解析器 tag 序列 | 含义 |
+|---|---|---|
+| `x)` | `[0]` | 多余 `)` 被**丢掉** |
+| `x)+1` | `[3,0,17]` | `ADD(x, 1)` —— **没有**截断，继续解析 |
+| `2+(x))` | `[3,17,0]` | `ADD(2, x)` |
+| `(x)+1)` | `[3,0,17]` | 尾部多余 `)` 丢掉 |
+| `sin(x))` | `[14,0]` | ✓ |
+| `)` / `()` | `[]` | 空 |
+| `(x` | `[0]` | 缺 `)` 也照样解析 |
+
+⇒ 规则是 **"无主的 `)` 直接被跳过，解析继续"**，不是"丢掉整段尾部"。
+而且跳过之后**仍然适用隐式乘法**：`x)2 -> [MUL, VAR_X, CONST]`、`sin(x))2 -> [MUL, SIN, VAR_X, CONST]`。
+
+**已修**（本轮，`src/math_function.rs`）：`Parser` 加一个 `depth`（`(` 进、`)` 出），
+`expr` / `term` 的循环开头丢一次"无主的 `)`"。三条护栏钉在 `math_function::parser_tests`。
+
+* **对括号平衡的文本是恒等操作**：深度 0 上还能 peek 到 `)` 的，按定义就是无主的，
+  所以 1280 条平衡文本的解析一字没变（全量对拍复算：`tokens_ok` 1280 → **1287**，没有一条变坏）。
+* **8 发"多右括号"逐条核对**：全 1290 发里 `#(` < `#)` 的**恰好 8 发**，其余全部平衡。
+  例：`14/(1+exp(100*(x-19)^2)))+24/(1+exp(100*(x-24)^2)) - 4.323`（`(`×6 / `)`×7）——
+  老实现只给 12 个 token 的 `DIV(14, …)`（整段尾部丢掉），真解析器给 **27 个 token** 的
+  `SUB(ADD(…), CONST 4.323)`，修后逐 tag 相同。
+* 修完还剩 **1 发**不同（见 §32.4 末），是那种"文本本身就是乱码"的输入，两边求值都是 NaN。
+
+### 32.8 验收（本分支 `agent/eval-unicorn`，同一份 401 回放快照，三条轴分开跑）
+
+```bash
+export CARGO_HOME=$WS/.reference/cargo-home CARGO_TARGET_DIR=$WS/.agent-work/cg/target15
+R=$WS/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive fire  --policy default --json $OUT/f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive batch --policy default --json $OUT/b.jsonl
+cargo run --release --offline -q --example batch_conv --dir $R --policy strict
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive conv --policy strict --json $OUT/c.jsonl
+cargo run --release --offline -q --example posy_probe    -- --dir $R --json $OUT/p.jsonl
+python3 tools/posy_attrib.py --conv $OUT/c.jsonl --probe $OUT/p.jsonl
+cargo test --offline
+```
+
+| 指标 | 轴 | 修前 | 修后 |
+|---|---|---|---|
+| 内容命中 | **fire**（`Match::fire`） | 325 / 1080 | **331 / 1080** |
+| 内容命中 | **batch**（`Match::fire_batch`） | 346 / 1080 | **355 / 1080** |
+| 内容命中 | **batch_conv**（收敛层，驱动 B） | 595 / 1080 | **616 / 1080** |
+| 种类序列 | **batch_conv**（驱动 B） | 1074 / 1080 | **1074 / 1080**（不退） |
+| 内容命中 | **conv**（`replay_attrib --drive conv --policy strict`） | 569 / 1080 | **585 / 1080** |
+| 纯序列化格式批 | conv | 16 | **0** |
+| `cargo test --offline` | — | **1520** passed | **1538** passed（+18，见下） |
+| `python3 tools/coverage_matrix.py --check` | — | OK | OK（`src` 函数数 +2，已重跑生成器） |
+
+`+18` 的构成：
+* **3** 条 `emit_f64` 护栏 × **5 个 test 二进制** = 15 —— `lib.rs` 一次，外加
+  `graphwar_lan_broadcaster_v6` / `graphwar_replay_reader` / `graphwar_server_broker_handler` /
+  `server_broker_request_connection` 四个集成测试用 `#[path = "../src/_scaffold/protocol.rs"]`
+  把该文件编进来（所以它的 `#[cfg(test)]` 在每个二进制里都跑一遍）；
+* **3** 条 `math_function::parser_tests`（括号平衡无影响 / 无主 `)` 跳过 / 真语料那一例）。
+
+基线 1520 是我在同一棵树上 `git stash` 后**自己复算**的（不是引报告）。
+
+### 32.9 仍未确定的（诚实清单）
+
+| # | 事项 | 缺什么 | 档 |
+|---|---|---|---|
+| 1 | 154 批 1 ulp **到底是什么**（§32.5 已排除求值器/常数/取 x） | 点数组 `[x19+0x30..0x40]` 的**填充者**（§25.4 的空白）；以及回放那份构建的 `pos_x/pos_y` 是在哪一步与"曲线点"分开算的 | **未知** |
+| 2 | 真解析器的**完整规则**在极端文本上的残留（`…-e^(…)+NaN` 那 1 发差一处结合） | 那类文本里 `NaN` 被词法器拆成 `n`(π)+跳过字符，真解析器的算子优先级在那种流上怎么走；影响 1/1290 发、且两边求值都是 NaN | **观测**（13 条探针 + 全量对拍） |
+| 3 | `fixtures/eval.tsv` 之外，是否还有**别的**夹具被 python-math-oracle 污染 | `path.tsv` 已核对"一字未变"；其它夹具不是求值器生成的 | **推断**（`path/parse` 已做正对照） |

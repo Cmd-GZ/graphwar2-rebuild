@@ -219,6 +219,71 @@ func _initialize() -> void:
 	ok(String(root_node.call("module_slot_status", NONSENSE)) == "unknown",
 		"%s 的槽位状态 = unknown（原版 25 型里也没有）" % NONSENSE)
 
+
+	# ------------------------------------------------------------------
+	# 2b) **一次最小交互后取回正确值**（2026-11 任务 19；docs/16-client.md §43）
+	#
+	# 上面 2) 那一段只证明"22 个槽都能按类型取回"——**取回来的是活对象**这件事，
+	# 得真调一个入口再读回来才算。这里用 `manager_probe_selftest()`（**我方自造**的
+	# 观测口，原版没有；理由见 §43）：它在容器里对 5 个 manager 各跑一遍
+	# "取回 → 写 → 读回"，返回 27 条 `名字=值`。
+	#
+	# ⚠️ 期望值**不是**从返回值抄下来的：它们逐条对应 `root_wiring.rs` 的单测
+	# `one_minimal_interaction_per_manager_reads_back_the_written_value`，
+	# 那边不通这一条也过不了（两边同一个 `interaction_selftest`）。
+	# ------------------------------------------------------------------
+	const PROBE_METHODS := ["manager_probe_selftest", "manager_probe"]
+	for wanted in PROBE_METHODS:
+		ok(methods.has(wanted), "方法 %s() 存在（我方观测口，§43）" % wanted)
+
+	var expected_probe := [
+		# ① LifeManager：set_alive(0x454b40) → get_alive(0x454950)
+		"life.alive=1", "life.death_tick=42", "life.due_at_42=1",
+		"life.death_tick_after=none", "life.subs=3",
+		# ② TargetManager：add_target → contains；两条订阅各走一次
+		"target.contains=true", "target.replayed=1", "target.removed=true",
+		"target.contains_after=false", "target.subs=2",
+		# ③ ObstacleManager：add_obstacle → is_obstacle → 排队 → 164 不炸 / 165 炸
+		"obstacle.hit_after_add=true", "obstacle.hit_far=false", "obstacle.pending=1",
+		"obstacle.due_164=0", "obstacle.due_165=1", "obstacle.hit_after_destroy=false",
+		"obstacle.subs=1",
+		# ④ FunctionManager：set_function → get_function_text；active_tick 三条窗口
+		"function.text=x", "function.active_tick=100", "function.active_at_101=1",
+		"function.active_at_100=0", "function.active_at_200=0", "function.subs=0",
+		# ⑤ TickHandler：tick() 推进计数并发 TickEvent(0)
+		"tick.delta=1", "tick.event_tag=0", "tick.at_500ms=30", "tick.subs=1",
+	]
+	var probe: PackedStringArray = root_node.call("manager_probe_selftest")
+	print("      manager_probe_selftest() 给出 %d 条（期望 %d 条）" % [probe.size(), expected_probe.size()])
+	ok(probe == PackedStringArray(expected_probe),
+		"5 个 manager 的最小交互结果 == 27 条 名字=值（实际 %s）" % probe)
+	ok(probe.size() == expected_probe.size(),
+		"交互条数 == 27（5 个 manager：5+5+7+6+4）")
+
+	# 逐个 manager 各取一条最关键的值再查一遍（单条查询口）
+	ok(String(root_node.call("manager_probe", "life.alive")) == "1",
+		"LifeManager：set_alive(id,true) 之后 get_alive(id) == 1（真表读回）")
+	ok(String(root_node.call("manager_probe", "target.contains")) == "true",
+		"TargetManager：add_target(id) 之后 contains(id) == true")
+	ok(String(root_node.call("manager_probe", "obstacle.hit_after_destroy")) == "false",
+		"ObstacleManager：queue→165 tick 之后 is_obstacle 变 false（掩膜真的被挖了）")
+	ok(String(root_node.call("manager_probe", "function.text")) == "x",
+		"FunctionManager：set_function(VarX) 之后 get_function_text == \"x\"")
+	ok(String(root_node.call("manager_probe", "tick.delta")) == "1",
+		"TickHandler：tick() 让 current_tick 恰好 +1")
+
+	# 反面对照：这 5 个槽的档位**仍然是 `stub`**（原版结构未复原），
+	# 所以"能交互"**不等于**"复原了原版类型"——两件事分开记（§43）。
+	for type_name in STUBBED:
+		ok(String(root_node.call("module_slot_status", type_name)) == "stub",
+			"%s 仍是 stub 档位（桩 = 原版结构未复原，不是「没接上」）" % type_name)
+
+	# 幂等：连调两次必须给出同一串（probe 不许把状态改歪）
+	var probe_again: PackedStringArray = root_node.call("manager_probe_selftest")
+	ok(probe_again == probe, "连调两次 manager_probe_selftest() 结果完全相同（幂等）")
+	ok(String(root_node.call("manager_probe", "no.such.key")) == "",
+		"未知名字 ⇒ 空串（不是 0，也不是 panic）")
+
 	# ------------------------------------------------------------------
 	# 3) 两张屏：Setup 屏（GameSetup）→ Game 屏（PlayScreen）
 	# ------------------------------------------------------------------

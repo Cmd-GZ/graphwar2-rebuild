@@ -1,0 +1,39 @@
+[gd_scene load_steps=2 format=3]
+
+; **真 `GraphwarPlane` 出现在播放屏上的最小场景**（`docs/16-client.md` §43）。
+;
+; 这个场景**不是**运行时界面的一部分（没有挂到 `main.tscn`，也不被 `client/src/**` 引用）：
+; 它是给 `client/tools/plane_on_screen_check.gd` 和截图用的验收场景。
+;
+; 节点树只有两层，因为原版的这条路径本来就只有两层：
+;
+;   PlaneOnScreen (Control)   ← GDScript 只做接线：喂一条真实弹道、每帧推 tick
+;     └ GraphwarPlane         ← **Rust 扩展类**（`src/_scaffold/graphwar_plane_class.rs`）
+;         ├ @FunctionDrawer@N ← 它自己在 `_ready` 里建 3 个（`init_children`，§40）
+;         │   └ Line2D        ← 曲线载体：每个 player id 一条（`update_function` 里建）
+;         └ @FunctionDrawer@N / @FunctionDrawer@N
+;
+; `type="GraphwarPlane"` 要求场景加载时扩展已经在 `ClassDB` 里（`--import` 过、`.so` 覆盖过）。
+; 加载失败时 `plane_on_screen_check.gd` 会直接红，不会静默退化成空场景。
+;
+; `board_scale = 20` / `flip_y = true` 是 `GraphwarPlane` 的两个 `#[export]` 属性，写成显式值
+; 是为了让这个场景也证明"属性带 STORAGE、能存进 `.tscn`"（与 `spike_axis_drawer.tscn` 同一个理由）。
+; 它们同时是 `_draw` 里 `draw_set_transform` 的 **我方选择** 实参（原版那次变换的实参没读到，§23）。
+
+[ext_resource type="Script" path="res://tools/plane_on_screen.gd" id="1"]
+
+[node name="PlaneOnScreen" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1")
+
+[node name="GraphwarPlane" type="GraphwarPlane" parent="."]
+layout_mode = 0
+offset_right = 1000.0
+offset_bottom = 600.0
+board_scale = 20.0
+flip_y = true

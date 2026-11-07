@@ -1247,3 +1247,24 @@ python3 tools/hole_axis_attrib.py --conv $OUT/conv.jsonl --hole $OUT/hole.jsonl 
 
 `tools/hole_axis_attrib.py` 会先打印"口径对齐：66 / 291"（对不上就说明口径漂了），
 再打印 `before/after`、四类计数（带 `== 200` 的加总校验）、d 的三个子因、每子因 3 个样本。
+
+## 13. 挖洞事件的生产者与"2 条"的机制（2026-11-07，`dispatch/17` 收尾 §12 的三个未知）
+
+§12.6 记了四个未知，本节关掉前三个的一半，其余维持**未知**并写清缺什么。地址与逐指令证据全在
+[`docs/06-verification.md`](06-verification.md) §30，这里只补 §12 没说的三句：
+
+1. **谁发 `DestroyObstacle`**：唯一生产者是 `GraphwarObstacleManager::destroy_obstacle`（x86
+   `0x3f1b30`，tag **41**，push 在 `0x3f1c17`）；`§12.4` 记的 `queue_destroy_obstacle`
+   （`0x3f20f0`）发的是**另一个** tag（**42** = 线上名 `QueueDestroyObstacle`，"排一次挖洞"）。
+   两者都在 `src/graphwar_obstacle_manager.rs`。
+2. **"2 条"不是两条不同实参**：162 组重复的 `(pos_x,pos_y,radius)` **逐位相同**、95% 紧邻、
+   57% 连消息 tick 都相同 ⇒ 同一坐标**排了两次队**、`handle_tick_event`（`0x3f1d30`）
+   对桶里**每一条**各调一次 `destroy_obstacle`（`0x3f1dd0` 循环），于是两条报文。
+   复现：`tools/destroy_dup_attrib.py --dir <快照>`。
+3. **§12.6 第 2 条里的 `X` 有了着落（一半）**：挖洞指令的 `u64` 字段是 `(u32 记录字段, u32 点序号)`，
+   `execute_results` 的挖洞块取**高 32 位**算延时（`0x472cb8 → 0x472ce6`），而高 32 位正是
+   `calculate_shot_results` 里写的**采样点序号**（arm64 `0x3b60d0 stp w20,w27`；
+   x86 `0x3c38fe mov dword [rax+rcx+0x1c], edx`）⇒ `tick = [管理器+0x58] + 点序号/30 + 60`。
+   **仍是未知**：`[管理器+0x58]` 到底是"本批开始 tick"还是别的；`+60` 是否就是 `DelayDestroy`。
+
+§12.6 第 4 条（反向"回放挖了、我方没撞"）本节没有动，仍缺"漏挖"探针。
