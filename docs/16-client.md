@@ -5979,3 +5979,292 @@ cargo test --offline                          # lib 457 / 总计 1488
 cargo test --offline --features gdext-bindings # lib 463（457 + 本类 6 条）/ 总计 1494
 bash client/run.sh selftest                   # 694 passed（默认 feature 的 .so）
 ```
+
+## 39. 三个「基类不是 `Control`」的类成了真节点（2026-11：`Node` / `VBoxContainer` / 基类未定）
+
+**一句话**：`src/_scaffold/` 下新增三份绑定外壳，把 `graphwar_root_node`（基类 **`Node`**）、
+`graphwar_lan_vbox`（基类 **`VBoxContainer`**）、`graphwar_ad_switch`（基类**仍未定**，按 `Node` 落）
+挂成**真 Godot 节点类**，用**同一套模板**（只有虚方法块不同）。headless 实测
+**117 条断言全过**；三份纯逻辑文件**一行没动**。
+
+> 档位（`AGENTS.md` §0.3）：**观测** = 能指到 arm64 `.symtab` 记录 / 反汇编地址 / 本轮 headless 真跑出来的输出；
+> **推断** = 有依据未证（同行写清缺什么）；**未知** = 没解出来。
+> `cargo test` / `selftest` 的条数**只是回归保护**，不是复原证据。
+
+### 39.0 这一节回答的三个问题
+
+| # | 问题 | 结论 | 档位 |
+|---|---|---|---|
+| 1 | **换基类要不要改虚方法 trait？** | **只改 3 处**（trait 名 / `Base<T>` 类型 / `init` 参数类型）；`#[func]` 与 `#[export]` **一个字都不用改** | 观测（三份类真跑） |
+| 2 | **`GraphwarAdSwitch` 到底是不是 Godot 类？** | **是**（6 条 arm64 `.symtab` 证据，见 39.4）。**但基类定不出来** —— 缺的正是「它一个虚方法都没覆写」 | 观测（是）/ 未知（基类） |
+| 3 | **`GraphwarRootNode` 能不能只做骨架？** | **能**：装配部分不做，但「持有子对象 → 转发一次调用」两条链路都通了（`purchase_confirmed` → `Ad_holder`、`show_screen` → 15 个屏的 `set_visible`） | 观测（headless） |
+
+### 39.1 本轮动了哪些文件
+
+| 文件 | 增/改 | 行数 | 内容 |
+|---|---|---|---|
+| `src/_scaffold/graphwar_root_node_class.rs` | **新增** | 555 | `Node` 基类骨架 + `ScreenHost` 适配器 + 5 条纯逻辑单测 |
+| `src/_scaffold/graphwar_lan_vbox_class.rs` | **新增** | 560 | `VBoxContainer` 基类 + 行投影 + 4 条单测 |
+| `src/_scaffold/graphwar_ad_switch_class.rs` | **新增** | 269 | `Node` 基类 + 2 个原版 getter + 3 条单测 |
+| `src/_scaffold/mod.rs` | 改 | +9 | 三个 `#[cfg(feature = "gdext-bindings")] pub mod …` + 注释 |
+| `client/tools/base_classes_check.gd` | **新增** | 402 | headless 验收脚本（117 条断言） |
+| `docs/16-client.md` | 改 | +本节 | — |
+
+`src/graphwar_root_node.rs` / `graphwar_lan_vbox.rs` / `graphwar_ad_switch.rs` **一行没动**
+（仍然零引擎依赖）；`src/lib.rs`、其它 `src/*.rs`、既有 `client/*.gd`、`docs/INDEX.md`、
+`docs/HANDOVER.md` **都没碰**。
+
+### 39.2 问题 1：换基类要改什么（**实测**，不是推理）
+
+三份文件是**同一个模板**的三个实例。逐项对照如下（左 = 本批真正改动的全部内容）：
+
+| 项 | `Control`（§38 的 `EntityDrawer`） | `Node`（`GraphwarRootNode` / `GraphwarAdSwitch`） | `VBoxContainer`（`GraphwarLanVBox`） |
+|---|---|---|---|
+| 虚方法 trait | `impl IControl` | **`impl INode`** | **`impl IVBoxContainer`** |
+| 基类字段 | `base: Base<Control>` | **`base: Base<Node>`** | **`base: Base<VBoxContainer>`** |
+| `init` 参数 | `Base<Control>` | **`Base<Node>`** | **`Base<VBoxContainer>`** |
+| 可覆写的虚方法集 | `ready` / `process` / `draw` / `notification` … | `ready` / `process` / `physics_process` / `enter_tree` / `exit_tree` … | **同一套**（`IVBoxContainer` 上溯 `IBoxContainer` → `IContainer` → `IControl`；`VBoxContainer` 自己不新增虚方法） |
+| `#[godot_api] impl 类名 { … }` | `#[func]` + `#[export]` | **完全一样** | **完全一样** |
+| `#[derive(GodotClass)]` + `#[class(base = …)]` | 同一行 | 同一行（只换 `base =`） | 同一行 |
+
+⇒ **结论**：换基类 = 改「虚方法块」的 3 个类型位置 + `#[class(base = X)]` 那一处。
+`#[func]` 方法表、`#[export]` 属性、`#[derive(GodotClass)]` 的字段生成（`init` 之外的
+`Default` 兜底）**都与基类无关** —— 三套基类下 headless 实测行为一致（39.7 的第 1、2 组断言）。
+
+两条**本轮实测到的基类差异**（不是模板差异，是引擎差异）：
+
+1. **`VBoxContainer` 会自动纵向排列子节点**（`child0.y = 0`、`child1.y = 28`，观测）。
+   这正是原版「显示顺序 = `add_child` 顺序」的机制来源；纯 `Node` 没有这个行为。
+   ⇒ 「不排序」这条结论在 `VBoxContainer` 下才**看得见**。
+2. **`#[export]` 生成的 setter 会占名字**：`#[export] owned: bool` 自动生成
+   `set_owned` / `get_owned`，自己再写一个 `pub fn set_owned` 会 **`E0592` 重复定义**
+   （本轮踩到，改名 `write_owned`）。同理 `Base<…>` 字段必须叫 `base`。
+
+### 39.3 12 个类的基类对照表（**本轮新产物**，arm64 2.0.60 `.symtab`）
+
+`docs/02-module-map.md` §18.3 只列到「哪 11 个类有 Godot 基类 impl」。本轮把**基类名**取出来了：
+gdext 把 `impl I<Base>` 的路径写进了符号名，所以 `grep 'gen::classes'` 一试即得。
+
+复现（`.reference/steam/android-2.0.60/libgraphwarrust.so`，未 strip）：
+
+```text
+readelf -sW libgraphwarrust.so | c++filt | grep "gen::classes" \
+  | grep -oE "(graphwarrust::[a-z_0-9]+::[A-Za-z]+).{0,200}?gen::classes::[a-z_0-9]+::" \
+  | sed -E 's/(graphwarrust::[a-z_0-9]+::[A-Za-z]+).*gen::classes::([a-z_0-9]+)::/\1  <=  \2/' \
+  | sort -u
+```
+
+输出（11 行，逐条 = 一个类的基类）：
+
+| 类 | 基类（`gen::classes::` 段） | Godot 类名 | 覆写的虚方法（符号里能看到的） |
+|---|---|---|---|
+| `AxisDrawer` | `control` | `Control` | —（另有 `__virtual_call` ×3） |
+| `EffectDrawer` | `control` | `Control` | — |
+| `EntityDrawer` | `control` | `Control` | — |
+| `GraphwarButton` | `button` | `Button` | — |
+| `GraphwarFunctionInput` | `line_edit` | `LineEdit` | — |
+| **`GraphwarLanVBox`** | **`v_box_container`** | **`VBoxContainer`** | **`init`（`0x450a90`）、`process`（`0x450c20`）** |
+| `GraphwarLongPressAnimation` | `control` | `Control` | — |
+| `GraphwarPlane` | `control` | `Control` | — |
+| **`GraphwarRootNode`** | **`node`** | **`Node`** | **`init`（`0x399dd0`）、`ready`（`0x39a6f0`）、`process`（`0x39c8a0`）** |
+| `GraphwarSetupControl` | `control` | `Control` | — |
+| `PlayerShowcase` | `control` | `Control` | — |
+| **`GraphwarAdSwitch`** | **（没有）** | **未知** | **没有** |
+
+最后一行就是本批最难的一条，见 39.4。
+
+### 39.4 问题 2：`GraphwarAdSwitch` 到底是不是 Godot 类
+
+#### 结论一：**是**（档位：观测）. 6 条 arm64 `.symtab` 证据
+
+`readelf -sW libgraphwarrust.so | c++filt | grep ad_switch` 逐条读出来的：
+
+| # | 符号 | 地址 / 大小 | 为什么它是证据 |
+|---|---|---|---|
+| 1 | `<…GraphwarAdSwitch as godot_core::obj::traits::GodotClass>::class_id::**CLASS_ID**` | `.data` `0x8b40c0`，8 B | 这个静态**定义在** `fn class_id()` 里面 ⇒ `impl GodotClass for GraphwarAdSwitch` 存在 |
+| 2 | `<… as cap::ImplementsGodotApi>::__register_methods` | `0x43fb5c`，400 B | 方法表注册驱动（`ImplementsGodotApi` 的 supertrait 是 `GodotClass`） |
+| 3 | `<… as cap::ImplementsGodotApi>::__register_constants` | `0x43fcec`，400 B | 常量表注册驱动 |
+| 4 | `<… as cap::ImplementsGodotVirtual>::__virtual_call::virtual_fn` | `0x4410f4`，156 B | 虚方法派发 |
+| 5 | `<… as UserClass>::__default_virtual_call::virtual_fn` | `0x438194`，156 B | 未覆写虚方法时的兜底派发 |
+| 6 | `graphwar_ad_switch::GraphwarAdSwitch::__registration_storage::STORAGE` | `.data` `0x8b41e8`，56 B | 惰性注册库的存储（`__register_*` 用的那把锁+函数表） |
+
+外加 `drop_in_place<GraphwarAdSwitch>`（`0x3ae8cc`，28 B）与 4 个
+`graphwar_ad_switch::_::__init::__inner_init`（`0x4439a4` 428 B / `0x443b50` 504 B /
+`0x443d48` 448 B / `0x443f08` 512 B）—— 后者的**跨度多重集**与 `GraphwarLanVBox` 的 4 个
+`__inner_init`（512/504/448/428）**逐个相同** ⇒ 同一组 gdext 单态化被两个类各实例化一次。
+
+⇒ 「`GraphwarAdSwitch` 不是 Godot 类、只是个纯 Rust 模块被误当成类」这条**被证否**。
+
+⚠️ **容易误判的一步**（这也是本批出发时的假设）：`docs/02` §18.3 与出发任务里说的
+「符号表里只有 11 个 `impl GodotClass`，缺 `GraphwarAdSwitch`」，数的是
+`<… as GodotClass>::class_id` 这个**函数**符号。12 个类确实只有 11 个 `class_id` 函数，
+但**第 12 个 impl 的关联常量 `CLASS_ID` 在表里**（证据 1）。所以正确读法是：
+
+```text
+class_id() 这个函数被内联/裁掉了 ≠ impl GodotClass 不存在
+（关联常量还留在 .data 里，LOCAL HIDDEN，8 字节）
+```
+
+#### 结论二：**基类定不出来**（档位：未知）. 缺什么证据写在这里
+
+一个类的基类在这份 `.symtab` 里**只有一个出口**：`<T as I<Base>>` 这族符号（39.3 那张表）。
+它**只在类覆写了至少一个虚方法时才生成** —— 而 `GraphwarAdSwitch` **一个都没覆写**
+（`docs/16` §22.5：6 个函数全是惰性注册驱动，没有独立方法体；本批也复核了：
+它连 `ready` / `process` 都没有）。一个空的 `impl INode for GraphwarAdSwitch {}` 与
+「不写这个 impl」编出来的机器码是同一件事 ⇒ **符号表里不存在能区分基类的东西**。
+
+本轮还试过另外两条静态路子，都**失败**了（写下来省得别人再试）：
+
+| 路子 | 结果 |
+|---|---|
+| 在 `.rodata` 里找 `"GraphwarAdSwitch"` 再找引用它的指令 | 4 处命中，全是 **`type_name` 游程**（`…GraphwarAdSwitchgraphwarrust::axis_drawe…`，**不以 NUL 结尾**）；全 `.text` 的 `adrp`+`add`/`ldr` 扫完，**没有任何一条指令**指向它们 |
+| 在 `.data.rel.ro` / `.rela.dyn` 里找指向类名字符串的指针 | **0 命中**（qword 搜 + 20707 条 `RELA` 的 addend 搜都试了） |
+
+⇒ 类的注册走 `.init_array` → `.data.rel.ro` 的函数指针表，基类名是一个 4–13 字节的
+**合并池短串**（`"Node"` / `"Control"` / `"VBoxContainer"`），不跟表就**归属不到某个类**。
+
+**缺的证据（任一条即可定案）**：
+
+1. **静态**：`classdb_register_extension_class` 调用点上传的 `parent_class_name` 实参。
+   要跟的是 `__registration_storage::STORAGE`（`0x8b41e8`，56 B）里那张函数指针表，
+   逐个 disasm 到 `adrp+add` 的短串 + 长度立即数。
+2. **运行时**（更省事）：真机 / 能跑原版 `.so` 的 Godot 4.0 环境里
+   `ClassDB.get_parent_class("GraphwarAdSwitch")` 一行就够。本机没有那个环境。
+
+#### 结论三：**本文件按 `Node` 落，并标成推断**
+
+理由三条（也写进了 `graphwar_ad_switch_class.rs` 的文件头）：
+
+* 模块文档 [`graphwar_ad_switch`] 与 `docs/02` §16.2 / `docs/16` §22 一直写 `Node`（同样是**推断**）；
+* 实例布局能对上「`base` 字段在最前」的写法：`owned` 在 `+0x18`
+  （**逐位（arm64）**，`docs/19` §2.10），而 gdext 的 `Base<T>` 是 24 字节
+  ⇒ 源码形状就是 `struct GraphwarAdSwitch { base: Base<…>, owned: bool }`；
+  但 **24 字节对所有 gdext 基类都一样**，所以它**区分不了**基类（别拿它当证据）；
+* 它不覆写虚方法 ⇒ 基类只影响「父类名」与「能不能挂在某个父节点下」；`Node` 是这一族里最宽的，
+  **行为上没有可观测差别**。
+
+⇒ **它需要注册**（不是纯 Rust 模块），基类按 `Node` 落、档位 **推断**。
+
+### 39.5 问题 3：`GraphwarRootNode` 只做骨架也能转发
+
+建出来的子节点树（headless 实测，`build_scene_graph()` 幂等）：
+
+```text
+GraphwarRootNode                         ← 本类（Node）
+├── ScreensControl                      ← 空 Node 容器（原版 _ready 里 get_node 过）
+│   └── MainMenu … DisconnectedPopUp     ← 15 个 Control，名字 = Screen::name()
+├── IAP_holder                          ← 空 Node 占位（原版 _ready 里 get_node 过）
+├── Ad_holder                            ← **GraphwarAdSwitch**（另一个扩展类）
+└── GraphwarModuleContainer
+    └── GraphwarBanList …                ← 25 个空 Node，名字 = 模块类名
+```
+
+两个 holder 的名字、数量、`get_node` 顺序都来自 `graphwar_root_node::READY_NODES`
+（**观测**：3 个 `lea` + 3 个长度立即数 + 3 个 `call 0x3acb00`）。
+
+两条**真的跑通**的转发链：
+
+| 链路 | 做了什么 | 证据 |
+|---|---|---|
+| `purchase_confirmed()` / `purchase_denied()` → `Ad_holder` | 拿到 `Gd<GraphwarAdSwitch>`，`bind_mut()` 写 `owned` ⇒ 再读 `are_ads_enabled()` 变了 | arm64 `0x3a658c` 写 1 / `0x3a61b0` 写 0（`+0x18` 的**唯一**两个写点，`docs/19` §2.10③） |
+| `show_screen(name)` → 15 个屏 | 跑 `graphwar_root_node::apply_show_screen`（`0x3af850` 决策表的纯逻辑版），把 `set_visible` 落到真 `Control` 上；两个单列分支的 `call_deferred` 进流水 | `0x3af850` 的控制流（`docs/16` §15.5）+ 本轮 headless |
+
+**刻意没做**（不猜）：`0x3a5760` 那 20288 字节状态机的主体、`0x3b0830` 命令总线的全部键
+（只解到 12 条）、25 个 manager 的**真实**装配（只建同名空 `Node` 占位）、两个
+`Rc<RefCell<T>>`（`+0x1668` / `+0x16c8`）、`GraphwarTextureLoader`（`+0x16a0`）。
+
+### 39.6 三个类各自的行为清单（原版 vs 本文件 vs 档位）
+
+| 类 | 原版 | 本文件 | 档位 |
+|---|---|---|---|
+| `GraphwarAdSwitch` | 2 个 getter（`are_ads_enabled = !owned` / 38 字节 AdMob id）+ 1 个 `+0x18` bool | 同 2 个 getter + `#[export] owned`（**推断**：属性可写）+ `owned_raw` / `owned_field_offset` 观测点 | getter 观测 / 基类与属性**推断** |
+| `GraphwarLanVBox` | `VBoxContainer`；每帧把源表投影成行（`load`+`instantiate`+`add_child` 一次），复用行只刷字段，源表没有的行 `queue_free`；**不排序**；Join 走内部 `mpmc` 通道、下一帧才连 | 同一套判据（`LanVBox::sync_rows` + `plan_frame`），但**源表由 GDScript 传**；行节点手工造（`Control` + `RoomName` 标签 + `JoinButton` 按钮）；4 个模式图标没画 | 判据/时序观测；行节点造法是我方选择 |
+| `GraphwarRootNode` | 装配屏表 + 2 个控制器 + 贴图加载器 + 一批 manager；`0x3af850` 切屏与广告；`0x3a5760` 状态机；`0x3b0830` 命令总线 | 只做「3 个 holder + 15 个屏 + 25 个占位槽」的形状，与 `0x3af850` 的转发；`ready` / `process` 计数**不猜行为** | 形状与切屏观测；状态机/总线**未做** |
+
+### 39.7 验收：`client/tools/base_classes_check.gd`（**117 条断言，0 失败**）
+
+```text
+$ cargo build --release --features gdext-bindings --offline
+$ cp $CARGO_TARGET_DIR/release/libgw2_rebuild.so client/libgw2_rebuild.so
+$ godot --headless --path client --import          # 必须先 import，否则扩展静默不加载
+$ godot --headless --path client --script res://tools/base_classes_check.gd
+Initialize godot-rust (API v4.6.stable.official, runtime v4.7.2.stable.official, safeguards balanced)
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+ok   ClassDB.class_exists("GraphwarRootNode")      # 另两个类同形
+ok   GraphwarRootNode 能实例化且是 Node
+ok   GraphwarLanVBox 能实例化且是 VBoxContainer
+ok   GraphwarAdSwitch 能实例化且是 Node
+ok   GraphwarLanVBox.is_class("Container")（继承链）
+ok   GraphwarLanVBox.is_class("Control")（继承链）
+ok   GraphwarAdSwitch **不**实现 ready/process（原版 6 个函数全是注册驱动）
+ok   属性 ads_slot 往返一致（true）                 # show_global / owned 同形，共 6 条
+ok   show_global = true ⇒ 源 = Broker
+ok   owned = true ⇒ are_ads_enabled() = false
+      ad_unit_id = "ca-app-pub-3940256099942544/6300978111"（38 字节）
+ok   owned 的字段偏移 == 0x18（arm64 逐位）
+     期望顺序 = ["RoomEntry_127_0_0_1_35249", "RoomEntry_127_0_0_1_35243", "RoomEntry_127_0_0_1_35241"]
+     实际顺序 = ["RoomEntry_127_0_0_1_35249", "RoomEntry_127_0_0_1_35243", "RoomEntry_127_0_0_1_35241"]
+ok   子节点顺序 == 传入顺序（**没有**按地址排序）
+ok   行节点被**复用**（3 个 instance_id 都没变 ⇒ 没有整页重建）
+ok   被清掉的行真的被 queue_free 释放了
+ok   press_join 之后请求还在通道里（1 条）
+      root 直接子节点 = 4
+ok   ScreensControl 下有 15 个屏节点（实际 15）
+ok   manager_slot_count() == 25（模块槽）
+ok   manager_registration_count() == 22（GraphwarGameClient::new 的注册点）
+ok   Ad_holder 的身份是 GraphwarAdSwitch（跨类持有，class_exists 级别的证据）
+ok   **转发真的写进了子对象的字段**（Ad_holder.are_ads_enabled() = true）
+      show_screen("Campaign") 写了 15 次 set_visible
+ok   **转发到了真节点**：ScreensControl/Campaign.visible == true
+      deferred_log = ["create_ad_view"]
+ok   离开 PlayScreen ⇒ call_deferred("create_ad_view") 被记下
+ok   进入 PlayScreen ⇒ call_deferred("destroy_ad_view")
+      Node 基类回调: ready=1 process=2；VBoxContainer 基类 process=2
+ok   GraphwarRootNode._ready 被引擎调到（1 次）
+ok   GraphwarLanVBox._process 被引擎调到（2 次）      # 不写 set_process，Godot 4.7 自己开
+      VBoxContainer 排列: child0.y=0.000000 child1.y=28.000000
+ok   VBoxContainer 把第 2 行排在 1 行下面（y 递增）—— 基类真的是 VBoxContainer
+ok   子对象 Ad_holder 随父节点一起被回收（没有单独 free）
+BASE_CLASSES 117 passed, 0 failed                  # 退出码 0
+```
+
+> 上面是**节选**（省掉了同形的方法存在性断言与重复的属性往返）；行尾 `#` 之后是我加的说明，
+> 不是程序输出。逐字全文用 39.7 的命令重跑即可。
+
+四条结论：
+
+| 结论 | 档位 | 证据 |
+|---|---|---|
+| 三个类都注册成**正确的基类**，`#[func]` / `#[export]` 在三套基类下行为一致 | **观测** | `is_class(...)` 5 条 + 方法表 26 条 + 属性往返 6 条 |
+| `GraphwarLanVBox` 加 3 个子项**顺序 = 插入顺序**，复用行不重建，过期行 `queue_free` | **观测** | 期望/实际顺序两行逐字相同 + `instance_id` 不变 + `is_instance_valid == false` |
+| `GraphwarRootNode` **只做骨架也能转发**：`purchase_confirmed` → 子对象字段；`show_screen` → 15 个真节点的 `set_visible` | **观测** | `Ad_holder.owned == true` + `ScreensControl/Campaign.visible == true` |
+| `_ready` / `_process` 在 `Node` 与 `VBoxContainer` 两种基类下都真的被引擎调到 | **观测** | `ready=1 process=2` / `process=2`；**没有**任何 `set_process(true)` |
+
+### 39.8 回归保护（与本节无关的两条硬要求）
+
+```text
+cargo test --offline                            # lib 457 passed / 总计 1499 passed / 0 failed
+cargo test --offline --features gdext-bindings   # lib 475 passed / 总计 1517 passed / 0 failed
+bash client/run.sh selftest                      # SELFTEST 694 passed, 0 failed
+```
+
+* `457 → 475` 的差 = `-4`（`_scaffold::gdext` 的手写入口在打开 feature 时不编译）
+  `+22`（`entity_drawer_class` 6 + `gdext_mod` 4 + 本批 12）；
+* `selftest` 的 694 在**两份 .so 下都跑过**：默认 feature 的手写绑定一份、本批的
+  `gdext-bindings` 一份 —— 都是 `694 passed, 0 failed`（换绑定层对客户端透明，§38 的结论再次成立）；
+* ⚠️ §38.7 里记的「总计 1488 / lib 463」是**上一轮**的数；本轮实测是 **1499 / 475**，
+  差的是别的批次加进来的测试，不是本批。条数**不是进度**（`AGENTS.md` §0.2）。
+
+### 39.9 仍未解 / 下一步
+
+1. **`GraphwarAdSwitch` 的基类**（本节最大未决项）：缺 39.4 那两条证据之一。
+2. **`GraphwarRootNode` 的 `process` 主体**（`0x3a5760`，20288 B / 339 条比较 / 64 个直接调用目标）
+   与命令总线 `0x3b0830` 的**全部**键（只解了 12 条）。
+3. **25 个 manager 的真实装配**：本批只按 `graphwar_module_container::MODULES` 建了同名空 `Node`；
+   各 manager 的节点形态（哪些真是节点、哪些是 `Rc<RefCell<_>>`）**未知**。
+4. **`GraphwarLanVBox` 的源表还不在节点层**：原版每帧直接读模块容器里的
+   `GraphwarLanBroadcasterV6` / `GraphwarServerBrokerHandler`（`+0x128` / `+0x240`）；
+   本批由 GDScript 把表传进来。要让这条链自洽，得先把那两个 handler 挂成节点。
+5. **两个 `Rc<RefCell<T>>`（`+0x1668` / `+0x16c8`）与 `GraphwarTextureLoader`（`+0x16a0`）**
+   仍然只有偏移、没有类型。
