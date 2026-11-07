@@ -8111,3 +8111,186 @@ python3 tools/coverage_matrix.py --check           # OK
 `src/_scaffold/graphwar_plane_class.rs` 退回 `418319d`、重编 `.so` 再跑一遍，数字**逐字相同**
 （530/2/25）⇒ 差异来自环境（缺 `assets` / 缺回放样本：日志里 `SKIP 回放：约定的样本 … 不在`），
 **不是本批改动造成的**。两条 FAIL 也是既有的（Skins 页皮肤、Cancel/Start 按钮宽度）。
+
+## 44. 5 个 manager 从"有键"到"能交互"：装配 + 事件流 + 一次最小交互（2026-11，任务 19）
+
+**一句话**：§41 让 22 个 manager **进**了容器，但**没有一个是能调的**。本节挑 5 个
+（`life` / `target` / `obstacle` / `function` / `tick_handler`）补上
+**构造 + 注册 + 按类型取回 + 一次最小交互**，并把它们的**事件流**（订阅什么、发什么）
+逐条指到 x86 指令；`assemble_check.gd` 从 183 条扩到 **199 条**，
+新增的 16 条里有 27 个"交互后读回"的值，与 `root_wiring.rs` 的单测**逐字相同**。
+
+> 档位口径同 §42：**逐位** = 与真二进制逐字节/逐位对拍；**观测** = 能指到反汇编地址/指令级读写；
+> **推断** = 有依据未证；**未知** = 没解出来。`cargo test` / 本脚本的条数**只是回归保护**。
+
+### 44.0 先说"没做到"的部分（免得被下面那张表误导）
+
+| 项 | 现状 | 档位 |
+|---|---|---|
+| `GraphwarFunctionManager`（32 字节）的**字段** | **一个都没解** | **未知** |
+| `GraphwarObstacleManager`（80 字节）的**字段** | **一个都没解** | **未知** |
+| `GraphwarTickHandler`（72 字节）的字段 | 只落了**有地址证据**的几个（见 §44.2），**没有**按字节复原 | 部分**观测** |
+| 这 3 个槽的档位 | **仍然是 `stub` / `impl_type = "—"`**（上一轮已经进了逐槽断言，本轮不改既有断言） | 我方口径 |
+
+⇒ **`stub` 的含义就地更正**：上一轮它是"**零行为**的空占位"，本节起它是
+"**原版结构未复原**"（其中 3 个现在**能交互**）。两件事分开验：
+档位看 `module_slot_status`，能不能交互看 `manager_probe_selftest`。
+
+### 44.1 本轮动了哪些文件
+
+| 文件 | 增/改 | 内容 |
+|---|---|---|
+| `src/graphwar_life_manager.rs` | +接线层 | 3 条订阅名 + 5 个判别值 + `set_alive` / `set_queued_death` / `get_alive` / `get_death_tick` / `get_all_entities` / `handle_tick_event` / `handle_entity_removed_event` / `send_all_info_events` + `outbox` + 4 条单测（纯逻辑 `set` / `status` / `take_queued_death` **一行没动**） |
+| `src/graphwar_target_manager.rs` | +接线层 | `handle_new_connection_event`（判别值闸 5）+ `take_outbox` / `outbox_len` |
+| `src/graphwar_tick_handler.rs` | +类型 | `GraphwarTickHandler`（累加器 / `current_tick` / `tick()` / `handle_connected_to_server_event` / 接已有 `tick_at`）+ 5 条单测（两个自由函数**一行没动**） |
+| `src/_scaffold/root_wiring.rs` | 改 | 3 个槽从零字段变成带状态（`TickHandlerSlot(GraphwarTickHandler)` / `FunctionManagerSlot(FunctionTable)` / `ObstacleManagerSlot(ObstacleTable)`）+ 5 个按类型取回口 + `interaction_selftest` + 5 条单测 |
+| `src/_scaffold/graphwar_root_node_class.rs` | **+2 个 `#[func]`** | `manager_probe_selftest()` / `manager_probe(name)`——**我方自造**的只读观测口，原版**没有**（见 §44.5 的边界） |
+| `client/tools/assemble_check.gd` | +16 条 | 27 条交互值 + 幂等 + 反面（桩仍报 stub）+ 未知名字 |
+| `docs/16-client.md` | +本节 | — |
+
+❌ `src/game.rs` / 别的 manager / `client/src/**` / `src/lib.rs` / 任何既有断言 **一行没动**。
+
+### 44.2 5 个 manager：订阅什么、发什么（全部 `观测`，x86 2026-08-28）
+
+复算工具：`../.venv/bin/python tools/addr_probe.py dis <vaddr>`（本机 `capstone`，离线）。
+
+| manager | 原版 `new` | 订阅（按调用序） | 发出的事件（tag 写在哪条指令） | 本轮接上的入口 | 档位 |
+|---|---|---|---|---|---|
+| `graphwar_life_manager` | `0x454790` | `new_connection_event`(5) / `entity_removed_event`(14) / `tick_event`(0) | `LifeInfo`(27) @`0x454c52`（`set_alive`）、@`0x4542af`（`send_all_info_events`）；`LifeQueuedDeath`(28) @`0x453f6d`（`set_queued_death`） | `set_alive` `set_queued_death` `get_alive` `get_death_tick` `get_all_entities` `send_all_info_events` `handle_tick_event` `handle_entity_removed_event` | 订阅/发 **观测** |
+| `graphwar_target_manager` | `0x465910` | `new_connection_event`(5) / `entity_removed_event`(14) | `TargetInfo`(23)（§41 前的逐位结论不变） | `add_target` `contains` `handle_new_connection_event` `handle_entity_removed_event` | 订阅 **观测**（与既有 `逐位` 一致） |
+| `graphwar_obstacle_manager` | `0x3f2360` | **只一条** `tick_event`(0) | `AddObstacle`(40) @`0x3f1876`、`DestroyObstacle`(41) @`0x3f1c09`、`QueueDestroyObstacle`(42) @`0x3f22b2`、`ClearObstacles`(39)（`clear_obstacles`） | `add_obstacle` `is_obstacle` `queue_destroy_obstacle` `destroy_obstacle` `clear_obstacles` `handle_tick_event` | 订阅/发 **观测**；延迟 165 tick **推断** |
+| `graphwar_function_manager` | 内联（`0x5236e0` 由 `0x517b9f` 调，紧跟 `add_module` `0x469db0`） | **不订阅**（无 `subscribe_to_events_event_handler`，构造体内无 `0x3d38f0` 调用） | **不发**（四个 `set_*` 体内无 `0x3d3530` 调用） | `set_function` `get_function` `get_function_text` `set_function_active_tick` `set_function_points` `get_active_functions_on_tick` | **推断**（正对照见 §44.3） |
+| `graphwar_tick_handler` | `0x519690` | **只一条** `connected_to_server_event`(7) | `TickEvent`(0)（`tick()` @`0x51988b`，载荷 = `current_tick`）、`TickRequest`(1)（`handle_connected_to_server_event` @`0x51964c`；以及 `tick()` 里 `current_tick % 60 == 0` 时 @`0x5198de`） | `tick` `handle_connected_to_server_event` + 接已有 `tick_at` | 订阅/发 **观测** |
+
+三条**顺带更正/新证**：
+
+1. **§41.6 那行"21 号之前 3 条 `subscribe_to_event` 订阅的是谁未解"⇒ 已解**：
+   `0x5179bb` / `0x517a0e` / `0x517a5e` 三条订阅的是
+   `connected_to_server_event`(len `0x19`) / `player_info_event`(len `0x11`) /
+   `entity_removed_event`(len `0x14`)，正好是 `GraphwarLocalPlayerManager` 的
+   `handle_connected_to_server` / `handle_player_info` / `handle_entity_removed_event`
+   三个处理器 ⇒ **它们属于 3 号 `GraphwarLocalPlayerManager`（构造被内联）**，不是 `TickHandler`
+   （`TickHandler` 的订阅在它自己的 `new` `0x519690` 里，只有 1 条）。
+2. **`GraphwarTickHandler::new` 的实参**：`0x519690` 里 `M+0x00..0x0f` = `SystemTime::now()`
+   （call `0x8f3a10`）、`M+0x28 = 0x3b9aca00`（1e9 ns）、`M+0x38` = 传入的事件队列
+   `Rc`、`M+0x40 = 0`（`current_tick`）。⇒ 本层的 `base_tick` / `base_ms` 是**我方形状**
+   （把"壁钟基准"换成抓包基准，好接已有的 `tick_at`）。
+3. **`tick()` 的步长是 1/60 秒**：`0x51986c` `add eax, 0xfe502a` = **16 666 666 ns**
+   （截断值，不是四舍五入的 16 666 667），溢出路径的串是
+   `'overflow when adding durations'`（`Duration` 的加法）。那个"判 60 整除"的分支是
+   幻数 `imul 0xeeeeeeef` + `ror 2` + `cmp 0x4444444`。
+
+### 44.3 负结论的正对照（`AGENTS.md` 合并纪律 A-4）
+
+`function_manager` 那两条"不订阅 / 不发"是**负结论**，所以先证明扫法有效：同一条命令
+`addr_probe.py dis <vaddr>` 在另外 4 个 manager 的 `new` 体内**都**能看到
+`call qword ptr [...]; slot 0x9bac88 -> 0x3d38f0`（= `EventHandler::subscribe`）
+和它的 `lea rsi,'<事件名>'` + `mov edx,<len>`：
+
+```text
+life   0x454790 → 0x454812 / 0x454867 / 0x4548b8 三条 subscribe（+3 条事件名 lea）
+target 0x465910 → 0x465995 / 0x4659e6 两条
+obstac 0x3f2360 → 0x3f23f0 一条（'tick_event', len 0xa）
+tick   0x519690 → 0x519762 一条（'connected_to_server_event', len 0x19）
+func   0x5236e0 → **零条**
+```
+
+发事件同理：`GraphwarEventQueue::add_event` 是 `slot 0x9bac80 -> 0x3d3530`，
+在 `set_alive` / `send_all_info_events` / `set_queued_death` / `add_obstacle` /
+`destroy_obstacle` / `queue_destroy_obstacle` / `tick` / `handle_connected_to_server_event`
+里**都**有；在 `set_function`(0x455e30) / `set_function_points`(0x456810) /
+`set_function_active_tick`(0x456b80) 里**零条**。
+
+### 44.4 落码：容器里现在装的是什么
+
+```text
+TickHandlerSlot(GraphwarTickHandler)     # graphwar_tick_handler.rs（原版模块文件）
+FunctionManagerSlot(FunctionTable)       # root_wiring.rs（我方形状，原版字段未解）
+ObstacleManagerSlot(ObstacleTable)       # root_wiring.rs（我方形状，纯逻辑复用 plane.rs）
+LifeState                                # graphwar_life_manager.rs（原类型 + 接线层）
+GraphwarTargetManager                    # graphwar_target_manager.rs（原类型 + 接线层）
+```
+
+新增的取回口（都走 `get_module::<M>()`，不是查表）：`tick_handler()` / `life_manager()` /
+`target_manager()` / `function_manager()` / `obstacle_manager()`。
+
+`ObstacleTable` 的纯逻辑**全部是已有函数**：光栅化 `plane::rasterize`（与 `0x3f11e0` 同构）、
+单点查询 `plane::is_occupied`（与 `0x3f15b0` 同构）、延迟 `game::DESTROY_DELAY_TICKS`（165，
+`docs/44` 的实测 163.9 / 164.0 / 167.0）。`FunctionTable::get_function_text` 走
+`math_function::to_text`（`docs/119` 1032/1032 对拍的那个函数）。
+
+### 44.5 headless 那侧：**我方自造的**观测口（原版没有）
+
+`RootWiring` 是 Rust 结构体，GDScript 只能调 `#[func]`。§41 之前那 18 个 `#[func]`
+全是"数个数 / 查键 / 取类型名"这类**只读静态**口，**没有任何办法触发一次 manager 交互**
+⇒ 本轮在 `graphwar_root_node_class.rs` 里**只加**了两个（既有 18 个与既有断言**一条没动**）：
+
+```text
+manager_probe_selftest() -> PackedStringArray   # 5 个 manager 各一次最小交互，27 条 "名字=值"
+manager_probe(name) -> GString                  # 单条查询；未知名字 ⇒ 空串
+```
+
+边界（写死在这里，别当成复原成果）：
+
+* **原版没有这两个方法**，它们是验收工具（`src/_scaffold/` 里本来就没有原版对应物）；
+* **只读**：不碰 22 个槽的注册，不碰 `Match` / `TurnManager` / `PlayerManager`
+  （那三个是既有断言在读的）；动的只有这 5 个 manager 自己表里的固定 id（`9001..=9003`）
+  与固定坐标，每次调用末尾把发件箱取走；
+* **幂等**：连调两次返回**同一串**（`assemble_check.gd` 就是这么比的）；
+* **值是真算的**：每一条都是"写进去 → 从被写的那张表读回来"，没有一条 `return` 常量
+  （反证：`root_wiring.rs` 的 `the_read_back_values_track_the_written_state` 换了输入，
+  读回值跟着变）。
+
+27 条期望值（两边逐字相同：GDScript 的 `expected_probe` 与 Rust 的 `expected_selftest()`）：
+
+```text
+life.alive=1  life.death_tick=42  life.due_at_42=1  life.death_tick_after=none  life.subs=3
+target.contains=true  target.replayed=1  target.removed=true  target.contains_after=false  target.subs=2
+obstacle.hit_after_add=true  obstacle.hit_far=false  obstacle.pending=1
+obstacle.due_164=0  obstacle.due_165=1  obstacle.hit_after_destroy=false  obstacle.subs=1
+function.text=x  function.active_tick=100  function.active_at_101=1
+function.active_at_100=0  function.active_at_200=0  function.subs=0
+tick.delta=1  tick.event_tag=0  tick.at_500ms=30  tick.subs=1
+```
+
+### 44.6 验收（本节实测）
+
+```text
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/assemble_check.gd   # 199 passed, 0 failed
+```
+
+| 命令 | 本节实测 | 基线（`CG@418319d`，同一条命令） |
+|---|---|---|
+| `cargo test --offline` | **1530**，全绿 | **1520**（本节 +10：`life_manager` 5 条 + `tick_handler` 5 条） |
+| `cargo test --offline --features gdext-bindings` | **1609**，全绿 | **1595**（本节 +14：上面 10 条 + `root_wiring` 4 条——那个模块挂在这个 feature 下） |
+| `assemble_check.gd` | **199 passed / 0 failed**，退出码 0 | **183**（§41；本节净 +16） |
+| `python3 tools/coverage_matrix.py --check` | **OK**（527 / 527 一行未变；`src_fns` 2311 → **2385**，`src_tree_sha256` 跟着变） | OK |
+
+**两条护栏（三条驱动轴，分开跑、分开报，`AGENTS.md` 合并纪律 C）**：
+
+| 轴 | 命令 | 本节实测 | 基线 |
+|---|---|---|---|
+| `fire` | `cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive fire --policy default` | 内容命中 **325 / 1080** | **325**（一位不差） |
+| `batch` | `… --drive batch --policy default` | 内容命中 **346 / 1080** | **346**（一位不差） |
+| `batch_conv` | `cargo run --release --offline -q --example batch_conv -- --dir <快照> --policy strict` | 种类序列 **1074 / 1080**、内容命中 **595 / 1080** | **1074 / 595**（一位不差） |
+
+⇒ 本节只动 `_scaffold/` 与 5 个 manager 的**接线层**，一条几何/弹道代码都没碰，
+三条轴逐数字不动，符合"接线层不该动几何"的预期。
+
+**新增 16 条的构成**：2 条（两个新 `#[func]` 存在）+ 2 条（27 条整串 / 条数）+
+5 条（5 个 manager 各一条关键值）+ 5 条（5 个槽仍报 `stub`，反面）+ 2 条（幂等 / 未知名字）。
+既有 183 条**一条没删、一条没改**。
+
+### 44.7 仍是推断 / 未知（诚实清单）
+
+| 项 | 档位 | 缺什么证据 |
+|---|---|---|
+| `GraphwarFunctionManager` / `GraphwarObstacleManager` 的**字段布局** | **未知** | 只解到函数名与落点（`fixtures/name_to_addr.tsv`）；两者的 `new` / `set_*` 体内字段偏移没逐条读。所以本轮**不**冒充类型名，装的是我方形状 |
+| `queue_destroy_obstacle` 的**到期时刻算法** | **推断** | 用 `docs/44` 的实测 165 tick；`0x3f20f0` 里那个加法（`now + ?`）没逐条解 |
+| `life::handle_tick_event` 到期后调 `set_alive` 的**实参** | **未知** | `0x4540aa` 那个调用点只看到 `call 0x454b40`，两个实参的来源没解 ⇒ 本层只把到期项**取出来返回**，不改第一张表 |
+| `get_fractional_tick`(`0x519530`) / `get_time_to_tick`(`0x519450`) 的**算式** | **未知** | 两个函数有落点、体内公式没读。本层只给了一个**我方**派生量 `elapsed_tick_units()`，名字都没沿用 |
+| `get_active_functions_on_tick` 的**点条数** | **推断** | §42.2 的三条谓词已落码，但本表不存曲线点 ⇒ `len` 按 0 算，窗口退化成 60 tick 尾巴 |
+| `function_manager` **不订阅/不发事件** | **推断**（有正对照） | 构造路径 `0x5236e0` 体内无 `0x3d38f0`/`0x3d3530` 调用；但那个闭包可能被内联到别处（没有独立符号可核） |

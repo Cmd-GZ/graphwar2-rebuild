@@ -117,6 +117,9 @@ pub const SUBSCRIPTIONS: [&str; 2] = ["new_connection_event", "entity_removed_ev
 /// `entity_removed_event` 的判别值 = **14**（不符就 `panic!()`）。
 pub const ENTITY_REMOVED_TAG: u16 = Event::EntityRemoved.wire_tag();
 
+/// `new_connection_event` 的判别值 = **5**（`docs/07` §7.2 的表；闭包里没断言它）。
+pub const NEW_CONNECTION_EVENT_TAG: u16 = Event::NewConnection.wire_tag();
+
 /// `TargetInfo` 的判别值 = **23**。
 pub const TARGET_INFO_TAG: u16 = Event::TargetInfo.wire_tag();
 
@@ -181,6 +184,31 @@ impl GraphwarTargetManager {
         }
         self.targets.remove(&entity_id);
         Ok(())
+    }
+
+    // ---- 接线层（2026-11 任务 19）：两条订阅各自的入口 + 发件箱 ----
+
+    /// `new_connection_event` 的入口：先按判别值 **5** 过闸，再走
+    /// [`GraphwarTargetManager::send_all_info_events`]。
+    ///
+    /// 闭包本身**没有**在 `new_connection_event` 上做判别值断言（只有
+    /// `entity_removed_event` 那条断言了 14，见模块文档 §4），这里按同一形态补一道闸：
+    /// 名字→判别值的对应来自 `docs/07` §7 的表，**不是我方发明的**。
+    pub fn handle_new_connection_event(&mut self, tag: u16) -> Result<Vec<u32>, ()> {
+        if tag != NEW_CONNECTION_EVENT_TAG {
+            return Err(());
+        }
+        Ok(self.send_all_info_events())
+    }
+
+    /// 取走发件箱（验收用；原版直接把事件塞进 `GraphwarEventQueue`）。
+    pub fn take_outbox(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// 发件箱里有几条。
+    pub fn outbox_len(&self) -> usize {
+        self.outbox.len()
     }
 }
 
