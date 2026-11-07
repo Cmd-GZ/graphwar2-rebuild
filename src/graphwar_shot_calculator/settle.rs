@@ -71,6 +71,23 @@ pub fn resolve(
     resolve_points(mask, targets, &points)
 }
 
+/// 带"射手"的 [`resolve`]：见 [`resolve_points_owned`]。
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_owned(
+    text: &str,
+    x0: f64,
+    y0: f64,
+    step: f64,
+    flip: bool,
+    mode: Mode,
+    mask: &[u8],
+    targets: &[Target],
+    owner: Option<i64>,
+) -> ShotOutcome {
+    let points = shot_points(text, x0, y0, step, flip, mode, true);
+    resolve_points_owned(mask, targets, &points, owner)
+}
+
 /// 与 [`resolve`] 同一套规则，但**点序列由调用方给**（`docs/120`）。
 ///
 /// 存在的理由只有一个：GDScript 那边已经拿着内核算好的点序列
@@ -88,6 +105,22 @@ pub fn resolve(
 /// 两者之间的换算在 [`crate::plane::is_occupied`] 里（`px = 20x+500`），
 /// 本函数与调用方都**不要**再翻一次（`docs/120` §2）。
 pub fn resolve_points(mask: &[u8], targets: &[Target], points: &[(f64, f64)]) -> ShotOutcome {
+    resolve_points_owned(mask, targets, points, None)
+}
+
+/// 带"射手"的 [`resolve_points`]：`owner` 那个实体**不参与致死判定**。
+///
+/// 这是内核里原本缺失的那条规则（`docs/122` §4）。二进制在
+/// **`0x3c4452`（有弹道点）与 `0x3c3e81`（空弹道）** 两处比较的都是开火记录
+/// `+0x18` 的射手 id，**没有**"位置与起点重合"这种判据 ⇒ 这里也只比 id。
+///
+/// `None` = 不排除任何人（`api::hit_test` 的既有契约就是这样，16 条测试不动）。
+pub fn resolve_points_owned(
+    mask: &[u8],
+    targets: &[Target],
+    points: &[(f64, f64)],
+    owner: Option<i64>,
+) -> ShotOutcome {
     let (x0, y0) = *points.first().unwrap_or(&(0.0, 0.0));
     let mut killed: Vec<i64> = Vec::new();
     let mut hits: Vec<Hit> = Vec::new();
@@ -104,6 +137,10 @@ pub fn resolve_points(mask: &[u8], targets: &[Target], points: &[(f64, f64)]) ->
         // 先判致死：经过即死，且不影响弹道
         for t in targets {
             if killed.contains(&t.id) {
+                continue;
+            }
+            // 射手本人不参与致死判定（`0x3c4456`）：只比 id，不比位置。
+            if Some(t.id) == owner {
                 continue;
             }
             let d = ((px - t.x).powi(2) + (py - t.y).powi(2)).sqrt();

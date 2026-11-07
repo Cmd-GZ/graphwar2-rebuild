@@ -77,7 +77,7 @@ use crate::plane::{empty_mask, rasterize};
 use crate::_scaffold::protocol::{emit_effect_info, emit_function_points, emit_life_queued_death};
 use crate::_scaffold::rng::ChaCha12;
 use crate::server::RoomState;
-use crate::graphwar_shot_calculator::settle::{resolve, ShotOutcome, Target};
+use crate::graphwar_shot_calculator::settle::{resolve_owned, ShotOutcome, Target};
 use crate::graphwar_tick_handler::tick_at;
 use crate::graphwar_turn_manager::{self, TurnDecision, TurnManager};
 
@@ -1103,20 +1103,18 @@ impl Match {
         //    谁被打死**不影响**别人的弹道（士兵本就不挡弹道，`docs/30`）。
         let mut outcomes = Vec::with_capacity(shots.len());
         for s in shots {
-            // 射手本人不参与致死判定
-            let others: Vec<Target> = self
-                .soldiers
-                .iter()
-                .filter(|t| {
-                    !(t.id == s.owner_id)
-                        && !((t.x - s.x0).abs() < 1e-12 && (t.y - s.y0).abs() < 1e-12)
-                })
-                .copied()
-                .collect();
+            // 射手本人不参与致死判定 —— **这条规则现在在内核里**（`settle::resolve_owned`），
+            // 调用方不再预先剔除。理由（`docs/122` §4 / §6）：二进制在 `0x3c4452`
+            // （有弹道点）与 `0x3c3e81`（空弹道）内部就排除射手，而且**只比 id**。
+            //
+            // 2026-11-07 两处修正：
+            // ① 删掉调用方多余的 `1e-12` 位置排除（二进制没有这条）；
+            // ② 把"按 id 排除"下沉进内核，避免规则散落在调用方。
+            let targets: Vec<Target> = self.soldiers.clone();
             // 步长用**实况 SERVER_STEP（0.01）**，不是 0.5。
             // `docs/136` 的几何探针给出：同一批回放，step=0.01 时 `end_x` 逐位相同 605/739；
             // step=0.5 只有 27/739。
-            outcomes.push(resolve(
+            outcomes.push(resolve_owned(
                 s.function_text,
                 s.x0,
                 s.y0,
@@ -1124,7 +1122,8 @@ impl Match {
                 s.flip,
                 crate::graphwar_path_calculator::Mode::Normal,
                 &self.mask,
-                &others,
+                &targets,
+                Some(s.owner_id),
             ));
         }
 
