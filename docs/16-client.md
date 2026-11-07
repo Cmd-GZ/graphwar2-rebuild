@@ -7429,7 +7429,7 @@ objdump -s --start-address=0x1baff0 --stop-address=0x1bb000 .reference/steam/202
 `0x498c93` 的 `mov r12, rdi` ⇒ `r12 = self`；`0x498dee` 的 `mov r14d, [r12+0x40]` → `0x498e49` 的
 `mov esi, r14d` → `call *0x9bb028`（`set_z_index`）。⇒ 这个字段就是 2024 符号表里有、2.0.60 里
 **被内联掉的 `FunctionDrawer::set_z_index`** 的宿主（§36.1 那条推断因此更站得住）。
-**字段初值未知** ⇒ 本类不设 z_index（`Line2D` 保持默认 0），见 §42.5。
+**字段初值未知** ⇒ 本类不设 z_index（`Line2D` 保持默认 0），见 §43.5。
 
 **(g) 布局更正（不改旧节，按 §41.3 的做法记在这里）：纯逻辑说 map 在 `self+0x20`，本轮按指令读到
 的是 `self+0x00`。**
@@ -7456,7 +7456,7 @@ bucket_mask**（随后 `[r14+rdx]` 的 `pcmpeqb` 组扫描；`[r12+0x10]` 在插
 * **颜色在原版里是入参**（`update_function` 的 `r9d`，`GraphwarPlane::draw` 用
   `get_team_overview` 的队色填它）⇒ 本类把它做成 `update_function(player_id, points, color)` 的
   第三个参数，**只在建节点时用一次**，不给默认值（默认值就是发明）；
-* **宽度是 `update_transform` 里的常量** ⇒ 从 `.rodata` 逐位读出 **0.125**（见 §42.3b），
+* **宽度是 `update_transform` 里的常量** ⇒ 从 `.rodata` 逐位读出 **0.125**（见 §43.3b），
   写在 `LINE_WIDTH` 里带地址。
 
 **(b) `new_len` 不再是独立入参。**
@@ -7469,7 +7469,7 @@ bucket_mask**（随后 `[r14+rdx]` 的 `pcmpeqb` 组扫描；`[r12+0x10]` 在插
 * **棋盘上还是画不出曲线**：3 个子节点是真的 `FunctionDrawer` 了，但 `GraphwarPlane::draw` 里
   那个 `0x456df0`（`graphwar_function_manager::get_active_functions_on_tick`）**没有接**——
   没有东西喂函数点。本类只是"能喂就会画"。
-* **`z_index` 的初值未知**（§42.3f）：本类不设。缺的证据是 `self+0x60` 的写入点（`init` 里）。
+* **`z_index` 的初值未知**（§43.3f）：本类不设。缺的证据是 `self+0x60` 的写入点（`init` 里）。
 * **`FunctionDrawer::draw`（arm64 `0x3911b4`）x86 侧仍未定位** ⇒ 本类**不实现 `_draw`**
   （§36.3 的有界否定照旧成立）。
 * **`update_transform` 三个入参的含义未知**：`x`/`y`/`scale` 是按被调者 `set_position` / `set_scale`
@@ -7479,7 +7479,7 @@ bucket_mask**（随后 `[r14+rdx]` 的 `pcmpeqb` 组扫描；`[r12+0x10]` 在插
   `get_point_position(0..9)` 那几条，脚本里另有对照断言防止空过。
 * **过期登记（不改旧节，按 §41.3 的做法记在这里）**：§41.8 那条"`FunctionDrawer` / `ObstacleDrawer`
   类还不存在，3 个子节点是 `Control` 占位"对 `FunctionDrawer` 已经过期——本类存在了；
-  `ObstacleDrawer` 仍不存在。§36.3 那句 `HashMap<i32, (Gd<Line2D>, usize)>` 应读作 §42.3a 的三元组。
+  `ObstacleDrawer` 仍不存在。§36.3 那句 `HashMap<i32, (Gd<Line2D>, usize)>` 应读作 §43.3a 的三元组。
 
 ### 42.6 复现（三分钟）
 
