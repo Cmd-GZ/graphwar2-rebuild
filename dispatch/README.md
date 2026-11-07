@@ -2,7 +2,7 @@
 
 这个目录是**派发给别的机器/agent 的任务书**。它不是产品文档，不进 `docs/` 索引。
 
-基线：`master` @ `51ddfd87`（**第三轮起点**）。第一轮 8 份任务已全部合并进 master；
+基线：`master` @ `a8788b61`（**第四轮起点**）。第一轮 8 份任务已全部合并进 master；
 CG 分支上保留任务书与执行报告（`dispatch/reports/CG-2026-11-07.md`）。
 当前回归：`cargo test --offline` **1512** / `--features gdext-bindings` **1583**。
 
@@ -218,3 +218,40 @@ cargo test --offline                 # 基线：lib 457 / 总计 1499，必须�
 2. **负结论要有正对照**：说"扫不到函数指针"之前，先用已知槽（如采样器的 `0x9bac98`）证明你的扫法有效。
 3. **改完必须给四件套**：`cargo test`（两条 feature）、`coverage --check`、
    **上面这张表里的数**、`check_doc_refs.py`。
+
+---
+
+# 第四轮（2026-11-08）
+
+第三轮报告在 `dispatch/reports/CG-round3-2026-11-08.md`。**它把两个我们以为"快解开了"的东西推翻了**：
+
+1. **"1 ulp 残差在求值器"是错的** —— unicorn 直调 `0x4ed670`/`0x4eb9d0`，1290 发里
+   `eval_differ = 0`、`const_differ = 0`。**求值器已逐位排除。**
+2. **"`EffectInfo` 的生产者查不动"是扫描方法的问题** —— tag 有**三种** materialize 形态
+   （`movabs` 直写 / `i64::MAX+add` / `i64::MAX+inc`），上一轮只扫了第一种。
+
+## 护栏（master `a8788b61` 实测，**报数必须带轴名**）
+
+| 指标 | `fire` | `batch` | `batch_conv`（`--drive batch`） |
+|---|---|---|---|
+| 内容命中 | **331 / 1080** | **355 / 1080** | **633 / 1080** |
+| 种类序列 | **819 / 1080** | **919 / 1080** | **1075 / 1080** |
+
+延迟段（`batch` 轴）：死亡集合 **215 / 379**、挖洞点 **140 / 262**。
+
+## 新任务
+
+| # | 分支 | 主题 | 优先级 | 依据 |
+|---|---|---|---|---|
+| 20 | `agent/point-array-filler` | 追点数组的**填充者** | **P0** | 1 ulp 与"同坐标不同序号"两条悬案的**共同入口**（报告 §8-1） |
+| 21 | `agent/diffeq-fire-path` | 给内核加 `Mode` 入参（DiffEq 开火） | **P0** | **515 批 / 550 发目前不可比**，因内核写死 `Mode::Normal`（§8-2） |
+| 22 | `agent/manager-layout` | `FunctionManager`(32B)/`ObstacleManager`(80B) 字段布局 | P1 | 两槽仍是我方形状、标 `stub`（§8-3） |
+| 23 | `agent/obstacle-drawer-node` | 补 `ObstacleDrawer` 节点类 | P1 | 客户端替换清单里唯一"类还不存在"的缺口（§8-4） |
+
+## 这一轮必须守的三条
+
+1. **`EffectInfo` / `DestroyObstacle` 的 tag 有三种 materialize 形态**（`movabs` / `i64::MAX+add` / `i64::MAX+inc`）
+   —— 少扫一种就会得出"查不动"的错误结论。
+2. **`gdext` 构建三步不能少**：`cargo build --release --features gdext-bindings` → **拷进 `client/`** → `--import`。
+   合并方今天就在这一步上翻过车（拷了非 gdext 版，`assemble_check` 直接崩、`plane_on_screen_check` 5 条假失败）。
+3. **数字必须能复跑**：给命令 + JSONL 路径；只给数不给命令的一律当未验证。
