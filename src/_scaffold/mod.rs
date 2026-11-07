@@ -76,6 +76,11 @@ pub mod graphwar_plane_class;
 // `GraphwarLongPressAnimation` 的真节点类（§39）：两次 `draw_arc` + `_process` 推进相位。
 #[cfg(feature = "gdext-bindings")]
 pub mod long_press_animation_class;
+// `ObstacleDrawer` 的真节点类（§45）：障碍掩膜 → `LA8` `ImageTexture` → **一个** `Sprite2D`
+// 子节点，按平面的 `Control::get_size()` 摆位置/缩放（原版这一层是平面的普通字段，不是节点）。
+// 只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod obstacle_drawer_class;
 // `PlayerShowcase` 的真节点类（§39）：读档案 + 三层 `draw_texture_rect` + 计数器闸门。
 #[cfg(feature = "gdext-bindings")]
 pub mod player_showcase_class;

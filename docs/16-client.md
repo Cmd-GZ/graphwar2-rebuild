@@ -8303,3 +8303,249 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
 | `get_fractional_tick`(`0x519530`) / `get_time_to_tick`(`0x519450`) 的**算式** | **未知** | 两个函数有落点、体内公式没读。本层只给了一个**我方**派生量 `elapsed_tick_units()`，名字都没沿用 |
 | `get_active_functions_on_tick` 的**点条数** | **推断** | §42.2 的三条谓词已落码，但本表不存曲线点 ⇒ `len` 按 0 算，窗口退化成 60 tick 尾巴 |
 | `function_manager` **不订阅/不发事件** | **推断**（有正对照） | 构造路径 `0x5236e0` 体内无 `0x3d38f0`/`0x3d3530` 调用；但那个闭包可能被内联到别处（没有独立符号可核） |
+
+## 45. `ObstacleDrawer` 成了真节点类 —— 客户端替换清单里最后一个"类还不存在"的缺口（2026-11，任务 23）
+
+**一句话**：§40 把棋盘上 3 个占位子节点换成了真 `FunctionDrawer`，但障碍层**一行代码都没有**。
+本节补上 `ObstacleDrawer`：`#[derive(GodotClass)] #[class(base = Control)]`，
+把 1000×600 的障碍掩膜拼成一张 **`LA8`** `Image` → `ImageTexture` → **一个** `Sprite2D` 子节点，
+按平面的 `Control::get_size()` 摆位；接进 `GraphwarPlane` 后由 `process` **每帧刷 2 次**
+（原版就是这个数）。`client/tools/obstacle_drawer_check.gd` **116 条断言全过**，退出码 0。
+
+> 档位口径同 §42：**逐位** = 与真二进制逐字节/逐位对拍；**观测** = 能指到反汇编地址/指令级读写；
+> **推断** = 有依据未证；**未知** = 没解出来。脚本条数**只是回归保护**，不是复原证据。
+
+### 45.1 一页结论
+
+| 项 | 结果 | 证据 |
+|---|---|---|
+| 基类 | **原版没有基类**（`ObstacleDrawer` 不是 Godot 类）；本类是 `Control` | 原版负面结论是**观测**（见 §45.2）；`Control` 是**推断** |
+| 结构体字段 | **4 个**：`Gd<ImageTexture>` / `Gd<Sprite2D>` / `PackedByteArray` / `Gd<Image>` | **观测**（`drop_in_place` @ `0x39518c`，268 B，逐字段析构） |
+| 图的规格 | `Image::create_from_data(1000, 600, false, **1 = LA8**, ..)` | **逐位**（立即数 `0x3e8` / `0x258` / `wzr` / `#0x1`） |
+| 像素映射 | `LA8 = (L = 0, A = !mask_byte)` ⇒ 障碍 = 不透明**黑**、空 = 全透明 | **逐位**（`mvn w8, w23` + `sturb wzr`） |
+| `Sprite2D` 摆法 | `position = size × 0.5`；`k = size.x / 1000`；`scale = (±k, **−k**)` | **逐位**（`fmov s2,#0.5` / `0x447a0000` / `fneg` / `fcsel`） |
+| 每帧几次 | **2**（`process_plan()` 已记；本类照做，不再只是计数） | **观测**（§36 / `src/obstacle_drawer.rs`） |
+| 新增代码 | `src/_scaffold/obstacle_drawer_class.rs` 683 行（**真实代码 257 行**，去掉注释/文档/单测） | 本节 §45.7 有复现命令 |
+| Plane 侧改动 | **+60 行 / −0 行**（其中**代码 32 行**） | `git diff --stat` |
+| 验收 | `obstacle_drawer_check.gd` **116 passed, 0 failed**；`cargo test` 1559 / 0；gdext 轴 1642 / 0；`selftest` **694 / 0**；既有 11 个 headless 脚本**一条没回归** | 本节 §45.7 |
+
+### 45.2 基类：**原版根本没有基类**（这条必须先说清，别把它当成"已复原的 `Control`"）
+
+任务书问"基类要有证据"。本轮查完的答案是：**原版 `ObstacleDrawer` 不是 Godot 类**，
+是 `GraphwarPlane` 的一个**普通字段**，所以它没有基类可抄。两条命令、一张表：
+
+```text
+# ① 谁注册成了 Godot 类：gdext 给每个 GodotClass 生成 __registration_storage
+readelf -sW libgraphwarrust.so | c++filt | grep "__registration_storage" \
+  | sed -E 's/.*graphwarrust::([a-z_0-9]+)::([A-Za-z]+).*/\1::\2/' | sort -u
+   → 12 个：axis_drawer / effect_drawer / entity_drawer / graphwar_ad_switch / graphwar_button /
+            graphwar_function_input / graphwar_lan_vbox / graphwar_long_press_animation /
+            graphwar_plane / graphwar_root_node / graphwar_setup_control / player_showcase
+     **没有 obstacle_drawer，也没有 function_drawer**
+
+# ② 基类（符号名里带 gen::classes::<base>::；§35.3 的那条命令）
+   → 11 行（正对照：effect_drawer/effect_drawer 那批确实扫得出来）
+   → grep -cE "function_drawer|obstacle_drawer" = 0
+```
+
+| 判据 | `ObstacleDrawer` | 正对照 |
+|---|---|---|
+| `__registration_storage::STORAGE` 符号 | **没有** | 12 个类都有（`GraphwarAdSwitch` 也有 —— §35.4 就是靠它定的性） |
+| `impl I<Base>`（`gen::classes::…`） | **没有** | 11 个类有 |
+| `.rodata` 里的**类名字面量**（`GraphwarAdSwitch` 那种 `type_name` 游程） | **没有**（全文件 4 处 `ObstacleDrawer` 全是 `.strtab` 的 mangled 符号名） | `GraphwarAdSwitch` 有游程 |
+| 运行时真·节点树 dump（§2.1.10） | `GraphwarPlane` 下**没有** `@ObstacleDrawer@N`（只有 `@AxisDrawer@N` / `@EntityDrawer@N` / `@EffectDrawer@N` / `@Line2D@N`） | 同上 |
+| `GraphwarPlane::init`（`0x4b7380`）里有 `obstacle_drawer.rs:37:97` 的 `panic::Location` | **有** | `src/obstacle_drawer.rs` 的 `FUNCTIONS[1]` 已记 |
+
+⇒ **本类选 `Control` 是推断**，两条理由（都**不是**原版证据）：
+
+1. **同族**：`*Drawer` 里凡是真注册成类的（`AxisDrawer` / `EffectDrawer` / `EntityDrawer`）
+   基类**全是 `Control`**（§35.3 观测）；
+2. **它按 `Control` 的语义布局**：`update` 那两次 `Control::get_size()` 拿的是**平面的**尺寸，
+   Sprite2D 的 `position` / `scale` 由它算出（§45.3d）。
+
+**缺的证据**（不硬说定死）：原版那个结构体在场景树里**没有对应节点**，所以"该是 `Control`
+还是 `Node2D`"没有可观测对象；要定死只能拿到 2024 版带 `impl I<…>` 的符号表的二进制，
+或抓到 `GraphwarPlane::init` 里那次构造的 `Gd::default_instance` 目标类名。
+⚠️ 同一条判据也适用于 **`FunctionDrawer`**：它**不在**那 12 个里（§40 的类注释说"原版是
+`Control` 子类"，那是**推断**，本节的扫描是对它的**更正/降档**）。
+
+### 45.3 从指令里读出来的五条（`update` = arm64 `0x422590`，4688 B）
+
+#### (a) 结构体只有 4 个字段（**观测**：`drop_in_place<ObstacleDrawer>` @ `0x39518c`）
+
+那 268 字节的 drop glue 只碰 3 个"需要析构"的字段，而有 4 个字段拼得进去：
+
+```text
++0x00  Gd<ImageTexture>   24 B   upcast_ref<RefCounted> + RefCounted::unreference（0x3951bc）
++0x18  Gd<Sprite2D>       24 B   **没有**析构代码（Node 不是 RefCounted，`Gd<Node>` 不保活）
++0x30  PackedByteArray    16 B   PackedElement::ffi_destroy（0x3951f8）
++0x40  Gd<Image>          24 B   同上；cleanup 路径里直接写 drop_in_place<Gd<Image>>
+```
+
+`update` 里三条指令印证这三个偏移：`add x0, x26, #0x20` 是那个 sprite 的 `RawGd`
+（`+0x18` 的 `Gd` 的 obj/id 半边）、`add x4, x19, #0x30` 是像素缓冲、`ldr x0, [x21, #0x40]!`
+是那张 `Image`。⇒ **一张图、一个贴图、一个 sprite**（不是"每个障碍一个 `Sprite2D`"），
+而且 **结构体里没有 `HashMap`、没有父节点句柄**。
+
+⚠️ **就地更正 `src/obstacle_drawer.rs` 文档里的一句话**（那个文件一行没改，按 §37.3 的做法记在这里）：
+它写"`hashbrown::rustc_entry` ×3 … 按 key 缓存那些节点"。按 (a) 的字段表，那 3 次 entry 的 map
+**不在 `ObstacleDrawer` 的字段里** ⇒ 读作"缓存的是**障碍数据**（`Mutex<GraphwarObstacleData>`，
+`0x4226e4` 那条 `ldxr` 锁）里的表"更合适。**档位：观测（字段数）+ 推断（那 3 次 entry 归属哪个 map）**，
+缺的证据是从 `0x422828` / `0x422df4` / `0x42306c` 三个 entry 调用点往上追它读的是哪个基址。
+
+#### (b) 图是 **1000×600 / `LA8` / 无 mipmap**（**逐位**）
+
+两处 `Image::create_from_data`（`0x422780` / `0x422d1c`）的实参**完全相同**：
+
+```text
+0x422764  mov w0, #0x3e8     ; 宽 1000
+0x422768  mov w1, #0x258     ; 高 600
+0x42276c  mov w2, wzr        ; use_mipmaps = false
+0x422770  mov w3, #0x1       ; Format = 1 = LA8（Godot 4：L8=0 / LA8=1 / R8=2 / RG8=3 / RGB8=4 / RGBA8=5）
+0x422760  add x4, x19, #0x30 ; &self.pixels（+0x30 那个 PackedByteArray）
+```
+
+1000×600 与 `plane::CANVAS_W/H` 一致 ⇒ **掩膜像素与图片像素一对一**（不需要再缩放）。
+
+#### (c) 掩膜字节 → 像素：**L = 0、A = `!m`**（**逐位**）
+
+`0x422cbc`–`0x422cf0` 的循环，每个掩膜字节 push **两个**字节（`op_push_back` ×2）：
+
+```text
+0x422cbc  ldrb  w23, [x22, x20]    ; m = mask[i]
+0x422cc0  sturh wzr, [x29, #-0xa8] ; pair = [0, 0]
+0x422ccc  bl    op_push_back       ; 推 L = 0
+0x422cd0  mvn   w8, w23            ; !m
+0x422cd8  sturb w8, [x29, #-0xa7]  ; pair[1] = !m
+0x422ce4  bl    op_push_back       ; 推 A = !m
+```
+
+掩膜口径（`plane::rasterize`）：`0x00` = 障碍、`0xFF` = 空 ⇒ **障碍 = 不透明黑、空 = 全透明**。
+另一条路径（`0x422bfc`–`0x422c3c`）改用 `ffi_index_mut(2*(row*1000+col)+1)` **只写 A 通道**，
+写的还是 `mvn`（`0x422c38`）——两条路径映射一致。⇒ "障碍物是黑的"是**从指令读出来的**，
+不是我们挑的颜色（颜色真要复原得等 `0x30` 那个缓冲的**来源**解出来，见 §45.6）。
+
+#### (d) `Sprite2D` 的摆法（**逐位**）
+
+```text
+0x422608 / 0x42262c  Control::get_size ×2       ; 平面的像素尺寸（原版调两次；本类调一次，同值）
+0x42260c  fmov s2, #0.5                         ; 0.5
+0x42261c  fmul s8, s0, s2 / fmul s9, s1, s2     ; position = size * 0.5（居中）
+0x422630  mov  w8, #0x447a0000                  ; 1000.0f32
+0x422644  fdiv s10, s0, s1                      ; k = size.x / 1000
+0x42266c  fneg s1, s10                          ; scale.y = -k（**永远**取负）
+0x422678  fcsel s0, s1, s10, ne                 ; scale.x = (w5 != 0) ? -k : k
+```
+
+`s = (k, −k)` 与 `plane` 自己的 `draw_set_transform(scale = (20, −20))` 是同一个取向
+（棋盘 y 向上、画布 y 向下）。那个 `w5` 是第 5 个入参（`0x4225fc` 存进 `w20`），
+**语义未知**，本类命名 `flip_x`（默认 `false` ⇒ `scale = (k, −k)`）。
+
+#### (e) `update` 的入参形状 + `add_child` 的父（**观测**）
+
+```text
+x0      = &mut self
+x1, x2  = 一个 16 B 的 RawGd（`stp x1,x2,[sp,#0x50]` @ 0x4225dc）→ 紧跟 upcast_ref
+          （字面量 "upcast_ref" @ 0x19d85a，长 10）+ Control::get_size ⇒ **平面节点**
+x3      = 指针（`mov x19, x3`），它的 `+0x40` 被当 GraphwarModuleContainer 用：
+          `ldr x19,[x19,#0x40]` → `get_module(x19+0x18)` @ 0x4226a0
+x4      = 一份 ptr/len 借用（`[x23]` / `[x23+0x8]` / `[x23+0x20]`）——障碍数据那一侧
+w5      = bool（见 (d)）
+```
+
+`add_child_full`（`0x423224`）的**父**是 `x1/x2` 那个节点（`0x4231f8` 又 `upcast_ref` 了一次）
+⇒ **原版把 `Sprite2D` 挂到平面上**（因为本结构体不是节点、也不存父句柄）。
+**本类的差别**：挂成自己的子节点（任务书要求"`Sprite2D` 子节点"），于是坐标原点 = 本节点原点；
+只要本节点贴在平面左上角（`position = (0,0)`），`position = size*0.5` 的语义与原版**逐像素相同**。
+
+### 45.4 与原版的差别（逐条）
+
+| 项 | 原版 | 本文件 | 档位 |
+|---|---|---|---|
+| 基类 | **没有**（平面的普通字段） | `Control` | 原版**观测**（负面）；`Control` 是**推断** |
+| 像素缓冲 | `PackedByteArray`（`+0x30`），逐字节 `op_push_back` | 先拼 `Vec<u8>`，再 `PackedByteArray::from(..)` 一次交出去 | 布局**观测**；批量是**我方选择**（逐字节 FFI 每帧 120 万次不划算） |
+| 贴图 | `create_from_image` 一次 + `update` N 次（`+0x00` 那个字段就是为 `update` 留的） | 同：首次 `create_from_image`，之后 `Image::set_data` + `ImageTexture::update` | **观测**（`CALLED_API` 里两条都在） |
+| `create_from_data` 每帧 2 次 | 是（`0x422780` / `0x422d1c`，两条路径） | 首次 1 次 + 之后每次 `set_data` | 次数**观测**；化简是**我方选择**（两条路径各管什么**未知**） |
+| 掩膜从哪来 | `GraphwarObstacleManager` 的 `Mutex<GraphwarObstacleData>`（每帧锁一次） | 本类自己持一张；改它的仍是 `plane::rasterize` | 锁**观测**；"自己持"是**化简**（那个 manager 还没节点化） |
+| 脏矩形 | 由 `graphwar_plane` 持有，本模块入参里没有矩形 | **同**（本类也不收矩形，每次刷整张图） | **观测** |
+| sprite 的父 | 平面（§45.3e） | 自己 | 原版**观测**；差别是**我方选择** |
+| 名字 | 无（不是节点，没有 `set_name` 的机会） | 不 `set_name` ⇒ 自动名 `@ObstacleDrawer@N` | 我方选择（同 §40） |
+
+### 45.5 接进 `GraphwarPlane`：为什么**默认不建**
+
+三处改动（`git diff` 全文 60 行）：
+
+1. 字段 `obstacle_drawer: Option<Gd<ObstacleDrawer>>`；
+2. `process` 里照 `process_plan()` 给的 **2** 真的刷两次（没有障碍层时退回"只计数"，行为与改前一致）；
+3. `#[func] build_obstacle_drawer()` / `obstacle_drawer_count()` / `obstacle_drawer_updates()`。
+
+**为什么不自动建**：既有验收脚本断言过平面的子节点数 —— `draw_classes_check.gd` 的
+`c.get_child_count() == 3`（`build_children` 之后）、`assemble_check.gd` 的 `1` / `4`。
+自动建就会把它们打红。⇒ 改成显式调用，`obstacle_drawer_check.gd` 里**两种情形都断言**：
+`plane.get_child_count()` 在"没建"时仍是 0、建完 1、进树后 4（3 个 `FunctionDrawer` + 1 个障碍层）。
+
+### 45.6 还没做 / 未知（诚实清单）
+
+| 项 | 档位 | 缺什么证据 |
+|---|---|---|
+| 障碍的**颜色**（现在照 (c) 是**黑**） | 黑是**逐位**；"原版最终是什么颜色"是**未知** | `0x30` 那个 `PackedByteArray` 的**上游**：原版是先往缓冲里 `ffi_index_mut` 写 A、再从别处 `memcpy` 一份源数据（`0x422b68`–`0x422b8c`），那份源数据的生产者没追 |
+| `update` 的 `w5`（第 5 个入参） | **未知** | 只有"为真时 `scale.x` 取负"这一条（`0x422678`）；调用方是谁还没定位 |
+| 每帧为什么刷 **2** 次 | **未知**（数字是**观测**） | 候选：一次整图 + 一次脏区；候选：两层障碍各一次。要抓 `update` 两次入参的运行时值 |
+| 两条 `create_from_data` 路径的分工 | **未知** | `0x4226dc` 那个 `b.ne 0x422a58` 判的是 `self[0]`（`Gd<ImageTexture>` 的 cached rtti 标记）；"首次建 / 之后走脏区"只是**推断** |
+| 脏矩形（只重画那一块） | **未知** | `src/obstacle_drawer.rs` 已记：本模块入参里没有矩形；"只重画一块"没有逐条读到 |
+| `Sprite2D` 的 `texture_filter` / `centered` | **未知** | `update` 里只有 `set_position` / `set_scale` / `set_texture`（`CALLED_API`），没有第三条 |
+| headless 下"贴图真的换了"的引擎侧证据 | **观测到的限制** | dummy 渲染器里 `RenderingServer::texture_2d_update` 不生效：同一像素建贴图时 alpha=255，`update` 之后从 `texture.get_image()` 读回来**还是** 255，而那张 `Image` 已经是 0（脚本里有一行 INFO 记这个）。⇒ 验收改读"喂给 `update` 的那张 `Image`" + 计数器；要看渲染结果得上有 GPU 的机器 |
+
+### 45.7 复现（四分钟）
+
+```text
+export CARGO_HOME=<工作区>/.reference/cargo-home CARGO_TARGET_DIR=<工作区>/.agent-work/cg/target23
+export GODOT=<工作区>/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so     # 不覆盖就是旧内核
+grep -a -c line_instance_id client/libgw2_rebuild.so                     # 判据：3
+"$GODOT" --headless --path client --import                                # 不 import 扩展静默不加载
+"$GODOT" --headless --path client --script res://tools/obstacle_drawer_check.gd
+   → OBSTACLE_DRAWER 116 passed, 0 failed（退出码 0）
+
+cargo test --offline                             # 1559 passed / 0 failed（改了 `src/` 必须全绿）
+cargo test --offline --features gdext-bindings   # 1642 passed / 0 failed（本类 4 条纯函数单测在这条轴里）
+python3 tools/coverage_matrix.py --check         # OK（重跑过：src_files 106 → 107、src_fns 2420 → 2453）
+python3 tools/check_doc_refs.py                  # 通过（退出码 0）
+```
+
+**"真实代码行数"的算法**（与任务书的模板对照同一个口径）：去掉空行、去掉以 `//` 开头的整行注释、
+去掉 `#[cfg(test)] mod tests { … }` 整块，剩下**有语句的行**：
+
+```text
+src/_scaffold/obstacle_drawer_class.rs   683 行 → 真实代码 **257** 行（其中单测块 58 行另计）
+src/_scaffold/entity_drawer_class.rs     678 行 → 真实代码 **292** 行（模板对照，同一口径）
+src/_scaffold/function_drawer_class.rs   538 行 → 真实代码 **216** 行（同一口径）
+
+# 口径（可复跑）：非空行、去掉整行注释（`//`/`///`/`//!`）、去掉 `#[cfg(test)] mod tests {..}` 整块
+python3 - <<'EOF'
+src = open('<文件>').read().split('\n'); n = 0; t = False
+for line in src:
+    st = line.strip()
+    if st.startswith('#[cfg(test)]'): t = True
+    if t or not st or st.startswith('//'): continue
+    n += 1
+print(n)
+EOF
+```
+
+⚠️ 任务书说模板 `entity_drawer_class.rs` "677 行，真实代码约 155 行"：那个 155 的口径比上面更严
+（只数函数体里的语句，不数 `struct` 字段 / 常量 / 签名），**本轮复现不出来**。为了让"本类 vs 模板"
+可比，三个文件都用上面这条命令的同一口径 ⇒ **257 : 292 : 216**。
+
+**selftest**（`bash client/run.sh selftest`）：**694 passed, 0 failed**（前置：`client/assets/` 已解出
++ `cargo build --example serve_match` + `export CARGO_TARGET_DIR` + 两个回放样本
+`1793897298` / `1783255495` 放进 Godot 的 `app_userdata/Graphwar/replays`）。缺那两个样本时是
+**633 / 0 / 2**、缺音频资产时还要再少 10 条 —— 这两个数**不是**本次改动造成的（本改动的 116 条
+在 `obstacle_drawer_check.gd` 里单独跑）。
+
+**既有 headless 脚本回归**（本节提交前逐个跑过，全绿）：`gdext_check` 24 / `base_classes_check` 117 /
+`entity_drawer_check` 72 / `function_drawer_check` 132 / `draw_classes_check` 235 /
+`curve_on_screen_check` 96 / `plane_on_screen_check` 76 / `signal_classes_check` 155 /
+`assemble_check` 199 / `spike_class_check` 23 / `recovered_view_check` 57，**`0 failed` ×11**。
