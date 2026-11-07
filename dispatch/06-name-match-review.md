@@ -1,4 +1,4 @@
-# 06 · `CG/name-match-review`：多候选定夺 + 无候选分类
+# 06 · `agent/name-match-review`：多候选定夺 + 无候选分类
 
 **优先级 P2。纯工具 + 文档。**
 

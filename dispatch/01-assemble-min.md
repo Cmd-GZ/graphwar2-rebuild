@@ -1,4 +1,4 @@
-# 01 · `CG/assemble-min`：让 `GraphwarRootNode` 真正装配
+# 01 · `agent/assemble-min`：让 `GraphwarRootNode` 真正装配
 
 **优先级 P0。** 这是唯一能把"12 个能跑的节点"变成"一棵能跑的树"的任务。
 

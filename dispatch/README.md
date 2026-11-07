@@ -11,10 +11,15 @@
 ```bash
 git clone git@github.com:Cmd-GZ/graphwar2-rebuild.git
 cd gw2-rebuild
-git checkout -b CG/<任务名> origin/master
+git checkout -b agent/<任务名> origin/master
 ```
 
 干完推到 `origin`，**不要直接推 `master`**，也不要推 `CG` 本身——由父会话合并。
+
+⚠️ **分支前缀必须是 `agent/`，不能是 `CG/`。**
+2026-11-07 实测：远端已存在分支 `CG`，而 Git 不允许同时存在 `CG` 与 `CG/xxx`
+（`cannot lock ref ... 'refs/heads/CG/xxx' exists; cannot create 'refs/heads/CG'` 的反向同样成立）。
+⇒ 本目录早先写的 `CG/<任务名>` 已全部改成 **`agent/<任务名>`**。
 
 ### 环境（这台机器上已经跑通的写法）
 
@@ -59,14 +64,14 @@ cargo test --offline                 # 基线：lib 457 / 总计 1499，必须�
 
 | # | 分支 | 主题 | 优先级 | 需要二进制 |
 |---|---|---|---|---|
-| 01 | `CG/assemble-min` | RootNode 真装配 3–5 个 manager，跑出棋盘 + 士兵 | **P0** | 是 |
-| 02 | `CG/function-drawer-node` | `FunctionDrawer` 节点化（补上 12 类之外的唯一缺口） | **P0** | 是 |
-| 03 | `CG/bit-exact-report` | 整局对拍剩余失败的归因分类 | P1 | 是（回放语料） |
-| 04 | `CG/campaign-data` | 21 关参数表落码 + 接客户端 | P1 | 否 |
-| 05 | `CG/crossbuild` | Windows / Android 编译验证 | P2 | 否 |
-| 06 | `CG/name-match-review` | 63 个多候选人工定夺 + 444 无候选分类 | P2 | 是 |
-| 07 | `CG/docs-renumber` | `docs/16` 的 §19/20/23/34 空号与交叉引用 | P2 | 否 |
-| 08 | `CG/viewport` | 用原版 `.gd` 换视图层的可行性调研 | P3 | 否 |
+| 01 | `agent/assemble-min` | RootNode 真装配 3–5 个 manager，跑出棋盘 + 士兵 | **P0** | 是 |
+| 02 | `agent/function-drawer-node` | `FunctionDrawer` 节点化（补上 12 类之外的唯一缺口） | **P0** | 是 |
+| 03 | `agent/bit-exact-report` | 整局对拍剩余失败的归因分类 | P1 | 是（回放语料） |
+| 04 | `agent/campaign-data` | 21 关参数表落码 + 接客户端 | P1 | 否 |
+| 05 | `agent/crossbuild` | Windows / Android 编译验证 | P2 | 否 |
+| 06 | `agent/name-match-review` | 63 个多候选人工定夺 + 444 无候选分类 | P2 | 是 |
+| 07 | `agent/docs-renumber` | `docs/16` 的 §19/20/23/34 空号与交叉引用 | P2 | 否 |
+| 08 | `agent/viewport` | 用原版 `.gd` 换视图层的可行性调研 | P3 | 否 |
 
 ## 冲突矩阵（并行前先看这个）
 
