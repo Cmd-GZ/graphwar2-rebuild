@@ -2029,3 +2029,185 @@ cargo run --release --offline --example kseq_text  -- --dir $R --file 1782676398
 | 2 | `1782675586#0` 我们多发 1 个死者（184743，`d = 0.42 < radius 0.5`） | 真值的致死半径/判据（现在全体士兵都按 0.5 算） | **未知** |
 | 3 | 2 发 DiffEq 的 `corrected_function` 真值**既不补括号也不加后缀**，而 `game.rs` 恒按 Normal 加后缀 | `Match::fire` 的"按模式分"（收敛层 `diffconv` 已做，`game.rs` 没做） | **未知**（`docs/06` §28.9 第 4 条的同一件事） |
 | 4 | `hole_point` 里同一个模式（多余的 `)` 会让"按印刷文本回代"丢掉常数） | — | 实测**改掉它整份 401 回放 0 行差异**（md5 相同），所以**没改**（无证据的改动不做）；等有独立证据再动 |
+
+## 30. 把 `diffconv` 的坐标计算**并回内核** + 两条路径的逐位一致性（2026-11-07，`dispatch/16-diffconv-merge`）
+
+> 任务书：[`dispatch/16-diffconv-merge.md`](../dispatch/16-diffconv-merge.md)（P1，纯工程债）。
+> 点这个债的是 `dispatch/reports/CG-round2-2026-11-07.md` **§5**：`src/game.rs`（真实实现）与
+> `src/_scaffold/diffconv.rs`（收敛层）**各有一份**爆炸点/挖洞点算法，第二轮任务 09/14 只改了
+> `game.rs`、收敛层没跟上 ⇒ 同一批回放在两条路径上得出不同结论，以后每次对拍都得先怀疑
+> "是驱动错了还是内核错了"。
+>
+> ⚠️ 编号：任务书写"用 §28"，但本分支上 **§28（多发批结构接线）与 §29（1074/918→915 复核）已经存在**，
+> 所以本节用 **§30**（要 §28 的话得把既有两节整体挪号，不值）。
+
+### 30.1 一句话结论（四条）
+
+1. **清单 = 7 条规则、11 处调用点**（§30.2）。其中 **9 处改成调内核同一个函数**、**1 处删掉**
+   （第三份采样）、**2 处保留**并标明是**假设探针**（H2：拿回放的文本重算，故意不同输入）。
+   收敛层现在**不再自己算任何一个坐标**。
+2. **核心验收过了，而且是逐位、全语料**：Normal 轴 **740 发 / 740 发**的点序列（逐坐标 `to_bits`）、
+   `stop`、`blocked`、`killed`（含顺序）、修正文本**全同**；挖洞点 **244 / 244** 逐位相同（§30.5）。
+   同一条断言在改之前是 **32 / 740**（§30.6 的正对照 ② —— 708 发的几何本来就**末位不同**）。
+3. **`DiffEq` 批（515 批 / 550 发）不可比，不并入分母**：内核开火路径把 `Mode::Normal` **写死**
+   （`src/game.rs::fire_functions`），DiffEq 局在内核里**没有**开火路径。这是**内核缺功能**，
+   不是"近似通过"（§30.4）。收敛层的 Ode 分派只能留在收敛层，理由是"内核那份不存在"。
+4. **回归全绿、且只升不降**：`fire` 内容 **325 / 1080**（未动，`src/game.rs` 一字未改）、
+   `batch_conv` 种类 **1074 → 1075**、内容 **595 → 612**（逐批 **变好 17 / 变差 0**）、
+   `cargo test --offline` **1525**（基线 1520，+5 条新断言）、`coverage_matrix --check` OK。
+
+### 30.2 清单：7 条规则、11 处调用点（改前 → 改后）
+
+| # | 位置（改前） | 它自己算的是什么 | 改后调的内核入口 |
+|---|---|---|---|
+| R1 | `corrected_function` 的函数体 + `unbalanced_brackets` | 修正文本：补 `)` + `± c.ddd` 后缀，**`c` 用原文解析的树** | `game::corrected_function_text`（`c` 用**去掉多余 `)` 的树**，`docs/06` §29） |
+| R2 | `settle::resolve` 内部（`shot_points(..., apply_correction=true)`） | 采样串：原文 + **全精度** `c`（`shifted_tokens`） | `game::sampling_function_text`（**印出来的三位小数**文本，`docs/06` §25） |
+| R3 | 同上 | 点序列：`calculate` + `SERVER_STEP` | `graphwar_shot_calculator::shot_points(…, apply_correction=false)` |
+| R4 | 同上 | 停点 / 阻断 / 致死 / 命中弧长 | `settle::resolve_points_owned` |
+| R5 | `fire_batch` ① 的 `others` 过滤器 | 射手排除**外加**一条 `1e-12` 位置排除 | 删掉：内核 `resolve_points_owned(owner)` **只比 id**（`docs/122` §4） |
+| R6 | `explosion_point(corrected, stop, …)` | 爆炸点：印出文本在 `±end_x` 处求值 + 非有限回退 | `game::hole_point`（产出路径） |
+| R7 | `fire_batch` ⑤ 的 `out.stop` | 挖洞点位置（**第一轮的老值**） | `game::hole_point`（挖洞点 ≡ 爆炸点，503/503 逐位） |
+
+调用点（11）：
+
+| 调用点 | 规则 | 处置 |
+|---|---|---|
+| `fire_batch` ① `resolve(原文, …)` | R2/R3/R4 | 改为 `sampling_text` + `shot_points(…, false)` + `resolve_points_owned` |
+| `fire_batch` ① `others` 过滤 | R5 | 删（整张士兵表交内核） |
+| `fire_batch` ① `corrected_function` | R1 | 改为转调内核 |
+| `fire_batch` ⑤ 挖洞 `out.stop` | R7 | 改为 `hole_point` |
+| `fire_batch` ⑥ `explosion_point` | R6 | 改为 `hole_point` |
+| `probe_file` `resolve(原文, …)` | R2/R3/R4 | 同上（与预测器逐行同构） |
+| `probe_file` `shot_points(原文, true)`（pts / `tail` / `n_points`） | R2/R3 | 改为从 `ShotOutcome::points` 取（**少算一次**） |
+| `probe_file` `corrected_function`（`corrected_ours`） | R1 | 随 R1 转调内核 |
+| `probe_file` `shot_points(原文, true)`（`our_n`） | R2/R3 | **删**（第三份采样；现在 `our_n == n_points`） |
+| `probe_file` `shot_points(回放文本, true)`（`h2` / `h2_n`） | — | **保留**：H2 假设（拿**回放**的文本重算），输入本来就不同，不是重复计算 |
+
+留下的三样"没有内核对应物"的东西（都写明理由）：`mode_of`（回放字符串 → 采样模式）、
+`Mode` 分派（`Ode` 时采样原文、修正文本 = 原文）、`explosion_point`（吃**已印出**文本的旧签名助手，
+已不在产出路径上，用 §30.5 的等价性断言钉住它与 `game::hole_point` 逐位一致）。
+
+### 30.3 为什么"并回内核"不会把收敛层变差（`Y` 类那处仍在）
+
+`game::execute_results` 的 ④（`EffectInfo(ExplosionEffect)`）**当前仍写 `out.stop`**，
+而 ③（挖洞）已经用 `hole_point`（`docs/06` §24 的 `Y` 类、§26 的坐标来源）。收敛层现在
+**③④ 都用 `hole_point`**：
+* 这是照**内核的那条规则函数**走（不是照内核那份还没接线完的调用点走）；
+* 若为了"和内核一模一样"把 ④ 也降回 `out.stop`，收敛层内容会掉回 `Y` 桶（§24：170 批），
+  而回放侧的铁证是 **503/503 条 `DestroyObstacle` 与同批 `ExplosionEffect` 坐标逐位相同**；
+* 差多少是**量化**的：全语料 **20 / 740 发**（`§30.5` 的"爆炸点相同 720 / 740"），
+  这就是"内核 ④ 未接线"的剩余量，不是收敛层算错，也不能藏起来。
+
+### 30.4 `DiffEq`：内核**没有** Ode 开火路径（内核缺口，本任务不许改 `game.rs`）
+
+`src/game.rs::fire_functions` 里写死的是：
+
+```rust
+let points = crate::graphwar_shot_calculator::shot_points(
+    &corrected, s.x0, s.y0, crate::SERVER_STEP, s.flip,
+    crate::graphwar_path_calculator::Mode::Normal,   // ← 写死
+    false,
+);
+```
+
+⇒ 对 DiffEq 房间，内核路径按 `y = f(x)` 采（错），收敛层按 RK4 采（对，`docs/142` §3）。
+两种结论不可能逐位相同，所以 **DiffEq 批不进分母**：全语料 **515 批 / 550 发**（Normal 是 565 批 / 740 发，
+合计 1080 批 / 1290 发）。这是本节唯一的"做不到"，性质是**内核缺功能**：
+`game.rs` 不在 `dispatch/16` 的允许改文件里，且 §29.7 第 3 条已经把它登记成**未知**
+（"`Match::fire` 的按模式分，收敛层已做、`game.rs` 没做"）。要让这条也变成"逐位"，下一步得在
+内核开火路径上加 `Mode` 入参 —— **另开任务**，不在本节。
+
+### 30.5 一致性断言怎么写（可复跑）
+
+对拍器就放在收敛层里（`src/_scaffold/diffconv.rs` 末尾）：`parity_file` / `parity_dir` / `Parity`。
+两条路径对**同一批回放**跑同一批：
+
+| 路径 | 是什么 |
+|---|---|
+| K | `game::Match::fire_functions`（只算几何、不改状态）+ `Match::fire_batch`（同一批真正结算一遍） |
+| C | `ConvPredictor::fire_batch` |
+
+比的**不是**"报文对上回放"，而是**中间结果逐位**：`points`（逐坐标 `to_bits`，长度也要同）、
+`stop`、`blocked`、`killed`（**含顺序**）、`hits`（id/下标/弧长位）、修正文本（取 K 真正**发出去**的
+`FunctionInfo.corrected_function`）；另单列**挖洞点**与**爆炸点**报文坐标。
+
+```bash
+export CARGO_HOME=<ws>/.cargo-home CARGO_TARGET_DIR=<本 worktree 私有>
+R=<ws>/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example diffconv_parity -- --dir $R --max-samples 5
+```
+
+实测（同一份 401 回放快照 / release / 私有 target）：
+
+```text
+文件 286；Normal 结算批 565；发 740；点序列/stop/blocked/killed/修正文本 逐位全同 740 / 740（100.0%）
+挖洞点（两边都调 game::hole_point）：逐位相同 244 / 244
+爆炸点（内核 ④ 仍用 stop，收敛层用 hole_point）：相同 720 / 740
+DiffEq 批 515 / 550 发：不可比（内核写死 Mode::Normal）⇒ 不在分母
+结论：Normal 轴 740 发逐位全同，没有一处不一致（退出码 0）
+```
+
+`cargo test` 里钉的是**固定样本**（5 份回放，覆盖 Normal 单发自由 / 单发撞障碍 / 撞障碍零死亡 /
+**11 批多发** / DiffEq），debug 下 0.32 s：
+
+```text
+cargo test --offline --test diffconv_parity -- --nocapture
+[样本] 文件 5；Normal 结算批 15；发 26；…逐位全同 26 / 26（100.0%）
+[样本] 挖洞点逐位相同 17 / 17；爆炸点相同 26 / 26
+[样本] DiffEq 批 3 / 6 发：不在分母
+```
+
+`GW2_PARITY_FULL=1 cargo test --offline --test diffconv_parity` 会跑全语料（同一份代码路径）。
+测试里另有两条"**反向**断言"（防空转）：样本必须**真的比过**挖洞点（`destroy_compared > 0`）、
+必须**真的把 DiffEq 计进不可比**（`diff_eq_batches > 0`）—— 否则"逐位相同"可能只是"没比较"。
+
+### 30.6 正对照：证明"原样就不同"这件事是真的（不是没比较）
+
+按 `AGENTS.md` 合并纪律 A.4，负结论要有正对照。这里做了两条**故意破坏**（改完立刻还原）：
+
+| 对照 | 怎么破坏 | 结果 |
+|---|---|---|
+| ① | 把 ⑤ 挖洞点改回第一轮的 `out.stop` | `挖洞点 242 / 244`、`不一致 1 处`（`1782675586 #0`）、退出码 **1** |
+| ② | 把采样改回"原文 + 全精度修正常数"（= 老 `settle::resolve` 那条路） | `逐位全同 32 / 740（4.3%）`、`不一致 1766 处`、退出码 **1** |
+| — | 现状（并回内核后） | `740 / 740`、`244 / 244`、退出码 **0** |
+
+对照 ② 同时回答了"这债到底有多贵"：**改之前，708 / 740 发 Normal 的弹道与内核差位**
+（不是"理论上可能"），这也正是 §5 说的"同一批数据两条路径不同结论"。
+
+### 30.7 回归数字（三条轴分开报，命令都能粘）
+
+```bash
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv    -- --dir $R --policy strict
+```
+
+| 轴 | 指标 | 改前（`CG@418319d`） | 改后 |
+|---|---|---|---|
+| `fire` | 内容命中 | 325 / 1080 | **325 / 1080**（未动：`src/game.rs` 一字未改） |
+| `batch` | 内容命中 | 346 / 1080 | **346 / 1080**（同上） |
+| `batch_conv` | 种类序列 | 1074 / 1080 | **1075 / 1080** |
+| `batch_conv` | 内容命中 | 595 / 1080 | **612 / 1080** |
+| `cargo test --offline` | 通过条数 | 1520 | **1525**（+3 单元 +2 集成） |
+
+逐批翻面（用 `batch_conv --json` 的 `content_ok` / `kind_seq_ok` 对位比）：
+**内容 变好 17 / 变差 0；种类 变好 1 / 变差 0**。变好的 17 批**全是 Normal**（16 个单发 + 1 个两发），
+即"采样串换成内核那条（印出来的三位小数）"直接换来的。
+
+### 30.8 这次改动对既有产物的影响（诚实清单）
+
+| 东西 | 变化 | 为什么 |
+|---|---|---|
+| `diffconv::ShotOutcome` | 新增 `points` / `sampling` / `hits` 三个字段 | 对拍要拿中间结果；只加字段，报文口径不变 |
+| `ShotGeom::our_n` | 现在**恒等于** `n_points` | 第三份采样（`shot_points(原文, true)`）删了。旧文档里比 `h2_n` vs `our_n` 的读法要按这条重读 |
+| `probe_file` 的 `stop_*` / `killed` / `blocked` / `n_points` / `tail` / `corrected_ours` | 变得与预测器**逐位同源** | 同一批内核入口（此前探针与预测器各算一次，可能不同） |
+| `explosion_point` / `unbalanced_brackets` | 仍在，语义未变，但**不在产出路径上** | `tests/diff_conv.rs` 与几个探针还在用；前者另有 `explosion_point_is_the_kernel_hole_point` 等价性断言（含"空函数早退"那条边界的说明） |
+| `replaydiff::Predictor::predict` | **一字未改** | `tools/bit_exact_attrib.py --check-baseline` 钉住的冻结基线（第二轮任务 10 刻意没动） |
+
+### 30.9 仍未确定的（诚实清单）
+
+| # | 事项 | 缺什么 | 档 |
+|---|---|---|---|
+| 1 | DiffEq 局的内核开火路径（采样模式该从哪来） | `game.rs::fire_functions` 的 `Mode` 入参在二进制里怎么传（`docs/06` §29.7 第 3 条同一件事）；本任务不许改 `game.rs` | **未知** |
+| 2 | `game::execute_results` ④ 何时改用 `hole_point`（`Y` 类 20 / 740 发） | 与 ③ 同一条证据（503/503）已经指向"该改"，但那是内核侧接线任务 | **推断**（证据足，未接线） |
+| 3 | 两条路径"逐位相同"是否等价于"与原版逐位相同" | 本节只证明**内部一致**；与原版的一致性仍由 §24–§29 那几条轴分别计（`fire` 325 / `batch_conv` 612 就是余下的差） | **逐位**（仅对"两路径相等"这一命题） |

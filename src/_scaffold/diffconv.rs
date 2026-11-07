@@ -13,6 +13,27 @@
 //! `fire` 的顺序拼报文，只是把上面两条换成回放给的真值。**报文顺序、字段名、
 //! 浮点写法全部复用 `protocol::emit_*`**，所以"逐字节"这条口径没有变松。
 //!
+//! ## 坐标一律走内核（2026-11-07，`docs/06` §30）
+//!
+//! 本模块**曾经**自己算过一遍坐标（修正文本 / 采样串 / 点序列 / 停点 / 致死 / 爆炸点 /
+//! 挖洞点 / 目标排除），于是同一条规则有两份实现，`dispatch/reports/CG-round2` §5 点名
+//! 的"两条路径给出不同结论"就是这么来的。现在这七处**全部改成调内核同一个函数**：
+//!
+//! | 规则 | 内核入口（`pub(crate)`，本模块直接调） |
+//! |---|---|
+//! | 修正文本（补括号 + `± c.ddd`） | [`crate::game::corrected_function_text`] |
+//! | 采样串（多删少补括号 + 后缀） | [`crate::game::sampling_function_text`] |
+//! | 点序列 | [`crate::graphwar_shot_calculator::shot_points`]（`apply_correction=false`） |
+//! | 停点 / 阻断 / 致死 / 命中弧长 | [`resolve_points_owned`]（射手排除在内核里，只比 id） |
+//! | 爆炸点 / 挖洞点 | [`crate::game::hole_point`] |
+//!
+//! 本模块只剩三样**没有内核对应物**的东西，都写明理由：
+//! * [`mode_of`]：回放字符串 → 采样模式。`game::fire_functions` 把 `Mode::Normal` **写死**
+//!   （`docs/06` §30.4），所以 DiffEq 局在**内核开火路径里根本不存在**，这条映射只能在这；
+//! * [`Mode`] 的分派（`Ode` 时采样原文、修正文本 = 原文）：同上，内核没有 Ode 开火路径；
+//! * [`explosion_point`]：**旧签名助手**（吃"已印出的文本"），只被测试/探针用；
+//!   `tests/diff_conv.rs` 有一条机械等价性断言钉住它与 `game::hole_point` 逐位相同。
+//!
 //! 为什么另起一份而不是给 `Match::fire` 加参数：`fire` 的报文序列已经被
 //! `tests/replay_diff.rs` 与端到端测试钉住，而同一时刻有别人在改 `game.rs` 的
 //! 同时回合制事务化（`docs/136` §6 第 3 条）。把它做成**新增的、可丢弃的实验层**，
@@ -26,7 +47,7 @@ use crate::plane::empty_mask;
 use crate::_scaffold::replaydiff::{
     compare_batch, split_batches, BatchVerdict, Inputs, Msg, Policy, Replay, ShotInput, StateMask,
 };
-use crate::graphwar_shot_calculator::settle::{resolve, Target};
+use crate::graphwar_shot_calculator::settle::{resolve_points_owned, Target};
 
 /// `QueueDestroyObstacle` → `DestroyObstacle` 的延迟（与 `game.rs` 同一个常量）。
 pub use crate::game::DESTROY_DELAY_TICKS;
@@ -43,28 +64,44 @@ pub fn mode_of(function_mode: &str) -> Mode {
     }
 }
 
-/// 修正文本的**唯一**规则（逐发真值见 `docs/142` §3.2）。
+/// 修正文本的**唯一**规则 —— 直接转调内核（`docs/06` §30.2）。
 ///
+/// * `Mode::Normal`：**就是** [`crate::game::corrected_function_text`]。
+///   内核那份是 `docs/06` §29 修出来的真值形状：`补齐缺失的 ")" + 保留多余的 ")"`
+///   作为**发出去**的串，而修正常数 `c` 由**去掉多余 ")" 的树**算（真解析器不会被多余的
+///   `)` 截断）。旧实现自己拼，且 `c` 用的是**原文**解析出来的树 ⇒ 那 8 条多余的 `)`
+///   会让后缀与真值不同。
 /// * `Mode::Ode`（DiffEq 局）：`corrected_function == function`，**不加后缀**
-///   —— 全语料 550/550 零例外（回放实读）。
-/// * `Mode::Normal`：`to_text(parse(function)) + " ± c.ddd"`。736/740 是
-///   `function + suffix` 的字面拼接，剩下 4 条是空函数（`" + 3.333"`）；
-///   另有 11 条函数**括号没闭合**，真值补了右括号（例：
-///   `5/155sin(4exp(4*6cos(` → `5/155sin(4exp(4*6cos())) + 6.055`），
-///   所以先过一遍 [`crate::math_function::to_text`]。
+///   —— 全语料 550/550 零例外（回放实读）。这条在内核里**没有对应物**：
+///   `game::fire_functions` 把 `Mode::Normal` 写死（§30.4），所以 Ode 局的内核开火路径
+///   不存在，这条分派只能留在这里。
 pub fn corrected_function(text: &str, x0: f64, y0: f64, flip: bool, mode: Mode) -> String {
     match mode {
         Mode::Ode => text.to_string(),
-        Mode::Normal => {
-            let toks = crate::math_function::parse(text);
-            format!(
-                "{}{}{}",
-                text,
-                ")".repeat(unbalanced_brackets(text)),
-                crate::graphwar_shot_calculator::correction_text(&toks, x0, y0, flip)
-            )
-        }
+        Mode::Normal => crate::game::corrected_function_text(text, x0, y0, flip),
     }
+}
+
+/// **采样器吃的串** —— 内核同一条规则（`docs/06` §25 / §30.2）。
+///
+/// `Normal` 直接转调 [`crate::game::sampling_function_text`]：与**发出去**的修正文本的
+/// 唯一差别是多出来的 `)` 被去掉（理由见 `game::balanced_texts`）。
+/// 旧实现走 `settle::resolve(原文, …)`，那条路内部按 `shifted_tokens`（**全精度** `c`）
+/// 平移 —— 与真值差 1e-6~1e-3，正是归因表 `Y2` 那一桶。
+///
+/// `Ode` 没有内核对应物（见 [`corrected_function`]），采样串就是函数原文。
+fn sampling_text(text: &str, x0: f64, y0: f64, flip: bool, mode: Mode) -> String {
+    match mode {
+        Mode::Ode => text.to_string(),
+        Mode::Normal => crate::game::sampling_function_text(text, x0, y0, flip),
+    }
+}
+
+/// 爆炸点 / 挖洞点 —— 转调内核 [`crate::game::hole_point`]，只补一个 `Mode` 适配。
+///
+/// `DiffEq` 局不重算、直接回停点（`hole_point` 的 `diff_eq` 参数就是这件事）。
+fn hole_point(text: &str, x0: f64, y0: f64, flip: bool, stop: (f64, f64), mode: Mode) -> (f64, f64) {
+    crate::game::hole_point(mode == Mode::Ode, text, x0, y0, flip, stop)
 }
 
 /// 字符串里没闭合的 `(` 个数（`(` 减 `)`, 下限 0）。
@@ -74,6 +111,11 @@ pub fn corrected_function(text: &str, x0: f64, y0: f64, flip: bool, mode: Mode) 
 /// 是**没闭合的括号会被补齐**（11 条，例 `5/155sin(4exp(4*6cos(` →
 /// `5/155sin(4exp(4*6cos()))`）。本项目的 `math_function::to_text` 会重新加括号
 /// （`to_text(parse("(40)*(1/(...))")) != "(40)*(1/(...))"`），所以不能直接用它。
+///
+/// ⚠️ **本函数已不在任何产出/坐标路径上**（`docs/06` §30.2）：补括号那条规则现在只有
+/// 内核一份（`game::balanced_texts`），本模块通过 [`corrected_function`] /
+/// [`sampling_text`] 调它。这里保留纯属**兼容**（`tests/diff_conv.rs` 用它钉住
+/// "缺几个括号"这个可读的量、探针用它打印），实现是纯词法计数、不参与任何坐标。
 pub fn unbalanced_brackets(text: &str) -> usize {
     let mut depth: i64 = 0;
     for ch in text.chars() {
@@ -106,6 +148,14 @@ pub fn unbalanced_brackets(text: &str) -> usize {
 /// （`1787655980` 第 1 批，回放的 `pos_y` 是有限的 11.36 而我们的求值给 `-inf`），
 /// 见 `docs/06-verification.md` §25.7。回退值本身**不是真值**（真值未知），
 /// 只是"别发出一个不是数字的坐标"。
+///
+/// ⚠️ **产出路径已改调内核 [`crate::game::hole_point`]**（`docs/06` §30.3）：报文里的
+/// 爆炸点/挖洞点现在由 `hole_point` 给。本函数保留是因为**入参不同** —— 它吃
+/// **已经印出来的**修正文本，而 `hole_point` 吃**函数原文**并在内部印一遍
+/// （补括号 + 三位小数后缀）。两者对同一条原文必须逐位一致，这由本模块的单元测试
+/// `tests::explosion_point_is_the_kernel_hole_point`（单点，含空函数那条边界）与
+/// `examples/diffconv_parity` + `tests/diffconv_parity.rs`（全语料 740 发）机械钉住
+/// —— 不然"同一件事两处各算一遍"就又回来了。
 pub fn explosion_point(corrected: &str, stop: (f64, f64), flip: bool, mode: Mode) -> (f64, f64) {
     if mode != Mode::Normal {
         return stop;
@@ -122,16 +172,22 @@ pub fn explosion_point(corrected: &str, stop: (f64, f64), flip: bool, mode: Mode
     (stop.0, y)
 }
 
-/// 我方的一发预测（顺便留下几何量给归因用）。
+/// 我方的一发预测（顺便留下几何量给归因/一致性对拍用）。
 #[derive(Debug, Clone)]
 pub struct ShotOutcome {
     pub owner: i64,
     pub function: String,
-    /// 修正文本（我方）
+    /// 修正文本（我方）= 内核 `game::corrected_function_text` 的产出
     pub corrected: String,
+    /// **采样串**（我方）= 内核 `game::sampling_function_text` 的产出（`Ode` 时 = 原文）
+    pub sampling: String,
+    /// 弹道点序列（含起点）—— 与 `game::fire_functions` 返回的 `points` 逐位相同
+    pub points: Vec<(f64, f64)>,
     pub stop: (f64, f64),
     pub blocked: bool,
     pub killed: Vec<i64>,
+    /// 与 `killed` 一一对应的命中细节（弧长 + 采样点下标）
+    pub hits: Vec<crate::graphwar_shot_calculator::settle::Hit>,
 }
 
 /// **模式感知**的预测器：与 `game::Match::fire` 同序同格式，但采样模式取自回放。
@@ -241,26 +297,32 @@ impl ConvPredictor {
     ) -> (Vec<String>, Vec<ShotOutcome>) {
         // ---- 结算阶段 ----
         // ① 几何并行：先按批开始那一刻的士兵表把每一发算完，再动状态。
-        //    目标表的排除规则与 `fire` 逐字节一致（射手本人 + 起点重合者）。
+        //
+        // **每一步都是内核同一入口**（`docs/06` §30）：
+        //   * 采样串   [`sampling_text`] → `game::sampling_function_text`
+        //   * 点序列   `graphwar_shot_calculator::shot_points(…, apply_correction=false)`
+        //     （与 `game::fire_functions` 同一个调用、同一个 `SERVER_STEP`）
+        //   * 停点/致死 [`resolve_points_owned`] —— **射手由内核按 id 排除**，
+        //     调用方不再预筛（旧实现多一条 `1e-12` 位置排除，二进制没有这条）
         let mut resolved = Vec::with_capacity(shots.len());
+        let mut samplings: Vec<String> = Vec::with_capacity(shots.len());
         for s in shots {
-            let others: Vec<Target> = self
-                .soldiers
-                .iter()
-                .filter(|t| {
-                    !(t.id == s.owner) && !((t.x - s.x0).abs() < 1e-12 && (t.y - s.y0).abs() < 1e-12)
-                })
-                .copied()
-                .collect();
-            resolved.push(resolve(
-                &s.text,
+            let sampling = sampling_text(&s.text, s.x0, s.y0, s.flip, self.mode);
+            let points = crate::graphwar_shot_calculator::shot_points(
+                &sampling,
                 s.x0,
                 s.y0,
                 crate::SERVER_STEP,
                 s.flip,
                 self.mode,
+                false,
+            );
+            samplings.push(sampling);
+            resolved.push(resolve_points_owned(
                 &self.mask,
-                &others,
+                &self.soldiers,
+                &points,
+                Some(s.owner),
             ));
         }
         let corrected: Vec<String> = shots
@@ -324,29 +386,40 @@ impl ConvPredictor {
 
         // ⑤ 挖洞块（回放不记录 `QueueDestroyObstacle`，位置**无证据**；沿用单发实现的
         //    "死亡之后、`FunctionActive` 之前"）
-        for out in resolved.iter() {
+        //
+        //    **位置 = 爆炸点，不是采样停点**，由内核同一函数 [`hole_point`]
+        //    （= `game::hole_point`）给出：全语料 503/503 条 `DestroyObstacle` 与同批
+        //    `EffectInfo(ExplosionEffect)` 坐标逐位相同（`docs/14` §12）。旧实现这里
+        //    写的是 `out.stop`，所以第二轮任务 14 在 `game.rs` 修好之后本模块没跟上。
+        for (s, out) in shots.iter().zip(resolved.iter()) {
             if !out.blocked {
                 continue;
             }
+            let (hx, hy) = hole_point(&s.text, s.x0, s.y0, s.flip, out.stop, self.mode);
             msgs.push(format!(
                 r#"{{"QueueDestroyObstacle":{{"pos_x":{},"pos_y":{},"radius":0.5,"tick":{}}}}}"#,
-                out.stop.0, out.stop.1, now_tick
+                hx, hy, now_tick
             ));
-            crate::plane::rasterize(&mut self.mask, out.stop.0, out.stop.1, 0.5, 0xFF);
+            crate::plane::rasterize(&mut self.mask, hx, hy, 0.5, 0xFF);
             self.pending_destroy.push((
                 now_tick + DESTROY_DELAY_TICKS,
                 format!(
                     r#"{{"DestroyObstacle":{{"pos_x":{},"pos_y":{},"radius":0.5}}}}"#,
-                    out.stop.0, out.stop.1
+                    hx, hy
                 ),
             ));
         }
 
-        // ⑥ 每发一对 `FunctionActive` + `EffectInfo(Explosion)`，顺序与前缀相同
-        for ((s, out), c) in shots.iter().zip(resolved.iter()).zip(corrected.iter()) {
+        // ⑥ 每发一对 `FunctionActive` + `EffectInfo(Explosion)`，顺序与前缀相同。
+        //
+        //    位置同样取内核的 [`hole_point`]（挖洞点 ≡ 爆炸点，503/503 逐位）：
+        //    `game::execute_results` 的 ④ 目前仍写 `out.stop`（`docs/06` §24 的 `Y` 类、
+        //    170 批），那是**内核侧**尚未接线的一处，不是本模块的重复计算 ——
+        //    `examples/diffconv_parity` 会把这个差单独计数（§30.5）。
+        for (s, out) in shots.iter().zip(resolved.iter()) {
             msgs.push(crate::_scaffold::protocol::emit_function_active(s.owner, now_tick));
             self.next_effect_id += 1;
-            let (ex, ey) = explosion_point(c, out.stop, s.flip, self.mode);
+            let (ex, ey) = hole_point(&s.text, s.x0, s.y0, s.flip, out.stop, self.mode);
             msgs.push(crate::_scaffold::protocol::emit_effect_info(
                 self.next_effect_id,
                 ex,
@@ -365,14 +438,17 @@ impl ConvPredictor {
         let outs = shots
             .iter()
             .zip(resolved.into_iter())
-            .zip(corrected.into_iter())
-            .map(|((s, r), c)| ShotOutcome {
+            .zip(corrected.into_iter().zip(samplings.into_iter()))
+            .map(|((s, r), (c, samp))| ShotOutcome {
                 owner: s.owner,
                 function: s.text.clone(),
                 corrected: c,
+                sampling: samp,
+                points: r.points,
                 stop: r.stop,
                 blocked: r.blocked,
                 killed: r.killed,
+                hits: r.hits,
             })
             .collect();
         (msgs, outs)
@@ -435,7 +511,11 @@ pub struct ShotGeom {
     pub h2: (f64, f64),
     /// H2 的点数（用来和 `FunctionPoints` 的点数比）
     pub h2_n: usize,
-    /// 我方步长路径的点数
+    /// 我方步长路径的点数。
+    ///
+    /// ⚠️ 2026-11（`docs/06` §30）：**= [`ShotGeom::n_points`]**。旧实现这是**第三份**
+    /// 采样（`shot_points(原文, apply_correction=true)`，全精度常数），与 `n_points`
+    /// 各算一遍；那份重复计算已删，探针的"我方"列现在与预测器逐位同一来源。
     pub our_n: usize,
 }
 
@@ -582,25 +662,26 @@ pub fn probe_file(path: &std::path::Path) -> Vec<ShotGeom> {
             .collect();
 
         for (shot_i, shot) in b.shots.iter().enumerate() {
-            let _ = shot_i;
+            // 目标表：**全表交给内核**，射手由 `resolve_points_owned` 按 id 排除
+            // （旧实现自己在调用方按 id + `1e-12` 位置双过滤，是同一规则的第二份）。
             let targets: Vec<Target> = alive
                 .iter()
-                .filter(|id| **id != shot.owner)
                 .filter_map(|id| pos.get(id).map(|(x, y)| Target { id: *id, x: *x, y: *y, radius: 0.5 }))
                 .collect();
-            let r = resolve(
-                &shot.text,
+            // 几何一律走内核同一入口（与 [`ConvPredictor::fire_batch`] 逐行同构）。
+            let sampling = sampling_text(&shot.text, shot.x0, shot.y0, shot.flip, mode);
+            let pts = crate::graphwar_shot_calculator::shot_points(
+                &sampling,
                 shot.x0,
                 shot.y0,
                 crate::SERVER_STEP,
                 shot.flip,
                 mode,
-                mask.mask(),
-                &targets,
+                false,
             );
-            let pts = crate::graphwar_shot_calculator::shot_points(&shot.text, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true);
-            let tail: Vec<(f64, f64)> = pts.iter().rev().take(4).rev().copied().collect();
-            let n_points = pts.len();
+            let r = resolve_points_owned(mask.mask(), &targets, &pts, Some(shot.owner));
+            let tail: Vec<(f64, f64)> = r.points.iter().rev().take(4).rev().copied().collect();
+            let n_points = r.points.len();
             out.push(ShotGeom {
                 file: name.clone(),
                 batch: idx,
@@ -643,7 +724,7 @@ pub fn probe_file(path: &std::path::Path) -> Vec<ShotGeom> {
                     let t = obs_corrected.get(shot_i).cloned().unwrap_or_default();
                     crate::graphwar_shot_calculator::shot_points(&t, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true).len()
                 },
-                our_n: crate::graphwar_shot_calculator::shot_points(&shot.text, shot.x0, shot.y0, crate::SERVER_STEP, shot.flip, mode, true).len(),
+                our_n: n_points,
             });
         }
     }
@@ -876,6 +957,347 @@ pub fn run_dir(dir: &std::path::Path, policy: &Policy, max_diffs: usize) -> Vec<
     names.iter().map(|p| run_file(p, policy, max_diffs)).collect()
 }
 
+// ===========================================================================
+// 两条路径的**逐位**一致性对拍（`docs/06` §30.5，任务 16 的核心验收）
+// ===========================================================================
+//
+// 问题：本模块曾经自己算一遍坐标，于是"同一批回放，两条路径给出不同结论"。
+// 现在坐标全走内核（§30.2–§30.4），这条对拍就是**机械化证明**：
+//
+//   路径 K = `game::Match::fire_functions` + `fire_batch`（真实实现，逐位同 `fire`）
+//   路径 C = `ConvPredictor::fire_batch`（收敛层）
+//
+// 比的是**中间结果**，不是报文是否对上回放：点序列（逐坐标 `to_bits`）/ `stop` /
+// `blocked` / `killed`（含顺序）/ 命中弧长 / 修正文本；另外单列挖洞点与爆炸点
+// （内核 ④ 仍写 `stop`，见 §30.5 的说明）。
+//
+// **DiffEq 批不参与**：内核开火路径把 `Mode::Normal` 写死（`game.rs` 的
+// `fire_functions`），DiffEq 局在内核里**根本没有**开火路径 ⇒ 不可比，只计数。
+// 这不是"近似通过"，是**内核缺功能**，必须单列（`docs/06` §30.4）。
+
+/// 一处不一致（`ours` = 收敛层，`kernel` = 内核路径）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParityMismatch {
+    pub file: String,
+    pub batch: usize,
+    /// 批内第几发（0 起）
+    pub shot: usize,
+    /// `points` / `stop` / `blocked` / `killed` / `hits` / `corrected` / `destroy` / `explosion`
+    pub field: &'static str,
+    pub ours: String,
+    pub kernel: String,
+}
+
+/// 一致性对拍的累计结果。
+#[derive(Debug, Clone, Default)]
+pub struct Parity {
+    /// 读到并至少有一个结算批的回放份数
+    pub files: usize,
+    /// 参与对拍的结算批（**Normal 轴**）
+    pub batches: usize,
+    /// 参与对拍的发数（**Normal 轴**）
+    pub shots: usize,
+    /// 五项（点序列 / stop / blocked / killed / 修正文本）**逐位全同**的发数
+    pub shots_identical: usize,
+    /// 不一致项总数
+    pub mismatches_total: usize,
+    /// 前若干处不一致的细节
+    pub mismatches: Vec<ParityMismatch>,
+    /// `DiffEq` 批 / 发：内核没有 Ode 开火路径 ⇒ **不可比**，单独计数
+    pub diff_eq_batches: usize,
+    pub diff_eq_shots: usize,
+    /// 挖洞点（两条路径都对 `hole_point`）：应逐位相同
+    pub destroy_compared: usize,
+    pub destroy_equal: usize,
+    /// 爆炸点：内核 ④ 仍用 `stop`，收敛层用 `hole_point` ⇒ 只计数、不算失败
+    pub explosion_compared: usize,
+    pub explosion_equal: usize,
+}
+
+impl Parity {
+    /// `Normal` 轴上"逐位全同"的比例（`"a / b"` 形式，带百分比）。
+    pub fn summary(&self) -> String {
+        let pct = if self.shots == 0 {
+            "-".to_string()
+        } else {
+            format!("{:.1}%", 100.0 * self.shots_identical as f64 / self.shots as f64)
+        };
+        format!(
+            "文件 {}；Normal 结算批 {}；发 {}；点序列/stop/blocked/killed/修正文本 逐位全同 {} / {}（{}）",
+            self.files, self.batches, self.shots, self.shots_identical, self.shots, pct
+        )
+    }
+
+    /// 是否**没有**任何不一致（DiffEq 批不算，见类型文档）。
+    pub fn ok(&self) -> bool {
+        self.mismatches_total == 0 && self.shots_identical == self.shots
+    }
+}
+
+fn bits_pair(v: (f64, f64)) -> (u64, u64) {
+    (v.0.to_bits(), v.1.to_bits())
+}
+
+/// 对拍一份回放（把结果累加进 `p`；`max_samples` 限制明细条数）。
+pub fn parity_file(path: &std::path::Path, p: &mut Parity, max_samples: usize) {
+    let Ok(replay) = Replay::load(path) else {
+        return;
+    };
+    let name = path
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let batches = split_batches(&replay);
+    if batches.is_empty() {
+        return;
+    }
+    let inputs = Inputs::scan(&replay, batches[0].start);
+    let soldiers: Vec<Target> = inputs
+        .pos
+        .iter()
+        .filter(|(id, _)| inputs.alive.get(id).copied().unwrap_or(true))
+        .map(|(id, (x, y))| Target { id: *id, x: *x, y: *y, radius: 0.5 })
+        .collect();
+    let base_tick = replay.msgs[batches[0].start].tick;
+    // 路径 K：内核 `Match`（与 `examples/replay_attrib --drive batch` 同一套构造）
+    let mut kernel = crate::game::Match::new(
+        inputs.room.clone(),
+        inputs.obstacles.clone(),
+        soldiers.clone(),
+        (base_tick, 0),
+    );
+    for id in inputs.targets.iter() {
+        kernel.add_target(*id, 1);
+    }
+    for (id, g) in inputs.skins.iter() {
+        let _ = kernel.note_skin_graphics(*id, g);
+    }
+    // 路径 C：收敛层预测器
+    let mut conv = ConvPredictor::new(
+        &inputs.obstacles,
+        soldiers,
+        mode_of(&inputs.room.function_mode),
+    );
+    p.files += 1;
+
+    let mut cursor = 0usize;
+    let mut diff_eq = conv.mode == Mode::Ode;
+    for (idx, b) in batches.iter().enumerate() {
+        // 模式 / 皮肤是**输入**，从文件开头扫（与 `run_file` 同一口径）
+        for m in &replay.msgs[cursor..b.start] {
+            match m.kind.as_str() {
+                "FunctionModeInfo" => {
+                    if let Some(s) = m.get_str("function_mode") {
+                        conv.mode = mode_of(&s);
+                        diff_eq = conv.mode == Mode::Ode;
+                    }
+                }
+                "SkinGraphicsInfo" => {
+                    if let (Some(id), Some(s)) = (m.get_i64("entity_id"), m.get_str("graphics_str")) {
+                        conv.skin.insert(id, s);
+                    }
+                }
+                _ => {}
+            }
+        }
+        cursor = b.start;
+        if b.shots.is_empty() {
+            continue;
+        }
+        if diff_eq {
+            p.diff_eq_batches += 1;
+            p.diff_eq_shots += b.shots.len();
+            continue;
+        }
+        p.batches += 1;
+        let tick = replay.msgs[b.start].tick;
+
+        // ---- 路径 K ----
+        kernel.tick_base = (tick, 0);
+        let subs: Vec<crate::game::Submission> = b
+            .shots
+            .iter()
+            .map(|s| crate::game::Submission {
+                owner_id: s.owner,
+                function_text: &s.text,
+                x0: s.x0,
+                y0: s.y0,
+                flip: s.flip,
+            })
+            .collect();
+        // `fire_functions` 只算几何、不改状态，`fire_batch` = 它 + `execute_results`
+        let ko = kernel.fire_functions(&subs);
+        let wire_k = kernel.fire_batch(&subs, 0);
+
+        // ---- 路径 C ----
+        let (wire_c, co) = conv.fire_batch(&b.shots, tick);
+
+        let to_msgs = |wire: &[String]| -> Vec<Msg> {
+            wire.iter().filter_map(|w| Msg::parse_wire(w).ok()).collect()
+        };
+        let kmsgs = to_msgs(&wire_k);
+        let cmsgs = to_msgs(&wire_c);
+
+        // 内核**发出去**的修正文本（按 `FunctionInfo` 出现顺序 = 发序号）
+        let k_corrected: Vec<String> = kmsgs
+            .iter()
+            .filter(|m| m.kind == "FunctionInfo")
+            .map(|m| m.get_str("corrected_function").unwrap_or_default())
+            .collect();
+
+        // 逐发比**中间结果**
+        for (i, _s) in b.shots.iter().enumerate() {
+            p.shots += 1;
+            let (ck, cc) = (&ko[i], &co[i]);
+            let mut diffs: Vec<(&'static str, String, String)> = Vec::new();
+            if ck.points.len() != cc.points.len() {
+                diffs.push((
+                    "points",
+                    format!("{} 点", cc.points.len()),
+                    format!("{} 点", ck.points.len()),
+                ));
+            } else if let Some(j) = cc
+                .points
+                .iter()
+                .zip(ck.points.iter())
+                .position(|(a, b)| bits_pair(*a) != bits_pair(*b))
+            {
+                diffs.push((
+                    "points",
+                    format!("第 {j} 点 {:?}", cc.points[j]),
+                    format!("第 {j} 点 {:?}", ck.points[j]),
+                ));
+            }
+            if bits_pair(ck.stop) != bits_pair(cc.stop) {
+                diffs.push(("stop", format!("{:?}", cc.stop), format!("{:?}", ck.stop)));
+            }
+            if ck.blocked != cc.blocked {
+                diffs.push((
+                    "blocked",
+                    cc.blocked.to_string(),
+                    ck.blocked.to_string(),
+                ));
+            }
+            if ck.killed != cc.killed {
+                diffs.push((
+                    "killed",
+                    format!("{:?}", cc.killed),
+                    format!("{:?}", ck.killed),
+                ));
+            }
+            if ck.hits.len() != cc.hits.len()
+                || ck
+                    .hits
+                    .iter()
+                    .zip(cc.hits.iter())
+                    .any(|(a, b)| a.id != b.id || a.index != b.index || a.arc.to_bits() != b.arc.to_bits())
+            {
+                diffs.push((
+                    "hits",
+                    format!("{:?}", cc.hits.iter().map(|h| (h.id, h.index, h.arc)).collect::<Vec<_>>()),
+                    format!("{:?}", ck.hits.iter().map(|h| (h.id, h.index, h.arc)).collect::<Vec<_>>()),
+                ));
+            }
+            // 修正文本：内核的这一条是它**发出去**的 `FunctionInfo.corrected_function`
+            if let Some(kc) = k_corrected.get(i) {
+                if *kc != cc.corrected {
+                    diffs.push((
+                        "corrected",
+                        format!("{:?}", cc.corrected),
+                        format!("{:?}", kc),
+                    ));
+                }
+            }
+            if diffs.is_empty() {
+                p.shots_identical += 1;
+            }
+            for (field, ours, kern) in diffs {
+                p.mismatches_total += 1;
+                if p.mismatches.len() < max_samples {
+                    p.mismatches.push(ParityMismatch {
+                        file: name.clone(),
+                        batch: idx,
+                        shot: i,
+                        field,
+                        ours,
+                        kernel: kern,
+                    });
+                }
+            }
+        }
+
+        // 挖洞点：两条路径都调 `game::hole_point` ⇒ 应逐位相同
+        let (dk, dc) = (destroy_points(&kmsgs), destroy_points(&cmsgs));
+        let n_destroy = dk.len().max(dc.len());
+        let eq_destroy = dk.iter().zip(dc.iter()).filter(|(a, b)| a == b).count();
+        p.destroy_compared += n_destroy;
+        p.destroy_equal += eq_destroy;
+        if eq_destroy != n_destroy {
+            p.mismatches_total += 1;
+            if p.mismatches.len() < max_samples {
+                p.mismatches.push(ParityMismatch {
+                    file: name.clone(),
+                    batch: idx,
+                    shot: 0,
+                    field: "destroy",
+                    ours: format!("{dc:?}"),
+                    kernel: format!("{dk:?}"),
+                });
+            }
+        }
+
+        // 爆炸点：内核 ④ 仍 `stop`，收敛层 `hole_point` ⇒ 只计数
+        let (ek, ec) = (explosion_points(&kmsgs), explosion_points(&cmsgs));
+        p.explosion_compared += ek.len();
+        p.explosion_equal += ek.iter().zip(ec.iter()).filter(|(a, b)| a == b).count();
+    }
+}
+
+fn destroy_points(msgs: &[Msg]) -> Vec<(u64, u64)> {
+    msgs.iter()
+        .filter(|m| m.kind == "QueueDestroyObstacle")
+        .map(|m| {
+            bits_pair((
+                m.get_f64("pos_x").unwrap_or(f64::NAN),
+                m.get_f64("pos_y").unwrap_or(f64::NAN),
+            ))
+        })
+        .collect()
+}
+
+fn explosion_points(msgs: &[Msg]) -> Vec<(u64, u64)> {
+    msgs.iter()
+        .filter(|m| {
+            m.kind == "EffectInfo"
+                && m.get_str("effect_type").as_deref() == Some("ExplosionEffect")
+        })
+        .map(|m| {
+            bits_pair((
+                m.get_f64("pos_x").unwrap_or(f64::NAN),
+                m.get_f64("pos_y").unwrap_or(f64::NAN),
+            ))
+        })
+        .collect()
+}
+
+/// 对整个语料跑一遍一致性对拍。
+pub fn parity_dir(dir: &std::path::Path, max_samples: usize) -> Parity {
+    let mut p = Parity::default();
+    let mut names: Vec<_> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.is_file())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    names.sort();
+    for n in &names {
+        parity_file(n, &mut p, max_samples);
+    }
+    p
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1052,5 +1474,95 @@ mod tests {
         // 状态落地：两名死者都从士兵表里移除
         assert_eq!(p.soldiers.len(), 1);
         assert_eq!(p.soldiers[0].id, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // 坐标并回内核（`docs/06` §30）：机械等价性 + "没有第二份规则"
+    // -----------------------------------------------------------------------
+
+    /// **机械等价性**：`explosion_point(corrected_function(t), stop, …)` ≡ `game::hole_point(false, t, stop, …)`。
+    ///
+    /// 这是"爆炸点规则只有内核一份"的证据：本模块那个旧签名助手（吃**已印出**的文本）
+    /// 在同一发的**真实停点**上必须与内核逐位一致 —— 它自己再写一遍规则的话，这条断言
+    /// 就是它的警戒线。语料侧的同一件事见 `examples/diffconv_parity`（740 发，§30.5）。
+    ///
+    /// 停点用**这一发自己采样出来的**（`shot_points` 的末点），不是随便编的坐标：
+    /// 空函数（原文 `""`）那一档两者会分家 —— `hole_point` 在"原文解析为空"时**提前返回
+    /// 停点**，而 `explosion_point` 会去求值印出来的 `" + c.ddd"`。生产的停点恰好等于
+    /// 那个常数，所以管线里永远同值；拿一个不相干的停点去比才看得出这条早退。
+    #[test]
+    fn explosion_point_is_the_kernel_hole_point() {
+        // 均衡 / 缺括号（11 条那一类）/ 多余右括号（8 条那一类）/ flip / 空函数 / 非有限
+        let cases = [
+            ("(40)*(1/((1+exp(-42*(x-(5))))*(1+exp(42*(x-(25))))))", -2.1413650290582837, -0.29656732812543574, false),
+            ("5/155sin(4exp(4*6cos(", -2.632134919326489, 6.05141758173637, false),
+            ("14/(1+exp(100*(x-19)^2)))+24/(1+exp(100*(x-24)^2))", 22.908325288230134, -4.32330978206142, true),
+            ("sin(x)", 14.559477538378344, -6.7280811727617085, true),
+            ("", 0.0, 3.0, false),
+            ("0.00", 1.651220991201045, 4.638020825690482, false),
+            ("1/(0)", 0.0, 2.0, false),
+        ];
+        for (text, x0, y0, flip) in cases {
+            let printed = corrected_function(text, x0, y0, flip, Mode::Normal);
+            // 这一发自己的停点（与 `ConvPredictor::fire_batch` 同一个内核入口）
+            let samp = sampling_text(text, x0, y0, flip, Mode::Normal);
+            let pts = crate::graphwar_shot_calculator::shot_points(
+                &samp, x0, y0, crate::SERVER_STEP, flip, Mode::Normal, false,
+            );
+            let stop = *pts.last().expect("弹道不该是空的");
+            let ours = explosion_point(&printed, stop, flip, Mode::Normal);
+            let kern = crate::game::hole_point(false, text, x0, y0, flip, stop);
+            assert_eq!(ours.0.to_bits(), kern.0.to_bits(), "x 位不同：text={text:?} flip={flip}");
+            assert_eq!(
+                ours.1.to_bits(),
+                kern.1.to_bits(),
+                "y 位不同：text={text:?} flip={flip} stop={stop:?}（printed={printed:?}）"
+            );
+        }
+        // DiffEq：两边都**不重算**，直接回停点
+        let stop = (1.5, -2.5);
+        assert_eq!(explosion_point("whatever", stop, true, Mode::Ode), stop);
+        assert_eq!(crate::game::hole_point(true, "whatever", 0.0, 0.0, true, stop), stop);
+    }
+
+    /// `sampling_text` 就是内核那条规则：`Normal` 与 `game::sampling_function_text` 逐字节相同，
+    /// `Ode` 是原文（内核没有 Ode 开火路径，见 §30.4）。
+    #[test]
+    fn sampling_text_is_the_kernel_rule() {
+        let f = "5/155sin(4exp(4*6cos(";
+        let (x0, y0) = (-2.632134919326489, 6.05141758173637);
+        assert_eq!(
+            sampling_text(f, x0, y0, false, Mode::Normal),
+            crate::game::sampling_function_text(f, x0, y0, false)
+        );
+        // 多余右括号：采样串要去掉（否则我方 parse 截断、常数被丢掉，弹道退化成 1 个点）
+        let g = "14/(1+exp(100*(x-19)^2)))+24/(1+exp(100*(x-24)^2))";
+        let samp = sampling_text(g, 22.908325288230134, -4.32330978206142, true, Mode::Normal);
+        assert!(!samp.contains(")))+24"), "采样串里不该有多余的 `)`：{samp:?}");
+        // 发出去的串只补不删 —— 两者不是同一个串
+        let printed = corrected_function(g, 22.908325288230134, -4.32330978206142, true, Mode::Normal);
+        assert!(printed.starts_with(g), "报文串必须逐字符保留原文：{printed:?}");
+        // DiffEq：采样串 = 原文（一个字符都不加）
+        assert_eq!(sampling_text(f, x0, y0, false, Mode::Ode), f);
+    }
+
+    /// 射手排除由**内核**做（只比 id，不比位置）：站在射手脚下（距离 0）的另一名士兵
+    /// 也会被打死 —— 旧实现在调用方多写了一条 `1e-12` 位置排除，二进制没有这条。
+    #[test]
+    fn owner_exclusion_is_the_kernels_not_prose() {
+        let mut p = ConvPredictor::new(
+            &[],
+            vec![
+                Target { id: 1, x: 0.0, y: 0.0, radius: 0.5 },
+                Target { id: 2, x: 0.0, y: 0.0, radius: 0.5 },
+            ],
+            Mode::Normal,
+        );
+        let (_, outs) = p.fire_batch(
+            &[ShotInput { owner: 1, x0: 0.0, y0: 0.0, flip: false, text: "0.00".into() }],
+            100,
+        );
+        // 1 号（射手）不算；2 号与射手同坐标 ⇒ 照样死（内核只比 id）
+        assert_eq!(outs[0].killed, vec![2], "同坐标的非射手必须被判死");
     }
 }
