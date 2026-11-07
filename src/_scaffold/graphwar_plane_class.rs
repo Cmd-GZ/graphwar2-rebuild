@@ -16,21 +16,22 @@
 //! src/_scaffold/graphwar_plane_class.rs ← 本文件：真的 add_child、真的 draw_rect、真的接 resized
 //! ```
 //!
-//! # 本切片**只**做三件本类自己的事（`FunctionDrawer` 不在本批）
+//! # 本切片**只**做三件本类自己的事（`FunctionDrawer` 已由 §42 的节点类补上）
 //!
-//! 1. **建 3 个子节点**（`init` 观测）——但它们是 `Control` **占位**，不是 `FunctionDrawer`；
+//! 1. **建 3 个子节点**（`init` 观测）——它们现在是**真的 `FunctionDrawer`**
+//!    （`src/_scaffold/function_drawer_class.rs`，`docs/16-client.md` §42）；
 //! 2. **脏矩形**：`obstacle_partial_update_event` 的纯数据版 + 每帧冲刷；
 //! 3. **画棋盘框**：`draw_set_transform` + `draw_rect`，常量全取 `graphwar_plane::BOARD_*`。
 //!
-//! 完整棋盘渲染（函数曲线 / 障碍 / 士兵）**不在本文件**：那是 `FunctionDrawer` /
-//! `ObstacleDrawer` / `EntityDrawer` 的事，本批没做。
+//! 完整棋盘渲染（函数曲线 / 障碍 / 士兵）**不在本文件**：曲线是那 3 个 `FunctionDrawer`
+//! 子节点的事，障碍 / 士兵分别归 `ObstacleDrawer` / `EntityDrawer`（都没有节点类）。
 //!
 //! # 与原版的差别（逐条，别当成"已复原"）
 //!
 //! | 项 | 原版 | 本文件 | 档位 |
 //! |---|---|---|---|
-//! | 子节点 | `init` 里 `Gd::default_instance::<FunctionDrawer>()` ×3 + `Node::add_child` ×3 | 同样 3 个，但是 `Control::new_alloc()` **占位**（`FunctionDrawer` 类还不存在） | 个数**观测**；占位是**我方选择** |
-//! | 子节点的名字 | 没 `set_name` ⇒ 引擎自动名 `@FunctionDrawer@N`（`docs/16` §2.1.10 的 dump 里同族的 `@AxisDrawer@N` / `@EntityDrawer@N` 都是自动名） | 也没 `set_name` ⇒ 自动名 `@Control@N`——**名字里的类名就是"这里还缺 `FunctionDrawer`"的证据** | 原版**观测**；本类**不伪造**那个名字 |
+//! | 子节点 | `init` 里 `Gd::default_instance::<FunctionDrawer>()` ×3 + `Node::add_child` ×3 | 同样 3 个 `FunctionDrawer`（`FunctionDrawer::new_alloc()`）——**不再是 `Control` 占位**（§42） | **观测**（个数 / 类名） |
+//! | 子节点的名字 | 没 `set_name` ⇒ 引擎自动名 `@FunctionDrawer@N`（`docs/16` §2.1.10 的 dump 里同族的 `@AxisDrawer@N` / `@EntityDrawer@N` 都是自动名） | 也没 `set_name` ⇒ 自动名 `@FunctionDrawer@N`。**运行时观测**的值是 `@FunctionDrawer@N`（`docs/16` §42.2） | 原版**观测**；本类**不伪造**那个名字 |
 //! | 建子节点的时机 | `init` | **`ready`**（`#[func] build_children()` 也能手动调）。理由：gdext 的 `init` 里 `Base` 还没构造完（`InitState::Uninitialized`），`base_mut()` 用不了 | 原版**观测**；时机差是**gdext 约束** |
 //! | `draw` 的图元 | `draw_set_transform` ×1（槽 `0x9bc018`）+ `draw_rect` ×1（槽 `0x9bc028`）；`draw_line` **0** 次 | 同 | **逐位**（常量槽）/ **观测**（调用点） |
 //! | `draw_set_transform` 的**实参** | 只确证了 GOT 槽，**实参没读到** | 用 `to_pixel` 那套换算当默认值（`PIXEL_OFFSET` / `PX_PER_UNIT`），两个导出属性可改 | 原版**未知**；默认值是**我方选择** |
@@ -42,7 +43,8 @@
 //! | `clear_state` / `update_entities` | 两个方法存在（`0x4bded0` / `0x4be270`），语义未解 | **不实现**（`UNKNOWNS` 第 5 条：`clear_state` 引用 `EntityDrawer` / `EffectDrawer` 类名的用途未知） | **未知** |
 //!
 //! ⇒ 这个类证明的是「**子节点意图 / 脏矩形 / 棋盘框常量**能真的落到引擎上」，
-//! **不是**"棋盘已经能玩"（曲线、障碍、士兵一个都没画）。
+//! **不是**"棋盘已经能玩"：3 个子节点是真的 `FunctionDrawer` 了，但**没有任何东西喂函数**
+//! （没有 `GraphwarFunctionManager`，`draw` 里那个 `0x456df0` 没接），障碍与士兵也没有节点。
 //!
 //! # 怎么打开
 //!
@@ -62,7 +64,7 @@
 //!   @export board_scale : float = 20.0    # 棋盘单位 → 像素（PX_PER_UNIT = 1000/50）
 //!   @export flip_y      : bool  = true    # 棋盘 y 向上、画布 y 向下 ⇒ 默认取负
 //!
-//!   build_children() -> int                       # 建 3 个占位子节点（幂等），返回个数
+//!   build_children() -> int                       # 建 3 个 FunctionDrawer 子节点（幂等），返回个数
 //!   function_drawer_count() -> int                # 纯逻辑记下的子节点数（FUNCTION_DRAWER_CHILDREN）
 //!   to_pixel(x, y) -> Vector2i                    # graphwar_plane::to_pixel 的搬运
 //!   on_obstacle_partial_update(tag, x, y, size) -> PackedInt32Array
@@ -91,6 +93,7 @@
 use godot::classes::{Control, IControl, Node};
 use godot::prelude::*;
 
+use super::function_drawer_class::FunctionDrawer;
 use crate::graphwar_plane::{self as gp, PixelRect};
 
 /// 默认的棋盘缩放：`PX_PER_UNIT = CANVAS_W / BOARD_W = 1000 / 50 = 20`。
@@ -112,7 +115,7 @@ fn pixels_of(r: PixelRect) -> PackedInt32Array {
     out
 }
 
-/// `GraphwarPlane`：棋盘本体（`Control` 子类）。画棋盘框 + 持 3 个占位子节点 + 收脏矩形。
+/// `GraphwarPlane`：棋盘本体（`Control` 子类）。画棋盘框 + 持 3 个 `FunctionDrawer` + 收脏矩形。
 #[derive(GodotClass)]
 #[class(base = Control)]
 pub struct GraphwarPlane {
@@ -172,7 +175,7 @@ impl IControl for GraphwarPlane {
 
     /// `_ready`：原版在这里连 `resized` + 订 3 个事件。
     ///
-    /// 本类：① 建 3 个占位子节点（原版在 `init`，见文件头对照表）；② 用纯逻辑给的
+    /// 本类：① 建 3 个 `FunctionDrawer` 子节点（原版在 `init`，见文件头对照表）；② 用纯逻辑给的
     /// **信号名 / 处理者名**连 `resized`；③ 3 个事件**没订**（事件名照样能从
     /// [`GraphwarPlane::ready_event_names`] 读到，只是没真的订阅）。
     fn ready(&mut self) {
@@ -256,9 +259,9 @@ impl IControl for GraphwarPlane {
 
 #[godot_api]
 impl GraphwarPlane {
-    /// 建 3 个占位子节点（`FUNCTION_DRAWER_CHILDREN`）。幂等：已经有就不重复建。
+    /// 建 3 个 `FunctionDrawer` 子节点（`FUNCTION_DRAWER_CHILDREN`）。幂等：已经有就不重复建。
     ///
-    /// 名字**不自拟**：原版没 `set_name` ⇒ 引擎自动名。我们的占位是 `Control` ⇒ `@Control@N`。
+    /// 名字**不自拟**：原版没 `set_name` ⇒ 引擎自动名（运行时是 `@FunctionDrawer@N`）。
     ///
     /// 返回子节点个数（恒 `3`）。
     #[func]
@@ -272,11 +275,12 @@ impl GraphwarPlane {
 
         // `init_children` 把闭包返回的 id 依次记进 `plane.function_drawers`（纯逻辑的意图结构）。
         self.plane.init_children(|_class_name| {
-            // 原版这里是 `Gd::default_instance::<FunctionDrawer>()`；我们没有那个类。
-            let child = Control::new_alloc();
+            // 原版这里是 `Gd::default_instance::<FunctionDrawer>()`；现在是**真的**
+            // `FunctionDrawer` 节点类（`docs/16-client.md` §42）。
+            let child = FunctionDrawer::new_alloc();
             let node = child.clone().upcast::<Node>();
             parent.add_child(&node);
-            // 原版没 `set_name` ⇒ 自动名（我们这边是 `@Control@N`）。
+            // 原版没 `set_name` ⇒ 自动名（`@FunctionDrawer@N`）。
             // 句柄到这里就可以丢掉：节点归**父节点**所有（文件头第 1 条）。
             // `InstanceId::to_i64()` 就是原版 `NodeRef` 要的那个 u64（纯逻辑只拿它当不透明 id）。
             child.instance_id().to_i64() as u64
