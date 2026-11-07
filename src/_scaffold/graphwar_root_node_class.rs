@@ -42,8 +42,11 @@
 //!   取回走 `get_module::<M>()`；**没有任何 `+0xNN` 偏移**；
 //! * 按类型逐个可查：`container_has_module("GraphwarTurnManager")` 之类，
 //!   还能再走一档 `container_module_live(...)`（真 downcast 回来）；
-//!   22 型里 17 个装的是**复原类型**（回 `assembled`），5 个是**零行为的空占位**
-//!   （回 `stub`，见 [`super::root_wiring::SlotKind`]）；客户端**不**注册的那 3 型
+//!   22 型按**四档**记账（2026-11-08 任务 28 起，判据见
+//!   [`super::root_wiring`] 的模块文档与 `docs/16` §47）：`wired` 4 / `layout` 2 /
+//!   `assembled` 15 / `stub` **1**（只剩 `GraphwarPlanePosManager`：24 B 布局未知）。
+//!   ⚠️ 旧文写的"17 个复原类型 + 5 个零行为空占位"是**三档时代**的口径，已作废；
+//!   客户端**不**注册的那 3 型
 //!   （`GraphwarBanList` / `GraphwarServerConnectionHandler` / `GraphwarGameRecorder`）
 //!   如实回 `placeholder`（[`GraphwarRootNode::module_slot_status`]）；
 //! * 屏里的 3 个假实体与容器里 `GameStateManager` 的 3 个 `Target` **是同一份数据**
@@ -56,7 +59,7 @@
 //! | `0x3a5760`（20288 B 状态机）的主体 | 原版形状本身没解出来（可能是 `_process` + 大量内联），不猜 |
 //! | `0x3b0830`（命令总线）的**全部**键 | 只解到 12 条（[`crate::graphwar_root_node::Command`]），131 KB 反编译没过完 |
 //! | **17 个 manager 的行为** | 本轮只做"构造 + 注册"（任务书 §4 明令不实现行为）；容器里是**空表**，没人驱动它们 |
-//! | **5 个 manager 的类型本身** | `TickHandler` / `ClientConnectionHandler` / `PlanePosManager` / `FunctionManager` / `ObstacleManager` 在本仓库没有可构造的类型 ⇒ 装的是**空占位**（`stub`），节点槽仍是**空 `Node`** |
+//! | **只剩 1 个槽结构未知** | `GraphwarPlanePosManager`（24 B 布局未知、无事件流）⇒ 档位 `stub`。另外四型已升级：`ClientConnectionHandler`(112 B) / `FunctionManager`(32 B) 布局全解但行为未做完 ⇒ `layout`；`TickHandler` / `ObstacleManager` ⇒ `wired`（`docs/16` §47.2） |
 //! | 两个 `Rc<RefCell<T>>`（`+0x1668` / `+0x16c8`） | 那两个控制器的类型与生命周期未解（`docs/16` §15.3 只给了偏移） |
 //! | `GraphwarTextureLoader`（`+0x16a0`） | 模块存在（`docs/16` §28），但节点层还没有 |
 //!
@@ -737,9 +740,10 @@ impl GraphwarRootNode {
         }
     }
 
-    /// 某个槽位的状态：`"assembled"`（容器里按类型查得到，且这一型有**复原类型**）/
-    /// `"stub"`（容器里查得到，但装的是**零行为的空占位**）/ `"placeholder"`（原版有这一型，
-    /// 本层没装）/ `"unknown"`（原版 25 型里也没有这个名字）。
+    /// 某个槽位的**复原档位**（四档，按序判断、第一个命中者为准；`docs/16` §47.1）：
+    /// `"wired"`（容器 + 事件流 + 最小交互断言）/ `"layout"`（原版字段布局逐字段解出）/
+    /// `"assembled"`（容器里是我方复原类型）/ `"stub"`（我方形状，布局未知）。
+    /// 另有 `"placeholder"`（原版有这一型，本层没装）/ `"unknown"`（原版 25 型里也没有这名字）。
     ///
     /// 判据是**运行时的**（[`super::root_wiring::RootWiring::has`]），不是静态表：
     /// 装失败就掉回 `placeholder`。
@@ -796,7 +800,12 @@ impl GraphwarRootNode {
         }
     }
 
-    /// 22 个槽里"空占位"的个数（`docs/16` §41.2 的 5）。
+    /// 22 个槽里**容器类型来源为 `SlotKind::Stub`** 的个数（= **5**，`docs/16` §41.2 那批）。
+    ///
+    /// ⚠️ 这**不是**档位 `stub` 的个数（那个现在是 **1**，只剩 `GraphwarPlanePosManager`）：
+    /// 本函数数的是"装配表里标为占位"的槽，档位则是"按证据判到第几档"。两者口径不同，
+    /// 2026-11-08 任务 28 起在 `assemble_check.gd` 里已分别断言（四档计数 + `SlotKind` 计数）。
+    /// 函数名保留是为了不破坏既有断言；改名留给下一轮与 gd 断言同批做。
     #[func]
     fn container_stub_manager_count(&mut self) -> i64 {
         self.ensure_scene_graph();
