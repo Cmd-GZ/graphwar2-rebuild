@@ -21,7 +21,7 @@
 |---|---|
 | `graphwar_root_node.rs` (≥1302) | 主场景节点，游戏总控，规模最大 |
 | `graphwar_plane.rs` | 坐标系、绘制 |
-| `graphwar_plane_pos_manager.rs` | 坐标↔位置换算 |
+| `graphwar_plane_pos_manager.rs` | **位置表**：实体 id → `(pos_x, pos_y, radius)`（24 B 值）+ `PosInfo`(26) 事件的入/出两端（⚠ 旧文写"坐标↔位置换算"，2026-11-08 任务 36 证否：换算在 `graphwar_plane.rs`） |
 | `graphwar_draw_util.rs` | 绘制工具 |
 | `entity_drawer.rs` / `effect_drawer.rs` | 实体/特效绘制 |
 | `graphwar_graphics_manager.rs` | 图形资源管理 |
@@ -795,7 +795,7 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 | `graphwar_game_server.rs`（3/86） | `src/graphwar_game_server.rs` + `src/server.rs` | `docs/43/46`（一回合 12 条报文与抓包逐字节）、`docs/62`（真实 TCP 跑到 EndingGame）、`docs/117`（回合推进接线）。原文件 `serverloop.rs`（主循环）+ `server.rs`（首包同步，与 server_connection_handler 共有） | `混装（待拆）` |
 | `graphwar_server_connection_handler.rs`（6/24） | `src/server.rs` | `docs/33`（新连接 7 条状态同步逐字节一致）；`docs/112` §15.3 指出建事件名数组的 `0x4500c0` 就在本模块。⚠ `server.rs` 里还有 `on_tick_request`（tick 应答）→ 见 §17.4 | `混装（待拆）` |
 | `graphwar_plane.rs`（10/19） | `src/plane.rs` | `docs/08/39`（掩膜光栅化与 `is_occupied` 逐字节 / 300 随机点一致）；`px = x*1000/50 + 500` 来自 `0x4be3e0`。⚠ 同文件还含 plane_pos_manager 与（疑似的）obstacle_manager 内容 → §17.4 | `混装（待拆）` |
-| `graphwar_plane_pos_manager.rs`（6/9） | `src/plane.rs` | `docs/140`：`px = 20x + 500` 由常量反查得出。⚠ 本模块的锚函数在 `0x3c7330…0x3c7cb0`（与 path_calculator / shot_calculator 同区段），与 `plane.rs` 里那条换算**没有**做过函数级对齐 ⇒ "plane.rs 属于本模块"是**推断**。**2026-11 复核（`docs/151` 第 28 条）**：`0x3c7330` 只有 `0x2f`（47）字节、`0x3c7cb0` 是 `0x8d9` B，**两者都零 `panic::Location`** ⇒ 函数级对齐仍然做不到，缺的是非锚证据（结构/体量/常量指纹） | `混装（待拆，锚无效）` |
+| `graphwar_plane_pos_manager.rs`（8/9） | **`src/graphwar_plane_pos_manager.rs`**（任务 36 新建） | **2026-11-08 就地更正（`docs/16` §52）**：本模块**不再**是"混装（待拆，锚无效）"。6 个公开方法 + 2 个闭包 = **8** 个 arm64 `FUNC` 符号，逐个对上 `fixtures/name_to_addr.tsv` 的 6 条锚（`0x3c62b0` / `0x3c64c0` / `0x3c66a0` / `0x3c6a10` / `0x3c6b40` / `0x3c6d30`）；24 B 布局（3 字段）与内层 48 B `HashMap<u32, 24 B POD>` 由**三份构建**逐偏移交叉验证（`观测`）。⚠ **旧文两处作废**：(a) 模块表里的「9 个符号」实测是 **8**（`readelf -sW … | grep graphwar_plane_pos_manager` 数出来 8 行；多出来的那 1 个是把 `GraphwarPlanePosData` 的某个内联副本算进去了）；(b) `px = 20x + 500` 那条换算**不属于**本模块，它在 `graphwar_plane.rs`（`0x4be3e0` 的 `panic::Location` 锚 = `src/graphwar_plane.rs:174:18`），本模块是**位置表**（`HashMap<id, (pos_x,pos_y,radius)>` + `PosInfo`(26) 事件）。锚函数 `0x3c7330`（47 B）与 `0x3c7cb0` 与本模块**无关**——它们是 `Rc::new_cyclic_in` 之类的泛型实例，不是本模块的方法 | `已有独立实现（布局+行为）` |
 | `graphwar_obstacle_manager.rs`（8/10） | `src/plane.rs`（只有掩膜部分） | **2026-11-07 更正（`docs/16` §24.4 第 1/1b 行）**：本模块的锚函数是 **10 个** —— `0x3c2bc0 0x3ee190 0x3f11e0 0x3f15b0 0x3f17a0 0x3f19a0 0x3f1b30 0x3f1d30 0x3f20f0 0x3f2360`（= `fixtures/module_funcs.tsv` 本模块 10 行）。旧文那 4 个（`0x3c64c0/0x3f00b0/0x3f2480/0x3f27d0`）是 `class_probe` v1 的 `+0x1000` 平移 artifact。**旧「两处证据冲突」可结案**：`0x4f15b0` 是 Ghidra 口径，其 ELF 虚地址 `0x3f15b0` **就是**本模块锚函数之一；所谓冲突是地址空间混用 + v1 平移共同造成的。`docs/08/39` 覆盖的光栅化 / `is_occupied`（摧毁 = 挖 r=0.5 洞）不变。障碍的生成与生命周期仍未落码 | `混装（待拆）` |
 | `graphwar_ad_switch.rs`（6/3） | — | `docs/19`/`docs/132`：判据只有 `are_ads_enabled() = !owned`；AdMob 在 `.gdc` 插件侧 | `未实现` |
 | `graphwar_audio_control.rs`（7/16） | — | `docs/111`：SoundHandler / `-15f` / `-5f` / 32767 归一化已还原，但没接进 `src/`（`client/` 是仿制） | `未实现` |
@@ -910,7 +910,7 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 |---|---|---|---|
 | `src/events.rs` | graphwar_event.rs（主体：`enum Event` 72 变体 + `GameInfo`）+ graphwar_event_handler.rs（`DISPATCH_NAME_TAGS` 名字→判别值表） | `docs/114` §3 | 表只有约 70 行数据；拆出去会让 `graphwar_event_handler.rs` 只剩一张表、没有 handler 行为，反而误导 |
 | `src/game.rs` | graphwar_game_state_manager.rs（主体：一局的状态/开火/胜负）+ graphwar_function_manager.rs（`SoldierFunctions`、`FunctionSlot`） | `docs/41`/`docs/112` §2.1 | 两者共用同一个 `Match`，槽表是它的字段；按函数切会让两边互相引用 |
-| `src/plane.rs` | graphwar_plane.rs（像素变换）+ graphwar_plane_pos_manager.rs（`px = 20x + 500`）+ graphwar_obstacle_manager.rs 的掩膜（⚠ 归属见 §17.1 该行的冲突） | `docs/08`/`docs/39`/`docs/140` | 三者的函数在二进制里就是分开的，但我方只实现了"点/掩膜"这一层，尚未逐函数对齐 |
+| `src/plane.rs` | graphwar_plane.rs（像素变换，已搬到 `src/graphwar_plane.rs`）+ graphwar_obstacle_manager.rs 的掩膜（⚠ 归属见 §17.1 该行的冲突）。⚠ **`graphwar_plane_pos_manager` 已不在此列**（2026-11-08 任务 36：它有自己的 `src/graphwar_plane_pos_manager.rs`，且 `px = 20x + 500` 从来不属于它） | `docs/08`/`docs/39`/`docs/140` | 两者的函数在二进制里就是分开的，但我方只实现了"点/掩膜"这一层，尚未逐函数对齐 |
 | `src/server.rs` | graphwar_server_connection_handler.rs（主体：新连接 7 条同步，`0x4500c0`）+ graphwar_tick_handler.rs（`on_tick_request`） | `docs/33`/`docs/112` §15.3 | tick 应答只有 5 行；等 `graphwar_tick_handler.rs` 的锚点核实完再拆 |
 | `src/turnstate.rs` | graphwar_game_state_manager.rs（与 `src/game.rs` 同模块：状态枚举 + 迁移表） | `docs/41` | 与 `game.rs` 同属一个原版模块，我方按"迁移表 / 运行实体"拆成两份；原版名已被 `game.rs` 占用（见 §17.4 说明） |
 | `src/graphwar_function_evolutionator.rs` | 原版 graphwar_function_evolutionator.rs + **我方接线层** `SoldierEvolver` / `FunctionSlot` / `SoldierFunctions` 的用法 | `docs/98` §3/§7、`docs/117` | 接线层（把进化结果写进哪个槽、什么时候跑）在原版的 computer_player_manager 里，**未还原**；现在混在进化器文件尾部，待 `computer_player_manager` 落地后迁出 |
@@ -1111,7 +1111,7 @@ function/mod|function/to_text)\.rs' --include='*.md' --include='*.rs' --include=
 | `graphwar_obstacle_manager` | 10 | `GraphwarObstacleData`, `GraphwarObstacleManager` | 8 | 89–295（13） | — |
 | `graphwar_path_calculator` | 1 | `GraphwarPathCalculator` | 1 | 45–105（9） | — |
 | `graphwar_plane` | 8 | `GraphwarPlane` | 4 | 33–178（4） | `IControl`, `GodotClass`, `ImplementsGodotApi`, `ImplementsGodotVirtual` |
-| `graphwar_plane_pos_manager` | 9 | `GraphwarPlanePosData`, `GraphwarPlanePosManager` | 6 | 81–144（8） | — |
+| `graphwar_plane_pos_manager` | ~~9~~ **8** | `GraphwarPlanePosData`, `GraphwarPlanePosManager` | 6（+2 闭包） | 81–144（8） | — |
 | `graphwar_play_screen_control` | 13 | `GraphwarPlayScreenControl` | 12 | 71–625（59） | — |
 | `graphwar_player_config` | 8 | `GraphwarPlayerConfig` | 8 | — | — |
 | `graphwar_player_manager` | 6 | `GraphwarPlayerManager` | 3 | 36–124（4） | — |
@@ -1396,7 +1396,7 @@ function/mod|function/to_text)\.rs' --include='*.md' --include='*.rs' --include=
 
 * `graphwar_module_container` 有 **66 个** direct 函数、但只有 3 个方法名（`add_module`/`get_module`/`get_module_wk`）——
   这是 gdext 的泛型单态化：每注册一个模块就编一份。**它不说明原版有 66 个函数**（`观测` + `推断`）。
-* `graphwar_nodes` 31 / `graphwar_plane_pos_manager` 9 / `graphwar_local_player_manager` 10 —— 同理，
+* `graphwar_nodes` 31 / `graphwar_plane_pos_manager` ~~9~~ **8** / `graphwar_local_player_manager` 10 —— 同理，
   泛型实例的个数 ≠ 源码里的函数个数。
 * `graphwar_client_connection_handler` 有 11 个 direct 函数但 7 个方法名，差的那 4 个是
   `panic_cold_explicit` ×1 与 `subscribe_to_events_event_handler::{{closure}}` ×3。
@@ -2291,16 +2291,29 @@ Linux x86-64 :  地址    ↔  它引用的 (file,line,col) 集合
 | `process` | `GraphwarPlane` | `0x4b83f0` | `src/graphwar_plane.rs:254` |
 | `obstacle_partial_update_event` | `GraphwarPlane` | `0x4be3e0` | `src/graphwar_plane.rs:174` |
 
-### graphwar_plane_pos_manager（6 个）
+### graphwar_plane_pos_manager（6 个 + 内层 3 个 + 2 个闭包）
 
-| 方法 | 类型 | x86 地址 | 源位置 |
-|---|---|---|---|
-| `get_position` | `GraphwarPlanePosManager` | `0x3c62b0` | `src/graphwar_plane_pos_manager.rs:116` |
-| `set_position` | `GraphwarPlanePosManager` | `0x3c64c0` | `src/graphwar_plane_pos_manager.rs:111` |
-| `get_all_positions` | `GraphwarPlanePosManager` | `0x3c66a0` | `src/graphwar_plane_pos_manager.rs:120` |
-| `send_all_info_events` | `GraphwarPlanePosManager` | `0x3c6a10` | `src/graphwar_plane_pos_manager.rs:133` |
-| `handle_entity_removed_event` | `GraphwarPlanePosManager` | `0x3c6b40` | `src/graphwar_plane_pos_manager.rs:142` |
-| `new` | `GraphwarPlanePosManager` | `0x3c6d30` | `src/graphwar_plane_pos_manager.rs:81` |
+**2026-11-08 任务 36 补齐**（`docs/16` §52）：arm64 未 strip 侧 `.symtab` 有 **8** 个 `FUNC`
+（6 个公开方法 + 2 个闭包）；Windows DLL 另有 3 个 `GraphwarPlanePosData::*` 的独立副本
+（arm64/x86 Linux 侧它们被内联进 manager 的同名方法）。x86 地址一律是**锚定**的
+（`fixtures/name_to_addr.tsv`，`panic::Location` 双向唯一）。
+
+| 方法 | 类型 | x86 地址 | arm64 | 源位置 |
+|---|---|---|---|---|
+| `get_position` | `GraphwarPlanePosManager` | `0x3c62b0` | `0x3b7f58` | `src/graphwar_plane_pos_manager.rs:116` |
+| `set_position` | `GraphwarPlanePosManager` | `0x3c64c0` | `0x3b8160` | `src/graphwar_plane_pos_manager.rs:111` |
+| `get_all_positions` | `GraphwarPlanePosManager` | `0x3c66a0` | `0x3b8348` | `src/graphwar_plane_pos_manager.rs:120` |
+| `send_all_info_events` | `GraphwarPlanePosManager` | `0x3c6a10` | `0x3b8660` | `src/graphwar_plane_pos_manager.rs:133` |
+| `handle_entity_removed_event` | `GraphwarPlanePosManager` | `0x3c6b40` | `0x3b8798` | `src/graphwar_plane_pos_manager.rs:142` |
+| `new` | `GraphwarPlanePosManager` | `0x3c6d30` | `0x3b89a0` | `src/graphwar_plane_pos_manager.rs:81` |
+| `subscribe_to_events_event_handler::{{closure}}` ×2 | `GraphwarPlanePosManager` | 闭包 `0x3c6cf0`/`0x3c6d10`/`0x3c71e0`/`0x3c7170` | `0x3b8944` / `0x3b8970` | 方法本身**内联进 `new`**（无独立符号码，`fixtures` 里两条记为「无锚」） |
+| `get_position` | `GraphwarPlanePosData` | —（内联） | —（内联） | DLL `0x1800d9ac0` |
+| `get_all_positions` | `GraphwarPlanePosData` | —（内联） | —（内联） | DLL `0x1800d9bb0` |
+| `new` | `GraphwarPlanePosData` | —（内联） | —（内联） | DLL `0x1800cd770`（与 `GraphwarTeamData::new` 被 LLVM 合并） |
+
+事件流（`观测`，`docs/16` §52.3）：订 `new_connection_event` → `send_all_info_events`、
+`entity_removed_event` → `handle_entity_removed_event`；发 `pos_info_event`（**tag 26**，
+`set_position` 与 `send_all_info_events` 各一处）；`handle_entity_removed_event` 认 **tag 14**、不发事件。
 
 ### graphwar_play_screen_control（9 个）
 
