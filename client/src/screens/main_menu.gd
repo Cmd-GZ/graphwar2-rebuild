@@ -38,9 +38,8 @@ extends GwScreen
 ##   所以这里照这个推断实现：读 `ProjectSettings` 的 `application/config/version`。
 
 const GAME_TITLE := "Graphwar II"
-const TITLE_DIVISOR := 8        # TitleSize.gd:        font_size = 视口宽 / 8
-const BUTTON_DIVISOR := 30      # MainMenuButtonResize.gd: font_size = 视口宽 / 30
-const VERSION_DIVISOR := 60     # VersionLabel.gd:     font_size = 视口宽 / 60
+# 字号除数（8 / 30 / 60）**不在本文件里**了：它们现在由原版脚本自己算
+# （`client/src/views/TitleSize.gd` 等，逐字节副本，见 `docs/16` §40）。
 
 ## `.tscn` 静态文本（原版没填版本时的样子）。
 const VERSION_PLACEHOLDER := "0.0.0"
@@ -49,8 +48,13 @@ const VERSION_SETTING := "application/config/version"
 var _title: Label
 var _version: Label
 
+## 本屏的四个容器节点挂的是**原版脚本**（`client/src/views/`，逐字节副本），
+## 所以 `font_divisor` / `apply_font_scale()` 在这里**不再需要**：
+##   最外层 MarginContainer ← `MarginContainer.gd`（安全区内边距）
+##   标题外层 MarginContainer ← `TitleSize.gd`（字号 = 宽/8，子节点最小宽 = 整屏宽）
+##   两列 VBoxContainer ← `MainMenuButtonResize.gd`（字号 = 宽/30）
+##   版本号外层 MarginContainer ← `VersionLabel.gd`（字号 = 宽/60）
 func _ready() -> void:
-	font_divisor = BUTTON_DIVISOR
 	super()
 
 func build() -> void:
@@ -58,11 +62,12 @@ func build() -> void:
 	outer.name = "MarginContainer"
 	outer.set_anchors_preset(Control.PRESET_FULL_RECT)
 	outer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	GwViews.attach(outer, "MarginContainer.gd")   # 原版 main_menu.tscn 的根节点就是它
 	add_child(outer)
 	var vbox := GwUI.vbox("VBoxContainer", GwUI.SEPARATION, outer)
 
 	# --- 标题（TitleSize.gd：子节点最小宽 = 整屏宽，字号 = 宽/8，EraserRegular）---
-	var title_margin := GwUI.margin("MarginContainer", 0, vbox)
+	var title_margin := GwUI.margin("MarginContainer", 0)
 	title_margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_title = GwUI.label(GAME_TITLE, 0, HORIZONTAL_ALIGNMENT_CENTER)
 	_title.name = "Label"
@@ -71,6 +76,10 @@ func build() -> void:
 	if title_font != null:
 		_title.add_theme_font_override("font", title_font)
 	title_margin.add_child(_title)
+	# 填完子节点再挂原版脚本，最后才进树 —— `_ready` 只在进树时发一次，
+	# 进树后再 `set_script()` 不会补发，原版脚本就永远连不上 `size_changed`。
+	GwViews.attach(title_margin, "TitleSize.gd")
+	vbox.add_child(title_margin)
 
 	# --- 两列 ---
 	var row := GwUI.hbox("HBoxContainer", GwUI.SEPARATION, vbox)
@@ -81,7 +90,7 @@ func build() -> void:
 	var left_col_margin := GwUI.margin("MarginContainer", 0, row)
 	left_col_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	left_col_margin.size_flags_vertical = Control.SIZE_FILL
-	var left_col := GwUI.vbox("VBoxContainer", GwUI.SEPARATION, left_col_margin)
+	var left_col := GwUI.vbox("VBoxContainer", GwUI.SEPARATION)
 	left_col.size_flags_vertical = Control.SIZE_FILL
 	var campaign := _menu_button("Campaign", GwCommands.CAMPAIGN, "PlayButton")
 	left_col.add_child(campaign)
@@ -89,6 +98,8 @@ func build() -> void:
 	var player := _menu_button("Player\n", GwCommands.PLAYER_SETTINGS, "CharacterButton")
 	left_col.add_child(player)
 	_v_spacer("MarginContainer2", left_col, 1.0)
+	GwViews.attach(left_col, "MainMenuButtonResize.gd")   # 字号 = 宽/30
+	left_col_margin.add_child(left_col)
 
 	var mid := _h_spacer("MarginContainer3", row, 0.05)
 
@@ -96,7 +107,7 @@ func build() -> void:
 	right_col_margin.name = "MarginContainer2"
 	right_col_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	right_col_margin.size_flags_vertical = Control.SIZE_FILL
-	var right_col := GwUI.vbox("VBoxContainer2", GwUI.SEPARATION, right_col_margin)
+	var right_col := GwUI.vbox("VBoxContainer2", GwUI.SEPARATION)
 	right_col.size_flags_vertical = Control.SIZE_FILL
 	var battle := _menu_button("Battle", GwCommands.MULTIPLAYER, "LocalButton")
 	right_col.add_child(battle)
@@ -104,14 +115,18 @@ func build() -> void:
 	var replays := _menu_button("Replays", GwCommands.REPLAY, "ReplayButton")
 	right_col.add_child(replays)
 	_v_spacer("MarginContainer2", right_col, 1.0)
+	GwViews.attach(right_col, "MainMenuButtonResize.gd")   # 字号 = 宽/30
+	right_col_margin.add_child(right_col)
 
 	# --- 版本号：右列**最下方**，右对齐（VersionLabel.gd 只管字号 = 宽/60）---
-	var version_margin := GwUI.margin("MarginContainer3", 0, right_col)
+	var version_margin := GwUI.margin("MarginContainer3", 0)
 	version_margin.name = "MarginContainer3"
 	version_margin.size_flags_vertical = Control.SIZE_FILL
 	_version = GwUI.label(version_text(), 0, HORIZONTAL_ALIGNMENT_RIGHT)
 	_version.name = "VersionLabel"
 	version_margin.add_child(_version)
+	GwViews.attach(version_margin, "VersionLabel.gd")   # 字号 = 宽/60
+	right_col.add_child(version_margin)
 
 	var pad_right5 := _h_spacer("MarginContainer5", row, 0.05)
 	var pad_right := _h_spacer("MarginContainer6", row, 0.2)
@@ -146,19 +161,6 @@ func _h_spacer(node_name: String, parent: Node, ratio: float) -> MarginContainer
 	m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	m.size_flags_stretch_ratio = ratio
 	return m
-
-## 字号：按钮 = 宽/30（基类递归写），标题 = 宽/8，版本 = 宽/60。
-func apply_font_scale() -> void:
-	super()
-	if not _built:
-		return
-	var width := get_viewport_rect().size.x
-	if width <= 0.0:
-		return
-	if _title != null:
-		_title.add_theme_font_size_override("font_size", maxi(10, int(width / float(TITLE_DIVISOR))))
-	if _version != null:
-		_version.add_theme_font_size_override("font_size", maxi(10, int(width / float(VERSION_DIVISOR))))
 
 func on_enter() -> void:
 	# 版本号只取决于工程设置，不随状态变化；但路径保持与原版一致（每次进入刷新一次）。

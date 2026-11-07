@@ -44,12 +44,11 @@ func build() -> void:
 	shell.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	shell.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-	var content := GwUI.vbox("ChatContainer2", GwUI.SEPARATION, shell)
+	var content := GwUI.vbox("ChatContainer2", GwUI.SEPARATION)
 	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	# ① 看不见的发送键：MarginContainer(ExitButtonContainer.gd, 宽/30) → GraphwarButton
-	var send_holder := GwUI.margin("MarginContainer", 0, content)
-	send_holder.set_meta("font_divisor", 30)
+	var send_holder := GwUI.margin("MarginContainer", 0)
 	var send := GwButton.make("      ")      # 原版文本就是 6 个空格
 	send.name = "GraphwarButton"
 	send.text = "      "
@@ -60,6 +59,10 @@ func build() -> void:
 	send.tooltip_text = "发送（原版这个按钮是 invisible_theme，看不见也点不动）"
 	send.pressed.connect(func(): _on_submit(_line_edit.text))
 	send_holder.add_child(send)
+	# 原版 `chat_pop_up.tscn` 的 `ChatContainer/ChatContainer2/MarginContainer` 挂
+	# `ExitButtonContainer.gd`（字号 = 宽/30）
+	GwViews.attach(send_holder, "ExitButtonContainer.gd")
+	content.add_child(send_holder)
 
 	# ② 输入行：黑底 + 3 px 黑边 + 圆角 10
 	_line_edit = LineEdit.new()
@@ -81,9 +84,13 @@ func build() -> void:
 	var box_style := StyleBoxFlat.new()
 	box_style.bg_color = BLACK_BG
 	_chat_box.add_theme_stylebox_override("normal", box_style)
-	_chat_box.gui_input.connect(_on_chat_box_input)
 	_chat_box.tooltip_text = "点这里会聚焦输入框（ChatBox.gd 的行为，docs/101 §4.3）"
 	content.add_child(_chat_box)
+	# 原版 `ChatBox.gd` 就是"点一下把焦点交给 `../ChatLineEdit`" —— 我们不再自己连 `gui_input`
+	GwViews.attach(_chat_box, "ChatBox.gd")
+	# 三个子节点齐了再挂 `ChatContainer.gd`（字号 = 宽/50），最后进树
+	GwViews.attach(content, "ChatContainer.gd")
+	shell.add_child(content)
 
 ## 原版 `invisible_theme.tres`：五态 stylebox 都指向 `invisible_button.tres`
 ## —— **透明底 + 3 px 透明边框 + 圆角 10**，字色 alpha 0。
@@ -100,10 +107,6 @@ func _invisible_theme(b: Button) -> void:
 	for c in ["font_color", "font_pressed_color", "font_hover_color", "font_focus_color",
 			"font_hover_pressed_color", "icon_normal_color"]:
 		b.add_theme_color_override(c, Color(0, 0, 0, 0))
-
-func _on_chat_box_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
-		_line_edit.grab_focus()
 
 func _on_submit(text_: String) -> void:
 	var msg := text_.strip_edges()

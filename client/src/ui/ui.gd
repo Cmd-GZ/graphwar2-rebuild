@@ -164,9 +164,9 @@ static func ad_bar() -> MarginContainer:
 static func exit_pair(cmd: String) -> MarginContainer:
 	var container := MarginContainer.new()
 	container.name = "ExitButtonContainer"
-	# 原版 `ExitButtonContainer.gd` 自己按 **宽/30** 设字号，与本屏其它文字无关
-	# （LanLobby 是 /40，但它的返回键仍然是 /30 —— 真机截图实测 146×96，docs/124 §4）。
-	container.set_meta("font_divisor", 30)
+	# 字号 = **宽/30**，由**原版** `ExitButtonContainer.gd`（`client/src/views/`，逐字节副本）
+	# 在 `_ready` 里对两个子节点写；与本屏其它文字无关（LanLobby 是 /40，返回键仍 /30 ——
+	# 真机截图实测 146×96，docs/124 §4）。我们不再用 `font_divisor` meta 自己算。
 
 	# 两个按钮各自带**原版 `.tres` 里那份不透明底**，这是"箭头只画一次"的关键：
 	#   `ClipButton`      ← `long_press_ghost_button_theme.tres`，normal = #0F281D（不透明）
@@ -209,6 +209,8 @@ static func exit_pair(cmd: String) -> MarginContainer:
 	press.add_theme_stylebox_override("pressed", sb_press_active)
 	press.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	container.add_child(press)
+	# 两个子按钮都填好之后再挂原版脚本、最后才进树（`_ready` 只在进树时发一次）。
+	GwViews.attach(container, "ExitButtonContainer.gd")
 	return container
 
 ## 通用的"全屏骨架"：MarginContainer → VBoxContainer。
@@ -218,10 +220,18 @@ static func exit_pair(cmd: String) -> MarginContainer:
 ## （恢复出的 `MarginContainer.gd::update_sizes` 可逐行读）；桌面最大化下窗口 == 安全区，
 ## 所以四个 margin 全是 0。分隔同样没有 override ⇒ 默认 4。
 ## 我们以前用 10/10，属于自定值（docs/124 §2.2）。
-static func frame(root: Control, margin_px: int = 0) -> Dictionary:
+## `view`：这个根节点挂哪个**原版**脚本。8 个界面（main_menu / campaign / GameSetup /
+## lan_lobby / player_screen / replay_lobby / play_screen / endgame_pop_up）的 `.tscn` 根
+## 就是挂 `MarginContainer.gd` 的 `MarginContainer`，所以默认值就是它；
+## 而 add_bot / confirm_exit / connecting / disconnected / join_ip / join_level 六个弹窗的
+## 根节点在原版里**没有**脚本（安全区那层是它里面的 `MarginContainer2`），传 `""` 关掉。
+## 节点路径对照见 `docs/16` §40。
+static func frame(root: Control, margin_px: int = 0, view: String = "MarginContainer.gd") -> Dictionary:
 	var m := margin("MarginContainer", margin_px)
 	m.set_anchors_preset(Control.PRESET_FULL_RECT)
 	m.name = "MarginContainer"
+	if view != "":
+		GwViews.attach(m, view)
 	root.add_child(m)
 	var v := vbox("VBoxContainer", SEPARATION, m)
 	return {"margin": m, "vbox": v}

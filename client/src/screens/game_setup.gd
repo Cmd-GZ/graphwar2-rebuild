@@ -63,7 +63,7 @@ func build() -> void:
 	# GhostButton：原版是 `invisible_theme` 的 GraphwarButton，9 个空格 ⇒ 真帧宽 **159**
 	# （`docs/137` §5，宿主导出的 `@@NODE GhostButton ... size=(159,96)`）。它不画任何东西，
 	# 唯一作用就是把标题往右顶 159 px。
-	var ghost_m := GwUI.margin("MarginContainer4", 0, top)
+	var ghost_m := GwUI.margin("MarginContainer4", 0)
 	ghost_m.size_flags_horizontal = Control.SIZE_FILL
 	# 宽度直接钉成真值 159：`GraphwarButton`（Rust）对"9 个空格"的度量与我们 Godot
 	# `Button` 不同（我们的空格是 28 px/个 ⇒ 252），只有钉住才能让标题落在真帧的 x=313。
@@ -74,8 +74,10 @@ func build() -> void:
 	ghost.flat = true
 	ghost.tooltip_text = "原版这里是空白占位按钮（LanLobbyTitle.gd 只调字号）"
 	ghost_m.add_child(ghost)
+	GwViews.attach(ghost_m, "LanLobbyTitle.gd")   # 字号 = 宽/30
+	top.add_child(ghost_m)
 
-	var room_m := GwUI.hbox("RoomName", GwUI.SEPARATION, top)
+	var room_m := GwUI.hbox("RoomName", GwUI.SEPARATION)
 	room_m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_room_edit = LineEdit.new()
 	_room_edit.name = "RoomNameLineEdit"
@@ -94,10 +96,13 @@ func build() -> void:
 	_room_edit.tooltip_text = "房间名。原版这个 LineEdit 是 Rust 类，text_changed→on_text_change（docs/104 §6.3）"
 	_room_edit.text_changed.connect(_on_room_name_changed)
 	room_m.add_child(_room_edit)
+	# 原版 `GameSetup.tscn` 的 `HBoxContainer/RoomName` 挂 `RoomName.gd`（字号 = 宽/30）
+	GwViews.attach(room_m, "RoomName.gd")
+	top.add_child(room_m)
 
 	# 聊天 / 上锁：原版是 `text = "     "`（5 个空格）+ `icon` + `expand_icon`，
 	# 与返回键同一套 ⇒ 真帧**都是 146×96**（宿主导出）。
-	var chat_m := GwUI.margin("MarginContainer2", 0, top)
+	var chat_m := GwUI.margin("MarginContainer2", 0)
 	chat_m.size_flags_horizontal = Control.SIZE_FILL
 	_chat_button = GwButton.make("     ")
 	_chat_button.name = "ChatButtonSetup"
@@ -107,8 +112,10 @@ func build() -> void:
 	_chat_button.expand_icon = true
 	_chat_button.tooltip_text = "聊天（toggle_chat）"
 	chat_m.add_child(_chat_button)
+	GwViews.attach(chat_m, "LanLobbyTitle.gd")    # 字号 = 宽/30
+	top.add_child(chat_m)
 
-	var lock_m := GwUI.margin("MarginContainer3", 0, top)
+	var lock_m := GwUI.margin("MarginContainer3", 0)
 	lock_m.size_flags_horizontal = Control.SIZE_FILL
 	_lock_button = GwButton.make("     ")
 	_lock_button.name = "LockButton"
@@ -117,6 +124,8 @@ func build() -> void:
 	_lock_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_lock_button.expand_icon = true
 	lock_m.add_child(_lock_button)
+	GwViews.attach(lock_m, "LanLobbyTitle.gd")    # 字号 = 宽/30
+	top.add_child(lock_m)
 
 	# ---------------- 玩家列表 ----------------
 	var list_m := GwUI.margin("MarginContainer2", 0, vbox)
@@ -229,6 +238,9 @@ func _team_title(text_: String) -> MarginContainer:
 	if tf != null:
 		l.add_theme_font_override("font", tf)
 	m.add_child(l)
+	# 原版队名容器挂 `LanLobbyTitle.gd`（字号 = 宽/30）；`GameSetup.tscn` 的两处
+	# `.../Team1Container/MarginContainer`、`.../Team2Container/MarginContainer` 就是它。
+	GwViews.attach(m, "LanLobbyTitle.gd")
 	return m
 
 func _on_room_name_changed(new_text: String) -> void:
