@@ -255,3 +255,21 @@ cargo test --offline                 # 基线：lib 457 / 总计 1499，必须�
 2. **`gdext` 构建三步不能少**：`cargo build --release --features gdext-bindings` → **拷进 `client/`** → `--import`。
    合并方今天就在这一步上翻过车（拷了非 gdext 版，`assemble_check` 直接崩、`plane_on_screen_check` 5 条假失败）。
 3. **数字必须能复跑**：给命令 + JSONL 路径；只给数不给命令的一律当未验证。
+
+### 第四轮增补（2026-11-08，两个"规模/运行时"任务）
+
+| # | 分支 | 主题 | 为什么给下游 |
+|---|---|---|---|
+| 24 | `agent/three-way-match` | **三向符号匹配器**（Linux / Android / Windows×2） | **纯算力**：四份构建 × 1.3 万函数的结构指纹最近邻 |
+| 25 | `agent/frida-point-array` | 在**真游戏**里抓点数组填充者 | 需要能跑起游戏；静态已卡住两次 |
+
+**给 24 的二进制**：`dist/gw2-windows-refs.tar.zst`（14 MB，两份 Windows DLL + SHA256SUMS + 说明）。
+拿不到就自己下：Steam 控制台 `download_depot 3066840 3066842`（**下完立刻 `cp` 出来**）。
+
+**⚠️ macOS 暂时不派**：没有 macOS 环境既不能编译也不能验证，
+写一份"无法验证"的配置没有意义（`AGENTS.md` §1：做不到就说做不到）。
+真要 macOS，前提是先有机器或 Apple 的交叉工具链。
+
+**给 24 的硬约束（必须写进结论）**：
+能跨构建对齐的键只有 `panic::Location`，目标里共 **2,035 个** ⇒ 名字上限是 2,035，**不是 13,503**。
+天花板之外只能给"上限估计 + 正对照准确率"，**不许硬凑**。
