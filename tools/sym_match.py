@@ -88,6 +88,8 @@ ELF 读取 / 符号解析 / 反汇编，是为了让 `--verify` 成为**独立�
 import argparse
 import bisect
 import collections
+import hashlib
+import math
 import os
 import pickle
 import re
@@ -115,6 +117,17 @@ SIZE_LOOSE_LO, SIZE_LOOSE_HI = 0.40, 2.20
 MIN_LIT = 16        # 字符串字面量**前缀**键的最短长度：短于它，两版的合并串表邻接差异会污染键
 MAX_LIT = 128
 
+# ---- 裁决（§F）与无候选归因（§G）用的常量
+ARB_MODBLOCK = "modblock"
+ARB_SCORE = "score"
+MODBLOCK_MAX = 15       # 模块块整体指派：位掩码 DP 的上限（2^15·15）
+SCORE_MARGIN = 1.0      # 候选集内裁决：最高分必须领先次高这么多
+CONTEST_MARGIN = 3.0    # 两行抢同一条 x86 槽时，第一名要领先这么多才算"分得开"
+RARE_N = 24             # "罕见"字面量/前缀：两侧各 ≤24 个函数引用才算证据
+TINY_NINSN = 12         # 指令数 ≤12 视为"太小"（drop_in_place / 转发 shim）
+# 控制流指令：一条都没有的函数不可能是函数（`.text` 里的数据/跳转表）
+_CFLOW_INSN = re.compile(r"^(b|bl|br|ret|cbz|cbnz|tbz|tbnz|b\.[a-z]+|blr|eret)$")
+
 CONF_UNIQUE = "unique"
 CONF_WEAK = "weak"
 CONF_MULTI = "multi"
@@ -123,6 +136,18 @@ CONF_SPLIT = "split"
 CONF_MERGE = "merge"
 
 STATUS = (CONF_UNIQUE, CONF_WEAK, CONF_MULTI, CONF_NONE, CONF_SPLIT, CONF_MERGE)
+
+
+def _seq_contains(big, small):
+    """`small` 是不是 `big` 的一段连续子序列（判"这段代码被内联进了那个函数"）。"""
+    n, k = len(big), len(small)
+    if k == 0 or k > n:
+        return False
+    first = small[0]
+    for i in range(n - k + 1):
+        if big[i] == first and big[i:i + k] == small:
+            return True
+    return False
 
 
 def die(msg):
@@ -159,9 +184,37 @@ def _reference_root(start):
 
 
 GW2 = _reference_root(ROOT)
+
+
+def _find_funcstarts():
+    """定位上游分析仓库的 Ghidra 函数起点表 `analysis/funcstarts_ghidra_va.pkl`。
+
+    正常布局是 `<上游>/gw2-rebuild/`（兄弟目录），子 agent 的工作区却在
+    `.agent-work/<topic>/wt-NN/` 里、层级更深，上游分析仓库在 `.reference/upstream/`。
+    以前这里写死 `GW2/analysis/...`，在本仓库（而非上游）里跑 `build` 会直接
+    `FileNotFoundError`。搜法：`GW2_FUNCSTARTS` 环境变量 → 逐级上溯 `analysis/`
+    → `.reference/upstream/analysis/` → 回退到旧路径（让报错信息指向真实位置）。
+
+    ⚠ 绝不用 `analysis/funcstarts.pkl`（`.eh_frame` 解析出来的表是错的，见 AGENTS.md）。
+    """
+    env = os.environ.get("GW2_FUNCSTARTS")
+    if env:
+        return env
+    d = ROOT
+    for _ in range(6):
+        cand = os.path.join(d, "analysis", "funcstarts_ghidra_va.pkl")
+        if os.path.exists(cand):
+            return cand
+        d = os.path.dirname(d)
+    cand = os.path.join(GW2, ".reference/upstream/analysis/funcstarts_ghidra_va.pkl")
+    if os.path.exists(cand):
+        return cand
+    return os.path.join(GW2, "analysis/funcstarts_ghidra_va.pkl")
+
+
 DEFAULT_ARM64 = os.path.join(GW2, ".reference/steam/android-2.0.60/libgraphwarrust.so")
 DEFAULT_X86 = os.path.join(GW2, ".reference/steam/2026-08-28/libgraphwarrust.so")
-DEFAULT_FUNCSTARTS = os.path.join(GW2, "analysis/funcstarts_ghidra_va.pkl")
+DEFAULT_FUNCSTARTS = _find_funcstarts()
 
 
 # ---------------------------------------------------------------------------
@@ -507,8 +560,10 @@ def extract_x86(elf, universe):
         if not body:
             continue
         calls, refs, consts, n = [], [], set(), 0
+        mns = []
         for i in cs.disasm(body, va):
             n += 1
+            mns.append(i.mnemonic)
             if i.mnemonic == "call" and i.operands and i.operands[0].type == X86_OP_IMM:
                 calls.append(i.operands[0].imm & 0xffffffffffffffff)
                 continue
@@ -524,7 +579,7 @@ def extract_x86(elf, universe):
                         d = struct.unpack("<d", struct.pack("<Q", v & 0xffffffffffffffff))[0]
                         if d == d and 1e-9 < abs(d) < 1e9:
                             refs.append(("f64imm", round(d, 9)))
-        out[va] = dict(n=n, calls=calls, refs=refs, consts=consts)
+        out[va] = dict(n=n, calls=calls, refs=refs, consts=consts, mn=mns)
     return out
 
 
@@ -541,9 +596,11 @@ def extract_arm64(elf, universe):
         if not body:
             continue
         calls, refs, consts, n = [], [], set(), 0
+        mns = []
         addr = {}                   # reg -> 已知的绝对地址（adrp / adrp+add 的结果）
         for i in cs.disasm(body, va):
             n += 1
+            mns.append(i.mnemonic)
             ops = i.operands
             mn = i.mnemonic
             used = False
@@ -579,12 +636,32 @@ def extract_arm64(elf, universe):
                 for op in ops:
                     if op.type == ARM64_OP_REG and op.access & WRITE:
                         addr.pop(op.reg, None)
-        out[va] = dict(n=n, calls=calls, refs=refs, consts=consts)
+        out[va] = dict(n=n, calls=calls, refs=refs, consts=consts, mn=mns)
     return out
 
 
-def build_features(elf, universe, raw, starts):
-    """把原始反汇编结果压成可比的键：lits / f64s / calls（归一到函数起点）。"""
+def body_sig(mns):
+    """函数体的**形状签名**：助记符序列的 sha1 前 16 位。
+
+    用途只有一个：判定"两个函数编出来是不是同一串指令"（ICF / 同构孪生）。
+    故意只取助记符、不取操作数——寄存器分配和立即数在两个架构间不同，取了反而不可比；
+    而同一个源函数在同一架构上被 ICF 合并时，助记符序列是**完全相同**的。
+    """
+    if not mns:
+        return None
+    h = hashlib.sha1()
+    for m in mns:
+        h.update(m.encode("utf-8"))
+        h.update(b"|")
+    return h.hexdigest()[:16]
+
+
+def build_features(elf, universe, raw, starts, keep_seq=False):
+    """把原始反汇编结果压成可比的键：lits / f64s / calls（归一到函数起点）。
+
+    `keep_seq=True` 时额外保留助记符序列 `mseq`（只有 arm64 侧要——判"内联进来的一段"
+    用的是同一架构内的序列包含关系，跨架构不可比）。
+    """
     lit_cache = {}
 
     def lit_of(va):
@@ -597,6 +674,10 @@ def build_features(elf, universe, raw, starts):
         if r is None:
             f["lits"], f["pfxs"], f["f64s"], f["calls"], f["consts"], f["ninsn"] = \
                 frozenset(), frozenset(), frozenset(), (), frozenset(), 0
+            f["sig"] = None
+            f["bsig"] = None
+            if keep_seq:
+                f["mseq"] = ()
             continue
         lits, pfxs, f64s = set(), set(), set()
         for t in r["refs"]:
@@ -623,6 +704,14 @@ def build_features(elf, universe, raw, starts):
         f["calls"] = tuple(sorted(calls))
         f["consts"] = frozenset(r["consts"])
         f["ninsn"] = r["n"]
+        f["sig"] = body_sig(r["mn"])
+        # 逐字节签名：`sig` 只比助记符形状，`bsig` 比**指令编码本身**。
+        # 判定 ICF（"两份同构函数被合并成一份"）必须用 `bsig`——形状相同、立即数/位移
+        # 不同的函数到处都是（drop_in_place<T> 就是），用形状判 ICF 会大面积假阳性。
+        b = elf.read(va, f["size"])
+        f["bsig"] = hashlib.sha1(b).hexdigest()[:16] if b else None
+        if keep_seq:
+            f["mseq"] = tuple(r["mn"])
 
     callers = collections.defaultdict(list)
     for va, f in universe.items():
@@ -636,6 +725,12 @@ def build_features(elf, universe, raw, starts):
 # ---------------------------------------------------------------------------
 # 6. 缓存（提取一次约 2 分钟，迭代时不该反复付这个代价）
 # ---------------------------------------------------------------------------
+# 缓存里存的是**特征提取的完整结果**，所以提取代码一改就必须让旧缓存失效。
+# 以前 key 只有 `tag + 二进制大小`，改了提取逻辑却还吃旧缓存（实测踩过：同一份 `.so`
+# 用新旧代码各跑一次，unique 差 2 条、multi 差 3 条，而且不报错）。
+CACHE_VERSION = "v4-bsig"
+
+
 def cache_dir():
     d = os.environ.get("SYM_MATCH_CACHE") or os.path.join(ROOT, ".agent-work/symmatch/cache")
     os.makedirs(d, exist_ok=True)
@@ -645,7 +740,7 @@ def cache_dir():
 def load_side(arch, path, universe_path, tag):
     """→ {va: feature dict}。缓存命中就不重新反汇编。"""
     st = os.stat(path)
-    key = "%s-%s" % (tag, st.st_size)
+    key = "%s-%s-%s" % (CACHE_VERSION, tag, st.st_size)
     cf = os.path.join(cache_dir(), key + ".pkl")
     if os.path.exists(cf):
         try:
@@ -659,10 +754,11 @@ def load_side(arch, path, universe_path, tag):
     if arch == "x86":
         uni = x86_universe(elf, universe_path)
         raw = extract_x86(elf, uni)
+        build_features(elf, uni, raw, sorted(uni))
     else:
         uni = arm64_universe(elf)
         raw = extract_arm64(elf, uni)
-    build_features(elf, uni, raw, sorted(uni))
+        build_features(elf, uni, raw, sorted(uni), keep_seq=True)
     try:
         with open(cf, "wb") as fh:
             pickle.dump(dict(mtime=int(st.st_mtime), size=st.st_size, universe=uni), fh)
@@ -727,6 +823,7 @@ class Matcher:
         self.votes = collections.defaultdict(collections.Counter)
         self.split_extra = collections.defaultdict(list)    # arm a -> [x86 u]（arm64 内联）
         self.merge_extra = collections.defaultdict(list)    # x86 x -> [arm b]（x86 内联）
+        self.arbi = {}          # (a, x) -> 裁决证据串（见 §F）
         self.log = []
 
     # ---------------------------------------------------------------- 基础
@@ -1194,6 +1291,534 @@ class Matcher:
                     self.split_extra[a2].append(x)
                     break
 
+    # ---------------------------------------------------------------- F. 裁决
+    # 背景：本工具原来是"多候选就把全部候选列出来、绝不挑一个"。§35（docs/02）实测
+    # 63 个多候选里 29 个其实含真值，是"拒绝猜"的代价。本轮加了一条**受限的**裁决通道：
+    # 只接受**唯一且可逐条复核**的结构事实，仍然不猜。
+    #
+    #   R1 `modblock`  模块块整体指派
+    #       一个 graphwar 模块的 `panic::Location` 文件名是一个**精确**的 `&'static str`
+    #       槽（如 `src/graphwar_life_manager.rs`）。"引用这个文件名的函数"在两侧都可枚举；
+    #       两侧**数量相等** ⇒ 该模块没有内联/ICF 差异，整块可以一起指派。用
+    #       体量/指令数/字面量/邻居一致度做得分，位掩码 DP 求最优指派并**数最优解个数**；
+    #       只有"恰好 1 个最优解"且**与模块内地址序号对齐给出同一答案**时才采纳。
+    #   R2 `score`     候选集内唯一最高分
+    #       只在**已经存在的候选集**里比（不新增候选）：唯一最高分、与次高差 ≥1.0、
+    #       并且至少有一条特征类证据（罕见字面量/f64）或 ≥2 条已配对邻居一致。
+    #
+    # 两条规则的证据都写进 `evidence` 字段的 `arbi=` 段。两条都**只填空**（不动已有配对），
+    # 且严格保持单射（一个 x86 地址只能被一个 arm64 函数认领）——`tests/sym_match.rs`
+    # 的 `unique_answers_are_injective` 会立刻抓住违反。
+
+    def _arbi_prep(self):
+        """建裁决用的索引：字面量/前缀 → 引用它的函数；逐字节孪生。"""
+        self._a_lit, self._x_lit = collections.defaultdict(list), collections.defaultdict(list)
+        self._a_pfx, self._x_pfx = collections.defaultdict(list), collections.defaultdict(list)
+        for va, f in self.arm.items():
+            for t in f["lits"]:
+                self._a_lit[t].append(va)
+            for t in f["pfxs"]:
+                self._a_pfx[t].append(va)
+        for va, f in self.x86.items():
+            for t in f["lits"]:
+                self._x_lit[t].append(va)
+            for t in f["pfxs"]:
+                self._x_pfx[t].append(va)
+        for d in (self._a_lit, self._x_lit, self._a_pfx, self._x_pfx):
+            for t in d:
+                d[t].sort()
+        # 逐字节孪生（ICF 的判据，见 `bsig`）
+        by_bsig = collections.defaultdict(list)
+        for va, f in self.arm.items():
+            if f.get("bsig"):
+                by_bsig[f["bsig"]].append(va)
+        self._twin = {}
+        for lst in by_bsig.values():
+            if len(lst) > 1:
+                for v in lst:
+                    self._twin[v] = [u for u in lst if u != v]
+        self._name2addr = {}
+
+    def _module_lit(self, a, name):
+        """`a` 自己所在模块的 `panic::Location` 文件名 lit（没有就 None）。
+
+        必须与 demangled 名字里的模块名一致：一个函数可能引用了别的模块的 Location
+        （内联进来的被调者留下的），那是别人的文件名，不能拿它当"我属于哪个模块"。
+        """
+        k = name_key(name)
+        if not k or not k[0]:
+            return None
+        want = "src/%s.rs" % k[0]
+        if want in self.arm[a]["lits"]:
+            return want
+        alt = [t for t in self.arm[a]["lits"]
+               if t.endswith("/%s.rs" % k[0]) or t.endswith("%s.rs" % k[0])]
+        return alt[0] if len(alt) == 1 else None
+
+    def _arbi_score(self, a, x):
+        """→ (得分, 特征命中数, 已配对邻居一致数)；出闸返回 None。
+
+        得分只由**二进制里能读到的东西**构成：罕见字面量、f64、罕见前缀、已配对邻居一致、
+        体量比/指令数比的对数偏差。刻意不给"顺序"加权——顺序证据已经被 D/E 两轮用尽了。
+        """
+        fa, fx = self.arm[a], self.x86[x]
+        if not fx["size"] or not fx["ninsn"]:
+            return None
+        r = fa["size"] / fx["size"]
+        if not (LOOSE_LO <= r <= LOOSE_HI):
+            return None
+        s = -abs(math.log(r))
+        q = fa["ninsn"] / fx["ninsn"]
+        s -= 0.8 * abs(math.log(q))
+        strong = 0        # 精确 `&'static str` 槽 / f64：内容级指纹
+        weak = 0          # `.rodata` 前缀：只能当弱证据（合并串表的邻接会造假，实测见过
+                          #   `GraphwarButton` 的 trampoline 与 `PlayerShowcase` 的共享
+                          #   `readyPlayerShowc`——那是两条相邻字符串被拼在一起）
+        for t in fa["lits"] & fx["lits"]:
+            if len(self._a_lit.get(t, ())) <= RARE_N and len(self._x_lit.get(t, ())) <= RARE_N:
+                s += 3.0
+                strong += 1
+        for t in fa["f64s"] & fx["f64s"]:
+            s += 2.0
+            strong += 1
+        for t in fa["pfxs"] & fx["pfxs"]:
+            if len(self._a_pfx.get(t, ())) <= RARE_N and len(self._x_pfx.get(t, ())) <= RARE_N:
+                s += 1.0
+                weak += 1
+        ca = {self.mp[c] for c in fa["calls"] if c in self.mp}
+        xa = {self.mp[c] for c in fa["callers"] if c in self.mp}
+        nag = len(ca & set(fx["calls"])) + len(xa & set(fx["callers"]))
+        s += 1.5 * nag
+        return s, strong, weak, nag
+
+    @staticmethod
+    def _strict_pair(fa, fx):
+        """一对函数是否落在**实测同源区间**：体量比 0.61–1.19 且指令数比 0.70–1.45。"""
+        if not fx["size"] or not fx["ninsn"]:
+            return False
+        r = fa["size"] / fx["size"]
+        if not (SIZE_LO <= r <= SIZE_HI):
+            return False
+        q = fa["ninsn"] / fx["ninsn"]
+        return NINSN_LO <= q <= NINSN_HI
+
+    def _best_assign(self, pend, avail):
+        """位掩码 DP：→ (最优解个数, 一个最优指派 dict)。用 `_arbi_score` 当权重。
+
+        `fwd[i][mask]` = 前 i 行、占用的 x86 槽集合为 mask 时的最优得分；最优解个数用
+        同一个 `fwd` 反向数——**只有得分恰好等于最优值的走法才算**，这样"唯一"才有意义。
+        """
+        n = len(pend)
+        if n == 0 or n > MODBLOCK_MAX:
+            return None, None
+        w = [[(lambda t: None if t is None else t[0])(self._arbi_score(a, x)) for x in avail]
+             for a in pend]
+        fwd = [{0: 0.0}]
+        for i in range(n):
+            cur = {}
+            for mask, val in fwd[-1].items():
+                for j in range(n):
+                    if mask >> j & 1 or w[i][j] is None:
+                        continue
+                    nm = mask | (1 << j)
+                    v = val + w[i][j]
+                    if nm not in cur or v > cur[nm] + 1e-9:
+                        cur[nm] = v
+            fwd.append(cur)
+        full = (1 << n) - 1
+        if full not in fwd[n]:
+            return None, None
+        memo = {}
+
+        def best_count(i, mask):
+            if i == n:
+                return 1 if mask == full else 0
+            key = (i, mask)
+            if key in memo:
+                return memo[key]
+            base = fwd[i][mask]
+            tot = 0
+            for j in range(n):
+                if mask >> j & 1 or w[i][j] is None:
+                    continue
+                nm = mask | (1 << j)
+                if nm not in fwd[i + 1]:
+                    continue
+                if abs(base + w[i][j] - fwd[i + 1][nm]) > 1e-9:
+                    continue
+                tot += best_count(i + 1, nm)
+            memo[key] = tot
+            return tot
+
+        nopt = best_count(0, 0)
+        out, mask = {}, 0
+        for i in range(n):
+            pick = None
+            for j in range(n):
+                if mask >> j & 1 or w[i][j] is None:
+                    continue
+                nm = mask | (1 << j)
+                if nm in fwd[i + 1] and abs(fwd[i][mask] + w[i][j] - fwd[i + 1][nm]) <= 1e-9:
+                    pick = j
+                    break
+            if pick is None:
+                return None, None
+            out[pend[i]] = avail[pick]
+            mask |= 1 << pick
+        return nopt, out
+
+    def arbitrate(self, symbols):
+        """裁决多候选。返回 (modblock 条数, score 条数)。**只填空，不改已有配对。**"""
+        self._arbi_prep()
+        self._symbols = symbols
+        self._name2addr = {}
+        for a, nm in symbols:
+            self._name2addr.setdefault(nm, a)
+        n_mod = self._arbi_modblocks(symbols)
+        n_score = 0
+        # 分数裁决要**迭代**：一行认领了某个槽以后，别的行的候选集里就少了一个竞争项，
+        # 原来"差一点"的裕度可能变得清楚（实测有这种连锁）。和主匹配一样收敛到不动。
+        for _ in range(4):
+            got = self._arbi_scores(symbols)
+            got += self._arbi_groups()
+            n_score += got
+            if not got:
+                break
+        self.log.append(("F:arbi", n_mod + n_score, len(self.mp)))
+        return n_mod, n_score
+
+    def _arbi_modblocks(self, symbols):
+        got = 0
+        blocks = collections.defaultdict(list)
+        for a, nm in symbols:
+            L = self._module_lit(a, nm)
+            if L:
+                blocks[L].append(a)
+        for L in sorted(blocks):
+            A = self._a_lit.get(L, [])
+            X = self._x_lit.get(L, [])
+            # 允许模块级数量差 ±1：`panic::Location` 集合是"有 panic 点的函数"，两侧
+            # 差一个成员本身是允许的（多一个内联进来的引用 / 少一个被 ICF 掉的）。
+            if not A or abs(len(A) - len(X)) > 1:
+                continue
+            # 块外占用保护：本模块的 x86 成员被"别的模块的 arm64 函数"认领了 ≥2 个时，
+            # 说明"引用同一个 Location 文件名"的两侧集合**不再一一对应**（实测
+            # `graphwar_team_manager` 就是这样：7 对 7，但真值落在已被别人占用的两个槽上，
+            # 于是整块被挤着平移一位）。这种情况整块放弃，一条都不定。
+            if sum(1 for x in X if x in self.rev and self.rev[x] not in A) > 1:
+                if os.environ.get("SYM_MATCH_DEBUG"):
+                    print("      [modblock] %s 块外占用>1，放弃" % L, file=sys.stderr)
+                continue
+            pend = sorted(a for a in A if a not in self.mp)
+            avail = sorted(x for x in X if x not in self.rev)
+            if not pend or len(avail) > len(pend) or len(pend) - len(avail) > 1:
+                continue
+            if len(pend) == 1 and len(avail) == 1:
+                # 只有一行时"最优解唯一"是废话；这一条要求严格同源区间
+                a, x = pend[0], avail[0]
+                if not self._strict_pair(self.arm[a], self.x86[x]):
+                    continue
+                cnt, plan = 1, {a: x}
+                rule = "n=1,strict"
+            elif len(pend) == len(avail) + 1:
+                # 模块里 arm64 比 x86 多一个函数 ⇒ 恰好一行的 x86 副本不存在（被内联/合并）。
+                # 枚举"跳过哪一行"，要求：① 其余各行按序号对齐后**全部**落在实测同源区间；
+                # ② 能这样做的跳过位置**只有一种**。两条都成立才采纳。
+                plan = None
+                hits = []
+                for k in range(len(pend)):
+                    mp2 = {pend[j]: avail[j if j < k else j - 1]
+                           for j in range(len(pend)) if j != k}
+                    if all(self._strict_pair(self.arm[a], self.x86[x]) for a, x in mp2.items()) \
+                            and all(self._arbi_score(a, x) is not None for a, x in mp2.items()):
+                        hits.append((k, mp2))
+                if len(hits) != 1:
+                    # 多个"跳过位置"都能让整块落在实测同源区间时，用结构得分把它们拉开：
+                    # 只有第一名领先第二名 ≥ SCORE_MARGIN 才采纳。
+                    scored = []
+                    for k2, mp2 in hits:
+                        tot = sum(self._arbi_score(a2, x2)[0] for a2, x2 in mp2.items())
+                        scored.append((tot, k2, mp2))
+                    if os.environ.get("SYM_MATCH_DEBUG"):
+                        print("      [modblock] %s n=%d avail=%d hits=%d scores=%s"
+                              % (L, len(pend), len(avail), len(hits),
+                                 ["%.2f@%d" % (t, k2) for t, k2, _ in sorted(scored, reverse=True)]),
+                              file=sys.stderr)
+                    if len(scored) < 2:
+                        continue
+                    scored.sort(key=lambda t: (-t[0], t[1]))
+                    if scored[0][0] - scored[1][0] < SCORE_MARGIN:
+                        continue
+                    _tot, k, plan = scored[0]
+                    rule = "n=%d,skip@%d(strict+score)" % (len(pend), k)
+                    cnt = 1
+                else:
+                    k, plan = hits[0]
+                    rule = "n=%d,skip@%d(strict)" % (len(pend), k)
+                    cnt = 1
+            else:
+                cnt, plan = self._best_assign(pend, avail)
+                if cnt != 1 or not plan:
+                    if os.environ.get("SYM_MATCH_DEBUG"):
+                        print("      [modblock] %s n=%d opt=%s rank_same=%s"
+                              % (L, len(pend), cnt, plan == dict(zip(pend, avail)) if plan else "-"),
+                              file=sys.stderr)
+                    continue
+                # 与"模块内地址序号对齐"必须给同一答案（两条独立规则互证）
+                if plan != dict(zip(pend, avail)):
+                    continue
+                if not all(self._strict_pair(self.arm[a], self.x86[plan[a]]) for a in pend):
+                    if os.environ.get("SYM_MATCH_DEBUG"):
+                        bad = [("0x%x->0x%x" % (a, plan[a])) for a in pend
+                               if not self._strict_pair(self.arm[a], self.x86[plan[a]])]
+                        print("      [modblock] %s 体量带外: %s" % (L, ",".join(bad)),
+                              file=sys.stderr)
+                    continue
+                rule = "n=%d,opt=1,rank=same" % len(pend)
+            for a in sorted(plan):
+                x = plan[a]
+                if a in self.mp or x in self.rev:
+                    continue
+                self.mp[a] = x
+                self.rev[x] = a
+                self.why[(a, x)].add("modblock")
+                self.arbi[(a, x)] = "%s(%s)" % (ARB_MODBLOCK, rule)
+                got += 1
+        return got
+
+    def _arbi_scores(self, symbols):
+        """候选集内唯一最高分。
+
+        采纳条件（三条都要）：
+          ① 最高分与次高分的差 ≥ `SCORE_MARGIN`；
+          ② 有**强特征**（罕见精确字面量 / f64）撑着，或有 ≥2 条已配对邻居一致撑
+             （纯弱前缀不算——实测过合并串表把两个无关类的前缀拼在一起）；
+          ③ 这个候选不是别的行同样"理直气壮"的首选（两个函数抢同一个 x86 槽、
+             得分又拉不开时，谁上都是赌，**两条都留 multi**）。
+        按裕度从大到小处理，先到先得，保持单射。
+        """
+        want = []
+        for a, nm in symbols:
+            if a in self.mp:
+                continue
+            cand = self._candidates(a)
+            if len(cand) < 2:
+                continue
+            scored = []
+            for x in cand:
+                r = self._arbi_score(a, x)
+                if r is not None:
+                    scored.append((x, r[0], r[1], r[2], r[3]))
+            if len(scored) < 2:
+                continue
+            scored.sort(key=lambda t: (-t[1], t[0]))
+            top = scored[0]
+            margin = top[1] - scored[1][1]
+            if margin < SCORE_MARGIN:
+                continue
+            strong, weak, nag = top[2], top[3], top[4]
+            if not (strong >= 1 or nag >= 2 or (nag >= 1 and margin >= 2.0)):
+                continue                       # 只有体量/弱前缀在支撑，不算证据
+            want.append(dict(margin=margin, a=a, x=top[0], score=top[1],
+                             strong=strong, weak=weak, nag=nag))
+        # 争用保护：同一条 x86 槽是多个行的首选时，看第一名能不能把第二名甩开
+        by_x = collections.defaultdict(list)
+        for w in want:
+            by_x[w["x"]].append(w)
+        blocked = set()
+        for x, lst in by_x.items():
+            if len(lst) < 2:
+                continue
+            lst.sort(key=lambda w: (-w["score"], w["a"]))
+            if lst[0]["score"] - lst[1]["score"] < CONTEST_MARGIN:
+                for w in lst:
+                    blocked.add(w["a"])
+        want.sort(key=lambda w: (-w["margin"], w["a"]))
+        got = 0
+        for w in want:
+            a, x = w["a"], w["x"]
+            if a in blocked or a in self.mp or x in self.rev:
+                continue
+            self.mp[a] = x
+            self.rev[x] = a
+            self.why[(a, x)].add("score")
+            self.arbi[(a, x)] = "%s(margin=%.2f,strong=%d,weak=%d,neighbours=%d)" % (
+                ARB_SCORE, w["margin"], w["strong"], w["weak"], w["nag"])
+            got += 1
+        return got
+
+    def _arbi_groups(self):
+        """互相抢同一条 x86 槽的几行，**整组一起指派**（和 modblock 同一套唯一性判据）。
+
+        单行裁决遇到"两行的首选是同一个槽"时必须两边都留 multi（谁上都是赌）。但把这几行
+        放在一起看，问题是"这个槽该给谁、另一个槽给谁"——一个**指派**问题：枚举所有
+        "行→槽"的单射（允许有行没槽），若最优指派**唯一**、且与次优的得分差 ≥ `SCORE_MARGIN`，
+        就整组采纳。
+        """
+        rows = []
+        for a, _nm in self._symbols:
+            if a in self.mp:
+                continue
+            cand = self._candidates(a)
+            if len(cand) < 2:
+                continue
+            sc = []
+            for x in cand:
+                r = self._arbi_score(a, x)
+                if r is not None:
+                    sc.append((x, r[0], r[1], r[3]))       # x, 分, strong, nag
+            if len(sc) >= 2:
+                rows.append((a, sc))
+        if not rows:
+            return 0
+        # 连成组：行与行之间共享候选槽就连在一起
+        parent = list(range(len(rows)))
+
+        def find(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        def union(i, j):
+            a, b = find(i), find(j)
+            if a != b:
+                parent[max(a, b)] = min(a, b)
+
+        owner = collections.defaultdict(list)
+        for i, (_a, sc) in enumerate(rows):
+            for x, _s, _st, _nag in sc:
+                owner[x].append(i)
+        for x, lst in owner.items():
+            for j in lst[1:]:
+                union(lst[0], j)
+        groups = collections.defaultdict(list)
+        for i in range(len(rows)):
+            groups[find(i)].append(i)
+        got = 0
+        for _root in sorted(groups):
+            idx = groups[_root]
+            if len(idx) < 2 or len(idx) > 4:
+                continue
+            slots = sorted({x for i in idx for x, _s, _st, _nag in rows[i][1]})
+            if len(slots) > 8:
+                continue
+            # 暴力枚举单射（行数 ≤4、槽数 ≤8 ⇒ P(8,4)=1680）
+            best = []
+
+            def rec(k, used, plan, total):
+                if k == len(idx):
+                    best.append((total, tuple(sorted(plan))))
+                    return
+                a, sc = rows[idx[k]]
+                for x, v, strong, nag in sc:
+                    if x in used:
+                        continue
+                    if not (strong >= 1 or nag >= 2):
+                        continue
+                    rec(k + 1, used | {x}, plan + [(a, x)], total + v)
+                # 这一行也可以不指派（可能它的 x86 副本根本不存在）
+                rec(k + 1, used, plan, total)
+
+            rec(0, set(), [], 0.0)
+            if not best:
+                continue
+            best.sort(key=lambda t: (-t[0], t[1]))
+            if len(best) < 2:
+                continue
+            if best[0][0] - best[1][0] < SCORE_MARGIN:
+                continue                                   # 最优解不唯一/拉不开
+            plan = dict(best[0][1])
+            if not plan:
+                continue
+            for a, x in sorted(plan.items()):
+                if a in self.mp or x in self.rev:
+                    continue
+                self.mp[a] = x
+                self.rev[x] = a
+                self.why[(a, x)].add("score")
+                self.arbi[(a, x)] = "%s(group=%d,opt=1,lead=%.2f)" % (
+                    ARB_SCORE, len(idx), best[0][0] - best[1][0])
+                got += 1
+        return got
+
+    # ---------------------------------------------------------------- G. 无候选归因
+    def classify_none(self, a, name):
+        """为什么这条 arm64 符号在 x86 侧一个候选都没有？→ (类别, 证据串)。
+
+        五类，按"先能证死的、后靠猜的"排：
+
+          `icf`     逐字节相同（`bsig`）的孪生已经在 x86 侧被认领 ⇒ x86 只留了一份代码
+          `inlined` 闭包/母函数已配对且地址相邻，或函数体助记符序列被相邻已配对兄弟包含，
+                    或特征集合被某个已配对 x86 函数包含
+          `data`    体内**没有任何控制流指令**（不是函数，是 `.text` 里的数据/跳转表）
+          `tiny`    指令数 ≤ 12（`drop_in_place` / 转发 shim，本来就没有可比特征）
+          `other`   以上都不成立 —— **诚实标未知**，但会把"哑火原因"写进证据串，便于分类统计：
+                      `no_feature`    没有字符串字面量、没有 f64、没有罕见整数常量
+                      `pfx_only`      只有"两侧几百个函数都引用"的公共前缀（不构成证据）
+                      `feature_no_fit` 有特征，但共享它的 x86 函数体量比全部出闸（0.40–2.20）
+
+        ⚠ 为什么不用"助记符序列相同"判 ICF：实测这 444 条里有 150 条存在**形状孪生**，
+        但它们是**不同的源函数**（例：`drop_in_place<Result<TickEvent,_>>` 与
+        `drop_in_place<http::extensions::Extensions>` 助记符序列逐条相同、字节不同）。
+        形状相同 ≠ ICF。只有逐字节相同才是"同一个函数体"。
+        """
+        fa = self.arm[a]
+        mseq = fa.get("mseq") or ()
+        for b in sorted(self._twin.get(a, ())):
+            if b in self.mp:
+                return "icf", "twin=0x%x;twin_x86=0x%x" % (b, self.mp[b])
+        # 被内联 ①：闭包 + 母函数已配对 + 两者地址相邻（Rust 把闭包紧挨着母函数排）
+        if "{{closure}}" in name:
+            base = name.split("::{{closure}}")[0]
+            pb = self._find_parent(base)
+            if pb is not None and pb in self.mp:
+                if abs(self.ai.get(pb, 1 << 30) - self.ai[a]) <= 3:
+                    return "inlined", "parent=0x%x;parent_x86=0x%x" % (pb, self.mp[pb])
+        # 被内联 ②：函数体助记符序列是相邻已配对兄弟的一段
+        i = self.ai[a]
+        for k in (-2, -1, 1, 2):
+            j = i + k
+            if not (0 <= j < len(self.A)):
+                continue
+            b = self.A[j]
+            if b not in self.mp:
+                continue
+            if _seq_contains(self.arm[b].get("mseq") or (), mseq):
+                return "inlined", "body_in=0x%x;x86=0x%x" % (b, self.mp[b])
+        # 被内联 ③：特征集合被某个已配对的 x86 函数包含
+        if fa["lits"] or fa["f64s"]:
+            for b in sorted(self.mp):
+                fx = self.x86[self.mp[b]]
+                if fa["lits"] and not fa["lits"] <= fx["lits"]:
+                    continue
+                if fa["f64s"] and not fa["f64s"] <= fx["f64s"]:
+                    continue
+                return "inlined", "features_in=0x%x" % self.mp[b]
+        if not mseq:
+            return "data", "no_insn"
+        if not any(_CFLOW_INSN.match(m) for m in mseq):
+            return "data", "no_control_flow;ninsn=%d" % fa["ninsn"]
+        if fa["ninsn"] <= TINY_NINSN:
+            return "tiny", "ninsn=%d" % fa["ninsn"]
+        # ---- 其它：至少把"为什么哑火"记下来
+        if not fa["lits"] and not fa["f64s"] and not fa["consts"]:
+            reason = "no_feature"
+        elif fa["lits"] or fa["f64s"]:
+            reason = "feature_no_fit"
+        else:
+            reason = "pfx_only"
+        return "other", "%s;ninsn=%d" % (reason, fa["ninsn"])
+
+    def _find_parent(self, base):
+        """在夹具的 1,300 个符号里找闭包的母函数（名字前缀匹配，容忍 trait 写法差异）。"""
+        pb = self._name2addr.get(base)
+        if pb is not None:
+            return pb
+        tail = "::".join(base.split("::")[-2:])
+        hits = [a for nm, a in self._name2addr.items() if nm.endswith("::" + tail)]
+        return hits[0] if len(hits) == 1 else None
+
     # ---------------------------------------------------------------- 收敛
     def run(self, rounds=8):
         self.seed_literals()
@@ -1231,6 +1856,11 @@ class Matcher:
             kinds.add("call")
         if "order" in self.why[(a, x)]:
             kinds.add("order")
+        if "modblock" in self.why[(a, x)]:
+            # 模块块裁决是**独立证据类**：它靠的是"Location 文件名划出的集合在两侧等量"
+            # + 体量/指令数兼容 + 最优解唯一，与 lit/f64/call/order 都不是同一条链。
+            kinds.add("modblock")
+        # `score` 裁决刻意**不**加成独立类：它是既有特征/邻居的再组合，不是新证据。
         return kinds, agree
 
     def evidence(self, a, x, kinds, agree):
@@ -1258,6 +1888,8 @@ class Matcher:
                 kinds, agree = self.corroborate(a, x)
                 conf = CONF_UNIQUE if len(kinds) >= 2 else CONF_WEAK
                 ev = self.evidence(a, x, kinds, agree)
+                if (a, x) in self.arbi:
+                    ev += ";arbi=" + self.arbi[(a, x)]
                 if self.split_extra.get(a):
                     conf = CONF_SPLIT
                     ev += ";inlined_x86=" + ",".join(
@@ -1277,8 +1909,9 @@ class Matcher:
                 continue
             cand = self._candidates(a)
             if not cand:
+                cat, det = self.classify_none(a, name)
                 rows.append(dict(a=a, name=name, size=fa["size"], cands=[],
-                                 conf=CONF_NONE, ev="no_candidate"))
+                                 conf=CONF_NONE, ev="no_candidate;why=%s;%s" % (cat, det)))
             elif len(cand) == 1:
                 x = cand[0]
                 kinds, agree = self.corroborate(a, x)
@@ -1288,6 +1921,31 @@ class Matcher:
                 rows.append(dict(a=a, name=name, size=fa["size"], cands=cand,
                                  conf=CONF_MULTI,
                                  ev="candidates=%d" % len(cand)))
+        # ---- 单射收尾：两条不同的 arm64 函数抢同一个 x86 槽时，工具**无法裁决**
+        # （两者的候选集里都只剩它一个）。按"多合一"记账：第一个保留原结论，其余记成
+        # `merge` 并写出对手地址。`tests/sym_match.rs::unique_answers_are_injective` 会
+        # 立刻抓住漏网的单射冲突，所以这一步是必须的，不是记账技巧。
+        def _strength(r):
+            """抢槽时谁"更该"保留结论：证据类数多者优先，其次体量比更接近 1。"""
+            if not r["cands"]:
+                return (99, 9.0, r["a"])
+            kinds, _agree = self.corroborate(r["a"], r["cands"][0])
+            fx = self.x86[r["cands"][0]]
+            ratio = abs(math.log(r["size"] / fx["size"])) if fx["size"] else 9.0
+            return (-len(kinds), ratio, r["a"])
+
+        seen = {}
+        for r in sorted(rows, key=_strength):
+            if r["conf"] not in (CONF_UNIQUE, CONF_WEAK, CONF_SPLIT):
+                continue
+            x = r["cands"][0]
+            if x in seen and seen[x][0] != r["a"]:
+                r["conf"] = CONF_MERGE
+                r["ev"] = ("size=%.2f;dup_claim;inlined_into=0x%x;rival=0x%x(%s)"
+                           % (r["size"] / self.x86[x]["size"] if self.x86[x]["size"] else 0,
+                              x, seen[x][0], seen[x][1]))
+            else:
+                seen.setdefault(x, (r["a"], r["name"]))
         rows.sort(key=lambda r: (r["a"], r["name"]))
         return rows
 
@@ -1375,6 +2033,8 @@ def cmd_build(args):
     print("[3/4] 匹配（字面量 → f64 → 调用图 → 顺序 → 空档对齐，迭代到收敛）…", file=sys.stderr)
     m = Matcher(arm, x86)
     m.run()
+    n_mod, n_score = m.arbitrate(symbols)
+    print("      裁决：modblock +%d / score +%d" % (n_mod, n_score), file=sys.stderr)
     for tag, n, tot in m.log:
         print("      %-10s +%-6d 累计 %d" % (tag, n, tot), file=sys.stderr)
     rows = m.conclude(symbols)
@@ -1436,8 +2096,34 @@ def load_truth(path):
     return truth, n_rows
 
 
+def _report_name(rows, args):
+    """`report --name <子串>`：把命中行连同**逐条依据**打出来，供人工复核。"""
+    hits = [r for r in rows if args.name.lower() in r["arm64_name"].lower()]
+    if not hits:
+        print("没有名字含 %r 的行" % args.name)
+        return 1
+    print("命中 %d 行（%s）" % (len(hits), rel(args.tsv)))
+    for r in hits:
+        print()
+        print("%s" % r["arm64_name"])
+        print("  arm64 0x%x（%d 字节）  confidence=%s"
+              % (int(r["arm64_addr"], 16), int(r["arm64_size"]), r["confidence"]))
+        cands = [c for c in r["x86_candidates"].split(",") if c]
+        if not cands:
+            print("  x86 候选：无")
+        else:
+            print("  x86 候选 %d 个：%s" % (len(cands), " ".join(cands)))
+        print("  依据：%s" % r["evidence"])
+        if len(cands) > 1:
+            print("  （多候选的含义：这几条 x86 函数都**共享至少一个**可比特征，"
+                  "按规则不挑；见 docs/02 §36）")
+    return 0
+
+
 def cmd_report(args):
     rows = read_tsv(args.tsv)
+    if args.name:
+        return _report_name(rows, args)
     st = collections.Counter(r["confidence"] for r in rows)
     print("sym_match 报告（%s，%d 行）" % (rel(args.tsv), len(rows)))
     print()
@@ -1447,6 +2133,37 @@ def cmd_report(args):
     print("  无候选     none   %4d" % st[CONF_NONE])
     print("  一拆多     split  %4d   （1 个 arm64 函数 ↔ N 个 x86 函数）" % st[CONF_SPLIT])
     print("  多合一     merge  %4d   （1 个 x86 函数 ↔ N 个 arm64 函数）" % st[CONF_MERGE])
+    arbi = collections.Counter()
+    for r in rows:
+        m2 = re.search(r"arbi=([a-z]+)\(", r["evidence"])
+        if m2:
+            arbi[m2.group(1)] += 1
+    if arbi:
+        print()
+        print("  裁决（本轮新增的多候选 → 唯一）：" +
+              " / ".join("%s %d" % kv for kv in sorted(arbi.items())))
+        rule = collections.Counter(re.search(r"arbi=[a-z]+\(([a-z]+)", r["evidence"]).group(1)
+                                   for r in rows if re.search(r"arbi=[a-z]+\(([a-z]+)", r["evidence"]))
+        print("      其中规则：" + " / ".join("%s %d" % kv for kv in sorted(rule.items())))
+    none_cat = collections.Counter()
+    for r in rows:
+        if r["confidence"] != CONF_NONE:
+            continue
+        m2 = re.search(r"why=([a-z]+)", r["evidence"])
+        none_cat[m2.group(1) if m2 else "?"] += 1
+    if none_cat:
+        print()
+        print("  无候选归因（%d 行）：" % sum(none_cat.values()) +
+              " / ".join("%s %d" % kv for kv in sorted(none_cat.items())))
+        sub = collections.Counter()
+        for r in rows:
+            if r["confidence"] != CONF_NONE:
+                continue
+            m2 = re.search(r"why=other;([a-z_]+)", r["evidence"])
+            if m2:
+                sub[m2.group(1)] += 1
+        if sub:
+            print("      other 的哑火原因：" + " / ".join("%s %d" % kv for kv in sorted(sub.items())))
     multi = [r for r in rows if r["confidence"] == CONF_MULTI]
     if multi:
         hist = collections.Counter(len(r["x86_candidates"].split(",")) for r in multi)
@@ -1575,6 +2292,8 @@ def main(argv=None):
 
     r = sub.add_parser("report", help="统计")
     r.add_argument("--tsv", default=DEFAULT_OUT)
+    r.add_argument("--name", default=None,
+                   help="只打印名字含该子串的行（逐条依据，供人工复核）")
     r.set_defaults(func=cmd_report)
 
     args = ap.parse_args(argv)
