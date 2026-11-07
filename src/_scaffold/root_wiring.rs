@@ -25,18 +25,18 @@
 //!
 //! | # | 原版类型 | `size_of::<M>()` | arm64 `<Type>::new` | 我方类型 | 档位 |
 //! |---|---|---|---|---|---|
-//! | 1 | `GraphwarTickHandler` | 72 | `0x40b528` | —（空占位） | 类型**观测**；无实现 |
+//! | 1 | `GraphwarTickHandler` | 72 | `0x40b528` | [`TickHandlerSlot`]（内含 [`GraphwarTickHandler`]） | 类型**观测**；字段布局未按字节复原（§43） |
 //! | 2 | `GraphwarClientConnectionHandler` | 112 | `0x48b048` | —（空占位） | 类型**观测**；无实现 |
 //! | 3 | `GraphwarLocalPlayerManager` | 64 | 内联（`0x409eac` 处 `alloc 0x58`） | [`GraphwarLocalPlayerManager`] | 类型**观测** |
 //! | 4 | `GraphwarPlayerManager` | 72 | `0x49d170` | [`GraphwarPlayerManager`] | 类型**观测** |
 //! | 5 | `GraphwarSoldierManager` | 72 | `0x49d590` | [`SoldierTable`] | 类型**观测** |
 //! | 6 | `GraphwarPlanePosManager` | 24 | `0x3b89a0` | —（空占位） | 类型**观测**；无实现 |
 //! | 7 | `GraphwarGameStateManager` | 296 | `0x4ade6c` | [`Match`] | 类型**观测** |
-//! | 8 | `GraphwarFunctionManager` | 32 | 内联（`Rc::new_cyclic_in` `0x40a158`） | —（空占位） | 类型**观测**；无实现 |
+//! | 8 | `GraphwarFunctionManager` | 32 | 内联（`Rc::new_cyclic_in` `0x40a158`） | [`FunctionManagerSlot`]（内含 [`FunctionTable`]，**我方形状**） | 类型**观测**；原版结构**未知**（§43） |
 //! | 9 | `GraphwarTargetManager` | 72 | `0x3dae34` | [`GraphwarTargetManager`] | 类型**观测** |
 //! | 10 | `GraphwarTeamManager` | 32 | `0x49960c` | [`TeamTable`] | 类型**观测** |
 //! | 11 | `GraphwarLifeManager` | 72 | `0x4977b8` | [`LifeState`] | 类型**观测** |
-//! | 12 | `GraphwarObstacleManager` | 80 | `0x426300` | —（空占位） | 类型**观测**；无实现 |
+//! | 12 | `GraphwarObstacleManager` | 80 | `0x426300` | [`ObstacleManagerSlot`]（内含 [`ObstacleTable`]，**我方形状**） | 类型**观测**；原版结构**未知**（§43） |
 //! | 13 | `GraphwarTurnManager` | 32 | `0x49adf8` | [`TurnManager`] | 类型**观测** |
 //! | 14 | `GraphwarEffectManager` | 72 | `0x40bc0c` | [`GraphwarEffectManager`] | 类型**观测** |
 //! | 15 | `GraphwarModeManager` | 32 | `0x498090` | [`GraphwarModeManager`] | 类型**观测** |
@@ -58,25 +58,30 @@
 //! —— 全 `.text` 扫下来，这 3 个的 `add_module` 调用点只在
 //! `game_server_thread`（20 条，含前两个）与 `GraphwarBackend::start_*`（各 1 条）里）。
 //!
-//! # `Wired` 的两档：真类型 / 空占位
+//! # `Wired` 的两档：真类型 / 桩（**2026-11 任务 19 就地更正过一句**）
 //!
 //! * [`SlotKind::RealType`]（**17** 个）：容器里装的是**本仓库已有的复原类型**
-//!   （各自模块里那个结构体）。**行为不完整**——本文件只做"构造 + 注册"，
-//!   不驱动任何 manager 的逻辑（任务书 §4 明确禁止在本轮实现那 19 个的行为）。
+//!   （各自模块里那个结构体）。**行为不完整**——本文件只做"构造 + 注册 + 接线"，
+//!   不把它们的业务逻辑写完。
 //! * [`SlotKind::Stub`]（**5** 个：`TickHandler` / `ClientConnectionHandler` /
-//!   `PlanePosManager` / `FunctionManager` / `ObstacleManager`）：这 5 个原版型在本仓库
-//!   **没有可构造的复原类型**（`graphwar_tick_handler.rs` 只有两个自由函数；
-//!   `graphwar_plane_pos_manager` / `graphwar_function_manager` / `graphwar_obstacle_manager`
-//!   连文件都没有，逻辑分别散在 `src/plane.rs` / `src/game.rs`；`client_connection_handler`
-//!   只有常量偏移表）。按 `AGENTS.md` §0 第 3 条，**不编一个像样的 manager**，
-//!   只放一个**零行为的空占位** `XxxSlot`，并在 [`Wired::status`] 里如实报 `"stub"`
-//!   （**不是** `"assembled"`）。
+//!   `PlanePosManager` / `FunctionManager` / `ObstacleManager`）：这 5 个原版型在仓库里
+//!   **没有按字节复原的结构体**（`client_connection_handler` 只有常量偏移表；
+//!   `graphwar_plane_pos_manager` 连文件都没有）。它们在 [`Wired::status`] 里如实报
+//!   `"stub"`（**不是** `"assembled"`），`module_impl_type` 仍是 `"—"`。
+//!
+//! ⚠️ **上一轮那句"零行为的空占位"已经过期**（`AGENTS.md` §0.6 就地更正）：
+//! 任务 19 给其中 **3 个**（`TickHandler` / `FunctionManager` / `ObstacleManager`）补上了
+//! **接线层 + 事件层**，它们现在**能交互**（[`RootWiring::interaction_selftest`]）。
+//! 档位**没变**，理由是硬的：原版那 72 / 32 / 80 字节的**字段布局**仍未复原
+//! （`TickHandler` 只落了有地址证据的几个字段，另两个**一个字段都没解**），
+//! 而且 `stub` / `—` 这两个值上一轮已经进了 `assemble_check.gd` 的逐槽断言。
+//! ⇒ 读法：**`stub` = "原版结构未复原"，不再等于"零行为"**；能不能交互要另测。
 //!
 //! # 与原版的差别（逐条，别当成"已复原"）
 //!
 //! | 项 | 原版 | 本文件 | 档位 |
 //! |---|---|---|---|
-//! | 注册几个 | `GraphwarGameClient::new` **22** 条 `add_module` | **22**（17 真类型 + 5 空占位） | 22 是**逐位**（§41）；17/5 是我方现状 |
+//! | 注册几个 | `GraphwarGameClient::new` **22** 条 `add_module` | **22**（17 真类型 + 5 桩；其中 3 个桩本轮可交互） | 22 是**逐位**（§41）；17/5 是我方现状 |
 //! | 注册顺序 | 22 条的调用序 | **同序**（[`Wired::ALL`] / [`SLOTS`]） | **逐位**（两架构尺寸序列相等） |
 //! | 谁在装 | `GraphwarGameClient::new`（客户端对象） | 本文件（`GraphwarRootNode` 调的 `assemble_demo`） | 装载者**不同**，容器语义相同 |
 //! | 各 manager 是否**共享**实例 | `GameStateManager` 内部是否也持 `TurnManager`：**未解** | **不共享**：容器里是各自独立实例；`Match` 自带一个内部 `TurnManager` / `LifeState` / `GraphwarEntityEffectManager` | 独立性是**我方形状**；原版是否共享 `未知` |
@@ -99,22 +104,30 @@
 //! RootWiring::has_name(&str) / retrievable_name(&str)
 //! RootWiring::registered() -> Vec<Wired>        # 按类型查成立的那几个，注册序
 //! RootWiring::game_state() / turn_manager() / player_manager() -> Option<Rc<RefCell<T>>>
+//! RootWiring::tick_handler() / life_manager() / target_manager()
+//! RootWiring::function_manager() / obstacle_manager()   # 任务 19 那 5 个
+//! RootWiring::interaction_selftest() -> Vec<(&str, String)>   # 5 个各一次最小交互（幂等）
+//! RootWiring::interaction_selftest_strings() -> Vec<String>   # "名字=值"
 //! slot_status(&str) -> "assembled" | "stub" | "placeholder" | "unknown"
 //! ```
 //!
 //! 引擎那一侧（`GraphwarRootNode`）只调用这些，**不碰 `HashMap` 的内部**。
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::events::Event;
 use crate::function_history_recorder::History;
-use crate::game::Match;
+use crate::game::{Match, DESTROY_DELAY_TICKS};
 use crate::graphwar_color_manager::GraphwarColorManager;
 use crate::graphwar_computer_player_manager::ComputerPlayers;
 use crate::graphwar_effect_manager::GraphwarEffectManager;
 use crate::graphwar_entity_effect_manager::GraphwarEntityEffectManager;
 use crate::graphwar_graphics_manager::GraphwarGraphicsManager;
-use crate::graphwar_life_manager::LifeState;
+use crate::graphwar_life_manager::{
+    LifeState, ENTITY_REMOVED_EVENT_TAG, TICK_EVENT_TAG,
+};
 use crate::graphwar_local_player_manager::{GraphwarLocalPlayerManager, LocalPlayerProfile};
 use crate::graphwar_mode_manager::{AxisMode, FunctionMode, GraphwarModeManager, TimeMode};
 use crate::graphwar_module_container::{self, GraphwarModuleContainer};
@@ -125,8 +138,12 @@ use crate::graphwar_shot_calculator::settle::Target;
 use crate::graphwar_soldier_manager::SoldierTable;
 use crate::graphwar_target_manager::GraphwarTargetManager;
 use crate::graphwar_team_manager::TeamTable;
+use crate::graphwar_tick_handler::{GraphwarTickHandler, TICKS_PER_SECOND};
 use crate::graphwar_turn_manager::{Team, TurnManager};
+use crate::math_function;
+use crate::plane::{empty_mask, is_occupied, rasterize};
 use crate::server::RoomState;
+use crate::Token;
 
 // ---------------------------------------------------------------------------
 // 1. 装哪 22 个、按什么序（名字是 `graphwar_module_container::MODULES` 的原文）
@@ -136,7 +153,8 @@ use crate::server::RoomState;
 /// **顺序 = 原版 `GraphwarGameClient::new` 的注册序**（`docs/16-client.md` §41）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Wired {
-    /// `GraphwarTickHandler`（72 字节）。**空占位**：本仓库只有 `tick_at` 那个自由函数。
+    /// `GraphwarTickHandler`（72 字节）⇔ [`TickHandlerSlot`]（内含
+    /// `graphwar_tick_handler::GraphwarTickHandler`，任务 19 补的接线层）。
     TickHandler,
     /// `GraphwarClientConnectionHandler`（112 字节）。**空占位**。
     ClientConnectionHandler,
@@ -150,7 +168,8 @@ pub enum Wired {
     PlanePosManager,
     /// `GraphwarGameStateManager`（296 字节）⇔ [`Match`]（那个模块的"运行实体那一半"）。
     GameStateManager,
-    /// `GraphwarFunctionManager`（32 字节）。**空占位**（函数槽在 `game::Match` 里）。
+    /// `GraphwarFunctionManager`（32 字节）⇔ [`FunctionManagerSlot`]（内含我方形状的
+    /// [`FunctionTable`]；原版结构未复原）。
     FunctionManager,
     /// `GraphwarTargetManager`（72 字节）⇔ [`GraphwarTargetManager`]。
     TargetManager,
@@ -158,7 +177,8 @@ pub enum Wired {
     TeamManager,
     /// `GraphwarLifeManager`（72 字节）⇔ [`LifeState`]。
     LifeManager,
-    /// `GraphwarObstacleManager`（80 字节）。**空占位**（掩膜逻辑在 `src/plane.rs`）。
+    /// `GraphwarObstacleManager`（80 字节）⇔ [`ObstacleManagerSlot`]（内含我方形状的
+    /// [`ObstacleTable`]，掩膜纯逻辑复用 `src/plane.rs`；原版结构未复原）。
     ObstacleManager,
     /// `GraphwarTurnManager`（32 字节）⇔ [`TurnManager`]。
     TurnManager,
@@ -187,7 +207,12 @@ pub enum Wired {
 pub enum SlotKind {
     /// 容器里装的是本仓库已有的复原类型（行为可能不完整，但类型是真的）。
     RealType,
-    /// 容器里装的是**零行为的空占位**：原版这一型在本仓库没有可构造的类型。
+    /// 容器里装的是**桩**：原版这一型的**结构体没有复原**（字段布局未知/未解）。
+    ///
+    /// ⚠️ 2026-11 任务 19 起，桩**不一定零行为**：`TickHandler` / `FunctionManager` /
+    /// `ObstacleManager` 三个已有接线层与事件层（能交互），
+    /// `ClientConnectionHandler` / `PlanePosManager` 仍是零行为。
+    /// 判据：能不能交互看 [`RootWiring::interaction_selftest`]，不看这个枚举。
     Stub,
 }
 
@@ -474,39 +499,325 @@ pub fn slot_status(name: &str) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
-// 3. 5 个零行为的空占位（**我方形状**，不是原版类型）
+// 3. 5 个 `SlotKind::Stub` 槽
 // ---------------------------------------------------------------------------
-
-/// 空占位：原版 `GraphwarTickHandler`（72 字节）在本仓库**没有**可构造的类型
-/// （`src/graphwar_tick_handler.rs` 只有 `TICKS_PER_SECOND` 与 `tick_at` 两个自由项）。
-///
-/// 它进容器只证明"**这一槽在注册序里存在**"，**不**证明原版行为。
-pub struct TickHandlerSlot;
+//
+// ⚠️ **2026-11 任务 19 就地更正（`AGENTS.md` §0.6）**：上一轮这 5 个叫"零行为的空占位"。
+// 本轮给其中 **3 个**（`TickHandler` / `FunctionManager` / `ObstacleManager`）补上了
+// **接线层 + 事件层**：它们现在**能交互**（构造 → 注册 → 取回 → 调一个入口 → 读回真值）。
+//
+// 但它们的档位**仍然是 `Stub`**，理由（两条，都是硬的）：
+//
+// 1. **原版的 72 / 32 / 80 字节结构体仍然没复原**：`GraphwarTickHandler` 的字段是本轮
+//    按指令读出来的（见 `graphwar_tick_handler.rs` 的文档块），
+//    `GraphwarFunctionManager` / `GraphwarObstacleManager` 的字段布局**一个都没解**
+//    （`name_to_addr.tsv` 只给到函数名与落点）；尺寸必然不等；
+// 2. 静态台账 `Wired::status()` / `module_impl_type` 的"`stub` / `—`"是**上一轮已经
+//    进断言**的口径（`assemble_check.gd` 的 22×4 逐槽断言里有它），本轮**不改既有断言**。
+//
+// ⇒ 读法：`stub` 现在表示"**原版结构未复原**"，**不再**表示"零行为"。
+// 判据也分了两档：`stub` 只看静态台账，**能不能交互**要另测（
+// [`RootWiring::interaction_selftest`] 与 `assemble_check.gd` 的 `manager_probe_*`）。
 
 /// 空占位：原版 `GraphwarClientConnectionHandler`（112 字节）。
 ///
 /// `src/graphwar_client_connection_handler.rs` 只有字段偏移表（`HandlerField`）与事件枚举，
-/// 没有那个 `RefCell` 里的结构体。
+/// 没有那个 `RefCell` 里的结构体 ⇒ **本轮仍是零行为**（不在这 5 个的第一批里）。
 pub struct ClientConnectionHandlerSlot;
 
 /// 空占位：原版 `GraphwarPlanePosManager`（24 字节）。
 ///
 /// 该模块**没有** `src/graphwar_plane_pos_manager.rs`；已知的东西（`px = 20x + 500` 之类）
-/// 以自由函数形式落在 `src/plane.rs` / `src/graphwar_plane.rs`。
+/// 以自由函数形式落在 `src/plane.rs` / `src/graphwar_plane.rs` ⇒ **本轮仍是零行为**。
 pub struct PlanePosManagerSlot;
 
-/// 空占位：原版 `GraphwarFunctionManager`（32 字节）。
+/// 接线层：原版 `GraphwarTickHandler`（72 字节）的容器槽。
 ///
-/// 该模块**没有** `src/graphwar_function_manager.rs`；函数槽在 [`crate::game::Match`] 里
-/// （`SoldierFunctions`，那是 `graphwar_function_evolutionator` 的类型，**不是**本模块的），
-/// 所以不把它冒充成这个槽——按 `AGENTS.md` §0 第 3 条，**不猜类型归属**。
-pub struct FunctionManagerSlot;
+/// 里面装的是 [`GraphwarTickHandler`]——本轮在**原版模块文件**（`src/graphwar_tick_handler.rs`）
+/// 里补的类型，字段只落有地址证据的那几个。事件的接法见那个文件的文档块。 （`观测`）
+pub struct TickHandlerSlot(pub GraphwarTickHandler);
 
-/// 空占位：原版 `GraphwarObstacleManager`（80 字节）。
+/// 接线层：原版 `GraphwarFunctionManager`（32 字节）的容器槽。
 ///
-/// 该模块**没有** `src/graphwar_obstacle_manager.rs`；掩膜光栅化与 `is_occupied`
-/// 落在 `src/plane.rs`（见 `docs/39` / `docs/08`），但那两个自由函数不是"那个 80 字节的结构体"。
-pub struct ObstacleManagerSlot;
+/// ⚠️ **原版那个 32 字节结构体的字段一个都没解**（`未知`），所以这里**不假冒类型名**：
+/// 装的是我方的最小函数槽表 [`FunctionTable`]（`AGENTS.md` §0 第 3 条：不把别的模块的类型
+/// 冒充成它）。函数槽的真实归宿（原版 `GraphwarFunctionManager` vs `Match` 里的
+/// `SoldierFunctions`）**仍未定**——`SoldierFunctions` 属 `graphwar_function_evolutionator`，
+/// 本槽**不**拿它充数。
+pub struct FunctionManagerSlot(pub FunctionTable);
+
+/// 接线层：原版 `GraphwarObstacleManager`（80 字节）的容器槽。
+///
+/// 掩膜/挖洞/延迟销毁的**纯逻辑**在 `src/plane.rs`（`rasterize` / `is_occupied` /
+/// `empty_mask`，`docs/39`）与 `src/game.rs` 的 `DESTROY_DELAY_TICKS`（实测 165 tick，
+/// `docs/44`）；本槽的 [`ObstacleTable`] 只是把**同一批纯函数**接成"按类型取回的对象"。
+/// 原版 80 字节结构体的字段布局**未解**，故同样不冒充类型名。
+pub struct ObstacleManagerSlot(pub ObstacleTable);
+
+// ---------------------------------------------------------------------------
+// 3b. 两个"我方形状"的表（**不是**原版的类型）
+// ---------------------------------------------------------------------------
+
+/// 函数槽表：**我方形状**，接的是原版 `GraphwarFunctionManager` 的那几个入口
+/// （`fixtures/name_to_addr.tsv`：`set_function` `0x455e30`、`get_function` `0x455b60`、
+/// `get_function_text` `0x4565f0`、`set_function_active_tick` `0x456b80`、
+/// `set_function_points` `0x456810`、`get_active_functions_on_tick` `0x456df0`）。
+///
+/// **实证到的两条**（x86 2026-08-28，`观测`）：
+///
+/// * 这个模块**没有** `subscribe_to_events_event_handler`（`docs/02` §18.5 的方法表），
+///   构造路径（`0x5236e0`，`GraphwarClient::new` 在 `0x517b9f` 调它、紧接着
+///   `add_module::<GraphwarFunctionManager>` `0x469db0`）体内**没有任何**
+///   `EventHandler::subscribe`（`0x3d38f0`）调用；
+/// * 四个 `set_*` 体内**没有** `GraphwarEventQueue::add_event`（`0x3d3530`）调用
+///   ⇒ 它**不发事件**（发 `FunctionInfo` / `FunctionActive` 的是 GameStateManager）。
+///
+/// ⇒ 所以 `subscribed` / `outbox` 这两个字段在这里**恒空**，是"正面证据"，
+/// 不是"没接线"：正对照见 `addr_probe.py dis 0x454790`（life）等四个 manager 的 `new`，
+/// 同一条命令能看到它们的 `subscribe` 调用。
+#[derive(Debug)]
+pub struct FunctionTable {
+    /// `soldier_id → token 序列`（原版一格一士兵，`docs/98` §3.1）。
+    slots: HashMap<u32, Vec<Token>>,
+    /// `set_function_active_tick` 写进去的那个 tick。
+    active_tick: HashMap<u32, u32>,
+    /// `set_function_points` 写进去的终点（`FunctionPoints.end_x/end_y`）。
+    points: HashMap<u32, (f64, f64)>,
+    /// 订阅名（恒空，见上面的类型文档）。
+    pub subscribed: Vec<&'static str>,
+    /// 发件箱（恒空，见上面的类型文档）。
+    pub outbox: Vec<Event>,
+}
+
+impl Default for FunctionTable {
+    fn default() -> Self {
+        Self {
+            slots: HashMap::new(),
+            active_tick: HashMap::new(),
+            points: HashMap::new(),
+            subscribed: Vec::new(),
+            outbox: Vec::new(),
+        }
+    }
+}
+
+impl FunctionTable {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// `set_function`（`0x455e30`）：写一格。
+    pub fn set_function(&mut self, soldier_id: u32, tokens: Vec<Token>) {
+        self.slots.insert(soldier_id, tokens);
+    }
+
+    /// `get_function`（`0x455b60`）：读一格。
+    pub fn get_function(&self, soldier_id: u32) -> Option<&[Token]> {
+        self.slots.get(&soldier_id).map(|v| v.as_slice())
+    }
+
+    /// `get_function_text`（`0x4565f0`）：那一格的文本（走 `math_function::to_text`，
+    /// 与 `Match::function_text` 同一个函数，`docs/119` 1032/1032 对拍）。
+    pub fn get_function_text(&self, soldier_id: u32) -> Option<String> {
+        self.get_function(soldier_id).map(math_function::to_text)
+    }
+
+    /// `set_function_active_tick`（`0x456b80`）：记下这条曲线从哪个 tick 起在场。
+    pub fn set_function_active_tick(&mut self, soldier_id: u32, tick: u32) {
+        self.active_tick.insert(soldier_id, tick);
+    }
+
+    /// 读回 `active_tick`（原版没有单独的 getter，`get_active_functions_on_tick` 内联读它）。
+    pub fn active_tick_of(&self, soldier_id: u32) -> Option<u32> {
+        self.active_tick.get(&soldier_id).copied()
+    }
+
+    /// `set_function_points`（`0x456810`）：记下曲线终点。
+    pub fn set_function_points(&mut self, soldier_id: u32, x: f64, y: f64) {
+        self.points.insert(soldier_id, (x, y));
+    }
+
+    /// 读回终点。
+    pub fn points_of(&self, soldier_id: u32) -> Option<(f64, f64)> {
+        self.points.get(&soldier_id).copied()
+    }
+
+    /// `get_active_functions_on_tick`（`0x456df0`）的**在场判据**（`docs/16-client.md` §42.2
+    /// 的三条指令级结论）：`tick > active_tick` **严格**大于，且
+    /// `30*(tick-active_tick) < points.len() + 1800`。
+    ///
+    /// 本表不存点（曲线点由 `FunctionDrawer` 那边持有），所以这里用 `points_of` 只有终点
+    /// ⇒ **点的条数按 0 算**，窗口 = `1800/30 = 60` tick。缺的证据写在
+    /// `docs/16-client.md` §43 的"仍是推断"表里。
+    pub fn get_active_functions_on_tick(&self, tick: u32) -> Vec<u32> {
+        let mut ids: Vec<u32> = self
+            .active_tick
+            .iter()
+            .filter(|&(_id, &active)| {
+                if tick <= active {
+                    return false;
+                }
+                let d = tick - active;
+                30u64 * d as u64 <= 1800
+            })
+            .map(|(&id, _)| id)
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    pub fn len(&self) -> usize {
+        self.slots.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.slots.is_empty()
+    }
+
+    /// 取走发件箱（恒空：该模块不发事件，见类型文档）。
+    pub fn take_outbox(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// 发件箱里有几条（恒 0）。
+    pub fn outbox_len(&self) -> usize {
+        self.outbox.len()
+    }
+}
+
+/// 障碍表：**我方形状**，接的是原版 `GraphwarObstacleManager` 的那几个入口
+/// （`fixtures/name_to_addr.tsv`：`new` `0x3f2360`、`add_obstacle` `0x3f17a0`、
+/// `destroy_obstacle` `0x3f1b30`、`clear_obstacles` `0x3f19a0`、
+/// `queue_destroy_obstacle` `0x3f20f0`、`handle_tick_event` `0x3f1d30`、
+/// `is_obstacle` `0x3f15b0`/`GraphwarObstacleData::draw_circle` `0x3f11e0`）。
+///
+/// 掩膜本身不是这里实现的：光栅化用 `plane::rasterize`（与 `0x3f11e0` 同构，
+/// 已被 unicorn 对拍过），单点查询用 `plane::is_occupied`（与 `0x3f15b0` 同构）。
+///
+/// **实证到的**（x86 2026-08-28，`观测`）：
+///
+/// ```text
+// new                    0x3f2360  末尾 subscribe 'tick_event'（len 0xa）⇒ 只订阅 1 条
+// add_obstacle           0x3f17a0  0x3f1876 0x7fff…+0x29 → tag 0x…28 = 40 AddObstacle
+// destroy_obstacle       0x3f1b30  0x3f1c09 0x7fff…+0x2a → tag 0x…29 = 41 DestroyObstacle
+// queue_destroy_obstacle 0x3f20f0  0x3f22b2 movabs 0x800000000000002a = 42 QueueDestroyObstacle
+// handle_tick_event      0x3f1d30  取 event[+8]（TickEvent 的 tick），按 0x18 步长遍历到期项，
+//                                  逐个调 destroy_obstacle（0x3f1dd0）
+// ```
+///
+/// ⚠️ 到期时刻的算法：`queue_destroy_obstacle` 里那张表**没逐条解**；
+/// 本层用 `docs/44` 实测的 165 tick（`game.rs::DESTROY_DELAY_TICKS`）当延迟，
+/// 这是**推断**（缺的证据：`0x3f20f0` 里那个加法）。
+pub struct ObstacleTable {
+    mask: Vec<u8>,
+    /// 还在场上的障碍（中心 + 半径，与 `plane::rasterize` 的入参同口径）。
+    obstacles: Vec<(f64, f64, f64)>,
+    /// 排队待销毁：`(到期 tick, x, y, 半径)`。
+    pending: Vec<(i64, f64, f64, f64)>,
+    /// 订阅名（`tick_event`，来自 `new` 的那条 `subscribe`）。
+    pub subscribed: Vec<&'static str>,
+    /// 发件箱。
+    pub outbox: Vec<Event>,
+}
+
+impl Default for ObstacleTable {
+    fn default() -> Self {
+        Self {
+            mask: empty_mask(),
+            obstacles: Vec::new(),
+            pending: Vec::new(),
+            subscribed: vec!["tick_event"],
+            outbox: Vec::new(),
+        }
+    }
+}
+
+impl ObstacleTable {
+    /// `new`（`0x3f2360`）：空掩膜 + 空表 + 一条订阅。
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// `add_obstacle`（`0x3f17a0`）：往掩膜里画实心圆（`fill = 0x00`）+ 发 `AddObstacle`(40)。
+    pub fn add_obstacle(&mut self, x: f64, y: f64, radius: f64) {
+        rasterize(&mut self.mask, x, y, radius, 0x00);
+        self.obstacles.push((x, y, radius));
+        self.outbox.push(Event::AddObstacle);
+    }
+
+    /// `is_obstacle`（`0x3f15b0`）：单点碰撞。**越界算命中**（`plane::is_occupied` 的口径）。
+    pub fn is_obstacle(&self, x: f64, y: f64) -> bool {
+        is_occupied(&self.mask, x, y)
+    }
+
+    /// `queue_destroy_obstacle`（`0x3f20f0`）：登记一条**延迟**销毁 + 发
+    /// `QueueDestroyObstacle`(42)。延迟取 `DESTROY_DELAY_TICKS`（165，**推断**，见类型文档）。
+    pub fn queue_destroy_obstacle(&mut self, now_tick: i64, x: f64, y: f64, radius: f64) {
+        self.pending.push((now_tick + DESTROY_DELAY_TICKS, x, y, radius));
+        self.outbox.push(Event::QueueDestroyObstacle);
+    }
+
+    /// `destroy_obstacle`（`0x3f1b30`）：立刻挖洞（把掩膜刷回 `0xFF`）+ 发 `DestroyObstacle`(41)。
+    pub fn destroy_obstacle(&mut self, x: f64, y: f64, radius: f64) {
+        rasterize(&mut self.mask, x, y, radius, 0xFF);
+        self.obstacles.retain(|&(ox, oy, or)| !(ox == x && oy == y && or == radius));
+        self.outbox.push(Event::DestroyObstacle);
+    }
+
+    /// `clear_obstacles`（`0x3f19a0`）：整张掩膜刷空 + 发 `ClearObstacles`(39)。
+    pub fn clear_obstacles(&mut self) {
+        self.mask = empty_mask();
+        self.obstacles.clear();
+        self.pending.clear();
+        self.outbox.push(Event::ClearObstacles);
+    }
+
+    /// `handle_tick_event`（`0x3f1d30`）：判别值必须是 **0**（`tick_event`）；
+    /// 把 `due <= now` 的排队项逐个 `destroy_obstacle` 掉，返回这次销毁的坐标。
+    pub fn handle_tick_event(&mut self, tag: u16, now: i64) -> Result<Vec<(f64, f64)>, ()> {
+        if tag != TICK_EVENT_TAG {
+            return Err(());
+        }
+        let mut due: Vec<(i64, f64, f64, f64)> = Vec::new();
+        self.pending.retain(|e| {
+            if e.0 <= now {
+                due.push(*e);
+                false
+            } else {
+                true
+            }
+        });
+        due.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        let mut out = Vec::with_capacity(due.len());
+        for (_, x, y, r) in due {
+            self.destroy_obstacle(x, y, r);
+            out.push((x, y));
+        }
+        Ok(out)
+    }
+
+    /// 掩膜（只读；验收/单测用）。
+    pub fn mask(&self) -> &[u8] {
+        &self.mask
+    }
+
+    pub fn obstacles(&self) -> &[(f64, f64, f64)] {
+        &self.obstacles
+    }
+
+    /// 还在排队的销毁条数。
+    pub fn pending_len(&self) -> usize {
+        self.pending.len()
+    }
+
+    pub fn take_outbox(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    pub fn outbox_len(&self) -> usize {
+        self.outbox.len()
+    }
+}
 
 // ---------------------------------------------------------------------------
 // 4. 演示数据（**我方选择**：不是原版的对局数据）
@@ -623,8 +934,10 @@ impl RootWiring {
     pub fn assemble_demo() -> Self {
         let mut c = GraphwarModuleContainer::new();
 
-        // ① GraphwarTickHandler —— 空占位（无复原类型）。
-        add(&mut c, TickHandlerSlot);
+        // ① GraphwarTickHandler —— 接线层：`GraphwarTickHandler::new(base_tick, base_ms)`。
+        //    原版 `new`（x86 `0x519690`）的实参是 `SystemTime::now()` 与事件队列；
+        //    我方用**抓包基准**（`fixtures/ticks.tsv` 那条 60 Hz 公式的两个基准）代进去。
+        add(&mut c, TickHandlerSlot(GraphwarTickHandler::new(0, 0)));
 
         // ② GraphwarClientConnectionHandler —— 空占位。
         add(&mut c, ClientConnectionHandlerSlot);
@@ -669,8 +982,10 @@ impl RootWiring {
         }
         add(&mut c, game);
 
-        // ⑧ GraphwarFunctionManager —— 空占位（函数槽在 `Match` 里，不冒充）。
-        add(&mut c, FunctionManagerSlot);
+        // ⑧ GraphwarFunctionManager —— 接线层：我方最小函数槽表（原版 32 字节结构未解）。
+        //    `subscribed` / `outbox` 恒空是**正面证据**（该模块不订阅、不发事件），
+        //    见 `FunctionTable` 的类型文档。
+        add(&mut c, FunctionManagerSlot(FunctionTable::new()));
 
         // ⑨ GraphwarTargetManager —— `id → alive` 那张表（空表，演示没有靶子）。
         add(&mut c, GraphwarTargetManager::new());
@@ -688,11 +1003,12 @@ impl RootWiring {
         }
         add(&mut c, teams);
 
-        // ⑪ GraphwarLifeManager —— 两张表（`LifeState::default()` = 空表）。
-        add(&mut c, LifeState::default());
+        // ⑪ GraphwarLifeManager —— 两张空表 + 三个订阅名（`LifeState::new()`，
+        //    `new` 对应原版 x86 `0x454790`：建两张表 + 三条 `subscribe`）。
+        add(&mut c, LifeState::new());
 
-        // ⑫ GraphwarObstacleManager —— 空占位。
-        add(&mut c, ObstacleManagerSlot);
+        // ⑫ GraphwarObstacleManager —— 接线层：掩膜 + 排队销毁（纯逻辑在 `plane.rs`）。
+        add(&mut c, ObstacleManagerSlot(ObstacleTable::new()));
 
         // ⑬ GraphwarTurnManager —— 直接 `TurnManager::new()` + 2 个玩家。
         let mut turns = TurnManager::new();
@@ -884,6 +1200,172 @@ impl RootWiring {
     /// `get_module::<ModeManager>()`（原版 arm64 `0x4a0754`）。
     pub fn mode_manager(&self) -> Option<Rc<RefCell<GraphwarModeManager>>> {
         self.container.borrow().get_module::<GraphwarModeManager>()
+    }
+
+    // ---- 本轮（任务 19）第一批 5 个：按类型取回 ----
+
+    /// `get_module::<TickHandler>()`（原版 arm64 `0x4a0ab4`）。
+    ///
+    /// 容器里的类型是 [`TickHandlerSlot`]（槽的类型名**没有**变、`stub` 档位也没变），
+    /// 里面是 [`GraphwarTickHandler`]（原版模块文件里的那个类型）。
+    pub fn tick_handler(&self) -> Option<Rc<RefCell<TickHandlerSlot>>> {
+        self.container.borrow().get_module::<TickHandlerSlot>()
+    }
+
+    /// `get_module::<LifeManager>()`（原版 arm64 `0x4a1324`）。
+    pub fn life_manager(&self) -> Option<Rc<RefCell<LifeState>>> {
+        self.container.borrow().get_module::<LifeState>()
+    }
+
+    /// `get_module::<TargetManager>()`（原版 arm64 `0x4a1d44`）。
+    pub fn target_manager(&self) -> Option<Rc<RefCell<GraphwarTargetManager>>> {
+        self.container.borrow().get_module::<GraphwarTargetManager>()
+    }
+
+    /// `get_module::<FunctionManager>()`（原版 arm64 `0x4a1834`）。装的是 [`FunctionManagerSlot`]。
+    pub fn function_manager(&self) -> Option<Rc<RefCell<FunctionManagerSlot>>> {
+        self.container.borrow().get_module::<FunctionManagerSlot>()
+    }
+
+    /// `get_module::<ObstacleManager>()`（原版 arm64 `0x4a14d4`）。装的是 [`ObstacleManagerSlot`]。
+    pub fn obstacle_manager(&self) -> Option<Rc<RefCell<ObstacleManagerSlot>>> {
+        self.container.borrow().get_module::<ObstacleManagerSlot>()
+    }
+
+    // ---- 一次最小交互：5 个 manager 各走一遍"从容器取回 → 写 → 读回" ----
+
+    /// **5 个 manager 的最小交互自检**：每个都"从容器按类型取回 → 调一个入口 → 读回真值"。
+    ///
+    /// 返回值是 `(名字, 值)`；**每一条的值都是那次交互真算出来的**，没有一条是常量返回：
+    /// 判据写在各条的注释里（读回来的表就是被写的那张表）。
+    ///
+    /// ## 幂等（可以重复调用，每次返回同一串 `名字=值`）
+    ///
+    /// 用**固定 id**（`9001..=9003`）与固定坐标，末尾把发件箱取走 ⇒ 第二次调用开始时的
+    /// 状态与第一次相同。`client/tools/assemble_check.gd` 的 `manager_probe_selftest`
+    /// 就是**连调两次比对**这一条。
+    ///
+    /// ## 这是验收，不是复原证据
+    ///
+    /// 它只证明"装配好的对象能交互"。每个入口**为什么**是这个语义，证据在各 manager
+    /// 文件的文档块与 `docs/16-client.md` §43。
+    pub fn interaction_selftest(&self) -> Vec<(&'static str, String)> {
+        let mut out: Vec<(&'static str, String)> = Vec::new();
+
+        // ① LifeManager：`set_alive`(0x454b40) → `get_alive`(0x454950)
+        if let Some(life) = self.life_manager() {
+            let mut life = life.borrow_mut();
+            life.set_alive(9001, true);
+            out.push(("life.alive", life.get_alive(9001).to_string()));
+            life.set_queued_death(9001, 42);
+            out.push((
+                "life.death_tick",
+                match life.get_death_tick(9001) {
+                    Some(t) => t.to_string(),
+                    None => "none".to_string(),
+                },
+            ));
+            let due = life.handle_tick_event(TICK_EVENT_TAG, 42).map(|v| v.len()).unwrap_or(0);
+            out.push(("life.due_at_42", due.to_string()));
+            out.push((
+                "life.death_tick_after",
+                match life.get_death_tick(9001) {
+                    Some(t) => t.to_string(),
+                    None => "none".to_string(),
+                },
+            ));
+            out.push(("life.subs", life.subscribed.len().to_string()));
+            let _ = life.take_outbox();
+        }
+
+        // ② TargetManager：`add_target` → `contains`；两条订阅各走一次
+        if let Some(target) = self.target_manager() {
+            let mut target = target.borrow_mut();
+            target.add_target(9002);
+            out.push(("target.contains", target.contains(9002).to_string()));
+            let replayed = target.handle_new_connection_event(5).map(|v| v.len()).unwrap_or(0);
+            out.push(("target.replayed", replayed.to_string()));
+            let removed = target.handle_entity_removed_event(ENTITY_REMOVED_EVENT_TAG, 9002).is_ok();
+            out.push(("target.removed", removed.to_string()));
+            out.push(("target.contains_after", target.contains(9002).to_string()));
+            out.push(("target.subs", target.subscribed.len().to_string()));
+            let _ = target.take_outbox();
+        }
+
+        // ③ ObstacleManager：`add_obstacle` → `is_obstacle` → 排队销毁 → 到期挖洞
+        if let Some(obstacle) = self.obstacle_manager() {
+            let mut obstacle = obstacle.borrow_mut();
+            obstacle.0.clear_obstacles();
+            obstacle.0.add_obstacle(0.0, 0.0, 1.0);
+            out.push(("obstacle.hit_after_add", obstacle.0.is_obstacle(0.0, 0.0).to_string()));
+            out.push(("obstacle.hit_far", obstacle.0.is_obstacle(20.0, 12.0).to_string()));
+            obstacle.0.queue_destroy_obstacle(0, 0.0, 0.0, 1.0);
+            out.push(("obstacle.pending", obstacle.0.pending_len().to_string()));
+            let early = obstacle.0.handle_tick_event(TICK_EVENT_TAG, 164).map(|v| v.len()).unwrap_or(0);
+            out.push(("obstacle.due_164", early.to_string()));
+            let due = obstacle.0.handle_tick_event(TICK_EVENT_TAG, 165).map(|v| v.len()).unwrap_or(0);
+            out.push(("obstacle.due_165", due.to_string()));
+            out.push(("obstacle.hit_after_destroy", obstacle.0.is_obstacle(0.0, 0.0).to_string()));
+            out.push(("obstacle.subs", obstacle.0.subscribed.len().to_string()));
+            let _ = obstacle.0.take_outbox();
+        }
+
+        // ④ FunctionManager：`set_function`(0x455e30) → `get_function_text`(0x4565f0)
+        if let Some(function) = self.function_manager() {
+            let mut function = function.borrow_mut();
+            function.0.set_function(9003, vec![Token::op(crate::Function::VarX)]);
+            out.push((
+                "function.text",
+                function.0.get_function_text(9003).unwrap_or_else(|| "none".to_string()),
+            ));
+            function.0.set_function_active_tick(9003, 100);
+            out.push((
+                "function.active_tick",
+                match function.0.active_tick_of(9003) {
+                    Some(t) => t.to_string(),
+                    None => "none".to_string(),
+                },
+            ));
+            out.push((
+                "function.active_at_101",
+                function.0.get_active_functions_on_tick(101).len().to_string(),
+            ));
+            out.push((
+                "function.active_at_100",
+                function.0.get_active_functions_on_tick(100).len().to_string(),
+            ));
+            out.push((
+                "function.active_at_200",
+                function.0.get_active_functions_on_tick(200).len().to_string(),
+            ));
+            out.push(("function.subs", function.0.subscribed.len().to_string()));
+            let _ = function.0.take_outbox();
+        }
+
+        // ⑤ TickHandler：`tick()`(0x519840) 推进计数并发 TickEvent
+        if let Some(tick) = self.tick_handler() {
+            let mut tick = tick.borrow_mut();
+            let before = tick.0.current_tick;
+            let now = tick.0.tick();
+            out.push(("tick.delta", now.wrapping_sub(before).to_string()));
+            out.push((
+                "tick.event_tag",
+                match tick.0.outbox.last() {
+                    Some(ev) => ev.wire_tag().to_string(),
+                    None => "none".to_string(),
+                },
+            ));
+            out.push(("tick.at_500ms", tick.0.tick_at_now(500).to_string()));
+            out.push(("tick.subs", tick.0.subscribed.len().to_string()));
+            let _ = tick.0.take_outbox();
+        }
+
+        out
+    }
+
+    /// [`RootWiring::interaction_selftest`] 的字符串形态（`"名字=值"`，给 GDScript 看）。
+    pub fn interaction_selftest_strings(&self) -> Vec<String> {
+        self.interaction_selftest().into_iter().map(|(name, value)| format!("{name}={value}")).collect()
     }
 }
 
@@ -1114,5 +1596,174 @@ mod tests {
         let b = a.clone();
         assert!(Rc::ptr_eq(&a.container(), &b.container()));
         assert_eq!(b.len(), Wired::COUNT);
+    }
+
+    // ---- 任务 19：5 个 manager 的"一次最小交互后取回正确值"（**证据主体**）----
+    //
+    // ⚠️ 这 5 条断言证明的是"装配好的对象能交互、读回来的是真表里的值"，
+    // **不**证明原版行为。原版每个入口的证据在各 manager 文件的文档块与
+    // `docs/16-client.md` §43。
+    //
+    // headless 那一侧（`client/tools/assemble_check.gd` 的 `manager_probe_selftest`）
+    // 读的是同一个 [`RootWiring::interaction_selftest`]，**两边数字必须一致**。
+
+    /// 期望值：`interaction_selftest()` 的完整输出（27 条，顺序即 5 个 manager 的序）。
+    fn expected_selftest() -> Vec<(&'static str, String)> {
+        [
+            // ① LifeManager
+            ("life.alive", "1"),
+            ("life.death_tick", "42"),
+            ("life.due_at_42", "1"),
+            ("life.death_tick_after", "none"),
+            ("life.subs", "3"),
+            // ② TargetManager
+            ("target.contains", "true"),
+            ("target.replayed", "1"),
+            ("target.removed", "true"),
+            ("target.contains_after", "false"),
+            ("target.subs", "2"),
+            // ③ ObstacleManager
+            ("obstacle.hit_after_add", "true"),
+            ("obstacle.hit_far", "false"),
+            ("obstacle.pending", "1"),
+            ("obstacle.due_164", "0"),
+            ("obstacle.due_165", "1"),
+            ("obstacle.hit_after_destroy", "false"),
+            ("obstacle.subs", "1"),
+            // ④ FunctionManager
+            ("function.text", "x"),
+            ("function.active_tick", "100"),
+            ("function.active_at_101", "1"),
+            ("function.active_at_100", "0"),
+            ("function.active_at_200", "0"),
+            ("function.subs", "0"),
+            // ⑤ TickHandler
+            ("tick.delta", "1"),
+            ("tick.event_tag", "0"),
+            ("tick.at_500ms", "30"),
+            ("tick.subs", "1"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k, v.to_string()))
+        .collect()
+    }
+
+    /// 5 个槽都能**按类型**取回（不是按数量），且取回来的是各自的类型。
+    #[test]
+    fn the_five_managers_are_retrievable_by_type() {
+        let wiring = RootWiring::assemble_demo();
+        assert!(wiring.tick_handler().is_some(), "TickHandler 取不回来");
+        assert!(wiring.life_manager().is_some(), "LifeManager 取不回来");
+        assert!(wiring.target_manager().is_some(), "TargetManager 取不回来");
+        assert!(wiring.function_manager().is_some(), "FunctionManager 取不回来");
+        assert!(wiring.obstacle_manager().is_some(), "ObstacleManager 取不回来");
+        // 空容器：5 个都取不回来（反面）
+        let empty = RootWiring::empty();
+        assert!(empty.tick_handler().is_none());
+        assert!(empty.life_manager().is_none());
+        assert!(empty.target_manager().is_none());
+        assert!(empty.function_manager().is_none());
+        assert!(empty.obstacle_manager().is_none());
+        // 同一个 `Rc`：两次取回是同一对象
+        let a = wiring.life_manager().unwrap();
+        let b = wiring.life_manager().unwrap();
+        assert!(Rc::ptr_eq(&a, &b));
+    }
+
+    /// **一次最小交互后取回正确值**：27 条逐条比对（这就是 headless probe 的期望串）。
+    #[test]
+    fn one_minimal_interaction_per_manager_reads_back_the_written_value() {
+        let wiring = RootWiring::assemble_demo();
+        assert_eq!(wiring.interaction_selftest(), expected_selftest());
+    }
+
+    /// 自检可重复调用：两次返回**完全一样**（headless probe 连调两次比对这一条）。
+    #[test]
+    fn the_interaction_selftest_is_idempotent() {
+        let wiring = RootWiring::assemble_demo();
+        let first = wiring.interaction_selftest_strings();
+        let second = wiring.interaction_selftest_strings();
+        assert_eq!(first, second, "重复调用必须给出同一串 名字=值");
+        assert_eq!(first.len(), 27);
+        assert_eq!(first[0], "life.alive=1");
+    }
+
+    /// 取回来的值不是常量：换一个输入，读回来的就变了（防"probe 直接 return 常量"）。
+    #[test]
+    fn the_read_back_values_track_the_written_state() {
+        let wiring = RootWiring::assemble_demo();
+
+        // LifeManager：换 id / 换 tick / 换 alive
+        let life = wiring.life_manager().expect("LifeManager 取不回来");
+        {
+            let mut l = life.borrow_mut();
+            l.set_alive(9011, false);
+            assert_eq!(l.get_alive(9011), 0, "写 false 就该读回 0");
+            l.set_alive(9011, true);
+            assert_eq!(l.get_alive(9011), 1, "写 true 就该读回 1");
+            l.set_queued_death(9011, 7);
+            assert_eq!(l.get_death_tick(9011), Some(7));
+            // 没到点不取
+            assert_eq!(l.handle_tick_event(TICK_EVENT_TAG, 6), Ok(vec![]));
+            assert_eq!(l.handle_tick_event(TICK_EVENT_TAG, 7), Ok(vec![(9011, 7)]));
+        }
+
+        // TargetManager：加两个、删一个
+        let target = wiring.target_manager().expect("TargetManager 取不回来");
+        {
+            let mut t = target.borrow_mut();
+            t.add_target(9012);
+            t.add_target(9013);
+            assert_eq!(t.len(), 2);
+            assert!(t.contains(9012) && t.contains(9013));
+            assert_eq!(t.handle_entity_removed_event(life_manager_entity_removed_tag(), 9012), Ok(()));
+            assert!(!t.contains(9012) && t.contains(9013));
+        }
+
+        // ObstacleManager：另一个坐标、另一个半径
+        let obstacle = wiring.obstacle_manager().expect("ObstacleManager 取不回来");
+        {
+            let mut o = obstacle.borrow_mut();
+            let o = &mut o.0;
+            o.clear_obstacles();
+            assert!(!o.is_obstacle(10.0, 5.0));
+            o.add_obstacle(10.0, 5.0, 2.0);
+            assert!(o.is_obstacle(10.0, 5.0), "画上去就该命中");
+            assert!(o.is_obstacle(11.0, 5.0), "半径 2 内也算命中");
+            assert!(!o.is_obstacle(-10.0, -5.0), "别的角落没有障碍");
+            o.destroy_obstacle(10.0, 5.0, 2.0);
+            assert!(!o.is_obstacle(10.0, 5.0), "挖洞之后不再命中");
+        }
+
+        // FunctionManager：换一条函数
+        let function = wiring.function_manager().expect("FunctionManager 取不回来");
+        {
+            let mut f = function.borrow_mut();
+            let f = &mut f.0;
+            f.set_function(9014, vec![Token::constant(2.0)]);
+            assert_eq!(f.get_function_text(9014).as_deref(), Some("2.00"),
+                "常数项按 to_text 的两位小数写出来（1032/1032 对拍过的那个函数）");
+            f.set_function_active_tick(9014, 1000);
+            assert_eq!(f.active_tick_of(9014), Some(1000));
+            assert!(f.get_active_functions_on_tick(1001).contains(&9014));
+            assert!(f.get_active_functions_on_tick(1000).is_empty(), "等于 active_tick 不在场");
+        }
+
+        // TickHandler：连发 3 次
+        let tick = wiring.tick_handler().expect("TickHandler 取不回来");
+        {
+            let mut t = tick.borrow_mut();
+            let base = t.0.current_tick;
+            let a = t.0.tick();
+            let b = t.0.tick();
+            let c = t.0.tick();
+            assert_eq!((a, b, c), (base + 1, base + 2, base + 3));
+            assert_eq!(t.0.outbox_len(), 3);
+        }
+    }
+
+    /// `entity_removed_event` 的判别值（14）——测试里直接写字面量会被抄错，这里从 life 那边取。
+    fn life_manager_entity_removed_tag() -> u16 {
+        ENTITY_REMOVED_EVENT_TAG
     }
 }
