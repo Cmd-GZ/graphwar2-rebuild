@@ -11,9 +11,10 @@
 //! 五项逐位比：**点序列**（逐坐标 `to_bits`）/ **stop** / **blocked** / **killed**（含顺序）/
 //! **修正文本**；外加命中弧长、挖洞点。
 //!
-//! ⚠️ **DiffEq 批不在分母里**：内核开火路径把 `Mode::Normal` 写死（`src/game.rs` 的
-//! `fire_functions`），DiffEq 局在内核里**没有**开火路径 ⇒ 不可比。这不是"近似通过"，
-//! 是内核缺功能（`docs/06` §30.4），本文件把它**单独计数**并要求 > 0 时也不影响断言。
+//! ⚠️ **DiffEq 批 2026-11-08 起也在分母里**（`docs/06` §33）：内核开火路径现在按
+//! `Match::sampling_mode()` 选采样器，Ode 局两条路径走同一套坐标。此前它们被 `continue`
+//! 掉、只计数——那正是 515 批 / 550 发"不可比"的那一段。断言因此**变严了**（不多比一条，
+//! 只是把原来跳过的 550 发也要求逐位相同）。
 //!
 //! 全语料（1080 批 / 1290 发）用同一条代码路径跑：
 //!
@@ -27,7 +28,7 @@ use gw2_rebuild::_scaffold::diffconv::{parity_dir, parity_file, Parity};
 use gw2_rebuild::_scaffold::replaydiff::default_corpus_dir;
 
 /// 固定样本：覆盖 Normal 单发自由飞行 / Normal 单发撞障碍 / Normal 多发批（11 批）/
-/// Normal 撞障碍但零死亡 / DiffEq（只用来验证"不可比"那条被正确计数）。
+/// Normal 撞障碍但零死亡 / DiffEq（**现在也要求逐位相同**，见 `docs/06` §33）。
 ///
 /// 名字与内容都来自只读语料；挑选依据见 `docs/06` §30.5（按 `batch_conv --json` 的
 /// `shots` / `obs_destroy` / `obs_deaths` 三个字段筛的）。
@@ -36,7 +37,7 @@ const SAMPLE: &[&str] = &[
     "1782640836", // Normal 单发，撞障碍 + 有死亡
     "1782674519", // Normal 单发，撞障碍、零死亡
     "1793899173", // Normal 多发批 11 批（同时回合制）
-    "1782760054", // DiffEq（内核没有 Ode 开火路径 ⇒ 只计数）
+    "1782760054", // DiffEq（Ode 轴：内核与收敛层都必须走 RK4）
 ];
 
 fn report(tag: &str, p: &Parity) {
@@ -46,7 +47,7 @@ fn report(tag: &str, p: &Parity) {
         p.destroy_equal, p.destroy_compared, p.explosion_equal, p.explosion_compared
     );
     println!(
-        "[{tag}] DiffEq 批 {} / {} 发：内核没有 Ode 开火路径 ⇒ 不在分母",
+        "[{tag}] DiffEq 批 {} / {} 发：**在分母里**（内核开火路径已补 `Mode`，`docs/06` §33）",
         p.diff_eq_batches, p.diff_eq_shots
     );
     for m in &p.mismatches {
@@ -95,10 +96,18 @@ fn conv_layer_matches_the_kernel_bit_for_bit_on_the_fixed_sample() {
     // 否则"逐位相同"可能只是"没比较"（§30.5 的正对照 ①②）。
     assert!(p.destroy_compared > 0, "样本里应当有撞障碍的批（挖洞点要真的被比过）");
     assert_eq!(p.destroy_equal, p.destroy_compared, "挖洞点也必须逐位相同");
-    // DiffEq 批被**计入不可比**而不是被静默丢掉
+    // DiffEq 批**真的进了分母**（2026-11-08 起）：既要被比到过，又要逐位相同。
+    // 这两条是防空转的：`diff_eq_shots == 0` 说明样本里没有 DiffEq 局，
+    // 那样"DiffEq 也逐位相同"就是一句没被检验的话（`docs/06` §33.4）。
     assert!(
         p.diff_eq_batches > 0,
-        "样本里应当有一份 DiffEq 回放（用来确认不可比那条被计数）"
+        "样本里应当有一份 DiffEq 回放（`diff_eq_batches > 0`）"
+    );
+    assert!(
+        p.diff_eq_shots > 0 && p.diff_eq_shots < p.shots,
+        "DiffEq 发数必须 > 0 且小于总发数（实际 {} / {}）",
+        p.diff_eq_shots,
+        p.shots
     );
 }
 

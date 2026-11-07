@@ -56,15 +56,16 @@ pub use crate::game::DESTROY_DELAY_TICKS;
 ///
 /// `NormalFunction` ⇒ `y = f(x)`；`DiffEqFunction` ⇒ `dy/dx = f(x, y)`（RK4）。
 /// 未知值按 `Normal`（`docs/136` §3 的语料里只有这两个值，`docs/78`）。
+///
+/// ⚠ 2026-11-08（`docs/06` §33）：**映射已经进内核**（`game::function_mode_of` +
+/// `game::sampling_mode`，`Match` 上也有 `function_mode` 字段与
+/// `set_function_mode`）。本函数只是保留旧名字给本模块与探针用，实现直接转调内核，
+/// 不再是一份独立的规则。
 pub fn mode_of(function_mode: &str) -> Mode {
-    if function_mode == "DiffEqFunction" {
-        Mode::Ode
-    } else {
-        Mode::Normal
-    }
+    crate::game::sampling_mode(crate::game::function_mode_of(function_mode))
 }
 
-/// 修正文本的**唯一**规则 —— 直接转调内核（`docs/06` §30.2）。
+/// 修正文本的**唯一**规则 —— 直接转调内核（`docs/06` §30.2 / §33.2）。
 ///
 /// * `Mode::Normal`：**就是** [`crate::game::corrected_function_text`]。
 ///   内核那份是 `docs/06` §29 修出来的真值形状：`补齐缺失的 ")" + 保留多余的 ")"`
@@ -72,29 +73,22 @@ pub fn mode_of(function_mode: &str) -> Mode {
 ///   `)` 截断）。旧实现自己拼，且 `c` 用的是**原文**解析出来的树 ⇒ 那 8 条多余的 `)`
 ///   会让后缀与真值不同。
 /// * `Mode::Ode`（DiffEq 局）：`corrected_function == function`，**不加后缀**
-///   —— 全语料 550/550 零例外（回放实读）。这条在内核里**没有对应物**：
-///   `game::fire_functions` 把 `Mode::Normal` 写死（§30.4），所以 Ode 局的内核开火路径
-///   不存在，这条分派只能留在这里。
+///   —— 全语料 550/550 零例外（回放实读）。这条规则原先只在本模块里，现在与内核
+///   共用同一个实现（`game::corrected_function_text_mode`）。
 pub fn corrected_function(text: &str, x0: f64, y0: f64, flip: bool, mode: Mode) -> String {
-    match mode {
-        Mode::Ode => text.to_string(),
-        Mode::Normal => crate::game::corrected_function_text(text, x0, y0, flip),
-    }
+    crate::game::corrected_function_text_mode(mode, text, x0, y0, flip)
 }
 
-/// **采样器吃的串** —— 内核同一条规则（`docs/06` §25 / §30.2）。
+/// **采样器吃的串** —— 内核同一条规则（`docs/06` §25 / §30.2 / §33.2）。
 ///
 /// `Normal` 直接转调 [`crate::game::sampling_function_text`]：与**发出去**的修正文本的
 /// 唯一差别是多出来的 `)` 被去掉（理由见 `game::balanced_texts`）。
 /// 旧实现走 `settle::resolve(原文, …)`，那条路内部按 `shifted_tokens`（**全精度** `c`）
 /// 平移 —— 与真值差 1e-6~1e-3，正是归因表 `Y2` 那一桶。
 ///
-/// `Ode` 没有内核对应物（见 [`corrected_function`]），采样串就是函数原文。
+/// `Ode` 局采样串就是函数原文（不带修正常数），同样转调内核。
 fn sampling_text(text: &str, x0: f64, y0: f64, flip: bool, mode: Mode) -> String {
-    match mode {
-        Mode::Ode => text.to_string(),
-        Mode::Normal => crate::game::sampling_function_text(text, x0, y0, flip),
-    }
+    crate::game::sampling_function_text_mode(mode, text, x0, y0, flip)
 }
 
 /// 爆炸点 / 挖洞点 —— 转调内核 [`crate::game::hole_point`]，只补一个 `Mode` 适配。
@@ -971,9 +965,10 @@ pub fn run_dir(dir: &std::path::Path, policy: &Policy, max_diffs: usize) -> Vec<
 // `blocked` / `killed`（含顺序）/ 命中弧长 / 修正文本；另外单列挖洞点与爆炸点
 // （内核 ④ 仍写 `stop`，见 §30.5 的说明）。
 //
-// **DiffEq 批不参与**：内核开火路径把 `Mode::Normal` 写死（`game.rs` 的
-// `fire_functions`），DiffEq 局在内核里**根本没有**开火路径 ⇒ 不可比，只计数。
-// 这不是"近似通过"，是**内核缺功能**，必须单列（`docs/06` §30.4）。
+// **DiffEq 批 2026-11-08 起参与对拍**（`docs/06` §33）：内核开火路径补上了
+// `Mode`（`game::Match::fire_functions` 现在读 `self.sampling_mode()`），
+// 于是两条路径在 Ode 局也走同一套坐标。改之前这里是 `continue`（不计入分母），
+// 那正是 515 批 / 550 发"不可比"的那一段。
 
 /// 一处不一致（`ours` = 收敛层，`kernel` = 内核路径）。
 #[derive(Debug, Clone, PartialEq)]
@@ -993,9 +988,9 @@ pub struct ParityMismatch {
 pub struct Parity {
     /// 读到并至少有一个结算批的回放份数
     pub files: usize,
-    /// 参与对拍的结算批（**Normal 轴**）
+    /// 参与对拍的结算批（**两条轴合起来**：Normal + DiffEq）
     pub batches: usize,
-    /// 参与对拍的发数（**Normal 轴**）
+    /// 参与对拍的发数（**两条轴合起来**）
     pub shots: usize,
     /// 五项（点序列 / stop / blocked / killed / 修正文本）**逐位全同**的发数
     pub shots_identical: usize,
@@ -1003,9 +998,12 @@ pub struct Parity {
     pub mismatches_total: usize,
     /// 前若干处不一致的细节
     pub mismatches: Vec<ParityMismatch>,
-    /// `DiffEq` 批 / 发：内核没有 Ode 开火路径 ⇒ **不可比**，单独计数
+    /// 这 `batches` / `shots` 里有多少属于 `DiffEqFunction`（**已计入分母**，
+    /// 2026-11-08 起；改之前它们被 `continue` 掉，只计数不比）。
     pub diff_eq_batches: usize,
     pub diff_eq_shots: usize,
+    /// `diff_eq_shots` 里**逐位全同**的发数（Ode 轴自己的分子，别拿总和减）。
+    pub diff_eq_shots_identical: usize,
     /// 挖洞点（两条路径都对 `hole_point`）：应逐位相同
     pub destroy_compared: usize,
     pub destroy_equal: usize,
@@ -1015,22 +1013,52 @@ pub struct Parity {
 }
 
 impl Parity {
-    /// `Normal` 轴上"逐位全同"的比例（`"a / b"` 形式，带百分比）。
+    /// "逐位全同"的比例（`"a / b"` 形式，带百分比）。
+    ///
+    /// **两条轴分开印**（`docs/06` §33）：Normal 与 DiffEq 改用同一条内核入口之后
+    /// 都属于"必须逐位相同"，但分母不同（740 / 550），混在一起印容易把
+    /// "Ode 轴刚开始比"读成"Normal 轴变差了"。
     pub fn summary(&self) -> String {
-        let pct = if self.shots == 0 {
-            "-".to_string()
-        } else {
-            format!("{:.1}%", 100.0 * self.shots_identical as f64 / self.shots as f64)
+        let pct_of = |a: usize, b: usize| -> String {
+            if b == 0 {
+                "-".to_string()
+            } else {
+                format!("{:.1}%", 100.0 * a as f64 / b as f64)
+            }
         };
+        let normal_shots = self.normal_shots();
+        let normal_identical = self.shots_identical.saturating_sub(self.diff_eq_shots_identical);
         format!(
-            "文件 {}；Normal 结算批 {}；发 {}；点序列/stop/blocked/killed/修正文本 逐位全同 {} / {}（{}）",
-            self.files, self.batches, self.shots, self.shots_identical, self.shots, pct
+            "文件 {}；结算批 {}（Normal {} / DiffEq {}）；发 {}（Normal {} / DiffEq {}）；\
+             点序列/stop/blocked/killed/修正文本 逐位全同 {} / {}（{}）；\
+             分轴 Normal {} / {}（{}）、DiffEq {} / {}（{}）",
+            self.files,
+            self.batches,
+            self.batches.saturating_sub(self.diff_eq_batches),
+            self.diff_eq_batches,
+            self.shots,
+            normal_shots,
+            self.diff_eq_shots,
+            self.shots_identical,
+            self.shots,
+            pct_of(self.shots_identical, self.shots),
+            normal_identical,
+            normal_shots,
+            pct_of(normal_identical, normal_shots),
+            self.diff_eq_shots_identical,
+            self.diff_eq_shots,
+            pct_of(self.diff_eq_shots_identical, self.diff_eq_shots),
         )
     }
 
-    /// 是否**没有**任何不一致（DiffEq 批不算，见类型文档）。
+    /// 是否**没有**任何不一致（现在涵盖两条轴）。
     pub fn ok(&self) -> bool {
         self.mismatches_total == 0 && self.shots_identical == self.shots
+    }
+
+    /// `Normal` 轴上的发数（= 分母减 DiffEq 发数）。
+    pub fn normal_shots(&self) -> usize {
+        self.shots - self.diff_eq_shots
     }
 }
 
@@ -1081,15 +1109,18 @@ pub fn parity_file(path: &std::path::Path, p: &mut Parity, max_samples: usize) {
     p.files += 1;
 
     let mut cursor = 0usize;
-    let mut diff_eq = conv.mode == Mode::Ode;
+    let mut mode = conv.mode;
     for (idx, b) in batches.iter().enumerate() {
         // 模式 / 皮肤是**输入**，从文件开头扫（与 `run_file` 同一口径）
         for m in &replay.msgs[cursor..b.start] {
             match m.kind.as_str() {
                 "FunctionModeInfo" => {
                     if let Some(s) = m.get_str("function_mode") {
-                        conv.mode = mode_of(&s);
-                        diff_eq = conv.mode == Mode::Ode;
+                        mode = mode_of(&s);
+                        conv.mode = mode;
+                        // 内核路径也要喂 —— 否则两条路径的模式不同，DiffEq 局必然不一致。
+                        // （这就是改之前那道 `if diff_eq { continue }` 挡住的东西。）
+                        kernel.set_function_mode_wire(&s);
                     }
                 }
                 "SkinGraphicsInfo" => {
@@ -1104,10 +1135,10 @@ pub fn parity_file(path: &std::path::Path, p: &mut Parity, max_samples: usize) {
         if b.shots.is_empty() {
             continue;
         }
-        if diff_eq {
+        // DiffEq 批**计入分母**（`docs/06` §33）：内核与收敛层都走 Ode，必须逐位相同。
+        if mode == Mode::Ode {
             p.diff_eq_batches += 1;
             p.diff_eq_shots += b.shots.len();
-            continue;
         }
         p.batches += 1;
         let tick = replay.msgs[b.start].tick;
@@ -1210,6 +1241,9 @@ pub fn parity_file(path: &std::path::Path, p: &mut Parity, max_samples: usize) {
             }
             if diffs.is_empty() {
                 p.shots_identical += 1;
+                if mode == Mode::Ode {
+                    p.diff_eq_shots_identical += 1;
+                }
             }
             for (field, ours, kern) in diffs {
                 p.mismatches_total += 1;

@@ -2917,3 +2917,189 @@ python3 tools/point_array_chain.py check    17/17 OK（退出码 0）
 > 第 4 条是本节留给下一轮最值钱的一条：§32.5 的不可能性证明假设的是**一次** `fl(x+c)`。
 > 若点数组用的是"加过 offset 的 token 流"，`fl(fl(x+a)+b)` 的**双舍入**能造出那个"落在格点之间"的值，
 > 而这条路径**不在** §32 的对拍范围内（那里比的是"给定文本 + 给定 x"）。
+
+## 34. 内核开火路径补上 `Mode`：DiffEq 515 批 / 550 发**从"不可比"变成"可比"**（2026-11-08，`dispatch/21`）
+
+> 任务书：[`dispatch/21-diffeq-fire-path.md`](../dispatch/21-diffeq-fire-path.md)。
+> 这一节结掉的是 `dispatch/reports/CG-round3` §7 与本文 §30.4 / §30.9 第 1 条那笔账：
+> `game.rs::fire_functions` 写死 `Mode::Normal` ⇒ 微分方程局（DiffEq）的开火走 `y = f(x)` 采样器
+> ⇒ **515 批 / 550 发根本不是"不一致"，是没法比**。
+>
+> 起点 `c99c8b5`，分支 `agent/diffeq-fire-path`，私有 `CARGO_TARGET_DIR`，同一份 401 回放快照。
+
+### 34.1 一句话（四条）
+
+1. **二进制里模式不是"开火时的入参"**，是「本局设置」里的一个字节：`FunctionModeInfo`(46) 的处理器写它，
+   **每次开火现读**，再原样塞进结算 config 的 `+0x39`，结算函数把它转给采样器的第 7 个实参
+   （整条链逐指令见 §34.2）。
+2. `Match` 因此长了一个字段 `function_mode: FunctionMode`（`graphwar_mode_manager` 那个，2 态、`repr(u8)`）
+   + `set_function_mode*`；`fire_functions` / `execute_results` 都按 `self.sampling_mode()` 走。
+3. **DiffEq 轴从"不可比"变成"可比"**：两条路径（内核 K / 收敛层 C）的逐位对拍分母
+   从 **740 发（只有 Normal）** 变成 **1290 发**，**DiffEq 550 / 550 逐位全同**（§34.4）。
+4. 对回放内容（才是"能不能对上原版"）：`batch` 轴 DiffEq 内容命中 **0 → 288 / 515 批（55.9%）**、
+   种类序列 **359 → 515 / 515**；`fire` 轴 **0 → 277 / 515**。**Normal 三轴护栏一条没退**。
+
+### 34.2 模式怎么传到采样器（**观测：逐指令，自己 objdump 复验**）
+
+x86-64 `2026-08-28`（`.reference/steam/2026-08-28/libgraphwarrust.so`，vaddr）：
+
+```text
+0x470eb0  GraphwarGameStateManager::fire_functions（5456 B）
+  0x471791  call 0x46e140             ; 模块容器按 16 字节 key 取「本局设置」模块
+  0x4717b8  movzbl 0x32(%rax),%r14d   ; ★ 模块 +0x32 = function_mode（2 态字节）
+  0x4717ef  movb $0x1,0x80(%rsp)      ; config+0x38 = 1
+  0x4717f7  movabs $0x3f847ae147ae147b ; config+0x00 = 0.01（服务端步长）
+  0x471806  mov %r14b,0x81(%rsp)      ; ★ config+0x39 = function_mode
+  0x47180e  movw $0x1,0x82(%rsp)      ; config+0x3a = 1
+  0x471825  call *0x9bacb0            ; = 0x3c2bc0 calculate_shot_results
+
+0x3c2bc0  graphwar_shot_calculator（12 KB）
+  0x3c2d18  movzbl 0x39(%rax),%eax    ; 读回 config+0x39
+  0x3c2d1c  mov %al,0x198(%rsp)       ; 溢出到栈槽
+  0x3c3091  movzbl 0x198(%rsp),%ecx   ; ★ 作为采样器第 7 实参（%ecx）
+  0x3c30c1  call *0x9bac98            ; = 0x3c2530 弦长采样器
+
+0x3c2530  采样器
+  0x3c2541  mov %ecx,%r15d            ; 第 7 实参 = mode
+  0x3c254a  mov %edx,%ebp             ; 第 6 实参 = flip（后面 test %bpl,%bpl 取反 x）
+  0x3c25f5  test %r15b,%r15b
+  0x3c25f8  je   0x3c2923             ; ★ mode == 0 ⇒ Normal 分支；非 0 ⇒ 落到 0x3c25fe（RK4）
+```
+
+* **极性**：`0 = NormalFunction`、`非 0 = DiffEqFunction`。三条互证：`docs/07` §5.2 的枚举判别值、
+  图标索引（`fx_option.svg` = 0 / `dx_dy_option.svg` = 1，`0x4c94a3`/`0x4c9529`）、
+  以及 `ctx+0x5c == 0` 才加修正常数（`0x51bbaa`）。
+* **谁写这个字节**：`FunctionModeInfo`(46) 的分支 `0x3e2b1b`（`mov BYTE PTR [r15+0x32],bpl`；
+  同族 45/47/48 = axis/turn/time，`docs/archive/110` §2.3）。⇒ **模式是事件的落值对象，开火时读**，
+  同一局里可以变（`Match::set_function_mode` 就是这条的落地）。
+* **实参排布**：`(rdi=out, rsi=tokens, xmm0/1/2=x0,y0,step, edx=flip, ecx=mode)`——与
+  `src/graphwar_path_calculator.rs::calculate` 的 Rust 签名逐位同构，所以**采样算法一个字节都没改**。
+
+**正对照（本文的两条"只此一处"结论，按 `AGENTS.md` 合并纪律 A.4 做）**：
+
+| 结论 | 扫描 | 结果 |
+|---|---|---|
+| `config+0x39` 在 `0x3c2bc0` 里**只被读一次、只转给采样器一次** | `objdump … \| grep '0x198(%rsp)'` | 5 处命中：1 次写（`0x3c2d1c`）、1 次读转采样器（`0x3c3091`）、3 次是**同一栈槽后来被当 8 字节量复用**（`0x3c3cd0`/`0x3c3db1`/`0x3c3f79`，都在 `0x3c3xxx` 段） |
+| 采样器函数指针槽 `0x9bac98` 只有 2 个使用者 | `objdump -d \| grep '0x9bac98'` | 恰好 2 条：`0x3c30c1`（开火结算体内）、`0x3e2d35`（客户端预览，`docs/151` §2.5 同结论） |
+
+### 34.3 改了什么（**集中、可解释**：一个字段 + 四个新函数 + 三处函数体 + 两处接线）
+
+| 文件 | 位置 | 改法 | 为什么在这里 |
+|---|---|---|---|
+| `src/game.rs` | `struct Match` | **新增字段** `function_mode: FunctionMode` | 二进制里它就挂在"本局设置"模块上，谁开火谁读（§34.2） |
+| `src/game.rs` | `Match::new` | 1 行：从 `room.function_mode` 初始化 | `RoomState::function_mode` 就是 46 号事件的字符串，落地路径不变 |
+| `src/game.rs` | 新增 `function_mode_of` / `sampling_mode` | 字符串→枚举、枚举→采样器 `Mode` | 全仓库只有这一份映射（`diffconv::mode_of` 改成转调） |
+| `src/game.rs` | 新增 `corrected_function_text_mode` / `sampling_function_text_mode` | `Normal` = 原两个函数；`Ode` = **原文照发** | 修正常数 `c = y0 − f(∓x0)` 对 `dy/dx` 无意义（§34.5 的两条证据） |
+| `src/game.rs` | `Match::fire_functions` | 采样串与采样模式都按 `self.sampling_mode()`（**原来写死 `Mode::Normal`**） | 这就是那条"不可比"的根 |
+| `src/game.rs` | `Match::execute_results` | ① 发出的 `corrected_function` 按模式；③ 挖洞点 `hole_point(mode == Ode, …)`（原来直接比 `room.function_mode` 字符串） | 同一个模式，两处读取口径必须一致 |
+| `src/game.rs` | 新增 `Match::function_mode` / `sampling_mode` / `set_function_mode` / `set_function_mode_wire` | getter + 46 号事件的落点（同时同步 `room.function_mode`） | 线上字符串取 `MODE_NAME_TABLE[0..2]`（**逐位**那张表），不再抄一份 match |
+| `src/_scaffold/replaydiff.rs` | `Predictor` | 新增 `mode_schedule`（全文件的 46 号事件时刻表）+ `sync_mode`；`predict` 开头多一行 | 模式是**输入流**的一环，不是常量：喂到哪一批就该用那一刻的值 |
+| `src/_scaffold/diffconv.rs` | `mode_of` / `corrected_function` / `sampling_text` | 全部改成**转调内核**（`docs/06` §30 的同一条纪律） | 同一条规则不许有第二份实现 |
+| `src/_scaffold/diffconv.rs` | `parity_file` | 删掉 `if diff_eq { continue }`，改成**计入分母**并给内核 `set_function_mode_wire` | 这就是"不可比"那道闸 |
+| `src/_scaffold/diffconv.rs` | `Parity` | 新增 `diff_eq_shots_identical`；`summary()` **分轴印**（Normal / DiffEq） | 分母 740→1290 后，混着印会把"Ode 轴刚开始比"读成"Normal 变差" |
+| `examples/diffconv_parity.rs` | 打印 | **只改两行文字**（删掉"DiffEq 不可比"这句已变成假话的说明，改成两句统计） | 断言/口径/退出码一字未动 |
+| `tests/diffconv_parity.rs` | 注释 + 一条断言 | 注释改口径；**新增**一条防空转断言（`diff_eq_shots > 0 && < shots`） | 原文那条 `diff_eq_batches > 0` **保留原样**且仍然成立 |
+| `src/game.rs`（`mod tests`） | 新增 4 条单测 | 模式来源/极性、RK4 换采样器、原文照发、挖洞点=停点 | 自写断言只作回归锁，**不构成复原证据** |
+
+**没动的**：`src/graphwar_path_calculator.rs`（采样算法，`Mode::Ode` 早就实现了）、`*_class.rs`、
+`client/**`、`src/lib.rs`、`dispatch/`、既有测试断言。`graphwar_shot_calculator::shot_points` 签名也没变
+（`apply_correction` 那条正交开关照旧传 `false`）。
+
+### 34.4 DiffEq 轴的数字（**分轴、带轴名、命令都能粘**）
+
+```bash
+R=<快照>/replays ; OUT=<本次工作目录>
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive fire  --policy default --json $OUT/f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive batch --policy default --json $OUT/b.jsonl
+cargo run --release --offline -q --example batch_conv    -- --dir $R --policy strict
+cargo run --release --offline -q --example diffconv_parity -- --dir $R --max-samples 6
+```
+
+**① 三条护栏轴（改前 / 改后都是同一台机器、同一份 401 回放快照上自己跑的）**
+
+| 轴 | 指标 | 改前（`c99c8b5`） | 改后 |
+|---|---|---|---|
+| `fire` | 内容命中（全 1080 批） | 331 / 1080 | **608 / 1080** |
+| `fire` | 其中 Normal | 331 / 565 | 331 / 565（**未退**） |
+| `fire` | 其中 **DiffEq** | **0 / 515** | **277 / 515** |
+| `batch` | 内容命中（全 1080 批） | 355 / 1080 | **643 / 1080** |
+| `batch` | 其中 Normal | 355 / 565 | 355 / 565（**未退**） |
+| `batch` | 其中 **DiffEq** | **0 / 515** | **288 / 515**（55.9%） |
+| `batch` | DiffEq 种类序列 | 359 / 515 | **515 / 515**（100%） |
+| `batch_conv` | 种类序列 | 1075 / 1080 | 1075 / 1080（**未退**） |
+| `batch_conv` | 内容命中 | 633 / 1080 | 633 / 1080（**未退**：收敛层本来就按模式走） |
+| 延迟段（**batch 轴**） | 死亡集合 | 215 / 379 | **366 / 385**（多报 19 / 漏报 0 / 错人 0） |
+| 延迟段（**batch 轴**） | 挖洞点 | 140 / 262 | **206 / 293** |
+| `cargo test --offline` | 通过条数 | 1559 | **1563**（+4 单测） |
+| `python3 tools/coverage_matrix.py --check` | — | OK | OK（改了 `src/` ⇒ 已重跑生成器，两个生成物一起提交） |
+
+⚠️ 延迟段的**分母变了**（379→385、262→293），不是口径放宽：DiffEq 批原来算不出"可比对象"
+（弹道整条错 ⇒ 既不杀人也撞不到障碍），现在产出了，于是进了分母。分子同时涨（+151 / +66）。
+
+**② 两条路径的逐位对拍（`diffconv_parity`，K = 内核 / C = 收敛层）**
+
+```text
+改后：文件 286；结算批 1080（Normal 565 / DiffEq 515）；发 1290（Normal 740 / DiffEq 550）
+      点序列/stop/blocked/killed/修正文本 逐位全同 1290 / 1290（100.0%）
+      分轴 Normal 740 / 740（100.0%）、DiffEq 550 / 550（100.0%）
+      挖洞点（两边都调 game::hole_point）：逐位相同 348 / 348
+      爆炸点（内核 ④ 仍用 stop，收敛层用 hole_point）：相同 1278 / 1290
+```
+
+改前：**DiffEq 515 批 / 550 发被 `continue` 掉，分母 740 发**（§30.4 / §30.5 的记录；本次没有为
+"改前"再复跑一遍旧代码，只复跑了改后）。所以这一条的正向变化是**分母**：740 → 1290，
+而新加进来的 550 发**一发不差**。
+
+**③ DiffEq 轴还剩什么（`batch` 轴，515 批，`tools/bit_exact_attrib.py` 互斥分桶）**
+
+```text
+内容命中 288 / 515（55.9%）；失败 227 批
+  Y  爆炸点 y 末位差（求值器末位）      124 批（54.6%，独占 124）
+  E1 end_x 差一个采样点                52 批（22.9%）
+  X  爆炸点 x 末位差（pos_x ≠ end_x）   43 批（18.9%，独占 23）
+  E2 end_x 真分歧（几何）               8 批（ 3.5%）
+```
+
+⇒ **真正的"几何算错"只有 8 批（1.6%）**；`end_x`（弹道终点 x）逐位相同的 **455 / 515（88.3%）**；
+`pos_y` 的差 **1 ulp 占 101 批**、2 ulp 29 批——与 Normal 轴那 106 批 1 ulp 是**同一类残差**
+（§32.5 已把求值器排除干净，来源仍是**未知**）。`C`（修正文本）桶**已经清零**
+（改前那 2 批就是 §34.5 的括号证据）。
+
+### 34.5 顺手钉死的一件事：DiffEq 局**连补括号都不做**
+
+`corrected_function` 在 Normal 局是 `原文 + ")"×缺 + " ± c.ddd"`；在 DiffEq 局是**原文逐字节**。
+第一版实现把"补括号"当成与模式无关的 `to_text` 性质（**推断**），结果 2 批报 `C` 类：
+
+| 回放 | 我方（补完括号） | 回放（真值） |
+|---|---|---|
+| `1782760485` #0 | `…cos(2588))))))))))))))))`（补 16 个） | `…cos(2588`（**一个都没补**） |
+| `1783013297` #0 | `sin(ln(abs((sin(558)cos(559)))))`（补 3 个） | `sin(ln(abs((sin(558)cos(559))` |
+
+⇒ 微分方程局里"算修正常数 + 重印函数串"这一步**整个被跳过**（补括号是这个重印的副产物），
+所以采样器吃的也是原文。这就是 `corrected_function_text_mode` / `sampling_function_text_mode`
+两个 `Mode::Ode` 分支都返回 `function_text.to_string()` 的依据（**观测**：回放实读 2/2，加上
+550/550 的 `corrected_function == function`）。改动前后这 2 批由 `C` 变成命中。
+
+### 34.6 正对照：证明"可比"不是"把比较放宽了"
+
+| 检查 | 做法 | 结果 |
+|---|---|---|
+| 口径没松 | `compare_batch` / `Policy` / 投影 / 折叠 / 归一化 / leave-one-out：**一行未改**（本次没有碰 `replaydiff` 的比对层，只在 `Predictor` 里加了模式同步） | `git diff` 里比对函数零改动 |
+| 提升来自哪 | 只换采样模式、文本规则不动：`fire` DiffEq 0 → **276**、`batch` 0 → **287**；再把文本规则改成"Ode 原文照发"：**+1 / +1** | 287+1=288（`batch`） |
+| 不是"少比了" | `batch_conv` 的 1080 分母、`diffconv_parity` 的 1290 分母都**没变小**；`tests/diffconv_parity.rs` 新增 `diff_eq_shots > 0 && < shots` 防空转断言 | 全绿 |
+| Normal 没被动 | `fire` Normal 331/565、`batch` Normal 355/565、`batch_conv` 1075/633 —— 与改前**逐数相同** | 未退 |
+| 模式不是"猜"的 | `function_mode` 的取值集合与极性可指到 `docs/07` §5.2（`逐位`）+ §34.2 的两条指令 | — |
+
+### 34.7 仍未确定的（诚实清单）
+
+| # | 事项 | 缺什么 | 档 |
+|---|---|---|---|
+| 1 | DiffEq 轴 **124 批 `pos_y` 1~3 ulp** 的来源 | 与 Normal 轴 §32.5 那个空白同一个入口：点数组的**填充者**。本节只证明"不是模式选错"（把模式改回 Normal 就整条弹道错，不是末位差） | **未知** |
+| 2 | DiffEq 轴 **52 批 `E1`**（`end_x` 差一个采样点）与 **8 批 `E2`** | 采样器的二分收敛在 Ode 分支上与真值差一个点；`docs/04` §10.4 说 Ode **没有**半步复检（`0x3c2840` 观测），所以不是"少了一段代码"这么简单 | **未知** |
+| 3 | `graphwar_mode_manager::FunctionMode` 的**类型归属** | 二进制里那个模块的 Rust 类型名是 TypeId 哈希，`type_name` 不存在（`docs/archive/110` §2.5 第 1 条）。本字段用它是因为**语义与 2 态形状**对得上 | **推断（强）** |
+| 4 | 一局里**中途改模式**对已发出的弹道有没有影响 | 语料里 **0 / 1080 批** 的"批前最后一个 46 号事件"与"第一批之前那个"不同（本次实测，见下），所以这条路径**在现有语料上不可观测**；`Predictor::mode_schedule` 按"开火时读"实现，但**没有被任何样本检验过** | **推断** |
+
+> 第 4 条的实测（可复跑：对 403 份回放逐行扫 `FunctionModeInfo` / `CalculatingResults`）：
+> **每批之前的模式 == 第一批之前的模式，0 例外**。96 份回放全文里出现过两种取值，但那些切换
+> 都落在**最后一批之后**（换局的设置广播）。⇒ `Match::new` 那一次初始化就够覆盖全语料；
+> `Predictor` 的时刻表是"按事件语义写对"，不是"靠它拿分"。

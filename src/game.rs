@@ -71,6 +71,8 @@
 
 use crate::graphwar_function_evolutionator::{self, Individual, SoldierEvolver, SoldierFunctions, SoldierTurn, VarMode};
 use crate::graphwar_life_manager::{LifeState, Status};
+use crate::graphwar_mode_manager::FunctionMode;
+use crate::graphwar_path_calculator::Mode;
 use crate::graphwar_entity_effect_manager::GraphwarEntityEffectManager;
 use crate::graphwar_effect_manager::EffectType;
 use crate::plane::{empty_mask, rasterize};
@@ -109,6 +111,31 @@ pub struct Match {
     /// 当前回合的起始 tick 与时间模式。
     turn_start_tick: i64,
     time_mode: String,
+    /// **本局的函数模式**：`NormalFunction`（`y = f(x)`）或 `DiffEqFunction`（`dy/dx = f(x,y)`）。
+    ///
+    /// 这是**开火路径**读的那个字节（`docs/06` §33，`观测` + 逐指令）：
+    ///
+    /// ```text
+    /// 0x471791  call 0x46e140            ; 模块容器按 key 取"本局设置"那个模块
+    /// 0x4717b8  movzbl 0x32(%rax),%r14d  ; ★ 模块 +0x32 = function_mode（2 态）
+    /// 0x471806  mov %r14b,0x81(%rsp)     ; → 结算 config+0x39
+    /// 0x471825  call *0x9bacb0           ; = 0x3c2bc0 calculate_shot_results
+    /// 0x3c2d18  movzbl 0x39(%rax),%eax   ; 结算函数读回 config+0x39
+    /// 0x3c3091  movzbl 0x198(%rsp),%ecx  ; ★ 作为采样器第 7 实参（%ecx）传下去
+    /// 0x3c30c1  call *0x9bac98           ; = 0x3c2530 弦长采样器
+    /// 0x3c25f5  test %r15b,%r15b / 0x3c25f8 je 0x3c2923   ; 0 ⇒ Normal 分支，非 0 ⇒ RK4 分支
+    /// ```
+    ///
+    /// 写入者是 `FunctionModeInfo`(46) 的分支 `0x3e2b1b`（`mov BYTE PTR [r15+0x32],bpl`）——
+    /// 也就是说**模式是"本局设置"里的一个字节，由 46 号事件落值，开火时现读**，
+    /// 不是开火时的入参，也不是函数的性质（`docs/06` §33.2）。
+    ///
+    /// 极性：`0 = NormalFunction`、`非 0 = DiffEqFunction`（`docs/07` §5.2 的枚举判别值，
+    /// 与图标索引 `fx_option`/`dx_dy_option` = 0/1 一致）。
+    ///
+    /// `RoomState::function_mode` 是同一个值的**线上视图**（`FunctionModeInfo` 的字符串），
+    /// 两者由 [`Match::new`] 与 [`Match::set_function_mode`] 保持同步。
+    function_mode: FunctionMode,
     /// 已排队但还没到期的 `DestroyObstacle`：`(到期 tick, 报文原文)`。
     ///
     /// 实测延迟 ≈165 tick（2.75 秒），见 `docs/44`。
@@ -355,6 +382,75 @@ pub(crate) fn sampling_function_text(
 }
 
 // ---------------------------------------------------------------------------
+// 函数模式：`FunctionModeInfo`(46) → 采样模式（`docs/06` §33）
+// ---------------------------------------------------------------------------
+
+/// `FunctionModeInfo.function_mode` 的线上字符串 → [`FunctionMode`]。
+///
+/// 取值集合已穷举（`docs/07` §5.2：`NormalFunction` / `DiffEqFunction`，两个变体），
+/// 所以"认不出来的字符串"**不该出现**；这里按 `docs/136` §3 的老口径兜底成
+/// `NormalFunction`，并把这一点写在这里而不是散在调用方。
+pub fn function_mode_of(wire: &str) -> FunctionMode {
+    if wire == "DiffEqFunction" {
+        FunctionMode::DiffEqFunction
+    } else {
+        FunctionMode::NormalFunction
+    }
+}
+
+/// [`FunctionMode`] → 采样器的 [`Mode`]（两个枚举是**同一件事的两层**：
+/// 前者是线上/设置里的 2 态字节，后者是采样器的算法分支）。
+pub fn sampling_mode(function_mode: FunctionMode) -> Mode {
+    match function_mode {
+        FunctionMode::NormalFunction => Mode::Normal,
+        FunctionMode::DiffEqFunction => Mode::Ode,
+    }
+}
+
+/// **模式感知**的 `corrected_function`（真值**发出去**的那一串）。
+///
+/// * `Mode::Normal`：就是 [`corrected_function_text`]（补括号 + `" ± c.ddd"`）；
+/// * `Mode::Ode`（微分方程局）：**原文照发**，不加修正常数、**连补括号都不做**。
+///
+///   两条证据（都是观测）：
+///   1. 回放实测 **550 / 550 条** `corrected_function == function`（`docs/142` §3）；
+///   2. 语料里有 **2 批** DiffEq 函数**括号不平衡**（`1782760485` #0 缺 16 个 `)`、
+///      `1783013297` #0 缺 3 个），回放的 `corrected_function` 与原文**逐字节相同**、
+///      **没有**补任何 `)`。⇒ 微分方程局里"修正文本"这一步整个被跳过（不重新
+///      `to_text`），所以连补括号这个副产物也不出现。
+///      （先按"补括号与模式无关"实现时，正是这 2 批报 `C` 类不一致，改回原文即命中。）
+pub(crate) fn corrected_function_text_mode(
+    mode: Mode,
+    function_text: &str,
+    x0: f64,
+    y0: f64,
+    flip: bool,
+) -> String {
+    match mode {
+        Mode::Normal => corrected_function_text(function_text, x0, y0, flip),
+        Mode::Ode => function_text.to_string(),
+    }
+}
+
+/// **模式感知**的采样串（见 [`sampling_function_text`] 与
+/// [`corrected_function_text_mode`] 的两条规则）。
+///
+/// `Ode` 局采样**原文**（与发出去的那串是同一个）：修正文本这一步不执行，
+/// 采样器直接吃玩家写的函数原文（`dy/dx = f(x, y)` 的右侧）。
+pub(crate) fn sampling_function_text_mode(
+    mode: Mode,
+    function_text: &str,
+    x0: f64,
+    y0: f64,
+    flip: bool,
+) -> String {
+    match mode {
+        Mode::Normal => sampling_function_text(function_text, x0, y0, flip),
+        Mode::Ode => function_text.to_string(),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 同时回合制：一发的提交（收集阶段的产物）
 // ---------------------------------------------------------------------------
 
@@ -453,12 +549,16 @@ impl Match {
                 entity_effects.register_soldier(id, None);
             }
         }
+        // 函数模式从房间设置取（`RoomState::function_mode` 就是 `FunctionModeInfo` 的字符串），
+        // 与二进制"开火时读设置模块那个字节"同义：初始化读一次，之后由 46 号事件改。
+        let function_mode = function_mode_of(&room.function_mode);
         Match {
             room, obstacles, soldiers, tick_base, mask,
             next_effect_id: 236, teams, all_teams, turn_count: 0,
             targets: std::collections::BTreeMap::new(),
             turn_limit: None,
             turn_start_tick: 0, time_mode: "Timer1m".to_string(),
+            function_mode,
             pending_destroy: Vec::new(),
             turns: TurnManager::new(),
             functions: SoldierFunctions::new(),
@@ -489,6 +589,42 @@ impl Match {
     /// 当前的 AI 配置（测试用它断言"25 s 预算确实接上了"）。
     pub fn ai_config(&self) -> AiConfig {
         self.ai
+    }
+
+    /// 本局的函数模式保存值（[`Match::function_mode`] 那一段的证据）。
+    pub fn function_mode(&self) -> FunctionMode {
+        self.function_mode
+    }
+
+    /// **开火路径实际用的**采样模式：`Mode::Normal`（`y = f(x)`）或 `Mode::Ode`（RK4）。
+    pub fn sampling_mode(&self) -> Mode {
+        sampling_mode(self.function_mode)
+    }
+
+    /// `FunctionModeInfo`(46) 的落地点：写模式字节（二进制 `0x3e2b1b` 的
+    /// `mov BYTE PTR [r15+0x32],bpl`）。
+    ///
+    /// 同时同步 `room.function_mode`（线上视图），两者因此不会分叉：
+    /// `room.function_mode` 是**报文侧**的字符串，`function_mode` 是**开火侧**的字节。
+    ///
+    /// 接线层（回放对拍器 / 服务器）收到一条 `FunctionModeInfo` 就该调它一次；
+    /// 二进制里这个写手是**事件处理器**，不是开火函数——所以模式在一局里可以中途改，
+    /// 每次开火读的是**当时**的值。
+    pub fn set_function_mode(&mut self, function_mode: FunctionMode) {
+        self.function_mode = function_mode;
+        // 线上字符串取**逐位**那张名字表（`MODE_NAME_TABLE[0..2]` =
+        // `NormalFunction` / `DiffEqFunction`，`.data.rel.ro` 逐条解出），不在这里抄一份。
+        //
+        // ⚠ 别换成 `FunctionMode::name()`：crate 里有**两个** `FunctionMode`——
+        // 本字段用的是 `graphwar_mode_manager` 的那个（"本局设置"，46 号事件的落值对象）；
+        // `name()`/`icon_path()` 挂在 `graphwar_level_manager::FunctionMode`（关卡数据）上。
+        self.room.function_mode =
+            crate::graphwar_setup_control::MODE_NAME_TABLE[function_mode as usize].to_string();
+    }
+
+    /// 同上，吃线上字符串（`FunctionModeInfo.function_mode`）——给"重放输入流"的接线层用。
+    pub fn set_function_mode_wire(&mut self, function_mode: &str) {
+        self.set_function_mode(function_mode_of(function_mode));
     }
 
     /// 当前的函数槽表（`soldier_id → tokens`）。
@@ -1249,6 +1385,13 @@ impl Match {
     pub fn fire_functions(&self, shots: &[Submission<'_>]) -> Vec<ShotOutcome> {
         // ① 几何并行：先把每一发的弹道都算完，用的是**批开始时**的士兵表与掩膜。
         //    谁被打死**不影响**别人的弹道（士兵本就不挡弹道，`docs/30`）。
+        //
+        // **模式（`docs/06` §33）**：真值在**开火时**读"本局设置"那个字节
+        // （`0x4717b8` → config+0x39），结算函数把它原样转给采样器（`0x3c3091` → `%ecx`），
+        // 采样器 `test %r15b,%r15b` 分两支（`0x3c25f5` / `je 0x3c2923`）。
+        // 所以这里不是"新增一个入参"，而是**补上原来漏读的那个字节**：
+        // 缺了它，`DiffEqFunction` 局也在按 `y = f(x)` 采（515 批 / 550 发不可比）。
+        let mode = self.sampling_mode();
         let mut outcomes = Vec::with_capacity(shots.len());
         for s in shots {
             // 射手本人不参与致死判定 —— **这条规则现在在内核里**（`settle::resolve_owned`），
@@ -1276,14 +1419,14 @@ impl Match {
             // **括号处理**（2026-11 第二次修，`docs/06` §29）：原文的括号既可能少
             // （要补 `)`）也可能多（多出来的 `)` 会让我方 `parse` 截断、把追加的常数一起丢掉）。
             // 采样串与报文串因此不是同一个串，见 [`balanced_texts`]。
-            let corrected = sampling_function_text(s.function_text, s.x0, s.y0, s.flip);
+            let corrected = sampling_function_text_mode(mode, s.function_text, s.x0, s.y0, s.flip);
             let points = crate::graphwar_shot_calculator::shot_points(
                 &corrected,
                 s.x0,
                 s.y0,
                 crate::SERVER_STEP,
                 s.flip,
-                crate::graphwar_path_calculator::Mode::Normal,
+                mode,
                 false,
             );
             outcomes.push(resolve_points_owned(
@@ -1345,15 +1488,25 @@ impl Match {
         }
 
         // ---- 广播阶段 ----
+        // 模式在**本方法里也要读一次**：修正常数只在 `NormalFunction` 局加
+        // （`DiffEq` 局 `corrected_function == function`，550/550，`docs/142` §3），
+        // 挖洞点的重算同理（见 [`hole_point`] 的 `diff_eq` 参数）。
+        let mode = self.sampling_mode();
         // ① 按类型分组的前缀
         let mut msgs = vec![crate::_scaffold::protocol::emit_game_state("CalculatingResults")];
         for s in shots {
             // 发出去的是**只补括号、不删**的那一串（回放 `corrected_function` 逐字节同形）；
-            // 采样用的另一串见 [`balanced_texts`]。
+            // 采样用的另一串见 [`balanced_texts`]。`DiffEq` 局两个串都不带修正常数。
             msgs.push(crate::_scaffold::protocol::emit_function_info(
                 s.owner_id,
                 s.function_text,
-                Some(&corrected_function_text(s.function_text, s.x0, s.y0, s.flip)),
+                Some(&corrected_function_text_mode(
+                    mode,
+                    s.function_text,
+                    s.x0,
+                    s.y0,
+                    s.flip,
+                )),
             ));
         }
         for (s, out) in shots.iter().zip(outcomes.iter()) {
@@ -1391,7 +1544,7 @@ impl Match {
                 continue;
             }
             let (hx, hy) = hole_point(
-                self.room.function_mode == "DiffEqFunction",
+                mode == Mode::Ode,
                 s.function_text,
                 s.x0,
                 s.y0,
@@ -1485,6 +1638,114 @@ mod tests {
         let end = *pts.last().unwrap();
         assert_eq!(end.0.to_bits(), (-24.99612783676475_f64).to_bits());
         assert_eq!(end.1.to_bits(), (-4.323_f64).to_bits());
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 函数模式（`docs/06` §33）：模式来自 `FunctionModeInfo`(46)，开火路径现读
+    // ─────────────────────────────────────────────────────────────────────
+
+    fn diffeq_room() -> RoomState {
+        RoomState { function_mode: "DiffEqFunction".into(), ..room() }
+    }
+
+    /// 模式的两个来源必须同义：`Match::new` 读房间字符串；`FunctionModeInfo` 事件走 setter。
+    /// 极性 `0 = NormalFunction / 1 = DiffEqFunction`（`docs/07` §5.2 的枚举判别值）。
+    #[test]
+    fn function_mode_comes_from_the_room_and_from_the_info_event() {
+        let normal = Match::new(room(), vec![], vec![], (0, 0));
+        assert_eq!(normal.function_mode(), FunctionMode::NormalFunction);
+        assert_eq!(normal.sampling_mode(), Mode::Normal);
+        assert_eq!(normal.room.function_mode, "NormalFunction");
+
+        let mut m = Match::new(diffeq_room(), vec![], vec![], (0, 0));
+        assert_eq!(m.function_mode(), FunctionMode::DiffEqFunction);
+        assert_eq!(m.sampling_mode(), Mode::Ode);
+
+        // `FunctionModeInfo` 的落地：46 号事件写的是设置里的那个字节，
+        // 开着局也能改（二进制写手 `0x3e2b1b`，读者是**每次开火** `0x4717b8`）。
+        m.set_function_mode_wire("NormalFunction");
+        assert_eq!(m.function_mode(), FunctionMode::NormalFunction);
+        assert_eq!(m.sampling_mode(), Mode::Normal);
+        assert_eq!(m.room.function_mode, "NormalFunction", "线上视图必须同步");
+        m.set_function_mode(FunctionMode::DiffEqFunction);
+        assert_eq!(m.room.function_mode, "DiffEqFunction");
+
+        // 线上字符串 ↔ 枚举：判别值就是 `MODE_NAME_TABLE` 的下标（逐位）
+        assert_eq!(function_mode_of("NormalFunction"), FunctionMode::NormalFunction);
+        assert_eq!(function_mode_of("DiffEqFunction"), FunctionMode::DiffEqFunction);
+        assert_eq!(crate::graphwar_setup_control::MODE_NAME_TABLE[0], "NormalFunction");
+        assert_eq!(crate::graphwar_setup_control::MODE_NAME_TABLE[1], "DiffEqFunction");
+    }
+
+    /// 同一发函数在两种模式下的**点序列不同**，且微分方程局与采样器直调逐位相同。
+    ///
+    /// 这一条是"内核真的换了采样器"的证据：改之前 `fire_functions` 写死 `Mode::Normal`，
+    /// 两种局算出来的 `end_x` 一定一样（那是 515 批不可比的成因）。
+    #[test]
+    fn diffeq_room_samples_the_same_function_with_rk4() {
+        // `y` 作被积函数：Normal 下 `y = f(x)` 是一条水平线（`y` 是变量 = 0? 不，解析器把
+        // 未知变量当 0），Ode 下 `dy/dx = y` 从 y0 起指数增长 —— 两者几何完全不同。
+        let text = "y";
+        let (x0, y0, flip) = (0.0_f64, 1.0_f64, false);
+
+        let normal = Match::new(room(), vec![], vec![], (0, 0));
+        let ode = Match::new(diffeq_room(), vec![], vec![], (0, 0));
+        let shot = Submission { owner_id: 1, function_text: text, x0, y0, flip };
+
+        let pn = crate::graphwar_shot_calculator::shot_points(
+            &sampling_function_text_mode(Mode::Normal, text, x0, y0, flip),
+            x0, y0, crate::SERVER_STEP, flip, Mode::Normal, false,
+        );
+        let po = crate::graphwar_shot_calculator::shot_points(
+            &sampling_function_text_mode(Mode::Ode, text, x0, y0, flip),
+            x0, y0, crate::SERVER_STEP, flip, Mode::Ode, false,
+        );
+        assert_ne!(pn.len(), po.len(), "两种采样器的点数不该一样：{} vs {}", pn.len(), po.len());
+
+        // 内核路径必须与"直接拿 Mode::Ode 调采样器"逐位相同（不许再写死 Normal）
+        let on = normal.fire_functions(std::slice::from_ref(&shot))[0].stop;
+        let oo = ode.fire_functions(std::slice::from_ref(&shot))[0].stop;
+        assert_eq!(on.0.to_bits(), pn.last().unwrap().0.to_bits());
+        assert_eq!(on.1.to_bits(), pn.last().unwrap().1.to_bits());
+        assert_eq!(oo.0.to_bits(), po.last().unwrap().0.to_bits());
+        assert_eq!(oo.1.to_bits(), po.last().unwrap().1.to_bits());
+        assert_ne!(on.0.to_bits(), oo.0.to_bits(), "两条弹道的终点不该相同");
+    }
+
+    /// 微分方程局：`corrected_function` **原文照发**（不加 `± c.ddd`，也不补括号）。
+    ///
+    /// 证据（观测）：全语料 550 发 DiffEq 的 `corrected_function == function` 零例外；
+    /// 其中 2 发括号不平衡（`1782760485` / `1783013297`），回放**没有**补 `)` ⇒
+    /// 修正文本那一步整个被跳过（连补括号这个副产物也不出现）。
+    #[test]
+    fn diffeq_room_emits_the_function_text_verbatim() {
+        let mut m = Match::new(diffeq_room(), vec![], vec![], (0, 0));
+        // 括号不平衡：15 个 `(`、0 个 `)`（回放 `1782760485` 那条的形状）
+        let text = "222cos(555(9sqrt(5πe3545.745yexp(cos(tan(sqrt(ln(abs(sin(cos(tan(sqrt(526852984sqrt(sqrt(ln(sin(cos(2588";
+        let msgs = m.fire(1, text, 0.0, 1.0, false, 0);
+        let fi = msgs.iter().find(|s| s.starts_with(r#"{"FunctionInfo""#)).expect("应有 FunctionInfo");
+        let parsed = parse_message(fi).unwrap();
+        assert_eq!(get_str(&parsed, "corrected_function").as_deref(), Some(text), "DiffEq 必须原文照发");
+        assert_eq!(get_str(&parsed, "function").as_deref(), Some(text));
+
+        // Normal 局同一发会带修正常数（对照，证明这条测试不是空转）
+        let mut mn = Match::new(room(), vec![], vec![], (0, 0));
+        let msgs = mn.fire(1, text, 0.0, 1.0, false, 0);
+        let fi = msgs.iter().find(|s| s.starts_with(r#"{"FunctionInfo""#)).unwrap();
+        let corrected = get_str(&parse_message(fi).unwrap(), "corrected_function").unwrap();
+        assert_ne!(corrected, text, "Normal 局必须加修正常数");
+        assert!(corrected.len() > text.len());
+    }
+
+    /// 微分方程局挖洞点 = 停点（不重算）。Normal 局才会用印刷版修正文本回代。
+    #[test]
+    fn diffeq_room_hole_point_is_the_stop() {
+        let stop = (3.0, 4.0);
+        let text = "sin(x)";
+        assert_eq!(hole_point(true, text, 1.0, 0.0, false, stop), stop);
+        // Normal：`end_x` 相同、`y` 用修正文本重算（与 `diffconv::explosion_point` 同源）
+        let (hx, _hy) = hole_point(false, text, 1.0, 0.0, false, stop);
+        assert_eq!(hx.to_bits(), stop.0.to_bits());
     }
 
     pub(super) fn room() -> RoomState {
