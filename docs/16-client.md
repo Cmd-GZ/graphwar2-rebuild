@@ -7698,7 +7698,7 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so   # 不覆
 > 档位口径同 §40：**逐位** = 与真二进制逐字节/逐位对拍；**观测** = 能指到反汇编地址/指令级读写；
 > **推断** = 有依据未证；**未知** = 没解出来。`cargo test` / 本脚本的条数**只是回归保护**。
 
-### 41.1 本轮动了哪些文件
+### 42.1 本轮动了哪些文件
 
 | 文件 | 增/改 | 行数 | 内容 |
 |---|---|---|---|
@@ -7712,7 +7712,7 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so   # 不覆
 别的 `*_class.rs`、`client/src/**`、`dispatch/` **一行没动**；既有断言一条未改
 （`function_drawer_check.gd` 132 条、`draw_classes_check.gd` 235 条，复跑仍全过）。
 
-### 41.2 `0x456df0` 到底是什么（**观测**；`docs/02` §15.2.1 那行"推断"就地升级）
+### 42.2 `0x456df0` 到底是什么（**观测**；`docs/02` §15.2.1 那行"推断"就地升级）
 
 | 项 | 值 | 判据 |
 |---|---|---|
@@ -7745,7 +7745,7 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so   # 不覆
 ⇒ 一条曲线"在场"的窗口 = 揭示期（`len/30` 个 tick）+ **1800/30 = 60 tick** 的尾巴
 （那 60 tick 就是淡出窗，对应 `get_function_fade_on_tick`；那个函数**没有 x86 落点**，见 §42.5）。
 
-### 41.3 谁调 `update_function`、什么时候、传什么（**观测**，全 `.text` 唯一）
+### 42.3 谁调 `update_function`、什么时候、传什么（**观测**，全 `.text` 唯一）
 
 ```text
 objdump -d .reference/steam/2026-08-28/libgraphwarrust.so | grep -E 'call +(456df0|498c70|498b70|499050|4992b0) <'
@@ -7778,7 +7778,7 @@ objdump -d .reference/steam/2026-08-28/libgraphwarrust.so | grep -E 'call +(456d
   值取 3 个字节拼 `r9d`），两张表分别来自 `get_team_overview`（`0x4be6e0`）在 `0x4b5fd3` /
   `0x4b60e3` 的两次返回值（该函数全二进制 7 个直接调用者，`draw` 里 2 个）。
 
-### 41.4 落码：本类怎么接的
+### 42.4 落码：本类怎么接的
 
 | 原版 | 本类 | 档位 |
 |---|---|---|
@@ -7805,7 +7805,7 @@ GraphwarPlane.feed_functions() -> 本帧追加的点数
 `points` 是**扁平 f64 数组** `[x0,y0,x1,y1,…]`：原版的点就是两个 f64（16 B/点），
 用 `PackedVector2Array` 会在入口就掉到 f32。
 
-### 41.5 还没做 / 未知（诚实清单）
+### 42.5 还没做 / 未知（诚实清单）
 
 1. **点的生产者没复原**。`set_function_points`（`0x456810`）的调用者是 `0x3e44d4`
    （落在一个 70 项跳转表的事件分派函数里，前面 `0x3e44aa` 先调 `0x3cae50` 把点表按 x 区间
@@ -7833,7 +7833,7 @@ GraphwarPlane.feed_functions() -> 本帧追加的点数
    + `get_team_overview`，没有该调用）⇒ **谁让平面每帧重画未解**。
 7. `ObstacleDrawer` 仍不存在；`FunctionDrawer::draw`（arm64 `0x3911b4`）x86 侧仍未定位（§40.5 照旧）。
 
-### 41.6 验收（可从干净树重跑）
+### 42.6 验收（可从干净树重跑）
 
 ```text
 cargo build --offline --features gdext-bindings
