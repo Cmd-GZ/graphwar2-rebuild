@@ -203,13 +203,19 @@ impl EffectInfo {
 ///
 /// 原版是 `Rc<RefCell<GraphwarEffectManager>>`（arm64 分配 `0x60` 字节），
 /// 这里只保留**语义**：一张表 + 一个广播出口。
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct GraphwarEffectManager {
     effects: HashMap<u32, EffectData>,
     /// 广播出去的事件（对应原版的 `GraphwarEventQueue`；本 crate 用 `Vec` 承接）。
     pub outbox: Vec<Event>,
     /// 本模块订阅的事件名（只有一条）。
     pub subscribed: Vec<&'static str>,
+}
+
+impl Default for GraphwarEffectManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GraphwarEffectManager {
@@ -293,5 +299,64 @@ impl GraphwarEffectManager {
             self.effects.remove(id);
         }
         dead
+    }
+
+    /// `tick_event` 的处理（**唯一**订阅的处理器）：判别值必须是 0（`tick_event`），
+    /// 否则原版走 `explicit panic` 那一支——本层返回 `Err(())`。
+    ///
+    /// 语义 = 扫表回收（[`Self::tick`]，arm64 `0x40bdd4`）+ **不发事件**
+    /// （模块文档 §4：`tick` 体内没有 `add_event`）。`now` 取事件的 `+0x08`。
+    pub fn handle_tick_event(&mut self, tag: u16, now: u32) -> Result<Vec<u32>, ()> {
+        if tag != Event::TickEvent.wire_tag() {
+            return Err(());
+        }
+        Ok(self.tick(now))
+    }
+
+    /// 取走发件箱。
+    pub fn take_outbox(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// 发件箱里有几条。
+    pub fn outbox_len(&self) -> usize {
+        self.outbox.len()
+    }
+}
+
+#[cfg(test)]
+mod event_flow_tests {
+    use super::*;
+
+    /// 订阅方向：`new`（`0x519ba0`）只有一条 `subscribe`（`0x519ca5`，名字 `tick_event`，len `0xa`）。
+    #[test]
+    fn new_registers_the_single_observed_subscription() {
+        let m = GraphwarEffectManager::new();
+        assert_eq!(m.subscribed, vec!["tick_event"]);
+        assert_eq!(GraphwarEffectManager::default().subscribed, m.subscribed);
+        assert_eq!(m.outbox_len(), 0);
+    }
+
+    /// 发方向：`add_effect` 发 `EffectInfo`(44)；`tick` / `handle_tick_event` **不发**。
+    #[test]
+    fn add_effect_emits_but_tick_does_not() {
+        let mut m = GraphwarEffectManager::new();
+        m.add_effect(9006, (1.5, -2.5), EffectType::Death, 100);
+        assert_eq!(m.outbox, vec![Event::EffectInfo]);
+        assert_eq!(Event::EffectInfo.wire_tag(), 44);
+        // 读回写进去的值
+        let info = m.last_effect_info(9006).expect("刚写进去的特效");
+        assert_eq!((info.effect_id, info.pos_x, info.pos_y, info.start_tick), (9006, 1.5, -2.5, 100));
+        // 没到期：一条也不回收，也不发
+        let _ = m.take_outbox();
+        assert_eq!(m.handle_tick_event(Event::TickEvent.wire_tag(), 3699), Ok(vec![]));
+        assert_eq!(m.outbox_len(), 0, "tick 不发事件（模块文档 §4）");
+        assert!(m.get(9006).is_some());
+        // 到期：回收（start_tick + 3600 <= now）
+        assert_eq!(m.handle_tick_event(Event::TickEvent.wire_tag(), 3700), Ok(vec![9006]));
+        assert!(m.get(9006).is_none());
+        assert_eq!(m.outbox_len(), 0, "回收也不发事件");
+        // 判别值不对 ⇒ Err（原版 explicit panic 那支）
+        assert_eq!(m.handle_tick_event(1, 9999), Err(()));
     }
 }

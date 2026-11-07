@@ -74,8 +74,12 @@ const WIRED_TIER := [
 	"wired",
 	# 2  ClientConnectionHandler  112 B 的 9 个偏移全解，行为 0 行
 	"layout",
-	# 3-5  LocalPlayerManager / PlayerManager / SoldierManager
-	"assembled", "assembled", "assembled",
+	# 3  LocalPlayerManager
+	"assembled",
+	# 4  PlayerManager        订 2 发 2 + 6 条交互（任务 40）
+	"wired",
+	# 5  SoldierManager
+	"assembled",
 	# 6  PlanePosManager      24 B 布局未知（连文件都没有）
 	"stub",
 	# 7  GameStateManager
@@ -84,19 +88,27 @@ const WIRED_TIER := [
 	"layout",
 	# 9  TargetManager        订 2 发 1 + 5 条交互
 	"wired",
-	# 10 TeamManager
-	"assembled",
+	# 10 TeamManager         订 2 发 2 + 7 条交互（任务 40）
+	"wired",
 	# 11 LifeManager          订 3 发 2 + 5 条交互
 	"wired",
 	# 12 ObstacleManager      订 1 发 4 + 7 条交互
 	"wired",
-	# 13-22 TurnManager / Effect / Mode / Graphics / EntityEffect / ComputerPlayer /
-	#       FunctionHistoryRecorder / Name / Color / Rank
-	"assembled", "assembled", "assembled", "assembled", "assembled",
+	# 13 TurnManager          订 2 发 1 + 6 条交互（任务 40）
+	"wired",
+	# 14 EffectManager        订 1 发 1 + 7 条交互（任务 40）
+	"wired",
+	# 15 ModeManager          订 1 发 3 + 5 条交互（任务 40）
+	"wired",
+	# 16 GraphicsManager
+	"assembled",
+	# 17 EntityEffectManager  订 2 发 1 + 7 条交互（任务 40）
+	"wired",
+	# 18-22 ComputerPlayer / FunctionHistoryRecorder / Name / Color / Rank
 	"assembled", "assembled", "assembled", "assembled", "assembled",
 ]
 ## 四档现值计数（顺序固定：wired / layout / assembled / stub；合计 = 22）。
-const TIER_TALLY := {"wired": 4, "layout": 2, "assembled": 15, "stub": 1}
+const TIER_TALLY := {"wired": 10, "layout": 2, "assembled": 9, "stub": 1}
 ## 容器里**什么都没有**的两个槽（纯标记）：只有它们的 `manager_impl_type()` 回 `"—"`。
 const EMPTY_IMPL := ["GraphwarClientConnectionHandler", "GraphwarPlanePosManager"]
 ## 容器类型是 `_scaffold` 包装/标记的 5 个（`SlotKind::Stub`，**不是**档位 `stub`）；
@@ -206,7 +218,7 @@ func _initialize() -> void:
 		"assembled_manager_total() == %d（= 原版 22 条 add_module）" % WIRED.size())
 	# 17 + 5 = 22：17 个槽容器里直接装原版模块类型，5 个槽容器类型是 `_scaffold` 包装/标记
 	# （`SlotKind::RealType` / `SlotKind::Stub`，§41.2 的既有口径）。
-	# ⚠️ 这**不是档位**：档位是 4 wired + 2 layout + 15 assembled + 1 stub（见 `WIRED_TIER`）。
+	# ⚠️ 这**不是档位**：档位是 10 wired + 2 layout + 9 assembled + 1 stub（见 `WIRED_TIER`）。
 	# 两个口子的函数名（尤其 `container_stub_manager_count`）是 §41 遗留措辞，函数在
 	# `graphwar_root_node_class.rs`（本轮禁区），`docs/16` §47.6 记了这条待改。
 	ok(int(root_node.call("container_real_manager_count")) == WIRED.size() - PACKAGED.size(),
@@ -230,7 +242,7 @@ func _initialize() -> void:
 		and int(tally["layout"]) == int(TIER_TALLY["layout"])
 		and int(tally["assembled"]) == int(TIER_TALLY["assembled"])
 		and int(tally["stub"]) == int(TIER_TALLY["stub"]),
-		"四档计数 == wired 4 / layout 2 / assembled 15 / stub 1（实际 %s）" % tally)
+		"四档计数 == wired 10 / layout 2 / assembled 9 / stub 1（实际 %s）" % tally)
 	ok(int(tally["wired"]) + int(tally["layout"]) + int(tally["assembled"]) + int(tally["stub"])
 		== WIRED.size(), "四档合计 == %d（每个槽只报一档）" % WIRED.size())
 	ok(outside.is_empty(),
@@ -303,12 +315,12 @@ func _initialize() -> void:
 
 
 	# ------------------------------------------------------------------
-	# 2b) **一次最小交互后取回正确值**（2026-11 任务 19；docs/16-client.md §43）
+	# 2b) **一次最小交互后取回正确值**（任务 19 + 任务 40；docs/16-client.md §44 / §50）
 	#
 	# 上面 2) 那一段只证明"22 个槽都能按类型取回"——**取回来的是活对象**这件事，
 	# 得真调一个入口再读回来才算。这里用 `manager_probe_selftest()`（**我方自造**的
-	# 观测口，原版没有；理由见 §43）：它在容器里对 5 个 manager 各跑一遍
-	# "取回 → 写 → 读回"，返回 27 条 `名字=值`。
+	# 观测口，原版没有；理由见 §44）：它在容器里对 11 个 manager 各跑一遍
+	# "取回 → 写 → 读回"，返回 65 条 `名字=值`。
 	#
 	# ⚠️ 期望值**不是**从返回值抄下来的：它们逐条对应 `root_wiring.rs` 的单测
 	# `one_minimal_interaction_per_manager_reads_back_the_written_value`，
@@ -334,13 +346,32 @@ func _initialize() -> void:
 		"function.active_at_100=0", "function.active_at_200=0", "function.subs=0",
 		# ⑤ TickHandler：tick() 推进计数并发 TickEvent(0)
 		"tick.delta=1", "tick.event_tag=0", "tick.at_500ms=30", "tick.subs=1",
+		# ⑥ TurnManager（任务 40）：begin_turn → Announce → TurnInfo(43)
+		"turn.soldier=9023", "turn.flip=false", "turn.emitted=1", "turn.subs=2",
+		"turn.removed=true", "turn.present_after=false",
+		# ⑦ PlayerManager：add_player → connection_of；级联 ConnectionRemoved(6)
+		"player.conn=9025", "player.emitted=1", "player.subs=2", "player.replayed=3",
+		"player.cascade=true", "player.outbox=5",
+		# ⑧ TeamManager：add_to_team → get_team；pick_team(0x3c1b40)
+		"team.added=Team2", "team.counts=1,2", "team.pick=Team1", "team.subs=2",
+		"team.replayed=3", "team.removed=1", "team.outbox=5",
+		# ⑨ ModeManager：set_axis_mode(0x497dc8) → AxisModeInfo(45)；末尾复位
+		"mode.axis=2", "mode.replayed=3", "mode.restored=true", "mode.outbox=5",
+		"mode.subs=1",
+		# ⑩ EntityEffectManager：出生登记 → 死亡结算读回同一格
+		"entity_effect.kind=1", "entity_effect.emitted=1", "entity_effect.subs=2",
+		"entity_effect.replayed=1", "entity_effect.removed=true",
+		"entity_effect.after=true", "entity_effect.outbox=2",
+		# ⑪ EffectManager：add_effect → EffectInfo(44)；tick_event 到期回收不发声
+		"effect.kind=0", "effect.emitted=1", "effect.subs=1", "effect.due_early=0",
+		"effect.due_at=1", "effect.gone=true", "effect.outbox=1",
 	]
 	var probe: PackedStringArray = root_node.call("manager_probe_selftest")
 	print("      manager_probe_selftest() 给出 %d 条（期望 %d 条）" % [probe.size(), expected_probe.size()])
 	ok(probe == PackedStringArray(expected_probe),
-		"5 个 manager 的最小交互结果 == 27 条 名字=值（实际 %s）" % probe)
+		"11 个 manager 的最小交互结果 == 65 条 名字=值（实际 %s）" % probe)
 	ok(probe.size() == expected_probe.size(),
-		"交互条数 == 27（5 个 manager：5+5+7+6+4）")
+		"交互条数 == 65（11 个 manager：5+5+7+6+4 + 6+6+7+5+7+7）")
 
 	# 逐个 manager 各取一条最关键的值再查一遍（单条查询口）
 	ok(String(root_node.call("manager_probe", "life.alive")) == "1",
@@ -353,6 +384,31 @@ func _initialize() -> void:
 		"FunctionManager：set_function(VarX) 之后 get_function_text == \"x\"")
 	ok(String(root_node.call("manager_probe", "tick.delta")) == "1",
 		"TickHandler：tick() 让 current_tick 恰好 +1")
+
+	# —— 任务 40 的 6 个：每个一条"交互后取回正确值" + 一条事件流读数 ——
+	#
+	# ⚠️ 这些值同样是"写进去 → 从被写的那张表读回来"，不是常量：Rust 侧
+	# `the_new_read_back_values_track_the_written_state` 换输入读回值跟着变。
+	ok(String(root_node.call("manager_probe", "turn.soldier")) == "9023",
+		"TurnManager：begin_turn(玩家 9021, 士兵 [9022,9023]) 先自增再取 ⇒ 射手 9023")
+	ok(String(root_node.call("manager_probe", "turn.subs")) == "2",
+		"TurnManager：订阅 2 条（new_connection_event / entity_removed_event，0x4637fc / 0x46384d）")
+	ok(String(root_node.call("manager_probe", "player.conn")) == "9025",
+		"PlayerManager：add_player(9024,9025) 之后 connection_of(9024) == 9025")
+	ok(String(root_node.call("manager_probe", "player.cascade")) == "true",
+		"PlayerManager：该连接最后一人被删 ⇒ 级联 ConnectionRemoved(6)")
+	ok(String(root_node.call("manager_probe", "team.added")) == "Team2",
+		"TeamManager：add_to_team(9026, Team2) 之后 get_team(9026) == Team2")
+	ok(String(root_node.call("manager_probe", "team.pick")) == "Team1",
+		"TeamManager：分队规则 0x3c1b40（Σteam < Σ(team^1)）在 (1,2) 上仍是 Team1")
+	ok(String(root_node.call("manager_probe", "mode.axis")) == "2",
+		"ModeManager：set_axis_mode(EveryFive) 之后 axis_mode == 2（判别值 = 声明序）")
+	ok(String(root_node.call("manager_probe", "mode.restored")) == "true",
+		"ModeManager：probe 末尾复位，容器里的模式与调用前一致（幂等的前提）")
+	ok(String(root_node.call("manager_probe", "entity_effect.kind")) == "1",
+		"EntityEffectManager：register_soldier(空皮肤) 登记 DeathEffect(1)，死亡结算读回同一格")
+	ok(String(root_node.call("manager_probe", "effect.due_at")) == "1",
+		"EffectManager：start_tick=1000 ⇒ 4600 tick 到期回收（3600 是 EFFECT_LIFETIME_TICKS）")
 
 	# 反面对照（任务 28 重判）：这 5 个 `SlotKind::Stub` 槽的档位**跟着事实走**，
 	# 不再是清一色 `stub`——"能交互"不等于"复原了原版结构"，两件事分开记（§43 / §47）：

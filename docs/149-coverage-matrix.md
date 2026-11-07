@@ -84,8 +84,8 @@
 | `graphwar_computer_player_manager.rs` | 5 | 27 | `src/graphwar_computer_player_manager.rs` | 30 | 观测 |
 | `graphwar_crash_reporter.rs` | 0 | 0 | `src/graphwar_crash_reporter.rs` | 2 | 观测 |
 | `graphwar_draw_util.rs` | 1 | 4 | `src/graphwar_draw_util.rs` | 1 | 观测 |
-| `graphwar_effect_manager.rs` | 1 | 3 | `src/graphwar_effect_manager.rs` | 10 | 观测 |
-| `graphwar_entity_effect_manager.rs` | 3 | 4 | `src/graphwar_entity_effect_manager.rs` | 11 | 观测 |
+| `graphwar_effect_manager.rs` | 1 | 3 | `src/graphwar_effect_manager.rs` | 16 | 观测 |
+| `graphwar_entity_effect_manager.rs` | 3 | 4 | `src/graphwar_entity_effect_manager.rs` | 17 | 观测 |
 | `graphwar_event.rs` | 0 | 0 | `src/events.rs` | 2 | 观测 |
 | `graphwar_event_handler.rs` | 2 | 4 | `src/events.rs` | 2 | 观测 |
 | `graphwar_event_queue.rs` | 0 | 0 | `src/graphwar_event_queue.rs` | 5 | 观测 |
@@ -107,7 +107,7 @@
 | `graphwar_local_player_manager.rs` | 3 | 15 | `src/graphwar_local_player_manager.rs` | 12 | 观测 |
 | `graphwar_logger.rs` | 2 | 2 | `src/graphwar_logger.rs` | 4 | 观测 |
 | `graphwar_long_press_animation.rs` | 7 | 7 | `src/graphwar_long_press_animation.rs` | 11 | 观测 |
-| `graphwar_mode_manager.rs` | 2 | 6 | `src/graphwar_mode_manager.rs` | 7 | 观测 |
+| `graphwar_mode_manager.rs` | 2 | 6 | `src/graphwar_mode_manager.rs` | 15 | 观测 |
 | `graphwar_module_container.rs` | 20 | 1 | `src/graphwar_module_container.rs` | 17 | 观测 |
 | `graphwar_name_manager.rs` | 3 | 3 | `src/graphwar_name_manager.rs` | 10 | 观测 |
 | `graphwar_nodes.rs` | 11 | 1 | `src/graphwar_nodes.rs` | 17 | 观测 |
@@ -117,7 +117,7 @@
 | `graphwar_plane_pos_manager.rs` | 6 | 9 | `src/plane.rs` | 16 | 观测 |
 | `graphwar_play_screen_control.rs` | 10 | 64 | `src/graphwar_play_screen_control.rs` | 8 | 观测 |
 | `graphwar_player_config.rs` | 0 | 0 | `src/graphwar_player_config.rs` | 8 | 观测 |
-| `graphwar_player_manager.rs` | 3 | 6 | `src/graphwar_player_manager.rs` | 12 | 观测 |
+| `graphwar_player_manager.rs` | 3 | 6 | `src/graphwar_player_manager.rs` | 19 | 观测 |
 | `graphwar_player_screen_control.rs` | 8 | 22 | `src/graphwar_player_screen_control.rs` | 19 | 观测 |
 | `graphwar_rank_manager.rs` | 4 | 4 | `src/graphwar_rank_manager.rs` | 11 | 观测 |
 | `graphwar_remote_event_handler.rs` | 3 | 171 | `src/events.rs` | 2 | 观测 |
@@ -132,9 +132,9 @@
 | `graphwar_soldier_manager.rs` | 4 | 5 | `src/graphwar_soldier_manager.rs` | 15 | 观测 |
 | `graphwar_stream_buffer.rs` | 0 | 0 | `src/graphwar_stream_buffer.rs` | 22 | 观测 |
 | `graphwar_target_manager.rs` | 3 | 4 | `src/graphwar_target_manager.rs` | 12 | 观测 |
-| `graphwar_team_manager.rs` | 7 | 10 | `src/graphwar_team_manager.rs` | 24 | 观测 |
+| `graphwar_team_manager.rs` | 7 | 10 | `src/graphwar_team_manager.rs` | 31 | 观测 |
 | `graphwar_tick_handler.rs` | 2 | 3 | `src/graphwar_tick_handler.rs` | 36 | 逐位 |
-| `graphwar_turn_manager.rs` | 14 | 45 | `src/graphwar_turn_manager.rs` | 60 | 逐位 |
+| `graphwar_turn_manager.rs` | 14 | 45 | `src/graphwar_turn_manager.rs` | 70 | 逐位 |
 | `graphwar_video_writer.rs` | 3 | 4 | `src/graphwar_video_writer.rs` | 8 | 观测 |
 
 ### 2.2 非 `graphwar_` 前缀的游戏模块
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（109 个文件、2504 条 `fn`） | `9a2039270ddf93ca0949a40c849de63228e191b88128d0c0017b2f96cba1c3ff` |
+| `src/` 树（109 个文件、2553 条 `fn`） | `2f23d57357adab643888610282ebcea8388257e75709d856be6c48908e3e1359` |
 

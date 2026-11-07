@@ -95,6 +95,8 @@
 //!   `entity`，`docs/10` §13.5 记过"玩家没了 ⇒ 他的士兵各发一条 `entity_removed`"，
 //!   两件事只能靠"这张表的 key 是 player_id"这一条串起来 ⇒ **推断**。
 
+use crate::events::Event;
+
 /// `player_info_event` 的判别值。
 pub const EVENT_PLAYER_INFO: u16 = 13;
 /// `connection_removed_event` 的判别值（本模块**级联时发**）。
@@ -183,23 +185,63 @@ impl ConnectionRemoved {
 }
 
 /// `GraphwarPlayerManager` 的可判定状态：一张 `player_id → connection_id` 表。
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// # 事件流（任务 40 补，`wired` 的第二件）
+///
+/// `new`（x86 `0x455410`）订阅 [`SUBSCRIPTIONS`] 那两条（`观测`）：
+///
+/// ```text
+/// 0x45547c  lea rsi,'new_connection_event' / 0x45548a mov edx,0x14 / 0x455495 call subscribe
+///           r8 = slot 0x9568d0 (+0x20 = 0x9568f0 → 跳板 0x4553d0 → 0x455160 send_all_info_events)
+/// 0x4554cd  lea rsi,'entity_removed_event' / 0x4554db mov edx,0x14 / 0x4554e6 call subscribe
+///           r8 = slot 0x9568f8 (+0x20 = 0x956918 → 跳板 0x4553f0 → 0x455250 handle_entity_removed_event)
+/// ```
+///
+/// 发方向两条，与本模块文档 §3/§4 的 `逐位` 结论一致：`PlayerInfo`(13)（`add_player` 与
+/// `send_all_info_events`）、`ConnectionRemoved`(6)（`handle_entity_removed_event` 的级联）。
+/// 发件箱只记判别值，载荷仍由 [`PlayerInfo`] / [`ConnectionRemoved`] 返回。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GraphwarPlayerManager {
     /// `HashMap<u32, u32>`（`self + 0x18`；这里用有序表让断言稳定）。
     pub players: std::collections::BTreeMap<u32, u32>,
+    /// 订阅名（`new` 的两条，顺序 = 调用序，`观测`）。
+    pub subscribed: Vec<&'static str>,
+    /// 发件箱（判别值；载荷见 [`PlayerInfo`] / [`ConnectionRemoved`]）。
+    pub outbox: Vec<Event>,
+}
+
+impl Default for GraphwarPlayerManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GraphwarPlayerManager {
-    /// 新建空管理器（原版还会订阅 [`SUBSCRIPTIONS`] 两条事件）。
+    /// 新建空管理器 + 订阅 [`SUBSCRIPTIONS`] 那两条（原版 `new` 的同一件事）。
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            players: std::collections::BTreeMap::new(),
+            subscribed: SUBSCRIPTIONS.iter().map(|s| s.name).collect(),
+            outbox: Vec::new(),
+        }
     }
 
     /// `add_player(player_id, connection_id)`：写表 + 发一条 (13)。
     pub fn add_player(&mut self, player_id: u32, connection_id: u32) -> PlayerInfo {
         self.players.insert(player_id, connection_id);
+        self.outbox.push(Event::PlayerInfo);
         PlayerInfo { player_id, connection_id }
     }
+
+    /// `new_connection_event` 的处理（跳板 `0x4553d0` → `0x455160`，见类型文档）：整表重播。
+    ///
+    /// 返回值 = 重播出去的载荷（顺序 = 原版 `HashMap` 迭代序，**不可复现**；本层是有序表）。
+    pub fn handle_new_connection_event(&mut self) -> Vec<PlayerInfo> {
+        let events = self.send_all_info_events();
+        self.outbox.extend(events.iter().map(|_| Event::PlayerInfo));
+        events
+    }
+
 
     /// `send_all_info_events`：整表逐条发 (13)。
     ///
@@ -221,8 +263,19 @@ impl GraphwarPlayerManager {
         if still_here {
             None
         } else {
+            self.outbox.push(Event::ConnectionRemoved);
             Some(ConnectionRemoved { connection_id: conn })
         }
+    }
+
+    /// 取走发件箱。
+    pub fn take_outbox(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// 发件箱里有几条。
+    pub fn outbox_len(&self) -> usize {
+        self.outbox.len()
     }
 
     /// 查某玩家的连接 id。
@@ -282,5 +335,56 @@ mod inline_tests {
         );
         // 不存在的 id ⇒ 什么也不发。
         assert_eq!(m.handle_entity_removed_event(9), None);
+    }
+
+    // ---- 任务 40：事件流（订阅方向 + 发方向）----
+
+    /// 订阅方向：`new` 之后 `subscribed` 就是 `0x455410` 里那两条（顺序 = 调用序）。
+    #[test]
+    fn new_registers_the_two_observed_subscriptions() {
+        let m = GraphwarPlayerManager::new();
+        assert_eq!(m.subscribed, vec!["new_connection_event", "entity_removed_event"]);
+        assert_eq!(m.subscribed.len(), SUBSCRIPTIONS.len());
+        assert_eq!(GraphwarPlayerManager::default().subscribed, m.subscribed);
+        assert_eq!(m.outbox_len(), 0);
+    }
+
+    /// 发方向：写表 → `PlayerInfo`(13)；级联 → `ConnectionRemoved`(6)。
+    #[test]
+    fn outbox_tracks_the_two_emitters() {
+        let mut m = GraphwarPlayerManager::new();
+        m.add_player(1, 100);
+        assert_eq!(m.outbox, vec![Event::PlayerInfo]);
+        assert_eq!(m.outbox[0].wire_tag(), EVENT_PLAYER_INFO);
+        // 同连接还有一个人 ⇒ 删掉一个**不**级联 ⇒ 不发件箱
+        m.add_player(2, 100);
+        let _ = m.take_outbox();
+        assert_eq!(m.handle_entity_removed_event(1), None);
+        assert_eq!(m.outbox_len(), 0, "不级联就一条都不发");
+        // 最后一个 ⇒ 发一条 (6)
+        assert_eq!(
+            m.handle_entity_removed_event(2),
+            Some(ConnectionRemoved { connection_id: 100 })
+        );
+        assert_eq!(m.outbox, vec![Event::ConnectionRemoved]);
+        assert_eq!(m.outbox[0].wire_tag(), EVENT_CONNECTION_REMOVED);
+        // 不存在的 id ⇒ 不发
+        assert_eq!(m.handle_entity_removed_event(9), None);
+        assert_eq!(m.outbox_len(), 1);
+    }
+
+    /// `new_connection_event` 的处理 = 整表重播（跳板 `0x4553d0` → `0x455160`）。
+    #[test]
+    fn new_connection_replays_the_whole_table() {
+        let mut m = GraphwarPlayerManager::new();
+        m.add_player(1, 100);
+        m.add_player(2, 100);
+        let _ = m.take_outbox();
+        let replayed = m.handle_new_connection_event();
+        assert_eq!(replayed.len(), 2);
+        assert_eq!(replayed[0], PlayerInfo { player_id: 1, connection_id: 100 });
+        assert_eq!(m.outbox_len(), 2, "重播也要进发件箱");
+        assert!(m.outbox.iter().all(|e| e.wire_tag() == EVENT_PLAYER_INFO));
+        assert_eq!(m.connection_of(1), Some(100), "重播不改表");
     }
 }
