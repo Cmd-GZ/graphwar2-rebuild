@@ -53,5 +53,6 @@
 |---|---|
 | [151-addr-open-items.md](151-addr-open-items.md) | **地址级悬案清单**：哪些"未知"只差一步、下一步查什么、哪几条查了也定不了（含 6 条已裁定） |
 | [152-audit-of-merged-claims.md](152-audit-of-merged-claims.md) | **对已合并结论的对抗性审计**：独立复算 8 项、查出并就地更正 4 处（条件码 / 函数体尾 / 清单缺项 / 旁证推广） |
+| [153-audit-downstream.md](153-audit-downstream.md) | **下游两轮 14 份任务报告（CG 分支）的对抗性复算**：18 项，查出 2 处轴/口径错配 + 1 处反事实当结果（1074 属 `batch_conv` / 收敛层 198-291 是预测 / 134-259 复现不出来） |
 | [MIGRATION.md](MIGRATION.md) | **旧文件 → 归档/吸收** 的完整映射表（"没丢东西"的凭据） |
 | [guide/README.md](guide/README.md) | 攻略向行为手册（另一套读者：想赢的人） |

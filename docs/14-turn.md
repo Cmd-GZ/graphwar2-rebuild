@@ -1196,13 +1196,22 @@ d) 的子因（同一套工具输出）：
 
 | 口径 | before | after | 复现 |
 |---|---|---|---|
-| **真实代码路径**（`--drive batch`，`Match::execute_results` 发的报文） | **1 / 259** | **134 / 259**（51.7%） | 见 §12.7 第 2 步 |
-| 收敛层口径（`--drive conv`，§24.7 那根轴的同一 291 分母） | **66 / 291** | **198 / 291**（68.0%） | 见 §12.7 第 3 步 |
+| **真实代码路径**（`--drive batch`，`Match::execute_results` 发的报文） | **1 / 259** | **134 / 259**（51.7%）| 见 §12.7 第 2 步 |
+| 收敛层口径（`--drive conv`，§24.7 那根轴的同一 291 分母） | **66 / 291** | **198 / 291**（68.0%）| 见 §12.7 第 3 步 |
 | 不命中 225 批 → 四类 | — | a 0 / b 0 / c 0 / d 200 | 见 §12.7 第 3 步 |
+
+> ⚠️ **审计更正（[`docs/153`](153-audit-downstream.md) §1-B/§1-C，2026-11-07 夜独立复算）**：
+> **`after` 两列都不是"合并后代码跑出来的数"**，请按下面这行读：
+>
+> | 口径 | 合并后**实测** | 说明 |
+> |---|---|---|
+> | 真实代码路径 `--drive batch`（`8755db9e`） | **139 / 258** | §12.7 第 2 步可复跑；表里的 134/259 复现不出来（分母也不同） |
+> | 真实代码路径 `--drive batch`（master，含 `b49c3150` 括号修复） | **140 / 262** | 同上命令，`--drive fire` 轴是 139/262 |
+> | 收敛层 `--drive conv` | **66 / 291**（未变） | `198/291` 是 `tools/hole_axis_attrib.py` 的「**改成**「挖洞点 = 爆炸点」**以后**」，即**反事实预测**：本任务的修改只落在 `src/game.rs`，`_scaffold/diffconv.rs` 未改 |
 
 `cargo test --offline` 1514 通过（基线 1512 + 本次新增 2 条：
 `game::tests::hole_point_is_the_explosion_point_not_the_sampled_stop`、
-`game::tests::queued_and_expired_destroy_points_are_identical`）；
+`game::tests::queued_and_expired_destroy_points_are_identical`；现行基线 **1520**，见 README）；
 `python3 tools/coverage_matrix.py --check` OK。
 
 ### 12.6 仍然未知 / 缺什么证据
@@ -1224,7 +1233,8 @@ R=<ws>/.reference/replays/gw2-replays-snapshot/replays             # 只读语�
 # 1) 我方逐发几何（停点 / 爆炸点 / 挖洞点），产出 hole.jsonl
 cargo run --release --offline --example hole_axis_probe -- --dir $R --json $OUT/hole.jsonl
 
-# 2) 真实代码路径的"延迟段挖洞点命中"（Match::execute_results 的报文 → 1/259 → 134/259）
+# 2) 真实代码路径的"延迟段挖洞点命中"（Match::execute_results 的报文 → 实测 1/259 → 139/258，
+#    合并 b49c3150 之后 140/262；见 §12.5 的审计更正）
 cargo run --release --offline --example replay_attrib -- \
     --dir $R --drive batch --policy strict --json $OUT/batch.jsonl
 python3 tools/bit_exact_attrib.py --json $OUT/batch.jsonl

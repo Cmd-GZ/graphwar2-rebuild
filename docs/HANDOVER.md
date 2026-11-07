@@ -7,10 +7,13 @@
 ## 1. CG 是什么
 
 ```
-master     源码复原的主线（可构建、可验收）
-CG         派发与验收的工作分支：
-             dispatch/        任务书（每轮一批）+ 执行报告
-             docs/HANDOVER.md 本文件（CG 侧的运作说明）
+还原进度   **527 / 527 可归属函数 = 100%**（逐位 88 / 观测 439 / 推断 0）｜ 未做 0、未知模块 0
+协议       **74 / 74 全字段 + 74 / 74 判别值 + 7 个线上枚举全集**（已无未知）
+GDExtension 类   12 / 12 全部还原
+真名       327 个函数有原版方法名 + x86 地址（fixtures/name_to_addr.tsv）
+cargo      **1520 passed / 0 failed**（lib 464；`--features gdext-bindings` **1595**，lib 539）
+客户端自检   **694 passed / 0 failed**（前置：`client/assets/` + `examples/serve_match`；
+           缺资产是 591 / 2 / 23 —— 两个口径见 README「客户端自检的两个口径」）
 ```
 
 **CG 上不写产品代码。** 所有代码改动都来自 `agent/*` 分支，经合并进 `master` 后，
