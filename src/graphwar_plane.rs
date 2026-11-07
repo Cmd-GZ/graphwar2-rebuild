@@ -25,7 +25,7 @@
 //! 按重定位 + capstone 重扫给 `0x4b5df0`；`:218:129` 它给 `0x4b8bd0`，重扫给 `0x4b7a70`）。
 //! **2026-11-07 更正**：真因**不是** pkl 过期（`analysis/xrefs.pkl` 与本版 `.so` 逐条一致，
 //! 5301/5301），而是上面那个 `off2va` 平移；`tools/class_probe.py` 已修为 v2，
-//! 且新增 `tools/loc_xrefs.py`（只读 `.so`）。详见 `docs/16-client.md` §27.1。
+//! 且新增 `tools/loc_xrefs.py`（只读 `.so`）。详见 `docs/16-client.md` §24.1。
 //! 所以本文地址**全部**由本轮重扫得出；`fixtures/name_to_addr.tsv` 里那几行 `唯一锚`
 //! 与本轮结论一致，可交叉核对。
 //!
@@ -34,7 +34,7 @@
 //! `Control` 子类，棋盘本体：**画棋盘框**、**每帧驱动障碍绘制器**、**给障碍/士兵做脏矩形**、
 //! **持有 3 个 `FunctionDrawer` 子节点**（函数曲线画在子节点里，不在 `draw` 里）。
 //!
-//! 一次 `draw`（`0x4b5df0`）只调 **2 个** `CanvasItem` 图元（穷举见 `docs/16-client.md` §26）：
+//! 一次 `draw`（`0x4b5df0`）只调 **2 个** `CanvasItem` 图元（穷举见 `docs/16-client.md` §23）：
 //!
 //! | 图元 | GOT 槽 | 调用点 | 实参 | 档位 |
 //! |---|---|---|---|---|
@@ -43,7 +43,7 @@
 //!
 //! ⇒ **弹道不在这里**：`draw` 里 `draw_line` 的调用点 = **0**。
 //!
-//! # 2.1 那弹道在哪？（有界穷举的结果，详见 `docs/16-client.md` §26）
+//! # 2.1 那弹道在哪？（有界穷举的结果，详见 `docs/16-client.md` §23）
 //!
 //! 全二进制只有 **7 个函数**调用过任何 `CanvasItem` 绘图原语（逐 GOT 槽穷举，含
 //! `mov slot,%reg` + `call *%reg` 的寄存器间接形态）：`EntityDrawer::draw`、
@@ -422,7 +422,7 @@ pub const DRAW_LINE_SLOT: u64 = 0x9bc228;
 
 /// `GraphwarPlane::draw` 里 `draw_line` 的调用点数 = **0**（有界否定的结论）。
 ///
-/// 详见 `docs/16-client.md` §26。
+/// 详见 `docs/16-client.md` §23。
 pub const DRAW_LINE_CALLS_IN_PLANE: usize = 0;
 
 // ---------------------------------------------------------------------------
@@ -485,7 +485,7 @@ pub type NodeRef = u64;
 #[derive(Clone, Debug, Default)]
 pub struct GraphwarPlane {
     /// 3 个 `FunctionDrawer` 子节点（[`FUNCTION_DRAWER_CHILDREN`]，`init` 观测）。
-    /// 函数曲线由它们画，**不在** `draw` 里（`docs/16-client.md` §26）。
+    /// 函数曲线由它们画，**不在** `draw` 里（`docs/16-client.md` §23）。
     pub function_drawers: Vec<NodeRef>,
     /// 障碍绘制器（每帧 [`OBSTACLE_DRAWER_UPDATES_PER_FRAME`] 次，`process` 观测；
     /// `init` / drop glue 里出现 `ObstacleDrawer` 也印证本类持有它）。

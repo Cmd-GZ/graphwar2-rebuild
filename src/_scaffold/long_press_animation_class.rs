@@ -26,7 +26,7 @@
 //! # 一处**就地更正**：被调的 API 是 `draw_arc`，不是"矩形"
 //!
 //! 纯逻辑模块的 §0 写的是"画**两层矩形**（黑底 + 白层）"，§6 把被调 API 记为**未知**。
-//! 本文件按 `docs/16-client.md` 的 GOT 槽表（§26 之后那张「绘制 API → 包装 → 槽」表，
+//! 本文件按 `docs/16-client.md` 的 GOT 槽表（§23 之后那张「绘制 API → 包装 → 槽」表，
 //! 行 `draw_arc | 0x19f9d0 | 0x8abca0 | 0x9bc020 | 5 | EntityDrawer::draw ×3 +
 //! GraphwarLongPressAnimation::draw ×2`）把它落成 **`CanvasItem::draw_arc`**：
 //!
@@ -83,7 +83,7 @@
 //!   draw_call_count() / process_call_count() / arc_total() / finished_count() -> int
 //! ```
 //!
-//! # 写这种类必须知道的几条（`docs/16-client.md` §38.4 实测过，这里只记与本类有关的）
+//! # 写这种类必须知道的几条（`docs/16-client.md` §34.4 实测过，这里只记与本类有关的）
 //!
 //! 1. **`base_mut()` 是独占借用**（`BaseMut<'_, Self>` 握着 `&mut self`）⇒ 画东西那段里
 //!    不能写 `self.arc_total += 2`（`E0499`）。本类把计数放在 `base` 作用域**之后**。

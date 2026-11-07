@@ -6,7 +6,7 @@
 //! 再 `ImageTexture::create_from_image` 上传，挂到**自己建的 `Sprite2D`** 上，
 //! 最后按平面 `Control::get_size()` 设 `position` / `scale`。
 //! ⇒ 障碍物是**节点 + 纹理**，和 `entity_drawer`（士兵）、`function_drawer`（曲线）同一个设计取向：
-//! 图元只有 7 个函数会用（`docs/16-client.md` §26.4 的有界穷举），本模块**不在**那 7 个里。
+//! 图元只有 7 个函数会用（`docs/16-client.md` §23.4 的有界穷举），本模块**不在**那 7 个里。
 //!
 //! # 函数表（arm64 2.0.60 未 strip）
 //!
@@ -63,7 +63,7 @@
 //! **分工（观测 + 推断，分开写）**：
 //!
 //! * **脏矩形在 `graphwar_plane` 手里**，不在本模块：`PixelRect` / `obstacle_rect` /
-//!   `obstacle_partial_update_event` 三个东西的落码与证据见 `docs/16-client.md` §26.7。
+//!   `obstacle_partial_update_event` 三个东西的落码与证据见 `docs/16-client.md` §23.7。
 //!   本模块 6 个 Location（`:51 :62 :92 :113 :120 :128`）里**没有一个**在做"矩形运算"
 //!   —— 它们全是 `unwrap`/断言类失败路径。
 //! * **谁决定重画哪块**：`GraphwarPlane::obstacle_partial_update_event`（x86 `0x4be3e0`）
@@ -115,7 +115,7 @@ pub const FUNCTIONS: [Func; 2] = [
         arm64_len: 1336,
         x86: 0x004b_7380,
         x86_len: 1776,
-        how: "Location :37:97 双向唯一（docs/16-client.md §26.2 的 init 行）",
+        how: "Location :37:97 双向唯一（docs/16-client.md §23.2 的 init 行）",
     },
 ];
 

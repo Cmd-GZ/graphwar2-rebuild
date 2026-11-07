@@ -1,7 +1,7 @@
 //! 原版 `src/graphwar_event_queue.rs` —— **全游戏的发件箱**（"为什么它不在 25 个
 //! manager 的注册表里"的答案）。
 //!
-//! ## 定案（2026-11-07，`docs/16-client.md` §33.3）
+//! ## 定案（2026-11-07，`docs/16-client.md` §30.3）
 //!
 //! 它**不是 manager**，所以不在 `GraphwarModuleContainer` 那张
 //! `HashMap<TypeId, Rc<dyn Any>>` 里（`docs/02-module-map.md` §22）。

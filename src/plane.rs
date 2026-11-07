@@ -9,7 +9,7 @@
 //! - **掩膜**：`0x4f15b0`（`graphwar_obstacle_manager.rs`）里的伪代码，
 //!   `idx = py*1000 + px`、`mask[idx] != 0xFF`、越界算命中。
 //!
-//! 详见 `docs/08-plane.md` §4 与 §6；搬家理由见 `docs/16-client.md` §26。
+//! 详见 `docs/08-plane.md` §4 与 §6；搬家理由见 `docs/16-client.md` §23。
 
 /// 画布宽度（像素）。
 pub const CANVAS_W: u32 = 1000;

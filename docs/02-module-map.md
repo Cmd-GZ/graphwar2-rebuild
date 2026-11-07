@@ -777,7 +777,7 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 | `graphwar_server_connection_handler.rs`（6/24） | `src/server.rs` | `docs/33`（新连接 7 条状态同步逐字节一致）；`docs/112` §15.3 指出建事件名数组的 `0x4500c0` 就在本模块。⚠ `server.rs` 里还有 `on_tick_request`（tick 应答）→ 见 §17.4 | `混装（待拆）` |
 | `graphwar_plane.rs`（10/19） | `src/plane.rs` | `docs/08/39`（掩膜光栅化与 `is_occupied` 逐字节 / 300 随机点一致）；`px = x*1000/50 + 500` 来自 `0x4be3e0`。⚠ 同文件还含 plane_pos_manager 与（疑似的）obstacle_manager 内容 → §17.4 | `混装（待拆）` |
 | `graphwar_plane_pos_manager.rs`（6/9） | `src/plane.rs` | `docs/140`：`px = 20x + 500` 由常量反查得出。⚠ 本模块的锚函数在 `0x3c7330…0x3c7cb0`（与 path_calculator / shot_calculator 同区段），与 `plane.rs` 里那条换算**没有**做过函数级对齐 ⇒ "plane.rs 属于本模块"是**推断** | `混装（待拆）` |
-| `graphwar_obstacle_manager.rs`（8/10） | `src/plane.rs`（只有掩膜部分） | **2026-11-07 更正（`docs/16` §27.4 第 1/1b 行）**：本模块的锚函数是 **10 个** —— `0x3c2bc0 0x3ee190 0x3f11e0 0x3f15b0 0x3f17a0 0x3f19a0 0x3f1b30 0x3f1d30 0x3f20f0 0x3f2360`（= `fixtures/module_funcs.tsv` 本模块 10 行）。旧文那 4 个（`0x3c64c0/0x3f00b0/0x3f2480/0x3f27d0`）是 `class_probe` v1 的 `+0x1000` 平移 artifact。**旧「两处证据冲突」可结案**：`0x4f15b0` 是 Ghidra 口径，其 ELF 虚地址 `0x3f15b0` **就是**本模块锚函数之一；所谓冲突是地址空间混用 + v1 平移共同造成的。`docs/08/39` 覆盖的光栅化 / `is_occupied`（摧毁 = 挖 r=0.5 洞）不变。障碍的生成与生命周期仍未落码 | `混装（待拆）` |
+| `graphwar_obstacle_manager.rs`（8/10） | `src/plane.rs`（只有掩膜部分） | **2026-11-07 更正（`docs/16` §24.4 第 1/1b 行）**：本模块的锚函数是 **10 个** —— `0x3c2bc0 0x3ee190 0x3f11e0 0x3f15b0 0x3f17a0 0x3f19a0 0x3f1b30 0x3f1d30 0x3f20f0 0x3f2360`（= `fixtures/module_funcs.tsv` 本模块 10 行）。旧文那 4 个（`0x3c64c0/0x3f00b0/0x3f2480/0x3f27d0`）是 `class_probe` v1 的 `+0x1000` 平移 artifact。**旧「两处证据冲突」可结案**：`0x4f15b0` 是 Ghidra 口径，其 ELF 虚地址 `0x3f15b0` **就是**本模块锚函数之一；所谓冲突是地址空间混用 + v1 平移共同造成的。`docs/08/39` 覆盖的光栅化 / `is_occupied`（摧毁 = 挖 r=0.5 洞）不变。障碍的生成与生命周期仍未落码 | `混装（待拆）` |
 | `graphwar_ad_switch.rs`（6/3） | — | `docs/19`/`docs/132`：判据只有 `are_ads_enabled() = !owned`；AdMob 在 `.gdc` 插件侧 | `未实现` |
 | `graphwar_audio_control.rs`（7/16） | — | `docs/111`：SoundHandler / `-15f` / `-5f` / 32767 归一化已还原，但没接进 `src/`（`client/` 是仿制） | `未实现` |
 | `graphwar_backend.rs`（6/12） | — | `docs/19` §3：联机层**不是**广告；读出 15 个方法名（`start_server` / `lan_broadcaster` / `broker`…），不是 Godot 类 | `未实现` |
@@ -825,8 +825,8 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 
 | 原版模块（函数/锚点） | 我们的文件 | 依据（锚点 / 函数名 / 文档） | 状态 |
 |---|---|---|---|
-| `math_function.rs`（7/15） | `src/math_function.rs` + `src/math_function/to_text.rs` | **2026-11-07 更正（`docs/16` §27.4 第 2 行）**：`math_function.rs:285:28` 全库唯一引用指令是 `0x4ece8f` ⇒ 属 **`0x4ec160`**（`to_string`）；解析器 `0x4ed670` 自己引的是 `math_function.rs:75:10`（另有一条 regex 池 `350:17`）。旧文那句是 `class_probe` v1 的 `+0x1000` artifact（`0x4ece8f + 0x1000 = 0x4ede8f` 被归给了 `0x4ed670`）。求值器 `0x4eb9d0` 与它同层；token → 文本 `0x4ec160` 的 panic 分支同样引 `math_function.rs:285:28`（`docs/119` §4.6，指令级）。原目录 `function/`。**同一个原版文件**，我方按"解析/求值"与"反向打印"拆两份。另见 `polish_notation_converter.rs` 的正名（本轮更正） | `一一对应` |
-| `polish_notation_converter.rs`（1/2） | — | **2026-11-07 再更正**：本模块的锚函数是 **`0x4f5450`**（引用指令 `0x4f5789` / `0x4f577c`，`docs/16` §27.4 第 3 行），不是 `0x4f57d0` —— 后者是 `class_probe` v1 的 `+0x1000` artifact。**也不是** `0x4ec160`（那是 `to_string`）。旧矩阵把 `src/math_function/to_text.rs` 记在这里 —— 但 `0x4ec160` 的 panic 分支引的是 `math_function.rs:285:28`（`docs/119` §4.6），按锚点应归 `math_function.rs`。⇒ `to_text.rs` 移到 `src/math_function/`，本模块改记 `未实现` | `未实现` |
+| `math_function.rs`（7/15） | `src/math_function.rs` + `src/math_function/to_text.rs` | **2026-11-07 更正（`docs/16` §24.4 第 2 行）**：`math_function.rs:285:28` 全库唯一引用指令是 `0x4ece8f` ⇒ 属 **`0x4ec160`**（`to_string`）；解析器 `0x4ed670` 自己引的是 `math_function.rs:75:10`（另有一条 regex 池 `350:17`）。旧文那句是 `class_probe` v1 的 `+0x1000` artifact（`0x4ece8f + 0x1000 = 0x4ede8f` 被归给了 `0x4ed670`）。求值器 `0x4eb9d0` 与它同层；token → 文本 `0x4ec160` 的 panic 分支同样引 `math_function.rs:285:28`（`docs/119` §4.6，指令级）。原目录 `function/`。**同一个原版文件**，我方按"解析/求值"与"反向打印"拆两份。另见 `polish_notation_converter.rs` 的正名（本轮更正） | `一一对应` |
+| `polish_notation_converter.rs`（1/2） | — | **2026-11-07 再更正**：本模块的锚函数是 **`0x4f5450`**（引用指令 `0x4f5789` / `0x4f577c`，`docs/16` §24.4 第 3 行），不是 `0x4f57d0` —— 后者是 `class_probe` v1 的 `+0x1000` artifact。**也不是** `0x4ec160`（那是 `to_string`）。旧矩阵把 `src/math_function/to_text.rs` 记在这里 —— 但 `0x4ec160` 的 panic 分支引的是 `math_function.rs:285:28`（`docs/119` §4.6），按锚点应归 `math_function.rs`。⇒ `to_text.rs` 移到 `src/math_function/`，本模块改记 `未实现` | `未实现` |
 | `entity_drawer.rs`（14/36） | `src/entity_drawer.rs` | `EntityDrawer::draw` = vaddr `0x4b2890`（GOT 槽 + `.rela.dyn` 定位 `draw_arc`/`draw_polygon` 六个调用点）；每条常量都标了 `.rodata` 槽与指令地址（`docs/140`）。⚠ 只覆盖 `draw` 一个函数，本模块另有 13 个锚函数未做；且我方只还原到"图元清单"层（不复现 gdext 调用） | `一一对应（部分）` |
 | `effect_drawer.rs`（11/17） | — | `docs/02 §2` 确认是游戏自己的特效绘制模块；无实现 | `未实现` |
 | `axis_drawer.rs`（6/3） | — | `docs/88` §7 记录了 AxisMode 的 4 个取值；绘制本体未落码 | `未实现` |
@@ -2947,7 +2947,7 @@ get_module_wk<M>(container: &Weak<RefCell<Self>>)        arm64 0x4a20a4
 |---|---|---|
 | 「`weak_caller.rs`（`dep`，39 个函数）是第三方依赖库，不算游戏代码」（§17 表、`docs/149`、`docs/coverage-matrix.tsv` 的 `scope=dep`） | 是 **crate 内模块**（`graphwarrust::weak_caller::…`），且**不是** 39 个函数的「库」，是 2 个泛型方法的 39 个单态化 | §18.7 + §34.4 |
 | 「`weak_caller` 是 **1** 个泛型方法 `call`（27 个 direct 符号）」 | **2** 个方法 `call` / `call_0`；`call` 本身再按 `(T, A, F)` 单态化。27 这个数是某次按 `call` 名字前缀数出来的，漏了 `call_0` 的 14~16 个 | §34.4 的两块地址区间 |
-| 「`weak_caller.rs` 有 **40** 个归属函数」（`fixtures/module_map.tsv`、`docs/16-client.md` §27 的「13 个模块没有 fixture 兜底」表（该表把本模块记成 `gdext 侧模块`，同样要改）、`docs/149`） | **39** 个单态化 + **1** 个内联了 `call` 的调用者（`0x3d4fa0`，属 `graphwar_game_recorder.rs`） | §34.7 第 2 条 |
+| 「`weak_caller.rs` 有 **40** 个归属函数」（`fixtures/module_map.tsv`、`docs/16-client.md` §24 的「13 个模块没有 fixture 兜底」表（该表把本模块记成 `gdext 侧模块`，同样要改）、`docs/149`） | **39** 个单态化 + **1** 个内联了 `call` 的调用者（`0x3d4fa0`，属 `graphwar_game_recorder.rs`） | §34.7 第 2 条 |
 | 「`weak_caller.rs` 有 **37** 个函数（2024-07-30 符号表）」（§18 A 表） | 那一版确实是 37（22 `call` + 15 `call_0`）；**2.0.60 是 35**（21 + 14）——两年里少了一型的两条 | `readelf -sW` 逐条数 |
 | 「`weak_caller` 的闭包落在 `weak_caller.rs:11–17`，所以它是 gdext 绑定胶水」（§18 表注） | 11–17 是**两个 `borrow_mut`** 的行号，不是「胶水」的证据；它是**弱自句柄工具**，与 gdext 无关（不进 `__register_methods` / `__virtual_call` 任何一条链） | §34.2 / §34.8 |
 
@@ -3130,3 +3130,230 @@ awk -F'\t' '$1 ~ /calculate_paths/' fixtures/sym_match.tsv
   为什么只有这么多解释、没有机理证明，`推断`。
 * **ICF 的判定是"逐条同构"的手工对齐**，没有做成工具规则：`_contained` 只比字面量/常量集合
   与体量，不比指令序列。真正的 ICF 判定要逐指令归一化后比，本轮没做。
+
+---
+
+## 36. 多候选定夺 + 无候选归因（2026-11，接 §35）
+
+> 编号说明：§23–§33 留给同时落地的其它模块，本节按预分配取 **36**，接在 §35 后面。
+> 工具：`tools/sym_match.py`（`build` / `report [--name]` / `--verify`）；
+> 产物：`fixtures/sym_match.tsv`（1,300 行，已入库，可逐行复核）；
+> 回归断言：`tests/sym_match.rs`（一致性断言，**不是复原证据**，见 `AGENTS.md` §0.2）。
+
+### 36.0 必须先说的一件事：入库的夹具**不能**由入库的工具重跑复现（观测）
+
+本轮第一件事是照 §35.8 重跑一遍 `build`，结果与入库夹具**不一致**：
+
+| 口径 | unique | weak | 唯一合计 | multi | none | split | merge |
+|---|---|---|---|---|---|---|---|
+| 入库夹具（§35 的数字） | 655 | 78 | **733** | 63 | 444 | 35 | 25 |
+| 同一份代码重跑 | 656 | 79 | **735** | 66 | 443 | 33 | 23 |
+
+逐行比：**38 行不同，其中 14 行连结论类别都不一样**。举两个：
+
+* `0x43d748`（`EffectDrawer::…::{{closure}}`）与 `0x43d930`（同级闭包）在两次生成里**互换**了
+  x86 地址（0x4e2a30 ↔ 0x4e2d50）——就是 §35.5 说的"闭包与母函数互换"那一类。
+* `0x3da9bc`（`GraphwarTargetManager::subscribe_to_events_event_handler`）入库时是
+  `unique 0x3d86a0`，重跑是 `none`。
+
+**这不是随机性**：4 个不同的 `PYTHONHASHSEED`（0 / 1 / 7 / 12345）+ 连续两次运行，
+输出**逐字节相同**。所以只能是**夹具与工具不同步**（夹具是开发过程中某一版代码的产物，
+后来工具改过、没有再生成）。结论：
+
+* **733 这个数字不可逐位复现**；本轮所有"改动前 / 改动后"的比较都用**同代码重跑**的 735，
+  同时给出 733 口径，两个都写。
+* 顺手修掉两个会让这个问题继续复发的坑（都在 `tools/sym_match.py`）：
+  ① 缓存 key 只有 `tag + 二进制大小`，**没有版本号**——改了特征提取逻辑会静默吃旧缓存
+     而不报错。现在 key 里带 `CACHE_VERSION`（本轮 `v4-bsig`）。
+  ② `analysis/funcstarts_ghidra_va.pkl` 的路径写死成 `GW2/analysis/…`，在
+     `.agent-work/<topic>/wt-NN/` 这种工作区里跑 `build` 直接 `FileNotFoundError`。
+     现在按 `GW2_FUNCSTARTS` → 逐级上溯 `analysis/` → `.reference/upstream/analysis/` 找。
+
+### 36.1 一句话结论 + 四问四答
+
+| 问题 | 结论 | 档位 |
+|---|---|---|
+| **(a) 多候选定夺** | 多候选 **63 → 37**；其中**定下 26 条**（`modblock` 17 + `score` 9，逐条带 `arbi=` 证据）。**唯一数 733 → 762**（同代码基线 735 → 762，**+27**）。另有一条 `merge` 行的候选被裁决后转成唯一、两条「抢同一个 x86 槽」的行按单射要求记成 `merge`（§36.7）。**没到 +30**，差的见 §36.4 / §36.7 | **观测** + **推断**（每条裁决的证据都写进 `arbi=` 段） |
+| **(b) 自校验** | `--verify` 从 **78.7%（222/282）→ 86.2%（243/282）**；召回 89.0% 不变；精确 94.9% 不变。**仍 < 90% 门槛，退出码 1**。多候选→唯一、且有唯一锚可判的 **21 条全部正确（0 错）**；verify 的"唯一候选是错的"从 16 变 17，多的那 1 条是 `0x3dae34`（TargetManager::new）：别的行把它的 5 个候选抢掉 4 个、只剩 `0x5186c0`，而真值是 `0x465910` —— 它不是裁决出来的，是候选集被压缩后剩下的，现在是 `merge;dup_claim` | **观测** |
+| **(c) 444 个无候选** | `icf` **0** / `inlined` **6** / `tiny` **172** / `data` **0** / `other` **266**，加起来 **444**。`other` 内部：`no_feature` 207 / `pfx_only` 55 / `feature_no_fit` 4 | `tiny`/`no_feature` 是**观测**（体量、特征集合都能量）；`inlined` 是**推断** |
+| **(d) 被否掉的通道** | §35.9 建议的"`.data.rel.ro` vtable 槽顺序当独立约束"——**实测不成立**：两张架构的表内槽序**不一致**（§36.3） | **观测** |
+
+### 36.2 两条裁决规则，以及为什么这不算"猜"
+
+§35 的硬规则是"多候选就把全部候选列出来，不挑一个"。本轮加的是**受限裁决**：
+只在"结构事实**唯一**"时收窄，仍然不给任何一条编候选。
+
+**R1 `modblock`——模块块整体指派**
+
+一个 graphwar 模块的 `panic::Location` 文件名是一个**精确**的 `&'static str` 槽
+（`src/graphwar_life_manager.rs` 这类）。"引用这个文件名的函数"在两侧都可枚举，
+于是整块可以**一起**指派。采纳条件（全部满足）：
+
+1. 两侧成员数相等，或差 ≤1（差 1 = 恰好一个成员在 x86 侧没有独立副本）；
+2. 用**体量比 / 指令数比 / 罕见字面量 / f64 / 已配对邻居一致**打分，位掩码 DP 求最优指派；
+3. **最优解恰好 1 个**（DP 数出来），且**与"模块内地址序号对齐"给出同一答案**（两条独立规则互证）；
+4. 每一对都落在**实测同源区间**（体量比 0.61–1.19、指令数比 0.70–1.45）；
+5. 本模块的 x86 成员**被块外函数占用 ≤1 个**（>1 个说明两侧集合已经不一一对应，整块放弃，
+   实测就靠这条挡住了 `graphwar_team_manager`：7 对 7，但真值落在两个已被别人占用的槽上，
+   不设这条会**整块平移一位**、给出 4 条错答案）。
+6. 需要"跳过一行"（两侧差 1）时，枚举跳过位置；**只有一个位置**能让其余各行全部落在同源区间；
+   若有多个位置，再要求结构得分的第一名领先第二名 ≥1.0。
+
+**R2 `score`——候选集内唯一最高分**
+
+只在**已经存在的候选集**里比（不新增候选）：最高分与次高差 ≥1.0，且至少有一条
+**强特征**（罕见精确字面量 / f64）或 ≥2 条已配对邻居一致。另加两条保护：
+
+* **争用保护**：两行的首选是同一条 x86 槽、得分又拉不开 ≥3.0 时，**两条都留 multi**（谁上都是赌）。
+* **整组指派**：互相抢槽的那几行（≤4 行、≤8 槽）整组枚举单射，最优解唯一且领先 ≥1.0 才采纳。
+* **迭代**：一行认领后，别的行的候选集少一个竞争项，原来"差一点"的裕度可能变清楚，所以跑到收敛。
+
+**两条规则都只填空**（绝不改已有配对），且保持**单射**（一个 x86 只能被一个 arm64 认领；
+`tests/sym_match.rs::unique_answers_are_injective` 会立刻抓住漏网）。
+
+**独立验证（这是本节最该被复核的部分）**：把规则套在**已经有结论的 389 条"multi 型"行**上
+（把它们自己的配对挖掉、重算候选、再裁决）：
+
+```text
+能定案 245 条；与工具自身结论一致 238 条 = 97.1%
+其中有独立 Location 真值的 123 条：对 122、错 1
+```
+
+也就是说这条规则的精度在 **97% 量级**、不是"看起来像"。
+
+**关键几条（本轮定下的、最值得复核的）**：
+
+| arm64 | → x86 | 依据 | 档位 |
+|---|---|---|---|
+| `GraphwarRankManager::{send_all_info_events,handle_entity_removed_event,new,set_rank}` = `0x498b5c / 0x498c58 / 0x498d2c / 0x498eb8` | `0x454d80 / 0x454e80 / 0x454f30 / 0x455090` | 模块块 4:4、最优解唯一、与序号对齐一致、四对体量比 0.98–1.12；**四条全部命中真值** | **观测**（体量/指令数/最优解唯一）+ **推断**（同模块同类） |
+| `GraphwarLifeManager::{get_death_tick,set_queued_death,new,get_alive,set_alive,…}` = `0x496af0 / 0x496ea4 / 0x4977b8 / 0x4979a8 / 0x497bb0` | `0x453a60 / 0x453de0 / 0x454790 / 0x454950 / 0x454b40` | 模块块 9 对 8（`get_all_entities` 的 x86 副本被占）⇒ 跳过位置唯一，其余 8 对体量比 0.83–1.11；**8 条全部命中真值** | 同上 |
+| `GraphwarTeamManager::add_to_team` `0x498f8c` | `0x3c17d0` | 候选 121 个，但结构得分**领先次高 26.9**、**20 条已配对邻居一致** | **观测**；真值命定 |
+| `GraphwarLevelGenerator::place_entity` `0x3dafc0` | `0x465a70` | 模块块 1 行 1 槽 + 体量比 1.08 + 共享 `3.141592654` 与模块文件 lit | **观测** |
+| `<GraphwarRootNode as INode>::ready::{{closure}}` `0x39c6e0` | `0x3a5660` | 唯一最高分（领先 2.17）+ 共享模块 lit + 2 条邻居一致 | **推断** |
+
+### 36.3 被否掉的通道：函数指针表的槽序**不**守恒（观测）
+
+§35.9 把"`.data.rel.ro` 的 vtable 槽顺序"列为下一步最该试的独立约束。**本轮试了，不成立。**
+
+做法：扫两侧 `.data.rel.ro` / `.data` / `.got`，把"8 字节一格、值落在 `.text`"的槽收起来，
+相邻槽（+8）连成表；arm64 侧 4,872 个槽 / 2,224 张表，x86 侧 8,184 / 2,528。
+然后拿**已配对的 6,046 对**当标尺，看"arm 表内第 k 槽 ↔ x86 表内第 k 槽"保不保。
+
+实测反例（gdext 的虚调用 trampoline 表，arm64 表起址 `0x8aed38`、45 槽）：
+
+```text
+arm 槽  9 -> arm 0x4d43bc   已配对 -> x86 0x4d7f80，落在 x86 槽 0x9bb528
+arm 槽 11 -> arm 0x43f8ec   已配对 -> x86 0x4e4e00，落在 x86 槽 0x9bb4f8   ← 地址**更小**
+```
+
+也就是说 x86 那张表里**槽序和 arm64 不一致**（28 个已配对成员里只有一部分单调），
+用槽号直接映射会成片配错（自洽率只有 77%）。原因 `未知`（推测与 ICF/哈希式 interning 有关，
+但没有证据）。**所以本轮没有把槽序当证据**，只在文档里记下"此路不通"，免得下一个 agent 再试。
+
+### 36.4 还定不下来的 37 个多候选：缺什么证据
+
+| 组 | 行数 | 候选项数 | 卡在哪 / 缺什么证据 |
+|---|---|---|---|
+| gdext 虚调用 trampoline（`__virtual_call::virtual_fn` / `__default_virtual_call::virtual_fn`，全是 156 B） | **12** | 9–10 | 区分它们的是**代码里嵌的 class 特有数据地址**；本工具的字面量/f64 特征抓不到"指向 `.data.rel.ro` 的引用"，而表槽序又不守恒（§36.3）。缺：**跨架构的 vtable/类描述符对应** |
+| `FunctionDrawer::{remove_function,update_transform,update_function_fade,draw}` | 4 | 29–36 | 候选全部来自一条**无区分度**的公共前缀（`upcast_refnull i`，两侧各 80± 个函数引用）；这一段又没有任何 order 锚（前后锚点跨 `0x498c70 → 0x416350`）。缺：这一段的对角线锚 |
+| `GraphwarFunctionEvolutionator::{score_function,calculate_functions,calculate_functions_old,new}` | 4 | 6–15 | 模块块 16:16，但**没有完整可指派**：集合里有成员体量比 0.04 / 5.61，说明"引用同一 Location 文件名"的两侧集合在实质上不是同一批函数。缺：区分"目录函数"与"被内联进来的引用者" |
+| `GraphwarTeamManager::{remove_from_team,send_all_info_events,new,get_team}` | 4 | 4–115 | 块外占用 2 个 ⇒ 整块放弃（§36.2 条件 5）；两行抢 `0x3c1980`。缺：块外那两条占用的复核（它们可能是错的，但不能靠"推翻别人"来定自己） |
+| `GraphwarModeManager::{set_axis_mode,set_time_mode,set_function_mode}` | 3 | 2 | **3 行抢 2 个槽**：x86 只有两份。哪一条被 ICF/内联掉，无法从现有特征判定。缺：三条函数的**字段偏移**（存的是不同成员，但 ours 不抽 `str [x,#off]` 的位移） |
+| `GraphwarSoldierManager::{add_soldier,send_all_info_events}` | 2 | 2 | 两行抢 `0x455570`，得分拉不开 3.0 ⇒ 两条都留 multi |
+| `MathFunction::{remove_offset,evaluate_token}` | 2 | 3–4 | 候选集里**不含真值**（`0x4eb830` 是 `remove_offset` 的真值）——说明候选生成就错了，不是裁决不够 |
+| `GraphwarBanList::new` / `GraphwarEffectManager::new` | 2 | 3–4 | 构造函数共享泛型字面量，得分领先 0.20 / 0.27 |
+| `GraphwarLifeManager::get_all_entities`、`TargetManager::subscribe…::{{closure}}`、`FunctionInput::delete_chars_at_caret`、`GraphwarSetupControl::ready::{{closure}}`、其余 trampoline | 8 | 2–124 | 各缺一条独立证据；`get_all_entities` 的 x86 副本被别的 arm64 函数占着（**观测**：模块块 9:8 的"跳过位置"就落在它身上） |
+
+### 36.5 444 个无候选：按"为什么对不上"分类
+
+分类是 `build` 时**逐条**算的，写进 `evidence` 栏：`no_candidate;why=<类别>;<证据>`，
+所以 `awk -F'\t' '$5=="none"' fixtures/sym_match.tsv` 就能复算。判定顺序 =
+"先能证死的、后靠猜的"：
+
+| 类别 | 条数 | 判据（可复核） | 档位 |
+|---|---|---|---|
+| **ICF 合并** | **0** | `bsig`（函数体**逐字节** sha1）相同的孪生且该孪生已被配对 | **观测**（判据能跑，但这 444 条里一条都没有） |
+| **被内联** | **6** | ① 闭包 + 母函数已配对 + 地址相邻；② 函数体助记符序列被相邻已配对兄弟包含；③ 特征集合被某个已配对 x86 函数包含 | **推断** |
+| **太小**（`drop_in_place` / 转发 shim） | **172** | 指令数 ≤ 12 | **观测** |
+| **纯数据 / 跳转表** | **0** | 体内没有任何控制流指令，或反汇编为空 | **观测**（444 条全部至少有一条 `b`/`bl`/`ret`，没有一条是 `.text` 里的数据） |
+| **其它（未知）** | **266** | 以上都不成立 | **未知**（但把哑火原因写进证据串） |
+
+`其它` 的 266 条内部（同一列的可复核子串）：`no_feature` **207**（**没有字符串字面量、没有 f64、
+没有罕见整数常量**——本工具的跨架构证据全部哑火，只剩顺序，而那几段顺序块整块没对上）、
+`pfx_only` **55**（只有"两侧几百个函数都引用"的公共前缀）、`feature_no_fit` **4**（有特征，
+但共享它的 x86 函数体量比全部出闸）。
+
+**举三个具体例子**：
+
+* `0x3ae8cc` / `0x3ae8cc` / `0x3ae8cc`（同一地址挂三个符号）
+  `core::ptr::drop_in_place<graphwarrust::axis_drawer::AxisDrawer>` 等，**7 条指令**：
+  就是一个 `Rc` 计数递减 + 条件调用析构的转发 shim，没有字面量、没有常数 ⇒ `why=tiny;ninsn=7`。
+* `0x469c54` `graphwar_event::_::<impl Deserialize for GraphwarEvent>::deserialize`，
+  **5,564 字节 / 1,391 条指令**，26 个字面量：**有特征、但体量比全出闸** ⇒
+  `why=other;feature_no_fit`。它是 serde 生成的巨型 `match`，与 x86 那份的差别在
+  内联深度，不是同一份函数体。
+* `0x3af898` / `0x395550` / `0x4d7f34` `drop_in_place<GraphwarRootNode>`：
+  1,244–1,252 字节、311 条指令、**零字面量零 f64** ⇒ `why=other;no_feature`。
+  三条同名同尺寸，但**逐字节不同**（所以不是 ICF，理由见下）。
+
+**两个必须写下来的负结果**：
+
+1. **"形状相同" ≠ ICF。** 这 444 条里有 **338 条**存在"助记符序列逐条相同"的孪生
+   （其中 150 条的孪生已经被配对），但**逐字节相同的一条都没有**；而且孪生往往是
+   **完全不同的源函数**——例：
+   `drop_in_place<Result<TickEvent,_>>`（`0x34acfc`，88 B / 22 条）与
+   `drop_in_place<http::extensions::Extensions>`（`0x4933d4`，同尺寸同形状）。
+   拿形状判 ICF 会得到 150 条假阳性。**ICF 只能按逐字节相同判。**
+2. **§35.1(d)① 那个 ICF 例子是错的，就地更正。** §35 说
+   `GraphwarTargetManager::new` 与 `GraphwarPlayerManager::new` 在 arm64 是"396 字节 / 99 条指令
+   逐条同构"、x86 只留一份、真值只能二选一。实测：
+   * 两条都是 396 B / 99 条指令，但**助记符序列并不逐条相同**（99 个位置里 13 个不同，
+     差的是 `adrp+add` 与 `mov/mov` 的**地址物化次序**），`bsig` 也不同；
+   * 真值给了**两个不同的 x86 地址**：`0x465910`（TargetManager）与 `0x455410`（PlayerManager，
+     本轮由模块块指派定下、命中真值）。
+   ⇒ 它们在 x86 是**两条**函数，"ICF 只能二选一"这个说法不成立。真正的困难是
+   TargetManager 那一侧的候选集里根本没有 `0x465910`（它被块外函数占用了）。
+
+### 36.6 复算命令
+
+```bash
+# 1) 生成（首次实测 22 秒：要反汇编 12,609 + 13,263 个函数；缓存命中 1.3 秒）
+../.venv/bin/python tools/sym_match.py build
+
+# 2) 统计：唯一 / 多候选 / 无候选 / 一拆多 / 多合一 + 裁决明细 + 无候选归因
+python3 tools/sym_match.py report
+
+# 3) 单条复核（任务书里说的 report --name，本轮加进工具了）
+python3 tools/sym_match.py report --name GraphwarLifeManager
+
+# 4) 自校验：拿 326 行唯一锚当 ground truth，退出码 0/1（90% 门槛）
+python3 tools/sym_match.py --verify ; echo "exit=$?"
+
+# 5) 无候选归因的原始计数
+awk -F'\t' '$5=="none"{split($6,a,";why=");split(a[2],b,";");print b[1]}' fixtures/sym_match.tsv \
+  | sort | uniq -c
+```
+
+`build` 需要 capstone（走仓库 venv）；`report` / `--verify` 只读 TSV，**标准库即可**。
+特征提取缓存在 `.agent-work/symmatch/cache/`（已 gitignore），key 里带
+`CACHE_VERSION`——**改了提取逻辑必须同时改版本号**，否则会静默吃旧缓存（§36.0）。
+
+### 36.7 还缺什么（`未知`）
+
+* **唯一数没到 +30**：733 → 762 是 **+29**（同代码基线 735 → 762 是 **+27**）。差的那几条
+  卡在 §36.4 的「3 行抢 2 个槽」（`GraphwarModeManager` 的 3 个 setter 对 2 个槽）和
+  「块外占用 >1」（`graphwar_team_manager` 等）上；另外本轮加的单射收尾把 **2 行**记成
+  `merge`（两条不同的 arm64 函数抢同一个 x86 槽，工具无法裁决）：
+  `0x3dae34`（TargetManager::new，**本来就是错的**，真值 `0x465910`）与
+  `0x46d0b0`（`…SkinGraphicsRequestEvent…::expecting`，`rival=0x46cd88`）。
+* **`--verify` 仍 86.2% < 90%**，退出码 1。剩下 39 条：17 条"唯一候选是错的"（多是
+  §35.5 说的闭包/母函数互换与 block 被挤平移）、13 条"名字键没对上"（arm64 没有独立符号）、
+  8 条"候选含真值但裁决不了"、1 条无候选。
+* **裁决的规则参数是实测定出来的**（`SCORE_MARGIN=1.0`、`CONTEST_MARGIN=3.0`、`RARE_N=24`、
+  `TINY_NINSN=12`），不是从原理推的。留一验证给了精度量级（97%），但**这些阈值在唯一锚上
+  被看过**，所以严格说"独立性"比主匹配弱一档——这一点必须写明，不能当成完全独立的证据链。
+* **`inlined` 那 6 条是推断**：本工具没有做"跨架构的函数体包含"（两侧指令不可比），
+  用的是"arm64 侧序列包含 + 母函数已配对"这种**间接**证据，缺一条直接的。
+* **`data`/`icf` 两档都是 0**：判据是能跑的（`bsig` 在这份二进制里确实找到 105 组、
+  456 个逐字节相同的函数），只是这 444 条里一条都不落进去。如果以后有人质疑"分类是我硬凑的"，
+  把判据跑一遍即可（§36.6 第 5 条 + `bsig`）。

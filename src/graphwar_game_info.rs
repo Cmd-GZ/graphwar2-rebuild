@@ -1,6 +1,6 @@
 //! 原版 `src/graphwar_game_info.rs` —— **局域网房间信标的载荷**（`GameInfo` 结构体）。
 //!
-//! ## 归属更正（2026-11-07，`docs/16-client.md` §33.9）
+//! ## 归属更正（2026-11-07，`docs/16-client.md` §30.9）
 //!
 //! `GameInfo` **不在** `graphwar_event.rs` 里。它的 serde impl 的完整路径是
 //! `graphwarrust::graphwar_game_info::_::<impl serde::ser::Serialize for

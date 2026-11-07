@@ -30,7 +30,12 @@ pub mod axis_drawer_class;
 pub mod broker;
 pub mod capi;
 pub mod diffconv;
-// `EntityDrawer` 的真节点类（`docs/16-client.md` §37）：把 `entity_drawer.rs` 的纯逻辑挂成
+// `FunctionDrawer` 的真节点类（`docs/16-client.md` §38）：每个 player id 一条 `Line2D`，
+// `update_function` 走纯逻辑的增量追加窗口（`function_drawer::append_window`）。
+// 只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod function_drawer_class;
+// `EntityDrawer` 的真节点类（`docs/16-client.md` §33）：把 `entity_drawer.rs` 的纯逻辑挂成
 // 3 个 `Sprite2D` + 1 个 `RichTextLabel` 的子节点树。只在 `gdext-bindings` 下编译。
 #[cfg(feature = "gdext-bindings")]
 pub mod entity_drawer_class;
@@ -44,7 +49,7 @@ pub mod graphwar_lan_vbox_class;
 #[cfg(feature = "gdext-bindings")]
 pub mod graphwar_root_node_class;
 
-// 三个"要信号接线"的类（`docs/16-client.md` §39）：`Button` / `LineEdit` / `Control` 子类，
+// 三个"要信号接线"的类（`docs/16-client.md` §35）：`Button` / `LineEdit` / `Control` 子类，
 // 验自造 `#[signal]`、连引擎原生信号、外部注册闭包表这三条路。同样只在 `gdext-bindings` 下编译。
 #[cfg(feature = "gdext-bindings")]
 pub mod graphwar_button_class;
@@ -53,7 +58,7 @@ pub mod graphwar_function_input_class;
 #[cfg(feature = "gdext-bindings")]
 pub mod graphwar_setup_control_class;
 
-// `EffectDrawer` 的真节点类（`docs/16-client.md` §39）：把 `effect_drawer.rs` 的图元清单落到
+// `EffectDrawer` 的真节点类（`docs/16-client.md` §35）：把 `effect_drawer.rs` 的图元清单落到
 // 真的 `draw_circle` / `draw_polygon` / `draw_line` 上。只在 `gdext-bindings` 下编译。
 #[cfg(feature = "gdext-bindings")]
 pub mod effect_drawer_class;
@@ -75,6 +80,10 @@ pub mod long_press_animation_class;
 #[cfg(feature = "gdext-bindings")]
 pub mod player_showcase_class;
 pub mod protocol;
+// 模块容器装载器 + 3 个 manager 的真装配（`docs/16-client.md` §38）：按 `TypeId` 把
+// `GameStateManager` / `TurnManager` / `PlayerManager` 装进 `GraphwarModuleContainer`。
+#[cfg(feature = "gdext-bindings")]
+pub mod root_wiring;
 pub mod replay_inflate;
 pub mod replaydiff;
 pub mod rng;

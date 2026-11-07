@@ -501,7 +501,7 @@ mod("graphwar_plane.rs", "graphwar", ("src/graphwar_plane.rs", "src/plane.rs"), 
 mod("graphwar_player_manager.rs", "graphwar", ("src/graphwar_player_manager.rs",), "观测",
     "4/4（旧记 3，add_player 在 x86 被内联、arm64 有独立符号）：player_id -> connection_id；该连接最后一人被删时级联 ConnectionRemoved(6)（docs/10 §15）")
 mod("graphwar_player_screen_control.rs", "graphwar", ("src/graphwar_player_screen_control.rs",), "观测",
-    "8/8：**就是写 GraphwarPlayerConfig 的地方**——set_skin/set_face/set_hat 三条具名 bl 直证，三个 setter 写 +0x60/+0x78/+0x90 且 inc dword [+0xa8]，与 docs/16 §25.9 布局逐字段吻合（§29）")
+    "8/8：**就是写 GraphwarPlayerConfig 的地方**——set_skin/set_face/set_hat 三条具名 bl 直证，三个 setter 写 +0x60/+0x78/+0x90 且 inc dword [+0xa8]，与 docs/16 §22.9 布局逐字段吻合（§29）")
 mod("graphwar_play_screen_control.rs", "graphwar", ("src/graphwar_play_screen_control.rs",), "观测",
     "docs/14-turn.md §9 逐函数规格（10 个可归属函数 / 64 个锚）；界面视图仍在 client/ GDScript（仿制），"
     "但控制器本体已落在 src/graphwar_play_screen_control.rs。旧行写「未做」与 src/lib.rs/文件头冲突 ⇒ 按代码更正")

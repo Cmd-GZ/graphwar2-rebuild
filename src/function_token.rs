@@ -1,6 +1,6 @@
 //! 原版 `src/function_token.rs` —— **一个 token，以及"字符串 → token"这张表**。
 //!
-//! ## 这个模块是干什么的（2026-11-07 定性，证据见 `docs/16-client.md` §33）
+//! ## 这个模块是干什么的（2026-11-07 定性，证据见 `docs/16-client.md` §30）
 //!
 //! `FunctionToken` 就是全项目一直在用的那个 16 字节 token：`{ tag: u64, value: f64 }`
 //! （本 crate 里叫 [`crate::Token`] / [`crate::Function`]，见 `src/lib.rs`）。

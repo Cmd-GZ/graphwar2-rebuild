@@ -1,6 +1,6 @@
 //! **不是原版的东西**：把复原的 [`crate::graphwar_root_node`] 挂成**真 Godot 节点类**的骨架。
 //!
-//! # 这一份只做「骨架」，不做「装配」
+//! # 这一份：**骨架 + 3 个 manager 的真装配**（`docs/16-client.md` §38）
 //!
 //! 原版 `GraphwarRootNode` 是主场景节点（`docs/16-client.md` §15），它干三件事：
 //!
@@ -10,7 +10,7 @@
 //!    `call_deferred("create_ad_view"|"destroy_ad_view")`；
 //! 3. **状态机**：`0x3a5760`（20288 字节、339 条比较、64 个直接调用目标）+ 命令总线 `0x3b0830`。
 //!
-//! **本文件只做第 1 条的"形状"和第 2 条的"链路"**：
+//! **本文件做三件事**（第 1 条只做了"3 个 manager"那一小块，见下）：
 //!
 //! * 建出 `_ready` 里真的 `get_node` 过的那 3 个 holder（[`READY_NODES`]，**观测**）：
 //!   `ScreensControl` / `IAP_holder` / `Ad_holder`，其中 `ScreensControl` 下挂 15 个屏节点、
@@ -21,18 +21,43 @@
 //!   把一次调用**转发给子对象** `Ad_holder`（arm64 `0x3a658c` / `0x3a61b0` 就是写那个
 //!   `+0x18` 字节的两条指令）。
 //!
-//! **刻意不做**（`AGENTS.md` §0 第 3 条：没证据就不猜）：
+//! # §42 新增：真装配（`GameStateManager` → `TurnManager` → `PlayerManager`）
+//!
+//! 原版容器里 **22 条 `add_module`**（`GraphwarGameClient::new`，`docs/02` §22.4）；
+//! 本类现在装 **3 个**（能开一局的最小集合），装配器在 [`super::root_wiring`]：
+//!
+//! ```text
+//! GraphwarRootNode（本类）
+//! ├── ScreensControl
+//! │   ├── GameSetup        ← **真节点类** GraphwarSetupControl（Setup 屏）
+//! │   ├── PlayScreen       ← **Game 屏**（Control 容器）
+//! │   │   └── GraphwarPlane            ← 已有节点类（画棋盘框）
+//! │   │       └── @EntityDrawer@N      ← 已有节点类（3 假实体 × 4 子节点）
+//! │   └── …其余 13 个屏（Control 占位）
+//! ├── IAP_holder / Ad_holder
+//! └── GraphwarModuleContainer（25 个 **占位** Node；真装配在 Rust 侧的 TypeId 表里）
+//! ```
+//!
+//! * 容器 = `Rc<RefCell<GraphwarModuleContainer>>`，键是 **`TypeId`**（`docs/02` §22.1），
+//!   取回走 `get_module::<M>()`；**没有任何 `+0xNN` 偏移**；
+//! * 按类型逐个可查：`container_has_module("GraphwarTurnManager")` 之类；
+//!   没装的 22 型如实回 `placeholder`（[`GraphwarRootNode::module_slot_status`]）；
+//! * 屏里的 3 个假实体与容器里 `GameStateManager` 的 3 个 `Target` **是同一份数据**
+//!   （[`super::root_wiring::DEMO_SOLDIERS`]）。
+//!
+//! **仍然刻意不做**（`AGENTS.md` §0 第 3 条：没证据就不猜）：
 //!
 //! | 没做的东西 | 为什么 |
 //! |---|---|
 //! | `0x3a5760`（20288 B 状态机）的主体 | 原版形状本身没解出来（可能是 `_process` + 大量内联），不猜 |
 //! | `0x3b0830`（命令总线）的**全部**键 | 只解到 12 条（[`crate::graphwar_root_node::Command`]），131 KB 反编译没过完 |
-//! | 25 个 manager 的**真实**装配 | 各 manager 的行为属别的模块；本文件只按 `graphwar_module_container::MODULES` 建**占位子节点**，让"根节点持有管理器子节点"这条形状可断言 |
+//! | **剩下 19 个 manager** 的装配 | 本轮只做 3 个（任务书 §要做什么）；那 19 型没有可 `new` 的实现，节点槽仍是**空 `Node` 占位** |
 //! | 两个 `Rc<RefCell<T>>`（`+0x1668` / `+0x16c8`） | 那两个控制器的类型与生命周期未解（`docs/16` §15.3 只给了偏移） |
-//! | `GraphwarTextureLoader`（`+0x16a0`） | 模块存在（`docs/16` §34），但节点层还没有 |
+//! | `GraphwarTextureLoader`（`+0x16a0`） | 模块存在（`docs/16` §28），但节点层还没有 |
 //!
-//! ⚠️ 占位子节点的名字**就是**原版类名（`GraphwarTurnManager` 之类），但它们只是空 `Node`
-//! —— **没有脚本、没有方法、没有行为**。别把它们当成"那个 manager 已经有节点了"。
+//! ⚠️ `GraphwarModuleContainer` 节点下的 25 个空 `Node` 名字**就是**原版类名
+//! （`GraphwarTurnManager` 之类），但它们仍然只是空节点——**真装配在 Rust 的容器里**，
+//! 不在节点树里。两处别混：`module_slot_status()` 说的是**容器**里装没装。
 //!
 //! # 基类：`Node`（**观测**）
 //!
@@ -80,6 +105,17 @@
 //!   purchase_confirmed() / purchase_denied() -> bool   # 原版写 +0x18 的两条
 //!   manager_slot_count() -> int
 //!   ready_call_count() / process_call_count() -> int
+//!
+//!   # ---- §42 真装配（容器侧）----
+//!   wiring_done() -> bool                         # 容器已经装好（build_scene_graph 会做）
+//!   container_module_count() -> int               # 容器里几个模块（= HashMap.len()）
+//!   container_module_names() -> PackedStringArray # **按类型查成立**的那几个，注册序
+//!   container_has_module(type_name) -> bool       # 按 TypeId 查（不是按数量）
+//!   container_game_state_soldiers() -> int        # 取回 GameStateManager 再读（士兵数）
+//!   container_turn_manager_soldiers(player_id) -> int
+//!   container_player_manager_players() -> int
+//!   module_slot_status(type_name) -> String       # "assembled" / "placeholder" / "unknown"
+//!   wired_manager_count() -> int                  # 按类型查成立的个数（= 3）
 //! ```
 
 use std::collections::BTreeMap;
@@ -90,7 +126,11 @@ use godot::prelude::*;
 use crate::graphwar_module_container::{self, MODULES};
 use crate::graphwar_root_node::{apply_show_screen, Screen, ScreenHost, ALL_SCREENS, READY_NODES};
 
+use super::entity_drawer_class::EntityDrawer;
 use super::graphwar_ad_switch_class::GraphwarAdSwitch;
+use super::graphwar_plane_class::GraphwarPlane;
+use super::graphwar_setup_control_class::GraphwarSetupControl;
+use super::root_wiring::{self, RootWiring, DEMO_SOLDIERS, Wired};
 
 /// `_ready` 里三个 holder 的节点名（[`READY_NODES`]，**观测**）。
 ///
@@ -106,6 +146,31 @@ pub const AD_HOLDER_CLASS: &str = crate::graphwar_ad_switch::CLASS;
 /// 档位：**观测**（arm64 `0x409c70` 的注册点数；`graphwar_module_container` 的
 /// `ADD_MODULE_COUNT` = 25 是**表里**的模块类型数，两者不同）。
 pub const MANAGER_REGISTRATION_COUNT: usize = graphwar_module_container::REGISTRATION_SITES[0].count;
+
+/// **Setup 屏**的屏名（`docs/16` §15.2 的 `.rodata` 原文 `0x1bda32`，9 字节）。
+///
+/// 与 `Screen::GameSetup.name()` 相等（单测断言，不另写第二份名字）。
+pub const SETUP_SCREEN_NAME: &str = "GameSetup";
+
+/// **Game 屏**的屏名（`docs/16` §15.2 的 `.rodata` 原文 `0x1bd92b`，10 字节）。
+///
+/// ⚠️ 它是 `0x3af850` 里**被单列处理**的那一屏（进出口要动广告），但这一条不影响
+/// 本文件把它当成"Game 屏"用：Game 屏的内容（棋盘 / 士兵）挂在这一屏下面。
+pub const GAME_SCREEN_NAME: &str = "PlayScreen";
+
+/// Game 屏里棋盘节点的**节点名**。
+///
+/// 档位：**观测** —— `docs/16` §2.1.10 的运行时 dump 里那条链是
+/// `PlayScreen/.../GamePlane/PlaneContainer/GraphwarPlane`，节点自己的名字就是它。
+pub const PLANE_NODE_NAME: &str = "GraphwarPlane";
+
+/// Game 屏（以及棋盘 / 绘制器）的尺寸 = `client/project.godot` 的
+/// `display/window/size/viewport_width/height`（1600×900）。
+///
+/// 档位：**我方选择** —— 原版这一屏的尺寸由 `.tscn` 的容器布局给
+/// （`PlayScreen/.../PlaneContainer`），我们没有那套场景；写死一个视口尺寸
+/// 只是为了让 `entity_drawer::sprite_transform` 的 `k = size.x / 50` 不至于乘 0。
+pub const VIEWPORT_SIZE: (f32, f32) = (1600.0, 900.0);
 
 /// 把 `[`crate::graphwar_root_node::ScreenHost`] 落到真子节点上的适配器。
 ///
@@ -163,11 +228,15 @@ impl ScreenHost for NodeScreenHost<'_> {
 /// ```text
 /// GraphwarRootNode            ← 本类（Node）
 /// ├── ScreensControl         ← 空 Node 容器（原版 ready 里 get_node 过）
-/// │   └── MainMenu … DisconnectedPopUp   （15 个 Control，名字 = Screen::name()）
+/// │   ├── MainMenu … DisconnectedPopUp   （15 个 Control，名字 = Screen::name()）
+/// │   ├── GameSetup          ← **Setup 屏**：GraphwarSetupControl（真节点类）
+/// │   └── PlayScreen         ← **Game 屏**：Control 容器
+/// │       └── GraphwarPlane            ← 棋盘本体（真节点类）
+/// │           └── @EntityDrawer@N      ← 实体绘制器（真节点类，自动名）
 /// ├── IAP_holder             ← 空 Node 占位（原版 ready 里 get_node 过）
 /// ├── Ad_holder              ← GraphwarAdSwitch（另一个扩展类）
 /// └── GraphwarModuleContainer
-///     └── GraphwarBanList … （25 个空 Node，名字 = 模块类名）
+///     └── GraphwarBanList … （25 个空 Node，名字 = 模块类名；**真装配在 Rust 容器里**）
 /// ```
 #[derive(GodotClass)]
 #[class(base = Node)]
@@ -187,6 +256,23 @@ pub struct GraphwarRootNode {
 
     /// `Ad_holder` 那个子对象（**推断**它是 [`GraphwarAdSwitch`]）。
     ad_holder: Option<Gd<GraphwarAdSwitch>>,
+
+    /// **已装配的模块容器**（3 个 manager，见 [`super::root_wiring`]）。
+    ///
+    /// 原版这条链是 `root+0x1668`（某个 manager 的 `Rc<RefCell<_>>`）→ 该 manager `+0x238`
+    /// （`Rc<RefCell<GraphwarModuleContainer>>`）→ `.borrow().get_module::<X>()`
+    /// （`docs/02` §22.1）。我们没有那两跳，直接把容器挂在根节点上——**形状不同**，
+    /// 但容器的语义（`TypeId` 键 + `Rc<RefCell<M>>` 值）是同一个。
+    wiring: Option<RootWiring>,
+
+    /// **Setup 屏**的真节点类（`GameSetup` 那一屏）。
+    setup_screen: Option<Gd<GraphwarSetupControl>>,
+
+    /// **Game 屏**里的棋盘本体（`GraphwarPlane`，`PlayScreen/GraphwarPlane`）。
+    plane: Option<Gd<GraphwarPlane>>,
+
+    /// 棋盘下的实体绘制器（`GraphwarPlane/@EntityDrawer@N`，**观测**的父子关系）。
+    entity_drawer: Option<Gd<EntityDrawer>>,
 
     /// 三个 holder 是否已经建好（幂等标志）。
     built: bool,
@@ -212,11 +298,43 @@ impl GraphwarRootNode {
             return self.child_slot_count();
         }
 
+        // ⓪ **模块容器装配**（`docs/16` §38）：3 个 manager 按 `TypeId` 进容器。
+        //    先于建屏做，因为 Game 屏里的 3 个假实体与容器里 `GameStateManager` 的
+        //    3 个 `Target` 是同一份数据（[`DEMO_SOLDIERS`]）。
+        if self.wiring.is_none() {
+            self.wiring = Some(RootWiring::assemble_demo());
+        }
+
         // ① ScreensControl + 15 个屏（原版：`get_node("ScreensControl")` 之后写屏表 `+0x1638`）
         let mut screens_control = Node::new_alloc();
         screens_control.set_name(&StringName::from(HOLDER_NAMES[0]));
         for screen in ALL_SCREENS {
-            // 屏是 `Control`：原版对它们调的是「收一个 bool」的可见性成员
+            if screen == Screen::GameSetup {
+                // Setup 屏：**真节点类** `GraphwarSetupControl`（`docs/16` §35 那个类）。
+                // 原版这一屏在 `.tscn` 里，我们这里由这个类自己建替身子节点。
+                let mut node = GraphwarSetupControl::new_alloc();
+                node.set_name(&StringName::from(SETUP_SCREEN_NAME));
+                node.set_visible(false);
+                node.set_size(Vector2::new(VIEWPORT_SIZE.0, VIEWPORT_SIZE.1));
+                screens_control.add_child(&node.clone().upcast::<Node>());
+                self.setup_screen = Some(node.clone());
+                // 屏表装的是 `Control`（屏的基类），`GraphwarSetupControl` 是它的子类。
+                self.screens.insert(screen, node.upcast::<Control>());
+                continue;
+            }
+            if screen == Screen::PlayScreen {
+                // Game 屏：`Control` 容器 + 棋盘 + 实体绘制器（见 `build_game_screen`）。
+                // 原版这一屏有 `play_screen_control`（Rust）；我们还没有那个模块的节点层，
+                // 所以这里只是一个容器 —— **不是**"已经复原了 PlayScreenControl"。
+                let mut node = Control::new_alloc();
+                node.set_name(&StringName::from(GAME_SCREEN_NAME));
+                node.set_visible(false);
+                self.build_game_screen(&mut node);
+                screens_control.add_child(&node.clone().upcast::<Node>());
+                self.screens.insert(screen, node);
+                continue;
+            }
+            // 其余 13 个屏仍是 `Control` 占位：原版对它们调的是「收一个 bool」的可见性成员
             // （`0x9ba978`，**推断** = `CanvasItem::set_visible`）⇒ 必须是 `CanvasItem` 系。
             let mut node = Control::new_alloc();
             node.set_name(&StringName::from(screen.name()));
@@ -238,8 +356,9 @@ impl GraphwarRootNode {
         self.base_mut().add_child(&ad.clone().upcast::<Node>());
         self.ad_holder = Some(ad);
 
-        // ④ 管理器占位：一个空 Node 容器 + 按 `MODULES` 建的空 Node。
-        //    ⚠️ 名字是原版类名，但节点是空的 —— 装配（构造、注册、`Rc<RefCell<_>>`）**没做**。
+        // ④ 管理器**节点槽**：一个空 Node 容器 + 按 `MODULES` 建的空 Node。
+        //    ⚠️ 名字是原版类名，但节点是空的 —— **真装配在 Rust 容器里**（第 ⓪ 步），
+        //    节点树这一层只是把 25 个槽画出来（`module_slot_status()` 才回答装没装）。
         let mut container = Node::new_alloc();
         container.set_name(&StringName::from("GraphwarModuleContainer"));
         for entry in MODULES {
@@ -251,6 +370,51 @@ impl GraphwarRootNode {
 
         self.built = true;
         self.child_slot_count()
+    }
+
+    /// Game 屏（`PlayScreen`）的内容：棋盘 + 实体绘制器 + 3 个假实体。
+    ///
+    /// 节点的**名字与父子关系**都是观测到的（`docs/16` §2.1.10 的运行时 dump）：
+    ///
+    /// ```text
+    /// PlayScreen/.../GraphwarPlane            ← 有自己的名字
+    /// GraphwarPlane/@EntityDrawer@N           ← **没有** set_name（引擎自动名）
+    /// ```
+    ///
+    /// 3 个假实体走 [`EntityDrawer`] 的 `spawn_entity`（每个建 3 个 `Sprite2D` + 1 个
+    /// `RichTextLabel`，`docs/16` §34）；它们的 id / 坐标 / 名字来自
+    /// [`super::root_wiring::DEMO_SOLDIERS`]（**我方选择**的假数据）。
+    fn build_game_screen(&mut self, screen: &mut Gd<Control>) {
+        let size = Vector2::new(VIEWPORT_SIZE.0, VIEWPORT_SIZE.1);
+        screen.set_size(size);
+
+        // 棋盘本体：`GraphwarPlane`（画一个棋盘框 + 3 个 `FunctionDrawer` 占位子节点）。
+        let mut plane = GraphwarPlane::new_alloc();
+        plane.set_name(&StringName::from(PLANE_NODE_NAME));
+        plane.set_size(size);
+
+        // 实体绘制器：原版是 `GraphwarPlane` 的**子节点**、**没** `set_name`
+        // ⇒ 这里也不命名（引擎会给 `@EntityDrawer@N`，与 dump 里一致）。
+        let mut drawer = EntityDrawer::new_alloc();
+        drawer.set_size(size);
+        // 3 个假士兵：`spawn_entity` / `set_entity_name` 是本类的 `#[func]`
+        // （`entity_drawer_class.rs` 里是私有方法）⇒ 走动态调用，等价于 GDScript 那一侧。
+        for soldier in DEMO_SOLDIERS {
+            drawer.call(
+                "spawn_entity",
+                &[soldier.id.to_variant(), soldier.x.to_variant(), soldier.y.to_variant()],
+            );
+            drawer.call(
+                "set_entity_name",
+                &[soldier.id.to_variant(), GString::from(soldier.name).to_variant()],
+            );
+        }
+
+        plane.add_child(&drawer.clone().upcast::<Node>());
+        screen.add_child(&plane.clone().upcast::<Node>());
+
+        self.plane = Some(plane);
+        self.entity_drawer = Some(drawer);
     }
 
     /// 根节点当前有几个直接子节点（观测点）。
@@ -267,6 +431,10 @@ impl INode for GraphwarRootNode {
             ads_slot: false,
             screens: BTreeMap::new(),
             ad_holder: None,
+            wiring: None,
+            setup_screen: None,
+            plane: None,
+            entity_drawer: None,
             built: false,
             deferred_log: Vec::new(),
             ready_calls: 0,
@@ -288,7 +456,7 @@ impl INode for GraphwarRootNode {
     /// `_process`（原版是 `0x3a5760` 那 20288 字节状态机的一部分，**形状未解**）。
     ///
     /// 骨架里只计数：**不猜**状态机做了什么（`graphwar_root_node` 的未知清单第 8 条）。
-    /// 不写 `set_process(true)`：Godot 4.7 自动开（`docs/16` §37.4 第 5 条，本轮再次实测）。
+    /// 不写 `set_process(true)`：Godot 4.7 自动开（`docs/16` §33.4 第 5 条，本轮再次实测）。
     fn process(&mut self, _delta: f64) {
         self.process_calls += 1;
     }
@@ -452,6 +620,145 @@ impl GraphwarRootNode {
     #[func]
     fn manager_registration_count(&self) -> i64 {
         MANAGER_REGISTRATION_COUNT as i64
+    }
+
+    // -----------------------------------------------------------------------
+    // §42：容器真装配的观测口（全部走 `TypeId`，没有一处读 `+0xNN`）
+    // -----------------------------------------------------------------------
+
+    /// 容器装好了吗（`build_scene_graph` / `_ready` 会做）。
+    #[func]
+    fn wiring_done(&mut self) -> bool {
+        self.ensure_scene_graph();
+        self.wiring.is_some()
+    }
+
+    /// 容器里现在有几个模块（= `HashMap::len`，原版 `get_module` 的空表快路径就是它）。
+    ///
+    /// ⚠️ 这只是**一个数**：验收要按类型逐条断言，见
+    /// [`GraphwarRootNode::container_has_module`]。
+    #[func]
+    fn container_module_count(&mut self) -> i64 {
+        self.ensure_scene_graph();
+        match self.wiring.as_ref() {
+            Some(w) => w.len() as i64,
+            None => -1,
+        }
+    }
+
+    /// **按类型**查在不在容器里（名字 → `TypeId` → `contains::<M>()`）。
+    ///
+    /// 名字是原版类型名（`graphwar_module_container::MODULES` 的原文）；未知名字一律 `false`。
+    /// 这一条**不是**按数量判的：`container_has_module("GraphwarBanList")` 在装了 3 个之后
+    /// 仍然是 `false`（那 22 型只有占位槽，容器里没有键）。
+    #[func]
+    fn container_has_module(&mut self, type_name: GString) -> bool {
+        self.ensure_scene_graph();
+        match self.wiring.as_ref() {
+            Some(w) => w.has_name(&type_name.to_string()),
+            None => false,
+        }
+    }
+
+    /// 按类型查**成立**的那几个名字，顺序 = 我们的注册序（`GameStateManager → TurnManager → PlayerManager`）。
+    #[func]
+    fn container_module_names(&mut self) -> PackedStringArray {
+        self.ensure_scene_graph();
+        let mut out = PackedStringArray::new();
+        if let Some(w) = self.wiring.as_ref() {
+            for name in w.registered_names() {
+                out.push(&GString::from(name));
+            }
+        }
+        out
+    }
+
+    /// 按类型查成立的个数（[`GraphwarRootNode::container_module_count`] 的**类型版**）。
+    #[func]
+    fn wired_manager_count(&mut self) -> i64 {
+        self.ensure_scene_graph();
+        match self.wiring.as_ref() {
+            Some(w) => w.registered().len() as i64,
+            None => -1,
+        }
+    }
+
+    /// **取回 `GameStateManager` 再读一次**（证明 `get_module` 拿到的是活对象，不是"表里有个键"）。
+    ///
+    /// 返回 `Match::soldiers.len()`；容器里没有这一型 ⇒ `-1`。
+    #[func]
+    fn container_game_state_soldiers(&mut self) -> i64 {
+        self.ensure_scene_graph();
+        let Some(w) = self.wiring.as_ref() else {
+            return -1;
+        };
+        match w.game_state() {
+            Some(game) => game.borrow().soldiers.len() as i64,
+            None => -1,
+        }
+    }
+
+    /// 取回 `TurnManager`，读某个玩家的士兵数（`player_id` 不存在 ⇒ `-1`）。
+    ///
+    /// 原版的 `TurnManager` 是 `player_id → {Vec<soldier_id>, 游标}`（`0x463f27`–`0x463fa6`
+    /// 那张表，`docs/98` §1.1）；这个口子读的就是那张表的长度。
+    #[func]
+    fn container_turn_manager_soldiers(&mut self, player_id: i64) -> i64 {
+        self.ensure_scene_graph();
+        let Some(w) = self.wiring.as_ref() else {
+            return -1;
+        };
+        let Some(turns) = w.turn_manager() else {
+            return -1;
+        };
+        let turns = turns.borrow();
+        match turns.player(player_id) {
+            Some(entry) => entry.turns.len() as i64,
+            None => -1,
+        }
+    }
+
+    /// 取回 `PlayerManager`，读 `player_id → connection_id` 那张表的行数。
+    #[func]
+    fn container_player_manager_players(&mut self) -> i64 {
+        self.ensure_scene_graph();
+        let Some(w) = self.wiring.as_ref() else {
+            return -1;
+        };
+        match w.player_manager() {
+            Some(players) => players.borrow().len() as i64,
+            None => -1,
+        }
+    }
+
+    /// 某个槽位的状态：`"assembled"`（容器里按类型查得到）/ `"placeholder"`（原版有这一型，
+    /// 我们没装）/ `"unknown"`（原版 25 型里也没有这个名字）。
+    ///
+    /// 前两档的判据是**运行时的**（[`super::root_wiring::RootWiring::has_name`]），
+    /// 不是静态表：装失败就掉回 `placeholder`。
+    #[func]
+    fn module_slot_status(&mut self, type_name: GString) -> GString {
+        self.ensure_scene_graph();
+        let name = type_name.to_string();
+        let assembled = self
+            .wiring
+            .as_ref()
+            .map(|w| w.has_name(&name))
+            .unwrap_or(false);
+        if assembled {
+            return GString::from(root_wiring::SLOT_ASSEMBLED);
+        }
+        if root_wiring::is_module_type_name(&name) {
+            GString::from(root_wiring::SLOT_PLACEHOLDER)
+        } else {
+            GString::from(root_wiring::SLOT_UNKNOWN)
+        }
+    }
+
+    /// 本层装了几个 manager（= `Wired::COUNT`，**3**；剩下 19 型没装）。
+    #[func]
+    fn assembled_manager_total(&self) -> i64 {
+        Wired::COUNT as i64
     }
 
     /// `_ready` 被引擎调到几次。

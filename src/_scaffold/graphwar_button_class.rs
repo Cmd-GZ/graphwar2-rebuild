@@ -16,7 +16,7 @@
 //! 状态机本体（`button_down` / `button_up` / `process` / `pressed` 的判定顺序）**只有一份**，
 //! 仍然在 `src/graphwar_button.rs` 里；本文件不复制任何判定。
 //!
-//! # 本轮要验的三种机制（结论见 `docs/16-client.md` §39）
+//! # 本轮要验的三种机制（结论见 `docs/16-client.md` §35）
 //!
 //! | # | 机制 | 原版形态 | 本文件怎么用 |
 //! |---|---|---|---|
@@ -264,7 +264,7 @@ impl GraphwarButton {
     ///
     /// 原版**不改状态**（只读 `+0x88`），这里也一样。它是 `#[func]` 而不是
     /// `IButton::pressed` 虚方法 —— 原版那条 `connect("pressed", …)` 指的就是一个能按名字
-    /// 找到的方法（`docs/16` §18 的 9 个名字分派入口里有 `GraphwarButton pressed`）。
+    /// 找到的方法（`docs/16` §19 的 9 个名字分派入口里有 `GraphwarButton pressed`）。
     ///
     /// ⚠️ 注意它与 `BaseButton` 的**虚方法** `pressed`（Godot 侧 `_pressed`）是两回事：
     /// 本类**没有**实现那个虚方法，只连信号。
@@ -301,7 +301,7 @@ impl GraphwarButton {
     /// **机制 3 的替代方案**：把 GDScript 的 `Callable` 注册进来，返回新的订阅者个数。
     ///
     /// 原版的表装的是 `Box<dyn FnMut(&str)>`；`Variant` 的类型表里**没有**这一项
-    /// （见 `docs/16-client.md` §39.4），所以 GDScript 只能给 `Callable`。
+    /// （见 `docs/16-client.md` §35.4），所以 GDScript 只能给 `Callable`。
     #[func]
     fn subscribe(&mut self, cb: Callable) -> i64 {
         if cb.is_valid() {

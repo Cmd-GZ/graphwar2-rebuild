@@ -47,7 +47,7 @@
 //! | `+0x00` | `Rc<RefCell<GraphwarPlayerConfig>>` | `mov rbp,[rdi]` → `[rbp+0x10]` 借用计数检查 / `[rbp+0x18]` 载荷；三个 `set_*` 与 `lock`/`pending` 都直接对它操作 |
 //! | `+0x10` / `+0x18` | 一个**两字宽**句柄，两半各自做非零检查，作为 `get_node_by_name` 的查找起点 | `lock`/`unlock`/`pending` 只读这两处；`skin_button_pressed` 用它找 `GraphwarRootNode` |
 //!
-//! ⇒ 与 `docs/16` §25.9 的根节点字段表**不冲突**：根节点 `+0x16a8` 持有**同一个** `Rc` 的
+//! ⇒ 与 `docs/16` §22.9 的根节点字段表**不冲突**：根节点 `+0x16a8` 持有**同一个** `Rc` 的
 //! 一份克隆，而本模块把这个 `Rc` 克隆**缓存在自己身上**（`+0x00`）。所以"写档案"这一步
 //! 既有 `.text` 里唯一的 `str [+0x16a8]`（在 `GraphwarRootNode::INode::init`），
 //! 也有本模块 `+0x00` 这条读路径。
@@ -168,7 +168,7 @@ pub fn lines_of(col: u32) -> Vec<u32> {
 ///   addend 解出真实入口）：
 ///   `0x9bb6e0 → 0x417c70`、`0x9bb6e8 → 0x417d50`、`0x9bb6f0 → 0x417e20`，
 ///   三个函数体内分别写 `+0x90`（帽）/ `+0x78`（脸）/ `+0x60`（皮肤）并
-///   `inc dword [rbx+0xa8]`（变更计数器 +1）—— 与 `docs/16` §25.9 的
+///   `inc dword [rbx+0xa8]`（变更计数器 +1）—— 与 `docs/16` §22.9 的
 ///   `GraphwarPlayerConfig` 字段表**逐字段吻合**。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigField {
@@ -181,7 +181,7 @@ pub enum ConfigField {
 }
 
 impl ConfigField {
-    /// 该字段在 `GraphwarPlayerConfig` 里的字节偏移（**观测**，见 `docs/16` §25.9）。
+    /// 该字段在 `GraphwarPlayerConfig` 里的字节偏移（**观测**，见 `docs/16` §22.9）。
     pub fn offset(self) -> u32 {
         match self {
             ConfigField::Skin => 0x60,
@@ -439,7 +439,7 @@ pub const UNANCHORED_ARM64: [(&str, u64, u32); 3] = [
 /// 某个函数调用过的**游戏内**函数（arm64 `bl` 解析到 `graphwarrust::…` 符号）。
 ///
 /// 档位：**观测**。godot/gdext/alloc/panic 那些基础被调者已滤掉（它们只说明"形状"，
-/// 不说明业务）。完整清单见 `docs/16-client.md` §29.3。
+/// 不说明业务）。完整清单见 `docs/16-client.md` §26.3。
 pub const GAME_CALLEES: [(&str, &[&str]); 6] = [
     (
         "load_items",
@@ -518,7 +518,7 @@ pub const LOAD_ITEMS_GODOT_CALLS: [&str; 8] = [
 ///    在 `RawGd::bind` 之后被调用，最可能是 `GraphwarTextureLoader` 的一个方法，
 ///    **未证**。
 /// 5. **玩家页的"存盘时机"**——`GraphwarPlayerConfig::save()` 在 `player_showcase::on_text_change`
-///    里被直接调用（`docs/16` §25.6），但本模块三个 setter 之后**没有** `save` 调用
+///    里被直接调用（`docs/16` §22.6），但本模块三个 setter 之后**没有** `save` 调用
 ///    ⇒ 改外观不立即落盘，落盘靠别处（可能是 `_exit_tree` / 切屏）。
 ///    缺的证据：没找到调用 `save` 的唯一时机。
 /// 6. **`load_items` 那 3 组内联块的行号 ↔ `SkinsVbox`/`FacesVbox`/`HatsVbox` 的先后**（见 [`LOADER_LINES`]）。
@@ -556,7 +556,7 @@ mod tests {
         assert_eq!(ATTRIBUTED.iter().filter(|t| t.2 == 0x140).count(), 3);
     }
 
-    /// 三个按钮回调各改一个**不同**的字段，且字段偏移与 `docs/16` §25.9 一致。
+    /// 三个按钮回调各改一个**不同**的字段，且字段偏移与 `docs/16` §22.9 一致。
     #[test]
     fn buttons_write_three_distinct_config_fields() {
         let fields: Vec<ConfigField> = BUTTON_ACTIONS.iter().map(|a| a.field).collect();

@@ -7,20 +7,20 @@
 # tool_version: 1
 # binary_sha256: 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
 # funcstarts_sha256: b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a
-# src_tree_sha256: 2f7e3f5e82f0ffa9b856b4e8540dad1e5ffac8fa066123467f87ad57616ed5c1
+# src_tree_sha256: 775092376aa4af479d1ffe780542ad1ff0b6e43f5dd37817a8f8fa7e459eeca1
 # funcstarts_n: 13263
 # src_modules: 246
 # loc_structs: 2042
 # attributed_funcs: 527
 # contested_funcs: 86
-# src_files: 104
-# src_fns: 2173
+# src_files: 106
+# src_fns: 2257
 module	scope	orig_funcs	contested	anchors	ours_file	ours_funcs	status	evidence
 graphwar_ad_switch.rs	graphwar	6	0	3	src/graphwar_ad_switch.rs	21	观测	6 条全是 gdext 惰性注册驱动；两个 getter trampoline + owned(+0x18) 已钉死
 graphwar_audio_control.rs	graphwar	7	1	16	src/graphwar_audio_control.rs	21	观测	9 函数 + 4 订阅闭包。订阅 effect_info(44，按 +0x20 的 u8 四臂落三槽) / soldier_info(15) / entity_removed(14) / game_state_info(30)；槽 +0x80/90/a0/b0/c0 = explosion/squash/spark/pop/unpop，音量 -15/-15/-15/0/-5 dB；state==1 清待播队列（docs/16 §30）
 graphwar_backend.rs	graphwar	6	1	12	src/graphwar_backend.rs	6	观测	**18 个方法**（旧文记 15，偏少）。LAN 与 broker 是两个独立字段**（+0x110 组播 ff02::1 / +0x228 broker），开房时一起装；「看哪一路」在 GraphwarLanVBox::show_global，不在这层（docs/09 §11）
 graphwar_button.rs	graphwar	6	0	3	src/graphwar_button.rs	13	观测	6/6 方法全解（init/ready/process/button_down/pressed/button_up）+16 条名字分派入口；docs/16 §18
-graphwar_campaign_control.rs	graphwar	1	0	1	src/graphwar_campaign_control.rs	3	观测	定性完成；get_current_level 返回 Option 给 local_player_manager 的 RankRequest 用（docs/16 §33）
+graphwar_campaign_control.rs	graphwar	1	0	1	src/graphwar_campaign_control.rs	23	观测	定性完成；get_current_level 返回 Option 给 local_player_manager 的 RankRequest 用（docs/16 §33）
 graphwar_client_connection_handler.rs	graphwar	8	0	16	src/graphwar_client_connection_handler.rs	8	观测	11 FUNC（8 方法 + 3 订阅闭包 + 连接线程）。ConnectionState 4 个变体（0/1/2/3），**与 GameState(8) 是两套**，唯一交点：失败时 set_state(7)。本机地址是 [::1]:port（**不是 127.0.0.1**）；远端只认 IP 字面量、**无 DNS**；connect_timeout 30s、**无重连**、**不发也不订阅心跳**（docs/09 §11）
 graphwar_color_manager.rs	graphwar	4	0	6	src/graphwar_color_manager.rs	26	观测	7/7（含 GraphwarColor::serialize）：两张 6 色表就是 init_team_colors 里的字面量；分配 = **队号选池** -> rand::random::<u64>()%6 起点 -> +1 线性探测跳过 used -> 6 个全占则 (r%180,g%180,b%180)。**不是进房顺序、不是 player_id 取模**（docs/10 §15）
 graphwar_computer_player_manager.rs	graphwar	5	0	27	src/graphwar_computer_player_manager.rs	30	观测	6/7 定位：HashMap<u32,BotData>（步长 0x78）+ SoldierBotData（0x58）。**不是掉线托管**：唯一入口是 bot_added_event(10)；level 阈值 4/11/26/101/251，精英数=种群/5，limit=5/5/10/15/25/200（docs/13 §25）
@@ -60,7 +60,7 @@ graphwar_plane_pos_manager.rs	graphwar	6	0	9	src/plane.rs	16	观测	docs/140：p
 graphwar_play_screen_control.rs	graphwar	10	3	64	src/graphwar_play_screen_control.rs	8	观测	docs/14-turn.md §9 逐函数规格（10 个可归属函数 / 64 个锚）；界面视图仍在 client/ GDScript（仿制），但控制器本体已落在 src/graphwar_play_screen_control.rs。旧行写「未做」与 src/lib.rs/文件头冲突 ⇒ 按代码更正
 graphwar_player_config.rs	graphwar	0	0	0	src/graphwar_player_config.rs	8	观测	PlayerShowcase 读的 config（名字+0x00/皮肤+0x60/脸+0x78/帽+0x90/变更计数+0xa8）；存档分隔符未解（docs/16 §33）
 graphwar_player_manager.rs	graphwar	3	0	6	src/graphwar_player_manager.rs	12	观测	4/4（旧记 3，add_player 在 x86 被内联、arm64 有独立符号）：player_id -> connection_id；该连接最后一人被删时级联 ConnectionRemoved(6)（docs/10 §15）
-graphwar_player_screen_control.rs	graphwar	8	0	22	src/graphwar_player_screen_control.rs	19	观测	8/8：**就是写 GraphwarPlayerConfig 的地方**——set_skin/set_face/set_hat 三条具名 bl 直证，三个 setter 写 +0x60/+0x78/+0x90 且 inc dword [+0xa8]，与 docs/16 §25.9 布局逐字段吻合（§29）
+graphwar_player_screen_control.rs	graphwar	8	0	22	src/graphwar_player_screen_control.rs	19	观测	8/8：**就是写 GraphwarPlayerConfig 的地方**——set_skin/set_face/set_hat 三条具名 bl 直证，三个 setter 写 +0x60/+0x78/+0x90 且 inc dword [+0xa8]，与 docs/16 §22.9 布局逐字段吻合（§29）
 graphwar_rank_manager.rs	graphwar	4	0	4	src/graphwar_rank_manager.rs	11	观测	4 函数。段位**只从远端事件进**（RemoteEventHandler::handle_{client,server}_remote_event 各一处 set_rank），模块内零换算；RankInfo(67) = 三个 dword（+8 标志 / +0xc 段位 / +0x10 player_id）；66 由 local_player_manager 发（推断）（docs/10 §14）
 graphwar_remote_event_handler.rs	graphwar	3	1	171	src/events.rs	2	观测	docs/110/96：远端事件名与判别值已解；我方 events.rs 实现枚举 + 编解码，无逐字节对拍
 graphwar_replay_control.rs	graphwar	2	0	9	src/graphwar_replay_control.rs	6	观测	4：回放控制；时钟字段仍未解（docs/16 §32.7）

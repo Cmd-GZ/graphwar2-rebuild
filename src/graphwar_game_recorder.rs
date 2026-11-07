@@ -288,7 +288,7 @@ impl GraphwarGameRecorder {
     /// 原版是「建目录 → 拼名 → `FileAccess::open` → `GzEncoder` → 逐行写」。
     /// 本 crate 不引外部依赖（`flate2` / `gzip` 都不在依赖表里），
     /// 所以这里只产生**未压缩的行**；压缩口径见 `src/_scaffold/replay_inflate.rs`
-    /// 与 `docs/16-client.md` §32。
+    /// 与 `docs/16-client.md` §29。
     pub fn save_game(&mut self) -> Vec<EventInfo> {
         self.saves += 1;
         self.events.clone()

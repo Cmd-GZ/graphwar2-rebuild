@@ -118,9 +118,9 @@
 //! | hat | `0x3e1308` `0x4401ec` `0x44e81c` `0x4bfdb8` | `add_player_victory_icon`、`PlayerShowcase`、`load_items`、`EntityDrawer::get_entity_hat_sprite` |
 //!
 //! `EntityDrawer::get_entity_{skin,face,hat}_sprite` 三个函数名本身就是证据：
-//! **画一个士兵时的三张图，就是这三个 getter 取的**（`docs/16` §24/§25）。
+//! **画一个士兵时的三张图，就是这三个 getter 取的**（`docs/16` §21/§22）。
 //!
-//! ⚠️ `docs/16` §24/§25 记的"`PlayerShowcase` 自己有三张 `HashMap`（`+0x168/+0x198/+0x1c8`，
+//! ⚠️ `docs/16` §21/§22 记的"`PlayerShowcase` 自己有三张 `HashMap`（`+0x168/+0x198/+0x1c8`，
 //! 间距 0x30）"：**这三个偏移正好是 loader 三张表的 `items` 字段**
 //! （`+0x150+0x18` / `+0x180+0x18` / `+0x1b0+0x18`）。两种读法都能解释字节：
 //! ① 那三处是 `get_*_texture` 内联后被误当成 PlayerShowcase 的字段（**推断**）；

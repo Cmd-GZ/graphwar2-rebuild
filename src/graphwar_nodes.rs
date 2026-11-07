@@ -326,7 +326,7 @@ pub const CALLERS: [(u64, &[u64]); 11] = [
 /// 档位：**观测**（每个名字都能指回一个 `lea rcx` + `mov r8d,<len>` + 紧接的 `call`）。
 ///
 /// ⚠️ 有 5 个调用点的 `lea`/`mov r8d` 配对窗口被相邻的其它 `lea` 挤掉，
-/// 那 5 个实参的**名字已读出、所属单态化未定**（`docs/16-client.md` §28.4）。
+/// 那 5 个实参的**名字已读出、所属单态化未定**（`docs/16-client.md` §25.4）。
 pub const NAMES_BY_ACCESSOR: [(u64, &[&str]); 11] = [
     (
         0x3a_aea0,

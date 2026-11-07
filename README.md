@@ -73,24 +73,24 @@
 
 | 指标 | 数值 | 口径 |
 |---|---|---|
-| 整局**完全一致**（消息级对拍） | **71/400 (17.8%)** | `docs/136`/`docs/142`，排除 A/B 类后仍严格逐条比 |
-| 消息**种类序列**命中 | **916/1080**（84.8%） | 同时回合制批次结构修好后（`docs/141`） |
-| 多发批**批结构** | **130/130** | 同上，剔掉死亡块 |
-| 客户端自检 | **694 条**（2026-11-07 深夜实测，0 失败） | ⚠️ **回归保护，不是复原证据** |
-| `cargo test` | **1488 条**（lib **457** + 51 个集成测试二进制） | 单测/集成；同样不是"与原版相同"的证据 |
+| 整局**完全一致**（消息级对拍） | **1/401 份回放**（`docs/06` §24，2026-11-07 夜）；旧口径 **71/400 帧**（`docs/136`/`docs/142`） | 两者分母不同（回放 vs 帧），别混着比 |
+| 消息**种类序列**命中 | **818/1080**（75.7%，`docs/06` §24 实测）；旧口径 916/1080（`docs/141` 批次结构修好后） | 同上，驱动/口径不同 |
+| 多发批**批结构** | **130/130** | 剔掉死亡块（`docs/141`） |
+| 客户端自检 | **606 passed / 2 failed / 23 skipped**（**无 `client/assets/`**，2026-11-07 夜实测） | ⚠️ 回归保护，不是复原证据。那 2 条 FAIL 已用未改动基线做对照（`530/2/25`，两条逐字相同）⇒ **基线自带且依赖缺失资产**；有 pck 时的 694 本机未复现 |
+| `cargo test` | **1512 条**（lib **457** + 66 个集成测试二进制；`--features gdext-bindings` 1583 条） | 单测/集成；同样不是"与原版相同"的证据 |
 
 **要补的活**（按"是不是复原"排序，不按工作量）：
 
 | # | 缺口 | 性质 |
 |---|---|---|
-| 1 | **客户端控制器迁回 Rust** —— **78 个模块名已权威确定**（`docs/02` §18），**12 个 GDExtension 类已还原 11 个**（只剩 `GraphwarPlane`）；控制器仍在 `client/` 那套 GDScript 里，它是**仿制品**，只有迁回去"还原源代码"才成立 |
+| 1 | **客户端控制器迁回 Rust** —— **78 个模块名已权威确定**（`docs/02` §18），**12 个 GDExtension 类已 12/12 还原且节点化**（2026-11-07 夜）；余下的是**控制器流程**（回合推进/准备态/弹道生命周期/胜负时机）仍在 `client/` 那套 GDScript 里，它是**仿制品**，只有迁回去"还原源代码"才成立 |
 | 2 | ~~源码原料回收~~ **✅ 已完成**：105/105 `.gdc` → `.gd`（token 流逐个相同）、31/31 `.scn` → `.tscn`、22/22 `.res` → `.tres`、`project.godot` 1346/1346 字节（`recovered-src/MANIFEST.tsv` 692 行；`tools/recover_source.py --check` 强制媒体策略） | 这一层地基已经打完，不再是缺口 |
 | 3 | **死亡集合 / `AshEffect` 发射器** | 对拍剩余失败的**主要来源**：37 个失败里 19 个是"死亡块整块是 `AshEffect`"、18 个是"死亡集合漏报"（`docs/141`） |
 | 4 | **同时回合制的 A 类**：`TurnInfo` 那组玩家排列（HashMap 迭代序） | 缺一份未捕获的熵；批内其它顺序**已定死**（130/130） |
 | 5 | **`game.rs::fire` 的 `1e-12` 位置排除** | 二进制里只有按实体 id 排除（`docs/122`） |
 | 6 | **目标重置的判定点** | 形状已钉住，判定点未知，397 份回放里 0 次部分命中 ⇒ 无真值 |
 | 7 | **界面像素**：主菜单 sha256 相同、弹窗 0.00–1.7%、玩家页 0.007%；但仍有屏缺真值 | 见 `docs/130`/`docs/137` |
-| 8 | **跨平台**：Win/Android `.gdextension` 条目已补，**没编译过**；跨架构逐位一致未验证 | `docs/132` |
+| 8 | **跨平台**：Win x86_64 / Android arm64 的 **check + build 都已成立**（2026-11-07 夜，`docs/18` §11）；仍未验的是**真机加载**（只有 wine）、APK 打包、macOS、arm64 Win/Linux，以及**跨架构逐位一致** | `docs/18` §11 |
 | 9 | **B 类**（25 s 墙钟、多客户端竞态） | 只能退化口径，永远做不到"逐位" |
 
 ### 还原进度：**527 / 527 可归属函数 = 100%**（2026-11-07 04:40）
@@ -125,7 +125,7 @@
 | | 现状 |
 |---|---|
 | **12 个 GDExtension 类的逻辑** | ✅ 全部还原（在 `src/`，纯 Rust、可测） |
-| **把它们变成真 Godot 节点** | 🔶 只验证了 **1 个**（`AxisDrawer`）：headless 实测 `ClassDB.class_exists=true`、`.tscn` 能实例化、`_draw` 被引擎调到（102 条线） |
+| **把它们变成真 Godot 节点** | ✅ **12/12 全部节点化**（2026-11-07 夜）。headless 断言按脚本计：`entity_drawer_check` 72 / `base_classes_check` 117 / `draw_classes_check` 235 / `signal_classes_check` 155 / `assemble_check` 86；另有 `FunctionDrawer`（不在 12 类之内、但棋盘必需）也是真节点（`function_drawer_check` 132） |
 
 绑定层有两条路，**已量化**（`docs/18-build.md` §10）：
 
@@ -136,8 +136,8 @@
 | 源码保真 | ✗ 是我们的发明 | ✅ 原版 `.rodata` 里留着 `gdext-…/godot-core/src/registry/class.rs` |
 
 ⇒ 骨架已按 **cargo feature `gdext-bindings`** 并入（**默认关闭，零风险**）：
-关闭时零依赖、1488 条测试全绿；打开时 5 个内核方法全部可调、`AxisDrawer` 的 `_draw` 真被引擎调到。
-**12 个类迁移粗估 ~1200 行代码**，尚未开工。
+关闭时零依赖、1512 条测试全绿；打开时 **1583 条**全绿，12 个类的 `_draw` / `_process` 真被引擎调到。
+**12 个类的迁移已完成**（2026-11-07 夜，`docs/16` §34–§38），外加 `FunctionDrawer`（§40）。
 
 ### 2026-11-07 深夜：三个"白捡的"证据源（别再从零挖）
 
@@ -173,15 +173,17 @@
 `graphwar_replay_player` / `graphwar_game_server` / `game` / `server` / `graphwar_play_screen_control`
 均已可运行；桥接层在 `src/_scaffold/`（`api` / `protocol` / `broker` / `capi` / `gdext*`）。
 **`cargo test --offline` 全绿**（条数每轮在变，**别把它当进度**——见 `AGENTS.md` §0.2）；
-`src/` 现有 33 个 `*.rs`，其中 12 个是 `src/_scaffold/` 里我方自造的文件。
-**客户端自检 = 604 条断言**：有资产时全绿；缺资产时 `175 passed, 10 skipped`，每条 skip 都显式报原因。
+`src/` 根目录现有 76 个 `*.rs`（55 个 `graphwar_*.rs`）＋ 3 个同名子目录，另有 `src/_scaffold/` 里 **25 个**我方自造文件。
+**客户端自检（无 `client/assets/`）= 606 passed / 2 failed / 23 skipped**（2026-11-07 夜实测，每条 skip 都显式报原因）。
+那 2 条 FAIL 用未改动基线做过对照（`530/2/25`，两条逐字相同）⇒ **基线自带、且依赖缺失资产**；
+有 pck 时的 694 条本机未复现（缺 `Graphwar.pck`）。
 模块全集与行号下界见 [`docs/02-module-map.md`](docs/02-module-map.md)。
 
 ## 文档
 
 全部文档的索引（现行 / 已归档 / 已并档）见 **[`docs/INDEX.md`](docs/INDEX.md)**。
 **一份文档一个主题**：同一主题只有一篇现行文档，已归并的进 `docs/archive/`。
-`docs/` 下现行 **99 篇**（`ls docs/*.md | wc -l`），`docs/archive/` 另有 **32 篇**过程档案。
+`docs/` 下现行 **29 篇**（`ls docs/*.md | wc -l`），`docs/archive/` 另有 **125 篇**过程档案。
 本表只列**现行**的与少数必须知道的指针，不是全量清单。
 
 | 文档 | 内容 |
@@ -238,8 +240,8 @@
 | **[107-docs-consolidation.md](docs/MIGRATION.md)** | **文档技术债清理**：家底清单、归并映射、改掉的陈旧断言 |
 | [AI.md](docs/archive/AI.md) | **AI 函数进化（唯一权威）** |
 
-已归档的 32 篇（含 `archive/ai/` 12 份 AI 逐轮记录）与 5 份"已并档"占位指针不再在此列出，
-见 [`docs/INDEX.md`](docs/INDEX.md) §2/§3。
+已归档的 **125 篇**（其中 `archive/ai/` 12 份 AI 逐轮记录）与 5 份"已并档"占位指针不再在此列出，
+见 [`docs/MIGRATION.md`](docs/MIGRATION.md)（旧文件 → 归档/吸收 的完整映射）与 [`docs/INDEX.md`](docs/INDEX.md)。
 
 ## 对外接口
 
@@ -270,7 +272,7 @@ gw2_simulate(text,x0,y0,step,flip,ode,obstacles,n,count)   -> 首个命中序号
 ## 目录
 
 ```
-docs/        逆向得到的实现说明（99 篇现行 + archive/ 32 篇过程档案）
+docs/        逆向得到的实现说明（29 篇现行 + archive/ 125 篇过程档案）
 src/         Rust 复原实现：**文件名 = 原版模块名**（`graphwar_*.rs` × 58 + 12 个非 graphwar 模块），
              我方自造的桥接/工具在 src/_scaffold/；对照表见 docs/02-module-map.md §17
 client/      Godot 4.7.2 重建客户端（15 个界面；媒体资产不入库，用 tools/extract_assets.py 从自己的 pck 解）
