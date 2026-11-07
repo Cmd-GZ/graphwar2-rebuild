@@ -20,7 +20,7 @@
 //!
 //! | 项 | 原版 | 本文件 | 档位 |
 //! |---|---|---|---|
-//! | 贴图 | `GraphwarTextureLoader` 的三张 `HashMap<String, Gd<Texture2D>>`（`+0x150/+0x180/+0x1b0`）按名字 `memcmp` 取 | **程序生成的 8×8 纯色 `ImageTexture`**（颜色由我方选定） | 原版是**观测**；纯色是**我方选择**（不依赖原版 pck） |
+//! | 贴图 | `GraphwarTextureLoader` 的三张 `HashMap<String, Gd<Texture2D>>`（`+0x150/+0x180/+0x1b0`）按**名字**查，名字来自 `EntityDrawer` 自己的 `HashMap<i32, String>`（`+0x30`，见 §51） | **接上了**：`crate::graphwar_texture_loader` 的三张表给名字→`res://skins|faces|hats/*.svg`，再从 `res://assets/<dir>/<name>.ctex` 加载真贴图；取不到才退回**程序生成的纯色 `ImageTexture`**（颜色由我方选定） | 原版的表/名字/查找是**观测**（x86 `0x4bb6b0` 的 `cmpq $0x0,0x168(%r13)` = 皮肤表）；`assets/*.ctex` 是 pck 解出的真资源；纯色是**我方兜底** |
 //! | 名字文本 | `GraphwarNameManager` / backtracer | 调用方用 [`EntityDrawer::set_entity_name`] 给 | **未解**（名字从哪来不归本模块） |
 //! | 名字标签预制体 | `load("res://name_label.tscn").instantiate_as::<RichTextLabel>()` | **不加载场景**，按 `recovered-src/name_label.tscn` 的 6 个属性手工造（[`new_name_label`]） | 场景属性是**观测**（pck 回收资源）；属性语义是**推断** |
 //! | 名字标签的 `theme` | 内联 `Theme` + `StyleBoxFlat`（bg/border 全 alpha 0） | 同值重建 | **观测**（`recovered-src/name_label.tscn`） |
@@ -51,11 +51,20 @@
 //! ```text
 //! EntityDrawer : Control
 //!   @export team_color : int      # 打包队伍色（低字节 = R，见 entity_drawer::Color::from_packed_rgb）
-//!   @export texture_size : int    # 程序生成贴图的边长（像素），默认 8
+//!   @export texture_size : int    # **兜底**纯色贴图的边长（像素），默认 8
+//!   @export assets_root : String  # 资产根（默认 "res://assets"；空串 ⇒ 不碰磁盘，等价"没有 assets 的机器"）
 //!
 //!   spawn_entity(id: int, x: float, y: float) -> int   # 建 4 个子节点并摆位，返回建了几个（恒 4）
 //!   remove_entity(id: int) -> bool                     # queue_free 那 4 个子节点并丢掉句柄
 //!   entity_count() -> int
+//!
+//!   # ---- 贴图（`GraphwarTextureLoader` 三张表的入口，§51）----
+//!   set_entity_look(id: int, skin: String, face: String, hat: String) -> bool
+//!   entity_look(id: int) -> PackedStringArray          # [skin, face, hat]
+//!   sprite_texture_path(id: int, layer: int) -> String  # 该层贴图的 resource_path（纯色兜底 = ""）
+//!   texture_stats() -> PackedInt64Array                # [加载成功, 退化纯色, 缺失名字数]
+//!   missing_assets() -> PackedStringArray              # 缺失的 "skins/<名>" 之类（去重、保序）
+//!   assets_available() -> bool                         # 资产根下有 MANIFEST.tsv
 //!   relayout() -> void                                 # 手动跑一遍「摆位置」
 //!   set_entity_name(id: int, name: String) -> void
 //!   set_entity_dead_ticks(id: int, ticks: int) -> float  # 走 entity_drawer::death_alpha，返回 alpha
@@ -103,19 +112,125 @@ use std::collections::BTreeMap;
 
 use godot::classes::image::Format;
 use godot::classes::{
-    canvas_item::TextureFilter, text_server::AutowrapMode, Control, IControl, Image, ImageTexture,
-    RichTextLabel, Node, Sprite2D, StyleBoxFlat, Texture2D, Theme,
+    canvas_item::TextureFilter, text_server::AutowrapMode, Control, FileAccess, IControl, Image,
+    ImageTexture, Node, ResourceLoader, RichTextLabel, Sprite2D, StyleBoxFlat, Texture2D, Theme,
 };
+use godot::obj::Singleton;
 use godot::prelude::*;
 
 use crate::entity_drawer::{self, EntityChildNode, Vec2 as BoardVec2};
+use crate::graphwar_texture_loader::{GraphwarTextureLoader, TextureKind};
+use crate::player_showcase::{DEFAULT_FACE, DEFAULT_HAT, DEFAULT_SKIN};
 
 // ---------------------------------------------------------------------------
-// 1. 程序生成贴图（替代原版从 pck 取的皮肤 / 脸 / 帽子）
+// 1. 贴图：`GraphwarTextureLoader` 的三张表 + 从 `client/assets/` 加载真贴图
 // ---------------------------------------------------------------------------
+//
+// **原版为什么是"三张 Sprite2D"而不是纯色方块**（证据链，详见 `docs/16-client.md` §51）：
+//
+// ```text
+// GraphwarGraphicsManager::set_{skin,face,hat}_graphics   x86 0x468c70/0x468b60/0x468a50
+//   → HashMap<u32 /*player_id*/, String /*名字*/>        +0x18 / +0x48 / +0x78
+//   → 事件 51 / 53 / 55（skin|face|hat_graphics_info_event）
+//   → EntityDrawer::ready 订了这三张事件                  x86 0x4b4130
+//   → EntityDrawer 自己的 HashMap<i32, String>（+0x30）   ← 名字
+//   → GraphwarTextureLoader::get_{skin,face,hat}_texture   arm64 0x40c1cc/0x40c0a4/0x40bf7c
+//       表 +0x150 / +0x180 / +0x1b0，键是名字（String）
+//   → Sprite2D.set_texture(tex)                          x86 0x4bb6b0 里内联的那段
+// ```
+//
+// **名字从哪来**（不是玩家 id、不是队色）：皮肤/脸/帽子三张表都以**字符串**为键
+// （`get_*_texture` 里是 hash + `memcmp`，可见 `src/graphwar_texture_loader.rs` §2），
+// 初值 = `GraphwarPlayerConfig::new` 的三条字面量 `yellow` / `regular_eyes` / `soldier_helmet`
+// （arm64 `0x39152c..0x3915a4`）。真机节点树 dump 也印证了这一点：
+// `@Sprite2D@N.texture = res://skins/yellow.svg`、`faces/regular_eyes.svg`、
+// `hats/soldier_helmet.svg`（`docs/16-client.md` §2.1.10，**观测**）。
+//
+// **贴图本体从哪来**：`new` 里 119 条 `res://skins|faces|hats|ranks/*.svg`
+// （arm64 `0x40c2f4`，`src/graphwar_texture_loader.rs` §4 全表）。本客户端**不往仓库里放任何图片**
+// （`AGENTS.md` 硬规矩 3）：真贴图在 `client/assets/`（使用者自己的 pck 解出来的 `.ctex`），
+// 那是 gitignore 的。⇒ 这里按 `res://<dir>/<name>.svg` 换算成 `res://assets/<dir>/<name>.ctex` 去加载，
+// **取不到就退回程序生成的纯色**（缺资产 / 名字不在表里 / 没 `load` 权限，全都走这条路）。
 
-/// 程序生成贴图的默认边长（像素）。8×8 是**我方选择**（原版贴图尺寸在 pck 里，见 `docs/16` §21）。
+/// **兜底**纯色贴图的默认边长（像素）。原版没有这个值——真贴图 512×512（皮肤/脸/帽子），
+/// `faces/no_face` 与 `ranks/*` 是 128×128（pck 解出的 `.ctex` 头 `GST2` 里读出来的，**观测**）。
+/// 纯色只在"取不到真贴图"时出现，边长是**我方选择**。
 pub const DEFAULT_TEXTURE_SIZE: i32 = 8;
+
+/// 资产根目录。与 `client/src/ui/assets.gd` 的 `DEFAULT_DIR` 是**同一个字符串**
+/// （那边是仿制品自己的资产层，缺资产时的行为由 `main.gd` 决定；本类不许改 `client/src/`）。
+pub const DEFAULT_ASSETS_ROOT: &str = "res://assets";
+
+/// 资产清单文件名。`client/src/ui/assets.gd` 的 `GwAssets::available()` 也以它为准
+/// （"解了一半的目录不算就绪"）。
+pub const ASSETS_MANIFEST: &str = "MANIFEST.tsv";
+
+/// 依次尝试的容器扩展名。`.ctex` = pck 解出来的 `CompressedTexture2D`（`tools/extract_assets.py`
+/// 的产物）；后三个给"手上有完整工程、直接放原件"的机器用（与 `GwAssets::TEXTURE_EXTS` 同序）。
+pub const TEXTURE_EXTS: [&str; 4] = ["ctex", "png", "webp", "svg"];
+
+/// 一个实体的外观：三张贴图的**名字**（`GraphwarTextureLoader` 三张表的键）。
+///
+/// 原版这三条字符串在 `EntityDrawer` 的 `HashMap<i32, String>`（`+0x30`，键 = 实体 id）里，
+/// 由 `ready` 订的三个 graphics 事件写入。本切片还没有事件通道 ⇒ 由调用方用
+/// [`EntityDrawer::set_entity_look`] 给；默认值 = `GraphwarPlayerConfig` 的三条默认字面量
+/// （[`DEFAULT_SKIN`] / [`DEFAULT_FACE`] / [`DEFAULT_HAT`]，`src/player_showcase.rs` 里记了地址）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct EntityLook {
+    skin: String,
+    face: String,
+    hat: String,
+}
+
+impl EntityLook {
+    /// `GraphwarPlayerConfig::new` 的三条默认外观名（arm64 `0x39152c..0x3915a4`）。**观测**
+    fn default_look() -> Self {
+        Self {
+            skin: DEFAULT_SKIN.to_string(),
+            face: DEFAULT_FACE.to_string(),
+            hat: DEFAULT_HAT.to_string(),
+        }
+    }
+
+    /// 这一层该查哪个名字。`None` = 名字标签（没有贴图）。
+    fn name_for(&self, kind: EntityChildNode) -> Option<&str> {
+        match kind {
+            EntityChildNode::SkinSprite => Some(&self.skin),
+            EntityChildNode::FaceSprite => Some(&self.face),
+            EntityChildNode::HatSprite => Some(&self.hat),
+            EntityChildNode::NameLabel => None,
+        }
+    }
+}
+
+/// 子节点种类 → `GraphwarTextureLoader` 的哪张表（`+0x150` / `+0x180` / `+0x1b0`）。
+fn texture_kind(kind: EntityChildNode) -> Option<TextureKind> {
+    match kind {
+        EntityChildNode::SkinSprite => Some(TextureKind::Skin),
+        EntityChildNode::FaceSprite => Some(TextureKind::Face),
+        EntityChildNode::HatSprite => Some(TextureKind::Hat),
+        EntityChildNode::NameLabel => None,
+    }
+}
+
+/// 原版 loader 表的键 → 本客户端磁盘上的候选路径。
+///
+/// `res://skins/yellow.svg` → `["res://assets/skins/yellow.ctex", ….png, ….webp, ….svg]`
+///
+/// 这是**纯字符串换算**（不碰引擎），所以能单测：原版表里那些 `res://<dir>/<name>.svg`
+/// 一条都不改，只是末段扩展名按 [`TEXTURE_EXTS`] 逐个试（pck 解出来的是容器格式）。
+///
+/// ⚠️ 原版那条笔误 `res://hats//no_hat.svg`（双斜杠）**不修**（`src/graphwar_texture_loader.rs`
+/// 模块文档 §4）：它进 `has_name` 那条表是第二份 `no_hat`，换算后仍指向同一个文件。
+pub fn asset_candidates(assets_root: &str, res_path: &str) -> Vec<String> {
+    let rel = res_path.strip_prefix("res://").unwrap_or(res_path);
+    // 表里的路径都以 `.svg` 结尾；换成候选扩展名时只取"目录 + 名字"。
+    let stem = rel.strip_suffix(".svg").unwrap_or(rel);
+    TEXTURE_EXTS
+        .iter()
+        .map(|ext| format!("{assets_root}/{stem}.{ext}"))
+        .collect()
+}
 
 /// 默认队伍色：纯红（打包 `u32` 的低字节 = R ⇒ `0x000000ff`）。
 ///
@@ -123,8 +238,8 @@ pub const DEFAULT_TEXTURE_SIZE: i32 = 8;
 /// 所以验收脚本里所有位置都能手算——**不是**从原版读出来的默认值。
 pub const DEFAULT_TEAM_COLOR: i64 = 0x0000_00ff;
 
-/// 三层贴图的纯色（RGBA，`0..=1`）。**我方选择**：原版是 pck 里的真贴图，
-/// 这里只要"能拿到 `Gd<Texture2D>` 并挂上去"。
+/// 三层贴图**退回纯色**时用的颜色（RGBA，`0..=1`）。**我方选择**：真贴图在 `client/assets/`，
+/// 这里只保证"取不到真贴图时也别是黑块"。
 ///
 /// 顺序与 [`entity_drawer::ENTITY_CHILD_NODES`] 的前三项（皮肤 / 脸 / 帽子）一致。
 const LAYER_COLORS: [(f32, f32, f32, f32); 3] = [
@@ -178,6 +293,37 @@ fn layer_color(texture_method: &str) -> (f32, f32, f32, f32) {
         _ => 0,
     };
     LAYER_COLORS[index]
+}
+
+/// 从资产目录里读一张**真贴图**：`res://skins/yellow.svg` → `res://assets/skins/yellow.ctex`。
+///
+/// 返回 `(实际命中的路径, Gd<Texture2D>)`。下面这些情况都返回 `None`（**都不是错误**，
+/// 调用方会退回纯色并记一条"缺什么"）：
+///
+/// * `assets_root` 空串 ⇒ 这台机器没有 `client/assets/`（`--script` 时常见）；
+/// * [`asset_candidates`] 的四个扩展名一个都不在；
+/// * `load()` 返回空 / 返回的不是 `Texture2D`（例如同名文件不是纹理）。
+///
+/// 先 `FileAccess::file_exists` 再 `load`：`load()` 找不到文件时会在引擎里打一条
+/// 红字错误，而"没装资产"是**正常状态**（`client/assets/` 是 gitignore 的），不该刷错误。
+fn load_asset_texture(assets_root: &str, res_path: &str) -> Option<(String, Gd<Texture2D>)> {
+    if assets_root.is_empty() {
+        return None;
+    }
+    for candidate in asset_candidates(assets_root, res_path) {
+        let path = GString::from(candidate.as_str());
+        if !FileAccess::file_exists(&path) {
+            continue;
+        }
+        let mut loader = ResourceLoader::singleton();
+        let Some(resource) = loader.load(&path) else {
+            continue;
+        };
+        if let Ok(texture) = resource.try_cast::<Texture2D>() {
+            return Some((candidate, texture));
+        }
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -244,6 +390,13 @@ struct EntityNodes {
     sprites: Vec<Gd<Sprite2D>>,
     /// 名字标签。
     name_label: Gd<RichTextLabel>,
+    /// 这个实体的外观（三张贴图的名字）。
+    ///
+    /// 原版是 `HashMap<i32, String>`（`+0x30`，键 = 实体 id）：`get_entity_skin_sprite`
+    /// （x86 `0x4bb6b0`）先按实体 id 从里面取名字，再拿名字去 `GraphwarTextureLoader` 查贴图
+    /// ——`cmp -0x20(%r8),%r12d` 比 id、`-0x10/-0x8` 取 `(ptr,len)`，然后 `hash(0x170)`+`0x150` 桶
+    /// 就是皮肤表。**观测**
+    look: EntityLook,
     /// 棋盘坐标 `(x, y)`。
     board: BoardVec2,
     /// 名字文本（`RichTextLabel::text`）。
@@ -360,18 +513,42 @@ pub struct EntityDrawer {
     #[export]
     team_color: i64,
 
-    /// 程序生成贴图的边长（像素）。
+    /// **兜底**纯色贴图的边长（像素）。
     #[export]
     texture_size: i64,
+
+    /// 资产根目录（`res://`）。默认 [`DEFAULT_ASSETS_ROOT`]。
+    ///
+    /// **这是我方接线**：原版没有这个属性——贴图由 `GraphwarRootNode` 构造的那一个
+    /// `GraphwarTextureLoader` 统一加载（`INode::init`，arm64 `0x39a44c`）。本切片还没有那个
+    /// 持有者，所以每个实例自己读盘。把它设成空串就等价于"这台机器没有 `client/assets/`"，
+    /// 验收脚本用这一手**在任何机器上**都能断言退化分支。
+    #[export]
+    assets_root: GString,
 
     /// 实体 id → 4 个子节点。`BTreeMap` 而不是 `HashMap`：遍历顺序稳定，日志/断言可复现。
     entities: BTreeMap<i64, EntityNodes>,
 
-    /// 贴图缓存：`GraphwarTextureLoader` 方法名 → `Gd<Texture2D>`（懒建，**每个类实例一份**）。
+    /// `GraphwarTextureLoader` 的三张表：名字 → `res://skins|faces|hats/*.svg`。
     ///
-    /// 原版是 loader 里的三张 `HashMap`（全局共享）；这里退化成每实例一份，
-    /// 因为我们还没有 `GraphwarTextureLoader` 这个节点。
-    textures: BTreeMap<&'static str, Gd<Texture2D>>,
+    /// 纯逻辑（表的内容、getter 的命中/未命中语义）在 `src/graphwar_texture_loader.rs`，
+    /// 本文件**不复制**那张 119 条的表，只把 getter 查出来的路径交给引擎去 `load`。
+    loader: GraphwarTextureLoader,
+
+    /// 贴图缓存：`(种类, 名字)` → `Gd<Texture2D>`（**每个类实例一份**）。
+    ///
+    /// 原版是 loader 里的三张 `HashMap<String, Gd<Texture2D>>`（全二进制共享一份，挂在
+    /// `GraphwarRootNode +0x16a0` 的 `Rc<RefCell<…>>` 里）。这里退化成每实例一份，键多带一个
+    /// 「种类」——因为同一个名字（`no_face` / `bot_0` 这种）在 skins 与 faces 两张表里都有，
+    /// 光用名字会串表。**我方化简**（共享那一层要等 `GraphwarRootNode` 接上）。
+    textures: BTreeMap<(u8, String), Gd<Texture2D>>,
+
+    /// 从磁盘加载成功的贴图数（观测点：验收脚本拿它区分"真贴图"与"纯色兜底"）。
+    loaded_textures: i64,
+    /// 退化成纯色的贴图数（观测点）。
+    fallback_textures: i64,
+    /// 缺哪些资产（`"skins/yellow"` 这种，去重、保序；`push_warning` 也用它）。
+    missing_assets: Vec<String>,
 
     /// 准备态：实体 id → 这一帧的 `PosInfo` + 时钟 `V`。
     ///
@@ -405,8 +582,14 @@ impl IControl for EntityDrawer {
             base,
             team_color: DEFAULT_TEAM_COLOR,
             texture_size: DEFAULT_TEXTURE_SIZE as i64,
+            assets_root: GString::from(DEFAULT_ASSETS_ROOT),
             entities: BTreeMap::new(),
+            // 原版这个对象由 `GraphwarRootNode` 构造一次（arm64 `0x39a44c`）；本切片每实例一份。
+            loader: GraphwarTextureLoader::new(),
             textures: BTreeMap::new(),
+            loaded_textures: 0,
+            fallback_textures: 0,
+            missing_assets: Vec::new(),
             prep: BTreeMap::new(),
             draw_calls: 0,
             arc_total: 0,
@@ -609,6 +792,9 @@ impl EntityDrawer {
 
         let mut sprites: Vec<Gd<Sprite2D>> = Vec::new();
         let mut name_label: Option<Gd<RichTextLabel>> = None;
+        // 新实体先按**默认外观**建（`GraphwarPlayerConfig` 的三条默认字面量）；
+        // 想换成 bot / 靶子的外观就接着调 [`Self::set_entity_look`]（原版是 graphics 事件写进来的）。
+        let look = EntityLook::default_look();
 
         // 顺序**直接取**原版常量：皮肤 → 脸 → 帽子 → 名字（叠放顺序就是 `add_child` 的先后）。
         for kind in entity_drawer::ENTITY_CHILD_NODES {
@@ -617,9 +803,12 @@ impl EntityDrawer {
                 // `@Sprite2D@N`（Godot 的自动名）⇒ 原版也没给它们起名字。**观测**
                 let mut sprite = Sprite2D::new_alloc();
 
-                // 贴图：原版从 `GraphwarTextureLoader` 按名字取；这里程序生成（见文件头对照表）。
-                if let Some(texture) = self.texture_for(kind) {
-                    sprite.set_texture(&texture);
+                // 贴图：名字 → `GraphwarTextureLoader` 的表 → `res://…svg` → `client/assets/*.ctex`。
+                // 取不到就给纯色兜底（"没有 assets 的机器"这条路也要能跑）。
+                if let Some(name) = look.name_for(kind) {
+                    if let Some(texture) = self.texture_for(kind, name) {
+                        sprite.set_texture(&texture);
+                    }
                 }
                 // 两个**原版常量**（`entity_drawer::SPRITE_TEXTURE_FILTER` / `SPRITE_FLIP_V`）：
                 // 三个 sprite 建好后统一 `texture_filter = 4`、`flip_v = true`。
@@ -654,6 +843,7 @@ impl EntityDrawer {
             EntityNodes {
                 sprites,
                 name_label,
+                look,
                 board,
                 name: GString::from(""),
                 dead_ticks: None,
@@ -987,18 +1177,213 @@ impl EntityDrawer {
         self.relayout();
     }
 
-    /// 懒建 + 缓存某一层的程序生成贴图。
+    // -----------------------------------------------------------------------
+    // 贴图（`GraphwarTextureLoader` 三张表的入口，§51）
+    // -----------------------------------------------------------------------
+
+    /// 换一个实体的外观（三张贴图的名字），返回 `false` = 没有这个实体。
+    ///
+    /// **这是我方接线**：原版没有这个 `#[func]`——名字由 `ready` 订的三个 graphics 事件写进
+    /// `HashMap<i32, String>`（`+0x30`）：`skin_graphics_info_event`(51) / `face_…`(53) /
+    /// `hat_…`(55)，发信方是 `GraphwarGraphicsManager`（`player_id → 名字`）。
+    /// 事件通道还没接，所以先由调用方直接给名字。
+    ///
+    /// 名字就是 `GraphwarTextureLoader` 三张表的键：皮肤 23 个、脸 17 个、帽子 28 个
+    /// （`src/graphwar_texture_loader.rs` 的 `SKINS` / `FACES` / `HATS`）。靶子用
+    /// `("target", "no_face", "no_hat")`——`res://skins/target.svg` 就在皮肤表里。
+    #[func]
+    fn set_entity_look(&mut self, id: i64, skin: GString, face: GString, hat: GString) -> bool {
+        if !self.entities.contains_key(&id) {
+            return false;
+        }
+        let look = EntityLook {
+            skin: skin.to_string(),
+            face: face.to_string(),
+            hat: hat.to_string(),
+        };
+
+        // 先把三张贴图取出来（`texture_for` 要 `&mut self`），再改实体——
+        // 否则 `self.entities.get_mut(id)` 与 `self.texture_for(…)` 会撞两次可变借用（E0499）。
+        let mut textures: Vec<(EntityChildNode, Option<Gd<Texture2D>>)> = Vec::new();
+        for kind in entity_drawer::ENTITY_CHILD_NODES.iter().filter(|k| k.is_sprite()) {
+            let name = look.name_for(*kind).unwrap_or("");
+            textures.push((*kind, self.texture_for(*kind, name)));
+        }
+
+        let Some(entity) = self.entities.get_mut(&id) else {
+            return false;
+        };
+        entity.look = look;
+        for (sprite, (_kind, texture)) in entity.sprites.iter_mut().zip(textures.iter()) {
+            if let Some(texture) = texture {
+                sprite.set_texture(texture);
+            }
+        }
+        // 换图之后 `tex_w` 可能变（512 / 128 两种），`scale` 里那个 `128/tex_w` 要重算。
+        self.relayout();
+        true
+    }
+
+    /// 某个实体当前的三条外观名：`[skin, face, hat]`；没有这个实体 ⇒ 空数组。
+    #[func]
+    fn entity_look(&self, id: i64) -> PackedStringArray {
+        let mut out = PackedStringArray::new();
+        let Some(entity) = self.entities.get(&id) else {
+            return out;
+        };
+        out.push(&GString::from(entity.look.skin.as_str()));
+        out.push(&GString::from(entity.look.face.as_str()));
+        out.push(&GString::from(entity.look.hat.as_str()));
+        out
+    }
+
+    /// 某个实体第 `layer` 层（0 皮肤 / 1 脸 / 2 帽子）贴图的 `resource_path`。
+    ///
+    /// 真贴图 ⇒ `res://assets/skins/yellow.ctex` 这种；**纯色兜底 ⇒ 空串**
+    /// （`ImageTexture::create_from_image` 造出来的资源没有路径）。验收脚本就靠这一条
+    /// 区分"真贴图"与"退化"。
+    #[func]
+    fn sprite_texture_path(&self, id: i64, layer: i64) -> GString {
+        let empty = GString::new();
+        let Some(entity) = self.entities.get(&id) else {
+            return empty;
+        };
+        let Some(sprite) = usize::try_from(layer).ok().and_then(|i| entity.sprites.get(i)) else {
+            return empty;
+        };
+        sprite
+            .get_texture()
+            .map(|texture| texture.get_path())
+            .unwrap_or(empty)
+    }
+
+    /// 贴图统计：`[从磁盘加载成功数, 退化纯色数, 缺失名字数]`（观测点）。
+    #[func]
+    fn texture_stats(&self) -> PackedInt64Array {
+        let mut out = PackedInt64Array::new();
+        out.push(self.loaded_textures);
+        out.push(self.fallback_textures);
+        out.push(self.missing_assets.len() as i64);
+        out
+    }
+
+    /// 缺哪些资产（`"skins/yellow"` 这种，去重、保序）。空 = 全部命中。
+    #[func]
+    fn missing_assets(&self) -> PackedStringArray {
+        let mut out = PackedStringArray::new();
+        for missing in &self.missing_assets {
+            out.push(&GString::from(missing.as_str()));
+        }
+        out
+    }
+
+    /// 资产目录就绪吗（`<assets_root>/MANIFEST.tsv` 在不在）。
+    ///
+    /// 判据与 `client/src/ui/assets.gd` 的 `GwAssets::available()` 一致：以清单文件为准，
+    /// "解了一半的目录不算就绪"。`assets_root` 为空串 ⇒ `false`。
+    #[func]
+    fn assets_available(&self) -> bool {
+        if self.assets_root.is_empty() {
+            return false;
+        }
+        let manifest = format!("{}/{}", self.assets_root, ASSETS_MANIFEST);
+        FileAccess::file_exists(&GString::from(manifest.as_str()))
+    }
+
+    /// 取某一层、某个名字的贴图（懒加载 + 缓存 + 兜底）。
+    ///
+    /// 三步，顺序就是原版 `get_entity_skin_sprite`（x86 `0x4bb6b0`）那三步：
+    ///
+    /// ```text
+    /// ① 名字 → loader 的表 → res://skins|faces|hats/<名>.svg   （原版：HashMap<String, Gd<Texture2D>>
+    ///                                                            的 getter，表 +0x150/+0x180/+0x1b0）
+    /// ② 路径 → 磁盘上的真贴图（本切片：res://assets/<dir>/<名>.ctex）→ Sprite2D.set_texture
+    /// ③ 拿不到 ⇒ **纯色兜底**（原版没有这一条：`get_*_texture` 未命中直接返回 None，
+    ///    调用方 `?` 掉；我们的客户端必须能在没有 assets 的机器上跑）
+    /// ```
     ///
     /// 返回 `Gd<Texture2D>` 的**克隆**：`Gd` 是引用计数智能指针（`ImageTexture` 是 `RefCounted`），
     /// 缓存里留一份、给 sprite 挂一份，两份都有效。
-    fn texture_for(&mut self, kind: EntityChildNode) -> Option<Gd<Texture2D>> {
-        let method = kind.texture_method()?;
-        if let Some(texture) = self.textures.get(method) {
+    fn texture_for(&mut self, kind: EntityChildNode, name: &str) -> Option<Gd<Texture2D>> {
+        let texture_kind = texture_kind(kind)?;
+        let cache_key = (texture_kind as u8, name.to_string());
+        if let Some(texture) = self.textures.get(&cache_key) {
             return Some(texture.clone());
         }
-        let texture = solid_texture(self.texture_size as i32, layer_color(method))?;
-        self.textures.insert(method, texture.clone());
+
+        // ① 原版 loader 的三张表（纯逻辑那侧）按名字查路径。
+        let res_path = match texture_kind {
+            TextureKind::Skin => self.loader.get_skin_texture(name).cloned(),
+            TextureKind::Face => self.loader.get_face_texture(name).cloned(),
+            TextureKind::Hat => self.loader.get_hat_texture(name).cloned(),
+        };
+
+        // ② 名字在表里 ⇒ 去资产目录要真贴图。
+        let mut texture = None;
+        if let Some(res_path) = res_path {
+            if let Some((_path, loaded)) = load_asset_texture(&self.assets_root.to_string(), &res_path)
+            {
+                self.loaded_textures += 1;
+                texture = Some(loaded);
+            } else {
+                // 名字合法、资产不在（或资产根为空）⇒ 缺的就是这一份。
+                self.note_missing(&res_path);
+            }
+        } else {
+            // 名字不在原版表里：**不是**资产问题，是我们（或调用方）给了个不存在的名字。
+            self.note_missing_unknown(texture_kind, name);
+        }
+
+        // ③ 兜底：程序生成的纯色（边长 `texture_size`，颜色按层）。
+        let texture = texture.unwrap_or_else(|| {
+            self.fallback_textures += 1;
+            solid_texture(self.texture_size as i32, layer_color(kind.texture_method().unwrap_or("")))
+                .unwrap_or_else(|| {
+                    godot_error!("EntityDrawer: 连纯色 ImageTexture 都建不出来（texture_size = {}）", self.texture_size);
+                    ImageTexture::new_gd().upcast::<Texture2D>()
+                })
+        });
+
+        self.textures.insert(cache_key, texture.clone());
         Some(texture)
+    }
+
+    /// 记一条"缺这份资产"，并在**第一次**遇到时打一条警告（不刷屏）。
+    ///
+    /// `res_path` 是原版表里的 `res://skins/yellow.svg`；日志里写成 `skins/yellow` 更好读。
+    fn note_missing(&mut self, res_path: &str) {
+        let rel = res_path
+            .strip_prefix("res://")
+            .unwrap_or(res_path)
+            .strip_suffix(".svg")
+            .unwrap_or(res_path.strip_prefix("res://").unwrap_or(res_path));
+        if self.missing_assets.iter().any(|m| m == rel) {
+            return;
+        }
+        self.missing_assets.push(rel.to_string());
+        if self.assets_root.is_empty() {
+            godot_warn!("EntityDrawer: 没有资产目录（assets_root 为空）⇒ {rel} 退化成纯色；把 assets_root 设回 \"{DEFAULT_ASSETS_ROOT}\" 再跑 tools/extract_assets.py 就能拿回真贴图");
+        } else {
+            godot_warn!(
+                "EntityDrawer: 缺少贴图资产 {rel}（{} 下没有 {rel}.ctex/png/webp/svg）⇒ 退化成纯色",
+                self.assets_root
+            );
+        }
+    }
+
+    /// 名字不在 `GraphwarTextureLoader` 的表里时记一条（这类"缺"不是资产问题）。
+    fn note_missing_unknown(&mut self, kind: TextureKind, name: &str) {
+        let dir = match kind {
+            TextureKind::Skin => "skins",
+            TextureKind::Face => "faces",
+            TextureKind::Hat => "hats",
+        };
+        let rel = format!("{dir}/{name}");
+        if self.missing_assets.iter().any(|m| m == &rel) {
+            return;
+        }
+        self.missing_assets.push(rel.clone());
+        godot_warn!("EntityDrawer: 名字 {name:?} 不在 GraphwarTextureLoader 的 {dir} 表里（退化成纯色）");
     }
 }
 
@@ -1013,6 +1398,79 @@ impl EntityDrawer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 默认外观 = `GraphwarPlayerConfig::new` 那三条字面量（arm64 `0x39152c..0x3915a4`）。
+    ///
+    /// 真机节点树 dump 里皮肤正好是 `res://skins/yellow.svg`（`docs/16-client.md` §2.1.10）。
+    /// 这条测试钉住"我们没换成别的默认值"。
+    #[test]
+    fn default_look_is_the_player_config_triple() {
+        let look = EntityLook::default_look();
+        assert_eq!(look.skin, "yellow");
+        assert_eq!(look.face, "regular_eyes");
+        assert_eq!(look.hat, "soldier_helmet");
+        // 三个名字**必须**在 `GraphwarTextureLoader` 的三张表里（否则一上手就退化）
+        assert!(crate::graphwar_texture_loader::SKINS.contains(&look.skin.as_str()));
+        assert!(crate::graphwar_texture_loader::FACES.contains(&look.face.as_str()));
+        assert!(crate::graphwar_texture_loader::HATS.contains(&look.hat.as_str()));
+    }
+
+    /// 资产路径换算：`res://skins/yellow.svg` → `res://assets/skins/yellow.ctex`（+ 三个备选）。
+    #[test]
+    fn asset_candidates_only_swap_the_extension() {
+        let got = asset_candidates(DEFAULT_ASSETS_ROOT, "res://skins/yellow.svg");
+        assert_eq!(got.len(), TEXTURE_EXTS.len());
+        assert_eq!(got[0], "res://assets/skins/yellow.ctex");
+        assert_eq!(got[1], "res://assets/skins/yellow.png");
+        assert_eq!(got[2], "res://assets/skins/yellow.webp");
+        assert_eq!(got[3], "res://assets/skins/yellow.svg");
+        // 目录与名字一个字不改（原版表的 119 条是证据，换算层不许"顺手修"）
+        for c in &got {
+            assert!(c.starts_with("res://assets/skins/yellow."), "{c}");
+        }
+        // 资产根可换（验收脚本用空串模拟"没有 assets 的机器"）
+        assert_eq!(
+            asset_candidates("", "res://faces/no_face.svg")[0],
+            "/faces/no_face.ctex"
+        );
+    }
+
+    /// 三张表里的 **68** 个名字（23 皮肤 + 17 脸 + 28 帽子）都能换算出一组候选路径。
+    ///
+    /// 名字表在 `src/graphwar_texture_loader.rs`（原版 `.rodata` 逐条抠的），本文件不复制。
+    #[test]
+    fn every_table_name_maps_to_candidates() {
+        use crate::graphwar_texture_loader::{path_of, TextureKind, FACES, HATS, SKINS};
+        for name in SKINS {
+            let c = asset_candidates(DEFAULT_ASSETS_ROOT, &path_of(TextureKind::Skin, name));
+            assert_eq!(c.len(), TEXTURE_EXTS.len());
+            assert!(c[0].starts_with("res://assets/skins/"), "{name}: {}", c[0]);
+        }
+        for name in FACES {
+            let c = asset_candidates(DEFAULT_ASSETS_ROOT, &path_of(TextureKind::Face, name));
+            assert!(c[0].starts_with("res://assets/faces/"), "{name}: {}", c[0]);
+        }
+        for name in HATS {
+            let c = asset_candidates(DEFAULT_ASSETS_ROOT, &path_of(TextureKind::Hat, name));
+            assert!(c[0].starts_with("res://assets/hats/"), "{name}: {}", c[0]);
+        }
+        assert_eq!(SKINS.len() + FACES.len() + HATS.len(), 68);
+    }
+
+    /// 三张 sprite 各对应 loader 的一张表；名字标签没有表。
+    #[test]
+    fn texture_kind_matches_the_three_loader_tables() {
+        assert_eq!(texture_kind(EntityChildNode::SkinSprite), Some(TextureKind::Skin));
+        assert_eq!(texture_kind(EntityChildNode::FaceSprite), Some(TextureKind::Face));
+        assert_eq!(texture_kind(EntityChildNode::HatSprite), Some(TextureKind::Hat));
+        assert_eq!(texture_kind(EntityChildNode::NameLabel), None);
+        // 缓存键要带种类：`bot_0` 在 skins 与 faces 两张表里都有，光用名字会串表。
+        for kind in entity_drawer::ENTITY_CHILD_NODES.iter().filter(|k| k.is_sprite()) {
+            let look = EntityLook::default_look();
+            assert!(look.name_for(*kind).is_some(), "{kind:?} 应该有名字");
+        }
+        assert_eq!(EntityLook::default_look().name_for(EntityChildNode::NameLabel), None);
+    }
 
     /// 子节点顺序：前三个是 sprite，最后一个是名字标签（原版 `ENTITY_CHILD_NODES`）。
     #[test]

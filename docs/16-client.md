@@ -9289,7 +9289,7 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
 | 项 | 现状 | 档位 |
 |---|---|---|
 | **准备圈**（`docs/140` 那三弧 + 三箭头） | **绘制已补（§50），触发仍未接**：`EntityDrawer::draw`（`0x4b2890`）那 6 条图元现在由 `_draw` 真的发出去（3 `draw_arc` + 3 `draw_polygon`），但只有 `set_ring()` 填过的实体才画，而播放屏还没人调它 ⇒ **画面上仍然没有** | 绘制=**观测**（118 条断言）；触发=缺口 |
-| **士兵/靶子的真贴图** | `EntityDrawer` 用的是**程序生成的 8×8 纯色**（皮肤/脸/帽子三块方块），不是 pck 里的 `skins/*`、`faces/*`、`hats/*` | 缺口（§33 对照表早就记了） |
+| **士兵/靶子的真贴图** | ~~`EntityDrawer` 用的是程序生成的 8×8 纯色~~ ⇒ **§52 接上了**：按名字查 `GraphwarTextureLoader` 的三张表，再读 `client/assets/skins|faces|hats/*.ctex`；取不到才退回纯色。**但"谁给名字"还没接**（原版是 3 个 graphics 事件，播放屏没接 ⇒ 现在一律用玩家默认三件套） | 贴图=**观测**（§52）；触发=缺口 |
 | **tick 源** | 原版 `GraphwarTickHandler::get_fractional_tick`（`0x519530`）没接 ⇒ 播放屏按**帧间隔**自己推 | 缺口（§43.6(d) 第 2 条） |
 | 点的生产者 | 仍由播放屏把内核算出的弹道 `set_function_points()` 进去（`0x3e44d4` 归属仍未证） | 缺口（§43.6(d) 第 1 条） |
 | 队色表 / 淡出 / `z_index` / `FunctionDrawer::draw` | 与 §43.6(d) 第 4–7 条**一模一样**，没有变化 | 缺口 |
@@ -9368,10 +9368,13 @@ PlaneContainer (AspectRatioContainer, ratio = 50:30, STRETCH_FIT)   ← 原版�
    `tests/entity_drawer.rs` 的 `arcs_carry_the_exact_draw_arc_arguments`
    （10 折点 / 0.3 带宽 / 关 AA / `0x00687d`）与 `open_ring_is_narrower_than_closed_ring`
    （张开 60° / 闭合 123°）仍在 `cargo test` 里跑。
-2. **士兵与靶子的贴图是纯色方块**（`EntityDrawer` 的程序生成贴图，§33 对照表"我方选择"）。
-   真贴图要 `GraphwarTextureLoader`（三张 `HashMap<String, Texture2D>`）那一层，没接。
-   靶子**还能看见**，但长得和士兵一样（`EntityDrawer` 没有"种类"概念，靠 id 区分：
-   士兵 = `_soldiers` 下标，靶子 = `1000 + target_id`）。
+2. ~~**士兵与靶子的贴图是纯色方块**~~ ⇒ **§52 接上了**：`GraphwarTextureLoader` 的三张表
+   （`HashMap<String, Gd<Texture2D>>`，`+0x150/+0x180/+0x1b0`）现在真的用上了，贴图来自
+   `client/assets/skins|faces|hats/*.ctex`，取不到才退回纯色。**仍未接的是"谁给名字"**：
+   原版由 `skin|face|hat_graphics_info_event`（51/53/55）写入，播放屏没接 ⇒ 现在所有实体
+   都用玩家默认三件套。靶子要变成靶子得调 `set_entity_look(id, "target", "no_face", "no_hat")`
+   （`res://skins/target.svg` 就在皮肤表里）；"哪个实体是靶子"靠 id 区分
+   （士兵 = `_soldiers` 下标，靶子 = `1000 + target_id`），这一层没动。
 3. **点的生产者仍是我方注入**（§43.6(d) 第 1 条没变）。
 4. **tick 源仍是我方推**（`get_fractional_tick` 没接）：`_advance_curve()` 按帧间隔推
    `60 tick/s`，`advance_shot_for_test()` 是自检的确定性入口。
@@ -9476,7 +9479,7 @@ spike_class_check   23 passed, 0 failed
 | 项 | 档位 | 缺什么 |
 |---|---|---|
 | "六个类都**在画**" | **观测** | 引擎回调计数（`draw_call_count` / `drawn_*_total` / `occupied_pixels` / `plane_draws`），本轮实测非零 |
-| 六个类**画得与原版一致** | **未知** | 没有本轮的截图对拍：① 准备圈缺失（§49.5 第 1 条）；② 士兵贴图是纯色方块；③ 画布模型（1000×600 + 缩放）是**我方选择**，原版那次 `draw_set_transform` 的实参没解；④ 队色表没接 |
+| 六个类**画得与原版一致** | **未知** | 没有本轮的截图对拍：① 准备圈缺失（§49.5 第 1 条）；② ~~士兵贴图是纯色方块~~ ⇒ 贴图已接（§52），但"谁给外观名"没接；③ 画布模型（1000×600 + 缩放）是**我方选择**，原版那次 `draw_set_transform` 的实参没解；④ 队色表没接 |
 | 准备圈的几何 | **观测** | `tests/entity_drawer.rs` 的两条测试；**§50 之后**这 6 条图元已经由 `_draw` 真的发到引擎（`entity_drawer_check.gd` 118 条断言），但**画面上仍然没有**（触发没接，§50.0 第 1 条） |
 | 名字 → 相位那张表 | **我方选择** | 原版 `EffectInfo` 判别值 → `EffectData.phase` 的映射没有任何证据 |
 | 特效时长 | **我方选择** | 原版只给 `start_tick`；`retain` 的判据是**推断** |
@@ -9855,3 +9858,153 @@ python3 tools/check_doc_refs.py                                         # 退出
 | 弧/箭头两组分支是否互斥、`V` 的相位是否要镜像 | **未知** | 哈希表语义；本类按"都画、不镜像"实现 |
 | 画出来的样子与原版是否**逐像素**一致 | **未知** | `--headless` 视口 64×64、无渲染器，本轮**没做**有限窗口截图（§43.5 的办法） |
 | `z_index` / 队色表 / 淡出 | **未知** | §43.6(d) 第 4–7 条，与本轮无关，仍然缺 |
+
+## 52. 士兵/靶子不再是纯色方块：`GraphwarTextureLoader` 三张表接上 `client/assets/` 的真贴图（2026-11，任务 37）
+
+> ⚠️ 任务书写的是"用 §51"，但 §51 已被任务 33（`EntityDrawer::draw`）占用 ⇒ 本节是 **§52**。
+
+**一句话**：`EntityDrawer` 的三个 `Sprite2D` 从"程序生成的 8×8 纯色 `ImageTexture`"变成
+"**按名字查 `GraphwarTextureLoader` 的三张表 → `res://skins|faces|hats/<名>.svg` →
+`res://assets/<dir>/<名>.ctex` 的真贴图**"；取不到（没有 assets / 名字不在表里）才退回纯色。
+验收脚本 `client/tools/entity_drawer_check.gd` **118 → 160** 条断言，两个方向都钉住。
+
+### 52.0 先说没做到的（免得被下面那张表误导）
+
+| # | 项 | 现状 | 档位 |
+|---|---|---|---|
+| 1 | **谁给名字**（`skin`/`face`/`hat`） | 原版是 `ready` 里订的三个 graphics 事件（51/53/55）写进 `HashMap<i32, String>`（`+0x30`）；本类**没有事件通道**，改由调用方 `set_entity_look()` 给，默认值 = 玩家档案的三条默认字面量 ⇒ **播放屏没有一处调它**（`client/src/**` 不在允许改动清单里） | 原版链路=**观测**；"谁喂"=缺口 |
+| 2 | **靶子**的外观 | `res://skins/target.svg` 就在皮肤表里（`SKINS` 数组第 6 个）。本类按实体 id 建节点 ⇒ 给靶子调 `set_entity_look(id, "target", "no_face", "no_hat")` 就对；**但"哪个实体是靶子"由播放屏决定**（`kind=="target"`），这一层没动 ⇒ 目前所有实体都用玩家默认三件套 | 贴图=**观测**；分类=缺口 |
+| 3 | 贴图本体从哪来 | 仓库里**不放任何图片**（`AGENTS.md` 硬规矩 3）。真贴图 = 使用者自己 pck 解出的 `client/assets/**.ctex`（gitignore）；缺了就退化 | **观测**（`.ctex` 头 `GST2` 读出的尺寸） |
+| 4 | 三张表**共享**那一层 | 原版是 `GraphwarRootNode +0x16a0` 上的**一个** `Rc<RefCell<GraphwarTextureLoader>>`（`INode::init` arm64 `0x39a44c` 构造，6 个模块共用）；本类每实例一份 | **我方化简**（根节点还没接这一层） |
+| 5 | `ranks/`（22）与 28 个 UI 图标 | loader 的 `new` **也加载它们**，但**没有任何 getter**按名字取（模块文档 §5 = 未知）⇒ 本轮只接三张有 getter 的表 | `new` 里加载=**观测**；查询入口=**未知** |
+| 6 | `get_chat_texture` / `get_time_mode_texture` | `docs/02` 列过这两个名字，arm64 `.symtab` 里**没有**这两个符号 ⇒ 本轮不实现（`docs/02` §1187 的旧账，仍然**未知**） | **未知** |
+
+### 52.1 原版到底按什么名字取图（**这是本任务①的答案**）
+
+**答案：按 `String` 名字，不按玩家 id、不按队色、不按编号。** 三类贴图各有一张
+`HashMap<String, Gd<Texture2D>>`，键是资源名本身（`"yellow"` / `"regular_eyes"` / `"soldier_helmet"`）。
+
+完整链路（每一跳都能指到地址；x86 = Linux `2026-08-28/libgraphwarrust.so` 的 vaddr，Ghidra 再加 `0x100000`）：
+
+| # | 跳 | 地址 / 证据 | 档位 |
+|---|---|---|---|
+| 1 | 玩家档案的三条**默认**外观名 | `GraphwarPlayerConfig::new` 的字面量 `yellow` / `regular_eyes` / `soldier_helmet`，arm64 `0x39152c..0x3915a4`（`src/player_showcase.rs` 的 `DEFAULT_SKIN/FACE/HAT` 已落码） | **观测** |
+| 2 | 名字进"哪个玩家"的索引 | `GraphwarGraphicsManager::set_skin_graphics` x86 `0x468c70` / `set_face_graphics` `0x468b60` / `set_hat_graphics` `0x468a50`：写 `HashMap<u32 player_id, String>`（`+0x18` / `+0x48` / `+0x78`，间距 `0x30`），并发 `*_graphics_info_event`（判别值 **51 / 53 / 55**） | **观测**（`src/graphwar_graphics_manager.rs` §2） |
+| 3 | 名字进 `EntityDrawer` | `EntityDrawer::ready` x86 `0x4b4130` 订 6 个事件，其中第 4/5/6 个就是 `skin|face|hat_graphics_info_event`（`.rodata` `0x1c2a95..0x1c2af6`） | **观测** |
+| 4 | 名字 → 这个实体的贴图 | `get_entity_skin_sprite` x86 **`0x4bb6b0`**（arm64 `0x4c1068`）：先按**实体 id** 在自己的 `HashMap<i32, String>`（`+0x30`，表项步长 `0x20`、键在 `-0x20`、串在 `-0x10/-0x8`）里取名字 —— 本轮反汇编复核：`cmp -0x20(%r8),%r12d` 比 id、`mov -0x10(%r8),%rsi` / `-0x8(%r8),%rdx` 取 `(ptr,len)` | **观测** |
+| 5 | 名字 → `Gd<Texture2D>` | 紧接着 `cmpq $0x0,0x168(%r13)`（= 表 `+0x150` 的 `items` 槽）→ `mov 0x150(%r13),%rdx` / `0x158(%r13),%rcx`（桶/控制字节）→ `lea 0x170(%r13)` 当 hasher ⇒ **这就是内联进来的 `get_skin_texture`**（表 `+0x150`，`+0x170` 是 hasher）；脸/帽子同形：`+0x180/+0x1a0`、`+0x1b0/+0x1d0`，arm64 三份 getter = `0x40c1cc` / `0x40c0a4` / `0x40bf7c`（各 296 B） | **观测** |
+| 6 | 谁把这些贴图装进三张表 | `GraphwarTextureLoader::new`（arm64 `0x40c2f4`，**21212 B**；x86 侧 `0x4d3180` 是**推断**，见 `src/graphwar_texture_loader.rs` §1）：119 次「名字 + `res://...svg`」成对出现，全部装进表 | **观测**（arm64 符号）/ **推断**（x86 地址） |
+| 7 | 装到节点上 | 三个 `get_entity_*_sprite` 里：`Sprite2D::new_gd()` → `set_texture` → `texture_filter = 4`（arm64 `0x4bfe10`）→ `flip_v = true`（arm64 `0x4bfe30`）→ `add_child` → 存进 `HashMap<i32, Gd<Sprite2D>>` | **观测** |
+| 8 | 真机上长什么样 | 节点树 dump：`GraphwarPlane/@EntityDrawer@N/@Sprite2D@N.texture = res://skins/yellow.svg` / `faces/regular_eyes.svg` / `hats/soldier_helmet.svg`；Bot 用 `skins/bot_N.svg` / `faces/no_face.svg` / `hats/no_hat.svg` | **观测**（§2.1.10） |
+
+⇒ **"原版就是纯色 + 名字"这个假设被证否**：原版画的是真贴图（第 8 条是运行时 dump，不是推断）。
+本轮据此把纯色降级成**兜底**。
+
+### 52.2 三类贴图各自怎么来 / `client/assets/` 里缺什么（**不修，只列**）
+
+`new` 的名字表现在落在 `src/graphwar_texture_loader.rs`（`SKINS` 23 / `FACES` 17 / `HATS` 28），
+`path_of()` 拼出 `res://<dir>/<名>.svg`。本机 `client/assets/`（= 使用者 pck 解出来的 148 个资产）对照：
+
+| 表 | 名字数 | assets 里有 | **缺** | 多出来的（loader 表里没有） |
+|---|---|---|---|---|
+| `res://skins/` | 23 | 25 | **0** | `cyan`、`reference` |
+| `res://faces/` | 17 | 18 | **0** | `reference` |
+| `res://hats/` | 28 | 28 | **0** | — |
+| `res://ranks/` | 22 | 22 | **0** | — |
+| UI 图标（`res://*.svg`） | 28 | 全部在 | **0** | `basic_soldier`、`empty_soldier`、`add_bot_option` 等控件图 |
+
+⇒ **三张表 68 个名字一个不缺**。两个注意点：
+
+1. **`bot_0`…`bot_5` 同时出现在 skins 与 faces 两张表里**（同名不同图）⇒ 缓存键必须是
+   `(种类, 名字)`，光用名字会串表（本类的 `textures: BTreeMap<(u8, String), Gd<Texture2D>>`）。
+2. 原版 `.rodata` 里那条笔误 `res://hats//no_hat.svg`（双斜杠）**不修**；`HATS` 表按名字去重后
+   `no_hat` 只剩一条正常路径，所以我们的候选路径里不会出现双斜杠。
+
+### 52.3 接上了什么（`src/_scaffold/entity_drawer_class.rs`）
+
+```text
+名字（EntityLook: skin/face/hat）
+  → crate::graphwar_texture_loader::{get_skin_texture,get_face_texture,get_hat_texture}   ← 原版三张表（纯逻辑）
+  → path_of(): res://skins|faces|hats/<名>.svg
+  → asset_candidates(): res://assets/<dir>/<名>.{ctex,png,webp,svg}                       ← 本客户端（.ctex 是 pck 解出的容器）
+  → FileAccess::file_exists → ResourceLoader::load → try_cast::<Texture2D>()
+  → Sprite2D::set_texture（+ texture_filter=4 / flip_v=true，两个原版常量）
+  → 任一步失败 ⇒ solid_texture(texture_size=8, layer_color)：**纯色兜底 + push_warning 点名缺什么**
+```
+
+新增的 `#[func]`（全是**观测口/接线口**，不是原版方法）：
+
+| 方法 | 干什么 | 谁会用 |
+|---|---|---|
+| `set_entity_look(id, skin, face, hat) -> bool` | 改这个实体的三张外观名，并重贴三张图 + 重摆（`tex_w` 变了） | 播放屏（未接）/ 验收脚本 |
+| `entity_look(id) -> PackedStringArray` | 读回三条名字 | 断言 |
+| `sprite_texture_path(id, layer) -> String` | 该层贴图的 `resource_path`（**兜底 = 空串**） | 断言"真贴图 vs 纯色" |
+| `texture_stats() -> PackedInt64Array` | `[加载成功, 退化纯色, 缺失名字数]` | 断言 |
+| `missing_assets() -> PackedStringArray` | 缺哪些（`"skins/yellow"` 这种，去重保序） | 断言 + 报给用户 |
+| `assets_available() -> bool` | `<assets_root>/MANIFEST.tsv` 在不在（**与 `client/src/ui/assets.gd::available()` 同判据**） | 断言 / 诊断 |
+
+导出的 `assets_root`（默认 `res://assets`）是**我方接线**：设成空串 = "这台机器没有 assets"，
+验收脚本靠它在**任何**机器上都能验退化分支（原版没有这个属性——贴图由根节点上那**一个** loader 统一加载）。
+
+### 52.4 `update_sprite` 那条 `unit = 128/tex_w` 现在真的起作用了
+
+原版 `update_sprite`（x86 `0x4b9530`）对**每一层**读**它自己**贴图的宽度：
+
+```text
+scale = ( (s/60)·(128/tex_w) , (k/−60)·(128/tex_w) )       k = size.x/50、s = 队伍镜像符号 ±1
+```
+
+以前三层都是 8×8 纯色 ⇒ `unit` 恒 16 ⇒ 这条"每层各读各的"**从来没有被测到过**。
+现在真贴图宽度不一样（皮肤 512、`faces/no_face` 128、帽子 512），三层 `scale` 就**必须**不同：
+`512 ⇒ unit 0.25`、`128 ⇒ unit 1.0`。§52.5 第 15.1 组就是钉这一条。
+
+> 尺寸来源：`.ctex` 头 `GST2` 的 `width/height`（`skins/*`、`faces/*`（除 `no_face`）、`hats/*` = 512²；
+> `faces/no_face`、`ranks/*`、`basic_soldier`、`empty_soldier` = 128²）。**观测**（读二进制头，不是猜）。
+
+### 52.5 断言：`entity_drawer_check.gd` 118 → **160**（+42）
+
+| 组 | 验什么 | 条数 |
+|---|---|---|
+| 3（改） | 三个 `texture` 非空 / 是 `Texture2D`；`sprite_texture_path` 与 `texture.resource_path` 一致 | 9 |
+| 3（分支） | **有 assets**：三条路径 = `res://assets/{skins/yellow,faces/regular_eyes,hats/soldier_helmet}.ctex`、都 512×512；**没有**：`resource_path` 为空、8×8 | 6 |
+| 3（统计） | `texture_stats()` = `[3,0,0]`（有 assets）/ `[0,3,3]`（没有） | 1 |
+| 15.1 | Bot 外观 `bot_2`/`no_face`/`no_hat`：三条路径、两条宽度 512/128、**两层 `scale` 不同**（各读自己的 `tex_w`） | 10 |
+| 15.2 | **没有 assets**（`assets_root=""`）：`assets_available()==false`、照样 spawn 4 个、三层纯色 8×8、`resource_path` 空、`missing_assets()` 点名三个、换外观仍退化且不崩 | 9 |
+| 15.3 | **名字不在表里**：`no_such_skin` ⇒ 皮肤层退化但脸/帽仍真贴图、`missing_assets()` 点名、不存在的 id 返回 false | 6 |
+
+两个方向都被钉住（**任务书②**）：
+
+* **能取到** ⇒ `texture != null`、`is Texture2D`、`resource_path = res://assets/**.ctex`（真 `.ctex`，512²）；
+* **取不到** ⇒ `texture != null`（仍是 `ImageTexture`）、`resource_path == ""`、8×8、日志里点名缺什么。
+
+缺资产时的日志（**不是**红字错误，是 `push_warning`，且**每个名字只打一次**）：
+
+```text
+WARNING: EntityDrawer: 没有资产目录（assets_root 为空）⇒ skins/yellow 退化成纯色；把 assets_root 设回 "res://assets" 再跑 tools/extract_assets.py 就能拿回真贴图
+WARNING: EntityDrawer: 缺少贴图资产 ranks/rank_0（res://assets 下没有 ranks/rank_0.ctex/png/webp/svg）⇒ 退化成纯色
+WARNING: EntityDrawer: 名字 "no_such_skin" 不在 GraphwarTextureLoader 的 skins 表里（退化成纯色）
+```
+
+### 52.6 回归（本轮实测，命令可复跑）
+
+| 项 | before | after | 命令 |
+|---|---|---|---|
+| `entity_drawer_check.gd` | 118 | **160** | `godot --headless --path client --script res://tools/entity_drawer_check.gd` |
+| `assemble_check.gd` | 213 | **213** | 同上换脚本 |
+| `plane_on_screen_check.gd` | 96 | **96** | 同上 |
+| `obstacle_drawer_check.gd` | 116 | **116** | 同上 |
+| `selftest`（四前置齐） | 712 | **712** | `godot --headless --path client -- --selftest` |
+| `cargo test --offline` | 1620 | **1620** | 本文件整个不参与编译（`gdext-bindings` 才编）⇒ 条数不变 |
+| `cargo test --offline --features gdext-bindings` | — | **+5 条**（`asset_candidates_only_swap_the_extension` / `every_table_name_maps_to_candidates` / `default_look_is_the_player_config_triple` / `texture_kind_matches_the_three_loader_tables`） | — |
+| `python3 tools/coverage_matrix.py` | `src_fns` 2571 | **2588** | 生成物：`docs/coverage-matrix.tsv` + `docs/149-coverage-matrix.md` |
+
+### 52.7 本轮没解决的（诚实清单）
+
+| 项 | 档位 | 缺什么证据 |
+|---|---|---|
+| **谁在什么时候调 `set_entity_look`** | **未知** | `graphics_info_event` 的载荷语义已知（`player_id` + 名字），但"实体 id ↔ 玩家 id"要在播放屏那侧接（`client/src/**` 不在本轮允许改动清单） |
+| 原版 `new` 里 **load 失败**时的默认贴图 | **未知** | `21212 B` 里只看出"逐个 `load` 后插表"，失败分支没解 ⇒ 我们用纯色兜底（**我方选择**，不是原版行为） |
+| `ranks/` 与 28 个 UI 图标的查询入口 | **未知** | 模块文档 §5：没有 getter，存储位置没证 |
+| `get_chat_texture` / `get_time_mode_texture` | **未知** | arm64 `.symtab` 没有这两个符号（`docs/02` §1187 的旧账） |
+| `texture_filter = 4` 的**语义** | **推断** | 数值是观测（`mov w1,#0x4`）；"4 == `LINEAR_WITH_MIPMAPS`" 是查 Godot 文档 |
+| 画出来与原版**逐像素**一致 | **未知** | headless 无渲染器；本轮的断言只到"贴图是哪张、尺寸多少、`scale` 算得对不对" |
