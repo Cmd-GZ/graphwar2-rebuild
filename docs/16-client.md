@@ -7503,3 +7503,183 @@ cargo test --offline                            # lib 457 / 总计 1499
 cargo test --offline --features gdext-bindings  # lib 522 / 总计 1564（基线 518/1560 + 本批 4 条单测）
 python3 tools/coverage_matrix.py --check        # OK（本次重跑只动了 src_files/src_fns/src_tree_sha256）
 ```
+
+## 41. 曲线真的画出来了：`0x456df0` 是**取值器**不是绘制，喂点的是 `GraphwarPlane::draw`（2026-11，任务 13）
+
+**一句话**：`0x456df0` 是 `GraphwarFunctionManager::get_active_functions_on_tick`，签名
+`fn(&self, tick: u32) -> Vec<u32>`——**它一个图元都不画**，只把"本 tick 还在场的 player id"挑出来；
+真正往 `Line2D` 里塞点的是 `GraphwarPlane::draw`，调用点 `0x4b69ec`（全二进制**唯一**一个
+`FunctionDrawer::update_function` 调用点）。本轮把那段循环接进
+`src/_scaffold/graphwar_plane_class.rs`，headless 实测 `Line2D.get_point_count()` =
+**60 → 90 → 100**（进树走 `_draw` 时 **30**），新脚本 **96 条断言全过**（退出码 0）。
+
+> 档位口径同 §40：**逐位** = 与真二进制逐字节/逐位对拍；**观测** = 能指到反汇编地址/指令级读写；
+> **推断** = 有依据未证；**未知** = 没解出来。`cargo test` / 本脚本的条数**只是回归保护**。
+
+### 41.1 本轮动了哪些文件
+
+| 文件 | 增/改 | 行数 | 内容 |
+|---|---|---|---|
+| `src/_scaffold/graphwar_plane_class.rs` | 改 | +468/−2 | 喂点循环 `feed_functions()`（`_draw` 里调）+ 活跃谓词 + `new_len` 算式 + 最小函数存储 + 3 条单测 |
+| `src/_scaffold/function_drawer_class.rs` | 改 | +8/−2 | `update_function` / `remove_function` 加 `pub`（让棋盘类直接调，**行为一行没变**）+ 注释 |
+| `client/tools/curve_on_screen_check.gd` | **新增** | 400 | headless 验收脚本（**96 条断言**） |
+| `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` | 重跑 | 2 行 | `src_fns` 2257→**2277**、`src_tree_sha256` 跟着变；**527/527 与每模块行一行没变** |
+| `docs/16-client.md` | +本节 | — | — |
+
+`src/function_drawer.rs` / `src/graphwar_plane.rs`（纯逻辑）、`src/lib.rs`、`src/_scaffold/mod.rs`、
+别的 `*_class.rs`、`client/src/**`、`dispatch/` **一行没动**；既有断言一条未改
+（`function_drawer_check.gd` 132 条、`draw_classes_check.gd` 235 条，复跑仍全过）。
+
+### 41.2 `0x456df0` 到底是什么（**观测**；`docs/02` §15.2.1 那行"推断"就地升级）
+
+| 项 | 值 | 判据 |
+|---|---|---|
+| 名字 | `GraphwarFunctionManager::get_active_functions_on_tick` | `fixtures/name_to_addr.tsv:435`，唯一锚 `src/graphwar_function_manager.rs:208:37` |
+| 大小 | `0x190` | 到 `0x456f80`（同族 `..._no_fade`）的距离 |
+| 签名 | `fn(&self, tick: u32) -> Vec<u32>` | `rdi` = sret 输出槽、`rsi` = self、`edx` = tick（`0x456dff` 把它存进 `0xc(%rsp)`） |
+| 返回什么 | 命中者的 **4 字节 player id** 组成的 `Vec` | `0x3be619` 的 `mov -0x78(%rcx),%eax` = bucket+0 的 key，随后 `mov %ecx,(%rax)` 写进新分配的 4 字节槽 |
+| 谁调它 | **只有** `0x4b6339`（`GraphwarPlane::draw` 体内） | 见 §41.3 的一条命令 |
+
+体内三件事（`0x456df0`–`0x456e8f`）：**锁**（`0x456e12` 的 `lock cmpxchg` 一条 Mutex，state 在
+`[self+0x18]` 那个 `Arc` 的 `+0x10`）→ **遍历**（`RawTable` 的 ctrl 在 `+0x18`、bucket_mask 在
+`+0x20`，与 `FunctionDrawer` 的表同一个 hashbrown 形态）→ **收 id**（`0x456e8f` 调 `0x3be540`，
+把命中的 id 逐个 push 进 `rdi` 指的 Vec）。
+
+过滤逻辑被内联在 `0x3be540` 里，而 `0x3be540` 在整份 `.text` **只有一个调用者**（`0x456e8f`）
+⇒ 那段谓词**确定为**本函数的。三条（bucket 步长 `0x78`，key 在 `+0x00`）：
+
+```text
+0x3be5e6  cmpl $0x1,-0x8(%rbp,%rcx,1)        ; (value+0x70) == 1 —— 字段语义未知
+0x3be5f0  cmp  %r13,-0x28(%rcx) / je skip    ; (value+0x50) != 0x8000_0000_0000_0000（i64::MIN）
+0x3be5f6  mov  %eax,%edx / sub -0x4(%rcx),%edx   ; edx = tick - active_tick（u32，value+0x74）
+0x3be5fb  jbe  skip                          ; tick <= active_tick ⇒ 不在场（**严格**大于）
+0x3be5fd  mov  -0x18(%rcx),%rdi              ; rdi = points.len()（value+0x60）
+0x3be601  lea (%rdx,%rdx,1),%r8d / shl $5,%edx / sub %r8d,%edx
+                                             ; edx = 30 * d（30 = .rodata 0x19ef90）
+0x3be60b  add  $0x708,%edi                   ; points.len() + 1800
+0x3be611  cmp  %edi,%edx / jae skip          ; 30*d >= len+1800 ⇒ 不在场
+```
+
+⇒ 一条曲线"在场"的窗口 = 揭示期（`len/30` 个 tick）+ **1800/30 = 60 tick** 的尾巴
+（那 60 tick 就是淡出窗，对应 `get_function_fade_on_tick`；那个函数**没有 x86 落点**，见 §41.5）。
+
+### 41.3 谁调 `update_function`、什么时候、传什么（**观测**，全 `.text` 唯一）
+
+```text
+objdump -d .reference/steam/2026-08-28/libgraphwarrust.so | grep -E 'call +(456df0|498c70|498b70|499050|4992b0) <'
+  4b6147  call 499050      ; FunctionDrawer::update_transform     ← 在 GraphwarPlane::draw
+  4b6339  call 456df0      ; get_active_functions_on_tick         ← 唯一调用点
+  4b6418  call 498b70      ; FunctionDrawer::remove_function      ← 唯一调用点
+  4b69ec  call 498c70      ; FunctionDrawer::update_function      ← **唯一调用点**
+  4b6a0e  call 4992b0      ; FunctionDrawer::update_function_fade ← 唯一调用点
+```
+
+**⇒ 结论：原版只有 `GraphwarPlane::draw`（`0x4b5df0`）喂点。** 顺序与实参（`0x4b6317`–`0x4b6a13`）：
+
+| # | 地址 | 干什么 | 实参从哪来 |
+|---|---|---|---|
+| 1 | `0x4b6317` | `mov 0x58(%rbp),%ebx` | 整数 tick（tick handler 上的 **u32** 字段） |
+| 2 | `0x4b631a` | `call 0x519530` = `get_fractional_tick` | 返回 f64，存 `0x130(%rsp)` |
+| 3 | `0x4b6339` | `get_active_functions_on_tick(&mut out, self, tick)` | out = `0xe0(%rsp)`；随后按 4 字节步长遍历它（`0x4b6562` 的 `mov (%r14),%ebp`） |
+| 4 | `0x4b65d9` | 在函数管理器里按 id 查一条 | bucket 步长 `0x78`；点数组 = **`Vec<(f64,f64)>`**（ptr `+0x58`、len `+0x60`） |
+| 5 | `0x4b67a0`–`0x4b6812` | `new_len = min(len, trunc(30*(fractional_tick - active_tick)))` | `30.0` = `.rodata 0x19ef90`（逐位） |
+| 6 | `0x4b69ec` | `update_function(id, points, len, new_len, color)` | `rdi`=绘制器 `self+0x80`、`esi`=id、`rdx`=点指针、`rcx`=len、`r8`=new_len、`r9d`=颜色 |
+| 7 | `0x4b69fe` | `call *0x9bbd08`（`get_function_fade_on_tick`？） | `(self+0x18, id, tick)`，返回值直接进下一步 |
+| 8 | `0x4b6a0e` | `update_function_fade(id)` | 参数 = 上一步的返回值 |
+| 9 | `0x4b6418` | `remove_function(id)` | 遍历"另一个集合"，不在某个 `HashSet` 里就删 |
+
+两个附带结论：
+
+* **三次 `FunctionDrawer` 调用都打在同一个绘制器上**：`0x4b6132` 的 `lea 0x80(%rax),%rdi`
+  把 `self+0x80` 存进 `0x90(%rsp)`，`0x4b69d4` / `0x4b6a04` 都从那里取。
+* **颜色是入参、每帧重查**：`0x4b6825` / `0x4b68f3` 两次 hashbrown 查表（key = player id，
+  值取 3 个字节拼 `r9d`），两张表分别来自 `get_team_overview`（`0x4be6e0`）在 `0x4b5fd3` /
+  `0x4b60e3` 的两次返回值（该函数全二进制 7 个直接调用者，`draw` 里 2 个）。
+
+### 41.4 落码：本类怎么接的
+
+| 原版 | 本类 | 档位 |
+|---|---|---|
+| `get_active_functions_on_tick` 的三条谓词 | `is_active_function()`（第 3 条；第 1/2 条见 §41.5） | **观测** |
+| `new_len = min(len, trunc(30*(frac-active)))` | `revealed_points()`，`30.0` 逐位 | **逐位**（常量）/ **观测**（算式） |
+| `update_function(id, points, len, new_len, color)` | `FunctionDrawer::update_function(id, points[..new_len], color)` | 传前缀**等价**（`append_window` 仍是唯一判定，同 §40.4b） |
+| `remove_function(id)`（`0x4b6418`） | 不在场就删表 + `remove_function` | **观测**（调用点）/ 集合形状**推断** |
+| 每帧喂 | `draw()` 末尾调 `feed_functions()`（位置与原版一致：画完棋盘框之后） | **观测** |
+| 喂给哪个 `FunctionDrawer` | 固定第 0 个子节点 | **推断**（"`self+0x80` 是 3 个里的第一个"没有直接证据） |
+| 让 `_draw` 每帧跑 | `_process` 里"有曲线正在揭示就 `queue_redraw()`" | **我方选择**（原版 `process` 无此调用，见 §41.5） |
+
+**替身（必须写清，别当成复原）**：`GraphwarFunctionManager` **还没有 `src/` 文件**
+（`docs/coverage-matrix.tsv` 第 36 行把它算进 `src/game.rs`），而本轮只许改这两个 `*_class.rs`
+⇒ 棋盘类里先放一份"最小函数存储 + 入口"，方法名照原版的语义起：
+
+```text
+GraphwarPlane.set_function_points(id, points, active_tick, color) -> 存下的点数
+    # 覆盖 GraphwarFunctionManager::set_function_points(0x456810) + set_function_active_tick(0x456b80) + 队色
+GraphwarPlane.set_fractional_tick(tick) -> tick
+    # 覆盖 GraphwarTickHandler::get_fractional_tick(0x519530) 的读取（原版每帧自己读）
+GraphwarPlane.feed_functions() -> 本帧追加的点数
+    # = 原版 draw 尾部那段循环；headless 直接调它（`_draw` 在 headless 下不一定被调）
+```
+`points` 是**扁平 f64 数组** `[x0,y0,x1,y1,…]`：原版的点就是两个 f64（16 B/点），
+用 `PackedVector2Array` 会在入口就掉到 f32。
+
+### 41.5 还没做 / 未知（诚实清单）
+
+1. **点的生产者没复原**。`set_function_points`（`0x456810`）的调用者是 `0x3e44d4`
+   （落在一个 70 项跳转表的事件分派函数里，前面 `0x3e44aa` 先调 `0x3cae50` 把点表按 x 区间
+   就地压实；**那个函数的模块归属未证**——`fixtures/module_map.tsv` 只给出
+   `graphwar_game_state_manager.rs` 的锚区间 `0x3caa20..0x4ac440`，落在区间内不等于归属）
+   与 `0x471a88`；**谁算出那张原始点表**没继续挖。
+   ⇒ 现在点必须由调用方注入，**这是本轮最大的缺口**（比"喂点"本身更靠上游）。
+2. **`get_function_fade_on_tick` 没有 x86 落点**：`0x4b69fe` 走的是 GOT 槽 `0x9bbd08`（方法指针
+   调用），alpha 的算式未知 ⇒ `update_function_fade` **没接**（不发明一个淡出曲线）。
+3. **谓词第 1/2 条没做**：`value+0x70 == 1` 与 `value+0x50 != i64::MIN` 两个字段的语义未知
+   （可能是 `FunctionState` 的某个变体与一个 `Option`），本类不猜。
+4. **`update_transform`（`0x4b6147`）仍未接**——已解出的部分：`x = 0.5*w`、`y = 0.5*h`
+   （`w`/`h` = `Control::get_size()` 的两个返回值，`0x4b60d4`/`0x4b60da`），scale 的 x 分量 =
+   `w/50`（`.rodata 0x1b9fc8` = `50.0f32`，与棋盘宽 50 个单位一致），`flip` 位来自
+   `get_team_overview` 返回值的若干位（`0x4b6111`–`0x4b6129`，语义未知）。
+   **但**：`0x4b60fa` 是 `movss 0x8(%rsp),%xmm2`（`MOVSS` 会清高 lane）+ `0x4b6104` 的
+   `divss` 只动低 lane ⇒ 按调用点读出来的 `Vector2(w/50, 0)` 会把线压扁，与"线要看得见"矛盾
+   ⇒ **这个 `Vector2` 的构造没解全**（很可能还有一处 `unpcklps`/`xmm3` 或内存构造没看到）。
+   缺的证据：**运行时帧对拍**（真机上量 `Line2D.scale` / `Line2D.position` 的真值）。
+   ⇒ 曲线现在画在子节点的默认变换下（位置 0、缩放 1、宽 0.125），**位置/粗细都还不对**。
+5. **客户端还没用真类**：`client/src/play/plane_view.gd` 是照 `.tscn` 重写的 GDScript 仿制品
+   （自己 `draw_line`），`GraphwarPlane` 目前只在 `client/tools/*.gd` 里被实例化
+   ⇒ **真机上眼前仍然看不到 Rust 侧的曲线**，要等播放屏改用真类（不在本轮允许改的文件里）。
+6. `_process` 里"揭示中就 `queue_redraw`"是我方补的（原版 `process` = `ObstacleDrawer::update` ×2
+   + `get_team_overview`，没有该调用）⇒ **谁让平面每帧重画未解**。
+7. `ObstacleDrawer` 仍不存在；`FunctionDrawer::draw`（arm64 `0x3911b4`）x86 侧仍未定位（§40.5 照旧）。
+
+### 41.6 验收（可从干净树重跑）
+
+```text
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so   # 不覆盖就还在跑旧内核
+grep -a -c line_instance_id client/libgw2_rebuild.so                    # 3
+"$GODOT" --headless --path client --import                              # 新增 .gd 后必须
+"$GODOT" --headless --path client --script res://tools/curve_on_screen_check.gd ; echo "EXIT=$?"
+    # CURVE_ON_SCREEN 96 passed, 0 failed / EXIT=0
+"$GODOT" --headless --path client --script res://tools/function_drawer_check.gd   # 132 passed（未回归）
+"$GODOT" --headless --path client --script res://tools/draw_classes_check.gd      # 235 passed（未回归）
+cargo test --offline                              # 1512 passed（基线）
+cargo test --offline --features gdext-bindings     # 1586 passed（含本批 3 条单测）
+python3 tools/coverage_matrix.py --check           # OK
+```
+
+headless 实测的 `Line2D.get_point_count()`（`points.len() = 100`、`active_tick = 10`）：
+
+| 场景 | 追加 | `get_point_count()` |
+|---|---|---|
+| `fractional_tick = 12.0` ⇒ 期望 `trunc(30*2)=60` | 60 | **60** |
+| `fractional_tick = 13.0` ⇒ 期望 `trunc(30*3)=90` | 30（只补增量） | **90** |
+| `fractional_tick = 14.0` ⇒ 期望封顶 100（120>100） | 10 | **100** |
+| 同一个 tick 再喂 | 0 | 100 |
+| `tick = 73`（d=63）⇒ `30*63=1890 < 1900` 仍在场 | 0 | 100 |
+| `tick = 74`（d=64）⇒ `30*64=1920 >= 1900` 出队 ⇒ `remove_function` | 0 | 线被删（`function_count() == 0`） |
+| **进树**（`_process` 请求重画 ⇒ `_draw` 里喂）`tick=11`、`active=10` | 30 | **30** |
+
+「进树 ⇒ 30」那一条是本轮唯一**走完整条路径**的断言：`_process` 请求重画 → 引擎调 `_draw` →
+`draw()` 里 `feed_functions()` → `FunctionDrawer::update_function` → `Line2D::add_point`。
+期望值在 GDScript 里按反汇编算式**独立重写**（不调 Rust 的 `revealed_points`），
+常量 `30.0` / `1800` 也写死在脚本里 ⇒ Rust 那边改常量脚本会红。
