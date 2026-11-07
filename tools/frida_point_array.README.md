@@ -93,3 +93,38 @@ miss       都没有（正常只应有 i=0 那一个：炮口/出生点，不是
 pairExact  (x, y) **两个位模式都**命中
 pairWho    这些命中来自求值器的哪个返回地址（`gw+3c2995` = `calculate_function` 体内）
 ```
+
+## 2026-11-08 `dispatch/34`：两处 `(ptr, n)` 读数（`docs/06` §42）
+
+这一轮给同一支探针加了一个**报文侧的断点**，用来判"报文读的点数组是不是就是
+`calculate_function` 算出来、进队列的那一块"，以及"每发两次 `calculate_function`
+（`gw+3c30c7` / `gw+3e2d3b`）返回的两条数组是否逐位相同"。
+
+| 新增 RVA | 是什么 | 抓什么 |
+|---|---|---|
+| **`0x472865`** | `execute_results` 里 `movdqu -0x10(%rdx,%rcx,1),%xmm0`（`pos = pts[n-1]`） | 执行前：`rdx` = 数组基址、`rcx` = n×16、`r13` = n、`r15d` = 队列项 `+0x18` 低 32 位；那 16 字节；整条数组摘要；与队列项 / 两次 `calculate_function` 返回的比对 |
+
+新增消息类型：
+
+| type | 内容 |
+|---|---|
+| `calc_array` | 每次 `calculate_function` 返回：`seq`（全局自增）、`ptr/len/kind`、`digest_xy`/`digest_y`（FNV-1a 64，覆全部 16·len 字节 / 只算 y）、首末点，以及与最近 8 个数组的**逐点逐字节**比较结果 `vs` |
+| `pos_read` | `movdqu` 那一刻的 `rdx/rcx/n/r13/r15`、`pos_bytes`、摘要、`vs_queue`（对入口扫到的队列项）、`vs_calc`（对两条数组） |
+| `selftest` | 装机时的**正对照**：合成数组 相同/翻 1 bit/翻 2 bit 三档，确认比对函数报得出不同 |
+
+驱动新增开关：
+
+```bash
+--attach                # ★ 本机必须：frida spawn 会把这游戏挂在 wait4、永不建窗口（docs/06 §42.1）
+--shots N --gap S --exprs "a,b,c"   # 连打 N 发，逐发轮换表达式
+--snap-dir DIR          # 每步按**窗口 id** 截图（root 全黑）
+--eval-rows 0           # 关掉 evals 抽样，连发时 JSONL 不会爆
+--extract raw.jsonl --extract raw2.jsonl --label series1 --label series2 \
+    --fixture-out fixtures/frida_ptr_pair_sample.jsonl   # 摘成入库用的纯文本样本
+```
+
+`--extract` 的输出 = 1 行 provenance + 每发 1 行（字段见 `fixtures/frida_ptr_pair_sample.jsonl`），
+**不含路径、不含用户名、不含整条数组的十六进制**。
+
+⚠ 坐标与点击的两个新坑（§42.1）：输入框在 `y≈1090`（不是 1048）；
+`mousemove X Y click 1` **一条命令**会把点击按旧指针位置派发，必须拆成两条。
