@@ -13,6 +13,14 @@
 | §15 | **用真实对局验证与取证**：采样器 69/69、`shot_calc`/`life_entry` 形态、harness 当玩家（原 `23`/`26`） |
 | §16 | 手段选择顺序 |
 
+> ⚠️ **审计 2026-11-08（读本文件前先看这两条）**
+> ① **`dispatch/` 不在本仓库**：`dispatch/NN-*.md` 是当轮任务书，每次合并后都从 master 移除
+> （最近一次 `ee41ff23`）。本文件 9 处「任务书：`dispatch/…`」已去掉链接、只留**轮次标识**；
+> 要看原文得找回对应分支/历史，**它不是可点的证据**。
+> ② **本文件是逐轮日志**：§24 起的每个数字都带轮次日期，是**当轮读数**，不是现行基线。
+> 现行值只看 `fixtures/guardrails.json` 与 `docs/HANDOVER.md` §0.0.0.2
+> （2026-11-08：内容 647 / 647 / 633，种类序列 1075 / 1075 / 1075，死亡 366/385，挖洞 207/294）。
+
 ## 1. 证据分级
 
 | 等级 | 含义 | 例子 |
@@ -489,7 +497,9 @@ fi.on_text_change("0"); fi.force_update_cb(); fi.on_text_submitted("0")
 3. **frida 运行时观测** —— 需要"实际怎么跑"（`93` 的 25 s 上限就是运行时确认的）；
 4. **REA 伪代码** —— 只有在①~③都给不出结构时，用来快速看懂控制流（前置检查见 `90` §2.6/§2.8）。
 
-REA 的定位、静默陷阱与强制前置检查见 [`90`](06-verification.md) §2.6–§2.8。
+REA 的定位、静默陷阱与强制前置检查见 `archive/90-anti-waste.md` §2.6–§2.8
+（**审计 2026-11-08**：原链接指向本文件 `§2.6`，但本节只有 §22「防无用功守则（原 `90-anti-waste`）」这个落点，
+`§2.6/§2.7/§2.8` 是归档件里的小节号 ⇒ 改成指向归档原文）。
 
 ## 17. 整机"逐位相同"的口径 —— 以及哪几处**证明做不到**
 
@@ -781,7 +791,7 @@ cd .. && .venv/bin/python analysis/difftest.py         # 768 例（原 704 + 64 
 
 ## 24. 整局对拍**剩余失败**的归因（2026-11-07，**401 份回放**＋2 份元数据的定格快照；纯分析）
 
-> 任务书：[`dispatch/03-bit-exact-report.md`](../dispatch/03-bit-exact-report.md)。
+> 任务书：`dispatch/03-bit-exact-report.md`。
 > 口径一个字都没改：仍然调 `_scaffold::replaydiff::compare_batch`（投影 → 折叠 → 分块 →
 > 块内多重集 → 字段级 diff），仍然用 `_scaffold::replaydiff::Policy`。
 > 本节只多做一件事：把**每一批**的失败落进一个互斥的桶里，并让"各桶之和 == 失败批数"
@@ -1276,7 +1286,7 @@ python3 tools/posy_attrib.py --conv $OUT/conv.jsonl --probe $OUT/posy.jsonl
 
 ## 26. 爆炸点 `pos_y`：坐标来源逐指令定死，末位差拆成两桶（2026-11-07，`dispatch/09`）
 
-> 任务书：[`dispatch/09-fx-explosion-y.md`](../dispatch/09-fx-explosion-y.md)。归因桶 = §24.4 的 `Y`
+> 任务书：`dispatch/09-fx-explosion-y.md`。归因桶 = §24.4 的 `Y`
 > （收敛层 170 批 / 33.2%）＋ `Y2`（6 批）。本节**推翻任务书的两个前提**（见 §26.1）并给出落地修正。
 >
 > **反汇编口径**：逐指令证据一律引 **arm64 Android 2.0.60 `libgraphwarrust.so`**
@@ -1486,7 +1496,7 @@ python3 tools/coverage_matrix.py --check   # OK
 
 ## 27. `FunctionPoints.end_x` 的取值点：逐指令定死 = `pts[len-1]`（2026-11-07，`dispatch/11`）
 
-> 任务书：[`dispatch/11-endx-sample-point.md`](../dispatch/11-endx-sample-point.md)（P1，任务书口径"失败 95 批"，
+> 任务书：`dispatch/11-endx-sample-point.md`（P1，任务书口径"失败 95 批"，
 > 那是 §26 修前的 `conv` 归因；**当前 `fire` 基线里这一桶是 `E1` 46 批**，见 §27.4）。
 > 本节**推翻任务书的前提**"`end_x` 取 `pts[n-2]`"，并给出一次**被实测否决的改法**的完整数据。
 >
@@ -1645,7 +1655,7 @@ cargo run --release --offline --example replay_endx_probe -- --dir $R --file 178
 
 ## 28. 多发批结构接线（2026-11-07 第二轮）：**逐发窗口 → 一次事务**
 
-> 任务书：[`dispatch/10-multi-shot-wiring.md`](../dispatch/10-multi-shot-wiring.md)。
+> 任务书：`dispatch/10-multi-shot-wiring.md`。
 > 上一轮（§24.4）把它记成 "`S` 123 批 + `SD` 7 批 / 接线即得 / 内容预计 ≥594"；
 > 本节把它**接上**，并给出三个数（总 / 多发批 / 单发批）。
 > 证据档位沿用仓库约定；本节所有比例的分母都是**结算批**（1080），不是文件。
@@ -2054,7 +2064,7 @@ cargo run --release --offline --example kseq_text  -- --dir $R --file 1782676398
 
 ## 30. 把 `diffconv` 的坐标计算**并回内核** + 两条路径的逐位一致性（2026-11-07，`dispatch/16-diffconv-merge`）
 
-> 任务书：[`dispatch/16-diffconv-merge.md`](../dispatch/16-diffconv-merge.md)（P1，纯工程债）。
+> 任务书：`dispatch/16-diffconv-merge.md`（P1，纯工程债）。
 > 点这个债的是 `dispatch/reports/CG-round2-2026-11-07.md` **§5**：`src/game.rs`（真实实现）与
 > `src/_scaffold/diffconv.rs`（收敛层）**各有一份**爆炸点/挖洞点算法，第二轮任务 09/14 只改了
 > `game.rs`、收敛层没跟上 ⇒ 同一批回放在两条路径上得出不同结论，以后每次对拍都得先怀疑
@@ -2920,7 +2930,7 @@ python3 tools/point_array_chain.py check    17/17 OK（退出码 0）
 
 ## 34. 内核开火路径补上 `Mode`：DiffEq 515 批 / 550 发**从"不可比"变成"可比"**（2026-11-08，`dispatch/21`）
 
-> 任务书：[`dispatch/21-diffeq-fire-path.md`](../dispatch/21-diffeq-fire-path.md)。
+> 任务书：`dispatch/21-diffeq-fire-path.md`。
 > 这一节结掉的是 `dispatch/reports/CG-round3` §7 与本文 §30.4 / §30.9 第 1 条那笔账：
 > `game.rs::fire_functions` 写死 `Mode::Normal` ⇒ 微分方程局（DiffEq）的开火走 `y = f(x)` 采样器
 > ⇒ **515 批 / 550 发根本不是"不一致"，是没法比**。
@@ -3106,7 +3116,7 @@ cargo run --release --offline -q --example diffconv_parity -- --dir $R --max-sam
 
 ## 35. **运行时**抓到点数组的填充者：`calculate_function`；写进去的 y 与求值器**逐位相同**（2026-11-07，`dispatch/25`）
 
-> 任务书：[`25-frida-point-array.md`](../dispatch/25-frida-point-array.md)。**本节全部是运行时观测**
+> 任务书：`dispatch/25-frida-point-array.md`。**本节全部是运行时观测**
 > （frida 17.26.1 挂在真游戏 `Graphwar II` Linux 2.0.60 进程里），不是静态推断。
 > 脚本：[`tools/frida_point_array.js`](../tools/frida_point_array.js)（下断）+ [`tools/frida_point_array.py`](../tools/frida_point_array.py)（驱动）。
 >
@@ -3762,7 +3772,7 @@ objdump -T <ws>/.reference/steam/2026-08-28/libgraphwarrust.so | grep -E 'UND.*(
 
 ## 37. **真机造了一个带障碍的对局**：一炮只产生 1 条挖洞指令；"两条报文"来自**两个 ObstacleManager 实例**（2026-11-07，`dispatch/27`）
 
-> 任务书：[`27-obstacle-room.md`](../dispatch/27-obstacle-room.md)（P1）。**本节全部是运行时观测**：
+> 任务书：`dispatch/27-obstacle-room.md`（P1）。**本节全部是运行时观测**：
 > frida 17.26.1 挂在真游戏 `Graphwar II` Linux **2.0.60** 进程里（`libgraphwarrust.so` sha256
 > `9a538115…`，= 逆向目标那份），Xvfb + xdotool 驱动，**在 Campaign Level 2（中心单障碍）里打了 9 炮，其中 8 炮撞到障碍**。
 > 脚本：[`tools/obstacle_room.js`](../tools/obstacle_room.js)（下断）+
@@ -4354,7 +4364,7 @@ $PY tools/explpos_attrib.py --attrib f.jsonl --mech mech.jsonl   # ★ 本节 39
 
 ## 41. `Ode` 局的**停止判据**：五个出口逐指令核对完毕，与实现逐条同构（2026-11-08，`dispatch/29`）
 
-> 任务书：[`dispatch/29-ode-stop-condition.md`](../dispatch/29-ode-stop-condition.md)。
+> 任务书：`dispatch/29-ode-stop-condition.md`。
 > 起点 `1877049`，分支 `agent/ode-stop`，私有 `CARGO_TARGET_DIR`，同一份 401 回放快照。
 > **编号说明**：任务书写"最大 §37、用 §38"，但本分支已有 §38（名字判据自检口径），
 > 所以本任务用 **§39**；并行任务如果也占了 §39，请协调者合并时重排。
@@ -4372,9 +4382,14 @@ $PY tools/explpos_attrib.py --attrib f.jsonl --mech mech.jsonl   # ★ 本节 39
    **−20.75531942288392，与回放逐位相同**。
 3. 那个样本（`1782764906` 批 #0）**真正的原因是空函数串**：`function == ""` ⇒
    `graphwar_shot_calculator::shot_points` 提前 `return Vec::new()` ⇒ 整条弹道消失 ⇒
-   `end_x = 0.0`。反事实测量（§39.4）：改 1 行，`batch` 轴 **643 → 647**、`fire` 轴 **608 → 612**，
-   `Normal` **一条不动**。⚠️ 那一行在 `src/graphwar_shot_calculator.rs`，**不在本任务允许改的
-   文件清单里**，所以本分支**没有落地**，只把证据和落地位置交上去。
+   `end_x = 0.0`。反事实测量（§39.4）：改 1 行，`batch` 轴 **643 → 647**、`fire` 轴 **608 → 612**
+   （⚠️ **审计 2026-11-08**：`fire` 那一列是 §39 改口径**之前**的轴——多发批还按逐发驱动；§39 之后
+   `fire` 与 `batch` 在本快照上逐字节相同，所以现行 `fire` 也是 **647**，不是 612。见 `guardrails.json`），
+   `Normal` **一条不动**。那一行在 `src/graphwar_shot_calculator.rs`，**不在本任务允许改的
+   文件清单里**，所以本分支**交付时没有落地**。
+   **✅ 审计 2026-11-08 更正：已由协调者落地** —— `f95a2a95`「fix(shot): Ode 局的空函数文本
+   不再提前返回空点列」，闸门正是 `mode != Mode::Ode`；`fixtures/guardrails.json` 现行
+   `batch`/`fire` 内容命中 = **647** 就是这一行的结果。**本段原写"没有落地"已过期。**
 4. 顺带查清：回放自己的 `FunctionPoints.end_x` 与它的 `EffectInfo(Explosion).pos_x`
    **差一个采样点**（`pos = end + 1`）的批，`Ode` **52 发 / 52 批**、`Normal` **79 发** ——
    这就是归因表的 `E1` 桶（`Ode` 侧 52 批，与 `bit_exact_attrib.py` 的数完全一致）。
@@ -4502,17 +4517,19 @@ probe(只跑采样器) stop = -24.99281942288328     ← 任务书看到的就�
 提前返回空 `Vec`（那条早退在"空函数 = 没有弹道"的旧假设下写的）。全语料 **1291 发**里
 `function == ""` 的有 **6 发**（5 份回放）。
 
-**反事实测量**（本分支实测，**改完即还原，没有入库**）：把早退收窄成
+**反事实测量**（本分支实测，改完即还原；**后来由协调者在 `f95a2a95` 正式落地**，见下）：把早退收窄成
 `if toks.is_empty() && mode != Mode::Ode { return Vec::new(); }` ——
 
 | 轴 | 改前 | 改后 | 其中 `Ode` | 其中 `Normal` |
 |---|---|---|---|---|
 | `batch`（内容命中） | 643 / 1080 | **647** | 288 → **292**（/515） | 355 → **355**（/565，未退） |
-| `fire`（内容命中） | 608 / 1080 | **612** | 277 → **281**（/515） | 331 → **331**（未退） |
+| `fire`（内容命中） | 608 / 1080 ⚠️**旧口径** | **612** ⚠️ | 277 → **281**（/515） | 331 → **331**（未退） |
 
 变干净的 4 批：`1782764906` #0 / #1 / #5、`1783342151` #2（全是 `DiffEq`）。
 
-⚠️ **没有在本分支落地**：`src/graphwar_shot_calculator.rs` 不在 `dispatch/29` §4 的允许清单里
+⚠️ ~~**没有在本分支落地**~~ **审计 2026-11-08：已落地**（`f95a2a95`，闸门 `mode != Mode::Ode`；
+`guardrails.json` 的 batch/fire = 647 即其结果）。原文保留如下，记录"交付时为什么没落地"：
+`src/graphwar_shot_calculator.rs` 不在 `dispatch/29` §4 的允许清单里
 （只许动 `src/graphwar_path_calculator.rs` 的 Ode 停止判据）。落地位置与判据都写在这里，
 请协调者按 `AGENTS.md` 的分支纪律另开一刀；`Normal` 侧不动的那一行靠 `mode != Mode::Ode`
 这个闸保证（它只放行 `Ode`，`Normal` 的早退逐字保留）。

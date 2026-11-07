@@ -1,6 +1,8 @@
 # docs 索引
 
-> **规则**：根目录只放**长期有效的知识**（一屏能看完的索引 + 21 篇主题文档）。
+> **规则**：根目录只放**长期有效的知识**（一屏能看完的索引 + 主题文档）。
+> **审计 2026-11-08**：原文写「21 篇主题文档」，实测根目录 **32 篇**（`ls docs/*.md | wc -l`）；
+> 篇数会变，本页只承诺「结构」不承诺条数（同一规矩见 `AGENTS.md` 的目录一节）。
 > 历史、已推翻的结论、过程档案全在 `archive/`；每篇归档的原因写在 [`MIGRATION.md`](MIGRATION.md)。
 > **四档证据标记**的定义在 [`06-verification.md`](06-verification.md) §1。
 
@@ -28,7 +30,7 @@
 
 | 文档 | 解决什么问题 |
 |---|---|
-| [07-protocol.md](07-protocol.md) | 事件枚举：73/73 覆盖、**72 个实测判别值**全表、一回合报文顺序 |
+| [07-protocol.md](07-protocol.md) | 事件枚举：**74/74 覆盖**、**74 条判别值**全表（72 条 `cmp` 链 + `63`/`65` 跳转表）、一回合报文顺序 |
 | [09-network.md](09-network.md) | 帧格式、握手 7 条、`Match`、整局循环、**broker 协议** |
 | [14-turn.md](14-turn.md) | tick 时钟、回合状态机、同时回合制的结算顺序与广播分组 |
 | [13-ai.md](13-ai.md) | AI 函数进化（唯一权威）：参数、评分、25 s 预算、变体 A/B |
@@ -54,5 +56,10 @@
 | [151-addr-open-items.md](151-addr-open-items.md) | **地址级悬案清单**：哪些"未知"只差一步、下一步查什么、哪几条查了也定不了（含 6 条已裁定） |
 | [152-audit-of-merged-claims.md](152-audit-of-merged-claims.md) | **对已合并结论的对抗性审计**：独立复算 8 项、查出并就地更正 4 处（条件码 / 函数体尾 / 清单缺项 / 旁证推广） |
 | [153-audit-downstream.md](153-audit-downstream.md) | **下游两轮 14 份任务报告（CG 分支）的对抗性复算**：18 项，查出 2 处轴/口径错配 + 1 处反事实当结果（1074 属 `batch_conv` / 收敛层 198-291 是预测 / 134-259 复现不出来） |
+| [144-lobby-fixes.md](144-lobby-fixes.md) | 大厅 / 房间列表的修正（**审计 2026-11-08**：原文缺索引行，本次补上） |
+| [147-ai-behaviour.md](147-ai-behaviour.md) | AI 行为面（评分 / 世代 / 可观测统计）（同上补行） |
+| [149-coverage-matrix.md](149-coverage-matrix.md) | **覆盖率矩阵**：按原版模块算的进度尺（`tools/coverage_matrix.py` 生成，勿手改）（同上补行） |
+| [150-win-rule.md](150-win-rule.md) | **胜负条件裁定**：一条规则还是两条；推翻 `archive/131` §2 的两分口径（同上补行） |
+| [154-docs-audit.md](154-docs-audit.md) | **文档审计（2026-11-08）**：过时数字 / 互相冲突 / 可整合 / 失效引用四类，逐条给处置 |
 | [MIGRATION.md](MIGRATION.md) | **旧文件 → 归档/吸收** 的完整映射表（"没丢东西"的凭据） |
 | [guide/README.md](guide/README.md) | 攻略向行为手册（另一套读者：想赢的人） |
