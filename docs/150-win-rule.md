@@ -369,7 +369,7 @@ cargo build --offline && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
 "$GODOT" --headless --path client --import
 CARGO_TARGET_DIR=$CARGO_TARGET_DIR bash client/run.sh selftest    # 658 passed, 0 failed
                                           # ⚠️ 审计 2026-11-08：658 是**当轮**读数；现行 709 / 0
-                                          #    （前置同 §：assets + serve_match，见 docs/16 §49.7）
+                                          #    （前置同 §：assets + serve_match，见 `archive/156-client-rounds.md` §49.7）
 ```
 
 > ⚠️ `selftest` 的两条联机断言只有在 `CARGO_TARGET_DIR` 指向**已构建**的

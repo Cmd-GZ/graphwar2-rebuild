@@ -406,7 +406,7 @@ $ bash client/run.sh selftest
 
 > ⚠️ **审计 2026-11-08 改了这一段**：原记「65 个二进制（lib 464 / 539）、总计 **1520** / **1595**、
 > `SELFTEST 694`」。现按本机复测替换：`cargo test --offline` = **1585**、`--features gdext-bindings`
-> = **1669**（两条轴都是 69 个二进制、0 failed，逐二进制求和），`selftest` 按 `docs/16` §49.7 = **709**。
+> = **1669**（两条轴都是 69 个二进制、0 failed，逐二进制求和），`selftest` 按 `archive/156-client-rounds.md` §49.7 = **709**。
 > 复跑命令：`cargo test --offline 2>&1 | grep '^test result'`（求和 `ok\. N` 即得总数）。
 > lib/集成的**拆分数**本次没记（`cargo test` 只在每行给总数）；要逐二进制清单跑 `cargo test -- --list`。
 
@@ -421,7 +421,7 @@ $ bash client/run.sh selftest
 
 一句话：**694 不是版本号，是"前置条件全齐"的读数**；缺一样就落到别的数上，四个数都实测过
 （⚠️ **审计 2026-11-08**：下面的 694 是 2026-11-07 的**当轮**基数，"全齐"档现已涨到 **709**
-＝ 694 + 15（`docs/16` §49.7）；其余三档没有跟着复测，**仍按当轮值记**，不要当成现行读数）：
+＝ 694 + 15（`archive/156-client-rounds.md` §49.7）；其余三档没有跟着复测，**仍按当轮值记**，不要当成现行读数）：
 
 | `client/assets/` | 编了 `examples/serve_match` | 结果 | 差在哪 |
 |---|---|---|---|

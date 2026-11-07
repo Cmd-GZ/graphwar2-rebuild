@@ -1302,7 +1302,7 @@ socket fd 在 `+0xb8`（**`-1` = 还没 bind**，`new` 写死），组播地址�
 1. **`EffectInfo`(44) / `QueueDestroyObstacle`(42) 里的坐标是权威端自己算出来的**，
    不是从别的客户端收来的。生产者在 `GraphwarGameStateManager::execute_results`，
    读的是**它自己进程里的点数组**（`0x472865 movdqu xmm0,[rdx+rcx-0x10]`，见
-   [`06-verification.md`](06-verification.md) §36.2）。
+   [`155`](archive/155-round-log.md) §36.2）。
 2. **所以"从线上收到的 `pos_y`"不是"不可复现的外来值"**：它是同一套代码用同一套输入
    算出来的数，接收方（与我们的内核）本来就该逐位算得一样。
 3. **反证是量化过的**：末位残差率在**战役单机**回放（无远端）是 28.7%（175/609），

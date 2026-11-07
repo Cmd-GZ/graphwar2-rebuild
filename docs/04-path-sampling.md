@@ -137,7 +137,7 @@ ODE 求值时第三个参数在**全部 7 个调用点**都传 `0`：`y'` 这个
 ## 8. 复刻物
 
 - Python 参照实现（已逐位验证）：上游 `graphwar_curve.py`（`hi = mid2` 已补）
-- Rust 复原：本仓库 `src/graphwar_path_calculator.rs`（同步修复；`06-verification.md` §32 当时记录 `cargo test` 135 条全绿，现为 **150 条**）
+- Rust 复原：本仓库 `src/graphwar_path_calculator.rs`（同步修复；`archive/155-round-log.md` §32 当时记录 `cargo test` 135 条全绿，现为 **150 条**）
 
 验收数字（两份实现共用）：第 4 点 = `-1.174402651902936`；`step=0.5` → 401 点 / 末点
 `(24.8098, 9.8719)`；`step=0.01` → 20001 点 / 末点 `(23.2128, 6.4176)`。
@@ -231,12 +231,12 @@ Ghidra 只用于 §8.3 的字节级交叉核对；**没有**采信 Ghidra 的反
 
 - 父仓库 `analysis/difftest.py` / `fuzz.py` 回归：本文按任务约定只做静态分析、不改源码，
   回归由改码一方执行（`docs/AGENTS.md` 硬规矩 2）。**已补跑**：768 例全过、fuzz 120 例 0 失配
-  （`06-verification.md` §32）。
+  （`archive/155-round-log.md` §32）。
 - **没有**覆盖 `ode=True` 路径（本文只判定了「ODE 分支无复检」这一条）。
-- 用真游戏实况复核：`06-verification.md` §26 显示实况 bug 的根源就在这里。**已重跑**
+- 用真游戏实况复核：`archive/155-round-log.md` §26 显示实况 bug 的根源就在这里。**已重跑**
   `tools/sim_turns_analyze.py`：`14-turn.md` §14 给出 82 发并集 **152/152**、多报 0 漏报 0，
   §9.1 的「19/82 曲线被截断」消失。
-- `tests/live_hits.rs` 切到 0.01：**已切、12 条全过**（`06-verification.md` §33）。当年切过去后 4 条失败
+- `tests/live_hits.rs` 切到 0.01：**已切、12 条全过**（`archive/155-round-log.md` §33）。当年切过去后 4 条失败
   **与本修复无关**，是测试自己跳过射手身体的半径固定 0.5、撞上掩膜像素量化抖动。
 - 仍**未做**：`chord2 = NaN` 分支与汇编的等价性实测（§9.1）。
   > 2026-11 补测（§10.5）：**853 个用例（112 条夹具 + 741 发真实 Normal）里没有一次**

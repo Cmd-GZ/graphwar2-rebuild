@@ -816,7 +816,7 @@ EffectInfo(effect_type = ExplosionEffect)
 
 > 本节补的是 §3.3 / §5.2 只写到"取值集合"的那一段：**`effect_type` 不只是个名字，
 > 它把 `pos` 的语义一分为二**。完整取证与复跑命令见
-> [`06-verification.md`](06-verification.md) §36。
+> [`155`](archive/155-round-log.md) §36。
 
 ### 10.1 线上字段不变，语义分两路（逐指令）
 
@@ -841,4 +841,4 @@ $PY tools/posy_source_attrib.py --dir <回放目录>     # 退出码 0 = 正对�
 
 ⇒ **协议结论**：`EffectInfo` 这条报文里 `pos` 有两种语义，
 "线上收到的坐标"**不等于**"别人算好的爆炸点"。爆炸点是**发送方自己点数组的最后一个采样点**，
-接收方要逐位复现它（这就是 `docs/06` §36 要回答的"为什么差 1 ulp"）。
+接收方要逐位复现它（这就是 `archive/155-round-log.md` §36 要回答的"为什么差 1 ulp"）。

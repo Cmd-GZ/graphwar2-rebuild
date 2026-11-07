@@ -9,11 +9,11 @@
 协议       **74 / 74 全字段 + 74 条判别值**（72 条 `cmp` 链 + `63`/`65` 由 arm64 跳转表定死）+ 7 个线上枚举全集（已无未知）
 GDExtension 类   12 / 12 全部还原
 真名       **348 / 527** 有原版真名（并集 351 个地址；无名 179 = 138 推断 + 41 未知）
-           （**审计 2026-11-08**：原记 327，那是 §20 的单表口径；现行三表并集见 `docs/02` §37–§40。
+           （**审计 2026-11-08**：原记 327，那是 §20 的单表口径；现行三表并集见 `archive/157-name-matching.md` §37–§40。
             327 条仍可在 `fixtures/name_to_addr.tsv` 里查到）
 cargo      **1585 passed / 0 failed**（`--features gdext-bindings` 的更数见当轮实测）
 客户端自检   **709 passed / 0 failed**（前置：`client/assets/` + `examples/serve_match`；
-           **审计 2026-11-08**：原记 694，`docs/16` §49.7 已涨到 709（+15）；缺资产的
+           **审计 2026-11-08**：原记 694，`archive/156-client-rounds.md` §49.7 已涨到 709（+15）；缺资产的
            591 / 2 / 23 等处是 2026-11-07 当轮读数，本次未复测。两个口径见 README「客户端自检的两个口径」）
 ```
 
@@ -21,8 +21,8 @@ cargo      **1585 passed / 0 failed**（`--features gdext-bindings` 的更数见
 ⇒ 527 约为游戏函数的 **40%**；其余 773 个（1,300 − 527；**审计 2026-11-08** 更正原记的 770）
 没有 `panic::Location`（纯计算 / 闭包 / 泛型单态化），尺子数不到。
 ⚠️ 但**名字不一定拿不到**：`tools/sym_match.py` 用「函数顺序（主）+ 体量比 + 字面量」批量对，
-**1,300 个 arm64 符号里 762 个给出了唯一候选（63.0% = 681 unique + 81 weak，`docs/02` §40.2）**，
-其中就包括采样器（**审计 2026-11-08**：原记 733 / 61%，那是上一轮的读数，已按 `docs/02` §40 更正）
+**1,300 个 arm64 符号里 762 个给出了唯一候选（63.0% = 681 unique + 81 weak，`archive/157-name-matching.md` §40.2）**，
+其中就包括采样器（**审计 2026-11-08**：原记 733 / 61%，那是上一轮的读数，已按 `archive/157-name-matching.md` §40 更正）
 `calculate_function`（arm `0x3b5374` ↔ x86 `0x3c2530`，体量比 0.61）。
 `fixtures/sym_match.tsv` 每条都带 `confidence` + 可复核的 `evidence` 字段。
 
@@ -77,7 +77,7 @@ cargo      **1585 passed / 0 failed**（`--features gdext-bindings` 的更数见
 
 ### 0.0.0.2 对拍现在到底多准（**三条轴，报数必须带轴名**）
 
-同一份 **401 份定格快照**（`.agent-work/replay-snapshot/`，指纹见 `docs/06` §25）。
+同一份 **401 份定格快照**（`.agent-work/replay-snapshot/`，指纹见 `archive/155-round-log.md` §25）。
 三条驱动轴的数**完全不同**，混着比就是错的——上一轮就是因此把 1074 记到了 `batch` 上。
 
 | 指标 | `fire` | `batch` | `batch_conv`（收敛层） |
@@ -97,7 +97,7 @@ cargo run --release --offline -q --example batch_conv   -- --dir <快照> --poli
 ```
 
 **当前最大的一块残差**：`Y` 桶（爆炸点 `pos_y`）的 154 批真末位差 —— 三个假设（取错 x / 相邻采点 /
-常数回代顺序）**已被数据全部否掉**，机制仍未知（`docs/06` §25）。下一轮的第一优先是
+常数回代顺序）**已被数据全部否掉**，机制仍未知（`archive/155-round-log.md` §25）。下一轮的第一优先是
 用 unicorn 对拍 `evaluate_recursive`（任务书 15）。
 
 ### 0.0.0.3 合并纪律（2026-11-07 事故后写死，**强制**）
@@ -404,19 +404,19 @@ else:
 
 * 一句话：**复检不通过时 `lo` 回基点 `x`、`hi` 砍到 `mid2`**。
   （历史）两份实现（`graphwar_curve.py` / `graphwar_path_calculator.rs`）曾都只做了 `lo = x`，**漏了 `hi = mid2`**
-  ⇒ 拒绝后区间宽一倍 ⇒ 从第 4 点起走另一条轨迹（`06-verification.md` §26 的三方对照）。**现已双双补上。**
+  ⇒ 拒绝后区间宽一倍 ⇒ 从第 4 点起走另一条轨迹（`archive/155-round-log.md` §26 的三方对照）。**现已双双补上。**
 * 计数器：**`ebx`**，`0x3c293f` 置 100，`0x3c2955 dec`，`0x3c2957 je` 直接返回（= 早停）。
   首次进入绕过 `dec`，所以恰好 100 轮。
 * ODE 分支**没有**这段复检（`0x3c2840` 直接接受），不要一起改。
 * 改法（**已完成**）：`graphwar_curve.py` 第 471–473 行、`graphwar_path_calculator.rs` 第 92–95 行各加一行 `hi = mid2`，
   并把判据写成 `not (ln > ln2)` / `!(chord > chord2)`（`jbe` 遇 NaN 成立）。
-* **验证已做完**（`06-verification.md` §32 记录）：
+* **验证已做完**（`archive/155-round-log.md` §32 记录）：
   - `analysis/gwemu.py` oracle 24 个用例，**24/24 整条点序列逐位相等**（原实现 17/24），
     含 `06-verification.md` §11 的 `(401, 24.8098, 9.8719)` 与 `(20001, 23.2128, 6.4176)`，第 4 点 `-1.174402651902936`；
   - 父仓库 `difftest.py` **768 例全过**、`fuzz.py` 120 例 0 失配；
   - 本仓库 `cargo test` 全绿（当时 135 条，现 **150** 条），`live_hits` 12 条无退化；
   - `14-turn.md` §14 用 **0.01** 重跑同时回合制：82 发并集 **152/152**、多报 0 / 漏报 0。
-* ✅ `tests/live_hits.rs` **已切到实况 0.01、12 条全过**（`06-verification.md` §33）。当年切 0.01 后的 4 个失败
+* ✅ `tests/live_hits.rs` **已切到实况 0.01、12 条全过**（`archive/155-round-log.md` §33）。当年切 0.01 后的 4 个失败
   **不是物理问题**：`first_hit()` 跳过射手身体的半径固定 0.5，而掩膜里的士兵是像素量化圆盘
   （边界抖 1 px = 0.05），0.01 下有点落在 0.507 处被误判成撞到自己；改 `SHOOTER_SKIP_R = 0.56` 即解。
 * ⚠️ **仍未做**：`chord2 = NaN` 那条分支与汇编的等价性**未实测**（`04-path-sampling.md` §9.1）。
