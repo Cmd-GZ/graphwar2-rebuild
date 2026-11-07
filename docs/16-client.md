@@ -9602,10 +9602,20 @@ python3 tools/check_doc_refs.py                                         # 退出
 
 ### 50.6 仍是推断 / 未知 + 下一步
 
-**下一步（触发接线，三行以内）**：在 `play_screen.gd` 的 `_sync_entities()` 里，对"当前行动的
-那具士兵"调一次 `_entities.call("set_ring", id, p.x, p.y, radius, v)`（`v` 取 tick 源），
-对其它实体 `_entities.call("clear_ring", id)`。这一条**本轮没做**：
-任务 33 的允许改动清单写着本文件"只改那段缺口注释"。
+**触发接线：已做**（2026-11-08，**协调者接力**，任务 33 的允许清单不含播放屏逻辑）。
+
+`play_screen.gd` 的 `_sync_entities()` 末尾现在会填 `prep` 表：只给"本回合行动的士兵"一条
+（`set_ring(id, p.x, p.y, GwCore.SOLDIER_HIT_RADIUS, _curve_tick)` + 首次出现时 `set_ring_base`），
+其余实体 `clear_ring(id)`；`_ring_base` 表记每具士兵的起始量。
+
+⚠️ 这条接的是**我方选择**，不是观测到的原版路径，三处都是选定的：
+- **谁填表**：原版是 `GraphwarBackend` 的 `pos_info_event`（还没接）⇒ 这里按回合状态代填；
+- **`pos_radius`**：用 `GwCore.SOLDIER_HIT_RADIUS` = 0.5（`PosInfo.radius` 恒 0.5，`docs/131`）；
+  若证实 `PosInfo` 的第 3 个 f64 已是像素，则 `k` 要换成 1.0（见 §50.0）；
+- **`V`**：用播放屏的 `_curve_tick`（同一个喂给 `GraphwarPlane.set_fractional_tick` 的时钟）。
+
+自检加了 3 条端到端断言（`selftest` 709 → **712**）：`EntityDrawer` 在树里、`prep` 表里恰 1 条、
+`set_ring`/`clear_ring` 两个接线口都在。
 
 | 项 | 档位 | 缺什么证据 |
 |---|---|---|

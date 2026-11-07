@@ -918,6 +918,14 @@ func _test_play_screen() -> void:
 		fire_button.emit_signal("pressed")
 		await _frames(2)
 	var plane := play.find_child("GraphwarPlane", true, false) as Control
+	# 准备圈的**触发**：`_sync_entities()` 现在代 `pos_info_event` 填 `prep` 表（**我方接线**，
+	# `docs/16` §50.6）⇒ 有行动士兵时表里恰 1 条，没有时 0 条。
+	var ent := play.find_child("EntityDrawer", true, false)
+	_expect(ent != null, "真节点：播放屏里有 EntityDrawer")
+	var ring_n := (int(ent.call("ring_count")) if ent != null else -1)
+	_expect(ring_n == 1, "准备圈：当前行动士兵在 prep 表里有且只有 1 条（实际 %d）" % ring_n)
+	_expect(ent != null and ent.has_method("set_ring") and ent.has_method("clear_ring"),
+		"准备圈：EntityDrawer 暴露 set_ring / clear_ring（接线口在）")
 	_expect(plane != null, "有 GraphwarPlane")
 	var pool_pts: PackedVector2Array = play.call("plane_points")
 	_expect(pool_pts.size() > 1, "开火后 `Line2D` 上的弹道点数 > 1（实际 %d）" % pool_pts.size())
@@ -1850,9 +1858,11 @@ func _test_fire_fx() -> void:
 	# 里 3 次 `draw_arc` + 3 个外凸箭头；现在 `EntityDrawer` 的 `_draw` 就照那 6 条图元发，
 	# 断言在 `client/tools/entity_drawer_check.gd`（72 → 118 条：半径/起止角/线宽/折点/关 AA/
 	# 中分角 2π/3 与 4π/3/箭头尖端在 r、底边在 r+0.5、张 12°/关掉准备态就不画）。
-	# ⚠️ **画面上仍然看不到**，卡的是**触发**：`_draw` 只画 `set_ring()` 填进去的实体，
-	# 而播放屏还没人调它（`pos_info_event` 没接，本轮任务书不许动播放屏的逻辑）
-	# ⇒ 自检里也就没有"播放屏真的画出准备圈"这条断言。见 `docs/16` §49.5 第 1 条 / §50.6。
+	# **触发也接上了**（2026-11-08 协调者接力）：`_sync_entities()` 按回合状态代
+	# `pos_info_event` 填 `prep` 表 —— 只给本回合行动的士兵一条、其余 `clear_ring`。
+	# ⚠️ 这是**我方接线**而非观测到的原版路径（原版填表的是 backend 的 `pos_info_event`，
+	# 那条链路还没接）；`pos_radius` 用 `GwCore.SOLDIER_HIT_RADIUS`(0.5)、`V` 用 `_curve_tick`，
+	# 两者都是**选定的**，见 `docs/16` §50.6。下面两条断言验"表里真有 1 条"。
 	var plane := play.find_child("GraphwarPlane", true, false) as Control
 	_expect(plane != null, "真节点：播放屏里有 GraphwarPlane")
 	_expect(plane != null and plane.is_class("GraphwarPlane"),

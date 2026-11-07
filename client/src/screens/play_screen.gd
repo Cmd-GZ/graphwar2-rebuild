@@ -153,6 +153,11 @@ var _fx: Control = null              ## 真 `EffectDrawer`（特效）
 var _obstacle_layer: Control = null  ## 真 `ObstacleDrawer`（障碍掩膜贴图）
 ## 已经 spawn 过的实体 id（`EntityDrawer` 没有"列出 id"的接口 ⇒ 这边记一份）。
 var _drawn_entities := {}
+
+## 准备圈的"起始量"（`EntityDrawer.set_ring_base` 的 `base`）。原版那两张哈希表里
+## `map[i]` 记的是"这具士兵开始准备时的时钟"，用来算 `H = min(π/6 + (V−base)/60, 61.5°)`。
+## 我方按"第一次把某具士兵标成准备态时的 `_curve_tick`"填，**这是接线选择、不是观测**（`docs/16` §50.6）。
+var _ring_base := {}
 ## 装不上真节点时的原因（headless 与 `--dump` 要能分清"扩展没加载"和"逻辑没走"）。
 var _nodes_error := ""
 ## 当前那条曲线（= 原版 `GraphwarFunctionManager` 里那条 `FunctionEntry`）。
@@ -1203,6 +1208,26 @@ func _sync_entities() -> void:
 		_entities.call("set_entity_name", id, String(e["name"]))
 		_entities.call("set_entity_dead_ticks", id, int(e["dead"]))
 		_drawn_entities[id] = true
+	# ---- 准备圈：**填 `prep` 表**（`docs/16` §50.6）----
+	#
+	# 原版 `EntityDrawer::draw`（`0x4b2890`）只画 `prep` 哈希表里的实体，而填表的是
+	# `GraphwarBackend` 的 `pos_info_event` —— 那条链路还没接。这里**由播放屏按回合状态代填**：
+	# 只给"本回合行动的士兵"一条，其余清掉。⚠️ 这是**我方接线**，不是观测到的原版路径。
+	var ring_id := -1
+	if _active_soldier_idx >= 0 and _active_soldier_idx < _soldiers.size():
+		var acting: Dictionary = _soldiers[_active_soldier_idx]
+		if bool(acting.get("alive", true)) and want.has(_active_soldier_idx):
+			ring_id = _active_soldier_idx
+	for id in want:
+		if id == ring_id:
+			var rp: Vector2 = want[id]["pos"]
+			_entities.call("set_ring", id, rp.x, rp.y, GwCore.SOLDIER_HIT_RADIUS, _curve_tick)
+			if not _ring_base.has(id):
+				_ring_base[id] = _curve_tick
+				_entities.call("set_ring_base", id, _curve_tick)
+		else:
+			_entities.call("clear_ring", id)
+			_ring_base.erase(id)
 
 # ---------------------------------------------------------------- 障碍（docs/126）
 
