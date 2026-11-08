@@ -1,0 +1,10 @@
+# 任务 57 · 新特征两侧覆盖率（正对照 348 / 目标集合 12,736）
+feature	pos_hit	pos_n	tgt_hit	tgt_n	pos_median_size	tgt_median_size
+shape	348	348	12736	12736	318	114
+scal	348	348	10803	12736	7	3
+scal_c	348	348	10801	12736	7	3
+wconst	295	348	3334	12736	1	0
+stok	93	348	2171	12736	0	0
+strs_s	94	348	2201	12736	0	0
+consts	145	348	2572	12736	0	0
+grams	348	348	12736	12736	102	36

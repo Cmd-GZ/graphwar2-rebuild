@@ -41,6 +41,10 @@ Linux 目标 `.so` 有 13,263 个函数（= Ghidra 起点表口径）：
     callers / caller_sizes / bsig(自身机器码 hash) / locrefs
     strs(引用到的字符串内容 hash，**含泄漏**) / strs_loc(其中是 Rust 源文件路径的那些)
     strs_s(= strs − strs_loc，**默认只用这一份**；本代权重 0，见下)
+    ---- 任务 57 的新证据来源（缓存 v6；默认权重全 0，只在 `newev` 里打开）----
+    shape/shgrams(操作数形状三元组，抹掉寄存器号/立即数/偏移)    scal(全部 IMM 立即数)
+    scal_c(= scal − 本函数自己 Location 的行号/列号/文件名长度，**泄漏探针**)
+    wconst(宽常量 ≥0x10000 + f32/f64 位型规范化数值)            stok(字符串内容的语义 token)
 
     ⚠ **`strs` 是泄漏，默认权重 0**：`panic::Location` 前 16 B 是 `(&'static str, len)`，
     被 `string_at` 的 (ptr,len) 路径解成**文件名**（正对照 348/348 带自己的 `src/*.rs`，
@@ -70,6 +74,10 @@ Linux 目标 `.so` 有 13,263 个函数（= Ghidra 起点表口径）：
                                      # 权重网格，**只在调参半上选**；--axes/--fixed/--holdout
     ../.reference/venv/bin/python tools/callgraph_fingerprint.py runall --shards 8 --jobs 8
                                      # 8 片并行跑全量 12,736 + merge → 夹具
+
+    # 新证据来源（任务 57 / docs/02 §43）：两侧覆盖率 + 单独/组合消融 + 只在调参半上选权重
+    ../.reference/venv/bin/python tools/callgraph_fingerprint.py newev --jobs 16 \
+        --bucket-holdout --out fixtures/fingerprint_newev.tsv
 
 `--weights "k=v,..."` 可以覆盖默认权重（`verify`/`tune2`/`calib` 都吃）；复现**旧代含泄漏**的
 84.2% 用 `verify --weights "hist=0.5,consts=0.5,strs=0.2,strs_s=0"`。
@@ -148,7 +156,11 @@ OUT_TSV = os.path.join(FIXTURES, "callgraph_fingerprint.tsv")
 # 缓存版本：反汇编 / 特征一改就抬，免得静默吃旧缓存（sym_match §36.0 的坑）
 #   v4 → v5：`strs` 拆成「原始」与「去掉 Rust 源文件路径」两份（见 RE_LOC_FILE 的注释）；
 #            v4 的缓存**没有** `strs_s`，所以必须重扫，不能混用。
-CACHE_VERSION = "cfgfp-v5"
+#   v5 → v6：新增四个**新证据来源**字段（任务 57，`docs/02` §43）——
+#            `shape`（操作数形状，机器码级三元组）/ `scal`（全部 IMM 立即数，含 <0x100）/
+#            `wconst`（宽常量 + f32/f64 位型的规范化数值）/ `stok`（真字符串内容的语义 token）。
+#            v5 的缓存**没有**这四个键，加载会直接报错，不会静默降级。
+CACHE_VERSION = "cfgfp-v6"
 
 STR_SECTIONS = (".rodata", ".data.rel.ro", ".data.rel.ro.local", ".rdata", ".rdata$r")
 MAX_STR = 96
@@ -285,6 +297,82 @@ def mn_id(mn):
     return v
 
 
+# ===========================================================================
+# 1.5 新证据来源（任务 57 / `docs/02` §43）—— 四个字段，全部**与名字/地址/Location 无关**
+#
+# 为什么 51 号之后必须换证据来源：13 个结构特征怎么组合，留出半都卡在 72.7~73.3%
+# （`docs/02` §35.3.1 ⑤），`gram`（助记符三元组）已经把「助记符层面」的信息吃干。
+# 新字段刻意避开 `gram` 已经在看的那一层：
+#
+#   `shape`  机器码级：**操作数形状**（reg/mem/imm + 寄存器宽度类 + 内存基址类），
+#            抹掉寄存器号、立即数、偏移 ⇒ `mov eax,17` 与 `mov [rsp+8],rax` 不同，
+#            但跨编译器/跨寄存器分配相同。三元组化后与 `gram` 只在「助记符」这一维重叠。
+#   `scal`   常量 xref（**全部** IMM 立即数，含 <0x100 的）：现有 `consts` 只收 ≥0x100
+#            的 32 位立即数 ⇒ 关卡号/标志位/小计数整段看不见。**明写的风险**：`panic::Location`
+#            的行号也是小立即数，同一份源码在两份构建里行号相同 ⇒ 可能是一条泄漏通道，
+#            所以另有 `loc_denoise()`，把"本函数自己 Location 的行号/列号/文件名长度"扣掉再测。
+#   `wconst` 常量 xref 的另一半：**宽常量**（≥0x10000）与 f32/f64 位型规范化后的数值
+#            （π / 黄金比 / murmur 常数这类"魔数"就是 §37 证据轴 ③，但现有 `consts` 收不到：
+#            `0x9E3779B97F4A7C15` 超出 32 位范围被 `-0x80000000 <= imm <= 0xFFFFFFFF` 挡掉）。
+#   `stok`   真字符串**内容语义**：把非 `.rs` 的字符串拆成小写 token 集合（snake/camel 都拆）。
+#            与 `strs_s`（精确内容 sha1）不同，它对 `format!` 展开差异、前缀拼接差异更稳。
+#
+# 四个字段都**不看名字、不看地址**；`scal` 里凡是落进任何节的立即数（= 地址）一律不收。
+# ===========================================================================
+_TOK_RE = re.compile(r"[A-Za-z][A-Za-z0-9]{2,}")
+_CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def str_tokens(s):
+    """字符串内容 → 语义 token 集合（小写；拆 snake_case 与 camelCase；丢纯数字与 hex 噪声）。
+
+    `s` 是字节串（扫描器读出来的可打印 ASCII）。**不复用 `strs_s` 的 sha1**：
+    精确内容跨构建漂移大（§35.3 实测 `strs` 真配对 Jaccard 中位仅 0.500），
+    token 层才是"语义"那一层。
+    """
+    txt = s.decode("ascii", "ignore") if isinstance(s, (bytes, bytearray)) else s
+    out = set()
+    for w in _TOK_RE.findall(txt):
+        for part in _CAMEL_RE.split(w):
+            t = part.lower()
+            if len(t) >= 3 and not t.isdigit():
+                out.add(t)
+    return frozenset(out)
+
+
+_SHAPE_ID = {}
+
+
+def shape_id(tok):
+    """操作数形状 token → 16 位稳定 id（同 `mn_id`：sha1，跨 run/跨构建一致）。"""
+    v = _SHAPE_ID.get(tok)
+    if v is None:
+        v = int(hashlib.sha1(tok.encode()).hexdigest()[:4], 16)
+        _SHAPE_ID[tok] = v
+    return v
+
+
+def float_tag(v):
+    """整数立即数按 f32 / f64 位型解码 → 规范化数值 token（跨位宽可比），解不出就 None。
+
+    `%.6g` 是关键：`mov eax,0x40490fdb`（f32 π = 3.14159274101257324）与
+    `movabs rax,0x400921FB54442D18`（f64 π = 3.141592653589793）规范化后都是 `F3.14159`，
+    于是"同一个源码字面量在两份构建里用了不同宽度的指令"不再破坏特征。
+    """
+    uv = v & 0xFFFFFFFFFFFFFFFF
+    cands = []
+    if uv <= 0xFFFFFFFF:
+        cands.append(struct.unpack("<f", struct.pack("<I", uv))[0])
+    cands.append(struct.unpack("<d", struct.pack("<Q", uv))[0])
+    for x in cands:
+        if x != x or x in (float("inf"), float("-inf")):
+            continue
+        if x == 0.0 or abs(x) < 1e-6 or abs(x) > 1e15:
+            continue
+        return "F%.6g" % x
+    return None
+
+
 def stable_hash(items, n=16):
     """**与 PYTHONHASHSEED 无关**的 hash（§39.7 的教训：输出不许随 hash 种子变）。"""
     h = hashlib.sha1()
@@ -388,7 +476,8 @@ def string_at(obj, va, ro_lo=0, ro_hi=0):
 
 def scan_x86(obj, universe, locs, verbose=True):
     from capstone import Cs, CS_ARCH_X86, CS_MODE_64
-    from capstone.x86 import X86_OP_IMM, X86_OP_MEM, X86_REG_RIP
+    from capstone.x86 import (X86_OP_IMM, X86_OP_MEM, X86_OP_REG,
+                             X86_REG_RIP, X86_REG_RSP, X86_REG_RBP)
 
     cs = Cs(CS_ARCH_X86, CS_MODE_64)
     cs.detail = True
@@ -408,7 +497,9 @@ def scan_x86(obj, universe, locs, verbose=True):
 
     feats = {va: dict(ninsn=0, hist=collections.Counter(), cls=collections.Counter(),
                       consts=set(), calls=[], icalls=0, strs=set(), strs_loc=set(),
-                      locrefs=set(), seq=[])
+                      locrefs=set(), seq=[],
+                      # 新证据来源（任务 57）：形状序列 / 全部立即数 / 宽常量 / 字符串 token
+                      shape=[], scal=set(), wconst=set(), stok=set())
              for va in universe}
     for insn in disasm_all(cs, code, tex["addr"], tex["addr"] + tex["size"], 1):
         owner = T.owner_of(starts, universe, insn.address)
@@ -419,6 +510,23 @@ def scan_x86(obj, universe, locs, verbose=True):
         fe["hist"][insn.mnemonic] += 1
         fe["seq"].append(mn_id(insn.mnemonic))
         fe["cls"][cls_of("x86", insn.mnemonic, insn)] += 1
+        # 新证据来源 F1：**操作数形状**（抹掉寄存器号 / 立即数 / 偏移）。
+        # 只编码「种类 + 宽度类 + 内存基址类」，所以跨寄存器分配、跨两份 LLVM 构建不变。
+        # `_SHAPE_ID` 是 memo，每条指令只是一次 dict 命中 + 一次 append。
+        _parts = []
+        for op in insn.operands:
+            if op.type == X86_OP_REG:
+                _parts.append("r%d" % op.size)
+            elif op.type == X86_OP_IMM:
+                _parts.append("i")
+            elif op.type == X86_OP_MEM:
+                _b = op.mem.base
+                _parts.append("m" + ("p" if _b == X86_REG_RIP
+                                     else ("s" if _b in (X86_REG_RSP, X86_REG_RBP) else "r"))
+                              + ("x" if op.mem.index else ""))
+            else:
+                _parts.append("?")
+        fe["shape"].append(shape_id("%s:%s" % (insn.mnemonic, ",".join(_parts))))
         end = insn.address + insn.size
         if insn.mnemonic == "call":
             if insn.operands and insn.operands[0].type == X86_OP_IMM:
@@ -430,6 +538,17 @@ def scan_x86(obj, universe, locs, verbose=True):
                 tgt = (end + op.mem.disp) & 0xFFFFFFFFFFFFFFFF
             elif op.type == X86_OP_IMM:
                 tgt = op.imm & 0xFFFFFFFFFFFFFFFF
+                # 新证据来源 F2：常量 xref。**凡是落进任何节的立即数都是地址，一律不收**，
+                # 也不收函数地址（`tgt in universe` 在下面统一处理）。
+                #   scal   = 全部立即数（含 <0x100 —— 关卡号/标志位/小计数就在这一档）
+                #   wconst = 宽常量（≥0x10000）+ f32/f64 位型的规范化数值（魔数）
+                if abs(op.imm) >= 2 and obj.sec_at(op.imm) is None and tgt not in universe:
+                    fe["scal"].add(abs(op.imm))
+                    if abs(op.imm) >= 0x10000:
+                        fe["wconst"].add("V%d" % op.imm)
+                        _ft = float_tag(op.imm)
+                        if _ft:
+                            fe["wconst"].add(_ft)
                 if -0x80000000 <= op.imm <= 0xFFFFFFFF and abs(op.imm) >= 0x100 \
                         and obj.sec_at(op.imm) is None:
                     fe["consts"].add(op.imm)
@@ -449,6 +568,8 @@ def scan_x86(obj, universe, locs, verbose=True):
                     fe["strs"].add(h)
                     if is_loc_file(s):          # Location 的 file ⇒ 泄漏，单列（默认不进打分）
                         fe["strs_loc"].add(h)
+                    else:                       # 新证据来源 F3：**真字符串内容**的语义 token
+                        fe["stok"] |= str_tokens(s)
     if verbose:
         sys.stderr.write("[fp] %-24s %6d 函数, ninsn=%d, 引用字符串的函数 %d"
                          "（其中引用 Rust 源文件路径的 %d ⇒ 泄漏列 strs_loc）\n"
@@ -456,6 +577,12 @@ def scan_x86(obj, universe, locs, verbose=True):
                             sum(f["ninsn"] for f in feats.values()),
                             sum(1 for f in feats.values() if f["strs"]),
                             sum(1 for f in feats.values() if f["strs_loc"])))
+        sys.stderr.write("[fp] %-24s 新证据：有形状 %d / 有立即数 %d / 有宽常量 %d / 有字符串 token %d\n"
+                         % (os.path.basename(obj.path),
+                            sum(1 for f in feats.values() if len(f["shape"]) >= 3),
+                            sum(1 for f in feats.values() if f["scal"]),
+                            sum(1 for f in feats.values() if f["wconst"]),
+                            sum(1 for f in feats.values() if f["stok"])))
     return feats
 
 
@@ -485,7 +612,9 @@ def scan_arm64(obj, universe, locs, verbose=True):
 
     feats = {va: dict(ninsn=0, hist=collections.Counter(), cls=collections.Counter(),
                       consts=set(), calls=[], icalls=0, strs=set(), strs_loc=set(),
-                      locrefs=set(), seq=[])
+                      locrefs=set(), seq=[],
+                      # 新证据来源（任务 57）：形状序列 / 全部立即数 / 宽常量 / 字符串 token
+                      shape=[], scal=set(), wconst=set(), stok=set())
              for va in universe}
     addr = {}
     owner = None
@@ -503,6 +632,23 @@ def scan_arm64(obj, universe, locs, verbose=True):
         fe["seq"].append(mn_id(mn))
         fe["cls"][cls_of("arm64", mn, insn)] += 1
         ops = insn.operands
+        # 新证据来源 F1（arm64 口径，与 x86 同构）：操作数形状，寄存器号/立即数/偏移全抹掉。
+        _parts = []
+        for _op in ops:
+            if _op.type == ARM64_OP_REG:
+                _r = insn.reg_name(_op.reg)
+                _parts.append("w" if _r and _r[0] == "w" else
+                              ("x" if _r and _r[0] == "x" else
+                               ("s" if _r and _r[0] in "sqd" else "r")))
+            elif _op.type == ARM64_OP_IMM:
+                _parts.append("i")
+            elif _op.type == ARM64_OP_MEM:
+                _mb = insn.reg_name(_op.mem.base)
+                _parts.append("m" + ("p" if _mb == "pc" else ("s" if _mb in ("sp", "wsp") else "r"))
+                              + ("x" if _op.mem.index else ""))
+            else:
+                _parts.append("?")
+        fe["shape"].append(shape_id("%s:%s" % (mn, ",".join(_parts))))
         tgts = []
         used = False
         if mn == "bl" and ops and ops[0].type == ARM64_OP_IMM:
@@ -541,6 +687,8 @@ def scan_arm64(obj, universe, locs, verbose=True):
                     fe["strs"].add(h)
                     if is_loc_file(s):          # 同 x86：Location 的 file 单列，默认不进打分
                         fe["strs_loc"].add(h)
+                    else:                       # 新证据来源 F3：真字符串内容的语义 token
+                        fe["stok"] |= str_tokens(s)
         if mn in ("movz", "movn", "mov") and len(ops) >= 2 and ops[1].type == ARM64_OP_IMM:
             v = ops[1].imm
             if mn == "movn":
@@ -549,6 +697,14 @@ def scan_arm64(obj, universe, locs, verbose=True):
                 v <<= ops[2].imm
             if abs(v) >= 0x100:
                 fe["consts"].add(v)
+            # 新证据来源 F2（arm64 口径）：同上，落进任何节的立即数都是地址，不收。
+            if abs(v) >= 2 and obj.sec_at(v) is None and v not in universe:
+                fe["scal"].add(abs(v))
+                if abs(v) >= 0x10000:
+                    fe["wconst"].add("V%d" % v)
+                    _ft = float_tag(v)
+                    if _ft:
+                        fe["wconst"].add(_ft)
         if mn in ARM64_BARRIER:
             addr = {}
         elif not used:
@@ -562,6 +718,12 @@ def scan_arm64(obj, universe, locs, verbose=True):
                             sum(f["ninsn"] for f in feats.values()),
                             sum(1 for f in feats.values() if f["strs"]),
                             sum(1 for f in feats.values() if f["strs_loc"])))
+        sys.stderr.write("[fp] %-24s 新证据：有形状 %d / 有立即数 %d / 有宽常量 %d / 有字符串 token %d\n"
+                         % (os.path.basename(obj.path),
+                            sum(1 for f in feats.values() if len(f["shape"]) >= 3),
+                            sum(1 for f in feats.values() if f["scal"]),
+                            sum(1 for f in feats.values() if f["wconst"]),
+                            sum(1 for f in feats.values() if f["stok"])))
     return feats
 
 
@@ -572,6 +734,29 @@ def cache_dir():
     d = os.environ.get("CFGFP_CACHE") or os.path.join(ROOT, ".agent-work/cfgfp")
     os.makedirs(d, exist_ok=True)
     return d
+
+
+def loc_denoise(fe, locs):
+    """`scal` **扣掉本函数自己那几条 `panic::Location` 会投影出来的立即数**（泄漏探针）。
+
+    为什么要扣：`Location` 结构体是 `{file_ptr, len, line, col}`，构造它的代码会把
+    **行号 / 列号 / 文件名长度**当立即数写进指令 —— 而同一份源码在 Linux 与 Windows 两份构建里
+    这些数**完全相同**（`docs/02` §35.3.1 的 `strs` 泄漏是同一个来源的另一半：
+    文件名内容；这里是它的**数值**投影）。正对照 348 个**全部**引用 `src/*.rs` 的 `Location`，
+    目标集合 12,736 个**一个都没有** ⇒ 若只保留 `scal`，这条通道就可能是"改进"的真凶。
+    所以另算一份 `scal_c` = `scal` − {行号, 列号, 文件名长度}，**两侧同一规则对称计算**，
+    两个都报；**数字只差一点点就说明改进不是行号通道给的**（`docs/02` §43.2 的实测）。
+    """
+    lv = [locs[l] for l in (fe.get("locrefs") or ()) if l in locs]
+    if not lv:
+        return frozenset(fe.get("scal") or ())
+    drop = set()
+    for item in lv:
+        line, col = item[1], item[2]
+        drop.add(line)
+        drop.add(col)
+        drop.add(len(item[0]))
+    return frozenset(v for v in (fe.get("scal") or ()) if v not in drop)
 
 
 class FP:
@@ -612,10 +797,23 @@ class FP:
             fe["strs_s"] = tuple(sorted(allstr - loc))
             fe["strs_set"] = frozenset(allstr)
             fe["strs_s_set"] = frozenset(fe["strs_s"])
+            # 新证据来源 F2/F3 的定稿形态（frozenset 才能进 picklable 的指纹库、才能做 Jaccard）
+            fe["scal"] = frozenset(fe.get("scal") or ())
+            fe["wconst"] = frozenset(fe.get("wconst") or ())
+            fe["stok"] = frozenset(fe.get("stok") or ())
+            # **泄漏探针**（任务 57 的纪律要求，见 docs/02 §43.2）：
+            # `panic::Location` 的**行号**也是小立即数，而同一份源码在两份构建里行号相同
+            # ⇒ `scal` 可能是一条"行号指纹"通道。`scal_c` = 把**本函数自己引用的 Location
+            # 行号**从 `scal` 里扣掉的版本；两者准确率之差就是这条通道的贡献（对称计算，
+            # 两侧都用同一个规则，只是正对照有 Location、目标集合基本没有 ⇒ 差值即可疑）。
+            fe["scal_c"] = loc_denoise(fe, self.locs)
             fe["hist_hash"] = stable_hash(fe["hist"].items())
             fe["seq"] = b"".join(struct.pack("<H", v) for v in fe.pop("seq", ()))
             fe["seq_hash"] = hashlib.sha1(fe["seq"]).hexdigest()[:16]
             fe["grams"] = frozenset(_trigrams(fe["seq"]))
+            # 新证据来源 F1：形状序列 → 三元组集合（与 `grams` 同构，但 token 里带操作数种类）
+            fe["shape"] = b"".join(struct.pack("<H", v) for v in fe.pop("shape", ()))
+            fe["shgrams"] = frozenset(_trigrams(fe["shape"]))
         self.callers = collections.defaultdict(list)
         for va in feats:
             for c in feats[va]["callees"]:
@@ -644,6 +842,11 @@ class FP:
         s.starts, s.names = st["starts"], st["names"]
         s.obj = None
         s.callers = None
+        # `scal_c` 是**派生**字段（`scal` − 自己 Location 的行号/列号/文件名长度）：
+        # 每次载入都按当前口径重算，改了 denoise 规则就不必重扫 366 MB 缓存。
+        if s.feats and "scal" in next(iter(s.feats.values())):
+            for _f in s.feats.values():
+                _f["scal_c"] = loc_denoise(_f, s.locs)
         return s
 
 
@@ -661,6 +864,9 @@ def load_fp(tag, force=False, verbose=True):
         probe = next(iter(st["feats"].values()), None)
         if probe is not None and "strs_s" not in probe:
             T.die("%s 是旧口径缓存（特征里没有 strs_s）——抬 CACHE_VERSION 或换 CFGFP_CACHE" % cp)
+        if probe is not None and "shgrams" not in probe:
+            T.die("%s 是 v5 缓存（没有新证据来源字段 shape/scal/wconst/stok）"
+                  "——抬 CACHE_VERSION 或换 CFGFP_CACHE" % cp)
         return FP.from_state(st)
     if cfg["kind"] == "pe":
         obj = T.Pe(cfg["path"])
@@ -724,8 +930,12 @@ W_SAME = dict(size=0.25, hist=0.0, gram=2.0, consts=0.25, caller=0.5, strs_s=0.0
 W_SAME_LEAK = dict(size=1.0, hist=0.5, gram=2.0, consts=0.5, caller=0.3, strs=0.2,
                    strs_s=0.0, callee=0.0, cbsig=0.0, rbsig=0.0, ncal=0.0, ncall=0.0)
 W_CROSS = dict(size=1.0, cls=0.0, callee=0.0, caller=0.5, ncall=0.3, ncal=0.0)
+# 新证据来源（任务 57）的键：`shape` / `scal` / `wconst` / `stok`，外加泄漏探针用的
+# `scal_c`（= `scal` 扣掉本函数自己 Location 的行号）。默认全 0（不进 W_SAME），
+# 只在 `newev` 的消融表里按需打开，**不许**在没有留出半数之前写进 W_SAME。
 SCORE_KEYS = ("size", "hist", "gram", "consts", "callee", "caller", "strs", "strs_s",
-              "ncal", "ncall", "cbsig", "rbsig", "cls")
+              "ncal", "ncall", "cbsig", "rbsig", "cls",
+              "shape", "scal", "scal_c", "wconst", "stok")
 SIZE_EPS = 0.4          # log 比的饱和点（同 §40）
 WIN_SAME = (0.7, 1.4)   # 候选窗口：保住真配对 97.0%，候选数中位 25,147 → 6,806
 WIN_CROSS = (0.7, 1.4)  # 跨 ISA 保住 96.4%（真配对 size 比 p05/p95 = 0.78/1.28）
@@ -804,6 +1014,19 @@ def score_same(qf, df, w=None):
     add(w.get("cbsig"), jaccard_sets(qf["callee_bsig"], df["callee_bsig"]))
     add(w.get("rbsig"), jaccard_sets(qf["caller_bsig"], df["caller_bsig"]))
     add(w.get("gram"), jaccard(qf["grams"], df["grams"]) if (qf["grams"] and df["grams"]) else None)
+    # ---- 新证据来源（任务 57 / docs/02 §43）----
+    # 与上面几项的区别：`shape` 看的是**操作数种类**（`gram` 只看助记符），`scal` 收的是
+    # 现有 `consts` 收不到的那一段（<0x100 与 >32 位），`wconst` 只收宽常量/浮点魔数，
+    # `stok` 是字符串的**语义 token**（`strs_s` 是精确内容 sha1）。两侧都空时返回 None
+    # （= 这一项不参与归一化分母），与 `consts`/`strs_s` 的既有口径一致。
+    add(w.get("shape"), jaccard(qf["shgrams"], df["shgrams"])
+        if (qf["shgrams"] and df["shgrams"]) else None)
+    add(w.get("scal"), jaccard(qf["scal"], df["scal"]) if (qf["scal"] and df["scal"]) else None)
+    add(w.get("scal_c"), jaccard(qf["scal_c"], df["scal_c"])
+        if (qf["scal_c"] and df["scal_c"]) else None)
+    add(w.get("wconst"), jaccard(qf["wconst"], df["wconst"])
+        if (qf["wconst"] and df["wconst"]) else None)
+    add(w.get("stok"), jaccard(qf["stok"], df["stok"]) if (qf["stok"] and df["stok"]) else None)
     # `cls` 是 14 类归一后的直方图（跨 ISA 才用的那一层）。同 ISA 也能用，而且比原始助记符稳：
     # 两份 LLVM 构建的差别（`int3`↔`ud2`、SEH vs DWARF 的 push/pop、寄存器分配）正好落在助记符层，
     # 类直方图把它们吸收掉。**只在调参半上验过**（tune3），留出半只报数。
@@ -1571,6 +1794,199 @@ def cmd_ablate(args):
     return 0
 
 
+# ===========================================================================
+# 7.6 新证据来源（任务 57 / `docs/02` §43）
+#
+# 51 号把权重这条路走死了：302 组结构权重网格在调参半最高 82.5%，留出半**全部**落在
+# 72.7~73.3%（`docs/02` §35.3.1 ⑤）。`newev` 只做一件事：把四个**新的特征来源**按同一套
+# 纪律测一遍 —— ①两侧覆盖率（正对照 / 目标集合，两个都报）；②单独 + 组合消融；
+# ③**只在调参半上选权重**，留出半只报数。选不中就是选不中，不许回头改。
+# ===========================================================================
+NEW_KEYS = ("shape", "scal", "scal_c", "wconst", "stok")
+NEW_DESC = dict(
+    shape="F1 机器码级：操作数形状三元组（reg/mem/imm + 宽度类 + 内存基址类）",
+    scal="F2 常量 xref：全部 IMM 立即数（含 <0x100 的关卡号/标志位/小计数）",
+    scal_c="F2' 同上但扣掉本函数自己 Location 的**行号**（泄漏探针）",
+    wconst="F2'' 宽常量 ≥0x10000 + f32/f64 位型规范化魔数",
+    stok="F3 真字符串内容的语义 token（不是 .rs 文件名）",
+)
+BUCKETS = ((0, 256, "<256 B"), (256, 1024, "256-1,024 B"),
+           (1024, 4096, "1,024-4,096 B"), (4096, 1 << 62, ">=4,096 B"))
+
+
+def _newev_cov_rows(lin, addrs, keys):
+    """一个函数集合上每个新特征的覆盖率与集合大小中位。"""
+    out = {}
+    for k in keys:
+        vals = [len(lin.feats[a][k]) for a in addrs]
+        hit = sum(1 for v in vals if v)
+        vals.sort()
+        out[k] = (hit, vals[len(vals) // 2] if vals else 0)
+    return out
+
+
+def cmd_newev(args):
+    pair = Pair("win", "linux")
+    _G["pair"], _G["topk"] = pair, args.topk
+    W = sys.stdout.write
+    lin = pair.fps["linux"]
+    named = sorted(named_linux_348())
+    tgt = target_addrs(pair.fps)
+    keys = ("shape", "scal", "scal_c", "wconst", "stok", "strs_s", "consts", "grams")
+
+    W("=== (1) 新证据来源的两侧覆盖率（**两个都必须报**，docs/159 3.2 的纪律）===\n")
+    for k in NEW_KEYS:
+        W("  %-8s %s\n" % (k, NEW_DESC[k]))
+    W("正对照 = 已定名 %d 个（都引用 `src/*.rs` Location）；目标集合 = 没有 `src/` Location 的 %d 个\n\n"
+      % (len(named), len(tgt)))
+    W("%-9s %-10s %-17s %-17s %-8s %s\n"
+      % ("特征", "两侧都有", "正对照命中", "目标命中", "比值", "集合中位 正/目"))
+    cov_p = _newev_cov_rows(lin, named, keys)
+    cov_t = _newev_cov_rows(lin, tgt, keys)
+    cov_rows = []
+    for k in keys:
+        hp, mp = cov_p[k]
+        ht, mt = cov_t[k]
+        pr, tr = hp / float(len(named)), ht / float(len(tgt))
+        ratio = (pr / tr) if tr else float("inf")
+        W("%-9s %-10s %3d/%3d = %5.1f%%  %5d/%5d = %5.1f%%  %6.2f  %4d / %4d\n"
+          % (k, "是" if (hp and ht) else ("**否**" if (hp or ht) else "-"),
+             hp, len(named), 100 * pr, ht, len(tgt), 100 * tr, ratio, mp, mt))
+        cov_rows.append((k, hp, len(named), ht, len(tgt), mp, mt))
+
+    W("\n--- 按体量分桶（体量混淆检查：同一桶里两侧要贴齐，否则那是「正对照更大」而不是特征）---\n")
+    W("%-9s" % "特征" + "".join("  %-24s" % b[2] for b in BUCKETS) + "\n")
+    for k in ("shape", "scal", "wconst", "stok"):
+        row = "%-9s" % k
+        for lo, hi, _lab in BUCKETS:
+            ps = [a for a in named if lo <= lin.feats[a]["size"] < hi]
+            ts = [a for a in tgt if lo <= lin.feats[a]["size"] < hi]
+            ph = sum(1 for a in ps if lin.feats[a][k])
+            th = sum(1 for a in ts if lin.feats[a][k])
+            row += "  %3d/%-4d %5.1f%%/%-5.1f%%" % (
+                ph, len(ps), 100 * ph / len(ps) if ps else 0.0,
+                100 * th / len(ts) if ts else 0.0)
+        W(row + "\n")
+    W("  （每格 = 命中/样本  正对照%/目标%）\n")
+
+    # ---- (2) 消融：新特征单独 / 与旧特征组合（两半都报） ----
+    base = W_SAME
+    cfgs = [("(0) 51 号基线 W_SAME", dict(base))]
+    for k in NEW_KEYS:
+        cfgs.append(("(1a) 单独 size+%s" % k, dict(size=0.25, **{k: 2.0})))
+        for wt in (0.5, 1.0, 2.0):
+            cfgs.append(("(1b) 基线+%s=%.2g" % (k, wt), dict(base, **{k: wt})))
+    combo = dict(base, **{"shape": 1.0, "scal": 0.5, "wconst": 0.5, "stok": 0.5})
+    cfgs.append(("(2a) 基线+shape/scal/wconst/stok", combo))
+    cfgs.append(("(2b) 同上但 scal->scal_c", dict(combo, scal=0.0, scal_c=0.5)))
+    cfgs.append(("(2c) 基线+shape+scal", dict(base, shape=1.0, scal=0.5)))
+    cfgs.append(("(2d) 基线+shape+scal_c", dict(base, shape=1.0, scal_c=0.5)))
+    cfgs.append(("(3a) 基线-gram + shape=2", dict(base, gram=0.0, shape=2.0)))
+    cfgs.append(("(3b) 基线-gram + shape=2 + scal=1", dict(base, gram=0.0, shape=2.0,
+                                                            scal=1.0)))
+    W("\n=== (2) 消融（同真值、同分半、同窗口 [0.70,1.40]；**留出半只报数**）===\n")
+    res, dt = _run_jobs(_ablate_eval, args.jobs, cfgs, "新证据消融")
+    W("墙钟 %.1f s（jobs=%d）；%d 组配置；调参半 n=%d / 留出半 n=%d\n"
+      % (dt, args.jobs, len(cfgs), len(pair.A), len(pair.B)))
+    W("%-34s | %-15s | %-15s\n" % ("配置", "调参半 top-1/top-5", "留出半 top-1/top-5"))
+    W("%-34s | %-15s | %-15s\n" % ("", "（只这里允许选）", "（只报数）"))
+    for r in res:
+        W("%-34s | %5.1f%% %5.1f%%   | %5.1f%% %5.1f%%\n"
+          % (r["label"], 100.0 * r["a1"] / r["an"], 100.0 * r["a5"] / r["an"],
+             100.0 * r["b1"] / r["bn"], 100.0 * r["b5"] / r["bn"]))
+
+    # ---- (3) 选择：**只在调参半上**：取最高的那组（并列桶里取特征更少的），留出半只报一次 ----
+    best = max(res, key=lambda r: (r["a1"], r["a5"]))
+    bucket = [r for r in res if r["a1"] >= best["a1"] - 1]
+    bucket.sort(key=lambda r: (sum(1 for k in SCORE_KEYS if r["w"].get(k)),
+                               -(r["a5"]), r["label"]))
+    pick = bucket[0]
+    W("\n=== (3) 选择（先定规则后用：调参半最高 -1 个样本的并列桶里取非 0 特征最少的）===\n")
+    W("调参半最高：%s（%.1f%%）；并列桶 %d 组\n"
+      % (best["label"], 100.0 * best["a1"] / best["an"], len(bucket)))
+    W("选中：%s\n" % pick["label"])
+    W("  -> 调参半 top-1 %.1f%% / top-5 %.1f%%\n"
+      % (100.0 * pick["a1"] / pick["an"], 100.0 * pick["a5"] / pick["an"]))
+    W("  -> **留出半 top-1 %.1f%% / top-5 %.1f%%**（51 号基线 72.7%% / 88.5%%）\n"
+      % (100.0 * pick["b1"] / pick["bn"], 100.0 * pick["b5"] / pick["bn"]))
+    W("  ⚠ 这个 tiebreak（非 0 特征最少）是为「只加特征」的网格写的：上面这一组配置里含**删特征**\n"
+      "    的项（(3a) 把 gram 关掉了），而 gram 是 51 号实测的主力（关掉掉到 33.3%%）⇒\n"
+      "    它把 tiebreak 打偏了。所以下面补一轮**加性网格**，tiebreak 只数**新增特征**。\n")
+
+    # ---- (4) 第二轮选择：**加性**网格（只在 W_SAME 上叠新特征权重） ----
+    axes = collections.OrderedDict([("shape", (0.0, 0.5, 1.0)),
+                                    ("scal", (0.0, 0.25, 0.5, 1.0)),
+                                    ("wconst", (0.0, 0.5))])
+    grid = []
+    for combo_w in itertools.product(*axes.values()):
+        g = dict(base)
+        for k, v in zip(axes, combo_w):
+            g[k] = v
+        if not any(g.get(k) for k in axes):
+            continue                          # 全 0 就是基线，已经在 (0) 里报过
+        grid.append((wlabel(g), g))
+    W("\n=== (4) 加性网格（%d 组，轴 %s；**只在调参半上选**）===\n"
+      % (len(grid), " ; ".join("%s=%s" % (k, ",".join("%.3g" % v for v in vs))
+                               for k, vs in axes.items())))
+    gres, gdt = _run_jobs(_grid_eval, args.jobs, grid, "加性网格")
+    W("墙钟 %.1f s（jobs=%d）\n" % (gdt, args.jobs))
+    gres.sort(key=lambda r: (-r["top1"], -r["top5"], r["label"]))
+    W("  %-6s %-6s  %s\n" % ("top-1", "top-5", "权重"))
+    for r in gres[:10]:
+        W("  %5.1f%% %5.1f%%  %s\n"
+          % (100.0 * r["top1"] / r["n"], 100.0 * r["top5"] / r["n"], r["label"]))
+    gbest = gres[0]["top1"]
+    gbucket = [r for r in gres if r["top1"] >= gbest - 1]
+    gbucket.sort(key=lambda r: (sum(1 for k in axes if r["w"].get(k)),
+                                -r["top5"], r["label"]))
+    gp = gbucket[0]
+    W("并列桶（调参半 top-1 ≥ 最高−1 个样本）：%d 组；按「新增特征最少」选中：%s\n"
+      % (len(gbucket), gp["label"]))
+    hres, _hdt = _run_jobs(_holdout_eval, args.jobs, [(gp["label"], gp["w"])],
+                           "留出半（只报一次）")
+    hr = hres[0]
+    W("  -> 调参半 top-1 %.1f%% / top-5 %.1f%%\n"
+      % (100.0 * gp["top1"] / gp["n"], 100.0 * gp["top5"] / gp["n"]))
+    W("  -> **留出半 top-1 %.1f%% / top-5 %.1f%%**（51 号基线 72.7%% / 88.5%%）\n"
+      % (100.0 * hr["top1"] / hr["n"], 100.0 * hr["top5"] / hr["n"]))
+    if getattr(args, "bucket_holdout", False) and len(gbucket) > 1:
+        # 调参半上这些配置**打平**（同一 top-1），所以"选哪一组"本身没有信息。
+        # 把整个并列桶的留出半各报一次 —— 这不是选择（选择已经在上面结束），
+        # 只是让人看见"打平的那些组在留出半上的散布"，免得把某一个个例当成能力。
+        bres, _bdt = _run_jobs(_holdout_eval, args.jobs,
+                               [(r["label"], r["w"]) for r in gbucket], "并列桶留出半（只报数）")
+        vals = sorted(100.0 * r["top1"] / r["n"] for r in bres)
+        base1 = [r for r in res if r["label"].startswith("(0)")][0]
+        b0 = 100.0 * base1["b1"] / base1["bn"]
+        W("    并列桶 %d 组的留出半 top-1：最低 %.1f%% / 中位 %.1f%% / 最高 %.1f%%"
+          "（基线 %.1f%%；桶里 %d 组高于基线）\n"
+          % (len(bres), vals[0], vals[len(vals) // 2], vals[-1], b0,
+             sum(1 for v in vals if v > b0)))
+    if getattr(args, "out", ""):
+        # 只落**文本**夹具（AGENTS.md 硬规矩 3：不提交二进制/缓存）。列口径写进表头，
+        # 这样任何人拿这份 tsv 都能复核文档里的每个数字，不需要重跑。
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write("# 任务 57 · 新证据来源消融（tools/callgraph_fingerprint.py newev）\n")
+            fh.write("# 真值：%s；分半：调参半 %d / 留出半 %d；窗口 %s\n"
+                     % (", ".join("%s=%d" % kv for kv in pair.prov.items()),
+                        len(pair.A), len(pair.B), WIN_SAME))
+            fh.write("# 留出半**只报数**，权重只在调参半上选（AGENTS.md 合并纪律 A4）\n")
+            fh.write("label\tweights\tn_tune\ttop1_tune\ttop5_tune\tn_hold\ttop1_hold\ttop5_hold\n")
+            for r in res:
+                fh.write("%s\t%s\t%d\t%.4f\t%.4f\t%d\t%.4f\t%.4f\n"
+                         % (r["label"], wlabel(r["w"]) or "(empty)", r["an"],
+                            r["a1"] / float(r["an"]), r["a5"] / float(r["an"]),
+                            r["bn"], r["b1"] / float(r["bn"]), r["b5"] / float(r["bn"])))
+        cov_path = args.out.replace(".tsv", "_coverage.tsv")
+        with open(cov_path, "w", encoding="utf-8") as fh:
+            fh.write("# 任务 57 · 新特征两侧覆盖率（正对照 348 / 目标集合 12,736）\n")
+            fh.write("feature\tpos_hit\tpos_n\ttgt_hit\ttgt_n\tpos_median_size\ttgt_median_size\n")
+            for row in cov_rows:
+                fh.write("%s\t%d\t%d\t%d\t%d\t%d\t%d\n" % row)
+        W("落盘：%s（+ %s）\n" % (args.out, cov_path))
+    return 0
+
+
 def _shard_worker(spec):
     """跑一个分片（`run --shard i/N --out …`），把 stdout/stderr 收进 StringIO 免得 8 路互相插。"""
     i, n, out, topk = spec
@@ -1932,7 +2348,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("cmd", choices=["build", "verify", "tune2", "calib",
                                     "run", "merge", "report", "probe",
-                                    "ablate", "tune3", "runall"])
+                                    "ablate", "tune3", "runall", "newev"])
     ap.add_argument("addr", nargs="*")
     ap.add_argument("--force", action="store_true", help="无视缓存重扫")
     ap.add_argument("--topk", type=int, default=5)
@@ -1951,12 +2367,15 @@ def main(argv=None):
     ap.add_argument("--holdout", type=int, default=0,
                     help="tune3 在选完之后，把并列桶前 N 组拿到**留出半**各报一次（只报数，不参与选择）")
     ap.add_argument("--coverage", action="store_true", help="ablate 额外打印两侧特征覆盖率")
+    ap.add_argument("--bucket-holdout", action="store_true",
+                    help="newev 把加性网格的**并列桶**在留出半上各报一次（只报数，不参与选择）")
     ap.add_argument("--shards", type=int, default=8, help="runall 的分片数")
     ap.add_argument("--tmp", default="", help="runall 分片文件目录（默认缓存目录下 shards/）")
     a = ap.parse_args(argv)
     return dict(build=cmd_build, verify=cmd_verify, tune2=cmd_tune2, calib=cmd_calib,
                 run=cmd_run, merge=cmd_merge, report=cmd_report, probe=cmd_probe,
-                ablate=cmd_ablate, tune3=cmd_tune3, runall=cmd_runall)[a.cmd](a)
+                ablate=cmd_ablate, tune3=cmd_tune3, runall=cmd_runall,
+                newev=cmd_newev)[a.cmd](a)
 
 
 if __name__ == "__main__":
