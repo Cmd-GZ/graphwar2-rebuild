@@ -1598,3 +1598,218 @@ python3 tools/bit_exact_attrib.py --json b.jsonl --check-baseline --axis batch
 
 **没有改动**：`src/`、`client/`、`dispatch/`、`fixtures/guardrails.json`，以及
 `tools/frida_point_array.{js,py}`（并行任务 39 正在改它们，本轮的探针是**独立**的一套）。
+
+## 28. `FunctionPoints.end_x` 的真身：`0x4569b8` 的 `pts[len-1].x`，但它是**开火那一刻从一份副本**读的（2026-11-08，`dispatch/44`）
+
+> 任务书：[`dispatch/44-endx-truth.md`](../dispatch/44-endx-truth.md)。起点 `CG@e24ba07`，分支 `agent/endx-truth`。
+> **本节全部是运行时观测**（frida 17.26.1 挂在真游戏 `Graphwar II` Linux 2.0.60 里，
+> `libgraphwarrust.so` sha256 `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`
+> = 逆向目标那份）。探针 [`tools/frida_point_array.js`](../tools/frida_point_array.js)（新增 `--fnpoints` 一组钩子，
+> **只读**）+ 驱动 [`tools/frida_point_array.py`](../tools/frida_point_array.py)；
+> 入库样本 [`fixtures/frida_endx_sample.jsonl`](../fixtures/frida_endx_sample.jsonl)（1 行 provenance + 12 行 shot，24 KB 纯文本）。
+>
+> 编号：本节之前最大是 §27。
+
+### 28.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | **`end_x` 在哪读出来的** | `0x4569b8`（fn `0x456810`，`fixtures/module_funcs.tsv` 归属 **`graphwar_function_manager.rs`**）：`movq -0x10(%rcx,%rax,1),%xmm0`，`rcx` = `Vec` 的 ptr、`rax` = `len·16` ⇒ **`pts[len-1].x`**。同处 `0x4569be movdqu (%rcx),%xmm1` = **`pts[0]`** ⇒ 报文 `start_x/start_y`；`0x4569ce mov %r15d,0x30(%rsp)` = `owner_id`（u32） | **观测 + 指令语义** |
+| ② | **`pos_x` 在哪读的** | `0x472865`（`execute_results`）：`movdqu -0x10(%rdx,%rcx,1)` = **队列项那块数组**的 `pts[n-1]`（与 §27/§43 同一条指令） | **观测**（§27 11/11 + 本轮 12/12） |
+| ③ | **两处是同一次读吗** | **不是**：**不同对象**（开火时的一份**副本** vs 结算时**队列里那块**）、**不同时刻**（相差 1.2 s / 16 s 不等）；**下标相同**（都是 `len-1`，本轮 12/12 都定位到最后一个点） | **观测** |
+| ④ | **装配点有几个** | **两个**（= 任务书的可能 (c)）：`0x471a88`（`game_state_manager` 侧，喂的是**副本**）与 `0x3e44d4`（**`graphwar_target_manager.rs`** 侧，喂的是另一次 `calculate_function`（`gw+3e2d3b`）那条数组）。**报文里上线的那个是前者**（12/12，判据见 28.2 第 3 条） | **观测** |
+| ⑤ | **本轮抓了几发** | **12 发**（2 × Normal level 0 + 10 × DiffEq level 16）；**12/12 `end_x == pos_x`**（逐位），队列那块在结算那一刻与开火时**逐字节相同**（12/12）⇒ **本轮没复现出那 100 发的不一致** | **观测** |
+| ⑥ | **那 100 发里谁不是"这次读"** | 判据：把 `end_x`、`pos_x` 分别与"用报文自己记的起点复算出的末点 x"**逐位**比（`residual_fold` 现成字段）。DiffEq 550 发：**`pos_x` 一次都不逐位相等**（0/100；82/100 只差 1–3 ulp），**`end_x` 有 35/100 逐位相等**；而 450 发"命中"里**两者都是 359/450 逐位相等**。⇒ **`pos_x` 是那个不属于"这条曲线末点"的字段** | **观测**（语料）+ **推断**（机制） |
+| ⑦ | **差的是 1 个采样步 / 末几位 / 还是别的来源** | 实测两个装配点的数组**起点差 1 ulp**，末点 x 在 **2/12 发**里正好差**一个采样步**（`0.00875` / `0.0075`），其余 10 发**逐位相同**；语料那 100 发里 **56 发 ≤0.02（一步）· 44 发 <1e-12（末几位）** ⇒ 两种形状同源 | **观测** |
+
+### 28.1 `end_x` 的装配点：`graphwar_function_manager.rs` 的 `0x456810`（逐指令）
+
+函数 `[0x456810, 0x456b75)`（`.eh_frame` FDE）。`objdump` 原文（`base+RVA`，构建见头）：
+
+```text
+456810  push …                               ; rdi = self、esi = owner(soldier id)、rdx = &Vec<(f64,f64)>
+456833  lock cmpxchg …                       ; 一把自旋锁
+45687a  je 45692c                            ; 走 HashMap 分支（key = esi）
+4568f1  cmp -0x78(%r14,%rbp,1),%r15d         ; 命中记录
+45697f  lea 0x1(%r8),%rax                    ; r8 = 0x7fffffffffffffff
+456991  mov 0x8(%r12),%r12                   ; r12 = self
+45699c  cmpq $0x0,0x10(%r12)
+4569a2  mov 0x8(%rbx),%rcx                   ; ★ rcx = 点数组 ptr（rbx = rdx = &Vec）
+4569a6  shl $0x4,%rax                        ; ★ rax = len·16
+4569b8  movq -0x10(%rcx,%rax,1),%xmm0        ; ★★ end_x = pts[len-1].x
+4569be  movdqu (%rcx),%xmm1                  ; ★★ start_x/start_y = pts[0]
+4569c2  movdqu %xmm1,0x18(%rsp)              ;   payload+0x00/+0x08
+4569c8  movq %xmm0,0x28(%rsp)                ;   payload+0x10 = end_x
+4569ce  mov %r15d,0x30(%rsp)                 ;   payload+0x18 = owner_id（u32）
+4569d3  lea 0x26(%r8),%rax                   ;   r8 = 0x7fff…ff ⇒ 0x8000000000000025
+4569d7  mov %rax,0x10(%rsp)                  ;   ★ 判别式 37 = FunctionPoints（见下）
+4569dc  lea 0x10(%rsp),%rsi
+4569e1  call *0x9bac80(%rip)                 ;   入队 / 派发
+```
+
+判别式 37 的独立核对：事件枚举 → JSON 的派发器 `0x504640` 用 `0x1c48d0` 的 62 项 int32 跳表
+（`movslq (%rdx,%rcx,4)` + `add` + `jmp *%rcx`），**第 37 项 = `0x5046c9` → jmp `0x50eb20`**，
+而 `0x50eb20` 逐条写下 `{"FunctionPoints":{…}}`（键名与长度：
+`FunctionPoints`@`0x1c55e9`/14、`start_x`@`0x1c506b`/7、`start_y`@`0x1c5072`/7、`end_x`@`0x1c5079`/5、
+`owner_id`@`0x19f6c8`/8；结构体偏移依次 `%r14` / `0x8(%r14)` / `0x10(%r14)` / `0x18(%r14)`）。
+⇒ `0x4569b8` 读的那 8 个字节**就是**报文里的 `end_x`。
+
+**两个直接调用点**（`call 0x456810` 的反查只有这两条）：
+
+| 站点 | 模块 | 喂进去的 `&Vec` 是 |
+|---|---|---|
+| **`0x471a88`** | `graphwar_game_state_manager.rs` | 一份**副本**：`mov %r12,0xb8(%rsp) / mov %r14,0xc0(%rsp) / mov %r12,0xc8(%rsp)` 拼出来的三元组；实测与 `gw+3c30c7` 那条**逐字节相同、指针不同**（12/12 `same_bytes=true`、`same_ptr=false`） |
+| **`0x3e44d4`** | **`graphwar_target_manager.rs`**（fn `0x3e2830`） | 它自己那次 `calculate_function`（调用点 `0x3e2d35`，返回 `gw+3e2d3b`）的返回值，**同一个指针**（12/12 `same_ptr=true`） |
+
+### 28.2 一次开火的实测链路（12 发；每发都抓到四处）
+
+```text
+t≈36.9s  calculate_function(gw+3c30c7)  → 数组 A（shot_calculator），ptr=P_A
+t≈36.93s 0x456810 @ 0x471a88            → FunctionPointsEvent{pts[0], pts[len-1].x}   ← 喂的是 A 的**副本**（P_A'）
+t≈36.94s 0x50eb20                       → JSON：{"FunctionPoints":{…}}（= 上面那个事件，键序 owner_id/start_x/start_y/end_x）
+t≈37.9s  calculate_function(gw+3e2d3b)  → 数组 B（target_manager），ptr=P_B，起点比 A **差 1 ulp**
+t≈37.9s  0x456810 @ 0x3e44d4            → 第二个 FunctionPointsEvent（喂的是 B 本身）
+t≈38.1s  0x472865                       → pos = A[ n-1 ]（rdx = P_A，**队列里那块**）
+```
+
+三条判据（都在样本里逐发可查）：
+
+1. **报文里的是哪个事件**：两个事件的 `start_x/start_y` 来自各自数组的 `pts[0]`，而 A/B 的起点差
+   **1 ulp**（例如 `40f4fbc49790eebf` vs `3ff4fbc49790eebf`）⇒ 拿 JSON 写入器那一刻的
+   `start_y` 一比特就能点名。**12/12 命中的是 `0x471a88` 那个**（`judge_ser_eq_ctorA=true`）。
+2. **`pos_x` 读的是哪块**：`0x472865` 的 `rdx` **等于** A 的指针（12/12 `same_ptr=true`），
+   且与开火时留的 A 副本**逐字节相同**（12/12 `same_bytes=true`）。
+3. **两处下标**：`end_x` 取 `len-1`、`pos` 取 `n-1`，且每发都用"在整条数组里逐字节找这个 8 字节"
+   验证过命中下标（`x_eq_idx=[len-1]`、`xy_idx=[n-1]`），**没有出现过 `len-2`**。
+
+⇒ **`end_x` 与 `pos_x` 是两次读：一次读副本、一次读队列那块。下标相同，对象不同，时刻不同。**
+
+### 28.3 那 100 发：哪个字段不是"这次读"（判据 + 结果）
+
+判据只用**报文自己的量**（不需要任何实现参与），三条一起看：
+
+```text
+(a) pos_x  与 end_x  逐位比                        → 语料 240/1290 不等（§25.6）
+(b) pos_x  与「用报文自己的 start_x/start_y 复算出的末点 x」逐位比  → `residual_fold` 的 ode_found
+(c) end_x  与同一个复算末点 x 逐位比                                → `residual_fold` 的 ode_end_x_match
+```
+
+```bash
+R=<WS>/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example residual_fold -- --dir $R --json fold.jsonl   # 1290（Normal 740 / DiffEq 550）
+# 只用 fold.jsonl 里的 pos_x / end_x / ode_last_x 三个字段做逐位（to_bits）比较：
+```
+
+| 桶 | `pos_x` 与复算末点 x | `end_x` 与复算末点 x |
+|---|---|---|
+| **100 发 `pos_x ≠ end_x`**（DiffEq） | 逐位相等 **0** ／ 差 ±1 ulp 70、±2 ulp 10、±3 ulp 2（合计 82）／ 差很远 18 | 逐位相等 **35** ／ 差很远 65 |
+| **450 发 `pos_x == end_x`**（DiffEq，正对照） | 逐位相等 **359** ／ 差很远 91 | 逐位相等 **359** ／ 差很远 91 |
+| 100 发只取**单发批**（86 发，排除配对错位） | 逐位相等 **0** | 逐位相等 **28**（84 发里 33%）／ 450 桶的单发批是 **332/395 = 84%** |
+
+⇒ **判据的落点**：那 100 发里 `pos_x` **一次都没有**落在报文自己那条曲线的末点上（而且不是差得远，
+82/100 只差 1–3 ulp —— 正是"同一条积分、起点差 1 ulp"会给出的量级），
+`end_x` 则**有 1/3 是逐位相等**的。**⇒ 不是"这次读"的那个字段是 `pos_x`。**
+
+> ⚠ 同一张表也说明**不能把话说满**：那 100 发里 `end_x` 也有 65/100 与复算末点差很远
+> （=`residual_fold` 复算本身在这些发上就复现不出那条曲线，与 450 桶里那 91 发"差很远"同源）。
+> 所以第 ⑥ 条的正确读法是"**两边只有 `pos_x` 是 0 命中**"，不是"`end_x` 全部命中"。
+
+### 28.4 两者差的是"一个采样步"还是"末几位"：两个装配点各自算了一遍
+
+两个装配点喂的是**两次不同的 `calculate_function`**（起点差 1 ulp），所以它们的 `end_x` 天然可能不同：
+
+| 系列 | 发 | `A.end_x` | `B.end_x`（target_manager） | 差 |
+|---|---|---|---|---|
+| `ode_l16` #3 `sin(x)-y/2` | 5432 点 | `24.992781822448826` | `24.984031822448827`（5431 点） | **0.00875**（= 一个 x 步） |
+| `ode_l16b` #5 `0-0.7` | 4518 点 | `24.997032951919522` | `24.98953295191952` | **0.0075**（= 一个 x 步） |
+| 其余 10 发 | — | — | — | **0.0**（逐位相同） |
+
+语料那 100 发的形状（§25.6 复算过）：**56 发 ≤0.02（一个步长）· 44 发 <1e-12（末几位）**。
+⇒ 量级、形态都对得上：**两个装配点各自用了一条"起点差 1 ulp"的数组算末点 x**。
+`pos_x` 站在其中一条上，`end_x` 站在另一条上，就会出现这两种形状；两条恰好一致时就相等。
+
+### 28.5 本轮**没**做到的（诚实清单）
+
+1. **没复现出那 100 发的不一致**：12 发（2 Normal + 10 DiffEq）全部 `end_x == pos_x`，
+   队列那块在结算时与开火时**逐字节相同**（`same_bytes=true` 12/12）。所以
+   "结算那一刻队列里装的是**另一条**数组"这一步**没有被直接观测到**，它是**推断**。
+   缺的证据很具体：**需要一发"线上 `end_x` 来自 `0x3e44d4`（target_manager）而 `pos_x` 来自队列那块"的样本**。
+   本轮 12 发里 JSON 写入器**一次都没**拿到 target_manager 那个事件（`judge_ser_eq_ctorB` 只有 4/12 为真，
+   且那 4 发里 A≡B，分不出来）。
+2. **两个装配点各自在什么条件下被上线/被消费，未定性**。已知：`0x3e44d4` 那一支必然在每次开火后
+   都跑（12/12 都装了一次），但它的消息**没有**进 JSON 写入器。
+3. **`owner_id` 的宽度**：装配处写 `mov %r15d,0x30(%rsp)`（4 字节），而写入器按 8 字节读（`mov $0x8,%edx`
+   是**键名长度** `owner_id`）。本轮在写入器那一刻读 `+0x18` 的 8 字节，**高 4 字节是脏的**
+   （抓到 `7f…` 这种值）；报文里落的是低 32 位。**未定性**：这是编译器的 4 字节写 + 结构体 8 字节槽，
+   还是我读错了偏移（低 32 位与装配处 `owner=230/231` 一致，但高半未验）。
+4. **只测了战役第 0 关（Normal）与第 16 关（DiffEq）的单人局**；联网局、多人局、带障碍/命中的局**没有样本**。
+
+### 28.6 复跑（两条命令 + 新开关）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+# ① 自己起 Xvfb（**必须 TCP**；本机是 niri/Wayland 会话，驱动已把 WAYLAND_DISPLAY 摘掉，见 28.7 坑 1）
+Xvfb :117 -screen 0 1920x1160x24 -listen tcp -ac -nolisten unix &
+# ② Normal 局（2 发）
+$PY tools/frida_point_array.py --attach --fnpoints --display 127.0.0.1:117 \
+    --settle 22 --shots 2 --gap 12 --exprs "sin(x)+3,x/2" --tail 22 --eval-rows 0 --out run.jsonl
+# ③ DiffEq 局（战役第 16 关 = func=1）：驱动代写 user://campaign.save 并点第 16 个节点
+$PY tools/frida_point_array.py --attach --fnpoints --display 127.0.0.1:117 \
+    --campaign-level 20 --level-node 16 --settle 24 --shots 6 --gap 13 \
+    --exprs "y,-y,sin(x)-y/2,0,x/2-y,y/2" --tail 25 --eval-rows 0 --out ode.jsonl
+# ④ 语料那条（28.3 的表）
+cargo run --release --offline -q --example residual_fold -- --dir $R --json fold.jsonl
+```
+
+新开关（全部**新增**，不给时行为与之前逐字节相同）：
+
+```bash
+--fnpoints                 # 打开 FunctionPoints 探针（fnpoints_ctor / fnpoints / pos_x_locate 三条消息）
+--campaign-level N         # 开跑前把**工作区** XDG_DATA_HOME 的 user://campaign.save 写成 level_N
+--level-node K | "x,y"     # 点第 K 关（内置 21 个实测坐标）或直接给坐标
+```
+
+### 28.7 本轮新踩的两个坑
+
+1. **本机是 Wayland 会话，Godot 会绕过 Xvfb**：`WAYLAND_DISPLAY=wayland-1` 存在时引擎走
+   `DisplayServerWayland`，**根本不在 Xvfb 上建 X11 窗口**（`xdotool search` 一直返回 `root`、
+   点击全落在根窗口、整轮 0 发）。驱动现在启动游戏前把 `WAYLAND_DISPLAY` 摘掉；
+   手工跑时也要 `env -u WAYLAND_DISPLAY`。
+2. **Xvfb 必须用后台作业起**：在同一条 `bash -c` 里 `(Xvfb … &)` 起的 Xvfb 会随那条命令退出被杀，
+   下一条命令里的游戏就报 `X11 Display is not available`（实测一次）。
+
+### 28.8 样本入库
+
+```text
+fixtures/frida_endx_sample.jsonl     1 行 provenance + 12 行 shot（24 KB，纯文本）
+  provenance：构建 sha256、5 个断点的 RVA 与"读什么"、正对照、指针口径（ASLR，仅同一次运行可比）、
+              **文件里没有**整条数组 hex / beat / reallocs / 任何路径与用户名
+  每行 shot：series（normal_l0 / ode_l16 / ode_l16b）、shot、expr_typed、mode、level
+             · ctor_A：caller=gw+471a8d、t_ms、vec{ptr,len}、end_x 位模式 + f64、start_pt/end_pt、owner_id、
+                       与最近两次 calculate_function 的对照（same_ptr/same_bytes）
+             · ctor_B：caller=gw+3e44d9、t_ms、vec{ptr,len}、end_x、start_pt
+             · wire：JSON 写入器那一刻的 end_x / start_x / start_y 位模式
+             · pos：t_ms、rdx、n、pos_bytes、pos_x 位模式、last_ctor、**在每条数组里命中的下标**
+             · judge_ser_eq_ctorA / judge_ser_eq_ctorB / judge_pos_eq_ctorA / judge_pos_eq_ctorB
+             · A_minus_B_end_x、A_minus_B_len、queue_array_bytes_unchanged_at_pos_read
+```
+
+**正对照（说"相等"之前必须先有的那条）**：
+
+1. 探针**装机时**自跑 `selfTestCompare()`：两条 100 点合成数组逐位相同 → `same=true`；翻第 37 点 1 bit →
+   `diffPoints=1`；再翻第 90 点 → `diffPoints=2`。本轮四次装机都是 `true/true/true`。
+2. **运行期**正对照：同一发两次 `calculate_function`（`gw+3c30c7` 与 `gw+3e2d3b`）的数组在
+   DiffEq 局经常不同（`diffPoints=129 / 3872 / 445 / 103`，`Normal` 局则相同）⇒ 比对函数在真数据上
+   **报得出不同**；而 `end_x` 与 `pts[len-1].x` 的"相等"是**比出来的**，不是假设的
+   （每发还额外核了 `prev_x_eq=false`，即它不是倒数第二个点）。
+
+### 28.9 护栏（本分支实测）
+
+| 项 | 结果 |
+|---|---|
+| `cargo test --offline` | **1631 通过 / 0 失败**（= 基线，本轮**没加**测试） |
+| `src/`、`client/`、`dispatch/`、`fixtures/guardrails.json` | **零改动** |
+| 本轮改的文件 | `tools/frida_point_array.{js,py,README.md}`（**只加**新开关与新钩子）、`fixtures/frida_endx_sample.jsonl`（新增）、本节 |
+
+`fire` / `batch` / `batch_conv` 三条轴本轮**没有重跑**（本分支不碰 `src/`，护栏数字与基线同；
+按 AGENTS.md §B 应该在合并侧跑）。
