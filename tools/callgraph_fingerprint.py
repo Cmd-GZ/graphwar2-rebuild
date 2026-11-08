@@ -52,6 +52,7 @@ Linux 目标 `.so` 有 13,263 个函数（= Ghidra 起点表口径）：
     ../.reference/venv/bin/python tools/callgraph_fingerprint.py calib         # 门槛 / 档位规则 / 体量分桶
     ../.reference/venv/bin/python tools/callgraph_fingerprint.py run --shard 0/8 --out x.tsv
     ../.reference/venv/bin/python tools/callgraph_fingerprint.py merge x?.tsv  # 合并分片 → 夹具
+                                     # （判档 + **全局**单射闸门在这里重算，见 apply_gates）
     ../.reference/venv/bin/python tools/callgraph_fingerprint.py report        # 规模 + 体量/档位分布
     ../.reference/venv/bin/python tools/callgraph_fingerprint.py probe 0x3a2e10
 
@@ -78,17 +79,46 @@ import sym_match as SM                       # noqa: E402  Elf / demangle / name
 import three_way_match as T                  # noqa: E402  Pe / 宇宙 / LocHit / elf_locations
 
 WS = SM.GW2                                  # 仓库根
+
+
+def _first_existing(env, *cands):
+    """按 环境变量 → 候选列表 取第一个存在的路径；都不存在就返回首选，让报错指向真位置。
+
+    为什么要这么写（`docs/159` §1）：这三个路径曾经写死在**已经不存在的**目录里
+    （`.reference/windows/graphwarrust-*.dll`、`.reference/upstream/analysis/…pkl`），
+    §35.9 的「一条命令复算」原样跑会直接 `T.die`，于是只能靠影子根 + 符号链接复跑 ——
+    数字没错，但复算命令是坏的。落盘布局是会变的（`sym_match._reference_root` 为此上溯过），
+    所以这里**不再写死任何一处**。
+    """
+    if os.environ.get(env):
+        return os.environ[env]
+    for c in cands:
+        p = c if os.path.isabs(c) else os.path.join(WS, c)
+        if os.path.exists(p):
+            return p
+    return os.path.join(WS, cands[0])
+
+
 BUILDS = collections.OrderedDict([
     ("linux", dict(kind="elf", isa="x86", funcstarts=True, names=False,
-                   path=os.path.join(WS, ".reference/steam/2026-08-28/libgraphwarrust.so"))),
+                   path=_first_existing("GW2_LINUX_SO",
+                                        ".reference/steam/2026-08-28/libgraphwarrust.so",
+                                        "libgraphwarrust.so"))),
     ("android", dict(kind="elf", isa="arm64", funcstarts=False, names=True,
-                     path=os.path.join(WS, ".reference/steam/android-2.0.60/libgraphwarrust.so"))),
+                     path=_first_existing("GW2_ANDROID_SO",
+                                          ".reference/steam/android-2.0.60/libgraphwarrust.so"))),
     ("win", dict(kind="pe", isa="x86", funcstarts=False, names=True,
-                 path=os.path.join(WS, ".reference/windows/graphwarrust-2.0.60.dll"))),
+                 path=_first_existing("GW2_WIN_DLL",
+                                      ".reference/steam/windows-2.0.60/graphwarrust.dll",
+                                      ".reference/windows/graphwarrust-2.0.60.dll"))),
     ("win_old", dict(kind="pe", isa="x86", funcstarts=False, names=True,
-                     path=os.path.join(WS, ".reference/windows/graphwarrust-early2026.dll"))),
+                     path=_first_existing("GW2_WIN_OLD_DLL",
+                                          ".reference/steam/windows-early2026/graphwarrust.dll",
+                                          ".reference/windows/graphwarrust-early2026.dll"))),
 ])
-FUNCSTARTS = os.path.join(WS, ".reference/upstream/analysis/funcstarts_ghidra_va.pkl")
+# 函数起点表：复用 `sym_match._find_funcstarts()` 的上溯（`GW2_FUNCSTARTS` → 逐级 `analysis/`
+# → `.reference/upstream/analysis/` → 旧路径）。全仓库就这一个来源，别在这里另起一份。
+FUNCSTARTS = SM.DEFAULT_FUNCSTARTS
 FIXTURES = os.path.join(ROOT, "fixtures")
 OUT_TSV = os.path.join(FIXTURES, "callgraph_fingerprint.tsv")
 
@@ -1127,14 +1157,46 @@ def cmd_calib(args):
         W("  单射闸门（%s）：多认领 %d 行、保留 %d 行，保留行精度=%s\n"
           % (lab, len(hi) - len(keep), len(keep),
              fmt_pct(sum(1 for r in keep if r["ok"]), len(keep))))
+        W("    ↑ 这一档在正对照上一直是 **0 行**（真值 1:1），所以它从没被真正测过；"
+          "证明闸门会开火见下。\n")
+    # 负对照：正对照里真值互不重复 ⇒ 单射闸门永远是 0 行，测不出它是否有效
+    # （`docs/159` §6：片内计数让它在 12,736 上漏了 25 组 / 56 行）。用合成用例证明它会开火、
+    # 也不会乱开火；走的是 `run`/`merge` 用的**同一个** apply_gates。
+    W("  单射闸门负对照（合成用例，走 merge/run 同一个 apply_gates）：\n")
+    def _g(spec):
+        rs = [dict(target=t, score=s, margin=m, size=sz) for t, s, m, sz in spec]
+        return [r["tier"] for r in apply_gates(rs)]
+    cases = [
+        ("2 行抢同一目标（都够高置信）", [(0x180001000, .90, .20, 512)] * 2,
+         [TIER_MID, TIER_MID]),
+        ("2 行各抢各的目标", [(0x180001000, .90, .20, 512), (0x180002000, .90, .20, 512)],
+         [TIER_HI, TIER_HI]),
+        ("1 行高置信 + 1 行低分同靶", [(0x180001000, .90, .20, 512),
+                                     (0x180001000, .45, .20, 512)],
+         [TIER_HI, TIER_UNK]),
+        ("1 行高置信 + 1 行同靶但 margin 不够", [(0x180001000, .90, .20, 512),
+                                              (0x180001000, .90, .01, 512)],
+         [TIER_HI, TIER_WEAK]),
+    ]
+    ok_all = True
+    for lab, spec, want in cases:
+        got = _g(spec)
+        ok = got == want
+        ok_all = ok_all and ok
+        W("    %-30s → %-28s %s\n"
+          % (lab, "/".join(got), "OK" if ok else "FAIL（期望 %s）" % "/".join(want)))
+    W("    闸门%s：一个目标被 ≥2 行认领时必须全部降档，其余情况不许误伤\n"
+      % ("有效" if ok_all else "**无效，先修闸门再看下面的数**"))
     sizes = sorted(dst.feats[a]["size"] for a in named)
     W("  已定名 348 个体量分布：中位 %d；12,736 目标见 report\n"
       % sizes[len(sizes) // 2])
     return 0
 
 
-# 档位门槛（**调参半**选出，留出半报数；见 `calib` / docs/02 §41.4）：
-#   高置信同源 = score>=0.65 且 margin>=0.05 且单射 ⇒ 留出半精度 **98.0%**（n=98/165）
+# 档位门槛（**调参半**选出，留出半报数；见 `calib` / docs/02 §35.4）：
+#   高置信同源 = score>=0.65 且 margin>=0.05 且**全局**单射 ⇒ 留出半 98.0%（n=98/165，
+#                只对「已定名 348」这一批成立；`docs/159` §3 实测去掉 `strs` 泄漏后 73.3%，
+#                目标集合只有 11.8% 带同类特征 ⇒ 对 12,736 只能说 **≈80–95%、逐条待核**）
 #   推断同源   = score>=0.50 且 margin>=0.05（不含上一档）      ⇒ 精度约 74%
 #   弱候选     = score>=0.50 但 margin<0.05（打平/贴太近）      ⇒ 约 65%
 #   未知       = 分数 <0.50 或窗口里根本没有候选
@@ -1145,31 +1207,89 @@ TIER_UNK = "未知"
 THR_HI = 0.65
 THR_MID = 0.50
 MARGIN_HI = 0.05
+SMALL_FN = 256          # 正对照这一档样本太少（两半合计 20/27 = 74%），不足 256 B 要打注记
+
+
+def tier_from_score(score, margin):
+    """只看**分数**的档位（`None` = 没有候选）。单射与体量注记不在这里，见 `apply_gates`。"""
+    if score is None:
+        return TIER_UNK
+    if score >= THR_HI and margin >= MARGIN_HI:
+        return TIER_HI
+    if score >= THR_MID and margin >= MARGIN_HI:
+        return TIER_MID
+    if score >= THR_MID:
+        return TIER_WEAK
+    return TIER_UNK
 
 
 def tier_of(best):
     if not best:
         return TIER_UNK, 0.0, 0.0
     score, margin = best[0][0], margin_of(best)
-    if score >= THR_HI and margin >= MARGIN_HI:
-        return TIER_HI, score, margin
-    if score >= THR_MID and margin >= MARGIN_HI:
-        return TIER_MID, score, margin
-    if score >= THR_MID:
-        return TIER_WEAK, score, margin
-    return TIER_UNK, score, margin
+    return tier_from_score(score, margin), score, margin
+
+
+def apply_gates(rows):
+    """**全局**判档 + 单射闸门 + 体量注记（`run` 与 `merge` 共用；写 `r["tier"]` / `r["note"]`）。
+
+    每条 `r` 需要 `score`（float 或 None）、`margin`、`target`（Windows VA 或 None）、`size`。
+    函数是**幂等**的：档位一律由 `score`/`margin` **重算**，不相信输入里的 `tier` 列 ——
+    否则 `merge` 会把分片内算出来的档位（含片内的错）当成既成事实。
+
+    ## 单射闸门为什么必须**全局**（`docs/159` §6 的硬错误）
+
+    规则：**一个 Windows 目标在整份夹具里只能被一行认领为「高置信同源」**。
+    旧实现把 `claim` 计数放在 `cmd_run()` 里，而 `run` 用 `targets[i::8]` **按地址跨步**切分
+    ⇒ 结构孪生通常地址相邻，几乎必然落在**不同片**，闸门永远看不见它们。实测后果：
+    2,803 行只落在 2,772 个目标上，25 个目标被 ≥2 行认领（56 行），且没有 `multi-claim` 注记；
+    其中 Windows `0x1800ead70` 被 **5** 个 Linux 函数认领，同片的 2 个被降了档、
+    跨片的 `0x6baef0` 仍是「高置信」。⇒ 至少 31 行必错。所以计数挪到这里，`merge` 时
+    对**全部 12,736 行**重算一次（`run` 不分片时它覆盖的也是全集，同一段代码）。
+
+    ## 多行抢同一个目标时怎么处置：**全部**降一档，不做"留分数最高的一个"
+
+    * 抢同一个目标的 ≥2 行里**至多一行**可能是对的，但我们没有任何证据说**是哪一行**
+      —— `docs/159` §7 实测的失败模式正是近孪生（`update_names_button_texture` 与
+      `update_view_function_button_texture` 只差一个贴图名常量），它们的 `score` 差在噪声内。
+      在这种情况下"取分数最高的"等于在一组没有信息的候选里挑一个当高置信，只会把错误
+      伪装成有把握。
+    * 降一档**不丢候选**：这些行仍以「推断同源」+ `note=multi-claim` 留在夹具里，
+      下游照 §35.4 的口径只能当结构同源候选用。
+    * 单遍计数、不迭代（同一行集内一次判完；与 `calib` 打印的闸门口径一致）。
+    """
+    for r in rows:
+        r["tier"] = tier_from_score(r["score"], r["margin"])
+        r["note"] = ""
+    claim = collections.Counter(r["target"] for r in rows if r["tier"] == TIER_HI)
+    for r in rows:
+        if r["tier"] == TIER_HI and claim[r["target"]] > 1:
+            r["tier"] = TIER_MID
+            r["note"] = "multi-claim"
+    # 体量注记（§35.7 第 2 条）：正对照 <256 B 只有 27 个样本（20/27 = 74%），
+    # 而目标集合有 58.8% 在这一档 ⇒ 档位不降，但引用时必须连注记一起引。
+    for r in rows:
+        if r["size"] < SMALL_FN:
+            r["note"] = r["note"] + ",small-uncalibrated" if r["note"] else "small-uncalibrated"
+    return rows
 
 
 PREAMBLE = (
-    "# 由 tools/callgraph_fingerprint.py run 生成，不要手改（重跑会覆盖）。\n"
+    "# 由 tools/callgraph_fingerprint.py run/merge 生成，不要手改（重跑会覆盖）。\n"
     "# 目标：Linux 2.0.60 里**不引用任何 src/*.rs panic::Location** 的函数"
     "（三份符号表都没有它们，名字要不回来的那批）。\n"
     "# 匹配**只**用结构：size / 助记符直方图 / 指令三元组 / 常量 / 调用者 / 引用字符串；"
-    "不读名字、不读地址、不读 Location。\n"
-    "# tier=高置信同源：同 ISA 分数>=0.65 且 margin>=0.05 且单射，"
-    "留出半实测精度 98.0%（docs/02 §41.4）；它只是**同源候选**，不是名字。\n"
-    "# note=small-uncalibrated 表示该行 size<256 B——正对照里这一档只有 11 个样本"
-    "（63.6%），精度**没有实测支撑**（docs/02 §41.7）。\n"
+    "不读名字、不读地址、不读 Location 键。\n"
+    "# ⚠ 但 strs 特征就是 Location 的文件名（panic::Location 的 (ptr,len) 槽）："
+    "去掉它，正对照留出半 84.2% → 73.3%（docs/159 §3.2）。\n"
+    "# tier=高置信同源：同 ISA 分数>=0.65 且 margin>=0.05 且**全局单射**（merge 里对全量重算，"
+    "一个 Windows 目标只许一行认领）。\n"
+    "# 精度口径：≈80–95%、**逐条待核**。98.0%/84.2% 只在「已定名 348」上测过"
+    "（体量中位 624 B、100% 带 Location 文件名串），不能直接搬到本表这批量级；"
+    "去掉泄漏特征后是 73.3%（docs/02 §35.4·§35.7、docs/159 §3）。\n"
+    "# note=small-uncalibrated 表示该行 size<256 B——正对照这一档两半合计只有 20/27 = 74%，"
+    "精度没有实测支撑（docs/02 §35.7）。\n"
+    "# note=multi-claim 表示有别的 Linux 函数也认领同一个 Windows 目标（≥2 抢 1）⇒ 已降一档。\n"
     "# android_cand_* 是跨 ISA 候选，实测 top-1 只有 6.5%，**不是证据**，只作结构角色参考。\n"
 )
 COLS = ("linux_addr", "size", "ninsn", "hist_hash", "ncallees", "ncallers", "nstrs",
@@ -1192,7 +1312,7 @@ def write_tsv(rows, path):
                 ("%.4f" % w[0][0]) if w else "-", ("%.4f" % margin_of(w)) if w else "-",
                 f["tier"],
                 ("0x%x" % a[0][1]) if a else "-", ("%.4f" % a[0][0]) if a else "-",
-                f["bsig"], f.get("note", "-"),
+                f["bsig"], f.get("note") or "-",
             ]) + "\n")
 
 
@@ -1221,22 +1341,25 @@ def cmd_run(args):
         f["win"] = rank(qf, pools["win"], scorers["win"], wins["win"], args.topk)
         f["android"] = rank(qf, pools["android"], scorers["android"], wins["android"],
                             min(args.topk, 3))
-        f["tier"], f["score"], f["margin"] = tier_of(f["win"])
+        # 档位用**发布精度**（4 位小数）判，不用内存里的全精度浮点：`merge` 是从夹具的
+        # score/margin 列重算档位的，若这里用全精度，`0.649996`（内存）与 `0.6500`（夹具）
+        # 会给出两个不同的档 —— 实测 12,736 行里就有 3 行落在这个边界上，
+        # 于是"夹具自己复算不出自己的档位"。量化一次，run 与 merge 逐行一致。
+        _t0, score, margin = tier_of(f["win"])
+        f["score"] = float("%.4f" % score)
+        f["margin"] = float("%.4f" % margin)
+        f["tier"] = tier_from_score(f["score"], f["margin"])
+        f["target"] = f["win"][0][1] if f["win"] else None
         rows.append(f)
         if (i + 1) % 500 == 0:
             sys.stderr.write("[fp] %d/%d\n" % (i + 1, len(targets)))
-    # ① 单射：一个 Windows 函数被多个目标认领 ⇒ 降一档（正对照里这一步去掉 0 行，所以是免费的）
-    claim = collections.Counter(f["win"][0][1] for f in rows if f["tier"] == TIER_HI)
-    for f in rows:
-        if f["tier"] == TIER_HI and claim[f["win"][0][1]] > 1:
-            f["tier"] = TIER_MID
-            f["note"] = "multi-claim"
-    # ② 体量注记：正对照的 348 个里只有 11 个 < 256 B（6.6%），而目标集合有 58.8% < 256 B
-    #    ⇒ 这一档的精度**没有实测支撑**，档位不降但必须写进 note（§41.7 诚实边界）
-    for f in rows:
-        if f["size"] < 256:
-            f["note"] = (f.get("note") + ",small-uncalibrated" if f.get("note")
-                         else "small-uncalibrated")
+    # 判档 / **单射闸门** / 体量注记 —— 与 `merge` 共用同一个函数（`apply_gates`）。
+    # 不分片时这里的行集就是全集，闸门就是全局的；分片时它只看得见本片，
+    # 所以**落地夹具必须走 merge**（merge 会对全部行重算，不继承这里的 tier）。
+    apply_gates(rows)
+    if args.shard or args.limit:
+        sys.stderr.write("[fp] 本次只跑了部分目标（--shard/--limit）：单射闸门只在本行集内计数，"
+                         "结论以 merge 的全局重算为准\n")
     out = args.out or OUT_TSV
     write_tsv(rows, out)
     W = sys.stdout.write
@@ -1246,38 +1369,80 @@ def cmd_run(args):
     return 0
 
 
+def _row_from_fields(p2):
+    """一行 TSV → `apply_gates` 需要的字段（score/margin/target/size），同时保留原始列。
+
+    档位**从 score/margin 重算**，所以分数就是唯一输入；这样 merge 既不依赖分片里
+    算好的 tier，也能把旧口径的产物重新纠正一遍。
+    """
+    f = list(p2)
+    i = {c: k for k, c in enumerate(COLS)}
+    sc, mg, ma = f[i["score"]], f[i["margin"]], f[i["match_addr"]]
+    return dict(fields=f,
+                score=float(sc) if sc != "-" else None,
+                margin=float(mg) if mg != "-" else None,
+                target=int(ma, 16) if ma.startswith("0x") else None,
+                size=int(f[i["size"]]))
+
+
 def cmd_merge(args):
-    """把分片结果合并成一份夹具（按 linux_addr 排序；表头用模块级 PREAMBLE/COLS）。"""
-    rows = {}
+    """合并分片 → 夹具，并在**这里**做全局判档 + 单射闸门（`docs/159` §6 的修法）。
+
+    为什么闸门必须在这个阶段开：`run` 用 `targets[i::8]` **按地址跨步**切分，而结构孪生
+    通常地址相邻 ⇒ 抢同一个 Windows 目标的两行几乎必然落在不同片，片内计数永远数不到它们
+    （实测漏 25 组 / 56 行）。`merge` 是唯一看得到全部行的地方，所以闸门只能落在这里；
+    档位也在这里按 score/margin 重算，不从分片继承（`apply_gates` 幂等）。
+    """
+    raw = {}
     for path in args.addr:
         with open(path, encoding="utf-8") as fh:
+            hdr = None
             for line in fh:
-                if line.startswith("#"):
+                if line.startswith("#") or not line.strip():
                     continue
                 p2 = line.rstrip("\n").split("\t")
-                if p2[0] == "linux_addr":
+                if hdr is None:
+                    hdr = tuple(p2)
+                    if hdr != COLS:
+                        T.die("%s 的表头与本工具的 COLS 不一致（列口径变了，别混着 merge）"
+                              % path)
                     continue
-                rows[int(p2[0], 16)] = p2
+                raw[int(p2[0], 16)] = p2
+    rows = [_row_from_fields(raw[va]) for va in sorted(raw)]
+    apply_gates(rows)
     out = args.out or OUT_TSV
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    ti, ni = COLS.index("tier"), COLS.index("note")
     with open(out, "w", encoding="utf-8") as fh:
         fh.write(PREAMBLE)
         fh.write("\t".join(COLS) + "\n")
-        for va in sorted(rows):
-            fh.write("\t".join(rows[va]) + "\n")
+        for r in rows:
+            r["fields"][ti] = r["tier"]
+            r["fields"][ni] = r["note"] or "-"
+            fh.write("\t".join(r["fields"]) + "\n")
     W = sys.stdout.write
-    W("合并 %d 个分片 → %s：%d 行，%d 列\n"
+    W("合并 %d 个分片 → %s：%d 行，%d 列（档位按 score/margin **全局**重算）\n"
       % (len(args.addr), os.path.relpath(out, ROOT), len(rows), len(COLS)))
-    ti = COLS.index("tier")
-    for k, v in collections.Counter(r[ti] for r in rows.values()).most_common():
+    for k, v in collections.Counter(r["tier"] for r in rows).most_common():
         W("  %-10s %6d\n" % (k, v))
+    hi = [r for r in rows if r["tier"] == TIER_HI]
+    tgts = collections.Counter(r["target"] for r in hi)
+    dup = [t for t, c in tgts.items() if c > 1]
+    mc = sum(1 for r in rows if "multi-claim" in r["note"])
+    W("  单射（全局）：高置信 %d 行落在 %d 个 Windows 目标上；降档 %d 行（multi-claim）\n"
+      % (len(hi), len(tgts), mc))
+    W("  其中 size<256 B（small-uncalibrated）%d 行\n"
+      % sum(1 for r in hi if r["size"] < SMALL_FN))
+    if dup:
+        W("  ⚠ 仍有 %d 组目标被 ≥2 行认领（闸门失效，不该发生）\n" % len(dup))
     return 0
 
 
 def cmd_report(args):
     fps = load_all()
     W = sys.stdout.write
-    named = named_linux()
+    named = named_linux()          # 354：三份夹具的名字并集
+    named348 = named_linux_348()   # 348：再 ∩ 527（正对照用的就是这个）
     W("指纹库（四份构建）\n")
     for tag, fp in fps.items():
         feats = fp.feats
@@ -1295,12 +1460,15 @@ def cmd_report(args):
     tgt = target_addrs(fps)
     W("\nLinux 目标 %d 个函数 = 有 src Location %d + 无 %d\n"
       % (len(lin.universe), len(lin.universe) - len(tgt), len(tgt)))
-    W("其中已定名（348 口径）%d 个；目标集合里有一个名字的 %d 个\n"
-      % (len(named), len([a for a in tgt if a in named])))
+    W("其中三份夹具里有一个名字的 %d 个；正对照用的 348 口径（再 ∩ 527）%d 个"
+      "；目标集合里有一个名字的 %d 个\n"
+      % (len(named), len(named348), len([a for a in tgt if a in named])))
     # 目标集合的体量分布 —— 决定"正对照那 84.2% 能不能搬到 12,736"
     buckets = ((0, 64), (64, 256), (256, 1024), (1024, 4096), (4096, 1 << 30))
-    W("\n目标集合（12,736）体量分布（正对照用的 348 个体量中位 %d）：\n"
-      % sorted(lin.feats[a]["size"] for a in named)[len(named) // 2])
+    # 上一版这里用的是 354（`named`），标签却写「348」⇒ 打印 624 B，与 `calib` 的 640 B
+    # 自相矛盾（`docs/159` §0 引用的就是那个 624）。改成真正的 348 口径。
+    W("\n目标集合（12,736）体量分布（正对照 348 个体量中位 %d B）：\n"
+      % sorted(lin.feats[a]["size"] for a in named348)[len(named348) // 2])
     for lo, hi in buckets:
         sel = [a for a in tgt if lo <= lin.feats[a]["size"] < hi]
         W("  size[%5d,%6d) %5d 个（%s）\n"
@@ -1344,8 +1512,11 @@ def cmd_probe(args):
                                                for k, v in f["cls"].most_common(6)))
             if f["callee_sizes"]:
                 W("        callee_sizes: %s\n" % list(f["callee_sizes"])[:12])
-            if tag == "linux" and f["locs"]:
-                pass
+            if tag == "linux" and f["locrefs"]:
+                # 之前这里是 `f["locs"]`（不存在的键）⇒ `probe` 必 KeyError，
+                # §35.9 的复算命令因此还有第二处跑不起来。Location 引用在 `locrefs` 里。
+                W("        locrefs: %d 个 Location 引用（§35 打分器**不读**这一列）\n"
+                  % len(f["locrefs"]))
     return 0
 
 
