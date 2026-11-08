@@ -98,7 +98,8 @@ fn main() {
     });
 
     // k -> 命中数；k = i32::MIN 表示"任何 k 都没命中"
-    let mut hit_by_k: std::collections::BTreeMap<i32, usize> = std::collections::BTreeMap::new();
+    let mut hit_by_axis_k: std::collections::BTreeMap<(char, i32), usize> =
+        std::collections::BTreeMap::new();
     let mut none = 0usize;
     let mut n = 0usize;
     let mut rows: Vec<String> = Vec::new();
@@ -121,29 +122,44 @@ fn main() {
         let flip = get_bool(line, "flip").unwrap_or(false);
         let toks = parse(fn_text);
         n += 1;
-        let mut found_k: Option<i32> = None;
-        for k in -k_max..=k_max {
-            let pts = calculate(&toks, shift_ulp(x0, k), y0, gw2_rebuild::SERVER_STEP, flip, Mode::Ode);
-            if pts.iter().any(|p| p.0.to_bits() == px.to_bits()) {
-                found_k = Some(k);
-                break;
+        // 起点有**两个**分量，两个都试：本轮实测两次调用差 1 ulp 的那一位
+        // 11 发落在 `x0`、另一次独立复跑落在 `y0`（docs/06 §26.4）
+        let mut found: Option<(char, i32)> = None;
+        'outer: for axis in ['x', 'y'] {
+            for k in -k_max..=k_max {
+                if k == 0 {
+                    continue;
+                }
+                let (xa, ya) = if axis == 'x' {
+                    (shift_ulp(x0, k), y0)
+                } else {
+                    (x0, shift_ulp(y0, k))
+                };
+                let pts = calculate(&toks, xa, ya, gw2_rebuild::SERVER_STEP, flip, Mode::Ode);
+                if pts.iter().any(|p| p.0.to_bits() == px.to_bits()) {
+                    found = Some((axis, k));
+                    break 'outer;
+                }
             }
         }
-        match found_k {
-            Some(k) => *hit_by_k.entry(k).or_insert(0) += 1,
+        match found {
+            Some((axis, k)) => *hit_by_axis_k.entry((axis, k)).or_insert(0) += 1,
             None => none += 1,
         }
         rows.push(format!(
-            "{{\"n\":{},\"k\":{},\"pos_x\":{},\"x0\":{}}}",
+            "{{\"n\":{},\"axis\":\"{}\",\"k\":{},\"pos_x\":{},\"x0\":{},\"y0\":{}}}",
             n,
-            found_k.map(|v| v as i64).unwrap_or(-999),
+            found.map(|(a, _)| a).unwrap_or('-'),
+            found.map(|(_, v)| v as i64).unwrap_or(-999),
             px,
-            x0
+            x0,
+            y0
         ));
     }
+    let total_hit: usize = hit_by_axis_k.values().sum();
     eprintln!(
-        "[ode_ulp_probe] 检查 {} 发 `ode_found=false` 的 DiffEq 发 ｜ 按 k 命中 {:?} ｜ 任何 k 都不中 {}",
-        n, hit_by_k, none
+        "[ode_ulp_probe] 检查 {} 发 `ode_found=false` 的 DiffEq 发 ｜ 按 (轴, k) 命中 {:?} ｜ 命中 {} ｜ 任何 (轴,k) 都不中 {}",
+        n, hit_by_axis_k, total_hit, none
     );
     for r in &rows {
         println!("{r}");

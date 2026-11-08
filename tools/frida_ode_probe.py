@@ -91,6 +91,37 @@ def _win_id(display):
     return 'root'
 
 
+def _frame_mean(display):
+    """抓一帧算平均亮度（ImageMagick，不依赖 PIL）。失败返回 None。"""
+    try:
+        w = _win_id(display)
+        p = subprocess.run('import -window %s png:- | identify -format "%%[fx:mean]" -' % w,
+                           shell=True, env=dict(os.environ, DISPLAY=display),
+                           capture_output=True, text=True, timeout=10)
+        return float(p.stdout.strip())
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def wait_drawn(display, min_mean=0.05, timeout=60.0):
+    """★ 等**画面真的画出来**再点菜单。
+
+    为什么不能只睡固定秒数：本轮实测（`docs/06` §26.1 坑 2）——`--settle 8` 时主菜单**已经画出来**，
+    但第一次 `Campaign` 点击**没生效**（后面那一下点到了主菜单的 `Player`），整轮白跑。
+    这里改成"平均亮度够亮（不是全黑）"再等 1 s ⇒ 不靠猜时间。
+    """
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        m = _frame_mean(display)
+        if m is not None and m > min_mean:
+            time.sleep(1.0)
+            print('[wait] frame drawn (mean=%.3f) after %.1fs' % (m, time.time() - t0), file=sys.stderr)
+            return True
+        time.sleep(0.5)
+    print('[wait] WARN frame still dark after %.1fs' % (time.time() - t0), file=sys.stderr)
+    return False
+
+
 def snap(display, d, label):
     if not d:
         return
@@ -350,7 +381,8 @@ def main():
                     help='开跑前往 user://campaign.save 写 `level_<n>`（20 = 全部解锁）')
     ap.add_argument('--no-save', action='store_true', help='不写 campaign.save（存档已就绪时用）')
     ap.add_argument('--level-node', default='16', help='要点的关卡号（1..20；按内置坐标表）或 "x,y"')
-    ap.add_argument('--settle', type=float, default=8.0, help='启动后等多久再点菜单')
+    ap.add_argument('--settle', type=float, default=20.0,
+                    help='启动后等多久再点菜单（之后还会等**画面画出来**，见 wait_drawn）')
     ap.add_argument('--shots', type=int, default=6)
     ap.add_argument('--exprs', default='y', help='逗号分隔的 dy/dx 表达式，逐发轮换')
     ap.add_argument('--gap', type=float, default=9.0, help='两发之间等多久（让弹道走完）')
@@ -466,6 +498,7 @@ def main():
     try:
         if not args.no_clicks:
             time.sleep(args.settle)
+            wait_drawn(args.display)
             snap(args.display, args.snap_dir, '00_boot')
             # ① Campaign
             xdo(args.display, NAV_MAIN[1]); time.sleep(NAV_MAIN[2]); xdo(args.display, NAV_MAIN[3])
