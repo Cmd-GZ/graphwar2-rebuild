@@ -2044,8 +2044,9 @@ cargo run --release --offline -q --example ode_array_check -- --raw <abs>/g.json
 > 并行任务 48 在改 `tools/frida_point_array.*`，本文件不碰它）。
 > 复算 [`examples/flip_branch_check.rs`](../examples/flip_branch_check.rs)（**新增**）+
 > [`examples/ode_array_check.rs`](../examples/ode_array_check.rs)（40 号）。
-> 入库样本 [`fixtures/frida_flip_sample.jsonl`](../fixtures/frida_flip_sample.jsonl)（1 行 provenance + 13 行 shot，111 KB）
-> 与 [`fixtures/frida_flip_normal_l05.jsonl`](../fixtures/frida_flip_normal_l05.jsonl)（1 + 4 行，35 KB），纯文本。
+> 入库样本 [`fixtures/frida_flip_sample.jsonl`](../fixtures/frida_flip_sample.jsonl)（1 行 provenance + 13 行 shot，**67 KB**）
+> 与 [`fixtures/frida_flip_normal_l05.jsonl`](../fixtures/frida_flip_normal_l05.jsonl)（1 + 4 行，**25 KB**），纯文本；
+> **整条数组的字节不入库**，只留摘要（`sha256` + FNV-1a-64，口径见下 §31.7 的"样本口径"）。
 >
 > **编号说明**：§30 留给并行任务 48，本节按任务书取 **§31**。
 
@@ -2318,6 +2319,32 @@ $PY tools/frida_flip_probe.py --extract <abs>/.run/l05.jsonl --label l05_normal 
 | `python3 tools/check_doc_refs.py` | 退出码 **0** |
 | `src/`、`client/`、`dispatch/`、`fixtures/guardrails.json` | **零改动** |
 | `tools/frida_point_array.*`、`tools/frida_ode_probe.*`、`tools/frida_ode_edge.*` | **零改动**（并行任务 48 在用前两支） |
+
+**样本口径（"只留摘要"这件事怎么自证）**：一条点数组的字节 = **16·n 字节**（每点 `x` 的 8 字节小端 f64 +
+`y` 的 8 字节小端 f64）。样本里每条数组只带两个摘要而不是全量字节：
+
+| 字段 | 跑在哪 | 谁算的 | 能证明什么 |
+|---|---|---|---|
+| `digest_xy` / `digest_y` | 同样的 16·n 字节 / 只跑 y 那 8 字节 | **探针在游戏进程里、调用那一刻**（`digestOf`，FNV-1a-64） | "那一块内存当时就是这些字节"（时间点上最强） |
+| `sha256` + `n_bytes` | 同样的 16·n 字节 | **驱动摘样本时**，用探针回传的 `arr.hex` | 任何人拿 `--full-array` 复跑都能复核，与语言/实现无关 |
+| `arr.digest_selfcheck` | — | 驱动用同一份字节**重算 FNV** 并与探针报的值逐位比 | "压缩没改证据"：本轮 **13/13 + 4/4 全 true** |
+
+本轮另外做了一次**独立复核**（不是同一段代码）：把两个样本文件里 **17 条报文数组 + 25 条同发的另一次调用 +
+17 条 `pos_read` 读时刻摘要**，全部拿原始 JSONL 的 `arr.hex` 重算 `sha256` / FNV（`pos_read` 那条按
+**前 `n·16` 字节**算，因为障碍截断就是"同一条缓冲、len 变小"）⇒ **0 处不一致**。
+
+**为了压到 100 KB 以下砍掉了什么**（都是"整条数组的转储"与"重复的结构"，标量证据一条没丢）：
+
+| 字段 | 压缩前 | 现在 | 做法 |
+|---|---|---|---|
+| `queue` | 39.7 KB | 9.9 KB | 队列项按 `(len, digest)` **去重**，只留数组摘要 + 首末点；`eval_sample` 只留前 3 条 |
+| `pos_read` | 16.6 KB | 7.7 KB | `which_calc` 8 条 → `{n_checked, same_ptr_seqs, same_ptr_and_len_seqs}`；`vs_queue` 只留命中的 `(item, off)` |
+| `fnpoints_ctor(_b)` | 14.5 + 14.4 KB | 5.2 + 5.0 KB | 去掉 `vs_calc` 的 8 条全量，只留 `same_ptr_seqs` / `same_ptr_and_len` |
+| `other_calcs`（同发另一次调用） | 27.3 KB | 9.9 KB | 只留**紧邻报文那块**的最后 2 条（`lean`：不带 token/首末点），其余只计数 `other_real_step_calls` |
+| `report_array_calc` | 9.2 KB | 9.2 KB | **原样保留**（token 流 + `(ptr,n)` + 首末点 + 摘要；这是核心证据） |
+| 标量（`flip`/`mode`/`x0`/`y0`/`pos_x`/`end_x`/`*_f`/`arr_dir`/`arr_truncated`/`level`/`shot`/`series`/`report_array_pick`） | — | — | **全部保留**，一条没删 |
+
+具体点数：主文件 **113 412 B → 68 120 B**（67 KB），Level 5 那份 **35 520 B → 25 715 B**（25 KB）。
 
 本轮新增的文件：
 

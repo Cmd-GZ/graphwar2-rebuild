@@ -35,6 +35,7 @@
     (1855, 55)   Fire! ← **长按** 2 s
 """
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -172,6 +173,53 @@ def shot_actions(expr):
 #   每次调用的 (ret, ptr, n, 摘要, 首末点)、`pos_read` 的 16 字节与"哪一次调用"、队列项。
 #   路径/用户名/整条数组 hex 一律不进。
 # ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════════
+# 数组摘要的口径（入库样本只留摘要，**整条数组的字节**一律不进库）
+#
+#   一条点数组的字节 = 16·n 字节：每点 `x` 的 8 字节（小端 f64）+ `y` 的 8 字节（小端 f64）。
+#   两种摘要都跑在这个字节串上：
+#     · `digest_xy`  FNV-1a-64（**探针在调用那一刻**在游戏内存里算的，见 frida_flip_probe.js
+#                   的 `digestOf`）—— 证明"那一块内存当时是这些字节"；
+#     · `sha256`     SHA-256（**驱动摘样本时**用探针回传的 `arr.hex` 算的）—— 便于别人用
+#                    任何语言复核；
+#     · `digest_y`  只跑每点的 y 那 8 字节（同 FNV-1a-64），用来区分"x 没变、y 变了"。
+#   驱动还会**用同一份字节重算一遍 FNV**，与探针报的值逐位比（`digest_selfcheck`），
+#   所以"压缩"不是"改证据"：任何一条摘要对不上，样本里会直接写 false。
+# ═══════════════════════════════════════════════════════════════════════════════
+FNV_OFF = 0xcbf29ce484222325
+FNV_PRM = 0x100000001b3
+M64 = (1 << 64) - 1
+
+
+def _fnv_xy(b):
+    """FNV-1a-64 over ALL 16·n bytes（与探针 `digestOf` 的 `xy` 同一个口径）。"""
+    h = FNV_OFF
+    for v in b:
+        h = ((h ^ v) * FNV_PRM) & M64
+    return '%016x' % h
+
+
+def _fnv_y(b):
+    """FNV-1a-64 over the y halves only（每点后 8 字节）。"""
+    h = FNV_OFF
+    for i in range(0, len(b), 16):
+        for j in range(8, 16):
+            h = ((h ^ b[i + j]) * FNV_PRM) & M64
+    return '%016x' % h
+
+
+def _arr_digests(hexstr):
+    """`arr.hex` → {sha256, fnv_xy, fnv_y, n_bytes}；没有 hex 就返回 None（入库样本不带 hex）。"""
+    if not hexstr:
+        return None
+    try:
+        b = bytes.fromhex(hexstr)
+    except Exception:  # noqa: BLE001
+        return None
+    return {'sha256': hashlib.sha256(b).hexdigest(), 'fnv_xy': _fnv_xy(b), 'fnv_y': _fnv_y(b),
+            'n_bytes': len(b)}
+
+
 def _tok_min(toks):
     return [{'t': t.get('t'), 'v': t.get('v')} for t in (toks or [])]
 
@@ -190,13 +238,27 @@ def _stop_min(st):
     return o
 
 
-def _calc_min(c, keep_tokens):
+def _calc_min(c, keep_tokens, lean=False):
     a = c.get('arr') or {}
     o = {'seq': c.get('seq'), 'ret': c.get('ret'), 'mode': c.get('mode'), 'flip': c.get('flip'),
          'x0': c.get('x0'), 'x0_f': c.get('x0f'), 'y0': c.get('y0'), 'y0_f': c.get('y0f'),
          'step': c.get('step'), 'step_f': c.get('stepf'),
          'arr': {k: a.get(k) for k in ('ptr', 'n', 'digest_xy', 'digest_y', 'first', 'last',
                                        'second_last', 'skipped') if a.get(k) is not None}}
+    if lean:
+        # 同一次开火的**另一次**调用（`gw+3e2d3b`）：token 流/首末点与报文那块重复，
+        # 只留"是不是同一条、差在哪"所必需的量。
+        o['arr'].pop('first', None)
+        o['arr'].pop('last', None)
+        o['arr'].pop('second_last', None)
+    # ★ 摘要（整条数组不回传，只回传摘要；口径见文件头那一块注释）
+    dg = _arr_digests(a.get('hex'))
+    if dg:
+        o['arr']['sha256'] = dg['sha256']
+        o['arr']['n_bytes'] = dg['n_bytes']
+        # 自检：用同一份字节重算 FNV，与**探针当时**报的 digest 逐位比
+        o['arr']['digest_selfcheck'] = (dg['fnv_xy'] == a.get('digest_xy')
+                                        and dg['fnv_y'] == a.get('digest_y'))
     if c.get('stop') is not None or c.get('stop_epilogue') is not None:
         o['stop'] = _stop_min(c.get('stop'))
         epi = c.get('stop_epilogue') or {}
@@ -251,18 +313,46 @@ def _pick_calc(pos, pend):
 
 
 def _pos_min(p):
-    return {k: p.get(k) for k in ('seq', 'rdx', 'rcx', 'n', 'r13', 'r15', 'pos_bytes', 'pos_x', 'pos_y',
-                                  'pos_xf', 'pos_yf', 'first', 'second_last', 'digest_xy', 'which_calc',
-                                  'vs_queue') if p.get(k) is not None}
+    """`pos = pts[n-1]` 那 16 字节 + 当时那条缓冲的摘要。
+
+    ⚠ `which_calc` / `vs_queue` 的**全量**都砍掉了：它们只是"这个指针是哪一次调用"的中间判据，
+      结论已经写进 `report_array_pick` / `queue.pos_array`；这里只留"有哪几个 seq 同指针"。
+    """
+    o = {k: p.get(k) for k in ('seq', 't', 'rdx', 'rcx', 'n', 'r13', 'r15', 'pos_bytes', 'pos_x', 'pos_y',
+                               'pos_xf', 'pos_yf', 'first', 'second_last', 'digest_xy', 'digest_y')
+         if p.get(k) is not None}
+    wc = p.get('which_calc') or []
+    if wc:
+        same = [w.get('seq') for w in wc if w.get('same_ptr')]
+        samelen = [w.get('seq') for w in wc if w.get('same_ptr') and w.get('same_len')]
+        o['which_calc'] = {'n_checked': len(wc), 'same_ptr_seqs': same, 'same_ptr_and_len_seqs': samelen}
+    vq = p.get('vs_queue') or []
+    if vq:
+        o['vs_queue'] = {'n_items': len(vq),
+                         'same_ptr_len_digest': [{'item': x.get('item'), 'off': x.get('off')}
+                                                 for x in vq if x.get('same_ptr') and x.get('same_len')
+                                                 and x.get('same_digest')]}
+    return o
 
 
 def _queue_min(q):
+    """`execute_results` 入口那一刻的队列：只留**去重后的数组摘要**与"报文那一块在不在里面"。"""
     if not q:
         return None
+    seen, arrays = set(), []
+    for it in (q.get('items') or []):
+        key = (it.get('len'), it.get('digest_xy'))
+        if it.get('digest_xy') is None or key in seen:
+            continue
+        seen.add(key)
+        arrays.append({'len': it.get('len'), 'digest_xy': it.get('digest_xy'),
+                       'first': it.get('first'), 'last': it.get('last'),
+                       'lenOff': it.get('lenOff')})
+    ev = q.get('eval_sample') or []
     return {'t': q.get('t'), 'qptr': q.get('qptr'), 'qlen': q.get('qlen'),
-            'items': [{k: it.get(k) for k in ('item', 'tag', 'lenOff', 'ptr', 'len', 'digest_xy', 'first', 'last')
-                       if it.get(k) is not None} for it in (q.get('items') or [])],
-            'eval_sample': q.get('eval_sample')}
+            'arrays': arrays, 'n_unique_arrays': len(arrays),
+            'eval_sample_n': len(ev),
+            'eval_sample_head': ev[:3]}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -296,6 +386,32 @@ def parse_raw(path):
                 rows.append(json.loads(line))
     return rows
 
+def _real_steps(pend, arr_calc):
+    """这一发里 `step = 0.01` 的采样器调用（不含报文用的那一条），按 seq 升序。"""
+    return [c for c in pend if c is not arr_calc and _is_real_step(c)]
+
+
+def _others_min(arr_calc, others):
+    """同一发的**另几次真发调用**：lean 版 + "与报文那块是否同一条/同 token/起点差多少"。"""
+    out = []
+    base_toks = _tok_min(((arr_calc or {}).get('tokens') or {}).get('toks'))
+    base_a = (arr_calc or {}).get('arr') or {}
+    for c in others:
+        o = _calc_min(c, False, lean=True)
+        o['same_tokens_as_report'] = (_tok_min((c.get('tokens') or {}).get('toks')) == base_toks)
+        o['same_ptr_as_report'] = (c.get('arr') or {}).get('ptr') == base_a.get('ptr')
+        o['same_arr_as_report'] = ((c.get('arr') or {}).get('digest_xy') == base_a.get('digest_xy')
+                                   and (c.get('arr') or {}).get('n') == base_a.get('n'))
+        out.append(o)
+    return out
+
+
+def _is_real_step(c):
+    """这一条采样器调用是**真正打出去的那一发**（`step = 0.01`）还是**进化器评候选**（`step = 0.5`）。"""
+    st = c.get('stepf')
+    return st is not None and abs(float(st) - 0.01) < 1e-9
+
+
 def _cand_min(cs):
     """进化器评的候选（`step = 0.5`）：只留条数 / 序号区间 / flip 集合 / 最长点数。"""
     if not cs:
@@ -321,11 +437,20 @@ def _trunc_min(calc, pos):
 
 
 def _ctor_min(c):
+    """`0x456810` 装配处那一刻的 `&Vec`：只留标量 + 摘要 + "它是哪一次采样器调用的那块"。"""
     if not c:
         return None
-    o = {k: c.get(k) for k in ('seq', 't', 'caller', 'owner_id', 'vec', 'start_pt', 'end_pt',
-                               'end_x', 'end_xf', 'digest_xy', 'vs_calc', 'skipped', 'error')
+    o = {k: c.get(k) for k in ('seq', 't', 'caller', 'owner_id', 'start_pt', 'end_pt', 'end_x',
+                               'end_xf', 'digest_xy', 'skipped', 'error')
          if c.get(k) is not None}
+    if c.get('vec'):
+        o['vec'] = {'len': c['vec'].get('len'), 'ptr': c['vec'].get('ptr'), 'cap': c['vec'].get('cap')}
+    vs = c.get('vs_calc') or []
+    same = [v for v in vs if v.get('same_ptr')]
+    o['vs_calc'] = {'n_checked': len(vs),
+                    'same_ptr_seqs': [v.get('seq') for v in same],
+                    'same_ptr_and_len': [{'seq': v.get('seq'), 'same_digest': v.get('same_digest')}
+                                         for v in same if v.get('same_len')]}
     return o
 
 
@@ -458,9 +583,12 @@ def extract(specs, out_path, notes=None, repro=None):
                     # 同一发里别的**真发**调用（`step = 0.01`，通常只有 `gw+3e2d3b` 那一次）；
                     # 进化器评候选（`step = 0.5`，Bot 关里一发能有几百条）只留计数与序号区间，
                     # 否则入库样本要涨到几百 KB 而信息量为零。
-                    'other_calcs': [_calc_min(c, False) for c in pend
-                                    if c is not arr_calc and (c.get('stepf') or 0) <= 0.009],
-                    'candidate_calls': _cand_min([c for c in pend if (c.get('stepf') or 0) > 0.009]),
+                    # 真发 = `step = 0.01`（`SERVER_STEP`）；进化器评候选 = `step = 0.5`（粗网格）
+                    # 同一发里 `step = 0.01` 的调用可能有十几条（进化器最后几档也用 0.01 细化），
+                    # 只留**紧挨着报文那块**的最后 2 条，其余只计数（判据：它们与报文那块是否同一条）。
+                    'other_calcs': _others_min(arr_calc, _real_steps(pend, arr_calc)[-2:]),
+                    'other_real_step_calls': len(_real_steps(pend, arr_calc)),
+                    'candidate_calls': _cand_min([c for c in pend if not _is_real_step(c)]),
                     'queue': _queue_min(queue),
                     'fnpoints_ctor': _ctor_min(ctor),
                     'fnpoints_ctor_b': _ctor_min(ctor_b) if ctor_b is not ctor else None,
@@ -504,8 +632,7 @@ def extract(specs, out_path, notes=None, repro=None):
                    if (s.get('pos_read') or {}).get('pos_bytes') ==
                    ((s.get('report_array_calc') or {}).get('arr') or {}).get('last')]
     ptr_named = [s for s in all_shots
-                 if any(w.get('same_ptr') and w.get('same_len')
-                        for w in ((s.get('pos_read') or {}).get('which_calc') or []))]
+                 if ((s.get('pos_read') or {}).get('which_calc') or {}).get('same_ptr_and_len_seqs')]
     # ★ 本轮的三个判据（写在这里 = 判据不写在报告里）
     flip1 = [s for s in all_shots if s.get('flip') == 1]
     flip0 = [s for s in all_shots if s.get('flip') == 0]
@@ -573,7 +700,18 @@ def extract(specs, out_path, notes=None, repro=None):
                              'pts[len-1].x (0x4569b8) -> end_x and pts[0] (0x4569be) -> start_x/start_y. '
                              '0x50eb20 writes them into the JSON: rsi=&event{start_x@0,start_y@8,end_x@0x10,'
                              'owner_id@0x18}.'),
-            'digest': 'FNV-1a 64 over ALL 16*n bytes (`digest_xy`) and over the y halves only (`digest_y`).',
+            'digest': ('FNV-1a 64 over ALL 16*n bytes (`digest_xy`) and over the y halves only (`digest_y`), '
+                       'computed INSIDE the game process at the moment of the call (probe `digestOf`).'),
+            'array_digest_spec': {
+                'bytes': ('one point array = 16*n bytes: 8 bytes of x (little-endian f64) + 8 bytes of y '
+                          '(little-endian f64), in point order'),
+                'sha256': ('SHA-256 over exactly those 16*n bytes, computed by the driver from the probe\'s '
+                           '`arr.hex` when the sample is extracted (whole arrays are NOT committed)'),
+                'fnv': 'FNV-1a-64 over the same 16*n bytes (`digest_xy`) / over the y halves only (`digest_y`)',
+                'verify': ('re-run the driver with `--full-array`, take `arr.hex`, sha256 it — it must equal '
+                           '`arr.sha256` here; the driver ALSO recomputes FNV from the same bytes and compares '
+                           'with the probe-time digest (`arr.digest_selfcheck`)'),
+            },
             'positive_control': ('probe self-test at install: two 100-point synthetic arrays -> same; flip 1 bit '
                                  'at point 37 -> diffPoints=1; flip one more at point 90 -> 2. Runtime: flip=0 and '
                                  'flip=1 shots of the same match produce opposite array directions and different '
@@ -594,6 +732,12 @@ def extract(specs, out_path, notes=None, repro=None):
                    'pos_read_with_n': len(n_ok),
                    'pos_bytes_equal_array_last_point': len(pos_is_last),
                    'arr_truncated_shots': len([s for s in all_shots if s.get('arr_truncated')]),
+                   'digest_selfcheck_ok': len([s for s in all_shots
+                                               if ((s.get('report_array_calc') or {}).get('arr') or {})
+                                               .get('digest_selfcheck') is True]),
+                   'digest_selfcheck_total': len([s for s in all_shots
+                                                  if ((s.get('report_array_calc') or {}).get('arr') or {})
+                                                  .get('digest_selfcheck') is not None]),
                    'pos_ptr_is_one_of_our_calc_calls': len(ptr_named),
                    'flip1_x_decreasing': len(dir_ok), 'flip1_shots': len(flip1),
                    'flip0_x_increasing': len(dir_ok0), 'flip0_shots': len(flip0),
