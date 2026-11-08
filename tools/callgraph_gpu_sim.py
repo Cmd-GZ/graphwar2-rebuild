@@ -92,12 +92,23 @@ import callgraph_fingerprint as CF              # noqa: E402
 FIXTURES = os.path.join(CF.ROOT, "fixtures")
 OUT_FIXTURE = os.path.join(FIXTURES, "callgraph_fingerprint.tsv")
 
-# 权重：**与 51 号发布版逐位相同**（不覆盖、不重训）。显式列出来只是为了让
-# "GPU 侧到底算了哪几个特征"一目了然；`strs`/`hist` 在 W_SAME 里本来就是 0。
+# 权重：默认 **与 51 号发布版逐位相同**（不覆盖、不重训）；`--weights` 可以覆盖成
+# 任务 63 审过的配置（例如 `scal=0.5`，`docs/02` §43 的留出半 78.2%）。显式列出来只是
+# 为了让"GPU 侧到底算了哪几个特征"一目了然；`strs`/`hist` 在 W_SAME 里本来就是 0。
+#
+# 任务 63 增补：集合段加了 `scal`（57 号的新特征，全部 IMM 立即数）。它进 GPU 路径是
+# **必须**的 —— 否则"GPU 与 CPU 逐条一致"验的不是最终配置，而是一个没人用的配置。
 W = CF.W_SAME
 WIN = CF.WIN_SAME
 EPS = CF.SIZE_EPS
-ACTIVE = tuple(k for k in ("size", "consts", "caller", "gram") if W.get(k))
+SEG_KEYS = ("consts", "gram", "scal")          # 走 CSV multi-hot 的三个集合段
+
+
+def _active():
+    return tuple(k for k in ("size", "consts", "caller", "gram", "scal") if W.get(k))
+
+
+ACTIVE = _active()
 
 TOPK = 5
 MAXCELLS = 3_000_000  # 一个块最多 R×C 个格子（float64 下约 24 MB/张量）
@@ -117,7 +128,8 @@ class Side:
     """
 
     __slots__ = ("tag", "addrs", "sizes", "cont", "nq", "nd",
-                 "cal_off", "cal_flat", "g_off", "g_flat", "c_off", "c_flat")
+                 "cal_off", "cal_flat", "g_off", "g_flat", "c_off", "c_flat",
+                 "s_off", "s_flat")
 
 
 def _cont_row(fe):
@@ -127,7 +139,7 @@ def _cont_row(fe):
             int(fe["bsig"][:8], 16) if fe.get("bsig") else 0)
 
 
-def build_side(fp, addrs, gvocab, cvocab, torch):
+def build_side(fp, addrs, gvocab, cvocab, torch, svocab=None):
     s = Side()
     s.tag = fp.tag
     n = len(addrs)
@@ -139,7 +151,8 @@ def build_side(fp, addrs, gvocab, cvocab, torch):
     cal_off = [0] * (n + 1)
     g_off = [0] * (n + 1)
     c_off = [0] * (n + 1)
-    cal, gram, con = [], [], []
+    s_off = [0] * (n + 1)
+    cal, gram, con, sca = [], [], [], []
     for i, va in enumerate(addrs):
         fe = fp.feats[va]
         sizes[i] = fe["size"]
@@ -151,9 +164,12 @@ def build_side(fp, addrs, gvocab, cvocab, torch):
         cal.extend(fe["caller_sizes"])
         gram.extend(gvocab[g] for g in fe["grams"])
         con.extend(cvocab[c] for c in cs)
+        if svocab is not None:
+            sca.extend(svocab[v] for v in fe["scal"])
         cal_off[i + 1] = len(cal)
         g_off[i + 1] = len(gram)
         c_off[i + 1] = len(con)
+        s_off[i + 1] = len(sca)
     s.sizes = torch.tensor(sizes, dtype=torch.int64)
     s.cont = torch.tensor(cont, dtype=torch.float32)
     s.nq = torch.tensor(nq, dtype=torch.int32)
@@ -164,6 +180,8 @@ def build_side(fp, addrs, gvocab, cvocab, torch):
         torch.tensor(gram, dtype=torch.int64)
     s.c_off, s.c_flat = torch.tensor(c_off, dtype=torch.int64), \
         torch.tensor(con, dtype=torch.int64)
+    s.s_off, s.s_flat = torch.tensor(s_off, dtype=torch.int64), \
+        torch.tensor(sca, dtype=torch.int64)
     return s
 
 
@@ -173,7 +191,7 @@ def build_matrices(torch, fps, queries=None):
     qaddrs = list(queries or sorted(lin.universe))
     qaddrs.sort(key=lambda va: (lin.feats[va]["size"], va))
     paddrs = sorted(win.universe, key=lambda va: (win.feats[va]["size"], va))
-    gvocab, cvocab = {}, {}
+    gvocab, cvocab, svocab = {}, {}, {}
     for fp, addrs in ((lin, qaddrs), (win, paddrs)):
         for va in addrs:
             for g in fp.feats[va]["grams"]:
@@ -182,8 +200,12 @@ def build_matrices(torch, fps, queries=None):
             for c in fp.feats[va]["consts"]:
                 if c not in cvocab:
                     cvocab[c] = len(cvocab)
-    return (build_side(lin, qaddrs, gvocab, cvocab, torch),
-            build_side(win, paddrs, gvocab, cvocab, torch), gvocab, cvocab)
+            for v in fp.feats[va]["scal"]:
+                if v not in svocab:
+                    svocab[v] = len(svocab)
+    return (build_side(lin, qaddrs, gvocab, cvocab, torch, svocab),
+            build_side(win, paddrs, gvocab, cvocab, torch, svocab), gvocab, cvocab,
+            svocab)
 
 
 def window_bounds(qsizes, psizes, torch):
@@ -210,7 +232,7 @@ def cmd_cpu(args):
     fps = CF.load_all(tags=["win", "linux"])
     lin = fps["linux"]
     pool = CF.Pool(fps["win"])
-    score, _w, win = CF.scorer_for("win", "linux")
+    score, _w, win = CF.scorer_for("win", "linux", W)
     qs = sorted(lin.universe, key=lambda va: (lin.feats[va]["size"], va))
     if args.limit:
         qs = qs[:args.limit]
@@ -388,7 +410,8 @@ def log_ulp_probe(torch, q, p, n=200000, seed=0):
                 max_ulp_diff=maxu, pct_exact=round(100.0 * exact / n, 3))
 
 
-def dense_vs_sparse(torch, q, p, wlo, whi, V, b0=-1, rows=64, ncol=4096):
+def dense_vs_sparse(torch, q, p, wlo, whi, V, b0=-1, rows=64, ncol=4096,
+                   seg="g"):
     """用**真·稠密** `A_multi-hot @ B_multi-hotᵀ`（一次 GEMM）对拍稀疏算式。
 
     任务书 §1.2 的原话就是"A @ Bᵀ 用同一套切块"。稠密版在这里**不能用于全量**：
@@ -396,6 +419,8 @@ def dense_vs_sparse(torch, q, p, wlo, whi, V, b0=-1, rows=64, ncol=4096):
     2013 = 5.7e13 flop，4060 上约 3800 s，而且 99.9% 的元素是 0。所以生产路径走稀疏，
     这里抽一块（默认 64 行 × 4096 列）**证明两者逐位相同**，否则"等价"就是空话。
     """
+    qo, qf = getattr(q, seg + "_off"), getattr(q, seg + "_flat")
+    po, pf = getattr(p, seg + "_off"), getattr(p, seg + "_flat")
     n = len(q.sizes)
     if b0 < 0:                                     # 自动挑"候选窗口最宽"的那 64 行，覆盖面最大
         best, pick = -1, 0
@@ -413,27 +438,27 @@ def dense_vs_sparse(torch, q, p, wlo, whi, V, b0=-1, rows=64, ncol=4096):
     nc = min(C, ncol)
     dev = "cpu"
     # 稠密 A（rows × V）
-    qn = q.g_off[b0 + 1:b1 + 1] - q.g_off[b0:b1]
+    qn = qo[b0 + 1:b1 + 1] - qo[b0:b1]
     tot = int(qn.sum())
-    vids = q.g_flat[q.g_off[b0]:q.g_off[b1]]
+    vids = qf[qo[b0]:qo[b1]]
     row_of = torch.repeat_interleave(torch.arange(rows, dtype=torch.int64), qn,
                                      output_size=tot)
     A = torch.zeros((rows, V), dtype=torch.float32)
     A[row_of, vids] = 1.0
     # 稠密 B（V × nc）：先挑出落在 [clo, clo+nc) 的非零
     pcols = torch.repeat_interleave(torch.arange(len(p.sizes), dtype=torch.int64),
-                                    p.g_off[1:] - p.g_off[:-1], output_size=int(p.g_off[-1]))
+                                    po[1:] - po[:-1], output_size=int(po[-1]))
     m = (pcols >= clo) & (pcols < clo + nc)
     B = torch.zeros((V, nc), dtype=torch.float32)
-    B[p.g_flat[m], pcols[m] - clo] = 1.0
+    B[pf[m], pcols[m] - clo] = 1.0
     dense = (A @ B).double()                       # ← 任务书要的那一次大 GEMM
     # 稀疏算式（生产路径）
     SHIFT = 20
     col_all = torch.arange(len(p.sizes), dtype=torch.int64)
-    key = (p.g_flat << SHIFT) | pcols
+    key = (pf << SHIFT) | pcols
     order = torch.argsort(key)
     pk, pk_col = key[order], pcols[order]
-    sp = _sparse_intersect(q.g_flat, q.g_off, b0, b1, pk, pk_col, clo, C,
+    sp = _sparse_intersect(qf, qo, b0, b1, pk, pk_col, clo, C,
                            wlo[b0:b1] - clo, whi[b0:b1] - clo, torch)
     # ⚠ 只比**行窗口内**的格子：`_sparse_intersect` 会按每行的 [lo,hi) 掩掉窗口外的列，
     # 而稠密 GEMM 不掩 —— 不掩就会把"窗口外的命中"也算进去，得到假的不一致。
@@ -441,7 +466,7 @@ def dense_vs_sparse(torch, q, p, wlo, whi, V, b0=-1, rows=64, ncol=4096):
     inwin = (cols_i[None, :] >= (wlo[b0:b1] - clo)[:, None]) & \
             (cols_i[None, :] < (whi[b0:b1] - clo)[:, None])
     diff = torch.where(inwin, (dense - sp[:, :nc]).abs(), torch.zeros(1))
-    return dict(rows=rows, cols=int(nc), vocab=int(V), block=(b0, b1),
+    return dict(seg=seg, rows=rows, cols=int(nc), vocab=int(V), block=(b0, b1),
                 compared_cells=int(inwin.sum()), max_abs_diff=float(diff.max()),
                 mismatches=int((diff > 0).sum()),
                 dense_shape=[rows, int(nc)], nonzero_A=int(A.sum()), nonzero_B=int(B.sum()))
@@ -490,6 +515,7 @@ def gpu_topk(torch, q, p, wlo, whi, topk=TOPK, max_cells=MAXCELLS, args_profile=
     pnq = p.nq.to(dev)
     pg_off, pg_flat = p.g_off.to(dev), p.g_flat.to(dev)
     pc_off, pc_flat = p.c_off.to(dev), p.c_flat.to(dev)
+    ps_off, ps_flat = p.s_off.to(dev), p.s_flat.to(dev)
     pcal_off, pcal_flat = p.cal_off.to(dev), p.cal_flat.to(dev)
     cols_all = torch.arange(len(psizes), device=dev, dtype=torch.int64)
     SHIFT = 20                                   # 列号 < 2^20（51,985 ✓），vid < 2^20
@@ -506,6 +532,7 @@ def gpu_topk(torch, q, p, wlo, whi, topk=TOPK, max_cells=MAXCELLS, args_profile=
 
     pk, pk_col = _sorted_keys(pg_flat, pg_off)
     ck, ck_col = _sorted_keys(pc_flat, pc_off)
+    sk, sk_col = _sorted_keys(ps_flat, ps_off)
     del cols_all
 
     # caller 多重集只在 nd>0 的列上非零（`multiset_sim` 对空集直接返回 0.0）⇒ 列压到
@@ -515,6 +542,7 @@ def gpu_topk(torch, q, p, wlo, whi, topk=TOPK, max_cells=MAXCELLS, args_profile=
 
     qg_off, qg_flat = q.g_off.to(dev), q.g_flat.to(dev)
     qc_off, qc_flat = q.c_off.to(dev), q.c_flat.to(dev)
+    qs_off, qs_flat = q.s_off.to(dev), q.s_flat.to(dev)
     qcal_off, qcal_flat = q.cal_off.to(dev), q.cal_flat.to(dev)
     qnq_all = q.nq.to(dev)
     qaddrs = q.addrs
@@ -570,6 +598,8 @@ def gpu_topk(torch, q, p, wlo, whi, topk=TOPK, max_cells=MAXCELLS, args_profile=
         # ② 集合段 —— I = A @ Bᵀ
         Ig = _sparse_intersect(qg_flat, qg_off, b0, b1, pk, pk_col, clo, C, wl, wh, torch)
         Ic = _sparse_intersect(qc_flat, qc_off, b0, b1, ck, ck_col, clo, C, wl, wh, torch)
+        Is = (_sparse_intersect(qs_flat, qs_off, b0, b1, sk, sk_col, clo, C, wl, wh, torch)
+              if W.get("scal") else None)
 
         _mark("sparse")
         # ③ caller —— rank 配对核（t 升序累加，与 CPU 的 Σ 顺序一致）
@@ -639,7 +669,18 @@ def gpu_topk(torch, q, p, wlo, whi, topk=TOPK, max_cells=MAXCELLS, args_profile=
             tot = tot + W["gram"] * Gv
             wt = wt + W["gram"]
             del den, Gv
-        del Ig, S
+        # ⑤ `scal`（任务 63）：**排在 gram 之后** —— 与 `score_same` 里 add() 的调用顺序一致。
+        # 两侧任一为空时 CPU 的 add() 返回 None（不进分母），这里用 hasS 掩掉同样的格子。
+        if Is is not None:
+            qsv = f64(qs_off[b0 + 1:b1 + 1] - qs_off[b0:b1])
+            psv = f64(ps_off[clo + 1:chi + 1] - ps_off[clo:chi])
+            hasS = (qsv[:, None] > 0) & (psv[None, :] > 0)
+            den = qsv[:, None] + psv[None, :] - Is
+            Sv = torch.where(hasS, Is / torch.clamp(den, min=1.0), torch.zeros_like(Is))
+            tot = tot + W["scal"] * Sv
+            wt = wt + W["scal"] * f64(hasS)
+            del qsv, psv, hasS, den, Sv
+        del Is, Ig, S
         score = tot / wt
         del tot, wt
         score = torch.where(in_win, score, torch.full_like(score, -1e300))
@@ -708,16 +749,24 @@ def cmd_gpu(args):
     if args.limit:
         qs = qs[:args.limit]
     t_m = time.perf_counter()
-    q, p, gv, cv = build_matrices(torch, fps, qs)
+    q, p, gv, cv, sv = build_matrices(torch, fps, qs)
     wlo, whi = window_bounds(q.sizes, p.sizes, torch)
     t_m = time.perf_counter() - t_m
-    F = len(CONT_NAMES) + len(gv) + len(cv)
-    sys.stderr.write("[gpu] 物化 %.1f s：Linux %d × F=%d（连续 %d + gram %d + consts %d），"
-                     "Windows %d × F=%d\n"
-                     % (t_m, len(q.sizes), F, len(CONT_NAMES), len(gv), len(cv),
-                        len(p.sizes), F))
+    assert len(sv) < (1 << 20), "scal 词表超过 2^20：键编码的 SHIFT=20 装不下"
+    F = len(CONT_NAMES) + len(gv) + len(cv) + len(sv)
+    sys.stderr.write("[gpu] 物化 %.1f s：Linux %d × F=%d（连续 %d + gram %d + consts %d"
+                     " + scal %d），Windows %d × F=%d；权重 %s\n"
+                     % (t_m, len(q.sizes), F, len(CONT_NAMES), len(gv), len(cv), len(sv),
+                        len(p.sizes), F, CF.wlabel(W)))
     if args.selftest:
-        st = dense_vs_sparse(torch, q, p, wlo, whi, len(gv))
+        # 每段都用**真·稠密** A@Bᵀ 抽一块对拍稀疏算式；ncol 按词表大小收（稠密 B 是 V×ncol）
+        st = dict(gram=dense_vs_sparse(torch, q, p, wlo, whi, len(gv), seg="g"))
+        if W.get("consts"):
+            st["consts"] = dense_vs_sparse(torch, q, p, wlo, whi, len(cv), seg="c",
+                                           ncol=2048)
+        if W.get("scal"):
+            st["scal"] = dense_vs_sparse(torch, q, p, wlo, whi, len(sv), seg="s",
+                                         ncol=1024)
         st["log_ulp"] = log_ulp_probe(torch, q, p)
         sys.stderr.write("[selftest] 稠密 A@Bᵀ vs 稀疏：%s\n" % json.dumps(st))
         if args.report:
@@ -727,10 +776,12 @@ def cmd_gpu(args):
                                args_profile=args.profile)
     stats.update(materialize_s=round(t_m, 4), total_s=round(t_m + dt, 4),
                  feature_cols=F, vocab_gram=len(gv), vocab_consts=len(cv),
+                 vocab_scal=len(sv), weights={k: W[k] for k in CF.SCORE_KEYS if W.get(k)},
+                 nnz_scal_linux=int(q.s_off[-1]), nnz_scal_win=int(p.s_off[-1]),
                  nnz_gram_linux=int(q.g_off[-1]), nnz_gram_win=int(p.g_off[-1]),
                  nnz_consts_linux=int(q.c_off[-1]), nnz_consts_win=int(p.c_off[-1]),
                  nnz_caller_linux=int(q.cal_off[-1]), nnz_caller_win=int(p.cal_off[-1]),
-                 cont_cols=list(CONT_NAMES), active_features=list(ACTIVE))
+                 cont_cols=list(CONT_NAMES), active_features=list(_active()))
     write_rows(args.out, rows, args.topk)
     if args.report:
         with open(args.report, "w", encoding="utf-8") as fh:
@@ -879,11 +930,15 @@ def main(argv=None):
     ap.add_argument("--profile", action="store_true", help="分阶段计时（size/sparse/caller/fuse/topk）")
     ap.add_argument("--selftest", action="store_true",
                     help="用真·稠密 A@Bᵀ 抽一块对拍稀疏内积（证明两者逐位相同）")
+    ap.add_argument("--weights", default="",
+                    help="覆盖打分权重，例如 `scal=0.5`（默认 = CF.W_SAME；CPU 与 GPU 用同一份）")
     ap.add_argument("--tools", default="", help="tools/ 目录（脚本被复制到别处执行时用）")
     ap.add_argument("--cache", default="", help="指纹缓存目录（= CFGFP_CACHE）")
     ap.add_argument("--reference-root", default="",
                     help="仓库根（定位 .reference/ 下四份构建；只读文件大小算缓存键，不重扫）")
     args = ap.parse_args(argv)
+    if args.weights:
+        globals()["W"] = CF.weights_override(CF.W_SAME, args.weights)
     if not os.environ.get("CFGFP_CACHE") and not args.cache:
         sys.stderr.write("[warn] 没设 CFGFP_CACHE / --cache ⇒ 会重扫（20+ min）\n")
     if args.cmd == "cpu":
