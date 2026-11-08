@@ -18,16 +18,27 @@
   agent/<task>     每个任务一个分支（我派 subagent 时建），**全部已推 origin**
   master           上游主线：他们把我的 CG 并进 master，我再用 master 同步回来
 
-已交付      第一轮 01–08 … 第九轮 39–42、第十轮 43–46 —— 全部已合并进 CG
+已交付      第一轮 01–08 … 第十轮 43–46、**第十一轮 47–53** —— 全部已合并进 CG
             报告在 dispatch/reports/CG-*.md
 下一轮候选  见 §7
 
-护栏（2026-11-08 21:45 实测；**以 fixtures/guardrails.json 为准**）
+护栏（2026-11-09 01:00 实测；**以 fixtures/guardrails.json 为准**）
   fire 647/1080 ｜ batch 647/1080 ｜ batch_conv 637/1080
   延迟段 死亡 366/385 ｜ 挖洞 206(fire) · 207(batch)
-  cargo test **1635** / 0 failed ｜ --features gdext-bindings **1734** / 0 failed
-  headless 12 个脚本 **1560** 条断言 0 失败（entity_drawer **292**）
+  cargo test **1659** / 0 failed ｜ --features gdext-bindings **1764** / 0 failed
+  headless **13** 个脚本 **1683** 条断言 0 失败（新增 process_loop_check 49；
+  entity_drawer **366** / assemble 217 / plane 96 / obstacle 116）
   selftest **714 / 0 / 1 skipped**
+  槽位 22 个里一个真 stub 都不剩
+
+⚠️ 写护栏：`--update-baseline --axis fire|batch|batch_conv`
+⚠️ 合并前：`python3 tools/merge_check.py --cg origin/CG --allow-dispatch`
+   （不加 --allow-dispatch 会误判 dispatch 污染；**大文件闸 MAX_KB=100 与"文本真值表入库"冲突**，
+    已向上游提政策建议；放行时必须在合并提交里登记理由）
+⚠️ **跑任何 headless 之前必须重建并覆盖 `.so`**（build --features gdext-bindings → cp → --import）；
+   否则 `Nonexistent function` 甚至**挂死**（我因此误判过一次集成 bug）
+⚠️ **新工作树没有 `client/assets/`**（gitignored）⇒ selftest 会掉到 686/3/22。
+   判断 selftest 数字前先确认资产在，否则会把 714/0 误读成"我这边有回归"
   槽位 22 个里一个真 stub 都不剩
 
 ⚠️ 写护栏：`--update-baseline --axis fire|batch|batch_conv`
