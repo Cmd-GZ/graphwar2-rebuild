@@ -1,0 +1,67 @@
+# 任务 71 · 天花板 / 口径双报（**24 组配置池** ＋ **3,000 组实测**，见 docs/02 §47.5 与 §160.10.1）
+# 留出半只报数；权重只在调参半上选。预注册规则：调参半最高−1 个样本的并列桶，桶内取非 0 特征最少者
+# 汇总	调参半最高	447/494	并列桶	12 组	预注册选中	REF − size	留出半	424/481	并列桶最高	425	并列桶最低	423	基线	412/481
+label	nonzero_feats	tune_top1	tune_n	holdout_top1	holdout_n	in_bucket	prereg_pick
+REF + cgram_a=0.5	6	447	494	425	481	是	否
+REF + caller_a=0.25	6	447	494	424	481	是	否
+REF + cgram_a=.5 + callee_a=.5	7	447	494	424	481	是	否
+REF − size	4	446	494	424	481	是	是
+REF − caller + cgram_a=.5	5	446	494	425	481	是	否
+REF + cgram_a=0.25	6	446	494	425	481	是	否
+REF + cgram_a=1	6	446	494	424	481	是	否
+REF + callee_a=0.25	6	446	494	424	481	是	否
+REF + callee_a=0.5	6	446	494	423	481	是	否
+REF + caller_a=0.5	6	446	494	425	481	是	否
+REF + ncall_a=0.25	6	446	494	425	481	是	否
+REF + ncall_a=0.5	6	446	494	423	481	是	否
+REF + ncal_a=0.25	6	445	494	424	481	否	否
+REF	5	444	494	424	481	否	否
+REF + ncal_a=0.5	6	444	494	422	481	否	否
+REF − consts	4	443	494	424	481	否	否
+REF − caller	4	443	494	423	481	否	否
+REF + callee_a=1	6	442	494	422	481	否	否
+REF + ncal_a=1	6	441	494	418	481	否	否
+REF + caller_a=1	6	439	494	420	481	否	否
+REF − scal	4	436	494	412	481	否	否
+REF + ncall_a=1	6	432	494	415	481	否	否
+REF − gram	4	345	494	344	481	否	否
+只用二阶 cgram_a=1	0	277	494	264	481	否	否
+
+# === 3,000 组（big3000）：**实测**，不是外推 ===
+# 命令：sweep --backend gpu --pop v2 --half tune --feats <24 个> --configs big3000 --cfg-cells 24000000
+# 墙钟：工具内部（结尾同步）216.54 s ／ 进程墙钟 225.00 s；显存峰值 1379.9 MB；n=494；配置数 3000
+# 分阶段（host 侧计时、没有逐段同步 ⇒ 只当量级）：物化 87.38 s ／ 融合 0.34 s ／ top-K 0.47 s
+# 调参半最好 top-1 = 450/494 = 91.09%；24 组池的最好值是 447/494 = 90.49% ⇒ 只高 3 个样本（0.61 点）
+# 并列桶（≥ 最高−1 个样本）= 3 组；命中数分布（命中数:配置数）：450:1; 449:2; 448:5; 447:3; 446:19; 445:21; 444:27; 443:44; 442:26; 441:29
+# ⚠ 这是在调参半上取 3,000 个最大值 ⇒ 与 24 组的最大值比**天生乐观**。三个样本正是这种选择的偏差量级，
+#   不等于找到了更好的配置。**留出半本轮没跑**（没有按预注册规则选中后单独评估）⇒ 不下任何涨点结论。
+#   另注：第 1 次用默认 --cfg-cells 4e6 跑，300 s 只到 块 1/10（74.8 s/块，推算 ~750 s）⇒ 按纪律 kill；
+#   调到 --cfg-cells 2.4e7 后 216.5 s 跑完（分块数从 5000 降到 790，瓶颈是逐配置的精确 top-K 的启动开销）。
+
+big3000	调参半	450	494	3	3	3000	—	—	—
+
+rank	label	tune_top1	tune_top5	n
+1	size0.25 hist0.75 callee0.375 ncal0.5 ncall1 cbsig0.125 rbsig0.375 gram2 shape2 scal_c1 wconst1.5 cls0.375 callee_a0.375 caller_a0.5 ncall_a0.125 cgram_a1.5	450	466	494
+2	hist0.375 callee0.25 caller0.25 strs_s1 cbsig1 rbsig1.5 gram1 shape2 scal_c1 wconst0.5 cls1 callee_a0.375 caller_a0.25	449	466	494
+3	size0.25 ncal0.25 ncall0.375 rbsig0.5 gram2 shape1 scal_c0.5 wconst1.5 cls1.5 caller_a1 ncal_a0.25 ncall_a0.125 cgram_a2 icall0.75	449	466	494
+4	hist0.125 caller0.125 strs_s0.125 rbsig1.5 gram2 scal_c0.125 cls0.25 callee_a0.125 cgram_a0.25	448	465	494
+5	hist0.5 consts0.5 caller0.5 ncal0.125 rbsig1.5 gram1.5 shape0.75 scal0.375 wconst0.75 cls0.125 cgram_a2	448	467	494
+6	hist0.75 consts1.5 callee0.5 caller0.5 rbsig1.5 gram1.5 shape1.5 scal_c0.75 wconst0.375 stok0.5 caller_a1 ncal_a0.5 cgram_a2 icall0.25	448	467	494
+7	hist1 consts0.5 callee0.75 strs_s0.25 rbsig1 gram2 shape1 scal1 scal_c0.5 stok0.5 cls0.75 callee_a0.25 caller_a1.5 ncall_a0.125	448	465	494
+8	size0.375 callee1 caller0.125 ncal0.25 ncall0.75 cbsig0.25 gram2 shape1.5 scal1 wconst2 cls0.75 callee_a0.125 caller_a0.375 ncal_a0.5 cgram_a0.25	448	466	494
+9	consts0.5 caller0.25 gram2 scal0.25	447	463	494
+10	callee0.5 strs_s0.125 ncal0.5 cbsig0.5 rbsig0.375 gram2 scal_c0.75 wconst0.25 callee_a1.5 caller_a0.375 ncall_a0.375 cgram_a1	447	465	494
+
+# === 协调者补测（2026-11-09 07:26）：把 big3000 并列桶前 3 名拿到【留出半】实测 ===
+# 动机：原报告因"取 3,000 个最大值天生乐观"而拒绝评估留出半；这一步 13 s 就能把问题问清。
+# 命令：tools/callgraph_sim_tensor71.py sweep --backend gpu --pop v2 --half holdout \
+#        --feats <24 个> --configs-file <3 组> --cfg-cells 24000000
+# 选取：**只在调参半上选**（并列桶 = 最高 450 的 −1 样本 = ≥449，共 3 组），留出半只报数。
+# 结果：rank1 428/481 = 88.98% ｜ rank2 428/481 = 88.98% ｜ rank3 426/481 = 88.57%（top5 均 449）
+# 对照：REF 424/481 = 88.15% ｜ 24 组池并列桶最高 425/481 = 88.36%
+# 判读：调参半的 +0.61 点在留出半兑现为 +0.62~0.83 点，**"取 3,000 个最大值"的乐观偏差没有出现**
+#       （若纯过拟合，留出半应回落）。但 n=481、CI ±2.8 点 ⇒ **幅度仍在噪声带内，未达显著**。
+#       ⇒ 只能写"小幅提升在留出半上复现、幅度未达显著"，**不能**写"找到了更好的配置"。
+coordinator_holdout	big3000_rank1	428	481	0.8898	449
+coordinator_holdout	big3000_rank2	428	481	0.8898	449
+coordinator_holdout	big3000_rank3	426	481	0.8857	449

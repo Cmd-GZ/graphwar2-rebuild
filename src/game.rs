@@ -484,7 +484,7 @@ pub struct Submission<'a> {
 }
 
 // ---------------------------------------------------------------------------
-// 批内结算顺序：把它当成一个**假设**，做成可切换策略（`dispatch/65`，`docs/06` §38）
+// 批内结算顺序：把它当成一个**假设**，做成可切换策略（`dispatch/65`，`docs/06` §39）
 // ---------------------------------------------------------------------------
 //
 // 真值里同一批的几何**不是**一次算完的（`docs/06` §34）：
@@ -504,7 +504,7 @@ pub struct Submission<'a> {
 // 原版**没有**这个开关：`GW2_SETTLE_ORDER` 只是对拍/扫描用的（不设 = 默认档），
 // 与 `examples/batch_cross_probe.rs` 的 `--mask-mode` 同一个性质。
 
-/// 批内结算顺序策略（`dispatch/65`；矩阵与判决见 `docs/06` §38）。
+/// 批内结算顺序策略（`dispatch/65`；矩阵与判决见 `docs/06` §39）。
 ///
 /// 每一档 = **批内解算顺序** × **洞对后续几发的可见性**：
 ///
@@ -544,9 +544,9 @@ pub enum SettleOrder {
 /// 它只影响 S4 的**取整分桶**（同 tick 内怎么排），不影响 S1–S3/S5/S6。
 pub const PROJECTILE_UNITS_PER_TICK: f64 = 0.29;
 
-/// 默认策略 = **扫完矩阵后选出来的那一档**（`docs/06` §38 的判决）。
+/// 默认策略 = **扫完矩阵后选出来的那一档**（`docs/06` §39 的判决）。
 ///
-/// 改这个常量要连 `docs/06` §38 的矩阵一起改 —— 它是"我们相信哪一种顺序"的唯一落点。
+/// 改这个常量要连 `docs/06` §39 的矩阵一起改 —— 它是"我们相信哪一种顺序"的唯一落点。
 pub const DEFAULT_SETTLE_ORDER: SettleOrder = SettleOrder::S3ArrivalHoles;
 
 impl SettleOrder {
@@ -644,6 +644,76 @@ fn arc_to_stop(points: &[(f64, f64)], stop: (f64, f64)) -> f64 {
         }
     }
     arc
+}
+
+/// **S3 的第二遍（到达序 + 逐发挖洞）—— 内核与收敛层共用的唯一实现。**
+///
+/// 输入是"第一遍用**批开始掩膜**解出来的结果"：
+///
+/// * `mask`：批开始那一刻的掩膜（只读；工作副本在函数里拷）；
+/// * `shots` / `points` / `outcomes`：**报文序**的提交、点列、第一遍结果；
+/// * `outcomes` 被就地替换成第二遍的结果（只有真的走到第二遍时才会改）。
+///
+/// 做的事就是 `dispatch/55` 提、`dispatch/65` 落地的那一步（`docs/06` §39）：按
+/// [`SettleOrder::permutation`] 的批内顺序**逐发重解**，每解完一发就把它挖的洞写进
+/// 本批的工作掩膜 ⇒ **后解的那几发看得见前面的洞**。报文侧的对应语义是 §34.5 的三档
+/// （整批共用掩膜 60/63、报文序给洞 `prefix` 61/63、到达序给洞 `arrival` 62/63）。
+///
+/// ## 为什么单独立成函数（2026-11-09，`docs/06` §42）
+///
+/// 收敛层 `_scaffold::diffconv::ConvPredictor::fire_batch` 是同一套结算流程的**第二份
+/// 驱动**（`batch_conv` 轴），它**不经过 `Match`**（§39.2 读法 3：`GW2_SETTLE_ORDER`
+/// 六档在那条轴上曾经逐字节相同，就是因为这段代码只存在于本文件里）。65 号把顺序语义
+/// 落进内核时没动它 ⇒ 两层口径分叉（§39.7 第 4 条）。现在两边调**这同一个**函数：
+/// 同构是**构造出来的**，不是两份代码各写一遍"看起来一样"。
+///
+/// 两边只要有一处不同就是 bug，而且 `tests/diffconv_parity.rs` / `examples/diffconv_parity`
+/// 会把它变成一条**逐位**的红 —— 那条对拍比的是 `points` / `stop` / `blocked` /
+/// `killed` / `hits` / 修正文本，两个驱动器各算一遍。
+///
+/// ## 两条口径（别改错）
+///
+/// 1. **工作掩膜必须是 `mask` 的拷贝**，不能直接写调用方的 `self.mask`：
+///    `plane::rasterize` 的抗锯齿环是**与旧值混合**（`blend_ring`），同一个洞画两遍与
+///    画一遍**不等**；而 [`Match::execute_results`] ③（收敛层 ⑤）之后还会再画一遍。
+///    直接写 `self.mask` 就会改动后续批的掩膜，把"同批可见性"这一个变量和"跨批状态"
+///    混在一起。拷一份 = 只动本批。
+/// 2. **单发批（`shots.len() < 2`）与 S1/S2 档一律不改任何东西**：任何顺序都退化成
+///    报文序，且没有洞要提前挖 ⇒ 与旧行为**逐位相同**（`Match::fire` 因此不可能被
+///    这一改动影响；`ConvPredictor::fire` = `N = 1` 的 `fire_batch`，同理）。
+pub(crate) fn settle_in_order_with_holes(
+    strategy: SettleOrder,
+    mode: Mode,
+    mask: &[u8],
+    soldiers: &[Target],
+    shots: &[Submission<'_>],
+    points: &[Vec<(f64, f64)>],
+    outcomes: &mut [ShotOutcome],
+) {
+    if !strategy.digs_holes() || shots.len() < 2 {
+        return;
+    }
+    let perm = strategy.permutation(shots, points, outcomes);
+    let mut work = mask.to_vec();
+    for &i in &perm {
+        let s = &shots[i];
+        let o = resolve_points_owned(&work, soldiers, &points[i], Some(s.owner_id));
+        if o.blocked {
+            // 位置 / 半径 / 填充值与 [`Match::execute_results`] ③ **同一条规则**
+            // （挖洞点 = 爆炸点，[`hole_point`]）：洞心由**重解后**的停点算 ——
+            // 这正是"前面挖的洞改变了后面那一发的停点，于是后面那一发挖在别处"。
+            let (hx, hy) = hole_point(
+                mode == Mode::Ode,
+                s.function_text,
+                s.x0,
+                s.y0,
+                s.flip,
+                o.stop,
+            );
+            rasterize(&mut work, hx, hy, 0.5, 0xFF);
+        }
+        outcomes[i] = o;
+    }
 }
 
 /// 当前策略：`GW2_SETTLE_ORDER=s1…s6` 覆盖 [`DEFAULT_SETTLE_ORDER`]。
@@ -1661,42 +1731,22 @@ impl Match {
             points.push(pts);
         }
 
-        // ③ 到达序 = 到停点弧长升序（[`arc_to_stop`]）。
+        // ③④ 到达序 + 逐发挖洞（S3 的第二遍）。
         //
-        // ④ 逐发挖洞：按顺序重解，**每解完一发就把它的洞写进本批的工作掩膜**，
-        //    后解的那几发因此看得见前面的洞 —— 这正是 `docs/06` §34.5 的 `arrival`
-        //    掩膜档在报文侧的语义（`prefix` 61/63、`arrival` 62/63、共用掩膜 60/63）。
-        //
-        //    ⚠ **工作掩膜必须是 `self.mask` 的一份拷贝**，不能直接写 `self.mask`：
-        //    `plane::rasterize` 的抗锯齿环是**与旧值混合**（`blend_ring`），同一个洞
-        //    画两遍与画一遍**不等**；而 [`Match::execute_results`] ③ 之后还会再画一
-        //    遍。直接写 `self.mask` 就会改动后续批的掩膜，把"同批可见性"这一个变量
-        //    和"跨批状态"混在一起。拷一份 = 只动本批。
-        //
-        //    单发批没有"同批别人"：任何顺序都退化成报文序，且没有洞要提前挖
-        //    ⇒ 与旧行为**逐位相同**（`Match::fire` 因此不可能被这一改动影响）。
-        if strategy.digs_holes() && shots.len() >= 2 {
-            let perm = strategy.permutation(shots, &points, &outcomes);
-            let mut mask = self.mask.clone();
-            for &i in &perm {
-                let s = &shots[i];
-                let o = resolve_points_owned(&mask, &self.soldiers, &points[i], Some(s.owner_id));
-                if o.blocked {
-                    // 位置 / 半径 / 填充值与 [`Match::execute_results`] ③ **同一条规则**
-                    // （挖洞点 = 爆炸点，[`hole_point`]）。
-                    let (hx, hy) = hole_point(
-                        mode == Mode::Ode,
-                        s.function_text,
-                        s.x0,
-                        s.y0,
-                        s.flip,
-                        o.stop,
-                    );
-                    rasterize(&mut mask, hx, hy, 0.5, 0xFF);
-                }
-                outcomes[i] = o;
-            }
-        }
+        // 实现**只有一份** —— [`settle_in_order_with_holes`]，收敛层
+        // （`_scaffold::diffconv::ConvPredictor::fire_batch`）调的是同一个函数。
+        // 理由：65 号把这段写在内核里时收敛层没跟，两层口径分叉过一个版本
+        // （`docs/06` §39.7 第 4 条 → §42 修掉）；同构必须由**同一个函数**保证，
+        // 不能靠两份代码"看起来一样"。
+        settle_in_order_with_holes(
+            strategy,
+            mode,
+            &self.mask,
+            &self.soldiers,
+            shots,
+            &points,
+            &mut outcomes,
+        );
 
         outcomes
     }
@@ -2202,7 +2252,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // 批内结算顺序（`dispatch/65`，`docs/06` §38）
+    // 批内结算顺序（`dispatch/65`，`docs/06` §39；收敛层跟进见 §42）
     // -----------------------------------------------------------------------
 
     /// 六档的短名/解析必须闭合，默认档必须是**扫出来的那一档**。
@@ -2222,11 +2272,11 @@ mod tests {
             let want = !matches!(o, SettleOrder::S1Message | SettleOrder::S2ArrivalFlat);
             assert_eq!(o.digs_holes(), want, "{} 的挖洞档位", o.name());
         }
-        // 落地档 = 到达序 + 挖洞（`docs/06` §38.4 的判决）
+        // 落地档 = 到达序 + 挖洞（`docs/06` §39.4 的判决）
         assert_eq!(DEFAULT_SETTLE_ORDER, SettleOrder::S3ArrivalHoles);
     }
 
-    /// **同批更早爆炸那一发挖的洞，对后解算的那一发可见**（`docs/06` §38.4 的机制）。
+    /// **同批更早爆炸那一发挖的洞，对后解算的那一发可见**（`docs/06` §39.4 的机制）。
     ///
     /// 几何是手搭的，不用回放：一堵竖墙在 `x = 0`（半径 1 的圆盘沿 y 排开），
     /// 两发都从右边水平向左打（常数函数，`y` 由起点决定）：

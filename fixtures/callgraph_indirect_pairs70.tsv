@@ -1,0 +1,10 @@
+# 任务 70 · 配对比较（同一批 query / 同一真值 / 同一窗口）
+compare	half	A_hit	B_hit	b(wrong->right)	c(right->wrong)	n	mcnemar_p
+6 特征 only：改前 → 改后	调参半	122	136	15	1	166	0.0005
+6 特征 only：改前 → 改后	留出半	111	119	9	1	165	0.0215
+基线 → REF(scal=.5)	调参半	136	137	1	0	166	1.0000
+基线 → REF(scal=.5)	留出半	120	129	9	0	165	0.0039
+REF → REF+callee_a=.5	调参半	137	138	2	1	166	1.0000
+REF → REF+callee_a=.5	留出半	129	127	0	2	165	0.5000
+REF → REF+caller_a 替 caller	调参半	137	138	1	0	166	1.0000
+REF → REF+caller_a 替 caller	留出半	129	129	0	0	165	1.0000

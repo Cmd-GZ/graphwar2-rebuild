@@ -1987,6 +1987,449 @@ def cmd_newev(args):
     return 0
 
 
+# ===========================================================================
+# 7.7 正对照 v2（任务 72 / `docs/02` §46）：348 → 965 个可锚定样本
+#
+# 63 号的判决是「n=165 ⇒ ±6 点 ⇒ 1~2 点的配置差不可判定」。本节只解决**样本量**，
+# 不碰打分器、不碰特征定义（AGENTS.md 合并纪律 A1）。
+#
+# ⚠ 先说清一件事：**348 的天花板不是名字，是锚。**
+# `named_linux()` = 三份名字夹具的并集 = 354，其中在 527（引用了 `src/*.rs` Location 的函数）
+# 里的就是 348 —— 也就是说"Windows 939 个真名 / Android 524 个真名里还有一堆没进 348"
+# 是个误解：那 939 个里能落到 Linux 地址的**已经全在**那三份夹具里了，剩下的 6 个是
+# "有名字但不在 527 内"。真正卡住的是 Linux 侧**能被 Location 锚住**的函数只有 527 个，
+# 而 §35 的严格 join（每个键两侧各唯一 + 正反向）只覆盖 333 个。
+#
+# ⇒ 扩样本只能换**锚点判据**，且判据必须只用**编译期常量 / 符号名**，
+#   **绝不用任何指纹特征**（否则"用指纹选样本再用指纹评估"= 循环论证，任务书 §1 的红线）。
+#   两条新判据（都在本文件里，都只看 `panic::Location` 与符号名）：
+#
+#   S1 **键集全等锚**：Linux 函数 L 与 Windows 函数 W 引用的 `panic::Location` 三元组集合
+#      **完全相同**（`src/*.rs` 与依赖 crate 两族都算），且该键集在 Linux 侧只有一个函数
+#      引用、在 Windows 侧也只有一个函数引用。
+#      —— 比 §35 的严格 join 松（不要求**每个键**两侧各唯一），但要求**整集相等**，
+#      所以仍是"编译期常量相等"，不是相似度、不是分数。
+#   S2 **名字链锚**：Windows COFF 名 ≡ Android `.symtab` 名（Rust 哈希归一后**完全相同**），
+#      两侧各自只落一个地址，且 Android 地址经**严格 join** 唯一落到一个 Linux 地址。
+#
+# 入选之后还有两条**复核**（复核只用符号名，不参与入选，见 `cmd_pc` 的输出）：
+#   ① 名字三方一致性（S1 的新样本上：Windows COFF 名 vs Android `.symtab` 名）；
+#   ② 跨版本复核（early2026 用**同一套 S1** 独立锚一遍，与 win 锚互相比名字）。
+# ===========================================================================
+PC_NAME_HASH = re.compile(r"17h[0-9a-f]{16}E")
+PC_NAME_LLVM = re.compile(r"\.llvm\.\d+$")
+
+
+def sym_key(name):
+    """Rust 旧 mangling 的哈希归一：`…17h<16 hex>E` → `…E`，并去掉 `.llvm.<n>` 后缀。
+
+    为什么不用 `c++filt`：Windows DLL 有 5 万多个函数符号，走 `sym_match.demangle()` 要
+    几秒到几十秒；而 `fp.names` 里存的是**原始 mangled 名**，哈希归一在 mangled 串上
+    做是等价的（demangle 只是把长度前缀吃掉）。
+
+    ⚠ `.llvm.<n>` 后缀**只在一侧出现**（LLVM 内部化的符号），第一版没剥它，
+    于是同一份源码在两份构建里被当成两个名字 ⇒ 38 条假"名字冲突"（§46.3 记了这一条）。
+    """
+    return PC_NAME_LLVM.sub("", PC_NAME_HASH.sub("E", name))
+
+
+def fp_names_of(fp):
+    """{地址: frozenset(归一后的符号名)}。Linux 是 stripped ⇒ 空表。"""
+    out = {}
+    for va, names in (fp.names or {}).items():
+        ks = frozenset(sym_key(n) for n in names)
+        if ks:
+            out[va] = ks
+    return out
+
+
+def fp_name_index(fp):
+    """{归一后的符号名: {地址…}}（一份构建内；同一个名字可能落多个地址 ⇒ 后面要查重）。"""
+    out = collections.defaultdict(set)
+    for va, ks in fp_names_of(fp).items():
+        for k in ks:
+            out[k].add(va)
+    return out
+
+
+def all_loc_keys(fp, va):
+    """该函数引用的**全部** `panic::Location` 三元组（`src/*.rs` 与依赖 crate 同列）。
+
+    与 `loc_keys(..., src_only=True)` 的区别是这一条：348 口径只看 `src/`，所以
+    依赖 crate（`/rustc/…`、`/home/…/registry/…`）的 Location 整段不在真值里。
+    但那些同样是**编译期常量**（`name_bridge.py` 早就把它们算进唯一性判定），
+    用它们做锚不引入任何指纹信息。
+    """
+    return frozenset(loc_keys(fp, va, src_only=False))
+
+
+def anchor_keyset_eq(src_fp, dst_fp):
+    """**S1 键集全等锚** → ({dst_addr: src_addr}, 逐条弃用计数 Counter, {dst: 键数})。
+
+    判据（写死，不看分数）：
+      ① dst（Linux）函数的键集 == src（Windows）函数的键集（集合相等，不是包含、不是相似度）；
+      ② 该键集在 dst 侧只有一个函数引用，在 src 侧也只有一个函数引用。
+
+    弃用原因分三种，**逐条计数并打印**（任务书 §1 要求"用了几条、弃了几条、为什么弃"）：
+      `linux_keyset_shared`  —— 同一个键集被多个 Linux 函数引用（内联/单态化，锚不住）；
+      `no_src_keyset`        —— Windows 侧没有任何函数的键集与它相同（对侧被内联/删掉了）；
+      `src_keyset_shared`    —— Windows 侧有多个函数同用这一个键集（冷段/垫片，锚不住）。
+    """
+    S = collections.defaultdict(list)
+    for va in src_fp.universe:
+        k = all_loc_keys(src_fp, va)
+        if k:
+            S[k].append(va)
+    D = collections.defaultdict(list)
+    for va in dst_fp.universe:
+        k = all_loc_keys(dst_fp, va)
+        if k:
+            D[k].append(va)
+    out, nk, st = {}, {}, collections.Counter()
+    for k, dv in D.items():
+        sv = S.get(k, ())
+        for va in dv:
+            if len(dv) > 1:
+                st["linux_keyset_shared"] += 1
+            elif not sv:
+                st["no_src_keyset"] += 1
+            elif len(sv) > 1:
+                st["src_keyset_shared"] += 1
+            else:
+                out[va] = sv[0]
+                nk[va] = len(k)
+                st["ok"] += 1
+    return out, st, nk
+
+
+def anchor_name_chain(fps, src_tag="win", bridge_tag="android"):
+    """**S2 名字链锚** → ({linux_addr: src_addr}, 逐条弃用计数 Counter)。
+
+    判据：src 侧 COFF 名与 bridge 侧 `.symtab` 名**哈希归一后完全相同**，且该名字在
+    两份构建里各自只落一个地址；bridge 地址经 `control_pairs(bridge, "linux")` 的
+    **严格 Location join** 唯一落到一个 Linux 地址。
+
+    名字相同 ≈ 同一份源码的同一个函数 —— 这条判据**一个指纹特征都没用**，
+    而且用的是两份**不同架构、同版本**的构建，独立性比"同构建内再打分"强。
+    """
+    src_i = fp_name_index(fps[src_tag])
+    br_i = fp_name_index(fps[bridge_tag])
+    strict, _ = control_pairs(bridge_tag, "linux", fps)      # linux -> bridge
+    b2l, dup = {}, set()
+    for l, b in strict.items():
+        if b in b2l:
+            dup.add(b)
+        b2l[b] = l
+    for b in dup:
+        b2l.pop(b, None)                                    # bridge 地址落多个 Linux 函数 ⇒ 弃
+    out, st = {}, collections.Counter()
+    for name in set(src_i) & set(br_i):
+        st["name_in_both"] += 1
+        sa, ba = src_i[name], br_i[name]
+        if len(sa) != 1:
+            st["src_name_not_unique"] += 1
+            continue
+        if len(ba) != 1:
+            st["bridge_name_not_unique"] += 1
+            continue
+        l = b2l.get(next(iter(ba)))
+        if l is None:
+            st["no_linux_anchor"] += 1
+            continue
+        out[l] = next(iter(sa))
+        st["ok"] += 1
+    st["bridge_addr_multi"] = len(dup)
+    return out, st
+
+
+def linux_side_names(fps):
+    """Linux 地址 → 它的**符号名**（归一后），只用 Android `.symtab` + **严格** Location join。
+
+    这条映射**只用于复核**（"同一个 Linux 函数在 Windows 与 Android 两份构建里名字是否一致"），
+    不参与入选判据。为什么只走严格 join 而不顺手用 S1 键集全等锚多拿 500 个名字：
+    **S1 在跨 ISA 上会锚错**。实测两条口径的"名字冲突"数 —— 严格 join **0** 条，
+    S1-eq **5** 条，而那 5 条逐条查过全是 **Android 侧**的错（同一个共享 panic 行
+    `oneshot.rs:130` / `linked_list.rs:186` 被另一个函数引用进去了），win 侧都是对的。
+    ⇒ 复核要的是**噪声低的那个**，不是覆盖大的那个（§46.3 记了 38 → 5 → 0 的这条排查链）。
+    """
+    an = fp_names_of(fps["android"])
+    out = collections.defaultdict(set)
+    strict, _ = control_pairs("android", "linux", fps)      # linux -> android
+    for l, a in strict.items():
+        out[l] |= an.get(a, frozenset())
+    return dict(out)
+
+
+def positive_control_v2(fps=None, verbose=True):
+    """正对照 v2：{linux_addr: win_addr} + 逐类来源 + 弃用计数 + 独立复核。
+
+    组成（**全部只靠 Location 常量与符号名**）：
+      S0 = §35 的旧真值（夹具 `win_addr=` ∪ 严格 join）—— 339
+      S1 = 键集全等锚的新样本 —— 与 S0 重叠 301（冲突 0），新增 629 里 3 条名字冲突 ⇒ 626
+      S2 = 名字链锚的新样本 —— 全部落在 S0/S1 内（实测新增 0）
+    S1 上的**名字冲突过滤**：两侧都有名字且**没有任何一个名字重合** ⇒ 弃（记 `name_conflict`）。
+    这条同样只看符号名，不看指纹；实测弃 3 条（全是 1 键、键是共享 panic 行的假锚）。
+    """
+    fps = fps or load_all()
+    lin, win = fps["linux"], fps["win"]
+    truth0, prov0 = control_pairs("win", "linux", fps)
+    eq, eq_st, nk = anchor_keyset_eq(win, lin)
+    nc, nc_st = anchor_name_chain(fps)
+    wnames = fp_names_of(win)
+    lnames = linux_side_names(fps)
+
+    truth, cls, conflict, nkeys = {}, {}, [], {}
+    for a, w in sorted(truth0.items()):
+        truth[a] = w
+        cls[a] = "S0"
+    for a, w in sorted(eq.items()):
+        if a in truth:
+            continue
+        wn, ln = wnames.get(w, frozenset()), lnames.get(a, frozenset())
+        if wn and ln and not (wn & ln):
+            conflict.append(a)                 # 两侧都有名字且完全不重合 ⇒ 假锚
+            continue
+        truth[a] = w
+        cls[a] = "S1"
+        nkeys[a] = nk.get(a, 0)
+    s2_new = [a for a in nc if a not in truth]
+    for a in s2_new:
+        truth[a] = nc[a]
+        cls[a] = "S2"
+    usable = {a: w for a, w in truth.items() if w in win.universe}
+    stats = dict(truth0=len(truth0), prov0=prov0, eq=eq_st, name=nc_st,
+                 eq_pairs=len(eq), name_pairs=len(nc), s2_new=len(s2_new),
+                 name_conflict=len(conflict), total=len(usable))
+    if verbose:
+        sys.stderr.write("[pc] 正对照 v2：S0=%d S1=%d S2=%d（名字冲突弃 %d）⇒ 可用 %d\n"
+                         % (len(truth0), sum(1 for a in cls if cls[a] == "S1"),
+                            len(s2_new), len(conflict), len(usable)))
+    audit = dict(named_win=len(wnames), n_linux_named=len(lnames),
+                 conflict=conflict, nkeys=nkeys, wnames=wnames, lnames=lnames)
+    return dict(truth=usable, truth0={a: w for a, w in truth0.items() if w in win.universe},
+                cls={a: cls[a] for a in usable}, stats=stats, audit=audit)
+
+
+PC_CONFIGS = [
+    ("BASE（51 号基线 W_SAME）", dict(W_SAME)),
+    ("PREREG +scal=0.25（§43.4 预注册选中）", dict(W_SAME, scal=0.25)),
+    ("TOP +scal=0.5（并列桶最高）", dict(W_SAME, scal=0.5)),
+    ("+scal_c=0.25（泄漏探针）", dict(W_SAME, scal=0.0, scal_c=0.25)),
+    ("+scal_c=0.5（泄漏探针）", dict(W_SAME, scal=0.0, scal_c=0.5)),
+    ("+shape=1.0（57 号的 F1）", dict(W_SAME, shape=1.0)),
+]
+
+
+def _pc_eval(job):
+    """进程池里跑一个（配置 × 人群 × 半）；返回**逐样本**命中向量（配对检验要用）。"""
+    label, w, pop, half = job
+    ctx = _G["pc"]
+    addrs = ctx[pop][half]
+    sc, _w, wnd = scorer_for("win", "linux", w)
+    pool = _G["pc_pool"]
+    h1, h5 = [], []
+    for a in addrs:
+        r = rank(ctx["fps"]["linux"].feats[a], pool, sc, wnd, _G["topk"])
+        t = ctx[pop]["truth"][a]
+        h1.append(1 if (r and r[0][1] == t) else 0)
+        h5.append(1 if any(c == t for _s, c in r) else 0)
+    return dict(label=label, pop=pop, half=half, h1=h1, h5=h5)
+
+
+def cmd_pc(args):
+    """任务 72：正对照 348 → v2，重算留出半、95% CI、与基线的配对差（含 McNemar）。
+
+    **两个口径都要报**（`docs/160` §160.5 的纪律）：`PREREG`（预注册选中 `scal=0.25`）
+    与 `TOP`（并列桶最高 `scal=0.5`）。留出半只报数，**不在这里重新选权重**。
+    """
+    import fingerprint_audit as FA          # 复用 63 号的 CI / McNemar 实现（同一份代码）
+    fps = load_all()
+    lin, win = fps["linux"], fps["win"]
+    pc = positive_control_v2(fps)
+    named = named_linux_348()
+    # 348 口径 = **旧真值**里落在 348 里的那批（331）；不能用 v2 真值，否则 S1 会把
+    # 13 个原本没有真值的已定名函数补进来，72.7 / 76.4 / 78.2 就复现不出来了。
+    old = {a: w for a, w in pc["truth0"].items() if a in named}
+    oldA, oldB = split_half_addrs(sorted(old))
+    A, B = split_half_addrs(sorted(pc["truth"]))
+    ctx = dict(fps=fps, v2=dict(truth=pc["truth"], A=A, B=B),
+               old348=dict(truth=old, A=oldA, B=oldB))
+    _G["pc"], _G["pc_pool"], _G["topk"] = ctx, Pool(win), args.topk
+    W = sys.stdout.write
+    st = pc["stats"]
+    W("=== (1) 正对照 v2：样本从哪来（判据只用 Location 常量/符号名，**不看任何指纹分数**）===\n")
+    W("  S0 旧真值（夹具 `win_addr=` ∪ 严格 Location join）            %4d（1:1 可测）\n"
+      % st["truth0"])
+    s1 = sum(1 for a in pc["cls"] if pc["cls"][a] == "S1")
+    W("  S1 键集全等锚（与 S0 重叠 %d、冲突 0；新进 %d；名字冲突弃 %d）      %4d\n"
+      % (st["eq_pairs"] - s1, s1, st["name_conflict"], s1))
+    W("  S2 名字链锚（新增）                                              %4d\n" % st["s2_new"])
+    W("  ------------------------------------------------------------------\n")
+    W("  合计可用 %4d（旧口径 348 里的 %d 条都在、另有 %d 条）\n"
+      % (st["total"], len(old), st["total"] - len(old)))
+    W("  分半：调参半 %d / 留出半 %d（按 Linux 地址 sha1 奇偶；与旧口径同一分半规则）\n"
+      % (len(A), len(B)))
+    W("\n  S1 的弃用计数（逐条，**按 Linux 函数计**；Linux 侧有 Location 键的函数共 %d 个）：\n"
+      % len([a for a in lin.universe if all_loc_keys(lin, a)]))
+    st1 = pc["stats"]["eq"]
+    W("    用了                     %4d\n" % st1.get("ok", 0))
+    W("    弃：键集在 Linux 侧不唯一 %4d（内联/单态化，同一组 Location 被多个函数引用）\n"
+      % st1.get("linux_keyset_shared", 0))
+    W("    弃：Windows 侧无此键集     %4d（对侧把这段内联掉/删掉了）\n"
+      % st1.get("no_src_keyset", 0))
+    W("    弃：键集在 Windows 侧不唯一 %4d（冷段 `panic_cold_*` 垫片共用同一组）\n"
+      % st1.get("src_keyset_shared", 0))
+    W("    另：名字冲突过滤弃         %4d（两侧都有名字、且没有任何名字重合 ⇒ 假锚）\n"
+      % st["name_conflict"])
+    st2 = pc["stats"]["name"]
+    W("\n  S2 的弃用计数：名字两侧都有 %d；弃：win 侧名字不唯一 %d / android 侧不唯一 %d /"
+      " android 地址落不到唯一 Linux 函数 %d ⇒ 用了 %d（**新增 %d**）\n"
+      % (st2.get("name_in_both", 0), st2.get("src_name_not_unique", 0),
+         st2.get("bridge_name_not_unique", 0), st2.get("no_linux_anchor", 0),
+         st2.get("ok", 0), st["s2_new"]))
+    W("    注：S2 的样本全部落在 S0∪S1 里 ⇒ 名字链这条路是**复核**，不是新增来源。\n")
+
+    # ---- 独立复核 ----
+    au = pc["audit"]
+    W("\n=== (2) 独立复核（只用符号名，**不参与入选**）===\n")
+    chk = collections.Counter()
+    chk_cls = collections.Counter()
+    for a in pc["truth"]:
+        wn = au["wnames"].get(pc["truth"][a], frozenset())
+        ln = au["lnames"].get(a, frozenset())
+        if not wn:
+            chk["win_unnamed"] += 1
+        elif not ln:
+            chk["linux_name_unknown"] += 1
+        elif wn & ln:
+            chk["agree"] += 1
+        else:
+            chk["DISAGREE"] += 1
+            chk_cls[pc["cls"][a]] += 1
+    W("  ① 名字三方一致：win COFF 名 vs android `.symtab` 名（同一 Linux 地址）\n")
+    W("     一致 %d / 冲突 %d / win 侧无名 %d / linux 侧名字未知 %d（n=%d）\n"
+      % (chk["agree"], chk["DISAGREE"], chk["win_unnamed"], chk["linux_name_unknown"],
+         len(pc["truth"])))
+    W("     冲突按来源分：%s（S1/S2 的**新**样本 0 冲突；这 5 条是旧真值 S0 里"
+      "跨架构内联差异/Android 侧锚错，逐条见 §46.3）\n"
+      % (dict(chk_cls) or "无"))
+    eqo, sto, _nko = anchor_keyset_eq(fps["win_old"], lin)
+    onames = fp_names_of(fps["win_old"])
+    both = [(a, pc["truth"][a], eqo[a]) for a in pc["truth"] if a in eqo]
+    bn = [(a, w, o) for a, w, o in both if w in au["wnames"] and o in onames]
+    agree = sum(1 for a, w, o in bn if au["wnames"][w] & onames[o])
+    shim = sum(1 for a, w, o in bn
+               if not (au["wnames"][w] & onames[o]) and fps["win_old"].feats[o]["size"] <= 32)
+    W("  ② 跨版本复核：early2026 用**同一套 S1** 独立锚 → %d 条（Linux 侧同一批函数）\n"
+      % len(eqo))
+    W("     两边都锚到、两边都有名字的 %d 条里：win 名 == old 名 %d 条；不一致 %d 条，"
+      "其中 %d 条的 old 侧是 ≤32 B 的 `panic_cold_*` 冷段垫片\n"
+      % (len(bn), agree, len(bn) - agree, shim))
+
+    # ---- 评估 ----
+    jobs = [(lab, w, pop, half) for lab, w in PC_CONFIGS
+            for pop in ("v2", "old348") for half in ("A", "B")]
+    res, dt = _run_jobs(_pc_eval, args.jobs, jobs, "正对照 v2 配置评估")
+    bykey = {(r["label"], r["pop"], r["half"]): r for r in res}
+    W("\n=== (3) 配置评估（墙钟 %.1f s，jobs=%d；留出半**只报数**）===\n" % (dt, args.jobs))
+    W("%-38s | %-19s | %-19s | %s\n" % ("配置", "v2 调参半 top-1/5", "v2 留出半 top-1/5",
+                                        "旧 348 留出半 top-1/5"))
+    rows = []
+    for lab, _w in PC_CONFIGS:
+        ra, rb = bykey[(lab, "v2", "A")], bykey[(lab, "v2", "B")]
+        ro = bykey[(lab, "old348", "B")]
+        W("%-38s | %5.1f%% %5.1f%%   | %5.1f%% %5.1f%%   | %5.1f%% %5.1f%%\n"
+          % (lab, 100.0 * sum(ra["h1"]) / len(ra["h1"]), 100.0 * sum(ra["h5"]) / len(ra["h5"]),
+             100.0 * sum(rb["h1"]) / len(rb["h1"]), 100.0 * sum(rb["h5"]) / len(rb["h5"]),
+             100.0 * sum(ro["h1"]) / len(ro["h1"]), 100.0 * sum(ro["h5"]) / len(ro["h5"])))
+    # CI + 配对
+    nboot = getattr(args, "B", 2000)      # ⚠ 别叫 B：B 是留出半地址表（第一版就撞了这个名字）
+    for pop, lab_pop in (("v2", "v2"), ("old348", "旧 348")):
+        base = bykey[(PC_CONFIGS[0][0], pop, "B")]["h1"]
+        W("\n-- %s 留出半 n=%d：95%% CI + 与基线的**配对**差（bootstrap B=%d；McNemar 精确）--\n"
+          % (lab_pop, len(base), nboot))
+        W("%-38s %-7s %-18s %-18s %-12s %s\n"
+          % ("配置", "top-1", "bootstrap 95% CI", "Wilson 95% CI", "McNemar b/c", "p"))
+        for lab, _w in PC_CONFIGS:
+            h = bykey[(lab, pop, "B")]["h1"]
+            k, n = sum(h), len(h)
+            lo, hi = FA.boot_ci(h, B=nboot, seed=72)
+            wl, wh = FA.wilson(k, n)
+            if pop == "v2" and lab == PC_CONFIGS[0][0]:
+                b_, c_, p_ = 0, 0, 1.0
+            else:
+                b_, c_, p_ = FA.mcnemar_exact(base, h)
+            W("%-38s %5.2f%%  [%5.2f%%, %5.2f%%]  [%5.2f%%, %5.2f%%]  b=%d c=%d     p=%.3g%s\n"
+              % (lab, 100.0 * k / n, 100.0 * lo, 100.0 * hi, 100.0 * wl, 100.0 * wh, b_, c_, p_,
+                 "  **显著**" if (p_ < 0.05 and lab != PC_CONFIGS[0][0]) else ""))
+            if lab != PC_CONFIGS[0][0]:
+                dlo, dhi = FA.boot_delta_ci(base, h, B=nboot, seed=72)
+                W("%-38s %+5.2f pt 配对 CI [%+6.2f, %+6.2f] pt\n"
+                  % ("    Δ vs 基线", 100.0 * (k - sum(base)) / n, 100.0 * dlo, 100.0 * dhi))
+    # 子群
+    W("\n=== (4) v2 留出半按期来源分群（**旧样本有偏没有？**看这张表）===\n")
+    W("%-30s %-6s %-22s %s\n" % ("子群", "n", "BASE top-1", "TOP(+scal=.5) top-1"))
+    addrs = ctx["v2"]["B"]
+    b_h = bykey[(PC_CONFIGS[0][0], "v2", "B")]["h1"]
+    t_h = bykey[(PC_CONFIGS[2][0], "v2", "B")]["h1"]
+    nk = pc["audit"]["nkeys"]
+    groups = [
+        ("S0（旧真值那一类）", lambda a: pc["cls"][a] == "S0"),
+        ("S1 新增", lambda a: pc["cls"][a] == "S1"),
+        ("S1 里带 src/*.rs 键", lambda a: pc["cls"][a] == "S1" and loc_keys(lin, a)),
+        ("S1 里只有依赖 crate 键", lambda a: pc["cls"][a] == "S1" and not loc_keys(lin, a)),
+        ("S1 里键数=1", lambda a: pc["cls"][a] == "S1" and nk.get(a, 0) == 1),
+        ("S1 里键数>=2", lambda a: pc["cls"][a] == "S1" and nk.get(a, 0) >= 2),
+    ]
+    for label, fn in groups:
+        idx = [i for i, a in enumerate(addrs) if fn(a)]
+        if not idx:
+            continue
+        W("%-30s %-6d %5.1f%%                 %5.1f%%\n"
+          % (label, len(idx), 100.0 * sum(b_h[i] for i in idx) / len(idx),
+             100.0 * sum(t_h[i] for i in idx) / len(idx)))
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write("# 任务 72 · 正对照 v2（348 → %d）与配置评估\n" % st["total"])
+            fh.write("# 判据只用 panic::Location 常量与符号名，**不含任何指纹分数**\n")
+            fh.write("# 分半：v2 调参半 %d / 留出半 %d；旧 348 调参半 %d / 留出半 %d\n"
+                     % (len(A), len(B), len(oldA), len(oldB)))
+            fh.write("# 留出半只报数；PREREG 是 §43.4 预注册选中的 scal=0.25，TOP 是并列桶最高 scal=0.5\n")
+            fh.write("pop\thalf\tlabel\tweights\tn\ttop1\ttop5\n")
+            for lab, w in PC_CONFIGS:
+                for pop in ("v2", "old348"):
+                    for half in ("A", "B"):
+                        r = bykey[(lab, pop, half)]
+                        fh.write("%s\t%s\t%s\t%s\t%d\t%.4f\t%.4f\n"
+                                 % (pop, half, lab, wlabel(w), len(r["h1"]),
+                                    sum(r["h1"]) / float(len(r["h1"])),
+                                    sum(r["h5"]) / float(len(r["h1"]))))
+            fh.write("# 也落留出半的**逐样本命中向量**，配对检验/CI 可以原样复算\n")
+            for pop in ("v2", "old348"):
+                for lab, _w in PC_CONFIGS:
+                    r = bykey[(lab, pop, "B")]
+                    fh.write("hits\t%s\t%s\t%s\n"
+                             % (pop, lab, ",".join(str(x) for x in r["h1"])))
+        W("\n落盘：%s\n" % args.out)
+        # 逐条样本（文本夹具）：谁进了正对照、来自哪一类、键数几个 —— 任何人都能逐条复核。
+        samp = args.out.replace(".tsv", "_samples.tsv")
+        half_of = dict([(a, "tune") for a in A] + [(a, "holdout") for a in B])
+        with open(samp, "w", encoding="utf-8") as fh:
+            fh.write("# 任务 72 · 正对照 v2 逐条样本（%d 行；S0 旧真值 / S1 键集全等锚 / S2 名字链锚）\n"
+                     % st["total"])
+            fh.write("# 判据只用 panic::Location 常量与符号名，**不含任何指纹分数**（任务书 §2 的红线）\n")
+            fh.write("# n_keys = 该 Linux 函数引用的 Location 三元组个数；has_src_key = 是否含 src/*.rs 的键\n")
+            fh.write("linux_addr\twin_addr\tclass\thas_src_key\tn_keys\thalf\n")
+            for a in sorted(pc["truth"]):
+                fh.write("0x%x\t0x%x\t%s\t%s\t%s\t%s\n"
+                         % (a, pc["truth"][a], pc["cls"][a],
+                            "是" if loc_keys(lin, a) else "否",
+                            pc["audit"]["nkeys"].get(a, "-") if pc["cls"][a] == "S1" else "-",
+                            half_of.get(a, "-")))
+        W("     逐条样本：%s\n" % samp)
+    return 0
+
+
 def _shard_worker(spec):
     """跑一个分片（`run --shard i/N --out …`），把 stdout/stderr 收进 StringIO 免得 8 路互相插。"""
     i, n, out, topk = spec
@@ -2348,7 +2791,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("cmd", choices=["build", "verify", "tune2", "calib",
                                     "run", "merge", "report", "probe",
-                                    "ablate", "tune3", "runall", "newev"])
+                                    "ablate", "tune3", "runall", "newev", "pc"])
     ap.add_argument("addr", nargs="*")
     ap.add_argument("--force", action="store_true", help="无视缓存重扫")
     ap.add_argument("--topk", type=int, default=5)
@@ -2370,12 +2813,13 @@ def main(argv=None):
     ap.add_argument("--bucket-holdout", action="store_true",
                     help="newev 把加性网格的**并列桶**在留出半上各报一次（只报数，不参与选择）")
     ap.add_argument("--shards", type=int, default=8, help="runall 的分片数")
+    ap.add_argument("--B", type=int, default=2000, help="pc 的 bootstrap 重采样次数（默认 2000）")
     ap.add_argument("--tmp", default="", help="runall 分片文件目录（默认缓存目录下 shards/）")
     a = ap.parse_args(argv)
     return dict(build=cmd_build, verify=cmd_verify, tune2=cmd_tune2, calib=cmd_calib,
                 run=cmd_run, merge=cmd_merge, report=cmd_report, probe=cmd_probe,
                 ablate=cmd_ablate, tune3=cmd_tune3, runall=cmd_runall,
-                newev=cmd_newev)[a.cmd](a)
+                newev=cmd_newev, pc=cmd_pc)[a.cmd](a)
 
 
 if __name__ == "__main__":

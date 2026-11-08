@@ -1,0 +1,18 @@
+# 任务 71 · 墙钟（**两个口径分开报**：工具内部计算时间 / 进程墙钟含 import torch 5-6 s）
+# old = 每组权重都把逐特征相似度重算一遍（63 号做法）；new = 一次物化 + N 组广播乘加
+# ⚠ 同一份新做法在不同负载下 0.51 s / 1.31 s 差 2.6 倍 ⇒ 只当量级看（docs/02 §47.2）
+suite	backend	mode	pop	half	rows	configs	candidate_cells	internal_wall_s	materialize_s	fuse_s	topk_s	proc_wall_s	peak_alloc_MB
+anchor/v2/holdout	cpu	new	v2	holdout	481	6	3397838	2.4609	1.952	0.4281	0.0621	8.1892	0.0
+anchor/v2/holdout	cuda	new	v2	holdout	481	6	3397838	0.5095	0.3993	0.0017	0.0212	6.5601	406.5
+anchor/old331/holdout	cuda	new	old331	holdout	165	6	1093739	0.3986	0.3372	0.0009	0.0172	6.6384	404.7
+loo-ref/v2/tune	cuda	new	v2	tune	494	6	3385716	0.6708	0.5584	0.0018	0.0191	6.8219	406.8
+loo-ref/v2/holdout	cuda	new	v2	holdout	481	6	3397838	0.5709	0.4593	0.0017	0.0182	6.2225	406.5
+loo-all/v2/tune	cuda	new	v2	tune	494	24	3385716	4.9003	3.8937	0.0181	0.0434	13.2573	912.8
+loo-all/v2/holdout	cuda	new	v2	holdout	481	24	3397838	4.5085	3.5167	0.0186	0.0435	12.7569	911.9
+second/v2/tune	cuda	new	v2	tune	494	19	3385716	4.3826	3.5973	0.0178	0.0422	12.5533	912.8
+second/v2/holdout	cuda	new	v2	holdout	481	19	3397838	4.0548	3.2727	0.0172	0.0448	12.3686	911.9
+ab/v2/holdout	cuda	old	v2	holdout	481	6	3397838	2.9596	2.7858	0.0191	0.0712	18.394	406.5
+ab/v2/holdout	cuda	new	v2	holdout	481	6	3397838	1.3127	0.9777	0.0041	0.2152	27.23	406.5
+ab/v2/holdout	cuda	new	v2	holdout	481	81	3397838	6.2583	4.6576	0.0391	0.3792	31.3527	406.5
+ab81old/v2/holdout(并发污染,弃用)	cpu	old	v2	holdout	481	81	3397838	316.1938	306.4	7.3885	1.1707	331.5953	0.0
+big3000/v2/tune	gpu	new	v2	tune	494	3000	3385716	216.5439	87.3755	0.3448	0.4667	225.0032	1379.9

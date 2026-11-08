@@ -1,0 +1,65 @@
+# 任务 70 · 间接调用图让 6 个特征「两侧可比」前后的留出半（tools/callgraph_indirect.py bench）
+# 真值 fixture=301, strict=333, both=295, agree=295, conflict=0；调参半 n=166 / 留出半 n=165；窗口 (0.7, 1.4)；collapse=False
+# 留出半**只报数**（AGENTS.md 合并纪律 A4）；预注册选择只在调参半上做
+label	weights	top1_tune	top5_tune	n_tune	top1_hold	top5_hold	n_hold
+(0) BEFORE 基线（直接边，§43 (0)）	size0.25 gram2 consts0.25 caller0.5	136	152	166	120	146	165
+(1) BEFORE 基线+scal=0.5（§43 REF，锚点）	size0.25 gram2 consts0.25 caller0.5 scal0.5	137	152	166	129	147	165
+(2) BEFORE 只用 6 个特征（callee/caller/counts/bsig）	size0.25 gram2 consts0.25 callee0.5 caller0.5 ncal0.5 ncall0.5 cbsig0.25 rbsig0.25	122	144	166	111	139	165
+(3) AFTER  同上，6 个全换成直接∪指针	size0.25 gram2 consts0.25 caller0.5	136	151	166	119	143	165
+(4) AFTER  REF + callee_a=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	138	152	166	127	147	165
+(5) AFTER  REF + ncal_a=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	137	152	166	128	147	165
+(6) AFTER  REF + callee_a=ncal_a=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	137	152	166	127	147	165
+(7) AFTER  REF + caller_a=0.5（替 caller）	size0.25 gram2 consts0.25 scal0.5	138	152	166	129	147	165
+(8) AFTER  REF + 六特征全开 0.25	size0.25 gram2 consts0.25 caller0.5 scal0.5	138	152	166	127	147	165
+(9) AFTER  REF + callee_a=ncal_a=1	size0.25 gram2 consts0.25 caller0.5 scal0.5	136	151	166	125	146	165
+# --- 加性网格（预注册选择）：调参半 + 选中/并列桶的留出半 ---
+GRID size0.25 gram2 consts0.25 caller0.5 scal0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	138	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5 scal0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	138	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5 scal0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	138	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5 scal0.25	size0.25 gram2 consts0.25 caller0.5 scal0.25	137	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5 scal0.25	size0.25 gram2 consts0.25 caller0.5 scal0.25	137	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5 scal0.25	size0.25 gram2 consts0.25 caller0.5 scal0.25	137	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5 scal0.25	size0.25 gram2 consts0.25 caller0.5 scal0.25	137	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5 scal0.25	size0.25 gram2 consts0.25 caller0.5 scal0.25	137	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5 scal0.25	size0.25 gram2 consts0.25 caller0.5 scal0.25	137	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5 scal0.25	size0.25 gram2 consts0.25 caller0.5 scal0.25	137	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5 scal0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	137	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5 scal0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	137	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5 scal0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	137	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5 scal0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	137	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5 scal0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	137	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5 scal0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	137	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5	size0.25 gram2 consts0.25 caller0.5	137	151	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5	size0.25 gram2 consts0.25 caller0.5	137	151	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5	size0.25 gram2 consts0.25 caller0.5	137	151	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5	size0.25 gram2 consts0.25 caller0.5	137	151	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5	size0.25 gram2 consts0.25 caller0.5	137	151	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5	size0.25 gram2 consts0.25 caller0.5	137	151	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5	size0.25 gram2 consts0.25 caller0.5	136	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5	size0.25 gram2 consts0.25 caller0.5	136	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5 scal0.25	size0.25 gram2 consts0.25 caller0.5 scal0.25	136	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5 scal0.25	size0.25 gram2 consts0.25 caller0.5 scal0.25	136	152	166	-	-	-
+GRID size0.25 gram2 consts0.25 caller0.5	size0.25 gram2 consts0.25 caller0.5	136	151	166	-	-	-
+PICK size0.25 gram2 consts0.25 caller0.5 scal0.25	size0.25 gram2 consts0.25 caller0.5 scal0.25	137	152	166	126	147	165
+TIE size0.25 gram2 consts0.25 caller0.5	size0.25 gram2 consts0.25 caller0.5	-	-	-	121	145	165
+TIE size0.25 gram2 consts0.25 caller0.5	size0.25 gram2 consts0.25 caller0.5	-	-	-	121	145	165
+TIE size0.25 gram2 consts0.25 caller0.5	size0.25 gram2 consts0.25 caller0.5	-	-	-	121	145	165
+TIE size0.25 gram2 consts0.25 caller0.5	size0.25 gram2 consts0.25 caller0.5	-	-	-	121	145	165
+TIE size0.25 gram2 consts0.25 caller0.5	size0.25 gram2 consts0.25 caller0.5	-	-	-	121	145	165
+TIE size0.25 gram2 consts0.25 caller0.5	size0.25 gram2 consts0.25 caller0.5	-	-	-	120	145	165
+TIE size0.25 gram2 consts0.25 caller0.5 scal0.25	size0.25 gram2 consts0.25 caller0.5 scal0.25	-	-	-	126	147	165
+TIE size0.25 gram2 consts0.25 caller0.5 scal0.25	size0.25 gram2 consts0.25 caller0.5 scal0.25	-	-	-	126	147	165
+TIE size0.25 gram2 consts0.25 caller0.5 scal0.25	size0.25 gram2 consts0.25 caller0.5 scal0.25	-	-	-	126	147	165
+TIE size0.25 gram2 consts0.25 caller0.5 scal0.25	size0.25 gram2 consts0.25 caller0.5 scal0.25	-	-	-	126	147	165
+TIE size0.25 gram2 consts0.25 caller0.5 scal0.25	size0.25 gram2 consts0.25 caller0.5 scal0.25	-	-	-	126	147	165
+TIE size0.25 gram2 consts0.25 caller0.5 scal0.25	size0.25 gram2 consts0.25 caller0.5 scal0.25	-	-	-	126	147	165
+TIE size0.25 gram2 consts0.25 caller0.5 scal0.25	size0.25 gram2 consts0.25 caller0.5 scal0.25	-	-	-	126	147	165
+TIE size0.25 gram2 consts0.25 caller0.5 scal0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	-	-	-	129	147	165
+TIE size0.25 gram2 consts0.25 caller0.5 scal0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	-	-	-	129	147	165
+TIE size0.25 gram2 consts0.25 caller0.5 scal0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	-	-	-	127	147	165
+TIE size0.25 gram2 consts0.25 caller0.5 scal0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	-	-	-	129	147	165
+TIE size0.25 gram2 consts0.25 caller0.5 scal0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	-	-	-	128	147	165
+TIE size0.25 gram2 consts0.25 caller0.5 scal0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	-	-	-	127	147	165
+TIE size0.25 gram2 consts0.25 caller0.5 scal0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	-	-	-	127	147	165
+TIE size0.25 gram2 consts0.25 caller0.5 scal0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	-	-	-	127	147	165
+TIE size0.25 gram2 consts0.25 caller0.5 scal0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	-	-	-	127	147	165
