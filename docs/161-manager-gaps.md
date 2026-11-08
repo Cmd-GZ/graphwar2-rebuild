@@ -43,7 +43,7 @@ sed -n '/const WIRED_TIER :=/,/^]/p' client/tools/assemble_check.gd | grep -c '"
 [`00-status.md`](00-status.md) §0.1b.2 的倒数第二行写：
 
 ```text
-| 4 个 manager 仍是 `assembled` | 只构造注册、没接事件流（11 wired / 2 layout / 7 assembled） | 缺工程 | ✅ 可做 |
+| ~~4 个 manager 仍是 `assembled`~~（**已由协调方就地更正为 9**） | 只构造注册、没接事件流（**11 wired / 2 layout / 9 assembled / 0 stub = 22**） | 缺工程 | ✅ 可做 |
 ```
 
 **同一行里两个数还互相矛盾**（4 vs 7），而且 **11 + 2 + 7 = 20 ≠ 22** —— 三个独立口径都不支持。
@@ -290,7 +290,7 @@ tag word 的两种构造都出现过，读的时候别只找 `movabs` 立即数�
 
 | # | 对象 | 旧说法 | 本轮实测 | 处置 |
 |---|---|---|---|---|
-| C1 | `docs/00-status.md` §0.1b.2 | "4 个 manager 仍是 `assembled`（11 wired / 2 layout / **7** assembled）" | **9**（三个独立口径：判据函数 / 四常量 + 编译期闸 / `assemble_check.gd`）；且旧行自身 4≠7、11+2+7=20≠22 | 登记；下一轮改那个文件的人顺手改。**本文是文档侧唯一给出 9 的现值页**（代码侧的三处口径都在 §0.1） |
+| ~~C1~~ **已修（2026-11-09）** | `docs/00-status.md` §0.1b.2 | "4 个 manager 仍是 `assembled`（11 wired / 2 layout / **7** assembled）" | **9**（三个独立口径：判据函数 / 四常量 + 编译期闸 / `assemble_check.gd`）；且旧行自身 4≠7、11+2+7=20≠22 | 登记；下一轮改那个文件的人顺手改。**本文是文档侧唯一给出 9 的现值页**（代码侧的三处口径都在 §0.1） |
 | C2 | `fixtures/name_to_addr.tsv` 的 `graphwar_name_manager / new` 行 | "歧义；候选 `0x3b6b20`, `0x3b6c70`, `0x420b40`, `0x4500c0`" | 真值 **`0x519100`**（4 个候选里 `0x4500c0` 是 `game_server_thread`，另 3 个不在本模块邻域）；判据：它同时订阅本模块的两条事件、处理器正是 `0x518f10`/`0x519030`，且被 `0x517690` 的 `0x517e63` 调用 | 登记（`fixtures/` 本轮禁改） |
 | C3 | `fixtures/name_to_addr.tsv` 的 `function_history_recorder / new` 行 | "未知（不引用任何 Location）" | 真值 **`0x3f10a0`**（判据：唯一订阅 `function_info_event`、处理器 `0x3f0e40`、被 `0x517690` 的 `0x517e27` 调用） | 登记（同上） |
 | C4 | `src/function_history_recorder.rs` 的 `EVENT_FIRE_TAG` 与模块文档首段 | 把 tag **35** 叫 `function_fire_event` | 字节：订阅名 `function_info_event`（`0x1bfccd`, len `0x13`）+ 处理器体内判别值闸 **35**；`docs/07` §7.2 的 72 条表里 **33 = `function_fire_event`** | 登记为**待裁口径**（G5）；裁决前不要照那个名字落码 |
