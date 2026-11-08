@@ -3218,5 +3218,5 @@ $PY tools/callgraph_fingerprint.py probe 0x3a2e10   # 单函数：四份构建�
 ### 36.3 口径提醒（同 `AGENTS.md` §0.2）
 
 本节与 `docs/16` §48 里的**全部地址**都能用 `tools/addr_probe.py` / `tools/arm64_sym.py` /
-`tools/pe_dis.py`（本轮新增，Windows PE 侧）原地复算；`cargo test` 的 1631 条只是回归保护，
+`tools/pe_dis.py`（本轮新增，Windows PE 侧）原地复算；`cargo test` 的条数只是回归保护（不是复原证据），
 **不构成**这些结论的证据。

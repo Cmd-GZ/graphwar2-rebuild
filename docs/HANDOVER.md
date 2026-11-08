@@ -11,7 +11,7 @@ GDExtension 类   12 / 12 全部还原
 真名       **348 / 527** 有原版真名（并集 351 个地址；无名 179 = 138 推断 + 41 未知）
            （**审计 2026-11-08**：原记 327，那是 §20 的单表口径；现行三表并集见 `archive/157-name-matching.md` §37–§40。
             327 条仍可在 `fixtures/name_to_addr.tsv` 里查到）
-cargo      **1628 passed / 0 failed**（`--features gdext-bindings` 的更数见当轮实测）
+cargo      **1638 passed / 0 failed**（`--features gdext-bindings` 的更数见当轮实测）
 客户端自检   **712 passed / 0 failed**（前置：`client/assets/` + `examples/serve_match`；**没有 serve_match 时 636 / 2 skipped**，差的是联机那 76 条；
            **审计 2026-11-08**：原记 694 → 709 → 现 712（gdswap 换进 24 个原版视图脚本）；缺资产的
            591 / 2 / 23 等处是 2026-11-07 当轮读数，本次未复测。两个口径见 README「客户端自检的两个口径」）
@@ -54,7 +54,7 @@ cargo      **1628 passed / 0 failed**（`--features gdext-bindings` 的更数见
 | 一个带 `_draw` 的类 | ~800 行，**且没有虚方法表** | **92 行**，虚方法表由宏生成 |
 | 源码保真 | ✗ 我们的发明 | ✅ 原版 `.rodata` 里有 `gdext-…/godot-core/src/registry/class.rs` |
 
-⇒ 骨架已按 **cargo feature `gdext-bindings`** 并入（**默认关闭**：零依赖、1585 绿）。
+⇒ 骨架已按 **cargo feature `gdext-bindings`** 并入（**默认关闭**：零依赖、1638 绿）。
 **12 个类迁移粗估 ~1200 行**，正在做第一个垂直切片（`EntityDrawer`）。
 ⚠️ 三个坑：不 `--import` 扩展静默不加载；`--script` 的 root 进树有时序；`GDExtensionPropertyInfo` 是 **48** 字节。
 
