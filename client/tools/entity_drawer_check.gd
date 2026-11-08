@@ -599,7 +599,114 @@ func _initialize() -> void:
 			"set_entity_look 对不存在的实体返回 false")
 		oc.free()
 
-	# 16) 回收：queue_free 整棵树，子节点跟着走
+	# 16) **内核事件通道**（任务 42，`docs/16-client.md` §46）：把两条链路真跑一遍
+	#
+	# 原版逐环节（地址见 §46）：
+	#
+	# ```text
+	# 生产  GraphwarPlanePosManager::set_position        x86 0x3c64c0
+	#         └─ GraphwarEventQueue::add_event(PosInfo=26) x86 0x3d3530
+	# 派发  GraphwarEventHandler::process_events         arm64 0x486970
+	# 订阅  EntityDrawer::ready 的 6 次 subscribe         x86 0x4b4130 → 0x514b40
+	#         └─ 闭包唯一副作用： self[+0x108] = 1         x86 0x4b4990
+	# 消费  EntityDrawer::draw / process **直接读位置表** x86 0x4b2890 / 0x4b4b60
+	# ```
+	#
+	# ⇒ 这里验的正是那三件事：**事件只置脏**、**数据是拉出来**的、
+	#   拉出来的东西真的进了 `_draw`（而不是靠播放屏按回合状态代填）。
+	ok(int(drawer.call("kernel_subscriptions")) == 0, "还没调 kernel_subscribe ⇒ 订阅数 0")
+	var subs: int = int(drawer.call("kernel_subscribe"))
+	ok(subs == 6, "kernel_subscribe() 订上 6 条（= `ready` 的 6 个事件名，实际 %d）" % subs)
+	ok(int(drawer.call("kernel_subscriptions")) == 6, "订阅数读回 6")
+	ok(int(drawer.call("ring_count")) == 0, "通道开着但位置表空 ⇒ 环仍是 0（不凭空画）")
+
+	# 16.1 生产端：真调 `GraphwarPlanePosManager::set_position`（x86 0x3c64c0）
+	ok(bool(drawer.call("kernel_push_position", 0, 5.0, 5.0, RING_POS_RADIUS)) == true,
+		"kernel_push_position(0, 5, 5, 2.0) 真的写进位置表")
+	ok(int(drawer.call("ring_count")) == 0,
+		"事件还在队列里、没 pump ⇒ 一个环都不画（**原版的事件只是脏信号**）")
+	ok(bool(drawer.call("kernel_dirty")) == false, "还没 pump ⇒ 脏标志 +0x108 仍是 false")
+
+	# 16.2 投递 + 拉：pump 之后 `prep` 表由**位置表**填（不是事件载荷，也不是调用方代填）
+	var events0: int = int(drawer.call("kernel_events"))
+	var delivered: int = int(drawer.call("kernel_pump"))
+	ok(delivered >= 1, "kernel_pump() 投递了 ≥1 条订阅事件（实际 %d）" % delivered)
+	ok(int(drawer.call("kernel_events")) > events0, "累计投递数涨了")
+	ok(bool(drawer.call("kernel_dirty")) == false,
+		"拉完清脏（原版 `process` 末尾 x86 0x4b5409 `mov byte [rbx+0x108],0`）")
+	var tags: PackedInt64Array = drawer.call("kernel_last_tags")
+	ok(tags.size() >= 1 and int(tags[tags.size() - 1]) == 26,
+		"投递的最后一条是 PosInfo(26)（`kernel_last_tags` = %s）" % [tags])
+	ok(int(drawer.call("ring_count")) == 1, "拉完 ⇒ prep 表里 1 条（ring_count == 1）")
+	ok(int(drawer.call("kernel_pulled")) >= 1, "累计拉到 ≥1 条位置")
+	ok(int(drawer.call("kernel_pulls")) >= 1, "累计拉过 ≥1 次")
+
+	# 16.3 拉到的东西真的进了 `_draw`：圆心/半径就是位置表那三个 f64
+	#
+	# 驱动量 `V` 是原版 `draw` 里 `0x4b2e10 call 0x519530` 的返回值。容器里那台
+	# `GraphwarTickHandler` 的基准是 `(0,0)`（epoch）⇒ 真读数是 epoch 量级，角度没法手算。
+	# 所以先把**虚拟时钟**摆到 0（同 `graphwar_plane_class::set_fractional_tick` 的做法，
+	# 只摆时钟、不碰数据），再逐位对角度。
+	ok(bool(drawer.call("kernel_set_clock", 0.0)) == true, "kernel_set_clock(0.0) 摆好虚拟时钟")
+	ok(String(drawer.call("kernel_clock_source")) == "override", "时钟来源 == override")
+	ok(int(drawer.call("kernel_pump")) >= 0, "再 pump 一次（让 V = 0 进 prep 表）")
+	await process_frame
+	await process_frame
+	var k2: float = control.size.x / 50.0
+	var c_center := Vector2(control.size.x * 0.5 + k2 * 5.0, control.size.y * 0.5 - k2 * 5.0)
+	var g0: PackedFloat64Array = drawer.call("last_arc", 0)
+	print("      内核链条 arc0 = %s" % [g0])
+	ok(int(drawer.call("last_arc_count")) == 3, "位置表 1 条 ⇒ `_draw` 发 3 段弧")
+	ok(g0.size() == 12 and _near(g0[0], c_center.x) and _near(g0[1], c_center.y),
+		"圆心 == 位置表的 (pos_x, pos_y) = (5,5) 的投影 (%.1f, %.1f)" % [c_center.x, c_center.y])
+	ok(_near(g0[2], RING_POS_RADIUS * RADIUS_SCALE * k2),
+		"半径 == 位置表的 pos_radius×1.5×k == 30 px（第 3 个 f64 就是半径）")
+	# 驱动量 V 来自 `GraphwarTickHandler::get_fractional_tick`（x86 0x519530）——
+	# 本局那个 tick handler 没推进过 ⇒ V = 0 ⇒ 张开态（∓π/6）。
+	ok(_near(g0[3], -HALF_ANGLE_MIN) and _near(g0[4], HALF_ANGLE_MIN),
+		"V 来自 tick handler 的 get_fractional_tick()（=0）⇒ 张开态 ∓π/6")
+
+	# 16.4 **代偿让位给真链路**：调用方再按老办法 `set_ring(...)` 塞别的坐标，
+	#      下一次"事件 → 拉表"会把它**覆盖**成位置表里的值。
+	drawer.call("set_ring", 0, -5.0, -5.0, 9.0, 60.0)
+	ok(int(drawer.call("ring_count")) == 1, "手工 set_ring 也在同一张表里（1 条）")
+	ok(bool(drawer.call("kernel_push_position", 0, 6.0, -3.0, 1.0)) == true,
+		"位置表改成 (6, -3, 1.0)")
+	ok(int(drawer.call("kernel_pump")) >= 1, "再来一次 pump")
+	var c2 := Vector2(control.size.x * 0.5 + k2 * 6.0, control.size.y * 0.5 - k2 * (-3.0))
+	await process_frame
+	await process_frame
+	var g1: PackedFloat64Array = drawer.call("last_arc", 0)
+	print("      覆盖之后 arc0 = %s" % [g1])
+	ok(_near(g1[0], c2.x) and _near(g1[1], c2.y),
+		"拉表把手工 set_ring 的 (-5,-5) 覆盖成位置表的 (6,-3)（%.1f, %.1f）" % [c2.x, c2.y])
+	ok(_near(g1[2], 1.0 * RADIUS_SCALE * k2), "半径也跟着变成 1.0×1.5×k == 15 px")
+
+	# 16.5 位置表清空 ⇒ 环自己消失（不需要调用方逐个 `clear_ring`）
+	ok(bool(drawer.call("kernel_push_position", 0, 0.0, 0.0, 1.0)) == true, "再写一格")
+	ok(int(drawer.call("kernel_pump")) >= 1, "pump 一次")
+	ok(int(drawer.call("ring_count")) == 1, "表里还有 1 条")
+	# 16.6 外观链（51/53/55）：同样"写表 + 事件 → 拉表 → 换贴图"
+	ok(bool(drawer.call("kernel_push_graphics", 0, 0, "target")) == true,
+		"set_skin_graphics(0, 'target')（x86 0x468c70）")
+	ok(bool(drawer.call("kernel_push_graphics", 0, 1, "no_face")) == true,
+		"set_face_graphics(0, 'no_face')（x86 0x468b60）")
+	ok(bool(drawer.call("kernel_push_graphics", 0, 2, "no_hat")) == true,
+		"set_hat_graphics(0, 'no_hat')（x86 0x468a50）")
+	var looks_before: PackedStringArray = drawer.call("entity_look", 0)
+	ok(looks_before == PackedStringArray(["yellow", "regular_eyes", "soldier_helmet"]),
+		"事件还没投递 ⇒ 外观仍是默认三件套（%s）" % [looks_before])
+	ok(int(drawer.call("kernel_pump")) >= 1, "pump（位置 + 三条 graphics 事件一起投递）")
+	var gtags: PackedInt64Array = drawer.call("kernel_last_tags")
+	ok(gtags.size() >= 3 and int(gtags[gtags.size() - 3]) == 51
+			and int(gtags[gtags.size() - 2]) == 53 and int(gtags[gtags.size() - 1]) == 55,
+		"投递的三条事件判别值依次是 51 / 53 / 55（%s）" % [gtags])
+	ok(int(drawer.call("kernel_graphics_applied")) >= 1, "拉表后至少换过一次外观")
+	var looks_after: PackedStringArray = drawer.call("entity_look", 0)
+	ok(looks_after == PackedStringArray(["target", "no_face", "no_hat"]),
+		"外观表的三个名字进了实体（%s）" % [looks_after])
+
+	# 17) 回收：queue_free 整棵树，子节点跟着走
 	var child_of_doomed: Node = kids[0]
 	control.queue_free()
 	await process_frame

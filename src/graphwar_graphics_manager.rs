@@ -47,7 +47,13 @@
 //! 三张表**间距 0x30**，每张是 `HashMap { ctrl@+0, bucket_mask@+8, growth_left@+0x10,
 //! items@+0x18, RandomState@+0x20 }`（`handle_entity_removed_event` 里
 //! `hash(self+0x38/+0x68/+0x98)` = 表基 + 0x20，正好是各自的 hasher）。
-//! 键是 `u32`（`player_id`），值是 `String`（24 字节，cap 在前）。
+//! 键是 `u32`（**实体 id**），值是 `String`（24 字节，cap 在前）。
+//!
+//! ⚠️ **2026-11-08（任务 42）就地更正**：本节此前写"键是 `player_id`"。线格式里这三个事件的
+//! 字段名是 **`entity_id`**（`{"SkinGraphicsInfo":{"entity_id":229,"graphics_str":"yellow"}}`，
+//! `src/_scaffold/protocol.rs`，**逐位**），而 `EntityDrawer::get_entity_*_sprite` 用的也是
+//! 同一个键（`docs/16-client.md` §46.3）。⇒ 键空间是**实体 id**，不是玩家 id。
+//! 形状（`u32` 键 + 24 B `String` 值 + 表间距 `0x30`）是 `逐位`，语义这一条改成**观测**。
 //!
 //! `send_all_info_events` 用基数 **`0x8000…0033` 再加 `k`**（`k = 0/2/4`）造三个判别值，
 //! 因此三个循环分别播 51 / 53 / 55：先皮肤（表 `+0x18`，直接用基数）、
@@ -189,6 +195,15 @@ impl GraphicsKind {
         }
     }
 
+    /// 这一条事件在 `src/events.rs` 里的变体（判别值见 [`Event::wire_tag`]）。
+    pub const fn event(self) -> crate::events::Event {
+        match self {
+            GraphicsKind::Skin => crate::events::Event::SkinGraphicsInfo,
+            GraphicsKind::Face => crate::events::Event::FaceGraphicsInfo,
+            GraphicsKind::Hat => crate::events::Event::HatGraphicsInfo,
+        }
+    }
+
     /// 对应的表在 `self` 里的字节偏移。
     pub const fn map_offset(self) -> usize {
         match self {
@@ -285,12 +300,30 @@ pub struct GraphwarGraphicsManager {
     pub faces: std::collections::BTreeMap<u32, String>,
     /// 帽子表（`self + 0x78`）。
     pub hats: std::collections::BTreeMap<u32, String>,
+    /// 出站缓冲：三个 setter 里那条 `GraphwarEventQueue::add_event`（`观测`）。
+    ///
+    /// 原版 setter **自己**把事件塞进 `self[8]` 那条队列（x86 `0x468cde` 的
+    /// `call *GOT 0x9bac80 -> 0x3d3530`）；本 crate 的 `GraphwarEventQueue` 是
+    /// **无载荷的 tag 队列**，而这里的事件带 `(entity_id, name)`，所以事件先落在这条
+    /// `outbox`，由持有队列的一方（`_scaffold::root_wiring::KernelBus`）搬进去。
+    /// **差异**：搬运点从 setter 体内挪到了调用点；tag 与顺序不变。
+    pub outbox: Vec<crate::events::Event>,
 }
 
 impl GraphwarGraphicsManager {
     /// 新建空管理器（原版还会订阅 [`SUBSCRIPTIONS`] 两条事件）。
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// 取走发件箱（`set_*_graphics` 已经写进去了；原版没有这个函数，事件直接进队列）。
+    pub fn take_outbox(&mut self) -> Vec<crate::events::Event> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// 发件箱里现在有几条。
+    pub fn outbox_len(&self) -> usize {
+        self.outbox.len()
     }
 
     fn table_mut(&mut self, kind: GraphicsKind) -> &mut std::collections::BTreeMap<u32, String> {
@@ -310,8 +343,13 @@ impl GraphwarGraphicsManager {
         }
     }
 
-    /// 三个 setter 的共同实现：写表 + 返回该发的那个事件。
+    /// 三个 setter 的共同实现：写表 + 把该发的那条事件放进发件箱 + 返回它的载荷。
+    ///
+    /// 顺序照原版：**先发事件、再写表**（x86 `0x468cde` 的 `add_event` 在 `HashMap::insert`
+    /// 之前；arm64 `0x49dd00` 同序）。本函数把"发事件"落成 `outbox.push`（见字段注释），
+    /// 所以两件事的**先后**保持为 先 push 后 insert。
     pub fn set_graphics(&mut self, kind: GraphicsKind, player_id: u32, name: &str) -> GraphicsInfo {
+        self.outbox.push(kind.event());
         self.table_mut(kind).insert(player_id, name.to_string());
         GraphicsInfo { kind, player_id, name: name.to_string() }
     }
@@ -450,5 +488,33 @@ mod inline_tests {
         assert_eq!(GraphicsKind::Face.tag(), 0x35);
         assert_eq!(GraphicsKind::Hat.tag(), 0x37);
         assert_eq!(GraphicsKind::Hat.tag_bits(), 0x8000_0000_0000_0037);
+        // 三个 setter 各发一条事件（x86 `0x468cde` 那句 `add_event`；tag = 51/53/55）
+        assert_eq!(
+            GraphicsKind::ALL.map(|k| k.event().wire_tag()),
+            [EVENT_SKIN_GRAPHICS_INFO, EVENT_FACE_GRAPHICS_INFO, EVENT_HAT_GRAPHICS_INFO]
+        );
+        assert_eq!([51u16, 53, 55], GraphicsKind::ALL.map(|k| k.event().wire_tag()));
+    }
+
+    /// `set_*_graphics` 把事件放进发件箱（原版直接进队列），写表的语义不变。
+    #[test]
+    fn setters_leave_one_event_in_the_outbox() {
+        let mut g = GraphwarGraphicsManager::new();
+        assert_eq!(g.outbox_len(), 0);
+        g.set_skin_graphics(229, "target");
+        assert_eq!(g.skins.get(&229).map(String::as_str), Some("target"));
+        g.set_face_graphics(229, "no_face");
+        g.set_hat_graphics(229, "no_hat");
+        assert_eq!(g.outbox_len(), 3);
+        assert_eq!(
+            g.take_outbox(),
+            vec![
+                crate::events::Event::SkinGraphicsInfo,
+                crate::events::Event::FaceGraphicsInfo,
+                crate::events::Event::HatGraphicsInfo
+            ]
+        );
+        assert_eq!(g.outbox_len(), 0, "取走之后清空");
+        assert_eq!(g.graphics_of(229)[0].as_deref(), Some("target"));
     }
 }
