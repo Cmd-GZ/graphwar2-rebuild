@@ -134,7 +134,7 @@
 //! |---|---|---|
 //! | `+0x00` | `RawTable.ctrl`（`NonNull<u8>`） | arm64 `0x3b7fdc` `ldp x9,x8,[x22,#0x18]`（x9 = ctrl = Data+0x00） |
 //! | `+0x08` | `RawTable.bucket_mask` | 同上（x8 = Data+0x08），`and x11, x0, x8` |
-//! | `+0x10` | `RawTable.growth_left` | 未单独观测（`RawTable` 的既有布局，`docs/16` §46.4 同口径） |
+//! | `+0x10` | `RawTable.growth_left` | 未单独观测（`RawTable` 的既有布局，`156` §46.4 同口径） |
 //! | `+0x18` | `RawTable.items`（长度） | arm64 `0x3b7fb4` `ldr x8,[x22,#0x30]` + `cbz` = 空表短路；x86 `0x3c630c` `cmp qword [r12+0x30],0` |
 //! | `+0x20` | `RandomState`（16 B，`k0`/`k1`） | arm64 `0x3b7fc0` `add x0,x22,#0x38` → `bl BuildHasher::hash_one`；x86 `0x3c6318` `lea rdi,[r12+0x38]` → `0x47dec0` |
 //!
@@ -169,6 +169,7 @@
 //! | 内层 48 B | 一张 `HashMap<u32, [f64;3]>` | [`GraphwarPlanePosData`]（单字段包一层，尺寸不变） | **观测** |
 //! | `get_position` / `get_all_positions` / `set_position` / `handle_entity_removed_event` | 见 §一 | 同名方法，语义逐条对上（锁 → 表操作 → 解锁 → 发事件） | **观测** |
 //! | `send_all_info_events` | 遍历所有键，逐个 `get_position` 后发 `PosInfo` | 同（顺序 = `HashMap` 迭代序，**不可依赖**） | **观测** |
+//! | **读表接口**（任务 41） | 原版没有；消费方直接用 `get_all_positions` 的散列序 | [`GraphwarPlanePosManager::get_all_positions_sorted`] / [`GraphwarPlanePosManager::positions_sorted`]（先调原版同名方法再按 id 排序，§八） | 我方补充（顺序口径差异） |
 //! | 发事件 | `PosInfo`(26)，载荷 `{pos, id}` | 只把 **tag** 放进 [`GraphwarEventQueue`]（本 crate 的 `Event` 是**无载荷**枚举）；载荷由表内容唯一决定 | **观测**（tag）/ 载荷**未建模** |
 //! | 订阅 | 2 条（`new_connection_event` / `entity_removed_event`），注册在 `&mut GraphwarEventHandler` 上 | **本 crate 没有 `GraphwarEventHandler` 的实现** ⇒ 订阅名以 [`SUBSCRIBED`] 常量记录 + 单测钉死，`new` 不注册 | 我方差异（**不是**原版行为） |
 //! | `new` 的第一个实参 | `&mut GraphwarEventHandler` | 去掉（同上） | 我方差异 |
@@ -180,7 +181,7 @@
 //! |---|---|---|
 //! | 值类型精确写法（`[f64;3]` vs `(f64,f64,f64)` vs `struct PlanePos{f64×3}`） | **推断**（24 B POD 是**观测**） | 没有任何一处读到字段名/算术；只能由线格式 `PosInfo` 反推 |
 //! | 三个 f64 的**语义**（`pos_x` / `pos_y` / `radius`？） | **推断** | 同上；`protocol.rs` 的字段名来自真实报文，但"表里存的就是这三个"没做点对点验证 |
-//! | `get_all_positions` 的**顺序** | **未知** | 就是 `RawTable` 的迭代序（散列序），原版没有排序调用；跨进程不确定 |
+//! | `get_all_positions` 的**顺序** | **未知** | 就是 `RawTable` 的迭代序（散列序），原版没有排序调用；跨进程不确定。我方消费方一律走 §8.2 的排序接口 |
 //! | `PosInfo` 的**字段排布**（`{pos, id}` 还是 `{id, pos}`） | **观测**（`{pos@+8, id@+0x20}`，两架构一致） | — |
 //! | 谁调 `set_position` | **观测**：`graphwar_remote_event_handler`（x86 `0x3e2830` 内 `0x3e3347`）与 `0x465a70`（`locs` 投 `graphwar_level_generator.rs`）；全部 35 个 `get_position` 调用点在 §〇 已列 | — |
 //! | `+0x00` 弱自句柄**谁在用** | **观测**（`new` 里为两条订阅闭包各 `Weak::clone` 一次） | 管理器内部**没有**一处读它；"谁替它订阅"= 它自己（在 `new` 里） |
@@ -190,10 +191,57 @@
 //!
 //! * `px = 20x + 500` 那条坐标换算 **不属于本模块**（§〇），它在
 //!   `src/graphwar_plane.rs::to_pixel`（`graphwar_plane.rs:174` 的锚，`docs/16` §42）；
-//! * `EntityDrawer::draw`（`0x4b2890`）与 `0x4b4b60`（`entity_drawer.rs`）**都读**
+//! * `EntityDrawer::draw`（`0x4b2890`）与 `EntityDrawer::process`（`0x4b4b60`）**都读**
 //!   `get_all_positions` / `get_position` ⇒ 准备圈/实体绘制的位置来源就是这张表
-//!   （`src/_scaffold/entity_drawer_class.rs` 目前用的是它自己那套坐标，**未接**本管理器，
-//!   这一条记在 `docs/16` §44.7 的"未做"里）。
+//!   （接法见 §八；`src/_scaffold/entity_drawer_class.rs` 从任务 41 起读这张表）。
+//!
+//! # 八、读表接口：原版的顺序是**散列序**，消费方必须自己排序（任务 41）
+//!
+//! ## 8.1 消费方到底怎么读这张表（`观测`，逐个调用点）
+//!
+//! `EntityDrawer::draw`（x86 `0x4b2890`，ELF FDE `0x4b2890..0x4b3feb` = 5979 B）里这条链：
+//!
+//! ```text
+//! 0x4b2b08  mov  rbx, [r12+0x238]   ; r12 = [root+0x1668]（根节点里的游戏客户端单元）
+//! 0x4b2b24  lea  rdi, [rbx+0x18]    ; &RefCell<GraphwarModuleContainer>
+//! 0x4b2b28  call 0x46ad30           ; GraphwarModuleContainer::get_module::<GraphwarPlanePosManager>
+//! 0x4b2b2d  mov  rbp, rax           ; Rc<RefCell<GraphwarPlanePosManager>>（RcBox 指针）
+//! ...
+//! 0x4b2dc3  call 0x46aa50           ; get_module::<GraphwarTickHandler>（同一段里 9 个 get_module）
+//! 0x4b2e10  call 0x519530           ; GraphwarTickHandler::get_fractional_tick ⇒ V
+//! 0x4b2e2f  mov  rsi, rbp           ; rbp = Manager RcBox + 0x18 = &GraphwarPlanePosManager
+//! 0x4b2e32  call 0x3c66a0           ; get_all_positions(&Manager, &mut Vec<u32>)   ← 就是这张表
+//! 0x4b2e88  lea  rax, [rcx+rax*4]   ; 元素宽度 4 ⇒ Vec<u32>（键 = 实体 id）
+//! 0x4b3135  mov  r15d, [rcx]        ; 循环体：按 **Vec 原序**逐个取 id
+//! 0x4b314b  call 0x3c62b0           ; get_position(id) —— None 就跳过（0x4b3155 jne 0x4b37f0）
+//! 0x4b315b  movsd xmm0, [rsp+0x80]  ; x = pos[0] → [rsp+0xb0]
+//! 0x4b316d  movsd xmm0, [rsp+0x88]  ; y = pos[1] → [rsp+0xa8]
+//! 0x4b317f  movsd xmm0, [rsp+0x90]  ; r = pos[2] → [rsp+0x60]（乘 1.5 才是画出来的半径）
+//! 0x4b3199  call 0x454950           ; GraphwarLifeManager::get_alive(id)  —— 门 1
+//! 0x4b31ac  call 0x462b50           ; GraphwarTurnManager::is_on_turn(id) —— 门 2
+//! ```
+//!
+//! 同一张表的第二个消费方：`EntityDrawer::process`（x86 `0x4b4b60`）在 `0x4b4f24`
+//! 调 `get_all_positions`、`0x4b5004` 调 `get_position`（同一套"取 id → 取三份 f64"）。
+//!
+//! **`0x4b2e32`（取表）与 `0x4b3130`（循环头）之间没有任何排序调用**：这一段共 5 条 `call`
+//! = `get_all_positions` 自己 + 1 条 `BuildHasher::hash_one`（`0x47dec0`，查 `map[i]` 用）
+//! + 3 条箭头绘制（`0x4b9a70`）；没有 `slice::sort*` / `sort_unstable*` 的调用点，
+//! 循环直接从 `Vec` 的第 0 个元素开始。⇒ **原版用散列序直接画**（与 §六"顺序未知"一致）。
+//!
+//! ## 8.2 我方接口（**原版没有这两个方法**）
+//!
+//! 散列序跨帧/跨进程不定 ⇒ 绘制顺序会抖（同一帧的内容一样，但 `draw_arc`/`draw_polygon`
+//! 的先后变，`last_arc` 这类观测口也就不稳定）。任务 41 起，所有消费方都改走：
+//!
+//! | 方法 | 返回 | 用途 |
+//! |---|---|---|
+//! | [`GraphwarPlanePosManager::get_all_positions_sorted`] | `Vec<u32>`（id 升序） | **键**的稳定顺序（原版 `get_all_positions` 的排序版） |
+//! | [`GraphwarPlanePosManager::positions_sorted`] | `Vec<(u32, PlanePos)>` | id 与三份 f64 一起给，绘制侧的唯一读表入口 |
+//!
+//! 两者都**先调原版同名方法再排序**（`get_all_positions()` / `get_position(id)`），
+//! 不是另开一条读 `HashMap` 的路——顺序是唯一被我方改动的量（`推断`不到，直接是口径差异）。
+//! 排序键 = **实体 id 升序**（`sort_unstable`，id 唯一所以稳定）。
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -354,8 +402,32 @@ impl GraphwarPlanePosManager {
     }
 
     /// `get_all_positions`（arm64 `0x3b8348` / x86 `0x3c66a0`）：**键**的集合（`Vec<u32>`）。
+    ///
+    /// ⚠️ 顺序 = `RawTable` 的迭代序（散列序，§六 标 `未知`）——原版 `EntityDrawer::draw`
+    /// 就是**照这个原序**画的（§8.1：`0x4b2e32` 之后直接 `0x4b3135 mov r15d,[rcx]`）。
+    /// 需要可复现的绘制顺序时用 [`Self::get_all_positions_sorted`]。
     pub fn get_all_positions(&self) -> Vec<u32> {
         self.lock().get_all_positions()
+    }
+
+    /// **我方补充**（原版没有这个方法）：`get_all_positions` 的**稳定顺序**版本 —— id 升序。
+    ///
+    /// 先调原版同名方法取键，再按 id 排序；只改顺序，不改集合（见 §8.2）。
+    pub fn get_all_positions_sorted(&self) -> Vec<u32> {
+        let mut ids = self.get_all_positions();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// **我方补充**：按 id 升序的 `(id, (pos_x, pos_y, radius))` 快照 —— 绘制侧唯一的读表入口。
+    ///
+    /// 形状照原版 `draw` 的循环（`get_all_positions` → 逐 id `get_position`，§8.1），
+    /// 只是**先排序**：`0x4b314b` 那个 `None 就跳过` 的分支在这里是 `filter_map`。
+    pub fn positions_sorted(&self) -> Vec<(u32, PlanePos)> {
+        self.get_all_positions_sorted()
+            .into_iter()
+            .filter_map(|id| self.get_position(id).map(|pos| (id, pos)))
+            .collect()
     }
 
     /// `send_all_info_events`（arm64 `0x3b8660` / x86 `0x3c6a10`）：把**当前全表**逐条重发一遍。
@@ -488,6 +560,61 @@ mod tests {
         assert_eq!(m.get_position(7), None);
         assert!(queue.borrow().is_empty(), "handle_entity_removed_event 不发事件");
         assert_eq!(m.handle_entity_removed_event(ENTITY_REMOVED_EVENT_TAG, 7), Ok(false));
+    }
+
+    /// **两顺序插入 → 排序后的读法一致**（任务 41 的核心断言，见 §8.2）。
+    ///
+    /// 原版 `get_all_positions` 是散列序（§六 `未知`）⇒ 同一批 id 的 `Vec` 顺序不可依赖。
+    /// 这条测试钉住"**排序后的读法与插入序无关**"，并且排序后 id 与自己的三份 f64 不错位。
+    #[test]
+    fn sorted_read_is_independent_of_insertion_order() {
+        let pairs: [(u32, PlanePos); 6] = [
+            (9, [9.0, 0.5, 1.0]),
+            (2, [2.0, 0.5, 1.0]),
+            (7, [7.0, 0.5, 1.0]),
+            (1, [1.0, 0.5, 1.0]),
+            (4, [4.0, 0.5, 1.0]),
+            (3, [3.0, 0.5, 1.0]),
+        ];
+        let new_manager = || {
+            GraphwarPlanePosManager::new(Rc::new(RefCell::new(GraphwarEventQueue::new())))
+        };
+        let forward = new_manager();
+        let backward = new_manager();
+        // 正序插入 vs 逆序插入（同一批 6 对，一个字符都没差）
+        for &(id, pos) in &pairs {
+            forward.borrow().set_position(id, pos);
+        }
+        for &(id, pos) in pairs.iter().rev() {
+            backward.borrow().set_position(id, pos);
+        }
+
+        // ① 两个顺序插入 ⇒ 稳定读法完全一致（id 升序 = 1..9 里那 6 个）
+        assert_eq!(forward.borrow().get_all_positions_sorted(), vec![1, 2, 3, 4, 7, 9]);
+        assert_eq!(
+            forward.borrow().get_all_positions_sorted(),
+            backward.borrow().get_all_positions_sorted(),
+            "两顺序插入 ⇒ 排序后的键序一致"
+        );
+        // ② 带值的快照也逐字节一致（id + 三份 f64）
+        assert_eq!(
+            forward.borrow().positions_sorted(),
+            backward.borrow().positions_sorted(),
+            "两顺序插入 ⇒ 排序后的 (id, pos) 快照一致"
+        );
+        // ③ 排序没有把值和键拆散：值的第一份就是自己的 id（构造时这么填的）
+        for (id, pos) in forward.borrow().positions_sorted() {
+            assert_eq!(pos, [id as f64, 0.5, 1.0], "id {id} 的三份 f64 错位了");
+        }
+        // ④ 只改顺序、不改集合：排序版的长度 = 原版 get_all_positions() 的长度
+        assert_eq!(
+            forward.borrow().positions_sorted().len(),
+            forward.borrow().get_all_positions().len()
+        );
+        // ⑤ 一条数据都没有时是空表（不能"排出一个假条目"）
+        let empty = new_manager();
+        assert!(empty.borrow().positions_sorted().is_empty());
+        assert!(empty.borrow().get_all_positions_sorted().is_empty());
     }
 
     /// `Rc::new_cyclic` 的弱自句柄指向自己（`+0x00` 那一格真的是 `Weak`），

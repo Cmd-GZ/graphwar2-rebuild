@@ -27,9 +27,15 @@ extends SceneTree
 ##    中分角 2π/3 与 4π/3、箭头尖端在 `r`、底边在 `r+0.5`、张 12°），
 ##    **关掉准备态（`clear_ring`）之后一条都不发**；
 ## 8. `remove_entity()` 的 `queue_free` 真的释放了那 4 个节点；
-## 9. 贴图三态（第 16 组）：**有 assets** ⇒ `texture.resource_path = res://assets/…ctex`、
+## 9. 贴图三态（第 15 组）：**有 assets** ⇒ `texture.resource_path = res://assets/…ctex`、
 ##    每层按**自己**贴图的宽度算缩放（`no_face` 是 128、皮肤 512）；**没有 assets**
-##    （`assets_root = ""`）⇒ 纯色兜底 + `missing_assets()` 点名缺什么；**名字不在表里** ⇒ 同样兜底。
+##    （`assets_root = ""`）⇒ 纯色兜底 + `missing_assets()` 点名缺什么；**名字不在表里** ⇒ 同样兜底；
+## 10. **位置表真的接进了绘制**（第 16 组，§46）：原版 `EntityDrawer::draw`（`0x4b2890`）在
+##    `0x4b2e32` 调 `GraphwarPlanePosManager::get_all_positions`、循环里 `0x4b314b`
+##    `get_position` 取三份 f64。本类先按 **id 升序**再画（原版是散列序 ⇒ 排序是我方差异），
+##    断言：表里 3 个 → 画 3 个（圆心/半径来自**表**而非 `set_ring`）；**两个不同插入顺序 ⇒
+##    画出来的顺序与 9 条弧的 12 个实参逐条一致**；表里有、准备态里没有 ⇒ 不画；
+##    `pos_table_enabled = false` ⇒ 回到 `prep` 代偿路径。
 ##
 ## 与 `client/tools/gdext_check.gd` 的分工：那个测「换绑定层对客户端透明」，这个测
 ## 「`EntityDrawer` 能不能长出节点树 + 把准星画出来」。
@@ -95,6 +101,35 @@ func ok(cond: bool, what: String) -> void:
 ## ⇒ 这里用固定的绝对容差（f32 → f64 的误差量级是 1e-8）。
 func _near(a: float, b: float, eps: float = 1e-5) -> bool:
 	return absf(a - b) <= eps
+
+## id 序列是不是严格升序（位置表的"排序生效"判据之一）。
+func _ids_ascending(ids: PackedInt64Array) -> bool:
+	for i in range(1, ids.size()):
+		if int(ids[i - 1]) >= int(ids[i]):
+			return false
+	return true
+
+## 两个 id 序列是不是**同一个集合**（排序只改顺序、不改集合）。
+func _same_id_set(a: PackedInt64Array, b: PackedInt64Array) -> bool:
+	if a.size() != b.size():
+		return false
+	var sa := []
+	var sb := []
+	for i in range(a.size()):
+		sa.append(int(a[i]))
+		sb.append(int(b[i]))
+	sa.sort()
+	sb.sort()
+	return sa == sb
+
+## 两个 id 序列是不是**逐位相同**（两个插入顺序画出来的顺序一致）。
+func _same_ids(a: PackedInt64Array, b: PackedInt64Array) -> bool:
+	if a.size() != b.size():
+		return false
+	for i in range(a.size()):
+		if int(a[i]) != int(b[i]):
+			return false
+	return true
 
 ## `entity_drawer::sprite_transform` 的 GDScript 版（**独立重算，不调 Rust**）。
 ##
@@ -176,6 +211,9 @@ func _initialize() -> void:
 		# 贴图链（`GraphwarTextureLoader` 三张表，§51）
 		"set_entity_look", "entity_look", "sprite_texture_path",
 		"texture_stats", "missing_assets", "assets_available",
+		# 位置表（`GraphwarPlanePosManager`，任务 41 / §46）
+		"pos_set_position", "pos_remove", "pos_count", "pos_ids_raw",
+		"pos_ids_sorted", "pos_get_position", "pos_drawn_ids", "pos_event_count",
 	]
 	var names := PackedStringArray()
 	for m in drawer.get_method_list():
@@ -599,7 +637,167 @@ func _initialize() -> void:
 			"set_entity_look 对不存在的实体返回 false")
 		oc.free()
 
-	# 16) 回收：queue_free 整棵树，子节点跟着走
+	# 16) 位置表：`GraphwarPlanePosManager::get_all_positions` 接进 `_draw` / `relayout`（§46）
+	#
+	# 原版 `EntityDrawer::draw`（x86 `0x4b2890`）在 `0x4b2e32` 调 `get_all_positions`，
+	# 拿到的 `Vec<u32>` **原序**直接喂循环（`0x4b3135 mov r15d,[rcx]`），循环里
+	# `0x4b314b` 调 `get_position` 取三份 f64（x / y / 半径 → `[rsp+0xb0]/[rsp+0xa8]/[rsp+0x60]`）；
+	# 取表到循环头那一段**没有排序调用** ⇒ 原版顺序 = 散列序（§45.8 标 `未知`）。
+	# 本类先 `get_all_positions` 再按 id 升序（**我方差异**），所以下面两组断言要能证明：
+	#   ① 表里有 N 个 ⇒ 画 N 个（而且圆心/半径来自表，不是 `set_ring` 那份坐标）；
+	#   ② 两个不同插入顺序 ⇒ 画出来的顺序与 9 条弧实参**完全一致**。
+	var pos_a: Object = EntityDrawer.new()
+	var pos_b: Object = EntityDrawer.new()
+	ok(pos_a != null and pos_b != null, "位置表用两个新实例（正序 / 逆序插入）")
+	if pos_a != null and pos_b != null:
+		var ca: Control = pos_a
+		var cb: Control = pos_b
+		for c in [ca, cb]:
+			c.set_size(Vector2(W, H))
+		pos_a.set("team_color", TEAM_COLOR)
+		pos_b.set("team_color", TEAM_COLOR)
+		ok(int(pos_a.call("pos_count")) == 0, "新实例的位置表是空的（pos_count() == 0）")
+		var drawn0: PackedInt64Array = pos_a.call("pos_drawn_ids")
+		ok(drawn0.size() == 0, "还没画过 ⇒ pos_drawn_ids() 为空")
+
+		# 三条 `PosInfo` 的三份 f64（x / y / radius）。id 故意乱序写进表。
+		var rows := [
+			{"id": 2, "pos": Vector3(2.0, -3.0, 2.0)},
+			{"id": 0, "pos": Vector3(0.0, 4.0, 1.0)},
+			{"id": 1, "pos": Vector3(-4.0, 1.0, 3.0)},
+		]
+		for r in rows:
+			ok(bool(pos_a.call("pos_set_position", r["id"], r["pos"].x, r["pos"].y, r["pos"].z)) == true,
+				"pos_set_position(%d, %s) == true" % [r["id"], r["pos"]])
+		# 第二个实例：同一批数据**逆序**插入（用于"两顺序插入 → 结果一致"）
+		for i in range(rows.size() - 1, -1, -1):
+			var rr: Dictionary = rows[i]
+			pos_b.call("pos_set_position", rr["id"], rr["pos"].x, rr["pos"].y, rr["pos"].z)
+
+		ok(int(pos_a.call("pos_count")) == 3, "写了 3 条 ⇒ pos_count() == 3")
+		var raw_ids: PackedInt64Array = pos_a.call("pos_ids_raw")
+		var sorted_ids: PackedInt64Array = pos_a.call("pos_ids_sorted")
+		ok(raw_ids.size() == 3, "pos_ids_raw() = get_all_positions() 的原序，3 个 id（实际 %s）" % [raw_ids])
+		ok(sorted_ids.size() == 3 and _ids_ascending(sorted_ids),
+			"pos_ids_sorted() 是 id 升序 [0,1,2]（实际 %s）" % [sorted_ids])
+		ok(_same_id_set(raw_ids, sorted_ids), "排序只改顺序、不改集合（原序 %s）" % [raw_ids])
+		var got2: PackedFloat64Array = pos_a.call("pos_get_position", 2)
+		ok(got2.size() == 3 and _near(got2[0], 2.0) and _near(got2[1], -3.0) and _near(got2[2], 2.0),
+			"pos_get_position(2) == 写进去的三份 f64 [2, −3, 2]（实际 %s）" % [got2])
+		ok(int(pos_a.call("pos_event_count")) == 3,
+			"set_position 每条发一条 PosInfo(26) ⇒ 事件队列 3 条（原版 0x3c659f 的 tag）")
+
+		# 门：只有"准备态"（`prep`）里的实体才画。原版这里是 `get_alive`（0x454950）+
+		# `is_on_turn`（0x462b50）两个 manager 的门，本类用 `prep` 近似（§46 的推断）。
+		# 故意把 `set_ring` 的坐标写成 (0,0)、半径 0.25：**与表里的值完全不同**，
+		# 这样"圆心/半径到底来自哪张表"才断得住。
+		for r in rows:
+			pos_a.call("set_ring", r["id"], 0.0, 0.0, 0.25, 0.0)
+			pos_b.call("set_ring", r["id"], 0.0, 0.0, 0.25, 0.0)
+		ok(int(pos_a.call("ring_count")) == 3, "三具都在准备态（ring_count() == 3）")
+
+		root.add_child(ca)
+		root.add_child(cb)
+		await process_frame
+		await process_frame
+
+		var drawn: PackedInt64Array = pos_a.call("pos_drawn_ids")
+		print("      位置表画出来的 id 顺序: %s（原序 %s）" % [drawn, raw_ids])
+		ok(drawn.size() == 3 and int(drawn[0]) == 0 and int(drawn[1]) == 1 and int(drawn[2]) == 2,
+			"表驱动 ⇒ 画的是 id 升序 [0,1,2]（实际 %s）" % [drawn])
+		ok(int(pos_a.call("last_arc_count")) == 9, "3 具 × 3 段弧 == 9 条 draw_arc")
+
+		# 圆心 = 表里 (x,y) 的投影（k = W/50 = 10）；半径 = 表里 radius × 1.5 × k。
+		# 数据：id 0 (0,4,r=1) → 中心 (250,110)、半径 15；id 1 (−4,1,r=3) → (210,140)、45；
+		#       id 2 (2,−3,r=2) → (270,180)、30。
+		var k_pos: float = W / 50.0
+		var want_centers := [Vector2(250.0, 110.0), Vector2(210.0, 140.0), Vector2(270.0, 180.0)]
+		var want_radii := [1.0 * RADIUS_SCALE * k_pos, 3.0 * RADIUS_SCALE * k_pos,
+			2.0 * RADIUS_SCALE * k_pos]
+		var centers_ok := true
+		var radii_ok := true
+		for e in range(3):
+			var arc: PackedFloat64Array = pos_a.call("last_arc", e * 3)
+			if not (_near(arc[0], want_centers[e].x) and _near(arc[1], want_centers[e].y)):
+				centers_ok = false
+			if not _near(arc[2], want_radii[e]):
+				radii_ok = false
+		ok(centers_ok, "三条弧的圆心 == 表里 x/y 的投影（(250,110)/(210,140)/(270,180)），不是 set_ring 的 (0,0)")
+		ok(radii_ok, "半径 == 表里 radius×1.5×k（15 / 45 / 30 px）")
+
+		# 表里有、准备态里没有 ⇒ 不画（门在起作用）
+		ok(bool(pos_a.call("pos_set_position", 7, 1.0, 1.0, 2.0)) == true,
+			"表里再加一条 id 7（**不**进准备态）")
+		await process_frame
+		await process_frame
+		var drawn3: PackedInt64Array = pos_a.call("pos_drawn_ids")
+		ok(int(pos_a.call("last_arc_count")) == 9 and drawn3.size() == 3,
+			"表里有 / 准备态里没有 ⇒ 不画（门 = 0x454950 get_alive + 0x462b50 is_on_turn 的近似）")
+
+		# ② 两个不同插入顺序 ⇒ 结果一致（这条才是"排序有效"的证明）
+		var drawn_b: PackedInt64Array = pos_b.call("pos_drawn_ids")
+		ok(drawn_b.size() == 3 and int(drawn_b[0]) == 0 and int(drawn_b[1]) == 1
+				and int(drawn_b[2]) == 2,
+			"逆序插入的那个实例，画出来也是 [0,1,2]（实际 %s）" % [drawn_b])
+		ok(_same_ids(drawn, drawn_b), "两个插入顺序 ⇒ pos_drawn_ids() 完全一致")
+		var arcs_equal := true
+		if int(pos_b.call("last_arc_count")) != 9:
+			arcs_equal = false
+		else:
+			for i in range(9):
+				var xa: PackedFloat64Array = pos_a.call("last_arc", i)
+				var xb: PackedFloat64Array = pos_b.call("last_arc", i)
+				if xa.size() != 12 or xb.size() != 12:
+					arcs_equal = false
+					break
+				for j in range(12):
+					if not _near(xa[j], xb[j]):
+						arcs_equal = false
+						break
+				if not arcs_equal:
+					break
+		ok(arcs_equal, "两个插入顺序 ⇒ 9 条 draw_arc 的 12 个实参逐条一致（排序真的生效）")
+
+		# ③ 代偿路径：`pos_table_enabled = false` ⇒ 回到 `prep`（`set_ring` 那套坐标）
+		pos_a.set("pos_table_enabled", false)
+		await process_frame
+		await process_frame
+		ok(int(pos_a.call("last_arc_count")) == 9,
+			"关掉位置表 ⇒ 仍按 prep 画 3 具（代偿路径保留，一条没删）")
+		var fb: PackedFloat64Array = pos_a.call("last_arc", 0)
+		ok(_near(fb[0], 250.0) and _near(fb[1], 150.0),
+			"代偿路径的圆心 == prep 里 (0,0) 的投影 (250,150)")
+		ok(_near(fb[2], 0.25 * RADIUS_SCALE * k_pos), "代偿路径的半径 == prep 的 0.25×1.5×k（3.75 px）")
+		pos_a.set("pos_table_enabled", true)
+		await process_frame
+		await process_frame
+
+		# ④ `process`/`relayout` 那条读表（原版 `0x4b4f24` get_all_positions、`0x4b5004`
+		#    get_position）：`spawn_entity` 给的坐标会被表里的覆盖
+		ok(int(pos_a.call("spawn_entity", 0, 9.0, 9.0)) == 4,
+			"spawn_entity(0, 9, 9)：先按 (9,9) 建 4 个子节点")
+		pos_a.call("relayout")
+		var sp0: Sprite2D = ca.get_child(0)
+		var texw: int = int(sp0.texture.get_width())
+		var want_sprite: Dictionary = expect_sprite(Vector2(W, H), TEAM_COLOR, texw, 0.0, 4.0)
+		print("      sprite0 position=%s（按表坐标 (0,4) 的期望 %s）"
+			% [sp0.position, want_sprite["position"]])
+		ok(sp0.position.is_equal_approx(want_sprite["position"]),
+			"spawn_entity 的 (9,9) 被表里的 (0,4) 覆盖 ⇒ sprite 位置 == 表坐标的投影")
+
+		# ⑤ 删表：只认 tag 14，返回"原来有没有"
+		ok(bool(pos_a.call("pos_remove", 7)) == true, "pos_remove(7) == true（表里有）")
+		ok(bool(pos_a.call("pos_remove", 7)) == false, "pos_remove(7) 再调一次 == false（不报错）")
+		ok(int(pos_a.call("pos_count")) == 3, "删掉 id 7 ⇒ 回到 3 条")
+
+		ca.queue_free()
+		cb.queue_free()
+		await process_frame
+		await process_frame
+		ok(not is_instance_valid(pos_a) and not is_instance_valid(pos_b),
+			"两个位置表实例都被 queue_free 回收")
+
+	# 17) 回收：queue_free 整棵树，子节点跟着走
 	var child_of_doomed: Node = kids[0]
 	control.queue_free()
 	await process_frame
