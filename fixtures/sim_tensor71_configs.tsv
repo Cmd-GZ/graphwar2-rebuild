@@ -1,0 +1,59 @@
+# 任务 71 · 配置 × 半 的 top-1/top-5（张量路径；留出半**只报数**）
+# 锚点六组在 v2 留出半上逐位复现 docs/02 §46.4 的 85.65 / 87.53 / 88.15 / 87.53 / 87.94 / 87.11
+suite	pop	half	config	n	top1	top5	pct1	pct5
+anchor/cpu	v2	holdout	BASE	481	412	446	85.65%	92.72%
+anchor/cpu	v2	holdout	PREREG scal.25	481	421	446	87.53%	92.72%
+anchor/cpu	v2	holdout	REF scal.5	481	424	446	88.15%	92.72%
+anchor/cpu	v2	holdout	scal_c.25（泄漏探针）	481	421	446	87.53%	92.72%
+anchor/cpu	v2	holdout	scal_c.5（泄漏探针）	481	423	446	87.94%	92.72%
+anchor/cpu	v2	holdout	shape1.0	481	419	446	87.11%	92.72%
+anchor/gpu	v2	holdout	BASE	481	412	446	85.65%	92.72%
+anchor/gpu	v2	holdout	PREREG scal.25	481	421	446	87.53%	92.72%
+anchor/gpu	v2	holdout	REF scal.5	481	424	446	88.15%	92.72%
+anchor/gpu	v2	holdout	scal_c.25（泄漏探针）	481	421	446	87.53%	92.72%
+anchor/gpu	v2	holdout	scal_c.5（泄漏探针）	481	423	446	87.94%	92.72%
+anchor/gpu	v2	holdout	shape1.0	481	419	446	87.11%	92.72%
+anchor/gpu	old331	holdout	BASE	165	120	146	72.73%	88.48%
+anchor/gpu	old331	holdout	PREREG scal.25	165	126	147	76.36%	89.09%
+anchor/gpu	old331	holdout	REF scal.5	165	129	147	78.18%	89.09%
+anchor/gpu	old331	holdout	scal_c.25（泄漏探针）	165	126	147	76.36%	89.09%
+anchor/gpu	old331	holdout	scal_c.5（泄漏探针）	165	128	147	77.58%	89.09%
+anchor/gpu	old331	holdout	shape1.0	165	124	146	75.15%	88.48%
+second/gpu	v2	tune	REF	494	444	464	89.88%	93.93%
+second/gpu	v2	tune	REF + cgram_a=0.25	494	446	465	90.28%	94.13%
+second/gpu	v2	tune	REF + cgram_a=0.5	494	447	465	90.49%	94.13%
+second/gpu	v2	tune	REF + cgram_a=1	494	446	465	90.28%	94.13%
+second/gpu	v2	tune	REF + callee_a=0.25	494	446	464	90.28%	93.93%
+second/gpu	v2	tune	REF + callee_a=0.5	494	446	464	90.28%	93.93%
+second/gpu	v2	tune	REF + callee_a=1	494	442	463	89.47%	93.72%
+second/gpu	v2	tune	REF + ncal_a=0.25	494	445	464	90.08%	93.93%
+second/gpu	v2	tune	REF + ncal_a=0.5	494	444	463	89.88%	93.72%
+second/gpu	v2	tune	REF + ncal_a=1	494	441	461	89.27%	93.32%
+second/gpu	v2	tune	REF + caller_a=0.25	494	447	464	90.49%	93.93%
+second/gpu	v2	tune	REF + caller_a=0.5	494	446	465	90.28%	94.13%
+second/gpu	v2	tune	REF + caller_a=1	494	439	460	88.87%	93.12%
+second/gpu	v2	tune	REF + ncall_a=0.25	494	446	466	90.28%	94.33%
+second/gpu	v2	tune	REF + ncall_a=0.5	494	446	465	90.28%	94.13%
+second/gpu	v2	tune	REF + ncall_a=1	494	432	459	87.45%	92.91%
+second/gpu	v2	tune	REF − caller + cgram_a=.5	494	446	465	90.28%	94.13%
+second/gpu	v2	tune	REF + cgram_a=.5 + callee_a=.5	494	447	465	90.49%	94.13%
+second/gpu	v2	tune	只用二阶 cgram_a=1	494	277	355	56.07%	71.86%
+second/gpu	v2	holdout	REF	481	424	446	88.15%	92.72%
+second/gpu	v2	holdout	REF + cgram_a=0.25	481	425	446	88.36%	92.72%
+second/gpu	v2	holdout	REF + cgram_a=0.5	481	425	447	88.36%	92.93%
+second/gpu	v2	holdout	REF + cgram_a=1	481	424	447	88.15%	92.93%
+second/gpu	v2	holdout	REF + callee_a=0.25	481	424	447	88.15%	92.93%
+second/gpu	v2	holdout	REF + callee_a=0.5	481	423	447	87.94%	92.93%
+second/gpu	v2	holdout	REF + callee_a=1	481	422	448	87.73%	93.14%
+second/gpu	v2	holdout	REF + ncal_a=0.25	481	424	446	88.15%	92.72%
+second/gpu	v2	holdout	REF + ncal_a=0.5	481	422	446	87.73%	92.72%
+second/gpu	v2	holdout	REF + ncal_a=1	481	418	443	86.90%	92.10%
+second/gpu	v2	holdout	REF + caller_a=0.25	481	424	447	88.15%	92.93%
+second/gpu	v2	holdout	REF + caller_a=0.5	481	425	448	88.36%	93.14%
+second/gpu	v2	holdout	REF + caller_a=1	481	420	444	87.32%	92.31%
+second/gpu	v2	holdout	REF + ncall_a=0.25	481	425	447	88.36%	92.93%
+second/gpu	v2	holdout	REF + ncall_a=0.5	481	423	445	87.94%	92.52%
+second/gpu	v2	holdout	REF + ncall_a=1	481	415	438	86.28%	91.06%
+second/gpu	v2	holdout	REF − caller + cgram_a=.5	481	425	447	88.36%	92.93%
+second/gpu	v2	holdout	REF + cgram_a=.5 + callee_a=.5	481	424	449	88.15%	93.35%
+second/gpu	v2	holdout	只用二阶 cgram_a=1	481	264	332	54.89%	69.02%

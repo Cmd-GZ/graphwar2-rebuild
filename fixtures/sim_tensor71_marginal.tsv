@@ -1,0 +1,64 @@
+# 任务 71 · 边际贡献（留一法）：**张量物化一次之后直接读出来的**
+# 工具 tools/callgraph_sim_tensor71.py sweep --configs loo-ref|loo-all；两半都报
+# base = 该基线的 top-1 命中数；delta = 拿掉这个特征后 top-1 变化（负 = 这个特征有用）
+family	half	config	feature_removed	n	top1	top5	delta	pct
+REF5	tune	REF	-	494	444	464	+0	89.88%
+REF5	tune	REF − size	-	494	446	463	+2	90.28%
+REF5	tune	REF − gram	-	494	345	403	-99	69.84%
+REF5	tune	REF − consts	-	494	443	464	-1	89.68%
+REF5	tune	REF − caller	-	494	443	462	-1	89.68%
+REF5	tune	REF − scal	-	494	436	463	-8	88.26%
+REF5	holdout	REF	-	481	424	446	+0	88.15%
+REF5	holdout	REF − size	-	481	424	446	+0	88.15%
+REF5	holdout	REF − gram	-	481	344	397	-80	71.52%
+REF5	holdout	REF − consts	-	481	424	446	+0	88.15%
+REF5	holdout	REF − caller	-	481	423	446	-1	87.94%
+REF5	holdout	REF − scal	-	481	412	446	-12	85.65%
+ALL24	tune	ALL18 等权 0.5	-	494	430	458	+0	87.04%
+ALL24	tune	ALL − size	size	494	427	455	-3	86.44%
+ALL24	tune	ALL − hist	hist	494	429	457	-1	86.84%
+ALL24	tune	ALL − consts	consts	494	429	458	-1	86.84%
+ALL24	tune	ALL − callee	callee	494	432	458	+2	87.45%
+ALL24	tune	ALL − caller	caller	494	433	458	+3	87.65%
+ALL24	tune	ALL − strs_s	strs_s	494	431	457	+1	87.25%
+ALL24	tune	ALL − ncal	ncal	494	433	458	+3	87.65%
+ALL24	tune	ALL − ncall	ncall	494	432	460	+2	87.45%
+ALL24	tune	ALL − cbsig	cbsig	494	430	458	+0	87.04%
+ALL24	tune	ALL − rbsig	rbsig	494	430	458	+0	87.04%
+ALL24	tune	ALL − gram	gram	494	413	447	-17	83.60%
+ALL24	tune	ALL − shape	shape	494	417	451	-13	84.41%
+ALL24	tune	ALL − scal	scal	494	419	453	-11	84.82%
+ALL24	tune	ALL − scal_c	scal_c	494	418	453	-12	84.62%
+ALL24	tune	ALL − wconst	wconst	494	425	457	-5	86.03%
+ALL24	tune	ALL − stok	stok	494	431	457	+1	87.25%
+ALL24	tune	ALL − cls	cls	494	427	457	-3	86.44%
+ALL24	tune	ALL − callee_a	callee_a	494	423	455	-7	85.63%
+ALL24	tune	ALL − caller_a	caller_a	494	430	457	+0	87.04%
+ALL24	tune	ALL − ncal_a	ncal_a	494	417	452	-13	84.41%
+ALL24	tune	ALL − ncall_a	ncall_a	494	431	458	+1	87.25%
+ALL24	tune	ALL − cgram_a	cgram_a	494	422	453	-8	85.43%
+ALL24	tune	ALL − icall	icall	494	434	459	+4	87.85%
+ALL24	holdout	ALL18 等权 0.5	-	481	411	439	+0	85.45%
+ALL24	holdout	ALL − size	size	481	408	437	-3	84.82%
+ALL24	holdout	ALL − hist	hist	481	411	438	+0	85.45%
+ALL24	holdout	ALL − consts	consts	481	411	439	+0	85.45%
+ALL24	holdout	ALL − callee	callee	481	411	440	+0	85.45%
+ALL24	holdout	ALL − caller	caller	481	416	442	+5	86.49%
+ALL24	holdout	ALL − strs_s	strs_s	481	411	438	+0	85.45%
+ALL24	holdout	ALL − ncal	ncal	481	411	440	+0	85.45%
+ALL24	holdout	ALL − ncall	ncall	481	418	443	+7	86.90%
+ALL24	holdout	ALL − cbsig	cbsig	481	411	439	+0	85.45%
+ALL24	holdout	ALL − rbsig	rbsig	481	411	439	+0	85.45%
+ALL24	holdout	ALL − gram	gram	481	401	434	-10	83.37%
+ALL24	holdout	ALL − shape	shape	481	403	434	-8	83.78%
+ALL24	holdout	ALL − scal	scal	481	407	436	-4	84.62%
+ALL24	holdout	ALL − scal_c	scal_c	481	407	436	-4	84.62%
+ALL24	holdout	ALL − wconst	wconst	481	410	437	-1	85.24%
+ALL24	holdout	ALL − stok	stok	481	410	437	-1	85.24%
+ALL24	holdout	ALL − cls	cls	481	408	438	-3	84.82%
+ALL24	holdout	ALL − callee_a	callee_a	481	409	437	-2	85.03%
+ALL24	holdout	ALL − caller_a	caller_a	481	417	442	+6	86.69%
+ALL24	holdout	ALL − ncal_a	ncal_a	481	408	437	-3	84.82%
+ALL24	holdout	ALL − ncall_a	ncall_a	481	418	444	+7	86.90%
+ALL24	holdout	ALL − cgram_a	cgram_a	481	404	437	-7	83.99%
+ALL24	holdout	ALL − icall	icall	481	414	440	+3	86.07%
