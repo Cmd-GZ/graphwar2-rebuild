@@ -29,14 +29,21 @@
             已派 4 份、**全部被我 interrupt 暂停**（因装 GPU 插件要重启 dsh），工作树见 §7
             未派 4 份：57 新证据 / 58 调用图角色 / 61 GPU 相似度 / 62 全语料对拍
 
-护栏（2026-11-09 02:20 实测；**以 fixtures/guardrails.json 为准**）
+护栏（2026-11-09 04:25 实测；**以 fixtures/guardrails.json 为准**）
   fire 647/1080 ｜ batch 647/1080 ｜ batch_conv 637/1080
   延迟段 死亡 366/385 ｜ 挖洞 206(fire) · 207(batch)
-  cargo test **1659** / 0 failed ｜ --features gdext-bindings **1764** / 0 failed
-  headless **13** 个脚本 **1683** 条断言 0 失败（process_loop 49；entity_drawer **366**；
-  assemble 217 / plane 96 / obstacle 116 / draw 235 / curve 96 / function_drawer 132 /
-  base 117 / signal 155 / recovered_view 57 / spike 23 / gdext 24）
-  selftest **714 / 0 / 1 skipped**（四前置齐；新工作树缺 client/assets 会掉到 686/3/22）
+  cargo test **1671** / 0 failed ｜ --features gdext-bindings **1777** / 0 failed
+  headless **14** 个脚本 **1744** 条断言 0 失败（新增 play_flow_check 61；
+  entity_drawer 366 / process_loop 49 / assemble 217 / plane 96 / obstacle 116）
+  selftest **714 / 0 / 1 skipped**
+  槽位 22 个里一个真 stub 都不剩
+  结构指纹 **78.18%**（留出半，57 号破的 73% 天花板）
+
+⚠️ 写护栏：`--update-baseline --axis fire|batch|batch_conv`
+⚠️ 合并前：`python3 tools/merge_check.py --cg origin/CG --allow-dispatch`
+   （**大文件闸 MAX_KB=100 与"文本真值表入库"冲突**，每轮都撞；放行要在合并提交里登记理由）
+⚠️ **跑任何 headless 之前必须重建并覆盖 `.so`**（build --features gdext-bindings → cp → --import）
+⚠️ **新工作树没有 `client/assets/`**（gitignore）⇒ selftest 掉到 686/3/22，是环境不是回归
   槽位 22 个里一个真 stub 都不剩
 ```
 
