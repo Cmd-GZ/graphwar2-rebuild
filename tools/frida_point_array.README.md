@@ -212,3 +212,28 @@ pairWho    这些命中来自求值器的哪个返回地址（`gw+3c2995` = `cal
    下一条命令里游戏报 `X11 Display is not available`）。
 3. 战役第 16 关弹窗的 `Start` 在 `(1072,1009)`、关卡节点 `(691,751)`（1920×1160）——
    `--level-node` 用的是内置坐标表，别手敲。
+
+## 2026-11-08 `dispatch/48`：两装配点**同一发**同时抓 + 找"改长度"的写入者（`docs/06` §30）
+
+一组**独立开关**（默认全关：不给这些开关时行为与之前**逐字节相同**；新逻辑都在
+`installDivergeProbe()` 里，主探针 / token 探针 / FunctionPoints 探针一行没动）。
+
+```bash
+--diverge                       # 打开分叉探针（下面 5 类消息）
+--dv-mam                        # 实验：item 刚 push 之后把它所在页设成陷阱（MemoryAccessMonitor，每页一次）
+--div-extract <raw.jsonl>       # 不给游戏：把 --diverge 的原始 JSONL 摘成入库样本（可给多次）
+--div-fixture-out <out.jsonl>   # --div-extract 的输出（纯文本；配 --label / --series-level）
+```
+
+消息（都是 `send()` 的一行）：
+
+| `type` | 是什么 |
+|---|---|
+| `dv_ctor` | `0x456810`（`end_x` 装配点）入口：喂进去的 `Vec` 的 `(cap,ptr,len)` + **整条数组的字节副本**的摘要/首末点（两个调用点 `gw+471a8d` / `gw+3e44d9` 都抓） |
+| `dv_pos` | `0x472865` 入口：读到的 `(rdx,n,pos 16 B)`，并与**每一个** `dv_ctor` 快照**逐点逐字节**比（`prefix_diff` / `firstDiff` / `pos` 在快照里命中的下标） |
+| `dv_csr` / `dv_csr_enter` | `0x3c2bc0` `calculate_shot_results` 返回时：sret 的 4 个字、结果 `Vec` 的每一项（`kind/ptr/len/owner`；ptr 按 `+0xc<<32 \| +0x8` 拼，见 `0x4727e1`） |
+| `dv_site` | 9 个"存储点"断点：`0x3c2d5e/6a/77`（push）、`0x3c30d7/e7`（采样器返回后存 ptr/len）、**`0x3c3bf7`/`0x3c3c2c`（★ 把 `len` 夹小）**、`0x3c50d5/eb`（拷进结果 Vec） |
+| `dv_mam*` | `--dv-mam` 的页级访问探针（`MemoryAccessMonitor` **每页只报一次**；在 `onAccess` 里重武装会退化成同一条指令反复触发，别照抄） |
+
+入库样本：[`fixtures/frida_array_divergence_sample.jsonl`](../fixtures/frida_array_divergence_sample.jsonl)
+（10 发，`docs/06` §30）。

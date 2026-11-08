@@ -243,6 +243,35 @@ def _parse_one(src_path, label, notes=None):
             print('[tok_suffix] #%s ret=%s flip=%s x0=%s y0=%s -> %r' % (
                 p.get('seq'), p.get('ret'), p.get('flip'), p.get('x0'), p.get('y0'), p.get('text')),
                 file=sys.stderr)
+        elif t == 'dv_ctor':
+            a = p.get('arr') or {}
+            print('[dv_ctor] #%s caller=%s vec=(ptr=%s,len=%s) digest=%s last=%s' % (
+                p.get('seq'), p.get('caller'), (p.get('vec') or {}).get('ptr'),
+                (p.get('vec') or {}).get('len'), a.get('digest_xy'), a.get('last')), file=sys.stderr)
+        elif t == 'dv_pos':
+            print('[dv_pos] #%s n=%s pos_x=%s wire_eq=%s vs_ctor=%s' % (
+                p.get('seq'), p.get('n'), p.get('pos_x'), (p.get('wire') or {}).get('equal_x'),
+                [(v.get('caller'), v.get('len'), v.get('same_ptr'), v.get('same_len'),
+                  v.get('prefix_diff'), v.get('last_point_eq'), v.get('pos_xy_idx_in_ctor'))
+                 for v in (p.get('vs_ctor') or [])]), file=sys.stderr)
+        elif t == 'dv_site':
+            print('[dv_site] %s @%s t=%s rax=%s rdx=%s r10=%s r14=%s slot1a0=%s' % (
+                p.get('site'), p.get('rva'), p.get('t'), p.get('rax'), p.get('rdx'),
+                p.get('r10'), p.get('r14'), p.get('slot1a0')), file=sys.stderr)
+        elif t == 'dv_mam_armed':
+            print('[dv_mam_armed] item=%s page=%s idx=%s' % (p.get('item'), p.get('page'), p.get('idx')), file=sys.stderr)
+        elif t == 'dv_mam':
+            print('[dv_mam] op=%s from=%s addr=%s off_item=%s bt=%s' % (
+                p.get('op'), p.get('from'), p.get('addr'), p.get('off_item'), (p.get('bt') or [])[:6]), file=sys.stderr)
+        elif t == 'dv_mam_err':
+            print('[dv_mam_err]', p.get('msg'), file=sys.stderr)
+        elif t == 'dv_csr_enter':
+            print('[dv_csr_enter] t=%s sret=%s' % (p.get('t'), p.get('sret')), file=sys.stderr)
+        elif t == 'dv_csr':
+            print('[dv_csr] t=%s vec_guess=%s items=%s' % (
+                p.get('t'), p.get('vec_guess'),
+                [(i.get('kind'), i.get('ptr'), i.get('len'), i.get('owner')) for i in (p.get('items') or [])]),
+                file=sys.stderr)
         elif t == 'pos_read':
             if cur is None:
                 cur = {'calc_calls': [], 'queue': None}
@@ -791,6 +820,218 @@ def endx_fixture(specs, out_path, exprs_per_series=None, modes=None, levels=None
     return prov, rows
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2026-11-08 `dispatch/48`：`--diverge` 的原始 JSONL → **入库用纯文本样本**
+#   一发一行，只留"判分叉 / 判谁改长度"要用的那几个量（整条数组 hex、beat、evals 全丢）：
+#     · sampler   : 每次 `calculate_function` 的 (ret, ptr, n, digest_xy)
+#     · results   : `calculate_shot_results`（0x3c2bc0）返回的那一刻，结果 Vec 的每一项
+#                   （kind / ptr / len / owner）—— `execute_results` 后面读的就是这条 Vec
+#     · clamp     : `0x3c3bf7` / `0x3c3c2c` 命中时 `r14`（item 基址）与 `r10`（新长度）
+#     · push/copy : `0x3c2d77`（旧长度 = 采样器 n）与 `0x3c50eb`（进结果 Vec 时的 16 字节）
+#     · ctor      : 两个装配点（gw+471a8d / gw+3e44d9）喂进去的数组 (len, digest, 末点)
+#     · pos       : `0x472865` 的 (rdx, n, pos 16 B) + 与每个 ctor 快照的**逐点**比较
+#     · judge     : `wire_end_x == pos_x`？`ctor.len == pos.n`？`prefix_diff`
+# ═══════════════════════════════════════════════════════════════════════════════
+
+DIV_FIXTURE_SCHEMA = 'gw2-frida-array-divergence-sample/1'
+
+
+def _div_shot(lab, idx, buf):
+    """把一发里累积的消息折成一行。`buf` = [(type, record), …]（按到达顺序）。"""
+    import struct as _s
+
+    def f64(h):
+        try:
+            return _s.unpack('<d', bytes.fromhex(h))[0]
+        except Exception:  # noqa: BLE001
+            return None
+
+    o = {'schema': 'gw2-frida-array-divergence-shot/1', 'series': lab, 'shot': idx + 1,
+         'levels': [], 'calc': [], 'csr': None, 'clamp': [], 'push': None, 'copy': None,
+         'ctors': [], 'pos': None, 'words': None, 'judge': {}}
+    for t, r in buf:
+        if t == 'calc_array':
+            i = r.get('info') or {}
+            o['calc'].append({'ret': r.get('ret'), 'ptr': i.get('ptr'), 'n': i.get('len'),
+                              'digest_xy': i.get('digest_xy')})
+        elif t == 'dv_csr':
+            items = []
+            for it in (r.get('items') or []):
+                items.append({'i': it.get('i'), 'kind': it.get('kind'), 'ptr': it.get('ptr'),
+                              'len': it.get('len'), 'owner': it.get('owner'),
+                              'extra': it.get('extra')})
+            o['csr'] = {'t': r.get('t'), 'vec': r.get('vec_guess'), 'items': items}
+        elif t == 'dv_site':
+            site = r.get('site') or ''
+            row = {'site': site, 'rva': r.get('rva'), 't': r.get('t'),
+                   'r10': r.get('r10'), 'r14': r.get('r14'), 'rdx': r.get('rdx'),
+                   'slot1a0': r.get('slot1a0'), 'xmm0': r.get('xmm0')}
+            if site.startswith('clamp_len'):
+                o['clamp'].append(row)
+            elif site == 'src_push_len':
+                o['push'] = row
+            elif site == 'copy_len_owner':
+                o['copy'] = row
+        elif t == 'dv_ctor':
+            a = r.get('arr') or {}
+            v = r.get('vec') or {}
+            o['ctors'].append({'caller': r.get('caller'), 't': r.get('t'),
+                               'ptr': v.get('ptr'), 'cap': v.get('cap'), 'len': v.get('len'),
+                               'digest_xy': a.get('digest_xy'), 'first': a.get('first'),
+                               'last': a.get('last')})
+        elif t == 'dv_pos':
+            pos = {'t': r.get('t'), 'rdx': r.get('rdx'), 'n': r.get('n'),
+                   'pos_bytes': r.get('pos_bytes'), 'pos_x': r.get('pos_x'),
+                   'pos_x_f': f64(r.get('pos_x')), 'digest_xy': r.get('digest_xy'),
+                   'vs_ctor': [{'caller': v.get('caller'), 'len': v.get('len'),
+                                'same_ptr': v.get('same_ptr'), 'same_len': v.get('same_len'),
+                                'prefix_diff': v.get('prefix_diff'),
+                                'last_point_eq': v.get('last_point_eq'),
+                                'pos_xy_idx_in_ctor': v.get('pos_xy_idx_in_ctor')}
+                               for v in (r.get('vs_ctor') or [])],
+                   'wire': r.get('wire')}
+            o['pos'] = pos
+        elif t == 'samplers':
+            # 行格式：[s, t, ret, hval, yout, xin, rdi, rsi, rdx, rcx, bt, sret, xmmAll, arrInfo]
+            #   rdx = flip、rcx = mode（`calculate_function` 的 edx/ecx），见 `hookFn('calculate_function')`
+            for row in (r.get('rows') or [])[:1]:
+                try:
+                    o['mode'] = int(row[9]) & 0xff
+                    o['flip'] = int(row[8]) & 0xff
+                    o['sampler_ret'] = row[2]
+                except Exception:  # noqa: BLE001
+                    pass
+        elif t == 'fnpoints':
+            o['words'] = {'end_x': r.get('end_x'), 'start_x': r.get('start_x'),
+                          'start_y': r.get('start_y'), 'ret': r.get('ret'), 't': r.get('t')}
+        elif t == 'pos_x_locate':
+            o['judge']['pos_x_locate_last_fn'] = r.get('last_fn')
+            o['judge']['pos_x_locate_last_ctor'] = r.get('last_ctor')
+    # ── 判分叉用的三个量（全部逐位/字节）──
+    pos = o.get('pos') or {}
+    wire = (pos.get('wire') or {})
+    item = None
+    for it in ((o.get('csr') or {}).get('items') or []):
+        try:
+            if it.get('ptr') and pos.get('rdx') and int(it['ptr'], 16) == int(pos['rdx'], 16):
+                item = it
+        except Exception:  # noqa: BLE001
+            pass
+    o['judge'].update({
+        'wire_end_x': (o.get('words') or {}).get('end_x'),
+        'pos_x': pos.get('pos_x'),
+        'end_x_eq_pos_x': wire.get('equal_x'),
+        'item_for_pos': item,
+        'sampler_n': [c.get('n') for c in o['calc']],
+        'item_len_minus_sampler_n': (int(item['len']) - int(o['calc'][0]['n']))
+        if (item and o['calc'] and o['calc'][0].get('n')) else None,
+        'clamped': bool(o['clamp']),
+    })
+    # 每个 ctor 与 pos 的逐点比较（取"长度对得上"的那一条当主判据）
+    best = None
+    for v in (pos.get('vs_ctor') or []):
+        if v.get('same_len'):
+            best = v
+    if best:
+        o['judge']['best_ctor'] = best
+    return o
+
+
+def divergence_fixture(specs, out_path, levels=None, notes=None):
+    """`--div-extract`：原始 JSONL（要带 `--diverge` 的记录）→ 入库样本（纯文本 JSONL）。"""
+    import hashlib
+    prov = {
+        'type': 'provenance', 'schema': DIV_FIXTURE_SCHEMA,
+        'question': ('dispatch/48：① 两个装配点（0x471a88 副本 / 0x472865 读队列那块）在同一发里'
+                     '是不是同一份内容（差 1 bit 也报）；② `0x472865` 读到的 n 是被谁改小的'),
+        'build': {
+            'game': 'Graphwar II Linux 2.0.60 (Steam)',
+            'libgraphwarrust.so_sha256': '9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187',
+            'address_space': 'RVA = ELF 虚地址 = 模块内偏移；下断 = base + RVA；Ghidra = RVA + 0x100000',
+        },
+        'hooks': [
+            {'rva': '0x456810', 'what': 'FunctionPointsEvent 装配（读 pts[len-1].x → end_x）；两个调用点 gw+471a8d / gw+3e44d9'},
+            {'rva': '0x472865', 'what': 'execute_results 读 pos = pts[n-1]（rdx = 数组基址、rcx = n*16）'},
+            {'rva': '0x3c2bc0', 'what': 'GraphwarShotCalculator::calculate_shot_results [0x3c2bc0,0x3c5c4d)（结果 Vec 的生产者）'},
+            {'rva': '0x3c2d77', 'what': '结果 item 的 push：+0x8 = 数组基址、+0x10 = [rsp+0x1a0]（= 采样器 n）'},
+            {'rva': '0x3c30c7', 'what': '采样器（call *0x9bac98）在这个函数里的返回点'},
+            {'rva': '0x3c3bf7', 'what': '★ 把 item 的 len 改小：mov %r10,0x10(%r14)；r10 = [point_event+0x1c]+1'},
+            {'rva': '0x3c3c2c', 'what': '同一段展开的配对项：mov %r10,0x10(%r9)'},
+            {'rva': '0x3c50eb', 'what': '结果 Vec 的填充（从源 Vec 过滤拷贝，item 的 +0x10..+0x20 原样搬）'},
+            {'rva': '0x50eb20', 'what': 'FunctionPointsEvent → JSON 写入器（报文里的 end_x 在这里定型）'},
+        ],
+        'how': {
+            'harness': 'Xvfb TCP (:117) -screen 0 1920x1160x24 -listen tcp -ac -nolisten unix + mesa-only EGL/GLX',
+            'driver': 'tools/frida_point_array.py --attach --diverge --fnpoints --campaign-level 20 --level-node 17',
+            'probe': 'tools/frida_point_array.js（只读 Interceptor；`--diverge` 一组新钩子）',
+            'levels': 'Level 17 = 战役第 18 关（func=1 即 Ode/DiffEq，散布障碍 + 2 靶）',
+            'positive_control': ('装机时 `dvCmpPrefix` 自测：两条 50 点合成数组相同 → diffPoints=0；'
+                                 '第 41 点翻 1 bit → diffPoints=1（记在 `hooks` 消息的 `dv_selftest`）；'
+                                 '运行期也报得出不同（不同发的数组 prefix_diff>0，见各发 `pos.vs_ctor`）'),
+        },
+        'cut': ('per shot: 每次 calculate_function 的 (ret,ptr,n,digest)、calculate_shot_results 返回那一刻的'
+                '结果 Vec 每一项 (kind,ptr,len,owner)、0x3c3bf7/0x3c3c2c 命中时的 (r14,r10)、'
+                '0x3c2d77 的旧 len、0x3c50eb 的 16 字节、两个 ctor 喂进去的数组 (len,digest,末点)、'
+                '0x472865 的 (rdx,n,pos 16B) 与"与每个 ctor 快照逐点比"的结果、以及 end_x==pos_x 的判定'),
+        'dropped': 'beat 心跳、evals/samplers 批量行、整条点数组 hex、reallocs、截图、`--dv-mam` 的逐次页访问行',
+        'no_local_paths': 'this file contains no filesystem path and no user name; pointers are ASLR-random per run',
+        'sources': [],
+        'counts': {},
+        'notes': notes or [],
+    }
+    all_shots = []
+    for i, (path, lab) in enumerate(specs):
+        raw = [json.loads(l) for l in open(path, encoding='utf-8', errors='replace') if l.strip()]
+        sha = hashlib.sha256(open(path, 'rb').read()).hexdigest()
+        by_type = {}
+        for r in raw:
+            t = r.get('type', '?')
+            by_type[t] = by_type.get(t, 0) + 1
+        keep_types = {'calc_array', 'dv_csr', 'dv_site', 'dv_ctor', 'dv_pos', 'fnpoints',
+                      'pos_x_locate', 'samplers'}
+        shots, buf = [], []
+        for r in raw:
+            t = r.get('type')
+            if t not in keep_types:
+                continue
+            buf.append((t, r))
+            if t == 'dv_pos':
+                shots.append(_div_shot(lab, len(shots), buf))
+                buf = []
+        prov['sources'].append({'label': lab, 'raw_jsonl_sha256': sha, 'raw_jsonl_lines': len(raw),
+                                'records_by_type': by_type, 'shots': len(shots)})
+        lv = (levels or '').split(',') if levels else []
+        if i < len(lv) and lv[i].strip():
+            for sh in shots:
+                sh['levels'] = [lv[i].strip()]
+        all_shots += shots
+    det = [s for s in all_shots if s['judge'].get('item_len_minus_sampler_n') not in (None, 0)]
+    eq = [s for s in all_shots if s['judge'].get('end_x_eq_pos_x') is True]
+    ne = [s for s in all_shots if s['judge'].get('end_x_eq_pos_x') is False]
+    unk = [s for s in all_shots if s['judge'].get('end_x_eq_pos_x') is None]
+    pf0 = [s for s in all_shots if (s['judge'].get('best_ctor') or {}).get('prefix_diff') == 0]
+    prov['counts'] = {
+        'shots': len(all_shots),
+        'end_x_eq_pos_x': len(eq), 'end_x_ne_pos_x': len(ne), 'end_x_unknown': len(unk),
+        'shots_len_clamped_below_sampler_n': len(det),
+        'clamp_site_hits': sum(len(s['clamp']) for s in all_shots),
+        'clamp_site_hits_len': sum(len(s['clamp']) for s in all_shots
+                                   if any(c.get('rva') == '0x3c3bf7' for c in s['clamp'])),
+        'best_ctor_prefix_diff_zero': len(pf0),
+        'distinct_sampler_n': sorted({c.get('n') for s in all_shots for c in s['calc'] if c.get('n')}),
+        # 只统计"数组项"（kind 的 0x1000/0x2000 位是障碍/未命中标志，见 §30）；其它变体的 +0x10 不是长度
+        'distinct_item_len': sorted({int(i['len']) for s in all_shots
+                                     for i in ((s.get('csr') or {}).get('items') or [])
+                                     if i.get('len') and 0 < int(i['len']) <= 20000
+                                     and i.get('kind', '').endswith(('1000', '2000'))}),
+    }
+    with open(out_path, 'w', encoding='utf-8') as f:
+        f.write(json.dumps(prov, ensure_ascii=False) + '\n')
+        for s in all_shots:
+            f.write(json.dumps(s, ensure_ascii=False) + '\n')
+    return prov, all_shots
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', default=None, help='JSONL 输出路径（`--extract` 模式下不需要）')
@@ -819,6 +1060,16 @@ def main():
                          '（结构体 `start_x@+0/start_y@+8/end_x@+0x10/owner_id@+0x18`），'
                          '并在 0x472865 那次读上把 `pos` 在每条 `calculate_function` 数组里**定位到下标**。'
                          '不加这个开关时行为与之前**逐字节相同**')
+    ap.add_argument('--diverge', action='store_true',
+                    help='（2026-11-08 `dispatch/48`）打开 **分叉探针**：①在 `0x456810`（end_x 装配点）'
+                         '把喂进去的**整条数组**留一份字节副本；②在 `0x472865`（pos 读点）把读到的数组'
+                         '与每个副本**逐点逐字节**比（差 1 bit 也报）；③在 `calculate_shot_results`'
+                         '（0x3c2bc0）返回时 dump 返回结构与结果 Vec 的每一项（kind/ptr/len/owner）。'
+                         '不加这个开关时行为与之前**逐字节相同**')
+    ap.add_argument('--dv-mam', action='store_true',
+                    help='（`dispatch/48` 实验）配合 `--diverge`：在结果 item 刚 push 进 Vec 之后把那一页'
+                         '设成"只读+陷阱"（`MemoryAccessMonitor`，每页一次），抓紧接着的那次访问是谁（`details.from`）。'
+                         '默认关 —— 它会给游戏线程加页错误，只在定位写入者时开')
     ap.add_argument('--campaign-level', type=int, default=None,
                     help='（`dispatch/44`）开跑前往**工作区** `XDG_DATA_HOME` 写 `user://campaign.save = level_<n>`'
                          '（20 = 解锁全部；给这个开关才会写）')
@@ -834,6 +1085,10 @@ def main():
                     help='（`dispatch/44`）与 `--endx-extract` 逐个对应的"这一系列按**执行顺序**打进去的表达式"')
     ap.add_argument('--series-mode', default=None, help='（`dispatch/44`）Normal,DiffEq,… 与 `--endx-extract` 逐个对应')
     ap.add_argument('--series-level', default=None, help='（`dispatch/44`）关卡号列表，与 `--endx-extract` 逐个对应')
+    ap.add_argument('--div-extract', default=None, action='append',
+                    help='（2026-11-08 `dispatch/48`）不给游戏：把 `--diverge` 跑出来的原始 JSONL 摘成入库样本'
+                         '（可给多次；配合 --div-fixture-out）')
+    ap.add_argument('--div-fixture-out', default=None, help='`--div-extract` 的输出文件（纯文本 JSONL）')
     ap.add_argument('--extract', default=None, action='append',
                     help='不给游戏、只把已有 JSONL 摘成入库样本（可给多次；配合 --fixture-out）')
     ap.add_argument('--fixture-out', default=None, help='`--extract` 的输出文件（纯文本 JSONL）')
@@ -873,6 +1128,27 @@ def main():
                 r['series'], r['shot'], r.get('expr_typed'), r['ctor_A'].get('end_x'),
                 (r.get('wire') or {}).get('end_x'), (r.get('pos') or {}).get('pos_x'),
                 r.get('A_minus_B_end_x')), file=sys.stderr)
+        return
+    if args.div_extract:
+        if not args.div_fixture_out:
+            ap.error('--div-extract 需要 --div-fixture-out')
+        labels = args.label or []
+        specs = [(p, labels[i] if i < len(labels) else 'series%d' % (i + 1))
+                 for i, p in enumerate(args.div_extract)]
+        prov, shots = divergence_fixture(specs, args.div_fixture_out,
+                                         levels=args.series_level, notes=args.note)
+        c = prov['counts']
+        print('[div-extract] shots=%d end_x==pos_x %d | != %d | unknown %d | len<sampler_n %d | '
+              'clamp hits %d | ctor prefix_diff==0 %d -> %s' % (
+                  c['shots'], c['end_x_eq_pos_x'], c['end_x_ne_pos_x'], c['end_x_unknown'],
+                  c['shots_len_clamped_below_sampler_n'], c['clamp_site_hits'],
+                  c['best_ctor_prefix_diff_zero'], args.div_fixture_out), file=sys.stderr)
+        for r in shots:
+            print('  %-8s #%d sampler_n=%s item_len=%s pos_n=%s end_x==pos_x=%s clamp=%s' % (
+                r['series'], r['shot'], r['judge'].get('sampler_n'),
+                ((r['judge'].get('item_for_pos') or {}).get('len')),
+                (r.get('pos') or {}).get('n'), r['judge'].get('end_x_eq_pos_x'),
+                [(c2.get('site'), c2.get('r10')) for c2 in r['clamp']]), file=sys.stderr)
         return
     if args.tokens_report:
         if not args.tokens_fixture_out:
@@ -1043,7 +1319,8 @@ def main():
     try:
         # 2026-11-08 `dispatch/39`：`--tokens` 同时打开 token 探针（关着的时候探针三个钩子立即 return）
         script.post({'type': 'cfg', 'evalRowsMax': args.eval_rows,
-                     'tokenProbe': bool(args.tokens), 'fnpoints': bool(args.fnpoints)})
+                     'tokenProbe': bool(args.tokens), 'fnpoints': bool(args.fnpoints),
+                     'diverge': bool(args.diverge), 'dvMam': bool(args.dv_mam)})
     except Exception as e:  # noqa: BLE001
         print('[warn] post cfg:', e, file=sys.stderr)
     if not args.attach:

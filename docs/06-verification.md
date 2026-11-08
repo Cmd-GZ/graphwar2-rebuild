@@ -1965,7 +1965,12 @@ cargo run --release --offline -q --example ode_array_check -- --raw <abs>/g.json
 ⇒ **采样器不认障碍**这句话第一次有了运行时对照：**同一发里"采样器给的 5098"和"报文读的 1528"并存**。
 `1528` 这个数就是"弹道撞上障碍"的位置（`(-4.399435177256, 0.304090674513)`）。
 **谁**把它改成 1528（哪个函数、按什么顺序查障碍）本节**没有**定位 —— 只证明了"截断发生在采样器返回之后、
-`execute_results` 读点之前，且是原地改 `Vec` 的 len"。这条留给下一轮（判据：在 `0x472865` 之前
+`execute_results` 读点之前，且是原地改 `Vec` 的 len"。
+> **§30 的更正（2026-11-08）**：上面这句"原地改 `Vec` 的 len"**不准确**。被改的是**结果项**里的长度字
+> （item `+0x10`，item = `{kind, ptr, len, owner}` 0x20 字节记录），点数组那个 `Vec` 的缓冲与数据
+> **一个字节都没动**；写入者是 `gw+0x3c3bf7`（`mov %r10,0x10(%r14)`），且它发生在
+> `calculate_shot_results` **返回之前**（不是 `execute_results` 里）。详见 **§30.3 / §30.0 ②③**。
+这条留给下一轮（判据：在 `0x472865` 之前
 对该 `(ptr,len)` 对写一个 watchpoint，或用 frida 的 `MemoryAccessMonitor` 抓写入者）。
 
 ### 29.6 一处**旧说法更正** + 五条出口里那条"NaN"其实进不去
@@ -2031,3 +2036,115 @@ cargo run --release --offline -q --example ode_array_check -- --raw <abs>/g.json
 
 **没有改动**：`src/`、`client/`、`dispatch/`、`fixtures/guardrails.json`、
 `tools/frida_point_array.*`、`tools/frida_ode_probe.*`（44 号与 40 号的东西）。
+
+## 30. 两装配点**同一发里的读数**与"`n` 是被谁改小的"：写入者是 `gw+3c3bf7`（`mov %r10,0x10(%r14)`）（2026-11-08，`dispatch/48`）
+
+> 起点 `CG@65463cd`，分支 `agent/array-divergence`。**本节全部是运行时观测**：frida 17.26.1 挂在真游戏
+> `Graphwar II` Linux 2.0.60 里，`libgraphwarrust.so` sha256
+> `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`（= 逆向目标那份）。
+> 探针 [`tools/frida_point_array.js`](../tools/frida_point_array.js)（新增 `--diverge` 一组钩子，**只读**）
+> + 驱动 `frida_point_array.py`（新增 `--diverge` / `--dv-mam` / `--div-extract`）；
+> 入库样本 [`fixtures/frida_array_divergence_sample.jsonl`](../fixtures/frida_array_divergence_sample.jsonl)
+> （1 行 provenance + **10 行 shot**，40 KB 纯文本，sha256 `388e1c77…`）。
+>
+> **编号说明**：本节之前最大是 §29，本节按任务书取 **§30**。
+
+### 30.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | **抓到"两装配点真的分叉"了吗** | **没抓到**（`end_x == pos_x` **10/10**，两条数组前 `len` 点逐字节相同 10/10）。但**抓到了两装配点本身分叉**：`0x471a88`（喂副本）与 `0x3e44d4`（喂数组本身）在同一次运行里拿到的数组**不同** —— `prefix_diff` 分别 1519 / 2309 / 2309 点，`Level 20` 那发连 `len` 都差 1（3875 vs 3874）。**报文永远取 A**（10/10 `wire_end_x == ctor_A.last`） | **观测（负结论 + 正对照）** |
+| ② | **谁把 `n` 改小的** | **`gw+0x3c3bf7`**：`mov %r10,0x10(%r14)`（在 `GraphwarShotCalculator::calculate_shot_results` `[0x3c2bc0,0x3c5c4d)` 内）。`r14` = 结果 item 的地址、`r10 = [point_event+0x1c] + 1` = "第一个撞障碍的点下标 + 1"；守卫是 `cmp %r10,0x10(%r14)` / `jb`（**只在变小时写**）。实测两发：旧 4404 → 新 **2309**（`r10=0x905`）、旧 4404 → 新 **2364**（`r10=0x93c`） | **观测**（命中 4 次） |
+| ③ | 改的是不是 **`Vec.len`** | **不是**。改的是**结果 item 里的 `&[T]` 长度字**（`item+0x10`，item = `{kind@0, ptr@+8, len@+0x10, owner@+0x18}` 的 0x20 字节记录）；**点数组本身一个字节没动**：采样器的 4404 点仍在原地，`pos` 正是它的 `[2308]`，`digest_xy`/首末点都不变。⇒ §29.5 的"原地改 `Vec` 的 len"应更正为"原地改**结果项**的长度字" | **观测 + 指令语义** |
+| ④ | 是**故意截断**还是副作用 | **故意**：同一次运行里 `kind` 的 `0x1000`/`0x2000` 位就是"没撞 / 撞了障碍"（Level 0 那发 `kind=0x1000`、`len=n`；Level 17 撞障碍的 4 发 `kind=0x2000` 且 `len` 被夹小）；且夹小的值是"第一个障碍点下标 + 1"，与 `EffectInfo.pos` 的语义（弹道停在障碍上）一致 | **观测 + 推断**（`kind` 位含义是**推断**：只有 2 个取值被观测到） |
+| ⑤ | 那 100 发的 `pos_x ≠ end_x` 是这条链造的吗 | **不是**。本节 10 发里 `end_x` 与 `pos` **永远读同一个 item**（`end_x` 取的是该 item 的数组**副本**、`pos` 读原件，而 item 的 `len` 在 `calculate_shot_results` 返回前就已经定稿）⇒ 这条链**结构上**不会给出 §28.3 那种 1 ulp 差。要造出来，必须让"副本"与"读"之间数组变了，或让报文取 B 而不是 A —— 本轮**没有**一发的报文取 B | **观测 + 推断**（缺"报文取 B"的样本） |
+
+### 30.1 链路（每一条都能在样本里逐发对上）
+
+```text
+① calculate_shot_results(0x3c2bc0) 里 call *0x9bac98（0x3c30c1，返回点 gw+3c30c7）
+      → 采样器返回 {kind@0, ptr@+8, len@+0x10}；0x3c30d7/0x3c30e7 把 ptr、len 存进 [rsp+0x100]/[rsp+0x1a0]
+② 0x3c2d4f..0x3c2d89 把它 push 成结果项：+0x8 = [rsp+0x100]、+0x10 = [rsp+0x1a0]（= 采样器的 n）
+③ ★ 0x3c3bf7 / 0x3c3c2c：遍历"撞障碍的点事件"（kind 0x8000000000000000，owner@+0x18、下标@+0x1c），
+      对同 owner 的数组项做 `if item.len >= idx+1 { item.len = idx+1 }`
+④ 0x3c50d0..0x3c50eb：把源 Vec 过滤拷进结果 Vec（item 的 +0x10..+0x20 原样搬）
+⑤ 0x3c51a1..0x3c51ba：结果 Vec（cap/ptr/len）写回 sret；返回 game_state_manager 的 0x471825
+⑥ 0x4718a1..0x4718b5：sret 抄进 self+0x30..0x48（= `execute_results` 后面读的那个队列）
+⑦ 0x471915 起逐项处理：`malloc(len*16)` + memcpy（**副本**）→ 0x471a88 `0x456810`（读 pts[len-1].x = end_x）
+⑧ 0x472865：`pos = item.ptr[item.len-1]`（原件）
+```
+
+### 30.2 逐发（10 发；`mode` 从探针的采样器帧读出：`rcx`=1 即 `Ode`）
+
+| 系列 | 关 | mode | 采样器 `n` | 结果项 `len`（= 报文用的） | `end_x == pos_x` | 两个装配点 |
+|---|---|---|---|---|---|---|
+| `normal_l0_1shot` #1 | 0 | 0 (`Normal`) | 3613 | 3613（`kind=0x1000`，未夹） | ✅ | A=B |
+| `l17_3shot` #1/#2/#3 | 17 | 1 (`Ode`) | 5185 | 1001 / 1053 / 1113（`kind=0x2000`） | ✅ | A=B |
+| `l17_1shot` #1 | 17 | 1 | 4621 | 4333 | ✅ | B 与 A **1519 点不同** |
+| `l17_3shot_b` #1/#2 | 17 | 1 | 5329 / 4966 | 368 / 428 | ✅ | #1：B 367 点（`len` 也少 1） |
+| `l17_3shot_c` #1/#2 | 17 | 1 | 4404 | **2309**（`r10=0x905`）/ **2364**（`r10=0x93c`） | ✅ | B 2309 点不同 |
+| `l20_2shot` #1（5 士兵 + Bot） | 20 | 1 | 3875 | 3875 | ✅ | B `len=3874`、末点不同 |
+
+### 30.3 ② 的运行时证据（`--diverge` 的 `dv_site` 行，原样摘）
+
+```text
+post_calc_slot1a0 @0x3c30e7 t=49203 rax=1134                      ← 采样器 n = 4404 存进 [rsp+0x1a0]
+src_push_len      @0x3c2d77 t=49204 rax=7fe0100a15f0 rdx=1134     ← push 时 item+0x10 = 4404
+clamp_len_0       @0x3c3bf7 t=49204 r10=905  r14=7fe0100a15f0     ← ★ 同一个 item 地址，新长度 2309
+copy_len_owner    @0x3c50eb t=49205 xmm0=0509000000000000e7…      ← 结果 Vec 里 +0x10 = 0x905 / owner 231
+```
+
+- `r14` 与 push 时的 `rax` **逐位相同**（`7fe0100a15f0`）⇒ 是同一个对象，不是"另一项顶上来"；
+- 另一发同样：`r10=93c`（2364），`r14=7fe01009e720`，push 时 `rax` 也是 `7fe01009e720`；
+- 两条外部对照：(a) `copy` 行的 `xmm0` 就是 `execute_results` 之后读到的 `len`；(b) `pos` 的 16 字节在该数组里**唯一命中 `len-1`** ⇒ 数组数据没动，只有长度字变了。
+
+### 30.4 ① 的负结论与它的**正对照**
+
+- **负结论**：`end_x`（`0x4569b8` 读的那 8 字节）与 `pos_x`（`0x472865` 读的那 8 字节）在同一发里 **10/10 逐位相等**；
+  `dv_pos` 把 `pos` 读到的整条 `n` 点数组与**每一个** ctor 快照逐点逐字节比，**长度对得上的那条 `prefix_diff` 恒为 0**。
+- **正对照 1（装机时）**：`dvCmpPrefix` 自测 —— 两条 50 点合成数组相同 → `diffPoints=0`；第 41 点翻 1 bit → `diffPoints=1`（记在 `hooks` 消息的 `dv_selftest`）。
+- **正对照 2（运行期）**：同一发里 A 与 B 两条数组的逐点比较**报得出不同**（1519 / 2309 / 2309 点），
+  跨发的比较也报得出（`prefix_diff=367 / 366`）⇒ "0" 是比出来的，不是比不了。
+- **为什么这条链不会分叉（推断，缺一条样本）**：`end_x` 的输入是"结果 Vec 里那个 item 的数组**副本**"，
+  `pos` 读的是"同一个 item 的原件"，而 item 的 `len` 在 `calculate_shot_results` 返回前已定稿（③ 在 ④⑤ 之前）。
+  ⇒ 要出现 `pos_x ≠ end_x`，必须满足下面之一，本轮**一条都没覆盖到**：
+  1. 报文里的 `FunctionPoints` 取的是 **B**（`gw+3e44d9`，target_manager 那条数组）—— 10 发**一次都没有**；
+  2. 副本与 `0x472865` 那次读之间，item 的 `ptr` 指向的缓冲被**下一发**覆写（本轮的 `--gap` 都 ≥ 18 s，没制造这种重叠）；
+  3. 别的关卡/更多士兵下 `execute_results` 挑中的 item 与 ctor 挑中的 item **不是同一个**（本轮 `Level 20` 一发的
+     结果 Vec 里只有 1 个数组项，也没分出来）。
+
+### 30.5 "谁改 len" 这一步卡过的地方（照实写）
+
+1. **`MemoryAccessMonitor` 是每页一次**：实测一页写 5 次只报第 1 次；因此只能抓"push 之后第一次访问"。
+   第一次访问是 `gw+3c3680` 的**读**（`mov 0x10(%rcx,%rdx,1),%rsi` —— 遍历各项取 `max(len)`），不是写。
+2. **在 `onAccess` 里重新武装会退化成"同一条指令反复触发"**：实测 40 次全是 `gw+3c3680` 同一条读同一个地址
+   （fault 后指令重执行，重武装又把它挡住）⇒ 这条路走不通，别照抄。
+3. **最终靠静态+运行时对撞定案**：把 `0x3c2bc0..0x3c5c4d` 里所有写 `+0x10` 的指令列出来（8 处），
+   只有 `0x3c3bf7/0x3c3c2c` 的语义是"把长度夹到 `idx+1`"；再在这两处下断，**4 次命中、每次都恰好是 item 的地址**。
+
+### 30.6 复跑（两条命令）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+# ① 私有 Xvfb（TCP；本机 Wayland 会让 Godot 绕过 Xvfb，驱动自己会摘掉 WAYLAND_DISPLAY）
+Xvfb :117 -screen 0 1920x1160x24 -listen tcp -ac -nolisten unix &
+# ② Level 17（= 战役第 18 关，func=1 即 Ode，散布障碍 + 2 靶）3 发
+$PY tools/frida_point_array.py --attach --diverge --fnpoints --display 127.0.0.1:117 \
+    --campaign-level 20 --level-node 17 --settle 20 --shots 3 --gap 20 \
+    --exprs "sin(x)-y/2,sin(x)-y/2,sin(x)-y/2" --tail 26 --eval-rows 0 --out /abs/l17.jsonl
+# ③ 摘样本（不给游戏）
+$PY tools/frida_point_array.py --div-extract /abs/l17.jsonl --label l17_3shot \
+    --series-level 17 --div-fixture-out fixtures/frida_array_divergence_sample.jsonl
+```
+
+### 30.7 本轮改动清单
+
+| 文件 | 改了什么 |
+|---|---|
+| [`tools/frida_point_array.js`](../tools/frida_point_array.js) | **新增**（独立函数 + 独立开关 `DVCFG.on`）：`installDivergeProbe()` —— ctor 整条数组快照、pos 侧逐点比较、`calculate_shot_results` 返回结构与结果 Vec 逐项 dump、9 个"存储点"断点（含 ★`0x3c3bf7`）、可选的 `--dv-mam` 页级访问探针；主/token/FunctionPoints 探针一行没动 |
+| [`tools/frida_point_array.py`](../tools/frida_point_array.py) | **新增** `--diverge` / `--dv-mam` / `--div-extract` / `--div-fixture-out` 与对应打印；`endx_fixture` 等既有函数没改 |
+| [`fixtures/frida_array_divergence_sample.jsonl`](../fixtures/frida_array_divergence_sample.jsonl) | **新增**：10 发（Level 0 ×1 / Level 17 ×8 / Level 20 ×1），纯文本，无路径/用户名，指针是 ASLR 单局值 |
+| [`docs/06-verification.md`](06-verification.md) | **新增本节**（并对 §29.5 的"原地改 `Vec` 的 len"写更正） |
+
+**没有改动**：`src/`、`client/`、`dispatch/`、`fixtures/guardrails.json`。`fire`/`batch`/`batch_conv` 三条轴本轮没重跑
+（本分支不碰 `src/`，护栏与基线同；按 AGENTS.md §B 应在合并侧跑）。
