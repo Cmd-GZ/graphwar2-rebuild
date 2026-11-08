@@ -75,19 +75,29 @@ FIRE_DOWN = 'mousedown 1'
 # ★ 必须先全选再打字：单击只是把**光标放进去**，直接 type 会**接在旧文本后面**。
 #   2026-11-07 独立复现轮实测：`--extra-shot` 想打 `x/2`，实际打进去的是
 #   `sin(x)+3x/2`（真机曲线与 `sin(x)+3x/2` 逐位吻合 929/929，见 docs/06 §35.8）。
-def shot_actions(expr):
+def shot_actions(expr, clear_key=True):
     """返回 (打字前的动作, 开火动作)。
 
     ⚠ 2026-11-08 本机实测：`mousemove` 与 `click 1` **也必须分开**（和 Fire 那条一样）。
       合成一条 `mousemove X Y click 1` 时，点击按**旧指针位置**派发 —— 第 1 发之后
       输入框再也没拿到焦点，连打 24 发里实际生效的 f(x) 一直是第一条（快照里看得见）。
+
+    ⚠ 2026-11-09 `dispatch/66` 实测：**`ctrl+a` 并不总能进全选**（焦点还没落到输入框里时
+      它发给的是窗口）。于是第 2 发以后的新表达式会**接在旧文本后面**：本轮抓到的
+      `parse_text` 里就出现过 `2+1exp(x)/5-1`（想打 `sin(x)*2+1`，实际生效的是拼接结果）。
+      `clear_key=True` 时在 `ctrl+a` 后面补一条 `key Delete`（全选成功就把内容删掉再打），
+      这样"每发一条新表达式"才有保障。抓到的 `parse_text` 仍然是**唯一真值**
+      ——判据只认它，不认我打算打的那条。
     """
-    return ([
+    pre = [
         (0.0, 'mousemove 1000 1090'),
         (0.3, 'click 1'),
-        (0.4, 'key --clearmodifiers ctrl+a'),
-        (0.3, 'type --delay 120 "%s"' % expr),
-    ], [
+        (0.5, 'key --clearmodifiers ctrl+a'),
+    ]
+    if clear_key:
+        pre.append((0.2, 'key --clearmodifiers Delete'))
+    pre.append((0.2, 'type --delay 120 "%s"' % expr))
+    return (pre, [
         (1.2, FIRE_MOVE),
         (0.4, FIRE_DOWN),
         (2.0, 'mouseup 1'),
@@ -1032,6 +1042,297 @@ def divergence_fixture(specs, out_path, levels=None, notes=None):
     return prov, all_shots
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2026-11-09 `dispatch/66`：**三样同抓**的离线判据台（`--triple-report`）
+#
+# 输入 = 一次 `--attach --triple --round-aware` 跑出来的原始 JSONL；输出 = 入库用的纯文本样本
+# （每条一发）+ 每发的判定。三样与判定口径：
+#   ① `tok_fire`（`0x3c2530` 入口）：token 列表 16·len 字节、`x0/y0/step/flip/mode`、
+#      以及这次 token 是**从哪串文本 parse 出来**的（`vs_parse[].text`，逐字节相同）
+#   ② `pos_read`（`0x472865` 的 `movdqu`）：`(rdx, rcx, n)` + 那 **16 字节**（= `pts[n-1]`）
+#   ③ `eff_payload`（`0x4729d6` 装配点）+ `eff_json`（`0x50f990` 写入器）：`effect_id` /
+#      `start_tick` / `pos_x`/`pos_y` 的**位模式**与 **JSON 文本**
+# 判据（每一条都能单独否证一种假设，见 `docs/06` §38）：
+#   A 常数末位差？ token 里**末位那个 const**（tag 17）的位模式 vs 真机自己印的后缀文本
+#     （`tok_suffix`）**按十进制 parse 回来**的位模式 —— 逐字节比。
+#   B 数组被改过？ ① 的真解析器/真采样器（unicorn 直调 `0x4ed670`/`0x3c2530`）拿**同一份 token**
+#     重跑一遍，n 与末点 vs ② 的 n 与那 16 字节；再看 f(② 的 pos_x)（真求值器 `0x4eb9d0`）
+#     是不是逐位等于 ② 的 pos_y（= "这个 pos 在不在曲线上"）。
+#   C 拷贝处有没有动？ ② 的 16 字节 vs ③ 载荷的位模式 / ③ JSON 文本里那两个小数 —— 逐字节。
+# 全部**只读**：不改游戏内存，不写 `user://` 以外的东西。
+# ═══════════════════════════════════════════════════════════════════════════════
+TRIPLE_SCHEMA = 'gw2-frida-triple-capture/1'
+
+
+def _le_d(h):
+    """16 进制小端 8 字节 → f64（`None` 透传）"""
+    import struct as _s
+    return None if not h else _s.unpack('<d', bytes.fromhex(h))[0]
+
+
+def _le_b(x):
+    import struct as _s
+    return None if x is None else _s.pack('<d', x).hex()
+
+
+def _ulp_diff(a, b):
+    import struct as _s
+    if a is None or b is None:
+        return None
+    ia = _s.unpack('<q', _s.pack('<d', a))[0]
+    ib = _s.unpack('<q', _s.pack('<d', b))[0]
+    return ia - ib
+
+
+def _dev_pairs(hexs):
+    """16 B/token 原文 → [(tag, f64)]（`tag` 是 u64；**只有 const(17) 的第二个 8 字节是 f64**）"""
+    import struct as _s
+    out = []
+    if not hexs:
+        return out
+    for i in range(0, len(hexs), 32):
+        raw = bytes.fromhex(hexs[i:i + 32])
+        if len(raw) != 16:
+            break
+        out.append((_s.unpack('<Q', raw[:8])[0], _s.unpack('<d', raw[8:])[0]))
+    return out
+
+
+def _real_oracle():
+    """真二进制：`tools/posy_unicorn.py` 的 `Real`（`0x4ed670` 解析 / `0x3c2530` 采样 / `0x4eb9d0` 求值）"""
+    import posy_unicorn as _pu
+    return _pu.Real()
+
+
+def triple_report(specs, out_path, oracle=1, notes=None, labels=None):
+    """把 `--triple` 的原始 JSONL 摘成入库样本 + 每发的判定。返回 (provenance, shots)。"""
+    R = _real_oracle() if oracle else None
+    all_shots = []
+    per_series = []
+    for si, (path, label) in enumerate(specs):
+        rows = [json.loads(l) for l in open(path, encoding='utf-8') if l.strip()]
+        fires = [r for r in rows if r.get('type') == 'tok_fire']
+        sufs = [r for r in rows if r.get('type') == 'tok_suffix']
+        poss = [r for r in rows if r.get('type') == 'pos_read']
+        effs = [r for r in rows if r.get('type') in ('eff_payload', 'eff_json')]
+        fnps = [r for r in rows if r.get('type') == 'fnpoints']
+        # 一发 = 一次 `calculate_function` 组（每发**两次**调用：`gw+3c30c7` 然后 `gw+3e2d3b`，
+        # 中间隔的是**弹道飞行时间**，实测 3–15 s）。所以按**调用点**切，不按时间猜：
+        # 见到第一个调用点就开新的一组；同一组里同一个 ret 只应出现一次。
+        groups = []
+        for r in fires:
+            ret = r.get('ret')
+            if not groups or ret == 'gw+3c30c7' or any(x.get('ret') == ret for x in groups[-1]):
+                groups.append([r])
+            else:
+                groups[-1].append(r)
+        for gi, g in enumerate(groups):
+            r0 = g[0]
+            toks = _dev_pairs((r0.get('tok') or {}).get('hex'))
+            const = next((t for t in reversed(toks) if t[0] == 17), None)
+            const_bits = _le_b(const[1]) if const else None
+            parse_txt = None
+            ptr_eq = same_bytes = None
+            for v in (r0.get('vs_parse') or []):
+                if v.get('same_bytes'):
+                    parse_txt = v.get('text')
+                    ptr_eq = v.get('ptr_eq')
+                    same_bytes = v.get('same_bytes')
+                    break
+            # ①-b：真机自己印的后缀（同一个常数 → 位模式相同才算"这条后缀属于这一发"）
+            suf_hits = []
+            for sf in sufs:
+                t = (sf.get('text') or '').strip()
+                try:
+                    v = float(t.split()[-1])
+                except Exception:  # noqa: BLE001
+                    continue
+                if const_bits and _le_b(v) == const_bits:
+                    suf_hits.append({'seq': sf.get('seq'), 'text': t, 'bits': _le_b(v),
+                                     'ret': sf.get('ret'), 'flip': sf.get('flip')})
+            # ── oracle 第一遍：用**抓到的 token** 重跑真采样器（只为拿末点，用来配 ②）──
+            orc = {}
+            if R is not None and toks:
+                try:
+                    x0, y0, step = _le_d(r0.get('x0')), _le_d(r0.get('y0')), _le_d(r0.get('step'))
+                    pts = R.path(toks, x0, y0, step, r0.get('flip') or 0, r0.get('mode') or 0)
+                    orc['sampler_n'] = len(pts)
+                    orc['sampler_last_x_bits'] = _le_b(pts[-1][0])
+                    orc['sampler_last_y_bits'] = _le_b(pts[-1][1])
+                except Exception as e:  # noqa: BLE001
+                    orc['error'] = str(e)
+            # ② 这一发的 `movdqu`：**按位模式配对**（不是按时间 —— 打字预览也会调
+            #    `calculate_function`，所以"有 tok_fire"不等于"这一发开出去了"）。
+            #    判据：真采样器用同一份 token 重跑的末点 16 字节 == `pos_read` 读到的那 16 字节。
+            pr = None
+            key = (orc.get('sampler_last_x_bits'), orc.get('sampler_last_y_bits'))
+            if key[0]:
+                pr = next((p for p in poss if p.get('t', 0) >= r0.get('t', 0)
+                           and (p.get('pos_bytes') or '')[:16] == key[0]
+                           and (p.get('pos_bytes') or '')[16:32] == key[1]), None)
+            if pr is None and R is None:      # 没有 oracle 时只能退回时间序
+                pr = next((p for p in poss if p.get('t', 0) >= r0.get('t', 0)
+                           and len(p.get('pos_bytes') or '') == 32), None)
+            if pr is not None:
+                poss = [p for p in poss if p is not pr]
+            pos_hex = (pr or {}).get('pos_bytes') or ''
+            pos_x, pos_y = _le_d(pos_hex[:16]), _le_d(pos_hex[16:32])
+            # ③ 装配点载荷 + JSON 文本：与 ② **位模式完全相等**才算同一条
+            ep = ej = None
+            if pr is not None:
+                for e in effs:
+                    if e.get('type') == 'eff_payload' and e.get('t', 0) >= pr.get('t', 0)                             and e.get('pos_x_bits') == pos_hex[:16] and e.get('pos_y_bits') == pos_hex[16:32]:
+                        ep = e
+                        break
+                if ep is not None:
+                    ej = next((e for e in effs if e.get('type') == 'eff_json'
+                               and e.get('effect_id') == ep.get('effect_id')
+                               and e.get('start_tick') == ep.get('start_tick')), None)
+            fp = next((f for f in reversed(fnps) if f.get('t', 0) <= (pr or {}).get('t', 0)), None)
+            # ── oracle 第二遍：修正常数的**全精度**值（真求值器），用来判"打印这一步"──
+            #    token 流是**前缀序** `[Add|Sub, <树…>, Const]`（§26.3），所以树 = tokens[1:-1]；
+            #    c_full = y0 − f(∓x0)（`flip` 时取 −x0，见 §36.1 环 1/2）。
+            if R is not None and len(toks) > 2:
+                try:
+                    sign = -1.0 if (r0.get('flip') or 0) else 1.0
+                    ftree = R.eval(toks[1:-1], sign * _le_d(r0.get('x0')), 0.0, 0.0)
+                    c_full = _le_d(r0.get('y0')) - ftree
+                    orc['tree_at_x0'] = ftree
+                    orc['c_full'] = c_full
+                    orc['c_full_bits'] = _le_b(c_full)
+                    if suf_hits:
+                        printed = suf_hits[0]['text'].split()[-1]
+                        orc['printed_is_round3_of_c_full'] = ('%.3f' % abs(c_full)) == printed
+                        orc['printed_minus_c_full'] = abs(float(printed) - abs(c_full))
+                        orc['const_ulp_vs_c_full_abs'] = _ulp_diff(float(printed), abs(c_full))
+                except Exception as e:  # noqa: BLE001
+                    orc['c_full_error'] = str(e)
+            # ── oracle 第三遍：把 ② 的 pos_x 回代（真求值器）──
+            if R is not None and toks and pr is not None:
+                try:
+                    orc['n_eq_wire'] = (orc.get('sampler_n') == pr.get('n'))
+                    orc['last_eq_wire_pos'] = True          # 配对条件本身就是逐字节相等
+                    if pos_x is not None:
+                        y_at = R.eval(toks, pos_x, 0.0, 0.0)
+                        orc['f_at_pos_x_bits'] = _le_b(y_at)
+                        orc['f_eq_pos_y'] = (_le_b(y_at) == pos_hex[16:32])
+                        orc['f_ulp_vs_pos_y'] = _ulp_diff(y_at, pos_y)
+                except Exception as e:  # noqa: BLE001
+                    orc['error'] = str(e)
+            # ── 判据 ─────────────────────────────────────────────────────────────
+            jd = {}
+            jd['const_eq_printed'] = bool(const_bits and suf_hits and suf_hits[0]['bits'] == const_bits)
+            jd['const_ulp_vs_printed'] = (_ulp_diff(const[1], float(suf_hits[0]['text'].split()[-1]))
+                                          if (const and suf_hits) else None)
+            if parse_txt and suf_hits:
+                jd['parse_text_endswith_suffix'] = parse_txt.endswith(suf_hits[0]['text'])
+            jd['array_untouched'] = orc.get('last_eq_wire_pos') if orc else None
+            jd['copy_exact'] = (bool(ep) and ep.get('pos_x_bits') == pos_hex[:16]
+                                and ep.get('pos_y_bits') == pos_hex[16:32]) if ep else None
+            jd['json_pos_bits_match'] = None
+            if ej is not None and ej.get('text'):
+                try:
+                    j = json.loads(ej['text'])['EffectInfo']
+                    jd['json_pos_bits_match'] = (_le_b(j['pos_x']) == pos_hex[:16]
+                                                 and _le_b(j['pos_y']) == pos_hex[16:32])
+                    jd['json_effect_id_eq'] = (j['effect_id'] == (ep or {}).get('effect_id'))
+                    jd['json_start_tick_eq'] = (j['start_tick'] == (ep or {}).get('start_tick'))
+                except Exception as e:  # noqa: BLE001
+                    jd['json_error'] = str(e)
+            jd['pos_x_eq_end_x'] = (fp or {}).get('end_x') == pos_hex[:16] if fp else None
+            rec = {
+                'type': 'shot', 'series': label, 'shot': gi + 1,
+                # fired=False ⇒ 这次 `calculate_function` 没有对应的 `execute_results`
+                #（`pos_read` 没出现）：**多半是打字预览**（曲线跟着输入框画），不是一发。
+                'fired': pr is not None,
+                'fire': {'calls': [r.get('ret') for r in g], 'flip': r0.get('flip'), 'mode': r0.get('mode'),
+                         'x0_bits': r0.get('x0'), 'y0_bits': r0.get('y0'), 'step_bits': r0.get('step'),
+                         'x0': _le_d(r0.get('x0')), 'y0': _le_d(r0.get('y0')),
+                         'tok_len': len(toks), 'tok_tags': [t[0] for t in toks],
+                         'tok_hex': (r0.get('tok') or {}).get('hex'),
+                         'const_bits': const_bits, 'const_value': const[1] if const else None,
+                         'parse_text': parse_txt, 'parse_ptr_eq': ptr_eq, 'parse_same_bytes': same_bytes},
+                'suffix': suf_hits[0] if suf_hits else None,
+                'suffix_rows': len(suf_hits),
+                'pos_read': {'rdx': (pr or {}).get('rdx'), 'rcx': (pr or {}).get('rcx'),
+                             'rcx_mod16': (pr or {}).get('rcx_mod16'), 'n': (pr or {}).get('n'),
+                             'n_from_r13': (pr or {}).get('n_from_r13'),
+                             'pos_hex': pos_hex, 'pos_x': pos_x, 'pos_y': pos_y,
+                             'digest_xy': (pr or {}).get('digest_xy'),
+                             # 数组在 `movdqu` 那一刻与"采样器刚返回时那份"逐点逐字节比（差 1 bit 也报）
+                             'vs_calc': [{'ret': v.get('ret'), 'ptr': v.get('ptr'), 'len': v.get('len'),
+                                          'same': v.get('same'), 'diffPoints': v.get('diffPoints')}
+                                         for v in ((pr or {}).get('vs_calc') or [])],
+                             # 与 `execute_results` 入口扫到的**队列项**再对一次（同一块内存？同一串字节？）
+                             'vs_queue': [{'off': v.get('off'), 'ptr': v.get('ptr'), 'len': v.get('len'),
+                                           'same_ptr': v.get('same_ptr'), 'same_len': v.get('same_len'),
+                                           'same_digest': v.get('same_digest')}
+                                          for v in ((pr or {}).get('vs_queue') or [])]} if pr else None,
+                'effect': {'effect_id': (ep or {}).get('effect_id'),
+                           'start_tick': (ep or {}).get('start_tick'),
+                           'effect_type': (ep or {}).get('effect_type'),
+                           'payload_hex': (ep or {}).get('payload_hex'),
+                           'json_text': (ej or {}).get('text')} if ep else None,
+                'fnpoints_end_x_bits': (fp or {}).get('end_x'),
+                'oracle': orc, 'judge': jd,
+            }
+            all_shots.append(rec)
+        per_series.append({'series': label, 'rows': len(rows), 'fires': len(fires),
+                           'shots': len(groups)})
+    prov = {
+        'type': 'provenance', 'schema': TRIPLE_SCHEMA,
+        'what': ('`dispatch/66`：在**同一次开火**里同时抓 ①`calculate_function`(0x3c2530) 入口吃到的 '
+                 'token 列表 ②`0x472865` 的 `movdqu` 读到的 `(rdx,rcx,n)` 与那 16 字节（= `pts[n-1]`）'
+                 '③这条 `EffectInfo` 的载荷位模式与**JSON 文本**（`0x50f990` 写入器）。对齐靠 '
+                 '`effect_id` + `start_tick` + **三种来源的 pos 位模式逐字节相同**。'),
+        'how': ('真游戏（Godot 4.7 + `libgraphwarrust.so`）在私有 Xvfb 上跑 `--attach`，'
+                'frida 17.26.1 挂 `tools/frida_point_array.js`；驱动 `tools/frida_point_array.py '
+                '--triple --round-aware`；离线用 `--triple-report`（本函数）摘样本。'),
+        'oracle': ('`--oracle 1`：`tools/posy_unicorn.py` 的 `Real` —— 真解析器 `0x4ed670` / '
+                   '真采样器 `0x3c2530` / 真求值器 `0x4eb9d0`，用**抓到的那份 token** 重跑。'
+                   if oracle else 'off'),
+        'build': {'game': 'Graphwar II Linux 2.0.60 (Steam)',
+                  'libgraphwarrust.so_sha256':
+                      '9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187',
+                  'address_space': 'RVA = ELF vaddr = 模块内偏移；Ghidra = RVA + 0x100000',
+                  'hooked_rva': {'calculate_function': '0x3c2530', 'pos_read_movdqu': '0x472865',
+                                 'effect_push_A': '0x4729d6', 'effect_push_B': '0x472e4d',
+                                 'effect_json_writer': '0x50f990',
+                                 'effect_json_dispatch': '0x504640 (跳表 0x1c48d0 第 44 项)'}},
+        'judge_keys': {
+            'const_eq_printed': '①的常数 token 位模式 == 真机印的后缀文本 parse 回来的位模式',
+            'const_ulp_vs_printed': '两者差几个 ulp（0 = 逐位相同）',
+            'parse_text_endswith_suffix': 'parse 出的整串文本是否以那条后缀结尾',
+            'array_untouched': '真采样器用同一份 token 重跑的末点 == ② 那 16 字节',
+            'copy_exact': '② 的 16 字节 == ③ 载荷的 pos 位模式（拷贝处没动）',
+            'json_pos_bits_match': '③ JSON 文本里 `pos_x/pos_y` 的十进制回 parse == ② 的位模式',
+            'pos_x_eq_end_x': '② 的 pos_x == 同一发 `FunctionPoints.end_x`（对齐旁证）',
+            'printed_is_round3_of_c_full': ('真机印出来的 3 位小数 == `{:.3}`(全精度 c)（真求值器算 c）'
+                                            ' —— 证明"打印这一步"就是 3 位四舍五入，没有别的精度源'),
+            'printed_minus_c_full': '全精度 c 与印出来的值差多少（≈半格 5e-4 量级，**不是** 1 ulp）',
+        },
+        'privacy': 'no_local_paths: 不含本机路径、用户名、回放文件内容；rdx/rcx 是那次会话的堆地址（ASLR 相关）',
+        'notes': notes or [],
+        'series': per_series,
+        'counts': {'shots': len(all_shots),
+                   'fired': sum(1 for s in all_shots if s.get('fired')),
+                   'const_eq_printed': sum(1 for s in all_shots if s['judge'].get('const_eq_printed')),
+                   'array_untouched': sum(1 for s in all_shots if s['judge'].get('array_untouched')),
+                   'copy_exact': sum(1 for s in all_shots if s['judge'].get('copy_exact')),
+                   'json_pos_bits_match': sum(1 for s in all_shots
+                                              if s['judge'].get('json_pos_bits_match')),
+                   'on_curve': sum(1 for s in all_shots if (s['oracle'] or {}).get('f_eq_pos_y')),
+                   'pos_x_eq_end_x': sum(1 for s in all_shots if s['judge'].get('pos_x_eq_end_x')),
+                   'printed_is_round3_of_c_full': sum(1 for s in all_shots
+                                                      if (s['oracle'] or {}).get('printed_is_round3_of_c_full'))},
+    }
+    with open(out_path, 'w', encoding='utf-8') as f:
+        f.write(json.dumps(prov, ensure_ascii=False) + '\n')
+        for s in all_shots:
+            f.write(json.dumps(s, ensure_ascii=False) + '\n')
+    return prov, all_shots
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', default=None, help='JSONL 输出路径（`--extract` 模式下不需要）')
@@ -1070,6 +1371,24 @@ def main():
                     help='（`dispatch/48` 实验）配合 `--diverge`：在结果 item 刚 push 进 Vec 之后把那一页'
                          '设成"只读+陷阱"（`MemoryAccessMonitor`，每页一次），抓紧接着的那次访问是谁（`details.from`）。'
                          '默认关 —— 它会给游戏线程加页错误，只在定位写入者时开')
+    ap.add_argument('--triple', action='store_true',
+                    help='（2026-11-09 `dispatch/66`）**三样同抓**：一次打开 token 探针（①采样器入口的 '
+                         'token 列表）+ fnpoints（②`end_x`/`pos` 定位）+ **EffectInfo 探针**（③装配点载荷 '
+                         '`0x4729d6`/`0x472e4d` 与 JSON 写入器 `0x50f990` 的文本）。'
+                         '不加这个开关时行为与之前**逐字节相同**')
+    ap.add_argument('--round-aware', action='store_true',
+                    help='（`dispatch/66`）回合感知：每一发按下 Fire! 后**等 `pos_read` 出现**'
+                         '（= `execute_results` 真的跑了；最多 `--fire-retry` 次、每次等 `--fire-wait` 秒）。'
+                         '判据**不能**用 `tok_fire`：一次开火有两次 `calculate_function`、中间隔着弹道飞行，'
+                         '上一发的第二次调用会落进下一次尝试的窗口（实测 8 次尝试只有 4 发真开出去）。'
+                         'Bot 先手/没轮到时输入框禁用，按 Fire! 不会有任何结果 —— 不是"抓不到"，是'
+                         '**这一发没发生**。不加这个开关时行为与之前**逐字节相同**（固定 gap）')
+    ap.add_argument('--triple-report', default=None, action='append',
+                    help='（`dispatch/66`）**不给游戏**：把 `--triple` 的原始 JSONL 摘成入库样本 '
+                         '（每发一行 + 每发的 A/B/C 判定）；可给多次，配 `--label`')
+    ap.add_argument('--triple-fixture-out', default=None, help='`--triple-report` 的输出（纯文本 JSONL）')
+    ap.add_argument('--fire-wait', type=float, default=15.0, help='`--round-aware` 每次尝试等多久（秒）')
+    ap.add_argument('--fire-retry', type=int, default=3, help='`--round-aware` 每发最多试几次')
     ap.add_argument('--campaign-level', type=int, default=None,
                     help='（`dispatch/44`）开跑前往**工作区** `XDG_DATA_HOME` 写 `user://campaign.save = level_<n>`'
                          '（20 = 解锁全部；给这个开关才会写）')
@@ -1150,6 +1469,33 @@ def main():
                 (r.get('pos') or {}).get('n'), r['judge'].get('end_x_eq_pos_x'),
                 [(c2.get('site'), c2.get('r10')) for c2 in r['clamp']]), file=sys.stderr)
         return
+    if args.triple_report:
+        if not args.triple_fixture_out:
+            ap.error('--triple-report 需要 --triple-fixture-out')
+        labels = args.label or []
+        specs = [(p, labels[i] if i < len(labels) else 'series%d' % (i + 1))
+                 for i, p in enumerate(args.triple_report)]
+        prov, shots = triple_report(specs, args.triple_fixture_out, oracle=args.oracle, notes=args.note)
+        c = prov['counts']
+        print('[triple-report] shots=%d const_eq_printed=%d array_untouched=%d copy_exact=%d '
+              'json_pos_bits_match=%d on_curve=%d pos_x==end_x=%d -> %s' % (
+                  c['shots'], c['const_eq_printed'], c['array_untouched'], c['copy_exact'],
+                  c['json_pos_bits_match'], c['on_curve'], c['pos_x_eq_end_x'],
+                  args.triple_fixture_out), file=sys.stderr)
+        for r in shots:
+            j = r['judge']
+            o = r['oracle'] or {}
+            print('  %-8s #%d id=%s n=%s const=%s printed_ulp=%s array=%s copy=%s json=%s '
+                  'f_ulp=%s end_x=%s' % (
+                      r['series'], r['shot'], (r['effect'] or {}).get('effect_id'),
+                      (r['pos_read'] or {}).get('n'), j.get('const_eq_printed'),
+                      j.get('const_ulp_vs_printed'), j.get('array_untouched'), j.get('copy_exact'),
+                      j.get('json_pos_bits_match'), o.get('f_ulp_vs_pos_y'), j.get('pos_x_eq_end_x')),
+                  file=sys.stderr)
+            print('            c_full=%r  printed=round3:%s  |printed|-|c_full|=%s' % (
+                o.get('c_full'), o.get('printed_is_round3_of_c_full'), o.get('printed_minus_c_full')),
+                file=sys.stderr)
+        return
     if args.tokens_report:
         if not args.tokens_fixture_out:
             ap.error('--tokens-report 需要 --tokens-fixture-out')
@@ -1218,6 +1564,8 @@ def main():
     src = open(args.js, encoding='utf-8').read()
     out = open(args.out, 'w', encoding='utf-8')
     tally = {}
+    # 2026-11-09 `dispatch/66`：`--round-aware` 用它判"这一发到底发生了没有"
+    SHOTST = {'fires': 0, 'suffixes': 0, 'pos': 0, 'eff_payload': 0, 'eff_json': 0}
 
     def on_message(msg, _data):
         if msg.get('type') == 'error':
@@ -1227,6 +1575,14 @@ def main():
         p = msg.get('payload') or {}
         t = p.get('type', '?')
         tally[t] = tally.get(t, 0) + 1
+        if t == 'tok_fire':
+            SHOTST['fires'] += 1
+        elif t == 'tok_suffix':
+            SHOTST['suffixes'] += 1
+        elif t == 'pos_read':
+            SHOTST['pos'] += 1
+        elif t in ('eff_payload', 'eff_json'):
+            SHOTST[t] += 1
         out.write(json.dumps(p) + '\n')
         out.flush()
         if t == 'hooks':
@@ -1278,6 +1634,15 @@ def main():
                 [(v.get('ptr'), v.get('same_ptr'), v.get('same_len'), v.get('same_digest')) for v in (p.get('vs_queue') or [])],
                 [(v.get('ret'), v.get('same'), v.get('diffPoints')) for v in (p.get('vs_calc') or [])]),
                 file=sys.stderr)
+        elif t == 'eff_payload':
+            print('[eff_payload] %s #%s id=%s tick=%s type=%s pos=(%s,%s) [%s,%s]' % (
+                p.get('site'), p.get('seq'), p.get('effect_id'), p.get('start_tick'),
+                p.get('effect_type'), p.get('pos_x'), p.get('pos_y'),
+                p.get('pos_x_bits'), p.get('pos_y_bits')), file=sys.stderr)
+        elif t == 'eff_json':
+            print('[eff_json] #%s id=%s tick=%s len=%s..%s text=%s' % (
+                p.get('seq'), p.get('effect_id'), p.get('start_tick'),
+                p.get('len_before'), p.get('len_after'), p.get('text')), file=sys.stderr)
 
     dev = frida.get_local_device()
     game = args.game
@@ -1319,8 +1684,10 @@ def main():
     try:
         # 2026-11-08 `dispatch/39`：`--tokens` 同时打开 token 探针（关着的时候探针三个钩子立即 return）
         script.post({'type': 'cfg', 'evalRowsMax': args.eval_rows,
-                     'tokenProbe': bool(args.tokens), 'fnpoints': bool(args.fnpoints),
-                     'diverge': bool(args.diverge), 'dvMam': bool(args.dv_mam)})
+                     'tokenProbe': bool(args.tokens or args.triple),
+                     'fnpoints': bool(args.fnpoints or args.triple),
+                     'diverge': bool(args.diverge), 'dvMam': bool(args.dv_mam),
+                     'effProbe': bool(args.triple)})
     except Exception as e:  # noqa: BLE001
         print('[warn] post cfg:', e, file=sys.stderr)
     if not args.attach:
@@ -1343,15 +1710,53 @@ def main():
             for s in range(nshots):
                 expr = exprs[s % len(exprs)]
                 print('[shot %d/%d] f(x) = %s' % (s + 1, nshots, expr), file=sys.stderr)
-                pre, fire = shot_actions(expr)
-                for delay, action in pre:
-                    time.sleep(delay)
-                    xdo(args.display, action)
-                snap(args.display, 'typed%d' % (s + 1))
-                for delay, action in fire:
-                    time.sleep(delay)
-                    xdo(args.display, action)
-                snap(args.display, 'shot%d' % (s + 1))
+                # 2026-11-09 `dispatch/66` `--round-aware`：按**证据**判"这一发发生了没有"。
+                # 不加这个开关时走原来的固定节奏（逐字节相同的旧行为）。
+                tries = max(1, args.fire_retry) if args.round_aware else 1
+                fired = False
+                for att in range(1, tries + 1):
+                    before = SHOTST['pos']
+                    before_fires = SHOTST['fires']
+                    pre, fire = shot_actions(expr)
+                    for delay, action in pre:
+                        time.sleep(delay)
+                        xdo(args.display, action)
+                    snap(args.display, 'typed%d_%d' % (s + 1, att))
+                    for delay, action in fire:
+                        time.sleep(delay)
+                        xdo(args.display, action)
+                    snap(args.display, 'shot%d_%d' % (s + 1, att))
+                    if not args.round_aware:
+                        fired = True
+                        break
+                    # ★ 判据是 `pos_read`（`0x472865` 的 `movdqu` = **结果真的执行了**），
+                    #   不是 `tok_fire`：一次开火有**两次** `calculate_function`（`gw+3c30c7`
+                    #   然后 `gw+3e2d3b`），两次之间隔着**弹道飞行**（实测 3–15 s）⇒ 上一发的
+                    #   第二次调用会落进这一次尝试的窗口，"tok_fire 涨了"并不等于"这一发开出去了"
+                    #   （本轮实测：8 次尝试里只有 4–5 发真开出去，日志却报 8 次"生效"；
+                    #   见 docs/06 §38.6）。
+                    tw = time.time()
+                    while time.time() - tw < args.fire_wait:
+                        if SHOTST['pos'] > before:
+                            break
+                        time.sleep(0.5)
+                    if SHOTST['pos'] > before:
+                        fired = True
+                        print('[shot %d] 第 %d 次尝试生效（pos_read #%d，连带的 calculate_function %d 次）' % (
+                            s + 1, att, SHOTST['pos'], SHOTST['fires'] - before_fires), file=sys.stderr)
+                        break
+                    print('[shot %d] 第 %d 次尝试**没有** execute_results（pos_read 没出现）'
+                          ' —— 不是本回合/输入框禁用，重试' % (s + 1, att), file=sys.stderr)
+                    time.sleep(3.0)
+                if not fired:
+                    print('[shot %d] 放弃：%d 次尝试都没有开出去' % (s + 1, tries), file=sys.stderr)
+                # 结算/特效要时间（`execute_results` 在弹道飞完之后才跑）
+                if args.round_aware and fired:
+                    te = time.time()
+                    while time.time() - te < 25.0:
+                        if SHOTST['eff_json'] >= SHOTST['pos']:
+                            break
+                        time.sleep(0.5)
                 if s + 1 < nshots:
                     time.sleep(args.gap)          # 让这一发的弹道走完、结算完
             if args.extra_shot:

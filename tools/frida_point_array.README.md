@@ -237,3 +237,49 @@ pairWho    这些命中来自求值器的哪个返回地址（`gw+3c2995` = `cal
 
 入库样本：[`fixtures/frida_array_divergence_sample.jsonl`](../fixtures/frida_array_divergence_sample.jsonl)
 （10 发，`docs/06` §30）。
+
+## 2026-11-09 `dispatch/66`：**三样同抓**（①采样器入口的 token ②`pts[n-1]` ③`EffectInfo` 的 JSON）
+
+第五个断点组 + 一个"回合感知"驱动开关（默认全关：不给开关时行为与之前**逐字节相同**；
+新逻辑全部收在 `EFFCFG` / `EFFST` / `installEffectProbe()` / `eff_payload` / `eff_json` 两条消息里）。
+
+| 新增 RVA | 是什么 | 抓什么 |
+|---|---|---|
+| **`0x4729d6`** | `execute_results` 里**站点 A**（Explosion）往事件队列 push 的 `call *0x9bac80`；上一句 `0x4729d1 lea rsi,[rsp+0x70]` | `rsi` = **载荷原文 0x28 字节**：判别式 `0x…2c`(44) @+0、`pos_x` @+8、`pos_y` @+0x10、`effect_id` @+0x18、`start_tick` @+0x1c、`effect_type` @+0x20（=0 Explosion） |
+| **`0x472e4d`** | 同形态的**站点 B**（Death/Spark/Ash） | 同上 |
+| **`0x50f990`** | `EffectInfo` → **JSON 的写入器**（派发：`0x504640` 的 62 项跳表 `0x1c48d0` **第 44 项** = `0x50476e` → `jmp 0x50f990`） | `rsi` = `&载荷`（`pos_x@+0`/`pos_y@+8`/`effect_id@+0x10`/`start_tick@+0x14`）；**onLeave 读输出 String 的新增段 = 这条 `EffectInfo` 的 JSON 文本** |
+
+消息：
+
+| `type` | 是什么 |
+|---|---|
+| `eff_payload` | 装配点那一瞬：`payload_hex`（0x28 B）+ `pos_x_bits`/`pos_y_bits`（内存序）+ `effect_id`/`start_tick`/`effect_type` |
+| `eff_json` | 写入器退出时：`len_before`/`len_after`、`text`（JSON 文本）、`text_hex`、同一刻的载荷位模式 |
+
+驱动新增开关：
+
+```bash
+--triple                 # = tokenProbe + fnpoints + **effProbe**（三样一次开）
+--round-aware            # 回合感知：按下 Fire! 后**等 tok_fire**，没等到就重试（--fire-retry/--fire-wait）
+--triple-report <raw.jsonl> --triple-fixture-out <out.jsonl> [--oracle 1]   # 离线：摘样本 + 每发 A/B/C 判定
+```
+
+`--triple-report` 的输出 = 1 行 provenance + 每发 1 行（`fire`/`suffix`/`pos_read`/`effect`/`oracle`/`judge`），
+**不含路径、用户名、整条数组的十六进制**；判据键见 `docs/06` §38。
+
+⚠ 三个本轮新踩的坑（`docs/06` §38.6）：
+
+1. **`ctrl+a` 不总能进全选**：焦点还没落到输入框时它发给的是窗口 ⇒ 新表达式**接在旧文本后面**。
+   本轮抓到的 `parse_text` 里出现过 `2+1exp(x)/5-1`（想打 `sin(x)*2+1`）。`shot_actions` 现在
+   在 `ctrl+a` 后补一条 `key Delete`。**判据只认 `parse_text`（实际喂进解析器的那串）**，不认我打算打的。
+2. **`frida` 钩子里 `rdi/rsi` 是调用者保存**：`onLeave` 读到的**不是**入口的值。
+   `eff_json` 第一版就是因此在 `len_before=-1`、`text=null` 上空的 —— 必须在 `onEnter` 抄下来。
+3. **一次开火是两次 `calculate_function`**（`gw+3c30c7` 然后 `gw+3e2d3b`），两次的间隔
+   **就是弹道飞行的时间**（实测 3–15 s；第二次在 `execute_results` 之前那一刻）⇒ 两发的调用
+   序列会**交错**（第 N 发的第二次调用落在第 N+1 次尝试的窗口里）。所以：
+   · 切发要**按调用点**（见到 `gw+3c30c7` 就开新的一组），不要按时间/按"计数有没有涨"；
+   · 驱动判"这一发开出去了没有"要用 **`pos_read`**（结果真的执行了），不能用 `tok_fire`
+     —— 用 `tok_fire` 会把上一发的第二次调用当成这一发生效（本轮实测：8 次尝试里只有 4–5 发
+     真的开了出去，日志却报 8 次"生效"）。
+   · 打字**不会**调 `0x3c2530`（输入框里那条曲线走的是 `0x3c5f70` 里的 parse+eval，不是采样器），
+     所以"只有一次调用、没有第二次"= **那一发还在飞**（或者压根没开出去）。

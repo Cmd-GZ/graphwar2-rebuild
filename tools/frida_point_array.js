@@ -1026,6 +1026,123 @@ function selfTestCompare() {
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2026-11-09 `dispatch/66`：`EffectInfo` 报文的**内容**（装配点 + JSON 文本）
+//
+// 为什么单开一块：并行任务也在动本文件；本轮新增的东西**全部**收在这里
+// （`EFFCFG` / `EFFST` / `installEffectProbe()` / `eff_payload` / `eff_json` 两条消息），
+// 开关是 `EFFCFG.on`（默认 **关**；驱动 `--triple` 用 `post({type:'cfg',effProbe:true})` 打开），
+// 主探针 / token 探针 / FunctionPoints 探针 / 分叉探针一行没动。
+//
+// 地址（构建同文件头：`libgraphwarrust.so` sha256 9a538115…）：
+//   `0x4729d6`  `execute_results` 里**站点 A**（Explosion）往事件队列 push 的那条
+//               `call *0x9bac80`；上一句 `0x4729d1 lea rsi,[rsp+0x70]` ⇒ **rsi = &载荷**。
+//               载荷布局（`0x4729cc`…`0x4729b6` 六条 store 逐条读出）：
+//                 +0x00 判别式 u64 = `0x800000000000002c`（= 44 = EffectInfo）
+//                 +0x08 pos_x f64   （`0x4729a0` movdqu 的前 8 字节）
+//                 +0x10 pos_y f64   （同一个 movdqu 的后 8 字节 —— 全 `.text` 只有两处写它）
+//                 +0x18 effect_id u32（`0x4729a6` 的 r12d，来自 `0x472930` 的 lock xadd）
+//                 +0x1c start_tick u32（`0x4729ae` 的 r13d）
+//                 +0x20 effect_type u8（`0x4729b6` 写常量 0 = ExplosionEffect）
+//   `0x472e4d`  **站点 B**（Death/Spark/Ash）的同形态 push（`0x472e43` 造判别式 44）
+//   `0x50f990`  `EffectInfo` → **JSON 的写入器**（手写 serde，逐条指令读出）
+//               rdi = 序列化器包装（`[rdi]` = 输出 String 的 `{cap@+0, ptr@+8, len@+0x10}`）
+//               rsi = ★ `&载荷`（= 事件 + 8 ⇒ `pos_x@+0`、`pos_y@+8`、`effect_id@+0x10`、
+//                     `start_tick@+0x14`、`effect_type@+0x18`）
+//               键名来自 rodata：`EffectInfo`@0x1c5646(0xa)、`effect_id`@0x1c5813(0x9)、
+//                     `pos_x`@0x1c5092(0x5)
+//               派发：`0x504640` 的事件→JSON 派发器，判据 44 查 `0x1c48d0` 的 62 项跳表
+//               第 44 项 = `0x50476e` → `jmp 0x50f990`（第 37 项 = `0x5046c9` → `0x50eb20`
+//               与 `dispatch/44` 抓 `FunctionPoints.end_x` 的那一处**同一个表**，可作表的自校验）
+//   ⇒ `0x50f990` 退出时输出 String 的**新增段**就是这条 `EffectInfo` 的 JSON 文本。
+// ═══════════════════════════════════════════════════════════════════════════════
+const EFFCFG = {
+  on: false,       // ★ 总开关（默认关：不加 --triple 的跑法行为与之前**逐字节相同**）
+  jsonMax: 4096,   // 单条 JSON 文本最多记多少字节
+};
+const EFFST = { pays: 0, jsons: 0 };
+
+/** 8 字节小端 → 十六进制（= 一个 f64 的位模式，内存序） */
+function leHex8(p) { return bytesHex(p, 8); }
+
+/** `0x50f990` 的「输出 String」：`[rdi]` 是 `{cap@+0, ptr@+8, len@+0x10}` 的**指针** */
+function outStringOf(w) {
+  const s = w.readPointer();
+  return { tri: s, cap: Number(s.readU64().toString()),
+           ptr: s.add(8).readPointer(), len: Number(s.add(0x10).readU64().toString()) };
+}
+
+function installEffectProbe(base, res) {
+  // ── ① 装配点（站点 A / B）：载荷原文（含 effect_id / start_tick / pos 两个位模式）──
+  const sites = [[0x4729d6, 'A_0x4729d6'], [0x472e4d, 'B_0x472e4d']];
+  for (const [rva, tag] of sites) {
+    try {
+      Interceptor.attach(base.add(rva), {
+        onEnter() {
+          if (!EFFCFG.on) return;
+          const c = this.context;
+          const o = { type: 'eff_payload', site: tag, seq: ++EFFST.pays, t: now(),
+                      rsi: hx(c.rsi), ret: rvaOf(c.rsp.readPointer()) };
+          try {
+            const p = c.rsi;
+            o.payload_hex = bytesHex(p, 0x28);
+            o.tag64 = '0x' + p.readU64().toString(16);
+            o.pos_x_bits = leHex8(p.add(8));
+            o.pos_y_bits = leHex8(p.add(0x10));
+            o.pos_x = p.add(8).readDouble();
+            o.pos_y = p.add(0x10).readDouble();
+            o.effect_id = p.add(0x18).readU32();
+            o.start_tick = p.add(0x1c).readU32();
+            o.effect_type = p.add(0x20).readU8();
+          } catch (e) { o.error = String(e); }
+          try { send(o); } catch (e) { }
+        },
+      });
+      res.hooks.push({ name: 'eff_payload_' + tag, rva: '0x' + rva.toString(16) });
+    } catch (e) { res.hooks.push({ name: 'eff_payload_' + tag, error: String(e) }); }
+  }
+
+  // ── ② JSON 写入器 `0x50f990`：退出时把输出 String 的**新增段**抄下来 = JSON 文本 ──
+  try {
+    Interceptor.attach(base.add(0x50f990), {
+      onEnter() {
+        if (!EFFCFG.on) return;
+        // ⚠ rdi/rsi 都是**调用者保存**寄存器：onLeave 里读到的已经不是入口的值
+        //   （第一版就是这么错的：len_before 恒为 -1、文本恒为 null）。必须在 onEnter 抄下来。
+        this.w = this.context.rdi;           // 序列化器包装（`[w]` = 输出 String）
+        this.pay = this.context.rsi;         // &载荷（pos_x 起）
+        this.len0 = -1;
+        try { this.s = outStringOf(this.w); this.len0 = this.s.len; }
+        catch (e) { this.errIn = String(e); }
+      },
+      onLeave() {
+        if (!EFFCFG.on) return;
+        const o = { type: 'eff_json', seq: ++EFFST.jsons, t: now() };
+        try {
+          const p = this.pay;
+          o.effect_id = p.add(0x10).readU32();
+          o.start_tick = p.add(0x14).readU32();
+          o.pos_x_bits = leHex8(p);
+          o.pos_y_bits = leHex8(p.add(8));
+          o.payload_hex = bytesHex(p, 0x20);
+        } catch (e) { o.payErr = String(e); }
+        try {
+          const s = outStringOf(this.w);
+          o.len_before = this.len0; o.len_after = s.len; o.buf = hx(s.ptr);
+          const n = s.len - this.len0;
+          if (this.len0 >= 0 && n > 0 && n <= EFFCFG.jsonMax) {
+            o.text = s.ptr.add(this.len0).readUtf8String(n);
+            o.text_hex = bytesHex(s.ptr.add(this.len0), n);
+          } else { o.note = 'len delta out of range'; }
+        } catch (e) { o.error = String(e); }
+        if (this.errIn) o.errIn = this.errIn;
+        try { send(o); } catch (e) { }
+      },
+    });
+    res.hooks.push({ name: 'eff_json_0x50f990', rva: '0x50f990' });
+  } catch (e) { res.hooks.push({ name: 'eff_json_0x50f990', error: String(e) }); }
+}
+
 function install(base) {
   BASE = base;
   const mod = Process.findModuleByAddress(base);
@@ -1277,6 +1394,10 @@ function install(base) {
   //    （**默认关**，`DVCFG.on=false` 时三个钩子立刻 return；开关可以装机后再 post）──────
   try { installDivergeProbe(base, res); } catch (e) { res.hooks.push({ name: 'diverge_probe', error: String(e) }); }
 
+  // ── 2026-11-09 `dispatch/66`：`EffectInfo` 这条报文的**内容**（装配点 + JSON 文本）
+  //    （**默认关**，`EFFCFG.on=false` 时两个钩子立刻 return；开关可以装机后再 post）────
+  try { installEffectProbe(base, res); } catch (e) { res.hooks.push({ name: 'effect_probe', error: String(e) }); }
+
   ST.ins = true;
   // 正对照：先证明"逐点对比函数"对**已知不同**的两条数组会报不同（负结论的前提，见 docs/06 §42）
   try { send({ type: 'selftest', cmp: selfTestCompare() }); } catch (e) { send({ type: 'selftest', error: String(e) }); }
@@ -1297,8 +1418,11 @@ recv('cfg', (m) => {
     if (m && typeof m.diverge === 'boolean') DVCFG.on = m.diverge;
     if (m && typeof m.dvArrMax === 'number') DVCFG.arrMax = m.dvArrMax;
     if (m && typeof m.dvMam === 'boolean') DVCFG.mam = m.dvMam;
+    // 2026-11-09 `dispatch/66`：EffectInfo 探针开关（驱动 `--triple` 打开）
+    if (m && typeof m.effProbe === 'boolean') EFFCFG.on = m.effProbe;
     send({ type: 'cfg_ack', evalRowsMax: CFG.evalRowsMax, arrayCap: CFG.arrayCap,
-           tokenProbe: TOKCFG.on, maxTokens: TOKCFG.maxTokens, fnpoints: FPCFG.on, diverge: DVCFG.on });
+           tokenProbe: TOKCFG.on, maxTokens: TOKCFG.maxTokens, fnpoints: FPCFG.on, diverge: DVCFG.on,
+           effProbe: EFFCFG.on });
   } catch (e) { send({ type: 'cfg_ack', error: String(e) }); }
 });
 
