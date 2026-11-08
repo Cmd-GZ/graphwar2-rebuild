@@ -10,6 +10,8 @@
     python3 tools/merge_check.py --cg origin/CG               # 默认：< 5 s，不跑测试
     python3 tools/merge_check.py --cg origin/CG --run-tests   # 再跑四件套
     python3 tools/merge_check.py --branch CG                  # 没有远端时用本地分支
+    python3 tools/merge_check.py --self-test                  # 自测大文件三档（造假分支，不碰真仓库）
+    python3 tools/merge_check.py --cg origin/CG --allow-large 'fixtures/foo.tsv=任务书 §5 的真值表'
 
 退出码：0 = 通过；1 = 有阻断项；2 = 用法 / 环境错（不是 git 仓库、分支解析不到）。
 
@@ -22,8 +24,15 @@
   （``src/lib.rs``、``src/game.rs``、``client/src/**``）。禁区文件要么在报告里被
   「声明 / 允许 / 放行」过，要么 ``--allow <path>`` 显式放行 —— 否则阻断。
   （不从任务书的允许清单反推：那样会把「`src/**` 注释里的…」也算成放行，禁区就废了。）
-* C 污染检查：新增文件 > 100 KB、二进制扩展名、git 自己判定的二进制、``dispatch/``
-  会不会被带进 master（会 = 阻断，除非 ``--allow-dispatch`` 承认会用路径剔除）。
+* C 污染检查：**大文件分三档**（任务书 68 §0-A，见下）、二进制扩展名、git 自己判定的
+  二进制、``dispatch/`` 会不会被带进 master（会 = 阻断，除非 ``--allow-dispatch`` 承认会用路径剔除）。
+  三档是**分开的**，不是"全都放宽"：
+
+  | 档 | 范围 | 上限 | 处置 |
+  |---|---|---|---|
+  | ① 代码/文档 | `src/ client/ docs/ tools/ tests/ examples/` + 根目录杂项 | **100 KB 卡死** | 不放宽（`--allow-large` 无效） |
+  | ② 文本真值表 | `fixtures/` 下的 tsv/jsonl/md/txt/json/csv | 默认 **8 MB** | 超了要 `--allow-large 'PATTERN=理由'`，理由逐条登记 |
+  | ③ 二进制/压缩 | 扩展名或 git 判定的二进制 | **任何大小都拦** | 不放宽（`--allow-large` 无效） |
 * D 四件套：``cargo test --offline`` / ``coverage_matrix --check`` / ``check_doc_refs`` /
   三条轴护栏 —— 只有 ``--run-tests`` 才跑，默认只打印命令；红 = 阻断。
 
@@ -343,9 +352,53 @@ def section_b(repo, mb, cg, args, report_lines, state):
 
 BIN_EXT = {".so", ".pck", ".png", ".ttf", ".dll", ".dylib", ".exe", ".o", ".a",
            ".zip", ".gz", ".jpg", ".jpeg", ".ogg", ".wav", ".pkl", ".glb", ".bin"}
-MAX_KB = 100          # 一般新增文件的闸
-FIXTURE_MAX_KB = 4096  # fixtures/ 下的**文本真值表**单列上限（tsv/jsonl/md）
-FIXTURE_EXT = {".tsv", ".jsonl", ".md", ".txt", ".json"}
+
+# 三档（任务书 68 §0-A）。**分档不是放开**：①③ 两档一个字节都没松。
+MAX_KB = 100                     # ① 代码/文档：卡死，--allow-large 无效
+FIXTURE_TEXT_MAX_KB = 8 * 1024   # ② fixtures 下的文本真值表：默认 8 MB
+FIXTURE_TEXT_EXT = {".tsv", ".jsonl", ".md", ".txt", ".json", ".csv"}
+TIER_CODE = "code"               # ① 代码/文档
+TIER_FIXTURE = "fixture-text"    # ② 文本真值表
+TIER_BINARY = "binary"           # ③ 二进制/压缩产物（任何大小都拦）
+TIER_CAP = {TIER_CODE: MAX_KB * 1024, TIER_FIXTURE: FIXTURE_TEXT_MAX_KB * 1024}
+TIER_NAME = {TIER_CODE: "① 代码/文档 ≤ %d KB" % MAX_KB,
+             TIER_FIXTURE: "② fixtures 文本真值表 ≤ %d MB" % (FIXTURE_TEXT_MAX_KB // 1024),
+             TIER_BINARY: "③ 二进制（任何大小都拦）"}
+
+
+def classify_tier(path):
+    """按**路径与扩展名**判档（不读内容），决定这道闸用哪个阈值。
+
+    默认档是 ①（含根目录杂项）：宁可拦错，不可漏放。只有 ``fixtures/`` 下的
+    文本真值表进 ②；扩展名像二进制的进 ③，与大小无关。
+    """
+    if os.path.splitext(path)[1].lower() in BIN_EXT:
+        return TIER_BINARY
+    if path.startswith("fixtures/") and os.path.splitext(path)[1].lower() in FIXTURE_TEXT_EXT:
+        return TIER_FIXTURE
+    return TIER_CODE
+
+
+def parse_allow_large(raw_items):
+    """``--allow-large`` 的写法是 ``PATTERN`` 或 ``PATTERN=理由``（可重复）。
+
+    理由**不是装饰**：放行条目会在结论里逐条打印，合并提交要照抄。
+    """
+    out = []
+    for item in raw_items or ():
+        pat, _sep, reason = item.partition("=")
+        pat = pat.strip()
+        if pat:
+            out.append((pat, reason.strip()))
+    return out
+
+
+def match_allow_large(path, patterns):
+    """返回命中的 ``(pattern, reason)``；没命中返回 None。语义同 ``--allow``：同名 / glob / 目录前缀。"""
+    for pat, reason in patterns:
+        if path == pat or fnmatch.fnmatch(path, pat) or path.startswith(pat.rstrip("/") + "/"):
+            return pat, reason
+    return None
 
 
 def blob_sizes(repo, ref):
@@ -367,44 +420,97 @@ def git_binary_paths(repo, mb, cg):
     return out
 
 
+def _fmt_kb(size):
+    return "%.0f KB" % (size / 1024.0) if size < 1024 * 1024 else "%.1f MB" % (size / (1024.0 ** 2))
+
+
 def section_c(repo, mb, cg, rows, args, state):
-    head("C", "污染检查")
+    head("C", "污染检查（大文件三档 / 二进制 / dispatch）")
     added = [p for st, p, _o in rows if st.startswith("A")]
     sizes = blob_sizes(repo, cg)
-    def _cap(p):
-        """fixtures/ 下的文本真值表放宽到 FIXTURE_MAX_KB（先例：callgraph_fingerprint.tsv 1.5 MB、
-        parse_matrix_truth.tsv 1.6 MB —— 都是任务书要求的可复算真值表）。
-        二进制/压缩产物仍按 MAX_KB 卡。"""
-        if p.startswith("fixtures/") and os.path.splitext(p)[1].lower() in FIXTURE_EXT:
-            return FIXTURE_MAX_KB * 1024
-        return MAX_KB * 1024
-    big = sorted(((p, sizes.get(p, 0)) for p in added if sizes.get(p, 0) > _cap(p)),
-                 key=lambda x: -x[1])
-    fixture_big = sorted(((p, sizes.get(p, 0)) for p in added
-                          if p.startswith("fixtures/")
-                          and os.path.splitext(p)[1].lower() in FIXTURE_EXT
-                          and MAX_KB * 1024 < sizes.get(p, 0) <= FIXTURE_MAX_KB * 1024),
-                         key=lambda x: -x[1])
+    allow_large = parse_allow_large(args.allow_large)
+
     bin_git = git_binary_paths(repo, mb, cg)
     bin_ext = [p for _st, p, _o in rows
                if os.path.splitext(p)[1].lower() in BIN_EXT]
     bin_all = sorted(set(bin_git) | set(bin_ext))
 
-    bullet("新增 %d 个，> %d KB：%s" % (
-        len(added), MAX_KB,
-        paint("❌ %d 个（%s）" % (len(big), "，".join(
-            "%s %.0f KB" % (p, s / 1024.0) for p, s in big[:5])), RED) if big else "无"))
-    if fixture_big:
-        bullet("（放行）fixtures 下的文本真值表 > %d KB 且 ≤ %d KB：%s" % (
-            MAX_KB, FIXTURE_MAX_KB,
-            "，".join("%s %.0f KB" % (p, sz / 1024.0) for p, sz in fixture_big[:5])))
-    if big:
-        state["blockers"] += ["大文件 %s" % p for p, _s in big[:5]]
+    # ---- 逐文件判档：超限的进 over[]，② 档被 --allow-large 接住的进 allowed[]
+    over = {TIER_CODE: [], TIER_FIXTURE: []}
+    within = []      # ② 档内但 > 100 KB（提示用：这些以前要人肉放行）
+    allowed = []     # (path, size, pattern, reason)
+    ignored = []     # (path, tier, pattern)：--allow-large 打到 ①/③ 档上，本闸不认
+    for p in added:
+        size = sizes.get(p, 0)
+        tier = classify_tier(p)
+        if tier == TIER_BINARY:
+            continue                      # 交给下面的二进制闸（按扩展名/内容，不看大小）
+        cap = TIER_CAP[tier]
+        if size <= cap:
+            if tier == TIER_FIXTURE and size > MAX_KB * 1024:
+                within.append((p, size))
+            continue
+        hit = match_allow_large(p, allow_large)
+        if tier == TIER_FIXTURE and hit:
+            allowed.append((p, size, hit[0], hit[1]))
+        else:
+            over[tier].append((p, size))
+            if hit:
+                ignored.append((p, tier, hit[0]))
+    for p in bin_all:                     # 二进制：--allow-large 一律不认
+        hit = match_allow_large(p, allow_large)
+        if hit:
+            ignored.append((p, TIER_BINARY, hit[0]))
 
-    bullet("二进制（扩展名或 git 判定）：%s" % (
-        paint("❌ " + "，".join(bin_all[:8]), RED) if bin_all else "无"))
+    # ---- ① 代码/文档
+    code_big = sorted(over[TIER_CODE], key=lambda x: -x[1])
+    if code_big:
+        bullets = "，".join("%s %s" % (p, _fmt_kb(s)) for p, s in code_big[:5])
+        bullet(paint("❌ %s：%d 个超限（%s）—— 这一档**不放宽**，超了就得搬到 fixtures/ 或删"
+                     % (TIER_NAME[TIER_CODE], len(code_big), bullets), RED))
+        state["blockers"] += ["大文件(①代码/文档) %s" % p for p, _s in code_big[:5]]
+    else:
+        bullet("%s：无超限" % TIER_NAME[TIER_CODE])
+
+    # ---- ② fixtures 文本真值表
+    fix_big = sorted(over[TIER_FIXTURE], key=lambda x: -x[1])
+    if fix_big:
+        bullet(paint("❌ %s：%d 个超 %d MB（%s）—— 要 --allow-large 'PATTERN=理由' 显式放行"
+                     % (TIER_NAME[TIER_FIXTURE], len(fix_big), FIXTURE_TEXT_MAX_KB // 1024,
+                        "，".join("%s %s" % (p, _fmt_kb(s)) for p, s in fix_big[:5])), RED))
+        state["blockers"] += ["大文件(②fixtures>8MB) %s" % p for p, _s in fix_big[:5]]
+    if allowed:
+        bullet("%s：%d 个超 %d MB，已用 --allow-large 放行（理由见下）"
+               % (TIER_NAME[TIER_FIXTURE], len(allowed), FIXTURE_TEXT_MAX_KB // 1024))
+    if within:
+        bullet("%s：%d 个在 %d KB..%d MB 之间，档内放行（最大 %s）"
+               % (TIER_NAME[TIER_FIXTURE], len(within), MAX_KB, FIXTURE_TEXT_MAX_KB // 1024,
+                  _fmt_kb(max(s for _p, s in within))))
+    if not (fix_big or allowed or within):
+        bullet("%s：无超限" % TIER_NAME[TIER_FIXTURE])
+
+    # ---- ③ 二进制
+    bullet("%s：%s" % (TIER_NAME[TIER_BINARY],
+                       paint("❌ " + "，".join(bin_all[:8]), RED) if bin_all else "无"))
     if bin_all:
         state["blockers"] += ["二进制 %s" % p for p in bin_all[:8]]
+
+    # ---- --allow-large 登记：接住的逐条打印，打错档的明确说无效
+    if allowed:
+        state["large_allowed"] = allowed
+        print(paint("  ── ② 档放行登记（--allow-large）──", DIM))
+        for p, size, pat, reason in allowed:
+            print("     %s %s > %d MB  ←  --allow-large %s；理由：%s" % (
+                paint("✅", GRN), p, FIXTURE_TEXT_MAX_KB // 1024, pat,
+                reason or paint("未写（建议写成 'PATTERN=理由'，合并提交要登记）", YEL)))
+    for p, tier, pat in ignored:
+        bullet(paint("⚠️ --allow-large %s 对 %s 无效（%s 是硬闸；三档里只有 ② 档收 --allow-large）"
+                     "—— %s 仍然阻断" % (pat, p, TIER_NAME[tier], p), YEL))
+    for pat, reason in allow_large:
+        if not reason:
+            bullet(paint("⚠️ --allow-large '%s' 没写理由 —— 输出和合并提交都登记不了原因" % pat, YEL))
+        if not any(pat == a[2] for a in allowed) and not any(pat == i[2] for i in ignored):
+            bullet(paint("（--allow-large '%s' 本次没命中任何文件）" % pat, DIM))
 
     disp = [p for st, p, _o in rows if p.startswith(DISPATCH)]
     if disp:
@@ -463,13 +569,23 @@ def section_d(repo, mb, cg, args, state):
             continue
         json_p = os.path.join(outdir, "%s.jsonl" % ax)
         policy = "default" if ax in ("fire", "batch") else "strict"
+        if ax == "batch_conv":
+            # 收敛层是**另一个 example**（`batch_conv`），不是 `replay_attrib --drive conv`：
+            # 后者实测 605/947，与 guardrails.json 登记的 637/1075 根本不是一条轴（2026-11-09 实测）。
+            replay = ["cargo", "run", "--release", "--offline", "-q", "--example", "batch_conv",
+                      "--", "--dir", args.snapshot or "<快照>", "--drive", "batch",
+                      "--policy", policy, "--json", json_p]
+        else:
+            replay = ["cargo", "run", "--release", "--offline", "-q", "--example", "replay_attrib",
+                      "--", "--dir", args.snapshot or "<快照>", "--drive", drive[ax],
+                      "--policy", policy, "--json", json_p]
         guard_cmds.append((
             "③ 护栏 %s" % ax,
-            ["cargo", "run", "--release", "--offline", "-q", "--example", "replay_attrib",
-             "--", "--dir", args.snapshot or "<快照>", "--drive", drive[ax],
-             "--policy", policy, "--json", json_p],
+            replay,
             [py, "tools/bit_exact_attrib.py", "--json", json_p,
-             "--check-baseline", "--axis", ax],
+             "--check-baseline", "--axis", ax,
+             # 语料指纹必须一起比：语料变了，护栏数字全不可比（任务书 68 §0-B）
+             "--snapshot", args.snapshot or "<快照>"],
         ))
 
     cmds = [
@@ -524,6 +640,128 @@ def section_d(repo, mb, cg, args, state):
         bullet(paint("第三条轴 batch_conv 默认没跑；要跑就 --axes fire,batch,batch_conv", DIM))
 
 
+# ---------------------------------------------------------------- 自测（--self-test）
+
+# 三档的验收不是"看代码"，是"造一个真会撞闸的分支，看退出码"。这些假分支只存在于
+# 临时仓库里（不碰当前仓库、不碰 origin），所以 `--self-test` 任何机器上都能跑。
+
+SELFTEST_REPORT = """# merge_check 自测夹具报告
+
+## 遗留 / 未做
+
+- 无。这是 `tools/merge_check.py --self-test` 在临时仓库里造的假报告，不是真实分支。
+
+## 建议的下一步
+
+- 无。
+"""
+
+# (分支名, 说明, {相对路径: KB}, 额外参数, 期望退出码, 输出里必须出现的子串)
+SELFTEST_CASES = [
+    ("big-tsv", "fixtures/ 下 9 MB 的 .tsv —— 超 ② 档 8 MB ⇒ 拦",
+     {"fixtures/selftest-big.tsv": 9 * 1024}, [], 1,
+     ["fixtures/selftest-big.tsv", "② fixtures"]),
+    ("ok-tsv-2mb", "fixtures/ 下 2 MB 的 .tsv —— ② 档内 ⇒ 过（不再人肉放行）",
+     {"fixtures/selftest-2mb.tsv": 2 * 1024}, [], 0, []),
+    ("edge-tsv-8mb", "fixtures/ 下正好 8 MB 的 .tsv —— 等于上限不算超 ⇒ 过",
+     {"fixtures/selftest-edge.tsv": 8 * 1024}, [], 0, []),
+    ("big-md-docs", "docs/ 下 200 KB 的 .md —— ① 档 100 KB 卡死 ⇒ 拦",
+     {"docs/selftest-big.md": 200}, [], 1,
+     ["docs/selftest-big.md", "① 代码/文档"]),
+    ("ok-md-fixtures", "fixtures/ 下 200 KB 的 .md —— ② 档 ⇒ 过",
+     {"fixtures/selftest-big.md": 200}, [], 0, []),
+    ("big-png-1kb", "fixtures/ 下 1 KB 的 .png —— ③ 档任何大小都拦 ⇒ 拦",
+     {"fixtures/selftest-tiny.png": 1}, [], 1, ["fixtures/selftest-tiny.png"]),
+    ("big-jsonl", "fixtures/ 下 9 MB 的 .jsonl —— 文本真值表也算 ② 档 ⇒ 拦",
+     {"fixtures/selftest-big.jsonl": 9 * 1024}, [], 1, ["fixtures/selftest-big.jsonl"]),
+    ("allow-tsv", "9 MB .tsv + --allow-large 'PATTERN=理由' ⇒ 放行，理由逐条登记",
+     {"fixtures/selftest-big.tsv": 9 * 1024},
+     ["--allow-large", "fixtures/selftest-big.tsv=selftest：合成真值表，验证放行路径"],
+     0, ["放行登记", "selftest：合成真值表，验证放行路径"]),
+    ("allow-code", "--allow-large 打到 ① 档（docs/）⇒ 无效，仍拦",
+     {"docs/selftest-big.md": 200},
+     ["--allow-large", "docs/selftest-big.md=想放宽代码文档"], 1,
+     ["--allow-large docs/selftest-big.md", "无效（① 代码/文档"]),
+    ("allow-png", "--allow-large 打到 ③ 档（二进制）⇒ 无效，仍拦",
+     {"fixtures/selftest-tiny.png": 1},
+     ["--allow-large", "fixtures/*.png=想放宽二进制"], 1,
+     ["fixtures/selftest-tiny.png", "无效（③ 二进制"]),
+]
+
+
+def _selftest_git(repo, *args, check=True):
+    p = subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=selftest", "-c", "user.email=selftest@local",
+         "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"] + list(args),
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        env=dict(os.environ, GIT_TERMINAL_PROMPT="0"),
+    )
+    if check and p.returncode != 0:
+        raise EnvError("自测仓库 git %s 失败：%s" % (" ".join(args), (p.stderr or "").strip()))
+    return p
+
+
+def _selftest_blob(path, kb, binary=False):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    n = max(1, kb) * 1024
+    if binary:
+        path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * max(0, n - 8))
+    else:
+        # 纯 ASCII：git 不判二进制，档位只由路径/扩展名决定
+        path.write_bytes(b"a" * n)
+
+
+def self_test():
+    """造临时仓库 + 假分支，验证三档阈值与 --allow-large 各自生效（任务书 68 §0-A 第 3 条）。"""
+    tmp = Path(tempfile.mkdtemp(prefix="mergecheck-selftest-"))
+    failed = 0
+    try:
+        _selftest_git(tmp, "init", "-q")
+        _selftest_git(tmp, "symbolic-ref", "HEAD", "refs/heads/master")
+        (tmp / "AGENTS.md").write_text("# selftest 夹具（不是真仓库）\n", encoding="utf-8")
+        rep = tmp / "dispatch" / "reports" / "2099-01-01-selftest.md"
+        rep.parent.mkdir(parents=True, exist_ok=True)
+        rep.write_text(SELFTEST_REPORT, encoding="utf-8")
+        _selftest_git(tmp, "add", "-A")
+        _selftest_git(tmp, "commit", "-q", "-m", "base")
+        print(paint("== merge_check 自测：%d 个假分支（临时仓库 %s）=="
+                    % (len(SELFTEST_CASES), tmp), BOLD))
+
+        for name, desc, files, extra, want_rc, must in SELFTEST_CASES:
+            _selftest_git(tmp, "checkout", "-q", "-B", name, "master")
+            _selftest_git(tmp, "clean", "-fdq")
+            for rel, kb in files.items():
+                _selftest_blob(tmp / rel, kb, binary=rel.endswith(".png"))
+            _selftest_git(tmp, "add", "-A")
+            _selftest_git(tmp, "commit", "-q", "-m", name)
+            p = subprocess.run(
+                [sys.executable, str(Path(__file__).resolve()), "--repo", str(tmp),
+                 "--branch", name, "--base", "master", "--color", "never"] + extra,
+                capture_output=True, text=True, encoding="utf-8", errors="replace")
+            out = (p.stdout or "") + (p.stderr or "")
+            ok = p.returncode == want_rc and all(s in out for s in must)
+            failed += 0 if ok else 1
+            print("  %s %-16s rc=%d（期望 %d）  %s"
+                  % (paint("✅" if ok else "❌", GRN if ok else RED), name,
+                     p.returncode, want_rc, desc))
+            if not ok:
+                for s in must:
+                    if s not in out:
+                        print(paint("      ✗ 输出里没有：%r" % s, RED))
+                for ln in out.splitlines():
+                    if any(k in ln for k in ("❌", "大文件", "无效", "放行", "阻断")):
+                        print(paint("      | " + ln.strip(), DIM))
+        print(paint("结论：%d/%d 通过%s" % (
+            len(SELFTEST_CASES) - failed, len(SELFTEST_CASES),
+            "" if not failed else "（失败时保留临时仓库供排查：%s）" % tmp),
+            GRN if not failed else RED))
+        return 0 if not failed else 1
+    finally:
+        if not failed:
+            import shutil
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- main
 
 def parse_args(argv):
@@ -540,6 +778,12 @@ def parse_args(argv):
     ap.add_argument("--reports-dir", default="dispatch/reports", help="报告目录")
     ap.add_argument("--allow", action="append", default=[],
                     help="放行某个禁区路径（可重复；只在本次运行生效）")
+    ap.add_argument("--allow-large", action="append", default=[], metavar="PATTERN[=理由]",
+                    help="放行 fixtures/ 下超过 %d MB 的文本真值表（可重复；理由会逐条登记）。"
+                         "对 ①代码/文档 与 ③二进制 **无效**，那两档是硬闸。"
+                         % (FIXTURE_TEXT_MAX_KB // 1024))
+    ap.add_argument("--self-test", action="store_true",
+                    help="自测：在临时仓库里造假分支（大 tsv / 大 md / 大 png …）验证三档各自生效")
     ap.add_argument("--allow-dispatch", action="store_true",
                     help="承认合并时用路径剔除 dispatch/（否则 dispatch 进 master 算阻断）")
     ap.add_argument("--run-tests", action="store_true", help="跑四件套（默认只打印命令）")
@@ -564,6 +808,8 @@ def main(argv):
             not os.environ.get("NO_COLOR") and sys.stdout.isatty())
 
     t0 = time.time()
+    if args.self_test:
+        return self_test()
     repo = find_repo(args.repo or os.getcwd()) or find_repo(Path(__file__).resolve().parent.parent)
     if repo is None:
         print(paint("不是 git 仓库：%s（用 --repo 指定）" % (args.repo or os.getcwd()), RED))
@@ -597,6 +843,13 @@ def main(argv):
     dt = time.time() - t0
     print()
     print(paint("──── 结论 ────", BOLD))
+    if state.get("large_allowed"):
+        # 放行不是"跑一次就完"：理由要能原样抄进合并提交，否则下次没人知道为什么放宽了
+        print(paint("── --allow-large 放行登记（合并提交照抄这几行）──", BOLD))
+        for p, size, pat, reason in state["large_allowed"]:
+            print("  %s  %s（%s > %d MB；--allow-large %s；理由：%s）" % (
+                paint("放行", GRN), p, _fmt_kb(size), FIXTURE_TEXT_MAX_KB // 1024, pat,
+                reason or paint("未写理由", YEL)))
     if state["blockers"]:
         seen, uniq = set(), []
         for b in state["blockers"]:

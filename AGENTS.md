@@ -88,6 +88,13 @@ cargo test --offline                      # 全绿即可，别把条数当进度
   但 `Caller`/`Callee` 类工具返回的也是 Ghidra 地址，别拿虚地址去查。
 - **调用图会骗人**：Rust 大量用函数指针派发，直接调用为零**不代表**没被使用。
   写"未观测到调用"，并用 `tools/ptr_slots.py` 补查。
+- **护栏语料必须冻结**：三轴数字（`fire` / `batch` / `batch_conv`）是在
+  `.reference/replays/gw2-replays-snapshot/replays` 这 **401 份回放的冻结快照**上量的。
+  **把新样本拷进快照 ⇒ 三轴数字全变**（401→403 那次：内容 647→654、批 1080→1094，
+  护栏校验报 7 项不一致）。**新样本另开目录（如 `.agent-work/replay-new/`），不许混进快照。**
+  指纹登记在 `fixtures/guardrails.json` 的 `corpus`（403 个文件的逐份 sha256），
+  `tools/bit_exact_attrib.py --check-baseline --snapshot <快照目录>` 会**先比语料再比数字**，
+  多了/少了/内容变了哪个文件直接点名。真要换语料：`--update-corpus` 重登记 + `docs/06` §41 写明 + 三轴全部重算。
 
 ## 合并纪律（2026-11-07 增补，**强制**）
 
@@ -120,6 +127,12 @@ cargo test --offline                      # 全绿即可，别把条数当进度
 4. **抽查负结论**：凡是"扫不到 / 零调用 / 没有写入者"这类结论，
    先做**正对照**证明自己的扫法有效（例：用已知的函数指针槽 `0x9bac98` 验扫描器）。
 5. **污染检查**：`git diff --stat` 看有没有二进制、大文件、`dispatch/` 之类残留。
+   **文本真值表放 `fixtures/`**：`merge_check.py` 的大文件闸是三档（不是一刀切）——
+   ② `fixtures/` 下的 tsv/jsonl/md/txt/json/csv 默认 **≤ 8 MB** 免放行，超了才用
+   `--allow-large 'PATTERN=理由'`（理由会逐条打印，照抄进合并提交）；
+   ① 代码/文档（`src/ client/ docs/ tools/ tests/ examples/`）仍 **100 KB 卡死**、
+   ③ 二进制/压缩产物 **任何大小都拦** —— 后两档 `--allow-large` **无效**。
+   自测：`python3 tools/merge_check.py --self-test`（造 10 个假分支，只看退出码）。
 
 ### B. 合并**后**，在 master 侧跑"四件套"
 

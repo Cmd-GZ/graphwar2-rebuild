@@ -15,13 +15,19 @@ R=.reference/replays/gw2-replays-snapshot/replays
 # 1) 任务书基线（旧驱动：每发一次 Match::fire，默认口径）
 cargo run --release --offline --example replay_attrib -- \
     --dir $R --drive fire --policy default --json /tmp/fire.jsonl
-python3 tools/bit_exact_attrib.py --json /tmp/fire.jsonl --check-baseline
+python3 tools/bit_exact_attrib.py --json /tmp/fire.jsonl --check-baseline --axis fire --snapshot $R
 
 # 2) 收敛层（模式感知 + 修正文本 + 爆炸点回代 + 皮肤特效，严格口径）
 cargo run --release --offline --example replay_attrib -- \
     --dir $R --drive conv --policy strict --json /tmp/conv.jsonl
 python3 tools/bit_exact_attrib.py --json /tmp/conv.jsonl
 ```
+
+`--check-baseline` 会**先比语料指纹、再比数字**：语料（快照目录的文件名集合与逐文件
+sha256）登记在 `fixtures/guardrails.json` 的 `corpus` 里，与 `--snapshot` 指向的目录比对，
+不一致就打印**多了/少了/内容变了哪些文件**并非 0。语料一变，三轴数字全部不可比
+（401→403 那次的 647→654 就是这么来的）⇒ **新样本另开目录，不许混进快照**。
+真要换语料：`--update-corpus --snapshot <目录>` 重登记，并在 `docs/06` 写明。
 
 ## 分桶规则（**按优先级取第一个命中**，所以互斥）
 
@@ -50,7 +56,9 @@ python3 tools/bit_exact_attrib.py --json /tmp/conv.jsonl
 
 import argparse
 import collections
+import hashlib
 import json
+import os
 import sys
 
 DEATH_EFFECTS = ("EffectInfo/DeathEffect", "EffectInfo/AshEffect", "EffectInfo/SparkEffect")
@@ -189,15 +197,133 @@ def pct(a, b):
     return f"{100.0 * a / b:.1f}%" if b else "-"
 
 
+# ---------------------------------------------------------------- 语料指纹（冻结纪律）
+
+GUARDRAILS = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "fixtures",
+                                          "guardrails.json"))
+
+
+def corpus_scan(snapshot):
+    """扫快照目录，返回 ``(files, names_sha256, digest_sha256, replays)``。
+
+    * ``files``：``{文件名: 内容 sha256}``（只看目录里的普通文件，**不递归**）
+    * ``names_sha256``：**文件名集合**的指纹 = ``sha256("\\n".join(sorted(names)) + "\\n")``
+    * ``digest_sha256``：名字与内容一起的指纹 = ``sha256(每行 "<sha>  <name>" 按名字排序 + "\\n")``
+    * ``replays``：名字是纯数字的文件数（快照里的回放都是 epoch 时间戳名）
+
+    只记**文件名**（不记绝对路径），所以快照搬到哪台机器都能复算；内容 sha256 是为了
+    连"原地改一份回放"也拦住 —— 只比文件名集合的话，覆盖同名的样本会静默溜过去。
+    """
+    names = sorted(n for n in os.listdir(snapshot)
+                   if os.path.isfile(os.path.join(snapshot, n)))
+    files = {}
+    for name in names:
+        h = hashlib.sha256()
+        with open(os.path.join(snapshot, name), "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        files[name] = h.hexdigest()
+    names_blob = "\n".join(names) + "\n" if names else ""
+    lines = ["%s  %s" % (files[n], n) for n in names]
+    digest_blob = "\n".join(lines) + "\n" if lines else ""
+    replays = sum(1 for n in names if n.isdigit())
+    return (files,
+            hashlib.sha256(names_blob.encode("utf-8")).hexdigest(),
+            hashlib.sha256(digest_blob.encode("utf-8")).hexdigest(),
+            replays)
+
+
+def corpus_record(snapshot):
+    """``--update-corpus`` 写进 guardrails.json 的那一块（纯文本、可 diff、人也能读）。"""
+    files, names_sha, digest, replays = corpus_scan(snapshot)
+    dir_hint = "/".join(os.path.abspath(snapshot).split(os.sep)[-2:])
+    return {
+        "what": "护栏语料（冻结快照）的指纹。--check-baseline 先比这里，再比三轴数字。",
+        "note": [
+            "语料一变，三轴数字**全部不可比**（401→403 那份让 647 变 654 就是这么来的）。",
+            "新样本另开目录（如 .agent-work/replay-new/），**不许**拷进快照目录。",
+            "改这里 = 承认换了语料：必须 --update-corpus 重登记，并在 docs/06 与提交信息里写明多了/少了哪些文件。",
+            "files 每行是 '<sha256>  <文件名>'（与 sha256sum 输出同格式，按文件名排序）；只记文件名不记路径。",
+            "names_sha256 只覆盖文件名集合，digest_sha256 连内容一起覆盖。",
+        ],
+        "dir_hint": dir_hint,
+        "count": len(files),
+        "replays": replays,
+        "names_sha256": names_sha,
+        "digest_sha256": digest,
+        "files": ["%s  %s" % (files[n], n) for n in sorted(files)],
+    }
+
+
+def check_corpus(g, snapshot):
+    """比对快照目录与 ``guardrails.json`` 的 ``corpus``，返回**不一致项数**（0 = 一致）。
+
+    报错要能直接回答"多了/少了哪几个文件"，否则人只会看见 7 项数字不一致。
+    """
+    want = g.get("corpus") or {}
+    if not os.path.isdir(snapshot):
+        print(f"  ❗ 快照目录不存在：{snapshot}")
+        return 1
+    files, names_sha, digest, replays = corpus_scan(snapshot)
+    print(f"  快照：{snapshot}")
+    if not want.get("files"):
+        print("  ❗ guardrails.json 里没有 corpus 指纹（老文件）—— 先跑 --update-corpus 登记")
+        return 1
+    exp = {}
+    for line in want["files"]:
+        sha, _sep, name = line.partition("  ")
+        if name.strip():
+            exp[name.strip()] = sha.strip()
+    added = sorted(set(files) - set(exp))
+    missing = sorted(set(exp) - set(files))
+    changed = sorted(n for n in set(exp) & set(files) if exp[n] != files[n])
+
+    bad = 0
+    def _row(label, got, want_s):
+        nonlocal bad
+        same = got == want_s
+        bad += 0 if same else 1
+        shown_got = got if not isinstance(got, str) or len(got) <= 16 else got[:16] + "…"
+        shown_want = want_s if not isinstance(want_s, str) or len(want_s) <= 16 else want_s[:16] + "…"
+        print(f"  {label:<15} 实测 {str(shown_got):>12}   登记 {str(shown_want):>12}   "
+              f"{'OK' if same else '❌ 不一致'}")
+
+    _row("文件数", len(files), want.get("count"))
+    _row("回放文件数", replays, want.get("replays"))
+    _row("文件名集 sha256", names_sha, want.get("names_sha256"))
+    _row("内容 digest", digest, want.get("digest_sha256"))
+
+    if added or missing or changed:
+        for label, names in (("多出", added), ("少了", missing), ("内容变了", changed)):
+            if not names:
+                continue
+            bad += len(names)
+            print(f"  ❗ {label} {len(names)} 个：{ '，'.join(names[:20]) }"
+                  + (f" ……（还有 {len(names) - 20} 个）" if len(names) > 20 else ""))
+        print("  ⇒ 语料被动过：三轴数字全部作废（fire/batch/batch_conv 的 647/637 不可比）。")
+        print("     先把快照恢复原状（快照目录里的 SHA256SUMS 可以逐份校验）；")
+        print("     真要换语料：把新样本放进**另一个**目录，"
+              "--update-corpus 重登记，并在 docs/06 写明多了/少了哪些文件。")
+    else:
+        print("  ⇒ 语料一致（冻结）。")
+    return bad
+
+
 def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", required=True)
     ap.add_argument("--check-baseline", action="store_true",
                     help="核对护栏值（读 fixtures/guardrails.json；用 --axis 指定哪条轴）")
+    ap.add_argument("--snapshot", metavar="DIR",
+                    help="语料快照目录（--check-baseline 的**语料指纹检查**要用它；"
+                         "--update-corpus 必填）。给了就逐文件 sha256 比一遍。")
     ap.add_argument("--axis", default="fire", choices=["fire", "batch", "batch_conv"],
                     help="这条 JSONL 是哪条驱动轴（默认 fire）。轴不能混，混了必红。")
     ap.add_argument("--update-baseline", action="store_true",
                     help="把当前实测写回 fixtures/guardrails.json 对应轴（改基线必须在 docs/06 说明）")
+    ap.add_argument("--update-corpus", action="store_true",
+                    help="把 --snapshot 的逐文件 sha256 写回 guardrails.json 的 corpus "
+                         "（= 承认换了语料；必须在 docs/06 写明多了/少了哪些文件）")
     args = ap.parse_args(argv)
 
     rows = load(args.json)
@@ -231,9 +357,8 @@ def main(argv):
     print(f"挖洞点   {d['destroy_ok']} / {d['destroy_checked']}"
           f" ({pct(d['destroy_ok'], d['destroy_checked'])})")
 
-    if args.update_baseline or args.check_baseline:
-        import json, os
-        gp = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "fixtures", "guardrails.json"))
+    if args.update_baseline or args.check_baseline or args.update_corpus:
+        gp = GUARDRAILS
         cur = {
             "batches": total,
             "content_ok": total - len(fails),
@@ -243,6 +368,21 @@ def main(argv):
             "destroy_ok": d["destroy_ok"],
             "destroy_checked": d["destroy_checked"],
         }
+        if args.update_corpus:
+            if not args.snapshot:
+                print("\n--update-corpus 需要 --snapshot <快照目录>")
+                return 2
+            g = json.load(open(gp, encoding="utf-8"))
+            rec = corpus_record(args.snapshot)
+            old = (g.get("corpus") or {}).get("count")
+            g["corpus"] = rec
+            open(gp, "w", encoding="utf-8").write(json.dumps(g, ensure_ascii=False, indent=2) + "\n")
+            print(f"\n已把语料指纹写回 {gp}")
+            print(f"  快照 {args.snapshot}：{rec['count']} 个文件（其中 {rec['replays']} 份回放）"
+                  + ("" if old is None else f"；原登记 {old} 个文件"))
+            print("  ⚠️ 改语料 = 三轴数字全部要重算。docs/06 里必须写明多了/少了哪些文件，"
+                  "提交信息里也要写。")
+            return 0
         if args.update_baseline:
             g = json.load(open(gp, encoding="utf-8"))
             g["axes"][args.axis].update(cur)
@@ -253,6 +393,14 @@ def main(argv):
         want = g["axes"][args.axis]
         print(f"\n== 对护栏基线的校验（轴 = {args.axis}；值来自 fixtures/guardrails.json）==")
         bad = 0
+        # 语料指纹**先**比：语料变了的话，下面那些数字全都没有意义（任务书 68 §0-B）
+        print("  ── 语料指纹（冻结纪律：新样本另开 replay-new/，不许混进快照）──")
+        if args.snapshot:
+            bad += check_corpus(g, args.snapshot)
+        else:
+            print("  ⚠️ 未校验：没给 --snapshot <快照目录> —— 冻结语料纪律要求带上它")
+            print("     （merge_check.py 跑护栏时会自动带上）")
+        print("\n  ── 三轴数字 ──")
         for k, label in [("batches", "结算批数"), ("content_ok", "内容命中"),
                          ("kind_seq_ok", "种类序列命中"), ("deaths_ok", "死亡集合命中"),
                          ("deaths_checked", "死亡集合分母"), ("destroy_ok", "挖洞点命中"),
