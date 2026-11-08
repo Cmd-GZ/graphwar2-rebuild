@@ -134,7 +134,7 @@
 | `graphwar_target_manager.rs` | 3 | 4 | `src/graphwar_target_manager.rs` | 12 | 观测 |
 | `graphwar_team_manager.rs` | 7 | 10 | `src/graphwar_team_manager.rs` | 31 | 观测 |
 | `graphwar_tick_handler.rs` | 2 | 3 | `src/graphwar_tick_handler.rs` | 36 | 逐位 |
-| `graphwar_turn_manager.rs` | 14 | 45 | `src/graphwar_turn_manager.rs` | 76 | 逐位 |
+| `graphwar_turn_manager.rs` | 14 | 45 | `src/graphwar_turn_manager.rs` | 98 | 逐位 |
 | `graphwar_video_writer.rs` | 3 | 4 | `src/graphwar_video_writer.rs` | 8 | 观测 |
 
 ### 2.2 非 `graphwar_` 前缀的游戏模块
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（110 个文件、2689 条 `fn`） | `8c89721d58837100ea85c49b7bb3492a7886ff134323ae29ccebc60c61bcdd38` |
+| `src/` 树（110 个文件、2719 条 `fn`） | `f38d27628791da9c138beb8acd220bcbfe8a4bb4eb1329fae95870c5653bbed3` |
 

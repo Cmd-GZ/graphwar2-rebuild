@@ -1053,6 +1053,189 @@ func _initialize() -> void:
 		await process_frame
 		ok(not is_instance_valid(gate_obj), "门控实例被 queue_free 回收")
 
+	# 18b) 回合模式 + 顺序支（任务 50：`TurnData[+0x58]`、`set_turn` 0x4638f0）
+	#      `docs/16-client.md` §50
+	#
+	# 门 2 `is_on_turn`(0x462b50) 的两个集合来自 `get_current_turn_players`(0x4627c0) /
+	# `get_current_turn_soldiers`(0x4628d0)，而这两个 getter 按 `TurnData[+0x58]` 分两支：
+	#
+	# ```text
+	# 0x4627e3 / 0x4628fc  cmp byte ptr [rsi+0x58], 0   ; 0 = SequentialTurns（顺序支）
+	# 0x462846 …           rax = [rsi+0x10] (序表 len) / rdi = [rsi+0x18] (当前玩家游标)
+	# 0x4629de …           entry = 玩家表[current]；士兵 = entry.soldiers[entry 游标]
+	# 0x4638f0 set_turn    ; 顺序支那两个游标的唯一写者（+ 发 TurnInfo(43)）
+	# ```
+	#
+	# 断言分三段：① 默认状态（顺序模式 + 序表空 + 回落）；② 关掉回落 = 逐字二进制（空集）；
+	# ③ `set_turn` 之后收窄到"当前玩家 + 它当前那个士兵"，并与同时回合对照。
+	var wanted_seq := [
+		"gate_turn_mode", "gate_set_turn_mode", "gate_announce_turn", "gate_turn_order",
+		"gate_current_player", "gate_sequential_state", "gate_sequential_fallback",
+		"gate_set_sequential_fallback",
+	]
+	for w in wanted_seq:
+		ok(names.has(w), "方法 %s() 存在" % w)
+
+	var seq_obj: Object = EntityDrawer.new()
+	ok(seq_obj != null and seq_obj is Control, "顺序支断言用一个新实例")
+	if seq_obj != null:
+		var seq_ctl: Control = seq_obj
+		seq_ctl.set_size(Vector2(W, H))
+		seq_obj.set("team_color", TEAM_COLOR)
+		root.add_child(seq_ctl)
+		seq_obj.call("kernel_set_clock", 0.0)
+		# 位置表：10/11/12（玩家 9001 的士兵）+ 14（玩家 9002 的士兵）+ 9001/9002（玩家 id 本身）
+		var seq_rows := [
+			{"id": 10, "pos": Vector3(1.0, 2.0, 1.0)},
+			{"id": 11, "pos": Vector3(-2.0, 3.0, 2.0)},
+			{"id": 12, "pos": Vector3(3.0, -1.0, 3.0)},
+			{"id": 14, "pos": Vector3(2.5, 1.5, 1.0)},
+			{"id": 9001, "pos": Vector3(-4.0, 4.0, 1.0)},
+			{"id": 9002, "pos": Vector3(-5.0, 5.0, 1.0)},
+		]
+		for r in seq_rows:
+			ok(bool(seq_obj.call("pos_set_position", r["id"], r["pos"].x, r["pos"].y, r["pos"].z)) == true,
+				"顺序支位置表写 id %d" % [int(r["id"])])
+		ok(bool(seq_obj.call("gate_attach")) == true, "顺序支：attach 取回同一份 Life/Turn manager")
+		# 生命：10 活 / 11 死 / 12 活 / 14 查不到(2) / 9001、9002 查不到(2) ⇒ 门 1 只排 0
+		ok(bool(seq_obj.call("gate_set_alive", 10, true)) == true, "set_alive(10, true)")
+		ok(bool(seq_obj.call("gate_set_alive", 11, false)) == true, "set_alive(11, false)")
+		ok(bool(seq_obj.call("gate_set_alive", 12, true)) == true, "set_alive(12, true)")
+
+		# ① 默认状态 = 二进制 `GraphwarTurnData::new` 的初值：模式 0（顺序），序表空
+		ok(int(seq_obj.call("gate_turn_mode")) == 0,
+			"`TurnData[+0x58]` 初值 == 0（SequentialTurns；get_turn_mode 0x462c10）")
+		ok(int(seq_obj.call("gate_turn_order").size()) == 0,
+			"出场序表还是空的（group 18 只 add_player，没 set_turn 过）")
+		ok(int(seq_obj.call("gate_current_player")) == -1, "当前玩家游标还没有目标（-1）")
+		ok(bool(seq_obj.call("gate_sequential_state")) == false, "顺序支的状态**不齐**")
+		ok(bool(seq_obj.call("gate_sequential_fallback")) == true, "回落开关默认 true（我方开关）")
+		var fb_players: PackedInt64Array = seq_obj.call("gate_current_players")
+		var fb_soldiers: PackedInt64Array = seq_obj.call("gate_current_soldiers")
+		ok(fb_players.has(9001) and fb_players.has(1),
+			"**回落断言 A**：顺序支缺状态 ⇒ 回落到同时支全集（含 9001 与演示玩家 1；实际 %s）" % [fb_players])
+		ok(fb_soldiers.has(12),
+			"**回落断言 B**：士兵集合也回落到「每人当前那个」（含 12；实际 %s）" % [fb_soldiers])
+		ok(bool(seq_obj.call("gate_on_turn", 12)) == true, "回落时 is_on_turn(12) == true（旧行为）")
+
+		# ② 关掉回落 = 逐字二进制：顺序支缺状态返回**空集**（0x46284d je 0x462878）
+		ok(bool(seq_obj.call("gate_set_sequential_fallback", false)) == false, "关掉回落开关")
+		ok(int(seq_obj.call("gate_current_players").size()) == 0,
+			"**原版语义断言 1**：顺序支 + 序表空 ⇒ players 是空集（0x46284d je）")
+		ok(int(seq_obj.call("gate_current_soldiers").size()) == 0,
+			"**原版语义断言 2**：soldiers 也是空集（0x4629e2 je）")
+		ok(bool(seq_obj.call("gate_on_turn", 12)) == false, "于是 is_on_turn(12) == false")
+		await process_frame
+		await process_frame
+		ok(int(seq_obj.call("pos_drawn_ids").size()) == 0,
+			"**原版语义断言 3**：顺序支还没人宣告回合 ⇒ 一具都不画（实际 %s）"
+			% [seq_obj.call("pos_drawn_ids")])
+		ok(bool(seq_obj.call("gate_set_sequential_fallback", true)) == true, "回落开关开回来")
+
+		# ③ 同时回合（`+0x58 != 0`）：全部登记玩家 + 每人当前士兵
+		ok(bool(seq_obj.call("gate_set_turn_mode", 1)) == true, "set_turn_mode(1)（0x462d20）")
+		ok(int(seq_obj.call("gate_turn_mode")) == 1, "get_turn_mode() == 1（同时回合）")
+		var sim_players: PackedInt64Array = seq_obj.call("gate_current_players")
+		ok(sim_players.has(9001) and sim_players.has(1) and sim_players.has(2),
+			"同时回合 ⇒ players 是玩家表全部键（实际 %s）" % [sim_players])
+		ok(bool(seq_obj.call("gate_set_turn_mode", 2)) == false,
+			"set_turn_mode(2) 被拒（严格版只认 0/1；二进制本身非 0 一律当同时回合）")
+		ok(bool(seq_obj.call("gate_set_turn_mode", 0)) == true, "set_turn_mode(0) 回顺序回合")
+
+		# ④ `set_turn`（0x4638f0）：公告"玩家 9001 现在用士兵 12" ⇒ 收窄到 1 人 + 1 士兵
+		ok(bool(seq_obj.call("gate_announce_turn", 9001, 12)) == true,
+			"gate_announce_turn(9001, 12)（= GraphwarTurnData::set_turn 0x4638f0）")
+		var seq_order: PackedInt64Array = seq_obj.call("gate_turn_order")
+		ok(seq_order.size() == 1 and int(seq_order[0]) == 9001,
+			"出场序表 = [9001]（0x463997 追加；实际 %s）" % [seq_order])
+		ok(int(seq_obj.call("gate_current_player")) == 9001, "当前玩家游标 = 9001（0x4639a3）")
+		ok(bool(seq_obj.call("gate_sequential_state")) == true, "顺序支状态齐了")
+		var seq_pl: PackedInt64Array = seq_obj.call("gate_current_players")
+		var seq_sol: PackedInt64Array = seq_obj.call("gate_current_soldiers")
+		ok(seq_pl.size() == 1 and int(seq_pl[0]) == 9001,
+			"顺序支 players 只含当前玩家 9001（实际 %s）" % [seq_pl])
+		ok(seq_sol.size() == 1 and int(seq_sol[0]) == 12,
+			"顺序支 soldiers 只含它当前的 12（实际 %s）" % [seq_sol])
+		ok(bool(seq_obj.call("gate_on_turn", 9001)) == true, "is_on_turn(9001) == true（当前玩家）")
+		ok(bool(seq_obj.call("gate_on_turn", 12)) == true, "is_on_turn(12) == true（它的当前士兵）")
+		ok(bool(seq_obj.call("gate_on_turn", 10)) == false, "is_on_turn(10) == false（同一玩家的别的士兵）")
+		ok(bool(seq_obj.call("gate_on_turn", 1)) == false,
+			"**收窄的判据**：is_on_turn(演示玩家 1) == false（同时回合下它是 true）")
+		await process_frame
+		await process_frame
+		var seq_drawn: PackedInt64Array = seq_obj.call("pos_drawn_ids")
+		ok(seq_drawn.size() == 2 and _same_ids(seq_drawn, PackedInt64Array([12, 9001])),
+			"顺序回合：只画 12（士兵）与 9001（玩家 id）（实际 %s）" % [seq_drawn])
+
+		# ⑤ 游标跟着 `set_turn` 换人：再登记玩家 9002（士兵 13/14）并公告 14
+		ok(bool(seq_obj.call("gate_set_turn", 9002, PackedInt64Array([13, 14]))) == true,
+			"登记玩家 9002：士兵 [13, 14]")
+		ok(bool(seq_obj.call("gate_announce_turn", 9002, 14)) == true, "公告 9002 用 14")
+		var seq_order2: PackedInt64Array = seq_obj.call("gate_turn_order")
+		ok(seq_order2.size() == 2 and int(seq_order2[1]) == 9002,
+			"出场序表 = [9001, 9002]（first-seen 顺序；实际 %s）" % [seq_order2])
+		ok(int(seq_obj.call("gate_current_player")) == 9002, "当前玩家游标换成 9002")
+		var seq_sol2: PackedInt64Array = seq_obj.call("gate_current_soldiers")
+		ok(seq_sol2.size() == 1 and int(seq_sol2[0]) == 14, "soldiers 换成 9002 的 14（实际 %s）" % [seq_sol2])
+		ok(bool(seq_obj.call("gate_on_turn", 12)) == false, "上一个玩家的士兵 12 出局")
+		ok(bool(seq_obj.call("gate_on_turn", 14)) == true, "新当前士兵 14 在回合内")
+		await process_frame
+		await process_frame
+		var seq_drawn2: PackedInt64Array = seq_obj.call("pos_drawn_ids")
+		ok(seq_drawn2.size() == 2 and _same_ids(seq_drawn2, PackedInt64Array([14, 9002])),
+			"换人之后画的是 14 与 9002（实际 %s）" % [seq_drawn2])
+
+		# ⑥ 公告 0（`TurnInfo{soldier_id: 0}` 那条路径）：删掉该玩家**整条记录**，
+		#    出场序表不动 ⇒ 两个 getter 不对称（0x463a8b vs 0x462846）
+		ok(bool(seq_obj.call("gate_announce_turn", 9002, 0)) == true, "公告 (9002, 0)（全灭哨兵）")
+		var zero_pl: PackedInt64Array = seq_obj.call("gate_current_players")
+		ok(zero_pl.size() == 1 and int(zero_pl[0]) == 9002,
+			"players 仍返回 9002（出场序表不删；实际 %s）" % [zero_pl])
+		ok(int(seq_obj.call("gate_current_soldiers").size()) == 0,
+			"soldiers 是空集（玩家记录被删，0x462a81 那一路）")
+		ok(bool(seq_obj.call("gate_on_turn", 9002)) == true and bool(seq_obj.call("gate_on_turn", 14)) == false,
+			"于是 9002 仍算在回合内、它的士兵 14 不算")
+
+		# ⑦ 同时回合 vs 顺序回合的**画面对照**（同一张位置表、同一套生命状态）
+		ok(bool(seq_obj.call("gate_set_turn", 9001, PackedInt64Array([10, 11, 12]))) == true,
+			"重新登记 9001（士兵 [10, 11, 12]）")
+		ok(bool(seq_obj.call("gate_set_turn", 9002, PackedInt64Array([13, 14]))) == true,
+			"重新登记 9002（士兵 [13, 14]；第 ⑥ 步把它整条删了）")
+		ok(bool(seq_obj.call("gate_announce_turn", 9002, 14)) == true,
+			"公告 (9002, 14) ⇒ 它的士兵游标落在 14")
+		ok(bool(seq_obj.call("gate_announce_turn", 9001, 12)) == true, "公告 (9001, 12) ⇒ 当前玩家回到 9001")
+		await process_frame
+		await process_frame
+		var narrow: PackedInt64Array = seq_obj.call("pos_drawn_ids")
+		ok(narrow.size() == 2 and _same_ids(narrow, PackedInt64Array([12, 9001])),
+			"顺序回合画 [12, 9001]（实际 %s）" % [narrow])
+		ok(bool(seq_obj.call("gate_set_turn_mode", 1)) == true, "切到同时回合")
+		await process_frame
+		await process_frame
+		var wide: PackedInt64Array = seq_obj.call("pos_drawn_ids")
+		ok(wide.size() == 4 and _same_ids(wide, PackedInt64Array([12, 14, 9001, 9002])),
+			"同时回合画 4 具 [12, 14, 9001, 9002]（比顺序支多 14/9002；实际 %s）" % [wide])
+		ok(bool(seq_obj.call("gate_set_turn_mode", 0)) == true, "切回顺序回合")
+		await process_frame
+		await process_frame
+		var narrow2: PackedInt64Array = seq_obj.call("pos_drawn_ids")
+		ok(narrow2.size() == 2 and _same_ids(narrow2, PackedInt64Array([12, 9001])),
+			"切回顺序 ⇒ 又只画 [12, 9001]（实际 %s）" % [narrow2])
+		# 状态齐了 ⇒ 回落开关关不关都不影响（只在"缺状态"时起作用）
+		ok(bool(seq_obj.call("gate_set_sequential_fallback", false)) == false,
+			"状态齐时关掉回落开关")
+		await process_frame
+		await process_frame
+		var narrow3: PackedInt64Array = seq_obj.call("pos_drawn_ids")
+		ok(narrow3.size() == 2 and _same_ids(narrow3, PackedInt64Array([12, 9001])),
+			"**回落开关只在缺状态时生效**：这里仍是 [12, 9001]（实际 %s）" % [narrow3])
+		ok(bool(seq_obj.call("gate_set_sequential_fallback", true)) == true, "回落开关恢复默认")
+
+		seq_ctl.queue_free()
+		await process_frame
+		await process_frame
+		ok(not is_instance_valid(seq_obj), "顺序支实例被 queue_free 回收")
+
 	# 19) 回收：queue_free 整棵树，子节点跟着走
 	var child_of_doomed: Node = kids[0]
 	control.queue_free()

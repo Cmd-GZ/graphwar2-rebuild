@@ -9122,3 +9122,203 @@ grep -a -c gate_attach client/libgw2_rebuild.so          # 4（判据：.so 真�
 ../.venv/bin/python tools/addr_probe.py dis 0x454950   # get_alive：默认 2、命中取值字节
 ../.venv/bin/python tools/addr_probe.py dis 0x4628d0   # get_current_turn_soldiers：两支 +0x58
 ```
+
+## 50. `TurnData[+0x58]` 解开了：那是 `TurnMode` 字节；顺序回合分支「当前玩家 + 它当前那个士兵」（2026-11，任务 50）
+
+**一句话**：46 号留下的"顺序回合那一支没建模"本轮补上。`TurnData[+0x58]` 是 **1 字节的
+`TurnMode`**（`0` = `SequentialTurns`、`1` = `SimultaneousTurns`，判别值与变体名由 serde
+`Serialize` 里那两条字面量钉住）；顺序支返回的是「**出场序表 `[current]` 那一个玩家**」+
+「**它的 `soldiers[cursor]`**」，两个游标都由 `GraphwarTurnData::set_turn`（x86 `0x4638f0`）
+写；本轮把模式、出场序表、当前玩家游标与 `set_turn` 全部建模进
+[`TurnManager`]，`is_on_turn` 不再在 `SequentialTurns` 下多画。`entity_drawer_check`
+**292 → 358**（既有 292 条一条没改）。
+
+### 50.0 `TurnData[+0x58]` 是什么（任务书 ① 的答案）
+
+**`TurnMode` 单字节**（`观测`）：
+
+| 字节 | 变体 | 证据 |
+|---|---|---|
+| `0` | `SequentialTurns` | `0x4627e3` / `0x4628fc` `cmp byte ptr [rsi+0x58], 0` + `je` → **顺序支**（单玩家 + 单士兵）；serde `0x3cbf70` 的 `!= 1` 分支取 `'SequentialTurns'`（15 B，`0x1c18d5`） |
+| `1` | `SimultaneousTurns` | 同一对 `cmp` 的 `!= 0` 走向（全玩家 + 各自当前士兵）；serde `0x3cbfcd cmp byte [r14],1` + `je` 取 `'SimultaneousTurns'`（17 B，`0x1c18e4`） |
+
+指令级证据（x86 2026-08-28，vaddr）：
+
+```text
+0x462c10  GraphwarTurnManager::get_turn_mode
+          0x462c4e movzx eax, byte ptr [r14+0x70]   ; r14 = ArcInner ⇒ data+0x58（Mutex 在 +0x10、data 在 +0x18）
+0x462d20  GraphwarTurnManager::set_turn_mode
+          0x462d6e mov   byte ptr [r14+0x70], sil   ; 写同一个字节
+          0x462d9a movzx eax, byte ptr [r14+0x70] / 0x462dae call add_event
+                                                    ; ⇒ 还把新值发一条事件（tag 0x2f = 47 = TurnModeInfo）
+0x3cbf70  impl Serialize for TurnMode（serde derive 落在本模块）
+          0x3cbfcd cmp byte ptr [r14], 1
+          0x3cbfd3 lea rdx,'SimultaneousTurns' (ecx=0x11)
+          0x3cbfe1 lea rdx,'SequentialTurns'   (ecx=0x0f)
+0x1c18ad  'new_connection_event' / 'entity_removed_event' / 'SequentialTurns' / 'SimultaneousTurns'
+          ↑ 四串连排；`GraphwarTurnManager::new` 0x4637fc 取的就是前两串（同模块 .rodata 簇）
+```
+
+**初值** = `0`（`SequentialTurns`）：**Windows 2.0.60** 同版本同名函数
+`GraphwarTurnData::new`（RVA `0x4a6f0`）`mov byte ptr [rsi+0x58], 0`。ELF 侧的构造函数没有
+单独定位（`TurnData` 在 `Arc<Mutex<…>>` 的分配路径里初始化）⇒ 这一条的证据档是
+**观测（跨构建，同版本）**，不是 ELF 逐位。
+
+**写者**（谁改模式）：`set_turn_mode` `0x462d20` 的三个调用族 ——
+
+```text
+0x3e41ae  远端事件处理器（graphwar_remote_event_handler，tag 47 TurnModeInfo）
+0x4500c0  graphwar_game_server（房间模式变更）
+0x476730  graphwar_game_state_manager（"无参翻转"：get_turn_mode → xor al,1 → set_turn_mode）
+0x49ae2b / 0x4a6eb0 / 0x4a7e1d  其余三处（模块未归属，未逐条解）
+```
+
+`graphwar_level_manager` 里那份同名 `TurnMode`（关卡模式字节 `+0x3a`）判别值相同
+（`SequentialTurns = 0`）—— 两侧互相旁证。Windows 符号里**只有**
+`graphwar_turn_manager..TurnMode` 的 serde impl（`level_manager` 没有）⇒ **旁证**该类型
+原本定义在 turn manager 模块，关卡那边是 `use` 过去的。
+
+### 50.1 顺序回合那一支返回什么（任务书 ② 的答案）
+
+| getter | 顺序支（`+0x58 == 0`）返回 | 指令 |
+|---|---|---|
+| `get_current_turn_players` `0x4627c0` | **单元素** = 出场序表 `[current]`：`[+0x8]` 指针、`[+0x10]` 长度、`[+0x18]` = **当前玩家游标**（`usize`）。表空 ⇒ **空 `Vec`** | `0x462846 mov rax,[rsi+0x10]` / `0x46284d je 0x462878` / `0x46284f mov rdi,[rsi+0x18]` / `0x462856 jae panic` / `0x462858 mov rax,[rsi+8]` / `0x46285c mov ebp,[rax+rdi*4]` |
+| `get_current_turn_soldiers` `0x4628d0` | **单元素** = 玩家表里 `players[current]` 那条记录的 `soldiers[cursor]`；该记录不存在 ⇒ 空 `Vec`（**不换人**，不回落别的玩家） | `0x4629de`–`0x4629fc` 取同一个 id；`0x462a03` 玩家表空判；`0x462a6d` 查表；`0x462a9e`/`0x462aa7`/`0x462ab0`/`0x462ab4` = `soldiers[cursor]` |
+
+**游标在哪 / 谁写**（`观测`）——`GraphwarTurnData::set_turn`（x86 **`0x4638f0`**，
+`esi = player_id: u32`、`edx = soldier_id: u32`）：
+
+```text
+0x463957/0x463970  在出场序表里线性找 player_id（data+0x8 ptr / +0x10 len）
+0x463a77/0x463a7a  命中第 rcx 个 ⇒ mov [rbx+0x30], rcx     ; rbx = ArcInner ⇒ data+0x18 = 当前玩家游标
+0x463997/0x4639a3  未命中 ⇒ 追加到表尾（len+1），游标 = 新位置      ; 出场序 = **first-seen 顺序**
+0x4639ab test r14d,r14d ; je 0x463a8b                      ; soldier_id == 0 走"删记录"
+0x463a8b…0x463aaa  HashMap::remove(player)（0x486f20）      ; **整条记录删掉，但出场序表那一格不删**
+0x463ba0 cmp [rax+rcx*4], r14d ; 0x463c5d mov [r13-8], rcx ; 士兵已在表里 ⇒ 游标 = 它的位置（去重）
+0x463bc6 mov [rax+rbp*4], r14d ; 0x463bd2 mov [r13-8], rbp ; 否则追加，游标 = 新位置
+0x463c09 lea rax,[r14+0x2c] / 0x463c17 call add_event       ; ⇒ 发 {player_id, soldier_id}（tag 0x2b = 43 = TurnInfo）
+```
+
+**喂它的人**：远端事件处理器 `0x3e2830` 的一支 —— `0x3e3131 mov ebp,[rbx+8]` /
+`0x3e3134 mov r14d,[rbx+0xc]` / `0x3e3170 call 0x4638f0` ⇒ 载荷就是
+`TurnInfo{player_id, soldier_id}` 那两个 `u32`。
+
+⇒ **顺序回合的"当前玩家"= 最近一次 `TurnInfo` 公告的那个玩家**（不是轮转游标、不是 id 排序、
+不是坐标）。"它的当前士兵"= 它最近一次被公告的那个士兵（表内去重后的位置）。
+
+`handle_entity_removed_event`（`0x463580`）只删玩家表那条记录（`0x486f20` + 释放 `Vec`），
+**不碰出场序表**（0x463580 体内没有对 `+0x8/+0x10/+0x18` 的写）⇒ 与 `set_turn(…, 0)`
+是同一种不对称。
+
+### 50.2 本轮动了哪些文件
+
+| 文件 | 增/改 | 内容 |
+|---|---|---|
+| `src/graphwar_turn_manager.rs` | 改（`TurnMode` + `PlayerTurns::announce` + 4 个字段 + 8 个方法 + 8 条单测 + 模块文档 §7） | `TurnMode`（`byte()`/`from_byte`/`from_known_byte`）；`TurnManager` 加 `order`/`current`/`mode`/`sequential_fallback`；`turn_mode`/`set_turn_mode`/`set_turn`/`turn_order`/`current_player`/`sequential_state_available`/`sequential_fallback`/`set_sequential_fallback`；两个 getter 按 `+0x58` 分两支 |
+| `src/_scaffold/entity_drawer_class.rs` | 改 | 8 个 `gate_*` `#[func]`（`turn_mode` / `set_turn_mode` / `announce_turn` / `turn_order` / `current_player` / `sequential_state` / `sequential_fallback` / `set_sequential_fallback`）+ 注释更新（`gate_current_*` 不再写死"同时回合那一支"） |
+| `client/tools/entity_drawer_check.gd` | 改（**既有 292 条一条没删**） | 新增第 18b 组（**+66** 条：8 条方法存在性 + 58 条断言） |
+| `docs/16-client.md` | +本节 | — |
+| `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` | 重跑 | `src_fns` 跟着涨（+8 个 `fn`：7 个方法 + `PlayerTurns::announce`） |
+
+❌ **没动**：`src/entity_drawer.rs`、`src/game.rs`、`client/src/**`、`dispatch/`、
+`fixtures/guardrails.json`、`src/_scaffold/root_wiring.rs`、别的 `*_class.rs`、
+`src/graphwar_level_manager.rs`。
+
+### 50.3 怎么建模的（含**回落开关**，我方接线写清）
+
+```text
+TurnData[+0x8]  ptr  ┐
+TurnData[+0x10] len  ├─→ TurnManager::order   （只由 set_turn 追加，first-seen 去重）
+TurnData[+0x18] 游标 ───→ TurnManager::current
+TurnData[+0x58] 字节 ───→ TurnManager::mode    （#[default] SequentialTurns，= 二进制初值 0）
+玩家表 entry 的 soldiers[cursor] ──→ PlayerEntry.turns（同一个 PlayerTurns，announce 会去重+移游标）
+```
+
+| 决定 | 内容 | 为什么 |
+|---|---|---|
+| **`order`/`current` 只由 `set_turn` 喂** | `add_player`（我方的轮转模型入口，二进制没有这个函数）**不**碰它们 | 照二进制：出场序表唯一的写者就是 `set_turn`（`0x463997`）；`add_player` 填的是玩家表 |
+| **回落开关** `sequential_fallback`（默认 `true`） | 顺序支拿不到"当前玩家"（`order` 空 / 游标越界，即还没人 `set_turn`）时，回落到同时支全集 = 46 号的旧行为；关掉则**逐字二进制**（空 `Vec`，`0x46284d je`） | `set_turn` 的真生产者（`graphwar_remote_event_handler` `0x3e2830`）本层还没接；一把关掉会让画面一具都不画（`AGENTS.md` 合并纪律 3b 记过同类事故） |
+| **`TurnMode` 是新定义的一份** | `graphwar_level_manager` 里另有同名同判别值的一份（关卡 `+0x3a`），本轮**允许改的文件**不含那个模块 ⇒ 两份并存 | 合并类型要动禁区；Windows 符号（只有本模块带 serde impl）**旁证**原版只有一份 |
+| **未知玩家按 `Team::One` 建记录** | 二进制的这条记录里**没有队伍**（队伍在 `player_manager`），本层把 `team` 挂在同一条 `PlayerEntry` 上 | 模型限制，**不是证据** |
+
+### 50.4 headless 断言（`client/tools/entity_drawer_check.gd` 292 → **358**，+66）
+
+第 18b 组（新实例、真 manager、真 `_draw`；位置表 10/11/12/14/9001/9002，生命 10 活 /
+11 死 / 12 活 / 14 与两个玩家 id 查不到 = 状态 `2`）：
+
+| 段 | 断言 | 实测（headless 输出） |
+|---|---|---|
+| 0 | 8 个 `gate_*` 方法存在 | 全在 |
+| ① | 默认 `gate_turn_mode() == 0`（= `TurnData::new` 初值）、出场序表空、`gate_current_player() == -1`、`gate_sequential_state() == false`、回落开关默认 `true` | 是 |
+| ① | **回落断言 A/B**：顺序支缺状态 ⇒ 回落到同时支全集（players 含 9001 与演示玩家 1；soldiers 含 12），`is_on_turn(12) == true` | 是 |
+| ② | **原版语义**：关掉回落 ⇒ players/soldiers 都是**空集**（`0x46284d` / `0x4629e2`）、`is_on_turn(12) == false`、**一具都不画**（`pos_drawn_ids()` 空） | 是 |
+| ③ | `set_turn_mode(1)` ⇒ 同时回合：players = 玩家表全部键；`set_turn_mode(2)` 被拒；`set_turn_mode(0)` 回顺序 | 是 |
+| ④ | `set_turn(9001, 12)` ⇒ 出场序表 `[9001]`、游标 9001、players `[9001]`、soldiers `[12]`；`is_on_turn(9001/12)=true`、`(10)=false`、**`(演示玩家 1)=false`**（同时回合下它是 true ⇒ 收窄的判据）；画面只画 `[12, 9001]` | 是 |
+| ⑤ | 再登记 9002 并 `set_turn(9002, 14)` ⇒ 出场序表 `[9001, 9002]`、游标换人、soldiers `[14]`、`is_on_turn(12)=false`；画面 `[14, 9002]` | 是 |
+| ⑥ | `set_turn(9002, 0)` ⇒ players 仍 `[9002]`（出场序表不删）、soldiers **空**（记录被删）、`is_on_turn(9002)=true` 而 `(14)=false` | 是 |
+| ⑦ | **宽窄对照（同一张表、同一套生命）**：顺序回合画 `[12, 9001]`；切同时回合画 **4 具** `[12, 14, 9001, 9002]`；切回顺序又只画 `[12, 9001]` | 是 |
+| ⑦ | 状态齐了 ⇒ 回落开关关不关都不影响（仍 `[12, 9001]`） | 是 |
+
+`ok()` 计数：新增 **66** 条（8 条方法存在性 + 58 条断言），既有 292 条**一条没改**。
+
+### 50.5 验收（本节实测，命令都能原地复跑）
+
+| 命令 | 本轮 | 改前（基线 `CG@65463cd`） |
+|---|---|---|
+| `cargo test --offline` | **1646**，全绿 | 1638（+8：turn_manager 8 条新单测） |
+| `cargo test --offline --features gdext-bindings` | **1745**，全绿 | **1737**（同一个 `CARGO_TARGET_DIR`，用 8 个 `--skip` 把新单测滤掉实测） |
+| `python3 tools/coverage_matrix.py --check` | **OK** | OK |
+| `python3 tools/check_doc_refs.py` | **OK**（rc=0） | OK |
+| `entity_drawer_check.gd` | **358 / 0** | 292 / 0 |
+| `assemble_check.gd` / `plane_on_screen_check.gd` / `obstacle_drawer_check.gd` | **217 / 96 / 116**，全 0 failed | 同 |
+| `function_drawer_check.gd` / `draw_classes_check.gd` / `curve_on_screen_check.gd` | **132 / 235 / 96**，全 0 failed | 同 |
+| `base_classes_check.gd` / `signal_classes_check.gd` / `gdext_check.gd` | **117 / 155 / 24**，全 0 failed | 同 |
+| `recovered_view_check.gd` / `spike_class_check.gd` | **57 / 23**，全 0 failed | 同 |
+| `selftest`（`-- --selftest`） | **625 passed / 3 failed / 24 skipped** | **625 / 3 / 24（逐条相同）** |
+
+⚠️ **selftest 的口径**：护栏记的是 714/0/1skip（那台机器 `rsc/` 资产与真回放目录齐全）。
+本机缺这两样 ⇒ 24 条 skip（音频 / 回放 / 原版存档）与 3 条**既有**失败（Skins 页贴图、
+`Cancel`/`Start` 按钮真帧宽度、皮肤层贴图）。这三条在**改前的干净树**上**逐条相同**
+（同一个 `CARGO_TARGET_DIR` 同口径实测：549/3/26 是没编 `serve_match` 时的数，
+补上 example 后就是 625/3/24）⇒ **本轮没引入新失败**。
+
+**三条驱动轴**：本轮一行都没碰 `src/game.rs` / `src/entity_drawer.rs`（只改 turn_manager 的
+只读查询与 `_scaffold` 的节点壳）⇒ 与 46 号同口径不变：`fire 647` / `batch 647` /
+`batch_conv` 种类序列 `1075`、内容命中 `637`。
+
+### 50.6 仍是推断 / 未知（诚实清单）
+
+| # | 项 | 档位 | 缺什么 / 影响 |
+|---|---|---|---|
+| 1 | `set_turn` 发的那条事件的**包装层编码** | **推断** | tag 由 `0x7fff…ffff + 0x2c` 反推为 43（`TurnInfo`）、payload 两个 `u32` 观测；`add_event`（`0x3d3530`）内部未逐位解 |
+| 2 | `+0x58` 的初值 | **观测（跨构建）** | ELF 侧 `GraphwarTurnData::new` 未单独定位；用的是 Windows 2.0.60 同版本同名函数（`0x4a6f0` `mov byte [rsi+0x58], 0`） |
+| 3 | 出场序表的**其它使用者** | **未知** | 只观测到 `set_turn` 写、两个 getter 读 `[current]`；`next_turn`（`0x463da0`）走玩家表（HashMap），不是这张表 ⇒ 是否还有别的消费者没查 |
+| 4 | 顺序回合下**轮转**怎么走 | **未知**（未变） | `next_turn` 的玩家遍历顺序仍是 HashMap 迭代序（`docs/47`）；本层的 `begin_turn`/`next_shooter` 仍是"由调用方指玩家"的形状 |
+| 5 | 本层的 `set_turn` 生产者 | **我方缺口** | 远端事件处理器（`0x3e2830` 那一支）没接 ⇒ 客户端里没人喂 `set_turn`；回落开关因此默认开 |
+| 6 | `get_alive == 2` 为什么算可画 | **未知**（未变，46 号 §49.5 第 5 条） | 本轮没动它 |
+| 7 | `TurnMode` 两份定义并存 | **我方结构差异** | 合并要动 `src/graphwar_level_manager.rs`（禁区） |
+
+### 50.7 复现（干净树）
+
+```text
+export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=<ws>/.agent-work/<你的>/target50
+cargo test --offline                                     # 1646，全绿
+python3 tools/coverage_matrix.py                         # 改了 src/ 必须重跑生成物
+python3 tools/coverage_matrix.py --check                 # OK
+python3 tools/check_doc_refs.py                          # OK（rc=0）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+grep -a -c gate_announce_turn client/libgw2_rebuild.so   # 4（判据：.so 真的是新的）
+"$GODOT" --headless --path client --import               # 解完资产必须再 import 一次
+"$GODOT" --headless --path client --script res://tools/entity_drawer_check.gd   # 358 passed / 0 failed
+```
+
+**地址复算（四条，互不依赖）**：
+
+```text
+../.venv/bin/python tools/addr_probe.py dis 0x462d20   # set_turn_mode：写 data+0x58 + 发事件
+../.venv/bin/python tools/addr_probe.py dis 0x462c10   # get_turn_mode：读 data+0x58
+../.venv/bin/python tools/addr_probe.py dis 0x4638f0   # set_turn：出场序表 + 两个游标
+../.venv/bin/python tools/addr_probe.py dis 0x4628d0   # 顺序支：players[current] 的 soldiers[cursor]
+../.venv/bin/python tools/pe_dis.py func 'GraphwarTurnData::new'   # Windows：初值 +0x58 = 0
+```
