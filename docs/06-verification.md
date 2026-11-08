@@ -2148,3 +2148,328 @@ $PY tools/frida_point_array.py --div-extract /abs/l17.jsonl --label l17_3shot \
 
 **没有改动**：`src/`、`client/`、`dispatch/`、`fixtures/guardrails.json`。`fire`/`batch`/`batch_conv` 三条轴本轮没重跑
 （本分支不碰 `src/`，护栏与基线同；按 AGENTS.md §B 应在合并侧跑）。
+
+## 31. **`flip=1`** 与 **Level 18–20** 的运行时样本：6 发 Bot 的 `flip=1` + 7 发我方 `flip=0`，两条朝向的弹道都与我方实现**逐位相同**（2026-11-08，`dispatch/49`）
+
+> 任务书：[`dispatch/49-level-flip-samples.md`](../dispatch/49-level-flip-samples.md)。起点 `CG@65463cd`，
+> 分支 `agent/level-flip-samples`。**本节全部是运行时观测**：frida 17.26.1 挂在真游戏
+> `Graphwar II` Linux 2.0.60 里，`libgraphwarrust.so` sha256
+> `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`（= 逆向目标那份，逐字节相同）。
+> 探针 [`tools/frida_flip_probe.js`](../tools/frida_flip_probe.js) + 驱动
+> [`tools/frida_flip_probe.py`](../tools/frida_flip_probe.py)（**从 45 号那两支复制出来的独立一支**：
+> 停因断点默认关掉，换成 **`FunctionPoints` 装配处 `0x456810`** 与它的 **JSON 写入器 `0x50eb20`** 两组钩子；
+> 并行任务 48 在改 `tools/frida_point_array.*`，本文件不碰它）。
+> 复算 [`examples/flip_branch_check.rs`](../examples/flip_branch_check.rs)（**新增**）+
+> [`examples/ode_array_check.rs`](../examples/ode_array_check.rs)（40 号）。
+> 入库样本 [`fixtures/frida_flip_sample.jsonl`](../fixtures/frida_flip_sample.jsonl)（1 行 provenance + 13 行 shot，**67 KB**）
+> 与 [`fixtures/frida_flip_normal_l05.jsonl`](../fixtures/frida_flip_normal_l05.jsonl)（1 + 4 行，**25 KB**），纯文本；
+> **整条数组的字节不入库**，只留摘要（`sha256` + FNV-1a-64，口径见下 §31.7 的"样本口径"）。
+>
+> **编号说明**：§30 留给并行任务 48，本节按任务书取 **§31**。
+
+### 31.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | **`flip=1` 怎么造** | **靠"打 Bot"**：`flip` 由**队伍**决定（Team1 `x≤0` → 0；Team2 `x≥0` → 1）。战役里玩家恒为 Team1，所以**我方自己的发永远是 `flip=0`**；**有对手的关卡里 Bot 是 Team2** ⇒ 它开火的每一发采样器入口 `edx` 都是 **1**。本轮在 **Level 18/19/20**（战役第 19/20/21 关，各有 1 个 Bot）+ **Level 5**（Normal 局、bot_0）按"等我方打完、等 Bot 出手"的节奏抓，得到 **8 发 `flip=1`**（Ode 6 + Normal 2） | **观测** |
+| ② | **Level 18/19/20 各抓到几发** | **Level 18：6 发**（我方 3 + Bot 3）· **Level 19：3 发**（我方 2 + Bot 1）· **Level 20：4 发**（我方 2 + Bot 2）；三关合计 13 发（`flip=1` 6 / `flip=0` 7）。三关都是 `func=1`（DiffEq）+ 散布式障碍（`min_count` 10/10/15）+ **我方 3/4/5 个士兵** + **0 个靶子** + **1 个 Bot**（难度档 3/3/4），与 `docs/10-campaign.md` §4 的表一致 | **观测**（关卡参数：逐位，见 §4；士兵数/敌方数：截图） |
+| ③ | **`flip=1` 与 `flip=0` 的可指认差异** | ① **采样方向**：`flip=1` 的 `pts[0].x = x0 > 0`、`pts[n-1].x < 0`（x **递减**）；`flip=0` 反过来（**13/13**）；② **报文的 `start_x` 是射手自己的 x**（`flip=1` 时为正），`owner_id` = 开火的那个士兵（**13/13**）；③ **整条点数组**：`calculate(…, flip=true)` 与真机 **1801/1801 逐位相同**（Ode，其中 1787 次是 `flip=1`），而把 `flip` **取反**只剩 **150/1801** 相同 —— 正对照证明 `edx` 这个标志真的在起作用；④ **Normal 局的修正常数**：判别发 **32/32** 命中 `c = y0 − f(flip ? −x0 : x0)`，取反 **0/32** | **观测 + 逐位** |
+| ④ | **修正量的取号与我们一致吗** | **一致**（这是任务书 §1 的 ①）：Level 5 的 326 次采样器调用里，常数 token 与 `c = y0 − f(±x0)` 逐位/3 位小数对上的有 **326/326**；其中**两种取号给出不同 c** 的 32 发判別发上：真机 flip **32/32**、取反 **0/32** | **逐位**（全精度那部分）/ **3 位小数**（真正打出去那一发，见 §31.4） |
+| ⑤ | **多士兵局里"谁的位置"进报文** | **射手自己的**：`FunctionPoints.start_x/start_y` = 那一发点数组的 `pts[0]`，与该次采样器入参 `x0/y0` **逐位相同（13/13）**；`owner_id` = 开火的士兵 id（我方 230–233 / 敌方 234–237、240）。同一局里我方 3 个士兵轮着开火 ⇒ 每发 `start_x` 不同（L19：`-21.81` / `-11.26`），**不是**队伍中心、也**不是**上一发的位置 | **观测** |
+| ⑥ | **有障碍的 Level 18–20** | 与 45 号在 Level 17 看到的是同一件事：**采样器不认障碍**（它照旧采到 `\|x\|>25`），**截断发生在采样器之外**（同一条缓冲、`Vec.len` 被原地改小）。13 发里 **6 发** `report_n < calc_n`（例：L18 的 `n=2171 → 1985`、L19 的 `5958 → 819`） | **观测** |
+| ⑦ | **报文两个字段对不对得上** | 这 17 发里 **`end_x == pos_x` 17/17 逐位相等**（§28 那个"100 发不一致"本轮**没有**复现） | **观测** |
+
+### 31.1 怎么造出 `flip=1`（可复跑；这是任务书的最后一格空白）
+
+#### ① 结论：`flip` 跟着**队伍**走，所以在战役里只能靠 **Bot** 拿到 1
+
+`docs/archive/105-team-sides.md` 与 `src/graphwar_turn_manager.rs` 的 `Team::flip` 都是：
+
+```text
+Team1（x ≤ 0，我方，战役里恒为玩家）  flip = false   → 朝 +x
+Team2（x ≥ 0，敌方 / Bot）            flip = true    → 朝 −x
+```
+
+本次实测把这个"队伍 ⇒ `flip`"的链条**在运行时接上了**：
+
+| 量 | `flip=0` 的 7 发 | `flip=1` 的 6 发 |
+|---|---|---|
+| 采样器 `x0` 的符号 | **全为负**（7/7） | **全为正**（6/6） |
+| `pts[0].x`（= `x0`） | 负 | 正 |
+| `pts[n-1].x`（= `end_x`） | 正（或仍负但更大） | 负 |
+| 点数组 x **走向** | **递增** 7/7 | **递减** 6/6 |
+| `FunctionPoints.owner_id` | **230–233**（我方士兵） | **234–237、240**（敌方士兵） |
+| 开火时谁在动 | 宿主用 `xdotool` 打字 | **没有人打字**：Bot 自己进化出式子后开火 |
+
+⇒ 我方士兵与敌方士兵的 id **不重叠**（230–233 vs 234–240），这条与"`flip=1` 就是敌方那一侧"完全一致。
+
+#### ② 有对手的战役关（`docs/10-campaign.md` §4 的表，逐位验证过）
+
+| Level | 关 | 我方士兵 | 靶 | Bot | 障碍 | `func` |
+|---|---|---|---|---|---|---|
+| **5** | 6 | 2 | 0 | bot_0 | 散布 min=5 | 0（Normal） |
+| 9 / 11 / 14 / 15 | 10/12/15/16 | 3 / 3 / 4 / 5 | 0 | bot_2 / 3 / 3 / 4 | 散布 | 0 |
+| **18 / 19 / 20** | 19/20/21 | **3 / 4 / 5** | **0** | **bot_3 / 3 / 4** | 散布 min=**10/10/15** | **1（DiffEq）** |
+
+本轮用的是 **18/19/20**（拿 `flip=1` 的 Ode 发）与 **5**（拿 `flip=1` 且 token 流里**带修正常数**的 Normal 发，见 §31.4）。
+
+#### ③ 一步步（能复跑）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
+       LIBGLX_VENDOR_LIBRARY_NAME=mesa LIBGL_ALWAYS_SOFTWARE=1
+Xvfb :93 -screen 0 1920x1160x24 -listen tcp -ac -nolisten unix &     # ★ TCP + 独占 display
+
+# 驱动会自己写 user://campaign.save = level_20（21 关全解锁），再点 Campaign → 关卡节点 → Start
+$PY tools/frida_flip_probe.py --attach --display 127.0.0.1:93 \
+    --data-dir <abs>/.run/gamedata --out <abs>/.run/l18.jsonl \
+    --campaign-level 20 --level-node 18 --shots 3 --exprs "sin(x)-y/2,y,0" \
+    --gap 3 --settle 22 --tail 20 --full-array \
+    --start-with-opponent 1 --between-opponent 1 --turn-detect 25 \
+    --opp-timeout 260 --shot-timeout 150 --retry-timeout 18
+```
+
+关卡节点坐标（1920×1160，三行七列**蛇形编号**）：`18 → (1187,751)`、`19 → (1429,751)`、`20 → (1672,751)`、
+`5 → (1429,224)`。输入框 `(1000,1090)` 先 `ctrl+a` 再 `type -- "式子"`；`Fire!` 在 `(1855,55)`，**长按 2 s**。
+
+#### ④ ★ 本轮的**必要条件**：驱动必须"回合感知"，不能打完就打字
+
+三关实测的**先手不一样**，这是本轮踩到的最大的坑（第一版驱动因此 0 发 / 只录到 Bot）：
+
+| 关 | Start 之后 25 s 内探针看到 | 结论 |
+|---|---|---|
+| **18** | 立刻出现 `flip=1` 的采样器调用（Bot 开始评候选） | **Bot 先手**；此时我方输入框**是禁用的**（打字不进、按 `Fire!` 无反应，截图里输入框仍空） |
+| **19** | 25 s 内一条 `calc` 都没有 | **我方先手** |
+| **20** | 立刻出现 `flip=1` 的采样器调用 | **Bot 先手** |
+| **5** | 25 s 内一条 `calc` 都没有 | **我方先手** |
+
+所以驱动现在这样做（`--turn-detect / --start-with-opponent / --between-opponent`）：
+**看探针的 `flip=1` 计数**判断"对手是不是在动" → 是就等它的 `pos_read`（上限 `--opp-timeout`），
+不是就直接打；我方打完再等对手的下一发（Bot 一局里 evolver 会评 **200 条上下**候选，
+从 Start 到它真正开火实测 **30–60 s**）。判据全部来自探针自己的消息，不用固定延时。
+
+### 31.2 逐发样本（13 发 Ode + 4 发 Normal）
+
+`(ptr, n)` 里的 `ptr` 是 ASLR 随机、**只在同一局内可比**，样本里都带着；下表给的是能跨局比较的量。
+`n` = 采样器返回的点数；`n_rep` = `execute_results` 读点那一刻的 `n`（有障碍时被截短，见 ⑥）。
+
+**Ode（`fixtures/frida_flip_sample.jsonl`）**：`mode=1`、`step=0.01`、`flip` 见列。
+
+| 系列 | # | `flip` | `owner_id` | `x0` | `y0` | `n` | `n_rep` | `pos_x`(= `end_x`) | x 走向 | 宿主打的式子 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| l18 | 0 | **1** | 235 | **7.0051** | 4.3654 | 2171 | 1985 | -10.3549 | 递减 | （Bot） |
+| l18 | 1 | 0 | 231 | -18.0074 | -12.5311 | 5958 | 819 | -16.3520 | 递增 | `sin(x)-y/2` |
+| l18 | 2 | **1** | 236 | **15.7162** | 11.1338 | 5022 | 3379 | -11.7350 | 递减 | （Bot） |
+| l18 | 3 | 0 | 230 | -17.1748 | 7.2670 | 781 | 127 | -17.0173 | 递增 | `y` |
+| l18 | 4 | **1** | 234 | **2.6715** | 7.3924 | 2766 | 2766 | -14.0222 | 递减 | （Bot） |
+| l18 | 5 | 0 | 231 | -18.0074 | -12.5311 | 4588 | 4588 | 24.9957 | 递增 | `0` |
+| l19 | 0 | 0 | 233 | -21.8133 | 0.0421 | 5691 | 2306 | -2.7477 | 递增 | `sin(x)-y/2` |
+| l19 | 1 | **1** | 237 | **3.1295** | -12.6028 | 3332 | 3332 | -24.9955 | 递减 | （Bot） |
+| l19 | 2 | 0 | 232 | -11.2552 | 1.0517 | 1441 | 1441 | -8.5981 | 递增 | `y` |
+| l20 | 0 | **1** | 240 | **14.2870** | 3.7070 | 2626 | 2626 | -5.4005 | 递减 | （Bot） |
+| l20 | 1 | 0 | 231 | -21.5606 | 8.1458 | 6079 | 1172 | -15.2337 | 递增 | `sin(x)-y/2` |
+| l20 | 2 | **1** | 237 | **10.5694** | -3.7233 | 3508 | 3508 | -20.1168 | 递减 | （Bot） |
+| l20 | 3 | 0 | 232 | -20.7363 | -13.8529 | 119 | 119 | -20.6572 | 递增 | `y` |
+
+每发两次真发调用（`gw+3c30c7` shot_calculator / `gw+3e2d3b` target_manager，§27.3/§28.2 同一条链），
+样本里 `report_array_calc` 是**报文读的那一块**、`other_calcs` 是同一发另一次，`candidate_calls` 是
+Bot 那几十/几百条 `step=0.5` 的 evolver 候选（只留条数与序号区间）。
+
+**Normal（`fixtures/frida_flip_normal_l05.jsonl`，Level 5）**：`mode=0`、`step=0.01`。
+
+| # | `flip` | `owner_id` | `x0` | `y0` | `n` | `n_rep` | `pos_x` | x 走向 | 式子 |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 | 0 | 231 | -14.3344 | -8.2205 | 4848 | 4848 | 24.9962 | 递增 | `sin(x)+3` |
+| 1 | **1** | 233 | **22.5383** | -2.9869 | 5071 | 966 | 13.4914 | 递减 | （Bot） |
+| 2 | 0 | 230 | -7.2143 | 5.8215 | 2098 | 2098 | 11.1344 | 递增 | `x/2` |
+| 3 | **1** | 234 | **17.8223** | 13.9152 | 5275 | 5269 | -24.9545 | 递减 | （Bot） |
+
+### 31.3 `flip=1` 到底改变了什么（≥1 条可指认的差异，这里给四条）
+
+#### ① 采样方向反过来（最直观的一条）
+
+同一关、同一个采样器 `0x3c2530`，只有入口 `edx` 不同：
+
+```text
+flip=0（Team1）  pts[0] = (x0, y0) 且 x0 < 0 ；pts[n-1].x > x0        ⇒ x 递增
+flip=1（Team2）  pts[0] = (x0, y0) 且 x0 > 0 ；pts[n-1].x < x0        ⇒ x 递减
+```
+
+13 发 Ode 里 **13/13** 与自己的 `flip` 一致（6 递减 / 7 递增），Normal 4 发 **4/4** 同样。
+（复算工具里 `x_dir_matches_flip`：Ode **1584/1801** 次采样器调用、Normal **324/326**；
+不一致的那些是 `n=1` 或首末点 x 相同（哑弹/撞 NaN 墙）的病态候选，不是方向反了。）
+
+#### ② 报文里 `start` 是**射手自己**的位置，`owner_id` 是**开火的士兵**
+
+`FunctionPoints` 的装配处 `0x456810`：`start = pts[0]`、`end_x = pts[len-1].x`、`owner_id = esi`（u32）。
+本轮把这三样与采样器入参对撞：**`start_x` 与那一发 `x0` 逐位相同 13/13**（`wire_start_eq_shooter_x0`），
+且 `owner_id` 在同一局里**随射手轮换**（L18：`231 → 230 → 231`；L19：`233 → 232`；L20：`231 → 232`）。
+⇒ 多士兵局里报文带的是**当前射手**的位置，`flip=1` 时它自然落在 `x>0` 那一侧。
+
+#### ③ 整条点数组：我方 `flip` 分支与真机**逐位相同**，取反就崩
+
+```bash
+cargo run --release --offline -q --example ode_array_check -- --raw <abs>/.run/l18.jsonl --json repro.json
+cargo run --release --offline -q --example flip_branch_check -- \
+    --raw <abs>/.run/l18.jsonl --raw <abs>/.run/l19.jsonl --raw <abs>/.run/l20.jsonl --json flip_ode.json
+```
+
+| 数据集 | `calc` 行 | 真机 `flip` 复算 | 取反 `flip` 复算 |
+|---|---|---|---|
+| Level 18（`ode_array_check`） | 905 | **逐位相同 905** | — |
+| Level 19 | 249 | **249** | — |
+| Level 20 | 647 | **647** | — |
+| 三关合（`flip_branch_check`） | 1801（flip=0 14 / **flip=1 1787**） | **1801 逐位相同**（其中 flip=1 **1787**） | 只有 **150/1801** 相同 |
+| Level 5（Normal） | 326（flip=0 4 / **flip=1 322**） | **326 逐位相同** | 只有 **2/326** 相同 |
+
+"取反还有 150 次相同"是**正对照的另一半**：那些发的函数是常数/偶函数（`f(x0) == f(-x0)`），
+`flip` 改了也看不出差别 —— 这正是"比对代码在真数据上报得出不同"的证据，不是反例。
+
+#### ④ Normal 局的修正常数取号（见 §31.4）
+
+### 31.4 `Mode::Normal` 的修正常数：`c = y0 − f(flip ? −x0 : x0)`
+
+任务书 §1 的 ①。要在运行时看到"取号"，必须用**有尾随常数的 Normal 局**（`Ode` 局不加常数，§27.0 ④）。
+Level 5 的 4 发（2 我方 + 2 Bot）给了 326 次采样器调用，每次的 token 流都带那个常数。
+
+**本轮读出的 token 排布**（与 40 号"尾随常数"的说法一致，这里把它说全）：
+
+```text
+[Add|Sub]  f 的 token…  Const(|c|)
+   ↑ 第一项是**取号**用的运算符（Sub ⇒ c < 0），最后一项是常数，中间是函数本身
+例：`sin(x)+3`（flip=0, x0=-14.3344, y0=-8.2205）
+     tokens = [Sub, Add, Sin, VarX, Const(3.0), Const(10.24)]   ⇒  y = sin(x)+3 − 10.24
+     c = y0 − f(x0) = -8.2205 − 2.0194 = −10.2399…  ⇒ 印成 `-10.240`（3 位小数）
+例：Bot 的 flip=1 发（x0=17.8223, y0=13.9152，f = sin(x)）
+     tokens = [Add, Sin, VarX, Const(13.059)]
+     c = y0 − f(−x0) = 13.9152 − (+0.8559) = 13.0594…  ⇒ `13.059`（**取的是 −x0**）
+     若按 flip=0 算：c = 13.9152 − (−0.8559) = 14.771  ✗
+```
+
+**精度分两种**（本轮实测，写进 `examples/flip_branch_check.rs` 的判据里）：
+
+* **Bot 的 evolver 候选**（`step = 0.5`）：常数是**全精度** `c`，可以 `to_bits()` 逐位比；
+* **真正打出去的那一发**（`step = 0.01`）：`c` 先被 `correction_text` 印成 **3 位小数**、再 parse 回
+  f64 才进 token 流（`src/game.rs` 那段"印出来的文本再 parse"）⇒ 只能比到 3 位小数。
+
+判据（写死在工具里）：`全精度命中 或 3 位小数命中` ⇒ 这个取号对。结果：
+
+| 量 | 数 |
+|---|---|
+| Normal 采样器调用 | 326（flip=0 **4** / flip=1 **322**） |
+| 常数 token 与 `c = y0 − f(±x0)` 对得上（真机 `flip`） | **326 / 326**（其中 3 位小数那条 9、全精度那条 318） |
+| 同上，把 `flip` **取反** | 294 / 326 |
+| **两种取号给出不同 `c`** 的判别发 | **32**（其中 flip=1 的 28） |
+| ↳ 真机 `flip` 取号命中 | **32 / 32** |
+| ↳ 取反 `flip` 取号命中 | **0 / 32** |
+
+⇒ **`flip=1` 时修正量确实按 `y0 − f(−x0)` 取号，与我们实现一致**（判别发 32/32 对、0/32 反）。
+
+### 31.5 本轮踩的坑 + 两处对旧说法的补充
+
+| # | 坑 / 更正 | 现象 | 处置 |
+|---|---|---|---|
+| 1 | **驱动不看回合就会 0 发** | 第一版照 40/45 号"Start 之后直接打字"跑 Level 18：输入框**是禁用的**，`Fire!` 点了没反应，整轮只录到 Bot 那一发（截图里输入框仍是空的） | 改成"**先判谁先手**"：看探针的 `flip=1` 计数（25 s 窗口），有对手活动就先等它的 `pos_read`；见 §31.1 ④ |
+| 2 | **有 Bot 的关卡并不都是 Bot 先手** | Level 18/20 Bot 先、Level 19/5 我方先（同一份驱动、同一台机器） | 不做假设，逐局判定（`--turn-detect`） |
+| 3 | **`marker` 不能按"最近一条"配** | `marker` 由驱动直接写进 JSONL（探针的 `post→recv` 在这台机器上不送达），**没有探针时基的 `t`**；Bot 的 `pos_read` 就在我方 marker 后面几十秒，"最近一条"会把 Bot 那一发也记成我方打的式子 | 改成**文件顺序 + 消费一次**：一条 marker 只配给它后面的第一个 `pos_read`；样本里 `expression` 为空 = Bot 那一发（同时 `x0>0` 可独立复核） |
+| 4 | **`arr_truncated` 必须单列** | 6/13 发 `report_n < calc_n`（障碍截断，同一条缓冲、`Vec.len` 被改小，§29.5 同一件事）。如果拿 `same_len` 当唯一点名判据，这些发会**配到错的那条数组**上 | `_pick_calc` 改成"`same_ptr` 必须成立、`same_len`/摘要只做优先级"，并给这种发打 `arr_truncated{calc_n,report_n}` |
+| 5 | **`owner_id` 只能用装配处那个 u32** | `0x50eb20` 写入器按 8 字节读 `owner_id`，高 4 字节是脏的（抓到 `139745350910183` 这种）。**44 号 §28.5 第 3 条的同一件事** | 样本里 `owner_ids` 一律取 `0x456810` 的 `esi`（u32）；写入器那份只作对照 |
+
+### 31.6 仍未做 / 未知（诚实清单）
+
+1. **只测了"战役 + Bot"这一条路**。另一条能拿到 `flip=1` 的路 —— **联网/局域网局里自己当 Team2** ——
+   本轮**没有**尝试（要过 `lan_lobby` 那一套菜单，`serve_match` 起服务端后客户端还得能连）。
+   ⇒ 目前 `flip=1` 的样本**全部来自 Bot**，没有"人类玩家在 Team2"的样本（两者的 `flip` 来源是同一条
+   `Team::flip`，但**"人类在 Team2"这一步本身没有被观测到**）。
+2. **Bot 为什么有时先手、有时后手未定性**。本轮只记录"哪一局谁先走"，没有去反汇编回合初始化
+   （`turn_manager` 的初始 current 是怎么定的）。
+3. **Bot 的候选评估次数/耗时只有计数**（`candidate_calls.n`：一发 200 条上下、30–60 s），
+   没有把 evolver 的入参/打分过程接进来。
+4. **Normal 局只测了 Level 5**（bot_0）。Level 9/11/14/15 同样是"有 Bot 的 Normal 局"，
+   但 11/14 是 `turn=1`（SimultaneousTurns），本轮没碰。
+5. **`flip` 对障碍截断有没有影响**没单独验证（截断在采样器之外，理论上与 `flip` 无关；本轮样本里
+   6 发截断有 4 发是 `flip=0`、2 发 `flip=1`，看不出关系，也没做判据）。
+6. **`pos` 与 `end_x` 这次 17/17 相等**：§28 那 100 发不一致的来源仍然未知（本节不碰）。
+
+### 31.7 复跑、护栏、文件清单
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
+       LIBGLX_VENDOR_LIBRARY_NAME=mesa LIBGL_ALWAYS_SOFTWARE=1
+Xvfb :93 -screen 0 1920x1160x24 -listen tcp -ac -nolisten unix &
+
+# ① Ode：Level 18 / 19 / 20（每关 2–3 发；Bot 关要等它先/后手各一发）
+for LV in 18 19 20; do
+  $PY tools/frida_flip_probe.py --attach --display 127.0.0.1:93 \
+      --data-dir <abs>/.run/gamedata --out <abs>/.run/l$LV.jsonl \
+      --campaign-level 20 --level-node $LV --shots 3 --exprs "sin(x)-y/2,y,0" \   # L19/L20 本轮实际各 2 发
+      --gap 3 --settle 22 --tail 20 --full-array \
+      --start-with-opponent 1 --between-opponent 1 --turn-detect 25 \
+      --opp-timeout 260 --shot-timeout 150 --retry-timeout 18
+done
+# ② Normal（带修正常数）：Level 5
+$PY tools/frida_flip_probe.py --attach --display 127.0.0.1:93 \
+    --data-dir <abs>/.run/gamedata3 --out <abs>/.run/l05.jsonl \
+    --campaign-level 20 --level-node 5 --shots 2 --exprs "sin(x)+3,x/2" \
+    --gap 3 --settle 22 --tail 15 --full-array --turn-detect 25
+
+# ③ 逐位复算（整条数组 / flip 分支 / 修正量取号）
+cargo run --release --offline -q --example ode_array_check   -- --raw <abs>/.run/l18.jsonl --json <abs>/repro.json
+cargo run --release --offline -q --example flip_branch_check -- --raw <abs>/.run/l18.jsonl \
+    --raw <abs>/.run/l19.jsonl --raw <abs>/.run/l20.jsonl --json <abs>/flip_ode.json
+
+# ④ 入库（原始 JSONL 在 `.agent-work` 里，不入库）
+$PY tools/frida_flip_probe.py --extract <abs>/.run/l18.jsonl --extract <abs>/.run/l19.jsonl \
+    --extract <abs>/.run/l20.jsonl --label l18 --label l19 --label l20 \
+    --fixture-out fixtures/frida_flip_sample.jsonl
+$PY tools/frida_flip_probe.py --extract <abs>/.run/l05.jsonl --label l05_normal \
+    --fixture-out fixtures/frida_flip_normal_l05.jsonl
+```
+
+护栏（本分支实测，`src/` 零改动）：
+
+| 项 | 结果 |
+|---|---|
+| `cargo test --offline` | **1638 通过 / 0 失败**（= 基线，本轮**没加**测试） |
+| `python3 tools/check_doc_refs.py` | 退出码 **0** |
+| `src/`、`client/`、`dispatch/`、`fixtures/guardrails.json` | **零改动** |
+| `tools/frida_point_array.*`、`tools/frida_ode_probe.*`、`tools/frida_ode_edge.*` | **零改动**（并行任务 48 在用前两支） |
+
+**样本口径（"只留摘要"这件事怎么自证）**：一条点数组的字节 = **16·n 字节**（每点 `x` 的 8 字节小端 f64 +
+`y` 的 8 字节小端 f64）。样本里每条数组只带两个摘要而不是全量字节：
+
+| 字段 | 跑在哪 | 谁算的 | 能证明什么 |
+|---|---|---|---|
+| `digest_xy` / `digest_y` | 同样的 16·n 字节 / 只跑 y 那 8 字节 | **探针在游戏进程里、调用那一刻**（`digestOf`，FNV-1a-64） | "那一块内存当时就是这些字节"（时间点上最强） |
+| `sha256` + `n_bytes` | 同样的 16·n 字节 | **驱动摘样本时**，用探针回传的 `arr.hex` | 任何人拿 `--full-array` 复跑都能复核，与语言/实现无关 |
+| `arr.digest_selfcheck` | — | 驱动用同一份字节**重算 FNV** 并与探针报的值逐位比 | "压缩没改证据"：本轮 **13/13 + 4/4 全 true** |
+
+本轮另外做了一次**独立复核**（不是同一段代码）：把两个样本文件里 **17 条报文数组 + 25 条同发的另一次调用 +
+17 条 `pos_read` 读时刻摘要**，全部拿原始 JSONL 的 `arr.hex` 重算 `sha256` / FNV（`pos_read` 那条按
+**前 `n·16` 字节**算，因为障碍截断就是"同一条缓冲、len 变小"）⇒ **0 处不一致**。
+
+**为了压到 100 KB 以下砍掉了什么**（都是"整条数组的转储"与"重复的结构"，标量证据一条没丢）：
+
+| 字段 | 压缩前 | 现在 | 做法 |
+|---|---|---|---|
+| `queue` | 39.7 KB | 9.9 KB | 队列项按 `(len, digest)` **去重**，只留数组摘要 + 首末点；`eval_sample` 只留前 3 条 |
+| `pos_read` | 16.6 KB | 7.7 KB | `which_calc` 8 条 → `{n_checked, same_ptr_seqs, same_ptr_and_len_seqs}`；`vs_queue` 只留命中的 `(item, off)` |
+| `fnpoints_ctor(_b)` | 14.5 + 14.4 KB | 5.2 + 5.0 KB | 去掉 `vs_calc` 的 8 条全量，只留 `same_ptr_seqs` / `same_ptr_and_len` |
+| `other_calcs`（同发另一次调用） | 27.3 KB | 9.9 KB | 只留**紧邻报文那块**的最后 2 条（`lean`：不带 token/首末点），其余只计数 `other_real_step_calls` |
+| `report_array_calc` | 9.2 KB | 9.2 KB | **原样保留**（token 流 + `(ptr,n)` + 首末点 + 摘要；这是核心证据） |
+| 标量（`flip`/`mode`/`x0`/`y0`/`pos_x`/`end_x`/`*_f`/`arr_dir`/`arr_truncated`/`level`/`shot`/`series`/`report_array_pick`） | — | — | **全部保留**，一条没删 |
+
+具体点数：主文件 **113 412 B → 68 120 B**（67 KB），Level 5 那份 **35 520 B → 25 715 B**（25 KB）。
+
+本轮新增的文件：
+
+| 文件 | 性质 |
+|---|---|
+| [`tools/frida_flip_probe.js`](../tools/frida_flip_probe.js) | **新增**（探针：`flip` + 走向 + `FunctionPoints` 装配/写入器；只读） |
+| [`tools/frida_flip_probe.py`](../tools/frida_flip_probe.py) | **新增**（驱动：回合感知 / 造关 / 摘样本） |
+| [`examples/flip_branch_check.rs`](../examples/flip_branch_check.rs) | **新增**（真机 `flip` vs 取反 `flip` 复算 + Normal 常数取号） |
+| [`fixtures/frida_flip_sample.jsonl`](../fixtures/frida_flip_sample.jsonl) | **新增**（13 发：6 `flip=1` + 7 `flip=0`，Level 18/19/20） |
+| [`fixtures/frida_flip_normal_l05.jsonl`](../fixtures/frida_flip_normal_l05.jsonl) | **新增**（4 发：2 `flip=1` + 2 `flip=0`，Level 5，带修正常数） |
+| `docs/06-verification.md` | **新增本节**（§31） |
