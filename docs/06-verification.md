@@ -4747,3 +4747,70 @@ python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire \
 | 覆盖率 | `coverage_matrix.py --check` | **OK**（原版可归属 527 个函数，逐位 88 / 观测 439 / 推断 0 / 未做 0） |
 | 文档引用 | `check_doc_refs.py` | **rc=0**（无死链） |
 | 闸门自身耗时 | `merge_check.py --branch <分支> --base <起点>` | **0.11 s**（`--run-tests` 之外，远低于 1 s 上限） |
+
+## 34b. 「打不全就全部复原」**第一次拿到真机样本**：部分命中 ⇒ 回合末全部 alive:true；全清 ⇒ 不复原（2026-11-09，用户现场打）
+
+> 之前这条的判据是从指令读出来的（`docs/150` §4），但**语料里 0 份"部分命中"的回放**
+> （多靶子关 7 次命中全是 7/7 全清）⇒ 一直是**推断**。用户这次针对性打了两把，
+> **两次都命中规则**，其中第二把**同一份文件里同时含正例与反例**。
+
+### 34b.1 两把的来历
+
+| 文件 | 场景 | 结果 |
+|---|---|---|
+| `1794176948` | 一炮打掉 1 个靶子后**立刻退出** | 死 1 个 → **回合末全部复活** |
+| `1794177110` | 先各打 1 个（两炮），第三炮**一次拿下两个** | 两次"死 1 个 ⇒ 全部复活"，最后一炮全清 ⇒ **不复原、直接 `EndingGame`** |
+
+（两份都在 `.agent-work/replay-new2/`，**不进冻结快照**。）
+
+### 34b.2 逐 tick 时间线（`LifeInfo` 与 `GameStateInfo` 原文）
+
+**`1794176948`**（士兵 `231`，靶子 `232`/`233`）：
+
+```
+tick 3716  ExecutingResults
+tick 3889  LifeInfo 233 alive:false        ← 打掉 1 个
+tick 3990  LifeInfo 232 alive:true
+tick 3990  LifeInfo 233 alive:true         ← ① **死的那个复活**；② **没死的那个也被重播**
+tick 3992  WaitingForFunctions             ← 顺序：复原**先于**下一回合
+```
+
+**`1794177110`**（士兵 `536`，靶子 `537`/`538`）：
+
+```
+tick 1229  ExecutingResults
+tick 1414  LifeInfo 538 alive:false  →  tick 1481  537 true + 538 true   ← 部分命中 ⇒ 复原
+tick 2299  ExecutingResults
+tick 2512  LifeInfo 537 alive:false  →  tick 2586  537 true + 538 true   ← 部分命中 ⇒ 复原
+tick 8073  ExecutingResults
+tick 8286  LifeInfo 537 alive:false
+tick 8413  LifeInfo 538 alive:false                                      ← 全清 ⇒ **两条 false**
+tick 8479  EndingGame                                                    ← 且**没有任何 true 跟着**
+```
+
+### 34b.3 三条结论（都从上面原文直接读出，不需要推理）
+
+1. **"部分命中 ⇒ 回合末全部复原"成立**，而且复原是**广播整组靶子**：
+   死掉的那个与**活着的那一个都收到 `alive:true`**（`232`/`537` 本来就没死，也被重播）。
+   ⇒ 与 `src/graphwar_target_manager.rs::should_reset_targets` 的语义一致
+   （"至少一个靶子活着 ⇒ 全部复原"），**该函数头的档位可以从「推断」升到「观测」**。
+2. **判定点 = 回合末**，且**早于** `WaitingForFunctions`：
+   `false` →（101 / 67 / 74 tick 后）→ 整组 `true` → 2 tick 后进入下一回合。
+   `docs/150` §4 用指令读出来的"回合末"由此得到运行时背书。
+3. **全清 ⇒ 不复原**：最后一炮两个靶子先后 `false`（8286 / 8413），
+   **后面没有任何 `true`**，直接 `EndingGame`(8479)。
+   ⇒ 同一份 replay 里同时提供了正例与反例，**不需要再找负对照**。
+
+### 34b.4 复核命令
+
+```bash
+# 事件级 dump（纯 python，replay 是 gzip 的 jsonl）
+python3 - <<'PY'
+import gzip, json
+p='.agent-work/replay-new2/1794177110'
+raw=open(p,'rb').read(); op = gzip.open if raw[:2]==b'\x1f\x8b' else open
+for l in op(p,'rt',encoding='utf-8',errors='replace'):
+    e=json.loads(l); ev=e.get('event') or {}
+    if 'LifeInfo' in ev or 'GameStateInfo' in ev: print(e.get('tick'), ev)
+PY
+```

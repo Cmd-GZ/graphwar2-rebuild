@@ -217,6 +217,11 @@ impl GraphwarTargetManager {
 /// 原版不是函数而是一段内联在 `queue_end_turn_trigger` 闭包里的判断；
 /// 这里把它抽成纯函数，好让测试把三个条件钉住。
 ///
+/// **运行时背书（2026-11-09，`docs/06` §34b）**：用户现场打了两把多靶子关，逐 tick 原文显示
+/// 「部分命中 ⇒ 回合末整组靶子广播 `alive:true`（**死的那一个和活着的那一个都重播**）」，
+/// 而「全清 ⇒ 没有任何 `true`，直接 `EndingGame`」。
+/// ⇒ 本条不再只是"读指令推出来的"，`reset_mode_flag` 的方向也与"一发全清模式"一致。
+///
 /// * `turn_clamped` = 闭包里那个 `w23`（`turn_count < +0xcc ? 0 : +0xc8`）；
 /// * `team1_alive` / `team2_alive` = `get_alive_teams()` 的两个 bool；
 /// * `reset_mode_flag` = `self[+0x11d]`（**推断**：一発で全部关卡的标志位）。
