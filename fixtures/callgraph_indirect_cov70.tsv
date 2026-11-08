@@ -1,0 +1,15 @@
+# 任务 70 · 6 特征「两侧可比」改造前后的覆盖率
+# 正对照 = named_linux_348()；目标 = 无 src/ Location 的函数
+feature	which	pos_hit	pos_n	tgt_hit	tgt_n
+callee	before	342	348	6711	12736
+callee	after	348	348	9029	12736
+caller	before	158	348	5585	12736
+caller	after	225	348	7546	12736
+ncal	before	342	348	6711	12736
+ncal	after	348	348	9029	12736
+ncall	before	158	348	5585	12736
+ncall	after	225	348	7546	12736
+cbsig	before	342	348	6711	12736
+cbsig	after	348	348	9029	12736
+rbsig	before	158	348	5585	12736
+rbsig	after	225	348	7546	12736
