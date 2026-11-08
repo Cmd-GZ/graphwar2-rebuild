@@ -4747,3 +4747,260 @@ python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire \
 | 覆盖率 | `coverage_matrix.py --check` | **OK**（原版可归属 527 个函数，逐位 88 / 观测 439 / 推断 0 / 未做 0） |
 | 文档引用 | `check_doc_refs.py` | **rc=0**（无死链） |
 | 闸门自身耗时 | `merge_check.py --branch <分支> --base <起点>` | **0.11 s**（`--run-tests` 之外，远低于 1 s 上限） |
+
+## 42. **LAN + AI 局造出来了**：AI 真的开了一发，三样同抓 + 直接量"喂进 `0x3c5f70` 的那个 `&Point`" —— 它**就是** `start_x`（0 ulp）；`0x3c5f70` 的调用者 = 槽 `0x9bacf0`、两个 `call`、**零个写入者**（2026-11-09，`dispatch/69`）
+
+> 任务书：[`dispatch/69-lan-ai-match.md`](../dispatch/69-lan-ai-match.md)。起点 `CG@766449b`，
+> 分支 `agent/lan-ai-match`，私有 `CARGO_HOME` / `CARGO_TARGET_DIR`。
+> 目标构建：`libgraphwarrust.so` sha256 **`9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`**
+> （= `steam/2026-08-28`，与录制语料那批回放同一个）。本节地址一律**虚地址**（vaddr）。
+>
+> **为什么是这一节**：§40.6 第 1 条把 1 ulp 的**唯一活口**指到"AI 开的那一发"（语料里分叉批全是
+> AI-vs-AI 的 AI 发，而 §40 三局是**人打**的、机器人一发没开）；§38.7 末段把另一条线指到
+> "`0x3c5f70` 的调用者未知"。本节把这两条**同时**做掉：先造出让 AI 真开火的局，再在**同一次开火**里
+> 抓三样，并**直接**读 `0x3c5f70` 吃进去的那个 `&Point`（不再靠"印出来的末位反推"）。
+
+### 42.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | **LAN + AI 局造出来了吗** | **造出来了**。`Battle(LanLobby) → Create Game → GameSetup 加 Bot(档 5) → 回合时限 5 min → Start`，房间地址 `198.18.0.1:<随机端口>`（`GameIpLabel`）。**它真的开了火**：本局 3 发真的执行（`pos_read` ×3），其中**第 2 发是 AI 打的**。⚠ 回合顺序**两轮不一样**（run1 AI 先手 / run2 玩家先手），见 §42.1 | **观测** |
+| ② | **三样抓到了吗（同一次开火）** | **抓到了**。AI 那一发：①`0x3c2530` 的 token 列表（3 个 token = `x + 9.961`）②`0x472865` 读到的 `pts[n-1]`（`n=2871`，`pos=(-5.035913617128012, 14.996913617128012)`）③`EffectInfo` 载荷 + JSON 文本。三者按**指针/sret/时间**三条独立链认回来，点相等只当判据；**把 ① 那份 token 原样喂真采样器重跑，`len` 与末点 16 字节逐位等于 ②**（「①确实是②的生产者」的硬证据） | **观测 + 逐位** |
+| ③ | 与 §40 的判据逐条比 | 常数 token **0 ulp**（3/3 发，含 AI 那发）；印出来的就是 `{:.3}`(全精度 `c`) **3/3**；数组**没被改过** `diffPoints=0` 2/2（第 1 发被障碍截断，见 §42.5）；`n` 没被夹小 2/2；载荷/JSON **逐字节相同** 3/3；`pos` **在曲线上** 3/3；`pos_x == end_x` 3/3 | **观测 + 逐位** |
+| ④ | **`0x3c5f70` 的调用者** | 槽 **`0x9bacf0`**（`.got`，`.rela.dyn[22038]`，`R_X86_64_RELATIVE`，addend `0x3c5f70`）；全 `.text` 只有 **2 条** rip 引用、**都是 `call`**、**写这个槽的代码 0 条**（唯一写入者是 ld.so）。两个调用点：`0x3c5d9a`（in `0x3c5c50` = `corrected_function` 包装，上游唯一调用者是 `0x470eb0` = **`fire_functions`**）与 `0x4f28a6`（in `0x4f2200` = **`GraphwarFunctionInput::force_update_cb`**，输入框实时更新）。运行时 401 条 `tok_suffix` 的返回地址分布 = `{gw+4f28ac: 398, gw+3c5da0: 3}`，与静态"正好两个"**逐一对上** | **观测 + 逐位**（重定位条目） |
+| ⑤ | **喂进 `0x3c5f70` 的 `&Point` 是不是 `start_x ∓ 1 ulp`** | **不是**。三发（含 AI 那发）**逐位相同**：`pt == FunctionPoints.start_x` **3/3**、0 ulp。§38 那条"差的是调用方的 `Point`"的推断，在**这一发上不成立** | **观测**（直接读 `rcx`，不再靠印字反推） |
+| ⑥ | **1 ulp 复现了吗** | **没有**。而且这次不是在"人打的那一侧"否掉的，是在**AI 开的那一发**上否掉的 | **观测**（覆盖面见 §42.6） |
+| ⑦ | 新看到的一件事 | **AI 的评分路径与开火路径用的是两个不同的 `c`**：AI 的 506 次评分里 **380 个常数是全精度**（如 `-10.438051018309416`）、29 个恰 3 位、**97 个是 NaN**；而**开火**那一刻用的是 `0x3c5f70` 印出来的 3 位小数（`9.961`）。两者差的是**打印舍入**（1e-4 量级），**不是** 1 ulp | **观测** |
+
+一句话：**AI 那条路走通了、那一发抓齐了、三样互相指认得干干净净，`pos` 逐位落在曲线上，
+喂进修正器的 `Point` 与报文 `start_x` 逐位相同** —— §37 那个 `…844` 在这一发上**也没有复现**。
+
+### 42.1 LAN + AI 局怎么造（1920×1160 窗口坐标，全部真机实测）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+# ① 私有 Xvfb（TCP + 自己的 display；`/tmp/.X11-unix` 是逐命令 tmpfs，只能走 TCP）
+Xvfb :95 -screen 0 1920x1160x24 -listen tcp -ac &      # 后台作业起，别在同一条命令里自杀
+# ② 一条命令里跑完：Popen 真游戏 → frida attach → 按步骤串点击 → 收 JSONL
+$PY tools/gw2_step_drive.py --display 127.0.0.1:95 \
+    --data-dir <绝对路径>/gamedata4 --out <绝对路径>/lan_ai_2.jsonl \
+    --snap-dir <绝对路径>/snaps4 --triple --settle 30 --steps '<见下>'
+```
+
+步骤串（`tools/gw2_step_drive.py` 的语法，坐标是本轮截图量的）：
+
+```text
+s boot, w1,
+c 1344 622,   w2,  s lobby        # 主菜单 Battle（右列上）
+c 765 1109,   w3,  s setup        # LanLobby 的 Create Game（底栏左）
+c 1645 975,   w2,  s addbot       # GameSetup 右下角 AddBot
+c 1297 747,   w1.5                # AddBotPopUp 第二行最右 = 档 5（本轮抓到的是 Cleverbot / Wolfram）
+c 1296 975, w0.9, c 1296 975, w0.9, c 1296 975, w1.5,   s setup2   # 回合时限 01:00→02:00→03:00→05:00
+c 958 1109,   w3,  s play1        # Start（底栏中间）
+```
+
+* **局面**：Team 1 = 本机玩家（2 个士兵）、Team 2 = Bot（2 个士兵）；双方出生点与障碍由关卡生成器给
+  （本轮 AI 的射手在 `(16.48908638287238, -6.528455594029953)`、`flip=1`，即从右往左打）。
+* **回合顺序两轮不一样，驱动必须回合感知**（照实记）：
+  * run1（`lan_ai_1.jsonl`，未入判据）：`Start` 之后 **AI 先手** —— 我打的字没生效、`pos_read` **0 条**，
+    与任务书提示的"Bot 先手的局输入框禁用"一致；那一局 AI 的评分在**首回合**就开跑了
+    （t=47 s 起 253 次评分），最后靠**回合超时**（3 min）自动开火一次（火路径那条 `tok_suffix`
+    在 t=227 s = 47+180，与回合时限**逐秒对上**），但那一次**没有** `execute_results`
+    （`pos_read` 0 条）⇒ 那一局只能证明"AI 的首回合会评候选"，**不能**用来判三样。
+  * run2（`lan_ai_2.jsonl`，**本节全部判据用的就是这一局**）：**玩家先手** —— 我那发真的开出去了
+    （t≈62 s），AI 在**第二手**（t≈199 s）开火。
+* 为了让 AI 有时间收敛，回合时限调到 **05:00**（默认 01:00）。实测：AI 在 **t≈199 s** 开出那一发
+  （`tok_suffix` 火路径那条在 `t=199474 ms`）。
+* `user://` 重定向 = `XDG_DATA_HOME/XDG_CACHE_HOME/XDG_CONFIG_HOME` 三个都指到工作区内的**绝对路径**
+  （**必须绝对**：相对路径 Godot 会打一行 `WARNING: XDG_DATA_HOME is a relative path` 然后**静默回落**
+  `$HOME/.local/share`，而这里 `$HOME` 不可写 ⇒ 直接起不来）。
+
+### 42.2 三样各在哪、怎么认回来（三条独立链，点相等只当判据）
+
+| # | 地址 | 抓到的东西 | 这一发（AI）的值 |
+|---|---|---|---|
+| ① | `0x3c2530` | `calculate_function` 入口：`rsi` = `&Vec<Token>`、`edx`=`flip`、`ecx`=`mode`、`xmm0/1`=`x0/y0`；16 B/token 原文 | `flip=1`、`x0=16.48908638287238`、`y0=-6.528455594029953`、3 个 token `[+ , x, const 9.961]` |
+| ② | `0x472865` | `execute_results` 里 `movdqu xmm0,[rdx+rcx-0x10]` = `pts[n-1]` | `rdx=7f3b9c148fe0`、`n=2871`、`pos=(-5.035913617128012, 14.996913617128012)` |
+| ③ | `0x4729d6` / `0x50f990` | `EffectInfo` 装配点载荷 + JSON 写入器 | `effect_id=237`、`start_tick=10394`、`{"EffectInfo":{"effect_id":237,"pos_x":-5.035913617128012,"pos_y":14.996913617128012,"effect_type":"ExplosionEffect","start_tick":10394}}` |
+| ④ | `0x3c5f70` | `rcx` = `&Point`（**16 字节原文**）+ 印出来的串 + `ret`（哪个调用点） | `Point=(16.48908638287238, -6.528455594029953)`、印 `' + 9.961'`、`ret=gw+3c5da0` |
+
+**认回来靠三条链，不靠"看起来像"**（`tools/lan_ai_triple.py` 的实现就是这三条）：
+
+```text
+② ← pos_read（0x472865 真的执行了）
+② 的那条数组 ← calc_array.info.ptr == pos_read.rdx 且 len == n（没被截断时；截断时退化成"首点 == 射手点"）
+① ← 那条 calc_array 的 rax（= 隐藏 sret）→ 同 sret 且时间在它之前的 tok_fire
+①' ← 0x3c5f70 火路径印字：ret == gw+3c5da0 且时间在 fnpoints 之前最近的一次
+③ ← pos_read 之后最近的 eff_payload / eff_json
+```
+
+⚠ **点是否相等只当判据**（`pt_eq_start_exact`），**不**当对齐键 —— 否则"`Point == start_x`"就成了自证。
+本轮一开始就是这么踩的：按 `x0/y0` 相同去挑 `tok_suffix`，等于把结论写进对齐里；改成"时间上最近的一条
+火路径印字"之后，三发的 `Point` 仍然逐位等于各自的 `start_x`，结论才站得住。
+
+### 42.3 本轮抓到的三发（都在同一个进程、同一局）
+
+| 发 | 谁打的 | `flip` | 起点 `(x0,y0)` | `n` | `pos` | 印出来的后缀 | token 列表 |
+|---|---|---:|---|---:|---|---|---|
+| #1 | **人**（`sin(x)+3`） | 0 | `(-23.92853796697529, 1.7320665317601502)` | 2506 | `(-3.5472879669757433, 1.1936577292728048)` | `' - 2.201'` | `[-, +, sin, x, const 3, const 2.201]` |
+| #2 | **AI**（档 5 的 Bot） | **1** | `(16.48908638287238, -6.528455594029953)` | 2871 | `(-5.035913617128012, 14.996913617128012)` | `' + 9.961'` | `[+, x, const 9.961]`（原始函数 = `x`） |
+| #3 | **人**（`x/2+1`） | 0 | `(-5.954592950812862, 12.972728852562526)` | 464 | `(-1.9033429508128457, 14.998328524593576)` | `' + 14.950'` | `[+, +, /, x, const 2, const 1, const 14.95]` |
+
+计数（`--triple` 全程开，`run/lan_ai_2.jsonl`）：`tok_fire` **510**、`tok_suffix` **401**、
+`calc_array` **509**、`fnpoints` **3**、`pos_read` **3**、`eff_payload/eff_json` 各 **3**。
+`tok_fire` 的 510 次里，**506 次是 AI 的评分**（`flip=1`、起点相同、`ret=gw+3c30c7`）——
+AI 的进化每评一个候选就走一次 `calculate_shot_results → calculate_function`（`docs/13-ai.md` §8.6 的评分核心
+`0x51a750` → 槽 `0x9bacb0` → `0x3c2bc0` → 槽 `0x9bac98` → `0x3c2530`）。
+
+### 42.4 判据（与 §40.4 逐条对口径）
+
+| 判据 | 定义 | 本轮 | §40 的人打 20 发 |
+|---|---|---:|---|
+| `const_eq_printed` | token 末位 `tag=17` 的值（**带符号**：顶层算子 `tag=3` 取 `+`、`tag=4` 取 `−`）位模式 == `float(印出来的串)` 位模式 | **3 / 3**（0 ulp） | 21 / 21 |
+| `printed_is_round3_of_c_full` | `{:.3}`(`c_full`) == 印出来的串，`c_full = y0 − f(∓x0)`（真求值器 `0x4eb9d0`） | **3 / 3**（AI 那发 `c_full=9.960630788842426` → `9.961`） | 20 / 20（分母 21−1） |
+| `pt_eq_start_exact` | **`0x3c5f70` 吃的那个 `&Point` 的 16 字节 == `FunctionPoints.start_x/start_y` 的 16 字节** | **3 / 3**（0 ulp） | 本轮新增判据（§40 没直接量） |
+| `sampler_replay_exact` | 拿 ①那份 token **原样喂真采样器**（`0x3c2530`，unicorn）重跑，`len` 与**末点 16 字节**都要逐位等于 ② | **2 / 2**（#1 被障碍截断，重跑得 6030 点、不可比，见 §42.5） | 20 / 20 |
+| `array_untouched` | `pos_read.vs_calc` 里有 `same=true & diffPoints==0` | **2 / 2**（#1 同上） | 20 / 20 |
+| `n_eq_wire` | `pos_read.n` == 那条 calc 数组的 `len` | **2 / 2** | 20 / 20 |
+| `copy_exact` | ③载荷的 16 字节 == ②那 16 字节 | **3 / 3** | 20 / 20 |
+| `json_pos_bits_match` | ③JSON 里两个小数 parse 回来 == ②那 16 字节 | **3 / 3** | 20 / 20 |
+| `on_curve` | 真求值器在 **`-pos_x`（`flip=1`）或 `pos_x`（`flip=0`）** 上的值与 `pos_y` **逐位相同** | **3 / 3** | 20 / 20（全 `flip=0`） |
+| `pos_x_eq_end_x` | ②的 `pos_x` == `FunctionPoints.end_x` | **3 / 3** | 20 / 20 |
+
+**新增口径（给后面的人）：`flip=1` 的曲线要按 `f(-x)` 判。** §40 那 20 发全是 `flip=0`，所以没暴露这一条。
+本轮 AI 那一发 `flip=1`：`f(pos_x) = pos_x + 9.961 = 4.925`（差 10.07），而 `f(-pos_x) = 14.996913617128012`
+**逐位等于** `pos_y`。⇒ 采样器在 `flip=1` 时把自变量取反；判"在不在曲线上"必须跟着翻，否则会误判成"不在曲线上"。
+
+### 42.5 第 1 发为什么 `array_untouched=—`：**被障碍截断**（照实记，不算通过也不算失败）
+
+`pos_read#1` 的 `vs_calc` 两条都是 `same=false` 且**长度对不上**（快照 `len=6030` vs `n=2506`），
+`vs_queue` 却是 `same_ptr=true / same_len=true / same_digest=true`；把它 ① 那份 token 重跑真采样器
+得到的是**完整的 6030 点**（所以 `sampler_replay_exact` 也不可比）。⇒ 这一发打到障碍物，
+`execute_results` 手里的队列项是**采样器数组的前 2506 点副本**（§40.6 第 2 条点名的"障碍截断族"，
+§40 那 20 发一发都没覆盖到）。所以它的"数组有没有被改过"**不能**用 `diffPoints==0` 判——
+本节把它记成 `—`，并单独给出 `truncated=True / truncated_from_len=6030`。
+
+### 42.6 判决：1 ulp **在 AI 那一发上也没复现** —— 以及这条否证的**覆盖面**
+
+```text
+① 常数末位差     否（观测；3/3 逐位相同，且印出来的就是 {:.3}(c_full)）
+② 数组被改过     否（观测；限"采样器返回 → 报文装配"，2/2 逐字节相同、无夹小；第 1 发截断不可判）
+③ 喂进修正器的 Point 是不是 start_x∓1ulp   **否**（观测；3/3 逐位相同，0 ulp）
+④ 那 1 ulp       未知 / 本轮未复现 —— 但这次是**在 AI 那一侧**否掉的
+```
+
+**这条否证有多强、有多弱（照 AGENTS.md 写清）：**
+
+* **强的地方**：`pt_eq_start_exact` 是**直接量**（读 `0x3c5f70` 的 `rcx` 那 16 字节，与报文 `start_x`
+  的 16 字节逐位比），**不依赖**"3 位小数够不够敏感"。§38 的反事实要求那 13 批发散时
+  `Point.x = start_x ∓ 1 ulp`；本轮的 AI 发是 **0 ulp**。
+* **弱的地方（缺什么）**：
+  1. **只有 1 发 AI**。语料里分叉的批是 AI-**vs-AI**（两边都是 Bot），本轮是"人 + 1 个 Bot"，
+     而且 AI 只开了一发（它的第二个回合没等到）。
+  2. AI 打出的函数是**单 token 的 `x`**（`c=9.9606`，离 3 位小数的四舍五入边界 1.3e-4 远得很）。
+     ⇒ **打印级**判据（常数末位）在这一发上**几乎无判别力**（1 ulp ≈ 1.8e-15，要撞上边界得再小 10 个量级）；
+     真正有判别力的是 `pt_eq_start_exact` 那条直接位比较。
+     为什么 AI 只打出 `x`：frida 把求值器钩住之后 AI 的进化慢了约三个量级（见 §42.7 第 3 条），
+     一个回合只够跑完**一代**（`tok_fire` 506 次 ≈ 2 × 250 个体 + 精评），所以它交出来的是"随机个体里的最好那个"。
+  3. §38 那 13 批的机理（`sin(u)/u` 在 `u=0` 处 NaN）在**正常游玩里几乎不出现**：AI 的候选里确实有
+     **97/506 个 `c=NaN`** 的（见 42.0 ⑦），但这一发不是。
+
+### 42.7 `0x3c5f70` 的调用者：**槽 `0x9bacf0`，两个 `call`，零个写入者**
+
+`tools/rela_slot.py 0x3c5f70`（**新增**，可原地复跑；它是"从重定位那一侧查"的版本，与
+[`tools/addr_probe.py callers`](../tools/addr_probe.py) 互为交叉验证）：
+
+```text
+TARGET 0x3c5f70  (.text)
+RELA   .rela.dyn 条目 24614 条；addend == 0x3c5f70 的槽 1 个
+  slot 0x9bacf0   （.rela.dyn[22038]，落在 .got）
+扫全 .text（6107716 字节）里对上面这些槽的 rip 引用……
+  2 条引用（读 2 / 写 0）
+  0x003c5d9a  read  slot 0x9bacf0  call qword ptr [rip + 0x5f4f50]  in 0x3c5c50
+  0x004f28a6  read  slot 0x9bacf0  call qword ptr [rip + 0x4c8444]  in 0x4f2200
+⇒ 写这个槽的代码：0 条。唯一的写入者是装载器（ld.so 按 R_X86_64_RELATIVE 填 addend）。
+```
+
+| 环节 | 地址 | 是什么 | 档 |
+|---|---|---|---|
+| 槽 | `0x9bacf0`（`.got`） | `R_X86_64_RELATIVE`，addend `0x3c5f70`；**全 `.text` 0 条写** | **逐位**（`.rela.dyn[22038]` 原始条目） |
+| 调用点 A | `0x3c5d9a` in **`0x3c5c50`**（FDE `0x3c5c50..0x3c5f68`） | 无 `panic::Location`；签名 `(sret rdi, text rsi, len rdx, pt rcx, flip r8d)`；体内先做 **UTF-8 字节扫 + 括号平衡**（`(`=`0x28` / `)`=`0x29` 计数），再把 `rcx` 原样传给 `0x3c5f70` ⇒ 这就是"`balanced_texts` + 修正常数"那个包装 | **观测**（逐指令） |
+| A 的上游 | `0x4712db` in **`0x470eb0`**（FDE `0x470eb0..0x4723ff`） | 槽 `0x9bace8` → `0x3c5c50`。`0x470eb0` = **`GraphwarGameStateManager::fire_functions`**（`panic::Location` ×31 全指 `src/graphwar_game_state_manager.rs`；`docs/02-module-map.md` §17 已定名）。★ **这是开火那条路** | **观测** |
+| 调用点 B | `0x4f28a6` in **`0x4f2200`**（FDE `0x4f2200..0x4f31a0`） | `panic::Location` ×6 `graphwar_game_client.rs` + ×5 `graphwar_function_input.rs`；`docs/02` 定名 **`GraphwarFunctionInput::force_update_cb`**（`src/graphwar_function_input.rs:327`）。`Point` 从 `[rsp+0x88]`（16 B `movupd`）搬到 `[rsp+0x170]` 再进 `rcx`；调完把印出来的串 `str::replace(' ', "")`（`0x502d20`）再 `parse::<f64>`，然后判 `abs(x) > 100000.0` | **观测** |
+| 旁证 | 运行时 `tok_suffix.ret` | 本轮 401 条：`{gw+4f28ac: 398, gw+3c5da0: 3}` —— **只出现这两个返回地址、一个不多**，与静态"正好两个 `call`"逐一对上 | **观测** |
+| 上游（另一半） | `0x471825` / `0x51a9a1` | `0x3c2bc0`（`calculate_shot_results`）经槽 `0x9bacb0` 被**两个人**调用：`0x471825`（在 `fire_functions` 里）与 **`0x51a9a1`（在 `0x51a750` = `GraphwarFunctionEvolutionator::score_function`，`docs/02` 定名，`docs/13-ai.md` §8.6 的评分核心）** ⇒ **AI 的评分与人的开火走同一个采样器**，但**只有开火那条路**会调 `0x3c5f70` | **观测** |
+
+**正对照（照 `AGENTS.md` 合并纪律 A4，先证明扫法有效）**：同一份 `.so` 上，
+`0x9bac98 → 0x3c2530`（文档有名的"采样器入口"）报 **1 个槽、2 条 `call`、0 条写**，两条调用点
+`0x3c30c1` / `0x3e2d35` 与 §40 记的 `gw+3c30c7` / `gw+3e2d3b`（返回地址 = 调用点+6）**逐一对上**；
+`0x9bacb0 → 0x3c2bc0` 报 2 条（`0x471825` / `0x51a9a1`）。⇒ 扫描器**会报**、且报的位置**可核对**。
+
+### 42.8 本轮踩到/记下来的坑（都不是"大概"，是实测）
+
+1. **`XDG_DATA_HOME` 给相对路径 ⇒ Godot 静默回落 `$HOME`**（只打一行 warning），本机 `$HOME` 不可写
+   ⇒ 游戏起不来、`user://` 也没重定向。**三个 XDG 变量都必须是绝对路径。**
+2. **`import -window <id>` 会抓到"陈旧窗口"**：一次失败尝试里 `07_play1`…`11_ai2` **五张逐字节相同**，
+   而同一进程的 `timer` 明明在走。⇒ 截图要**把所有 `xdotool search --name Graphwar` 的 id 都截一张**
+   （`tools/gw2_step_drive.py` 的 `snap_all()` 就是干这个），别信 `tail -1`。
+3. **frida 把 AI 的进化拖慢约三个量级**：基础探针的 `evaluate`（`0x4eb9d0`）钩子在 `onLeave` 里对**每次**
+   求值做 `Map` 记账，而一次评分要调它 **1.4 万次**（实测 `evals` 3.6e6 / `samplers` 253）⇒ 单次评分 ≈ **0.3 s**。
+   后果：AI 一个回合只够跑完**一代**（评分 25 s 墙钟预算一过就交卷），交出来的是随机个体。
+   **下次要 AI 打出"收敛解"，得先做一个不带 `evaluate` 钩子的精简探针**（只留 `0x3c2530` 入口 +
+   `0x472865` + `0x4729d6` + `0x3c5f70` 四处），或把 `calcKeep/arrayCap` 压到 1/64。
+4. **每次 bash 调用是独立的 PID 命名空间**：`ps` 看不见别的调用起的进程，frida **attach 不到**别的调用
+   起的游戏 ⇒ 只能"一条命令里 Popen + attach"（与 §42.1 / `dispatch/34` 的老坑同源）。
+   反过来，**xdotool 走 TCP 就能跨调用**——所以"长期实例 + 逐步点击"只能用来量坐标，**不能用来抓**。
+5. **`/tmp` 是逐命令 tmpfs**：`/tmp/d4f22.txt` 下一条命令就没了。中间产物一律放工作区。
+6. **`Start` 点一次就够**（本轮实测生效）；但**第一回合可能是 AI 的**，此时输入框禁用、打字无效果 ——
+   驱动必须"回合感知"，别把"我打了字"当成"我开了火"。
+
+### 42.9 复跑（每条都能原地跑）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+cd <WS>/.agent-work/cg/wt-69
+R=<绝对路径的可写目录>          # 不要放进仓库
+
+# ① 静态：`0x3c5f70` 的槽 + 调用点 + 写入者（12 s，纯 ELF + capstone）
+$PY tools/rela_slot.py 0x3c5f70
+$PY tools/rela_slot.py 0x3c2530        # 正对照（应报槽 0x9bac98 / 2 条 call / 0 条写）
+$PY tools/addr_probe.py callers 0x3c5f70   # 交叉验证：同样两个调用点
+
+# ② 运行时：LAN+AI 局 + 三样同抓（一条命令里跑完，约 8 min）
+Xvfb :95 -screen 0 1920x1160x24 -listen tcp -ac &     # 私有 display
+STEPS='s boot, w1, c 1344 622, w2, s lobby, c 765 1109, w3, s setup, c 1645 975, w2, s addbot,
+       c 1297 747, w1.5, c 1296 975, w0.9, c 1296 975, w0.9, c 1296 975, w1.5, s setup2,
+       c 958 1109, w3, s play1, c 1000 1090, w0.5, k ctrl+a, w0.2, k Delete, w0.2,
+       t sin(x)+3, w1, m 1855 55, w0.4, d, w2, u, w2, s fired, w300, s end'
+$PY tools/gw2_step_drive.py --display 127.0.0.1:95 \
+    --data-dir $R/gamedata --out $R/lan_ai.jsonl --snap-dir $R/snaps \
+    --triple --settle 30 --steps "$STEPS"
+
+# ③ 判据（会调真二进制：`0x4eb9d0` 求值器）
+$PY tools/lan_ai_triple.py --jsonl $R/lan_ai.jsonl --label lanAI --oracle 1 \
+    --fixture-out fixtures/lan_ai_triple_sample.jsonl
+```
+
+### 42.10 本轮改动清单（`src/` **一个字节没动**）
+
+| 文件 | 内容 |
+|---|---|
+| [`tools/rela_slot.py`](../tools/rela_slot.py) | **新增**：从 `.rela.dyn` 那一侧查"谁经指针用了这个函数"——打印重定位原始条目（槽 + `.rela.dyn` 序号 + 所在节）、全 `.text` 的 rip 引用逐条分类**读/写**、结论"写它的代码 N 条" |
+| [`tools/gw2_step_drive.py`](../tools/gw2_step_drive.py) | **新增**：按**步骤串**驱动真游戏（`w/c/m/d/u/t/k/s/r` 七种步骤），复用 `frida_point_array.py` 的 `xdo/snap/_win_id` 与 `frida_point_array.js` 的整套探针；`snap_all()` 把**每个** Graphwar 窗口都截一张（坑 2）；`r` 步骤打"上一次打点以来各计数器涨了多少" |
+| [`tools/lan_ai_triple.py`](../tools/lan_ai_triple.py) | **新增**：以 `pos_read` 为锚切"发"，用三条独立链认回 ①②③，逐发跑 §42.4 那 9 条判据（`--oracle` 走真求值器），产出入库样本 |
+| [`fixtures/lan_ai_triple_sample.jsonl`](../fixtures/lan_ai_triple_sample.jsonl) | **新增**：1 行 provenance + 3 发逐发一行（纯文本、无路径/用户名） |
+| [`docs/06-verification.md`](06-verification.md) | **新增本节（§42）** |
+
+**没有改动**：`src/`、`client/`、`dispatch/`、`fixtures/guardrails.json`、
+`tools/frida_point_array.{js,py}`（一行没动 —— 本轮的三样复用它们，新东西全在新文件里）。
+
+### 42.11 验收
+
+| 项 | 结果 |
+|---|---|
+| ① LAN+AI 局 | **造出来了**：`Battle → Create Game → AddBot(档 5) → 05:00 → Start`；AI **开出 1 发**（判据那一局共 3 发真的执行：人 2 + AI 1） |
+| ② 三样同抓 | **抓到了**（同一次开火，三条独立链对齐）：AI 那发 `n=2871`、`pos`、`EffectInfo` 齐 |
+| ③ `0x3c5f70` 调用者 | **找到了**：槽 `0x9bacf0` / 2 条 `call`（`0x3c5d9a`、`0x4f28a6`）/ **0 条写**；上游 `0x470eb0`（`fire_functions`）；运行时 401 条返回地址分布逐一对上 |
+| ④ 1 ulp | **未复现**（AI 那一发上；`Point == start_x` 逐位 3/3）。覆盖面与缺什么见 §42.6 |
+| `cargo test --offline` | **1693 passed / 0 failed** |
+| `tools/check_doc_refs.py` | **rc=0** |
