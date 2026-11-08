@@ -445,3 +445,37 @@ headless：entity_drawer 118 / assemble 213 / plane_on_screen 96 / obstacle 116 
 pos_radius 语义     PosInfo.radius 恒 0.5，第 3 个 f64 的标定未做（docs/140 §3.1 那 14%）
 「越界停」          未动
 ```
+
+---
+
+# 第九轮（2026-11-08 傍晚）
+
+## 上一轮最重要的结论，以及它带来的下一批活
+
+第八轮把 407 批判成「**回放自身不自洽**」（407/407，正对照 647/0）。
+那句话有个前提：**回放里记的文本就是当时真正喂进采样器的文本**。第九轮先把这个前提钉死。
+
+| # | 分支 | 主题 | 优先级 | 依据 |
+|---|---|---|---|---|
+| 39 | `agent/token-at-fire` | 抓**开火那一刻**真正喂进 `calculate_function` 的 token 列表 | **P0** | 报告 §8-1；407 那条结论最后一块替代解释 |
+| 40 | `agent/ode-runtime-samples` | 补 **DiffEq/Ode 局**运行时样本 | **P0** | 报告 §8-2；残差 219 批是 DiffEq，而 34 号 37 发**一发 Ode 都没有** |
+| 41 | `agent/get-all-positions` | 把 `get_all_positions` 接进 `EntityDrawer` | P1 | 报告 §8-3；原版 `_draw` 读它，我们现在不读，顺序是散列序**要排序** |
+| 42 | `agent/real-inputs` | 两个"输入端"从**代偿**换成真链路 | P1 | 报告 §8-4；`pos_info_event` 与 graphics 51/53/55 现在都是我方接线 |
+
+## 当前护栏（master `9f3b7d18`，以 `fixtures/guardrails.json` 为准）
+
+```
+fire 647 / 1075 ｜ batch 647 / 1075 ｜ batch_conv 637 / 1075
+死亡 366 / 385（漏报 0）｜ 挖洞 207 / 294
+cargo test --offline 1628
+headless：entity_drawer 118 / assemble 213 / plane_on_screen 96 / obstacle 116 / function_drawer 132
+selftest 712 / 0（**有 serve_match**；没有它时是 636，差的是联机那 76 条）
+```
+
+## 合并前请先跑
+
+```
+python3 tools/merge_check.py --cg origin/CG
+```
+
+它会把本报告的 §遗留/§建议 打出来、扫自曝句、查禁区与污染。**缺节/碰禁区/二进制/dispatch 进 master 一律非 0。**
