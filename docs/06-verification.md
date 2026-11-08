@@ -2708,3 +2708,305 @@ python3 tools/hypothesis_sweep_agg.py --dir out/par --tsv fixtures/hypothesis_sw
 
 **没有改动**：`src/`（一个字节都没动）、`client/`、`dispatch/`、`fixtures/guardrails.json`、
 既有的任何夹具格式。
+
+## 35. `EffectInfo.pos_y` 的写入者是 `gw+0x4729a0` 的 16 字节 `movdqu`——**逐字节拷贝点数组末点**；回放里那个 `…844` 真二进制**产不出来**（2026-11-09，`dispatch/60`）
+
+> 起点 `CG@62f231c`，分支 `agent/posy-writer`。目标构建：`libgraphwarrust.so`
+> sha256 **`9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`**（= `steam/2026-08-28`，与录制
+> 这批回放的构建同一个）。本节地址一律**虚地址**（vaddr）；`.text` 的 vaddr 比文件偏移大 `0x1000`
+> （`.text` addr `0x37b940` / offset `0x37a940`），照 §28 的口径。
+>
+> **编号说明**：本工作树基于 `CG@62f231c`，`docs/06` 里本节之前最大是 **§32**。§33（「老版本 replay」假设被否）
+> 在 `origin/master`（`a605751` 起，含 §33.4b–§33.5），§34 属并行任务 ⇒ 本节按任务书取 **§35**，不占 33/34。
+>
+> 背景（不重推）：§33 已用 unicorn 直调真 `.so` 证明 `1794158844` 批#0 的末点 y 真二进制给的是
+> `-14.998302430429845`（`6d50`），回放记 `…844`（`6d4f`）——**采样器给的值与我们逐位相同**。
+> 本节回答的是"**报文装配处是谁写这个字段、从哪读**"，以及"那个 `…844` 到底能不能由这条路径产生"。
+
+### 35.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | **`EffectInfo.pos_y` 是哪条指令写的** | 全 `.text` **只有 2 条**：`gw+0x4729a0` 与 `gw+0x472e14`，都是 `movdqu [rsp+0x78], xmm0`（**一条 16 字节指令同时写 `pos_x`@+0x78 与 `pos_y`@+0x80**），都在 `graphwar_effect_manager.rs` 的 fn `[0x472470, 0x473513)` 里。**没有任何一条指令对 y 做运算/换算/回代** | 观测 + 指令语义 |
+| ② | **它的源是什么** | 站点 **A**（Explosion）：`xmm0 ← [rsp+0xf0]`（`0x472997`）`← 0x47286b` `← 0x472865 movdqu xmm0,[rdx+rcx-0x10]` = **队列项点数组的 `pts[n-1]`**（§28/§30 同一条指令）。站点 **B**（Death/Spark/Ash）：`xmm0 ← [rsp+0xc0]@0x472e0b ← 0x472b49 ← 0x472b40 ← call 0x3c62b0` = `graphwar_plane_pos_manager.rs` 的点位表 | 观测 |
+| ③ | **tag44 有几个生产者** | **2 个**：`0x4729cc` / `0x472e43`（都是 `movabs 0x7fff…ff` + `add 0x2d` 算出判别式 `0x800000000000002c`，再 `mov [rsp+0x70]`）。另两处 `movabs 0x800000000000002c`（`0x4bf09b`/`0x4e2dd4`）是**消费者**（紧跟 `cmp [rsi],rax`）| 观测（脚本 + 正/负对照） |
+| ④ | **unicorn 能产出回放的 `…844` 吗** | **不能**。用回放自己的 `corrected_function`（真解析器 `0x4ed670`）+ `start`+`step=0.01`+`flip/mode` 跑真采样器（`0x3c2530`）：**8993 点**，末点 `x` 与报文 `end_x` **逐位相同**，末点 `y = -14.998302430429845`（= 真求值器在末点 x 上的值，逐位），报文 `pos_y` 比它**低 1 ulp** | 逐位 |
+| ⑤ | **那个 y 是"另一个 x 上求的值"吗** | **不是**。`f'(末点 x) ≈ −96`：x 动 1 ulp，y 动 **~100 ulp**；把 `sin/cos/exp` 各扰 ±3 ulp（343 组）**没有一组**能产出回放值。⇒（x,y）这一对**根本不在曲线上**，不是"换了个点" | 逐位（实验） |
+| ⑥ | **那么那个值从哪来** | **不是这条写入路径**（写入是逐字节拷贝，见 ①②）。全语料（Normal 局、配对可信 **267 发**）里只有 **185 发（69.3%）** 的 `pos` 逐位落在报文自己那条曲线上；**34 发差 ±1~2 ulp**、48 发差更多。唯一的单 ulp 旋钮是**修正常数 `+ c.ddd` 的末位**：把它 +1 ulp 就**逐位**复现回放的 `…844`。⇒ 差异在上游（采样器吃的那串 token / 数组末点），**不在装配处** ⇒ 交给 **56 号任务（打印-回代）** 与运行时探针（缺什么见 §35.6） | 观测 + **推断**（机制未定） |
+
+### 35.1 先把"谁写这个字段"穷举掉（扫法、正对照、负结论）
+
+**字段偏移从哪来**（两条独立证据）：arm64 侧 `add_effect` 的 `EffectData` 是
+`{pos_x@+0, pos_y@+8, start_tick@+0x10, effect_type@+0x14}`（本仓库
+[`src/graphwar_effect_manager.rs`](../src/graphwar_effect_manager.rs) 模块文档 §2–§3，逐位），
+x86 侧 `0x472942`/`0x472db1` 的 `movdqa [rsp+0x70], xmm0` + `[rsp+0x80]=tick` + `[rsp+0x84]=type`
+与它**逐字节吻合**；事件载荷（发给 `GraphwarEventQueue` 的那 72 字节）则是
+`{判别式@+0, pos_x@+8, pos_y@+0x10, effect_id@+0x18, start_tick@+0x1c, effect_type@+0x20}`
+（`0x472997..0x4729b6` 六条 store 逐条对上）。
+
+**扫法**（新工具 [`tools/effect_info_pos.py`](../tools/effect_info_pos.py)）：
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+SO=<WS>/.reference/steam/2026-08-28/libgraphwarrust.so     # sha256 9a538115…
+$PY tools/effect_info_pos.py $SO tags                      # ① 全 .text 的判别式 store（直线窗口常量传播）
+$PY tools/effect_info_pos.py $SO writes 0x472865 0x80 8    # ② 函数内写 [rsp+0x80]（= pos_y）的全部指令
+$PY tools/effect_info_pos.py $SO writes 0x472865 0x78 16   # ③ 写 [rsp+0x78] 16 字节（= pos_x+pos_y）的全部指令
+```
+
+**结果（② 原样摘）** —— 函数 `[0x472470, 0x473513)` 里碰到 `[rsp+0x80, +0x88)` 的只有 6 条，
+其中**只有 2 条是 64 位写**（即 `pos_y`）：
+
+```text
+472948  c684248400000000     mov byte  ptr [rsp+0x84], 0        ; 另一套布局的 effect_type（被后面覆盖）
+472950  4489ac2480000000     mov dword ptr [rsp+0x80], r13d     ; 另一套布局的 start_tick（4 字节，被覆盖）
+4729a0  f30f7f442478         movdqu xmmword ptr [rsp+0x78], xmm0 ; ★★ 站点 A：pos_x@+0x78 / pos_y@+0x80
+472dbb  88842484000000       mov byte  ptr [rsp+0x84], al        ; 站点 B 的 effect_type
+472dc9  89ac2480000000       mov dword ptr [rsp+0x80], ebp       ; 站点 B 的 start_tick（4 字节，被覆盖）
+472e14  f30f7f442478         movdqu xmmword ptr [rsp+0x78], xmm0 ; ★★ 站点 B：同一条指令形态
+```
+
+**站点 A 的前后几条（原样，`objdump` 口径 = vaddr）**：
+
+```text
+472840  48b9ffffffffffffff7f   movabs rcx, 0x7fffffffffffffff      ; 队列项 len 的哨兵比较
+47284a  48394810               cmp qword ptr [rax + 0x10], rcx
+47284e  0f83aa070000           jae 0x472ffe
+472854  4d85ed                 test r13, r13                       ; r13 = 队列项 +0x10 的 n
+472857  741b                   je 0x472874                         ; n == 0 ⇒ 不读点
+472859  4c89e9                 mov rcx, r13
+47285c  48c1e104               shl rcx, 4                          ; rcx = n*16
+472860  488b542408             mov rdx, qword ptr [rsp + 8]        ; rdx = 点数组 ptr（从队列项 +0x8 拼出）
+472865  f30f6f440af0           movdqu xmm0, xmmword ptr [rdx + rcx - 0x10]   ; ★ pts[n-1] = (x, y)
+47286b  660f7f8424f0000000     movdqa xmmword ptr [rsp + 0xf0], xmm0 ; ★ 点缓存：x@0xf0 / y@0xf8
+        …（中间是这个 item 的结算：effect_id 自增、start_tick、HashMap insert @0x472977）
+472939  660f6f8424f0000000     movdqa xmm0, xmmword ptr [rsp + 0xf0]
+472942  660f7f442470           movdqa xmmword ptr [rsp + 0x70], xmm0 ; EffectData{pos_x@0,pos_y@8}
+472948  c684248400000000       mov byte ptr [rsp + 0x84], 0        ; effect_type = 0 = ExplosionEffect
+472950  4489ac2480000000       mov dword ptr [rsp + 0x80], r13d    ; start_tick
+47296d  488d4c2470             lea rcx, [rsp + 0x70]               ; &pos
+472977  e854f6fcff             call 0x441fd0                       ; 登记（add_effect 内联）
+472997  660f6f8424f0000000     movdqa xmm0, xmmword ptr [rsp + 0xf0] ; ★ 再来一次，同一块
+4729a0  f30f7f442478           movdqu xmmword ptr [rsp + 0x78], xmm0 ; ★★ 事件载荷 pos_x/pos_y
+4729a6  4489a42488000000       mov dword ptr [rsp + 0x88], r12d    ; effect_id（0x472930 的 lock xadd 返回值）
+4729ae  4489ac248c000000       mov dword ptr [rsp + 0x8c], r13d    ; start_tick
+4729b6  c684249000000000       mov byte ptr [rsp + 0x90], 0        ; effect_type
+4729be  48b8ffffffffffffff7f   movabs rax, 0x7fffffffffffffff
+4729c8  4883c02d               add rax, 0x2d                       ; 判别式 0x800000000000002c = 44
+4729cc  4889442470             mov qword ptr [rsp + 0x70], rax     ; ★ tag44 生产者 ①
+4729d1  488d742470             lea rsi, [rsp + 0x70]
+4729d6  ff15a4825400           call qword ptr [rip + 0x5482a4]     ; = *0x9bac80（事件队列出口）
+```
+
+⇒ **`pos_y` 是 `pts[n-1].y` 的一次 8 字节搬移，中间没有任何浮点运算**。
+`docs/06` §33.5 的第 2 条线索（"是否用 `end_x` 回代求 `F(x)`、或 `plane↔screen` 往返"）在**这条路径上被否掉**：
+两个坐标来自**同一条 16 字节 load**，不可能只动 y。
+
+**站点 B（同一条指令形态，源完全不同）**：
+
+```text
+472b22  488dbc24d0000000     lea rdi, [rsp + 0xd0]
+472b2d  e87e37f5ff           call 0x3c62b0                       ; graphwar_plane_pos_manager.rs：查点位表
+472b32  83bc24d000000001     cmp dword ptr [rsp + 0xd0], 1       ; Option 判别：查到了吗
+472b3a  0f854b030000         jne 0x472e8b                        ; 查不到 ⇒ 一条都不发
+472b40  f30f6f8424d8000000   movdqu xmm0, xmmword ptr [rsp + 0xd8]; ★ 点位表给的点
+472b49  660f7f8424c0000000   movdqa xmmword ptr [rsp + 0xc0], xmm0
+        …
+472e0b  660f6f8424c0000000   movdqa xmm0, xmmword ptr [rsp + 0xc0]
+472e14  f30f7f442478         movdqu xmmword ptr [rsp + 0x78], xmm0 ; ★★ 站点 B 的 pos_x/pos_y
+472e29  0fb6442448           movzx eax, byte ptr [rsp + 0x48]     ; effect_type 从记录里抄（Death/Spark/Ash）
+472e2e  88842490000000       mov byte ptr [rsp + 0x90], al
+472e35  48b8ffffffffffff…     movabs rax, 0x7fffffffffffffff
+472e3f  4883c02d             add rax, 0x2d
+472e43  4889442470           mov qword ptr [rsp + 0x70], rax      ; ★ tag44 生产者 ②
+472e4d  ff152d7e5400         call qword ptr [rip + 0x547e2d]      ; = *0x9bac80
+```
+
+站点 A 恒写 `effect_type = 0`（= `ExplosionEffect`），所以**报文里的 `ExplosionEffect` 只能来自站点 A**；
+站点 B 抄记录里的类型（`0x472a53..0x472b49` 那条循环走的是死亡/灰烬那一路，`pos` 来自点位表）。
+
+**扫法的正/负对照（照 `AGENTS.md` 合并纪律 A4）**：
+
+* 正对照：同一套 `tags` 扫描在 `.text` 里报出 **40+ 个变体**的判别式 store（33/34/35/39/42/43/44/45/47…74），
+  说明"能扫到东西"；`movabs 0x800000000000002c` 的**裸常量**只出现 2 次（`0x4bf09b`/`0x4e2dd4`），
+  两处都紧跟 `cmp [rsi],rax` ⇒ **消费者**（与 `docs/00-status.md` 第 4 条一致）。
+* **这个扫法的边界（照实写）**：它只跟"直线窗口内的常量传播"，**漏了跨 `call` 的 `lea 0x26(%r8)` 形态**
+  ——§28 的 tag37 生产者（`0x4569d7`）就没被扫出来（`r8` 在更早的 `movabs` 里定值，中间隔了 `call`）。
+  所以"**只有 2 个 tag44 生产者**"这个负结论，靠的是**两条独立的路**同时收敛：
+  ① 判别式 store 扫描只报 2 处；② 裸 `0x800000000000002c` 只有 2 处且都是消费者；
+  ③ tag44 记录里 `pos_x/pos_y` 的写入点（`[rsp+0x80]` 64 位写）在**整个 `.text`** 里也只在
+  这个函数出现（`0x4729a0`/`0x472e14`，都是 `movdqu [rsp+0x78]`——同一个栈槽、同一个函数）。
+  仍未覆盖的形态：**经寄存器间接 store**（`mov [reg], imm` 之类）如果判别式来自 `.rodata` 常量。
+  本节的结论不依赖"绝对没有第三个生产者"，因为**写 `pos_y` 的那两条指令已经定位到具体地址**。
+
+### 35.2 unicorn 复现：真二进制**产不出**回放里那个 `…844`
+
+新工具 [`tools/posy_unicorn.py`](../tools/posy_unicorn.py)（真解析器 `0x4ed670` → token，
+真采样器 `0x3c2530` → 点数组，真求值器 `0x4eb9d0`）：
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+gunzip -c dispatch/replays/1794158844 > R.json
+$PY tools/posy_unicorn.py --replay R.json --batch 0
+```
+
+`1794158844` 批#0（`owner=255`、`Team1` ⇒ `flip=0`、`FunctionModeInfo=NormalFunction` ⇒ `mode=0`）：
+
+```text
+corrected_function = (exp((-7.42+x))*cos(((sin(abs(((5.48/x)-x)))/-0.43)--2.28))) + 8.046
+start = (-17.65943389522108, 8.046474981224986)
+真二进制（unicorn，step=0.01、flip=0、mode=0）
+  n = 8993
+  pts[8992] = (11.845800479777765, -14.998302430429845)   [4027b10cc2af2c58, c02dff217f046d50]
+报文 FunctionPoints.end_x = 11.845800479777765  [4027b10cc2af2c58]   ← **逐位相同**
+报文 EffectInfo(Explosion) pos = (11.845800479777765, -14.998302430429844)
+                                                         [4027b10cc2af2c58, c02dff217f046d4f]
+                                                         ← pos_y **低 1 ulp**
+真求值器 f(末点 x) = -14.998302430429845  [c02dff217f046d50]     ← 与末点 y **逐位相同**
+```
+
+⇒ ·末点 y **就是**这条曲线上 `x` 处的函数值（求值器独立复核，逐位；逐指令也确认：
+`call 0x4eb9d0`@`0x3c2990` 之后紧跟 `0x3c2995 movsd [rsp+0xa8], xmm0`，坐标另存于 `0x3c2944`/`0x3c2ac4`，
+`tools/posy_trace.py` 全程录到的写只有这些）；
+·`end_x`（同一条数组的末点 x）与报文**逐位相同**；
+·报文 `pos_y` 却是 `f(同一点 x)` **减 1 ulp** —— 而这个字段的写入指令（§35.1）是**逐字节拷贝**。
+
+**"换个 x" 也被否掉**（同一批上量的）：
+
+```text
+f'(末点 x) ≈ -96                ⇒ x 动 1 ulp，y 动 ~100 ulp
+x-1 ulp → y 差 -106 ulp ; x+1 ulp → y 差 +100 ulp
+sin/cos/exp 各扰 ±3 ulp（343 组）→ 能逐位产出回放值的：**0 组**
+```
+
+⇒ 回放的 `(pos_x, pos_y)` 这一对**不在这条曲线上**，也不是"曲线上邻近某个点"。
+
+**那什么能逐位产出它**（数值实验，同一 x 上）：
+
+```text
+把修正常数 token「8.046」+1 ulp（= nextafter(8.046, +inf)）→ y = -14.998302430429844 [c02dff217f046d4f]  ← **逐位命中回放**
+把 -7.42 / 5.48 / -0.43 / -2.28 各 ±1 ulp                     → 都不命中
+```
+
+`y = e·c + 8.046` 的最后一步是"加常数"，所以常数末位 ±1 ulp ⇔ y 末位 ∓1 ulp，**而 x 一点不动**
+（采样停点是 `|y|` 过界前最后一个点，1 ulp 的 y 位移在 x 的 1 ulp 粒度下不可见）。这与观测到的
+"x 逐位相同、y 差 1 ulp"形状**完全吻合**。
+
+⚠ 这一条是**推断**（数值等价性实验），不是"抓到了真机读数"：它说明**唯一能自洽解释该 1 ulp 的旋钮**是
+采样器吃的那串 token 里的修正常数，而**不是**装配处的拷贝。缺证据见 §35.6。
+
+### 35.3 全语料：`pos` 到底在不在报文自己那条曲线上（新工具 + 数）
+
+判据只用**报文自己的量** + 真解析器/真求值器（`flip=1` 的局在 `-pos_x` 上求值，与
+`graphwar_shot_calculator::settle::explosion_point` 同规则）：
+
+```bash
+$PY tools/posy_corpus.py --dir <WS>/.reference/replays/gw2-replays-snapshot/replays --json corpus.jsonl
+```
+
+`Mode::Normal` 且有 `ExplosionEffect`、且"`pos_x ≈ end_x`"（配对可信）的 **267 发**：
+
+| 判据 | 结果 |
+|---|---|
+| `pos_x` 与 `end_x` **逐位相同** | **242 / 267（90.6%）**；+1 ulp 12 发、−1 ulp 5 发、+2 ulp 3 发、其余 4 发 |
+| `pos_y` 逐位等于 `f(pos_x)`（= `pos` 在曲线上） | **185 / 267（69.3%）** |
+| 不在曲线上 | **82 发**（其中 **34 发差 ±1~2 ulp**，48 发差更多） |
+
+⇒ 与 §25 的"回放自身不自洽"同一形态，但**换了个更强的判据**：不是"我方复算对不上"，
+而是"**报文里的 `pos` 不在报文自己那条曲线上**"。**`19` 发差 +1 ulp、`18` 发差 −1 ulp**
+（未过滤配对时）说明这个末位差**两个方向都有**，不是某个固定的偏置。
+
+### 35.4 逐发对照（两把新样本）与"冲突样本"的形状
+
+`tools/posy_batches.py`（真采样器逐发跑；`flip` 按队伍、`mode` 按 `FunctionModeInfo`、
+`effect` 一对一按 `pos_x==end_x` 优先配）：
+
+**`1794158844`（顺序回合，10 发）**
+
+| 批 | owner | 队/`flip` | n | 末点 x vs `end_x` | 末点 y vs `pos_y` | `f(pos_x)` vs `pos_y` |
+|---|---|---|---|---|---|---|
+| 0 | 255 | 1 / 0 | 8993 | 逐位相同 | **+1 ulp** | **+1 ulp** |
+| 1 | 275 | 2 / 1 | 20001 | 逐位相同 | 逐位相同 | 逐位相同 |
+| 2 | 237 | 1 / 0 | 20001 | 逐位相同 | 逐位相同 | 逐位相同 |
+| 3 | 240 | 2 / 1 | 20001 | 差（大） | 差（大） | 逐位相同 |
+| 4 | 243 | 1 / 0 | 5404 | 逐位相同 | **−8 ulp** | 逐位相同（`pos_x≠end_x`，+2 ulp） |
+| 5 | 268 | 2 / 1 | 16554 | 逐位相同 | 逐位相同 | 逐位相同 |
+| 6 | 277 | 2 / 1 | 4857 | 逐位相同 | 逐位相同 | −64 ulp（`pos_x≠end_x`） |
+| 7 | 263 | 1 / 0 | 6955 | 逐位相同 | 逐位相同 | 逐位相同 |
+| 8 | 267 | 1 / 0 | 6545 | 逐位相同 | 逐位相同 | 逐位相同 |
+| 9 | 258 | 1 / 0 | 4715 | 逐位相同 | 逐位相同 | 逐位相同 |
+
+**`1794158991`（同时回合，21 发）**：`end_x` 逐位相同 **11 / 21**。其余 10 发**不可比**——
+它们是 §29.5/§30 的**障碍截断**（`0x3c3bf7` 把结果项 `len` 夹到"第一个撞障碍的点 +1"），
+报文里的末点 = **截断后**那条数组的末点，而本轮复算**没有障碍掩膜**，末点自然不是一个点
+（那 10 发的 `pos` 反而**逐位落在曲线上**：`f(pos_x)` 与 `pos_y` 逐位相同）。**这一族不是 1 ulp 差，不计入分母。**
+可比的 11 发里：`pos_y` 与真二进制末点逐位相同 **10 发**，**+1 ulp 1 发（批#7）**。
+
+⇒ 汇总（可比样本）：
+
+```text
+pos_y == 真二进制末点（逐位）       18 / 20   （8844: 7/9 + 8844#3 / 8991: 10/11）
+pos_y 比真二进制末点低 1 ulp        2 / 20    （8844#0、8991#7）  ← §33.3 的那一类
+pos 在曲线上但 x 比 end_x 多走 1~16 ulp  3 / 20 （8844#4/#6、8991#16）
+```
+
+**两类分得很干净**：
+(а) "`pos` 在曲线上、`pos_x ≠ end_x`" ⇒ **停点/末点被精化或截断**（另一条路径，形状自洽）；
+(б) "`pos_x == end_x`、`pos_y` 比曲线值低 1 ulp" ⇒ **不在曲线上**（本轮批#0 就是它）。
+
+### 35.5 仍未确定 / 缺什么证据（诚实清单）
+
+1. **那个 1 ulp 到底由谁引入**：唯一的自洽旋钮是采样器吃的 `+ 8.046` token 的末位（§35.2），
+   但**没有**在真机上直接读到这一次的 token（`fixtures/frida_token_at_fire_sample.jsonl`
+   那套探针能读，但抓的是 2026-11-08 的样本，不是这两把新的）。**缺**：在**同一个分叉批**上
+   同时抓 ① `0x3c2530` 入口的 token 列表（`rsi` 的 `16 B/token`）② `0x472865` 的 `(rdx, rcx, n)`
+   与那 16 字节 ③ 报文里这条 `EffectInfo` 的 JSON 文本（`0x3cb760` 写完那一刻）。
+   三样对齐，就能判"常数末位差"还是"数组被改过"。
+2. **站点 A 的 `[rsp+0xf0]` 除了 `0x47286b` 还有没有别的写**：本函数内只有 `0x47286b`（16 字节）与
+   `0x472b7d`（4 字节，另一条分支写 u32，不落在 y 上）——但**数组本体**在采样器之后有没有被改写，
+   这一节**没有**答（§30 的 10 发里 `digest` 不变，但那 10 发 `pos_x == end_x`，不含分叉样本）。
+3. **`pos_x ≠ end_x` 的那 20 发**（+1 ulp 12 / −1 ulp 5 / +2 ulp 3）：本轮只在 8844 批#4 上复算过
+   （`pos_x = end_x + 2 ulp`，且 `pos_y == f(pos_x)` **逐位**）⇒ 那一类的 `pos` **在曲线上**，
+   只是 x 比 `end_x` 多走了一点点。这与"停点被精化/末点被再算一次"的形态一致，但**没有**在真机上抓到对应指令。
+4. **`1794158991`（同时回合）**：本轮的逐批表见 `fixtures/`（每发的 `n` / `end_x` / `pos` / `f(pos_x)`），
+   但"同 tick 8 发的批为什么更差"（§33.4f）**不在**本节范围内（`dispatch/55`）。
+5. 本节**没有**改 `src/`：`cargo test` 与三条护栏轴与基线同（见 §35.7 的复跑）。
+
+### 35.6 复跑（每条都能原地跑）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+SO=<WS>/.reference/steam/2026-08-28/libgraphwarrust.so     # sha256 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
+
+# ① 写入指令：全 .text 找 tag44 的生产者 / 找写 pos_y 的全部指令
+$PY tools/effect_info_pos.py $SO tags
+$PY tools/effect_info_pos.py $SO writes 0x472865 0x80 8
+
+# ② 真二进制复算一发（要解压后的 JSONL）
+gunzip -c dispatch/replays/1794158844 > R.json
+$PY tools/posy_unicorn.py --replay R.json --batch 0            # 末点 / f(末点 x) / 报文 pos
+$PY tools/posy_unicorn.py --replay R.json --batch 0 --variants  # x0/y0 各 ±3 ulp（老线索的复核）
+
+# ③ 一份回放里每一发的对照表（真采样器逐发跑，一发 ~25 s）
+$PY tools/posy_batches.py --replay R.json --json b.jsonl
+
+# ④ 全语料的"pos 在不在曲线上"（只调解析器/求值器，很快）
+$PY tools/posy_corpus.py --dir <WS>/.reference/replays/gw2-replays-snapshot/replays --json corpus.jsonl
+```
+
+### 35.7 本轮改动清单（**没有**改 `src/`）
+
+| 文件 | 内容 |
+|---|---|
+| [`tools/effect_info_pos.py`](../tools/effect_info_pos.py) | **新增**：判别式 store 扫描（`tags`）+ 栈槽写入指令穷举（`writes`/`slot`）+ 反汇编窗口（`dis`/`func`） |
+| [`tools/posy_unicorn.py`](../tools/posy_unicorn.py) | **新增**：真解析器→真采样器→真求值器；报文 vs 复算逐位对照；`--variants` / `--solve` |
+| [`tools/posy_trace.py`](../tools/posy_trace.py) | **新增**：在 unicorn 里跟踪**真采样器自己**往点数组里写的每一次写（`rip` + 值），以及最后一次求值器调用的 `x`——用来钉"末点 y 是 `0x3c2995` 紧接 `call 0x4eb9d0` 之后存下的" |
+| [`tools/gen_posy_fixture.py`](../tools/gen_posy_fixture.py) | **新增**：把逐批/语料结果压成 `fixtures/` 的纯文本摘要（去路径/用户名） |
+| [`tools/posy_batches.py`](../tools/posy_batches.py) | **新增**：一份回放里**每一发**的对照表（按队伍推 `flip`、按 `owner_id` 配对、按 `pos_x==end_x` 配 effect） |
+| [`tools/posy_corpus.py`](../tools/posy_corpus.py) | **新增**：全语料"`pos` 在不在曲线上"的普查（读 gzip 回放，只用报文自己的量） |
+| [`fixtures/effectinfo_posy_sample.jsonl`](../fixtures/effectinfo_posy_sample.jsonl) | **新增**：样本摘要（纯文本、无路径/用户名；两把新回放逐批 + 语料汇总） |
+| [`docs/06-verification.md`](06-verification.md) | **新增本节（§35）** |
+
+**没有改动**：`src/`、`client/`、`fixtures/guardrails.json`、既有的任何夹具格式。
+`dispatch/replays/` 的 5 份样本按 [`dispatch/replays/README.md`](../dispatch/replays/README.md) 的规矩
+**用完删除**（不进交付分支）。
