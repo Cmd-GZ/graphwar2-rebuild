@@ -1,0 +1,31 @@
+# 任务 57 · 新证据来源消融（tools/callgraph_fingerprint.py newev）
+# 真值：fixture=301, strict=333, both=295, agree=295, conflict=0；分半：调参半 166 / 留出半 165；窗口 (0.7, 1.4)
+# 留出半**只报数**，权重只在调参半上选（AGENTS.md 合并纪律 A4）
+label	weights	n_tune	top1_tune	top5_tune	n_hold	top1_hold	top5_hold
+(0) 51 号基线 W_SAME	size0.25 gram2 consts0.25 caller0.5	166	0.8193	0.9157	165	0.7273	0.8848
+(1a) 单独 size+shape	size0.25 shape2	166	0.7952	0.9217	165	0.7152	0.8909
+(1b) 基线+shape=0.5	size0.25 gram2 consts0.25 caller0.5 shape0.5	166	0.8193	0.9096	165	0.7515	0.8848
+(1b) 基线+shape=1	size0.25 gram2 consts0.25 caller0.5 shape1	166	0.8193	0.9096	165	0.7515	0.8848
+(1b) 基线+shape=2	size0.25 gram2 consts0.25 caller0.5 shape2	166	0.8253	0.9157	165	0.7515	0.8848
+(1a) 单独 size+scal	size0.25 scal2	166	0.3072	0.6084	165	0.3030	0.6121
+(1b) 基线+scal=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+(1b) 基线+scal=1	size0.25 gram2 consts0.25 caller0.5 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+(1b) 基线+scal=2	size0.25 gram2 consts0.25 caller0.5 scal2	166	0.8193	0.9036	165	0.7758	0.8909
+(1a) 单独 size+scal_c	size0.25 scal_c2	166	0.3072	0.6084	165	0.3030	0.5939
+(1b) 基线+scal_c=0.5	size0.25 gram2 consts0.25 caller0.5 scal_c0.5	166	0.8253	0.9157	165	0.7758	0.8909
+(1b) 基线+scal_c=1	size0.25 gram2 consts0.25 caller0.5 scal_c1	166	0.8253	0.9157	165	0.7818	0.8909
+(1b) 基线+scal_c=2	size0.25 gram2 consts0.25 caller0.5 scal_c2	166	0.8193	0.9036	165	0.7758	0.8909
+(1a) 单独 size+wconst	size0.25 wconst2	166	0.0663	0.2108	165	0.0788	0.2545
+(1b) 基线+wconst=0.5	size0.25 gram2 consts0.25 caller0.5 wconst0.5	166	0.8253	0.9157	165	0.7697	0.8909
+(1b) 基线+wconst=1	size0.25 gram2 consts0.25 caller0.5 wconst1	166	0.8193	0.9157	165	0.7697	0.8909
+(1b) 基线+wconst=2	size0.25 gram2 consts0.25 caller0.5 wconst2	166	0.7952	0.8976	165	0.7697	0.8909
+(1a) 单独 size+stok	size0.25 stok2	166	0.0060	0.0422	165	0.0182	0.0303
+(1b) 基线+stok=0.5	size0.25 gram2 consts0.25 caller0.5 stok0.5	166	0.8193	0.9157	165	0.7273	0.8848
+(1b) 基线+stok=1	size0.25 gram2 consts0.25 caller0.5 stok1	166	0.8133	0.9157	165	0.7273	0.8848
+(1b) 基线+stok=2	size0.25 gram2 consts0.25 caller0.5 stok2	166	0.8072	0.9157	165	0.7212	0.8848
+(2a) 基线+shape/scal/wconst/stok	size0.25 gram2 consts0.25 caller0.5 shape1 scal0.5 wconst0.5 stok0.5	166	0.8253	0.9157	165	0.7818	0.8909
+(2b) 同上但 scal->scal_c	size0.25 gram2 consts0.25 caller0.5 shape1 scal_c0.5 wconst0.5 stok0.5	166	0.8253	0.9157	165	0.7818	0.8909
+(2c) 基线+shape+scal	size0.25 gram2 consts0.25 caller0.5 shape1 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+(2d) 基线+shape+scal_c	size0.25 gram2 consts0.25 caller0.5 shape1 scal_c0.5	166	0.8253	0.9157	165	0.7697	0.8909
+(3a) 基线-gram + shape=2	size0.25 consts0.25 caller0.5 shape2	166	0.8253	0.9217	165	0.7394	0.8909
+(3b) 基线-gram + shape=2 + scal=1	size0.25 consts0.25 caller0.5 shape2 scal1	166	0.8253	0.9096	165	0.7697	0.8909
