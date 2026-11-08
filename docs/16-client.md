@@ -9546,6 +9546,11 @@ last_probes == 1 + last_ticks（0x518484 在循环头）
 
 ### 52.6 诚实清单（还留在 GDScript 的流程 + 缺什么证据）
 
+> ⚠️ **2026-11 任务 67 就地更新**（下表是 54 号当时的现状，**别当现行清单读**）：
+> 第 **1** 条（弹道生命周期）与第 **4** 条（回合超时）已经搬走，
+> 第 **3** 条（AI 回合）搬了闸门与瞄准、**判据仍是我方自定**；
+> 第 **2 / 5 / 6 / 7 / 8** 条原样留着。现行清单与证据见 **§53.6**。
+
 | # | 还没搬的流程（仍在 `play_screen.gd`） | 行数量级 | 档位 | 缺什么 |
 |---|---|---|---|---|
 | 1 | **弹道生命周期**：`_begin_shot` / `_advance_presentation` / `_apply_kills_up_to` / `_on_shot_arrived` / `_finish_round` / `flush_shot` | ~200 | 死亡时机 **观测**（`LifeQueuedDeath{tick}` == `EffectInfo.start_tick`，`docs/65`）；"飞完才判胜负" **推断** | 原版由 `FunctionDrawer`/`GraphwarPlane::draw` 按 `V` 推；本屏按帧 delta 推 ⇒ 需要先把 §52.5 的 tick 链接上，否则"搬过去"只是把同一个猜测换个语言写 |
@@ -9561,6 +9566,9 @@ last_probes == 1 + last_ticks（0x518484 在循环头）
 "某队没有存活实体 ⇒ 结束"，靶子算 `Team2` 的成员。这一点由 §52.3 的真相表钉住。
 
 ### 52.7 断言（before → after）
+
+> ⚠️ **任务 67 之后**：`cargo test` 1671→1691 / 1777→1797、`play_flow_check` 61→135、
+> headless 合计 1744→1818、`selftest` 仍是 714 / 0 / 1 skip。见 §53.7。
 
 | 套件 | before | after |
 |---|---|---|
@@ -9581,3 +9589,156 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
 "$GODOT" --headless --path client -- --selftest                              # 714 / 0 / 1skip
 cargo test --offline --lib -- play_screen_control                            # 7 条真相表
 ```
+
+## 53. 播放屏的**弹道生命周期**搬进 Rust：从"每帧判断"到"事件驱动"（2026-11，任务 67）
+
+**一句话**：`play_screen.gd` 里"根据游戏状态决定做什么"的第三块 —— **弹道生命周期**
+（准备态 → 发射 → 飞行 → 命中/越界 → 结算）—— 的**判据**搬进了 Rust；GDScript 只剩
+"递数据 / 读揭示点数 / 按事件摆节点"。顺带把 **回合超时**与 **AI 回合闸门**也搬了过去。
+本轮**没有**搬联机与回放驱动（缺证据，§53.6 #5/#6）。
+
+### 53.1 边界（照 `dispatch/67` §2，沿用 54 号）
+
+| 进 Rust（本轮） | 留 GDScript（本轮没动的） |
+|---|---|
+| "哪条命中**什么时候**落地"（点序号队列） | 把命中表算出来（`_judge_shots`：调内核 `hit_test`） |
+| "弹道**飞完了没有**"（揭示点数 >= 总点数） | 揭示点数怎么读（读真 `Line2D` 的点数） |
+| "这一发**结算过没有**"（每发只收一次回合） | 结算之后做什么（靶子复原 `_apply_target_reset`、判胜负 `_check_match_over` 只应用结论） |
+| "回合数 +1"（`TurnCountInfo.turn_count` 的本地对应物） | 状态行/倒计时**文本**怎么排版 |
+| "到点该自动开火了没有"（`0x470989` 的三个合取项） | 秒数怎么画成 `MM:SS` |
+| "AI 什么时候动手"（思考倒计时闸门，**我方自定**） | 特效节点/音效槽位 |
+
+### 53.2 落地位置（文件 / 函数）
+
+| # | 位置 | 对应原版 | 档位 |
+|---|---|---|---|
+| 1 | `src/graphwar_play_screen_control.rs` §6 `ShotLifecycle`（`begin` / `advance` / `flush` / `land_all` / `settle` / `abort` / `snapshot`） | `execute_results`（`0x472470`）的**死亡块** `0x472814`–`0x472872` + `handle_tick`（`0x470840`）的状态推进 | 命中排队 **观测（指令级）**；"飞完才判"**推断** |
+| 2 | 同文件 §7 `TurnClock`（`turn_duration_ticks` / `end_of_turn_tick` / `advance` / `seconds_left` / `decide`） | `handle_tick` ②：`0x470989`–`0x4709ec`（`cmp BYTE [self+0x120],2` / `get_end_of_turn_tick` `0x462ec0` / `cmp now,end` / `cmp BYTE [self+0x11c],0` → `call fire_functions` `0x470eb0`） | **观测**（谓词本体早已落在 `turnstate::should_auto_fire`，本轮补"流程"） |
+| 3 | 同文件 §8 `BotTurn` + `bot_aim_expression` | **没有原版对应物**（原版是 `aigen` 进化器） | **我方自定** |
+| 4 | `src/_scaffold/play_flow_class.rs` `GwShotFlow` / `GwTurnClock` / `GwBotTurn` | 原版客户端**没有**这三个类（54 号那三个同理） | **我方外壳** |
+| 5 | `client/src/screens/play_screen.gd`（只删流程、留视图） | —— | —— |
+| 6 | `client/tools/play_flow_check.gd`（**61 → 135 条断言**） | —— | **验收工具** |
+
+⚠️ **文件归属（诚实标注，不是结论）**：原版这台状态机**不叫这个名**——它是
+`graphwar_game_state_manager.rs` 的 `handle_tick`（`0x470840`）+ `execute_results`
+（`0x472470`）。本轮把它放在 `graphwar_play_screen_control.rs`，理由有两条：
+(a) 54 号已经把同类的"客户端本地权威"（`LevelRules`）放在这里，保持一处；
+(b) 内核那份 `handle_tick` 在 `src/game.rs`，**本轮 65 号拥有它，不许改**。
+⇒ 这是**待拆**项：等 `src/game.rs` 那侧空出来，`ShotLifecycle` 应当并回
+`graphwar_game_state_manager` 的对应函数（届时 `LevelRules` 同样处理）。
+本轮的实现**不改** `src/game.rs` 一个字节，所以内核/客户端的口径没有分叉风险。
+
+### 53.3 三块流程的 before → after
+
+| 块 | 原位置 | before | after | Rust 落点 |
+|---|---|---|---|---|
+| **A. 弹道生命周期** | `_begin_shot` / `_advance_presentation` / `_apply_kills_up_to`(38 行) / `_on_shot_arrived` / `_finish_round` / `flush_shot` / `_reset_shot_state` | 直接写状态机：`_pending_kills` 队列、`_pending_target_kills` 队列、`_logic_settled` 闩、`_kills_this_shot` 计数、`_turns_used` 计数 | 三件只剩"递数据 / 执行事件"：`_flow.begin(...)` → `_flow.advance(reveal)` → 按事件摆节点；`_apply_kills_up_to` **删**（换成 `_apply_shot_events` 事件执行器） | `ShotLifecycle` |
+| **B. 回合超时** | `_process` 里 `_time_left -= delta; if <= 0: _next_turn(true)` + `_update_timer_label` | 自己数秒、到点**只换手**（与原版不符：原版是 `call fire_functions`） | `_turn_clock.advance(delta)` + `decide(in_flight, running)` → `"auto_fire"` ⇒ **按原版打出去**，打不出去才兜底换手 | `TurnClock` |
+| **C. AI 回合闸门** | `_tick_bot_turn` / `bot_take_turn` 里的 `_bot_think_left` + `_bot_aim_expression`(16 行) | GDScript 自己数 0.6 s、自己算 `%.6f*x` | `_bot.tick(delta, can_fire)` / `_bot.arm()` / `_bot.disarm()` / `_bot.aim_expression(pos, team, others)`；`_bot_aim_expression` **删** | `BotTurn` + `bot_aim_expression` |
+
+播放屏本体：**3080 → 3070 行**（代码行 2123 → 2090，注释 767 → 800）。
+本轮**确实变短了**（−10 行），但别把行数当成果：删掉的是 38 行落地循环 + 16 行瞄准 +
+散落的 6 处状态字段，加回来的是 38 行的**事件执行器**（按 `kind` 分支摆节点）与
+Rust 侧的证据注释。判据不是行数，而是 §53.4 那张"GDScript 里还剩几个状态分支"的表。
+
+| 函数 | before | after | 变化 |
+|---|---|---|---|
+| `_apply_kills_up_to` | 38 | **删** | 判据进 `ShotLifecycle::land_until`（按点序号、去重、计数） |
+| `_apply_shot_events` | — | 38 | **新**：只按 `kind`（`soldier_killed`/`target_killed`/`arrived`）摆节点 |
+| `_begin_shot` | 13 | 21 | 递 `total_points`/两张命中表/停止点/`already_settled` |
+| `_advance_presentation` | 18 | 17 | 一行 `_flow.advance(_curve_reveal())` |
+| `_on_shot_arrived` | 24 | 23 | 结算问 `_flow.settled()` |
+| `_finish_round` | 6 | 5 | 闩在 Rust |
+| `_reset_shot_state` | 20 | 16 | 状态归零在 `_flow.reset()` |
+| `_settle_round` | 19 | 22 | 回合 +1 读 `_flow.settle()` 的 `turns_used` |
+| `_bot_aim_expression` | 16 | **删** | 进 `bot_aim_expression`（Rust） |
+| `_tick_bot_turn` | 13 | 13 | 一行 `_bot.tick(...)` |
+| `_process`（超时段） | — | — | 三个合取项 + 闩在 `TurnClock::decide`；到点动作按原版改成**开火** |
+| `_update_timer_label` | 15 | 18 | 本地读 `_turn_clock.seconds_left()`，联机仍读 `_time_left` |
+
+### 53.4 GDScript 里还剩哪些"根据游戏状态决定做什么"的分支
+
+| 分支 | 为什么还在 | 档位 |
+|---|---|---|
+| `fire()` 的 5 条早退（回放/在飞/阵亡/轮到 AI/空函数） | **输入护栏**，不是流程：它决定"这次按键要不要理"，原版由 `GameStateInfo` 状态机拦；本屏没有那台机器，只有 `_shot_in_flight` 镜像 | **我方投影**，缺"客户端本地状态机"这一层证据 |
+| `_apply_shot_events` 的 `match kind` | **事件类型 → 视图动作**（摆哪个特效、置谁的 `alive`）。不是"游戏状态 → 做什么" | 视图分派 |
+| `_apply_target_reset`（打不全就全部复原） | 判定条件与内核那份**不同**且没有真值（`docs/131` §4、§52.6 #2）⇒ **本轮故意不动** | **推断** |
+| `_check_match_over` / `_settle_round` 的"应用结论" | 只读 `_rules.evaluate()` / `_flow.settle()` 的结果去排版、结束局 | 应用层 |
+| `_process` 里的 `_online_mode` / `_replay_mode` 分叉 | 联机与回放**本轮不做**（缺证据，§53.6 #5/#6） | 登记 |
+
+⇒ 真正的"状态机"（准备 → 发射 → 飞行 → 命中/越界 → 结算）**已经不在 GDScript 里**：
+阶段、待落地队列、已结算闩、回合计数全部在 `ShotLifecycle`。
+
+### 53.5 证据（逐条能指到地址或真报文）
+
+| 结论 | 证据 | 档位 |
+|---|---|---|
+| 命中**按弹道点序号**排队、按序号取点落地 | `0x472814`: `mov 0x10(%rax),%r13`（记录 `+0x10` = 点序号）→ `shl $0x4,%rcx` → `movdqu -0x10(%rdx,%rcx,1)`（16 字节/点，取 `points[idx-1]`） | **观测（指令级）** |
+| 死亡块的 tick = `[模块+0x58] + X/30 + 60` | `0x472ce6`: `mov eax,0x88888889 / imul r13 / shr r13,0x24 / lea edx,[r12+r13] / add edx,0x3c`（除以 **30**，不是 60） | **观测** |
+| 同一批死亡按 `start_tick` 升序 | `docs/14` §7.3：**106 / 106** 批 | **观测** |
+| 死亡效果落在**死者站位**（不是弹道停点） | `docs/15` §1.2：`DeathEffect.pos == PosInfo` 逐位相同（两例） | **观测**（真报文） |
+| 爆炸点在弹道**停止点** | `docs/14` §12.1（503/503）、`docs/31` §2 | **观测** |
+| "飞完才判胜负" | `docs/143` §3 + 用户实测；**缺**逐帧样本 | **推断** |
+| 超时判据三个合取项 | `0x470989`–`0x4709ec`（状态 `[+0x120]==2` / `now >= end_of_turn_tick` / `[+0x11c]!=0`）→ `call 0x470eb0 fire_functions` | **观测** |
+| 回合时长六档 | `docs/14` §3.3.2（`Timer30s/1m/2m/3m/5m` 实测、`TimerInf` 线上发 `0`） | **观测** |
+| 超时后"再判一次"的**我方闩** | 原版靠 `fire_functions` 改状态自锁；我们开火可能失败（输入框空），会每帧重试 ⇒ 本层加"本回合只自动开火一次" | **我方选择** |
+| AI 何时开火 | 原版是 `aigen` 进化器，**时序没有任何观测** | **我方自定** |
+
+### 53.6 诚实清单（本轮之后**仍然**留在 GDScript 的流程）
+
+| # | 还没搬的 | 量级 | 档位 | 缺什么 |
+|---|---|---|---|---|
+| 1 | **"打不全就全部复原"**（`_apply_target_reset` → `GwTargetSet.settle_shot`） | ~20 行 | **推断** | 语料 397 份回放 **0 次部分命中**；且判定条件与 `graphwar_target_manager::should_reset_targets` 不一致（§52.6 #2 原样保留） |
+| 2 | **`_judge_shots`**（命中纯计算） | ~65 行 | 内核 `hit_test` 已**逐位** | 它只是"调内核 + 拼下标表"；要搬得先让内核直接吃 `GwTargetSet` 的实体表，那是 `graphwar_shot_calculator` 的接口问题，不属于本屏 |
+| 3 | **每帧 tick 驱动**（`drive_frame`） | 3 行接线 | 我方接线 | 同 §52.5 三条理由（在本屏没有消费者、会静默改 `EntityDrawer` 的 `V`、无真帧可对） |
+| 4 | **联机局全套**（`_online_*`） | ~400 行 | 服务端权威 | 本轮不做（`docs/134`/`docs/139`） |
+| 5 | **回放驱动**（`_replay_*`） | ~380 行 | 我方自定 | 本轮不做（`docs/133` §4.2） |
+| 6 | **关卡靶子/障碍布局**（`_target_positions` / `_level_obstacles`） | ~30 行 | 数目 **逐位**，坐标**我方自定** | 原版随机生成，没有每关固定坐标（`docs/118` §8 #16） |
+| 7 | **`fire()` 的输入护栏**（5 条早退） | ~12 行 | 我方投影 | 缺"客户端本地 `GameState` 投影"这一层的证据（原版靠服务端状态机） |
+
+⚠️ 本轮**没有**碰 `src/game.rs` 的结算（65 号拥有它），也没有动 `fixtures/`。
+
+### 53.7 断言（before → after）
+
+| 套件 | before | after |
+|---|---|---|
+| `cargo test --offline` | 1671 | **1691**（+20：`graphwar_play_screen_control::lifecycle_tests`） |
+| `cargo test --offline --features gdext-bindings` | 1777 | **1797**（+20，同上；外壳类不写 `#[func]` 单测，见文件头） |
+| `client/tools/play_flow_check.gd` | 61 | **135**（+74：3 个类的方法表 + 生命周期 6 组 + 时钟 4 组 + AI 闸门 2 组 + 源码回流检查 18 条） |
+| 其余 13 个 headless 脚本 | 1683 | **1683**（逐项不变） |
+| headless 合计（14 个脚本） | 1744 | **1818** |
+| `selftest`（四前置齐） | 714 / 0 / 1 skip | **714 / 0 / 1 skip**（一条断言没删；只改了读的字段名，见 §53.8） |
+
+### 53.8 接口变化（GDScript 侧要改的）
+
+1. `_begin_shot(shot)` → `_begin_shot(shot, already_settled := false)`：多一个"本地不结算"标志
+   （压平模式与联机用）。总点数取 **`drawn`**（截断后那条）—— 取 `points`（采样全量）
+   会让"揭完"永远等不到。
+2. `fire()` 的返回值 `void` → `bool`：超时自动开火要判"这一发到底交出去没有"。
+3. `_judge_shots()` 的命中记录多一个 `index`（**士兵下标**）：Rust 侧不持有 GDScript 字典，
+   只拿下标认人；`_apply_shot_events` 用 `_soldiers[index].alive = false` 落死亡。
+4. `_on_shot_arrived()` / `_finish_round(shot)` 改成 `_on_shot_arrived(phase, stop)` / `_finish_round()`
+   —— 它们现在由**事件**驱动，不再自己去读 `_pending_shot`。
+5. `level_state()` 里几个诊断键改名：`kills_this_shot` → `soldiers_landed`、
+   `target_kills_this_shot` → `targets_landed`（语义没变，只是"这张表在 Rust 里"）；
+   新增 `lifecycle`（`GwShotFlow.snapshot()`）与 `turn_clock`（`GwTurnClock.snapshot()`）。
+6. `_turns_used` **这个变量没了**：`level_state()["turns_used"]` 与 `_check_match_over()` 都读
+   `_flow.turns_used()`。
+
+### 53.9 复现
+
+```bash
+export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=<你的私有 target>
+cargo build --offline --features gdext-bindings        # ← 必须最后跑这一档，否则 .so 是没 gdext 的那份
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/play_flow_check.gd   # PLAY_FLOW 135 passed
+"$GODOT" --headless --path client -- --selftest                             # 714 / 0 / 1skip
+cargo test --offline --lib -- graphwar_play_screen_control                  # 30 条（含 20 条生命周期）
+```
+
+⚠️ **踩过的坑（本轮实测）**：`cargo test --offline --lib` 用**默认 features** 构建，
+它会把 `$CARGO_TARGET_DIR/debug/libgw2_rebuild.so` 覆盖成**没有 gdext-bindings** 的那份；
+先 `cp` 再 `cargo test` 就会让 Godot 拿到旧内核（本轮的报错是
+`Parse Error: Too many arguments for "begin()" call. Expected at most 4 but received 5`）。
+**先测、最后 build gdext、再 cp。**

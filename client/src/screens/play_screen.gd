@@ -206,9 +206,8 @@ var _targets := GwTargetSet.new()
 ## `src/_scaffold/play_flow_class.rs` → `graphwar_play_screen_control::LevelRules`），
 ## 本屏只读它的结论去排版文案（`docs/16` §52）。
 var _rules: GwLevelRules = null
-## 已结算的回合数：`docs/118` §7.1 的 `turn_limit` 与它比较（`Level 7` = 1）。
-var _turns_used := 0
 ## 本次结算里被摧毁的靶子 id（保序）。用于"打不全就全部复原"这条推断规则。
+## （**已结算的回合数**不在本屏：`_flow.turns_used()`，见 `docs/16` §53。）
 var _destroyed_this_shot: Array[int] = []
 ## 上一次胜负判定结果（诊断/自检用；不参与逻辑）。
 var _last_verdict := {}
@@ -218,6 +217,8 @@ var _last_verdict := {}
 var _layout_override := {}
 var _functions := {}                            # player_index -> String
 var _active := 0
+## 联机 / 回放共用的倒计时秒数（**只给排版与联机那条路用**）。
+## 本地回合的时钟在 Rust：`GwTurnClock`（`0x470989` 的三个合取项，`docs/16` §53）。
 var _time_left := 0.0
 var _shot_queue: Array[Dictionary] = []         # 同时回合制下本轮的弹道
 var _show_names := true
@@ -233,31 +234,24 @@ var _suppress_offset_clear := false
 
 # ---------------------------------------------------------------- 一发弹道的生命周期（docs/143）
 #
-# 这是本文件最重要的一处流程改动：`fire()` **不再**当场结算。一发弹道的时序是
-#
-#   开火（算出全量点序列 + 预先判出命中）→ 逐 tick 揭示（弹道在飞）→
-#   弹道走到死者那个点 ⇒ 那一次死亡才落地（`LifeQueuedDeath{tick}`，docs/65）
-#   → 飞完 ⇒ 在停止点炸（`EffectInfo(ExplosionEffect)`，docs/31/§43）
-#   → 清掉曲线（docs/143 §2）→ 回合计数 / 靶子复原 / 判胜负 / 推进回合。
-#
-# 依据：`docs/43` §1 的报文顺序（`FunctionPoints` → 死亡与特效 → `FunctionActive`
-# → `EffectInfo(ExplosionEffect)` → `ExecutingResults` → `TurnCountInfo`）与
-# `docs/41` 的状态机（`Fire` 只在 `WaitingForFunctions` 下有意义）。见 `docs/143` §3。
+# 时序：开火（点序列 + 命中表）→ 逐 tick 揭示 → 走到死者那个点才落地
+# （`LifeQueuedDeath{tick}`，docs/65）→ 飞完在停止点炸 → 清曲线 → 收回合。
+# **流程与判据在 Rust**（`GwShotFlow` → `ShotLifecycle`，docs/16 §53）；
+# 本屏只递数据、读揭示点数、按事件摆节点。报文顺序见 docs/43 §1。
 
 ## 有弹道正在飞。发射期间**不能再发**（`docs/143` §4：原版要等 `TurnEnded`）。
+## 状态本体在 `_flow`（Rust）；这个字段只是它的镜像，供本屏早退判断。
 var _shot_in_flight := false
-## 在飞的那一发的记录：`{points, drawn, team, shooter, soldier, judged, phase}`。
+## 在飞那一发的**视图数据**（画线 / 报点数 / 联机标记）；流程状态全在 `_flow`。
 var _pending_shot: Dictionary = {}
-## 这一发**还没落地**的击杀（按弹道点序号排）。落地靠弹道揭示到那个点。
-var _pending_kills: Array = []
-var _pending_target_kills: Array = []
 ## 这一发的命中表（`_judge_shots()` 的产物），给状态行与自检看。
 var _judged: Dictionary = {}
-var _kills_this_shot := 0
-var _target_kills_this_shot := 0
-## 逻辑是否已经落地。**自动化运行**（`--selftest`/`--dump-tree`）里在开火那一刻就落地
-## （把时序压平，好让自检"开火后下一帧读结果"照旧成立）；真机走逐 tick。
-var _logic_settled := false
+## 弹道生命周期（`docs/16` §53）：`GwShotFlow` → `ShotLifecycle`。
+var _flow := GwShotFlow.new()
+## 本地回合时钟（超时谓词 `0x470989`–`0x4709ec`）。
+var _turn_clock := GwTurnClock.new()
+## AI 回合闸门（**我方自定**：原版 AI 时序未观测）。
+var _bot := GwBotTurn.new()
 ## 效果层（`docs/143` §1）。由 `build()` 挂到棋盘上。
 var _effects: GwEffectLayer = null
 ## 本轮收到/发出的效果事件流水（诊断与自检用；不影响绘制）。
@@ -268,14 +262,11 @@ var _fx_log: Array = []
 var _turn_driver := GwTurnDriver.new()
 ## 当前射手在 `_soldiers` 里的下标（`_active` 是**玩家**下标，两个编号都在用）。
 var _active_soldier_idx := 0
-## 轮到 AI 时还剩多少秒开火；`< 0` = 不在 AI 回合。
-var _bot_think_left := -1.0
 
 ## AI 开火前的等待（秒）—— **自定**。原版是 25 s 预算内的进化（`docs/93`），
 ## 我们这一版**还没有** AI 生成器接进客户端（`docs/AI.md` 的线），只用一条自定直线。
+## 闸门本体在 Rust（`GwBotTurn` → `graphwar_play_screen_control::BotTurn`）。
 const BOT_THINK_SECONDS := 0.6
-## AI 用的函数模板（见 `_bot_aim_expression()`）：`"%f*x"`，斜率指向最近的敌人。
-const BOT_AIM_FORMAT := "%.6f*x"
 
 ## 效果 → 音效。**槽位有逐位证据**（`0x4bf090` 的 4 臂跳表：0→0x80、1→0x90、
 ## 2/3→0xa0，见 `docs/143` §4.1），**音效身份一条证据都没有**（`docs/128` §4.1）
@@ -752,7 +743,6 @@ func begin_match() -> void:
 	_soldiers.clear()
 	_targets = GwTargetSet.new()
 	_destroyed_this_shot.clear()
-	_turns_used = 0
 	_last_verdict = {}
 	_reset_shot_state()
 	var level := GwCampaign.level(int(st.level_index)) if st.kind == GwGameState.Kind.CAMPAIGN else {}
@@ -829,6 +819,10 @@ func begin_match() -> void:
 		_rules.from_campaign(level, _human_team())
 	else:
 		_rules.from_versus(_human_team())
+	# 回合时钟（Rust）：档位 = 原版 `TimeMode` 的判别值（`0..5`，与 `GwModes.TimeMode` 同一套）。
+	_turn_clock.set_time_mode(int(st.time_mode))
+	_bot.configure(BOT_THINK_SECONDS)
+	_bot.disarm()
 	_status("关卡规则：%s ／ 靶子 %d ／ 回合上限 %s" % [_rules.kind_name(), _targets.total(),
 		"∞" if _rules.turn_limit() <= 0 else str(_rules.turn_limit())])
 
@@ -1369,41 +1363,42 @@ func _on_function_text_submitted(_new_text: String) -> void:
 ##   `Fire` 只在 `WaitingForFunctions` 下有意义（`src/turnstate.rs`，13 次迁移来自真抓包）；
 ## * 不是我的回合不能发（本地：射手必须是人类玩家的士兵）；
 ## * 结算**延后到弹道飞完**，判胜负在结算之后。
-func fire() -> void:
+## 返回**这一发是否真的交出去了**（超时自动开火要用它决定要不要兜底换手）。
+func fire() -> bool:
 	var app_node := app()
 	if app_node == null or not _running:
-		return
+		return false
 	if _replay_mode:
 		_status("回放模式不接管输入（这一局的每一发都来自录像）")
-		return
+		return false
 	# ① 发射期间不能再发（docs/143 §4）。原版的状态机里 `Fire` 只从
 	# `WaitingForFunctions` 出发，弹道在飞时服务端根本不收 `FunctionFire`。
 	if _shot_in_flight:
 		_status("上一发还在飞（服务端此时是 ExecutingResults）⇒ 不能再发")
-		return
+		return false
 	var active_soldier := _active_soldier()
 	if active_soldier.is_empty() or not bool(active_soldier.alive):
 		_status("当前射手已阵亡")
-		return
+		return false
 	if not _online_mode and bool(active_soldier.get("is_bot", false)):
 		_status("现在是 AI 的回合（玩家 %s）⇒ 本地不接受人类开火"
 			% String(active_soldier.get("name", "?")))
-		return
+		return false
 	var expr := String(_input.text).strip_edges()
 	if expr == "":
 		_status("先输入一个函数")
-		return
+		return false
 	# 联机：开火不再走本地结算（`docs/134` §7.1 第 3 条）。判定、生死、回合全在服务端；
 	# 本界面只发两条请求，然后等 `FunctionPoints` 把弹道带回来（`_draw_online_shot()`）。
 	if _online_mode:
 		_fire_online(expr, active_soldier)
-		return
+		return true                      # 联机：请求发出去了就算"交出去"
 	var team := int(active_soldier.team)
 	var direction := 1.0 if team == 0 else -1.0     # 队伍固定在两侧（docs/105）
 	var result := GwCore.calculate_path(expr, active_soldier.pos, direction)
 	if not bool(result.ok):
 		_status("弹道算不出来：%s" % String(result.note))
-		return
+		return false
 	var pts: PackedVector2Array = result.points
 	# 障碍挡弹道（`docs/30` §2：障碍让弹道**停下**，士兵只是被穿过）。
 	# 这里只决定"**画**到哪一点"：`shot.points` 仍保留整条点序列 ——
@@ -1428,6 +1423,7 @@ func fire() -> void:
 	var shot := {"points": pts, "drawn": drawn.points, "team": team,
 		"shooter": _active, "soldier": active_soldier, "phase": "local"}
 	_commit_shot(shot)
+	return true
 
 ## 把一发（或同时回合的一批）弹道交给结算，然后走**回合结算**（`docs/131` §2、§4）。
 ##
@@ -1463,32 +1459,32 @@ func _commit_shot(shot: Dictionary) -> void:
 	if _fast_forward():
 		# 自动化运行（`--selftest` / `--dump-tree`）：把时序**压平** —— 逻辑当刻落地，
 		# 动画照放（自检既要在下一帧读到结算结果，也要能看"弹道还在飞"）。
-		_apply_kills_up_to(1 << 30)
-		_logic_settled = true
-		_finish_round(shot)
+		# 落地在 Rust 侧、**只落命中不吐到达**（`ShotLifecycle::land_all`）：曲线照放，
+		# 到站与收尾仍等 `_advance_presentation`（命中先落地、动画照放）。
+		_apply_shot_events(_flow.land_all())
+		_finish_round()
 
 # ---------------------------------------------------------------- 一发弹道的播放与落地（docs/143）
 
 ## 自动化运行（`--selftest` / `--dump-tree`）把"发射 → 结算"的时序**压平**。
 ##
 ## 压平的只有**触发时机**：判定规则走的是同一条代码路径（`_judge_shots` /
-## `_apply_kills_up_to` / `_settle_round`）。真机（返回 `false`）走逐 tick：
+## `_apply_shot_events` / `_settle_round`）。真机（返回 `false`）走逐 tick：
 ## 死亡在弹道到达那个点时落地、胜负在弹道飞完之后才判（`docs/143` §3）。
 func _fast_forward() -> bool:
 	var a := app()
 	return a != null and bool(a.get("automation"))
 
 ## 清掉"一发"的所有中间状态（换局 / 退出对局时调；幂等）。
+##
+## 状态本体（阶段 / 待落地队列 / 已结算闩 / 回合数）在 Rust 的 `_flow`：
+## 这里只剩视图层自己的东西（曲线、特效、视角）。
 func _reset_shot_state() -> void:
 	_shot_in_flight = false
 	_pending_shot = {}
-	_pending_kills = []
-	_pending_target_kills = []
 	_judged = {}
-	_kills_this_shot = 0
-	_target_kills_this_shot = 0
-	_logic_settled = false
-	_bot_think_left = -1.0
+	_flow.reset()                     # 生命周期 + 回合计数一起归零（Rust）
+	_bot.disarm()                     # AI 闸门（Rust）
 	_turn_driver.round_reset()        # 同时回合制的收集器（Rust 侧）
 	_fx_log.clear()
 	if _effects != null:
@@ -1514,101 +1510,98 @@ func _alive_flags() -> Array:
 	return out
 
 ## 开始放一发：命中表已经算好，但**一条都没落地**（顺序回合走这条）。
-func _begin_shot(shot: Dictionary) -> void:
+## `already_settled = true`：压平模式（automation）与联机（本地不结算）。
+func _begin_shot(shot: Dictionary, already_settled := false) -> void:
 	_pending_shot = shot
 	_judged = shot.get("judged", {})
-	_kills_this_shot = 0
-	_target_kills_this_shot = 0
 	_destroyed_this_shot.clear()
-	_pending_kills = (_judged.get("kills", []) as Array).duplicate()
-	_pending_target_kills = (_judged.get("target_kills", []) as Array).duplicate()
-	_logic_settled = false
-	_shot_in_flight = true
 	_shot_status = ""
+	_shot_in_flight = true
+	# 总点数取**画上去的那条**（`drawn`，撞障碍会被截断）—— 与 `_set_curve()` 设的
+	# `_curve_total` 是同一个量；取 `points`（全量、未截断）会让"揭完"永远等不到。
+	_flow.begin(
+		(_pending_shot.get("drawn", _pending_shot.get("points", PackedVector2Array()))
+			as PackedVector2Array).size(),
+		_judged.get("kills", []),
+		_judged.get("target_kills", []),
+		_judged.get("stop", Vector2.ZERO),
+		already_settled)
 
-## 每帧推进：弹道揭示到哪，就落地到哪（死亡/靶子的 `tick` 语义，`docs/65`）。
+## 每帧推进：把"画到第几个点"递给 Rust，执行它吐回来的事件。
+##
+## 揭示点数**读 `Line2D`**（= 测量，留在视图层）；"该落哪些命中 / 算不算飞完"
+## 是**判断**，在 `ShotLifecycle::advance`（`docs/16` §53）。
 func _advance_presentation() -> void:
 	if _pending_shot.is_empty():
 		return
 	if _plane == null:
-		_on_shot_arrived()
+		# 没有平面可读揭示点数 ⇒ 直接按"已揭完"推进（与原实现同一条兜底）。
+		_apply_shot_events(_flow.flush())
 		return
-	# 揭示点数**读 `Line2D`**（原版 `FunctionDrawer` 的 value 里那个"已写入数"）。
-	if not _logic_settled:
-		_apply_kills_up_to(_curve_reveal())
-	if _curve_finished():
-		_on_shot_arrived()
+	_apply_shot_events(_flow.advance(_curve_reveal()))
 
-## 落地"弹道已经走到的那一段"里的击杀。`reveal` = 已揭示的点数。
+## 执行 Rust 吐回来的一批事件：**只摆节点、只播声音，不再判断**。
 ##
-## 为什么按点序号而不是按时间：`LifeQueuedDeath{tick}` 与 `EffectInfo.start_tick`
-## 相等（`docs/65` §1 两例），而弹道点是采样器给的（`docs/04`）⇒ "到那个点"就是
-## "到那个 tick"。`point` 由 `_first_point_within()` 算，与内核判死的规则是同一条
-## （`src/graphwar_shot_calculator/settle.rs`：点落在半径内）。
-func _apply_kills_up_to(reveal: int) -> void:
-	if _pending_kills.is_empty() and _pending_target_kills.is_empty():
+## 三种事件 `soldier_killed` / `target_killed` / `arrived` 的形状见 `GwShotFlow`。
+## "哪个点该落哪条命中"由 `ShotLifecycle::advance` 定（点序号语义 = 死亡 tick，
+## `docs/65` §1）；这里只按 `kind` 分派。
+func _apply_shot_events(events: Array) -> void:
+	if events.is_empty():
 		return
 	var changed := false
-	var rest: Array = []
-	for k in _pending_kills:
-		if int(k.get("point", 0)) > reveal:
-			rest.append(k)
-			continue
-		var victim: Dictionary = k["soldier"]
-		if bool(victim.get("alive", false)):
-			victim.alive = false
-			_kills_this_shot += 1
-			changed = true
-			# 死亡特效的坐标是**死者站位**（`docs/31` §3 逐位），不是弹道停点。
-			_spawn_effect("DeathEffect", victim.pos)
-			_spawn_effect("AshEffect", victim.pos)      # 推断（灰烬），见 GwEffectLayer 文件头
-	_pending_kills = rest
-	var rest_t: Array = []
-	for k in _pending_target_kills:
-		if int(k.get("point", 0)) > reveal:
-			rest_t.append(k)
-			continue
-		if _targets.destroy(int(k["target_id"])):
-			_target_kills_this_shot += 1
-			_destroyed_this_shot.append(int(k["target_id"]))
-			changed = true
-			# 靶子只有 `SparkEffect` 这一条线索（`docs/123` §90 是**造**靶子时发的），
-			# 用在这里是**推断**：靶子被打掉与靶子出现共用同一个效果名。
-			_spawn_effect("SparkEffect", k["pos"])
-	_pending_target_kills = rest_t
+	for e in events:
+		match String(e.get("kind", "")):
+			"soldier_killed":
+				var idx := int(e.get("index", -1))
+				if idx < 0 or idx >= _soldiers.size():
+					continue
+				var victim: Dictionary = _soldiers[idx]
+				victim.alive = false
+				changed = true
+				# 死亡特效的坐标是**死者站位**（`docs/31` §3 逐位），不是弹道停点。
+				_spawn_effect("DeathEffect", victim.pos)
+				_spawn_effect("AshEffect", victim.pos)      # 推断（灰烬），见 GwEffectLayer 文件头
+			"target_killed":
+				var tid := int(e.get("target_id", -1))
+				if not _targets.destroy(tid):
+					continue
+				_destroyed_this_shot.append(tid)
+				changed = true
+				# 靶子只有 `SparkEffect` 这一条线索（`docs/123` §90 是**造**靶子时发的），
+				# 用在这里是**推断**：靶子被打掉与靶子出现共用同一个效果名。
+				_spawn_effect("SparkEffect", e.get("pos", Vector2.ZERO))
+			"arrived":
+				_on_shot_arrived(String(_pending_shot.get("phase", "local")),
+					e.get("stop", Vector2.ZERO))
 	if changed:
 		_refresh_plane()
 		_refresh_targets()
 		_note_shot_status()
 
-## 弹道飞完（到达 `drawn.impact`）：① 剩余击杀落地；② 在**停止点**炸；
-## ③ 清掉曲线；④ 判回合（真机才是这里判；压平模式早判过了）。
-func _on_shot_arrived() -> void:
+## 弹道飞完：在**停止点**炸 → 清曲线 → 判回合（要不要结算问 `_flow.settled()`）。
+## 进来时 Rust 已把剩余命中全部落完（`advance` 到达前会连越界的一起落地）。
+func _on_shot_arrived(phase: String, stop: Vector2) -> void:
 	if _pending_shot.is_empty():
 		return
-	var shot := _pending_shot
-	var judged: Dictionary = shot.get("judged", _judged)
-	if not _logic_settled:
-		_apply_kills_up_to(1 << 30)
 	# `EffectInfo(ExplosionEffect)` 的位置 = 弹道停止点（`docs/31` §2/§3 逐位），
 	# 时机 = 弹道执行时（`docs/43` §1 的报文顺序里紧跟 `FunctionActive`）。
 	# 联机不合成：那一条由**服务端**发过来（已经在 `EffectInfo` 分支里画了）。
-	if String(shot.get("phase", "local")) != "online":
-		_spawn_effect("ExplosionEffect", judged.get("stop", Vector2.ZERO))
+	if phase != "online":
+		_spawn_effect("ExplosionEffect", stop)
 	_note_shot_status()
 	# 打完就**清掉曲线**（`docs/143` §2：原版一发结算完不再留线，用户实测）。
 	_clear_curve()
 	_pending_shot = {}
 	_shot_in_flight = false
-	if String(shot.get("phase", "local")) == "online":
+	if phase == "online":
 		return                      # 联机：生死与回合全在服务端，本地不结算
-	if _logic_settled:
+	if _flow.settled():
 		return                      # 压平模式：这一发在开火那一刻已经结算过了
-	_finish_round(shot)
+	_finish_round()
 
 ## 一个回合的收尾：回合轮转 → 回合结算（`_settle_round` 里含判胜负）。
-func _finish_round(_shot: Dictionary) -> void:
-	_logic_settled = true
+## "这一发结算过没有"那个闩在 Rust（`ShotLifecycle::settle`）。
+func _finish_round() -> void:
 	_next_turn(true)
 	_settle_round()
 
@@ -1630,8 +1623,7 @@ func flush_shot() -> bool:
 	if _pending_shot.is_empty():
 		return false
 	_advance_curve(1000000.0)          # 推到"揭完"那个 tick（Rust 侧夹住上限，不会越界）
-	_apply_kills_up_to(1 << 30)
-	_on_shot_arrived()
+	_apply_shot_events(_flow.flush())
 	return true
 
 ## 自检入口：按**秒**推进弹道，走与 `_process` 完全相同的那条路（可复现）。
@@ -1643,49 +1635,37 @@ func advance_shot_for_test(seconds: float) -> void:
 
 # ---------------------------------------------------------------- AI 的回合（docs/143 §6）
 
-## AI 的一发**自定**函数：一条过射手、指向最近敌人的直线（`f(x) = m·x`）。
+## 每帧问一次"是不是该 AI 动手了"。
 ##
-## 为什么这样能指过去：修正常数 `c = y0 − f(x0)`（`docs/24` §6.2）会把曲线钉在射手身上，
-## 所以 `m = (y敌 − y我)/(x敌 − x我)` 的那条线正好穿过敌人。
-## **这不是原版 AI**：原版是 `aigen` 的进化器（`docs/AI.md`、`docs/109` §4），
-## 还没接进客户端（`docs/143` §6.4）。这里只保证"AI 的回合真的会有人开火"。
-func _bot_aim_expression(soldier: Dictionary) -> String:
-	for s in _soldiers:
-		if not bool(s.alive) or int(s.team) == int(soldier.team):
-			continue
-		if is_same(s, soldier):
-			continue
-		var dx := float(s.pos.x) - float(soldier.pos.x)
-		if absf(dx) < 0.000001:
-			return "0"
-		return BOT_AIM_FORMAT % ((float(s.pos.y) - float(soldier.pos.y)) / dx)
-	return "0"
-
-## 每帧看一眼"是不是该 AI 动手了"。
-##
+## 闸门本体在 Rust（`GwBotTurn` → `graphwar_play_screen_control::BotTurn`）：
+## 思考倒计时、`can_fire` 的三个前置、"到点该开火"那个判断都不在 GDScript。
 ## 自动化运行里**不**让 AI 自动开火：自检用 `apply_external_shot()` 构造外部来弹
 ## （否则 AI 的弹道会插进断言中间，`docs/143` §6.5）。
 func _tick_bot_turn(delta: float) -> void:
-	if _bot_think_left < 0.0 or _shot_in_flight or not _running:
-		return
 	if _fast_forward():
 		return
-	_bot_think_left -= delta
-	if _bot_think_left <= 0.0:
+	if _bot.tick(delta, _running and not _shot_in_flight):
 		bot_take_turn()
 
 ## AI 回合：由**它自己**开一发。
 ##
 ## 旧实现根本没有这一步 —— 回合轮转到了 Bot，界面上什么都不发生，要等人类再按一次
 ## Fire 才会"动一下"（用户实测的"卡住"，`docs/143` §6.1）。返回是否真的开了火。
+##
+## 函数串由 Rust 给（`GwBotTurn.aim_expression`：一条过射手、指向最近敌人的直线，
+## **不是原版 AI** —— 原版是 `aigen` 进化器，`docs/AI.md`/`docs/143` §6.4）。
 func bot_take_turn() -> bool:
 	if not _running or _shot_in_flight or _online_mode or _replay_mode:
 		return false
 	var shooter := _active_soldier()
 	if shooter.is_empty() or not bool(shooter.alive) or not bool(shooter.get("is_bot", false)):
 		return false
-	_bot_think_left = -1.0
-	var expr := _bot_aim_expression(shooter)
+	_bot.disarm()
+	var targets: Array = []
+	for s in _soldiers:
+		targets.append({"x": float(s.pos.x), "y": float(s.pos.y),
+			"team": int(s.team), "alive": bool(s.alive)})
+	var expr := _bot.aim_expression(shooter.pos, int(shooter.team), targets)
 	var direction := 1.0 if int(shooter.team) == 0 else -1.0
 	var result := GwCore.calculate_path(expr, shooter.pos, direction)
 	if not bool(result.ok):
@@ -1701,20 +1681,22 @@ func bot_take_turn() -> bool:
 	_commit_shot(shot)
 	return true
 
-## 一次射击 / 一轮同时回合的**结算**：① 回合数 +1；② "打不全就全部复原"；③ 判胜负。
+## 一次射击 / 一轮同时回合的**结算**：① 回合数 +1（Rust）；② "打不全就全部复原"；③ 判胜负。
 ##
-## 回合数为什么在这里 +1：战役关 `TimeModeInfo = TimerInf`（`docs/123` §5.1 #9），
-## 根本没有超时路径，一个回合只能由"打完一发"来推进。LAN 的 3 分钟超时不计回合
-## （那些对局的 `turn_limit` 恒为 0，`docs/118` §7.1）。这条口径见 `docs/131` §4.3。
+## 回合数为什么在结算时才 +1：战役关 `TimeModeInfo = TimerInf`（`docs/123` §5.1 #9），
+## 没有超时路径，一个回合只能由"打完一发"推进（`docs/131` §4.3）。
 func _settle_round() -> void:
 	if _replay_mode:
 		return          # 回放的胜负由录像自己的 GameStateInfo 决定，不在这里判
-	_turns_used += 1
+	# 回合 +1 在 Rust（`ShotLifecycle::settle`，**同一发只收一次**）；这里只读结果。
+	var outcome := _flow.settle()
+	if not bool(outcome.get("settled", false)):
+		return
 	var restored := _apply_target_reset()
 	var extra := ""
 	if not restored.is_empty():
 		extra = " ／ 本发没打全 ⇒ 靶子全部复原（推断，docs/131 §4）"
-	_status("%s ／ 回合 %d/%s%s" % [_shot_status, _turns_used,
+	_status("%s ／ 回合 %d/%s%s" % [_shot_status, int(outcome.get("turns_used", 0)),
 		"∞" if _rules == null or _rules.turn_limit() <= 0 else str(_rules.turn_limit()), extra])
 	_check_match_over()
 
@@ -1783,24 +1765,15 @@ func _simultaneous_announced() -> Array:
 				break
 	return out
 
-## 命中判定 —— 走**内核的掩膜规则**（`docs/120`）。
+## 命中的**纯计算**（不改任何状态）：谁被打中、弹道第几个点打中的、停在哪。
+## 拆出来是为了让"算结果"（= 原版 `SynchronizingResults`）与"结果落地"
+## （= `ExecutingResults` 的 tick）分开 —— 后者在 Rust 的 `ShotLifecycle`（docs/16 §53）。
 ##
-## 真实规则在 `src/graphwar_shot_calculator/settle.rs::resolve_points`（`docs/30` 的真对局回放）：
-## 障碍光栅化进 1000×600 掩膜决定弹道停在哪；士兵与**靶子**都**不**挡弹道，只在
-## "弹道点落在半径内"时判死（`PosInfo.radius` 恒 0.5）。
-## 射手本人不参与致死（`settle` 的约定：子弹从自己身上出发）。
-##
-## ⚠️ 靶子与士兵塞进 **同一个** `hit_test` 数组（借用关系，见 `GwTargetSet.entities()`
-## 与 `docs/131` §3.1）：内核第 3 个入参只当"半径实体"用，回的 `hits` 是**下标**，
-## 所以下标 → 实体的映射由本函数的 `owners` 表负责。**靶子必须在这里**，
-## 否则打靶关的靶子只是"画着玩的"（那就是 `docs/131` §1 的 bug）。
-## 判一次命中的**纯计算**部分（不改任何状态）：谁被打中、弹道第几个点打中的、
-## 弹道停在哪。拆出来是为了让"算结果"（= 原版的 `SynchronizingResults`）与
-## "结果落地"（= `ExecutingResults` 的 tick）分开 —— 后者靠弹道揭示（`docs/143` §3）。
-##
-## ⚠️ 靶子与士兵塞进 **同一个** `hit_test` 数组（借用关系，见 `GwTargetSet.entities()`
-## 与 `docs/131` §3.1）：内核第 3 个入参只当"半径实体"用，回的 `hits` 是**下标**，
-## 所以下标 → 实体的映射由本函数的 `owners` 表负责。
+## 规则走**内核掩膜**（`docs/120`，真值在 `shot_calculator::settle::resolve_points`）：
+## 障碍决定停点，士兵与靶子都不挡弹道，只在"点落在半径内"时判死；射手本人不参与。
+## ⚠️ 靶子与士兵塞进**同一个** `hit_test` 数组（`docs/131` §3.1）：内核第 3 个入参只当
+## "半径实体"用、回的 `hits` 是**下标**，所以下标 → 实体的映射靠下面的 `owners` 表。
+## **靶子必须在这里**，否则打靶关的靶子只是"画着玩的"（`docs/131` §1 的 bug）。
 func _judge_shots(shots: Array) -> Dictionary:
 	var kills: Array = []
 	var target_kills: Array = []
@@ -1812,13 +1785,16 @@ func _judge_shots(shots: Array) -> Dictionary:
 		var pts: PackedVector2Array = shot.points
 		var entities: Array = []        # hit_test 第 3 个入参：[{pos, radius}, …]
 		var owners: Array = []          # 与 entities 同下标：{kind: "soldier"/"target", …}
-		for s in _soldiers:
+		for si in _soldiers.size():
+			var s: Dictionary = _soldiers[si]
 			if not bool(s.alive):
 				continue
 			if is_same(s, shot.get("soldier", null)):
 				continue                      # 射手本人不参与致死判定
 			entities.append({"pos": s.pos, "radius": GwCore.SOLDIER_HIT_RADIUS})
-			owners.append({"kind": "soldier", "soldier": s, "pos": s.pos,
+			# `index` = **士兵下标**：Rust 侧的落地队列只拿它认人
+			# （`ShotLifecycle` 不持有 GDScript 字典，见 `docs/16` §53.2）。
+			owners.append({"kind": "soldier", "index": si, "soldier": s, "pos": s.pos,
 				"radius": GwCore.SOLDIER_HIT_RADIUS})
 		for t in _targets.entities():
 			entities.append(t)
@@ -1845,8 +1821,8 @@ func _judge_shots(shots: Array) -> Dictionary:
 			var owner: Dictionary = owners[i]
 			var at := _first_point_within(pts, owner["pos"], float(owner["radius"]))
 			if String(owner["kind"]) == "soldier":
-				kills.append({"soldier": owner["soldier"], "point": at,
-					"pos": owner["pos"], "kind": "soldier"})
+				kills.append({"soldier": owner["soldier"], "index": int(owner["index"]),
+					"point": at, "pos": owner["pos"], "kind": "soldier"})
 			else:
 				target_kills.append({"target_id": int(owner["target_id"]), "point": at,
 					"pos": owner["pos"], "kind": "target"})
@@ -1875,21 +1851,22 @@ func _note_shot_status() -> void:
 	if sources.is_empty():
 		return
 	_shot_status = "本轮命中 %d 个士兵、%d 个靶子 ／ 判定来源：%s ／ %s%s" % [
-		_kills_this_shot, _target_kills_this_shot, String(sources[0]),
+		_flow.kills_landed(), _flow.targets_landed(), String(sources[0]),
 		String(_judged.get("note", "")),
 		"（弹道被障碍拦下）" if bool(_judged.get("blocked", false)) else ""]
 	_status(_shot_status)
 
 ## 一次性结算一批弹道（同时回合、外部来弹、压平模式都走这条）。
-## 与逐 tick 那条路径共用 `_judge_shots()` + `_apply_kills_up_to()`：**判定只有一份**。
+## 与逐 tick 那条路径共用 `_judge_shots()` + Rust 的 `ShotLifecycle`：**判定只有一份**。
 func _resolve_shots(shots: Array) -> void:
 	_judged = _judge_shots(shots)
-	_kills_this_shot = 0
-	_target_kills_this_shot = 0
 	_destroyed_this_shot.clear()
-	_pending_kills = (_judged.get("kills", []) as Array).duplicate()
-	_pending_target_kills = (_judged.get("target_kills", []) as Array).duplicate()
-	_apply_kills_up_to(1 << 30)
+	# 这一批**没有单条弹道在飞**（同时回合攒齐 / 外部来弹）⇒ 命中一次全落地，
+	# 既没有"到达"，也没有爆炸与清线（旧实现同口径，`docs/16` §53.6 登记过）。
+	_flow.begin(0, _judged.get("kills", []), _judged.get("target_kills", []),
+		_judged.get("stop", Vector2.ZERO), false)
+	_apply_shot_events(_flow.land_all())
+	_flow.abort()                     # 这一批没有单条弹道在飞 ⇒ 不收尾、不判到达
 	_note_shot_status()
 
 ## 靶子的绘制入口：真 `EntityDrawer` 里的实体表是**唯一**的画布来源，
@@ -1945,12 +1922,12 @@ func _next_turn(advance: bool) -> void:
 	if idx >= 0 and idx < _soldiers.size():
 		_active_soldier_idx = idx
 		_active = int(_soldiers[idx].player)
-	_time_left = float(GwModes.turn_seconds(app_node.state.time_mode))
-	# 轮到 AI ⇒ 起倒计时（automation 运行里不自动开火，见 `_tick_bot_turn()`）。
-	_bot_think_left = -1.0
+	# 回合时钟归零（Rust：`GwTurnClock.restart`），AI 闸门先取消。
+	_turn_clock.restart()
+	_bot.disarm()
 	var shooter := _active_soldier()
 	if not shooter.is_empty() and bool(shooter.get("is_bot", false)):
-		_bot_think_left = BOT_THINK_SECONDS
+		_bot.arm()
 	_load_active_function()
 	_update_timer_label()
 	_refresh_function_list()
@@ -1987,7 +1964,7 @@ func _check_match_over() -> void:
 		"teams_present": _teams_present(),
 		"targets_total": _targets.total(),
 		"targets_alive": _targets.alive_count(),
-		"turns_used": _turns_used,
+		"turns_used": _flow.turns_used(),
 	})
 	_last_verdict = verdict
 	if not bool(verdict.get("over", false)):
@@ -2041,18 +2018,21 @@ func level_state() -> Dictionary:
 		"running": _running,
 		"rules": (_rules.snapshot() if _rules != null else {}),
 		"targets": _targets.snapshot(),
-		"turns_used": _turns_used,
+		"turns_used": _flow.turns_used(),
 		"verdict": (_last_verdict.duplicate(true) if not _last_verdict.is_empty() else {}),
 		"shot_status": _shot_status,
 		"obstacles": _obstacles.size(),
 		# --- 弹道生命周期（docs/143）：这些字段只读，不参与逻辑，给自检/诊断看 ---
+		# **全部来自 Rust**（`GwShotFlow.snapshot()` 与它的分项读数）。
 		"in_flight": _shot_in_flight,
-		"logic_settled": _logic_settled,
-		"pending_kills": _pending_kills.size(),
-		"pending_target_kills": _pending_target_kills.size(),
+		"logic_settled": _flow.settled(),
+		"pending_kills": _flow.pending_kills(),
+		"pending_target_kills": _flow.pending_targets(),
 		"shot_points": (_pending_shot.get("points", PackedVector2Array()) as PackedVector2Array).size(),
-		"kills_this_shot": _kills_this_shot,
-		"target_kills_this_shot": _target_kills_this_shot,
+		"soldiers_landed": _flow.kills_landed(),
+		"targets_landed": _flow.targets_landed(),
+		"lifecycle": _flow.snapshot(),
+		"turn_clock": _turn_clock.snapshot(),
 		"effects": (_effects.count() if _effects != null else -1),
 		"effects_spawned": (_effects.spawned() if _effects != null else {}),
 		"fx_log": _fx_log.duplicate(true),
@@ -2066,7 +2046,7 @@ func level_state() -> Dictionary:
 		"soldiers": _soldiers.size(),
 		"alive_soldiers": _alive_soldier_count(),
 		"turn_driver": _turn_driver.snapshot(),
-		"bot_think_left": _bot_think_left,
+		"bot_think_left": _bot.think_left(),
 		"status": _status_text,
 		"path_points": _curve_reveal(),
 	}
@@ -2148,7 +2128,6 @@ func _begin_replay(path: String) -> void:
 	_soldiers.clear()
 	_targets = GwTargetSet.new()
 	_destroyed_this_shot.clear()
-	_turns_used = 0
 	_last_verdict = {}
 	_reset_shot_state()
 	_clear_curve()
@@ -2488,7 +2467,6 @@ func _begin_online(app_node) -> void:
 	_soldiers.clear()
 	_targets = GwTargetSet.new()
 	_destroyed_this_shot.clear()
-	_turns_used = 0
 	_last_verdict = {}
 	_reset_shot_state()
 	_time_left = 0.0
@@ -2862,7 +2840,9 @@ func _draw_online_shot(owner_id: int, start: Vector2, end_x: float) -> void:
 	# 新的 `FunctionFire`，本地不能比它更宽松。**不**做本地结算（生死/回合在服务端）。
 	_pending_shot = {"phase": "online", "owner": owner_id, "stop": impact,
 		"judged": {"stop": impact, "sources": []}}
-	_logic_settled = true
+	# 周期本体在 Rust：点数为 `cut.size()`、命中队列空、`already_settled = true`
+	# （联机下生死与回合都归服务端，本地只负责"飞到哪就收尾"）。
+	_flow.begin(cut.size(), [], [], impact, true)
 	_shot_in_flight = true
 	var app_node := app()
 	if app_node != null and int(app_node.state.function_mode) == 0:
@@ -2983,14 +2963,19 @@ func _process(delta: float) -> void:
 		return
 	# 轮到 AI ⇒ 到点由**它自己**开火（旧实现没有这一步，界面上就一直等着人类再按 Fire）。
 	_tick_bot_turn(delta)
-	var limit := GwModes.turn_seconds(app_node.state.time_mode)
-	if limit <= 0:
-		_update_timer_label()
+	# 回合时钟 + 超时谓词都在 Rust（`GwTurnClock` → `handle_tick` 的三个合取项，
+	# `0x470989`–`0x4709ec`）：状态（在等开火）、截止 tick、"有人在等"。
+	if not _turn_clock.has_deadline():
+		_update_timer_label()      # `TimerInf`：没有截止时刻（战役关 21/21 都是这一档）
 		return
-	_time_left -= delta
-	if _time_left <= 0.0:
-		_status("回合时限到，自动换手")
-		_next_turn(true)
+	_turn_clock.advance(delta)
+	if String(_turn_clock.decide(_shot_in_flight, _running)) == "auto_fire":
+		# 原版到点做的**不是**换手，而是 `call fire_functions`（`0x4709ec`）：
+		# 把已提交的那个函数打出去。这里照做；万一打不出去（输入框空 / 轮到 AI），
+		# 才退回换手 —— **我方兜底**，见 `docs/16-client.md` §53.4。
+		if not fire():
+			_status("回合时限到，没有可提交的函数 ⇒ 换手")
+			_next_turn(true)
 	_update_timer_label()
 
 ## 倒计时。**无限时限时原版是空白**（观测：`orig_campaign_play.png` 左下角没有任何字符，
@@ -3001,11 +2986,14 @@ func _update_timer_label() -> void:
 	var app_node := app()
 	if app_node == null:
 		return
-	var limit := GwModes.turn_seconds(app_node.state.time_mode)
-	if limit <= 0:
-		_timer_label.text = ""
+	# 联机：倒计时是本地那条 `_time_left`（换手与否归服务端，本屏只显示）。
+	if _online_mode:
+		var limit := GwModes.turn_seconds(app_node.state.time_mode)
+		_timer_label.text = "" if limit <= 0 else GwModes.format_clock(_time_left)
 		return
-	_timer_label.text = GwModes.format_clock(_time_left)
+	# 本地：秒数由 Rust 的回合时钟给（`-1.0` = 无限时档 ⇒ 空白）。
+	var left := _turn_clock.seconds_left()
+	_timer_label.text = "" if left < 0.0 else GwModes.format_clock(left)
 
 # ---------------------------------------------------------------- 附加按钮与显示开关
 
