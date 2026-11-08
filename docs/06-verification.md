@@ -4738,3 +4738,124 @@ $PY tools/frida_point_array.py --triple-report $R/run.jsonl --label matchX --ora
 **没有改动**：`src/`（一个字节都没动）、`client/`、`dispatch/`、`fixtures/guardrails.json`、
 既有的任何夹具格式与断言。原始 JSONL（几百 MB，含整条数组十六进制）**不入库**，
 `run/`、截图、`user://` 数据一律没进库；样本由 `--triple-report` 一条命令从原始 JSONL 重放得到。
+
+## 41. 合并闸门的两处口径：大文件三档 + 冻结语料指纹（2026-11-09，`dispatch/68`）
+
+> 本轮只动工具与文档：`tools/merge_check.py`、`tools/bit_exact_attrib.py`、
+> `fixtures/guardrails.json`（**只加 `corpus` 字段，三轴数字一位没动**——改完用 JSON 逐键比对，
+> `axes` / `_comment` / `_updated` 与改前**完全相同**）、`AGENTS.md`、本节。
+> `src/`、`client/`、`examples/`、`tests/`、既有夹具格式：**零改动**。
+>
+> 证据等级：本节全部是**观测**（工具在本分支上实跑的输出与退出码），不是推断。
+
+### 41.1 大文件闸：三档，各自独立
+
+起因：`merge_check.py` 原先 `MAX_KB=100` 一刀切，而"文本真值表入库"是常态 —— 第十二轮
+**52 / 57 / 61 三次**被拦，每次都要人肉 `--allow` 并在合并提交里写理由。临时方案（fixtures
+下文本放宽到 4 MB）已作废，改成下面三档：
+
+| 档 | 范围 | 上限 | 处置 |
+|---|---|---|---|
+| ① 代码/文档 | `src/ client/ docs/ tools/ tests/ examples/` + 根目录杂项 | **100 KB** | 卡死；`--allow-large` **无效** |
+| ② 文本真值表 | `fixtures/` 下的 `.tsv .jsonl .md .txt .json .csv` | **8 MB** | 超了要 `--allow-large 'PATTERN=理由'`，理由逐条打印（结论里再列一遍，供合并提交照抄） |
+| ③ 二进制/压缩 | `BIN_EXT` 扩展名，或 git 判定的二进制 | **任何大小都拦** | 卡死；`--allow-large` **无效** |
+
+判档只看**路径与扩展名**（不读内容），放行语义才可预测；内容层面的二进制另有
+`git diff --numstat` 的 `-  -` 一条独立信号。**默认档是 ①**（宁可拦错，不可漏放）。
+
+自测（造 10 个假分支，只看退出码，不碰真仓库、不碰 origin）：
+
+```bash
+python3 tools/merge_check.py --self-test
+#  ✅ big-tsv         rc=1   9 MB .tsv 超 ② 档 8 MB
+#  ✅ ok-tsv-2mb      rc=0   2 MB .tsv 在 ② 档内（这类以前要人肉放行）
+#  ✅ edge-tsv-8mb    rc=0   正好 8 MB 不算超
+#  ✅ big-md-docs     rc=1   docs/ 下 200 KB .md（① 档卡死）
+#  ✅ ok-md-fixtures  rc=0   fixtures/ 下 200 KB .md（② 档）
+#  ✅ big-png-1kb     rc=1   1 KB 的 .png 也拦（③ 档，与大小无关）
+#  ✅ big-jsonl       rc=1   9 MB .jsonl（jsonl 也算文本真值表 ⇒ ② 档）
+#  ✅ allow-tsv       rc=0   --allow-large 'PATTERN=理由' 放行且把理由登记出来
+#  ✅ allow-code      rc=1   --allow-large 打到 docs/ ⇒ 无效（① 档不放宽）
+#  ✅ allow-png       rc=1   --allow-large 打到 .png ⇒ 无效（③ 档不放宽）
+```
+
+真实用法：先例 `fixtures/parse_matrix_truth.tsv` 1.6 MB、`fixtures/callgraph_fingerprint.tsv`
+1.5 MB 这类**可复算真值表**现在落在 ② 档内，**不再需要人肉放行**；只有超过 8 MB 才要显式放行：
+
+```bash
+python3 tools/merge_check.py --cg origin/CG \
+    --allow-large 'fixtures/big_truth.tsv=任务书 §5 要求入库的可复算真值表'
+```
+
+放行条目会在【C】节与结论里各打印一次（`--allow-large` 的模式 + 理由），没有理由会显式告警
+（`⚠️ ... 没写理由`）——**理由要照抄进合并提交**。
+
+### 41.2 冻结语料 + 指纹（把"401 → 403"那次事故制度化）
+
+事故：把两份新 replay 拷进 `.agent-work/replay-snapshot/`（401 → 403），三轴数字全变
+（内容 647 → 654、批 1080 → 1094），护栏校验报 **7 项不一致**。
+
+`fixtures/guardrails.json` 现在多一个 `corpus` 字段（**三轴数字没动**）：
+
+| 字段 | 含义 |
+|---|---|
+| `count` / `replays` | 快照目录文件数 **403** / 其中回放 **401**（另外两个是 `SHA256SUMS`、`MANIFEST.tsv`） |
+| `names_sha256` | **文件名集合**的指纹 = `sha256("\n".join(排序后的文件名) + "\n")` |
+| `digest_sha256` | 名字 + 内容一起的指纹 = `sha256(排序后的 "<sha256>  <文件名>" 行 + "\n")` |
+| `files` | 逐文件 `"<sha256>  <文件名>"`（与 `sha256sum` 输出同格式，按文件名排序；只记名字不记路径） |
+| `dir_hint` | 快照目录末两段（`gw2-replays-snapshot/replays`），只作提示，校验不比路径 |
+
+`bit_exact_attrib.py --check-baseline` 现在**先比语料、再比数字**：
+
+```bash
+python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire \
+    --snapshot .reference/replays/gw2-replays-snapshot/replays
+```
+
+- 一致：`文件数/回放文件数/names_sha256/digest` 四行全 `OK`，打印 `⇒ 语料一致（冻结）`；
+- 不一致：四行逐项标 `❌ 不一致`，并**点名** `多出 N 个 / 少了 N 个 / 内容变了 N 个`，退出码 1；
+- 没给 `--snapshot`：只打一行 `⚠️ 未校验`（三轴数字照比，旧的文档命令仍可用）。
+  `merge_check.py` 跑护栏时**一定**带 `--snapshot`，所以合并闸门这一侧是强制的。
+
+**为什么连内容 sha256 一起记**：只比文件名集合时，"把同名回放覆盖成别的样本"会静默溜过去。
+本轮实测的四个场景（快照目录如实为 403 个文件 / 401 份回放）：
+
+| 场景 | 输出要点 | 退出码 |
+|---|---|---|
+| 干净快照 | `文件数 403/403`、`names_sha256` 与 `digest` 双向一致 | **0** |
+| 故意多拷一份 `1999999999`（复制自 `1782640359`） | `多出 1 个：1999999999`、`5 项不一致` | **1** |
+| 副本里删掉 `1782640433` | `少了 1 个：1782640433` | **1** |
+| 副本里给 `1782640520` 追加 1 字节（**同名**） | `内容变了 1 个：1782640520`（只有 `digest` 变、`names_sha256` 不变） | **1** |
+
+第一条污染测试是**在真快照上**做的，验完已删掉那一个文件：`sha256sum -c SHA256SUMS`
+**401 行全通过**、`--check-baseline` 回到 rc=0（另外两条在 `cp -a` 的副本上做，不动真快照）。
+
+真要换语料：`python3 tools/bit_exact_attrib.py --update-corpus --snapshot <目录>` 重新登记
+（打印新旧文件数），并在本节 + 提交信息里写明**多了/少了哪些文件**，三轴全部重算。
+**新样本另开目录（如 `.agent-work/replay-new/`），不许混进快照。**
+
+### 41.3 一处口径更正：`batch_conv` 轴不是 `replay_attrib --drive conv`
+
+`merge_check.py --axes` 以前把 `batch_conv` 映射成 `replay_attrib --drive conv`。本轮实测
+两者**不是同一条轴**（同一份快照、同一天）：
+
+| 命令 | 内容命中 | 种类序列 |
+|---|---|---|
+| `replay_attrib --drive conv --policy strict` | **605 / 1080** | **947** |
+| `batch_conv --policy strict` | **637 / 1080** | **1075**（= `guardrails.json` 的 `batch_conv` 轴） |
+
+⇒ 已改成走 `--example batch_conv`，与 `fixtures/guardrails.json` 里登记的 `cmd` 一致。
+留着的话，`--axes fire,batch,batch_conv` 会报**假红**（4 项不一致），把人往错方向带。
+
+### 41.4 本轮复跑（本分支实测，不是抄报告）
+
+| 项 | 命令 | 结果 |
+|---|---|---|
+| `fire` 轴 | `replay_attrib --drive fire --policy default` + `--check-baseline --axis fire --snapshot <快照>` | 结算批 **1080** · 内容 **647** · 种类 **1075** · 死亡 **366/385** · 挖洞 **207/294** —— 全部一致，语料指纹一致 |
+| `batch` 轴 | 同上，`--drive batch` / `--axis batch` | **1080 / 647 / 1075 / 366-385 / 207-294** —— 全部一致 |
+| `batch_conv` 轴 | `batch_conv --policy strict` + `--axis batch_conv` | **1080 / 637 / 1075 / 347-385 / 207-294** —— 全部一致 |
+| 大文件闸 | `merge_check.py --self-test` | **10/10** 通过（三个阈值各自生效 + `--allow-large` 正反两面） |
+| 回归 | `cargo test --offline` | **1693 passed / 0 failed**（71 个 test 二进制 + 1 个 doc-tests 的 `test result:` 行求和） |
+| 覆盖率 | `coverage_matrix.py --check` | **OK**（原版可归属 527 个函数，逐位 88 / 观测 439 / 推断 0 / 未做 0） |
+| 文档引用 | `check_doc_refs.py` | **rc=0**（无死链） |
+| 闸门自身耗时 | `merge_check.py --branch <分支> --base <起点>` | **0.11 s**（`--run-tests` 之外，远低于 1 s 上限） |
