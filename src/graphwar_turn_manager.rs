@@ -98,12 +98,120 @@
 //! | `== 0`（顺序回合） | **单元素**：玩家表 `[+0x8]` 那个 `Vec` 的第 `[+0x18]` 个（当前玩家） | **单元素**：该玩家 entry 的 `soldiers[cursor]` | `0x462846`–`0x46286f` / `0x4629de`–`0x462ab0` |
 //! | `!= 0`（同时回合） | 玩家表 `[+0x28]` 哈希表的**全部键**（`0x46282c call 0x3c03b0` 是 collect 适配器，取键在 `0x3c0484 mov eax,[r13+rax*8-0x28]`） | 每个 entry 的 `soldiers[cursor]`（`0x4629bc mov ebx,[rax+rdi*4]`；空 `Vec` 跳过 `0x46299f`） | `0x4627e9`–`0x462844` / `0x46290b`–`0x4629d3` |
 //!
-//! ⚠️ **本层只实现"同时回合"那一支的集合**：[`TurnManager`] 的模型是"每玩家一个游标"
-//! 那张表，**没有** `+0x58` mode 字段，也没有顺序回合那条"当前玩家游标" ⇒
-//! [`TurnManager::is_on_turn`] 在 `SequentialTurns` 下是原版的**超集**
-//! （原版只让当前玩家 + 其当前士兵为真）。缺的证据：`+0x58` 的写者
-//! （`set_turn_mode` `0x462d20` / `get_turn_mode` `0x462c10` 都还没接）与顺序回合的
-//! 当前玩家游标。详见 `docs/16-client.md` §48.5。
+//! ⚠️ 任务 46 当时**只实现"同时回合"那一支**（[`TurnManager`] 是"每玩家一个游标"那张表，
+//! 没有 `+0x58` mode 字段、也没有顺序回合那条"当前玩家游标"）⇒ 那时
+//! [`TurnManager::is_on_turn`] 在 `SequentialTurns` 下是原版的**超集**。
+//! **任务 50 补上了那一支**：[`TurnMode`]（`+0x58` 那个字节）+ 玩家**出场序表** +
+//! 当前玩家游标 + [`TurnManager::set_turn`]（`0x4638f0`），见下面的 §7。
+//!
+//! ## 7. `TurnData[+0x58]` = `TurnMode` 字节；顺序支用"出场序表 + 当前玩家游标"（任务 50，`观测`）
+//!
+//! ### 7.1 那个字节是什么（`观测`）
+//!
+//! **`TurnData[+0x58]` 是一个 1 字节的 `TurnMode`**，两个变体（判别值就在字节里）：
+//!
+//! | 字节 | 变体 | 谁读 | 谁写 |
+//! |---|---|---|---|
+//! | `0` | `SequentialTurns` | 两个 getter：`0x4627e3` / `0x4628fc` `cmp byte [rsi+0x58],0` + `je` 进顺序支 | [`TurnManager::set_turn`] 不写它；`set_turn_mode` 写 |
+//! | `1` | `SimultaneousTurns` | 同上（`!= 0` 进同时支） | 同上 |
+//!
+//! 证据链（全部 x86 2026-08-28，vaddr）：
+//!
+//! ```text
+//! 0x462c10  get_turn_mode   : movzx eax, byte ptr [r14+0x70]   ; r14 = ArcInner ⇒ data+0x58
+//! 0x462d20  set_turn_mode   : mov   byte ptr [r14+0x70], sil   ; 写同一个字节
+//!                             0x462d9a movzx eax,[r14+0x70] / 0x462dae call add_event
+//!                             ; ⇒ set_turn_mode 还把新值发一条事件（tag 0x2f = 47 = TurnModeInfo）
+//! 0x3cbf70  TurnMode::serialize（serde）:
+//!                             cmp byte ptr [r14], 1
+//!                             0x3cbfd3 lea 'SimultaneousTurns'(17) / 0x3cbfe1 lea 'SequentialTurns'(15)
+//!                             ⇒ **判别值 1 = SimultaneousTurns，0 = SequentialTurns**
+//! 0x1c18d5  'SequentialTurns' / 0x1c18e4 'SimultaneousTurns'  ; 两串紧挨，且紧跟在
+//!           0x1c18ad 'new_connection_event' / 0x1c18c1 'entity_removed_event' 之后
+//!           （同模块 .rodata 簇；`GraphwarTurnManager::new` 0x4637fc 就取前两串）
+//! ```
+//!
+//! 判别值的**语义**（哪一支是"顺序"）由两个 getter 自己给出：`== 0` 那一支只返回
+//! **一个**玩家的 id 与**一个**士兵（下节），`!= 0` 那一支返回全部 —— 与
+//! `graphwar_level_manager::TurnMode` 里 `SequentialTurns = 0` 的既有记录一致。
+//!
+//! 初值：**Windows 2.0.60**（同版本、同名函数 `GraphwarTurnData::new`，RVA `0x4a6f0`）
+//! `mov byte ptr [rsi+0x58], 0` ⇒ 默认 `SequentialTurns`。ELF 侧的构造函数没逐位定位
+//! （`TurnData` 由 `Arc<Mutex<…>>` 的分配路径里初始化，未单独确认），这一条标 **观测（跨构建）**。
+//!
+//! ### 7.2 顺序支返回什么（`观测`）
+//!
+//! ```text
+//! get_current_turn_players  (rsi = &TurnData)
+//!   0x462846 mov rax,[rsi+0x10]      ; 出场序表的 len（空 ⇒ 返回空 Vec，0x46284d je 0x462878）
+//!   0x46284f mov rdi,[rsi+0x18]      ; **当前玩家游标**（usize）
+//!   0x462853 cmp rdi,rax ; 0x462856 jae panic（index out of bounds）
+//!   0x462858 mov rax,[rsi+8]         ; 出场序表的 ptr
+//!   0x46285c mov ebp,[rax+rdi*4]     ; players[current] ⇒ 单元素
+//!
+//! get_current_turn_soldiers (rsi = &TurnData)
+//!   0x4629de…0x4629fc               ; 同上取当前玩家 id（同一对 [+0x8]/[+0x10]/[+0x18]）
+//!   0x462a03 cmp qword [rsi+0x40],0 ; 玩家表（HashMap）空 ⇒ 返回空 Vec
+//!   0x462a6d cmp ebp,[rcx+r8*8-0x28]; 用玩家 id 查表
+//!   0x462a9e mov rsi,[rax-0x10]     ; entry 的士兵表 len（空 ⇒ 返回空 Vec）
+//!   0x462aa7 mov rdi,[rax-8]        ; **该玩家的士兵游标**
+//!   0x462ab0 mov rax,[rax-0x18]     ; 士兵表 ptr
+//!   0x462ab4 mov ebx,[rax+rdi*4]    ; soldiers[cursor] ⇒ 单元素
+//! ```
+//!
+//! ⇒ **顺序支 = 「`players[current]`」+「`players[current]` 的 `soldiers[cursor]`」**，
+//! 与同时支共用同一张玩家表（entry 形状也一样：士兵表 ptr/len/游标）。
+//!
+//! ### 7.3 那个游标是谁写的（`观测`）
+//!
+//! `GraphwarTurnManager::set_turn`（x86 **`0x4638f0`**，`rcx=self` / `esi=player_id` /
+//! `edx=soldier_id`，都是 `u32`）——**它是顺序支那两个游标的唯一写者**：
+//!
+//! ```text
+//! 0x463957/0x463970  在出场序表（data+0x8 ptr / +0x10 len）里线性找 player_id
+//! 0x463a77/0x463a7a  找到第 rcx 个 ⇒ mov [rbx+0x30], rcx      ; data+0x18 = 当前玩家游标
+//! 0x463997/0x4639a3  没找到 ⇒ 追加到表尾（len+1），游标 = 新位置（r13 = 旧 len）
+//! 0x4639ab test r14d,r14d / je 0x463a8b                        ; soldier_id == 0 走"删记录"
+//! 0x463a8b…0x463aaa  soldier_id == 0 ⇒ HashMap::remove(player)（0x486f20）⇒ **整条记录没了，
+//!                    但出场序表里那一格不删**（下游因此不对称：players 仍有它、soldiers 没有）
+//! 0x463ba0 cmp [rax+rcx*4], r14d ; 0x463c5d mov [r13-8], rcx   ; 士兵已在表里 ⇒ 游标 = 它的位置
+//! 0x463bc6 mov [rax+rbp*4], r14d ; 0x463bd2 mov [r13-8], rbp   ; 否则追加，游标 = 新位置
+//! 0x463c09 lea rax,[r14+0x2c] / 0x463c17 call add_event(0x3d3530)
+//!                    ; ⇒ 发一条 {player_id, soldier_id}（tag 0x2b = 43 = **TurnInfo**）
+//! ```
+//!
+//! 喂它的是远端事件处理器 **`0x3e2830`**（`graphwar_remote_event_handler`）的一支：
+//! `0x3e3131 mov ebp,[rbx+8]` / `0x3e3134 mov r14d,[rbx+0xc]` / `0x3e3170 call 0x4638f0`
+//! ⇒ 载荷就是 `TurnInfo{player_id, soldier_id}` 那两个 `u32`。
+//!
+//! `TurnMode` 的写者：`set_turn_mode`（`0x462d20`）被远端事件（`0x3e41ae`，**TurnModeInfo**）、
+//! 游戏服（`0x4500c0`）与 `graphwar_game_state_manager` 的两态翻转（`0x476730`：
+//! `get_turn_mode` → `xor al,1` → `set_turn_mode`）调用。
+//!
+//! ### 7.4 本层怎么建模 + **回落开关**（我方接线，写清差异）
+//!
+//! * [`TurnMode`] 是**本模块新定义的枚举**（`0`/`1` 与二进制一致）。`graphwar_level_manager`
+//!   里已有一份同名同判别值的 `TurnMode`（关卡模式字节 `+0x3a`）；本轮**允许改的文件**
+//!   不含那个模块，所以没有合并成一个类型 —— 这是**我方结构差异**，不是证据。
+//!   Windows 符号里只有 `graphwar_turn_manager..TurnMode` 的 serde impl（`level_manager`
+//!   没有），**旁证**该类型原本定义在本模块。
+//! * [`TurnManager`] 加 `order`（出场序表）/`current`（游标）/`mode`（`+0x58`）。
+//!   `order`/`current` **只由 [`TurnManager::set_turn`] 喂**（照二进制）；
+//!   [`TurnManager::add_player`]（我方的轮转模型入口，二进制没有这个函数）**不喂它们**。
+//! * **回落开关** `sequential_fallback`（默认 `true`）：顺序支拿不到"当前玩家"
+//!   （出场序表空 / 游标越界，即 `set_turn` 还没被调用过）时，回落到同时支的全集
+//!   = 任务 46 之前的旧行为。原版在这条状态上是**空集**（`0x46284d je` 直接返回空 Vec），
+//!   所以把开关关掉就逐字回到二进制语义（`.with_sequential_fallback(false)`）。
+//!   为什么默认开：本层的 `set_turn` 还没有真生产者（远端事件处理器没接），
+//!   一把关掉会让画面"一具都不画"（`AGENTS.md` 合并纪律 3b 记过同类事故）。
+//!
+//! ### 7.5 仍是未知（诚实清单）
+//!
+//! | # | 项 | 档位 | 缺什么 |
+//! |---|---|---|---|
+//! | 1 | `set_turn` 那条事件的**转义/载荷编码** | 推断 | tag 由 `0x7fff…ffff + 0x2c` 反推为 43（`TurnInfo`），payload 两个 `u32` 观测；具体包装层（`add_event` 0x3d3530）未逐位解 |
+//! | 2 | 出场序表的**遍历/使用**者（除顺序支 getter 外） | 未知 | 只观测到 `set_turn` 写、两个 getter 读 `[current]`；`next_turn`（0x463da0）走的是玩家表（HashMap），不是这张表 |
+//! | 3 | `soldier_id == 0` 删记录后 `players` 仍返回已删玩家 | **观测**（0x463a8b vs 0x462846） | 原版就是这样不对称；是否真是"全灭即退场"的意图，未知 |
 
 use std::collections::BTreeMap;
 
@@ -116,6 +224,67 @@ use crate::graphwar_life_manager::{is_alive_byte, LifeState, Status, MISSING_STA
 /// "全灭 / 空队"的哨兵（`docs/98` §1.4，replay `1793884702` 实测到 `TurnInfo{soldier_id: 0}`）。
 /// [`PlayerTurns::add`] 会拒绝把 0 当真实士兵 id。
 pub const SOLDIER_ID_NONE: i64 = 0;
+
+// ---------------------------------------------------------------------------
+// 回合模式（`TurnData[+0x58]`）
+// ---------------------------------------------------------------------------
+
+/// 是回合制还是同时回合制 —— **`TurnData[+0x58]` 那个字节**（`0x4627e3` / `0x4628fc`）。
+///
+/// 判别值与名字（`观测`，模块文档 §7.1）：
+///
+/// ```text
+/// 0x3cbf70  TurnMode::serialize  : cmp byte [r14],1
+///                                  == 1 ⇒ 'SimultaneousTurns'(17 B) @0x1c18e4
+///                                  != 1 ⇒ 'SequentialTurns'  (15 B) @0x1c18d5
+/// ```
+///
+/// 两个 getter 用的是 `cmp byte [rsi+0x58], 0` + `je` ⇒ **只区分「0」与「非 0」**，
+/// 所以 [`TurnMode::from_byte`] 对任何非 0 都归到 [`TurnMode::SimultaneousTurns`]
+/// （照二进制，不替它拒绝未知值）。
+///
+/// ⚠️ `graphwar_level_manager` 里也有一份同名同判别值的 `TurnMode`（关卡模式字节 `+0x3a`）。
+/// Windows 符号里只有本模块这个类型带 serde impl，**旁证**原版只定义了一份；
+/// 本轮允许改的文件不含那个模块，所以两份暂时并存（**我方结构差异**，模块文档 §7.4）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, PartialOrd, Ord, Hash)]
+pub enum TurnMode {
+    /// 顺序回合：一回合只有"当前玩家 + 它当前的那个士兵"在回合内。判别值 `0`
+    /// （= `GraphwarTurnData::new` 的初值，模块文档 §7.1）。
+    #[default]
+    SequentialTurns = 0,
+    /// 同时回合：全部登记玩家 + 每人当前的那个士兵。判别值 `1`。
+    SimultaneousTurns = 1,
+}
+
+impl TurnMode {
+    /// 写进 `TurnData[+0x58]` 的那个字节。
+    pub const fn byte(self) -> u8 {
+        self as u8
+    }
+
+    /// 按二进制的判据读一个字节：**`0` = 顺序，非 `0` = 同时**（`0x4628fc cmp …,0`）。
+    pub const fn from_byte(b: u8) -> Self {
+        if b == 0 {
+            TurnMode::SequentialTurns
+        } else {
+            TurnMode::SimultaneousTurns
+        }
+    }
+
+    /// 只认 `0` / `1` 的严格版本（给"改模式"的验收入口用；二进制本身不校验）。
+    pub const fn from_known_byte(b: u8) -> Option<Self> {
+        match b {
+            0 => Some(TurnMode::SequentialTurns),
+            1 => Some(TurnMode::SimultaneousTurns),
+            _ => None,
+        }
+    }
+
+    /// 顺序回合？（顺序支 = 单玩家 + 单士兵）
+    pub const fn is_sequential(self) -> bool {
+        matches!(self, TurnMode::SequentialTurns)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // 队伍
@@ -204,6 +373,28 @@ impl PlayerTurns {
             "soldier_id 0 是\"全灭\"哨兵，不能作为真实士兵入表（docs/98 §1.4）"
         );
         self.soldiers.push(soldier_id);
+    }
+
+    /// **公告一个士兵**（`GraphwarTurnData::set_turn` 里那段，x86 `0x463ba0`–`0x463bd2`）：
+    /// 已在表里 ⇒ 游标指到**它的位置**（`0x463c5d mov [r13-8], rcx`）；
+    /// 不在 ⇒ 追加到表尾，游标 = 新位置（`0x463bc6` / `0x463bd2`）。
+    ///
+    /// 与 [`PlayerTurns::add`] 的区别：`add` 只追加（建表用），`announce` 会**去重**并
+    /// 移动游标 —— 这正是二进制那条"同一玩家的士兵表会被反复公告同一批 id"的路径。
+    /// 返回公告后游标的位置。
+    pub fn announce(&mut self, soldier_id: i64) -> usize {
+        assert_ne!(
+            soldier_id, SOLDIER_ID_NONE,
+            "soldier_id 0 是\"全灭\"哨兵：set_turn 对它走的是\"删记录\"分支（0x463a8b），不是入表"
+        );
+        match self.soldiers.iter().position(|&id| id == soldier_id) {
+            Some(i) => self.index = i,
+            None => {
+                self.soldiers.push(soldier_id);
+                self.index = self.soldiers.len() - 1;
+            }
+        }
+        self.index
     }
 
     /// 士兵列表（顺序 = 轮转顺序）。
@@ -397,6 +588,22 @@ pub struct PlayerEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnManager {
     players: BTreeMap<i64, PlayerEntry>,
+    /// 玩家**出场序表**（`TurnData[+0x8]` 指针 / `[+0x10]` len，x86 `0x462858` / `0x462846`）。
+    ///
+    /// 只由 [`TurnManager::set_turn`] 追加（二进制同：`0x463997` 写入、`0x46399f` 加 len），
+    /// **去重**、保持 first-seen 顺序。`add_player` 不碰它（见我方的模型差异，模块文档 §7.4）。
+    order: Vec<i64>,
+    /// **当前玩家游标**（`TurnData[+0x18]`）：`order` 的下标，`set_turn` 每次都写它
+    /// （`0x463a7a` 命中已有玩家 / `0x4639a3` 新追加）。顺序支的两个 getter 只读这一格。
+    current: usize,
+    /// `TurnData[+0x58]`：回合模式字节（初值 `0` = [`TurnMode::SequentialTurns`]）。
+    mode: TurnMode,
+    /// **我方开关**：顺序支拿不到"当前玩家"时，是否回落到同时支的全集。
+    ///
+    /// 原版在"出场序表空 / 游标越界"这条状态上返回**空集**（`0x46284d je 0x462878`）；
+    /// 开关关掉就逐字回到那个语义。默认开 —— 本层的 `set_turn` 还没有真生产者
+    /// （远端事件处理器 `0x3e2830` 没接），一把关掉会让画面一具都不画。模块文档 §7.4。
+    sequential_fallback: bool,
     empty_roster: EmptyRoster,
     /// 订阅名（`new` 的两条，顺序 = 调用序，`观测`）。
     pub subscribed: Vec<&'static str>,
@@ -417,6 +624,10 @@ impl TurnManager {
     pub fn new() -> Self {
         Self {
             players: BTreeMap::new(),
+            order: Vec::new(),
+            current: 0,
+            mode: TurnMode::default(),
+            sequential_fallback: true,
             empty_roster: EmptyRoster::default(),
             subscribed: SUBSCRIBED_EVENTS.to_vec(),
             outbox: Vec::new(),
@@ -496,31 +707,155 @@ impl TurnManager {
     }
 
     // -----------------------------------------------------------------------
-    // 只读查询：`is_on_turn` 那条链（任务 46；地址与两支语义见模块文档 §6）
+    // 只读查询：`is_on_turn` 那条链（任务 46 读语义 / 任务 50 补顺序支）
     // -----------------------------------------------------------------------
+
+    // -- 回合模式（`TurnData[+0x58]`，任务 50） ---------------------------------
+
+    /// `GraphwarTurnManager::get_turn_mode`（x86 **`0x462c10`**）：读 `TurnData[+0x58]`
+    /// （`0x462c4e movzx eax, byte ptr [r14+0x70]`，`r14` = `ArcInner` ⇒ data+`0x58`）。
+    pub fn turn_mode(&self) -> TurnMode {
+        self.mode
+    }
+
+    /// `GraphwarTurnManager::set_turn_mode`（x86 **`0x462d20`**）：写 `TurnData[+0x58]`
+    /// （`0x462d6e mov byte ptr [r14+0x70], sil`），然后**发一条带该字节的事件**
+    /// （`0x462d9a movzx eax,[r14+0x70]` → `0x462dae call add_event`）。
+    ///
+    /// 事件判别值由 payload 的 tag 字反推为 **`0x2f` = 47 = [`Event::TurnModeInfo`]**
+    /// （`0x462da3 lea rax,[r13+0x30]`，`r13 = 0x7fff…ffff` ⇒ `0x8000…002f`）。
+    /// payload 的形状（`{turn_mode: 字节}`）与 `src/_scaffold/protocol.rs` 的
+    /// `TurnModeInfo` 一致（那一侧是字符串，不是这里发的字节——**转义层未逐位解**，§7.5 第 1 条）。
+    pub fn set_turn_mode(&mut self, mode: TurnMode) {
+        self.mode = mode;
+        self.outbox.push(Event::TurnModeInfo);
+    }
+
+    /// 玩家**出场序表**（`TurnData[+0x8]/[+0x10]`，只由 [`TurnManager::set_turn`] 追加）。
+    pub fn turn_order(&self) -> &[i64] {
+        &self.order
+    }
+
+    /// 当前玩家游标指向谁（`TurnData[+0x18]` 那一格 `order[current]`）；表空 ⇒ `None`。
+    pub fn current_player(&self) -> Option<i64> {
+        self.order.get(self.current).copied()
+    }
+
+    /// 顺序支需要的那份状态**齐不齐**（模式 = 顺序 **且** 游标指得到一个玩家）。
+    ///
+    /// `false` 有两种可能：① 现在是同时回合；② 顺序回合但没人 `set_turn` 过
+    /// （`order` 空 / 游标越界）—— 后者就是回落开关起作用的那条路径。
+    pub fn sequential_state_available(&self) -> bool {
+        self.mode.is_sequential() && self.current_player().is_some()
+    }
+
+    /// 回落开关当前值（默认 `true`，见模块文档 §7.4）。
+    pub fn sequential_fallback(&self) -> bool {
+        self.sequential_fallback
+    }
+
+    /// 换回落开关（`false` = 逐字二进制：顺序支缺状态时返回空集）。
+    pub fn with_sequential_fallback(mut self, on: bool) -> Self {
+        self.sequential_fallback = on;
+        self
+    }
+
+    /// 就地改回落开关，返回改完的值。
+    pub fn set_sequential_fallback(&mut self, on: bool) -> bool {
+        self.sequential_fallback = on;
+        on
+    }
+
+    /// `GraphwarTurnData::set_turn`（x86 **`0x4638f0`**）：公告"这个玩家现在用这个士兵"。
+    ///
+    /// 这是**顺序支两个游标的唯一写者**（模块文档 §7.3）：
+    ///
+    /// 1. 玩家不在出场序表里 ⇒ 追加到表尾（`0x463997`/`0x46399f`）；在 ⇒ 取它那格；
+    /// 2. **当前玩家游标 = 那个位置**（`0x463a7a` / `0x4639a3`，`TurnData[+0x18]`）；
+    /// 3. `soldier_id == 0` ⇒ 把该玩家的**整条记录删掉**（`0x463a8b` → `HashMap::remove`
+    ///    `0x486f20`），**出场序表里那一格不删**（观测：下游因此不对称）；
+    ///    否则把士兵公告进该玩家的表（去重 + 游标，见 [`PlayerTurns::announce`]）；
+    /// 4. 发一条 `TurnInfo{player_id, soldier_id}`（`0x463c09` tag `0x2b` = 43 + `add_event`）。
+    ///
+    /// ⚠️ 我方差异：二进制这条记录里**没有队伍**（队伍在 `player_manager` 里），本层把
+    /// `team` 挂在同一条 [`PlayerEntry`] 上 ⇒ 未知玩家按 [`Team::One`] 建记录。
+    /// 这不是证据，只是模型限制（模块文档 §7.4）。
+    pub fn set_turn(&mut self, player_id: i64, soldier_id: i64) {
+        // ① 出场序表：命中取位置，否则追加到表尾（0x463970 / 0x463997）
+        let pos = match self.order.iter().position(|&id| id == player_id) {
+            Some(i) => i,
+            None => {
+                self.order.push(player_id);
+                self.order.len() - 1
+            }
+        };
+        // ② 当前玩家游标 = 该位置（0x463a7a / 0x4639a3）
+        self.current = pos;
+        // ③ 士兵：0 ⇒ 整条记录删掉；否则公告（0x463a8b / 0x463ba0–0x463bd2）
+        if soldier_id == SOLDIER_ID_NONE {
+            self.players.remove(&player_id);
+        } else {
+            let entry = self.players.entry(player_id).or_insert_with(|| PlayerEntry {
+                team: Team::One,
+                turns: PlayerTurns::new(Vec::new()),
+            });
+            entry.turns.announce(soldier_id);
+        }
+        // ④ 发 TurnInfo{player_id, soldier_id}（0x463c09–0x463c17）
+        self.outbox.push(Event::TurnInfo);
+    }
 
     /// `GraphwarTurnData::get_current_turn_players`（x86 `0x4627c0`）：本回合**玩家 id** 集合。
     ///
-    /// 二进制按 `TurnData[+0x58]` 分两支（`观测`）：`== 0`（顺序回合）返回**单元素**
-    /// （当前玩家，`0x462846`–`0x46286f`）；`!= 0`（同时回合）遍历玩家表并取**键**
-    /// 收进 `Vec<u32>`（`0x4627e9`–`0x462844`；collect 适配器 `0x46282c call 0x3c03b0`，取键在 `0x3c0484`）。
+    /// 二进制按 `TurnData[+0x58]` 分两支（`观测`）：
     ///
-    /// 本层没有 `+0x58` mode 字段 ⇒ **只实现同时回合那一支**（返回全部玩家的 id）。
-    /// 顺序回合下原版只给一个玩家 id，本函数是它的**超集**（模块文档 §6 的 ⚠️）。
+    /// * **`== 0`（顺序回合，`0x462846`–`0x46286f`）**：**单元素** = 出场序表
+    ///   `[+0x8]/[+0x10]` 的第 `[+0x18]`（当前玩家游标）个。表空 ⇒ 空 `Vec`（`0x46284d je`）。
+    /// * **`!= 0`（同时回合，`0x4627e9`–`0x462844`）**：玩家表（HashMap）的**全部键**
+    ///   （collect 适配器 `0x46282c call 0x3c03b0`，取键在 `0x3c0484`）。
+    ///
+    /// 顺序支缺状态（没人 `set_turn` 过）时本层按 [`TurnManager::sequential_fallback`]
+    /// 决定回落（默认回落到同时支全集）——原版那里是**空集**。模块文档 §7.4。
     pub fn get_current_turn_players(&self) -> Vec<i64> {
-        self.players.keys().copied().collect()
+        if !self.mode.is_sequential() {
+            return self.players.keys().copied().collect();
+        }
+        if let Some(current) = self.current_player() {
+            // 照二进制：单个元素，**不**检查它还在不在玩家表里（删记录后仍在出场序表）
+            return vec![current];
+        }
+        if self.sequential_fallback {
+            self.players.keys().copied().collect()
+        } else {
+            Vec::new()
+        }
     }
 
     /// `GraphwarTurnData::get_current_turn_soldiers`（x86 `0x4628d0`）：本回合**士兵 id** 集合。
     ///
-    /// 同时回合那一支：遍历玩家表，每个 entry 取 `soldiers[cursor]`
-    /// （`0x4629bc mov ebx,[rax+rdi*4]`，`rdi` = `[entry-8]` 的游标），空 `Vec` 跳过
-    /// （`0x46299f test rsi,rsi / je`）⇒ 每个玩家最多一个，与 [`PlayerTurns::current`] 同义。
-    ///
-    /// 顺序回合那一支（`0x4629de`–`0x462ab0`）只返回当前玩家那一个士兵——本层没有那个
-    /// "当前玩家"游标，见模块文档 §6。
+    /// * **同时回合那一支（`0x46290b`–`0x4629d3`）**：遍历玩家表，每个 entry 取 `soldiers[cursor]`
+    ///   （`0x4629bc mov ebx,[rax+rdi*4]`，`rdi` = `[entry-8]` 的游标），空 `Vec` 跳过
+    ///   （`0x46299f test rsi,rsi / je`）⇒ 每个玩家最多一个，与 [`PlayerTurns::current`] 同义。
+    /// * **顺序回合那一支（`0x4629de`–`0x462ab4`）**：先取当前玩家，再在玩家表里查它
+    ///   （`0x462a6d`），然后取它 `soldiers[cursor]`。查不到该玩家 ⇒ **空 `Vec`**
+    ///   （删记录那条路径，§7.3 第 3 条）——**不**回落到别的玩家。
     pub fn get_current_turn_soldiers(&self) -> Vec<i64> {
-        self.players.values().filter_map(|entry| entry.turns.current()).collect()
+        if !self.mode.is_sequential() {
+            return self.players.values().filter_map(|entry| entry.turns.current()).collect();
+        }
+        if let Some(current) = self.current_player() {
+            return self
+                .players
+                .get(&current)
+                .and_then(|entry| entry.turns.current())
+                .into_iter()
+                .collect();
+        }
+        if self.sequential_fallback {
+            self.players.values().filter_map(|entry| entry.turns.current()).collect()
+        } else {
+            Vec::new()
+        }
     }
 
     /// `GraphwarTurnManager::is_on_turn`（x86 **`0x462b50`**，FDE `0x462b50..0x462c07`；
@@ -530,9 +865,9 @@ impl TurnManager {
     /// 先查 soldiers（`0x462b64` 取、`0x462b85` 比），不中再查 players（`0x462bac` 取、
     /// `0x462bd5` 比），命中返回 `1`，都不中返回 `0`（`0x462bfe xor ebx,ebx`）。
     ///
-    /// ⚠️ 语义**不是**"当前回合方"，也**不是**"本回合已开火"：同时回合模式下**所有登记
-    /// 玩家**与**每个玩家的当前士兵**都为真；顺序回合模式下原版只让当前玩家 + 其当前士兵
-    /// 为真，而本层是它的超集（模块文档 §6）。
+    /// ⚠️ 语义**不是**"当前回合方"，也**不是**"本回合已开火"：同时回合下**所有登记玩家**与
+    /// **每个玩家的当前士兵**都为真；顺序回合下只有**当前玩家 + 它当前那个士兵**为真
+    /// （任务 50 已按二进制建模，含 `+0x58` 模式；见模块文档 §7）。
     ///
     /// 实例 id 域：二进制参数是 `u32`（`esi`），本层实体 id 是 `i64`；调用方负责域转换
     /// （`EntityDrawer` 侧按 `u32` 转换，越界 = 不通过）。
@@ -952,6 +1287,156 @@ mod tests {
         assert!(manager.get_current_turn_soldiers().is_empty(), "空 Vec 不 push（0x46299f）");
         assert!(manager.is_on_turn(7), "玩家 id 在 players 里就为真");
         assert!(!manager.is_on_turn(0), "0 是哨兵，从不在表里");
+    }
+
+    // -----------------------------------------------------------------------
+    // ⑦ 回合模式 + 顺序支（任务 50；`+0x58`、`0x4628d0` 顺序支、`set_turn` 0x4638f0）
+    // -----------------------------------------------------------------------
+
+    /// `TurnData[+0x58]` 的初值是 `0` = `SequentialTurns`（`GraphwarTurnData::new`，模块文档 §7.1），
+    /// 读它的是 `get_turn_mode`（`0x462c10`）。
+    #[test]
+    fn turn_mode_defaults_to_sequential_turns() {
+        let manager = TurnManager::new();
+        assert_eq!(manager.turn_mode(), TurnMode::SequentialTurns);
+        assert_eq!(manager.turn_mode().byte(), 0, "写进 +0x58 的那个字节");
+        assert_eq!(TurnMode::SimultaneousTurns.byte(), 1);
+        assert_eq!(TurnMode::from_byte(0), TurnMode::SequentialTurns);
+        assert_eq!(TurnMode::from_byte(1), TurnMode::SimultaneousTurns);
+        assert_eq!(TurnMode::from_byte(7), TurnMode::SimultaneousTurns, "二进制只判 == 0");
+        assert_eq!(TurnMode::from_known_byte(2), None, "严格版只认 0/1");
+    }
+
+    /// `set_turn_mode`（`0x462d20`）：写字节 + 发一条 `TurnModeInfo`（tag 47）。
+    #[test]
+    fn set_turn_mode_writes_the_byte_and_emits_turn_mode_info() {
+        let mut manager = TurnManager::new();
+        manager.add_player(1, Team::One, vec![10]);
+        manager.take_outbox();
+        manager.set_turn_mode(TurnMode::SimultaneousTurns);
+        assert_eq!(manager.turn_mode(), TurnMode::SimultaneousTurns);
+        assert_eq!(manager.get_current_turn_players(), vec![1], "同时支：玩家表全部键");
+        assert_eq!(manager.get_current_turn_soldiers(), vec![10]);
+        assert_eq!(manager.take_outbox(), vec![Event::TurnModeInfo], "0x462dae add_event");
+    }
+
+    /// 顺序支：**只有当前玩家 + 它当前那个士兵**（`0x462846` / `0x4629de`）。
+    #[test]
+    fn sequential_branch_narrows_to_the_current_player() {
+        let mut manager = TurnManager::new().with_sequential_fallback(false);
+        manager.add_player(1, Team::One, vec![10, 11]);
+        manager.add_player(2, Team::Two, vec![20, 21]);
+        // 还没人 set_turn ⇒ 出场序表空 ⇒ 原版返回空集（0x46284d je）
+        assert!(manager.get_current_turn_players().is_empty(), "序表空 ⇒ 空集（原版语义）");
+        assert!(manager.get_current_turn_soldiers().is_empty());
+        assert!(!manager.is_on_turn(1) && !manager.is_on_turn(10));
+
+        manager.set_turn(2, 21);
+        assert_eq!(manager.get_current_turn_players(), vec![2], "单元素：当前玩家");
+        assert_eq!(manager.get_current_turn_soldiers(), vec![21], "单元素：它当前的士兵");
+        assert!(manager.is_on_turn(2) && manager.is_on_turn(21));
+        assert!(!manager.is_on_turn(1), "别的玩家不在回合内（同人不同支的差别就在这）");
+        assert!(!manager.is_on_turn(20), "同一玩家的**别的**士兵也不在");
+        assert!(manager.sequential_state_available());
+    }
+
+    /// 回落开关（我方）：顺序支缺状态时默认回落到同时支的全集 —— 任务 46 的旧行为。
+    #[test]
+    fn sequential_falls_back_to_the_union_when_no_turn_was_announced() {
+        let mut manager = TurnManager::new();
+        manager.add_player(1, Team::One, vec![10]);
+        manager.add_player(2, Team::Two, vec![20]);
+        assert!(manager.sequential_fallback(), "默认开");
+        assert!(!manager.sequential_state_available(), "序表空 ⇒ 顺序支状态不齐");
+        assert_eq!(manager.get_current_turn_players(), vec![1, 2], "回落 = 同时支全集");
+        assert_eq!(manager.get_current_turn_soldiers(), vec![10, 20]);
+        assert!(manager.is_on_turn(10) && manager.is_on_turn(2));
+
+        assert_eq!(manager.set_sequential_fallback(false), false);
+        assert!(manager.get_current_turn_players().is_empty(), "关掉 = 逐字二进制（空集）");
+        assert!(manager.get_current_turn_soldiers().is_empty());
+        assert!(!manager.is_on_turn(10) && !manager.is_on_turn(1));
+
+        // 一旦有人 set_turn，状态就齐了 ⇒ 开关不再起作用
+        assert!(manager.set_sequential_fallback(true));
+        manager.set_turn(1, 10);
+        assert_eq!(manager.get_current_turn_players(), vec![1]);
+        assert_eq!(manager.get_current_turn_soldiers(), vec![10]);
+        manager.set_sequential_fallback(false);
+        assert_eq!(manager.get_current_turn_players(), vec![1], "状态齐了 ⇒ 关不关都一样");
+        assert_eq!(manager.get_current_turn_soldiers(), vec![10]);
+    }
+
+    /// `set_turn`（`0x4638f0`）把**当前玩家游标**移到被公告的那个人身上（出场序 = first-seen）。
+    #[test]
+    fn set_turn_moves_the_current_player_cursor() {
+        let mut manager = TurnManager::new();
+        manager.add_player(1, Team::One, vec![10, 11]);
+        manager.add_player(2, Team::Two, vec![20, 21]);
+        manager.take_outbox();
+
+        manager.set_turn(1, 10);
+        assert_eq!(manager.turn_order(), &[1], "首次出现 ⇒ 追加到序表尾（0x463997）");
+        assert_eq!(manager.current_player(), Some(1));
+        assert_eq!(manager.get_current_turn_players(), vec![1]);
+
+        manager.set_turn(2, 20);
+        assert_eq!(manager.turn_order(), &[1, 2]);
+        assert_eq!(manager.current_player(), Some(2), "游标跟着换人（0x463a7a）");
+        assert_eq!(manager.get_current_turn_players(), vec![2]);
+        assert_eq!(manager.get_current_turn_soldiers(), vec![20]);
+
+        manager.set_turn(1, 11);
+        assert_eq!(manager.turn_order(), &[1, 2], "序表不重复加（0x463970 找到就走 0x463a77）");
+        assert_eq!(manager.current_player(), Some(1), "回指第 0 格");
+        assert_eq!(manager.get_current_turn_soldiers(), vec![11], "该玩家自己的游标也动了");
+        assert_eq!(manager.take_outbox(), vec![Event::TurnInfo; 3], "每条 set_turn 发 TurnInfo");
+    }
+
+    /// 士兵公告**去重**并把游标指到那个位置（`0x463ba0` / `0x463c5d` vs `0x463bc6` / `0x463bd2`）。
+    #[test]
+    fn announce_dedups_soldiers_and_sets_the_cursor() {
+        let mut turns = PlayerTurns::new(vec![10, 11, 12]);
+        assert_eq!(turns.announce(12), 2, "已在表里 ⇒ 游标移到它的位置");
+        assert_eq!(turns.soldiers(), &[10, 11, 12], "不追加重复项");
+        assert_eq!(turns.announce(11), 1);
+        assert_eq!(turns.announce(99), 3, "新 id ⇒ 追加到表尾，游标 = 新位置");
+        assert_eq!(turns.soldiers(), &[10, 11, 12, 99]);
+        assert_eq!(turns.current(), Some(99));
+    }
+
+    /// `soldier_id == 0` ⇒ 删掉该玩家的**整条记录**（`0x463a8b` → `HashMap::remove`），
+    /// 但出场序表里那一格**不删** ⇒ 两个 getter 在这一点上不对称（`观测`）。
+    #[test]
+    fn set_turn_with_zero_removes_the_record_but_keeps_the_order_slot() {
+        let mut manager = TurnManager::new();
+        manager.add_player(1, Team::One, vec![10]);
+        manager.add_player(2, Team::Two, vec![20]);
+        manager.set_turn(1, 10);
+        manager.set_turn(2, 20);
+        manager.set_turn(1, SOLDIER_ID_NONE);
+        assert_eq!(manager.turn_order(), &[1, 2], "序表不删");
+        assert_eq!(manager.current_player(), Some(1), "游标仍指向它");
+        assert_eq!(manager.get_current_turn_players(), vec![1], "players 仍含已删玩家");
+        assert!(manager.get_current_turn_soldiers().is_empty(), "soldiers 查不到 ⇒ 空（0x462a81）");
+        assert!(manager.player(1).is_none(), "玩家表里整条没了");
+        assert!(!manager.is_on_turn(10));
+        assert!(manager.is_on_turn(1));
+    }
+
+    /// 同时回合那一支不受顺序游标影响：全员 + 每人当前士兵（`0x46290b`–`0x4629d3`）。
+    #[test]
+    fn simultaneous_branch_ignores_the_sequential_cursor() {
+        let mut manager = TurnManager::new().with_sequential_fallback(false);
+        manager.add_player(1, Team::One, vec![10, 11]);
+        manager.add_player(2, Team::Two, vec![20]);
+        manager.set_turn(2, 20);
+        assert_eq!(manager.get_current_turn_players(), vec![2], "顺序支：只有 2");
+        manager.set_turn_mode(TurnMode::SimultaneousTurns);
+        assert_eq!(manager.get_current_turn_players(), vec![1, 2], "同时支：全部键");
+        assert_eq!(manager.get_current_turn_soldiers(), vec![10, 20], "每人取自己的游标");
+        assert!(manager.is_on_turn(10) && manager.is_on_turn(2));
+        assert!(!manager.is_on_turn(11));
     }
 
     // -----------------------------------------------------------------------

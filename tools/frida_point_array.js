@@ -479,6 +479,353 @@ function installTokenProbe(base, res) {
   } catch (e) { res.hooks.push({ name: 'tok_suffix_0x3c5f70', error: String(e) }); }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2026-11-08 `dispatch/48`：**两装配点同时抓** + 抓"谁把长度改小"
+//
+// 为什么单独一块：并行任务 49 也在动本文件。本轮新增的东西**全部**收在这里
+// （`DVCFG` / `DVST` / `installDivergeProbe()` / `dv_*` 五条消息），开关是 `DVCFG.on`
+// （默认 **关**；驱动 `--diverge` 用 `post({type:'cfg',diverge:true})` 打开），主探针 /
+// token 探针 / FunctionPoints 探针一行没动。
+//
+// 这一块要回答的两件事（任务书 `dispatch/48`）：
+//   ① `0x456810`（`end_x` 的装配点，两个调用者 `gw+471a8d` / `gw+3e44d9`）喂进去的那条数组，
+//      与 `0x472865`（`pos` 读点）读的那条数组，**在同一发里**是不是同一份内容？
+//      → 在 ctor 那一刻**整条拷字节**，在 pos 那一刻**逐点逐字节比**（差 1 bit 也报）。
+//   ② `0x472865` 读到的 `n` 是被谁改小的？
+//      → 在 `calculate_shot_results`（`0x3c2bc0`）返回时把它的**返回结构**（0x20 字节）与它
+//        指向的那条 `Vec<Item>`（0x20 字节/项：kind@+0、ptr@+8/+0xc 两个 32 位半、len@+0x10、
+//        owner@+0x18）整条 dump 出来；配合 `calculate_function`（0x3c2530）返回时的 `n`，
+//        就能把"5098 → 1528"夹在 [采样器返回, calculate_shot_results 返回] 这个区间里。
+//
+// 地址（构建同文件头：`libgraphwarrust.so` sha256 9a538115…）：
+//   0x456810  FunctionPointsEvent 装配（fn [0x456810,0x456b75)）：rdx = &Vec<(f64,f64)>
+//   0x472865  execute_results 读 `pos = pts[n-1]`（rdx = 点数组基址、rcx = n*16）
+//   0x3c2bc0  `GraphwarShotCalculator::calculate_shot_results`（fn [0x3c2bc0,0x3c5c4d)）
+//             rdi = sret（0x20 字节）、rsi = &params（+0x20 是第一步指针）
+//             唯一直接调用点是槽 `0x9bacb0` 的两处：`0x471825`（game_state_manager）与 `0x51a9a1`
+//             返回后 `0x4718a1` 起把 sret 当 `Vec`（cap@+0、ptr@+8、len@+0x10）拷进 self+0x30，
+//             再逐项（0x20 B）`malloc(len*16)+memcpy` 然后把**副本**喂给 `0x456810` ⇒
+//             `end_x` 读的就是这个 item 的长度。
+//   0x3c2530  采样器 `calculate_function`（fn [0x3c2530,0x3c2bb9)）；`0x3c30c7` 是它在本函数里的返回点
+// ═══════════════════════════════════════════════════════════════════════════════
+const DVCFG = {
+  on: false,           // ★ 总开关（默认关：不加 --diverge 的跑法行为与之前**逐字节相同**）
+  rva: {
+    fnpoints_ctor: 0x456810,
+    pos_read: 0x472865,
+    csr: 0x3c2bc0,     // calculate_shot_results
+  },
+  ctorKeep: 6,         // 记住最近几次 ctor 喂进去的完整数组副本（每份 ≤ arrayCap 点）
+  itemsMax: 24,        // `dv_csr` 最多 dump 结果 Vec 的多少项
+  arrMax: 20000,       // 单条数组最多拷多少点（16 B/点）——与 CFG.arrayCap 独立
+  mam: false,          // 页级写监视（`--dv-mam`）：item push 之后武装一次，抓"紧接着的那次访问"
+  rowsMax: 200,
+};
+const DVST = { ctorSeq: 0, posSeq: 0, csrSeq: 0, ctors: [], rows: [] };
+
+/** 一条点数组的完整快照：摘要 + 首末点 + **原始字节**（判"逐字节相同"只认字节，不认摘要） */
+function dvSnap(p, len) {
+  const o = { ptr: hx(p), len: len };
+  if (!p || p.isNull() || !(len > 0) || len > DVCFG.arrMax || !readable(p)) {
+    o.note = 'unreadable-or-empty-or-too-long'; return o;
+  }
+  try {
+    const dg = digestOf(p, len);
+    o.digest_xy = dg.xy; o.digest_y = dg.y;
+    o.first = bytesHex(p, 16);
+    o.last = bytesHex(p.add((len - 1) * 16), 16);
+    o.bytes = arrBytes(p, len);
+  } catch (e) { o.error = String(e); }
+  return o;
+}
+
+/** 两条数组的**前 np 点**逐点逐字节比（长度不同也能比；`cmpArrayBytes` 要求等长，这里补上） */
+function dvCmpPrefix(a, b, np) {
+  const o = { points: np, diffPoints: 0, firstDiff: [] };
+  if (!a || !b) { o.reason = 'null side'; return o; }
+  const lim = Math.min(np, Math.floor(a.length / 16), Math.floor(b.length / 16));
+  o.points = lim;
+  for (let i = 0; i < lim; i++) {
+    let eq = true;
+    for (let j = 0; j < 16; j++) if (a[i * 16 + j] !== b[i * 16 + j]) { eq = false; break; }
+    if (!eq) {
+      o.diffPoints++;
+      if (o.firstDiff.length < 6) o.firstDiff.push([i, hexPoint(a, i), hexPoint(b, i)]);
+    }
+  }
+  return o;
+}
+
+/** 0x20 字节的队列/结果项 → {kind, ptr, len, owner, extra}（ptr 存成 +0x8/+0xc 两个 32 位半） */
+function dvItem(raw) {
+  const o = { raw: raw };
+  if (!raw || raw.length !== 64) return o;
+  try {
+    const be = (h) => h.match(/../g).reverse().join('');            // 小端 hex → 大端 hex
+    const u = (h) => BigInt('0x' + be(h));
+    // 布局（`execute_results` 0x4727e1 逐条读出：`mov 0x8(%rax),%r15d` / `mov 0xc(%rax),%r12d`
+    //        / `shl $0x20,%r12` / `or %r15,%r12` ⇒ 指针 = (+0xc<<32)|(+0x8)，两个 32 位半）
+    o.kind = '0x' + be(raw.substr(0, 16));                          // +0x00 u64
+    const lo = u(raw.substr(16, 8)), hi = u(raw.substr(24, 8));     // +0x08 / +0x0c 两个 u32
+    o.ptr = '0x' + (((hi << 32n) | lo).toString(16));               // 拼出来的指针
+    o.len = u(raw.substr(32, 16)).toString();                       // +0x10 u64
+    o.owner = Number(u(raw.substr(48, 8)));                         // +0x18 u32
+    o.extra = '0x' + be(raw.substr(56, 8));                         // +0x1c u32
+    o.alt = { f64_at_8: null };                                     // 另一种变体：+0x8 起是 f64
+    try {
+      const dv = new DataView(new Uint8Array(raw.match(/../g).map((x) => parseInt(x, 16))).buffer);
+      o.alt.f64_at_8 = dv.getFloat64(8, true);
+      o.alt.f64_at_16 = dv.getFloat64(16, true);
+    } catch (e2) { }
+  } catch (e) { o.error = String(e); }
+  return o;
+}
+
+function installDivergeProbe(base, res) {
+  // ── ① ctor 那一刻：把喂进去的**整条数组**留一份字节副本 ─────────────────────
+  try {
+    Interceptor.attach(base.add(DVCFG.rva.fnpoints_ctor), {
+      onEnter() {
+        if (!DVCFG.on) return;
+        const o = { type: 'dv_ctor', seq: ++DVST.ctorSeq, t: now(), caller: rvaOf(this.returnAddress) };
+        try {
+          const v = this.context.rdx;
+          const cap = Number(v.readU64().toString());
+          const p = v.add(8).readPointer();
+          const len = Number(v.add(0x10).readU64().toString());
+          o.vec = { cap: cap, ptr: hx(p), len: len };
+          o.owner_id = this.context.rsi.toUInt32() >>> 0;
+          const snap = dvSnap(p, len);
+          o.arr = { ptr: snap.ptr, len: snap.len, digest_xy: snap.digest_xy, digest_y: snap.digest_y,
+                    first: snap.first, last: snap.last, note: snap.note, error: snap.error };
+          DVST.ctors.push({ t: o.t, caller: o.caller, ptr: snap.ptr, len: snap.len,
+                            bytes: snap.bytes, digest_xy: snap.digest_xy });
+          while (DVST.ctors.length > DVCFG.ctorKeep) DVST.ctors.shift();
+          o.kept = DVST.ctors.length;
+        } catch (e) { o.error = String(e); }
+        try { send(o); } catch (e) { }
+      },
+    });
+    res.hooks.push({ name: 'dv_fnpoints_ctor', rva: '0x' + DVCFG.rva.fnpoints_ctor.toString(16) });
+  } catch (e) { res.hooks.push({ name: 'dv_fnpoints_ctor', error: String(e) }); }
+
+  // ── ② pos 那一刻：与**每个** ctor 快照逐点比（差 1 bit 也报）──────────────────
+  try {
+    Interceptor.attach(base.add(DVCFG.rva.pos_read), {
+      onEnter() {
+        if (!DVCFG.on) return;
+        const c = this.context;
+        const o = { type: 'dv_pos', seq: ++DVST.posSeq, t: now(), rdx: hx(c.rdx), rcx: hx(c.rcx) };
+        try {
+          const n16 = c.rcx.toUInt32() >>> 0;
+          const n = n16 / 16;
+          o.n = n; o.rcx_mod16 = n16 % 16;
+          const p = c.rdx;
+          if (n16 > 0 && n <= DVCFG.arrMax && readable(p)) {
+            const pos = bytesHex(p.add(n16 - 16), 16);
+            o.pos_bytes = pos;
+            o.pos_x = pos ? pos.substr(0, 16) : null;
+            o.pos_y = pos ? pos.substr(16, 16) : null;
+            const bytes = arrBytes(p, n);
+            o.vs_ctor = [];
+            for (const k of DVST.ctors) {
+              const r = { t: k.t, caller: k.caller, ptr: k.ptr, len: k.len,
+                          same_ptr: k.ptr === o.rdx, same_len: k.len === n };
+              if (k.bytes && bytes) {
+                const cp = dvCmpPrefix(bytes, k.bytes, Math.min(k.len, n));
+                r.prefix_points = cp.points;
+                r.prefix_diff = cp.diffPoints;
+                r.firstDiff = cp.firstDiff;
+                r.last_point_eq = (hexPoint(bytes, n - 1) === hexPoint(k.bytes, k.len - 1));
+                const loc = locatePoint(k.bytes, k.len, pos, 6);
+                r.pos_x_idx_in_ctor = loc.x_idx;
+                r.pos_xy_idx_in_ctor = loc.xy_idx;
+              } else { r.bytes = 'not-kept'; }
+              o.vs_ctor.push(r);
+            }
+            if (FPST.lastFn) {
+              o.wire = { seq: FPST.lastFn.seq, t: FPST.lastFn.t, end_x: FPST.lastFn.end_x,
+                         equal_x: FPST.lastFn.end_x === o.pos_x };
+            }
+            o.digest_xy = null;
+            try { const dg = digestOf(p, n); o.digest_xy = dg.xy; } catch (e) { }
+          } else { o.note = 'unreadable-empty-or-too-long'; }
+        } catch (e) { o.error = String(e); }
+        if (DVST.rows.length > DVCFG.rowsMax) DVST.rows.shift();
+        DVST.rows.push([o.seq, o.t, o.n, o.pos_x]);
+        try { send(o); } catch (e) { }
+      },
+    });
+    res.hooks.push({ name: 'dv_pos', rva: '0x' + DVCFG.rva.pos_read.toString(16) });
+  } catch (e) { res.hooks.push({ name: 'dv_pos', error: String(e) }); }
+
+  // ── ③ `calculate_shot_results` 返回：把返回结构 + 结果 Vec 的每一项 dump 出来 ──
+  //    这一处是回答"长度是被谁改小的"的关键：如果返回的 item 里已经有 `{ptr=P, len=1528}`，
+  //    那么"改小"**不是** `execute_results` 里改的，而是这个函数里算出来的（区间就此收紧）。
+  try {
+    Interceptor.attach(base.add(DVCFG.rva.csr), {
+      onEnter() {
+        if (!DVCFG.on) return;
+        this.t = now();
+        this.sret = this.context.rdi;
+        try {
+          send({ type: 'dv_csr_enter', t: this.t, sret: hx(this.context.rdi), params: hx(this.context.rsi),
+                 step: bytesHex(this.context.rsi.add(0x00), 8), mode: bytesHex(this.context.rsi.add(0x08), 8) });
+        } catch (e) { }
+      },
+      onLeave(retval) {
+        if (!DVCFG.on) return;
+        const o = { type: 'dv_csr', t: now(), t_enter: this.t, rax: hx(retval), sret: hx(this.sret) };
+        try {
+          const s = (retval && !retval.isNull()) ? retval : this.sret;
+          const w = [];
+          for (let i = 0; i < 4; i++) w.push(bytesHex(s.add(i * 8), 8));
+          o.sret_words = w;
+          const cap = Number(s.readU64().toString());
+          const vp = s.add(8).readPointer();
+          const len = Number(s.add(0x10).readU64().toString());
+          o.vec_guess = { cap: cap, ptr: hx(vp), len: len };
+          if (vp && !vp.isNull() && readable(vp) && len > 0 && len <= 8192) {
+            const items = [];
+            const nmax = Math.min(len, DVCFG.itemsMax);
+            for (let i = 0; i < nmax; i++) {
+              const it = vp.add(i * 0x20);
+              const rec = dvItem(bytesHex(it, 0x20));
+              rec.i = i;
+              try {
+                const pv = rec.ptr ? ptr(rec.ptr) : null;
+                const il = rec.len ? Number(rec.len) : 0;
+                if (pv && !pv.isNull() && readable(pv) && il > 0 && il <= DVCFG.arrMax) {
+                  rec.arr_first = bytesHex(pv, 16);
+                  rec.arr_last = bytesHex(pv.add((il - 1) * 16), 16);
+                  const dg = digestOf(pv, il);
+                  rec.arr_digest_xy = dg.xy;
+                }
+              } catch (e) { rec.arrErr = String(e); }
+              items.push(rec);
+            }
+            o.items = items;
+            o.vec_len = len;
+          }
+        } catch (e) { o.error = String(e); }
+        try { send(o); } catch (e) { }
+      },
+    });
+    res.hooks.push({ name: 'dv_csr', rva: '0x' + DVCFG.rva.csr.toString(16) });
+  } catch (e) { res.hooks.push({ name: 'dv_csr', error: String(e) }); }
+
+  // ── ④ "长度是在哪条指令被写进 item 的"：在几个候选**存储点**上下断 ────────────
+  //    静态读出（`objdump -d` 0x3c2bc0..0x3c5c4d，见 `dispatch/48` 报告）：
+  //      `0x3c2d4f..0x3c2d89`  把一项 0x20 字节的记录 push 进"源 Vec"（ptr@+0x8 取 [rsp+0x100]、
+  //                            len@+0x10 取 [rsp+0x1a0]、owner@+0x18 = r12d、flag@+0x1c）
+  //      `0x3c30d7/0x3c30e7`   采样器（0x3c30c1 `call *0x9bac98`）返回后立刻把 sret 的
+  //                            [1] 存进 [rsp+0x100]、[2] 存进 [rsp+0x1a0] —— 所以"源 item 的 len"
+  //                            在**静态上**看起来就是采样器的 n；是否被改小只能靠**运行时**看。
+  //      `0x3c50e0..0x3c50eb`  "源 Vec" → "结果 Vec" 的过滤拷贝（`execute_results` 读的就是它）
+  //    这几个钩子只读寄存器/栈槽，不改内存。
+  const DV_SITES = [
+    [0x3c2d5e, 'src_push_kind'], [0x3c2d6a, 'src_push_ptr'], [0x3c2d77, 'src_push_len'],
+    [0x3c30d7, 'post_calc_slot100'], [0x3c30e7, 'post_calc_slot1a0'],
+    [0x3c50d5, 'copy_idx'], [0x3c50eb, 'copy_len_owner'],
+    // ★ 静态定位到的"改 len"那一条：`0x3c3bf7 mov %r10,0x10(%r14)`（配对的下一条项在 `0x3c3c2c`）。
+    //   守卫：`cmp %r10,0x10(%r14)` / `jb` ⇒ 只在"新长度更小"时才写 ⇒ 命中即是一次**截断**。
+    //   `r10 = [point_event+0x1c] + 1`、`[point_event+0x18]` = owner（与 item 的 +0x18 比）。
+    [0x3c3bf7, 'clamp_len_0'], [0x3c3c2c, 'clamp_len_1'],
+  ];
+  res.dv_sites = [];
+  for (const [rva, nm] of DV_SITES) {
+    try {
+      Interceptor.attach(base.add(rva), {
+        onEnter() {
+          if (!DVCFG.on) return;
+          const c = this.context;
+          const o = { type: 'dv_site', site: nm, rva: '0x' + rva.toString(16), t: now() };
+          try {
+            o.rax = hx(c.rax); o.rbx = hx(c.rbx); o.rcx = hx(c.rcx); o.rdx = hx(c.rdx);
+            o.r8 = hx(c.r8); o.r9 = hx(c.r9); o.r10 = hx(c.r10);
+            o.r12 = hx(c.r12); o.r13 = hx(c.r13); o.r14 = hx(c.r14); o.r15 = hx(c.r15);
+            o.slot100 = bytesHex(c.rsp.add(0x100), 8);
+            o.slot1a0 = bytesHex(c.rsp.add(0x1a0), 8);
+            o.xmm0 = abHex(c.xmm0);
+          } catch (e) { }
+          try { send(o); } catch (e) { }
+        },
+      });
+      res.dv_sites.push({ name: nm, rva: '0x' + rva.toString(16) });
+    } catch (e) { res.dv_sites.push({ name: nm, error: String(e) }); }
+  }
+
+  // ── ⑤ 页级访问监视（"慢动作"）：item 刚 push 进 Vec 之后，把它所在那一页设成陷阱，
+  //    每抓到一次访问就**重新武装**一次 ⇒ 得到"这一页上按顺序发生的访问/写入"清单。
+  //    为什么这么做：`Vec.len` 的写入者是唯一没有静态答案的一步（见 `dispatch/48` 报告），
+  //    `MemoryAccessMonitor` 又是**每页一次**的（本机实测：一页写 5 次只报第 1 次）。
+  //    开关：`DVCFG.mam`（驱动 `--dv-mam`），默认关。
+  DVST.mamHits = 0; DVST.mamPage = null; DVST.mamItem = null;
+  function dvMamArm(page, why) {
+    try { MemoryAccessMonitor.disable(); } catch (e) { }
+    try {
+      send({ type: 'dv_mam_armed', t: now(), page: hx(page), why: why, item: hx(DVST.mamItem) });
+      MemoryAccessMonitor.enable({ base: page, size: 0x1000 }, {
+        onAccess(d) {
+          DVST.mamHits++;
+          let off = null;
+          try { off = DVST.mamItem ? d.address.sub(DVST.mamItem).toString() : null; } catch (e) { }
+          try {
+            send({ type: 'dv_mam', t: now(), n: DVST.mamHits, op: d.operation, from: rvaOf(d.from),
+                   from_abs: hx(d.from), addr: hx(d.address), off_item: off,
+                   bt: btOf(d.context, 8) });
+          } catch (e) { }
+          if (DVST.mamHits < 40) {
+            try { dvMamArm(page, 'rearm' + DVST.mamHits); }
+            catch (e) { try { send({ type: 'dv_mam_err', msg: 'rearm:' + e }); } catch (e2) { } }
+          }
+        },
+        onComplete() { try { send({ type: 'dv_mam_done', t: now() }); } catch (e) { } },
+      });
+    } catch (e) { try { send({ type: 'dv_mam_err', msg: String(e) }); } catch (e2) { } }
+  }
+  try {
+    Interceptor.attach(base.add(0x3c2d90), {     // push 之后：`mov %rbx,0x128(%rsp)`（源 Vec.len++）
+      onEnter() {
+        if (!DVCFG.on || !DVCFG.mam) return;
+        const c = this.context;
+        try {
+          const idx = Number(c.rbx.toString()) - 1;      // 刚 push 的那一项
+          DVST.mamItem = c.rax.add(idx * 0x20);
+          DVST.mamPage = DVST.mamItem.and(ptr('0xfffffffffffff000'));
+          DVST.mamHits = 0;
+          dvMamArm(DVST.mamPage, 'after_push');
+        } catch (e) { try { send({ type: 'dv_mam_err', msg: String(e) }); } catch (e2) { } }
+      },
+    });
+    res.hooks.push({ name: 'dv_mam_arm', rva: '0x3c2d90' });
+    // 0x3c3685：`cmp %rdi,%rsi` —— 紧跟 0x3c3680 那次 `mov 0x10(%rcx,%rdx,1),%rsi`（遍历各项取 max len）。
+    // 如果刚才读的正好是我们那一项的 +0x10，就在**读之后**重新武装（避免把这次读本身当成"下一次访问"）。
+    Interceptor.attach(base.add(0x3c3685), {
+      onEnter() {
+        if (!DVCFG.on || !DVCFG.mam || !DVST.mamItem) return;
+        try {
+          const c = this.context;
+          const a = c.rcx.add(c.rdx).add(0x10);
+          if (a.equals(DVST.mamItem.add(0x10))) dvMamArm(DVST.mamPage, 'after_maxlen_read');
+        } catch (e) { }
+      },
+    });
+    res.hooks.push({ name: 'dv_mam_rearm_after_read', rva: '0x3c3685' });
+  } catch (e) { res.hooks.push({ name: 'dv_mam_arm', error: String(e) }); }
+
+  // 正对照：一条"逐点前缀比较"的自测，证明它**报得出** 1 bit 的差
+  try {
+    const n = 50, A = new Uint8Array(n * 16), B = new Uint8Array(n * 16);
+    for (let i = 0; i < A.length; i++) { A[i] = (i * 13 + 7) & 0xff; B[i] = A[i]; }
+    const same = dvCmpPrefix(A, B, n);
+    B[41 * 16 + 3] ^= 0x01;
+    const one = dvCmpPrefix(A, B, n);
+    res.dv_selftest = { identical: same.diffPoints === 0, onebit: one.diffPoints === 1,
+                        onebitIdx: one.firstDiff[0] && one.firstDiff[0][0], points: n };
+  } catch (e) { res.dv_selftest = { error: String(e) }; }
+}
+
 let BASE = null;
 const T0 = Date.now();
 const now = () => Date.now() - T0;
@@ -926,6 +1273,10 @@ function install(base) {
   //    `FPCFG.on=false` 时两个钩子立刻 return；开关可以装机后再 post）──────────────
   try { installFunctionPointsProbe(base, res); } catch (e) { res.hooks.push({ name: 'fnpoints_probe', error: String(e) }); }
 
+  // ── 2026-11-08 `dispatch/48`：两装配点**同时**抓 + `calculate_shot_results` 返回结构
+  //    （**默认关**，`DVCFG.on=false` 时三个钩子立刻 return；开关可以装机后再 post）──────
+  try { installDivergeProbe(base, res); } catch (e) { res.hooks.push({ name: 'diverge_probe', error: String(e) }); }
+
   ST.ins = true;
   // 正对照：先证明"逐点对比函数"对**已知不同**的两条数组会报不同（负结论的前提，见 docs/06 §42）
   try { send({ type: 'selftest', cmp: selfTestCompare() }); } catch (e) { send({ type: 'selftest', error: String(e) }); }
@@ -942,8 +1293,12 @@ recv('cfg', (m) => {
     if (m && typeof m.maxTokens === 'number') TOKCFG.maxTokens = m.maxTokens;
     // 2026-11-08 `dispatch/44`：FunctionPoints 探针开关（驱动 `--fnpoints` 打开）
     if (m && typeof m.fnpoints === 'boolean') FPCFG.on = m.fnpoints;
+    // 2026-11-08 `dispatch/48`：分叉探针开关（驱动 `--diverge` 打开）
+    if (m && typeof m.diverge === 'boolean') DVCFG.on = m.diverge;
+    if (m && typeof m.dvArrMax === 'number') DVCFG.arrMax = m.dvArrMax;
+    if (m && typeof m.dvMam === 'boolean') DVCFG.mam = m.dvMam;
     send({ type: 'cfg_ack', evalRowsMax: CFG.evalRowsMax, arrayCap: CFG.arrayCap,
-           tokenProbe: TOKCFG.on, maxTokens: TOKCFG.maxTokens, fnpoints: FPCFG.on });
+           tokenProbe: TOKCFG.on, maxTokens: TOKCFG.maxTokens, fnpoints: FPCFG.on, diverge: DVCFG.on });
   } catch (e) { send({ type: 'cfg_ack', error: String(e) }); }
 });
 

@@ -1965,7 +1965,12 @@ cargo run --release --offline -q --example ode_array_check -- --raw <abs>/g.json
 ⇒ **采样器不认障碍**这句话第一次有了运行时对照：**同一发里"采样器给的 5098"和"报文读的 1528"并存**。
 `1528` 这个数就是"弹道撞上障碍"的位置（`(-4.399435177256, 0.304090674513)`）。
 **谁**把它改成 1528（哪个函数、按什么顺序查障碍）本节**没有**定位 —— 只证明了"截断发生在采样器返回之后、
-`execute_results` 读点之前，且是原地改 `Vec` 的 len"。这条留给下一轮（判据：在 `0x472865` 之前
+`execute_results` 读点之前，且是原地改 `Vec` 的 len"。
+> **§30 的更正（2026-11-08）**：上面这句"原地改 `Vec` 的 len"**不准确**。被改的是**结果项**里的长度字
+> （item `+0x10`，item = `{kind, ptr, len, owner}` 0x20 字节记录），点数组那个 `Vec` 的缓冲与数据
+> **一个字节都没动**；写入者是 `gw+0x3c3bf7`（`mov %r10,0x10(%r14)`），且它发生在
+> `calculate_shot_results` **返回之前**（不是 `execute_results` 里）。详见 **§30.3 / §30.0 ②③**。
+这条留给下一轮（判据：在 `0x472865` 之前
 对该 `(ptr,len)` 对写一个 watchpoint，或用 frida 的 `MemoryAccessMonitor` 抓写入者）。
 
 ### 29.6 一处**旧说法更正** + 五条出口里那条"NaN"其实进不去
@@ -2031,3 +2036,675 @@ cargo run --release --offline -q --example ode_array_check -- --raw <abs>/g.json
 
 **没有改动**：`src/`、`client/`、`dispatch/`、`fixtures/guardrails.json`、
 `tools/frida_point_array.*`、`tools/frida_ode_probe.*`（44 号与 40 号的东西）。
+
+## 30. 两装配点**同一发里的读数**与"`n` 是被谁改小的"：写入者是 `gw+3c3bf7`（`mov %r10,0x10(%r14)`）（2026-11-08，`dispatch/48`）
+
+> 起点 `CG@65463cd`，分支 `agent/array-divergence`。**本节全部是运行时观测**：frida 17.26.1 挂在真游戏
+> `Graphwar II` Linux 2.0.60 里，`libgraphwarrust.so` sha256
+> `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`（= 逆向目标那份）。
+> 探针 [`tools/frida_point_array.js`](../tools/frida_point_array.js)（新增 `--diverge` 一组钩子，**只读**）
+> + 驱动 `frida_point_array.py`（新增 `--diverge` / `--dv-mam` / `--div-extract`）；
+> 入库样本 [`fixtures/frida_array_divergence_sample.jsonl`](../fixtures/frida_array_divergence_sample.jsonl)
+> （1 行 provenance + **10 行 shot**，40 KB 纯文本，sha256 `388e1c77…`）。
+>
+> **编号说明**：本节之前最大是 §29，本节按任务书取 **§30**。
+
+### 30.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | **抓到"两装配点真的分叉"了吗** | **没抓到**（`end_x == pos_x` **10/10**，两条数组前 `len` 点逐字节相同 10/10）。但**抓到了两装配点本身分叉**：`0x471a88`（喂副本）与 `0x3e44d4`（喂数组本身）在同一次运行里拿到的数组**不同** —— `prefix_diff` 分别 1519 / 2309 / 2309 点，`Level 20` 那发连 `len` 都差 1（3875 vs 3874）。**报文永远取 A**（10/10 `wire_end_x == ctor_A.last`） | **观测（负结论 + 正对照）** |
+| ② | **谁把 `n` 改小的** | **`gw+0x3c3bf7`**：`mov %r10,0x10(%r14)`（在 `GraphwarShotCalculator::calculate_shot_results` `[0x3c2bc0,0x3c5c4d)` 内）。`r14` = 结果 item 的地址、`r10 = [point_event+0x1c] + 1` = "第一个撞障碍的点下标 + 1"；守卫是 `cmp %r10,0x10(%r14)` / `jb`（**只在变小时写**）。实测两发：旧 4404 → 新 **2309**（`r10=0x905`）、旧 4404 → 新 **2364**（`r10=0x93c`） | **观测**（命中 4 次） |
+| ③ | 改的是不是 **`Vec.len`** | **不是**。改的是**结果 item 里的 `&[T]` 长度字**（`item+0x10`，item = `{kind@0, ptr@+8, len@+0x10, owner@+0x18}` 的 0x20 字节记录）；**点数组本身一个字节没动**：采样器的 4404 点仍在原地，`pos` 正是它的 `[2308]`，`digest_xy`/首末点都不变。⇒ §29.5 的"原地改 `Vec` 的 len"应更正为"原地改**结果项**的长度字" | **观测 + 指令语义** |
+| ④ | 是**故意截断**还是副作用 | **故意**：同一次运行里 `kind` 的 `0x1000`/`0x2000` 位就是"没撞 / 撞了障碍"（Level 0 那发 `kind=0x1000`、`len=n`；Level 17 撞障碍的 4 发 `kind=0x2000` 且 `len` 被夹小）；且夹小的值是"第一个障碍点下标 + 1"，与 `EffectInfo.pos` 的语义（弹道停在障碍上）一致 | **观测 + 推断**（`kind` 位含义是**推断**：只有 2 个取值被观测到） |
+| ⑤ | 那 100 发的 `pos_x ≠ end_x` 是这条链造的吗 | **不是**。本节 10 发里 `end_x` 与 `pos` **永远读同一个 item**（`end_x` 取的是该 item 的数组**副本**、`pos` 读原件，而 item 的 `len` 在 `calculate_shot_results` 返回前就已经定稿）⇒ 这条链**结构上**不会给出 §28.3 那种 1 ulp 差。要造出来，必须让"副本"与"读"之间数组变了，或让报文取 B 而不是 A —— 本轮**没有**一发的报文取 B | **观测 + 推断**（缺"报文取 B"的样本） |
+
+### 30.1 链路（每一条都能在样本里逐发对上）
+
+```text
+① calculate_shot_results(0x3c2bc0) 里 call *0x9bac98（0x3c30c1，返回点 gw+3c30c7）
+      → 采样器返回 {kind@0, ptr@+8, len@+0x10}；0x3c30d7/0x3c30e7 把 ptr、len 存进 [rsp+0x100]/[rsp+0x1a0]
+② 0x3c2d4f..0x3c2d89 把它 push 成结果项：+0x8 = [rsp+0x100]、+0x10 = [rsp+0x1a0]（= 采样器的 n）
+③ ★ 0x3c3bf7 / 0x3c3c2c：遍历"撞障碍的点事件"（kind 0x8000000000000000，owner@+0x18、下标@+0x1c），
+      对同 owner 的数组项做 `if item.len >= idx+1 { item.len = idx+1 }`
+④ 0x3c50d0..0x3c50eb：把源 Vec 过滤拷进结果 Vec（item 的 +0x10..+0x20 原样搬）
+⑤ 0x3c51a1..0x3c51ba：结果 Vec（cap/ptr/len）写回 sret；返回 game_state_manager 的 0x471825
+⑥ 0x4718a1..0x4718b5：sret 抄进 self+0x30..0x48（= `execute_results` 后面读的那个队列）
+⑦ 0x471915 起逐项处理：`malloc(len*16)` + memcpy（**副本**）→ 0x471a88 `0x456810`（读 pts[len-1].x = end_x）
+⑧ 0x472865：`pos = item.ptr[item.len-1]`（原件）
+```
+
+### 30.2 逐发（10 发；`mode` 从探针的采样器帧读出：`rcx`=1 即 `Ode`）
+
+| 系列 | 关 | mode | 采样器 `n` | 结果项 `len`（= 报文用的） | `end_x == pos_x` | 两个装配点 |
+|---|---|---|---|---|---|---|
+| `normal_l0_1shot` #1 | 0 | 0 (`Normal`) | 3613 | 3613（`kind=0x1000`，未夹） | ✅ | A=B |
+| `l17_3shot` #1/#2/#3 | 17 | 1 (`Ode`) | 5185 | 1001 / 1053 / 1113（`kind=0x2000`） | ✅ | A=B |
+| `l17_1shot` #1 | 17 | 1 | 4621 | 4333 | ✅ | B 与 A **1519 点不同** |
+| `l17_3shot_b` #1/#2 | 17 | 1 | 5329 / 4966 | 368 / 428 | ✅ | #1：B 367 点（`len` 也少 1） |
+| `l17_3shot_c` #1/#2 | 17 | 1 | 4404 | **2309**（`r10=0x905`）/ **2364**（`r10=0x93c`） | ✅ | B 2309 点不同 |
+| `l20_2shot` #1（5 士兵 + Bot） | 20 | 1 | 3875 | 3875 | ✅ | B `len=3874`、末点不同 |
+
+### 30.3 ② 的运行时证据（`--diverge` 的 `dv_site` 行，原样摘）
+
+```text
+post_calc_slot1a0 @0x3c30e7 t=49203 rax=1134                      ← 采样器 n = 4404 存进 [rsp+0x1a0]
+src_push_len      @0x3c2d77 t=49204 rax=7fe0100a15f0 rdx=1134     ← push 时 item+0x10 = 4404
+clamp_len_0       @0x3c3bf7 t=49204 r10=905  r14=7fe0100a15f0     ← ★ 同一个 item 地址，新长度 2309
+copy_len_owner    @0x3c50eb t=49205 xmm0=0509000000000000e7…      ← 结果 Vec 里 +0x10 = 0x905 / owner 231
+```
+
+- `r14` 与 push 时的 `rax` **逐位相同**（`7fe0100a15f0`）⇒ 是同一个对象，不是"另一项顶上来"；
+- 另一发同样：`r10=93c`（2364），`r14=7fe01009e720`，push 时 `rax` 也是 `7fe01009e720`；
+- 两条外部对照：(a) `copy` 行的 `xmm0` 就是 `execute_results` 之后读到的 `len`；(b) `pos` 的 16 字节在该数组里**唯一命中 `len-1`** ⇒ 数组数据没动，只有长度字变了。
+
+### 30.4 ① 的负结论与它的**正对照**
+
+- **负结论**：`end_x`（`0x4569b8` 读的那 8 字节）与 `pos_x`（`0x472865` 读的那 8 字节）在同一发里 **10/10 逐位相等**；
+  `dv_pos` 把 `pos` 读到的整条 `n` 点数组与**每一个** ctor 快照逐点逐字节比，**长度对得上的那条 `prefix_diff` 恒为 0**。
+- **正对照 1（装机时）**：`dvCmpPrefix` 自测 —— 两条 50 点合成数组相同 → `diffPoints=0`；第 41 点翻 1 bit → `diffPoints=1`（记在 `hooks` 消息的 `dv_selftest`）。
+- **正对照 2（运行期）**：同一发里 A 与 B 两条数组的逐点比较**报得出不同**（1519 / 2309 / 2309 点），
+  跨发的比较也报得出（`prefix_diff=367 / 366`）⇒ "0" 是比出来的，不是比不了。
+- **为什么这条链不会分叉（推断，缺一条样本）**：`end_x` 的输入是"结果 Vec 里那个 item 的数组**副本**"，
+  `pos` 读的是"同一个 item 的原件"，而 item 的 `len` 在 `calculate_shot_results` 返回前已定稿（③ 在 ④⑤ 之前）。
+  ⇒ 要出现 `pos_x ≠ end_x`，必须满足下面之一，本轮**一条都没覆盖到**：
+  1. 报文里的 `FunctionPoints` 取的是 **B**（`gw+3e44d9`，target_manager 那条数组）—— 10 发**一次都没有**；
+  2. 副本与 `0x472865` 那次读之间，item 的 `ptr` 指向的缓冲被**下一发**覆写（本轮的 `--gap` 都 ≥ 18 s，没制造这种重叠）；
+  3. 别的关卡/更多士兵下 `execute_results` 挑中的 item 与 ctor 挑中的 item **不是同一个**（本轮 `Level 20` 一发的
+     结果 Vec 里只有 1 个数组项，也没分出来）。
+
+### 30.5 "谁改 len" 这一步卡过的地方（照实写）
+
+1. **`MemoryAccessMonitor` 是每页一次**：实测一页写 5 次只报第 1 次；因此只能抓"push 之后第一次访问"。
+   第一次访问是 `gw+3c3680` 的**读**（`mov 0x10(%rcx,%rdx,1),%rsi` —— 遍历各项取 `max(len)`），不是写。
+2. **在 `onAccess` 里重新武装会退化成"同一条指令反复触发"**：实测 40 次全是 `gw+3c3680` 同一条读同一个地址
+   （fault 后指令重执行，重武装又把它挡住）⇒ 这条路走不通，别照抄。
+3. **最终靠静态+运行时对撞定案**：把 `0x3c2bc0..0x3c5c4d` 里所有写 `+0x10` 的指令列出来（8 处），
+   只有 `0x3c3bf7/0x3c3c2c` 的语义是"把长度夹到 `idx+1`"；再在这两处下断，**4 次命中、每次都恰好是 item 的地址**。
+
+### 30.6 复跑（两条命令）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+# ① 私有 Xvfb（TCP；本机 Wayland 会让 Godot 绕过 Xvfb，驱动自己会摘掉 WAYLAND_DISPLAY）
+Xvfb :117 -screen 0 1920x1160x24 -listen tcp -ac -nolisten unix &
+# ② Level 17（= 战役第 18 关，func=1 即 Ode，散布障碍 + 2 靶）3 发
+$PY tools/frida_point_array.py --attach --diverge --fnpoints --display 127.0.0.1:117 \
+    --campaign-level 20 --level-node 17 --settle 20 --shots 3 --gap 20 \
+    --exprs "sin(x)-y/2,sin(x)-y/2,sin(x)-y/2" --tail 26 --eval-rows 0 --out /abs/l17.jsonl
+# ③ 摘样本（不给游戏）
+$PY tools/frida_point_array.py --div-extract /abs/l17.jsonl --label l17_3shot \
+    --series-level 17 --div-fixture-out fixtures/frida_array_divergence_sample.jsonl
+```
+
+### 30.7 本轮改动清单
+
+| 文件 | 改了什么 |
+|---|---|
+| [`tools/frida_point_array.js`](../tools/frida_point_array.js) | **新增**（独立函数 + 独立开关 `DVCFG.on`）：`installDivergeProbe()` —— ctor 整条数组快照、pos 侧逐点比较、`calculate_shot_results` 返回结构与结果 Vec 逐项 dump、9 个"存储点"断点（含 ★`0x3c3bf7`）、可选的 `--dv-mam` 页级访问探针；主/token/FunctionPoints 探针一行没动 |
+| [`tools/frida_point_array.py`](../tools/frida_point_array.py) | **新增** `--diverge` / `--dv-mam` / `--div-extract` / `--div-fixture-out` 与对应打印；`endx_fixture` 等既有函数没改 |
+| [`fixtures/frida_array_divergence_sample.jsonl`](../fixtures/frida_array_divergence_sample.jsonl) | **新增**：10 发（Level 0 ×1 / Level 17 ×8 / Level 20 ×1），纯文本，无路径/用户名，指针是 ASLR 单局值 |
+| [`docs/06-verification.md`](06-verification.md) | **新增本节**（并对 §29.5 的"原地改 `Vec` 的 len"写更正） |
+
+**没有改动**：`src/`、`client/`、`dispatch/`、`fixtures/guardrails.json`。`fire`/`batch`/`batch_conv` 三条轴本轮没重跑
+（本分支不碰 `src/`，护栏与基线同；按 AGENTS.md §B 应在合并侧跑）。
+
+## 31. **`flip=1`** 与 **Level 18–20** 的运行时样本：6 发 Bot 的 `flip=1` + 7 发我方 `flip=0`，两条朝向的弹道都与我方实现**逐位相同**（2026-11-08，`dispatch/49`）
+
+> 任务书：[`dispatch/49-level-flip-samples.md`](../dispatch/49-level-flip-samples.md)。起点 `CG@65463cd`，
+> 分支 `agent/level-flip-samples`。**本节全部是运行时观测**：frida 17.26.1 挂在真游戏
+> `Graphwar II` Linux 2.0.60 里，`libgraphwarrust.so` sha256
+> `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`（= 逆向目标那份，逐字节相同）。
+> 探针 [`tools/frida_flip_probe.js`](../tools/frida_flip_probe.js) + 驱动
+> [`tools/frida_flip_probe.py`](../tools/frida_flip_probe.py)（**从 45 号那两支复制出来的独立一支**：
+> 停因断点默认关掉，换成 **`FunctionPoints` 装配处 `0x456810`** 与它的 **JSON 写入器 `0x50eb20`** 两组钩子；
+> 并行任务 48 在改 `tools/frida_point_array.*`，本文件不碰它）。
+> 复算 [`examples/flip_branch_check.rs`](../examples/flip_branch_check.rs)（**新增**）+
+> [`examples/ode_array_check.rs`](../examples/ode_array_check.rs)（40 号）。
+> 入库样本 [`fixtures/frida_flip_sample.jsonl`](../fixtures/frida_flip_sample.jsonl)（1 行 provenance + 13 行 shot，**67 KB**）
+> 与 [`fixtures/frida_flip_normal_l05.jsonl`](../fixtures/frida_flip_normal_l05.jsonl)（1 + 4 行，**25 KB**），纯文本；
+> **整条数组的字节不入库**，只留摘要（`sha256` + FNV-1a-64，口径见下 §31.7 的"样本口径"）。
+>
+> **编号说明**：§30 留给并行任务 48，本节按任务书取 **§31**。
+
+### 31.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | **`flip=1` 怎么造** | **靠"打 Bot"**：`flip` 由**队伍**决定（Team1 `x≤0` → 0；Team2 `x≥0` → 1）。战役里玩家恒为 Team1，所以**我方自己的发永远是 `flip=0`**；**有对手的关卡里 Bot 是 Team2** ⇒ 它开火的每一发采样器入口 `edx` 都是 **1**。本轮在 **Level 18/19/20**（战役第 19/20/21 关，各有 1 个 Bot）+ **Level 5**（Normal 局、bot_0）按"等我方打完、等 Bot 出手"的节奏抓，得到 **8 发 `flip=1`**（Ode 6 + Normal 2） | **观测** |
+| ② | **Level 18/19/20 各抓到几发** | **Level 18：6 发**（我方 3 + Bot 3）· **Level 19：3 发**（我方 2 + Bot 1）· **Level 20：4 发**（我方 2 + Bot 2）；三关合计 13 发（`flip=1` 6 / `flip=0` 7）。三关都是 `func=1`（DiffEq）+ 散布式障碍（`min_count` 10/10/15）+ **我方 3/4/5 个士兵** + **0 个靶子** + **1 个 Bot**（难度档 3/3/4），与 `docs/10-campaign.md` §4 的表一致 | **观测**（关卡参数：逐位，见 §4；士兵数/敌方数：截图） |
+| ③ | **`flip=1` 与 `flip=0` 的可指认差异** | ① **采样方向**：`flip=1` 的 `pts[0].x = x0 > 0`、`pts[n-1].x < 0`（x **递减**）；`flip=0` 反过来（**13/13**）；② **报文的 `start_x` 是射手自己的 x**（`flip=1` 时为正），`owner_id` = 开火的那个士兵（**13/13**）；③ **整条点数组**：`calculate(…, flip=true)` 与真机 **1801/1801 逐位相同**（Ode，其中 1787 次是 `flip=1`），而把 `flip` **取反**只剩 **150/1801** 相同 —— 正对照证明 `edx` 这个标志真的在起作用；④ **Normal 局的修正常数**：判别发 **32/32** 命中 `c = y0 − f(flip ? −x0 : x0)`，取反 **0/32** | **观测 + 逐位** |
+| ④ | **修正量的取号与我们一致吗** | **一致**（这是任务书 §1 的 ①）：Level 5 的 326 次采样器调用里，常数 token 与 `c = y0 − f(±x0)` 逐位/3 位小数对上的有 **326/326**；其中**两种取号给出不同 c** 的 32 发判別发上：真机 flip **32/32**、取反 **0/32** | **逐位**（全精度那部分）/ **3 位小数**（真正打出去那一发，见 §31.4） |
+| ⑤ | **多士兵局里"谁的位置"进报文** | **射手自己的**：`FunctionPoints.start_x/start_y` = 那一发点数组的 `pts[0]`，与该次采样器入参 `x0/y0` **逐位相同（13/13）**；`owner_id` = 开火的士兵 id（我方 230–233 / 敌方 234–237、240）。同一局里我方 3 个士兵轮着开火 ⇒ 每发 `start_x` 不同（L19：`-21.81` / `-11.26`），**不是**队伍中心、也**不是**上一发的位置 | **观测** |
+| ⑥ | **有障碍的 Level 18–20** | 与 45 号在 Level 17 看到的是同一件事：**采样器不认障碍**（它照旧采到 `\|x\|>25`），**截断发生在采样器之外**（同一条缓冲、`Vec.len` 被原地改小）。13 发里 **6 发** `report_n < calc_n`（例：L18 的 `n=2171 → 1985`、L19 的 `5958 → 819`） | **观测** |
+| ⑦ | **报文两个字段对不对得上** | 这 17 发里 **`end_x == pos_x` 17/17 逐位相等**（§28 那个"100 发不一致"本轮**没有**复现） | **观测** |
+
+### 31.1 怎么造出 `flip=1`（可复跑；这是任务书的最后一格空白）
+
+#### ① 结论：`flip` 跟着**队伍**走，所以在战役里只能靠 **Bot** 拿到 1
+
+`docs/archive/105-team-sides.md` 与 `src/graphwar_turn_manager.rs` 的 `Team::flip` 都是：
+
+```text
+Team1（x ≤ 0，我方，战役里恒为玩家）  flip = false   → 朝 +x
+Team2（x ≥ 0，敌方 / Bot）            flip = true    → 朝 −x
+```
+
+本次实测把这个"队伍 ⇒ `flip`"的链条**在运行时接上了**：
+
+| 量 | `flip=0` 的 7 发 | `flip=1` 的 6 发 |
+|---|---|---|
+| 采样器 `x0` 的符号 | **全为负**（7/7） | **全为正**（6/6） |
+| `pts[0].x`（= `x0`） | 负 | 正 |
+| `pts[n-1].x`（= `end_x`） | 正（或仍负但更大） | 负 |
+| 点数组 x **走向** | **递增** 7/7 | **递减** 6/6 |
+| `FunctionPoints.owner_id` | **230–233**（我方士兵） | **234–237、240**（敌方士兵） |
+| 开火时谁在动 | 宿主用 `xdotool` 打字 | **没有人打字**：Bot 自己进化出式子后开火 |
+
+⇒ 我方士兵与敌方士兵的 id **不重叠**（230–233 vs 234–240），这条与"`flip=1` 就是敌方那一侧"完全一致。
+
+#### ② 有对手的战役关（`docs/10-campaign.md` §4 的表，逐位验证过）
+
+| Level | 关 | 我方士兵 | 靶 | Bot | 障碍 | `func` |
+|---|---|---|---|---|---|---|
+| **5** | 6 | 2 | 0 | bot_0 | 散布 min=5 | 0（Normal） |
+| 9 / 11 / 14 / 15 | 10/12/15/16 | 3 / 3 / 4 / 5 | 0 | bot_2 / 3 / 3 / 4 | 散布 | 0 |
+| **18 / 19 / 20** | 19/20/21 | **3 / 4 / 5** | **0** | **bot_3 / 3 / 4** | 散布 min=**10/10/15** | **1（DiffEq）** |
+
+本轮用的是 **18/19/20**（拿 `flip=1` 的 Ode 发）与 **5**（拿 `flip=1` 且 token 流里**带修正常数**的 Normal 发，见 §31.4）。
+
+#### ③ 一步步（能复跑）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
+       LIBGLX_VENDOR_LIBRARY_NAME=mesa LIBGL_ALWAYS_SOFTWARE=1
+Xvfb :93 -screen 0 1920x1160x24 -listen tcp -ac -nolisten unix &     # ★ TCP + 独占 display
+
+# 驱动会自己写 user://campaign.save = level_20（21 关全解锁），再点 Campaign → 关卡节点 → Start
+$PY tools/frida_flip_probe.py --attach --display 127.0.0.1:93 \
+    --data-dir <abs>/.run/gamedata --out <abs>/.run/l18.jsonl \
+    --campaign-level 20 --level-node 18 --shots 3 --exprs "sin(x)-y/2,y,0" \
+    --gap 3 --settle 22 --tail 20 --full-array \
+    --start-with-opponent 1 --between-opponent 1 --turn-detect 25 \
+    --opp-timeout 260 --shot-timeout 150 --retry-timeout 18
+```
+
+关卡节点坐标（1920×1160，三行七列**蛇形编号**）：`18 → (1187,751)`、`19 → (1429,751)`、`20 → (1672,751)`、
+`5 → (1429,224)`。输入框 `(1000,1090)` 先 `ctrl+a` 再 `type -- "式子"`；`Fire!` 在 `(1855,55)`，**长按 2 s**。
+
+#### ④ ★ 本轮的**必要条件**：驱动必须"回合感知"，不能打完就打字
+
+三关实测的**先手不一样**，这是本轮踩到的最大的坑（第一版驱动因此 0 发 / 只录到 Bot）：
+
+| 关 | Start 之后 25 s 内探针看到 | 结论 |
+|---|---|---|
+| **18** | 立刻出现 `flip=1` 的采样器调用（Bot 开始评候选） | **Bot 先手**；此时我方输入框**是禁用的**（打字不进、按 `Fire!` 无反应，截图里输入框仍空） |
+| **19** | 25 s 内一条 `calc` 都没有 | **我方先手** |
+| **20** | 立刻出现 `flip=1` 的采样器调用 | **Bot 先手** |
+| **5** | 25 s 内一条 `calc` 都没有 | **我方先手** |
+
+所以驱动现在这样做（`--turn-detect / --start-with-opponent / --between-opponent`）：
+**看探针的 `flip=1` 计数**判断"对手是不是在动" → 是就等它的 `pos_read`（上限 `--opp-timeout`），
+不是就直接打；我方打完再等对手的下一发（Bot 一局里 evolver 会评 **200 条上下**候选，
+从 Start 到它真正开火实测 **30–60 s**）。判据全部来自探针自己的消息，不用固定延时。
+
+### 31.2 逐发样本（13 发 Ode + 4 发 Normal）
+
+`(ptr, n)` 里的 `ptr` 是 ASLR 随机、**只在同一局内可比**，样本里都带着；下表给的是能跨局比较的量。
+`n` = 采样器返回的点数；`n_rep` = `execute_results` 读点那一刻的 `n`（有障碍时被截短，见 ⑥）。
+
+**Ode（`fixtures/frida_flip_sample.jsonl`）**：`mode=1`、`step=0.01`、`flip` 见列。
+
+| 系列 | # | `flip` | `owner_id` | `x0` | `y0` | `n` | `n_rep` | `pos_x`(= `end_x`) | x 走向 | 宿主打的式子 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| l18 | 0 | **1** | 235 | **7.0051** | 4.3654 | 2171 | 1985 | -10.3549 | 递减 | （Bot） |
+| l18 | 1 | 0 | 231 | -18.0074 | -12.5311 | 5958 | 819 | -16.3520 | 递增 | `sin(x)-y/2` |
+| l18 | 2 | **1** | 236 | **15.7162** | 11.1338 | 5022 | 3379 | -11.7350 | 递减 | （Bot） |
+| l18 | 3 | 0 | 230 | -17.1748 | 7.2670 | 781 | 127 | -17.0173 | 递增 | `y` |
+| l18 | 4 | **1** | 234 | **2.6715** | 7.3924 | 2766 | 2766 | -14.0222 | 递减 | （Bot） |
+| l18 | 5 | 0 | 231 | -18.0074 | -12.5311 | 4588 | 4588 | 24.9957 | 递增 | `0` |
+| l19 | 0 | 0 | 233 | -21.8133 | 0.0421 | 5691 | 2306 | -2.7477 | 递增 | `sin(x)-y/2` |
+| l19 | 1 | **1** | 237 | **3.1295** | -12.6028 | 3332 | 3332 | -24.9955 | 递减 | （Bot） |
+| l19 | 2 | 0 | 232 | -11.2552 | 1.0517 | 1441 | 1441 | -8.5981 | 递增 | `y` |
+| l20 | 0 | **1** | 240 | **14.2870** | 3.7070 | 2626 | 2626 | -5.4005 | 递减 | （Bot） |
+| l20 | 1 | 0 | 231 | -21.5606 | 8.1458 | 6079 | 1172 | -15.2337 | 递增 | `sin(x)-y/2` |
+| l20 | 2 | **1** | 237 | **10.5694** | -3.7233 | 3508 | 3508 | -20.1168 | 递减 | （Bot） |
+| l20 | 3 | 0 | 232 | -20.7363 | -13.8529 | 119 | 119 | -20.6572 | 递增 | `y` |
+
+每发两次真发调用（`gw+3c30c7` shot_calculator / `gw+3e2d3b` target_manager，§27.3/§28.2 同一条链），
+样本里 `report_array_calc` 是**报文读的那一块**、`other_calcs` 是同一发另一次，`candidate_calls` 是
+Bot 那几十/几百条 `step=0.5` 的 evolver 候选（只留条数与序号区间）。
+
+**Normal（`fixtures/frida_flip_normal_l05.jsonl`，Level 5）**：`mode=0`、`step=0.01`。
+
+| # | `flip` | `owner_id` | `x0` | `y0` | `n` | `n_rep` | `pos_x` | x 走向 | 式子 |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 | 0 | 231 | -14.3344 | -8.2205 | 4848 | 4848 | 24.9962 | 递增 | `sin(x)+3` |
+| 1 | **1** | 233 | **22.5383** | -2.9869 | 5071 | 966 | 13.4914 | 递减 | （Bot） |
+| 2 | 0 | 230 | -7.2143 | 5.8215 | 2098 | 2098 | 11.1344 | 递增 | `x/2` |
+| 3 | **1** | 234 | **17.8223** | 13.9152 | 5275 | 5269 | -24.9545 | 递减 | （Bot） |
+
+### 31.3 `flip=1` 到底改变了什么（≥1 条可指认的差异，这里给四条）
+
+#### ① 采样方向反过来（最直观的一条）
+
+同一关、同一个采样器 `0x3c2530`，只有入口 `edx` 不同：
+
+```text
+flip=0（Team1）  pts[0] = (x0, y0) 且 x0 < 0 ；pts[n-1].x > x0        ⇒ x 递增
+flip=1（Team2）  pts[0] = (x0, y0) 且 x0 > 0 ；pts[n-1].x < x0        ⇒ x 递减
+```
+
+13 发 Ode 里 **13/13** 与自己的 `flip` 一致（6 递减 / 7 递增），Normal 4 发 **4/4** 同样。
+（复算工具里 `x_dir_matches_flip`：Ode **1584/1801** 次采样器调用、Normal **324/326**；
+不一致的那些是 `n=1` 或首末点 x 相同（哑弹/撞 NaN 墙）的病态候选，不是方向反了。）
+
+#### ② 报文里 `start` 是**射手自己**的位置，`owner_id` 是**开火的士兵**
+
+`FunctionPoints` 的装配处 `0x456810`：`start = pts[0]`、`end_x = pts[len-1].x`、`owner_id = esi`（u32）。
+本轮把这三样与采样器入参对撞：**`start_x` 与那一发 `x0` 逐位相同 13/13**（`wire_start_eq_shooter_x0`），
+且 `owner_id` 在同一局里**随射手轮换**（L18：`231 → 230 → 231`；L19：`233 → 232`；L20：`231 → 232`）。
+⇒ 多士兵局里报文带的是**当前射手**的位置，`flip=1` 时它自然落在 `x>0` 那一侧。
+
+#### ③ 整条点数组：我方 `flip` 分支与真机**逐位相同**，取反就崩
+
+```bash
+cargo run --release --offline -q --example ode_array_check -- --raw <abs>/.run/l18.jsonl --json repro.json
+cargo run --release --offline -q --example flip_branch_check -- \
+    --raw <abs>/.run/l18.jsonl --raw <abs>/.run/l19.jsonl --raw <abs>/.run/l20.jsonl --json flip_ode.json
+```
+
+| 数据集 | `calc` 行 | 真机 `flip` 复算 | 取反 `flip` 复算 |
+|---|---|---|---|
+| Level 18（`ode_array_check`） | 905 | **逐位相同 905** | — |
+| Level 19 | 249 | **249** | — |
+| Level 20 | 647 | **647** | — |
+| 三关合（`flip_branch_check`） | 1801（flip=0 14 / **flip=1 1787**） | **1801 逐位相同**（其中 flip=1 **1787**） | 只有 **150/1801** 相同 |
+| Level 5（Normal） | 326（flip=0 4 / **flip=1 322**） | **326 逐位相同** | 只有 **2/326** 相同 |
+
+"取反还有 150 次相同"是**正对照的另一半**：那些发的函数是常数/偶函数（`f(x0) == f(-x0)`），
+`flip` 改了也看不出差别 —— 这正是"比对代码在真数据上报得出不同"的证据，不是反例。
+
+#### ④ Normal 局的修正常数取号（见 §31.4）
+
+### 31.4 `Mode::Normal` 的修正常数：`c = y0 − f(flip ? −x0 : x0)`
+
+任务书 §1 的 ①。要在运行时看到"取号"，必须用**有尾随常数的 Normal 局**（`Ode` 局不加常数，§27.0 ④）。
+Level 5 的 4 发（2 我方 + 2 Bot）给了 326 次采样器调用，每次的 token 流都带那个常数。
+
+**本轮读出的 token 排布**（与 40 号"尾随常数"的说法一致，这里把它说全）：
+
+```text
+[Add|Sub]  f 的 token…  Const(|c|)
+   ↑ 第一项是**取号**用的运算符（Sub ⇒ c < 0），最后一项是常数，中间是函数本身
+例：`sin(x)+3`（flip=0, x0=-14.3344, y0=-8.2205）
+     tokens = [Sub, Add, Sin, VarX, Const(3.0), Const(10.24)]   ⇒  y = sin(x)+3 − 10.24
+     c = y0 − f(x0) = -8.2205 − 2.0194 = −10.2399…  ⇒ 印成 `-10.240`（3 位小数）
+例：Bot 的 flip=1 发（x0=17.8223, y0=13.9152，f = sin(x)）
+     tokens = [Add, Sin, VarX, Const(13.059)]
+     c = y0 − f(−x0) = 13.9152 − (+0.8559) = 13.0594…  ⇒ `13.059`（**取的是 −x0**）
+     若按 flip=0 算：c = 13.9152 − (−0.8559) = 14.771  ✗
+```
+
+**精度分两种**（本轮实测，写进 `examples/flip_branch_check.rs` 的判据里）：
+
+* **Bot 的 evolver 候选**（`step = 0.5`）：常数是**全精度** `c`，可以 `to_bits()` 逐位比；
+* **真正打出去的那一发**（`step = 0.01`）：`c` 先被 `correction_text` 印成 **3 位小数**、再 parse 回
+  f64 才进 token 流（`src/game.rs` 那段"印出来的文本再 parse"）⇒ 只能比到 3 位小数。
+
+判据（写死在工具里）：`全精度命中 或 3 位小数命中` ⇒ 这个取号对。结果：
+
+| 量 | 数 |
+|---|---|
+| Normal 采样器调用 | 326（flip=0 **4** / flip=1 **322**） |
+| 常数 token 与 `c = y0 − f(±x0)` 对得上（真机 `flip`） | **326 / 326**（其中 3 位小数那条 9、全精度那条 318） |
+| 同上，把 `flip` **取反** | 294 / 326 |
+| **两种取号给出不同 `c`** 的判别发 | **32**（其中 flip=1 的 28） |
+| ↳ 真机 `flip` 取号命中 | **32 / 32** |
+| ↳ 取反 `flip` 取号命中 | **0 / 32** |
+
+⇒ **`flip=1` 时修正量确实按 `y0 − f(−x0)` 取号，与我们实现一致**（判别发 32/32 对、0/32 反）。
+
+### 31.5 本轮踩的坑 + 两处对旧说法的补充
+
+| # | 坑 / 更正 | 现象 | 处置 |
+|---|---|---|---|
+| 1 | **驱动不看回合就会 0 发** | 第一版照 40/45 号"Start 之后直接打字"跑 Level 18：输入框**是禁用的**，`Fire!` 点了没反应，整轮只录到 Bot 那一发（截图里输入框仍是空的） | 改成"**先判谁先手**"：看探针的 `flip=1` 计数（25 s 窗口），有对手活动就先等它的 `pos_read`；见 §31.1 ④ |
+| 2 | **有 Bot 的关卡并不都是 Bot 先手** | Level 18/20 Bot 先、Level 19/5 我方先（同一份驱动、同一台机器） | 不做假设，逐局判定（`--turn-detect`） |
+| 3 | **`marker` 不能按"最近一条"配** | `marker` 由驱动直接写进 JSONL（探针的 `post→recv` 在这台机器上不送达），**没有探针时基的 `t`**；Bot 的 `pos_read` 就在我方 marker 后面几十秒，"最近一条"会把 Bot 那一发也记成我方打的式子 | 改成**文件顺序 + 消费一次**：一条 marker 只配给它后面的第一个 `pos_read`；样本里 `expression` 为空 = Bot 那一发（同时 `x0>0` 可独立复核） |
+| 4 | **`arr_truncated` 必须单列** | 6/13 发 `report_n < calc_n`（障碍截断，同一条缓冲、`Vec.len` 被改小，§29.5 同一件事）。如果拿 `same_len` 当唯一点名判据，这些发会**配到错的那条数组**上 | `_pick_calc` 改成"`same_ptr` 必须成立、`same_len`/摘要只做优先级"，并给这种发打 `arr_truncated{calc_n,report_n}` |
+| 5 | **`owner_id` 只能用装配处那个 u32** | `0x50eb20` 写入器按 8 字节读 `owner_id`，高 4 字节是脏的（抓到 `139745350910183` 这种）。**44 号 §28.5 第 3 条的同一件事** | 样本里 `owner_ids` 一律取 `0x456810` 的 `esi`（u32）；写入器那份只作对照 |
+
+### 31.6 仍未做 / 未知（诚实清单）
+
+1. **只测了"战役 + Bot"这一条路**。另一条能拿到 `flip=1` 的路 —— **联网/局域网局里自己当 Team2** ——
+   本轮**没有**尝试（要过 `lan_lobby` 那一套菜单，`serve_match` 起服务端后客户端还得能连）。
+   ⇒ 目前 `flip=1` 的样本**全部来自 Bot**，没有"人类玩家在 Team2"的样本（两者的 `flip` 来源是同一条
+   `Team::flip`，但**"人类在 Team2"这一步本身没有被观测到**）。
+2. **Bot 为什么有时先手、有时后手未定性**。本轮只记录"哪一局谁先走"，没有去反汇编回合初始化
+   （`turn_manager` 的初始 current 是怎么定的）。
+3. **Bot 的候选评估次数/耗时只有计数**（`candidate_calls.n`：一发 200 条上下、30–60 s），
+   没有把 evolver 的入参/打分过程接进来。
+4. **Normal 局只测了 Level 5**（bot_0）。Level 9/11/14/15 同样是"有 Bot 的 Normal 局"，
+   但 11/14 是 `turn=1`（SimultaneousTurns），本轮没碰。
+5. **`flip` 对障碍截断有没有影响**没单独验证（截断在采样器之外，理论上与 `flip` 无关；本轮样本里
+   6 发截断有 4 发是 `flip=0`、2 发 `flip=1`，看不出关系，也没做判据）。
+6. **`pos` 与 `end_x` 这次 17/17 相等**：§28 那 100 发不一致的来源仍然未知（本节不碰）。
+
+### 31.7 复跑、护栏、文件清单
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
+       LIBGLX_VENDOR_LIBRARY_NAME=mesa LIBGL_ALWAYS_SOFTWARE=1
+Xvfb :93 -screen 0 1920x1160x24 -listen tcp -ac -nolisten unix &
+
+# ① Ode：Level 18 / 19 / 20（每关 2–3 发；Bot 关要等它先/后手各一发）
+for LV in 18 19 20; do
+  $PY tools/frida_flip_probe.py --attach --display 127.0.0.1:93 \
+      --data-dir <abs>/.run/gamedata --out <abs>/.run/l$LV.jsonl \
+      --campaign-level 20 --level-node $LV --shots 3 --exprs "sin(x)-y/2,y,0" \   # L19/L20 本轮实际各 2 发
+      --gap 3 --settle 22 --tail 20 --full-array \
+      --start-with-opponent 1 --between-opponent 1 --turn-detect 25 \
+      --opp-timeout 260 --shot-timeout 150 --retry-timeout 18
+done
+# ② Normal（带修正常数）：Level 5
+$PY tools/frida_flip_probe.py --attach --display 127.0.0.1:93 \
+    --data-dir <abs>/.run/gamedata3 --out <abs>/.run/l05.jsonl \
+    --campaign-level 20 --level-node 5 --shots 2 --exprs "sin(x)+3,x/2" \
+    --gap 3 --settle 22 --tail 15 --full-array --turn-detect 25
+
+# ③ 逐位复算（整条数组 / flip 分支 / 修正量取号）
+cargo run --release --offline -q --example ode_array_check   -- --raw <abs>/.run/l18.jsonl --json <abs>/repro.json
+cargo run --release --offline -q --example flip_branch_check -- --raw <abs>/.run/l18.jsonl \
+    --raw <abs>/.run/l19.jsonl --raw <abs>/.run/l20.jsonl --json <abs>/flip_ode.json
+
+# ④ 入库（原始 JSONL 在 `.agent-work` 里，不入库）
+$PY tools/frida_flip_probe.py --extract <abs>/.run/l18.jsonl --extract <abs>/.run/l19.jsonl \
+    --extract <abs>/.run/l20.jsonl --label l18 --label l19 --label l20 \
+    --fixture-out fixtures/frida_flip_sample.jsonl
+$PY tools/frida_flip_probe.py --extract <abs>/.run/l05.jsonl --label l05_normal \
+    --fixture-out fixtures/frida_flip_normal_l05.jsonl
+```
+
+护栏（本分支实测，`src/` 零改动）：
+
+| 项 | 结果 |
+|---|---|
+| `cargo test --offline` | **1638 通过 / 0 失败**（= 基线，本轮**没加**测试） |
+| `python3 tools/check_doc_refs.py` | 退出码 **0** |
+| `src/`、`client/`、`dispatch/`、`fixtures/guardrails.json` | **零改动** |
+| `tools/frida_point_array.*`、`tools/frida_ode_probe.*`、`tools/frida_ode_edge.*` | **零改动**（并行任务 48 在用前两支） |
+
+**样本口径（"只留摘要"这件事怎么自证）**：一条点数组的字节 = **16·n 字节**（每点 `x` 的 8 字节小端 f64 +
+`y` 的 8 字节小端 f64）。样本里每条数组只带两个摘要而不是全量字节：
+
+| 字段 | 跑在哪 | 谁算的 | 能证明什么 |
+|---|---|---|---|
+| `digest_xy` / `digest_y` | 同样的 16·n 字节 / 只跑 y 那 8 字节 | **探针在游戏进程里、调用那一刻**（`digestOf`，FNV-1a-64） | "那一块内存当时就是这些字节"（时间点上最强） |
+| `sha256` + `n_bytes` | 同样的 16·n 字节 | **驱动摘样本时**，用探针回传的 `arr.hex` | 任何人拿 `--full-array` 复跑都能复核，与语言/实现无关 |
+| `arr.digest_selfcheck` | — | 驱动用同一份字节**重算 FNV** 并与探针报的值逐位比 | "压缩没改证据"：本轮 **13/13 + 4/4 全 true** |
+
+本轮另外做了一次**独立复核**（不是同一段代码）：把两个样本文件里 **17 条报文数组 + 25 条同发的另一次调用 +
+17 条 `pos_read` 读时刻摘要**，全部拿原始 JSONL 的 `arr.hex` 重算 `sha256` / FNV（`pos_read` 那条按
+**前 `n·16` 字节**算，因为障碍截断就是"同一条缓冲、len 变小"）⇒ **0 处不一致**。
+
+**为了压到 100 KB 以下砍掉了什么**（都是"整条数组的转储"与"重复的结构"，标量证据一条没丢）：
+
+| 字段 | 压缩前 | 现在 | 做法 |
+|---|---|---|---|
+| `queue` | 39.7 KB | 9.9 KB | 队列项按 `(len, digest)` **去重**，只留数组摘要 + 首末点；`eval_sample` 只留前 3 条 |
+| `pos_read` | 16.6 KB | 7.7 KB | `which_calc` 8 条 → `{n_checked, same_ptr_seqs, same_ptr_and_len_seqs}`；`vs_queue` 只留命中的 `(item, off)` |
+| `fnpoints_ctor(_b)` | 14.5 + 14.4 KB | 5.2 + 5.0 KB | 去掉 `vs_calc` 的 8 条全量，只留 `same_ptr_seqs` / `same_ptr_and_len` |
+| `other_calcs`（同发另一次调用） | 27.3 KB | 9.9 KB | 只留**紧邻报文那块**的最后 2 条（`lean`：不带 token/首末点），其余只计数 `other_real_step_calls` |
+| `report_array_calc` | 9.2 KB | 9.2 KB | **原样保留**（token 流 + `(ptr,n)` + 首末点 + 摘要；这是核心证据） |
+| 标量（`flip`/`mode`/`x0`/`y0`/`pos_x`/`end_x`/`*_f`/`arr_dir`/`arr_truncated`/`level`/`shot`/`series`/`report_array_pick`） | — | — | **全部保留**，一条没删 |
+
+具体点数：主文件 **113 412 B → 68 120 B**（67 KB），Level 5 那份 **35 520 B → 25 715 B**（25 KB）。
+
+本轮新增的文件：
+
+| 文件 | 性质 |
+|---|---|
+| [`tools/frida_flip_probe.js`](../tools/frida_flip_probe.js) | **新增**（探针：`flip` + 走向 + `FunctionPoints` 装配/写入器；只读） |
+| [`tools/frida_flip_probe.py`](../tools/frida_flip_probe.py) | **新增**（驱动：回合感知 / 造关 / 摘样本） |
+| [`examples/flip_branch_check.rs`](../examples/flip_branch_check.rs) | **新增**（真机 `flip` vs 取反 `flip` 复算 + Normal 常数取号） |
+| [`fixtures/frida_flip_sample.jsonl`](../fixtures/frida_flip_sample.jsonl) | **新增**（13 发：6 `flip=1` + 7 `flip=0`，Level 18/19/20） |
+| [`fixtures/frida_flip_normal_l05.jsonl`](../fixtures/frida_flip_normal_l05.jsonl) | **新增**（4 发：2 `flip=1` + 2 `flip=0`，Level 5，带修正常数） |
+| `docs/06-verification.md` | **新增本节**（§31） |
+
+## 32. 假设空间整片扫描：H1–H5 共 29 档**一档也没超过 647**，而且**没有任何一批**从失败翻成命中（2026-11-08，`dispatch/53`）
+
+> 任务书：[`dispatch/53-corpus-sweep.md`](../dispatch/53-corpus-sweep.md)。起点 `CG@55013a3`，分支 `agent/corpus-sweep`。
+> **节号**：任务书说"现在最大 §30、本节取 §31"，但**本分支 `docs/06-verification.md` 实际最大是 §29**
+> （`grep -n '^## ' docs/06-verification.md | tail -1` ⇒ `## 29.`；§30 只存在于 `docs/16-client.md` 等别的文件），
+> 所以本节取 **§30**，不留空号。若上游另有一节 §30，合并时按序重编号即可。
+>
+> **本节全部是"我方实现的假设对比"**（证据档 = **推断**），不是真值：判据只有一条 ——
+> 把某个假设换成另一种解释后，`fire` 轴的内容命中数能不能**稳定超过** 647，以及
+> **有没有任何一批从失败变成命中**。两问的答案都是否。
+>
+> **没改 `src/`**（任务书硬约束）。全部开关住在
+> [`examples/hypothesis_sweep.rs`](../examples/hypothesis_sweep.rs)，接线只用三个**本来就 `pub`** 的接口。
+
+### 32.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 基线复现得出 647 吗 | **是，逐批完全一致**：`286` 份可读回放 / `1080` 个结算批 / 内容命中 **647**，与 `replay_attrib --drive fire` 的 `结算批 1080；内容命中 647` 同一个数 | **正对照** |
+| ② | 我方的"假设开关版"点序列与内核一致吗 | **一致**：`H0` 档把内核 `Match::fire_functions` 也跑一遍，**1290/1290 发**的 `Vec<(f64,f64)>` **逐位相同**（`to_bits` 比较，不是容差）；发出去的 `corrected_function` **0/1080 批**有差异 | **正对照** |
+| ③ | 29 档里有超过 647 的吗 | **没有**。最高是 `H4b`（= 647，且它与 `H0` **结构等价**，见 30.3 第 2 条），其余 27 档全部**低于**基线（最低 34） | **推断**（我方实现口径） |
+| ④ | 有哪一批"从失败翻成命中"吗 | **一共 0 批**：29 档 × 1080 批 = 31320 次比对里，`fix`（基线失败→本档命中）**全是 0**；所有低于 647 的档**只破坏已有命中** | **推断** |
+| ⑤ | 那 433 批失败长什么样 | 前三位是 `Y` 爆炸点 y 末位差 **189**（43.6%）、`E1` `end_x` 小差 ≤0.02 且爆炸点一致 **127**（29.3%）、`X` 爆炸点 x 末位差（回放自身 `pos_x ≠ end_x`）**91**（21.0%）—— **94% 的失败是 ≤0.02（多数 ≤1e-9）的数值末位差**，不是"取错了哪一点" | `tools/bit_exact_attrib.py` 分桶 |
+| ⑥ | 结论 | **假设空间已扫，没有更好的解释**。H1–H5 这条假设轴对 433 批失败**一条也解释不了**：不是"没扫到更好的"，而是"这一族解释全部为负且不留翻盘" | 硬结论 |
+
+### 32.1 假设怎么落成开关（不碰 `src/` 的三个接缝）
+
+`Match::fire_batch` 本体就是两段（`src/game.rs`）：`fire_functions`（算几何、`&self` 不改状态）→
+`execute_results`（按 outcome 发报文 + 落地状态）。因此"换一种解释"可以只换这两段中间的东西：
+
+| 接缝 | 签名 | 用它做哪几档 |
+|---|---|---|
+| `Match::fire_functions` | `&self -> Vec<ShotOutcome>` | **正对照**（`H0` 逐位比点序列） |
+| `settle::resolve_points_owned` | `(mask, targets, points, owner) -> ShotOutcome` | `H3`/`H4`/`H5`：换了**点序列**之后重算停点与致死 |
+| `Match::execute_results` | `(&mut self, shots, &outcomes, tick) -> Vec<String>` | 全部档：报文**从 outcome 里取字段**，所以换 outcome = 换解释 |
+
+`Match::mask` 是私有的，所以例子里自带一份（`plane::empty_mask` + 每障碍一次 `plane::rasterize`，
+与 `Match::new` 的建法逐行相同），挖洞时按报文里的 `QueueDestroyObstacle` 同步光栅化 ——
+**`H0` 档 647 全中**就是这一份自带状态正确的证明。
+
+采样器是 `src/graphwar_path_calculator.rs::calculate` 的**逐行复刻**（同一份算术、同一份早退，
+弦长用 `sqrt(a*a+b*b)` 而不是 `f64::hypot`），多出来的只有两个东西：`term` 开关，以及把
+"因越界被丢掉的那一步"交出来。复刻是否漂了，由 ② 的正对照（1290/1290 逐位）回答。
+
+各假设的取值：
+
+```text
+H1  end_x = last / prev / first_oob / interp        —— 只改 FunctionPoints.end_x
+H2  pos   = last / prev / first_oob / interp        —— 只改 EffectInfo(ExplosionEffect).pos_*（挖洞点跟着挪）
+H3  采样串的修正常量 = {:.3}（现行）/ {:.17}（全精度）/ 向零截断到 3 位
+H4  采样终止 = 越界即停（现行）/ 越界后再走一步 / 停在最后一个 inside 点
+H5  DiffEq 步长 = 0.01（现行）/ 0.005 / 自适应
+```
+
+两条**必须说清楚的定义**（否则数字没法复跑）：
+
+* **`last/prev/first_oob` 相对的是"停点那一格"，不是整条采样的最后一格**：真值的 `pts` 是被
+  截断过的那块缓冲（§29.4：`5098 → 1528`、`pos = pts[1527]`），所以被障碍挡住时 `pts[len-1]`
+  指的是**挡住那一格**（我方 `outcome.stop`）。`first_oob` = 采样器因越界丢掉的那一步；
+  被障碍挡住时取 `pts[idx+1]`；`interp` = 停点与它之间**插值到棋盘边界**（`|x|=25` / `|y|=15`）。
+* **`H5` 的"自适应"是一条具体规则**：`h = 0.01 / (1 + |f(x0,y0)|)`，夹在 `[1e-3, 1e-2]`，
+  且只作用于 `DiffEq` 局（`H5c` 是"两轴都减半"的对照档）。它只是自适应方案里**一个**可复跑实例，
+  ⇒ `H5b` 的数字只能否掉**这条**规则，不能否掉"所有自适应"。
+
+### 32.2 完整表（`fire` 轴；每档一行；`noop` = 该批上"四种取法都退回停点"的批数）
+
+基线 `H0` = **647 / 1080 结算批**（286 份可读回放；另有 117 份读失败，是既有的、与本节无关）。
+`fix` = 基线失败→本档命中；`break` = 基线命中→本档失败；`net = fix - break`。
+
+| 档 | 假设（唯一改动） | 内容命中 | Δ vs 647 | fix | break | net | noop 批 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| **H0** | 基线（现行实现） | **647** | **0** | 0 | 0 | 0 | — |
+| **H4b** | 终止 = 停在最后一个 inside 点 | **647** | **0** | 0 | 0 | 0 | 1080 |
+| H3b | 修正常量 = 向零截断到 3 位 | 469 | −178 | 0 | 178 | −178 | — |
+| H5b | `DiffEq` 步长 = 自适应 | 383 | −264 | 0 | 264 | −264 | — |
+| H5a | `DiffEq` 步长 = 0.005 | 369 | −278 | 0 | 278 | −278 | — |
+| H3a | 修正常量 = 全精度（`{:.17}`） | 315 | −332 | 0 | 332 | −332 | — |
+| H4a | 终止 = 越界后再走一步 | 266 | −381 | 0 | 381 | −381 | — |
+| H1b | `end_x` = 首个越界点 | 101 | −546 | 0 | 546 | −546 | 126 |
+| H1c | `end_x` = 插值到边界 | 101 | −546 | 0 | 546 | −546 | 126 |
+| H2b | `pos` = 首个越界点 | 101 | −546 | 0 | 546 | −546 | 126 |
+| H2c | `pos` = 插值到边界 | 101 | −546 | 0 | 546 | −546 | 126 |
+| Gfirst_oob_last | `G(first_oob,last)`：`end_x`=首个越界点，`pos`=last | 101 | −546 | 0 | 546 | −546 | 126 |
+| Glast_first_oob | `G(last,first_oob)`：`end_x`=last，`pos`=首个越界点 | 101 | −546 | 0 | 546 | −546 | 126 |
+| Gfirst_oob_first_oob | `G(first_oob,first_oob)` | 101 | −546 | 0 | 546 | −546 | 126 |
+| Gfirst_oob_interp | `G(first_oob,interp)` | 101 | −546 | 0 | 546 | −546 | 126 |
+| Ginterp_last | `G(interp,last)`：`end_x`=插值到边界，`pos`=last | 101 | −546 | 0 | 546 | −546 | 126 |
+| Glast_interp | `G(last,interp)`：`end_x`=last，`pos`=插值到边界 | 101 | −546 | 0 | 546 | −546 | 126 |
+| Ginterp_first_oob | `G(interp,first_oob)` | 101 | −546 | 0 | 546 | −546 | 126 |
+| Ginterp_interp | `G(interp,interp)` | 101 | −546 | 0 | 546 | −546 | 126 |
+| H1a | `end_x` = `pts[len-2]` | 34 | −613 | 0 | 613 | −613 | 37 |
+| H2a | `pos` = `pts[len-2]` | 34 | −613 | 0 | 613 | −613 | 37 |
+| H5c | 步长 = 0.005（`Normal` 与 `DiffEq` 都吃；对照档） | 34 | −613 | 0 | 613 | −613 | — |
+| Gprev_last | `G(prev,last)`：`end_x`=`pts[len-2]`，`pos`=last | 34 | −613 | 0 | 613 | −613 | 37 |
+| Gprev_prev | `G(prev,prev)`：两维都取 `pts[len-2]` | 34 | −613 | 0 | 613 | −613 | 37 |
+| Gprev_first_oob | `G(prev,first_oob)` | 34 | −613 | 0 | 613 | −613 | 37 |
+| Gprev_interp | `G(prev,interp)` | 34 | −613 | 0 | 613 | −613 | 37 |
+| Glast_prev | `G(last,prev)`：`end_x`=last，`pos`=`pts[len-2]` | 34 | −613 | 0 | 613 | −613 | 37 |
+| Gfirst_oob_prev | `G(first_oob,prev)` | 34 | −613 | 0 | 613 | −613 | 37 |
+| Ginterp_prev | `G(interp,prev)` | 34 | −613 | 0 | 613 | −613 | 37 |
+
+**H1×H2 的 4×4 全 16 格都跑了**（`G(a,b)` = `end_x` 取 `a`、`pos` 取 `b`）。逐格的原始数字在 [`fixtures/hypothesis_sweep.tsv`](../fixtures/hypothesis_sweep.tsv)（29 行 + 2 行表头，纯文本）。
+
+**读表要点（三条都要一起看，缺一条就会误读）**：
+
+1. **`fix` 全 0**。不是"某档在某批上赢了但总体亏了"——是**一批都没赢过**。任何一档超过 647 都要求
+   `fix > break`，而这里 `break` 从来是 0、`fix` 也是 0…… 换句话说：`647` 的每一批要么被保住、
+   要么被打破，**433 批失败里一批准也没变**。
+2. **`H4b ≡ H0` 不是巧合，是结构等价**：`compute` 在**入列前**就查越界（`graphwar_path_calculator`
+   两条 `return pts`），所以数组里的点**本来就全是 inside 点**，"越界即停"与"停在最后一个 inside 点"
+   是同一条规则。这条等价关系是**实现可读出来的**，跑它只是把它变成数字。
+3. **`34` 与 `101` 不是"命中"，是"无操作"**。`prev` 档在**全发都只有 1 个点**的批上取不到
+   `pts[len-2]`，退回停点 ⇒ 报文逐字节不变；`first_oob`/`interp` 档在**整批没有越界步**
+   （点数预算用尽 / 二分 100 次不收敛，§29.0 ①②）的批上同理。这些批在基线里本来就是对的，
+   于是原样留在命中里。核对（`OK == noop ∩ H0命中`，全档成立）：
+
+   ```text
+   H1a/H2a/G*prev*   OK = 34  = noop 37 批 ∩ H0命中   （37 − 34 = 3 批本来就失败）
+   H1b/H1c/H2b/H2c   OK = 101 = noop 126 批 ∩ H0命中  （126 − 101 = 25 批本来就失败）
+   ```
+
+   ⇒ 这两族"命中数"其实等于**基线自己**在这批上不受影响的那部分，`Δ` 全是负的。
+
+### 32.3 并行方案与实测（`nproc = 32`，16C/32T）
+
+粒度选择经过三次实测（同一台机、同一份 29 档工作，`time` 取 bash 内建，`USER` 是各子进程之和）：
+
+| 方案 | 桶数 / 槽数 | 墙钟 | 说明 |
+|---|---|---|---|
+| `--shard i/32`（取模分片） | 32 / 32 | 42.5 s | 最慢那片决定墙钟：一片 40 s 而平均只要 16 s |
+| 128 片取模 | 128 / 32 | 35.1 s | 尾部仍是大文件 |
+| **按文件装桶（本方案）** | **283 / 32** | **12.57 s** | 一桶一份回放，动态补位 |
+
+最终这一对（**背靠背**、同一台机、同一 flags）：
+
+```text
+串行（1 进程，--shard 0/1，29 档）   墙钟 165.70 s   USER 163.58 s
+并行（32 槽，283 桶，29 档）         墙钟  12.57 s
+加速比                               13.2×    （任务书要求 ≤ 串行的 1/8 = 8×）
+```
+
+同机另一次（系统负载更重时，`loadavg` 57）也测过一对：串行 189.37 s / 并行 19.63 s = **9.65×**。
+`USER/墙钟 = 163.58/12.57 = 13.0` ⇒ 这台机上真正能拿到的并行度约 13 个逻辑核（其余被同机别的
+任务占着，`/proc/loadavg` 在本轮一直在 32–57 之间）。**结论只按实测给：13.2×，最差一次 9.65×**。
+
+为什么不是"32 片正好"：单片工作量的方差极大（一局里一条 `DiffEq` 高频式子能把整趟拉长一个数量级），
+取模分片必然有一片是长尾。**按文件装桶 + 32 槽动态补位**把长尾摊成"最后一个桶"，
+再加一个**共享趟**优化（见 30.4）才把墙钟压下来。
+
+### 32.4 一个不损失正确性的 4 倍提速：共享趟
+
+`H1`/`H2`/`H4b` 这 23 档**一个比特都不改点序列**，只改报文里的字段（`end_x` / `pos_*`）。
+而 `execute_results` 的状态落地（致死、挖洞、`effect_id`、掩膜）**只看 outcome，不看报文字段**，
+⇒ 这 23 档的**状态演化完全相同**。所以例子里把它们合成**一趟**：跑一次
+`fire_functions → resolve_points_owned → execute_results`，然后逐档
+**克隆报文 → 打补丁 → `compare_batch`**。
+
+总数从 29 趟/文件降到 7 趟/文件（1 趟共享 + `H3a/H3b/H4a/H5a/H5b/H5c` 各一趟），
+**结果逐批不变**（改前改后 29 档的 `content_ok` 一个数都没动，`H0` 仍是 647）。
+
+⚠ 这条优化带来一处**必须写明的边界**：`H2` 只改报文里的 `pos_*`，**掩膜演化仍按停点**（挖洞用
+`hole_point(…, out.stop)`）⇒ 如果"`pos` 取别的点"是真的，挖洞点会在别处、后续批次的弹道会跟着变，
+而这里**低估了**那条影响。对结论没有影响（`H2*` 各档都远低于基线，且 `fix = 0`），但不能拿这张表
+去否掉"pos 影响挖洞位置"这类**跨批次**假设。
+
+### 32.5 为什么这是硬结论（而不是"没扫到"）
+
+1. **本族解释的每一格都跑了**：H1 的 4 种 × H2 的 4 种 = 全 16 格，加上 H3 2 档、H4 2 档、H5 3 档，
+   共 29 档；`fix` 全 0 ⇒ **不可能**有任何一档把 433 批里的某一类翻成命中。
+2. **失败的形状与本族解释对不上**：94% 的失败（`Y 189 + E1 127 + X 91`）是
+   **≤0.02、多数 ≤1e-9 的数值末位差**；而 H1/H2 换的是"用哪个点"（差一步 = 0.0075~0.01），
+   H3 换的是常数精度（差 1e-6~1e-3），H5 换的是积分步长（差 1e-2 级）。**量级不匹配**：
+   能把末位差修好的东西不可能同时把 546 批"本来对的"打成错（实测 `H1b` 就是 −546）。
+3. **交叉项不必扫**：本族里"改点序列"的三档（`H3`/`H4`/`H5`）彼此正交且**每一档单独为负**，
+   而 `H3`/`H4`/`H5` 与 `H1/H2` 的组合只可能让 `end_x`/`pos` 更偏（点序列本身已变），
+   且 `H1×H2` 的 16 格实测 `fix` 也全 0。⇒ 剩下的 3×3×3 组合空间不是"没扫"，是**被单变量结果关掉**。
+   （要真扫也可以：`--configs` 已支持任意组合，见 30.7。）
+
+### 32.6 与既有结论的关系（本节新增了什么）
+
+* §28 说 `end_x = pts[len-1]`（`0x4569b8`，读的是**副本**）、`pos` 是**队列那块**的 `pts[n-1]`：
+  本节把"下标可能不是 `len-1`"这一族**穷举并全部否掉**（`pts[len-2]` 只有 34/1080，且那 34 批是
+  无操作批）。⇒ **`len-1` 这个下标本身不是失败原因**。
+* §25 说采样器吃的是**印出来的三位小数**：`H3a`（全精度）−332、`H3b`（截断）−178 ⇒ **这条也关掉了**。
+* §29 说 `DiffEq` 三种边界（预算用尽 / 不收敛 / 障碍）与停点判据逐位一致：`H5a`（0.005）−278、
+  `H5b`（自适应）−264 ⇒ **步长/停判据不是失败来源**。
+* §42 记过"C 桶 14 批只差 1 ulp、硬挪 `x0` 会 647→652 但多出 7 个新不符"：本节的 `H3` 两档是
+  同一条思路的**系统性**版本（不是按批挑 ulp），结论一致 —— **别在常数/起点上打补丁**。
+
+### 32.7 复跑（三条命令，逐条可复现本节每一个数）
+
+```bash
+R=<快照>/replays          # 403 个条目 = 401 份回放 + MANIFEST.tsv + SHA256SUMS（286 份可读）
+B=target/release/examples/hypothesis_sweep
+
+# ① 串行（也是"单进程串行"的分母；--verify 只对 H0 做两项正对照）
+cargo build --release --offline --example hypothesis_sweep
+time $B --dir $R --shard 0/1 --configs all --verify \
+        --json out/serial.jsonl --batches out/serial-batch.jsonl
+
+# ② 并行（32 槽；成本探针 0.3 s → LPT 装桶 → 动态补位）
+python3 tools/hypothesis_sweep_par.py --bin $B --dir $R --out out/par \
+        --slots 32 --buckets 403 --configs all
+
+# ③ 汇总（每档 content_ok / Δ / fix / break / net / noop；--tsv 就是入库那张表）
+python3 tools/hypothesis_sweep_agg.py --dir out/par --tsv fixtures/hypothesis_sweep.tsv
+```
+
+只跑某一族：`--configs H1a,H2c,Ginterp_interp`；任意组合假设见源码里 `all_configs()`
+（每档就是一个 `Hyp { end_x, pos, cprec, term, step }` 字面量，加一行就能扩档）。
+
+### 32.8 仍未确定 / 本轮没覆盖
+
+* **117 份回放读失败**是既有现象（与本节无关），未排查；它们不进任何分母。
+* `H5b` 的"自适应"只否掉了**一条具体规则**（见 30.1），不是"所有自适应方案"。
+* `H2` 的挖洞点只在报文里改，掩膜演化仍按停点（30.4 的边界）；**跨批次**的 pos 假设没被这一轮检验。
+* `H3` 只改"采样器吃的那一串"的常数精度；**把全精度常数写进报文**这一档没有单独跑 ——
+  它会被 `corrected_function` 逐字节比掉（回放 739/739 是三位小数，§29.2），属于观测已排除。
+* 本轮**没有**回答"433 批到底错在哪"：它只关掉了 H1–H5 这一族。下一步该看的是
+  `Y`（189 批）与 `X`（91 批）那两桶：两者的量级是 **1 ulp**，落在**求值器/打印-回代**
+  这条链上，而不是"换哪个点"。
+
+### 32.9 本轮改动清单
+
+| 文件 | 内容 |
+|---|---|
+| [`examples/hypothesis_sweep.rs`](../examples/hypothesis_sweep.rs) | **新增**：29 档假设的开关版整片扫描（`--shard i/N` / `--files` / `--configs` / `--verify` / `--cost-probe` / `--json` / `--batches`），采样器复刻 + 4 种取值 + 终止/步长/常数精度开关 |
+| [`tools/hypothesis_sweep_par.py`](../tools/hypothesis_sweep_par.py) | **新增**：并行驱动（成本探针 → LPT 装桶 → 动态补位 → 计时） |
+| [`tools/hypothesis_sweep_agg.py`](../tools/hypothesis_sweep_agg.py) | **新增**：分片汇总（`content_ok`/Δ/`fix`/`break`/`net`/`noop`，出 TSV） |
+| [`fixtures/hypothesis_sweep.tsv`](../fixtures/hypothesis_sweep.tsv) | **新增**：29 档汇总表（纯文本，无路径/用户名） |
+| [`docs/06-verification.md`](06-verification.md) | **新增本节** |
+
+**没有改动**：`src/`（一个字节都没动）、`client/`、`dispatch/`、`fixtures/guardrails.json`、
+既有的任何夹具格式。

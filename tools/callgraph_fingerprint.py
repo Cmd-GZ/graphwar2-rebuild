@@ -38,7 +38,14 @@ Linux 目标 `.so` 有 13,263 个函数（= Ghidra 起点表口径）：
 
     size / ninsn / hist(助记符) / cls(跨 ISA 归一后的类直方图) / consts(整数与 f64 位型)
     callees(被调者地址) / callee_bsig(ICF 归一后的被调者多重集) / callee_sizes(跨构建可比的多重集)
-    callers / caller_sizes / strs(引用到的字符串内容 hash) / bsig(自身机器码 hash) / locrefs
+    callers / caller_sizes / bsig(自身机器码 hash) / locrefs
+    strs(引用到的字符串内容 hash，**含泄漏**) / strs_loc(其中是 Rust 源文件路径的那些)
+    strs_s(= strs − strs_loc，**默认只用这一份**；本代权重 0，见下)
+
+    ⚠ **`strs` 是泄漏，默认权重 0**：`panic::Location` 前 16 B 是 `(&'static str, len)`，
+    被 `string_at` 的 (ptr,len) 路径解成**文件名**（正对照 348/348 带自己的 `src/*.rs`，
+    目标集合 0/12,736 带）。扫描时把一切 `.rs` 路径单列进 `strs_loc`，`strs_s` 是扣掉它们之后的
+    结构字符串；`strs` 只留给 `ablate` 复现消融表。见 `docs/159` §3.2、`docs/02` §35.3.1。
 
 `callee_bsig` 是"含 ICF 归并后的规范化"：链接器把**逐字节相同**的函数合并成同一份机器码，
 所以被调者身份必须用**机器码 hash**表示，否则同一份代码在 A 构建里是 40 个地址、
@@ -56,19 +63,35 @@ Linux 目标 `.so` 有 13,263 个函数（= Ghidra 起点表口径）：
     ../.reference/venv/bin/python tools/callgraph_fingerprint.py report        # 规模 + 体量/档位分布
     ../.reference/venv/bin/python tools/callgraph_fingerprint.py probe 0x3a2e10
 
+    # 去泄漏重训三件套（都吃 `--jobs N` 进程池；并行**不改数字**，只改墙钟）
+    ../.reference/venv/bin/python tools/callgraph_fingerprint.py ablate --jobs 15 --coverage
+                                     # 一个特征一个特征清零，**两半都报**（归因表）
+    ../.reference/venv/bin/python tools/callgraph_fingerprint.py tune3 --jobs 12
+                                     # 权重网格，**只在调参半上选**；--axes/--fixed/--holdout
+    ../.reference/venv/bin/python tools/callgraph_fingerprint.py runall --shards 8 --jobs 8
+                                     # 8 片并行跑全量 12,736 + merge → 夹具
+
+`--weights "k=v,..."` 可以覆盖默认权重（`verify`/`tune2`/`calib` 都吃）；复现**旧代含泄漏**的
+84.2% 用 `verify --weights "hist=0.5,consts=0.5,strs=0.2,strs_s=0"`。
+
 `build` 需要 capstone（仓库 `.reference/venv`）；其余子命令只读缓存，标准库即可。
 """
 
 import argparse
 import bisect
 import collections
+import contextlib
 import hashlib
+import io
+import itertools
 import math
+import multiprocessing
 import os
 import pickle
 import re
 import struct
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -123,10 +146,24 @@ FIXTURES = os.path.join(ROOT, "fixtures")
 OUT_TSV = os.path.join(FIXTURES, "callgraph_fingerprint.tsv")
 
 # 缓存版本：反汇编 / 特征一改就抬，免得静默吃旧缓存（sym_match §36.0 的坑）
-CACHE_VERSION = "cfgfp-v4"
+#   v4 → v5：`strs` 拆成「原始」与「去掉 Rust 源文件路径」两份（见 RE_LOC_FILE 的注释）；
+#            v4 的缓存**没有** `strs_s`，所以必须重扫，不能混用。
+CACHE_VERSION = "cfgfp-v5"
 
 STR_SECTIONS = (".rodata", ".data.rel.ro", ".data.rel.ro.local", ".rdata", ".rdata$r")
 MAX_STR = 96
+
+# `panic::Location` 的 `file` 字段长这样：`src/graphwar_root_node.rs`、`library/core/src/x.rs`。
+# 它会被 `string_at` 当成普通字符串收进 `strs`（Location 结构体前 16 B 就是 `(&'static str, len)`），
+# 而**这一半特征只在正对照一侧 100% 可得**（正对照 348/348 带项目文件名，目标集合只有 11.8%）
+# ⇒ 它是泄漏，不是结构（`docs/159` §3.2）。扫描时把命中的 hash 单独记进 `strs_loc`，
+# 打分器默认只用 `strs_s = strs - strs_loc`；原始 `strs` 留着**只**用于复现消融表（默认权重 0）。
+RE_LOC_FILE = re.compile(rb"^[A-Za-z0-9_./-]+\.rs$")
+
+
+def is_loc_file(s):
+    """这个字符串是不是 Rust 源文件路径（⇒ `panic::Location` 的 `file` 投影）？"""
+    return bool(RE_LOC_FILE.match(s))
 
 # ===========================================================================
 # 1. 指令 → 类（跨 ISA 可比的那一层）
@@ -370,8 +407,8 @@ def scan_x86(obj, universe, locs, verbose=True):
         return None
 
     feats = {va: dict(ninsn=0, hist=collections.Counter(), cls=collections.Counter(),
-                      consts=set(), calls=[], icalls=0, strs=set(), locrefs=set(),
-                      seq=[])
+                      consts=set(), calls=[], icalls=0, strs=set(), strs_loc=set(),
+                      locrefs=set(), seq=[])
              for va in universe}
     for insn in disasm_all(cs, code, tex["addr"], tex["addr"] + tex["size"], 1):
         owner = T.owner_of(starts, universe, insn.address)
@@ -408,12 +445,17 @@ def scan_x86(obj, universe, locs, verbose=True):
             if sec_name(tgt):
                 s = string_at(obj, tgt, ro_lo, ro_hi)
                 if s is not None:
-                    fe["strs"].add(hashlib.sha1(s).hexdigest()[:8])
+                    h = hashlib.sha1(s).hexdigest()[:8]
+                    fe["strs"].add(h)
+                    if is_loc_file(s):          # Location 的 file ⇒ 泄漏，单列（默认不进打分）
+                        fe["strs_loc"].add(h)
     if verbose:
-        sys.stderr.write("[fp] %-24s %6d 函数, ninsn=%d, 引用字符串的函数 %d\n"
+        sys.stderr.write("[fp] %-24s %6d 函数, ninsn=%d, 引用字符串的函数 %d"
+                         "（其中引用 Rust 源文件路径的 %d ⇒ 泄漏列 strs_loc）\n"
                          % (os.path.basename(obj.path), len(universe),
                             sum(f["ninsn"] for f in feats.values()),
-                            sum(1 for f in feats.values() if f["strs"])))
+                            sum(1 for f in feats.values() if f["strs"]),
+                            sum(1 for f in feats.values() if f["strs_loc"])))
     return feats
 
 
@@ -442,8 +484,8 @@ def scan_arm64(obj, universe, locs, verbose=True):
         return None
 
     feats = {va: dict(ninsn=0, hist=collections.Counter(), cls=collections.Counter(),
-                      consts=set(), calls=[], icalls=0, strs=set(), locrefs=set(),
-                      seq=[])
+                      consts=set(), calls=[], icalls=0, strs=set(), strs_loc=set(),
+                      locrefs=set(), seq=[])
              for va in universe}
     addr = {}
     owner = None
@@ -495,7 +537,10 @@ def scan_arm64(obj, universe, locs, verbose=True):
             if sec_name(t):
                 s = string_at(obj, t, ro_lo, ro_hi)
                 if s is not None:
-                    fe["strs"].add(hashlib.sha1(s).hexdigest()[:8])
+                    h = hashlib.sha1(s).hexdigest()[:8]
+                    fe["strs"].add(h)
+                    if is_loc_file(s):          # 同 x86：Location 的 file 单列，默认不进打分
+                        fe["strs_loc"].add(h)
         if mn in ("movz", "movn", "mov") and len(ops) >= 2 and ops[1].type == ARM64_OP_IMM:
             v = ops[1].imm
             if mn == "movn":
@@ -511,10 +556,12 @@ def scan_arm64(obj, universe, locs, verbose=True):
                 if op.type == ARM64_OP_REG and op.access & WRITE:
                     addr.pop(op.reg, None)
     if verbose:
-        sys.stderr.write("[fp] %-24s %6d 函数, ninsn=%d, 引用字符串的函数 %d\n"
+        sys.stderr.write("[fp] %-24s %6d 函数, ninsn=%d, 引用字符串的函数 %d"
+                         "（其中引用 Rust 源文件路径的 %d ⇒ 泄漏列 strs_loc）\n"
                          % (os.path.basename(obj.path), len(universe),
                             sum(f["ninsn"] for f in feats.values()),
-                            sum(1 for f in feats.values() if f["strs"])))
+                            sum(1 for f in feats.values() if f["strs"]),
+                            sum(1 for f in feats.values() if f["strs_loc"])))
     return feats
 
 
@@ -554,7 +601,17 @@ class FP:
             fe["callees"] = tuple(sorted(calls))
             fe["callee_sizes"] = tuple(sorted(feats[a]["size"] for a in fe["callees"]))
             fe["callee_bsig"] = tuple(sorted(feats[a]["bsig"] or "-" for a in fe["callees"]))
-            fe["strs"] = tuple(sorted(fe["strs"]))
+            # `strs` 一分为二（`docs/159` §3.2 的泄漏）：
+            #   strs_loc = 引用到的**Rust 源文件路径**（= panic::Location 的 file 字段投影）
+            #   strs_s   = 其余字符串（log 文案、贴图名、格式化模板…）——**默认只用这一份**
+            #   strs     = 原始并集（含泄漏），只为复现消融表而留，默认权重 0
+            loc = set(fe.get("strs_loc") or ())
+            allstr = set(fe["strs"])
+            fe["strs"] = tuple(sorted(allstr))
+            fe["strs_loc"] = tuple(sorted(allstr & loc))
+            fe["strs_s"] = tuple(sorted(allstr - loc))
+            fe["strs_set"] = frozenset(allstr)
+            fe["strs_s_set"] = frozenset(fe["strs_s"])
             fe["hist_hash"] = stable_hash(fe["hist"].items())
             fe["seq"] = b"".join(struct.pack("<H", v) for v in fe.pop("seq", ()))
             fe["seq_hash"] = hashlib.sha1(fe["seq"]).hexdigest()[:16]
@@ -600,7 +657,11 @@ def load_fp(tag, force=False, verbose=True):
     cp = os.path.join(cache_dir(), key)
     if os.path.exists(cp) and not force:
         with open(cp, "rb") as fh:
-            return FP.from_state(pickle.load(fh))
+            st = pickle.load(fh)
+        probe = next(iter(st["feats"].values()), None)
+        if probe is not None and "strs_s" not in probe:
+            T.die("%s 是旧口径缓存（特征里没有 strs_s）——抬 CACHE_VERSION 或换 CFGFP_CACHE" % cp)
+        return FP.from_state(st)
     if cfg["kind"] == "pe":
         obj = T.Pe(cfg["path"])
         universe = T.pe_universe(obj)
@@ -619,21 +680,52 @@ def load_fp(tag, force=False, verbose=True):
 
 
 def load_all(force=False, tags=None):
+    """按 tag 取指纹库；同进程内**缓存复用**（进程池 fork 出来的子进程直接共享父进程这份）。
+
+    为什么要缓存：`runall` 的 8 个分片 worker 各自会 `load_all()`，没有这一层就是 8 次
+    15 s 的 pickle 反序列化；fork 之后这条缓存是现成的（只读，不写回）。
+    """
+    key = ("all" if not tags else ",".join(tags), bool(force))
+    if not force and key in _FPS_CACHE:
+        return _FPS_CACHE[key]
     out = collections.OrderedDict()
     for tag in (tags or BUILDS):
         out[tag] = load_fp(tag, force)
+    _FPS_CACHE[key] = out
     return out
+
+
+_FPS_CACHE = {}
 
 
 # ===========================================================================
 # 4. 打分：**不读名字 / 不读地址 / 不读 Location**，只用结构
 # ===========================================================================
-# 权重：`tune2` 在**调参半**上选出，留出半只报数（见 docs/02 §41.3）。0 = 该特征关掉。
-#   同 ISA：size + hist(0.5) + **gram(2.0)** + consts + caller + strs ⇒ 调参半 top-1 89.8%
-#   跨 ISA：最好也只有 10.2%（size + caller + ncall）⇒ 负结论，不当证据用
-W_SAME = dict(size=1.0, hist=0.5, gram=2.0, consts=0.5, caller=0.3, strs=0.2,
-              callee=0.0, cbsig=0.0, rbsig=0.0, ncal=0.0, ncall=0.0)
+# 权重：`tune3` 在**调参半**上选出，留出半只报数（见 docs/02 §35.3 / §35.6）。
+# 0 = 该特征关掉；**没写的键也是 0**（`score_same` 用 `.get`），所以"哪些特征参与"一目了然。
+#
+# ⚠ 四处与发布版（`c1183d29` / 第 38 轮）不同，都是 `docs/159` §3.2 的直接整改：
+#   * `strs`（**原始**字符串集）默认 **0** —— 它其实等于 `panic::Location` 的 `file` 字段：
+#     正对照 348/348 带自己的 `src/*.rs` 串，目标集合 0/12,736 带 ⇒ 是泄漏，不是结构。
+#     留着这个键只是为了 `ablate` 能复现消融表（`W_SAME_LEAK`）。
+#   * `strs_s`（**去掉一切 Rust 源文件路径**之后的字符串）是替代品：扫描时把
+#     `src/*.rs` / `/rustc/<hash>/library/.../*.rs` / `.cargo/.../*.rs` 全部记进 `strs_loc`
+#     并从 `strs_s` 里剔除（它们全是 Location 投影）。剔除后两侧覆盖率重新对齐：
+#     正对照 94/348 = 27.0% vs 目标集合 2,201/12,736 = 17.3%（`ablate --coverage` 打印）
+#     —— 比"原始 strs 100% vs 0%"对称得多，但实测它不出力，所以权重仍是 0。
+#   * `hist`(F2) 在最终配置里权重 **0**：`docs/159` §3.2 实测清零后两半 top-1 一格不动
+#     （gram 的三元组集合已经把它的信息吃完）⇒ 留着权重只会让人误以为它有贡献。
+#   * `consts` 默认小权重（不是 0）：审计 §3.2 只证实"3/348 的 Location 行号落进 consts"，
+#     不构成系统性泄漏；它的收益由 `ablate` 的两半数字决定（见 docs/02 §35.3）。
+W_SAME = dict(size=0.25, hist=0.0, gram=2.0, consts=0.25, caller=0.5, strs_s=0.0,
+              strs=0.0, callee=0.0, cbsig=0.0, rbsig=0.0, ncal=0.0, ncall=0.0)
+# 发布过的旧配置（`docs/02` §35.3 的 84.2%/89.8% 就是它）。**含泄漏**，
+# 只用于 `ablate` 的"清零前后"对照；任何新数字都不许用它。
+W_SAME_LEAK = dict(size=1.0, hist=0.5, gram=2.0, consts=0.5, caller=0.3, strs=0.2,
+                   strs_s=0.0, callee=0.0, cbsig=0.0, rbsig=0.0, ncal=0.0, ncall=0.0)
 W_CROSS = dict(size=1.0, cls=0.0, callee=0.0, caller=0.5, ncall=0.3, ncal=0.0)
+SCORE_KEYS = ("size", "hist", "gram", "consts", "callee", "caller", "strs", "strs_s",
+              "ncal", "ncall", "cbsig", "rbsig", "cls")
 SIZE_EPS = 0.4          # log 比的饱和点（同 §40）
 WIN_SAME = (0.7, 1.4)   # 候选窗口：保住真配对 97.0%，候选数中位 25,147 → 6,806
 WIN_CROSS = (0.7, 1.4)  # 跨 ISA 保住 96.4%（真配对 size 比 p05/p95 = 0.78/1.28）
@@ -701,7 +793,10 @@ def score_same(qf, df, w=None):
     add(w.get("consts"), jaccard(qf["consts"], df["consts"]) if (qf["consts"] and df["consts"]) else None)
     add(w.get("callee"), multiset_sim(qf["callee_sizes"], df["callee_sizes"]))
     add(w.get("caller"), multiset_sim(qf["caller_sizes"], df["caller_sizes"]))
-    add(w.get("strs"), jaccard(set(qf["strs"]), set(df["strs"])) if (qf["strs"] and df["strs"]) else None)
+    add(w.get("strs_s"), jaccard(qf["strs_s_set"], df["strs_s_set"])
+        if (qf["strs_s"] and df["strs_s"]) else None)
+    add(w.get("strs"), jaccard(qf["strs_set"], df["strs_set"])
+        if (qf["strs"] and df["strs"]) else None)
     add(w.get("ncal"), sim_log(len(qf["callees"]), len(df["callees"])) if
         (qf["callees"] or df["callees"]) else None)
     add(w.get("ncall"), sim_log(len(qf["callers"]), len(df["callers"])) if
@@ -709,6 +804,10 @@ def score_same(qf, df, w=None):
     add(w.get("cbsig"), jaccard_sets(qf["callee_bsig"], df["callee_bsig"]))
     add(w.get("rbsig"), jaccard_sets(qf["caller_bsig"], df["caller_bsig"]))
     add(w.get("gram"), jaccard(qf["grams"], df["grams"]) if (qf["grams"] and df["grams"]) else None)
+    # `cls` 是 14 类归一后的直方图（跨 ISA 才用的那一层）。同 ISA 也能用，而且比原始助记符稳：
+    # 两份 LLVM 构建的差别（`int3`↔`ud2`、SEH vs DWARF 的 push/pop、寄存器分配）正好落在助记符层，
+    # 类直方图把它们吸收掉。**只在调参半上验过**（tune3），留出半只报数。
+    add(w.get("cls"), cos_hist(qf["cls"], df["cls"]))
     return tot / wt if wt else 0.0
 
 
@@ -944,11 +1043,14 @@ def cmd_verify(args):
     W("已定名测试集（§40.1 的 348 口径，= 三份夹具并集 ∩ 527）：%d 个 Linux 地址\n" % len(named))
     for dst_tag, src_tag in (("linux", "win"), ("linux", "android"), ("linux", "win_old")):
         dst, src = fps[dst_tag], fps[src_tag]
-        sc, ww, win = scorer_for(src_tag, dst_tag)
+        wgt = weights_for(args, src_tag, dst_tag)
+        sc, ww, win = scorer_for(src_tag, dst_tag, wgt)
         pool = Pool(src)
         truth, prov = control_pairs(src_tag, dst_tag, fps)
         W("\n=== %s → %s（%s） ===\n" % (dst_tag, src_tag,
               "同 ISA" if BUILDS[src_tag]["isa"] == BUILDS[dst_tag]["isa"] else "跨 ISA"))
+        W("权重：%s\n" % " ".join("%s=%.2g" % (k, ww.get(k, 0.0)) for k in SCORE_KEYS
+                                   if ww.get(k)) or "（空）")
         W("真值来源：%s\n" % ", ".join("%s=%d" % kv for kv in prov.items()))
         testable = [a for a in sorted(named) if a in truth and truth[a] in src.universe]
         W("测试集：%d 个（候选池 = %s 的 %d 个函数，**不筛名字**）\n"
@@ -1040,7 +1142,8 @@ def cmd_tune2(args):
         gate = GATES[2]
         W("  以下用窗口[%.2f,%.2f]：\n" % gate)
         for label, w in CONFIGS:
-            sc, _w, _win = scorer_for(src_tag, dst_tag, w)
+            sc, _w, _win = scorer_for(src_tag, dst_tag,
+                                      weights_override(w, args.weights))
             ok = tk = 0
             for a in A:
                 r = rank(dst.feats[a], pool, sc, gate, args.topk)
@@ -1065,7 +1168,7 @@ def cmd_calib(args):
     named = named_linux_348()
     dst_tag, src_tag = "linux", "win"
     dst, src = fps[dst_tag], fps[src_tag]
-    sc, ww, win = scorer_for(src_tag, dst_tag)
+    sc, ww, win = scorer_for(src_tag, dst_tag, weights_for(args, src_tag, dst_tag))
     pool = Pool(src)
     truth, prov = control_pairs(src_tag, dst_tag, fps)
     testable = [a for a in sorted(named) if a in truth]
@@ -1193,10 +1296,314 @@ def cmd_calib(args):
     return 0
 
 
+# ===========================================================================
+# 7.5 无泄漏重训：消融 / 权重网格 / 分片并行（`docs/159` §3.2 的整改）
+#
+# 为什么要有这一段：审计查明发布的 84.2% 是**泄漏撑高**的 —— `strs`(F7) 就是
+# `panic::Location` 的 `file` 字段（正对照 348/348 带自己的 `src/*.rs` 串，目标集合
+# 0/12,736 带），于是"在看得见文件名的总体上的准确率"被当成了"在看不见的总体上的准确率"。
+# 整改分三步，都能在本文件里复跑：
+#   ① `ablate`：一个特征一个特征清零，**两半都报**（不用改默认权重也能看见它掉多少）；
+#   ② `tune3`  ：**只在调参半**上跑权重网格（`--jobs N` 进程池横向并行），选完再在留出半报一次；
+#   ③ `runall` ：8 片并行跑全量 12,736 + `merge`（`--jobs N`）。
+# 硬约束：网格只在调参半上选，留出半**不参与**选择（`AGENTS.md` 合并纪律 A4）。
+# 并行只用来缩短墙钟，**不改任何数字**：`--jobs 1` 与 `--jobs N` 的输出逐位相同
+# （任务要求把这一条实测出来：同子集串行 vs 并行的墙钟与加速比）。
+# ===========================================================================
+def weights_for(args, src_tag, dst_tag):
+    """`--weights` 覆盖到**这一对构建**的默认权重上；没给就是 None（= 用模块默认）。"""
+    spec = getattr(args, "weights", "")
+    if not spec:
+        return None
+    same = BUILDS[src_tag]["isa"] == BUILDS[dst_tag]["isa"]
+    return weights_override(W_SAME if same else W_CROSS, spec)
+
+
+def weights_override(base, spec):
+    """在 `base` 上覆盖 `k=v,...`（没写的键保持 `base` 的值）。未知特征名直接 `die`。"""
+    out = dict(base)
+    for kv in (spec or "").replace(";", ",").split(","):
+        kv = kv.strip()
+        if not kv:
+            continue
+        k, _, v = kv.partition("=")
+        k = k.strip()
+        if k not in SCORE_KEYS:
+            T.die("未知特征名 %r（可用：%s）" % (k, ", ".join(SCORE_KEYS)))
+        out[k] = float(v)
+    return out
+
+
+def wlabel(w):
+    """权重 → 紧凑标签（只列非 0 项，按 SCORE_KEYS 顺序）。"""
+    return " ".join("%s%.2g" % (k, w[k]) for k in SCORE_KEYS if w.get(k))
+
+
+class Pair:
+    """一对构建的打分上下文：真值 / 分半 / 候选池。串行与进程池共享同一份（fork 继承）。"""
+
+    def __init__(self, src_tag="win", dst_tag="linux", fps=None):
+        self.src_tag, self.dst_tag = src_tag, dst_tag
+        fps = fps or load_all(tags=[dst_tag, src_tag])
+        self.fps = fps
+        self.src, self.dst = fps[src_tag], fps[dst_tag]
+        named = named_linux_348()
+        self.truth, self.prov = control_pairs(src_tag, dst_tag, fps)
+        self.testable = [a for a in sorted(named)
+                         if a in self.truth and self.truth[a] in self.src.universe]
+        self.A, self.B = split_half_addrs(self.testable)
+        self.pool = Pool(self.src)
+
+    def ev(self, w, addrs, topk=5):
+        """返回 (top-1 命中数, top-k 命中数, n)。"""
+        sc, _w, win = scorer_for(self.src_tag, self.dst_tag, w)
+        ok1 = okk = 0
+        for a in addrs:
+            r = rank(self.dst.feats[a], self.pool, sc, win, topk)
+            t = self.truth[a]
+            ok1 += bool(r) and r[0][1] == t
+            okk += any(c == t for _s, c in r)
+        return ok1, okk, len(addrs)
+
+
+_G = {}          # 进程池里由 fork 继承的只读上下文（pair / topk）
+
+
+def _grid_eval(job):
+    label, w = job
+    ok1, okk, n = _G["pair"].ev(w, _G["pair"].A, _G["topk"])
+    return dict(label=label, w=w, top1=ok1, top5=okk, n=n)
+
+
+def _holdout_eval(job):
+    """把一个（**已经用调参半选出来的**）配置拿到留出半上各报一次。"""
+    label, w = job
+    ok1, okk, n = _G["pair"].ev(w, _G["pair"].B, _G["topk"])
+    return dict(label=label, w=w, top1=ok1, top5=okk, n=n)
+
+
+# 网格轴（**粗网格**）：不含 `strs`（泄漏列，永远 0），字符串只走 `strs_s`。
+# `counts` / `bsig` 是"同进同出"的伪轴：前者同时给 ncal/ncall，后者给 cbsig/rbsig。
+GRID_AXES = collections.OrderedDict([
+    ("size", (0.5, 1.0, 2.0)),
+    ("gram", (1.0, 2.0, 3.0)),
+    ("hist", (0.0, 0.5)),
+    ("consts", (0.0, 0.25, 0.5)),
+    ("caller", (0.0, 0.2, 0.5)),
+])                                   # 5 轴 × 3×3×2×3×3 = 162 组（默认"粗网格"）
+
+# 阶段 2（加次要特征）与阶段 3（细化）不写死在这里：它们是在**阶段 1 的赢家**上再扫，
+# 所以用 `--fixed` 钉住赢家、用 `--axes` 给要扫的轴（实际命令见 `docs/02` §35.9）。
+# 例：`tune3 --fixed "size=0.5,gram=2,consts=0.25,caller=0.2" \
+#        --axes "cls=0,0.4;callee=0,0.3;counts=0,0.3;bsig=0,0.5;strs_s=0,0.2"`  # 2^5 = 32 组
+
+
+def parse_axes(spec):
+    """`size=0.5,1,2;gram=1,2` → OrderedDict；`counts`/`bsig` 是伪轴。"""
+    axes = collections.OrderedDict()
+    for part in (spec or "").split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        k, _, vs = part.partition("=")
+        k = k.strip()
+        if k not in tuple(SCORE_KEYS) + ("counts", "bsig"):
+            T.die("未知网格轴 %r" % k)
+        axes[k] = tuple(float(v) for v in vs.split(",") if v.strip())
+    return axes
+
+
+def grid_configs(axes=None, fixed=None):
+    axes = axes or GRID_AXES
+    keys = list(axes)
+    out = []
+    for combo in itertools.product(*(axes[k] for k in keys)):
+        w = dict(fixed or {})
+        for k, v in zip(keys, combo):
+            if k == "counts":
+                w["ncal"] = w["ncall"] = v
+            elif k == "bsig":
+                w["cbsig"], w["rbsig"] = v, 0.6 * v
+            else:
+                w[k] = v
+        w.setdefault("strs", 0.0)          # 泄漏列永不进网格
+        out.append((wlabel(w), w))
+    return out
+
+
+def _run_jobs(fn, jobs, items, label):
+    """串行或进程池跑 `items`；返回 (结果, 墙钟秒)。**并行不改结果**，只改墙钟。"""
+    t0 = time.time()
+    jobs = max(1, int(jobs or 1))
+    if jobs == 1 or len(items) <= 1:
+        res = [fn(it) for it in items]
+    else:
+        ctx = multiprocessing.get_context("fork")
+        with ctx.Pool(processes=min(jobs, len(items))) as pool:
+            res = pool.map(fn, items, chunksize=1)
+    dt = time.time() - t0
+    sys.stderr.write("[fp] %s：%d 项，jobs=%d，墙钟 %.1f s（%.2f s/项）\n"
+                     % (label, len(items), min(jobs, max(1, len(items))), dt, dt / max(1, len(items))))
+    return res, dt
+
+
+def cmd_tune3(args):
+    """**只在调参半**上跑权重网格（同 ISA linux→win），`--jobs N` 横向并行。
+
+    输出：墙钟 / 加速比（`--jobs` 与 `--jobs 1` 对同一 `--max-configs` 子集各跑一次即可对比）、
+    调参半 top-1 排名前 25、以及**选中配置在留出半上的那一次**报数（只报一次，不回头改）。
+    """
+    pair = Pair("win", "linux")
+    _G["pair"], _G["topk"] = pair, args.topk
+    axes = parse_axes(args.axes) if args.axes else GRID_AXES
+    cfgs = grid_configs(axes, weights_override({}, args.fixed) if args.fixed else None)
+    if args.max_configs:
+        cfgs = cfgs[:args.max_configs]
+    W = sys.stdout.write
+    W("网格：%s\n" % " ; ".join("%s=%s" % (k, ",".join("%.3g" % v for v in vs))
+                                for k, vs in axes.items()))
+    W("配置数 %d；调参半 n=%d（留出半 n=%d 不参与选择）；候选窗口 %s；topk=%d\n"
+      % (len(cfgs), len(pair.A), len(pair.B), WIN_SAME, args.topk))
+    res, dt = _run_jobs(_grid_eval, args.jobs, cfgs, "权重网格")
+    W("墙钟 %.1f s（jobs=%d）⇒ %.1f 配置/s\n" % (dt, args.jobs, len(cfgs) / max(dt, 1e-9)))
+    res.sort(key=lambda r: (-(r["top1"]), -(r["top5"]), r["label"]))
+    W("\n调参半 top-1 前 25（同分按 top-5 排；**这张表是唯一允许拿来选权重的依据**）：\n")
+    W("  %-6s %-6s  %s\n" % ("top-1", "top-5", "权重（非 0 项）"))
+    for r in res[:25]:
+        W("  %5.1f%% %5.1f%%  %s\n"
+          % (100.0 * r["top1"] / r["n"], 100.0 * r["top5"] / r["n"], r["label"]))
+    best = res[0]
+    W("\n调参半最高：%s（top-1 %.1f%%）\n"
+      % (best["label"], 100.0 * best["top1"] / best["n"]))
+    # **选择规则先定好再用**（免得看到留出半再挑）：在"只差 1 个样本以内"的并列桶里，
+    # 取**非 0 特征最少**的配置（同样的准确率下越简单越可能是真信号，不是网格噪声）；
+    # 再按 top-5、标签排序。1 个样本 = 1/166 = 0.6%，比这更小的差别不选。
+    bucket = [r for r in res if r["top1"] >= best["top1"] - 1]
+    bucket.sort(key=lambda r: (sum(1 for k in SCORE_KEYS if r["w"].get(k)),
+                               -(r["top5"]), r["label"]))
+    pick = bucket[0]
+    W("并列桶（top-1 ≥ 最高−1 个样本）：%d 组；按「非 0 特征最少」选中：%s\n"
+      % (len(bucket), pick["label"]))
+    W("选中配置：%s\n" % ", ".join("%s=%.3g" % (k, pick["w"][k]) for k in SCORE_KEYS
+                                    if pick["w"].get(k)))
+    if args.holdout:
+        # 留出半**只报数、不参与选择**：选在上面的调参半已经结束，这里只是把短名单各报一次，
+        # 让人看得见"选中的那个在留出半是多少、没选中的又是多少"（敏感性）。
+        short = bucket[:args.holdout]
+        res2, dt2 = _run_jobs(_holdout_eval, args.jobs,
+                             [(r["label"], r["w"]) for r in short], "留出半（只报数）")
+        W("\n留出半（n=%d，**这些数不进选择**）：\n" % len(pair.B))
+        W("  %-6s %-6s  %s\n" % ("top-1", "top-5", "权重（非 0 项）"))
+        for r in res2:
+            W("  %5.1f%% %5.1f%%  %s\n"
+              % (100.0 * r["top1"] / r["n"], 100.0 * r["top5"] / r["n"], r["label"]))
+    return 0
+
+
+def _ablate_eval(job):
+    label, w = job
+    pair = _G["pair"]
+    a1, a5, an = pair.ev(w, pair.A, _G["topk"])
+    b1, b5, bn = pair.ev(w, pair.B, _G["topk"])
+    return dict(label=label, w=w, a1=a1, a5=a5, an=an, b1=b1, b5=b5, bn=bn)
+
+
+def cmd_ablate(args):
+    """一个特征一个特征清零 / 加回来，**两半都报**（`docs/159` §3.2 的复算入口）。
+
+    这不是"调参"，是**归因**：每一行只改一个特征，看两半的 top-1 掉多少 ——
+    用来回答「84.2% 里有多少是泄漏、多少是结构」。
+    """
+    pair = Pair("win", "linux")
+    _G["pair"], _G["topk"] = pair, args.topk
+
+    def zero(w, *keys):
+        out = dict(w)
+        for k in keys:
+            out[k] = 0.0
+        return out
+
+    new = W_SAME
+    old = W_SAME_LEAK
+    configs = [
+        ("① 发布值（含泄漏 strs 原始）", old),
+        ("② 本次默认（无泄漏）", new),
+        ("③ ② − consts", zero(new, "consts")),
+        ("④ ② − caller", zero(new, "caller")),
+        ("⑤ ② − size", zero(new, "size")),
+        ("⑥ ② − gram", zero(new, "gram")),
+        ("⑦ ② + strs_s（干净字符串）", dict(new, strs_s=0.2)),
+        ("⑧ ② + cls（类直方图）", dict(new, cls=0.4)),
+        ("⑨ ② + callee/counts/bsig", dict(new, callee=0.3, ncal=0.3, ncall=0.3,
+                                        cbsig=0.5, rbsig=0.3)),
+        ("⑩ ② + strs（把泄漏加回来）", dict(new, strs=0.2)),
+        ("⑪ ① − strs（审计 §3.2）", zero(old, "strs")),
+        ("⑫ ① − consts", zero(old, "consts")),
+        ("⑬ ① − hist", zero(old, "hist")),
+        ("⑭ ① − strs − consts", zero(old, "strs", "consts")),
+        ("⑮ ① strs=2.0（放大泄漏）", dict(old, strs=2.0)),
+    ]
+    W = sys.stdout.write
+    W("真值来源：%s\n" % ", ".join("%s=%d" % kv for kv in pair.prov.items()))
+    W("分半：调参半 %d / 留出半 %d；候选窗口 %s；topk=%d\n\n"
+      % (len(pair.A), len(pair.B), WIN_SAME, args.topk))
+    jobs = [(label, w) for label, w in configs]
+    res, dt = _run_jobs(_ablate_eval, args.jobs, jobs, "消融")
+    W("墙钟 %.1f s（jobs=%d）\n" % (dt, args.jobs))
+    W("%-30s | %-16s | %-16s\n" % ("配置", "调参半 top-1 / top-5", "留出半 top-1 / top-5"))
+    W("%-30s | %-16s | %-16s\n" % ("", "n    top-1  top-5", "n    top-1  top-5"))
+    for r in res:
+        W("%-30s | %3d %5.1f%% %5.1f%% | %3d %5.1f%% %5.1f%%\n"
+          % (r["label"], r["an"], 100.0 * r["a1"] / r["an"], 100.0 * r["a5"] / r["an"],
+             r["bn"], 100.0 * r["b1"] / r["bn"], 100.0 * r["b5"] / r["bn"]))
+    if args.coverage:
+        # 特征两侧覆盖率（正对照 vs 目标集合）——"看得见 / 看不见"的直接量化
+        lin = pair.fps["linux"]
+        tgt = target_addrs(pair.fps)
+        named = named_linux_348()
+        for key in ("strs", "strs_s", "consts"):
+            pos = sum(1 for a in named if lin.feats[a][key])
+            tar = sum(1 for a in tgt if lin.feats[a][key])
+            W("  覆盖率 %-7s 正对照 %3d/%d = %5.1f%%  目标 %5d/%d = %5.1f%%\n"
+              % (key, pos, len(named), 100.0 * pos / len(named),
+                 tar, len(tgt), 100.0 * tar / len(tgt)))
+    W("\n口径：top-1 = 第一名候选恰好是 Location 真值；top-5 = 真值在前 5 名里。\n")
+    return 0
+
+
+def _shard_worker(spec):
+    """跑一个分片（`run --shard i/N --out …`），把 stdout/stderr 收进 StringIO 免得 8 路互相插。"""
+    i, n, out, topk = spec
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+        cmd_run(argparse.Namespace(shard="%d/%d" % (i, n), out=out, topk=topk, limit=0))
+    return out
+
+
+def cmd_runall(args):
+    """8 片并行跑全量 12,736 → `merge`（判档 + 全局单射闸门）。
+
+    分片口径与 `run --shard i/N` **完全一样**（`targets[i::N]`）；`--jobs` 只决定同时开几个分片。
+    `--jobs 8` 与串行 `run` 的产物逐字节相同（分片文件 + merge 是确定性排序）。
+    """
+    shards = args.shards
+    o = args.out or OUT_TSV
+    tmpdir = args.tmp or os.path.join(cache_dir(), "shards")
+    os.makedirs(tmpdir, exist_ok=True)
+    specs = [(i, shards, os.path.join(tmpdir, "s%d.tsv" % i), args.topk) for i in range(shards)]
+    W = sys.stdout.write
+    W("全量 12,736 个目标切成 %d 片（`targets[i::N]`），同时开 %d 片\n"
+      % (shards, min(args.jobs, shards)))
+    outs, dt = _run_jobs(_shard_worker, args.jobs, specs, "分片")
+    W("分片全部完成，墙钟 %.1f s（jobs=%d）\n" % (dt, args.jobs))
+    return cmd_merge(argparse.Namespace(addr=outs, out=o))
+
+
 # 档位门槛（**调参半**选出，留出半报数；见 `calib` / docs/02 §35.4）：
-#   高置信同源 = score>=0.65 且 margin>=0.05 且**全局**单射 ⇒ 留出半 98.0%（n=98/165，
-#                只对「已定名 348」这一批成立；`docs/159` §3 实测去掉 `strs` 泄漏后 73.3%，
-#                目标集合只有 11.8% 带同类特征 ⇒ 对 12,736 只能说 **≈80–95%、逐条待核**）
+#   高置信同源 = score>=0.65 且 margin>=0.05 且**全局**单射
+#                ⇒ 去泄漏重训后：调参半 100%（n=74）、留出半 **95.8%**（n=72）
+#                ⚠ 这是「该档位里 top-1 对的比例」，**不是**全体准确率：全体留出半 top-1 只有 72.7%
+#                （`docs/02` §35.3 / `docs/159` §3.2）。目标集合只有 348 这一批的 1/36 体量，逐条待核。
 #   推断同源   = score>=0.50 且 margin>=0.05（不含上一档）      ⇒ 精度约 74%
 #   弱候选     = score>=0.50 但 margin<0.05（打平/贴太近）      ⇒ 约 65%
 #   未知       = 分数 <0.50 或窗口里根本没有候选
@@ -1275,21 +1682,22 @@ def apply_gates(rows):
 
 
 PREAMBLE = (
-    "# 由 tools/callgraph_fingerprint.py run/merge 生成，不要手改（重跑会覆盖）。\n"
+    "# 由 tools/callgraph_fingerprint.py runall/run + merge 生成，不要手改（重跑会覆盖）。\n"
     "# 目标：Linux 2.0.60 里**不引用任何 src/*.rs panic::Location** 的函数"
     "（三份符号表都没有它们，名字要不回来的那批）。\n"
-    "# 匹配**只**用结构：size / 助记符直方图 / 指令三元组 / 常量 / 调用者 / 引用字符串；"
-    "不读名字、不读地址、不读 Location 键。\n"
-    "# ⚠ 但 strs 特征就是 Location 的文件名（panic::Location 的 (ptr,len) 槽）："
-    "去掉它，正对照留出半 84.2% → 73.3%（docs/159 §3.2）。\n"
-    "# tier=高置信同源：同 ISA 分数>=0.65 且 margin>=0.05 且**全局单射**（merge 里对全量重算，"
-    "一个 Windows 目标只许一行认领）。\n"
-    "# 精度口径：≈80–95%、**逐条待核**。98.0%/84.2% 只在「已定名 348」上测过"
-    "（体量中位 624 B、100% 带 Location 文件名串），不能直接搬到本表这批量级；"
-    "去掉泄漏特征后是 73.3%（docs/02 §35.4·§35.7、docs/159 §3）。\n"
-    "# note=small-uncalibrated 表示该行 size<256 B——正对照这一档两半合计只有 20/27 = 74%，"
-    "精度没有实测支撑（docs/02 §35.7）。\n"
+    "# 匹配**只**用结构：size / 指令三元组 gram / 常量 / 调用者；不读名字、不读地址、不读 Location 键。\n"
+    "# ⚠ 去泄漏重训（docs/159 §3.2、docs/02 §35.3）：发布版的 strs 特征其实就是 Location 的 file 字段"
+    "（正对照 348/348 带自己的 src/*.rs 串，目标集合 0/12736 带）⇒ 已**默认关掉**（权重 0）。\n"
+    "#   去掉泄漏后正对照 top-1：留出半 84.2% → 73.3%（只关 strs）/ 72.7%（重训默认）；"
+    "top-5 93.3% → 88.5%。调参半 81.9% / 91.6%。\n"
+    "#   去掉**一切** Rust 源文件路径之后的字符串（strs_s）实测也不出力（两半 0/331 翻转），权重同样为 0。\n"
+    "# tier=高置信同源：分数>=0.65 且 margin>=0.05 且**全局单射**（merge 对全量重算，一个目标只许一行认领）。\n"
+    "# 精度口径：**只在「已定名 348」上测过**。高置信档 留出半 95.8%（n=72）/ 调参半 100%（n=74）；"
+    "但**全体** top-1 只有 72.7%（留出半）⇒ 引用档位精度时必须同时给覆盖率，"
+    "否则会把 72.7% 误读成 95.8%。对 12,736 只能说「结构同源候选」。\n"
+    "# note=small-uncalibrated 表示 size<256 B——正对照这一档两半合计只有 20/27 = 74%，精度没有实测支撑。\n"
     "# note=multi-claim 表示有别的 Linux 函数也认领同一个 Windows 目标（≥2 抢 1）⇒ 已降一档。\n"
+    "# nstrs = 引用到的**结构**字符串数（已扣掉 Rust 源文件路径）；含泄漏的原始串数要看 `probe`。\n"
     "# android_cand_* 是跨 ISA 候选，实测 top-1 只有 6.5%，**不是证据**，只作结构角色参考。\n"
 )
 COLS = ("linux_addr", "size", "ninsn", "hist_hash", "ncallees", "ncallers", "nstrs",
@@ -1337,7 +1745,7 @@ def cmd_run(args):
         qf = lin.feats[va]
         f = dict(addr=va, size=qf["size"], ninsn=qf["ninsn"], hist_hash=qf["hist_hash"],
                  ncallees=len(qf["callees"]), ncallers=len(qf["callers"]),
-                 nstrs=len(qf["strs"]), nconsts=len(qf["consts"]), bsig=qf["bsig"] or "-")
+                 nstrs=len(qf["strs_s"]), nconsts=len(qf["consts"]), bsig=qf["bsig"] or "-")
         f["win"] = rank(qf, pools["win"], scorers["win"], wins["win"], args.topk)
         f["android"] = rank(qf, pools["android"], scorers["android"], wins["android"],
                             min(args.topk, 3))
@@ -1523,7 +1931,8 @@ def cmd_probe(args):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("cmd", choices=["build", "verify", "tune2", "calib",
-                                    "run", "merge", "report", "probe"])
+                                    "run", "merge", "report", "probe",
+                                    "ablate", "tune3", "runall"])
     ap.add_argument("addr", nargs="*")
     ap.add_argument("--force", action="store_true", help="无视缓存重扫")
     ap.add_argument("--topk", type=int, default=5)
@@ -1532,10 +1941,22 @@ def main(argv=None):
     ap.add_argument("--out", default="", help="run 的输出路径（分片时写临时文件）")
     ap.add_argument("--min-score", type=float, default=0.0)
     ap.add_argument("--min-margin", type=float, default=0.0)
+    # 无泄漏重训（docs/159 §3.2 的整改）：并行 / 权重覆盖 / 网格轴
+    ap.add_argument("--jobs", type=int, default=1,
+                    help="进程池并行度（1 = 串行；网格与分片都吃这个参数，结果与串行逐位相同）")
+    ap.add_argument("--weights", default="", help="覆盖默认权重，如 `strs=0,consts=0,gram=2`")
+    ap.add_argument("--axes", default="", help="tune3 的网格轴，如 `size=.5,1,2;gram=1,2,3`")
+    ap.add_argument("--max-configs", type=int, default=0, help="tune3 只跑前 N 组（量加速比用）")
+    ap.add_argument("--fixed", default="", help="tune3 把不扫的轴钉在这个权重上，如 `size=1,gram=2`")
+    ap.add_argument("--holdout", type=int, default=0,
+                    help="tune3 在选完之后，把并列桶前 N 组拿到**留出半**各报一次（只报数，不参与选择）")
+    ap.add_argument("--coverage", action="store_true", help="ablate 额外打印两侧特征覆盖率")
+    ap.add_argument("--shards", type=int, default=8, help="runall 的分片数")
+    ap.add_argument("--tmp", default="", help="runall 分片文件目录（默认缓存目录下 shards/）")
     a = ap.parse_args(argv)
     return dict(build=cmd_build, verify=cmd_verify, tune2=cmd_tune2, calib=cmd_calib,
-                run=cmd_run, merge=cmd_merge, report=cmd_report,
-                probe=cmd_probe)[a.cmd](a)
+                run=cmd_run, merge=cmd_merge, report=cmd_report, probe=cmd_probe,
+                ablate=cmd_ablate, tune3=cmd_tune3, runall=cmd_runall)[a.cmd](a)
 
 
 if __name__ == "__main__":

@@ -55,7 +55,7 @@
 | 现象 | 真实行为 |
 |---|---|
 | `^` 结合性 | **左结合**：`2^3^2 = (2^3)^2 = 64`，不是 512 |
-| 一元负号与 `^` | `-x^2` = `(-x)^2`，因为负号比 `^` 松 |
+| 一元负号与 `^` | `-x^2` = **`-(x^2)`**（负号比 `^` 松：token 串是 `NEG POW VAR_X CONST 2`）。⚠️ 本节旧版写成 `(-x)^2`，与同一行的"负号比 `^` 松"以及二进制实测**互相矛盾**，2026-11-08 按 `fixtures/parse_matrix_truth.tsv` 改正 |
 | `log` | 是 **log10**；自然对数是 `ln` |
 
 ### 3.1 `^` 的**输入可达性**：Steam 运行时下这个键打不出来
@@ -577,3 +577,214 @@ Rust 的 `regex` crate —— `0x4ed898` 是 `call *0x9bc280(%rip)`，该 GOT �
 | N 次退格 | `delete_chars_at_caret_plan` / `BACKSPACE_METHOD` / `Buffer::run_plan` | 落地方式 | 观测（N 的算法未知） |
 | 提交原样 | `submit_intent` / `REFRESH_METHOD` / `REFRESH_PREFIX` | — | 观测 |
 
+
+---
+
+## 14. 差分矩阵：7,106 条形状 + 16,821 条真语料（2026-11-08，`dispatch/52`）
+
+> **一句话**：把解析器/求值器的差分矩阵从 349 条放大到 **7,106 条**（另加 403 份回放里的
+> **16,821 条去重原文**），并行直调真二进制跑完。修掉 **3 条**解析不一致（修前 157 条命中），
+> 修后 **7,106/7,106** 与 **16,821/16,821** 的 token 串完全一致；求值 49,742 个位模式里
+> 只剩 7 个只差 NaN **符号位**的槽位，且已证明那是 **oracle（unicorn）与真硬件不一致**（§14.7）。
+>
+> * 工具：`tools/parse_matrix.py`（生成 / 并行对拍 / 比对 / 正对照 / 测速），
+>   我方一侧导出器 `examples/parse_matrix.rs`。
+> * 入库：矩阵 `fixtures/parse_matrix.jsonl`（548 KB），真值 `fixtures/parse_matrix_truth.tsv`（1.7 MB，
+>   紧凑编码，见 §14.1 末）—— 都是**纯文本**，`--check-truth` 可以在**不用 unicorn** 的情况下回归。
+> * 真二进制：`libgraphwarrust.so` sha256 `9a538115…`；解析 `0x4ed670`、求值 `0x4eb9d0`，
+>   unicorn 逐指令模拟。
+
+### 14.1 口径（三条，缺一条结论就不成立）
+
+| 项 | 怎么做 |
+|---|---|
+| **解析** | 同一行文本喂两边，比 **token tag 序列**；`CONST`（tag 17）再比 `f64` **位模式**。算子 token 的 `value` 字段**不是契约**（真二进制从不初始化它，读出来是堆残留），夹具里归一成 `0` —— 与 `fixtures/parse.tsv` 同口径 |
+| **求值** | 同一 token 串在 **7 组 `(x,y,dy)`** 上比 `f64` 位模式：6 组 `y=dy=0`（游戏真实取值）+ 1 组 `(2.25, 1.25, -0.5)` 专门覆盖 `y` / `y'`（tag 1/2） |
+| **正对照** | `--selftest` 往"我方"结果里注入 4 条已知错误（改 tag / 改常数位 / 少一个 token / 改一个求值位），比对器必须**恰好**报出这 4 条、不多报。本轮实测：**注入 4 → 报出 4 → 多报 0** |
+
+跑法（`$PY` = 有 unicorn/capstone 的解释器，`$SO` = 真二进制）：
+
+```bash
+$PY tools/parse_matrix.py --gen             # 写 fixtures/parse_matrix.jsonl（种子固定 = 52，可复现）
+$PY tools/parse_matrix.py --run --jobs 16   # 16 进程，每进程独立 Uc 实例，跑真二进制
+$PY tools/parse_matrix.py --ours            # cargo 跑我方 parse/eval
+$PY tools/parse_matrix.py --compare         # 比对 + 写真值夹具
+$PY tools/parse_matrix.py --selftest        # 正对照
+$PY tools/parse_matrix.py --speed --cases 240 --jobs 16   # 串行 vs 并行
+
+# 改完 src/ 之后的**回归闸**（不需要 unicorn、不需要真二进制）：
+$PY tools/parse_matrix.py --ours && $PY tools/parse_matrix.py --check-truth
+```
+
+真值夹具的编码（1.7 MB，比 `tag:16hex` 的写法小一半；参考既有 `fixtures/callgraph_fingerprint.tsv` 的量级）：
+每条式子一行 `<id> \t <cat> \t <tokens> \t <7 组求值位串>`，`tokens` 里**每个 token 一个 tag 字符**
+（`0-9` 是 tag 0–9，`a-j` 是 tag 10–19），tag 为 `h`（=17 CONST）时**紧跟 16 位十六进制**的 f64 位模式。
+原文在 `fixtures/parse_matrix.jsonl` 的同一个 `id` 上 —— 夹具里刻意不重复存文本。
+
+### 14.2 矩阵规模与耗时
+
+| 形状 | 条数 | 说明 |
+|---|---:|---|
+| `token_soup` | 1334 | 无语法结构的 token 随机拼接（最容易撞出优先级边角） |
+| `random_expr` | 1271 | 按语法随机生成，深度 1–5 |
+| `real_unbalanced` | 898 | 真语料里**括号不平衡**的原文（上一轮修的那类"风险形状"） |
+| `real_balanced` | 891 | 真语料里括号平衡的原文 |
+| `real_mutate` | 696 | 真语料原文上的单字符破坏（增/删/改 1–3 处） |
+| `number` | 585 | `.5` / `5.` / `1e3` / `1E-3` / `1.2.3` / 400 位数字 / 全角数字 …… |
+| `enum_binary` | 480 | 5 个二元运算符 × 12 左操作数 × 8 右操作数 |
+| `func_chain` | 330 | `log/ln/sqrt/exp/abs/sin/cos/tan` 的**连写**（`logln(x)`、`sqrtabsx`…） |
+| `enum_unary` | 162 | 一元负号 / 函数前缀 × 操作数 |
+| `illegal` | 159 | 非法字符、非 ASCII（`π` `Π` `√` `×` `²` 全角数字 emoji…） |
+| `implicit` | 126 | 隐式乘法（`2x`、`2sin(x)`、`(x+1)(x-1)`、`x)(2)`…） |
+| `pow_assoc` | 105 | `^` 左结合 / 一元负号与 `^` 的优先（含空格变体） |
+| `spaces` | 26 | 空格、tab、`s in(x)`、`sq rt(x)` |
+| `y_token` | 19 | `y` 与 `y'` 的切词（`yy''`、`y'y`、`y’`…） |
+| `long` | 15 | **> 1 KB**：600 项和式、1100 个隐式乘法、300 层括号、300 个无主 `)`… |
+| `empty` | 9 | 空串 / 只有空白 / `()` / `)` / `(` |
+| **合计** | **7106** | 另有同一个生成器的随机与真语料两半（种子 52） |
+
+**并行实测**（这台机器 16C32T）：
+
+| 跑法 | 条数 | 墙钟 | CPU 合计 | 说明 |
+|---|---:|---:|---:|---|
+| 16 进程 | 7106 | **250.0 s** | 54 min 18 s | 每进程一个 `Uc`，按 `i % jobs` 分片 |
+| 串行对照 | 240（分层抽样） | 63.6 s | — | 与前一条同批数据 |
+| 16 进程对照 | 240（同一批） | **9.4 s** | — | **加速比 6.74×**（差额是 16 次进程启动 + 收尾） |
+| 16 进程（全量真语料） | 16821 | 776.8 s | 177 min | 见 §14.3 |
+
+### 14.3 结果
+
+| 指标 | 修前 | 修后 |
+|---|---:|---:|
+| token 串一致（7106 条） | 6949 / 7106 | **7106 / 7106** |
+| token 串一致（16821 条真语料） | （未跑全量） | **16821 / 16821** |
+| 求值位模式一致（7106 × 7 = 49,742 槽） | — | **49,735 逐位相同**，7 个只差 NaN 符号位（§14.7） |
+| 求值位模式一致（16821 × 7 = 117,747 槽） | — | **117,747 / 117,747** |
+
+修前那 157 条不一致**按成因分三组**（三条规则各自独立可证，见 §14.4–§14.6）：
+
+| 规则 | 命中条数 | 一句话 |
+|---|---:|---|
+| **R1** 函数链后紧跟 `-` → 函数被丢掉，`-` 当一元负号 | **150** | `sin-x` 旧给 `SUB(SIN, X)`，真值 `NEG(X)` |
+| **R2** `+` / `-` 缺**左**操作数时补 `CONST 0`（不是一元负号） | **4** | `)-1e3` 旧给 `NEG(...)`，真值 `SUB(CONST 0, …)` |
+| **R3** 小写化只折叠 **ASCII** 大写（不是 Unicode 折叠） | **3** | `Π` 旧给 `CONST π`，真值空串 |
+
+> **这三条在真语料里极罕见**：16821 条原文里，**旧解析器**与真解析器只在 **1 条**上不同
+> （`(-4.726)*(1/((1+exp(-42*(x-(-20))))*…`，含 `xexp-42` 这种"函数名紧跟 `-`"的形状）。
+> ⇒ 三条轴的数字**看不到**这三条修正是**预期的**（§14.8 实测：三条轴逐项未动），
+> 拿轴绿当"解析器改对了"的证据在这里是**无效**的；证据只能是矩阵本身。
+
+### 14.4 R1：函数链后面紧跟 `-`，**整条函数链被丢掉**（逐位，150/157）
+
+真二进制在"操作数位置"看到**连续函数名 + `-`** 时，把函数名**整个丢掉**，那个 `-` 变成一元负号。
+`+` `*` `/` `^` `)` 和"函数名后面是别的 token"**都不触发**：
+
+| 原文 | 真值 token 串 | 旧实现（错） |
+|---|---|---|
+| `sin-x` | `NEG VAR_X` | `SUB SIN VAR_X` |
+| `sin-x^2` | `NEG POW VAR_X CONST(2)` | `SUB SIN POW …` |
+| `logtan-.5` | `NEG CONST(0.5)` | `SUB LOG TAN CONST` |
+| `2sin-3` | `MUL CONST(2) NEG CONST(3)` | `SUB MUL …` |
+| `sin-sin` | `NEG SIN` | `SUB SIN SIN` |
+| `-sin-x` | `NEG NEG VAR_X` | `SUB NEG SIN VAR_X` |
+| `2^sin-x^2` | `POW POW CONST(2) NEG VAR_X CONST(2)` | `POW CONST NEG POW …` |
+| `sin+2` / `sin*2` / `sin^2` | `ADD SIN CONST` / `MUL SIN CONST` / `POW SIN CONST`（**保留** `sin`） | 同（不变） |
+| `sin` / `sin)` | `SIN` | 同（不变） |
+
+**关键细节**：`-` 吃多深，取决于它在**哪一层**出现 ——
+
+* 在操作数起点（`unary()` 层）：`sin-x^2 → NEG(POW(x,2))`，负号比 `^` 松；
+* 在 `^` 的右操作数（`prefixed()` 层）：`2^sin-x^2 → POW(POW(2,NEG(x)),2)`，负号只吃 primary，
+  后面的 `^2` 留在外层幂链上。
+
+⇒ 落地方式：`Parser::take_func_chain_before_minus()` 在 **`unary()` 与 `prefixed()` 两处**各截一次
+（`src/math_function.rs`），`primary()` 只管"收函数链 + 包原子"。
+证据：`--selftest` 抓得到的差分矩阵 150 条 + 23 条定点探针（`tests/parse_stray_paren.rs` 之外的
+新观测，已钉进 `math_function::parser_tests::func_chain_before_minus_is_dropped`）。
+
+### 14.5 R2：`+` / `-` 缺**左**操作数时补 `CONST 0`（逐位，4/157）
+
+旧实现在 `expr()` 里把"左操作数缺失的 `-`"翻成一元负号，那是错的：
+
+| 原文 | 真值 | 旧实现（错） |
+|---|---|---|
+| `)-1e3` | `SUB CONST(0) MUL MUL CONST(1) CONST(e) CONST(3)` | `NEG MUL MUL …` |
+| `)-x` | `SUB CONST(0) VAR_X` | `NEG VAR_X` |
+| `)-)*21e3` | `MUL MUL MUL SUB CONST(0) CONST(0) …` | `… NEG …` |
+
+一元负号**只**在操作数位置产生（`-x`、`2*-3`、`x^-1`）。`+` 那一侧的"补 0"规则（`x)+ → ADD x CONST(0)`）
+本来就是对的，这次只是把 `-` 拉齐。
+
+### 14.6 R3：小写化只折叠 **ASCII** 大写（逐位，3/157）
+
+真解析器入口是**逐字节**的 `c - 'A' < 0x1a ? c + 0x20 : c`（`0x4ed7a3`–`0x4ed7ba`，§13.6），
+不是 Rust 的 `str::to_lowercase()`（全 Unicode）。旧实现用了后者，于是：
+
+| 原文 | 真值 | 旧实现（错） |
+|---|---|---|
+| `Π`（U+03A0） | （空 token 串） | `CONST(π)` |
+| `Πx` | `VAR_X` | `MUL CONST(π) VAR_X` |
+| `πΠ` | `CONST(π)` | `MUL CONST(π) CONST(π)` |
+| `π` / `PI` / `SIN(X)` | `CONST(π)` / `CONST(π)` / `SIN VAR_X` | 同（不变：ASCII 折叠两边一样） |
+
+原因：Unicode 折叠把 `Π` 变成 `π`，而 `π` 在下一步会被 `replace("π","n")` 换成 `n`（= CONST π）；
+真解析器不动 `Π`，于是它是个未匹配字符、被跳过。**对 ASCII 输入两种折叠完全等价**，
+所以这条修正不可能影响任何 ASCII 文本（三轴用的全是 ASCII）。
+
+### 14.7 残留 7 个 NaN 槽位 = **oracle 与真硬件不一致**（不是实现问题）
+
+49,742 个求值槽位里有 **7 个**（2 条式子：`/y'*yloglogsinsin`、`ny'^cos1lncosy'` 这一类）
+两个操作数**同时是 NaN** 且符号相反时，位模式不同。做了两组对照：
+
+1. **真硬件**（本机 x86-64，`rustc -O` + `_mm_add_sd`/`_mm_mul_sd` 内联指令）：
+   `dst=-NaN, src=+NaN → fff8000000000000`；`dst=+NaN, src=-NaN → 7ff8000000000000`
+   ⇒ **目的地操作数的 NaN 胜**（与 x86 手册一致）。
+2. **unicorn 跑同一条指令**（自建 stub，`addsd xmm0,xmm1` 两种操作数顺序）：
+   **两次都返回 `7ff8000000000000`** —— 与真硬件不符，且与操作数顺序无关。
+
+⇒ 这 7 个槽位是 **unicorn/QEMU softfloat 的双 NaN 选择规则**与真硬件的差异，
+**我方 `eval`（Rust 的 `a op b`，在本机硬件上 dst = 左操作数）是对的**。
+缺的证据只剩"在真机上跑一次那两条式子的弹道"，但那与 NaN 符号位无关（`NaN` 只终止点序列，
+符号/载荷不进任何比较）。
+
+**另外还抓到一个同类的 oracle 假象（已修在 oracle 侧，不是实现）**：
+`analysis/emu.py::_do_import` 对 `pow` 是特判的 —— 它算 **python 的 `a ** b`**，定义域外返回
+`complex`、再被兜成 **正 NaN**；而二进制真的从 glibc 拿 `pow`（`UND pow@GLIBC_2.2.5`），
+`pow(-2.5,0.5) = fff8000000000000`（**负** NaN）。这条与 §11 的 `log(0)` 是同一类假象。
+`tools/eval_oracle.py::load_oracle()` 现已把 `pow` 也换成 `ctypes` 直调 libm
+（修前矩阵因此刷出 **205** 个假的"求值不一致"，修后只剩上面那 7 个真·oracle 差异）。
+
+### 14.8 影响面：三条轴**一位没退**
+
+改动只在 `src/math_function.rs`（解析器）与 `tools/`、`fixtures/`、本文件。三轴在本分支重跑：
+
+| 轴 | 内容命中 | 种类序列 | 死亡集合 | 挖洞点 |
+|---|---|---|---|---|
+| `fire`（`replay_attrib --drive fire --policy default`） | **647 / 1080** | 1075 | 366 / 385 | 207 / 294 |
+| `batch`（`replay_attrib --drive batch --policy default`） | **647 / 1080** | 1075 | 366 / 385 | 207 / 294 |
+| `batch_conv`（`batch_conv --policy strict --drive batch`） | **637 / 1080** | 1075 | 347 / 385 | 207 / 294 |
+
+`tools/bit_exact_attrib.py --check-baseline --axis <轴>` 三条都是「全部一致」。
+`cargo test --offline`：**1641** 通过（基线 1638 + 本轮新增 3 条 `math_function::parser_tests`）。
+`python3 tools/coverage_matrix.py --check`：OK（改了 `src/`，已重跑生成器）。
+
+⚠️ **这正是"护栏不敏感"的又一次实测**：16821 条真语料里只有 1 条踩到这三条规则，
+所以三轴数字逐项不变是**预期**的；**不许**拿"轴没动"当"改错了"或"不用改"的理由。
+
+### 14.9 档位与未决
+
+| 结论 | 档 |
+|---|---|
+| R1 / R2 / R3 三条规则 | **逐位**（真二进制 `0x4ed670` 直调，7,106 + 16,821 条全量对拍） |
+| 求值器在 49,742 个槽位上逐位一致（除 7 个 NaN 符号位） | **逐位** |
+| 7 个 NaN 槽位 = unicorn 与真硬件不一致 | **逐位**（硬件内联指令 vs unicorn 同一条指令，两个方向都测了） |
+| **`pow` 换 libm** 后的 oracle 口径 | **观测**（`UND pow@GLIBC_2.2.5` + `ctypes` 直调对照） |
+| **R1 的源码级原因**（为什么实现会长成这样） | **未知** —— 只钉住行为，没把 `0x4ed670` 的递归下降逐块读出来 |
+
+**仍未做的**（诚实清单）：
+
+1. **矩阵没覆盖"输入框层"**：`graphwar_function_input` 的 28 条字符折叠（§13.3）是**另一层**，
+   本轮全部文本都是直接喂解析器的原样文本（含 `²`、`Π` 这类输入框会折叠/不会折叠的字符）。
+2. **`to_text` 的往返**没有跟着放大（§12 的 1040 例没动）。
+3. **R1 的源码级解释**未知（见上）。若以后要写"为什么"，得把 `0x4ed670` 的解析循环读出来。
+4. 7 个 NaN 槽位**不打算修**：修它等于让实现去迁就 unicorn 的软浮点，反而会偏离真硬件。

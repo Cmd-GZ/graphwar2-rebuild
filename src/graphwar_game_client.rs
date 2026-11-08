@@ -175,7 +175,8 @@
 //! |---|---|
 //! | `0x516510` / `0x516ad0` / `0x516fd0` 的语义 | 函数体未逐指令读完；`0x516510` 调了 `turn_manager` 一族（`0x46b740`/`0x46c430`/`0x46b460`/`0x463340`）并 push 一条 `Event`，但判别值走的是 `lea`+`add` 编码，未定位 |
 //! | `0x515590` / `0x5159a0` / `0x5175b0` 的语义 | 只观测到「构造 `Event` #22 `game_name_request_event`」与「调用 `graphwar_backend.rs`」 |
-//! | `0x518240` / `0x518400` / `0x516450` / `0x5164b0` / `0x5172d0` / `0x517490` / `0x516970` | 都是「取 `+0x40` 句柄 → 递增引用 → 调内层一次 → 递减」，内层 `0x46aa50`/`0x46aea0`/`0x46b180` 未解 |
+//! | `0x516450` / `0x5164b0` / `0x5172d0` / `0x517490` / `0x516970` | 都是「取 `+0x40` 句柄 → 递增引用 → 调内层一次 → 递减」，内层 `0x46aa50`/`0x46aea0`/`0x46b180` 未解 |
+//! | ~~`0x518240` / `0x518400`~~ **已解，见 §8** | 上面那一行只描述了这两个函数**前 8 条指令**（取句柄 → `get_module`）。真实主体：`0x518240` = **`GraphwarGameClient::tick`**（推进一个 tick）、`0x518400` = **`GraphwarGameClient::process`**（每帧进来一次、里面按 1/60 s **定步追赶**、每圈**先 tick 后泵**）。逐指令读法在 `docs/16-client.md` §48.3，落地在本文 §8。`ORIG_FUNCS` 里这两条的 `class` **仍记 `StateQuery`**（`tests/graphwar_game_client.rs` 把 4 条那个划分写死了，本任务不许改 `tests/`），但 `role` 已改成 `Role::Tick` / `Role::ProcessLoop` |
 //! | `0x3d6080` / `0x3d7380` / `0x3d7630` | 同时引用本模块与 `graphwar_replay_player.rs` 的 Location（contested），归属本身有歧义 |
 //! | 屏名表 / 命令总线的 12 条键 | **不在本模块**：那些在 `graphwar_root_node.rs`（`docs/16` §15.6/§15.10）。本模块只拿到总线**兜底转发**的两条键（§2）与 `add_bot_N` 六条（§4） |
 
@@ -241,6 +242,13 @@ pub enum Role {
     BackendCall,
     /// `add_bot_N` 的取值器（`0x516970`）
     AddBotValue,
+    /// `GraphwarGameClient::tick`（`0x518240`）：推进一个 tick（发 `TickEvent`，
+    /// 每 60 个再来一条 `TickRequest`）。证据：`docs/16-client.md` §48.2 的表 +
+    /// `0x518400` 里 `call r13`（`r13 = [GOT 0x9baf38]`）落在 `0x518496`。
+    Tick,
+    /// `GraphwarGameClient::process`（`0x518400`）：**60 Hz 定步追赶循环**
+    /// （先 tick 后泵）。逐指令读法见 `docs/16-client.md` §48.3，落地见本文 §8。
+    ProcessLoop,
     /// 看得到调用图但说不出一句语义
     Undetermined,
 }
@@ -304,10 +312,15 @@ pub const ORIG_FUNCS: &[OrigFn] = &[
     // --- 事件订阅 ---
     OrigFn { vaddr: 0x517690, size: 0xbb0, class: Class::EventWiring, role: Role::None, anchors: &[(53, 17), (54, 17), (55, 17), (56, 17), (57, 17), (58, 17), (59, 17), (60, 17)], also_in: &[] },
     // --- 状态查询 ---
+    //
+    // ⚠️ 最后两条（`0x518240` / `0x518400`）的 `class` **仍是 `StateQuery`**：`tests/graphwar_game_client.rs`
+    // 把「StateQuery = 4 条」写死了，本任务不许改 `tests/` ⇒ 只改 `role`（真实语义），
+    // 并在模块文档 §7 就地标出这条分类已经过时。两者都不是"取句柄查一次"：
+    // `0x518240` 是 `tick`、`0x518400` 是 `process` 的定步循环（本文 §8）。
     OrigFn { vaddr: 0x516450, size: 0x60, class: Class::StateQuery, role: Role::Undetermined, anchors: &[(152, 22), (152, 49)], also_in: &[] },
     OrigFn { vaddr: 0x5164b0, size: 0x60, class: Class::StateQuery, role: Role::Undetermined, anchors: &[(152, 22), (152, 49)], also_in: &[] },
-    OrigFn { vaddr: 0x518240, size: 0xe0, class: Class::StateQuery, role: Role::Undetermined, anchors: &[(139, 41), (139, 86), (140, 22)], also_in: &[] },
-    OrigFn { vaddr: 0x518400, size: 0x130, class: Class::StateQuery, role: Role::Undetermined, anchors: &[(130, 41), (130, 86), (132, 28)], also_in: &[] },
+    OrigFn { vaddr: 0x518240, size: 0xe0, class: Class::StateQuery, role: Role::Tick, anchors: &[(139, 41), (139, 86), (140, 22)], also_in: &[] },
+    OrigFn { vaddr: 0x518400, size: 0x130, class: Class::StateQuery, role: Role::ProcessLoop, anchors: &[(130, 41), (130, 86), (132, 28)], also_in: &[] },
     // --- setup 界面回调 ---
     OrigFn { vaddr: 0x516970, size: 0x160, class: Class::SetupCallback, role: Role::AddBotValue, anchors: &[(152, 22), (152, 49), (234, 57), (235, 30)], also_in: &[] },
     OrigFn { vaddr: 0x5172d0, size: 0x1c0, class: Class::SetupCallback, role: Role::Undetermined, anchors: &[(152, 22), (152, 49), (241, 57), (242, 30)], also_in: &[] },
@@ -626,3 +639,352 @@ pub const INDIRECT_CALLS_TO_OTHER_MODULES: &[(u32, u32, u32, &str)] = &[
     (0x517a77, 0x9bac88, FN_EVENT_SUBSCRIBE, "graphwar_event_handler.rs"),
     (0x517b65, 0x9bbce8, 0x477bc0, "graphwar_game_state_manager.rs"),
 ];
+
+// ---------------------------------------------------------------------------
+// 8. `GraphwarGameClient::process`（x86 `0x518400`）：60 Hz 定步追赶循环
+// ---------------------------------------------------------------------------
+//
+// 本节照 `docs/16-client.md` §48.3 的逐指令读法落地（x86 全文，`self` 在 `rdi`）：
+//
+// ```text
+// 51840b  mov  r15,[rdi+0x40]       ; r15 = Rc<RefCell<模块容器>>
+// 518430  lea  rdi,[r15+0x18]
+// 518434  call 0x46aa50             ; get_module::<GraphwarTickHandler>()
+// 518458  mov  r13,[GOT 0x9baf38]   ; ⇒ 0x518240 GraphwarGameClient::tick
+// 51845f  mov  rbp,[GOT 0x9baef8]   ; ⇒ 0x3d3630 GraphwarEventHandler::process_events
+// 518470  <循环头>                   ; RefCell::borrow_mut
+// 518484  call 0x519450             ;   GraphwarTickHandler::get_time_to_tick()
+// 51848e  cmp  edx,0x3b9aca00       ;   Duration.nanos == 1e9 ?（哨兵 = 欠一个 tick）
+// 518494  jne  5184a3               ;   不欠 ⇒ 出循环
+// 518496  call r13                  ;   ① GraphwarGameClient::tick()
+// 51849c  call rbp                  ;   ② GraphwarEventHandler::process_events()
+// 5184a1  jmp  518470               ;   回循环头（一帧欠 N 个 tick 就转 N 圈）
+// ```
+//
+// 三条要点全部出自上面的指令，不是猜的：
+//
+// 1. **时基是墙钟**：`delta` 两架构都不读（x86 全文不碰 `xmm0`，arm64 不碰 `d0`），
+//    定步靠 `GraphwarTickHandler` 里 `Instant::now` 驱动的累加器 ——
+//    落到本层就是 [`ProcessLoop::time_to_tick`]，循环体自己**不**碰时间。
+// 2. **先 tick 后泵**：`0x518496` 在前、`0x51849c` 在后（arm64 `0x40ac8c` → `0x40ac94` 同序）。
+//    顺序反了，本 tick 产生的事件会晚一个 tick 才被订阅者看到。
+// 3. **追赶**：`0x5184a1 jmp 0x518470`，不是"每帧最多补一次"。
+
+/// `0x51848e` 的比较立即数 `0x3b9aca00`（1e9）：`get_time_to_tick()` 的纳秒等于它
+/// ⇒ **欠一个 tick**。
+///
+/// 合法 `Duration` 的 `subsec_nanos` 不可能等于 1e9，所以原版的两条"欠账"路径
+/// （x86 `0x5194f3`）故意返回这个值当哨兵（`docs/16-client.md` §48.3 的末段）。
+pub const DUE_SENTINEL_NANOS: u32 = 1_000_000_000;
+
+/// `0x519450` 的返回值该不该进循环体：`0x51848e` 的 `cmp edx,0x3b9aca00` + `0x518494` 的 `jne`。
+///
+/// ⚠️ **我方差异（`AGENTS.md` §0.3，必须写清）**：`src/graphwar_tick_handler.rs` 的
+/// `get_time_to_tick` 在"欠账"时把下溢**夹成 `(0, 0)`**（原版那条路径在别处落
+/// `panic!("overflow when subtracting durations")`），而"**刚好**落在 tick 边界"也返回
+/// `(0, 0)` ⇒ 本层**分不开**这两种情况，所以这里把 `(0, 0)` 也算"到期"。
+/// 可测的后果只有一处：帧边界**正好**压在 tick 边界上时，本层比原版**早一帧** tick
+/// （总 tick 数不变 —— 原版晚一帧补上）。墙钟下这条路径概率为 0；测试里是有意用它来
+/// 把"喂 1 秒 ⇒ 恰好 60 个 tick"钉成确定值。
+pub fn tick_is_due(time_to_tick: (u64, u32)) -> bool {
+    time_to_tick.1 == DUE_SENTINEL_NANOS || time_to_tick == (0, 0)
+}
+
+/// `0x518400` 循环体用到的三个动作。
+///
+/// **我方接口**（`_scaffold` 意义上的接线，原版没有这个 trait）：原版这三件事分别落在
+/// `GraphwarTickHandler`（`0x519450`）、`GraphwarGameClient`（`0x518240`）、
+/// `GraphwarEventHandler`（`0x3d3630`）三个对象上；本层的 [`crate::_scaffold::root_wiring::KernelBus`]
+/// 一个人扮演三者。用一个 trait 把"循环体只依赖这三个调用"钉住 ⇒ [`process`] 本体里
+/// 不掺容器 / 队列 / 引擎的任何细节，也就方便拿假宿主把定步语义单独验掉。
+pub trait ProcessLoop {
+    /// `GraphwarTickHandler::get_time_to_tick`（x86 `0x519450` / arm64 `0x40b298`）。
+    fn time_to_tick(&mut self) -> (u64, u32);
+
+    /// `GraphwarGameClient::tick`（x86 `0x518240`）：推进一个 tick。
+    ///
+    /// 它产出的 `TickEvent`（每 60 个再一条 `TickRequest`）**必须**在
+    /// [`Self::process_events`] 之前进队列 —— 否则"先 tick 后泵"就名存实亡。
+    fn tick(&mut self);
+
+    /// `GraphwarEventHandler::process_events`（x86 `0x3d3630` / arm64 `0x486970`）
+    /// = 我方 `KernelBus::pump`。返回这一次投递了几条（**我方观测值**）。
+    fn process_events(&mut self) -> usize;
+}
+
+/// 一次 `process()` 转了几圈（**我方观测值**；原版 `process` 没有返回值）。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct FrameTicks {
+    /// `get_time_to_tick()` 被调了几次 = **1 + 本帧 tick 数**。
+    ///
+    /// 实测口径（`docs/16-client.md` §48.4）：客户端 `get_time_to_tick` 次数
+    /// = 帧数 + due tick 数（`112 = 52 帧 + 60 个 tick`）。
+    pub probes: u32,
+    /// `GraphwarGameClient::tick`（`0x518240`）被调了几次。
+    pub ticks: u32,
+    /// 事件泵（`0x3d3630`）被调了几次（== `ticks`：每个 tick 后一次）。
+    pub pumps: u32,
+}
+
+/// `GraphwarGameClient::process`（x86 `0x518400`；arm64 `0x40ac00`）的循环体。
+///
+/// 每帧被引擎 `_process(delta)` 推一次，实际调用链（全部观测，`docs/16-client.md` §48.2）：
+///
+/// ```text
+/// GraphwarRootNode::process 0x3a5760 → GraphwarBackend::process 0x515dc0 → 本函数
+/// ```
+///
+/// 进来后按 **1/60 s 的墙钟**追赶：`0x519450` 说"欠一个 tick"就转一圈
+/// （**先** `tick()`、**后** `process_events()`），一直追到不欠为止。
+///
+/// `_delta` 参数**不使用**：原版 x86 全文不读 `xmm0`、arm64 全文不读 `d0`
+/// （§48.3）。留着它是为了让签名与引擎 `_process(delta)` / 原版 `process(delta)` 一致 ——
+/// 定步的时基在 [`ProcessLoop::time_to_tick`] 里。
+pub fn process<L: ProcessLoop + ?Sized>(host: &mut L, _delta: f64) -> FrameTicks {
+    let mut out = FrameTicks::default();
+    loop {
+        // 0x518470 循环头 → 0x518484 get_time_to_tick
+        out.probes += 1;
+        // 0x51848e/0x518494：不欠 ⇒ 出循环（0x5184a3）
+        if !tick_is_due(host.time_to_tick()) {
+            break;
+        }
+        // ① 0x518496 call r13 = GraphwarGameClient::tick
+        host.tick();
+        out.ticks += 1;
+        // ② 0x51849c call rbp = GraphwarEventHandler::process_events
+        host.process_events();
+        out.pumps += 1;
+        // 0x5184a1 jmp 0x518470
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
+// 9. 单测：定步语义（**不碰引擎**，用假宿主 + 真 `GraphwarTickHandler`）
+// ---------------------------------------------------------------------------
+//
+// 真值来源仍是反汇编（`docs/16-client.md` §48.3）；下面的断言只是回归保护
+// （`AGENTS.md` §0 第 2 条）。引擎侧那一半在 `client/tools/process_loop_check.gd`。
+
+#[cfg(test)]
+mod process_loop_tests {
+    use super::*;
+    use crate::graphwar_tick_handler::{GraphwarTickHandler, NANOS_PER_SECOND, NANOS_PER_TICK};
+
+    /// 一个假宿主：墙钟用一个可以随便摆的纳秒计数器，tick/pump 都记序。
+    struct Host {
+        handler: GraphwarTickHandler,
+        clock_ns: u64,
+        /// 按发生顺序记 `'T'`（tick）/ `'P'`（process_events）。
+        trace: Vec<char>,
+        /// 每次 `process_events` 时"已经 tick 过几次"，用来证明**同一次** tick 先发生。
+        ticks_seen_by_pump: Vec<u32>,
+        /// 每次 `process_events` 时发件箱里有几条（原版 tick 直接 push 进共享队列）。
+        outbox_seen_by_pump: Vec<usize>,
+        ticks: u32,
+        frames: u32,
+        probes: u32,
+    }
+
+    impl Host {
+        fn new() -> Self {
+            Self {
+                // 基准 (0, 0)，与 `assemble_demo` 给的那个基准同值；墙钟由 `clock_ns` 摆。
+                handler: GraphwarTickHandler::new(0, 0),
+                clock_ns: 0,
+                trace: Vec::new(),
+                ticks_seen_by_pump: Vec::new(),
+                outbox_seen_by_pump: Vec::new(),
+                ticks: 0,
+                frames: 0,
+                probes: 0,
+            }
+        }
+
+        /// 把墙钟摆到基准之后 `ns` 纳秒（= 原版 `now - base`）。
+        fn set_clock_ns(&mut self, ns: u64) {
+            self.clock_ns = ns;
+            self.handler
+                .set_now(ns / 1_000_000_000, (ns % 1_000_000_000) as u32);
+        }
+
+        /// 走一帧。
+        fn frame(&mut self, delta: f64) -> FrameTicks {
+            self.frames += 1;
+            let out = process(self, delta);
+            assert_eq!(out.pumps, out.ticks, "每个 tick 后恰好一次泵");
+            out
+        }
+    }
+
+    impl ProcessLoop for Host {
+        fn time_to_tick(&mut self) -> (u64, u32) {
+            self.probes += 1;
+            self.handler.get_time_to_tick()
+        }
+
+        fn tick(&mut self) {
+            self.handler.tick();
+            self.ticks += 1;
+            self.trace.push('T');
+        }
+
+        fn process_events(&mut self) -> usize {
+            self.trace.push('P');
+            self.ticks_seen_by_pump.push(self.ticks);
+            self.outbox_seen_by_pump.push(self.handler.outbox_len());
+            // 原版 `tick` 直接 push 进共享队列；本层 tick handler 只有发件箱 ⇒ 泵之前取走。
+            self.handler.take_outbox().len()
+        }
+    }
+
+    /// `0x51848e` 的哨兵与边界：1e9 ⇒ 到期；正的剩余 ⇒ 不到期。
+    #[test]
+    fn the_due_check_is_the_sentinel_compare() {
+        assert_eq!(DUE_SENTINEL_NANOS, 0x3b9a_ca00, "0x51848e 的立即数");
+        assert!(tick_is_due((0, DUE_SENTINEL_NANOS)), "哨兵 = 欠一个 tick");
+        assert!(tick_is_due((0, 0)), "我方差异：下溢被夹成 (0,0) ⇒ 到期");
+        assert!(!tick_is_due((0, NANOS_PER_TICK)));
+        assert!(!tick_is_due((0, 1)));
+        assert!(!tick_is_due((1, 0)));
+    }
+
+    /// 一帧不欠 ⇒ 一次都不转，`get_time_to_tick` 只调 1 次（循环头那次）。
+    #[test]
+    fn a_frame_that_is_not_due_does_nothing() {
+        let mut host = Host::new();
+        // ⚠️ 必须先摆钟：`GraphwarTickHandler::new(0, 0)` 的基准是 epoch，不摆就是
+        // "1960 年之后 56 年的欠账" ⇒ 循环会追 17 亿个 tick（本仓库真踩过这个挂死）。
+        host.set_clock_ns(0);
+        let out = host.frame(0.0);
+        assert_eq!(out, FrameTicks { probes: 1, ticks: 0, pumps: 0 });
+        assert_eq!(host.handler.current_tick, 0);
+        assert!(host.trace.is_empty());
+    }
+
+    /// **喂 1 秒 ⇒ 恰好 60 个 tick**（一次 `process` 里追完，`probes = 1 + 60`）。
+    ///
+    /// 60 来自 `0xfe502a` = 16 666 666 ns（`GraphwarTickHandler::tick` 的加法）：
+    /// 60 × 16 666 666 = 999 999 960 ≤ 1e9 < 61 个。
+    #[test]
+    fn one_second_in_one_frame_is_exactly_sixty_ticks() {
+        let mut host = Host::new();
+        host.set_clock_ns(NANOS_PER_SECOND as u64);
+        let out = host.frame(0.0);
+        assert_eq!(host.frames, 1);
+        assert_eq!(host.probes, out.probes, "循环体只调 get_time_to_tick，不多不少");
+        assert_eq!(out.ticks, 60, "定步 60 Hz");
+        assert_eq!(out.pumps, 60);
+        assert_eq!(out.probes, 61, "帧数 + due tick 数（§48.4 的 112 = 52 + 60 同口径）");
+        assert_eq!(host.handler.current_tick, 60);
+        // `get_time_to_tick` 读的是**离下一个边界**还有多久：1e9 - 999 999 960 = 40 ns 已过，
+        // 所以离第 61 个 tick 还有 16 666 666 - 40 = 16 666 626 ns（不是 0，也不是 1e9 哨兵）。
+        assert_eq!(host.handler.get_time_to_tick(), (0, 16_666_626));
+    }
+
+    /// **喂 2.5 个 tick ⇒ 转 2 圈并留下 0.5 个 tick**。
+    #[test]
+    fn two_and_a_half_ticks_tick_twice_and_keep_the_remainder() {
+        let mut host = Host::new();
+        // 2.5 tick = 41 666 665 ns（2 × 16 666 666 + 8 333 333）。
+        host.set_clock_ns(2 * NANOS_PER_TICK as u64 + 8_333_333);
+        let out = host.frame(0.0);
+        assert_eq!((out.ticks, out.pumps), (2, 2));
+        assert_eq!(host.handler.current_tick, 2);
+        assert_eq!(
+            host.handler.get_time_to_tick(),
+            (0, 8_333_333),
+            "留下 0.5 个 tick（= 16 666 666 - 8 333 333）"
+        );
+    }
+
+    /// 帧率不影响 tick 数：60 帧 × 1/120 s 与 120 帧 × 1/240 s 都是 30 个 tick。
+    ///
+    /// 这就是 §48.4 实测的"帧 52/s 时 tick 仍 60/s"的可执行版本。
+    #[test]
+    fn tick_rate_does_not_follow_the_frame_rate() {
+        let mut fast = Host::new();
+        for k in 1..=60u64 {
+            fast.set_clock_ns(k * 8_333_333); // 1/120 s
+            fast.frame(1.0 / 120.0);
+        }
+        assert_eq!(fast.handler.current_tick, 30, "60 帧 × 半 tick = 30 tick");
+
+        let mut slower = Host::new();
+        for k in 1..=120u64 {
+            slower.set_clock_ns(k * 4_166_667); // ≈1/240 s（向上取整，120 帧正好 0.5 s）
+            slower.frame(1.0 / 240.0);
+        }
+        assert_eq!(slower.handler.current_tick, 30, "120 帧 × 1/4 tick = 30 tick");
+    }
+
+    /// 掉帧要**在下一帧补回来**（`0x5184a1 jmp 0x518470`），不是丢掉。
+    #[test]
+    fn dropped_frames_are_caught_up_in_the_next_frame() {
+        let mut host = Host::new();
+        // 第一帧掉 3 个 tick 的时间，只走一帧。
+        host.set_clock_ns(3 * NANOS_PER_TICK as u64);
+        assert_eq!(host.frame(0.0).ticks, 3);
+        // 之后每帧 1 tick 的墙钟 ⇒ 每帧正好 1 个。
+        for k in 4..=8u64 {
+            host.set_clock_ns(k * NANOS_PER_TICK as u64);
+            assert_eq!(host.frame(0.0).ticks, 1, "第 {k} 个 tick 的墙钟");
+        }
+        assert_eq!(host.handler.current_tick, 8);
+    }
+
+    /// **先 tick 后泵**（`0x518496` → `0x51849c`）：泵看到的已经是"刚 tick 过"的世界，
+    /// 且发件箱里已经有这条 tick 的 `TickEvent`。
+    #[test]
+    fn tick_runs_before_process_events() {
+        let mut host = Host::new();
+        host.set_clock_ns(3 * NANOS_PER_TICK as u64);
+        host.frame(0.0);
+        assert_eq!(host.trace, vec!['T', 'P', 'T', 'P', 'T', 'P'], "每圈都是 T 然后 P");
+        assert_eq!(host.ticks_seen_by_pump, vec![1, 2, 3], "泵看到 tick 计数已经涨过");
+        assert_eq!(host.outbox_seen_by_pump, vec![1, 1, 1], "泵前发件箱里已有 tick 产出");
+        assert_eq!(host.handler.outbox_len(), 0, "泵把发件箱取走了");
+    }
+
+    /// 第 60 个 tick 会**再**发一条 `TickRequest`（`tick` 里的整除分支）——
+    /// 它必须也在**同一次**泵之前进队列。
+    #[test]
+    fn the_sixtieth_tick_queues_a_tick_request_before_the_pump() {
+        let mut host = Host::new();
+        host.set_clock_ns(60 * NANOS_PER_TICK as u64);
+        host.frame(0.0);
+        assert_eq!(host.outbox_seen_by_pump.len(), 60);
+        assert_eq!(
+            host.outbox_seen_by_pump[59], 2,
+            "第 60 个 tick 一口气产 TickEvent + TickRequest"
+        );
+        assert_eq!(host.outbox_seen_by_pump[58], 1, "其余每个 tick 只产 TickEvent");
+    }
+
+    /// `delta` **不被使用**（两架构都不读 delta 寄存器）：同样的墙钟、不同的 delta ⇒ 同样结果。
+    #[test]
+    fn delta_is_not_used_by_the_loop() {
+        let mut a = Host::new();
+        let mut b = Host::new();
+        a.set_clock_ns(7 * NANOS_PER_TICK as u64 + 10);
+        b.set_clock_ns(7 * NANOS_PER_TICK as u64 + 10);
+        let ra = a.frame(0.0);
+        let rb = b.frame(1.0);
+        assert_eq!(ra, rb);
+        assert_eq!(ra.ticks, 7);
+        // 一个巨大的 delta 也不会多转一圈。
+        assert_eq!(b.frame(1e9).ticks, 0);
+    }
+
+    /// 本帧的 `probes` 恒等于 `1 + ticks`（`0x518484` 在循环头、每圈一次）。
+    #[test]
+    fn probes_equal_one_plus_ticks() {
+        for ns in [0u64, 1, NANOS_PER_TICK as u64, 5 * NANOS_PER_TICK as u64 + 7] {
+            let mut host = Host::new();
+            host.set_clock_ns(ns);
+            let out = host.frame(0.0);
+            assert_eq!(out.probes, out.ticks + 1, "ns = {ns}");
+        }
+    }
+}

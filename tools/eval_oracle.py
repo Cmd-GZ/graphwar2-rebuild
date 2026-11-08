@@ -82,6 +82,39 @@ def load_oracle():
         fn.restype = ctypes.c_double
         fn.argtypes = [ctypes.c_double]
         emu.MATH[name] = (lambda f: (lambda v: f(ctypes.c_double(v))))(fn)
+
+    # ---- `pow` 也要换成真 libm（2026-11-08，`dispatch/52` 差分矩阵）----
+    #
+    # 上游 `analysis/emu.py::_do_import` 对 `pow` 是**特判**的：它算 python 的 `a ** b`。
+    # 定义域外 python 返回 **complex**，被那段代码兜成 `float('nan')` —— 也就是**正** NaN
+    # （`7ff8000000000000`）；而二进制真的从 glibc 拿 `pow`（`UND pow@GLIBC_2.2.5`），
+    # glibc 的 `pow(-2.5, 0.5)` 给的是**负** NaN（`fff8000000000000`）。
+    # ⇒ 与 §30.3 那条 `log(0)` 是同一类**oracle 假象**，不换掉就会在矩阵里刷出
+    # 一堆假的"求值不一致"（本仓库旧矩阵里 205 个 eval 槽位就是这么来的）。
+    #
+    # 换法：拦 `_do_import`，只劫 `pow` 这一条导入，其余原样交回上游实现。
+    # ⚠️ 劫持分支必须**自己做上游那段收尾**（弹返回地址进 RSP/RIP），
+    # 否则 emulator 会继续在导入桩上执行 —— 表现为 `UncError: Unhandled CPU exception`。
+    libm_pow = libm.pow
+    libm_pow.restype = ctypes.c_double
+    libm_pow.argtypes = [ctypes.c_double, ctypes.c_double]
+    _orig_do_import = emu.Emu._do_import
+
+    def _do_import(self, address):
+        if self.imports[address].split("@")[0] == "pow":
+            from unicorn.x86_const import UC_X86_REG_RIP, UC_X86_REG_RSP
+
+            a, b = self.xmm_get(0), self.xmm_get(1)
+            self.xmm_set(0, libm_pow(ctypes.c_double(a), ctypes.c_double(b)))
+            uc = self.uc
+            sp = uc.reg_read(UC_X86_REG_RSP)
+            raddr = self.rq(sp)
+            uc.reg_write(UC_X86_REG_RSP, sp + 8)
+            uc.reg_write(UC_X86_REG_RIP, raddr)
+            return
+        return _orig_do_import(self, address)
+
+    emu.Emu._do_import = _do_import
     return Gw
 
 

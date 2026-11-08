@@ -343,7 +343,9 @@ def section_b(repo, mb, cg, args, report_lines, state):
 
 BIN_EXT = {".so", ".pck", ".png", ".ttf", ".dll", ".dylib", ".exe", ".o", ".a",
            ".zip", ".gz", ".jpg", ".jpeg", ".ogg", ".wav", ".pkl", ".glb", ".bin"}
-MAX_KB = 100
+MAX_KB = 100          # 一般新增文件的闸
+FIXTURE_MAX_KB = 4096  # fixtures/ 下的**文本真值表**单列上限（tsv/jsonl/md）
+FIXTURE_EXT = {".tsv", ".jsonl", ".md", ".txt", ".json"}
 
 
 def blob_sizes(repo, ref):
@@ -369,8 +371,20 @@ def section_c(repo, mb, cg, rows, args, state):
     head("C", "污染检查")
     added = [p for st, p, _o in rows if st.startswith("A")]
     sizes = blob_sizes(repo, cg)
-    big = sorted(((p, sizes.get(p, 0)) for p in added if sizes.get(p, 0) > MAX_KB * 1024),
+    def _cap(p):
+        """fixtures/ 下的文本真值表放宽到 FIXTURE_MAX_KB（先例：callgraph_fingerprint.tsv 1.5 MB、
+        parse_matrix_truth.tsv 1.6 MB —— 都是任务书要求的可复算真值表）。
+        二进制/压缩产物仍按 MAX_KB 卡。"""
+        if p.startswith("fixtures/") and os.path.splitext(p)[1].lower() in FIXTURE_EXT:
+            return FIXTURE_MAX_KB * 1024
+        return MAX_KB * 1024
+    big = sorted(((p, sizes.get(p, 0)) for p in added if sizes.get(p, 0) > _cap(p)),
                  key=lambda x: -x[1])
+    fixture_big = sorted(((p, sizes.get(p, 0)) for p in added
+                          if p.startswith("fixtures/")
+                          and os.path.splitext(p)[1].lower() in FIXTURE_EXT
+                          and MAX_KB * 1024 < sizes.get(p, 0) <= FIXTURE_MAX_KB * 1024),
+                         key=lambda x: -x[1])
     bin_git = git_binary_paths(repo, mb, cg)
     bin_ext = [p for _st, p, _o in rows
                if os.path.splitext(p)[1].lower() in BIN_EXT]
@@ -380,6 +394,10 @@ def section_c(repo, mb, cg, rows, args, state):
         len(added), MAX_KB,
         paint("❌ %d 个（%s）" % (len(big), "，".join(
             "%s %.0f KB" % (p, s / 1024.0) for p, s in big[:5])), RED) if big else "无"))
+    if fixture_big:
+        bullet("（放行）fixtures 下的文本真值表 > %d KB 且 ≤ %d KB：%s" % (
+            MAX_KB, FIXTURE_MAX_KB,
+            "，".join("%s %.0f KB" % (p, sz / 1024.0) for p, sz in fixture_big[:5])))
     if big:
         state["blockers"] += ["大文件 %s" % p for p, _s in big[:5]]
 

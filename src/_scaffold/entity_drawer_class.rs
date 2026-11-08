@@ -100,11 +100,20 @@
 //!   gate_queried() -> int          # 累计走真查询判过的 id 次数（观测点）
 //!   gate_alive(id: int) -> int     # LifeManager::get_alive 的原始状态字节（1 活 / 0 死 / 2 查不到）
 //!   gate_on_turn(id: int) -> bool  # TurnManager::is_on_turn（0x462b50）
-//!   gate_current_players() -> PackedInt64Array    # get_current_turn_players（0x4627c0）
-//!   gate_current_soldiers() -> PackedInt64Array   # get_current_turn_soldiers（0x4628d0）
+//!   gate_current_players() -> PackedInt64Array    # get_current_turn_players（0x4627c0；按 +0x58 两支）
+//!   gate_current_soldiers() -> PackedInt64Array   # get_current_turn_soldiers（0x4628d0；按 +0x58 两支）
 //!   gate_set_alive(id: int, alive: bool) -> bool  # 真调 LifeManager::set_alive（0x454b40；验收生产者）
 //!   gate_set_turn(player_id: int, soldiers: PackedInt64Array) -> bool  # add_player（验收生产者）
 //!   gate_advance_turn(player_id: int) -> int      # next_turn 的轮转那一半：推进到下一个活着的士兵
+//!   # ---- 回合模式 / 顺序支（任务 50：TurnData[+0x58]、set_turn 0x4638f0）----
+//!   gate_turn_mode() -> int                       # get_turn_mode（0x462c10）：0 顺序 / 1 同时
+//!   gate_set_turn_mode(mode: int) -> bool         # set_turn_mode（0x462d20）：写字节 + 发 TurnModeInfo(47)
+//!   gate_announce_turn(player_id: int, soldier_id: int) -> bool   # set_turn（0x4638f0）
+//!   gate_turn_order() -> PackedInt64Array         # 出场序表（TurnData[+0x8]/[+0x10]）
+//!   gate_current_player() -> int                  # 当前玩家游标（TurnData[+0x18]）；-1 = 没有
+//!   gate_sequential_state() -> bool               # 顺序支所需状态齐不齐（= 会不会回落）
+//!   gate_sequential_fallback() -> bool            # 回落开关当前值（默认 true）
+//!   gate_set_sequential_fallback(on: bool) -> bool  # 改回落开关（false = 逐字二进制：空集）
 //!
 //!   ready_call_count() / process_call_count() / resized_call_count() -> int
 //!   draw_call_count() -> int                      # `_draw` 被引擎调到几次
@@ -159,7 +168,7 @@ use crate::graphwar_plane_pos_manager::{
     GraphwarPlanePosManager, PlanePos, ENTITY_REMOVED_EVENT_TAG,
 };
 use crate::graphwar_texture_loader::{GraphwarTextureLoader, TextureKind};
-use crate::graphwar_turn_manager::{Team, TurnManager};
+use crate::graphwar_turn_manager::{Team, TurnManager, TurnMode};
 use crate::player_showcase::{DEFAULT_FACE, DEFAULT_HAT, DEFAULT_SKIN};
 
 // ---------------------------------------------------------------------------
@@ -1498,7 +1507,11 @@ impl EntityDrawer {
         }
     }
 
-    /// `GraphwarTurnData::get_current_turn_players`（x86 `0x4627c0`，同时回合那一支）。
+    /// `GraphwarTurnData::get_current_turn_players`（x86 `0x4627c0`）。
+    ///
+    /// 按 `TurnData[+0x58]` 分两支（任务 50）：同时回合 = 玩家表全部键；顺序回合 = 当前玩家一个
+    /// （出场序表 `[+0x8]/[+0x10]` 的第 `[+0x18]` 个）。顺序支缺状态时见
+    /// [`TurnManager::sequential_fallback`]（默认回落 = 旧行为）。
     #[func]
     fn gate_current_players(&self) -> PackedInt64Array {
         let mut out = PackedInt64Array::new();
@@ -1510,7 +1523,10 @@ impl EntityDrawer {
         out
     }
 
-    /// `GraphwarTurnData::get_current_turn_soldiers`（x86 `0x4628d0`，同时回合那一支）。
+    /// `GraphwarTurnData::get_current_turn_soldiers`（x86 `0x4628d0`）。
+    ///
+    /// 同时回合 = 每玩家 `soldiers[cursor]`；顺序回合 = **当前玩家**的 `soldiers[cursor]`
+    /// （`0x4629de`–`0x462ab4`；该玩家不在玩家表里 ⇒ 空集，不换人）。
     #[func]
     fn gate_current_soldiers(&self) -> PackedInt64Array {
         let mut out = PackedInt64Array::new();
@@ -1520,6 +1536,104 @@ impl EntityDrawer {
             }
         }
         out
+    }
+
+    /// `GraphwarTurnManager::get_turn_mode`（x86 `0x462c10`）：`TurnData[+0x58]` 那个字节。
+    ///
+    /// `0` = 顺序回合、`1` = 同时回合（判别值与名字见 `graphwar_turn_manager` 模块文档 §7.1）。
+    /// 拿不到 manager ⇒ `-1`。
+    #[func]
+    fn gate_turn_mode(&self) -> i64 {
+        match &self.gate_managers {
+            Some(gate) => i64::from(gate.turn.borrow().turn_mode().byte()),
+            None => -1,
+        }
+    }
+
+    /// **验收用的生产者**：真调 `GraphwarTurnManager::set_turn_mode`（x86 `0x462d20`）。
+    ///
+    /// 只收 `0` / `1`（严格版；二进制本身不校验，非 0 一律当同时回合）。原版这条写操作在
+    /// 远端事件处理器（`TurnModeInfo`，`0x3e41ae`）、游戏服（`0x4500c0`）与 `game_state_manager`
+    /// 的两态翻转（`0x476730`）里；本层还没有那些模块。
+    #[func]
+    fn gate_set_turn_mode(&mut self, mode: i64) -> bool {
+        let Some(gate) = self.gate_managers.clone() else {
+            return false;
+        };
+        let Ok(byte) = u8::try_from(mode) else {
+            return false;
+        };
+        let Some(mode) = TurnMode::from_known_byte(byte) else {
+            return false;
+        };
+        gate.turn.borrow_mut().set_turn_mode(mode);
+        self.base_mut().queue_redraw();
+        true
+    }
+
+    /// **验收用的生产者**：真调 `GraphwarTurnData::set_turn`（x86 `0x4638f0`）——
+    /// 公告"这个玩家现在用这个士兵"，同时把**当前玩家游标**移到它身上。
+    ///
+    /// `soldier_id == 0` ⇒ 删掉该玩家的整条记录（`0x463a8b`），出场序表不动。
+    #[func]
+    fn gate_announce_turn(&mut self, player_id: i64, soldier_id: i64) -> bool {
+        let Some(gate) = self.gate_managers.clone() else {
+            return false;
+        };
+        gate.turn.borrow_mut().set_turn(player_id, soldier_id);
+        self.base_mut().queue_redraw();
+        true
+    }
+
+    /// 玩家**出场序表**（`TurnData[+0x8]/[+0x10]`，只由 `set_turn` 追加）。
+    #[func]
+    fn gate_turn_order(&self) -> PackedInt64Array {
+        let mut out = PackedInt64Array::new();
+        if let Some(gate) = &self.gate_managers {
+            for id in gate.turn.borrow().turn_order() {
+                out.push(*id);
+            }
+        }
+        out
+    }
+
+    /// 当前玩家游标指向谁（`TurnData[+0x18]` 那一格）；`-1` = 没有（序表空 / 拿不到 manager）。
+    #[func]
+    fn gate_current_player(&self) -> i64 {
+        match &self.gate_managers {
+            Some(gate) => gate.turn.borrow().current_player().unwrap_or(-1),
+            None => -1,
+        }
+    }
+
+    /// 顺序支需要的状态齐不齐（模式 = 顺序 **且** 游标指得到一个玩家）。
+    /// `false` + 顺序模式 ⇒ 走回落开关那条路。
+    #[func]
+    fn gate_sequential_state(&self) -> bool {
+        match &self.gate_managers {
+            Some(gate) => gate.turn.borrow().sequential_state_available(),
+            None => false,
+        }
+    }
+
+    /// 回落开关当前值（`TurnManager::sequential_fallback`，默认 `true`）。
+    #[func]
+    fn gate_sequential_fallback(&self) -> bool {
+        match &self.gate_managers {
+            Some(gate) => gate.turn.borrow().sequential_fallback(),
+            None => false,
+        }
+    }
+
+    /// 改回落开关，返回改完的值。`false` ⇒ 顺序支缺状态时按二进制返回**空集**。
+    #[func]
+    fn gate_set_sequential_fallback(&mut self, on: bool) -> bool {
+        let Some(gate) = self.gate_managers.clone() else {
+            return false;
+        };
+        let on = gate.turn.borrow_mut().set_sequential_fallback(on);
+        self.base_mut().queue_redraw();
+        on
     }
 
     /// **验收用的生产者**：真调 `GraphwarLifeManager::set_alive`（x86 `0x454b40`）。
