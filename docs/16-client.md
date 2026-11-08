@@ -8691,3 +8691,186 @@ readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so | grep -E \
 # ⇒ GraphwarEventHandler::process_events 0x486970 / ::subscribe_to_event 0x486bc8
 #   GraphwarPlanePosManager::set_position 0x3b8160 / draw 侧的两个 getter 见 §47.2
 ```
+
+## 48. `EntityDrawer` 的门控从「`prep` 近似」换成真查询：`get_alive`(0x454950) + `is_on_turn`(0x462b50)（2026-11，任务 46）
+
+**一句话**：原版 `EntityDrawer::draw`（x86 `0x4b2890`）画谁不画谁，由
+`LifeManager::get_alive`（x86 **`0x454950`**）与 `TurnManager::is_on_turn`（x86 **`0x462b50`**）
+两个查询决定。本轮把两个函数的**语义逐条读出来**——`get_alive` 读的是第一张生命表的
+状态字节（`1` 活 / `0` 死 / `2` 查不到），`is_on_turn` **既不是**"当前回合方"**也不是**
+"本回合已开火"，而是 **`id ∈ 当前士兵集合 ∪ 本回合玩家集合`**——并在 `EntityDrawer`
+的节点壳里接上**真查询**：从 `KernelBus` 的容器里 `get_module` 取回两份 manager
+（`0x46c2c0` / `0x46b740`），`_draw` 逐 id 调它们。**拿不到 manager / 开关关掉 /
+位置表为空**时，门回落上一轮的 `prep` 成员近似（一条没删）。`entity_drawer_check`
+**236 → 292**（既有 236 条一条没改）。
+
+### 48.0 两个门控的语义（任务书 ① 的两句话 + 证据档）
+
+| 门 | 函数（vaddr / FDE / 大小） | 语义（`观测`） | 任务书里的猜想 | 证据档 |
+|---|---|---|---|---|
+| 1 | `GraphwarLifeManager::get_alive` **`0x454950`**（`0x454950..0x454b32`，482 B） | 按 `u32` id 查**第一张表**（`+0x18`）里的 8 字节值，返回**值里的第 1 个字节**；查不到**返回 `2`**。`1` = 活、`0` = 死、`2` = 查不到。**不读**排队死亡表（`+0x48`） | "是活着还是未被排队死亡？" ⇒ **前者**：读的只是 `set_alive` 无条件写的那张表，排队死亡表只有 `mode == 1` 才写、`get_alive` 从不碰 | **观测** |
+| 2 | `GraphwarTurnManager::is_on_turn` **`0x462b50`**（`0x462b50..0x462c07`，183 B） | **`id ∈ get_current_turn_soldiers() ∪ get_current_turn_players()`**：先查 soldiers（`0x462b64` 取 / `0x462b85` 比），不中再查 players（`0x462bac` 取 / `0x462bd5` 比），命中返 `1`，都不中返 `0`（`0x462bfe xor ebx,ebx`） | "是当前回合方，还是本回合已开火？" ⇒ **都不是**：是**两个集合的成员判定**；玩家 id 本身也在集合里 | **观测** |
+| 门在 `draw` 里怎么用 | `0x4b3199 call get_alive` → `0x4b32e2 test r14b,r14b` / `0x4b31ac call is_on_turn` → `0x4b34c3 test bl,bl`；两处 `je 0x4b37f0`（循环尾） | 两个门**同时为真**才画。门 1 判的是**整字节非零**（`2` 也算过），与 `turn_manager` 轮转那条 `0x463fbb test $0x1`（`2` 不算活）**不是同一条判据** | — | **观测** |
+
+`get_alive` 的指令级证据（x86 2026-08-28，`addr_probe.py dis 0x454950`）：
+
+```text
+0x4549a9  mov   r14b, 2              ; 查不到时的默认返回值 = 2
+0x4549ac  cmp   qword [r12+0x30],0   ; 第一张表的 len（空表快路径 0x454a62）
+0x4549c2  call  0x47dec0             ; hash(id)，桶在 +0x18 / +0x20 / +0x38
+0x454a5c  movzx r14d,[rcx+r8*8-4]    ; 命中 ⇒ 取"值"的第 1 个字节
+（对照 0x454b40 set_alive：0x454b9f `lea rdi,[rbx+0x18]` **无条件**写第一张；
+  0x454bb9 `cmp r14d,1` / 0x454bc7 `call 0x442330` 才碰 +0x48 那张 ⇒ get_alive 不读它）
+```
+
+`is_on_turn` 的指令级证据（`addr_probe.py dis 0x462b50`）：
+
+```text
+0x462b64  call 0x463460          ; GraphwarTurnManager::get_current_turn_soldiers → Vec<u32>
+0x462b85  cmp  [rdi+rcx], ebx    ;   id == soldiers[i]？
+0x462bac  call 0x463340          ; GraphwarTurnManager::get_current_turn_players → Vec<u32>
+0x462bd5  cmp  [rdi+rcx], ebx    ;   id == players[i]？
+0x462bde  mov  bl, 1             ; 命中
+0x462bfe  xor  ebx, ebx          ; 两个集合都不中
+```
+
+两个 getter（`0x463460` / `0x463340`）只是 `Mutex` 锁住 `TurnData` 后转发给
+`GraphwarTurnData::get_current_turn_soldiers`（**`0x4628d0`**）/ `get_current_turn_players`
+（**`0x4627c0`**）；这两个函数按 `TurnData[+0x58]`（回合模式位）分两支（同一个函数里
+两条生成不同形状的代码，不是两个函数）：
+
+| `TurnData[+0x58]` | players 集合 | soldiers 集合 | 证据 |
+|---|---|---|---|
+| `== 0`（顺序回合） | **单元素**：玩家表 `[+0x8]` 那个 `Vec` 的第 `[+0x18]` 个（当前玩家） | **单元素**：该玩家 entry 的 `soldiers[cursor]` | `0x462846`–`0x46286f` / `0x4629de`–`0x462ab0` |
+| `!= 0`（同时回合） | 玩家表 `[+0x28]` 哈希表的**全部键**（`0x4627e9`–`0x462844`；collect 适配器 `0x46282c call 0x3c03b0`，取键在 `0x3c0484 mov eax,[r13+rax*8-0x28]`） | 每个 entry 的 `soldiers[cursor]`（`0x46290b`–`0x4629d3`；`0x4629bc mov ebx,[rax+rdi*4]`，空 `Vec` 在 `0x46299f` 跳过） | 同上 |
+
+⇒ **`is_on_turn` 的真值表随回合模式变**：同时回合下"所有登记玩家 + 每个玩家的当前士兵"都为真；
+顺序回合下只有"当前玩家 + 它当前的那个士兵"为真。**本仓库的 `TurnManager` 是"每玩家一个游标"
+那张表**（= 同时回合的数据形状），没有 `+0x58` mode 字段、也没有顺序回合的"当前玩家游标"
+⇒ 本层实现的是**同时回合那一支**，在 `SequentialTurns` 下是原版的**超集**（见 §48.5 第 1 条）。
+
+### 48.1 本轮动了哪些文件
+
+| 文件 | 增/改 | 内容 |
+|---|---|---|
+| `src/graphwar_life_manager.rs` | 改（+1 个纯函数 +1 条单测） | 新增 `is_drawable_alive_byte(state) = state != 0`：把 `draw` 门 1 的 `0x4b32e2 test r14b,r14b` 落成代码，并在文档里写清它与 `is_alive_byte`（`& 1`）**不是同一条判据** |
+| `src/graphwar_turn_manager.rs` | 改（+3 个查询方法 +3 条单测 + 模块文档 §6） | `get_current_turn_players`（`0x4627c0`）/ `get_current_turn_soldiers`（`0x4628d0`）/ `is_on_turn`（`0x462b50`），全部只读；模块文档 §6 记两支语义 + 本层的缺口 |
+| `src/_scaffold/entity_drawer_class.rs` | 改 | ①`GateManagers`（两个 `Rc<RefCell<…>>`）+ `passes()`；②导出开关 `gate_query_enabled`（默认 `true`）；③`rings_for_frame` 走真查询 / 回落 `prep` 两支；④`kernel_clock()`（`V` 取 tick handler）；⑤14 个 `gate_*` `#[func]`；⑥文件头对照表 / 契约补行 |
+| `client/tools/entity_drawer_check.gd` | 改（**既有 236 条一条没删**） | 新增第 18 组（门控，**+56** 条：14 条方法存在性 + 3 条写表 + 39 条断言） |
+| `docs/16-client.md` | +本节 | — |
+| `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` | 重跑 | `src_fns` / `src_tree_sha256` 跟着涨（2665 → **2689** 条 `fn`：14 个 `gate_*` + `kernel_clock` + `GateManagers::passes` + turn_manager 3 个 + life_manager 1 个） |
+
+❌ **没动**：`src/entity_drawer.rs`（算术一行没改）、`src/game.rs`、`client/src/**`、`dispatch/`、
+`fixtures/guardrails.json`、`src/_scaffold/root_wiring.rs`、别的 `*_class.rs`。
+
+### 48.2 怎么接的（**几行、读什么**）
+
+`_draw` 的循环源仍是 [`rings_for_frame`]，只在**门**这一处分了两支（`entity_drawer_class.rs`，
+`grep gate_source` 定位）：
+
+| # | 位置 | 读什么 | 行数量级 |
+|---|---|---|---|
+| 1 | `GateManagers::passes(id)` | `life.borrow().get_alive(id_u32)` 过 `is_drawable_alive_byte`；再 `turn.borrow().is_on_turn(id)` | ~12 行（含文档） |
+| 2 | `gate_attach()` / `gate_detach()` | `KernelBus → wiring() → life_manager() / turn_manager()`（= 原版 `0x4b2b28` 那段 `get_module` 的类型版） | ~20 行 |
+| 3 | `rings_for_frame()` | 表非空时：**attach 过 + 开关开** ⇒ 逐 id 调 `passes`；否则逐 id 看 `prep` 成员 | 改 ~20 行 |
+| 4 | `kernel_clock()` | 真查询那一支的 `V` = `get_fractional_tick`（原版 `0x4b2e10`），经 `KernelBus` 取 | ~6 行 |
+| 5 | 14 个 `gate_*` `#[func]` | 观测口 9（`available` / `enabled` / `set_enabled` / `source` / `queried` / `alive` / `on_turn` / `current_players` / `current_soldiers`）+ 生产者 5（`attach` / `detach` / `set_alive` / `set_turn` / `advance_turn`） | ~150 行（含文档） |
+
+**和原版的差别（写清）**：
+
+* **manager 怎么拿到**：原版 `draw` 里 `[root+0x1668] → backend+0x220 → 模块容器 → get_module`
+  （`0x4b2b28`，Life `0x46c2c0` / Turn `0x46b740`）。本层没有那条对象图，改从
+  `_scaffold::root_wiring::KernelBus` 的容器里**按类型取回**（仍是同一次 `get_module`，
+  取回的是容器里那一份 `Rc`）⇒ **我方接线差异**，不是"从根节点取回来的那一份"。
+* **开关**：原版没有。`gate_query_enabled`（默认 `true`）只是"允许走真查询"；
+  **真正决定的是 `gate_managers` 是否为 `Some`**。默认 `None` ⇒ 门回落 `prep`，
+  **与上一轮逐字相同**。理由：播放屏（`client/src/**`，禁区）还没有把生命/回合状态喂进容器，
+  一把默认接上会让准备圈少东西（`AGENTS.md` 合并纪律 3b 记过同类事故）。
+* **`V` 与 `base`**：真查询那一支 `V` 走 `get_fractional_tick`（原版同源），`base` 仍只由
+  `set_ring_base` 给（`map[i]` 来源仍 `未知`，§47.6 第 4 条没变）。
+
+### 48.3 headless 断言（`client/tools/entity_drawer_check.gd` 236 → **292**，+56）
+
+第 18 组把整条门控**真跑一遍**（新实例、真 manager、真 `_draw`；实体 id 取 10/11/12，
+另加玩家 id 9001 本身）：
+
+| 组 | 断言 | 实测（headless 输出） |
+|---|---|---|
+| 0 | 14 个 `gate_*` 方法存在 | 全在 |
+| 1 | 没 attach ⇒ `gate_available() == false`、`gate_source() == "prep"`、开关默认 `true` | 是 |
+| 2 | 位置表 3 条 + 准备态 3 条 ⇒ **拿不到 manager 时三具全画按 `prep`**（回落断言） | `[10, 11, 12]` |
+| 3 | attach 成功；`set_alive` 后 `gate_alive(10)=1 / (11)=0 / (99)=2` | 是 |
+| 4 | `set_turn(9001,[10,11,12])` 后 `get_current_turn_soldiers() = [1,3,10]`（演示玩家的 1/3 + 新的 10）、`get_current_turn_players() = [1,2,9001]`；`is_on_turn(10)=true / (11)=false / (9001)=true` | 是（集合里**有演示玩家**，所以断言用 `has` 而不是逐元素相等） |
+| 5 | **活着+轮到 ⇒ 画**；**死了 ⇒ 不画**；**活着但没轮到 ⇒ 不画** | 第一帧只画 `[10]`（3 段弧） |
+| 6 | **门控输入变化 ⇒ 下一帧跟着变**：`gate_advance_turn(9001)`（跳过死的 11）⇒ 当前 12 | 只画 `[12]` |
+| 7 | **门 1 判整字节**：把玩家 id 9001 放进位置表（`get_alive == 2`、`is_on_turn == true`） | 画 `[12, 9001]` |
+| 8 | **manager 不可用 ⇒ 回落 `prep`**（`gate_detach`） | `gate_source=prep`，画 4 个 `[10,11,12,9001]` |
+| 9 | **开关关掉 ⇒ 回落 `prep`**；再打开 ⇒ 回到门控 | 关：4 个；开：`[12,9001]` |
+
+`ok()` 计数：新增 **56** 条（14 条方法存在性 + 3 条写表 + 39 条断言），既有 236 条**一条没改**。
+
+### 48.4 验收（本节实测，命令都能原地复跑）
+
+| 命令 | 本轮 | 改前（同一条命令 / 同一个 `CARGO_TARGET_DIR`） |
+|---|---|---|
+| `cargo test --offline` | **1635**，全绿 | **1631**（+4：life_manager 1 条、turn_manager 3 条） |
+| `cargo test --offline --features gdext-bindings` | **1734**，全绿 | 同一构建目录实测 **1730**（用 `--skip` 把 4 条新单测滤掉） |
+| `python3 tools/coverage_matrix.py --check` | **OK** | OK |
+| `python3 tools/check_doc_refs.py` | **OK**（rc=0） | OK |
+| `entity_drawer_check.gd` | **292 passed / 0 failed** | **236 / 0** |
+| `assemble_check.gd` | **217 / 0** | 217 |
+| `plane_on_screen_check.gd` | **96 / 0** | 96 |
+| `obstacle_drawer_check.gd` | **116 / 0** | 116 |
+| `function_drawer_check.gd` / `draw_classes_check.gd` / `curve_on_screen_check.gd` | **132 / 235 / 96**，全 0 failed | 同 |
+| `base_classes_check.gd` / `signal_classes_check.gd` / `gdext_check.gd` | **117 / 155 / 24**，全 0 failed | 同 |
+| `selftest`（`-- --selftest`，四前置齐） | **714 passed / 0 failed / 1 skipped** | 714 / 0 / 1 |
+
+**三条驱动轴**（与客户端无关：改的是 `_scaffold` 的节点类 + manager 的只读查询，
+`src/game.rs` 一行没动）：
+
+```text
+replay_attrib --drive fire  --policy default : 内容命中 647 / 1080
+replay_attrib --drive batch --policy default : 内容命中 647 / 1080
+batch_conv --policy strict                   : 种类序列 1075 / 1080；内容命中 637 / 1080（变好 128 批 / 变差 0 批）
+```
+
+⚠️ **口径**：护栏记的是 647/1075、647/1075、637/1075（分母 1075）；本轮输入目录是
+`.reference/replays/gw2-replays-snapshot/replays`（403 个文件、读失败 117 ⇒ 286 份可读），
+跑出 **1080** 个结算批 —— **分子逐条相同**（647 / 647 / 637，种类序列 1075），分母差 5 是
+输入集合不同，不是回归（同 §46.4 的记法）。
+
+### 48.5 仍是推断 / 未知（诚实清单）
+
+| # | 项 | 档位 | 缺什么 / 影响 |
+|---|---|---|---|
+| 1 | **`is_on_turn` 的回合模式分支** | **已知差异** | 二进制按 `TurnData[+0x58]` 分顺序/同时两支；本层只有同时回合那一支（每玩家一个游标）。⇒ 在 `SequentialTurns` 下原版只让"当前玩家 + 其当前士兵"为真，本层会把**所有**玩家的当前士兵都判真。缺：`+0x58` mode 字段与它的写者（`set_turn_mode` `0x462d20` / `get_turn_mode` `0x462c10` 未接）+ 顺序回合那条"当前玩家游标"（`[+0x8]/[+0x10]/[+0x18]`） |
+| 2 | **门仍然默认走 `prep`** | **我方接线（有意）** | `gate_managers` 默认 `None`；要 `gate_attach()` 才真查。缺：播放屏侧把生命/回合状态喂进容器（`client/src/**` 是禁区）⇒ 默认画面与上一轮**逐字相同**，不能写成"门控已复原到画面" |
+| 3 | `prep` 成员 ≈ 门的**等价性** | **推断**（原 §46.5 第 1 条，未变） | 回落分支仍用"`prep` 成员 = 两个门同时为真"这条我方定义；要证它得让播放屏的生产者接进来 |
+| 4 | manager 的**取回路径** | **我方接线差异** | 原版 `root+0x1668 → backend+0x220 → 容器`；本层 `KernelBus`（thread-local）→ 同一个 `RootWiring` 容器 ⇒ 类型与实例同一份，**对象图不同** |
+| 5 | `get_alive == 2` 为什么在门里算"可画" | **未知** | `test r14b,r14b` 只说"非零就过"；"查不到"的实体（未上场士兵 / 靶子 / 别的实体）该不该画，`draw` 的其余控制流还没解完 → 本层照二进制实现，**不替它加 `& 1`** |
+| 6 | `V`（真查询那一支） | **推断** | 用 `get_fractional_tick`（`0x519530`）同源，但容器里 tick handler 的基准是 `(0,0)`（epoch）⇒ 角度不可用；验收用 `kernel_set_clock(0)` 摆时钟（**我方接线口**） |
+| 7 | `base`（`map[i]`） | **未知**（未变） | 仍由 `set_ring_base` 给；真查询那一支 `prep` 里没有的实体 `base = None` |
+
+### 48.6 复现（干净树）
+
+```text
+export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=<ws>/.agent-work/<你的>/target46
+cargo test --offline                                     # 1635，全绿
+cargo test --offline --features gdext-bindings           # 1734，全绿
+python3 tools/coverage_matrix.py                         # 改了 src/ 必须重跑生成物
+python3 tools/coverage_matrix.py --check                 # OK
+python3 tools/check_doc_refs.py                          # OK（rc=0）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+grep -a -c gate_attach client/libgw2_rebuild.so          # 4（判据：.so 真的是新的）
+"$GODOT" --headless --path client --import               # 解完资产必须再 import 一次
+"$GODOT" --headless --path client --script res://tools/entity_drawer_check.gd   # 292 passed / 0 failed
+```
+
+**地址复算（三条，互不依赖）**：
+
+```text
+../.venv/bin/python tools/addr_probe.py dis 0x462b50   # is_on_turn：两个集合的并集
+../.venv/bin/python tools/addr_probe.py dis 0x454950   # get_alive：默认 2、命中取值字节
+../.venv/bin/python tools/addr_probe.py dis 0x4628d0   # get_current_turn_soldiers：两支 +0x58
+```

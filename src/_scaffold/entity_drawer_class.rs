@@ -30,7 +30,7 @@
 //! | 准备圈的**输入** | `draw` 从两张哈希表取中心的 x/y、半径、时钟 `V`、`map[i]`（栈槽 `[rsp+0xb0]/[rsp+0xa8]`、`[rsp+0x90]`，`map[i]` 在 `0x4b34d3`–`0x4b35ae` 那段读） | 调用方用 `set_ring()` / `set_ring_base()` 给 | 原版**观测**（`0x4b2e94`–`0x4b35b4`）；本类**我方接线**（`GraphwarBackend` 的 `pos_info_event` 没接） |
 //! | 准备圈的**坐标** | `PosInfo` 的第 1/2/3 个 f64 是否已是画布像素：**未知** | 按 [`ring_center_px`] 那条棋盘 → 像素投影（`k = size.x / 50`，与 sprite 同一条算式），半径乘同一个 `k` | **推断**（缺"PosInfo 的单位"这一条证据） |
 //! | 准备圈的**颜色** | 哈希表里的打包 RGB（`0x4b347a`） | 导出属性 `team_color`（`relayout` 也用它） | **我方接线**（队色表 `get_team_overview` 没接，`docs/16-client.md` §49.5 第 7 条） |
-//! | 准备圈的**实体顺序 / x,y,radius 来源** | `draw` 在 `0x4b2e32` 调 `GraphwarPlanePosManager::get_all_positions`（**散列序**），循环里 `0x4b314b` 逐 id `get_position` 取三份 f64；门是 `get_alive`(`0x454950`) + `is_on_turn`(`0x462b50`)（任务 41 新证） | 读本类持有的那张表：[`GraphwarPlanePosManager::positions_sorted`]（先 `get_all_positions` 再按 **id 升序**）→ `x/y/radius`；门用 `prep` 成员近似；**表空 / 开关关掉 ⇒ 回到 `prep` 那条代偿路径** | 原版读表**观测**（`docs/16` §46；第二处 `process` 在 `0x4b4f24`）；**排序是我方差异**（原版无排序调用） |
+//! | 准备圈的**实体顺序 / x,y,radius 来源** | `draw` 在 `0x4b2e32` 调 `GraphwarPlanePosManager::get_all_positions`（**散列序**），循环里 `0x4b314b` 逐 id `get_position` 取三份 f64；门是 `get_alive`(`0x454950`) + `is_on_turn`(`0x462b50`)（任务 41 新证） | 读本类持有的那张表：[`GraphwarPlanePosManager::positions_sorted`]（先 `get_all_positions` 再按 **id 升序**）→ `x/y/radius`；**门**：`gate_attach()` 拿到两份真 manager 后就是 `get_alive != 0` ∧ `is_on_turn`（任务 46），拿不到 / 开关关掉 / 表空 ⇒ 回到 `prep` 那条代偿路径 | 原版读表与两个门**观测**（`docs/16` §46/§48；第二处 `process` 在 `0x4b4f24`）；**排序是我方差异**（原版无排序调用）；门回落与开关是**我方接线** |
 //! | 子节点命名 | 3 个 sprite 是引擎自动名 `@Sprite2D@N`；名字标签是场景根名 `RichTextLabel`；本类自己挂在 `GraphwarPlane` 下时也是自动名 `@EntityDrawer@N` | 同：sprite **不命名**、名字标签叫 `RichTextLabel` | **观测**（`docs/16` §2.1.10 的节点树 dump） |
 //!
 //! ⇒ 这个类解决的是"**能不能真的建出一棵节点树、并把纯逻辑算出来的位置写进去**"，
@@ -55,6 +55,8 @@
 //!   @export texture_size : int    # **兜底**纯色贴图的边长（像素），默认 8
 //!   @export assets_root : String  # 资产根（默认 "res://assets"；空串 ⇒ 不碰磁盘，等价"没有 assets 的机器"）
 //!   @export pos_table_enabled : bool  # true（默认）= `_draw` 读位置表；false ⇒ 走 `prep` 代偿路径
+//!   @export gate_query_enabled : bool # true（默认）= 门走真 manager 查询（**attach 过才有**）；
+//!                                     # false 或没 attach / 拿不到 manager ⇒ 回落 `prep`（任务 46）
 //!
 //!   spawn_entity(id: int, x: float, y: float) -> int   # 建 4 个子节点并摆位，返回建了几个（恒 4）
 //!   remove_entity(id: int) -> bool                     # queue_free 那 4 个子节点并丢掉句柄
@@ -87,6 +89,22 @@
 //!   pos_get_position(id: int) -> PackedFloat64Array   # [pos_x, pos_y, radius]
 //!   pos_drawn_ids() -> PackedInt64Array           # 最近一次 `_draw` 实际画的 id 顺序
 //!   pos_event_count() -> int                      # 表的事件队列长度（set_position 每条 +1）
+//!
+//!   # ---- 门控（任务 46：`get_alive` 0x454950 + `is_on_turn` 0x462b50 的真查询）----
+//!   gate_attach() -> bool          # 从 KernelBus 的容器 get_module 取 Life/Turn 两份 manager
+//!   gate_detach() -> bool          # 丢掉缓存（模拟"拿不到 manager"⇒ 回落 prep）
+//!   gate_available() -> bool       # 有没有 attach 到两份 manager
+//!   gate_enabled() -> bool         # 开关当前值（= 导出属性 gate_query_enabled）
+//!   gate_set_enabled(on: bool) -> bool      # 改开关（false ⇒ 一律走 prep 近似）
+//!   gate_source() -> String        # 最近一次 `_draw` 实际用的是 "managers" 还是 "prep"
+//!   gate_queried() -> int          # 累计走真查询判过的 id 次数（观测点）
+//!   gate_alive(id: int) -> int     # LifeManager::get_alive 的原始状态字节（1 活 / 0 死 / 2 查不到）
+//!   gate_on_turn(id: int) -> bool  # TurnManager::is_on_turn（0x462b50）
+//!   gate_current_players() -> PackedInt64Array    # get_current_turn_players（0x4627c0）
+//!   gate_current_soldiers() -> PackedInt64Array   # get_current_turn_soldiers（0x4628d0）
+//!   gate_set_alive(id: int, alive: bool) -> bool  # 真调 LifeManager::set_alive（0x454b40；验收生产者）
+//!   gate_set_turn(player_id: int, soldiers: PackedInt64Array) -> bool  # add_player（验收生产者）
+//!   gate_advance_turn(player_id: int) -> int      # next_turn 的轮转那一半：推进到下一个活着的士兵
 //!
 //!   ready_call_count() / process_call_count() / resized_call_count() -> int
 //!   draw_call_count() -> int                      # `_draw` 被引擎调到几次
@@ -134,10 +152,14 @@ use godot::prelude::*;
 
 use crate::entity_drawer::{self, EntityChildNode, Vec2 as BoardVec2};
 use crate::graphwar_event_queue::GraphwarEventQueue;
+use crate::graphwar_life_manager::{
+    is_drawable_alive_byte, LifeState, MISSING_STATE,
+};
 use crate::graphwar_plane_pos_manager::{
     GraphwarPlanePosManager, PlanePos, ENTITY_REMOVED_EVENT_TAG,
 };
 use crate::graphwar_texture_loader::{GraphwarTextureLoader, TextureKind};
+use crate::graphwar_turn_manager::{Team, TurnManager};
 use crate::player_showcase::{DEFAULT_FACE, DEFAULT_HAT, DEFAULT_SKIN};
 
 // ---------------------------------------------------------------------------
@@ -499,6 +521,46 @@ struct PrepRing {
     base: Option<f64>,
 }
 
+/// 门控用的两份真 manager（任务 46）——原版 `draw` 每帧 `get_module` 取回来的那两个。
+///
+/// ```text
+/// 0x4b3199  call 0x454950   ; GraphwarLifeManager::get_alive(id)   ← 门 1
+/// 0x4b319e  mov  r14d, eax  ;        状态字节（1 活 / 0 死 / 2 查不到）
+/// 0x4b31ac  call 0x462b50   ; GraphwarTurnManager::is_on_turn(id)  ← 门 2
+/// 0x4b31b1  mov  ebx, eax   ;        bool
+/// 0x4b32e2  test r14b, r14b ; je 跳过   ⇒ 门 1：**整字节非零**才算过（2 也算过）
+/// 0x4b34c3  test bl, bl     ; je 跳过   ⇒ 门 2
+/// ```
+///
+/// **我方接线**：原版在 `draw` 里 `[root+0x1668] → backend+0x238 → get_module`（x86
+/// `0x46c2c0` Life / `0x46b740` Turn）；本层没有那条对象图，改由 [`EntityDrawer::gate_attach`]
+/// 从 `_scaffold::root_wiring::KernelBus` 的容器里**按类型取回**（仍是同一次 `get_module`），
+/// 缓存成本字段。**拿不到 ⇒ `None` ⇒ 回落 `prep`**（`docs/16` §48）。
+#[derive(Clone)]
+struct GateManagers {
+    /// `GraphwarLifeManager`（⇔ [`LifeState`]）。
+    life: Rc<RefCell<LifeState>>,
+    /// `GraphwarTurnManager`（⇔ [`TurnManager`]）。
+    turn: Rc<RefCell<TurnManager>>,
+}
+
+impl GateManagers {
+    /// 两个门同时为真才画（原版 `0x4b32e2` 与 `0x4b34c3` 两处 `je` 跳过）。
+    ///
+    /// 门 1 用 [`is_drawable_alive_byte`]（**整字节非零**，不是 `& 1`）；
+    /// 门 2 用 [`TurnManager::is_on_turn`]（`0x462b50`）。id 域：位置表的键是 `u32`，
+    /// 越界（`i64` 负数 / 超过 `u32`）⇒ 两个门都查不到 ⇒ 不画。
+    fn passes(&self, entity_id: i64) -> bool {
+        let Ok(id) = u32::try_from(entity_id) else {
+            return false;
+        };
+        if !is_drawable_alive_byte(self.life.borrow().get_alive(id)) {
+            return false;
+        }
+        self.turn.borrow().is_on_turn(entity_id)
+    }
+}
+
 /// 一次 `draw_arc` 的实参 —— **已经转成 f32**（= 引擎真正收到的数），留给验收脚本对拍。
 ///
 /// 槽位顺序照 `CanvasItem::draw_arc(center, radius, start_angle, end_angle, point_count,
@@ -559,6 +621,17 @@ pub struct EntityDrawer {
     #[export]
     pos_table_enabled: bool,
 
+    /// **门控开关**（任务 46）：`true`（默认）= 门走真 manager 查询（`get_alive` + `is_on_turn`），
+    /// 但**得先 [`Self::gate_attach`] 拿到两份 manager**；`false` / 没 attach / 拿不到
+    /// ⇒ 回落 [`Self::prep`] 成员近似（第九轮 41 号那条代偿路径）。
+    ///
+    /// **这是我方接线**：原版 `draw` 无条件从容器 `get_module` 取那两个 manager
+    /// （`0x46c2c0` / `0x46b740`），没有开关。开关留在这里是因为**播放屏那侧还没有人把
+    /// 生命/回合状态喂进容器**（`client/src/**` 是禁区）——一把默认接上会让准备圈少东西
+    /// （`AGENTS.md` 合并纪律 3b 记过的同类事故），所以默认路径与上一轮逐字相同。
+    #[export]
+    gate_query_enabled: bool,
+
     /// 实体 id → 4 个子节点。`BTreeMap` 而不是 `HashMap`：遍历顺序稳定，日志/断言可复现。
     entities: BTreeMap<i64, EntityNodes>,
 
@@ -607,6 +680,15 @@ pub struct EntityDrawer {
     /// `Rc<RefCell<GraphwarPlanePosManager>>`；表的内容由 [`Self::pos_set_position`] 写入
     /// （等价于原版 `pos_info_event` 那条生产者）。**不是**"从容器里取回来"的那一份。
     pos_manager: Rc<RefCell<GraphwarPlanePosManager>>,
+
+    /// 门控用的两份真 manager（任务 46）。`None` = **拿不到**（没 `gate_attach` / 容器里没有）
+    /// ⇒ `_draw` 的门回落 [`Self::prep`] 成员近似。取回路径见 [`Self::gate_attach`]。
+    gate_managers: Option<GateManagers>,
+
+    /// 最近一次 `_draw` 的门数据源：`"managers"`（真查询）或 `"prep"`（近似/代偿）。
+    gate_source: &'static str,
+    /// 累计"用真查询判过的 id"次数（观测点：证明门真的走了 manager，不是 `prep`）。
+    gate_queried: i64,
 
     /// 最近一次 `_draw` **实际画出来的实体 id**，按发出顺序（观测点：排序有没有生效）。
     last_drawn_ids: Vec<i64>,
@@ -657,6 +739,7 @@ impl IControl for EntityDrawer {
             texture_size: DEFAULT_TEXTURE_SIZE as i64,
             assets_root: GString::from(DEFAULT_ASSETS_ROOT),
             pos_table_enabled: true,
+            gate_query_enabled: true,
             entities: BTreeMap::new(),
             // 原版这个对象由 `GraphwarRootNode` 构造一次（arm64 `0x39a44c`）；本切片每实例一份。
             loader: GraphwarTextureLoader::new(),
@@ -670,6 +753,11 @@ impl IControl for EntityDrawer {
             pos_manager: GraphwarPlanePosManager::new(Rc::new(RefCell::new(
                 GraphwarEventQueue::new(),
             ))),
+            // 门控 manager 一开始**拿不到**：原版由节点层 `get_module` 取回（见字段文档），
+            // 本层要等 `gate_attach()` 从 KernelBus 的容器里取 ⇒ 默认回落 `prep`。
+            gate_managers: None,
+            gate_source: "prep",
+            gate_queried: 0,
             last_drawn_ids: Vec::new(),
             draw_calls: 0,
             arc_total: 0,
@@ -1125,42 +1213,74 @@ impl EntityDrawer {
     /// 1. **表非空 ⇒ 表驱动**：id 与顺序来自
     ///    [`GraphwarPlanePosManager::positions_sorted`]（= `get_all_positions` 后按 id 升序）。
     ///    排序是**我方差异**：原版直接用散列序（顺序 `未知`），见 `docs/16` §46 与本文件头。
-    /// 2. **门**：只有"准备态"的实体才画。原版那两个门是 `get_alive` + `is_on_turn`（上表），
-    ///    本类没有那两个 manager ⇒ 用 `prep` 成员判定（**推断**：与"准备态"同集合）。
-    /// 3. **`V` / `base` 仍取自 `prep`**：原版 `V` 来自
-    ///    `GraphwarTickHandler::get_fractional_tick`（`0x519530`，同一段 `0x4b2dc3` 取的模块），
-    ///    位置表里只有三份 f64、没有时钟。⇒ 表里有、`prep` 里没有的实体**不画**
-    ///    （门不满足；`V`/`base` 只对画出来的那些有用）。
+    /// 2. **门**（任务 46）：**attach 到两份真 manager 且开关打开**时用真查询 —
+    ///    `get_alive(id) != 0` ∧ `is_on_turn(id)`（`0x4b3199` / `0x4b31ac` 两个调用，
+    ///    判据在 `0x4b32e2` / `0x4b34c3`）。**拿不到 manager / 开关关掉**时回落 `prep`
+    ///    成员近似（上一轮的行为，逐字保留：第九轮 41 号的教训，见 `docs/16` §48）。
+    /// 3. **`V`**：真查询那一支用 `GraphwarTickHandler::get_fractional_tick`
+    ///    （原版 `0x4b2e10`，本层经 KernelBus 取，`kernel_set_clock` 可摆）；`prep` 那一支
+    ///    仍用 `prep` 里的 `v`。`base`（`map[i]`）两支撑都来自 `prep`（来源仍 `未知`）。
+    ///    ⇒ 表里有、`prep` 里没有的实体：**真查询那一支照画**（`V` 从 tick handler 取，
+    ///    `base = None`），`prep` 那一支仍**不画**（它的门就是 `prep` 成员）。
     /// 4. **表空（或 [`Self::pos_table_enabled`] = `false`）⇒ 代偿路径**：用 `prep` 自己那套
     ///    坐标（`set_ring` 填的，`play_screen.gd::_sync_entities` 走的就是它）—— 这条路径
     ///    **保留可回退**，本轮没有删。
-    fn rings_for_frame(&self) -> Vec<(i64, PrepRing)> {
+    fn rings_for_frame(&mut self) -> Vec<(i64, PrepRing)> {
         if self.pos_table_enabled {
             let table = self.pos_manager.borrow().positions_sorted();
             if !table.is_empty() {
-                return table
-                    .into_iter()
-                    .filter_map(|(id, pos)| {
-                        let id = id as i64;
-                        // 门：准备态（原版是 get_alive + is_on_turn，见文档第 2 条）。
-                        let known = self.prep.get(&id)?;
-                        Some((
-                            id,
-                            PrepRing {
-                                // x/y/radius **来自位置表**（原版三条 movsd）。
-                                board: BoardVec2::new(pos[0], pos[1]),
-                                pos_radius: pos[2],
-                                // 时钟与起始量仍来自 `prep`（见文档第 3 条）。
-                                v: known.v,
-                                base: known.base,
-                            },
-                        ))
-                    })
-                    .collect();
+                // 门的数据源：开关关掉 / 没 attach ⇒ `None`（= 上一轮那条 `prep` 近似）。
+                let gating =
+                    if self.gate_query_enabled { self.gate_managers.clone() } else { None };
+                self.gate_source = if gating.is_some() { "managers" } else { "prep" };
+                // 真查询那一支的 `V` = `get_fractional_tick`（原版 0x4b2e10）。
+                let clock = if gating.is_some() { self.kernel_clock() } else { 0.0 };
+                let mut out = Vec::with_capacity(table.len());
+                for (id, pos) in table {
+                    let id = i64::from(id);
+                    let (visible, v) = match &gating {
+                        Some(gate) => {
+                            self.gate_queried += 1;
+                            (gate.passes(id), clock)
+                        }
+                        // 近似：`prep` 成员（上一轮的门），`v` 也取 `prep` 的。
+                        None => {
+                            let Some(known) = self.prep.get(&id) else { continue };
+                            (true, known.v)
+                        }
+                    };
+                    if !visible {
+                        continue;
+                    }
+                    out.push((
+                        id,
+                        PrepRing {
+                            // x/y/radius **来自位置表**（原版三条 movsd）。
+                            board: BoardVec2::new(pos[0], pos[1]),
+                            pos_radius: pos[2],
+                            v,
+                            // `map[i]` 仍只由 `prep` 给（来源 `未知`，见文档第 3 条）。
+                            base: self.prep.get(&id).and_then(|p| p.base),
+                        },
+                    ));
+                }
+                return out;
             }
         }
         // 代偿路径：`prep` 是 `BTreeMap` ⇒ 天然 id 升序，与上一轮行为逐字相同。
+        self.gate_source = "prep";
         self.prep.iter().map(|(id, prep)| (*id, *prep)).collect()
+    }
+
+    /// 这一帧的时钟 `V`：原版 `draw` 里 `0x4b2e10 call 0x519530`
+    /// （`GraphwarTickHandler::get_fractional_tick`）的读数，本层经 KernelBus 取。
+    ///
+    /// 没有通道时返回 `0.0`（与 `KernelBus::fractional_tick` 的 `None` 分支同值）。
+    fn kernel_clock(&self) -> f64 {
+        match super::root_wiring::kernel_bus() {
+            Some(bus) => bus.borrow().fractional_tick(),
+            None => 0.0,
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -1266,6 +1386,193 @@ impl EntityDrawer {
     #[func]
     fn pos_event_count(&self) -> i64 {
         self.pos_manager.borrow().event_queue.borrow().len() as i64
+    }
+
+    // -----------------------------------------------------------------------
+    // 门控（任务 46）：`get_alive`(0x454950) + `is_on_turn`(0x462b50) 的真查询
+    // -----------------------------------------------------------------------
+    //
+    // 原版 `EntityDrawer::draw` 的循环体（x86 `0x4b3130`–`0x4b34c3`）：
+    //
+    // ```text
+    // 0x4b3199  call 0x454950      ; get_alive(id)  → 状态字节（1 活 / 0 死 / 2 查不到）
+    // 0x4b319e  mov  r14d, eax
+    // 0x4b31ac  call 0x462b50      ; is_on_turn(id) → bool
+    // 0x4b31b1  mov  ebx, eax
+    // 0x4b32e2  test r14b, r14b    ; 门 1：== 0（死）⇒ 跳过（**2 "查不到" 也算过**）
+    // 0x4b34c3  test bl, bl        ; 门 2：false ⇒ 跳过
+    // ```
+    //
+    // 两个 manager 原版从 `[root+0x1668] → backend+0x238 → get_module` 取
+    // （Life `0x46c2c0` / Turn `0x46b740`）；本层经 `KernelBus` 的容器取回**同一类型**的那一份
+    // （[`Self::gate_attach`]）。**拿不到**（没装通道 / 容器里没有）⇒ `gate_managers = None`
+    // ⇒ `_draw` 的门回落 `prep` 成员近似 —— 上一轮的行为一条没删。
+    //
+    // 下面 3 个（`gate_set_alive` / `gate_set_turn` / `gate_advance_turn`）是**验收用的生产者入口**：
+    // 原版这些写操作
+    // 分别在 `graphwar_remote_event_handler`（生命 / 回合状态同步）与 `game_state_manager` 里，
+    // 本层还没有那些模块，所以让验收脚本直接调 manager 的真方法（不是新造一套状态）。
+
+    /// 从 `KernelBus` 的容器里**按类型取回** `LifeManager` + `TurnManager`（= 原版 `draw` 里
+    /// 那两次 `get_module`，x86 `0x46c2c0` / `0x46b740`），缓存到本类。
+    ///
+    /// 返回 `false` = **拿不到**（通道没装，或容器里缺其中一份）⇒ 门回落 `prep`。
+    /// 原版每帧在 `draw` 里现取；本层缓存一次（`Rc` 共享，取回的是同一份 manager）。
+    #[func]
+    fn gate_attach(&mut self) -> bool {
+        let Some(bus) = super::root_wiring::kernel_bus() else {
+            return false;
+        };
+        let (life, turn) = {
+            let bus = bus.borrow();
+            (bus.wiring().life_manager(), bus.wiring().turn_manager())
+        };
+        match (life, turn) {
+            (Some(life), Some(turn)) => {
+                self.gate_managers = Some(GateManagers { life, turn });
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// 丢掉缓存的 manager（模拟"拿不到 manager"），返回原来有没有。
+    ///
+    /// 之后 `_draw` 的门回落 `prep`（验收脚本用它断言回落分支）。
+    #[func]
+    fn gate_detach(&mut self) -> bool {
+        self.gate_managers.take().is_some()
+    }
+
+    /// 有没有 attach 到两份 manager。
+    #[func]
+    fn gate_available(&self) -> bool {
+        self.gate_managers.is_some()
+    }
+
+    /// 开关当前值（= 导出属性 `gate_query_enabled`）。
+    #[func]
+    fn gate_enabled(&self) -> bool {
+        self.gate_query_enabled
+    }
+
+    /// 改开关，返回改完的值。`false` ⇒ 即使 attach 过也一律走 `prep` 近似。
+    #[func]
+    fn gate_set_enabled(&mut self, on: bool) -> bool {
+        self.gate_query_enabled = on;
+        self.base_mut().queue_redraw();
+        on
+    }
+
+    /// 最近一次 `_draw` 的门数据源：`"managers"`（真查询）/ `"prep"`（回落/近似）。
+    #[func]
+    fn gate_source(&self) -> GString {
+        GString::from(self.gate_source)
+    }
+
+    /// 累计"用真查询判过的 id"次数（观测点：>0 才证明门真的走了 manager）。
+    #[func]
+    fn gate_queried(&self) -> i64 {
+        self.gate_queried
+    }
+
+    /// `LifeManager::get_alive`（x86 `0x454950`）的**原始状态字节**：`1` 活 / `0` 死 /
+    /// `2` 查不到（`MISSING_STATE`）。拿不到 manager ⇒ `-1`。
+    #[func]
+    fn gate_alive(&self, id: i64) -> i64 {
+        let Some(gate) = &self.gate_managers else {
+            return -1;
+        };
+        let Ok(id) = u32::try_from(id) else {
+            return -1;
+        };
+        i64::from(gate.life.borrow().get_alive(id))
+    }
+
+    /// `TurnManager::is_on_turn`（x86 `0x462b50`）= `id ∈ 当前士兵 ∪ 本回合玩家`。
+    #[func]
+    fn gate_on_turn(&self, id: i64) -> bool {
+        match &self.gate_managers {
+            Some(gate) => gate.turn.borrow().is_on_turn(id),
+            None => false,
+        }
+    }
+
+    /// `GraphwarTurnData::get_current_turn_players`（x86 `0x4627c0`，同时回合那一支）。
+    #[func]
+    fn gate_current_players(&self) -> PackedInt64Array {
+        let mut out = PackedInt64Array::new();
+        if let Some(gate) = &self.gate_managers {
+            for id in gate.turn.borrow().get_current_turn_players() {
+                out.push(id);
+            }
+        }
+        out
+    }
+
+    /// `GraphwarTurnData::get_current_turn_soldiers`（x86 `0x4628d0`，同时回合那一支）。
+    #[func]
+    fn gate_current_soldiers(&self) -> PackedInt64Array {
+        let mut out = PackedInt64Array::new();
+        if let Some(gate) = &self.gate_managers {
+            for id in gate.turn.borrow().get_current_turn_soldiers() {
+                out.push(id);
+            }
+        }
+        out
+    }
+
+    /// **验收用的生产者**：真调 `GraphwarLifeManager::set_alive`（x86 `0x454b40`）。
+    ///
+    /// 原版这条写操作在远端事件处理器里（`life_info_event` 那条链）；本层还没有那个模块。
+    /// 拿不到 manager ⇒ `false`。
+    #[func]
+    fn gate_set_alive(&mut self, id: i64, alive: bool) -> bool {
+        let Some(gate) = self.gate_managers.clone() else {
+            return false;
+        };
+        let Ok(id) = u32::try_from(id) else {
+            return false;
+        };
+        gate.life.borrow_mut().set_alive(id, alive);
+        self.base_mut().queue_redraw();
+        true
+    }
+
+    /// **验收用的生产者**：在那个 `TurnManager` 上登记一个玩家（`player_id` + 轮转士兵表）。
+    ///
+    /// 游标从 0 起（[`crate::graphwar_turn_manager::PlayerTurns::new`] 的口径）。
+    #[func]
+    fn gate_set_turn(&mut self, player_id: i64, soldiers: PackedInt64Array) -> bool {
+        let Some(gate) = self.gate_managers.clone() else {
+            return false;
+        };
+        let ids: Vec<i64> = (0..soldiers.len()).map(|i| soldiers[i]).collect();
+        gate.turn.borrow_mut().add_player(player_id, Team::One, ids);
+        self.base_mut().queue_redraw();
+        true
+    }
+
+    /// **验收用的生产者**：推进该玩家的游标到**下一个活着的士兵**（= `next_turn` `0x463da0`
+    /// 的轮转那一半，存活谓词就是 `life_manager` 状态字节 `& 1`，`0x463fbb`）。
+    ///
+    /// 返回新的"当前士兵"，`-1` = 拿不到 manager / 没有该玩家。
+    #[func]
+    fn gate_advance_turn(&mut self, player_id: i64) -> i64 {
+        let Some(gate) = self.gate_managers.clone() else {
+            return -1;
+        };
+        let life = Rc::clone(&gate.life);
+        // `TurnManager::next_shooter` 收的是**状态字节**（`& 1` 判活由它内部做，
+        // 与 `0x463fbb` 的 `test $0x1` 同一个谓词）；越界 id 按"查不到"（2）处理。
+        let next = gate.turn.borrow_mut().next_shooter(player_id, |soldier_id| {
+            match u32::try_from(soldier_id) {
+                Ok(id) => life.borrow().get_alive(id),
+                Err(_) => MISSING_STATE,
+            }
+        });
+        self.base_mut().queue_redraw();
+        next.unwrap_or(-1)
     }
 
     // -----------------------------------------------------------------------
