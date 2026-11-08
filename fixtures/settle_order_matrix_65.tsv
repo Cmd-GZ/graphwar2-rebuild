@@ -1,0 +1,70 @@
+# `dispatch/65` 的矩阵证据（**纯文本**，无 replay 二进制）
+#
+# 生成：`tools/settle_order_sweep.py`（语料 A）+ `examples/batch_cross_probe --mask-mode kernel`
+#       （语料 B），命令逐条见 `docs/06-verification.md` §38.8。策略定义见 §38.1。
+#
+# 语料 A = 只读快照 `.reference/replays/gw2-replays-snapshot/replays`（401 份 → 286 份可读、
+#          1080 个结算批）。这是三条护栏轴的口径。
+# 语料 B = 55 号那 5 份（`1794158844` 顺序 1 发/批 + 4 份同时回合），23 批 / 89 发。
+#          ⚠ 原件在 `.agent-work/`（按规矩随时会被清），所以这里的数字就是唯一可核的形态。
+#
+# S1 报文序 + 整批共用批开始掩膜（**旧行为**）
+# S2 到达序 + 共用掩膜（只换序的控制项）      S3 到达序 + 逐发挖洞（**落地**）
+# S4 到达 tick 序 + 逐发挖洞                  S5 owner id 序 + 逐发挖洞
+# S6 报文序 + 逐发挖洞（55 号的 `prefix` 档）
+#
+# ---- 语料 A：三轴 × 策略（内容命中 = `compare_batch` 的 content_ok）----
+# 死亡 = 我方报了死亡的那些批里"我方死亡集合 == 回放死亡集合"（385 = 我方报了死亡的批）
+# 挖洞 = 回放有 DestroyObstacle 的批里"我方 blocked 点与其中一条逐位相等"（294 = 有 DestroyObstacle 的批）
+axis	strategy	batches	content	of	death	of	hole	of
+fire	s1	1080	647	1080	366	385	207	294
+fire	s2	1080	647	1080	366	385	207	294
+fire	s3	1080	647	1080	366	385	207	294
+fire	s4	1080	647	1080	366	385	207	294
+fire	s5	1080	647	1080	366	385	206	294
+fire	s6	1080	647	1080	366	385	206	294
+batch	s1	1080	647	1080	366	385	207	294
+batch	s2	1080	647	1080	366	385	207	294
+batch	s3	1080	647	1080	366	385	207	294
+batch	s4	1080	647	1080	366	385	207	294
+batch	s5	1080	647	1080	366	385	206	294
+batch	s6	1080	647	1080	366	385	206	294
+conv	s1	1080	637	1080	366	385	207	294
+conv	s2	1080	637	1080	366	385	207	294
+conv	s3	1080	637	1080	366	385	207	294
+conv	s4	1080	637	1080	366	385	207	294
+conv	s5	1080	637	1080	366	385	207	294
+conv	s6	1080	637	1080	366	385	207	294
+#
+# ---- 语料 B：`--mask-mode kernel`（驱动**真内核** `Match::fire_functions`+`execute_results`）----
+# stop/89   = 89 发里"我方停点与回放 EffectInfo.pos 逐位相等（|Δ|≤1e-12）"
+# stop/63   = 其中 ≥6 发的 8 个批（63 发）那一档 —— `dispatch/55` §34.5 用的就是这一档
+# batch/23  = 整批每一发都复现的批数
+# big/23    = 含 `数值（差 >1e-3）` 类差异的批数；big_n = 这类差异的条目数
+# seq/10    = 正对照 `1794158844`（顺序回合，1 发/批）停点复现数
+# seqprev/10= 该正对照里"`end_x` 比 `pos_x` 早一个采样点"的发数
+strategy	stop/89	stop/63	batch/23	big/23	big_n	content/23	seq/10	seqprev/10
+s1	86	60	20	7	12	9	10	0
+s2	86	60	20	7	12	9	10	0
+s3	88	62	22	5	6	9	10	0
+s4	88	62	22	5	6	9	10	0
+s5	83	57	20	7	21	9	10	0
+s6	86	60	21	6	12	9	10	0
+#
+# ---- 语料 B：55 号那套**理想实验**（`--mask-mode none|prefix|arrival`，洞位置取回放的
+#      `ExplosionEffect`）—— 本轮原样复跑，用来证明"新加的 kernel 档没把老仪器搞坏"
+ideal	89	63	batch/23
+none	86	60	20
+prefix	87	61	21
+arrival	88	62	22
+#
+# ---- 语料 A 的逐批净变化（s1 → s3）：**只有 2 批**，两批都是"大差条目变少"，没有一批变差 ----
+# 1782927590 #0（4 发）diffs 5 → 3，两条 `数值（差 >1e-3）`（EffectInfo.pos_x/pos_y）消失；
+#                        仍剩一条 `差 >1e-3`（FunctionPoints.end_x）⇒ content_ok 仍 False
+# 1793884550 #1（7 发）diffs 7 → 5，两条 `数值（差 >1e-3）`（EffectInfo.pos_x/pos_y）消失
+#                        ⇒ content_ok 仍 False（其余是末位差/批内顺序）
+# 其余 1078 批逐字节不变；s1 → s2 全部 1080 批逐字节不变（顺序对几何无影响，见 §38.4）
+#
+# ---- 扫描器的墙钟（16 片进程池，语料 A，6 策略 × 3 轴 = 18 格）----
+sweep	wall_s	cpu_s	speedup
+settle_order_sweep	21.42	231.88	10.8x

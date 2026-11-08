@@ -58,6 +58,11 @@ enum MaskMode {
     Same,
     Arrival,
     Prefix,
+    /// **驱动真内核**（`Match::fire_functions` + `execute_results`，`dispatch/65`）：
+    /// 掩膜由 `Match` 自己维护（含它自己在前面几批挖的洞），批内顺序由
+    /// `GW2_SETTLE_ORDER` 选（`SettleOrder`）。这一档量的是**落地实现**，
+    /// 不是"把回放的洞塞进掩膜"的理想实验 ⇒ 与 `arrival`/`prefix` 那几档互为对照。
+    Kernel,
 }
 
 impl MaskMode {
@@ -68,8 +73,9 @@ impl MaskMode {
             "same" => MaskMode::Same,
             "arrival" => MaskMode::Arrival,
             "prefix" => MaskMode::Prefix,
+            "kernel" => MaskMode::Kernel,
             other => {
-                eprintln!("--mask-mode 只认 none|prev|same|arrival|prefix，给的是 {other}");
+                eprintln!("--mask-mode 只认 none|prev|same|arrival|prefix|kernel，给的是 {other}");
                 std::process::exit(2);
             }
         }
@@ -81,6 +87,7 @@ impl MaskMode {
             MaskMode::Same => "same",
             MaskMode::Arrival => "arrival",
             MaskMode::Prefix => "prefix",
+            MaskMode::Kernel => "kernel",
         }
     }
 }
@@ -348,6 +355,34 @@ fn main() {
             }
         };
         let batches = split_batches(&replay);
+        // `kernel` 档：**一个回放一个 `Match`**（与 `replay_attrib --drive batch` 同一接线）。
+        // 掩膜随批推进（`execute_results` ③ 挖洞），所以这一档量的就是落地实现的真实状态。
+        let mut kernel_model: Option<gw2_rebuild::game::Match> = if a.mask_mode == MaskMode::Kernel {
+            let first = batches.first().map(|b| b.start).unwrap_or(0);
+            let inp = Inputs::scan(&replay, first);
+            let soldiers: Vec<Target> = inp
+                .pos
+                .iter()
+                .filter(|(id, _)| inp.alive.get(id).copied().unwrap_or(true))
+                .map(|(id, (x, y))| Target { id: *id, x: *x, y: *y, radius: 0.5 })
+                .collect();
+            let base_tick = replay.msgs.get(first).map(|m| m.tick).unwrap_or(1);
+            let mut m = gw2_rebuild::game::Match::new(
+                inp.room.clone(),
+                inp.obstacles.clone(),
+                soldiers,
+                (base_tick, 0),
+            );
+            for id in inp.targets.iter() {
+                m.add_target(*id, 1);
+            }
+            for (id, g) in inp.skins.iter() {
+                let _ = m.note_skin_graphics(*id, g);
+            }
+            Some(m)
+        } else {
+            None
+        };
         for (bidx, b) in batches.iter().enumerate() {
             if let Some(want) = a.batch {
                 if want != bidx {
@@ -401,7 +436,43 @@ fn main() {
 
             // ---- 我方：每一发按 --mask-mode 决定掩膜后跑一遍 ----
             let mut mine: Vec<Mine> = Vec::new();
+            // `kernel` 档：整批交给真内核（`fire_functions` 按 `GW2_SETTLE_ORDER` 定顺序，
+            // `execute_results` 落地挖洞）。逐发手算那条路只服务 `none|prev|same|arrival|prefix`。
+            if let Some(m) = kernel_model.as_mut() {
+                m.tick_base = (tick, 0);
+                let subs: Vec<gw2_rebuild::game::Submission<'_>> = b
+                    .shots
+                    .iter()
+                    .map(|s| gw2_rebuild::game::Submission {
+                        owner_id: s.owner,
+                        function_text: &s.text,
+                        x0: s.x0,
+                        y0: s.y0,
+                        flip: s.flip,
+                    })
+                    .collect();
+                let outcomes = m.fire_functions(&subs);
+                let _wire = m.execute_results(&subs, &outcomes, tick);
+                for (si, o) in outcomes.iter().enumerate() {
+                    let stop_index = if o.blocked {
+                        o.points.iter().position(|q| *q == o.stop).unwrap_or(o.points.len() - 1)
+                    } else {
+                        o.points.len() - 1
+                    };
+                    mine.push(Mine {
+                        owner: b.shots[si].owner,
+                        n: o.points.len(),
+                        pts: o.points.clone(),
+                        stop_index,
+                        stop: o.stop,
+                        blocked: o.blocked,
+                    });
+                }
+            }
             for (si, s) in b.shots.iter().enumerate() {
+                if a.mask_mode == MaskMode::Kernel {
+                    break; // 已由上面的内核路径产出
+                }
                 let my = obs.iter().find(|x| x.owner == s.owner);
                 let mut holes = prev_holes.clone();
                 let in_batch_holes = |want: MaskMode, sj: usize, o: &Obs, my: Option<&Obs>| -> bool {

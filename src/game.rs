@@ -484,6 +484,193 @@ pub struct Submission<'a> {
 }
 
 // ---------------------------------------------------------------------------
+// 批内结算顺序：把它当成一个**假设**，做成可切换策略（`dispatch/65`，`docs/06` §38）
+// ---------------------------------------------------------------------------
+//
+// 真值里同一批的几何**不是**一次算完的（`docs/06` §34）：
+//
+// * 同批各发的爆炸时刻互不相同 —— `EffectInfo.start_tick` 在 `1794158991` 批#1 里是
+//   `258`=25205 < `249`=25245 < `255`=25309（批起点 25056）；
+// * **更早爆炸那几发挖的洞，对后面解算的几发可见**：只把 `249`/`258` 的洞放进掩膜，
+//   owner 255 的停点就**逐位等于**回放（§34.4 的单变量实验）；
+// * 可见性阶梯（§34.5，89 发）：整批共用批开始掩膜 60/63 → 按**报文序**给洞（`prefix`）
+//   61/63 → 按**爆炸先后**给洞（`arrival`）62/63。⇒ **报文顺序 ≠ 结算顺序**。
+//
+// ⚠ 但"结算顺序 = 爆炸时刻"这条**没有被直证**：§34.5 读法 ③ 里 `same` 与 `arrival`
+// 在这 89 发上打平（缺一条"晚爆炸的洞不挡早爆炸的发"的样本）。所以这里**不写死**
+// 任何一种顺序，而是做成策略：一次扫出 `策略 × 轴` 的矩阵（`dispatch/65` §8），
+// 再按结果定默认值 [`DEFAULT_SETTLE_ORDER`]。
+//
+// 原版**没有**这个开关：`GW2_SETTLE_ORDER` 只是对拍/扫描用的（不设 = 默认档），
+// 与 `examples/batch_cross_probe.rs` 的 `--mask-mode` 同一个性质。
+
+/// 批内结算顺序策略（`dispatch/65`；矩阵与判决见 `docs/06` §38）。
+///
+/// 每一档 = **批内解算顺序** × **洞对后续几发的可见性**：
+///
+/// | 档 | 批内顺序 | 洞可见 | 出处 |
+/// |---|---|---|---|
+/// | [`SettleOrder::S1Message`] | 报文序（`FunctionPoints` 序） | 否（整批共用批开始掩膜） | 旧行为（基线） |
+/// | [`SettleOrder::S2ArrivalFlat`] | 到达序（到停点弧长升序） | 否 | **控制项**：只换序、不挖洞 |
+/// | [`SettleOrder::S3ArrivalHoles`] | 到达序（到停点弧长升序） | **是** | `dispatch/55` 提的那条改法 |
+/// | [`SettleOrder::S4TickHoles`] | 到达 tick 序（整数 tick；同 tick 按报文序） | 是 | 55 号的"按 `start_tick` 序" |
+/// | [`SettleOrder::S5OwnerHoles`] | owner id 升序 | 是 | 反例（把顺序换成别的全序） |
+/// | [`SettleOrder::S6MessageHoles`] | 报文序 | 是 | 55 号的 `prefix` 档（**控制项**） |
+///
+/// 为什么"到达序"= **到停点的弧长升序**：同一批的弹丸 `active_tick` 相同、速度相同
+/// （`docs/141` §2），所以"谁先到"⇔"谁的弧长更短"（[`crate::graphwar_shot_calculator::settle::Hit::arc`]
+/// 用的就是这条）。**不需要**先知道速度本身 —— 只有 S4 的取整分桶用到
+/// [`PROJECTILE_UNITS_PER_TICK`]。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettleOrder {
+    /// S1 报文序 + 批开始掩膜（旧行为）。
+    S1Message,
+    /// S2 到达序 + 批开始掩膜（只换序，不挖洞）。
+    S2ArrivalFlat,
+    /// S3 **到达序 + 逐发挖洞**（`dispatch/55` 的方案）。
+    S3ArrivalHoles,
+    /// S4 到达 tick 序 + 逐发挖洞。
+    S4TickHoles,
+    /// S5 owner id 序 + 逐发挖洞。
+    S5OwnerHoles,
+    /// S6 报文序 + 逐发挖洞（55 号的 `prefix`）。
+    S6MessageHoles,
+}
+
+/// 弹丸速度（棋盘单位 / tick）。
+///
+/// **推断**：`graphwar_shot_calculator::settle` 的"≈0.29 单位/tick"（与 `docs/141` §2
+/// "同一回合所有弹丸 `active_tick` 相同"配套）。**没有**反汇编或报文侧的直证。
+/// 它只影响 S4 的**取整分桶**（同 tick 内怎么排），不影响 S1–S3/S5/S6。
+pub const PROJECTILE_UNITS_PER_TICK: f64 = 0.29;
+
+/// 默认策略 = **扫完矩阵后选出来的那一档**（`docs/06` §38 的判决）。
+///
+/// 改这个常量要连 `docs/06` §38 的矩阵一起改 —— 它是"我们相信哪一种顺序"的唯一落点。
+pub const DEFAULT_SETTLE_ORDER: SettleOrder = SettleOrder::S3ArrivalHoles;
+
+impl SettleOrder {
+    /// 六档全表（扫描器与文档都按这个顺序报）。
+    pub const ALL: [SettleOrder; 6] = [
+        SettleOrder::S1Message,
+        SettleOrder::S2ArrivalFlat,
+        SettleOrder::S3ArrivalHoles,
+        SettleOrder::S4TickHoles,
+        SettleOrder::S5OwnerHoles,
+        SettleOrder::S6MessageHoles,
+    ];
+
+    /// 环境变量/报告里用的短名（`s1`…`s6`）。
+    pub fn name(self) -> &'static str {
+        match self {
+            SettleOrder::S1Message => "s1",
+            SettleOrder::S2ArrivalFlat => "s2",
+            SettleOrder::S3ArrivalHoles => "s3",
+            SettleOrder::S4TickHoles => "s4",
+            SettleOrder::S5OwnerHoles => "s5",
+            SettleOrder::S6MessageHoles => "s6",
+        }
+    }
+
+    /// 短名 → 档（不认识的返回 `None`，由调用方决定怎么报）。
+    pub fn parse(s: &str) -> Option<SettleOrder> {
+        Self::ALL.into_iter().find(|o| o.name() == s)
+    }
+
+    /// 这一档是否**逐发挖洞**（解完一发就把它的洞写进本批的工作掩膜）。
+    ///
+    /// S1/S2 不挖：洞仍由 [`Match::execute_results`] ③ 在整批结算完之后落地（旧行为）。
+    pub fn digs_holes(self) -> bool {
+        matches!(
+            self,
+            SettleOrder::S3ArrivalHoles
+                | SettleOrder::S4TickHoles
+                | SettleOrder::S5OwnerHoles
+                | SettleOrder::S6MessageHoles
+        )
+    }
+
+    /// 批内解算顺序（`shots` 下标的一个排列）。见 [`Match::fire_functions`] 的 ③ 段。
+    fn permutation(
+        self,
+        shots: &[Submission<'_>],
+        points: &[Vec<(f64, f64)>],
+        outcomes: &[ShotOutcome],
+    ) -> Vec<usize> {
+        let mut perm: Vec<usize> = (0..shots.len()).collect();
+        match self {
+            // 报文序 = 调用方给的顺序，原样不动
+            SettleOrder::S1Message | SettleOrder::S6MessageHoles => {}
+            SettleOrder::S2ArrivalFlat | SettleOrder::S3ArrivalHoles => {
+                let arcs: Vec<f64> = (0..shots.len())
+                    .map(|i| arc_to_stop(&points[i], outcomes[i].stop))
+                    .collect();
+                perm.sort_by(|&a, &b| {
+                    arcs[a]
+                        .partial_cmp(&arcs[b])
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then(a.cmp(&b))
+                });
+            }
+            SettleOrder::S4TickHoles => {
+                let ticks: Vec<i64> = (0..shots.len())
+                    .map(|i| {
+                        (arc_to_stop(&points[i], outcomes[i].stop) / PROJECTILE_UNITS_PER_TICK)
+                            .round() as i64
+                    })
+                    .collect();
+                perm.sort_by(|&a, &b| ticks[a].cmp(&ticks[b]).then(a.cmp(&b)));
+            }
+            SettleOrder::S5OwnerHoles => {
+                perm.sort_by(|&a, &b| shots[a].owner_id.cmp(&shots[b].owner_id).then(a.cmp(&b)));
+            }
+        }
+        perm
+    }
+}
+
+/// 一发从起点量到 `stop` 的**弧长**（弹丸走过的距离）—— 也就是"到达时刻"的排序键。
+///
+/// `stop` 一定落在点列里（[`resolve_points_owned`] 只从点列里取值），所以按位相等即可定位；
+/// 万一不在（点列为空这种边界），退化成整条点列的弧长：**只影响排序键，不影响几何**。
+fn arc_to_stop(points: &[(f64, f64)], stop: (f64, f64)) -> f64 {
+    let mut arc = 0.0f64;
+    for w in 1..points.len() {
+        let (px, py) = points[w];
+        let (qx, qy) = points[w - 1];
+        arc += ((px - qx).powi(2) + (py - qy).powi(2)).sqrt();
+        if px.to_bits() == stop.0.to_bits() && py.to_bits() == stop.1.to_bits() {
+            return arc;
+        }
+    }
+    arc
+}
+
+/// 当前策略：`GW2_SETTLE_ORDER=s1…s6` 覆盖 [`DEFAULT_SETTLE_ORDER`]。
+///
+/// 值不认识时**退回默认档并警告一次**（不是静默忽略）：这个开关是给扫描器用的，
+/// 拼错一个字母就会让整张矩阵看起来"改了什么都没生效"——"改了但没生效"是这个项目
+/// 反复踩过的坑（`AGENTS.md`），这里用一条 `eprintln!` 把它变成可见的。
+pub fn settle_order() -> SettleOrder {
+    match std::env::var("GW2_SETTLE_ORDER") {
+        Ok(v) => match SettleOrder::parse(v.trim()) {
+            Some(o) => o,
+            None => {
+                static WARNED: std::sync::Once = std::sync::Once::new();
+                WARNED.call_once(|| {
+                    eprintln!(
+                        "GW2_SETTLE_ORDER={v} 不认识（只认 s1…s6）⇒ 用默认档 {}",
+                        DEFAULT_SETTLE_ORDER.name()
+                    );
+                });
+                DEFAULT_SETTLE_ORDER
+            }
+        },
+        Err(_) => DEFAULT_SETTLE_ORDER,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 玩家加入：`PlayerInfo`（补 `docs/33` §4 的缺口；接线与文档见 `docs/139`）
 // ---------------------------------------------------------------------------
 
@@ -1394,8 +1581,25 @@ impl Match {
     /// 本方法**只算几何、不改任何状态**：真值在这一段里写的是 `FunctionPoints`
     /// （`set_function_points`），而我们的报文在 [`Match::execute_results`] 里统一发。
     pub fn fire_functions(&self, shots: &[Submission<'_>]) -> Vec<ShotOutcome> {
+        self.fire_functions_with(shots, settle_order())
+    }
+
+    /// [`Match::fire_functions`] 的**显式档位**版本。
+    ///
+    /// 单独留一个入口的理由只有一条：`settle_order()` 读的是环境变量，而 `cargo test`
+    /// 是多线程的 —— 测试里改 `GW2_SETTLE_ORDER` 会与别的测试抢同一个进程。所以她
+    /// 走参数、产品路径走环境变量（默认档 [`DEFAULT_SETTLE_ORDER`]）。
+    pub fn fire_functions_with(
+        &self,
+        shots: &[Submission<'_>],
+        strategy: SettleOrder,
+    ) -> Vec<ShotOutcome> {
         // ① 几何并行：先把每一发的弹道都算完，用的是**批开始时**的士兵表与掩膜。
         //    谁被打死**不影响**别人的弹道（士兵本就不挡弹道，`docs/30`）。
+        //
+        //    ⚠ 这只对**士兵表**成立，对**掩膜**不成立：同批更早爆炸的那几发会挖洞
+        //    （`docs/06` §34.4），所以"整批共用一张掩膜"是一个**假设**，不是事实。
+        //    它对应策略 [`SettleOrder::S1Message`]（旧行为）；其余档在 ③④ 段重算。
         //
         // **模式（`docs/06` §33）**：真值在**开火时**读"本局设置"那个字节
         // （`0x4717b8` → config+0x39），结算函数把它原样转给采样器（`0x3c3091` → `%ecx`），
@@ -1403,6 +1607,14 @@ impl Match {
         // 所以这里不是"新增一个入参"，而是**补上原来漏读的那个字节**：
         // 缺了它，`DiffEqFunction` 局也在按 `y = f(x)` 采（515 批 / 550 发不可比）。
         let mode = self.sampling_mode();
+        // ② 点列 + 第一遍解算。
+        //
+        //    点列**与掩膜无关**（`shot_points` 不吃掩膜：弹道只由函数与起点决定，
+        //    见 `docs/30` 的"士兵不挡弹道、障碍才挡"）⇒ 第二遍按别的顺序重解时
+        //    不必重采，只换"用哪张掩膜"。
+        //
+        //    第一遍的结果就是 S1 的答案，同时给出到达序的排序键（到停点的弧长）。
+        let mut points: Vec<Vec<(f64, f64)>> = Vec::with_capacity(shots.len());
         let mut outcomes = Vec::with_capacity(shots.len());
         for s in shots {
             // 射手本人不参与致死判定 —— **这条规则现在在内核里**（`settle::resolve_owned`），
@@ -1431,7 +1643,7 @@ impl Match {
             // （要补 `)`）也可能多（多出来的 `)` 会让我方 `parse` 截断、把追加的常数一起丢掉）。
             // 采样串与报文串因此不是同一个串，见 [`balanced_texts`]。
             let corrected = sampling_function_text_mode(mode, s.function_text, s.x0, s.y0, s.flip);
-            let points = crate::graphwar_shot_calculator::shot_points(
+            let pts = crate::graphwar_shot_calculator::shot_points(
                 &corrected,
                 s.x0,
                 s.y0,
@@ -1443,9 +1655,47 @@ impl Match {
             outcomes.push(resolve_points_owned(
                 &self.mask,
                 &targets,
-                &points,
+                &pts,
                 Some(s.owner_id),
             ));
+            points.push(pts);
+        }
+
+        // ③ 到达序 = 到停点弧长升序（[`arc_to_stop`]）。
+        //
+        // ④ 逐发挖洞：按顺序重解，**每解完一发就把它的洞写进本批的工作掩膜**，
+        //    后解的那几发因此看得见前面的洞 —— 这正是 `docs/06` §34.5 的 `arrival`
+        //    掩膜档在报文侧的语义（`prefix` 61/63、`arrival` 62/63、共用掩膜 60/63）。
+        //
+        //    ⚠ **工作掩膜必须是 `self.mask` 的一份拷贝**，不能直接写 `self.mask`：
+        //    `plane::rasterize` 的抗锯齿环是**与旧值混合**（`blend_ring`），同一个洞
+        //    画两遍与画一遍**不等**；而 [`Match::execute_results`] ③ 之后还会再画一
+        //    遍。直接写 `self.mask` 就会改动后续批的掩膜，把"同批可见性"这一个变量
+        //    和"跨批状态"混在一起。拷一份 = 只动本批。
+        //
+        //    单发批没有"同批别人"：任何顺序都退化成报文序，且没有洞要提前挖
+        //    ⇒ 与旧行为**逐位相同**（`Match::fire` 因此不可能被这一改动影响）。
+        if strategy.digs_holes() && shots.len() >= 2 {
+            let perm = strategy.permutation(shots, &points, &outcomes);
+            let mut mask = self.mask.clone();
+            for &i in &perm {
+                let s = &shots[i];
+                let o = resolve_points_owned(&mask, &self.soldiers, &points[i], Some(s.owner_id));
+                if o.blocked {
+                    // 位置 / 半径 / 填充值与 [`Match::execute_results`] ③ **同一条规则**
+                    // （挖洞点 = 爆炸点，[`hole_point`]）。
+                    let (hx, hy) = hole_point(
+                        mode == Mode::Ode,
+                        s.function_text,
+                        s.x0,
+                        s.y0,
+                        s.flip,
+                        o.stop,
+                    );
+                    rasterize(&mut mask, hx, hy, 0.5, 0xFF);
+                }
+                outcomes[i] = o;
+            }
         }
 
         outcomes
@@ -1949,6 +2199,87 @@ mod tests {
         assert_eq!(p.1, 0.0, "y 是修正文本（+ 9.311）在 end_x 处重算的值");
         // DiffEq 局不重算：`corrected_function == function`，爆炸点就是停点
         assert_eq!(hole_point(true, text, 0.0, 0.0, false, stop), stop);
+    }
+
+    // -----------------------------------------------------------------------
+    // 批内结算顺序（`dispatch/65`，`docs/06` §38）
+    // -----------------------------------------------------------------------
+
+    /// 六档的短名/解析必须闭合，默认档必须是**扫出来的那一档**。
+    ///
+    /// 这条不是形式主义：`GW2_SETTLE_ORDER` 拼错会**静默退回默认档**，而"改了但没生效"
+    /// 是本项目反复踩的坑。名字与解析不闭合，扫描器就会把 6 格扫成 1 格。
+    #[test]
+    fn settle_order_switch_is_closed_and_defaults_to_s3() {
+        assert_eq!(SettleOrder::ALL.len(), 6);
+        for o in SettleOrder::ALL {
+            assert_eq!(SettleOrder::parse(o.name()), Some(o), "{} 的名字解析不回来", o.name());
+        }
+        assert_eq!(SettleOrder::parse("s9"), None);
+        assert_eq!(SettleOrder::parse("S3"), None, "短名大小写敏感（与扫描器一致）");
+        // 挖洞档：S3/S4/S5/S6；S1/S2 不挖（洞由 `execute_results` ③ 事后落地）
+        for o in SettleOrder::ALL {
+            let want = !matches!(o, SettleOrder::S1Message | SettleOrder::S2ArrivalFlat);
+            assert_eq!(o.digs_holes(), want, "{} 的挖洞档位", o.name());
+        }
+        // 落地档 = 到达序 + 挖洞（`docs/06` §38.4 的判决）
+        assert_eq!(DEFAULT_SETTLE_ORDER, SettleOrder::S3ArrivalHoles);
+    }
+
+    /// **同批更早爆炸那一发挖的洞，对后解算的那一发可见**（`docs/06` §38.4 的机制）。
+    ///
+    /// 几何是手搭的，不用回放：一堵竖墙在 `x = 0`（半径 1 的圆盘沿 y 排开），
+    /// 两发都从右边水平向左打（常数函数，`y` 由起点决定）：
+    ///
+    /// * `owner=1` 从 `(10, 0.0)` 出发 —— 先到（弧长更短）
+    /// * `owner=2` 从 `(12, -0.1)` 出发 —— 后到，且它的路径从 1 号挖的洞里穿过
+    ///
+    /// 报文顺序故意给成 `[2, 1]`（后到的排在前面），于是三种读法分得开：
+    ///
+    /// * **S1**（报文序 + 共用掩膜）：2 号对着完好的墙停住；
+    /// * **S2**（到达序 + **不**挖洞）：与 S1 **逐位相同** —— 只换序对几何没有任何影响；
+    /// * **S3**（到达序 + 逐发挖洞）：1 号先解、在墙上挖洞，2 号从洞里穿过去 ⇒ 停得更靠左。
+    #[test]
+    fn arrival_order_makes_earlier_holes_visible() {
+        // 墙：x = 0 上从 y=-3 到 3 排一串半径 1 的圆盘（`rasterize` 的单位是棋盘单位）
+        let mut obstacles = Vec::new();
+        let mut y = -3.0;
+        while y <= 3.0 {
+            obstacles.push((0.0, y, 1.0));
+            y += 0.25;
+        }
+        let m = Match::new(room(), obstacles, vec![], (0, 0));
+        let subs = [
+            Submission { owner_id: 2, function_text: "0", x0: 12.0, y0: -0.1, flip: true },
+            Submission { owner_id: 1, function_text: "0", x0: 10.0, y0: 0.0, flip: true },
+        ];
+        let s1 = m.fire_functions_with(&subs, SettleOrder::S1Message);
+        let s2 = m.fire_functions_with(&subs, SettleOrder::S2ArrivalFlat);
+        let s3 = m.fire_functions_with(&subs, SettleOrder::S3ArrivalHoles);
+        let s4 = m.fire_functions_with(&subs, SettleOrder::S4TickHoles);
+        let s6 = m.fire_functions_with(&subs, SettleOrder::S6MessageHoles);
+
+        // ① 两发都必须真的撞在墙上（否则这个几何什么都没量到）
+        assert!(s1[0].blocked && s1[1].blocked, "两发都该撞墙：{:?}", (s1[0].blocked, s1[1].blocked));
+        // ② 顺序对几何没有任何影响（S2 == S1，逐位）
+        assert_eq!(s2[0].stop, s1[0].stop, "只换序不许改停点");
+        assert_eq!(s2[1].stop, s1[1].stop, "只换序不许改停点");
+        // ③ 1 号是**先到**的那一发：它在 S1 里就停在同一处（洞对挖洞者自己不可见）
+        assert_eq!(s3[1].stop, s1[1].stop, "先到的那一发不受影响");
+        // ④ 2 号解得更晚 ⇒ 它看得见 1 号的洞 ⇒ 停点必须变，而且停得更靠左（洞挖穿了墙）
+        assert_ne!(s3[0].stop, s1[0].stop, "后到的那一发必须看得见前面的洞");
+        assert!(
+            s3[0].stop.0 < s1[0].stop.0 - 1e-9,
+            "应当穿过洞继续往左：S1 x={} / S3 x={}",
+            s1[0].stop.0,
+            s3[0].stop.0
+        );
+        // ⑤ 报文序给洞（S6 = 55 号的 `prefix`）：2 号排在前面 ⇒ 它**看不到** 1 号的洞
+        assert_eq!(s6[0].stop, s1[0].stop, "报文序里 2 号在前 ⇒ 拿不到 1 号的洞");
+        // ⑥ S4（整数 tick 序）与 S3 同一序（两发的飞行 tick 不同）⇒ 停点相同
+        assert_eq!(s4[0].stop, s3[0].stop, "S4 与 S3 在这个几何里同序");
+        // ⑦ 两发的点列**一字节都没变**（洞只改停点，不改弹道采样）
+        assert_eq!(s3[0].points, s1[0].points, "弹道点列与掩膜无关（`shot_points` 不吃掩膜）");
     }
 
     /// 排队点与到期点必须是**同一个点**（原版 503/503 逐位相同），
