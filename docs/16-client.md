@@ -8645,7 +8645,7 @@ grep -a -c line_instance_id client/libgw2_rebuild.so   # 必须是 3（判据：
 
 | # | 项 | 档位 | 缺什么 |
 |---|---|---|---|
-| 1 | **谁逐帧驱动 `pump`** | **未知（本轮没接）** | 原版是 `GraphwarGameClient::process`（arm64 符号；x86 未定位，0x515dc0 里那两个 `call` 是内联后的 ReplayPlayer/GameClient `process`，没单独符号）。本层要接它得改 `client/src/**`（禁区）或等 `graphwar_game_client` 的节点层 |
+| 1 | **谁逐帧驱动 `pump`** | **已定位（任务 43；本层仍未接）** | 原版是 **`GraphwarGameClient::process` = x86 `0x518400`**（§48.1 四条证据），`0x515dc0` 那次 `call` 是 `call *GOT 0x9bc468`、目标就是独立函数 `0x518400`——§47.6 原写的"x86 未定位 / 是内联体"**不成立**，已按 §48.0 就地改正。泵在它体内的 **60 Hz 定步循环**里（§48.3/§48.5）。本层要接它仍得改 `client/src/**`（禁区） |
 | 2 | tick handler 的基准 | **我方差异** | `assemble_demo` 给的是 `(0,0)`（`fixtures/ticks.tsv` 口径，供 `tick.at_500ms=30` 用），于是 `get_fractional_tick()` 是 epoch 量级 ⇒ `V` 不可用。原版 `new` 的实参是 `SystemTime::now()`。本层给了一个**摆时钟**的口子（`kernel_set_clock`，同 `graphwar_plane_shape::set_fractional_tick`） |
 | 3 | `PosInfo` 三个 `f64` 的**单位** | **推断**（未变） | `draw` 里它们直接进 `sprite_transform` 那条投影（`k = size.x/50`），没有第二段换算；但"表里存的就是棋盘坐标"仍是推断（§45.6） |
 | 4 | `map[i]`（`H` 的起始量）来自哪张表 | **未知** | `draw` 在 `0x4b34d3`–`0x4b35ae` 读的第二个哈希表还没解；本层仍由 `set_ring_base` 给 |
@@ -8690,4 +8690,252 @@ readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so | grep -E \
   "graphwar_event_handler|GraphwarPlanePosManager"
 # ⇒ GraphwarEventHandler::process_events 0x486970 / ::subscribe_to_event 0x486bc8
 #   GraphwarPlanePosManager::set_position 0x3b8160 / draw 侧的两个 getter 见 §47.2
+```
+
+## 48. 谁每帧驱动事件泵：`GraphwarGameClient::process` = **x86 `0x518400`**，泵挂在 **60 Hz 定步循环**里（2026-11，任务 43）
+
+**一句话**：`GraphwarGameClient::process` 的 x86 地址是 **`0x518400`**（4 条互不依赖的证据，见 §48.1）；
+它不是"每帧把事件派发一遍"，而是**每帧进来一次、在里面按 1/60 秒的定步追赶**：
+`get_time_to_tick` 说"欠一个 tick" ⇒ `GraphwarGameClient::tick()` + **`GraphwarEventHandler::process_events()`**
+（= 我方 `KernelBus::pump` 的原版对应物），一直追到不欠为止。⇒ 事件泵的**真实频率是 60 Hz**，
+由引擎的 `_process` 每帧推、用**墙钟**（`Instant::now`）定步，**与帧率无关**（实测帧率 50–82 fps 时 tick 恒 60/s）。
+
+### 48.0 先纠正 §47.6 第 1 条（本轮实测，`AGENTS.md` §0.6）
+
+| # | 旧说法（§47.6 第 1 条，原地已改） | 本轮实测 | 证据 |
+|---|---|---|---|
+| 1 | "原版是 `GraphwarGameClient::process`（arm64 符号；**x86 未定位**，`0x515dc0` 里那两个 `call` 是内联后的 ReplayPlayer/GameClient `process`，没单独符号）" | **不成立**。`0x515dc0`（`GraphwarBackend::process`）里那次调用是 `call *0x9bc468(%rip)`（GOT 槽），槽里就是**独立函数 `0x518400`**；`0x518400` 有 3 个 `(file,line,col)` 双向唯一锚（`src/graphwar_game_client.rs:130:41 / 130:86 / 132:28`），另有 Windows 同 ISA 同名函数与 arm64 符号各一份同形证据 | **观测**（§48.1） |
+
+> 顺带纠正 `src/graphwar_game_client.rs` §7 的同一行（"`0x518400` … 都是「取 `+0x40` 句柄 → 递增引用 → 调内层一次 → 递减」"）：
+> 那句话只描述了**前 8 条指令**；函数的真实主体是 §48.3 那个定步循环。本任务不改 `src/`（只允许动
+> `src/_scaffold/root_wiring.rs` 的注释），所以**那一行留给后续轮就地改**。
+
+### 48.1 身份：`GraphwarGameClient::process` = x86 `0x518400`（四条独立证据）
+
+| # | 证据 | 内容 | 档位 |
+|---|---|---|---|
+| A | **Location 锚**（`fixtures/name_to_addr.tsv` 第 266 行） | arm64 名 `GraphwarGameClient::process` 经 `panic::Location` 的 `(file,line,col)` join 到 `0x518400`，`join_kind=唯一锚`，**3/3 个双向唯一锚**（130:41、130:86、132:28） | 观测 |
+| B | **Windows 2.0.60 同名 + 同 ISA + 逐指令同形** | PE 符号 `_ZN12graphwarrust20graphwar_game_client18GraphwarGameClient7processE` @ RVA `0x133390`（`fixtures/windows_name_to_addr.tsv` 第 405 行 → Linux `0x518400`，3/3 锚）。两侧**指令序列逐条同形**（§48.3），而且 Windows 侧的 4 个被调者**都有真名**：`get_module` / `GraphwarTickHandler::get_time_to_tick` / `GraphwarGameClient::tick` / `GraphwarEventHandler::process_events` | 观测（结构对拍） |
+| C | **arm64 未 strip 符号同形** | `GraphwarGameClient::process` @ arm64 `0x40ac00`（344 B）；体内四个 `bl` 目标全有名字，与 x86 的四个被调者一一对应（§48.3） | 观测 |
+| D | **x86 体内唯一性** | 全 `.text` 里 `call 0x519450`（`get_time_to_tick`）只有 3 处：`0x4500c0`（`game_server_thread`）两处 + **`0x518400` 一处**（`0x518484`）；`0x518400` 的 FDE 边界 `0x518400..0x518527`（`0x127` B；`fixtures` 记的 `0x130` 是到下一个函数起点的距离）与它的 3 个 Location 锚同体 | 观测 |
+
+**正对照（证明"扫法有效"，`AGENTS.md` 合并纪律 A.4）**：
+
+```text
+../.venv/bin/python tools/addr_probe.py callers 0x519450   # ⇒ 3 处（0x451ba3 / 0x4524da / 0x518484）
+../.venv/bin/python tools/addr_probe.py callers 0x518400   # ⇒ call rel32 0 处；GOT 槽 0x9bc468 两个站点
+../.venv/bin/python tools/addr_probe.py callers 0x4b2890   # 已知函数（EntityDrawer::draw）⇒ 槽 0x9bb7a8 命中
+```
+第一个/第三个命令都**非空** ⇒ "`call rel32` 为 0"不是"没人调"，而是"走 GOT 槽"（`AGENTS.md` 间接调用第 1 条）。
+
+### 48.2 逐环节地址：引擎 `_process` → … → 事件泵
+
+x86（ELF 虚地址；Ghidra = +`0x100000`）：
+
+```text
+① 引擎 idle frame 的虚函数派发
+   GraphwarRootNode 的 gdext `__virtual_call(name, hash)`  x86 0x40cdc0
+     0x40ce62  movabs rax,0x737365636f72705f     ; "_process"（len 8）
+     0x40ce6e  cmp [rdi],rax ；0x40ce74 xor ebx,0x1647d661   ; 名字 + 哈希 双判据
+     0x40ce7e  mov rbx,[GOT 0x9ba9e8]            ; ⇒ 0x3aa9a0（process 的 vcall 入口）
+     （"_ready" 分支 ⇒ GOT 0x9ba9f0 = 0x3aaa60，标签 "ready"）
+② `_process` 的 gdext 入口 shim（自带 {类名, 方法名} 诊断对）
+   x86 0x3aa9a0：0x3aa9c2 类名 'GraphwarRootNode'(0x19e490,len 0x10)
+                 0x3aa9d7 方法名 'process'(0x1bd9ba,len 7)
+                 0x3aaa17 call 0x42a8a0
+③ typed vcall：取 delta:f64 + 绑定实例（`Gd` → `&mut T`）
+   x86 0x42a8a0：0x42a8bf movsd xmm0,[rax]      ; delta
+                 0x42a8d1 call 0x4b0f20          ; 实例绑定（panic 串里带类名）
+                 0x42a914 call *GOT 0x9ba898     ; ⇒ 0x3a5760
+④ GraphwarRootNode::process(delta)   = <GraphwarRootNode as INode>::process
+   x86 0x3a5760（FDE 0x3a5760..0x3aa696；arm64 0x39c8a0 / 16984 B）
+     0x3a6a16/0x3a6a23  cmp dword [root+0x90],3 / [root+0xa0],3   ；两个门（字段语义未解）
+     0x3a6a30  rbx = [root+0x1668]                ; Rc<RefCell<GraphwarBackend>>
+     0x3a6a4e  call *GOT 0x9ba938                 ; ⇒ GraphwarBackend::process
+⑤ GraphwarBackend::process   x86 0x515dc0
+     0x515dd1  cmp qword [rdi+0x1e0],0 ; je 出   ; Option<GraphwarGameClient> 为空就不往下走
+     0x515de3  cmp dword [r12],2 ; je 0x515df5   ; mode==2 ⇒ 跳过 ReplayPlayer
+     0x515df0  call 0x3d7380                     ; ReplayPlayer::process
+     0x515df8  call *GOT 0x9bc468                ; ⇒ **GraphwarGameClient::process**
+⑥ GraphwarGameClient::process   **x86 0x518400**（FDE 0x518400..0x518527，0x127 B；表记 0x130）
+⑦ 泵：GraphwarEventHandler::process_events   x86 0x3d3630（arm64 0x486970，114 个 bl 站点里的 1 个）
+```
+
+配套（都在同一条链上，逐条可复算）：
+
+| 地址 | 名字 | 怎么钉住的 |
+|---|---|---|
+| `0x518400` | `GraphwarGameClient::process` | 本文 §48.1 四条 |
+| `0x515dc0` | `GraphwarBackend::process` | `fixtures/name_to_addr.tsv`（79:51）+ `src/graphwar_backend.rs` |
+| `0x3a5760` | `GraphwarRootNode::process`（= `INode::process` 的虚函数体） | 56 个 Location 锚（`fixtures/name_to_addr.tsv` 第 38 行）；arm64 名 `<… as INode>::process` 0x39c8a0 |
+| `0x519450` | `GraphwarTickHandler::get_time_to_tick` | arm64 名（`tools/arm64_sym.py find get_time_to_tick`）＋ `src/graphwar_tick_handler.rs` 的字段表 |
+| `0x518240` | `GraphwarGameClient::tick` | `fixtures/name_to_addr.tsv`（139:41，消去法唯一） |
+| `0x3d3630` | `GraphwarEventHandler::process_events` | `fixtures/name_to_addr.tsv`（`src/graphwar_event_handler.rs:467`）；arm64 0x486970 同形 |
+| `0x46aa50` | `get_module::<GraphwarTickHandler>` | `src/graphwar_module_container.rs` 的槽表（`get: 0x46aa50`） |
+
+### 48.3 `0x518400` 的逐指令读法（x86 全文 + arm64 命名对照）
+
+x86（`tools/addr_probe.py dis 0x518400`，节选；`self` 在 `rdi`）：
+
+```text
+51840b  mov  r15,[rdi+0x40]        ; r15 = Rc<RefCell<容器>> 的 RcBox
+51840f..51842c  RefCell::borrow    ; cmp isize::MAX → 越界 panic(130:86)；[r15+0x10] += 1
+518430  lea  rdi,[r15+0x18]        ; &容器数据
+518434  call 0x46aa50              ; get_module::<GraphwarTickHandler>()（返回 Rc<RefCell<..>>）
+51843c  test rax,rax ; je panic    ; unwrap（130:41）
+51844c  dec  [r15+0x10]            ; drop 外层 Ref
+518450  add  r14,0x18              ; r14 = tick handler 数据（RefCell value）
+518458  mov  r13,[GOT 0x9baf38]    ; ⇒ 0x518240 GraphwarGameClient::tick
+51845f  mov  rbp,[GOT 0x9baef8]    ; ⇒ 0x3d3630 GraphwarEventHandler::process_events
+518470  cmp  qword [r12+0x10],0 ; jne panic(132:28)     ; 循环头：RefCell::borrow_mut
+518478  mov  qword [r12+0x10],-1   ;   （borrow 标志置 -1）
+518484  call 0x519450              ;   GraphwarTickHandler::get_time_to_tick()
+518489  inc  qword [r12+0x10]      ;   （解借用）
+51848e  cmp  edx,0x3b9aca00        ;   返回的 Duration.nanos == 1e9 ？ ⇒ **哨兵 = "欠一个 tick"**
+518494  jne  5184a3                ;   不欠 ⇒ 出循环
+518496  mov  rdi,rbx ; call r13    ;   ① GraphwarGameClient::tick()
+51849c  mov  rdi,r15 ; call rbp    ;   ② GraphwarEventHandler::process_events()   ← **事件泵**
+5184a1  jmp  518470                ;   回到循环头（一帧欠多个 tick 时在这里追赶）
+```
+
+arm64 同形（`llvm-objdump`，**被调者全有真名**，等于给 x86 那段当注解）：
+
+```text
+40ac38  bl  <GraphwarModuleContainer::get_module>            ; 0x4a0ab4
+40ac40  cbz x0 → unwrap_failed
+40ac70  bl  0x40b298 <GraphwarTickHandler::get_time_to_tick>
+40ac78  cmp w1,w22 (=0x3b9aca00) ; b.ne 0x40ac9c（出循环）
+40ac8c  bl  0x40a9bc <GraphwarGameClient::tick>
+40ac94  bl  0x486970 <GraphwarEventHandler::process_events>   ; rdi = self+8
+40ac98  b   0x40ac60                                          ; 循环
+```
+
+Windows 同形（`tools/pe_dis.py dis 0x133390`，节选）：`call get_module` → `call get_time_to_tick` →
+`cmp edx,0x3b9aca00` → `call GraphwarGameClient::tick` → `call GraphwarEventHandler::process_events` → 回循环头。
+三份构建（Linux x86-64 / Windows x86-64 / Android arm64）**形状一致**。
+
+**`delta` 参数没被用**：x86 全文不读 `xmm0`、arm64 全文不读 `d0` ⇒ 定步的时基是
+`GraphwarTickHandler` 里的**墙钟**（`std::time::Instant::now`，0x8f3a10），不是引擎给的 delta。
+
+**`get_time_to_tick` 的哨兵**：它返回 `Duration`（`rax`=秒，`edx`=纳秒）。两条"欠账"路径
+（x86 `0x5194f3` / arm64 `0x40b354`）把纳秒写成 **`1_000_000_000`**（合法 `Duration` 不可能出现的值）
+⇒ 调用方的 `cmp edx,0x3b9aca00` 就是"该 tick 了"。一个 tick = `0xfe502a` = **16,666,666 ns = 1/60 s**
+（同常量在 `GraphwarTickHandler::tick` 0x519840 的加法里）。
+
+### 48.4 运行时（frida，两次独立运行）：`process` **每帧 1 次**，泵 **60 Hz**
+
+工具：`tools/frida_process_chain.js` + `tools/frida_process_chain.py`（本轮新增，**只读**，
+`Interceptor.attach` 记「每秒次数 / 线程 id / 返回地址」）。跑法见 §48.8；
+构建 = `.reference/game/libgraphwarrust.so`（sha256 `9a538115…bed187`，与逆向目标逐字节相同）。
+
+**一段实测（对局中，1 s 窗口；`tid` 16 = 引擎主线程，293 = `game_server_thread`）**：
+
+| 钩子（RVA） | 次数/秒 | 线程 | 返回地址（= 调用点） |
+|---|---|---|---|
+| `0x3a5760` `RootNode::process` | **52** | 16 | `0x42a91a`（= gdext typed vcall 里 `call *GOT 0x9ba898` 的下一条） |
+| `0x515dc0` `Backend::process` | **52** | 16 | `0x3a6a54`（= `0x3a6a4e` 的下一条） |
+| `0x518400` `GameClient::process` | **52** | 16 | `0x515dfe`（= `0x515df8` 的下一条） |
+| `0x518240` `GameClient::tick` | **60** | 16 | `0x51849c`（= process 循环体内） |
+| `0x3d3630` `process_events` | 120 | 16:60 / 293:60 | 客户端 `0x5184a1`（= 泵调用点）/ 服务端 `0x451be5` |
+| `0x519450` `get_time_to_tick` | 292 | 16:112 / 293:180 | `0x518489`(112) / `0x451ba8`(120) / `0x4524df`(60) |
+
+三条结论（都不依赖我的算式，直接读表）：
+
+1. **`process` 与帧回调 1:1**：`RootNode::process = Backend::process = GameClient::process = 52`，
+   **14 个对局窗口里 14 个逐秒相等**（只有切关窗口 `seq 14` 不等 —— 那一秒是
+   `wait_for_players` 的忙等在推 `process`，见下）。返回地址只有 `0x515dfe` 一个
+   ⇒ **每帧一次、且只从 `GraphwarBackend::process` 进来**。
+2. **泵是 60 Hz 定步，不是帧率**：帧 52/s（`root_iv` 均值 19.2 ms）时 `tick` 仍 **60/s**；
+   另一轮帧 82/s 时 `tick` 也是 60/s。客户端 `get_time_to_tick` = `112 = 52 帧 + 60 个 due tick`
+   ——正是"每帧进循环 1 次 + 每个到期 tick 再判 1 次"的算术。稳态窗口 `tick` 落在 **59–61/s**
+   （`seq 19–28`，均值 60.0）；两个掉帧窗口（`seq 16/18`，帧 33–34 fps、平均 29 ms/帧）是 **57/62**，
+   差的那几拍就是"tick 只能在 `process` 里补"的直接后果。
+3. **线程归属**：客户端这条链全程在引擎主线程；多出来的 180 次/秒 `get_time_to_tick` 与 60 次/秒
+   `process_events` 来自 `game_server_thread`（`0x4500c0`，它自己也有一个同样的定步循环）。
+
+**主菜单阶段**（同一轮，前 14 个窗口）：`RootNode::process = Backend::process`（≈100/s），
+`GameClient::process` / `tick` / `process_events` / `get_time_to_tick` **全 0**
+—— 因为 `[backend+0x1e0]`（`Option<GraphwarGameClient>`）为空，与 `0x515dd1` 那条 `je` 一致。
+
+**另一个调用者**（非每帧）：进对局前的准备阶段，`0x516fd0`（arm64 名 `wait_for_players`）里
+`call rbp`（rbp = `[GOT 0x9bc468]`）+ `sleep(Duration::new(0,1_000_000))`（`0x517189` 置 `rdi=0`、`0x51718d` 置 `esi=0xf4240`，`0x517192` 调 GOT 槽 `0x9bbcf8` → `0x906f70`；1 ms）
+组成忙等循环，把 `process` 拉到 110/s（实测该窗口 `GameClient::process n=127`，站点 `0x51718b:110`）。
+
+**调用栈**（frida `Backtracer.FUZZY`，在 `0x518400` 入口抓，`libgraphwarrust.so` 内一律 RVA）：
+
+```text
+0x515dfe  ← 0x3a6a54  ← 0x42a91a  ← 0x3aaa1c  ← Graphwar.x86_64+0x1345ef9  ← libc.so.6+0x10079d  ← …
+（Backend::process）（RootNode::process）（typed vcall 0x42a8a0）（shim 0x3aa9a0）（引擎，符号已 strip）
+```
+
+### 48.5 ③ `KernelBus::pump` 应该挂在哪（结论）
+
+**挂在 `0x3d3630`（`GraphwarEventHandler::process_events`）的位置**，也就是：
+
+```text
+GraphwarGameClient::process(delta):            // 0x518400，每帧一次（引擎 _process 推）
+    let tick = modules.get_module::<GraphwarTickHandler>();
+    loop {
+        if !tick.get_time_to_tick().is_overdue() { break }   // 0x519450，nanos==1e9 哨兵
+        self.tick();                                          // 0x518240
+        <事件泵>();                                            // 0x3d3630  ← **pump 挂这里**
+    }
+```
+
+四条要点（每条都能指回上面）：
+
+1. **不是"每帧直接 pump"**：泵在 **60 Hz 定步循环**里（`0x5184a1`），帧率 50–82 fps 时泵仍是 60 Hz。
+2. **要有追赶（catch-up）**：一帧欠 N 个 tick 就转 N 圈（`0x5184a1 jmp 0x518470`）；不能"每帧补一次"。
+3. **时基是墙钟**：`Instant::now()`（`0x8f3a10`），不是引擎的 `delta`（`process` 两架构都不读 delta 寄存器）。
+   ⇒ 我们那边 `KernelBus` 需要的时钟应当是同一种"墙钟 + 1/60 s 累加器"，`src/graphwar_tick_handler.rs`
+   的 `get_time_to_tick()` / `NANOS_PER_TICK` 已经是这套（只差"谁来转这个循环"）。
+4. **挂载点必须与 `tick` 同一个循环体、同一线程**：`tick`（发 `TickEvent`/`TickRequest`）与泵的先后顺序是
+   **tick 先、泵后**（`0x518499` → `0x51849f`）；顺序反了会让本 tick 产生的事件晚一个 tick 才被订阅者看到。
+
+### 48.6 我们要改的清单（3 处，全部在禁区内或待后续轮）
+
+| # | 位置 | 改什么 | 为什么现在没改 |
+|---|---|---|---|
+| 1 | `src/graphwar_game_client.rs` | 加 `process(&mut self, _delta: f64)`：照 §48.3 的循环，内部调 `graphwar_tick_handler::get_time_to_tick` + `tick()` + 事件泵回调 | 本任务允许改的文件不含它（`src/game.rs`、`client/src/**` 同理） |
+| 2 | `src/_scaffold/root_wiring.rs` | 给 `KernelBus` 加 `drive_frame()`（= 上面那个循环的宿主：`while overdue { tick_handler.tick(); bus.pump(); }`） | 本轮只允许**改注释**；已在 `KernelBus::pump` 的 doc 里写清位置与频率 |
+| 3 | `client/src/**`（播放屏那一帧） | 在 `_process(delta)` 里调 2 的 `drive_frame()`，**删掉**现在两处代偿（`set_ring` / `id ≥ 1000 ⇒ set_entity_look`） | `client/src/**` 是禁区 |
+
+⇒ 结论同 §47.4 的最后一格：**通道已经通了，缺的是"每帧推一次"的宿主**；宿主就是 `0x518400`，
+它的**泵挂在 60 Hz 定步循环里**，不是每帧直挂。
+
+⚠ **本轮连"注释版"的第 2 处也没落**：`tools/coverage_matrix.py --check` 把 `src/` 全树的 sha256
+记在 `docs/coverage-matrix.tsv` 里 ⇒ **只要动 `src/` 任何一个字节**（包括注释）就必须重跑
+`coverage_matrix.py` 并一起提交那两份生成物，而它们不在本任务允许改的文件里。所以本轮把"驱动方式"
+整段写在这里（+ `docs/02` §36），代码侧留给下一轮**连同 `process` 实现一起**落。
+
+### 48.7 仍是推断 / 未知（诚实清单）
+
+| # | 项 | 档位 | 缺什么 |
+|---|---|---|---|
+| 1 | `0x3a5760` 里 `[root+0x90]`/`[root+0xa0] == 3` 两个门控什么 | **未知** | 只观测到"等于 3 才往下"，没有把两个字段的写点解出来；实测路径上恒成立（`Backend::process` 与 `RootNode::process` 逐秒相等） |
+| 2 | `get_time_to_tick` 用 `nanos==1e9` 当哨兵的**源码写法** | **推断** | 反汇编只有"两条欠账路径返回 1e9"这一条观测；源码里更像 `Option<Duration>`/`bool` 两种写法之一，未定 |
+| 3 | `GraphwarRootNode::process` 的 `_process` 是否受 `process_mode`/暂停影响 | **未知** | 只观测到"主菜单与对局中都每帧被调"；没测暂停/切后台 |
+| 4 | `0x42a8a0` 里 `call 0x4b0f20` 的具体语义（实例绑定） | **推断** | panic 串写着「attempted to access a non-current mutable borrow of type: `graphwarrust::graphwar_root_node::GraphwarRootNode`」⇒ 是 gdext 的实例绑定；未逐条读 |
+| 5 | 引擎侧（`Graphwar.x86_64`）调用点 | **未知（符号已 strip）** | 栈上是 `Graphwar.x86_64+0x1345ef9`，只有偏移；要指到 `SceneTree::process`/`Main::iteration` 得先给 Godot 二进制做函数边界 |
+| 6 | `delta` 从不被用是否也适用于 `EntityDrawer::process` 等其它节点 | **未知** | 本任务只逐条读了 `0x518400` |
+
+### 48.8 复现（全部可原地复跑）
+
+```text
+# ① 身份（静态）
+$PY tools/addr_probe.py dis  0x518400        # x86 全文：循环头 + 两个 call + 哨兵比较
+$PY tools/addr_probe.py callers 0x518400     # call rel32 0；GOT 槽 0x9bc468 两个站点（0x515df8 / 0x517000）
+$PY tools/addr_probe.py locs 0x518400        # 3 个锚，全落 src/graphwar_game_client.rs
+$PY tools/arm64_sym.py dis 0x40ac00 --n 0x160   # 需 OBJDUMP=llvm-objdump（GNU objdump 不解 arm64）
+$PY tools/pe_dis.py dis 0x133390            # Windows 同名同形（ImageBase 0x180000000，这里印的是 RVA）
+$PY tools/pe_dis.py at 0x134690             # ⇒ GraphwarEventHandler::process_events
+
+# ② 运行时（真游戏 + frida；本机必须 Popen+attach，spawn 会把游戏挂死）
+$PY tools/frida_process_chain.py --out .agent-work/run/process_chain.jsonl --menu 5 --match 10
+#   stderr 每秒一行：[tally NN] dt=… RootNode::process n=… Backend::process n=… GameClient::process n=…
+#   JSONL 里还有每个钩子的线程与返回地址；--extract 可摘成入库小样本（本轮**不**入库，运行时产物）
+
+# ③ 回归
+cargo test --offline          # 1631（本任务不改 src/ 逻辑，只加注释）
+$PY tools/check_doc_refs.py   # rc=0
 ```
