@@ -198,6 +198,24 @@ def _parse_one(src_path, label, notes=None):
             q['items'] = [_queue_item_min(i) for i in (r.get('items') or []) if i.get('len')]
             q['rawitems'] = r.get('rawitems')          # 每项 0x20 字节原文（短，留）
             cur = {'queue': q, 'calc_calls': [], 'pos_read': None, 'exec_t': r.get('t')}
+        elif t == 'tok_fire':
+            v = p.get('vec') or {}
+            tk = p.get('tok') or {}
+            print('[tok_fire] #%s ret=%s flip=%s mode=%s x0=%s y0=%s step=%s vec=(cap=%s,len=%s) tags=%s vs_parse=%s' % (
+                p.get('seq'), p.get('ret'), p.get('flip'), p.get('mode'),
+                p.get('x0'), p.get('y0'), p.get('step'), v.get('cap'), v.get('len'), tk.get('tags'),
+                [(q.get('seq'), q.get('ret'), q.get('ptr_eq'), q.get('same_bytes'), (q.get('text') or '')[:60])
+                 for q in (p.get('vs_parse') or [])]), file=sys.stderr)
+        elif t == 'tok_parse':
+            r = p.get('rec') or {}
+            o = r.get('out') or {}
+            print('[tok_parse] #%s ret=%s txtlen=%s outlen=%s tags=%s txt=%r' % (
+                r.get('seq'), r.get('ret'), r.get('txtLen'), o.get('len'), o.get('tags'),
+                (r.get('txt') or '')[:120]), file=sys.stderr)
+        elif t == 'tok_suffix':
+            print('[tok_suffix] #%s ret=%s flip=%s x0=%s y0=%s -> %r' % (
+                p.get('seq'), p.get('ret'), p.get('flip'), p.get('x0'), p.get('y0'), p.get('text')),
+                file=sys.stderr)
         elif t == 'pos_read':
             if cur is None:
                 cur = {'calc_calls': [], 'queue': None}
@@ -336,6 +354,271 @@ def extract_fixture(specs, out_path, notes=None):
     return prov, all_shots
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2026-11-08 `dispatch/39`：把 token 探针的原始 JSONL 摘成入库样本 + 做**逐字节**比较
+#
+# 输入：`--tokens` 跑出来的原始 JSONL（可能多份，按 `--label` 起名）+（可选）**同一局**的
+#   回放文件（`user://replays/<unix 秒>`，gzip JSONL）——有它才能做"真机抓到的 token 列表
+#   vs 回放里记的两种表示"的**同局**比较。
+#
+# 三种比较（全部逐字节，不看"像不像"）：
+#   A. 探针在 `calculate_function` 入口抓到的 token 列表
+#      vs **同一次运行里解析器产出的那个 token 列表**（ptr 恒等 + 逐字节）→ "token 从哪来"
+#   B. 探针抓到的"喂进解析器的那串文本"（`txtHex`）
+#      vs 回放里 `FunctionInfo.corrected_function` 的 UTF-8 字节 → 回放记的是不是喂进去的那串
+#   C. 真二进制（unicorn 直调 `0x4ed670`）重新解析 `corrected_function` 得到的 token 列表
+#      vs 探针抓到的 token 列表（16 B/token 逐字节，含常量的 f64 位模式）→ 端到端闭合（`--oracle`）
+# ═══════════════════════════════════════════════════════════════════════════════
+
+TOKEN_TAG = {0: 'x', 1: 'y', 2: "y'", 3: '+', 4: '-', 5: 'neg', 6: '*', 7: '/', 8: '^',
+             9: 'sqrt', 10: 'log', 11: 'ln', 12: 'exp', 13: 'abs', 14: 'sin', 15: 'cos',
+             16: 'tan', 17: 'const', 18: '(', 19: ')'}
+TOKENS_FIXTURE_SCHEMA = 'gw2-frida-token-at-fire-sample/1'
+
+
+def decode_tokens(hexs):
+    """16 B/token 的原始十六进制 → [{tag, name, bits, value}]。`tag` 是 u64，`value` 是 f64。"""
+    import struct as _s
+    out = []
+    if not hexs:
+        return out
+    for i in range(0, len(hexs), 32):
+        ch = hexs[i:i + 32]
+        if len(ch) != 32:
+            break
+        raw = bytes.fromhex(ch)
+        tag = _s.unpack('<Q', raw[:8])[0]
+        val = _s.unpack('<d', raw[8:])[0]
+        out.append({'tag': tag, 'name': TOKEN_TAG.get(tag, '?%d' % tag),
+                    'value_bits': raw[8:].hex(), 'value': val})
+    return out
+
+
+def token_sig(hexs):
+    """逐字节比较用的规范化形式（就是 hex 本身；空列表 → 空串）。"""
+    return hexs or ''
+
+
+def prefix_text(tokens):
+    """token 列表 → **前缀写法**的短语（只是给人看的忠实渲染，不是 `0x4ec160` 的 `to_text`）。"""
+    parts = []
+    for t in tokens:
+        if t['name'] == 'const':
+            # 用 repr（最短往返表示）：`10.938` 而不是 `10.938000000000001`；
+            # 精确定义仍然只有 `value_bits` 那 16 个十六进制字符算数。
+            parts.append(repr(t['value']))
+        else:
+            parts.append(t['name'])
+    return '(' + ' '.join(parts) + ')'
+
+
+def read_replay_functions(path):
+    """读一局回放（gzip JSONL），返回 (按出现顺序的 FunctionInfo 行, 其余关键行摘要, sha256)。"""
+    import gzip
+    import hashlib
+    raw = open(path, 'rb').read()
+    sha = hashlib.sha256(raw).hexdigest()
+    try:
+        text = gzip.decompress(raw)
+    except OSError:
+        text = raw
+    rows = [json.loads(l) for l in text.split(b'\n') if l.strip()]
+    fis, keep = [], []
+    for r in rows:
+        ev = r.get('event') or {}
+        k = next(iter(ev), None)
+        if k == 'FunctionInfo':
+            fis.append({'tick': r.get('tick'), **ev[k]})
+        elif k in ('FunctionPoints', 'FunctionFire', 'EffectInfo', 'GameStateInfo', 'TargetInfo', 'LifeInfo'):
+            keep.append({'tick': r.get('tick'), 'event': {k: ev[k]}})
+    return fis, keep, sha
+
+
+def _function_for_fire(fis, corrected):
+    """在回放里找 `corrected_function` 与抓到的文本**逐字节相等**的那一条 FunctionInfo。
+
+    找不到就返回 None（不许猜"大概是这条"）。
+    """
+    for i, f in enumerate(fis):
+        cf = f.get('corrected_function')
+        if cf is not None and cf == corrected:
+            return i, f
+    return None, None
+
+
+def tokens_report(specs, out_path, replay_path=None, notes=None, oracle=0):
+    """`--tokens-report`：原始 JSONL（可多份）→ 入库样本 + 三种逐字节比较。"""
+    import hashlib
+    import struct as _s
+
+    fires, sources = [], []
+    hooks = selftest = None
+    by_type_all = {}
+    for path, label in specs:
+        raw = open(path, 'rb').read()
+        sha = hashlib.sha256(raw).hexdigest()
+        rows = [json.loads(l) for l in raw.decode('utf-8').split('\n') if l.strip()]
+        by_type = {}
+        for r in rows:
+            t = r.get('type', '?')
+            by_type[t] = by_type.get(t, 0) + 1
+            by_type_all[t] = by_type_all.get(t, 0) + 1
+        hooks = hooks or next((r for r in rows if r.get('type') == 'hooks'), None)
+        selftest = selftest or next((r for r in rows if r.get('type') == 'selftest'), None)
+        suffixes = [r for r in rows if r.get('type') == 'tok_suffix' and r.get('text')]
+        suffix_texts = sorted({r['text'] for r in suffixes})
+        for r in rows:
+            if r.get('type') != 'tok_fire':
+                continue
+            tok = r.get('tok') or {}
+            matched = (r.get('vs_parse') or [])
+            # 只认"逐字节相同"的那一条；按 seq 取最小的（同一次运行里同一段文本可能 parse 两次）
+            same = [q for q in matched if q.get('same_bytes') is True]
+            best = sorted(same, key=lambda q: (q.get('seq') or 0))[0] if same else None
+            fires.append({
+                'type': 'fire', 'series': label, 'seq': r.get('seq'), 't': r.get('t'),
+                'caller': r.get('ret'),
+                'flip': r.get('flip'), 'mode': r.get('mode'),
+                'x0_bits': r.get('x0'), 'y0_bits': r.get('y0'), 'step_bits': r.get('step'),
+                'vec': r.get('vec'),
+                'tokens': {'len': tok.get('len'), 'hex': tok.get('hex'), 'tags': tok.get('tags')},
+                'matched_parse': None if not best else {
+                    'seq': best.get('seq'), 'caller': best.get('ret'),
+                    'ptr_eq': best.get('ptr_eq'), 'same_bytes': best.get('same_bytes'),
+                    'text': best.get('text'), 'txt_hex': best.get('txtHex'), 'txt_len': best.get('txtLen'),
+                    'out_ptr': (best.get('parse_out') or {}).get('ptr'),
+                },
+                'vs_parse_all_same': len(same),
+                # 这一发抓到的那串文本**以哪些**修正常数后缀结尾（就 `0x3c5f70` 印出来的那些串，
+                # 逐个与文本做字节后缀比较；不做"取最后一条"这种猜法）
+                'suffix_matches': sorted({t for t in suffix_texts
+                                          if (best or {}).get('text') and best['text'].endswith(t)}),
+            })
+        sources.append({'label': label, 'raw_jsonl_sha256': sha, 'raw_jsonl_lines': len(rows),
+                        'records_by_type': by_type, 'fires': sum(1 for r in rows if r.get('type') == 'tok_fire')})
+
+    # ── 同一局的回放：只用来做 B/C 两条比较（没有就不做，不许拿别的局凑）────────
+    fis, replay_keep, replay_sha = ([], [], None)
+    if replay_path:
+        fis, replay_keep, replay_sha = read_replay_functions(replay_path)
+
+    # ── 可选：真二进制（unicorn）再解析一遍（C）────────────────────────────────
+    oracle_parse = None
+    if oracle:
+        sys.path.insert(0, HERE)
+        import eval_oracle as EO  # 复用既有的真二进制对拍台，不另造
+        Gw = EO.load_oracle()
+        EO.G(Gw)                      # 常驻一个模拟器
+
+        def oracle_parse(text):       # noqa: F811
+            EO.reset_heap(Gw)
+            toks = EO.call_parse(Gw, text)
+            return [{'tag': t, 'bits': '%016x' % _s.unpack('<Q', _s.pack('<d', v))[0]} for t, v in toks]
+
+    # ── 逐发：解码 + 三种比较 ──────────────────────────────────────────────────
+    rows_out = []
+    cmp_A = cmp_B = cmp_C = 0
+    n_fires = 0
+    for f in fires:
+        n_fires += 1
+        dec = decode_tokens((f['tokens'] or {}).get('hex'))
+        f['tokens_decoded'] = dec
+        f['prefix_text'] = prefix_text(dec)
+        mp = f.get('matched_parse') or {}
+        text = mp.get('text')
+        f['A_tokens_eq_parse'] = bool(mp.get('same_bytes') is True)
+        cmp_A += 1 if f['A_tokens_eq_parse'] else 0
+        # B：抓到的文本字节 vs 回放里那条 corrected_function 的字节
+        if text is not None and fis:
+            idx, rec = _function_for_fire(fis, text)
+            if rec is not None:
+                fn = rec.get('function')
+                cf = rec.get('corrected_function')
+                prefix_ok = cf is not None and fn is not None and cf.startswith(fn)
+                f['replay'] = {'function_index': idx, 'tick': rec.get('tick'),
+                               'function': fn, 'corrected_function': cf,
+                               'corrected_utf8_hex': (cf or '').encode('utf-8').hex(),
+                               'function_is_prefix_of_corrected': bool(prefix_ok)}
+                f['B_text_eq_replay_corrected'] = (text == cf)
+                cmp_B += 1 if f['B_text_eq_replay_corrected'] else 0
+            else:
+                f['replay'] = None
+                f['B_text_eq_replay_corrected'] = None
+        # C：真二进制解析 corrected_function → token 列表，与抓到的逐字节比
+        if oracle_parse is not None and f.get('replay') and f['replay'].get('corrected_function'):
+            want = f['tokens']
+            got = oracle_parse(f['replay']['corrected_function'])
+            # ⚠ 位串的两种写法：抓的是内存里那 8 字节的**小端字节序**十六进制，
+            #   oracle 给的是 u64 的**大端**十六进制；统一折成整数再比，别拿字符串比。
+            same = (len(got) == (want.get('len') or 0) and all(
+                (d['tag'] == g['tag'] and
+                 int.from_bytes(bytes.fromhex(d['value_bits']), 'little') == int(g['bits'], 16))
+                for d, g in zip(dec, got)))
+            f['C_oracle_tokens_match'] = bool(same)
+            f['C_oracle_tokens'] = got
+            cmp_C += 1 if same else 0
+        rows_out.append(f)
+
+    # 全精度修正常数 vs 印出来的 3 位小数：**这一条是 407 批的前提**
+    const_notes = []
+    for f in rows_out:
+        for t in f['tokens_decoded']:
+            if t['name'] == 'const':
+                const_notes.append({'series': f['series'], 'seq': f['seq'], 'value': t['value'],
+                                    'value_bits': t['value_bits']})
+
+    prov = {
+        'type': 'provenance', 'schema': TOKENS_FIXTURE_SCHEMA,
+        'what': ('what the sampler really eats: at `calculate_function` (x86 RVA 0x3c2530) entry we dump the '
+                 'token list `&Vec<Token>` (16 B/token) it is handed, the caller, x0/y0/step/flip/mode, and we '
+                 'dump every `MathFunction::new` (0x4ed670) call (input text bytes -> token list) so the token '
+                 'list can be traced to the exact text it was parsed from. Compared byte-for-byte with the two '
+                 'text representations a replay records (`FunctionInfo.function` / `FunctionInfo.corrected_function`).'),
+        'build': {
+            'game': 'Graphwar II Linux 2.0.60 (Steam)',
+            'libgraphwarrust.so_sha256': '9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187',
+            'engine': 'Godot 4.7.stable.official.5b4e0cb0f + godot-rust (API v4.6, runtime v4.7)',
+            'address_space': 'RVA = ELF virtual address = module offset; Ghidra address = RVA + 0x100000',
+            'hooked_rva': {'calculate_function': '0x3c2530', 'math_function_new_0x4ed670': '0x4ed670',
+                           'calculate_function_offset_str': '0x3c5f70'},
+            'token_layout': 'Vec<Token>{cap@+0, ptr@+8, len@+0x10}; Token = {tag: u64, value: f64} = 16 B',
+            'abi': ('calculate_function(sret:rdi, tokens:rsi, flip:edx, mode:ecx, x0:xmm0, y0:xmm1, step:xmm2); '
+                    'MathFunction::new(sret:rdi, text:&String rsi)'),
+        },
+        'how': {
+            'harness': 'Xvfb :97 -screen 0 1920x1160x24 -listen tcp -ac  (+ mesa-only EGL/GLX env)',
+            'driver': ('tools/frida_point_array.py --attach --tokens  (NOT frida spawn: spawn hangs this build in '
+                       'wait4 before it creates a window; see docs/06 42.1)'),
+            'flow': 'Popen game -> attach -> Campaign / level node / Start -> type f(x) -> LONG-PRESS Fire!',
+            'correlation': ('the sampler hook compares its token list against every parse in a 256-entry ring '
+                            'by (a) pointer identity of the token buffer and (b) 16 B/token byte equality'),
+        },
+        'cut': ('per calculate_function call: caller, flip/mode, x0/y0/step bit patterns, the token list '
+                '(hex of 16*len bytes + tags), and the parse record it matches (caller + input text + text hex). '
+                'Replay side: only the FunctionInfo row whose corrected_function is byte-identical to the '
+                'captured text (no guessing), plus the shot-shaping rows (FunctionPoints / EffectInfo).'),
+        'dropped': ('beat heartbeats, evals/samplers bulk rows, the raw gzip replay bytes, screenshots.'),
+        'no_local_paths': 'this file contains no filesystem path and no user name; pointers are ASLR-random per run.',
+        'sources': sources,
+        'replay': ({'sha256': replay_sha, 'function_info_rows': len(fis),
+                    'excerpt': replay_keep} if replay_path else None),
+        'probe_selftest_at_install': (selftest or {}).get('cmp'),
+        'hooks': hooks,
+        'const_tokens': const_notes,
+        'counts': {'fires': n_fires,
+                   'A_tokens_equal_parse': cmp_A,
+                   'B_captured_text_equals_replay_corrected': cmp_B,
+                   'C_oracle_tokens_equal_captured': (cmp_C if oracle_parse is not None else None),
+                   'replay_function_info_rows': len(fis)},
+        'notes': notes or [],
+    }
+    with open(out_path, 'w', encoding='utf-8') as fh:
+        fh.write(json.dumps(prov, ensure_ascii=False) + '\n')
+        for r in rows_out:
+            fh.write(json.dumps(r, ensure_ascii=False) + '\n')
+    return prov, rows_out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', default=None, help='JSONL 输出路径（`--extract` 模式下不需要）')
@@ -354,6 +637,10 @@ def main():
     ap.add_argument('--eval-rows', type=int, default=0, help='`evals` 抽样行上限；0（默认）= 不收，只留 classify 用的 yMap')
     ap.add_argument('--attach', action='store_true',
                     help='自己 Popen 游戏再 attach（**本机必须**：frida spawn 会把这游戏挂死在 wait4，见 docs/06 §42.1）')
+    ap.add_argument('--tokens', action='store_true',
+                    help='（2026-11-08 `dispatch/39`）打开 **token 探针**：在 `calculate_function`(0x3c2530) 入口'
+                         '抓它真正吃到的 token 列表，并在解析器 0x4ed670 上抓「文本 → token」的每一次调用，'
+                         '两者用 ptr 恒等 + 逐字节对撞。不加这个开关时行为与之前**逐字节相同**')
     ap.add_argument('--snap-dir', default=None, help='（调试用）每一步截一张 1920x1160 的 PNG 到这个目录；PNG 不入库')
     ap.add_argument('--extract', default=None, action='append',
                     help='不给游戏、只把已有 JSONL 摘成入库样本（可给多次；配合 --fixture-out）')
@@ -361,11 +648,40 @@ def main():
     ap.add_argument('--note', default=None, action='append',
                     help='`--extract` 时写进 provenance 的说明（可给多次）')
     ap.add_argument('--label', default=None, action='append',
-                    help='`--extract` 时给每批起的标签（顺序对应；缺省用 seriesN）')
+                    help='`--extract` / `--tokens-report` 时给每批起的标签（顺序对应；缺省用 seriesN）')
+    # ── 2026-11-08 `dispatch/39`：token 抓取的**离线**摘要模式（不给游戏）──────────────
+    ap.add_argument('--tokens-report', default=None, action='append',
+                    help='（`dispatch/39`）不给游戏：把 `--tokens` 跑出来的原始 JSONL 摘成入库样本，'
+                         '并做 A/B/C 三种**逐字节**比较（可给多次；配合 --tokens-fixture-out）')
+    ap.add_argument('--tokens-fixture-out', default=None, help='`--tokens-report` 的输出文件（纯文本 JSONL）')
+    ap.add_argument('--replay', default=None,
+                    help='（`dispatch/39`）**同一局**的回放文件（`user://replays/<unix 秒>`，gzip JSONL）；'
+                         '给了它才能做"抓到的文本 vs 回放记的 corrected_function"这条同局比较')
+    ap.add_argument('--oracle', type=int, default=0,
+                    help='（`dispatch/39`）>0 时再用**真二进制**（unicorn 直调 0x4ed670）解析一遍回放里的 '
+                         'corrected_function，与抓到的 token 列表逐字节比（需要 EMU 环境，见 tools/eval_oracle.py）')
     args = ap.parse_args()
 
+    if args.tokens_report:
+        if not args.tokens_fixture_out:
+            ap.error('--tokens-report 需要 --tokens-fixture-out')
+        labels = args.label or []
+        specs = [(p, labels[i] if i < len(labels) else 'series%d' % (i + 1))
+                 for i, p in enumerate(args.tokens_report)]
+        prov, rows = tokens_report(specs, args.tokens_fixture_out, replay_path=args.replay,
+                                   notes=args.note, oracle=args.oracle)
+        c = prov['counts']
+        print('[tokens-report] fires=%d A=%d B=%s C=%s -> %s' % (
+            c['fires'], c['A_tokens_equal_parse'], c['B_captured_text_equals_replay_corrected'],
+            c['C_oracle_tokens_equal_captured'], args.tokens_fixture_out), file=sys.stderr)
+        for r in rows:
+            print('[fire %s/%s] caller=%s flip=%s mode=%s len=%s  %s\n           text=%r  A=%s B=%s' % (
+                r['series'], r['seq'], r['caller'], r['flip'], r['mode'], r['tokens']['len'],
+                r['prefix_text'], (r.get('matched_parse') or {}).get('text'),
+                r['A_tokens_eq_parse'], r.get('B_text_eq_replay_corrected')), file=sys.stderr)
+        return
     if not args.extract and not args.out:
-        ap.error('需要 --out（或者用 --extract 模式）')
+        ap.error('需要 --out（或者用 --extract / --tokens-report 模式）')
     if args.extract:
         if not args.fixture_out:
             ap.error('--extract 需要 --fixture-out')
@@ -468,7 +784,8 @@ def main():
     # 2026-11-08 `dispatch/34`：连打多发的模式把 `evals` 抽样关掉（默认 0），
     # 否则 20 发会把 JSONL 撑到几十 MB；`classify` 用的 yMap/pairMap 不受影响。
     try:
-        script.post({'type': 'cfg', 'evalRowsMax': args.eval_rows})
+        # 2026-11-08 `dispatch/39`：`--tokens` 同时打开 token 探针（关着的时候探针三个钩子立即 return）
+        script.post({'type': 'cfg', 'evalRowsMax': args.eval_rows, 'tokenProbe': bool(args.tokens)})
     except Exception as e:  # noqa: BLE001
         print('[warn] post cfg:', e, file=sys.stderr)
     if not args.attach:
