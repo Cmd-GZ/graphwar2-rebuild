@@ -63,22 +63,34 @@ danger-full-access 下 : /dev/nvidia0 /dev/nvidiactl /dev/nvidia-modeset 都在�
 | `.reference/uv-python` | CPython **3.12.16**（本机只有 3.14，torch 无 cp314 轮子；`uv` 默认装到家目录会 EROFS，要用 `UV_PYTHON_INSTALL_DIR` 改道） |
 | `.reference/gpu-venv` | **torch 2.6.0+cu124 + triton 3.2.0**；`danger-full-access` 下实测 `cuda_available True`、capability (8,9)、matmul OK |
 
-**要注意的三条**
+**⚠️ 2026-11-09 02:35 我写错过两条，已按实测改正（别重犯）**
 
-1. **必须会话级 `danger-full-access`**：`cuda_run` 是在**宿主进程**里 spawn Python 的，
-   子进程继承宿主沙箱 —— 我用 `sandbox_permissions: danger-full-access` 单次提权**帮不到插件**。
-2. **`runsDir` 必须改道**：`~/.dsh` 只读（只有 `.dsh/profiles` 可写），默认 `$DSH_HOME/gpu-runs`
-   会每次 mkdir 失败。写进 profile 的 `cordis.patch.yml`（插件认 `config.pythonPath` / `config.runsDir`，
-   见 `lib/engine.js:219/229`）：
-   ```yaml
-   - id: dsh-cuda
-     config:
-       pythonPath: /home/CG/Myprojects/graphwar2-rebuild/.reference/gpu-venv/bin/python
-       runsDir:    /home/CG/Myprojects/graphwar2-rebuild/.agent-work/gpu-runs
-   ```
-3. **subagent 能否拿到 `cuda_*` 工具 = 未验证**：插件注册在宿主 `ctx.tools`，subagent 的工具集由
-   preset 决定。重启后第一件事就是 spawn 一个极小 agent 测 `cuda_status`。
-   **拿不到就由我集中跑 GPU**，subagent 只交 CPU 侧规格/数据。
+| 我曾写 | 实测真相 |
+|---|---|
+| "必须会话级 `danger-full-access`，否则插件也拿不到 GPU" | ❌ **错**。插件的三个工具跑在**宿主进程**里，在**我的工具沙箱之外** ⇒ `workspace-write` 下 `cuda_status` 照样看到 GPU、`cuda_run` 照样能建 `~/.dsh/gpu-runs/<job>/` |
+| "`runsDir` 必须改道，否则 mkdir 失败" | ❌ **错**。`~/.dsh` 对我只读、**对宿主可写**（实测 `home writable? True`），默认 runsDir 正常工作 |
+
+**真正被沙箱关着的只有我的 bash**：`ls /dev/nvidia*` 空、`touch ~/.dsh/...` 只读。
+我当初只验了 bash 就推断"宿主也不行"——**推理越界**。教训与 §4 第 9 条同源：**先验到那一层，再下结论**。
+
+**正确的现状（2026-11-09 02:35）**
+
+- 插件已能用：`cuda_status` 报 RTX 4060 / 8188 MiB / cap 8.9；
+- 唯一缺的是解释器：默认发现只找到 `/usr/bin/python3`（3.14，**torch 无 cp314 轮子**，2.6–2.9.1 全没有）。
+- 已用**宿主身份**（`cuda_run` 跑的 python）写好 `~/.dsh/cuda.json`：
+  ```json
+  {"pythonPath": "/home/CG/Myprojects/graphwar2-rebuild/.reference/gpu-venv/bin/python",
+   "pythonCandidates": ["/home/CG/Myprojects/graphwar2-rebuild/.reference/gpu-venv/bin/python"]}
+  ```
+  宿主侧实测该解释器 `torch 2.6.0+cu124  cuda True`。
+  **`cuda.json` 只在插件构造时读一次** ⇒ 需要**再重启一次 dsh**（普通启动即可，不用带环境变量）。
+
+**这样分工就清楚了**
+
+| 场景 | 是否需要 danger-full-access |
+|---|---|
+| 用 `cuda_run` / `cuda_status` 跑 GPU 活（我 or subagent） | **不需要**（宿主侧） |
+| 我用 bash 直接跑 `.reference/gpu-venv/bin/python` | 需要单次提权（或就这么干，只是每次弹一次授权） |
 
 ## 1. 环境（**都在 `.reference/`，已 gitignore；工作区外只读**）
 
