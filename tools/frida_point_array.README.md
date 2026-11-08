@@ -172,3 +172,43 @@ pairWho    这些命中来自求值器的哪个返回地址（`gw+3c2995` = `cal
 2. 点菜单坐标（1920×1160，本机实测仍然有效）：`(534,633)` Campaign → `(237,224)` 关卡节点 →
    `(1070,1010)` Start → 输入框 `(1000,1106)` → `Fire!` 长按 `(1754,45)`。
    截图必须按**窗口 id**（`xdotool search --name '^Graphwar$'`），root 全黑。
+
+## 2026-11-08 `dispatch/44`：`FunctionPoints.end_x` 的**装配处**（`docs/06` §28）
+
+第四个断点组，**独立函数 + 独立开关**（并行任务 45 也在改这个文件，所以新增的东西全部收在
+`FPCFG` / `FPST` / `installFunctionPointsProbe()` / `recv('cfg')` 的 `fnpoints` 分支里，其余探针一行没动）：
+
+| 新增 RVA | 是什么 | 抓什么 |
+|---|---|---|
+| **`0x456810`** | `FunctionPointsEvent` 的**装配**（`graphwar_function_manager.rs`） | `rdi`=self、`esi`=owner、**`rdx`=`&Vec<(f64,f64)>`**；体内 `0x4569b8 movq -0x10(%rcx,%rax,1)` = **`pts[len-1].x` → `end_x`**、`0x4569be movdqu (%rcx)` = `pts[0]` → `start_x/start_y`、`0x4569ce` = `owner_id`(u32)、判别式 `0x8000000000000025` = 37 |
+| **`0x50eb20`** | `FunctionPointsEvent` → JSON 写入器 | `rsi` = `&event`，`start_x@+0`、`start_y@+8`、`end_x@+0x10`、`owner_id@+0x18` ⇒ **报文里那个 `end_x`**；同处记返回地址与调用栈 |
+| **`0x472865`** | 与主探针**同一处** `movdqu`（再挂一个只读监听） | 把这一刻的 `pos` 在**每条 `calculate_function` 数组里定位到下标**（`x_idx`/`y_idx`/`xy_idx`），并与最近一次装配的 `(ptr,len)`、`end_x` 对撞 |
+
+新增消息类型：
+
+| type | 内容 |
+|---|---|
+| `fnpoints_ctor` | 每次装配：`caller`（`gw+471a8d` = 状态机侧 / `gw+3e44d9` = **target_manager** 侧）、`vec{cap,ptr,len}`、`start_pt`、`end_pt`、`end_x`、`owner_id`、与最近 8 条数组的 `same_ptr`/`same_bytes` |
+| `fnpoints` | JSON 写入器那一刻：`end_x`/`start_x`/`start_y` 的**位模式**、`owner_id`、调用栈、`vs_calc`（`end_x` 在每条数组里**命中的下标**、是否等于末点/倒数第二点） |
+| `pos_x_locate` | `0x472865` 那一刻：`n`、`pos_bytes`、`pos_x`、`last_fn{equal_x}`、`last_ctor{same_ptr,same_len,equal_x}`、每条数组的 `x_idx/xy_idx/same_bytes` |
+
+驱动新增开关：
+
+```bash
+--fnpoints                      # 打开上面这组钩子（不加 = 行为与之前逐字节相同）
+--campaign-level 20             # 开跑前把**工作区** XDG_DATA_HOME 的 user://campaign.save 写成 level_20
+--level-node 16                 # 点第 16 关（内置 21 个实测坐标；也可给 "x,y"）
+# 不给游戏，只把带 --fnpoints 的原始 JSONL 摘成入库样本（规则在代码里，可复跑）：
+--endx-extract raw.jsonl --endx-extract ode.jsonl --label normal_l0 --label ode_l16 \
+    --series-mode Normal,DiffEq --series-level 0,16 --series-exprs "sin(x)+3,x/2" \
+    --series-exprs "y,-y,sin(x)-y/2" --endx-fixture-out fixtures/frida_endx_sample.jsonl
+```
+
+⚠ 三个本轮新踩的坑（`docs/06` §28.7）：
+
+1. **本机是 niri/Wayland 会话**：`WAYLAND_DISPLAY` 存在时 Godot 走 `DisplayServerWayland`，
+   **不在 Xvfb 上建 X11 窗口**（`xdotool search` 一直返回 `root`，整轮 0 发）。驱动现在启动前把它摘掉。
+2. **Xvfb 要用后台作业起**（同一条命令里 `(Xvfb … &)` 起的会随命令退出被杀，
+   下一条命令里游戏报 `X11 Display is not available`）。
+3. 战役第 16 关弹窗的 `Start` 在 `(1072,1009)`、关卡节点 `(691,751)`（1920×1160）——
+   `--level-node` 用的是内置坐标表，别手敲。

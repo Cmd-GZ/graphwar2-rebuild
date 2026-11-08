@@ -1598,3 +1598,436 @@ python3 tools/bit_exact_attrib.py --json b.jsonl --check-baseline --axis batch
 
 **没有改动**：`src/`、`client/`、`dispatch/`、`fixtures/guardrails.json`，以及
 `tools/frida_point_array.{js,py}`（并行任务 39 正在改它们，本轮的探针是**独立**的一套）。
+
+## 28. `FunctionPoints.end_x` 的真身：`0x4569b8` 的 `pts[len-1].x`，但它是**开火那一刻从一份副本**读的（2026-11-08，`dispatch/44`）
+
+> 任务书：[`dispatch/44-endx-truth.md`](../dispatch/44-endx-truth.md)。起点 `CG@e24ba07`，分支 `agent/endx-truth`。
+> **本节全部是运行时观测**（frida 17.26.1 挂在真游戏 `Graphwar II` Linux 2.0.60 里，
+> `libgraphwarrust.so` sha256 `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`
+> = 逆向目标那份）。探针 [`tools/frida_point_array.js`](../tools/frida_point_array.js)（新增 `--fnpoints` 一组钩子，
+> **只读**）+ 驱动 [`tools/frida_point_array.py`](../tools/frida_point_array.py)；
+> 入库样本 [`fixtures/frida_endx_sample.jsonl`](../fixtures/frida_endx_sample.jsonl)（1 行 provenance + 12 行 shot，24 KB 纯文本）。
+>
+> 编号：本节之前最大是 §27。
+
+### 28.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | **`end_x` 在哪读出来的** | `0x4569b8`（fn `0x456810`，`fixtures/module_funcs.tsv` 归属 **`graphwar_function_manager.rs`**）：`movq -0x10(%rcx,%rax,1),%xmm0`，`rcx` = `Vec` 的 ptr、`rax` = `len·16` ⇒ **`pts[len-1].x`**。同处 `0x4569be movdqu (%rcx),%xmm1` = **`pts[0]`** ⇒ 报文 `start_x/start_y`；`0x4569ce mov %r15d,0x30(%rsp)` = `owner_id`（u32） | **观测 + 指令语义** |
+| ② | **`pos_x` 在哪读的** | `0x472865`（`execute_results`）：`movdqu -0x10(%rdx,%rcx,1)` = **队列项那块数组**的 `pts[n-1]`（与 §27/§43 同一条指令） | **观测**（§27 11/11 + 本轮 12/12） |
+| ③ | **两处是同一次读吗** | **不是**：**不同对象**（开火时的一份**副本** vs 结算时**队列里那块**）、**不同时刻**（相差 1.2 s / 16 s 不等）；**下标相同**（都是 `len-1`，本轮 12/12 都定位到最后一个点） | **观测** |
+| ④ | **装配点有几个** | **两个**（= 任务书的可能 (c)）：`0x471a88`（`game_state_manager` 侧，喂的是**副本**）与 `0x3e44d4`（**`graphwar_target_manager.rs`** 侧，喂的是另一次 `calculate_function`（`gw+3e2d3b`）那条数组）。**报文里上线的那个是前者**（12/12，判据见 28.2 第 3 条） | **观测** |
+| ⑤ | **本轮抓了几发** | **12 发**（2 × Normal level 0 + 10 × DiffEq level 16）；**12/12 `end_x == pos_x`**（逐位），队列那块在结算那一刻与开火时**逐字节相同**（12/12）⇒ **本轮没复现出那 100 发的不一致** | **观测** |
+| ⑥ | **那 100 发里谁不是"这次读"** | 判据：把 `end_x`、`pos_x` 分别与"用报文自己记的起点复算出的末点 x"**逐位**比（`residual_fold` 现成字段）。DiffEq 550 发：**`pos_x` 一次都不逐位相等**（0/100；82/100 只差 1–3 ulp），**`end_x` 有 35/100 逐位相等**；而 450 发"命中"里**两者都是 359/450 逐位相等**。⇒ **`pos_x` 是那个不属于"这条曲线末点"的字段** | **观测**（语料）+ **推断**（机制） |
+| ⑦ | **差的是 1 个采样步 / 末几位 / 还是别的来源** | 实测两个装配点的数组**起点差 1 ulp**，末点 x 在 **2/12 发**里正好差**一个采样步**（`0.00875` / `0.0075`），其余 10 发**逐位相同**；语料那 100 发里 **56 发 ≤0.02（一步）· 44 发 <1e-12（末几位）** ⇒ 两种形状同源 | **观测** |
+
+### 28.1 `end_x` 的装配点：`graphwar_function_manager.rs` 的 `0x456810`（逐指令）
+
+函数 `[0x456810, 0x456b75)`（`.eh_frame` FDE）。`objdump` 原文（`base+RVA`，构建见头）：
+
+```text
+456810  push …                               ; rdi = self、esi = owner(soldier id)、rdx = &Vec<(f64,f64)>
+456833  lock cmpxchg …                       ; 一把自旋锁
+45687a  je 45692c                            ; 走 HashMap 分支（key = esi）
+4568f1  cmp -0x78(%r14,%rbp,1),%r15d         ; 命中记录
+45697f  lea 0x1(%r8),%rax                    ; r8 = 0x7fffffffffffffff
+456991  mov 0x8(%r12),%r12                   ; r12 = self
+45699c  cmpq $0x0,0x10(%r12)
+4569a2  mov 0x8(%rbx),%rcx                   ; ★ rcx = 点数组 ptr（rbx = rdx = &Vec）
+4569a6  shl $0x4,%rax                        ; ★ rax = len·16
+4569b8  movq -0x10(%rcx,%rax,1),%xmm0        ; ★★ end_x = pts[len-1].x
+4569be  movdqu (%rcx),%xmm1                  ; ★★ start_x/start_y = pts[0]
+4569c2  movdqu %xmm1,0x18(%rsp)              ;   payload+0x00/+0x08
+4569c8  movq %xmm0,0x28(%rsp)                ;   payload+0x10 = end_x
+4569ce  mov %r15d,0x30(%rsp)                 ;   payload+0x18 = owner_id（u32）
+4569d3  lea 0x26(%r8),%rax                   ;   r8 = 0x7fff…ff ⇒ 0x8000000000000025
+4569d7  mov %rax,0x10(%rsp)                  ;   ★ 判别式 37 = FunctionPoints（见下）
+4569dc  lea 0x10(%rsp),%rsi
+4569e1  call *0x9bac80(%rip)                 ;   入队 / 派发
+```
+
+判别式 37 的独立核对：事件枚举 → JSON 的派发器 `0x504640` 用 `0x1c48d0` 的 62 项 int32 跳表
+（`movslq (%rdx,%rcx,4)` + `add` + `jmp *%rcx`），**第 37 项 = `0x5046c9` → jmp `0x50eb20`**，
+而 `0x50eb20` 逐条写下 `{"FunctionPoints":{…}}`（键名与长度：
+`FunctionPoints`@`0x1c55e9`/14、`start_x`@`0x1c506b`/7、`start_y`@`0x1c5072`/7、`end_x`@`0x1c5079`/5、
+`owner_id`@`0x19f6c8`/8；结构体偏移依次 `%r14` / `0x8(%r14)` / `0x10(%r14)` / `0x18(%r14)`）。
+⇒ `0x4569b8` 读的那 8 个字节**就是**报文里的 `end_x`。
+
+**两个直接调用点**（`call 0x456810` 的反查只有这两条）：
+
+| 站点 | 模块 | 喂进去的 `&Vec` 是 |
+|---|---|---|
+| **`0x471a88`** | `graphwar_game_state_manager.rs` | 一份**副本**：`mov %r12,0xb8(%rsp) / mov %r14,0xc0(%rsp) / mov %r12,0xc8(%rsp)` 拼出来的三元组；实测与 `gw+3c30c7` 那条**逐字节相同、指针不同**（12/12 `same_bytes=true`、`same_ptr=false`） |
+| **`0x3e44d4`** | **`graphwar_target_manager.rs`**（fn `0x3e2830`） | 它自己那次 `calculate_function`（调用点 `0x3e2d35`，返回 `gw+3e2d3b`）的返回值，**同一个指针**（12/12 `same_ptr=true`） |
+
+### 28.2 一次开火的实测链路（12 发；每发都抓到四处）
+
+```text
+t≈36.9s  calculate_function(gw+3c30c7)  → 数组 A（shot_calculator），ptr=P_A
+t≈36.93s 0x456810 @ 0x471a88            → FunctionPointsEvent{pts[0], pts[len-1].x}   ← 喂的是 A 的**副本**（P_A'）
+t≈36.94s 0x50eb20                       → JSON：{"FunctionPoints":{…}}（= 上面那个事件，键序 owner_id/start_x/start_y/end_x）
+t≈37.9s  calculate_function(gw+3e2d3b)  → 数组 B（target_manager），ptr=P_B，起点比 A **差 1 ulp**
+t≈37.9s  0x456810 @ 0x3e44d4            → 第二个 FunctionPointsEvent（喂的是 B 本身）
+t≈38.1s  0x472865                       → pos = A[ n-1 ]（rdx = P_A，**队列里那块**）
+```
+
+三条判据（都在样本里逐发可查）：
+
+1. **报文里的是哪个事件**：两个事件的 `start_x/start_y` 来自各自数组的 `pts[0]`，而 A/B 的起点差
+   **1 ulp**（例如 `40f4fbc49790eebf` vs `3ff4fbc49790eebf`）⇒ 拿 JSON 写入器那一刻的
+   `start_y` 一比特就能点名。**12/12 命中的是 `0x471a88` 那个**（`judge_ser_eq_ctorA=true`）。
+2. **`pos_x` 读的是哪块**：`0x472865` 的 `rdx` **等于** A 的指针（12/12 `same_ptr=true`），
+   且与开火时留的 A 副本**逐字节相同**（12/12 `same_bytes=true`）。
+3. **两处下标**：`end_x` 取 `len-1`、`pos` 取 `n-1`，且每发都用"在整条数组里逐字节找这个 8 字节"
+   验证过命中下标（`x_eq_idx=[len-1]`、`xy_idx=[n-1]`），**没有出现过 `len-2`**。
+
+⇒ **`end_x` 与 `pos_x` 是两次读：一次读副本、一次读队列那块。下标相同，对象不同，时刻不同。**
+
+### 28.3 那 100 发：哪个字段不是"这次读"（判据 + 结果）
+
+判据只用**报文自己的量**（不需要任何实现参与），三条一起看：
+
+```text
+(a) pos_x  与 end_x  逐位比                        → 语料 240/1290 不等（§25.6）
+(b) pos_x  与「用报文自己的 start_x/start_y 复算出的末点 x」逐位比  → `residual_fold` 的 ode_found
+(c) end_x  与同一个复算末点 x 逐位比                                → `residual_fold` 的 ode_end_x_match
+```
+
+```bash
+R=<WS>/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example residual_fold -- --dir $R --json fold.jsonl   # 1290（Normal 740 / DiffEq 550）
+# 只用 fold.jsonl 里的 pos_x / end_x / ode_last_x 三个字段做逐位（to_bits）比较：
+```
+
+| 桶 | `pos_x` 与复算末点 x | `end_x` 与复算末点 x |
+|---|---|---|
+| **100 发 `pos_x ≠ end_x`**（DiffEq） | 逐位相等 **0** ／ 差 ±1 ulp 70、±2 ulp 10、±3 ulp 2（合计 82）／ 差很远 18 | 逐位相等 **35** ／ 差很远 65 |
+| **450 发 `pos_x == end_x`**（DiffEq，正对照） | 逐位相等 **359** ／ 差很远 91 | 逐位相等 **359** ／ 差很远 91 |
+| 100 发只取**单发批**（86 发，排除配对错位） | 逐位相等 **0** | 逐位相等 **28**（84 发里 33%）／ 450 桶的单发批是 **332/395 = 84%** |
+
+⇒ **判据的落点**：那 100 发里 `pos_x` **一次都没有**落在报文自己那条曲线的末点上（而且不是差得远，
+82/100 只差 1–3 ulp —— 正是"同一条积分、起点差 1 ulp"会给出的量级），
+`end_x` 则**有 1/3 是逐位相等**的。**⇒ 不是"这次读"的那个字段是 `pos_x`。**
+
+> ⚠ 同一张表也说明**不能把话说满**：那 100 发里 `end_x` 也有 65/100 与复算末点差很远
+> （=`residual_fold` 复算本身在这些发上就复现不出那条曲线，与 450 桶里那 91 发"差很远"同源）。
+> 所以第 ⑥ 条的正确读法是"**两边只有 `pos_x` 是 0 命中**"，不是"`end_x` 全部命中"。
+
+### 28.4 两者差的是"一个采样步"还是"末几位"：两个装配点各自算了一遍
+
+两个装配点喂的是**两次不同的 `calculate_function`**（起点差 1 ulp），所以它们的 `end_x` 天然可能不同：
+
+| 系列 | 发 | `A.end_x` | `B.end_x`（target_manager） | 差 |
+|---|---|---|---|---|
+| `ode_l16` #3 `sin(x)-y/2` | 5432 点 | `24.992781822448826` | `24.984031822448827`（5431 点） | **0.00875**（= 一个 x 步） |
+| `ode_l16b` #5 `0-0.7` | 4518 点 | `24.997032951919522` | `24.98953295191952` | **0.0075**（= 一个 x 步） |
+| 其余 10 发 | — | — | — | **0.0**（逐位相同） |
+
+语料那 100 发的形状（§25.6 复算过）：**56 发 ≤0.02（一个步长）· 44 发 <1e-12（末几位）**。
+⇒ 量级、形态都对得上：**两个装配点各自用了一条"起点差 1 ulp"的数组算末点 x**。
+`pos_x` 站在其中一条上，`end_x` 站在另一条上，就会出现这两种形状；两条恰好一致时就相等。
+
+### 28.5 本轮**没**做到的（诚实清单）
+
+1. **没复现出那 100 发的不一致**：12 发（2 Normal + 10 DiffEq）全部 `end_x == pos_x`，
+   队列那块在结算时与开火时**逐字节相同**（`same_bytes=true` 12/12）。所以
+   "结算那一刻队列里装的是**另一条**数组"这一步**没有被直接观测到**，它是**推断**。
+   缺的证据很具体：**需要一发"线上 `end_x` 来自 `0x3e44d4`（target_manager）而 `pos_x` 来自队列那块"的样本**。
+   本轮 12 发里 JSON 写入器**一次都没**拿到 target_manager 那个事件（`judge_ser_eq_ctorB` 只有 4/12 为真，
+   且那 4 发里 A≡B，分不出来）。
+2. **两个装配点各自在什么条件下被上线/被消费，未定性**。已知：`0x3e44d4` 那一支必然在每次开火后
+   都跑（12/12 都装了一次），但它的消息**没有**进 JSON 写入器。
+3. **`owner_id` 的宽度**：装配处写 `mov %r15d,0x30(%rsp)`（4 字节），而写入器按 8 字节读（`mov $0x8,%edx`
+   是**键名长度** `owner_id`）。本轮在写入器那一刻读 `+0x18` 的 8 字节，**高 4 字节是脏的**
+   （抓到 `7f…` 这种值）；报文里落的是低 32 位。**未定性**：这是编译器的 4 字节写 + 结构体 8 字节槽，
+   还是我读错了偏移（低 32 位与装配处 `owner=230/231` 一致，但高半未验）。
+4. **只测了战役第 0 关（Normal）与第 16 关（DiffEq）的单人局**；联网局、多人局、带障碍/命中的局**没有样本**。
+
+### 28.6 复跑（两条命令 + 新开关）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+# ① 自己起 Xvfb（**必须 TCP**；本机是 niri/Wayland 会话，驱动已把 WAYLAND_DISPLAY 摘掉，见 28.7 坑 1）
+Xvfb :117 -screen 0 1920x1160x24 -listen tcp -ac -nolisten unix &
+# ② Normal 局（2 发）
+$PY tools/frida_point_array.py --attach --fnpoints --display 127.0.0.1:117 \
+    --settle 22 --shots 2 --gap 12 --exprs "sin(x)+3,x/2" --tail 22 --eval-rows 0 --out run.jsonl
+# ③ DiffEq 局（战役第 16 关 = func=1）：驱动代写 user://campaign.save 并点第 16 个节点
+$PY tools/frida_point_array.py --attach --fnpoints --display 127.0.0.1:117 \
+    --campaign-level 20 --level-node 16 --settle 24 --shots 6 --gap 13 \
+    --exprs "y,-y,sin(x)-y/2,0,x/2-y,y/2" --tail 25 --eval-rows 0 --out ode.jsonl
+# ④ 语料那条（28.3 的表）
+cargo run --release --offline -q --example residual_fold -- --dir $R --json fold.jsonl
+```
+
+新开关（全部**新增**，不给时行为与之前逐字节相同）：
+
+```bash
+--fnpoints                 # 打开 FunctionPoints 探针（fnpoints_ctor / fnpoints / pos_x_locate 三条消息）
+--campaign-level N         # 开跑前把**工作区** XDG_DATA_HOME 的 user://campaign.save 写成 level_N
+--level-node K | "x,y"     # 点第 K 关（内置 21 个实测坐标）或直接给坐标
+```
+
+### 28.7 本轮新踩的两个坑
+
+1. **本机是 Wayland 会话，Godot 会绕过 Xvfb**：`WAYLAND_DISPLAY=wayland-1` 存在时引擎走
+   `DisplayServerWayland`，**根本不在 Xvfb 上建 X11 窗口**（`xdotool search` 一直返回 `root`、
+   点击全落在根窗口、整轮 0 发）。驱动现在启动游戏前把 `WAYLAND_DISPLAY` 摘掉；
+   手工跑时也要 `env -u WAYLAND_DISPLAY`。
+2. **Xvfb 必须用后台作业起**：在同一条 `bash -c` 里 `(Xvfb … &)` 起的 Xvfb 会随那条命令退出被杀，
+   下一条命令里的游戏就报 `X11 Display is not available`（实测一次）。
+
+### 28.8 样本入库
+
+```text
+fixtures/frida_endx_sample.jsonl     1 行 provenance + 12 行 shot（24 KB，纯文本）
+  provenance：构建 sha256、5 个断点的 RVA 与"读什么"、正对照、指针口径（ASLR，仅同一次运行可比）、
+              **文件里没有**整条数组 hex / beat / reallocs / 任何路径与用户名
+  每行 shot：series（normal_l0 / ode_l16 / ode_l16b）、shot、expr_typed、mode、level
+             · ctor_A：caller=gw+471a8d、t_ms、vec{ptr,len}、end_x 位模式 + f64、start_pt/end_pt、owner_id、
+                       与最近两次 calculate_function 的对照（same_ptr/same_bytes）
+             · ctor_B：caller=gw+3e44d9、t_ms、vec{ptr,len}、end_x、start_pt
+             · wire：JSON 写入器那一刻的 end_x / start_x / start_y 位模式
+             · pos：t_ms、rdx、n、pos_bytes、pos_x 位模式、last_ctor、**在每条数组里命中的下标**
+             · judge_ser_eq_ctorA / judge_ser_eq_ctorB / judge_pos_eq_ctorA / judge_pos_eq_ctorB
+             · A_minus_B_end_x、A_minus_B_len、queue_array_bytes_unchanged_at_pos_read
+```
+
+**正对照（说"相等"之前必须先有的那条）**：
+
+1. 探针**装机时**自跑 `selfTestCompare()`：两条 100 点合成数组逐位相同 → `same=true`；翻第 37 点 1 bit →
+   `diffPoints=1`；再翻第 90 点 → `diffPoints=2`。本轮四次装机都是 `true/true/true`。
+2. **运行期**正对照：同一发两次 `calculate_function`（`gw+3c30c7` 与 `gw+3e2d3b`）的数组在
+   DiffEq 局经常不同（`diffPoints=129 / 3872 / 445 / 103`，`Normal` 局则相同）⇒ 比对函数在真数据上
+   **报得出不同**；而 `end_x` 与 `pts[len-1].x` 的"相等"是**比出来的**，不是假设的
+   （每发还额外核了 `prev_x_eq=false`，即它不是倒数第二个点）。
+
+### 28.9 护栏（本分支实测）
+
+| 项 | 结果 |
+|---|---|
+| `cargo test --offline` | **1631 通过 / 0 失败**（= 基线，本轮**没加**测试） |
+| `src/`、`client/`、`dispatch/`、`fixtures/guardrails.json` | **零改动** |
+| 本轮改的文件 | `tools/frida_point_array.{js,py,README.md}`（**只加**新开关与新钩子）、`fixtures/frida_endx_sample.jsonl`（新增）、本节 |
+
+`fire` / `batch` / `batch_conv` 三条轴本轮**没有重跑**（本分支不碰 `src/`，护栏数字与基线同；
+按 AGENTS.md §B 应该在合并侧跑）。
+
+## 29. `DiffEq` 的三条**边界**：点数预算用尽 / 二分 100 次不收敛 / 有障碍（2026-11-08，`dispatch/45`）
+
+> 起点 `CG@e24ba07`，分支 `agent/ode-edge-cases`。**本节全部是运行时观测**：frida 17.26.1 挂在真游戏
+> `Graphwar II` Linux 2.0.60 里，`libgraphwarrust.so` sha256
+> `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`（= 逆向目标那份，逐字节相同）。
+> 探针 [`tools/frida_ode_edge.js`](../tools/frida_ode_edge.js)（下断，只读）+ 驱动
+> [`tools/frida_ode_edge.py`](../tools/frida_ode_edge.py)（**从 40 号那两支复制出来的独立一支**，
+> 不改 `frida_ode_probe.*` / `frida_point_array.*`，并行任务 44 在改后者）；
+> 逐位复算仍用 [`examples/ode_array_check.rs`](../examples/ode_array_check.rs)。
+> 入库样本 [`fixtures/frida_ode_edge_l16.jsonl`](../fixtures/frida_ode_edge_l16.jsonl)（4 发）+
+> [`fixtures/frida_ode_edge_l17.jsonl`](../fixtures/frida_ode_edge_l17.jsonl)（3 发），1 行 provenance + 每发 1 行，纯文本。
+>
+> **编号说明**：本节之前最大节号是 §27（44 号用 §28），本节按任务书取 **§29**。
+
+### 29.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | **"点数预算用尽"抓到了吗** | **抓到了**：`20*cos(40*x)-2*y` 一发，采样器两次调用都返回 **`n = 20001`**，收尾处 `count = 20000 = budget` ⇒ 预算用尽（§29.4） | **观测**（停因）+ **逐位**（8/8 数组同长同字节） |
+| ② | **"二分 100 次不收敛"抓到了吗** | **抓到 2 发**（另加 1 发复跑）：`sqrt(0-y)`（`n=1`，第一步就出不去）与 `sqrt(24-x)/20-y/5`（`n=4707`，撞在 `x=24` 的 NaN 墙上）；判据是收尾处 `count < budget` 且**接受路径没有任何出口** ⇒ 二分把 100 次用完 | **观测** |
+| ③ | **预算用尽时原版保留哪些点** | **20001 个** = 首点 1 + **接受的 20000 个**（`(200/0.01) as i32 = 20000`）。最后一点就是第 20000 个被接受的点；`pos = pts[20000]`。语料里那 8 发 `n=20001` 与此一致 | **观测 + 逐位** |
+| ④ | **有障碍时的 `Ode`** | 采样器**不认识**障碍（第 17 关里它照旧一路采到 `|x|>25`，`n=5098`）；**截断发生在采样器之外**：`execute_results` 读到的**还是同一块缓冲**，但长度被改成 **1528**（`same_ptr=true / same_len=false`），`pos = pts[1527]`。另两发（`OverY` / 不收敛）没有被截 | **观测** |
+| ⑤ | **我们的停判据与真机一致吗** | **一致**：把每发的 `(tokens, x0, y0, step, flip, mode)` 原样喂我方 `calculate(..., Mode::Ode)`，**22/22 次采样器调用整条数组逐位相同**（L16 8/8、L17 6/6、另一局复跑 8/8），`n` 全部同长（含 `n=20001` 与 `n=1`） | **逐位** |
+| ⑥ | **40 号把 `sqrt(0-y)` 那发记成 "NaN" 对不对** | **不对，已更正**：真机停因是**二分 100 次不收敛**，不是 NaN。而且 0x3c2881 那条 `jp`（NaN 出口）在 `Ode` 下**进不去**（`|chord-step|<0.001` 先要求 chord 有限 ⇒ `cand_y` 不可能 NaN），**全程 0 次命中** | **观测 + 指令论证**（§29.6） |
+
+### 29.1 停因怎么变成**运行时事实**（而不是"看最后一个点像什么"）
+
+40 号的 11 发样本里，停因是**我方 trace 反推**的（样本里只有 `(ptr,n)` 与首末点），所以
+"预算用尽 / 不收敛"这两条**一条也没验**。本节把它们变成运行时事实的办法是：
+**在五条出口各自的判决指令上下断**，按二进制的顺序把条件再算一遍。
+
+`0x3c2530` 的 `Ode` 分支（`0x3c25fe` 起；`0x3c25f5 test %r15b,%r15b` 分出 `Normal` 走 `0x3c2923`）逐条：
+
+| RVA | 是什么 | 停因 | 本节挂不挂 |
+|---|---|---|---|
+| `0x3c2840` | **接受路径入口**（`0x3c27f2 ja` 即 `0.001 > |chord-step|` 成立才进来，一个点一次）。进来之后二进制按 `ucomisd px,cand_y`+`jp` → `ucomisd 25.0,|mid|`+`ja` → `ucomisd 15.0,|cand_y|`+`ja` 的顺序查 | **NaN / OverX / OverY 三者** | ✅ 挂（非分支指令） |
+| `0x3c2b5d` | **公共收尾**：所有出口 + 正常结束都跳这里，1 次调用只进 1 次 | `count == budget` ⇒ **预算用尽**；`count < budget` 且接受路径没记过停因 ⇒ **不收敛** | ✅ 挂（非分支指令） |
+| `0x3c2835` | `jmp 0x3c2b5d`：hi=mid 分支把 `ebx=100` 用完 | 不收敛 | ❌ **不挂**（见 §29.5） |
+| `0x3c2679` | `je 0x3c2b5d`：lo=mid 分支把 100 次用完 | 不收敛 | ❌ 不挂（逐轮命中太密） |
+| `0x3c291e` | `jmp 0x3c2b5d`：`cmp %r13d,%r12d` 相等（`r12` = 接受点数，`r13` = `(200/step) as i32`） | 预算用尽 | ❌ **不挂**（见 §29.5） |
+
+帧里的两个值直接来自那两条 `movapd`：`mid @ rsp+0x80`（`0x3c26a1` 写入）、
+`cand_y @ rsp+0x50`（`0x3c27bc` 写入）；`0x3c2871/0x3c2860` 正是把它们装进 `xmm0/xmm1` 再 `ucomisd`。
+所以"在 `0x3c2840` 上复算"与"在那三条 `jp`/`ja` 上看"**同义**，但每个点只挂 1 次而不是 3 次。
+
+**三条与实现无关的正对照**（都进了入库样本的 provenance）：
+
+1. `count + 1 == n`：每一发都成立（`stop.count_plus1_eq_n = 4/4`、`3/3`）——"接受点数 = 数组长度 − 首点"；
+2. 预算那一发 `count == budget == 20000`（`budget_exits_with_count_eq_budget = 1`）；
+3. 探针装好时跑一次 `stopSelfTest()`：**14 组**合成帧值喂给**同一个** `classifyFrame()`，
+   五条出口各认得出，且近邻不认（恰好 `25.0` / 恰好 `15.0` / NaN 不走 `ja` / `count != budget`）；
+   本节两次运行的 `selftest.stop.ok` 都是 `true`。
+
+### 29.2 三类边界怎么造（可复跑）
+
+`Ode` 局的造法沿用 40 号：`user://campaign.save = level_20` 解锁 21 关 → `Campaign` →
+关卡网格第 N 个节点 → `Start`。**`Level 16` = 战役第 17 关**（`func=1`、无障碍），
+**`Level 17` = 战役第 18 关**（`func=1`、散布式障碍 `min_count=10`、2 个靶），节点坐标 `(963,751)`。
+
+> ⚠ **士兵起点每局随机**：本轮四次运行的起点分别是 `(-13.78,-5.69)`、`(-22.64,13.60)`、`(-2.84,-3.09)`、
+> `(-16.63,12.14)`、`(-11.55,-11.61)`。**式子必须对起点鲁棒**，否则"造出来的边界"只是运气：
+> 第一轮用 `40*cos(40*x)`（对 `y0=-5.69` 能跑满预算）在 `y0=13.60` 那局**只走了 143 点就越 `|y|>15`**。
+
+三类样本的式子（都先在**我方实现**上用 `examples/ode_stop_trace` 扫过 `x0 ∈ {-22.6,-17,-13.8,-8}` ×
+`y0 ∈ {-13…14.5}` 的 32 个起点，全部给出同一停因才拿去打）：
+
+| 目标 | 式子 | 为什么它能造出来 |
+|---|---|---|
+| **预算用尽** | `20*cos(40*x)-2*y` | `-2*y` 把 `y` 钉在 0 附近（`y` 有界 ⇒ 不会先越界），`20*cos(40*x)` 让 `|dy/dx|≈20` ⇒ 每个点只前进 `step/20`，走满 20000 点才走 10 个 x 单位（棋盘宽 50） |
+| **二分不收敛**（x 方向） | `sqrt(24-x)/20-y/5` | `x=24` 是一堵 **NaN 墙**（`sqrt(负)`）。`x` 每次前进 ≈`step`，撞墙前最后一步 `d<0.01`，而墙前 `chord≈d`（`< step-0.001`）⇒ 二分永远找不到 `|chord-step|<0.001` 的 `h`，100 次用完后收尾 |
+| **二分不收敛**（y 方向） | `sqrt(0-y)` | `y` 从负侧逼近 0（`y'=sqrt(-y)` 减速），撞到 `y=0` 那堵 NaN 墙同理；本题里它常表现为 **`n=1`**：第一步就出不去（`y0>0` 时整条区间都是 NaN 候选） |
+| **有障碍** | 第 17 关 + 任意 `Ode` 式子 | 采样器只吃 token（不吃障碍表），所以障碍**不可能**在采样器里停；要看的是**后面谁把它截短** |
+
+可复跑命令（`--full-array` 才带整条数组；原始 JSONL **不入库**）：
+
+```bash
+# ① 私有 Xvfb（TCP；只让 glvnd 看 mesa，否则 Xvfb 自己在 swrast_dri 里 core dump）
+export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
+       LIBGLX_VENDOR_LIBRARY_NAME=mesa LIBGL_ALWAYS_SOFTWARE=1
+Xvfb :95 -screen 0 1920x1160x24 -listen tcp -ac -nolisten unix &
+
+# ② L16（无障碍）：越界 / 不收敛 ×2 / 预算用尽
+.reference/venv/bin/python tools/frida_ode_edge.py --attach --display 127.0.0.1:95 \
+    --out <abs>/g.jsonl --campaign-level 20 --level-node 16 --shots 4 --gap 25 --tail 140 --full-array \
+    --exprs "sin(x)-y/2,sqrt(0-y),sqrt(24-x)/20-y/5,20*cos(40*x)-2*y"
+
+# ③ L17（有障碍）
+.reference/venv/bin/python tools/frida_ode_edge.py --attach --display 127.0.0.1:95 \
+    --out <abs>/h.jsonl --campaign-level 20 --level-node 17 --shots 3 --gap 25 --tail 60 --full-array \
+    --exprs "sin(x)-y/2,y,sqrt(0-y)"
+
+# ④ 逐位复算（我方 Ode 积分 vs 真机数组）与 ⑤ 入库
+cargo run --release --offline -q --example ode_array_check -- --raw <abs>/g.jsonl --json <abs>/rg.json
+.reference/venv/bin/python tools/frida_ode_edge.py --extract <abs>/g.jsonl --label l16_edge \
+    --repro <abs>/rg.json --fixture-out fixtures/frida_ode_edge_l16.jsonl
+```
+
+> **两个本机必踩的坑（本轮都真踩了）**：① 宿主的 `WAYLAND_DISPLAY=wayland-1` 会让 Godot 连**真桌面**
+> 而不是 Xvfb（现象：`xdotool` 找不到窗口、日志里出现 `DisplayServerWayland`、每次都点在空处）⇒ 驱动里
+> 显式清掉 `WAYLAND_DISPLAY` 并加 `--display-driver x11`；② `pkill -f <pattern>` 会**匹配到自己那条
+> 命令**（命令行里含同样的字符串）⇒ 把整条 run 杀掉（本轮踩了两次，一次连 Xvfb 的 mesa 环境变量
+> 也漏了，Xvfb 自崩）。
+
+### 29.3 逐发样本（每发的 `(ptr,n)` / `pos` / 停因 / 式子）
+
+**L16（`Level 16`，无障碍）**：`x0 = -16.631895083956245`、`y0 = 12.13935088779579`、`step = 0.01`、`flip = 0`，每发两次采样器调用（`gw+3c30c7` / `gw+3e2d3b`）。
+
+| # | 式子（喂进去的 token 数） | `n` | 停因 | `count/budget` | `pos`（= `pts[n-1]`） |
+|---|---|---|---|---|---|
+| 0 | `sin(x)-y/2`（6） | 5796 | **OverX**（`\|mid\|>25`） | 5795/20000 | (24.99247991604208, -0.8480643343875887) |
+| 1 | `sqrt(0-y)`（4） | **1** | **不收敛**（第一步就 100 次用完） | 0/20000 | (-16.631895083956245, 12.13935088779579)（= 首点，哑弹） |
+| 2 | `sqrt(24-x)/20-y/5`（10） | 4707 | **不收敛**（撞 `x=24` 的 NaN 墙） | 4706/20000 | (23.99497991604136, 0.4989950509848507) |
+| 3 | `20*cos(40*x)-2*y`（10） | **20001** | **预算用尽**（`count == budget`） | **20000/20000** | (-1.4136919589615613, 0.0254310552857208) |
+
+**L17（`Level 17`，散射障碍 + 2 靶）**：`x0 = -11.551310177255347`、`y0 = -11.614455499437057`、`step = 0.01`、`flip = 0`。
+
+| # | 式子 | 采样器 `n` | 停因 | `count/budget` | `execute_results` 读到的 `n` | `pos` |
+|---|---|---|---|---|---|---|
+| 0 | `sin(x)-y/2` | 5098 | OverX | 5097/20000 | **1528**（← 被截，`same_ptr` 但 `same_len=false`） | (-4.399435177256279, 0.30409067451325844) = **`pts[1527]`** |
+| 1 | `y` | 344 | OverY | 343/20000 | 344（没截） | (-11.295528927255521, -14.999723026611177) |
+| 2 | `sqrt(0-y)` | 1407 | 不收敛 | 1406/20000 | 1407（没截） | (-4.741622677255167, -1.1498665087736645e-05) |
+
+每发的 `(ptr, n)`、摘要、首/末/次末点、token 流、`pos` 的 16 字节、以及"这个指针是哪一次采样器调用"
+都在样本里逐发可查（`report_array_calc.arr` / `pos_read.which_calc`）；指针是 ASLR 随机的**单局**值，
+**不是常量**，别拿它当证据之外的用途。
+
+### 29.4 "预算用尽时保留哪些点"——答案是 **20001**
+
+- `(200.0 / step) as i32` = `20000`（`step=0.01`），循环体最多接受 20000 个点；
+- 数组**开头**已经放了首点（士兵位置，`0x3c258d/0x3c2596` 写入），所以 `n = 1 + 20000 = 20001`；
+- 收尾时 `count(r12d) == budget(r13d) == 20000` **相等**，`0x3c2915 cmp` + `0x3c2918 jne` 不跳 ⇒ 直接收尾；
+- 拿真机抓的 `(tokens, x0, y0, step, flip, mode)` 喂我方实现：**20001 点、逐位相同**（`same_len=true`、`diff_points=0`）
+  ⇒ 我方既没有少留一个点，也没有多试一个点；
+- 语料侧（40 号 §27.5 第 ⑤ 条）那 **8 发 `n=20001`** 与本轮**同一判据**，但本轮是**第一次**在运行时
+  看到 `count == budget` 那一刻，不是从 `n` 反推的。
+
+### 29.5 有障碍的 `Ode`：截断在**采样器之外**，而且是**原地改长度**
+
+第 17 关那发 `sin(x)-y/2`：
+
+1. 采样器两次调用都返回 **`n = 5098`**、整条数组与**我方实现逐位相同**（`ode_array_check` 6/6）；
+2. `execute_results` 读点的那一刻（`0x472865 movdqu -0x10(%rdx,%rcx,1)`）：`rdx` **就是**那次调用的缓冲
+   （`which_calc.same_ptr = true`），但 `rcx/16 = **1528**`（`same_len = false`）；
+3. 我们把 `pos` 这 16 字节在整条 5098 点数组里搜：**唯一命中下标 1527**（`pts[1528-1]`）⇒
+   报文读的仍然是"`n-1` 这个点"，只是**那个 `n` 已经被人改小了**；
+4. 同一局里另两发（`y` → OverY `n=344`；`sqrt(0-y)` → 不收敛 `n=1407`）**没有**被截 —— 它们的弹道
+   在语义上先停住了（`|y|→15` / 二分失败），没有碰到障碍。
+
+⇒ **采样器不认障碍**这句话第一次有了运行时对照：**同一发里"采样器给的 5098"和"报文读的 1528"并存**。
+`1528` 这个数就是"弹道撞上障碍"的位置（`(-4.399435177256, 0.304090674513)`）。
+**谁**把它改成 1528（哪个函数、按什么顺序查障碍）本节**没有**定位 —— 只证明了"截断发生在采样器返回之后、
+`execute_results` 读点之前，且是原地改 `Vec` 的 len"。这条留给下一轮（判据：在 `0x472865` 之前
+对该 `(ptr,len)` 对写一个 watchpoint，或用 frida 的 `MemoryAccessMonitor` 抓写入者）。
+
+### 29.6 一处**旧说法更正** + 五条出口里那条"NaN"其实进不去
+
+**更正**：§27.3 的逐发表格第 10 行（`sqrt(0-y)`，`n=789`）把停因写成 **NaN**。本轮在运行时把出口
+判决指令挂上以后，同一类式子的真机停因是**二分 100 次不收敛**：`sqrt(0-y)` 在 `y0>0` 的局里是
+`n=1` 且接受路径一次都没进（`count=0`），在 `y0<0` 的局里是 `n=789/4707…`，同样 `count < budget`。
+§27.3 表格上已加更正行。
+
+**为什么"NaN 出口"进不去**（`0x3c2881 jp 0x3c2b5d`，比较 `xmm0=cand_y` 与 `xmm1=px`）：
+
+- 要执行到 `0x3c2881`，必须先**从 `0x3c27f2 ja 0x3c2840` 进接受路径**，条件是 `0.001 > |chord-step|`；
+- `chord = hypot(h, cand_y - y)`：只要 `cand_y` 是 NaN，`chord` 就是 NaN ⇒ `|chord-step|` 是 NaN ⇒
+  `ucomisd` 无序 ⇒ `ja` **不成立** ⇒ 走**不收敛**那一支（`0x3c27f4` 的 `cmpunordsd` 把它送去 `hi=mid`）；
+- `px = ±mid`，而 `mid = (lo+hi)/2` 由有限值算出，**不可能是 NaN**；
+- ⇒ `0x3c2881` 的两个操作数在 `Ode` 分支上**都不可能**是 NaN。本轮所有运行里这条断点**一次没命中**
+  （`stop.kind` 从未出现 `NaN`）。
+
+**这条对上游文档的影响**：`docs/04-path-sampling.md` §2/§5 把"候选 NaN"列成五个出口之一 —— 在
+**`Ode` 分支**上它是个**死分支**（NaN 候选实际走"100 次不收敛"）。`Normal` 分支（`0x3c2923` 那套）
+本轮**没测**，不做结论。
+
+### 29.7 一个探针陷阱：**无条件 `jmp` 不能挂**（这条差点让我们把停因写错）
+
+第一版探针（照 40 号那套）分别挂了 `0x3c2835` 与 `0x3c291e` —— 两条都是 `jmp 0x3c2b5d`。结果：
+**每一次采样器调用都会两条都命中**，连 `n=1` 的那发也是
+`flow_tail = ['NoConverge@3c2835', 'Budget@3c291e', 'epi']`
+（而 `n=1` 根本没进过接受路径 ⇒ 不可能走到 `0x3c291e`）。
+
+三条对照说明这是**观测假象**、不是游戏行为：
+
+1. 同一次运行里 `n=1`、`n=4707`、`n=20001` 三种发**都是**"先 NoConverge 再 Budget"，与"预算是否用尽"无关；
+2. 这些发返回的点数组与**我方实现逐位相同**（`ode_array_check` 8/8）⇒ 多出来的那次"经过"没有改变结果
+   （两条 `jmp` 的目标都是同一个收尾 `0x3c2b5d`，跳错了也看不出来）；
+3. 换成"只挂非分支指令（`0x3c2840` + `0x3c2b5d`）"以后，判据立刻自洽：
+   预算那发 `count==budget`，不收敛那两发 `count<budget` 且接受路径无出口，`OverX` 那发在 `0x3c2840` 上就停。
+
+⇒ **规矩（写给下一个挂探针的人）**：frida 的 `Interceptor` 挂**分支指令**（`jmp`/`jcc`）时，
+"这条指令执行了"与"这条分支真的跳了"**不是一回事**；要判分支有没有跳，**挂在它的入口块 +
+用寄存器/栈帧自己把条件算一遍**，或者干脆挂**非分支**的落点。
+
+### 29.8 仍未确定 / 本轮没覆盖
+
+1. **"把 `n` 改成 1528"的那个写入者没定位**（§29.5 第 4 条）——只证明了"采样器之后、读点之前、原地改 len"；
+2. **只测了 `Level 16 / 17`**：`Level 18/19/20`（同样是 `func=1`，但 3/4/5 个士兵 + Bot）**没测**；
+   多士兵局里每个士兵各一发、`flip` 可能为 1，这轮一个都没有；
+3. **`flip=1` 的 `Ode` 仍然 0 发**（与 40 号一样：我方士兵都在左侧朝右打）；
+4. **`end_x` 仍然没单独抓**（40 号 §27.6 第 1 条；`dispatch/44` 在查，本节不碰）；
+5. **`Normal` 分支的 NaN 出口有没有死**（§29.6）本轮没测，只对 `Ode` 分支下了结论；
+6. 预算那一发的**采样器耗时**（本机 + 探针）约 **22–25 s/次调用**（`dur_ms = 25194 / 21823`），
+   期间游戏线程被冻住 ⇒ 驱动必须 `--gap 25` 以上、慢发（预算类）要放**最后一发**，
+   否则后面几发的打字会被提前写进输入框（本轮第一版就这样把第 2 发打成了第 3 发的式子）。
+
+### 29.9 本轮改动清单
+
+| 文件 | 改了什么 |
+|---|---|
+| [`tools/frida_ode_edge.js`](../tools/frida_ode_edge.js) | **新增**：在 40 号探针上加了**五条出口的运行时判定**（`0x3c2840` 接受路径 + `0x3c2b5d` 收尾三分法）、`stopSelfTest` 正对照、`flow_tail` 控制流环、按线程分开的"当前调用"（采样器确实在两个线程上先后跑） |
+| [`tools/frida_ode_edge.py`](../tools/frida_ode_edge.py) | **新增**：驱动（清 `WAYLAND_DISPLAY` + `--display-driver x11`）、`marker` 行（样本里带得出式子）、`--stop-exact`、`--extract` 把停因并进样本 |
+| [`fixtures/frida_ode_edge_l16.jsonl`](../fixtures/frida_ode_edge_l16.jsonl) | **新增**：4 发（越界 / 不收敛 ×2 / 预算用尽），纯文本，无路径/用户名 |
+| [`fixtures/frida_ode_edge_l17.jsonl`](../fixtures/frida_ode_edge_l17.jsonl) | **新增**：3 发（有障碍），其中 1 发证明"报文读的 `n` 被截短" |
+| [`docs/06-verification.md`](06-verification.md) | **新增本节**；并在 §27.3 的表格后加一行**更正**（`sqrt(0-y)` 那发的停因不是 NaN） |
+
+**没有改动**：`src/`、`client/`、`dispatch/`、`fixtures/guardrails.json`、
+`tools/frida_point_array.*`、`tools/frida_ode_probe.*`（44 号与 40 号的东西）。

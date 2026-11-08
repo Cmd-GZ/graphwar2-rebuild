@@ -36,6 +36,12 @@ extends SceneTree
 ##    断言：表里 3 个 → 画 3 个（圆心/半径来自**表**而非 `set_ring`）；**两个不同插入顺序 ⇒
 ##    画出来的顺序与 9 条弧的 12 个实参逐条一致**；表里有、准备态里没有 ⇒ 不画；
 ##    `pos_table_enabled = false` ⇒ 回到 `prep` 代偿路径。
+## 11. **门控从近似换成真查询**（第 18 组，§48，任务 46）：原版 `draw` 在 `0x4b3199` 调
+##    `LifeManager::get_alive`、`0x4b31ac` 调 `TurnManager::is_on_turn`，判据是
+##    `0x4b32e2 test r14b,r14b`（**整字节非零**，查不到的 2 也算过）与 `0x4b34c3 test bl,bl`。
+##    断言：**活着+轮到 ⇒ 画** / **死了 ⇒ 不画** / **活着但没轮到 ⇒ 不画** /
+##    游标一动下一帧跟着变 / **manager 不可用 ⇒ 回落 `prep`**（detach 与开关两种）/
+##    查不到（状态 2）的实体在门 1 里算"可画"。
 ##
 ## 与 `client/tools/gdext_check.gd` 的分工：那个测「换绑定层对客户端透明」，这个测
 ## 「`EntityDrawer` 能不能长出节点树 + 把准星画出来」。
@@ -905,7 +911,149 @@ func _initialize() -> void:
 	ok(looks_after == PackedStringArray(["target", "no_face", "no_hat"]),
 		"外观表的三个名字进了实体（%s）" % [looks_after])
 
-	# 17) 回收：queue_free 整棵树，子节点跟着走
+	# 18) 门控：`get_alive`(0x454950) + `is_on_turn`(0x462b50) 从 `prep` 近似换成真查询
+	#     （任务 46，`docs/16-client.md` §48）
+	#
+	# 原版 `EntityDrawer::draw` 的循环体里两个门：
+	#
+	# ```text
+	# 0x4b3199 call 0x454950  ; get_alive(id)  → 状态字节（1 活 / 0 死 / 2 查不到）
+	# 0x4b31ac call 0x462b50  ; is_on_turn(id) → bool
+	# 0x4b32e2 test r14b,r14b ; je 跳过   ⇒ 门 1：**整字节非零**才过（2 "查不到" 也算过）
+	# 0x4b34c3 test bl,bl     ; je 跳过   ⇒ 门 2
+	# ```
+	#
+	# 本节实体 id 取 10/11/12（避开演示容器里的玩家 1/2 与士兵 1/2/3），
+	# 回合表里**新登记玩家 9001**：士兵表 [10, 11, 12]，游标 0 ⇒ 当前士兵 = 10。
+	var wanted_gate := [
+		"gate_attach", "gate_detach", "gate_available", "gate_enabled", "gate_set_enabled",
+		"gate_source", "gate_queried", "gate_alive", "gate_on_turn",
+		"gate_current_players", "gate_current_soldiers",
+		"gate_set_alive", "gate_set_turn", "gate_advance_turn",
+	]
+	for w in wanted_gate:
+		ok(names.has(w), "方法 %s() 存在" % w)
+
+	var gate_obj: Object = EntityDrawer.new()
+	ok(gate_obj != null and gate_obj is Control, "门控用一个新实例")
+	if gate_obj != null:
+		var gate_ctl: Control = gate_obj
+		gate_ctl.set_size(Vector2(W, H))
+		gate_obj.set("team_color", TEAM_COLOR)
+		root.add_child(gate_ctl)
+		gate_obj.call("kernel_set_clock", 0.0)  # V 摆到 0（§47.6 第 2 条；这里只求可复现）
+
+		ok(bool(gate_obj.call("gate_available")) == false,
+			"还没 attach ⇒ gate_available() == false（= 拿不到 manager）")
+		ok(bool(gate_obj.call("gate_enabled")) == true, "开关默认 true（导出属性 gate_query_enabled）")
+		ok(String(gate_obj.call("gate_source")) == "prep", "没 attach ⇒ 门的数据源是 prep（回落）")
+
+		# 三条位置 + 三个准备态（与第 16 组同一套写法；坐标故意与表里不同）
+		var g_rows := [
+			{"id": 10, "pos": Vector3(1.0, 2.0, 1.0)},
+			{"id": 11, "pos": Vector3(-2.0, 3.0, 2.0)},
+			{"id": 12, "pos": Vector3(3.0, -1.0, 3.0)},
+		]
+		for r in g_rows:
+			ok(bool(gate_obj.call("pos_set_position", r["id"], r["pos"].x, r["pos"].y, r["pos"].z)) == true,
+				"pos_set_position(%d) == true" % [r["id"]])
+			gate_obj.call("set_ring", r["id"], 0.0, 0.0, 0.25, 0.0)
+		ok(int(gate_obj.call("ring_count")) == 3, "三具都在准备态（ring_count() == 3）")
+		await process_frame
+		await process_frame
+		var drawn_fb0: PackedInt64Array = gate_obj.call("pos_drawn_ids")
+		ok(drawn_fb0.size() == 3,
+			"**回落断言 1**：拿不到 manager ⇒ 三具全按 prep 画（实际 %s）" % [drawn_fb0])
+
+		# attach：= 原版 `draw` 里两次 `get_module`（Life 0x46c2c0 / Turn 0x46b740）
+		ok(bool(gate_obj.call("gate_attach")) == true, "gate_attach() 取回 Life/Turn 两份 manager")
+		ok(bool(gate_obj.call("gate_available")) == true, "attach 之后 gate_available() == true")
+
+		# 生产者（原版这些写在远端事件处理器 / game_state_manager 里）：
+		# 生命 10 活 / 11 死 / 12 活；回合玩家 9001 的士兵表 [10,11,12]
+		ok(bool(gate_obj.call("gate_set_alive", 10, true)) == true, "set_alive(10, true)（0x454b40）")
+		ok(bool(gate_obj.call("gate_set_alive", 11, false)) == true, "set_alive(11, false)")
+		ok(bool(gate_obj.call("gate_set_alive", 12, true)) == true, "set_alive(12, true)")
+		ok(int(gate_obj.call("gate_alive", 10)) == 1, "get_alive(10) == 1（活）")
+		ok(int(gate_obj.call("gate_alive", 11)) == 0, "get_alive(11) == 0（死）")
+		ok(int(gate_obj.call("gate_alive", 99)) == 2, "get_alive(99) == 2（查不到）")
+		ok(bool(gate_obj.call("gate_set_turn", 9001, PackedInt64Array([10, 11, 12]))) == true,
+			"登记玩家 9001：士兵 [10, 11, 12]（游标 0 ⇒ 当前 10）")
+		var cur_sol: PackedInt64Array = gate_obj.call("gate_current_soldiers")
+		var cur_pl: PackedInt64Array = gate_obj.call("gate_current_players")
+		ok(cur_sol.has(10) and not cur_sol.has(11) and not cur_sol.has(12),
+			"get_current_turn_soldiers() 只含游标处的 10（实际 %s）" % [cur_sol])
+		ok(cur_pl.has(9001), "get_current_turn_players() 含玩家 9001（实际 %s）" % [cur_pl])
+		ok(bool(gate_obj.call("gate_on_turn", 10)) == true, "is_on_turn(10) == true（当前士兵）")
+		ok(bool(gate_obj.call("gate_on_turn", 11)) == false, "is_on_turn(11) == false（同玩家别的士兵）")
+		ok(bool(gate_obj.call("gate_on_turn", 9001)) == true, "is_on_turn(9001) == true（玩家 id 也在集合里）")
+		await process_frame
+		await process_frame
+
+		# ① 活着 + 轮到 ⇒ 画；② 死了 ⇒ 不画；③ 活着但没轮到 ⇒ 不画
+		var drawn1: PackedInt64Array = gate_obj.call("pos_drawn_ids")
+		print("      门控第一帧画出来的 id: %s" % [drawn1])
+		ok(String(gate_obj.call("gate_source")) == "managers", "门的数据源 == managers（真查询）")
+		ok(int(gate_obj.call("gate_queried")) > 0, "gate_queried() > 0（门真的走了 manager）")
+		ok(drawn1.size() == 1 and int(drawn1[0]) == 10,
+			"① 活着+轮到 ⇒ 画 10；② 死了（11）不画；③ 活着但没轮到（12）不画（实际 %s）" % [drawn1])
+		ok(int(gate_obj.call("last_arc_count")) == 3,
+			"一具士兵 == 3 段弧（实际 %d）" % [int(gate_obj.call("last_arc_count"))])
+
+		# ④ 门控输入变化 ⇒ 下一帧跟着变：推进游标（11 死 ⇒ 跳到 12）
+		var next_soldier: int = int(gate_obj.call("gate_advance_turn", 9001))
+		ok(next_soldier == 12,
+			"gate_advance_turn(9001) ⇒ 当前士兵 12（跳过死的 11；实际 %d）" % [next_soldier])
+		await process_frame
+		await process_frame
+		var drawn2: PackedInt64Array = gate_obj.call("pos_drawn_ids")
+		ok(drawn2.size() == 1 and int(drawn2[0]) == 12,
+			"轮到 12 ⇒ 只画 12；10 活着但没轮到了（实际 %s）" % [drawn2])
+
+		# ⑤ 门 1 判的是**整字节非零**（0x4b32e2）：查不到（2）也算过 —— 把**玩家 id 9001**
+		#    本身放进位置表（它在 players 集合里 ⇒ is_on_turn 为真，但 life 表里没有它 ⇒ 状态 2）
+		ok(bool(gate_obj.call("pos_set_position", 9001, -4.0, 4.0, 1.0)) == true,
+			"位置表加一条 id 9001（= 那个玩家 id）")
+		gate_obj.call("set_ring", 9001, 0.0, 0.0, 0.25, 0.0)
+		await process_frame
+		await process_frame
+		var drawn3: PackedInt64Array = gate_obj.call("pos_drawn_ids")
+		ok(int(gate_obj.call("gate_alive", 9001)) == 2 and bool(gate_obj.call("gate_on_turn", 9001)),
+			"9001：get_alive == 2（查不到）+ is_on_turn == true")
+		ok(drawn3.size() == 2 and _same_ids(drawn3, PackedInt64Array([12, 9001])),
+			"门 1 只排除 0 ⇒ 查不到的 9001 也画（实际 %s）" % [drawn3])
+
+		# ⑥ manager 不可用 ⇒ 回落 prep（detach）
+		ok(bool(gate_obj.call("gate_detach")) == true, "gate_detach() 丢掉缓存的 manager")
+		await process_frame
+		await process_frame
+		var drawn4: PackedInt64Array = gate_obj.call("pos_drawn_ids")
+		ok(String(gate_obj.call("gate_source")) == "prep", "detach 之后门的数据源回到 prep")
+		ok(drawn4.size() == 4,
+			"**回落断言 2**：manager 不可用 ⇒ 四具全按 prep 画（实际 %s）" % [drawn4])
+
+		# ⑦ 开关关掉：即使 attach 过也走 prep（回退口）
+		ok(bool(gate_obj.call("gate_attach")) == true, "再 attach 回来")
+		ok(bool(gate_obj.call("gate_set_enabled", false)) == false, "gate_set_enabled(false) ⇒ 开关关")
+		await process_frame
+		await process_frame
+		var drawn5: PackedInt64Array = gate_obj.call("pos_drawn_ids")
+		ok(String(gate_obj.call("gate_source")) == "prep" and drawn5.size() == 4,
+			"开关关掉 ⇒ 回落 prep，四具全画（实际 %s）" % [drawn5])
+		ok(bool(gate_obj.call("gate_set_enabled", true)) == true, "开关打开（gate_set_enabled(true)）")
+		ok(bool(gate_obj.get("gate_query_enabled")) == true, "导出属性 gate_query_enabled 读到 true")
+		await process_frame
+		await process_frame
+		var drawn6: PackedInt64Array = gate_obj.call("pos_drawn_ids")
+		ok(drawn6.size() == 2 and _same_ids(drawn6, PackedInt64Array([12, 9001])),
+			"开关打开 ⇒ 又只画当前回合的 12 与查不到的 9001（实际 %s）" % [drawn6])
+
+		gate_ctl.queue_free()
+		await process_frame
+		await process_frame
+		ok(not is_instance_valid(gate_obj), "门控实例被 queue_free 回收")
+
+	# 19) 回收：queue_free 整棵树，子节点跟着走
 	var child_of_doomed: Node = kids[0]
 	control.queue_free()
 	await process_frame

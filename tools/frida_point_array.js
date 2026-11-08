@@ -107,6 +107,228 @@ const TOKST = {
   rows: [],
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2026-11-08 `dispatch/44`：`FunctionPoints.end_x` 的**装配/序列化处**
+//
+// 为什么单独一块：并行任务 45 也在动本文件；本轮新增的东西**全部**收在这里
+// （`FPCFG` / `FPST` / `installFunctionPointsProbe()` / `fnpoints` / `pos_x_locate` 两条消息），
+// 开关是 `FPCFG.on`（默认 **关**；驱动 `--fnpoints` 用 `post({type:'cfg',fnpoints:true})` 打开），
+// 主探针与 token 探针一行没动。
+//
+// 地址（构建同文件头：`libgraphwarrust.so` sha256 9a538115…）：
+//   0x50eb20  `FunctionPointsEvent` → JSON 的**写入器**（手写 serde，逐条指令读出）
+//               rdi = 写入器（`{cap@+0, ptr@+8, len@+0x10}` 的 String 包装）
+//               rsi = ★ `&FunctionPointsEvent`
+//                     `start_x` f64 @+0x00、`start_y` f64 @+0x08、`end_x` f64 @+0x10、
+//                     `owner_id` i64 @+0x18      （依据：0x50ebaf/0x50ebf0/0x50ec0f/0x50ec13
+//                                                依次 `lea 0x18(%r14)` / `%r14` / `0x8(%r14)` / `0x10(%r14)`）
+//               键名来自 rodata：`FunctionPoints`@0x1c55e9(0xe)、`start_x`@0x1c506b(7)、
+//                     `start_y`@0x1c5072(7)、`end_x`@0x1c5079(5)、`owner_id`@0x19f6c8(8)
+//               调用者：唯一直接调用点 `0x5046d3`（事件枚举 → JSON 的派发器 `0x504640`，
+//                     判据 37 = FunctionPoints，读 `0x1c48d0` 的 62 项跳表第 37 项 = `0x5046c9`）
+//   ⇒ 在这一处停下时，`end_x` 这 8 个字节就是**报文里那个值**（已定型、后面不再改）。
+//
+// 要回答的三件事只能靠"同时"看两处：
+//   ① 报文 `end_x` 的 8 字节；② `0x472865` 那次读的 `pos` 16 字节；③ 每次 `calculate_function`
+//   返回的整条点数组（主探针已经在 `calc_array` 里留了字节副本）。所以这里对 `end_x`
+//   逐条数组做"**在第几个点上**"的定位（x 分量 8 字节逐字节比，不是比摘要）。
+// ═══════════════════════════════════════════════════════════════════════════════
+const FPCFG = {
+  on: false,          // ★ 总开关（默认关：不加 --fnpoints 的跑法行为与之前**逐字节相同**）
+  rva: {
+    fnpoints_ctor: 0x456810,  // ★ FunctionPointsEvent 的装配（读 `pts[len-1].x` → end_x）
+    fnpoints_ser: 0x50eb20,   // FunctionPointsEvent → JSON（rsi = &event）
+    pos_read: 0x472865,       // 与主探针同一处 `movdqu`（这里再挂一个**只读**监听，用于"点定位"）
+  },
+  idxMax: 12,         // 每条数组最多报几个"命中的下标"
+  arrMax: 8,          // 最多对多少条数组做定位（= 主探针的 calcKeep）
+  rowsMax: 400,       // `fnpoints` 最多留多少行
+  btDepth: 20,
+};
+const FPST = {
+  seq: 0, posSeq: 0, ctorSeq: 0, rows: [], lastFn: null, lastCtor: null,
+};
+
+/** 点数组第 i 点的 x（**前 8 字节原始字节序**的十六进制，32→16 字符）；越界返回 null */
+function pointXHex(bytes, i) {
+  try {
+    if (!bytes || i < 0 || i * 16 + 16 > bytes.length) return null;
+    let s = '';
+    for (let j = 0; j < 8; j++) s += ('0' + bytes[i * 16 + j].toString(16)).slice(-2);
+    return s;
+  } catch (e) { return null; }
+}
+/** 在一条数组里找"x 位模式 == xhex"的所有下标（最多取 max 个）——**逐字节**比，不比摘要 */
+function findXIdx(bytes, len, xhex, max) {
+  const out = [];
+  if (!bytes || !xhex || xhex.length !== 16) return out;
+  const want = [];
+  for (let j = 0; j < 8; j++) want.push(parseInt(xhex.substr(j * 2, 2), 16));
+  for (let i = 0; i < len; i++) {
+    let hit = true;
+    for (let j = 0; j < 8; j++) if (bytes[i * 16 + j] !== want[j]) { hit = false; break; }
+    if (hit) { out.push(i); if (out.length >= max) break; }
+  }
+  return out;
+}
+/** 把一条数组与一个 16 字节的 `pos` 对比：x 命中哪些下标、y 命中哪些下标、x&y 同下标命中 */
+function locatePoint(bytes, len, posHex16, max) {
+  const o = { x_idx: [], y_idx: [], xy_idx: [] };
+  if (!bytes || !posHex16 || posHex16.length !== 32) return o;
+  const xh = posHex16.substr(0, 16), yh = posHex16.substr(16, 16);
+  o.x_idx = findXIdx(bytes, len, xh, max);
+  // y 分量：每点后 8 字节
+  const wantY = [];
+  for (let j = 0; j < 8; j++) wantY.push(parseInt(yh.substr(j * 2, 2), 16));
+  for (let i = 0; i < len; i++) {
+    let hit = true;
+    for (let j = 0; j < 8; j++) if (bytes[i * 16 + 8 + j] !== wantY[j]) { hit = false; break; }
+    if (hit) { o.y_idx.push(i); if (o.y_idx.length >= max) break; }
+  }
+  for (const i of o.x_idx) if (o.y_idx.indexOf(i) >= 0) o.xy_idx.push(i);
+  return o;
+}
+
+function installFunctionPointsProbe(base, res) {
+  // ⓪ ★ `FunctionPointsEvent` 的**装配处**（`end_x` 真正被读出来的那一条指令在这里面）
+  //    fn [0x456810, 0x456b75)：`rdi` = self、`esi` = owner/soldier id、`rdx` = `&Vec<(f64,f64)>`
+  //    体内 0x4569b8 `movq -0x10(%rcx,%rax,1),%xmm0`（rcx = vec.ptr、rax = len·16）
+  //    = **`pts[len-1].x` ⇒ 写进 `FunctionPointsEvent.end_x`**；
+  //    同处 0x4569be `movdqu (%rcx),%xmm1` = `pts[0]` ⇒ `start_x/start_y`；
+  //    0x4569ce `mov %r15d,0x30(%rsp)` = owner（**u32**）；
+  //    0x4569d3 `lea 0x26(%r8),%rax`（r8=0x7fff…ff）+ 0x4569d7 = 判别式 `0x8000000000000025`
+  //    （= 派发器的 37 号 FunctionPoints，见本轮 0x1c48d0 跳表第 37 项 = 0x5046c9）。
+  //    两个直接调用点：`0x3e44d4`（采样器 `gw+3e2d3b` 那次返回的那条数组）与 `0x471a88`。
+  try {
+    Interceptor.attach(base.add(FPCFG.rva.fnpoints_ctor), {
+      onEnter() {
+        if (!FPCFG.on) return;
+        const o = { type: 'fnpoints_ctor', seq: ++FPST.ctorSeq, t: now(),
+                    caller: rvaOf(this.returnAddress), bt: btOf(this.context, 8) };
+        try {
+          o.self = hx(this.context.rdi);
+          o.owner_id = this.context.rsi.toUInt32() >>> 0;
+          const v = this.context.rdx;
+          o.vec_ptr_hdr = hx(v);
+          const cap = v.readU64().toString();
+          const ap = v.add(8).readPointer();
+          const alen = Number(v.add(0x10).readU64().toString());
+          o.vec = { cap: cap, ptr: hx(ap), len: alen };
+          if (ap && !ap.isNull() && alen > 0 && alen <= CFG.arrayCap && readable(ap)) {
+            o.start_pt = bytesHex(ap, 16);                       // = pts[0]（报文 start_x/start_y）
+            o.end_pt = bytesHex(ap.add((alen - 1) * 16), 16);    // = pts[len-1]（报文 end_x 就是它的前 8 B）
+            o.end_x = o.end_pt.substr(0, 16);
+            // 与本次运行里 `calculate_function` 返回过的数组对撞：是哪一条（指针 + 逐字节）
+            o.vs_calc = [];
+            const bytes = arrBytes(ap, alen);
+            for (const ca of ST.calcArrays.slice(-FPCFG.arrMax)) {
+              const r = { ret: ca.ret, ptr: hx(ca.ptr), len: ca.len, seq: ca.seq, t: ca.t,
+                          same_ptr: hx(ca.ptr) === o.vec.ptr };
+              if (ca.bytes && bytes) {
+                const c = cmpArrayBytes(bytes, ca.bytes);
+                r.same_bytes = c.same; r.diffPoints = c.diffPoints;
+              }
+              o.vs_calc.push(r);
+            }
+          } else { o.skipped = 'unreadable-or-empty-or-too-long'; }
+        } catch (e) { o.error = String(e); }
+        FPST.lastCtor = o;
+        try { send(o); } catch (e) { }
+      },
+    });
+    res.hooks.push({ name: 'fnpoints_ctor', rva: '0x' + FPCFG.rva.fnpoints_ctor.toString(16) });
+  } catch (e) { res.hooks.push({ name: 'fnpoints_ctor', error: String(e) }); }
+
+  // ① `FunctionPointsEvent` 的 JSON 写入器：`end_x` 在这里**定型**
+  try {
+    Interceptor.attach(base.add(FPCFG.rva.fnpoints_ser), {
+      onEnter() {
+        if (!FPCFG.on) return;
+        const o = { type: 'fnpoints', seq: ++FPST.seq, t: now(),
+                    ret: rvaOf(this.returnAddress), bt: btOf(this.context, FPCFG.btDepth) };
+        try {
+          const ev = this.context.rsi;
+          o.ev_ptr = hx(ev);
+          o.start_x = bytesHex(ev, 8);
+          o.start_y = bytesHex(ev.add(8), 8);
+          o.end_x = bytesHex(ev.add(0x10), 8);          // ★ 报文里的 `end_x` 原文
+          try { o.owner_id = ev.add(0x18).readS64().toString(); } catch (e) { o.owner_id = null; }
+          // 与"本次运行里 `calculate_function` 返回过的数组"逐点定位（x 这 8 字节）
+          o.vs_calc = [];
+          for (const ca of ST.calcArrays.slice(-FPCFG.arrMax)) {
+            const r = { ret: ca.ret, ptr: hx(ca.ptr), len: ca.len, seq: ca.seq, t: ca.t };
+            if (ca.bytes) {
+              r.last_x = pointXHex(ca.bytes, ca.len - 1);
+              r.last_x_eq = r.last_x === o.end_x;
+              r.prev_x = pointXHex(ca.bytes, ca.len - 2);
+              r.prev_x_eq = r.prev_x === o.end_x;
+              r.x_eq_idx = findXIdx(ca.bytes, ca.len, o.end_x, FPCFG.idxMax);
+            } else { r.bytes = 'not-kept'; }
+            o.vs_calc.push(r);
+          }
+          FPST.lastFn = o;
+        } catch (e) { o.error = String(e); }
+        if (FPST.rows.length > FPCFG.rowsMax) FPST.rows.shift();
+        FPST.rows.push([o.seq, o.t, o.end_x]);
+        try { send(o); } catch (e) { }
+      },
+    });
+    res.hooks.push({ name: 'fnpoints_ser', rva: '0x' + FPCFG.rva.fnpoints_ser.toString(16) });
+  } catch (e) { res.hooks.push({ name: 'fnpoints_ser', error: String(e) }); }
+
+  // ② 与主探针**同一处** `0x472865`：把这一刻的 `pos` 在每条数组里**定位到下标**
+  //    （主探针的 `pos_read` 只报"整条数组是否逐字节相同"，分不出"差一个点"；这里补上）
+  try {
+    Interceptor.attach(base.add(FPCFG.rva.pos_read), {
+      onEnter() {
+        if (!FPCFG.on) return;
+        const c = this.context;
+        const o = { type: 'pos_x_locate', seq: ++FPST.posSeq, t: now(), rdx: hx(c.rdx), rcx: hx(c.rcx) };
+        try {
+          const n16 = c.rcx.toUInt32() >>> 0;
+          o.n = n16 / 16;
+          const p = c.rdx;
+          if (n16 > 0 && o.n <= CFG.arrayCap && readable(p)) {
+            const bytes = arrBytes(p, o.n);
+            o.pos_bytes = bytesHex(p.add(n16 - 16), 16);
+            o.pos_x = o.pos_bytes ? o.pos_bytes.substr(0, 16) : null;
+            if (bytes) {
+              o.vs_calc = [];
+              for (const ca of ST.calcArrays.slice(-FPCFG.arrMax)) {
+                const r = { ret: ca.ret, ptr: hx(ca.ptr), len: ca.len, seq: ca.seq, same_ptr: hx(ca.ptr) === o.rdx };
+                if (ca.bytes) {
+                  const loc = locatePoint(ca.bytes, ca.len, o.pos_bytes, FPCFG.idxMax);
+                  r.x_idx = loc.x_idx; r.y_idx = loc.y_idx; r.xy_idx = loc.xy_idx;
+                  r.same_bytes = cmpArrayBytes(bytes, ca.bytes).same;
+                } else { r.bytes = 'not-kept'; }
+                o.vs_calc.push(r);
+              }
+            }
+            // 与"最近一条 `fnpoints`"直接对撞：报文里 `end_x` vs 这里读到的 `pos.x`
+            if (FPST.lastFn) {
+              o.last_fn = { seq: FPST.lastFn.seq, t: FPST.lastFn.t, end_x: FPST.lastFn.end_x,
+                            equal_x: FPST.lastFn.end_x === o.pos_x };
+            }
+            // 与"最近一次装配"对撞：装配读的 (ptr,len) 与这里读的 (ptr,len) 是同一次吗
+            if (FPST.lastCtor) {
+              const lc = FPST.lastCtor;
+              o.last_ctor = { seq: lc.seq, t: lc.t, caller: lc.caller,
+                              ptr: (lc.vec || {}).ptr, len: (lc.vec || {}).len,
+                              same_ptr: (lc.vec || {}).ptr === o.rdx,
+                              same_len: (lc.vec || {}).len === o.n,
+                              end_x: lc.end_x,
+                              equal_x: lc.end_x === o.pos_x,
+                              end_eq_pos_point: lc.end_pt === o.pos_bytes };
+            }
+          }
+        } catch (e) { o.error = String(e); }
+        try { send(o); } catch (e) { }
+      },
+    });
+    res.hooks.push({ name: 'pos_x_locate', rva: '0x' + FPCFG.rva.pos_read.toString(16) });
+  } catch (e) { res.hooks.push({ name: 'pos_x_locate', error: String(e) }); }
+}
+
 /** Rust 的 `Vec<T>` / `String` 三元组：`{cap@+0, ptr@+8, len@+0x10}`（与 `docs/119` §1 同布局） */
 function vecTriple(p) {
   try {
@@ -700,6 +922,10 @@ function install(base) {
   //    开关可以装机后再 post，所以这里**无条件装**，不赌 install 与 cfg 的先后）─────────
   try { installTokenProbe(base, res); } catch (e) { res.hooks.push({ name: 'token_probe', error: String(e) }); }
 
+  // ── 2026-11-08 `dispatch/44`：`FunctionPoints.end_x` 的装配/序列化处（**默认关**，
+  //    `FPCFG.on=false` 时两个钩子立刻 return；开关可以装机后再 post）──────────────
+  try { installFunctionPointsProbe(base, res); } catch (e) { res.hooks.push({ name: 'fnpoints_probe', error: String(e) }); }
+
   ST.ins = true;
   // 正对照：先证明"逐点对比函数"对**已知不同**的两条数组会报不同（负结论的前提，见 docs/06 §42）
   try { send({ type: 'selftest', cmp: selfTestCompare() }); } catch (e) { send({ type: 'selftest', error: String(e) }); }
@@ -714,8 +940,10 @@ recv('cfg', (m) => {
     // 2026-11-08 `dispatch/39`：token 探针开关（驱动 `--tokens` 打开）
     if (m && typeof m.tokenProbe === 'boolean') TOKCFG.on = m.tokenProbe;
     if (m && typeof m.maxTokens === 'number') TOKCFG.maxTokens = m.maxTokens;
+    // 2026-11-08 `dispatch/44`：FunctionPoints 探针开关（驱动 `--fnpoints` 打开）
+    if (m && typeof m.fnpoints === 'boolean') FPCFG.on = m.fnpoints;
     send({ type: 'cfg_ack', evalRowsMax: CFG.evalRowsMax, arrayCap: CFG.arrayCap,
-           tokenProbe: TOKCFG.on, maxTokens: TOKCFG.maxTokens });
+           tokenProbe: TOKCFG.on, maxTokens: TOKCFG.maxTokens, fnpoints: FPCFG.on });
   } catch (e) { send({ type: 'cfg_ack', error: String(e) }); }
 });
 

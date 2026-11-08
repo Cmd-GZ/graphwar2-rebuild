@@ -3184,3 +3184,39 @@ $PY tools/callgraph_fingerprint.py probe 0x3a2e10   # 单函数：四份构建�
 **14 列逐字节一致**（`docs/159` §6.1）；`merge` 连跑两次输出也逐字节相同
 ⇒ 结果不随 `PYTHONHASHSEED` 变（§39.7 的坑）。
 **本节没有一个数字来自"跑测试"**：`cargo test` 是回归保护，不是复原证据（`AGENTS.md` §0.2）。
+
+## 36. `GraphwarGameClient::process` 的三个邻居：进程链的 x86 锚点表（2026-11，任务 43）
+
+§21 的 `graphwar_game_client` 表里 `process` 早就写着 `0x518400`，但只标了"唯一锚"、没有语义；
+第十轮 43 号把它**逐条读通**并补上调用链（详细推导、逐指令与运行时计数见 [`docs/16-client.md` §48](16-client.md)）。
+本节只做一件 §21 没做的事：**把这条链上每一环的 x86 地址钉在一张表里**，免得下次再从
+`call *GOT` 槽反推。
+
+### 36.1 链上七个地址（x86 ELF 虚地址；Ghidra/REA = +`0x100000`）
+
+| 环节 | 类型 / 方法 | x86 | 尺寸来源 | 名字怎么钉住的 |
+|---|---|---|---|---|
+| 引擎虚函数派发 | `GraphwarRootNode` 的 `__virtual_call` | `0x40cdc0` | FDE `0x40cdc0..0x40cede` | 体内 `movabs 0x737365636f72705f` = `"_process"` + 哈希 `0x1647d661`（`0x40ce62`/`0x40ce74`）；`"_ready"` 分支给 `0x3aaa60` |
+| `_process` 的 gdext 入口 shim | —（生成代码） | `0x3aa9a0` | FDE `0x3aa9a0..0x3aaa56` | 体内两个字面量：`"GraphwarRootNode"`(`0x19e490`,len `0x10`)、`"process"`(`0x1bd9ba`,len 7)；`0x3aaa17 call 0x42a8a0` |
+| typed vcall（取 delta、绑定实例） | —（生成代码） | `0x42a8a0` | — | `0x42a8bf movsd xmm0,[rax]`（delta）+ panic 串带类名；`0x42a914 call *GOT 0x9ba898` |
+| 引擎 `_process` 的落地 | `GraphwarRootNode::process`（= `<… as INode>::process`） | `0x3a5760` | FDE `0x3a5760..0x3aa696` | 56 个 `panic::Location` 锚（`fixtures/name_to_addr.tsv` 第 38 行）；arm64 `<… as INode>::process` `0x39c8a0`（16984 B） |
+| 后端每帧 | `GraphwarBackend::process` | `0x515dc0` | FDE `0x515dc0..0x516369` | `fixtures/name_to_addr.tsv`（`src/graphwar_backend.rs:79:51`）；arm64 `0x407ef0` |
+| **客户端每帧** | **`GraphwarGameClient::process`** | **`0x518400`** | FDE `0x518400..0x518527`（`0x127` B） | 3/3 个双向唯一 Location 锚（`src/graphwar_game_client.rs:130:41 / 130:86 / 132:28`）＋ Windows 同 ISA 同名同形 `0x133390` ＋ arm64 `0x40ac00` |
+| 事件泵 | `GraphwarEventHandler::process_events` | `0x3d3630` | — | `fixtures/name_to_addr.tsv`（`src/graphwar_event_handler.rs:467`）；arm64 `0x486970`（114 个 `bl` 站点） |
+
+### 36.2 这张表能直接回答的三个问题
+
+1. **`process` 是"每帧"还是"定时"**：`0x518400` 每帧被调**一次**（`0x515df8` 唯一入口），
+   体内是 **1/60 s 定步追赶循环**（`0x519450 get_time_to_tick` 的 `nanos==1e9` 哨兵 → `0x518240 tick`
+   → `0x3d3630 process_events`）。⇒ **泵频率 = 60 Hz，不由帧率决定**（`docs/16` §48.4 有 frida 计数）。
+2. **`0x46aa50` 是谁**：`get_module::<GraphwarTickHandler>`（`src/graphwar_module_container.rs` 的槽表），
+   `process` 就是靠它拿 tick handler（`src/graphwar_tick_handler.rs` 已有 `get_time_to_tick()`）。
+3. **谁的 `process` 走 GOT**：`0x515dc0` 用的槽是 `0x9bc468`、`0x3a5760` 用的是 `0x9ba938`、
+   `0x3a5760` 自身被 `0x9ba898` 取址 —— 这三条都是"地址被当值用"（虚表/gdext 派发），
+   所以 `tools/addr_probe.py callers` 的 `call rel32` 一栏是 **0**，别据此写"没人调"。
+
+### 36.3 口径提醒（同 `AGENTS.md` §0.2）
+
+本节与 `docs/16` §48 里的**全部地址**都能用 `tools/addr_probe.py` / `tools/arm64_sym.py` /
+`tools/pe_dis.py`（本轮新增，Windows PE 侧）原地复算；`cargo test` 的 1631 条只是回归保护，
+**不构成**这些结论的证据。
