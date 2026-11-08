@@ -9122,3 +9122,136 @@ grep -a -c gate_attach client/libgw2_rebuild.so          # 4（判据：.so 真�
 ../.venv/bin/python tools/addr_probe.py dis 0x454950   # get_alive：默认 2、命中取值字节
 ../.venv/bin/python tools/addr_probe.py dis 0x4628d0   # get_current_turn_soldiers：两支 +0x58
 ```
+
+## 50. 60 Hz 定步 `process` 循环落进内核：`0x518400` 的循环体 + `KernelBus::drive_frame`（2026-11，任务 47）
+
+**一句话**：§48 查清的那条循环**已经在 `src/` 里跑起来了**——`graphwar_game_client::process`
+逐指令对应 x86 `0x518400`：**墙钟时基**（不读 delta）、**欠几个 tick 转几圈**、每圈
+**先 `tick()` 后 `process_events()`**；宿主是 `KernelBus::drive_frame(delta)`（`src/_scaffold/root_wiring.rs`），
+它 tick 的是**容器里那台** `GraphwarTickHandler`（= `EntityDrawer` 读 `V` 的同一台）。
+⚠️ **没接到播放屏**（`client/src/**` 是禁区，见 §50.6）。
+
+### 50.1 落地位置（文件 / 函数 / 行号）
+
+| # | 位置 | 对应原版 | 档位 |
+|---|---|---|---|
+| 1 | `src/graphwar_game_client.rs:743` `pub fn process<L: ProcessLoop + ?Sized>(host, _delta) -> FrameTicks` | `GraphwarGameClient::process` x86 `0x518400`（循环体 `0x518470`–`0x5184a1`） | **观测**（逐指令，§48.3） |
+| 2 | `src/graphwar_game_client.rs:689` `pub fn tick_is_due((u64,u32)) -> bool` | `0x51848e` 的 `cmp edx,0x3b9aca00` + `0x518494` 的 `jne` | **观测**（立即数 `0x3b9aca00`） |
+| 3 | `src/graphwar_game_client.rs:700` `pub trait ProcessLoop`（`time_to_tick` / `tick` / `process_events`） | 三个被调者：`0x519450` / `0x518240` / `0x3d3630` | **观测**（GOT 槽 `0x9baf38` / `0x9baef8`）＋**我方接口** |
+| 4 | `src/graphwar_game_client.rs:717` `pub struct FrameTicks { probes, ticks, pumps }` | 原版 `process` **没有返回值** | **我方观测值** |
+| 5 | `src/_scaffold/root_wiring.rs:2106` `impl ProcessLoop for KernelBus` | 宿主的三件事 | **我方接线**（⚠️ `_scaffold::root_wiring` 整个模块本来就被 `#[cfg(feature = "gdext-bindings")]` 门控 ⇒ 宿主与它的 6 条单测只在这个 feature 下编，见 §50.3 的数字口径） |
+| 6 | `src/_scaffold/root_wiring.rs:2165` `KernelBus::drive_frame(delta)` | `GraphwarBackend::process` `0x515dc0` → `0x518400` 那一跳（**每帧一次**） | **我方接线**（原版宿主是节点） |
+| 7 | `src/_scaffold/root_wiring.rs:2240` `anchor_tick_handler_to_now` | `GraphwarTickHandler::new` `0x519690` 的 `base = SystemTime::now()` | **观测**（`new` 的实参形状）＋只在总线这条路用（§50.5 第 6 条） |
+| 8 | `src/_scaffold/root_wiring.rs:3112` `KernelProcessHost`（`#[class(base=RefCounted)]`，**只在 `--features gdext-bindings` 下编**） | 原版**没有**这个类 | **我方验收外壳** |
+| 9 | `client/tools/process_loop_check.gd`（新，49 条断言） | —— | **验收工具** |
+
+### 50.2 语义怎么对到 `0x518400`（逐指令 → 一行代码）
+
+| x86 | 本层 | 说明 |
+|---|---|---|
+| `51840b`…`518434` `get_module::<GraphwarTickHandler>` | `KernelBus::time_to_tick` → `wiring.tick_handler()` | 仍是**按类型从容器里取**（`0x46aa50`），不是另存一份 |
+| `518484 call 0x519450` | `ProcessLoop::time_to_tick()` | 读容器里那台 handler 的 `get_time_to_tick()` |
+| `51848e cmp edx,0x3b9aca00` / `518494 jne` | `tick_is_due()` + `if !due { break }` | 哨兵 `1e9` = 欠一个 tick |
+| `518496 call r13`（`0x518240`） | `ProcessLoop::tick()` | `handler.tick()`：`TickEvent` + 每 60 个一条 `TickRequest` |
+| `51849c call rbp`（`0x3d3630`） | `ProcessLoop::process_events()` → `KernelBus::pump()` | 投递给订阅者 |
+| `5184a1 jmp 518470` | `loop { … }` | **追赶**，不是"每帧最多补一次" |
+| 全程不读 `xmm0`（arm64 不读 `d0`） | `_delta` 参数被忽略 | 时基是 handler 里的 `SystemTime::now` |
+
+`probes`（`get_time_to_tick` 次数）按 §48.4 的实测口径应等于**帧数 + due tick 数**：
+`0x518484` 在循环头，每圈一次、出循环前再探一次。本层的两条断言（Rust
+`probes_equal_one_plus_ticks`、gd `last_probes == 1 + last_ticks`）就在钉这条算术。
+
+### 50.3 断言（before → after）
+
+| 组 | before | after | 说明 |
+|---|---|---|---|
+| `cargo test --offline` | 1638 | **1648**（+10） | `graphwar_game_client::process_loop_tests` **10** 条 |
+| `cargo test --offline --features gdext-bindings` | 1737 | **1753**（+16） | 同上 + `_scaffold::root_wiring::process_host_tests` **6** 条 |
+| `client/tools/process_loop_check.gd` | （新文件）0 | **49** | headless，真引擎 + gdext 内核 |
+| `entity_drawer_check.gd` | 292 | **292**（不动，本轮实测 rc=0） | 任务书要求本文件不许动（并行任务 50 在用） |
+| `assemble_check.gd` | 217 | **217**（实测 rc=0） | 未改 |
+| `plane_on_screen_check.gd` | 96 | **96**（实测 rc=0） | 未改 |
+| `obstacle_drawer_check.gd` | 116 | **116**（实测 rc=0） | 未改 |
+| `selftest.gd` | 714 passed / 0 failed / 1 skipped | **714 / 0 / 1**（实测 rc=0） | 未改；跑法见 §50.7（**不是** `--script`） |
+
+**本轮踩到的坑（写下来给下一个人）**：`GraphwarTickHandler::new(0, 0)` 的基准是 **epoch**。
+假宿主如果不先摆钟，`now - base` 就是"56 年"，`process` 会追 **17 亿** 圈 ——
+本轮第一条单测就是这么挂死的（`cargo test` 打出 `has been running for over 60 seconds` 才暴露）。
+⇒ 任何新宿主都必须保证基准正确：`KernelBus` 在 `install_kernel_bus` 里重锚（§50.5 第 6 条），
+测试里必须用 `set_elapsed_nanos` / `set_clock_ns` 把钟摆上。这条也是"原版为什么不慌"的答案：
+原版 `new` 的实参就是 `SystemTime::now()`。
+
+三条**任务书点名**的断言（gd 脚本里，逐条都过了）：
+
+```text
+喂 1 秒（一次 drive_frame(0.0)，墙钟 set_elapsed_nanos(1e9)）⇒ last_ticks == 60、last_pumps == 60
+喂 2.5 个 tick（41 666 665 ns）⇒ last_ticks == 2，且 time_to_tick_nanos() == 8 333 333（留下 0.5）
+先 tick 后泵：订阅 tick_event 后同一次 pump 里就投递 2 条 TickEvent(0)（delivered_tags == [0,0]）
+```
+
+外加 6 条同族断言：`1/60 s ⇒ 1 tick`、`掉 3 个 tick 的帧下一帧补回 3 圈`、
+`60 帧 × 半 tick ⇒ 30 tick`（帧率无关）、`delta=0 与 delta=1e6 圈数相同`、
+`probes == frames + ticks`、`fractional_tick() == 60.0`（与 `EntityDrawer` 的 `V` 同源）。
+
+### 50.4 "先 tick 后泵"是怎么证的（不是读代码说的）
+
+读代码只能证明"我们照这个顺序写"；gd 断言证的是**可观测后果**：
+
+1. 把 `tick_event`（判别值 0）订阅上（`GraphwarEventHandler` 的一类订阅名，`0x3d38f0` 的表里有）；
+2. 摆墙钟推进 2 个 tick，`drive_frame(0.0)`；
+3. **同一次** `pump` 投递出来的事件里就有 2 条 `TickEvent`（`delivered_tags == [0, 0]`），
+   且 `queue_len() == 0`（没有留给下一帧）；
+4. 紧接着再推一帧（不欠账）⇒ `delivered_count` 不涨（不存在"迟到一个 tick 的事件"）。
+
+⇒ 若顺序反了（先泵后 tick），第 3 步这一帧会投递 **0** 条，事件要等下一帧才出现。
+这条在 Rust 侧还有一个更强的版本：`tick_runs_before_process_events` 断言
+泵看到的 `tick` 计数**已经涨过**、且泵那一刻发件箱里**已经有**这条 tick 的产出。
+
+### 50.5 与 `0x518400` 的**差异**（做不到 / 故意不同的地方，逐条）
+
+| # | 项 | 原版 | 本层 | 档位 / 缺什么 |
+|---|---|---|---|---|
+| 1 | **第二个调用者 `wait_for_players`** | `0x516fd0` 里 `call [GOT 0x9bc468]` + `sleep(1 ms)` 忙等，把 `process` 拉到 **110/s**（实测 `0x51718b:110`） | **没有移植**。`drive_frame` 只有"每帧一次"这一条用法 | **未知**：`0x516fd0` 的函数体没逐条读（§7 的诚实清单里仍记 Undetermined），我方也没有"准备阶段"那个宿主 |
+| 2 | **播放屏每帧调用** | 引擎 `_process` → `RootNode::process` → `Backend::process` → `GameClient::process` | `drive_frame` **没有运行时调用者**（`client/src/**` 禁区） | **我方接线缺口**：播放屏那两处代偿（`set_ring` / `id ≥ 1000 ⇒ set_entity_look`）还在 |
+| 3 | **`Backend::process` 的两个门** | `0x515dd1` 先判 `[backend+0x1e0]`（`Option<GraphwarGameClient>`）非空；`0x515de3` 判 `mode==2` 跳过 `ReplayPlayer::process` | `drive_frame` 无条件转循环 | 门控属于 `graphwar_backend.rs`（**不在**本任务允许改的清单里）；本层没有 `Option<GameClient>` 这块状态 |
+| 4 | **"欠账"哨兵** | `get_time_to_tick` 欠账时返回 `Duration{ nanos: 1e9 }`（合法值不可能出现） | `graphwar_tick_handler::get_time_to_tick` 把下溢**夹成 `(0,0)`**（原版那条路走 `panic!`）；`tick_is_due` 因此把 `(0,0)` 也当"到期" | **我方差异（可测）**：帧边界**正好**压在 tick 边界时，本层比原版**早一帧** tick；总 tick 数不变（原版晚一帧补上）。墙钟下概率 0，测试里是**故意**用它把"1 秒 ⇒ 60"钉成确定值 |
+| 5 | **`tick` 的事件去向** | `GraphwarTickHandler::tick` 直接 push 进**共享** `GraphwarEventQueue`（`+0x38`） | 本层 handler 只有 `outbox`；宿主在**泵之前**搬进共享队列 | **我方接线**（tag/顺序不变）。这也正是"先 tick 后泵"在本层能成立的前提 |
+| 6 | **tick handler 的基准点** | `new`（`0x519690`）里 `base = SystemTime::now()` | `assemble_demo_with_queue` 给 `(0,0)`（epoch，为了 `tick.at_500ms=30` 那个抓包口径）；**只有 `install_kernel_bus` 这条路**用 §50.1 第 7 条重锚到安装时刻 | **我方接线**。不重锚的后果不是"差一点"：`now-base` 是 56 年 ⇒ 一帧要追 17 亿个 tick（死循环），`V` 也是垃圾量级 |
+| 7 | **线程** | 引擎主线程（frida：`RootNode/Backend/GameClient` 全 `tid=16`） | 调用者线程（gdext 主线程）；thread-local 总线本身绑线程 | 同一线程内一致；**未测**跨线程 |
+| 8 | **返回值** | `process` 返回 `()` | 返回 `FrameTicks`（`probes/ticks/pumps`） | 纯观测值，不影响行为 |
+
+### 50.6 诚实清单（仍是推断 / 未知）
+
+| # | 项 | 档位 | 缺什么 |
+|---|---|---|---|
+| 1 | `get_time_to_tick` 的**源码写法**（哨兵 vs `Option`） | **推断** | 反汇编只给出"两条欠账路径返回 1e9"（§48.7 第 2 条），原版源码的写法未定 |
+| 2 | 本层"帧边界正好压 tick 边界"的处理 | **我方选择** | 原版在那个点上不 tick（`nanos==0` 不是 1e9）；本层分不开，见 §50.5 第 4 条 |
+| 3 | 掉帧上限 | 原版**未观测到**上限（循环没有计数/上限的痕迹） | 本层也没有上限；基准点错（epoch）时就是死循环 ⇒ 所以必须由宿主保证基准正确（§50.5 第 6 条） |
+| 4 | `wait_for_players` 的忙等周期 110/s 的用途 | **未知** | 未读 `0x516fd0` 的函数体；不知道它为什么不用帧回调 |
+
+### 50.7 复现
+
+```text
+# ① 单测（不碰引擎）
+cargo test --offline --lib -- process_loop_tests process_host_tests   # 16 条
+
+# ② headless（真引擎 + gdext 内核）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/process_loop_check.gd   # PROCESS_LOOP 49 passed, 0 failed
+
+# ③ 其余 headless 护栏（每个脚本都是独立进程；`--import` 之后才有资产缓存）
+"$GODOT" --headless --path client --script res://tools/entity_drawer_check.gd    # 292 passed
+"$GODOT" --headless --path client --script res://tools/assemble_check.gd         # 217 passed
+"$GODOT" --headless --path client --script res://tools/plane_on_screen_check.gd  #  96 passed
+"$GODOT" --headless --path client --script res://tools/obstacle_drawer_check.gd  # 116 passed
+
+# ④ selftest：**主场景**跑的，不能用 `--script`（那样会报
+#    "doesn't inherit from SceneTree or MainLoop"，因为 selftest.gd 是 `extends Node`）；
+#    回放样本放在 `$HOME/.local/share/godot/app_userdata/Graphwar/replays`（selftest 不走 XDG）
+"$GODOT" --headless --path client -- --selftest                                  # 714 / 0 / 1skip
+
+# ⑤ 静态证据（§48 已给，原地可复跑）
+$PY tools/addr_probe.py dis 0x518400
+```
