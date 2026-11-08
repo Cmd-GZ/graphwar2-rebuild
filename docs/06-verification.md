@@ -4748,7 +4748,74 @@ python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire \
 | 文档引用 | `check_doc_refs.py` | **rc=0**（无死链） |
 | 闸门自身耗时 | `merge_check.py --branch <分支> --base <起点>` | **0.11 s**（`--run-tests` 之外，远低于 1 s 上限） |
 
-## 42. 收敛层跟上 **S3**：`batch_conv` **637 → 637**（1080 批里 **2 批内部变好 / 0 批变差**），`diffconv_parity` **1290 / 1290** 仍逐位（2026-11-09，`dispatch/73`）
+## 34b. 「打不全就全部复原」**第一次拿到真机样本**：部分命中 ⇒ 回合末全部 alive:true；全清 ⇒ 不复原（2026-11-09，用户现场打）
+
+> 之前这条的判据是从指令读出来的（`docs/150` §4），但**语料里 0 份"部分命中"的回放**
+> （多靶子关 7 次命中全是 7/7 全清）⇒ 一直是**推断**。用户这次针对性打了两把，
+> **两次都命中规则**，其中第二把**同一份文件里同时含正例与反例**。
+
+### 34b.1 两把的来历
+
+| 文件 | 场景 | 结果 |
+|---|---|---|
+| `1794176948` | 一炮打掉 1 个靶子后**立刻退出** | 死 1 个 → **回合末全部复活** |
+| `1794177110` | 先各打 1 个（两炮），第三炮**一次拿下两个** | 两次"死 1 个 ⇒ 全部复活"，最后一炮全清 ⇒ **不复原、直接 `EndingGame`** |
+
+（两份都在 `.agent-work/replay-new2/`，**不进冻结快照**。）
+
+### 34b.2 逐 tick 时间线（`LifeInfo` 与 `GameStateInfo` 原文）
+
+**`1794176948`**（士兵 `231`，靶子 `232`/`233`）：
+
+```
+tick 3716  ExecutingResults
+tick 3889  LifeInfo 233 alive:false        ← 打掉 1 个
+tick 3990  LifeInfo 232 alive:true
+tick 3990  LifeInfo 233 alive:true         ← ① **死的那个复活**；② **没死的那个也被重播**
+tick 3992  WaitingForFunctions             ← 顺序：复原**先于**下一回合
+```
+
+**`1794177110`**（士兵 `536`，靶子 `537`/`538`）：
+
+```
+tick 1229  ExecutingResults
+tick 1414  LifeInfo 538 alive:false  →  tick 1481  537 true + 538 true   ← 部分命中 ⇒ 复原
+tick 2299  ExecutingResults
+tick 2512  LifeInfo 537 alive:false  →  tick 2586  537 true + 538 true   ← 部分命中 ⇒ 复原
+tick 8073  ExecutingResults
+tick 8286  LifeInfo 537 alive:false
+tick 8413  LifeInfo 538 alive:false                                      ← 全清 ⇒ **两条 false**
+tick 8479  EndingGame                                                    ← 且**没有任何 true 跟着**
+```
+
+### 34b.3 三条结论（都从上面原文直接读出，不需要推理）
+
+1. **"部分命中 ⇒ 回合末全部复原"成立**，而且复原是**广播整组靶子**：
+   死掉的那个与**活着的那一个都收到 `alive:true`**（`232`/`537` 本来就没死，也被重播）。
+   ⇒ 与 `src/graphwar_target_manager.rs::should_reset_targets` 的语义一致
+   （"至少一个靶子活着 ⇒ 全部复原"），**该函数头的档位可以从「推断」升到「观测」**。
+2. **判定点 = 回合末**，且**早于** `WaitingForFunctions`：
+   `false` →（101 / 67 / 74 tick 后）→ 整组 `true` → 2 tick 后进入下一回合。
+   `docs/150` §4 用指令读出来的"回合末"由此得到运行时背书。
+3. **全清 ⇒ 不复原**：最后一炮两个靶子先后 `false`（8286 / 8413），
+   **后面没有任何 `true`**，直接 `EndingGame`(8479)。
+   ⇒ 同一份 replay 里同时提供了正例与反例，**不需要再找负对照**。
+
+### 34b.4 复核命令
+
+```bash
+# 事件级 dump（纯 python，replay 是 gzip 的 jsonl）
+python3 - <<'PY'
+import gzip, json
+p='.agent-work/replay-new2/1794177110'
+raw=open(p,'rb').read(); op = gzip.open if raw[:2]==b'\x1f\x8b' else open
+for l in op(p,'rt',encoding='utf-8',errors='replace'):
+    e=json.loads(l); ev=e.get('event') or {}
+    if 'LifeInfo' in ev or 'GameStateInfo' in ev: print(e.get('tick'), ev)
+PY
+```
+
+## 34c. 收敛层跟上 **S3**：`batch_conv` **637 → 637**（1080 批里 **2 批内部变好 / 0 批变差**），`diffconv_parity` **1290 / 1290** 仍逐位（2026-11-09，`dispatch/73`）
 
 > 任务书：`dispatch/73-conv-follow-s3.md`（**不在本仓库**，理由见本文件开头的审计说明）。
 > 起点 `CG@766449b`，分支 `agent/conv-follow-s3`。上一轮 65 号（§39）把 S3 落进内核时
@@ -4758,7 +4825,7 @@ python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire \
 > 证据等级：本节全部是**观测**（每条都给了可复跑命令）。本轮**没有**新增逐位证据 ——
 > 与真二进制对拍的仍然只有 §39 的那几条；本节证明的是"两层口径一致"，不是"更接近原版"。
 
-### 42.0 一页结论
+### 34c.0 一页结论
 
 | # | 问题 | 答案 | 档 |
 |---|---|---|---|
@@ -4768,7 +4835,7 @@ python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire \
 | ④ | 有没有做不到的 | **没有做不到**。到达序的键是"到停点的弧长"，只需要**点列 + 该发的 `stop`**，收敛层第一遍解完就有；不需要速度常数 | 观测 |
 | ⑤ | 代价 / 局限 | 报文装配仍是两份；不动点迭代仍没做（§39.7 第 3 条同款）；headless 没跑（`client/` 是禁区，理由同 §39） | — |
 
-### 42.1 落点：S3 的第二遍只有**一份实现**
+### 34c.1 落点：S3 的第二遍只有**一份实现**
 
 65 号把「到达序 + 逐发挖洞」写在 `Match::fire_functions_with` 的 ③④ 两段里；而收敛层
 `ConvPredictor::fire_batch` 自己另有一份结算循环（`batch_conv` 轴驱动的就是它），那段代码在它
@@ -4796,7 +4863,7 @@ python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire \
 ② 单发批与 S1/S2 档在函数里**直接返回** ⇒ `Match::fire`（以及 `ConvPredictor::fire` = `N = 1` 的
 `fire_batch`）**不可能**被这次改动碰到。
 
-### 42.2 三轴 before → after（**分开跑、分开报**）
+### 34c.2 三轴 before → after（**分开跑、分开报**）
 
 语料 = 冻结快照 `gw2-replays-snapshot/replays`（403 个文件 = **401 份回放** + `SHA256SUMS` +
 `MANIFEST.tsv`）；286 份可读 / **1080 批**。before = `CG@766449b` 实跑，after = 本分支实跑。
@@ -4817,7 +4884,7 @@ python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire \
 **一个字都不用改**。（另：本文件开头那句"2026-11-08：内容 647 / 647 / 633"里的 **633 是旧记**，
 现行 `batch_conv` 是 **637** —— §39 起就是这个数，`fixtures/guardrails.json` 也是 637。）
 
-### 42.3 `batch_conv` 逐批变化清单（1080 批里只有 **2 批**）
+### 34c.3 `batch_conv` 逐批变化清单（1080 批里只有 **2 批**）
 
 对拍 `batch_conv --drive batch --policy strict --json` 的改前 / 改后两份 JSONL：**1078 批逐字节
 不变**，只有下面两批的内部读数变了；**0 批 content_ok / kind_seq_ok 翻面（两个方向都没有）**。
@@ -4834,7 +4901,7 @@ python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire \
 （`1782927590#0` 5 → 3 条、`1793884550#1` 7 → 5 条），连"三条大差消失"的形态都一样。两层在**同一批人**
 身上动、方向一致 —— 不是"我猜它应该一样"，是两份独立产物对同一份语料给出同一个净变化。
 
-### 42.4 `diffconv_parity` 仍成立（+ 一条**会让它红**的负对照）
+### 34c.4 `diffconv_parity` 仍成立（+ 一条**会让它红**的负对照）
 
 命令与数（快照目录，`GW2_REPLAY_DIR=<快照>` 时测试才跑全语料；不设时它去 Godot 的 `user://`）：
 
@@ -4864,7 +4931,7 @@ python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire \
 （含弧长）逐位相同** ③ 报文 `FunctionPoints.end_x` = **重解后**的停点（不是第一遍那个值）。
 同一个负对照下这条单测也红（`assertion left != right failed: 后到的那一发必须看得见前面的洞`）。
 
-### 42.5 遗留 / 未做（照实写）
+### 34c.5 遗留 / 未做（照实写）
 
 1. **报文装配仍是两份**：内核 `execute_results` 与收敛层 `fire_batch_with` 的 ④–⑦ 各写一遍。
    它们本来就有已知差异（爆炸点内核 ④ 用 `stop`、收敛层用 `hole_point`，§30.5 那 12 处），
@@ -4880,7 +4947,7 @@ python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire \
 5. **§39.7 第 1、2、5 条遗留不受影响**（机制的运行时直证仍缺、S3 与 S4 仍分不开、`hole_point` 的
    印刷版残差仍在）。
 
-### 42.6 本轮改动清单
+### 34c.6 本轮改动清单
 
 | 文件 | 改了什么 |
 |---|---|
@@ -4905,7 +4972,7 @@ python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire \
 | `tools/check_doc_refs.py` | rc=0 | **rc=0** |
 | headless / selftest | — | **没跑**（见 §42.5 第 4 条） |
 
-### 42.7 复跑（本节每个数都能这样复核）
+### 34c.7 复跑（本节每个数都能这样复核）
 
 ```bash
 export CARGO_HOME=<WS>/.reference/cargo-home CARGO_TARGET_DIR=<WS>/.agent-work/cg/target73
@@ -4934,7 +5001,7 @@ python3 tools/bit_exact_attrib.py --json b.jsonl --check-baseline --axis batch -
 python3 tools/bit_exact_attrib.py --json c.jsonl --check-baseline --axis batch_conv --snapshot $R
 ```
 
-## 43. **LAN + AI 局造出来了**：AI 真的开了一发，三样同抓 + 直接量"喂进 `0x3c5f70` 的那个 `&Point`" —— 它**就是** `start_x`（0 ulp）；`0x3c5f70` 的调用者 = 槽 `0x9bacf0`、两个 `call`、**零个写入者**（2026-11-09，`dispatch/69`）
+## 42. **LAN + AI 局造出来了**：AI 真的开了一发，三样同抓 + 直接量"喂进 `0x3c5f70` 的那个 `&Point`" —— 它**就是** `start_x`（0 ulp）；`0x3c5f70` 的调用者 = 槽 `0x9bacf0`、两个 `call`、**零个写入者**（2026-11-09，`dispatch/69`）
 
 > 任务书：[`dispatch/69-lan-ai-match.md`](../dispatch/69-lan-ai-match.md)。起点 `CG@766449b`，
 > 分支 `agent/lan-ai-match`，私有 `CARGO_HOME` / `CARGO_TARGET_DIR`。
@@ -4946,7 +5013,7 @@ python3 tools/bit_exact_attrib.py --json c.jsonl --check-baseline --axis batch_c
 > "`0x3c5f70` 的调用者未知"。本节把这两条**同时**做掉：先造出让 AI 真开火的局，再在**同一次开火**里
 > 抓三样，并**直接**读 `0x3c5f70` 吃进去的那个 `&Point`（不再靠"印出来的末位反推"）。
 
-### 43.0 一页结论
+### 42.0 一页结论
 
 | # | 问题 | 答案 | 档 |
 |---|---|---|---|
@@ -4961,7 +5028,7 @@ python3 tools/bit_exact_attrib.py --json c.jsonl --check-baseline --axis batch_c
 一句话：**AI 那条路走通了、那一发抓齐了、三样互相指认得干干净净，`pos` 逐位落在曲线上，
 喂进修正器的 `Point` 与报文 `start_x` 逐位相同** —— §37 那个 `…844` 在这一发上**也没有复现**。
 
-### 43.1 LAN + AI 局怎么造（1920×1160 窗口坐标，全部真机实测）
+### 42.1 LAN + AI 局怎么造（1920×1160 窗口坐标，全部真机实测）
 
 ```bash
 export PY=<WS>/.reference/venv/bin/python
@@ -5001,7 +5068,7 @@ c 958 1109,   w3,  s play1        # Start（底栏中间）
   （**必须绝对**：相对路径 Godot 会打一行 `WARNING: XDG_DATA_HOME is a relative path` 然后**静默回落**
   `$HOME/.local/share`，而这里 `$HOME` 不可写 ⇒ 直接起不来）。
 
-### 43.2 三样各在哪、怎么认回来（三条独立链，点相等只当判据）
+### 42.2 三样各在哪、怎么认回来（三条独立链，点相等只当判据）
 
 | # | 地址 | 抓到的东西 | 这一发（AI）的值 |
 |---|---|---|---|
@@ -5024,7 +5091,7 @@ c 958 1109,   w3,  s play1        # Start（底栏中间）
 本轮一开始就是这么踩的：按 `x0/y0` 相同去挑 `tok_suffix`，等于把结论写进对齐里；改成"时间上最近的一条
 火路径印字"之后，三发的 `Point` 仍然逐位等于各自的 `start_x`，结论才站得住。
 
-### 43.3 本轮抓到的三发（都在同一个进程、同一局）
+### 42.3 本轮抓到的三发（都在同一个进程、同一局）
 
 | 发 | 谁打的 | `flip` | 起点 `(x0,y0)` | `n` | `pos` | 印出来的后缀 | token 列表 |
 |---|---|---:|---|---:|---|---|---|
@@ -5038,7 +5105,7 @@ c 958 1109,   w3,  s play1        # Start（底栏中间）
 AI 的进化每评一个候选就走一次 `calculate_shot_results → calculate_function`（`docs/13-ai.md` §8.6 的评分核心
 `0x51a750` → 槽 `0x9bacb0` → `0x3c2bc0` → 槽 `0x9bac98` → `0x3c2530`）。
 
-### 43.4 判据（与 §40.4 逐条对口径）
+### 42.4 判据（与 §40.4 逐条对口径）
 
 | 判据 | 定义 | 本轮 | §40 的人打 20 发 |
 |---|---|---:|---|
@@ -5057,7 +5124,7 @@ AI 的进化每评一个候选就走一次 `calculate_shot_results → calculate
 本轮 AI 那一发 `flip=1`：`f(pos_x) = pos_x + 9.961 = 4.925`（差 10.07），而 `f(-pos_x) = 14.996913617128012`
 **逐位等于** `pos_y`。⇒ 采样器在 `flip=1` 时把自变量取反；判"在不在曲线上"必须跟着翻，否则会误判成"不在曲线上"。
 
-### 43.5 第 1 发为什么 `array_untouched=—`：**被障碍截断**（照实记，不算通过也不算失败）
+### 42.5 第 1 发为什么 `array_untouched=—`：**被障碍截断**（照实记，不算通过也不算失败）
 
 `pos_read#1` 的 `vs_calc` 两条都是 `same=false` 且**长度对不上**（快照 `len=6030` vs `n=2506`），
 `vs_queue` 却是 `same_ptr=true / same_len=true / same_digest=true`；把它 ① 那份 token 重跑真采样器
@@ -5066,7 +5133,7 @@ AI 的进化每评一个候选就走一次 `calculate_shot_results → calculate
 §40 那 20 发一发都没覆盖到）。所以它的"数组有没有被改过"**不能**用 `diffPoints==0` 判——
 本节把它记成 `—`，并单独给出 `truncated=True / truncated_from_len=6030`。
 
-### 43.6 判决：1 ulp **在 AI 那一发上也没复现** —— 以及这条否证的**覆盖面**
+### 42.6 判决：1 ulp **在 AI 那一发上也没复现** —— 以及这条否证的**覆盖面**
 
 ```text
 ① 常数末位差     否（观测；3/3 逐位相同，且印出来的就是 {:.3}(c_full)）
@@ -5091,7 +5158,7 @@ AI 的进化每评一个候选就走一次 `calculate_shot_results → calculate
   3. §38 那 13 批的机理（`sin(u)/u` 在 `u=0` 处 NaN）在**正常游玩里几乎不出现**：AI 的候选里确实有
      **97/506 个 `c=NaN`** 的（见 42.0 ⑦），但这一发不是。
 
-### 43.7 `0x3c5f70` 的调用者：**槽 `0x9bacf0`，两个 `call`，零个写入者**
+### 42.7 `0x3c5f70` 的调用者：**槽 `0x9bacf0`，两个 `call`，零个写入者**
 
 `tools/rela_slot.py 0x3c5f70`（**新增**，可原地复跑；它是"从重定位那一侧查"的版本，与
 [`tools/addr_probe.py callers`](../tools/addr_probe.py) 互为交叉验证）：
@@ -5121,7 +5188,7 @@ RELA   .rela.dyn 条目 24614 条；addend == 0x3c5f70 的槽 1 个
 `0x3c30c1` / `0x3e2d35` 与 §40 记的 `gw+3c30c7` / `gw+3e2d3b`（返回地址 = 调用点+6）**逐一对上**；
 `0x9bacb0 → 0x3c2bc0` 报 2 条（`0x471825` / `0x51a9a1`）。⇒ 扫描器**会报**、且报的位置**可核对**。
 
-### 43.8 本轮踩到/记下来的坑（都不是"大概"，是实测）
+### 42.8 本轮踩到/记下来的坑（都不是"大概"，是实测）
 
 1. **`XDG_DATA_HOME` 给相对路径 ⇒ Godot 静默回落 `$HOME`**（只打一行 warning），本机 `$HOME` 不可写
    ⇒ 游戏起不来、`user://` 也没重定向。**三个 XDG 变量都必须是绝对路径。**
@@ -5140,7 +5207,7 @@ RELA   .rela.dyn 条目 24614 条；addend == 0x3c5f70 的槽 1 个
 6. **`Start` 点一次就够**（本轮实测生效）；但**第一回合可能是 AI 的**，此时输入框禁用、打字无效果 ——
    驱动必须"回合感知"，别把"我打了字"当成"我开了火"。
 
-### 43.9 复跑（每条都能原地跑）
+### 42.9 复跑（每条都能原地跑）
 
 ```bash
 export PY=<WS>/.reference/venv/bin/python
@@ -5167,7 +5234,7 @@ $PY tools/lan_ai_triple.py --jsonl $R/lan_ai.jsonl --label lanAI --oracle 1 \
     --fixture-out fixtures/lan_ai_triple_sample.jsonl
 ```
 
-### 43.10 本轮改动清单（`src/` **一个字节没动**）
+### 42.10 本轮改动清单（`src/` **一个字节没动**）
 
 | 文件 | 内容 |
 |---|---|
@@ -5180,7 +5247,7 @@ $PY tools/lan_ai_triple.py --jsonl $R/lan_ai.jsonl --label lanAI --oracle 1 \
 **没有改动**：`src/`、`client/`、`dispatch/`、`fixtures/guardrails.json`、
 `tools/frida_point_array.{js,py}`（一行没动 —— 本轮的三样复用它们，新东西全在新文件里）。
 
-### 43.11 验收
+### 42.11 验收
 
 | 项 | 结果 |
 |---|---|
