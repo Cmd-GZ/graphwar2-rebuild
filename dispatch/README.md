@@ -479,3 +479,41 @@ python3 tools/merge_check.py --cg origin/CG
 ```
 
 它会把本报告的 §遗留/§建议 打出来、扫自曝句、查禁区与污染。**缺节/碰禁区/二进制/dispatch 进 master 一律非 0。**
+
+---
+
+# 第十轮（2026-11-08 傍晚）
+
+## 第九轮的遗留（报告 §7/§8 原文要点）
+
+```
+· 谁每帧驱动 KernelBus::pump   —— 原版 GraphwarGameClient::process 在 x86 上**还没定位**（最后一环）
+· end_x 的真身                —— 未知；需要同时抓 FunctionPoints 装配处 + 0x472865
+· Ode 的三条边界              —— 预算用尽 / 二分不收敛 / 有障碍提前停，**一条都没验**
+· EntityDrawer 的门控         —— get_alive / is_on_turn 现在用 prep 成员**近似**（推断）
+```
+
+## 新任务
+
+| # | 分支 | 主题 | 优先级 |
+|---|---|---|---|
+| 43 | `agent/game-client-process` | 定位 `GraphwarGameClient::process`（x86）→ 到 `pump` 的完整链路 | **P0** |
+| 44 | `agent/endx-truth` | **同时**抓 `FunctionPoints` 装配处 + `0x472865`，定那 100 发哪个字段不是"这次读" | **P0** |
+| 45 | `agent/ode-edge-cases` | Ode 三类边界样本（预算用尽 20001 点 / 不收敛 / 有障碍） | P1 |
+| 46 | `agent/entity-drawer-gating` | `get_alive` / `is_on_turn` 从近似换成真查询 | P1 |
+
+## 当前护栏（master `4277d901`）
+
+```
+fire 647 / 1075 ｜ batch 647 / 1075 ｜ batch_conv 637 / 1075
+死亡 366 / 385 ｜ 挖洞 207 / 294
+cargo test --offline 1631
+headless entity_drawer 236 / assemble 217 / plane_on_screen 96 / obstacle 116 / function_drawer 132
+selftest 712（有 serve_match）/ 636（无）
+```
+
+## 一个已完成的第三方审计（可以少走弯路）
+
+`docs/158-audit-407.md`：「407 批 = 回放自身不自洽」**经独立复现成立**（不用本仓库 tools 自写复算器；
+正对照 20/20；并集 407 漏 0）。⇒ **不要再花力气去"修"那 407 批**，它们不是我们的错。
+唯一的替代解释（回放记的文本≠当时喂进去的文本）由第九轮 39 号在抓。
