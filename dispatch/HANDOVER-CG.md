@@ -209,7 +209,11 @@ python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire
 
 ## 7. 第十二轮（进行中）与待办
 
-### 已暂停的 4 个工作树（改动都在盘上，**重启后可以 continue 它们**）
+### 已暂停的 4 个工作树（**实测：全是 0 改动、干净停在 base `62f231c`**）
+
+> ⚠️ 我在派出后几分钟就 interrupt 了，它们**还没写出任何东西** ⇒ **没有可见成果可续**，
+> 重启后应当**重新派**（工作树可以直接复用，`git status` 干净）。
+> 别再写"改动都在盘上"——那是我 2026-11-09 02:30 的一处**误记**，已按实测改正。
 
 | worktree | 分支 | 任务 | 状态 |
 |---|---|---|---|
@@ -218,9 +222,11 @@ python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire
 | `wt-56` | `agent/print-roundtrip` | 56 打印-回代链（3 位小数 ↔ 全精度；Y189+X91 桶） | 同上 |
 | `wt-60` | `agent/posy-writer` | 60 谁写 `EffectInfo.pos_y` | 同上 |
 
-**恢复办法**：`send_message` 给对应 agent id（若已不可续则在新 worktree 里重派，工作树改动先用
-`git status` 认领）。给它们的 prompt 里必须重申：`cargo test 1659`、13 个 headless 1683 条、
-entity_drawer **366**、selftest 714/0/1skip（且新工作树**要先 `cp -a client/assets`**）。
+**重派办法**：4 个 worktree（`wt-54/55/56/60`）和 4 个分支（`agent/client-controllers-rust`、
+`agent/overlap-scenario`、`agent/print-roundtrip`、`agent/posy-writer`）都已建好且干净，**直接用**；
+prompt 必须重申：`cargo test 1659`、13 个 headless **1683** 条、entity_drawer **366**、
+selftest 714/0/1skip，且**新工作树要先 `cp -a client/assets client/`**（gitignore，否则 selftest 掉到 686/3/22）。
+任务书原文在 `dispatch/54-*.md` 等四份里，**照着重发即可**（我已把要点抄进上面那张表）。
 
 ### 还没派的 4 份（都是算力活，**GP​U 通了之后优先**）
 
