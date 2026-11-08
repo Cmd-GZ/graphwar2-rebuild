@@ -154,7 +154,7 @@ use crate::graphwar_color_manager::GraphwarColorManager;
 use crate::graphwar_computer_player_manager::ComputerPlayers;
 use crate::graphwar_effect_manager::{EffectType, GraphwarEffectManager};
 use crate::graphwar_entity_effect_manager::GraphwarEntityEffectManager;
-use crate::graphwar_graphics_manager::GraphwarGraphicsManager;
+use crate::graphwar_graphics_manager::{GraphicsKind, GraphwarGraphicsManager};
 use crate::graphwar_life_manager::{
     LifeState, ENTITY_REMOVED_EVENT_TAG, TICK_EVENT_TAG,
 };
@@ -1163,6 +1163,20 @@ impl RootWiring {
     /// 演示数据见 [`DEMO_SOLDIERS`] / [`DEMO_PLAYERS`] / [`demo_room`] /
     /// [`DEMO_LOCAL_PROFILE`]（**我方选择**）。
     pub fn assemble_demo() -> Self {
+        // 原版**只有一条** `Rc<RefCell<GraphwarEventQueue>>`（`GraphwarGameClient::new` 里造的，
+        // 其余 manager 拿 `Weak`/`Rc` 共享，`src/graphwar_event_queue.rs` 模块文档）。
+        // 任务 42 起本层也共用一条：容器外的 [`KernelBus`] 与容器内的 manager 拿的是同一个 `Rc`。
+        Self::assemble_demo_with_queue(Rc::new(RefCell::new(GraphwarEventQueue::new())))
+    }
+
+    /// 同 [`RootWiring::assemble_demo`]，但事件队列由调用方给（任务 42 的 [`KernelBus`] 用）。
+    ///
+    /// 为什么需要这个入口：原版那条"事件从哪个 manager 出、进哪个队列"是**同一个对象**
+    /// （`GraphwarGameClient +0x1d8` 那一个 `Rc<RefCell<GraphwarEventQueue>>`），
+    /// 而本层 22 个槽各自独立（模块文档"与原版的差别"里记着）。
+    /// 有了它，[`GraphwarPlanePosManager::set_position`] 发的那条 `PosInfo`(26)
+    /// 与 [`KernelBus::pump`] 读的是**同一条队列**——事件通道这才算通。
+    pub fn assemble_demo_with_queue(queue: Rc<RefCell<GraphwarEventQueue>>) -> Self {
         let mut c = GraphwarModuleContainer::new();
 
         // ① GraphwarTickHandler —— 接线层：`GraphwarTickHandler::new(base_tick, base_ms)`。
@@ -1203,7 +1217,7 @@ impl RootWiring {
         //    `new` 的形状照原版：`Rc::new_cyclic` 造、返回 `Rc<RefCell<Self>>`；
         //    事件队列是本层自己造的（原版那一个由 `GraphwarGameClient::new` 持有并共享，
         //    我方 22 个槽各自独立，这一条记在模块文档"与原版的差别"里）。
-        let plane_pos_queue = Rc::new(RefCell::new(GraphwarEventQueue::new()));
+        let plane_pos_queue = Rc::clone(&queue);
         add(&mut c, PlanePosManagerSlot(GraphwarPlanePosManager::new(plane_pos_queue)));
 
         // ⑦ GraphwarGameStateManager —— 我方 = `game::Match`（运行实体那一半）。
@@ -1498,6 +1512,12 @@ impl RootWiring {
     }
 
     // ---- 本轮（任务 40）第二批 6 个：按类型取回 ----
+
+    /// `get_module::<GraphicsManager>()`（原版 x86 `0x46a8e0` / arm64 `0x4c115c` 那两次调用点
+    /// 都在 `EntityDrawer::get_entity_{skin,face,hat}_sprite` 里，见 `docs/16` §46.3）。
+    pub fn graphics_manager(&self) -> Option<Rc<RefCell<GraphwarGraphicsManager>>> {
+        self.container.borrow().get_module::<GraphwarGraphicsManager>()
+    }
 
     /// `get_module::<EffectManager>()`（原版 arm64 `0x4a10c4`）。
     pub fn effect_manager(&self) -> Option<Rc<RefCell<GraphwarEffectManager>>> {
@@ -1842,6 +1862,277 @@ impl RootWiring {
     pub fn interaction_selftest_strings(&self) -> Vec<String> {
         self.interaction_selftest().into_iter().map(|(name, value)| format!("{name}={value}")).collect()
     }
+}
+
+// ---------------------------------------------------------------------------
+// 5b. 事件通道（任务 42）：`GraphwarEventHandler` 的替身 + 那条唯一的队列
+// ---------------------------------------------------------------------------
+//
+// # 原版是什么（逐环节地址见 `docs/16-client.md` §46）
+//
+// ```text
+// 生产  GraphwarPlanePosManager::set_position      x86 0x3c64c0 / arm64 0x3b8160
+//         └─ GraphwarEventQueue::add_event(PosInfo=26)
+//                                     x86 0x3d3530（经 0x3c65ad / GOT 0x9bac80）
+// 派发  GraphwarEventHandler::process_events       arm64 0x486970
+//         └─ 由 GraphwarGameClient::process（arm64 符号）逐帧调
+// 订阅  EntityDrawer::ready                        x86 0x4b4130 / arm64 0x4bab44
+//         └─ GraphwarBackend::subscribe_to_event    x86 0x514b40 / arm64 0x406e80
+//              → GraphwarEventHandler::subscribe_to_event  arm64 0x486bc8
+// 消费  EntityDrawer::process / ::draw             x86 0x4b4b60 / 0x4b2890
+//         └─ 直接读 GraphwarPlanePosManager 的位置表（**不是**事件载荷）
+// ```
+//
+// ⇒ 两条链路的六条订阅里，**闭包只做一件事**：`[EntityDrawer + 0x108] = 1`
+// （x86 `0x4b4990` / arm64 `0x4bb378`，六条订阅共用同一份代码，`0x4b4a13` 那句 `strb`）。
+// 数据本身是 `process`/`draw` **拉**出来的。所以本层的替身也必须照这个形状做：
+// **事件只置脏 → 消费者自己回表里拉**。
+//
+// # 我方这一层替身（**scaffold**，原版没有这个类型）
+//
+// * `GraphwarEventHandler` 在 `src/` 里**没有实现**（22 个槽里也没有它）⇒ 本层用一个
+//   "名字 → 订阅计数" 的表代替它的订阅面；
+// * 原版事件要走一圈 socket（`send_buffer` → 对端 → `handle_*_remote_event` → `process_events`），
+//   本层没有网络 ⇒ [`KernelBus::pump`] 把**出站队列**里的事件**直接回灌**给本地订阅者
+//   （标 `我方接线`：省掉的是那圈 socket，两端的方法都是真的）。
+// * 那唯一一条 `Rc<RefCell<GraphwarEventQueue>>` 由 [`RootWiring::assemble_demo_with_queue`]
+//   同时交给容器里的 manager 与本对象 ⇒ "谁发的"和"谁收的"是同一条队列（这一条是**原版形状**）。
+
+/// 事件通道的替身（**scaffold**；原版是 `GraphwarEventHandler` + `GraphwarGameClient` 的那个字段）。
+///
+/// 生命周期：挂在 [`KERNEL_BUS`] 这个 `thread_local` 上（节点层随手可取，见
+/// [`install_kernel_bus`]）。原版那条链是"节点 → `GraphwarRootNode +0x1668` → `GraphwarBackend +0x220`
+/// → 容器 → `get_module`"，本层没有那条对象图 ⇒ 用 thread-local 代替（**形状不同**，
+/// 但"从容器里按类型取回 manager"这一步仍是原版的 `get_module`）。
+pub struct KernelBus {
+    /// 那条唯一的出站队列（原版：`GraphwarGameClient` 持有、其余 manager 共享）。
+    queue: Rc<RefCell<GraphwarEventQueue>>,
+    /// 容器（22 个 manager，原版 `GraphwarBackend +0x220` 的那个 `Rc<RefCell<…>>`）。
+    wiring: RootWiring,
+    /// 事件名 → 订阅者个数（原版 `GraphwarEventHandler` 里那些 `Vec<Box<dyn Fn(&GraphwarEvent)>>`）。
+    subscribers: HashMap<&'static str, usize>,
+    /// 已经投递给本地订阅者的事件（观测点；按投递顺序）。
+    delivered: Vec<Event>,
+    /// `pump()` 被调过几次（观测点）。
+    pumps: i64,
+    /// **虚拟时钟**（`None` = 读容器里 `GraphwarTickHandler` 的真读数）。
+    ///
+    /// 原版 `EntityDrawer::draw` 的 `V` 就是 `get_fractional_tick()`（x86 `0x519530` 的返回值）。
+    /// 本层那个 tick handler 的基准是 `(0, 0)`（= epoch，见 `assemble_demo` ①），
+    /// 于是 `V` 会是"从 1970 年到现在"那个量级 —— 画出来的角度是垃圾。
+    /// 这个"摆时钟"的口子与 [`crate::_scaffold::graphwar_plane_class`] 的
+    /// `set_fractional_tick` 是同一种**我方接线口**：只摆时钟、不碰数据。
+    clock_override: Option<f64>,
+}
+
+impl KernelBus {
+    /// 那条共享队列（给需要自己 `add_event` 的地方）。
+    pub fn queue(&self) -> Rc<RefCell<GraphwarEventQueue>> {
+        Rc::clone(&self.queue)
+    }
+
+    /// 容器本体（`get_module` 的入口）。
+    pub fn wiring(&self) -> &RootWiring {
+        &self.wiring
+    }
+
+    /// 订阅一个事件名（= `GraphwarEventHandler::subscribe_to_event` 的**登记**那一半）。
+    ///
+    /// 名字必须在 `0x3d38f0` 解出的那张表里（[`crate::events::DISPATCH_NAME_TAGS`]），
+    /// 否则返回 `false`（原版那 6 条订阅名全部在表里，见 `docs/16` §46）。
+    pub fn subscribe(&mut self, name: &str) -> bool {
+        match crate::events::DISPATCH_NAME_TAGS.iter().find(|(n, _)| *n == name) {
+            Some((n, _)) => {
+                *self.subscribers.entry(n).or_insert(0) += 1;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// 某个事件名上挂了几个订阅者。
+    pub fn subscriber_count(&self, name: &str) -> usize {
+        self.subscribers.get(name).copied().unwrap_or(0)
+    }
+
+    /// 订阅表原样给出（`(名字, 个数)`，按名字排序 —— `HashMap` 序不可依赖）。
+    pub fn subscribers(&self) -> Vec<(&'static str, usize)> {
+        let mut out: Vec<(&'static str, usize)> =
+            self.subscribers.iter().map(|(k, v)| (*k, *v)).collect();
+        out.sort_unstable_by_key(|(k, _)| *k);
+        out
+    }
+
+    /// **把出站队列里的事件投递给本地订阅者**（原版 `process_events` 的位置）。
+    ///
+    /// 返回值 = 这一次真正投递出去的事件（按队列顺序）。只有**有人订阅**的事件才会被记下来，
+    /// 没订阅的照原版口径丢掉（原版 `process_events` 也只调订阅表里有的那些）。
+    pub fn pump(&mut self) -> Vec<Event> {
+        self.pumps += 1;
+        let drained = self.queue.borrow_mut().send_buffer();
+        let mut out = Vec::new();
+        for ev in drained {
+            let subscribed = dispatch_name(ev).is_some_and(|n| self.subscribers.contains_key(n));
+            if subscribed {
+                self.delivered.push(ev);
+                out.push(ev);
+            }
+        }
+        out
+    }
+
+    /// 已投递事件（按投递顺序）。
+    pub fn delivered(&self) -> &[Event] {
+        &self.delivered
+    }
+
+    /// `pump()` 被调过几次。
+    pub fn pumps(&self) -> i64 {
+        self.pumps
+    }
+
+    /// 队列里还压着几条（没 `pump` 之前）。
+    pub fn queue_len(&self) -> usize {
+        self.queue.borrow().len()
+    }
+
+    // ---- 生产侧：两个 manager 的 setter（原版都是直接调，本层照调） ----
+
+    /// `GraphwarPlanePosManager::set_position`（x86 `0x3c64c0`）：写表 **+ 发 `PosInfo`(26)**。
+    ///
+    /// 这就是 `pos_info_event` 那条链的**源头**（另一端是 `draw`/`process` 拉表）。
+    pub fn set_position(&self, id: u32, pos: [f64; 3]) -> bool {
+        let Some(slot) = self.wiring.plane_pos_manager() else {
+            return false;
+        };
+        let manager = Rc::clone(&slot.borrow().0);
+        manager.borrow().set_position(id, pos);
+        true
+    }
+
+    /// `GraphwarGraphicsManager::set_*_graphics`（x86 `0x468c70` / `0x468b60` / `0x468a50`）。
+    ///
+    /// 写 `entity_id → 名字` 三张表之一，并把 manager 产出的那条事件搬到**共享队列**。
+    /// ⚠️ 差异（**我方接线**）：原版那条 `add_event` 在 setter 体内（x86 `0x468cde`）；
+    /// 我方 manager 没有队列句柄，事件先落在它的 `outbox`，由这里搬过去 —— tag/顺序不变。
+    pub fn set_graphics(&self, kind: GraphicsKind, id: u32, name: &str) -> bool {
+        let Some(graphics) = self.wiring.graphics_manager() else {
+            return false;
+        };
+        let mut manager = graphics.borrow_mut();
+        let info = manager.set_graphics(kind, id, name);
+        debug_assert_eq!(info.tag(), kind.tag());
+        let outbox = manager.take_outbox();
+        drop(manager);
+        let mut queue = self.queue.borrow_mut();
+        for ev in outbox {
+            queue.add_event(ev);
+        }
+        true
+    }
+
+    // ---- 消费侧：**拉**（原版 `draw` / `process` / `get_entity_*_sprite` 就是这么做） ----
+
+    /// 位置表全量：`(entity_id, [pos_x, pos_y, radius])`。
+    ///
+    /// 原版调用点：`EntityDrawer::draw` x86 `0x4b2890`（`get_all_positions` @`0x4b2e32`、
+    /// `get_position` @`0x4b314b`）与 `EntityDrawer::process` x86 `0x4b4b60`
+    /// （@`0x4b4f24` / @`0x4b5004`）。
+    pub fn positions(&self) -> Vec<(u32, [f64; 3])> {
+        let Some(slot) = self.wiring.plane_pos_manager() else {
+            return Vec::new();
+        };
+        let manager = Rc::clone(&slot.borrow().0);
+        let m = manager.borrow();
+        m.get_all_positions()
+            .into_iter()
+            .filter_map(|id| m.get_position(id).map(|p| (id, p)))
+            .collect()
+    }
+
+    /// 三张外观表之一（`entity_id → 名字`）。
+    pub fn graphics(&self, kind: GraphicsKind) -> Vec<(u32, String)> {
+        let Some(graphics) = self.wiring.graphics_manager() else {
+            return Vec::new();
+        };
+        let manager = graphics.borrow();
+        manager.table(kind).iter().map(|(id, name)| (*id, name.clone())).collect()
+    }
+
+    /// `GraphwarTickHandler::get_fractional_tick`（x86 `0x519530`）——
+    /// `EntityDrawer::draw` 里那个驱动量 `V`（`0x4b2e10 call 0x519530`）。
+    pub fn fractional_tick(&self) -> f64 {
+        if let Some(v) = self.clock_override {
+            return v;
+        }
+        match self.wiring.tick_handler() {
+            Some(handler) => handler.borrow().0.get_fractional_tick(),
+            None => 0.0,
+        }
+    }
+
+    /// 把虚拟时钟摆到 `tick`（`None` = 恢复读 `GraphwarTickHandler` 的真读数）。
+    ///
+    /// 同 [`Self::fractional_tick`] 的注释：这是**我方接线口**（摆时钟不是复原）。
+    pub fn set_clock(&mut self, tick: Option<f64>) {
+        self.clock_override = tick;
+    }
+
+    /// 现在这个时钟读数是从哪儿来的：`"override"` / `"tick_handler"` / `"none"`。
+    pub fn clock_source(&self) -> &'static str {
+        if self.clock_override.is_some() {
+            "override"
+        } else if self.wiring.tick_handler().is_some() {
+            "tick_handler"
+        } else {
+            "none"
+        }
+    }
+}
+
+/// 事件 → `0x3d38f0` 那张表里的派发名（没有名字的两条 = `GameHeartbeat` / `VersionInfo`）。
+pub fn dispatch_name(event: Event) -> Option<&'static str> {
+    crate::events::DISPATCH_NAME_TAGS
+        .iter()
+        .find(|(_, e)| *e == event)
+        .map(|(name, _)| *name)
+}
+
+thread_local! {
+    /// 本线程那条事件通道（节点层 [`crate::_scaffold::entity_drawer_class`] 用它）。
+    static KERNEL_BUS: RefCell<Option<Rc<RefCell<KernelBus>>>> = const { RefCell::new(None) };
+}
+
+/// 装一条事件通道（**幂等**）：第一次调用时按原版注册序装 22 个槽，并造那条共享队列。
+///
+/// 原版对应物是 `GraphwarGameClient::new` 里造的队列 + `GraphwarRootNode +0x1668` 那一路；
+/// 本层没有那条对象图 ⇒ 装在这里（**我方接线**）。
+pub fn install_kernel_bus() -> Rc<RefCell<KernelBus>> {
+    if let Some(bus) = kernel_bus() {
+        return bus;
+    }
+    let queue = Rc::new(RefCell::new(GraphwarEventQueue::new()));
+    let wiring = RootWiring::assemble_demo_with_queue(Rc::clone(&queue));
+    let bus = Rc::new(RefCell::new(KernelBus {
+        queue,
+        wiring,
+        subscribers: HashMap::new(),
+        delivered: Vec::new(),
+        pumps: 0,
+        clock_override: None,
+    }));
+    KERNEL_BUS.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&bus)));
+    bus
+}
+
+/// 现在这条通道（没装过 ⇒ `None`）。
+pub fn kernel_bus() -> Option<Rc<RefCell<KernelBus>>> {
+    KERNEL_BUS.with(|slot| slot.borrow().clone())
+}
+
+/// 拆掉通道（验收脚本每次开新一轮时用；原版没有这个操作）。
+pub fn uninstall_kernel_bus() {
+    KERNEL_BUS.with(|slot| *slot.borrow_mut() = None);
 }
 
 // ---------------------------------------------------------------------------
@@ -2570,5 +2861,93 @@ mod tests {
             assert_eq!(f.handle_tick_event(Event::TickEvent.wire_tag(), 3639), Ok(vec![]));
             assert_eq!(f.handle_tick_event(Event::TickEvent.wire_tag(), 3640), Ok(vec![9112]));
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // 事件通道（任务 42）：`KernelBus` 的三条性质
+    // -----------------------------------------------------------------------
+
+    /// 那条队列是**共享**的：总线手里的 `Rc` 与容器里 `PlanePosManager` 手里的是同一个
+    /// （原版：`GraphwarGameClient` 造一条、其余 manager 共享，`src/graphwar_event_queue.rs`）。
+    #[test]
+    fn the_bus_and_the_plane_pos_manager_share_one_queue() {
+        uninstall_kernel_bus();
+        let bus = install_kernel_bus();
+        let queue = bus.borrow().queue();
+        let slot = bus.borrow().wiring().plane_pos_manager().expect("PlanePosManager");
+        let manager = slot.borrow().0.clone();
+        assert!(Rc::ptr_eq(&queue, &manager.borrow().event_queue));
+        // 幂等：第二次拿到的是同一个对象
+        let again = install_kernel_bus();
+        assert!(Rc::ptr_eq(&bus, &again));
+        uninstall_kernel_bus();
+        assert!(kernel_bus().is_none());
+    }
+
+    /// 生产 → 队列 → 投递：`set_position`（x86 `0x3c64c0`）发的那条 `PosInfo`(26)
+    /// 只有**订阅了**才投递给本地订阅者（原版 `process_events`，arm64 `0x486970`）。
+    #[test]
+    fn pos_info_reaches_the_subscriber_after_pump() {
+        uninstall_kernel_bus();
+        let bus = install_kernel_bus();
+
+        assert!(bus.borrow().set_position(77, [1.5, -2.5, 0.5]));
+        assert_eq!(bus.borrow().positions(), vec![(77u32, [1.5, -2.5, 0.5])]);
+        assert_eq!(bus.borrow().queue_len(), 1, "set_position 发一条");
+
+        // 没订阅 ⇒ 投递 0 条（照原版：订阅表里没有的不调）
+        assert!(bus.borrow_mut().pump().is_empty());
+        assert_eq!(bus.borrow().queue_len(), 0, "队列被取走");
+
+        // 订阅之后同一条路径 ⇒ 投递 1 条，tag = 26
+        assert!(bus.borrow_mut().subscribe("pos_info_event"));
+        assert_eq!(bus.borrow().subscriber_count("pos_info_event"), 1);
+        assert!(!bus.borrow_mut().subscribe("没有这条事件"));
+        assert!(bus.borrow().set_position(78, [0.0, 0.0, 1.0]));
+        let delivered = bus.borrow_mut().pump();
+        assert_eq!(delivered, vec![Event::PosInfo]);
+        assert_eq!(delivered[0].wire_tag(), 26);
+        assert_eq!(bus.borrow().delivered(), &[Event::PosInfo]);
+        assert_eq!(bus.borrow().pumps(), 2, "第一次（没订阅）也算一次 pump");
+        uninstall_kernel_bus();
+    }
+
+    /// 三张外观表：`set_*_graphics`（x86 `0x468c70`/`0x468b60`/`0x468a50`）各自发
+    /// 51 / 53 / 55，键是**实体 id**（`protocol.rs` 的字段名就是 `entity_id`）。
+    #[test]
+    fn graphics_setters_emit_the_three_info_events() {
+        uninstall_kernel_bus();
+        let bus = install_kernel_bus();
+        for name in [
+            "skin_graphics_info_event",
+            "face_graphics_info_event",
+            "hat_graphics_info_event",
+        ] {
+            assert!(bus.borrow_mut().subscribe(name), "{name} 必须在 0x3d38f0 的表里");
+        }
+
+        assert!(bus.borrow().set_graphics(GraphicsKind::Skin, 229, "target"));
+        assert!(bus.borrow().set_graphics(GraphicsKind::Face, 229, "no_face"));
+        assert!(bus.borrow().set_graphics(GraphicsKind::Hat, 229, "no_hat"));
+
+        assert_eq!(bus.borrow().graphics(GraphicsKind::Skin), vec![(229u32, "target".to_string())]);
+        assert_eq!(bus.borrow().graphics(GraphicsKind::Face), vec![(229u32, "no_face".to_string())]);
+        assert_eq!(bus.borrow().graphics(GraphicsKind::Hat), vec![(229u32, "no_hat".to_string())]);
+
+        let delivered = bus.borrow_mut().pump();
+        assert_eq!(
+            delivered,
+            vec![
+                Event::SkinGraphicsInfo,
+                Event::FaceGraphicsInfo,
+                Event::HatGraphicsInfo
+            ],
+            "三条事件按调用序、判别值 51/53/55"
+        );
+        assert_eq!(
+            delivered.iter().map(|e| e.wire_tag()).collect::<Vec<_>>(),
+            vec![51, 53, 55]
+        );
+        uninstall_kernel_bus();
     }
 }

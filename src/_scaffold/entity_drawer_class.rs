@@ -148,13 +148,19 @@ use crate::player_showcase::{DEFAULT_FACE, DEFAULT_HAT, DEFAULT_SKIN};
 //
 // ```text
 // GraphwarGraphicsManager::set_{skin,face,hat}_graphics   x86 0x468c70/0x468b60/0x468a50
-//   → HashMap<u32 /*player_id*/, String /*名字*/>        +0x18 / +0x48 / +0x78
+//   → HashMap<u32 /*实体 id*/, String /*名字*/>          +0x18 / +0x48 / +0x78
 //   → 事件 51 / 53 / 55（skin|face|hat_graphics_info_event）
 //   → EntityDrawer::ready 订了这三张事件                  x86 0x4b4130
-//   → EntityDrawer 自己的 HashMap<i32, String>（+0x30）   ← 名字
+//        ⚠️ 订阅闭包**只置** `self[+0x108] = 1`（x86 0x4b4990），不写任何名字表
+//   → EntityDrawer::get_entity_*_sprite **当场**取名字    x86 0x4bb6b0 / 0x4bb0a0 / 0x4b9e70
+//        └─ get_module::<GraphwarGraphicsManager>（x86 0x46a8e0）+ 内联 get_*_graphics(实体 id)
+//           三张表分别读 ctrl@+0x18/+0x48/+0x78（RcBox 数据从 +0x18 起 ⇒ 指令里是 +0x30/+0x60/+0x90）
 //   → GraphwarTextureLoader::get_{skin,face,hat}_texture   arm64 0x40c1cc/0x40c0a4/0x40bf7c
 //       表 +0x150 / +0x180 / +0x1b0，键是名字（String）
 //   → Sprite2D.set_texture(tex)                          x86 0x4bb6b0 里内联的那段
+//
+// ⇒ **旧说法"EntityDrawer 有 HashMap<i32,String>（+0x30）"作废**（2026-11-08，任务 42）：
+//   名字不落在 EntityDrawer 里，每次取图现查。证据见 `docs/16-client.md` §46.3。
 // ```
 //
 // **名字从哪来**（不是玩家 id、不是队色）：皮肤/脸/帽子三张表都以**字符串**为键
@@ -622,6 +628,24 @@ pub struct EntityDrawer {
     process_calls: i64,
     /// `on_resized` 被调用过几次（观测点）。
     resized_calls: i64,
+
+    // ---- 内核事件通道（任务 42，§46）----
+    /// 真的订上去几条（原版 `ready` 里那 6 条；`0` = 还没调 `kernel_subscribe`）。
+    kernel_subscriptions: i64,
+    /// 原版的脏标志 `+0x108`（六条订阅闭包唯一会写的那一格；`process` 末尾清 0）。
+    kernel_dirty: bool,
+    /// `kernel_pump()` 被调过几次。
+    kernel_pumps: i64,
+    /// 累计投递给本类的订阅事件条数。
+    kernel_events: i64,
+    /// 累计"脏了 → 回表里拉"的次数。
+    kernel_pulls: i64,
+    /// 累计从位置表拉到的条目数。
+    kernel_pulled: i64,
+    /// 累计因为外观表变了而重贴图的实体数。
+    kernel_graphics_applied: i64,
+    /// 最近投递的事件判别值（最多留 64 条）。
+    kernel_last_tags: Vec<i64>,
 }
 
 #[godot_api]
@@ -655,6 +679,14 @@ impl IControl for EntityDrawer {
             ready_calls: 0,
             process_calls: 0,
             resized_calls: 0,
+            kernel_subscriptions: 0,
+            kernel_dirty: false,
+            kernel_pumps: 0,
+            kernel_events: 0,
+            kernel_pulls: 0,
+            kernel_pulled: 0,
+            kernel_graphics_applied: 0,
+            kernel_last_tags: Vec::new(),
         }
     }
 
@@ -1426,24 +1458,35 @@ impl EntityDrawer {
 
     /// 换一个实体的外观（三张贴图的名字），返回 `false` = 没有这个实体。
     ///
-    /// **这是我方接线**：原版没有这个 `#[func]`——名字由 `ready` 订的三个 graphics 事件写进
-    /// `HashMap<i32, String>`（`+0x30`）：`skin_graphics_info_event`(51) / `face_…`(53) /
-    /// `hat_…`(55)，发信方是 `GraphwarGraphicsManager`（`player_id → 名字`）。
-    /// 事件通道还没接，所以先由调用方直接给名字。
+    /// **这是我方接线**：原版没有这个 `#[func]`。原版的名字**不在** `EntityDrawer` 的任何字段里——
+    /// `get_entity_{skin,face,hat}_sprite` 每次取图都当场 `get_module::<GraphwarGraphicsManager>`
+    /// 再查那三张表（`+0x18/+0x48/+0x78`，键 = 实体 id），见 `docs/16-client.md` §46.3。
+    /// 真链路（事件 → `kernel_pump` 拉表 → `apply_look`）已经接上；这个入口留给调用方直接指定名字。
     ///
     /// 名字就是 `GraphwarTextureLoader` 三张表的键：皮肤 23 个、脸 17 个、帽子 28 个
     /// （`src/graphwar_texture_loader.rs` 的 `SKINS` / `FACES` / `HATS`）。靶子用
     /// `("target", "no_face", "no_hat")`——`res://skins/target.svg` 就在皮肤表里。
     #[func]
     fn set_entity_look(&mut self, id: i64, skin: GString, face: GString, hat: GString) -> bool {
+        self.apply_look(
+            id,
+            EntityLook {
+                skin: skin.to_string(),
+                face: face.to_string(),
+                hat: hat.to_string(),
+            },
+        )
+    }
+
+    /// 真正换装的那一半：写 `look` + 三张 `Sprite2D.texture` + 重摆。
+    ///
+    /// [`Self::set_entity_look`]（手工入口）与内核拉取（[`Self::kernel_pump`] 的第 ③ 步，
+    /// 原版 `get_entity_*_sprite` 那条路）**共用这一份**，所以两条路的贴图/缩放/relayout
+    /// 一定一致。
+    fn apply_look(&mut self, id: i64, look: EntityLook) -> bool {
         if !self.entities.contains_key(&id) {
             return false;
         }
-        let look = EntityLook {
-            skin: skin.to_string(),
-            face: face.to_string(),
-            hat: hat.to_string(),
-        };
 
         // 先把三张贴图取出来（`texture_for` 要 `&mut self`），再改实体——
         // 否则 `self.entities.get_mut(id)` 与 `self.texture_for(…)` 会撞两次可变借用（E0499）。
@@ -1627,6 +1670,271 @@ impl EntityDrawer {
         }
         self.missing_assets.push(rel.clone());
         godot_warn!("EntityDrawer: 名字 {name:?} 不在 GraphwarTextureLoader 的 {dir} 表里（退化成纯色）");
+    }
+
+    // -----------------------------------------------------------------------
+    // 内核事件通道（任务 42，`docs/16-client.md` §46）—— **本文件唯一的一处新增接线**
+    // -----------------------------------------------------------------------
+    //
+    // 原版这条链（逐环节地址见 §46）：
+    //
+    // ```text
+    // ready  (x86 0x4b4130 / arm64 0x4bab44)
+    //   └─ 6 × GraphwarBackend::subscribe_to_event   x86 0x514b40 / arm64 0x406e80
+    //        pos_info_event / life_info_event / entity_removed_event /
+    //        skin|face|hat_graphics_info_event     (entity_drawer::READY_EVENTS)
+    //        ⇒ 六条订阅共用**同一个闭包**   x86 0x4b4990 / arm64 0x4bb378
+    //          闭包体只有一句： self[+0x108] = 1   （x86 0x4b4a13 `mov byte [rax+0x108],1`）
+    // process (x86 0x4b4b60) / draw (x86 0x4b2890)
+    //   └─ **拉**：PlanePosManager::get_all_positions/get_position（x86 0x3c66a0 / 0x3c62b0）
+    //             get_entity_*_sprite → GraphicsManager 的三张表（x86 0x46a8e0 + 内联查表）
+    //   └─ process 末尾 self[+0x108] = 0         （x86 0x4b5409）
+    // ```
+    //
+    // ⇒ **事件不带数据**，它只是"脏"信号；数据是每帧从 manager 的表里拉的。
+    // 这就是把"按回合状态代填 prep / 按 id 判靶子代填外观"换成真链路的那一步：
+    // `prep` 与 `EntityLook` 现在由**位置表/外观表**填，不再由调用方猜。
+    //
+    // ⚠️ 我方差异（**scaffold**）：原版拿 manager 的路径是
+    // `节点 → GraphwarRootNode +0x1668 → GraphwarBackend +0x220 → 容器 → get_module`；
+    // 本层没有那条对象图 ⇒ 走 `_scaffold::root_wiring` 的 thread-local 通道
+    // （`install_kernel_bus` / `kernel_bus`），两步 `get_module` 仍是原版语义。
+
+    /// 这个类订阅的那 6 条事件（= [`entity_drawer::READY_EVENTS`] 的判别值）。
+    ///
+    /// `READY_EVENTS` 是**名字**（`.rodata` 原文），这里把它换成 `0x3d38f0` 解出的判别值；
+    /// 单测 `kernel_events_are_the_six_ready_names` 钉住两边同源。
+    fn is_kernel_event(tag: u16) -> bool {
+        entity_drawer::READY_EVENTS.iter().any(|name| {
+            crate::events::Event::from_dispatch_name(name)
+                .is_some_and(|event| event.wire_tag() == tag)
+        })
+    }
+
+    /// 订阅那 6 条事件（= 原版 `ready` 里的 6 次 `GraphwarBackend::subscribe_to_event`）。
+    ///
+    /// 返回真的订上去几条（原版 = 6）。第一次调用会**装**一条内核事件通道
+    /// （[`super::root_wiring::install_kernel_bus`]，幂等）。
+    #[func]
+    fn kernel_subscribe(&mut self) -> i64 {
+        let bus = super::root_wiring::install_kernel_bus();
+        let mut bus = bus.borrow_mut();
+        let mut n = 0;
+        for name in entity_drawer::READY_EVENTS {
+            if bus.subscribe(name) {
+                n += 1;
+            }
+        }
+        self.kernel_subscriptions = n;
+        n
+    }
+
+    /// 往位置表里写一格：真调 `GraphwarPlanePosManager::set_position`（x86 `0x3c64c0`）。
+    ///
+    /// **这是给验收脚本用的生产端入口**（原版这条调用在 `graphwar_remote_event_handler`
+    /// x86 `0x3e2830` 的 `0x3e3347`，本 crate 还没有那个模块）。返回 `false` = 通道没装。
+    #[func]
+    fn kernel_push_position(&mut self, id: i64, x: f64, y: f64, radius: f64) -> bool {
+        let Ok(id) = u32::try_from(id) else {
+            return false;
+        };
+        match super::root_wiring::kernel_bus() {
+            Some(bus) => bus.borrow().set_position(id, [x, y, radius]),
+            None => false,
+        }
+    }
+
+    /// 往外观表里写一格：真调 `GraphwarGraphicsManager::set_{skin,face,hat}_graphics`。
+    ///
+    /// `layer`：0 皮肤 / 1 脸 / 2 帽子（对应三张表 `+0x18` / `+0x48` / `+0x78`）。
+    /// **验收用的生产端入口**（原版调用点在远端事件处理器与 game_state_manager，见 §46.3）。
+    #[func]
+    fn kernel_push_graphics(&mut self, id: i64, layer: i64, name: GString) -> bool {
+        let Ok(id) = u32::try_from(id) else {
+            return false;
+        };
+        let kind = match layer {
+            0 => crate::graphwar_graphics_manager::GraphicsKind::Skin,
+            1 => crate::graphwar_graphics_manager::GraphicsKind::Face,
+            2 => crate::graphwar_graphics_manager::GraphicsKind::Hat,
+            _ => return false,
+        };
+        match super::root_wiring::kernel_bus() {
+            Some(bus) => bus.borrow().set_graphics(kind, id, &name.to_string()),
+            None => false,
+        }
+    }
+
+    /// **一帧的通道处理**：先投递（只置脏），脏了就回表里拉（位置 + 外观）。
+    ///
+    /// 返回这一次投递给本类的订阅事件条数（`-1` = 通道没装）。
+    /// 拉的动作与返回值分开记（[`Self::kernel_pulled`] / [`Self::ring_count`]），
+    /// 因为原版这两步在**不同函数**里（`process_events` 置脏、`process`/`draw` 拉）。
+    #[func]
+    fn kernel_pump(&mut self) -> i64 {
+        let Some(bus) = super::root_wiring::kernel_bus() else {
+            return -1;
+        };
+
+        // ① 投递：原版 `GraphwarEventHandler::process_events`（arm64 `0x486970`）→ 六条闭包
+        let delivered = {
+            let mut bus = bus.borrow_mut();
+            bus.pump()
+        };
+        let mut mine = 0i64;
+        for event in &delivered {
+            let tag = event.wire_tag();
+            self.kernel_last_tags.push(i64::from(tag));
+            if Self::is_kernel_event(tag) {
+                mine += 1;
+            }
+        }
+        // 观测口只留最近 64 条（长会话里别无限长）
+        if self.kernel_last_tags.len() > 64 {
+            let drop = self.kernel_last_tags.len() - 64;
+            self.kernel_last_tags.drain(..drop);
+        }
+        self.kernel_pumps += 1;
+        self.kernel_events += mine;
+        if mine > 0 {
+            // 原版闭包唯一的一句：`self[+0x108] = 1`
+            self.kernel_dirty = true;
+        }
+
+        // ② 拉位置表（原版 `draw` 0x4b2e32/0x4b314b、`process` 0x4b4f24/0x4b5004）
+        //
+        // ⚠️ **每次都拉**，不是"脏了才拉"：原版 `draw` 里 `get_all_positions` / `get_position`
+        // 是无条件调用的（`0x4b2e32` / `0x4b314b` 在直线代码上，前面没有拿 `+0x108` 做分支）；
+        // `+0x108` 那个脏标志在 `process` 里只管"要不要建新实体节点"那一段（`0x4b5044`）。
+        let positions = bus.borrow().positions();
+        let clock = bus.borrow().fractional_tick();
+        let mut live: Vec<i64> = Vec::with_capacity(positions.len());
+        for (id, pos) in positions {
+            let id = i64::from(id);
+            live.push(id);
+            // `map[i]`（`base`）照旧由 `set_ring_base` 那条路给，拉的时候**保留**（§46.6 未解项）
+            let base = self.prep.get(&id).and_then(|p| p.base);
+            self.prep.insert(
+                id,
+                PrepRing {
+                    board: BoardVec2::new(pos[0], pos[1]),
+                    pos_radius: pos[2],
+                    v: clock,
+                    base,
+                },
+            );
+        }
+        // 表里没有的 ⇒ 不再画。原版 `draw` 遍历的就是这张表的**全部键**（`get_all_positions`）。
+        self.prep.retain(|id, _| live.contains(id));
+        self.kernel_pulled += live.len() as i64;
+
+        // ③ 拉外观表（原版 `get_entity_{skin,face,hat}_sprite` 里那三次 `get_module` + 内联查表）
+        let skins = bus.borrow().graphics(crate::graphwar_graphics_manager::GraphicsKind::Skin);
+        let faces = bus.borrow().graphics(crate::graphwar_graphics_manager::GraphicsKind::Face);
+        let hats = bus.borrow().graphics(crate::graphwar_graphics_manager::GraphicsKind::Hat);
+        let mut looks: BTreeMap<i64, EntityLook> = BTreeMap::new();
+        for (id, name) in skins {
+            looks.entry(i64::from(id)).or_insert_with(EntityLook::default_look).skin = name;
+        }
+        for (id, name) in faces {
+            looks.entry(i64::from(id)).or_insert_with(EntityLook::default_look).face = name;
+        }
+        for (id, name) in hats {
+            looks.entry(i64::from(id)).or_insert_with(EntityLook::default_look).hat = name;
+        }
+        for (id, look) in looks {
+            let changed = self.entities.get(&id).is_some_and(|entity| entity.look != look);
+            if changed {
+                self.apply_look(id, look);
+                self.kernel_graphics_applied += 1;
+            }
+        }
+
+        // ④ 每帧末尾清脏（原版 `process` x86 `0x4b5409` `mov byte [rbx+0x108],0`）——
+        //    标志只活到"这一帧处理完"，所以 `kernel_dirty()` 读的是"上一次 pump 之后有没有新事件"。
+        self.kernel_dirty = false;
+        self.kernel_pulls += 1;
+        self.base_mut().queue_redraw();
+        mine
+    }
+
+    /// 摆虚拟时钟（`V` = 原版 `draw` 里 `0x4b2e10 call 0x519530` 那个读数）。
+    ///
+    /// **我方接线口**（同 `_scaffold::graphwar_plane_class` 的 `set_fractional_tick`）：
+    /// 容器里那个 `GraphwarTickHandler` 的基准是 `(0, 0)`，真读数会是 epoch 量级；
+    /// 验收要可复现的角度就必须能把时钟摆到指定读数。`NaN` = 恢复读 tick handler。
+    #[func]
+    fn kernel_set_clock(&mut self, tick: f64) -> bool {
+        let Some(bus) = super::root_wiring::kernel_bus() else {
+            return false;
+        };
+        bus.borrow_mut()
+            .set_clock(if tick.is_nan() { None } else { Some(tick) });
+        true
+    }
+
+    /// 时钟读数来自哪儿（`"override"` / `"tick_handler"` / `"none"`）。
+    #[func]
+    fn kernel_clock_source(&mut self) -> GString {
+        match super::root_wiring::kernel_bus() {
+            Some(bus) => {
+                let source = bus.borrow().clock_source();
+                GString::from(source)
+            }
+            None => GString::from("none"),
+        }
+    }
+
+    /// 原版的"脏"标志 `+0x108`（六条订阅闭包唯一会写的那一格）。
+    #[func]
+    fn kernel_dirty(&self) -> bool {
+        self.kernel_dirty
+    }
+
+    /// `kernel_subscribe()` 真的订上去几条（原版 = 6）。
+    #[func]
+    fn kernel_subscriptions(&self) -> i64 {
+        self.kernel_subscriptions
+    }
+
+    /// `kernel_pump()` 被调过几次。
+    #[func]
+    fn kernel_pumps(&self) -> i64 {
+        self.kernel_pumps
+    }
+
+    /// 累计**投递给本类**的订阅事件条数。
+    #[func]
+    fn kernel_events(&self) -> i64 {
+        self.kernel_events
+    }
+
+    /// 累计"因为脏了而回表里拉"的次数。
+    #[func]
+    fn kernel_pulls(&self) -> i64 {
+        self.kernel_pulls
+    }
+
+    /// 累计从位置表里拉到的条目数（每次拉累加这个 ID 的总条数）。
+    #[func]
+    fn kernel_pulled(&self) -> i64 {
+        self.kernel_pulled
+    }
+
+    /// 累计因为外观表变了而重贴图的实体数。
+    #[func]
+    fn kernel_graphics_applied(&self) -> i64 {
+        self.kernel_graphics_applied
+    }
+
+    /// 最近若干次投递的事件判别值（按投递顺序，最多保留 64 条）。
+    #[func]
+    fn kernel_last_tags(&self) -> PackedInt64Array {
+        let mut out = PackedInt64Array::new();
+        for tag in self.kernel_last_tags.iter().rev().take(64).rev() {
+            out.push(*tag);
+        }
+        out
     }
 }
 
@@ -1893,5 +2201,27 @@ mod tests {
             entity_drawer::half_angle(0.0, Some(0.0)),
             entity_drawer::HALF_ANGLE_MIN_RAD
         );
+    }
+
+    /// 通道订阅的那 6 条事件 = `ready` 里那 6 个名字（`0x1c2a95..`），判别值逐条对上。
+    ///
+    /// 这条把**名字**（`.rodata` 原文，`entity_drawer::READY_EVENTS`）与**判别值**
+    /// （`0x3d38f0` 解出来的 `src/events.rs`）钉在一起——两边任何一边改了这里就红。
+    #[test]
+    fn kernel_events_are_the_six_ready_names() {
+        let tags: Vec<u16> = entity_drawer::READY_EVENTS
+            .iter()
+            .map(|name| {
+                crate::events::Event::from_dispatch_name(name)
+                    .unwrap_or_else(|| panic!("{name} 不在 0x3d38f0 的派发表里"))
+                    .wire_tag()
+            })
+            .collect();
+        assert_eq!(tags, vec![26, 27, 14, 51, 53, 55], "pos/life/removed/skin/face/hat");
+        for tag in tags {
+            assert!(EntityDrawer::is_kernel_event(tag), "tag {tag} 应被认成订阅事件");
+        }
+        // 反例：`TurnInfo`(43) 不在那 6 条里（原版 `ready` 里也没有它）
+        assert!(!EntityDrawer::is_kernel_event(43));
     }
 }

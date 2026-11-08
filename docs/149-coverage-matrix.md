@@ -97,7 +97,7 @@
 | `graphwar_game_recorder.rs` | 2 | 4 | `src/graphwar_game_recorder.rs` | 14 | 观测 |
 | `graphwar_game_server.rs` | 3 | 86 | `src/graphwar_game_server.rs+src/server.rs` | 23 | 逐位 |
 | `graphwar_game_state_manager.rs` | 33 | 207 | `src/game.rs+src/turnstate.rs` | 109 | 逐位 |
-| `graphwar_graphics_manager.rs` | 6 | 8 | `src/graphwar_graphics_manager.rs` | 18 | 观测 |
+| `graphwar_graphics_manager.rs` | 6 | 8 | `src/graphwar_graphics_manager.rs` | 22 | 观测 |
 | `graphwar_lan_broadcaster_v6.rs` | 4 | 4 | `src/graphwar_lan_broadcaster_v6.rs` | 20 | 观测 |
 | `graphwar_lan_vbox.rs` | 11 | 19 | `src/graphwar_lan_vbox.rs` | 37 | 观测 |
 | `graphwar_level_generator.rs` | 4 | 26 | `src/graphwar_level_generator.rs+src/graphwar_level_generator/tables.rs` | 28 | 逐位 |
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（110 个文件、2619 条 `fn`） | `7a432aab9bdbe27e15206728868c99126a17547fa7cef4f6ffe09cc78beca947` |
+| `src/` 树（110 个文件、2665 条 `fn`） | `b88a93c842537c4c4a2086ce60194bf971eabce300ebe57b241757aa63f8e145` |
 

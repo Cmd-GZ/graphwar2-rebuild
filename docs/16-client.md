@@ -8501,3 +8501,193 @@ grep -a -c line_instance_id client/libgw2_rebuild.so   # 必须是 3（判据：
 **结构断言在哪儿**：`src/graphwar_plane_pos_manager.rs` 的
 `sorted_read_is_independent_of_insertion_order`（两顺序插入 ⇒ 快照一致），以及
 `client/tools/entity_drawer_check.gd` 第 16 组（真引擎：表驱动 9 条弧 + 两插入顺序逐条一致）。
+
+## 47. 两个"输入端"从代偿换成真链路：`pos_info_event`(26) 与 graphics 51/53/55（2026-11，任务 42）
+
+**一句话**：两条链路的**逐环节地址都解出来了**，而且解出来的形状跟旧文档不一样 ——
+`EntityDrawer` 在 `ready` 里订的那 6 个事件**不带数据**，它们只把 `+0x108` 置 1；
+真正的位置与外观是 `draw` / `process` / `get_entity_*_sprite` **每帧回表里拉**的。
+本轮把这条"事件只置脏 + 消费方拉表"的通道在**内核侧**接通并做了 headless 对拍
+（`entity_drawer_check.gd` 160 → **197** 条）；播放屏那两处代偿**仍在原处**
+（`client/src/**` 是禁区），但它们现在有真链路可以顶替，缺的只是"谁来驱动那一帧"。
+
+### 47.0 先纠正三条任务书前提 + 三条旧说法（`AGENTS.md` §0.6）
+
+| # | 说法（出处） | 实测 | 证据 |
+|---|---|---|---|
+| 1 | 任务书让读 `docs/16` 的「50.6 / 52.0 / 53」三节 | 本分支 `docs/16` **最大是 §45**：旧的 50–51 两节已整体搬进 [`archive/156-client-rounds.md`](archive/156-client-rounds.md)（本文件 §42 那张索引表），PlanePosManager 的 24 B 是**§45**（不是 53） | 本文件目录 |
+| 2 | "填 `prep` 表的是 `ready` 订的 `pos_info_event`"（archive 156 §51.0 第 1 条、本文件 §45.x 的"消费方"一行） | **不成立**。六次 `subscribe_to_event` 传的是**同一个闭包**，函数体只有一句 `self[+0x108] = 1`（x86 `0x4b4990` / arm64 `0x4bb378`）。位置是 `draw`/`process` **直接读** `GraphwarPlanePosManager` 的表 | **观测**（§47.2） |
+| 3 | "`EntityDrawer` 自己有 `HashMap<i32,String>`（`+0x30`）存外观名"（本文件 §44.0 第 1 条、`entity_drawer_class.rs` 文件头） | 本轮能指到的取图路径上**没有这张表**：`get_entity_*_sprite` 每次**当场** `get_module::<GraphwarGraphicsManager>` 再查那三张表（`+0x18/+0x48/+0x78`）。旧说法要么指错了偏移、要么指了一条没观测到的旁路 ⇒ **按本轮的路径为准** | **观测**（§47.3） |
+| 4 | `GraphwarGraphicsManager` 的表键叫 `player_id`（`src/graphwar_graphics_manager.rs` 模块文档 §2） | 线格式的字段名是 **`entity_id`**（`{"SkinGraphicsInfo":{"entity_id":229,"graphics_str":"yellow"}}`，`src/_scaffold/protocol.rs` 逐位）⇒ 键空间与 `PlanePosManager` / `EntityDrawer` **同一个**（实体 id）。"player_id" 只是形状推断，已在模块文档就地改正 | 报文**逐位** |
+
+### 47.1 两条链路各自通到哪一环
+
+| 链路 | 生产 | 通道 | 订阅 | 消费 | 结论 |
+|---|---|---|---|---|---|
+| `pos_info_event`(26) | `PlanePosManager::set_position` | 共享 `GraphwarEventQueue` + `EventHandler::process_events` | `EntityDrawer::ready` 6 条里的第 1 条（闭包只置 `+0x108`） | `draw` / `process` **拉位置表** | **全链通**（内核侧接上、headless 验过）；缺"谁来每帧调 `pump`"（播放屏是禁区） |
+| graphics 51/53/55 | `GraphicsManager::set_{skin,face,hat}_graphics` | 同一条队列 | `ready` 6 条里的第 4/5/6 条（**同一个**闭包） | `get_entity_{skin,face,hat}_sprite` **拉外观表** | **全链通**（同上）；靶子分支靠"外观表里有 `entity_id → target`"这一条，不再靠 `id ≥ 1000` 猜 |
+
+### 47.2 `pos_info_event`(26)：逐环节地址
+
+```text
+① 收报 → 落表   graphwar_remote_event_handler   x86 0x3e2830
+                  载荷 {tag@+0, pos[0..1]@+8, pos[2]@+0x18, id@+0x20}  @0x3e32d4..0x3e32ee
+                  get_module::<PlanePosManager>  x86 0x46c9e0            @0x3e32f4
+                  GraphwarPlanePosManager::set_position  x86 0x3c64c0    @0x3e3347
+② 写表 + 发事件   set_position（arm64 0x3b8160）
+                  HashMap::insert → 解锁 → add_event(PosInfo=26)
+                  x86 0x3c65ad → GOT 0x9bac80 → 0x3d3530   (arm64 0x3b8234 → 0x3d7a40)
+                  另一条生产点：graphwar_level_generator x86 0x465a70 @0x465f85
+③ 派发           GraphwarEventHandler::process_events   arm64 0x486970
+                  （调用者：GraphwarGameClient::process、GameLevelManager::setup_level*、
+                    ReplayPlayer::inject_events、game_server_thread）
+④ 订阅           EntityDrawer::ready  x86 0x4b4130 / arm64 0x4bab44
+                  GraphwarBackend::subscribe_to_event  x86 0x514b40 / arm64 0x406e80
+                    → GraphwarEventHandler::subscribe_to_event  arm64 0x486bc8
+                  名字 "pos_info_event"（len 14）  .rodata x86 0x1c2a95
+⑤ 闭包           x86 0x4b4990 / arm64 0x4bb378——**六条订阅共用同一个**
+                  唯一副作用： x86 0x4b4a13 `mov byte [rax+0x108],1`
+                              arm64 0x4bb3fc `strb w10,[x8,#0x108]`
+                  描述符（.data.rel.ro）x86 0x95e318 / 0x95e340 / 0x95e368 /
+                                       0x95e390 / 0x95e3b8 / 0x95e3e0
+                    每个 = {0x4d9d50(ret=无 drop), 0x18, 8, 0x4d8b00, 0x4b4990(调用)}
+⑥ 消费（真读表） EntityDrawer::draw     x86 0x4b2890
+                  get_fractional_tick 0x519530 @0x4b2e10      → V
+                  get_all_positions   0x3c66a0 @0x4b2e32
+                  逐 id get_position  0x3c62b0 @0x4b314b
+                    pos[0] → [rsp+0xb0] @0x4b315b            ← 环心 x
+                    pos[1] → [rsp+0xa8] @0x4b316d            ← 环心 y
+                    pos[2] → [rsp+0x60] @0x4b317f            ← pos_radius
+                  EntityDrawer::process x86 0x4b4b60：同两个调用 @0x4b4f24 / @0x4b5004，
+                    读脏标志 @0x4b503b，末尾清 0 @0x4b5409
+⑦ 怎么拿到 manager  节点 → GraphwarRootNode +0x1668（Rc<RefCell<GraphwarBackend>>）
+                  → Backend +0x220（Rc<RefCell<容器>>，RcBox 数据从 +0x18 起 ⇒ 指令里是 +0x238）
+                  → get_module::<M>（draw/process 里是 0x46c2c0）
+```
+
+**⇒ 结论（`观测`）**：`pos_info_event` 是**脏信号**；`prep` 表的三样东西
+（环心 x/y、`pos_radius`、`V`）在 `draw` 里就是位置表的三个 `f64` 加 `get_fractional_tick`。
+
+### 47.3 graphics 51/53/55：逐环节地址
+
+```text
+① 收报 → 写表+发事件  GraphwarGraphicsManager::set_skin_graphics  x86 0x468c70 / arm64 0x49dd00
+                      set_face_graphics                         x86 0x468b60 / arm64 0x49dbec
+                      set_hat_graphics                          x86 0x468a50 / arm64 0x49dad8
+                      x86 0x468ccf `lea rax,[r12+0x33]`（tag 基数 0x33=51）
+                      x86 0x468cde `call *GOT 0x9bac80 -> 0x3d3530`（add_event）
+② 谁调 setter        graphwar_remote_event_handler  x86 0x3e2830（client）/ 0x3dee00（server）
+                      game_state_manager::add_target        x86 0x46f310
+                      game_state_manager::add_soldier_to_player x86 0x474a10
+③ 订阅               EntityDrawer::ready 的第 4/5/6 条（名字 .rodata 0x1c2ac6 / 0x1c2ade / 0x1c2af6）
+                      闭包 = 与 pos_info **同一个** 0x4b4990（只置 +0x108）
+④ 消费（真读表）      EntityDrawer::get_entity_skin_sprite  x86 0x4bb6b0 / arm64 0x4c1068
+                      get_module::<GraphicsManager>  x86 0x46a8e0 @0x4bb7a7（arm64 0x4c115c）
+                      内联 get_skin_graphics(entity_id)：表 +0x18 ⇒ 指令里读 [RcBox+0x30]/[+0x48]
+                      再查 loader 的皮肤表（+0x150，items 在 +0x168）@0x4bb8f7
+                      GraphwarTextureLoader::get_skin_texture  arm64 0x4c1270
+                      → Sprite2D::set_texture  arm64 0x421574
+                      get_entity_face_sprite x86 0x4bb0a0：表 +0x48 ⇒ 读 [RcBox+0x60]
+                      get_entity_hat_sprite  x86 0x4b9e70：表 +0x78 ⇒ 读 [RcBox+0x90]
+```
+
+**⇒ 结论（`观测`）**：外观名**不经过** `EntityDrawer` 的任何字段；它每次取图都从
+`GraphwarGraphicsManager` 的三张表里按同一把键（`entity_id`）查。
+⇒ **靶子分支**不再需要"按 id 判靶子"：靶子的外观也走 `set_skin_graphics(target_id,"target")`
+（原版由 `game_state_manager::add_target` 那条旁路补一次，x86 `0x46f310`）。
+
+### 47.4 落码：接上了哪一段、还剩哪一段是代偿
+
+| 环节 | 本轮状态 | 文件 |
+|---|---|---|
+| 共享事件队列（一条，而不是 22 个槽各一条） | **接上**：`assemble_demo_with_queue` 把同一个 `Rc<RefCell<GraphwarEventQueue>>` 交给容器里的 manager 与总线 | `src/_scaffold/root_wiring.rs` |
+| `GraphwarEventHandler`（订阅表 + 派发） | **替身**：`KernelBus`（`subscribe` / `pump` / `delivered`）。原版那个类型在 `src/` 里没有实现 | 同上 |
+| 生产端：`set_position` / `set_*_graphics` | **真方法**（本轮只加了"事件落 outbox"这一步，见下） | `graphwar_graphics_manager.rs` |
+| 订阅端：6 条事件 | **接上**：`EntityDrawer::kernel_subscribe()`（原版 `ready` 里那 6 次 `subscribe_to_event`） | `entity_drawer_class.rs` |
+| 脏标志 `+0x108` | **接上**：`kernel_dirty`（投递置位、`pump` 末尾清 0，与原版 `0x4b4a13` / `0x4b5409` 同序） | 同上 |
+| 消费端：`prep` 表 ← 位置表 | **接上**：`kernel_pump()` 每帧拉 `get_all_positions`/`get_position`（`PosInfo` 的三个 `f64` 就是环心 x/y + 半径） | 同上 |
+| 消费端：外观 ← 三张表 | **接上**：同一次 `pump` 里拉三张外观表 → 走**与 `set_entity_look` 同一份** `apply_look` | 同上 |
+| **播放屏那两处代偿** | **仍在**（`client/src/**` 禁区）。它们是 `_sync_entities()` 里的 `set_ring(...)` 与 `id ≥ 1000 ⇒ set_entity_look(...)`。真链路一旦被驱动，`pump` 的 `retain` 会把这些代偿值**覆盖掉**（§47.5 的 16.4 就是这条的断言） | `client/src/screens/play_screen.gd`（未改） |
+| **谁来每帧驱动 `kernel_pump`** | **还没接**：原版是 `GraphwarGameClient::process` 逐帧调 `process_events` + `EntityDrawer::process` 自己拉。本层没有 game client 节点 | ⇒ 见 §47.6 第 1 条 |
+
+**本轮唯一动的 `*_class.rs`**：`entity_drawer_class.rs` 的**一个连续区块**
+（`// 内核事件通道（任务 42）` 标记起，到 impl 结束），加上 `set_entity_look` 里
+把"换装"那半段抽成 `apply_look`（纯重构，行为不变）。没有第二处改动。
+
+### 47.5 headless 断言（`client/tools/entity_drawer_check.gd` 160 → **197**，+37）
+
+新增的第 16 节把整条链**真跑一遍**（不是读常量）：
+
+| 组 | 断言 | 含义 |
+|---|---|---|
+| 16.0 | `kernel_subscribe() == 6` | 6 条订阅名都进了 `0x3d38f0` 的表（名字 ↔ 判别值同源） |
+| 16.1 | 写位置表后 `ring_count() == 0`、`kernel_dirty() == false` | **事件不是数据**：没 `pump` 之前一个环都不画 |
+| 16.2 | `pump()` 后 `ring_count() == 1`、`kernel_pulled() ≥ 1`、脏标志回 false、最后一条投递是 **26** | 投递 → 拉表 → 清脏 |
+| 16.3 | `last_arc(0)` 的圆心 == 位置表 `(5,5)` 的投影、半径 == `pos_radius×1.5×k`、`V=0` ⇒ 张开态 ∓π/6 | 拉到的东西**真的进了 `_draw`** |
+| 16.4 | 手工 `set_ring(-5,-5,9,60)` 之后再来一次"事件 → 拉表" ⇒ 圆心/半径被位置表 `(6,-3,1.0)` **覆盖** | **代偿让位给真链路** |
+| 16.6 | 三条 graphics 事件（51/53/55）⇒ `entity_look(0) == [target, no_face, no_hat]` | 外观也走"写表 + 事件 → 拉表" |
+| — | `kernel_set_clock(0.0)` / `kernel_clock_source() == "override"` | 时钟是**摆**进去的（见 §47.6 第 2 条） |
+
+**A/B（同一台机子、同一套环境，基线 = `6deb1c0` 的 `.so`）**：
+`entity_drawer_check` **160 → 197**（+37；静态看 `ok()` 调用点 129 → 166 也是 +37；
+没有 `client/assets` 时两侧各少 8 条既有资产断言 ⇒ 152 → 189），
+`assemble_check` **217 → 217**，`plane_on_screen_check` **96 → 96**，
+`obstacle_drawer_check` **116 → 116**，`selftest` **653 / 0 / 3 → 653 / 0 / 3**（不变）。
+⇒ 新增断言 37 条，旧断言一条没删、没改。
+
+靶子分支：本节的实体 id = 0（士兵），外观名给的是 `target/no_face/no_hat`。
+**为什么不在自检里造真靶子**：靶子的 id 空间（`TARGET_ID_BASE`）与"谁是靶子"是播放屏的约定，
+内核侧的 `Match` 里那 3 个 `Target` 并没有走 `PlanePosManager`/`GraphicsManager`；
+本轮验的是"**外观表里出现 `entity_id → target` 就会换图**"这一条，
+也就是原版 `add_target` 那条旁路的**结果**，而不是重造一遍实体。
+
+### 47.6 仍是推断 / 未知（诚实清单）
+
+| # | 项 | 档位 | 缺什么 |
+|---|---|---|---|
+| 1 | **谁逐帧驱动 `pump`** | **未知（本轮没接）** | 原版是 `GraphwarGameClient::process`（arm64 符号；x86 未定位，0x515dc0 里那两个 `call` 是内联后的 ReplayPlayer/GameClient `process`，没单独符号）。本层要接它得改 `client/src/**`（禁区）或等 `graphwar_game_client` 的节点层 |
+| 2 | tick handler 的基准 | **我方差异** | `assemble_demo` 给的是 `(0,0)`（`fixtures/ticks.tsv` 口径，供 `tick.at_500ms=30` 用），于是 `get_fractional_tick()` 是 epoch 量级 ⇒ `V` 不可用。原版 `new` 的实参是 `SystemTime::now()`。本层给了一个**摆时钟**的口子（`kernel_set_clock`，同 `graphwar_plane_shape::set_fractional_tick`） |
+| 3 | `PosInfo` 三个 `f64` 的**单位** | **推断**（未变） | `draw` 里它们直接进 `sprite_transform` 那条投影（`k = size.x/50`），没有第二段换算；但"表里存的就是棋盘坐标"仍是推断（§45.6） |
+| 4 | `map[i]`（`H` 的起始量）来自哪张表 | **未知** | `draw` 在 `0x4b34d3`–`0x4b35ae` 读的第二个哈希表还没解；本层仍由 `set_ring_base` 给 |
+| 5 | `process` 里 `+0x108` 到底门控哪一段 | **推断**：`0x4b5044` 之后是"建实体节点/取子节点"那一段（`get_entity_skin_sprite` `0x4bb6b0` 与 `update_sprite` `0x4b9530` 都在其下游） | 没有把整段 `process` 的控制流解完 |
+| 6 | 事件派发的**队列方向** | **我方接线** | 原版出站队列 → socket → 对端 → `handle_*_remote_event` → `process_events`；本层没有网络层，`pump()` 把出站事件**直接回灌**（省掉的只是那圈 socket，两端方法都是真的） |
+| 7 | `GraphwarGraphicsManager` 的 `+0x08`"事件通道"类型 | **未知**（模块文档 §5 同） | 本层用 `outbox` 承接（`Vec<Event>`），没有按字节复原那一格 |
+
+### 47.7 复现（干净树，全部可原地复跑）
+
+```text
+export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=<ws>/.agent-work/<你的>/target42
+cargo test --offline                                     # 1630，全绿
+cargo test --offline --features gdext-bindings           # 1729，全绿（含 KernelBus 的 3 条单测）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/entity_drawer_check.gd   # 197 passed / 0 failed
+"$GODOT" --headless --path client --script res://tools/assemble_check.gd        # 217 / 0
+"$GODOT" --headless --path client --script res://tools/plane_on_screen_check.gd # 96 / 0
+"$GODOT" --headless --path client --script res://tools/obstacle_drawer_check.gd # 116 / 0
+"$GODOT" --headless --path client -- --selftest                                 # 见下面那条环境说明
+python3 tools/coverage_matrix.py                          # 改了 src/ 必须重跑
+python3 tools/coverage_matrix.py --check
+python3 tools/check_doc_refs.py
+```
+
+**selftest 的环境依赖（本节实测，如实记）**：本工作区是**新克隆的 worktree**，
+`client/assets/`（gitignore）与 `~/.local/share/godot/app_userdata/Graphwar/replays/`
+都不在 ⇒ 第一次跑是 **549 passed / 3 failed / 26 skipped**，三条失败全是"没有真贴图/真肤列表"：
+`点 Skins 页的第 -1 号皮肤`、`外观：皮肤层贴图来自真资源（实际 ）`、按钮宽度（字体/真帧）。
+把主仓库的 `client/assets/` 拷进来、并 `cargo build --example serve_match`（自检按
+`CARGO_TARGET_DIR` 找它）之后：**653 passed / 0 failed / 3 skipped**（剩下 3 条 skip 是回放样本与
+两个联机用例——快照 `replays/` 不在本机）。⇒ **0 failed**；条数差 714−653 全部来自环境
+（回放快照 + 那 61 条只在快照在场时才跑的用例），不是本轮改动。
+
+**地址复算（三条，互不依赖）**：
+
+```text
+../.venv/bin/python tools/addr_probe.py dis 0x4b4130        # ready：6 条名字 + 6 个描述符槽
+../.venv/bin/python tools/addr_probe.py callers 0x3c64c0    # set_position 的 2 个直接调用点
+readelf -sW .reference/steam/android-2.0.60/libgraphwarrust.so | grep -E \
+  "graphwar_event_handler|GraphwarPlanePosManager"
+# ⇒ GraphwarEventHandler::process_events 0x486970 / ::subscribe_to_event 0x486bc8
+#   GraphwarPlanePosManager::set_position 0x3b8160 / draw 侧的两个 getter 见 §47.2
+```
