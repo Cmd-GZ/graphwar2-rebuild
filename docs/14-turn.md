@@ -357,7 +357,7 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 | 6 | 弹丸飞行速度 | 只知道中位 ≈0.29 单位/tick（p10~p90 0.255~0.300）；**排序不需要它**，只有"绝对时刻"才需要 | **推断** |
 | 7 | `active_tick` 的取值 | 观测到"同批所有发相同"，但绝对值来自哪个时钟没解；实现里用 `now_tick` | **推断** |
 | 8 | 回合开头那两条 `FunctionInfo("", null) × 全部士兵` 与 `TurnCountInfo` | 只观测到形状，没有发射器；本轮**没有实现**（不在批窗口内，不影响对拍口径） | **未知** |
-| 9 | ~~`DiffEq` 模式的同时回合制~~ **已结（2026-11-08，`docs/06` §33）** | 原文写「`Match::fire_batch` 与 `fire` 一样硬编码 `Mode::Normal`；515 个 DiffEq 批本轮仍未覆盖」。**该缺口已补**：`Match` 有了 `function_mode`（`FunctionModeInfo`(46) 的落值对象，开火时现读），`fire_functions` / `execute_results` 按 `sampling_mode()` 选采样器与文本规则。DiffEq 515 批 / 550 发现在**在分母里**：两条路径逐位对拍 550/550 全同；对回放内容 `batch` 轴 288 / 515 批（55.9%）。剩下的 227 批不是模式问题（`docs/06` §33.4） | **观测 + 逐位**（`docs/06` §33） |
+| 9 | ~~`DiffEq` 模式的同时回合制~~ **已结（2026-11-08，`archive/155-round-log.md` §33）** | 原文写「`Match::fire_batch` 与 `fire` 一样硬编码 `Mode::Normal`；515 个 DiffEq 批本轮仍未覆盖」。**该缺口已补**：`Match` 有了 `function_mode`（`FunctionModeInfo`(46) 的落值对象，开火时现读），`fire_functions` / `execute_results` 按 `sampling_mode()` 选采样器与文本规则。DiffEq 515 批 / 550 发现在**在分母里**：两条路径逐位对拍 550/550 全同；对回放内容 `batch` 轴 288 / 515 批（55.9%）。剩下的 227 批不是模式问题（`archive/155-round-log.md` §33.4） | **观测 + 逐位**（`archive/155-round-log.md` §33） |
 
 ---
 
@@ -1034,7 +1034,7 @@ nm -C -S --defined-only .rea-work/apk/arm64/lib/arm64-v8a/libgraphwarrust.so | g
 
 ## 12. 挖洞点 = 爆炸点（`DestroyObstacle` 的位置语义）
 
-> 这一节回答 `docs/06-verification.md` §24.7 那根"挖洞点轴"的机制问题
+> 这一节回答 `archive/155-round-log.md` §24.7 那根"挖洞点轴"的机制问题
 > （`dispatch/14-hole-axis`）：延迟段 291 个可比批里我方只有 66 个命中，225 个不命中，
 > 其中 **200 例"我方这个点在该回放的任何 `DestroyObstacle` 里都不存在"**。
 > **结论：一根坐标轴的问题，不是机制分叉** —— 我方拿"采样停点"当挖洞点，
@@ -1071,7 +1071,7 @@ x 相同（都是 `end_x`），y 差 8e-5。原因是修正文本里的常数**�
 
 ### 12.2 200 例的四类分桶（互斥，加总 == 200）
 
-口径与 `docs/06-verification.md` §24.7 完全一致（`bit_exact_attrib.py` 的
+口径与 `archive/155-round-log.md` §24.7 完全一致（`bit_exact_attrib.py` 的
 `destroy_checked / destroy_ok`，逐文件重置、点按 `repr` 逐位比）。
 分母：225 个不命中批 = **25 例末位差（0 < d ≤ 1e-12，不算"点位不存在"）** + **200 例**。
 
@@ -1154,7 +1154,7 @@ d) 的子因（同一套工具输出）：
 0x472d19  call 0x3f20f0              ; ObstacleManager::queue_destroy_obstacle
 ```
 
-> ⚠️ 这里顺带改正 `docs/06-verification.md` §24.6(b) 的一处读法：那个魔术数
+> ⚠️ 这里顺带改正 `archive/155-round-log.md` §24.6(b) 的一处读法：那个魔术数
 > `0x88888889 / shr 0x24` 是**除以 30**，不是除以 60（0..20000 逐个验过，只有 30 全对）。
 > 该式同时用在死亡块（`0x472aad`）和挖洞块上，即两处 tick 都是
 > `[模块+0x58] + X/30 + 60`；`X` 与 `[模块+0x58]` 的语义**本轮未定**（见 §12.6）。
@@ -1251,7 +1251,7 @@ python3 tools/hole_axis_attrib.py --conv $OUT/conv.jsonl --hole $OUT/hole.jsonl 
 ## 13. 挖洞事件的生产者与"2 条"的机制（2026-11-07，`dispatch/17` 收尾 §12 的三个未知）
 
 §12.6 记了四个未知，本节关掉前三个的一半，其余维持**未知**并写清缺什么。地址与逐指令证据全在
-[`docs/06-verification.md`](06-verification.md) §30，这里只补 §12 没说的三句：
+[`155`](archive/155-round-log.md) §30，这里只补 §12 没说的三句：
 
 1. **谁发 `DestroyObstacle`**：唯一生产者是 `GraphwarObstacleManager::destroy_obstacle`（x86
    `0x3f1b30`，tag **41**，push 在 `0x3f1c17`）；`§12.4` 记的 `queue_destroy_obstacle`
@@ -1272,7 +1272,7 @@ python3 tools/hole_axis_attrib.py --conv $OUT/conv.jsonl --hole $OUT/hole.jsonl 
 ## 14. 带障碍的真的对局跑通了：挖洞点 = 截断点数组的**末点**；"两条报文"来自两个 `ObstacleManager`（2026-11-07，`dispatch/27`）
 
 > 本节只补 §12 / §13 的**机制**，全部细节（下断地址、实参、位模式、复跑命令）在
-> [`docs/06-verification.md`](06-verification.md) §36。样本
+> [`155`](archive/155-round-log.md) §36。样本
 > [`fixtures/obstacle_destroy_pairs.jsonl`](../fixtures/obstacle_destroy_pairs.jsonl)（8 条，文本）。
 > 等级：**观测**（真游戏 campaign `Level 2` 里 8 炮全部撞障碍）。
 

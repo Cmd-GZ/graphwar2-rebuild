@@ -80,7 +80,7 @@ const WIRED_TIER := [
 	"wired",
 	# 5  SoldierManager
 	"assembled",
-	# 6  PlanePosManager      24 B / 3 字段全解 + 订 2 发 1 处理 1 + 9 条交互（任务 36，§52）
+	# 6  PlanePosManager      24 B / 3 字段全解 + 订 2 发 1 处理 1 + 9 条交互（任务 36，§44）
 	"wired",
 	# 7  GameStateManager
 	"assembled",
@@ -431,7 +431,7 @@ func _initialize() -> void:
 	# 不再是清一色 `stub`——"能交互"不等于"复原了原版结构"，两件事分开记（§43 / §47）：
 	#   TickHandler / ObstacleManager = wired（三件齐）
 	#   ClientConnectionHandler / FunctionManager = layout（布局逐字段解出，行为没做完）
-	#   PlanePosManager = wired（任务 36：24 B / 3 字段全解 + 事件流两方向 + 9 条交互，§52）
+	#   PlanePosManager = wired（任务 36：24 B / 3 字段全解 + 事件流两方向 + 9 条交互，§44）
 	for type_name in PACKAGED:
 		ok(String(root_node.call("module_slot_status", type_name)) == PACKAGED_TIER[type_name],
 			"%s 的档位 = %s（不再是清一色 stub）" % [type_name, PACKAGED_TIER[type_name]])

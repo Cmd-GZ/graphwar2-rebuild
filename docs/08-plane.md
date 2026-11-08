@@ -571,4 +571,4 @@ arm64 侧同一结论（符号名直接可读）：`place_entity`×3、`calculat
 与本节 `0x3f11e0` / `0x3f15b0`（**ELF** 口径）是同一对函数，差 `0x100000`。别当两处。
 
 重复报文（"一次挖洞发 2 条"）的成因、以及我方内核"只发 1 条"的差异登记，见
-[`docs/06-verification.md`](06-verification.md) §30.5–§30.6。
+[`155`](archive/155-round-log.md) §30.5–§30.6。

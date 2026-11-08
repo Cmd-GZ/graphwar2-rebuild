@@ -77,11 +77,16 @@ func build() -> void:
 	var vbox := GwUI.vbox("VBoxContainer", 4, margin)
 
 	# 左上角返回（原版 MarginContainer2/HBoxContainer/ExitButtonContainer）
-	var top_holder := GwUI.margin("MarginContainer2", 0, vbox)
+	var top_holder := GwUI.margin("MarginContainer2", 0)
 	top_holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var top := GwUI.hbox("HBoxContainer", 4, top_holder)
+	var top := GwUI.hbox("HBoxContainer", 4)
 	_exit_pair = GwUI.exit_pair(GwCommands.CANCEL_LEVEL)
 	top.add_child(_exit_pair)
+	top_holder.add_child(top)
+	# 原版 `join_level_pop_up.tscn` 的 `MarginContainer/VBoxContainer/MarginContainer2`
+	# 挂 `MarginContainerPopUpBack.gd`（安全区；桌面下 margin 全 0）
+	GwViews.attach(top_holder, "MarginContainerPopUpBack.gd")
+	vbox.add_child(top_holder)
 
 	# 面板行。真值 239 : 1434 : 239 —— `.tscn` 写的是 3:6:3，但面板最小宽由 TextEdit
 	# 撑住，最终落在 1:6:1；这里直接写 1:6:1 能复现同一个矩形（docs/130 实测 x=243..1677）。
@@ -113,6 +118,7 @@ func build() -> void:
 	_title.name = "LevelTitleLabel"
 	_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_title.size_flags_vertical = Control.SIZE_SHRINK_CENTER   # 真值 flags=V-SHRINK-CENTER
+	GwViews.attach(_title, "LevelTitleLabel.gd")   # 字号 = 宽/30
 	_content.add_child(_title)
 
 	# 说明行：真值三个子节点 + 中间那层 10 px 内边距 ⇒ 64 / 1297 / 65。
@@ -122,16 +128,20 @@ func build() -> void:
 	var desc_pad_l := GwUI.margin("MarginContainer2", 0, desc_row)
 	desc_pad_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	desc_pad_l.size_flags_stretch_ratio = 1.0
-	var desc_margin := GwUI.margins("MarginContainer", 10, 10, 10, 10, desc_row)
+	var desc_margin := GwUI.margins("MarginContainer", 10, 10, 10, 10)
 	desc_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	desc_margin.size_flags_stretch_ratio = 20.0
-	desc_margin.set_meta("font_divisor", 40)
+	GwViews.attach(desc_margin, "IpPopUpMargin.gd")   # margin 10 + 子节点字号 = 宽/40
+	desc_row.add_child(desc_margin)
 	var desc_right := GwUI.margin("MarginContainer3", 0, desc_row)
 	desc_right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	desc_right.size_flags_stretch_ratio = 1.0
 
 	var scroll := GwUI.scroll("ScrollContainer")
+	GwViews.attach(scroll, "LevelDescriptionScrollContainer.gd")   # 子节点字号 = 宽/40
 	desc_margin.add_child(scroll)
+	# 说明栏的 TextEdit 是随后加的 ⇒ 复用原版自己的刷新函数把字号补上
+	scroll.call_deferred("update_child_sizes")
 	var desc := TextEdit.new()
 	desc.name = "LevelDescriptionEdit"
 	desc.editable = false
@@ -208,16 +218,22 @@ func build() -> void:
 	var left_spacer := GwUI.spacer(Vector2(0, 0))
 	left_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	actions.add_child(left_spacer)
-	var cancel_holder := GwUI.margin("MarginContainer", 0, actions)
+	var cancel_holder := GwUI.margin("MarginContainer", 10)
 	cancel_holder.size_flags_horizontal = Control.SIZE_SHRINK_CENTER   # 原版：按钮宽度由文字决定
 	_cancel = GwButton.make(" Cancel ", GwCommands.CANCEL_LEVEL)
 	_cancel.name = "GraphwarButton"
 	cancel_holder.add_child(_cancel)
-	var start_holder := GwUI.margin("MarginContainer2", 0, actions)
+	GwViews.attach(cancel_holder, "IpPopUpMargin.gd")
+	actions.add_child(cancel_holder)
+	cancel_holder.call_deferred("update_child_sizes")
+	var start_holder := GwUI.margin("MarginContainer2", 10)
 	start_holder.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_start = GwButton.make("  Start  ", GwCommands.START_LEVEL)
 	_start.name = "GraphwarButton2"
 	start_holder.add_child(_start)
+	GwViews.attach(start_holder, "IpPopUpMargin.gd")
+	actions.add_child(start_holder)
+	start_holder.call_deferred("update_child_sizes")
 	var right_spacer := GwUI.spacer(Vector2(0, 0))
 	right_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	actions.add_child(right_spacer)
@@ -282,36 +298,17 @@ func on_enter() -> void:
 	_description.text = String(level.description)
 	_update_mode_icons(level)
 	_update_options_height()
-	_apply_desc_font()
 
 func apply_font_scale() -> void:
 	super.apply_font_scale()
-	_apply_desc_font()
-	if _built and _cancel != null:
-		# `IpPopUpMargin.gd`：容器 margin = 10、子节点字号 = `x / 40`。
-		# 核对：原版 @1920 Cancel = 194×92、Start = 218×92（含 10 px 上下 margin 的那一行是 93 高）
-		var fsize := maxi(8, int(get_viewport_rect().size.x / 40.0))
-		for b in [_cancel, _start]:
-			(b as GwButton).add_theme_font_size_override("font_size", fsize)
-			var holder := (b as GwButton).get_parent()
-			if holder is MarginContainer:
-				for side in ["left", "top", "right", "bottom"]:
-					(holder as MarginContainer).add_theme_constant_override("margin_" + side, 10)
+	# Cancel / Start 两个壳的字号与 10 px margin 现在由原版 `IpPopUpMargin.gd` 自己写
+	# （`client/src/views/`），这里不再重复设；1920 下仍是 194×92 / 218×92。
 	if _exit_pair != null:
 		var k := get_viewport_rect().size.x * 0.05
 		(_exit_pair as Control).custom_minimum_size = Vector2(k, k)
 		# 屏幕级那一行 96（= 屏宽×0.05，与返回键同高）。真值矩形 1920×96。
 		if _bottom_band != null:
 			_bottom_band.custom_minimum_size = Vector2(0, k)
-
-## `LevelDescriptionScrollContainer.gd`：说明栏字号 = `x / 40`（比标题小一档）。
-func _apply_desc_font() -> void:
-	if _description == null:
-		return
-	var w := get_viewport_rect().size.x
-	if w <= 0.0:
-		return
-	_description.add_theme_font_size_override("font_size", maxi(8, int(w / 40.0)))
 
 func _update_mode_icons(level: Dictionary) -> void:
 	(_mode_buttons["axis"] as GwButton).icon = GwIcons.get_icon(GwModes.axis_icon(int(level.axis)))

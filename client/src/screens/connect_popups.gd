@@ -35,7 +35,7 @@ func _ready() -> void:
 	super()
 
 func build() -> void:
-	var frame := GwUI.frame(self)
+	var frame := GwUI.frame(self, 0, "")   # 原版这几个弹窗的根节点没有脚本（见 docs/16 §40）
 	var bands: VBoxContainer = frame.vbox
 	_popup_band(bands, "HBoxContainer")
 	var panel_band := _popup_band(bands, "HBoxContainer2")
@@ -58,8 +58,10 @@ func build() -> void:
 	_grow_spacer(content, "MarginContainer", 1.0)
 	_build_button_row(content)
 
-	var overlay := GwUI.margin("MarginContainer2", 0, self)
+	var overlay := GwUI.margin("MarginContainer2", 0)
 	overlay.add_child(GwUI.exit_pair(_exit_command()))
+	GwViews.attach(overlay, "MarginContainerPopUpBack.gd")   # 安全区；桌面下 margin 全 0
+	add_child(overlay)
 
 ## 文案行。原版三种各一行，结构不同（见文件头）。
 func _build_text_row(content: VBoxContainer) -> void:
@@ -138,10 +140,15 @@ func _grow_spacer(parent: Container, node_name: String, ratio: float) -> MarginC
 	m.size_flags_stretch_ratio = ratio
 	return m
 
-## `IpPopUpMargin.gd` 包一层：margin 全 10。`expand` = 原版有没有写 `size_flags_horizontal = 3`。
+## 原版 `IpPopUpMargin.gd`（margin 全 10 + 子节点字号 = 宽/40）包一层。
+## `expand` = 原版有没有写 `size_flags_horizontal = 3`。
 func _ip_margin(parent: HBoxContainer, node_name: String, expand: bool) -> MarginContainer:
-	var m := GwUI.margin(node_name, 10, parent)
+	var m := GwUI.margin(node_name, 10)
 	m.size_flags_horizontal = Control.SIZE_EXPAND_FILL if expand else Control.SIZE_FILL
+	GwViews.attach(m, "IpPopUpMargin.gd")
+	parent.add_child(m)
+	# 子节点随后才加 ⇒ deferred 复用原版自己的 `update_child_sizes()`（同一函数）
+	m.call_deferred("update_child_sizes")
 	return m
 
 # ---------------------------------------------------------------- 状态

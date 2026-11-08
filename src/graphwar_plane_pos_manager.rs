@@ -193,7 +193,7 @@
 //! * `EntityDrawer::draw`（`0x4b2890`）与 `0x4b4b60`（`entity_drawer.rs`）**都读**
 //!   `get_all_positions` / `get_position` ⇒ 准备圈/实体绘制的位置来源就是这张表
 //!   （`src/_scaffold/entity_drawer_class.rs` 目前用的是它自己那套坐标，**未接**本管理器，
-//!   这一条记在 `docs/16` §52.7 的"未做"里）。
+//!   这一条记在 `docs/16` §44.7 的"未做"里）。
 
 use std::cell::RefCell;
 use std::collections::HashMap;

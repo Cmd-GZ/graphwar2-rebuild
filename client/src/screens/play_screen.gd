@@ -462,15 +462,14 @@ func build() -> void:
 	var right := GwUI.vbox("RightControls", 4, main_hbox)
 	right.size_flags_horizontal = Control.SIZE_FILL
 	var fire_row := GwUI.hbox("HBoxContainer", 4, right)
-	var fire_margin := GwUI.margin("FireContainer", 0, fire_row)
+	var fire_margin := GwUI.margin("FireContainer", 0)
 	fire_margin.name = "FireContainer"
 	fire_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var fire_stack := Control.new()
 	fire_stack.name = "FireStack"
 	fire_stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# 原版 FireContainer 的 `custom_minimum_size.x = x*0.07`，高度由文字撑到与左上按钮行同高
-	# （实测 FireButton = 337×96 @1920）。这里把高度也钉到同一档，右侧键盘才能像原版那样居中。
-	fire_margin.add_child(fire_stack)
+	# 原版 `FireContainer.gd`（`client/src/views/`）给子节点写 `custom_minimum_size.x = x*0.07`
+	# 和字号 宽/30；高度由文字撑到与左上按钮行同高（实测 FireButton = 337×96 @1920）。
 	var clip := GwButton.make(" Fire! ")
 	clip.name = "ClipButton"
 	clip.flat = true
@@ -484,6 +483,9 @@ func build() -> void:
 	_fire_button.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_fire_button.tooltip_text = "开火（fire）"
 	fire_stack.add_child(_fire_button)
+	GwViews.attach(fire_margin, "FireContainer.gd")   # 最小宽 = 屏宽×0.07，字号 = 宽/30
+	fire_margin.add_child(fire_stack)
+	fire_row.add_child(fire_margin)
 
 	var right_top_pad := GwUI.margin("MarginContainer", 0, right)
 	right_top_pad.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -503,18 +505,20 @@ func build() -> void:
 
 	# ---------------- 底部信息行 ----------------
 	var info := GwUI.hbox("HBoxContainer2", 4, vbox)
-	var timer_m := GwUI.margin("TimerContainer", 0, info)
+	var timer_m := GwUI.margin("TimerContainer", 0)
 	timer_m.size_flags_horizontal = Control.SIZE_FILL     # 原版：只有函数输入框抢水平空间
 	_timer_label = GwUI.label("00:00", 0, HORIZONTAL_ALIGNMENT_CENTER)
 	_timer_label.name = "TimerLabel"
 	timer_m.add_child(_timer_label)
+	GwViews.attach(timer_m, "TimerContainer.gd")   # 字号 = 宽/30
+	info.add_child(timer_m)
 	var pad := GwUI.margin("MarginContainer", 0, info)
 	pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	pad.size_flags_stretch_ratio = 0.01       # OffsetContainer.gd 的兄弟间隔：实测 14 px @1920
 
 	# f(x) = 是一个**图标**（`fx_option.svg` 里就画着 "f(x) ="，DiffEq 用 dy/dx 那张），
 	# 不是一个 Label + 一个小图标 —— 原版 FxLabel 实测 visible=0。
-	var fx_m := GwUI.margin("FxContainer", 0, info)
+	var fx_m := GwUI.margin("FxContainer", 0)
 	fx_m.size_flags_horizontal = Control.SIZE_FILL
 	_fx_button = GwButton.make("")
 	_fx_button.name = "FxTextureButton"
@@ -523,6 +527,8 @@ func build() -> void:
 	_fx_button.tooltip_text = "函数模式指示（Normal / DiffEq）"
 	_fx_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	fx_m.add_child(_fx_button)
+	GwViews.attach(fx_m, "FxContainer.gd")   # 字号 = 宽/60
+	info.add_child(fx_m)
 
 	_input = GwFunctionInput.new()
 	_input.name = "GraphwarFunctionInput"
@@ -532,12 +538,16 @@ func build() -> void:
 	_input.text_submitted.connect(_on_function_text_submitted)
 	info.add_child(_input)
 
-	var offset_m := GwUI.margin("OffsetContainer", 0, info)
+	var offset_m := GwUI.margin("OffsetContainer", 0)
 	offset_m.size_flags_horizontal = Control.SIZE_FILL
 	_offset_label = GwUI.label("", 0, HORIZONTAL_ALIGNMENT_CENTER)
 	_offset_label.name = "OffsetLabel"
 	_offset_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	offset_m.add_child(_offset_label)
+	# 原版 `OffsetContainer.gd`：子节点最小宽 = 屏宽×0.09、字号 = 宽/60
+	# （`OffsetLabel.gd` 本身没有被任何 `.tscn` 引用，原版也是运行时 new() 的 ⇒ 不挂）
+	GwViews.attach(offset_m, "OffsetContainer.gd")
+	info.add_child(offset_m)
 
 	# ---------------- 回放进度（**我们自定**，原版回放界面未观测；`docs/133` §4.2） ----------------
 	# 原版 `play_screen.tscn` 里**没有**这条：左侧 `LeftReplaysButtonsGrid` 只有
@@ -676,9 +686,9 @@ func apply_font_scale() -> void:
 		# 这里同样保留宽度，否则整条底栏会整体左移 ~140 px（docs/125 §4）。
 		_timer_label.custom_minimum_size = Vector2(w * 0.0729, 0)
 	if _offset_label != null:
-		# OffsetContainer.gd：`desired_size = (screen.x * 0.09, 0)`、字号 `screen.x / 60`
+		# 字号（`screen.x / 60`，无下限）现在由**原版** `OffsetContainer.gd` 写，
+		# 这里只保留最小宽那一条（与原版同值 0.09·x，重复写不会打架）。
 		_offset_label.custom_minimum_size = Vector2(w * 0.09, 0)
-		_offset_label.add_theme_font_size_override("font_size", maxi(8, int(w / 60.0)))
 	var fire_stack := find_child("FireStack", true, false)
 	if fire_stack != null:
 		(fire_stack as Control).custom_minimum_size = Vector2(key * 1.4, key)
@@ -1208,12 +1218,12 @@ func _sync_entities() -> void:
 		_entities.call("set_entity_name", id, String(e["name"]))
 		_entities.call("set_entity_dead_ticks", id, int(e["dead"]))
 		_drawn_entities[id] = true
-		# ---- 外观（`docs/16` §52）：原版由 `set_{skin,face,hat}_graphics` 的 51/53/55 事件喂
+		# ---- 外观（`docs/16` §44）：原版由 `set_{skin,face,hat}_graphics` 的 51/53/55 事件喂
 		# `EntityDrawer` 的 `HashMap<i32,String>`；那条链路（`GraphwarGraphicsManager`）还没接，
 		# 所以这里按实体种类代填。默认三件套 `yellow/regular_eyes/soldier_helmet` 是
 		# `GraphwarPlayerConfig::new` 的字面量（arm64 `0x39152c..0x3915a4`），士兵不用显式设。
 		# 靶子得显式设成 `target/no_face/no_hat`（`res://skins/target.svg` 在表里）。
-		# ⚠️ 这是**我方接线**，原版是 graphics 事件驱动的（`docs/16` §52.0）。
+		# ⚠️ 这是**我方接线**，原版是 graphics 事件驱动的（`docs/16` §44.0）。
 		if id >= TARGET_ID_BASE:
 			_entities.call("set_entity_look", id, "target", "no_face", "no_hat")
 	# ---- 准备圈：**填 `prep` 表**（`docs/16` §50.6）----

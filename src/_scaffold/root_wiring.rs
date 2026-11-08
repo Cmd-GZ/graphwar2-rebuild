@@ -33,7 +33,7 @@
 //! | 3 | `GraphwarLocalPlayerManager` | 64 | 内联（`0x409eac` 处 `alloc 0x58`） | [`GraphwarLocalPlayerManager`] | `assembled` | 类型**观测** |
 //! | 4 | `GraphwarPlayerManager` | 72 | `0x49d170` | [`GraphwarPlayerManager`] | `wired` | 类型**观测**；事件流**指令级**（任务 40，§50） |
 //! | 5 | `GraphwarSoldierManager` | 72 | `0x49d590` | [`SoldierTable`] | `assembled` | 类型**观测** |
-//! | 6 | `GraphwarPlanePosManager` | 24 | `0x3b89a0` | [`PlanePosManagerSlot`]（内含 [`GraphwarPlanePosManager`]） | `wired` | 类型**观测**；布局**逐字段观测**（24 B / 3 字段，`docs/16` §52） |
+//! | 6 | `GraphwarPlanePosManager` | 24 | `0x3b89a0` | [`PlanePosManagerSlot`]（内含 [`GraphwarPlanePosManager`]） | `wired` | 类型**观测**；布局**逐字段观测**（24 B / 3 字段，`docs/16` §44） |
 //! | 7 | `GraphwarGameStateManager` | 296 | `0x4ade6c` | [`Match`] | `assembled` | 类型**观测** |
 //! | 8 | `GraphwarFunctionManager` | 32 | 内联（arm64 `0x419c80` / x86 `0x5236e0`，由 `0x40a158` / `0x517b9f` 调用） | [`FunctionManagerSlot`]：`layout` = 原版 32 字节布局（**任务 22 解开**，4 字段）+ `table` = 我方行为表 | `layout` | 类型**观测**；布局**逐字段观测**（`docs/16` §46） |
 //! | 9 | `GraphwarTargetManager` | 72 | `0x3dae34` | [`GraphwarTargetManager`] | `wired` | 类型**观测** |
@@ -194,7 +194,7 @@ use crate::Token;
 // （见 `src/lib.rs` 末尾的注释与 `docs/16` §46.8）。这里只留 import。
 use crate::graphwar_function_manager::GraphwarFunctionManager;
 use crate::graphwar_obstacle_manager::GraphwarObstacleManager;
-// 任务 36：24 B 布局 + 位置表行为（`src/graphwar_plane_pos_manager.rs`，`docs/16` §52）
+// 任务 36：24 B 布局 + 位置表行为（`src/graphwar_plane_pos_manager.rs`，`docs/16` §44）
 use crate::graphwar_event_queue::GraphwarEventQueue;
 // `ENTITY_REMOVED_EVENT_TAG`（= 14）本文件已经从 `graphwar_life_manager` 引进来了，
 // 本模块的同名常量与它同值（`graphwar_plane_pos_manager::tests` 里有一条断言钉住这一点）。
@@ -222,7 +222,7 @@ pub enum Wired {
     SoldierManager,
     /// `GraphwarPlanePosManager`（24 字节）⇔ [`PlanePosManagerSlot`]（内含
     /// [`GraphwarPlanePosManager`]，**任务 36 解开的原版 24 B 布局 + 位置表行为**）。
-    /// 档位 `wired`（订 2 / 发 1 / 处理 1 + 9 条交互断言，`docs/16` §52）。
+    /// 档位 `wired`（订 2 / 发 1 / 处理 1 + 9 条交互断言，`docs/16` §44）。
     PlanePosManager,
     /// `GraphwarGameStateManager`（296 字节）⇔ [`Match`]（那个模块的"运行实体那一半"）。
     GameStateManager,
@@ -440,7 +440,7 @@ pub const SLOT_TIERS: [&str; 4] = [SLOT_WIRED, SLOT_LAYOUT, SLOT_ASSEMBLED, SLOT
 /// 四档的**现值计数**（顺序同 [`SLOT_TIERS`]；合计 = [`Wired::COUNT`] = 22）。
 ///
 /// 任务 40 起：**10** wired（任务 19 的 4 + 任务 40 的 6）/ 2 layout / **9** assembled / 1 stub；
-/// **任务 36 起：11 / 2 / 9 / 0**（`PlanePosManager` 从 `stub` 升到 `wired`，见 `docs/16` §52）。
+/// **任务 36 起：11 / 2 / 9 / 0**（`PlanePosManager` 从 `stub` 升到 `wired`，见 `docs/16` §44）。
 ///
 /// 改任何一槽的档位必须**同批**改这里、[`Wired::status`] 与
 /// `client/tools/assemble_check.gd` 的 `WIRED_TIER`（任务 28 的病根就是只有一处改）。
@@ -575,7 +575,7 @@ impl Wired {
     ///    任务 40 的 6 个：`TurnManager`（订 2 发 1，6 条）/ `PlayerManager`（订 2 发 2，6 条）/
     ///    `TeamManager`（订 2 发 2，7 条）/ `ModeManager`（订 1 发 3，5 条）/
     ///    `EntityEffectManager`（订 2 发 1，7 条）/ `EffectManager`（订 1 发 1，7 条）；
-    ///    任务 36 的 1 个：`PlanePosManager`（订 2 发 1 处理 1，8 条，`docs/16` §52）；
+    ///    任务 36 的 1 个：`PlanePosManager`（订 2 发 1 处理 1，8 条，`docs/16` §44）；
     /// 2. `layout` —— 原版布局逐字段解出、但没到 `wired`：
     ///    `ClientConnectionHandler`（112 B 的 9 个偏移全解，行为 0 行）/
     ///    `FunctionManager`（32 B / 4 字段全解，容器 + 6 条交互断言都在，但**发方向**
@@ -662,7 +662,7 @@ pub fn slot_status(name: &str) -> &'static str {
 // |---|---|---|---|---|---|
 // | `GraphwarTickHandler`（72 B） | **部分**：`+0x00..0x0f` 壁钟、`+0x28` 1e9 ns、`+0x38` 事件队列、`+0x40` `current_tick` 有指令证据，其余是我方形状 | 订 **1**（`connected_to_server_event`）/ 发 **2**（`TickEvent`、`TickRequest`）——与原版一致 | **4** 条 | `wired` | 布局：`get_fractional_tick`/`get_time_to_tick` 的算式（§44.7 仍列未知） |
 // | `GraphwarClientConnectionHandler`（112 B） | **逐字段全解**：`HandlerField` 9 条偏移 + `SIZE = 0x70 = 112`，与 §41.2 的 vtable size 对上（`观测`） | **未接**（订阅名/处理器/`forward_event` 的 24 个事件名都有证据，代码里一条没接） | **0** 条 | `layout` | 行为：`connect`/`tick`/`disconnect`/`forward_event` 的状态机没落码（4 状态表只有纯函数） |
-// | `GraphwarPlanePosManager`（24 B） | **逐字段全解**：3 字段 `+0x00` 弱自句柄 / `+0x08` 事件队列 `Rc` / `+0x10` `Arc<Mutex<GraphwarPlanePosData>>`（内层 48 B 一张 `HashMap<u32, 24 B POD>`），三构建偏移序列逐条相同（`docs/16` §52） | 订 **2**（`new_connection_event` → `send_all_info_events`；`entity_removed_event` → `handle_entity_removed_event`）/ 发 **1**（`PosInfo` tag 26）处理 **1**（`EntityRemoved` tag 14）—— 与原版一致（§52.3） | **8** 条（`plane_pos.*`） | `wired` | 行为：值类型的精确写法（`[f64;3]` 是**推断**）、`get_all_positions` 的迭代序（散列序，不可依赖） |
+// | `GraphwarPlanePosManager`（24 B） | **逐字段全解**：3 字段 `+0x00` 弱自句柄 / `+0x08` 事件队列 `Rc` / `+0x10` `Arc<Mutex<GraphwarPlanePosData>>`（内层 48 B 一张 `HashMap<u32, 24 B POD>`），三构建偏移序列逐条相同（`docs/16` §44） | 订 **2**（`new_connection_event` → `send_all_info_events`；`entity_removed_event` → `handle_entity_removed_event`）/ 发 **1**（`PosInfo` tag 26）处理 **1**（`EntityRemoved` tag 14）—— 与原版一致（§44.3） | **8** 条（`plane_pos.*`） | `wired` | 行为：值类型的精确写法（`[f64;3]` 是**推断**）、`get_all_positions` 的迭代序（散列序，不可依赖） |
 // | `GraphwarFunctionManager`（32 B） | **逐字段全解**：4 字段，三构建偏移序列相同（§46.2） | 订 **0**（正面证据：原版也不订阅）/ 发 **0**，而原版 3 个 `set_*` 各发 1 条 `FunctionInfo` 类事件 ⇒ **发方向未接** | **6** 条 | `layout` | 事件流：把 `FunctionInfo`/`FunctionActive` 写进 [`FunctionTable::outbox`]（并核对载荷 `(id, 文本, tick)`） |
 // | `GraphwarObstacleManager`（80 B） | **逐字段全解**：5 字段，三构建偏移序列相同（§46.3） | 订 **1**（`tick_event`）/ 发 **4**（`AddObstacle`/`DestroyObstacle`/`QueueDestroyObstacle`/`ClearObstacles`）——与原版一致 | **7** 条 | `wired` | 行为：`draw_circle` 写什么值、`queue_destroy_obstacle` 的到期加法（§46.8） |
 //
@@ -694,7 +694,7 @@ pub struct ClientConnectionHandlerSlot;
 /// * 内层 `GraphwarPlanePosData` = **48 B = 一张 `HashMap<u32, 24 B POD>`**。
 ///
 /// 布局 + `size_of == 24` 的编译期硬闸 + 行为（位置表 + `PosInfo` 事件的两个方向）都在
-/// [`graphwar_plane_pos_manager`]（**观测**，`docs/16` §52）。
+/// [`graphwar_plane_pos_manager`]（**观测**，`docs/16` §44）。
 ///
 /// 与别的包装槽一样，容器里放的是 `_scaffold` 的包装（`SlotKind::Stub`），里面装的是
 /// **原版模块文件里的类型**（`Rc<RefCell<GraphwarPlanePosManager>>`，就是原版 `new`
@@ -1798,7 +1798,7 @@ impl RootWiring {
         //
         // 原版这 4 个数据方法都先拿 `Arc<Mutex<GraphwarPlanePosData>>` 的锁（`+0x10`），
         // 值是 24 字节；发的事件是 `PosInfo`(26)，认的是 `EntityRemoved`(14)。
-        // 逐指令证据见 `src/graphwar_plane_pos_manager.rs` 文件头（`docs/16` §52）。
+        // 逐指令证据见 `src/graphwar_plane_pos_manager.rs` 文件头（`docs/16` §44）。
         if let Some(slot) = self.plane_pos_manager() {
             let manager = slot.borrow().0.clone();
             let manager = manager.borrow();

@@ -19,6 +19,13 @@
    在 docs/16 自身里，没有标记的 `§` 视为自引用；在别的文件里，"本文件/本文/本节 §…"
    视为该文件自身，不计入。
 
+③ **2026-11-08 搬迁的节号（第三类解析，不是白名单）**：`docs/16` §42–§51 已整体移入
+   `docs/archive/156-client-rounds.md`（**编号不变**，见该文件开头的出处说明）。所以这几条号
+   在 `docs/16` 里查不到标题**不等于死链** —— 脚本会到那个后缀文件里再查一次：
+   查到 = 「已搬迁解析」（单独计数并打印档案文件名）；**查不到仍然算死链**。
+   这样 `src/`、`client/` 里那些 `docs/16 §43` 的代码注释一个字节都不用改，
+   而写错号的引用照样会被抓出来。
+
 白名单（EXEMPT）分三类，**每条都打印理由**，不是静默放过：
 
 * `PRE_EXISTING_DEAD` —— 改号**之前**就落不到任何小节的引用。成因已逐条查明：
@@ -49,6 +56,15 @@ SKIP_DIR_NAMES = {
 
 REF_RE = re.compile(r"§(\d+(?:\.\d+)*)")
 HEAD_RE = re.compile(r"^(#{2,4})\s+(\d+(?:\.\d+)*)([.．])?(?=\s|$)")
+
+# --- ③ 2026-11-08 搬迁：docs/16 §42–§51 整体移入这个文件（编号不变） -------------------
+# 只对 docs/16 生效：其它文档没有做过这种"整段后移"，所以不给它们开口子。
+MOVED_TO_ARCHIVE: dict[str, Path] = {
+    "16": ROOT / "docs/archive/156-client-rounds.md",
+}
+MOVED_RANGE: dict[str, range] = {
+    "16": range(42, 52),          # §42–§51
+}
 
 # --- 文档标记：同一行里决定 §NN 归属 -------------------------------------------------
 # (正则, 归属)。'16' = docs/16；'SELF' = 该文件自身；'OTHER' = 别的文档。
@@ -259,6 +275,20 @@ def load_headings() -> set[str]:
     return heads
 
 
+def load_moved_headings() -> dict[str, set[str]]:
+    """③ 搬迁到 archive 的那些节号（只对配置了的文档生效）。"""
+    out: dict[str, set[str]] = {}
+    for doc, path in MOVED_TO_ARCHIVE.items():
+        hs: set[str] = set()
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                m = HEAD_RE.match(line)
+                if m:
+                    hs.add(m.group(2))
+        out[doc] = hs
+    return out
+
+
 def out_of_scope_reason(path: str) -> str | None:
     for prefix, why in OUT_OF_SCOPE:
         if path == prefix or path.startswith(prefix):
@@ -267,14 +297,16 @@ def out_of_scope_reason(path: str) -> str | None:
 
 
 def check_refs(verbose: bool) -> tuple[list[str], list[str]]:
-    """② 全仓 docs/16 §引用无死链（白名单逐条给理由）。"""
+    """② 全仓 docs/16 §引用无死链（搬迁段到 archive 里再查一次；白名单逐条给理由）。"""
     heads = load_headings()
+    moved_heads = load_moved_headings()
     errs: list[str] = []
     notes: list[str] = []
     dead_by_file: dict[str, list[tuple[int, str]]] = {}
     exempt_dead: list[tuple[str, int, str, str]] = []
     exempt_scope: list[tuple[str, int, str, str]] = []
     total = resolved = 0
+    moved_resolved = 0
 
     for p in iter_files():
         path = rel(p)
@@ -302,6 +334,11 @@ def check_refs(verbose: bool) -> tuple[list[str], list[str]]:
                 if ref[1:] in heads:
                     resolved += 1
                     continue
+                # ③ 已搬迁的节号：到 archive 后缀文件里再查一次（查到才算解析成功）
+                if int(m.group(1).split(".")[0]) in MOVED_RANGE.get("16", range(0)):
+                    if ref[1:] in moved_heads.get("16", set()):
+                        moved_resolved += 1
+                        continue
                 # 死链：先看是不是改号前就死的，再看文件在不在允许清单内
                 why = next(
                     (w for f, r, w in PRE_EXISTING_DEAD if f == path and r == ref), None
@@ -321,7 +358,9 @@ def check_refs(verbose: bool) -> tuple[list[str], list[str]]:
             errs.append(f"{path}:{ln}: `{ref}` 找不到对应小节（死链，且不在白名单里）")
 
     notes.append(f"② 指向 docs/16 的 §引用：共 {total} 条，解析成功 {resolved} 条，"
-                 f"白名单豁免 {len(exempt_dead) + len(exempt_scope)} 条，死链 {sum(len(v) for v in dead_by_file.values())} 条")
+                 f"已搬迁解析 {moved_resolved} 条（落在 `{rel(MOVED_TO_ARCHIVE['16'])}` 的 §42–§51，"
+                 f"编号不变），白名单豁免 {len(exempt_dead) + len(exempt_scope)} 条，"
+                 f"死链 {sum(len(v) for v in dead_by_file.values())} 条")
     if verbose:
         for path, ln, ref, why in exempt_dead:
             notes.append(f"   [既有死链] {path}:{ln} `{ref}` —— {why}")

@@ -63,3 +63,14 @@
 | [154-docs-audit.md](154-docs-audit.md) | **文档审计（2026-11-08）**：过时数字 / 互相冲突 / 可整合 / 失效引用四类，逐条给处置 |
 | [MIGRATION.md](MIGRATION.md) | **旧文件 → 归档/吸收** 的完整映射表（"没丢东西"的凭据） |
 | [guide/README.md](guide/README.md) | 攻略向行为手册（另一套读者：想赢的人） |
+
+## 过程档案（`archive/`：逐轮过程数据；**结论不在这里**，索引在对应主文档）
+
+| 文件 | 里面是什么 |
+|---|---|
+| [155-round-log.md](archive/155-round-log.md) | `docs/06` **§24–§43** 的逐轮归因日志（2026-11-08 原样搬迁，节号不变） |
+| [156-client-rounds.md](archive/156-client-rounds.md) | `docs/16` **§42–§51** 的逐轮"接线 / 接节点"记录（同上） |
+| [157-name-matching.md](archive/157-name-matching.md) | `docs/02` **§34–§40** 的名字匹配三表过程记录（同上） |
+
+> 搬迁口径与逐字自证见 [`154-docs-audit.md`](154-docs-audit.md) 附录 A；
+> 三份的入口分别在 [`06`](06-verification.md) §24、[`16`](16-client.md) §42、[`02`](02-module-map.md) §34。

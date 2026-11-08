@@ -183,7 +183,7 @@ pub mod graphwar_module_container;
 pub mod weak_caller;
 pub mod graphwar_plane;
 /// 位置表管理器 `graphwar_plane_pos_manager.rs`（24 B 布局 + `PosInfo` 事件的两个方向）。
-/// 第八轮解出（`docs/16-client.md` §52）；逐字段证据见文件头。
+/// 第八轮解出（`docs/16-client.md` §44）；逐字段证据见文件头。
 pub mod graphwar_plane_pos_manager;
 pub mod player_showcase;
 pub mod graphwar_lan_vbox;
