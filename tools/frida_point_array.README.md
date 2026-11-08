@@ -128,3 +128,47 @@ pairWho    这些命中来自求值器的哪个返回地址（`gw+3c2995` = `cal
 
 ⚠ 坐标与点击的两个新坑（§42.1）：输入框在 `y≈1090`（不是 1048）；
 `mousemove X Y click 1` **一条命令**会把点击按旧指针位置派发，必须拆成两条。
+
+## 2026-11-08 `dispatch/39`：开火那一刻喂进 `calculate_function` 的 **token 列表**（`docs/06` §26）
+
+第三个断点组，**独立函数 + 独立开关**（并行任务 40 也在改这个文件，所以新增的东西全部收在
+`TOKCFG` / `installTokenProbe()` / `recv('cfg')` 的 `tokenProbe` 分支里，主探针一行没动）：
+
+| 新增 RVA | 是什么 | 抓什么 |
+|---|---|---|
+| **`0x3c2530`** | `calculate_function`（采样器）入口 | `rsi` = `&Vec<Token>`：`{cap, ptr, len}` + **16·len 字节原文**；`edx`=flip、`ecx`=mode、`xmm0/1/2`=x0/y0/step 的**位模式**；调用点 RVA |
+| **`0x4ed670`** | `MathFunction::new`（解析器）= 槽 `0x9bacf8` | `rsi` = `&String` 输入文本：**UTF-8 字节 + 长度**；返回的 `Vec<Token>` 也抓（`cap/ptr/len` + 字节） |
+| **`0x3c5f70`** | `calculate_function_offset_str` | onLeave 读 sret `String` = `" + 10.938"` / `" - 0.000"`（修正常数的**文本**） |
+
+新增消息类型：
+
+| type | 内容 |
+|---|---|
+| `tok_fire` | 每次 `calculate_function` 入口：`ret`（`gw+3c30c7` 或 `gw+3e2d3b`）、`flip/mode/x0/y0/step`、`vec{cap,ptr,len}`、`tok{hex,tags}`，以及 `vs_parse` —— 与最近 256 次 parse 的比对（`ptr_eq` 指针恒等 / `same_bytes` 逐字节） |
+| `tok_parse` | 每次解析器调用：输入文本 `txt`/`txtHex`/`txtLen`、调用点、输出的 token 列表 |
+| `tok_suffix` | 每次 `offset_str` 返回的后缀串（`text` + `hex`）+ 当时的 `x0/y0` 位模式 |
+
+⚠ 这三个钩子**装机时就装上**（`TOKCFG.on=false` 时回调第一行就 `return`），开关由驱动
+`--tokens` → `post({type:'cfg',tokenProbe:true})` 打开：这样不赌 `install()` 与 `cfg` 的先后。
+
+驱动新增开关：
+
+```bash
+--tokens                     # 打开 token 探针（不加 = 行为与之前逐字节相同）
+--tokens-report raw.jsonl    # 离线摘要模式（不给游戏）：可给多次
+--replay <user://replays/<unix 秒>>   # **同一局**的回放（gzip JSONL）→ 才能做"抓到的文本 vs corrected_function"
+--oracle 1                   # 再用真二进制（unicorn 直调 0x4ed670）解析一遍，与抓到的 token 逐字节比
+--tokens-fixture-out fixtures/frida_token_at_fire_sample.jsonl
+```
+
+`--tokens-report` 的输出 = 1 行 provenance + 每次 `calculate_function` 一行，含
+`tokens.hex`（16·len 字节原文）、`tokens_decoded`（tag + f64 位模式）、`prefix_text`（前缀写法，
+**只是给人看的忠实渲染，不是 `0x4ec160` 的 `to_text`**）、`matched_parse`（那一次 parse 的文本与 hex）、
+`suffix_matches`、以及 `A/B/C` 三条逐字节结论。**不含路径、不含用户名、不含整条回放的二进制**。
+
+⚠ 两个新坑（`docs/06` §26.8）：
+1. **不要用共享 Xvfb**。本轮在别人已经开着的 `:92` 上截图/点击，落到的是**别人 agent 的游戏窗口**，
+   于是"主菜单"其实在别人那台机上、连点五下没开成炮。自己起 `:97` 后一次就对。
+2. 点菜单坐标（1920×1160，本机实测仍然有效）：`(534,633)` Campaign → `(237,224)` 关卡节点 →
+   `(1070,1010)` Start → 输入框 `(1000,1106)` → `Fire!` 长按 `(1754,45)`。
+   截图必须按**窗口 id**（`xdotool search --name '^Graphwar$'`），root 全黑。

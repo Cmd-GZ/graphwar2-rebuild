@@ -1087,3 +1087,159 @@ python3 tools/residual_fold.py --fold /tmp/fold.jsonl --attrib /tmp/b.jsonl --ta
 | [`tests/residual_fold.rs`](../tests/residual_fold.rs) | **新增 3 条回归锁**（自洽 / 恰好 1 ulp / 炮口点），断言里全是**回放原文与位模式** |
 
 **没有改动**：`src/` 一行没动 ⇒ 生成物（`docs/coverage-matrix.tsv` 等）**不需要重算**，`--check` 通过即为此事。
+
+## 26. 开火那一刻喂进 `calculate_function` 的 token 列表 **就是** `parse(corrected_function)`：两种表示够用（2026-11-08，`dispatch/39`）
+
+> **本节除注明外全部是运行时观测**：frida 17.26.1 挂在真游戏 `Graphwar II` Linux 2.0.60 里
+> （`libgraphwarrust.so` sha256 `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`），
+> 不是静态推断。
+> 脚本：[`tools/frida_point_array.js`](../tools/frida_point_array.js)（下断，本轮新增 token 探针，**默认关**）+
+> [`tools/frida_point_array.py`](../tools/frida_point_array.py)（驱动 `--tokens` / 离线 `--tokens-report`）。
+> 入库样本：[`fixtures/frida_token_at_fire_sample.jsonl`](../fixtures/frida_token_at_fire_sample.jsonl)。
+>
+> **编号说明**：本文件现行最大节号是 §25（§24–§43 的逐轮日志已搬进
+> [`archive/155-round-log.md`](archive/155-round-log.md)），所以本节用 **§26**。
+
+### 26.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 抓到几次开火的 token 列表 | **4 发 / 8 次 `calculate_function` 入口**（每发 **2 次**：`gw+3c30c7` 与 `gw+3e2d3b`）。**同发的两次调用拿到的 token 列表逐字节相同 4/4** | **观测** |
+| ② | 与回放两种表示逐字节比 | **相同**：探针抓到的"喂进解析器的那串文本"与**同一局回放**里 `FunctionInfo.corrected_function` 的 UTF-8 字节**逐字节相同 4/4**（2 发 × 2 次调用）。原文 `FunctionInfo.function` 就是这串文本的前缀 | **逐位**（memcmp 相等，不是"看起来一样"） |
+| ③ | 有没有"第三种形态" | **没有**。喂进去的 token 列表 = `parse(corrected_function)`；三种候选的**否证**见 §26.5 | **观测** |
+| ④ | 常量的**位模式** | 采样器吃到的是**印出来的 3 位小数**：`10.938`（bits `c74b378941e02540`），**不是**全精度 `10.9375129828388`（bits `72bca1b301e02540`，= 这一发的 `start_y`）⇒ §25 的"折叠在 3 位小数打印"这一步**逐位坐实** | **逐位** |
+| ⑤ | `x0/y0` 与回放对得上吗 | 抓到的位模式 = 回放 `FunctionPoints.start_x/start_y` 的位模式 **4/4**；`pos_read` 的末点 = 回放 `EffectInfo(Explosion)` 的 `pos_x/pos_y` 位模式 **2/2** | **逐位** |
+| ⑥ | 对 407 批判决的影响 | **加强**（前提成立，不用打折扣）。附带一处**口径更正**（§26.6）：`corrected_function ≠ function + 后缀` 在语料的 1291 发里有 **588 发**，但判据本体解析**整串**，判决不受影响 | **观测** |
+
+⇒ 一句话：**回放里记的那串文本就是当时真正喂进采样器的那串**；token 列表由它解析而来，一个 bit 都不差。
+407 批「回放自身不自洽」不再有"它记错了输入"这个替代解释。
+
+### 26.1 先证明"抓的是实参"：三个函数的签名是**逐条指令读出来**的
+
+不下这个功夫，"抓到 rsi 指的那块"就只是猜。三条都是本构建（`9a538115…`）实测：
+
+| RVA | 函数 | 签名（序言逐条读出） | 证据指令 |
+|---|---|---|---|
+| `0x3c2530` | `calculate_function`（采样器） | `(sret:rdi, tokens:&Vec<Token>:rsi, flip:edx, mode:ecx, x0:xmm0, y0:xmm1, step:xmm2)` | `3c254c mov %rsi,%r14`；`3c2541 mov %ecx,%r15d` / `3c254a mov %edx,%ebp` / `3c2544/3c254f/3c2555` 三条 `movsd` 落栈；体内 6 处 `call 0x4eb9d0` 全部 `mov %r14,%rdi` ⇒ 它把自己的 rsi 原样喂给求值器 |
+| `0x4ed670` | `MathFunction::new`（解析器，槽 `0x9bacf8` 的目标） | `(sret:rdi = &mut Vec<Token>, text:&String:rsi)` | `4ed687 mov 0x8(%rsi),%r15`（ptr）+ `4ed68b mov 0x10(%rsi),%rdx`（len）⇒ **24 字节的 `String`**，不是 `&str`；随后一段 SSE 把文本转小写（`paddb/pminub/pcmpeqb`） |
+| `0x3c5f70` | `calculate_function_offset_str`（修正常数**文本**） | `(sret:rdi = &mut String, text, len, pt:&(x0,y0):rcx, flip:r8d)` | `3c6003 movsd (%r14),%xmm0` = `x0`、`3c602f movsd 0x8(%r14),%xmm1` = `y0`；`3c6055..` 造 `" -"`/`" +"`（`movw $0x2d20` / `$0x2b20`）；`3c6189 mov %rbx,0x10(%r13)` 把长度写回 sret |
+
+`Vec<Token>` 的布局与 `docs/03` §1 一致：**16 B/token**，`{cap@+0, ptr@+8, len@+0x10}`，
+token = `{tag: u64, value: f64}`。求值器 `0x4eb9d0` 的 `cmp 0x10(%rdi),%rax` / `mov 0x8(%rdi),%rcx` /
+`shl $0x4` 三条独立复证了同一布局。
+
+`.text` 里指向解析器的 RIP 相对调用**只有 5 处**（扫描 `ff 15`/`48 8b` 的 disp32）：
+`0x3c5ffd`（在 offset_str 体内）、`0x455ed8`、`0x455f4e`（设函数）、`0x51ba93`、`0x51beff`。
+**采样器那条链上没有直接 parse** —— 所以"token 是不是由某一次 parse 产出"只能靠运行时判，
+本轮就是靠**指针恒等 + 逐字节**判的（§26.2）。
+
+### 26.2 一次开火的实测链路（`0` 这一发，全在进程里抓）
+
+```text
+键入每个字符   → 0x3c6003（offset_str 体内）解析"当前输入框文本"并算 c → 右下角显示 " + 10.938"
+按下 Fire!     → 0x3c5f70 再算一次 c，返回 sret String = " + 10.938"（9 B，hex 202b2031302e393338）
+               → 拼出 corrected_function = "0 + 10.938"（10 B，hex 30202b2031302e393338）
+               → 解析器 0x4ed670（调用点 gw+455f54）→ token 列表 [Add, const 0.0, const 10.938]
+               → calculate_function 入口 rsi 指向的 Vec：**同样的 48 字节**（16×3）
+```
+
+探针在采样器入口把 `rsi` 指的那条 Vec 拿到的 48 字节，与环里最近 256 次 parse 的记录逐条比：
+**`same_bytes = true`，`ptr_eq = false`** —— 也就是说采样器吃的那块**不是** parse 返回值本身，
+而是**入队前又拷的一份**（与 §43 "两次调用两块缓冲、内容逐位相同"同源）。
+4 发全部如此；这是"token 从哪来"唯一的运行时证据，所以照实写：**内容逐字节相同、指针不同**。
+
+### 26.3 逐发数据（4 发，全部 `flip=0` `mode=0` `step=0.01`）
+
+| 局 | 发 | 输入框里打的 | **喂进解析器的那串文本**（hex 见样本） | token 列表（前缀顺序，`value` 是 f64 真值） | 调用点 |
+|---|---|---|---|---|---|
+| series1（打完，写了回放） | 1 | `0` | `0 + 10.938` | `[+, 0.0, 10.938]`（3） | `gw+3c30c7` / `gw+3e2d3b` |
+| | 2 | `-1.27791*x-0.09694` | `-1.27791*x-0.09694 - 0.000` | `[-, -, *, neg, 1.27791, x, 0.09694, 0.0]`（8） | 同上 |
+| series2（没打完，无回放） | 3 | `sin(x)+3` | `sin(x)+3 - 10.408` | `[-, +, sin, x, 3.0, 10.408]`（6） | 同上 |
+| | 4 | `sin(x`（**故意少一个 `)`**） | `sin(x) - 7.408` | `[-, sin, x, 7.408]`（4） | 同上 |
+
+两个坐标（两局各自的 `start`，位模式逐位可查）：series1 `(-8.6347822155735052, 10.9375129828388)`，
+series2 的另一对见样本 `x0_bits/y0_bits`；`step_bits = 7b14ae47e17a843f` = `0.01`（`SERVER_STEP`）。
+
+### 26.4 与回放**逐字节**比（同一局：这局自己写的 `user://replays/1794133422`）
+
+系列 1 那一局打完（`EndingGame`）→ 游戏自己把整局事件 gzip 落盘 → 里面就有这两发的
+`FunctionInfo` 两种表示。比较做得死死的：
+
+| 比什么 | 怎么比 | 结果 |
+|---|---|---|
+| 抓到的文本 vs 回放 `corrected_function` | UTF-8 字节 memcmp（`3020…` vs 样本里的 `corrected_utf8_hex`） | **4/4 相同** |
+| 抓到的文本 vs 回放 `function` | `function` 是不是 `corrected_function` 的**前缀** | **4/4 是** |
+| 抓到的 token 列表 vs 真二进制重新解析 `corrected_function` | unicorn 直调 `0x4ed670`，16 B/token 逐字节（含常量的 f64 位模式） | **4/4 相同**（`tools/frida_point_array.py --tokens-report … --oracle 1`） |
+| 抓到的 token 列表 vs 同一次运行里那次 parse 的输出 | 96/16·len 字节 memcmp | **8/8 相同** |
+| `x0/y0` vs 回放 `FunctionPoints.start_x/start_y` | 位模式 | **4/4 相同** |
+| `pos_read` 的末点 vs 回放 `EffectInfo(ExplosionEffect)` | 位模式 | **2/2 相同** |
+
+第二发还顺带把"真机判死"钉了一下：这一发命中了靶（回放里 `EffectInfo(SparkEffect)`
+`pos = (7.0201282600030721, -9.0890097189757544)`，随后 `EndingGame`），而弹道末点是
+`(11.658967784425609, -14.996051521395332)` —— 与 `pos_read` 抓的 16 字节**逐位相同**。
+（"命中点 ≠ 末点"与 `docs/120` §0 第 2 条"士兵不进掩膜"一致；靶子的 id 是 `TargetInfo.target_id`。）
+
+### 26.5 "第三种形态"：**没有** —— 三个候选逐条否证
+
+任务书担心的是"真机喂进去的既不是 A 也不是 B，而是另一种拼法"。三个具体候选，全部被数据否掉：
+
+| 候选形态 | 判据 | 实测 |
+|---|---|---|
+| ①**前置** `Add(c, tree)`（= 我方 `shifted_tokens` 的形状） | token 列表的第一个 token 是 `const` 还是运算符 | **不是**：真机是**后置**——`Sub/Add(tree, |c|)`，常量在**末尾**（`[3,17,17]`、`[4,4,6,5,17,0,17,17]`）。我方的**前置**写法与它**数值逐位相同**（IEEE 加法可交换；`Sub(orig,|c|)` ≡ `Add(orig,c)`），但 token 列表**不是同一串** |
+| ②全精度修正常数 | 常量 token 的位模式 vs `y0 - f(∓x0)` 的位模式 | **不是**：`10.938` vs `10.9375129828388`（同一个 `y0`），差 **0.0005** —— 喂的是**印出来的 3 位小数** |
+| ③先过一遍 `to_text`（`0x4ec160`）再解析 | 喂进去的文本是否等于 `to_text(tokens)` 的规范形式（`((2.00*x)+1.00)` 那种两点小数、全括号） | **不是**：喂进去的是**原文原样 + 后缀**（`-1.27791*x-0.09694 - 0.000`、`sin(x)+3 - 10.408`），原文一个字符都没被重写 |
+
+⇒ "回放里只有两种表示"这个**前提**成立；`corrected_function` 就是采样器的输入文本。
+
+### 26.6 一处**口径更正**（与 §25 有关，但不改判决）
+
+§25.1 写"常数 = `FunctionInfo.corrected_function` 里**原文之后**的后缀（如 `" + 1.916"`），逐字节切"。
+本轮把整份语料（403 份回放 / 1291 条带 `corrected_function` 的 `FunctionInfo`）按四种形状分了一遍：
+
+| 形状 | 条数 | 例子（原文 → corrected_function） |
+|---|---:|---|
+| A `原文 + " ± d.ddd"` | **703** | `-11.54` → `-11.54 + 17.658` |
+| B `corrected == function`（**没有后缀**） | **550** | `-0.8` → `-0.8` ⇒ 与 §25 的 **550 发 DiffEq/Ode** 条数一致：Ode 局**根本不做修正**（与我方 `shot_points(…, apply_correction && Mode::Normal)` 的门一致） |
+| C 先**补 `)`** 再加后缀 | **8** | `5/155sin(4exp(4*6cos(` → `5/155sin(4exp(4*6cos())) + 6.055` |
+| D `" + NaN"` / `" - inf"` | **29** | `…)+100/` → `…)+100/ - inf` |
+| E 补 `)` + `NaN` | **1** | `…))))  + NaN` |
+
+⇒ 所以"原文之后逐字节切出来的一定是常数"这条**对 588 / 1291 条不成立**（B/C/D/E）。
+**但 §25 的判据本体不受影响**：`examples/residual_fold.rs:228` 复算用的是
+`parse(corrected_function)` **整串**，后缀只喂给"常数"那一列（`split_ok` 已经单独记了）。
+本轮实拍也证实了 C 这条形状：输入 `sin(x`（少一个 `)`）→ 采样器吃的是 `sin(x) - 7.408`。
+
+### 26.7 复跑（四条命令）
+
+```bash
+# ① 私有 Xvfb（**不要**用共享 display：本轮踩过——共享 Xvfb 上会点到别人的游戏窗口）
+export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
+       LIBGLX_VENDOR_LIBRARY_NAME=mesa LIBGL_ALWAYS_SOFTWARE=1
+Xvfb :97 -screen 0 1920x1160x24 -listen tcp -ac -nolisten unix &
+
+# ② 抓（`--attach` 必加、`--tokens` 打开 token 探针；坐标见 tools/frida_point_array.README.md）
+.reference/venv/bin/python tools/frida_point_array.py --attach --tokens \
+    --game .reference/game --data-dir <可写目录> --out <abs>/series.jsonl \
+    --display 127.0.0.1:97 --settle 14 --shots 2 --gap 12 --exprs "sin(x)+3,sin(x" --tail 30
+
+# ③ 摘样本 + 三种逐字节比较（`--replay` 指向**同一局**写在 user:// 下的回放文件；`--oracle` 用真二进制复解析）
+EMU=.reference/analysis-repo .reference/venv/bin/python tools/frida_point_array.py \
+    --tokens-report <abs>/series.jsonl --label series1 \
+    --replay <可写目录>/data/godot/app_userdata/Graphwar/replays/<unix 秒> --oracle 1 \
+    --tokens-fixture-out fixtures/frida_token_at_fire_sample.jsonl
+
+# ④ §26.6 那张形状表（纯读回放语料）
+python3 -c "…见本节正文的分类规则…"   # A/B/C/D/E 五类，分母 1291
+```
+
+### 26.8 遗留 / 未做（照实写）
+
+* **只抓到 4 发、2 局**：series1 打完两发就把关卡通了（`EndingGame`），series2 两发没打完、所以
+  **没有同局回放** ⇒ ②的"与回放逐字节比"只覆盖 **2 发**（4 次调用），不是 4 发。系列 2 那两发的
+  文本/token 只有 A 条（对 parse）成立，B/C 缺省为 `null`，样本里也**没填**。
+* **全是 Normal 局**（`mode=0`、`flip=0`）。`flip=1`（Team2）与 `mode=1`（DiffEq/Ode）两条分支本轮
+  **没有**运行时样本；"Ode 局不做修正"这条目前只有语料形状（§26.6 的 B 类 550 条）支持，属 **推断**。
+* **没有**在进程内调用 `to_text`（`0x4ec160`）：本轮不需要它（喂进去的是原文，不是它的输出），
+  样本里也**不含**任何 `to_text` 结果 —— 所以"token → 文本"那条路本轮**没有**被运行时验证。
+* 命中判定只被**顺带**证到一次（第二发命中靶 → `SparkEffect` + `EndingGame`）；它不在本节判据里。
+* `run/`、截图、`user://` 数据（含那份 gzip 回放）**一律没入库**；入库只有纯文本样本与本节。

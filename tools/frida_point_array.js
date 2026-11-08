@@ -68,6 +68,195 @@ const CFG = {
   evalRowsMax: 4000,    // `evals` 抽样行上限（驱动可用 cfg 消息改成 0，见 recv('cfg')）
 };
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// 2026-11-08 `dispatch/39`：开火那一刻**真正喂进** `calculate_function` 的 token 列表
+//
+// 为什么单独一块：并行任务 40 也在改本文件。本轮新增的东西**全部**收在这里
+// （`TOKCFG` + `installTokenProbe()` + 三个 `tok_*` 消息），主探针一行没动，
+// 开关是 `TOKCFG.on`（默认 **关**；驱动 `--tokens` 用 `post({type:'cfg',tokenProbe:true})` 打开）。
+//
+// 地址（构建同文件头：`libgraphwarrust.so` sha256 9a538115…）：
+//   0x3c2530  calculate_function（采样器）  [0x3c2530, 0x3c2bb9)
+//             **签名（序言逐条读出，见 docs/06 §45.2）**
+//               rdi = sret（0x20 字节的 `{kind, ptr, len, +0x18}` 记录）
+//               rsi = `&Vec<Token>`（`{cap@+0, ptr@+8, len@+0x10}`，token 步长 16 B）
+//               edx = flip(u8)          ecx = mode(u8)
+//               xmm0 = x0  xmm1 = y0  xmm2 = step
+//             体内 6 处 `call 0x4eb9d0`（求值器）都用 `rdi = 这个 rsi`：`(cap, ptr, len)` 布局成立。
+//   0x4ed670  `MathFunction::new`（解析器）= 槽 `0x9bacf8` 的目标
+//             rdi = sret `&mut Vec<Token>`；rsi = `&String` 输入文本（`{cap@+0, ptr@+8, len@+0x10}`）
+//             ⇒ 这是**唯一**能读到"喂给采样器的那串文本"的位置（`docs/119` §1 同布局）。
+//             全 `.text` 只有 5 个 `call *0x9bacf8(%rip)` 调用点：0x3c5ffd（offset_str 内）、
+//             0x455ed8 / 0x455f4e（设函数）、0x51ba93 / 0x51beff；**采样器那条链上没有直接 parse**，
+//             所以"token 是不是由某一次 parse 产出"只能靠**运行时**（ptr 恒等 + 逐字节）判。
+//   0x3c5f70  `calculate_function_offset_str`（`c = y0 - f(∓x0)` → `" + 1.916"`）
+//             rdi = sret `&mut String`（0x3c6189 `mov %rbx,0x10(%r13)` 写回）；rsi/rdx = 文本+buf
+//             rcx = `&(x0,y0)`（`0x3c6003 movsd (%r14)` = x0、`0x3c602f movsd 0x8(%r14)` = y0）
+//             r8d = flip。**onLeave 读 sret** 就拿到真机自己印的那个后缀串。
+// ═══════════════════════════════════════════════════════════════════════════════
+const TOKCFG = {
+  on: false,          // ★ 总开关（默认关：不加 --tokens 的跑法行为与之前**逐字节相同**）
+  maxTokens: 256,     // 单个 token 列表最多拷多少 token（16 B/token）
+  parseKeep: 256,     // 记住最近多少次 parse（token 列表可能是很久以前 parse 出来的）
+  textMax: 4096,      // 单个文本最多记多少字节
+  suffixRows: 400,    // `tok_suffix` 最多留多少行
+};
+const TOKST = {
+  seq: 0, fires: 0, parses: 0, suffixes: 0, pSeq: 0,
+  ring: [],           // [{seq, t, ret, sret, text, out:{cap,ptr,len,hex,tags}}]
+  rows: [],
+};
+
+/** Rust 的 `Vec<T>` / `String` 三元组：`{cap@+0, ptr@+8, len@+0x10}`（与 `docs/119` §1 同布局） */
+function vecTriple(p) {
+  try {
+    const cap = Number(p.readU64().toString());
+    const vp = p.add(8).readPointer();
+    const len = Number(p.add(0x10).readU64().toString());
+    return { cap: cap, ptr: vp, len: len };
+  } catch (e) { return { error: String(e) }; }
+}
+/** token 列表的原始字节（16 B/token）+ 判别值序列（tag 是 u64 低 8 字节） */
+function tokBytes(v) {
+  const o = { len: v.len, ptr: hx(v.ptr), hex: null, tags: null };
+  if (!v.ptr || v.ptr.isNull() || !(v.len > 0)) { o.note = 'empty'; return o; }
+  if (v.len > TOKCFG.maxTokens) { o.note = 'len>maxTokens'; return o; }
+  try {
+    const b = new Uint8Array(v.ptr.readByteArray(v.len * 16));
+    let s = '';
+    for (let i = 0; i < b.length; i++) s += ('0' + b[i].toString(16)).slice(-2);
+    o.hex = s;
+    o.tags = [];
+    for (let i = 0; i < v.len; i++) {
+      let t = 0n;
+      for (let j = 7; j >= 0; j--) t = (t << 8n) | BigInt(b[i * 16 + j]);
+      o.tags.push(Number(t));
+    }
+  } catch (e) { o.error = String(e); }
+  return o;
+}
+/** 两条 token 列表**逐字节**比（hex 是规范化的，`===` 就是 memcmp） */
+function tokCmp(a, b) {
+  if (!a || !b) return { same: null, reason: 'null side' };
+  if (!a.hex || !b.hex) return { same: null, reason: 'no bytes' };
+  if (a.len !== b.len) return { same: false, reason: 'len differs', nA: a.len, nB: b.len };
+  if (a.hex === b.hex) return { same: true, nA: a.len, nB: b.len };
+  const diff = [];
+  for (let i = 0; i < a.len && diff.length < 6; i++) {
+    const x = a.hex.substr(i * 32, 32), y = b.hex.substr(i * 32, 32);
+    if (x !== y) diff.push([i, x, y]);
+  }
+  return { same: false, reason: 'bytes differ', nA: a.len, nB: b.len, firstDiff: diff };
+}
+/** 采样器入口那一刻的 16 字节 xmm → 低 8 字节 = 一个 f64 的位串（内存序） */
+function _xmm(p) { return xmmLow(p); }
+
+function installTokenProbe(base, res) {
+  // ── ① 解析器 `0x4ed670`：文本 → token 列表（**token 的唯一来源**）──────────────
+  try {
+    Interceptor.attach(base.add(0x4ed670), {
+      onEnter() {
+        if (!TOKCFG.on) return;
+        const c = this.context;
+        const str = vecTriple(c.rsi);                      // &String 输入文本
+        const rec = { seq: ++TOKST.pSeq, t: now(),
+                      ret: rvaOf(c.rsp.readPointer()), sret: hx(c.rdi),
+                      txt: null, txtLen: null, out: null };
+        try {
+          if (str.ptr && !str.ptr.isNull() && str.len >= 0 && str.len <= TOKCFG.textMax) {
+            rec.txtLen = str.len;
+            rec.txt = str.ptr.readUtf8String(str.len);
+            rec.txtHex = bytesHex(str.ptr, str.len);       // ★ 逐字节（含大小写/空格）
+          } else { rec.txtSkip = 'len>textMax or unreadable'; rec.txtLen = str.len; }
+        } catch (e) { rec.txtErr = String(e); }
+        this.rec = rec;
+      },
+      onLeave(retval) {
+        if (!TOKCFG.on) return;
+        const rec = this.rec; if (!rec) return;
+        try {
+          const out = vecTriple(retval || ptr(rec.sret));
+          rec.out = tokBytes(out);
+          rec.out.cap = out.cap;
+          TOKST.parses++;
+          TOKST.ring.push(rec);
+          while (TOKST.ring.length > TOKCFG.parseKeep) TOKST.ring.shift();
+          send({ type: 'tok_parse', t: now(), rec: rec });
+        } catch (e) { send({ type: 'tok_parse', t: now(), rec: rec, error: String(e) }); }
+      },
+    });
+    res.hooks.push({ name: 'tok_parse_0x4ed670' });
+  } catch (e) { res.hooks.push({ name: 'tok_parse_0x4ed670', error: String(e) }); }
+
+  // ── ② 采样器 `0x3c2530`：**开火那一刻**的实参（token 列表 + x0/y0/step/flip/mode）──
+  try {
+    Interceptor.attach(base.add(0x3c2530), {
+      onEnter() {
+        if (!TOKCFG.on) return;
+        const c = this.context;
+        const o = { type: 'tok_fire', seq: ++TOKST.fires, t: now(),
+                    ret: rvaOf(c.rsp.readPointer()), sret: hx(c.rdi),
+                    flip: (Number(c.rdx.toString()) & 0xff),
+                    mode: (Number(c.rcx.toString()) & 0xff),
+                    x0: xmmLow(c.xmm0), y0: xmmLow(c.xmm1), step: xmmLow(c.xmm2) };
+        try {
+          const vec = vecTriple(c.rsi);
+          o.vec = { cap: vec.cap, ptr: hx(vec.ptr), len: vec.len };
+          o.tok = tokBytes(vec);
+          // 与环里**每一次** parse 比：ptr 恒等 + 逐字节（这是"token 从哪来"的唯一运行时证据）
+          o.vs_parse = [];
+          for (const r of TOKST.ring) {
+            if (!r.out) continue;
+            const ptrEq = r.out.ptr && vec.ptr && !vec.ptr.isNull() &&
+                          ((r.out.ptr === o.vec.ptr) || hx(r.out.ptr) === o.vec.ptr);
+            const cmp = tokCmp(r.out, o.tok);
+            if (ptrEq || (cmp.same === true)) {
+              o.vs_parse.push({ seq: r.seq, ret: r.ret, sret: r.sret, t: r.t,
+                                ptr_eq: !!ptrEq, same_bytes: cmp.same,
+                                text: r.txt, txtHex: r.txtHex, txtLen: r.txtLen,
+                                parse_out: r.out, firstDiff: cmp.firstDiff });
+            }
+          }
+          if (!o.vs_parse.length) o.vs_parse_note = 'no parse in ring matches this token list';
+        } catch (e) { o.error = String(e); }
+        try { send(o); } catch (e) { }
+      },
+    });
+    res.hooks.push({ name: 'tok_fire_0x3c2530' });
+  } catch (e) { res.hooks.push({ name: 'tok_fire_0x3c2530', error: String(e) }); }
+
+  // ── ③ 修正常数的**文本**：`calculate_function_offset_str` 0x3c5f70 的返回值 ─────
+  // 这是"回放里 corrected_function 的后缀"唯一的真机出处（`{:.3}` 印出来的那 3 位小数）。
+  try {
+    Interceptor.attach(base.add(0x3c5f70), {
+      onEnter() {
+        if (!TOKCFG.on) return;
+        this.o = { type: 'tok_suffix', seq: ++TOKST.suffixes, t: now(),
+                   ret: rvaOf(this.context.rsp.readPointer()), sret: hx(this.context.rdi),
+                   flip: (Number(this.context.r8.toString()) & 0xff) };
+        try {
+          const p = this.context.rcx;                         // &(x0,y0)
+          if (p && !p.isNull()) { this.o.x0 = bytesHex(p, 8); this.o.y0 = bytesHex(p.add(8), 8); }
+        } catch (e) { }
+      },
+      onLeave(retval) {
+        if (!TOKCFG.on) return;
+        const o = this.o; if (!o) return;
+        try {
+          const srt = vecTriple(retval || ptr(o.sret));
+          o.len = srt.len;
+          if (srt.ptr && !srt.ptr.isNull() && srt.len >= 0 && srt.len <= 64) {
+            o.text = srt.ptr.readUtf8String(srt.len);
+            o.hex = bytesHex(srt.ptr, srt.len);
+          }
+        } catch (e) { o.error = String(e); }
+        try { send(o); } catch (e) { }
+      },
+    });
+    res.hooks.push({ name: 'tok_suffix_0x3c5f70' });
+  } catch (e) { res.hooks.push({ name: 'tok_suffix_0x3c5f70', error: String(e) }); }
+}
+
 let BASE = null;
 const T0 = Date.now();
 const now = () => Date.now() - T0;
@@ -507,6 +696,10 @@ function install(base) {
     }
   } catch (e) { res.hooks.push({ name: 'realloc', error: String(e) }); }
 
+  // ── 2026-11-08 `dispatch/39`：token 探针（**默认关**，`TOKCFG.on=false` 时三个钩子立刻 return；
+  //    开关可以装机后再 post，所以这里**无条件装**，不赌 install 与 cfg 的先后）─────────
+  try { installTokenProbe(base, res); } catch (e) { res.hooks.push({ name: 'token_probe', error: String(e) }); }
+
   ST.ins = true;
   // 正对照：先证明"逐点对比函数"对**已知不同**的两条数组会报不同（负结论的前提，见 docs/06 §42）
   try { send({ type: 'selftest', cmp: selfTestCompare() }); } catch (e) { send({ type: 'selftest', error: String(e) }); }
@@ -518,7 +711,11 @@ recv('cfg', (m) => {
   try {
     if (m && typeof m.evalRowsMax === 'number') CFG.evalRowsMax = m.evalRowsMax;
     if (m && typeof m.arrayCap === 'number') CFG.arrayCap = m.arrayCap;
-    send({ type: 'cfg_ack', evalRowsMax: CFG.evalRowsMax, arrayCap: CFG.arrayCap });
+    // 2026-11-08 `dispatch/39`：token 探针开关（驱动 `--tokens` 打开）
+    if (m && typeof m.tokenProbe === 'boolean') TOKCFG.on = m.tokenProbe;
+    if (m && typeof m.maxTokens === 'number') TOKCFG.maxTokens = m.maxTokens;
+    send({ type: 'cfg_ack', evalRowsMax: CFG.evalRowsMax, arrayCap: CFG.arrayCap,
+           tokenProbe: TOKCFG.on, maxTokens: TOKCFG.maxTokens });
   } catch (e) { send({ type: 'cfg_ack', error: String(e) }); }
 });
 
