@@ -111,6 +111,28 @@ danger-full-access 下 : /dev/nvidia0 /dev/nvidiactl /dev/nvidia-modeset 都在�
 | 用 `cuda_run` / `cuda_status` 跑 GPU 活（我 or subagent） | **不需要**（宿主侧） |
 | 我用 bash 直接跑 `.reference/gpu-venv/bin/python` | 需要单次提权（或就这么干，只是每次弹一次授权） |
 
+## 0.6 磁盘 GC（2026-11-09 06:10 做过一次，**每 1–2 轮要重做**）
+
+`.agent-work` 曾涨到 **461 GB** —— 几乎全是**每个子 agent 一个 cargo `target/`**（单个 12–19 GB）。
+清理后 **39 GB**（回收约 436 GB）。做法与规则：
+
+```bash
+# ① 已完成任务的工作树（分支在 origin，工作树是纯冗余）
+git worktree remove --force .agent-work/cg/wt-<N>   # 或 rm -rf；最后 git worktree prune
+# ② 旧 target/（保留主 targetCG 和**正在跑**的那些）
+for t in .agent-work/cg/target*; do case ${t##*/} in targetCG|target69|...) ;; *) rm -rf "$t";; esac; done
+# ③ 杂项：假 HOME(fh*)、轴输出 *.jsonl、r5*/r6* 中间目录、旧快照
+# ④ 死缓存：CACHE_VERSION 升到 v6 后，**v4/v5 的 pkl 再也读不了**，直接删（cfgfp51 655M→291M）
+```
+
+**规矩（下次别再攒）**：
+1. **合完一个任务就删它的 `target<NN>/`**（15 GB 级，重建只要 2–3 分钟）；
+2. 子 agent 的 `--jobs` 用 **12–16**（32 线程机同时跑多个 agent，30 会超订 —— 第十三轮撞过）；
+3. 缓存目录只留**当前 `CACHE_VERSION`** 那一代；
+4. `.agent-work/` 是 gitignore 的**可丢弃**目录，**文档里不许引用它的路径当证据**（AGENTS 已有此条）。
+
+⚠️ **harness 的 subagent 记录本身（70+ 个 inactive）我删不掉**，那是会话状态；能清的是它们的工作区，已清。
+
 ## 1. 环境（**都在 `.reference/`，已 gitignore；工作区外只读**）
 
 ```bash
