@@ -7,14 +7,14 @@
 # tool_version: 1
 # binary_sha256: 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
 # funcstarts_sha256: b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a
-# src_tree_sha256: f38d27628791da9c138beb8acd220bcbfe8a4bb4eb1329fae95870c5653bbed3
+# src_tree_sha256: 34a457479c842b30e55bba069aadbf6f05db2fd86029440a6a96732a607fb88d
 # funcstarts_n: 13263
 # src_modules: 246
 # loc_structs: 2042
 # attributed_funcs: 527
 # contested_funcs: 86
 # src_files: 110
-# src_fns: 2719
+# src_fns: 2776
 module	scope	orig_funcs	contested	anchors	ours_file	ours_funcs	status	evidence
 graphwar_ad_switch.rs	graphwar	6	0	3	src/graphwar_ad_switch.rs	21	观测	6 条全是 gdext 惰性注册驱动；两个 getter trampoline + owned(+0x18) 已钉死
 graphwar_audio_control.rs	graphwar	7	1	16	src/graphwar_audio_control.rs	21	观测	9 函数 + 4 订阅闭包。订阅 effect_info(44，按 +0x20 的 u8 四臂落三槽) / soldier_info(15) / entity_removed(14) / game_state_info(30)；槽 +0x80/90/a0/b0/c0 = explosion/squash/spark/pop/unpop，音量 -15/-15/-15/0/-5 dB；state==1 清待播队列（docs/16 §30）
@@ -34,7 +34,7 @@ graphwar_event_queue.rs	graphwar	0	0	0	src/graphwar_event_queue.rs	5	观测	**�
 graphwar_function_evolutionator.rs	graphwar	16	0	25	src/graphwar_function_evolutionator.rs	88	观测	docs/AI.md：权重/长度/装配/交叉/变异/适应度全部从反汇编 + 40 万次运行时抽样得出；无逐字节对拍
 graphwar_function_input.rs	graphwar	13	2	33	src/graphwar_function_input.rs	41	观测	17 条函数；7 个原版名 + gui_input 0x4fedc0；**输入框只做一步预处理：删空格**（docs/03 §13）
 graphwar_function_manager.rs	graphwar	7	0	12	src/game.rs	100	观测	docs/112 §2.1：7 个函数的存取结构逐条读出（HashMap<u32, 112 字节>、Vec<Token>）；我方 Match::functions 同构，但没有逐字节对拍
-graphwar_game_client.rs	graphwar	36	19	59	src/graphwar_game_client.rs	10	观测	36 个函数分 8 类（docs/16 §17）：8 种请求事件判别值 11/12/16/17/18/19/20/21 + 0x48 记录形状 + add_bot_0..5 -> 3/10/25/100/250/1000 + 0x517690 的 3 订阅名/14 manager；6 个入口函数语义未知
+graphwar_game_client.rs	graphwar	36	19	59	src/graphwar_game_client.rs	31	观测	36 个函数分 8 类（docs/16 §17）：8 种请求事件判别值 11/12/16/17/18/19/20/21 + 0x48 记录形状 + add_bot_0..5 -> 3/10/25/100/250/1000 + 0x517690 的 3 订阅名/14 manager；6 个入口函数语义未知
 graphwar_game_info.rs	graphwar	0	0	0	src/graphwar_game_info.rs	0	观测	GameInfo 结构体（9 字段）在此模块，**不在** graphwar_event.rs；我方只做 pub use 复用（docs/16 §33）
 graphwar_game_recorder.rs	graphwar	2	1	4	src/graphwar_game_recorder.rs	14	观测	3：订 32 条服务端广播事件（24 条 *_info_event + 8 条不带 info 的；*_request_event 一条不订）；GameStateInfo==6 EndingGame 上升沿落盘 user://replays/<unix 秒>（gzip + 每行 {event,tick}），==1 Setup 且上一条是 6 时清缓冲（docs/16 §32）
 graphwar_game_server.rs	graphwar	3	1	86	src/graphwar_game_server.rs+src/server.rs	23	逐位	docs/43/46：一回合 12 条报文与抓包逐字节一致；docs/62 真实 TCP 跑到 EndingGame
