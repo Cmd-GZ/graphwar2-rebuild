@@ -800,6 +800,13 @@ def run(torch, q, p, feats, cfgs, rowsel, dev, cells=600_000, cfg_cells=4_000_00
     peak = 0.0
     t_mat = t_fuse = t_top = 0.0
     t0 = time.perf_counter()
+
+    def _sync():
+        # ⚠ 分阶段计时必须**先同步**：CUDA 的算子调用是异步的，不同步量到的是
+        # "host 侧把 kernel 排进队列"的时间，会把上游块的排队算到下游段头上
+        # （本轮 3,000 组那一次的物化因此报了 87 s，而同一份工作空闲时是 0.4–1.0 s）。
+        if dev == "cuda":
+            torch.cuda.synchronize()
     for bi, (b0, b1) in enumerate(blocks):
         R = b1 - b0
         clo, chi = int(min(wlo[b0:b1])), int(max(whi[b0:b1]))
@@ -823,14 +830,18 @@ def run(torch, q, p, feats, cfgs, rowsel, dev, cells=600_000, cfg_cells=4_000_00
                 # 这里重算**同一套特征集合**（不是"只算这组权重非 0 的那几个"）——
                 # 那会让 old 侧偏快、把加速比压低，是保守方向。
                 for ci in range(c0, c1):
+                    _sync()
                     tm = time.perf_counter()
                     V = mat_block(torch, q, p, feats, b0, b1, clo, chi, wl, wh)
+                    _sync()
                     t_mat += time.perf_counter() - tm
                     tf = time.perf_counter()
                     sc = fuse([V[k] for k in feats], Wt[ci:ci + 1], torch)[0]   # (R,C)
+                    _sync()
                     t_fuse += time.perf_counter() - tf
                     tt = time.perf_counter()
                     _s, fa = topk_lex(sc, in_win, addr_blk, topk, torch)
+                    _sync()
                     t_top += time.perf_counter() - tt
                     if truth is not None:
                         trow = torch.tensor([truth[raddr[b0 + r]] for r in range(R)],
@@ -841,15 +852,19 @@ def run(torch, q, p, feats, cfgs, rowsel, dev, cells=600_000, cfg_cells=4_000_00
                     del V, sc, fa
             else:
                 # 本工具的做法：**一次物化**，N 组权重只是同一个张量的广播乘加
+                _sync()
                 tm = time.perf_counter()
                 V = mat_block(torch, q, p, feats, b0, b1, clo, chi, wl, wh)
+                _sync()
                 t_mat += time.perf_counter() - tm
                 tf = time.perf_counter()
                 sc = fuse([V[k] for k in feats], Wt[c0:c1], torch)
+                _sync()
                 t_fuse += time.perf_counter() - tf
                 tt = time.perf_counter()
                 fs, fa = topk_lex(sc.view((c1 - c0) * R, C), in_win.expand(c1 - c0, R, C)
                                   .reshape((c1 - c0) * R, C), addr_blk, topk, torch)
+                _sync()
                 t_top += time.perf_counter() - tt
                 if truth is not None:
                     trow = torch.tensor([[truth[raddr[b0 + r]]] for r in range(R)],
