@@ -9412,7 +9412,7 @@ grep -a -c gate_announce_turn client/libgw2_rebuild.so   # 4（判据：.so 真�
 | # | 项 | 原版 | 本层 | 档位 / 缺什么 |
 |---|---|---|---|---|
 | 1 | **第二个调用者 `wait_for_players`** | `0x516fd0` 里 `call [GOT 0x9bc468]` + `sleep(1 ms)` 忙等，把 `process` 拉到 **110/s**（实测 `0x51718b:110`） | **没有移植**。`drive_frame` 只有"每帧一次"这一条用法 | **未知**：`0x516fd0` 的函数体没逐条读（§7 的诚实清单里仍记 Undetermined），我方也没有"准备阶段"那个宿主 |
-| 2 | **播放屏每帧调用** | 引擎 `_process` → `RootNode::process` → `Backend::process` → `GameClient::process` | `drive_frame` **没有运行时调用者**（`client/src/**` 禁区） | **我方接线缺口**：播放屏那两处代偿（`set_ring` / `id ≥ 1000 ⇒ set_entity_look`）还在 |
+| 2 | **播放屏每帧调用** | 引擎 `_process` → `RootNode::process` → `Backend::process` → `GameClient::process` | `drive_frame` **仍然没有运行时调用者**。`client/src/**` 的禁区已在任务 54 放开（§52），但**评估后决定不接**：接了没有消费者、且会静默改掉 `EntityDrawer` 读的 `V`（同一台 tick handler）—— 三条理由与实测数见 §52.5 | **我方接线缺口（有明确理由）**：播放屏那两处代偿（`set_ring` / `id ≥ 1000 ⇒ set_entity_look`）还在 |
 | 3 | **`Backend::process` 的两个门** | `0x515dd1` 先判 `[backend+0x1e0]`（`Option<GraphwarGameClient>`）非空；`0x515de3` 判 `mode==2` 跳过 `ReplayPlayer::process` | `drive_frame` 无条件转循环 | 门控属于 `graphwar_backend.rs`（**不在**本任务允许改的清单里）；本层没有 `Option<GameClient>` 这块状态 |
 | 4 | **"欠账"哨兵** | `get_time_to_tick` 欠账时返回 `Duration{ nanos: 1e9 }`（合法值不可能出现） | `graphwar_tick_handler::get_time_to_tick` 把下溢**夹成 `(0,0)`**（原版那条路走 `panic!`）；`tick_is_due` 因此把 `(0,0)` 也当"到期" | **我方差异（可测）**：帧边界**正好**压在 tick 边界时，本层比原版**早一帧** tick；总 tick 数不变（原版晚一帧补上）。墙钟下概率 0，测试里是**故意**用它把"1 秒 ⇒ 60"钉成确定值 |
 | 5 | **`tick` 的事件去向** | `GraphwarTickHandler::tick` 直接 push 进**共享** `GraphwarEventQueue`（`+0x38`） | 本层 handler 只有 `outbox`；宿主在**泵之前**搬进共享队列 | **我方接线**（tag/顺序不变）。这也正是"先 tick 后泵"在本层能成立的前提 |
@@ -9454,4 +9454,130 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
 
 # ⑤ 静态证据（§48 已给，原地可复跑）
 $PY tools/addr_probe.py dis 0x518400
+```
+
+## 52. 播放屏的**流程**搬进 Rust：胜负判定 + 射手轮转（2026-11，任务 54）
+
+**一句话**：`client/src/screens/play_screen.gd` 里那两块"根据状态决定做什么"的流程
+（**胜负判定**与**回合射手轮转 + 同时回合收集**）原本各有一份 **GDScript 重复实现**
+（`client/src/game/level_rules.gd` **219 行** + `client/src/game/turn_driver.gd` **121 行** = **340 行**），
+现在**两份 `.gd` 已删除**，决定权回到 Rust；播放屏只剩"递数据进去、读结论出来"。
+
+### 52.1 边界（搬什么 / 留什么）
+
+判据照 `dispatch/54` §1：**Rust 负责状态与流程，GDScript 只负责摆节点与画。**
+
+| 进 Rust（本轮的） | 留 GDScript（本轮没动的） |
+|---|---|
+| "这局结束了没有、谁赢"（胜负判定） | 胜负文案怎么排版（`_status()` 那一行） |
+| "轮到谁开火"（射手轮转，逐位 `0x463da0`） | 倒计时标签文本（`_update_timer_label`） |
+| "同时回合制下本回合齐了没有"（收集阶段） | 底下的 `_shot_queue`（弹道数据本身，是绘制输入） |
+| 规则标签（打靶关/对战关/both）、回合上限 | 关卡规则字符串的**显示** |
+
+### 52.2 落地位置（文件 / 函数）
+
+| # | 位置 | 对应原版 | 档位 |
+|---|---|---|---|
+| 1 | `src/graphwar_play_screen_control.rs` §5 `LevelRules::evaluate`（+ `LevelKind` / `MatchState` / `Verdict` / `TARGET_TEAM`） | 判据 `0x473520`（`get_alive_teams`）+ 两入口 `0x475a64`/`0x475a80`/`0x475a88`（`0x4759f0`）+ 胜方字节 `0x478133`–`0x478236`（`turnstate::winner_byte`） | **逐位**（数值表）/ 入口顺序见 §52.6 |
+| 2 | `src/_scaffold/play_flow_class.rs` `GwLevelRules`（GDExtension `RefCounted`） | 原版客户端**没有**这个类；旧 `.gd` 的 `GwLevelRules` 是仿制品 | **我方外壳** |
+| 3 | `src/_scaffold/play_flow_class.rs` `GwTurnDriver`（同） | `GraphwarTurnManager::next_turn`（`0x463da0`）+ `RoundCollection`（收集阶段） | 轮转 **逐位**；收集 **观测** |
+| 4 | `src/graphwar_turn_manager.rs`（**未改**，被复用） `PlayerTurns::next_shooter` / `RoundCollection` | `0x463f40`–`0x463f58`（先自增再取）/ `0x463fc7`–`0x463fca`（最多 `len` 次）/ `0x463fb6`（`call 0x454950` + `test $0x1`）/ `0x464016`（哨兵 0） | **逐位** |
+| 5 | `client/src/screens/play_screen.gd`（只删流程留视图） | —— | —— |
+| 6 | `client/tools/play_flow_check.gd`（新，**61 条断言**） | —— | **验收工具** |
+
+### 52.3 两块流程的 before → after
+
+| 块 | 原文件 | before | after | Rust 落点 | 证据 |
+|---|---|---|---|---|---|
+| **A. 胜负判定** | `client/src/game/level_rules.gd` | **219 行** | **0**（删） | `LevelRules::evaluate` + `GwLevelRules` | `0x473520`（枚举生命表逐实体问活、按队伍置两位）、`0x475a64`（上限）、`0x475a80`/`0x475a88`（两队各一条 `je END`）、`0x475bac`（`mov BYTE [self+0x120],6`）；胜方字节表 `0x478133`–`0x478236`。**观测**：401 份回放 / 217 次 `EndingGame` 全部符合"有一队零活实体"；靶子 127/127 是 `Team2`（`docs/150` §Q1） |
+| **B. 射手轮转 + 同时回合收集** | `client/src/game/turn_driver.gd` | **121 行** | **0**（删） | `GwTurnDriver` → `graphwar_turn_manager` | `index=(index+1)%len`（`0x463f40`–`0x463f58`）、`dec/jne`（`0x463fc7`–`0x463fca`）、判活 `& 1`（`0x463fb6`）、全灭 0（`0x464016`）；`docs/98` 三局逐发吻合。收集顺序：130/130 批按公告顺序（`docs/14-turn.md`） |
+
+播放屏本体：`client/src/screens/play_screen.gd` **3061 → 3080 行**（`+63 / −44`，净 **+19**）。
+**它不是"变短了"，而是"删了 44 行流程、加了 63 行（其中 33 行是注释与 `level_state()` 的诊断形状）"** —— 逐项：
+
+| 函数 | before | after | 变化 |
+|---|---|---|---|
+| `_reset_turn_driver()` | 16 | 8 | 归组循环（11 行）搬进 `GwTurnDriver.setup_flat` |
+| `_all_alive_players_shot()` + `_shot_owners()` | 8 + 6 | **删** | 换成 `_simultaneous_announced()`（只递"谁该交"）+ Rust 的 `round_submit()` |
+| `_next_turn()` | 27 | 26 | 判活闭包 → `_alive_flags()` 数组；轮转本体在 Rust |
+| `_active_soldier()` | 30 | 32 | 读 `current_shooter()`；保留联机兜底（服务端给 `TurnInfo`） |
+| `_check_match_over()` | 30 | 31 | 只**应用** Rust 的 `evaluate()` 结论 |
+| `_commit_shot()`（同时回合支） | 35 | 41 | "齐了没有"改问 `round_submit()`（`RoundCollection`） |
+
+### 52.4 接口变化（GDScript 侧要改的四处，都不是改名）
+
+1. `GwLevelRules.for_campaign()/for_versus()/for_match()`（静态）→ `GwLevelRules.new()` + `from_*()`。
+   **GDExtension 类不支持 GDScript 的静态 `static func` 语义**（`GDScriptNativeClass` 里找不到），
+   所以改成"先 `new()` 再初始化"。
+2. `r.turn_limit` / `r.targets_planned` / `r.level_index`（字段）→ `r.turn_limit()` 等方法（属性要写 getter，本轮直接用方法）。
+3. `GwTurnDriver.SOLDIER_ID_NONE`（常量）→ `td.soldier_id_none()`（扩展类不注册 const）。
+4. `next_shooter(alive: Callable)` → `next_shooter(alive: Array[bool])`：Rust 侧不接 GDScript 闭包（每次判活要跨语言回调，且 `Callable` 的调用在 gdext 里没有零成本路径）。语义不变：按**士兵下标**判活。
+
+⚠️ **编号换算**：原版 `soldier_id` 是实体 id，`0` 是"全灭"哨兵（`0x464016`），
+而 `PlayerTurns::add` 拒收 0；界面侧用的是**士兵下标**（从 0 起）。
+`GwTurnDriver` 在进出各换一次（内部 id = 下标 + 1），回 GDScript 时全灭/空表一律 `-1`。
+
+### 52.5 `KernelBus::drive_frame` 能不能接到播放屏 `_process`？—— **能，本轮没接**
+
+`dispatch/54` 说"你这轮可能正好把它接上"。**实测结论：技术上三行就能接，但本轮故意没接**，
+理由是"接了也验不了，而且会静默改掉另一个模块的读数"。证据（`play_flow_check.gd` 第 5 组，真引擎里跑出来的）：
+
+```text
+摆 1 个 tick 的墙钟 ⇒ drive_frame 转 1 圈
+喂 1 秒（1e9 ns）  ⇒ 下一帧追上 59 圈（合计 60 tick）
+fractional_tick()  == 60.0   ← 与 EntityDrawer 读的 V 是**同一台** GraphwarTickHandler
+last_probes == 1 + last_ticks（0x518484 在循环头）
+```
+
+⇒ "宿主每帧调一次"这条路是**通的**（`KernelProcessHost.drive_frame` 已经挂在扩展里）。
+不接的三条理由：
+
+1. **没有消费者**：播放屏的曲线揭示仍按帧 `delta` 推（`_advance_curve`），不是按 tick 推。
+   原版是 `GraphwarPlane::draw` 的喂点循环每帧读 `get_fractional_tick`（§43.6(d) 第 2 条缺口），
+   那条链**没接**；现在接 `drive_frame` 只会白转 tick。
+2. **会静默改掉 `EntityDrawer` 的 `V`**：两边读的是容器里**同一台** tick handler（§51.1 第 5 条）。
+   播放屏一旦 `install_kernel_bus()` 并开始推进，`EntityDrawer` 的 `fractional_tick` 就从
+   "没有通道 ⇒ 0.0" 变成一个真实读数 —— 这属于**行为变更**，而手上没有真帧能证明它是对的。
+3. **没有真帧可对**：`EntityDrawer` 的准备圈相位依赖 `V`，接了之后画面上"圈转到哪"会变，
+   而我们没有原版逐帧样本（`docs/143` §9 已登记同类缺口）。
+
+⇒ 记在 §52.6 第 5 条（缺口），接的时候必须**同时**接"曲线按 tick 揭示"，否则等于把一个
+时钟接到没有齿轮的轴上。
+
+### 52.6 诚实清单（还留在 GDScript 的流程 + 缺什么证据）
+
+| # | 还没搬的流程（仍在 `play_screen.gd`） | 行数量级 | 档位 | 缺什么 |
+|---|---|---|---|---|
+| 1 | **弹道生命周期**：`_begin_shot` / `_advance_presentation` / `_apply_kills_up_to` / `_on_shot_arrived` / `_finish_round` / `flush_shot` | ~200 | 死亡时机 **观测**（`LifeQueuedDeath{tick}` == `EffectInfo.start_tick`，`docs/65`）；"飞完才判胜负" **推断** | 原版由 `FunctionDrawer`/`GraphwarPlane::draw` 按 `V` 推；本屏按帧 delta 推 ⇒ 需要先把 §52.5 的 tick 链接上，否则"搬过去"只是把同一个猜测换个语言写 |
+| 2 | **"打不全就全部复原"**（`_apply_target_reset` → `GwTargetSet.settle_shot`） | ~40 | **推断**（用户实测 + `docs/123` §2.2 的形状结论） | 语料 397 份回放里 **0 次部分命中** ⇒ 没有真值；且**判定条件与内核那份不同**：`graphwar_target_manager::should_reset_targets` 是 `(turn_clamped&1)==0 && team1_alive && team2_alive && flag==1`，客户端的 `settle_shot` 是"打掉的 ≠ 全部"。两边**没有**对齐证据，所以本轮不动它（动了就是把两份不同的规则合成一份错的） |
+| 3 | **AI 的回合**（`_tick_bot_turn` / `bot_take_turn` / `_bot_aim_expression`） | ~80 | **我方自定**（原版是 `aigen` 进化器，`docs/AI.md`） | 没有证据可搬；`graphwar_function_evolutionator.rs` 已在 `src/`，但"AI 什么时候开火"的原版时序未知 |
+| 4 | **回合超时自动换手**（`_process` 里的 `_time_left`） | ~15 | `turnstate::should_auto_fire`（`0x470989`–`0x4709ec`）**观测**，但**没接线** | 原版判据是 `end_of_turn_tick`（服务端给的截止 tick），我们没有服务端；`Match` 上也没有 `[+0x11c]` 那一位（`docs/14` §11.3） |
+| 5 | **每帧 tick 驱动**（§52.5 的 `drive_frame`） | 3 行接线 | **我方接线** | 见 §52.5 三条 |
+| 6 | **联机局全套**（`_online_*` / `_fire_online` / `_draw_online_shot`） | ~400 | 服务端权威（`docs/134`/`docs/139`） | 不属于本屏：换手/胜负/弹道都来自服务端报文，本屏只是收 |
+| 7 | **回放驱动**（`_replay_*` / `_begin_replay` / `_replay_tick`） | ~380 | `graphwar_replay_player.rs` 已复原；本屏的播放控制（tick/seek/速度）**我方自定** | 原版回放界面的控制器行为未观测（`docs/133` §4.2） |
+| 8 | **关卡靶子/障碍布局**（`_target_positions` / `_level_obstacles`） | ~30 | 数目 **逐位**（`docs/118` §7.1）；坐标**我方自定** | 原版随机生成，没有每关固定坐标（`docs/118` §8 #16） |
+
+`LevelKind`（打靶关/对战关/both）现在是**纯标签**（`docs/150` §3）：判定只有一条
+"某队没有存活实体 ⇒ 结束"，靶子算 `Team2` 的成员。这一点由 §52.3 的真相表钉住。
+
+### 52.7 断言（before → after）
+
+| 套件 | before | after |
+|---|---|---|
+| `cargo test --offline` | 1659 | **1666**（+7：`graphwar_play_screen_control::tests` 新增 7 条） |
+| `cargo test --offline --features gdext-bindings` | 1764 | **1772**（+8：同上 + `play_flow_class::tests` 1 条） |
+| `client/tools/play_flow_check.gd`（**新**） | — | **61 passed / 0 failed** |
+| 其余 13 个 headless 脚本 | 1683 | **1683**（逐项不变：49/366/217/96/116/235/96/132/117/155/57/23/24） |
+| headless 合计（14 个脚本） | 1683 | **1744** |
+| `selftest`（四前置齐） | 714 / 0 / 1 skip | **714 / 0 / 1 skip**（断言**一条没删**；改了 6 处调用形态，见 §52.4） |
+
+### 52.8 复现
+
+```text
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/play_flow_check.gd    # PLAY_FLOW 61 passed
+"$GODOT" --headless --path client -- --selftest                              # 714 / 0 / 1skip
+cargo test --offline --lib -- play_screen_control                            # 7 条真相表
 ```

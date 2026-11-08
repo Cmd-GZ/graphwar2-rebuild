@@ -1481,21 +1481,29 @@ func _test_level_rules() -> void:
 	app_node.close_all_popups()
 	await _frames(1)
 
-	# ---------------- 0. 规则本体（纯逻辑，不依赖内核/界面） ----------------
-	# 关卡分类：`docs/118` §7.1 的两列（目标数 / Bot 数）
-	var r0 := GwLevelRules.for_campaign(GwCampaign.level(0), 0)
-	var r6 := GwLevelRules.for_campaign(GwCampaign.level(6), 0)
-	var r7 := GwLevelRules.for_campaign(GwCampaign.level(7), 0)
-	var r5 := GwLevelRules.for_campaign(GwCampaign.level(5), 0)
-	_expect(r0.kind_name() == "targets" and int(r0.targets_planned) == 1 and r0.turn_limit == 0,
+	# ---------------- 0. 规则本体（**判定在 Rust**，见 docs/16 §52） ----------------
+	# 关卡分类：`docs/118` §7.1 的两列（目标数 / Bot 数）。
+	# `GwLevelRules` 现在是扩展类（`src/_scaffold/play_flow_class.rs` →
+	# `graphwar_play_screen_control::LevelRules`）：字段改成方法，语义逐条不变。
+	var r0 := GwLevelRules.new()
+	r0.from_campaign(GwCampaign.level(0), 0)
+	var r6 := GwLevelRules.new()
+	r6.from_campaign(GwCampaign.level(6), 0)
+	var r7 := GwLevelRules.new()
+	r7.from_campaign(GwCampaign.level(7), 0)
+	var r5 := GwLevelRules.new()
+	r5.from_campaign(GwCampaign.level(5), 0)
+	_expect(r0.kind_name() == "targets" and int(r0.targets_planned()) == 1 and r0.turn_limit() == 0,
 		"规则：第 1 关（index 0）= 打靶关、1 个靶子、无回合上限（实际 %s）" % str(r0.snapshot()))
-	_expect(r6.kind_name() == "targets" and int(r6.targets_planned) == 2 and r6.turn_limit == 6,
+	_expect(r6.kind_name() == "targets" and int(r6.targets_planned()) == 2 and r6.turn_limit() == 6,
 		"规则：第 7 关（index 6）= 打靶关、2 个靶子、上限 6（实际 %s）" % str(r6.snapshot()))
-	_expect(r7.kind_name() == "targets" and r7.turn_limit == 1,
+	_expect(r7.kind_name() == "targets" and r7.turn_limit() == 1,
 		"规则：第 8 关（index 7）= 打靶关、上限 **1**（docs/118 §7.1 'first try'；实际 %s）"
 			% str(r7.snapshot()))
 	_expect(r5.kind_name() == "versus", "规则：第 6 关（index 5）= 对战关（有 Bot、无靶子）")
-	_expect(GwLevelRules.for_match(true, true, 0, 0).kind_name() == "both",
+	var rboth := GwLevelRules.new()
+	rboth.from_match(true, true, 0, 0)
+	_expect(rboth.kind_name() == "both",
 		"规则：目标 + 对手 ⇒ both（21 关数据里不存在，见 docs/131 §2.2）")
 
 	# 打靶关：靶子全清 ⇒ 通关 / 还在且未到上限 ⇒ 继续
@@ -3772,24 +3780,28 @@ func _test_play_flow() -> void:
 	var was_automation := bool(app_node.automation)
 	app_node.automation = false          # ← 真机时序（docs/143 §3）
 
-	# ---------------- 0. 回合轮转的**单元**断言（规则同 src/graphwar_turn_manager.rs，0x463da0） ----------------
+	# ---------------- 0. 回合轮转的**单元**断言（**规则在 Rust**，0x463da0） ----------------
+	# `GwTurnDriver` 现在是扩展类（`src/_scaffold/play_flow_class.rs` →
+	# `graphwar_turn_manager::PlayerTurns::next_shooter`）。两处接口变化：
+	# ① `alive` 从 `Callable` 换成"按士兵下标的存活数组"（Rust 侧不接 GDScript 闭包）；
+	# ② 常量 `SOLDIER_ID_NONE` 换成方法 `soldier_id_none()`（扩展类没有 const）。
 	var td := GwTurnDriver.new()
 	td.setup([{"player": 0, "soldiers": [0, 1]}])
-	var alive_all := func(i: int) -> bool: return true
+	var alive_all := [true, true]
 	_expect(td.first_shooter(alive_all) == 0, "轮转：第一个射手 = 0 号士兵")
 	_expect(td.next_shooter(alive_all) == 1,
 		"轮转：**先自增再取** ⇒ 同一下一个玩家换到 1 号士兵（0x463f40 的四条指令）")
 	_expect(td.next_shooter(alive_all) == 0, "轮转：到尾回绕到 0 号")
 	td.setup([{"player": 0, "soldiers": [0, 1]}])
-	var alive_zero := func(i: int) -> bool: return int(i) == 0
+	var alive_zero := [true, false]
 	td.first_shooter(alive_all)
 	_expect(td.next_shooter(alive_zero) == 0,
 		"轮转：跳过死士兵（最多试 len 次，0x463fc7 的 dec/jne）")
-	var alive_none := func(i: int) -> bool: return false
+	var alive_none := [false, false]
 	td.setup([{"player": 0, "soldiers": [0, 1]}])
 	td.first_shooter(alive_all)
 	_expect(td.next_shooter(alive_none) == -1, "轮转：全灭 ⇒ 没有射手（对应 Some(SOLDIER_ID_NONE)）")
-	_expect(GwTurnDriver.SOLDIER_ID_NONE == 0, "轮转：哨兵 soldier_id = 0（0x464016 的 movl $0x0）")
+	_expect(td.soldier_id_none() == 0, "轮转：哨兵 soldier_id = 0（0x464016 的 movl $0x0）")
 	td.setup([{"player": 0, "soldiers": [0]}, {"player": 1, "soldiers": [1]}])
 	_expect(td.first_shooter(alive_all) == 0, "轮转：两名玩家 ⇒ 先从 0 号玩家的士兵开始")
 	_expect(td.next_shooter(alive_all) == 1, "轮转：两名玩家 ⇒ 交替到 1 号玩家")
