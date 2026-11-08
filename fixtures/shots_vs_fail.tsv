@@ -1,0 +1,26 @@
+# 每回合发数 ↔ 对拍失败：全语料汇总（`tools/shots_vs_fail.py --tsv` 生成）
+# 轴 = fire（`replay_attrib --drive fire --policy default --json`）
+# 语料 = .reference/replays/gw2-replays-snapshot/replays 的 401 份（有结算批 282 份 / 1080 个结算批）
+# 失败 = content_ok==false；大差 = 批内出现 DiffClass::NumericValueFar（|Δ|>1e-3）
+shots	batches	files	fails	fail_rate	batches_large	large_rate
+1	950	208	338	35.6%	86	9.1%
+2	98	60	65	66.3%	19	19.4%
+3	18	14	16	88.9%	4	22.2%
+4	3	3	3	100.0%	2	66.7%
+5	2	2	2	100.0%	1	50.0%
+6	1	1	1	100.0%	0	0.0%
+7	2	2	2	100.0%	1	50.0%
+8	6	4	6	100.0%	3	50.0%
+合计	1080	282	433	40.1%	116	10.7%
+
+# 三组（与 docs/06 §33.4f 同分组）
+group	batches	fails	fail_rate	fails_large	large_rate
+≤3 发	1066	419	39.3%	109	10.2%
+4–5 发	5	5	100.0%	3	60.0%
+≥6 发	9	9	100.0%	4	44.4%
+
+# 关键统计量（全部由本脚本现算，无 scipy）
+# ≥6 vs ≤3：χ²=13.72 p=0.000212；Yates χ²=11.30 p=0.000773；Fisher 两侧 p=0.000239；RR=2.42 [2.06, 2.84]
+# 同时(≥2 发) vs 顺序(1 发)：χ²=66.94 p=2.79e-16；73.1% vs 35.6%
+# 每局发数是否恒定：273/282 份回放只出现一种发数（⇒ ≥6 vs ≤3 主要是**跨局**比较，不是局内比较）
+# 大差（|Δ|>1e-3）最低出现在 1 发批；1 发批占全部大差 74.1%（86/116）→ 不存在'大差只在 ≥N 发'的 N ≥ 2

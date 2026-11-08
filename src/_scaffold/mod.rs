@@ -84,6 +84,13 @@ pub mod obstacle_drawer_class;
 // `PlayerShowcase` 的真节点类（§39）：读档案 + 三层 `draw_texture_rect` + 计数器闸门。
 #[cfg(feature = "gdext-bindings")]
 pub mod player_showcase_class;
+// 播放屏的**流程权威**（`dispatch/54`，`docs/16-client.md` §52）：把原来写在
+// `client/src/game/level_rules.gd`（219 行）与 `turn_driver.gd`（121 行）里的流程搬进 Rust。
+// `GwLevelRules` = 胜负判定（`0x473520`/`0x4759f0`/`0x478133`–`0x478236`）；
+// `GwTurnDriver` = 射手轮转（`0x463da0`）+ 同时回合收集（`RoundCollection`）。只在
+// `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod play_flow_class;
 pub mod protocol;
 // 模块容器装载器 + 3 个 manager 的真装配（`docs/16-client.md` §38）：按 `TypeId` 把
 // `GameStateManager` / `TurnManager` / `PlayerManager` 装进 `GraphwarModuleContainer`。

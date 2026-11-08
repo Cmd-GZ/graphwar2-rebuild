@@ -202,7 +202,9 @@ var _obstacles: Array = []
 ## 之前这里只有靶子绘制（纯绘制），靶子**根本没进命中判定**，
 ## 于是打靶关的胜负永远由"两队士兵存活数"决定 ⇒ 第一发就通关（`docs/131` §1）。
 var _targets := GwTargetSet.new()
-## 本局的胜负规则（`docs/131` §2）：打靶关 / 对战关 / 两者都有。
+## 本局的胜负规则（`docs/131` §2 / `docs/150`）：**判定在 Rust**（`GwLevelRules` =
+## `src/_scaffold/play_flow_class.rs` → `graphwar_play_screen_control::LevelRules`），
+## 本屏只读它的结论去排版文案（`docs/16` §52）。
 var _rules: GwLevelRules = null
 ## 已结算的回合数：`docs/118` §7.1 的 `turn_limit` 与它比较（`Level 7` = 1）。
 var _turns_used := 0
@@ -260,7 +262,9 @@ var _logic_settled := false
 var _effects: GwEffectLayer = null
 ## 本轮收到/发出的效果事件流水（诊断与自检用；不影响绘制）。
 var _fx_log: Array = []
-## 回合轮转（`docs/143` §6）。规则同 `src/graphwar_turn_manager.rs`（`0x463da0`）。
+## 回合轮转（`docs/143` §6）。**规则在 Rust**：`GwTurnDriver`（扩展类）→
+## `graphwar_turn_manager::PlayerTurns::next_shooter`（`0x463da0`，逐位）。
+## 本屏只读"下一个射手是谁"（`docs/16` §52）。
 var _turn_driver := GwTurnDriver.new()
 ## 当前射手在 `_soldiers` 里的下标（`_active` 是**玩家**下标，两个编号都在用）。
 var _active_soldier_idx := 0
@@ -788,8 +792,8 @@ func begin_match() -> void:
 	# 回合轮转：每玩家一张士兵表（`docs/143` §6，规则同 `src/graphwar_turn_manager.rs`）。
 	_reset_turn_driver()
 	_active = 0
-	if not _soldiers.is_empty():
-		_active = int(_soldiers[0].player)
+	if _active_soldier_idx >= 0 and _active_soldier_idx < _soldiers.size():
+		_active = int(_soldiers[_active_soldier_idx].player)
 	_time_left = float(GwModes.turn_seconds(st.time_mode))
 	_running = true
 	_set_axis_mode(int(st.axis_mode))
@@ -820,10 +824,13 @@ func begin_match() -> void:
 	_set_obstacles(_obstacles)
 	# 胜负规则（`docs/131` §2）：战役关按 `docs/118` §7.1 的"目标数 / Bot 数"两列分类；
 	# 非战役对局没有靶子也没有回合上限，只有"对方全灭"这一条。
-	_rules = (GwLevelRules.for_campaign(level, _human_team())
-		if st.kind == GwGameState.Kind.CAMPAIGN else GwLevelRules.for_versus(_human_team()))
+	_rules = GwLevelRules.new()
+	if st.kind == GwGameState.Kind.CAMPAIGN:
+		_rules.from_campaign(level, _human_team())
+	else:
+		_rules.from_versus(_human_team())
 	_status("关卡规则：%s ／ 靶子 %d ／ 回合上限 %s" % [_rules.kind_name(), _targets.total(),
-		"∞" if _rules.turn_limit <= 0 else str(_rules.turn_limit)])
+		"∞" if _rules.turn_limit() <= 0 else str(_rules.turn_limit())])
 
 func end_match() -> void:
 	_running = false
@@ -1435,11 +1442,17 @@ func _commit_shot(shot: Dictionary) -> void:
 	shot["judged"] = _judge_shots([shot])
 	if int(app_node.state.turn_mode) == GwModes.Turn.SIMULTANEOUS:
 		# 同时回合：先全部记下，轮完再结算（真实结算在 src/graphwar_shot_calculator/settle.rs，docs/86）。
+		# **"本回合齐了没有"是流程** ⇒ 由 Rust 的 `RoundCollection` 判（`docs/141` §1：
+		# 一回合 N 发一个事务，按公告顺序收）。本屏只递"这一发是谁打的"。
 		# ⚠️ 这一支**没有**接逐 tick 时序（见 `docs/143` §9 "未做"）：整批一落地就算完。
+		if _shot_queue.is_empty():
+			_turn_driver.round_open(_simultaneous_announced())
 		_shot_queue.append(shot)
-		if _all_alive_players_shot():
+		var collected := _turn_driver.round_submit(_active)
+		if bool(collected.get("complete", false)):
 			_resolve_shots(_shot_queue)
 			_shot_queue.clear()
+			_turn_driver.round_reset()
 			_next_turn(true)
 			_settle_round()
 		else:
@@ -1476,26 +1489,29 @@ func _reset_shot_state() -> void:
 	_target_kills_this_shot = 0
 	_logic_settled = false
 	_bot_think_left = -1.0
+	_turn_driver.round_reset()        # 同时回合制的收集器（Rust 侧）
 	_fx_log.clear()
 	if _effects != null:
 		_effects.clear()
 	_clear_curve()                    # 曲线 + tick 一起归零（幂等）
 
 ## 把 `_soldiers` 摊成"每玩家一张士兵表"，交给回合轮转（`docs/143` §6）。
+##
+## **归组在 Rust**（`GwTurnDriver.setup_flat`：入参是"每个士兵属于哪个玩家"这一列，
+## 玩家顺序 = 首次出现顺序，与旧实现逐项一致）。本屏只剩"给数据、读结果"。
 func _reset_turn_driver() -> void:
-	var players: Array = []
+	var owners: Array = []
 	for s in _soldiers:
-		if not players.has(int(s.player)):
-			players.append(int(s.player))
-	var groups: Array = []
-	for pi in players:
-		var list: Array = []
-		for i in _soldiers.size():
-			if int(_soldiers[i].player) == int(pi):
-				list.append(i)
-		groups.append({"player": int(pi), "soldiers": list})
-	_turn_driver.setup(groups)
-	_active_soldier_idx = 0 if not _soldiers.is_empty() else -1
+		owners.append(int(s.player))
+	_turn_driver.setup_flat(owners)
+	_active_soldier_idx = _turn_driver.first_shooter(_alive_flags()) if not _soldiers.is_empty() else -1
+
+## 存活表（按士兵下标）—— 交给 Rust 侧的轮转/收集器判活（`0x454950` 的 `& 1` 那一位）。
+func _alive_flags() -> Array:
+	var out: Array = []
+	for s in _soldiers:
+		out.append(bool(s.alive))
+	return out
 
 ## 开始放一发：命中表已经算好，但**一条都没落地**（顺序回合走这条）。
 func _begin_shot(shot: Dictionary) -> void:
@@ -1699,7 +1715,7 @@ func _settle_round() -> void:
 	if not restored.is_empty():
 		extra = " ／ 本发没打全 ⇒ 靶子全部复原（推断，docs/131 §4）"
 	_status("%s ／ 回合 %d/%s%s" % [_shot_status, _turns_used,
-		"∞" if _rules == null or _rules.turn_limit <= 0 else str(_rules.turn_limit), extra])
+		"∞" if _rules == null or _rules.turn_limit() <= 0 else str(_rules.turn_limit()), extra])
 	_check_match_over()
 
 ## 一次射击结束时的"**打不全就全部复原**"（`docs/131` §4）。
@@ -1752,20 +1768,19 @@ func _clip_to_obstacle(pts: PackedVector2Array) -> Dictionary:
 		"blocked": true,
 	}
 
-func _all_alive_players_shot() -> bool:
+## 同时回合制：本回合**该交**的玩家 = 每个还有活士兵的玩家（`docs/86`：一回合一人一发）。
+##
+## 这只是一列数据（给 Rust 的 `round_open()` 当"公告顺序"）；"齐了没有"不在这里判。
+func _simultaneous_announced() -> Array:
 	var app_node := app()
+	var out: Array = []
 	if app_node == null:
-		return true
+		return out
 	for pi in app_node.state.players.size():
 		for s in _soldiers:
-			if int(s.player) == pi and bool(s.alive) and int(pi) not in _shot_owners():
-				return false
-	return true
-
-func _shot_owners() -> Array:
-	var out := []
-	for shot in _shot_queue:
-		out.append(int(shot.shooter))
+			if int(s.player) == int(pi) and bool(s.alive):
+				out.append(int(pi))
+				break
 	return out
 
 ## 命中判定 —— 走**内核的掩膜规则**（`docs/120`）。
@@ -1893,12 +1908,14 @@ func _active_soldier() -> Dictionary:
 			if int(s2.get("entity_id", -1)) == _online_soldier:
 				return s2
 		return {}
-	# 本地：射手由回合轮转（`GwTurnDriver`，规则同 `src/graphwar_turn_manager.rs`）**指定到具体士兵**。
-	# 旧实现是"该玩家的第一个活着的士兵"，多士兵关卡里第二个士兵永远轮不到（docs/143 §6.2）。
-	if _active_soldier_idx >= 0 and _active_soldier_idx < _soldiers.size():
-		var cur: Dictionary = _soldiers[_active_soldier_idx]
-		if int(cur.player) == _active:
-			return cur
+	# 本地：射手由**Rust 的轮转**（`GwTurnDriver` → `PlayerTurns::next_shooter`，`0x463da0` 逐位）
+	# 指定到具体士兵。旧实现是"该玩家的第一个活着的士兵"，多士兵关卡里第二个士兵永远轮不到
+	# （docs/143 §6.2）—— 那个规则现在只有 Rust 一份。
+	var idx := _turn_driver.current_shooter()
+	if idx >= 0 and idx < _soldiers.size() and int(_soldiers[idx].player) == _active:
+		_active_soldier_idx = idx
+		return _soldiers[idx]
+	# 兜底：游标还没跑过（**联机局**的 `_active` 来自服务端 `TurnInfo`，本地轮转不参与）。
 	for s in _soldiers:
 		if int(s.player) == _active:
 			return s
@@ -1921,11 +1938,10 @@ func _next_turn(advance: bool) -> void:
 	# 联机：换手是**服务端 `TurnInfo`** 的事（`_apply_online_turn()`），本地不许抢。
 	if _online_mode:
 		return
-	var n: int = app_node.state.players.size()
-	if n <= 0 or _soldiers.is_empty():
+	if app_node.state.players.size() <= 0 or _soldiers.is_empty():
 		return
-	var idx := _turn_driver.next_shooter(func(i: int) -> bool:
-		return i >= 0 and i < _soldiers.size() and bool(_soldiers[i].alive))
+	# 轮转本体在 Rust（`0x463f40`–`0x463fca`：先自增再取、判活、最多试 len 次）。
+	var idx := _turn_driver.next_shooter(_alive_flags())
 	if idx >= 0 and idx < _soldiers.size():
 		_active_soldier_idx = idx
 		_active = int(_soldiers[idx].player)
@@ -1964,7 +1980,8 @@ func _check_match_over() -> void:
 	if app_node == null:
 		return
 	if _rules == null:
-		_rules = GwLevelRules.for_versus(_human_team())
+		_rules = GwLevelRules.new()
+		_rules.from_versus(_human_team())
 	var verdict := _rules.evaluate({
 		"alive_by_team": _alive_by_team(),
 		"teams_present": _teams_present(),
@@ -2167,7 +2184,8 @@ func _begin_replay(path: String) -> void:
 	_set_axis_mode(int(app_node.state.axis_mode) if app_node != null else GwModes.AXIS_DEFAULT)
 	_refresh_mode_indicators()
 	# 回放不做胜负判定（录像自己会发 `GameStateInfo{EndingGame}`），这里只占位。
-	_rules = GwLevelRules.for_versus(0)
+	_rules = GwLevelRules.new()
+	_rules.from_versus(0)
 	_replay.seek(_replay.first_tick)
 	_realize_replay_state()
 	_replay.play()
@@ -2481,7 +2499,8 @@ func _begin_online(app_node) -> void:
 	_build_online_obstacles(room)
 	_apply_online_turn(room)
 	# 胜负规则只做占位：联机局由服务端判（`_check_match_over()` 的联机分支直接返回）。
-	_rules = GwLevelRules.for_versus(_human_team())
+	_rules = GwLevelRules.new()
+	_rules.from_versus(_human_team())
 	_set_axis_mode(int(app_node.state.axis_mode))
 	_refresh_mode_indicators()
 	_refresh_plane()
