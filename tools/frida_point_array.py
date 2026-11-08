@@ -97,6 +97,33 @@ _pre, _fire = shot_actions('sin(x)+3')
 CLICKS = NAV + _pre + _fire            # 兼容旧用法（= 进对局 + 打一发 sin(x)+3）
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2026-11-08 `dispatch/44`：把战役关卡解锁 / 点进某个关卡（造 `DiffEq` 局要用）
+#   ① `user://campaign.save` = `level_<n>`（纯文本；`docs/10-campaign.md` §2 逐位验证过）
+#   ② 关卡网格坐标（1920×1160，三行七列、**蛇形编号**；`docs/06` §27.1 ③ 实测）
+#   全部**追加**在原结构之外：不给这两个开关时 NAV 与老行为逐字节相同。
+# ═══════════════════════════════════════════════════════════════════════════════
+LEVEL_NODE = {
+    0: (243, 224), 1: (486, 224), 2: (700, 224), 3: (963, 224), 4: (1187, 224), 5: (1429, 224), 6: (1672, 224),
+    13: (212, 486), 12: (467, 486), 11: (698, 486), 10: (963, 486), 9: (1187, 486), 8: (1429, 486), 7: (1657, 486),
+    14: (218, 751), 15: (467, 751), 16: (691, 751), 17: (963, 751), 18: (1187, 751), 19: (1429, 751), 20: (1672, 751),
+}
+
+
+def write_campaign_save(data_dir, level):
+    """往工作区自己的 `XDG_DATA_HOME` 里预写 `user://campaign.save = level_<n>`。
+
+    游戏侧 `0x418170` 读全文 → `rsplit('_')` → `u32`；`level_20` = 解锁到 20（全部 21 关）。
+    ⚠ 只写**工作区**的 data 目录（`--data-dir`），不碰用户真正的 `user://`。
+    """
+    p = os.path.join(data_dir, 'data', 'godot', 'app_userdata', 'Graphwar', 'campaign.save')
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, 'w', encoding='utf-8') as f:
+        f.write('level_%d' % level)
+    print('[save] campaign.save = level_%d' % level, file=sys.stderr)
+    return p
+
+
 def xdo(display, action):
     cmd = 'xdotool ' + action
     subprocess.run(cmd, shell=True, env=dict(os.environ, DISPLAY=display),
@@ -619,6 +646,151 @@ def tokens_report(specs, out_path, replay_path=None, notes=None, oracle=0):
     return prov, rows_out
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2026-11-08 `dispatch/44`：带 `--fnpoints` 的原始 JSONL → **入库用纯文本样本**
+#   一条发看的四件事（`docs/06` §28）：
+#     · ctor_A  `0x456810` 在 `gw+471a8d` 那一支的读数（`end_x` = `pts[len-1].x`）
+#     · ctor_B  同一个函数在 `gw+3e44d9`（target_manager）那一支的读数
+#     · wire    `FunctionPointsEvent → JSON`（`0x50eb20`）那一刻的 `end_x/start_*` 位模式
+#     · pos     `0x472865` 那一刻的 `pos`（16 B）与"在每条数组里命中的下标"
+#   不发出去的：整条数组 hex、beat、reallocs；不含任何路径/用户名。
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def endx_fixture(specs, out_path, exprs_per_series=None, modes=None, levels=None, notes=None):
+    """specs = [(raw_jsonl, label)]；exprs_per_series[i] = 该系列按**执行顺序**打进去的表达式表。"""
+    import struct as _struct
+
+    def _f64(h):
+        try:
+            return _struct.unpack('<d', bytes.fromhex(h))[0]
+        except Exception:  # noqa: BLE001
+            return None
+
+    prov = {
+        'schema': 'gw2-frida-endx-sample/1',
+        'question': 'dispatch/44：FunctionPoints.end_x 的装配处 vs EffectInfo.pos_x 的读点，同一发里同不同',
+        'build': {
+            'game': 'Graphwar II Linux 2.0.60 (Steam)',
+            'so': 'libgraphwarrust.so',
+            'sha256': '9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187',
+            'addr_space': 'RVA = ELF 虚地址 = 模块内偏移；下断 = base + RVA；Ghidra = RVA + 0x100000',
+        },
+        'probe': 'tools/frida_point_array.js（--fnpoints：fnpoints_ctor / fnpoints / pos_x_locate 三条消息）'
+                 ' + tools/frida_point_array.py（--fnpoints / --campaign-level / --level-node / --endx-extract）',
+        'hooks': [
+            {'rva': '0x456810', 'what': 'FunctionPointsEvent 装配（graphwar_function_manager.rs）',
+             'reads': 'rdx=&Vec<(f64,f64)>；0x4569b8 movq -0x10(%rcx,%rax,1) = pts[len-1].x → end_x；'
+                      '0x4569be movdqu (%rcx) = pts[0] → start_x/start_y；0x4569ce = owner_id(u32)'},
+            {'rva': '0x471a88', 'what': '装配点 A（graphwar_game_state_manager.rs 侧调用，喂的是副本）'},
+            {'rva': '0x3e44d4', 'what': '装配点 B（graphwar_target_manager.rs 侧调用，喂的是 gw+3e2d3b 那条数组）'},
+            {'rva': '0x50eb20', 'what': 'FunctionPointsEvent → JSON 写入器（报文里 end_x 在这里定型）'},
+            {'rva': '0x472865', 'what': 'execute_results 里 movdqu -0x10(%rdx,%rcx,1) = pos'},
+        ],
+        'positive_control': '探针装机时跑 selfTestCompare()：合成数组 相同/翻 1 bit/翻 2 bit 三档均正确；'
+                            '运行期也报得出不同（同一发两次 calculate_function 的数组 diffPoints=129/3872/445/103 等）',
+        'pointer_note': '样本里的堆/栈指针是**该次运行**的 ASLR 值，只用于判"同一个对象"（same_ptr），跨运行不可比',
+        'not_in_file': '整条点数组的十六进制、beat 心跳、reallocs、任何文件系统路径与用户名',
+        'series': [],
+        'counts': {},
+    }
+    stats = dict(shots=0, ser_eq_ctorA=0, ser_eq_ctorB=0, pos_eq_ctorA=0, pos_eq_ctorB=0,
+                 A_ne_B=0, queue_array_unchanged=0, queue_array_changed=0)
+    rows = [prov]
+    for i, (path, label) in enumerate(specs):
+        raw = [json.loads(l) for l in open(path, encoding='utf-8', errors='replace') if l.strip()]
+        mode = (modes or [])[i] if modes and i < len(modes) else None
+        level = (levels or [])[i] if levels and i < len(levels) else None
+        exprs = []
+        if exprs_per_series and i < len(exprs_per_series) and exprs_per_series[i]:
+            exprs = [e.strip() for e in exprs_per_series[i].split(',') if e.strip()]
+        # 一发的形状：calcA → ctorA(0x471a8d) → SER → calcB → ctorB(0x3e44d9) → pos
+        # ⇒ 以 **ctorA** 为发界（SER 之后的 ctorB / pos 属于同一发）
+        groups = []
+        for r in raw:
+            t = r.get('type')
+            if t == 'fnpoints_ctor' and r.get('caller') == 'gw+471a8d':
+                groups.append({'ctorA': r, 'ctorB': None, 'pos': None, 'ser': None})
+                continue
+            if not groups:
+                continue
+            g = groups[-1]
+            if t == 'fnpoints_ctor':
+                g['ctorB'] = r
+            elif t == 'fnpoints':
+                g['ser'] = r
+            elif t == 'pos_x_locate':
+                g['pos'] = r
+        groups = [g for g in groups if g.get('ser')]
+        prov['series'].append({'label': label, 'raw_series': '(原始 JSONL 未入库)', 'mode': mode,
+                               'level': level, 'shots': len(groups)})
+        for k, g in enumerate(groups):
+            a, b, ser, pos = g['ctorA'], g['ctorB'], g['ser'], g['pos']
+            stats['shots'] += 1
+            o = {'schema': 'gw2-frida-endx-shot/1', 'series': label, 'mode': mode, 'level': level,
+                 'shot': k + 1, 'expr_typed': exprs[k] if k < len(exprs) else None}
+            av, bv = (a.get('vec') or {}), ((b or {}).get('vec') or {})
+            o['ctor_A'] = {'caller': a.get('caller'), 't_ms': a.get('t'),
+                           'vec': {'ptr': av.get('ptr'), 'len': av.get('len')},
+                           'end_x_bits': a.get('end_x'), 'end_x': _f64(a.get('end_x')),
+                           'start_pt': a.get('start_pt'), 'end_pt': a.get('end_pt'),
+                           'owner_id': a.get('owner_id'),
+                           'vs_calc': [{'ret': x.get('ret'), 'ptr': x.get('ptr'), 'len': x.get('len'),
+                                        'same_ptr': x.get('same_ptr'), 'same_bytes': x.get('same_bytes')}
+                                       for x in (a.get('vs_calc') or [])[-2:]]}
+            if b:
+                o['ctor_B'] = {'caller': b.get('caller'), 't_ms': b.get('t'),
+                               'vec': {'ptr': bv.get('ptr'), 'len': bv.get('len')},
+                               'end_x_bits': b.get('end_x'), 'end_x': _f64(b.get('end_x')),
+                               'start_pt': b.get('start_pt')}
+            o['wire'] = {'end_x_bits': ser.get('end_x'), 'end_x': _f64(ser.get('end_x')),
+                         'start_x_bits': ser.get('start_x'), 'start_y_bits': ser.get('start_y'),
+                         'ret': ser.get('ret')}
+            if pos:
+                o['pos'] = {'t_ms': pos.get('t'), 'rdx': pos.get('rdx'), 'n': pos.get('n'),
+                            'pos_bytes': pos.get('pos_bytes'), 'pos_x_bits': pos.get('pos_x'),
+                            'pos_x': _f64(pos.get('pos_x')), 'last_ctor': pos.get('last_ctor'),
+                            'vs_calc': [{'ret': x.get('ret'), 'ptr': x.get('ptr'), 'len': x.get('len'),
+                                         'same_ptr': x.get('same_ptr'), 'x_idx': x.get('x_idx'),
+                                         'xy_idx': x.get('xy_idx'), 'same_bytes': x.get('same_bytes')}
+                                        for x in (pos.get('vs_calc') or [])[-2:]]}
+            # ── 三条判决（全部**位模式**比较）──
+            o['judge_ser_eq_ctorA'] = (a.get('end_x') == ser.get('end_x'))
+            if b:
+                o['judge_ser_eq_ctorB'] = (b.get('end_x') == ser.get('end_x'))
+            if pos:
+                o['judge_pos_eq_ctorA'] = (a.get('end_x') == pos.get('pos_x'))
+                if b:
+                    o['judge_pos_eq_ctorB'] = (b.get('end_x') == pos.get('pos_x'))
+            if b:
+                o['A_minus_B_end_x'] = (_f64(a.get('end_x')) or 0.0) - (_f64(b.get('end_x')) or 0.0)
+                o['A_minus_B_len'] = (av.get('len') or 0) - (bv.get('len') or 0)
+            if pos:
+                cur = None
+                for x in (pos.get('vs_calc') or []):
+                    if x.get('same_ptr'):
+                        cur = x
+                if cur is not None:
+                    o['queue_array_bytes_unchanged_at_pos_read'] = cur.get('same_bytes')
+            # 统计
+            stats['ser_eq_ctorA'] += 1 if o.get('judge_ser_eq_ctorA') else 0
+            stats['ser_eq_ctorB'] += 1 if o.get('judge_ser_eq_ctorB') else 0
+            stats['pos_eq_ctorA'] += 1 if o.get('judge_pos_eq_ctorA') else 0
+            stats['pos_eq_ctorB'] += 1 if o.get('judge_pos_eq_ctorB') else 0
+            stats['A_ne_B'] += 1 if (b and a.get('end_x') != b.get('end_x')) else 0
+            if o.get('queue_array_bytes_unchanged_at_pos_read') is True:
+                stats['queue_array_unchanged'] += 1
+            elif o.get('queue_array_bytes_unchanged_at_pos_read') is False:
+                stats['queue_array_changed'] += 1
+            rows.append(o)
+    if notes:
+        prov['notes'] = list(notes)
+    prov['counts'] = stats
+    with open(out_path, 'w', encoding='utf-8') as f:
+        for o in rows:
+            f.write(json.dumps(o, ensure_ascii=False) + '\n')
+    return prov, rows
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', default=None, help='JSONL 输出路径（`--extract` 模式下不需要）')
@@ -641,7 +813,27 @@ def main():
                     help='（2026-11-08 `dispatch/39`）打开 **token 探针**：在 `calculate_function`(0x3c2530) 入口'
                          '抓它真正吃到的 token 列表，并在解析器 0x4ed670 上抓「文本 → token」的每一次调用，'
                          '两者用 ptr 恒等 + 逐字节对撞。不加这个开关时行为与之前**逐字节相同**')
+    ap.add_argument('--fnpoints', action='store_true',
+                    help='（2026-11-08 `dispatch/44`）打开 **FunctionPoints 探针**：在 '
+                         '`FunctionPointsEvent → JSON` 写入器 0x50eb20 入口抓报文里 `end_x` 的 8 字节原文'
+                         '（结构体 `start_x@+0/start_y@+8/end_x@+0x10/owner_id@+0x18`），'
+                         '并在 0x472865 那次读上把 `pos` 在每条 `calculate_function` 数组里**定位到下标**。'
+                         '不加这个开关时行为与之前**逐字节相同**')
+    ap.add_argument('--campaign-level', type=int, default=None,
+                    help='（`dispatch/44`）开跑前往**工作区** `XDG_DATA_HOME` 写 `user://campaign.save = level_<n>`'
+                         '（20 = 解锁全部；给这个开关才会写）')
+    ap.add_argument('--level-node', default=None,
+                    help='（`dispatch/44`）要点的关卡号（0..20，按内置坐标表）或 "x,y"；不给 = 老行为 `243 224`')
     ap.add_argument('--snap-dir', default=None, help='（调试用）每一步截一张 1920x1160 的 PNG 到这个目录；PNG 不入库')
+    # ── 2026-11-08 `dispatch/44`：把 `--fnpoints` 的原始 JSONL 摘成入库样本（不给游戏）──
+    ap.add_argument('--endx-extract', default=None, action='append',
+                    help='（`dispatch/44`）原始 JSONL（要带 `--fnpoints` 的记录），可给多次')
+    ap.add_argument('--endx-fixture-out', default=None,
+                    help='（`dispatch/44`）`--endx-extract` 的输出文件（纯文本 JSONL）')
+    ap.add_argument('--series-exprs', default=None, action='append',
+                    help='（`dispatch/44`）与 `--endx-extract` 逐个对应的"这一系列按**执行顺序**打进去的表达式"')
+    ap.add_argument('--series-mode', default=None, help='（`dispatch/44`）Normal,DiffEq,… 与 `--endx-extract` 逐个对应')
+    ap.add_argument('--series-level', default=None, help='（`dispatch/44`）关卡号列表，与 `--endx-extract` 逐个对应')
     ap.add_argument('--extract', default=None, action='append',
                     help='不给游戏、只把已有 JSONL 摘成入库样本（可给多次；配合 --fixture-out）')
     ap.add_argument('--fixture-out', default=None, help='`--extract` 的输出文件（纯文本 JSONL）')
@@ -662,6 +854,26 @@ def main():
                          'corrected_function，与抓到的 token 列表逐字节比（需要 EMU 环境，见 tools/eval_oracle.py）')
     args = ap.parse_args()
 
+    if args.endx_extract:
+        if not args.endx_fixture_out:
+            ap.error('--endx-extract 需要 --endx-fixture-out')
+        labels = args.label or []
+        specs = [(p, labels[i] if i < len(labels) else 'series%d' % (i + 1))
+                 for i, p in enumerate(args.endx_extract)]
+        modes = args.series_mode.split(',') if args.series_mode else None
+        levels = args.series_level.split(',') if args.series_level else None
+        prov, rows = endx_fixture(specs, args.endx_fixture_out, exprs_per_series=args.series_exprs,
+                                  modes=modes, levels=levels, notes=args.note)
+        c = prov['counts']
+        print('[endx-extract] shots=%d wire==ctorA %d | pos==ctorA %d | A!=B %d | queue_bytes_unchanged %d -> %s' % (
+            c['shots'], c['ser_eq_ctorA'], c['pos_eq_ctorA'], c['A_ne_B'],
+            c['queue_array_unchanged'], args.endx_fixture_out), file=sys.stderr)
+        for r in rows[1:]:
+            print('  %-10s #%d %-14s A=%s wire=%s pos=%s A-B=%s' % (
+                r['series'], r['shot'], r.get('expr_typed'), r['ctor_A'].get('end_x'),
+                (r.get('wire') or {}).get('end_x'), (r.get('pos') or {}).get('pos_x'),
+                r.get('A_minus_B_end_x')), file=sys.stderr)
+        return
     if args.tokens_report:
         if not args.tokens_fixture_out:
             ap.error('--tokens-report 需要 --tokens-fixture-out')
@@ -711,6 +923,22 @@ def main():
     for k in ('data', 'cache', 'config'):
         os.makedirs(os.path.join(data, k), exist_ok=True)
 
+    # 2026-11-08 `dispatch/44`：造 DiffEq 局要用 `--campaign-level`（只写工作区 data 目录）
+    if args.campaign_level is not None:
+        write_campaign_save(data, args.campaign_level)
+    # 关卡节点那一步的坐标：`--level-node` 给了就换掉 NAV 的第 2 步（不给 = 老行为）
+    nav = list(NAV)
+    if args.level_node:
+        if ',' in args.level_node:
+            xy = args.level_node.replace(',', ' ')
+        else:
+            n = int(args.level_node)
+            if n not in LEVEL_NODE:
+                ap.error('--level-node %d 不在内置坐标表里' % n)
+            xy = '%d %d' % LEVEL_NODE[n]
+        nav[1] = (nav[1][0], 'mousemove %s click 1' % xy)
+        print('[nav] level node = %s' % xy, file=sys.stderr)
+
     src = open(args.js, encoding='utf-8').read()
     out = open(args.out, 'w', encoding='utf-8')
     tally = {}
@@ -744,6 +972,30 @@ def main():
                 p.get('ret'), i.get('ptr'), i.get('len'),
                 [(v.get('ret'), v.get('same'), v.get('diffPoints')) for v in (i.get('vs') or [])]),
                 file=sys.stderr)
+        elif t == 'fnpoints':
+            print('[fnpoints] #%s end_x=%s start=(%s,%s) owner=%s ret=%s bt=%s' % (
+                p.get('seq'), p.get('end_x'), p.get('start_x'), p.get('start_y'), p.get('owner_id'),
+                p.get('ret'), (p.get('bt') or [])[:5]), file=sys.stderr)
+            for v in (p.get('vs_calc') or []):
+                print('    vs calc ret=%s len=%s last_x_eq=%s prev_x_eq=%s x_idx=%s' % (
+                    v.get('ret'), v.get('len'), v.get('last_x_eq'), v.get('prev_x_eq'), v.get('x_eq_idx')),
+                    file=sys.stderr)
+        elif t == 'fnpoints_ctor':
+            v = p.get('vec') or {}
+            print('[fnpoints_ctor] #%s caller=%s owner=%s vec=(ptr=%s,len=%s) end_x=%s start_pt=%s end_pt=%s' % (
+                p.get('seq'), p.get('caller'), p.get('owner_id'), v.get('ptr'), v.get('len'),
+                p.get('end_x'), p.get('start_pt'), p.get('end_pt')), file=sys.stderr)
+            for x in (p.get('vs_calc') or []):
+                print('    vs calc ret=%s ptr=%s len=%s same_ptr=%s same_bytes=%s' % (
+                    x.get('ret'), x.get('ptr'), x.get('len'), x.get('same_ptr'), x.get('same_bytes')),
+                    file=sys.stderr)
+        elif t == 'pos_x_locate':
+            print('[pos_x_locate] #%s n=%s pos_x=%s last_fn=%s' % (
+                p.get('seq'), p.get('n'), p.get('pos_x'), p.get('last_fn')), file=sys.stderr)
+            for v in (p.get('vs_calc') or []):
+                print('    vs calc ret=%s len=%s same_ptr=%s x_idx=%s xy_idx=%s same_bytes=%s' % (
+                    v.get('ret'), v.get('len'), v.get('same_ptr'), v.get('x_idx'), v.get('xy_idx'),
+                    v.get('same_bytes')), file=sys.stderr)
         elif t == 'pos_read':
             print('[pos_read] #%s rdx=%s rcx=%s n=%s pos=%s vs_queue=%s vs_calc=%s' % (
                 p.get('seq'), p.get('rdx'), p.get('rcx'), p.get('n'), p.get('pos_bytes'),
@@ -754,7 +1006,12 @@ def main():
     dev = frida.get_local_device()
     game = args.game
     argv = [os.path.join(game, 'Graphwar.x86_64'), '--resolution', '1920x1160', '--position', '0,0']
-    env = {k: v for k, v in dict(os.environ, **env).items() if k not in ('LC_ALL',)}
+    # 2026-11-08 `dispatch/44` 新坑：本机是 **niri/Wayland** 会话，`WAYLAND_DISPLAY` 一存在
+    # Godot 就走 `DisplayServerWayland`，**根本不在 Xvfb 上建 X11 窗口** ⇒ `xdotool search` 一直
+    # 返回 `root`、点击全落在根窗口、整轮 0 发（实测：`window=root after 40.4s`）。
+    # 这里强制走 X11：把 `WAYLAND_DISPLAY` 摘掉（`--display` 给你的那个 X display 才是目标）。
+    env = {k: v for k, v in dict(os.environ, **env).items()
+           if k not in ('LC_ALL', 'WAYLAND_DISPLAY')}
     if args.attach:
         # ── 2026-11-08 `dispatch/34`：★ 本机实测 **frida `spawn` 会把这份游戏挂死** ──────────
         # 现象：`dev.spawn()` + `dev.resume()` 之后进程树变成
@@ -785,7 +1042,8 @@ def main():
     # 否则 20 发会把 JSONL 撑到几十 MB；`classify` 用的 yMap/pairMap 不受影响。
     try:
         # 2026-11-08 `dispatch/39`：`--tokens` 同时打开 token 探针（关着的时候探针三个钩子立即 return）
-        script.post({'type': 'cfg', 'evalRowsMax': args.eval_rows, 'tokenProbe': bool(args.tokens)})
+        script.post({'type': 'cfg', 'evalRowsMax': args.eval_rows,
+                     'tokenProbe': bool(args.tokens), 'fnpoints': bool(args.fnpoints)})
     except Exception as e:  # noqa: BLE001
         print('[warn] post cfg:', e, file=sys.stderr)
     if not args.attach:
@@ -798,7 +1056,7 @@ def main():
         if not args.no_clicks:
             time.sleep(args.settle)
             snap(args.display, 'boot')
-            for i, (delay, action) in enumerate(NAV):
+            for i, (delay, action) in enumerate(nav):
                 time.sleep(delay)
                 print('[click] +%.1fs %s' % (time.time() - t0, action), file=sys.stderr)
                 xdo(args.display, action)
