@@ -294,6 +294,302 @@ pub const VICTORY_LABELS: [&str; 2] = ["TeamVictoryLabel", "SelfVictoryLabel"];
 /// `0x3da130` 用到的三个头像/皮肤图标节点名。档位：**观测**（角色**推断**）。
 pub const VICTORY_ICONS: [&str; 3] = ["SkinIcon", "FaceIcon", "HatIcon"];
 
+// ---------------------------------------------------------------------------
+// 5. 对局流程：**胜负判定**（客户端本地权威）
+// ---------------------------------------------------------------------------
+//
+// # 为什么这一段在 `play_screen_control` 里
+//
+// 原版的胜负**不在界面控制器里算**：判据是
+//
+// ```text
+// 0x473520  GraphwarGameStateManager::get_alive_teams  -> (Team1 有活体, Team2 有活体)
+// 0x4759f0  queue_end_turn_trigger（回合末）
+//   0x475a64  cmp turn_count, turn_limit   ; ① 上限用尽
+//   0x475a80  test al,1 / je END           ; ② Team1 没人
+//   0x475a88  test dl,1 / je END           ; ③ Team2 没人
+//   0x475bac  mov BYTE [self+0x120],6      ; EndingGame
+// 0x4780c0  set_state(EndingGame) 分支里算胜方字节
+//   0x478133..0x478236                     ; -> [self+0x11f]，表见 turnstate::winner_byte
+// ```
+//
+// 本仓库的**真值实现在 `game.rs`**（`Match::ending` / `Match::team_has_survivor`，
+// 与上面两处逐行对应），本文件**不重算那条规则**，只把"胜方字节"那张逐位表
+// （[`crate::turnstate::winner_byte`]）与两个结束入口的顺序组合成**界面要的一个结论**。
+//
+// 这一层存在的唯一理由：原版客户端**没有本地权威**——它收服务端的
+// `GameStateInfo(EndingGame)` + 胜方字节；我们的客户端没有服务端，所以必须有
+// 一个本地权威来说明"这局结束了没有、谁赢"。这段代码就是那个权威，**并且**它的
+// 数值来源仍是逐位的那张表，不是我们发明的判据。
+//
+// # 档位
+//
+// | 项 | 档位 | 依据 |
+// |---|---|---|
+// | 胜方字节 `(Team1 活, Team2 活, 设过上限)` -> `0/1/2` | **逐位** | `0x478133`–`0x478236`，见 [`crate::turnstate::winner_byte`] 的表 |
+// | 两个结束入口（上限 / 某队没人）与 `EndingGame` 出口 | **逐位** | `0x475a64` / `0x475a80` / `0x475a88` → `0x475bac` |
+// | 靶子算 **Team2** 的存活实体（于是"靶子全清" == "Team2 全灭"） | **观测** | `docs/150` §Q1：111 份回放 / 127 个靶子全是 `TeamInfo{Team2}`、0 个 `SoldierInfo` |
+// | **哪个入口先判**（本层把 wipe 放前、上限放后） | **我方选择** | 二进制是上限在前（`0x475a64` < `0x475a80`）；**胜方**由存活位算，与入口顺序无关 ⚠️ 见 [`LevelRules::evaluate`] |
+// | `mutual_wipe` 时的 `winner_team` | **我方选择** | 真值写字节 `2`（没人赢），界面需要一个队伍号去排版文案 |
+// | 每关的 `turn_limit` / 靶子数 / 有没有 Bot | **逐位 + 运行时** | `graphwar_level_manager::SETUPS`（`docs/118` §7.1，21/21 与 385 份回放一致） |
+
+/// 靶子所在的队伍（`docs/150` §Q1）。**观测**：127/127 个靶子都收到 `TeamInfo{Team2}`。
+///
+/// 队伍编号用**界面侧**的 0 基约定（`0 = Team1`、`1 = Team2`），与
+/// `graphwar_turn_manager::Team::One.id()`（1 基）差一 —— 换算在
+/// [`crate::turnstate::winner_byte`] 的调用处做一次，别在这条链上重复换。
+pub const TARGET_TEAM: i64 = 1;
+
+/// 关卡类型。**只是标签**（`docs/150` §3：判定只有一条，标签给状态行/文档看）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LevelKind {
+    /// 对战关：有对手、无靶子（8 关：5/9/11/14/15/18/19/20）。
+    Versus,
+    /// 打靶关：有靶子、无对手（13 关）。
+    Targets,
+    /// 两者都有：21 关数据里不存在，但规则要定义。
+    Both,
+}
+
+impl LevelKind {
+    /// 状态行/文档里的名字（与删掉的 `level_rules.gd` 逐字一致，便于对照旧断言）。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LevelKind::Versus => "versus",
+            LevelKind::Targets => "targets",
+            LevelKind::Both => "both",
+        }
+    }
+
+    fn from_flags(has_targets: bool, has_opponent: bool) -> Self {
+        match (has_targets, has_opponent) {
+            (true, true) => LevelKind::Both,
+            (true, false) => LevelKind::Targets,
+            (false, _) => LevelKind::Versus,
+        }
+    }
+}
+
+/// 判一局要用的**输入**（全部由调用方给：界面/回放各自知道自己的局面）。
+///
+/// 注意它**不含**"谁的回合"：回合与胜负是两件事（`0x4759f0` 只在回合末判）。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MatchState {
+    /// 每队**存活士兵**数（键固定 0/1，缺省 0）。
+    pub alive_team0: i64,
+    pub alive_team1: i64,
+    /// **开局时**就有士兵的队伍（含已全灭的队 —— 否则它一灭就从表里消失，判不出"这队没了"）。
+    pub teams_present: Vec<i64>,
+    /// 靶子集合的规模与存活数（靶子算 [`TARGET_TEAM`] 的存活实体）。
+    pub targets_total: i64,
+    pub targets_alive: i64,
+    /// 已经结算过的回合数（与 `turn_limit` 比）。
+    pub turns_used: i64,
+}
+
+impl MatchState {
+    /// `alive_by_team` 取某个键（缺省 0）。
+    pub fn alive_of(&self, team: i64) -> i64 {
+        match team {
+            0 => self.alive_team0,
+            1 => self.alive_team1,
+            _ => 0,
+        }
+    }
+
+    /// 某队**存活实体**数 = 士兵 + （该队是 [`TARGET_TEAM] 时的）存活靶子。
+    ///
+    /// 这就是 `0x473520` 数的那个量（它枚举**生命表**：士兵与靶子都有 `LifeInfo`，
+    /// 玩家实体没有 ⇒ 不数，`docs/150` §Q2）。
+    pub fn survivors_of(&self, team: i64) -> i64 {
+        let mut n = self.alive_of(team);
+        if team == TARGET_TEAM && self.targets_total > 0 {
+            n += self.targets_alive;
+        }
+        n
+    }
+}
+
+/// 判定结论（界面只读这四项）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Verdict {
+    pub over: bool,
+    pub human_won: bool,
+    /// 界面展示用的胜方队伍号（真值"没人赢"时由本层给一个，见 [`LevelRules::evaluate`]）。
+    pub winner_team: i64,
+    /// **给状态行/自检看的标签**，不参与任何分支。
+    pub reason: &'static str,
+}
+
+/// 一局的规则（关卡类型 + 人类队伍 + 回合上限）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LevelRules {
+    pub kind: LevelKind,
+    pub human_team: i64,
+    /// 回合上限；`0` = **无上限**（原版此时压根不发 `TurnLimitInfo`，`docs/123` §5.1 #4）。
+    pub turn_limit: i64,
+    /// 关卡号（`-1` = 非战役对局，只为状态行/文档可追溯）。
+    pub level_index: i64,
+    /// 关卡表里写的目标数（只做一致性自检，判定用实际靶子集合）。
+    pub targets_planned: i64,
+}
+
+impl LevelRules {
+    /// 战役关：类型由"有没有靶子 / 有没有对手"两列决定（`docs/118` §7.1，**只是标签**）。
+    pub fn for_campaign(
+        targets_planned: i64,
+        has_bot: bool,
+        turn_limit: i64,
+        level_index: i64,
+        human_team: i64,
+    ) -> Self {
+        LevelRules {
+            kind: LevelKind::from_flags(targets_planned > 0, has_bot),
+            human_team,
+            turn_limit: turn_limit.max(0),
+            level_index,
+            targets_planned,
+        }
+    }
+
+    /// 非战役对局（LAN / 回放）：没有靶子、没有回合上限。
+    pub fn for_versus(human_team: i64) -> Self {
+        LevelRules {
+            kind: LevelKind::Versus,
+            human_team,
+            turn_limit: 0,
+            level_index: -1,
+            targets_planned: 0,
+        }
+    }
+
+    /// 通用构造（类型由"有没有靶子 / 有没有对手"决定，**只是标签**）。
+    pub fn for_match(
+        has_targets: bool,
+        has_opponent: bool,
+        turn_limit: i64,
+        human_team: i64,
+    ) -> Self {
+        LevelRules {
+            kind: LevelKind::from_flags(has_targets, has_opponent),
+            human_team,
+            turn_limit: turn_limit.max(0),
+            level_index: -1,
+            targets_planned: 0,
+        }
+    }
+
+    pub fn kind_name(&self) -> &'static str {
+        self.kind.as_str()
+    }
+
+    pub fn has_targets(&self) -> bool {
+        matches!(self.kind, LevelKind::Targets | LevelKind::Both)
+    }
+
+    pub fn has_opponent_rule(&self) -> bool {
+        matches!(self.kind, LevelKind::Versus | LevelKind::Both)
+    }
+
+    /// **判一局的胜负。**
+    ///
+    /// 唯一判据（`0x473520` + `0x4759f0` ②③）：**某队没有存活实体 ⇒ 结束**，
+    /// 还有活实体的那队赢；两队都没人 ⇒ 真值写字节 `2`（没人赢）。
+    /// 回合上限（`0x475a64`）是**独立的**第二个结束入口，胜方同样由
+    /// [`crate::turnstate::winner_byte`] 从存活位算（两边都还有人 + 设过上限 ⇒ Team2）。
+    ///
+    /// # 与二进制的两处差异（都是**我方选择**，写在这里别当结论）
+    ///
+    /// 1. **入口顺序**：二进制先判上限（`0x475a64`）、后判 wipe（`0x475a80`/`0x475a88`）；
+    ///    本层先判 wipe。**判定结果不变**（胜方由存活位算，与谁先跳无关），
+    ///    只有"最后一回合清空靶子"时的 `reason` 标签不同：二进制那条路也会进 END，
+    ///    但胜方字节是 `0`（Team1）⇒ 人类照样赢。本层把这个收场标成 `targets_cleared`。
+    /// 2. **`mutual_wipe` 的 `winner_team`**：真值写 `2`（没人赢），界面必须有队伍号去
+    ///    排版文案，所以本层填"人类以外的那一队"。`human_won` 仍是 `false`。
+    pub fn evaluate(&self, st: &MatchState) -> Verdict {
+        // 参评的队伍 = 有士兵的队 ∪ 靶子所在的队（靶子有队伍，`docs/150` §Q1）。
+        let mut judged: Vec<i64> = Vec::new();
+        for t in &st.teams_present {
+            if !judged.contains(t) {
+                judged.push(*t);
+            }
+        }
+        if st.targets_total > 0 && !judged.contains(&TARGET_TEAM) {
+            judged.push(TARGET_TEAM);
+        }
+        // 什么都没有（例如回放模式没有玩家表）⇒ 明确说"判不了"，**不猜**胜负。
+        if judged.is_empty() {
+            return Verdict {
+                over: false,
+                human_won: false,
+                winner_team: self.human_team,
+                reason: "no_verdict",
+            };
+        }
+
+        let team1_alive = st.survivors_of(0) > 0;
+        let team2_alive = st.survivors_of(1) > 0;
+        let wiped: Vec<i64> = judged
+            .iter()
+            .copied()
+            .filter(|t| st.survivors_of(*t) == 0)
+            .collect();
+        let limit_hit = self.turn_limit > 0 && st.turns_used >= self.turn_limit;
+
+        if wiped.is_empty() && !limit_hit {
+            return Verdict {
+                over: false,
+                human_won: false,
+                winner_team: self.human_team,
+                reason: "playing",
+            };
+        }
+
+        // 胜方字节：**逐位**那张表（`0x478133`–`0x478236`）。
+        // `turn_limit_set` 是 "set_turn_limit 被调过"（`[+0xc8] == 1`），**不是**"上限用尽"。
+        let byte = crate::turnstate::winner_byte(team1_alive, team2_alive, self.turn_limit > 0);
+        // 字节 -> 界面队伍号：0 = Team1、1 = Team2、2 = 没人赢。
+        let winner_from_byte = match byte {
+            0 => Some(0),
+            1 => Some(1),
+            _ => None,
+        };
+        let human_won = winner_from_byte == Some(self.human_team) && !wiped.contains(&self.human_team);
+        let reason: &'static str = if wiped.contains(&0) && wiped.contains(&1) {
+            "mutual_wipe"
+        } else if wiped.contains(&self.human_team) {
+            "own_wiped"
+        } else if !wiped.is_empty() {
+            // 对手方（打靶关 = 靶子所在的 Team2）全灭 ⇒ 人类胜（`0x475a88`）。
+            // 两队都没有士兵、清空它的只能是靶子 ⇒ 标签换成 targets_cleared。
+            // ⚠️ 这是**同一个判据**的两种标签，不是两条规则。
+            let w = wiped
+                .iter()
+                .copied()
+                .find(|t| *t != self.human_team)
+                .unwrap_or(TARGET_TEAM);
+            if w == TARGET_TEAM && st.alive_of(w) == 0 && st.targets_total > 0 {
+                "targets_cleared"
+            } else {
+                "enemy_wiped"
+            }
+        } else {
+            // 上限用尽（`0x475a64`）：两边都还有人 ⇒ 胜方字节写死 `1`（Team2）。
+            "turn_limit"
+        };
+
+        let winner_team = winner_from_byte.unwrap_or_else(|| {
+            // 真值"没人赢"（字节 2）：界面给一个可排版的队伍号（我方选择）。
+            if self.human_team == 0 {
+                1
+            } else {
+                0
+            }
+        });
+        Verdict { over: true, human_won, winner_team, reason }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,5 +616,145 @@ mod tests {
     fn panic_location_matches_binary_string() {
         assert_eq!(PANIC_LOCATION.0, "src/graphwar_play_screen_control.rs");
         assert_eq!(PANIC_LOCATION.1, 561);
+    }
+
+    // ---- 5. 胜负判定 ----------------------------------------------------
+
+    /// `docs/118` §7.1 的四关：0（1 靶/无上限）、6（2 靶/上限 6）、7（1 靶/上限 1）、
+    /// 5（有 Bot/无靶子/无上限）。分类与上限都来自 `graphwar_level_manager::SETUPS`。
+    #[test]
+    fn campaign_rules_match_level_table() {
+        let r0 = LevelRules::for_campaign(1, false, 0, 0, 0);
+        assert_eq!(r0.kind_name(), "targets");
+        assert_eq!(r0.targets_planned, 1);
+        assert_eq!(r0.turn_limit, 0);
+        let r6 = LevelRules::for_campaign(2, false, 6, 6, 0);
+        assert_eq!(r6.kind_name(), "targets");
+        assert_eq!(r6.turn_limit, 6);
+        let r7 = LevelRules::for_campaign(1, false, 1, 7, 0);
+        assert_eq!(r7.kind_name(), "targets");
+        assert_eq!(r7.turn_limit, 1);
+        let r5 = LevelRules::for_campaign(0, true, 0, 5, 0);
+        assert_eq!(r5.kind_name(), "versus");
+        assert_eq!(LevelRules::for_match(true, true, 0, 0).kind_name(), "both");
+    }
+
+    /// 打靶关：靶子全清 ⇒ 人类通关（`0x475a88`：Team2 没有活实体）。
+    #[test]
+    fn targets_cleared_wins() {
+        let r = LevelRules::for_campaign(1, false, 0, 0, 0);
+        let v = r.evaluate(&MatchState {
+            alive_team0: 1,
+            teams_present: vec![0],
+            targets_total: 1,
+            targets_alive: 0,
+            turns_used: 1,
+            ..Default::default()
+        });
+        assert!(v.over && v.human_won);
+        assert_eq!(v.reason, "targets_cleared");
+        // 靶子还在、没到上限 ⇒ 继续（旧实现这里判人类胜，是 bug）
+        let v = r.evaluate(&MatchState {
+            alive_team0: 1,
+            teams_present: vec![0],
+            targets_total: 1,
+            targets_alive: 1,
+            turns_used: 3,
+            ..Default::default()
+        });
+        assert!(!v.over);
+        assert_eq!(v.reason, "playing");
+    }
+
+    /// 第 8 关（index 7）：上限 1 用尽 ⇒ 判负，胜方 = Team2（`0x475a64` + 胜方字节写死 1）。
+    #[test]
+    fn turn_limit_loses_with_team2() {
+        let r = LevelRules::for_campaign(1, false, 1, 7, 0);
+        let v = r.evaluate(&MatchState {
+            alive_team0: 1,
+            teams_present: vec![0],
+            targets_total: 1,
+            targets_alive: 1,
+            turns_used: 1,
+            ..Default::default()
+        });
+        assert!(v.over && !v.human_won);
+        assert_eq!(v.reason, "turn_limit");
+        assert_eq!(v.winner_team, 1);
+    }
+
+    /// 对战关：对方全灭 ⇒ 通关；我方全灭 ⇒ 失败（`docs/84`：45/45 实测）。
+    #[test]
+    fn versus_wipes() {
+        let r = LevelRules::for_versus(0);
+        let v = r.evaluate(&MatchState {
+            alive_team0: 2,
+            alive_team1: 0,
+            teams_present: vec![0, 1],
+            turns_used: 3,
+            ..Default::default()
+        });
+        assert!(v.over && v.human_won);
+        assert_eq!(v.reason, "enemy_wiped");
+        assert_eq!(v.winner_team, 0);
+        let v = r.evaluate(&MatchState {
+            alive_team0: 0,
+            alive_team1: 1,
+            teams_present: vec![0, 1],
+            turns_used: 3,
+            ..Default::default()
+        });
+        assert!(v.over && !v.human_won);
+        assert_eq!(v.reason, "own_wiped");
+        assert_eq!(v.winner_team, 1);
+    }
+
+    /// 双方都不在场（回放模式没有玩家表）⇒ **判不了**，不能像旧实现那样"0 == 0 ⇒ 有人赢"。
+    #[test]
+    fn no_verdict_when_nobody_present() {
+        let r = LevelRules::for_versus(0);
+        let v = r.evaluate(&MatchState { teams_present: vec![], ..Default::default() });
+        assert!(!v.over);
+        assert_eq!(v.reason, "no_verdict");
+    }
+
+    /// 胜方字节 = 真值 `0x478133`–`0x478236` 那张表，本层**没有**第二份实现。
+    #[test]
+    fn winner_byte_table_is_the_binary_one() {
+        use crate::turnstate::winner_byte;
+        assert_eq!(winner_byte(false, false, false), 2);
+        assert_eq!(winner_byte(false, true, false), 1);
+        assert_eq!(winner_byte(true, false, false), 0);
+        // 两边都还有人：设过上限 ⇒ Team2（`adc al,1` 那条），否则没人赢。
+        assert_eq!(winner_byte(true, true, false), 2);
+        assert_eq!(winner_byte(true, true, true), 1);
+        // 同一发把两边都清空 ⇒ 字节 2，人类判负（真值里没有样本，`docs/150` §6）。
+        let r = LevelRules::for_versus(0);
+        let v = r.evaluate(&MatchState {
+            alive_team0: 0,
+            alive_team1: 0,
+            teams_present: vec![0, 1],
+            ..Default::default()
+        });
+        assert!(v.over && !v.human_won);
+        assert_eq!(v.reason, "mutual_wipe");
+    }
+
+    /// 靶子算 **Team2** 的存活实体（`docs/150` §Q1）⇒ "靶子全清" 与 "Team2 全灭" 是同一条。
+    #[test]
+    fn targets_count_as_team2_survivors() {
+        let st = MatchState {
+            alive_team0: 1,
+            teams_present: vec![0],
+            targets_total: 3,
+            targets_alive: 2,
+            ..Default::default()
+        };
+        assert_eq!(st.survivors_of(TARGET_TEAM), 2);
+        assert_eq!(st.survivors_of(0), 1);
+        // 只有靶子的关：`teams_present` 里没有 Team2，但判据会把它加进来。
+        let r = LevelRules::for_campaign(3, false, 0, 8, 0);
+        let v = r.evaluate(&st);
+        assert!(!v.over);
     }
 }
