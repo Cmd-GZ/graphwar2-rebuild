@@ -189,9 +189,11 @@ impl Parser {
         v
     }
 
-    /// 丢掉**没有配对的** `)`（深度 0 时）。
+    /// 丢掉**没有配对的** `)`（深度 0 时），然后**继续解析**。
     ///
-    /// 真解析器（`0x4ed670`）就是这么干的 —— unicorn 直调实测（`docs/06` §30.7）：
+    /// 真解析器（`0x4ed670`）就是这么干的 —— unicorn 直调实测
+    /// （`docs/archive/155-round-log.md` §32.7；规则现状见 `docs/03` §10；
+    /// 13 条观测钉在 `tests/parse_stray_paren.rs`）：
     ///
     /// ```text
     /// x)      -> [x]                  （多余 `)` 被吃掉）
@@ -200,54 +202,94 @@ impl Parser {
     /// (x)+1)  -> [ADD, VAR_X, CONST]
     /// ```
     ///
-    /// 旧实现遇到无主 `)` 就收工，于是 `14/(1+exp(100*(x-19)^2)))+24/…` 只剩第一项
-    /// （1290 发里 8 发真语料是这种"多一个右括号"的文本）。
-    /// **对括号平衡的文本这是恒等操作**（`skip` 一次都不触发）。
+    /// ⚠️ **只在 `expr()` 的循环里调用**，`term()` 里不许调 —— 无主 `)` 结束的是
+    /// **整条子表达式**，不是最近的一个乘子。在 `term()` 里跳过会让后面的 `^`
+    /// 整个丢失、让隐式乘法只乘到最右边的操作数上（`x+2)3` 会被解析成
+    /// `ADD(x, MUL(2,3))`，而真二进制给 `MUL(ADD(x,2),3)`）。见 [`Parser::expr`]。
+    ///
+    /// 旧实现（更早的一版）遇到无主 `)` 就收工，于是
+    /// `14/(1+exp(100*(x-19)^2)))+24/…` 只剩第一项（1290 发里 8 发真语料是这种
+    /// "多一个右括号"的文本）。**对括号平衡的文本这是恒等操作**（一次都不触发）。
     fn skip_stray_close(&mut self) {
         while self.depth == 0 && matches!(self.peek().map(tag), Some(RightBracket)) {
             self.take();
         }
     }
 
+    /// 加减层。**这一层同时是"无主 `)` 之后的重启点"**。
+    ///
+    /// 括号配对时它只处理 `+`/`-`（`term()` 会把 `*` `/` `^` 和隐式乘法都吃掉）。
+    /// 一旦 [`Parser::skip_stray_close`] 丢掉了深度 0 上的 `)`，跳过的就是**整条
+    /// 子表达式**的右边界，所以后面的一切都以 `left`（左侧整体）为左操作数重新开始：
+    ///
+    /// ```text
+    /// x)^2      -> [POW, VAR_X, CONST 2]              （`^` 作用在整条式子上）
+    /// x+2)3     -> [MUL, ADD, VAR_X, CONST 2, CONST 3]（隐式乘法乘在 `x+2` 上）
+    /// x+)2*3    -> [MUL, MUL, ADD, VAR_X, 0, 2, 3]
+    /// x)+1)^2   -> [POW, ADD, VAR_X, 1, 2]
+    /// x)/2/3    -> [DIVIDE, DIVIDE, VAR_X, 2, 3]
+    /// ```
+    ///
+    /// `*` `/`、`^`、隐式乘法这三支**只有刚跳过 `)` 才可能走到**：正常扫描时
+    /// `term()` 不会在这些 token 上停下（`^` 也已由 `power()` 吃掉）。
     fn expr(&mut self) -> Option<Box<Node>> {
         let mut left = self.term();
         loop {
             self.skip_stray_close();
-            let op = match self.peek() {
-                Some(t) if matches!(tag(t), Add | Sub) => tag(t),
-                _ => break,
+            let t = match self.peek() {
+                Some(t) => *t,
+                None => break,
             };
-            self.take();
-            let right = self.term();
-            if op == Add {
-                // '+' 两侧缺都补 0
-                let l = left.take().unwrap_or_else(|| Node::zero().unwrap());
-                let r = right.unwrap_or_else(|| Node::zero().unwrap());
-                left = Node::bin(Add, Some(l), Some(r));
-            } else if left.is_none() {
-                // 没有左操作数的 '-' 变成一元负号
-                left = Node::un(UnaryMinus, right);
-            } else {
-                let r = right.unwrap_or_else(|| Node::zero().unwrap());
-                left = Node::bin(Sub, left, Some(r));
+            match tag(&t) {
+                Add | Sub => {
+                    let op = tag(&t);
+                    self.take();
+                    let right = self.term();
+                    if op == Add {
+                        // '+' 两侧缺都补 0
+                        let l = left.take().unwrap_or_else(|| Node::zero().unwrap());
+                        let r = right.unwrap_or_else(|| Node::zero().unwrap());
+                        left = Node::bin(Add, Some(l), Some(r));
+                    } else if left.is_none() {
+                        // 没有左操作数的 '-' 变成一元负号
+                        left = Node::un(UnaryMinus, right);
+                    } else {
+                        let r = right.unwrap_or_else(|| Node::zero().unwrap());
+                        left = Node::bin(Sub, left, Some(r));
+                    }
+                }
+                Mul | Divide => {
+                    let op = tag(&t);
+                    self.take();
+                    left = Node::bin(op, left, self.unary());
+                }
+                Pow => {
+                    self.take();
+                    left = Node::bin(Pow, left, self.prefixed());
+                }
+                _ if starts_operand(&t) => {
+                    // 隐式乘法：乘在**整条式子**上
+                    left = Node::bin(Mul, left, self.unary());
+                }
+                _ => break,
             }
         }
         left
     }
 
+    /// 乘除层。**这里不处理无主 `)`** —— 它属于上一层（见 [`Parser::expr`]）。
     fn term(&mut self) -> Option<Box<Node>> {
         let mut left = self.unary();
         loop {
-            self.skip_stray_close();
             let t = match self.peek() {
-                Some(t) => t,
+                Some(t) => *t,
                 None => break,
             };
-            if matches!(tag(t), Mul | Divide) {
-                let op = tag(t);
+            if matches!(tag(&t), Mul | Divide) {
+                let op = tag(&t);
                 self.take();
                 left = Node::bin(op, left, self.unary());
-            } else if starts_operand(t) {
+            } else if starts_operand(&t) {
                 // 隐式乘法
                 left = Node::bin(Mul, left, self.unary());
             } else {
@@ -461,7 +503,8 @@ mod parser_tests {
         assert_eq!(tags("2+(x))"), vec![3, 17, 0]);
     }
 
-    /// 无主的 `)`：**跳过、继续解析**（真解析器 `0x4ed670` 的实测值，`docs/06` §30.7）。
+    /// 无主的 `)`：**跳过、继续解析**（真解析器 `0x4ed670` 的实测值，
+    /// `docs/archive/155-round-log.md` §32.7；13 条全集见 `tests/parse_stray_paren.rs`）。
     #[test]
     fn stray_close_paren_is_skipped() {
         assert_eq!(tags("x)"), vec![0]);
@@ -475,6 +518,9 @@ mod parser_tests {
         assert_eq!(tags("x)*2"), vec![6, 0, 17]);
         assert_eq!(tags("x)+"), vec![3, 0, 17]);
         assert_eq!(tags("x))"), vec![0]);
+        // 跳过之后 `^` 作用在**整条式子**上（是整条子表达式结束，不是最近一个乘子结束）
+        assert_eq!(tags("x)^2"), vec![8, 0, 17]);
+        assert_eq!(tags("x+2)3"), vec![6, 3, 0, 17, 17]);
         assert_eq!(tags(")"), Vec::<u32>::new());
         assert_eq!(tags("()"), Vec::<u32>::new());
         assert_eq!(tags("(x"), vec![0]);
