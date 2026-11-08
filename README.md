@@ -7,7 +7,7 @@
 `analysis/` + `graphwar_curve.py`）；本仓库是**实现本体**，独立托管在
 `Cmd-GZ/graphwar2-rebuild`，与上游仓库分离、互不包含。
 
-**现在是什么**（2026-11-07）：**内核**（曲线 / 物理 / 命中 / 协议 / broker / 服务端 / 关卡 / 战役数据 / AI 参数）
+**现在是什么**：**内核**（曲线 / 物理 / 命中 / 协议 / broker / 服务端 / 关卡 / 战役数据 / AI 参数）
 按真值复刻的部分**每一条都能指到证据**；`client/` 里 15 个界面能走完整流程。
 
 ⚠️ **但有两条必须先说清，否则本文档就是在虚报**：
@@ -18,7 +18,7 @@
    **没有** `play_screen` / `player_screen` / `lan_lobby` / `campaign` / `GameSetup`。
    ⇒ 所以"回合推进 / 准备态 / 弹道生命周期 / 胜负时机"这些**流程**，在 `client/` 里是**推断出来的**，
    不是从原版读出来的。**这是当前最大的一块不诚实，也是下一步要迁回 Rust 的原因。**
-2. **客户端自检的条数（前置条件齐 = **709**，缺资产 = 591–667，见「总结」）不是复原进度。**
+2. **客户端自检的条数（前置条件齐 = **714**，缺资产 = 591–667，见「总结」）不是复原进度。**
    那些断言是**写实现的人自己写的**，只能证明"和实现一致"，不能证明"和原版一致"。
    它现在的定位是**回归保护**。复原证据只看：反汇编地址 / 真实报文 / 真机真帧。
 
@@ -47,8 +47,6 @@
 「重建还缺什么」一列只写**具体缺的东西**，不写"待完善"。
 
 > 按**重建这个游戏需要哪些工作包**列，不按"模块"列：按模块列会让人以为"全绿 = 能玩"。
-> 2026-11-06 这版把三行**整行重写**：客户端界面（旧文"⬜ 未做"）、资源/音频（旧文"只有 1 个 humm.wav"）、
-> 网络协议（旧文"46 种消息、缺 24 个"）；另新增 broker、战役数据、命中判定三行。
 
 | 工作包 | 状态 | 证据（一句话 + 现行文档） | 重建还缺什么 |
 |---|---|---|---|
@@ -57,7 +55,7 @@
 | 障碍掩膜 / 碰撞 | ✅ 逐位 | 光栅化与 `is_occupied` 与真二进制**逐字节 / 300 随机点一致**；摧毁 = 命中点挖 `r=0.5` 的洞（frida 实证，[39](docs/archive/39-punch-hole.md)）；同批更早爆炸的洞会进掩膜（**到达序逐发挖洞**已落地，65 号） | ① 82 发里 **1 例**圆边像素个案未查清（[86 §9.2](docs/archive/86-simultaneous-turns.md)）；② `0x567530` = `calculate_paths`：**关卡构造/校验专用，不对局内弹道负责**（[08 §5.7](docs/08-plane.md)）；③ 掩膜的持有者与重建时机仍未观测 |
 | 命中判定与射手排除 | ✅ 逐位（规则）/ 🔶 落点 | 判定本体与内核**只有一份实现**：`_scaffold::api::hit_test` 走 `graphwar_shot_calculator::settle::resolve_points`，与 `resolve` 共用函数体（[120](docs/archive/120-hit-test.md)）；"射手不自伤"实测为**按实体 id 排除**（`0x3c4452` 指令级）（[122](docs/archive/122-self-hit.md)） | 调用方无 `1e-12` 位置排除；"按 id 排除"在内核里（`docs/122` §6）。剩下的是**落点**类差异（见下方三轴失败桶） |
 | 回合 / 生命 / 结算 | ✅ 逐位 | 穿过即死、不挡弹道、无血量、友军误伤；回合状态机 6 状态 7 事件 **13 次迁移逐个相同**；同时回合制几何并行 + 事件按飞行时间（**152/152**、时刻判决 38:0，[86 §14](docs/archive/86-simultaneous-turns.md)） | ① **出场顺序**属"缺一份熵"那类（见下方「两类非确定性」，[113](docs/archive/113-hashmap-determinism.md)）；② **目标「打不全就全部复原」**：判定点**已定位**（2026-11-07）——`GameStateManager::queue_end_turn_trigger::{{closure}}`（arm64 `0x4abc00`）：回合末 ∧ 两队都还有人活着 ∧ `[+0x11d]==1` ⇒ 遍历靶子集合逐个 `set_alive(id,true,0)`；`target_manager` 本身只是 `HashSet<u32>`（无 alive 字段）。形状见 [123](docs/archive/123-target-reset.md)，指令级见 `docs/16` §32。运行时真值（[`06` §34b](docs/06-verification.md)）：部分命中 ⇒ 回合末**整组靶子广播 `alive:true`**（死的那一个与活着的都重播）；全清 ⇒ 不复原、直接 `EndingGame`。判定点=回合末，早于 `WaitingForFunctions` |
-| 网络协议（事件） | ✅ **74/74 全字段** | 二进制里**共 74 个事件名**（旧文写 73，漏了 `VersionInfo`）：**全部 74 个**都有**字段名 + 线序 + 类型**，可从二进制复现（`tools/wire_fields.py --verify`）；原来"10 个透传、不猜键名"的那批**已全部升级成强类型**——字段名不是猜的，是从 serde 的 `serialize_field("键名", 值)` **调用序**读出来的（LLVM 内联后是 `lea rsi,[rip+名字]` + `mov edx,长度` + `call`）。三道交叉验证：字段数 == `struct … with N elements` 的 N（**67/67**）、`Deserialize` 侧同名比较（**67/67**）、抓包键序 == 二进制键序（**13/13 强类型 + 48 种事件 + 1 条 LAN 广播，共 133 行全同**）⇒ 旧的"serde 按声明顺序序列化"由**推断升为逐位+观测**（`docs/07` §3 是 74 条权威规格表） | **已无未知**（2026-11-07 收口）：`GameHeartbeat = 63` / `VersionInfo = 65` 由**两条机制不同**的独立证据互校 **72/72** 定死（x86 侧 serde `VARIANTS` 表 `.data.rel.ro 0x961608`、arm64 侧 `GraphwarEvent::serialize` 的 74 格跳转表 `0x19e770`）；**7 个线上枚举全部穷举**（判据是结构性的：serde `unknown_variant` 把表地址与长度都写成指令立即数，全 `.text` 扫该形状**恰好命中 8 张表，没有第 9 张**）——`AxisMode` 4 / `FunctionMode` 2 / `TurnMode` 2 / `TimeMode` 6 / `GameState` 8 / `GraphwarTeam` 2 / `EffectType` 4（`docs/07` §5） |
+| 网络协议（事件） | ✅ **74/74 全字段** | 二进制里**共 74 个事件名**（`VersionInfo` 在列）：**全部 74 个**都有**字段名 + 线序 + 类型**，可从二进制复现（`tools/wire_fields.py --verify`）；原来"10 个透传、不猜键名"的那批**已全部升级成强类型**——字段名不是猜的，是从 serde 的 `serialize_field("键名", 值)` **调用序**读出来的（LLVM 内联后是 `lea rsi,[rip+名字]` + `mov edx,长度` + `call`）。三道交叉验证：字段数 == `struct … with N elements` 的 N（**67/67**）、`Deserialize` 侧同名比较（**67/67**）、抓包键序 == 二进制键序（**13/13 强类型 + 48 种事件 + 1 条 LAN 广播，共 133 行全同**）⇒ 旧的"serde 按声明顺序序列化"由**推断升为逐位+观测**（`docs/07` §3 是 74 条权威规格表） | **已无未知**（2026-11-07 收口）：`GameHeartbeat = 63` / `VersionInfo = 65` 由**两条机制不同**的独立证据互校 **72/72** 定死（x86 侧 serde `VARIANTS` 表 `.data.rel.ro 0x961608`、arm64 侧 `GraphwarEvent::serialize` 的 74 格跳转表 `0x19e770`）；**7 个线上枚举全部穷举**（判据是结构性的：serde `unknown_variant` 把表地址与长度都写成指令立即数，全 `.text` 扫该形状**恰好命中 8 张表，没有第 9 张**）——`AxisMode` 4 / `FunctionMode` 2 / `TurnMode` 2 / `TimeMode` 6 / `GameState` 8 / `GraphwarTeam` 2 / `EffectType` 4（`docs/07` §5） |
 | broker / 房间列表 | ✅ 逐位 / 🔶 覆盖面 | 协议**已还原并实现**（`src/_scaffold/broker.rs`，12 条测试）：与对局同一套帧（`u16` 大端 + JSON），会话 = 客户端发 `VersionInfo{version:"2.0.60",system:"linux"}` → broker 逐条推 `GameInfo{game_info}`；房间表项 9 字段另有 LAN 通道的运行时验证（[115](docs/archive/115-broker.md)） | ① **`--broker_address` 在这个构建里完全不生效**（6 组受控实验），客户端取地址唯一路径是 HTTPS + **内编根证书** ⇒ **原版客户端无法被改指到自建 broker**；② 房主视角抓包、`GameHeartbeat`、`GameRemoved` 真实报文**都缺**（[115 §9](docs/archive/115-broker.md)） |
 | 服务端循环 | ✅ 逐位 | `graphwar_game_server::run` 在**真实 TCP** 上跑完整一局到 `EndingGame`；延迟删障碍 **165 tick**；射手轮转（`Vec<soldier_id>` + 游标）与"按士兵的 AI 进化层"**已接进** `game.rs::Match::begin_next_turn` / `graphwar_game_server::advance`，端到端断言"首发射手 = `soldiers[1]`""跳过死者""每回合都进化过"，**25 s 墙钟预算在这条路径上真的生效了**（[117](docs/archive/117-server-wiring.md)） | ① 多客户端同房未实现（现在只支持单连接）；② 断线重连 / 超时踢人 / 房主迁移未做；③ Global 大厅与建房流程未做（客户端也不连服务器） |
 | 关卡生成 | ✅ 逐位 / 🔶 覆盖面 | 随机散布模式 **13/13 逐位复现**（障碍 `x/y/r` 的 `to_bits()` 全等，[61](docs/archive/61-levelgen-rust.md)）；中心单障碍 **4 个真值样本**（半径 3.34/4.81/6.75/5.69，全在 `u*5+3` 区间）；障碍**无固定坐标**（每份回放都不同）⇒ 关卡 = 参数 + 生成器；"圆盘式"已结案——它不是关卡生成器（[103](docs/archive/103-disk-levelgen.md)） | 中心单障碍只有 **4 个**真值样本（缺更多回放/抓包真值来钉死半径区间 `u*5+3`） |
@@ -68,7 +66,7 @@
 | **资源 / 音频** | 🔶 还原完成，未接 | 资源 **692 文件 md5 全符**（`rsc/MANIFEST.tsv`，[17](docs/17-resources.md)）；音频 **10 个导入产物**（3 `.sample` + 6 `.mp3str` + 1 `.oggvorbisstr`）**四道独立检查全过**（PCK 自带 MD5 692/692、容器账本、mp3 帧链、PCM/Vorbis）；`humm.wav` 确证由 **Rust 侧 hound 解析**（`0x50a080`），走 `AudioStreamGenerator` + `push_buffer`（[111](docs/archive/111-audio.md)）。"有一份 `music.ogg` 损坏"的来源已查明：那是使用者自己 `rebuild_ogg.py` 生成的（granule 全 0、缺 EOS 页），**不是游戏资源** | ① **音频播放链路没接进客户端**（`SoundHandler`、音量 `-15f`/`-5f`、`32767` 归一化都已还原，[111 §4](docs/archive/111-audio.md)）；② **音效 ↔ 游戏事件已解**（`docs/16` §30）：订阅 `effect_info`(44，按 `+0x20` 的 u8 四臂) / `soldier_info`(15) / `entity_removed`(14) / `game_state_info`(30)；槽 `+0x80/90/a0/b0/c0` = explosion/squash/spark/pop/unpop，音量 −15/−15/−15/0/−5 dB；`state==1` 清待播队列；③ 仓库**不含任何媒体文件**（`.svg/.ttf/.png/.tres/.tscn/.pck` 一律不入库），要用自己的 `Graphwar.pck` 跑 `tools/extract_assets.py` 生成 `client/assets/`（gitignored） |
 | **构建产物** | 🔶 部分 | `cargo build --release` 出 cdylib，`gdext_rust_init` 在真 Godot 4.7.2 注册成功；导出 `.pck` 能从包里启动并加载还原的纹理（[18](docs/18-build.md)，原 `19` 已并入其 §6） | 没有可玩的一体化产物：客户端要使用者自己的原版 `Graphwar.pck` 才能取到图标/字体；原扩展对外只有 **12 类 25 个方法**、几乎全是 UI 回调，玩法逻辑完全不开放（[18 §6.5](docs/18-build.md)） |
 
-### 总结：现在到底差多少（2026-11-07 实测，按证据而非感觉）
+### 总结：现在到底差多少（按证据而非感觉）
 
 **先给硬数字**：
 
@@ -92,35 +90,39 @@
 | 4 | **界面像素**：主菜单 sha256 相同、弹窗 0.00–1.7%、玩家页 0.007%；但仍有屏缺真值 | 见 `docs/130`/`docs/137` |
 | 5 | **9 个 manager 仍是 `assembled`**（11 wired / 2 layout / 9 assembled / 0 stub = 22） | 只构造注册、没接事件流；`docs/161` 已给出九格"缺什么"与**7 格静态可解**的判断。建议顺序 Rank → Name → LocalPlayer（GSM 卡 `src/game.rs` 禁区，别派） |
 | 6 | **收敛层 `diffconv` 未跟上 S3** | 内核按**到达序逐发挖洞**已落地，收敛层还没跟 ⇒ 两层口径会分叉（已派 `dispatch/73`） |
-| 7 | **跨平台**：Win x86_64 / Android arm64 的 **check + build 都已成立**（2026-11-07 夜，`docs/18` §11）；仍未验的是**真机加载**（只有 wine）、APK 打包、macOS、arm64 Win/Linux，以及**跨架构逐位一致** | `docs/18` §11 |
+| 7 | **跨平台**：Win x86_64 / Android arm64 的 **check + build 都已成立**（`docs/18` §11）；仍未验的是**真机加载**（只有 wine）、APK 打包、macOS、arm64 Win/Linux，以及**跨架构逐位一致** | `docs/18` §11 |
 | 8 | **B 类**（25 s 墙钟、多客户端竞态） | 只能做统计验收，永远做不到"逐位" |
 
-### 还原进度：**527 / 527 可归属函数 = 100%**（2026-11-07 04:40）
+### 还原进度：**527 / 527 可归属函数 = 100%**
 
 口径见 `docs/00-status.md` §0.2（`python3 tools/coverage_matrix.py` 复算）：
 
 ```
 可归属函数 527 个 / 78 个模块   已实现 527（逐位 88 / 观测 439 / 推断 0）
 未做 0 ｜ 完全未知模块 0
-12 个 GDExtension 类          12/12 的逻辑已还原
+15 个 GDExtension 类          15/15 的逻辑已还原、且都已节点化
 协议                          74/74 字段 + 74/74 判别值 + 7 个枚举全集
-327 个函数有原版真名 + x86 地址（fixtures/name_to_addr.tsv）
+348 个函数有原版真名 + x86 地址（fixtures/name_to_addr.tsv）
 ```
 
 **"100%" 的准确含义**：所有能被 `panic::Location` 锚定的游戏函数，
 都有一个能指到证据（地址或文档小节）的 Rust 实现。**它不等于"源码还原完成"**，因为：
 
-⚠️ **527 只是"游戏函数"的一部分**：2.0.60 arm64 的 `FUNC` 符号 18,793 个，
-其中名字含 `graphwar` 的 **1,300** 个 —— 可归属的 527 约为它的 **40%**，
-其余 770 个没有 `panic::Location`（纯计算函数、闭包、泛型单态化），进度尺数不到。
-其中就包括**采样器本体 `0x3c2530`** 与**求值器 `0x4eb9d0`**。⚠️ **2026-11-07 更正**：
-采样器的名字**其实是拿得到的** —— `tools/sym_match.py` 按「函数顺序 + 体量比」把它对成
-`graphwar_shot_calculator::GraphwarShotCalculator::calculate_function`
-（arm64 `0x3b5374` / 1020 B ↔ x86 `0x3c2530` / 1680 B，体量比 0.61；`via=call+f64`）。
-`0x3c5f70` 同理 = `calculate_function_offset_str`（不是"修正常数"，旧别名作废）。
-⇒ 真正的限制不是"名字不可得"，而是**对不上的那 444 个无候选符号**（多为 ICF 合并 / 内联 / 纯数据）。
+⚠️ **527 只是"游戏函数"的一部分**：x86 目标 `.text` 里 Ghidra 认出 **13,263** 个函数，
+只有 **527** 个引用 `src/*.rs` 的 `panic::Location`（可归属），**12,736 个一个都不引用**
+（纯计算函数、闭包、泛型单态化）—— 进度尺量不到它们。
+（另一层分母：Android 2.0.60 的 `FUNC` 18,793 个、名字含 `graphwar` 的 1,300 个，是 arm64 口径，别与 13,263 混用。）
 
-### 对拍现在多准（2026-11-07 深夜实测，**三条驱动轴必分开报**）
+**名字的现状**：可归属的 527 里，**348** 个有原版真名（三份符号表并集，`fixtures/name_to_addr.tsv`），
+**179** 个无名（138 个只能给到源函数名/族，41 个只能标未知）。
+采样器本体 `0x3c2530` 与求值器 `0x4eb9d0` **名字是拿得到的**：`tools/sym_match.py` 按
+「函数顺序 + 体量比」把 arm64 符号对到 x86（`0x3b5374`/1020 B ↔ `0x3c2530`/1680 B，比 0.61）
+⇒ `graphwar_shot_calculator::GraphwarShotCalculator::calculate_function`；
+`0x3c5f70` = `calculate_function_offset_str`。
+⇒ 限制不在"名字完全不可得"，而在**没有候选符号的那批**（ICF 合并 / 内联 / 纯数据）与
+**12,736 个连 `Location` 都没有的**（结构指纹只能给同源候选：预注册 76.4% / 并列桶最高 78.2%，`docs/02` §35）。
+
+### 对拍现在多准（**三条驱动轴必分开报**）
 
 同一份 **401 份定格快照**（语料口径见 `docs/06` §24.2：目录里 403 个文件 = 回放 401 + 元数据 2；
 本机复算时 `replay_attrib` 报"文件 286（读失败 115）"—— 115 份是**没有结算窗口**的回放，不是读崩），
@@ -128,17 +130,17 @@
 
 | 指标 | `fire`（每发一次 `Match::fire`） | `batch`（`Match::fire_batch`） | `batch_conv`（收敛层 `ConvPredictor::fire_batch`） |
 |---|---|---|---|
-| 内容命中（报文逐字段） | **325 / 1080** | **346 / 1080** | **595 / 1080** |
-| 种类序列命中（只看种类顺序） | **819 / 1080** | **919 / 1080** | **1074 / 1080** |
+| 内容命中（报文逐字段） | **647 / 1080** | **647 / 1080** | **637 / 1080** |
+| 种类序列命中（只看种类顺序） | **1075 / 1080** | **1075 / 1080** | **1075 / 1080** |
 
-另有两条**延迟段**指标（只有 `batch` 轴有）：死亡集合 **215 / 379**、挖洞点 **140 / 262**
+另有两条**延迟段**指标（只有 `batch` 轴有）：死亡集合 **366 / 385**（漏报 0）、挖洞点 **207 / 294**
 （分母是"有可比对象的批"，**与 1080 不是一根轴**）。
 
 **为什么必须写轴名**：上一轮真出过事故——下游报「种类序列 1074」，把它记成 `batch` 轴的实际是
 `batch_conv`，而 `batch` 轴当轮是 915（`AGENTS.md` §C）。**同一个指标在三条轴上完全不同。**
 
-**别把"种类序列"当进度**：`1074 / 1080` 只说明消息**种类**的顺序对了，同批报文里的**值**可能还错；
-最严的"内容命中"在同一根轴上只有 `595 / 1080`。整局**完全一致**（消息级、全批全中）的更少。
+**别把"种类序列"当进度**：`1075 / 1080` 只说明消息**种类**的顺序对了，同批报文里的**值**可能还错；
+最严的"内容命中"在同一根轴上只有 `647 / 1080`。整局**完全一致**（消息级、全批全中）的更少。
 
 复跑（**不给可复跑命令的数字一律当未验证**，`AGENTS.md` §C）：
 
@@ -150,14 +152,14 @@ cargo run --release --offline -q --example batch_conv    -- --dir <快照> --dri
 python3 tools/bit_exact_attrib.py --json b.jsonl      # 延迟段两条 + 失败分桶
 ```
 
-### 能不能真的跑起来（2026-11-07 实测，不是推测）
+### 能不能真的跑起来
 
 两个必须先分清的东西：
 
 | | 现状 |
 |---|---|
 | **12 个 GDExtension 类的逻辑** | ✅ 全部还原（在 `src/`，纯 Rust、可测） |
-| **把它们变成真 Godot 节点** | ✅ **12/12 全部节点化**（2026-11-07 夜）。headless 断言按脚本计：`entity_drawer_check` 72 / `base_classes_check` 117 / `draw_classes_check` 235 / `signal_classes_check` 155 / `assemble_check` 86；另有 `FunctionDrawer`（不在 12 类之内、但棋盘必需）也是真节点（`function_drawer_check` 132） |
+| **把它们变成真 Godot 节点** | ✅ **全部节点化**。headless 断言按脚本计（13 个脚本、共 **1,800** 条）：`entity_drawer_check` 366 / `assemble_check` 217 / `draw_classes_check` 235 / `signal_classes_check` 155 / `play_flow_check` 135 / `function_drawer_check` 132 / `base_classes_check` 117 / `obstacle_drawer_check` 116 / `plane_on_screen_check` 96 / `curve_on_screen_check` 96 / `recovered_view_check` 57 / `process_loop_check` 49 / `gdext_check` 24 / `spike_class_check` 23 —— 全 **0 failed** |
 
 绑定层有两条路，**已量化**（`docs/18-build.md` §10）：
 
@@ -168,10 +170,9 @@ python3 tools/bit_exact_attrib.py --json b.jsonl      # 延迟段两条 + 失败
 | 源码保真 | ✗ 是我们的发明 | ✅ 原版 `.rodata` 里留着 `gdext-…/godot-core/src/registry/class.rs` |
 
 ⇒ 骨架已按 **cargo feature `gdext-bindings`** 并入（**默认关闭，零风险**）：
-关闭时零依赖、**1638** 条测试全绿；打开时条数更多（gdext 绑定会多出一批），12 个类的 `_draw` / `_process` 真被引擎调到。
-**12 个类的迁移已完成**（2026-11-07 夜，`docs/16` §34–§38），外加 `FunctionDrawer`（§40）。
+关闭时零依赖、**1693** 条测试全绿；`--features gdext-bindings` 时 **1799** 条全绿。所有节点的 `_draw` / `_process` 真被引擎调到。
 
-### 2026-11-07 深夜：三个"白捡的"证据源（别再从零挖）
+### 三个"白捡的"证据源（别再从零挖）
 
 这一晚最大的进展**不是多写了多少代码**，而是找到了三份"现成的答案"，写在这里避免以后重复劳动：
 
@@ -188,7 +189,7 @@ python3 tools/bit_exact_attrib.py --json b.jsonl      # 延迟段两条 + 失败
 ① 2026 那三版 `.so` 尾部那 793 KB **不是符号表**，是 2024 版 `.strtab` 的下半截死数据（`docs/02` §19）；
 ② 2024 版 `.pck` 里那 313 个 `.svg` / 249 个 `.gd` 路径串**不是文件**，是 `.import`/`.remap` 记录的源路径（素材源文件确认拿不回来）。
 
-### 两类"非确定性"的现状（旧文笼统写成"不可复现"，那是错的）
+### 两类"非确定性"的现状
 
 按"**结果是否由输入决定**"分两类（[06 §17.2](docs/06-verification.md)）：
 
@@ -206,18 +207,18 @@ python3 tools/bit_exact_attrib.py --json b.jsonl      # 延迟段两条 + 失败
 均已可运行；桥接层在 `src/_scaffold/`（`api` / `protocol` / `broker` / `capi` / `gdext*`）。
 **`cargo test --offline` 全绿**（条数每轮在变，**别把它当进度**——见 `AGENTS.md` §0.2）；
 `src/` 根目录现有 76 个 `*.rs`（55 个 `graphwar_*.rs`）＋ 3 个同名子目录，另有 `src/_scaffold/` 里 **25 个**我方自造文件。
-### 客户端自检的两个口径（`bash client/run.sh selftest`，2026-11-07 深夜**本机四组实测**）
+### 客户端自检的两个口径（`bash client/run.sh selftest`）
 
-**709 不是版本号，是"前置条件全齐"的读数（2026-11-08 本机实测；旧文档的 694 是早期读数）**：少一样就落到别的数上，四个数都跑过（详见 [`docs/18`](docs/18-build.md) §10.3.1）：
+**714 不是版本号，是"前置条件全齐"的读数**：少一样就落到别的数上，四个数都跑过（详见 [`docs/18`](docs/18-build.md) §10.3.1）：
 
 | `client/assets/` | 编了 `examples/serve_match` | 结果 |
 |---|---|---|
-| ✅ | ✅ | **709 passed / 0 failed**（2026-11-08 实测；旧读数 694）← 完整口径 |
+| ✅ | ✅ | **714 passed / 0 failed / 1 skipped** ← 完整口径 |
 | ✅ | ❌ | **618 passed / 0 failed / 2 skipped**（少的 76 条 = 两条联机套件整段 skip） |
 | ❌ | ✅ | **667 passed / 2 failed / 21 skipped** |
 | ❌ | ❌ | **591 passed / 2 failed / 23 skipped** |
 
-两条恒等式把前置条件钉死：**709 = 618 + 91**、**667 = 591 + 76**（76 → 91 是任务 31 新增的节点断言）。
+两条恒等式把前置条件钉死：**714 = 618 + 96**、**667 = 591 + 76**（差额来自各轮新增的节点/流程断言）。
 
 **694 的三个前置条件**：①`client/assets/` 齐备（用**你自己的** `Graphwar.pck` 解，**音频要先解再 `--import`**）；
 ②`cargo build --offline --example serve_match`；③用 `run.sh` 自己的 `XDG_*` 默认值（手改会让 `user://replays` 指空）。
@@ -226,7 +227,7 @@ python3 tools/bit_exact_attrib.py --json b.jsonl      # 延迟段两条 + 失败
 ①`点 Skins 页的第 -1 号皮肤 ⇒ Faces/Hats 42 格立刻换成它（实际 42）`（皮肤图标取不到 ⇒ `target` 停在 `-1`；
 括号里的 42 是**格数**不是"通过"）；②`Cancel = 194 宽 / Start = 218 宽（真帧；实际 184 / 167）`（缺字体 ⇒ 184/167）。
 这两条**不是回归**：用未改动基线对拍过（`530/2/25`，两条逐字相同）⇒ **基线自带 + 依赖真资产**。
-⚠️ **`passed` 数会随客户端版本漂移**（旧文里的 `606 / 2 / 23` 在当前 HEAD 复现不出来：实测 `591/2/23` 或 `667/2/21`）
+⚠️ **`passed` 数会随前置条件漂移**：缺 `assets` 时实测 `591/2/23` 或 `667/2/21`，不要拿别的机器上的数当基线
 ⇒ **判据只有"failed == 2 且就是这两条"，别拿 passed 数当判据**。
 模块全集与行号下界见 [`docs/02-module-map.md`](docs/02-module-map.md)。
 
