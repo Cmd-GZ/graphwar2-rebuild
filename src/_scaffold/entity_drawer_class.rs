@@ -30,6 +30,7 @@
 //! | 准备圈的**输入** | `draw` 从两张哈希表取中心的 x/y、半径、时钟 `V`、`map[i]`（栈槽 `[rsp+0xb0]/[rsp+0xa8]`、`[rsp+0x90]`，`map[i]` 在 `0x4b34d3`–`0x4b35ae` 那段读） | 调用方用 `set_ring()` / `set_ring_base()` 给 | 原版**观测**（`0x4b2e94`–`0x4b35b4`）；本类**我方接线**（`GraphwarBackend` 的 `pos_info_event` 没接） |
 //! | 准备圈的**坐标** | `PosInfo` 的第 1/2/3 个 f64 是否已是画布像素：**未知** | 按 [`ring_center_px`] 那条棋盘 → 像素投影（`k = size.x / 50`，与 sprite 同一条算式），半径乘同一个 `k` | **推断**（缺"PosInfo 的单位"这一条证据） |
 //! | 准备圈的**颜色** | 哈希表里的打包 RGB（`0x4b347a`） | 导出属性 `team_color`（`relayout` 也用它） | **我方接线**（队色表 `get_team_overview` 没接，`docs/16-client.md` §49.5 第 7 条） |
+//! | 准备圈的**实体顺序 / x,y,radius 来源** | `draw` 在 `0x4b2e32` 调 `GraphwarPlanePosManager::get_all_positions`（**散列序**），循环里 `0x4b314b` 逐 id `get_position` 取三份 f64；门是 `get_alive`(`0x454950`) + `is_on_turn`(`0x462b50`)（任务 41 新证） | 读本类持有的那张表：[`GraphwarPlanePosManager::positions_sorted`]（先 `get_all_positions` 再按 **id 升序**）→ `x/y/radius`；门用 `prep` 成员近似；**表空 / 开关关掉 ⇒ 回到 `prep` 那条代偿路径** | 原版读表**观测**（`docs/16` §46；第二处 `process` 在 `0x4b4f24`）；**排序是我方差异**（原版无排序调用） |
 //! | 子节点命名 | 3 个 sprite 是引擎自动名 `@Sprite2D@N`；名字标签是场景根名 `RichTextLabel`；本类自己挂在 `GraphwarPlane` 下时也是自动名 `@EntityDrawer@N` | 同：sprite **不命名**、名字标签叫 `RichTextLabel` | **观测**（`docs/16` §2.1.10 的节点树 dump） |
 //!
 //! ⇒ 这个类解决的是"**能不能真的建出一棵节点树、并把纯逻辑算出来的位置写进去**"，
@@ -53,6 +54,7 @@
 //!   @export team_color : int      # 打包队伍色（低字节 = R，见 entity_drawer::Color::from_packed_rgb）
 //!   @export texture_size : int    # **兜底**纯色贴图的边长（像素），默认 8
 //!   @export assets_root : String  # 资产根（默认 "res://assets"；空串 ⇒ 不碰磁盘，等价"没有 assets 的机器"）
+//!   @export pos_table_enabled : bool  # true（默认）= `_draw` 读位置表；false ⇒ 走 `prep` 代偿路径
 //!
 //!   spawn_entity(id: int, x: float, y: float) -> int   # 建 4 个子节点并摆位，返回建了几个（恒 4）
 //!   remove_entity(id: int) -> bool                     # queue_free 那 4 个子节点并丢掉句柄
@@ -75,6 +77,16 @@
 //!   clear_ring_base(id: int) -> bool              # 查不到 ⇒ H 恒 π/6（0x4b34e6 je 0x4b35b4）
 //!   clear_ring(id: int) -> bool                   # 这具士兵**不在**准备态 ⇒ 它的环一个图元都不发
 //!   ring_count() -> int
+//!
+//!   # ---- 位置表（`GraphwarPlanePosManager`，任务 41：`_draw`/`relayout` 的数据源）----
+//!   pos_set_position(id: int, x: float, y: float, radius: float) -> bool   # 写表 + 发 PosInfo(26)
+//!   pos_remove(id: int) -> bool                   # 删一格（只认 tag 14，不发事件）
+//!   pos_count() -> int
+//!   pos_ids_raw() -> PackedInt64Array             # get_all_positions() 的原序（**散列序**，观测用）
+//!   pos_ids_sorted() -> PackedInt64Array          # 排序版（id 升序；`_draw` 用的就是这个）
+//!   pos_get_position(id: int) -> PackedFloat64Array   # [pos_x, pos_y, radius]
+//!   pos_drawn_ids() -> PackedInt64Array           # 最近一次 `_draw` 实际画的 id 顺序
+//!   pos_event_count() -> int                      # 表的事件队列长度（set_position 每条 +1）
 //!
 //!   ready_call_count() / process_call_count() / resized_call_count() -> int
 //!   draw_call_count() -> int                      # `_draw` 被引擎调到几次
@@ -108,7 +120,9 @@
 //!    另外 `self.entities.get_mut(id)` 与 `self.relayout()` **不能写在同一个表达式里**
 //!    （`E0499`，两次可变借用），要先结束前者的借用。
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use godot::classes::image::Format;
 use godot::classes::{
@@ -119,6 +133,10 @@ use godot::obj::Singleton;
 use godot::prelude::*;
 
 use crate::entity_drawer::{self, EntityChildNode, Vec2 as BoardVec2};
+use crate::graphwar_event_queue::GraphwarEventQueue;
+use crate::graphwar_plane_pos_manager::{
+    GraphwarPlanePosManager, PlanePos, ENTITY_REMOVED_EVENT_TAG,
+};
 use crate::graphwar_texture_loader::{GraphwarTextureLoader, TextureKind};
 use crate::player_showcase::{DEFAULT_FACE, DEFAULT_HAT, DEFAULT_SKIN};
 
@@ -130,13 +148,19 @@ use crate::player_showcase::{DEFAULT_FACE, DEFAULT_HAT, DEFAULT_SKIN};
 //
 // ```text
 // GraphwarGraphicsManager::set_{skin,face,hat}_graphics   x86 0x468c70/0x468b60/0x468a50
-//   → HashMap<u32 /*player_id*/, String /*名字*/>        +0x18 / +0x48 / +0x78
+//   → HashMap<u32 /*实体 id*/, String /*名字*/>          +0x18 / +0x48 / +0x78
 //   → 事件 51 / 53 / 55（skin|face|hat_graphics_info_event）
 //   → EntityDrawer::ready 订了这三张事件                  x86 0x4b4130
-//   → EntityDrawer 自己的 HashMap<i32, String>（+0x30）   ← 名字
+//        ⚠️ 订阅闭包**只置** `self[+0x108] = 1`（x86 0x4b4990），不写任何名字表
+//   → EntityDrawer::get_entity_*_sprite **当场**取名字    x86 0x4bb6b0 / 0x4bb0a0 / 0x4b9e70
+//        └─ get_module::<GraphwarGraphicsManager>（x86 0x46a8e0）+ 内联 get_*_graphics(实体 id)
+//           三张表分别读 ctrl@+0x18/+0x48/+0x78（RcBox 数据从 +0x18 起 ⇒ 指令里是 +0x30/+0x60/+0x90）
 //   → GraphwarTextureLoader::get_{skin,face,hat}_texture   arm64 0x40c1cc/0x40c0a4/0x40bf7c
 //       表 +0x150 / +0x180 / +0x1b0，键是名字（String）
 //   → Sprite2D.set_texture(tex)                          x86 0x4bb6b0 里内联的那段
+//
+// ⇒ **旧说法"EntityDrawer 有 HashMap<i32,String>（+0x30）"作废**（2026-11-08，任务 42）：
+//   名字不落在 EntityDrawer 里，每次取图现查。证据见 `docs/16-client.md` §46.3。
 // ```
 //
 // **名字从哪来**（不是玩家 id、不是队色）：皮肤/脸/帽子三张表都以**字符串**为键
@@ -463,6 +487,7 @@ fn color_of(c: entity_drawer::Color) -> Color {
 /// `base` = `map[i]`（`0x4b3586` 的 `subsd`）。
 ///
 /// **原版是 `HashMap<i32, …>`**；这里用 `BTreeMap`（遍历顺序稳定，断言可复现）。
+#[derive(Clone, Copy, Debug)]
 struct PrepRing {
     /// 棋盘坐标 `(x, y)`（与 [`EntityDrawer::spawn_entity`] 同口径）。
     board: BoardVec2,
@@ -526,6 +551,14 @@ pub struct EntityDrawer {
     #[export]
     assets_root: GString,
 
+    /// **位置表开关**（任务 41）：`true` = `_draw` 读 [`Self::pos_manager`] 这张表；
+    /// `false` = 回到代偿路径（[`Self::prep`] 自己那套坐标，`set_ring` 填的）。
+    ///
+    /// **这是我方接线**：原版没有这个开关——`draw` 无条件读位置表（`0x4b2e32`）。
+    /// 留在导出属性上是为了"表空了/接线坏了还能退回上一轮的行为"，验收脚本两种都断言。
+    #[export]
+    pos_table_enabled: bool,
+
     /// 实体 id → 4 个子节点。`BTreeMap` 而不是 `HashMap`：遍历顺序稳定，日志/断言可复现。
     entities: BTreeMap<i64, EntityNodes>,
 
@@ -554,7 +587,29 @@ pub struct EntityDrawer {
     ///
     /// `_draw` **只画这张表里的实体**（原版 `draw` 也只遍历自己那两张哈希表）。
     /// 空表 ⇒ 一个绘制图元都不发 —— 这就是"关掉准备态就不画"的那条分支。
+    ///
+    /// 任务 41 起它**只是门 + 时钟**：实体的 id 顺序与 `x/y/radius` 改由
+    /// [`Self::pos_manager`] 的位置表给（表空时仍用这里的坐标，即代偿路径）。
     prep: BTreeMap<i64, PrepRing>,
+
+    /// **位置表**（原版 `GraphwarPlanePosManager`，24 B / `docs/16` §46）。
+    ///
+    /// 原版 `EntityDrawer::draw`（x86 `0x4b2890`）从根节点取它的路径是：
+    ///
+    /// ```text
+    /// [root+0x1668] → 游戏客户端单元 → [+0x238] 模块容器
+    ///   → get_module::<GraphwarPlanePosManager>(0x46ad30) → Rc<RefCell<Manager>>
+    ///   → get_all_positions(0x3c66a0) → 逐 id get_position(0x3c62b0)
+    /// ```
+    ///
+    /// **我方接线差异**：本任务不许改 `root_wiring.rs` / `graphwar_root_node_class.rs`
+    /// （容器取回那条路在那边），所以本类**自己持有一个**真类型的
+    /// `Rc<RefCell<GraphwarPlanePosManager>>`；表的内容由 [`Self::pos_set_position`] 写入
+    /// （等价于原版 `pos_info_event` 那条生产者）。**不是**"从容器里取回来"的那一份。
+    pos_manager: Rc<RefCell<GraphwarPlanePosManager>>,
+
+    /// 最近一次 `_draw` **实际画出来的实体 id**，按发出顺序（观测点：排序有没有生效）。
+    last_drawn_ids: Vec<i64>,
 
     /// `_draw` 被引擎调用过几次（观测点）。
     draw_calls: i64,
@@ -573,6 +628,24 @@ pub struct EntityDrawer {
     process_calls: i64,
     /// `on_resized` 被调用过几次（观测点）。
     resized_calls: i64,
+
+    // ---- 内核事件通道（任务 42，§46）----
+    /// 真的订上去几条（原版 `ready` 里那 6 条；`0` = 还没调 `kernel_subscribe`）。
+    kernel_subscriptions: i64,
+    /// 原版的脏标志 `+0x108`（六条订阅闭包唯一会写的那一格；`process` 末尾清 0）。
+    kernel_dirty: bool,
+    /// `kernel_pump()` 被调过几次。
+    kernel_pumps: i64,
+    /// 累计投递给本类的订阅事件条数。
+    kernel_events: i64,
+    /// 累计"脏了 → 回表里拉"的次数。
+    kernel_pulls: i64,
+    /// 累计从位置表拉到的条目数。
+    kernel_pulled: i64,
+    /// 累计因为外观表变了而重贴图的实体数。
+    kernel_graphics_applied: i64,
+    /// 最近投递的事件判别值（最多留 64 条）。
+    kernel_last_tags: Vec<i64>,
 }
 
 #[godot_api]
@@ -583,6 +656,7 @@ impl IControl for EntityDrawer {
             team_color: DEFAULT_TEAM_COLOR,
             texture_size: DEFAULT_TEXTURE_SIZE as i64,
             assets_root: GString::from(DEFAULT_ASSETS_ROOT),
+            pos_table_enabled: true,
             entities: BTreeMap::new(),
             // 原版这个对象由 `GraphwarRootNode` 构造一次（arm64 `0x39a44c`）；本切片每实例一份。
             loader: GraphwarTextureLoader::new(),
@@ -591,6 +665,12 @@ impl IControl for EntityDrawer {
             fallback_textures: 0,
             missing_assets: Vec::new(),
             prep: BTreeMap::new(),
+            // 位置表：原版从模块容器取回（`0x4b2b28`），本类自己持一份（见字段文档）。
+            // 事件队列是原版 `new` 的第二个实参（`Rc<RefCell<GraphwarEventQueue>>`）。
+            pos_manager: GraphwarPlanePosManager::new(Rc::new(RefCell::new(
+                GraphwarEventQueue::new(),
+            ))),
+            last_drawn_ids: Vec::new(),
             draw_calls: 0,
             arc_total: 0,
             polygon_total: 0,
@@ -599,6 +679,14 @@ impl IControl for EntityDrawer {
             ready_calls: 0,
             process_calls: 0,
             resized_calls: 0,
+            kernel_subscriptions: 0,
+            kernel_dirty: false,
+            kernel_pumps: 0,
+            kernel_events: 0,
+            kernel_pulls: 0,
+            kernel_pulled: 0,
+            kernel_graphics_applied: 0,
+            kernel_last_tags: Vec::new(),
         }
     }
 
@@ -658,6 +746,9 @@ impl IControl for EntityDrawer {
     ///
     /// ⚠️ **要画东西得先有准备态**：`prep` 空表时这里一条图元都不发（原版也只看自己的哈希表）。
     /// 谁来填这张表 = 还没接的 `pos_info_event`（`entity_drawer::READY_EVENTS` 第 1 个）。
+    ///
+    /// **任务 41**：循环的 id / 顺序 / `x,y,radius` 改由位置表给
+    /// （[`Self::rings_for_frame`]），`prep` 退化成"门 + 时钟"。
     fn draw(&mut self) {
         self.draw_calls += 1;
 
@@ -669,10 +760,14 @@ impl IControl for EntityDrawer {
         let scale = ring_canvas_scale(control_size);
         let ring_color = entity_drawer::Color::from_packed_rgb(packed);
 
+        // **位置表就接在这里**：原版 `draw` 的循环头（`0x4b3130`）就是从
+        // `get_all_positions` 的 `Vec<u32>` 里取 id（见 `rings_for_frame` 的文档）。
+        let rings = self.rings_for_frame();
+
         let mut arcs: Vec<ArcRecord> = Vec::new();
         let mut polys: Vec<(Vec<Vector2>, Color)> = Vec::new();
 
-        for prep in self.prep.values() {
+        for (_id, prep) in &rings {
             let center_px = ring_center_px(control_size, packed, prep.board);
             let input = entity_drawer::EntityRingInput {
                 center: prep.board,
@@ -770,6 +865,8 @@ impl IControl for EntityDrawer {
         self.polygon_total += poly_n;
         self.last_arcs = arcs;
         self.last_polys = polys.into_iter().map(|(p, _)| p).collect();
+        // 观测点：这一帧**实际画的 id 顺序**（验收脚本拿它断言"排序生效"）。
+        self.last_drawn_ids = rings.iter().map(|(id, _)| *id).collect();
     }
 }
 
@@ -895,7 +992,24 @@ impl EntityDrawer {
         let packed = self.team_color as u32;
         let control_size = BoardVec2::new(size.x as f64, size.y as f64);
 
-        for entity in self.entities.values_mut() {
+        // **同一条位置表的第二个消费方**（任务 41）：原版 `EntityDrawer::process`
+        // （x86 `0x4b4b60`）在 `0x4b4f24` 调 `get_all_positions`、`0x4b5004` 调
+        // `get_position`，拿到的 x/y 就是 `update_sprite` 用的那两个值（sprite 与名字标签
+        // 都按它摆）。⇒ 表里有这个 id 就以表为准；表空/开关关掉 ⇒ 用实体自己的坐标。
+        let table = if self.pos_table_enabled {
+            self.pos_manager.borrow().positions_sorted()
+        } else {
+            Vec::new()
+        };
+
+        for (id, entity) in self.entities.iter_mut() {
+            // 表命中 ⇒ 棋盘坐标换成表里的 x/y（`[*]` 是 `PlanePos = [f64;3]`）；
+            // 不命中 ⇒ 仍用 `spawn_entity` / `set_ring` 给的那一份（代偿路径）。
+            // 只影响本帧的摆位，**不写回** `entity.board`（表清空后不会留残值）。
+            let board = match table.iter().find(|(table_id, _)| *table_id as i64 == *id) {
+                Some((_, pos)) => BoardVec2::new(pos[0], pos[1]),
+                None => entity.board,
+            };
             // 三个贴图层：位置 / 缩放 / 水平翻面全部来自 `entity_drawer::sprite_transform`。
             for sprite in &mut entity.sprites {
                 // 原版每一层都读自己贴图的宽度（`Texture2D::get_width`）。
@@ -907,8 +1021,8 @@ impl EntityDrawer {
                     control_size,
                     packed,
                     tex_width,
-                    entity.board.x,
-                    entity.board.y,
+                    board.x,
+                    board.y,
                 );
                 sprite.set_position(Vector2::new(
                     transform.position.x as f32,
@@ -930,8 +1044,8 @@ impl EntityDrawer {
                 BoardVec2::new(label_size.x as f64, label_size.y as f64),
                 BoardVec2::new(min_size.x as f64, min_size.y as f64),
                 packed,
-                entity.board.x,
-                entity.board.y,
+                board.x,
+                board.y,
                 alpha,
             );
             entity.name_label.set_position(Vector2::new(
@@ -991,6 +1105,167 @@ impl EntityDrawer {
     #[func]
     fn ready_call_count(&self) -> i64 {
         self.ready_calls
+    }
+
+    /// 这一帧要画哪些实体、按什么顺序（**位置表接线**，任务 41）。
+    ///
+    /// 原版 `EntityDrawer::draw` 的循环头（x86 `0x4b3130`）就是从
+    /// `PlanePosManager::get_all_positions`（`0x4b2e32`）返回的 `Vec<u32>` 里逐个取 id：
+    ///
+    /// ```text
+    /// 0x4b3135  mov  r15d, [rcx]      ; id = *it（**原序**，那一段没有排序调用）
+    /// 0x4b314b  call get_position     ; None ⇒ 跳过（0x4b3155 jne 0x4b37f0）
+    /// 0x4b315b…0x4b317f               ; x/y/radius ← 三份 f64（[rsp+0xb0]/[rsp+0xa8]/[rsp+0x60]）
+    /// 0x4b3199 call get_alive         ; 门 1（GraphwarLifeManager，0x454950）
+    /// 0x4b31ac call is_on_turn        ; 门 2（GraphwarTurnManager，0x462b50）
+    /// ```
+    ///
+    /// 本函数的规则（每一条都写清出处）：
+    ///
+    /// 1. **表非空 ⇒ 表驱动**：id 与顺序来自
+    ///    [`GraphwarPlanePosManager::positions_sorted`]（= `get_all_positions` 后按 id 升序）。
+    ///    排序是**我方差异**：原版直接用散列序（顺序 `未知`），见 `docs/16` §46 与本文件头。
+    /// 2. **门**：只有"准备态"的实体才画。原版那两个门是 `get_alive` + `is_on_turn`（上表），
+    ///    本类没有那两个 manager ⇒ 用 `prep` 成员判定（**推断**：与"准备态"同集合）。
+    /// 3. **`V` / `base` 仍取自 `prep`**：原版 `V` 来自
+    ///    `GraphwarTickHandler::get_fractional_tick`（`0x519530`，同一段 `0x4b2dc3` 取的模块），
+    ///    位置表里只有三份 f64、没有时钟。⇒ 表里有、`prep` 里没有的实体**不画**
+    ///    （门不满足；`V`/`base` 只对画出来的那些有用）。
+    /// 4. **表空（或 [`Self::pos_table_enabled`] = `false`）⇒ 代偿路径**：用 `prep` 自己那套
+    ///    坐标（`set_ring` 填的，`play_screen.gd::_sync_entities` 走的就是它）—— 这条路径
+    ///    **保留可回退**，本轮没有删。
+    fn rings_for_frame(&self) -> Vec<(i64, PrepRing)> {
+        if self.pos_table_enabled {
+            let table = self.pos_manager.borrow().positions_sorted();
+            if !table.is_empty() {
+                return table
+                    .into_iter()
+                    .filter_map(|(id, pos)| {
+                        let id = id as i64;
+                        // 门：准备态（原版是 get_alive + is_on_turn，见文档第 2 条）。
+                        let known = self.prep.get(&id)?;
+                        Some((
+                            id,
+                            PrepRing {
+                                // x/y/radius **来自位置表**（原版三条 movsd）。
+                                board: BoardVec2::new(pos[0], pos[1]),
+                                pos_radius: pos[2],
+                                // 时钟与起始量仍来自 `prep`（见文档第 3 条）。
+                                v: known.v,
+                                base: known.base,
+                            },
+                        ))
+                    })
+                    .collect();
+            }
+        }
+        // 代偿路径：`prep` 是 `BTreeMap` ⇒ 天然 id 升序，与上一轮行为逐字相同。
+        self.prep.iter().map(|(id, prep)| (*id, *prep)).collect()
+    }
+
+    // -----------------------------------------------------------------------
+    // 位置表（`GraphwarPlanePosManager`，任务 41）
+    // -----------------------------------------------------------------------
+    //
+    // 原版没有这一组 `#[func]`：表由 `pos_info_event` 的生产者写（`GraphwarRemoteEventHandler`
+    // → `set_position`），绘制侧（`draw`/`process`）只读。本类自己持有那张表（见字段文档），
+    // 所以**读写两端都在这里**：下面的 `pos_set_position` / `pos_remove` 等价于生产者，
+    // 其余是只读观测口（验收脚本用它断言"读的是这张表、顺序是排过序的"）。
+
+    /// 往位置表写一格：`set_position(id, (x, y, radius))`（原版 x86 `0x3c64c0`）。
+    ///
+    /// 三份 f64 的语义与线格式 `PosInfo` 的 `pos_x` / `pos_y` / `radius` 对齐
+    /// （`PlanePos` 的精确写法仍是**推断**，见 `graphwar_plane_pos_manager` 文件头 §四）。
+    /// 副作用与原版一致：**同时发一条 `PosInfo`(tag 26)** 到本表的事件队列
+    /// （[`Self::pos_event_count`] 数得到）。
+    ///
+    /// 返回 `false` = `id` 超出 `u32`（原版的键就是 `u32`）。
+    #[func]
+    fn pos_set_position(&mut self, id: i64, x: f64, y: f64, radius: f64) -> bool {
+        let Ok(id) = u32::try_from(id) else {
+            return false;
+        };
+        let pos: PlanePos = [x, y, radius];
+        self.pos_manager.borrow().set_position(id, pos);
+        self.base_mut().queue_redraw();
+        true
+    }
+
+    /// 从位置表删一格：`handle_entity_removed_event`（原版 x86 `0x3c6b40`，只认 tag 14）。
+    ///
+    /// 返回"原来有没有"（原版这条路径**不发事件**）。
+    #[func]
+    fn pos_remove(&mut self, id: i64) -> bool {
+        let Ok(id) = u32::try_from(id) else {
+            return false;
+        };
+        let removed = self
+            .pos_manager
+            .borrow()
+            .handle_entity_removed_event(ENTITY_REMOVED_EVENT_TAG, id)
+            .unwrap_or(false);
+        if removed {
+            self.base_mut().queue_redraw();
+        }
+        removed
+    }
+
+    /// 位置表里有几个实体（= `get_all_positions().len()`）。
+    #[func]
+    fn pos_count(&self) -> i64 {
+        self.pos_manager.borrow().get_all_positions().len() as i64
+    }
+
+    /// `get_all_positions()` 的**原序**（散列序，`未知`）—— 只用于**观测**"原版那个顺序"，
+    /// 绘制顺序**不许**依赖它。
+    #[func]
+    fn pos_ids_raw(&self) -> PackedInt64Array {
+        let mut out = PackedInt64Array::new();
+        for id in self.pos_manager.borrow().get_all_positions() {
+            out.push(id as i64);
+        }
+        out
+    }
+
+    /// [`GraphwarPlanePosManager::get_all_positions_sorted`]：id 升序 —— **`_draw` 用的就是这个**。
+    #[func]
+    fn pos_ids_sorted(&self) -> PackedInt64Array {
+        let mut out = PackedInt64Array::new();
+        for id in self.pos_manager.borrow().get_all_positions_sorted() {
+            out.push(id as i64);
+        }
+        out
+    }
+
+    /// 表里某个 id 的三份 f64：`[pos_x, pos_y, radius]`；没有这一格 ⇒ 空数组。
+    #[func]
+    fn pos_get_position(&self, id: i64) -> PackedFloat64Array {
+        let mut out = PackedFloat64Array::new();
+        let Ok(id) = u32::try_from(id) else {
+            return out;
+        };
+        if let Some(pos) = self.pos_manager.borrow().get_position(id) {
+            for v in pos {
+                out.push(v);
+            }
+        }
+        out
+    }
+
+    /// 最近一次 `_draw` **实际画的实体 id 顺序**（观测点：排序有没有生效）。
+    #[func]
+    fn pos_drawn_ids(&self) -> PackedInt64Array {
+        let mut out = PackedInt64Array::new();
+        for id in &self.last_drawn_ids {
+            out.push(*id);
+        }
+        out
+    }
+
+    /// 位置表那条事件队列里积了几条（`set_position` 每条 +1，tag 26 `PosInfo`）。
+    #[func]
+    fn pos_event_count(&self) -> i64 {
+        self.pos_manager.borrow().event_queue.borrow().len() as i64
     }
 
     // -----------------------------------------------------------------------
@@ -1183,24 +1458,35 @@ impl EntityDrawer {
 
     /// 换一个实体的外观（三张贴图的名字），返回 `false` = 没有这个实体。
     ///
-    /// **这是我方接线**：原版没有这个 `#[func]`——名字由 `ready` 订的三个 graphics 事件写进
-    /// `HashMap<i32, String>`（`+0x30`）：`skin_graphics_info_event`(51) / `face_…`(53) /
-    /// `hat_…`(55)，发信方是 `GraphwarGraphicsManager`（`player_id → 名字`）。
-    /// 事件通道还没接，所以先由调用方直接给名字。
+    /// **这是我方接线**：原版没有这个 `#[func]`。原版的名字**不在** `EntityDrawer` 的任何字段里——
+    /// `get_entity_{skin,face,hat}_sprite` 每次取图都当场 `get_module::<GraphwarGraphicsManager>`
+    /// 再查那三张表（`+0x18/+0x48/+0x78`，键 = 实体 id），见 `docs/16-client.md` §46.3。
+    /// 真链路（事件 → `kernel_pump` 拉表 → `apply_look`）已经接上；这个入口留给调用方直接指定名字。
     ///
     /// 名字就是 `GraphwarTextureLoader` 三张表的键：皮肤 23 个、脸 17 个、帽子 28 个
     /// （`src/graphwar_texture_loader.rs` 的 `SKINS` / `FACES` / `HATS`）。靶子用
     /// `("target", "no_face", "no_hat")`——`res://skins/target.svg` 就在皮肤表里。
     #[func]
     fn set_entity_look(&mut self, id: i64, skin: GString, face: GString, hat: GString) -> bool {
+        self.apply_look(
+            id,
+            EntityLook {
+                skin: skin.to_string(),
+                face: face.to_string(),
+                hat: hat.to_string(),
+            },
+        )
+    }
+
+    /// 真正换装的那一半：写 `look` + 三张 `Sprite2D.texture` + 重摆。
+    ///
+    /// [`Self::set_entity_look`]（手工入口）与内核拉取（[`Self::kernel_pump`] 的第 ③ 步，
+    /// 原版 `get_entity_*_sprite` 那条路）**共用这一份**，所以两条路的贴图/缩放/relayout
+    /// 一定一致。
+    fn apply_look(&mut self, id: i64, look: EntityLook) -> bool {
         if !self.entities.contains_key(&id) {
             return false;
         }
-        let look = EntityLook {
-            skin: skin.to_string(),
-            face: face.to_string(),
-            hat: hat.to_string(),
-        };
 
         // 先把三张贴图取出来（`texture_for` 要 `&mut self`），再改实体——
         // 否则 `self.entities.get_mut(id)` 与 `self.texture_for(…)` 会撞两次可变借用（E0499）。
@@ -1384,6 +1670,271 @@ impl EntityDrawer {
         }
         self.missing_assets.push(rel.clone());
         godot_warn!("EntityDrawer: 名字 {name:?} 不在 GraphwarTextureLoader 的 {dir} 表里（退化成纯色）");
+    }
+
+    // -----------------------------------------------------------------------
+    // 内核事件通道（任务 42，`docs/16-client.md` §46）—— **本文件唯一的一处新增接线**
+    // -----------------------------------------------------------------------
+    //
+    // 原版这条链（逐环节地址见 §46）：
+    //
+    // ```text
+    // ready  (x86 0x4b4130 / arm64 0x4bab44)
+    //   └─ 6 × GraphwarBackend::subscribe_to_event   x86 0x514b40 / arm64 0x406e80
+    //        pos_info_event / life_info_event / entity_removed_event /
+    //        skin|face|hat_graphics_info_event     (entity_drawer::READY_EVENTS)
+    //        ⇒ 六条订阅共用**同一个闭包**   x86 0x4b4990 / arm64 0x4bb378
+    //          闭包体只有一句： self[+0x108] = 1   （x86 0x4b4a13 `mov byte [rax+0x108],1`）
+    // process (x86 0x4b4b60) / draw (x86 0x4b2890)
+    //   └─ **拉**：PlanePosManager::get_all_positions/get_position（x86 0x3c66a0 / 0x3c62b0）
+    //             get_entity_*_sprite → GraphicsManager 的三张表（x86 0x46a8e0 + 内联查表）
+    //   └─ process 末尾 self[+0x108] = 0         （x86 0x4b5409）
+    // ```
+    //
+    // ⇒ **事件不带数据**，它只是"脏"信号；数据是每帧从 manager 的表里拉的。
+    // 这就是把"按回合状态代填 prep / 按 id 判靶子代填外观"换成真链路的那一步：
+    // `prep` 与 `EntityLook` 现在由**位置表/外观表**填，不再由调用方猜。
+    //
+    // ⚠️ 我方差异（**scaffold**）：原版拿 manager 的路径是
+    // `节点 → GraphwarRootNode +0x1668 → GraphwarBackend +0x220 → 容器 → get_module`；
+    // 本层没有那条对象图 ⇒ 走 `_scaffold::root_wiring` 的 thread-local 通道
+    // （`install_kernel_bus` / `kernel_bus`），两步 `get_module` 仍是原版语义。
+
+    /// 这个类订阅的那 6 条事件（= [`entity_drawer::READY_EVENTS`] 的判别值）。
+    ///
+    /// `READY_EVENTS` 是**名字**（`.rodata` 原文），这里把它换成 `0x3d38f0` 解出的判别值；
+    /// 单测 `kernel_events_are_the_six_ready_names` 钉住两边同源。
+    fn is_kernel_event(tag: u16) -> bool {
+        entity_drawer::READY_EVENTS.iter().any(|name| {
+            crate::events::Event::from_dispatch_name(name)
+                .is_some_and(|event| event.wire_tag() == tag)
+        })
+    }
+
+    /// 订阅那 6 条事件（= 原版 `ready` 里的 6 次 `GraphwarBackend::subscribe_to_event`）。
+    ///
+    /// 返回真的订上去几条（原版 = 6）。第一次调用会**装**一条内核事件通道
+    /// （[`super::root_wiring::install_kernel_bus`]，幂等）。
+    #[func]
+    fn kernel_subscribe(&mut self) -> i64 {
+        let bus = super::root_wiring::install_kernel_bus();
+        let mut bus = bus.borrow_mut();
+        let mut n = 0;
+        for name in entity_drawer::READY_EVENTS {
+            if bus.subscribe(name) {
+                n += 1;
+            }
+        }
+        self.kernel_subscriptions = n;
+        n
+    }
+
+    /// 往位置表里写一格：真调 `GraphwarPlanePosManager::set_position`（x86 `0x3c64c0`）。
+    ///
+    /// **这是给验收脚本用的生产端入口**（原版这条调用在 `graphwar_remote_event_handler`
+    /// x86 `0x3e2830` 的 `0x3e3347`，本 crate 还没有那个模块）。返回 `false` = 通道没装。
+    #[func]
+    fn kernel_push_position(&mut self, id: i64, x: f64, y: f64, radius: f64) -> bool {
+        let Ok(id) = u32::try_from(id) else {
+            return false;
+        };
+        match super::root_wiring::kernel_bus() {
+            Some(bus) => bus.borrow().set_position(id, [x, y, radius]),
+            None => false,
+        }
+    }
+
+    /// 往外观表里写一格：真调 `GraphwarGraphicsManager::set_{skin,face,hat}_graphics`。
+    ///
+    /// `layer`：0 皮肤 / 1 脸 / 2 帽子（对应三张表 `+0x18` / `+0x48` / `+0x78`）。
+    /// **验收用的生产端入口**（原版调用点在远端事件处理器与 game_state_manager，见 §46.3）。
+    #[func]
+    fn kernel_push_graphics(&mut self, id: i64, layer: i64, name: GString) -> bool {
+        let Ok(id) = u32::try_from(id) else {
+            return false;
+        };
+        let kind = match layer {
+            0 => crate::graphwar_graphics_manager::GraphicsKind::Skin,
+            1 => crate::graphwar_graphics_manager::GraphicsKind::Face,
+            2 => crate::graphwar_graphics_manager::GraphicsKind::Hat,
+            _ => return false,
+        };
+        match super::root_wiring::kernel_bus() {
+            Some(bus) => bus.borrow().set_graphics(kind, id, &name.to_string()),
+            None => false,
+        }
+    }
+
+    /// **一帧的通道处理**：先投递（只置脏），脏了就回表里拉（位置 + 外观）。
+    ///
+    /// 返回这一次投递给本类的订阅事件条数（`-1` = 通道没装）。
+    /// 拉的动作与返回值分开记（[`Self::kernel_pulled`] / [`Self::ring_count`]），
+    /// 因为原版这两步在**不同函数**里（`process_events` 置脏、`process`/`draw` 拉）。
+    #[func]
+    fn kernel_pump(&mut self) -> i64 {
+        let Some(bus) = super::root_wiring::kernel_bus() else {
+            return -1;
+        };
+
+        // ① 投递：原版 `GraphwarEventHandler::process_events`（arm64 `0x486970`）→ 六条闭包
+        let delivered = {
+            let mut bus = bus.borrow_mut();
+            bus.pump()
+        };
+        let mut mine = 0i64;
+        for event in &delivered {
+            let tag = event.wire_tag();
+            self.kernel_last_tags.push(i64::from(tag));
+            if Self::is_kernel_event(tag) {
+                mine += 1;
+            }
+        }
+        // 观测口只留最近 64 条（长会话里别无限长）
+        if self.kernel_last_tags.len() > 64 {
+            let drop = self.kernel_last_tags.len() - 64;
+            self.kernel_last_tags.drain(..drop);
+        }
+        self.kernel_pumps += 1;
+        self.kernel_events += mine;
+        if mine > 0 {
+            // 原版闭包唯一的一句：`self[+0x108] = 1`
+            self.kernel_dirty = true;
+        }
+
+        // ② 拉位置表（原版 `draw` 0x4b2e32/0x4b314b、`process` 0x4b4f24/0x4b5004）
+        //
+        // ⚠️ **每次都拉**，不是"脏了才拉"：原版 `draw` 里 `get_all_positions` / `get_position`
+        // 是无条件调用的（`0x4b2e32` / `0x4b314b` 在直线代码上，前面没有拿 `+0x108` 做分支）；
+        // `+0x108` 那个脏标志在 `process` 里只管"要不要建新实体节点"那一段（`0x4b5044`）。
+        let positions = bus.borrow().positions();
+        let clock = bus.borrow().fractional_tick();
+        let mut live: Vec<i64> = Vec::with_capacity(positions.len());
+        for (id, pos) in positions {
+            let id = i64::from(id);
+            live.push(id);
+            // `map[i]`（`base`）照旧由 `set_ring_base` 那条路给，拉的时候**保留**（§46.6 未解项）
+            let base = self.prep.get(&id).and_then(|p| p.base);
+            self.prep.insert(
+                id,
+                PrepRing {
+                    board: BoardVec2::new(pos[0], pos[1]),
+                    pos_radius: pos[2],
+                    v: clock,
+                    base,
+                },
+            );
+        }
+        // 表里没有的 ⇒ 不再画。原版 `draw` 遍历的就是这张表的**全部键**（`get_all_positions`）。
+        self.prep.retain(|id, _| live.contains(id));
+        self.kernel_pulled += live.len() as i64;
+
+        // ③ 拉外观表（原版 `get_entity_{skin,face,hat}_sprite` 里那三次 `get_module` + 内联查表）
+        let skins = bus.borrow().graphics(crate::graphwar_graphics_manager::GraphicsKind::Skin);
+        let faces = bus.borrow().graphics(crate::graphwar_graphics_manager::GraphicsKind::Face);
+        let hats = bus.borrow().graphics(crate::graphwar_graphics_manager::GraphicsKind::Hat);
+        let mut looks: BTreeMap<i64, EntityLook> = BTreeMap::new();
+        for (id, name) in skins {
+            looks.entry(i64::from(id)).or_insert_with(EntityLook::default_look).skin = name;
+        }
+        for (id, name) in faces {
+            looks.entry(i64::from(id)).or_insert_with(EntityLook::default_look).face = name;
+        }
+        for (id, name) in hats {
+            looks.entry(i64::from(id)).or_insert_with(EntityLook::default_look).hat = name;
+        }
+        for (id, look) in looks {
+            let changed = self.entities.get(&id).is_some_and(|entity| entity.look != look);
+            if changed {
+                self.apply_look(id, look);
+                self.kernel_graphics_applied += 1;
+            }
+        }
+
+        // ④ 每帧末尾清脏（原版 `process` x86 `0x4b5409` `mov byte [rbx+0x108],0`）——
+        //    标志只活到"这一帧处理完"，所以 `kernel_dirty()` 读的是"上一次 pump 之后有没有新事件"。
+        self.kernel_dirty = false;
+        self.kernel_pulls += 1;
+        self.base_mut().queue_redraw();
+        mine
+    }
+
+    /// 摆虚拟时钟（`V` = 原版 `draw` 里 `0x4b2e10 call 0x519530` 那个读数）。
+    ///
+    /// **我方接线口**（同 `_scaffold::graphwar_plane_class` 的 `set_fractional_tick`）：
+    /// 容器里那个 `GraphwarTickHandler` 的基准是 `(0, 0)`，真读数会是 epoch 量级；
+    /// 验收要可复现的角度就必须能把时钟摆到指定读数。`NaN` = 恢复读 tick handler。
+    #[func]
+    fn kernel_set_clock(&mut self, tick: f64) -> bool {
+        let Some(bus) = super::root_wiring::kernel_bus() else {
+            return false;
+        };
+        bus.borrow_mut()
+            .set_clock(if tick.is_nan() { None } else { Some(tick) });
+        true
+    }
+
+    /// 时钟读数来自哪儿（`"override"` / `"tick_handler"` / `"none"`）。
+    #[func]
+    fn kernel_clock_source(&mut self) -> GString {
+        match super::root_wiring::kernel_bus() {
+            Some(bus) => {
+                let source = bus.borrow().clock_source();
+                GString::from(source)
+            }
+            None => GString::from("none"),
+        }
+    }
+
+    /// 原版的"脏"标志 `+0x108`（六条订阅闭包唯一会写的那一格）。
+    #[func]
+    fn kernel_dirty(&self) -> bool {
+        self.kernel_dirty
+    }
+
+    /// `kernel_subscribe()` 真的订上去几条（原版 = 6）。
+    #[func]
+    fn kernel_subscriptions(&self) -> i64 {
+        self.kernel_subscriptions
+    }
+
+    /// `kernel_pump()` 被调过几次。
+    #[func]
+    fn kernel_pumps(&self) -> i64 {
+        self.kernel_pumps
+    }
+
+    /// 累计**投递给本类**的订阅事件条数。
+    #[func]
+    fn kernel_events(&self) -> i64 {
+        self.kernel_events
+    }
+
+    /// 累计"因为脏了而回表里拉"的次数。
+    #[func]
+    fn kernel_pulls(&self) -> i64 {
+        self.kernel_pulls
+    }
+
+    /// 累计从位置表里拉到的条目数（每次拉累加这个 ID 的总条数）。
+    #[func]
+    fn kernel_pulled(&self) -> i64 {
+        self.kernel_pulled
+    }
+
+    /// 累计因为外观表变了而重贴图的实体数。
+    #[func]
+    fn kernel_graphics_applied(&self) -> i64 {
+        self.kernel_graphics_applied
+    }
+
+    /// 最近若干次投递的事件判别值（按投递顺序，最多保留 64 条）。
+    #[func]
+    fn kernel_last_tags(&self) -> PackedInt64Array {
+        let mut out = PackedInt64Array::new();
+        for tag in self.kernel_last_tags.iter().rev().take(64).rev() {
+            out.push(*tag);
+        }
+        out
     }
 }
 
@@ -1650,5 +2201,27 @@ mod tests {
             entity_drawer::half_angle(0.0, Some(0.0)),
             entity_drawer::HALF_ANGLE_MIN_RAD
         );
+    }
+
+    /// 通道订阅的那 6 条事件 = `ready` 里那 6 个名字（`0x1c2a95..`），判别值逐条对上。
+    ///
+    /// 这条把**名字**（`.rodata` 原文，`entity_drawer::READY_EVENTS`）与**判别值**
+    /// （`0x3d38f0` 解出来的 `src/events.rs`）钉在一起——两边任何一边改了这里就红。
+    #[test]
+    fn kernel_events_are_the_six_ready_names() {
+        let tags: Vec<u16> = entity_drawer::READY_EVENTS
+            .iter()
+            .map(|name| {
+                crate::events::Event::from_dispatch_name(name)
+                    .unwrap_or_else(|| panic!("{name} 不在 0x3d38f0 的派发表里"))
+                    .wire_tag()
+            })
+            .collect();
+        assert_eq!(tags, vec![26, 27, 14, 51, 53, 55], "pos/life/removed/skin/face/hat");
+        for tag in tags {
+            assert!(EntityDrawer::is_kernel_event(tag), "tag {tag} 应被认成订阅事件");
+        }
+        // 反例：`TurnInfo`(43) 不在那 6 条里（原版 `ready` 里也没有它）
+        assert!(!EntityDrawer::is_kernel_event(43));
     }
 }

@@ -7,14 +7,14 @@
 # tool_version: 1
 # binary_sha256: 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
 # funcstarts_sha256: b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a
-# src_tree_sha256: b105172e09682866bd741faefcaa792dc212c106abe68f0b942ea91d846d3057
+# src_tree_sha256: b88a93c842537c4c4a2086ce60194bf971eabce300ebe57b241757aa63f8e145
 # funcstarts_n: 13263
 # src_modules: 246
 # loc_structs: 2042
 # attributed_funcs: 527
 # contested_funcs: 86
 # src_files: 110
-# src_fns: 2607
+# src_fns: 2665
 module	scope	orig_funcs	contested	anchors	ours_file	ours_funcs	status	evidence
 graphwar_ad_switch.rs	graphwar	6	0	3	src/graphwar_ad_switch.rs	21	观测	6 条全是 gdext 惰性注册驱动；两个 getter trampoline + owned(+0x18) 已钉死
 graphwar_audio_control.rs	graphwar	7	1	16	src/graphwar_audio_control.rs	21	观测	9 函数 + 4 订阅闭包。订阅 effect_info(44，按 +0x20 的 u8 四臂落三槽) / soldier_info(15) / entity_removed(14) / game_state_info(30)；槽 +0x80/90/a0/b0/c0 = explosion/squash/spark/pop/unpop，音量 -15/-15/-15/0/-5 dB；state==1 清待播队列（docs/16 §30）
@@ -39,7 +39,7 @@ graphwar_game_info.rs	graphwar	0	0	0	src/graphwar_game_info.rs	0	观测	GameInfo
 graphwar_game_recorder.rs	graphwar	2	1	4	src/graphwar_game_recorder.rs	14	观测	3：订 32 条服务端广播事件（24 条 *_info_event + 8 条不带 info 的；*_request_event 一条不订）；GameStateInfo==6 EndingGame 上升沿落盘 user://replays/<unix 秒>（gzip + 每行 {event,tick}），==1 Setup 且上一条是 6 时清缓冲（docs/16 §32）
 graphwar_game_server.rs	graphwar	3	1	86	src/graphwar_game_server.rs+src/server.rs	23	逐位	docs/43/46：一回合 12 条报文与抓包逐字节一致；docs/62 真实 TCP 跑到 EndingGame
 graphwar_game_state_manager.rs	graphwar	33	10	207	src/game.rs+src/turnstate.rs	109	逐位	docs/41：6 状态 7 事件、13 次迁移在真实对局里逐个相同
-graphwar_graphics_manager.rs	graphwar	6	0	8	src/graphwar_graphics_manager.rs	18	观测	6 函数。**TextureLoader 不在本模块**——它是独立模块 graphwar_texture_loader（三张 HashMap<String,Gd<Texture2D>> @ +0x150/+0x180/+0x1b0，按名字 memcmp 索引，GraphwarRootNode 的 INode impl 里 0x39a328 唯一构造、21KB 饿汉加载）。本模块只管 player_id→名字 三张表（+0x18/+0x48/+0x78）与 51/53/55 三条 info 事件（docs/16 §31）
+graphwar_graphics_manager.rs	graphwar	6	0	8	src/graphwar_graphics_manager.rs	22	观测	6 函数。**TextureLoader 不在本模块**——它是独立模块 graphwar_texture_loader（三张 HashMap<String,Gd<Texture2D>> @ +0x150/+0x180/+0x1b0，按名字 memcmp 索引，GraphwarRootNode 的 INode impl 里 0x39a328 唯一构造、21KB 饿汉加载）。本模块只管 player_id→名字 三张表（+0x18/+0x48/+0x78）与 51/53/55 三条 info 事件（docs/16 §31）
 graphwar_lan_broadcaster_v6.rs	graphwar	4	0	4	src/graphwar_lan_broadcaster_v6.rs	20	观测	5/5（get_game_info 两侧都无锚，不给 x86 地址）。广播周期 **1 秒**（elapsed > 1s，正好 1.000s 不发）；收侧去重 = 房间表键发送方 SocketAddr + **10 秒 TTL**（cmp x0,#0xa）；**广播的 address 恒为 [::1]:<port>**（set_room_info 里 IpAddr::from_str(「::1」)）（docs/09 §12）
 graphwar_lan_vbox.rs	graphwar	11	1	19	src/graphwar_lan_vbox.rs	37	观测	13 个 FUNC 全登记；process = 0x4f90b0（唯一锚，16 个三元组）。**不消费任何事件**——每帧直读两张表（LAN 广播器 +0x128/+0x1a0 或 broker +0x240/+0x248）；行节点 = 新场景实例 + 按 SocketAddr 缓存复用；Join 走 mpmc 通道下一帧才连；**没有排序**（HashMap 迭代序）（docs/09 §10）
 graphwar_level_generator.rs	graphwar	4	1	26	src/graphwar_level_generator.rs+src/graphwar_level_generator/tables.rs	28	逐位	docs/61/56：障碍 x/y/r 的 to_bits() 全等，13/13 逐位复现；docs/55 公式闭合
