@@ -64,9 +64,21 @@ fn match_number(s: &[u8], i: usize) -> Option<(usize, f64)> {
     None
 }
 
-/// 切词。原程序的顺序：整串小写 -> `pi`/`π` 换成 `n` -> 正则切词（未匹配字符被跳过）。
+/// 切词。原程序的顺序：整串**只把 ASCII 大写**转小写 -> `pi`/`π` 换成 `n` -> 正则切词（未匹配字符被跳过）。
+///
+/// ⚠️ 2026-11-08 更正（`dispatch/52` 差分矩阵，**逐位**）：小写化是**逐字节的 ASCII 折叠**，
+/// 不是 Rust 的 `str::to_lowercase()`（后者是**全 Unicode** 的）。二进制入口那三条指令
+/// （`0x4ed7a3`–`0x4ed7ba`：`c - 'A' < 0x1a ? c + 0x20 : c`）只会动 `A..=Z`。
+///
+/// 差别只在一个可观测点上：`Π`（U+03A0）。Unicode 折叠会把它变成 `π`，再被
+/// `replace("π","n")` 变成 `n`（= CONST π）；真解析器**不动**它，于是它是个未匹配字符、
+/// 被跳过 ⇒ 空 token 串。矩阵实测：`Π -> []`、`Πx -> [VAR_X]`、`πΠ -> [CONST π]`。
 pub fn lex(text: &str) -> Vec<Token> {
-    let lowered = text.to_lowercase().replace("pi", "n").replace('\u{03c0}', "n");
+    let mut lowered = String::with_capacity(text.len());
+    for c in text.chars() {
+        lowered.push(if c.is_ascii_uppercase() { c.to_ascii_lowercase() } else { c });
+    }
+    let lowered = lowered.replace("pi", "n").replace('\u{03c0}', "n");
     let s = lowered.as_bytes();
     let mut out = Vec::new();
     let mut i = 0usize;
@@ -170,6 +182,11 @@ fn starts_operand(t: &Token) -> bool {
     matches!(tag(t), VarX | VarY | VarDy | Const | LeftBracket | Sqrt | Log | Abs | Sin | Cos | Tan | Ln | Exp)
 }
 
+/// 只吃一个 primary 的一元函数（`(`/`)`、变量、常量不算）。
+fn is_unary_fn(f: Function) -> bool {
+    matches!(f, Sqrt | Log | Abs | Sin | Cos | Tan | Ln | Exp)
+}
+
 struct Parser {
     t: Vec<Token>,
     i: usize,
@@ -245,18 +262,15 @@ impl Parser {
                     let op = tag(&t);
                     self.take();
                     let right = self.term();
-                    if op == Add {
-                        // '+' 两侧缺都补 0
-                        let l = left.take().unwrap_or_else(|| Node::zero().unwrap());
-                        let r = right.unwrap_or_else(|| Node::zero().unwrap());
-                        left = Node::bin(Add, Some(l), Some(r));
-                    } else if left.is_none() {
-                        // 没有左操作数的 '-' 变成一元负号
-                        left = Node::un(UnaryMinus, right);
-                    } else {
-                        let r = right.unwrap_or_else(|| Node::zero().unwrap());
-                        left = Node::bin(Sub, left, Some(r));
-                    }
+                    // `+` / `-` 两侧缺都补 CONST 0（**包括左缺**）。
+                    // 2026-11-08 更正（`dispatch/52` 差分矩阵，**逐位**）：左操作数缺失时
+                    // 真解析器**不**把 `-` 变成一元负号，而是补 0 做二元减法：
+                    // `)-1e3 -> SUB(CONST 0, MUL(MUL(1,e),3))`（我们旧版给 `NEG(...)`）。
+                    // 一元负号只来自 `-` 出现在**操作数位置**时（[`Parser::unary`] /
+                    // [`Parser::prefixed`]，含它们各自截走的"函数链 + `-`"那一支）。
+                    let l = left.take().unwrap_or_else(|| Node::zero().unwrap());
+                    let r = right.unwrap_or_else(|| Node::zero().unwrap());
+                    left = Node::bin(op, Some(l), Some(r));
                 }
                 Mul | Divide => {
                     let op = tag(&t);
@@ -299,12 +313,44 @@ impl Parser {
         left
     }
 
+    /// 若当前位置是"**函数链 + `-`**"，则把两者都吃掉并返回 `true`；否则**一个 token 都不动**。
+    ///
+    /// 这是真解析器那条怪规则的落地（2026-11-08 差分矩阵，**逐位**，`docs/03` §14）：
+    /// 函数名后面紧跟 `-` 时，**整条函数链被丢掉**，那个 `-` 当一元负号用。
+    /// 它只在"操作数起点"上触发 —— [`Parser::unary`]（`-` 的负号层）与
+    /// [`Parser::prefixed`]（`^` 的右操作数）各查一次，因为**两层吃操作数的深度不同**：
+    ///
+    /// ```text
+    /// sin-x^2       -> NEG(POW(x,2))          走 unary：负号比 `^` 松
+    /// 2^sin-x^2     -> POW(POW(2,NEG(x)),2)   走 prefixed：负号只吃 primary，`^2` 留在外层
+    /// ```
+    fn take_func_chain_before_minus(&mut self) -> bool {
+        let save = self.i;
+        let mut n = 0usize;
+        while let Some(f) = self.peek().map(tag) {
+            if !is_unary_fn(f) {
+                break;
+            }
+            self.take();
+            n += 1;
+        }
+        if n > 0 && matches!(self.peek().map(tag), Some(Sub | UnaryMinus)) {
+            self.take();
+            return true;
+        }
+        self.i = save;
+        false
+    }
+
     fn unary(&mut self) -> Option<Box<Node>> {
         if let Some(t) = self.peek() {
             if matches!(tag(t), Sub | UnaryMinus) {
                 self.take();
                 return Node::un(UnaryMinus, self.unary());
             }
+        }
+        if self.take_func_chain_before_minus() {
+            return Node::un(UnaryMinus, self.unary());
         }
         self.power()
     }
@@ -330,10 +376,14 @@ impl Parser {
                 return Node::un(UnaryMinus, self.prefixed());
             }
         }
+        if self.take_func_chain_before_minus() {
+            return Node::un(UnaryMinus, self.prefixed());
+        }
         self.primary()
     }
 
-    fn primary(&mut self) -> Option<Box<Node>> {
+    /// 原子：变量 / 常量 / 括号组。**函数不在这里**（[`Parser::primary`] 先收函数链）。
+    fn atom(&mut self) -> Option<Box<Node>> {
         let t = match self.peek() {
             Some(t) => *t,
             None => return None,
@@ -355,13 +405,40 @@ impl Parser {
                 }
                 node
             }
-            Sqrt | Log | Abs | Sin | Cos | Tan | Ln | Exp => {
-                self.take();
-                // 函数只作用于紧跟的一个 primary（所以 sin^2 的 sin 没有操作数）
-                Node::un(tag(&t), self.primary())
-            }
             _ => None,
         }
+    }
+
+    fn primary(&mut self) -> Option<Box<Node>> {
+        // —— 函数链：真解析器先把**连续的**函数名全部吃掉，再拿一个原子包起来 ——
+        //
+        // "链尾紧跟 `-`" 那一支**不在这里**：它由操作数的两个入口
+        // （[`Parser::unary`] / [`Parser::prefixed`]）用
+        // [`Parser::take_func_chain_before_minus`] 提前截走，因为两层的深度不同。
+        //
+        // 其余怪癖（`docs/03` §14，真二进制逐位）：
+        //
+        // ```text
+        // sin+2 / sin*2  -> [ADD, SIN, CONST 2] / [MUL, SIN, CONST 2]（`+` `*` 不触发丢弃）
+        // sin^2          -> [POW, SIN, CONST 2]                        （`sin` 没有操作数、照样留着）
+        // sin)  / sin    -> [SIN]
+        // ```
+        let mut funcs: Vec<Function> = Vec::new();
+        loop {
+            match self.peek().map(tag) {
+                Some(f) if is_unary_fn(f) => {
+                    funcs.push(f);
+                    self.take();
+                }
+                _ => break,
+            }
+        }
+        let mut node = self.atom();
+        for f in funcs.into_iter().rev() {
+            // 函数只作用于紧跟的一个原子（所以 `sin^2` 的 `sin` 没有操作数、照样留着）
+            node = Node::un(f, node);
+        }
+        node
     }
 }
 
@@ -537,5 +614,54 @@ mod parser_tests {
         assert_eq!(toks[1].tag, Add, "左子是 ADD");
         assert_eq!(toks.last().unwrap().tag, Const);
         assert_eq!(toks.last().unwrap().value, 4.323);
+    }
+
+    /// **函数链后面紧跟 `-`：整条链被丢掉，`-` 当一元负号**（`docs/03` §14）。
+    ///
+    /// 每条都是真二进制 `0x4ed670` 的直调观测（`tools/parse_matrix.py`，同一批也钉在
+    /// `fixtures/parse_matrix_truth.tsv`）。旧实现把函数当成"缺操作数的节点"留着，
+    /// 于是 `sin-x` 给 `SUB(SIN, X)` —— 那是错的。
+    #[test]
+    fn func_chain_before_minus_is_dropped() {
+        assert_eq!(tags("sin-x"), vec![5, 0]); // NEG, VAR_X
+        assert_eq!(tags("sin-x^2"), vec![5, 8, 0, 17]); // NEG, POW, X, 2（负号比 ^ 松）
+        assert_eq!(tags("logtan-.5"), vec![5, 17]); // 链上 log/tan 一起丢
+        assert_eq!(tags("2sin-3"), vec![6, 17, 5, 17]); // MUL, 2, NEG, 3
+        assert_eq!(tags("sin-sin"), vec![5, 14]); // 右边的 sin 没操作数、照样留
+        assert_eq!(tags("-sin-x"), vec![5, 5, 0]);
+        // `^` 的右操作数位置是 **prefixed** 层：负号只吃 primary，`^2` 留在外层
+        assert_eq!(tags("2^sin-x^2"), vec![8, 8, 17, 5, 0, 17]);
+        // `+` `*` `^` 不触发丢弃
+        assert_eq!(tags("sin+2"), vec![3, 14, 17]);
+        assert_eq!(tags("sin*-x"), vec![6, 14, 5, 0]);
+        assert_eq!(tags("sin^2(x)"), vec![6, 8, 14, 17, 0]);
+        assert_eq!(tags("sin"), vec![14]);
+        assert_eq!(tags("sin+"), vec![3, 14, 17]);
+    }
+
+    /// **`+` / `-` 缺左操作数都补 `CONST 0`**；一元负号**只**在操作数位置产生。
+    ///
+    /// 旧实现在 `expr()` 里把"左缺的 `-`"翻成一元负号，于是 `)-1e3` 给 `NEG(...)`；
+    /// 真二进制是 `SUB(CONST 0, ...)`（真值同 `fixtures/parse_matrix_truth.tsv`）。
+    #[test]
+    fn missing_left_operand_of_minus_is_zero() {
+        assert_eq!(tags(")-1e3"), vec![4, 17, 6, 6, 17, 17, 17]);
+        assert_eq!(tags(")-x"), vec![4, 17, 0]);
+        assert_eq!(tags("x)+"), vec![3, 0, 17]); // `+` 那条不变
+    }
+
+    /// **小写化只折叠 ASCII 大写**（真解析器 `0x4ed7a3`–`0x4ed7ba`），
+    /// 不是 Rust 的 `str::to_lowercase()`（全 Unicode）。
+    ///
+    /// 唯一可观测差别是 `Π`（U+03A0）：Unicode 折叠会把它变成 `π` → `n` → CONST π；
+    /// 真解析器不动它 ⇒ 未匹配字符、被跳过。`π` 本身两条路一样（都是 CONST π）。
+    #[test]
+    fn lowercasing_is_ascii_only() {
+        assert_eq!(tags("\u{03a0}"), Vec::<u32>::new()); // 空 token 串
+        assert_eq!(tags("\u{03a0}x"), vec![0]);
+        assert_eq!(tags("\u{03c0}\u{03a0}"), vec![17]);
+        assert_eq!(tags("\u{03c0}"), vec![17]);
+        assert_eq!(tags("PI"), vec![17]); // ASCII 折照旧
+        assert_eq!(tags("SIN(X)"), vec![14, 0]);
     }
 }
