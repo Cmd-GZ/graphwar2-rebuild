@@ -3557,3 +3557,170 @@ $PY tools/callgraph_roles.py match      # 正对照（§37.4）+ 写 control 夹
 $PY tools/callgraph_roles.py run        # 12,736 个角色（§37.5）+ 写角色夹具
 $PY tools/callgraph_roles.py probe 0x3c1f40   # 单条：把五个轴的证据逐条打出来
 ```
+
+## 42. 结构指纹的大规模相似度检索搬到 GPU：13,263 × 51,985 全量 top-5 与 CPU **逐条一致**，快 252 倍（2026-11，任务 61）
+
+> **编号让位说明**：`dispatch/61` 让用 §36，但 §36 已被 43 号（`process` 的 x86 锚点表）占用；
+> 而 `docs/02` §37–§41 在历史引用里已经指向**搬进 archive 的第 37–41 轮**（见本节上方 §34 的索引）。
+> 再占 §37 会让"§35 接 §37"这种旧引用落到本节上 ⇒ **本节用 §42**，旧节号一个都不动。
+>
+> **工具**：`tools/callgraph_gpu_sim.py`（`cpu` / `gpu` / `check` / `merge` 四个子命令）。
+> **输入**：51 号重训过的指纹缓存（`CACHE_VERSION = cfgfp-v5`，366 MB，**不重扫**）。
+> **特征口径**：直接读 `callgraph_fingerprint.W_SAME`，一个权重都不改；`strs` 仍是 0（不读）。
+> **夹具**：[`fixtures/callgraph_fingerprint_gpu_ctl348.tsv`](../fixtures/callgraph_fingerprint_gpu_ctl348.tsv)（348 行 CPU↔GPU 逐条对照）。
+
+### 42.0 一句话 + 四问四答
+
+**一句话**：把 4 个特征物化成矩阵搬到 4060 上以后，13,263 × 51,985 全量 top-5 从 **1131.2 s（CPU 单进程）**
+掉到 **4.48 s（含 0.79 s 物化；3 次取样 4.35 / 4.48 / 4.58）**，而 348 个已定名正对照的 **top-1 与 top-5 都是 348/348 逐条相同**。
+
+| 问 | 答 |
+|---|---|
+| ① 特征矩阵多大？ | Linux **13,263 × 47,380**、Windows **51,985 × 47,380**（F = 8 连续 + 41,512 gram + 5,860 consts）。稠密 fp32 要 **12.37 GB**，做成稀疏后显存峰值 **378.6 MB** |
+| ② GPU 用上了吗？ | 用上了：`NVIDIA GeForce RTX 4060 Laptop GPU`（sm_89 / 7857 MiB / torch 2.6.0+cu124），`peak_alloc_MB = 378.6` |
+| ③ 和 CPU 逐条一致吗？ | **348/348 top-1 与 top-5 完全相同**；12,736 目标集 top-1 **12,736/12,736**，top-5 12,734/12,736（2 行是 `log()` 末位 1 ulp 造成的并列换位，见 §42.4.3） |
+| ④ 快多少？ | 端到端 CPU 单进程 **1131.2 s → 4.48 s（252×）**；同机 **CPU 16 进程 109.4 s → 4.48 s（24.4×）** |
+
+### 42.1 为什么这件事适合 GPU —— 以及为什么最后**没有**用稠密 GEMM
+
+候选对规模（`CF.Pool.window` 的 size 窗口，`(0.7, 1.4)`）：
+
+| 量 | 数 |
+|---|---|
+| 查询行（Linux 整份宇宙） | 13,263（= 12,736 无 Location + 527 有 Location） |
+| 候选池（Windows 2.0.60） | 51,985 |
+| 全交叉 | 6.90 亿对 |
+| **窗口内候选对**（真正要打分） | **100,520,308**（每行均值 7,579） |
+
+任务书 §1.2 建议"连续部分一次大 GEMM、集合部分 `A @ Bᵀ` 同一套切块"。**照字面做不划算**：
+gram 词表 41,512 维，稠密侧是 `13,263 × 41,512` 与 `41,512 × 51,985`，光 fp32 存储 12.37 GB
+（8 GB 卡放不下），而 `A @ Bᵀ` 的 **5.73e13 flop** 里 **99.9% 的乘数是 0**（Linux 侧 gram
+每行平均 55 个非零、Windows 侧 54.7 个）。实测这样跑一遍约 3800 s —— 比 CPU 还慢。
+
+所以本节把 `A_multi-hot @ B_multi-hotᵀ` 写成**只走非零的等价算式**：
+把池侧 `(vid, col)` 压成一个 int64 键**全局排序**后，`(vid, col∈[lo,hi))` 的 posting 命中
+就是**一段连续下标**，两个 `searchsorted` 拿到区间，`repeat_interleave` 展开成 (行,列) 对，
+`index_add` 计数。交集计数是小整数 ⇒ float64 累加**与累加顺序无关**（精确）。
+**这个等价性不是"我认为"**，§42.4.2 用真·稠密 `A @ Bᵀ` 抽一块逐格对拍过（`max_abs_diff = 0.0`）。
+
+### 42.2 特征矩阵（物化口径）
+
+行序 = `(size, 地址)` 升序，与 `CF.Pool` **完全同序**（候选窗口才能是一段连续下标）。
+
+| 段 | 列数 | Linux 13,263 行 | Windows 51,985 行 | dtype |
+|---|---|---|---|---|
+| 连续 `F_c` | 8（size/ninsn/ncallees/ncallers/nconsts/nstrs_s/ngrams/bsig_hi32） | 0.40 MB | 1.59 MB | float32 |
+| `gram` 多热 | 41,512 | nnz **729,782** | nnz **2,842,129** | CSR int64 |
+| `consts` 多热 | 5,860 | nnz **5,174** | nnz **32,668** | CSR int64 |
+| `caller_sizes` 多重集 | 1（变长 CSR） | nnz **34,374** | nnz **323,212** | CSR int64 |
+| **合计（稠密等价）** | **47,380** | 2.51 GB | 9.85 GB | — |
+
+⚠ `nstrs_s` 只是**计数**进连续段，`strs`/`strs_s` 的权重在 `W_SAME` 里就是 0 ⇒ 不参与打分，
+`strs`（`Location` 文件名泄漏）本工具**一次都没读**（`docs/159` §3.2、§35.3.1）。
+
+### 42.3 GPU 上怎么算
+
+1. **分块**：行按 size 排序后贪心成块，保证每块 `R × C ≤ 3e6` 个格子（C = 该块所有行窗口的并集宽度）。
+   全量出 **40 块**，最宽一块 **15,878** 列。块对窗口的浪费只有 **1.25×**（100.5 M → 125 M 覆盖对）。
+2. **size 段**：`1 - min(|log((sd+1)/(sq+1))|/eps, 1)`，一次广播（0.13 s）。
+3. **集合段**：上面的稀疏 `searchsorted + index_add`（gram 0.86 s 里含 consts）。
+4. **caller 段**：`multiset_sim` 是**按 rank 配对**的，写成"第 t 轮参与的行是前缀"的循环，
+   总工作量 = `Σ nq`（3.44e4 行·rank），列先压到 `nd>0` 的 15,170 列上（1.96 s，最大头）。
+5. **融合**：加法顺序**逐字照抄** `CF.score_same` 的 `add()` 调用顺序（size → consts → caller → gram）。
+   浮点加法不满足结合律，换顺序会在 1e-16 分叉，最终可能翻转 top-5。
+6. **取 top-5**：`kth` = 第 5 大的**值**；严格大于它的 ≤ 4 个必进，等于它的取**地址最小**的 5 个，
+   并起来按 `(-score, addr)` 排 —— 与 CPU 的 `sc.sort(key=(-score, addr))` 等价且**与并列规模无关**。
+   全量 **6,353 行**存在第 5 名并列；早先的"逐行 Python 回退"版本在这一步吃掉 **10.1 s**，
+   向量化后 **0.27 s**。
+
+### 42.4 正对照：与 CPU 逐条一致
+
+CPU 基线**不是另写一套**：`cpu` 子命令逐行调 `callgraph_fingerprint.rank()`（发布版代码本体）。
+两边输出同一张表（`linux_addr / size / ncallers / top1..5 地址与分数`），`check` 逐条判地址序列。
+
+#### 42.4.1 三条数（`python tools/callgraph_gpu_sim.py check --cpu ... --gpu ...`）
+
+| 范围 | n | top-1 一致 | top-5 一致 | max \|Δscore\| |
+|---|---|---|---|---|
+| **348 已定名正对照** | 348 | **348 / 348** | **348 / 348** | 2.22e-16 |
+| 12,736 无 Location 目标 | 12,736 | **12,736 / 12,736** | 12,734 / 12,736 | 2.22e-16 |
+| 全部 Linux 宇宙 | 13,263 | **13,263 / 13,263** | 13,261 / 13,263 | 2.22e-16 |
+| 与**夹具 top-1** 比（`fixtures/callgraph_fingerprint.tsv`） | 12,736 | **12,736 / 12,736** | — | score 4 位小数 **12,736/12,736** 全同（max 5e-5 = 夹具自身的 4 位舍入） |
+
+⚠ 与 `--shard i/16` 跑出来的 16 进程 CPU 表也对过一遍：数字**一模一样**（并行不改结果）。
+
+#### 42.4.2 稀疏内积 vs 真稠密 `A @ Bᵀ`（`--selftest`）
+
+挑"候选窗口最宽"的 64 行（块 `[11136, 11200)`，取 4,096 列）：
+
+```
+compared_cells 257,309   max_abs_diff 0.0   mismatches 0
+nonzero_A 6,751   nonzero_B 349,756   vocab 41,512
+```
+
+#### 42.4.3 剩下 2 行为什么不同（**不是实现 bug**）
+
+`0x5ad6d0` 与 `0x735a70` 两行 **top-1 相同**，只是第 2–4 名互换。原因测出来了：
+
+* 同一个候选的分数，CPU 与 GPU 差 **1 ulp**（`0x5ad6d0`：1.11e-16；`0x735a70`：5.55e-17）；
+* 这两个候选在精确算术下**完全并列**，于是 CPU 侧"因 1 ulp 差异按分数排"、GPU 侧"并列按地址排" ⇒ 顺序不同；
+* 1 ulp 来自 `log()`：`--selftest` 直接测了 200,000 个真实尺寸比 ——
+  **199,618 个逐位相同（99.809%）、382 个差 1 ulp、0 个差 >1 ulp**（CUDA 的 `log` vs glibc 的 `log`）。
+
+⇒ 要让这 2 行也一致，只能让两边用同一个 libm；这与"实现是否等价"无关。**本节不掩饰这条**。
+
+### 42.5 墙钟与加速比（三条轴分开报）
+
+同机同数据（13,263 行 × 100,520,308 个候选对），单线程/多进程/GPU 各跑一次：
+
+| 轴 | 配置 | 墙钟 | 加速比 vs GPU |
+|---|---|---|---|
+| **CPU 单进程** | `.reference/venv/bin/python ... cpu`（`rank()` 原样，纯 Python） | **1131.23 s**（11.25 µs/对） | **252×** |
+| **CPU 16 进程** | 同一命令 `--shard i/16` 起 16 个 + `merge`（0.12 s） | **109.44 s**（并行段 109.32 s） | **24.4×** |
+| **GPU** | RTX 4060 Laptop，`torch 2.6.0+cu124` | **4.48 s**（物化 0.79 + 计算 3.69；3 次 4.35/4.48/4.58，输出逐字节相同） | 1× |
+
+* CPU 16 进程相对单进程 **10.3×**（机器 32 线程，进程间抢内存带宽，到不了 16×）。
+* 只算**计算段**（不含物化）GPU 是 **3.69 s** ⇒ 306.7× / 29.7×。端到端的 252×/24.4× 是本节采用的数。
+* GPU 阶段分解（`--profile`，三次取中）：caller 1.95 s / sparse 0.85 s / fuse 0.41 s / topk 0.25 s / size 0.09 s。
+
+**GPU 型号与 `prime-run`**：`NVIDIA GeForce RTX 4060 Laptop GPU`，sm_89，7857 MiB，驱动 620.70.06。
+**不需要 `prime-run`** —— 插件（`cuda_run`/`cuda_status`）的工具跑在**宿主进程**里，
+`/dev/nvidia*` 直接可见，`torch.cuda.is_available()` 为 True（本节的报告里 `device` 字段就是卡名）。
+（我的 bash 在 bwrap 沙箱里看不到 `/dev/nvidia*`，所以 GPU 活一律走插件 —— 与 "prime-run 生效与否" 是两件事。）
+
+### 42.6 产物与可复跑命令
+
+| 产物 | 内容 |
+|---|---|
+| `tools/callgraph_gpu_sim.py` | 工具本体（`cpu`/`gpu`/`check`/`merge`，**不依赖 numpy**，GPU 侧只用 torch） |
+| [`fixtures/callgraph_fingerprint_gpu_ctl348.tsv`](../fixtures/callgraph_fingerprint_gpu_ctl348.tsv) | 348 个正对照的 CPU↔GPU 逐条对照（含 `same_top1`/`same_top5`/`max_abs_dscore`） |
+| 本节 | 矩阵规模、显存、一致性、加速比 |
+
+```bash
+export CFGFP_CACHE=<指纹缓存目录>              # 366 MB、cfgfp-v5，别重扫
+# ① CPU 基线（单进程，约 19 分钟）
+../.reference/venv/bin/python tools/callgraph_gpu_sim.py cpu --out cpu.tsv
+# ② CPU 基线（16 进程，约 110 s）
+for i in $(seq 0 15); do ../.reference/venv/bin/python tools/callgraph_gpu_sim.py \
+    cpu --shard $i/16 --out sh$i.tsv & done; wait
+../.reference/venv/bin/python tools/callgraph_gpu_sim.py merge --out cpu16.tsv sh*.tsv
+# ③ GPU（约 4.5 s，peak 379 MB；三次取样输出逐字节相同）
+<gpu-python> tools/callgraph_gpu_sim.py gpu --selftest --profile --out gpu.tsv --report gpu.json
+# ④ 对拍（含 348 对照表落盘）
+<任何 python> tools/callgraph_gpu_sim.py check --cpu cpu.tsv --gpu gpu.tsv \
+    --controls-out fixtures/callgraph_fingerprint_gpu_ctl348.tsv
+```
+
+**不入库**：`.npy`/`.pt`/特征是算出来的中间量，一律现算（本节只入文本）。
+
+### 42.7 遗留 / 没做 / 别误读
+
+1. **准确率一个字没动**。top-1 72.7%（留出半）是 **51 号**的结论，本节**只换算力、不换特征**，
+   没有重测准确率，也不该拿本节任何数字当"准确率变了"。特征权重直接读 `CF.W_SAME`（`strs` 仍 0）。
+2. **2 行 top-5 顺序不同**（§42.4.3），成因是 libm 的 `log` 末位差，**不是**实现不等价；
+   硬门槛"348 个正对照逐条一致"是 **348/348 通过**。
+3. **CPU 16 进程不是 16 核**：机器 32 线程，16 进程实测 10.3× 加速（内存带宽先撞墙）。
+   若换更多进程/更快的 CPU，24.4× 这个数会变小 —— 引用时必须连配置一起引（`AGENTS.md` C 节）。
+4. **本节没做**：Android 侧（12,609）的 GPU 排序、跨 ISA 检索、以及"用 GPU 做新特征搜索"。
+   `dispatch/61` §2 明确"GPU 上只做算、不做特征设计"，本节遵守。
+5. `cuda_run` **不是并发安全**的：这一轮 GPU 任务都是串行提交的，墙钟数字不含排队。
