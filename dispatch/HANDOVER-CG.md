@@ -29,13 +29,25 @@
             已派 4 份、**全部被我 interrupt 暂停**（因装 GPU 插件要重启 dsh），工作树见 §7
             未派 4 份：57 新证据 / 58 调用图角色 / 61 GPU 相似度 / 62 全语料对拍
 
-护栏（2026-11-09 04:25 实测；**以 fixtures/guardrails.json 为准**）
-  fire 647/1080 ｜ batch 647/1080 ｜ batch_conv 637/1080
-  延迟段 死亡 366/385 ｜ 挖洞 206(fire) · 207(batch)
-  cargo test **1671** / 0 failed ｜ --features gdext-bindings **1777** / 0 failed
-  headless **14** 个脚本 **1744** 条断言 0 失败（新增 play_flow_check 61；
-  entity_drawer 366 / process_loop 49 / assemble 217 / plane 96 / obstacle 116）
+护栏（2026-11-09 05:55 实测；**以 fixtures/guardrails.json 为准**）
+  fire 647/1080 ｜ batch 647/1080 ｜ batch_conv 637/1080（种类 1075×3）
+  延迟段 死亡 366/385 ｜ 挖洞 207/294
+  cargo test **1693** / 0 failed ｜ --features gdext-bindings **1799** / 0 failed
+  headless **14** 个脚本 **1818** 条断言 0 失败（play_flow **135** / entity_drawer 366 / process_loop 49）
   selftest **714 / 0 / 1 skipped**
+  coverage 527 可归属：逐位 88 / 观测 439 / 推断 0 / 未做 0
+  结构指纹 **78.18%**（留出半，95% CI [72.12, 84.24]；n=165 ⇒ ±6 点）
+
+✅ **工具债已还**（第十三轮 68 号）：
+  · 大文件闸**三档化**（代码/文档 100 KB 卡死；fixtures 文本真值表 ≤8 MB 免放行；二进制任何大小都拦），
+    超了用 `--allow-large 'PATTERN=理由'`；自测 `merge_check.py --self-test`（10/10）
+  · **冻结语料指纹**（`guardrails.json` 的 `corpus`）：`--check-baseline --snapshot <快照>` 先比语料再比数字
+  · `--axes batch_conv` 曾经走错轴（605/947，不是 637/1075），已修
+
+⚠️ **跑任何 headless 之前必须重建并覆盖 `.so`**（build --features gdext-bindings → cp → --import）
+⚠️ **新工作树没有 `client/assets/`**（gitignore）⇒ selftest 掉到 686/3/22，是环境不是回归
+⚠️ **`cargo test --offline --lib` 会把 `debug/libgw2_rebuild.so` 覆盖成没有 gdext-bindings 的那份**
+   ⇒ **先测 → 最后 build gdext → 再 cp**（67 号踩到：`Parse Error: Too many arguments for "begin()"`）
   槽位 22 个里一个真 stub 都不剩
   结构指纹 **78.18%**（留出半，57 号破的 73% 天花板）
 
