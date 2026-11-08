@@ -32,7 +32,10 @@
 use godot::classes::RefCounted;
 use godot::prelude::*;
 
-use crate::graphwar_play_screen_control::{LevelKind, LevelRules, MatchState, TARGET_TEAM};
+use crate::graphwar_play_screen_control::{
+    BotTurn, LevelKind, LevelRules, MatchState, PlannedKill, ShotEvent, ShotLifecycle, TurnAction,
+    TurnClock, TARGET_TEAM,
+};
 use crate::graphwar_turn_manager::{PlayerTurns, RoundCollection, SubmitResult, SOLDIER_ID_NONE};
 
 /// 士兵下标 → `PlayerTurns` 内部 id 的偏移（见文件头"编号换算"）。
@@ -531,5 +534,453 @@ mod tests {
         assert_eq!(SOLDIER_ID_SHIFT, 1);
         assert_eq!(0 + SOLDIER_ID_SHIFT, 1, "0 号士兵的内部 id 必须非 0");
         assert_eq!(7 - SOLDIER_ID_SHIFT, 6, "返回值 = 内部 id − 1");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GwShotFlow —— 弹道生命周期（`play_screen.gd` 那 6 个函数的"决定"部分）
+// ---------------------------------------------------------------------------
+//
+// **不是原版的东西**：原版没有这个类；它是"把 `_begin_shot` / `_advance_presentation` /
+// `_apply_kills_up_to` / `_on_shot_arrived` / `_finish_round` / `flush_shot` 的**判断**
+// 挪到 Rust"之后留下的那台状态机外壳。逻辑本体在
+// [`crate::graphwar_play_screen_control::ShotLifecycle`]。
+//
+// 视图层只剩三件事：递数据（`begin`）、递"画到第几个点"（`advance`）、执行事件。
+
+/// 一发弹道的生命周期（原版 `handle_tick` + `execute_results` 的状态推进）。
+///
+/// ```text
+/// var f := GwShotFlow.new()
+/// f.begin(total_points, judged_kills, judged_stop, false)   # 开火
+/// var events := f.advance(reveal)                           # 每帧
+/// for e in events: ...                                      # 只按 kind 摆节点
+/// var s := f.settle()                                       # {settled, turns_used}
+/// f.reset()                                                 # 换局
+/// ```
+///
+/// `kills` 的每一项（由播放屏的命中表给）：
+/// `{kind: "soldier"/"target", point: int, index: int, target_id: int, pos: Vector2}`。
+/// 返回的事件：
+/// `{kind: "soldier_killed", point, index, pos}` /
+/// `{kind: "target_killed", point, target_id, pos}` /
+/// `{kind: "arrived", stop}`。
+#[derive(GodotClass)]
+#[class(base = RefCounted)]
+pub struct GwShotFlow {
+    base: Base<RefCounted>,
+    flow: ShotLifecycle,
+}
+
+#[godot_api]
+impl IRefCounted for GwShotFlow {
+    fn init(base: Base<RefCounted>) -> Self {
+        Self { base, flow: ShotLifecycle::new() }
+    }
+}
+
+/// 从 Variant 取一个 `Vector2`（缺键/类型不对 ⇒ `(0.0, 0.0)`）。
+fn vec2_of(v: Option<Variant>) -> (f64, f64) {
+    match v {
+        Some(v) => {
+            let p = v.to::<Vector2>();
+            (p.x as f64, p.y as f64)
+        }
+        None => (0.0, 0.0),
+    }
+}
+
+/// `(f64, f64)` → `Vector2`（Godot 侧是 f32 构建，与手写层同样掉一遍精度）。
+fn to_vec2(p: (f64, f64)) -> Vector2 {
+    Vector2::new(p.0 as f32, p.1 as f32)
+}
+
+/// 一条命中记录 → [`PlannedKill`]（`kind` 缺省按 `soldier`）。
+fn planned_kill_of(d: &VarDictionary) -> PlannedKill {
+    let point = dict_int(d, "point", 0).max(0) as usize;
+    let pos = vec2_of(d.get("pos"));
+    let kind = d.get("kind").map(|v| v.to::<GString>().to_string()).unwrap_or_default();
+    if kind == "target" {
+        PlannedKill::target(point, dict_int(d, "target_id", -1), pos)
+    } else {
+        PlannedKill::soldier(point, dict_int(d, "index", -1), pos)
+    }
+}
+
+/// 一张命中表 → [`PlannedKill`] 列表。
+fn planned_kills_of(list: &VarArray) -> Vec<PlannedKill> {
+    let mut out: Vec<PlannedKill> = Vec::new();
+    for i in 0..list.len() {
+        if let Some(v) = list.get(i) {
+            out.push(planned_kill_of(&v.to::<VarDictionary>()));
+        }
+    }
+    out
+}
+
+/// [`ShotEvent`] → GDScript 字典。
+fn event_dict(e: &ShotEvent) -> VarDictionary {
+    let mut d = VarDictionary::new();
+    match e {
+        ShotEvent::SoldierKilled { point, index, pos } => {
+            d.set("kind", &GString::from("soldier_killed"));
+            d.set("point", *point as i64);
+            d.set("index", *index);
+            d.set("pos", to_vec2(*pos));
+        }
+        ShotEvent::TargetKilled { point, target_id, pos } => {
+            d.set("kind", &GString::from("target_killed"));
+            d.set("point", *point as i64);
+            d.set("target_id", *target_id);
+            d.set("pos", to_vec2(*pos));
+        }
+        ShotEvent::Arrived { stop } => {
+            d.set("kind", &GString::from("arrived"));
+            d.set("stop", to_vec2(*stop));
+        }
+    }
+    d
+}
+
+#[godot_api]
+impl GwShotFlow {
+    /// 换局：连回合数一起归零。
+    #[func]
+    fn reset(&mut self) {
+        self.flow.reset();
+    }
+
+    /// 开一发。`already_settled = true` 用于压平模式（automation）与联机（本地不结算）。
+    ///
+    /// `kills` / `target_kills` 是**两张表**（士兵的与靶子的），与命中表同形。
+    #[func]
+    fn begin(
+        &mut self,
+        total_points: i64,
+        kills: VarArray,
+        target_kills: VarArray,
+        stop: Vector2,
+        already_settled: bool,
+    ) {
+        let mut planned = planned_kills_of(&kills);
+        let targets = planned_kills_of(&target_kills);
+        self.flow.begin(
+            total_points.max(0) as usize,
+            std::mem::take(&mut planned),
+            targets,
+            (stop.x as f64, stop.y as f64),
+            already_settled,
+        );
+    }
+
+    /// 推进到"画了 `reveal` 个点"，返回这一帧该执行的事件（顺序 = 弹道先后）。
+    #[func]
+    fn advance(&mut self, reveal: i64) -> VarArray {
+        let reveal = if reveal < 0 { 0 } else { reveal as usize };
+        let events = self.flow.advance(reveal);
+        let mut out = VarArray::new();
+        for e in &events {
+            out.push(&event_dict(e));
+        }
+        out
+    }
+
+    /// 把在飞的那一发直接跑完（自检/诊断用）。
+    #[func]
+    fn flush(&mut self) -> VarArray {
+        let events = self.flow.flush();
+        let mut out = VarArray::new();
+        for e in &events {
+            out.push(&event_dict(e));
+        }
+        out
+    }
+
+    /// 把还没落地的命中全部落地，**不吐到达事件**（"一次结算一整批弹道"那条路：
+    /// 同时回合攒齐 / 外部来弹。那一批里没有单条弹道在飞）。
+    #[func]
+    fn land_all(&mut self) -> VarArray {
+        let events = self.flow.land_all();
+        let mut out = VarArray::new();
+        for e in &events {
+            out.push(&event_dict(e));
+        }
+        out
+    }
+
+    /// 收一个回合。**同一发只收一次**（`{settled, turns_used}`）。
+    #[func]
+    fn settle(&mut self) -> VarDictionary {
+        let o = self.flow.settle();
+        let mut d = VarDictionary::new();
+        d.set("settled", o.settled);
+        d.set("turns_used", o.turns_used);
+        d
+    }
+
+    /// 半路丢弃（换局 / 联机断线）。
+    #[func]
+    fn abort(&mut self) {
+        self.flow.abort();
+    }
+
+    #[func]
+    fn in_flight(&self) -> bool {
+        self.flow.in_flight()
+    }
+
+    #[func]
+    fn arrived(&self) -> bool {
+        self.flow.arrived()
+    }
+
+    #[func]
+    fn revealed(&self) -> i64 {
+        self.flow.revealed() as i64
+    }
+
+    #[func]
+    fn total_points(&self) -> i64 {
+        self.flow.total_points() as i64
+    }
+
+    #[func]
+    fn pending_kills(&self) -> i64 {
+        self.flow.pending_soldiers() as i64
+    }
+
+    #[func]
+    fn pending_targets(&self) -> i64 {
+        self.flow.pending_targets() as i64
+    }
+
+    #[func]
+    fn kills_landed(&self) -> i64 {
+        self.flow.kills_landed()
+    }
+
+    #[func]
+    fn targets_landed(&self) -> i64 {
+        self.flow.targets_landed()
+    }
+
+    #[func]
+    fn settled(&self) -> bool {
+        self.flow.settled()
+    }
+
+    #[func]
+    fn turns_used(&self) -> i64 {
+        self.flow.turns_used()
+    }
+
+    /// 只读快照（自检/诊断）。
+    #[func]
+    fn snapshot(&self) -> VarDictionary {
+        let s = self.flow.snapshot();
+        let mut d = VarDictionary::new();
+        d.set("in_flight", s.in_flight);
+        d.set("revealed", s.revealed as i64);
+        d.set("total_points", s.total_points as i64);
+        d.set("pending", s.pending as i64);
+        d.set("kills_landed", s.kills_landed);
+        d.set("targets_landed", s.targets_landed);
+        d.set("settled", s.settled);
+        d.set("turns_used", s.turns_used);
+        d
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GwTurnClock —— 回合时钟（超时谓词的流程部分，`0x470989`）
+// ---------------------------------------------------------------------------
+//
+// **不是原版的东西**：原版这圈流程在 `graphwar_game_state_manager::handle_tick`
+// （`0x470840`）里，没有单独的类。本类只把"回合开始 → 截止 tick → 动作"这一段
+// 与 [`crate::turnstate::should_auto_fire`] 的谓词接起来。
+
+/// 回合时钟（tick 制，60 Hz）。
+///
+/// ```text
+/// var c := GwTurnClock.new()
+/// c.set_time_mode(state.time_mode)   # 0..5，与 GwModes.TimeMode 同一套判别值
+/// c.restart()                        # 回合开始
+/// c.advance(delta)                   # 每帧
+/// c.decide(in_flight, running)       # "auto_fire" / "nothing"
+/// c.seconds_left()                   # 倒计时（-1.0 = 无限时档）
+/// ```
+#[derive(GodotClass)]
+#[class(base = RefCounted)]
+pub struct GwTurnClock {
+    base: Base<RefCounted>,
+    clock: TurnClock,
+}
+
+#[godot_api]
+impl IRefCounted for GwTurnClock {
+    fn init(base: Base<RefCounted>) -> Self {
+        Self { base, clock: TurnClock::default() }
+    }
+}
+
+#[godot_api]
+impl GwTurnClock {
+    /// 换时间档（`0 = Timer30s … 4 = Timer5m, 5 = TimerInf`），并**重置回合**。
+    #[func]
+    fn set_time_mode(&mut self, time_mode: i64) {
+        self.clock.set_time_mode(if (0..=5).contains(&time_mode) { time_mode as u8 } else { 5 });
+    }
+
+    /// 回合开始：计时归零、超时闩清零。
+    #[func]
+    fn restart(&mut self) {
+        self.clock.restart();
+    }
+
+    /// 推进时钟（按秒），返回本回合已过 tick。
+    #[func]
+    fn advance(&mut self, seconds: f64) -> i64 {
+        self.clock.advance(seconds)
+    }
+
+    /// 判"现在该不该自动开火"（三个合取项，见 `TurnClock::decide`）。
+    /// 返回 `"auto_fire"` 或 `"nothing"`。
+    #[func]
+    fn decide(&mut self, in_flight: bool, running: bool) -> GString {
+        match self.clock.decide(in_flight, running) {
+            TurnAction::AutoFire => GString::from("auto_fire"),
+            TurnAction::Nothing => GString::from("nothing"),
+        }
+    }
+
+    /// 倒计时剩几秒；`-1.0` = 无限时档（原版标签是空白）。
+    #[func]
+    fn seconds_left(&self) -> f64 {
+        self.clock.seconds_left().unwrap_or(-1.0)
+    }
+
+    /// 这一档有没有截止时刻。
+    #[func]
+    fn has_deadline(&self) -> bool {
+        self.clock.turn_duration_ticks().is_some()
+    }
+
+    /// 本回合的时长（tick）；`-1` = 没有截止。
+    #[func]
+    fn duration_ticks(&self) -> i64 {
+        self.clock.turn_duration_ticks().unwrap_or(-1)
+    }
+
+    #[func]
+    fn elapsed_ticks(&self) -> i64 {
+        self.clock.elapsed_ticks()
+    }
+
+    #[func]
+    fn auto_fired_total(&self) -> i64 {
+        self.clock.auto_fired_total()
+    }
+
+    /// 只读快照（自检/诊断）。
+    #[func]
+    fn snapshot(&self) -> VarDictionary {
+        let s = self.clock.snapshot();
+        let mut d = VarDictionary::new();
+        d.set("time_mode", s.time_mode as i64);
+        d.set("duration_ticks", s.duration_ticks.unwrap_or(-1));
+        d.set("elapsed_ticks", s.elapsed_ticks);
+        d.set("seconds_left", s.seconds_left.unwrap_or(-1.0));
+        d.set("auto_fired", s.auto_fired);
+        d.set("auto_fired_total", s.auto_fired_total);
+        d
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GwBotTurn —— AI 回合闸门（**我方自定**）
+// ---------------------------------------------------------------------------
+//
+// ⚠️ 原版是 `aigen` 进化器，"AI 什么时候开火"**没有观测**（`docs/16` §52.6 #3）。
+// 搬到 Rust 的理由是"判据只能有一份"，不是"更像原版"。逻辑本体在
+// [`crate::graphwar_play_screen_control::BotTurn`]。
+
+/// AI 的思考闸门 + 一发**自定**的瞄准函数。
+#[derive(GodotClass)]
+#[class(base = RefCounted)]
+pub struct GwBotTurn {
+    base: Base<RefCounted>,
+    bot: BotTurn,
+}
+
+#[godot_api]
+impl IRefCounted for GwBotTurn {
+    fn init(base: Base<RefCounted>) -> Self {
+        Self { base, bot: BotTurn::default() }
+    }
+}
+
+#[godot_api]
+impl GwBotTurn {
+    /// 配思考时长（**自定**值；旧 `.gd` 是 0.6 s）。
+    #[func]
+    fn configure(&mut self, think_seconds: f64) {
+        self.bot = BotTurn::new(think_seconds);
+    }
+
+    /// 轮到 AI：起倒计时。
+    #[func]
+    fn arm(&mut self) {
+        self.bot.arm();
+    }
+
+    /// 离开 AI 的回合 / 停局：取消倒计时。
+    #[func]
+    fn disarm(&mut self) {
+        self.bot.disarm();
+    }
+
+    #[func]
+    fn armed(&self) -> bool {
+        self.bot.armed()
+    }
+
+    #[func]
+    fn think_left(&self) -> f64 {
+        self.bot.think_left()
+    }
+
+    #[func]
+    fn think_seconds(&self) -> f64 {
+        self.bot.think_seconds()
+    }
+
+    /// 推进一帧；返回"现在该让它开火了"。
+    #[func]
+    fn tick(&mut self, delta: f64, can_fire: bool) -> bool {
+        self.bot.tick(delta, can_fire)
+    }
+
+    /// 一发**自定**的函数串（一条过射手、指向最近敌人的直线）。
+    ///
+    /// `others` = 按士兵下标顺序的 `[{x, y, team, alive}, …]`。
+    #[func]
+    fn aim_expression(&self, shooter: Vector2, team: i64, others: VarArray) -> GString {
+        let mut list: Vec<(f64, f64, i64, bool)> = Vec::new();
+        for i in 0..others.len() {
+            let Some(v) = others.get(i) else { continue };
+            let d = v.to::<VarDictionary>();
+            list.push((
+                d.get("x").map(|v| v.to::<f64>()).unwrap_or(0.0),
+                d.get("y").map(|v| v.to::<f64>()).unwrap_or(0.0),
+                dict_int(&d, "team", -1),
+                d.get("alive").map(|v| v.to::<bool>()).unwrap_or(false),
+            ));
+        }
+        let expr =
+            crate::graphwar_play_screen_control::bot_aim_expression(
+                (shooter.x as f64, shooter.y as f64, team),
+                &list,
+            );
+        GString::from(expr.as_str())
     }
 }
