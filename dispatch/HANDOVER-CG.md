@@ -29,12 +29,23 @@
             已派 4 份、**全部被我 interrupt 暂停**（因装 GPU 插件要重启 dsh），工作树见 §7
             未派 4 份：57 新证据 / 58 调用图角色 / 61 GPU 相似度 / 62 全语料对拍
 
-护栏（2026-11-09 05:55 实测；**以 fixtures/guardrails.json 为准**）
+护栏（2026-11-09 07:35 实测；**以 fixtures/guardrails.json 为准**）
   fire 647/1080 ｜ batch 647/1080 ｜ batch_conv 637/1080（种类 1075×3）
-  延迟段 死亡 366/385 ｜ 挖洞 207/294
-  cargo test **1693** / 0 failed ｜ --features gdext-bindings **1799** / 0 failed
-  headless **14** 个脚本 **1818** 条断言 0 失败（play_flow **135** / entity_drawer 366 / process_loop 49）
-  selftest **714 / 0 / 1 skipped**
+  延迟段 死亡 366/385 ｜ 挖洞 207/294 ｜ 语料指纹 403 文件/401 回放（冻结）
+  cargo test **1694** / 0 failed ｜ --features gdext-bindings **1800** / 0 failed
+  headless **14** 个脚本 **1818** 条断言 0 失败 ｜ selftest **714 / 0 / 1 skipped**
+  coverage 527 可归属：逐位 88 / 观测 439 / 推断 0 / 未做 0
+  结构指纹（游戏代码子集）**88.15%**；975 混合总体 85.65%（±3.02，多数是依赖 crate）
+
+⚠️ **口径纪律（第十四轮血账，见报告 §8）**：
+  · **并发跑的墙钟一律作废**（互相抢核）；测量必须**串行 + 限线程**（`OMP_NUM_THREADS=8`）
+  · 给子 agent 写许可时**给目标值不给上界**（"96 行就够"而不是"≤2,000 行"）
+  · **CUDA 异步**：分阶段计时必须 `torch.cuda.synchronize()`，否则物化会被报成 87 s（真实 0.4–1.0 s）
+  · 现成的加速比数：61 号全量 CPU 1131 s / GPU 4.48 s；63 号 331 行×318 组 1525 s；
+    71 号张量内部 CPU 2.461 / GPU 0.510（4.83×）
+⚠️ **跑任何 headless 之前必须重建并覆盖 `.so`**；**`cargo test --lib` 会把 `.so` 覆盖成无 gdext 版**
+  ⇒ 先测 → 最后 build gdext → 再 cp
+⚠️ **新工作树没有 `client/assets/`** ⇒ selftest 掉到 686/3/22，是环境不是回归
   coverage 527 可归属：逐位 88 / 观测 439 / 推断 0 / 未做 0
   结构指纹 **78.18%**（留出半，95% CI [72.12, 84.24]；n=165 ⇒ ±6 点）
 
