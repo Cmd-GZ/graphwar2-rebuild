@@ -18,16 +18,23 @@
   agent/<task>     每个任务一个分支（我派 subagent 时建），**全部已推 origin**
   master           上游主线：他们把我的 CG 并进 master，我再用 master 同步回来
 
-已交付      第一轮 01–08 … 第八轮 35–38、第九轮 39–42 —— 全部已合并进 CG
+已交付      第一轮 01–08 … 第九轮 39–42、第十轮 43–46 —— 全部已合并进 CG
             报告在 dispatch/reports/CG-*.md
 下一轮候选  见 §7
 
-护栏（2026-11-08 18:40 实测；**以 fixtures/guardrails.json 为准**）
-  fire 647/1080 ｜ batch 647/1080 ｜ batch_conv 637/1080（fire 口径已含 fire_batch 变更）
-  延迟段 死亡 366/385 ｜ 挖洞 206(fire) · 207(batch)（分母 293·294）
-  cargo test 1631 / 0 failed ｜ --features gdext-bindings 1730 / 0 failed
-  headless 12 个脚本 **1504** 条断言 0 失败（entity_drawer **236**）
-  selftest **714 / 0 / 1 skipped**（skip = 自检那局没靶子）
+护栏（2026-11-08 21:45 实测；**以 fixtures/guardrails.json 为准**）
+  fire 647/1080 ｜ batch 647/1080 ｜ batch_conv 637/1080
+  延迟段 死亡 366/385 ｜ 挖洞 206(fire) · 207(batch)
+  cargo test **1635** / 0 failed ｜ --features gdext-bindings **1734** / 0 failed
+  headless 12 个脚本 **1560** 条断言 0 失败（entity_drawer **292**）
+  selftest **714 / 0 / 1 skipped**
+  槽位 22 个里一个真 stub 都不剩
+
+⚠️ 写护栏：`--update-baseline --axis fire|batch|batch_conv`
+⚠️ 合并前：`python3 tools/merge_check.py --cg origin/CG --allow-dispatch`（不加 --allow-dispatch 会误判 dispatch 污染）
+⚠️ **跑任何 headless 之前必须重建并覆盖 `.so`**（build --features gdext-bindings → cp → --import）；
+   否则 `Nonexistent function` 甚至**挂死**（我因此误判过一次集成 bug）。判据：
+   `grep -ac <新方法名> client/libgw2_rebuild.so` 非 0
   槽位 22 个里**一个真 stub 都不剩**
 
 ⚠️ 写护栏：`--update-baseline --axis fire|batch|batch_conv`
