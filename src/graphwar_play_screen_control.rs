@@ -590,6 +590,666 @@ impl LevelRules {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 6. 弹道生命周期：准备 → 发射 → 飞行 → 命中/越界 → 结算
+// ---------------------------------------------------------------------------
+//
+// # 这一段为什么在 `play_screen_control` 里
+//
+// 原版**没有**"弹道生命周期"这个函数：它是 `graphwar_game_state_manager::handle_tick`
+// （`0x470840`）+ `execute_results`（`0x472470`）合起来的**状态推进**。客户端能观察到的
+// 是它投影出来的四件事，本层就把这四件事做成一台显式状态机：
+//
+// ```text
+// ① 哪条命中什么时候落地   execute_results 的死亡块（0x472814）从记录里取出**点序号**
+//                           （记录 +0x10），`shl $0x4` 后按 16 字节/点取 `points[idx-1]`
+//                           ⇒ 命中是**按弹道点序号**排队的，不是"一次性全落地"
+// ② 落地顺序               同一发内按点序号升序（0x472814 的记录是按 index 排的）；
+//                           协议侧 106/106 批的死亡块按 `start_tick` 升序（docs/14 §7.3）
+// ③ 什么时候算"飞完"       本层取"揭示点数 >= 总点数"（旧 `.gd` 的 `_curve_finished`，
+//                           它读的是真 `Line2D` 的点数，不是我们另记的账）
+// ④ 结算只发生一次         压平模式（automation）在开火当刻就结算，之后到达事件只做收尾
+//                           ⇒ `settled` 这个闩（旧 `.gd` 的 `_logic_settled`）
+// ```
+//
+// # 档位
+//
+// | 项 | 档位 | 依据 |
+// |---|---|---|
+// | 命中按**弹道点序号**排队 | **观测（指令级）** | `0x472814`–`0x472872`：`mov 0x10(%rax),%r13` / `shl $0x4` / `movdqu -0x10(%rdx,%rcx,1)` |
+// | 死亡效果落在**死者站位** | **观测** | `docs/15` §1.2 的真报文：`DeathEffect.pos == PosInfo` |
+// | 死亡块按 tick 升序 | **观测** | `docs/14` §7.3：106/106 批 |
+// | 爆炸点 = 弹道停止点 | **观测** | `docs/14` §12.1（503/503）、`docs/31` §2 |
+// | "飞完才判胜负" | **推断** | `docs/143` §3 + 用户实测；缺逐帧真样本 |
+// | 一点掩膜 / 30 点每 tick | **观测** | `0x472ce6` 的 `imul r13 / shr 0x24` = 除以 30（docs/14 §12.4） |
+
+/// 一发弹道的阶段。
+///
+/// 对应原版状态机里的两段（`docs/14` §2）：
+/// * [`ShotPhase::Idle`] ≈ `WaitingForFunctions`（没有弹道在飞）；
+/// * [`ShotPhase::InFlight`] ≈ `ExecutingResults`（弹道在飞，服务端也不收新开火）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShotPhase {
+    Idle,
+    InFlight,
+}
+
+/// 命中类别（原版死亡块里 `+0x18` 那个判别字段的两档之一）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KillKind {
+    /// 士兵阵亡（`LifeQueuedDeath` + `LifeInfo{alive:false}`）。
+    Soldier,
+    /// 靶子被打掉（`docs/150` §Q1：靶子也是**生命表**里的实体）。
+    Target,
+}
+
+/// 一条**已计划、未落地**的命中（原版 `LifeQueuedDeath{entity_id, tick}` 的本地对应物）。
+///
+/// `point` = **弹道点序号**：弹道揭示到这个点，这条命中才落地。这就是 `0x472814`
+/// 那个死亡块记录里的 `+0x10` 字段（`shl $0x4` 后当 16 字节/点的下标用）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlannedKill {
+    /// 弹道点序号（从 0 起）。
+    pub point: usize,
+    pub kind: KillKind,
+    /// [`KillKind::Soldier`] 时是**士兵下标**；靶子时无意义（`-1`）。
+    pub index: i64,
+    /// [`KillKind::Target`] 时是**靶子 id**；士兵时无意义（`-1`）。
+    pub target_id: i64,
+    /// 死者站位 —— **不是**弹道停点（`docs/15` §1.2 观测）。
+    pub pos: (f64, f64),
+}
+
+impl PlannedKill {
+    /// 士兵阵亡。
+    pub fn soldier(point: usize, index: i64, pos: (f64, f64)) -> Self {
+        PlannedKill { point, kind: KillKind::Soldier, index, target_id: -1, pos }
+    }
+
+    /// 靶子被打掉。
+    pub fn target(point: usize, target_id: i64, pos: (f64, f64)) -> Self {
+        PlannedKill { point, kind: KillKind::Target, index: -1, target_id, pos }
+    }
+}
+
+/// 推进一帧（或一次结算）时吐出的事件。**顺序即弹道先后**。
+#[derive(Debug, Clone, PartialEq)]
+pub enum ShotEvent {
+    /// 一名士兵阵亡（视图层据此置 `alive=false` + 摆死亡特效）。
+    SoldierKilled { point: usize, index: i64, pos: (f64, f64) },
+    /// 一个靶子被打掉（视图层据此销毁实体 + 摆火花）。
+    TargetKilled { point: usize, target_id: i64, pos: (f64, f64) },
+    /// 弹道飞完（视图层据此在**停止点**炸、清曲线、并在 `settle` 为真时收回合）。
+    Arrived { stop: (f64, f64) },
+}
+
+/// [`ShotLifecycle::settle`] 的结论。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SettleOutcome {
+    /// 这一次调用**真的**结算了一个回合（`false` = 这一发已经结算过 ⇒ 不重复算）。
+    pub settled: bool,
+    /// 累计已结算的回合数（`TurnCountInfo.turn_count` 的本地对应物）。
+    pub turns_used: i64,
+}
+
+/// 一发弹道的生命周期（= 播放屏那 6 个函数的"决定"部分）。
+///
+/// 视图层只做三件不再判断的事：把数据递进来（[`ShotLifecycle::begin`]）、
+/// 把"画到第几个点"递进来（[`ShotLifecycle::advance`]）、执行吐回来的事件。
+#[derive(Debug, Clone)]
+pub struct ShotLifecycle {
+    phase: ShotPhase,
+    /// 这条弹道的总点数（`FunctionPoints.points.len()`）。
+    total_points: usize,
+    /// 已经揭示到的点数（由视图层从真 `Line2D` 读出来喂进来）。
+    reveal: usize,
+    /// 还没落地的命中，**按点序号升序**。
+    pending: std::collections::VecDeque<PlannedKill>,
+    /// 弹道停止点（爆炸点，`docs/14` §12.1：503/503 与爆炸点相同）。
+    stop: (f64, f64),
+    /// 这一发**是否已经结算过**（旧 `.gd` 的 `_logic_settled`）。
+    settled: bool,
+    turns_used: i64,
+    /// 本发已经落地的士兵下标 / 靶子 id（同一发内同一受害者只落一次）。
+    hit_soldiers: Vec<i64>,
+    hit_targets: Vec<i64>,
+    kills_landed: i64,
+    targets_landed: i64,
+}
+
+impl Default for ShotLifecycle {
+    fn default() -> Self {
+        ShotLifecycle::new()
+    }
+}
+
+impl ShotLifecycle {
+    /// 空状态：没有弹道在飞、回合数 0。
+    pub fn new() -> Self {
+        ShotLifecycle {
+            phase: ShotPhase::Idle,
+            total_points: 0,
+            reveal: 0,
+            pending: std::collections::VecDeque::new(),
+            stop: (0.0, 0.0),
+            settled: false,
+            turns_used: 0,
+            hit_soldiers: Vec::new(),
+            hit_targets: Vec::new(),
+            kills_landed: 0,
+            targets_landed: 0,
+        }
+    }
+
+    /// 换局 / 退出对局：连回合数一起归零（旧 `.gd` 的 `_reset_shot_state`）。
+    pub fn reset(&mut self) {
+        *self = ShotLifecycle::new();
+    }
+
+    /// 开始放一发。
+    ///
+    /// * `total_points` —— 这条弹道**画上去的**总点数（截断后的那条，不是采样全量）；
+    /// * `kills` / `target_kills` —— 已算好的命中表（顺序无要求，本层按点序号排并合并）；
+    /// * `stop` —— 弹道停止点（爆炸点）；
+    /// * `already_settled` —— 压平模式（automation）/ 联机：本地不再结算，到达时只收尾。
+    pub fn begin(
+        &mut self,
+        total_points: usize,
+        kills: Vec<PlannedKill>,
+        target_kills: Vec<PlannedKill>,
+        stop: (f64, f64),
+        already_settled: bool,
+    ) {
+        self.phase = ShotPhase::InFlight;
+        self.total_points = total_points;
+        self.reveal = 0;
+        self.stop = stop;
+        self.settled = already_settled;
+        self.hit_soldiers.clear();
+        self.hit_targets.clear();
+        self.kills_landed = 0;
+        self.targets_landed = 0;
+        self.pending = kills.into_iter().chain(target_kills).collect();
+        // 按点序号升序 —— 先被打到的先落地（`docs/14` §7.3：106/106 按 `start_tick` 升序）。
+        self.pending
+            .make_contiguous()
+            .sort_by(|a, b| a.point.cmp(&b.point).then(a.kind_index().cmp(&b.kind_index())));
+    }
+
+    /// 这一发一共多少点。
+    pub fn total_points(&self) -> usize {
+        self.total_points
+    }
+
+    /// "飞完了" —— 与旧 `.gd` 的 `_curve_finished()` **逐字对应**：
+    /// 点数 < 2 直接算完（一条线都没有），否则揭示点数 >= 总点数。
+    pub fn arrived(&self) -> bool {
+        self.total_points < 2 || self.reveal >= self.total_points
+    }
+
+    /// 推进"画到第几个点"，吐回这一帧该执行的事件。
+    ///
+    /// 已经不在飞（或已飞完）⇒ 空表（幂等，视图层不需要自己判重复）。
+    pub fn advance(&mut self, reveal: usize) -> Vec<ShotEvent> {
+        let mut out = Vec::new();
+        if self.phase != ShotPhase::InFlight {
+            return out;
+        }
+        if reveal > self.reveal {
+            self.reveal = reveal;
+        }
+        // ① 落地"弹道已经走到的那一段"里的命中。
+        self.land_until(self.reveal, &mut out);
+        // ② 飞完了没有（到达事件只吐一次）。
+        if self.arrived() {
+            // 到达前先把**剩下的全部**落完 —— 旧 `.gd` 的 `_on_shot_arrived()` 里
+            // 那句 `_apply_kills_up_to(1 << 30)`（越界的命中不会因为它排在弹道之外就丢掉）。
+            self.reveal = self.reveal.max(self.total_points);
+            self.land_until(usize::MAX, &mut out);
+            self.phase = ShotPhase::Idle;
+            out.push(ShotEvent::Arrived { stop: self.stop });
+        }
+        out
+    }
+
+    /// 把点序号 `<= upto` 的命中落地，按队列顺序（已按点序号升序）。
+    fn land_until(&mut self, upto: usize, out: &mut Vec<ShotEvent>) {
+        while let Some(k) = self.pending.front() {
+            if k.point > upto {
+                break;
+            }
+            let k = self.pending.pop_front().expect("front 已判空");
+            // 同一发里同一受害者只落一次（原版 `if alive` 守卫的等价物：
+            // 命中表是**开火那一刻**对着存活表算的，所以陈旧只可能来自同一发内部的重复）。
+            match k.kind {
+                KillKind::Soldier => {
+                    if self.hit_soldiers.contains(&k.index) {
+                        continue;
+                    }
+                    self.hit_soldiers.push(k.index);
+                    self.kills_landed += 1;
+                    out.push(ShotEvent::SoldierKilled { point: k.point, index: k.index, pos: k.pos });
+                }
+                KillKind::Target => {
+                    if self.hit_targets.contains(&k.target_id) {
+                        continue;
+                    }
+                    self.hit_targets.push(k.target_id);
+                    self.targets_landed += 1;
+                    out.push(ShotEvent::TargetKilled {
+                        point: k.point,
+                        target_id: k.target_id,
+                        pos: k.pos,
+                    });
+                }
+            }
+        }
+    }
+
+    /// 把在飞的那一发**直接跑完**（旧 `.gd` 的 `flush_shot()`：自检/诊断用）。
+    pub fn flush(&mut self) -> Vec<ShotEvent> {
+        self.advance(usize::MAX)
+    }
+
+    /// 把还没落地的命中**全部**落地，**不吐到达事件**，阶段仍是 InFlight。
+    ///
+    /// 两条路用它：
+    /// * **压平模式**（automation）：开火当刻落地，但曲线照放 —— 到达与收尾仍由
+    ///   后面每帧的 [`ShotLifecycle::advance`] 给（旧 `.gd` 的 `_logic_settled` 口径）；
+    /// * **整批结算**（同时回合攒齐 / 外部来弹）：那一批里没有单条弹道在飞，
+    ///   既没有"到达"也没有爆炸与清线（旧 `.gd` 的 `_resolve_shots()`），
+    ///   调用方接 [`ShotLifecycle::abort`] 收尾。
+    pub fn land_all(&mut self) -> Vec<ShotEvent> {
+        let mut out = Vec::new();
+        if self.phase != ShotPhase::InFlight {
+            return out;
+        }
+        self.land_until(usize::MAX, &mut out);
+        out
+    }
+
+    /// 收一个回合。**同一发只收一次**（`settled` 闩，旧 `.gd` 的 `_logic_settled`）。
+    pub fn settle(&mut self) -> SettleOutcome {
+        if self.settled {
+            return SettleOutcome { settled: false, turns_used: self.turns_used };
+        }
+        self.settled = true;
+        self.turns_used += 1;
+        SettleOutcome { settled: true, turns_used: self.turns_used }
+    }
+
+    /// 半路丢弃（换局 / 联机断线）。
+    pub fn abort(&mut self) {
+        self.phase = ShotPhase::Idle;
+        self.pending.clear();
+    }
+
+    pub fn phase(&self) -> ShotPhase {
+        self.phase
+    }
+
+    pub fn in_flight(&self) -> bool {
+        self.phase == ShotPhase::InFlight
+    }
+
+    pub fn revealed(&self) -> usize {
+        self.reveal
+    }
+
+    /// 还没落地的命中条数（士兵 + 靶子）。
+    pub fn pending_count(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// 还没落地的**士兵**命中条数（`level_state()["pending_kills"]`）。
+    pub fn pending_soldiers(&self) -> usize {
+        self.pending.iter().filter(|k| k.kind == KillKind::Soldier).count()
+    }
+
+    /// 还没落地的**靶子**命中条数。
+    pub fn pending_targets(&self) -> usize {
+        self.pending.iter().filter(|k| k.kind == KillKind::Target).count()
+    }
+
+    pub fn kills_landed(&self) -> i64 {
+        self.kills_landed
+    }
+
+    pub fn targets_landed(&self) -> i64 {
+        self.targets_landed
+    }
+
+    pub fn settled(&self) -> bool {
+        self.settled
+    }
+
+    pub fn turns_used(&self) -> i64 {
+        self.turns_used
+    }
+
+    /// 只读快照（自检/诊断）。
+    pub fn snapshot(&self) -> LifecycleSnapshot {
+        LifecycleSnapshot {
+            in_flight: self.in_flight(),
+            revealed: self.reveal,
+            total_points: self.total_points,
+            pending: self.pending.len(),
+            kills_landed: self.kills_landed,
+            targets_landed: self.targets_landed,
+            settled: self.settled,
+            turns_used: self.turns_used,
+        }
+    }
+}
+
+impl PlannedKill {
+    /// 排序用的类别序号（同点序号时士兵先于靶子 —— 原版死亡块在前、靶子块在后）。
+    fn kind_index(&self) -> u8 {
+        match self.kind {
+            KillKind::Soldier => 0,
+            KillKind::Target => 1,
+        }
+    }
+}
+
+/// [`ShotLifecycle::snapshot`] 的只读形状。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LifecycleSnapshot {
+    pub in_flight: bool,
+    pub revealed: usize,
+    pub total_points: usize,
+    pub pending: usize,
+    pub kills_landed: i64,
+    pub targets_landed: i64,
+    pub settled: bool,
+    pub turns_used: i64,
+}
+
+// ---------------------------------------------------------------------------
+// 7. 回合时钟：超时谓词（`handle_tick` 的那三个合取项）
+// ---------------------------------------------------------------------------
+//
+// 原版判据（`docs/14` §11.3，`0x470989`–`0x4709ec`，**观测**）：
+//
+// ```text
+// 0x470989  cmp BYTE [self+0x120], 2     ; state == WaitingForFunctions
+// call TurnManager::get_end_of_turn_tick (0x462ec0)
+// cmp  eax, 1                            ; 取到了截止 tick
+// cmp  now_tick, end                     ; now >= end
+// cmp  BYTE [self+0x11c], 0              ; "有人在等"标志
+//   → call fire_functions (0x470eb0)     ; **把已提交的函数打出去**
+// ```
+//
+// 三个合取项一项都不能省 —— 谓词本体已经落在 [`crate::turnstate::should_auto_fire`]
+// （带真值表），本节只负责"回合开始 → 截止 tick → 动作"这一圈**流程**，以及一个
+// **我方**加的闩（见 [`TurnClock::decide`]）。
+
+/// 回合时钟的结论。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnAction {
+    /// 什么都不做。
+    Nothing,
+    /// 到点了：按原版把**已提交的函数**打出去（`0x4709ec` 的 `call fire_functions`）。
+    AutoFire,
+}
+
+/// 一回合的时钟（tick 制，60 Hz；`docs/14` §1.1）。
+///
+/// 时长来自 `TimeMode` 那张表（`docs/14` §3.3.2 的六档实测），
+/// 与 [`crate::graphwar_tick_handler::turn_duration_ticks`] 是**同一张表**。
+#[derive(Debug, Clone)]
+pub struct TurnClock {
+    time_mode: crate::graphwar_mode_manager::TimeMode,
+    /// 本回合已经过去的 tick（含不足一 tick 的余量，按 60 Hz 累积）。
+    elapsed_ticks: i64,
+    tick_remainder: f64,
+    /// **我方**加的闩：这一回合已经自动开过火（原版靠 `fire_functions` 改状态自锁，
+    /// 我们这边开火可能失败（输入框空 / 轮到 AI），失败时要防每帧重试）。
+    auto_fired: bool,
+    auto_fired_total: i64,
+}
+
+impl Default for TurnClock {
+    fn default() -> Self {
+        TurnClock::new(5) // TimerInf
+    }
+}
+
+impl TurnClock {
+    /// `time_mode` 是原版那个判别值（`0..=5`，`graphwar_mode_manager::TimeMode`）：
+    /// `0 = Timer30s … 4 = Timer5m, 5 = TimerInf`。
+    pub fn new(time_mode: u8) -> Self {
+        TurnClock {
+            time_mode: time_mode_at(time_mode),
+            elapsed_ticks: 0,
+            tick_remainder: 0.0,
+            auto_fired: false,
+            auto_fired_total: 0,
+        }
+    }
+
+    /// 换时间档（换局 / 设置屏改了档位）。**同时重置回合**。
+    pub fn set_time_mode(&mut self, time_mode: u8) {
+        self.time_mode = time_mode_at(time_mode);
+        self.restart();
+    }
+
+    /// 回合开始：计时归零、闩清零（旧 `.gd` 的 `_time_left = GwModes.turn_seconds(...)`）。
+    pub fn restart(&mut self) {
+        self.elapsed_ticks = 0;
+        self.tick_remainder = 0.0;
+        self.auto_fired = false;
+    }
+
+    /// 本回合的时长（tick）；`None` = `TimerInf`，没有截止时刻。
+    pub fn turn_duration_ticks(&self) -> Option<i64> {
+        self.time_mode.seconds().map(|s| s as i64 * crate::graphwar_tick_handler::TICKS_PER_SECOND)
+    }
+
+    /// 回合截止 tick —— 相对"回合开始"的 tick 轴（回合开始时为 0）。
+    ///
+    /// 原版是绝对 tick（`turn_start_tick + duration`，`docs/14` §3.2）；本层用
+    /// "本回合已过 tick" 做基准，两者只差一个常量偏移，**判据不变**。
+    pub fn end_of_turn_tick(&self) -> Option<i64> {
+        self.turn_duration_ticks()
+    }
+
+    /// 推进时钟（按秒，内部换成 60 Hz 的 tick）。返回本回合已过 tick。
+    pub fn advance(&mut self, seconds: f64) -> i64 {
+        if seconds > 0.0 {
+            self.tick_remainder += seconds * crate::graphwar_tick_handler::TICKS_PER_SECOND as f64;
+            let whole = self.tick_remainder.floor();
+            self.tick_remainder -= whole;
+            self.elapsed_ticks += whole as i64;
+        }
+        self.elapsed_ticks
+    }
+
+    /// 倒计时剩几秒（给 `TimerLabel` 排版用；`None` = 无限时档，原版是空白）。
+    pub fn seconds_left(&self) -> Option<f64> {
+        let total = self.turn_duration_ticks()? as f64;
+        Some(((total - self.elapsed_ticks as f64)
+            / crate::graphwar_tick_handler::TICKS_PER_SECOND as f64)
+            .max(0.0))
+    }
+
+    /// 本回合已过 tick。
+    pub fn elapsed_ticks(&self) -> i64 {
+        self.elapsed_ticks
+    }
+
+    /// 判"现在该不该自动开火"。
+    ///
+    /// `in_flight` / `running` 是**播放屏自己的状态**：本屏没有服务端，状态机靠这两个
+    /// 布尔投影（`docs/16-client.md` §53.4 写明了这条投影是**我方**的）：
+    ///
+    /// ```text
+    /// running == false            -> EndingGame
+    /// in_flight == true           -> ExecutingResults
+    /// 否则                        -> WaitingForFunctions   ← 只有这一档可能超时
+    /// waiting = running && !in_flight                  ← 对应 [self+0x11c] != 0
+    /// ```
+    pub fn decide(&mut self, in_flight: bool, running: bool) -> TurnAction {
+        if self.auto_fired {
+            return TurnAction::Nothing;
+        }
+        let state = if !running {
+            crate::turnstate::GameState::EndingGame
+        } else if in_flight {
+            crate::turnstate::GameState::ExecutingResults
+        } else {
+            crate::turnstate::GameState::WaitingForFunctions
+        };
+        let waiting = running && !in_flight;
+        if crate::turnstate::should_auto_fire(state, self.elapsed_ticks, self.end_of_turn_tick(), waiting)
+        {
+            self.auto_fired = true;
+            self.auto_fired_total += 1;
+            TurnAction::AutoFire
+        } else {
+            TurnAction::Nothing
+        }
+    }
+
+    /// 累计自动开火次数（诊断）。
+    pub fn auto_fired_total(&self) -> i64 {
+        self.auto_fired_total
+    }
+
+    /// 只读快照。
+    pub fn snapshot(&self) -> ClockSnapshot {
+        ClockSnapshot {
+            time_mode: self.time_mode as u8,
+            duration_ticks: self.turn_duration_ticks(),
+            elapsed_ticks: self.elapsed_ticks,
+            seconds_left: self.seconds_left(),
+            auto_fired: self.auto_fired,
+            auto_fired_total: self.auto_fired_total,
+        }
+    }
+}
+
+/// [`TurnClock::snapshot`] 的只读形状。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClockSnapshot {
+    pub time_mode: u8,
+    /// `None` = `TimerInf`（没有截止时刻）。
+    pub duration_ticks: Option<i64>,
+    pub elapsed_ticks: i64,
+    pub seconds_left: Option<f64>,
+    pub auto_fired: bool,
+    pub auto_fired_total: i64,
+}
+
+/// 判别值 → `TimeMode`（`0 = Timer30s … 5 = TimerInf`，越界按 `TimerInf`）。
+fn time_mode_at(index: u8) -> crate::graphwar_mode_manager::TimeMode {
+    use crate::graphwar_mode_manager::TimeMode;
+    match index {
+        0 => TimeMode::Timer30s,
+        1 => TimeMode::Timer1m,
+        2 => TimeMode::Timer2m,
+        3 => TimeMode::Timer3m,
+        4 => TimeMode::Timer5m,
+        _ => TimeMode::TimerInf,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 8. AI 回合闸门（"Bot 什么时候开火"）
+// ---------------------------------------------------------------------------
+//
+// ⚠️ **这一整节都是我方自定**：原版是 `aigen` 进化器（`docs/13`、`docs/147`），
+// "AI 什么时候开火"的原版时序**没有任何观测**（`docs/16-client.md` §52.6 #3）。
+// 搬到 Rust 的理由不是"更像原版"，而是**判据只能有一份**：现在它从 GDScript 挪过来，
+// 与 `GwLevelRules` / `GwTurnDriver` 同处一层，视图层不再有"轮到 AI 了吗"的分支。
+
+/// AI 回合的思考闸门（**我方自定**）。
+#[derive(Debug, Clone)]
+pub struct BotTurn {
+    think_seconds: f64,
+    /// 还要想多久；`< 0` = 没在等（人类回合 / 已开火 / 停了）。
+    think_left: f64,
+}
+
+impl Default for BotTurn {
+    fn default() -> Self {
+        BotTurn::new(0.6)
+    }
+}
+
+impl BotTurn {
+    /// `think_seconds` 是**自定**的思考时长（旧 `.gd` 的 `BOT_THINK_SECONDS = 0.6`）。
+    pub fn new(think_seconds: f64) -> Self {
+        BotTurn { think_seconds, think_left: -1.0 }
+    }
+
+    /// 轮到 AI：起倒计时。
+    pub fn arm(&mut self) {
+        self.think_left = self.think_seconds;
+    }
+
+    /// 离开 AI 的回合 / 停局：取消倒计时。
+    pub fn disarm(&mut self) {
+        self.think_left = -1.0;
+    }
+
+    pub fn think_seconds(&self) -> f64 {
+        self.think_seconds
+    }
+
+    pub fn think_left(&self) -> f64 {
+        self.think_left
+    }
+
+    pub fn armed(&self) -> bool {
+        self.think_left >= 0.0
+    }
+
+    /// 推进一帧。返回"现在该让它开火了"。
+    ///
+    /// `can_fire` = 视图层能给出的三个前置（在跑、没有弹道在飞、不在 automation 里；
+    /// 旧 `.gd` 的 `_tick_bot_turn` 那三行早退）。
+    pub fn tick(&mut self, delta: f64, can_fire: bool) -> bool {
+        if !self.armed() || !can_fire {
+            return false;
+        }
+        self.think_left -= delta;
+        if self.think_left <= 0.0 {
+            self.think_left = -1.0;
+            return true;
+        }
+        false
+    }
+}
+
+/// AI 一发的函数串：一条过射手、指向最近敌人的直线（**我方自定**，`f(x) = m·x`）。
+///
+/// 为什么这样能指过去：修正常数 `c = y0 − f(±x0)`（`docs/24` §6.2）把曲线钉在射手身上，
+/// 所以 `m = (y敌 − y我)/(x敌 − x我)` 的那条线正好穿过敌人。
+///
+/// `others` 按**士兵下标顺序**给，取**第一个**活着的敌人（与旧 `.gd` 的循环同序）。
+/// 每条是 `(x, y, team, alive)`。
+pub fn bot_aim_expression(
+    shooter: (f64, f64, i64),
+    others: &[(f64, f64, i64, bool)],
+) -> String {
+    for (x, y, team, alive) in others {
+        if !*alive || *team == shooter.2 {
+            continue;
+        }
+        // 射手指的是"自己"那一条 —— 按坐标判等（`is_same` 的等价物；同一位置不会有两个士兵）。
+        if (*x - shooter.0).abs() < f64::EPSILON && (*y - shooter.1).abs() < f64::EPSILON {
+            continue;
+        }
+        let dx = *x - shooter.0;
+        if dx.abs() < 0.000001 {
+            return "0".to_string();
+        }
+        return format!("{:.6}*x", (*y - shooter.1) / dx);
+    }
+    "0".to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -756,5 +1416,339 @@ mod tests {
         let r = LevelRules::for_campaign(3, false, 0, 8, 0);
         let v = r.evaluate(&st);
         assert!(!v.over);
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    //! 弹道生命周期（§6）/ 回合时钟（§7）/ AI 闸门（§8）的纯逻辑断言。
+    //!
+    //! 这些断言**不碰引擎**，钉的是"什么时候落地 / 什么时候算飞完 / 结算几次"
+    //! 这三条流程；`GDExtension` 那一层由 `client/tools/play_flow_check.gd` 覆盖。
+
+    use super::*;
+
+    fn kill_at(point: usize, index: i64) -> PlannedKill {
+        PlannedKill::soldier(point, index, (1.0, 2.0))
+    }
+
+    /// 命中**按点序号**落地：弹道还没走到那个点，就不许落地。
+    #[test]
+    fn kills_land_only_when_the_curve_reaches_the_point() {
+        let mut lc = ShotLifecycle::new();
+        lc.begin(100, vec![kill_at(50, 3), kill_at(10, 7)], vec![], (24.0, 0.5), false);
+        assert_eq!(lc.phase(), ShotPhase::InFlight);
+        assert_eq!(lc.pending_count(), 2);
+
+        // 走到第 9 点：一条都不落（旧的 10 号点还没到）
+        assert!(lc.advance(9).is_empty());
+        assert_eq!(lc.kills_landed(), 0);
+
+        // 走到第 10 点：正好落 7 号士兵（边界是 `<=`，不是 `<`）
+        let ev = lc.advance(10);
+        assert_eq!(ev.len(), 1);
+        assert_eq!(ev[0], ShotEvent::SoldierKilled { point: 10, index: 7, pos: (1.0, 2.0) });
+        assert_eq!(lc.kills_landed(), 1);
+        assert_eq!(lc.pending_count(), 1);
+
+        // 走到第 49 点：还差一点
+        assert!(lc.advance(49).is_empty());
+        // 走到第 50 点：落 3 号
+        assert_eq!(lc.advance(50).len(), 1);
+        assert_eq!(lc.kills_landed(), 2);
+        assert_eq!(lc.pending_count(), 0);
+    }
+
+    /// 命中表**先排序再落地**：给进来是乱的，落地顺序必须按点序号升序。
+    #[test]
+    fn kills_are_sorted_by_point_before_landing() {
+        let mut lc = ShotLifecycle::new();
+        lc.begin(40, vec![kill_at(30, 1), kill_at(10, 2), kill_at(20, 3)], vec![], (5.0, 5.0), false);
+        let ev = lc.advance(1000);
+        let order: Vec<i64> = ev
+            .iter()
+            .filter_map(|e| match e {
+                ShotEvent::SoldierKilled { index, .. } => Some(*index),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(order, vec![2, 3, 1], "10 → 20 → 30");
+    }
+
+    /// "飞完了" = 点数 < 2 或揭示点数 >= 总点数（旧 `.gd` 的 `_curve_finished`）。
+    #[test]
+    fn arrival_needs_the_whole_curve() {
+        let mut lc = ShotLifecycle::new();
+        lc.begin(30, vec![], vec![], (24.0, 0.0), false);
+        assert!(!lc.arrived());
+        let ev = lc.advance(29);
+        assert!(ev.is_empty(), "揭示 29/30 ⇒ 还没飞完");
+        let ev = lc.advance(30);
+        assert_eq!(ev, vec![ShotEvent::Arrived { stop: (24.0, 0.0) }]);
+        assert!(!lc.in_flight(), "到达后就离开 InFlight");
+        // 幂等：再推一次不再吐事件
+        assert!(lc.advance(30).is_empty());
+        assert!(lc.flush().is_empty());
+    }
+
+    /// 一条线都没有（0/1 点）⇒ 直接算飞完（与旧 `.gd` 的 `_curve_total < 2` 同一条）。
+    #[test]
+    fn tiny_curve_arrives_immediately() {
+        let mut lc = ShotLifecycle::new();
+        lc.begin(1, vec![], vec![], (0.0, 0.0), false);
+        assert!(lc.arrived());
+        assert_eq!(lc.advance(0), vec![ShotEvent::Arrived { stop: (0.0, 0.0) }]);
+    }
+
+    /// 到达时把**剩余的**命中一次性落完（`_on_shot_arrived` 的 `_apply_kills_up_to(1<<30)`）。
+    #[test]
+    fn arrival_lands_the_remaining_kills_first() {
+        let mut lc = ShotLifecycle::new();
+        lc.begin(5, vec![kill_at(1, 0), kill_at(9, 1)], vec![], (3.0, 3.0), false);
+        let ev = lc.advance(5);
+        // 第 1 点先落，然后越界的 9 号也落，最后才是到达
+        assert_eq!(ev.len(), 3);
+        assert_eq!(ev[1], ShotEvent::SoldierKilled { point: 9, index: 1, pos: (1.0, 2.0) });
+        assert_eq!(ev[2], ShotEvent::Arrived { stop: (3.0, 3.0) });
+        assert_eq!(lc.pending_count(), 0);
+    }
+
+    /// 同一发里同一个受害者只落一次（原版 `if alive` 守卫的等价物）。
+    #[test]
+    fn the_same_victim_lands_once_per_shot() {
+        let mut lc = ShotLifecycle::new();
+        lc.begin(50, vec![kill_at(5, 2), kill_at(6, 2), kill_at(7, 2)], vec![], (1.0, 1.0), false);
+        let ev = lc.advance(50);
+        let killed: Vec<i64> = ev
+            .iter()
+            .filter_map(|e| match e {
+                ShotEvent::SoldierKilled { index, .. } => Some(*index),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(killed, vec![2], "2 号士兵只死一次");
+        assert_eq!(lc.kills_landed(), 1);
+        // 下一发重新算：闩是**每发**清的
+        lc.begin(50, vec![kill_at(5, 2)], vec![], (1.0, 1.0), false);
+        assert_eq!(lc.advance(50).len(), 2, "新一发里 2 号还能再落一次 + 到达");
+    }
+
+    /// 靶子走另一条计数（`targets_landed`），与士兵互不干扰。
+    #[test]
+    fn targets_count_separately_from_soldiers() {
+        let mut lc = ShotLifecycle::new();
+        lc.begin(
+            20,
+            vec![kill_at(3, 0)],
+            vec![PlannedKill::target(4, 1000, (12.0, -5.0))],
+            (1.0, 1.0),
+            false,
+        );
+        let ev = lc.advance(20);
+        assert_eq!(
+            ev[0],
+            ShotEvent::SoldierKilled { point: 3, index: 0, pos: (1.0, 2.0) },
+            "同一点序号时士兵在前"
+        );
+        assert_eq!(
+            ev[1],
+            ShotEvent::TargetKilled { point: 4, target_id: 1000, pos: (12.0, -5.0) }
+        );
+        assert_eq!((lc.kills_landed(), lc.targets_landed()), (1, 1));
+    }
+
+    /// 结算**每发只收一次**（压平模式先收，到达时不再收）。
+    #[test]
+    fn settle_happens_once_per_shot() {
+        let mut lc = ShotLifecycle::new();
+        lc.begin(4, vec![], vec![], (1.0, 1.0), false);
+        let first = lc.settle();
+        assert!(first.settled);
+        assert_eq!(first.turns_used, 1);
+        let second = lc.settle();
+        assert!(!second.settled, "同一发不许再算一个回合");
+        assert_eq!(second.turns_used, 1);
+
+        // 压平模式：begin(already_settled = true) ⇒ 结算已被消费过
+        lc.begin(4, vec![], vec![], (1.0, 1.0), true);
+        assert!(!lc.settle().settled);
+        assert_eq!(lc.turns_used(), 1);
+
+        // 下一发照常 +1
+        lc.begin(4, vec![], vec![], (1.0, 1.0), false);
+        assert_eq!(lc.settle().turns_used, 2);
+    }
+
+    /// `reset()` 连回合数一起归零（换局）。
+    #[test]
+    fn reset_clears_everything_including_turns() {
+        let mut lc = ShotLifecycle::new();
+        lc.begin(10, vec![kill_at(1, 0)], vec![], (1.0, 1.0), false);
+        lc.advance(10);
+        lc.settle();
+        assert_eq!(lc.turns_used(), 1);
+        lc.reset();
+        assert_eq!(
+            lc.snapshot(),
+            LifecycleSnapshot {
+                in_flight: false,
+                revealed: 0,
+                total_points: 0,
+                pending: 0,
+                kills_landed: 0,
+                targets_landed: 0,
+                settled: false,
+                turns_used: 0,
+            }
+        );
+    }
+
+    /// 不在飞时推进是空操作（视图层每帧都调，不许有副作用）。
+    #[test]
+    fn advancing_while_idle_does_nothing() {
+        let mut lc = ShotLifecycle::new();
+        assert!(lc.advance(100).is_empty());
+        assert!(lc.flush().is_empty());
+        assert_eq!(lc.turns_used(), 0);
+    }
+
+    // ---- 7. 回合时钟 ----------------------------------------------------
+
+    /// 六档时长与 `TimeMode::seconds()` 同一张表（`docs/14` §3.3.2 全档实测）。
+    #[test]
+    fn turn_clock_durations_match_the_six_modes() {
+        let want = [
+            (0u8, Some(1800i64)),
+            (1, Some(3600)),
+            (2, Some(7200)),
+            (3, Some(10800)),
+            (4, Some(18000)),
+            (5, None), // TimerInf
+        ];
+        for (index, ticks) in want {
+            let c = TurnClock::new(index);
+            assert_eq!(c.turn_duration_ticks(), ticks, "档位 {index}");
+            assert_eq!(c.end_of_turn_tick(), ticks);
+        }
+    }
+
+    /// 到点才自动开火；三个合取项（状态 / 时钟 / 有人在等）缺一不可（`0x470989`）。
+    #[test]
+    fn auto_fire_needs_all_three_conjuncts() {
+        let mut c = TurnClock::new(1); // Timer1m = 3600 tick
+        c.restart();
+        // 没到点
+        c.advance(59.9);
+        assert_eq!(c.elapsed_ticks(), 3594);
+        assert_eq!(c.decide(false, true), TurnAction::Nothing);
+        // 到点：到 60.0 s ⇒ 3600 tick
+        c.advance(0.1);
+        assert_eq!(c.elapsed_ticks(), 3600);
+        assert_eq!(c.decide(false, true), TurnAction::AutoFire);
+        // 闩：同一回合只给一次
+        assert_eq!(c.decide(false, true), TurnAction::Nothing);
+        assert_eq!(c.auto_fired_total(), 1);
+    }
+
+    /// 弹道在飞（≈ `ExecutingResults`）或局已结束（≈ `EndingGame`）⇒ 都不超时。
+    #[test]
+    fn auto_fire_is_suppressed_while_in_flight_or_stopped() {
+        let mut c = TurnClock::new(0); // Timer30s = 1800 tick
+        c.restart();
+        c.advance(31.0);
+        assert_eq!(c.elapsed_ticks(), 1860);
+        assert_eq!(c.decide(true, true), TurnAction::Nothing, "弹道在飞");
+        assert_eq!(c.decide(false, false), TurnAction::Nothing, "局已结束");
+        assert_eq!(c.decide(false, true), TurnAction::AutoFire, "回到等开火才判");
+    }
+
+    /// `TimerInf` 永远不超时（战役关就是这一档：`TimeModeInfo` 21/21 = `TimerInf`）。
+    #[test]
+    fn timer_inf_never_times_out() {
+        let mut c = TurnClock::new(5);
+        c.restart();
+        c.advance(10_000.0);
+        assert_eq!(c.seconds_left(), None, "无限时档没有倒计时（原版标签是空白）");
+        assert_eq!(c.decide(false, true), TurnAction::Nothing);
+    }
+
+    /// 倒计时是"总时长 − 已过"，且向下夹到 0（`format_clock` 那边向下取整）。
+    #[test]
+    fn seconds_left_counts_down() {
+        let mut c = TurnClock::new(2); // Timer2m
+        c.restart();
+        assert_eq!(c.seconds_left(), Some(120.0));
+        c.advance(1.5);
+        assert_eq!(c.seconds_left(), Some(118.5));
+        c.advance(200.0);
+        assert_eq!(c.seconds_left(), Some(0.0));
+    }
+
+    /// 回合开始时闩要清掉（新回合可以再超时一次）。
+    #[test]
+    fn restart_clears_the_latch() {
+        let mut c = TurnClock::new(0);
+        c.restart();
+        c.advance(30.0);
+        assert_eq!(c.decide(false, true), TurnAction::AutoFire);
+        c.restart();
+        assert_eq!(c.elapsed_ticks(), 0);
+        c.advance(30.0);
+        assert_eq!(c.decide(false, true), TurnAction::AutoFire);
+        assert_eq!(c.auto_fired_total(), 2);
+    }
+
+    /// 60 Hz 的帧余量不许丢：60 × (1/60) 秒 = 恰 60 tick。
+    #[test]
+    fn clock_keeps_fractional_ticks() {
+        let mut c = TurnClock::new(3);
+        c.restart();
+        for _ in 0..60 {
+            c.advance(1.0 / 60.0);
+        }
+        assert_eq!(c.elapsed_ticks(), 60);
+    }
+
+    // ---- 8. AI 闸门 ----------------------------------------------------
+
+    /// 思考倒计时：起表 → 到点才放行，且放行一次就把表停掉。
+    #[test]
+    fn bot_gate_counts_down_then_fires_once() {
+        let mut b = BotTurn::new(0.6);
+        assert!(!b.armed());
+        b.arm();
+        assert!(b.armed());
+        assert!(!b.tick(0.3, true));
+        assert!(b.tick(0.3, true));
+
+        assert!(!b.armed(), "开火后表停掉");
+        assert!(!b.tick(1.0, true), "停表后不再吐 true");
+    }
+
+    /// `can_fire == false`（弹道在飞 / 停了）时表**不动**。
+    #[test]
+    fn bot_gate_freezes_when_it_cannot_fire() {
+        let mut b = BotTurn::new(0.5);
+        b.arm();
+        for _ in 0..10 {
+            assert!(!b.tick(0.4, false));
+        }
+        assert!((b.think_left() - 0.5).abs() < 1e-12, "被挡住时倒计时不走");
+        assert!(b.tick(0.5, true));
+    }
+
+    /// 直线瞄准：`m = (y敌 − y我)/(x敌 − x我)`，6 位小数，形状与旧 `.gd` 逐字符一致。
+    #[test]
+    fn bot_aim_expression_is_the_same_line() {
+        // 射手 (−18,−5.1)，敌人 (18,−5.1) ⇒ m = 0
+        assert_eq!(bot_aim_expression((-18.0, -5.1, 0), &[(18.0, -5.1, 1, true)]), "0.000000*x");
+        // 射手 (0,0)，敌人 (2,4) ⇒ m = 2
+        assert_eq!(bot_aim_expression((0.0, 0.0, 0), &[(2.0, 4.0, 1, true)]), "2.000000*x");
+        // 没有敌人 ⇒ "0"（不是 "0.000000*x"：旧 `.gd` 的兜底分支）
+        assert_eq!(bot_aim_expression((0.0, 0.0, 0), &[(2.0, 4.0, 0, true)]), "0");
+        // 死人不算
+        assert_eq!(bot_aim_expression((0.0, 0.0, 0), &[(2.0, 4.0, 1, false)]), "0");
+        // 竖直对齐 ⇒ 旧 `.gd` 的 `absf(dx) < 1e-6` 兜底
+        assert_eq!(bot_aim_expression((0.0, 0.0, 0), &[(0.0, 9.0, 1, true)]), "0");
     }
 }

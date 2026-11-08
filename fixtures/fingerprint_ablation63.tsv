@@ -1,0 +1,322 @@
+# 任务 63 · 特征消融 / 漏洞补丁（tools/fingerprint_audit.py sweep）
+# 真值：fixture=301, strict=333, both=295, agree=295, conflict=0；分半：调参半 166 / 留出半 165；窗口 (0.7, 1.4)；类别=win→linux（同 ISA）
+# 留出半只报数；权重只在调参半上选（AGENTS.md 合并纪律 A4）
+label	weights	n_tune	top1_tune	top5_tune	n_hold	top1_hold	top5_hold
+00 BASE（51 号基线 W_SAME）	size0.25 gram2 consts0.25 caller0.5	166	0.8193	0.9157	165	0.7273	0.8848
+01 REF（57 号：BASE+scal=0.5）	size0.25 gram2 consts0.25 caller0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+LOO-size  （REF − size）	gram2 consts0.25 caller0.5 scal0.5	166	0.8253	0.9096	165	0.7818	0.8909
+LOO-gram  （REF − gram）	size0.25 consts0.25 caller0.5 scal0.5	166	0.6988	0.8373	165	0.7091	0.8606
+LOO-consts（REF − consts）	size0.25 gram2 caller0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+LOO-caller（REF − caller）	size0.25 gram2 consts0.25 scal0.5	166	0.8313	0.9096	165	0.7758	0.8909
+LOO-scal  （REF − scal）	size0.25 gram2 consts0.25 caller0.5	166	0.8193	0.9157	165	0.7273	0.8848
+ADD-hist  （REF + hist=0.5）	size0.25 hist0.5 gram2 consts0.25 caller0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+ADD-strs_s（REF + strs_s=0.5）	size0.25 gram2 consts0.25 caller0.5 strs_s0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+ADD-callee（REF + callee=0.5）	size0.25 gram2 consts0.25 callee0.5 caller0.5 scal0.5	166	0.8253	0.9157	165	0.7758	0.8909
+ADD-cbsig （REF + cbsig=0.5）	size0.25 gram2 consts0.25 caller0.5 cbsig0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+ADD-rbsig （REF + rbsig=0.5）	size0.25 gram2 consts0.25 caller0.5 rbsig0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+ADD-ncal  （REF + ncal=0.5）	size0.25 gram2 consts0.25 caller0.5 ncal0.5 scal0.5	166	0.8253	0.9157	165	0.7758	0.8909
+ADD-ncall （REF + ncall=0.5）	size0.25 gram2 consts0.25 caller0.5 ncall0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+ADD-wconst（REF + wconst=0.5）	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5	166	0.8253	0.9157	165	0.7818	0.8909
+ADD-stok  （REF + stok=0.5）	size0.25 gram2 consts0.25 caller0.5 scal0.5 stok0.5	166	0.8253	0.9157	165	0.7818	0.8909
+ADD-shape （REF + shape=0.5）	size0.25 gram2 consts0.25 caller0.5 shape0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+ADD-cls   （REF + cls=0.5）	size0.25 gram2 consts0.25 caller0.5 cls0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+SUB4 ----	size0.25 caller0.5	166	0.2590	0.4217	165	0.2424	0.3697
+SUB4 ---S	size0.25 caller0.5 scal0.5	166	0.7048	0.8434	165	0.7212	0.8606
+SUB4 --S-	size0.25 caller0.5 shape0.5	166	0.7651	0.8795	165	0.7030	0.8727
+SUB4 --SS	size0.25 caller0.5 shape0.5 scal0.5	166	0.8072	0.9036	165	0.7818	0.8909
+SUB4 -C--	size0.25 consts0.25 caller0.5	166	0.3614	0.4940	165	0.3333	0.4970
+SUB4 -C-S	size0.25 consts0.25 caller0.5 scal0.5	166	0.6988	0.8373	165	0.7091	0.8606
+SUB4 -CS-	size0.25 consts0.25 caller0.5 shape0.5	166	0.7651	0.8976	165	0.6970	0.8727
+SUB4 -CSS	size0.25 consts0.25 caller0.5 shape0.5 scal0.5	166	0.7952	0.8976	165	0.7818	0.8909
+SUB4 G---	size0.25 gram2 caller0.5	166	0.8012	0.9157	165	0.7152	0.8848
+SUB4 G--S	size0.25 gram2 caller0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+SUB4 G-S-	size0.25 gram2 caller0.5 shape0.5	166	0.8012	0.9096	165	0.7394	0.8848
+SUB4 G-SS	size0.25 gram2 caller0.5 shape0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+SUB4 GC--	size0.25 gram2 consts0.25 caller0.5	166	0.8193	0.9157	165	0.7273	0.8848
+SUB4 GC-S	size0.25 gram2 consts0.25 caller0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+SUB4 GCS-	size0.25 gram2 consts0.25 caller0.5 shape0.5	166	0.8193	0.9096	165	0.7515	0.8848
+SUB4 GCSS	size0.25 gram2 consts0.25 caller0.5 shape0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal0 consts0 shape0 gram1	size0.25 gram1 caller0.5	166	0.7952	0.8976	165	0.7091	0.8848
+GRID scal0 consts0 shape0 gram2	size0.25 gram2 caller0.5	166	0.8012	0.9157	165	0.7152	0.8848
+GRID scal0 consts0 shape0 gram3	size0.25 gram3 caller0.5	166	0.8072	0.9036	165	0.7273	0.8848
+GRID scal0 consts0 shape0.5 gram1	size0.25 gram1 caller0.5 shape0.5	166	0.7952	0.9157	165	0.7212	0.8848
+GRID scal0 consts0 shape0.5 gram2	size0.25 gram2 caller0.5 shape0.5	166	0.8012	0.9096	165	0.7394	0.8848
+GRID scal0 consts0 shape0.5 gram3	size0.25 gram3 caller0.5 shape0.5	166	0.8072	0.9096	165	0.7333	0.8848
+GRID scal0 consts0 shape1 gram1	size0.25 gram1 caller0.5 shape1	166	0.8012	0.9157	165	0.7273	0.8848
+GRID scal0 consts0 shape1 gram2	size0.25 gram2 caller0.5 shape1	166	0.8012	0.9096	165	0.7394	0.8848
+GRID scal0 consts0 shape1 gram3	size0.25 gram3 caller0.5 shape1	166	0.8072	0.9096	165	0.7333	0.8848
+GRID scal0 consts0.25 shape0 gram1	size0.25 gram1 consts0.25 caller0.5	166	0.8193	0.9096	165	0.7273	0.8848
+GRID scal0 consts0.25 shape0 gram2	size0.25 gram2 consts0.25 caller0.5	166	0.8193	0.9157	165	0.7273	0.8848
+GRID scal0 consts0.25 shape0 gram3	size0.25 gram3 consts0.25 caller0.5	166	0.8193	0.9036	165	0.7394	0.8848
+GRID scal0 consts0.25 shape0.5 gram1	size0.25 gram1 consts0.25 caller0.5 shape0.5	166	0.8193	0.9157	165	0.7394	0.8848
+GRID scal0 consts0.25 shape0.5 gram2	size0.25 gram2 consts0.25 caller0.5 shape0.5	166	0.8193	0.9096	165	0.7515	0.8848
+GRID scal0 consts0.25 shape0.5 gram3	size0.25 gram3 consts0.25 caller0.5 shape0.5	166	0.8193	0.9096	165	0.7455	0.8848
+GRID scal0 consts0.25 shape1 gram1	size0.25 gram1 consts0.25 caller0.5 shape1	166	0.8193	0.9157	165	0.7394	0.8848
+GRID scal0 consts0.25 shape1 gram2	size0.25 gram2 consts0.25 caller0.5 shape1	166	0.8193	0.9096	165	0.7515	0.8848
+GRID scal0 consts0.25 shape1 gram3	size0.25 gram3 consts0.25 caller0.5 shape1	166	0.8193	0.9096	165	0.7455	0.8848
+GRID scal0 consts0.5 shape0 gram1	size0.25 gram1 consts0.5 caller0.5	166	0.8072	0.9096	165	0.7273	0.8848
+GRID scal0 consts0.5 shape0 gram2	size0.25 gram2 consts0.5 caller0.5	166	0.8193	0.9157	165	0.7273	0.8848
+GRID scal0 consts0.5 shape0 gram3	size0.25 gram3 consts0.5 caller0.5	166	0.8193	0.9036	165	0.7394	0.8848
+GRID scal0 consts0.5 shape0.5 gram1	size0.25 gram1 consts0.5 caller0.5 shape0.5	166	0.8193	0.9157	165	0.7394	0.8848
+GRID scal0 consts0.5 shape0.5 gram2	size0.25 gram2 consts0.5 caller0.5 shape0.5	166	0.8193	0.9096	165	0.7515	0.8848
+GRID scal0 consts0.5 shape0.5 gram3	size0.25 gram3 consts0.5 caller0.5 shape0.5	166	0.8193	0.9096	165	0.7455	0.8848
+GRID scal0 consts0.5 shape1 gram1	size0.25 gram1 consts0.5 caller0.5 shape1	166	0.8193	0.9157	165	0.7394	0.8848
+GRID scal0 consts0.5 shape1 gram2	size0.25 gram2 consts0.5 caller0.5 shape1	166	0.8193	0.9096	165	0.7515	0.8848
+GRID scal0 consts0.5 shape1 gram3	size0.25 gram3 consts0.5 caller0.5 shape1	166	0.8193	0.9096	165	0.7455	0.8848
+GRID scal0 consts1 shape0 gram1	size0.25 gram1 consts1 caller0.5	166	0.7590	0.8855	165	0.7030	0.8788
+GRID scal0 consts1 shape0 gram2	size0.25 gram2 consts1 caller0.5	166	0.8133	0.9096	165	0.7273	0.8848
+GRID scal0 consts1 shape0 gram3	size0.25 gram3 consts1 caller0.5	166	0.8193	0.9036	165	0.7394	0.8848
+GRID scal0 consts1 shape0.5 gram1	size0.25 gram1 consts1 caller0.5 shape0.5	166	0.7831	0.8916	165	0.7212	0.8848
+GRID scal0 consts1 shape0.5 gram2	size0.25 gram2 consts1 caller0.5 shape0.5	166	0.8133	0.9096	165	0.7515	0.8848
+GRID scal0 consts1 shape0.5 gram3	size0.25 gram3 consts1 caller0.5 shape0.5	166	0.8193	0.9096	165	0.7455	0.8848
+GRID scal0 consts1 shape1 gram1	size0.25 gram1 consts1 caller0.5 shape1	166	0.8012	0.9036	165	0.7212	0.8848
+GRID scal0 consts1 shape1 gram2	size0.25 gram2 consts1 caller0.5 shape1	166	0.8193	0.9096	165	0.7515	0.8848
+GRID scal0 consts1 shape1 gram3	size0.25 gram3 consts1 caller0.5 shape1	166	0.8193	0.9096	165	0.7455	0.8848
+GRID scal0.25 consts0 shape0 gram1	size0.25 gram1 caller0.5 scal0.25	166	0.8253	0.9157	165	0.7697	0.8909
+GRID scal0.25 consts0 shape0 gram2	size0.25 gram2 caller0.5 scal0.25	166	0.8253	0.9157	165	0.7636	0.8909
+GRID scal0.25 consts0 shape0 gram3	size0.25 gram3 caller0.5 scal0.25	166	0.8193	0.9096	165	0.7636	0.8909
+GRID scal0.25 consts0 shape0.5 gram1	size0.25 gram1 caller0.5 shape0.5 scal0.25	166	0.8253	0.9157	165	0.7697	0.8909
+GRID scal0.25 consts0 shape0.5 gram2	size0.25 gram2 caller0.5 shape0.5 scal0.25	166	0.8253	0.9157	165	0.7636	0.8909
+GRID scal0.25 consts0 shape0.5 gram3	size0.25 gram3 caller0.5 shape0.5 scal0.25	166	0.8193	0.9096	165	0.7636	0.8909
+GRID scal0.25 consts0 shape1 gram1	size0.25 gram1 caller0.5 shape1 scal0.25	166	0.8253	0.9157	165	0.7697	0.8909
+GRID scal0.25 consts0 shape1 gram2	size0.25 gram2 caller0.5 shape1 scal0.25	166	0.8253	0.9096	165	0.7697	0.8909
+GRID scal0.25 consts0 shape1 gram3	size0.25 gram3 caller0.5 shape1 scal0.25	166	0.8193	0.9096	165	0.7636	0.8909
+GRID scal0.25 consts0.25 shape0 gram1	size0.25 gram1 consts0.25 caller0.5 scal0.25	166	0.8253	0.9157	165	0.7697	0.8909
+GRID scal0.25 consts0.25 shape0 gram2	size0.25 gram2 consts0.25 caller0.5 scal0.25	166	0.8253	0.9157	165	0.7636	0.8909
+GRID scal0.25 consts0.25 shape0 gram3	size0.25 gram3 consts0.25 caller0.5 scal0.25	166	0.8193	0.9096	165	0.7636	0.8909
+GRID scal0.25 consts0.25 shape0.5 gram1	size0.25 gram1 consts0.25 caller0.5 shape0.5 scal0.25	166	0.8253	0.9157	165	0.7697	0.8909
+GRID scal0.25 consts0.25 shape0.5 gram2	size0.25 gram2 consts0.25 caller0.5 shape0.5 scal0.25	166	0.8253	0.9157	165	0.7636	0.8909
+GRID scal0.25 consts0.25 shape0.5 gram3	size0.25 gram3 consts0.25 caller0.5 shape0.5 scal0.25	166	0.8193	0.9096	165	0.7636	0.8909
+GRID scal0.25 consts0.25 shape1 gram1	size0.25 gram1 consts0.25 caller0.5 shape1 scal0.25	166	0.8253	0.9157	165	0.7697	0.8909
+GRID scal0.25 consts0.25 shape1 gram2	size0.25 gram2 consts0.25 caller0.5 shape1 scal0.25	166	0.8253	0.9096	165	0.7697	0.8909
+GRID scal0.25 consts0.25 shape1 gram3	size0.25 gram3 consts0.25 caller0.5 shape1 scal0.25	166	0.8193	0.9096	165	0.7636	0.8909
+GRID scal0.25 consts0.5 shape0 gram1	size0.25 gram1 consts0.5 caller0.5 scal0.25	166	0.8253	0.9157	165	0.7697	0.8909
+GRID scal0.25 consts0.5 shape0 gram2	size0.25 gram2 consts0.5 caller0.5 scal0.25	166	0.8253	0.9157	165	0.7636	0.8909
+GRID scal0.25 consts0.5 shape0 gram3	size0.25 gram3 consts0.5 caller0.5 scal0.25	166	0.8193	0.9096	165	0.7636	0.8909
+GRID scal0.25 consts0.5 shape0.5 gram1	size0.25 gram1 consts0.5 caller0.5 shape0.5 scal0.25	166	0.8253	0.9157	165	0.7697	0.8909
+GRID scal0.25 consts0.5 shape0.5 gram2	size0.25 gram2 consts0.5 caller0.5 shape0.5 scal0.25	166	0.8253	0.9157	165	0.7636	0.8909
+GRID scal0.25 consts0.5 shape0.5 gram3	size0.25 gram3 consts0.5 caller0.5 shape0.5 scal0.25	166	0.8193	0.9096	165	0.7636	0.8909
+GRID scal0.25 consts0.5 shape1 gram1	size0.25 gram1 consts0.5 caller0.5 shape1 scal0.25	166	0.8253	0.9157	165	0.7697	0.8909
+GRID scal0.25 consts0.5 shape1 gram2	size0.25 gram2 consts0.5 caller0.5 shape1 scal0.25	166	0.8253	0.9096	165	0.7697	0.8909
+GRID scal0.25 consts0.5 shape1 gram3	size0.25 gram3 consts0.5 caller0.5 shape1 scal0.25	166	0.8193	0.9096	165	0.7636	0.8909
+GRID scal0.25 consts1 shape0 gram1	size0.25 gram1 consts1 caller0.5 scal0.25	166	0.7892	0.8916	165	0.7455	0.8848
+GRID scal0.25 consts1 shape0 gram2	size0.25 gram2 consts1 caller0.5 scal0.25	166	0.8253	0.9157	165	0.7636	0.8909
+GRID scal0.25 consts1 shape0 gram3	size0.25 gram3 consts1 caller0.5 scal0.25	166	0.8193	0.9096	165	0.7636	0.8909
+GRID scal0.25 consts1 shape0.5 gram1	size0.25 gram1 consts1 caller0.5 shape0.5 scal0.25	166	0.7952	0.9096	165	0.7576	0.8909
+GRID scal0.25 consts1 shape0.5 gram2	size0.25 gram2 consts1 caller0.5 shape0.5 scal0.25	166	0.8253	0.9157	165	0.7636	0.8909
+GRID scal0.25 consts1 shape0.5 gram3	size0.25 gram3 consts1 caller0.5 shape0.5 scal0.25	166	0.8193	0.9096	165	0.7636	0.8909
+GRID scal0.25 consts1 shape1 gram1	size0.25 gram1 consts1 caller0.5 shape1 scal0.25	166	0.8133	0.9157	165	0.7697	0.8909
+GRID scal0.25 consts1 shape1 gram2	size0.25 gram2 consts1 caller0.5 shape1 scal0.25	166	0.8253	0.9096	165	0.7697	0.8909
+GRID scal0.25 consts1 shape1 gram3	size0.25 gram3 consts1 caller0.5 shape1 scal0.25	166	0.8193	0.9096	165	0.7636	0.8909
+GRID scal0.5 consts0 shape0 gram1	size0.25 gram1 caller0.5 scal0.5	166	0.8253	0.9157	165	0.7758	0.8909
+GRID scal0.5 consts0 shape0 gram2	size0.25 gram2 caller0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal0.5 consts0 shape0 gram3	size0.25 gram3 caller0.5 scal0.5	166	0.8253	0.9096	165	0.7818	0.8909
+GRID scal0.5 consts0 shape0.5 gram1	size0.25 gram1 caller0.5 shape0.5 scal0.5	166	0.8253	0.9157	165	0.7758	0.8909
+GRID scal0.5 consts0 shape0.5 gram2	size0.25 gram2 caller0.5 shape0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal0.5 consts0 shape0.5 gram3	size0.25 gram3 caller0.5 shape0.5 scal0.5	166	0.8253	0.9096	165	0.7818	0.8909
+GRID scal0.5 consts0 shape1 gram1	size0.25 gram1 caller0.5 shape1 scal0.5	166	0.8253	0.9157	165	0.7758	0.8909
+GRID scal0.5 consts0 shape1 gram2	size0.25 gram2 caller0.5 shape1 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal0.5 consts0 shape1 gram3	size0.25 gram3 caller0.5 shape1 scal0.5	166	0.8253	0.9096	165	0.7818	0.8909
+GRID scal0.5 consts0.25 shape0 gram1	size0.25 gram1 consts0.25 caller0.5 scal0.5	166	0.8253	0.9157	165	0.7758	0.8909
+GRID scal0.5 consts0.25 shape0 gram2	size0.25 gram2 consts0.25 caller0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal0.5 consts0.25 shape0 gram3	size0.25 gram3 consts0.25 caller0.5 scal0.5	166	0.8253	0.9096	165	0.7818	0.8909
+GRID scal0.5 consts0.25 shape0.5 gram1	size0.25 gram1 consts0.25 caller0.5 shape0.5 scal0.5	166	0.8253	0.9157	165	0.7758	0.8909
+GRID scal0.5 consts0.25 shape0.5 gram2	size0.25 gram2 consts0.25 caller0.5 shape0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal0.5 consts0.25 shape0.5 gram3	size0.25 gram3 consts0.25 caller0.5 shape0.5 scal0.5	166	0.8253	0.9096	165	0.7818	0.8909
+GRID scal0.5 consts0.25 shape1 gram1	size0.25 gram1 consts0.25 caller0.5 shape1 scal0.5	166	0.8253	0.9157	165	0.7758	0.8909
+GRID scal0.5 consts0.25 shape1 gram2	size0.25 gram2 consts0.25 caller0.5 shape1 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal0.5 consts0.25 shape1 gram3	size0.25 gram3 consts0.25 caller0.5 shape1 scal0.5	166	0.8253	0.9096	165	0.7818	0.8909
+GRID scal0.5 consts0.5 shape0 gram1	size0.25 gram1 consts0.5 caller0.5 scal0.5	166	0.8253	0.9157	165	0.7758	0.8909
+GRID scal0.5 consts0.5 shape0 gram2	size0.25 gram2 consts0.5 caller0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal0.5 consts0.5 shape0 gram3	size0.25 gram3 consts0.5 caller0.5 scal0.5	166	0.8253	0.9096	165	0.7818	0.8909
+GRID scal0.5 consts0.5 shape0.5 gram1	size0.25 gram1 consts0.5 caller0.5 shape0.5 scal0.5	166	0.8253	0.9157	165	0.7758	0.8909
+GRID scal0.5 consts0.5 shape0.5 gram2	size0.25 gram2 consts0.5 caller0.5 shape0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal0.5 consts0.5 shape0.5 gram3	size0.25 gram3 consts0.5 caller0.5 shape0.5 scal0.5	166	0.8253	0.9096	165	0.7818	0.8909
+GRID scal0.5 consts0.5 shape1 gram1	size0.25 gram1 consts0.5 caller0.5 shape1 scal0.5	166	0.8253	0.9157	165	0.7758	0.8909
+GRID scal0.5 consts0.5 shape1 gram2	size0.25 gram2 consts0.5 caller0.5 shape1 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal0.5 consts0.5 shape1 gram3	size0.25 gram3 consts0.5 caller0.5 shape1 scal0.5	166	0.8253	0.9096	165	0.7818	0.8909
+GRID scal0.5 consts1 shape0 gram1	size0.25 gram1 consts1 caller0.5 scal0.5	166	0.7892	0.9036	165	0.7576	0.8909
+GRID scal0.5 consts1 shape0 gram2	size0.25 gram2 consts1 caller0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal0.5 consts1 shape0 gram3	size0.25 gram3 consts1 caller0.5 scal0.5	166	0.8253	0.9096	165	0.7818	0.8909
+GRID scal0.5 consts1 shape0.5 gram1	size0.25 gram1 consts1 caller0.5 shape0.5 scal0.5	166	0.8072	0.9096	165	0.7697	0.8909
+GRID scal0.5 consts1 shape0.5 gram2	size0.25 gram2 consts1 caller0.5 shape0.5 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal0.5 consts1 shape0.5 gram3	size0.25 gram3 consts1 caller0.5 shape0.5 scal0.5	166	0.8253	0.9096	165	0.7818	0.8909
+GRID scal0.5 consts1 shape1 gram1	size0.25 gram1 consts1 caller0.5 shape1 scal0.5	166	0.8133	0.9157	165	0.7758	0.8909
+GRID scal0.5 consts1 shape1 gram2	size0.25 gram2 consts1 caller0.5 shape1 scal0.5	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal0.5 consts1 shape1 gram3	size0.25 gram3 consts1 caller0.5 shape1 scal0.5	166	0.8253	0.9096	165	0.7818	0.8909
+GRID scal1 consts0 shape0 gram1	size0.25 gram1 caller0.5 scal1	166	0.8193	0.9036	165	0.7697	0.8909
+GRID scal1 consts0 shape0 gram2	size0.25 gram2 caller0.5 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts0 shape0 gram3	size0.25 gram3 caller0.5 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts0 shape0.5 gram1	size0.25 gram1 caller0.5 shape0.5 scal1	166	0.8193	0.9036	165	0.7758	0.8909
+GRID scal1 consts0 shape0.5 gram2	size0.25 gram2 caller0.5 shape0.5 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts0 shape0.5 gram3	size0.25 gram3 caller0.5 shape0.5 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts0 shape1 gram1	size0.25 gram1 caller0.5 shape1 scal1	166	0.8193	0.9157	165	0.7758	0.8909
+GRID scal1 consts0 shape1 gram2	size0.25 gram2 caller0.5 shape1 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts0 shape1 gram3	size0.25 gram3 caller0.5 shape1 scal1	166	0.8253	0.9096	165	0.7818	0.8909
+GRID scal1 consts0.25 shape0 gram1	size0.25 gram1 consts0.25 caller0.5 scal1	166	0.8193	0.9036	165	0.7697	0.8909
+GRID scal1 consts0.25 shape0 gram2	size0.25 gram2 consts0.25 caller0.5 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts0.25 shape0 gram3	size0.25 gram3 consts0.25 caller0.5 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts0.25 shape0.5 gram1	size0.25 gram1 consts0.25 caller0.5 shape0.5 scal1	166	0.8193	0.9036	165	0.7758	0.8909
+GRID scal1 consts0.25 shape0.5 gram2	size0.25 gram2 consts0.25 caller0.5 shape0.5 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts0.25 shape0.5 gram3	size0.25 gram3 consts0.25 caller0.5 shape0.5 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts0.25 shape1 gram1	size0.25 gram1 consts0.25 caller0.5 shape1 scal1	166	0.8193	0.9157	165	0.7758	0.8909
+GRID scal1 consts0.25 shape1 gram2	size0.25 gram2 consts0.25 caller0.5 shape1 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts0.25 shape1 gram3	size0.25 gram3 consts0.25 caller0.5 shape1 scal1	166	0.8253	0.9096	165	0.7818	0.8909
+GRID scal1 consts0.5 shape0 gram1	size0.25 gram1 consts0.5 caller0.5 scal1	166	0.8133	0.9036	165	0.7697	0.8909
+GRID scal1 consts0.5 shape0 gram2	size0.25 gram2 consts0.5 caller0.5 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts0.5 shape0 gram3	size0.25 gram3 consts0.5 caller0.5 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts0.5 shape0.5 gram1	size0.25 gram1 consts0.5 caller0.5 shape0.5 scal1	166	0.8193	0.9036	165	0.7758	0.8909
+GRID scal1 consts0.5 shape0.5 gram2	size0.25 gram2 consts0.5 caller0.5 shape0.5 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts0.5 shape0.5 gram3	size0.25 gram3 consts0.5 caller0.5 shape0.5 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts0.5 shape1 gram1	size0.25 gram1 consts0.5 caller0.5 shape1 scal1	166	0.8193	0.9157	165	0.7758	0.8909
+GRID scal1 consts0.5 shape1 gram2	size0.25 gram2 consts0.5 caller0.5 shape1 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts0.5 shape1 gram3	size0.25 gram3 consts0.5 caller0.5 shape1 scal1	166	0.8253	0.9096	165	0.7818	0.8909
+GRID scal1 consts1 shape0 gram1	size0.25 gram1 consts1 caller0.5 scal1	166	0.8012	0.8855	165	0.7697	0.8909
+GRID scal1 consts1 shape0 gram2	size0.25 gram2 consts1 caller0.5 scal1	166	0.8193	0.9157	165	0.7818	0.8909
+GRID scal1 consts1 shape0 gram3	size0.25 gram3 consts1 caller0.5 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts1 shape0.5 gram1	size0.25 gram1 consts1 caller0.5 shape0.5 scal1	166	0.8012	0.8976	165	0.7758	0.8909
+GRID scal1 consts1 shape0.5 gram2	size0.25 gram2 consts1 caller0.5 shape0.5 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts1 shape0.5 gram3	size0.25 gram3 consts1 caller0.5 shape0.5 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts1 shape1 gram1	size0.25 gram1 consts1 caller0.5 shape1 scal1	166	0.8072	0.9157	165	0.7758	0.8909
+GRID scal1 consts1 shape1 gram2	size0.25 gram2 consts1 caller0.5 shape1 scal1	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal1 consts1 shape1 gram3	size0.25 gram3 consts1 caller0.5 shape1 scal1	166	0.8253	0.9096	165	0.7818	0.8909
+GRID scal2 consts0 shape0 gram1	size0.25 gram1 caller0.5 scal2	166	0.7892	0.8916	165	0.7697	0.8909
+GRID scal2 consts0 shape0 gram2	size0.25 gram2 caller0.5 scal2	166	0.8193	0.9036	165	0.7758	0.8909
+GRID scal2 consts0 shape0 gram3	size0.25 gram3 caller0.5 scal2	166	0.8193	0.9157	165	0.7818	0.8909
+GRID scal2 consts0 shape0.5 gram1	size0.25 gram1 caller0.5 shape0.5 scal2	166	0.8012	0.9036	165	0.7697	0.8909
+GRID scal2 consts0 shape0.5 gram2	size0.25 gram2 caller0.5 shape0.5 scal2	166	0.8193	0.9036	165	0.7758	0.8909
+GRID scal2 consts0 shape0.5 gram3	size0.25 gram3 caller0.5 shape0.5 scal2	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal2 consts0 shape1 gram1	size0.25 gram1 caller0.5 shape1 scal2	166	0.8072	0.9036	165	0.7697	0.8909
+GRID scal2 consts0 shape1 gram2	size0.25 gram2 caller0.5 shape1 scal2	166	0.8193	0.9036	165	0.7818	0.8909
+GRID scal2 consts0 shape1 gram3	size0.25 gram3 caller0.5 shape1 scal2	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal2 consts0.25 shape0 gram1	size0.25 gram1 consts0.25 caller0.5 scal2	166	0.7892	0.8916	165	0.7697	0.8909
+GRID scal2 consts0.25 shape0 gram2	size0.25 gram2 consts0.25 caller0.5 scal2	166	0.8193	0.9036	165	0.7758	0.8909
+GRID scal2 consts0.25 shape0 gram3	size0.25 gram3 consts0.25 caller0.5 scal2	166	0.8193	0.9157	165	0.7818	0.8909
+GRID scal2 consts0.25 shape0.5 gram1	size0.25 gram1 consts0.25 caller0.5 shape0.5 scal2	166	0.8012	0.8976	165	0.7697	0.8909
+GRID scal2 consts0.25 shape0.5 gram2	size0.25 gram2 consts0.25 caller0.5 shape0.5 scal2	166	0.8193	0.9036	165	0.7758	0.8909
+GRID scal2 consts0.25 shape0.5 gram3	size0.25 gram3 consts0.25 caller0.5 shape0.5 scal2	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal2 consts0.25 shape1 gram1	size0.25 gram1 consts0.25 caller0.5 shape1 scal2	166	0.8072	0.9036	165	0.7697	0.8909
+GRID scal2 consts0.25 shape1 gram2	size0.25 gram2 consts0.25 caller0.5 shape1 scal2	166	0.8193	0.9036	165	0.7818	0.8909
+GRID scal2 consts0.25 shape1 gram3	size0.25 gram3 consts0.25 caller0.5 shape1 scal2	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal2 consts0.5 shape0 gram1	size0.25 gram1 consts0.5 caller0.5 scal2	166	0.7892	0.8916	165	0.7697	0.8909
+GRID scal2 consts0.5 shape0 gram2	size0.25 gram2 consts0.5 caller0.5 scal2	166	0.8133	0.9036	165	0.7758	0.8909
+GRID scal2 consts0.5 shape0 gram3	size0.25 gram3 consts0.5 caller0.5 scal2	166	0.8193	0.9157	165	0.7818	0.8909
+GRID scal2 consts0.5 shape0.5 gram1	size0.25 gram1 consts0.5 caller0.5 shape0.5 scal2	166	0.8012	0.8976	165	0.7697	0.8909
+GRID scal2 consts0.5 shape0.5 gram2	size0.25 gram2 consts0.5 caller0.5 shape0.5 scal2	166	0.8193	0.9036	165	0.7758	0.8909
+GRID scal2 consts0.5 shape0.5 gram3	size0.25 gram3 consts0.5 caller0.5 shape0.5 scal2	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal2 consts0.5 shape1 gram1	size0.25 gram1 consts0.5 caller0.5 shape1 scal2	166	0.8072	0.9036	165	0.7697	0.8909
+GRID scal2 consts0.5 shape1 gram2	size0.25 gram2 consts0.5 caller0.5 shape1 scal2	166	0.8193	0.9036	165	0.7818	0.8909
+GRID scal2 consts0.5 shape1 gram3	size0.25 gram3 consts0.5 caller0.5 shape1 scal2	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal2 consts1 shape0 gram1	size0.25 gram1 consts1 caller0.5 scal2	166	0.7831	0.8916	165	0.7636	0.8909
+GRID scal2 consts1 shape0 gram2	size0.25 gram2 consts1 caller0.5 scal2	166	0.8133	0.9036	165	0.7758	0.8909
+GRID scal2 consts1 shape0 gram3	size0.25 gram3 consts1 caller0.5 scal2	166	0.8193	0.9157	165	0.7818	0.8909
+GRID scal2 consts1 shape0.5 gram1	size0.25 gram1 consts1 caller0.5 shape0.5 scal2	166	0.7892	0.8916	165	0.7697	0.8909
+GRID scal2 consts1 shape0.5 gram2	size0.25 gram2 consts1 caller0.5 shape0.5 scal2	166	0.8133	0.9036	165	0.7758	0.8909
+GRID scal2 consts1 shape0.5 gram3	size0.25 gram3 consts1 caller0.5 shape0.5 scal2	166	0.8253	0.9157	165	0.7818	0.8909
+GRID scal2 consts1 shape1 gram1	size0.25 gram1 consts1 caller0.5 shape1 scal2	166	0.7952	0.8976	165	0.7697	0.8909
+GRID scal2 consts1 shape1 gram2	size0.25 gram2 consts1 caller0.5 shape1 scal2	166	0.8133	0.9036	165	0.7818	0.8909
+GRID scal2 consts1 shape1 gram3	size0.25 gram3 consts1 caller0.5 shape1 scal2	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0 c64=0 icall=0 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 stokx0.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0 c64=0 icall=0 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0 c64=0 icall=0 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 stokx0.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0 c64=0 icall=0.3 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 icall0.3	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0 c64=0 icall=0.3 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 stokx0.5 icall0.3	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0 c64=0 icall=0.3 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 icall0.3	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0 c64=0 icall=0.3 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 stokx0.5 icall0.3	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0 c64=0.5 icall=0 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0 c64=0.5 icall=0 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 stokx0.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0 c64=0.5 icall=0 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0 c64=0.5 icall=0 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 stokx0.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0 c64=0.5 icall=0.3 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 icall0.3	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0 c64=0.5 icall=0.3 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 stokx0.5 icall0.3	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0 c64=0.5 icall=0.3 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 icall0.3	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0 c64=0.5 icall=0.3 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 stokx0.5 icall0.3	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0.5 c64=0 icall=0 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 stok20.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0.5 c64=0 icall=0 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 stok20.5 stokx0.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0.5 c64=0 icall=0 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 stok20.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0.5 c64=0 icall=0 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 stok20.5 stokx0.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0.5 c64=0 icall=0.3 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 stok20.5 icall0.3	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0.5 c64=0 icall=0.3 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 stok20.5 stokx0.5 icall0.3	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0.5 c64=0 icall=0.3 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 stok20.5 icall0.3	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0.5 c64=0 icall=0.3 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 stok20.5 stokx0.5 icall0.3	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0.5 c64=0.5 icall=0 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 stok20.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0.5 c64=0.5 icall=0 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 stok20.5 stokx0.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0.5 c64=0.5 icall=0 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 stok20.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0.5 c64=0.5 icall=0 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 stok20.5 stokx0.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0.5 c64=0.5 icall=0.3 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 stok20.5 icall0.3	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0.5 c64=0.5 icall=0.3 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 stok20.5 stokx0.5 icall0.3	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0.5 c64=0.5 icall=0.3 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 stok20.5 icall0.3	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0 stok2=0.5 c64=0.5 icall=0.3 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 stok20.5 stokx0.5 icall0.3	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0 c64=0 icall=0 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0 c64=0 icall=0 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 stokx0.5 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0 c64=0 icall=0 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0 c64=0 icall=0 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 stokx0.5 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0 c64=0 icall=0.3 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 icall0.3 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0 c64=0 icall=0.3 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 stokx0.5 icall0.3 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0 c64=0 icall=0.3 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 icall0.3 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0 c64=0 icall=0.3 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 stokx0.5 icall0.3 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0 c64=0.5 icall=0 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0 c64=0.5 icall=0 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 stokx0.5 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0 c64=0.5 icall=0 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0 c64=0.5 icall=0 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 stokx0.5 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0 c64=0.5 icall=0.3 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 icall0.3 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0 c64=0.5 icall=0.3 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 stokx0.5 icall0.3 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0 c64=0.5 icall=0.3 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 icall0.3 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0 c64=0.5 icall=0.3 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 stokx0.5 icall0.3 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0.5 c64=0 icall=0 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 stok20.5 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0.5 c64=0 icall=0 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 stok20.5 stokx0.5 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0.5 c64=0 icall=0 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 stok20.5 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0.5 c64=0 icall=0 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 stok20.5 stokx0.5 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0.5 c64=0 icall=0.3 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 stok20.5 icall0.3 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0.5 c64=0 icall=0.3 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 stok20.5 stokx0.5 icall0.3 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0.5 c64=0 icall=0.3 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 stok20.5 icall0.3 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0.5 c64=0 icall=0.3 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 stok20.5 stokx0.5 icall0.3 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0.5 c64=0.5 icall=0 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 stok20.5 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0.5 c64=0.5 icall=0 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 stok20.5 stokx0.5 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0.5 c64=0.5 icall=0 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 stok20.5 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0.5 c64=0.5 icall=0 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 stok20.5 stokx0.5 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0.5 c64=0.5 icall=0.3 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 stok20.5 icall0.3 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0.5 c64=0.5 icall=0.3 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 stok20.5 stokx0.5 icall0.3 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0.5 c64=0.5 icall=0.3 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 stok20.5 icall0.3 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=0.5 stok2=0.5 c64=0.5 icall=0.3 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 stok20.5 stokx0.5 icall0.3 imm010.5	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0 c64=0 icall=0 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0 c64=0 icall=0 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 stokx0.5 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0 c64=0 icall=0 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0 c64=0 icall=0 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 stokx0.5 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0 c64=0 icall=0.3 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 icall0.3 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0 c64=0 icall=0.3 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 stokx0.5 icall0.3 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0 c64=0 icall=0.3 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 icall0.3 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0 c64=0 icall=0.3 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 stokx0.5 icall0.3 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0 c64=0.5 icall=0 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0 c64=0.5 icall=0 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 stokx0.5 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0 c64=0.5 icall=0 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0 c64=0.5 icall=0 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 stokx0.5 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0 c64=0.5 icall=0.3 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 icall0.3 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0 c64=0.5 icall=0.3 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 stokx0.5 icall0.3 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0 c64=0.5 icall=0.3 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 icall0.3 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0 c64=0.5 icall=0.3 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 stokx0.5 icall0.3 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0.5 c64=0 icall=0 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 stok20.5 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0.5 c64=0 icall=0 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 stok20.5 stokx0.5 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0.5 c64=0 icall=0 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 stok20.5 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0.5 c64=0 icall=0 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 stok20.5 stokx0.5 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0.5 c64=0 icall=0.3 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 stok20.5 icall0.3 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0.5 c64=0 icall=0.3 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 stok20.5 stokx0.5 icall0.3 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0.5 c64=0 icall=0.3 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 stok20.5 icall0.3 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0.5 c64=0 icall=0.3 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 stok20.5 stokx0.5 icall0.3 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0.5 c64=0.5 icall=0 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 stok20.5 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0.5 c64=0.5 icall=0 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 stok20.5 stokx0.5 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0.5 c64=0.5 icall=0 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 stok20.5 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0.5 c64=0.5 icall=0 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 stok20.5 stokx0.5 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0.5 c64=0.5 icall=0.3 wconst=0 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 stok20.5 icall0.3 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0.5 c64=0.5 icall=0.3 wconst=0 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5 stok20.5 stokx0.5 icall0.3 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0.5 c64=0.5 icall=0.3 wconst=0.5 stokx=0	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 stok20.5 icall0.3 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+HOLE imm01=1 stok2=0.5 c64=0.5 icall=0.3 wconst=0.5 stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 wconst0.5 c640.5 stok20.5 stokx0.5 icall0.3 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+FILL-scal0=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 scal00.5	166	0.8253	0.9157	165	0.7818	0.8909
+FILL-small=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 small0.5	166	0.8253	0.9157	165	0.7818	0.8909
+FILL-stokx=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 stokx0.5	166	0.8253	0.9157	165	0.7818	0.8909
+FILL-stok2=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 stok20.5	166	0.8253	0.9157	165	0.7818	0.8909
+FILL-imm01=1	size0.25 gram2 consts0.25 caller0.5 scal0.5 imm011	166	0.8253	0.9157	165	0.7818	0.8909
+FILL-c64=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 c640.5	166	0.8253	0.9157	165	0.7818	0.8909
+FILL-scal64=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 scal640.5	166	0.8253	0.9157	165	0.7818	0.8909
+FILL-icall=0.3	size0.25 gram2 consts0.25 caller0.5 scal0.5 icall0.3	166	0.8253	0.9157	165	0.7818	0.8909
+FILL-scal_sgn=0.5	size0.25 gram2 consts0.25 caller0.5 scal0.5 scal_sgn0.5	166	0.8253	0.9157	165	0.7818	0.8909
