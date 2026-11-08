@@ -31,8 +31,69 @@
 |---|---|---|---|---|
 | **① 函数身份** | **527 / 13,263 有归属（4.0%）** | Ghidra 函数总数 | 12,736 个**没有 `panic::Location`**，任何符号表都定不了名；结构指纹留出半 top-1 **78.2%**（57 号把天花板从 73% 抬上来），但只给**同源候选**、不是名字 | 名字到顶；特征口径仍有洞（`consts` 漏 `<0x100`，13 轮在审） |
 | **② 名字** | **348 / 527 有原版真名（66%）** | 可归属函数 | 179 个无名：138 个给出推断、**41 个只能标未知**（其中 39 个在 Windows 侧本身也没名字） | 基本到顶 |
-| **③ 行为一致** | **647 / 1080 批逐位相同（59.9%）** | 401 份快照的结算批 | 433 批失败里 **407 批已独立确认是「回放自身不自洽」**（`158-audit-407.md`，第三方复现）；余下 26 批是结构性差异（C 14 / E2 11 / D 5） | **可及上限就在附近**；除非抓到"当时喂进去的第三种文本" |
+| **③ 行为一致** | **647 / 1080 批逐位相同（59.9%）** | 401 份快照的结算批（`fire` 轴 + `--policy default`） | 433 批失败按**归因确定度**分四档：**A 211**（值级互斥，已证与我方无关）· **B 210**（机制已定位、修法未验证：`end_x`/`pos_x` 两次读 205 + 死效块 5）· **C 12**（仍在三条开放线上：含 NaN 11 + 常数不符 1）· **D 0** | 可及上限 **775 / 1080**（悲观）· **869 / 1080**（乐观）；**211 批**已证与我方无关 ⇒ 天花板 **869**（还剩 **222 批**可争），**不是**"就在附近" |
 | **④ 客户端** | 视图层已换 24 个原版脚本；**控制器仍是 GDScript 仿制** | 原版 Rust 控制器 | 控制器要迁回 Rust（`AGENTS.md` §0.4）；两个输入端（`pos_info_event` / graphics 51·53·55）已换真链路 | **最大的一块欠账** |
+
+### 0.1b.1 ③「行为一致」那一行的三个界怎么来的（2026-11-09 实测）
+
+> 口径：**`fire` 轴 + `--policy default`**（本快照上它与 `batch` 轴逐字节相同）。三条界都是
+> 实测分档算出来的，不是估计；**不同轴的数不许放一起比**（`AGENTS.md`「合并纪律 C」）。
+
+- **分档判据**（互斥、可加总：`433 = 211 + 210 + 12 + 0`）：
+  **A** = 批内有「值级互斥」——回放**自己记的那个点**，用回放**自己记的** `corrected_function`
+  （Normal 走 `y = f(x)`）或用我方逐位验证过的 RK4（DiffEq）**复算不出同一个 `y`**，
+  且 `pos_x == end_x`（先把"两份数组"这条解释排除掉）；
+  **B** = 没有值级互斥，但 `pos_x ≠ end_x`（`docs/06` §28：这两个字段是**两个装配点、两个时刻**的两次读），
+  或死效块结构差（D 桶）；**C** = A/B 都不命中、落在三条开放线上；**D** = 以上都不是（实测 **0**）。
+- **硬上界 = 1080 − 211 = 869**。A 档那一对 `pos_x`/`pos_y` 是回放**同时刻的一次 16 字节拷贝**
+  （`docs/06` §37），`y ≠ f(x)` ⇒ 任何忠实实现都产不出这个点。背书两处：`docs/06` §33.3 的
+  unicorn 单发复核；本次抽 60 发用真二进制求值器（`docs/06` §25.2 ④）——正对照 30 发 **30/30** 命中，
+  407 里 28 发 **我方 28/28 与真二进制逐位相同**、其中 **18 发真二进制复现不出回放的 `pos_y`**。
+  ⇒ A 档**永远不可能命中**，这就是天花板。
+- **乐观界 = 647 + 210 + 12 = 869**：B、C 两档全中。它与硬上界**重合不是巧合**——D = 0，
+  意思是"三条开放线之外没有别的批"。
+- **保守界 = 647 + 128 = 775**：只数 B 档里 diff **全部**落在该机制负责字段上的批
+  （`end_x`/`pos_x` 123 批 + 死效块 5 批）；B 档另有 82 批还带 `pos_y` 差，这套修法不负责，**不计入**。
+  ⚠️ 这是"**若**修法成立"的上限、不是保证：`docs/06` §28 在 12 发新样本里**没复现出**两字段不等，
+  触发条件仍未知。
+- **旧说法更正（就地改，理由留档）**：本行原写"407 批已确认是回放自身不自洽 ⇒ 上限就在附近"。
+  407 是 `docs/06` §25 的判决、经第三方 `docs/158` 独立复现，判决本身站得住；**但 `docs/06` §28 更晚**：
+  `end_x` 与 `pos_x` 来自两个不同对象、两个时刻 ⇒ 只被"两字段不等"覆盖的 **145 批是机制、不是矛盾**，
+  降为 B；`pos_x == end_x` 的那 262 批里又有 **189 批**只是末位差（1 ulp 级），
+  正是 `docs/HANDOVER.md` §0.0.0.2f 里 66 号线（token 常数 +1 ulp）的靶子。
+  另：旧文明细 "C 14 / E2 11 / D 5" 实测是 **C 14 / E2 7 / D 5**（合计仍是 26）。
+- **条件上界**：若 66 号线成立（真二进制用的 token 常数确实 +1 ulp），A 里 Normal 侧那 **65 批**
+  末位差要移进 C ⇒ A = 146、天花板 **934**；DiffEq 侧 129 批不受该线影响
+  （`docs/06` §36：DiffEq 局 `corrected_function == function`，**没有常数**）。
+
+复跑（在 `gw2-rebuild/` 根下；产物 `fire.jsonl` / `fold.jsonl` 留在同一目录）：
+
+```bash
+export CARGO_HOME=<WS>/.cargo-home CARGO_TARGET_DIR=<私有 target>
+R=<401 份快照目录>
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive fire --policy default --json fire.jsonl
+cargo run --release --offline -q --example residual_fold  -- --dir $R --json fold.jsonl
+python3 tools/bit_exact_attrib.py --json fire.jsonl --check-baseline --axis fire        # 桶表；护栏 7 项全一致
+python3 tools/residual_fold.py --fold fold.jsonl --attrib fire.jsonl --table table.tsv  # 407 = 262 ∪ 218；正对照 647 批 0 误报
+python3 - <<'PY'   # A/B/C 分档（判据见上；D 为 0）
+import importlib.util as u
+def mod(n, p):
+    s = u.spec_from_file_location(n, p); m = u.module_from_spec(s); s.loader.exec_module(m); return m
+B = mod("b", "tools/bit_exact_attrib.py"); F = mod("r", "tools/residual_fold.py")
+fold = {}
+for x in F.load_jsonl("fold.jsonl"): fold.setdefault((x["file"], x["batch"]), []).append(x)
+n = {"A": 0, "B": 0, "C": 0}
+for r in B.load("fire.jsonl"):
+    if r["content_ok"]: continue
+    ss = fold[(r["file"], r["batch"])]
+    A = any((x["mode"] == "Normal" and x["pos_eq_endx"] and x["split_ok"] and x["has_expl"]
+             and not F.pos_is_start(x) and not isinstance(x["pos_y"], str) and not x["self_hit"])
+            or (x["mode"] == "DiffEq" and x["ode_found"] and not x["ode_hit"]) for x in ss)
+    k = "A" if A else "B" if (B.classify(r)[0] == "D" or any(not x["pos_eq_endx"] for x in ss)) else "C"
+    n[k] += 1
+print(n)   # {'A': 211, 'B': 210, 'C': 12}
+PY
+```
 
 **另外两个不要忘的口径**：
 
