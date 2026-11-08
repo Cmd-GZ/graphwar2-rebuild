@@ -73,6 +73,37 @@
 //! | C | **玩家出场顺序**（`docs/47`）：判为 HashMap 迭代序 ⇒ 不可确定性复现。本模块**不管**玩家顺序，由调用方给 | 调用方 |
 //! | D | `SequentialTurns` 与 `SimultaneousTurns` 两个分支的发射时序（`docs/98` §6-D） | 未解 |
 //! | E | 空 `Vec` 到底走哪条分支（§1 上方那条冲突） | 需 REA 复核调用点；本实现给两个策略 |
+//!
+//! ## 6. 只读查询：`is_on_turn` 数的是**两个集合的并集**（任务 46，`观测`）
+//!
+//! `EntityDrawer::draw` 的门 2 是 `GraphwarTurnManager::is_on_turn`（vaddr **`0x462b50`**，
+//! FDE `0x462b50..0x462c07`，调用点 `0x4b31ac`）。逐条读下来它**既不是**"当前回合方"，
+//! **也不是**"本回合已开火"，而是**两个集合的成员判定**：
+//!
+//! ```text
+//! 0x462b64  call 0x463460          ; get_current_turn_soldiers() → Vec<u32>（sret）
+//! 0x462b85  cmp  [rdi+rcx], ebx    ; id == soldiers[i]？是 ⇒ 0x462bde（bl = 1）
+//! 0x462bac  call 0x463340          ; get_current_turn_players()  → Vec<u32>
+//! 0x462bd5  cmp  [rdi+rcx], ebx    ; id == players[i]？ 是 ⇒ 0x462bde（bl = 1）
+//! 0x462bfe  xor  ebx, ebx          ; 两个集合都不中 ⇒ 返回 0
+//! ```
+//!
+//! ⇒ **`is_on_turn(id)` ⇔ `id ∈ soldiers ∪ players`**（`观测`）。两个 getter 都是
+//! `Mutex` 锁住 `TurnData` 后转发给 `GraphwarTurnData::get_current_turn_players`
+//! （x86 `0x4627c0`）/ `get_current_turn_soldiers`（x86 `0x4628d0`），而这两个函数按
+//! `TurnData[+0x58]`（回合模式位）分两支：
+//!
+//! | `TurnData[+0x58]` | players | soldiers | 证据 |
+//! |---|---|---|---|
+//! | `== 0`（顺序回合） | **单元素**：玩家表 `[+0x8]` 那个 `Vec` 的第 `[+0x18]` 个（当前玩家） | **单元素**：该玩家 entry 的 `soldiers[cursor]` | `0x462846`–`0x46286f` / `0x4629de`–`0x462ab0` |
+//! | `!= 0`（同时回合） | 玩家表 `[+0x28]` 哈希表的**全部键**（`0x46282c call 0x3c03b0` 是 collect 适配器，取键在 `0x3c0484 mov eax,[r13+rax*8-0x28]`） | 每个 entry 的 `soldiers[cursor]`（`0x4629bc mov ebx,[rax+rdi*4]`；空 `Vec` 跳过 `0x46299f`） | `0x4627e9`–`0x462844` / `0x46290b`–`0x4629d3` |
+//!
+//! ⚠️ **本层只实现"同时回合"那一支的集合**：[`TurnManager`] 的模型是"每玩家一个游标"
+//! 那张表，**没有** `+0x58` mode 字段，也没有顺序回合那条"当前玩家游标" ⇒
+//! [`TurnManager::is_on_turn`] 在 `SequentialTurns` 下是原版的**超集**
+//! （原版只让当前玩家 + 其当前士兵为真）。缺的证据：`+0x58` 的写者
+//! （`set_turn_mode` `0x462d20` / `get_turn_mode` `0x462c10` 都还没接）与顺序回合的
+//! 当前玩家游标。详见 `docs/16-client.md` §48.5。
 
 use std::collections::BTreeMap;
 
@@ -464,6 +495,55 @@ impl TurnManager {
         self.players.get(&player_id).map(|e| e.team.flip())
     }
 
+    // -----------------------------------------------------------------------
+    // 只读查询：`is_on_turn` 那条链（任务 46；地址与两支语义见模块文档 §6）
+    // -----------------------------------------------------------------------
+
+    /// `GraphwarTurnData::get_current_turn_players`（x86 `0x4627c0`）：本回合**玩家 id** 集合。
+    ///
+    /// 二进制按 `TurnData[+0x58]` 分两支（`观测`）：`== 0`（顺序回合）返回**单元素**
+    /// （当前玩家，`0x462846`–`0x46286f`）；`!= 0`（同时回合）遍历玩家表并取**键**
+    /// 收进 `Vec<u32>`（`0x4627e9`–`0x462844`；collect 适配器 `0x46282c call 0x3c03b0`，取键在 `0x3c0484`）。
+    ///
+    /// 本层没有 `+0x58` mode 字段 ⇒ **只实现同时回合那一支**（返回全部玩家的 id）。
+    /// 顺序回合下原版只给一个玩家 id，本函数是它的**超集**（模块文档 §6 的 ⚠️）。
+    pub fn get_current_turn_players(&self) -> Vec<i64> {
+        self.players.keys().copied().collect()
+    }
+
+    /// `GraphwarTurnData::get_current_turn_soldiers`（x86 `0x4628d0`）：本回合**士兵 id** 集合。
+    ///
+    /// 同时回合那一支：遍历玩家表，每个 entry 取 `soldiers[cursor]`
+    /// （`0x4629bc mov ebx,[rax+rdi*4]`，`rdi` = `[entry-8]` 的游标），空 `Vec` 跳过
+    /// （`0x46299f test rsi,rsi / je`）⇒ 每个玩家最多一个，与 [`PlayerTurns::current`] 同义。
+    ///
+    /// 顺序回合那一支（`0x4629de`–`0x462ab0`）只返回当前玩家那一个士兵——本层没有那个
+    /// "当前玩家"游标，见模块文档 §6。
+    pub fn get_current_turn_soldiers(&self) -> Vec<i64> {
+        self.players.values().filter_map(|entry| entry.turns.current()).collect()
+    }
+
+    /// `GraphwarTurnManager::is_on_turn`（x86 **`0x462b50`**，FDE `0x462b50..0x462c07`；
+    /// 调用点：`EntityDrawer::draw` 的 `0x4b31ac`）。
+    ///
+    /// **判据 = `id ∈ get_current_turn_soldiers() ∪ get_current_turn_players()`**（`观测`）：
+    /// 先查 soldiers（`0x462b64` 取、`0x462b85` 比），不中再查 players（`0x462bac` 取、
+    /// `0x462bd5` 比），命中返回 `1`，都不中返回 `0`（`0x462bfe xor ebx,ebx`）。
+    ///
+    /// ⚠️ 语义**不是**"当前回合方"，也**不是**"本回合已开火"：同时回合模式下**所有登记
+    /// 玩家**与**每个玩家的当前士兵**都为真；顺序回合模式下原版只让当前玩家 + 其当前士兵
+    /// 为真，而本层是它的超集（模块文档 §6）。
+    ///
+    /// 实例 id 域：二进制参数是 `u32`（`esi`），本层实体 id 是 `i64`；调用方负责域转换
+    /// （`EntityDrawer` 侧按 `u32` 转换，越界 = 不通过）。
+    pub fn is_on_turn(&self, entity_id: i64) -> bool {
+        // 顺序照二进制：先 soldiers（0x462b64），再 players（0x462bac）。
+        if self.get_current_turn_soldiers().iter().any(|&id| id == entity_id) {
+            return true;
+        }
+        self.get_current_turn_players().iter().any(|&id| id == entity_id)
+    }
+
     /// 直接推进该玩家的游标（不产生判决）。未知玩家返回 `None`。
     pub fn next_shooter(&mut self, player_id: i64, state: impl Fn(i64) -> u8) -> Option<i64> {
         self.players.get_mut(&player_id)?.turns.next_shooter_by_state(state)
@@ -823,6 +903,55 @@ mod tests {
         let mut manager = TurnManager::new().with_empty_roster(EmptyRoster::Skip);
         manager.add_player(1, Team::Two, vec![]);
         assert_eq!(manager.begin_turn(1, alive_set(&[]), false).broadcast(), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // ⑥ `is_on_turn`（任务 46；`0x462b50` = soldiers ∪ players）
+    // -----------------------------------------------------------------------
+
+    /// `0x462b50` 的判据是**两个集合的并集**：士兵 id 命中 `get_current_turn_soldiers`，
+    /// 玩家 id 命中 `get_current_turn_players`（`0x462bac` 那一段）。
+    #[test]
+    fn is_on_turn_is_soldiers_union_players() {
+        let mut manager = TurnManager::new();
+        manager.add_player(1, Team::One, vec![10, 11]);
+        manager.add_player(2, Team::Two, vec![20]);
+        assert_eq!(manager.get_current_turn_soldiers(), vec![10, 20], "每玩家取游标处那一个");
+        assert_eq!(manager.get_current_turn_players(), vec![1, 2], "同时回合分支：玩家表全部键");
+        assert!(manager.is_on_turn(10), "当前士兵 ⇒ 真");
+        assert!(manager.is_on_turn(20));
+        assert!(manager.is_on_turn(1), "玩家 id 也算（players 那一支）");
+        assert!(manager.is_on_turn(2));
+        assert!(!manager.is_on_turn(11), "同一玩家的**别的**士兵不在此列");
+        assert!(!manager.is_on_turn(99), "两个集合都不中 ⇒ 假（0x462bfe）");
+    }
+
+    /// 读的是**当前游标**：游标一动，集合跟着动（不是初始表快照）。
+    #[test]
+    fn is_on_turn_follows_the_cursor() {
+        let mut manager = TurnManager::new();
+        manager.add_player(1, Team::One, vec![10, 11, 12]);
+        assert!(manager.is_on_turn(10) && !manager.is_on_turn(11));
+        assert_eq!(manager.next_shooter(1, all_alive), Some(11));
+        assert!(!manager.is_on_turn(10), "游标走了 ⇒ 上一个不再是当前士兵");
+        assert!(manager.is_on_turn(11));
+        assert_eq!(manager.get_current_turn_soldiers(), vec![11]);
+    }
+
+    /// 空玩家表 ⇒ 两个集合都空；空士兵表的玩家**玩家 id 仍为真**（players 分支取键）。
+    #[test]
+    fn empty_tables_make_is_on_turn_false_except_player_ids() {
+        let empty = TurnManager::new();
+        assert!(empty.get_current_turn_players().is_empty());
+        assert!(empty.get_current_turn_soldiers().is_empty());
+        assert!(!empty.is_on_turn(1));
+
+        let mut manager = TurnManager::new();
+        manager.add_player(7, Team::Two, vec![]);
+        assert_eq!(manager.get_current_turn_players(), vec![7]);
+        assert!(manager.get_current_turn_soldiers().is_empty(), "空 Vec 不 push（0x46299f）");
+        assert!(manager.is_on_turn(7), "玩家 id 在 players 里就为真");
+        assert!(!manager.is_on_turn(0), "0 是哨兵，从不在表里");
     }
 
     // -----------------------------------------------------------------------

@@ -242,6 +242,17 @@ pub const fn is_alive_byte(state: u8) -> bool {
     state & 1 != 0
 }
 
+/// `EntityDrawer::draw` 的门 1 判据（x86 `0x4b32e2` 的 `test %r14b,%r14b` / `je` 跳过）：
+/// **只有 0（死）不画**。查不到（[`MISSING_STATE`] = 2）在这一处**算可画**。
+///
+/// ⚠️ 与 [`is_alive_byte`] **不是同一条判据**，别混用：
+/// `0x463fbb`（`turn_manager` 的轮转）是 `test $0x1`（2 不算活）；
+/// `0x4b32e2`（`EntityDrawer::draw` 的存活门）判的是**整个字节非零**（2 算可画）。
+/// 证据：`0x4b3199 call 0x454950` → `0x4b319e mov r14d,eax` → `0x4b32e2 test r14b,r14b`。
+pub const fn is_drawable_alive_byte(state: u8) -> bool {
+    state != 0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,6 +280,18 @@ mod tests {
         assert!(is_alive_byte(3));
         assert!(!is_alive_byte(0xFE));
         assert!(is_alive_byte(0xFF));
+    }
+
+    /// `EntityDrawer::draw` 的门**不是** `& 1`：`0x4b32e2 test r14b,r14b` 只排除 0。
+    ///
+    /// 两条判据在"查不到（2）"这一格上分道扬镳：轮转不认它，draw 的门认它。
+    #[test]
+    fn draw_gate_only_excludes_zero() {
+        assert!(!is_drawable_alive_byte(0), "死（0）⇒ 不画");
+        assert!(is_drawable_alive_byte(1), "活（1）⇒ 画");
+        assert!(is_drawable_alive_byte(MISSING_STATE), "查不到（2）在 draw 的门里算可画");
+        assert!(is_drawable_alive_byte(3));
+        assert!(!is_alive_byte(MISSING_STATE), "但轮转那条门（test $0x1）不认 2 —— 别混用");
     }
 }
 
