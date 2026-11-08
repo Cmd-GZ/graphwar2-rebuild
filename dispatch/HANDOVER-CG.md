@@ -18,19 +18,21 @@
   agent/<task>     每个任务一个分支（我派 subagent 时建），**全部已推 origin**
   master           上游主线：他们把我的 CG 并进 master，我再用 master 同步回来
 
-已交付      第一轮 01–08、第二轮 09–14、第三轮 15–19、第四轮 20–25、
-            第五轮 26–28、第六轮 29–32、第七轮 33–34、第八轮 35–38 —— 全部已合并进 CG
+已交付      第一轮 01–08 … 第八轮 35–38、第九轮 39–42 —— 全部已合并进 CG
             报告在 dispatch/reports/CG-*.md
 下一轮候选  见 §7
 
-护栏（2026-11-08 05:30 实测；**以 fixtures/guardrails.json 为准**）
-  fire       内容 647/1080 ｜ 种类 947/1080   ← 口径已变：fire 对多发批走 fire_batch
-  batch      内容 647/1080 ｜ 种类 1075/1080
-  batch_conv 内容 637/1080 ｜ 种类 1075/1080
-  延迟段     死亡 366/385 ｜ 挖洞 206(fire) · 207(batch)（分母 293·294）
-  cargo test 1628 / 0 failed ｜ --features gdext-bindings 1723 / 0 failed
-  headless   12 个脚本 1428 条断言 0 失败
-  selftest   **714 passed / 0 failed / 1 skipped**（skip = 自检那局没有靶子，靶子外观分支只有代码路径）
+护栏（2026-11-08 18:40 实测；**以 fixtures/guardrails.json 为准**）
+  fire 647/1080 ｜ batch 647/1080 ｜ batch_conv 637/1080（fire 口径已含 fire_batch 变更）
+  延迟段 死亡 366/385 ｜ 挖洞 206(fire) · 207(batch)（分母 293·294）
+  cargo test 1631 / 0 failed ｜ --features gdext-bindings 1730 / 0 failed
+  headless 12 个脚本 **1504** 条断言 0 失败（entity_drawer **236**）
+  selftest **714 / 0 / 1 skipped**（skip = 自检那局没靶子）
+  槽位 22 个里**一个真 stub 都不剩**
+
+⚠️ 写护栏：`--update-baseline --axis fire|batch|batch_conv`
+⚠️ **合并前先跑 `python3 tools/merge_check.py --cg origin/CG --allow-dispatch`**（纪律 A.0；
+   不加 `--allow-dispatch` 会把 CG 自带的 dispatch/ 判成污染）
   槽位       **22 个槽里一个真 stub 都不剩**（36 号把最后一个 PlanePosManager 升到 wired）
 
 ⚠️ 写护栏：`python3 tools/bit_exact_attrib.py --json <jsonl> --update-baseline --axis fire|batch|batch_conv`
