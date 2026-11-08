@@ -4747,3 +4747,189 @@ python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire \
 | 覆盖率 | `coverage_matrix.py --check` | **OK**（原版可归属 527 个函数，逐位 88 / 观测 439 / 推断 0 / 未做 0） |
 | 文档引用 | `check_doc_refs.py` | **rc=0**（无死链） |
 | 闸门自身耗时 | `merge_check.py --branch <分支> --base <起点>` | **0.11 s**（`--run-tests` 之外，远低于 1 s 上限） |
+
+## 42. 收敛层跟上 **S3**：`batch_conv` **637 → 637**（1080 批里 **2 批内部变好 / 0 批变差**），`diffconv_parity` **1290 / 1290** 仍逐位（2026-11-09，`dispatch/73`）
+
+> 任务书：`dispatch/73-conv-follow-s3.md`（**不在本仓库**，理由见本文件开头的审计说明）。
+> 起点 `CG@766449b`，分支 `agent/conv-follow-s3`。上一轮 65 号（§39）把 S3 落进内核时
+> **明确登记了这条遗留**（§39.7 第 4 条）：「收敛层 `src/_scaffold/diffconv.rs` 没跟」
+> ⇒ `batch_conv` 轴与内核口径分叉。本节就是把那条遗留补上。
+>
+> 证据等级：本节全部是**观测**（每条都给了可复跑命令）。本轮**没有**新增逐位证据 ——
+> 与真二进制对拍的仍然只有 §39 的那几条；本节证明的是"两层口径一致"，不是"更接近原版"。
+
+### 42.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 收敛层怎么跟的 | 把 S3 的第二遍抽成**一个函数** [`game::settle_in_order_with_holes`](../src/game.rs)，内核与收敛层**都调它**；`ConvPredictor::fire_batch` 拆成"读环境变量"的薄壳 + `fire_batch_with(…, strategy)` 显式档位 | 观测（源码 + 单测） |
+| ② | `tests/diffconv_parity.rs` 还成立吗 | **成立**：固定样本 **32 / 32** 发逐位、全语料 **1290 / 1290** 发逐位，`mismatches_total = 0`；挖洞点 349 / 349 | 观测 |
+| ③ | 三轴 before → after | `fire` **647 → 647**、`batch` **647 → 647**（这两条轴的 JSONL 与改前**逐字节相同**）、`batch_conv` **637 → 637**（**2 批内部变好 / 0 批变差**） | 观测 |
+| ④ | 有没有做不到的 | **没有做不到**。到达序的键是"到停点的弧长"，只需要**点列 + 该发的 `stop`**，收敛层第一遍解完就有；不需要速度常数 | 观测 |
+| ⑤ | 代价 / 局限 | 报文装配仍是两份；不动点迭代仍没做（§39.7 第 3 条同款）；headless 没跑（`client/` 是禁区，理由同 §39） | — |
+
+### 42.1 落点：S3 的第二遍只有**一份实现**
+
+65 号把「到达序 + 逐发挖洞」写在 `Match::fire_functions_with` 的 ③④ 两段里；而收敛层
+`ConvPredictor::fire_batch` 自己另有一份结算循环（`batch_conv` 轴驱动的就是它），那段代码在它
+那边**根本不存在** —— §39.2 读法 3 记的「`batch_conv` 六档全同，构造如此」正是这件事。
+
+本轮的切法是**不复制、抽出来共用**：
+
+| 文件 | 改了什么 |
+|---|---|
+| [`src/game.rs`](../src/game.rs) | 新增 `pub(crate) fn settle_in_order_with_holes(strategy, mode, mask, soldiers, shots, points, outcomes)`：65 号那两段（③ 到达序 = `arc_to_stop` 升序；④ 逐发重解 + 把每发的洞写进**掩膜拷贝**）原封搬进来，连"为什么必须拷掩膜""为什么单发批直接返回"的理由一起搬。`fire_functions_with` 的 ③④ 收成**一次调用** |
+| [`src/_scaffold/diffconv.rs`](../src/_scaffold/diffconv.rs) | `fire_batch` → `fire_batch_with(shots, now_tick, strategy)`（显式档位，测试用；与 `Match::fire_functions_with` 同一个理由：`cargo test` 多线程，环境变量不进测试）+ `fire_batch` 薄壳（档位取 `game::settle_order()`，即 `GW2_SETTLE_ORDER`，默认 S3）。第一遍照旧用批开始掩膜解全部发、**把点列留下来**，然后调**同一个** `settle_in_order_with_holes`；后面 ④–⑦（死亡块 / 挖洞块 / 爆炸块 / 状态落地）全部读重解后的 `resolved` |
+
+**为什么两层能同构**（不是"看代码像"）：收敛层早就是"内核函数的第二个调用者"——采样串
+（`sampling_function_text_mode`）、点列（`shot_points`）、停点/致死（`resolve_points_owned`）、
+挖洞点（`hole_point`）全都转调内核（§30.2）。**缺的只有第二遍那十几行**，所以抽出来共用之后
+"同构"是**构造出来的**：两层跑的是同一个函数、同一张掩膜、同一档 `SettleOrder`。谁再各写一遍，
+`diffconv_parity` 就会红 —— §42.4 的负对照就是这件事的实测。
+
+**输入够不够**（任务书 ④ 那条）：够。到达序的键是「沿弹道到停点的弧长」，只需要**点列 + 该发的
+`stop`**，两者在收敛层第一遍解完之后都在手上（点列本来就与掩膜无关：`shot_points` 不吃掩膜，
+§39 的 ② 段）。**不需要**速度常数 `PROJECTILE_UNITS_PER_TICK`（那是 S4 取整分桶才要的、且是**推断**值）。
+
+**两条不许动的地方**（写进代码注释了）：① 工作掩膜必须是 `self.mask` 的**拷贝**（`plane::rasterize`
+的抗锯齿环与旧值混合，同一个洞画两遍 ≠ 画一遍，而 `execute_results` ③ / 收敛层 ⑥ 之后还会再画一遍）；
+② 单发批与 S1/S2 档在函数里**直接返回** ⇒ `Match::fire`（以及 `ConvPredictor::fire` = `N = 1` 的
+`fire_batch`）**不可能**被这次改动碰到。
+
+### 42.2 三轴 before → after（**分开跑、分开报**）
+
+语料 = 冻结快照 `gw2-replays-snapshot/replays`（403 个文件 = **401 份回放** + `SHA256SUMS` +
+`MANIFEST.tsv`）；286 份可读 / **1080 批**。before = `CG@766449b` 实跑，after = 本分支实跑。
+
+| 轴 | 命令 | before | after | 判定 |
+|---|---|---|---|---|
+| `fire` | `replay_attrib --dir <快照> --drive fire --policy default --json f.jsonl` | 内容 **647** / 种类 1075 / 死亡 366-385 / 挖洞 207-294 | **同左**；JSONL 与改前**逐字节相同** | 一位没动 |
+| `batch` | `replay_attrib --dir <快照> --drive batch --policy default --json b.jsonl` | 内容 **647** / 1075 / 366-385 / 207-294 | **同左**；JSONL **逐字节相同** | 一位没动 |
+| `batch_conv` | `batch_conv --dir <快照> --policy strict`（⚠ 是 `--example batch_conv`，**不是** `replay_attrib --drive conv`） | 内容 **637** / 1075 / 死亡 **347**-385 / 挖洞 207-294 | 内容 **637** / 1075 / 347-385 / 207-294 | 内容轴一位没退；**2 批内部变好** |
+
+`batch_conv` 的分组读数（同一份 JSONL）：多发批（≥2 发）130 批 —— 种类 **128 / 130**、内容
+**32 / 130**；单发批 950 —— 种类 **947 / 950**、内容 **605 / 950**。三组数与改前**逐字段相同**，
+说明变化**只**落在多发批内部的几何读数上，没动"命中 / 不命中"这一层。
+
+`tools/bit_exact_attrib.py --json <…> --check-baseline --axis fire|batch|batch_conv --snapshot <快照>`
+三条轴各跑一次：**全部一致**（结算批 1080、内容 647/647/637、种类 1075、死亡 366/366/347、
+挖洞 207），语料指纹也一致（内容 digest `2f85d8133097b922…`）。⇒ `fixtures/guardrails.json`
+**一个字都不用改**。（另：本文件开头那句"2026-11-08：内容 647 / 647 / 633"里的 **633 是旧记**，
+现行 `batch_conv` 是 **637** —— §39 起就是这个数，`fixtures/guardrails.json` 也是 637。）
+
+### 42.3 `batch_conv` 逐批变化清单（1080 批里只有 **2 批**）
+
+对拍 `batch_conv --drive batch --policy strict --json` 的改前 / 改后两份 JSONL：**1078 批逐字节
+不变**，只有下面两批的内部读数变了；**0 批 content_ok / kind_seq_ok 翻面（两个方向都没有）**。
+
+| 批 | 发数 | before | after | 方向 |
+|---|---|---|---|---|
+| `1782927590` #0 | 4 | **5** 条差异，其中 **3 条** `数值（差 >1e-3）`：`FunctionPoints.end_x`、`EffectInfo.pos_x`、`EffectInfo.pos_y` | **3** 条：三条大差**全部消失**，剩 1 条 `EffectInfo.pos_x` 末位差 | **变好**（content_ok 仍 False） |
+| `1793884550` #1 | 7 | **7** 条差异，其中 **3 条** `数值（差 >1e-3）`（同样是 `end_x` / `pos_x` / `pos_y`） | **5** 条：三条大差消失，剩 1 条末位差（其余是批内顺序那类） | **变好**（content_ok 仍 False） |
+
+两批的 `killed` / `obs_deaths` / `obs_destroy` / `blocked` **一个都没变**（脚本逐字段比对过）
+⇒ 死亡 347/385、挖洞 207/294 两条轴当然不动。这就是"内容轴一位没退、净 2 批变好"的完整清单。
+
+**与 §39.3 的交叉验证**（本轮最直接的"两层同构"观测证据）：内核侧 `s1 → s3` 改变的是**同样这两批**
+（`1782927590#0` 5 → 3 条、`1793884550#1` 7 → 5 条），连"三条大差消失"的形态都一样。两层在**同一批人**
+身上动、方向一致 —— 不是"我猜它应该一样"，是两份独立产物对同一份语料给出同一个净变化。
+
+### 42.4 `diffconv_parity` 仍成立（+ 一条**会让它红**的负对照）
+
+命令与数（快照目录，`GW2_REPLAY_DIR=<快照>` 时测试才跑全语料；不设时它去 Godot 的 `user://`）：
+
+| 口径 | 结果 |
+|---|---|
+| 固定样本 `tests/diffconv_parity.rs`（5 份 / 18 批 / **32 发**） | 点序列/stop/blocked/killed/修正文本 **32 / 32** 逐位（Normal 26/26、DiffEq 6/6）；挖洞点 **18 / 18** |
+| 全语料 `GW2_PARITY_FULL=1`（286 份 / 1080 批 / **1290 发**） | **1290 / 1290** 逐位（Normal 740/740、DiffEq 550/550）；挖洞点 **349 / 349**；爆炸点 1278 / 1290（差的 12 处仍是内核 ④ 用 `stop` 那条老账，§30.5，**不是**本轮引入的） |
+
+**负对照（这条比上面的 100% 更值钱）**：把收敛层那句调用临时改成恒 `SettleOrder::S1Message`
+（即"故意不等档"，1 行），全语料对拍立刻红在**正好那两批**：
+
+```text
+[全语料] ! 1782927590 批 #0 第 0 发 · stop：C=(-9.426577233846734, 0.05037921123840361) K=(-9.441030358846787, 0.4547466761936061)
+[全语料] ! 1782927590 批 #0 第 0 发 · destroy：…
+[全语料] ! 1793884550 批 #1 第 5 发 · stop：C=(13.202499153646912, 12.230769549877957) K=(13.258749153646903, 12.238816760178384)
+[全语料] ! 1793884550 批 #1 第 0 发 · destroy：…
+逐位全同 1288 / 1290（99.8%）；挖洞点 347 / 349
+```
+
+⇒ ① 那条对拍**真的在比这一段**（1290/1290 不是空转）；② 语料里 S1 与 S3 几何不同的**只有这 2 批**，
+与 §39.3 / §42.3 的清单**互相独立地对上**（一个来自内核轴，一个来自收敛层轴）。
+
+**新增单测**（`_scaffold::diffconv::tests::arrival_order_follows_the_kernel_bit_for_bit`）：
+手工搭一堵墙（几何照抄内核那条 `arrival_order_makes_earlier_holes_visible`），两发都撞墙、
+报文序故意把**后到**的排前面，三条断言：① **S1 ≠ S3**（先到那发不变、后到那发穿过洞继续往左）
+② 收敛层 S3 与 `Match::fire_functions_with(S3)` 的**点列 / 停点 / `blocked` / `killed` / `hits`
+（含弧长）逐位相同** ③ 报文 `FunctionPoints.end_x` = **重解后**的停点（不是第一遍那个值）。
+同一个负对照下这条单测也红（`assertion left != right failed: 后到的那一发必须看得见前面的洞`）。
+
+### 42.5 遗留 / 未做（照实写）
+
+1. **报文装配仍是两份**：内核 `execute_results` 与收敛层 `fire_batch_with` 的 ④–⑦ 各写一遍。
+   它们本来就有已知差异（爆炸点内核 ④ 用 `stop`、收敛层用 `hole_point`，§30.5 那 12 处），
+   合并会把两条轴的口径一起动 ⇒ 不在本任务范围内。
+2. **`GW2_SETTLE_ORDER` 的语义变了**：收敛层现在也读它 ⇒ §39.2 读法 3 那句"`batch_conv` 六档全同
+   是构造如此"**从此只在 S1/S2 上成立**。65 号那张六档矩阵**没有重扫**（它的 `batch_conv` 列本来就
+   只用来证明"那条轴不经过内核"；重扫要 6 × 3 × 401 份，价值低于内核轴与语料 B 那两列）。
+3. **不动点迭代没做**（与 §39.7 第 3 条同款）：第二遍用的序来自第一遍的停点，理论上存在"第一遍的序
+   错了 ⇒ 第二遍的序也该错"的批；本语料 2 批里没有出现。
+4. **headless / `client/run.sh selftest` 没跑**：本机没有 godot，且 `client/` 是本任务的禁区。
+   替代证据：客户端只走 `Match::fire`（单发批），单发批在 `settle_in_order_with_holes` 里**直接返回**
+   ⇒ 这条路径在客户端上不可达。
+5. **§39.7 第 1、2、5 条遗留不受影响**（机制的运行时直证仍缺、S3 与 S4 仍分不开、`hole_point` 的
+   印刷版残差仍在）。
+
+### 42.6 本轮改动清单
+
+| 文件 | 改了什么 |
+|---|---|
+| [`src/game.rs`](../src/game.rs) | 新增 `settle_in_order_with_holes`（S3 第二遍的**唯一**实现，`pub(crate)`，含全套理由）；`fire_functions_with` 的 ③④ 改为调用它。**没有**改 `SettleOrder` 六档、`arc_to_stop`、`permutation`、默认档、`execute_results` |
+| [`src/_scaffold/diffconv.rs`](../src/_scaffold/diffconv.rs) | `fire_batch_with`（显式档位）+ `fire_batch` 薄壳；第一遍保留点列；第二遍调内核同一个函数；编号 ②–⑦ 重排 + 注释写明"并行只对士兵表成立、对掩膜不成立"；**+1 条单测**（上面那条三层断言 + 内置负对照） |
+| [`docs/coverage-matrix.tsv`](coverage-matrix.tsv) / [`docs/149-coverage-matrix.md`](149-coverage-matrix.md) | 机械重生成（`tools/coverage_matrix.py`）：`src/game.rs` 的函数数 109/118 → **110/119**，`src/` 树 2956 → **2960** 条 `fn`（+4 = 上面 2 个函数 + 2 个测试件） |
+| 本节 | 追加 |
+
+**没有改动**：`fixtures/guardrails.json`（三轴数字与语料指纹全部原样通过）、`tests/diffconv_parity.rs`
+与任何既有断言、`src/graphwar_shot_calculator*`、`client/`、`dispatch/`。
+
+**护栏结果（本轮在 `agent/conv-follow-s3` 上现跑）**：
+
+| 项 | 基线（`CG@766449b`，本轮实测复现） | 改后 |
+|---|---|---|
+| `cargo test --offline` | **1693** / 0 失败 | **1694** / 0 失败（+1：`arrival_order_follows_the_kernel_bit_for_bit`） |
+| `cargo test --offline --features gdext-bindings` | **1799** / 0 失败 | **1800** / 0 失败 |
+| `replay_attrib --drive fire` | 647 / 1080（JSONL digest 已核） | **647 / 1080**（JSONL 与改前**逐字节相同**） |
+| `replay_attrib --drive batch` | 647 / 1080 | **647 / 1080**（同上） |
+| `batch_conv --policy strict` | 637 / 1080 | **637 / 1080**（2 批内部变好、0 批变差，清单见 §42.3） |
+| `tools/coverage_matrix.py --check` | OK | **OK** |
+| `tools/check_doc_refs.py` | rc=0 | **rc=0** |
+| headless / selftest | — | **没跑**（见 §42.5 第 4 条） |
+
+### 42.7 复跑（本节每个数都能这样复核）
+
+```bash
+export CARGO_HOME=<WS>/.reference/cargo-home CARGO_TARGET_DIR=<WS>/.agent-work/cg/target73
+R=<WS>/.reference/replays/gw2-replays-snapshot/replays
+
+# ① 三轴（分开跑、分开报；batch_conv 必须用 --example batch_conv）
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv -- --dir $R --policy strict
+
+# ② 逐批清单（§42.3）：同一命令带 --json，改前改后各一份，逐行 diff
+cargo run --release --offline -q --example batch_conv -- --dir $R --drive batch --policy strict --json c.jsonl
+diff <改前的 c.jsonl> c.jsonl        # 期望：只有 2 行不同（1782927590#0、1793884550#1）
+
+# ③ 两层对拍（§42.4）：必须用快照目录当语料，否则它会去 Godot 的 user://
+GW2_REPLAY_DIR=$R cargo test --offline --test diffconv_parity -- --nocapture
+GW2_REPLAY_DIR=$R GW2_PARITY_FULL=1 cargo test --offline --release --test diffconv_parity -- --nocapture
+
+# ④ 负对照（把收敛层那行改成恒 S1 再跑 ③）：
+#    src/_scaffold/diffconv.rs 里 settle_in_order_with_holes(strategy, …) → S1Message
+#    期望：全语料 1288/1290、挖洞 347/349，红在 1782927590#0 与 1793884550#1
+
+# ⑤ 护栏（语料指纹 + 三轴数字；不许改 guardrails.json）
+python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire  --snapshot $R
+python3 tools/bit_exact_attrib.py --json b.jsonl --check-baseline --axis batch --snapshot $R
+python3 tools/bit_exact_attrib.py --json c.jsonl --check-baseline --axis batch_conv --snapshot $R
+```

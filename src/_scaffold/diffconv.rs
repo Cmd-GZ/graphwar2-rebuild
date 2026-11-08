@@ -278,16 +278,38 @@ impl ConvPredictor {
     /// 2. **几何并行**：每一发都对着**批开始那一刻**的士兵表算（`docs/141` §2.1，
     ///    死亡集合恰好等于"逐发独立"的并集，152/152）；谁死不改变别人的弹道。
     ///
+    ///    ⚠ **"并行"只对士兵表成立，对掩膜不成立**（`docs/06` §34.4 / §42）：同批更早
+    ///    爆炸的那几发会挖洞，后解算的那几发**看得见**那些洞。所以第二遍按到达序逐发
+    ///    重解（[`crate::game::settle_in_order_with_holes`]）—— 与内核**同一个函数**。
+    ///    第一遍（上面 ①）算出来的停点只用来给第二遍定**序**。
+    ///
     /// 死亡块里同一名士兵**只出现一次**，归属**最早到达**的那一发：同一回合所有弹丸的
     /// `active_tick` 相同（13/13 回合），所以"谁先到"⇔"谁的弧长更短"，
     /// 排序键取 `(弧长, 发序号, 士兵 id)`；全体并列的兜底纯为确定性，
     /// 真游戏在"两发同时到达"时怎么判仍是 **未知**（`docs/141` §5 第 5 条）。
     ///
     /// `N = 1` 时本函数与 [`ConvPredictor::fire`] 逐字节相同 ⇒ 单发批**不可能**变差。
+    ///
+    /// 批内**结算顺序**（`docs/06` §42）走 [`ConvPredictor::fire_batch_with`]，档位由
+    /// [`crate::game::settle_order`] 给（`GW2_SETTLE_ORDER`，默认
+    /// [`crate::game::DEFAULT_SETTLE_ORDER`] = S3）——
+    /// **与内核 `Match::fire_functions` 读的是同一个开关、同一档**。
     pub fn fire_batch(
         &mut self,
         shots: &[ShotInput],
         now_tick: i64,
+    ) -> (Vec<String>, Vec<ShotOutcome>) {
+        self.fire_batch_with(shots, now_tick, crate::game::settle_order())
+    }
+
+    /// [`ConvPredictor::fire_batch`] 的**显式档位**版本（理由与
+    /// [`crate::game::Match::fire_functions_with`] 完全一样：`settle_order()` 读环境变量，
+    /// 而 `cargo test` 是多线程的 —— 档位从参数进，产品路径从环境变量进）。
+    pub fn fire_batch_with(
+        &mut self,
+        shots: &[ShotInput],
+        now_tick: i64,
+        strategy: crate::game::SettleOrder,
     ) -> (Vec<String>, Vec<ShotOutcome>) {
         // ---- 结算阶段 ----
         // ① 几何并行：先按批开始那一刻的士兵表把每一发算完，再动状态。
@@ -298,11 +320,14 @@ impl ConvPredictor {
         //     （与 `game::fire_functions` 同一个调用、同一个 `SERVER_STEP`）
         //   * 停点/致死 [`resolve_points_owned`] —— **射手由内核按 id 排除**，
         //     调用方不再预筛（旧实现多一条 `1e-12` 位置排除，二进制没有这条）
+        //
+        // 点列单独留着不只为对拍：第二遍（②）要用它算**到达弧长**。
         let mut resolved = Vec::with_capacity(shots.len());
         let mut samplings: Vec<String> = Vec::with_capacity(shots.len());
+        let mut points: Vec<Vec<(f64, f64)>> = Vec::with_capacity(shots.len());
         for s in shots {
             let sampling = sampling_text(&s.text, s.x0, s.y0, s.flip, self.mode);
-            let points = crate::graphwar_shot_calculator::shot_points(
+            let pts = crate::graphwar_shot_calculator::shot_points(
                 &sampling,
                 s.x0,
                 s.y0,
@@ -315,16 +340,50 @@ impl ConvPredictor {
             resolved.push(resolve_points_owned(
                 &self.mask,
                 &self.soldiers,
-                &points,
+                &pts,
                 Some(s.owner),
             ));
+            points.push(pts);
         }
+
+        // ② **批内结算顺序 / 逐发挖洞（S3）** —— 与内核**同一个函数**。
+        //
+        // 这一段就是"两层为什么同构"的答案：不是各写一遍，而是
+        // [`crate::game::settle_in_order_with_holes`] 一个实现、两个驱动器
+        // （内核 `Match::fire_functions_with` / 本收敛层）。它按到达序（到停点弧长升序）
+        // 重解，每解完一发把洞写进**本批的工作掩膜拷贝**，于是后解的发看得见前面的洞。
+        //
+        // ⚠ `self.mask` **不在这里改**（函数内部拷一份）：跨批状态仍由 ⑥ 在整批结算完
+        // 之后一次性落地，与 `Match::execute_results` ③ 同序同值 —— 只有"同批可见性"
+        // 这一个变量被打开。
+        //
+        // 单发批 / S1 / S2 在函数里**直接返回** ⇒ 与 65 号之前的行为逐位相同。
+        let subs: Vec<crate::game::Submission<'_>> = shots
+            .iter()
+            .map(|s| crate::game::Submission {
+                owner_id: s.owner,
+                function_text: &s.text,
+                x0: s.x0,
+                y0: s.y0,
+                flip: s.flip,
+            })
+            .collect();
+        crate::game::settle_in_order_with_holes(
+            strategy,
+            self.mode,
+            &self.mask,
+            &self.soldiers,
+            &subs,
+            &points,
+            &mut resolved,
+        );
+
         let corrected: Vec<String> = shots
             .iter()
             .map(|s| corrected_function(&s.text, s.x0, s.y0, s.flip, self.mode))
             .collect();
 
-        // ② 合并死亡：按 (弧长, 发序号, 士兵 id) 升序，同一士兵只留最早到达的那一发。
+        // ③ 合并死亡：按 (弧长, 发序号, 士兵 id) 升序，同一士兵只留最早到达的那一发。
         let mut merged: Vec<(f64, usize, i64)> = Vec::new();
         for (si, out) in resolved.iter().enumerate() {
             for h in &out.hits {
@@ -346,7 +405,7 @@ impl ConvPredictor {
 
         // ---- 广播阶段 ----
         let mut msgs = vec![crate::_scaffold::protocol::emit_game_state("CalculatingResults")];
-        // ③ 前缀按类型分组（`docs/141` §3.1 ①②）
+        // ④ 前缀按类型分组（`docs/141` §3.1 ①②）
         for (s, c) in shots.iter().zip(corrected.iter()) {
             msgs.push(crate::_scaffold::protocol::emit_function_info(
                 s.owner,
@@ -361,7 +420,7 @@ impl ConvPredictor {
         }
         msgs.push(crate::_scaffold::protocol::emit_game_state("SynchronizingResults"));
 
-        // ④ 死亡块：顺序 = 到达时刻；特效类型照抄**出生登记**（[`death_effect_type`]）
+        // ⑤ 死亡块：顺序 = 到达时刻；特效类型照抄**出生登记**（[`death_effect_type`]）
         for id in &deaths {
             msgs.push(crate::_scaffold::protocol::emit_life_queued_death(*id, now_tick));
             let Some(t) = self.soldiers.iter().find(|t| t.id == *id) else {
@@ -378,7 +437,7 @@ impl ConvPredictor {
             ));
         }
 
-        // ⑤ 挖洞块（回放不记录 `QueueDestroyObstacle`，位置**无证据**；沿用单发实现的
+        // ⑥ 挖洞块（回放不记录 `QueueDestroyObstacle`，位置**无证据**；沿用单发实现的
         //    "死亡之后、`FunctionActive` 之前"）
         //
         //    **位置 = 爆炸点，不是采样停点**，由内核同一函数 [`hole_point`]
@@ -404,7 +463,7 @@ impl ConvPredictor {
             ));
         }
 
-        // ⑥ 每发一对 `FunctionActive` + `EffectInfo(Explosion)`，顺序与前缀相同。
+        // ⑦ 每发一对 `FunctionActive` + `EffectInfo(Explosion)`，顺序与前缀相同。
         //
         //    位置同样取内核的 [`hole_point`]（挖洞点 ≡ 爆炸点，503/503 逐位）：
         //    `game::execute_results` 的 ④ 目前仍写 `out.stop`（`docs/06` §24 的 `Y` 类、
@@ -1508,6 +1567,114 @@ mod tests {
         // 状态落地：两名死者都从士兵表里移除
         assert_eq!(p.soldiers.len(), 1);
         assert_eq!(p.soldiers[0].id, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // 批内结算顺序（S3）：收敛层与内核**同一个函数**（`docs/06` §42）
+    // -----------------------------------------------------------------------
+
+    /// 内核测试用的那间房（`RoomState` 只是 `Match::new` 的入参，几何用不到）。
+    fn room() -> crate::server::RoomState {
+        crate::server::RoomState {
+            room_name: "Graphwar Game".into(),
+            game_state: "Setup".into(),
+            axis_mode: "EveryUnit".into(),
+            function_mode: "NormalFunction".into(),
+            turn_mode: "SequentialTurns".into(),
+            time_mode: "Timer1m".into(),
+        }
+    }
+
+    /// **收敛层真的按 S3 结算，而且与内核逐位相同**（`docs/06` §42）。
+    ///
+    /// 几何照抄 `game.rs::tests::arrival_order_makes_earlier_holes_visible`（同一堵墙、
+    /// 同一组起点）：一堵竖墙在 `x = 0`（半径 1 的圆盘沿 y 排开），两发都从右边水平
+    /// 向左打。`owner=1` 从 `(10, 0)` 出发（**先到**），`owner=2` 从 `(12, -0.1)` 出发
+    /// （**后到**，路径从 1 号挖的洞里穿过），报文序故意给成 `[2, 1]`。
+    ///
+    /// 三条断言各钉一件事，缺一条这个测试就会变成空转：
+    ///
+    /// 1. **S1 ≠ S3**：改档位真的改了收敛层的几何（否则"两层都调同一个函数"是句空话）；
+    /// 2. **与内核 `fire_functions_with(S3)` 逐位相同**：点列 / 停点 / `blocked` /
+    ///    `killed` / `hits` 全比 —— 同构不是"看起来一样"，是同一个函数的两个驱动器；
+    /// 3. **报文跟着重解后的停点走**：`FunctionPoints.end_x` = 第二遍的 `stop.x`
+    ///    （第一遍那个是错的），否则报文和几何会各说一套。
+    #[test]
+    fn arrival_order_follows_the_kernel_bit_for_bit() {
+        // 墙：x = 0 上从 y=-3 到 3 排一串半径 1 的圆盘（与内核那条测试同一个几何）
+        let mut obstacles = Vec::new();
+        let mut y = -3.0;
+        while y <= 3.0 {
+            obstacles.push((0.0, y, 1.0));
+            y += 0.25;
+        }
+        let shots = vec![
+            ShotInput { owner: 2, x0: 12.0, y0: -0.1, flip: true, text: "0".into() },
+            ShotInput { owner: 1, x0: 10.0, y0: 0.0, flip: true, text: "0".into() },
+        ];
+        let pred = || ConvPredictor::new(&obstacles, Vec::new(), Mode::Normal);
+        let (_w1, s1) = pred().fire_batch_with(&shots, 0, crate::game::SettleOrder::S1Message);
+        let (w3, s3) =
+            pred().fire_batch_with(&shots, 0, crate::game::SettleOrder::S3ArrivalHoles);
+
+        // ① 两发都撞墙（否则这个几何什么都没量到）；先到的那发不受影响，后到的看得见洞
+        assert!(s1[0].blocked && s1[1].blocked, "两发都该撞墙：{:?}", (s1[0].blocked, s1[1].blocked));
+        assert_eq!(s3[1].stop, s1[1].stop, "先到的那一发不受影响");
+        assert_ne!(s3[0].stop, s1[0].stop, "后到的那一发必须看得见前面的洞");
+        assert!(
+            s3[0].stop.0 < s1[0].stop.0 - 1e-9,
+            "应当穿过洞继续往左：S1 x={} / S3 x={}",
+            s1[0].stop.0,
+            s3[0].stop.0
+        );
+
+        // ② 与内核逐位相同（两边都调 `game::settle_in_order_with_holes`）
+        let mut kernel = crate::game::Match::new(room(), obstacles.clone(), Vec::new(), (0, 0));
+        let subs: Vec<crate::game::Submission<'_>> = shots
+            .iter()
+            .map(|s| crate::game::Submission {
+                owner_id: s.owner,
+                function_text: &s.text,
+                x0: s.x0,
+                y0: s.y0,
+                flip: s.flip,
+            })
+            .collect();
+        let ko = kernel.fire_functions_with(&subs, crate::game::SettleOrder::S3ArrivalHoles);
+        for i in 0..shots.len() {
+            assert_eq!(bits_pair(ko[i].stop), bits_pair(s3[i].stop), "第 {i} 发停点");
+            assert_eq!(ko[i].blocked, s3[i].blocked, "第 {i} 发 blocked");
+            assert_eq!(ko[i].killed, s3[i].killed, "第 {i} 发 killed");
+            assert_eq!(ko[i].points.len(), s3[i].points.len(), "第 {i} 发点数");
+            assert!(
+                ko[i]
+                    .points
+                    .iter()
+                    .zip(s3[i].points.iter())
+                    .all(|(a, b)| bits_pair(*a) == bits_pair(*b)),
+                "第 {i} 发点列必须逐位相同"
+            );
+            assert_eq!(ko[i].hits.len(), s3[i].hits.len(), "第 {i} 发命中数");
+            assert!(
+                ko[i]
+                    .hits
+                    .iter()
+                    .zip(s3[i].hits.iter())
+                    .all(|(a, b)| a.id == b.id && a.index == b.index && a.arc.to_bits() == b.arc.to_bits()),
+                "第 {i} 发命中细节（含弧长）必须逐位相同"
+            );
+        }
+
+        // ③ 报文里的 `end_x` 是**第二遍**的停点
+        let ends: Vec<f64> = w3
+            .iter()
+            .filter_map(|w| Msg::parse_wire(w).ok())
+            .filter(|m| m.kind == "FunctionPoints")
+            .filter_map(|m| m.get_f64("end_x"))
+            .collect();
+        assert_eq!(ends.len(), 2, "两发各一条 `FunctionPoints`");
+        assert_eq!(ends[0].to_bits(), s3[0].stop.0.to_bits(), "end_x 必须跟重解后的停点");
+        assert_ne!(ends[0].to_bits(), s1[0].stop.0.to_bits(), "不能是第二遍之前那个值");
     }
 
     // -----------------------------------------------------------------------
