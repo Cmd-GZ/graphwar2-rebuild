@@ -5257,3 +5257,316 @@ $PY tools/lan_ai_triple.py --jsonl $R/lan_ai.jsonl --label lanAI --oracle 1 \
 | ④ 1 ulp | **未复现**（AI 那一发上；`Point == start_x` 逐位 3/3）。覆盖面与缺什么见 §43.6 |
 | `cargo test --offline` | **1693 passed / 0 failed** |
 | `tools/check_doc_refs.py` | **rc=0** |
+
+## 44. `GraphwarGameClient::process`（`0x518400`）的**节奏真值**：帧 30–67 fps 时 tick 恒 **60.00/s**；每帧 **0/1/2** 个 tick、长帧按 `gap ÷ 16.667 ms` 成比例追赶；泵**只跟着 tick 走**（不是每帧一次）；引擎给的 `delta` **从不被读**（`--fixed-fps 10` 下 delta 恒 0.1 s，tick 仍跟墙钟）（2026-11-09，`dispatch/80`）
+
+> 任务书：[`dispatch/80-drive-frame-cadence.md`](../dispatch/80-drive-frame-cadence.md)。起点 `CG@e150ccd`，
+> 分支 `agent/drive-frame-cadence`，私有 `CARGO_HOME` / `CARGO_TARGET_DIR`。
+> 目标构建：`libgraphwarrust.so` sha256 **`9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`**
+> （= `steam/2026-08-28`，与 §42 / §48 同一份）。地址一律**虚地址**（RVA），Ghidra = RVA + `0x100000`。
+>
+> **为什么这一节**：§48 已经把那条循环**逐指令**读出来了、§51 已经把它落进内核
+> （`process` + `KernelBus::drive_frame`），但**"运行时到底按什么节奏跑"一直只有"每秒几次"这种汇总数**
+> （§48.4 的 52/60/120）。§52.5 / §53.6 两次评估后**故意没接**，理由之一是"没有真帧可对"。
+> 本节把"节奏"本身量成真值：**每帧形状**（几个 tick、几个泵、什么顺序）、**长帧行为**、**delta 读没读**。
+>
+> **编号说明**：任务书写"现在最大 §43、你用 §44"。本文件**现行的最大编号是 §42**
+> （§24–§43 已整体搬进 [`archive/155-round-log.md`](archive/155-round-log.md)），§44 在本文件未被占用
+> ⇒ 按任务书用 **§44**（若并行任务也占了 §44，请协调者重排）。
+>
+> **本节只做测量，没有接线**（`src/`、`client/` 一个字节没动；接线方案写在 §44.7，只写不改 —— 本轮
+> `src/_scaffold/root_wiring.rs` 归 77 号）。
+
+### 44.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | **钩到了吗** | **钩到了**。8 个钩子，**5 次独立运行 / 5 局**（战役关对局），合计 **12 175 帧、12 856 个 tick**；每帧的调用者只有 **`0x515dfe`** 一个站点（4642/4642） | **观测** |
+| ② | **帧率 / tick 率 / 比值** | 帧 **30.00 → 66.98 fps** 五档，tick 恒 **59.94–60.01/s**；比值 = `60 ÷ 帧率`（默认 64.90 fps ⇒ **0.924 tick/帧**；`--max-fps 30` ⇒ **1.998**）；稳态每秒 tick 数 **59–61** | **观测** |
+| ③ | **每帧几个 tick** | 默认参数：**0:507（11.0%）/ 1:4116 / 2:15**，另有 4 帧（4/13/37/91 tick）来自长帧与人为冻结 | **观测** |
+| ④ | **泵是不是每帧一次** | **不是**。`pumps` 与 `ticks` **逐帧严格相等**（A 的 4 642 帧逐帧相等；五轮全部相等）⇒ **0-tick 的帧一次都没泵**；泵在 tick 那一圈里（`0x51849f`） | **观测** |
+| ⑤ | **顺序** | **tick 先、泵后**：调用点 `0x518499 call r13`（tick）→ `0x51849f call rbp`（泵）；运行时 4 640 / 4 642 帧的顺序串是 `TPTP…`，**0 帧**是"泵在前" | **观测** |
+| ⑥ | **`delta` 读没读** | **没读**。①指令：`0x518400..0x518527` 全文**没有一条 `xmm` 操作数**；②行为：`--fixed-fps 10` 下引擎给的 delta **恒 100 000 µs**（n=1332，min=max），而该轮帧间隔只有 23 216 µs、tick 仍是 **60.01/s**、**1.393 tick/帧**（若按 delta 走该是 **6**） | **观测**（指令 + 运行时双证） |
+| ⑦ | **与 `ProcessLoop` 对齐** | 5 项对上（每帧一次 / 先 tick 后泵 / 追赶无上限 / delta 忽略 / `probes = 帧数 + tick 数`），1 项是**我方已知差异**（`(0,0)` 也算到期，实测撞不到 —— §44.6） | **观测** |
+| ⑧ | **接线** | **没接**。方案见 §44.7（改哪 2 处、会动 5 个读数） | —— |
+
+### 44.1 钩子：地址、返回地址、样本量（含正对照 / 负对照）
+
+工具：**新增** [`tools/frida_cadence.js`](../tools/frida_cadence.js) + [`tools/frida_cadence.py`](../tools/frida_cadence.py)
+（`Interceptor.attach`，**只读**；时间源 `clock_gettime(CLOCK_MONOTONIC)`，µs 级 —— `Date.now()` 只有 ms，
+量不了 16.667 ms 上的抖动）。进局用战役那条路（`campaign.save = level_20` + 3 次点击，坐标同
+[`tools/frida_point_array.py`](../tools/frida_point_array.py) 的 `NAV`/`LEVEL_NODE`）。
+
+| 钩子（RVA） | 名字（§48.1 已定） | 每秒次数（§44.2 那一秒） | 线程 | 返回地址 = 调用点 |
+|---|---|---:|---|---|
+| `0x3a5760` | `GraphwarRootNode::process`（引擎 `_process`） | **64** | 15 | `0x42a91a` |
+| `0x515dc0` | `GraphwarBackend::process` | **64** | 15 | `0x3a6a54` |
+| `0x518400` | **`GraphwarGameClient::process`** | **64** | 15 | **`0x515dfe`**（唯一） |
+| `0x518240` | `GraphwarGameClient::tick` | **60** | 15 | `0x51849c`（循环体内，`call r13` + 3） |
+| `0x3d3630` | `GraphwarEventHandler::process_events`（= 泵） | 120 = **60 客户端** + 60 服务端 | 15 / 304 | `0x5184a1`（客户端）/ `0x451be5`（服务端） |
+| `0x519450` | `GraphwarTickHandler::get_time_to_tick` | 304 = **124 客户端** + 180 服务端 | 15 / 304 | `0x518489`:124 / `0x451ba8`:120 / `0x4524df`:60 |
+| `0x51848e` | 判决点 `cmp edx,0x3b9aca00` | **124** = 64 帧 + 60 tick | 15 | —— |
+| `0x42a8bf` | `movsd xmm0,[rax]`（引擎交给 `_process` 的 f64） | **64**（这一行取自 A2 的同一秒） | 15 | —— |
+| `0x463da0` | `TurnManager::next_turn`（**负对照**） | **0** | —— | —— |
+
+**正对照（证明钩子链路有效，`AGENTS.md` 合并纪律 A.4）**
+
+```text
+① 引擎帧钩子在自己跳：RootNode::process = Backend::process = GameClient::process = 64/s，三者逐秒相等
+   ⇒ 不是"钩子挂了却报 0"，也不是"什么都算一次"。
+② 判决点的算术自洽：0x51848e 命中 124 次 = 64 帧 + 60 tick（每个循环圈一次、每帧最后一圈不 due）
+   ⇒ `probes = 帧数 + tick 数` 这条在**运行时**成立（不是从反汇编推的）。
+③ 菜单 vs 对局（判别力）：进对局前 28 个 1 秒窗口里 `RootNode::process` 82–119/s，
+   而 `GameClient::process` **恒 0**（`[backend+0x1e0]` 为空，`0x515dd1` 那条 `je`）
+   ⇒ 钩子确实是"按函数挂的"，不是"整体计数"。
+④ 负对照：`TurnManager::next_turn`（只在换手时调）整局 **0** 次。
+```
+
+**第二个调用者（复现了 §48.4 的 110/s，顺手记下来）**：进对局那一秒 `GameClient::process` **n=99**，
+返回地址**全部是 `0x51718b`**（`wait_for_players` 的 1 ms 忙等）；下一秒混合（`0x51718b` 20 + `0x515dfe` 48）；
+之后纯 `0x515dfe`。⇒ **`0x518400` 有两个宿主**，"每帧一次"只对 `0x515dfe` 这一条成立。
+本节的稳态窗口（`reset` 之后）里 `0x51718b` **一次都没出现**（4642/4642 = `0x515dfe`）。
+
+### 44.2 真值表：帧率、tick 率、比值（五轮，同一份构建）
+
+每轮都是**进对局后 `reset()` 清零**再记，窗口里只有一个稳态对局（不含菜单、不含开局忙等）。
+
+| 运行 | 游戏参数 | 窗口 | 帧 | **帧率** | tick | **tick 率** | **tick/帧** |
+|---|---|---:|---:|---:|---:|---:|---:|
+| **A** | 默认（无 fps 限制） | 71.52 s | 4 642 | **64.90** | 4 291 | **60.00** | 0.924 |
+| **A2** | 默认 + delta 探针 | 40.92 s | 2 741 | **66.98** | 2 455 | **60.00** | 0.896 |
+| **B** | `--fixed-fps 10` | 40.04 s | 2 533 | **63.26** | 2 403 | **60.01** | 0.949 |
+| **B2** | `--fixed-fps 10` + delta 探针 | 30.91 s | 1 332 | **43.09** | 1 855 | **60.01** | 1.393 |
+| **C** | `--max-fps 30` | 30.90 s | 927 | **30.00** | 1 852 | **59.94** | 1.998 |
+
+**五轮全部满足**（每一轮都是全窗口累计，不是抽样）：
+
+```text
+pumps == ticks                    （A 4291/4291、A2 2455/2455、B 2403/2403、B2 1855/1855、C 1852/1852）
+probes == frames + ticks           （A 8933 = 4642+4291、A2 5196、B 4936、B2 3187、C 2779）
+tick 率 ∈ [59.94, 60.01]          （帧率 30 → 67 五档全中；跨 70 秒零漂移）
+```
+
+**稳态每秒抖动**（只取长度满 1 s 的窗口；A 的三个"冻结秒"除外）：
+
+| 运行 | 每秒 tick 数 | 每秒帧数 |
+|---|---|---|
+| A | **59–61**（冻结秒最高 149） | 27–80（有卡顿），均值 66.29 |
+| A2 | **58.42–61** | 60–81，均值 66.60 |
+| B | **58.42–61** | 58.42–67，均值 63.23 |
+| B2 | **57.43–64** | 13–50，均值 42.97 |
+| C | **59–61** | 29.70–31，均值 30.01 |
+
+⇒ **帧率变了 2.2 倍，tick 率一动不动。** 这就是"能不能接 `drive_frame`"的判据：接线**不能**用帧率去推 tick 数。
+
+### 44.3 每帧的形状：0/1/2（+ 长帧），泵与 tick 严格 1:1
+
+| 运行 | `ticks/frame` 直方图 | `pumps/frame` 直方图 | 0-tick 帧 |
+|---|---|---|---|
+| **A**（默认 64.90 fps） | `0:507  1:4116  2:15  4:1  13:1  37:1  91:1` | **与左列逐格相同** | **507（10.9%）** |
+| A2（66.98 fps） | `0:302  1:2423  2:16` | **与左列逐格相同** | 302（11.0%） |
+| B2（43.09 fps） | `1:936  2:331  3:22  4:25  5:17  6:1` | **与左列逐格相同** | 0 |
+| C（30.00 fps） | `1:16  2:897  3:14` | **与左列逐格相同** | 0 |
+
+三条都直接读表：
+
+1. **`pumps ≡ ticks`**：`0x5184a1 jmp` 那条回边把 `tick` 与泵捆在同一圈里（§48.3），
+   所以**帧率高于 60 时必然有"整帧一个事件都不派发"**。任何"每帧泵一次"的设计都是错的。
+2. **顺序只有一个**：`order` 串（`T`=tick、`P`=泵）在 A 的 4 642 帧里 **4 640 帧是 `TP` 的整数次重复**，
+   剩下 2 帧是 37/91 tick 的长帧（串按 20 对截断，判据算不了，不是顺序变了）；
+   **`first-event-is-pump` 五轮全 0**。
+3. **`process` 自身很快**：帧内耗时 dwell 均值 **107–157 µs**、最小 40 µs ⇒ 它**不阻塞**、不 sleep
+   （循环体里五个 `call` 全是 `get_module` / `get_time_to_tick` / `tick` / 泵 / drop）。
+
+### 44.4 追赶：长帧按 `gap ÷ 16.667 ms` 补齐（人为冻结 + 自发长帧）
+
+拿不到"长帧"不需要等真帧 —— 把**进程**冻住 `SIGSTOP`（墙钟 `CLOCK_MONOTONIC` 照走），
+恢复后的那一帧必须一次补齐欠账。这是 `0x5184a1 jmp 0x518470` 那条回边的**直接观测**：
+
+| 冻结 | 受影响那一帧的 tick | 该帧 gap（墙钟） | 该帧 dwell（process 内） | `gap ÷ 16.667 ms` |
+|---|---:|---:|---:|---:|
+| **200 ms**（+20 s） | **13** | 215 906 µs | **360 µs** | 12.95 |
+| **600 ms**（+40 s） | **37** | 616 599 µs | **1 116 µs** | 37.00 |
+| **1 500 ms**（+55 s） | **91** | 1 515 083 µs | **2 449 µs** | 90.90 |
+| 自发（+43.6 s，无冻结） | 4 | 78 273 µs | 204 µs | 4.70 |
+
+* **没有上限**：1.5 s 冻结 ⇒ 91 圈，循环里没有计数/限幅（与 §51.6 第 3 条一致，现在有运行时样本了）。
+* **追赶很便宜**：91 个 tick + 91 次泵一共 **2 449 µs** ⇒ 每圈约 **27 µs**。
+* **背靠背**：`tick` 之间的墙钟间隔直方图里有一簇**微秒级**的
+  （A：`[16,33)µs:122  [33,66):30  [66,100):3  [100,500):2` 合计 **157**；
+  理论值 = `15×1 + 3 + 12 + 36 + 90 = 156` 个"帧内第二个及以后的 tick"）⇒ 同一帧里多个 tick 是**连着执行**的。
+* **稳态间隔正好一个周期**：A 的 `tick` 间隔 n=4290、**均值 16 667.2 µs**、最小 18 µs（帧内追赶）、
+  最大 1 515 087 µs（1.5 s 冻结）；主体落在 `[10k,15k):1805 + [15k,16.5k):1463 + [16.5k,17k):163`。
+  71.52 s × 60 = 4291.2 ⇒ 实际 **4291** ⇒ **70 秒里零漂移**（累加器 + 定步，不是"每帧重置"）。
+* **判决点的相位**（`0x51848e` 上"距下一个 tick 还有多少"）：不是恒 1e9、也不是恒 0，
+  而是**铺满 0–16.6 ms**（A：`[1k,5k):1158  [5k,10k):1380  [10k,15k):1386  [15k,16.5k):416`）
+  ⇒ 帧与 tick 栅格不同步、相位一直在漂；**只有 due 那一刻返回哨兵 1e9**（哨兵命中数 = tick 数，逐轮相等）。
+
+### 44.5 `delta` 到底读没读：指令 + 行为，两条独立证据
+
+**(a) 指令级（§48.3 已给，本节复跑确认）**：`tools/addr_probe.py dis 0x518400` 的 **FDE `0x518400..0x518527`**
+全文没有一条操作数涉及 `xmm`（循环头/哨兵/两个 `call`/`je`/panic 路径都在内）。arm64 侧同形不读 `d0`。
+
+**(b) 行为级（本节新增的判别实验）**：引擎交给 `_process` 的 delta 不经过 `xmm` 也可读 ——
+`0x42a8bf movsd xmm0,[rax]`（typed vcall 里把 Variant 的 f64 装进 xmm0），`rax` 就是那个 f64 的地址。
+在这条指令上下钩读它，得到**引擎真正给的 delta**：
+
+| 运行 | 帧间隔（实测） | **引擎给的 delta** | tick/帧 | 若"按 delta 定时步"应有 |
+|---|---|---:|---:|---:|
+| **A2** 默认 | 均值 **14 930 µs**（min 11 370 / max 20 267） | 均值 ≈ **15 000 µs**（n=2741，min 11 641 / max 18 489）—— **跟墙钟一致** | 0.896 | ≈ 0.90（同值，**不可判别**） |
+| **B2** `--fixed-fps 10` | 均值 **23 216 µs** | **恒 100 000 µs**（n=1332，**min = max = 100000**；24 条样本 `v=0.1` 逐条相同） | **1.393** | **6.0**（`0.1 s × 60`） |
+
+⇒ `--fixed-fps 10` 把"引擎的 delta"和"墙钟"**拆开了 4.3 倍**：delta 说每帧该走 6 个 tick，
+实际只走 **1.393**（= `60 ÷ 43.09`，完全由帧间隔解释）。**循环不读 delta —— 这是行为证据，不是读代码说的。**
+
+> 附带的旁证：正常局里 delta（≈15 000 µs）与帧间隔（14 930 µs）**几乎相等** ——
+> 这正是"为什么光看正常局的 tick 数分不出这两种模型"的原因，所以才要 `--fixed-fps` 那个拆分实验。
+
+### 44.6 与我方 `ProcessLoop` / `drive_frame` 的逐项对齐
+
+| # | 项 | 原版（本节实测） | 我方（`src/graphwar_game_client.rs:743` / `root_wiring.rs:2288`） | 一致？ |
+|---|---|---|---|---|
+| 1 | 宿主频率 | 每引擎帧 **1 次**（`0x515dfe`，64/64/64 逐秒与 `RootNode::process` 相等） | `drive_frame` 设计为"每帧一次"，**但现在没有任何运行时调用者**（`frames()` 恒 0） | **一致（未接）** |
+| 2 | 循环体顺序 | tick（`0x518499`）→ 泵（`0x51849f`），每圈一对 | `host.tick()` → `host.process_events()` | **一致** |
+| 3 | 泵的节奏 | **pumps ≡ ticks**；0-tick 帧泵 0 次 | 同一循环体里调用 ⇒ 同 | **一致** |
+| 4 | 追赶 | 无上限：200/600/1500 ms ⇒ 13/37/91 圈 | `loop { … }` 无上限 | **一致** |
+| 5 | delta | **不读**（指令 + `--fixed-fps 10` 行为） | `process(host, _delta)` 忽略 | **一致** |
+| 6 | `probes` 口径 | `probes = 帧数 + tick 数`（124 = 64 + 60） | `out.probes += 1` 每圈一次 ⇒ 同 | **一致** |
+| 7 | "到期"判据 | `edx == 1e9` 才算到期（`0x51848e`）；非到期时剩余量 2 µs–16.6 ms | `tick_is_due` 把 `(0,0)` **也**算到期（§51.5 第 4 条） | **已知差异**（见下） |
+| 8 | 时基 | `Instant::now()` 墙钟，`base` = tick handler 创建时刻 | `anchor_tick_handler_to_now`（安装时刻重锚） | **一致** |
+
+**第 7 项的量级**：五轮里"非到期"判决点的剩余量**最小 2 µs（B2）/ 3 µs（A2）**，从没落到 0
+⇒ 我方那条 `(0,0)` 分支在墙钟下**撞不到**（§51.5 第 4 条说的"帧边界正好压 tick 边界"概率≈0 现在有了数值）。
+**没有观测到它造成任何 tick 数差异**：五轮的 `tick 率` 全部落在 59.94–60.01。
+
+### 44.7 接线方案（**只写，不改** —— `root_wiring.rs` 本轮归 77 号）
+
+#### 44.7.1 实测给出的三条硬前提
+
+```text
+① 每帧**一次** drive_frame（不是"每帧 while 到期"—— while 已经在 process() 内部）
+   证据：GameClient::process 与引擎帧 1:1（64/64/64 每秒，站点唯一 0x515dfe）
+② **外面不要定时器/限速/"每帧最多补一次"**：追赶发生在 0x5184a1 那条回边里
+   证据：1.5 s 冻结 ⇒ 单帧 91 圈，dwell 只有 2 449 µs
+③ **要有"在对局里"这个门**（原版 0x515dd1 判 Option<GraphwarGameClient>）
+   证据：菜单阶段 GameClient::process 实测 **0/s**（28 个 1 s 窗口）
+```
+
+#### 44.7.2 要改哪两处（两处各 1–3 行）
+
+**方案 A（贴合原版结构）**：`src/_scaffold/graphwar_root_node_class.rs:468`
+
+```rust
+fn process(&mut self, _delta: f64) {          // ← 原版就是 GraphwarRootNode::process 0x3a5760
+    self.process_calls += 1;
++   if self.in_match() {   // ← 门（**伪代码**：本层没有 in_match()，要用后端/播放屏那个"对局中"状态；
++                            //    对应原版 0x515dd1 的 [backend+0x1e0] ≠ 0）
++       super::root_wiring::install_kernel_bus().borrow_mut().drive_frame(_delta);
++   }
+}
+```
+
+⚠ **但活动客户端现在不实例化这个 Rust 类**：`client/src/main.gd` 是 GDScript 根节点，
+只有 `client/tools/assemble_check.gd` 建 Rust 的 `GraphwarRootNode`。选 A 就**必须同时**让活动客户端用它
+（= 把播放屏挂到 Rust 根节点下），那是比"3 行"大得多的改动。
+
+**方案 B（最小，改播放屏）**：`client/src/screens/play_screen.gd:2943`
+
+```gdscript
+func _process(delta: float) -> void:
+    _advance_curve(delta)
++   if _running:                              # ← 门：菜单/结算后不推（原版那 28 个窗口是 0/s）
++       _frame_driver.drive_frame(delta)      # ← 每帧**一次**
+    ...
+```
+
+它需要一个 `#[func]` 生产类把 `KernelBus::drive_frame` 暴露给 GDScript。现成能用的只有
+`KernelProcessHost`（`src/_scaffold/root_wiring.rs:3365`，`#[class(base=RefCounted)]`，**验收外壳**、
+只在 `--features gdext-bindings` 下编）。要么直接用它（但它的自我说明写着"原版没有这个类"），
+要么由 77 号加一个正式的（例如挂在 `GraphwarRootNode` 上的 `#[func] frame_tick(delta)`）。
+
+**另外两行不用改**（现状已对）：
+`KernelBus::drive_frame`（`root_wiring.rs:2288`）语义与实测逐条一致；
+`anchor_tick_handler_to_now`（`:2363`）就是"base = 创建时刻"那一句的对应物 —— **不重锚就是 17 亿圈死循环**
+（§51.3 的坑）。
+
+#### 44.7.3 会动到哪些读数（逐项）
+
+| # | 读数 | 现在 | 接上之后 | 风险 / 要补的断言 |
+|---|---|---|---|---|
+| 1 | **`EntityDrawer` 的 `V`**（`entity_drawer_class.rs:1288` `kernel_clock()`） | 无总线 ⇒ **`0.0`** | 真实读数（每秒 **+60**） | ⚠ §52.5 第 2 条说的就是它。**频率**有真值了，**绝对相位没有**（见 §44.8 第 1 条） |
+| 2 | `KernelBus::frames()/ticks()/probes()` | 0（只有测试里非 0） | 每秒 ≈ **+65 / +60 / +125** | 只有断言读它；`process_loop_check` 用**自己的** host，不受影响 |
+| 3 | `tick_event` / `TickRequest` 投递 | 一条都没有 | 每 tick 一条 `TickEvent`；每 60 条一条 `TickRequest`；**默认帧率下 11% 的帧一条都没有** | 任何"每帧必有一条 tick 事件"的断言都会挂 |
+| 4 | 播放屏 `_advance_curve(delta)`（`play_screen.gd:1035`） | 自己按 `delta × 60` 累加 `_curve_tick` | **不变**（它不读 tick handler） | 接上后**两个钟并存**；以后把曲线改成"按 tick 揭示"时**必须删掉**这行的累加，否则双倍速 |
+| 5 | 菜单 / 非对局 | —— | 加了门 ⇒ 不动；**不加门 ⇒ 菜单里也 tick**（与原版 0/s 不符），`V` 会在菜单里跑 | 门是必需的，不是"以后再说" |
+
+#### 44.7.4 接上之后照真值钉的四条断言（headless 可写）
+
+```text
+1) 30 s 墙钟：ticks ∈ 60×秒 ± 3；probes == frames + ticks；pumps == ticks        （A/A2/B/B2/C 五轮都满足）
+2) 帧率无关：同一段墙钟，--max-fps 30 / 默认 / 240 下 tick 数相同（±2）           （实测 59.94 / 60.00 / —）
+3) 0-tick 帧存在：帧率 > 60 时 zero_tick_frames > 0，且这些帧 pumps == 0          （A：507 帧，10.9%）
+4) 长帧追赶：摆墙钟 +200 ms ⇒ 单帧 ticks ∈ [12,13]（实测 13）、+1500 ms ⇒ 91 圈    （§44.4 表）
+```
+
+### 44.8 诚实清单（仍是推断 / 未知）
+
+| # | 项 | 档 | 缺什么 |
+|---|---|---|---|
+| 1 | `V`（`get_fractional_tick`）的**绝对相位** | **未知** | 基准是 tick handler 创建时刻（`SystemTime::now()`），运行时无法复原 ⇒ "频率"可对、"相位"不可对。这正是 §52.5 第 3 条"没有真帧可对"的**真正范围**：节奏有真值，相位没有 |
+| 2 | 真机（非 llvmpipe）帧率 | **未知** | 本机 Xvfb + llvmpipe，帧率 30–67；真机可能 vsync 60 或更高。但 tick 率与帧率**无关**已在 30 / 43 / 63 / 65 / 67 五个点验过 |
+| 3 | `--fixed-fps` 下帧率为何从 65 掉到 43 | **推断** | 只观测到"帧间隔 15.4 → 23.2 ms"，没读引擎侧（`Graphwar.x86_64` 已 strip）；不影响本条结论（delta 与墙钟已拆开） |
+| 4 | `wait_for_players` 忙等为什么是 1 ms / 99–127 次每秒 | **未知** | 只观测到站点 `0x51718b` 与频率；`0x516fd0` 的函数体没逐条读（§51.6 第 4 条仍未结） |
+| 5 | `(0,0)` 边界的后果 | **我方差异（实测未触发）** | 非到期剩余量最小 2 µs ⇒ 撞不到；但这是"本机五轮没撞到"，不是"证明不可能" |
+| 6 | 跨线程 | **未测** | 本节所有客户端钩子都在 tid 15（引擎主线程）；服务端线程的 60 次/秒泵是**另一条链**（`0x451be5`），不属于本循环 |
+
+### 44.9 复现（全部可原地复跑）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+cd <WT>                                    # 分支 agent/drive-frame-cadence
+
+# ① 进局 + 量（每轮 ~2.5 min：18 s 起到窗口，再跑 --record 秒）
+$PY tools/frida_cadence.py --out <工作区>/A.jsonl --data-dir <工作区>/gd_A \
+    --record 70 --stall 200@20 --stall 600@40 --stall 1500@55      # A：默认 + 三档冻结
+$PY tools/frida_cadence.py --out <工作区>/C.jsonl --data-dir <工作区>/gd_C \
+    --record 30 --game-arg=--max-fps --game-arg=30                  # C：帧率 30
+$PY tools/frida_cadence.py --out <工作区>/B2.jsonl --data-dir <工作区>/gd_B2 \
+    --record 30 --game-arg=--fixed-fps --game-arg=10                # B2：delta 恒 0.1 s（判别实验）
+
+# ② 真值表（从 JSONL 直接打；跨 tally 求和 = 窗口累计，以最后一次 reset 为界）
+$PY tools/frida_cadence.py --summary <工作区>/A.jsonl
+
+# ③ 静态复核（delta 不读 + 循环体）
+$PY tools/addr_probe.py dis 0x518400     # FDE 全文；搜 xmm —— 一条都没有
+$PY tools/addr_probe.py dis 0x42a8a0     # 0x42a8bf movsd xmm0,[rax]（delta 的原文出处）
+$PY tools/addr_probe.py dis 0x518240     # tick：内部再调 0x519840，无 sleep
+```
+
+产物（**不入库**，`.agent-work/` 是易失的）：每轮一份 JSONL（`hooks/ready/buckets/mark/reset/tally`）、
+`xvfb.log`、可选截图。**入库的只有本节数字 + `tools/frida_cadence.{js,py}` 两个脚本**。
+
+**没有改动**：`src/`（含 `src/_scaffold/root_wiring.rs` —— 77 号独占）、`client/`（含
+`client/tools/process_loop_check.gd`）、`dispatch/`、`fixtures/guardrails.json`。
+
+### 44.10 验收
+
+| 项 | 结果 |
+|---|---|
+| ① 钩子正对照 | **过**：`RootNode=Backend=GameClient=64/s` 逐秒相等；判决点 124 = 64 帧 + 60 tick；菜单 28 窗口 `GameClient=0`；负对照 `next_turn=0` |
+| ② 帧率 / tick 率 / 比值 / delta | **有数**：帧 30.00–66.98 fps、tick 59.94–60.01/s、比值 = `60÷帧率`；delta 实测"默认≈墙钟、`--fixed-fps 10` 恒 0.1 s 而 tick 不动" |
+| ③ 与 `ProcessLoop` 对齐 | **6/7 一致 + 1 已知差异（实测未触发）**（§44.6） |
+| ④ 接线 | **没动**，方案见 §44.7（改 2 处、动 5 个读数） |
+| `cargo test --offline` | **1710 passed / 0 failed / 1 ignored**（`rc=0`；本轮不改 `src/`，只加两个 `tools/` 脚本 + 本节） |
+| `tools/check_doc_refs.py` | **rc=0** |
+
+### 44.11 本轮新增的文件
+
+| 文件 | 说明 |
+|---|---|
+| [`tools/frida_cadence.js`](../tools/frida_cadence.js) | **新增**：8 个钩子（帧链三跳 + 循环体两跳 + 判决点 `0x51848e` + delta 装载点 `0x42a8bf` + 负对照）。每帧记 `ticks/pumps/probes/顺序串/进入间隔/帧内耗时`，每秒把**累计直方图**发一条 `tally`；计时用 `clock_gettime(CLOCK_MONOTONIC)`（µs 级） |
+| [`tools/frida_cadence.py`](../tools/frida_cadence.py) | **新增**：起私有 Xvfb（TCP + mesa 环境）→ `Popen` 真游戏 → frida `attach` → 按步骤串点进对局 → `reset()` 后开测量窗口；`--stall DUR@AT` 做 `SIGSTOP` 追赶实验；`--game-arg` 透传 `--fixed-fps` / `--max-fps`；`--summary <jsonl>` 把 JSONL 打成真值表（跨 tally 求和、以最后一次 `reset` 为界） |
+
+**没有改动**：`src/`（含 `src/_scaffold/root_wiring.rs` —— 77 号独占）、`client/`（含
+`client/tools/process_loop_check.gd`）、`dispatch/`、`fixtures/guardrails.json`、
+`tools/frida_process_chain.{js,py}`（§48 的探针一行没动 —— 本节的东西全在新文件里）。
