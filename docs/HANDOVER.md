@@ -23,8 +23,8 @@
              但这只是 13,263 个 Ghidra 函数里的 4.0% —— 见 §3「信息天花板」
 真名         348 / 527（三份符号表并集）；无名 179 = 138 族级 + 41 未知
 协议         74 / 74 全字段 + 74 条判别值 + 7 个线上枚举全集（无未知）
-GDExtension  15 / 15 类，**全部节点化**；headless 14 个 SceneTree 脚本 / 1818 条 / 0 failed
-cargo        1694 / 0（`--features gdext-bindings` 1800 / 0）
+GDExtension  15 / 15 类，**全部节点化**；headless 14 个 SceneTree 脚本 / 1827 条 / 0 failed
+cargo        1710 / 0（`--features gdext-bindings` 1816 / 0）
 selftest     714 / 0 / 1 skip（**前置**：`client/assets/` + 编好 `examples/serve_match`；
              没有 serve_match 时 636 / 2 skip；缺 assets 掉到 591–667）
 
@@ -82,14 +82,14 @@ selftest     714 / 0 / 1 skip（**前置**：`client/assets/` + 编好 `examples
 
 | 档 | 内容 | 备注 |
 |---|---|---|
-| **Ａ 缺工程** | ① `client/src/screens/*.gd` **≈6,062 行**仿制流程（原版控制器在 Rust 里）；② **9 个 manager 仍是 `assembled`**（11 wired / 2 layout / 9 assembled / 0 stub = 22）——`docs/161` 九格清单，**7 格静态可解**，建议 **Rank → Name → LocalPlayer**，**GSM 卡 `src/game.rs` 禁区别派**；③ `ShotLifecycle` 文件归属（原版在 `game_state_manager`） | 证据齐了只差写 |
+| **Ａ 缺工程** | ① `client/src/screens/*.gd` **≈6,062 行**仿制流程（原版控制器在 Rust 里）；② **6 个 manager 仍是 `assembled`**（**14 wired / 2 layout / 6 assembled / 0 stub = 22**）—— Rank / Name / LocalPlayer 已升档（74 号），余下六格见 `docs/161`，**GSM 卡 `src/game.rs` 禁区别派**；③ `ShotLifecycle` 文件归属（原版在 `game_state_manager`） | 证据齐了只差写 |
 | **Ｂ 缺样本（易得）** | 目前**空**（Level 18–20 / flip=1 / 部分命中 都已补齐） | 找人打一局即可 |
 | **Ｃ 缺样本（难造）** | 1 ulp 正主 —— 但目前证据表明**它可能根本不在链上**，别再立项 | — |
 | **Ｄ 缺真值（可运行时挖）** | `drive_frame` 的**节奏真值**（钩 `0x518400` + 泵函数数调用）；libm 边界 | 开游戏 + frida |
 | **Ｅ 物理不可得** | 服务端撮合、`.svg`/`.ttf` 源、12,736 个名字 | **别立项** |
 
 **当前在派的两件**（都是 Ａ 档）：
-**① 9 个 manager 升档**（按 `docs/161` 的 Rank → Name → LocalPlayer）；
+**① manager 升档**（74 号已完成 Rank / Name / LocalPlayer，余 6 格）；
 **② 换证据类型**（不是加特征：`gram`/`scal` 之外边际已被证明为 0）。
 
 ---

@@ -9742,3 +9742,93 @@ cargo test --offline --lib -- graphwar_play_screen_control                  # 30
 先 `cp` 再 `cargo test` 就会让 Godot 拿到旧内核（本轮的报错是
 `Parse Error: Too many arguments for "begin()" call. Expected at most 4 but received 5`）。
 **先测、最后 build gdext、再 cp。**
+
+---
+
+## 54. 三个 `assembled` manager 升 `wired`：`Rank` / `Name` / `LocalPlayer`（2026-11，任务 74）
+
+> 依据 [`161-manager-gaps.md`](161-manager-gaps.md)（9 格升档清单）与 `dispatch/74`。
+> 本轮**只做 3 格**，按"静态可解 × 影响面 ÷ 成本"排序的第 1–3 名；`GameStateManager` 不碰
+> （不是缺证据，是卡 `src/game.rs` 禁区）。
+
+### 54.1 判据回顾：`wired` 要三件
+
+`wired` = **① 已接容器 + ② 事件流两个方向都指到指令 + ③ 有最小交互断言**
+（判据原文在 `src/_scaffold/root_wiring.rs` 的"槽位复原档位"一节）。
+三格都是 ① 早就成立，本轮补的是 ②③——**② 的地址是本轮自己在 x86 上逐条复核的**
+（上一轮 `docs/161` §3 给的是 arm64 侧 + 跳板名，本轮补 x86 的 `subscribe`/`add_event` 调用点与 vtable）。
+
+### 54.2 三格的地址级证据（x86，全部本轮复跑过）
+
+| 槽 | `new` / 构造点 | 订阅（调用点 → 闭包 vtable `+0x20` → 跳板 → 处理器） | 发布（`add_event` 点） |
+|---|---|---|---|
+| 22 `RankManager` (72 B) | `0x454f30`（call 点 `0x517edb`） | `new_connection_event`(len 0x14) `0x454fb5` → `0x9567d8+0x20`=`0x454f10` → `0x454d80`；`entity_removed_event` `0x455006` → `0x956800+0x20`=`0x454ef0` → `0x454e80` | `0x454e35`（整表重播，`[rsp+8]=1`、`pshufd` 换 key/value）/ `0x45511f`（`set_rank`，`cmp edx,1` 分叉**之后**，两路共用）——都是 tag **67** |
+| 20 `NameManager` (72 B) | **`0x519100`**（call 点 `0x517e63`；`alloc 0x60`） | `new_connection_event` `0x519209` → `0x9627e0+0x20`=`0x5190c0` → `0x518f10`；`entity_removed_event` `0x519255` → `0x962808+0x20`=`0x5190e0` → `0x519030` | `0x518fe5`（重播）/ `0x5193e8`（`set_name`）——tag **60** |
+| 3 `LocalPlayerManager` (64 B) | **内联**在 `0x517690`（`0x51792a alloc 0x58`，无独立符号） | `connected_to_server`(len **0x19**) `0x5179d4` → `0x962ba8+0x20`=`0x51a730` → `0x51a570`；`player_info`(len **0x11**) `0x517a27` → `0x962bd0+0x20`=`0x51a710` → `0x519f40`；`entity_removed` `0x517a77` → `0x962bf8+0x20`=`0x51a6f0` → `0x51a610` | **59** `@0x51a170` / **50** `@0x51a247` / **52** `@0x51a31e` / **54** `@0x51a3f5` / **66** `@0x51a451`（5 连发，全部 `lea rax,[rbp+imm]`，`rbp = isize::MAX`）；**8** `@0x51a5bb`（`handle_connected_to_server` 重入队） |
+
+`handle_entity_removed_event`（Rank `0x454e80` / Name `0x519030` / LocalPlayer `0x51a610`）**体内零 `add_event`**
+⇒ 三格的"删一条"都**不发**事件，代码侧也照此（`outbox` 不 push）。
+
+### 54.3 补上的三个字段级结论（上一轮登记的缺口）
+
+1. **Name 的 72 B 布局 + 基址口径（`docs/161` G1）结案**：盒是 `alloc 0x60`
+   （RcInner 16 + `RefCell<M>` 80），`M` 基 = 盒 + `0x18`；`M+0x00` 自句柄 / `+0x08`+`0x10` 两个构造实参 /
+   `+0x18` 表（ctrl/mask/growth/items，32 B）/ `+0x38` `RandomState`（**16** B，两个 `u64`，
+   写点 `0x5191a5`/`0x5191a9`）。上一轮说"`+0x38`→`+0x48` 有 8 字节没写点"是**把 16 字节的
+   hasher 当成了 8 字节**，其实 72 B 每个字节都有写点。
+2. **LocalPlayer 的 `+0x20` 槽**（上一轮"语义未知"）= **`Weak<RefCell<Self>>` 自句柄**
+   （写点 `0x517965` `mov [rax+0x38], rax`，`rax` 就是盒基）。同批把 64 B 的 8 条写入点排全：
+   `+0x00/+0x08/+0x10` = `Vec<u32>` 的 cap/ptr/**dangling=4**/len（`Vec::<u32>::new()`），
+   `+0x18` connected（构造只清 4 字节）、`+0x1c` connection_id（构造**无**写点，首次在 `0x51a593`）、
+   `+0x28` 事件队列 `Rc`（`0x51a596`/`0x51a5a9` 当队列用）、`+0x30` 一个 `Weak`、`+0x38` 第三个实参。
+3. **"5 条请求的触发条件"**（`docs/161` §2 第 3 行）= **五道门，且请求内部没有逐条判据**：
+   `0x519f58` tag==13、`0x519f68` `connected==1`、`0x519f71` `connection_id` 相等、
+   `0x519f9d` 旧 `len==0`（"第一次"）、**`0x519fb1`→`0x51a058`**（本轮新发现：`M+0x30` 那张表里
+   已有该 `player_id` 就直接收尾）。`0x51a170`–`0x51a451` 是一条直线，中间没有再跳回收尾的 `jcc`。
+   ⚠️ 第五道门那张表（key = `player_id`、entry **120 B**）的语义**未知**，登记为 `docs/161` G7；
+   **我方没有复现它**（照抄未知语义 = 把猜测写成行为，见 `graphwar_local_player_manager.rs` 类型文档）。
+
+### 54.4 代码落点
+
+| 文件 | 改动 |
+|---|---|
+| `src/graphwar_rank_manager.rs` | `subscribed` / `outbox` / `take_outbox` / `outbox_len` / `handle_new_connection_event`；`set_rank` 两条路都 push `Event::RankInfo`；模块文档 §7（x86 事件流）/ §8（复跑） |
+| `src/graphwar_name_manager.rs` | 同上（`Event::NameInfo`）；`RC_BOX_SIZE` / `SELF_WEAK_OFFSET` / `HASHER_SIZE` 三个常量 + 模块文档 §7（布局结案）/ §8（事件流）/ §9（复跑） |
+| `src/graphwar_local_player_manager.rs` | 同上（`Event::NewPlayerRequest` + 5 条 `MetadataRequest::event()`）；模块文档 §8（64 B 布局）/ §9（事件流 + 五道门）/ §10（复跑） |
+| `src/_scaffold/root_wiring.rs` | `Wired::status()` 三个臂；`WIRED_TIER_COUNT` 11→**14**、`ASSEMBLED_TIER_COUNT` 9→**6**；三个 getter；`interaction_selftest` 加 **29** 条读数（`rank.*` 9 / `name.*` 8 / `local_player.*` 12） |
+| `client/tools/assemble_check.gd` | `WIRED_TIER` 三槽 + `TIER_TALLY` 14/2/6/0 + 期望串 74→**103** 条 + **+9** 条交互断言（每格 3 条，分别指 订阅 / 发布 / 状态） |
+| `docs/161-manager-gaps.md` | §0 档位分布、§2 三行 ✅、新增 §2.1、§4 G1 结案 + 新 G7、§5/§6 标完成、§7 C5/C6 两条就地更正、§9 验收数字 |
+
+### 54.5 观测口（我方自造，原版没有）
+
+`RootWiring::interaction_selftest` 现在覆盖 **14** 个 manager、**103** 条 `名字=值`。
+三格各自的读数都**按同一套口径**写：每个块里至少有 **一条订阅**（`*.subs`）、
+**一条发布**（`*.emitted` / `*.outbox_after_replay` / `*.tags`）、**一条状态**（`*.rank_of` /
+`*.name_of` / `*.present_after` / `*.ids*`）——这正是"升档意味着真的接上了"的最小证明。
+
+⚠️ **幂等口**：`local_player.*` 那一段末尾把 `connected` / `connection_id` / `player_ids`
+**复位**到"没连上"。原版没有这个操作，纯粹是探针的可重复入口（`assemble_check` 会连调两次比对）；
+`rank.*` / `name.*` 不需要复位（末尾各自删掉自己写的那一行）。
+
+### 54.6 断言 before → after
+
+| 套件 | before | after |
+|---|---|---|
+| `cargo test --offline` | 1694 | **1710**（+16） |
+| `cargo test --offline --features gdext-bindings` | 1800 | **1816**（+16） |
+| `client/tools/assemble_check.gd` | 217 / 0 | **226 / 0**（+9） |
+| headless 14 个脚本合计 | 1818 | **1827**（其余 13 个逐项不变） |
+| `selftest` | 714 / 0 / 1 skip | **714 / 0 / 1 skip** |
+| 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **647 / 647 / 637** |
+
+### 54.7 遗留 / 未做（下一步该干什么）
+
+1. **`Rank` 的 `+0x08` 是否进序列化**（`docs/161` G3）**仍开**：`set_rank` 造的载荷是三个 dword
+   （`+0x08` flag / `+0x0c` rank / `+0x10` player），而 `docs/07` §3.3 记的线上体只有两个字段。
+   定案要么读序列化那张跳转表的 67 臂、要么抓一次真实报文 —— **不阻塞** `wired`（档位不要求布局轴）。
+2. **`LocalPlayer` 的第五道门那张表**（G7）语义未知；我方**没有**实现它，
+   所以"同一个 `player_id` 第二次 `player_info` 该不该再发 5 连发"这件事我方行为与原版**可能不同**。
+3. 剩 6 个 `assembled`：`Soldier`（`add_soldier` 指纹锚）/ `Graphics`（168 B 的 `0xa8` 之后）/
+   `ComputerPlayer`（要抓 bot 局）/ `FunctionHistoryRecorder`（先裁 33/35 口径）/ `Color`（`+0x10`）/
+   `GameState`（⛔ 禁区 `src/game.rs`）。排序见 `docs/161` §6。
+4. 本轮**没有**碰 `client/src/**`、`src/game.rs`、`src/lib.rs`、`dispatch/`、`fixtures/`。
