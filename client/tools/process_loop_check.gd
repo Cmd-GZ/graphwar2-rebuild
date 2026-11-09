@@ -20,6 +20,8 @@ extends SceneTree
 ## 6. `get_time_to_tick` 被调次数 == 帧数 + due tick 数（实测口径，`§48.4` 的 `112 = 52 + 60`）。
 ##
 ## 它**不**验"播放屏每帧调这里"——`client/src/**` 是禁区（见 §50 的差异表）。
+## 第 9 组更进一步：**把"不接"这个决策本身钉成断言**（任务 85，`docs/16-client.md` §58）——
+## 生产客户端里没有驱动/通道符号、没有收件人时泵只会抽干队列、以及"接上之后 5 个读数会变成什么"。
 ## 这是**验收工具**，不是游戏逻辑（与 `selftest.gd` 一样放在 `tools/` 下，不进运行时路径）。
 
 const EXTENSION_PATH := "res://gw2rebuild.gdextension"
@@ -28,6 +30,14 @@ const HOST := "KernelProcessHost"
 const NANOS_PER_TICK := 16_666_666
 ## `0x3b9aca00` = 1e9（`0x519450` 的"欠一个 tick"哨兵，`0x51848e` 的比较立即数）。
 const DUE_SENTINEL_NANOS := 1_000_000_000
+
+const PLAY_SCREEN_SRC := "res://src/screens/play_screen.gd"
+const CLIENT_SRC_DIR := "res://src"
+## 生产路径里**不许**出现的驱动/通道符号（它们只允许出现在 `tools/*_check.gd` 这类验收脚本里）。
+## 出现任何一个 ⇒ 有人把驱动接进了活动客户端 ⇒ 决策（§58.3）必须重做。
+const PRODUCTION_FORBIDDEN := [
+	"drive_frame", "KernelProcessHost", "kernel_subscribe", "kernel_pump",
+]
 
 const METHODS := [
 	"reset", "subscribe", "set_elapsed_nanos", "drive_frame",
@@ -39,6 +49,8 @@ const METHODS := [
 
 var _checks := 0
 var _failures: PackedStringArray = []
+## 扫描器这一轮看过几个 `.gd`（负结论的正对照：0 个文件 ⇒ "没命中"毫无意义）。
+var _scan_files := 0
 
 func ok(cond: bool, what: String) -> void:
 	_checks += 1
@@ -62,6 +74,36 @@ func _method_names(obj: Object) -> PackedStringArray:
 	for m in obj.get_method_list():
 		names.append(String(m.name))
 	return names
+
+## 递归收 `.gd`（`res://src/**`；`client/` 是活动客户端，`tools/` 不在它下面）。
+func _gd_files(dir_path: String, out: PackedStringArray) -> void:
+	var d := DirAccess.open(dir_path)
+	if d == null:
+		return
+	d.list_dir_begin()
+	var entry := d.get_next()
+	while entry != "":
+		if not entry.begins_with("."):
+			var p := dir_path.path_join(entry)
+			if d.current_is_dir():
+				_gd_files(p, out)
+			elif entry.ends_with(".gd"):
+				out.append(p)
+		entry = d.get_next()
+	d.list_dir_end()
+
+## 在 `client/src/**` 里搜一组符号，返回 `文件:符号` 的命中清单（空 = 生产路径干净）。
+func _scan_client_sources(symbols: Array) -> PackedStringArray:
+	var files := PackedStringArray()
+	_gd_files(CLIENT_SRC_DIR, files)
+	_scan_files = files.size()
+	var hits := PackedStringArray()
+	for path in files:
+		var text: String = FileAccess.get_file_as_string(path)
+		for sym in symbols:
+			if text.contains(String(sym)):
+				hits.append("%s:%s" % [path, sym])
+	return hits
 
 func _initialize() -> void:
 	print("=== 60 Hz 定步 process 循环验收（docs/16-client.md §50）")
@@ -185,6 +227,66 @@ func _initialize() -> void:
 	var frac: float = float(host.call("fractional_tick"))
 	ok(absf(frac - 60.0) < 1e-6,
 		"`get_fractional_tick()`（EntityDrawer 的 V）== 60.0（同一台 tick handler，实际 %.6f）" % frac)
+
+	# 9) **决策：生产路径不接驱动**（`docs/16-client.md` §58，任务 85）
+	#
+	# 80 号量到的节奏真值（`docs/06` §44）说明**原版**是"每帧一次 `drive_frame` + 泵跟着 tick"。
+	# 本轮**决定不接**：理由与可执行触发条件在 §58.3。这一组把决策变成断言 ——
+	#
+	#   ① 生产客户端源码里**没有**驱动/通道符号（只有 `tools/*_check.gd` 用）；
+	#   ② 没有订阅者时，泵照跑、队列被抽干、**投递 0 条** ⇒ 就算接上也没有收件人；
+	#   ③ 接上之后那 5 个读数**会变成什么**（65 帧 / 1 秒，对齐 §44.7.3 的 +65/+60/+125）。
+	#
+	# ⚠️ ① 是**负结论**，所以先做正对照：本脚本自己就在调 `drive_frame`
+	#    （扫描器不是"永远返回空"）。`AGENTS.md` 合并纪律 A.4。
+	var play_src: String = FileAccess.get_file_as_string(PLAY_SCREEN_SRC)
+	ok(play_src.length() > 20000, "读到播放屏源码（%d 字符）" % play_src.length())
+	ok(not play_src.contains("drive_frame"), "播放屏里**没有** `drive_frame` 调用（决策：不接）")
+	var hits: PackedStringArray = _scan_client_sources(PRODUCTION_FORBIDDEN)
+	ok(_scan_files > 20, "扫描器扫到 `client/src/**` 的 %d 个 .gd（正对照：不是空目录）" % _scan_files)
+	ok(hits.is_empty(), "生产客户端里没有驱动/通道符号（命中：%s）" % [hits])
+	ok(FileAccess.get_file_as_string("res://tools/process_loop_check.gd").contains("drive_frame"),
+		"正对照：**本脚本**在调 `drive_frame` ⇒ 上一条不是\"扫描器永远返回空\"")
+
+	# 9.2 没有收件人时：泵照跑、队列被抽干、一条也投递不出去（读数③的实质）
+	host = _host()
+	var drawer: Object = ClassDB.instantiate("EntityDrawer")
+	ok(drawer != null and drawer is Control,
+		"借一个 `EntityDrawer` 造一条真事件（`kernel_push_position` → `set_position` → `PosInfo(26)`）")
+	if drawer != null:
+		ok(bool(drawer.call("kernel_push_position", 7, 5.0, 5.0, 2.0)) == true,
+			"位置表写入一条 ⇒ 共享队列里压 1 条 `PosInfo(26)`")
+		ok(int(host.call("queue_len")) == 1, "队列长度 1（还没泵）")
+		ok(bool(host.call("set_elapsed_nanos", NANOS_PER_TICK)) == true, "墙钟推进 1 个 tick")
+		var one: int = int(host.call("drive_frame", 0.0))
+		ok(one == 1 and int(host.call("last_pumps")) == 1,
+			"1 个 tick ⇒ 1 次泵（§44.3 的 `pumps ≡ ticks` 同口径）")
+		ok(int(host.call("queue_len")) == 0 and int(host.call("delivered_count")) == 0,
+			"**泵把队列抽干了，却一条也没投递**（没有订阅者 ⇒ 接线后 `tick_event` 仍无收件人）")
+		drawer.free()
+	# 9.3 正对照：有人订阅才收得到（同一台 host、同一条 tick 路径）
+	host = _host()
+	ok(bool(host.call("subscribe", "tick_event")) == true, "订阅 `tick_event`（正对照）")
+	host.call("set_elapsed_nanos", 2 * NANOS_PER_TICK)
+	var two: int = int(host.call("drive_frame", 0.0))
+	ok(two == 2 and int(host.call("delivered_count")) == 2,
+		"有订阅者 ⇒ 2 个 tick 投递 2 条（接线要有效果，**先得有收件人**）")
+
+	# 9.4 接上之后那 5 个读数会变成什么：65 帧 / 1 秒（≈ §44.2 的 A 轮 64.90 fps）
+	host = _host()
+	var zero_tick := 0
+	for k in range(1, 66):
+		host.call("set_elapsed_nanos", k * 15_384_615)
+		if int(host.call("drive_frame", 0.0)) == 0:
+			zero_tick += 1
+	var frames_n: int = int(host.call("frames"))
+	var ticks_n: int = int(host.call("ticks_total"))
+	ok(ticks_n == 59 or ticks_n == 60, "1 秒 65 帧 ⇒ **%d 个 tick**（tick 率仍 60/s，不是 65）" % ticks_n)
+	ok(int(host.call("pumps_total")) == ticks_n, "泵数 == tick 数（%d）⇒ 不是每帧泵" % ticks_n)
+	ok(int(host.call("probes_total")) == frames_n + ticks_n,
+		"探针数 == 帧数 + tick 数（%d + %d = %d）⇒ §44.7.3 的 +65/+60/+125" % [frames_n, ticks_n,
+			frames_n + ticks_n])
+	ok(zero_tick > 0, "**0-tick 帧存在**（65 帧里 %d 帧一个 tick 都没有 ⇒ 这些帧泵 0 次）" % zero_tick)
 
 	host = null
 	_finish()

@@ -6413,3 +6413,142 @@ grep -o '"type": "gate5[a-z_]*"' $R/game.jsonl | sort | uniq -c
   JSONL 完整 ⇒ 判"打到没有"看 JSONL 的类型计数。
 * **本轮改动**：新增 [`tools/gate5_serve.py`](../tools/gate5_serve.py)（自建协议服务器 + LAN 广播，只写日志、
   不改游戏内存）；本文本节。`src/` 只动了 `_scaffold/root_wiring.rs` 的**注释**（档位分布口径 19/2/1/0）。
+
+## 49. `drive_frame` 接不接：**不接**（决策，不是评估）—— 判据是"读数会变、画面一位不变"，而**可见时序的缺口在消费者不在驱动**；留给下一轮的触发条件写成会红的断言（2026-11-10，`dispatch/85`）
+
+> 任务书：`dispatch/85-drive-frame-decision.md`。起点 `CG@c339016`，分支 `agent/drive-frame-wire`，
+> 私有 `CARGO_HOME` / `CARGO_TARGET_DIR`。**本轮不改 `src/`**（`cargo test` 1753 一位未动）。
+>
+> **为什么这一节**：80 号把节奏真值量成了（§44），81 号把回放改成按 tick 推（§56），
+> 于是"要不要在实时对局里接 `KernelBus::drive_frame`"变成一道**决策题**。67 号当初不接的理由是
+> "会静默改 `EntityDrawer` 的 `V`"——那个理由**本轮被实测部分证伪**：接线改的是**读数**，
+> 不是**画面**。但决策仍然是**不接**，理由换成了更强的那一条（§49.2）。
+
+### 49.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | **原版的节奏** | 每引擎帧**一次** `GameClient::process`（`0x515dfe` 唯一站点、64/64/64 逐秒等于引擎帧），里面**按墙钟 60 tick/s 追赶**、**泵只跟 tick 走**（`pumps ≡ ticks`，0-tick 帧泵 0 次，10.9% 的帧 0 tick）、**tick 先泵后**、**delta 从不被读**、**长帧无上限追赶**、只在**对局中**跑（菜单 28 窗口 0/s） | **观测**（§44.2–§44.5，5 次运行 12 856 tick） |
+| ② | **接不接** | **不接**（80 号 §44.7 的两处方案**一个都不动**）：`src/_scaffold/graphwar_root_node_class.rs` 与 `client/src/screens/play_screen.gd` 本轮零改动 | 决策（判据见 §49.3） |
+| ③ | **`V` 会不会变** | **读数会变、画面不变**：生产路径里 `EntityDrawer` 的 `V` 来自 `set_ring(..., _curve_tick)` 的**代偿支**，内核钟（`fractional_tick`）那条支要求"位置表非空 **且** 门 attach"，生产里两者都没有 ⇒ `kernel_clock()` **一次都不被调**。实测：把内核钟从 0.49 推到 60，画出来的弧**逐位没变**（张开 1.047197580 rad） | **观测**（真 `EntityDrawer._draw`，§49.1） |
+| ④ | **只接 V 会怎样** | **准备圈立刻饱和**：`H = min(π/6 + (V − base)/60, 1.0733775)`，而 `base` 来自 `_curve_tick`（≈1.0）⇒ V=60 时 H 撞上限。实测张开 **2.146754980 rad**（= 2 × 1.0733775）。⇒ V 与 base **必须同一支钟**、同一改动里换 | **观测**（§49.1 正对照） |
+| ⑤ | **5 个读数接上会变成什么** | 见 §49.2 的表（每项都有本轮实测或 §44 的真值） | 观测 / 算术 |
+| ⑥ | **触发条件**（可执行） | T1 = V **与 base 同时**改由内核钟供给（= `set_fractional_tick` / `set_ring` 的实参不再是 `_curve_tick`）或位置表出现生产写入者；T2 = "对局中"门在**联机 / 回放**两态各有一次 `GameClient::process` 的每秒次数观测（原版门 `0x515dd1` 判 `[backend+0x1e0]`，我方只有 `_running` 这个近似）；T3 = 生产路径出现 `tick_event` 的订阅者。**T1/T2/T3 一起满足才接**，落地顺序见 §49.4 | 决策 |
+| ⑦ | **决策怎么钉住** | 两条 headless 断言组：`process_loop_check.gd` 第 9 组（生产源码无驱动符号、无收件人时泵只抽干队列、接上后读数变成什么）+ `play_flow_check.gd` 5.1/5.2 组（V 的来源 + 画面不变 + 饱和 + T1 tripwire）。**变异测试**证明它们会红（§49.5） | **观测**（运行时 + 文件文本） |
+
+### 49.1 本轮唯一的**新测量**：V 的消费者是谁（`last_arc` 探针）
+
+探针不是"读一下 `fractional_tick`"，而是**真 `EntityDrawer._draw` 发出去的弧**（`last_arc()` 给 12 个实参，
+`[3]`/`[4]` = 起止角，`[4]−[3] = 2H`）。窗口口径见 `client/tools/play_flow_check.gd` 5.2 组（同一段现在成了断言）：
+
+| 状态 | 摆了哪些东西 | 内核钟读数 | 张开 `2H`（rad） | 读的是谁 |
+|---|---|---|---|---|
+| **生产口径** | 位置表空、门没 attach、`set_ring(v=1.0)` + `set_ring_base(1.0)` | 0.485 → **60.0**（驱动 60 tick） | 1.047197580 → **1.047197580（逐位相同）** | `prep` 里的 `v`（= `_curve_tick`） |
+| **正对照** | 填一格位置表 + `gate_attach` + 活着/轮到 | 60.0 | **2.146754980**（= 2 × 1.0733775，**饱和**） | `kernel_clock()` = 内核钟 |
+
+两条一起读出来的只有一句话：**内核钟确实能驱动这段画面（正对照有判别力），但生产路径里没人读它**。
+67 号那条"会静默改 V"因此要拆成两半：**读数**会被改（`fractional_tick` 从 ~0 变成 60·t），**画面**不会改。
+
+> 补充事实（同一台机器量的）：`EntityDrawer.kernel_clock_source()` 在装了总线且没摆 override 时是
+> `tick_handler` —— 也就是说接线后 `V` 的**绝对相位**是"总线安装时刻起的墙钟秒数"，与
+> `_curve_tick`（每发重置、到 `_curve_final_tick` 饱和）**不是同一支钟**。
+> 这正是 §44.8 第 1 条"频率有真值、相位没有"在**画面**上的后果。
+
+### 49.2 那 5 个读数：现在是什么 / 接上会变成什么
+
+| # | 读数 | **现在**（不接） | 接上之后（B 方案：播放屏 `_process` + `_running` 门） | 依据 |
+|---|---|---|---|---|
+| 1 | `EntityDrawer` 的 `V`（`kernel_clock()`，`entity_drawer_class.rs:1288`） | 内核钟**读数**在 0 附近漂（总线没装时 `0.0`）；**画面上用的**是 `_curve_tick`（每发重置的假钟） | 读数 **60·t**；**画面仍不变**（除非同时改 V 的支路） | §49.1 实测 |
+| 2 | `KernelBus::frames() / ticks() / probes()` | **0 / 0 / 0**（活动客户端根本没装总线；只有 `tools/*_check.gd` 装） | 每秒 **+65 / +60 / +125**（本轮实测 65 帧/1 秒 ⇒ 60 tick、60 泵、125 探针，其中 **5 帧 0 tick**） | 观测（`process_loop_check` 第 9.4 组） |
+| 3 | `tick_event` 投递 | **一条都没有**（队列里的事件只在 `kernel_pump()` 时被取走） | 每 tick 一条 `TickEvent(0)` —— **但只在有订阅者时**。实测：无订阅者时泵照跑、队列被**抽干**、投递 **0** 条 | 观测（`process_loop_check` 第 9.2/9.3 组） |
+| 4 | 播放屏 `_advance_curve(delta)` | 帧 delta × 60 累加 `_curve_tick`（1020/1043–1044 两处喂 `set_fractional_tick`） | **不变** ⇒ 两只钟并存（内核钟 60/s + 曲线假钟按帧走） | 源码观测 |
+| 5 | 菜单 / 非对局 | —— | 生产路径**没有总线** ⇒ 接线等于"第一次安装总线"，`_running` 是唯一可用的门；而 `_running` 在**联机局**与**回放局**也为真（`play_screen.gd:2163`），回放里 `GwReplayDriver.advance_dt` **已经是 tick 驱动** ⇒ 回放里会两只钟同时推 | 源码观测 |
+
+### 49.3 判据：为什么是"不接"（三条，按强度）
+
+1. **可见时序的真缺口在消费者，不在驱动。** 原版曲线揭示走 `GraphwarTickHandler::get_fractional_tick`
+   （`0x519530`）每帧喂 `GraphwarPlane::draw` 的喂点循环；我方是 `_advance_curve(delta)` 的**帧累加**
+   （`play_screen.gd:1038`，注释里自己写着这条缺口）。**接驱动 ≠ 接时序**：tick 在跑而曲线按帧走，
+   屏幕上的东西一点不变（§49.1 实测），但 `frames()/ticks()` 从此非 0 ⇒ 下一轮读代码的人会以为
+   曲线是 tick 驱动的。**这是 §0 第 6 条点名的"看起来做完了"**，比"诚实地没接"更贵。
+2. **V 与 base 是一对相位，只能同一支钟。** 接线后若把 V 换到内核钟而 `base` 仍是 `_curve_tick`，
+   准备圈**永远全开**（§49.0 ④，实测饱和）。所以这不是"接两行"，而是"换一支钟 + 换 base 的来源"，
+   而 base（原版 `map[i]`）的**写入者至今未知**（§46.6 未解项）⇒ 现在接只会把两个未解项焊在一起。
+3. **门没有可验证的对应物。** 原版的门是 `0x515dd1` 判 `[backend+0x1e0]`（= `Option<GraphwarGameClient>`），
+   我方没有 backend 对象，只有 `_running`：它在**联机局**与**回放局**也为真，而 80 号的五轮**全是战役本地局**，
+   这两种状态下 `GameClient::process` 到底跑不跑**一次都没量过**。接线 = 给两种无真值的状态**发明**行为。
+
+### 49.4 触发条件（下一轮照这个顺序落，不要跳步）
+
+```text
+T1（必须）：V 与 base **同时**改由内核钟供给
+           ⇒ play_screen.gd 的 `set_fractional_tick(_, _curve_tick)` 与
+              `set_ring(id, …, _curve_tick)` / `set_ring_base(_, _curve_tick)` 三处实参同时换掉，
+              或 EntityDrawer 位置表出现生产写入者（`kernel_push_position`，原版在 0x3e3347）
+T2（必须）：门有对应物 —— 在**联机局**与**回放局**各量一次 0x518400 的每秒次数（判据同 §44.1 的钩子）
+T3（可选）：生产路径出现 `tick_event` 的订阅者（否则泵只是在抽干队列）
+
+落地顺序：T1 → 同一改动里在 `_process` 加 `if <对局中>: drive_frame(delta)` → 再删 `_advance_curve` 的累加
+         （**先删后接**会有一帧两倍速；先接后删 = 两只钟并存一版）
+```
+
+`play_flow_check.gd` 5.1 组的最后一条就是 **T1 的 tripwire**：T1 一到，它变红并直接指向本节。
+
+### 49.5 断言（先钉决策，再证明它们会红）
+
+| 脚本 | 组 | 新增 | 条数 |
+|---|---|---|---:|
+| `client/tools/process_loop_check.gd` | 9（生产路径不接驱动） | 源码扫描（72 个 `.gd`，正对照：本脚本自己在调）+ 无收件人时泵只抽干队列 + 接上后 5 个读数怎么变 | **49 → 66** |
+| `client/tools/play_flow_check.gd` | 5.1 / 5.2（决策钉死 + V 实测） | V 的三处实参、位置表无生产者、T1 tripwire、弧逐位不变、正对照饱和 | **185 → 199** |
+
+**变异测试（负结论的正对照，`AGENTS.md` 合并纪律 A.4）**：
+
+| 变异 | 结果 |
+|---|---|
+| 在 `play_screen.gd::_process` 里插 `if _running: KernelProcessHost.drive_frame(delta)` | `PROCESS_LOOP 64 passed, 2 failed`（`播放屏里没有 drive_frame`、`生产客户端没有驱动/通道符号` 命中 2 条）；`PLAY_FLOW 198 passed, 1 failed` |
+| 把 `set_ring(..., _curve_tick)` 的实参改成 `0.0`（= 假装 T1 到达） | `PLAY_FLOW 197 passed, 2 failed`（实参那条 + **T1 tripwire**） |
+| 两处都还原 | 全绿（§49.6） |
+
+### 49.6 本轮基线（**每个数都是本轮自己跑的**）
+
+| 项 | 值 | 复跑命令 |
+|---|---|---|
+| `cargo test --offline` | **1753 / 0 failed**（69 个测试二进制含 doc-tests，逐行求和） | `cargo test --offline` |
+| `--features gdext-bindings` | **1859 / 0 failed**（本轮不改 `src/`，与基线同值） | `cargo test --offline --features gdext-bindings`（**最后**跑，否则 `.so` 没 gdext） |
+| headless 14 脚本 | **1923**（before **1892**；`process_loop 49→66`、`play_flow 185→199`） | 14 个脚本逐个 `--script` 跑、把 `NNN passed` 求和：`for f in assemble_check base_classes_check curve_on_screen_check draw_classes_check entity_drawer_check function_drawer_check gdext_check obstacle_drawer_check plane_on_screen_check play_flow_check process_loop_check recovered_view_check signal_classes_check spike_class_check; do "$GODOT" --headless --path client --script res://tools/$f.gd; done` |
+| `selftest` | **716 / 0 / 1 skipped**（跑 **1** 次就绿；LAN 大厅那两条既有 flake 未出现） | `"$GODOT" --headless --path client -- --selftest` |
+| 三轴 `fire` / `batch` / `batch_conv` | **647 / 647 / 637**（内容命中；`bit_exact_attrib --check-baseline` 三轴"**全部一致**"，语料 403 份指纹未变：282 份有结算批 / 1080 批） | `replay_attrib --drive fire|batch --policy default --json`、`batch_conv --policy strict`（本轮不碰 `src/`，与基线同值） |
+| `coverage_matrix.py --check` | rc=0（本轮不改 `src/`，两份生成物不用重跑） | `python3 tools/coverage_matrix.py --check` |
+
+⚠️ **`play_flow` 的口径差 2 条**：任务书写 **183**，本机跑出 **185** —— 差的两条是 §15 组"真实回放"那
+两条，**有 `~/.local/share/godot/app_userdata/Graphwar/replays/1793897298` 才跑**。本轮按任务书把样本
+拷进沙箱 HOME ⇒ 1890（无样本）+ 2 = **1892** 是同一个基线。
+⚠️ 任务书写 `selftest 714`，实测 **716** —— 与 §57.7 的 A/B 记录一致（714 + 84 号新增 2 条 = 716），
+714 是 84 号之前的数。本轮**没有**动 selftest。
+
+### 49.7 诚实清单（这一节**没有**证明的东西）
+
+| # | 项 | 档 | 缺什么 |
+|---|---|---|---|
+| 1 | 活动客户端**确实**没装总线 | **观测**（源码扫描：`client/src/**` 72 个 `.gd` 里 0 处 `install_kernel_bus`/`kernel_*`） | 没有"库里跑起来抓 `frames()`"的运行时样本（要真机跑一局 + frida 挂 `0x5184a1`），但这不影响结论：没调用者就没帧 |
+| 2 | 原版**回放 / 联机**里 `GameClient::process` 跑不跑 | **未知** | 需要在两种状态下各量一次 `0x518400` 的每秒次数（§49.4 T2） |
+| 3 | 原版 `base`（`map[i]`）的写入者 | **未知**（§46.6 未解项） | 换 V/base 到同一支钟之前必须先解这条，否则准备圈的起始量仍是猜的 |
+| 4 | `V` 的绝对相位 | **未知**（§44.8 第 1 条） | 基准是 tick handler 创建时刻，运行时不可复原 ⇒ 只能对"频率"，对不了"相位" |
+| 5 | 回放里若接上会不会与服务端的第二个 tick 源打架 | **推断**（`GwReplayDriver` 自己按 tick 推；原版服务端线程另有 60/s 的泵，`0x451be5`） | 需要跨线程观测（§44.8 第 6 条：跨线程未测） |
+
+### 49.8 复现（全部可原地复跑）
+
+```bash
+cd <WT>                                    # 分支 agent/drive-frame-wire
+export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=<私有 target>
+cargo test --offline                                     # 1753
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/process_loop_check.gd   # 66
+"$GODOT" --headless --path client --script res://tools/play_flow_check.gd      # 199（无样本时 197）
+# V 的两条读数（§49.1）：play_flow_check 的 5.2 组当场打印 1.047197580 / 2.146754980
+```
+
+**本轮没有改动**：`src/game.rs`、`src/_scaffold/root_wiring.rs`、`src/_scaffold/graphwar_root_node_class.rs`、
+`client/src/**`（`play_screen.gd` 只在变异测试里临时改过，已逐字节还原：`git diff` 为空）、
+`dispatch/`、`fixtures/guardrails.json`。
