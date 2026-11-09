@@ -1,0 +1,17 @@
+check	value	detail
+sections:linux	symtab=0 debug=0 dynsym=136	.dynsym;.eh_frame;.eh_frame_hdr
+sections:android	symtab=1 debug=0 dynsym=128	.dynsym;.eh_frame;.eh_frame_hdr;.symtab
+sections:win	coff_syms=147444	PE COFF 符号表条数（0 = 只剩 .pdata 的函数边界）
+crash_artifacts	strings=5	user://crash_log.txt|<unnamed>|<unknown>|stack backtrace:|Failed to get global server address for crash
+crash_reporter_literals	8	`src/graphwar_crash_reporter.rs:` 字面量份数；这些是 inline &str，不是 panic::Location 结构（§17.2）
+real_crash_artifact	0	无（仓库与 .reference 都没有崩溃日志/转储）
+anchor_yield_bound	0	帧给出的只可能是 地址 ∪ panic Location；13,263 个地址已全列、527 个 Location 已全收（§37）⇒ 新锚 0
+anchors_total	52	见 campaign_anchors75.tsv
+anchors_truth_975	45	两侧之一：已定名那批（正对照）
+anchors_target_12736	7	两侧之二：目标集合（新用途标签）
+coverage	truth 4.62% vs target 0.05%	比值 84.0×（两侧差 = 判别力是否有偏）
+positive_control	45/45	已有名字里用途对得上 / 可判条数
+holdout_overlap	27	与留出半（481 行）重叠几行 —— 决定能不能做 before→after
+frame_assets_in_repo	0	docs/img 等目录里的截图（0 = 仓库里没有可用的真机帧）
+anchor_yield_bound	0	帧只给可见状态：字符串→.rodata（已收）、几何→client/ 绘制（不是 12,736 的成员）、关卡布局→campaign 已用二进制解出 ⇒ 新锚 0；且没有 `帧→地址` 的唯一点对点映射
+two_sided	不可达	真机帧只有原版实跑那一次；无法对 12,736 个函数逐一取帧 ⇒ 两侧覆盖率无从谈起（41 号纪律：单侧特征不许用）
