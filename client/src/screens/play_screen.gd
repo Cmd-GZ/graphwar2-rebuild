@@ -287,7 +287,10 @@ const SFX_FOR_EFFECT := {
 # --- 回放模式（`docs/133`；这是本文件里唯一为回放新增的分叉） ---
 ## 回放模式下：不接管输入（键盘/开火无效），由 tick 时钟消费事件流。
 var _replay_mode := false
-var _replay: GwReplayPlayer = null
+## **驱动在 Rust**：`GwReplayDriver` → `src/_scaffold/replay_driver.rs`（`docs/16` §56）。
+## 旧实现在 `client/src/play/replay_player.gd`（那份 `.gd` 还在，但本屏已不再用它；
+## 自检仍在用它做 canonical 的三端对拍 —— 见 §56.6 第 1 条）。
+var _replay: GwReplayDriver = null
 var _replay_path := ""
 var _replay_bar: HBoxContainer = null
 var _replay_progress: ProgressBar = null
@@ -2109,6 +2112,11 @@ func _soldier_of(player_index: int) -> Dictionary:
 ## 本重建的 `app.gd` 只负责 `state.reset_replay(path)` 然后调 `begin_match()`，
 ## 所以**分叉点在这里** —— 这也是本文件里唯一为回放新增的分支（`docs/133` §4.1）。
 ##
+## **流程（tick 时钟 + 事件泵 + 结算批）在 Rust**：`GwReplayDriver`
+## → `src/_scaffold/replay_driver.rs`（`docs/16` §56）。本函数只剩"递路径 / 读快照 / 摆节点"：
+## 旧实现在这里建 `GwReplayPlayer`（一份 426 行的 GDScript 局面机），再每帧 `advance_dt(dt)`
+## —— 那是**每帧泵一次**，与原版量到的 `pumps ≡ ticks`（`docs/06` §44.3）不符。
+##
 ## 喂给绘制/结算的东西一律**不绕过内核**：
 ## * 弹道：回放只给 `FunctionPoints{start_x, start_y, end_x}`（**没有点序列**），
 ##   所以用 `GwCore.calculate_path(函数文本, 起点, 方向)` 重算 —— 那条路径就是
@@ -2136,78 +2144,78 @@ func _begin_replay(path: String) -> void:
 	_replay_right.visible = true
 	_replay_bar.visible = true
 
-	var f := GwReplayFile.load_path(path)
-	if not f.ok():
-		_status("回放打不开：%s" % f.error)
+	var drv := GwReplayDriver.new()
+	# `user://` / `res://` 是 **Godot** 的路径方案，内核只认真路径 ⇒ 换算留在视图层
+	# （`docs/16` §56.5 第 3 条）。
+	if not drv.load(ProjectSettings.globalize_path(path)):
+		_status("回放打不开：%s" % String(drv.error()))
 		# `app.gd::_play_replay()` 在调 `begin_match()` **之前**先弹了一句
 		# `回放播放未实现`（那是它还没接回放时的占位）。这里用一句准确的覆盖掉它 ——
 		# 否则用户会一边看着回放在播、一边读到"未实现"。气泡文本不能含内部标记
 		# （`app.gd::INTERNAL_MARKERS`），所以只写事实。
-		notify("回放打不开：%s" % f.error)
-		_replay_label.text = "回放读取失败：%s" % f.error
+		notify("回放打不开：%s" % String(drv.error()))
+		_replay_label.text = "回放读取失败：%s" % String(drv.error())
 		_replay_progress.value = 0.0
 		_running = false
 		return
-	_replay = GwReplayPlayer.new().setup(f)
+	_replay = drv
 	_replay_mode = true
 	_running = true
-	# 四个模式：回放里记着**这一局真实的选择**（`AxisModeInfo` 等），按观测到的字符串
-	# 映射到 `GwModes` 的档位（对照表见 GwReplayPlayer.mode_indices 的注释）。
+	var snap: Dictionary = _replay.snapshot()
+	# 四个模式：回放里记着**这一局真实的选择**（`AxisModeInfo` 等）。字符串 → 档位的
+	# 对照表还在 `GwReplayPlayer` 的**静态**查表函数里（纯查表，不是流程；`docs/133` §3.3），
+	# 所以这里直接借它，不抄第二份。
 	var app_node := app()
 	if app_node != null:
-		var mi := _replay.mode_indices()
-		app_node.state.axis_mode = int(mi.axis)
-		app_node.state.function_mode = int(mi.function)
-		app_node.state.turn_mode = int(mi.turn)
-		app_node.state.time_mode = int(mi.time)
+		app_node.state.axis_mode = GwReplayPlayer.axis_index(String(snap.axis_mode))
+		app_node.state.function_mode = GwReplayPlayer.function_index(String(snap.function_mode))
+		app_node.state.turn_mode = GwReplayPlayer.turn_index(String(snap.turn_mode))
+		app_node.state.time_mode = GwReplayPlayer.time_index(String(snap.time_mode))
 	_set_axis_mode(int(app_node.state.axis_mode) if app_node != null else GwModes.AXIS_DEFAULT)
 	_refresh_mode_indicators()
 	# 回放不做胜负判定（录像自己会发 `GameStateInfo{EndingGame}`），这里只占位。
 	_rules = GwLevelRules.new()
 	_rules.from_versus(0)
-	_replay.seek(_replay.first_tick)
+	# 驱动器的 `load()` 已经把时钟停在第一条事件上、并把那一拍的事件消费掉了
+	# （旧实现是显式一句 `seek(first_tick)`；现在在 `ReplayDriver::with_replay` 里，
+	# 语义相同，少一次调用）。
 	_realize_replay_state()
 	_replay.play()
 	_update_replay_ui()
 	_status(_replay_status_text())
 	# 同上：覆盖 `app.gd` 里那句占位气泡（`回放播放未实现`）。
-	notify("回放 %s ／ %d 条事件 ／ tick %d–%d" % [
-		_replay.state.game_name if _replay.state.game_name != "" else _replay_path.get_file(),
-		_replay.file.events.size(), _replay.first_tick, _replay.last_tick])
+	notify("回放 %s ／ %d 条事件 ／ tick %d–%d ／ %d 个结算批" % [
+		String(snap.game_name) if String(snap.game_name) != "" else _replay_path.get_file(),
+		int(snap.events), int(snap.first_tick), int(snap.last_tick), int(snap.batches)])
 
 ## 主循环里的回放推进（`_process` 的回放分支）。
+##
+## 一行调用：**推进在 Rust**（定步累加器 + 每 tick 一次泵，`docs/16` §56）。
 func _replay_tick(delta: float) -> void:
 	if _replay == null:
 		return
-	var applied := _replay.advance_dt(delta)
-	if not applied.is_empty():
-		_apply_replay_events(applied)
+	_apply_replay_events(_replay.advance_dt(delta))
 	_update_replay_ui()
 
-## 把一批刚被消费掉的事件喂给绘制/状态（**按事件类型分派，不猜副作用**）。
-func _apply_replay_events(applied: Array[Dictionary]) -> void:
-	var need_actors := false
-	var need_layout := false
-	var need_shot := false
-	for ev in applied:
-		match String(ev.kind):
-			"PosInfo", "TeamInfo", "LifeInfo", "SoldierInfo", "EntityRemoved", \
-			"SkinGraphicsInfo", "FaceGraphicsInfo", "HatGraphicsInfo", "TargetInfo", "ColorInfo":
-				need_actors = true
-			"AddObstacle", "ClearObstacles", "DestroyObstacle":
-				need_layout = true
-			"FunctionPoints":
-				need_actors = true
-				need_shot = true
-			_:
-				pass
-	if need_layout:
+## 执行一次驱动报告：**只看 Rust 给的"该重画哪层"三个标志摆节点，不再看事件名**。
+##
+## 旧实现自己遍历事件数组、按 `kind` 决定要不要重摆实体/障碍/弹道（24 行 match）。
+## 那张表现在在 `ReplayDriver::mark_dirty()`（`docs/16` §56.4）——"事件类型 → 视图动作"
+## 本身**不是**游戏流程，但它与"谁消费事件"绑在一起，绑在 Rust 里就不会再出现
+## "GDScript 也有一份消费顺序"这种双份真理。
+func _apply_replay_events(report: Dictionary) -> void:
+	if bool(report.get("dirty_layout", false)):
 		_replay_sync_layout()
-	if need_actors:
+	if bool(report.get("dirty_actors", false)):
 		_replay_sync_actors()
-	if need_shot:
+	if bool(report.get("dirty_shot", false)):
 		_replay_draw_last_shot()
-	_status(_replay_status_text())
+	# 结算批落地（`ExecutingResults` 那一拍）：**只更新状态行，不动节点** ——
+	# 生死/特效是延迟段里那些 `LifeInfo` 事件带来的（`docs/136` §2 的批窗口形状）。
+	# 长帧一次跨多批时 `settled` 里会有多个下标（`docs/06` §44.4 的追赶），按序记下即可。
+	var settled: Array = report.get("settled", [])
+	if int(report.get("events", 0)) > 0 or not settled.is_empty():
+		_status(_replay_status_text())
 
 ## 从**当前局面**整体重建画面（跳转/进入时用；逐事件路径只做增量）。
 func _realize_replay_state() -> void:
@@ -2225,15 +2233,15 @@ func _realize_replay_state() -> void:
 ## （例如微分方程局，`GwCore.calculate_path` 只跑 `Mode::Normal`）就清空并说明原因，
 ## 不拿界面预览折线冒充（`docs/133` §4.5）。
 func _replay_draw_last_shot() -> void:
-	var shots: Array = _replay.state.shots if _replay != null else []
-	if shots.is_empty():
+	var shot: Dictionary = _replay.last_shot() if _replay != null else {}
+	if shot.is_empty():
 		_clear_curve()
 		_replay_shot_status = "还没有开火记录"
 		return
-	_replay_draw_shot(shots[shots.size() - 1])
+	_replay_draw_shot(shot)
 
 func _replay_sync_layout() -> void:
-	_obstacles = _replay.obstacles_for_view()
+	_obstacles = _replay.obstacles()
 	_set_obstacles(_obstacles)
 
 ## 士兵与靶子：**同一个局面对象**既给 `_plane` 画，也给"谁死了"用。
@@ -2264,7 +2272,7 @@ func _replay_sync_actors() -> void:
 func _replay_skin_index(entity_id: int) -> int:
 	if _replay == null:
 		return 0
-	var nm := String(_replay.state.graphics.get("skin:%d" % entity_id, ""))
+	var nm := String(_replay.graphics("skin", entity_id))
 	if nm == "":
 		return 0
 	return maxi(0, GwIcons.SKINS.find("skins/" + nm))
@@ -2290,12 +2298,12 @@ func _replay_draw_shot(d: Dictionary) -> void:
 	var start: Vector2 = d.get("start", Vector2.ZERO)
 	var expr := String(d.get("function", ""))
 	if expr == "":
-		expr = String(_replay.state.functions.get(owner, ""))
+		expr = String(_replay.function_of(owner))
 	if expr == "":
 		_clear_curve()
 		_replay_shot_status = "这一发没有函数文本（owner %d）" % owner
 		return
-	var team := _replay.team_index(owner)
+	var team := int(_replay.team_index(owner))
 	var direction := 1.0
 	if team == 1:
 		direction = -1.0
@@ -2306,7 +2314,8 @@ func _replay_draw_shot(d: Dictionary) -> void:
 	# `DiffEqFunction` 的 `f` 是 `dy/dx`，必须走 ODE（一阶 RK4），否则画出来是错的线
 	# —— 契约与实测见 `docs/138`（内核 `path_calculate_mode`，`mode` 是字符串
 	# `"normal"` / `"ode"`；`GwCore.calculate_path()` 的第 4 个参数就是它）。
-	var mode := "ode" if String(_replay.state.function_mode) == "DiffEqFunction" else "normal"
+	var snap: Dictionary = _replay.snapshot()
+	var mode := "ode" if String(snap.function_mode) == "DiffEqFunction" else "normal"
 	var result := GwCore.calculate_path(expr, start, direction, mode)
 	var replay_corrected := String(d.get("corrected", ""))
 	if not bool(result.ok):
@@ -2314,10 +2323,13 @@ func _replay_draw_shot(d: Dictionary) -> void:
 		_replay_shot_status = "内核算不出这一发（%s）／ 函数 %s" % [String(result.note), expr]
 		return
 	var drawn := _clip_to_obstacle(result.points)
-	_set_curve(drawn.points, _replay_color({
-		"color": _replay.state.colors.get(int(_replay.file.soldier_owner.get(owner, -1)), null),
-		"team": maxi(0, team),
-	}), owner)
+	# 颜色：`ColorInfo` 是按**玩家**记的，函数表的 owner 是**士兵** ⇒ 先过一次
+	# `soldier_owner`（`SoldierInfo` 那张全局表）。没有 ColorInfo 就退回本队色表。
+	var pid := int(_replay.soldier_owner(owner))
+	var col: Color = TEAM_COLORS[clampi(maxi(0, team), 0, 1)][0]
+	if _replay.has_color(pid):
+		col = _replay.color_of(pid)
+	_set_curve(drawn.points, col, owner)
 	# 修正常数：只有 Normal 有。ODE 下内核给的是 `NaN` ⇒ `format_offset()` 出空串，
 	# 正好是原版 DiffEq 局右下角不显示修正文本的样子（`docs/92` §4.10、`docs/138`）。
 	_offset_label.text = GwCore.format_offset(float(result.offset))
@@ -2333,27 +2345,33 @@ func _replay_draw_shot(d: Dictionary) -> void:
 func _replay_status_text() -> String:
 	if _replay == null:
 		return "回放未载入"
+	var snap: Dictionary = _replay.snapshot()
 	var dead := 0
 	var total := 0
 	for a in _replay.actors():
 		total += 1
 		if not bool(a.alive):
 			dead += 1
-	return "回放 %s ／ %s ／ 状态 %s ／ 回合 %d ／ 实体 %d（阵亡 %d）／ %s ／ %s" % [
-		_replay_path.get_file(), _replay.state.game_name, _replay.state.game_state,
-		_replay.state.turn_count, total, dead, _replay.summary(), _replay_shot_status]
+	return "回放 %s ／ %s ／ 状态 %s ／ 回合 %d ／ 实体 %d（阵亡 %d）／ %s ／ 批 %d/%d（%s）／ %s" % [
+		_replay_path.get_file(), String(snap.game_name), String(snap.game_state),
+		int(snap.turn_count), total, dead, String(snap.summary),
+		int(snap.batches_settled), int(snap.batches), String(snap.phase), _replay_shot_status]
 
 ## 进度条 / tick 标签刷新。
 func _update_replay_ui() -> void:
 	if _replay == null or _replay_progress == null:
 		return
 	_replay_progress.value = _replay.progress()
+	var snap: Dictionary = _replay.snapshot()
 	_replay_label.text = "回放 %s ／ %s ／ %s" % [
-		_replay.state.game_name, _replay.summary(),
-		"（已到结尾）" if _replay.finished() else "",
+		String(snap.game_name), String(snap.summary),
+		"（已到结尾）" if bool(snap.finished) else "",
 	]
 
 ## 左侧三颗播放键（prev / play_pause / next）。**我们自定的接线**，见 `docs/133` §4.3。
+##
+## 播放控制也在 Rust（`ReplayDriver::toggle/step_event/step_back_event`）：
+## 跳转 = 从头重放（保证局面恒等于 `state_at(tick)`，不留增量漂移）。
 func _on_replay_button(cmd: String) -> void:
 	if not _replay_mode or _replay == null:
 		_status("当前不是回放模式")
@@ -2390,40 +2408,46 @@ func _set_replay_input_enabled(enabled: bool) -> void:
 
 # ---- 自检 / 诊断用的只读入口（不参与游戏逻辑） ----
 
-## 当前回放播放器的**规范性局面串**（与 Kernel / Python 参考同格式，`docs/133` §5）。
+## 当前回放驱动器的**规范性局面串**（与 Kernel / Python 参考同格式，`docs/133` §5）。
 func replay_canonical() -> String:
-	return _replay.canonical() if _replay != null else ""
+	return String(_replay.canonical()) if _replay != null else ""
 
 func replay_state() -> Dictionary:
 	if _replay == null:
 		return {}
+	var snap: Dictionary = _replay.snapshot()
 	return {
 		"mode": _replay_mode,
-		"tick": _replay.current_tick(),
-		"first_tick": _replay.first_tick,
-		"last_tick": _replay.last_tick,
-		"cursor": _replay.cursor,
-		"events": _replay.file.events.size(),
-		"playing": _replay.playing,
-		"progress": _replay.progress(),
-		"game_name": _replay.state.game_name,
-		"game_state": _replay.state.game_state,
-		"turn_count": _replay.state.turn_count,
-		"obstacles": _replay.state.obstacles.size(),
+		"tick": int(snap.tick),
+		"first_tick": int(snap.first_tick),
+		"last_tick": int(snap.last_tick),
+		"cursor": int(snap.cursor),
+		"events": int(snap.events),
+		"playing": bool(snap.playing),
+		"progress": float(snap.progress),
+		"game_name": String(snap.game_name),
+		"game_state": String(snap.game_state),
+		"turn_count": int(snap.turn_count),
+		"obstacles": int(snap.obstacles),
 		"soldiers": _soldiers.size(),
-		"canonical": _replay.canonical(),
+		"canonical": String(snap.canonical),
 		"shot_status": _replay_shot_status,
+		# 新增（`docs/16` §56）：驱动侧的事实，给自检与状态行看。
+		"phase": String(_replay.phase()),
+		"batches": int(snap.batches),
+		"batches_settled": int(snap.batches_settled),
+		"batch_note": String(snap.batch_note),
+		"stats": snap.stats,
 	}
 
-## 自检用：把回放**推进** n 秒墙钟（等价于主循环跑 n 秒）。
+## 自检用：把回放**推进** n 秒墙钟（等价于主循环跑 n 秒）。返回本次消费的事件条数。
 func replay_advance_for_test(seconds: float) -> int:
 	if _replay == null:
 		return 0
-	var applied := _replay.advance_dt(seconds)
-	if not applied.is_empty():
-		_apply_replay_events(applied)
+	var report: Dictionary = _replay.advance_dt(seconds)
+	_apply_replay_events(report)
 	_update_replay_ui()
-	return applied.size()
+	return int(report.get("events", 0))
 
 ## 自检用：直接跳到某个 tick（走与按键跳转**同一条**路径）。
 func replay_seek_for_test(target_tick: int) -> void:
@@ -3036,9 +3060,10 @@ func _refresh_function_list() -> void:
 	if _replay_mode and _replay != null:
 		# 回放里的函数表在事件里（`FunctionInfo.owner_id` = 士兵号，`docs/79` §1），
 		# 不在 `state.players` 里 —— 那张表在回放模式下是空的。
-		for owner in _replay.state.functions.keys():
+		var funcs: Dictionary = _replay.functions()
+		for owner in funcs.keys():
 			lines.append("[color=white]soldier %d: f(x) = %s[/color]"
-				% [int(owner), String(_replay.state.functions[owner])])
+				% [int(owner), String(funcs[owner])])
 		_view_functions_label.clear()
 		_view_functions_label.append_text(
 			"[outline_size=4][outline_color=black]%s[/outline_color][/outline_size]"

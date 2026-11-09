@@ -9921,3 +9921,169 @@ cargo test --offline --lib -- graphwar_play_screen_control                  # 30
    我方用 `SeqRng` 替身，只验判定规则。要逐位复现"第 n 个玩家拿到什么颜色"必须接真 ChaCha 流。
 4. **`Graphics` 的贴图侧**在 `GraphwarTextureLoader`（另一个模块），本任务没碰。
 5. `ComputerPlayer` 仍是 `assembled`（要抓一次 bot 局的 `BotData.state`）；`GameState` 仍卡 `src/game.rs` 禁区。
+
+## 56. 回放的**驱动**搬进 Rust：`GwReplayDriver` —— 按 **tick** 推进，不按帧（2026-11，任务 81）
+
+**一句话**：`play_screen.gd` 里"回放怎么往前走"的那一层 —— **tick 时钟 / 事件泵 / 结算批落地 /
+"事件类型 → 重画哪层"的分派** —— 搬进了 Rust（`src/_scaffold/replay_driver.rs` +
+`replay_driver_class.rs` 的 `GwReplayDriver`）；判据不是我们的手感，而是 **`docs/06` §44 量到的
+`pumps ≡ ticks`**：原版的事件泵**只在 tick 那一圈里跑**，所以**按帧写的驱动天然是错的**。
+GDScript 只剩"递 `delta` / 读报告里的三个重画标志 / 摆节点"。
+
+本轮**只做回放驱动**。联机、关卡坐标、`_judge_shots`、「打不全就全部复原」、`drive_frame` 接线
+**原样保留并登记**（§56.6）——`dispatch/81` §1 也是这么派的。
+
+### 56.1 边界（沿用 54/67 号）
+
+| 进 Rust（本轮） | 留 GDScript（本轮没动的） |
+|---|---|
+| **定步累加器**：`dt → n 个 tick`，余数留下 | 把 `delta` 从引擎交进来（`_process(delta)`） |
+| **事件泵**："泵几次"由 tick 数决定，`pumps ≡ ticks` | —— |
+| **消费顺序**：`事件.tick <= 当前 tick`，按文件顺序 | —— |
+| **结算批**（`CalculatingResults` → `ExecutingResults` → 延迟段）在哪一拍落地 | 结算那一拍**画什么**（本轮：只更新状态行，不动节点） |
+| **事件类型 → 重画哪一层**（`dirty_actors/layout/shot`） | 真的去重摆实体 / 重铺障碍 / 重画弹道 |
+| 局面累加（`ReplayState`，原版模块，**早就**在 Rust） | 读局面摆节点（`_sync_entities()` 等） |
+| 播放控制（`play/pause/toggle/seek/step_event`） | 三颗播放键的**图标与禁用态** |
+
+判据仍是 `dispatch/81` §2 那句：**GDScript 里不许再出现"根据游戏状态决定做什么"的分支**。
+本轮删掉的那条正好是"根据事件类型决定做什么"——它虽然属于视图分派，但**与"谁消费事件"绑在一起**：
+两份消费顺序就是两份真理（旧的 24 行 `match` 在 `_apply_replay_events` 里）。
+
+### 56.2 落地位置（文件 / 类型 / 接口）
+
+| # | 位置 | 内容 | 档位 |
+|---|---|---|---|
+| 1 | `src/_scaffold/replay_driver.rs`（800 行） | 纯逻辑 `ReplayDriver`：定步累加器、`drive_frame` / `drive_ticks`、结算批、`PumpReport`；**17 条 `#[cfg(test)]` 断言** | 节奏 **观测**（§44）；界面时序 **我方自定** |
+| 2 | `src/_scaffold/replay_driver_class.rs`（557 行） | `GwReplayDriver`（`#[class(base=RefCounted)]`，43 个 `#[func]`）：路径/加载、局面查询、批表、驱动、播放控制 | **我方外壳**（原版没有这个类） |
+| 3 | `src/_scaffold/mod.rs` | 两个 `pub mod` + 一句"这是什么"（纯逻辑不带 `#[cfg]`，所以 `cargo test` 直接测；外壳类在 `gdext-bindings` 下） | —— |
+| 4 | `client/src/screens/play_screen.gd` | 只改回放那一段（§56.4）：建驱动器、递 `dt`、按三个标志摆节点 | —— |
+| 5 | `client/tools/play_flow_check.gd` | **135 → 183 条**（+48：第 10–16 组） | **验收工具** |
+
+⚠️ **文件归属（诚实标注）**：原版这一层的**真名未知**。`docs/78` §1 只给出两个模块名
+（`graphwar_replay_player.rs` 读盘 + 局面累加 / `graphwar_replay_control.rs` 回放列表屏），
+而 `graphwar_replay_control::process`（`0x4c6f40`，8784 字节）里**播放时钟的具体形态没解**
+（那份模块文档 §4 自己写着"未知"）。所以：**局面累加**用原版模块 `graphwar_replay_player.rs`
+（现成的，一个字没改）；**驱动**放在 `_scaffold`，因为它没有可指认的原版函数归属。
+等哪天 `0x4c6f40` 的时钟被逐条读出来，这个类应当并回 `graphwar_replay_control`。
+
+### 56.3 按 tick 怎么走：§44 的五条真值 → 代码落点 → 断言
+
+| # | `docs/06` §44 的真值（5 次运行 / 12 856 个 tick，**观测**） | 本实现的落点（`replay_driver.rs`） | 钉它的断言 |
+|---|---|---|---|
+| 1 | tick 率恒 **60.00/s**（帧率 30→67 五档全中，70 s 零漂移） | `TICK_PERIOD_NS = 16_666_666`（`:73`）+ `accum_ns` 整数累加 | `period_gives_sixty_ticks_per_second`（60 s ⇒ 3599–3600 tick）；`play_flow_check`「200 ms = 12 tick」 |
+| 2 | **`pumps ≡ ticks` 逐帧严格相等** | `drive_ticks_inner`（`:422`）：`for _ in 0..n { tick(); pump(); }` —— 泵在循环体**里面** | `pumps_equal_ticks_and_zero_tick_frames_pump_nothing`；`play_flow_check` 逐帧比 `report.ticks == report.pumps`（120 帧，0 帧不符） |
+| 3 | 默认帧率下 **10.9% 的帧一个 tick 都不推**（`0:507`） | `drive_frame`（`:365`）：`n == 0` ⇒ 记 `zero_tick_frames` 并**直接返回**（一次都不泵） | 同一条测试的 `zero_tick_frames == 60`（120 帧 × 1/120 s）；`play_flow_check` 同名断言 |
+| 4 | 长帧追赶**无上限**（SIGSTOP 1 500 ms ⇒ 单帧 **91** 圈） | 循环里**没有任何计数/限幅**；`MAX_FRAME_NS` 只是 f64 溢出护栏（3600 s） | `long_frame_catches_up_without_cap`（1.5 s ⇒ 90 tick）；`play_flow_check`「> 60，旧 `.gd` 必挂」 |
+| 5 | 顺序恒 **`TP`**（tick `0x518499` → 泵 `0x51849f`） | 同上：一个循环体里先 `ticks += 1` 再 `pumps += 1`（`stats` 分开记，能自查） | `stats().pumps == stats().ticks`（两条独立的计数） |
+
+**两处刻意的偏离（都写进代码注释与 §56.6）**：
+
+1. **`delta` 我们读了**。原版不读（§44.5 指令层 0 处 `xmm` + 行为层 `--fixed-fps 10` 双证），
+   原版读的是 `GraphwarTickHandler::get_time_to_tick` 的**墙钟**；headless 里没有墙钟，
+   读墙钟会把每条断言变成竞态。⇒ `dt` 只当墙钟的**替身**，并且提供确定性原语
+   `drive_ticks(n)`（`GDScript` 侧 `advance_ticks`）。**节奏**仍服从上表五条。
+2. **"对局中"门用的是 `playing`**，不是原版 `[backend+0x1e0]`（`0x515dd1`，菜单 28 个 1 s
+   窗口实测 0/s）。回放屏没有"对局"概念，我们拿"用户按了播放"当同一件事。
+
+**结算批**（`docs/136` §2 的窗口形状，401 份冻结语料上量过）：
+批切分**没有第二份实现** —— 直接借 `replaydiff::split_batches`，本文件只把它的**消息下标**
+换成 **tick**（`:486`）。为什么换 tick：内核播放器的游标是"内核解析器"的下标，批切分是
+"replaydiff 解析器"的下标，两套解析器**不保证下标相同**（一个有 `skipped_lines`、一个直接报错）；
+`tick` 是两份解析器里同一个数。落地判据在 `settle_due`（`:460`）：`exec_tick <= 当前 tick` 的批
+**按序全记**——长帧一次跨三批时 `settled == [0,1,2]`，**不跳批**。
+跳转（`seek`）走 `resync_batches`（`:479`）：越过的批**直接算已结算但不报**（跳转不是"驱动"）。
+
+### 56.4 GDScript 侧 before → after
+
+**代码行**（去掉注释与空行；同一口径两头都量过）：
+
+| 函数 | before | after | 变化 |
+|---|---|---|---|
+| `_apply_replay_events` | **23**（遍历事件 + `match kind` 三组） | **10** | 三个 `dirty_*` 布尔 + 结算计数；分派表进 `ReplayDriver::mark_dirty`（`:445`） |
+| `_replay_tick` | 7（`advance_dt` → 非空才派发） | 5 | 一行 `advance_dt(dt)` + 一行派发 |
+| `_begin_replay` | 49 | 48 | 建 `GwReplayDriver` 代替 `GwReplayPlayer.setup(f)`；路径过 `ProjectSettings.globalize_path` |
+| `_replay_sync_actors` | 18 | 18 | 数据来源换成 `_replay.actors()`（形状一致，一行没改） |
+| `_replay_draw_shot` | 38 | 40 | 颜色/函数文本改问驱动器（`has_color`/`color_of`/`function_of`/`soldier_owner`） |
+| `_replay_status_text` | 12 | 14 | 多报"批 x/y（相位）" |
+| `replay_state()` | 20 | 26 | 多给 `phase` / `batches` / `batches_settled` / `batch_note` / `stats` |
+| `_replay_draw_last_shot` | 7 | 7 | 读 `last_shot()`（`state.shots[...]` 的取法进 Rust） |
+| `_on_replay_button` | 14 | 14 | 只是命令转给驱动器 |
+
+播放屏本体：**3 068 → 3 093 行**（代码行 2 099 → **2 094**，注释 780 → **810**，空行 190 → 190）。
+⚠️ **净行数是 +25，不要说"文件变短了"**：删掉的是 13 行 `match` 分派，加回来的是 6 行结算计数，
+再把"为什么这么写"的证据注释补到 `AGENTS.md` §0 第 5 条的要求。**判据不是行数**，是这张表：
+真正退场的是**那份 426 行的 GDScript 局面机不再被播放屏调用** —— `_replay.advance_dt` 现在打的是
+Rust，`_replay.state.*` / `_replay.file.*` / `_replay.obstacles_for_view()` / `_replay.mode_indices()`
+在播放屏里**已归零**（`play_flow_check` 第 16 组逐条钉住）。
+
+### 56.5 三处接口上的说明（GDScript 侧要改的）
+
+1. **`advance_dt()` 的返回值从"事件数组"变成"报告字典"**：
+   `{frames, ticks, pumps, events, kinds, dirty_actors, dirty_layout, dirty_shot, settled, tick,
+   cursor, batches_settled}`。`kinds` 仍**逐条**给事件名（自检要拿它跟独立扫描比对）。
+2. **`load(path)` 只认原生路径**：`user://` / `res://` 是 Godot 的方案，换算留在视图层
+   （`ProjectSettings.globalize_path`）。内核不解释 Godot 的 URI。
+3. **`load()` 之后时钟停在第一条事件的 tick 上、并把那一拍消费掉**（旧实现是显式
+   `seek(first_tick)`）；`seek()` 仍是"从头重放"（保证局面恒等于 `state_at(tick)`）。
+4. **`GwReplayPlayer` 那份 `.gd` 还在**（426 行）。播放屏已不再用它，但 `selftest.gd`
+   仍用它做 canonical 的三端对拍，而 `client/src/play/*.gd` 不在本任务允许改的范围内
+   ⇒ **两份实现暂时并存**，登记在 §56.6 第 1 条。
+
+### 56.6 诚实清单（本轮之后**仍然**留在 GDScript / 没搬的）
+
+| # | 还没搬的 | 量级 | 档位 | 缺什么 |
+|---|---|---|---|---|
+| 1 | **`GwReplayPlayer` 本体**（`client/src/play/replay_player.gd`，426 行）—— 与内核 `graphwar_replay_player.rs` 重复的局面机 | 426 行 | **我方重复** | 播放屏已不用它；剩 `selftest.gd` 在用。**下一轮**：把 selftest 的那 6 条对拍改打 `GwReplayDriver`，然后删掉这份 `.gd`（`client/src/play/` 不在本轮允许改的范围内） |
+| 2 | **联机局全套**（`_online_*`） | ~400 行 | 服务端权威 | 与 §53.6 #4 同一条（`docs/134`/`docs/139`），本轮未动 |
+| 3 | **关卡靶子/障碍坐标**（`_target_positions` / `_level_obstacles`） | ~30 行 | 数目 **逐位**、坐标**我方自定** | 与 §53.6 #6 同一条（`docs/118` §8 #16） |
+| 4 | **`_judge_shots`**（命中纯计算） | ~65 行 | 内核 `hit_test` 已**逐位** | 与 §53.6 #2 同一条 |
+| 5 | **「打不全就全部复原」**（`_apply_target_reset`） | ~20 行 | **推断** | 与 §53.6 #1 同一条（语料 397 份 **0 次**部分命中） |
+| 6 | **`drive_frame` 接线**（`KernelBus` 的 60 Hz 定步） | 3 行 | —— | 与 §53.6 #3 同一条。**本轮没接**（`root_wiring.rs` 归 79 号；`src/game.rs` 禁区） |
+| 7 | **原版回放界面的时序与控件** | —— | **未知** | `docs/78` 只给出场景名；`0x4c6f40` 的播放时钟没解 ⇒ 本轮驱动是**我方自定**，只有**节奏**借了 §44 的真值 |
+| 8 | 回放里的**特效**（`EffectInfo`）只记不画 | —— | 推断 | 与联机那条同一个缺口（`GwPlaneView` 没有特效图层，`docs/139` §7） |
+
+⚠️ 本轮**没有**碰 `src/game.rs` 结算、`fixtures/`、`dispatch/`、`root_wiring.rs`、
+`assemble_check.gd`、`graphwar_local_player_manager.rs` / `graphwar_computer_player_manager.rs`。
+
+### 56.7 断言（before → after）与复现
+
+| 套件 | before | after |
+|---|---|---|
+| `cargo test --offline` | 1730 | **1747**（+17：`_scaffold::replay_driver::tests`） |
+| `cargo test --offline --features gdext-bindings` | 1836 | **1853**（+17，同上；外壳类不写 `#[func]` 单测） |
+| `client/tools/play_flow_check.gd` | 135 | **183**（+48：第 10–16 组，见文件头表） |
+| headless 14 个脚本合计 | 1839 | **1887**（其余 13 个逐项不变：assemble 238 / base 117 / curve 96 / draw 235 / entity 366 / function 132 / gdext 24 / obstacle 116 / plane 96 / process 49 / recovered 57 / signal 155 / spike 23） |
+| `selftest` | 714 / 0 / 1 skip | **714 / 0 / 1 skip**（跑 **2** 次都过；第一次因为 `examples/serve_match` 没编而多 2 条 skip，编出来就回到 714） |
+| 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **647 / 647 / 637**（`replay_attrib --drive fire|batch --policy default`、`batch_conv --policy strict`，快照 401 份） |
+| 档位分布 | 18 / 2 / 2 / 0 | **18 / 2 / 2 / 0**（`docs/coverage-matrix.tsv` 只变了 `src_tree_sha256` 与文件/`fn` 计数：111/3009 → 113/3112） |
+
+```bash
+export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=<你的私有 target>
+cargo test --offline                                   # 1747
+cargo test --offline --features gdext-bindings         # 1853（这一档**最后**跑，否则 .so 没 gdext）
+cargo build --offline --features gdext-bindings --example serve_match   # selftest 的四前置之一
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/play_flow_check.gd   # PLAY_FLOW 183 passed
+"$GODOT" --headless --path client -- --selftest                             # 714 / 0 / 1skip
+cargo test --offline --lib -- replay_driver                                 # 17 条
+```
+
+⚠️ 又踩了同一串坑（记下来省下一个人半小时）：**`export A=1 B=$A/...` 在同一句里 `$A` 是空的**
+⇒ `HOME=/home`、`XDG_DATA_HOME=/data`，回放目录找不到、存档写不进去，一跑 `selftest` 就是
+638/7failed（看着像回归，其实是环境）。**分两句 export**。
+
+### 56.8 这条线的证据等级（能给什么、不能给什么）
+
+| 结论 | 证据 | 档位 |
+|---|---|---|
+| tick 率 60/s、`pumps ≡ ticks`、0-tick 帧、追赶无上限、顺序 `TP`、`delta` 不读 | `docs/06` §44（5 次运行 / 12 856 tick / 8 个钩子 / 正负对照） | **观测** |
+| tick ↔ 60 Hz | `docs/35` §2（113 个 `TickReply` 样本） | **观测** |
+| 批窗口形状（`CalculatingResults`→`ExecutingResults`→延迟段）与批内顺序 | `docs/136` §2 + `replaydiff::split_batches` 在 401 份语料上的统计 | **观测** |
+| 局面累加（哪条事件改哪个字段） | `docs/133` §3 + 三端同格式对拍（§5） | **推断** |
+| 驱动的**界面时序**（几帧一次、按哪个键做什么） | —— | **我方自定**（原版未观测） |
+| "驱动按 tick 走"这件事在**我们的客户端**里成立 | 17 条 cargo 断言 + 48 条 headless 断言（其中第 14 组与第 15 组是**两份独立实现**互比：Rust 驱动 vs 本脚本自己扫回放文本；`canonical` vs 旧 GDScript 局面机逐字符） | **回归保护**（`AGENTS.md` §0.2：不是复原证据） |
+
+> 一句话别读错：**节奏是观测来的，"回放该这么播"仍然是我方自定**。
+> 本轮真正钉死的是"**泵必须跟着 tick 走**"这一条 —— 它同时被 §44 的运行时和本轮的断言固定住，
+> 而"每帧泵一次"那种写法现在会在 headless 里直接红。
