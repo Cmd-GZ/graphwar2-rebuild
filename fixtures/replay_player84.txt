@@ -1,0 +1,48 @@
+# fixtures/replay_player84.txt —— 旧 GDScript 局面机（`GwReplayPlayer`）的**期望值**（`dispatch/84`）
+#
+# 为什么有这份夹具：`client/src/play/replay_player.gd`（426 行，`class_name GwReplayPlayer`）
+# 是内核 `src/graphwar_replay_player.rs` 的**第二份局面机**，只有 `client/tools/selftest.gd`
+# 在用。84 号要删掉它 ⇒ **先把它算出来的期望值固化成文本**，再改 selftest 打
+# `GwReplayDriver`（`src/_scaffold/replay_driver.rs`），这样删了旧代码也仍有对照。
+#
+# 来源（**全部由旧实现算出**，不是新驱动自己给的）：
+#   样本  `$HOME/.local/share/godot/app_userdata/Graphwar/replays/1793897298`
+#         （= `.reference/replays/gw2-replays-snapshot/replays/1793897298`；104 条事件，
+#          tick 1..2276，与 `selftest.gd::REPLAY_SAMPLE` 同一份）
+#   程序  `GwReplayFile.load_path(path)` → `GwReplayPlayer.new().setup(f)`，然后按
+#         `selftest.gd::_test_replay_player()` 第 3、4 组**同一串调用**取值：
+#           `play()` / `advance_dt(0.5)` / `pause()` / `advance_dt(1.0)` /
+#           `speed = 2.0` / `play()` / `advance_dt(0.5)` / `seek(t)` / `canonical()` /
+#           `cursor` / `state.alive` / `step_event()` / `step_back_event()`
+#   命令  `"$GODOT" --headless --path client --script res://tools/_gen84.gd -- --write`
+#         （一次性脚本，跑完即删、不进库；`-- --verify` 模式拿这份夹具回头核旧实现）
+#
+# 口径：`canonical()` 与 `src/graphwar_replay_player.rs::ReplayState::canonical` **逐字符同格式**
+#       （`tick=T|O=x,y,r;…|E=id,team,alive,x,y,r;…|F=owner=text;…`，数字一律 `%.6f`，
+#       `alive` 写 `0/1`，未知队伍写 `?`，没有位置的实体留空三项）。数字是 `%.6f` 的**文本**，
+#       所以这里存的是"逐字符相同"，不是"近似相等"。
+#
+# 格式：`key<TAB>value`，`#` 开头是注释，空行忽略。一条 key 一行（值里不含制表符）。
+#
+# 每一行被哪个断言用：见 `docs/16-client.md` §57.2 的表。
+first_tick	1
+last_tick	2276
+tick_after_setup	1
+tick_after_half_second	31
+tick_after_pause_1s	31
+tick_after_2x_half_second	91
+tick_delta_2x_half_second	60
+canonical_tick_550	tick=550|O=|E=229,Team1,1,,,;230,Team1,1,-5.156307,-9.889981,0.500000;231,Team1,1,,,;232,Team2,1,9.782073,4.595394,0.500000|F=230=x+2sin(20x)
+cursor_tick_550	81
+canonical_tick_1000	tick=1000|O=|E=229,Team1,1,,,;230,Team1,1,-5.156307,-9.889981,0.500000;231,Team1,1,,,;232,Team2,1,9.782073,4.595394,0.500000|F=230=x+2sin(20x)
+cursor_tick_1000	84
+canonical_tick_2168	tick=2168|O=|E=229,Team1,1,,,;230,Team1,1,-5.156307,-9.889981,0.500000;231,Team1,1,,,;232,Team2,1,9.782073,4.595394,0.500000|F=230=x+2sin(10x)
+cursor_tick_2168	101
+canonical_tick_2169	tick=2169|O=|E=229,Team1,1,,,;230,Team1,1,-5.156307,-9.889981,0.500000;231,Team1,1,,,;232,Team2,0,9.782073,4.595394,0.500000|F=230=x+2sin(10x)
+cursor_tick_2169	102
+canonical_tick_2276	tick=2276|O=|E=229,Team1,1,,,;230,Team1,1,-5.156307,-9.889981,0.500000;231,Team1,1,,,;232,Team2,0,9.782073,4.595394,0.500000|F=230=x+2sin(10x)
+cursor_tick_2276	104
+alive_232_tick_2168	1
+alive_232_tick_2169	0
+next_event_tick_from_tick_1	2
+prev_event_tick_from_that_tick	1

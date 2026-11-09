@@ -10087,3 +10087,183 @@ cargo test --offline --lib -- replay_driver                                 # 17
 > 一句话别读错：**节奏是观测来的，"回放该这么播"仍然是我方自定**。
 > 本轮真正钉死的是"**泵必须跟着 tick 走**"这一条 —— 它同时被 §44 的运行时和本轮的断言固定住，
 > 而"每帧泵一次"那种写法现在会在 headless 里直接红。
+
+---
+
+## 57. 退役旧回放局面机：`replay_player.gd` 426 → 65 行，selftest 13 条改打 `GwReplayDriver`（2026-11，任务 84）
+
+`dispatch/84` 的一句话：**内核里有两份局面机** —— `src/graphwar_replay_player.rs`（原版模块）
+与 `client/src/play/replay_player.gd`（426 行 GDScript 副本）；81 号把驱动的流程搬进 Rust（§56）
+之后，后者只有 `selftest` 还在用，就成了纯维护负担。本轮把它退役。
+
+顺序是**硬要求**（`dispatch/84` §1 提醒②）：**先把旧实现的期望值固化成夹具 → 再改 selftest →
+最后删代码**。反过来做的话，"新实现等于旧实现"这件事就只剩新实现自己在说。
+
+### 57.1 固化的夹具：`fixtures/replay_player84.txt`（21 个键 / 48 行）
+
+| 列 | 是什么 |
+|---|---|
+| **来源** | **只由旧实现算出来**：`GwReplayFile.load_path(样本)` → `GwReplayPlayer.new().setup(f)`，再按 `selftest.gd` 第 3、4 组**同一串调用**取值 |
+| **样本** | `$HOME/.local/share/godot/app_userdata/Graphwar/replays/1793897298`（= `.reference/replays/gw2-replays-snapshot/replays/1793897298`；104 条事件，tick 1..2276） |
+| **生成** | `"$GODOT" --headless --path client --script res://tools/_gen84.gd -- --write`（**一次性脚本，未入库**；`-- --verify` 拿夹具回头核旧实现 ⇒ `FIXTURE_CHECK keys=21 mismatches=0`） |
+| **格式** | `key<TAB>value`；`#` 开头注释、空行忽略；值里不含制表符 |
+| **里面是什么量** | **时钟 7 个**：`first_tick`(1) / `last_tick`(2276) / `tick_after_setup`(1) / `tick_after_half_second`(31) / `tick_after_pause_1s`(31) / `tick_after_2x_half_second`(91) / `tick_delta_2x_half_second`(60)；**局面 10 个**：tick **550 / 1000 / 2168 / 2169 / 2276** 各一组 `canonical_tick_<t>` 与 `cursor_tick_<t>`（游标 81 / 84 / 101 / 102 / 104）；**生死 2 个**：`alive_232_tick_2168`(1) / `alive_232_tick_2169`(0)；**事件步进 2 个**：`next_event_tick_from_tick_1`(2) / `prev_event_tick_from_that_tick`(1) |
+
+取值那一段（旧类被删之后，要复核就从 git 历史里把它捞出来重跑这段）：
+
+```gdscript
+var p := GwReplayPlayer.new().setup(f)
+p.play(); p.advance_dt(0.5);                      # → tick_after_half_second
+p.pause(); p.advance_dt(1.0);                     # → tick_after_pause_1s
+p.speed = 2.0; p.play(); p.advance_dt(0.5);       # → tick_after_2x_half_second
+p.seek(550); p.canonical(); p.cursor              # → canonical_tick_550 / cursor_tick_550
+p.seek(2169); bool(p.state.alive.get(232, true))  # → alive_232_tick_2169
+p.seek(1); p.step_event(); p.step_back_event()    # → next_event_tick_from_tick_1 / prev_…
+```
+
+`canonical` 那 5 行里 tick 550/2168/2169/2276 与 §56 三端对拍过的四个串**逐字符相同**
+（`diff` 0 处）⇒ 夹具没有把三端对拍的价值丢掉（Python `tools/replay_state.py` / 内核 C ABI / 旧 `.gd` 三方同格式）。
+
+### 57.2 selftest 那 13 条 before → after（`_test_replay_player()` 第 3、4 组）
+
+⚠️ `dispatch/84` 写的是"那 6 条"（16 轮报告的口径），**实际是 13 条**：第 3 组 5 条播放模型 +
+第 4 组 8 条局面。**全改、一条不剩、判据一条不改**，只是被验的实现从 `.gd` 换成驱动：
+
+| # | 原来打 `GwReplayPlayer` | 现在打 `GwReplayDriver` | 期望值取自夹具的键 |
+|---|---|---|---|
+| 1 | `player.current_tick()` | `tick()` | `tick_after_setup` |
+| 2 | `player.last_tick` | `last_tick()` | `last_tick` |
+| 3 | `play(); advance_dt(0.5)` | `play(); advance_dt(0.5); tick()` | `tick_after_half_second` |
+| 4 | `pause(); advance_dt(1.0)` | `pause(); advance_dt(1.0); tick()` | `tick_after_pause_1s` |
+| 5 | `speed=2.0; play(); advance_dt(0.5)` | `set_speed(2.0); play(); advance_dt(0.5)` | `tick_after_2x_half_second` |
+| 6 | `seek(550); canonical()` | `seek(550); canonical()` + `cursor()` | `canonical_tick_550` / `cursor_tick_550` |
+| 7 | `seek(2168); canonical()` | 同左 | `canonical_tick_2168` / `cursor_tick_2168` |
+| 8 | `seek(2169); canonical()` | 同左 | `canonical_tick_2169` / `cursor_tick_2169` |
+| 9 | `state.alive.get(232)` | `actors()` 里 id=232 的 `alive` | `alive_232_tick_2168` / `_2169` |
+| 10 | `seek(2276); canonical()` | 同左 | `canonical_tick_2276` / `cursor_tick_2276` |
+| 11 | 往回跳 vs 新建播放器 | 往回跳 vs 新建**驱动器**，且**都**等于夹具 | `canonical_tick_1000` / `cursor_tick_1000` |
+| 12 | `step_event()` | `step_event()` | `next_event_tick_from_tick_1` |
+| 13 | `step_back_event()` | `step_back_event()` | `prev_event_tick_from_that_tick` |
+
+13 → **15** 条 `_expect`：多出的两条是**夹具可读**（21 键）与**驱动可载入**（`load()` 成功）；
+其余 13 条一一对应，第 6–11 条顺带把 `cursor` 也钉住（夹具里两件都固化了，判一次就够）。
+`GOLDEN_TICK_*` 四个常量**从 selftest 里删掉**（唯一真值来源改成夹具，不留第二份）。
+
+### 57.3 删了什么 / 为什么文件没有整份消失（**任务前提被证伪**）
+
+`client/src/play/replay_player.gd`：**426 → 65 行**（`git diff --numstat` = `+27 / −388`）。
+删掉的是**局面机本体**：`state` 字典与 `_reset_state()`、`apply_event()` 的 20 个 `match` 分支（覆盖 23 类事件）、
+`canonical()`、`advance_dt / advance_to / seek / step_event / step_back_event`、
+`actors() / obstacles_for_view() / target_positions() / mode_indices() / team_index() / summary()`、
+`GwReplayFile` 依赖与 tick 时钟常量 `TICKS_PER_SECOND`。
+
+**留下的只有 4 个纯查表静态函数**（`axis_index / function_index / turn_index / time_index`：
+字符串进、整数出，无状态、无副作用、不看回放）。原因不是"顺手留"，而是**删不动**：
+
+> `client/src/screens/play_screen.gd`（本轮**禁区**）`_begin_replay()` 第 2170–2173 行还有
+> 4 处活调用 `GwReplayPlayer.axis_index(...)` / `function_index` / `turn_index` / `time_index`。
+> **实测**（整份文件移走 → `--import` → `--quit-after 5`）：
+> ```
+> SCRIPT ERROR: Parse Error: Identifier "GwReplayPlayer" not declared in the current scope.   ×4
+> ERROR: Failed to load script "res://src/screens/play_screen.gd" with error "Parse error".
+> ```
+> ⇒ **整个播放屏解析失败**（`selftest` 会在几百条上同时红）。
+
+⇒ 完全删除必须同时改播放屏那 4 行（改成调驱动侧同一张表），那是**另一个任务**。
+本轮在允许范围内做到"局面机归零"，并把这条登记进 §57.8 #1。
+
+### 57.4 新增的"旧局面机不许长回来"断言（`play_flow_check.gd` 第 17 组，2 条）
+
+| 判据 | 现在的实现 |
+|---|---|
+| **方法表** | `GwReplayPlayer` 若还在，**不许**有这 16 个：`setup / advance_dt / advance_to / apply_event / canonical / seek / step_event / step_back_event / actors / obstacles_for_view / target_positions / current_tick / progress / finished / mode_indices / team_index` |
+| **源码** | `res://src/play/replay_player.gd` 若还在：**≤ 80 行**，且不含 `func apply_event` / `func canonical` / `func advance_dt` / `func _reset_state` / `"obstacles": []` / `"shots": []` / `TICKS_PER_SECOND` |
+
+`dispatch/84` 的「要做什么」第 4 条原话是"加一条 headless 断言：**旧类名已不存在**"。这一条**做不到**（同上：禁区里的 4 处调用），
+所以退一格成"旧**局面机**已不存在"：类名还在，但它已经没有任何局面/时钟能力 ——
+而且只要有人把其中任何一块加回来，上面两条就红。
+
+### 57.5 行为一致性：**逐位相同**，不是近似
+
+| 对拍 | 量 | 结果 |
+|---|---|---|
+| `seek(t)` 逐 tick | 旧 `.gd` `canonical()` vs 驱动 `canonical()`；`t` = **117 个**（全部事件 tick ∪ 每 25 tick ∪ 550/1000/2168/2169/2276） | **0 处不同** |
+| 同 117 个 tick | 旧 `cursor` vs 驱动 `cursor()` | **0 处不同** |
+| `advance_dt` 序列 | 44 帧（40×0.5 s + 1.0 + 0.25 + 2×(1/60)）后逐帧 `current_tick()` vs `tick()` | **0 处不同** |
+| 夹具自核 | 21 个键 vs 旧实现现值（`--verify`） | **keys=21 mismatches=0** |
+
+⇒ 判据要的每一个量都是**逐字符/逐位相同**（`canonical` 是 `%.6f` 文本，比的是**字符串**）。
+
+**唯一一处已知偏离（不是本轮引入、也碰不到判据）**：旧 `advance_dt()` 把 `dt` **夹到 1.0 s**，
+驱动**不夹**（§56 文件头第 2 条已登记）。本轮把它量了出来：
+
+```text
+dt=0.50  old_tick=31   new_tick=31    same
+dt=1.00  old_tick=61   new_tick=61    same
+dt=1.50  old_tick=61   new_tick=91    DIFF   ← 旧实现夹到 1.0 s（60 tick）
+dt=2.00  old_tick=61   new_tick=121   DIFF
+```
+
+selftest 用的最大 `dt` 就是 1.0 s ⇒ 这条偏离**碰不到任何断言**。按 `dispatch/84` §5，
+本轮**没有**把它"顺手修成一致"（那是语义改动，要另开任务）。
+
+### 57.6 残留引用（`grep` 全仓，2026-11-10）
+
+| 位置 | 是什么 | 处置 |
+|---|---|---|
+| `client/src/screens/play_screen.gd:2170–2173` | **4 处活调用** `GwReplayPlayer.axis_index(...)` 等 | ⚠ 禁区，未动；这是 §57.3 留下的**唯一**理由 |
+| `client/src/screens/play_screen.gd:291–292` | 注释"那份 `.gd` 还在…自检仍在用它做 canonical 的三端对拍" ⇒ **已过期** | ⚠ 禁区，未动（本轮改后自检**不再**用它） |
+| `client/src/app/app.gd:328` | 注释"播放/暂停由 `GwReplayPlayer` 自己接管" ⇒ 81 号起就已过期 | ⚠ 不在允许范围 |
+| `client/src/play/replay_file.gd:34` | 注释"见 `GwReplayPlayer` 的游标模型" ⇒ 游标模型已删 | ⚠ `client/src/play/**` 本轮只许删 |
+| `client/src/play/replay_player.gd` 自身 | 4 个纯查表函数 + 说明（65 行） | **保留**（§57.3） |
+| `client/tools/*.gd`、`src/_scaffold/replay_driver_class.rs:20` | 断言表 / 注释里的历史名 | 保留（都是"已退役"的判据与说明） |
+
+`client/src/play/` **没有空**（还剩 `function_input / keyboard_input / player_showcase /
+replay_file / replay_player`），所以没有目录要清。
+
+### 57.7 断言（before → after）与复现
+
+| 套件 | before | after |
+|---|---|---|
+| `cargo test --offline` | 1753 | **1753**（本轮**没改任何 `.rs`**：只改 GDScript + 加夹具） |
+| `cargo test --offline --features gdext-bindings` | 1859 | **1859**（同上） |
+| `selftest`（`-- --selftest`） | 714 / 0 / 1 skip | **716 / 0 / 1 skip**（+2，见 §57.2） |
+| `client/tools/play_flow_check.gd` | 183 | **185**（+2：第 17 组） |
+| headless 14 个脚本合计 | 1890 | **1892**（其余 13 份逐项不变：assemble 241 / base 117 / curve 96 / draw 235 / entity 366 / function 132 / gdext 24 / obstacle 116 / plane 96 / process 49 / recovered 57 / signal 155 / spike 23） |
+| 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **647 / 647 / 637**（`batches` 1080、`kind_seq` 1075 同；401 份冻结快照） |
+| manager 档位 | 19 / 2 / 1 / 0 | **19 / 2 / 1 / 0**（本轮不碰任何 manager；`docs/161-manager-gaps.md:414` 未动） |
+| `coverage_matrix.py --check` / `check_doc_refs.py` | OK | **OK**（`src/` 一个字没动） |
+
+```bash
+export RUSTUP_HOME=<ws>/.reference/rustup
+export CARGO_HOME=<ws>/.reference/cargo-home
+export CARGO_TARGET_DIR=<你的私有 target>
+export GODOT=<ws>/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cargo test --offline                                   # 1753
+cargo test --offline --features gdext-bindings         # 1859（**最后**跑，否则 .so 没 gdext）
+cargo build --offline --features gdext-bindings --example serve_match
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/play_flow_check.gd   # PLAY_FLOW 185 passed
+"$GODOT" --headless --path client -- --selftest                            # 716 / 0 / 1skip
+```
+
+⚠️ **本轮撞到一条 selftest 的既有 flake（不是本轮引入，已 A/B 证实）**：连跑到第 3 次时
+LAN 大厅那两条会**成对**红 —— `本地房间列表初始为空（实际 1）` 与
+`底部 Join IP 宽度 = 屏宽×0.2（LobbyButtonContainer.gd，期望 12.8）`。
+A/B：把本轮改动全部 `git stash` 回基线（426 行旧局面机仍在）连跑 **4** 次 ⇒ **第 3 次同样红这两条**
+（712 passed / 2 failed），其余 3 次 714/0/1；本轮改动连跑 **9** 次 ⇒ 第 3、7 次红这两条
+（714 passed / 2 failed），其余 7 次 **716/0/1**。两边的总数差恒等于 +2（本轮新增的两条），
+**红的是同两条、同一组（LAN 大厅）**，与回放无关。成因未查（嫌疑：跨进程 LAN 发现残留 ⇒
+两条同时红）。⇒ **`selftest 714/0/1` 这个护栏在"连跑"姿势下仍有 1/4~1/5 的假红**，
+复核时先看是不是这两条（`docs/18` §10.3 的种子钉死只治了关卡生成那一条，治不了这条）。
+
+### 57.8 遗留 / 未做
+
+| # | 项 | 状态 | 缺什么 |
+|---|---|---|---|
+| 1 | `replay_player.gd` **整份删除** | 只剩 4 个纯查表函数（65 行） | 播放屏 `_begin_replay()` 那 4 行（`client/src/screens/play_screen.gd`，本轮禁区）改成调驱动侧同一张表 ⇒ 之后可整份删 |
+| 2 | `play_screen.gd:291–292` / `app.gd:328` / `replay_file.gd:34` 的**过期注释** | 未改 | 同上（禁区 / 本轮只许删）；文字见 §57.6 |
+| 3 | selftest 的 **LAN 大厅 flake**（2 条成对红，≈1/4） | 已 A/B 定位到**基线也有** | 另开任务（本轮允许范围里没有它） |
+| 4 | `advance_dt` 的 `dt > 1.0 s`：旧实现夹、驱动不夹 | **刻意偏离**（§57.5） | 要改语义就另开任务（`dispatch/84` §5 明令不许"顺手修成一致"） |
+| 5 | 回放界面的时序与控件 | **未知** | 与 §56.6 #7 同一条（`0x4c6f40` 的播放时钟没解） |
