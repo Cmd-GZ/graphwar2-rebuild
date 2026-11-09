@@ -1,0 +1,8 @@
+# 任务 78 · 特征表规模 → 显存/墙钟（单配置、同一批 481 行、同一台机器、**串行跑**）
+# 复跑：$PY tools/callgraph_sim_tensor71.py sweep --pop v2 --half holdout --backend gpu \
+#        --feats all|core|gram,scal,caller --configs-file <单行配置> --report <json>
+# 两个口径分开写（第十三轮/63 号的纪律）：wall_s = 工具内部计算；proc_wall_s = 进程墙钟（含 import torch）
+# cols	nfeat	peak_alloc_MB	build_s	materialize_s	fuse_s	topk_s	wall_s	proc_wall_s	cells_x_feats
+24 列（全表）	24	911.9	5.4068	1.1562	0.0178	0.0122	1.2055	13.3812	81548112
+5 列（51 号 REF5）	5	218.0	0.9200	0.4431	0.0150	0.0223	0.4983	8.1544	16989190
+3 列（瘦身后）	3	212.4	0.8852	0.2920	0.0045	0.0222	0.3327	7.8940	10193514

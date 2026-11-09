@@ -96,6 +96,15 @@ pub mod protocol;
 // `GameStateManager` / `TurnManager` / `PlayerManager` 装进 `GraphwarModuleContainer`。
 #[cfg(feature = "gdext-bindings")]
 pub mod root_wiring;
+// 回放的**驱动**（`dispatch/81`，`docs/16-client.md` §56）：把"回放怎么往前走"
+// 从 GDScript（每帧 `tick += dt × 60`）搬成 Rust 的定步累加器 + **每 tick 泵一次**
+// —— 依据是 `docs/06` §44 量到的 `pumps ≡ ticks`（原版泵只在 tick 那一圈里跑）。
+// 纯逻辑（无 gdext），所以 `cargo test` 直接测；外壳类在 `replay_driver_class.rs`。
+pub mod replay_driver;
+// `GwReplayDriver` 的 GDExtension 外壳（播放屏的回放模式用它驱动）。只在
+// `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod replay_driver_class;
 pub mod replay_inflate;
 pub mod replaydiff;
 pub mod rng;

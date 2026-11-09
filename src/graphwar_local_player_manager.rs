@@ -131,8 +131,9 @@
 //! * `new` 的字段初始化顺序（两个架构上都内联掉了，只有 3 个闭包 + 形状证据）。
 //!   任务 74 在 x86 侧补了 8 条写入点（§8），只到"哪个偏移写了什么"这一档。
 //! * `NewPlayerRequest`(8) 的载荷为什么是**连接号**而不是别的（服务端那侧未读）。
-//! * `+0x30` 那个 `Weak` 指向的**是谁**、以及它后面那张 120 字节 entry 的表是什么
-//!   （§9 第五道门）。任务 74 只定到"这是一道门、且它在 5 连发之前"，语义**未知**。
+//! * `+0x30` 那个 `Weak` 指向的**是谁**：任务 79 结案 —— **模块容器的弱句柄**
+//!   （运行时读出来的目标 == 容器盒基，`get_module_wk` 拿它去取 CPM）；那张 120 字节
+//!   entry 的表 = **`GraphwarComputerPlayerManager` 的 Bot 表**（§9.1，四路证据）。
 //! * 配置里四个 `String` 的**字段名**（`player_config` 模块的 `Serialize` 才带名字，
 //!   本模块只看到偏移）⇒ 名字是 `推断`，顺序（名字/皮肤/脸/帽子）来自四条请求的语义。
 //!
@@ -198,6 +199,34 @@
 //! ⑤ 是任务 74 **新发现**的一道门（`docs/161` 当时只写到"⑤ 的门没逐条读"）：
 //! 命中即返回，所以"5 连发"不只看 `connected`/`first`，还看那张表的**首次插入**。
 //! 五条请求**内部没有**逐条判据（`0x51a170`–`0x51a451` 是一条直线，中间没有再跳到收尾的 `jcc`）。
+//!
+//! ### 9.1 第五道门结案（任务 79）：那张表是 `GraphwarComputerPlayerManager` 的 Bot 表
+//!
+//! `M+0x30` 那个 `Weak` **不是** bot 表本身，而是**模块容器的弱句柄**；门里那一步是
+//! "向容器要 `GraphwarComputerPlayerManager`，再在它的 Bot 表里按 `player_id` 查"。四条独立证据：
+//!
+//! ```text
+//! ① 静态：0x519fb1 lea rdi,[r14+0x30] ; 0x519fb5 call 0x46c5a0
+//!    0x46c5a0 = get_module_wk 的 20 个单态化之一（docs/02 §22.3：ComputerPlayerManager 的 wk）
+//!    函数体：upgrade 弱句柄 → container.borrow() → TypeId 哈希查 → 返回 Rc<RefCell<T>>
+//! ② 静态：返回后读 [rax+0x48]（= T+0x30 = hashbrown 的 items）、T+0x18/T+0x20（ctrl/mask）、
+//!    T+0x38（RandomState at +0x50）⇒ T 的形状与 CPM（`+0x18` 表 + `+0x38` hasher，72 B）**逐字段相同**
+//! ③ 静态：表项步长 **0x78 = 120 B**，key 在 `entry+0x00`（u32）、状态在 `entry+0x08`；
+//!    与 CPM 自己那三个函数（`0x478fc0` 插入 / `0x47a520` erase / `0x479520` 查）用的是**同一套偏移**
+//! ④ 运行时（`tools/frida_cpm_gates.js`，bot 局 ×2）：在 `0x519fb5` 处挂钩 `0x46c5a0` 的**返回**，
+//!    返回值 **逐次等于** CPM 的盒基（`cpmSelf-0x18`）⇒ `get_module_wk::<ComputerPlayerManager>`
+//! ```
+//!
+//! 门的语义（**观测**）：`player_info_event` 说的那个 `player_id` **已经在 Bot 表里**
+//! ⇒ 直接收尾、**不发**那 5 条请求。这与"Bot 的身份由 `add_computer_player` 自己申报"是同一件事：
+//! `0x478fc0` 插表之后按顺序发 59/50/52/54/66（`docs/161` §2 第 18 行），
+//! 所以本模块**不该**替一个 Bot 再申报一遍。
+//!
+//! ⚠️ 门的**可达性**（运行时两局都是这样，见 `docs/06` §46）：门④（"`Vec` 旧长 == 0"）先拦住，
+//! 而 `handle_connected_to_server` 会把 `Vec` 清空 ⇒ ⑤ 只在"本连接连上之后的**第一个**
+//! `player_info`"上求值一次。实测那个第一发永远是本机玩家自己（LAN 进大厅时就建好，pid 229），
+//! Bot 永远晚到（`vec_len ≥ 1`）⇒ 两局里 ⑤ 的**命中分支没走到**，走的是 `0x51a084`（未命中）。
+//! 这条门要触发的场景是"本连接的第一个玩家是 Bot"（纯 Bot 客户端 / 连接重建），本次没有造出来。
 //!
 //! ## 10. 复跑
 //!
@@ -411,8 +440,10 @@ impl MetadataRequest {
 /// `0x51a3f5`/`0x51a451`），`handle_connected_to_server` 里 8（`0x51a5bb` 重入队）。
 /// `handle_entity_removed_event` 体内**零** `add_event`。
 ///
-/// ⚠️ 原版还有第五道门（模块文档 §9 ⑤：`M+0x30` 那张表里已有该 `player_id` 就直接收尾），
-/// **本实现没有复现它** —— 那张表的语义未知（§7），照抄等于把猜测写成行为。
+/// ⚠️ 原版还有第五道门（模块文档 §9 ⑤ / §9.1）：**本连接的第一个 `player_id` 若已在
+/// `GraphwarComputerPlayerManager` 的 Bot 表里 ⇒ 不发那 5 条**。
+/// [`Self::handle_player_info`] 没有 Bot 表可查（等价于"表为空"），
+/// 要复现这条门请用 [`Self::handle_player_info_with_bots`]。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GraphwarLocalPlayerManager {
     /// `Vec<u32>`（`+0x00/+0x08/+0x10`）：我名下的所有 `player_id`。
@@ -463,11 +494,33 @@ impl GraphwarLocalPlayerManager {
     /// `handle_player_info`：过滤 → push → **首次入列**时给 5 条请求。
     ///
     /// `level` 对应 `campaign_control::get_current_level()`（`Some` 用它，`None` 用 0）。
+    ///
+    /// 这里**没有** Bot 表可查 ⇒ 第五道门恒为"未命中"（等价于原版表为空那一支）。
     pub fn handle_player_info(
         &mut self,
         player_id: u32,
         connection_id: u32,
         level: Option<u32>,
+    ) -> Vec<MetadataRequest> {
+        self.handle_player_info_with_bots(player_id, connection_id, level, |_| false)
+    }
+
+    /// `handle_player_info` + **第五道门**（模块文档 §9.1，`0x519fb1`→`0x51a058`）。
+    ///
+    /// `is_computer_player(pid)` 回答"这个 `player_id` 在 `GraphwarComputerPlayerManager`
+    /// 的 Bot 表里吗"（原版是 `get_module_wk::<GraphwarComputerPlayerManager>` 之后一次哈希查，
+    /// 只管"在不在"，不读 `BotData` 的任何字段 ⇒ 传 `|id| bots.get(id).is_some()` 即可）。
+    ///
+    /// 三条要注意的**顺序**（逐位，`0x519f7b`–`0x51a058`）：
+    /// 1. `push` 在门⑤**之前** ⇒ 即使是 Bot，它的 id 也照样进 [`Self::player_ids`]；
+    /// 2. 门④（旧长 == 0）先拦 ⇒ 门⑤ 只对"本连接的第一个 player_info"求值一次；
+    /// 3. 门⑤命中 ⇒ 直接收尾，**一条请求都不发**（`0x51a058 je 0x51a0e0`）。
+    pub fn handle_player_info_with_bots(
+        &mut self,
+        player_id: u32,
+        connection_id: u32,
+        level: Option<u32>,
+        is_computer_player: impl Fn(u32) -> bool,
     ) -> Vec<MetadataRequest> {
         if self.connected != 1 {
             return Vec::new();
@@ -478,6 +531,10 @@ impl GraphwarLocalPlayerManager {
         let first = self.player_ids.is_empty();
         self.player_ids.push(player_id);
         if !first {
+            return Vec::new();
+        }
+        // ⑤ 本连接的第一个玩家是个 Bot ⇒ Bot 的身份由 add_computer_player 自己申报过了
+        if is_computer_player(player_id) {
             return Vec::new();
         }
         let requests = vec![
@@ -618,5 +675,38 @@ mod inline_tests {
         let _ = m.take_outbox();
         assert!(m.handle_player_info(11, 101, None).is_empty(), "③ connection_id 不匹配");
         assert!(m.outbox.is_empty());
+    }
+
+    /// 第五道门（§9.1，`0x519fb1`→`0x51a058`）：本连接的第一个 `player_id` 是个 Bot
+    /// ⇒ **一条都不发**；而且它照样进了 `player_ids`（`push` 在门之前，`0x519f91`）。
+    #[test]
+    fn gate_five_blocks_requests_for_a_bot_first_player() {
+        let mut m = mgr();
+        m.handle_connected_to_server(228);
+        let _ = m.take_outbox();
+        let bots = [232u32, 235];
+        let reqs = m.handle_player_info_with_bots(232, 228, Some(7), |id| bots.contains(&id));
+        assert!(reqs.is_empty(), "第一个玩家是 Bot ⇒ 5 连发被门⑤拦掉");
+        assert!(m.outbox.is_empty());
+        assert_eq!(m.player_ids, vec![232], "push 在门⑤之前，Bot 的 id 也进 Vec");
+
+        // 反面对照：同一个 id、表里没有它 ⇒ 5 连发照发（这就是两局运行时观测到的那条路）。
+        let mut n = mgr();
+        n.handle_connected_to_server(228);
+        let _ = n.take_outbox();
+        let reqs = n.handle_player_info_with_bots(229, 228, None, |id| bots.contains(&id));
+        assert_eq!(reqs.len(), 5, "非 Bot ⇒ 门⑤未命中，5 连发照发");
+    }
+
+    /// 门④ 先于门⑤：第二个 `player_info` 即使是 Bot 也不会再发请求（两局运行时都是这条路）。
+    #[test]
+    fn gate_four_runs_before_gate_five() {
+        let mut m = mgr();
+        m.handle_connected_to_server(228);
+        let _ = m.take_outbox();
+        assert_eq!(m.handle_player_info(229, 228, None).len(), 5);
+        let _ = m.take_outbox();
+        assert!(m.handle_player_info_with_bots(232, 228, None, |id| id == 232).is_empty());
+        assert_eq!(m.player_ids, vec![229, 232]);
     }
 }

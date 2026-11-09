@@ -5257,3 +5257,777 @@ $PY tools/lan_ai_triple.py --jsonl $R/lan_ai.jsonl --label lanAI --oracle 1 \
 | ④ 1 ulp | **未复现**（AI 那一发上；`Point == start_x` 逐位 3/3）。覆盖面与缺什么见 §43.6 |
 | `cargo test --offline` | **1693 passed / 0 failed** |
 | `tools/check_doc_refs.py` | **rc=0** |
+
+## 44. `GraphwarGameClient::process`（`0x518400`）的**节奏真值**：帧 30–67 fps 时 tick 恒 **60.00/s**；每帧 **0/1/2** 个 tick、长帧按 `gap ÷ 16.667 ms` 成比例追赶；泵**只跟着 tick 走**（不是每帧一次）；引擎给的 `delta` **从不被读**（`--fixed-fps 10` 下 delta 恒 0.1 s，tick 仍跟墙钟）（2026-11-09，`dispatch/80`）
+
+> 任务书：[`dispatch/80-drive-frame-cadence.md`](../dispatch/80-drive-frame-cadence.md)。起点 `CG@e150ccd`，
+> 分支 `agent/drive-frame-cadence`，私有 `CARGO_HOME` / `CARGO_TARGET_DIR`。
+> 目标构建：`libgraphwarrust.so` sha256 **`9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`**
+> （= `steam/2026-08-28`，与 §42 / §48 同一份）。地址一律**虚地址**（RVA），Ghidra = RVA + `0x100000`。
+>
+> **为什么这一节**：§48 已经把那条循环**逐指令**读出来了、§51 已经把它落进内核
+> （`process` + `KernelBus::drive_frame`），但**"运行时到底按什么节奏跑"一直只有"每秒几次"这种汇总数**
+> （§48.4 的 52/60/120）。§52.5 / §53.6 两次评估后**故意没接**，理由之一是"没有真帧可对"。
+> 本节把"节奏"本身量成真值：**每帧形状**（几个 tick、几个泵、什么顺序）、**长帧行为**、**delta 读没读**。
+>
+> **编号说明**：任务书写"现在最大 §43、你用 §44"。本文件**现行的最大编号是 §42**
+> （§24–§43 已整体搬进 [`archive/155-round-log.md`](archive/155-round-log.md)），§44 在本文件未被占用
+> ⇒ 按任务书用 **§44**（若并行任务也占了 §44，请协调者重排）。
+>
+> **本节只做测量，没有接线**（`src/`、`client/` 一个字节没动；接线方案写在 §44.7，只写不改 —— 本轮
+> `src/_scaffold/root_wiring.rs` 归 77 号）。
+
+### 44.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | **钩到了吗** | **钩到了**。8 个钩子，**5 次独立运行 / 5 局**（战役关对局），合计 **12 175 帧、12 856 个 tick**；每帧的调用者只有 **`0x515dfe`** 一个站点（4642/4642） | **观测** |
+| ② | **帧率 / tick 率 / 比值** | 帧 **30.00 → 66.98 fps** 五档，tick 恒 **59.94–60.01/s**；比值 = `60 ÷ 帧率`（默认 64.90 fps ⇒ **0.924 tick/帧**；`--max-fps 30` ⇒ **1.998**）；稳态每秒 tick 数 **59–61** | **观测** |
+| ③ | **每帧几个 tick** | 默认参数：**0:507（11.0%）/ 1:4116 / 2:15**，另有 4 帧（4/13/37/91 tick）来自长帧与人为冻结 | **观测** |
+| ④ | **泵是不是每帧一次** | **不是**。`pumps` 与 `ticks` **逐帧严格相等**（A 的 4 642 帧逐帧相等；五轮全部相等）⇒ **0-tick 的帧一次都没泵**；泵在 tick 那一圈里（`0x51849f`） | **观测** |
+| ⑤ | **顺序** | **tick 先、泵后**：调用点 `0x518499 call r13`（tick）→ `0x51849f call rbp`（泵）；运行时 4 640 / 4 642 帧的顺序串是 `TPTP…`，**0 帧**是"泵在前" | **观测** |
+| ⑥ | **`delta` 读没读** | **没读**。①指令：`0x518400..0x518527` 全文**没有一条 `xmm` 操作数**；②行为：`--fixed-fps 10` 下引擎给的 delta **恒 100 000 µs**（n=1332，min=max），而该轮帧间隔只有 23 216 µs、tick 仍是 **60.01/s**、**1.393 tick/帧**（若按 delta 走该是 **6**） | **观测**（指令 + 运行时双证） |
+| ⑦ | **与 `ProcessLoop` 对齐** | 5 项对上（每帧一次 / 先 tick 后泵 / 追赶无上限 / delta 忽略 / `probes = 帧数 + tick 数`），1 项是**我方已知差异**（`(0,0)` 也算到期，实测撞不到 —— §44.6） | **观测** |
+| ⑧ | **接线** | **没接**。方案见 §44.7（改哪 2 处、会动 5 个读数） | —— |
+
+### 44.1 钩子：地址、返回地址、样本量（含正对照 / 负对照）
+
+工具：**新增** [`tools/frida_cadence.js`](../tools/frida_cadence.js) + [`tools/frida_cadence.py`](../tools/frida_cadence.py)
+（`Interceptor.attach`，**只读**；时间源 `clock_gettime(CLOCK_MONOTONIC)`，µs 级 —— `Date.now()` 只有 ms，
+量不了 16.667 ms 上的抖动）。进局用战役那条路（`campaign.save = level_20` + 3 次点击，坐标同
+[`tools/frida_point_array.py`](../tools/frida_point_array.py) 的 `NAV`/`LEVEL_NODE`）。
+
+| 钩子（RVA） | 名字（§48.1 已定） | 每秒次数（§44.2 那一秒） | 线程 | 返回地址 = 调用点 |
+|---|---|---:|---|---|
+| `0x3a5760` | `GraphwarRootNode::process`（引擎 `_process`） | **64** | 15 | `0x42a91a` |
+| `0x515dc0` | `GraphwarBackend::process` | **64** | 15 | `0x3a6a54` |
+| `0x518400` | **`GraphwarGameClient::process`** | **64** | 15 | **`0x515dfe`**（唯一） |
+| `0x518240` | `GraphwarGameClient::tick` | **60** | 15 | `0x51849c`（循环体内，`call r13` + 3） |
+| `0x3d3630` | `GraphwarEventHandler::process_events`（= 泵） | 120 = **60 客户端** + 60 服务端 | 15 / 304 | `0x5184a1`（客户端）/ `0x451be5`（服务端） |
+| `0x519450` | `GraphwarTickHandler::get_time_to_tick` | 304 = **124 客户端** + 180 服务端 | 15 / 304 | `0x518489`:124 / `0x451ba8`:120 / `0x4524df`:60 |
+| `0x51848e` | 判决点 `cmp edx,0x3b9aca00` | **124** = 64 帧 + 60 tick | 15 | —— |
+| `0x42a8bf` | `movsd xmm0,[rax]`（引擎交给 `_process` 的 f64） | **64**（这一行取自 A2 的同一秒） | 15 | —— |
+| `0x463da0` | `TurnManager::next_turn`（**负对照**） | **0** | —— | —— |
+
+**正对照（证明钩子链路有效，`AGENTS.md` 合并纪律 A.4）**
+
+```text
+① 引擎帧钩子在自己跳：RootNode::process = Backend::process = GameClient::process = 64/s，三者逐秒相等
+   ⇒ 不是"钩子挂了却报 0"，也不是"什么都算一次"。
+② 判决点的算术自洽：0x51848e 命中 124 次 = 64 帧 + 60 tick（每个循环圈一次、每帧最后一圈不 due）
+   ⇒ `probes = 帧数 + tick 数` 这条在**运行时**成立（不是从反汇编推的）。
+③ 菜单 vs 对局（判别力）：进对局前 28 个 1 秒窗口里 `RootNode::process` 82–119/s，
+   而 `GameClient::process` **恒 0**（`[backend+0x1e0]` 为空，`0x515dd1` 那条 `je`）
+   ⇒ 钩子确实是"按函数挂的"，不是"整体计数"。
+④ 负对照：`TurnManager::next_turn`（只在换手时调）整局 **0** 次。
+```
+
+**第二个调用者（复现了 §48.4 的 110/s，顺手记下来）**：进对局那一秒 `GameClient::process` **n=99**，
+返回地址**全部是 `0x51718b`**（`wait_for_players` 的 1 ms 忙等）；下一秒混合（`0x51718b` 20 + `0x515dfe` 48）；
+之后纯 `0x515dfe`。⇒ **`0x518400` 有两个宿主**，"每帧一次"只对 `0x515dfe` 这一条成立。
+本节的稳态窗口（`reset` 之后）里 `0x51718b` **一次都没出现**（4642/4642 = `0x515dfe`）。
+
+### 44.2 真值表：帧率、tick 率、比值（五轮，同一份构建）
+
+每轮都是**进对局后 `reset()` 清零**再记，窗口里只有一个稳态对局（不含菜单、不含开局忙等）。
+
+| 运行 | 游戏参数 | 窗口 | 帧 | **帧率** | tick | **tick 率** | **tick/帧** |
+|---|---|---:|---:|---:|---:|---:|---:|
+| **A** | 默认（无 fps 限制） | 71.52 s | 4 642 | **64.90** | 4 291 | **60.00** | 0.924 |
+| **A2** | 默认 + delta 探针 | 40.92 s | 2 741 | **66.98** | 2 455 | **60.00** | 0.896 |
+| **B** | `--fixed-fps 10` | 40.04 s | 2 533 | **63.26** | 2 403 | **60.01** | 0.949 |
+| **B2** | `--fixed-fps 10` + delta 探针 | 30.91 s | 1 332 | **43.09** | 1 855 | **60.01** | 1.393 |
+| **C** | `--max-fps 30` | 30.90 s | 927 | **30.00** | 1 852 | **59.94** | 1.998 |
+
+**五轮全部满足**（每一轮都是全窗口累计，不是抽样）：
+
+```text
+pumps == ticks                    （A 4291/4291、A2 2455/2455、B 2403/2403、B2 1855/1855、C 1852/1852）
+probes == frames + ticks           （A 8933 = 4642+4291、A2 5196、B 4936、B2 3187、C 2779）
+tick 率 ∈ [59.94, 60.01]          （帧率 30 → 67 五档全中；跨 70 秒零漂移）
+```
+
+**稳态每秒抖动**（只取长度满 1 s 的窗口；A 的三个"冻结秒"除外）：
+
+| 运行 | 每秒 tick 数 | 每秒帧数 |
+|---|---|---|
+| A | **59–61**（冻结秒最高 149） | 27–80（有卡顿），均值 66.29 |
+| A2 | **58.42–61** | 60–81，均值 66.60 |
+| B | **58.42–61** | 58.42–67，均值 63.23 |
+| B2 | **57.43–64** | 13–50，均值 42.97 |
+| C | **59–61** | 29.70–31，均值 30.01 |
+
+⇒ **帧率变了 2.2 倍，tick 率一动不动。** 这就是"能不能接 `drive_frame`"的判据：接线**不能**用帧率去推 tick 数。
+
+### 44.3 每帧的形状：0/1/2（+ 长帧），泵与 tick 严格 1:1
+
+| 运行 | `ticks/frame` 直方图 | `pumps/frame` 直方图 | 0-tick 帧 |
+|---|---|---|---|
+| **A**（默认 64.90 fps） | `0:507  1:4116  2:15  4:1  13:1  37:1  91:1` | **与左列逐格相同** | **507（10.9%）** |
+| A2（66.98 fps） | `0:302  1:2423  2:16` | **与左列逐格相同** | 302（11.0%） |
+| B2（43.09 fps） | `1:936  2:331  3:22  4:25  5:17  6:1` | **与左列逐格相同** | 0 |
+| C（30.00 fps） | `1:16  2:897  3:14` | **与左列逐格相同** | 0 |
+
+三条都直接读表：
+
+1. **`pumps ≡ ticks`**：`0x5184a1 jmp` 那条回边把 `tick` 与泵捆在同一圈里（§48.3），
+   所以**帧率高于 60 时必然有"整帧一个事件都不派发"**。任何"每帧泵一次"的设计都是错的。
+2. **顺序只有一个**：`order` 串（`T`=tick、`P`=泵）在 A 的 4 642 帧里 **4 640 帧是 `TP` 的整数次重复**，
+   剩下 2 帧是 37/91 tick 的长帧（串按 20 对截断，判据算不了，不是顺序变了）；
+   **`first-event-is-pump` 五轮全 0**。
+3. **`process` 自身很快**：帧内耗时 dwell 均值 **107–157 µs**、最小 40 µs ⇒ 它**不阻塞**、不 sleep
+   （循环体里五个 `call` 全是 `get_module` / `get_time_to_tick` / `tick` / 泵 / drop）。
+
+### 44.4 追赶：长帧按 `gap ÷ 16.667 ms` 补齐（人为冻结 + 自发长帧）
+
+拿不到"长帧"不需要等真帧 —— 把**进程**冻住 `SIGSTOP`（墙钟 `CLOCK_MONOTONIC` 照走），
+恢复后的那一帧必须一次补齐欠账。这是 `0x5184a1 jmp 0x518470` 那条回边的**直接观测**：
+
+| 冻结 | 受影响那一帧的 tick | 该帧 gap（墙钟） | 该帧 dwell（process 内） | `gap ÷ 16.667 ms` |
+|---|---:|---:|---:|---:|
+| **200 ms**（+20 s） | **13** | 215 906 µs | **360 µs** | 12.95 |
+| **600 ms**（+40 s） | **37** | 616 599 µs | **1 116 µs** | 37.00 |
+| **1 500 ms**（+55 s） | **91** | 1 515 083 µs | **2 449 µs** | 90.90 |
+| 自发（+43.6 s，无冻结） | 4 | 78 273 µs | 204 µs | 4.70 |
+
+* **没有上限**：1.5 s 冻结 ⇒ 91 圈，循环里没有计数/限幅（与 §51.6 第 3 条一致，现在有运行时样本了）。
+* **追赶很便宜**：91 个 tick + 91 次泵一共 **2 449 µs** ⇒ 每圈约 **27 µs**。
+* **背靠背**：`tick` 之间的墙钟间隔直方图里有一簇**微秒级**的
+  （A：`[16,33)µs:122  [33,66):30  [66,100):3  [100,500):2` 合计 **157**；
+  理论值 = `15×1 + 3 + 12 + 36 + 90 = 156` 个"帧内第二个及以后的 tick"）⇒ 同一帧里多个 tick 是**连着执行**的。
+* **稳态间隔正好一个周期**：A 的 `tick` 间隔 n=4290、**均值 16 667.2 µs**、最小 18 µs（帧内追赶）、
+  最大 1 515 087 µs（1.5 s 冻结）；主体落在 `[10k,15k):1805 + [15k,16.5k):1463 + [16.5k,17k):163`。
+  71.52 s × 60 = 4291.2 ⇒ 实际 **4291** ⇒ **70 秒里零漂移**（累加器 + 定步，不是"每帧重置"）。
+* **判决点的相位**（`0x51848e` 上"距下一个 tick 还有多少"）：不是恒 1e9、也不是恒 0，
+  而是**铺满 0–16.6 ms**（A：`[1k,5k):1158  [5k,10k):1380  [10k,15k):1386  [15k,16.5k):416`）
+  ⇒ 帧与 tick 栅格不同步、相位一直在漂；**只有 due 那一刻返回哨兵 1e9**（哨兵命中数 = tick 数，逐轮相等）。
+
+### 44.5 `delta` 到底读没读：指令 + 行为，两条独立证据
+
+**(a) 指令级（§48.3 已给，本节复跑确认）**：`tools/addr_probe.py dis 0x518400` 的 **FDE `0x518400..0x518527`**
+全文没有一条操作数涉及 `xmm`（循环头/哨兵/两个 `call`/`je`/panic 路径都在内）。arm64 侧同形不读 `d0`。
+
+**(b) 行为级（本节新增的判别实验）**：引擎交给 `_process` 的 delta 不经过 `xmm` 也可读 ——
+`0x42a8bf movsd xmm0,[rax]`（typed vcall 里把 Variant 的 f64 装进 xmm0），`rax` 就是那个 f64 的地址。
+在这条指令上下钩读它，得到**引擎真正给的 delta**：
+
+| 运行 | 帧间隔（实测） | **引擎给的 delta** | tick/帧 | 若"按 delta 定时步"应有 |
+|---|---|---:|---:|---:|
+| **A2** 默认 | 均值 **14 930 µs**（min 11 370 / max 20 267） | 均值 ≈ **15 000 µs**（n=2741，min 11 641 / max 18 489）—— **跟墙钟一致** | 0.896 | ≈ 0.90（同值，**不可判别**） |
+| **B2** `--fixed-fps 10` | 均值 **23 216 µs** | **恒 100 000 µs**（n=1332，**min = max = 100000**；24 条样本 `v=0.1` 逐条相同） | **1.393** | **6.0**（`0.1 s × 60`） |
+
+⇒ `--fixed-fps 10` 把"引擎的 delta"和"墙钟"**拆开了 4.3 倍**：delta 说每帧该走 6 个 tick，
+实际只走 **1.393**（= `60 ÷ 43.09`，完全由帧间隔解释）。**循环不读 delta —— 这是行为证据，不是读代码说的。**
+
+> 附带的旁证：正常局里 delta（≈15 000 µs）与帧间隔（14 930 µs）**几乎相等** ——
+> 这正是"为什么光看正常局的 tick 数分不出这两种模型"的原因，所以才要 `--fixed-fps` 那个拆分实验。
+
+### 44.6 与我方 `ProcessLoop` / `drive_frame` 的逐项对齐
+
+| # | 项 | 原版（本节实测） | 我方（`src/graphwar_game_client.rs:743` / `root_wiring.rs:2288`） | 一致？ |
+|---|---|---|---|---|
+| 1 | 宿主频率 | 每引擎帧 **1 次**（`0x515dfe`，64/64/64 逐秒与 `RootNode::process` 相等） | `drive_frame` 设计为"每帧一次"，**但现在没有任何运行时调用者**（`frames()` 恒 0） | **一致（未接）** |
+| 2 | 循环体顺序 | tick（`0x518499`）→ 泵（`0x51849f`），每圈一对 | `host.tick()` → `host.process_events()` | **一致** |
+| 3 | 泵的节奏 | **pumps ≡ ticks**；0-tick 帧泵 0 次 | 同一循环体里调用 ⇒ 同 | **一致** |
+| 4 | 追赶 | 无上限：200/600/1500 ms ⇒ 13/37/91 圈 | `loop { … }` 无上限 | **一致** |
+| 5 | delta | **不读**（指令 + `--fixed-fps 10` 行为） | `process(host, _delta)` 忽略 | **一致** |
+| 6 | `probes` 口径 | `probes = 帧数 + tick 数`（124 = 64 + 60） | `out.probes += 1` 每圈一次 ⇒ 同 | **一致** |
+| 7 | "到期"判据 | `edx == 1e9` 才算到期（`0x51848e`）；非到期时剩余量 2 µs–16.6 ms | `tick_is_due` 把 `(0,0)` **也**算到期（§51.5 第 4 条） | **已知差异**（见下） |
+| 8 | 时基 | `Instant::now()` 墙钟，`base` = tick handler 创建时刻 | `anchor_tick_handler_to_now`（安装时刻重锚） | **一致** |
+
+**第 7 项的量级**：五轮里"非到期"判决点的剩余量**最小 2 µs（B2）/ 3 µs（A2）**，从没落到 0
+⇒ 我方那条 `(0,0)` 分支在墙钟下**撞不到**（§51.5 第 4 条说的"帧边界正好压 tick 边界"概率≈0 现在有了数值）。
+**没有观测到它造成任何 tick 数差异**：五轮的 `tick 率` 全部落在 59.94–60.01。
+
+### 44.7 接线方案（**只写，不改** —— `root_wiring.rs` 本轮归 77 号）
+
+#### 44.7.1 实测给出的三条硬前提
+
+```text
+① 每帧**一次** drive_frame（不是"每帧 while 到期"—— while 已经在 process() 内部）
+   证据：GameClient::process 与引擎帧 1:1（64/64/64 每秒，站点唯一 0x515dfe）
+② **外面不要定时器/限速/"每帧最多补一次"**：追赶发生在 0x5184a1 那条回边里
+   证据：1.5 s 冻结 ⇒ 单帧 91 圈，dwell 只有 2 449 µs
+③ **要有"在对局里"这个门**（原版 0x515dd1 判 Option<GraphwarGameClient>）
+   证据：菜单阶段 GameClient::process 实测 **0/s**（28 个 1 s 窗口）
+```
+
+#### 44.7.2 要改哪两处（两处各 1–3 行）
+
+**方案 A（贴合原版结构）**：`src/_scaffold/graphwar_root_node_class.rs:468`
+
+```rust
+fn process(&mut self, _delta: f64) {          // ← 原版就是 GraphwarRootNode::process 0x3a5760
+    self.process_calls += 1;
++   if self.in_match() {   // ← 门（**伪代码**：本层没有 in_match()，要用后端/播放屏那个"对局中"状态；
++                            //    对应原版 0x515dd1 的 [backend+0x1e0] ≠ 0）
++       super::root_wiring::install_kernel_bus().borrow_mut().drive_frame(_delta);
++   }
+}
+```
+
+⚠ **但活动客户端现在不实例化这个 Rust 类**：`client/src/main.gd` 是 GDScript 根节点，
+只有 `client/tools/assemble_check.gd` 建 Rust 的 `GraphwarRootNode`。选 A 就**必须同时**让活动客户端用它
+（= 把播放屏挂到 Rust 根节点下），那是比"3 行"大得多的改动。
+
+**方案 B（最小，改播放屏）**：`client/src/screens/play_screen.gd:2943`
+
+```gdscript
+func _process(delta: float) -> void:
+    _advance_curve(delta)
++   if _running:                              # ← 门：菜单/结算后不推（原版那 28 个窗口是 0/s）
++       _frame_driver.drive_frame(delta)      # ← 每帧**一次**
+    ...
+```
+
+它需要一个 `#[func]` 生产类把 `KernelBus::drive_frame` 暴露给 GDScript。现成能用的只有
+`KernelProcessHost`（`src/_scaffold/root_wiring.rs:3365`，`#[class(base=RefCounted)]`，**验收外壳**、
+只在 `--features gdext-bindings` 下编）。要么直接用它（但它的自我说明写着"原版没有这个类"），
+要么由 77 号加一个正式的（例如挂在 `GraphwarRootNode` 上的 `#[func] frame_tick(delta)`）。
+
+**另外两行不用改**（现状已对）：
+`KernelBus::drive_frame`（`root_wiring.rs:2288`）语义与实测逐条一致；
+`anchor_tick_handler_to_now`（`:2363`）就是"base = 创建时刻"那一句的对应物 —— **不重锚就是 17 亿圈死循环**
+（§51.3 的坑）。
+
+#### 44.7.3 会动到哪些读数（逐项）
+
+| # | 读数 | 现在 | 接上之后 | 风险 / 要补的断言 |
+|---|---|---|---|---|
+| 1 | **`EntityDrawer` 的 `V`**（`entity_drawer_class.rs:1288` `kernel_clock()`） | 无总线 ⇒ **`0.0`** | 真实读数（每秒 **+60**） | ⚠ §52.5 第 2 条说的就是它。**频率**有真值了，**绝对相位没有**（见 §44.8 第 1 条） |
+| 2 | `KernelBus::frames()/ticks()/probes()` | 0（只有测试里非 0） | 每秒 ≈ **+65 / +60 / +125** | 只有断言读它；`process_loop_check` 用**自己的** host，不受影响 |
+| 3 | `tick_event` / `TickRequest` 投递 | 一条都没有 | 每 tick 一条 `TickEvent`；每 60 条一条 `TickRequest`；**默认帧率下 11% 的帧一条都没有** | 任何"每帧必有一条 tick 事件"的断言都会挂 |
+| 4 | 播放屏 `_advance_curve(delta)`（`play_screen.gd:1035`） | 自己按 `delta × 60` 累加 `_curve_tick` | **不变**（它不读 tick handler） | 接上后**两个钟并存**；以后把曲线改成"按 tick 揭示"时**必须删掉**这行的累加，否则双倍速 |
+| 5 | 菜单 / 非对局 | —— | 加了门 ⇒ 不动；**不加门 ⇒ 菜单里也 tick**（与原版 0/s 不符），`V` 会在菜单里跑 | 门是必需的，不是"以后再说" |
+
+#### 44.7.4 接上之后照真值钉的四条断言（headless 可写）
+
+```text
+1) 30 s 墙钟：ticks ∈ 60×秒 ± 3；probes == frames + ticks；pumps == ticks        （A/A2/B/B2/C 五轮都满足）
+2) 帧率无关：同一段墙钟，--max-fps 30 / 默认 / 240 下 tick 数相同（±2）           （实测 59.94 / 60.00 / —）
+3) 0-tick 帧存在：帧率 > 60 时 zero_tick_frames > 0，且这些帧 pumps == 0          （A：507 帧，10.9%）
+4) 长帧追赶：摆墙钟 +200 ms ⇒ 单帧 ticks ∈ [12,13]（实测 13）、+1500 ms ⇒ 91 圈    （§44.4 表）
+```
+
+### 44.8 诚实清单（仍是推断 / 未知）
+
+| # | 项 | 档 | 缺什么 |
+|---|---|---|---|
+| 1 | `V`（`get_fractional_tick`）的**绝对相位** | **未知** | 基准是 tick handler 创建时刻（`SystemTime::now()`），运行时无法复原 ⇒ "频率"可对、"相位"不可对。这正是 §52.5 第 3 条"没有真帧可对"的**真正范围**：节奏有真值，相位没有 |
+| 2 | 真机（非 llvmpipe）帧率 | **未知** | 本机 Xvfb + llvmpipe，帧率 30–67；真机可能 vsync 60 或更高。但 tick 率与帧率**无关**已在 30 / 43 / 63 / 65 / 67 五个点验过 |
+| 3 | `--fixed-fps` 下帧率为何从 65 掉到 43 | **推断** | 只观测到"帧间隔 15.4 → 23.2 ms"，没读引擎侧（`Graphwar.x86_64` 已 strip）；不影响本条结论（delta 与墙钟已拆开） |
+| 4 | `wait_for_players` 忙等为什么是 1 ms / 99–127 次每秒 | **未知** | 只观测到站点 `0x51718b` 与频率；`0x516fd0` 的函数体没逐条读（§51.6 第 4 条仍未结） |
+| 5 | `(0,0)` 边界的后果 | **我方差异（实测未触发）** | 非到期剩余量最小 2 µs ⇒ 撞不到；但这是"本机五轮没撞到"，不是"证明不可能" |
+| 6 | 跨线程 | **未测** | 本节所有客户端钩子都在 tid 15（引擎主线程）；服务端线程的 60 次/秒泵是**另一条链**（`0x451be5`），不属于本循环 |
+
+### 44.9 复现（全部可原地复跑）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+cd <WT>                                    # 分支 agent/drive-frame-cadence
+
+# ① 进局 + 量（每轮 ~2.5 min：18 s 起到窗口，再跑 --record 秒）
+$PY tools/frida_cadence.py --out <工作区>/A.jsonl --data-dir <工作区>/gd_A \
+    --record 70 --stall 200@20 --stall 600@40 --stall 1500@55      # A：默认 + 三档冻结
+$PY tools/frida_cadence.py --out <工作区>/C.jsonl --data-dir <工作区>/gd_C \
+    --record 30 --game-arg=--max-fps --game-arg=30                  # C：帧率 30
+$PY tools/frida_cadence.py --out <工作区>/B2.jsonl --data-dir <工作区>/gd_B2 \
+    --record 30 --game-arg=--fixed-fps --game-arg=10                # B2：delta 恒 0.1 s（判别实验）
+
+# ② 真值表（从 JSONL 直接打；跨 tally 求和 = 窗口累计，以最后一次 reset 为界）
+$PY tools/frida_cadence.py --summary <工作区>/A.jsonl
+
+# ③ 静态复核（delta 不读 + 循环体）
+$PY tools/addr_probe.py dis 0x518400     # FDE 全文；搜 xmm —— 一条都没有
+$PY tools/addr_probe.py dis 0x42a8a0     # 0x42a8bf movsd xmm0,[rax]（delta 的原文出处）
+$PY tools/addr_probe.py dis 0x518240     # tick：内部再调 0x519840，无 sleep
+```
+
+产物（**不入库**，`.agent-work/` 是易失的）：每轮一份 JSONL（`hooks/ready/buckets/mark/reset/tally`）、
+`xvfb.log`、可选截图。**入库的只有本节数字 + `tools/frida_cadence.{js,py}` 两个脚本**。
+
+**没有改动**：`src/`（含 `src/_scaffold/root_wiring.rs` —— 77 号独占）、`client/`（含
+`client/tools/process_loop_check.gd`）、`dispatch/`、`fixtures/guardrails.json`。
+
+### 44.10 验收
+
+| 项 | 结果 |
+|---|---|
+| ① 钩子正对照 | **过**：`RootNode=Backend=GameClient=64/s` 逐秒相等；判决点 124 = 64 帧 + 60 tick；菜单 28 窗口 `GameClient=0`；负对照 `next_turn=0` |
+| ② 帧率 / tick 率 / 比值 / delta | **有数**：帧 30.00–66.98 fps、tick 59.94–60.01/s、比值 = `60÷帧率`；delta 实测"默认≈墙钟、`--fixed-fps 10` 恒 0.1 s 而 tick 不动" |
+| ③ 与 `ProcessLoop` 对齐 | **6/7 一致 + 1 已知差异（实测未触发）**（§44.6） |
+| ④ 接线 | **没动**，方案见 §44.7（改 2 处、动 5 个读数） |
+| `cargo test --offline` | **1710 passed / 0 failed / 1 ignored**（`rc=0`；本轮不改 `src/`，只加两个 `tools/` 脚本 + 本节） |
+| `tools/check_doc_refs.py` | **rc=0** |
+
+### 44.11 本轮新增的文件
+
+| 文件 | 说明 |
+|---|---|
+| [`tools/frida_cadence.js`](../tools/frida_cadence.js) | **新增**：8 个钩子（帧链三跳 + 循环体两跳 + 判决点 `0x51848e` + delta 装载点 `0x42a8bf` + 负对照）。每帧记 `ticks/pumps/probes/顺序串/进入间隔/帧内耗时`，每秒把**累计直方图**发一条 `tally`；计时用 `clock_gettime(CLOCK_MONOTONIC)`（µs 级） |
+| [`tools/frida_cadence.py`](../tools/frida_cadence.py) | **新增**：起私有 Xvfb（TCP + mesa 环境）→ `Popen` 真游戏 → frida `attach` → 按步骤串点进对局 → `reset()` 后开测量窗口；`--stall DUR@AT` 做 `SIGSTOP` 追赶实验；`--game-arg` 透传 `--fixed-fps` / `--max-fps`；`--summary <jsonl>` 把 JSONL 打成真值表（跨 tally 求和、以最后一次 `reset` 为界） |
+
+**没有改动**：`src/`（含 `src/_scaffold/root_wiring.rs` —— 77 号独占）、`client/`（含
+`client/tools/process_loop_check.gd`）、`dispatch/`、`fixtures/guardrails.json`、
+`tools/frida_process_chain.{js,py}`（§48 的探针一行没动 —— 本节的东西全在新文件里）。
+
+## 45. **AI-vs-AI 的"收敛解"那一发抓到了（6 发，每发 6~16 个 token）**：常数 token 与真机印字 **6/6 都是 0 ulp**、喂进 `0x3c5f70` 的 `&Point` 与报文 `start_x/start_y` **6/6 逐位相同**、`pos` **6/6 在曲线上**；但每发的 `c` 离 3 位小数的四舍五入边界 **1.99e-4 ~ 3.81e-4（折 1.6e11 ~ 1.8e12 ulp）** ⇒ **打印级判据结构性没有判别力**；1 ulp **仍未复现**（2026-11-09，`dispatch/82`）
+
+> 任务书：[`dispatch/82-1ulp-ai-converged.md`](../dispatch/82-1ulp-ai-converged.md)。起点 `CG@e150ccd`，
+> 分支 `agent/1ulp-ai-converged`，私有 `CARGO_HOME` / `CARGO_TARGET_DIR`。
+> 目标构建：`libgraphwarrust.so` sha256 **`9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`**。
+> 本节地址一律**虚地址**（vaddr = 模块内偏移 = `gw+…`）。
+>
+> **为什么是这一节**：§42.6 的"缺什么"第 1、2 条把 1 ulp 的最后一条活口指到
+> "**AI-vs-AI 的收敛解**"——§42 那一局是"人 + 1 Bot"，AI 只开了一发，而且打出的是**单 token `x`**
+> （`c=9.9606`，离打印边界 1.3e-4），原因是 frida 的 `evaluate` 钩子把进化拖慢约三个量级。
+> 本节把这两条同时做掉：**换精简探针**让 AI 跑到收敛 + **造 AI-vs-AI 局**（两队各一个 Bot、人类 0 士兵），
+> 然后按 60/66 那套判据逐发验，并**直接量**每一发的 `c` 离四舍五入边界多远。
+>
+> ⚠ **节号跳过了 §43**：§42 正文里还留着一批写成 `§43.x` 的**自引用**（69 号那节从 §43 重编号成 §42 时
+> 正文没跟着改）。占掉 §43 会把这些旧引用变成"指向本节但内容无关"的假链接，所以本节用 §44。
+
+### 45.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | **AI 打出多 token 表达式了吗** | **打出来了**。3 次跑（同配方）共 **6 发**真的执行，token 数 **6 / 16 / 9 / 9 / 13 / 11**（§42 那发是 **1** 个 token）。AI 的搜索规模从"一回合 1 代"涨到"一回合 **45 ~ 109 代**"：整局采样次数 **506（§42，含 evaluate 钩子）→ 221130（run1）** | **观测** |
+| ② | **三样判据（常数 / 数组 / pos）** | 常数 token vs 印字 **6/6 逐位相同（0 ulp）**；印出来的就是 `{:.3}`(`c_full`) **6/6**；**数组没被改过 3/3**（`diffPoints=0`，另 3 发**被障碍截断**不可判，见 44.4）；`n` 没被夹小 **3/3**；`pos` **在曲线上 6/6**；`pos_x == end_x` **6/6**；`&Point` == 报文 `start_x/start_y` **6/6（0 ulp）** | **观测 + 逐位** |
+| ③ | **这一发的 `c` 离四舍五入边界多远** | **1.99e-4 / 2.34e-4 / 3.81e-4 / 2.67e-4 / 2.86e-4 / 2.91e-4**，折成 ulp 是 **1.79e12 / 5.28e11 / 4.29e11 / 6.01e11 / 1.61e11 / 3.28e11**（§42 那发 1.3e-4 同量级）。⇒ **打印级判据没有判别力**：1 ulp 是 1.1e-16 量级，要撞上边界还得再小 **12 个量级**；这不是"这一发不巧"，是**结构上不可能**靠随机收敛解撞到（见 44.5） | **观测 + 推断**（"不可能"这半句是量级推断） |
+| ④ | **1 ulp 复现了吗** | **没有**。6/6 的 `&Point`、6/6 的常数 token、3/3 的数组都是 **0 ulp**；而且三次跑都是 **AI 自己开火、AI 自己收敛**的那一发 | **观测** |
+| ⑤ | 附带的新观测 | 同一士兵、同一 `x0` 进 `0x3c2530` 时，**开火那一次采样拿到的 `y0` 与评分那几次相差正好 1 ulp**（run1 4/4 发；run2/run3 的 2 发是 0 ulp ⇒ **值相关，不是恒定偏移**）。两条轨迹**只差 `pts[0].y` 这一个点**，而它正是报文里的 `start_y`。机制**未知**，但它至少证明：这个引擎里确实存在"同一逻辑量被算两遍、差 1 ulp"的位置 | **观测**（差值/落点）+ **未知**（机制） |
+| ⑥ | 局型 | **真·AI-vs-AI**：Team 1 一个 Bot、Team 2 一个 Bot，**人类 0 人**（造法见 44.1） | **观测**（截图 + 探针） |
+
+一句话：**收敛解抓到了、三样判据在 6 发上全部是 0 ulp、`c` 离打印边界还有 11~12 个量级** —— §38 那个 `…844`
+在 AI-vs-AI 这条路上**仍然没有复现**，而且这一轮把"打印级判据"这条路的判别力问题**量出来了**。
+
+### 45.1 AI-vs-AI 局怎么造（全部真机实测，1920×1160）
+
+在 §42.1 的配方上加两步（**加第二个 Bot** + **把人类从 Team 1 删掉**），坐标都是本轮截图量的：
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+Xvfb :95 -screen 0 1920x1160x24 -listen tcp -ac &      # ⚠ GLX 会崩，见 44.6 第 1 条
+$PY tools/gw2_step_drive.py --display 127.0.0.1:95 \
+    --data-dir <绝对路径>/gamedata --out <绝对路径>/run1.jsonl --snap-dir <绝对路径>/snaps \
+    --js tools/frida_lean_triple.js --triple --settle 25 --keep-alive 15 --steps '<见下>'
+```
+
+```text
+s boot, w1,
+c 1344 622,   w2, s lobby        # 主菜单 Battle
+c 765 1109,   w3, s setup        # LanLobby 的 Create Game
+c 1648 980,   w2, s addbot       # GameSetup 右下角 AddBot（"+ 机器人"）
+c 1276 742,   w1.5, s bot1       # AddBot 弹窗：第二行最右那个（§42 用的同一格）
+c 1648 980,   w2, s addbot2      # 再点一次 AddBot
+c 1276 742,   w1.5, s bot2       # ★ 第二个 Bot 落在 **Team 1**（游戏自动平衡两队）
+c 41 213,     w1.5, s nohuman    # ★ 点 Team 1 那一行最左边的 ✗ ⇒ **把人类删掉**
+c 958 1109,   w3, s play1        # Start
+r start, w20, r t20, w20, r t40, w20, r t60, w30, r t90, w30, r t120, w30, r t150
+```
+
+* **造出来的局**（三轮都是 `09_nohuman` 截图里的原样，逐字抄下来）：
+  * run1：Team 1 = `Wolfram`，Team 2 = `Alpha Zordon`；
+  * run2：Team 1 = `Deep Thought`，Team 2 = `Multivac`；
+  * run3：Team 1 = `HAL`，Team 2 = `Deep Thought`；
+  * 三次都是 **人类 0 人**、两队各 1 个 Bot ⇒ 这是任务书要的"两队各一个 Bot、人类 0 士兵"，
+    **不是** §42 那种"人 + 1 Bot"。
+* ⚠ **更正 §42.1 的一句**：§42 把"AddBot 弹窗第二行最右"记成**档 5**。本轮同一个坐标点了 **6 次**，
+  先后给出 `Alpha Zordon` / `Wolfram` / `Multivac` / `Deep Thought` / `Deep Thought` / `HAL`
+  —— **5 个不同的 Bot**（`docs/13-ai.md` §25.4 已把名字池的机制查死：`rand % 10`，与 `level` 无数据流）
+  ⇒ **这个格子的图标不决定难度**，§42 里"档 5"这个说法**不要再用**。
+  真要写难度，只能从 Bot 的行为量（每回合采样次数 / 代数）反推，或去看它的皮肤。
+* **两队的 AI 都会自己开火**：run1 一局真的执行了 **4 发**（依次由 `owner_id` 236 / 233 / 237 / 233 开出，
+  Team 1 两发、Team 2 两发），run2/run3 各 **1 发**（那一发落地后对局直接结束、回到 GameSetup 画面）。
+  中断的地方照实记：**"AI-vs-AI 一局能打几发"取决于 AI 打没打中**，不是配方不稳。
+
+### 45.2 精简探针：**去掉了什么**（这就是 ① 的那一半）
+
+新增 [`tools/frida_lean_triple.js`](../tools/frida_lean_triple.js)。与 `tools/frida_point_array.js` 的差集：
+
+| 去掉的钩子/记账 | 为什么它是主因 |
+|---|---|
+| **`0x4eb9d0` 求值器** | ★ **主因**：一次 AI 评分要调它 ≈1.4 万次（§42.8 实测 `evals` 3.6e6 / `samplers` 253），而钩子的 `onLeave` 每次都要 `Map.set` + 字符串拼接 ⇒ 单次评分 ≈0.3 s，一回合（25 s 墙钟）**只够跑完一代** |
+| `0x4ed670` 解析器 | 只在输入框打字/`0x3c5f70` 内部重解析时走；与"AI 交卷那一发"无关（要文本从 `0x3c5f70` 的实参取） |
+| `0x4724cc` 开火队列预扫 | 每次把**整条**点数组 dump 成十六进制（一发 80 KB） |
+| `0x456810` `FunctionPoints` 装配 | 每次把整条数组 `hexPoint` 化，再与 8 条数组逐点比 |
+| `libc realloc` 钩子 / `evals`·`samplers`·`reallocs` 抽样行 / `ring`·`yMap`·`pairMap` | 全是"每次求值/每次采样都要付钱"的记账 |
+| **每次 `calculate_function` 各发一条 `tok_fire` + `calc_array`** | AI 搜索里那是**几万条**消息；改成**进程内环**（`ringFires` 24 / `ringCalcs` 4096），在 `0x472865`（每发只执行一次的 `movdqu`）那一刻**连 `pos` 一起回吐** |
+
+**留下的 7 个钩子**（都是"每发 O(1) 次"）：`0x3c2530`（入口实参 + 退出时 sret 记录/**只算 32 位×2 摘要**、
+最近 8 条才留字节）、`0x472865`、`0x4729d6`、`0x472e4d`、`0x50f990`、`0x3c5f70`、`0x50eb20`。
+比任务书建议的"四处"多三处：`0x472e4d`（站点 B）、`0x50f990`（JSON 写入器）与 `0x50eb20`（报文的
+`start_x/end_y/owner_id`）—— 后两个是判据**必需**的（没有 `start_x` 就没法判 `&Point == start_x`），
+而它们都只在"一发一次"的频率上触发。
+
+**提速实测**（同一台机器、同一配方）：
+
+| 跑 | 整局 `calculate_function` 次数 | 回合数 | 每回合 ≈ | 折算代数（分母 506/代） |
+|---|---:|---:|---:|---:|
+| §42（旧探针） | **506** | 1~2 | 506 | **≈1** |
+| run1 | **221130** | 4 | 55282 | **≈109 / 回合** |
+| run2 | 22772 | 1 | 22772 | ≈45 |
+| run3 | 37952 | 1 | 37952 | ≈75 |
+
+分母（506 = 253 评分 × 2 次采样/评分）来自 `docs/13-ai.md` §5.2 的"每代 `种群+3` 次评分"；
+**代数按 25 s 墙钟截断**（`docs/13-ai.md` §10），所以三次跑的代数不同（同一台机器上还有别的活在跑）。
+⇒ 单回合吞吐约 **110×**，这就是"能收敛"的原因。
+
+### 45.3 六发逐发数据（三次跑，全部是 AI 自己开的火）
+
+| 跑 | # | owner | `flip` | 起点 `(x0,y0)` | `n` | 生产者的 len | token 数 | 印出来的后缀 | `c_full` |
+|---|---|---:|---:|---|---:|---:|---:|---|---|
+| run1 | 1 | 236 | 0 | `(-13.599590334658506, 12.283359158786663)` | 681 | **4383**（截断） | 6 | `' + 0.996'` | `0.9956991810201039` |
+| run1 | 2 | 233 | **1** | `(5.7128913751280486, 10.534275368240717)` | 3687 | **4946**（截断） | **16** | `' + 3.093'` | `3.092734370824166` |
+| run1 | 3 | 237 | 0 | `(-17.912233896592081, 0.013058731737453755)` | 3874 | **4761**（截断） | 9 | `' - 5.290'` | `-5.289881287830012` |
+| run1 | 4 | 233 | **1** | `(5.7128913751280486, 10.534275368240717)` | 3511 | **3511** | 9 | `' - 2.616'` | `-2.6162329393437957` |
+| run2 | 1 | 236 | 0 | `(-6.6059063362438168, -8.0650413488993351)` | 20001 | **20001** | 13 | `' + 11.783'` | `11.782786263788793` |
+| run3 | 1 | 237 | 0 | `(-19.619799747797305, -4.7227909016153831)` | 6120 | **6120** | 11 | `' - 4.723'` | `-4.722790880722739` |
+
+token 序列（`docs/03-function-language.md` §12 的 tag）：`[3,6,0,5,17,17]` / `[3,4,17,6,15,3,5,17,6,5,17,3,17,0,17,17]` /
+`[4,6,5,17,3,14,0,0,17]` / `[4,13,3,17,6,5,17,0,17]` / `[3,7,5,17,12,13,4,15,3,17,0,17,17]` / `[4,7,3,5,17,0,12,4,17,0,17]`。
+**没有一发是单 token**，最长的 16 个 token —— 与 §42 那发"单 token `x`"形成对照。
+
+### 45.4 判据表（与 §40.4 / §42.4 逐条对口径）
+
+| 判据 | 定义 | 本轮 6 发 | §42（3 发，人+1Bot） |
+|---|---|---|---:|
+| `const_eq_printed` | token 末位 `tag=17` 的值（带符号：顶层 `tag=3` 取 `+`、`tag=4` 取 `−`）位模式 == `float(印字)` 位模式 | **6 / 6**（0 ulp） | 3 / 3 |
+| `printed_is_round3_of_c_full` | `{:.3}`(`c_full`) == 印字，`c_full = y0 − f(∓x0)`（真求值器 `0x4eb9d0`） | **6 / 6** | 3 / 3 |
+| `pt_eq_start_exact` | `0x3c5f70` 吃的 `&Point` 16 字节 == 报文 `start_x/start_y` 16 字节 | **6 / 6**（0 ulp） | 3 / 3 |
+| `array_untouched` | `pos_read` 那 16 字节所在数组 == 生产者数组**逐点逐字节**（`diffPoints==0`） | **3 / 3**（另 3 发**截断**，不可判） | 2 / 2（第 1 发截断） |
+| `n_eq_wire` | `pos_read.n` == 生产者数组 `len` | **3 / 3** | 2 / 2 |
+| `on_curve` | 真求值器在 `-pos_x`（`flip=1`）或 `pos_x`（`flip=0`）上的值 == `pos_y`（逐位） | **6 / 6** | 3 / 3 |
+| `pos_x_eq_end_x` | `pos.x` == 报文 `end_x` | **6 / 6** | 3 / 3 |
+| `sampler_replay_exact` | 拿 token 列表喂真采样器（unicorn）重跑，`len` 与末点 16 字节都要逐位等于 `pos` | **3 / 3**（同上，截断的 3 发不可比） | 2 / 2 |
+| `copy_exact` | `EffectInfo` 载荷的 16 字节 == `pos` 那 16 字节 | **6 / 6** | 3 / 3 |
+| `json_pos_bits_match` | `EffectInfo` 的 JSON 文本里两个小数 parse 回来 == 那 16 字节 | **6 / 6** | 3 / 3 |
+
+**"截断"那 3 发到底是什么**（照实记，不算通过也不算失败）：`pos_read.rdx` 与某条
+`calculate_function` 返回值**是同一个缓冲**（指针相同 ⇒ 生产者认死了），但那条数组的 `len` **大于** `n`
+（4383 vs 681 / 4946 vs 3687 / 4761 vs 3874），而且它的**末点 ≠ `pos`** ⇒ 打到障碍/边界，队列项是
+**这条数组的前 `n` 点**（§40.6 第 2 条、§42.5 那一族）。这一族的"数组有没有被改过"只能比**前缀**，
+本轮 run1 用的探针版本还没有前缀比较（run2/run3 加了，但那两发恰好**没截断**，`len == n`）——
+⇒ **前缀判据本轮没有样本**，列进 44.7 的遗留。
+
+### 45.5 `c` 离四舍五入边界多远 —— **打印级判据的判别力，量出来了**
+
+`{:.3}` 只在 `c·1000` 的小数部分穿过 **0.5** 时才会换一位。所以"常数末位差"这条判据能看见的
+最小变化是 `d = |frac(c·1000) − 0.5| / 1000`；把它折成 `c` 的 ulp：
+
+| 跑 | # | 印字 | `c_full` | `frac(c·1000)` | `d`（绝对值） | `d` 折成 ulp |
+|---|---|---:|---|---:|---:|---:|
+| run1 | 1 | `' + 0.996'` | `0.9956991810201039` | 0.6992 | **1.992e-04** | **1.79e12** |
+| run1 | 2 | `' + 3.093'` | `3.092734370824166` | 0.7344 | 2.344e-04 | 5.28e11 |
+| run1 | 3 | `' - 5.290'` | `-5.289881287830012` | 0.1187 | **3.813e-04** | 4.29e11 |
+| run1 | 4 | `' - 2.616'` | `-2.6162329393437957` | 0.7671 | 2.671e-04 | 6.01e11 |
+| run2 | 1 | `' + 11.783'` | `11.782786263788793` | 0.7863 | 2.863e-04 | 1.61e11 |
+| run3 | 1 | `' - 4.723'` | `-4.722790880722739` | 0.2091 | 2.909e-04 | 3.28e11 |
+
+**怎么读这张表**：`c` 要变 **≥ d** 才会让印出来的末位改一个字；而这 6 发的 **1 ulp 是 1.1e-16（c≈0.5）
+到 1.8e-15（c≈12）**（表里最后一列就是按各发自己的 ulp 折的）。
+所以哪怕 `c` 差 **1 万 ulp**、**1 亿 ulp**，这条判据也**看不见**——
+要让它有判别力，得撞上 `|frac(c·1000) − 0.5| ≲ 1e-12` 的 `c`，随机收敛解撞上的机会是 **1e-12 量级**。
+⇒ **"打印级判据"这条路的判别力问题不是样本运气，是结构性的**（这一句是**量级推断**，
+依据是上表的 6 个实测 `d` 与 IEEE-754 的 ulp 定义；不是"观测到不可能"）。
+**真正有判别力的是那两条直接位比较**：`const_eq_printed`（常数 token 与 `float(印字)` 的位模式）与
+`pt_eq_start_exact`（`&Point` 与报文起点）—— 本轮它们都是 **0 ulp**。
+
+### 45.6 判决：1 ulp **仍然没有复现** —— 以及这一轮把覆盖面补到了哪儿
+
+```text
+① 常数末位差              否（观测；6/6 逐位相同，且印出来的就是 {:.3}(c_full) 6/6）
+② 数组被改过              否（观测；3/3 逐字节相同、无夹小；另 3 发被障碍截断 ⇒ 不可判）
+③ 喂进修正器的 Point 是
+   不是 start_x ∓ 1 ulp    否（观测；6/6 逐位相同，0 ulp）
+④ 那 1 ulp                未知 / 本轮未复现 —— 但这次的样本是 **AI-vs-AI 的收敛解**，
+                          正是 §42.6 点名的最后一条路
+```
+
+**与 §42 比，覆盖面补上了什么 / 还缺什么：**
+
+* 补上：**真·AI-vs-AI**（两队各一个 Bot、人类 0 人，§42 是"人 + 1 Bot"）；
+  **AI 收敛**（一回合 45~109 代，§42 是 1 代）；**6 发**（§42 只有 1 发 AI）；
+  每一发都量了 **`c` 离打印边界多远**（§42 只有一句定性的"1.3e-4 远得很"）。
+* 还缺（照实写）：
+  1. **前缀判据没有样本**：3 发截断的发里，"队列项 == 采样器数组前 `n` 点"这一步**没测**（见 44.4 末段）；
+  2. **`c` 落在边界附近的那一发没拿到，而且基本拿不到**（44.5）；除非能让 AI 打出 `c` 恰好逼近
+     `.xxx5` 的解，或直接改判据（用位比较，不用印字）；
+  3. AI 的"收敛"是**它自己 25 s 预算用完**，不是数学最优；六发的 token 数 6~16 也说明它没到"最简单解"；
+  4. §38 那 13 批的机理（`sin(u)/u` 在 `u=0` 处 NaN）在本轮 6 发里**没有出现**（没有一发的 `c` 是 NaN）。
+
+### 45.7 附带的新观测：**同一士兵的 `start_y` 有 1 ulp 差**（值相关）
+
+run1 的 4 发里，同一士兵、同一 `x0` 进 `0x3c2530` 时出现了**两个相差正好 1 ulp 的 `y0`**：
+
+| 跑 | # | 开火那一次采样的 `y0`（= 报文 `start_y`） | 同回合评分那几次的 `y0` | ulp 差 | `flip` |
+|---|---|---|---:|---:|---:|
+| run1 | 1 | `12.283359158786663` | `12.283359158786665` | **1** | 0 |
+| run1 | 2 | `10.534275368240717` | `10.534275368240715` | **1** | 1 |
+| run1 | 3 | `0.013058731737453755` | `0.013058731737453757` | **1** | 0 |
+| run1 | 4 | `10.534275368240717` | `10.534275368240715` | **1** | 1 |
+| run2 | 1 | `-8.0650413488993351` | 同值 | **0** | 0 |
+| run3 | 1 | `-4.7227909016153831` | 同值 | **0** | 0 |
+
+* **它落在哪**：run1 第 4 发，执行的那条数组（calc `seq=221129`，`ptr=7f88f4165400`，**与 `pos_read.rdx` 同一个指针**）
+  与另一条数组（calc `seq=221130`，堆上另一块）**逐点逐字节比**：
+  `diffPoints = 1`，`firstDiff = [[0, '0c1a573200da1640f24d838a8c112540', '0c1a573200da1640f14d838a8c112540']]`
+  ⇒ **3511 个点里只有第 0 个点的 y 不同，差 1 ulp**，其余 3510 个点**逐位相同**。而第 0 点的 y
+  正是报文里的 `start_y`。**档：观测（逐字节）**。
+* **游戏自己也印两个值**：同一个 `owner_id` 的两条 `FunctionPointsEvent` 里，`start_y` 差 1 ulp ——
+  开火那一刻（序列化调用者 `gw+504559`）是执行路径那个值，局终那一条（`gw+3d59c4`）是另一个值：
+  `owner 236`：`8605a07314912840` vs `8705a07314912840`；`owner 233`：`f24d838a8c112540` vs `f14d838a8c112540`；
+  `owner 237`：`00b4ea4d89be8a3f` vs `01b4ea4d89be8a3f`。**档：观测**（两条报文原文都在）。
+* **机制：未知**。能确定的只有"值相关"：run1 的 4 发差 1 ulp，run2/run3 的 2 发完全不差。
+  这不像"恒定偏移"，更像**同一个量被两条路各算一遍、往返一次舍入**（例如镜像/仿射变换回不去）。
+* **它是不是语料那 13 批的 1 ulp**：**未知**。那批是 `c` 的末位差（打印量），这里是 `start_y`/`pts[0].y`
+  （采样起点），而且**执行路径自身是自洽的**（`&Point` == `start_y` == `pts[0].y`，0 ulp）。
+  下一步该查的是：语料回放里的 `start_y` 取的是两条路里的哪一条 —— 如果我们的复原取了另一条，
+  就会在 `start_y` 上差 1 ulp（但如果语料的分叉只在 `c` 上，那就还是另一回事）。
+
+### 45.8 本轮踩到/记下来的坑（都是实测）
+
+1. **Xvfb 起来就崩（`Caught signal 11`）**：`Xvfb :95 … -listen tcp -ac` 在**这台机器上**会崩在
+   GLX 初始化里（backtrace 是 `libnvidia-egl-gbm.so.1 → libEGL_nvidia → swrast_dri`）。
+   **修法**：给 Xvfb 也加 `__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json
+   LIBGL_ALWAYS_SOFTWARE=1`（这样 GLX 走 llvmpipe，`glxinfo -B` 报 `direct rendering: Yes`）；
+   另外 `/tmp/.X11-unix` 是逐命令 tmpfs，同一条命令里 `mkdir -p` 一下更稳。
+2. **Python 驱动收尾会 SIGSEGV**：run2/run3 的 `gw2_step_drive.py` 在 `finally` 里
+   `dev.kill(pid)` 之后 **exit 139**（run1 是 0）。**数据没丢**（JSONL 完整、`[done]` 计数也在），
+   但**别把退出码当成功判据** —— 判"这一局抓到没有"要看 JSONL 里的 `pos_read` 条数。
+3. **"截断族"要的是前缀比较器，不是更大的环**：run1 一开始 `array_untouched` 报了 `False`，
+   查下来是**比较器**的问题——`cmpArray()` 遇到两条数组长度不同就直接 `same:false`，
+   而截断族的队列项本来就比生产者短（4383 vs 681 …）。实测**生产者离 `pos_read` 只有 1~2 条记录**
+   （开火那次采样紧挨着 `execute_data`），所以 24 条环**够用**；run2/run3 把环加到 **4096**
+   （进程内约 800 KB）只是保险，真正补上的是 `cmpPrefix()` 这条前缀判据。
+   ⚠ 反过来：**没有前缀判据时，"数组被改过"这个 `False` 是假阳性** —— 别拿它当结论。
+4. **一枪常常有多个 `EffectInfo`**：AI 收敛后一枪既可能打掉士兵（`AshEffect`，站点 B `0x472e4d`），
+   又炸在落点（`ExplosionEffect`，站点 A `0x4729d6`）。按"时间最近"配会配到 Ash 上，
+   于是 `copy_exact` 假性变 False。**正确配法是按 `effect_id`**（站点 A 优先）。
+   这一条对复跑 60/66 那套判据的人很重要 —— 那两次一枪只有一个效果，没暴露。
+5. **`--triple` 的 cfg 消息对精简探针无意义**：探针**永远开着**，只回一条 `cfg_ack`。
+6. **AI-vs-AI 的对局可能"一枪就结束"**（run2/run3 都是这样，打完回到 GameSetup）⇒
+   一次跑只能拿到 1 发；要多发就多跑几次（本轮 3 次跑拿了 6 发）。
+
+### 45.9 复跑（每条都能原地跑）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+cd <WS>/.agent-work/cg/wt-82
+R=<可写目录>          # 不要放进仓库，更不要进冻结快照
+
+# ① 私有 display（GLX 必须走 mesa，见 44.8 第 1 条）
+mkdir -p /tmp/.X11-unix
+__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
+LIBGL_ALWAYS_SOFTWARE=1 Xvfb :95 -screen 0 1920x1160x24 -listen tcp -ac &
+
+# ② AI-vs-AI 局 + 精简探针（一条命令里 Popen + attach + 点击；约 4 min）
+$PY tools/gw2_step_drive.py --display 127.0.0.1:95 --data-dir $R/gamedata \
+    --out $R/run.jsonl --snap-dir $R/snaps --js tools/frida_lean_triple.js --triple --settle 25 \
+    --keep-alive 15 --steps 's boot, w1, c 1344 622, w2, s lobby, c 765 1109, w3, s setup,
+      c 1648 980, w2, s addbot, c 1276 742, w1.5, s bot1, c 1648 980, w2, s addbot2,
+      c 1276 742, w1.5, s bot2, c 41 213, w1.5, s nohuman, c 958 1109, w3, s play1,
+      r start, w20, r t20, w20, r t40, w20, r t60, w30, r t90, w30, r t120, w30, r t150'
+
+# ③ 判据（会调真二进制求值器/采样器：0x4eb9d0 / 0x3c2530）
+$PY tools/lean_triple.py --jsonl $R/run.jsonl --label lean-AIvAI --oracle 1
+```
+
+### 45.10 本轮改动清单（`src/` **一个字节没动**）
+
+| 文件 | 内容 |
+|---|---|
+| [`tools/frida_lean_triple.js`](../tools/frida_lean_triple.js) | **新增**：精简三样探针。只留"每发 O(1)"的 7 个钩子；去掉求值器/解析器/队列预扫/fnpoints 装配/内存分配/抽样行；`calculate_function` 的数组只算 32 位×2 摘要（最近 8 条才留字节）；`tok_fire`/`calc_array` 攒在**进程内环**里，在 `0x472865` 那一刻**连 `pos` 一起回吐**；`pos_read` 还做 `same_ptr`/`same_len`/`same_digest` 三条对齐键与**前缀比较**；装机时跑 `selftest` 正对照（1 bit / 2 bit 差都能报出来） |
+| [`tools/lean_triple.py`](../tools/lean_triple.py) | **新增**：把 `pos_read.recent` 摊平回 `tok_fire` / `calc_array` 同形状的行，**直接复用** `tools/lan_ai_triple.py` 的 `group_shots()` / `judge_shot()`（那套判据在 §40/§42 上验过）；追加 ① `c` 离 `.xxx5` 边界的绝对量/相对量/**ulp 数** ② `EffectInfo` 按 `effect_id` 配对 ③ 截断族的**前缀判据** |
+| [`docs/06-verification.md`](06-verification.md) | **新增本节（§44）** |
+
+**没有改动**：`src/`、`client/`、`fixtures/`（本轮**没有**写入库样本）、`dispatch/`、
+`fixtures/guardrails.json`、`tools/frida_point_array.{js,py}`、`tools/lan_ai_triple.py`。
+原始 JSONL/截图都在 `.agent-work/`（不入库、也不进 `.reference/replays/…-snapshot` 冻结快照）。
+
+### 45.11 验收
+
+| 项 | 结果 |
+|---|---|
+| ① 探针去掉了什么 | 见 44.2 的表：**主因是 `0x4eb9d0` 求值器**（一次评分 1.4 万次调用）；AI 一回合从 **1 代 → 45~109 代** |
+| ① AI 多 token | **6 发**，token 数 **6/16/9/9/13/11**（§42 那发是 1） |
+| ② 三样判据 | 常数 **6/6 0 ulp**；数组 **3/3 `diffPoints=0`**（3 发截断不可判）；`pos` 在曲线上 **6/6**；`pos_x==end_x` **6/6**；`&Point==start` **6/6 0 ulp** |
+| ③ 离边界多远 | **1.99e-4 ~ 3.81e-4**（**1.6e11 ~ 1.8e12 ulp**）⇒ 打印级判据**结构性无判别力** |
+| ④ 1 ulp | **未复现**（AI-vs-AI 收敛解这一条路上也否掉） |
+| ⑤ 样本位置 | `.agent-work/cg/wt-82/run/lean82/`（**没进冻结快照**；本轮没写 `fixtures/`） |
+| `cargo test --offline` | **1710 passed / 0 failed**（72 个 test 二进制） |
+| `tools/check_doc_refs.py` | **rc=0** |
+
+## 46. **G7 结案：LocalPlayerManager 的第五道门是"向容器要 `ComputerPlayerManager` 再查它的 Bot 表"**（`0x519fb5`→`0x46c5a0`）；`Computer.state` 的 **3 → 1 → 3** 三个写入点全部抓到（2026-11-09，`dispatch/79`）
+
+> 任务书：[`dispatch/79-localplayer-gates.md`](../dispatch/79-localplayer-gates.md)。起点 `CG@8a6914b`，
+> 分支 `agent/localplayer-gates`，私有 `CARGO_HOME` / `CARGO_TARGET_DIR`。
+> 目标构建 `libgraphwarrust.so` sha256 **`9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`**
+> （`steam/2026-08-28`）。地址一律**虚地址**（vaddr，Ghidra = vaddr + `0x100000`）。
+
+### 46.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 第五道门那张表**是什么** | **`GraphwarComputerPlayerManager` 的 Bot 表**（`HashMap<u32, BotData>`，桶 120 B）。门里那一步是"拿 `M+0x30` 那个**容器弱句柄** → `get_module_wk::<ComputerPlayerManager>`（`0x46c5a0`）→ 在 `T+0x18` 那张表里按 `player_id` 查一次" | **逐位 + 观测**（4 条独立链，见 46.2） |
+| ② | **谁写**、**何时读** | 写：`add_computer_player` `0x478fc0`（`0x4790a0 call 0x440890` 插表）；删：`handle_entity_removed_event` `0x47a520`（key = `event+0x08`）。读：本模块三个函数（`0x4785f0` / `0x479520` / `0x47a520`）**直接读 `self+0x18`**；**唯一的跨模块读点就是这道门** | 观测 |
+| ③ | 门⑤的**语义** | "本连接的第一个 `player_id` **已经在 Bot 表里** ⇒ 不发那 5 条身份请求"（Bot 的身份由 `add_computer_player` 自己申报：59/50/52/54/66） | 观测（未命中分支 3/3 实跑；命中分支**没走到**，见 46.5） |
+| ④ | `Computer.state` 的 **0/1/2** | **只有 3 和 1 存在**：`3` = 空闲/可算（建档 `0x478fe3`、`handle_tick` 收尾 `0x47864f`）；`1` = 已 `thread::spawn` 未收（`0x479dfa`）。`0`/`2` **没有任何写入点**（有界否定 + 正对照） | 观测 |
+| ⑤ | 运行时打到哪一步 | **3 局样本**：门⑤ 求值 **3 次**（都走未命中 ⇒ 5 连发 5/5）；`get_module_wk` 返回值 **3/3 等于 CPM 盒基**；`state` 迁移 **3 次**（两个 Bot，每次 3→1→3） | 观测 |
+
+### 46.1 造局 + 探针（一条命令一局，约 3–4 min）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+# ① 私有 display（GLX 必须走 mesa，见 §45.8 第 1 条；否则 Xvfb 崩在 libnvidia-egl-gbm）
+mkdir -p /tmp/.X11-unix
+__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
+LIBGL_ALWAYS_SOFTWARE=1 Xvfb :95 -screen 0 1920x1160x24 -listen tcp -ac &
+
+# ② 三局（Popen 真游戏 → frida attach → 按步骤串点击 → 收 JSONL）
+#    局 1/2 = LAN + Bot（局 1 人+1 Bot，局 2 AI-vs-AI 2 Bot）；局 3 = 战役（campaign.save = level_20）
+$PY tools/gw2_step_drive.py --display 127.0.0.1:95 --data-dir $R/gamedata \
+    --out $R/bot1.jsonl --snap-dir $R/snaps1 --js tools/frida_cpm_gates.js \
+    --settle 25 --keep-alive 60 --steps '<§42.1 的 Battle→Create Game→AddBot→Start>'
+```
+
+* **探针**（本轮新增）：[`tools/frida_cpm_gates.js`](../tools/frida_cpm_gates.js)。16 个钩子，装好时先做**自校验**
+  （把 `0x519fb1` = `49 8d 7e 30 e8 …`、`0x47864f` = `49 c7 07 03 …`、`0x4786ab` = `83 7c 2b 90 03` 的字节读回来打一条
+  `hooks` 消息 —— 三处全对，说明模块基址与内存访问都对）。
+* **样本**：`.agent-work/cg/fh79/{bot1,bot2,bot3}.jsonl`（**没进冻结快照**，本轮也没写 `fixtures/`）。
+* **造局的坑**（照 `§45.6`）：LAN 局用 `c 1648 980`(AddBot) + `c 1276 742`(弹窗格子)，**不看图标判难度**
+  （§45 已证同一格子 6 次给 5 个不同 Bot）。本轮的 AddBot 落下来的 `level` 是 **1000**（> 251 ⇒ 第 6 档：`limit=200`、
+  精英 50）—— 与 `docs/118` §12.4 记的 `3/25/50/100/250` 不是一套数，**弹窗这条路能给到 1000**，登记在这儿。
+
+### 46.2 第五道门是什么：**四条独立链都指向 `GraphwarComputerPlayerManager`**
+
+```text
+① 静态（指令形状）
+   0x519fb1 lea rdi,[r14+0x30]          ; r14 = LocalPlayerManager 的 M 基 ⇒ &M+0x30（构造实参 2 = 一个 Weak）
+   0x519fb5 call 0x46c5a0               ; = get_module_wk 的 20 个单态化之一（docs/02 §22.3 的 ComputerPlayerManager 那一格）
+   0x46c5a0 体内：upgrade 弱句柄(0x46c5a9..0x46c5c5) → RefCell::borrow(0x46c5d3) → TypeId 哈希(0x46c600 call 0x47e490)
+                 → 命中后返回 Rc<RefCell<T>>；未命中/表空走 0x46c730
+② 静态（返回值的形状，与 CPM 逐字段相同）
+   0x519fe6 cmp qword [rax+0x48],0       ; = T+0x30 = hashbrown 的 items ⇒ items==0 直接当"未命中"（0x51a084）
+   0x519ffd call 0x47dec0                ; 用 T+0x38 的 RandomState 算 hash（lea rdi,[rbx+0x50] = T+0x38）
+   0x51a009/0x51a00d                     ; ctrl = T+0x18，bucket_mask = T+0x20
+   0x51a04f imul r8,r8,0x78              ; **桶步长 0x78 = 120 B**
+   0x51a053 cmp r15d,[rcx+r8-0x78]       ; **key 在 entry+0x00（u32）= player_id**（r15d = event+0x08）
+   0x51a058 je 0x51a0e0                  ; 命中 ⇒ 收尾（**不发** 5 连发）；未命中落 0x51a084
+③ 静态（同一个 T 的另一侧：CPM 自己的三个函数用的是同一套偏移）
+   0x478fc0 → 0x47908b lea rsi,[r14+0x18]（&self.bots）+ 0x4790a0 call 0x440890 插表
+   0x479588/0x47958c/0x479570            ; 查表：ctrl = self+0x18、mask = self+0x20、hasher = self+0x38
+   0x4795d2 cmp r15d,[r14+rdi-0x78]      ; key@entry+0x00；0x479610 cmp dword [r14-0x70],3 ⇒ **state@entry+0x08**
+   0x47a520 删除：同 stride、同 key 位置，命中后 ctrl 字节置删除标记 + `dec [r12+0x30]`（items--）+ drop
+④ 运行时（决定性：指针同一性）
+   在 0x46c5a0 的 **onLeave** 读返回值 rax（= RcInner 基）与 CPM 的盒基（`cpmSelf-0x18`）比：
+   局 2 三次调用 **3/3 `match_cpm = true`**（`ret = 0x2a419420` == cpm_box），
+   其中 1 次来自本门（`0x519fb5`），2 次来自 `bot_added_event` 分派里的 `0x3e3d7f`（紧接着就是 `add_computer_player`）
+   ⇒ 同一个单态化在两条完全不同的调用路径上都取出 CPM
+```
+
+⇒ **语义**：`player_info_event` 说的那个 `player_id` 已经在 Bot 表里 ⇒ 直接收尾、5 条身份请求一条都不发。
+这与"Bot 的身份由 CPM 自己申报"是同一件事（`0x478fc0` 插表之后按顺序发 59/50/52/54/66）。
+
+### 46.3 那张表长什么样（运行时原文 + 静态两条链）
+
+```text
+120 字节桶（局 2，bot 232，level=1000）：
+  00: e8 00 00 00 | ff ff ff 3c      ; +0x00 key = 232（+0x04 是桶内填充）
+  08: 03 00 00 00 00 00 00 00        ; +0x08 **state = 3**（= BotData+0x00）
+  18: 00 00 80 3f 00 00 80 3f        ; BotData+0x10/+0x14 = 两个 f32 1.0
+  38: 28 02 bf 05 fc 7f 00 00        ; BotData+0x30 = 栈上指针
+  40: 30 c0 f9 89 a2 7f 00 00        ; BotData+0x38 = .data.rel.ro 字面量（名字池那条链）
+  68: e8 03 00 00 | 32 00 00 00 | 05 00 00 00 | c8 00 00 00
+      ; BotData+0x60 level=1000 · +0x64 精英=50 · +0x68 每槽=5 · +0x6c limit=200
+```
+
+* `+0x68` 那四个数与静态 `0x479017`–`0x47902e`（`edx/ecx/r8d/r9d` → `[rsp+0xe0..0xf0]` = 值的 `+0x60..`) **逐值对上**；
+* **key 是 `player_id` 不是 `connection_id`**（更正，见 46.6 ①）：同一个 Bot 的 `player_info_event` 是
+  `(player_id=232, connection_id=228)`，228 是**房主（我）的连接** ⇒ Bot 的实体挂在房主连接下，
+  键用的是它自己的 `player_id`（= `bot_added_event+0x0c`）。
+
+### 46.4 `Computer.state`：**3 → 1 → 3**，三个写入点全部在运行时抓到
+
+```text
+建档            0x478fe3 mov qword [rsp+0x10],3 → 0x479036 movups 搬进 BotData+0x00   ⇒ state = 3（空闲）
+过门+spawn      0x479610 cmp [entry+0x08],3 通过；0x479da4 call 0x438d20(thread::spawn)
+                0x479dfa mov [r14-0x70],rbx（rbx = [rsp+0xa8] = 1，见 0x4796f9）    ⇒ state = 1（线程在跑）
+handle_tick     0x4786ab cmp [entry+0x08],3 → 不等就收尾（0x478e0e 再判一次、drop）
+                0x47864f mov qword [r15],3                                          ⇒ state = 3（收尾）
+```
+
+| 局 | Bot | 建档 | `turn_info` 过门读到 | 写 1 | 采样到 1 | 写 3（`handle_tick`） | 采样到 3 |
+|---|---|---|---|---|---|---|---|
+| 1（人+1 Bot） | 232 | t=36.1 s | t=100.95 s `state=3` | t=100.95 s | t=100.96 s | t=125.97 s（`before=1`） | t=126.01 s |
+| 2（AI-vs-AI） | 232 | t=36.1 s | t=45.8 s `state=3` | t=45.8 s | t=45.9 s | t=60.3 s（`before=1`） | t=60.4 s |
+| 2（AI-vs-AI） | 235 | t=41.2 s | t=64.9 s `state=3` | t=64.9 s | t=64.9 s | t=89.9 s（`before=1`） | t=89.9 s |
+
+* 采样器 = 100 ms 直读 `entry+0x08`（不依赖任何写入点）；两局共 **800+ 次**采样，**只出现过 3 和 1**。
+* `state != 3` 期间 `turn_info` **过不了门**（`handle_turn_info_event` 的第三道门）——这是"一个 Bot 同时只跑一个线程"的实现方式。
+* `0` 与 `2`：**无写入点**。判据 = 对 `0x4785f0–0x47a800` 全段扫 `mov [mem], imm∈{0,1,2,3}`，
+  只命中 `0x47864f` / `0x478ef9` / `0x478fe3`（三条写 3）与 `0x4796f9`（写 1 到栈、再经 `0x479dfa` 进 `BotData`）；
+  **正对照**：同一次扫描把这三条 3 和那条 1 都抓到了 ⇒ 扫法有效。
+
+### 46.5 负结论与正对照：门⑤的**命中分支没走到**（照实记）
+
+* **正对照（观测链有效）**：3 局里门⑤ 各求值一次，每一次都完整打出
+  `gate5_enter`（`0x519fb1`）→ `get_module_wk`（返回值 == CPM 盒基）→ `gate5_miss`（`0x51a084`）
+  → **5 条 `send`（59/50/52/54/66，`pid` 都是 229）**。⇒ 钩子确实落在门的两个出口上。
+* **有界否定**：`0x51a0e0`（命中出口）3 局 **0 次**。原因是**结构性的**，不是随机：
+
+  ```text
+  门④ 先拦：只有"本连接连上之后的**第一个** player_info"才能走到 ⑤
+            （0x519f9d test rbx,rbx；rbx = push 之前的 len；而 0x51a5c5 连接时会把 len 清 0）
+  三局实测：那个"第一发"**永远是本机玩家自己**：pid=229 / conn=228（= 我的连接），
+            t≈29.5–36.8 s 就到了 —— 而那会儿 Bot 表**还不存在**（首个 add 在 t=36.1 s 之后，
+            且 LAN 局里我是在大厅/Battle 界面就连上了，Bot 只能在 GameSetup 里加）
+   ⇒ 走到 ⑤ 的每一次，表都是空的（`[T+0x30] == 0` 走 0x519fe6 的短路，连哈希都不要）
+  ```
+* **要触发它需要什么**（给下一轮）：一个"本连接的第一个玩家是 Bot"的局 —— 纯 Bot 客户端 / 连接重建后服务端
+  先广播 Bot 的 `player_info`。本轮的三种局（LAN 人+Bot、AI-vs-AI、战役）**都造不出来**：
+  战役里对手**根本不是 CPM 的 Bot**（局 3：`cpm_add` 0 次、表始终空）。
+
+### 46.6 顺带更正三条（都是本轮实测/字节证据）
+
+| # | 旧说法 | 本轮实测 | 处置 |
+|---|---|---|---|
+| ① | CPM 的 Bot 表 `HashMap<u32 /*connection_id*/, BotData>`（模块文档 §6、`docs/161` §2 第 18 行沿用） | key = **`player_id`**：局 2 里 key 232 的 Bot，其 `player_info_event` 是 `(player_id=232, connection_id=228)`，228 是**我的**连接；门⑤ 比的也是 `event+0x08`（`player_id`） | ✅ 已改模块文档 §6 + 代码注释 |
+| ② | `BotData+0x08` 是状态 | 状态在桶内 `entry+0x08` = **`BotData+0x00`**（`0x479610` / `0x4786ab` / `0x479dfa` 三条指令一致） | ✅ 已改模块文档 §6 与 `src/graphwar_computer_player_manager.rs` |
+| ③ | `handle_tick` 里 `state != 3` 走一条**不返回**的路径（`0x5ec160`） | **`0x4785f0` 体内没有 `0x5ec160`**。那条路是**收尾**（`0x4786b2` → `0x478e0e` → drop → `0x47864f` 写回 3）；体内真正的 panic 是 `0x478ebb` 的 **`"Failed to join computer player thread."`**（`0x478eda` → `0x478ee0 ud2`） | ✅ 已改模块文档 §7-A |
+
+### 46.7 我方实现跟上了什么（`src/` 两处，只动门条件 / 状态机）
+
+| 文件 | 改了什么 | 证据 |
+|---|---|---|
+| `src/graphwar_local_player_manager.rs` | 新增 `handle_player_info_with_bots(..., is_computer_player)`：**门⑤**（push 之后、5 连发之前；命中 ⇒ 一条不发）。`handle_player_info` 变成"没有 Bot 表"的等价形式（= 原版表空那一支） | 46.2 / 46.3；测试 `gate_five_blocks_requests_for_a_bot_first_player`、`gate_four_runs_before_gate_five` |
+| `src/graphwar_computer_player_manager.rs` | 新增 `BOT_STATE_RUNNING = 1`、`handle_turn_info_event_with_spawn`（过门 ⇒ state=1）、`handle_tick`（把 != 3 的写回 3）；`BOT_STATE_READY = 3` 补三个写入点 | 46.4；测试 `state_goes_three_one_three` |
+
+### 46.8 本轮的坑（都是实测）
+
+1. **Xvfb 起来就崩**：见 §45.8 第 1 条，本轮复现同款（崩在 `libnvidia-egl-gbm → libEGL_nvidia → swrast_dri`）；
+   修法照旧（`__EGL_VENDOR_LIBRARY_FILENAMES=…50_mesa.json` + `LIBGL_ALWAYS_SOFTWARE=1`）。
+2. **扫描 hashbrown 桶必须看 ctrl 字节**：第一版探针把掩码以内的每个槽都当有效项，结果读出
+   `16=1,47=104,999455886=0` 这种垃圾键。正确做法是 `ctrl[i] & 0x80 == 0` 才算占用槽（`0x80` = DELETED、`0xFF` = EMPTY）。
+3. **驱动退出码 139 不代表失败**：三局都是 `dev.kill(pid)` 之后 SIGSEGV（§45.8 第 2 条），JSONL 完整 —— 判"抓到没有"看 JSONL 里的类型计数。
+4. **`selftest` 的两个 SKIP 是环境**：`XDG_DATA_HOME` 一设，Godot 的 `user://` 就跟着走，
+   回放样本要放到 `$XDG_DATA_HOME/godot/app_userdata/Graphwar/replays/`；`examples/serve_match` 要在
+   `CARGO_TARGET_DIR` 里编好（本轮 `cargo build --offline --example serve_match`）。两条都补上之后才是 **714 / 0 / 1 skip**。
+
+### 46.9 复跑（每条都能原地跑）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+# 门⑤ / state 的运行时（三局任选，约 3–4 min；样本只写 .agent-work/）
+$PY tools/gw2_step_drive.py --display 127.0.0.1:95 --data-dir $R/gamedata \
+    --out $R/bot.jsonl --snap-dir $R/snaps --js tools/frida_cpm_gates.js --settle 25 --keep-alive 60 \
+    --steps 'w1, s boot, c 1344 630, w2, s lobby, c 765 1109, w3, s setup, c 1648 980, w2, s addbot,
+             c 1276 742, w1.5, s bot1, c 958 1109, w3, s play1, r start, w20, r t20, w20, r t40'
+
+# 静态（四条链各自能复核）
+../.venv/bin/python tools/addr_probe.py dis     0x519f40    # 五道门 + 5 连发
+../.venv/bin/python tools/addr_probe.py dis     0x46c5a0    # get_module_wk::<CPM>
+../.venv/bin/python tools/addr_probe.py dis     0x478fc0    # 插表 + 建档 5 条
+../.venv/bin/python tools/addr_probe.py dis     0x4785f0    # handle_tick：读 3 / 写 3
+../.venv/bin/python tools/addr_probe.py dis     0x479520    # turn_info 三道门 + spawn + 写 1
+```

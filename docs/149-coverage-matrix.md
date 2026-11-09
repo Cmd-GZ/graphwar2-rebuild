@@ -80,8 +80,8 @@
 | `graphwar_button.rs` | 6 | 3 | `src/graphwar_button.rs` | 13 | 观测 |
 | `graphwar_campaign_control.rs` | 1 | 1 | `src/graphwar_campaign_control.rs` | 23 | 观测 |
 | `graphwar_client_connection_handler.rs` | 8 | 16 | `src/graphwar_client_connection_handler.rs` | 8 | 观测 |
-| `graphwar_color_manager.rs` | 4 | 6 | `src/graphwar_color_manager.rs` | 26 | 观测 |
-| `graphwar_computer_player_manager.rs` | 5 | 27 | `src/graphwar_computer_player_manager.rs` | 30 | 观测 |
+| `graphwar_color_manager.rs` | 4 | 6 | `src/graphwar_color_manager.rs` | 32 | 观测 |
+| `graphwar_computer_player_manager.rs` | 5 | 27 | `src/graphwar_computer_player_manager.rs` | 33 | 观测 |
 | `graphwar_crash_reporter.rs` | 0 | 0 | `src/graphwar_crash_reporter.rs` | 2 | 观测 |
 | `graphwar_draw_util.rs` | 1 | 4 | `src/graphwar_draw_util.rs` | 1 | 观测 |
 | `graphwar_effect_manager.rs` | 1 | 3 | `src/graphwar_effect_manager.rs` | 16 | 观测 |
@@ -97,14 +97,14 @@
 | `graphwar_game_recorder.rs` | 2 | 4 | `src/graphwar_game_recorder.rs` | 14 | 观测 |
 | `graphwar_game_server.rs` | 3 | 86 | `src/graphwar_game_server.rs+src/server.rs` | 23 | 逐位 |
 | `graphwar_game_state_manager.rs` | 33 | 207 | `src/game.rs+src/turnstate.rs` | 119 | 逐位 |
-| `graphwar_graphics_manager.rs` | 6 | 8 | `src/graphwar_graphics_manager.rs` | 22 | 观测 |
+| `graphwar_graphics_manager.rs` | 6 | 8 | `src/graphwar_graphics_manager.rs` | 25 | 观测 |
 | `graphwar_lan_broadcaster_v6.rs` | 4 | 4 | `src/graphwar_lan_broadcaster_v6.rs` | 20 | 观测 |
 | `graphwar_lan_vbox.rs` | 11 | 19 | `src/graphwar_lan_vbox.rs` | 37 | 观测 |
 | `graphwar_level_generator.rs` | 4 | 26 | `src/graphwar_level_generator.rs+src/graphwar_level_generator/tables.rs` | 28 | 逐位 |
 | `graphwar_level_manager.rs` | 40 | 590 | `src/graphwar_level_manager.rs` | 20 | 观测 |
 | `graphwar_life_manager.rs` | 9 | 12 | `src/graphwar_life_manager.rs` | 25 | 逐位 |
 | `graphwar_lobby_control.rs` | 1 | 6 | `src/graphwar_lobby_control.rs` | 7 | 观测 |
-| `graphwar_local_player_manager.rs` | 3 | 15 | `src/graphwar_local_player_manager.rs` | 19 | 观测 |
+| `graphwar_local_player_manager.rs` | 3 | 15 | `src/graphwar_local_player_manager.rs` | 22 | 观测 |
 | `graphwar_logger.rs` | 2 | 2 | `src/graphwar_logger.rs` | 4 | 观测 |
 | `graphwar_long_press_animation.rs` | 7 | 7 | `src/graphwar_long_press_animation.rs` | 11 | 观测 |
 | `graphwar_mode_manager.rs` | 2 | 6 | `src/graphwar_mode_manager.rs` | 15 | 观测 |
@@ -129,7 +129,7 @@
 | `graphwar_server_connection_handler.rs` | 6 | 24 | `src/server.rs` | 7 | 逐位 |
 | `graphwar_setup_control.rs` | 21 | 70 | `src/graphwar_setup_control.rs` | 48 | 观测 |
 | `graphwar_shot_calculator.rs` | 1 | 12 | `src/graphwar_shot_calculator.rs+src/graphwar_shot_calculator/settle.rs` | 36 | 逐位 |
-| `graphwar_soldier_manager.rs` | 4 | 5 | `src/graphwar_soldier_manager.rs` | 15 | 观测 |
+| `graphwar_soldier_manager.rs` | 4 | 5 | `src/graphwar_soldier_manager.rs` | 21 | 观测 |
 | `graphwar_stream_buffer.rs` | 0 | 0 | `src/graphwar_stream_buffer.rs` | 22 | 观测 |
 | `graphwar_target_manager.rs` | 3 | 4 | `src/graphwar_target_manager.rs` | 12 | 观测 |
 | `graphwar_team_manager.rs` | 7 | 10 | `src/graphwar_team_manager.rs` | 31 | 观测 |
@@ -148,7 +148,7 @@
 | `entity_drawer.rs` | 14 | 36 | `src/entity_drawer.rs` | 19 | 观测 |
 | `function_button_manager.rs` | 2 | 3 | `src/function_button_manager.rs` | 6 | 观测 |
 | `function_drawer.rs` | 1 | 1 | `src/function_drawer.rs` | 10 | 观测 |
-| `function_history_recorder.rs` | 1 | 3 | `src/function_history_recorder.rs` | 11 | 观测 |
+| `function_history_recorder.rs` | 1 | 3 | `src/function_history_recorder.rs` | 20 | 观测 |
 | `function_token.rs` | 0 | 0 | `src/function_token.rs` | 9 | 观测 |
 | `graphwar_texture_loader.rs` | 1 | 1 | `src/graphwar_texture_loader.rs` | 7 | 观测 |
 | `math_function.rs` | 7 | 15 | `src/math_function.rs+src/math_function/to_text.rs` | 54 | 逐位 |
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（111 个文件、2983 条 `fn`） | `65638a3cf83f3137a4e5a6f2285d3304852127aea90aa2f1392f7b4c2683f887` |
+| `src/` 树（113 个文件、3119 条 `fn`） | `729e966ffd243a84ae37d84c5669f8c544ed3434ac230d19731de82f1a7bea18` |
 

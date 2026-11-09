@@ -1,0 +1,28 @@
+# 任务 78 · 24 个特征在**正对照（已定名 354）vs 目标集合（12,736）**上的覆盖率（Linux 侧）
+# 口径与 tools/callgraph_fingerprint.py ablate --coverage 相同；`_a`/`cgram_a` 需 callgraph_indirect.attach
+# 判据：该特征在这一行**有没有值**（与 callgraph_sim_tensor71.build_side 同一套字段）
+feature	n_pos	pos_hit	pos_pct	n_tgt	tgt_hit	tgt_pct	mask_rule
+size	348	348	100.0%	12736	12736	100.0%	always
+hist	348	348	100.0%	12736	12736	100.0%	always
+consts	348	145	41.7%	12736	2572	20.2%	both
+callee	348	342	98.3%	12736	6711	52.7%	always
+caller	348	158	45.4%	12736	5585	43.9%	always
+strs_s	348	94	27.0%	12736	2201	17.3%	both
+strs	348	348	100.0%	12736	3041	23.9%	both
+ncal	348	342	98.3%	12736	6711	52.7%	either
+ncall	348	158	45.4%	12736	5585	43.9%	either
+cbsig	348	342	98.3%	12736	6711	52.7%	always
+rbsig	348	158	45.4%	12736	5585	43.9%	always
+gram	348	348	100.0%	12736	12736	100.0%	both
+shape	348	348	100.0%	12736	12736	100.0%	both
+scal	348	348	100.0%	12736	10803	84.8%	both
+scal_c	348	348	100.0%	12736	10801	84.8%	both
+wconst	348	295	84.8%	12736	3334	26.2%	both
+stok	348	93	26.7%	12736	2171	17.0%	both
+cls	348	348	100.0%	12736	12736	100.0%	always
+callee_a	348	348	100.0%	12736	9029	70.9%	always
+caller_a	348	225	64.7%	12736	7546	59.2%	always
+ncal_a	348	348	100.0%	12736	9029	70.9%	either
+ncall_a	348	225	64.7%	12736	7546	59.2%	either
+cgram_a	348	348	100.0%	12736	9029	70.9%	both
+icall	348	348	100.0%	12736	8418	66.1%	either

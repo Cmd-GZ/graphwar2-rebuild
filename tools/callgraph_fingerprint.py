@@ -930,6 +930,42 @@ W_SAME = dict(size=0.25, hist=0.0, gram=2.0, consts=0.25, caller=0.5, strs_s=0.0
 W_SAME_LEAK = dict(size=1.0, hist=0.5, gram=2.0, consts=0.5, caller=0.3, strs=0.2,
                    strs_s=0.0, callee=0.0, cbsig=0.0, rbsig=0.0, ncal=0.0, ncall=0.0)
 W_CROSS = dict(size=1.0, cls=0.0, callee=0.0, caller=0.5, ncall=0.3, ncal=0.0)
+
+# ---------------------------------------------------------------------------
+# 任务 78（`docs/02` §35.12 特征表瘦身）：**默认特征集 5 列 → 3 列**
+#
+# 为什么（全部是 71 号已测的数，不在这里重推）：
+#   * `size` / `consts` 在 REF5 上的留一法边际是 **0**（留出半 424 = 424，调参半反而 +2 / −1）；
+#     78 号在 v2 留出半上把这两列一起删掉后，**逐样本命中向量一字不差**（b=0 c=0，
+#     见 `fixtures/feature_cleanup78_ladder.tsv`）⇒ 它们在这张表里是纯冗余。
+#   * `cbsig` / `rbsig` 是整函数 sha1 的集合，跨构建 **0% 重合**、判别力 0.000（70 号）
+#     ⇒ 作为结构特征**没有判别力**，不该占默认表的列。
+#   * `strs` 是 `panic::Location` 的 `file` 投影（泄漏），`strs_s` 是它的近亲，
+#     `hist` / `cls` 等其余列在 71 号的 24 列等权留一法里全是 0 或负边际。
+#
+# 纪律（任务书 §1.4 第 1 条）：**代码路径一律不删** —— `W_SAME` 原样保留，
+# `--featset full` 一键回到旧默认；受影响的只是"没显式给权重"的调用
+# （`score_same` / `scorer_for` 的默认值），显式配置（BASE / PREREG / REF …）一个都没动。
+W_SLIM = dict(gram=2.0, scal=0.5, caller=0.5)
+FS_DEFAULT = "slim"             # 任务 78 起，默认特征集就是瘦身后的三列
+FEATSETS = {"slim": W_SLIM, "full": W_SAME}
+_DEFAULT_SAME_W = None          # None = 还没被 `--featset` 定过 ⇒ 用 FS_DEFAULT
+
+
+def same_weights():
+    """当前"默认同 ISA 权重"。`--featset slim`（默认）= 3 列；`full` = 51 号的 W_SAME。"""
+    return _DEFAULT_SAME_W if _DEFAULT_SAME_W is not None else FEATSETS[FS_DEFAULT]
+
+
+def set_featset(name):
+    """切换默认特征集（`main` 里由 `--featset` 调用）。返回选中的权重字典。"""
+    global _DEFAULT_SAME_W
+    if name not in FEATSETS:
+        raise SystemExit("未知 --featset %r（可用：%s）" % (name, ", ".join(FEATSETS)))
+    _DEFAULT_SAME_W = FEATSETS[name]
+    return _DEFAULT_SAME_W
+
+
 # 新证据来源（任务 57）的键：`shape` / `scal` / `wconst` / `stok`，外加泄漏探针用的
 # `scal_c`（= `scal` 扣掉本函数自己 Location 的行号）。默认全 0（不进 W_SAME），
 # 只在 `newev` 的消融表里按需打开，**不许**在没有留出半数之前写进 W_SAME。
@@ -990,8 +1026,11 @@ def multiset_sim(qs, ds):
 
 
 def score_same(qf, df, w=None):
-    """同 ISA（Linux x86-64 ↔ Windows x86-64）：尺寸 + **原始助记符**直方图 + 常量 + 邻域。"""
-    w = w or W_SAME
+    """同 ISA（Linux x86-64 ↔ Windows x86-64）：尺寸 + **原始助记符**直方图 + 常量 + 邻域。
+
+    没给 `w` 时用 `same_weights()`（任务 78 起 = `W_SLIM` 三列；`--featset full` 回到 `W_SAME`）。
+    """
+    w = w or same_weights()
     tot = wt = 0.0
     def add(weight, val):
         nonlocal tot, wt
@@ -1057,7 +1096,7 @@ def score_cross(qf, df, w=None):
 def scorer_for(src_tag, dst_tag, w=None):
     same = BUILDS[src_tag]["isa"] == BUILDS[dst_tag]["isa"]
     if same:
-        return (lambda q, d: score_same(q, d, w)), (w or W_SAME), WIN_SAME
+        return (lambda q, d: score_same(q, d, w)), (w or same_weights()), WIN_SAME
     return (lambda q, d: score_cross(q, d, w)), (w or W_CROSS), WIN_CROSS
 
 
@@ -1750,7 +1789,7 @@ def cmd_ablate(args):
     old = W_SAME_LEAK
     configs = [
         ("① 发布值（含泄漏 strs 原始）", old),
-        ("② 本次默认（无泄漏）", new),
+        ("② 51 号默认（无泄漏；78 号起叫 `--featset full`）", new),
         ("③ ② − consts", zero(new, "consts")),
         ("④ ② − caller", zero(new, "caller")),
         ("⑤ ② − size", zero(new, "size")),
@@ -2787,11 +2826,38 @@ def cmd_probe(args):
     return 0
 
 
+def cmd_featset(args):
+    """打印当前"默认特征集"是哪一档、摘掉了什么、旧数怎么复现（任务 78，`docs/02` §35.12）。
+
+    这个子命令**不做任何测量**：78 号的数全部由
+    `tools/callgraph_sim_tensor71.py sweep --configs-file fixtures/feature_cleanup78_configs.tsv`
+    产出（张量路径与 `score_same` 逐位一致，见 §47.1；两半都报，见 §35.12 的表）。
+    这里只回答一件事：**默认用哪几列、怎么回到旧默认**。
+    """
+    W = sys.stdout.write
+    act = same_weights()
+    name = "slim" if act is W_SLIM else "full"
+    nz = [k for k in SCORE_KEYS if act.get(k)]
+    W("默认特征集：%s —— %d 列参与打分：%s\n\n"
+      % (name, len(nz), ", ".join("%s%g" % (k, act[k]) for k in nz)))
+    W("被摘掉、但**代码路径仍在**的默认键（`--featset full` 逐位复原旧数）：%s\n"
+      % (", ".join(k for k in SCORE_KEYS if W_SAME.get(k) and k not in nz) or "（无）"))
+    W("另有 19 个列在默认集里权重恒 0（cbsig/rbsig 是整函数 sha1，跨构建 0% 重合；\n"
+      "strs 是 Location 投影），它们只在 `ablate` / `newev` / `tune3` 的对照表里出现。\n\n")
+    W("复现命令：\n")
+    W("  默认（瘦身三列）  : $PY tools/callgraph_sim_tensor71.py sweep --pop v2 --half holdout \\\n"
+      "                      --configs-file fixtures/feature_cleanup78_configs.tsv\n")
+    W("  旧默认（5 列）    : 同上，取配置行 `L0_REF5`（= 51 号 W_SAME + scal，88.15%）\n")
+    W("  旧数（`ablate`）  : $PY tools/callgraph_fingerprint.py ablate --featset full --coverage\n")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("cmd", choices=["build", "verify", "tune2", "calib",
                                     "run", "merge", "report", "probe",
-                                    "ablate", "tune3", "runall", "newev", "pc"])
+                                    "ablate", "tune3", "runall", "newev", "pc",
+                                    "featset"])
     ap.add_argument("addr", nargs="*")
     ap.add_argument("--force", action="store_true", help="无视缓存重扫")
     ap.add_argument("--topk", type=int, default=5)
@@ -2814,12 +2880,16 @@ def main(argv=None):
                     help="newev 把加性网格的**并列桶**在留出半上各报一次（只报数，不参与选择）")
     ap.add_argument("--shards", type=int, default=8, help="runall 的分片数")
     ap.add_argument("--B", type=int, default=2000, help="pc 的 bootstrap 重采样次数（默认 2000）")
+    ap.add_argument("--featset", default=FS_DEFAULT, choices=sorted(FEATSETS),
+                    help="默认特征集：slim（任务 78 起，gram+scal+caller 三列，§35.12）"
+                         " / full（51 号 W_SAME，复现 78 号之前的所有默认数）")
     ap.add_argument("--tmp", default="", help="runall 分片文件目录（默认缓存目录下 shards/）")
     a = ap.parse_args(argv)
+    set_featset(a.featset)
     return dict(build=cmd_build, verify=cmd_verify, tune2=cmd_tune2, calib=cmd_calib,
                 run=cmd_run, merge=cmd_merge, report=cmd_report, probe=cmd_probe,
                 ablate=cmd_ablate, tune3=cmd_tune3, runall=cmd_runall,
-                newev=cmd_newev, pc=cmd_pc)[a.cmd](a)
+                newev=cmd_newev, pc=cmd_pc, featset=cmd_featset)[a.cmd](a)
 
 
 if __name__ == "__main__":
