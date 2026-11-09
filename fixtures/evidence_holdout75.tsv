@@ -1,0 +1,9 @@
+check	value	detail
+holdout_top1_REF	421/481 = 87.53%	全留出半自检（期望与 docs/02 §46 的 87.53% 一致）
+campaign_anchored_rows_in_truth	45	975 里被 campaign 锚住的行数（含两半）
+campaign_anchored_rows_correct	26/45	这些行在 REF 下 top-1 已对的比例
+anchored_half_holdout	14/27 = 51.9%	留出半里被 campaign 锚住的行的 REF top-1
+anchored_half_tune	12/18 = 66.7%	调参半同上（只作参考，不参与选择）
+rest_half_holdout	407/454 = 89.6%	留出半里**没被**锚住的行（对照：这批好得多）
+errors_inside_anchor_set	19/19	锚住行里错的那几条，top-1 有百分之多少落在**同一批锚的 Windows 对侧**（= 关卡闭包近孪生：结构指纹分不开，正是 campaign 表能分开的地方）
+before_after	421/481 -> 421/481	campaign 能给的新跨构建对 = 0（目标集合那 7 个没有对侧名字/用途对）⇒ 加进去一格不动
