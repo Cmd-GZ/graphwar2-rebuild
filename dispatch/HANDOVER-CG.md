@@ -29,11 +29,27 @@
             已派 4 份、**全部被我 interrupt 暂停**（因装 GPU 插件要重启 dsh），工作树见 §7
             未派 4 份：57 新证据 / 58 调用图角色 / 61 GPU 相似度 / 62 全语料对拍
 
-护栏（2026-11-09 07:35 实测；**以 fixtures/guardrails.json 为准**）
+护栏（2026-11-09 18:30 实测；**以 fixtures/guardrails.json 为准**）
   fire 647/1080 ｜ batch 647/1080 ｜ batch_conv 637/1080（种类 1075×3）
-  延迟段 死亡 366/385 ｜ 挖洞 207/294 ｜ 语料指纹 403 文件/401 回放（冻结）
-  cargo test **1694** / 0 failed ｜ --features gdext-bindings **1800** / 0 failed
-  headless **14** 个脚本 **1818** 条断言 0 失败 ｜ selftest **714 / 0 / 1 skipped**
+  死亡 366/385 ｜ 挖洞 207/294 ｜ 语料指纹 403 文件/401 回放（冻结）
+  cargo test **1710** / 0 failed ｜ --features gdext-bindings **1816** / 0 failed
+  headless **14** 个脚本 **1827** 条断言（assemble_check **226** / play_flow 135 / entity_drawer 366）
+  selftest **714 / 0 / 1 skipped**
+  coverage 527 可归属：逐位 88 / 观测 439 / 推断 0 / 未做 0
+  manager 档位 **14 wired / 2 layout / 6 assembled / 0 stub**（第十五轮 74 号升了三格）
+
+⚠️ **档位表有四处，必须同步**（漏一处就自相矛盾）：
+  ① `src/_scaffold/root_wiring.rs` 的 `Wired::status()` 臂
+  ② 同文件四个计数常量（有编译期 `assert!(四者之和==22)`）
+  ③ `client/tools/assemble_check.gd` 的 `WIRED_TIER[22]` + `TIER_TALLY`
+  ④ `docs/161-manager-gaps.md`
+  ⚠️ 另有**两处仍写旧数 11/2/9/0**：`docs/00-status.md` §0.1b.2 与 `docs/HANDOVER.md` §遗留（需上游同步）
+
+⚠️ **四条路已全部关闭**（别再投算力）：加特征/调权重（71 边际只在 gram+scal）、补间接调用图（70 边际 0）、
+  扩正对照（72 游戏代码仍 ±6.4）、换数据源类型（75 三条全不通）。**唯一堵点是 Linux 侧独立锚 = 外部资源。**
+⚠️ **指纹在"关卡闭包族"只有 51.9%**（族外 89.6%，Fisher p=2.6e-6，错 19/19 在族内）——
+  任何"用结构相似度给关卡侧命名"的计划都要先知道。
+⚠️ **口径纪律**：并发跑的墙钟一律作废；测量要串行 + 限线程；CUDA 分阶段计时必须 `synchronize()`。
   coverage 527 可归属：逐位 88 / 观测 439 / 推断 0 / 未做 0
   结构指纹（游戏代码子集）**88.15%**；975 混合总体 85.65%（±3.02，多数是依赖 crate）
 
