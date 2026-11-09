@@ -788,3 +788,30 @@ GSM       别碰 —— 不是缺证据，是卡 src/game.rs 禁区
 
 前面三条路径都没复现 1 ulp；82 是**唯一没走完的**（AI-vs-AI 收敛解）。
 **"仍然没复现"是合格结论**——只要写清抓了几发、`c` 离舍入边界多远、覆盖面缺什么。
+
+---
+
+# 第十七轮（2026-11-10）
+
+第十六轮：selftest 的 flake 真因找到（关卡种子是骰子）；manager 档位 **19/2/1/0**（只剩 1 格）；
+`drive_frame` 节奏真值量到（60.00 tick/s、pumps ≡ ticks、delta 没读）；回放驱动搬进 Rust；
+**1 ulp 的四条路全关**（打印级判据整条退役）。
+报告 §9 还自曝了一条**影响历史结论的工具盲区**（`addr_probe.py tags` 第四形态）。
+
+| # | 分支 | 主题 | 类型 | 优先级 |
+|---|---|---|---|---|
+| 83 | `agent/addrprobe-tags` | 修 `addr_probe.py tags` 第四形态 + **全量复扫 + 历史结论复核** | 静态 | **P0** |
+| 84 | `agent/retire-replay-player` | 删 `replay_player.gd`（426 行旧局面机），selftest 6 条改打 `GwReplayDriver` | 工程 | P1 |
+| 85 | `agent/drive-frame-wire` | `drive_frame` **接不接**的决策 + 落地（先写断言再动手） | 决策+工程 | P1 |
+| 86 | `agent/last-tier` | 档位最后一格 + 门⑤命中分支 | 静态+运行时 | P2 |
+| 87 | `agent/1ulp-y0` | 1 ulp 最后一条新线：**`y0` 算两遍** | 静态 | P2 |
+
+## 本轮特别提醒
+
+```
+① 83 会动 tools/ 并**让历史 tag 结论变动** —— 每条变动都要点名，不许无声改数；
+② 84 要删代码：**先把旧实现的期望值固化成夹具**，否则删了就失去对照；
+③ 85 是决策题，不是评估题：**先写断言再动手**（"先红后绿"是判据）；
+④ headless 只跑 `extends SceneTree` 的脚本（14 个）；`selftest` 的两种降级见 `docs/18` §10.3.3；
+⑤ 新样本一律 `.agent-work/replay-*`，**不许进冻结快照**。
+```
