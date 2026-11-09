@@ -6838,3 +6838,229 @@ n=struct.pack('<Q',0x8000000000000025);print([hex(i) for i in range(len(d)) if d
 **其余 8 条本节未逐脚本对齐基线**（未证是环境还是别的，下一轮要对就把 14 个脚本的基线逐条登记）。
 本轮**没有改任何 `.gd`/`.rs`**
 （`git status` 只有 `docs/06`、`tools/tag_ctor_gaps.py`、`fixtures/tag37_rescan88.tsv`）⇒ 这 12 条与本节无关。
+
+## 51. 门⑤ 的**真房源顺序**抓到了：真服务器**先**发 `PlayerInfo`（带**房主**的连接号）、**后**发 `BotAdded`；真客户端只在自己那条连接上走到门⑤ ⇒ **7 次求值 0 命中**（2026-11-10，`dispatch/92`）
+
+> 任务书：[`dispatch/92-gate5-real-lobby.md`](../dispatch/92-gate5-real-lobby.md)。分支 `agent/gate5-real-lobby`，
+> 基于 `CG@38cb827`，私有 `CARGO_HOME` / `CARGO_TARGET_DIR`。目标构建 `libgraphwarrust.so` sha256
+> **`9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`**（与 §46/§48 同一份，
+> `sha256sum .reference/game/libgraphwarrust.so` 复核过）。地址一律 **vaddr**。
+>
+> 本节补的是 §48.6 写下的**唯一缺口**："顺序是我们造的 ⇒ 不证明原版服务器会产出这种顺序"。
+> 补法：**我们当加入方**（不是服务器），让**真游戏自己开的房源**控帧序；同时用 §46 那套门⑤ 探针
+> 在**两个真客户端**上各读一遍五道门的现场取值。
+
+### 51.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 真房源加 Bot 时 `BotAdded` 与 `PlayerInfo` 的先后 | **`PlayerInfo` 先、`BotAdded` 后**，**3/3 次**加 Bot（相隔 **+1 ms / +55 ms / +50 ms**）；中间夹 8 条实体帧（`TeamInfo`/`ColorInfo`/`SoldierInfo`/`EntityEffectInfo`）。两条帧**同属房主那条连接**（`conn=228`） | **观测**（真服务器 + 线上原文 + frida 逐条读数） |
+| ② | 那个 `PlayerInfo` 的 `connection_id` 归属 | **= 发 `NewBotRequest` 的那条连接**（3/3 都是 228）。加入方（`conn=235`）收到的**第一发** `player_info` 有 **2/3 是 Bot 的**，但 `conn` 仍是 **228** ⇒ 被门③（`0x519f71`）**直接拦掉**；它能走到门⑤ 的那一发是**它自己**（`pid=236`），此时 Bot 表**是空的** | **观测** |
+| ③ | 门⑤ 在真房源下会命中吗 | **不会**。5 局 7 个客户端进程共 **7 次 `gate5_enter`、7 次 `gate5_miss`、0 次 `gate5_found`**。真房源里唯一"**表里已有该 Bot 且 `conn` 匹配**"的局面出现在**别人加入触发的重播**上，它被**门④** 拦（`vec_len=2`） | **观测** |
+| ④ | 与 §48 四局面的对照 | `selffirst`（自己先、Bot 晚到）与**真房主逐帧一致**，且真房源更极端（重播那次表里已有仍是门④ 拦）；`nobot` 与**真加入方**一致；**`hit` 与 `rebuild` 在真房源里没有对应物** —— 服务器从不让 Bot 挂到别人的新连接上 | **观测** |
+| ⑤ | 卡在哪 / 缺什么 | 卡点不是"抓不到帧"，而是**局**：① LAN 列表在两个真实例之间**不通**（房主广播 169 次、加入方**收到 0 次**）⇒ 改用 UI 的 `Join IP`；② 加入方**自己**点 AddBot 那一局**没跑成**（有人加入后 GameSetup 整屏上移 ≈255 px，旧坐标点空）⇒ "请求方视角"只用房主证明；③ `BotAdded` 是否也发给非请求方只有 **1 个负样本**（见 50.6/50.7） | — |
+
+### 51.1 造局：真服务器控帧序，我们当加入方（`Join IP` 是唯一走通的入口）
+
+| 角色 | 谁 | 怎么看 |
+|---|---|---|
+| **房主 = 真服务器** | 真游戏 `Graphwar.x86_64` + 真 `.so`，`Battle → Create Game → 加 Bot → 停在 GameSetup` | [`tools/frida_gate5_wire.js`](../tools/frida_gate5_wire.js)（进程内：libc `socket/bind/listen/accept/connect/send/recv/sendto/recvfrom` + 门⑤ 的五道门） |
+| **加入方** | 第二个真游戏实例（另一块私有 `Xvfb`）或 [`tools/gate5_real_join.py`](../tools/gate5_real_join.py)（裸 TCP 客户端） | 同上 / 后者直接把 `u16` 大端长度帧解出来 |
+| **LAN 发现** | 真房主每秒往 `[ff02::1]:42968` 发 9 字段 `GameInfo`（`address` = 真房源地址） | 同一支探针的 `udp_out`/`udp_in`；也可以用 [`tools/gw2_lan_capture.py`](../tools/gw2_lan_capture.py)（但**绑不住** 42968，见 50.6） |
+
+**LAN 列表这条路本轮不通**（这是 §92 原本首选的路）：
+
+```text
+房主（display :95）在 GameSetup 里停了 169 s，期间 udp_out 到 [ff02::1]:42968 共 **169 条**（1 Hz，
+  payload 里 address="[::1]:33315"、current_player_count 2），自己也收回了 169 条（src=fe80::e118:…，正对照）
+加入方（display :96）在同机、同一个 UDP 端口 `[::]:42968`（`bind` 时刻 t≈25.7 s，进 LanLobby 就绑）
+  ⇒ **收到 0 条**（`udp_in` 只有 2 条，都是 192.168.31.1:53 的 DNS 应答）；LAN 列表**整屏空白**（截图现场）
+⇒ 改用大厅右下角的 `Join IP`：点 (1197,1094) → 弹窗里点输入框 (1006,530) → 打字 `[::1]:33315` → 点 Join (1065,727)
+   ⇒ **连上了**（真服务器回 NewConnection{235}，随后是整份快照）
+```
+
+> ⚠ 端口**每局随机**：服务器 `bind([::]:0)`，UI 左下角 `GameIpLabel` 显示 `[::1]:33315`（本轮三局：35717 / 39759 / 33315）。
+> 读端口的可靠办法是**房主自己那条 beacon**（`udp_out` 的 `address` 字段）或截图里的 label；
+> `ss -tlnp` / `pgrep` 都**不行** —— 跑游戏那条命令在自己的 `bwrap --unshare-pid` 命名空间里，
+> 另一条命令看不见它的进程（`ss -tln` 只能看到 socket、看不到 pid）。
+
+### 51.2 加 Bot 的线上顺序（逐条原文，房主连接 `conn=228`）
+
+**第 1 次（第 4 局，`Bot#1`）** —— 从 `NewBotRequest` 到 `BotAdded` 的**全部 11 帧**：
+
+```text
+in  fd=27  NewBotRequest {"NewBotRequest":{"connection_id":228,"level":1000}}        t=…（客户端点 AddBot）
+in  fd=26  PlayerInfo   {"PlayerInfo":{"player_id":232,"connection_id":228}}         ← ★ 第一发是 PlayerInfo
+in  fd=26  TeamInfo{232,Team2} / ColorInfo{232} / SoldierInfo{233,player 232} / TeamInfo{233}
+            / EntityEffectInfo{233,DeathEffect} / SoldierInfo{234,player 232} / TeamInfo{234} / EntityEffectInfo{234}
+in  fd=26  BotAdded     {"BotAdded":{"connection_id":228,"player_id":232,"level":1000}}  ← ★ 8 条实体帧之后才到
+```
+
+| 局 | 加的是 | `PlayerInfo`（房主那条连接上） | `BotAdded` | 间隔 |
+|---|---|---|---|---|
+| 第 2 局（房主 + 裸客户端加入） | Bot#1 = 232 | t=35077 | t=35078 | **+1 ms** |
+| 第 4 局 | Bot#1 = 232 | t=35061 | t=35116 | **+55 ms** |
+| 第 4 局 | Bot#2 = 239（加入方**在线**时加） | t=100308 | t=100358 | **+50 ms** |
+
+⇒ **先后是稳定的（3/3），间隔不稳定（1–55 ms）**；间隔来自服务器在"实体已经建好"之后才让
+`ComputerPlayerManager` 建档发 `BotAdded`（客户端侧 `cpm_add` 的时刻与 `BotAdded` 同刻）。
+**客户端侧也一样**：`handle_player_info` 在 `BotAdded` 之前执行，那一发读到的 `bot_table_keys` **都是 `""`**：
+
+```text
+第 2 局 {"type":"player_info","pid":232,"conn":228,"vec_len":1,"pid_in_bot_table":false,"bot_table_keys":"","t":35279}
+       {"type":"cpm_add","key":232,"level":1000,"t":35318}          ← 39 ms 之后表里才有 232
+第 4 局 {"type":"player_info","pid":232,"conn":228,"vec_len":1,"pid_in_bot_table":false,"bot_table_keys":"","t":35061}
+       {"type":"cpm_add","key":232,"level":1000,"t":35116}
+```
+
+### 51.3 连接归属：**Bot 挂在"请求它的那条连接"上**，不跟新连接走
+
+| 观测 | 原文 | 出现次数 |
+|---|---|---|
+| Bot 的 `PlayerInfo.connection_id` = 请求方 | `{"player_id":232,"connection_id":228}` / `{"player_id":239,"connection_id":228}` | **3/3**（三局里唯一有 Bot 的连接号都是 228 = 房主） |
+| 加入方（`conn=235`）收到的**第一发** `player_info` | 第 4 局 `pid=232 conn=228`（Bot）；第 3 局 `pid=229 conn=228`（房主）；裸客户端那局 `pid=232 conn=228` | **3 次加入**：Bot 2/3、房主 1/3 —— **都不是本连接** |
+| 加入方自己那一发 | `{"player_id":236,"connection_id":235}`，`NewConnection` 之后 **+78 ms**（房主自己那发是 +102 ms） | 3/3 |
+| 加入方收到的 `BotAdded` | **0 条**（第 4 局房主在线加了 `Bot#2=239`，加入方只收到 `PlayerInfo{239,conn 228}` + 4 条实体帧，**没有** `BotAdded`）⇒ 它的 CPM 表**始终为空**（`bot_table_keys:""`） | 负结论 **1/1** |
+| 有人加入时服务器会**重播**已有玩家的 `PlayerInfo` | 第 4 局 B 加入：房主收到 `PlayerInfo{232,conn 228}`（`pid_in_bot_table=true`）、`PlayerInfo{229,conn 228}`、`PlayerInfo{236,conn 235}` | 1/1 |
+
+### 51.4 门⑤ 在真房源里的 7 次求值（两个视角，逐条原文）
+
+**房主视角（`my_conn=228`，第 4 局）**：
+
+```text
+connected_to_server ev08=228
+player_info pid=229 conn=228 vec_len=0 bot_table_keys=""      → gate5_enter → gate5_miss → 5 连发（pid 229）
+player_info pid=232 conn=228 vec_len=1 bot_table_keys=""      ← 加 Bot#1：**门④ 拦**（vec_len≠0）⇒ 门⑤ 不求值
+cpm_add 232                                                   ← 表里此时才有 232
+player_info pid=232 conn=228 vec_len=2 pid_in_bot_table=true  ← ★ B 加入触发**重播**：表里**已是 Bot**、conn 也匹配，
+                                                                 **仍被门④ 拦**（vec_len=2）—— 真房源里最接近命中的一次
+player_info pid=229 conn=228 vec_len=3                        ← 门④ 拦
+player_info pid=236 conn=235 vec_len=4                        ← 门③ 拦（别人的连接）
+player_info pid=239 conn=228 vec_len=4 bot_table_keys="232"   ← 加 Bot#2：门④ 拦（表里还没有 239）
+cpm_add 239
+```
+
+**加入方视角（`my_conn=235`，第 4 局）**：
+
+```text
+connected_to_server ev08=235
+player_info pid=232 conn=228 vec_len=0   ← 连接建立后**第一发**就是 Bot，但 conn=228 ⇒ 门③ 拦（不求值）
+player_info pid=229 conn=228 vec_len=0   ← 同上
+player_info pid=236 conn=235 vec_len=0 bot_table_keys=""  → gate5_enter → gate5_miss → 5 连发（pid 236）
+player_info pid=239 conn=228 vec_len=1 bot_table_keys=""  ← 房主加 Bot#2；门③ 拦，**表仍是空**
+```
+
+**汇总（5 局 7 个客户端进程）**：
+
+| 局 | 角色 | `gate5_enter` | `gate5_found` | `gate5_miss` | 结论 |
+|---|---|---|---|---|---|
+| 第 1 局 | 房主（单实例，探针 `frida_cpm_gates.js`） | 1 | 0 | 1 | 第一发是自己，表空 |
+| 第 2 局 | 房主 | 1 | 0 | 1 | 同上 |
+| 第 3 局 | 房主 / 加入方 | 1 / 1 | 0 / 0 | 1 / 1 | 房主门④ 拦；加入方表空 |
+| 第 4 局 | 房主 / 加入方 | 1 / 1 | 0 / 0 | 1 / 1 | 同上（多一次"表里已有"的重播，仍门④ 拦） |
+| 第 5 局 | 房主（组播对照，不加 Bot） | 1 | 0 | 1 | — |
+| **合计** | | **7** | **0** | **7** | **真房源下门⑤ 一次都没命中** |
+
+> 判据与探针自校验：`hooks` 里四处字节 4/4 与 §46/§48 同值（`498d7e30e8e6` / `55415741` / `49c70703` /
+> `837c2b900374ae`），且每次 `gate5_enter` 里那次 `get_module_wk`（`0x46c5a0`）返回值 **= CPM 盒基**（`match_cpm:true`）
+> ⇒ 探针没坏，"0 次命中"不是"钩子没响"。
+
+### 51.5 与 §48 四局面逐条对照
+
+| §48 的局面 | 我们造的帧序 | 真房源里的对应局面 | 一致? |
+|---|---|---|---|
+| `hit` | `BotAdded{232}` → 中间 2 s → **第一发** `PlayerInfo{232, 本连接}` ⇒ 命中 | **没有对应物**：真服务器是 `PlayerInfo` 在前、`BotAdded` 在后（3/3），且 `PlayerInfo` 带的是**请求方**连接号；请求方若是自己，它的第一发永远是**它自己** | ✗ **不一致**（这是"我们造的"，真房源产不出） |
+| `nobot` | 不发 `BotAdded` → 第一发 `PlayerInfo{232}` 但表空 ⇒ miss + 5 连发 | **等价于真加入方**：第一发 `player_info`（Bot 或房主）被门③ 拦、能走到门⑤ 的是自己、表空 ⇒ miss + 5 连发 | ✓ 一致 |
+| `selffirst` | 自己先（229）→ Bot 晚到 ⇒ 门④ 拦 | **与真房主逐帧一致**（229 先、232 后、门④ 拦）；真房源还多出一种更狠的：别人加入触发重播时**表里已有该 Bot**，仍被门④ 拦 | ✓ 一致（真房源更极端） |
+| `rebuild` | 第二条 `NewConnection{231}` → 我们**把 Bot 的 conn 改成 231** → 命中 | **没有对应物**：真服务器重播 Bot 的 `PlayerInfo` 时用的是**原连接号 228**；真客户端也没有重连（`docs/09` §11.4）；本轮 5 局里**每条连接都只收到 1 条 `NewConnection`**（`A_join2` 那次出现 2 条是因为同时抓到了房主自己那条和加入方那条），**没有一次重建** | ✗ **不一致**（命中靠的是我们改写连接号） |
+
+⇒ 一句话：**§48 的两个"命中"局面都是服务器侧可控性造出来的；真房源的帧序只对应 §48 的两个"未命中"局面。**
+门⑤ 的命中分支**可达**（§48 已证），但在**真房源**里**没有到达它的路径**（本轮 7 次求值全 miss）。
+
+### 51.6 顺带三条观测（都与旧文档/旧坐标有关）
+
+1. **LAN 广播端口是 `42968`，不是 `55463`**：本轮三局、房主侧 `udp_out` 的目标恒为 `[ff02::1]:42968`，
+   房主自己也 `bind([::]:42968)`。`docs/09` §1.1 记的"抓到发往 `55463`"与这一份构建/这一套局不符
+   —— **未改 `docs/09`（本轮只许动 `docs/06` 与 `tools/`），登记在此待改**。
+2. **`tools/gw2_lan_capture.py` 绑不住 42968**（`bind_error`，v4/v6 都失败）⇒ 想独立于游戏复现广播，
+   目前只能靠进程内 `sendto` 钩子；跨进程的组播投递为何收不到（见 50.1 的 0/169）**未查**，
+   本轮只证明"加入方进程一条都没读到"（同一支 `recvfrom` 钩子在房主进程上抓到 169 条，正对照成立）。
+3. **GameSetup 的布局随人数上移**：房主（Team1 只有自己一行）`AddBot` 在 **(1648,980)**；
+   有人加入后 Team1 变两行，整屏上移 ≈255 px，`AddBot` 落到 **(≈1318,725)**。本轮加入方按旧坐标点
+   `AddBot` 点空 ⇒ "加入方自己加 Bot"那一局**没造出来**（见 50.7）。
+
+### 51.7 缺什么（照实记，不当结论）
+
+1. **"请求方视角"只用房主证明了**：房主在第 4 局确实收到了"表里已有该 Bot + `conn` 匹配"的 `player_info`
+   （`pid_in_bot_table=true`），被门④ 拦；但**没有**跑成"加入方自己点 AddBot → 服务器发 `PlayerInfo{bot, 235}`"
+   这一局（50.6 第 3 条）。若有人要补，坐标改成 (1318,725) + 弹窗格子按新布局重测即可。
+2. **`BotAdded` 会不会也发给非请求方**：本轮只有 **1 个负样本**（第 4 局 `Bot#2`，加入方只收到
+   `PlayerInfo{239}`，没有 `BotAdded{239}`）。要坐实得再跑 2~3 局，或静态确认服务器那条广播的目标集合。
+3. **LAN 列表跨进程投递为 0 的机制**（组播成员/接口选择）**未查**；本轮用 `Join IP` 绕开，
+   这条不影响门⑤ 的结论（门⑤ 判据在客户端事件层，与发现层无关）。
+4. **真房源里没有"连接重建"**：5 局 **0 次**，所以 §48 的 `rebuild` 命中在真实服务器上**没有对应物**
+   —— 这是负结论，不是缺口。
+
+### 51.8 复跑（每条都能原地跑；样本只写 `.agent-work/`，不进冻结快照）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+# 0) 两块私有 display（GLX 必须走 mesa，见 §46.8 第 1 条）
+mkdir -p /tmp/.X11-unix
+for d in 95 96; do
+  __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json LIBGL_ALWAYS_SOFTWARE=1 \
+    Xvfb :$d -screen 0 1920x1160x24 -listen tcp -ac & done
+
+# 1) 房主（真服务器）：建房 → 加 Bot#1 →（60 s 后）加入方已进来 → 加 Bot#2
+$PY tools/gw2_step_drive.py --display 127.0.0.1:95 --data-dir $R/gdA --out $R/A.jsonl \
+    --snap-dir $R/snaps/A --js tools/frida_gate5_wire.js --settle 24 --keep-alive 30 \
+    --steps 's boot, w1, c 1344 622, w2, s lobby, c 765 1109, w3, s setup, c 1648 980, w2, s addbot,
+             c 1276 742, w1.5, s bot1, r addbot, w60, s waitB, c 1648 980, w2, s addbot2,
+             c 1276 742, w1.5, s bot2, r addbot2, w60, s after, r tail'
+
+# 2) 房间地址 = 房主自己 beacon 的 address 字段（端口每局随机；`ss -tlnp` 跨命名空间看不见 pid）
+grep '"type": "udp_out"' $R/A.jsonl | tail -1        # ⇒ "address":"[::1]:33315"
+
+# 3) 加入方（第二个真客户端，另一块 display）：Join IP → 点输入框 → 打地址 → Join
+$PY tools/gw2_step_drive.py --display 127.0.0.1:96 --data-dir $R/gdB --out $R/B.jsonl \
+    --snap-dir $R/snaps/B --js tools/frida_gate5_wire.js --settle 24 --keep-alive 20 \
+    --steps "s boot, w1, c 1344 622, w3, s lobby2, c 1197 1094, w2, s ipdialog, c 1006 530, w1,
+             t \"[::1]:33315\", w1, s typed2, c 1065 727, w8, s joined2, w25, s afterjoin2,
+             w40, s tail2, r mark"
+
+# 3') 或者不要第二个游戏：裸 TCP 客户端当加入方（最快，只看线上原文）
+$PY tools/gate5_real_join.py --addr '[::1]:33315' --out $R/join.jsonl --hold 40
+
+# 4) 判据：门⑤ 的三个出口 + 那 5 条请求（不用 frida 也能判 conn 归属）
+grep -o '"type": "gate5[a-z_]*"' $R/B.jsonl | sort | uniq -c      # 期望 1 enter / 1 miss / 0 found
+python3 -c "import json,sys;[print(o['text']) for o in map(json.loads,open('$R/B.jsonl'))
+            if o.get('type')=='frame' and o['name'] in ('PlayerInfo','BotAdded')]"
+```
+
+* **样本**：本轮 5 局（2 局房主单实例 + 3 局"房主 + 加入方"），JSONL 只写 `.agent-work/cg/fh92/logs/`
+  （**没进冻结快照**，也没写 `fixtures/`）。上面 50.2–50.4 的原文是从这些 JSONL 里**逐条抄下来的**，
+  所以证据不依赖路径。
+* **驱动退出码 139 不代表失败**（`dev.kill` 之后的 SIGSEGV，§46.8 第 3 条）；判"打到没有"看类型计数。
+
+### 51.9 本轮改动（`src/` / `client/` / `fixtures/` / `dispatch/` **一个字节没动**）
+
+| 文件 | 内容 |
+|---|---|
+| [`tools/frida_gate5_wire.js`](../tools/frida_gate5_wire.js) | **新增**：`§46` 那套门⑤ 五道门钩子 **加** libc 套接字钩子（`socket/bind/listen/accept/connect/send/recv/sendto/recvfrom`），把 TCP 字节流按 `u16` 大端长度**重组成帧**、把 UDP 数据报原文记下来 —— 好让"线上顺序"与"门内取值"落在**同一份 JSONL、同一条时间轴**上 |
+| [`tools/gate5_real_join.py`](../tools/gate5_real_join.py) | **新增**：当**加入方**连真房源（`ss -tln`/`--addr` 找端口、`NewConnectionRequest` → `NewPlayerRequest` → 只收不发、逐帧记 `t/dir/name/text`），把 `docs/09` §5.5 那次"连真服务器没回音"重做成**能判**的工具 |
+| [`tools/gw2_lan_capture.py`](../tools/gw2_lan_capture.py) | **新增**：进程外抓 LAN 发现广播 + 列本游戏监听口（含跨 `bwrap --unshare-pid` 的坑说明）。本轮它**绑不住** 42968（50.6 第 2 条），留作下一轮查组播用 |
+| [`docs/06-verification.md`](06-verification.md) | **新增本节（§50）** |
+
+**没有改动**：`src/`、`client/`、`fixtures/`、`fixtures/guardrails.json`、`dispatch/`；`.agent-work/` 里只有
+两局截图、JSONL 与探针草稿（不入库）。
+
+### 51.10 验收
+
+| 项 | 结果 |
+|---|---|
+| ① 加 Bot 时 `BotAdded` vs `PlayerInfo` 的先后 | **抓到了**：`PlayerInfo` **先**、`BotAdded` **后**，3/3 次（+1 / +55 / +50 ms）；中间 8 条实体帧；客户端侧 `bot_table_keys=""`（3/3） |
+| ② 那个 `PlayerInfo` 的 `connection_id` 归属 | **= 请求加 Bot 的那条连接**（3/3 = 228），**不是**加入方的新连接；加入方第一发 `player_info` 2/3 是 Bot 但 `conn` 是 228（门③ 拦），走到门⑤ 的是它自己（`pid=236`），表空 |
+| ③ 门⑤ 在真房源下会命中吗 | **不会**：7 次 `gate5_enter` / **0** `gate5_found` / 7 `gate5_miss`；与 §48 对照：`selffirst`✓、`nobot`✓、`hit`✗、`rebuild`✗ |
+| ④ 卡在哪 | LAN 列表两实例**不通**（169 广播 / 0 接收，正对照成立）⇒ `Join IP`；加入方自己加 Bot 那局**没跑成**（布局上移 255 px）；`BotAdded` 是否发给非请求方只有 1 个负样本 |
+| `cargo test --offline` | **1753 passed / 0 failed**（`src/` 未动） |
+| `tools/check_doc_refs.py` | **rc=0** |
