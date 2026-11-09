@@ -92,7 +92,13 @@
 //! ⚠️ **任务 77（本轮）**：`Soldier` / `Graphics` / `FunctionHistoryRecorder` / `Color` 四格
 //! **14 / 2 / 6 / 0 → 18 / 2 / 2 / 0**（四格各自补了「布局逐字段 + 订阅/发布指令级 + 3 条交互
 //! 断言」，证据在各自 manager 文件的模块文档与 `docs/161` §2.2）。
-//! 剩 2 个 `assembled`：`GameState`（禁区 `src/game.rs`）/ `ComputerPlayer`（要抓一次 bot 局）。
+//!
+//! ⚠️ **任务 79**：`ComputerPlayer` **18 / 2 / 2 / 0 → 19 / 2 / 1 / 0**（`state` 3/1 结案 +
+//! `docs/06` §46 的运行时读数 ⇒ 交互断言补齐，见 `docs/161` §2.3）。
+//! **任务 86 复核（本轮）**：分布仍是 **19 / 2 / 1 / 0**，最后那 1 格 `assembled` 是
+//! **`GraphwarGameStateManager`**，**不是证据缺**——它的事件层必须落进 `src/game.rs` 的
+//! [`Match`]（结算内核，本轮禁区），交互断言又必须落进 `client/tools/selftest.gd`（另一个任务的
+//! 文件）⇒ 两处都不许碰，所以**不升**，理由与"两条绕路为什么已被否掉"见 `docs/161` §2 第 7 行 / §7 C15。
 //!
 //! 三条读法（每条都有反例撑着，别合并省略）：
 //!
@@ -103,10 +109,11 @@
 //!    都在跑，但**发方向的事件流没接**（原版 3 个 `set_*` 各发一条 `FunctionInfo` 类事件，
 //!    我方 [`FunctionTable`] 一条都不发）⇒ 它停在 `layout`；`ClientConnectionHandler` 才是
 //!    "布局全解、行为一行没写"。
-//! 3. **`assembled` 不等于"复原了"**：剩下这 **6** 个只有"类型 + 部分行为 + 按类型可调"，
-//!    原版布局多数**没逐字段解出**，事件流也没接全（任务 40 之后 6 个升到 `wired`，
-//!    见 §50；任务 74 又升 3 个，见 §54；`GameStateManager` 因为事件层在 `src/game.rs`
-//!    （禁区）仍停在 `assembled`）。
+//! 3. **`assembled` 不等于"复原了"**：只剩 **1** 个（`GraphwarGameStateManager`），它只有
+//!    "类型 + 部分行为 + 按类型可调"，原版布局**没**逐字段解出、事件流没接
+//!    （任务 40 之后 6 个升到 `wired`，见 §50；任务 74 又升 3 个，见 §54；任务 77 再升 4 个，
+//!    任务 79 升 1 个。`GameStateManager` 因为事件层在 `src/game.rs`（禁区）仍停在 `assembled`；
+//!    任务 86 复核过：**缺的是实现位置，不是证据**，见 `docs/161` §2 第 7 行）。
 //!
 //! ⚠️ 与本文件里的 [`SlotKind`] **不是一回事**：`SlotKind` 回答"容器里放的是原版模块类型本身、
 //! 还是 `_scaffold` 的包装"（**容器类型来源**的二分类，17 / 5，
@@ -118,7 +125,7 @@
 //!
 //! | 项 | 原版 | 本文件 | 证据档 |
 //! |---|---|---|---|
-//! | 注册几个 | `GraphwarGameClient::new` **22** 条 `add_module` | **22**（档位 14 `wired` + 2 `layout` + 6 `assembled` + 0 `stub`；容器类型来源 17 + 5） | 22 是**逐位**（§41）；档位是我方现状 |
+//! | 注册几个 | `GraphwarGameClient::new` **22** 条 `add_module` | **22**（档位 19 `wired` + 2 `layout` + 1 `assembled` + 0 `stub`；容器类型来源 17 + 5） | 22 是**逐位**（§41）；档位是我方现状 |
 //! | 注册顺序 | 22 条的调用序 | **同序**（[`Wired::ALL`] / [`SLOTS`]） | **逐位**（两架构尺寸序列相等） |
 //! | 谁在装 | `GraphwarGameClient::new`（客户端对象） | 本文件（`GraphwarRootNode` 调的 `assemble_demo`） | 装载者**不同**，容器语义相同 |
 //! | 各 manager 是否**共享**实例 | `GameStateManager` 内部是否也持 `TurnManager`：**未解** | **不共享**：容器里是各自独立实例；`Match` 自带一个内部 `TurnManager` / `LifeState` / `GraphwarEntityEffectManager` | 独立性是**我方形状**；原版是否共享 `未知` |
@@ -455,7 +462,11 @@ pub const SLOT_TIERS: [&str; 4] = [SLOT_WIRED, SLOT_LAYOUT, SLOT_ASSEMBLED, SLOT
 /// **任务 74 起：14 / 2 / 6 / 0**（`Rank` / `Name` / `LocalPlayer` 三格从 `assembled` 升到
 /// `wired`：容器 + 事件流两方向指到指令 + 交互断言，见 `docs/16` §54 与 `docs/161` §2）。
 /// **任务 77 起：18 / 2 / 2 / 0**（`Color` / `Soldier` / `Graphics` / `FunctionHistoryRecorder`
-/// 四格同款升档，见 `docs/161` §2.2；只剩 `GameState`（禁区）与 `ComputerPlayer`（要 bot 局））。
+/// 四格同款升档，见 `docs/161` §2.2）。
+/// **任务 79 起：19 / 2 / 1 / 0**（`ComputerPlayer` 升档，见 `docs/161` §2.3）。
+/// **任务 86 复核：仍是 19 / 2 / 1 / 0**——最后一格 `GameState` **不升**，因为它的事件层要落进
+/// `src/game.rs`、交互断言要落进 `client/tools/selftest.gd`，两个都是别的任务的禁区；
+/// 证据本身**不缺**（7 条订阅全指到指令），缺的是**实现位置**（`docs/161` §2 第 7 行）。
 ///
 /// 改任何一槽的档位必须**同批**改这里、[`Wired::status`] 与
 /// `client/tools/assemble_check.gd` 的 `WIRED_TIER`（任务 28 的病根就是只有一处改）。
@@ -596,8 +607,9 @@ impl Wired {
     ///    `FunctionManager`（32 B / 4 字段全解，容器 + 6 条交互断言都在，但**发方向**
     ///    的事件流没接：原版 3 个 `set_*` 各发一条 `FunctionInfo` 类事件，我方的
     ///    [`FunctionTable`] 一条都不发）；
-    /// 3. `assembled` —— 容器里是我方复原类型（**6** 个，含 `GameStateManager`：
-    ///    它的事件层在 `src/game.rs`，本轮是禁区 ⇒ 停在 `assembled`，见 `docs/16` §50.4）；
+    /// 3. `assembled` —— 容器里是我方复原类型（**1** 个：`GameStateManager`，
+    ///    它的事件层在 `src/game.rs`，本轮是禁区 ⇒ 停在 `assembled`，见 `docs/16` §50.4 与
+    ///    `docs/161` §2 第 7 行：缺的是实现位置，不是证据）；
     /// 4. `stub` —— 都不是：**任务 36 起 0 个**（最后一个 `PlanePosManager` 已升 `wired`；
     ///    24 B 布局逐字段解出，见 `src/graphwar_plane_pos_manager.rs`）。
     ///
@@ -1460,7 +1472,7 @@ impl RootWiring {
 
     /// 装配序里"容器里装的是原版模块类型本身"的几个（[`SlotKind::RealType`]，17 个）。
     ///
-    /// ⚠️ **不是**档位 `assembled` 的那 15 个；档位看 [`Wired::status`]。
+    /// ⚠️ **不是**档位 `assembled` 的那 1 个；档位看 [`Wired::status`]。
     pub fn real_managers(&self) -> Vec<Wired> {
         self.registered().into_iter().filter(|w| w.kind() == SlotKind::RealType).collect()
     }
