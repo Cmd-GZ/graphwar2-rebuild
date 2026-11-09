@@ -23,7 +23,7 @@
              但这只是 13,263 个 Ghidra 函数里的 4.0% —— 见 §3「信息天花板」
 真名         348 / 527（三份符号表并集）；无名 179 = 138 族级 + 41 未知
 协议         74 / 74 全字段 + 74 条判别值 + 7 个线上枚举全集（无未知）
-GDExtension  15 / 15 类，**全部节点化**；headless 14 个 SceneTree 脚本 / 1827 条 / 0 failed
+GDExtension  **原版 12 类**（`docs/02` §16.2）+ 我方 3 = **15 个，全部节点化**；headless 14 个 SceneTree 脚本 / 1827 条 / 0 failed
 cargo        1710 / 0（`--features gdext-bindings` 1816 / 0）
 selftest     714 / 0 / 1 skip（**前置**：`client/assets/` + 编好 `examples/serve_match`；
              没有 serve_match 时 636 / 2 skip；缺 assets 掉到 591–667）
