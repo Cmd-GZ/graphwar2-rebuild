@@ -517,6 +517,56 @@ fn split_settlement_batches(bytes: &[u8]) -> (Vec<SettlementBatch>, String) {
 /// `TICKS_PER_SECOND` 的公开别名（界面/自检要按 60 Hz 算秒数）。
 pub const TICKS_PER_SECOND_I64: i64 = TICKS_PER_SECOND;
 
+// ---------------------------------------------------------------- 模式档位（`dispatch/89`）
+//
+// 回放里记着**这一局真实的选择**：`AxisModeInfo{axis_mode}` / `FunctionModeInfo` /
+// `TurnModeInfo` / `TimeModeInfo`，值都是线上枚举的名字（`"EveryUnit"` 等）。
+// 播放屏要把它们翻成 `App.state.axis_mode` 那 4 个**档位下标**（`GwModes`，`client/src/app/modes.gd`）。
+//
+// 这张表原来在 `client/src/play/replay_player.gd::GwReplayPlayer` 的 4 个 `static func` 里
+// （84 号把那份 426 行的 GDScript 局面机删到只剩这 4 个函数，89 号把这一份也搬走、整份删除）。
+//
+// **为什么搬进 Rust**（`dispatch/89` §1 选项 A）：下标就是**线上枚举的声明顺序**，
+// 而那张唯一的权威表已经在 Rust 里 —— [`crate::_scaffold::protocol::WIRE_VALUE_ENUMS`]
+// （`docs/07` §5.2 用 serde `unknown_variant` 的指令形状穷举出来的 8 张 VARIANTS 表，
+// **逐位**）。所以这里**不抄名字**：位置 = 下标，问一次表即可。
+// 枚举的判别值另有一份 `repr(u8)` 版本（`crate::graphwar_mode_manager` /
+// `graphwar_turn_manager`），下面的 `mode_index_matches_wire_enums` 把它们对拍上，
+// 防止哪天有人只改一边。
+
+/// 线上枚举名 → 该名字在 `WIRE_VALUE_ENUMS` 里的**位置**（= 枚举判别值 = 档位下标）。
+///
+/// `None` = 枚举名或取值不认识（调用方各自决定兜底，见下面 4 个函数的注释）。
+fn wire_index(enum_name: &str, value: &str) -> Option<i64> {
+    let (_, names) = crate::_scaffold::protocol::WIRE_VALUE_ENUMS
+        .iter()
+        .find(|(n, _)| *n == enum_name)?;
+    names.iter().position(|v| *v == value).map(|i| i as i64)
+}
+
+/// `axis_mode` → `GwModes` 轴档（`0 = NoAxis / 1 = OnlyMain / 2 = EveryFive / 3 = EveryUnit`）。
+///
+/// 不认识的字符串退回 **3（`EveryUnit`）**，与退役的 GDScript 表**同一兜底**
+/// （那也是 `GwModes.AXIS_DEFAULT`：原版默认视野，宁可多画网格也不要少画）。
+pub fn axis_index(s: &str) -> i64 {
+    wire_index("AxisMode", s).unwrap_or(3)
+}
+
+/// `function_mode` → 函数档（`0 = NormalFunction / 1 = DiffEqFunction`）；不认识退回 0。
+pub fn function_index(s: &str) -> i64 {
+    wire_index("FunctionMode", s).unwrap_or(0)
+}
+
+/// `turn_mode` → 回合制档（`0 = SequentialTurns / 1 = SimultaneousTurns`）；不认识退回 0。
+pub fn turn_index(s: &str) -> i64 {
+    wire_index("TurnMode", s).unwrap_or(0)
+}
+
+/// `time_mode` → 时限档（`0 = Timer30s … 4 = Timer5m / 5 = TimerInf`）；不认识退回 5（无限）。
+pub fn time_index(s: &str) -> i64 {
+    wire_index("TimeMode", s).unwrap_or(5)
+}
+
 // ===========================================================================
 // 断言（纯逻辑；不依赖任何外部文件 —— 语料是 `.agent-work/` 里的易失物）
 // ===========================================================================
@@ -796,5 +846,87 @@ mod tests {
             ticks += d.drive_frame(1.0 / 60.0).ticks as u64;
         }
         assert!((3599..=3600).contains(&ticks), "60 s 推了 {ticks} 个 tick");
+    }
+}
+
+// ===========================================================================
+// 模式档位查表（`dispatch/89`）的断言
+// ===========================================================================
+
+#[cfg(test)]
+mod mode_index_tests {
+    use super::*;
+
+    use crate::graphwar_mode_manager::{AxisMode, FunctionMode, TimeMode};
+    use crate::graphwar_turn_manager::TurnMode;
+
+    /// **期望值来自退役的旧实现**（`client/src/play/replay_player.gd::GwReplayPlayer` 的
+    /// 4 个 `static func`，89 号整份删除）—— 不是"新实现自证"：这 15 行照抄旧表。
+    #[test]
+    fn retired_gdscript_table_is_reproduced_value_by_value() {
+        // axis_index：`docs/133` §3.3 在 400 份真实回放里见过的 4 个取值全都在这。
+        assert_eq!(axis_index("NoAxis"), 0);
+        assert_eq!(axis_index("OnlyMain"), 1);
+        assert_eq!(axis_index("EveryFive"), 2);
+        assert_eq!(axis_index("EveryUnit"), 3);
+        // function_index
+        assert_eq!(function_index("NormalFunction"), 0);
+        assert_eq!(function_index("DiffEqFunction"), 1);
+        // turn_index
+        assert_eq!(turn_index("SequentialTurns"), 0);
+        assert_eq!(turn_index("SimultaneousTurns"), 1);
+        // time_index：6 档按秒数升序
+        assert_eq!(time_index("Timer30s"), 0);
+        assert_eq!(time_index("Timer1m"), 1);
+        assert_eq!(time_index("Timer2m"), 2);
+        assert_eq!(time_index("Timer3m"), 3);
+        assert_eq!(time_index("Timer5m"), 4);
+        assert_eq!(time_index("TimerInf"), 5);
+    }
+
+    /// 不认识的字符串：兜底与旧表**逐值相同**（3 / 0 / 0 / 5），不是 `unwrap_or(0)`。
+    #[test]
+    fn unknown_strings_fall_back_like_the_retired_table() {
+        for s in ["", "everyunit", "NoAxis ", "Timer0s", "???", "EndingGame"] {
+            assert_eq!(axis_index(s), 3, "axis 兜底 EveryUnit（{s:?}）");
+            assert_eq!(function_index(s), 0, "function 兜底 NormalFunction（{s:?}）");
+            assert_eq!(turn_index(s), 0, "turn 兜底 SequentialTurns（{s:?}）");
+            assert_eq!(time_index(s), 5, "time 兜底 TimerInf（{s:?}）");
+        }
+        // 大小写敏感（线上就是这几个字面量）
+        assert_eq!(wire_index("AxisMode", "everyunit"), None);
+    }
+
+    /// 下标来源 = `protocol::WIRE_VALUE_ENUMS` 的**位置**，且该位置 == 三个原版枚举的
+    /// `repr(u8)` 判别值（`逐位`，`docs/07` §5.2）。谁改了其中一边，这条就红。
+    #[test]
+    fn mode_index_matches_wire_enums() {
+        let table = |name: &str| -> &'static [&'static str] {
+            crate::_scaffold::protocol::WIRE_VALUE_ENUMS
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, v)| *v)
+                .unwrap_or_else(|| panic!("`WIRE_VALUE_ENUMS` 里没有 {name}"))
+        };
+        // 四个枚举的变体数（`docs/07` §5.2）
+        assert_eq!(table("AxisMode").len(), 4);
+        assert_eq!(table("FunctionMode").len(), 2);
+        assert_eq!(table("TurnMode").len(), 2);
+        assert_eq!(table("TimeMode").len(), 6);
+        // 位置 == 判别值（`graphwar_mode_manager` / `graphwar_turn_manager` 的 `repr`）
+        assert_eq!(table("AxisMode")[AxisMode::NoAxis as usize], "NoAxis");
+        assert_eq!(table("AxisMode")[AxisMode::OnlyMain as usize], "OnlyMain");
+        assert_eq!(table("AxisMode")[AxisMode::EveryFive as usize], "EveryFive");
+        assert_eq!(table("AxisMode")[AxisMode::EveryUnit as usize], "EveryUnit");
+        assert_eq!(table("FunctionMode")[FunctionMode::NormalFunction as usize], "NormalFunction");
+        assert_eq!(table("FunctionMode")[FunctionMode::DiffEqFunction as usize], "DiffEqFunction");
+        assert_eq!(table("TurnMode")[TurnMode::SequentialTurns as usize], "SequentialTurns");
+        assert_eq!(table("TurnMode")[TurnMode::SimultaneousTurns as usize], "SimultaneousTurns");
+        assert_eq!(table("TimeMode")[TimeMode::Timer30s as usize], "Timer30s");
+        assert_eq!(table("TimeMode")[TimeMode::Timer1m as usize], "Timer1m");
+        assert_eq!(table("TimeMode")[TimeMode::Timer2m as usize], "Timer2m");
+        assert_eq!(table("TimeMode")[TimeMode::Timer3m as usize], "Timer3m");
+        assert_eq!(table("TimeMode")[TimeMode::Timer5m as usize], "Timer5m");
+        assert_eq!(table("TimeMode")[TimeMode::TimerInf as usize], "TimerInf");
     }
 }

@@ -10174,6 +10174,9 @@ p.seek(1); p.step_event(); p.step_back_event()    # → next_event_tick_from_tic
 ⇒ 完全删除必须同时改播放屏那 4 行（改成调驱动侧同一张表），那是**另一个任务**。
 本轮在允许范围内做到"局面机归零"，并把这条登记进 §57.8 #1。
 
+> **89 号已完成**（2026-11-10）：那 4 行改成问 `GwReplayDriver` 的静态查表函数，
+> `client/src/play/replay_player.gd` **整份删除**（66 → 0 行）—— 见 **§59**。
+
 ### 57.4 新增的"旧局面机不许长回来"断言（`play_flow_check.gd` 第 17 组，2 条）
 
 | 判据 | 现在的实现 |
@@ -10184,6 +10187,9 @@ p.seek(1); p.step_event(); p.step_back_event()    # → next_event_tick_from_tic
 `dispatch/84` 的「要做什么」第 4 条原话是"加一条 headless 断言：**旧类名已不存在**"。这一条**做不到**（同上：禁区里的 4 处调用），
 所以退一格成"旧**局面机**已不存在"：类名还在，但它已经没有任何局面/时钟能力 ——
 而且只要有人把其中任何一块加回来，上面两条就红。
+
+> **89 号**把这两条**升级**成更强的判据（类不存在 + 文件不存在 + `client/src/**` 里
+> 可执行引用 0 处 + 18 个用例逐值复现旧表）—— 见 §59.4。上表"≤ 80 行"这条已不适用。
 
 ### 57.5 行为一致性：**逐位相同**，不是近似
 
@@ -10222,6 +10228,11 @@ selftest 用的最大 `dt` 就是 1.0 s ⇒ 这条偏离**碰不到任何断言*
 
 `client/src/play/` **没有空**（还剩 `function_input / keyboard_input / player_showcase /
 replay_file / replay_player`），所以没有目录要清。
+
+> **89 号后**：上表第 1 行已解（4 处调用改成问驱动）、第 2 行已清（`play_screen.gd:291–292`
+> 的注释改成"已整份删除"）、第 5 行已删（文件不存在，`client/src/play/` 因此**少了一个文件**，
+> 仍剩 4 个 + 2 个 `.uid`）；第 3 行（`app.gd:328`）与第 4 行（`replay_file.gd:34`）
+> **仍不在允许改的范围内**，重新登记在 §59.6。
 
 ### 57.7 断言（before → after）与复现
 
@@ -10269,6 +10280,9 @@ A/B：把本轮改动全部 `git stash` 回基线（426 行旧局面机仍在）
 | 3 | selftest 的 **LAN 大厅 flake**（2 条成对红，≈1/4） | 已 A/B 定位到**基线也有** | 另开任务（本轮允许范围里没有它） |
 | 4 | `advance_dt` 的 `dt > 1.0 s`：旧实现夹、驱动不夹 | **刻意偏离**（§57.5） | 要改语义就另开任务（`dispatch/84` §5 明令不许"顺手修成一致"） |
 | 5 | 回放界面的时序与控件 | **未知** | 与 §56.6 #7 同一条（`0x4c6f40` 的播放时钟没解） |
+
+> **89 号后**：#1 已完成（`replay_player.gd` 整份删除）、#2 只剩 `app.gd:328` /
+> `replay_file.gd:34` 两处注释（禁区，§59.6）；#3/#4/#5 **不变**。
 
 ## 58. **此处故意不接**：`KernelBus::drive_frame` 不进播放屏（决策 + 触发条件），并把它钉成会红的断言（2026-11-10，任务 85）
 
@@ -10338,3 +10352,131 @@ T3  生产路径出现 `tick_event` 的订阅者（否则泵只是在抽干队�
 | 3 | `EntityDrawer` 位置表的生产写入者（原版 `0x3e3347`，远端事件处理器） | 未接 | `graphwar_remote_event_handler` 那个模块 |
 | 4 | 原版 `base`（`map[i]`）的写入者 | **未知**（§46.6） | 与 §58.2 的"同一支钟"是同一件事，先解它 |
 | 5 | 回放里同时有两个 tick 源会不会打架 | **推断**（`GwReplayDriver` 自己按 tick 推） | 跨线程观测（原版服务端线程另有 60/s 的泵，`0x451be5`） |
+
+## 59. 退役收尾：`replay_player.gd` **整份删除** —— 播放屏那 4 行改成问 Rust（2026-11-10，任务 89）
+
+`dispatch/89` 的一句话：84 号把旧回放局面机删到只剩 4 个**纯查表静态函数**，
+唯一挡住整份删除的是 `client/src/screens/play_screen.gd::_begin_replay()` 里那 4 行
+`GwReplayPlayer.axis_index(...)` 等（84 号时 `client/src/screens/**` 是禁区）。
+本轮把那 4 行改掉，文件整份消失。
+
+### 59.1 那 4 行改成了什么（选项 A：搬进 Rust）
+
+| 行（`_begin_replay()`） | 84 号 | 89 号 |
+|---|---|---|
+| 轴档 | `GwReplayPlayer.axis_index(String(snap.axis_mode))` | `GwReplayDriver.axis_index(...)` |
+| 函数档 | `GwReplayPlayer.function_index(...)` | `GwReplayDriver.function_index(...)` |
+| 回合制档 | `GwReplayPlayer.turn_index(...)` | `GwReplayDriver.turn_index(...)` |
+| 时限档 | `GwReplayPlayer.time_index(...)` | `GwReplayDriver.time_index(...)` |
+
+**为什么是 A（Rust）而不是 B（视图层小工具类）**：
+
+1. **表的内容本来就是 Rust 的东西。** 档位下标 = **线上枚举的声明顺序**，那张唯一的权威表是
+   `src/_scaffold/protocol.rs::WIRE_VALUE_ENUMS`（`docs/07` §5.2：serde `unknown_variant` 的
+   指令形状穷举出 **8 张 VARIANTS 表**，全 `.text` 没有第 9 张 —— **逐位**）。
+   新实现**不抄名字**：`wire_index(enum_name, value)` 在表里取**位置**即下标。
+   放 GDScript = 那 14 个字符串的**第二份**，正是 84 号刚删掉的那种重复。
+2. **方向一致**：`§56`/`§57` 的结论是"回放流程归 Rust"，本轮延续；且**没有**引入新的
+   GDScript 局面机（任务书 §2 明令）。
+3. **成本最低**：4 个 `#[func]` 是**静态**纯函数（字符串进、整数出，无状态、不看回放），
+   播放屏只换了类名一个词，`_begin_replay()` 的其余 48 行一字未动。
+
+落点：
+
+| 文件 | 内容 |
+|---|---|
+| `src/_scaffold/replay_driver.rs` | `wire_index()` + `axis_index / function_index / turn_index / time_index`（纯逻辑，`cargo test` 直接测） |
+| `src/_scaffold/replay_driver_class.rs` | 4 个 `static #[func]`（透传；`GwReplayDriver` 的 `#[func]` 43 → 47） |
+
+**兜底与旧表逐值相同**（这一点是行为一致性，不是新设计）：不认识的字符串
+⇒ 轴 `3`（`EveryUnit` = `GwModes.AXIS_DEFAULT`）/ 函数 `0` / 回合制 `0` / 时限 `5`（`TimerInf`）。
+旧 `.gd` 的两个三元表达式与两个 `match` 尾 `return` 就是这个数，**原样搬过来**。
+
+### 59.2 这张表本身的证据（本轮**没有**新增证据，只是换了落点）
+
+* **"名字 → 下标"**：`WIRE_VALUE_ENUMS` 的顺序 = 枚举声明顺序（`docs/07` §5.2，**逐位**）；
+  另用 `repr(u8)` 的 `crate::graphwar_mode_manager::{AxisMode, FunctionMode, TimeMode}` 与
+  `graphwar_turn_manager::TurnMode` 对拍（`mode_index_matches_wire_enums`，14 个名字逐项）。
+* **"下标 → 界面档位"**：`docs/133` §3.3（400 份真实回放里 4 个字段的全部取值与出现次数）+
+  `docs/92` §6 的连点观测。⚠️ 这一步是 **观测 + 推断**（没有直接观测到原版把
+  `AxisModeInfo` 的字节喂给哪个按钮档位），84 号登记过，本轮未改判。
+
+### 59.3 断言：84 号的两条升级成五条（`play_flow_check.gd` 第 17 组）
+
+| # | 判据 | 84 号 | 89 号 |
+|---|---|---|---|
+| 1 | 类在 `ClassDB` 里不存在 | "存在但不许有 16 个局面方法" | **不存在**（`ClassDB.class_exists == false`，类又回来直接红） |
+| 2 | 源文件不存在 | "≤ 80 行、无局面写法" | **`FileAccess.file_exists == false`**（`res://src/play/replay_player.gd`，0 行） |
+| 3 | `client/src/**` 里**可执行**引用 0 处 | — | 逐行扫 **71** 个 `.gd`（删掉一份之后是 71；84 号时是 72），**整行注释跳过**（"这文件删了"写进注释最有价值）；命中即红 |
+| 4 | 第 3 条的正对照 | — | 同一个扫描器必须扫到 `GwReplayDriver`（实际 **6 处**）⇒ 0 命中才有效（`AGENTS.md` A.4） |
+| 5 | 旧表被**逐值**接上 | — | `REPLAY_MODE_CASES` **18 个用例**（14 个已知取值 + 4 个兜底），期望值**来自旧实现**（删文件前抄下来） |
+
+**变异测试**（证明这几条不是永远绿；两处都还原后再跑）：
+
+| 变异 | 结果 |
+|---|---|
+| 往 `play_screen.gd` 末尾插一行 `const _TMP89_MUTANT := GwReplayPlayer` | `PLAY_FLOW 205 passed, 1 failed`，点名 `res://src/screens/play_screen.gd:3097` |
+| 把 `["time_index", "Timer5m", 4]` 改成 `5` | `PLAY_FLOW 205 passed, 1 failed`，`time_index(Timer5m)=4≠5` |
+
+### 59.4 数字（before → after）
+
+| 套件 | before | after | 备注 |
+|---|---|---|---|
+| `cargo test --offline` | 1753 | **1756** | +3：`mode_index_tests`（旧表逐值 / 兜底 / 与 `repr(u8)` 对拍） |
+| `cargo test --offline --features gdext-bindings` | 1859 | **1862** | 同上，同一批 +3 |
+| headless 14 个脚本合计 | 1923 | **1930** | 只有 `play_flow` 变：199 → **206**（+4 新入口断言、+3 第 17 组）；其余 13 份**逐项不变**（assemble 241 / base 117 / curve 96 / draw 235 / entity 366 / function 132 / gdext 24 / obstacle 116 / plane 96 / process 66 / recovered 57 / signal 155 / spike 23） |
+| `selftest` | 716 / 0 / 1 skip | **716 / 0 / 1 skip** | 本文件**没改**（禁区）；连跑 2 次干净 |
+| 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **647 / 647 / 637** | 引擎逻辑一字未动；`batches` 1080、`kind_seq` 1075 同 |
+| `coverage_matrix.py --check` | OK | **OK**（重跑生成物） | `src_fns` 3119 → **3131**（`_scaffold` 里新增 12 个 `fn`）、`src_tree_sha256` 变 |
+
+```bash
+export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=<你的私有 target>
+export GODOT=<ws>/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cargo test --offline                                     # 1756
+cargo test --offline --features gdext-bindings           # 1862（**最后**跑，否则 .so 没 gdext）
+cargo build --offline --features gdext-bindings --example serve_match   # selftest 的两条联机用例要它
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/play_flow_check.gd   # PLAY_FLOW 206 passed
+"$GODOT" --headless --path client -- --selftest                            # 716 / 0 / 1skip
+# 三轴（401 份冻结快照）
+cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive fire  --policy default --json f.jsonl  # 内容命中 647
+cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive batch --policy default --json b.jsonl  # 内容命中 647
+cargo run --release --offline -q --example batch_conv   -- --dir <快照> --policy strict                                   # 内容 637 / 种类 1075
+```
+
+⚠️ **一个操作坑（本轮实测）**：跑 `selftest` 时要 `export CARGO_TARGET_DIR`，否则它找不到
+`examples/serve_match` ⇒ 两条联机用例**自跳过**（`640 passed / 0 failed / **3** skipped`）。
+那不是红，但会让人误读成"selftest 退步 76 条"。
+
+### 59.5 客户端还能不能起
+
+`--import` 干净（无 Parse Error）；随后 14 个 headless 脚本全绿（上面 1930 条），
+`selftest` 716 条全绿 ⇒ `play_screen.gd` 与整个 `client/src/**` 解析正常、
+`GwReplayDriver` 的 4 个**静态**方法在 GDScript 里两种调用姿势都通
+（`GwReplayDriver.axis_index("EveryUnit")` 直接调 = 3；实例 `call("axis_index", …)` = 3）。
+"静态 `#[func]` 能不能被 GDScript 直接调"**本轮实测确认可以**（`godot` 0.5 / 4.7.2；
+`about()` 早就在用同一形状，但之前没有任何调用点，等于没验过）。
+
+### 59.6 残留引用（`grep` 全仓，2026-11-10 本轮）
+
+| 位置 | 是什么 | 处置 |
+|---|---|---|
+| `client/src/screens/play_screen.gd:291–292` | 84 号登记的过期注释（"那份 `.gd` 还在…自检仍在用它做三端对拍"） | ✅ **已清**：改成"已在 89 号整份删除" |
+| `client/src/play/replay_player.gd` | 文件本身 | ✅ **已删**（66 → 0 行；`client/src/play/` 剩 4 个 `.gd` + 2 个 `.uid`） |
+| `client/src/app/app.gd:328` | 注释"播放/暂停由 `GwReplayPlayer` 自己接管"（81 号起就过期） | ⚠ **不在允许改的范围内**（允许清单里没有 `client/src/app/**`）⇒ 登记 |
+| `client/src/play/replay_file.gd:34` | 注释"见 `GwReplayPlayer` 的游标模型"（游标模型 84 号已删） | ⚠ `client/src/play/**` 本轮**只许删** ⇒ 登记 |
+| `client/tools/selftest.gd:2139 / 2243` | 注释里的历史说明（夹具来源） | ⚠ `selftest.gd` 是禁区 ⇒ 登记（都是注释，`#` 开头） |
+| `client/src/screens/play_screen.gd:2117` | 注释里的历史说明（"旧实现在这里建…，89 号整份删除"） | 保留（**故意**：历史就该写在这一行旁边） |
+| `client/tools/play_flow_check.gd`、`src/_scaffold/replay_driver*.rs` | 断言表 / 说明里的历史名 | 保留（判据与出处） |
+
+⇒ `client/src/**` 的**可执行**引用 0 处；剩余 4 处全是注释，3 处在本轮禁区。
+
+### 59.7 遗留 / 未做
+
+| # | 项 | 状态 | 缺什么 |
+|---|---|---|---|
+| 1 | `app.gd:328` / `replay_file.gd:34` / `selftest.gd` 的过期注释 | 未改 | 需要下一轮把这三处列进允许清单（纯注释，零风险） |
+| 2 | "下标 → 界面档位"这一步 | **观测 + 推断**（§59.2） | 直接观测：原版把 `AxisModeInfo` 落到 `TurnTimeButton`/`AxisModeButton` 档位的运行时证据（回放里换模式后按一下 UI 反查） |
+| 3 | `docs/133` §3.3 的取值分布是否仍是最新 | 沿用 84 号的 400 份样本口径 | 快照语料是冻结的 401 份，没有新样本 ⇒ 分布不变 |
+| 4 | `GwReplayDriver` 的 `#[func]` 现为 47 个（43 + 4） | 已改 | 若将来把"模式表"独立成一个 `GwWireModes` 类（按原版模块名归位）更贴近原版分层，但**原版没有这个类名的证据** ⇒ 本轮不猜 |
