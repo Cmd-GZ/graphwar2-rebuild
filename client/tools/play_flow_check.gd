@@ -24,6 +24,13 @@ extends SceneTree
 ## | 7 | **回合超时**（`GwTurnClock`）：六档时长 + 三个合取项 + 我方闩 | 谓词 **观测**（`0x470989`–`0x4709ec`）；闩是**我方**兜底 |
 ## | 8 | **AI 回合闸门**（`GwBotTurn`）：思考倒计时 + 一发直线 | **我方自定**（原版是 `aigen` 进化器，时序未观测） |
 ## | 9 | 播放屏源码里**不再有**这些流程分支，且确实调的是新入口 | **观测**（读文件文本，等价于 `grep`） |
+## | 10 | **回放驱动**（`GwReplayDriver`）的类/方法表在扩展里，旧 `.gd` 局面机不再被播放屏使用 | **观测**（运行时） |
+## | 11 | 加载 → 事件数 / tick 范围 / 结算批切分（3 批、边界 tick） | 批窗口形状 **观测**（`docs/136` §2 的 401 份语料口径） |
+## | 12 | **按 tick 推进**：`pumps ≡ ticks`、0-tick 帧泵 0 次、60 fps 每帧 1 tick、长帧追赶无上限 | **观测**（`docs/06` §44.2/§44.3/§44.4；5 次运行 12 856 个 tick） |
+## | 13 | **结算批在 tick 时钟上的落地**：只在 `ExecutingResults` 那一拍结算、长帧按序跨多批、`seek` 不报结算 | **观测**（同 §44.4 的追赶；批窗口来自 `replaydiff::split_batches`） |
+## | 14 | 驱动吐出的事件序列与**本脚本独立扫描**的结果逐条相同 | 交叉验证（两份实现，两份语言） |
+## | 15 | 真实回放（本机样本）上的同一批事实 + `canonical` 与旧 GDScript 局面机逐字符相同 | 局面 **推断**（`docs/133` §3）+ 三端同格式（§5） |
+## | 16 | 播放屏源码：旧回放驱动写法消失、新驱动入口出现 | **观测**（读文件文本） |
 ##
 ## # 为什么没有"端到端打一枪"
 ##
@@ -68,6 +75,60 @@ const RULES_METHODS := [
 const FLOW_CLASS := "GwShotFlow"
 const CLOCK_CLASS := "GwTurnClock"
 const BOT_CLASS := "GwBotTurn"
+const REPLAY_DRIVER_CLASS := "GwReplayDriver"
+## 本类的方法表（少一个就说明驱动又退回 GDScript 了）。
+const REPLAY_METHODS := [
+	"load", "load_text", "ok", "error", "first_tick", "last_tick", "tick", "cursor",
+	"event_count", "progress", "finished", "playing", "speed", "set_speed", "canonical",
+	"summary", "stats", "phase", "snapshot", "actors", "obstacles", "target_positions",
+	"last_shot", "team_index", "soldier_owner", "has_color", "color_of", "graphics",
+	"functions", "function_of", "batches", "batch_count", "batches_settled", "batch_note",
+	"advance_dt", "advance_ticks", "play", "pause", "toggle", "seek", "step_event",
+	"step_back_event",
+]
+## 81 号搬走的回放驱动（`docs/16-client.md` §56）：这些写法**不许**再出现在播放屏里。
+const REPLAY_GONE := [
+	"GwReplayPlayer.new().setup(", "func _apply_replay_events(applied: Array[Dictionary])",
+	"_replay.state.", "_replay.file.", "_replay.obstacles_for_view(",
+	"_replay.mode_indices(", "_replay.current_tick(",
+]
+## 搬完之后播放屏**必须**调的新入口。
+const REPLAY_CALLS := [
+	"GwReplayDriver.new()", "_replay.advance_dt(", "_replay.snapshot()",
+	"_replay.last_shot(", "_replay.actors()", "_replay.obstacles()",
+	"_replay.phase()", "dirty_actors", "dirty_layout", "dirty_shot",
+]
+## 本机真实回放样本的**文件名**（与 `selftest.gd` 的 `REPLAY_SAMPLE` 同一份，
+## `docs/133` §5 的样本）。
+##
+## ⚠️ 不能写 `user://replays/…`：`user://` 是**本重建版**自己的目录
+## （`app_userdata/Graphwar II — Client Rebuild`），原版存档在
+## `app_userdata/Graphwar/replays/`（与 `selftest.gd::_real_replay_dir()` 同一条路）。
+const REPLAY_REAL_NAME := "1793897298"
+
+## 合成回放（**不依赖任何外部文件**，所以本组的条数在每台机器上都一样）。
+## 形状照 401 份语料：`CalculatingResults` → `FunctionInfo`/`FunctionPoints`
+## → `ExecutingResults` → 延迟段里的 `LifeInfo`。3 批 / 19 条事件 / tick 1..120。
+const SYNTHETIC_REPLAY := """{\"event\":{\"GameNameInfo\":{\"game_name\":\"T\"}},\"tick\":1}
+{\"event\":{\"SoldierInfo\":{\"soldier_id\":11,\"player_id\":1}},\"tick\":1}
+{\"event\":{\"PosInfo\":{\"entity_id\":11,\"pos_x\":-8.0,\"pos_y\":0.0,\"radius\":0.5}},\"tick\":2}
+{\"event\":{\"TeamInfo\":{\"entity_id\":11,\"team\":\"Team1\"}},\"tick\":2}
+{\"event\":{\"PosInfo\":{\"entity_id\":12,\"pos_x\":8.0,\"pos_y\":0.0,\"radius\":0.5}},\"tick\":2}
+{\"event\":{\"TeamInfo\":{\"entity_id\":12,\"team\":\"Team2\"}},\"tick\":2}
+{\"event\":{\"GameStateInfo\":{\"game_state\":\"CalculatingResults\"}},\"tick\":10}
+{\"event\":{\"FunctionInfo\":{\"owner_id\":11,\"function\":\"x\",\"corrected_function\":null}},\"tick\":11}
+{\"event\":{\"FunctionPoints\":{\"owner_id\":11,\"start_x\":-8.0,\"start_y\":0.0,\"end_x\":8.0}},\"tick\":12}
+{\"event\":{\"GameStateInfo\":{\"game_state\":\"ExecutingResults\"}},\"tick\":20}
+{\"event\":{\"LifeInfo\":{\"entity_id\":12,\"alive\":false}},\"tick\":30}
+{\"event\":{\"GameStateInfo\":{\"game_state\":\"CalculatingResults\"}},\"tick\":60}
+{\"event\":{\"FunctionPoints\":{\"owner_id\":12,\"start_x\":8.0,\"start_y\":0.0,\"end_x\":-8.0}},\"tick\":62}
+{\"event\":{\"GameStateInfo\":{\"game_state\":\"ExecutingResults\"}},\"tick\":70}
+{\"event\":{\"LifeInfo\":{\"entity_id\":11,\"alive\":false}},\"tick\":80}
+{\"event\":{\"GameStateInfo\":{\"game_state\":\"CalculatingResults\"}},\"tick\":100}
+{\"event\":{\"FunctionPoints\":{\"owner_id\":11,\"start_x\":-8.0,\"start_y\":0.0,\"end_x\":8.0}},\"tick\":102}
+{\"event\":{\"GameStateInfo\":{\"game_state\":\"ExecutingResults\"}},\"tick\":110}
+{\"event\":{\"GameStateInfo\":{\"game_state\":\"EndingGame\"}},\"tick\":120}
+"""
 const FLOW_METHODS := [
 	"reset", "begin", "advance", "flush", "land_all", "settle", "abort",
 	"in_flight", "arrived", "revealed", "total_points", "pending_kills",
@@ -472,7 +533,285 @@ func _initialize() -> void:
 	ok(src.contains("func _apply_shot_events"),
 		"播放屏只剩**事件执行器** `_apply_shot_events()`（按 kind 摆节点）")
 
+	# ---------------- 10. 回放驱动（`GwReplayDriver`，`docs/16-client.md` §56） ----------------
+	# 先钉接口：类在扩展里、方法表齐、旧 .gd 局面机不再被播放屏使用。
+	ok(ClassDB.class_exists(REPLAY_DRIVER_CLASS),
+		"扩展里有回放驱动类 %s（回放推进的权威）" % REPLAY_DRIVER_CLASS)
+	var rd: Object = ClassDB.instantiate(REPLAY_DRIVER_CLASS)
+	ok(rd != null, "`%s` 能 ClassDB.instantiate" % REPLAY_DRIVER_CLASS)
+	if rd == null:
+		_finish()
+		return
+	ok(_missing(rd, REPLAY_METHODS).is_empty(),
+		"`%s` 方法表齐（缺：%s）" % [REPLAY_DRIVER_CLASS, _missing(rd, REPLAY_METHODS)])
+
+	# ---------------- 11. 加载 + 结算批切分（合成回放，19 条 / 3 批） ----------------
+	ok(bool(rd.call("load_text", SYNTHETIC_REPLAY)) and bool(rd.call("ok")),
+		"合成回放能加载（error='%s'）" % String(rd.call("error")))
+	ok(int(rd.call("event_count")) == 19 and int(rd.call("first_tick")) == 1
+		and int(rd.call("last_tick")) == 120,
+		"加载后：19 条事件 / tick 1..120（实际 %d / %d..%d）"
+		% [int(rd.call("event_count")), int(rd.call("first_tick")), int(rd.call("last_tick"))])
+	# 批切分：与**本脚本自己扫回放文本**算出来的边界比（两份实现，两份语言）。
+	var want_batches := _expected_batches(SYNTHETIC_REPLAY)
+	var got_batches: Array = rd.call("batches")
+	ok(int(rd.call("batch_count")) == 3 and String(rd.call("batch_note")) == "",
+		"切出 3 个结算批、没有降级原因（实际 %d / '%s'）"
+		% [int(rd.call("batch_count")), String(rd.call("batch_note"))])
+	ok(_batch_bounds(got_batches) == _batch_bounds(want_batches),
+		"批边界与独立扫描一致（驱动 %s ／ 扫描 %s）"
+		% [str(_batch_bounds(got_batches)), str(_batch_bounds(want_batches))])
+	var shots_ok := true
+	for i in got_batches.size():
+		if int((got_batches[i] as Dictionary).get("shots", -1)) != 1:
+			shots_ok = false
+	ok(shots_ok, "每批 1 发（`FunctionPoints` 计数，%s）" % str([1, 1, 1]))
+
+	# ---------------- 12. **按 tick** 推进（`docs/06` §44 的五条真值） ----------------
+	var d1: Object = _driver_fresh()
+	# 120 帧 × 1/120 s = 60 个 tick；一半的帧一个 tick 都不该推（§44.3 的 0-tick 帧）。
+	var bad_pumps := 0
+	var ticks_sum := 0
+	for i in 120:
+		var rep: Dictionary = d1.call("advance_dt", 1.0 / 120.0)
+		if int(rep.get("ticks", -1)) != int(rep.get("pumps", -2)):
+			bad_pumps += 1
+		ticks_sum += int(rep.get("ticks", 0))
+	ok(bad_pumps == 0 and ticks_sum == 60,
+		"`pumps ≡ ticks` 逐帧相等（§44.3；不符 %d 帧），120 帧 × 1/120 s = 60 tick（实际 %d）"
+		% [bad_pumps, ticks_sum])
+	var st1: Dictionary = d1.call("stats")
+	ok(int(st1.get("frames", 0)) == 120 and int(st1.get("ticks", 0)) == 60
+		and int(st1.get("pumps", 0)) == 60,
+		"累计：帧 120 / tick 60 / 泵 60（实际 %s）" % str(st1))
+	ok(int(st1.get("zero_tick_frames", 0)) == 60,
+		"0-tick 帧 60 个、每个泵 0 次（§44.3：默认帧率下这种帧占 10.9%%；实际 %d）"
+		% int(st1.get("zero_tick_frames", 0)))
+	# 60 fps ⇒ 每帧正好 1 tick（比 §44.2 的 0.924 tick/帧 更严的定步自检）
+	var d2: Object = _driver_fresh()
+	var one_each := true
+	for i in 60:
+		if int((d2.call("advance_dt", 1.0 / 60.0) as Dictionary).get("ticks", 0)) != 1:
+			one_each = false
+	ok(one_each and int(d2.call("tick")) == 61,
+		"60 fps 每帧 1 tick、60 帧后 tick 61（实际 %d）" % int(d2.call("tick")))
+	# 长帧追赶**无上限**（§44.4：1.5 s 冻结 ⇒ 单帧 91 圈；旧 .gd 夹到 1 s = 60 tick）
+	var d3: Object = _driver_fresh()
+	var big: Dictionary = d3.call("advance_dt", 1.5)
+	ok(int(big.get("ticks", 0)) >= 90 and int(big.get("pumps", 0)) == int(big.get("ticks", 0)),
+		"长帧 1.5 s ⇒ 单帧 %d tick（§44.4 实测 91；旧实现夹到 60）" % int(big.get("ticks", 0)))
+	ok(int(big.get("ticks", 0)) > 60, "长帧不夹到 1 s（这一条旧 `.gd` 必挂）")
+	# 暂停门（原版 `0x515dd1` 的"在对局里"；回放屏用"用户按了播放"当同一件事）
+	# 注意：这里**不**调 `play()`（`_driver_fresh()` 会 play，所以手工建一个）
+	var d4: Object = ClassDB.instantiate(REPLAY_DRIVER_CLASS)
+	d4.call("load_text", SYNTHETIC_REPLAY)
+	var paused: Dictionary = d4.call("advance_ticks", 10)
+	ok(int(paused.get("ticks", -1)) == 0 and int(paused.get("pumps", -1)) == 0,
+		"没在播放 ⇒ 推 10 个 tick 也是 0 tick / 0 泵（门在驱动里）")
+	# 确定性：同一段 dt 两次独立驱动给出同一批 tick
+	var d5: Object = _driver_fresh()
+	var d6: Object = _driver_fresh()
+	var a5: int = int((d5.call("advance_dt", 0.2) as Dictionary).get("ticks", -1))
+	var a6: int = int((d6.call("advance_dt", 0.2) as Dictionary).get("ticks", -1))
+	ok(a5 == a6 and a5 == 12, "200 ms = 12 tick、两次驱动完全相同（实际 %d / %d）" % [a5, a6])
+	# tick 单调（驱动过程中不许回退）
+	var d7: Object = _driver_fresh()
+	var mono := true
+	var last := int(d7.call("tick"))
+	for i in 30:
+		d7.call("advance_dt", 0.07)
+		if int(d7.call("tick")) < last:
+			mono = false
+		last = int(d7.call("tick"))
+	ok(mono, "推进过程中 tick 单调不减（到 tick %d）" % last)
+
+	# ---------------- 13. 结算批在 tick 时钟上落地 ----------------
+	var d8: Object = _driver_fresh()
+	ok((d8.call("advance_ticks", 18) as Dictionary).get("settled", [1]).is_empty(),
+		"tick 19（批 0 的 ExecutingResults 在 20）⇒ 还没结算")
+	var r8: Dictionary = d8.call("advance_ticks", 1)
+	ok(str(r8.get("settled", [])) == "[0]",
+		"tick 20 = ExecutingResults ⇒ 第 0 批结算（实际 %s）" % str(r8.get("settled", [])))
+	ok(int(d8.call("batches_settled")) == 1 and String(d8.call("phase")) == "executing",
+		"结算计数 1、相位 executing（实际 %d / %s）"
+		% [int(d8.call("batches_settled")), String(d8.call("phase"))])
+	var d9: Object = _driver_fresh()
+	var r9: Dictionary = d9.call("advance_ticks", 109)
+	ok(str(r9.get("settled", [])) == "[0, 1, 2]",
+		"长帧跨三批 ⇒ 按序全记、**不跳批**（实际 %s）" % str(r9.get("settled", [])))
+	var d10: Object = _driver_fresh()
+	d10.call("seek", 105)
+	ok(int(d10.call("batches_settled")) == 2
+		and (d10.call("advance_ticks", 0) as Dictionary).get("settled", [1]).is_empty(),
+		"跳转不算结算（跳到 105 ⇒ 已结算 2 批，但不再报结算）")
+	var d11: Object = _driver_fresh()
+	var r11: Dictionary = d11.call("advance_ticks", 29)   # 1 → 30（LifeInfo 那一拍）
+	ok(_has_kind_arr(r11.get("kinds", []), "LifeInfo"),
+		"延迟段里的死亡事件（tick 30 的 `LifeInfo`）由驱动吐出来（批 0 已在 20 结算）")
+	# 延迟段的右端点：下一批开始 tick 严格晚于执行拍（除末尾批允许相等）
+	var b: Array = rd.call("batches")
+	ok(int(b[0].next_start_tick) == 60 and int(b[0].exec_tick) == 20,
+		"批 0：执行拍 20、延迟段到 60（下一批开始）")
+
+	# ---------------- 14. 消息序列：驱动 vs 本脚本独立扫描 ----------------
+	var d12: Object = _driver_fresh()
+	var rep12: Dictionary = d12.call("advance_ticks", 19)   # → tick 20
+	# 装载时已经消费了 tick ≤ 1 的两条（`GameNameInfo`/`SoldierInfo`）⇒ 从 1 之后算起
+	var want_kinds := _kinds_upto(SYNTHETIC_REPLAY, 1, 20)
+	ok(str(rep12.get("kinds", [])) == str(want_kinds),
+		"驱动到 tick 20 的事件名序列 = 独立扫描（%d 条：%s）"
+		% [want_kinds.size(), str(want_kinds)])
+	ok(int(d12.call("cursor")) == want_kinds.size() + 2 and want_kinds.size() == 8,
+		"游标 = 8 条 + 装载时消费的 2 拍 = 10（实际 %d / 扫描 %d 条）"
+		% [int(d12.call("cursor")), want_kinds.size()])
+
+	# ---------------- 15. 真实回放（有样本才做；`docs/133` §5 的同一份） ----------------
+	var real_path := _real_replay_path()
+	if real_path != "":
+		var real: Object = ClassDB.instantiate(REPLAY_DRIVER_CLASS)
+		ok(bool(real.call("load", real_path))
+			and int(real.call("event_count")) == 104,
+			"真实回放能加载：104 条事件（实际 %d）" % int(real.call("event_count")))
+		# 与**旧 GDScript 局面机**在同一个 tick 上的 canonical 逐字符相同 ——
+		# 两份独立实现（Rust 内核模块 ↔ 这份 .gd），三端格式见 `docs/133` §5。
+		var f := GwReplayFile.load_path(real_path)
+		if f.ok():
+			var gd := GwReplayPlayer.new().setup(f)
+			var same := true
+			for t in [550, 2168, 2169, 2276]:
+				real.call("seek", int(t))
+				gd.seek(int(t))
+				if String(real.call("canonical")) != gd.canonical():
+					same = false
+			ok(same, "回放驱动与旧 GDScript 局面机在 tick 550/2168/2169/2276 上 canonical 逐字符相同")
+			var rb: Array = real.call("batches")
+			var wb := _expected_batches_raw(f)
+			ok(_batch_bounds(rb) == _batch_bounds(wb) and rb.size() > 0,
+				"真实回放的批边界与独立扫描一致（%d 批）" % rb.size())
+			# 真实回放上重申 pumps ≡ ticks（合成回放已经查过，这里换成真样本）
+			real.call("seek", int(real.call("first_tick")))
+			real.call("play")
+			var rp_ok := true
+			for i in 20:
+				var r: Dictionary = real.call("advance_dt", 1.0 / 100.0)
+				if int(r.get("ticks", -1)) != int(r.get("pumps", -2)):
+					rp_ok = false
+			ok(rp_ok, "真实回放上 `pumps ≡ ticks` 仍逐帧相等（100 fps 帧率，多数帧 0 tick）")
+	else:
+		print("      SKIP 真实回放（%s 不在本机）—— 第 15 组 4 条不计入"
+			% REPLAY_REAL_NAME)
+
+	# ---------------- 16. 播放屏源码：回放驱动真的搬走了 ----------------
+	ok(not src.contains("GwReplayPlayer.new()"),
+		"播放屏不再自己建 GDScript 局面机（`GwReplayPlayer.new()` 已无）")
+	for pat in REPLAY_GONE:
+		ok(not src.contains(pat), "源码里已无旧回放驱动写法：`%s`" % pat)
+	for pat in REPLAY_CALLS:
+		ok(src.contains(pat), "源码里确实调新驱动入口：`%s`" % pat)
+
 	_finish()
+
+## 本机原版存档目录里的那个样本的**绝对路径**（没有则返回空串）。
+##
+## 与 `selftest.gd::_real_replay_dir()` 同一条路：`$HOME/.local/share/godot/app_userdata/
+## Graphwar/replays/<时间戳>`（原版存档目录，**只读**；仓库里不放任何回放文件）。
+func _real_replay_path() -> String:
+	var home := OS.get_environment("HOME")
+	if home == "":
+		return ""
+	var p := home.path_join(".local/share/godot/app_userdata/Graphwar/replays")
+	p = p.path_join(REPLAY_REAL_NAME)
+	return p if FileAccess.file_exists(p) else ""
+
+## 新建一个加载好合成回放的驱动器并 `play()`（每条的起点都干净）。
+func _driver_fresh() -> Object:
+	var d: Object = ClassDB.instantiate(REPLAY_DRIVER_CLASS)
+	d.call("load_text", SYNTHETIC_REPLAY)
+	d.call("play")
+	return d
+
+## 事件名在不在一个**字符串数组**里（驱动报告里的 `kinds`）。
+func _has_kind_arr(kinds: Array, kind: String) -> bool:
+	for k in kinds:
+		if String(k) == kind:
+			return true
+	return false
+
+## 批的边界三元组（用来把"驱动的批"与"独立扫描的批"逐项比）。
+func _batch_bounds(batches: Array) -> Array:
+	var out := []
+	for b in batches:
+		var d: Dictionary = b
+		out.append([int(d.get("start_tick", -1)), int(d.get("exec_tick", -2)),
+			int(d.get("next_start_tick", -3))])
+	return out
+
+## **独立扫描**（本脚本自己实现，不走 Rust、不调 `replaydiff`）：
+## 从回放文本重新切结算批 —— `CalculatingResults` → `ExecutingResults` → 下一批开始。
+##
+## 这份实现存在的唯一理由就是"让驱动的批边界有一份**别的**实现可以对"：
+## 两边都错成一样的概率，远小于一边错。
+func _expected_batches(text: String) -> Array:
+	return _expected_batches_raw(GwReplayFile.parse_text(text))
+
+func _expected_batches_raw(f: GwReplayFile) -> Array:
+	var out := []
+	if not f.ok():
+		return out
+	var evs := f.events
+	var last_tick := 0
+	for e in evs:
+		last_tick = int(e.tick)
+	var i := 0
+	while i < evs.size():
+		if _is_state(evs[i], "CalculatingResults"):
+			var start := i
+			var j := i
+			var end := -1
+			while j < evs.size():
+				if _is_state(evs[j], "ExecutingResults"):
+					end = j
+					break
+				if j > start and _is_state(evs[j], "CalculatingResults"):
+					break
+				j += 1
+			if end >= 0:
+				var tail := end + 1
+				while tail < evs.size():
+					if _is_state(evs[tail], "CalculatingResults"):
+						break
+					tail += 1
+				var next_tick := last_tick
+				if tail < evs.size():
+					next_tick = int(evs[tail].tick)
+				var shots := 0
+				for k in range(start, end + 1):
+					if String(evs[k].kind) == "FunctionPoints":
+						shots += 1
+				out.append({
+					"start_tick": int(evs[start].tick),
+					"exec_tick": int(evs[end].tick),
+					"next_start_tick": maxi(next_tick, int(evs[end].tick)),
+					"shots": shots,
+				})
+				i = end + 1
+				continue
+		i += 1
+	return out
+
+func _is_state(ev: Dictionary, state: String) -> bool:
+	return String(ev.kind) == "GameStateInfo" \
+		and String(ev.data.get("game_state", "")) == state
+
+## 回放文本里 `tick ∈ (lo, hi]` 的事件名（文件顺序）—— 用来与驱动吐出的 `kinds` 比。
+func _kinds_upto(text: String, lo: int, hi: int) -> Array:
+	var f := GwReplayFile.parse_text(text)
+	var out := []
+	for e in f.events:
+		var t := int(e.tick)
+		if t > lo and t <= hi:
+			out.append(String(e.kind))
+	return out
 
 ## 一批事件里有没有某种 `kind`。
 func _has_kind(events: Array, kind: String) -> bool:
