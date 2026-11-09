@@ -159,7 +159,7 @@ python3 tools/bit_exact_attrib.py --json b.jsonl      # 延迟段两条 + 失败
 | | 现状 |
 |---|---|
 | **12 个 GDExtension 类的逻辑** | ✅ 全部还原（在 `src/`，纯 Rust、可测） |
-| **把它们变成真 Godot 节点** | ✅ **全部节点化**。headless 断言按脚本计（**14** 个脚本、共 **1,923** 条）：`entity_drawer_check` 366 / `assemble_check` 241 / `draw_classes_check` 235 / `signal_classes_check` 155 / `play_flow_check` 199 / `function_drawer_check` 132 / `base_classes_check` 117 / `obstacle_drawer_check` 116 / `plane_on_screen_check` 96 / `curve_on_screen_check` 96 / `recovered_view_check` 57 / `process_loop_check` 66 / `gdext_check` 24 / `spike_class_check` 23 —— 全 **0 failed** |
+| **把它们变成真 Godot 节点** | ✅ **全部节点化**。headless 断言按脚本计（**14** 个脚本、共 **1,930** 条）：`entity_drawer_check` 366 / `assemble_check` 241 / `draw_classes_check` 235 / `signal_classes_check` 155 / `play_flow_check` 199 / `function_drawer_check` 132 / `base_classes_check` 117 / `obstacle_drawer_check` 116 / `plane_on_screen_check` 96 / `curve_on_screen_check` 96 / `recovered_view_check` 57 / `process_loop_check` 66 / `gdext_check` 24 / `spike_class_check` 23 —— 全 **0 failed** |
 
 绑定层有两条路，**已量化**（`docs/18-build.md` §10）：
 

@@ -416,6 +416,10 @@ $ bash client/run.sh selftest
 处置  重跑一次即可恢复；但**不许把 7 failed 当成代码回归**（也不是 skip）
 ```
 
+⚠️ 这一条与 §10.3.4 那个「LAN 大厅成对红」**不是同一件事**：那个恰好掉 2 条、名字固定
+（`本地房间列表初始为空` + `底部 Join IP 宽度`），已在 §10.3.4 修掉；本节这个 signature 是
+`passed` 掉 85 条（7 条真服务端用例整组连不上），**仍未定因**。
+
 **判据**：出现 `629/7` 时，先看 `client/run.sh` 用的那颗 `serve_match` 是哪一份
 （`CARGO_TARGET_DIR/release/examples/` → `debug/examples/` 的回退顺序），再重跑一次；
 两次都不行才当回归查。
@@ -473,9 +477,10 @@ $ bash client/run.sh selftest
   判据只有"`failed == 2` 且就是上面这两条" + "skip 里全是资产/联机"。
 * 退出码：`failed > 0` 时 `run.sh selftest` **返回 1**（`694`/`618` 时返回 0）。
 
-> **现读数（2026-11-09 实测，`agent/selftest-flake`）**：四个前置条件齐备时是
-> **`SELFTEST 714 passed, 0 failed, 1 skipped`**、`rc=0`（上面表里的 694/618/667/591 是
-> 2026-11-07 的**当轮**基数，`passed` 随客户端版本漂移，**别拿它当判据**）。
+> **现读数（2026-11-10 实测，`agent/lan-lobby-flake`）**：四个前置条件齐备时是
+> **`SELFTEST 717 passed, 0 failed, 1 skipped`**、`rc=0`（`716 → 717` 多的是 §10.3.4 那条
+> "LAN 发现隔离成功"；上面表里的 694/618/667/591 是 2026-11-07 的**当轮**基数，
+> `passed` 随客户端版本漂移，**别拿它当判据**）。
 > 这个读数**必须可复跑** —— 同一条命令两次给出不同结果的护栏等于没有护栏，
 > 所以"确定性"单独立了一节：**§10.3.2**（根因、修法、连续 10 次的原始记录）。
 
@@ -704,6 +709,163 @@ GW2_SELFTEST_MATCH_SEED=89 bash client/run.sh selftest    # 每次都 696/1/2 + 
 （0.25 / 0.35 / 0.45 s）取 `AudioEffectCapture` 的窗口（`_capture_rms/_capture_peak/_capture_humm`）——
 headless 下按帧数等会读到 0，所以那里必须用墙钟。机器**极端**过载时它们理论上仍可能抖；
 本轮 20 次里没出现过，真出现时按上面 (5) 的办法先确认是不是它。
+
+### 10.3.4 `selftest` 的第二条既有 flake：LAN 大厅**成对红**（2026-11-10 新增，已修）
+
+> **一句话**：那两条红只有**一个**根因 —— LAN 大厅的**房间表里多了一行**。
+> 那一行是**外部输入**（`App._install_net()` 启动就绑原版的 `UDP 42968`），
+> 而两条断言都以"房间表是空的"为前提，用例自己从没把这个前提拿回来。
+>
+> 修法两条，**判据一个字没改、断言一条没删**（`_expect(` 703 → 704，多的那条是"隔离成功"）：
+> 1. **前提由用例自己控制**：`_isolate_lan_discovery()` = 清表 + 换私有端口 + **断言这次隔离成功**；
+> 2. **底栏那个 " Join IP " 按 `input_text` 找**，不按节点名找 —— 房间条目里也有一个
+>    叫 `JoinButton` 的节点，`find_child("JoinButton")` 给的是**深度优先的第一个**。
+>
+> 证据档：根因链是 **观测**（确定性复现 3/3 + 逐帧快照）；
+> "上游那两次红具体是谁在广播"是 **未知**（没抓到），候选与排除写在 (6)。
+
+#### (1) 症状与上游记录
+
+| 项 | 值 |
+|---|---|
+| 现象 | 连跑 `bash client/run.sh selftest`，LAN 大厅两条**成对**变红，总数差恒为 `+2` |
+| 上游（第十七轮 84 号 A/B，基线 `7323124`） | 连跑 4 次第 **3** 次红；本轮 9 次第 **3、7** 次红 ⇒ **不是当轮引入的** |
+| 红的两条 | `本地房间列表初始为空（实际 1）` / `底部 Join IP 宽度 = 屏宽×0.2（LobbyButtonContainer.gd，期望 12.8）` |
+| 本机裸跑（`CG@38cb827`，工作树 `agent/lan-lobby-flake`） | **10 次全绿**（(4) 的原始表）⇒ 这条**要触发条件**，不是"改坏了" |
+
+⚠️ 与本文件 §10.3.3 那个 `629/7` **不是同一件事**：那个是 **7 条、全在"真服务端"那一组**（连不上），
+本条的 signature 是**恰好 2 条**且名字固定。（本节没有改 §10.3.3 那条，它**仍未定因**。）
+
+#### (2) 根因（观测）：房间表里多了一行 ⇒ 两条断言同时红
+
+`LanLobby` 的 Local 页每帧重投影一次（`_sync_list` → `_wanted_rows("local")`），数据源只有两个：
+
+```
+net.local_rooms()            # GwLanDiscovery：UDP 42968 收到的 9 字段 JSON 行
+App.local_room_row()         # 自己开的那间（create_game 才有）
+```
+
+而 `App._install_net()`（`client/src/app/app.gd:127`）在**进程启动时**就绑了原版端口
+`GwLanDiscovery.DEFAULT_PORT = 42968`。⇒ **任何**在这台机器上广播房主的进程，
+只要在用例走到 LAN 大厅之前（进程第 ~2 秒）灌一条合法 JSON（房间 TTL 12 s），
+房间表就有 1 条，Local 页就画 1 行。
+
+两条断言的依赖关系**不是"同一个尺寸/同一次页面切换"，而是"同一个列表"**：
+
+| 断言 | 怎么被那一行弄红 |
+|---|---|
+| `本地房间列表初始为空（实际 1）` | 直接数 `GraphwarLanVBox` 的 `HBoxContainer` 子节点 ⇒ 1 |
+| `底部 Join IP 宽度 = 屏宽×0.2（期望 12.8）` | 量的是 `lobby.find_child("JoinButton")`。**房间条目里也有一个 `JoinButton`**（`game_room_entry.tscn` 的 `JoinButtonContainer/JoinButton`），而 `find_child` 是**深度优先的第一个** ⇒ 列表有行时拿到的是**行里**那个（`custom_minimum_size.x == 0`，不受 `LobbyButtonContainer.gd` 管） |
+
+逐帧快照（修**之前**的代码 + 一条注入的广播行，原始输出）：
+
+```text
+@@DIAG boot      f=2  win=(64, 64) vp=64 mode=local rows=0 items=[] join_min=12.80 first_join=MarginContainer/VBoxContainer/MarginContainer/HBoxContainer/JoinButton
+@@DIAG signal rooms_changed(local) f=3 rooms=1 pkts=1 [{ "room_name": "Stray Room", … "address": "127.0.0.1:1" … }]
+@@DIAG lan_local f=31 win=(64, 64) vp=64 mode=local rows=1 items=["Stray Room"] join_min=0.00  first_join=MarginContainer/VBoxContainer/ScrollContainer/GraphwarLanVBox/HBoxContainer/JoinButtonContainer/JoinButton
+@@DIAG geom_join f=31 （同上）
+SELFTEST 714 passed, 2 failed, 1 skipped
+  FAIL 本地房间列表初始为空（实际 1）
+  FAIL 底部 Join IP 宽度 = 屏宽×0.2（LobbyButtonContainer.gd，期望 12.8）
+```
+
+`join_min` 从 **12.80 → 0.00**、`first_join` 从**底栏**变到**列表行里**，就是第二条红的原因；
+`rows` 从 **0 → 1** 就是第一条红的原因。**一行 ⇒ 两条**，这就是"成对"。
+
+#### (3) 确定性复现（3/3，修之前）
+
+把"外部广播"做成旋钮（就是 §10.3.2 用 `GW2_SELFTEST_MATCH_SEED=89` 造"0 个障碍"的同一套路）：
+启动时往自己的 LAN 监听端口塞一条房主广播（`GwWireSamples.broadcast` 造的 9 字段 JSON，
+与 `docs/24` §1.1 抓包同形状）。**判据一条没改的基线代码**连跑 3 次：
+
+```text
+PREFIX-inject run 1 | rc=1 | SELFTEST 714 passed, 2 failed, 1 skipped
+      FAIL 本地房间列表初始为空（实际 1）
+      FAIL 底部 Join IP 宽度 = 屏宽×0.2（LobbyButtonContainer.gd，期望 12.8）
+PREFIX-inject run 2 | rc=1 | SELFTEST 714 passed, 2 failed, 1 skipped   （同上两条）
+PREFIX-inject run 3 | rc=1 | SELFTEST 714 passed, 2 failed, 1 skipped   （同上两条）
+```
+
+⇒ "成对红"100% 可重放，**不是骰子**；上游看到的是"概率"，因为**广播源在不在**才是概率。
+
+#### (4) 本机裸跑记录（修之前，10 次全绿 —— 如实记"没复现"）
+
+```text
+run  1..10 | rc=0 | SELFTEST 716 passed, 0 failed, 1 skipped | 9.4–10.3s
+```
+
+这 10 次里 **3 次**（run 1 / 2 / 9）`UDP 42968` **绑不上**（`LAN 发现不可用：… 绑定失败（2）`），
+另 7 次绑上了 —— 绑上了但**没有广播源**，所以没复现。
+`ss -lunpe` 显示这台机器上 `*:42968` 曾被**另一个 DSH 子进程**（cgroup
+`dsh-subprocess-…`，uid 1000）占着 ⇒ 42968 在这个环境里本来就是**抢**的。
+⇒ 本机复现率 0/10 是"没有广播源 + 端口被抢"的巧合，**不能当成没问题**（(3) 已证明）。
+
+#### (5) 修法（`client/tools/selftest.gd`；判据、条数、期望值全部不动）
+
+| # | 改什么 | 为什么 |
+|---|---|---|
+| ① | 新增 `_isolate_lan_discovery(tag)`：`lan.stop()`（**会清空房间表**）→ `lan_listen(0)`（私有端口）→ **断言** `err == OK && is_listening() && room_count() == 0` | "房间表是空的"是这组用例的**前提**，必须由用例自己控制；私有端口外部的周期性广播再也到不了。多出来的那 **1** 条断言就是"隔离成功"，隔离失败会**红**，不会静默 |
+| ② | `_test_lan_lobby()` 第一行 `await _isolate_lan_discovery("联机大厅")` | 把①接上去。**在进大厅之前**做，`show_global/show_local` 的语义不受影响 |
+| ③ | 新增 `_lobby_join_ip_button(lobby)`：按 `input_text == GwCommands.JOIN_IP`（`"join_ip"`）找底栏按钮 | 修的是**选哪个节点**，不是判据：断言原文写的就是"**底部** Join IP 宽度"，判据仍是 `custom_minimum_size.x == 屏宽×0.2`（期望值一个字没改） |
+| ④ | `GW2_SELFTEST_INJECT_LAN_ROOM=1/2` + `GW2_SELFTEST_DIAG=1` | 旋钮与诊断（只读）。`=1` = 启动时塞一行（**回归判据**：修好之后不许再红）；`=2` = 隔离**之后**再塞一行（**正对照**：断言必须还红）；`DIAG` 打逐帧快照 |
+
+**没有做的事**：没删断言、没把失败改成跳过、**没有加大任何 sleep**、没动 `client/src/**`。
+`grep -c '_expect('` **703 → 704**（+1 = 隔离断言）、`grep -c '_skip('` **22 → 22**；
+运行时 `SELFTEST 716 passed, 0 failed, 1 skipped` → **`717 passed, 0 failed, 1 skipped`**。
+
+#### (6) 那一行到底是谁送的（触发源：**未知**，候选与排除如实记）
+
+| 候选 | 档 | 说明 |
+|---|---|---|
+| `tools/gate5_serve.py` | **观测**（代码） | 默认往 `127.0.0.1,255.255.255.255:42968` 每 ~1 s 灌一条 `GameInfo`，`--broadcast-for 0` = **不停**。它是本仓库里**唯一**会周期性广播房主的脚本（gate5 那几轮实测都用它） |
+| 同机另一个客户端 / 另一个 agent 的进程 | **观测**（`ss`） | `*:42968` 确实被另一个 DSH 子进程占用过；任何绑上它的客户端都在收同一条广播 |
+| 局域网里**原版真机**的房主 | **未知**（未验证） | 原版广播走 IPv6 组播 `ff02::1`（`docs/24` §7.2、`src/graphwar_backend.rs:170`），我们监听的是 IPv4 `*` ⇒ **大概率收不到**。这一条不做结论 |
+| `examples/serve_match` 自己广播 | **排除**（观测） | `examples/serve_match.rs` 里没有任何 UDP/广播代码；`_test_net_real_server` 那条广播是**自检自己发的**，而且发往**私有端口**（`net.lan_port`），从不发 42968 |
+| 自检自己发的包 | **排除**（观测） | `_test_net_lan_discovery` / `_test_net_real_server` 都 `set_dest_address("127.0.0.1", net.lan_port)`（私有的临时端口）；`client/tools/*.gd`（14 个 headless 脚本）里 0 处 `42968`/`set_dest_address` |
+
+⇒ 上游那两次红具体是哪一份广播**没抓到**，所以标 **未知**；但"有广播 ⇒ 必定成对红"是 (3) 的 3/3。
+
+#### (7) 修完的复跑记录
+
+① **连跑 20 次全绿**（本机，`bash client/run.sh selftest`）：
+
+```text
+run  1..20 | rc=0 | SELFTEST 717 passed, 0 failed, 1 skipped | 9.5–10.1s
+```
+
+② **原始触发条件开着**也全绿（`GW2_SELFTEST_INJECT_LAN_ROOM=1`，修之前是 3/3 红）：
+
+```text
+inject-run 1..5 | rc=0 | SELFTEST 717 passed, 0 failed, 1 skipped
+```
+
+③ **正对照：断言还有牙齿**（`=2`，隔离之后再塞一行）：
+
+```text
+@@DIAG lan_local … rows=1 items=["Stray Room"] join_min=0.00 join_ip_min=12.80 first_join=…/GraphwarLanVBox/…/JoinButton
+SELFTEST 716 passed, 1 failed, 1 skipped
+  FAIL 本地房间列表初始为空（实际 1）        ← 只有这一条；"Join IP 宽度"不再跟着红
+```
+
+⇒ 既证明"多一行仍然会红"（护栏没被削弱），也证明**成对**这件事本身被去掉了：
+第二条现在量的是它自己声明的那个节点。
+
+④ **dispatch/90 的关键判据**："先连跑 14 个 headless，再跑 selftest，第一次就必须全绿"：
+
+```text
+HEADLESS_TOTAL passed=1923 failed=0 scripts=14        ← 与基线 1923 一致
+SELFTEST_AFTER_HEADLESS rc=0 | SELFTEST 717 passed, 0 failed, 1 skipped
+```
+
+#### (8) 红了怎么读（这一组）
+
+1. 先看 `FAIL` 里有没有 `本地房间列表初始为空（实际 N）`：有 ⇒ **房间表里真有 N 条**，
+   加 `GW2_SELFTEST_DIAG=1` 重跑一次，`@@DIAG lan_local` 那行的 `items=[…]` 就是**房间名**、
+   `rooms=`/`pkts=` 是表里的条数与收到过的包数；
+2. 想知道"是不是外部广播"，看 `@@DIAG boot` 的 `lan=on:<port>`：`42968` = 绑到了原版端口
+   （外部能打进来），其它端口 = 已经隔离；
+3. 想**确定性地**验证护栏还在：`GW2_SELFTEST_INJECT_LAN_ROOM=2 bash client/run.sh selftest`
+   ⇒ 必须看到 `本地房间列表初始为空（实际 1）` 这一条红（其它不许红）。
 
 ### 10.4 b) feature 打开时：5 个方法 + 真节点类都活着（headless 实测）
 

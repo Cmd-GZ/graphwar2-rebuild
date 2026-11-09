@@ -540,12 +540,51 @@ impl GwReplayDriver {
         self.driver.as_mut().and_then(|d| d.step_back_event()).unwrap_or(-1)
     }
 
+    // ------------------------------------------------- 模式档位查表（`dispatch/89`）
+    //
+    // 回放里记着**这一局真实的选择**（`AxisModeInfo` / `FunctionModeInfo` / `TurnModeInfo` /
+    // `TimeModeInfo`），播放屏 `_begin_replay()` 要把这 4 个**字符串**翻成 `App.state.*` 的
+    // **档位下标**（`GwModes`，`client/src/app/modes.gd`）。
+    //
+    // 这四个 `static func` 原来在 `client/src/play/replay_player.gd::GwReplayPlayer` 里
+    // （84 号删剩的最后一小块，89 号整份删除）。搬到这里而不是留在 GDScript 的理由：
+    // 下标就是**线上枚举的声明顺序**，那张唯一的权威表 `protocol::WIRE_VALUE_ENUMS`
+    // 本来就在 Rust（`docs/07` §5.2，**逐位**）—— 视图层再抄一份就等于第二个真相。
+    // 纯查表：字符串进、整数出，无状态、不看回放，所以是静态方法。
+    //
+    // 兜底值（不认识的字符串）与旧 `.gd` 表**逐值相同**：3 / 0 / 0 / 5。
+
+    /// `axis_mode` → `GwModes` 轴档（`0 = NoAxis / 1 = OnlyMain / 2 = EveryFive / 3 = EveryUnit`）。
+    #[func]
+    fn axis_index(s: GString) -> i64 {
+        super::replay_driver::axis_index(s.to_string().as_str())
+    }
+
+    /// `function_mode` → 函数档（`0 = NormalFunction / 1 = DiffEqFunction`）。
+    #[func]
+    fn function_index(s: GString) -> i64 {
+        super::replay_driver::function_index(s.to_string().as_str())
+    }
+
+    /// `turn_mode` → 回合制档（`0 = SequentialTurns / 1 = SimultaneousTurns`）。
+    #[func]
+    fn turn_index(s: GString) -> i64 {
+        super::replay_driver::turn_index(s.to_string().as_str())
+    }
+
+    /// `time_mode` → 时限档（`0 = Timer30s … 4 = Timer5m / 5 = TimerInf`）。
+    #[func]
+    fn time_index(s: GString) -> i64 {
+        super::replay_driver::time_index(s.to_string().as_str())
+    }
+
     /// 一句话说明"这个类是干什么的"（`docs`/自检里用）。
     #[func]
     fn about() -> GString {
         GString::from(
             "回放驱动（我方自定）：定步 60 tick/s、pumps≡ticks、长帧追赶无上限；\
-             结算批借 replaydiff::split_batches。见 docs/16-client.md §56",
+             结算批借 replaydiff::split_batches；模式字符串→档位下标见 4 个静态查表函数。\
+             见 docs/16-client.md §56 / §59",
         )
     }
 }

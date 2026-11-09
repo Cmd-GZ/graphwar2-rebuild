@@ -288,8 +288,8 @@ const SFX_FOR_EFFECT := {
 ## 回放模式下：不接管输入（键盘/开火无效），由 tick 时钟消费事件流。
 var _replay_mode := false
 ## **驱动在 Rust**：`GwReplayDriver` → `src/_scaffold/replay_driver.rs`（`docs/16` §56）。
-## 旧实现在 `client/src/play/replay_player.gd`（那份 `.gd` 还在，但本屏已不再用它；
-## 自检仍在用它做 canonical 的三端对拍 —— 见 §56.6 第 1 条）。
+## 旧实现在 `client/src/play/replay_player.gd`（那份 `.gd` 已在 89 号**整份删除**：
+## 局面机归 `src/graphwar_replay_player.rs`，模式字符串 → 档位那张表归驱动，见 §59）。
 var _replay: GwReplayDriver = null
 var _replay_path := ""
 var _replay_bar: HBoxContainer = null
@@ -2114,7 +2114,7 @@ func _soldier_of(player_index: int) -> Dictionary:
 ##
 ## **流程（tick 时钟 + 事件泵 + 结算批）在 Rust**：`GwReplayDriver`
 ## → `src/_scaffold/replay_driver.rs`（`docs/16` §56）。本函数只剩"递路径 / 读快照 / 摆节点"：
-## 旧实现在这里建 `GwReplayPlayer`（一份 426 行的 GDScript 局面机），再每帧 `advance_dt(dt)`
+## 旧实现在这里建一份 426 行的 GDScript 局面机（`GwReplayPlayer`，89 号整份删除），再每帧 `advance_dt(dt)`
 ## —— 那是**每帧泵一次**，与原版量到的 `pumps ≡ ticks`（`docs/06` §44.3）不符。
 ##
 ## 喂给绘制/结算的东西一律**不绕过内核**：
@@ -2162,15 +2162,17 @@ func _begin_replay(path: String) -> void:
 	_replay_mode = true
 	_running = true
 	var snap: Dictionary = _replay.snapshot()
-	# 四个模式：回放里记着**这一局真实的选择**（`AxisModeInfo` 等）。字符串 → 档位的
-	# 对照表还在 `GwReplayPlayer` 的**静态**查表函数里（纯查表，不是流程；`docs/133` §3.3），
-	# 所以这里直接借它，不抄第二份。
+	# 四个模式：回放里记着**这一局真实的选择**（`AxisModeInfo` 等）。字符串 → 档位下标的
+	# 对照表在 **Rust 侧**（`GwReplayDriver` 的 4 个**静态**查表函数，纯查表不是流程）：
+	# 源表是 `src/_scaffold/protocol.rs::WIRE_VALUE_ENUMS`（`docs/07` §5.2，**逐位**），
+	# 下标 = 线上枚举的声明顺序。GDScript 里**没有**第二份表，本屏只问一句
+	# （`docs/16-client.md` §59；84 号那份 `.gd` 查表已在 89 号整份删除）。
 	var app_node := app()
 	if app_node != null:
-		app_node.state.axis_mode = GwReplayPlayer.axis_index(String(snap.axis_mode))
-		app_node.state.function_mode = GwReplayPlayer.function_index(String(snap.function_mode))
-		app_node.state.turn_mode = GwReplayPlayer.turn_index(String(snap.turn_mode))
-		app_node.state.time_mode = GwReplayPlayer.time_index(String(snap.time_mode))
+		app_node.state.axis_mode = GwReplayDriver.axis_index(String(snap.axis_mode))
+		app_node.state.function_mode = GwReplayDriver.function_index(String(snap.function_mode))
+		app_node.state.turn_mode = GwReplayDriver.turn_index(String(snap.turn_mode))
+		app_node.state.time_mode = GwReplayDriver.time_index(String(snap.time_mode))
 	_set_axis_mode(int(app_node.state.axis_mode) if app_node != null else GwModes.AXIS_DEFAULT)
 	_refresh_mode_indicators()
 	# 回放不做胜负判定（录像自己会发 `GameStateInfo{EndingGame}`），这里只占位。

@@ -31,7 +31,7 @@ extends SceneTree
 ## | 14 | 驱动吐出的事件序列与**本脚本独立扫描**的结果逐条相同 | 交叉验证（两份实现，两份语言） |
 ## | 15 | 真实回放（本机样本）上的同一批事实 + `canonical`/游标 = `fixtures/replay_player84.txt`（**旧局面机固化**下来的期望值） | 局面 **推断**（`docs/133` §3）+ 三端同格式（§5） |
 ## | 16 | 播放屏源码：旧回放驱动写法消失、新驱动入口出现 | **观测**（读文件文本） |
-## | 17 | **旧局面机已退役**：`GwReplayPlayer` 不再有 `setup/advance_dt/canonical/apply_event/…`，源文件 ≤ 80 行、无局面写法 | **观测**（运行时方法表 + 读文件文本；`dispatch/84`） |
+## | 17 | **旧局面机整份退役**：`GwReplayPlayer` 类不存在、源文件不存在、`client/src/**` 里 0 处**可执行**引用；4 个查表函数在 `GwReplayDriver` 上逐值复现旧表 | **观测**（运行时 ClassDB + 读文件文本 + 逐值调用；`dispatch/84`/`89`） |
 ##
 ## # 为什么没有"端到端打一枪"
 ##
@@ -80,20 +80,35 @@ const REPLAY_DRIVER_CLASS := "GwReplayDriver"
 ## 84 号固化的夹具：**旧 GDScript 局面机**（`GwReplayPlayer`，426 行）算出来的期望值。
 ## 旧代码退役之后，它就是对拍旧实现的**唯一**对照物（先固化、再删，`docs/16-client.md` §57）。
 const REPLAY_FIXTURE := "fixtures/replay_player84.txt"
-## 旧局面机的类名与文件（用来钉"它不许把局面/时钟带回来"）。
+## 旧局面机的类名与文件（用来钉"它不许把局面/时钟带回来"；89 号起**文件已整份删除**）。
 const REPLAY_OLD_PLAYER_CLASS := "GwReplayPlayer"
 const REPLAY_OLD_PLAYER_PATH := "res://src/play/replay_player.gd"
+## 89 号：`GwReplayPlayer` 那 4 个 `static func` 搬到了 `GwReplayDriver`（静态、纯查表）。
+## 左边 = 方法名，中间 = 入参，右边 = **旧实现**给的整数（删文件前逐条抄下来的）。
+## 判据不是"能跑通"，而是"删掉的那张表被一模一样地接上了" —— 14 个已知取值 + 4 个兜底。
+const REPLAY_MODE_CASES := [
+	["axis_index", "NoAxis", 0], ["axis_index", "OnlyMain", 1],
+	["axis_index", "EveryFive", 2], ["axis_index", "EveryUnit", 3],
+	["function_index", "NormalFunction", 0], ["function_index", "DiffEqFunction", 1],
+	["turn_index", "SequentialTurns", 0], ["turn_index", "SimultaneousTurns", 1],
+	["time_index", "Timer30s", 0], ["time_index", "Timer1m", 1],
+	["time_index", "Timer2m", 2], ["time_index", "Timer3m", 3],
+	["time_index", "Timer5m", 4], ["time_index", "TimerInf", 5],
+	# 兜底：旧 `match` 的 `return` 与两个三元表达式的默认值（3 / 0 / 0 / 5）
+	["axis_index", "???", 3], ["function_index", "???", 0],
+	["turn_index", "???", 0], ["time_index", "???", 5],
+]
 ## 旧局面机的方法（84 号删掉的那批）：再出现任何一个都说明它又长回来了。
 const REPLAY_STATE_MACHINE_METHODS := [
 	"setup", "advance_dt", "advance_to", "apply_event", "canonical", "seek",
 	"step_event", "step_back_event", "actors", "obstacles_for_view", "target_positions",
 	"current_tick", "progress", "finished", "mode_indices", "team_index",
 ]
-## 旧局面机的源码写法（同一个意思，防它换个名字长回来）。
-const REPLAY_STATE_MACHINE_SOURCE := [
-	"func apply_event", "func canonical", "func advance_dt", "func _reset_state",
-	"\"obstacles\": []", "\"shots\": []", "TICKS_PER_SECOND",
-]
+## 84 号的第二条判据（旧源文件 ≤ 80 行、不含 `func apply_event` / `"obstacles": []` 等写法）
+## 在 89 号被**更强的判据取代**：文件本身必须不存在、类必须在 `ClassDB` 里不存在。
+## 之所以不保留"扫全 `client/src/**` 找局面写法"：那几个模式串在别处有**合法**命中
+## （`core_bridge.gd` 的返回形状、`play_screen.gd` 的 `CURVE_TICKS_PER_SECOND`），
+## 扫全仓会变成假红机器。
 ## 本类的方法表（少一个就说明驱动又退回 GDScript 了）。
 const REPLAY_METHODS := [
 	"load", "load_text", "ok", "error", "first_tick", "last_tick", "tick", "cursor",
@@ -111,10 +126,15 @@ const REPLAY_GONE := [
 	"_replay.mode_indices(", "_replay.current_tick(",
 ]
 ## 搬完之后播放屏**必须**调的新入口。
+##
+## 最后 4 条是 89 号加的：模式字符串 → 档位下标原来问 `GwReplayPlayer`（已删），
+## 现在问驱动的**静态**查表函数（`docs/16-client.md` §59）。
 const REPLAY_CALLS := [
 	"GwReplayDriver.new()", "_replay.advance_dt(", "_replay.snapshot()",
 	"_replay.last_shot(", "_replay.actors()", "_replay.obstacles()",
 	"_replay.phase()", "dirty_actors", "dirty_layout", "dirty_shot",
+	"GwReplayDriver.axis_index(", "GwReplayDriver.function_index(",
+	"GwReplayDriver.turn_index(", "GwReplayDriver.time_index(",
 ]
 ## 本机真实回放样本的**文件名**（与 `selftest.gd` 的 `REPLAY_SAMPLE` 同一份，
 ## `docs/133` §5 的样本）。
@@ -804,31 +824,51 @@ func _initialize() -> void:
 	for pat in REPLAY_CALLS:
 		ok(src.contains(pat), "源码里确实调新驱动入口：`%s`" % pat)
 
-	# ---------------- 17. 旧局面机退役（`dispatch/84`，`docs/16-client.md` §57） ----------------
-	# 防止有人把那份 426 行的 GDScript 局面机又加回来：**时钟 / 事件规则 / 对拍串**一个都不许在。
+	# ---------------- 17. 旧局面机**整份**退役（`dispatch/84` + `89`，§57 / §59） ----------------
+	# 84 号把那份 426 行的 GDScript 局面机删到只剩 4 个查表函数；89 号把播放屏那 4 行调用
+	# 改成问驱动（`GwReplayDriver.axis_index(...)` 等），于是**类与文件都该整份消失**。
+	# 本组钉三件事：① 类/文件确实没了（不是"方法表碰巧干净"）；② `client/src/**` 里
+	# **可执行**引用 0 处（注释里的历史说明允许留）；③ 被删掉的那张表在 Rust 上**逐值**
+	# 复现（14 个已知取值 + 4 个兜底），不是"大概对"。
 	if ClassDB.class_exists(REPLAY_OLD_PLAYER_CLASS):
 		var old_player: Object = ClassDB.instantiate(REPLAY_OLD_PLAYER_CLASS)
 		var back := PackedStringArray()
 		for m in REPLAY_STATE_MACHINE_METHODS:
 			if _methods_of(old_player).has(String(m)):
 				back.append(String(m))
-		ok(back.is_empty(),
-			"旧局面机已退役：`%s` 不再有局面/时钟方法（又出现的：%s）"
+		ok(false, "旧局面机类 `%s` 又回来了（89 号已整份删除；方法表：%s）"
 			% [REPLAY_OLD_PLAYER_CLASS, str(back)])
 	else:
 		ok(true, "旧局面机 `%s` 整个类都不在了（局面只剩 Rust 一份）"
 			% REPLAY_OLD_PLAYER_CLASS)
 	var old_src := FileAccess.get_file_as_string(REPLAY_OLD_PLAYER_PATH)
-	var left := PackedStringArray()
-	var old_lines := 0
-	if old_src != "":
-		old_lines = old_src.split("\n").size()
-		for pat in REPLAY_STATE_MACHINE_SOURCE:
-			if old_src.contains(pat):
-				left.append(pat)
-	ok(old_src == "" or (left.is_empty() and old_lines <= 80),
-		"`%s` 只剩纯查表（%d 行 ≤ 80、无局面写法；又出现的：%s）"
-		% [REPLAY_OLD_PLAYER_PATH, old_lines, str(left)])
+	ok(not FileAccess.file_exists(REPLAY_OLD_PLAYER_PATH),
+		"`%s` 已**整份删除**（exists=%s，%d 行）"
+		% [REPLAY_OLD_PLAYER_PATH, str(FileAccess.file_exists(REPLAY_OLD_PLAYER_PATH)),
+			old_src.split("\n").size() if old_src != "" else 0])
+
+	# ② 可执行引用：逐行扫 `client/src/**`，**整行注释跳过**（"这文件删了"写进注释最有价值）。
+	var live_hits := _scan_src_identifier(REPLAY_OLD_PLAYER_CLASS)
+	ok(live_hits.is_empty(),
+		"`client/src/**` 里 `%s` 的**可执行**引用 0 处（命中：%s）"
+		% [REPLAY_OLD_PLAYER_CLASS, str(live_hits)])
+	# 正对照：同一个扫描器必须扫得到确实存在的符号，否则"0 命中"什么也不能证明（AGENTS.md A.4）。
+	var ctrl := _scan_src_identifier(REPLAY_DRIVER_CLASS)
+	ok(not ctrl.is_empty(),
+		"正对照：同一个扫描器扫到 `%s` %d 处 ⇒ 上一条的 0 命中有效"
+		% [REPLAY_DRIVER_CLASS, ctrl.size()])
+
+	# ③ 逐值复现旧表。**期望值来自旧实现**（删文件前抄下来的数），不是新实现自证。
+	var mode_wrong := PackedStringArray()
+	for case in REPLAY_MODE_CASES:
+		var got := _mode_index_of(String(case[0]), String(case[1]))
+		if got != int(case[2]):
+			mode_wrong.append("%s(%s)=%d≠%d"
+				% [String(case[0]), String(case[1]), got, int(case[2])])
+	ok(mode_wrong.is_empty(),
+		"`%s` 的 4 个静态查表函数逐值复现旧 `%s` 的表（%d 个用例；不符：%s）"
+		% [REPLAY_DRIVER_CLASS, REPLAY_OLD_PLAYER_CLASS, REPLAY_MODE_CASES.size(),
+			str(mode_wrong)])
 
 	_finish()
 
@@ -848,6 +888,43 @@ func _scan_src_symbols(symbols: Array) -> PackedStringArray:
 			if text.contains(String(sym)):
 				hits.append("%s:%s" % [path, sym])
 	return hits
+
+## 扫 `client/src/**` 里的 .gd，返回 `文件:行号` —— **整行注释跳过**（`#` 开头的行不算引用）。
+##
+## 为什么要跳过注释：`GwReplayPlayer` 这个名字在"它已被删除"的说明里出现最有价值，
+## 而那种说明都是注释；把注释也算命中，等于逼后来的人删掉解释。
+## 判据仍是严的：任何一行**代码**（含行尾注释里的同名符号）都会命中。
+## 正对照由调用方做（同一个扫描器必须能扫到确实存在的符号）。
+func _scan_src_identifier(sym: String) -> PackedStringArray:
+	var files := PackedStringArray()
+	_gd_files("res://src", files)
+	if files.size() <= 20:
+		push_error("[gw2] 源码扫描面只有 %d 个 .gd，负结论不可信" % files.size())
+	var hits := PackedStringArray()
+	for path in files:
+		var text: String = FileAccess.get_file_as_string(path)
+		var line_no := 0
+		for line in text.split("\n"):
+			line_no += 1
+			if line.strip_edges().begins_with("#"):
+				continue
+			if line.contains(sym):
+				hits.append("%s:%d" % [path, line_no])
+	return hits
+
+## 调驱动上的**静态**查表函数（`GwReplayDriver.axis_index(s)` 等），返回它给的整数。
+##
+## 走实例 `call()` 而不是 `GwReplayDriver.axis_index(...)` 的直接写法：直接写在 GDScript 里
+## 是**编译期**解析的，方法一旦不在就整脚本 Parse Error（`dispatch/84` §57.3 那次实测），
+## 而这里要的是"变红"，不是"检查脚本自己起不来"。调用不到就返回 `-999`（不可能等于期望值）。
+func _mode_index_of(method: String, arg: String) -> int:
+	var drv: Object = ClassDB.instantiate(REPLAY_DRIVER_CLASS)
+	if drv == null:
+		return -999
+	var got: Variant = drv.call(method, arg)
+	if got == null:
+		return -999
+	return int(got)
 
 func _gd_files(dir_path: String, out: PackedStringArray) -> void:
 	var d := DirAccess.open(dir_path)

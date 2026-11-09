@@ -6091,6 +6091,11 @@ $PY tools/gw2_step_drive.py --display 127.0.0.1:95 --data-dir $R/gamedata \
   **三种都是 0 个构造点** ⇒ 这个变体在这份构建里是**被搬来搬去**的（`Event` 一旦建好就不再重写判别式），
   或者用了本文没扫到的形态。**这条不影响 ① 的结论**（两条 `fnpoints` 的差别在 `event+0x10` 的**值**上，
   而值由 `0x3cb760` 原样输出），但下一轮若要从"构造点"反查生产者，得先把这个形态找出来。
+  > 🔁 **上面这段是 87 号用当时的旧工具（三形态，没有形态④）得出的，留着原文以便看出它被复核过。**
+  > **88 号已用 83 修好的四形态工具 + 五种扩展形态 + store 判据 + 反向取证复扫：结论不翻转，
+  > 而且升级为硬结论 —— 这份构建里 `FunctionPoints`（tag 37）没有构造点。**
+  > 那句"或者用了本文没扫到的形态"**要改口**：不是"没扫到"，是**算术上构造不出来**。
+  > 全部证据、正对照与缺口见 **§50**。
 
 **两条各自的信封**：
 
@@ -6558,3 +6563,689 @@ cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/li
 **本轮没有改动**：`src/game.rs`、`src/_scaffold/root_wiring.rs`、`src/_scaffold/graphwar_root_node_class.rs`、
 `client/src/**`（`play_screen.gd` 只在变异测试里临时改过，已逐字节还原：`git diff` 为空）、
 `dispatch/`、`fixtures/guardrails.json`。
+
+## 50. **`FunctionPoints`（tag 37）没有构造点** —— 四形态复扫 + 五种扩展形态 + store 判据 + 反向取证**全部为 0**；87 号那条负结论**不翻转**，从"有界否定"升级为**硬结论**（2026-11-10，`dispatch/88`）
+
+> 任务书：[`dispatch/88-functionpoints-rescan.md`](../dispatch/88-functionpoints-rescan.md)。起点 `CG@38cb827`，
+> 分支 `agent/functionpoints-rescan`，私有 `CARGO_HOME` / `CARGO_TARGET_DIR`。目标构建：`libgraphwarrust.so`
+> sha256 **`9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`**（= `steam/2026-08-28`）。
+> 本节地址一律**虚地址**（vaddr = 模块内偏移 = `gw+…`），`.text` 的 vaddr 比文件偏移大 `0x1000`。
+>
+> **为什么这一节（一条依赖关系）**：§47 里那条负结论是 87 号用**当时的三形态工具**扫出来的；而 83 号
+> 恰好修掉了第四形态（`movabs 0x8000…000` + `add rax,n`，见 [`07-protocol.md`](07-protocol.md) §7.1.1），
+> 修前那批点全被记进 **tag 0**、修后**换桶 129 处**。⇒ **87 那句"构造点扫不到"必须先复扫才算数**，
+> 不能当定论往下一轮传。本节就是那次复扫：**答案是"仍然 0"，但这次带正对照，而且范围比 87 大得多。**
+
+### 50.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | **tag 37 的构造点有没有** | **没有**。四形态扫描命中 **1 处**（`0x4758b5`，形态③直写），而它是 `cmp` 的**比较操作数**（下一条 `0x4758bf cmp [rsi],rax`）；**store 判据 0 处**（没有任何一条 store 把 tag word 写进内存）；值追踪 + store + escapes + 反向取证**四种玩法都为 0** | **逐位**（指令）+ **观测**（扫描读数） |
+| ② | **87 那条负结论翻不翻** | **不翻转**，且升级：87 说"三种形态都是 0"，现改为"**四形态 + 五种扩展形态 + store 判据 + 反向取证全为 0**"；87 那句"**或者用了本文没扫到的形态**"要改口 —— 不是没扫到，是**算术上构造不出来**（§50.4 的封闭证明），而且"**被搬来搬去**"那半句**被支持**（只有比较，没有写入） | **逐位**（`imm64` 全库唯一 + 封闭枚举） |
+| ③ | **正对照（这次扫描器真的会命中吗）** | 6 条，全绿：**A1 变异**（拿 tag 15 的真字节把 `add rax,0xf` 的立即数改成 `0x25` ⇒ 同一条判据必须报 **tag 37**）、**B0** 形态③、**C0** 0x4758b5 之后是 `cmp`、**D0** 值追踪认 tag 15、**E0** 两步累加 `2^63+0x20+5` ⇒ tag 37、**S1/S2** store 判据在 tag 44 上给出 `0x4729cc`/`0x472e43`（**与 §37 ① 的两个生产者逐址相同**） | **逐位**（变异体 + 已知真值） |
+| ④ | **四份构建都给数** | 本机**只有 2 份** `.so`（`2026-08-28` x86-64 + `android-2.0.60` arm64）；任务书列的 `windows-2.0.60` / `windows-early2026` **不存在**（与 07 §7.1.1 同一条）。⇒ 全量复扫**只覆盖 x86-64**；arm64 只做了定点抽查（tag 37 **未查**，标**未知**） | — |
+| ⑤ | **还缺什么** | (a) arm64 全量（工具 x86-only）；(b) 值追踪不跟 XMM / 不跟跨函数 / 不跟 `memcpy`（三条各自的兜底见 §50.7）；(c) **全库有 12 个 tag 也没有 store 站点**（`25/32/36/37/38/39/47/62/63/65/72/73`）⇒ "没有 store"**单独不足以**证明"没有构造"，真正的证据是 §50.4 的算术封闭 | — |
+
+一句话：**这个二进制里，tag 37 的 word 只被"读"，从来没有被"写"** ——
+它唯一的 materialize 点 `0x4758b5` 紧接着就是 `cmp [rsi], rax`（`match event { FunctionPoints(..) => … }`），
+而全库**没有任何一条** `add/or/lea` 能把 `2^63` 补成 `2^63|0x25`、也没有任何一条 store 写下过这个值。
+
+### 50.1 四形态复扫（83 修好的工具，原样口径）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+export GW2_SO=<WS>/.reference/steam/2026-08-28/libgraphwarrust.so      # sha256 9a538115…
+$PY tools/addr_probe.py tags --only 37
+```
+
+原样输出（节选）：
+
+```text
+== 全 .text 的 `0x8000…|n` materialize 点（四种形态）：67 个 tag ==
+
+ tag 37  0x8000000000000025   1 处
+   in 0x4758b0  x1  0x4758b5  src/graphwar_game_state_manager.rs x2
+
+== 形态计数（判据见本节开头注释）==
+  MAX+add   x140      movabs    x3049      BASE+or   x25      BASE+lea  x9
+  MAX+inc   x61       BASE+add  x54        BASE+inc  x41
+  合计 3379 处（含 tag>73 的桶）
+
+== 正对照 ==
+  tag 42 @0x3f20f0 (queue_destroy_obstacle)   : OK
+  tag 41 @0x3f1b30 (destroy_obstacle)          : OK
+  tag 44 生产点 @0x472470 + 消费者 0x4bf09b/0x4e2dd4: OK
+  tag 15 形态④ 0x474b8d (add_soldier_to_player)  : OK
+```
+
+* **tag 37 = 1 处，地址与 87 报的完全一致**（`0x4758b5`）；`kind` 是 `movabs`（= 形态③ 直写），
+  **不是** 形态④。⇒ **83 的修复没有给 tag 37 增加任何构造点**，87 的读数在修后**逐址不变**。
+* 形态④ 的四类合计 `54+25+41+9 = 129`，与 07 §7.1.1"换桶 129 处"同值（旁证：本节用的是同一份工具）。
+* 四条内置正对照**全 OK** ⇒ 扫描器本身这次没坏（这已经排掉"扫法坏了"这一种解释）。
+
+### 50.2 那唯一一处到底在干什么（指令级）
+
+```text
+4758b0  push  rbx                          ; ← FDE 起点 = 函数入口
+4758b1  sub   rsp, 0x50
+4758b5  movabs rax, 0x8000000000000025     ; ★ 全库唯一的 tag 37 materialize
+4758bf  cmp   qword ptr [rsi], rax         ; ★★ 立刻拿去**比较** —— 不是写
+4758c2  jne   0x4759ba                     ; 不是 FunctionPoints 就走别的臂
+4758c8  movzx ecx, byte ptr [rdi + 0x120]
+```
+
+⇒ 这是 `if event.tag == FunctionPoints { … }` 的 match 臂（87 的原话），本节只补两条它当时没有的证据：
+
+1. **原始字节层面**：`25 00 00 00 00 00 00 80`（小端）在**整份 10 227 896 字节的文件里只出现 1 次**，
+   文件偏移 `0x4748b7`（= vaddr `0x4758b5` + 2，即那条 `movabs` 的立即数字段）。
+   `.rodata` / `.data.rel.ro` 里**没有**这个值 ⇒ **"tag 从常量表 load 进来"这条路也不存在**
+   （不是"没扫到表"，是表里根本没这个数）。
+2. **用法层面**：`movabs` 之后的下一条就是 `cmp`，值进了标志位、**没有进内存**。
+
+### 50.3 四形态之外还可能有的写法（83 口径刻意取窄的坑）与复扫结果
+
+`addr_probe.py` 里 `_tag_after_base()` 只认**同一个寄存器**上的 `add/or/inc/lea`，而且只看 **12 条**窗口；
+`_tag_of_reg()` 遇到**寄存器源**直接返回 None。这两条取窄口径，正好会给"扫不到构造点"留口子：
+
+| # | 形态 | 例子 | 83 口径 | 本节怎么扫 |
+|---|---|---|---|---|
+| ⑤ | `lea` 到**另一个**寄存器 | `movabs rax,2^63; lea rdx,[rax+0x25]` | ✗ 漏 | 值追踪的 `copy` 分支 |
+| ⑥ | 先 `mov` 拷贝再补 | `movabs rax,2^63; mov rdx,rax; add rdx,0x25` | ✗ 漏 | 同上 |
+| ⑦ | **多步**累加 | `…+0x20` 再 `+5` | ✗ 只认第一次写 ⇒ 记成 tag 32 | 值追踪逐步累加（`multi-step`） |
+| ⑧ | **寄存器源**（通用构造器） | `movabs rax,2^63; or rax, rcx`（rcx=37） | ✗ 返回 None ⇒ 记进 tag 0 | `generic` 子命令**单独列全库** |
+| ⑨ | 先造低位再置 bit63 | `mov eax,0x25; bts rax,0x3f` | ✗ 漏 | 单独统计 `bts/btc/btr r,63` |
+
+为此新增 [`tools/tag_ctor_gaps.py`](../tools/tag_ctor_gaps.py)（**只新增，不改 `addr_probe.py` 的任何计数口径**）：
+
+```bash
+$PY tools/tag_ctor_gaps.py scan    --tag 37   # ① 值追踪全库，报该 tag 的全部站点 + 每站点的**下一条用法**
+$PY tools/tag_ctor_gaps.py stores  --tag 37   # ② 构造点判据：tag word 被**写进内存**的站点
+$PY tools/tag_ctor_gaps.py prov    --tag 37   # ③ 反向：全库所有"补 n / 补 n+1"的算术点 + 源寄存器溯源
+$PY tools/tag_ctor_gaps.py generic            # ④ 家族常量 ⊕ 寄存器的站点（通用构造器候选）
+$PY tools/tag_ctor_gaps.py --self-test        # ⑤ 正对照（变异真字节，见 §50.5）
+```
+
+读数（原样）：
+
+```text
+== 值追踪（四形态 + ⑤⑥⑦⑧⑨）==
+   基本块 83182 个；命中 tag 数：66；总站点 3529；家族常量⊕寄存器站点 89
+   形态计数：BASE+add x182, BASE+inc x102, BASE+lea x9, BASE+or x30, copy x29, movabs x3177
+
+== tag 37 (0x8000000000000025) ==
+   0x4758b5  movabs        base movabs@0x4758b5  in 0x4758b0  src/graphwar_game_state_manager.rs x2
+        0x4758bf  cmp      qword ptr [rsi], rax
+        0x4758c2  jne      0x4759ba
+        0x4758c8  movzx    ecx, byte ptr [rdi + 0x120]
+
+== 家族值 store 到内存：全库 1324 处，覆盖 66 个 tag ==
+   （值流出 push/XMM：全库 1312 处，其中 tag 37 的 0 处）
+== tag 37 ==
+   **0 处**：没有任何一条 store 把 tag 37 写进内存 ⇒ 没有构造点
+```
+
+⇒ 五种扩展形态全试过：**tag 37 仍然只有 `0x4758b5` 一处，而且它不写内存**。
+⚠️ 值追踪的总站点数（3529）**不能**与 07 §7.1.1 的 3379 相加或相减：本节的口径是"值在寄存器里
+每变一次就记一次"，83 是"每个 `movabs` 记一次"；两者**只在 tag 37 上给同一个答案**（1 处、同一地址）。
+
+**为什么要按基本块（一个真实踩到的假阳性）**：第一版值追踪是"整段 `.text` 线性扫"，它把
+`0x5e4b50` 这个带跳转表的函数里**互斥的两个臂**接起来累加 —— `0x5e4c99 add rbx,0xf` 与
+`0x5e4db7 add rbx,0xa` 落在不同的 jump-table 臂上，线性相加恰好凑出 `2^63+0x19` 之类的假 tag。
+改成"**按 FDE 解码 + 走到 `jmp`/`ret`/`int3` 就停**"之后，`0x5e4db7` / `0x606dc7` 两个假 tag 37
+**当场消失**（这两处其实是 `2^63` 当**长度/下标的哨兵**在用，与事件判别值无关）。
+
+### 50.4 反向取证：不依赖"从哪个 `movabs` 出发"（这条把口子堵死）
+
+前面都是"从哨兵常量往外走"。反过来问更硬：**要造出 `2^63|0x25`，全库有哪些指令能做到？**
+`2^63|0x25` 只能由 `2^63 + 0x25` 或 `i64::MAX + 0x26`（或它们的 `or`/`lea` 等价写法）得到 ⇒
+`prov --tag 37` 把全库**所有**立即数 ∈ {`0x25`,`0x26`} 且写到寄存器的 `add`/`or`/`lea` 全列出来，逐条溯源：
+
+| 站点 | 指令 | 源寄存器上一个写者 | 判决 |
+|---|---|---|---|
+| `0x3b0cd3` | `lea rax,[r13+0x25]` | `lea rax,[r13+0x15]` | 地址算术（同一基址两次加） |
+| `0x3b0d06` | `lea rax,[r13+0x25]` | `call 0x3bb690` | 返回值 |
+| `0x3e8cc3` | `add rbx,0x26` | `add rbx,6` | 长度累加 |
+| `0x4569d3` | `lea rax,[r8+0x26]` | `shl rax,4` | 结构体偏移 |
+| `0x456cd3` | `lea rax,[r9+0x25]` | `add rax,0x10` | 结构体偏移 |
+| `0x4a0929` 等 4 处 | `add r14,0x26` | （窗口内无写者） | std 内部计数 |
+| `0x5f94c5` | `lea rax,[rsp+0x25]` | `lea rax,[rsp+0x24]` | **栈槽** |
+| `0x4aaaa9` 等 3 处 | `lea rax,[r14+0x26]` | `call [slot]` | 返回值 |
+| `0x4b0c10` / `0x6a58ed` / `0x6a5ccf` / `0x8806f0` | `lea rsi,[rsp+0x..]` | `call [slot]` | **栈槽**（不是 tag） |
+| `0x6ba813` / `0x6ba846` | `lea rax,[r13+0x26]` | `lea rax,[r13+0x16]` / `call` | 地址算术 |
+| `0x82211f` / `0x8259d2` | `lea rdx,[rdi+0x26]` | （窗口内无写者） | 指针算术 |
+| `0x6b02d0` / `0x6b077f` / `0x919ece` | `add r10d/esi/ecx,0x26` | `mov r..,eax` / `mov rcx,rsi` | **32 位**再加（高位早被截断） |
+| `0x920507` | `lea rcx,[rsi+0x26]` | `add rcx,r11` | 指针算术 |
+
+上面这张表就是 `prov --tag 37` 的**全部 25 行**（`1+1+1+1+1+4+1+3+4+2+2+3+1 = 25`，无删减）；
+**没有一处**的源寄存器来自 `0x7fffffffffffffff` / `0x8000000000000000`（没有一行出现"家族常量"）。
+配套两条：
+
+* **`bts/btc/btr reg, 63` 全库 0 处** ⇒ "先造低位 `0x25` 再置 bit63"这条也堵住了；
+* **通用构造器（家族常量 ⊕ 寄存器）= 89 处**（`xor` 32 / `or` 6 / `add` 4 / `lea`+索引 47），
+  逐个看：**落在 game 模块的只有 2 个函数** —— `0x3d3630`(`graphwar_event_handler.rs`) 与
+  `0x45aab0`(`graphwar_server_connection_handler.rs`)，两者是**同一个惯用法**：
+
+  ```text
+  3d3821  mov    r14, rcx                 ; rcx = [事件+0] 的判别值（**读**进来的）
+  3d3824  movabs rax, 0x8000000000000000
+  3d382e  xor    r14, rax                 ; = tag ^ 2^63  ⇒ 变体下标 n
+  3d3831  test   rcx, rcx
+  3d3834  mov    eax, 0x3e               ; 非负 ⇒ 0x3e（= 62，"不是事件 tag"）
+  3d3839  cmovns r14, rax
+  ```
+  `0x3e2830` 里同一条（`lea rbp,[r13+1]` ⇒ `xor rcx,rbp`）后面跟着 `cmp r12,0x45` 的范围检查 ⇒
+  这是**把已有的 tag word 折成变体下标**（消费），不是造 tag。其余 84 处全在 std/core：
+  cpuid 特性探测（`0x91aa9f` 一带）、`Arc` 计数打包（`0x54f08c` / `0x6823ac` 的
+  `lea rdi,[rax+1]; or rdi,rdx; lock cmpxchg`）、跳转表偏移（`0x7e90e1` 一带）。
+
+⇒ **封闭性**：一个 64 位 tag word 只能有三条来路 —— ① 立即数 materialize（§50.1/§50.2：全库唯一一处，
+且是 `cmp` 的操作数）；② 由家族常量做算术（§50.4：25 处全枚举、无一接哨兵，且 89 处寄存器合成里
+game 模块只有 2 处消费）；③ 从数据表 load（§50.2：那个值在文件里根本不存在）。
+**三条全关** ⇒ tag 37 在这份构建里构造不出来。
+
+### 50.5 正对照（负结论的必要条件：证明扫描器这次**真的会命中**）
+
+`--self-test` 拿**真字节**做变异，不靠"应该能行"：
+
+| # | 对照 | 期望 | 结果 |
+|---|---|---|---|
+| **A0** | `0x474b8d` 原字节（`movabs 2^63` + `add rax,0xf`，tag 15 的真实形态④） | tag 15 | **OK** |
+| **A1** | **同一条指令把立即数 `0x0f` 改成 `0x25`** | **tag 37** | **OK** ⇒ 判据对 `0x25` 这个立即数**确实是敏感的**（这一条是本节的核心正对照） |
+| **B0** | 形态③ 直写：tag 42 的站点存在 | True | **OK** |
+| **C0** | `0x4758b5` 的下一条 | `cmp` | **OK** ⇒ tag 37 只被**消费** |
+| **D0** | 值追踪把 `0x474b8d/0x474b97` 认成 tag 15 | True | **OK**（两套判据互证） |
+| **E0** | 合成 `2^63 + 0x20 + 5`（两步累加，形态⑦） | tag 37 | **OK** |
+| **S1** | `stores --tag 44` | `0x4729cc` / `0x472e43` | **OK**，与 §37 ① 的"tag44 有 2 个生产者"**逐址相同** |
+| **S2** | `stores --tag 15` | `0x45560a` / `0x474b9b` | **OK**（`0x474b8d`+`0x474b97` 那一对的落点） |
+
+`$PY tools/tag_ctor_gaps.py --self-test` → **rc=0**（6 条全过，见上表 A0–E0）。
+⇒ **本节的 0 不是"扫描器坏了"的 0**：同一条判据在变异样本上、在别的 tag 上、在同一族形态上都**会命中**。
+
+### 50.6 判决：**不翻转**，并且 87 那句要改
+
+87 的原文（§47.1 的 ⚠ 条）与本节的意见逐句对：
+
+| 87 原句 | 本节判决 | 新证据 |
+|---|---|---|
+| "判别式在 `.text` 里只出现 1 次，在 `0x4758b5`" | **成立，且更强** | 扩到**整份文件**（含 `.rodata`/`.data`）仍只有 1 次（§50.2） |
+| "而且是一条 `cmp`… **不是构造点**" | **成立** | `0x4758bf cmp [rsi],rax`（§50.2） |
+| "我按**三种**形态扫过构造点…**三种都是 0**" | **数字对，口径已过期** | 四形态：tag 37 也只有那 1 处（§50.1） |
+| "…⇒ 这个变体是**被搬来搬去**的（`Event` 一旦建好就不再重写判别式）" | **成立（被支持）** | `stores --tag 37` = **0 处**：全库没有一条 store 写下过这个 word（§50.3） |
+| "**或者用了本文没扫到的形态**" | **要改口** | 五种扩展形态 + 反向取证 + 通用构造器 + `bts` 全关（§50.3–§50.4）⇒ **不是"没扫到"，是构造不出来** |
+
+⇒ 建议把 87 那句改成："**这份构建里 tag 37 没有构造点**：四形态命中 1 处且那处是比较操作数，
+store 判据 0 处，反向取证 25 处全不接哨兵，通用构造器 89 处里 game 模块只有 2 处且都是消费（§50）。"
+
+**一条推论（标明档位：推断）**：tag word 在本进程内**从不被写出** ⇒ `FunctionPoints` 事件在本进程里
+**只被消费**（`0x4758b5` 的 match、`0x3e2830`/`0x3d3630` 的变体下标提取、`0x3e3347` 抄进点位表 §47.3）。
+"那第一条 `FunctionPoints` 事件从哪来"（是不是从收到的报文里**整块拷贝**一个已经带 tag 的结构）
+**本节没有证据** —— 要证它得在 `0x4758b5` 与 `0x3e3347` 上挂运行时探针，看 `[rsi]` 指向谁写的内存。
+⚠️ 这与 §45.7/§47 的 1 ulp 线**无关**（那条差在 `event+0x10` 的**值**上，本节一个字都没动那里的结论）。
+
+### 50.7 诚实清单（这一节**没有**证明的东西）
+
+| # | 项 | 档 | 缺什么 |
+|---|---|---|---|
+| 1 | **arm64**（`android-2.0.60`）上 tag 37 有没有构造点 | **未知** | `tools/addr_probe.py` / 本节新工具都是 x86-only（capstone x86 解码）；arm64 要另写 `movz/movk` 版本。任务书要的 4 份构建本机只有 2 份（`windows-2.0.60`/`windows-early2026` 不存在，同 07 §7.1.1） |
+| 2 | 值追踪**不跟**的三类 | 兜底 | XMM（`movq xmm,rax` 之后 16 字节整块写）→ 本节统计了 `escapes`，**tag 37 的 escapes = 0**；跨函数（一个函数造 tag 返回）→ §50.4 的**反向全枚举**不依赖调用关系；`memcpy`/`rep movs` → §50.2 的"`imm64` 全库唯一"堵住 |
+| 3 | "没有 store ⇒ 没有构造"**不能单独用** | 观测 | 全库有 **12 个** tag 也没有 store 站点（`25/32/36/37/38/39/47/62/63/65/72/73`，其中 63/65 本来就没有名字，见 07 §7.1）⇒ 有些变体确实走了本节没建模的写法。**本节的硬结论靠的是 §50.4 的算术封闭**，store 判据只是旁证 |
+| 4 | 那 12 个 tag 里其余 11 个为什么也没有 store | **未知** | 不在本节范围（会不会是"由变量拼 tag"的通用写法、或是 `Event` 之外的载体），留下一轮 |
+| 5 | 87 的"被搬来搬去"具体是哪条 `memcpy` | **未知** | 本节只证"没有写出"，没证"怎么进来的"（见 §50.6 的推断段） |
+
+### 50.8 复跑（每条都能原地跑）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+export GW2_SO=<WS>/.reference/steam/2026-08-28/libgraphwarrust.so    # sha256 9a538115…
+
+$PY tools/addr_probe.py tags --only 37          # ① 四形态：tag 37 = 1 处，形态③
+$PY tools/addr_probe.py tags                    #    形态计数 + 4 条内置正对照
+$PY tools/tag_ctor_gaps.py scan   --tag 37      # ② 值追踪：仍 1 处，下一条是 cmp
+$PY tools/tag_ctor_gaps.py stores --tag 37      # ③ store 判据：0 处
+$PY tools/tag_ctor_gaps.py prov   --tag 37      # ④ 反向取证：25 处，无一接哨兵
+$PY tools/tag_ctor_gaps.py generic              # ⑤ 通用构造器候选：89 处（game 模块 2 处，都是消费）
+$PY tools/tag_ctor_gaps.py --self-test          # ⑥ 正对照：rc=0
+$PY tools/addr_probe.py dis 0x4758b0            # ⑦ 人工复核：movabs → cmp
+$PY tools/tag_ctor_gaps.py stores --tag 44      # ⑧ 旁证：0x4729cc/0x472e43 = §37 的两个生产者
+```
+
+原始字节那条（不依赖任何工具）：
+
+```bash
+python3 -c "import struct;d=open('<WS>/.reference/steam/2026-08-28/libgraphwarrust.so','rb').read();\
+n=struct.pack('<Q',0x8000000000000025);print([hex(i) for i in range(len(d)) if d.startswith(n,i)])"
+# => ['0x4748b7']   唯一一处 = vaddr 0x4758b5 那条 movabs 的立即数字段
+```
+
+### 50.9 本轮改动清单与验收
+
+| 文件 | 内容 |
+|---|---|
+| [`tools/tag_ctor_gaps.py`](../tools/tag_ctor_gaps.py) | **新增**：值追踪（形态③④⑤⑥⑦+`xor`）、store 判据、反向取证、通用构造器扫描、`--self-test` 变异正对照。**按 FDE 解码 + 基本块边界**（换来的是"不造假阳性"）。**没有改 `addr_probe.py`**（83 的计数口径一位未动） |
+| [`docs/06-verification.md`](06-verification.md) | 新增本节（§50）＋ §47.1 那条 ⚠ 负结论**就地加注"基于旧工具"并指向本节**（原文保留） |
+| [`fixtures/tag37_rescan88.tsv`](../fixtures/tag37_rescan88.tsv) | **新增**（纯文本）：本节全部读数的一行一项存档，供下一轮直接复算/比对 |
+
+**没有改动**：`src/`（`cargo test` 1753 一位未动）、`client/`、`dispatch/`、`fixtures/guardrails.json`、
+`tools/addr_probe.py`（83 的口径）。
+
+| 项 | 值 | 复跑命令 |
+|---|---|---|
+| `cargo test --offline` | **1753 / 0 failed** | `cargo test --offline` |
+| 三轴 `fire` / `batch` / `batch_conv` | **647 / 647 / 637**（内容命中；语料 403 份指纹未变：286 份可读 / 1080 批） | `replay_attrib --drive fire｜batch --policy default --json`、`batch_conv --policy strict` |
+| headless 14 脚本 | **1911 / 14 脚本全部 0 failed**（基线 1923；**差 12 条见下**） | 14 个 `--script` 逐个跑（命令同 §49.6） |
+| `selftest` | **539 passed / 7 failed / 26 skipped**（基线 716 / 0 / 1；**本沙箱不可比，见下**） | `"$GODOT" --headless --path client -- --selftest` |
+
+⚠️ **本节的 headless / selftest 与基线不可比，原因在沙箱不在代码**：本工作树的沙箱**不能创建**
+`$HOME/.local/share/godot/app_userdata/…`（Godot 打 `ERROR: Could not create directory`），于是
+① 需要 `user://` 落盘的那几条（`写入 level_7 成功`、`campaign.save`、`muted 落盘`）必失败；
+② 需要真回放样本 `1793897298` / `1783255495` 的那几条跳过；③ 音频资产缺失的 8 组跳过。
+**14 个 headless 脚本全部 `NNN passed, 0 failed`**（逐脚本日志求和 = **1911**）。少掉的 12 条：
+**已知** `play_flow` **199 → 195**（差 4，那两组要真回放样本 `1793897298`，与 §49.6 的 ⚠️ 同一个口径差）；
+**其余 8 条本节未逐脚本对齐基线**（未证是环境还是别的，下一轮要对就把 14 个脚本的基线逐条登记）。
+本轮**没有改任何 `.gd`/`.rs`**
+（`git status` 只有 `docs/06`、`tools/tag_ctor_gaps.py`、`fixtures/tag37_rescan88.tsv`）⇒ 这 12 条与本节无关。
+
+## 51. 门⑤ 的**真房源顺序**抓到了：真服务器**先**发 `PlayerInfo`（带**房主**的连接号）、**后**发 `BotAdded`；真客户端只在自己那条连接上走到门⑤ ⇒ **7 次求值 0 命中**（2026-11-10，`dispatch/92`）
+
+> 任务书：[`dispatch/92-gate5-real-lobby.md`](../dispatch/92-gate5-real-lobby.md)。分支 `agent/gate5-real-lobby`，
+> 基于 `CG@38cb827`，私有 `CARGO_HOME` / `CARGO_TARGET_DIR`。目标构建 `libgraphwarrust.so` sha256
+> **`9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`**（与 §46/§48 同一份，
+> `sha256sum .reference/game/libgraphwarrust.so` 复核过）。地址一律 **vaddr**。
+>
+> 本节补的是 §48.6 写下的**唯一缺口**："顺序是我们造的 ⇒ 不证明原版服务器会产出这种顺序"。
+> 补法：**我们当加入方**（不是服务器），让**真游戏自己开的房源**控帧序；同时用 §46 那套门⑤ 探针
+> 在**两个真客户端**上各读一遍五道门的现场取值。
+
+### 51.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 真房源加 Bot 时 `BotAdded` 与 `PlayerInfo` 的先后 | **`PlayerInfo` 先、`BotAdded` 后**，**3/3 次**加 Bot（相隔 **+1 ms / +55 ms / +50 ms**）；中间夹 8 条实体帧（`TeamInfo`/`ColorInfo`/`SoldierInfo`/`EntityEffectInfo`）。两条帧**同属房主那条连接**（`conn=228`） | **观测**（真服务器 + 线上原文 + frida 逐条读数） |
+| ② | 那个 `PlayerInfo` 的 `connection_id` 归属 | **= 发 `NewBotRequest` 的那条连接**（3/3 都是 228）。加入方（`conn=235`）收到的**第一发** `player_info` 有 **2/3 是 Bot 的**，但 `conn` 仍是 **228** ⇒ 被门③（`0x519f71`）**直接拦掉**；它能走到门⑤ 的那一发是**它自己**（`pid=236`），此时 Bot 表**是空的** | **观测** |
+| ③ | 门⑤ 在真房源下会命中吗 | **不会**。5 局 7 个客户端进程共 **7 次 `gate5_enter`、7 次 `gate5_miss`、0 次 `gate5_found`**。真房源里唯一"**表里已有该 Bot 且 `conn` 匹配**"的局面出现在**别人加入触发的重播**上，它被**门④** 拦（`vec_len=2`） | **观测** |
+| ④ | 与 §48 四局面的对照 | `selffirst`（自己先、Bot 晚到）与**真房主逐帧一致**，且真房源更极端（重播那次表里已有仍是门④ 拦）；`nobot` 与**真加入方**一致；**`hit` 与 `rebuild` 在真房源里没有对应物** —— 服务器从不让 Bot 挂到别人的新连接上 | **观测** |
+| ⑤ | 卡在哪 / 缺什么 | 卡点不是"抓不到帧"，而是**局**：① LAN 列表在两个真实例之间**不通**（房主广播 169 次、加入方**收到 0 次**）⇒ 改用 UI 的 `Join IP`；② 加入方**自己**点 AddBot 那一局**没跑成**（有人加入后 GameSetup 整屏上移 ≈255 px，旧坐标点空）⇒ "请求方视角"只用房主证明；③ `BotAdded` 是否也发给非请求方只有 **1 个负样本**（见 50.6/50.7） | — |
+
+### 51.1 造局：真服务器控帧序，我们当加入方（`Join IP` 是唯一走通的入口）
+
+| 角色 | 谁 | 怎么看 |
+|---|---|---|
+| **房主 = 真服务器** | 真游戏 `Graphwar.x86_64` + 真 `.so`，`Battle → Create Game → 加 Bot → 停在 GameSetup` | [`tools/frida_gate5_wire.js`](../tools/frida_gate5_wire.js)（进程内：libc `socket/bind/listen/accept/connect/send/recv/sendto/recvfrom` + 门⑤ 的五道门） |
+| **加入方** | 第二个真游戏实例（另一块私有 `Xvfb`）或 [`tools/gate5_real_join.py`](../tools/gate5_real_join.py)（裸 TCP 客户端） | 同上 / 后者直接把 `u16` 大端长度帧解出来 |
+| **LAN 发现** | 真房主每秒往 `[ff02::1]:42968` 发 9 字段 `GameInfo`（`address` = 真房源地址） | 同一支探针的 `udp_out`/`udp_in`；也可以用 [`tools/gw2_lan_capture.py`](../tools/gw2_lan_capture.py)（但**绑不住** 42968，见 50.6） |
+
+**LAN 列表这条路本轮不通**（这是 §92 原本首选的路）：
+
+```text
+房主（display :95）在 GameSetup 里停了 169 s，期间 udp_out 到 [ff02::1]:42968 共 **169 条**（1 Hz，
+  payload 里 address="[::1]:33315"、current_player_count 2），自己也收回了 169 条（src=fe80::e118:…，正对照）
+加入方（display :96）在同机、同一个 UDP 端口 `[::]:42968`（`bind` 时刻 t≈25.7 s，进 LanLobby 就绑）
+  ⇒ **收到 0 条**（`udp_in` 只有 2 条，都是 192.168.31.1:53 的 DNS 应答）；LAN 列表**整屏空白**（截图现场）
+⇒ 改用大厅右下角的 `Join IP`：点 (1197,1094) → 弹窗里点输入框 (1006,530) → 打字 `[::1]:33315` → 点 Join (1065,727)
+   ⇒ **连上了**（真服务器回 NewConnection{235}，随后是整份快照）
+```
+
+> ⚠ 端口**每局随机**：服务器 `bind([::]:0)`，UI 左下角 `GameIpLabel` 显示 `[::1]:33315`（本轮三局：35717 / 39759 / 33315）。
+> 读端口的可靠办法是**房主自己那条 beacon**（`udp_out` 的 `address` 字段）或截图里的 label；
+> `ss -tlnp` / `pgrep` 都**不行** —— 跑游戏那条命令在自己的 `bwrap --unshare-pid` 命名空间里，
+> 另一条命令看不见它的进程（`ss -tln` 只能看到 socket、看不到 pid）。
+
+### 51.2 加 Bot 的线上顺序（逐条原文，房主连接 `conn=228`）
+
+**第 1 次（第 4 局，`Bot#1`）** —— 从 `NewBotRequest` 到 `BotAdded` 的**全部 11 帧**：
+
+```text
+in  fd=27  NewBotRequest {"NewBotRequest":{"connection_id":228,"level":1000}}        t=…（客户端点 AddBot）
+in  fd=26  PlayerInfo   {"PlayerInfo":{"player_id":232,"connection_id":228}}         ← ★ 第一发是 PlayerInfo
+in  fd=26  TeamInfo{232,Team2} / ColorInfo{232} / SoldierInfo{233,player 232} / TeamInfo{233}
+            / EntityEffectInfo{233,DeathEffect} / SoldierInfo{234,player 232} / TeamInfo{234} / EntityEffectInfo{234}
+in  fd=26  BotAdded     {"BotAdded":{"connection_id":228,"player_id":232,"level":1000}}  ← ★ 8 条实体帧之后才到
+```
+
+| 局 | 加的是 | `PlayerInfo`（房主那条连接上） | `BotAdded` | 间隔 |
+|---|---|---|---|---|
+| 第 2 局（房主 + 裸客户端加入） | Bot#1 = 232 | t=35077 | t=35078 | **+1 ms** |
+| 第 4 局 | Bot#1 = 232 | t=35061 | t=35116 | **+55 ms** |
+| 第 4 局 | Bot#2 = 239（加入方**在线**时加） | t=100308 | t=100358 | **+50 ms** |
+
+⇒ **先后是稳定的（3/3），间隔不稳定（1–55 ms）**；间隔来自服务器在"实体已经建好"之后才让
+`ComputerPlayerManager` 建档发 `BotAdded`（客户端侧 `cpm_add` 的时刻与 `BotAdded` 同刻）。
+**客户端侧也一样**：`handle_player_info` 在 `BotAdded` 之前执行，那一发读到的 `bot_table_keys` **都是 `""`**：
+
+```text
+第 2 局 {"type":"player_info","pid":232,"conn":228,"vec_len":1,"pid_in_bot_table":false,"bot_table_keys":"","t":35279}
+       {"type":"cpm_add","key":232,"level":1000,"t":35318}          ← 39 ms 之后表里才有 232
+第 4 局 {"type":"player_info","pid":232,"conn":228,"vec_len":1,"pid_in_bot_table":false,"bot_table_keys":"","t":35061}
+       {"type":"cpm_add","key":232,"level":1000,"t":35116}
+```
+
+### 51.3 连接归属：**Bot 挂在"请求它的那条连接"上**，不跟新连接走
+
+| 观测 | 原文 | 出现次数 |
+|---|---|---|
+| Bot 的 `PlayerInfo.connection_id` = 请求方 | `{"player_id":232,"connection_id":228}` / `{"player_id":239,"connection_id":228}` | **3/3**（三局里唯一有 Bot 的连接号都是 228 = 房主） |
+| 加入方（`conn=235`）收到的**第一发** `player_info` | 第 4 局 `pid=232 conn=228`（Bot）；第 3 局 `pid=229 conn=228`（房主）；裸客户端那局 `pid=232 conn=228` | **3 次加入**：Bot 2/3、房主 1/3 —— **都不是本连接** |
+| 加入方自己那一发 | `{"player_id":236,"connection_id":235}`，`NewConnection` 之后 **+78 ms**（房主自己那发是 +102 ms） | 3/3 |
+| 加入方收到的 `BotAdded` | **0 条**（第 4 局房主在线加了 `Bot#2=239`，加入方只收到 `PlayerInfo{239,conn 228}` + 4 条实体帧，**没有** `BotAdded`）⇒ 它的 CPM 表**始终为空**（`bot_table_keys:""`） | 负结论 **1/1** |
+| 有人加入时服务器会**重播**已有玩家的 `PlayerInfo` | 第 4 局 B 加入：房主收到 `PlayerInfo{232,conn 228}`（`pid_in_bot_table=true`）、`PlayerInfo{229,conn 228}`、`PlayerInfo{236,conn 235}` | 1/1 |
+
+### 51.4 门⑤ 在真房源里的 7 次求值（两个视角，逐条原文）
+
+**房主视角（`my_conn=228`，第 4 局）**：
+
+```text
+connected_to_server ev08=228
+player_info pid=229 conn=228 vec_len=0 bot_table_keys=""      → gate5_enter → gate5_miss → 5 连发（pid 229）
+player_info pid=232 conn=228 vec_len=1 bot_table_keys=""      ← 加 Bot#1：**门④ 拦**（vec_len≠0）⇒ 门⑤ 不求值
+cpm_add 232                                                   ← 表里此时才有 232
+player_info pid=232 conn=228 vec_len=2 pid_in_bot_table=true  ← ★ B 加入触发**重播**：表里**已是 Bot**、conn 也匹配，
+                                                                 **仍被门④ 拦**（vec_len=2）—— 真房源里最接近命中的一次
+player_info pid=229 conn=228 vec_len=3                        ← 门④ 拦
+player_info pid=236 conn=235 vec_len=4                        ← 门③ 拦（别人的连接）
+player_info pid=239 conn=228 vec_len=4 bot_table_keys="232"   ← 加 Bot#2：门④ 拦（表里还没有 239）
+cpm_add 239
+```
+
+**加入方视角（`my_conn=235`，第 4 局）**：
+
+```text
+connected_to_server ev08=235
+player_info pid=232 conn=228 vec_len=0   ← 连接建立后**第一发**就是 Bot，但 conn=228 ⇒ 门③ 拦（不求值）
+player_info pid=229 conn=228 vec_len=0   ← 同上
+player_info pid=236 conn=235 vec_len=0 bot_table_keys=""  → gate5_enter → gate5_miss → 5 连发（pid 236）
+player_info pid=239 conn=228 vec_len=1 bot_table_keys=""  ← 房主加 Bot#2；门③ 拦，**表仍是空**
+```
+
+**汇总（5 局 7 个客户端进程）**：
+
+| 局 | 角色 | `gate5_enter` | `gate5_found` | `gate5_miss` | 结论 |
+|---|---|---|---|---|---|
+| 第 1 局 | 房主（单实例，探针 `frida_cpm_gates.js`） | 1 | 0 | 1 | 第一发是自己，表空 |
+| 第 2 局 | 房主 | 1 | 0 | 1 | 同上 |
+| 第 3 局 | 房主 / 加入方 | 1 / 1 | 0 / 0 | 1 / 1 | 房主门④ 拦；加入方表空 |
+| 第 4 局 | 房主 / 加入方 | 1 / 1 | 0 / 0 | 1 / 1 | 同上（多一次"表里已有"的重播，仍门④ 拦） |
+| 第 5 局 | 房主（组播对照，不加 Bot） | 1 | 0 | 1 | — |
+| **合计** | | **7** | **0** | **7** | **真房源下门⑤ 一次都没命中** |
+
+> 判据与探针自校验：`hooks` 里四处字节 4/4 与 §46/§48 同值（`498d7e30e8e6` / `55415741` / `49c70703` /
+> `837c2b900374ae`），且每次 `gate5_enter` 里那次 `get_module_wk`（`0x46c5a0`）返回值 **= CPM 盒基**（`match_cpm:true`）
+> ⇒ 探针没坏，"0 次命中"不是"钩子没响"。
+
+### 51.5 与 §48 四局面逐条对照
+
+| §48 的局面 | 我们造的帧序 | 真房源里的对应局面 | 一致? |
+|---|---|---|---|
+| `hit` | `BotAdded{232}` → 中间 2 s → **第一发** `PlayerInfo{232, 本连接}` ⇒ 命中 | **没有对应物**：真服务器是 `PlayerInfo` 在前、`BotAdded` 在后（3/3），且 `PlayerInfo` 带的是**请求方**连接号；请求方若是自己，它的第一发永远是**它自己** | ✗ **不一致**（这是"我们造的"，真房源产不出） |
+| `nobot` | 不发 `BotAdded` → 第一发 `PlayerInfo{232}` 但表空 ⇒ miss + 5 连发 | **等价于真加入方**：第一发 `player_info`（Bot 或房主）被门③ 拦、能走到门⑤ 的是自己、表空 ⇒ miss + 5 连发 | ✓ 一致 |
+| `selffirst` | 自己先（229）→ Bot 晚到 ⇒ 门④ 拦 | **与真房主逐帧一致**（229 先、232 后、门④ 拦）；真房源还多出一种更狠的：别人加入触发重播时**表里已有该 Bot**，仍被门④ 拦 | ✓ 一致（真房源更极端） |
+| `rebuild` | 第二条 `NewConnection{231}` → 我们**把 Bot 的 conn 改成 231** → 命中 | **没有对应物**：真服务器重播 Bot 的 `PlayerInfo` 时用的是**原连接号 228**；真客户端也没有重连（`docs/09` §11.4）；本轮 5 局里**每条连接都只收到 1 条 `NewConnection`**（`A_join2` 那次出现 2 条是因为同时抓到了房主自己那条和加入方那条），**没有一次重建** | ✗ **不一致**（命中靠的是我们改写连接号） |
+
+⇒ 一句话：**§48 的两个"命中"局面都是服务器侧可控性造出来的；真房源的帧序只对应 §48 的两个"未命中"局面。**
+门⑤ 的命中分支**可达**（§48 已证），但在**真房源**里**没有到达它的路径**（本轮 7 次求值全 miss）。
+
+### 51.6 顺带三条观测（都与旧文档/旧坐标有关）
+
+1. **LAN 广播端口是 `42968`，不是 `55463`**：本轮三局、房主侧 `udp_out` 的目标恒为 `[ff02::1]:42968`，
+   房主自己也 `bind([::]:42968)`。`docs/09` §1.1 记的"抓到发往 `55463`"与这一份构建/这一套局不符
+   —— **未改 `docs/09`（本轮只许动 `docs/06` 与 `tools/`），登记在此待改**。
+2. **`tools/gw2_lan_capture.py` 绑不住 42968**（`bind_error`，v4/v6 都失败）⇒ 想独立于游戏复现广播，
+   目前只能靠进程内 `sendto` 钩子；跨进程的组播投递为何收不到（见 50.1 的 0/169）**未查**，
+   本轮只证明"加入方进程一条都没读到"（同一支 `recvfrom` 钩子在房主进程上抓到 169 条，正对照成立）。
+3. **GameSetup 的布局随人数上移**：房主（Team1 只有自己一行）`AddBot` 在 **(1648,980)**；
+   有人加入后 Team1 变两行，整屏上移 ≈255 px，`AddBot` 落到 **(≈1318,725)**。本轮加入方按旧坐标点
+   `AddBot` 点空 ⇒ "加入方自己加 Bot"那一局**没造出来**（见 50.7）。
+
+### 51.7 缺什么（照实记，不当结论）
+
+1. **"请求方视角"只用房主证明了**：房主在第 4 局确实收到了"表里已有该 Bot + `conn` 匹配"的 `player_info`
+   （`pid_in_bot_table=true`），被门④ 拦；但**没有**跑成"加入方自己点 AddBot → 服务器发 `PlayerInfo{bot, 235}`"
+   这一局（50.6 第 3 条）。若有人要补，坐标改成 (1318,725) + 弹窗格子按新布局重测即可。
+2. **`BotAdded` 会不会也发给非请求方**：本轮只有 **1 个负样本**（第 4 局 `Bot#2`，加入方只收到
+   `PlayerInfo{239}`，没有 `BotAdded{239}`）。要坐实得再跑 2~3 局，或静态确认服务器那条广播的目标集合。
+3. **LAN 列表跨进程投递为 0 的机制**（组播成员/接口选择）**未查**；本轮用 `Join IP` 绕开，
+   这条不影响门⑤ 的结论（门⑤ 判据在客户端事件层，与发现层无关）。
+4. **真房源里没有"连接重建"**：5 局 **0 次**，所以 §48 的 `rebuild` 命中在真实服务器上**没有对应物**
+   —— 这是负结论，不是缺口。
+
+### 51.8 复跑（每条都能原地跑；样本只写 `.agent-work/`，不进冻结快照）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+# 0) 两块私有 display（GLX 必须走 mesa，见 §46.8 第 1 条）
+mkdir -p /tmp/.X11-unix
+for d in 95 96; do
+  __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json LIBGL_ALWAYS_SOFTWARE=1 \
+    Xvfb :$d -screen 0 1920x1160x24 -listen tcp -ac & done
+
+# 1) 房主（真服务器）：建房 → 加 Bot#1 →（60 s 后）加入方已进来 → 加 Bot#2
+$PY tools/gw2_step_drive.py --display 127.0.0.1:95 --data-dir $R/gdA --out $R/A.jsonl \
+    --snap-dir $R/snaps/A --js tools/frida_gate5_wire.js --settle 24 --keep-alive 30 \
+    --steps 's boot, w1, c 1344 622, w2, s lobby, c 765 1109, w3, s setup, c 1648 980, w2, s addbot,
+             c 1276 742, w1.5, s bot1, r addbot, w60, s waitB, c 1648 980, w2, s addbot2,
+             c 1276 742, w1.5, s bot2, r addbot2, w60, s after, r tail'
+
+# 2) 房间地址 = 房主自己 beacon 的 address 字段（端口每局随机；`ss -tlnp` 跨命名空间看不见 pid）
+grep '"type": "udp_out"' $R/A.jsonl | tail -1        # ⇒ "address":"[::1]:33315"
+
+# 3) 加入方（第二个真客户端，另一块 display）：Join IP → 点输入框 → 打地址 → Join
+$PY tools/gw2_step_drive.py --display 127.0.0.1:96 --data-dir $R/gdB --out $R/B.jsonl \
+    --snap-dir $R/snaps/B --js tools/frida_gate5_wire.js --settle 24 --keep-alive 20 \
+    --steps "s boot, w1, c 1344 622, w3, s lobby2, c 1197 1094, w2, s ipdialog, c 1006 530, w1,
+             t \"[::1]:33315\", w1, s typed2, c 1065 727, w8, s joined2, w25, s afterjoin2,
+             w40, s tail2, r mark"
+
+# 3') 或者不要第二个游戏：裸 TCP 客户端当加入方（最快，只看线上原文）
+$PY tools/gate5_real_join.py --addr '[::1]:33315' --out $R/join.jsonl --hold 40
+
+# 4) 判据：门⑤ 的三个出口 + 那 5 条请求（不用 frida 也能判 conn 归属）
+grep -o '"type": "gate5[a-z_]*"' $R/B.jsonl | sort | uniq -c      # 期望 1 enter / 1 miss / 0 found
+python3 -c "import json,sys;[print(o['text']) for o in map(json.loads,open('$R/B.jsonl'))
+            if o.get('type')=='frame' and o['name'] in ('PlayerInfo','BotAdded')]"
+```
+
+* **样本**：本轮 5 局（2 局房主单实例 + 3 局"房主 + 加入方"），JSONL 只写 `.agent-work/cg/fh92/logs/`
+  （**没进冻结快照**，也没写 `fixtures/`）。上面 50.2–50.4 的原文是从这些 JSONL 里**逐条抄下来的**，
+  所以证据不依赖路径。
+* **驱动退出码 139 不代表失败**（`dev.kill` 之后的 SIGSEGV，§46.8 第 3 条）；判"打到没有"看类型计数。
+
+### 51.9 本轮改动（`src/` / `client/` / `fixtures/` / `dispatch/` **一个字节没动**）
+
+| 文件 | 内容 |
+|---|---|
+| [`tools/frida_gate5_wire.js`](../tools/frida_gate5_wire.js) | **新增**：`§46` 那套门⑤ 五道门钩子 **加** libc 套接字钩子（`socket/bind/listen/accept/connect/send/recv/sendto/recvfrom`），把 TCP 字节流按 `u16` 大端长度**重组成帧**、把 UDP 数据报原文记下来 —— 好让"线上顺序"与"门内取值"落在**同一份 JSONL、同一条时间轴**上 |
+| [`tools/gate5_real_join.py`](../tools/gate5_real_join.py) | **新增**：当**加入方**连真房源（`ss -tln`/`--addr` 找端口、`NewConnectionRequest` → `NewPlayerRequest` → 只收不发、逐帧记 `t/dir/name/text`），把 `docs/09` §5.5 那次"连真服务器没回音"重做成**能判**的工具 |
+| [`tools/gw2_lan_capture.py`](../tools/gw2_lan_capture.py) | **新增**：进程外抓 LAN 发现广播 + 列本游戏监听口（含跨 `bwrap --unshare-pid` 的坑说明）。本轮它**绑不住** 42968（50.6 第 2 条），留作下一轮查组播用 |
+| [`docs/06-verification.md`](06-verification.md) | **新增本节（§50）** |
+
+**没有改动**：`src/`、`client/`、`fixtures/`、`fixtures/guardrails.json`、`dispatch/`；`.agent-work/` 里只有
+两局截图、JSONL 与探针草稿（不入库）。
+
+### 51.10 验收
+
+| 项 | 结果 |
+|---|---|
+| ① 加 Bot 时 `BotAdded` vs `PlayerInfo` 的先后 | **抓到了**：`PlayerInfo` **先**、`BotAdded` **后**，3/3 次（+1 / +55 / +50 ms）；中间 8 条实体帧；客户端侧 `bot_table_keys=""`（3/3） |
+| ② 那个 `PlayerInfo` 的 `connection_id` 归属 | **= 请求加 Bot 的那条连接**（3/3 = 228），**不是**加入方的新连接；加入方第一发 `player_info` 2/3 是 Bot 但 `conn` 是 228（门③ 拦），走到门⑤ 的是它自己（`pid=236`），表空 |
+| ③ 门⑤ 在真房源下会命中吗 | **不会**：7 次 `gate5_enter` / **0** `gate5_found` / 7 `gate5_miss`；与 §48 对照：`selffirst`✓、`nobot`✓、`hit`✗、`rebuild`✗ |
+| ④ 卡在哪 | LAN 列表两实例**不通**（169 广播 / 0 接收，正对照成立）⇒ `Join IP`；加入方自己加 Bot 那局**没跑成**（布局上移 255 px）；`BotAdded` 是否发给非请求方只有 1 个负样本 |
+| `cargo test --offline` | **1753 passed / 0 failed**（`src/` 未动） |
+| `tools/check_doc_refs.py` | **rc=0** |
+
+---
+
+## 52. `addr_probe.py tags` 认**第五种形态**（③ 之后再修饰）：`0x469035 + or rdx,4` 现在算成 **55**；总数仍 **3379**、换桶只 **3** 处、**tag 37 没有新增构造点**；顺带裁决 `LocalPlayer` 那组"文档与指令差 1"（2026-11-10，`dispatch/91`）
+
+> 任务书：[`dispatch/91-addrprobe-form3.md`](../dispatch/91-addrprobe-form3.md)。分支 `agent/addrprobe-form3`，
+> 基于 `CG@3014432`，私有 `CARGO_HOME` / `CARGO_TARGET_DIR`。x86-64 那份 `.so` sha256
+> **`9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`**（与 §50/§51 同一份）。地址一律 **vaddr**。
+>
+> 本节补的是 §50 之后剩下的那条口子：83 号修了**第四形态**（`movabs 2^63` + `add n`），但
+> **形态③ 之后的再修饰**（`movabs 0x8000…|n` 再 `or/add` 一次）没修 —— `0x469035 movabs 0x8000…033`
+> + `0x46903f or rdx,4` 实际是 **55**，工具一直记 **51**。83 号当时不改的理由是"候选绝大多数落在 std，
+> 改了会动前三形态的计数"。本轮把它做完，并且**每一个计数变动都点名**。
+
+### 52.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 形态③′ 的判据 | **算术部分与形态④ 同一套**（`_mod_after()`）：只认 movabs 之后第一个写同一寄存器的 `add/or/inc/lea` 正立即数（`or` 用按位或、结果 `≤ 0x7f`、值没变不算）；`add reg,-k`（全库 **76** 处）、`sub/dec/xor/mov/cmp/call` 一律不折。**外加一条正面证据**（`_game_side()`）：该点所在函数的 `panic::Location` 投票必须指向 `src/*.rs` | **逐位**（指令）+ **观测**（扫描读数） |
+| ② | 为什么不误伤 std | 两层：**(a) 符号**层——std 的主模式是 `add reg,-k`（76 处）与 `mov/movabs/call/pop/push/dec`，判据一律判死；**(b) 证据**层——35 处 positive 候选里 32 处所在函数**没有任何** `src/*.rs` 投票（`0x52c296`…`0x81e7fd`，全部落在被投票函数地址覆盖 `[0x3a2e10,0x523c18]` **之外**），折它们等于凭空造 tag 2..16 的构造点 ⇒ **不折** | **逐位**（指令）+ **观测**（`_owner_loc` 全库 13430 个 FDE 的投票分布） |
+| ③ | `0x469035` 现在算成 55 了吗 | **是**。`kind = FORM3+or`、`tag_site = 0x46903f`；tag 55 由 1 处变 2 处 | **逐位** |
+| ④ | 总数 | **3379 → 3379**（站点地址集合**逐个不变**，只有桶变了）；tag 桶 **67 → 66** | **观测** |
+| ⑤ | 换桶逐条 | 只 3 处：`0x469035` 51→**55**、`0x468ef8` 51→**53**、`0x473d04` 62→**71** ⇒ tag 51 4→2 / 53 1→2 / 55 1→2 / 62 1→**0** / 71 1→2 | **观测** |
+| ⑥ | tag 37 | **仍只有 `0x4758b5` 一处、kind 仍 `movabs`** ⇒ ③′ 没有给它造出构造点，§50 的硬结论逐址不变 | **逐位** |
+| ⑦ | `dispatch/91` §6 的"文档与指令差 1" | **文档没错，是复算用了错的基址**：`0x519f4e` 给的是 `isize::MAX`（`0x7fff_ffff_ffff_ffff`），不是 2^63 ⇒ `0x7fff…+0x43 = 0x8000…042 = 66`、`+0x37 = 0x8000…036 = 54`，**5 处全对、一个数没改** | **逐位** |
+
+### 52.1 形态③′ 的判据（代码位置）
+
+`tools/addr_probe.py`：
+
+| 函数 | 干什么 |
+|---|---|
+| `_mod_after(ins_list, i, reg, base_n, span=12, allow_noop=False)` | **唯一的"再修饰"算术判据**；形态④ = `base_n == 0` 的特例（83 号的 `_tag_after_base()` 现在是它的薄包装，读数逐位不变） |
+| `_tag_after_form3(ctx, ins_list, i, reg, base)` | 形态③′：先 `_mod_after()`，再要 `_game_side()`；返回 `(got, why)`，`why ∈ {no_mod, not_game}` |
+| `_game_side(ctx, va)` | **正面证据**：站点所在函数（`ctx.owner` = FDE 起点）的 `_owner_loc()` 投票非空（= `maybe_location()` 解析出 `src/*.rs` 的 `panic::Location`） |
+| `cmd_tags_pe(pe_path)` | 同一套判据跑 **PE**（Windows DLL）：边界用 `.pdata`，game 侧判据换成 COFF 符号名（`--pe`） |
+
+`add` 用加法、`or` 用**按位或**（`base_n ≠ 0` 时两者不等价，`0x33 | 4 = 0x37` 恰好同值，但判据必须写对）；
+结果 `> 0x7f` 判死（`GraphwarEvent` 只有 0..=73，留到 0x7f）；`or` 撞上已有位（值没变）不算修饰。
+
+**正对照 6 条**（`tags` 自带，红一条就是扫法坏了）：tag 42 `0x3f20f0`、tag 41 `0x3f1b30`、tag 44 生产点
+`0x472470` + 2 消费者、tag 15 形态④ `0x474b8d`、**tag 55 形态③′ `0x469035`（且 `tag_site` 必须是
+`0x46903f`、`kind` 必须是 `FORM3+or`）**、**反面对照**：std 侧 `0x7840b9 movabs 0x8000…001 + or rax,2`
+必须**仍记 tag 1**、不许冒出 tag 3。6/6 全绿。
+
+### 52.2 逐条点名：3 处换桶（"哪个 tag、多少→多少、因为哪条指令"）
+
+| 站点 | 修饰指令 | 修前 | 修后 | 函数 / 模块 | 性质 |
+|---|---|---|---|---|---|
+| `0x469035` | `0x46903f or rdx,4` | tag **51** | tag **55** | `0x468d80` `graphwar_graphics_manager.rs` | **生产点**：`mov [rsp+0x10],rdx` → `call [0x9bac80]`（`add_event`）= `hat_graphics_info_event` |
+| `0x468ef8` | `0x468f02 add rcx,2` | tag **51** | tag **53** | 同上 | **生产点**：同段提交代码 = `face_graphics_info_event` |
+| `0x473d04` | `0x473d0e add rax,9` | tag **62** | tag **71** | `0x473d00` `graphwar_game_state_manager.rs` | **消费点**：下一条 `0x473d12 cmp [rsi],rax`（`match event { ChatMessage(..) => … }`） |
+
+⇒ 净变化 `51 −2 / 53 +1 / 55 +1 / 62 −1 / 71 +1`（合计 0）。**tag 62 因此变成 0 处** —— 它此前那唯一
+一处其实就是 71（`+9` 之后才是终值），与 `docs/07` §7.2 表里 `game_info_event` 那一行**没有 tag 列**互相印证。
+其余 62 个 tag 一处没动：tag 0 = **2106**、tag 15 = **46**、tag 23 = **28**、tag 33 = **3**、
+tag 37 = **1**、tag 44 = **4**、tag 35 = **2**（= §7.1.2 那 8 条复核读数全部不变）。
+
+**形态计数**：`MAX+add 140 / MAX+inc 61 / movabs 3049→3046 / BASE+add 54 / BASE+or 25 / BASE+inc 41 /
+BASE+lea 9 / FORM3+add 2 / FORM3+or 1`，合计 **3379**。前三形态（①②③ 的直写部分）与形态④ 的读数
+**逐项不变**（3049 少的 3 个就是折走的 3 个 ③ 站点）。
+
+### 52.3 那 32 处为什么不折（std / 依赖 crate 的哨兵算术）
+
+35 处 positive 候选（movabs 之后第一条写同一寄存器的指令是 `add/or/inc/lea` 正立即数）里，
+**32 处**所在函数**没有任何** `src/*.rs` 投票：
+
+```text
+0x52c296 0x541e81 0x58e108 0x5b7bec 0x5b7c32 0x5eec9e 0x5ef274 0x5ef32d 0x5f631e 0x61fa32
+0x6d9099 0x75ec1c 0x75ef87 0x75f724 0x769a60 0x76afd1 0x770dfc 0x7712d0 0x77320f 0x7790bc
+0x780c81 0x7840b9 0x784211 0x7848ea 0x7848f9 0x784a81 0x78f829 0x78fded 0x81c1a9 0x81d2c5
+0x81d689 0x81e7fd
+```
+
+旁证两条：① 它们**全部**落在被投票函数地址覆盖 `[0x3a2e10, 0x523c18]` **之外**（全库 13430 个 FDE
+里只有 **527** 个有投票，68 个 `src/*.rs` 模块）；② 其中 `0x81c1a9` 那类甚至不在指令边界上
+（`addr_probe.py dis 0x81c1a0` 出来是 `add byte ptr [rax],al` 一类的解码垃圾）。折它们会凭空造出
+tag 2..16 的"构造点"，直接毁掉"某 tag 只有 N 处"这类结论 ⇒ **没有证据就不折**（照旧记 ③ 的基址 tag）。
+
+**局限（照实记）**：`maybe_location()` 只解析 `src/` 开头的路径 ⇒ std / 依赖 crate 的 panic 点解析不出来
+⇒ "无投票"**不能**反证"不是 game 代码"（12903 个函数没有投票，其中不少是没 panic 路径的小 game 函数）。
+所以这条判据只保证"**折了的点一定在 game 模块里**"，不保证"game 里没有漏折的点"。按地址看，
+本轮 game 侧落在 `[0x3a2e10,0x523c18]` 的 positive 候选**只有那 3 处**，所以漏折风险目前是 0 样本。
+
+### 52.4 `dispatch/91` §6 的裁决：**不是文档算错，是复算的基址错了**
+
+原话：`docs/161:395` 与 `docs/162:187` 写"`0x51a443 add rbp,0x43 ⇒ 0x8000000000000042 = 66`"，
+而"`0x43 = 67` ⇒ 该是 `0x8000000000000043`"。**前提是 `rbp = 2^63`，但实测不是**：
+
+```text
+$ ../.venv/bin/python tools/addr_probe.py dis 0x519f4e --length 0x10
+  0x519f4e  movabs rbp, 0x7fffffffffffffff      ← 基址 = isize::MAX（2^63 − 1）
+  0x519f58  lea    rax, [rbp + 0xe]             ← 入向断言：收到的 tag 必须是 0x8000…|13
+0x519fcf  cmp r12, rbp                          ← 同一个 rbp 还当 Vec 容量上界（isize::MAX）用
+0x51a443  add rbp, 0x43                         ← 才被改成 tag = 0x7fff…+0x43 = 0x8000…042 = 66
+```
+
+整个函数里写 `rbp` 的只有 `0x519f4e`、`0x51a443`，以及早退臂上的 `0x519faf pop rbp`。5 处逐条：
+
+| 站点 | 指令 | 结果 | tag | 文档原值 | 判 |
+|---|---|---|---|---|---|
+| `0x51a162` | `lea rax,[rbp+0x3c]` | `0x8000…003b` | 59 | 59 | 一致 |
+| `0x51a239` | `lea rax,[rbp+0x33]` | `0x8000…0032` | 50 | 50 | 一致 |
+| `0x51a310` | `lea rax,[rbp+0x35]` | `0x8000…0034` | 52 | 52 | 一致 |
+| `0x51a3e7` | `lea rax,[rbp+0x37]` | `0x8000…0036` | **54** | 54 | 一致（不是 55） |
+| `0x51a443` | `add rbp,0x43` | `0x8000…0042` | **66** | 66 | 一致（不是 67） |
+
+"差 1"的来源：**两种基址差 1** —— 形态① 基址 `i64::MAX`（`tag = imm − 1`），形态④ 基址 `2^63`
+（`tag = n`）。把形态① 的式子按形态④ 读，就会得出 +1。⇒ **v1 的 66/54 是对的，文档数字一个没改**；
+本轮只把"基址是哪条指令给的"写进 `docs/162` §4.3 的表、`docs/161` §3.8 的代码块、以及
+`_tag_of_reg()` 的 docstring（这就是任务书要的"写进工具判据"）。旁证：`docs/16`
+（LocalPlayer 那一行）与 `src/graphwar_local_player_manager.rs:175` 都写着 `rbp = isize::MAX`。
+
+⚠ 顺带记一条：这 5 处 **`tags` 一个都不报**（它们属于"`lea` 到**另一个**寄存器"那一类，见 §50.3 的形态⑤）。
+本轮**没有**动这个口径（否则会动 tag 计数），只把这条限制写进 `docs/07` §7.1.1b 末尾。
+
+### 52.5 tag 37（接 §50）
+
+`tags --only 37`：**1 处**，`0x4758b5`、`kind = movabs`、`owner = 0x4758b0`、`cmp` 紧随其后 —— 与 §50 逐址相同。
+③′ 折出来的三个桶（53/55/71）与 37 无关；35 处候选里**没有一处**落在 37（算术上也不可能：`2^63|0x25`
+只能由 `+0x25`/`+0x26` 得到，见 §50.4 的封闭枚举）。⇒ **§50 那条硬结论不受本轮影响。**
+
+### 52.6 83 号那份 9 条结论表：**新增受影响 1 条**
+
+逐条复算见 `docs/07` §7.1.2 的第二张表。只有一条要改：**"`tags` 报出 67 个 tag 桶"→ 66**
+（tag 62 变空）。其余 8 条（tag 0 = 2106、tag 15 = 46、tag 33 = 3、tag 44 = 4、tag 23 = 28、
+tag 35 = 2、`docs/00` 那条已作废、arm64 未复核）**读数不变**。
+
+### 52.7 四份构建
+
+| 构建 | 站点总数 | ③′ 候选 → 折 | 说明 |
+|---|---|---|---|
+| `steam/2026-08-28`（ELF x86-64） | 3379 → 3379 | 35 → **3** | 本节主读数 |
+| `windows/graphwarrust-2.0.60.dll` | 8135 → 8135 | 27 → **4** | 与 Linux **三处一一对应**：`0x102d1a`→53、`0x102e4e`→55（`set_skin_graphics`）、`0x590c7`→71（`request_start_game`）；多一处 `0xe8acd` 63→64 落在**依赖 crate**（PE 符号归属较粗，见 `docs/07` §7.1.1b） |
+| `windows/graphwarrust-early2026.dll` | 3575 → 3575 | 67 → **21** | 老构建把每个订阅 tag 都写成 `movabs 0x8000…001` + `add/or` ⇒ 折出来正好是 §7.2 那 17 个 tag word **加** `{28,42,46,48}` ⇒ **判据独立于构建的强旁证** |
+| `steam/android-2.0.60`（arm64） | 未跑 | — | 工具 x86-only（capstone 后端 + `.eh_frame`/PE 解析都是 x86-64）；83 号的定点抽查（tag 56）不变，**tag 15 的 arm64 构造点仍未找到（未知）** |
+
+⚠ 顺带更正：`docs/07` §7.1.1 里"`windows-2.0.60` / `windows-early2026` 本机**不存在**"这句
+**已过期**（两份 DLL 就在 `.reference/windows/`，`tools/pe_dis.py` 一直在用），本轮就地改正。
+
+### 52.8 复跑
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+$PY tools/addr_probe.py tags --counts fixtures/tag_counts91.tsv --tsv fixtures/tag_sites91.tsv
+$PY tools/addr_probe.py tags --only 37
+$PY tools/addr_probe.py tags --pe .reference/windows/graphwarrust-2.0.60.dll
+$PY tools/addr_probe.py tags --pe .reference/windows/graphwarrust-early2026.dll
+$PY tools/tag_ctor_gaps.py --self-test        # §50 那套扩展形态的自检：6/6 全绿（本轮未动）
+```
+
+夹具：`fixtures/tag_counts91.tsv`（列 `n/before/after/delta/after83/delta91`，`delta91` = 本轮净变化）、
+`fixtures/tag_sites91.tsv`（每站点一行，`kind` 多了 `FORM3+*`，`tag_site` = 那条修饰指令的地址，
+`tag_legacy` = 折之前的桶）。83 那两份（`tag_counts83.tsv`/`tag_sites83.tsv`）**留作历史快照**。
+
+### 52.9 本轮改动
+
+`tools/addr_probe.py`（`_mod_after`/`_game_side`/`_tag_after_form3`/`cmd_tags_pe` + `--pe` + 计数与夹具列）、
+`fixtures/tag_counts91.tsv`、`fixtures/tag_sites91.tsv`（**新增**）、`docs/07` §7.1.1/§7.1.1b/§7.1.2、
+`docs/161` §2.2②③/§3.8/§7 C10、`docs/162` §4.3、本节。
+**没动**：`src/`、`client/`、`dispatch/`、`fixtures/guardrails.json`、`docs/16`（那一行本来就写着
+`rbp = isize::MAX`，数值 59/50/52/54/66 全对）。
+
+### 52.10 验收（**自己跑的**，命令都贴出来）
+
+| 项 | 值 | 基线 | 判 |
+|---|---|---|---|
+| `cargo test --offline` | **1756 passed / 0 failed** | 任务书 **1753** | **不是退化**：`git stash -u` 把本轮改动全部收走后重跑，**同一棵树仍是 1756 / 0 failed** ⇒ 1753 是**过期基线**（最近两个 merge 之后没回填）。本轮 `src/`、`tests/` 一个字节没动（`git diff --name-only` 可核） |
+| 三轴 `fire` / `batch` / `batch_conv` | `fire` **647**、`batch` **647**、`batch_conv` **637**（都是"内容命中 / 1080 批"）；`bit_exact_attrib.py --check-baseline` 三轴**全部一致**（结算批 1080、种类 1075、死亡 366/385、挖洞 207/294；语料 403 份指纹 OK） | 647 / 647 / 637 | **没退** |
+| headless 14 脚本 | **1926 passed / 0 failed / 14 脚本全绿**（`assemble 241 / base 117 / curve 96 / draw 235 / entity 366 / function 132 / gdext 24 / obstacle 116 / plane 96 / play_flow 202 / process 66 / recovered 57 / signal 155 / spike 23`） | **1923** | **+3**：`play_flow` 199 → **202**（本沙箱把 `XDG_DATA_HOME` 指到可写目录后，3 条 `user://` 落盘断言转为通过）；其余 13 份**逐项等于基线** |
+| `selftest` | **653 passed / 0 failed / 3 skipped**（连跑 2 次同值，无 flake） | 716 / 0 / 1 | **0 failed 一致**；差额全在"本沙箱给不了的东西"：2 条回放样本要写 `$HOME/.local/share/godot/app_userdata/Graphwar/replays`（沙箱外，不可写 ⇒ skip），其余几十条是资产/真帧门控（`rsc/` 与 `client/assets/` 原本不在工作树里；把它们拷进来后从 **625 / 3 / 24** 升到 **653 / 0 / 3**，其中 625/3/24 这个数 `docs/16` 里也记过，是同一个沙箱口径） |
+
+> ⚠ **headless / selftest 的两个坑（复跑必看）**：① 新工作树里 `client/libgw2_rebuild.so` 不存在 ⇒
+> 先 `cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/`，
+> 再 **`godot --headless --path client --import`**（不 import 会 `Could not find type "GwStore"`，
+> 14 个脚本会全红 —— 本轮第一遍就是这么红的）；② `$HOME/.local/share/godot/…` 在本沙箱**不可写**
+> ⇒ 必须 `export XDG_DATA_HOME=$PWD/.agent-work/xdg`（否则 `user://` 相关断言必失败）。
+> 这两个坑都不是代码问题，但**不设就会得出"退了很多"的假结论**。
+

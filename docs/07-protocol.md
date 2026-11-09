@@ -555,17 +555,25 @@ x86 版是 stripped，拿不到符号；arm64 版有符号，可以直接读 `Se
 `tests/events.rs`（新增「名字 → 判别值」全表钉死）、本文、`tools/event_tags.py`（复现脚本）。
 **`cargo test` 205 → 206 全绿**。
 
-#### 7.1.1 生产点计数的新口径（2026-11-10，任务 83 —— **引用 tag 计数前先读这一段**）
+#### 7.1.1 生产点计数的新口径（2026-11-10，任务 83 + 91 —— **引用 tag 计数前先读这一段**）
 
-判别值（tag word）在 x86 上是 `i64::MIN | n`，LLVM 有**四种** materialize 写法，
-`tools/addr_probe.py tags` 现在四种都认：
+判别值（tag word）在 x86 上是 `i64::MIN | n`，LLVM 有**五种** materialize 写法，
+`tools/addr_probe.py tags` 现在五种都认（③′ 是任务 91 补的，见本节后半）：
 
 | 形态 | 写法 | 判据 |
 |---|---|---|
 | ① | `movabs r, 0x7fffffffffffffff` + `add r, n+1` | 基址 `i64::MAX`，`tag = 0x8000…0 + imm − 1` |
 | ② | `movabs r, 0x7fffffffffffffff` + `inc r` | 基址 `i64::MAX`，`inc` ⇒ tag 0 |
 | ③ | `movabs r, 0x8000…\|n` 直写 | 立即数直接就是 tag |
+| **③′** | `movabs r, 0x8000…\|n` + 再修饰一次（`add/or/inc/lea` 正立即数） | `tag = n + imm`（`or` 用按位或）；**另需该点在 `src/*.rs` 投票的函数里**（§7.1.1b） |
 | ④ | `movabs r, 0x8000000000000000` + `add r, n`（同族 `or r, n` / `inc r` / `lea r, [r+n]`） | 基址是 **2^63 本身**，`n` **从 0 起算**；`n = 0`（无后修饰）就是 tag 0 |
+
+> ⚠ **两种基址差 1，别混**（`dispatch/91` §6 就是这么混出来的）：形态① 的基址是
+> `i64::MAX = 0x7fff_ffff_ffff_ffff` ⇒ `+imm` 得 `0x8000…|（imm−1）`，**tag = imm − 1**；
+> 形态④ 的基址是 `2^63 = 0x8000_0000_0000_0000` ⇒ `+n` 直接得 tag，**tag = n**。
+> 实例：`LocalPlayer` 的五处发布基址是 `isize::MAX`（`0x519f4e movabs rbp,0x7fffffffffffffff`），
+> 所以 `0x51a443 add rbp,0x43 ⇒ 66`、`0x51a3e7 lea rax,[rbp+0x37] ⇒ 54` —— **都不减一也不加一**，
+> 裁决见 [`docs/162`](162-audit-tiers.md) §4.3。
 
 **修形态④ 之前**，第四类点全被记进 **tag 0**（修前 2235 处），于是"某 tag 只有 N 处"的
 结论**系统性偏低**。修后（`_tag_after_base()`，见 `tools/addr_probe.py`）：
@@ -577,11 +585,15 @@ x86 版是 stripped，拿不到符号；arm64 版有符号，可以直接读 `Se
 * 复跑：`../.venv/bin/python tools/addr_probe.py tags --counts fixtures/tag_counts83.tsv --tsv fixtures/tag_sites83.tsv`
   —— 自带 4 条正对照（tag 42 `0x3f20f0`、tag 41 `0x3f1b30`、tag 44 生产点 + 2 消费者、tag 15 形态④ `0x474b8d`）。
 
-**构建覆盖（照实写）**：本机 `<WS>/.reference/steam/` 只有 **2 份不同的 `.so`** ——
-`2026-08-28`（**x86-64**，本文全部数字的来源）与 `android-2.0.60`（**arm64**，独立构建）；
-`upstream/`、`analysis-repo/` 是指向 `2026-08-28` 的符号链接，`game/` 是同一份文件
-（sha256 前 16 位都是 `9a53811518e74b75`）。任务书列的 4 份里
-`windows-2.0.60` / `windows-early2026` 本机**不存在** ⇒ 全量复扫**只覆盖 x86-64 那一份**。
+**构建覆盖（照实写，2026-11-10 任务 91 更正）**：本机**四份构建都在** ——
+`.reference/steam/2026-08-28/libgraphwarrust.so`（**x86-64**，本文全部数字的来源；`upstream/`、
+`analysis-repo/`、`game/` 都是它的符号链接，sha256 前 16 位 `9a53811518e74b75`）、
+`.reference/steam/android-2.0.60/libgraphwarrust.so`（**arm64**）、
+`.reference/windows/graphwarrust-2.0.60.dll` 与 `.reference/windows/graphwarrust-early2026.dll`（**PE/x86-64**）。
+⚠ 任务 83 当时写的"`windows-2.0.60` / `windows-early2026` 本机**不存在**、全量复扫只覆盖 x86-64"
+**已过期**（两份 DLL 就在 `.reference/windows/`，`tools/pe_dis.py` 早就在用）。任务 91 因此补了
+`addr_probe.py tags --pe <dll>`（同一套判据、PE 后端），**四份里跑了三份全量 + arm64 定点**，
+跨构建读数见 §7.1.1b 末尾。
 arm64 侧只做了定点抽查（`arm64_sym.py find 'add_soldier'` + capstone AArch64 解码
 `GraphwarGameStateManager::add_soldier_to_player`）：该函数在 arm64 上也构 `0x8000…0038`
 （= tag 56，`0x4ab0a0`/`0x4ab124`/`0x4ab274` 的 `mov x8,#0x38` + `movk x8,#0x8000,lsl#48`），
@@ -590,6 +602,107 @@ arm64 侧只做了定点抽查（`arm64_sym.py find 'add_soldier'` + capstone AA
 **互验（17/17）**：形态④ 修好后，扫描器在名字↔tag 分派函数 `0x3d38f0` 体内认出 **17** 个 tag word，
 tag 集合 = `{3,4,22,29,34,35,50,51,52,53,54,55,59,60,64,70,71}`，与 §7.2 表「tag」列的 17 行
 **完全一致**（那 17 行的 tag 是从 `%ebx` 判别值独立推出的）⇒ 本节结论与扫描器互相背书。
+
+#### 7.1.1b 形态③′：**③ 之后再修饰一次**（2026-11-10，任务 91）
+
+LLVM 有时先把 tag 立即数算成**基支**，再在别的支上用一条小立即数指令把它推到**目标 tag**
+（两支共用同一段提交代码），于是"算完即记账"会把两支记进同一个桶：
+
+```text
+0x468e93  movabs rax, 0x8000…033                          ⇒ tag 51（skin）
+0x468ef8  movabs rcx, 0x8000…033 + 0x468f02 add rcx, 2    ⇒ tag 53（face）  修前记 51
+0x469035  movabs rdx, 0x8000…033 + 0x46903f or  rdx, 4    ⇒ tag 55（hat）   修前记 51
+```
+
+**判据**（代码：`_mod_after()` / `_tag_after_form3()` / `_game_side()`，`tools/addr_probe.py`）：
+
+1. **算术部分与形态④ 同一套**：只认 movabs 之后**第一个写同一寄存器**的指令，且必须是
+   `add imm` / `or imm`（`0 ≤ imm ≤ 0x7f`，`or` 要求 `imm > 0`）/ `inc` / `lea [reg+disp]`；
+   `add` 用加法、`or` 用**按位或**（基址非 0 时两者不等价）；结果必须 `≤ 0x7f`；
+   值没变（`or` 撞已有位）不算修饰。
+   **`add reg, -k` 一律不折** —— 那批（全库 **76 处**负立即数：`imm=-0x11` 61 处、`-2` 3、`-4` 3、
+   `-5` 2、`-0xc` 2，其余 5 处各 1）是 std 把 `i64::MIN` 一族**拉回** `i64::MAX` 一族的哨兵算术；
+   其余"撞到同一寄存器但不是修饰"的：`call` 230 / `mov` 127 / `movabs` 66 / `pop` 26 / `dec` 25 /
+   `push` 16 / `lea`（形状不符）9 / `sub` 2 / `cmp` 2 / `add reg,reg` 1 / `movsxd` 1 / `bt` 1。
+2. **一条正面证据（91 号新加，关键）**：该点所在函数的 `panic::Location` 投票必须指向 `src/*.rs`
+   —— 算术形状**分不开**事件判别值和 std/依赖 crate 的哨兵算术：全库 35 处 positive 候选里
+   **只有 3 处**落在有 `src/*.rs` 投票的函数里，另 **32 处**（`0x52c296`/`0x541e81`/`0x58e108`/
+   `0x5b7bec`/`0x5b7c32`/`0x5eec9e`/`0x5ef274`/`0x5ef32d`/`0x5f631e`/`0x61fa32`/`0x6d9099`/
+   `0x75ec1c`/`0x75ef87`/`0x75f724`/`0x769a60`/`0x76afd1`/`0x770dfc`/`0x7712d0`/`0x77320f`/
+   `0x7790bc`/`0x780c81`/`0x7840b9`/`0x784211`/`0x7848ea`/`0x7848f9`/`0x784a81`/`0x78f829`/
+   `0x78fded`/`0x81c1a9`/`0x81d2c5`/`0x81d689`/`0x81e7fd`）**一个投票都没有**，且全部落在
+   被投票函数地址覆盖 `[0x3a2e10, 0x523c18]` **之外** ⇒ 折它们等于凭空造出 tag 2..16 的
+   "构造点"（其中 `0x81c1a9` 那类还落在不是指令边界上的解码垃圾里）。**没有证据就不折**
+   （照旧记 ③ 的基址 tag）—— 保守方向：本轮的改动**不会新增任何 tag 的构造点**。
+3. **局限（照实记）**：`maybe_location()` 只解析 `src/` 开头的路径 ⇒ std / 依赖 crate 的 panic 点
+   解析不出来 ⇒ "无投票"**不能**反证"不是 game 代码"（13430 个 FDE 里只有 527 个有投票）。
+   这条判据只保证"折了的点一定在 game 模块里"，**不保证"game 里没有漏折的点"**。
+
+**本轮全量读数**（`2026-08-28` x86-64，sha256 `9a538115…`）：
+
+| 项 | 数 |
+|---|---|
+| materialize 站点总数 | **3379 → 3379**（一点没丢、没重复） |
+| 形态计数 | `MAX+add 140 / MAX+inc 61 / movabs 3049→3046 / BASE+add 54 / BASE+or 25 / BASE+inc 41 / BASE+lea 9 / FORM3+add 2 / FORM3+or 1` |
+| ③′ 候选（有正立即数的 `add/or/inc/lea`） | **35**（折 3 / 非 game 模块不折 32） |
+| 无修饰的 ③ 站点 | 969（`mov`/`movabs`/`call`/`push`/`pop`/负立即数/超界…） |
+| tag 桶数 | **67 → 66**（tag 62 变空，见下） |
+
+**逐条点名：每一次计数变动**（"哪个 tag、多少→多少、因为哪条指令"）——只有这 3 处换桶：
+
+| 站点（movabs） | 修饰指令 | 修前 tag | 修后 tag | 所在函数 / 模块 | 性质 |
+|---|---|---|---|---|---|
+| `0x469035` | `0x46903f or rdx,4` | **51**（4 处） | **55**（1→2 处） | `0x468d80` `graphwar_graphics_manager.rs` | **生产点**（`hat_graphics_info_event`，`call [0x9bac80]`） |
+| `0x468ef8` | `0x468f02 add rcx,2` | **51**（同上） | **53**（1→2 处） | 同上 | **生产点**（`face_graphics_info_event`） |
+| `0x473d04` | `0x473d0e add rax,9` | **62**（1 处） | **71**（1→2 处） | `0x473d00` `graphwar_game_state_manager.rs` | **消费点**（下一条 `0x473d12 cmp [rsi],rax`） |
+
+⇒ 净变化：`tag 51 −2`、`tag 53 +1`、`tag 55 +1`、`tag 62 −1`、`tag 71 +1`（合计 0）；
+**tag 62（`game_info_event`）的 materialize 点由 1 处变 0 处** —— 原来那唯一一处 `0x473d04`
+其实是 `+9` 之后的 **71**，从来不是 62（与 §7.2 表里 `game_info_event` 那一行**没有 tag 列**
+互相印证）。除此之外**其他 62 个 tag 的站点数一个都没动**（tag 0 = 2106、tag 15 = 46、
+tag 23 = 28、tag 33 = 3、tag 37 = 1、tag 44 = 4、tag 35 = 2 …）。
+`tag 37` 仍是 `0x4758b5` 一处、kind 仍是 `movabs` ⇒ **形态③′ 没有给 tag 37 造出构造点**
+（`docs/06` §50 的硬结论不受影响，正相反：那条结论的前提之一"只有 1 处 materialize"逐址不变）。
+
+**夹具与复跑**（83 那两份留作**历史快照**，当前口径看 91 这两份）：
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+$PY tools/addr_probe.py tags --counts fixtures/tag_counts91.tsv --tsv fixtures/tag_sites91.tsv
+# 列：n / before（①②③ 直写）/ after（五种全折）/ delta / after83（只折④）/ delta91（91 这轮净变化）
+# 站点表 tag_sites91.tsv 的 kind 列多了 FORM3+add / FORM3+or / FORM3+inc / FORM3+lea，
+# tag_site 列 = 那条**修饰指令**的地址（形态③′ 才有意义），tag_legacy 列 = 折之前的桶
+```
+
+正对照 **6 条**（`tags` 自带，红一条就说明扫法坏了）：tag 42 `0x3f20f0`、tag 41 `0x3f1b30`、
+tag 44 生产点 `0x472470` + 2 消费者 `0x4bf09b`/`0x4e2dd4`、tag 15 形态④ `0x474b8d`、
+**tag 55 形态③′ `0x469035`（要求 `tag_site == 0x46903f` 且 `kind == FORM3+or`）**、
+**反面对照**：std 侧 `0x7840b9 movabs 0x8000…001 + or rax,2` 必须**仍记 tag 1**、不许冒出 tag 3。
+
+**跨构建复核（四份构建，任务 91）**：同一套判据用 `tags --pe <dll>` 跑在 PE 上
+（后端换成 `.pdata`/COFF 符号；game 侧判据 = 站点所在函数里**有** `graphwarrust` crate 的符号，
+或它前面最近的符号名带 `graphwarrust` —— 两条取并。PE 没有 `panic::Location`，粒度比 ELF 粗，
+**折出来的点数不能与 ELF 的 3 处直接比大小**）：
+
+| 构建 | 站点总数 | ③′ 候选 | 折 | 91 这一轮的换桶 | 与 Linux 的对应 |
+|---|---|---|---|---|---|
+| `steam/2026-08-28`（ELF x86-64） | **3379 → 3379** | 35 | **3** | `51 −2 / 53 +1 / 55 +1 / 62 −1 / 71 +1` | —（基准） |
+| `windows/graphwarrust-2.0.60.dll` | **8135 → 8135** | 27 | **4** | `51 −2 / 53 +1 / 55 +1 / 62 −1 / 63 −1 / 64 +1 / 71 +1` | **三处一一对应**：`0x102d1a`→53 / `0x102e4e`→55（`graphwar_graphics_manager::set_skin_graphics`，= Linux `0x468ef8`/`0x469035`）、`0x590c7`→71（`graphwar_game_state_manager::request_start_game`，= Linux `0x473d04`）；多一处 `0xe8acd` 63→64（`room_server_room_provider::process`，**依赖 crate**，PE 的符号归属把它算进 game 侧 ⇒ 这条是 PE 判据的已知粗粒度，不上 Linux） |
+| `windows/graphwarrust-early2026.dll` | **3575 → 3575** | 67 | **21** | 见下（21 处几乎全在 `subscribe_to_event`） | 老构建把**每个订阅 tag** 都写成 `movabs 0x8000…001` + `add/or` ⇒ 折出来正好是 §7.2 那 17 个 tag word **加** `{28,42,46,48}`；**这是判据独立于构建的强旁证** |
+| `steam/android-2.0.60`（arm64） | 未跑 | — | — | — | 工具 x86-only（`capstone` 后端 + `.eh_frame`/PE 解析都是 x86）；83 号已做定点抽查（tag 56），**tag 15 的 arm64 构造点仍未找到（未知）** |
+
+early2026 的 21 处折叠**逐条落在订阅 tag 上**（RVA ⇒ tag）：`0xa4d8d`→35、`0xa5264`→3、`0xa52e1`→4、
+`0xa5564`→22、`0xa5620`→29、`0xa569f`→50、`0xa5711`→34、`0xa5a3b`→71、`0xa5aa3`→51、`0xa5af7`→52、
+`0xa5b4b`→53、`0xa5b9f`→54、`0xa5be9`→55、`0xa5c47`→59、`0xa5c9b`→60、`0xa5da8`→64、`0xa5e0b`→70
+（17 处，全在 `graphwar_event_handler::GraphwarEventHandler::subscribe_to_event`）+ `0xf18d6`→28
+（`graphwar_life_manager::set_queued_death`）、`0x1a3a0b`→42（`graphwar_obstacle_manager::queue_destroy_obstacle`）、
+另 2 处是 `0x1581a7`→48 / `0x1581fe`→46（`graphwar_level_manager::setup_level`，基址 `0x8000…|10`）。
+复跑：`$PY tools/addr_probe.py tags --pe .reference/windows/graphwarrust-early2026.dll`。
+
+> **不在本工具口径里的已知形态**（别拿 `tags` 的读数当"全了"）：`lea` 到**另一个**寄存器
+> （`movabs rbp,isize::MAX; lea rax,[rbp+0x3c]`）、先 `mov` 拷贝再补、多步累加、寄存器源
+> （`or rax,rcx`）、先造低位再 `bts rax,0x3f` —— 这五类见 `docs/06` §50.3 与
+> `tools/tag_ctor_gaps.py`。`LocalPlayer` 那 5 处发布正是第一类，`tags` 一个都不报（口径未变）。
 
 **复扫新认出、但语义未定的站点**（只是"生产点位置"，不是本文 72 条名字的证据，交下一轮）：
 
@@ -616,6 +729,22 @@ tag 集合 = `{3,4,22,29,34,35,50,51,52,53,54,55,59,60,64,70,71}`，与 §7.2 �
 | `docs/00` §0.4 第 4 条 | tag44 生产者"需换路子找" | 已在 `docs/07` §10 结案；"裸常量 2 处都是消费者"读数不变 | **已作废**（不是本轮推翻，是 `§10` 早就结案、00 没回填；本轮就地补注） |
 | `docs/10` §15.5 | **arm64** 全量扫 tag 35 只有两处 | arm64 **未复扫**（工具 x86-only）；x86 侧 tag 35 **1 → 2 处**，新增那处 `0x3d4153` 在名字↔tag 分派函数里（tag word，不是生产者） | **未复核**；x86 侧"非分派构造点仍只有 1 处（`0x456377`）"与原意**同向** |
 | `docs/02` §（TargetInfo） | 全二进制只有 **2 处**构造 `TargetInfo` | tag 23 修前修后**都是 28 处**（`0x46580e` 仍是其中之一） | **成立**（未变） |
+
+**任务 91 的口径换成"五种形态"之后，上表 9 条逐条复算（第三次口径变化，2026-11-10）**：
+
+| 出处 | 83 口径读数 | 91 口径读数 | 判决 |
+|---|---|---|---|
+| `docs/161` C10 / §2.2② | tag 0 = 2106 | **2106**（不动） | 成立 |
+| `docs/161` C10 | tag 15 = 46 | **46**（不动） | 成立 |
+| `docs/161` §2.2④ / `docs/16` §55.2④ | tag 33 = 3 处，地址 3 个 | **不变**（`0x3cab13`/`0x3caba7`/`0x470f3a`） | 成立 |
+| `docs/06` §37 | tag 44 = 4 处（2 生产 + 2 消费） | **不变**（`0x4729be`/`0x472e35`/`0x4bf09b`/`0x4e2dd4`） | 成立 |
+| `docs/06` §37 | `tags` 报出 **67** 个 tag 桶 | **66** 个（tag 62 变空） | **数字要改**：67 → **66**（唯一变动的一条，原因见 §7.1.1b 的逐条点名） |
+| `docs/00` §0.4 第 4 条 | 已作废 | 同上 | 不变 |
+| `docs/10` §15.5 | arm64 未复核；x86 tag 35 = 2 处 | **未变**（tag 35 = 2） | 不变 |
+| `docs/02` §（TargetInfo） | tag 23 = 28 处 | **未变**（28） | 成立 |
+| `docs/06` §50（tag 37） | 1 处 `0x4758b5`、kind `movabs` | **逐址不变**（1 处、`movabs`） | **成立**，且 ③′ 没有给它新增构造点 |
+
+⇒ **新增受影响条目：1 条**（`docs/06` §37 的"67 个 tag 桶"→ 66），其余 8 条读数不动。
 
 ---
 

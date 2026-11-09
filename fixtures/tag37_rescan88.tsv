@@ -1,0 +1,61 @@
+# dispatch/88 · `FunctionPoints`(tag 37) 构造点复扫的读数存档（纯文本，重跑会覆盖）。
+# so=/home/CG/Myprojects/graphwar2-rebuild/.reference/steam/2026-08-28/libgraphwarrust.so
+# sha256=9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
+# 生成命令见 docs/06-verification.md §50.8；本文件只是**读数**，结论在 §50。
+# 列：section	key	value	note
+section	key	value	note
+addr_probe_tags	tag_buckets	67	四形态（83 口径），全 .text
+addr_probe_tags	sites_total	3379	含 tag>73 的桶
+addr_probe_tags	kind_MAX+add	140	形态① 基址 i64::MAX
+addr_probe_tags	kind_MAX+inc	61	形态②
+addr_probe_tags	kind_movabs	3049	形态③ 直写
+addr_probe_tags	kind_BASE+add	54	形态④
+addr_probe_tags	kind_BASE+or	25	形态④
+addr_probe_tags	kind_BASE+inc	41	形态④
+addr_probe_tags	kind_BASE+lea	9	形态④
+addr_probe_tags	form4_total	129	54+25+41+9，与 docs/07 §7.1.1 的"换桶 129"同值
+addr_probe_tags	tag37_sites	1	0x4758b5 kind=movabs owner=0x4758b0
+addr_probe_tags	tag37_site_addr	0x4758b5	与 87 号报的地址一致
+addr_probe_tags	self_controls	4/4 OK	tag42 0x3f20f0 / tag41 0x3f1b30 / tag44 生产+2 消费者 / tag15 形态④ 0x474b8d
+ctor_gaps_scan	blocks	83182	按 FDE 解码 + 基本块边界
+ctor_gaps_scan	tag_buckets	66	值追踪口径（**不可**与上面 67/3379 相加相减）
+ctor_gaps_scan	sites_total	3529	同上
+ctor_gaps_scan	generic_sites	89	家族常量⊕寄存器
+ctor_gaps_scan	kind_BASE+add	182	值追踪（每步都记）
+ctor_gaps_scan	kind_BASE+inc	102	
+ctor_gaps_scan	kind_BASE+lea	9	
+ctor_gaps_scan	kind_BASE+or	30	
+ctor_gaps_scan	kind_copy	29	形态⑤/⑥：异 dst 的 lea / mov 拷贝
+ctor_gaps_scan	kind_movabs	3177	形态③
+ctor_gaps_scan	tag37_sites	1	0x4758b5（同一地址）
+ctor_gaps_scan	tag37_next_insn	cmp qword ptr [rsi], rax	★ 只被消费
+ctor_gaps_stores	stores_total	1324	家族值写进内存
+ctor_gaps_stores	tag_buckets_with_store	66	
+ctor_gaps_stores	tag37_stores	0	★ 没有构造点
+ctor_gaps_stores	tag37_escapes	0	值流出 push/XMM：tag 37 一处都没有
+ctor_gaps_stores	escapes_total	1312	
+ctor_gaps_stores	control_tag44	0x4729cc 0x472e43	与 docs/06 §37 ① 的两个生产者**逐址相同**
+ctor_gaps_stores	control_tag15	0x45560a 0x474b9b	
+ctor_gaps_prov	prov_sites	25	全库 add/or/lea 且立即数 ∈ {0x25,0x26}
+ctor_gaps_prov	sentinel_fed	0	★ 没有一处源寄存器来自 0x7fff…ff / 0x8000…00
+ctor_gaps_generic	xor	32	全在 std/core + 2 处 game（变体下标提取）
+ctor_gaps_generic	or	6	cpuid 探测 / Arc 计数打包
+ctor_gaps_generic	add	4	跳转表偏移
+ctor_gaps_generic	lea_index	47	`x + (2^63|k)` ⇒ 变体下标（8 个函数，全是消费）
+ctor_gaps_generic	game_module_owners	2	0x3d3630 graphwar_event_handler.rs / 0x45aab0 server_connection_handler.rs
+ctor_gaps_generic	bts_btc_btr_63	0	"先造低位再置 bit63"这条路不存在
+raw_bytes	imm64_occurrences	1	整份文件 10,227,896 B；文件偏移 0x4748b7 = vaddr 0x4758b5+2
+raw_bytes	rodata_has_tag37	0	.data/.rodata 里没有这个值 ⇒ 不能从常量表 load
+store_census	tags_with_store	62/74	
+store_census	tags_without_store	25 32 36 37 38 39 47 62 63 65 72 73	⚠ "没有 store"单独不足以证明"没有构造"
+store_census	tag30_to_40	30:4 31:1 32:0 33:3 34:1 35:2 36:0 37:0 38:0 39:0 40:1	
+self_test	rc	0	A0/A1/B0/C0/D0/E0 全过
+self_test	A1_mutation	0x474b8d 的 add rax,0xf 立即数改 0x25 ⇒ 判出 tag 37	★ 核心正对照：判据对 0x25 敏感
+gate	cargo_test	1753 passed / 0 failed	
+gate	axis_fire	647	--drive fire --policy default
+gate	axis_batch	647	--drive batch --policy default
+gate	axis_batch_conv	637	--policy strict
+gate	headless	1911 / 14 脚本 0 failed	基线 1923；沙箱缺 user:// 与回放样本，差 12
+gate	selftest	539 passed / 7 failed / 26 skipped	基线 716/0/1；沙箱缺 user:// 落盘 + 音频 + 回放样本，不可比
+verdict	tag37_ctor	不存在	四形态+五扩展+store+反向取证全为 0
+verdict	conclusion_flip	不翻转	87 升级为硬结论；"或者用了本文没扫到的形态"要改口

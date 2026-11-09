@@ -177,15 +177,39 @@ note       NOT an FDE function start               ← 第三条订阅落在上�
 
 三条订阅（全在 `0x517690` 体内，名字/长度/@站点）：`0x5179d4`（`connected_to_server_event`，len 0x19）/
 `0x517a27`（`player_info_event`，len 0x11）/ `0x517a77`（`entity_removed_event`，len 0x14）。
-发布六条 —— 五条在 `0x519f40`，tag 用 `rbp = 0x7fff_ffff_ffff_ffff` 加立即数拼出：
+发布六条 —— 五条在 `0x519f40`，tag 用 `rbp = isize::MAX = 0x7fff_ffff_ffff_ffff` 加立即数拼出
+（**基址来源写在指令上**：`0x519f4e movabs rbp, 0x7fffffffffffffff` —— 整个函数里写 `rbp` 的只有
+这一条、下面那条 `0x51a443 add`、以及早退臂上的 `0x519faf pop rbp`）：
 
 ```text
+0x519f4e movabs rbp, 0x7fff_ffff_ffff_ffff        ← 基址 = isize::MAX（**不是** 2^63！）
+⇒ 恒等式：0x7fff… + imm = 0x8000…|（imm − 1），即 **tag = imm − 1**
+
 0x51a162 lea rax,[rbp+0x3c]  ⇒ 0x800000000000003b = 59   @0x51a170 call [0x9bac80]
 0x51a239 lea rax,[rbp+0x33]  ⇒ 0x8000000000000032 = 50   @0x51a247
 0x51a310 lea rax,[rbp+0x35]  ⇒ 0x8000000000000034 = 52   @0x51a31e
 0x51a3e7 lea rax,[rbp+0x37]  ⇒ 0x8000000000000036 = 54   @0x51a3f5
 0x51a443 add rbp,0x43        ⇒ 0x8000000000000042 = 66   @0x51a451
 ```
+
+> **2026-11-10（任务 91）复核裁决 —— "66 该不该是 67 / 54 该不该是 55"：不改，v1 全对。**
+> 有人按"基址 = `0x8000…000`（2^63）"复算，得 `0x43 → 67`、`0x37 → 55`，记成"文档与指令差 1"。
+> 但**基址不是 2^63**：`0x519f4e` 给的是 `isize::MAX`（上面的指令就是证据）。2^63 是**另一种**
+> materialize 形态（`addr_probe.py` 的形态④，`n` **从 0 起算**，见 `docs/07` §7.1.1），两种基址
+> 差 1，这才是"看起来差 1"的来源。5 处逐条复算（**判据 = 指令 + 基址 + 结果**）：
+
+| 站点 | 指令 | 基址 | 结果 | tag | 本文原值 | 判 |
+|---|---|---|---|---|---|---|
+| `0x51a162` | `lea rax,[rbp+0x3c]` | `0x7fff_ffff_ffff_ffff` | `0x8000_0000_0000_003b` | **59** | 59 | 一致 |
+| `0x51a239` | `lea rax,[rbp+0x33]` | 同上 | `0x8000_0000_0000_0032` | **50** | 50 | 一致 |
+| `0x51a310` | `lea rax,[rbp+0x35]` | 同上 | `0x8000_0000_0000_0034` | **52** | 52 | 一致 |
+| `0x51a3e7` | `lea rax,[rbp+0x37]` | 同上 | `0x8000_0000_0000_0036` | **54** | 54 | 一致（不是 55） |
+| `0x51a443` | `add rbp,0x43` | 同上 | `0x8000_0000_0000_0042` | **66** | 66 | 一致（不是 67） |
+
+> 旁证两处：`docs/16` §（`LocalPlayerManager` 那一行）写的是"全部 `lea rax,[rbp+imm]`，
+> **`rbp = isize::MAX`**"；`src/graphwar_local_player_manager.rs:175` 同句。三处独立同值。
+> 复跑：`../.venv/bin/python tools/addr_probe.py dis 0x519f4e --length 0x10`（基址）与
+> `dis 0x51a150 --length 0x40` / `dis 0x51a3d8 --length 0x90`（发布点）。
 
 第六条在 `0x51a570`（`handle_connected_to_server`），**这是本轮查到的一处"文档自相矛盾"的现场**：
 
