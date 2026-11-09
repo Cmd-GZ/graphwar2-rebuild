@@ -18,6 +18,8 @@ var _main: Control
 
 func run(main: Control) -> int:
 	_main = main
+	# 清掉上一次运行留下的服务端日志：残留状态不跨运行存在（`docs/18` §10.3.2）
+	_prune_server_logs()
 	# 让布局至少跑两帧（字号缩放依赖 viewport 尺寸）
 	await _frames(3)
 
@@ -2376,6 +2378,26 @@ func _replay_play_button(lobby: Node, title: String) -> GwButton:
 ## 联机用例共用的看门狗上限（帧）。headless 下 1 帧 ≈ 1/60 s。
 const NET_WAIT_FRAMES := 240
 
+## 所有"起一台真服务端"的用例共用的**关卡种子**（固定值，见
+## `src/graphwar_game_server.rs::run` 的 `GW2_MATCH_SEED` 旋钮）。
+##
+## 为什么必须钉死（`docs/18` §10.3.2「确定性」）：
+## 服务端默认关卡种子来自 `seed_from_os()`，所以**每局障碍布局都不同**，而这些赌局
+## 会直接变成断言的红绿 ——
+##   * `_server_started()` 要求 `AddObstacle > 0`，实测 400 个种子里有 **14 个**（3.5%）
+##     一个障碍都不生成 ⇒ 那一跑必报 `真服务端：开局那一批到了（障碍 0、SoldierInfo 4）`；
+##   * 开局位置固定 `x = ±10` 而生成器不看这两个点 ⇒ 障碍可能压住射手，
+##     `0.00` 那一发在第一点就被掩膜判停，命中链路的两条断言跟着红。
+## 钉死之后同一份布局可以反复复跑；想换一局验证别的布局，用
+## `GW2_SELFTEST_MATCH_SEED=<n>` 覆盖（只影响自检，不改任何判据）。
+##
+## 这个种子是实测挑出来的（10 个障碍、4 名士兵都不在障碍里、`0.00` 那一发能命中），
+## 不是"跑通了就算"——挑选过程见 `docs/18` §10.3.2。
+const ONLINE_TEST_SEED := 8
+
+## 起服务端的序号：日志文件名要唯一（同一进程里可能连起好几台）。
+var _server_seq := 0
+
 func _net() -> GwNet:
 	var app_node := get_node_or_null("/root/App")
 	return app_node.net if app_node != null else null
@@ -2406,6 +2428,158 @@ func _free_port() -> int:
 	var p := srv.get_local_port()
 	srv.stop()
 	return p
+
+
+# ---------------------------------------------------------------- 起/停真服务端
+#
+# 这一组是"确定性"的落脚点（`docs/18` §10.3.2）。原来起服务端是两句：
+#
+#     var port := _free_port()
+#     var pid := OS.create_process(bin, ["127.0.0.1:%d" % port])
+#
+# 两句各有毛病，而且**都不报错**：
+#   ① `_free_port()` = 让内核挑一个端口 ⇒ 立刻 `stop()` 放掉。从"放掉"到服务端
+#      `TcpListener::bind` 之间，这个端口可能已经被别的 socket 拿走（包括本进程
+#      自己连出去的 socket，它们同属临时端口段）⇒ 服务端 bind 失败、
+#      `serve_match` 打一行 `SERVER_ERR` 就退出，而自检只会看到"连不上"；
+#   ② `OS.create_process()` 不能重定向 stdout/stderr ⇒ 服务端的
+#      `SEED/LISTEN/ACCEPT/RECV/SERVER_ERR` 一行都留不下，红了只能猜。
+#
+# 所以现在：地址交给内核挑（`127.0.0.1:0`），端口从服务端**自己打的** `LISTEN <addr>`
+# 读回来（`src/graphwar_game_server.rs::run` 本来就有这一行，`src/` 不用动）；
+# stderr 落到 `user://serve_match_logs/` 下的日志文件，起不来 / 中途断了就把尾部打出来。
+
+## 服务端日志目录（每次自检开头清空：残留日志只会误导下一次）。
+func _server_log_dir() -> String:
+	return ProjectSettings.globalize_path("user://").trim_suffix("/").path_join("serve_match_logs")
+
+## 清掉上一次运行留下的服务端日志（`run()` 开头调一次）。
+func _prune_server_logs() -> void:
+	var dir := _server_log_dir()
+	DirAccess.make_dir_recursive_absolute(dir)
+	var d := DirAccess.open(dir)
+	if d == null:
+		return
+	for f in d.get_files():
+		if f.ends_with(".log"):
+			DirAccess.remove_absolute(dir.path_join(f))
+
+## 把一段路径塞进 `/bin/sh -c` 里（用单引号包，内部的单引号按 POSIX 转义）。
+func _shell_quote(s: String) -> String:
+	return "'" + s.replace("'", "'\\''") + "'"
+
+## 这一次自检用哪个关卡种子：默认 `ONLINE_TEST_SEED`，
+## `GW2_SELFTEST_MATCH_SEED=<n>` 只给"想在别的布局上复现问题"时用。
+func _match_seed() -> int:
+	var raw := OS.get_environment("GW2_SELFTEST_MATCH_SEED").strip_edges()
+	if raw != "" and raw.is_valid_int():
+		return int(raw)
+	return ONLINE_TEST_SEED
+
+## 起一台 `examples/serve_match`，**等到它真的 `LISTEN` 了**才返回。
+##
+## 返回 `{"ok": bool, "pid": int, "addr": String, "port": int, "log": String}`：
+## `addr` 是服务端**实际**监听的 `host:port`（`127.0.0.1:0` 由内核分配），
+## 失败时 `ok == false` 且 `log` 里有服务端自己的话。
+func _spawn_server(bin: String, seed: int) -> Dictionary:
+	_server_seq += 1
+	var log_path := _server_log_dir().path_join("serve_match_%d_%d_s%d.log"
+		% [OS.get_process_id(), _server_seq, seed])
+	DirAccess.remove_absolute(log_path)
+	var pid := -1
+	var prev_seed := OS.get_environment("GW2_MATCH_SEED")
+	# 子进程继承父进程的环境（`OS.create_process` 没有 env 参数），所以先摆好再起，
+	# 起完立刻还原 —— 别的用例读到的是它们自己的设置。
+	OS.set_environment("GW2_MATCH_SEED", str(seed))
+	if OS.get_name() == "Linux" or OS.get_name() == "macOS":
+		# `exec` 让 sh 被服务端替换掉 ⇒ 拿到的 pid 就是服务端自己（`OS.kill` 杀得掉），
+		# 重定向 `2> log` 由 sh 做（Godot 的 create_process 做不到）。
+		pid = OS.create_process("/bin/sh", ["-c", "exec %s 127.0.0.1:0 2> %s"
+			% [_shell_quote(bin), _shell_quote(log_path)]])
+	else:
+		pid = OS.create_process(bin, ["127.0.0.1:0"])
+	OS.set_environment("GW2_MATCH_SEED", prev_seed)
+	var out := {"ok": false, "pid": pid, "addr": "", "port": 0, "log": log_path}
+	if pid <= 0:
+		return out
+	# 等 `LISTEN <host:port>`（= 服务端 bind 成功那条线）。600 帧 ≈ 10 s，远大于实测 30 ms。
+	for i in 600:
+		var text := ""
+		if FileAccess.file_exists(log_path):
+			text = FileAccess.get_file_as_string(log_path)
+		# ⚠️ **只认以 '\n' 结尾的完整行**。最后一段没有换行 ⇒ 服务端还没写完，不能当证据。
+		# 这不是理论洁癖：本轮真撞过 —— 读到 `LISTEN 127.0.0.1:`（端口那几位还没落地），
+		# 于是 addr 成了 `127.0.0.1:`、port 成了 0，后面连不上就红（`docs/18` §10.3.2）。
+		var pieces := text.split("\n")
+		for k in maxi(0, pieces.size() - 1):
+			var line := String(pieces[k])
+			if not line.begins_with("LISTEN "):
+				continue
+			var a := line.substr(7).strip_edges()
+			var c := a.rfind(":")
+			if c <= 0:
+				continue
+			var tail := a.substr(c + 1)
+			if not tail.is_valid_int() or int(tail) <= 0:
+				continue
+			out["addr"] = a
+			out["port"] = int(tail)
+			out["ok"] = true
+			return out
+		if not _pid_alive(pid):
+			break
+		await _frames(1)
+	return out
+
+## pid 还在跑吗（**僵尸不算**）。Linux 读 `/proc/<pid>/stat` 的状态位；别的平台退回引擎。
+##
+## 为什么不拿 `OS.is_process_running()` 轮询：Godot 的 pid 表一旦把子进程回收掉，再问同一个
+## pid 会打一条 `The process … does not exist or is not a child` 的 **ERROR** ——
+## 混在自检日志里很像真失败（本轮复现过一次，`docs/18` §10.3.2）。
+func _pid_alive(pid: int) -> bool:
+	if pid <= 0:
+		return false
+	if OS.get_name() != "Linux":
+		return OS.is_process_running(pid)
+	var path := "/proc/%d/stat" % pid
+	if not DirAccess.dir_exists_absolute("/proc/%d" % pid):
+		return false                    # 连 /proc 条目都没有 ⇒ 已经被回收
+	# ⚠️ 不能读 `get_file_as_string()`：procfs 的 `stat()` 报 **size = 0**，
+	# 那个 API 读出来永远是空串（实测；`get_line()` 走 fgets 才能拿到内容）。
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return OS.is_process_running(pid)
+	var stat := f.get_line()
+	f.close()
+	var close_paren := stat.rfind(")")
+	if close_paren < 0 or close_paren + 2 >= stat.length():
+		return OS.is_process_running(pid)
+	return String(stat[close_paren + 2]) != "Z"
+
+## 杀掉一台 `serve_match` 并**等它真的退出**（端口放掉了才继续）。
+##
+## 只 `OS.kill(pid)` 就走的话，进程可能还活着、端口还占着，紧接着的用例就会连到
+## "上一台还没死透的服务端"。
+func _kill_server(pid: int) -> void:
+	if pid <= 0:
+		return
+	if _pid_alive(pid):
+		OS.kill(pid)
+	for i in 240:                       # 最多 240 帧 ≈ 4 s
+		if not _pid_alive(pid):
+			return
+		await _frames(1)
+
+## 红了的诊断：把服务端日志的尾部打出来（含 `LISTEN`/`RECV`/`SERVER_ERR`）。
+func _dump_server_log(log_path: String, why: String) -> void:
+	if not FileAccess.file_exists(log_path):
+		print("[gw2/selftest] %s：服务端没有日志（%s）" % [why, log_path])
+		return
+	var lines := FileAccess.get_file_as_string(log_path).split("\n")
+	print("[gw2/selftest] %s：serve_match 日志尾部（%s）" % [why, log_path])
+	for i in range(maxi(0, lines.size() - 12), lines.size()):
+		if String(lines[i]).strip_edges() != "":
+			print("    | %s" % String(lines[i]).trim_suffix("\n"))
 
 ## 把 JoinIpPopUp 的输入框写成 `text_` 再按 Join —— 走的是用户真实的点击路径。
 func _submit_join_ip_text(text_: String) -> void:
@@ -2988,16 +3162,20 @@ func _test_net_real_server() -> void:
 		_skip("联机端到端：没找到 examples/serve_match（先 `cargo build --offline --example serve_match`，"
 			+ "或用 GW2_NET_SERVER 指定路径）")
 		return
-	var port := _free_port()
-	_expect(port > 0, "真服务端：找到一个空闲端口")
-	if port <= 0:
+	var match_seed := _match_seed()
+	var srv := await _spawn_server(bin, match_seed)
+	var pid: int = int(srv["pid"])
+	var addr: String = String(srv["addr"])
+	_expect(int(srv["port"]) > 0, "真服务端：找到一个空闲端口")
+	_expect(pid > 0 and bool(srv["ok"]),
+		"真服务端：把 %s 拉起来了（pid=%d，seed=%d）" % [bin.get_file(), pid, match_seed])
+	if pid <= 0 or not bool(srv["ok"]):
+		_dump_server_log(String(srv["log"]), "真服务端：服务端起不来")
+		await _kill_server(pid)
+		await _net_reset()
 		return
-	var pid := OS.create_process(bin, ["127.0.0.1:%d" % port])
-	_expect(pid > 0, "真服务端：把 %s 拉起来了（pid=%d）" % [bin.get_file(), pid])
-	if pid <= 0:
-		return
-
-	var addr := "127.0.0.1:%d" % port
+	print("[gw2/selftest] 真服务端：pid=%d LISTEN %s seed=%d 日志=%s"
+		% [pid, addr, match_seed, String(srv["log"])])
 
 	# --- ① 让**我们自己的服务端**出现在 Local 列表里 ---
 	#
@@ -3013,12 +3191,22 @@ func _test_net_real_server() -> void:
 	var sender := PacketPeerUDP.new()
 	sender.bind(0, "127.0.0.1")
 	sender.set_dest_address("127.0.0.1", lan_port)
-	sender.put_packet((GwWireSamples.broadcast("Graphwar Game", "Setup", 1, addr,
-		"EveryUnit", "NormalFunction", "SequentialTurns", "Timer1m", false) + "\n").to_utf8_buffer())
+	var broadcast := (GwWireSamples.broadcast("Graphwar Game", "Setup", 1, addr,
+		"EveryUnit", "NormalFunction", "SequentialTurns", "Timer1m", false) + "\n").to_utf8_buffer()
 	_command("multiplayer")
 	await _frames(1)
 	_command("show_local")
-	var listed := await _wait_until(func(): return net.lan.room_count() >= 1, 120)
+	# 广播是**无连接 UDP**：丢一条服务端也不会知道，而原版房主的广播是**周期性**的
+	# （`docs/24` §7.2 的 `graphwar_lan_broadcaster_v6.rs`）。所以这里一边等一边重发
+	# 同一条（同一 address 只会占一行，`GwLanDiscovery::_ingest` 按 address 去重），
+	# 不再"发一条 + 定长等待"。
+	var listed := false
+	for i in 40:
+		sender.put_packet(broadcast)
+		await _frames(3)
+		if net.lan.room_count() >= 1:
+			listed = true
+			break
 	_expect(listed, "真服务端：Local 列表收到这台服务端的广播（%d 条）" % net.lan.room_count())
 	var lobby_list := _screen("LanLobby").find_child("GraphwarLanVBox", true, false)
 	var seen_addr := ""
@@ -3029,10 +3217,12 @@ func _test_net_real_server() -> void:
 				seen_addr = String(jb.get_meta("room_address", ""))
 	_expect(seen_addr == addr, "真服务端：Local 页那一行的 address 就是它（%s）" % seen_addr)
 
-	# --- ② 从列表里点进去（连不上就退避重试：服务端刚起来可能还没 bind）---
+	# --- ② 从列表里点进去（连不上就退避重试）---
 	var joined := false
 	for attempt in 6:
-		await get_tree().create_timer(0.25).timeout
+		# 服务端已经被确认 `LISTEN` 了（`_spawn_server` 读到了那一行），所以这里不再
+		# 用 0.25 s 墙钟睡眠赌它 bind 好了；留重试只给"握手慢/连接被拒"兜底。
+		await _frames(2)
 		var btn: GwButton = null
 		for c in _screen("LanLobby").find_child("GraphwarLanVBox", true, false).get_children():
 			if c is HBoxContainer:
@@ -3051,7 +3241,8 @@ func _test_net_real_server() -> void:
 	_expect(joined, "真服务端：从 Local 列表点 Join 真的连上并完成握手")
 	sender.close()
 	if not joined:
-		OS.kill(pid)
+		_dump_server_log(String(srv["log"]), "真服务端：连不上")
+		await _kill_server(pid)
 		await _net_reset()
 		return
 
@@ -3069,6 +3260,9 @@ func _test_net_real_server() -> void:
 	var started := await _wait_until(func(): return _server_started(session), NET_WAIT_FRAMES)
 	_expect(started, "真服务端：开局那一批到了（障碍 %d、SoldierInfo %d）"
 		% [session.count_of("AddObstacle"), session.count_of("SoldierInfo")])
+	if not started:
+		# 红了要能自己说明白：服务端到底发没发、seed 是哪个（`docs/18` §10.3.2）
+		_dump_server_log(String(srv["log"]), "真服务端：开局那一批没到（seed=%d）" % match_seed)
 	if started:
 		_expect(session.room["obstacles"].size() > 0, "真服务端：障碍落进 room.obstacles（%d 个）"
 			% session.room["obstacles"].size())
@@ -3116,7 +3310,7 @@ func _test_net_real_server() -> void:
 	await _frames(2)
 	_expect(app_node.current_screen == "MainMenu", "真服务端：exit_play 回主菜单")
 	_expect(not app_node.online, "真服务端：退出后 online 置假")
-	OS.kill(pid)
+	await _kill_server(pid)
 	await _frames(2)
 	await _net_reset()
 
@@ -3135,20 +3329,14 @@ func _test_net_real_server() -> void:
 ##   * 弹道复算的"点序列 = 服务端那条"可以用一条**固定**的 `FunctionPoints` 钉死。
 ##
 ## 缺 `serve_match` 时 A 段整段 skip（显式打印原因），B 段照样跑。
-## 联机用例的**关卡种子**（固定值，见 `src/graphwar_game_server.rs::run` 的 `GW2_MATCH_SEED`）。
 ##
-## 为什么钉死：真服务端的关卡种子默认来自 `seed_from_os()`，所以每局障碍布局都不同。
-## 实测 30 个种子里有 8 个会**有障碍压住射手**（开局位置固定 x=±10，生成器不看这两个点），
-## 还有约 1.6% 的种子一个障碍都不生成 —— 用例若跟着摇骰子，就会偶发红灯。
-## 这个种子是实测挑出来的：10 个障碍、4 名士兵都不在障碍里。
-const ONLINE_TEST_SEED := 8
+## 关卡种子（`ONLINE_TEST_SEED`）由 `_spawn_server()` 统一钉死 —— 本用例和
+## `_test_net_real_server` 用的是同一个种子，所以两边跑的是**同一份布局**。
 
 func _test_play_online() -> void:
-	# 子进程继承父进程的环境（`OS.create_process` 没有 env 参数，只能这样给）。
-	OS.set_environment("GW2_MATCH_SEED", str(ONLINE_TEST_SEED))
+	# 种子的设置/还原在 `_spawn_server()` 里做（起子进程之前摆好、起完立刻还原）。
 	await _test_play_online_real_server()
 	await _test_play_online_lifeinfo_fake_server()
-	OS.set_environment("GW2_MATCH_SEED", "")      # 还回去：别的用例不该被这个种子影响
 
 ## 挑一条"能打中敌人"的函数：**用内核**预演服务端会怎么判。
 ##
@@ -3351,24 +3539,28 @@ func _test_play_online_real_server() -> void:
 			"联机 PlayScreen：PlayScreen 有 online_state()（本轮新增的诊断入口）"):
 		return
 	var pid := -1
+	var srv := {}
 	var session: GwNetSession = null
 	var st := {}
 	var expr := ""
 	var attempts := 0
-	# 6 次：射手被障碍压住的概率约 40%（x=±10 是固定开局位、障碍随机撒），
-	# 6 次全撞上的概率 ~0.4%（每次尝试 ~3 s，只在真撞上时才多花时间）。
+	# 种子已钉死（`ONLINE_TEST_SEED`）⇒ 第 1 次尝试就拿到那份已知能打的布局；
+	# 循环保留下来只当兜底（例如服务端起不来时换一台重试），不再是撞概率。
 	for attempt in 6:
 		attempts += 1
-		var port := _free_port()
-		if port <= 0:
-			break
-		pid = OS.create_process(bin, ["127.0.0.1:%d" % port])
-		if pid <= 0:
-			break
-		var addr := "127.0.0.1:%d" % port
+		srv = await _spawn_server(bin, _match_seed())
+		pid = int(srv["pid"])
+		if pid <= 0 or not bool(srv["ok"]):
+			_dump_server_log(String(srv["log"]), "联机 PlayScreen：服务端起不来")
+			pid = -1
+			await _kill_server(int(srv["pid"]))
+			await _net_reset()
+			continue
+		var addr := String(srv["addr"])
 		var joined := false
 		for a2 in 6:
-			await get_tree().create_timer(0.2).timeout
+			# 服务端已确认 LISTEN，不再用 0.2 s 墙钟睡眠赌 bind
+			await _frames(2)
 			app_node.connect_to(addr)
 			joined = await _wait_until(func(): return app_node.online, 90)
 			if joined:
@@ -3376,7 +3568,8 @@ func _test_play_online_real_server() -> void:
 			_command("cancel_connecting")
 			await _frames(2)
 		if not joined:
-			OS.kill(pid)
+			_dump_server_log(String(srv["log"]), "联机 PlayScreen：连不上（%s）" % addr)
+			await _kill_server(pid)
 			pid = -1
 			await _net_reset()
 			continue
@@ -3384,7 +3577,8 @@ func _test_play_online_real_server() -> void:
 		var started := await _wait_until(
 			func(): return _play_online_started(session), NET_WAIT_FRAMES)
 		if not started:
-			OS.kill(pid)
+			_dump_server_log(String(srv["log"]), "联机 PlayScreen：开局那一批没到")
+			await _kill_server(pid)
 			pid = -1
 			await _net_reset()
 			continue
@@ -3395,7 +3589,7 @@ func _test_play_online_real_server() -> void:
 			break
 		print("[gw2/selftest] 联机：第 %d 局的射手打不出去（障碍压住 / 全被挡），换一局"
 			% (attempt + 1))
-		OS.kill(pid)
+		await _kill_server(pid)
 		pid = -1
 		_command("exit_play")
 		await _frames(2)
@@ -3404,7 +3598,7 @@ func _test_play_online_real_server() -> void:
 			"联机 PlayScreen：%d 次尝试内找到一局打得出去的（连上 + 开局 + 有一条能命中敌人的函数）"
 				% attempts):
 		if pid > 0:
-			OS.kill(pid)
+			await _kill_server(pid)
 		await _net_reset()
 		return
 	_expect(int(session.my_connection_id) == 228,
@@ -3580,7 +3774,7 @@ func _test_play_online_real_server() -> void:
 	_expect(not app_node.online, "联机 PlayScreen：退出后 online 置假")
 	var after: Dictionary = play.call("online_state")
 	_expect(not bool(after["mode"]), "联机 PlayScreen：退出后联机分支关掉了（订阅已放）")
-	OS.kill(pid)
+	await _kill_server(pid)
 	await _frames(2)
 	await _net_reset()
 
