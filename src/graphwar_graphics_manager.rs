@@ -61,6 +61,67 @@
 //! 注意 `0x33 | 2 == 0x33`，所以"脸"那一支**只能**是加法——编译器在两条支上
 //! 混用了 `add` 与 `orr`，这也正好证明基数确实是 `0x33` 而不是别的。
 //!
+//! ### 2.1 第三处重播的 tag = **55**（2026-11-09，任务 77 在 x86 上逐位复核）
+//!
+//! 上一轮留下的问题是"第三处是 `mov rax,[rsp+0x10]` 间接载入，只读到字面量 51/53"。
+//! x86 `send_all_info_events`（`0x468d80`）里三处是**同一个套路**，第三个的真值在
+//! `0x469035` 就写死了：
+//!
+//! ```text
+//! 皮肤 0x468e93 movabs rax, 0x8000000000000033          → 0x468eac add_event    (= 51)
+//! 脸   0x468ef8 movabs rcx, 0x8000000000000033
+//!      0x468f02 add   rcx, 2                            → 存 [rsp+0x10]        (= 53)
+//! 帽   0x469035 movabs rdx, 0x8000000000000033
+//!      0x46903f or    rdx, 4                            → 存 [rsp+0x10]        (= 55)
+//! 公共尾 0x46910e mov rax,[rsp+0x10] ; 0x469113 mov [rsp+0x30], rax
+//!        0x46911d lea rsi,[rsp+0x30] ; 0x469122 call [0x9bac80]
+//! ```
+//!
+//! ⇒ 第三处**就是 55（帽子）**，而且"间接载入"的谜底是：三支共用同一段提交代码，
+//! tag 从栈槽 `rsp+0x10` 取，所以字面量扫描只看到基址。
+//! 
+//! ### 2.2 168 B = **0x18 头** + 三张 0x30 的表（任务 77 结案；旧说法已改正）
+//!
+//! 上一轮（`docs/161` §2 第 16 行 / §3.5）写的是「`0xa8` 之后还有 `0x30` 字节没解」。
+//! **这句是错的**：`0xa8 = 168` 正好是 `size_of`，三张表从 `+0x18` 起、每张 `0x30`，
+//! 到 `+0xa8` 就结束了，**表后面没有字节**。没解的是**表前面**那 `0x18` 的头三个字。
+//! 建盒函数 `0x522710`（唯一调用点 `0x4693a2`）逐条写下来就是它们：
+//!
+//! ```text
+//! 0x522731 mov edi,0xc0 / call __rust_alloc        ; 0xc0 = 16 + 8 + 168
+//! 0x5227ca mov [rbx+0x10], 0                       ; RefCell 借用字 = 未借
+//! 0x5227d2 mov [rbx+0x18], rbx                     ; M+0x00 = 盒基 = 弱自句柄
+//! 0x5227d6 mov [rbx+0x20], r14                     ; M+0x08 = 事件通道 Rc（调用点 0x517d60 inc [r14] 强计数）
+//! 0x5227da mov [rbx+0x28], r15                     ; M+0x10 = 容器弱引用（调用点 0x517d6a inc [r15+8] 弱计数）
+//! 0x522796/0x5227a1 → [rbx+0x30..0x50]             ; 皮肤表（ctrl/mask/growth/items 32 B）
+//! 0x5227ac mov [rbx+0x50], rax ; 0x5227b0 mov [rbx+0x58], rdx   ; 皮肤表 RandomState（M+0x38/+0x40）
+//! 0x5227b4/0x5227b8 → [rbx+0x60..0x80]             ; 脸表
+//! 0x5227bc mov [rbx+0x80], rcx ; 0x5227c3 mov [rbx+0x88], rdx   ; 脸表 RandomState（M+0x68/+0x70）
+//! 0x5227de/…      → [rbx+0x90..0xb0]               ; 帽子表
+//!                                                  ; 帽子表 RandomState 在 M+0x98/+0xa0 = 盒+0xb0/+0xb8
+//! ```
+//!
+//! 三个头的**语义**与 `graphwar_color_manager` §6 完全同款（弱自句柄 / 事件通道 /
+//! 容器弱引用），这也是 22 个 manager 的公共头形状。
+//!
+//! ## 2.3 事件流接线（任务 77 逐条复核，x86；`wired` 的第二件）
+//!
+//! ```text
+//! new 0x469390
+//!   0x4693fc lea rsi,[0x1c18ad] 'new_connection_event' + 0x46940a mov edx,0x14
+//!   0x469403 lea r8,<0x958330>  +0x20 = 0x469350 → lea rsi,[0x468d80] send_all_info_events
+//!   0x469415 call [0x9bac88] → 0x3d38f0    == subscribe_to_event
+//!   0x46944d lea rsi,[0x1c18c1] 'entity_removed_event' + 0x46945b mov edx,0x14
+//!   0x469454 lea r8,<0x958358>  +0x20 = 0x469370 → lea rsi,[0x469220] handle_entity_removed_event
+//!   0x469466 call [0x9bac88] → 0x3d38f0
+//!
+//! 发（六处 = 三个 setter + 三处整表重播）
+//!   set_skin_graphics 0x468c70: 0x468cde call [0x9bac80]（51）
+//!   set_face_graphics 0x468b60: 0x468bce call [0x9bac80]（53）
+//!   set_hat_graphics  0x468a50: 0x468abe call [0x9bac80]（55）
+//!   send_all_info_events 0x468d80: 0x468eac（51）/ 0x468fe6（53）/ 0x469122（55）
+//! ```
+//!
 //! ## 3. `GraphwarTextureLoader` 在哪？（问题的正面答案：**不在本模块**）
 //!
 //! arm64 `.symtab` 里模块段就是 **`graphwar_texture_loader`**：
@@ -234,6 +295,14 @@ impl GraphicsKind {
     }
 }
 
+/// 弱自句柄在 `self` 里的偏移（值 = 盒基）。
+pub const SELF_WEAK_OFFSET: usize = 0x00;
+/// 事件通道 `Rc<RefCell<GraphwarEventQueue>>` 在 `self` 里的偏移。
+pub const EVENT_QUEUE_OFFSET: usize = 0x08;
+/// 容器弱引用在 `self` 里的偏移（模块文档 §2.2）。
+pub const CONTAINER_WEAK_OFFSET: usize = 0x10;
+/// 三个字的头 —— 三张表从第一张的 0x18 起。
+pub const HEADER_SIZE: usize = 0x18;
 /// 一张外观表的步长（字节）：三张表首尾相接。
 pub const MAP_STRIDE: usize = 0x30;
 /// `HashMap` 里 `items` 字段相对表基的偏移。
@@ -292,6 +361,14 @@ impl GraphicsInfo {
 }
 
 /// `GraphwarGraphicsManager` 的可判定状态：三张 `player_id → 名字` 表。
+///
+/// # 事件流（任务 77 补，`wired` 的第二件；见模块文档 §2.3）
+///
+/// `new`（x86 `0x469390`）订阅 [`SUBSCRIPTIONS`] 那两条：
+/// `new_connection_event`@`0x469415` → 闭包槽 `0x958330`（`+0x20` = `0x469350`）→ `0x468d80`；
+/// `entity_removed_event`@`0x469466` → 闭包槽 `0x958358`（`+0x20` = `0x469370`）→ `0x469220`。
+/// 发方向六处：三个 setter 各一条（51/53/55）+ `send_all_info_events` 三处重播
+/// （`0x468eac`/`0x468fe6`/`0x469122`，tag 也是 51/53/55，逐位见模块文档 §2.1）。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GraphwarGraphicsManager {
     /// 皮肤表（`self + 0x18`）。
@@ -300,6 +377,8 @@ pub struct GraphwarGraphicsManager {
     pub faces: std::collections::BTreeMap<u32, String>,
     /// 帽子表（`self + 0x78`）。
     pub hats: std::collections::BTreeMap<u32, String>,
+    /// 订阅名（`new` 的两条 `subscribe`，顺序 = 调用序，`观测`）。
+    pub subscribed: Vec<&'static str>,
     /// 出站缓冲：三个 setter 里那条 `GraphwarEventQueue::add_event`（`观测`）。
     ///
     /// 原版 setter **自己**把事件塞进 `self[8]` 那条队列（x86 `0x468cde` 的
@@ -311,9 +390,15 @@ pub struct GraphwarGraphicsManager {
 }
 
 impl GraphwarGraphicsManager {
-    /// 新建空管理器（原版还会订阅 [`SUBSCRIPTIONS`] 两条事件）。
+    /// 新建空管理器 + 两条订阅（原版 `new` 做的同一件事）。
+    ///
+    /// 原版 `new`（x86 `0x469390`）= 建盒（`0x522710`，`0xc0` = 16+8+168）+ 两条订阅；
+    /// 168 B 的切法是 `0x18` 头 + 三张 `0x30` 表（模块文档 §2.2）。
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            subscribed: SUBSCRIPTIONS.iter().map(|s| s.name).collect(),
+            ..Self::default()
+        }
     }
 
     /// 取走发件箱（`set_*_graphics` 已经写进去了；原版没有这个函数，事件直接进队列）。
@@ -385,7 +470,16 @@ impl GraphwarGraphicsManager {
         out
     }
 
-    /// `handle_entity_removed_event`：从三张表各删一次。
+    /// `new_connection_event` 的处理（闭包槽 `0x958330` → `0x469350` → `0x468d80`）：整表重播。
+    ///
+    /// 原版三个循环逐条 `add_event`（51 / 53 / 55）；本实现把同样条数记进发件箱并返回载荷。
+    pub fn handle_new_connection_event(&mut self) -> Vec<GraphicsInfo> {
+        let events = self.send_all_info_events();
+        self.outbox.extend(events.iter().map(|e| e.kind.event()));
+        events
+    }
+
+    /// `handle_entity_removed_event`（`0x469220`）：从三张表各删一次。
     ///
     /// 返回真正删掉的条数（原版三张表各无条件 `remove` 一次，不看返回值）。
     pub fn handle_entity_removed_event(&mut self, player_id: u32) -> usize {
@@ -516,5 +610,49 @@ mod inline_tests {
         );
         assert_eq!(g.outbox_len(), 0, "取走之后清空");
         assert_eq!(g.graphics_of(229)[0].as_deref(), Some("target"));
+    }
+
+    /// 两个订阅在 `new` 里落码；头部三个字的偏移与 168 B 的切法（模块文档 §2.2）。
+    #[test]
+    fn new_subscribes_and_168_splits_into_header_plus_three_tables() {
+        let g = GraphwarGraphicsManager::new();
+        assert_eq!(g.subscribed, vec!["new_connection_event", "entity_removed_event"]);
+        assert_eq!(g.subscribed.len(), SUBSCRIPTIONS.len());
+        assert_eq!(SUBSCRIPTIONS[0].handler, "send_all_info_events");
+        assert_eq!(SUBSCRIPTIONS[1].handler, "handle_entity_removed_event");
+        // 168 = 0x18 头 + 3 × 0x30 表，**表后面没有字节**（任务 77 改正）
+        assert_eq!(HEADER_SIZE + 3 * MAP_STRIDE, 168);
+        assert_eq!(MAP_STRIDE, 0x30);
+        assert_eq!(
+            (SELF_WEAK_OFFSET, EVENT_QUEUE_OFFSET, CONTAINER_WEAK_OFFSET),
+            (0x00, 0x08, 0x10)
+        );
+    }
+
+    /// 整表重播：三张表逐条发，tag 分别是 51/53/55（第三处 = 55，`0x46903f or rdx,4`）。
+    #[test]
+    fn replay_emits_51_53_55_in_table_order() {
+        let mut g = GraphwarGraphicsManager::new();
+        let _ = g.set_skin_graphics(1, "yellow");
+        let _ = g.set_face_graphics(1, "smile");
+        let _ = g.set_hat_graphics(1, "cap");
+        let _ = g.take_outbox();
+        let replayed = g.handle_new_connection_event();
+        assert_eq!(replayed.len(), 3);
+        let tags: Vec<u16> = replayed.iter().map(|i| i.tag()).collect();
+        assert_eq!(tags, vec![51, 53, 55]);
+        assert_eq!(
+            g.outbox,
+            vec![
+                crate::events::Event::SkinGraphicsInfo,
+                crate::events::Event::FaceGraphicsInfo,
+                crate::events::Event::HatGraphicsInfo
+            ]
+        );
+        // 删一条：三张表各删一次，**一条事件都不发**（0x469220 体内零 add_event）
+        let _ = g.take_outbox();
+        assert_eq!(g.handle_entity_removed_event(1), 3);
+        assert_eq!(g.outbox_len(), 0);
+        assert_eq!(g.graphics_of(1), [None, None, None]);
     }
 }

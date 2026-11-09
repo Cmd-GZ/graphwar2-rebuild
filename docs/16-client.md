@@ -9831,4 +9831,93 @@ cargo test --offline --lib -- graphwar_play_screen_control                  # 30
 3. 剩 6 个 `assembled`：`Soldier`（`add_soldier` 指纹锚）/ `Graphics`（168 B 的 `0xa8` 之后）/
    `ComputerPlayer`（要抓 bot 局）/ `FunctionHistoryRecorder`（先裁 33/35 口径）/ `Color`（`+0x10`）/
    `GameState`（⛔ 禁区 `src/game.rs`）。排序见 `docs/161` §6。
+   ⚠️ **2026-11-09 任务 77 之后只剩 2 个**（`ComputerPlayer` / `GameState`），其余四格已在 §55 升 `wired`。
 4. 本轮**没有**碰 `client/src/**`、`src/game.rs`、`src/lib.rs`、`dispatch/`、`fixtures/`。
+
+## 55. 再升 4 格：`Color` / `Soldier` / `Graphics` / `FunctionHistoryRecorder`（2026-11，任务 77）
+
+> 依据 [`161-manager-gaps.md`](161-manager-gaps.md) §2/§6 与 `dispatch/77`。
+> 上一轮（§54）把 `Rank` / `Name` / `LocalPlayer` 升完，剩 6 格；本轮做**静态可解的四格**，
+> 留 `GameState`（⛔ `src/game.rs` 禁区）与 `ComputerPlayer`（要抓一次 bot 局的 `BotData.state`）。
+> 档位分布 **14 / 2 / 6 / 0 → 18 / 2 / 2 / 0**。
+
+### 55.1 四格的地址级证据（x86，全部本轮复跑；arm64 只用来定名）
+
+| 槽 | `new`（构造点） | 订阅（调用点 → 闭包槽 `+0x20` → 处理器） | 发布（`add_event` 点 → tag） |
+|---|---|---|---|
+| 21 `ColorManager` (120 B) | `0x465620`（call 点 `0x517e9f`；建盒 `0x524140`，`alloc 0x90`） | `new_connection_event`(len 0x14) `0x4656a5` → `0x957dc0+0x20`=`0x465600` → `0x465460`；`entity_removed_event` `0x4656f6` → `0x957de8+0x20`=`0x4655e0` → `0x465570` | `0x464fb6`（`add_team_color`）/ `0x465517`（整表重播）——tag **61**；`0x465570` 体内零 `add_event` |
+| 5 `SoldierManager` (72 B) | `0x455760`（call 点 `0x517af8`；建盒 `0x522890`，`alloc 0x60`） | `new_connection_event` `0x4557e5` → `0x956980+0x20`=`0x455740` → `0x455570`；`entity_removed_event` `0x455836` → `0x9569a8+0x20`=`0x455720` → `0x4556d0` | `0x455616`（整表重播）——tag **15**；`0x474ba5`（`add_soldier`，内联进 `0x474a10`）——tag **15**；级联 `0x444fd0`——tag **14** |
+| 16 `GraphicsManager` (168 B) | `0x469390`（call 点 `0x517d73`；建盒 `0x522710`，`alloc 0xc0`） | `new_connection_event` `0x469415` → `0x958330+0x20`=`0x469350` → `0x468d80`；`entity_removed_event` `0x469466` → `0x958358+0x20`=`0x469370` → `0x469220` | three setters：`0x468cde`(**51**)/`0x468bce`(**53**)/`0x468abe`(**55**)；整表重播 `0x468eac`/`0x468fe6`/`0x469122` = 51/53/**55** |
+| 19 `FunctionHistoryRecorder` (48 B) | `0x3f10a0`（call 点 `0x517e27`；`alloc 0x48`） | `function_info_event`（`0x1bfccd`, len **0x13**）`0x3f115a` → `0x955050+0x20`=`0x3f1080` → `0x3f0e40` | **零**（`0x3f0e40` 体内无 `add_event`）——"发 0 条"是**正面证据** |
+
+### 55.2 四个字段级结论（上一轮登记的缺口）
+
+1. **`Color` 的 `+0x10`（`docs/161` G2）= 容器弱引用**：`Weak<RefCell<GraphwarModuleContainer>>`。
+   建盒 `0x524237` 写入；调用点 `0x517e8c` 按**弱计数**（`[r15+8]`）+1（同批的 `0x517e83` 按**强计数**
+   `[r14]` +1 = 事件通道 Rc）。本模块 4 个函数对 `M+0x10` **零读点**（同一扫描能看到
+   `+0x18/+0x30/+0x38/+0x48/+0x60/+0x68`，所以是有界否定）。⇒ 120 = `0x18` 头 + `0x30` 占用表 + `0x30` 队池表。
+2. **`Soldier` 的 `add_soldier`（G4）**：x86 侧**没有独立函数**，正文内联进
+   `GraphwarGameStateManager::add_soldier_to_player`（`0x474a10`，`panic::Location` 命中
+   `src/graphwar_soldier_manager.rs:65:26`），块 `0x474b38–0x474bab`。**它发 `SoldierInfo`(15)**：
+   `0x474b50` 原子计数器（`0x9c10c0`）发一个新兵 id 当 **key**、`ebp`（owner）当 **value** 插入
+   （`0x474b65`），再 `0x474b8d movabs 0x8000…000` + `0x474b97 add rax,0xf` → `0x474ba5` 发 (15)。
+   ⇒ **键值极性 = 士兵 → 主人**（观测），旧文档的"默认广播/推断"升级为观测。
+   ⚠️ 这条同时暴露 `tools/addr_probe.py tags` 的**盲区**：`movabs 0x8000…000 + add rax,N` 被记进 tag 0，
+   所以按 tag 数点数会漏掉它（`docs/161` C10）。
+3. **`Graphics` 的 168 B（旧说法"`0xa8` 之后还有 `0x30` 字节"）是错的**：`0xa8 = 168` 正好是
+   `size_of`，三张表 `+0x18/+0x48/+0x78` 各 `0x30` 铺到 `+0xa8` 结束；没解的是**表前面**的 `0x18` 头
+   （`+0x00` 弱自句柄 / `+0x08` 事件通道 Rc / `+0x10` 容器 Weak，建盒 `0x522710` 逐条写）。
+   第三处重播 tag 也逐位复核完：`0x469035 movabs 0x8000…033` + `0x46903f or rdx,4` = **55**，
+   三支共用提交代码（`0x46910e` 从 `rsp+0x10` 取 tag）⇒ 这才是"字面量扫描只看到基址"的原因。
+4. **`FunctionHistoryRecorder` 的 33/35 裁决（G5）= 35**：订阅名串 `0x1bfccd` = `function_info_event`
+   （全文唯一引用点）+ 处理器闸 `isize::MAX+0x24` = `0x8000…0023` = 35；`function_fire_event`(33) 的串
+   只有 2 个引用点（都在名字↔tag 表里）、tag 33 的 3 处 materialize 也**没有订阅者**。
+   ⇒ 常量改名 `EVENT_FUNCTION_INFO_TAG`（值仍是 35），旧名 `EVENT_FIRE_TAG` 留作别名
+   （`tests/last_five.rs` 在用，本任务不许改 `tests/`）。48 B 布局同批解出：
+   `Vec`（cap/ptr/len 三个字）+ 弱自句柄 + 事件通道 + 容器 Weak。
+
+### 55.3 代码落点
+
+| 文件 | 改动 |
+|---|---|
+| `src/graphwar_color_manager.rs` | 头三字常量（`SELF_WEAK_OFFSET`/`EVENT_QUEUE_OFFSET`/`CONTAINER_WEAK_OFFSET`/`HEADER_SIZE`）+ `subscribed`/`outbox` + `handle_new_connection_event` + `take_outbox`/`outbox_len` + 3 条内联测试 |
+| `src/graphwar_soldier_manager.rs` | `subscribed`/`outbox`（元素是**本模块的** `SoldierEvent`，因为 `tests/` 里那份 `#[path]` 编译不带 `events.rs`）+ `handle_new_connection_event` + `handle_entity_removed_event_emitting` + 2 条内联测试；§2 的"Mutex/锁字"就地更正 |
+| `src/graphwar_graphics_manager.rs` | 头三字常量 + `subscribed` + `handle_new_connection_event` + 2 条内联测试；§2.1/§2.2 补第三处重播与 168 B 切法 |
+| `src/function_history_recorder.rs` | `EVENT_FUNCTION_INFO_TAG`（+旧名别名）/ `SUBSCRIPTIONS` / `subscribed` + `outbox`（元素是**空枚举** ⇒ 编译期钉住"发 0 条"）/ `handle_function_info_event` 三道闸 / `clear_for_probe` / 3 条内联测试；文档 §裁决 |
+| `src/_scaffold/root_wiring.rs` | `Wired::status()` 四个臂、`WIRED_TIER_COUNT` 14→18、`ASSEMBLED_TIER_COUNT` 6→2、`interaction_selftest` 四段（+32 条）、22 槽台账单测、`color_manager()`/`history()` 取回口 |
+| `client/tools/assemble_check.gd` | `WIRED_TIER` 四槽 + `TIER_TALLY` + 期望探针表（135 条）+ **12 条**新断言（四格各 3 条：订阅 / 发布 / 状态） |
+
+### 55.4 观测口（我方自造，原版没有）
+
+`RootWiring::interaction_selftest` 现在覆盖 **18** 个 manager、**135** 条 `名字=值`
+（本任务 +32：`color.*` 8 / `soldier.*` 7 / `graphics.*` 9 / `history.*` 8）。
+每格仍是"一条订阅 + 一条发布 + 一条状态"的最小组合。
+
+⚠️ **幂等口**：`soldier.*` 用固定 id 让 `add_soldier` 落在**同一行**（表长不变）；
+`graphics.*` / `color.*` 末尾各自删掉自己写的那一格；`history.*` 末尾 `clear_for_probe()`
+（原版这条 `Vec` 只写不删 ⇒ 那个 `clear` 是**验收侧的重置**，不是复原行为）。
+
+### 55.5 断言 before → after
+
+| 套件 | before | after |
+|---|---|---|
+| 档位分布 | 14 / 2 / 6 / 0 | **18 / 2 / 2 / 0** |
+| `cargo test --offline` | 1710 | **1730**（+20 = 新增内联测试 10 条 × 两个编译单元） |
+| `cargo test --offline --features gdext-bindings` | 1816 | **1836**（+20） |
+| `client/tools/assemble_check.gd` | 226 / 0 | **238 / 0**（+12） |
+| headless 14 个脚本合计 | 1827 | **1839**（其余 13 个逐项不变） |
+| `selftest` | 714 / 0 / 1 skip | **714 / 0 / 1 skip**（跑 1 次就过） |
+| 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **647 / 647 / 637** |
+
+### 55.6 遗留 / 未做
+
+1. **`FunctionHistoryRecorder` 的消费点仍未知**（上下键翻历史）：全库没有 `Vec<FunctionData>` 的读取点，
+   两份二进制的 `"ui_up"`/`"ui_down"` 也搜不到 ⇒ 要么真机抓一次按键，要么接受"只写不读"。
+   **不阻塞** `wired`（档位只要求订阅/发布/断言）。
+2. **`FunctionData.color` 到底是"颜色"还是"段位"**：处理器查的那张表在**某个模块的 `+0x18`**，
+   `Color` 的占用表与 `Rank` 的表都在这个偏移 ⇒ 取的是哪个模块仍**未定**（缺 `0x46e580` 的 TypeId 归属）。
+   本字段仍是**推断**。
+3. **`Color` 的随机流口径**：原版起点用一次 `random::<u64>()`、兜底三次 `random::<u8>()`（线程局部 ChaCha）；
+   我方用 `SeqRng` 替身，只验判定规则。要逐位复现"第 n 个玩家拿到什么颜色"必须接真 ChaCha 流。
+4. **`Graphics` 的贴图侧**在 `GraphwarTextureLoader`（另一个模块），本任务没碰。
+5. `ComputerPlayer` 仍是 `assembled`（要抓一次 bot 局的 `BotData.state`）；`GameState` 仍卡 `src/game.rs` 禁区。

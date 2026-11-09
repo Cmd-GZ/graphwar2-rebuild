@@ -32,7 +32,7 @@
 //! | 2 | `GraphwarClientConnectionHandler` | 112 | `0x48b048` | —（只有 [`HandlerField`](crate::graphwar_client_connection_handler::HandlerField) 偏移表，没有结构体） | `layout` | 类型**观测**；布局**逐字段观测**（`docs/16` §47.2） |
 //! | 3 | `GraphwarLocalPlayerManager` | 64 | 内联（`0x409eac` 处 `alloc 0x58`；x86 `0x51792a` 同一条） | [`GraphwarLocalPlayerManager`] | `wired` | 类型**观测**；布局**逐字段观测**（64 B / 8 条写入点，`docs/16` §54.3）；事件流**指令级** |
 //! | 4 | `GraphwarPlayerManager` | 72 | `0x49d170` | [`GraphwarPlayerManager`] | `wired` | 类型**观测**；事件流**指令级**（任务 40，§50） |
-//! | 5 | `GraphwarSoldierManager` | 72 | `0x49d590` | [`SoldierTable`] | `assembled` | 类型**观测** |
+//! | 5 | `GraphwarSoldierManager` | 72 | `0x49d590` | [`SoldierTable`] | `wired` | 类型**观测**；布局**逐字段观测**（72 B = 0x18 头 + 48 表，模块 §2）；事件流**指令级**（x86 `0x455760`，含 `add_soldier` 内联块 `0x474a10`） |
 //! | 6 | `GraphwarPlanePosManager` | 24 | `0x3b89a0` | [`PlanePosManagerSlot`]（内含 [`GraphwarPlanePosManager`]） | `wired` | 类型**观测**；布局**逐字段观测**（24 B / 3 字段，`docs/16` §44） |
 //! | 7 | `GraphwarGameStateManager` | 296 | `0x4ade6c` | [`Match`] | `assembled` | 类型**观测** |
 //! | 8 | `GraphwarFunctionManager` | 32 | 内联（arm64 `0x419c80` / x86 `0x5236e0`，由 `0x40a158` / `0x517b9f` 调用） | [`FunctionManagerSlot`]：`layout` = 原版 32 字节布局（**任务 22 解开**，4 字段）+ `table` = 我方行为表 | `layout` | 类型**观测**；布局**逐字段观测**（`docs/16` §46） |
@@ -43,12 +43,12 @@
 //! | 13 | `GraphwarTurnManager` | 32 | `0x49adf8` | [`TurnManager`] | `wired` | 类型**观测**；事件流**指令级**（任务 40，§50） |
 //! | 14 | `GraphwarEffectManager` | 72 | `0x40bc0c` | [`GraphwarEffectManager`] | `wired` | 类型**观测**；事件流**指令级**（任务 40，§50） |
 //! | 15 | `GraphwarModeManager` | 32 | `0x498090` | [`GraphwarModeManager`] | `wired` | 类型**观测**；布局**新解**（32 B，§50） |
-//! | 16 | `GraphwarGraphicsManager` | 168 | `0x49e394` | [`GraphwarGraphicsManager`] | `assembled` | 类型**观测** |
+//! | 16 | `GraphwarGraphicsManager` | 168 | `0x49e394` | [`GraphwarGraphicsManager`] | `wired` | 类型**观测**；布局**逐字段观测**（168 = 0x18 头 + 3×0x30，模块 §2.2）；事件流**指令级**（x86 `0x469390`，第三处重播 tag = 55） |
 //! | 17 | `GraphwarEntityEffectManager` | 72 | `0x3e9f40` | [`GraphwarEntityEffectManager`] | `wired` | 类型**观测**；事件流**指令级**（任务 40，§50） |
 //! | 18 | `GraphwarComputerPlayerManager` | 72 | `0x4b02a4` | [`ComputerPlayers`] | `assembled` | 类型**观测** |
-//! | 19 | `FunctionHistoryRecorder` | 48 | `0x49d9a0` | [`History`] | `assembled` | 类型**观测** |
+//! | 19 | `FunctionHistoryRecorder` | 48 | `0x49d9a0` | [`History`] | `wired` | 类型**观测**；布局**逐字段观测**（48 = Vec + 弱自句柄 + 通道 + 容器弱引用）；事件流**指令级**（x86 `0x3f10a0`/`0x3f0e40`，**发 0 条**）；33/35 已裁决 |
 //! | 20 | `GraphwarNameManager` | 72 | `0x40af68` | [`GraphwarNameManager`] | `wired` | 类型**观测**；布局**逐字段观测**（72 B 全解，`docs/16` §54.3）；事件流**指令级**（x86 `0x519100`） |
-//! | 21 | `GraphwarColorManager` | 120 | `0x49cbe8` | [`GraphwarColorManager`] | `assembled` | 类型**观测** |
+//! | 21 | `GraphwarColorManager` | 120 | `0x49cbe8` | [`GraphwarColorManager`] | `wired` | 类型**观测**；布局**逐字段观测**（120 = 0x18 头 + 2×0x30，模块 §6）；事件流**指令级**（x86 `0x465620`） |
 //! | 22 | `GraphwarRankManager` | 72 | `0x498d2c` | [`GraphwarRankManager`] | `wired` | 类型**观测**；事件流**指令级**（x86 `0x454f30`）；`+0x08` 序列化口径仍**推断** |
 //!
 //! **顺序的档位是"逐位"**：两个二进制里 22 条调用的
@@ -70,15 +70,15 @@
 //!
 //! | 档位 | 判据（**按序判断，第一个命中者为准**） | 现值 |
 //! |---|---|---|
-//! | [`SLOT_WIRED`] | 已接容器 **+** 已接事件流 **+** 有最小交互断言（[`RootWiring::interaction_selftest`] 覆盖这一槽） | **14** |
+//! | [`SLOT_WIRED`] | 已接容器 **+** 已接事件流 **+** 有最小交互断言（[`RootWiring::interaction_selftest`] 覆盖这一槽） | **18** |
 //! | [`SLOT_LAYOUT`] | 原版字段布局**已逐字段解出**（有证据档），但**不满足** `wired` | **2** |
-//! | [`SLOT_ASSEMBLED`] | 容器里装的是**我方复原类型**（`our_type` 非 `—`，能按类型取回并调用），但**不满足**上面两条 | **6** |
+//! | [`SLOT_ASSEMBLED`] | 容器里装的是**我方复原类型**（`our_type` 非 `—`，能按类型取回并调用），但**不满足**上面两条 | **2** |
 //! | [`SLOT_STUB`] | 以上都不是：**我方形状占位**，原版字段布局**未知** | **0** |
 //!
 //! ```text
 //! 结构轴：stub（布局未知） ──→ layout（布局逐字段解出）
 //! 行为轴：assembled（装上我方复原类型） ──→ wired（+ 事件流 + 最小交互断言）
-//! 一个槽只报**它达到的更高那一档**；两条轴都到顶 = wired（**14** + 2 + **6** + 0 = 22）。
+//! 一个槽只报**它达到的更高那一档**；两条轴都到顶 = wired（**18** + 2 + **2** + 0 = 22）。
 //! ⇒ "结构已解但行为未做" = layout；"结构也没解" = stub —— 这两个词的分工就是本轮要根治的模糊。
 //! ```
 //!
@@ -86,10 +86,13 @@
 //! 就是 `GraphwarPlanePosManager`）。任务 36 把 24 B 布局逐字段解出、并把事件流两个方向
 //! 接上之后它是 `wired` ⇒ 11 / 2 / 9 / 0，**22 个槽里一个 `stub` 都不剩**。
 //!
-//! ⚠️ **任务 74（本轮）**：`Rank` / `Name` / `LocalPlayer` 三格 11 / 2 / 9 / 0 → **14 / 2 / 6 / 0**
+//! ⚠️ **任务 74**：`Rank` / `Name` / `LocalPlayer` 三格 11 / 2 / 9 / 0 → **14 / 2 / 6 / 0**
 //! （三格各自的两条轴都到顶：订阅/发布都指到指令 + 交互断言，见 `docs/16` §54）。
-//! 剩 6 个 `assembled`：`Soldier` / `GameState`（禁区 `src/game.rs`）/ `Graphics` /
-//! `ComputerPlayer` / `FunctionHistoryRecorder` / `Color`。
+//!
+//! ⚠️ **任务 77（本轮）**：`Soldier` / `Graphics` / `FunctionHistoryRecorder` / `Color` 四格
+//! **14 / 2 / 6 / 0 → 18 / 2 / 2 / 0**（四格各自补了「布局逐字段 + 订阅/发布指令级 + 3 条交互
+//! 断言」，证据在各自 manager 文件的模块文档与 `docs/161` §2.2）。
+//! 剩 2 个 `assembled`：`GameState`（禁区 `src/game.rs`）/ `ComputerPlayer`（要抓一次 bot 局）。
 //!
 //! 三条读法（每条都有反例撑着，别合并省略）：
 //!
@@ -451,14 +454,16 @@ pub const SLOT_TIERS: [&str; 4] = [SLOT_WIRED, SLOT_LAYOUT, SLOT_ASSEMBLED, SLOT
 /// **任务 36 起：11 / 2 / 9 / 0**（`PlanePosManager` 从 `stub` 升到 `wired`，见 `docs/16` §44）。
 /// **任务 74 起：14 / 2 / 6 / 0**（`Rank` / `Name` / `LocalPlayer` 三格从 `assembled` 升到
 /// `wired`：容器 + 事件流两方向指到指令 + 交互断言，见 `docs/16` §54 与 `docs/161` §2）。
+/// **任务 77 起：18 / 2 / 2 / 0**（`Color` / `Soldier` / `Graphics` / `FunctionHistoryRecorder`
+/// 四格同款升档，见 `docs/161` §2.2；只剩 `GameState`（禁区）与 `ComputerPlayer`（要 bot 局））。
 ///
 /// 改任何一槽的档位必须**同批**改这里、[`Wired::status`] 与
 /// `client/tools/assemble_check.gd` 的 `WIRED_TIER`（任务 28 的病根就是只有一处改）。
-pub const WIRED_TIER_COUNT: usize = 14;
+pub const WIRED_TIER_COUNT: usize = 18;
 /// 见 [`WIRED_TIER_COUNT`]。
 pub const LAYOUT_TIER_COUNT: usize = 2;
 /// 见 [`WIRED_TIER_COUNT`]。
-pub const ASSEMBLED_TIER_COUNT: usize = 6;
+pub const ASSEMBLED_TIER_COUNT: usize = 2;
 /// 见 [`WIRED_TIER_COUNT`]。**任务 36 起为 0**——22 个槽里没有一个报 `stub` 了。
 pub const STUB_TIER_COUNT: usize = 0;
 
@@ -617,7 +622,15 @@ impl Wired {
             // 加最小交互断言；地址级证据见三份 manager 文件的模块文档 §7–§9 与 docs/161 §2
             | Wired::RankManager
             | Wired::NameManager
-            | Wired::LocalPlayerManager => SLOT_WIRED,
+            | Wired::LocalPlayerManager
+            // 任务 77 的 4 个：Color（2 订阅 + 2 发布 61，120 B 逐字段）/ Soldier（2 订阅 +
+            // add_soldier 与整表重播都发 15 + 级联 14，72 B）/ Graphics（2 订阅 + 6 处发布
+            // 51/53/55，168 B = 0x18 头 + 3×0x30）/ FunctionHistoryRecorder（1 订阅、
+            // **发 0 条**，48 B）。地址级证据见四份模块文档与 docs/161 §2.2
+            | Wired::ColorManager
+            | Wired::SoldierManager
+            | Wired::GraphicsManager
+            | Wired::FunctionHistoryRecorder => SLOT_WIRED,
             Wired::ClientConnectionHandler | Wired::FunctionManager => SLOT_LAYOUT,
             _ => SLOT_ASSEMBLED,
         }
@@ -1563,10 +1576,23 @@ impl RootWiring {
         self.container.borrow().get_module::<GraphwarLocalPlayerManager>()
     }
 
-    // ---- 一次最小交互：14 个 manager 各走一遍"从容器取回 → 写 → 读回" ----
+    // ---- 任务 77：按类型取回四格（Color / Soldier / Graphics / FunctionHistoryRecorder） ----
 
-    /// **14 个 manager 的最小交互自检**（任务 19 的 5 个 + 任务 40 的 6 个
-    /// + 任务 36 的 `PlanePosManager` + 任务 74 的 `Rank` / `Name` / `LocalPlayer`）：
+    /// `get_module::<ColorManager>()`。构造点 `0x517690` + `call 0x465620` @`0x517e9f`。
+    pub fn color_manager(&self) -> Option<Rc<RefCell<GraphwarColorManager>>> {
+        self.container.borrow().get_module::<GraphwarColorManager>()
+    }
+
+    /// `get_module::<FunctionHistoryRecorder>()`。构造点 `0x517690` + `call 0x3f10a0` @`0x517e27`。
+    pub fn history(&self) -> Option<Rc<RefCell<History>>> {
+        self.container.borrow().get_module::<History>()
+    }
+
+    // ---- 一次最小交互：18 个 manager 各走一遍"从容器取回 → 写 → 读回" ----
+
+    /// **18 个 manager 的最小交互自检**（任务 19 的 5 个 + 任务 40 的 6 个
+    /// + 任务 36 的 `PlanePosManager` + 任务 74 的 `Rank` / `Name` / `LocalPlayer`
+    /// + 任务 77 的 `Color` / `Soldier` / `Graphics` / `FunctionHistoryRecorder`）：
     /// 每个都"从容器按类型取回 → 调一个入口 → 读回真值"。
     ///
     /// 返回值是 `(名字, 值)`；**每一条的值都是那次交互真算出来的**，没有一条是常量返回：
@@ -1976,6 +2002,146 @@ impl RootWiring {
             m.player_ids.clear();
             m.connected = 0;
             m.connection_id = 0;
+        }
+
+        // ⑯ ColorManager（任务 77）：`add_team_color`(0x464d10) 发 (61) → `color_of` 读回
+        //     → 整表重播 → `handle_entity_removed_event`(0x465570，**不发**) 删掉（幂等）。
+        //
+        // `SeqRng` 固定序列 ⇒ 起点 = `0 % 6 = 0` ⇒ Team1[0] = (186,42,32)；不碰真 `rand` 流
+        // （原版用线程局部 ChaCha，本层只验"判定规则"，模块文档 §6 已登记这条差异）。
+        if let Some(color) = self.color_manager() {
+            let mut m = color.borrow_mut();
+            let mut rng = crate::graphwar_color_manager::SeqRng::new(vec![0], vec![0]);
+            let info = m.add_team_color(9041, crate::graphwar_color_manager::TEAM1_KEY, &mut rng);
+            let rgb = |c: crate::graphwar_color_manager::GraphwarColor| format!("{},{},{}", c.r, c.g, c.b);
+            out.push(("color.rgb", rgb(info.color)));
+            out.push((
+                "color.read_back",
+                match m.color_of(9041) {
+                    Some(c) => rgb(c),
+                    None => "none".to_string(),
+                },
+            ));
+            out.push(("color.emitted", m.outbox_len().to_string()));
+            let replayed = m.handle_new_connection_event();
+            out.push(("color.replayed", replayed.len().to_string()));
+            out.push(("color.outbox_after_replay", m.outbox_len().to_string()));
+            out.push(("color.removed", m.handle_entity_removed_event(9041).to_string()));
+            out.push(("color.present_after", m.color_of(9041).is_some().to_string()));
+            out.push(("color.subs", m.subscribed.len().to_string()));
+            let _ = m.take_outbox();
+        }
+
+        // ⑰ SoldierManager（任务 77）：`add_soldier` 发 (15) → `owner_of` 读回 → 整表重播
+        //     → `handle_entity_removed_event`(0x4556d0) 级联发 (14)。
+        //
+        // 幂等：固定 id 9042/9043，`add_soldier` 对同一键是**覆盖**（表长不变），
+        // 起手/末尾都把发件箱取空（容器里 3 条 demo 士兵的 `add_soldier` 事件也在这里清掉）。
+        if let Some(soldier) = self.soldier_manager() {
+            let mut m = soldier.borrow_mut();
+            let _ = m.take_outbox();
+            m.add_soldier(9042, 9043);
+            out.push((
+                "soldier.owner",
+                match m.owner_of(9042) {
+                    Some(v) => v.to_string(),
+                    None => "none".to_string(),
+                },
+            ));
+            out.push(("soldier.emitted_add", m.outbox_len().to_string()));
+            out.push(("soldier.rows", m.len().to_string()));
+            let _ = m.take_outbox();
+            let cascaded = m.handle_entity_removed_event_emitting(9043);
+            out.push(("soldier.cascade", cascaded.len().to_string()));
+            out.push((
+                "soldier.cascade_tag",
+                m.outbox.first().map(|e| (e.tag() & 0xff) as u16).unwrap_or(u16::MAX).to_string(),
+            ));
+            let replayed = m.handle_new_connection_event();
+            out.push(("soldier.replayed", replayed.len().to_string()));
+            out.push(("soldier.subs", m.subscribed.len().to_string()));
+            let _ = m.take_outbox();
+        }
+
+        // ⑱ GraphicsManager（任务 77）：三个 setter（51/53/55）→ 读回 → 整表重播
+        //     → `handle_entity_removed_event`(0x469220，**不发**) 三张表各删一次。
+        if let Some(graphics) = self.graphics_manager() {
+            let mut m = graphics.borrow_mut();
+            let _ = m.take_outbox();
+            let _ = m.set_skin_graphics(9044, "yellow");
+            let _ = m.set_face_graphics(9044, "smile");
+            let _ = m.set_hat_graphics(9044, "cap");
+            out.push((
+                "graphics.skin",
+                match m.skins.get(&9044) {
+                    Some(v) => v.clone(),
+                    None => "none".to_string(),
+                },
+            ));
+            out.push(("graphics.emitted", m.outbox_len().to_string()));
+            let replayed = m.handle_new_connection_event();
+            let tags: Vec<String> = replayed.iter().map(|g| g.tag().to_string()).collect();
+            out.push(("graphics.tags", tags.join(",")));
+            out.push(("graphics.replayed", replayed.len().to_string()));
+            out.push(("graphics.outbox_after_replay", m.outbox_len().to_string()));
+            let _ = m.take_outbox();
+            out.push(("graphics.removed", m.handle_entity_removed_event(9044).to_string()));
+            out.push((
+                "graphics.present_after",
+                m.graphics_of(9044).iter().any(|v| v.is_some()).to_string(),
+            ));
+            out.push(("graphics.outbox_after_remove", m.outbox_len().to_string()));
+            out.push(("graphics.subs", m.subscribed.len().to_string()));
+            let _ = m.take_outbox();
+        }
+
+        // ⑲ FunctionHistoryRecorder（任务 77）：三道闸（tag 35 / None 文本 / 入库）各走一次，
+        //     **发 0 条**（`0x3f0e40` 体内零 add_event）。
+        //
+        // 幂等：末尾 `clear_for_probe()`（原版这条 Vec 只写不删，见模块文档）。
+        if let Some(history) = self.history() {
+            let mut m = history.borrow_mut();
+            m.clear_for_probe();
+            let _ = m.take_outbox();
+            let ok = m.handle_function_info_event(
+                9045,
+                Some("x".to_string()),
+                0x00ff_0000,
+                crate::function_history_recorder::EVENT_FUNCTION_INFO_TAG,
+            );
+            out.push(("history.recorded", ok.to_string()));
+            out.push(("history.len", m.len().to_string()));
+            out.push((
+                "history.first",
+                match m.entries().first() {
+                    Some(e) => format!("{},{:#08x},{}", e.text, e.color, e.player),
+                    None => "none".to_string(),
+                },
+            ));
+            out.push((
+                "history.wrong_tag",
+                m.handle_function_info_event(
+                    9045,
+                    Some("x".to_string()),
+                    0,
+                    0x8000_0000_0000_0021,
+                )
+                .to_string(),
+            ));
+            out.push((
+                "history.none_text",
+                m.handle_function_info_event(
+                    9045,
+                    None,
+                    0,
+                    crate::function_history_recorder::EVENT_FUNCTION_INFO_TAG,
+                )
+                .to_string(),
+            ));
+            out.push(("history.len_after_rejected", m.len().to_string()));
+            out.push(("history.emitted", m.outbox_len().to_string()));
+            out.push(("history.subs", m.subscribed.len().to_string()));
+            m.clear_for_probe();
         }
 
         out
@@ -2541,9 +2707,9 @@ mod tests {
                 SLOT_LAYOUT,    // 2  ClientConnectionHandler（布局全解，行为 0 行）
                 SLOT_WIRED,     // 3  LocalPlayerManager（订 3 发 6 + 12 条交互，任务 74）
                 SLOT_WIRED,     // 4  PlayerManager（订 2 发 2 + 6 条交互，任务 40）
-                SLOT_ASSEMBLED, // 5  SoldierManager
+                SLOT_WIRED,     // 5  SoldierManager（订 2 + add_soldier 发 15 + 级联 14 + 7 条交互，任务 77）
                 SLOT_WIRED,     // 6  PlanePosManager（24 B 布局全解 + 事件流两方向 + 9 条交互，任务 36）
-                SLOT_ASSEMBLED, // 7  GameStateManager
+                SLOT_ASSEMBLED, // 7  GameStateManager（禁区 src/game.rs）
                 SLOT_LAYOUT,    // 8  FunctionManager（布局全解，发方向未接）
                 SLOT_WIRED,     // 9  TargetManager（订 2 发 1 + 5 条）
                 SLOT_WIRED,     // 10 TeamManager（订 2 发 2 + 7 条交互，任务 40）
@@ -2552,12 +2718,12 @@ mod tests {
                 SLOT_WIRED,     // 13 TurnManager（订 2 发 1 + 6 条交互，任务 40）
                 SLOT_WIRED,     // 14 EffectManager（订 1 发 1 + 7 条交互，任务 40）
                 SLOT_WIRED,     // 15 ModeManager（订 1 发 3 + 5 条交互，任务 40）
-                SLOT_ASSEMBLED, // 16 GraphicsManager
+                SLOT_WIRED,     // 16 GraphicsManager（订 2 + 6 处发布 51/53/55 + 9 条交互，任务 77）
                 SLOT_WIRED,     // 17 EntityEffectManager（订 2 发 1 + 7 条交互，任务 40）
-                SLOT_ASSEMBLED, // 18 ComputerPlayerManager
-                SLOT_ASSEMBLED, // 19 FunctionHistoryRecorder
+                SLOT_ASSEMBLED, // 18 ComputerPlayerManager（要抓一次 bot 局）
+                SLOT_WIRED,     // 19 FunctionHistoryRecorder（订 1 发 0 + 8 条交互，任务 77）
                 SLOT_WIRED,     // 20 NameManager（订 2 发 2 + 9 条交互，任务 74）
-                SLOT_ASSEMBLED, // 21 ColorManager
+                SLOT_WIRED,     // 21 ColorManager（订 2 发 2 + 8 条交互，任务 77）
                 SLOT_WIRED,     // 22 RankManager（订 2 发 2 + 10 条交互，任务 74）
             ]
         );
@@ -2738,8 +2904,9 @@ mod tests {
     // headless 那一侧（`client/tools/assemble_check.gd` 的 `manager_probe_selftest`）
     // 读的是同一个 [`RootWiring::interaction_selftest`]，**两边数字必须一致**。
 
-    /// 期望值：`interaction_selftest()` 的完整输出（**65 条**，顺序即 11 个 manager 的序：
-    /// 任务 19 的 5 个 27 条在前、任务 40 的 6 个 38 条在后——前 27 条一个字都没动）。
+    /// 期望值：`interaction_selftest()` 的完整输出（**135 条**，顺序即 18 个 manager 的序：
+    /// 任务 19 的 5 个 27 条 + 任务 40 的 6 个 38 条 + 任务 36 的 9 条
+    /// + 任务 74 的 29 条 + 任务 77 的四格 32 条；**旧条目一个字都没动**，新条目只往后追加）。
     fn expected_selftest() -> Vec<(&'static str, String)> {
         [
             // ① LifeManager
@@ -2860,6 +3027,42 @@ mod tests {
             ("local_player.removed", "1"),
             ("local_player.ids_after", "1"),
             ("local_player.subs", "3"),
+            // ⑯ ColorManager（任务 77）：add_team_color(0x464d10) 发 (61) → 读回 → 重播 → 删
+            ("color.rgb", "186,42,32"),
+            ("color.read_back", "186,42,32"),
+            ("color.emitted", "1"),
+            ("color.replayed", "1"),
+            ("color.outbox_after_replay", "2"),
+            ("color.removed", "true"),
+            ("color.present_after", "false"),
+            ("color.subs", "2"),
+            // ⑰ SoldierManager（任务 77）：add_soldier 发 (15)、级联发 (14)、整表重播 N 条
+            ("soldier.owner", "9043"),
+            ("soldier.emitted_add", "1"),
+            ("soldier.rows", "4"),
+            ("soldier.cascade", "1"),
+            ("soldier.cascade_tag", "14"),
+            ("soldier.replayed", "4"),
+            ("soldier.subs", "2"),
+            // ⑱ GraphicsManager（任务 77）：三个 setter 51/53/55 → 重播同序 → 三张表各删
+            ("graphics.skin", "yellow"),
+            ("graphics.emitted", "3"),
+            ("graphics.tags", "51,53,55"),
+            ("graphics.replayed", "3"),
+            ("graphics.outbox_after_replay", "6"),
+            ("graphics.removed", "3"),
+            ("graphics.present_after", "false"),
+            ("graphics.outbox_after_remove", "0"),
+            ("graphics.subs", "2"),
+            // ⑲ FunctionHistoryRecorder（任务 77）：tag 35 才收、None 丢、发 0 条
+            ("history.recorded", "true"),
+            ("history.len", "1"),
+            ("history.first", "x,0xff0000,9045"),
+            ("history.wrong_tag", "false"),
+            ("history.none_text", "false"),
+            ("history.len_after_rejected", "1"),
+            ("history.emitted", "0"),
+            ("history.subs", "1"),
         ]
         .into_iter()
         .map(|(k, v)| (k, v.to_string()))
@@ -2939,7 +3142,7 @@ mod tests {
         let first = wiring.interaction_selftest_strings();
         let second = wiring.interaction_selftest_strings();
         assert_eq!(first, second, "重复调用必须给出同一串 名字=值");
-        assert_eq!(first.len(), 103);
+        assert_eq!(first.len(), 135);
         assert_eq!(first[0], "life.alive=1");
         assert_eq!(first[64], "effect.outbox=1");
         // 任务 36 新增的 9 条（顺序接在 ⑪ 之后）
@@ -2952,6 +3155,15 @@ mod tests {
         assert_eq!(first[90], "name.subs=2");
         assert_eq!(first[91], "local_player.before_connect=0");
         assert_eq!(first[102], "local_player.subs=3");
+        // 任务 77 新增的 32 条（顺序接在 ⑮ 之后：8 + 7 + 9 + 8）
+        assert_eq!(first[103], "color.rgb=186,42,32");
+        assert_eq!(first[110], "color.subs=2");
+        assert_eq!(first[111], "soldier.owner=9043");
+        assert_eq!(first[117], "soldier.subs=2");
+        assert_eq!(first[118], "graphics.skin=yellow");
+        assert_eq!(first[126], "graphics.subs=2");
+        assert_eq!(first[127], "history.recorded=true");
+        assert_eq!(first[134], "history.subs=1");
     }
 
     /// 取回来的值不是常量：换一个输入，读回来的就变了（防"probe 直接 return 常量"）。

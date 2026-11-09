@@ -1,8 +1,10 @@
 # 161 · 停在 `assembled` 的 9 个 manager：升档要什么证据（2026-11-09，第十三轮之后）
 
-> **一句话**：档位分布现在是 **14 `wired` / 2 `layout` / 6 `assembled` / 0 `stub`**
-> （本文定稿时是 11 / 2 / 9 / 0，任务 74 把 `Rank` / `Name` / `LocalPlayer` 三格升到 `wired`，
-> 见 §2 的 ✅ 行与 [`16-client.md`](16-client.md) §54）。本轮（161）把 9 个里的 **8 个**的
+> **一句话**：档位分布现在是 **18 `wired` / 2 `layout` / 2 `assembled` / 0 `stub`**
+> （本文定稿时是 11 / 2 / 9 / 0；任务 74 把 `Rank` / `Name` / `LocalPlayer` 三格升到 `wired`
+> → 14 / 2 / 6 / 0；**任务 77 把 `Color` / `Soldier` / `Graphics` / `FunctionHistoryRecorder`
+> 四格升到 `wired`** → 18 / 2 / 2 / 0，见 §2.1 / §2.2 与 [`16-client.md`](16-client.md) §54/§55）。
+> 本轮（161）把 9 个里的 **8 个**的
 > **构造点 + 订阅 + 发布方向**全部钉到指令，其中 **2 个 `new` 的 x86 地址是当时才定下来的**
 > （`GraphwarNameManager` / `FunctionHistoryRecorder`）。
 > 结论：下一轮的活**大部分是工程（接线层 + 交互断言），不是再挖证据**——任务 74 就是照这个做的
@@ -21,9 +23,9 @@
 
 | 口径 | 位置 | 结果 |
 |---|---|---|
-| 判据函数本体 | `src/_scaffold/root_wiring.rs` 的 `Wired::status()`（`match` 臂） | `wired` 臂 **14** 个 / `layout` 臂 **2** 个 / 其余落 `_ =>` = **6** |
-| 四个计数常量 + 编译期闸 | 同文件 `WIRED_TIER_COUNT` / `LAYOUT_TIER_COUNT` / `ASSEMBLED_TIER_COUNT` / `STUB_TIER_COUNT` | **14 / 2 / 6 / 0**；`const _: () = assert!(四者之和 == Wired::COUNT)`（= 22）**在编译期就红**，改一槽漏改这里编不过 |
-| 运行时断言表 | `client/tools/assemble_check.gd` 的 `WIRED_TIER[22]` + `TIER_TALLY` | 逐槽字符串 / 计数，与上二者一致（**14 / 2 / 6 / 0**） |
+| 判据函数本体 | `src/_scaffold/root_wiring.rs` 的 `Wired::status()`（`match` 臂） | `wired` 臂 **18** 个 / `layout` 臂 **2** 个 / 其余落 `_ =>` = **2** |
+| 四个计数常量 + 编译期闸 | 同文件 `WIRED_TIER_COUNT` / `LAYOUT_TIER_COUNT` / `ASSEMBLED_TIER_COUNT` / `STUB_TIER_COUNT` | **18 / 2 / 2 / 0**；`const _: () = assert!(四者之和 == Wired::COUNT)`（= 22）**在编译期就红**，改一槽漏改这里编不过 |
+| 运行时断言表 | `client/tools/assemble_check.gd` 的 `WIRED_TIER[22]` + `TIER_TALLY` | 逐槽字符串 / 计数，与上二者一致（**18 / 2 / 2 / 0**） |
 
 复核命令（5 秒，不需要编译）：
 
@@ -44,8 +46,8 @@ sed -n '/const WIRED_TIER :=/,/^]/p' client/tools/assemble_check.gd | grep -c '"
 `20 GraphwarNameManager` / `21 GraphwarColorManager` / `22 GraphwarRankManager`。
 
 **任务 74 升掉的 3 个**（→ `wired`）：`3 LocalPlayer` / `20 Name` / `22 Rank`（§2 的 ✅ 行）。
-**现在剩的 6 个**：`5 Soldier` / `7 GameState`（⛔ 禁区）/ `16 Graphics` /
-`18 ComputerPlayer` / `19 FunctionHistoryRecorder` / `21 Color`。
+**任务 77 再升 4 个**（→ `wired`）：`5 Soldier` / `16 Graphics` / `19 FunctionHistoryRecorder` / `21 Color`（§2.2）。
+**现在剩的 2 个**：`7 GameState`（⛔ 禁区 `src/game.rs`）/ `18 ComputerPlayer`（要抓一次 bot 局）。
 
 ### 0.3 ⚠️ `docs/00` 那条"7"是**陈旧数据**（本轮登记，不改）
 
@@ -54,7 +56,7 @@ sed -n '/const WIRED_TIER :=/,/^]/p' client/tools/assemble_check.gd | grep -c '"
 ```text
 | ~~4 个 manager 仍是 `assembled`~~（**已由协调方就地更正为 9**） | 只构造注册、没接事件流（**11 wired / 2 layout / 9 assembled / 0 stub = 22**） | 缺工程 | ✅ 可做 |
 
-> ⚠️ 上面这段是 `docs/00` 的**历史引文**。任务 74 之后现值是 **14 / 2 / 6 / 0**
+> ⚠️ 上面这段是 `docs/00` 的**历史引文**。任务 74 之后是 **14 / 2 / 6 / 0**、任务 77 之后**现值是 18 / 2 / 2 / 0**
 > （见 §9），`docs/00-status.md` §0.1b.2 与 `docs/HANDOVER.md` §遗留 那两处仍写着旧的
 > 9 格 / 11-2-9-0 —— 这两个文件**不在任务 74 的允许改动清单里**，只能登记（§7 C7）。
 ```
@@ -110,13 +112,13 @@ tag word 的两种构造都出现过，读的时候别只找 `movabs` 立即数�
 | # | manager（原版型 / size / 我方型） | 已知什么 | **缺什么证据** | 拿证据的手段 |
 |---|---|---|---|---|
 | 3 | `GraphwarLocalPlayerManager` / 64 / `graphwar_local_player_manager::GraphwarLocalPlayerManager` | `new` **内联**进 `GraphwarGameClient::new`（arm64 `0x409eac` 处 `alloc 0x58`，无独立符号）；**订阅 3 条**（全在 `0x517690` 体内）：`connected_to_server_event`(7) `@0x5179d4` → `0x51a570`、`player_info_event`(13) `@0x517a27` → `0x519f40`、`entity_removed_event`(14) `@0x517a77` → `0x51a610`；**发 6 条**：`handle_player_info`(`0x519f40`) 里 5 处 `add_event` = **59**`@0x51a170` / **50**`@0x51a247` / **52**`@0x51a31e` / **54**`@0x51a3f5` / **66**`@0x51a451`，`handle_connected_to_server`(`0x51a570`) 里 1 处 = **7**`@0x51a5bb`；档案四字段 `+0x18/+0x30/+0x48/+0x60`（模块文档 §3） | ✅ **任务 74 已升 `wired`**（§2.1）：① `+0x20` = `Weak<RefCell<Self>>` 自句柄（写点 `0x517965`，值 = 盒基）② 5 条请求内部**没有**逐条判据，门是**五道**（`0x519f68` connected / `0x519f71` conn 相等 / `0x519f9d` 旧 len==0 / **`0x519fb1`→`0x51a058` 新发现的一张表**）③ `outbox`/`subscribed` 已落码。**仍缺**：第五道门那张表（key = `player_id`、entry 120 B）的语义（§4 G7） | ① `new` 的 `alloc 0x58` 之后 24 条写指令逐条读（arm64 `0x409eac`–`0x409f60`），判 `+0x20` 是 `Option`/`Weak`/标志 ② `0x519f40` 的 5 段：每段 `add_event` 前的 `cmp`/`jne` 就是门（`addr_probe.py dis 0x519f40`，5 段各 40–60 行）③ 这一条不用新证据，照 `docs/archive/156-client-rounds.md` §50.1 的写法加 `subscribed`/`outbox` |
-| 5 | `GraphwarSoldierManager` / 72 / `graphwar_soldier_manager::SoldierTable` | `new` = `0x455760`（call 点 `0x517af8`，arm64 `0x49d590`）；**订阅 2 条**：`new_connection_event`(5) `@0x4557e5` → `0x455570` `send_all_info_events`、`entity_removed_event`(14) `@0x455836` → `0x4556d0`；**发 1 条** `SoldierInfo`(15) `@0x455616`；模块文档 §6 已列 5 条未知 | ① `add_soldier` 的 x86 地址**没锚到**（`name_to_addr.tsv` 两个候选 `0x3e2830` / `0x474a10` 都被证否）⇒ 它**发不发 `SoldierInfo`(15)** 未知（模块 §6-B）② 表里**键值极性**只有间接证据（§6-D）③ 72 B 逐字段 | ① 用 arm64 侧**已知的 144 B 体**（`0x49d2fc`）做 x86 指纹匹配：`tools/func_diff.py` / `tools/sym_match.py`（arm64 有符号、x86 无符号，这是现成路子）② 极性：读 `send_all_info_events` `0x455570` 的载荷装配（哪个寄存器进 `+0x00` / `+0x08`）+ `handle_entity_removed_event` `0x4556d0` 拿 `event+8` 当 key 的那条 `cmp` ③ 同上判据 §1.2 的"写入点 + 偏移"清单 |
+| 5 | `GraphwarSoldierManager` / 72 / `graphwar_soldier_manager::SoldierTable` | `new` = `0x455760`（call 点 `0x517af8`，arm64 `0x49d590`）；**订阅 2 条**：`new_connection_event`(5) `@0x4557e5` → `0x455570` `send_all_info_events`、`entity_removed_event`(14) `@0x455836` → `0x4556d0`；**发 1 条** `SoldierInfo`(15) `@0x455616`；模块文档 §6 已列 5 条未知 | ✅ **任务 77 已升 `wired`**（§2.2）。原缺：① `add_soldier` 的 x86 地址**没锚到**（`name_to_addr.tsv` 两个候选 `0x3e2830` / `0x474a10` 都被证否）⇒ 它**发不发 `SoldierInfo`(15)** 未知（模块 §6-B）② 表里**键值极性**只有间接证据（§6-D）③ 72 B 逐字段 | ① 用 arm64 侧**已知的 144 B 体**（`0x49d2fc`）做 x86 指纹匹配：`tools/func_diff.py` / `tools/sym_match.py`（arm64 有符号、x86 无符号，这是现成路子）② 极性：读 `send_all_info_events` `0x455570` 的载荷装配（哪个寄存器进 `+0x00` / `+0x08`）+ `handle_entity_removed_event` `0x4556d0` 拿 `event+8` 当 key 的那条 `cmp` ③ 同上判据 §1.2 的"写入点 + 偏移"清单 |
 | 7 | `GraphwarGameStateManager` / 296 / `game::Match` | `new` = `0x477bc0`（**虚调**：经槽 `0x9bbce8`，站点 `0x517b65`；arm64 `0x4ade6c`）；**订阅 7 条**，全部**逐字节复核**且与 `156` §50.0 那 7 个名字**完全一致**：`tick`(0)`@0x477c92`→`0x470840`、`new_connection`(5)`@0x477ce8`→`0x477140`、`entity_removed`(14)`@0x477d3e`→`0x476a20`、`connection_removed`(6)`@0x477d94`→`0x477540`、`function_points`(37)`@0x477dea`→`0x4758b0`、`skin_graphics_info`(51)`@0x477e40`→`0x4741a0`、`chat_message`(71)`@0x477e96`→`0x473d00` | **不是证据缺，是禁区块**：容器里装的是 `src/game.rs` 的 `Match`（结算内核，`fire`/`batch` 三条驱动轴都在用它）⇒ 接事件层**必须改 `src/game.rs`**；`grep -n "outbox\|subscribed" src/game.rs` 零命中。另：296 B 布局**没有**逐字段（`Match` 不是布局复原，是行为复原） | 两条路都已被 `156` §50.4 否定（加壳会改容器类型、另起旁表=把猜测写成行为）。**唯一的正路**：等 `src/game.rs` 解禁后按 §50.1 的六个 manager 同款写法加 `SUBSCRIBED_EVENTS[7]` + `outbox` + 7 个 `handle_*` 入口。**在此之前派活只会撞墙** |
-| 16 | `GraphwarGraphicsManager` / 168 / `graphwar_graphics_manager::GraphwarGraphicsManager` | `new` = `0x469390`（call 点 `0x517d73`，arm64 `0x49e394`）；**订阅 2 条**：`new_connection_event`(5)`@0x469415`→`0x468d80`、`entity_removed_event`(14)`@0x469466`→`0x469220`；**发 4 处**：`set_hat_graphics`(`0x468a50`)→**55**`@0x468abe`、`set_face_graphics`(`0x468b60`)→**53**`@0x468bce`、`set_skin_graphics`(`0x468c70`)→**51**`@0x468cde`、`send_all_info_events`(`0x468d80`) 三处重播 `@0x468eac`/`@0x468fe6`/`@0x469122`；三张表在 `+0x18/+0x48/+0x78`（hasher 各自 `+0x20`，模块文档 §2）；`outbox`/`take_outbox` **代码里已有** | ① 168 B 里**三张表以外**还有 4 个字（`0x18×3 = 0x78`，到 `0xa8` 之间有 `0x30` 字节）没解 ② `send_all_info_events` 的**第三处**重播 tag 是**间接载入**（`mov rax,[rsp+0x10]`）⇒ 我方扫描只读到两处字面量 51/53，第三处按模块文档是 **55**，**未逐位复核** ③ 贴图来源不在本模块（`GraphwarTextureLoader`，模块 §3 的有界否定） | ① `new` 的 `alloc` 之后全部写指令（`0x469390`–`0x4694e9`）+ 三个 getter（`+0x150/+0x180/+0x1b0` 一族）逐条读 ② `0x469122` 往前 20 条，跟 `[rsp+0x10]` 的来源（三表循环的公共 tag） ③ 贴图侧去找 `GraphwarTextureLoader` 的 `new`（不是本槽的事，别混） |
+| 16 | `GraphwarGraphicsManager` / 168 / `graphwar_graphics_manager::GraphwarGraphicsManager` | `new` = `0x469390`（call 点 `0x517d73`，arm64 `0x49e394`）；**订阅 2 条**：`new_connection_event`(5)`@0x469415`→`0x468d80`、`entity_removed_event`(14)`@0x469466`→`0x469220`；**发 4 处**：`set_hat_graphics`(`0x468a50`)→**55**`@0x468abe`、`set_face_graphics`(`0x468b60`)→**53**`@0x468bce`、`set_skin_graphics`(`0x468c70`)→**51**`@0x468cde`、`send_all_info_events`(`0x468d80`) 三处重播 `@0x468eac`/`@0x468fe6`/`@0x469122`；三张表在 `+0x18/+0x48/+0x78`（hasher 各自 `+0x20`，模块文档 §2）；`outbox`/`take_outbox` **代码里已有** | ✅ **任务 77 已升 `wired`**（§2.2）。原缺：① 168 B 里**三张表以外**还有 4 个字（`0x18×3 = 0x78`，到 `0xa8` 之间有 `0x30` 字节）没解 ② `send_all_info_events` 的**第三处**重播 tag 是**间接载入**（`mov rax,[rsp+0x10]`）⇒ 我方扫描只读到两处字面量 51/53，第三处按模块文档是 **55**，**未逐位复核** ③ 贴图来源不在本模块（`GraphwarTextureLoader`，模块 §3 的有界否定） | ① `new` 的 `alloc` 之后全部写指令（`0x469390`–`0x4694e9`）+ 三个 getter（`+0x150/+0x180/+0x1b0` 一族）逐条读 ② `0x469122` 往前 20 条，跟 `[rsp+0x10]` 的来源（三表循环的公共 tag） ③ 贴图侧去找 `GraphwarTextureLoader` 的 `new`（不是本槽的事，别混） |
 | 18 | `GraphwarComputerPlayerManager` / 72 / `graphwar_computer_player_manager::ComputerPlayers` | `new` = `0x47a720`（call 点 `0x517deb`，arm64 `0x4b02a4`）；**订阅 3 条**：`tick_event`(0)`@0x47a7a5`→`0x4785f0` `handle_tick`、`turn_info_event`(43)`@0x47a7fa`→`0x479520`、`entity_removed_event`(14)`@0x47a84b`→`0x47a520`；**发 5 条**（全在 `add_computer_player` `0x478fc0`）：**59**`@0x4791f9`、50-base`@0x479271`（tag 待读）、**52**`@0x4792ec`、**54**`@0x479366`、**66**`@0x4793a6`；难度六档阈值 `4/11/26/101/251`（模块 §3，与 [`13-ai.md`](13-ai.md) §1 互证） | ① `handle_tick` 里 `state != 3` 走的那条**不返回**路径（`0x5ec160`，Ghidra 标 `hasNoReturn`）是什么（模块 §7-A）② `state` 的 `0/1/2` 语义（§7-B）③ `computer_function_thread` 的 x86 地址靠夹逼（§7-C）④ `BotData` 那个 120 字节**大半未解**（模块文档字段表末行）⑤ `0x479271` 那处的 tag | ① `addr_probe.py dis 0x4785f0`，追 `0x5ec160` 的调用点前后（它是 `noreturn`，所以"不返回"其实是 `panic!`/`abort`，判据是它前面那条 `lea rdi,<&str>` 的串）② 全 `.text` 搜 `BotData` 的 state 字（`+0x00`）**写入点**：立即数 0..3 的 `mov dword ptr [reg+disp], N`，且 `reg` 来自 `0x478fc0` 的插入路径 ③ 与 ① 同一条线索（线程体就在 `add_computer_player` 的 `spawn` 参数里）④ `new`/`add_computer_player` 里对 `+0x18` 起的 120 字节逐字段 |
-| 19 | `FunctionHistoryRecorder` / 48 / `function_history_recorder::History` | **`new` = `0x3f10a0`（本轮新钉；`name_to_addr.tsv` 原记"未知"）**，call 点 `0x517e27`，arm64 `0x49d9a0`；**订阅 1 条**：名字逐字节 `function_info_event`（`0x1bfccd`，len `0x13`）`@0x3f115a` → 处理器 `0x3f0e40`，其体内**判别值闸 = 35**（`lea rax,[isize::MAX+0x24]`）；**发 0 条**（`0x3f0e40` 体内无 `add_event`）；容量/去重两条已有硬结论（模块文档，观测） | ① **口径冲突（必须先裁）**：本模块把 tag **35** 叫 `function_fire_event`（`EVENT_FIRE_TAG = 0x8000…0023`），而 [`07-protocol.md`](07-protocol.md) §7.2 的 72 条表里 **33 = `function_fire_event`、35 = `function_info_event`**；本轮字节证据（订阅名字 + 判别值闸）**两边都指向 35** ② `Vec<FunctionData>` 的**消费点**（上下键）全库无落点（有界否定，模块文档 §"上下键"）③ 48 B 逐字段 | ① 裁定判据：全 `.text` 找**构造 33** 的地方（`movabs 0x8000…><0021` 或 base+`0x21`）；若 33 只在**解码器**里出现、且没有任何订阅者，则"35 才是 recorder 订阅的那条"成立，我方改名 ② 消费点：真机按一次 `ui_up` 抓 `LineEdit.text`（`docs/06` §13 的 `tools/frida_live.js` 可用），或者接受"只写不读"并登记 ③ 同上逐字段 |
+| 19 | `FunctionHistoryRecorder` / 48 / `function_history_recorder::History` | **`new` = `0x3f10a0`（本轮新钉；`name_to_addr.tsv` 原记"未知"）**，call 点 `0x517e27`，arm64 `0x49d9a0`；**订阅 1 条**：名字逐字节 `function_info_event`（`0x1bfccd`，len `0x13`）`@0x3f115a` → 处理器 `0x3f0e40`，其体内**判别值闸 = 35**（`lea rax,[isize::MAX+0x24]`）；**发 0 条**（`0x3f0e40` 体内无 `add_event`）；容量/去重两条已有硬结论（模块文档，观测） | ✅ **任务 77 已升 `wired`**（§2.2）。原缺：① **口径冲突（必须先裁）**：本模块把 tag **35** 叫 `function_fire_event`（`EVENT_FIRE_TAG = 0x8000…0023`），而 [`07-protocol.md`](07-protocol.md) §7.2 的 72 条表里 **33 = `function_fire_event`、35 = `function_info_event`**；本轮字节证据（订阅名字 + 判别值闸）**两边都指向 35** ② `Vec<FunctionData>` 的**消费点**（上下键）全库无落点（有界否定，模块文档 §"上下键"）③ 48 B 逐字段 | ① 裁定判据：全 `.text` 找**构造 33** 的地方（`movabs 0x8000…><0021` 或 base+`0x21`）；若 33 只在**解码器**里出现、且没有任何订阅者，则"35 才是 recorder 订阅的那条"成立，我方改名 ② 消费点：真机按一次 `ui_up` 抓 `LineEdit.text`（`docs/06` §13 的 `tools/frida_live.js` 可用），或者接受"只写不读"并登记 ③ 同上逐字段 |
 | 20 | `GraphwarNameManager` / 72 / `graphwar_name_manager::GraphwarNameManager` | **`new` = `0x519100`（本轮新钉；`name_to_addr.tsv` 给的 4 个候选 `0x3b6b20`/`0x3b6c70`/`0x420b40`/`0x4500c0` 全错——`0x4500c0` 是 `game_server_thread`）**，call 点 `0x517e63`，arm64 `0x40af68`；**订阅 2 条**：`new_connection_event`(5)`@0x519209`→`0x518f10`、`entity_removed_event`(14)`@0x519255`→`0x519030`；**发 2 条** `NameInfo`(60)：`@0x518fe5`（整表重播）、`@0x5193e8`（`set_name` `0x519350`）；表 `+0x18`、hasher `+0x38`、entry `0x20`（模块文档 §2） | ✅ **任务 74 已升 `wired`**（§2.1）：① 结案——盒是 `alloc 0x60`（RcInner 16 + RefCell 80），`M` 基 = `盒+0x18`；`+0x38` 起那 **16** 字节是 `RandomState`（两个 `u64`，写点 `0x5191a5`/`0x5191a9`），**没有空洞**，72 B 全部有写入点 ② `outbox`/`subscribed` 已落码。**无遗留** | ① 先定基址：arm64 `0x40af68` 的 `alloc` 尺寸（`RefCell<M>` = 80 = 72+8 ⇒ **`0x50`**，不是 `0x58`；`0x58` 是 `RcInner`），再把写入点减去 `0x18` 对齐 ② 断言照 `156` §50.5 的写法：`set_name(9010,"x")` → 读回表 → `take_outbox()` 应恰好 1 条 (60) |
-| 21 | `GraphwarColorManager` / 120 / `graphwar_color_manager::GraphwarColorManager` | `new` = `0x465620`（call 点 `0x517e9f`，arm64 `0x49cbe8`）；**订阅 2 条**：`new_connection_event`(5)`@0x4656a5`→`0x465460`、`entity_removed_event`(14)`@0x4656f6`→`0x465570`；**发 2 条** `ColorInfo`(61)：`@0x464fb6`（`add_team_color` `0x464d10`）、`@0x465517`（整表重播）；两张 6 色池字面量**逐位**（模块 §2）、分配规则"队号选池 + 随机起点 + 线性探测"（§3）、载荷 8 字节 `{id@+0, r@+4, g@+5, b@+6}`（§5） | ① `new` 的第三个字段 `self+0x10` **没被本模块任何函数读过**（模块 §6 第一条）② 120 B 逐字段 ③ 随机流**消耗顺序**：起点 1 次 `u64` + 兜底 3 次 `u8` ⇒ 复现第 n 个玩家必须真 `rand_chacha` 流（模块 §6 第三条，标推断） | ① `+0x10` 只在 `new` 里写、读侧零命中 ⇒ 判"留给别人的借用句柄 or 缓存"，定案要**读 `new` 的初始化闭包**（`Rc::new_cyclic_in`，`0x465620` 里那段）② 逐字段同上 ③ 随机流：抓一次 `request_new_player` 前后的 ChaCha 状态（`tools/capture_rand_values.js` 已有；见 `docs/06` §13 的 frida 活体） |
+| 21 | `GraphwarColorManager` / 120 / `graphwar_color_manager::GraphwarColorManager` | `new` = `0x465620`（call 点 `0x517e9f`，arm64 `0x49cbe8`）；**订阅 2 条**：`new_connection_event`(5)`@0x4656a5`→`0x465460`、`entity_removed_event`(14)`@0x4656f6`→`0x465570`；**发 2 条** `ColorInfo`(61)：`@0x464fb6`（`add_team_color` `0x464d10`）、`@0x465517`（整表重播）；两张 6 色池字面量**逐位**（模块 §2）、分配规则"队号选池 + 随机起点 + 线性探测"（§3）、载荷 8 字节 `{id@+0, r@+4, g@+5, b@+6}`（§5） | ✅ **任务 77 已升 `wired`**（§2.2）。原缺：① `new` 的第三个字段 `self+0x10` **没被本模块任何函数读过**（模块 §6 第一条）② 120 B 逐字段 ③ 随机流**消耗顺序**：起点 1 次 `u64` + 兜底 3 次 `u8` ⇒ 复现第 n 个玩家必须真 `rand_chacha` 流（模块 §6 第三条，标推断） | ① `+0x10` 只在 `new` 里写、读侧零命中 ⇒ 判"留给别人的借用句柄 or 缓存"，定案要**读 `new` 的初始化闭包**（`Rc::new_cyclic_in`，`0x465620` 里那段）② 逐字段同上 ③ 随机流：抓一次 `request_new_player` 前后的 ChaCha 状态（`tools/capture_rand_values.js` 已有；见 `docs/06` §13 的 frida 活体） |
 | 22 | `GraphwarRankManager` / 72 / `graphwar_rank_manager::GraphwarRankManager` | `new` = `0x454f30`（call 点 `0x517edb`，arm64 `0x498d2c`）；**订阅 2 条**：`new_connection_event`(5)`@0x454fb5`→`0x454d80`、`entity_removed_event`(14)`@0x455006`→`0x454e80`；**发 2 条** `RankInfo`(67)：`@0x454e35`（整表重播）、`@0x45511f`（`set_rank` `0x455090`）；表基 `+0x18` / hasher `+0x38` / 载荷 `{+0x08 flag, +0x0c rank, +0x10 player}`（模块 §3，并就地更正了 `docs/112` §5.3 的"两张 map"误读） | ✅ **任务 74 已升 `wired`**（§2.1）：① `outbox`/`subscribed` 已落码；x86 两条订阅 + 两处 `add_event` 逐条复核（`0x454fb5`/`0x455006`、`0x454e35`/`0x45511f`）② 72 B 里 `+0x00` = 自句柄（`0x454f62` 读它当 `Weak`）、`+0x18` 表、`+0x38` hasher 16 B。**仍缺**：`+0x08` 那个标志**是否进序列化**（§4 G3，**不阻塞** `wired`） | ① 判据：`serde` 的 `RankInfo` 字段数（`docs/07` §3.3 记 `rank_info` 的线上体 = `entity_id` + `rank`，wire 只有 2 个）＋ `set_rank` 里那三处 `mov` 的**顺序**；定案不需要新证据，读 `0x455090`–`0x45511f` 逐条即可 ② 断言：`set_rank(9011, Some(3))` → 读回 → outbox 1 条 (67) |
 
 ### 2.1 任务 74 完成的三格（地址级：补了什么 / 还剩什么）
@@ -131,6 +133,87 @@ tag word 的两种构造都出现过，读的时候别只找 `movabs` 立即数�
 四个档位口径同批改动：`Wired::status()` 三个臂 / `WIRED_TIER_COUNT` 11→14 与
 `ASSEMBLED_TIER_COUNT` 9→6 / `assemble_check.gd` 的 `WIRED_TIER` + `TIER_TALLY` / 本文。
 `assemble_check` **217 → 226**（+9 条：三格各 3 条，分别指订阅 / 发布 / 状态）。
+
+### 2.2 任务 77 完成的四格（地址级：补了什么 / 还剩什么）
+
+四格都是同一个判据：**容器 + 事件流两个方向都指到指令 + 最小交互断言**（§1.1）。
+证据全部在 **x86** 上逐条复核（arm64 只用来定名，不抄结论）。
+
+| # | manager | 订阅（x86 调用点 → 闭包槽`+0x20` → 处理器） | 发布（x86 `add_event` 点） | 交互读数 | 剩余 |
+|---|---|---|---|---|---|
+| 21 | `ColorManager` | `new_connection_event` `0x4656a5` → `0x957dc0` → **`0x465460`**；`entity_removed_event` `0x4656f6` → `0x957de8` → **`0x465570`** | **61** `@0x464fb6`（`add_team_color`）/ `@0x465517`（整表重播）；`0x465570` 体内**零** `add_event` | **8** 条 `color.*` | 随机流口径（不阻塞） |
+| 5 | `SoldierManager` | `0x4557e5` → `0x956980` → **`0x455570`**；`0x455836` → `0x9569a8` → **`0x4556d0`** | **15** `@0x455616`（整表重播）＋ **15** `@0x474ba5`（`add_soldier`，内联进 `0x474a10`）＋ **14**（级联 `0x444fd0`） | **7** 条 `soldier.*` | 无（`add_soldier` 极性/发送已结案） |
+| 16 | `GraphicsManager` | `0x469415` → `0x958330` → **`0x468d80`**；`0x469466` → `0x958358` → **`0x469220`** | **51** `@0x468cde` / **53** `@0x468bce` / **55** `@0x468abe`（三个 setter）；整表重播三处 `@0x468eac`/`@0x468fe6`/`@0x469122` = 51/53/**55** | **9** 条 `graphics.*` | 贴图侧（`GraphwarTextureLoader`，另一个模块） |
+| 19 | `FunctionHistoryRecorder` | `function_info_event`（`0x1bfccd`, len `0x13`）`0x3f115a` → `0x955050` → **`0x3f0e40`** | **0 条**（`0x3f0e40` 体内零 `add_event`；发方向是**正面证据**） | **8** 条 `history.*` | 消费点（上下键）仍未知 |
+| 3 | `LocalPlayerManager` | （任务 74：`0x5179d4`/`0x517a27`/`0x517a77`） | 6 处 | 12 条 | 第五道门的表（G7） |
+
+四格各自补上的**证据**（这一轮新解出来的东西，逐条能指到指令）：
+
+**① `Color` 的 `+0x10`（G2）—— 容器弱引用，且本模块零读点**
+
+```text
+建盒 0x524140（唯一调用点 0x465632）：alloc 0x90 = RcInner 16 + RefCell 8 + 120
+  0x52422f mov [rbx+0x18], rbx      ; M+0x00 = 盒基（弱自句柄）
+  0x524233 mov [rbx+0x20], r14      ; M+0x08 = 事件通道 Rc（调用点 0x517e83 inc [r14] = 强计数）
+  0x524237 mov [rbx+0x28], r15      ; M+0x10 = **容器 Weak**（调用点 0x517e8c inc [r15+8] = 弱计数）
+两张 6 色表由 **0x465070**（`init_team_colors`，唯一调用点 0x5241e9）建，落在 M+0x48
+  ⇒ 120 = 0x18 头 + 0x30 占用表 + 0x30 队池表（没有空洞）
+读点普查（有界否定，带正对照）：4 个函数体里对 M+0x10 的读 = **0**；
+  同一次扫描能看到 +0x18/+0x30/+0x38/+0x48/+0x60/+0x68 的读写 ⇒ 不是扫法坏了
+```
+
+**② `Soldier` 的 `add_soldier`（G4）—— 它**发** `SoldierInfo`(15)，而且是内联的**
+
+```text
+x86 侧没有独立函数：正文内联进 GraphwarGameStateManager::add_soldier_to_player（0x474a10）
+  判据① 该函数正是调三个外观 setter 的那个（0x474d91 / 0x474eca / 0x47500c = skin/face/hat）
+  判据② addr_probe.py locs 0x474a10 命中 src/graphwar_soldier_manager.rs:65:26（另外 17 条是 game_state_manager）
+  判据③ 体内用的是本模块的表基/通道：0x474b5d lea rdi,[r14+0x30]（= M+0x18）、0x474b6a mov r15,[r14+0x20]（= M+0x08）
+块内（0x474b38–0x474bab）：
+  0x474b50 mov ebx,1 ; 0x474b55 lock xadd [0x9c10c0], ebx   ; 全局原子计数器发一个**新兵 id**
+  0x474b61 mov esi,ebx / 0x474b63 mov edx,ebp / 0x474b65 call 0x442330   ; insert(新兵, owner)
+  0x474b85/0x474b89 mov [rsp+0x30],[rsp+0x34] = (新兵, owner)            ; 载荷 +0x08 / +0x0c
+  0x474b8d movabs rax,0x8000000000000000 ; 0x474b97 add rax,0xf          ; tag 15
+  0x474ba5 call [0x9bac80] → 0x3d3530                                   ; add_event
+⇒ 结论：**会发 (15)**；载荷 = (新兵 id, owner)；键值极性 = **士兵 → 主人**（两条独立证据同向）
+```
+
+> ⚠️ 旧普查（`addr_probe.py tags`）只认三种 materialize 形态，**漏了第四种**
+> `movabs 0x8000…000 ; add rax,N`：它把这批记进 **tag 0**（2235 处），所以上一轮只看到
+> `send_all_info_events` 的 1 处、误以为 `add_soldier` 不发。判据见 §7 C10。
+
+**③ `Graphics` 的 168 B 与第三处重播（G-16）**
+
+```text
+建盒 0x522710（唯一调用点 0x4693a2）：alloc 0xc0 = RcInner 16 + RefCell 8 + 168
+  [rbx+0x18]=rbx / [rbx+0x20]=r14 / [rbx+0x28]=r15      ; 头三个字（同 Color：弱自句柄/通道 Rc/容器 Weak）
+  [rbx+0x30..0x50] + [rbx+0x50]=rax,[rbx+0x58]=rdx      ; 皮肤表 + hasher(M+0x38/+0x40)
+  [rbx+0x60..0x80] + [rbx+0x80]=rcx,[rbx+0x88]=rdx      ; 脸表 + hasher(M+0x68/+0x70)
+  [rbx+0x90..0xb0] + [rbx+0xb0],[rbx+0xb8]              ; 帽子表 + hasher(M+0x98/+0xa0)
+⇒ 168 = **0x18 头 + 3×0x30 表**，**表后面没有字节**（旧说法"0xa8 之后还有 0x30 字节"是错的，见 §7 C8）
+第三处重播 tag（旧说法"间接载入、未逐位复核"）：
+  0x469035 movabs rdx,0x8000000000000033 ; 0x46903f or rdx,4     ; = 55
+  0x46910e mov rax,[rsp+0x10] ; 0x469113 mov [rsp+0x30],rax      ; 三支共用同一段提交代码
+  0x46911d lea rsi,[rsp+0x30] ; 0x469122 call [0x9bac80]         ; ⇒ 第三处 = 55（帽子）
+```
+
+**④ `FunctionHistoryRecorder` 的 33/35 与 `new` 的 48 B**
+
+```text
+new = 0x3f10a0（alloc 0x48 = 16 + 8 + 48）
+  M+0x00/+0x08/+0x10 = Vec 的 cap/ptr/len（0 / 8 = dangling / 0）
+  M+0x18 = 盒基（弱自句柄）· M+0x20 = 事件通道 Rc · M+0x28 = 容器 Weak
+裁决：订阅的是 **function_info_event = 35**
+  订阅名 0x3f1141 引 0x1bfccd（"function_info_event"，全 .text 只有这一个引用点）+ 0x3f114f mov edx,0x13
+  处理器闸 0x3f0e4e/0x3f0e58 lea rax,[isize::MAX+0x24] = 0x8000…0023 = 35
+  33 的反证：串 0x1bf607 只有 2 个引用点（0x3d53d4 / 0x3dca26，都在名字↔tag 表里），
+             tag 33 的 materialize 只有 3 处（0x3cab13/0x3caba7/0x470f3a），**没有任何订阅者**
+⇒ 常量改名 EVENT_FUNCTION_INFO_TAG（值仍是 35），旧名 EVENT_FIRE_TAG 保留为别名（tests/last_five.rs 在用）
+```
+
+四格升完后四个档位口径同批改动：`Wired::status()` 四臂 / `WIRED_TIER_COUNT` 14→18 与
+`ASSEMBLED_TIER_COUNT` 6→2 / `assemble_check.gd` 的 `WIRED_TIER` + `TIER_TALLY` / 本文。
+`assemble_check` **226 → 238**（+12 条：四格各 3 条，分别指订阅 / 发布 / 状态）。
 
 ---
 
@@ -267,10 +350,10 @@ tag word 的两种构造都出现过，读的时候别只找 `movabs` 立即数�
 | # | 对象 | 缺什么 | 怎么拿 | 静态？ |
 |---|---|---|---|---|
 | ~~G1~~ **已结案（任务 74）** | NameManager `+0x38`→`+0x48` 的 8 字节 / 基址口径（`0x50` vs `0x58`） | 两个问题同一个误读：盒是 `alloc 0x60`（16 + 80，`M` 基 = 盒 + `0x18`）；`+0x38` 起是 **16** 字节 `RandomState`（写点 `0x5191a5`/`0x5191a9`），72 B 无空洞 | x86 `0x519100` 的 8 条写入点逐条读（`src/graphwar_name_manager.rs` §7） | ✅ 已做 |
-| G2 | ColorManager `+0x10` | 字段语义（本模块零读点） | `new` 里 `Rc::new_cyclic_in` 初始化闭包那 10 条写指令 | ✅ |
+| ~~G2~~ **已结案（任务 77）** | ColorManager `+0x10` | **容器弱引用**（`Weak<RefCell<GraphwarModuleContainer>>`）：建盒 `0x524237` 写入、调用点 `0x517e8c` 按**弱计数** +1；本模块 4 个函数零读点（有界否定 + 正对照） | x86 `0x524140` 建盒 + `0x465620` 内读点普查 | ✅ 已做 |
 | G3 | RankManager `+0x08` | 是否进序列化 | `0x455090`–`0x45511f` 逐条 + `docs/07` §3.3 的 `rank_info` 线上体 | ✅ |
-| G4 | SoldierManager `add_soldier` | x86 落点（⇒ 它发不发 15） | arm64 `0x49d2fc` 那 144 B 的指纹匹配（`tools/func_diff.py` / `sym_match.py`） | ✅ |
-| G5 | FHR 33 vs 35 | 一个**口径判决**（本仓库内部两处说法冲突） | 全 `.text` 找"构造 33"的点；判据：33 有没有订阅者/发布者 | ✅ |
+| ~~G4~~ **已结案（任务 77）** | SoldierManager `add_soldier` | x86 落点 = **内联进 `0x474a10`**（`Location src/graphwar_soldier_manager.rs:65:26`）；**它发 (15)**（`0x474b8d`+`0x474b97` → `0x474ba5`）；键值极性 = 士兵→主人（`0x474b50` 原子计数器发号当 key） | x86 逐条（§2.2 ②） | ✅ 已做 |
+| ~~G5~~ **已结案（任务 77）** | FHR 33 vs 35 | **35 才是本记录器订阅的那条**（`function_info_event`）：订阅名串 `0x1bfccd` 全文唯一 + 处理器闸 = 35；`function_fire_event`(33) **没有任何订阅者** | x86 逐条（§2.2 ④） | ✅ 已做 |
 | G6 | ComputerPlayerManager `state` 0/1/2 + `handle_tick` 的 no-return 路径 | 三个取值的语义（写入点全 `.text` 没找到） | 抓一次 bot 局的 `BotData`（`docs/06` §13 的 frida 活体 / `hook_ai_*.js` 已有 6 个） | ⚠️ 建议运行时（**不阻塞升档**） |
 | **G7**（任务 74 新登记） | LocalPlayerManager `handle_player_info` 的**第五道门**：`M+0x30` 那个 `Weak` 升级后的一张表 | 表是谁的、entry 为什么 120 字节、为什么"已在表里就不发 5 连发" | `0x519fb1` 的 `call 0x46c5a0` 反查（`tools/addr_probe.py callers`）+ 那张表按 120 B 步长找 value 类型 | ✅ 静态（**不阻塞** `wired`：档位只要求订阅/发布/断言） |
 
@@ -285,11 +368,11 @@ tag word 的两种构造都出现过，读的时候别只找 `movabs` 立即数�
 |---|---|---|
 | `GraphwarRankManager` | ✅ **已升 `wired`（任务 74）** | 2 订阅 + 2 发布全部在 `0x454f30`/`0x454d80`/`0x455090` 体内（已落码 + 9 条读数）；`+0x08` 序列化口径仍开（G3） |
 | `GraphwarNameManager` | ✅ **已升 `wired`（任务 74）** | 同上（`0x519100`/`0x518f10`/`0x519350`）；72 B 布局 + 基址口径同批结案（G1） |
-| `GraphwarColorManager` | ✅ 静态可解 | 三条缺口都在 `new` 与 `add_team_color` 体内；随机流那条**不阻塞** |
-| `GraphwarSoldierManager` | ✅ 静态可解 | `add_soldier` 可指纹匹配（arm64 有符号） |
-| `GraphwarGraphicsManager` | ✅ 静态可解 | 三张表 + 4 处发布全在 `new`/`send_all_info_events` 体内 |
+| `GraphwarColorManager` | ✅ **已升 `wired`（任务 77）** | `+0x10` = 容器弱引用（G2 结案）+ 2 订阅 + 2 发布全指到指令 + 8 条读数；随机流口径仍开（不阻塞） |
+| `GraphwarSoldierManager` | ✅ **已升 `wired`（任务 77）** | `add_soldier` 内联落点 + 它发 (15) + 极性全部结案（§2.2 ②）；2 订阅 + 3 处发布 + 7 条读数 |
+| `GraphwarGraphicsManager` | ✅ **已升 `wired`（任务 77）** | 168 = 0x18 头 + 3×0x30（旧说法已改正）+ 第三处重播 tag = 55 逐位复核 + 9 条读数 |
 | `GraphwarLocalPlayerManager` | ✅ **已升 `wired`（任务 74）** | 内联构造的 8 条写入点（+0x20 = 自句柄）+ 5 道门；x86 侧**不需要**找 `new`（就在 `0x517690` 里）；第五道门那张表仍开（G7） |
-| `FunctionHistoryRecorder` | ✅ 静态可裁（口径） | 33/35 一条 grep；消费点是运行时，但不阻塞 |
+| `FunctionHistoryRecorder` | ✅ **已升 `wired`（任务 77）** | 33/35 已裁决（35）；1 订阅 + **发 0 条**（正面证据）+ 8 条读数；消费点仍未知（不阻塞） |
 | `GraphwarComputerPlayerManager` | ⚠️ 部分运行时 | 订阅/发布/难度档**静态**；`state` 语义建议抓一次 bot 局（不阻塞） |
 | `GraphwarGameStateManager` | ⛔ 禁区（`src/game.rs`） | 证据早就够了（7 条订阅本轮逐字节复核），**卡的是代码归属** |
 
@@ -305,12 +388,14 @@ tag word 的两种构造都出现过，读的时候别只找 `movabs` 立即数�
 | ~~1~~ **已完成（任务 74）** | `GraphwarRankManager` | 九格里**最便宜**：2 订阅 + 2 发布 + 1 张表 | 已落码 + **9** 条读数 ⇒ `wired` |
 | ~~2~~ **已完成（任务 74）** | `GraphwarNameManager` | 结构最干净（`map +0x18`、hasher `+0x38`），`new` 地址已钉 | 已落码 + **8** 条读数 ⇒ `wired`（`fixtures/name_to_addr.tsv` 仍是 §7 C2 的登记，本轮禁改 `fixtures/`） |
 | ~~3~~ **已完成（任务 74）** | `GraphwarLocalPlayerManager` | **影响面最大的一格**：50/52/54/59/66 五条"请求"的唯一发起侧 | `+0x20` = 自句柄；门读成 5 道；`outbox` + **12** 条读数 ⇒ `wired` |
-| **4** | `GraphwarSoldierManager` | 士兵表是 `turn_manager` 轮转与 `life_manager` 判活的共同输入；`add_soldier` 一锚就通 | "用 arm64 `0x49d2fc` 指纹锚 x86 `add_soldier`；定它发不发 `SoldierInfo`(15)" |
-| **5** | `GraphwarGraphicsManager` | 168 B 是九格里最大的结构，且贴图链影响**渲染保真**（`docs/16` §21/§22 的贴图来自它） | "解 `0xa8` 之后 0x30 字节；复核第三处重播 tag；2 订阅 + 4 发布落码" |
+| ~~4~~ **已完成（任务 77）** | `GraphwarSoldierManager` | — | `add_soldier` 内联落点 + 发 15 + 极性；**7** 条读数 ⇒ `wired` |
+| ~~5~~ **已完成（任务 77）** | `GraphwarGraphicsManager` | — | 168 B 全解（0x18 头 + 3×0x30）+ 第三处重播 = 55；**9** 条读数 ⇒ `wired` |
+| ~~6~~ **已完成（任务 77）** | `GraphwarColorManager` | — | G2 结案（容器弱引用）+ **8** 条读数 ⇒ `wired` |
+| ~~7~~ **已完成（任务 77）** | `FunctionHistoryRecorder` | — | 33/35 裁决 + **8** 条读数（发 0 条是正面证据）⇒ `wired` |
 
-**不派**：`GraphwarGameStateManager`（⛔ 禁区）。**可排后**：`ComputerPlayerManager`（要抓 bot 局）、
-`FunctionHistoryRecorder`（先裁 33/35，再落码 —— 它不发事件，升档只要订阅 + 断言，成本极低，
-但**口径不裁就落码等于把错名字写进代码**）。
+**不派**：`GraphwarGameStateManager`（⛔ 禁区）。**只剩 1 格**：`ComputerPlayerManager`
+（要抓一次 bot 局拿 `BotData.state` 的 0/1/2；订阅/发布/难度六档都已是静态结论，不阻塞升档——
+下一轮若接受"state 语义标未知"，它也能升，但本任务没派它）。
 
 ---
 
@@ -321,12 +406,17 @@ tag word 的两种构造都出现过，读的时候别只找 `movabs` 立即数�
 | ~~C1~~ **已修（2026-11-09）** | `docs/00-status.md` §0.1b.2 | "4 个 manager 仍是 `assembled`（11 wired / 2 layout / **7** assembled）" | **9**（三个独立口径：判据函数 / 四常量 + 编译期闸 / `assemble_check.gd`）；且旧行自身 4≠7、11+2+7=20≠22 | 登记；下一轮改那个文件的人顺手改。**本文是文档侧唯一给出 9 的现值页**（代码侧的三处口径都在 §0.1） |
 | C2 | `fixtures/name_to_addr.tsv` 的 `graphwar_name_manager / new` 行 | "歧义；候选 `0x3b6b20`, `0x3b6c70`, `0x420b40`, `0x4500c0`" | 真值 **`0x519100`**（4 个候选里 `0x4500c0` 是 `game_server_thread`，另 3 个不在本模块邻域）；判据：它同时订阅本模块的两条事件、处理器正是 `0x518f10`/`0x519030`，且被 `0x517690` 的 `0x517e63` 调用 | 登记（`fixtures/` 本轮禁改） |
 | C3 | `fixtures/name_to_addr.tsv` 的 `function_history_recorder / new` 行 | "未知（不引用任何 Location）" | 真值 **`0x3f10a0`**（判据：唯一订阅 `function_info_event`、处理器 `0x3f0e40`、被 `0x517690` 的 `0x517e27` 调用） | 登记（同上） |
-| C4 | `src/function_history_recorder.rs` 的 `EVENT_FIRE_TAG` 与模块文档首段 | 把 tag **35** 叫 `function_fire_event` | 字节：订阅名 `function_info_event`（`0x1bfccd`, len `0x13`）+ 处理器体内判别值闸 **35**；`docs/07` §7.2 的 72 条表里 **33 = `function_fire_event`** | 登记为**待裁口径**（G5）；裁决前不要照那个名字落码 |
+| C4 | `src/function_history_recorder.rs` 的 `EVENT_FIRE_TAG` 与模块文档首段 | 把 tag **35** 叫 `function_fire_event` | 字节：订阅名 `function_info_event`（`0x1bfccd`, len `0x13`，**全文唯一引用点**）+ 处理器体内判别值闸 **35**；`docs/07` §7.2 的 72 条表里 **33 = `function_fire_event`** | ✅ **任务 77 已裁并落码**：35 = `function_info_event`，常量改名 `EVENT_FUNCTION_INFO_TAG`（值不变），旧名留别名（`tests/last_five.rs` 在用）；33 无订阅者的反证见 §2.2 ④ |
 | C5 | 本文 §2 第 20 行（G1） | "`+0x38`→`+0x48` 那 8 字节没有写入点"、"基址口径 `0x50` vs `0x58`" | x86 `0x519100`：`alloc 0x60`（16 + 80），`M` 基 = 盒 + `0x18`；`+0x38` 起是 **16** 字节 `RandomState`，两个 `u64` 都有写点（`0x5191a5` / `0x5191a9`） | **任务 74 就地更正**：不是空洞、也不是 8 字节；`0x60`/`0x58`/`0x50` 三个数的差别见 `src/graphwar_name_manager.rs` §7 |
 | C6 | 本文 §2 第 3 行 | "`+0x20` 那个 8 字节槽语义未知"、"5 条请求的触发条件没逐条读" | `+0x20` = 自句柄（写点 `0x517965`，值 = 盒基）；5 条请求**内部无判据**，门是 5 道（第五道 `0x519fb1`→`0x51a058` 是任务 74 新发现的） | **任务 74 就地更正**；第五道门那张表登记为 G7 |
-| C7 | `docs/00-status.md` §0.1b.2 与 `docs/HANDOVER.md` §遗留 | 两处都写"9 个 manager 仍是 `assembled`（11 wired / 2 layout / 9 assembled / 0 stub）" | 任务 74 之后是 **14 / 2 / 6 / 0**（三格升 `wired`），见 §9 | **登记**（这两个文件不在任务 74 的允许清单里）。下一轮改它们的人顺手改：`00` 那行要把"9 个"改成"6 个"、"11/2/9/0"改成"14/2/6/0"；`HANDOVER` 同理 |
+| C7 | `docs/00-status.md` §0.1b.2 与 `docs/HANDOVER.md` §遗留 | 两处都写"9 个 manager 仍是 `assembled`（11 wired / 2 layout / 9 assembled / 0 stub）" | 任务 74 之后是 **14 / 2 / 6 / 0**（三格升 `wired`），见 §9 | **登记**（这两个文件不在任务 74/77 的允许清单里）。下一轮改它们的人顺手改：`00` 那行写**现值**（任务 77 之后 = "2 个"、`18/2/2/0`）；`HANDOVER` 同理 |
 
 ---
+
+| C8 | 本文 §2 第 16 行 / §3.5（`Graphics`） | "168 B 里三张表以外还有 **4 个字**（到 `0xa8` 之间有 `0x30` 字节）没解"、"`0xa8` 之后还有 `0x30` 字节" | **表后面没有字节**：`0xa8 = 168` 正好是 `size_of`，三张表 `+0x18/+0x48/+0x78` 各 `0x30` 铺到 `+0xa8` 就结束；没解的是**表前面**的 `0x18` 头（`+0x00` 弱自句柄 / `+0x08` 事件通道 Rc / `+0x10` 容器 Weak，建盒 `0x522710` 逐条写） | **任务 77 就地更正**（§2.2 ③ 与 `src/graphwar_graphics_manager.rs` §2.2） |
+| C9 | 本文 §3.5 / §2 第 16 行（`Graphics`） | 第三处重播 tag "是间接载入（`mov rax,[rsp+0x10]`）⇒ 按模块文档是 55，**未逐位复核**" | **逐位复核完**：`0x469035 movabs rdx,0x8000…0033` + `0x46903f or rdx,4` = **55**；三支共用提交代码，tag 从 `rsp+0x10` 取（这就是"字面量扫描只看到基址"的原因） | **任务 77 就地更正**（§2.2 ③） |
+| C10 | `tools/addr_probe.py tags`（**工具盲区，不是本文的错**） | 该命令自称扫"三种 materialize 形态"，于是"tag 15 只有 1 处在 soldier 模块" | **漏了第四种**：`movabs 0x8000000000000000` + `add rax,N`。这类全被记进 **tag 0**（2235 处）。`add_soldier` 的 (15) 就是这么漏掉的（`0x474b8d`+`0x474b97`） | 登记：**凡是用 `tags` 下的"某 tag 只有 N 处"结论都要复查这个形态**。修工具不在本任务允许改动的目录里（`tools/`），下一位改 `tools/` 的人顺手加一条 `_tag_of_reg` 的 `0x8000…000 + add` 分支 |
+| C11 | `src/graphwar_soldier_manager.rs` §2（旧） | "`+0x10/+0x14` 是锁字与 poison 字节（`Mutex`）" | **没有锁**：`+0x10` 是 `RefCell` 的借用字（`0` = 未借、`-1` = 写借），逐条见 `0x4555d9`/`0x474b3d`/`0x474b48` | **任务 77 就地更正**（该文件 §2） |
 
 ## 8. 复现（干净树，5 分钟）
 
@@ -370,6 +460,19 @@ tag word 的两种构造都出现过，读的时候别只找 `movabs` 立即数�
 | headless 14 个脚本合计 | 1818 | **1827**（其余 13 个逐项不变） |
 | `selftest` | 714 / 0 / 1 skip | **714 / 0 / 1 skip**（不变） |
 | 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **647 / 647 / 637**（不变） |
+
+## 9.1 任务 77 的验收数字（本人重跑；同一条分支的私有 target）
+
+| 项 | task 74 后 | task 77 后 |
+|---|---|---|
+| 档位分布 | 14 / 2 / 6 / 0 | **18 / 2 / 2 / 0** |
+| `cargo test --offline` | 1710 | **1730**（+20：新增内联测试 10 条 × 两个编译单元——`tests/graphwar_{color,soldier,graphics}_manager.rs` 也 `#[path]` 编了同一份文件） |
+| `cargo test --offline --features gdext-bindings` | 1816 | **1836**（同上；`root_wiring` 的 22 槽台账与 135 条探针台账都在这一侧） |
+| `client/tools/assemble_check.gd` | 226 / 0 | **238 / 0**（+12：四格各 3 条，分别指 订阅 / 发布 / 状态） |
+| headless 14 个脚本合计 | 1827 | **1839**（其余 13 个逐项不变：24 / 96 / 116 / 132 / 235 / 96 / 366 / 117 / 155 / 23 / 135 / 49 / 57） |
+| `selftest` | 714 / 0 / 1 skip | **714 / 0 / 1 skip**（**只跑了一次**，一次就过；本轮的 flake 未复现） |
+| 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **647 / 647 / 637**（不变；文件 286 / 读失败 117 / 结算批 1080 也没变） |
+| coverage 两份生成物 | — | 重跑 `tools/coverage_matrix.py`：`docs/coverage-matrix.tsv` + `docs/149-coverage-matrix.md`（527 可归属 / 527 已实现；逐位 88 / 观测 439） |
 
 复跑（全部在本分支的私有 target 上）：
 
