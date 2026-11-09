@@ -756,3 +756,35 @@ Name      `new` 已钉 0x519100；tsv 里 4 个候选全错（0x4500c0 是 game_
 LocalPlayer 影响面最大（50/52/54/59/66 五条请求的唯一发起侧）；new 内联在 0x517690
 GSM       别碰 —— 不是缺证据，是卡 src/game.rs 禁区
 ```
+
+---
+
+# 第十六轮（2026-11-09 晚）
+
+第十五轮：manager 三格升档（11/2/9/0 → **14/2/6/0**）；三条"换证据类型"全不通，
+但挖出**结构指纹在"关卡闭包族"上系统性崩**（51.9% vs 族外 89.6%，Fisher p=2.6e-6）。
+另发现 **`selftest` 有 flake**（同命令反复跑会 704/4、697/1），护栏不可靠。
+
+| # | 分支 | 主题 | 类型 | 优先级 |
+|---|---|---|---|---|
+| 76 | `agent/selftest-flake` | 修 `selftest` 的不确定性（要连续 10 次全绿） | 测试 | **P0** |
+| 77 | `agent/manager-upgrade-2` | 再升 4 格（Color / Soldier / Graphics / FHR） | 纯静态 | **P0** |
+| 78 | `agent/feature-cleanup` | 按 71 的留一法删负收益特征，把表变小变准 | 静态 + GPU | P1 |
+| 79 | `agent/localplayer-gates` | G7 第五道门 + `Computer.state` 0/1/2（抓 bot 局） | 运行时 | P1 |
+| 80 | `agent/drive-frame-cadence` | 给 `drive_frame` 量**节奏真值**（钩 0x518400 + 泵） | 运行时 | P1 |
+| 81 | `agent/client-flow-3` | 客户端流程继续搬（**回放驱动**优先） | 工程 | P1 |
+| 82 | `agent/1ulp-ai-converged` | 1 ulp 最后一条路：AI-vs-AI **收敛解**那一发 | 运行时 | P2 |
+
+## 三条纪律（本轮特别容易踩）
+
+```
+① `selftest` 现在**不可靠**（76 号在修）：报失败先重跑一次，别当回归；
+② headless 只跑 `extends SceneTree` 的脚本（`*_check.gd`）——
+   拿 `plane_on_screen.gd`/`screenshots.gd`/`selftest.gd` 喂 `--script` 会弹 ALERT + 留僵尸实例；
+③ 新样本一律放 `.agent-work/replay-*`，**不许进冻结快照**（401 份，混进去三轴数字全变）。
+```
+
+## 82 的预期（先说清，免得又一轮白跑）
+
+前面三条路径都没复现 1 ulp；82 是**唯一没走完的**（AI-vs-AI 收敛解）。
+**"仍然没复现"是合格结论**——只要写清抓了几发、`c` 离舍入边界多远、覆盖面缺什么。
