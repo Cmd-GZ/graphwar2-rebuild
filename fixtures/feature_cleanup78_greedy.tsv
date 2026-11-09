@@ -1,0 +1,21 @@
+# 任务 78 · R5：24 列等权 0.5 起**逐轮删一列**（贪心，选择只用调参半）
+# 规则见 feature_cleanup78_prereg.md R5；接受条件 Δ>=0，并列取 ORDER 序小的
+# 删列顺序：icall → ncall → size → ncall_a → consts → strs_s → callee → ncal → wconst → stok → caller → cbsig → rbsig → hist
+# rung	ncols	tune_top1	tune_top5	tune_n	hold_top1	hold_top5	hold_n	features
+BASE	4	436	463	494	412	446	481	size consts caller gram
+L0_REF5	5	444	464	494	424	446	481	size consts caller gram scal
+L2_3col	3	445	463	494	424	446	481	caller gram scal
+S0_23eq	23	430	458	494	411	439	481	size hist consts callee caller strs_s ncal ncall cbsig rbsig gram shape scal scal_c wconst stok cls callee_a caller_a ncal_a ncall_a cgram_a icall
+S1_drop_icall	22	434	459	494	414	440	481	size hist consts callee caller strs_s ncal ncall cbsig rbsig gram shape scal scal_c wconst stok cls callee_a caller_a ncal_a ncall_a cgram_a
+S2_drop_ncall	21	437	461	494	420	444	481	size hist consts callee caller strs_s ncal cbsig rbsig gram shape scal scal_c wconst stok cls callee_a caller_a ncal_a ncall_a cgram_a
+S3_drop_size	20	440	460	494	415	442	481	hist consts callee caller strs_s ncal cbsig rbsig gram shape scal scal_c wconst stok cls callee_a caller_a ncal_a ncall_a cgram_a
+S4_drop_ncall_a	19	443	462	494	424	447	481	hist consts callee caller strs_s ncal cbsig rbsig gram shape scal scal_c wconst stok cls callee_a caller_a ncal_a cgram_a
+S5_drop_consts	18	444	462	494	424	447	481	hist callee caller strs_s ncal cbsig rbsig gram shape scal scal_c wconst stok cls callee_a caller_a ncal_a cgram_a
+S6_drop_strs_s	17	446	462	494	423	446	481	hist callee caller ncal cbsig rbsig gram shape scal scal_c wconst stok cls callee_a caller_a ncal_a cgram_a
+S7_drop_callee	16	447	462	494	423	446	481	hist caller ncal cbsig rbsig gram shape scal scal_c wconst stok cls callee_a caller_a ncal_a cgram_a
+S8_drop_ncal	15	447	463	494	424	447	481	hist caller cbsig rbsig gram shape scal scal_c wconst stok cls callee_a caller_a ncal_a cgram_a
+S9_drop_wconst	14	447	463	494	422	446	481	hist caller cbsig rbsig gram shape scal scal_c stok cls callee_a caller_a ncal_a cgram_a
+S10_drop_stok	13	447	463	494	423	446	481	hist caller cbsig rbsig gram shape scal scal_c cls callee_a caller_a ncal_a cgram_a
+S11_drop_caller	12	447	463	494	423	447	481	hist cbsig rbsig gram shape scal scal_c cls callee_a caller_a ncal_a cgram_a
+S12_drop_cbsig	11	447	463	494	423	447	481	hist rbsig gram shape scal scal_c cls callee_a caller_a ncal_a cgram_a
+S13_drop_rbsig	10	447	463	494	423	447	481	hist gram shape scal scal_c cls callee_a caller_a ncal_a cgram_a
