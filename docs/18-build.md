@@ -454,6 +454,12 @@ $ bash client/run.sh selftest
   判据只有"`failed == 2` 且就是上面这两条" + "skip 里全是资产/联机"。
 * 退出码：`failed > 0` 时 `run.sh selftest` **返回 1**（`694`/`618` 时返回 0）。
 
+> **现读数（2026-11-09 实测，`agent/selftest-flake`）**：四个前置条件齐备时是
+> **`SELFTEST 714 passed, 0 failed, 1 skipped`**、`rc=0`（上面表里的 694/618/667/591 是
+> 2026-11-07 的**当轮**基数，`passed` 随客户端版本漂移，**别拿它当判据**）。
+> 这个读数**必须可复跑** —— 同一条命令两次给出不同结果的护栏等于没有护栏，
+> 所以"确定性"单独立了一节：**§10.3.2**（根因、修法、连续 10 次的原始记录）。
+
 **复跑（三分钟）**：
 
 ```bash
@@ -466,6 +472,219 @@ cp $CARGO_TARGET_DIR/release/libgw2_rebuild.so client/libgw2_rebuild.so
 "$GODOT" --headless --path client --import                      # 解完资产必须再 import 一次
 bash client/run.sh selftest                                     # 期望 SELFTEST 694 passed, 0 failed
 ```
+
+### 10.3.2 `selftest` 的**确定性**：同一条命令必须给出同一个结果（2026-11-09 新增）
+
+> 一句话：`714 / 0 / 1 skipped` 这个读数以前**不是可复跑的** —— 同一台机器、同一条
+> `bash client/run.sh selftest` 会偶发 `704/4`、`697/1`。护栏一旦不确定，
+> "红了"就分不清是真回归还是骰子。本节记：根因（带证据）、修法（**只动"等什么、
+> 什么时候起、什么时候退"，判据一条没改**）、以及复跑记录。
+
+#### (1) 症状
+
+上游实测（原文）：
+
+| 现象 | 备注 |
+|---|---|
+| `SELFTEST 704 passed, 4 failed, 1 skipped` | 与 `714/0/1` 是同一条命令 |
+| `SELFTEST 697 passed, 1 failed, 1 skipped` + `FAIL 真服务端：开局那一批到了（障碍 0、SoldierInfo 4）` | 失败项名字是关键线索 |
+| 干净重跑又回到 `714 / 0 / 1 skipped` | ⇒ 不是回归 |
+
+本机（2026-11-09，工作树 `agent/selftest-flake`）**连续 10 次没有复现**，全是 `714/0/1`
+（原始输出见 (4)）。不复现 ≠ 没问题 —— 把"骰子"换成旋钮之后，那条失败可以**确定性重放**：
+
+```bash
+GW2_SELFTEST_MATCH_SEED=89 bash client/run.sh selftest
+# SELFTEST 696 passed, 1 failed, 2 skipped
+#   FAIL 真服务端：开局那一批到了（障碍 0、SoldierInfo 4）
+# [gw2/selftest] 真服务端：开局那一批没到（seed=89）：serve_match 日志尾部（…/serve_match_4_1_s89.log）
+#     | SEED 89
+#     | LISTEN 127.0.0.1:44553
+#     | ACCEPT 127.0.0.1:58518
+#     | RECV NewConnectionRequest
+#     | RECV NewPlayerRequest
+#     | PLAYER_INFO player_id=229 connection_id=228
+#     | RECV GameStartRequest
+#     | STARTED obstacles=0 players=4 order=[229, 230] bots=[] ai=level1 budget=Some(25.0)
+```
+
+⇒ 失败串与上游**逐字相同**；服务端自己的日志说明 `obstacles=0`：
+**它真的一个障碍都没生成**，不是"到了没收到"。第 2 条 skip 是
+`_test_play_online_real_server` 里"障碍 > 0"那条在 0 障碍局面下显式跳过的（它本来就这么写）。
+
+#### (2) 根因（三条，都有证据）
+
+**① 关卡种子是骰子 —— 决定性的一条（观测）。**
+`src/graphwar_game_server.rs::run` 的默认种子来自 `seed_from_os()`，所以**每局障碍布局都不同**。
+`_test_play_online` 早就钉了 `GW2_MATCH_SEED`，但 `_test_net_real_server` **没钉**。
+用 `examples/serve_match` 配一个只做握手的客户端，扫 **400 个种子**（`GW2_MATCH_SEED=<n>`）：
+
+```text
+14 个种子（3.5%）一个障碍都不生成：
+  89, 110, 119, 146, 173, 197, 209, 228, 244, 301, 305, 313, 352, 387
+障碍数分布：min = 0，max = 37
+```
+
+而这条用例的判据 `_server_started()` 要求 `AddObstacle > 0` ⇒ 抽到这类种子就**必红**
+（括号里的"SoldierInfo 4"是恒定的：士兵固定 4 名）。
+正对照：真·随机种子（不设 `GW2_MATCH_SEED`）跑 60 次，**2 次**（3.3%）拿到 `AddObstacle == 0`
+—— 与 14/400 一致。⇒ **单次约 3.5% 必红，这就是"同一条命令两次不同结果"。**
+
+顺带排除一条嫌疑（**负结果，观测**）：同一批 60 次随机里，开火后的
+`EffectInfo / QueueDestroyObstacle` **60/60 都有** ⇒ 上游那次 `704/4` 不是"命中链路偶发打空"
+造成的；这一档本机没复现，也没找到能产生它的机制，**如实记为未知**。
+
+**② 端口是"先占后放"（推断 —— 机制成立，本轮未撞上实例）。**
+`_free_port()` 让内核挑一个端口再立刻 `stop()` 放掉。从"放掉"到服务端
+`TcpListener::bind` 之间，这个端口可能已经被别人拿走（包括本进程自己的出站连接 ——
+临时端口同段）⇒ 服务端 `SERVER_ERR` 退出，而自检只看到"连不上"，看不出为什么。
+
+**③ 起/停都没有握手，而且服务端的话留不下来（观测：代码里到处是定长 sleep）。**
+原来 `OS.create_process()` 之后就 `await create_timer(0.25)` / `0.2` 赌它 bind 好了；
+`OS.kill(pid)` 之后立刻往下走（进程可能还没死、端口还占着）。
+更要紧的是 `OS.create_process()` **不能重定向 stderr** ⇒ 服务端的
+`SEED / LISTEN / ACCEPT / RECV / SERVER_ERR` 一行都留不下 ——
+这就是为什么上游只看到一句 `FAIL …（障碍 0、SoldierInfo 4）` 却查不下去。
+
+#### (3) 修法（`client/tools/selftest.gd`，判据一条没改）
+
+新增一组 helper，把"起一台真服务端"做成**有握手、有日志、有 teardown**：
+
+| helper | 做什么 | 替掉了什么 |
+|---|---|---|
+| `_spawn_server(bin, seed)` | 地址交给内核（`127.0.0.1:0`），端口从服务端**自己打的** `LISTEN <addr>` 读回；stderr 落 `user://serve_match_logs/serve_match_<godot pid>_<序号>_s<seed>.log`；**等到 LISTEN 才返回**（最多 10 s，实测 30 ms） | `_free_port()` + `OS.create_process()` + 定长 sleep |
+| `_kill_server(pid)` / `_pid_alive(pid)` | `OS.kill` 之后**等它真的退出**（最多 4 s；Linux 读 `/proc/<pid>/stat` 的状态位，僵尸(`Z`)算已退出） | 裸 `OS.kill(pid)` |
+| `_dump_server_log()` | 红了打印服务端日志尾部（`SEED/LISTEN/ACCEPT/RECV/SERVER_ERR`） | 什么都没有 |
+| `_match_seed()` | 所有起真服务端的用例统一钉 `ONLINE_TEST_SEED = 8`；`GW2_SELFTEST_MATCH_SEED=<n>` 可覆盖（诊断用） | 只有 `_test_play_online` 钉了 |
+| `_prune_server_logs()` | `run()` 开头清空日志目录 | 残留状态跨运行 |
+
+另外两处：
+
+* **LAN 广播**：从"发一条 UDP + 定长等 120 帧"改成"一边等一边重发同一条"
+  （UDP 无连接，而原版房主本来就是**周期性**广播，`docs/24` §7.2）；
+  同一个 `address` 只占一行（`GwLanDiscovery::_ingest` 按 address 去重）。
+* **连接重试**里的 `await create_timer(0.25/0.2)` 换成 `await _frames(2)`：
+  服务端已被确认 `LISTEN`，不必再用墙钟赌它 bind 好了。
+
+`ONLINE_TEST_SEED = 8` 是**实测挑的**（不是"跑通了就算"）：10 个障碍、4 名士兵都不在障碍里、
+`0.00` 那一发能命中（服务端日志 `STARTED obstacles=10`）。两个联机用例共用同一份布局。
+
+#### (3b) 修的时候自己踩到的第二个坑：「就绪信号」读到了**半行**（如实记）
+
+第一版改完（读 `LISTEN` 再连）**自己在连跑里红过 1 次**（那批 10 次里的第 8 次）：
+
+```text
+run  8 | rc=1 | SELFTEST 681 passed, 2 failed, 1 skipped | 13.1s
+  FAIL 真服务端：找到一个空闲端口
+  FAIL 真服务端：从 Local 列表点 Join 真的连上并完成握手
+[gw2/selftest] 真服务端：pid=428 LISTEN 127.0.0.1: seed=8 日志=…/serve_match_386_1_s8.log
+[toast] 地址要写成 host:port                 ← ×6：addr 成了 "127.0.0.1:"
+[gw2/selftest] 真服务端：连不上：serve_match 日志尾部（…/serve_match_386_1_s8.log）
+    | SEED 8
+    | LISTEN 127.0.0.1:46203                  ← 同一份日志**稍后**已经写全了
+```
+
+根因：`eprintln!("LISTEN {}", local)` 那一行**不是一次性可见的** —— 第一次读到的内容停在
+`127.0.0.1:`，端口那几位还没落地，于是 `int("")` = 0、`addr` 成了 `127.0.0.1:`。
+（这也正好说明：**旧的"发一条 + 睡 0.25 s"其实一直在赌同一件事**，只是赌错了没人知道。）
+
+修法：**只认以 `\n` 结尾的完整行**（服务端每行都以 `\n` 收尾 ⇒ 没有 `\n` 就是还没写完），
+并且端口那一段必须 `is_valid_int()` 且 `> 0`，否则继续等。
+
+顺手还收拾了一个噪音坑：`OS.is_process_running()` 一旦把子进程回收掉，**再问同一个 pid**
+就会打 `ERROR: The process 428 does not exist or is not a child of the calling process.`
+（混在自检日志里很像真失败）。现在轮询走 `_pid_alive()`。
+⚠️ 这条也有坑：`FileAccess.get_file_as_string("/proc/<pid>/stat")` **永远是空串**
+（procfs 的 `size` 报 0，Godot 按 size 读），必须 `FileAccess.open()` + `get_line()`（实测）。
+
+这两条是同一类错误：**「就绪/存活」不能"读一眼文件"就下结论，要读到一个完整的记录。**
+
+**没有做的事**：没删任何断言、没把失败改成跳过、没有加大 sleep。
+`grep -c '_expect('` 前后都是 **701** 处（运行时 **714** 条），`grep -c '_skip('` 前后都是 **22** 处。
+
+#### (4) 复跑记录（本机，2026-11-09）
+
+循环脚本（就是它跑的）：
+
+```bash
+for i in $(seq 1 20); do                     # 修复前/第一版各跑 10 次，第二版跑 20 次
+  bash client/run.sh selftest > run$i.log 2>&1
+  echo "run $i rc=$?"; grep -E '^SELFTEST ' run$i.log | tail -1
+done
+```
+
+修复**前**（HEAD `e150ccd`）：10/10 全绿，**没复现** ——
+
+```text
+run  1 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.8s
+run  2 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.9s
+run  3 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.8s
+run  4 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.9s
+run  5 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.9s
+run  6 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.8s
+run  7 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.8s
+run  8 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.8s
+run  9 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.9s
+run 10 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.9s
+```
+
+第一版修法（只换起/停，**还没**修 (3b) 那半行）：**9 绿 1 红** ——
+
+```text
+run  1..7 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.4–10.1s
+run  8    | rc=1 | SELFTEST 681 passed, 2 failed, 1 skipped | 13.1s   ← (3b) 那半行
+run  9..10| rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.7s
+```
+
+第二版（只认完整行 + `/proc` 判活）：**20/20 全绿** ——
+
+```text
+run  1 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.7s
+run  2 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.8s
+run  3 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.4s
+run  4 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.4s
+run  5 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.4s
+run  6 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.4s
+run  7 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.4s
+run  8 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.4s
+run  9 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.4s
+run 10 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.4s
+run 11 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.4s
+run 12 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.7s
+run 13 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.7s
+run 14 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.7s
+run 15 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.7s
+run 16 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.7s
+run 17 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.8s
+run 18 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.8s
+run 19 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.8s
+run 20 | rc=0 | SELFTEST 714 passed, 0 failed, 1 skipped | 9.8s
+```
+
+判据是"`714 / 0 / 1 skipped` 且 `rc=0`"，不是"看着像好了"；跑完 `ps` 里**没有**残留的
+`serve_match` / Godot 进程（teardown 真的等到了退出）。
+
+
+**确定性的第二个判据**：同一个坏种子必须**稳定**给出同一个结果 ——
+
+```bash
+GW2_SELFTEST_MATCH_SEED=89 bash client/run.sh selftest    # 每次都 696/1/2 + 同一条 FAIL
+```
+
+#### (5) 红了怎么读
+
+1. 先看 `[gw2/selftest] 真服务端：pid=… LISTEN … seed=… 日志=…` 里的 **seed** 与 **端口**；
+2. 失败时自检会自动打 `serve_match 日志尾部`：`LISTEN` 有没有？`ACCEPT` 有没有？
+   `STARTED obstacles=N` 是多少？`SERVER_ERR` 有没有？
+3. 想换一份布局复跑：`GW2_SELFTEST_MATCH_SEED=<n> bash client/run.sh selftest`；
+4. **别用 `--script` 喂 `client/tools/*.gd` 里的 helper**（`selftest.gd` /
+   `plane_on_screen.gd` / `screenshots.gd` 都不是 `extends SceneTree`）——
+   那会弹 ALERT 并留下僵尸 Godot 实例，跟本节的坑叠在一起更难查。
+
+**仍然存在的时序依赖（如实记，未改）**：`_test_audio` 的几条断言按**真实时间**
+（0.25 / 0.35 / 0.45 s）取 `AudioEffectCapture` 的窗口（`_capture_rms/_capture_peak/_capture_humm`）——
+headless 下按帧数等会读到 0，所以那里必须用墙钟。机器**极端**过载时它们理论上仍可能抖；
+本轮 20 次里没出现过，真出现时按上面 (5) 的办法先确认是不是它。
 
 ### 10.4 b) feature 打开时：5 个方法 + 真节点类都活着（headless 实测）
 
