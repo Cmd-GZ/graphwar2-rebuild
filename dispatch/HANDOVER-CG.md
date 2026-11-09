@@ -29,12 +29,28 @@
             已派 4 份、**全部被我 interrupt 暂停**（因装 GPU 插件要重启 dsh），工作树见 §7
             未派 4 份：57 新证据 / 58 调用图角色 / 61 GPU 相似度 / 62 全语料对拍
 
-护栏（2026-11-09 22:00 实测；**以 fixtures/guardrails.json 为准**）
+护栏（2026-11-10 02:00 实测；**以 fixtures/guardrails.json 为准**）
   fire 647/1080 ｜ batch 647/1080 ｜ batch_conv 637/1080（种类 1075×3）
   死亡 366/385 ｜ 挖洞 207/294 ｜ 语料指纹 403 文件/401 回放（冻结）
   cargo test **1753** / 0 failed ｜ --features gdext-bindings **1859** / 0 failed
-  headless **14** 个脚本 **1890** 条（play_flow **183** / assemble_check **241**）
-  selftest **714 / 0 / 1 skipped**（**flake 已修，现在可信**）
+  headless **14** 个脚本 **1923** 条（process_loop **66** / play_flow **199** / assemble 241 / entity 366）
+  selftest **716 / 0 / 1 skipped**
+  coverage 527 可归属：逐位 88 / 观测 439 / 推断 0 / 未做 0
+  manager 档位 **19 wired / 2 layout / 1 assembled / 0 stub**（最后一格 = GSM，卡 src/game.rs 禁区）
+
+🔴 **护栏还有两条已知 flake（都要先重跑再判断）**：
+  ① 关卡种子骰子（**已修**：钉 `ONLINE_TEST_SEED=8`；`GW2_SELFTEST_MATCH_SEED=89` 可确定性复现红）
+  ② **LAN 大厅两条成对红**（「本地房间列表初始为空」+「Join IP 宽度」），约 1/4–1/3 概率，**未修**
+     （第十七轮 84 号 A/B 证明是既有的：基线 4 次有 1 次红、本轮 9 次有 2 次红）
+     ⇒ 看到这两条一起红，**先重跑一次**；其余红就是真红。
+
+⚠️ **`drive_frame` 决定不接**（第十七轮 85 号）—— 三条触发条件在 `docs/16` §58.3 + `process_loop_check.gd` 第 9 组 tripwire。
+  ⚠️ 落地顺序：**先 T1（V 与 base 一起接内核钟）→ 同一次改动加门 → 最后才删 `_advance_curve`**（先删会一帧两倍速）。
+⚠️ **`addr_probe.py tags` 第四形态已修**（第十七轮 83 号，根因=capton 对 `add` 的 `regs_write` 只回 EFLAGS）；
+  tag 0 2235→2106、129 处换桶；9 条历史结论已逐条复核（5 条地址一字不差）。
+  ⚠️ 仍有未修的：形态③ 之后的再修饰（`0x469035 + or rdx,4` = 55 被记成 51）。
+⚠️ **指纹默认 3 列**（78 号）⇒ 复现旧 12,736 夹具要加 `--featset full`。
+⚠️ **造 bot 局别用"档 5"**（82 号：同一格子 6 次给 5 个不同 Bot）。
   coverage 527 可归属：逐位 88 / 观测 439 / 推断 0 / 未做 0
   manager 档位 **19 wired / 2 layout / 1 assembled / 0 stub**
 
