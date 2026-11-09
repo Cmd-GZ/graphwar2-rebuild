@@ -129,10 +129,87 @@
 //! ## 7. 未确定
 //!
 //! * `new` 的字段初始化顺序（两个架构上都内联掉了，只有 3 个闭包 + 形状证据）。
+//!   任务 74 在 x86 侧补了 8 条写入点（§8），只到"哪个偏移写了什么"这一档。
 //! * `NewPlayerRequest`(8) 的载荷为什么是**连接号**而不是别的（服务端那侧未读）。
-//! * `+0x20` 那个 8 字节槽从没被本模块读过，语义**未知**。
+//! * `+0x30` 那个 `Weak` 指向的**是谁**、以及它后面那张 120 字节 entry 的表是什么
+//!   （§9 第五道门）。任务 74 只定到"这是一道门、且它在 5 连发之前"，语义**未知**。
 //! * 配置里四个 `String` 的**字段名**（`player_config` 模块的 `Serialize` 才带名字，
 //!   本模块只看到偏移）⇒ 名字是 `推断`，顺序（名字/皮肤/脸/帽子）来自四条请求的语义。
+//!
+//! ## 8. 64 B 布局：内联构造的 8 条写入点（任务 74，x86 `0x517690` 体内）
+//!
+//! ```text
+//! 0x51792a alloc(size 0x58, align 8)      ← RcInner(16) + RefCell<M>(72)，M = 64
+//!   rax = 盒基：+0x00 strong / +0x08 weak / +0x10 RefCell borrow 标志（0x517975/0x51798c/0x517984）
+//!   M 基 = rax + 0x18 = RefCell 的 +0x08
+//!     M+0x00 ← 0        0x517946    Vec 的 cap
+//!     M+0x08 ← 4        0x51794e    Vec 的 ptr（`Vec::<u32>::new()` 的 dangling = align 4）
+//!     M+0x10 ← 0        0x517956    Vec 的 len
+//!     M+0x18 ← 0(dword) 0x51795e    connected（构造时只清这一格 4 字节）
+//!     M+0x1c    （构造**无**写入点）connection_id 的首次写点在 0x51a593（`handle_connected_to_server`）
+//!     M+0x20 ← rax      0x517965    **`Weak<RefCell<Self>>` 自句柄**（`Rc::new_cyclic_in`）
+//!     M+0x28 ← r14      0x517969    构造实参 1（= 事件队列 `Rc<RefCell<…>>`，见 §9 的用法）
+//!     M+0x30 ← r15      0x51796d    构造实参 2（一个 `Weak`，见 §7）
+//!     M+0x38 ← r12      0x517971    构造实参 3
+//! ```
+//!
+//! ⇒ `docs/161` §2 第 3 行那条"`+0x20` 那个 8 字节槽从没被本模块读过，语义未知"本轮结案：
+//! **它就是自句柄**（写的值 = 盒基地址本身，写入点在 `new_cyclic` 的初始化序列里）。
+//! 三个构造实参的**身份**仍是 `推断`（`+0x28` 那条有用法证据：`0x51a596`/`0x51a5a9`
+//! 把它当事件队列用）。
+//!
+//! ## 9. 事件流接线（任务 74 就地复核，x86 逐条；`wired` 的第二件）
+//!
+//! ```text
+//! 订阅 3 条（全在 0x517690 体内，rdi = 事件通道对象 rsp）
+//!   0x5179bb lea rsi,'connected_to_server_event'(0x1c64c2) + 0x5179cc mov edx,0x19
+//!   0x5179c2 lea r8,<0x962ba8> +0x20 → 0x51a730 → lea rsi,[0x51a570]
+//!   0x5179d4 call [0x9bac88] → 0x3d38f0
+//!   0x517a0e lea rsi,'player_info_event'(0x1c6558) + 0x517a1f mov edx,0x11
+//!   0x517a15 lea r8,<0x962bd0> +0x20 → 0x51a710 → lea rsi,[0x519f40]
+//!   0x517a27 call [0x9bac88]
+//!   0x517a5e lea rsi,'entity_removed_event'(0x1c646d) + 0x517a6c mov edx,0x14
+//!   0x517a65 lea r8,<0x962bf8> +0x20 → 0x51a6f0 → lea rsi,[0x51a610]
+//!   0x517a77 call [0x9bac88]
+//! 发 6 条（`rbp = isize::MAX`，tag 用 `lea rax,[rbp+imm]` / `add rbp,imm` 绕回来）
+//!   handle_player_info 0x519f40（5 连发，全在一条直线上）：
+//!     0x51a162 +0x3c ⇒ 59 (name)   @0x51a170 call [0x9bac80] → 0x3d3530
+//!     0x51a239 +0x33 ⇒ 50 (skin)   @0x51a247
+//!     0x51a310 +0x35 ⇒ 52 (face)   @0x51a31e
+//!     0x51a3e7 +0x37 ⇒ 54 (hat)    @0x51a3f5
+//!     0x51a443 add rbp,0x43 ⇒ 66   @0x51a451
+//!   handle_connected_to_server 0x51a570（重入队）：
+//!     0x51a577 movabs 0x8000…0007 ; 0x51a581 断言 tag ; 0x51a5b1 inc rax ⇒ 8
+//!     @0x51a5bb call [0x9bac80] → 0x3d3530
+//!   handle_entity_removed_event 0x51a610：`Vec::retain`，**体内零 `add_event`**
+//! ```
+//!
+//! **门的逐条读法**（`docs/161` §2 第 3 行缺的那一条）——五道，前四道在 push 之前/当场：
+//!
+//! ```text
+//! ① tag == 13                     0x519f58 lea rax,[rbp+0xe] ; 0x519f5c cmp
+//! ② connected == 1                0x519f68 cmp dword [rdi+0x18],1 ; jne → 收尾
+//! ③ connection_id 相等            0x519f6e/0x519f71（event+0x0c vs self+0x1c）
+//! ④ 旧 len == 0（"第一次"）        0x519f7b..0x519f99（push）; 0x519f9d test rbx,rbx ; je → 发 5 连
+//! ⑤ M+0x30 那个 Weak 升级后的表里   0x519fb1 call 0x46c5a0（升级）→ 0x51a02c..0x51a058 哈希查
+//!    **还没有**该 player_id         0x51a058 je 0x51a0e0 ⇒ 已在表里就直接收尾（**不发** 5 连发）
+//! ```
+//!
+//! ⑤ 是任务 74 **新发现**的一道门（`docs/161` 当时只写到"⑤ 的门没逐条读"）：
+//! 命中即返回，所以"5 连发"不只看 `connected`/`first`，还看那张表的**首次插入**。
+//! 五条请求**内部没有**逐条判据（`0x51a170`–`0x51a451` 是一条直线，中间没有再跳到收尾的 `jcc`）。
+//!
+//! ## 10. 复跑
+//!
+//! ```bash
+//! ../.venv/bin/python tools/addr_probe.py dis 0x517690   # 3 条订阅 + 内联构造的 8 条写入点
+//! ../.venv/bin/python tools/addr_probe.py dis 0x519f40   # 5 条请求 + 五个 tag + 五道门
+//! ../.venv/bin/python tools/addr_probe.py dis 0x51a570   # connected → NewPlayerRequest(8)
+//! ../.venv/bin/python tools/addr_probe.py dis 0x51a610   # 删一条（不发）
+//! ../.venv/bin/python tools/addr_probe.py dis 0x51a730   # 跳板 → 0x51a570（另两条 0x51a710/0x51a6f0）
+//! ```
+
+use crate::events::Event;
 
 /// `connected_to_server_event` 的判别值。
 pub const EVENT_CONNECTED_TO_SERVER: u16 = 7;
@@ -310,10 +387,33 @@ impl MetadataRequest {
             _ => STRING_REQUEST_PAYLOAD_SIZE,
         }
     }
+
+    /// 该请求在 `crate::events::Event` 里的变体（发件箱只记这个）。
+    pub const fn event(&self) -> Event {
+        match self {
+            Self::Name { .. } => Event::NameRequest,
+            Self::Skin { .. } => Event::SkinGraphicsRequest,
+            Self::Face { .. } => Event::FaceGraphicsRequest,
+            Self::Hat { .. } => Event::HatGraphicsRequest,
+            Self::Rank { .. } => Event::RankRequest,
+        }
+    }
 }
 
 /// 本机玩家管理器。
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// # 事件流（任务 74 补，`wired` 的第二件；见模块文档 §9）
+///
+/// 订阅 3 条（全在 `0x517690` 体内）：`connected_to_server_event`@`0x5179d4`
+/// → 跳板 `0x51a730` → `0x51a570`；`player_info_event`@`0x517a27` → `0x51a710` → `0x519f40`；
+/// `entity_removed_event`@`0x517a77` → `0x51a6f0` → `0x51a610`。
+/// 发 6 条：`handle_player_info` 里 59/50/52/54/66（`0x51a170`/`0x51a247`/`0x51a31e`/
+/// `0x51a3f5`/`0x51a451`），`handle_connected_to_server` 里 8（`0x51a5bb` 重入队）。
+/// `handle_entity_removed_event` 体内**零** `add_event`。
+///
+/// ⚠️ 原版还有第五道门（模块文档 §9 ⑤：`M+0x30` 那张表里已有该 `player_id` 就直接收尾），
+/// **本实现没有复现它** —— 那张表的语义未知（§7），照抄等于把猜测写成行为。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GraphwarLocalPlayerManager {
     /// `Vec<u32>`（`+0x00/+0x08/+0x10`）：我名下的所有 `player_id`。
     pub player_ids: Vec<u32>,
@@ -323,12 +423,29 @@ pub struct GraphwarLocalPlayerManager {
     pub connection_id: u32,
     /// `+0x38` 里那份配置。
     pub profile: LocalPlayerProfile,
+    /// 订阅名（`new` 的三条 `subscribe`，顺序 = 调用序，`观测`）。
+    pub subscribed: Vec<&'static str>,
+    /// 发件箱（判别值；载荷见 [`MetadataRequest`] / [`EVENT_NEW_PLAYER_REQUEST`]）。
+    pub outbox: Vec<Event>,
+}
+
+impl Default for GraphwarLocalPlayerManager {
+    fn default() -> Self {
+        Self::new(LocalPlayerProfile::default())
+    }
 }
 
 impl GraphwarLocalPlayerManager {
-    /// 新建（原版还会订阅 [`SUBSCRIPTIONS`] 三条事件）。
+    /// 新建 + 订阅 [`SUBSCRIPTIONS`] 那三条（原版 `new` 做的同一件事）。
     pub fn new(profile: LocalPlayerProfile) -> Self {
-        Self { player_ids: Vec::new(), connected: 0, connection_id: 0, profile }
+        Self {
+            player_ids: Vec::new(),
+            connected: 0,
+            connection_id: 0,
+            profile,
+            subscribed: SUBSCRIPTIONS.iter().map(|s| s.name).collect(),
+            outbox: Vec::new(),
+        }
     }
 
     /// `handle_connected_to_server`：记下自己的连接号、请求建玩家、清空 id 列表。
@@ -338,6 +455,7 @@ impl GraphwarLocalPlayerManager {
         self.connected = 1;
         self.connection_id = connection_id;
         // 原版此处 emit(NewPlayerRequest { connection_id })；返回它作为可断言的载荷。
+        self.outbox.push(Event::NewPlayerRequest);
         self.player_ids.clear();
         connection_id
     }
@@ -362,7 +480,7 @@ impl GraphwarLocalPlayerManager {
         if !first {
             return Vec::new();
         }
-        vec![
+        let requests = vec![
             MetadataRequest::Name { name: self.profile.name.clone(), player_id },
             MetadataRequest::Skin { skin: self.profile.skin.clone(), player_id },
             MetadataRequest::Face { face: self.profile.face.clone(), player_id },
@@ -372,16 +490,29 @@ impl GraphwarLocalPlayerManager {
                 level: level.unwrap_or(0),
                 player_id,
             },
-        ]
+        ];
+        self.outbox.extend(requests.iter().map(|r| r.event()));
+        requests
     }
 
     /// `handle_entity_removed_event`：把该 id 从 [`Self::player_ids`] 里**全部**删掉。
     ///
     /// 逐位：`Vec::retain`（x86 `0x51a610`、arm64 `0x411c9c` 两边同形）。返回删了几个。
+    /// `0x51a610` 体内**没有** `add_event` ⇒ 这条处理器不发事件。
     pub fn handle_entity_removed_event(&mut self, entity_id: u32) -> usize {
         let before = self.player_ids.len();
         self.player_ids.retain(|id| *id != entity_id);
         before - self.player_ids.len()
+    }
+
+    /// 取走发件箱（与原版 `GraphwarEventQueue` 的"取空"同口径）。
+    pub fn take_outbox(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// 发件箱里有几条。
+    pub fn outbox_len(&self) -> usize {
+        self.outbox.len()
     }
 
     /// 我名下第一个 `player_id`（没有就是 `None`）。
@@ -436,5 +567,56 @@ mod inline_tests {
         m.player_ids.push(5);
         assert_eq!(m.handle_entity_removed_event(5), 2);
         assert!(m.player_ids.is_empty());
+    }
+
+    /// `new` 的三条订阅在代码侧落地（顺序 = `0x5179d4` / `0x517a27` / `0x517a77`）。
+    #[test]
+    fn new_registers_the_three_subscriptions() {
+        let m = mgr();
+        assert_eq!(
+            m.subscribed,
+            vec!["connected_to_server_event", "player_info_event", "entity_removed_event"]
+        );
+        assert_eq!(m.subscribed, SUBSCRIPTIONS.iter().map(|s| s.name).collect::<Vec<_>>());
+        assert!(m.outbox.is_empty());
+    }
+
+    /// 发方向 6 条（模块文档 §9）：connected → 1 条 (8)；首次 player_info → 5 条
+    /// 59/50/52/54/66；第二次 → 0；`entity_removed` → 0（`0x51a610` 无 `add_event`）。
+    #[test]
+    fn outbox_tracks_the_six_emitters() {
+        let mut m = mgr();
+        m.handle_connected_to_server(100);
+        assert_eq!(m.take_outbox(), vec![Event::NewPlayerRequest]);
+
+        m.handle_player_info(11, 100, Some(4));
+        assert_eq!(
+            m.take_outbox(),
+            vec![
+                Event::NameRequest,
+                Event::SkinGraphicsRequest,
+                Event::FaceGraphicsRequest,
+                Event::HatGraphicsRequest,
+                Event::RankRequest,
+            ]
+        );
+
+        assert!(m.handle_player_info(12, 100, Some(4)).is_empty());
+        assert!(m.outbox.is_empty(), "第二次 player_info 不发请求");
+
+        m.handle_entity_removed_event(11);
+        assert!(m.outbox.is_empty(), "删一条不发事件（0x51a610 无 add_event）");
+    }
+
+    /// 两条门的反面对照（模块文档 §9 ②③）：没连上 / 连接号不匹配 ⇒ 一条都不发。
+    #[test]
+    fn two_gates_block_before_any_request() {
+        let mut m = mgr();
+        assert!(m.handle_player_info(11, 100, None).is_empty(), "② connected != 1");
+        assert!(m.outbox.is_empty());
+        m.handle_connected_to_server(100);
+        let _ = m.take_outbox();
+        assert!(m.handle_player_info(11, 101, None).is_empty(), "③ connection_id 不匹配");
+        assert!(m.outbox.is_empty());
     }
 }

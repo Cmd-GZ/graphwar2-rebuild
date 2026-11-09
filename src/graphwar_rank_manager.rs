@@ -92,6 +92,45 @@
 //!   不能证明"22 段位"，也不能证明 `rank` 值域就是 0..21（`docs/112` §5.5 的负结果仍成立）。
 //! * `+0x08` 那个标志是否真的不进序列化（见 §3 末）。
 //! * `handle_entity_removed_event`（120 B）只有"删一条"的形状，x86 侧无锚 ⇒ **观测**级。
+//!
+//! ## 7. 事件流接线（任务 74 就地复核，x86 逐条；`wired` 的第二件）
+//!
+//! 上一轮（`docs/161` §3.1）给的是 arm64 侧的名字/长度；本轮把 **x86 侧**的
+//! 订阅闭包跳板与发事件点逐条读了一遍（复跑命令见 §8），**两侧同位**：
+//!
+//! ```text
+//! new 0x454f30
+//!   0x454f9c lea rsi,[0x1c0eef] 'new_connection_event' + 0x454faa mov edx,0x14
+//!   0x454fa3 lea r8,<0x9567d8>   +0x20 = 0x9567f8 → 0x454f10 → lea rsi,[0x454d80]
+//!   0x454fb5 call [0x9bac88] → 0x3d38f0      == subscribe_to_event
+//!   0x454fed lea rsi,[0x1c0e12] 'entity_removed_event' + 0x454ffb mov edx,0x14
+//!   0x454ff4 lea r8,<0x956800>   +0x20 = 0x956820 → 0x454ef0 → lea rsi,[0x454e80]
+//!   0x455006 call [0x9bac88] → 0x3d38f0
+//!
+//! 发（两处，都是 tag word 0x8000_0000_0000_0043 = 67）
+//!   send_all_info_events 0x454d80: 0x454e0c [rsp+8]=1 ; 0x454e07 movq xmm0,[rcx-8]
+//!      0x454e14 pshufd xmm0,0xe1 ; 0x454e19 [rsp+0xc]=xmm0 ; 0x454e1f movabs …43
+//!      0x454e35 call [0x9bac80] → 0x3d3530     == add_event
+//!   set_rank 0x455090: 0x4550fe [rsp+0x18]=edx(op) / 0x455103 [rsp+0x1c]=ecx(rank)
+//!      0x455107 [rsp+0x20]=esi(player) / 0x45510b movabs …43 / 0x45511f call [0x9bac80]
+//!   handle_entity_removed_event 0x454e80: **体内零 `add_event`** ⇒ 删一条不发事件
+//! ```
+//!
+//! ⇒ 两个方向都指到指令：**订阅 2 条**（名字/长度/跳板/处理器）+ **发布 2 处**（tag 67）。
+//! 本文件的 `subscribed` / `outbox` 就是这两个方向的落地（`我方接线`：原版是
+//! `GraphwarEventQueue::add_event`，本层先落发件箱，再由容器层搬进共享队列）。
+//!
+//! ## 8. 复跑
+//!
+//! ```bash
+//! ../.venv/bin/python tools/addr_probe.py dis    0x454f30      # 2 条订阅
+//! ../.venv/bin/python tools/addr_probe.py dis    0x454d80      # 广播 67
+//! ../.venv/bin/python tools/addr_probe.py dis    0x455090      # set_rank 67（cmp edx,1 分叉）
+//! ../.venv/bin/python tools/addr_probe.py dis    0x454f10      # 跳板 → 0x454d80
+//! ../.venv/bin/python tools/addr_probe.py dis    0x454ef0      # 跳板 → 0x454e80
+//! ```
+
+use crate::events::Event;
 
 /// `rank_info_event` 的判别值。
 pub const EVENT_RANK_INFO: u16 = 67;
@@ -174,16 +213,40 @@ impl RankInfo {
 pub const SET_RANK_INSERT: u32 = 1;
 
 /// `GraphwarRankManager` 的可判定状态：一张 `player_id → 段位` 表。
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// # 事件流（任务 74 补，`wired` 的第二件；见模块文档 §7）
+///
+/// `new`（x86 `0x454f30`）订阅 [`SUBSCRIPTIONS`] 那两条：
+/// `new_connection_event`@`0x454fb5` → 跳板 `0x454f10` → `0x454d80`（整表重播）；
+/// `entity_removed_event`@`0x455006` → 跳板 `0x454ef0` → `0x454e80`（删一条）。
+/// 发方向两处都在 `add_event`（`0x9bac80`）上：`0x454e35`（重播）与 `0x45511f`（`set_rank`），
+/// tag 都是 `0x8000_0000_0000_0043`(67)；`handle_entity_removed_event` 体内**零** `add_event`。
+///
+/// 发件箱只记判别值（[`Event::RankInfo`]），载荷仍由 [`RankInfo`] 返回。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GraphwarRankManager {
     /// `HashMap<u32, u32>`（用有序表代替，只为让断言稳定；见 `send_all_info_events` 的说明）。
     pub ranks: std::collections::BTreeMap<u32, u32>,
+    /// 订阅名（`new` 的两条 `subscribe`，顺序 = 调用序，`观测`）。
+    pub subscribed: Vec<&'static str>,
+    /// 发件箱（判别值；载荷见 [`RankInfo`]）。
+    pub outbox: Vec<Event>,
+}
+
+impl Default for GraphwarRankManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GraphwarRankManager {
-    /// 新建空管理器（原版还会订阅 [`SUBSCRIPTIONS`] 两条事件）。
+    /// 新建空管理器 + 订阅 [`SUBSCRIPTIONS`] 那两条（原版 `new` 做的同一件事）。
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            ranks: std::collections::BTreeMap::new(),
+            subscribed: SUBSCRIPTIONS.iter().map(|s| s.name).collect(),
+            outbox: Vec::new(),
+        }
     }
 
     /// `set_rank(player_id, op, rank)`：`op == 1` 写入，其它撤销；**两条路都发一条 (67)**。
@@ -196,7 +259,17 @@ impl GraphwarRankManager {
         } else {
             self.ranks.remove(&player_id);
         }
+        self.outbox.push(Event::RankInfo);
         RankInfo { flag: op, rank, player_id }
+    }
+
+    /// `new_connection_event` 的处理（跳板 `0x454f10` → `0x454d80`）：**整表重播**。
+    ///
+    /// 返回值 = 重播出去的载荷（顺序 = 原版 `HashMap` 迭代序，不可复现）。
+    pub fn handle_new_connection_event(&mut self) -> Vec<RankInfo> {
+        let events = self.send_all_info_events();
+        self.outbox.extend(events.iter().map(|_| Event::RankInfo));
+        events
     }
 
     /// `send_all_info_events`：整表逐条发 (67)，`flag` 恒为 [`RANK_INFO_FLAG_SET`]。
@@ -215,8 +288,20 @@ impl GraphwarRankManager {
     }
 
     /// `handle_entity_removed_event`：从表里删掉该玩家，返回是否删到了。
+    ///
+    /// 逐位：`0x454e80` 体内**没有** `add_event` ⇒ 这条处理器不发事件（只删表）。
     pub fn handle_entity_removed_event(&mut self, player_id: u32) -> bool {
         self.ranks.remove(&player_id).is_some()
+    }
+
+    /// 取走发件箱（与原版 `GraphwarEventQueue` 的"取空"同口径）。
+    pub fn take_outbox(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// 发件箱里有几条。
+    pub fn outbox_len(&self) -> usize {
+        self.outbox.len()
     }
 
     /// 查段位（表里没有就是 `None`）。
@@ -258,5 +343,35 @@ mod inline_tests {
         let e = m.set_rank(7, 0, 3);
         assert_eq!(e.triple(), (0, 3, 7));
         assert_eq!(m.rank_of(7), None);
+    }
+
+    /// `new` 的两条订阅在代码侧落地（顺序 = `0x454fb5` 后 `0x455006`）。
+    #[test]
+    fn new_registers_the_two_subscriptions() {
+        let m = GraphwarRankManager::new();
+        assert_eq!(m.subscribed, vec!["new_connection_event", "entity_removed_event"]);
+        assert_eq!(m.subscribed.len(), SUBSCRIPTIONS.len());
+        assert!(m.outbox.is_empty());
+    }
+
+    /// 发方向两处：`set_rank` 两条路各一条 (67)，`handle_new_connection_event` 按表长重播，
+    /// `handle_entity_removed_event` **一条都不发**（`0x454e80` 体内零 `add_event`）。
+    #[test]
+    fn outbox_tracks_the_two_emitters() {
+        let mut m = GraphwarRankManager::new();
+        m.set_rank(7, SET_RANK_INSERT, 3);
+        assert_eq!(m.take_outbox(), vec![Event::RankInfo]);
+
+        let replayed = m.handle_new_connection_event();
+        assert_eq!(replayed.len(), 1);
+        assert_eq!(replayed[0].triple(), (RANK_INFO_FLAG_SET, 3, 7));
+        assert_eq!(m.take_outbox(), vec![Event::RankInfo], "重播一条 = 一条发件");
+
+        assert!(m.handle_entity_removed_event(7));
+        assert!(m.outbox.is_empty(), "删一条不发事件（0x454e80 无 add_event）");
+
+        // 撤销支同样发一条（`0x45511f` 在 `cmp edx,1` 的分叉**之后**，两条路共用）。
+        m.set_rank(8, 0, 0);
+        assert_eq!(m.take_outbox(), vec![Event::RankInfo]);
     }
 }

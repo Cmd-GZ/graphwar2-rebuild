@@ -104,12 +104,12 @@
 | `graphwar_level_manager.rs` | 40 | 590 | `src/graphwar_level_manager.rs` | 20 | 观测 |
 | `graphwar_life_manager.rs` | 9 | 12 | `src/graphwar_life_manager.rs` | 25 | 逐位 |
 | `graphwar_lobby_control.rs` | 1 | 6 | `src/graphwar_lobby_control.rs` | 7 | 观测 |
-| `graphwar_local_player_manager.rs` | 3 | 15 | `src/graphwar_local_player_manager.rs` | 12 | 观测 |
+| `graphwar_local_player_manager.rs` | 3 | 15 | `src/graphwar_local_player_manager.rs` | 19 | 观测 |
 | `graphwar_logger.rs` | 2 | 2 | `src/graphwar_logger.rs` | 4 | 观测 |
 | `graphwar_long_press_animation.rs` | 7 | 7 | `src/graphwar_long_press_animation.rs` | 11 | 观测 |
 | `graphwar_mode_manager.rs` | 2 | 6 | `src/graphwar_mode_manager.rs` | 15 | 观测 |
 | `graphwar_module_container.rs` | 20 | 1 | `src/graphwar_module_container.rs` | 17 | 观测 |
-| `graphwar_name_manager.rs` | 3 | 3 | `src/graphwar_name_manager.rs` | 10 | 观测 |
+| `graphwar_name_manager.rs` | 3 | 3 | `src/graphwar_name_manager.rs` | 17 | 观测 |
 | `graphwar_nodes.rs` | 11 | 1 | `src/graphwar_nodes.rs` | 17 | 观测 |
 | `graphwar_obstacle_manager.rs` | 8 | 14 | `src/plane.rs` | 16 | 逐位 |
 | `graphwar_path_calculator.rs` | 1 | 9 | `src/graphwar_path_calculator.rs` | 2 | 逐位 |
@@ -119,7 +119,7 @@
 | `graphwar_player_config.rs` | 0 | 0 | `src/graphwar_player_config.rs` | 8 | 观测 |
 | `graphwar_player_manager.rs` | 3 | 6 | `src/graphwar_player_manager.rs` | 19 | 观测 |
 | `graphwar_player_screen_control.rs` | 8 | 22 | `src/graphwar_player_screen_control.rs` | 19 | 观测 |
-| `graphwar_rank_manager.rs` | 4 | 4 | `src/graphwar_rank_manager.rs` | 11 | 观测 |
+| `graphwar_rank_manager.rs` | 4 | 4 | `src/graphwar_rank_manager.rs` | 17 | 观测 |
 | `graphwar_remote_event_handler.rs` | 3 | 171 | `src/events.rs` | 2 | 观测 |
 | `graphwar_replay_control.rs` | 2 | 9 | `src/graphwar_replay_control.rs` | 6 | 观测 |
 | `graphwar_replay_player.rs` | 5 | 18 | `src/graphwar_replay_player.rs` | 53 | 观测 |
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（111 个文件、2960 条 `fn`） | `9e6b684acf63f6440c9aef43e1702696f5ccc4efd0962fbc7b655fe137093465` |
+| `src/` 树（111 个文件、2983 条 `fn`） | `65638a3cf83f3137a4e5a6f2285d3304852127aea90aa2f1392f7b4c2683f887` |
 

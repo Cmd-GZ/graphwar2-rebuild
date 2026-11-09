@@ -74,8 +74,9 @@ const WIRED_TIER := [
 	"wired",
 	# 2  ClientConnectionHandler  112 B 的 9 个偏移全解，行为 0 行
 	"layout",
-	# 3  LocalPlayerManager
-	"assembled",
+	# 3  LocalPlayerManager    订 3 发 6 + 12 条交互（任务 74：0x5179d4/0x517a27/0x517a77，
+	#                          5 连发 59/50/52/54/66 + 0x51a5bb 的 8）
+	"wired",
 	# 4  PlayerManager        订 2 发 2 + 6 条交互（任务 40）
 	"wired",
 	# 5  SoldierManager
@@ -104,11 +105,19 @@ const WIRED_TIER := [
 	"assembled",
 	# 17 EntityEffectManager  订 2 发 1 + 7 条交互（任务 40）
 	"wired",
-	# 18-22 ComputerPlayer / FunctionHistoryRecorder / Name / Color / Rank
-	"assembled", "assembled", "assembled", "assembled", "assembled",
+	# 18 ComputerPlayerManager
+	"assembled",
+	# 19 FunctionHistoryRecorder
+	"assembled",
+	# 20 NameManager           订 2 发 2 + 8 条交互（任务 74：x86 new = 0x519100）
+	"wired",
+	# 21 ColorManager
+	"assembled",
+	# 22 RankManager           订 2 发 2 + 9 条交互（任务 74：0x454f30）
+	"wired",
 ]
 ## 四档现值计数（顺序固定：wired / layout / assembled / stub；合计 = 22）。
-const TIER_TALLY := {"wired": 11, "layout": 2, "assembled": 9, "stub": 0}
+const TIER_TALLY := {"wired": 14, "layout": 2, "assembled": 6, "stub": 0}
 ## 容器里**什么都没有**的两个槽（纯标记）：只有它们的 `manager_impl_type()` 回 `"—"`。
 const EMPTY_IMPL := ["GraphwarClientConnectionHandler"]
 ## 容器类型是 `_scaffold` 包装/标记的 5 个（`SlotKind::Stub`，**不是**档位 `stub`）；
@@ -218,7 +227,7 @@ func _initialize() -> void:
 		"assembled_manager_total() == %d（= 原版 22 条 add_module）" % WIRED.size())
 	# 17 + 5 = 22：17 个槽容器里直接装原版模块类型，5 个槽容器类型是 `_scaffold` 包装/标记
 	# （`SlotKind::RealType` / `SlotKind::Stub`，§41.2 的既有口径）。
-	# ⚠️ 这**不是档位**：档位是 10 wired + 2 layout + 9 assembled + 1 stub（见 `WIRED_TIER`）。
+	# ⚠️ 这**不是档位**：档位是 14 wired + 2 layout + 6 assembled + 0 stub（见 `WIRED_TIER`）。
 	# 两个口子的函数名（尤其 `container_stub_manager_count`）是 §41 遗留措辞，函数在
 	# `graphwar_root_node_class.rs`（本轮禁区），`docs/16` §47.6 记了这条待改。
 	ok(int(root_node.call("container_real_manager_count")) == WIRED.size() - PACKAGED.size(),
@@ -242,7 +251,7 @@ func _initialize() -> void:
 		and int(tally["layout"]) == int(TIER_TALLY["layout"])
 		and int(tally["assembled"]) == int(TIER_TALLY["assembled"])
 		and int(tally["stub"]) == int(TIER_TALLY["stub"]),
-		"四档计数 == wired 10 / layout 2 / assembled 9 / stub 1（实际 %s）" % tally)
+		"四档计数 == wired 14 / layout 2 / assembled 6 / stub 0（实际 %s）" % tally)
 	ok(int(tally["wired"]) + int(tally["layout"]) + int(tally["assembled"]) + int(tally["stub"])
 		== WIRED.size(), "四档合计 == %d（每个槽只报一档）" % WIRED.size())
 	ok(outside.is_empty(),
@@ -319,8 +328,8 @@ func _initialize() -> void:
 	#
 	# 上面 2) 那一段只证明"22 个槽都能按类型取回"——**取回来的是活对象**这件事，
 	# 得真调一个入口再读回来才算。这里用 `manager_probe_selftest()`（**我方自造**的
-	# 观测口，原版没有；理由见 §44）：它在容器里对 11 个 manager 各跑一遍
-	# "取回 → 写 → 读回"，返回 65 条 `名字=值`。
+	# 观测口，原版没有；理由见 §44）：它在容器里对 14 个 manager 各跑一遍
+	# "取回 → 写 → 读回"，返回 103 条 `名字=值`。
 	#
 	# ⚠️ 期望值**不是**从返回值抄下来的：它们逐条对应 `root_wiring.rs` 的单测
 	# `one_minimal_interaction_per_manager_reads_back_the_written_value`，
@@ -369,13 +378,28 @@ func _initialize() -> void:
 		"plane_pos.empty=true", "plane_pos.position=1.5,-2.5,0.5", "plane_pos.tag=true",
 		"plane_pos.emitted=1", "plane_pos.all=1", "plane_pos.replayed=1",
 		"plane_pos.removed=true", "plane_pos.after=true", "plane_pos.subs=2",
+		# ⑬ RankManager（任务 74）：**状态** rank_of / **发布** emitted+replay / **订阅** subs
+		"rank.rank_of=3", "rank.triple=1,3,9011", "rank.emitted=1", "rank.replayed=1",
+		"rank.replay_flag=1", "rank.outbox_after_replay=2", "rank.removed=true",
+		"rank.present_after=false", "rank.subs=2",
+		# ⑭ NameManager（任务 74）
+		"name.name_of=gw2", "name.event=gw2,9012", "name.emitted=1", "name.replayed=1",
+		"name.outbox_after_replay=2", "name.removed=true", "name.present_after=false",
+		"name.subs=2",
+		# ⑮ LocalPlayerManager（任务 74）
+		"local_player.before_connect=0", "local_player.connected=true",
+		"local_player.conn=9030", "local_player.emitted_connect=1",
+		"local_player.tags=59,50,52,54,66", "local_player.rank_req=1,4,9013",
+		"local_player.emitted_requests=6", "local_player.second=0",
+		"local_player.ids=2", "local_player.removed=1", "local_player.ids_after=1",
+		"local_player.subs=3",
 	]
 	var probe: PackedStringArray = root_node.call("manager_probe_selftest")
 	print("      manager_probe_selftest() 给出 %d 条（期望 %d 条）" % [probe.size(), expected_probe.size()])
 	ok(probe == PackedStringArray(expected_probe),
-		"12 个 manager 的最小交互结果 == 74 条 名字=值（实际 %s）" % probe)
+		"14 个 manager 的最小交互结果 == 103 条 名字=值（实际 %s）" % probe)
 	ok(probe.size() == expected_probe.size(),
-		"交互条数 == 74（12 个 manager：5+5+7+6+4 + 6+6+7+5+7+7 + 9）")
+		"交互条数 == 103（14 个 manager：5+5+7+6+4 + 6+6+7+5+7+7 + 9 + 9+8+12）")
 
 	# 逐个 manager 各取一条最关键的值再查一遍（单条查询口）
 	ok(String(root_node.call("manager_probe", "life.alive")) == "1",
@@ -426,6 +450,29 @@ func _initialize() -> void:
 		"PlanePosManager：订阅 2 条（new_connection_event / entity_removed_event，原版 new 内联）")
 	ok(String(root_node.call("manager_probe", "plane_pos.after")) == "true",
 		"PlanePosManager：handle_entity_removed_event(tag 14) 之后那一格真的没了")
+
+	# —— 任务 74 的三格：每条读数各自指到 **订阅 / 发布 / 状态** 之一 ——
+	#
+	# 地址（订阅/发布的落点）写在三份 manager 文件的模块文档里；这里断的是
+	# "容器里那一份**真的**按原版语义动过"：
+	ok(String(root_node.call("manager_probe", "rank.subs")) == "2",
+		"RankManager「订阅」2 条（new_connection_event@0x454fb5 / entity_removed_event@0x455006）")
+	ok(String(root_node.call("manager_probe", "rank.emitted")) == "1",
+		"RankManager「发布」set_rank 发 1 条（add_event @0x45511f，tag 67）")
+	ok(String(root_node.call("manager_probe", "rank.present_after")) == "false",
+		"RankManager「状态」handle_entity_removed_event@0x454e80 之后表里真没了")
+	ok(String(root_node.call("manager_probe", "name.subs")) == "2",
+		"NameManager「订阅」2 条（@0x519209 / @0x519255，x86 new = 0x519100）")
+	ok(String(root_node.call("manager_probe", "name.outbox_after_replay")) == "2",
+		"NameManager「发布」set_name(@0x5193e8) + 整表重播(@0x518fe5) 各 1 条（tag 60）")
+	ok(String(root_node.call("manager_probe", "name.name_of")) == "gw2",
+		"NameManager「状态」set_name 之后 name_of 读回同一份写入值")
+	ok(String(root_node.call("manager_probe", "local_player.subs")) == "3",
+		"LocalPlayerManager「订阅」3 条（@0x5179d4 / @0x517a27 / @0x517a77，全在 0x517690 体内）")
+	ok(String(root_node.call("manager_probe", "local_player.tags")) == "59,50,52,54,66",
+		"LocalPlayerManager「发布」首次 player_info 连发 5 条（@0x51a170/0x51a247/0x51a31e/0x51a3f5/0x51a451）")
+	ok(String(root_node.call("manager_probe", "local_player.before_connect")) == "0",
+		"LocalPlayerManager「状态」没连上时不发请求（门②在我方也成立）")
 
 	# 反面对照（任务 28 重判）：这 5 个 `SlotKind::Stub` 槽的档位**跟着事实走**，
 	# 不再是清一色 `stub`——"能交互"不等于"复原了原版结构"，两件事分开记（§43 / §47）：
