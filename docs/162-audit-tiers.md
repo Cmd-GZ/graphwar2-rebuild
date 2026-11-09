@@ -15,6 +15,12 @@
 **复核者立场**：不读第十五轮的结论，四个数各自从代码/测试里重新算；不一致按"文件 + 行号 + 实际值"记。
 地址一律 **ELF 虚地址**（Ghidra = 本值 + `0x100000`，只加一次）。
 
+**审计对象**：`be74cbd`（= 克隆时的 master）。复核结束后 master 前进到 `c5c8c87`，其间只改了
+`docs/00-status.md`（`:117` 未变）、`docs/HANDOVER.md` 与 `docs/guide/**`；**四个口径文件
+（`root_wiring.rs` / `assemble_check.gd` / `docs/161` / `README.md`）逐字未变**
+⇒ §1 的四个数、§2 的逐槽表、§6 的 D 清单在 `c5c8c87` 上同样成立，唯一漂移是
+`docs/HANDOVER.md` 的行号（`:85` → `:90`，内容仍是 `14 wired / 2 layout / 6 assembled / 0 stub`）。
+
 ---
 
 ## 1. 四个口径 × 实际值 × 是否一致
