@@ -401,7 +401,26 @@ $ cargo test --offline --features gdext-bindings
 $ cargo tree | wc -l
   1                       # 仍然零依赖（只有 gw2-rebuild 自己）
 $ bash client/run.sh selftest
-  SELFTEST 709 passed, 0 failed        # 前置条件见 §10.3.1，缺一样就不是这个数
+  SELFTEST 709 passed, 0 failed        # 前置条件见 
+#### 10.3.3 `selftest` 仍有一种**未定因**的降级（2026-11-09 实测，签名固定）
+
+在**刚从 `--features gdext-bindings` release 构建 + `--import` + 连跑 14 个 headless 脚本**之后，
+紧接着连跑三次 `selftest` 都得到 **629 passed / 7 failed / 1 skipped**；此后（无任何代码改动）
+连跑三次又都回到 **714 / 0 / 1 skip**。
+
+```
+签名  629 + 7 = 636 ⇒ **正好是"没有 serve_match"那一档的分母**
+含义  serve_match 被找到了（否则会 skip），但那 7 条"真服务端"用例**连不上**
+      ⇒ 不是断言错，是**起服务/连服务**这一层没就绪
+已知  76 号已经把"关卡种子是骰子"那条彻底钉死（连续 20 次全绿），这一条是**另一件事**
+处置  重跑一次即可恢复；但**不许把 7 failed 当成代码回归**（也不是 skip）
+```
+
+**判据**：出现 `629/7` 时，先看 `client/run.sh` 用的那颗 `serve_match` 是哪一份
+（`CARGO_TARGET_DIR/release/examples/` → `debug/examples/` 的回退顺序），再重跑一次；
+两次都不行才当回归查。
+
+§10.3.1，缺一样就不是这个数
 ```
 
 > ⚠️ **审计 2026-11-08 改了这一段**：原记「65 个二进制（lib 464 / 539）、总计 **1520** / **1595**、
