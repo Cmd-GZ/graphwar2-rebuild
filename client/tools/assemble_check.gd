@@ -107,8 +107,10 @@ const WIRED_TIER := [
 	"wired",
 	# 17 EntityEffectManager  订 2 发 1 + 7 条交互（任务 40）
 	"wired",
-	# 18 ComputerPlayerManager
-	"assembled",
+	# 18 ComputerPlayerManager  订 3（tick/turn_info/entity_removed）+ 发 5（59/50/52/54/66）
+	#                          + `state` 3/1 写入点（0x478fe3 / 0x479dfa / 0x47864f）+ 10 条交互
+	#                          （任务 79：0x47a720；BotData 键 = player_id、桶步长 0x78）
+	"wired",
 	# 19 FunctionHistoryRecorder  订 1（function_info_event = 35）+ **发 0 条** + 8 条交互
 	#                         （任务 77：0x3f10a0 / 0x3f0e40；33/35 已裁决）
 	"wired",
@@ -120,7 +122,7 @@ const WIRED_TIER := [
 	"wired",
 ]
 ## 四档现值计数（顺序固定：wired / layout / assembled / stub；合计 = 22）。
-const TIER_TALLY := {"wired": 18, "layout": 2, "assembled": 2, "stub": 0}
+const TIER_TALLY := {"wired": 19, "layout": 2, "assembled": 1, "stub": 0}
 ## 容器里**什么都没有**的两个槽（纯标记）：只有它们的 `manager_impl_type()` 回 `"—"`。
 const EMPTY_IMPL := ["GraphwarClientConnectionHandler"]
 ## 容器类型是 `_scaffold` 包装/标记的 5 个（`SlotKind::Stub`，**不是**档位 `stub`）；
@@ -230,7 +232,7 @@ func _initialize() -> void:
 		"assembled_manager_total() == %d（= 原版 22 条 add_module）" % WIRED.size())
 	# 17 + 5 = 22：17 个槽容器里直接装原版模块类型，5 个槽容器类型是 `_scaffold` 包装/标记
 	# （`SlotKind::RealType` / `SlotKind::Stub`，§41.2 的既有口径）。
-	# ⚠️ 这**不是档位**：档位是 18 wired + 2 layout + 2 assembled + 0 stub（见 `WIRED_TIER`）。
+	# ⚠️ 这**不是档位**：档位是 19 wired + 2 layout + 1 assembled + 0 stub（见 `WIRED_TIER`）。
 	# 两个口子的函数名（尤其 `container_stub_manager_count`）是 §41 遗留措辞，函数在
 	# `graphwar_root_node_class.rs`（本轮禁区），`docs/16` §47.6 记了这条待改。
 	ok(int(root_node.call("container_real_manager_count")) == WIRED.size() - PACKAGED.size(),
@@ -413,13 +415,18 @@ func _initialize() -> void:
 		"history.recorded=true", "history.len=1", "history.first=x,0xff0000,9045",
 		"history.wrong_tag=false", "history.none_text=false",
 		"history.len_after_rejected=1", "history.emitted=0", "history.subs=1",
+		# ⑳ ComputerPlayerManager（任务 79）：5 条身份请求 + state 3→1→3
+		"computer.tags=59,50,52,54,66", "computer.level=1000", "computer.limit=200",
+		"computer.state_add=3", "computer.think=9046,9050,200", "computer.state_spawn=1",
+		"computer.blocked_while_running=true", "computer.reset=1",
+		"computer.state_after_tick=3", "computer.removed=true",
 	]
 	var probe: PackedStringArray = root_node.call("manager_probe_selftest")
 	print("      manager_probe_selftest() 给出 %d 条（期望 %d 条）" % [probe.size(), expected_probe.size()])
 	ok(probe == PackedStringArray(expected_probe),
-		"18 个 manager 的最小交互结果 == 135 条 名字=值（实际 %s）" % probe)
+		"19 个 manager 的最小交互结果 == 145 条 名字=值（实际 %s）" % probe)
 	ok(probe.size() == expected_probe.size(),
-		"交互条数 == 135（18 个 manager：5+5+7+6+4 + 6+6+7+5+7+7 + 9 + 9+8+12 + 8+7+9+8）")
+		"交互条数 == 145（19 个 manager：5+5+7+6+4 + 6+6+7+5+7+7 + 9 + 9+8+12 + 8+7+9+8 + 10）")
 
 	# 逐个 manager 各取一条最关键的值再查一遍（单条查询口）
 	ok(String(root_node.call("manager_probe", "life.alive")) == "1",
@@ -522,6 +529,14 @@ func _initialize() -> void:
 		"FunctionHistoryRecorder「发布」**0 条**（0x3f0e40 体内零 add_event，发方向是正面证据）")
 	ok(String(root_node.call("manager_probe", "history.len_after_rejected")) == "1",
 		"FunctionHistoryRecorder「状态」tag 33 / None 文本各被挡一次，历史里只留 tag 35 那条")
+	ok(String(root_node.call("manager_probe", "computer.tags")) == "59,50,52,54,66",
+		"ComputerPlayerManager「发布」建档 5 条身份请求 = 59/50/52/54/66（0x4791f9/0x479271/0x4792ec/0x479366/0x4793a6）")
+	ok(String(root_node.call("manager_probe", "computer.state_spawn")) == "1"
+		and String(root_node.call("manager_probe", "computer.state_after_tick")) == "3",
+		"ComputerPlayerManager「状态」`state` 3→1（0x479dfa，spawn 之后）→3（0x47864f，handle_tick 收尾）")
+	ok(String(root_node.call("manager_probe", "computer.level")) == "1000"
+		and String(root_node.call("manager_probe", "computer.limit")) == "200",
+		"ComputerPlayerManager「订阅」3 条（tick/turn_info/entity_removed）+ 难度档 1000→limit 200 落表")
 
 	# 反面对照（任务 28 重判）：这 5 个 `SlotKind::Stub` 槽的档位**跟着事实走**，
 	# 不再是清一色 `stub`——"能交互"不等于"复原了原版结构"，两件事分开记（§43 / §47）：

@@ -81,7 +81,7 @@
 | `graphwar_campaign_control.rs` | 1 | 1 | `src/graphwar_campaign_control.rs` | 23 | 观测 |
 | `graphwar_client_connection_handler.rs` | 8 | 16 | `src/graphwar_client_connection_handler.rs` | 8 | 观测 |
 | `graphwar_color_manager.rs` | 4 | 6 | `src/graphwar_color_manager.rs` | 32 | 观测 |
-| `graphwar_computer_player_manager.rs` | 5 | 27 | `src/graphwar_computer_player_manager.rs` | 30 | 观测 |
+| `graphwar_computer_player_manager.rs` | 5 | 27 | `src/graphwar_computer_player_manager.rs` | 33 | 观测 |
 | `graphwar_crash_reporter.rs` | 0 | 0 | `src/graphwar_crash_reporter.rs` | 2 | 观测 |
 | `graphwar_draw_util.rs` | 1 | 4 | `src/graphwar_draw_util.rs` | 1 | 观测 |
 | `graphwar_effect_manager.rs` | 1 | 3 | `src/graphwar_effect_manager.rs` | 16 | 观测 |
@@ -104,7 +104,7 @@
 | `graphwar_level_manager.rs` | 40 | 590 | `src/graphwar_level_manager.rs` | 20 | 观测 |
 | `graphwar_life_manager.rs` | 9 | 12 | `src/graphwar_life_manager.rs` | 25 | 逐位 |
 | `graphwar_lobby_control.rs` | 1 | 6 | `src/graphwar_lobby_control.rs` | 7 | 观测 |
-| `graphwar_local_player_manager.rs` | 3 | 15 | `src/graphwar_local_player_manager.rs` | 19 | 观测 |
+| `graphwar_local_player_manager.rs` | 3 | 15 | `src/graphwar_local_player_manager.rs` | 22 | 观测 |
 | `graphwar_logger.rs` | 2 | 2 | `src/graphwar_logger.rs` | 4 | 观测 |
 | `graphwar_long_press_animation.rs` | 7 | 7 | `src/graphwar_long_press_animation.rs` | 11 | 观测 |
 | `graphwar_mode_manager.rs` | 2 | 6 | `src/graphwar_mode_manager.rs` | 15 | 观测 |
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（111 个文件、3009 条 `fn`） | `2efc6a637760223dafefa8c3d909b9abf07b6f04f65e44a79071947839797551` |
+| `src/` 树（111 个文件、3016 条 `fn`） | `9570a26f5385609fecc35e28192f900e49f9f3ae30281fe9687184e185db1140` |
 

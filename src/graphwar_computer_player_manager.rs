@@ -133,16 +133,50 @@
 //!
 //! ## 6. `BotData` 与"轮到它了"的门（观测）
 //!
-//! Bot 表是 `HashMap<u32 /*connection_id*/, BotData>`，**桶步长 `0x78` = 120 字节**
+//! Bot 表是 `HashMap<u32, BotData>`，**桶步长 `0x78` = 120 字节**
 //! （`handle_entity_removed_event` 里 `iVar10 * -0x78`、`handle_tick` 同），
-//! 值里已经看到的位置：
+//! **key = 该 Bot 的 `player_id`**（`bot_added_event` 载荷 `+0x0c`），`BotData` 从 `entry+0x08` 起
+//! 共 112 字节。任务 79 的运行时样本（两局）把这一段钉到了字节：
 //!
-//! | 偏移（相对 `BotData`） | 内容 | 等级 |
+//! ```text
+//! 样本（AI-vs-AI，bot 232，level = 1000）：120 字节桶的原文
+//!   00: e8 00 00 00            ; +0x00 key = 232（u32），+0x04 是桶内填充
+//!   08: 03 00 00 00            ; +0x08 **state = 3**（= BotData+0x00）
+//!   18: 00 00 80 3f 00 00 80 3f; BotData+0x10/+0x14 = 两个 f32 1.0
+//!   68: e8 03 00 00 32 00 00 00 05 00 00 00 c8 00 00 00
+//!       ; BotData+0x60 level=1000 · +0x64 精英数=50 · +0x68 每槽个体=5 · +0x6c limit=200
+//! ```
+//!
+//! 那四个数**与静态两条链一致**：`0x479017`–`0x47902e` 把 `edx/ecx/r8d/r9d` 写进
+//! `[rsp+0xe0..0xf0]`（= 值的 `+0x60..+0x70`），而运行时读回来的原文正好在 `entry+0x68`。
+//!
+//! | 偏移（相对 `BotData`，基 = `entry+0x08`） | 内容 | 等级 |
 //! |---|---|---|
-//! | `+0x08` | **状态** `i32`；`== 3` 是"可以让它算"的门 | 观测 |
-//! | `+0x34` 一带 | `HashMap<u32 /*soldier_id*/, SoldierBotData>`（桶步长 **`0x58` = 88**） | 观测 |
+//! | `+0x00` | **状态** `i32`；`== 3` 才放行算函数 | 观测（静态写入点 + 运行时直读） |
+//! | `+0x10 / +0x14` | 两个 `f32` = `1.0`（样本里两次都是 `0x3f800000`） | 观测（一局样本） |
+//! | `+0x60` | `level`（原始难度参数） | 观测（静态 + 运行时） |
+//! | `+0x64` | 精英数（`= 种群/5`） | 观测（同上） |
+//! | `+0x68` | 每槽个体数（恒 5） | 观测（同上） |
+//! | `+0x6c` | `limit`（复杂度上限） | 观测（同上） |
+//! | `+0x3c` 一带 | 第二层 `HashMap<u32 /*soldier_id*/, SoldierBotData>`（桶步长 **`0x58` = 88**） | 观测（起点未逐位钉死） |
 //! | `SoldierBotData + 0x50` | 一个 `u8`（`handle_turn_info_event` 读出来当参数） | 观测 |
-//! | 其余 | 未解（`level` / 精英数 / 每槽个体数 都在这 120 字节里） | 未知 |
+//!
+//! ⚠️ **更正（任务 79）**：旧版本把 key 写成 `connection_id`、把状态写成 `BotData+0x08`。
+//! 运行时两局都是：bot_added 的 key = 232，而该 Bot 的 `player_info_event` 是
+//! `(player_id=232, connection_id=228)` —— 228 是**我（房主）的连接**。⇒ key 是 **player_id**，
+//! 不是 connection id；状态在桶内 `+0x08`（= `BotData+0x00`），`0x479610 cmp dword [r14-0x70],3`
+//! 与 `0x4795d2 cmp r15d,[r14+rdi-0x78]` 两条指令就是这个口径。
+//!
+//! `state` 的完整轨迹（**观测**，两局 × 两个 Bot，100 ms 直读 + 三条写入点）：
+//!
+//! ```text
+//! 建档        0x478fe3/0x479036 → BotData+0x00 = 3       （空闲，可算）
+//! 过 turn_info 门 0x479610 读到 3 ⇒ 放行；thread::spawn 0x479da4
+//!           0x479dfa mov [r14-0x70],rbx（rbx = [rsp+0xa8] = 1）→ state = 1   （线程在跑）
+//! handle_tick 0x47864f mov qword [r15],3                → state = 3        （收尾，样本里 25 s 后）
+//! ```
+//!
+//! `0` 与 `2`：**在 `.text` 里找不到写 `BotData+0x00` 的指令**（有界否定，正对照见 §7-B）。
 //!
 //! `handle_turn_info_event` 的门是**三道**（全部观测）：
 //!
@@ -163,11 +197,11 @@
 //!
 //! | # | 未知 | 缺什么 |
 //! |---|---|---|
-//! | A | `handle_tick` 到底做什么 | 它扫表时对 `state != 3` 的条目走一条**不返回**的路径（`0x5ec160`，Ghidra 标 `hasNoReturn`），本文只解到"门是 `state != 3`"；那条路径是 `join()` 失败 panic 还是别的，**未解** |
-//! | B | `state` 的四个值各是什么意思 | 只确定 `3` 是"可算"；`0/1/2` 没观测到写入点 |
+//! | A | `handle_tick` 到底做什么 | ⚠️ **任务 79 更正**：旧版说"`state != 3` 走一条**不返回**的路径（`0x5ec160`）"——**`0x4785f0` 体内没有 `0x5ec160`**。实测那条路是**收尾**：`0x4786b2` 取 `&BotData` → 判 `state != 3` → `0x478e0e` 再判一次 → drop（`0x47b5e0`/`0x404df0`）→ `0x47864f` 把 `state` 写回 3；体内真正的 panic 是 `0x478ebb` 那条 **`"Failed to join computer player thread."`**（`0x478eda` 调 panic、`0x478ee0 ud2`）。**体内逐步语义仍只到"收尾 + 复位"这一档** |
+//! | B | `state` 的取值 | ✅ **任务 79 结案（观测）**：`3` = 空闲/可算（建档 `0x478fe3`；`handle_tick` 收尾 `0x47864f`），`1` = 已 spawn 未收（`0x479dfa`，`rbx = [rsp+0xa8] = 1`，见 `0x4796f9`）。**`0`/`2` 没有任何写入点**（有界否定）：函数块 `0x4785f0–0x47a800` 的 `mov [mem], imm∈{0,1,2,3}` 扫描只命中 `0x47864f`/`0x478ef9`/`0x478fe3`（三条写 3）与 `0x4796f9`（写 1 到栈，再经 `0x479dfa` 进 `BotData`）；**正对照**：同一次扫描确实抓到了这三条 3 与那条 1。运行时两局 100 ms 采样 + 三条写入点，只见 `3→1→3` |
 //! | C | `computer_function_thread` 的 x86 地址 | 无锚，靠顺序夹逼（见 §1 表注）；`0x47a300` 的形参表与本模块其它函数不连号，**推断** |
 //! | D | `rank_request_event`（66）的载荷第二个字段 | 反编译只看到 `player_id` 与一个常量 `0` |
-//! | E | 难度档与 `docs/13-ai.md` 的 `limit` 列（5/5/10/15/25/200）的接口点 | 那列由进化器自己按 `level` 再算一次；本模块只把 `level` 原样塞进 `BotData` |
+//! | E | 难度档与 `docs/13-ai.md` 的 `limit` 列（5/5/10/15/25/200）的接口点 | 那列由进化器自己按 `level` 再算一次；本模块只把 `level` 原样塞进 `BotData`（运行时佐证：`level=1000` 的 Bot 在表里就是 `level=1000 / 精英 50 / 每槽 5 / limit 200`） |
 //! | F | 房间里"人 + Bot"的上限 | 玩家上限（10）在 `graphwar_player_manager`（`docs/10`）；Bot 是否占这个名额未查 |
 
 use std::collections::HashMap;
@@ -194,7 +228,18 @@ pub const TAG_TURN_INFO: u64 = 0x8000_0000_0000_002b;
 pub const TAG_ENTITY_REMOVED: u64 = 0x8000_0000_0000_000e;
 
 /// `BotData` 里那个"可以开始算"的状态值（观测：`state == 3` 才放行）。
+///
+/// 写入点：`0x478fe3`（建档时 `mov qword [rsp+0x10],3` → 搬进 `BotData+0x00`）、
+/// `0x47864f`（`handle_tick` 收尾 `mov qword [r15],3`）、`0x478ef9`（panic 路径复位）。
 pub const BOT_STATE_READY: i32 = 3;
+
+/// "已经 spawn、线程还没收"的状态（**观测**，任务 79）。
+///
+/// `handle_turn_info_event` 过了门、`thread::spawn`（`0x479da4 call 0x438d20`）之后
+/// 立刻写 `BotData+0x00 = 1`：`0x479dfa mov qword [r14-0x70],rbx`，其中
+/// `rbx = [rsp+0xa8] = 1`（`0x4796f9`）。运行时抓到的完整轨迹是
+/// **3 → 1 →（25 s 后）3**：`handle_tick` 的 `0x47864f` 把它写回 3。
+pub const BOT_STATE_RUNNING: i32 = 1;
 
 /// 每槽个体数（`add_computer_player` 的第 4 个实参是常数 5）。
 ///
@@ -421,11 +466,18 @@ pub struct SoldierBotData {
 /// 一个 Bot 的运行时状态。
 #[derive(Debug, Clone)]
 pub struct BotData {
-    /// `+0x08`：状态；`== 3` 才放行算函数。
+    /// `+0x00`（= 桶内的 `entry+0x08`）：状态；`== 3` 才放行算函数。
+    ///
+    /// 三个取值里**只有 3 和 1 有写入点**（任务 79）：3 = 空闲（建档 / `handle_tick` 收尾），
+    /// 1 = "已 spawn、还没收"。`0` 与 `2` 在 `.text` 里**找不到写 `BotData+0x00` 的指令**
+    /// （有界否定 + 正对照，见模块文档 §7-B）；运行时两局 100 ms 采样也没见过它们。
     pub state: i32,
     /// 建档时那两组数。
     pub new_bot: NewBot,
-    /// `+0x34` 一带：`soldier_id → SoldierBotData`（桶步长 `0x58`）。
+    /// 第二层哈希表：`soldier_id → SoldierBotData`（桶步长 `0x58`）。
+    ///
+    /// 起点相对 `BotData` **未逐位钉死**：`0x479b2b` 的 `lea rdi,[r14-0x20]`（= `entry+0x58`）
+    /// 与 `0x478a55` 的 `cmp dword [rbp+0x28],0`（= `entry+0xa0`）都指向它那一带。
     pub soldiers: HashMap<u32, SoldierBotData>,
 }
 
@@ -524,6 +576,57 @@ impl ComputerPlayers {
             flag,
             new_bot: bot.new_bot,
         })
+    }
+
+    /// `handle_turn_info_event` + **状态迁移**（任务 79，`0x479dfa`）。
+    ///
+    /// 与 [`Self::handle_turn_info_event`] 的区别只有一件：过了门的那个 Bot 的
+    /// `state` 被置成 [`BOT_STATE_RUNNING`]（原版在 `thread::spawn` **之后**写
+    /// `BotData+0x00 = 1`，见 `0x479da4` / `0x479dfa`）。
+    /// 之后 `handle_tick` 才把它写回 3 —— 运行时的轨迹是 **3 → 1 → 3**。
+    pub fn handle_turn_info_event_with_spawn(&mut self, turn: TurnInfo) -> Option<ThinkRequest> {
+        if self.bots.is_empty() {
+            return None;
+        }
+        let bot = self.bots.get(&turn.player_id)?;
+        if !bot.can_think() {
+            return None;
+        }
+        let flag = bot
+            .soldiers
+            .get(&turn.soldier_id)
+            .map(|s| s.byte_50)
+            .unwrap_or(0);
+        let new_bot = bot.new_bot;
+        if let Some(b) = self.bots.get_mut(&turn.player_id) {
+            b.state = BOT_STATE_RUNNING;
+        }
+        Some(ThinkRequest {
+            player_id: turn.player_id,
+            soldier_id: turn.soldier_id,
+            flag,
+            new_bot,
+        })
+    }
+
+    /// `handle_tick`（`0x4785f0`）的状态部分：**把每条 entry 的 `state` 写回 3**。
+    ///
+    /// 逐位：`0x4786ab cmp dword [..],3` → `state == 3` 直接跳到 `0x47864f`；
+    /// `state != 3` 先走收尾（drop / 取线程结果那一段，`0x478e0e` 再判一次），
+    /// **两条路最后都执行** `0x47864f mov qword [r15],3`。
+    /// ⇒ 返回"这次被写回 3 的那些 `player_id`（原本不是 3 的）"。
+    ///
+    /// ⚠️ 这条不是"跳过一回合"：`state` 回到 3 之后下一次 `turn_info` 才能再过门。
+    pub fn handle_tick(&mut self) -> Vec<u32> {
+        let mut reset = Vec::new();
+        for (id, bot) in self.bots.iter_mut() {
+            if bot.state != BOT_STATE_READY {
+                reset.push(*id);
+                bot.state = BOT_STATE_READY;
+            }
+        }
+        reset.sort_unstable();
+        reset
     }
 
     /// 表里当前"可以动手"的 Bot 数——攻略侧读数，二进制里没有这个函数。
@@ -652,6 +755,27 @@ mod tests {
             "不是 Bot"
         );
         assert_eq!(bots.ready_count(), 1);
+    }
+
+    /// `Computer.state` 的整条时间线（任务 79，运行时观测的代码版）：
+    /// 建档 **3** → 过门 spawn **1** → `handle_tick` 收尾 **3**。
+    #[test]
+    fn state_goes_three_one_three() {
+        let mut bots = ComputerPlayers::new();
+        bots.add_computer_player(NewBot::from_level(232, 1000));
+        assert_eq!(bots.get(232).unwrap().state, BOT_STATE_READY, "建档 = 3");
+        assert_eq!(bots.get(232).unwrap().new_bot.limit, 200, "level 1000 落进第 6 档");
+
+        let turn = TurnInfo { player_id: 232, soldier_id: 70 };
+        assert!(bots.handle_turn_info_event_with_spawn(turn).is_some());
+        assert_eq!(bots.get(232).unwrap().state, BOT_STATE_RUNNING, "spawn 之后 = 1");
+        assert_eq!(bots.ready_count(), 0, "1 期间不能再过门");
+        assert_eq!(bots.handle_turn_info_event_with_spawn(turn), None, "state != 3 ⇒ 拦");
+
+        assert_eq!(bots.handle_tick(), vec![232], "handle_tick 把它写回 3");
+        assert_eq!(bots.get(232).unwrap().state, BOT_STATE_READY);
+        assert_eq!(bots.handle_tick(), Vec::<u32>::new(), "已经是 3 ⇒ 无事可做");
+        assert!(bots.handle_turn_info_event_with_spawn(turn).is_some(), "又能算了");
     }
 
     /// 实体删除会把那条 Bot 从表里摘掉（断言 tag=14 的那一段）。

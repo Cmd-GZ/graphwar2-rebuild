@@ -111,11 +111,11 @@ tag word 的两种构造都出现过，读的时候别只找 `movabs` 立即数�
 
 | # | manager（原版型 / size / 我方型） | 已知什么 | **缺什么证据** | 拿证据的手段 |
 |---|---|---|---|---|
-| 3 | `GraphwarLocalPlayerManager` / 64 / `graphwar_local_player_manager::GraphwarLocalPlayerManager` | `new` **内联**进 `GraphwarGameClient::new`（arm64 `0x409eac` 处 `alloc 0x58`，无独立符号）；**订阅 3 条**（全在 `0x517690` 体内）：`connected_to_server_event`(7) `@0x5179d4` → `0x51a570`、`player_info_event`(13) `@0x517a27` → `0x519f40`、`entity_removed_event`(14) `@0x517a77` → `0x51a610`；**发 6 条**：`handle_player_info`(`0x519f40`) 里 5 处 `add_event` = **59**`@0x51a170` / **50**`@0x51a247` / **52**`@0x51a31e` / **54**`@0x51a3f5` / **66**`@0x51a451`，`handle_connected_to_server`(`0x51a570`) 里 1 处 = **7**`@0x51a5bb`；档案四字段 `+0x18/+0x30/+0x48/+0x60`（模块文档 §3） | ✅ **任务 74 已升 `wired`**（§2.1）：① `+0x20` = `Weak<RefCell<Self>>` 自句柄（写点 `0x517965`，值 = 盒基）② 5 条请求内部**没有**逐条判据，门是**五道**（`0x519f68` connected / `0x519f71` conn 相等 / `0x519f9d` 旧 len==0 / **`0x519fb1`→`0x51a058` 新发现的一张表**）③ `outbox`/`subscribed` 已落码。**仍缺**：第五道门那张表（key = `player_id`、entry 120 B）的语义（§4 G7） | ① `new` 的 `alloc 0x58` 之后 24 条写指令逐条读（arm64 `0x409eac`–`0x409f60`），判 `+0x20` 是 `Option`/`Weak`/标志 ② `0x519f40` 的 5 段：每段 `add_event` 前的 `cmp`/`jne` 就是门（`addr_probe.py dis 0x519f40`，5 段各 40–60 行）③ 这一条不用新证据，照 `docs/archive/156-client-rounds.md` §50.1 的写法加 `subscribed`/`outbox` |
+| 3 | `GraphwarLocalPlayerManager` / 64 / `graphwar_local_player_manager::GraphwarLocalPlayerManager` | `new` **内联**进 `GraphwarGameClient::new`（arm64 `0x409eac` 处 `alloc 0x58`，无独立符号）；**订阅 3 条**（全在 `0x517690` 体内）：`connected_to_server_event`(7) `@0x5179d4` → `0x51a570`、`player_info_event`(13) `@0x517a27` → `0x519f40`、`entity_removed_event`(14) `@0x517a77` → `0x51a610`；**发 6 条**：`handle_player_info`(`0x519f40`) 里 5 处 `add_event` = **59**`@0x51a170` / **50**`@0x51a247` / **52**`@0x51a31e` / **54**`@0x51a3f5` / **66**`@0x51a451`，`handle_connected_to_server`(`0x51a570`) 里 1 处 = **7**`@0x51a5bb`；档案四字段 `+0x18/+0x30/+0x48/+0x60`（模块文档 §3） | ✅ **任务 74 已升 `wired`**（§2.1）：① `+0x20` = `Weak<RefCell<Self>>` 自句柄（写点 `0x517965`，值 = 盒基）② 5 条请求内部**没有**逐条判据，门是**五道**（`0x519f68` connected / `0x519f71` conn 相等 / `0x519f9d` 旧 len==0 / **`0x519fb1`→`0x51a058`**）③ `outbox`/`subscribed` 已落码。**任务 79 结案（§2.3）**：`+0x30` = **模块容器弱句柄**；第五道门 = `get_module_wk::<ComputerPlayerManager>`（`0x46c5a0`）之后在 CPM 的 Bot 表里按 `player_id` 查一次 —— 命中就**不发** 5 连发 | ① `new` 的 `alloc 0x58` 之后 24 条写指令逐条读（arm64 `0x409eac`–`0x409f60`），判 `+0x20` 是 `Option`/`Weak`/标志 ② `0x519f40` 的 5 段：每段 `add_event` 前的 `cmp`/`jne` 就是门（`addr_probe.py dis 0x519f40`，5 段各 40–60 行）③ 这一条不用新证据，照 `docs/archive/156-client-rounds.md` §50.1 的写法加 `subscribed`/`outbox` |
 | 5 | `GraphwarSoldierManager` / 72 / `graphwar_soldier_manager::SoldierTable` | `new` = `0x455760`（call 点 `0x517af8`，arm64 `0x49d590`）；**订阅 2 条**：`new_connection_event`(5) `@0x4557e5` → `0x455570` `send_all_info_events`、`entity_removed_event`(14) `@0x455836` → `0x4556d0`；**发 1 条** `SoldierInfo`(15) `@0x455616`；模块文档 §6 已列 5 条未知 | ✅ **任务 77 已升 `wired`**（§2.2）。原缺：① `add_soldier` 的 x86 地址**没锚到**（`name_to_addr.tsv` 两个候选 `0x3e2830` / `0x474a10` 都被证否）⇒ 它**发不发 `SoldierInfo`(15)** 未知（模块 §6-B）② 表里**键值极性**只有间接证据（§6-D）③ 72 B 逐字段 | ① 用 arm64 侧**已知的 144 B 体**（`0x49d2fc`）做 x86 指纹匹配：`tools/func_diff.py` / `tools/sym_match.py`（arm64 有符号、x86 无符号，这是现成路子）② 极性：读 `send_all_info_events` `0x455570` 的载荷装配（哪个寄存器进 `+0x00` / `+0x08`）+ `handle_entity_removed_event` `0x4556d0` 拿 `event+8` 当 key 的那条 `cmp` ③ 同上判据 §1.2 的"写入点 + 偏移"清单 |
 | 7 | `GraphwarGameStateManager` / 296 / `game::Match` | `new` = `0x477bc0`（**虚调**：经槽 `0x9bbce8`，站点 `0x517b65`；arm64 `0x4ade6c`）；**订阅 7 条**，全部**逐字节复核**且与 `156` §50.0 那 7 个名字**完全一致**：`tick`(0)`@0x477c92`→`0x470840`、`new_connection`(5)`@0x477ce8`→`0x477140`、`entity_removed`(14)`@0x477d3e`→`0x476a20`、`connection_removed`(6)`@0x477d94`→`0x477540`、`function_points`(37)`@0x477dea`→`0x4758b0`、`skin_graphics_info`(51)`@0x477e40`→`0x4741a0`、`chat_message`(71)`@0x477e96`→`0x473d00` | **不是证据缺，是禁区块**：容器里装的是 `src/game.rs` 的 `Match`（结算内核，`fire`/`batch` 三条驱动轴都在用它）⇒ 接事件层**必须改 `src/game.rs`**；`grep -n "outbox\|subscribed" src/game.rs` 零命中。另：296 B 布局**没有**逐字段（`Match` 不是布局复原，是行为复原） | 两条路都已被 `156` §50.4 否定（加壳会改容器类型、另起旁表=把猜测写成行为）。**唯一的正路**：等 `src/game.rs` 解禁后按 §50.1 的六个 manager 同款写法加 `SUBSCRIBED_EVENTS[7]` + `outbox` + 7 个 `handle_*` 入口。**在此之前派活只会撞墙** |
 | 16 | `GraphwarGraphicsManager` / 168 / `graphwar_graphics_manager::GraphwarGraphicsManager` | `new` = `0x469390`（call 点 `0x517d73`，arm64 `0x49e394`）；**订阅 2 条**：`new_connection_event`(5)`@0x469415`→`0x468d80`、`entity_removed_event`(14)`@0x469466`→`0x469220`；**发 4 处**：`set_hat_graphics`(`0x468a50`)→**55**`@0x468abe`、`set_face_graphics`(`0x468b60`)→**53**`@0x468bce`、`set_skin_graphics`(`0x468c70`)→**51**`@0x468cde`、`send_all_info_events`(`0x468d80`) 三处重播 `@0x468eac`/`@0x468fe6`/`@0x469122`；三张表在 `+0x18/+0x48/+0x78`（hasher 各自 `+0x20`，模块文档 §2）；`outbox`/`take_outbox` **代码里已有** | ✅ **任务 77 已升 `wired`**（§2.2）。原缺：① 168 B 里**三张表以外**还有 4 个字（`0x18×3 = 0x78`，到 `0xa8` 之间有 `0x30` 字节）没解 ② `send_all_info_events` 的**第三处**重播 tag 是**间接载入**（`mov rax,[rsp+0x10]`）⇒ 我方扫描只读到两处字面量 51/53，第三处按模块文档是 **55**，**未逐位复核** ③ 贴图来源不在本模块（`GraphwarTextureLoader`，模块 §3 的有界否定） | ① `new` 的 `alloc` 之后全部写指令（`0x469390`–`0x4694e9`）+ 三个 getter（`+0x150/+0x180/+0x1b0` 一族）逐条读 ② `0x469122` 往前 20 条，跟 `[rsp+0x10]` 的来源（三表循环的公共 tag） ③ 贴图侧去找 `GraphwarTextureLoader` 的 `new`（不是本槽的事，别混） |
-| 18 | `GraphwarComputerPlayerManager` / 72 / `graphwar_computer_player_manager::ComputerPlayers` | `new` = `0x47a720`（call 点 `0x517deb`，arm64 `0x4b02a4`）；**订阅 3 条**：`tick_event`(0)`@0x47a7a5`→`0x4785f0` `handle_tick`、`turn_info_event`(43)`@0x47a7fa`→`0x479520`、`entity_removed_event`(14)`@0x47a84b`→`0x47a520`；**发 5 条**（全在 `add_computer_player` `0x478fc0`）：**59**`@0x4791f9`、50-base`@0x479271`（tag 待读）、**52**`@0x4792ec`、**54**`@0x479366`、**66**`@0x4793a6`；难度六档阈值 `4/11/26/101/251`（模块 §3，与 [`13-ai.md`](13-ai.md) §1 互证） | ① `handle_tick` 里 `state != 3` 走的那条**不返回**路径（`0x5ec160`，Ghidra 标 `hasNoReturn`）是什么（模块 §7-A）② `state` 的 `0/1/2` 语义（§7-B）③ `computer_function_thread` 的 x86 地址靠夹逼（§7-C）④ `BotData` 那个 120 字节**大半未解**（模块文档字段表末行）⑤ `0x479271` 那处的 tag | ① `addr_probe.py dis 0x4785f0`，追 `0x5ec160` 的调用点前后（它是 `noreturn`，所以"不返回"其实是 `panic!`/`abort`，判据是它前面那条 `lea rdi,<&str>` 的串）② 全 `.text` 搜 `BotData` 的 state 字（`+0x00`）**写入点**：立即数 0..3 的 `mov dword ptr [reg+disp], N`，且 `reg` 来自 `0x478fc0` 的插入路径 ③ 与 ① 同一条线索（线程体就在 `add_computer_player` 的 `spawn` 参数里）④ `new`/`add_computer_player` 里对 `+0x18` 起的 120 字节逐字段 |
+| 18 | `GraphwarComputerPlayerManager` / 72 / `graphwar_computer_player_manager::ComputerPlayers` | `new` = `0x47a720`（call 点 `0x517deb`，arm64 `0x4b02a4`）；**订阅 3 条**：`tick_event`(0)`@0x47a7a5`→`0x4785f0` `handle_tick`、`turn_info_event`(43)`@0x47a7fa`→`0x479520`、`entity_removed_event`(14)`@0x47a84b`→`0x47a520`；**发 5 条**（全在 `add_computer_player` `0x478fc0`）：**59**`@0x4791f9`、50-base`@0x479271`（tag 待读）、**52**`@0x4792ec`、**54**`@0x479366`、**66**`@0x4793a6`；难度六档阈值 `4/11/26/101/251`（模块 §3，与 [`13-ai.md`](13-ai.md) §1 互证） | ✅ **任务 79 已结案（§2.3）**：① `state` = **3/1 两个值**（`0x478fe3` 建档 3、`0x479dfa` spawn 后 1、`0x47864f` 收尾 3；**`0`/`2` 无写入点**，有界否定 + 正对照）② `BotData` 的 `+0x00`=state / `+0x60`=level / `+0x64`=精英 / `+0x68`=每槽 5 / `+0x6c`=limit （静态 + 运行时原文）③ 键是 **`player_id`** 不是 connection id（运行时：key 232 的 Bot，`player_info= (232, conn=228=我的)`) ④ 第五道门 G7 **结案**：那张 120 B 表**就是** CPM 的 Bot 表（§2.3） **仍缺**：`handle_tick` 收尾段的逐句语义（§7-A）、`computer_function_thread` 的 x86 地址（§7-C，仍是推断） | ① `addr_probe.py dis 0x4785f0`（收尾段 `0x4786b2`–`0x478e38`）② `0x47a300` 的形参表逐句读 ③ 抓一次 `turn_info` 里 `spawn` 的闭包指针与线程体入口对拍 |
 | 19 | `FunctionHistoryRecorder` / 48 / `function_history_recorder::History` | **`new` = `0x3f10a0`（本轮新钉；`name_to_addr.tsv` 原记"未知"）**，call 点 `0x517e27`，arm64 `0x49d9a0`；**订阅 1 条**：名字逐字节 `function_info_event`（`0x1bfccd`，len `0x13`）`@0x3f115a` → 处理器 `0x3f0e40`，其体内**判别值闸 = 35**（`lea rax,[isize::MAX+0x24]`）；**发 0 条**（`0x3f0e40` 体内无 `add_event`）；容量/去重两条已有硬结论（模块文档，观测） | ✅ **任务 77 已升 `wired`**（§2.2）。原缺：① **口径冲突（必须先裁）**：本模块把 tag **35** 叫 `function_fire_event`（`EVENT_FIRE_TAG = 0x8000…0023`），而 [`07-protocol.md`](07-protocol.md) §7.2 的 72 条表里 **33 = `function_fire_event`、35 = `function_info_event`**；本轮字节证据（订阅名字 + 判别值闸）**两边都指向 35** ② `Vec<FunctionData>` 的**消费点**（上下键）全库无落点（有界否定，模块文档 §"上下键"）③ 48 B 逐字段 | ① 裁定判据：全 `.text` 找**构造 33** 的地方（`movabs 0x8000…><0021` 或 base+`0x21`）；若 33 只在**解码器**里出现、且没有任何订阅者，则"35 才是 recorder 订阅的那条"成立，我方改名 ② 消费点：真机按一次 `ui_up` 抓 `LineEdit.text`（`docs/06` §13 的 `tools/frida_live.js` 可用），或者接受"只写不读"并登记 ③ 同上逐字段 |
 | 20 | `GraphwarNameManager` / 72 / `graphwar_name_manager::GraphwarNameManager` | **`new` = `0x519100`（本轮新钉；`name_to_addr.tsv` 给的 4 个候选 `0x3b6b20`/`0x3b6c70`/`0x420b40`/`0x4500c0` 全错——`0x4500c0` 是 `game_server_thread`）**，call 点 `0x517e63`，arm64 `0x40af68`；**订阅 2 条**：`new_connection_event`(5)`@0x519209`→`0x518f10`、`entity_removed_event`(14)`@0x519255`→`0x519030`；**发 2 条** `NameInfo`(60)：`@0x518fe5`（整表重播）、`@0x5193e8`（`set_name` `0x519350`）；表 `+0x18`、hasher `+0x38`、entry `0x20`（模块文档 §2） | ✅ **任务 74 已升 `wired`**（§2.1）：① 结案——盒是 `alloc 0x60`（RcInner 16 + RefCell 80），`M` 基 = `盒+0x18`；`+0x38` 起那 **16** 字节是 `RandomState`（两个 `u64`，写点 `0x5191a5`/`0x5191a9`），**没有空洞**，72 B 全部有写入点 ② `outbox`/`subscribed` 已落码。**无遗留** | ① 先定基址：arm64 `0x40af68` 的 `alloc` 尺寸（`RefCell<M>` = 80 = 72+8 ⇒ **`0x50`**，不是 `0x58`；`0x58` 是 `RcInner`），再把写入点减去 `0x18` 对齐 ② 断言照 `156` §50.5 的写法：`set_name(9010,"x")` → 读回表 → `take_outbox()` 应恰好 1 条 (60) |
 | 21 | `GraphwarColorManager` / 120 / `graphwar_color_manager::GraphwarColorManager` | `new` = `0x465620`（call 点 `0x517e9f`，arm64 `0x49cbe8`）；**订阅 2 条**：`new_connection_event`(5)`@0x4656a5`→`0x465460`、`entity_removed_event`(14)`@0x4656f6`→`0x465570`；**发 2 条** `ColorInfo`(61)：`@0x464fb6`（`add_team_color` `0x464d10`）、`@0x465517`（整表重播）；两张 6 色池字面量**逐位**（模块 §2）、分配规则"队号选池 + 随机起点 + 线性探测"（§3）、载荷 8 字节 `{id@+0, r@+4, g@+5, b@+6}`（§5） | ✅ **任务 77 已升 `wired`**（§2.2）。原缺：① `new` 的第三个字段 `self+0x10` **没被本模块任何函数读过**（模块 §6 第一条）② 120 B 逐字段 ③ 随机流**消耗顺序**：起点 1 次 `u64` + 兜底 3 次 `u8` ⇒ 复现第 n 个玩家必须真 `rand_chacha` 流（模块 §6 第三条，标推断） | ① `+0x10` 只在 `new` 里写、读侧零命中 ⇒ 判"留给别人的借用句柄 or 缓存"，定案要**读 `new` 的初始化闭包**（`Rc::new_cyclic_in`，`0x465620` 里那段）② 逐字段同上 ③ 随机流：抓一次 `request_new_player` 前后的 ChaCha 状态（`tools/capture_rand_values.js` 已有；见 `docs/06` §13 的 frida 活体） |
@@ -214,6 +214,37 @@ new = 0x3f10a0（alloc 0x48 = 16 + 8 + 48）
 四格升完后四个档位口径同批改动：`Wired::status()` 四臂 / `WIRED_TIER_COUNT` 14→18 与
 `ASSEMBLED_TIER_COUNT` 6→2 / `assemble_check.gd` 的 `WIRED_TIER` + `TIER_TALLY` / 本文。
 `assemble_check` **226 → 238**（+12 条：四格各 3 条，分别指订阅 / 发布 / 状态）。
+
+### 2.3 任务 79 完成的一格（`ComputerPlayerManager`）+ G7 结案
+
+`GraphwarComputerPlayerManager` **`assembled` → `wired`**（第 18 行）。判据仍是 §1.1 那三件，
+第三件（最小交互断言）本轮补上 **10 条** `computer.*` 读数；前两件的地址级证据原本就在，本轮补的是**语义**：
+
+| # | 项 | 本轮拿到的 | 档 |
+|---|---|---|---|
+| 1 | `BotData` 的**键** | **`player_id`**（`bot_added_event+0x0c`），不是 connection id：运行时 key 232 的 Bot，其 `player_info_event` 是 `(player_id=232, connection_id=228)`，228 是**房主（我）的连接** | 观测 |
+| 2 | `BotData` 字段 | 桶 120 B = key(8) + 112 B；`+0x00` state / `+0x60` level / `+0x64` 精英 / `+0x68` 每槽 5 / `+0x6c` limit（`+0x10/+0x14` 是两个 `f32 1.0`）| 静态 + 运行时原文 |
+| 3 | `state` 状态机 | **3 → 1 → 3**：`0x478fe3`（建档 3）/ `0x479dfa`（`thread::spawn` 后写 1，`rbx=[rsp+0xa8]=1` 见 `0x4796f9`）/ `0x47864f`（`handle_tick` 收尾 3）。`0`/`2` **无写入点** | 观测（3 次迁移，100 ms 直读） |
+| 4 | `handle_tick` 的"不返回" | 旧说法（`0x5ec160`）**不成立**：体内没有它；`state != 3` 是**收尾 + 复位**，真正的 panic 串是 `"Failed to join computer player thread."`（`0x478ebb`/`0x478ee0 ud2`）| 逐位（字节） |
+| 5 | **G7 第五道门** | `M+0x30` = **容器**弱句柄；门 = `get_module_wk::<ComputerPlayerManager>`（`0x46c5a0`）→ 在 CPM 的 Bot 表按 `player_id` 查一次 → 命中则**不发** 5 连发 | 逐位 + 观测（返回值 == CPM 盒基 **3/3**） |
+
+**G7 的四条独立链**（详见 `docs/06` §46.2）：
+
+```text
+① 指令形状  0x519fb1 lea rdi,[r14+0x30] ; 0x519fb5 call 0x46c5a0（get_module_wk 的 20 个单态化之一）
+② 返回形状  0x519fe6 [rax+0x48] = items；+0x18 ctrl / +0x20 mask / +0x38 RandomState —— 与 CPM（72 B）逐字段相同
+③ 同套偏移  CPM 自己三个函数（0x478fc0 插 / 0x47a520 删 / 0x479520 查）用的就是 stride 0x78、key@entry+0x00、state@entry+0x08
+④ 运行时    0x46c5a0 的返回值 3/3 == CPM 盒基（`cpmSelf-0x18`）；其中 1 次来自本门、2 次来自 bot_added 分派 0x3e3d7f
+```
+
+⚠️ **命中分支没走到**（照实记）：3 局（LAN 人+Bot / AI-vs-AI / 战役）门⑤ 各只求值一次，**都走未命中**（`0x51a084`）并发 5 条；
+原因结构性 —— 门④ 只放"本连接的第一个 `player_info`"，而那个"第一发"永远是本机玩家自己（pid 229，t≈29.5–36.8 s），
+Bot 只能更晚加进来。要打中它需要"本连接的第一个玩家是 Bot"的局（纯 Bot 客户端 / 连接重建），本轮没造出来。
+**正对照**：同一条观测链在 3 局里都完整打出 `gate5_enter → get_module_wk → gate5_miss → 5 条 send`。
+
+本轮四个档位口径同批改动：`Wired::status()` 加一格 / `WIRED_TIER_COUNT` 18→19 与 `ASSEMBLED_TIER_COUNT` 2→1 /
+`assemble_check.gd` 的 `WIRED_TIER` + `TIER_TALLY` / 本文。`assemble_check` **238 → 241**（+3，指订阅/发布/状态），
+交互读数 **135 → 145**（+10）。
 
 ---
 
@@ -354,8 +385,8 @@ new = 0x3f10a0（alloc 0x48 = 16 + 8 + 48）
 | G3 | RankManager `+0x08` | 是否进序列化 | `0x455090`–`0x45511f` 逐条 + `docs/07` §3.3 的 `rank_info` 线上体 | ✅ |
 | ~~G4~~ **已结案（任务 77）** | SoldierManager `add_soldier` | x86 落点 = **内联进 `0x474a10`**（`Location src/graphwar_soldier_manager.rs:65:26`）；**它发 (15)**（`0x474b8d`+`0x474b97` → `0x474ba5`）；键值极性 = 士兵→主人（`0x474b50` 原子计数器发号当 key） | x86 逐条（§2.2 ②） | ✅ 已做 |
 | ~~G5~~ **已结案（任务 77）** | FHR 33 vs 35 | **35 才是本记录器订阅的那条**（`function_info_event`）：订阅名串 `0x1bfccd` 全文唯一 + 处理器闸 = 35；`function_fire_event`(33) **没有任何订阅者** | x86 逐条（§2.2 ④） | ✅ 已做 |
-| G6 | ComputerPlayerManager `state` 0/1/2 + `handle_tick` 的 no-return 路径 | 三个取值的语义（写入点全 `.text` 没找到） | 抓一次 bot 局的 `BotData`（`docs/06` §13 的 frida 活体 / `hook_ai_*.js` 已有 6 个） | ⚠️ 建议运行时（**不阻塞升档**） |
-| **G7**（任务 74 新登记） | LocalPlayerManager `handle_player_info` 的**第五道门**：`M+0x30` 那个 `Weak` 升级后的一张表 | 表是谁的、entry 为什么 120 字节、为什么"已在表里就不发 5 连发" | `0x519fb1` 的 `call 0x46c5a0` 反查（`tools/addr_probe.py callers`）+ 那张表按 120 B 步长找 value 类型 | ✅ 静态（**不阻塞** `wired`：档位只要求订阅/发布/断言） |
+| ~~G6~~ **已结案（任务 79）** | ComputerPlayerManager `state` 0/1/2 + `handle_tick` 的 no-return 路径 | **只有 3 和 1**：`3`=空闲（`0x478fe3` / `0x47864f`）、`1`=已 spawn 未收（`0x479dfa`）；`0`/`2` 无写入点（有界否定 + 正对照）。`handle_tick` 体内**没有** `0x5ec160`：`state != 3` 是**收尾**，panic 串是 `"Failed to join computer player thread."` | 运行时 bot 局 3 次 + `addr_probe.py dis 0x4785f0`（`docs/06` §46.4） | ✅ 已做 |
+| ~~G7~~ **已结案（任务 79）** | LocalPlayerManager `handle_player_info` 的**第五道门** | 表 = **`GraphwarComputerPlayerManager` 的 Bot 表**（`HashMap<u32 /*player_id*/, BotData>`，桶 120 B）；`M+0x30` 是**容器**弱句柄，门里 `get_module_wk::<CPM>`（`0x46c5a0`）→ 按 `player_id` 查一次；命中 ⇒ 不发 5 连发（Bot 身份由 `add_computer_player` 自己申报）。四条链：指令形状 / 返回类型形状 / CPM 自己三个函数的同套偏移 / 运行时返回值 == CPM 盒基 3/3 | `docs/06` §46.2–46.3；`tools/frida_cpm_gates.js` | ✅ 静态 + 运行时（**命中分支未观测到**，见 §2.3 与 `docs/06` §46.5） |
 
 其余"缺"全是**工程**：`outbox` / `subscribed` 两个口 + `interaction_selftest` 里的读数
 （写法照 `docs/archive/156-client-rounds.md` §50.1 / §50.5，38 条读数是现成模板）。
@@ -373,11 +404,14 @@ new = 0x3f10a0（alloc 0x48 = 16 + 8 + 48）
 | `GraphwarGraphicsManager` | ✅ **已升 `wired`（任务 77）** | 168 = 0x18 头 + 3×0x30（旧说法已改正）+ 第三处重播 tag = 55 逐位复核 + 9 条读数 |
 | `GraphwarLocalPlayerManager` | ✅ **已升 `wired`（任务 74）** | 内联构造的 8 条写入点（+0x20 = 自句柄）+ 5 道门；x86 侧**不需要**找 `new`（就在 `0x517690` 里）；第五道门那张表仍开（G7） |
 | `FunctionHistoryRecorder` | ✅ **已升 `wired`（任务 77）** | 33/35 已裁决（35）；1 订阅 + **发 0 条**（正面证据）+ 8 条读数；消费点仍未知（不阻塞） |
-| `GraphwarComputerPlayerManager` | ⚠️ 部分运行时 | 订阅/发布/难度档**静态**；`state` 语义建议抓一次 bot 局（不阻塞） |
+| `GraphwarComputerPlayerManager` | ✅ **已升 `wired`（任务 79）** | 3 订阅 + 5 发布 + 难度六档**静态**；`state` 语义运行时结案（3/1，3 次迁移）+ 10 条交互读数；只剩 `handle_tick` 收尾段逐句与线程体地址（§7-A/C，不阻塞） |
 | `GraphwarGameStateManager` | ⛔ 禁区（`src/game.rs`） | 证据早就够了（7 条订阅本轮逐字节复核），**卡的是代码归属** |
 
 **✅ 7 格 / ⚠️ 1 格 / ⛔ 1 格**（任务 74 之前）；**任务 74 之后 ✅ 7 格里的 3 格已落地**
 （`Rank` / `Name` / `LocalPlayer` → `wired`），剩 4 格 ✅（`Soldier` / `Graphics` / `Color` / `FunctionHistoryRecorder`）。
+
+**现值（任务 79 之后）：9 格里 8 格 `wired`，唯一剩下的 ⛔ 是 `GraphwarGameStateManager`（禁区 `src/game.rs`）。**
+档位分布 **19 / 2 / 1 / 0**（任务 77 是 18/2/2/0；任务 79 把 `ComputerPlayerManager` 从 `assembled` 提到 `wired`）。
 
 ---
 
@@ -393,9 +427,8 @@ new = 0x3f10a0（alloc 0x48 = 16 + 8 + 48）
 | ~~6~~ **已完成（任务 77）** | `GraphwarColorManager` | — | G2 结案（容器弱引用）+ **8** 条读数 ⇒ `wired` |
 | ~~7~~ **已完成（任务 77）** | `FunctionHistoryRecorder` | — | 33/35 裁决 + **8** 条读数（发 0 条是正面证据）⇒ `wired` |
 
-**不派**：`GraphwarGameStateManager`（⛔ 禁区）。**只剩 1 格**：`ComputerPlayerManager`
-（要抓一次 bot 局拿 `BotData.state` 的 0/1/2；订阅/发布/难度六档都已是静态结论，不阻塞升档——
-下一轮若接受"state 语义标未知"，它也能升，但本任务没派它）。
+**不派**：`GraphwarGameStateManager`（⛔ 禁区 `src/game.rs`）。**九格已全部收口**（任务 79 把最后那格
+`ComputerPlayerManager` 升到 `wired`，见 §2.3）。剩下的都是**不阻塞**的小口子，登记在 §4 与各模块文档 §7。
 
 ---
 
@@ -417,6 +450,9 @@ new = 0x3f10a0（alloc 0x48 = 16 + 8 + 48）
 | C9 | 本文 §3.5 / §2 第 16 行（`Graphics`） | 第三处重播 tag "是间接载入（`mov rax,[rsp+0x10]`）⇒ 按模块文档是 55，**未逐位复核**" | **逐位复核完**：`0x469035 movabs rdx,0x8000…0033` + `0x46903f or rdx,4` = **55**；三支共用提交代码，tag 从 `rsp+0x10` 取（这就是"字面量扫描只看到基址"的原因） | **任务 77 就地更正**（§2.2 ③） |
 | C10 | `tools/addr_probe.py tags`（**工具盲区，不是本文的错**） | 该命令自称扫"三种 materialize 形态"，于是"tag 15 只有 1 处在 soldier 模块" | **漏了第四种**：`movabs 0x8000000000000000` + `add rax,N`。这类全被记进 **tag 0**（2235 处）。`add_soldier` 的 (15) 就是这么漏掉的（`0x474b8d`+`0x474b97`） | 登记：**凡是用 `tags` 下的"某 tag 只有 N 处"结论都要复查这个形态**。修工具不在本任务允许改动的目录里（`tools/`），下一位改 `tools/` 的人顺手加一条 `_tag_of_reg` 的 `0x8000…000 + add` 分支 |
 | C11 | `src/graphwar_soldier_manager.rs` §2（旧） | "`+0x10/+0x14` 是锁字与 poison 字节（`Mutex`）" | **没有锁**：`+0x10` 是 `RefCell` 的借用字（`0` = 未借、`-1` = 写借），逐条见 `0x4555d9`/`0x474b3d`/`0x474b48` | **任务 77 就地更正**（该文件 §2） |
+| C12 | 本文 §2 第 18 行 / `src/graphwar_computer_player_manager.rs` §6（旧） | Bot 表是 `HashMap<u32 /*connection_id*/, BotData>` | **key = `player_id`**：运行时 key 232 的 Bot，其 `player_info_event` 是 `(player_id=232, connection_id=228)`，228 是**房主（我）的连接**；LPM 门⑤ 比的也是 `event+0x08`（`player_id`） | **任务 79 就地更正**（模块文档 §6 + 本文 §2.3 ①） |
+| C13 | 同上 | 状态在 `BotData+0x08` | 状态在桶内 `entry+0x08` = **`BotData+0x00`**（`0x479610` / `0x4786ab` / `0x479dfa` 三条指令同一口径）；`BotData+0x60`/`+0x64`/`+0x68`/`+0x6c` = level/精英/每槽/limit | **任务 79 就地更正**（模块文档 §6） |
+| C14 | 同上 §7-A（旧） | "`handle_tick` 里 `state != 3` 走一条**不返回**路径（`0x5ec160`，Ghidra 标 `hasNoReturn`）" | **`0x4785f0` 体内没有 `0x5ec160`**：那条路是**收尾**（`0x4786b2` → `0x478e0e` 再判一次 → drop `0x47b5e0`/`0x404df0` → `0x47864f` 把 state 写回 3）；体内真正的 panic 是 `0x478ebb` 的串 **`"Failed to join computer player thread."`**（`0x478eda` 调 panic、`0x478ee0 ud2`）。`addr_probe.py callers 0x5ec160` 也不在 `0x4785f0` 体内 | **任务 79 就地更正**（模块文档 §7-A） |
 
 ## 8. 复现（干净树，5 分钟）
 
@@ -489,3 +525,17 @@ cargo run --release --offline -q --example replay_attrib -- --dir <快照> --dri
 cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive batch --policy default --json b.jsonl
 cargo run --release --offline -q --example batch_conv    -- --dir <快照> --policy strict
 ```
+
+## 9.3 任务 79 的验收数字（本人重跑；同一条分支的私有 target）
+
+| 项 | task 77 后 | task 79 后 |
+|---|---|---|
+| 档位分布 | 18 / 2 / 2 / 0 | **19 / 2 / 1 / 0** |
+| `cargo test --offline` | 1730 | **1736**（+6：LPM 3 条门测试 + CPM 1 条状态机测试，× 两个编译单元） |
+| `cargo test --offline --features gdext-bindings` | 1836 | **1842**（同上） |
+| `client/tools/assemble_check.gd` | 238 / 0 | **241 / 0**（+3：Computer 的 订阅 / 发布 / 状态） |
+| 交互读数（`manager_probe_selftest`） | 135 条 / 18 个 manager | **145 条 / 19 个 manager**（+10 条 `computer.*`） |
+| headless 14 个脚本合计 | 1839 | **1842**（其余 13 个逐项不变：24 / 117 / 96 / 116 / 132 / 235 / 96 / 366 / 155 / 23 / 135 / 49 / 57） |
+| `selftest` | 714 / 0 / 1 skip | **714 / 0 / 1 skip**（不变；⚠️ 必须 `HOME` 指到工作区、回放样本放对 `user://`、`examples/serve_match` 编好，否则会多出 2 条 SKIP） |
+| 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **647 / 647 / 637**（不变） |
+| coverage 两份生成物 | 527 / 527 | **527 / 527**（`src_fns` 3009 → 3016，其余不变） |

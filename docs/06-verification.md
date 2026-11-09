@@ -5857,3 +5857,177 @@ $PY tools/lean_triple.py --jsonl $R/run.jsonl --label lean-AIvAI --oracle 1
 | ⑤ 样本位置 | `.agent-work/cg/wt-82/run/lean82/`（**没进冻结快照**；本轮没写 `fixtures/`） |
 | `cargo test --offline` | **1710 passed / 0 failed**（72 个 test 二进制） |
 | `tools/check_doc_refs.py` | **rc=0** |
+
+## 46. **G7 结案：LocalPlayerManager 的第五道门是"向容器要 `ComputerPlayerManager` 再查它的 Bot 表"**（`0x519fb5`→`0x46c5a0`）；`Computer.state` 的 **3 → 1 → 3** 三个写入点全部抓到（2026-11-09，`dispatch/79`）
+
+> 任务书：[`dispatch/79-localplayer-gates.md`](../dispatch/79-localplayer-gates.md)。起点 `CG@8a6914b`，
+> 分支 `agent/localplayer-gates`，私有 `CARGO_HOME` / `CARGO_TARGET_DIR`。
+> 目标构建 `libgraphwarrust.so` sha256 **`9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`**
+> （`steam/2026-08-28`）。地址一律**虚地址**（vaddr，Ghidra = vaddr + `0x100000`）。
+
+### 46.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 第五道门那张表**是什么** | **`GraphwarComputerPlayerManager` 的 Bot 表**（`HashMap<u32, BotData>`，桶 120 B）。门里那一步是"拿 `M+0x30` 那个**容器弱句柄** → `get_module_wk::<ComputerPlayerManager>`（`0x46c5a0`）→ 在 `T+0x18` 那张表里按 `player_id` 查一次" | **逐位 + 观测**（4 条独立链，见 46.2） |
+| ② | **谁写**、**何时读** | 写：`add_computer_player` `0x478fc0`（`0x4790a0 call 0x440890` 插表）；删：`handle_entity_removed_event` `0x47a520`（key = `event+0x08`）。读：本模块三个函数（`0x4785f0` / `0x479520` / `0x47a520`）**直接读 `self+0x18`**；**唯一的跨模块读点就是这道门** | 观测 |
+| ③ | 门⑤的**语义** | "本连接的第一个 `player_id` **已经在 Bot 表里** ⇒ 不发那 5 条身份请求"（Bot 的身份由 `add_computer_player` 自己申报：59/50/52/54/66） | 观测（未命中分支 3/3 实跑；命中分支**没走到**，见 46.5） |
+| ④ | `Computer.state` 的 **0/1/2** | **只有 3 和 1 存在**：`3` = 空闲/可算（建档 `0x478fe3`、`handle_tick` 收尾 `0x47864f`）；`1` = 已 `thread::spawn` 未收（`0x479dfa`）。`0`/`2` **没有任何写入点**（有界否定 + 正对照） | 观测 |
+| ⑤ | 运行时打到哪一步 | **3 局样本**：门⑤ 求值 **3 次**（都走未命中 ⇒ 5 连发 5/5）；`get_module_wk` 返回值 **3/3 等于 CPM 盒基**；`state` 迁移 **3 次**（两个 Bot，每次 3→1→3） | 观测 |
+
+### 46.1 造局 + 探针（一条命令一局，约 3–4 min）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+# ① 私有 display（GLX 必须走 mesa，见 §45.8 第 1 条；否则 Xvfb 崩在 libnvidia-egl-gbm）
+mkdir -p /tmp/.X11-unix
+__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json \
+LIBGL_ALWAYS_SOFTWARE=1 Xvfb :95 -screen 0 1920x1160x24 -listen tcp -ac &
+
+# ② 三局（Popen 真游戏 → frida attach → 按步骤串点击 → 收 JSONL）
+#    局 1/2 = LAN + Bot（局 1 人+1 Bot，局 2 AI-vs-AI 2 Bot）；局 3 = 战役（campaign.save = level_20）
+$PY tools/gw2_step_drive.py --display 127.0.0.1:95 --data-dir $R/gamedata \
+    --out $R/bot1.jsonl --snap-dir $R/snaps1 --js tools/frida_cpm_gates.js \
+    --settle 25 --keep-alive 60 --steps '<§42.1 的 Battle→Create Game→AddBot→Start>'
+```
+
+* **探针**（本轮新增）：[`tools/frida_cpm_gates.js`](../tools/frida_cpm_gates.js)。16 个钩子，装好时先做**自校验**
+  （把 `0x519fb1` = `49 8d 7e 30 e8 …`、`0x47864f` = `49 c7 07 03 …`、`0x4786ab` = `83 7c 2b 90 03` 的字节读回来打一条
+  `hooks` 消息 —— 三处全对，说明模块基址与内存访问都对）。
+* **样本**：`.agent-work/cg/fh79/{bot1,bot2,bot3}.jsonl`（**没进冻结快照**，本轮也没写 `fixtures/`）。
+* **造局的坑**（照 `§45.6`）：LAN 局用 `c 1648 980`(AddBot) + `c 1276 742`(弹窗格子)，**不看图标判难度**
+  （§45 已证同一格子 6 次给 5 个不同 Bot）。本轮的 AddBot 落下来的 `level` 是 **1000**（> 251 ⇒ 第 6 档：`limit=200`、
+  精英 50）—— 与 `docs/118` §12.4 记的 `3/25/50/100/250` 不是一套数，**弹窗这条路能给到 1000**，登记在这儿。
+
+### 46.2 第五道门是什么：**四条独立链都指向 `GraphwarComputerPlayerManager`**
+
+```text
+① 静态（指令形状）
+   0x519fb1 lea rdi,[r14+0x30]          ; r14 = LocalPlayerManager 的 M 基 ⇒ &M+0x30（构造实参 2 = 一个 Weak）
+   0x519fb5 call 0x46c5a0               ; = get_module_wk 的 20 个单态化之一（docs/02 §22.3 的 ComputerPlayerManager 那一格）
+   0x46c5a0 体内：upgrade 弱句柄(0x46c5a9..0x46c5c5) → RefCell::borrow(0x46c5d3) → TypeId 哈希(0x46c600 call 0x47e490)
+                 → 命中后返回 Rc<RefCell<T>>；未命中/表空走 0x46c730
+② 静态（返回值的形状，与 CPM 逐字段相同）
+   0x519fe6 cmp qword [rax+0x48],0       ; = T+0x30 = hashbrown 的 items ⇒ items==0 直接当"未命中"（0x51a084）
+   0x519ffd call 0x47dec0                ; 用 T+0x38 的 RandomState 算 hash（lea rdi,[rbx+0x50] = T+0x38）
+   0x51a009/0x51a00d                     ; ctrl = T+0x18，bucket_mask = T+0x20
+   0x51a04f imul r8,r8,0x78              ; **桶步长 0x78 = 120 B**
+   0x51a053 cmp r15d,[rcx+r8-0x78]       ; **key 在 entry+0x00（u32）= player_id**（r15d = event+0x08）
+   0x51a058 je 0x51a0e0                  ; 命中 ⇒ 收尾（**不发** 5 连发）；未命中落 0x51a084
+③ 静态（同一个 T 的另一侧：CPM 自己的三个函数用的是同一套偏移）
+   0x478fc0 → 0x47908b lea rsi,[r14+0x18]（&self.bots）+ 0x4790a0 call 0x440890 插表
+   0x479588/0x47958c/0x479570            ; 查表：ctrl = self+0x18、mask = self+0x20、hasher = self+0x38
+   0x4795d2 cmp r15d,[r14+rdi-0x78]      ; key@entry+0x00；0x479610 cmp dword [r14-0x70],3 ⇒ **state@entry+0x08**
+   0x47a520 删除：同 stride、同 key 位置，命中后 ctrl 字节置删除标记 + `dec [r12+0x30]`（items--）+ drop
+④ 运行时（决定性：指针同一性）
+   在 0x46c5a0 的 **onLeave** 读返回值 rax（= RcInner 基）与 CPM 的盒基（`cpmSelf-0x18`）比：
+   局 2 三次调用 **3/3 `match_cpm = true`**（`ret = 0x2a419420` == cpm_box），
+   其中 1 次来自本门（`0x519fb5`），2 次来自 `bot_added_event` 分派里的 `0x3e3d7f`（紧接着就是 `add_computer_player`）
+   ⇒ 同一个单态化在两条完全不同的调用路径上都取出 CPM
+```
+
+⇒ **语义**：`player_info_event` 说的那个 `player_id` 已经在 Bot 表里 ⇒ 直接收尾、5 条身份请求一条都不发。
+这与"Bot 的身份由 CPM 自己申报"是同一件事（`0x478fc0` 插表之后按顺序发 59/50/52/54/66）。
+
+### 46.3 那张表长什么样（运行时原文 + 静态两条链）
+
+```text
+120 字节桶（局 2，bot 232，level=1000）：
+  00: e8 00 00 00 | ff ff ff 3c      ; +0x00 key = 232（+0x04 是桶内填充）
+  08: 03 00 00 00 00 00 00 00        ; +0x08 **state = 3**（= BotData+0x00）
+  18: 00 00 80 3f 00 00 80 3f        ; BotData+0x10/+0x14 = 两个 f32 1.0
+  38: 28 02 bf 05 fc 7f 00 00        ; BotData+0x30 = 栈上指针
+  40: 30 c0 f9 89 a2 7f 00 00        ; BotData+0x38 = .data.rel.ro 字面量（名字池那条链）
+  68: e8 03 00 00 | 32 00 00 00 | 05 00 00 00 | c8 00 00 00
+      ; BotData+0x60 level=1000 · +0x64 精英=50 · +0x68 每槽=5 · +0x6c limit=200
+```
+
+* `+0x68` 那四个数与静态 `0x479017`–`0x47902e`（`edx/ecx/r8d/r9d` → `[rsp+0xe0..0xf0]` = 值的 `+0x60..`) **逐值对上**；
+* **key 是 `player_id` 不是 `connection_id`**（更正，见 46.6 ①）：同一个 Bot 的 `player_info_event` 是
+  `(player_id=232, connection_id=228)`，228 是**房主（我）的连接** ⇒ Bot 的实体挂在房主连接下，
+  键用的是它自己的 `player_id`（= `bot_added_event+0x0c`）。
+
+### 46.4 `Computer.state`：**3 → 1 → 3**，三个写入点全部在运行时抓到
+
+```text
+建档            0x478fe3 mov qword [rsp+0x10],3 → 0x479036 movups 搬进 BotData+0x00   ⇒ state = 3（空闲）
+过门+spawn      0x479610 cmp [entry+0x08],3 通过；0x479da4 call 0x438d20(thread::spawn)
+                0x479dfa mov [r14-0x70],rbx（rbx = [rsp+0xa8] = 1，见 0x4796f9）    ⇒ state = 1（线程在跑）
+handle_tick     0x4786ab cmp [entry+0x08],3 → 不等就收尾（0x478e0e 再判一次、drop）
+                0x47864f mov qword [r15],3                                          ⇒ state = 3（收尾）
+```
+
+| 局 | Bot | 建档 | `turn_info` 过门读到 | 写 1 | 采样到 1 | 写 3（`handle_tick`） | 采样到 3 |
+|---|---|---|---|---|---|---|---|
+| 1（人+1 Bot） | 232 | t=36.1 s | t=100.95 s `state=3` | t=100.95 s | t=100.96 s | t=125.97 s（`before=1`） | t=126.01 s |
+| 2（AI-vs-AI） | 232 | t=36.1 s | t=45.8 s `state=3` | t=45.8 s | t=45.9 s | t=60.3 s（`before=1`） | t=60.4 s |
+| 2（AI-vs-AI） | 235 | t=41.2 s | t=64.9 s `state=3` | t=64.9 s | t=64.9 s | t=89.9 s（`before=1`） | t=89.9 s |
+
+* 采样器 = 100 ms 直读 `entry+0x08`（不依赖任何写入点）；两局共 **800+ 次**采样，**只出现过 3 和 1**。
+* `state != 3` 期间 `turn_info` **过不了门**（`handle_turn_info_event` 的第三道门）——这是"一个 Bot 同时只跑一个线程"的实现方式。
+* `0` 与 `2`：**无写入点**。判据 = 对 `0x4785f0–0x47a800` 全段扫 `mov [mem], imm∈{0,1,2,3}`，
+  只命中 `0x47864f` / `0x478ef9` / `0x478fe3`（三条写 3）与 `0x4796f9`（写 1 到栈、再经 `0x479dfa` 进 `BotData`）；
+  **正对照**：同一次扫描把这三条 3 和那条 1 都抓到了 ⇒ 扫法有效。
+
+### 46.5 负结论与正对照：门⑤的**命中分支没走到**（照实记）
+
+* **正对照（观测链有效）**：3 局里门⑤ 各求值一次，每一次都完整打出
+  `gate5_enter`（`0x519fb1`）→ `get_module_wk`（返回值 == CPM 盒基）→ `gate5_miss`（`0x51a084`）
+  → **5 条 `send`（59/50/52/54/66，`pid` 都是 229）**。⇒ 钩子确实落在门的两个出口上。
+* **有界否定**：`0x51a0e0`（命中出口）3 局 **0 次**。原因是**结构性的**，不是随机：
+
+  ```text
+  门④ 先拦：只有"本连接连上之后的**第一个** player_info"才能走到 ⑤
+            （0x519f9d test rbx,rbx；rbx = push 之前的 len；而 0x51a5c5 连接时会把 len 清 0）
+  三局实测：那个"第一发"**永远是本机玩家自己**：pid=229 / conn=228（= 我的连接），
+            t≈29.5–36.8 s 就到了 —— 而那会儿 Bot 表**还不存在**（首个 add 在 t=36.1 s 之后，
+            且 LAN 局里我是在大厅/Battle 界面就连上了，Bot 只能在 GameSetup 里加）
+   ⇒ 走到 ⑤ 的每一次，表都是空的（`[T+0x30] == 0` 走 0x519fe6 的短路，连哈希都不要）
+  ```
+* **要触发它需要什么**（给下一轮）：一个"本连接的第一个玩家是 Bot"的局 —— 纯 Bot 客户端 / 连接重建后服务端
+  先广播 Bot 的 `player_info`。本轮的三种局（LAN 人+Bot、AI-vs-AI、战役）**都造不出来**：
+  战役里对手**根本不是 CPM 的 Bot**（局 3：`cpm_add` 0 次、表始终空）。
+
+### 46.6 顺带更正三条（都是本轮实测/字节证据）
+
+| # | 旧说法 | 本轮实测 | 处置 |
+|---|---|---|---|
+| ① | CPM 的 Bot 表 `HashMap<u32 /*connection_id*/, BotData>`（模块文档 §6、`docs/161` §2 第 18 行沿用） | key = **`player_id`**：局 2 里 key 232 的 Bot，其 `player_info_event` 是 `(player_id=232, connection_id=228)`，228 是**我的**连接；门⑤ 比的也是 `event+0x08`（`player_id`） | ✅ 已改模块文档 §6 + 代码注释 |
+| ② | `BotData+0x08` 是状态 | 状态在桶内 `entry+0x08` = **`BotData+0x00`**（`0x479610` / `0x4786ab` / `0x479dfa` 三条指令一致） | ✅ 已改模块文档 §6 与 `src/graphwar_computer_player_manager.rs` |
+| ③ | `handle_tick` 里 `state != 3` 走一条**不返回**的路径（`0x5ec160`） | **`0x4785f0` 体内没有 `0x5ec160`**。那条路是**收尾**（`0x4786b2` → `0x478e0e` → drop → `0x47864f` 写回 3）；体内真正的 panic 是 `0x478ebb` 的 **`"Failed to join computer player thread."`**（`0x478eda` → `0x478ee0 ud2`） | ✅ 已改模块文档 §7-A |
+
+### 46.7 我方实现跟上了什么（`src/` 两处，只动门条件 / 状态机）
+
+| 文件 | 改了什么 | 证据 |
+|---|---|---|
+| `src/graphwar_local_player_manager.rs` | 新增 `handle_player_info_with_bots(..., is_computer_player)`：**门⑤**（push 之后、5 连发之前；命中 ⇒ 一条不发）。`handle_player_info` 变成"没有 Bot 表"的等价形式（= 原版表空那一支） | 46.2 / 46.3；测试 `gate_five_blocks_requests_for_a_bot_first_player`、`gate_four_runs_before_gate_five` |
+| `src/graphwar_computer_player_manager.rs` | 新增 `BOT_STATE_RUNNING = 1`、`handle_turn_info_event_with_spawn`（过门 ⇒ state=1）、`handle_tick`（把 != 3 的写回 3）；`BOT_STATE_READY = 3` 补三个写入点 | 46.4；测试 `state_goes_three_one_three` |
+
+### 46.8 本轮的坑（都是实测）
+
+1. **Xvfb 起来就崩**：见 §45.8 第 1 条，本轮复现同款（崩在 `libnvidia-egl-gbm → libEGL_nvidia → swrast_dri`）；
+   修法照旧（`__EGL_VENDOR_LIBRARY_FILENAMES=…50_mesa.json` + `LIBGL_ALWAYS_SOFTWARE=1`）。
+2. **扫描 hashbrown 桶必须看 ctrl 字节**：第一版探针把掩码以内的每个槽都当有效项，结果读出
+   `16=1,47=104,999455886=0` 这种垃圾键。正确做法是 `ctrl[i] & 0x80 == 0` 才算占用槽（`0x80` = DELETED、`0xFF` = EMPTY）。
+3. **驱动退出码 139 不代表失败**：三局都是 `dev.kill(pid)` 之后 SIGSEGV（§45.8 第 2 条），JSONL 完整 —— 判"抓到没有"看 JSONL 里的类型计数。
+4. **`selftest` 的两个 SKIP 是环境**：`XDG_DATA_HOME` 一设，Godot 的 `user://` 就跟着走，
+   回放样本要放到 `$XDG_DATA_HOME/godot/app_userdata/Graphwar/replays/`；`examples/serve_match` 要在
+   `CARGO_TARGET_DIR` 里编好（本轮 `cargo build --offline --example serve_match`）。两条都补上之后才是 **714 / 0 / 1 skip**。
+
+### 46.9 复跑（每条都能原地跑）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+# 门⑤ / state 的运行时（三局任选，约 3–4 min；样本只写 .agent-work/）
+$PY tools/gw2_step_drive.py --display 127.0.0.1:95 --data-dir $R/gamedata \
+    --out $R/bot.jsonl --snap-dir $R/snaps --js tools/frida_cpm_gates.js --settle 25 --keep-alive 60 \
+    --steps 'w1, s boot, c 1344 630, w2, s lobby, c 765 1109, w3, s setup, c 1648 980, w2, s addbot,
+             c 1276 742, w1.5, s bot1, c 958 1109, w3, s play1, r start, w20, r t20, w20, r t40'
+
+# 静态（四条链各自能复核）
+../.venv/bin/python tools/addr_probe.py dis     0x519f40    # 五道门 + 5 连发
+../.venv/bin/python tools/addr_probe.py dis     0x46c5a0    # get_module_wk::<CPM>
+../.venv/bin/python tools/addr_probe.py dis     0x478fc0    # 插表 + 建档 5 条
+../.venv/bin/python tools/addr_probe.py dis     0x4785f0    # handle_tick：读 3 / 写 3
+../.venv/bin/python tools/addr_probe.py dis     0x479520    # turn_info 三道门 + spawn + 写 1
+```

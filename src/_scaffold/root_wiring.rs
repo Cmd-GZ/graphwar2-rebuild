@@ -45,7 +45,7 @@
 //! | 15 | `GraphwarModeManager` | 32 | `0x498090` | [`GraphwarModeManager`] | `wired` | 类型**观测**；布局**新解**（32 B，§50） |
 //! | 16 | `GraphwarGraphicsManager` | 168 | `0x49e394` | [`GraphwarGraphicsManager`] | `wired` | 类型**观测**；布局**逐字段观测**（168 = 0x18 头 + 3×0x30，模块 §2.2）；事件流**指令级**（x86 `0x469390`，第三处重播 tag = 55） |
 //! | 17 | `GraphwarEntityEffectManager` | 72 | `0x3e9f40` | [`GraphwarEntityEffectManager`] | `wired` | 类型**观测**；事件流**指令级**（任务 40，§50） |
-//! | 18 | `GraphwarComputerPlayerManager` | 72 | `0x4b02a4` | [`ComputerPlayers`] | `assembled` | 类型**观测** |
+//! | 18 | `GraphwarComputerPlayerManager` | 72 | `0x4b02a4` | [`ComputerPlayers`] | `wired` | 任务 79：3 订阅 + 5 发布 + `state` 3/1 写入点 + 10 条交互 |
 //! | 19 | `FunctionHistoryRecorder` | 48 | `0x49d9a0` | [`History`] | `wired` | 类型**观测**；布局**逐字段观测**（48 = Vec + 弱自句柄 + 通道 + 容器弱引用）；事件流**指令级**（x86 `0x3f10a0`/`0x3f0e40`，**发 0 条**）；33/35 已裁决 |
 //! | 20 | `GraphwarNameManager` | 72 | `0x40af68` | [`GraphwarNameManager`] | `wired` | 类型**观测**；布局**逐字段观测**（72 B 全解，`docs/16` §54.3）；事件流**指令级**（x86 `0x519100`） |
 //! | 21 | `GraphwarColorManager` | 120 | `0x49cbe8` | [`GraphwarColorManager`] | `wired` | 类型**观测**；布局**逐字段观测**（120 = 0x18 头 + 2×0x30，模块 §6）；事件流**指令级**（x86 `0x465620`） |
@@ -70,7 +70,7 @@
 //!
 //! | 档位 | 判据（**按序判断，第一个命中者为准**） | 现值 |
 //! |---|---|---|
-//! | [`SLOT_WIRED`] | 已接容器 **+** 已接事件流 **+** 有最小交互断言（[`RootWiring::interaction_selftest`] 覆盖这一槽） | **18** |
+//! | [`SLOT_WIRED`] | 已接容器 **+** 已接事件流 **+** 有最小交互断言（[`RootWiring::interaction_selftest`] 覆盖这一槽） | **19** |
 //! | [`SLOT_LAYOUT`] | 原版字段布局**已逐字段解出**（有证据档），但**不满足** `wired` | **2** |
 //! | [`SLOT_ASSEMBLED`] | 容器里装的是**我方复原类型**（`our_type` 非 `—`，能按类型取回并调用），但**不满足**上面两条 | **2** |
 //! | [`SLOT_STUB`] | 以上都不是：**我方形状占位**，原版字段布局**未知** | **0** |
@@ -459,11 +459,11 @@ pub const SLOT_TIERS: [&str; 4] = [SLOT_WIRED, SLOT_LAYOUT, SLOT_ASSEMBLED, SLOT
 ///
 /// 改任何一槽的档位必须**同批**改这里、[`Wired::status`] 与
 /// `client/tools/assemble_check.gd` 的 `WIRED_TIER`（任务 28 的病根就是只有一处改）。
-pub const WIRED_TIER_COUNT: usize = 18;
+pub const WIRED_TIER_COUNT: usize = 19;
 /// 见 [`WIRED_TIER_COUNT`]。
 pub const LAYOUT_TIER_COUNT: usize = 2;
 /// 见 [`WIRED_TIER_COUNT`]。
-pub const ASSEMBLED_TIER_COUNT: usize = 2;
+pub const ASSEMBLED_TIER_COUNT: usize = 1;
 /// 见 [`WIRED_TIER_COUNT`]。**任务 36 起为 0**——22 个槽里没有一个报 `stub` 了。
 pub const STUB_TIER_COUNT: usize = 0;
 
@@ -630,7 +630,11 @@ impl Wired {
             | Wired::ColorManager
             | Wired::SoldierManager
             | Wired::GraphicsManager
-            | Wired::FunctionHistoryRecorder => SLOT_WIRED,
+            | Wired::FunctionHistoryRecorder
+            // 任务 79：`state` 的 3/1 语义结案（写入点 0x478fe3 / 0x479dfa / 0x47864f，
+            // 运行时 3→1→3 三发），配 10 条交互读数 ⇒ 三件齐。地址级证据见
+            // `src/graphwar_computer_player_manager.rs` §6/§7 与 `docs/06` §46
+            | Wired::ComputerPlayerManager => SLOT_WIRED,
             Wired::ClientConnectionHandler | Wired::FunctionManager => SLOT_LAYOUT,
             _ => SLOT_ASSEMBLED,
         }
@@ -1576,6 +1580,11 @@ impl RootWiring {
         self.container.borrow().get_module::<GraphwarLocalPlayerManager>()
     }
 
+    /// `get_module::<ComputerPlayerManager>()`。构造点 `0x517690` + `call 0x47a720` @`0x517deb`。
+    pub fn computer_player_manager(&self) -> Option<Rc<RefCell<ComputerPlayers>>> {
+        self.container.borrow().get_module::<ComputerPlayers>()
+    }
+
     // ---- 任务 77：按类型取回四格（Color / Soldier / Graphics / FunctionHistoryRecorder） ----
 
     /// `get_module::<ColorManager>()`。构造点 `0x517690` + `call 0x465620` @`0x517e9f`。
@@ -2142,6 +2151,63 @@ impl RootWiring {
             out.push(("history.emitted", m.outbox_len().to_string()));
             out.push(("history.subs", m.subscribed.len().to_string()));
             m.clear_for_probe();
+        }
+
+        // ⑳ ComputerPlayerManager（任务 79）：建档发 5 条身份请求（59/50/52/54/66）→
+        //     `state` 时间线 **3 →(turn_info 过门 + spawn) 1 →(handle_tick) 3** → erase。
+        //     写入点：`0x478fe3`（建档 3）/ `0x479dfa`（spawn 后 1）/ `0x47864f`（tick 收尾 3）。
+        //     幂等：固定 key 9046，末尾 erase。
+        if let Some(cpm) = self.computer_player_manager() {
+            let mut m = cpm.borrow_mut();
+            let profile = crate::graphwar_computer_player_manager::BotProfile::new(1000, 0);
+            let events =
+                crate::graphwar_computer_player_manager::add_computer_player_events(9046, &profile);
+            out.push((
+                "computer.tags",
+                events
+                    .iter()
+                    .map(|e| e.discriminant().to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ));
+            m.add_computer_player(crate::graphwar_computer_player_manager::NewBot::from_level(
+                9046, 1000,
+            ));
+            let (level, limit) = match m.get(9046) {
+                Some(b) => (b.new_bot.level, b.new_bot.limit),
+                None => (0, 0),
+            };
+            out.push(("computer.level", level.to_string()));
+            out.push(("computer.limit", limit.to_string()));
+            out.push((
+                "computer.state_add",
+                m.get(9046).map(|b| b.state).unwrap_or(-1).to_string(),
+            ));
+            let turn = crate::graphwar_computer_player_manager::TurnInfo {
+                player_id: 9046,
+                soldier_id: 9050,
+            };
+            out.push((
+                "computer.think",
+                match m.handle_turn_info_event_with_spawn(turn) {
+                    Some(r) => format!("{},{},{}", r.player_id, r.soldier_id, r.new_bot.limit),
+                    None => "none".to_string(),
+                },
+            ));
+            out.push((
+                "computer.state_spawn",
+                m.get(9046).map(|b| b.state).unwrap_or(-1).to_string(),
+            ));
+            out.push((
+                "computer.blocked_while_running",
+                m.handle_turn_info_event(turn).is_none().to_string(),
+            ));
+            out.push(("computer.reset", m.handle_tick().len().to_string()));
+            out.push((
+                "computer.state_after_tick",
+                m.get(9046).map(|b| b.state).unwrap_or(-1).to_string(),
+            ));
+            out.push(("computer.removed", m.handle_entity_removed_event(9046).to_string()));
         }
 
         out
@@ -2720,7 +2786,7 @@ mod tests {
                 SLOT_WIRED,     // 15 ModeManager（订 1 发 3 + 5 条交互，任务 40）
                 SLOT_WIRED,     // 16 GraphicsManager（订 2 + 6 处发布 51/53/55 + 9 条交互，任务 77）
                 SLOT_WIRED,     // 17 EntityEffectManager（订 2 发 1 + 7 条交互，任务 40）
-                SLOT_ASSEMBLED, // 18 ComputerPlayerManager（要抓一次 bot 局）
+                SLOT_WIRED,     // 18 ComputerPlayerManager（订 3 发 5 + state 3/1 写入点 + 10 条交互，任务 79）（要抓一次 bot 局）
                 SLOT_WIRED,     // 19 FunctionHistoryRecorder（订 1 发 0 + 8 条交互，任务 77）
                 SLOT_WIRED,     // 20 NameManager（订 2 发 2 + 9 条交互，任务 74）
                 SLOT_WIRED,     // 21 ColorManager（订 2 发 2 + 8 条交互，任务 77）
@@ -3063,6 +3129,17 @@ mod tests {
             ("history.len_after_rejected", "1"),
             ("history.emitted", "0"),
             ("history.subs", "1"),
+            // ⑳ ComputerPlayerManager（任务 79）：建档 5 条身份请求 + `state` 3→1→3
+            ("computer.tags", "59,50,52,54,66"),
+            ("computer.level", "1000"),
+            ("computer.limit", "200"),
+            ("computer.state_add", "3"),
+            ("computer.think", "9046,9050,200"),
+            ("computer.state_spawn", "1"),
+            ("computer.blocked_while_running", "true"),
+            ("computer.reset", "1"),
+            ("computer.state_after_tick", "3"),
+            ("computer.removed", "true"),
         ]
         .into_iter()
         .map(|(k, v)| (k, v.to_string()))
@@ -3093,9 +3170,9 @@ mod tests {
         assert!(Rc::ptr_eq(&a, &b));
     }
 
-    /// **一次最小交互后取回正确值**：**103** 条逐条比对（这就是 headless probe 的期望串；
+    /// **一次最小交互后取回正确值**：**145** 条逐条比对（这就是 headless probe 的期望串；
     /// 任务 36 之前是 65 条（+`PlanePosManager` 9 条 = 74）；任务 74 再加 29 条
-    /// （`Rank` 9 + `Name` 8 + `LocalPlayer` 12）。
+    /// （`Rank` 9 + `Name` 8 + `LocalPlayer` 12）；任务 77 再加 32 条；任务 79 再加 10 条（`Computer`）。
     #[test]
     fn one_minimal_interaction_per_manager_reads_back_the_written_value() {
         let wiring = RootWiring::assemble_demo();
@@ -3142,7 +3219,7 @@ mod tests {
         let first = wiring.interaction_selftest_strings();
         let second = wiring.interaction_selftest_strings();
         assert_eq!(first, second, "重复调用必须给出同一串 名字=值");
-        assert_eq!(first.len(), 135);
+        assert_eq!(first.len(), 145);
         assert_eq!(first[0], "life.alive=1");
         assert_eq!(first[64], "effect.outbox=1");
         // 任务 36 新增的 9 条（顺序接在 ⑪ 之后）
