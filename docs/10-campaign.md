@@ -1572,6 +1572,10 @@ strb w9, [sp, #0x16]   ; 载荷 +0x06 = b      （w9 = w2 >> 16）
 * **不是**：`FunctionInfo`(35) 的上行与本模块无关。arm64 全量扫 tag 35 只有两处：
   `function_manager::set_function` 与 `function_history_recorder::handle_function_fire_event`
   （后者更可能是转发）。本模块 3 个函数里没有任何 35 的构造。
+  〔任务 83（2026-11-10）：**arm64 口径未复扫**（`addr_probe.py tags` 是 x86-64 only，本机 arm64 那份
+  是独立构建）。x86-64 侧按四形态复扫：tag 35 修前 1 处 → 修后 **2 处**，新增的那处在名字↔tag
+  分派函数 `0x3d38f0`（`0x3d4153`，是 tag word 不是生产者），**非分派的构造点仍只有 1 处**
+  （`0x456377`，`graphwar_function_manager.rs`）⇒ 与 `docs/161` §2.2④ 的裁决同向，本节结论**不变**。〕
 
 ### 15.6 (d) `lobby_control` 是什么：一对互斥按钮 + 清 LAN 列表
 
