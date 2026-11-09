@@ -24,7 +24,7 @@
 
 **验收标准**仍是 `docs/06` §17.1 的"逐位相同"（状态 / 消息字节及其批内顺序 / 几何三条全中）；
 "能开一局"只是必要条件。当前**三条驱动轴没有一条到 100%**——最严的"内容命中"最高也只有
-**595 / 1080**（收敛层），见下文「对拍现在多准」。
+**647 / 1080**（`fire` / `batch` 两轴；收敛层 `batch_conv` 是 637），见下文「对拍现在多准」。
 
 ## 目标二进制
 
@@ -77,8 +77,8 @@
 | 延迟段（**只有 `batch` 轴**） | 死亡集合 **366/385**（漏报 0）、挖洞点 **207/294** | 分母是"有可比对象的批"，与 1080 **不是**一根轴 |
 | 整局**完全一致**（消息级对拍） | **1/401 份回放**（`docs/06` §24.2 **当轮**读数，本轮未重算）；旧口径 **71/400 帧** | 两者分母不同（回放 vs 帧），别混着比 |
 | 多发批**批结构** | **130/130**（`docs/141` **当轮**读数） | 剔掉死亡块 |
-| 客户端自检 | **714 passed / 0 failed / 1 skipped**（四个前置全到位时：`client/assets/` 已解出、**解完资产后再 `--import`**、`cargo build --example serve_match`、两个回放样本 1783255495/1793897298 放进 `$HOME/.local/share/godot/app_userdata/Graphwar/replays`）。缺一档就掉：缺回放样本 **686 / 0 / 10** → 缺 assets **606 / 2 / 23** → 再缺 `serve_match` **530 / 2 / 25** （2026-11-08 实测，四处都对得上） | ⚠️ 回归保护，不是复原证据。那 2 条 FAIL **只在缺 assets 时出现**（`点 Skins 页的第 -1 号皮肤`、`Cancel = 194 宽 / Start = 218 宽`），有资产时归零 ⇒ 属缺资产而非回归 |
-| `cargo test` | **1693 条**（默认 feature；`--features gdext-bindings` 的条数见当轮实测） | 单测/集成；同样不是"与原版相同"的证据。**条数每轮都在变**，别拿它当进度（`AGENTS.md` §0.2） |
+| 客户端自检 | **714 passed / 0 failed / 1 skipped**（四个前置全到位时：`client/assets/` 已解出、**解完资产后再 `--import`**、`cargo build --example serve_match`、两个回放样本 1783255495/1793897298 放进 `$HOME/.local/share/godot/app_userdata/Graphwar/replays`）。缺一样就掉，四种组合的读数见下文「客户端自检的两个口径」 | ⚠️ 回归保护，不是复原证据。那 2 条 FAIL **只在缺 assets 时出现**（`点 Skins 页的第 -1 号皮肤`、`Cancel = 194 宽 / Start = 218 宽`），有资产时归零 ⇒ 属缺资产而非回归 |
+| `cargo test` | **1710 条**（默认 feature；`--features gdext-bindings` **1816** 条） | 单测/集成；同样不是"与原版相同"的证据。**条数每轮都在变**，别拿它当进度（`AGENTS.md` §0.2） |
 
 **要补的活**（按"是不是复原"排序，不按工作量）：
 
@@ -88,7 +88,7 @@
 | 2 | **死亡集合 / `AshEffect` 发射器** | 对拍剩余失败的**主要来源**：37 个失败里 19 个是"死亡块整块是 `AshEffect`"、18 个是"死亡集合漏报"（`docs/141`） |
 | 3 | **同时回合制的 A 类**：`TurnInfo` 那组玩家排列（HashMap 迭代序） | 缺一份未捕获的熵；批内其它顺序**已定死**（130/130） |
 | 4 | **界面像素**：主菜单 sha256 相同、弹窗 0.00–1.7%、玩家页 0.007%；但仍有屏缺真值 | 见 `docs/130`/`docs/137` |
-| 5 | **9 个 manager 仍是 `assembled`**（11 wired / 2 layout / 9 assembled / 0 stub = 22） | 只构造注册、没接事件流；`docs/161` 已给出九格"缺什么"与**7 格静态可解**的判断。建议顺序 Rank → Name → LocalPlayer（GSM 卡 `src/game.rs` 禁区，别派） |
+| 5 | **6 个 manager 仍是 `assembled`**（14 wired / 2 layout / 6 assembled / 0 stub = 22） | 只构造注册、没接事件流；`docs/161` 已给出六格"缺什么"与**静态可解**的判断（`Rank` / `Name` / `LocalPlayer` 三格已升 `wired`；GSM 卡 `src/game.rs` 禁区，别派） |
 | 6 | **收敛层 `diffconv` 未跟上 S3** | 内核按**到达序逐发挖洞**已落地，收敛层还没跟 ⇒ 两层口径会分叉（已派 `dispatch/73`） |
 | 7 | **跨平台**：Win x86_64 / Android arm64 的 **check + build 都已成立**（`docs/18` §11）；仍未验的是**真机加载**（只有 wine）、APK 打包、macOS、arm64 Win/Linux，以及**跨架构逐位一致** | `docs/18` §11 |
 | 8 | **B 类**（25 s 墙钟、多客户端竞态） | 只能做统计验收，永远做不到"逐位" |
@@ -158,8 +158,8 @@ python3 tools/bit_exact_attrib.py --json b.jsonl      # 延迟段两条 + 失败
 
 | | 现状 |
 |---|---|
-| **12 个 GDExtension 类的逻辑** | ✅ 全部还原（在 `src/`，纯 Rust、可测） |
-| **把它们变成真 Godot 节点** | ✅ **全部节点化**。headless 断言按脚本计（13 个脚本、共 **1,800** 条）：`entity_drawer_check` 366 / `assemble_check` 217 / `draw_classes_check` 235 / `signal_classes_check` 155 / `play_flow_check` 135 / `function_drawer_check` 132 / `base_classes_check` 117 / `obstacle_drawer_check` 116 / `plane_on_screen_check` 96 / `curve_on_screen_check` 96 / `recovered_view_check` 57 / `process_loop_check` 49 / `gdext_check` 24 / `spike_class_check` 23 —— 全 **0 failed** |
+| **12 个原版 GDExtension 类的逻辑** | ✅ 全部还原（在 `src/`，纯 Rust、可测） |
+| **把它们变成真 Godot 节点** | ✅ **全部节点化**。headless 断言按脚本计（14 个脚本、共 **1,827** 条）：`entity_drawer_check` 366 / `assemble_check` 226 / `draw_classes_check` 235 / `signal_classes_check` 155 / `play_flow_check` 135 / `function_drawer_check` 132 / `base_classes_check` 117 / `obstacle_drawer_check` 116 / `plane_on_screen_check` 96 / `curve_on_screen_check` 96 / `recovered_view_check` 57 / `process_loop_check` 49 / `gdext_check` 24 / `spike_class_check` 23 —— 全 **0 failed** |
 
 绑定层有两条路，**已量化**（`docs/18-build.md` §10）：
 
@@ -170,7 +170,7 @@ python3 tools/bit_exact_attrib.py --json b.jsonl      # 延迟段两条 + 失败
 | 源码保真 | ✗ 是我们的发明 | ✅ 原版 `.rodata` 里留着 `gdext-…/godot-core/src/registry/class.rs` |
 
 ⇒ 骨架已按 **cargo feature `gdext-bindings`** 并入（**默认关闭，零风险**）：
-关闭时零依赖、**1693** 条测试全绿；`--features gdext-bindings` 时 **1799** 条全绿。所有节点的 `_draw` / `_process` 真被引擎调到。
+关闭时零依赖、**1710** 条测试全绿；`--features gdext-bindings` 时 **1816** 条全绿。所有节点的 `_draw` / `_process` 真被引擎调到。
 
 ### 三个"白捡的"证据源（别再从零挖）
 
@@ -206,7 +206,7 @@ python3 tools/bit_exact_attrib.py --json b.jsonl      # 延迟段两条 + 失败
 `graphwar_replay_player` / `graphwar_game_server` / `game` / `server` / `graphwar_play_screen_control`
 均已可运行；桥接层在 `src/_scaffold/`（`api` / `protocol` / `broker` / `capi` / `gdext*`）。
 **`cargo test --offline` 全绿**（条数每轮在变，**别把它当进度**——见 `AGENTS.md` §0.2）；
-`src/` 根目录现有 76 个 `*.rs`（55 个 `graphwar_*.rs`）＋ 3 个同名子目录，另有 `src/_scaffold/` 里 **25 个**我方自造文件。
+`src/` 根目录现有 79 个 `*.rs`（58 个 `graphwar_*.rs`）＋ 3 个同名子目录，另有 `src/_scaffold/` 里 **29 个**我方自造文件。
 ### 客户端自检的两个口径（`bash client/run.sh selftest`）
 
 **714 不是版本号，是"前置条件全齐"的读数**：少一样就落到别的数上，四个数都跑过（详见 [`docs/18`](docs/18-build.md) §10.3.1）：
@@ -214,19 +214,19 @@ python3 tools/bit_exact_attrib.py --json b.jsonl      # 延迟段两条 + 失败
 | `client/assets/` | 编了 `examples/serve_match` | 结果 |
 |---|---|---|
 | ✅ | ✅ | **714 passed / 0 failed / 1 skipped** ← 完整口径 |
-| ✅ | ❌ | **618 passed / 0 failed / 2 skipped**（少的 76 条 = 两条联机套件整段 skip） |
+| ✅ | ❌ | **636 passed / 0 failed / 2 skipped**（少的 78 条 = 两条联机套件整段 skip） |
 | ❌ | ✅ | **667 passed / 2 failed / 21 skipped** |
 | ❌ | ❌ | **591 passed / 2 failed / 23 skipped** |
 
-两条恒等式把前置条件钉死：**714 = 618 + 96**、**667 = 591 + 76**（差额来自各轮新增的节点/流程断言）。
+两条恒等式把前置条件钉死：**714 = 636 + 78**、**667 = 591 + 76**（差额来自各轮新增的节点/流程断言）。
 
-**694 的三个前置条件**：①`client/assets/` 齐备（用**你自己的** `Graphwar.pck` 解，**音频要先解再 `--import`**）；
+**714 的三个前置条件**：①`client/assets/` 齐备（用**你自己的** `Graphwar.pck` 解，**音频要先解再 `--import`**）；
 ②`cargo build --offline --example serve_match`；③用 `run.sh` 自己的 `XDG_*` 默认值（手改会让 `user://replays` 指空）。
 
 **没有 assets 时应该期待什么**：`failed == 2`，两条**逐字固定**且与 `.so` 无关 ——
 ①`点 Skins 页的第 -1 号皮肤 ⇒ Faces/Hats 42 格立刻换成它（实际 42）`（皮肤图标取不到 ⇒ `target` 停在 `-1`；
 括号里的 42 是**格数**不是"通过"）；②`Cancel = 194 宽 / Start = 218 宽（真帧；实际 184 / 167）`（缺字体 ⇒ 184/167）。
-这两条**不是回归**：用未改动基线对拍过（`530/2/25`，两条逐字相同）⇒ **基线自带 + 依赖真资产**。
+这两条**不是回归**：用更早一轮的未改动基线对拍过（`530/2/25`，两条逐字相同）⇒ **基线自带 + 依赖真资产**。
 ⚠️ **`passed` 数会随前置条件漂移**：缺 `assets` 时实测 `591/2/23` 或 `667/2/21`，不要拿别的机器上的数当基线
 ⇒ **判据只有"failed == 2 且就是这两条"，别拿 passed 数当判据**。
 模块全集与行号下界见 [`docs/02-module-map.md`](docs/02-module-map.md)。
@@ -235,7 +235,7 @@ python3 tools/bit_exact_attrib.py --json b.jsonl      # 延迟段两条 + 失败
 
 全部文档的索引（现行 / 已归档 / 已并档）见 **[`docs/INDEX.md`](docs/INDEX.md)**。
 **一份文档一个主题**：同一主题只有一篇现行文档，已归并的进 `docs/archive/`。
-`docs/` 下现行 **31 篇**（`ls docs/*.md | wc -l`；审计发现原记 29，实测 31），`docs/archive/` 另有 **125 篇**过程档案。
+`docs/` 下现行 **37 篇**（`ls docs/*.md | wc -l`），`docs/archive/` 另有 **140 篇**过程档案（其中 `archive/ai/` 12 份）。
 本表只列**现行**的与少数必须知道的指针，不是全量清单。
 
 | 文档 | 内容 |
@@ -292,7 +292,7 @@ python3 tools/bit_exact_attrib.py --json b.jsonl      # 延迟段两条 + 失败
 | **[107-docs-consolidation.md](docs/MIGRATION.md)** | **文档技术债清理**：家底清单、归并映射、改掉的陈旧断言 |
 | [AI.md](docs/archive/AI.md) | **AI 函数进化（唯一权威）** |
 
-已归档的 **125 篇**（其中 `archive/ai/` 12 份 AI 逐轮记录）与 5 份"已并档"占位指针不再在此列出，
+已归档的 **140 篇**（其中 `archive/ai/` 12 份 AI 逐轮记录）与 5 份"已并档"占位指针不再在此列出，
 见 [`docs/MIGRATION.md`](docs/MIGRATION.md)（旧文件 → 归档/吸收 的完整映射）与 [`docs/INDEX.md`](docs/INDEX.md)。
 
 ## 对外接口
@@ -324,11 +324,11 @@ gw2_simulate(text,x0,y0,step,flip,ode,obstacles,n,count)   -> 首个命中序号
 ## 目录
 
 ```
-docs/        逆向得到的实现说明（31 篇现行 + archive/ 125 篇过程档案）
+docs/        逆向得到的实现说明（37 篇现行 + archive/ 140 篇过程档案）
 src/         Rust 复原实现：**文件名 = 原版模块名**（`graphwar_*.rs` × 58 + 12 个非 graphwar 模块），
              我方自造的桥接/工具在 src/_scaffold/；对照表见 docs/02-module-map.md §17
 client/      Godot 4.7.2 重建客户端（15 个界面；媒体资产不入库，用 tools/extract_assets.py 从自己的 pck 解）
-tests/       与真二进制对齐用的用例（64 个 `*.rs`；**条数会变，别写死在这里** —— `AGENTS.md` §0.2）
+tests/       与真二进制对齐用的用例（70 个 `*.rs`；**条数会变，别写死在这里** —— `AGENTS.md` §0.2）
 fixtures/    真值夹具（已入库）
 tools/       分析脚本（含 extract_assets.py / parse_replay.py / campaign_data.py 等离线工具）
 rsc/         ← gitignore，用 tools/pck_extract.py 生成

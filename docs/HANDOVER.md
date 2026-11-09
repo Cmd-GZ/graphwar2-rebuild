@@ -110,7 +110,7 @@ python3 tools/merge_check.py --cg origin/CG     # ①报告 §遗留/§建议全
 
 ```bash
 export CARGO_HOME=<WS>/.cargo-home CARGO_TARGET_DIR=<WS>/.cargo-home/target
-cargo test --offline                                  # 1694
+cargo test --offline                                  # 1710
 python3 tools/coverage_matrix.py --check
 python3 tools/check_doc_refs.py
 cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive fire  --policy default --json f.jsonl
@@ -174,7 +174,7 @@ GPU 口径      比"计算时间"还是"进程墙钟"？（后者含 `import tor
 上游（本机）  派活 + 审查 + 合并 + 文档           16 核 / 15 GB / 无独显
 下游（CG）    执行任务，提交到 CG 分支            32 GB / Ryzen 9 7945HX(16C32T) / RTX 4060
               dispatch/ 只在 CG 上；**master 里一份都没有**（每轮合并必剔）
-在跑的        第十五轮：① 9 个 manager 升档 ② 换证据类型
+在跑的        manager 升档（第十五轮把 Rank / Name / LocalPlayer 升到 `wired`，余 **6** 格）；换证据类型
 关键文档      docs/00 状态总览 · docs/02 模块图 · docs/06 验证记录 · docs/161 manager 缺口
              docs/158/159/160 三份对抗性审计 · docs/guide/ 攻略手册
 ```

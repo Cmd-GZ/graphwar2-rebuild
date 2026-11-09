@@ -324,7 +324,7 @@ tag word 的两种构造都出现过，读的时候别只找 `movabs` 立即数�
 | C4 | `src/function_history_recorder.rs` 的 `EVENT_FIRE_TAG` 与模块文档首段 | 把 tag **35** 叫 `function_fire_event` | 字节：订阅名 `function_info_event`（`0x1bfccd`, len `0x13`）+ 处理器体内判别值闸 **35**；`docs/07` §7.2 的 72 条表里 **33 = `function_fire_event`** | 登记为**待裁口径**（G5）；裁决前不要照那个名字落码 |
 | C5 | 本文 §2 第 20 行（G1） | "`+0x38`→`+0x48` 那 8 字节没有写入点"、"基址口径 `0x50` vs `0x58`" | x86 `0x519100`：`alloc 0x60`（16 + 80），`M` 基 = 盒 + `0x18`；`+0x38` 起是 **16** 字节 `RandomState`，两个 `u64` 都有写点（`0x5191a5` / `0x5191a9`） | **任务 74 就地更正**：不是空洞、也不是 8 字节；`0x60`/`0x58`/`0x50` 三个数的差别见 `src/graphwar_name_manager.rs` §7 |
 | C6 | 本文 §2 第 3 行 | "`+0x20` 那个 8 字节槽语义未知"、"5 条请求的触发条件没逐条读" | `+0x20` = 自句柄（写点 `0x517965`，值 = 盒基）；5 条请求**内部无判据**，门是 5 道（第五道 `0x519fb1`→`0x51a058` 是任务 74 新发现的） | **任务 74 就地更正**；第五道门那张表登记为 G7 |
-| C7 | `docs/00-status.md` §0.1b.2 与 `docs/HANDOVER.md` §遗留 | 两处都写"9 个 manager 仍是 `assembled`（11 wired / 2 layout / 9 assembled / 0 stub）" | 任务 74 之后是 **14 / 2 / 6 / 0**（三格升 `wired`），见 §9 | **登记**（这两个文件不在任务 74 的允许清单里）。下一轮改它们的人顺手改：`00` 那行要把"9 个"改成"6 个"、"11/2/9/0"改成"14/2/6/0"；`HANDOVER` 同理 |
+| ~~C7~~ **已修** | `docs/00-status.md` §0.1b.2 与 `docs/HANDOVER.md` §4 | 两处都写"9 个 manager 仍是 `assembled`（11 wired / 2 layout / 9 assembled / 0 stub）" | 任务 74 之后是 **14 / 2 / 6 / 0**（三格升 `wired`），见 §9 | **已改**：`00` §0.1b.2 与 §0.4 第 5 条、`README.md` 第 5 条、`HANDOVER` §4 现都写 **6 格 / 14 wired / 2 layout / 6 assembled / 0 stub** |
 
 ---
 

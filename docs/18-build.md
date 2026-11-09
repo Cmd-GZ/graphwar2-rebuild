@@ -395,49 +395,41 @@ export CARGO_HOME=/path/.cargo-home CARGO_TARGET_DIR=$CARGO_HOME/target   # ✗
 
 ```text
 $ cargo test --offline
-  69 个测试二进制（含 doc-tests）；总计 1585 passed / 0 failed
+  总计 1710 passed / 0 failed          # 逐行 '^test result' 求和；含 doc-tests
 $ cargo test --offline --features gdext-bindings
-  69 个测试二进制（含 doc-tests）；总计 1669 passed / 0 failed
+  总计 1816 passed / 0 failed
 $ cargo tree | wc -l
   1                       # 仍然零依赖（只有 gw2-rebuild 自己）
 $ bash client/run.sh selftest
-  SELFTEST 709 passed, 0 failed        # 前置条件见 §10.3.1，缺一样就不是这个数
+  SELFTEST 714 passed, 0 failed, 1 skipped   # 前置条件见 §10.3.1，缺一样就不是这个数
 ```
 
-> ⚠️ **审计 2026-11-08 改了这一段**：原记「65 个二进制（lib 464 / 539）、总计 **1520** / **1595**、
-> `SELFTEST 694`」。现按本机复测替换：`cargo test --offline` = **1585**、`--features gdext-bindings`
-> = **1669**（两条轴都是 69 个二进制、0 failed，逐二进制求和），`selftest` 按 `archive/156-client-rounds.md` §49.7 = **709**。
-> 复跑命令：`cargo test --offline 2>&1 | grep '^test result'`（求和 `ok\. N` 即得总数）。
-> lib/集成的**拆分数**本次没记（`cargo test` 只在每行给总数）；要逐二进制清单跑 `cargo test -- --list`。
+> 复跑：`cargo test --offline 2>&1 | grep '^test result'`（求和 `ok\. N` 即得总数）；
+> 要逐二进制清单跑 `cargo test -- --list`（二进制个数会随 `tests/*.rs` 增减，本页不写死）。
+> 两种 feature 的条数**并不相同**：feature 打开时手写 `gdext.rs` 的入口不编译，而
+> `gdext_mod.rs` 与各 `*_class.rs` 补进更多单测。**条数是回归保护，不是复原进度**（`AGENTS.md` §0.2）。
 
-> **审计（2026-11-07 深夜）**：本节原记「`64 个 test 二进制；lib 457 / 总计 1488 / 0 failed`、
-> 两种 feature 的条数**完全相同是巧合**」。**实测现在是默认 1520 / gdext 1595**（lib 464 / 539），
-> 两者**并不相同** ⇒ "完全相同是巧合"那句解释**作废**（它是早期只有 4 条 `gdext_mod` 单测时的现象）。
-> （**当轮读数**：这段的 1520 / 1595 是 2026-11-07 的值；**现行 1585 / 1669**，见上一段审计注。）
-> 现在的差来自：feature 打开时手写 `gdext.rs` 的入口不编译，而 `gdext_mod.rs` 与各 `*_class.rs`
-> 补进更多单测。**条数是回归保护，不是复原进度**（`AGENTS.md` §0.2）。
+### 10.3.1 `selftest` 的两个口径：**714 需要什么前置条件**（本机四组实测）
 
-### 10.3.1 `selftest` 的两个口径：**694 需要什么前置条件**（2026-11-07 深夜，本机四组实测）
-
-一句话：**694 不是版本号，是"前置条件全齐"的读数**；缺一样就落到别的数上，四个数都实测过
-（⚠️ **审计 2026-11-08**：下面的 694 是 2026-11-07 的**当轮**基数，"全齐"档现已涨到 **709**
-＝ 694 + 15（`archive/156-client-rounds.md` §49.7）；其余三档没有跟着复测，**仍按当轮值记**，不要当成现行读数）：
+一句话：**714 不是版本号，是"前置条件全齐"的读数**；缺一样就落到别的数上，四个数都实测过
+（⚠️ 表里 `667` / `591` 两档是 2026-11-07 深夜的**当轮**基数（那一轮"全齐"是 694、无 `serve_match` 是 618），
+之后没有跟着复测，**不要当成现行读数**；现行"全齐"= **714**，无 `serve_match` = **636**）：
 
 | `client/assets/` | 编了 `examples/serve_match` | 结果 | 差在哪 |
 |---|---|---|---|
-| ✅ | ✅ | **694 passed / 0 failed** | **完整口径**。gdext 版与手写版 `.so` **都**给 694（sha256 `3a1f28a1…` / `85b1cf3b…`）⇒ 换绑定层对客户端透明 |
-| ✅ | ❌ | **618 passed / 0 failed / 2 skipped** | 少的 76 条 = 两条联机套件**整段 skip**（`联机端到端` / `联机 PlayScreen`） |
-| ❌ | ✅ | **667 passed / 2 failed / 21 skipped** | 21 条 skip = 10 条图标/字体/设置 + 11 条音频 |
-| ❌ | ❌ | **591 passed / 2 failed / 23 skipped** | 在上面基础上再 +2 条联机 skip |
+| ✅ | ✅ | **714 passed / 0 failed / 1 skipped** | **完整口径**。gdext 版与手写版 `.so` 给的条数**相同** ⇒ 换绑定层对客户端透明 |
+| ✅ | ❌ | **636 passed / 0 failed / 2 skipped** | 少的 78 条 = 两条联机套件**整段 skip**（`联机端到端` / `联机 PlayScreen`） |
+| ❌ | ✅ | **667 passed / 2 failed / 21 skipped**（当轮） | 21 条 skip = 10 条图标/字体/设置 + 11 条音频 |
+| ❌ | ❌ | **591 passed / 2 failed / 23 skipped**（当轮） | 在上面基础上再 +2 条联机 skip |
 
-两条恒等式把三个前置条件钉死：**694 = 618 + 76**、**667 = 591 + 76**（当轮基数；现行"全齐"= 709）。
+两条恒等式把三个前置条件钉死：**714 = 636 + 78**（现行）、**667 = 591 + 76**（缺 assets 那两档，当轮基数）。
 
-**694 的三个前置条件**：
+**714 的三个前置条件**：
 
 1. **`client/assets/` 齐备** —— 用**你自己的** `Graphwar.pck` 解（`tools/extract_assets.py` + `client/src/audio/extract_audio.py`），
    两个脚本的默认 pck 路径是**仓库根的上一级**，在子目录/克隆里跑要显式 `--pck <你的 Graphwar.pck>`；
    **音频必须"先解、再 `--import`"**（顺序反了 `GwAudio` 仍报缺资产，**11 条**音频类断言全变 SKIP）。
-2. **`cargo build --offline --example serve_match`** —— 缺它少 76 条（`618` 而不是 `694`）。
+2. **`cargo build --offline --example serve_match`** —— 缺它少 78 条（`636` 而不是 `714`）。
 3. 用 `run.sh` 自己的 `XDG_DATA_HOME/CACHE/CONFIG` 默认值。**手改会把 `user://replays` 指到空目录**，
    回放列表那条断言直接红（历史记录里的 `693 passed, 1 failed` 就是这么来的）。
 
@@ -452,7 +444,7 @@ $ bash client/run.sh selftest
 * **`passed` 数会随客户端版本漂移**（历史文档里的 `606 / 2 / 23` 是旧版本读数，
   当前 HEAD 复现不出来：实测是 `591/2/23` 或 `667/2/21`）⇒ **别拿 `passed` 当判据**，
   判据只有"`failed == 2` 且就是上面这两条" + "skip 里全是资产/联机"。
-* 退出码：`failed > 0` 时 `run.sh selftest` **返回 1**（`694`/`618` 时返回 0）。
+* 退出码：`failed > 0` 时 `run.sh selftest` **返回 1**（`714`/`636` 时返回 0）。
 
 **复跑（三分钟）**：
 
@@ -460,11 +452,11 @@ $ bash client/run.sh selftest
 export CARGO_HOME=<WS>/.cargo-home CARGO_TARGET_DIR=<WS>/.agent-work/<topic>/target
 python3 tools/extract_assets.py --pck <你的 Graphwar.pck>        # → client/assets/
 python3 client/src/audio/extract_audio.py --pck <你的 Graphwar.pck>   # 音频先解
-cargo build --offline --example serve_match                     # 缺它 694 → 618
+cargo build --offline --example serve_match                     # 缺它 714 → 636
 cargo build --release --offline --features gdext-bindings
 cp $CARGO_TARGET_DIR/release/libgw2_rebuild.so client/libgw2_rebuild.so
 "$GODOT" --headless --path client --import                      # 解完资产必须再 import 一次
-bash client/run.sh selftest                                     # 期望 SELFTEST 694 passed, 0 failed
+bash client/run.sh selftest                                     # 期望 SELFTEST 714 passed, 0 failed, 1 skipped
 ```
 
 ### 10.4 b) feature 打开时：5 个方法 + 真节点类都活着（headless 实测）
@@ -591,7 +583,7 @@ bash client/run.sh selftest
 ### 10.8 这条线到什么程度（成立 / 不成立）
 
 **成立（实测/观测）**：类名与方法契约不变；`_draw` 虚方法真的被引擎调到；同一份脚本对
-两份绑定都过；feature 关闭时零依赖、`selftest` **694 不变**（两份 `.so` 都实测过，
+两份绑定都过；feature 关闭时零依赖、`selftest` 条数不变（**714 / 0 / 1 skip**，两份 `.so` 都实测过，
 **前提是 §10.3.1 那三条前置条件**）。
 
 **不成立 / 没做**：
@@ -748,8 +740,8 @@ Android 真要出 APK 还缺 `client/export_presets.cfg` + Android SDK + JDK。
 
 ### 11.9 回归
 
-改了 `src/` ⇒ 本机默认 target 重跑 `cargo test --offline`：**lib 464 / 总计 1520**、0 failed、
-1 ignored（与基线一致）（**审计**：本节原记「lib 457 / 总计 1499」，2026-11-07 深夜复测 464 / 1520）；
+改了 `src/` ⇒ 本机默认 target 重跑 `cargo test --offline`：**当轮实测** lib 464 / 总计 **1520**、0 failed、
+1 ignored（与当时基线一致；现行 **1710**）；
 重跑 `tools/coverage_matrix.py` 后 `--check` **OK**，
 两个生成物一起提交（差异只有 `src_tree_sha256` 与 `src_fns 2171 → 2175`，
 归属 527、逐位 88 / 观测 439 **不变**）。

@@ -8,22 +8,18 @@
 > 原版的界面控制器是 Rust 模块（在 `.so` 里）。所以"看起来对"**不是**复原证据；
 > 客户端自检条数也只是**回归保护**，不是复原证据。
 
-> ⚠️ **条数口径（2026-11-07 深夜审计 / 2026-11-08 复核，先读）**：本篇按**轮次**记录，各节里的
-> `cargo test` / `selftest` 条数（`1488` / `1494` / `1499` / `1512` / `1520` / `1584` / `1586` / `1595` …）
-> 都是**那一轮当场的读数**，**不是现行基线**。
-> **现行基线**：
-> `cargo test --offline` **1585 / 0 failed**、`--features gdext-bindings` **1669 / 0 failed**
-> —— 这两条是**本轮审计实测**（69 个测试二进制含 doc-tests，`grep '^test result'` 逐行求和）；
-> `bash client/run.sh selftest` **709 / 0 failed** —— 这条是**转引** §49.7（本轮未复跑：要 Godot + 已编 `.so` + `--import`）。
-> selftest 的前置条件 = `client/assets/` + `examples/serve_match` + 用 `run.sh` 的默认 `XDG_*`；
-> 缺资产的机器是 **591 / 2 / 23**、补了 `serve_match` 是 **667 / 2 / 21** —— 这一档是 2026-11-07
-> **当轮**读数，本次未复测（旧文里的 `606` 复现不出来）。
-> ⚠️ **审计 2026-11-08 改了这里**：原记「1520 / 1595 / 694」，实测已是 **1585 / 1669 / 709**
-> （selftest 的 +15 来自 §49.7）。复原进度**不看这些条数**（`AGENTS.md` §0.2）。
+> ⚠️ **条数口径（先读）**：本篇按**轮次**记录，各节里的 `cargo test` / `selftest` 条数
+> （`1488` / `1494` / `1499` / `1512` / `1520` / `1585` / `1595` / `1625` / `1694` …）都是**那一轮当场的读数**，
+> **不是现行基线**。
+> **现行基线**：`cargo test --offline` **1710 / 0 failed**、`--features gdext-bindings` **1816 / 0 failed**；
+> `bash client/run.sh selftest` **714 / 0 / 1 skip** —— 前置 = `client/assets/` + 编好的
+> `examples/serve_match` + `run.sh` 默认 `XDG_*`；没有 `serve_match` 时 **636 / 2 skip**，
+> 缺 `client/assets/` 时落到 **591–667**（逐档见 `docs/18` §10.3.1）。
+> headless 14 个 SceneTree 脚本合计 **1827** 条。复原进度**不看这些条数**（`AGENTS.md` §0.2）。
 
 > 📦 **§42–§51 已整体搬入 [`archive/156-client-rounds.md`](archive/156-client-rounds.md)**
 > （2026-11-08，**内容未改、节号不变**）：逐轮的"接线 / 接节点"记录与逐例表不再占本篇正文 ——
-> 索引与仍留在主文档的数字结论见本文 **§42**；上面两处 `§49.7` 也指那个文件。
+> 索引与仍留在主文档的数字结论见本文 **§42**；`§49.7` 也指那个文件。
 
 > **本篇合并自**：
 
@@ -6001,8 +5997,8 @@ godot --headless --path client --import
 godot --headless --path client --script res://tools/entity_drawer_check.gd
 
 # 4) 回归保护（与本节无关的两条硬要求）
-cargo test --offline                          # lib 457 / 总计 1488（当轮；现行 1520）
-cargo test --offline --features gdext-bindings # lib 463（457 + 本类 6 条）/ 总计 1494（当轮；现行 1595）
+cargo test --offline                          # lib 457 / 总计 1488（当轮）
+cargo test --offline --features gdext-bindings # lib 463（457 + 本类 6 条）/ 总计 1494（当轮）
 bash client/run.sh selftest                   # 694 passed（默认 feature 的 .so）
 ```
 
@@ -7712,7 +7708,7 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so   # 不覆
 
 | 命令 | 结果 |
 |---|---|
-| `cargo test --offline` | lib **457** / 总计 **1512**（当轮；现行 1520），全绿（与 §38 的 1512 **一位不差**） |
+| `cargo test --offline` | lib **457** / 总计 **1512**（当轮），全绿（与 §38 的 1512 **一位不差**） |
 | `cargo test --offline --features gdext-bindings` | lib **529** / 总计 **1584**，全绿 |
 | `python3 tools/coverage_matrix.py --check` | **OK**（改了 `src/`，两个生成物一起提交） |
 | `assemble_check.gd` | **183 passed / 0 failed**（§38 的 86 条 → 183） |
@@ -7732,9 +7728,9 @@ cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so   # 不覆
 | `156` §48–§49 | 播放屏 3 个"可解"缺口（tick 算式 / `update_transform` 三实参 / 两张颜色表）／6 个真 GDExtension 节点挂进播放屏 |
 | `156` §50–§51 | 第二批 6 个 manager 接到 `wired`／`EntityDrawer::draw` 补上（准备圈 3 段弧 + 3 个外凸箭头；**屏幕上看不见的仍是触发**） |
 
-**数字结论留在主文档**（其余全是过程与逐例表）：自检条数只看文首「条数口径」横幅
-（现行 **1585 / 1669 / 709**）；`709` 那条（+15）出自 `156` §49.7，`assemble_check.gd` 203→213（§50）、
-`entity_drawer_check.gd` 72→118（§51）都是**当轮读数**；逐例表见 [`156`](archive/156-client-rounds.md)。
+**数字结论留在主文档**（其余全是过程与逐例表）：自检条数只看文首「条数口径」横幅（那里是现行值）；
+`assemble_check.gd` 203→213（§50）、`entity_drawer_check.gd` 72→118（§51）都是**当轮读数**；
+逐例表见 [`156`](archive/156-client-rounds.md)。
 
 ## 43. 把原版视图脚本真正换进 `client/`：换 24 个 / 跳 15 个（2026-11，任务「gdswap」）
 
