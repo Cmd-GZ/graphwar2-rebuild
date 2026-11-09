@@ -3685,6 +3685,10 @@ $PY tools/effect_info_pos.py $SO writes 0x472865 0x78 16   # ③ 写 [rsp+0x78] 
 * 正对照：同一套 `tags` 扫描在 `.text` 里报出 **40+ 个变体**的判别式 store（33/34/35/39/42/43/44/45/47…74），
   说明"能扫到东西"；`movabs 0x800000000000002c` 的**裸常量**只出现 2 次（`0x4bf09b`/`0x4e2dd4`），
   两处都紧跟 `cmp [rsi],rax` ⇒ **消费者**（与 `docs/00-status.md` 第 4 条一致）。
+  〔任务 83（2026-11-10）按**四形态**口径复扫复核本节两条读数：**tag 44 = 4 处**
+  （2 生产 `0x4729be`/`0x472e35` + 2 消费者 `0x4bf09b`/`0x4e2dd4`，一字不差）；
+  "40+ 个变体"修前 59 个 tag 桶、修后 **67** 个 ⇒ **本节结论不变**。
+  计数口径与逐 tag 对照见 `docs/07` §7.1.1 + `fixtures/tag_counts83.tsv`。〕
 * **这个扫法的边界（照实写）**：它只跟"直线窗口内的常量传播"，**漏了跨 `call` 的 `lea 0x26(%r8)` 形态**
   ——§28 的 tag37 生产者（`0x4569d7`）就没被扫出来（`r8` 在更早的 `movabs` 里定值，中间隔了 `call`）。
   所以"**只有 2 个 tag44 生产者**"这个负结论，靠的是**两条独立的路**同时收敛：
@@ -6031,3 +6035,520 @@ $PY tools/gw2_step_drive.py --display 127.0.0.1:95 --data-dir $R/gamedata \
 ../.venv/bin/python tools/addr_probe.py dis     0x4785f0    # handle_tick：读 3 / 写 3
 ../.venv/bin/python tools/addr_probe.py dis     0x479520    # turn_info 三道门 + spawn + 写 1
 ```
+
+## 47. **`y0` 不是"算两遍"，是"从一张表里抄两遍"**：采样器在 `0x3c2bc0` 里**只有一处**调用点、`y0` 是 `[rsp+0x108]` 从 `GraphwarPlanePosManager` 表项 `+0x10` **逐字节拷贝**的；那张表**全库只有 2 个写入者**，两个都是字节拷贝 ⇒ 82 号那 1 ulp **不产生在 `0x3c2bc0` 里、也不产生在表的写入处**；与语料那 13 批**不是同一个观测量**（那批差在 `x`）（2026-11-09，`dispatch/87`）
+
+> 任务书：[`dispatch/87-1ulp-y0-twice.md`](../dispatch/87-1ulp-y0-twice.md)。起点 `CG@7323124`，分支 `agent/1ulp-y0`，
+> 私有 `CARGO_HOME` / `CARGO_TARGET_DIR`。目标构建：`libgraphwarrust.so` sha256
+> **`9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`**（= `steam/2026-08-28`）。
+> 本节地址一律 **虚地址**（vaddr = 模块内偏移 = `gw+…`），Ghidra 地址 = 本地址 + `0x100000`。
+>
+> **为什么是这一节**：§45.7 里 82 号量到"同一士兵、同一 `x0` 进 `0x3c2530` 时，开火那次采样的 `y0`
+> 与评分那几次相差正好 1 ulp（run1 **4/4**，run2/run3 **0 ulp**）"，并给了两条 `FunctionPoints` 的
+> 序列化调用者（`gw+504559` / `gw+3d59c4`）。任务书要的是**指令级**：这两条 `y0` 各自由谁给、
+> 在哪一步分叉。本节把它查到了"**能指到指令**"，同时**否掉**了两个最像的候选位置，并给出剩下的唯一缺口。
+
+### 47.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 两条 `FunctionPoints`（`gw+504559` / `gw+3d59c4`）的生产点与算式 | **两条走的是同一个序列化器 `0x50eb20`**（`{"FunctionPoints":{"owner_id":…,"start_x":…,"start_y":…,"end_x":…}}`，`start_y` = `event+0x10`，由 f64 写出器 `0x3cb760` 落笔）。区别只在**谁来叫它、包成什么信封**：`gw+504559` 在 `0x504500`（一次性把**一个 Event** 变成字符串）里 ← 槽 `0x9bafb8` ← `0x3d89e0`（Event→JSON，6 个调用点 = `remote_event_handler` / `client_connection_handler` / `server_connection_handler` / broker，都是"要发出去/转出去"的地方）= **网络报文**；`gw+3d59c4` 在 **`0x3d5740..0x3d6076` = `graphwar_game_recorder.rs`**（Location `150:81`）里，写的是 `{"event":<Event>,"tick":<n>}` = **回放文件记录**。**算式：两条都没有算式** —— 都是把 `event+0x10` 那 8 字节交给同一个 f64 写出器 ⇒ **1 ulp 不在这两个点上产生，在结构体里** | **逐位**（指令）+ **观测**（82 的两条报文） |
+| ② | 两条路径的 `y0` 在哪一步分叉 | **不在 `0x3c2bc0` 里**：它体内对采样器槽 `0x9bac98` 的引用**全函数只有 1 处**（`0x3c30c1`），`y0` = `xmm1 ← [rsp+0x108]`，而 `[rsp+0x108]` 在采样器之前只被 `0x3c2f35` 写过一次（另一处 `0x3c414b` 是后面组装结果时复用同一栈槽，47.2 有说明）—— 值来自**表项 `[r8-0x10]`**（= 表项 `+0x10`），`x0` 来自同一表项 `[r8-0x18]`。**`y0` 是抄的，没有任何运算**。**也不在表的写入处**：那张表（`GraphwarPlanePosManager` 的 `HashMap<u32,(f64,f64,f64)>`）全库**只有 2 个写入者**，两个都是 `movups/movq` 逐字节拷贝（见 47.3）。⇒ 分叉只能在**"两条路各自拿到的是哪一张表/哪一刻的表"**（47.4） | **逐位**（指令） |
+| ③ | 与语料那 13 批是否同源 | **不同源**（就观测量而言已证）：§38.5 那 13 批是 **`x` 侧**（把 point.x 向零挪 1 ulp，13/13 复现回放），而本节这条是 **`y` 侧**；而且那 13 批的差是 **NaN vs 数**，NaN 来自 `f(x0)`（`sin(u)/u` 在 `u=0`），**是 `x` 的函数，有限的 `y0` 动不了它**；量级上也对不上（1 ulp 的 `y0` ≈ 1e-15，比 `c` 的 ulp 与 `{:.3}` 边界低 12 个量级）。**是否"同一类机制"（同一个 `Point` 被两条路各算一遍）仍未证** —— 见 47.5 | **推断**（结构论证 + §38 的 13/13 复现，未做反事实） |
+| ④ | 能不能指到分叉指令 | **没有**。得到的是**有界否定**：`0x3c2bc0` 内不可能（唯一采样点 + 纯拷贝）；表的两个写入者不可能（字节拷贝）；`calculate_shot_results` 全库**只有 2 个调用点**（开火 / AI 评分），**两条采样是两次不同的调用，不是一次调用里的两遍**。剩下唯一缺口：**AI 那条路的计算器输入里那张表是哪一个对象**（47.6 给了 3 行 frida 就能定的配方） | — |
+
+一句话：**"`y0` 算两遍"这句话在指令级不成立** —— 它只被**抄**两遍（两次 `calculate_shot_results` 调用各抄一次），
+而"抄"的两端都不是算术；所以 82 号量到的 1 ulp 要么来自**两条路读的表不是同一张**，要么来自
+**两次采样之间表被改写过一次**，二者都没有静态证据能定。这条线**降级但不能关**。
+
+### 47.1 两条 `FunctionPoints` 的序列化点（①）
+
+**同一个序列化器**：`0x50eb20`（`FunctionPointsEvent`），字段名与顺序由 `.rodata` 字面量定死：
+
+| 字面量 vaddr | 内容 | 谁读它 |
+|---|---|---|
+| `0x1c55e9` (len 14) | `FunctionPoints` | `0x50eb54` 写外层名 |
+| `0x19f6c8` (len 8) | `owner_id` | `lea rsi` @ `0x50ebb3`，值 = `event+0x20`（i64，`call 0x3cc060` @ `0x50ebc4`） |
+| `0x1c506b` (len 7) | `start_x` | `lea rsi` @ `0x50ebd2`，值 = `event+0x8`（f64，`call 0x3cb760` @ `0x50ebe6`） |
+| `0x1c5072` (len 7) | `start_y` | `lea rsi` @ `0x50ebf4`，**值 = `event+0x10`**（f64，`call 0x3cb760` @ `0x50ec05`） |
+| `0x1c5079` (len 5) | `end_x` | `lea rsi` @ `0x50ec13`，值 = `event+0x18`（f64，`call 0x3cb760` @ `0x50ec27`） |
+
+（`0x3cb760` 管 f64、`0x3cc060` 管整数 —— 旁证：回放信封的 `tick` 字段（`0x1b925c`，len 4）走的就是
+`0x3cc060`（`0x3d59e6`），而 `tick` 是整数。）
+
+* 变体下标 = **37**：`0x504640` 用 `[rdi]` 当判别式，`test/cmovs` 把负数 `^ 0x8000…` 再查跳表 `0x1c48d0`；
+  第 **37** 项 → `0x5046c9` → `jmp 0x50eb20`。与 [`src/events.rs`](../src/events.rs) 的
+  `FunctionPoints = 37` **对得上**（**逐位**：跳表条目）。
+* ⚠ 顺带一条**负结论**（老实记）：`FunctionPoints` 的判别式 `0x8000000000000025` 在整个 `.text` 里
+  **只出现 1 次**，在 `0x4758b5`，而且是一条 `cmp`（`if event.tag == FunctionPoints` 的 match 臂），
+  **不是构造点**。我按三种形态扫过构造点（`movabs imm64` / `movabs 0x8000…+add 0x25` / `or`），
+  **三种都是 0 个构造点** ⇒ 这个变体在这份构建里是**被搬来搬去**的（`Event` 一旦建好就不再重写判别式），
+  或者用了本文没扫到的形态。**这条不影响 ① 的结论**（两条 `fnpoints` 的差别在 `event+0x10` 的**值**上，
+  而值由 `0x3cb760` 原样输出），但下一轮若要从"构造点"反查生产者，得先把这个形态找出来。
+
+**两条各自的信封**：
+
+| | 序列化点 | 信封 | 谁调它 |
+|---|---|---|---|
+| **网络** | `0x504554 call 0x504640` → ret `gw+504559` | `{"FunctionPoints":{…}}`（一个 Event 就是一个字符串） | `0x504500` 的唯一用户是**重定位槽 `0x9bafb8`**（`R_X86_64_RELATIVE`，addend `0x504500`），使用点 `0x3d89f6` in **`0x3d89e0`**（Event→JSON 字符串）；`0x3d89e0` 的 6 个调用者：`0x3dee00`(`graphwar_remote_event_handler.rs`)、`0x437ce0`(`server_broker_request_connection`/`server_broker_handler`)、`0x4592d0`(`client_connection_handler`)、`0x459690`、`0x45a560`、`0x45aab0`(`server_connection_handler`) |
+| **回放** | `0x3d59bf call 0x3cb910`（该函数末尾 `jmp 0x504640`）→ ret `gw+3d59c4` | `{"event":<Event>,"tick":<n>}`：字段名 `event` @ `0x1bf7d2`(5) → 再 `tick` @ `0x1b925c`(4) | `0x3d5740..0x3d6076` = **`graphwar_game_recorder.rs`**（Location `150:81`）；调用者 `0x3a5760` / `0x3b0830`（`graphwar_root_node.rs`）、`0x3d4fa0`（`graphwar_game_recorder.rs`） |
+
+⇒ ① 的判决：两条 `fnpoints` 的**生产点**是 `0x3d89e0`（网络）与 `0x3d5740`（回放），**算式都是"无"**
+——同一个 `0x3cb760` 把 `event+0x10` 打印出来。82 号那 1 ulp 差在**结构体**里，往上游找才有意义。
+（本节比 §45.7 多的是：**两个 ret 各自挂在哪个函数、包成什么信封、走哪个模块**，都是第一次落到地址。）
+
+### 47.2 `y0` 在 `0x3c2bc0` 里是**抄**的，不是算的（② 的前半）
+
+`0x3c2bc0` = `GraphwarShotCalculator::calculate_shot_results`（FDE `[0x3c2bc0, 0x3c5c4d)`，12 432 B）。
+它按一个 `Vec<u32>`（士兵 id）循环（`0x3c2db5: mov r12d,[rbp]`），每个 id 做一次采样。**采样调用点全函数唯一**：
+
+```text
+3c3099  lea   rdi,[rsp+0xb0]          ; sret
+3c30a1  movq  xmm0,[rsp+0x90]         ; x0
+3c30aa  movq  xmm1,[rsp+0x108]        ; y0      ← ★
+3c30b3  lea   rsi,[rsp+0x10]          ; &Vec<Token>（从 map B 的 get 结果拷来）
+3c30b8  movq  xmm2,[rsp+0x110]        ; step（= [arg2+0]，开火路径实测 0.01）
+3c30c1  call  [0x9bac98]              ; calculate_function（0x3c2530）
+```
+
+`[rsp+0x108]`（`y0`）与 `[rsp+0x90]`（`x0`）在**采样器之前**只有一处写入，而且就是相邻两条指令：
+
+```text
+3c2f20  movsd xmm0,[r8-0x18]          ; 表项 +0x8  → x0
+3c2f26  movsd [rsp+0x90],xmm0
+3c2f2f  movq  xmm0,[r8-0x10]          ; 表项 +0x10 → y0     ← ★
+3c2f35  movq  [rsp+0x108],xmm0
+3c2f3e  mov   r14b,1                  ; "表里查到了"
+```
+
+⚠ 这两个栈槽在**后面**（组装结果那一段 `0x3c413a` / `0x3c414b`）会被复用，所以"只写一次"的说法
+不成立；但采样器只从"表项命中"那条路径进（`0x3c2f3e: r14b=1` → `0x3c305b: test r14b,al`），
+那条路径上它读到的**必是本轮刚抄的那份**。
+
+`r8` 是 hashbrown 桶：`r8 = ctrl − idx*0x20`，`cmp r12d,[r8-0x20]` 是 key（`u32` sold id），
+所以表项布局是 **`{u32 key@0, f64 @+8, f64 @+0x10, f64 @+0x18}`（stride 0x20）**，
+`x0`/`y0` 就是 `+8`/`+0x10` 那两个 f64。**中间没有任何算术**（没有 `addsd`/`mulsd`/`subsd` 碰过这两个栈槽）。
+
+**交叉验证**（不靠"看起来像"）：这个布局与那张表的 `get` 完全对得上 —— `0x3c62b0`
+（`graphwar_plane_pos_manager.rs:116`）在命中时是
+
+```text
+3c63bb  mov   rax,[r9-0x8]            ; 第三个 f64
+3c63bf  mov   [rbx+0x18],rax          ; → out+0x18
+3c63c3  movdqu xmm0,[r9-0x18]         ; 前 16 字节 = x,y
+3c63c9  movdqu [rbx+0x8],xmm0         ; → out+0x8 (x) / out+0x10 (y)
+3c63ce  mov   ecx,1                   ; Option::Some
+```
+
+⇒ 表的值类型 = `(f64 x, f64 y, f64 z)`，`get` 返回 `Option<(f64,f64,f64)>`；
+`0x3c2bc0` 取的 `+8/+0x10` 与 `get` 的 `out+8/out+0x10` **是同一对偏移**。
+
+### 47.3 那张表是谁的、谁写它（② 的后半）
+
+**是谁的**：`GraphwarPlanePosManager`（`docs/02-module-map.md` §22.3：x86 `add/get/wk` =
+`0x46a0d0` / `0x46ad30` / **`0x46c9e0`**，`size_of` = **24**）。三条独立的指针链把它钉死：
+
+1. 开火路径 `fire_functions`（`0x470eb0`）在 `0x471095` / `0x47159d` 两次 `call 0x46c9e0`
+   （= `get_module_wk::<GraphwarPlanePosManager>`），把 **`[wk+0x28]`** 放进给计算器的输入结构
+   （`0x4715dc: [rsp] = [rax+0x28]` → `0x4717d2/0x4717d6: [rsp+0x58] = [rsp]`，而 `[rsp+0x58]` 就是
+   输入结构的 **`+0x10`** 字段 —— 与 `0x3c2bc0` 读的 `[arg2+0x10]` 同一格）。
+2. 那个 `[wk+0x28]` 的**被锁地址**与 `0x3c2bc0` 锁的地址**同形**：两边都是
+   `p = …; lea rcx,[p+0x10]; lock cmpxchg [rcx]`，且 `[p+0x30]` 是 len、`[p+0x18]` 是 ctrl。
+3. 表的 `insert` `0x3c64c0` 也是取 `[rdi+0x10]` 当表指针（`0x3c64e8`），而它被
+   `0x3e331d: rdi = wk + 0x18` 调用 —— `wk+0x18+0x10 = wk+0x28`，**同一个字段**。
+
+**谁写它（全库只有 2 个调用者，都是字节拷贝）**：
+
+| 写入者 | 写什么 | 形态 |
+|---|---|---|
+| 关卡生成器 `0x465a70` @ **`0x465f85`**（`graphwar_level_generator.rs`，9 个 Location） | `(x, y, 0.5)`：`x ← [rsp+0x70]`、`y ← [rsp+0x90]`、第三位 = `movabs 0x3fe0000000000000`（**0.5**） | `movaps`/`movsd` 两个栈槽拷进 24 字节临时值，再 `insert(id, &值)` |
+| 事件处理器 `0x3e2830` @ **`0x3e3347`**（`graphwar_remote_event_handler.rs`，89 个 Location） | **`FunctionPoints` 事件的 `start_x/start_y/end_x` 原样**：`movups xmm0,[rbx+8]`（16 B）+ `movq xmm0,[rbx+0x18]`（8 B）→ `[rsp+0x30..0x48]`；key = `mov ebp,DWORD PTR [rbx+0x20]`（`owner_id` 的**低 32 位**） | 纯 `movups`/`movq` 拷贝，**没有任何浮点运算** |
+
+⇒ ② 的判决（有界否定）：**`0x3c2bc0` 内部不可能产生 1 ulp**（唯一采样点 + 纯拷贝）；
+**表的两个写入者也不可能产生 1 ulp**（唯一形态是字节拷贝；`0x3c64c0` 只有这 2 个调用者）。
+所以 82 号量到的"同一 `x0`、两个 `y0`"只能来自 **两条路读的不是同一张表 / 不是同一刻的表**。
+
+**顺带一条新观测（原版源码级事实）**：这张表把**关卡生成器的出生点**和**上一次
+`FunctionPoints` 事件的三元组**存在同一格里 —— 于是第三位 `z` 前一种是 **0.5**、后一种是 **`end_x`**。
+所以"士兵的起点"不是从实体读的，**是从这张表读的**；一次开火之后，表里那格就被这条
+`FunctionPoints` 的 `start_x/start_y/end_x` 覆盖。（这也解释了为什么 §45.7 里
+"执行路径、报文 `start_y`、`pts[0].y` 三者自洽"：它们本来就是同一个数被抄出来的。）
+
+### 47.4 两次采样是**两次调用**，不是一次调用里的两遍（② 的定位）
+
+`calculate_shot_results` 全库**只有 1 个入口槽 `0x9bacb0`、只有 2 个使用点**（`addr_probe.py callers 0x3c2bc0`）：
+
+| 调用点 | 所在函数 | 模块（Location 投票） | 计算器输入结构从哪来 |
+|---|---|---|---|
+| **`0x471825`** | `0x470eb0` | `graphwar_game_state_manager.rs`（31 个 Location） | **栈上现搭**：`0x4717cd..0x47180e` 铺 `[rsp+0x48]` —— `+0x00` = `movabs 0x3f847ae147ae147b`（**0.01**）、`+0x10` = `[rsp]`（= PlanePosManager 的 `[wk+0x28]`）、`+0x28` = `rbp`、`+0x30` = `r13`、`+0x39` = mode |
+| **`0x51a9a1`** | `0x51a750` | `graphwar_function_evolutionator.rs`（即 AI 评分；§42.3 的 `0x51a750`） | **调用方给的**：`rsi = rbx+0x18`（`rbx` = 本轮的 `rsi`），只把 `step` 现写一次（`0x51a994: [rbx+0x18] = xmm0`），其余字段（含 `+0x10` 那张表）都是**外面传进来的** |
+
+层层向上：`0x51a750` ← `0x51b440` / `0x51d080`（都只有 1 个调用者 `0x47a300`）← 更外层。
+**在整个 AI 区 `0x51a000..0x51f000` 里，`0x46c9e0` / `0x3c62b0` / `0x3c64c0` / `0x3c66a0`
+的 `call rel32` 是 0 条**（扫法：全 `.text` 的 `call` 按目标过滤；正对照 = 同一扫法在
+`0x470eb0` / `0x3e2830` / `0x465a70` 里各命中 1~2 条）⇒ **AI 那条路自己不碰这张表，
+表是外面传进来的**。所以 ② 的缺口只剩一句话：**传进去的是不是同一个对象、同一刻的同一张表**。
+
+### 47.5 与语料那 13 批是否同源（③）
+
+**不同源**（就"差在哪个观测量"而言已证；"是不是同一类机制"仍未证）。三条依据：
+
+1. **§38.5 已经把语料那 13 批钉在 `x` 上**：喂真 `0x3c5f70` 时只把 `point.x` 向零挪 1 ulp，
+   **13/13 复现回放**（`docs/06` §38.0 的"真二进制喂别的点"一行）。本节这条是 **`y`**
+   （`start_y` / `pts[0].y`），而且 82 的 `pt_eq_start_exact` 是 6/6 **0 ulp**。
+2. **结构上 `y0` 动不了那 13 批**：那 13 批的差是 **NaN vs 数**，NaN 来自 `f(x0)`
+   （`sin(u)/u` 在 `u=0` 处 `0/0`，§38.3(b)）—— `f` 只吃 `x`；`c = y0 − f(x0)` 在 `y0` 有限时
+   该是 NaN 就是 NaN，改 `y0` 不会把 NaN 变成 `1.197`。
+3. **量级上也对不上**：1 ulp 的 `y0`（`y≈12` 时 ≈ 1.8e-15）比 `c` 自己的 ulp、比 `{:.3}` 的
+   四舍五入边界（§45.5 实测 1.99e-4~3.81e-4）低 12 个量级；在 `|c| ≥ 1e13` 那种定标点上
+   **直接就被吸收掉**（`y0` 那点差异连 `c` 的最低位都碰不到）。
+
+⇒ 结论：**这两条 1 ulp 是两个不同观测量的两条线**，不能互相解释。剩下没证的只有"它们是不是
+同一个**类型**的毛病（同一个 `Point` 被两条路各算/各抄一遍）"—— 若要合并，需要**一批同时
+在 `start_y` 与 `c` 上都差 1 ulp 的样本**，目前**一批都没有**（本节与 §38 都是零交叉）。
+
+### 47.6 缺什么（下一轮照这 3 步就能收）
+
+1. **表的对象身份**（本节唯一缺口）：在 `0x471825` 与 `0x51a9a1` 两个调用点，各读一次
+   `[[&self]+0x10]`（表的 `Arc` 指针）与"该 soldier id 的表项 16 字节"。**同一发里两个指针不等
+   ⇒ 分叉 = 两张表；相等 ⇒ 分叉 = 两次采样之间有人改过表（那时再去抓 `0x3e3347` 的写入时刻）**。
+   三行 frida（挂 `0x471825` / `0x51a9a1` 的 `onEnter`，读 `this.context.rsi` 的 `+0x10`，
+   再对 id 做一次 `0x3c62b0` 直调）就够，**不需要重开 AI-vs-AI 局**：人打的一发也能比。
+2. **82 的原始 JSONL 已经没了**：`.agent-work/cg/wt-82` 整棵被回收，本节**没有**复核 82 的
+   逐发数字（`8605a07314912840` vs `8705a07314912840` 等 3 对 hex 是照抄 §45.7 的）。要复核只能重跑
+   §45.9 那条配方（约 4 min / 局）。
+3. **"没有第三个写入者"这条是"扫到 2 个调用者"级别的否定**：`0x3c64c0` 的 `call rel32` = 2、
+   重定位槽 = 0、`lea/movabs` = 0（`plane_pos_chain.py` ⑧）。**但**若有人绕过 `insert` 用
+   `get_mut`/`entry` 原地改表项，本节**没有扫**（`0x3c6b40` 里的 `0x486610` 只看不改）。
+   要补：对 `HashMap<u32,(f64,f64,f64)>` 的 `RawTable` 写入口全扫一遍（没做）。
+
+### 47.7 复跑（每条都能原地跑）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+export GW2_SO=<WS>/.reference/steam/2026-08-28/libgraphwarrust.so    # sha256 9a538115…
+
+# ① 本节的**全部**静态断言（sha 不对就直接退，不会给你假绿）
+$PY tools/plane_pos_chain.py             # 8 组断言 + ②b「槽 0x9bac98 只 1 处」+ ⑧「insert 只 2 个调用者」
+$PY tools/plane_pos_chain.py --self-test # 正对照：故意写错的期望必须被抓到
+$PY tools/plane_pos_chain.py --verbose   # 每条断言附上实际指令
+
+# ② 人工复核（和工具无关的三条）
+$PY tools/addr_probe.py callers 0x3c2bc0   # 只 2 处：0x471825 / 0x51a9a1
+$PY tools/addr_probe.py callers 0x3c64c0   # 只 2 处：0x3e3347 / 0x465f85
+$PY tools/addr_probe.py locs    0x3d5740   # => graphwar_game_recorder.rs
+$PY tools/addr_probe.py dis     0x50eb20   # start_y 落在 event+0x10
+```
+
+### 47.8 本轮改动清单（`src/` **一个字节没动**）
+
+| 文件 | 内容 |
+|---|---|
+| [`tools/plane_pos_chain.py`](../tools/plane_pos_chain.py) | **新增**：把 §47 的整条链（计算器只认 `[arg2+0x10]` / 唯一采样点 / 两个栈槽是表项的拷贝 / `get` 的 24 字节三拷贝 / `insert` 的 24 字节值 + u32 key / 事件处理器的原样抄写 / 关卡生成器的 0.5 第三位 / `insert` 只有 2 个调用者 / 槽 `0x9bac98` 在 `0x3c2bc0` 内只 1 处）做成**指令级断言**；`.so` 的 sha256 先比，不符直接非 0；带 `--self-test` 正对照 |
+| [`docs/06-verification.md`](06-verification.md) | **新增本节（§47）** |
+
+**没有改动**：`src/`、`client/`、`fixtures/`、`fixtures/guardrails.json`、`dispatch/`；
+`.agent-work/` 里只有反汇编缓存与探针草稿（不入库）。
+
+### 47.9 验收
+
+| 项 | 结果 |
+|---|---|
+| ① 两条 fnpoints 的生产点与算式 | **网络** = `0x3d89e0`（Event→JSON）← 槽 `0x9bafb8` ← `0x504500`，ret `gw+504559`，信封 `{"FunctionPoints":{…}}`；**回放** = `0x3d5740`(`graphwar_game_recorder.rs`)，ret `gw+3d59c4`，信封 `{"event":…,"tick":…}`；**两条共用序列化器 `0x50eb20`，`start_y` = `event+0x10` 由 `0x3cb760` 原样输出 ⇒ 算式 = 无** |
+| ② 分叉点 | **指不到单一指令，但两侧都被否掉**：`0x3c2bc0` 内对采样器只有 1 处引用（`0x3c30c1`），`y0` = `[rsp+0x108]` ← 表项 `[r8-0x10]`（纯拷贝，无算术）；表的写入者只有 2 个（`0x465f85` / `0x3e3347`），都是字节拷贝；`calculate_shot_results` 只有 2 个调用点（开火 / AI 评分） |
+| ③ 与语料那 13 批同源吗 | **不同源**（`x` 侧 vs `y` 侧；NaN 只由 `f(x0)` 决定；量级低 12 个数量级）—— **"同一类机制"未证**（无一批同时差两侧） |
+| ④ 缺什么 | 表的**对象身份**（3 行 frida：两个调用点各读 `[[&self]+0x10]` + 该 id 的表项）；82 的原始 JSONL 已被回收（本轮未复核）；未扫 `get_mut`/`entry` 这类绕过 `insert` 的原地写 |
+| `cargo test --offline` | **1753 passed / 0 failed**（`src/` 未动；复跑命令见 §47.7 上方环境） |
+| `tools/plane_pos_chain.py` | **rc=0**（8 组断言全过）；`--self-test` **rc=0** |
+| `tools/check_doc_refs.py` | **rc=0** |
+
+## 48. 门⑤的**命中分支打到了**（`0x51a0e0`）：自建协议服务器把"本连接的第一个 `player_info` 是 Bot"造出来（2026-11-10，`dispatch/86`）
+
+> 任务书：[`dispatch/86-last-tier-and-gate5.md`](../dispatch/86-last-tier-and-gate5.md)。分支 `agent/last-tier`，
+> 基于 `CG@7323124`，私有 `CARGO_HOME` / `CARGO_TARGET_DIR`。
+> 目标构建 `libgraphwarrust.so` sha256 **`9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`**
+> （与 §46 同一份，`sha256sum .reference/game/libgraphwarrust.so` 复核过）。地址一律 **vaddr**。
+
+### 48.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | §46.5 留下的"命中分支没走到"补上了吗 | **补上了**：4 局受控实验里 **2 局**打出 `gate5_found`（`0x51a0e0`） | **观测**（真游戏 + 真帧格式 + frida 逐条读数） |
+| ② | 用什么局打中的 | **自建服务器**（[`tools/gate5_serve.py`](../tools/gate5_serve.py)）按真帧格式发 `BotAdded` → 再发**第一发** `PlayerInfo`（Bot 的 `player_id`）；真游戏客户端当**加入方**（LAN 列表里点 `Join`） | 观测 |
+| ③ | 命中时**做了什么** | 门⑤ 命中 ⇒ `0x51a0e0` 直接收尾：`LocalPlayerManager` 那 5 条请求（59/50/52/54/66）**零次**发出 | 观测，**两条独立证据**（frida `send` 钩子 0 次 + 线上 0 帧） |
+| ④ | 原版局面为什么打不到（§46.5 结论） | **现场复现**：第一发是本机玩家（229）之后，Bot 的 `player_info` 连门⑤ 都**不求值**（门④ `0x519f9d` 旧 len != 0 先拦）| 观测 |
+| ⑤ | §46.5 提的"**连接重建**"这条路 | **成立**：第二条 `NewConnection` ⇒ 客户端**第二次** `connected_to_server_event`（`ev08` = 新 id）⇒ 门④ 的旧 len 清 0 ⇒ 下一个 `player_info` 又走门⑤，**命中** | 观测 |
+| ⑥ | 这证明了原版服务器会产出这种顺序吗 | **不证明**（见 47.6）：顺序是我们造的；命中分支的**可达性与行为**是观测，原版 LAN 局的**发生概率**仍是 `未知` | — |
+
+### 48.1 为什么走"自建服务器"（三条更"真"的路都堵着）
+
+| 路 | 结论 | 依据 |
+|---|---|---|
+| 两个真客户端，A 建房加 Bot、B 加入 | **推断：结构上打不到** —— 门③ 要求 `player_info.connection_id == 本连接 id`（`0x519f71`），而 §46.3 的运行时原文里 Bot 232 的 `player_info` 是 `conn=228`（= 房主的连接）⇒ B 的这道门对 Bot 不成立；A 自己的**第一发**又永远是 A 自己。⚠️ **本轮没有跑这一局**，所以这条是**推断**（缺的那一步是"第二台真客户端加入 + 抓 B 收到的 `player_info` 序列"） | §46.3 + §46.5（推断） |
+| 纯 Bot 客户端 | **不存在**：客户端 UI 只能以"玩家"身份加入，"只当 Bot"没有入口 | `docs/09` §1（LAN 流程） |
+| 让原版客户端连**我们的** broker | **已证死**：CLI 参数是死的（`std::env::args()` 从 `lang_start` 取，GDExtension 里从不运行）+ TLS 根证书编进 rodata | `docs/09` §6.6.2（6 组受控实验） |
+| **LAN 发现 + 自建 TCP 对局服务器** | **成了**：LAN 列表接受裸 9 字段 `GameInfo`（变体 C），点 `Join` 就连它 `address` 里的 `host:port` | `docs/09` §6.6.3（真客户端当加入方，我们控制报文序） |
+
+### 48.2 造局：一条命令一局（约 60–90 s）
+
+```text
+① LAN 发现：UDP 灌一条 9 字段 `GameInfo`（`docs/09` §1.1.1 的格式，结尾带 "\n"，无长度前缀）
+   room_name="gate5" / game_state="Setup" / current_player_count=2 /
+   address="127.0.0.1:46701" / axis_mode="EveryUnit" / function_mode="NormalFunction" /
+   turn_mode="SequentialTurns" / time_mode="Timer1m" / locked=false
+   ⇒ LAN 大厅出现一行 `gate5  2`（截图：右侧 `Join` 按钮在 1920×1160 的 (1842, 209)）
+   ⚠️ 同时发给 127.0.0.1 与 255.255.255.255 时列表里会出现**两行**（同一房间两次广播）——
+      这不是 bug，是按两条 target 各灌一次的结果。
+② 对局通信：TCP，`u16` 大端长度 + JSON（`docs/09` §1.1）。先按 `docs/archive/33` §1 的顺序回 7 条
+   （`NewConnection` + 6 条 `*Info`），再按 `--mode` 决定后面发什么。
+③ 探针仍是 `tools/frida_cpm_gates.js`（17 个钩子，装好时自校验 `bytes_519fb1 = 49 8d 7e 30 e8` 等三处）。
+```
+
+`--mode` 的四种（就是 47.3 那张表）：
+
+```text
+hit         BotAdded{232} → (等 2 s) → PlayerInfo{232, conn}      ← 第一发是 Bot
+nobot       不发 BotAdded → PlayerInfo{232, conn}                 ← 第一发不是 Bot（表空）
+selffirst   PlayerInfo{229} → BotAdded{232} → PlayerInfo{232}     ← 复现原版局面（Bot 晚到）
+rebuild     PlayerInfo{229} → BotAdded{232} → NewConnection{231} → PlayerInfo{232, 231}
+```
+
+### 48.3 四局矩阵（判据 = frida 逐条 + 线上帧，两者分开记）
+
+| 局 | 第一发 `player_info` | 门⑤ 求值次数 | 出口 | frida `send`（5 个调用点） | 线上收到的那 5 条请求 |
+|---|---|---|---|---|---|
+| **hit** | Bot 232，**表里已有** | 1 | **`gate5_found`**（`0x51a0e0`） | **0 次** | 只有 CPM 自己申报的那 5 条（值是 Bot 的真名，见 47.4） |
+| nobot | 232，表空 | 1 | `gate5_miss`（`0x51a084`） | **5 次**（`pid` 全 232） | 同样的 5 条，但值是**客户端默认值**（`CG`/`yellow`/`regular_eyes`/`soldier_helmet`/`rank 0`） |
+| selffirst | 229（本机玩家） | **1**（只在那发上） | miss | 5 次（`pid` 全 229） | 第二发（Bot 232）**连门⑤ 都没到**（门④ 拦，`vec_len=1`）⇒ 它之后线上**一条新请求都没有**（232 那 5 条是 `BotAdded` 之后 **65 ms** CPM 自申报的，见 47.4） |
+| rebuild | 229 先；重建后 232 | **2** | miss → **`gate5_found`** | 5 次（`pid` 全 229） | 重建后那发 Bot 的 `player_info` 之后**零新增请求**（232 的 5 条同样来自 CPM 自申报） |
+
+> 判读要点：`hit` 那一局线上**确实**出现了 5 条请求，但它们的值是真名（`ChatGPT` / `bot_5` / `no_face` /
+> `no_hat` / `rank=null`）且在 `BotAdded` 之后 **59 ms** 就到了 —— 那是 `add_computer_player`（`0x478fc0`）
+> 的**自申报**（§2 第 18 行的 59/50/52/54/66 五个 `add_event` 点），**不是** `LocalPlayerManager` 发的；
+> 后者那 5 个调用点（`0x51a170`/`0x51a247`/`0x51a31e`/`0x51a3f5`/`0x51a451`）在这一局**一次都没执行**。
+
+### 48.4 命中那一局的原文（`--mode hit`）
+
+```text
+服务器 → 客户端（时间 = 服务器单调钟，同一条连接）
+  NewConnectionRequest{major_version:"2.0", minor_version:"60"}      ← 客户端先说
+  ← NewConnection{connection_id:230} + TurnModeInfo/GameStateInfo/GameNameInfo/
+    AxisModeInfo/FunctionModeInfo/TimeModeInfo（7 条，顺序照 docs/archive/33 §1）
+  NewPlayerRequest{connection_id:230}                                ← 客户端 +61 ms 自己发的
+  ← BotAdded{connection_id:230, player_id:232, level:1000}
+  NameRequest{232,"ChatGPT"} / SkinGraphicsRequest{232,"bot_5"} /
+  FaceGraphicsRequest{232,"no_face"} / HatGraphicsRequest{232,"no_hat"} /
+  RankRequest{232,null}                                              ← +59 ms，CPM 自申报（frida send 钩子 0 次）
+  ← PlayerInfo{player_id:232, connection_id:230}                     ← 本连接的第一发，+2.0 s
+  （此后 20 s 只有 1 Hz 的 TickRequest，**没有**任何 59/50/52/54/66）
+```
+
+```text
+frida（同一局，逐条原文；`t` = 探针自己的单调钟 ms）
+{"type":"connected_to_server","tag":"8000000000000007","ev08":230,"ev0c":32687,"t":30441}
+{"type":"get_module_wk","ret":"0x28ec1d60","cpm_box":"0x28ec1d60","match_cpm":true,"t":30537}   ← bot_added 分派那条
+{"type":"cpm_add","key":232,"level":1000,"s":50,"n":5,"limit":200,"t":30537}
+{"type":"bot_key","key":232,"state":3,"raw":"e8000000 72400c01 03000000 … e8030000 32000000 05000000 c8000000","t":30537}
+{"type":"player_info","pid":232,"conn":230,"connected":1,"my_conn":230,"vec_len":0,
+ "pid_in_bot_table":true,"bot_table_keys":"232","hit_state":3,"t":32491}                      ← 五道门的现场取值
+{"type":"gate5_enter","weak_target":"0x26e5d0a0","cpm_box":"0x1f0c9710","t":32491}
+{"type":"get_module_wk","ret":"0x1f0c9710","cpm_box":"0x1f0c9710","match_cpm":true,"t":32491}  ← 门里那一条
+{"type":"gate5_found","t":32491}                                                               ← ★ 命中出口
+```
+
+`raw` 那 120 字节与 §46.3 的表逐字段同形：`+0x00` key = `e8 00 00 00` = 232、`+0x08` state = 3、
+`+0x60` level = 1000、`+0x64` 精英 = 50、`+0x68` 每槽 = 5、`+0x6c` limit = 200。
+
+### 48.5 正对照（两条，都在同一套 harness 里跑）
+
+1. **同一条链仍完整打出**：`hit`/`nobot`/`selffirst`/`rebuild` 四局的 `gate5_enter`（`0x519fb1`）都打出来了，
+   且门里那次 `get_module_wk`（`0x46c5a0`）的返回值**逐次等于** CPM 盒基（`match_cpm=true`，4/4）——
+   与 §46.2 ④ 一致 ⇒ 探针与判据本身没坏。
+2. **未命中出口仍会发 5 条**：`nobot` 局同一发 `player_info` 走 `0x51a084` ⇒ frida `send` 5 次
+   （`raw` 里 `3b…`/`32…`/`34…`/`36…`/`42…` = tag 59/50/52/54/66，`pid` 全是 232），线上 99 ms 后收到同样 5 条。
+   ⇒ "命中 = 不发"这个判断不是靠"什么都没看到"得出的，而是**同一实验条件下有对照**。
+
+### 48.6 边界：这**不**证明原版服务器会产出这种顺序
+
+命中分支**可达**（真二进制、真帧格式、合法枚举值）与**命中时的行为**（一条不发）现在都是观测；
+但"原版 LAN 局里会不会出现'本连接第一发是 Bot'"**仍未观测到**，理由照 §46.5 原样成立：
+原版服务器把 Bot 挂在**房主**连接上、AI/Bot 只能在 `GameSetup` 里加，而房主自己的第一发永远是自己。
+⇒ 剩下的缺口只有一个：**原版那台服务器是否会先广播 Bot 的 `player_info`**。要闭合它，得在真房源上
+抓一次"加 Bot 时的报文顺序"（`tools/capture_net_raw.js` 现成），看 `BotAdded` 与 `PlayerInfo` 的先后与连接归属。
+
+**本轮实际跑了什么 / 没跑什么**（免得后面的人误读上面的表）：
+
+* 跑了的四局全部是**我们当服务器**（4 局 × 一次连接，`gate5_enter` 共 5 次、`gate5_found` 2 次）；
+* **没跑**：两台真客户端互连（47.1 第 1 行，推断）、纯 Bot 客户端（入口不存在）、
+  把原版客户端指向自家 broker（已由 `docs/09` §6.6.2 证死，本轮没有重试）；
+* 原版 LAN 局（人+Bot / AI-vs-AI / 战役）那三局的读数来自 §46，本轮**没有**重跑。
+
+### 48.7 顺带观测：`connected_to_server_event` 是**客户端本地**产生的
+
+`docs/07` §3.3 给 `ConnectedToServer` 标的证据档是"逐位（无抓包）"。本轮 4 局里 **3 局**
+（`hit`/`selffirst`/`rebuild`）服务器**只**发了那 7 条握手，客户端仍在 `NewConnection` 之后 **59–61 ms**
+自己发出 `NewPlayerRequest{conn}` ⇒ `connected_to_server_event`（tag 7）由客户端在收到 `NewConnection` 时
+**本地**产生，不依赖线上那条 `ConnectedToServer`；线上那条**也收**（`nobot` 局服务器先读到一帧
+`TickRequest`，于是多发了一条 `ConnectedToServer{230}`，客户端随后同样发出 `NewPlayerRequest{230}`）。
+⇒ 两条来源**不互斥**，"必须先收到线上 `ConnectedToServer`"这条推断**不成立**。
+
+### 48.8 复跑（每条都能原地跑；样本只写 `.agent-work/`，不进冻结快照）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+# ① 一局（Xvfb 私有 display；自建服务器 + 真游戏 + frida 必须**同一条命令**里起，见 §42.8 第 4 条）
+$PY tools/gate5_serve.py --mode hit --out $R/serve.jsonl --collect 20 &   # LAN 广播 + 脚本化报文
+$PY tools/gw2_step_drive.py --display 127.0.0.1:95 --data-dir $R/gamedata \
+    --out $R/game.jsonl --snap-dir $R/snaps --js tools/frida_cpm_gates.js --settle 22 --keep-alive 8 \
+    --steps 'w1, c 1344 622, w3, c 1842 209, w8, s afterjoin, w12, r mark'
+#    `--mode nobot|selffirst|rebuild` 就是另外三局（47.3 的表）
+# ② 判据（不用 frida 也能判：线上那 5 条请求在不在）
+grep -c '"tag_name": "NameRequest"' $R/serve.jsonl        # hit=5（CPM 自申报）/ 另外看玩家 pid
+grep -o '"type": "gate5[a-z_]*"' $R/game.jsonl | sort | uniq -c
+```
+
+* **样本**：`.agent-work/cg/fh86/logs/{serve,game}_{hit,nobot,selffirst,rebuild}*.jsonl`（**没进冻结快照**，
+  也没写 `fixtures/`）。
+* **驱动退出码 139 不代表失败**（`nobot` 局就是 139）：那是 `dev.kill(pid)` 之后的 SIGSEGV（§46.8 第 3 条），
+  JSONL 完整 ⇒ 判"打到没有"看 JSONL 的类型计数。
+* **本轮改动**：新增 [`tools/gate5_serve.py`](../tools/gate5_serve.py)（自建协议服务器 + LAN 广播，只写日志、
+  不改游戏内存）；本文本节。`src/` 只动了 `_scaffold/root_wiring.rs` 的**注释**（档位分布口径 19/2/1/0）。
+
+## 49. `drive_frame` 接不接：**不接**（决策，不是评估）—— 判据是"读数会变、画面一位不变"，而**可见时序的缺口在消费者不在驱动**；留给下一轮的触发条件写成会红的断言（2026-11-10，`dispatch/85`）
+
+> 任务书：`dispatch/85-drive-frame-decision.md`。起点 `CG@c339016`，分支 `agent/drive-frame-wire`，
+> 私有 `CARGO_HOME` / `CARGO_TARGET_DIR`。**本轮不改 `src/`**（`cargo test` 1753 一位未动）。
+>
+> **为什么这一节**：80 号把节奏真值量成了（§44），81 号把回放改成按 tick 推（§56），
+> 于是"要不要在实时对局里接 `KernelBus::drive_frame`"变成一道**决策题**。67 号当初不接的理由是
+> "会静默改 `EntityDrawer` 的 `V`"——那个理由**本轮被实测部分证伪**：接线改的是**读数**，
+> 不是**画面**。但决策仍然是**不接**，理由换成了更强的那一条（§49.2）。
+
+### 49.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | **原版的节奏** | 每引擎帧**一次** `GameClient::process`（`0x515dfe` 唯一站点、64/64/64 逐秒等于引擎帧），里面**按墙钟 60 tick/s 追赶**、**泵只跟 tick 走**（`pumps ≡ ticks`，0-tick 帧泵 0 次，10.9% 的帧 0 tick）、**tick 先泵后**、**delta 从不被读**、**长帧无上限追赶**、只在**对局中**跑（菜单 28 窗口 0/s） | **观测**（§44.2–§44.5，5 次运行 12 856 tick） |
+| ② | **接不接** | **不接**（80 号 §44.7 的两处方案**一个都不动**）：`src/_scaffold/graphwar_root_node_class.rs` 与 `client/src/screens/play_screen.gd` 本轮零改动 | 决策（判据见 §49.3） |
+| ③ | **`V` 会不会变** | **读数会变、画面不变**：生产路径里 `EntityDrawer` 的 `V` 来自 `set_ring(..., _curve_tick)` 的**代偿支**，内核钟（`fractional_tick`）那条支要求"位置表非空 **且** 门 attach"，生产里两者都没有 ⇒ `kernel_clock()` **一次都不被调**。实测：把内核钟从 0.49 推到 60，画出来的弧**逐位没变**（张开 1.047197580 rad） | **观测**（真 `EntityDrawer._draw`，§49.1） |
+| ④ | **只接 V 会怎样** | **准备圈立刻饱和**：`H = min(π/6 + (V − base)/60, 1.0733775)`，而 `base` 来自 `_curve_tick`（≈1.0）⇒ V=60 时 H 撞上限。实测张开 **2.146754980 rad**（= 2 × 1.0733775）。⇒ V 与 base **必须同一支钟**、同一改动里换 | **观测**（§49.1 正对照） |
+| ⑤ | **5 个读数接上会变成什么** | 见 §49.2 的表（每项都有本轮实测或 §44 的真值） | 观测 / 算术 |
+| ⑥ | **触发条件**（可执行） | T1 = V **与 base 同时**改由内核钟供给（= `set_fractional_tick` / `set_ring` 的实参不再是 `_curve_tick`）或位置表出现生产写入者；T2 = "对局中"门在**联机 / 回放**两态各有一次 `GameClient::process` 的每秒次数观测（原版门 `0x515dd1` 判 `[backend+0x1e0]`，我方只有 `_running` 这个近似）；T3 = 生产路径出现 `tick_event` 的订阅者。**T1/T2/T3 一起满足才接**，落地顺序见 §49.4 | 决策 |
+| ⑦ | **决策怎么钉住** | 两条 headless 断言组：`process_loop_check.gd` 第 9 组（生产源码无驱动符号、无收件人时泵只抽干队列、接上后读数变成什么）+ `play_flow_check.gd` 5.1/5.2 组（V 的来源 + 画面不变 + 饱和 + T1 tripwire）。**变异测试**证明它们会红（§49.5） | **观测**（运行时 + 文件文本） |
+
+### 49.1 本轮唯一的**新测量**：V 的消费者是谁（`last_arc` 探针）
+
+探针不是"读一下 `fractional_tick`"，而是**真 `EntityDrawer._draw` 发出去的弧**（`last_arc()` 给 12 个实参，
+`[3]`/`[4]` = 起止角，`[4]−[3] = 2H`）。窗口口径见 `client/tools/play_flow_check.gd` 5.2 组（同一段现在成了断言）：
+
+| 状态 | 摆了哪些东西 | 内核钟读数 | 张开 `2H`（rad） | 读的是谁 |
+|---|---|---|---|---|
+| **生产口径** | 位置表空、门没 attach、`set_ring(v=1.0)` + `set_ring_base(1.0)` | 0.485 → **60.0**（驱动 60 tick） | 1.047197580 → **1.047197580（逐位相同）** | `prep` 里的 `v`（= `_curve_tick`） |
+| **正对照** | 填一格位置表 + `gate_attach` + 活着/轮到 | 60.0 | **2.146754980**（= 2 × 1.0733775，**饱和**） | `kernel_clock()` = 内核钟 |
+
+两条一起读出来的只有一句话：**内核钟确实能驱动这段画面（正对照有判别力），但生产路径里没人读它**。
+67 号那条"会静默改 V"因此要拆成两半：**读数**会被改（`fractional_tick` 从 ~0 变成 60·t），**画面**不会改。
+
+> 补充事实（同一台机器量的）：`EntityDrawer.kernel_clock_source()` 在装了总线且没摆 override 时是
+> `tick_handler` —— 也就是说接线后 `V` 的**绝对相位**是"总线安装时刻起的墙钟秒数"，与
+> `_curve_tick`（每发重置、到 `_curve_final_tick` 饱和）**不是同一支钟**。
+> 这正是 §44.8 第 1 条"频率有真值、相位没有"在**画面**上的后果。
+
+### 49.2 那 5 个读数：现在是什么 / 接上会变成什么
+
+| # | 读数 | **现在**（不接） | 接上之后（B 方案：播放屏 `_process` + `_running` 门） | 依据 |
+|---|---|---|---|---|
+| 1 | `EntityDrawer` 的 `V`（`kernel_clock()`，`entity_drawer_class.rs:1288`） | 内核钟**读数**在 0 附近漂（总线没装时 `0.0`）；**画面上用的**是 `_curve_tick`（每发重置的假钟） | 读数 **60·t**；**画面仍不变**（除非同时改 V 的支路） | §49.1 实测 |
+| 2 | `KernelBus::frames() / ticks() / probes()` | **0 / 0 / 0**（活动客户端根本没装总线；只有 `tools/*_check.gd` 装） | 每秒 **+65 / +60 / +125**（本轮实测 65 帧/1 秒 ⇒ 60 tick、60 泵、125 探针，其中 **5 帧 0 tick**） | 观测（`process_loop_check` 第 9.4 组） |
+| 3 | `tick_event` 投递 | **一条都没有**（队列里的事件只在 `kernel_pump()` 时被取走） | 每 tick 一条 `TickEvent(0)` —— **但只在有订阅者时**。实测：无订阅者时泵照跑、队列被**抽干**、投递 **0** 条 | 观测（`process_loop_check` 第 9.2/9.3 组） |
+| 4 | 播放屏 `_advance_curve(delta)` | 帧 delta × 60 累加 `_curve_tick`（1020/1043–1044 两处喂 `set_fractional_tick`） | **不变** ⇒ 两只钟并存（内核钟 60/s + 曲线假钟按帧走） | 源码观测 |
+| 5 | 菜单 / 非对局 | —— | 生产路径**没有总线** ⇒ 接线等于"第一次安装总线"，`_running` 是唯一可用的门；而 `_running` 在**联机局**与**回放局**也为真（`play_screen.gd:2163`），回放里 `GwReplayDriver.advance_dt` **已经是 tick 驱动** ⇒ 回放里会两只钟同时推 | 源码观测 |
+
+### 49.3 判据：为什么是"不接"（三条，按强度）
+
+1. **可见时序的真缺口在消费者，不在驱动。** 原版曲线揭示走 `GraphwarTickHandler::get_fractional_tick`
+   （`0x519530`）每帧喂 `GraphwarPlane::draw` 的喂点循环；我方是 `_advance_curve(delta)` 的**帧累加**
+   （`play_screen.gd:1038`，注释里自己写着这条缺口）。**接驱动 ≠ 接时序**：tick 在跑而曲线按帧走，
+   屏幕上的东西一点不变（§49.1 实测），但 `frames()/ticks()` 从此非 0 ⇒ 下一轮读代码的人会以为
+   曲线是 tick 驱动的。**这是 §0 第 6 条点名的"看起来做完了"**，比"诚实地没接"更贵。
+2. **V 与 base 是一对相位，只能同一支钟。** 接线后若把 V 换到内核钟而 `base` 仍是 `_curve_tick`，
+   准备圈**永远全开**（§49.0 ④，实测饱和）。所以这不是"接两行"，而是"换一支钟 + 换 base 的来源"，
+   而 base（原版 `map[i]`）的**写入者至今未知**（§46.6 未解项）⇒ 现在接只会把两个未解项焊在一起。
+3. **门没有可验证的对应物。** 原版的门是 `0x515dd1` 判 `[backend+0x1e0]`（= `Option<GraphwarGameClient>`），
+   我方没有 backend 对象，只有 `_running`：它在**联机局**与**回放局**也为真，而 80 号的五轮**全是战役本地局**，
+   这两种状态下 `GameClient::process` 到底跑不跑**一次都没量过**。接线 = 给两种无真值的状态**发明**行为。
+
+### 49.4 触发条件（下一轮照这个顺序落，不要跳步）
+
+```text
+T1（必须）：V 与 base **同时**改由内核钟供给
+           ⇒ play_screen.gd 的 `set_fractional_tick(_, _curve_tick)` 与
+              `set_ring(id, …, _curve_tick)` / `set_ring_base(_, _curve_tick)` 三处实参同时换掉，
+              或 EntityDrawer 位置表出现生产写入者（`kernel_push_position`，原版在 0x3e3347）
+T2（必须）：门有对应物 —— 在**联机局**与**回放局**各量一次 0x518400 的每秒次数（判据同 §44.1 的钩子）
+T3（可选）：生产路径出现 `tick_event` 的订阅者（否则泵只是在抽干队列）
+
+落地顺序：T1 → 同一改动里在 `_process` 加 `if <对局中>: drive_frame(delta)` → 再删 `_advance_curve` 的累加
+         （**先删后接**会有一帧两倍速；先接后删 = 两只钟并存一版）
+```
+
+`play_flow_check.gd` 5.1 组的最后一条就是 **T1 的 tripwire**：T1 一到，它变红并直接指向本节。
+
+### 49.5 断言（先钉决策，再证明它们会红）
+
+| 脚本 | 组 | 新增 | 条数 |
+|---|---|---|---:|
+| `client/tools/process_loop_check.gd` | 9（生产路径不接驱动） | 源码扫描（72 个 `.gd`，正对照：本脚本自己在调）+ 无收件人时泵只抽干队列 + 接上后 5 个读数怎么变 | **49 → 66** |
+| `client/tools/play_flow_check.gd` | 5.1 / 5.2（决策钉死 + V 实测） | V 的三处实参、位置表无生产者、T1 tripwire、弧逐位不变、正对照饱和 | **185 → 199** |
+
+**变异测试（负结论的正对照，`AGENTS.md` 合并纪律 A.4）**：
+
+| 变异 | 结果 |
+|---|---|
+| 在 `play_screen.gd::_process` 里插 `if _running: KernelProcessHost.drive_frame(delta)` | `PROCESS_LOOP 64 passed, 2 failed`（`播放屏里没有 drive_frame`、`生产客户端没有驱动/通道符号` 命中 2 条）；`PLAY_FLOW 198 passed, 1 failed` |
+| 把 `set_ring(..., _curve_tick)` 的实参改成 `0.0`（= 假装 T1 到达） | `PLAY_FLOW 197 passed, 2 failed`（实参那条 + **T1 tripwire**） |
+| 两处都还原 | 全绿（§49.6） |
+
+### 49.6 本轮基线（**每个数都是本轮自己跑的**）
+
+| 项 | 值 | 复跑命令 |
+|---|---|---|
+| `cargo test --offline` | **1753 / 0 failed**（69 个测试二进制含 doc-tests，逐行求和） | `cargo test --offline` |
+| `--features gdext-bindings` | **1859 / 0 failed**（本轮不改 `src/`，与基线同值） | `cargo test --offline --features gdext-bindings`（**最后**跑，否则 `.so` 没 gdext） |
+| headless 14 脚本 | **1923**（before **1892**；`process_loop 49→66`、`play_flow 185→199`） | 14 个脚本逐个 `--script` 跑、把 `NNN passed` 求和：`for f in assemble_check base_classes_check curve_on_screen_check draw_classes_check entity_drawer_check function_drawer_check gdext_check obstacle_drawer_check plane_on_screen_check play_flow_check process_loop_check recovered_view_check signal_classes_check spike_class_check; do "$GODOT" --headless --path client --script res://tools/$f.gd; done` |
+| `selftest` | **716 / 0 / 1 skipped**（跑 **1** 次就绿；LAN 大厅那两条既有 flake 未出现） | `"$GODOT" --headless --path client -- --selftest` |
+| 三轴 `fire` / `batch` / `batch_conv` | **647 / 647 / 637**（内容命中；`bit_exact_attrib --check-baseline` 三轴"**全部一致**"，语料 403 份指纹未变：282 份有结算批 / 1080 批） | `replay_attrib --drive fire|batch --policy default --json`、`batch_conv --policy strict`（本轮不碰 `src/`，与基线同值） |
+| `coverage_matrix.py --check` | rc=0（本轮不改 `src/`，两份生成物不用重跑） | `python3 tools/coverage_matrix.py --check` |
+
+⚠️ **`play_flow` 的口径差 2 条**：任务书写 **183**，本机跑出 **185** —— 差的两条是 §15 组"真实回放"那
+两条，**有 `~/.local/share/godot/app_userdata/Graphwar/replays/1793897298` 才跑**。本轮按任务书把样本
+拷进沙箱 HOME ⇒ 1890（无样本）+ 2 = **1892** 是同一个基线。
+⚠️ 任务书写 `selftest 714`，实测 **716** —— 与 §57.7 的 A/B 记录一致（714 + 84 号新增 2 条 = 716），
+714 是 84 号之前的数。本轮**没有**动 selftest。
+
+### 49.7 诚实清单（这一节**没有**证明的东西）
+
+| # | 项 | 档 | 缺什么 |
+|---|---|---|---|
+| 1 | 活动客户端**确实**没装总线 | **观测**（源码扫描：`client/src/**` 72 个 `.gd` 里 0 处 `install_kernel_bus`/`kernel_*`） | 没有"库里跑起来抓 `frames()`"的运行时样本（要真机跑一局 + frida 挂 `0x5184a1`），但这不影响结论：没调用者就没帧 |
+| 2 | 原版**回放 / 联机**里 `GameClient::process` 跑不跑 | **未知** | 需要在两种状态下各量一次 `0x518400` 的每秒次数（§49.4 T2） |
+| 3 | 原版 `base`（`map[i]`）的写入者 | **未知**（§46.6 未解项） | 换 V/base 到同一支钟之前必须先解这条，否则准备圈的起始量仍是猜的 |
+| 4 | `V` 的绝对相位 | **未知**（§44.8 第 1 条） | 基准是 tick handler 创建时刻，运行时不可复原 ⇒ 只能对"频率"，对不了"相位" |
+| 5 | 回放里若接上会不会与服务端的第二个 tick 源打架 | **推断**（`GwReplayDriver` 自己按 tick 推；原版服务端线程另有 60/s 的泵，`0x451be5`） | 需要跨线程观测（§44.8 第 6 条：跨线程未测） |
+
+### 49.8 复现（全部可原地复跑）
+
+```bash
+cd <WT>                                    # 分支 agent/drive-frame-wire
+export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=<私有 target>
+cargo test --offline                                     # 1753
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/process_loop_check.gd   # 66
+"$GODOT" --headless --path client --script res://tools/play_flow_check.gd      # 199（无样本时 197）
+# V 的两条读数（§49.1）：play_flow_check 的 5.2 组当场打印 1.047197580 / 2.146754980
+```
+
+**本轮没有改动**：`src/game.rs`、`src/_scaffold/root_wiring.rs`、`src/_scaffold/graphwar_root_node_class.rs`、
+`client/src/**`（`play_screen.gd` 只在变异测试里临时改过，已逐字节还原：`git diff` 为空）、
+`dispatch/`、`fixtures/guardrails.json`。
