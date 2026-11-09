@@ -114,7 +114,7 @@ PY
 | 缺口 | 具体是什么 | 性质 | 现状 / 下一步 |
 |---|---|---|---|
 | **客户端控制器** | `client/src/screens/*.gd` 仍有 **6,062 行**仿制品；67 号把弹道生命周期/回合超时/AI 闸门搬进 Rust（`play_screen.gd` 只降 12 行） | **Ａ 缺工程** | ✅ 可做，量大；继续按 67 号的路子切 |
-| **9 个 manager 仍是 `assembled`** | 只构造注册、没接事件流（**11 wired / 2 layout / 9 assembled / 0 stub = 22**）；九格各缺什么见 [`docs/161`](161-manager-gaps.md) | **Ａ 缺工程** | ✅ **7 格静态可解**；GSM 卡 `src/game.rs` 禁区。建议顺序：Rank → Name → LocalPlayer |
+| **6 个 manager 仍是 `assembled`** | 只构造注册、没接事件流（**14 wired / 2 layout / 6 assembled / 0 stub = 22**）。已升档：**Rank / Name / LocalPlayer**（74 号，地址级证据）；余六格见 [`docs/161`](161-manager-gaps.md) | **Ａ 缺工程** | ✅ 可做；GSM 卡 `src/game.rs` 禁区，**别派** |
 | 收敛层 `diffconv` 未跟 S3 | 内核按到达序逐发挖洞了，收敛层没有 | **Ａ 缺工程** | ✅ 已派（`dispatch/73`） |
 | `ShotLifecycle` 文件归属 | 原版在 `game_state_manager`，我方落在 `play_screen_control` | **Ａ 缺工程**（边界要靠 `Location` 再切一次） | 可做 |
 | ~~弹道"打不全就复原"~~ | 原以为要"部分命中"的样本（语料 397 份里 0 份） | **Ｂ 缺样本（易得）→ 已结案** | ✅ **用户打了两炮就拿到**（`docs/06` §34b）：部分命中 ⇒ 回合末整组 `alive:true`；全清 ⇒ 不复原 |

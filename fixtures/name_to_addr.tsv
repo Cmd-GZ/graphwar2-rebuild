@@ -268,7 +268,7 @@ graphwar_name_manager	GraphwarNameManager	send_all_info_events	0x518f10	src/grap
 graphwar_name_manager	GraphwarNameManager	handle_entity_removed_event	0x519030	src/graphwar_name_manager.rs	79	唯一锚	direct	1 个双向唯一 (file,line,col) 锚；展示锚 src/graphwar_name_manager.rs:79:18
 graphwar_name_manager	GraphwarNameManager	subscribe_to_events_event_handler				未知	direct	该函数不引用任何 panic::Location（无锚，名字无法落地）
 graphwar_name_manager	GraphwarNameManager	subscribe_to_events_event_handler				未知	direct	该函数不引用任何 panic::Location（无锚，名字无法落地）
-graphwar_name_manager	GraphwarNameManager	new				歧义	direct	引用了 2 个 Location 键（src 0 个），但没有一个是两侧一对一；候选 x86（未定）: 0x3b6b20, 0x3b6c70, 0x420b40, 0x4500c0
+graphwar_name_manager	GraphwarNameManager	new	0x519100		唯一锚	direct	dispatch/74 逐条复核：new=0x519100（tsv 旧候选 4 个全错，0x4500c0 实为 game_server_thread）	dispatch/74：new=0x519100（tsv 旧 4 候选全错，0x4500c0 实为 game_server_thread）；订阅 0x5191xx、处理器跳板已核
 graphwar_name_manager	GraphwarNameManager	set_name	0x519350	src/graphwar_name_manager.rs	57	唯一锚	direct	1 个双向唯一 (file,line,col) 锚；展示锚 src/graphwar_name_manager.rs:57:26
 graphwar_tick_handler	GraphwarTickHandler	get_time_to_tick	0x519450	/rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/time.rs	201	唯一锚	direct	消去法唯一：无直接一对一锚，按「一个名字只对应一个地址」消去后只剩 0x519450；展示锚 /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/time.rs:201:18
 graphwar_tick_handler	GraphwarTickHandler	get_fractional_tick	0x519530	/rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/time.rs	201	唯一锚	direct	消去法唯一：无直接一对一锚，按「一个名字只对应一个地址」消去后只剩 0x519530；展示锚 /rustc/ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96/library/core/src/time.rs:201:18
