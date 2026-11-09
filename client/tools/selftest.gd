@@ -22,6 +22,11 @@ func run(main: Control) -> int:
 	_prune_server_logs()
 	# 让布局至少跑两帧（字号缩放依赖 viewport 尺寸）
 	await _frames(3)
+	_diag_arm()
+	_diag_line("boot")
+	if OS.get_environment("GW2_SELFTEST_INJECT_LAN_ROOM") == "1":
+		await _inject_stray_room()
+		_diag_line("injected")
 
 	_test_boot()
 	await _test_main_menu()
@@ -58,6 +63,7 @@ func run(main: Control) -> int:
 	await _test_play_online()
 	# 用户实测的四条 bug（docs/144）：房间残留 / 占位行 Join / Players 列 / 关卡弹窗几何
 	await _test_lobby_fixes()
+	_diag_line("end")
 
 	var passed := _checks - _failures.size()
 	if _skipped.is_empty():
@@ -103,6 +109,132 @@ func _command(cmd: String) -> void:
 func _find_button(root: Node, node_name: String) -> GwButton:
 	var n := root.find_child(node_name, true, false)
 	return n as GwButton
+
+# ---------------------------------------------------------------- 诊断（只读，不参与判定）
+#
+# `GW2_SELFTEST_DIAG=1` 时把"那一帧的窗口 / 视口 / 大厅列表 / LAN 房间表"打一行 `@@DIAG`。
+#
+# 为什么需要它：LAN 大厅那两条断言（本地列表为空 / Join 宽度 = 屏宽×0.2）在偶发红时，
+# 失败的**文字**只给出"实际 1"/"期望 12.8"，看不出那个 1 是**哪一行**、12.8 是**哪个
+# JoinButton**。把这两件事都打出来，红的那一次就能直接读到根因（见 docs/18 §10.3.4）。
+var _diag := OS.get_environment("GW2_SELFTEST_DIAG") == "1"
+
+func _diag_line(tag: String) -> void:
+	if not _diag:
+		return
+	var app_node := get_node_or_null("/root/App")
+	var net := _net()
+	var lobby := _screen("LanLobby")
+	var list: Node = null
+	var rows := -1
+	var items: Array = []
+	if lobby != null:
+		list = lobby.find_child("GraphwarLanVBox", true, false)
+		if list != null:
+			rows = list.get_child_count()
+			for c in list.get_children():
+				var nm := (c as Node).find_child("RoomName", true, false) as Label
+				items.append(String(nm.text) if nm != null else String(c.name))
+	var join_node: Node = null
+	if lobby != null:
+		join_node = lobby.find_child("JoinButton", true, false)
+	var join_min := -1.0
+	if join_node is Control:
+		join_min = (join_node as Control).custom_minimum_size.x
+	# 底栏那个（断言真正量的那个）单独打一份：它和"深度优先第一个 JoinButton"在列表有行时**不是同一个节点**。
+	var join_ip := _lobby_join_ip_button(lobby)
+	var join_ip_min := -1.0
+	if join_ip != null:
+		join_ip_min = join_ip.custom_minimum_size.x
+	var vboxes := 0
+	for n in get_tree().root.find_children("*", "VBoxContainer", true, false):
+		if String(n.name) == "GraphwarLanVBox":
+			vboxes += 1
+	print("@@DIAG %-14s f=%d win=%s vp=%.0f mode=%s rows=%d items=%s join_min=%.2f join_ip_min=%.2f first_join=%s vboxes=%d lan=%s:%d rooms=%d pkts=%d local_room=%s online=%s" % [
+		tag, Engine.get_process_frames(), str(get_window().size),
+		get_window().get_visible_rect().size.x,
+		String(app_node.room_list_mode) if app_node != null else "?",
+		rows, str(items), join_min, join_ip_min,
+		(lobby.get_path_to(join_node) if join_node != null else "<null>"),
+		vboxes,
+		("on" if (net != null and net.lan != null and net.lan.is_listening()) else "off"),
+		(net.lan_port if net != null else -1),
+		(net.lan.room_count() if net != null else -1),
+		(net.lan.packets_seen() if net != null else -1),
+		("yes" if (app_node != null and not app_node.local_room.is_empty()) else "no"),
+		("yes" if (app_node != null and app_node.online) else "no")])
+
+## 装好诊断：任何一次"房间表变了"都打一行（含当时帧号、总包数）。
+func _diag_arm() -> void:
+	if not _diag:
+		return
+	var net := _net()
+	if net != null:
+		net.rooms_changed.connect(_diag_on_rooms_changed)
+		print("@@DIAG arm: lan_listening=%s port=%d diag=1" % [
+			str(net.lan.is_listening()), net.lan_port])
+
+func _diag_on_rooms_changed(mode: String) -> void:
+	var net := _net()
+	if net == null:
+		return
+	print("@@DIAG signal rooms_changed(%s) f=%d rooms=%d pkts=%d %s" % [
+		mode, Engine.get_process_frames(), net.lan.room_count(), net.lan.packets_seen(),
+		str(net.lan.rooms())])
+
+## 负对照（变异测试）用的旋钮：往自己的 LAN 监听端口塞一条"房主广播"。
+##
+## 为什么留着：这一组断言在 2026-11-10 之前会**偶发成对红**，根因是"LAN 房间表里多了一行"
+## （`docs/18` §10.3.4）。要证明修好了、而且**断言还真的会红**，就得能把那个"多一行"
+## 确定性地造出来 —— 和 76 号用 `GW2_SELFTEST_MATCH_SEED=89` 造"0 个障碍"是同一套路。
+##
+##   `GW2_SELFTEST_INJECT_LAN_ROOM=1`  ⇒ 启动时塞一行（模拟"这台机器上真有个房主在广播"）
+##                                       修好之后它**不该**再让那两条变红（= 回归判据）；
+##   `GW2_SELFTEST_INJECT_LAN_ROOM=2`  ⇒ 在"本地列表初始为空"检查**之前**塞一行
+##                                       （隔离之后仍然塞得进去）⇒ 那一条**必须**红
+##                                       （= 断言还有牙齿的正对照）。
+func _inject_stray_room() -> void:
+	var net := _net()
+	if net == null or net.lan == null:
+		return
+	if not net.lan.is_listening():
+		net.lan_listen(0)
+	await _frames(1)
+	var s := PacketPeerUDP.new()
+	s.bind(0, "127.0.0.1")
+	s.set_dest_address("127.0.0.1", net.lan_port)
+	var line := GwWireSamples.broadcast("Stray Room", "Setup", 1, "127.0.0.1:1",
+		"EveryUnit", "NormalFunction", "SequentialTurns", "Timer1m", false)
+	s.put_packet((line + "\n").to_utf8_buffer())
+	await _frames(2)
+	print("@@SELFTEST_INJECT 塞入一条房主广播：port=%d rooms=%d pkts=%d" % [
+		net.lan_port, net.lan.room_count(), net.lan.packets_seen()])
+	s.close()
+
+## 把 LAN 发现切到**私有端口**，并把房间表清空（`GwLanDiscovery.stop()` 就会清表）。
+##
+## 为什么必须这么做（`docs/18` §10.3.4 的原始记录）：
+##   `App._install_net()` 在**启动时**就绑了原版的 `UDP 42968`，而我们这一组断言
+##   （「本地房间列表初始为空」以及后面那条「底部 Join IP 宽度」）**都以"房间表是空的"为前提**。
+##   42968 是**外部输入**：这台机器上任何在广播的房主（`tools/gate5_serve.py`、同机另一个
+##   客户端、局域网里走 IPv4 广播的真房主）灌一条 9 字段 JSON 进来，房间表就多一行，
+##   于是**代码没变**也会红。这条用例要测的是"没有房间数据时这一页画 0 行"，
+##   不是"这台机器的局域网是安静的"。
+##   ⇒ 前提由用例自己拿回来：清表 + 换私有端口（外部广播再也到不了），**并且断言这次隔离成功**。
+func _isolate_lan_discovery(tag: String) -> bool:
+	var net := _net()
+	if net == null or net.lan == null:
+		return false
+	var boot_port := net.lan_port
+	var was_listening := net.lan.is_listening()
+	net.lan_stop()
+	await _frames(1)
+	var err := net.lan_listen(0)
+	var rooms := net.lan.room_count()
+	var ok := err == OK and net.lan.is_listening() and rooms == 0
+	_expect(ok, "LAN 发现切到私有端口、房间表清空（%s：启动口 %d%s → 私有 %d，err=%d，清表后 %d 条）"
+		% [tag, boot_port, "" if was_listening else "（没绑上）", net.lan_port, err, rooms])
+	return ok
 
 # ---------------------------------------------------------------- 用例
 
@@ -252,6 +384,12 @@ func _test_replay_lobby() -> void:
 	_expect(screen.find_child("ReplaysContainer", true, false) != null, "ReplayLobby 有 ReplaysContainer")
 
 func _test_lan_lobby() -> void:
+	# 先把这个用例的**前提**拿回来：LAN 房间表清空 + 换私有端口（`docs/18` §10.3.4）。
+	# 不做这一步，"本地列表初始为空"就在测"这台机器的局域网安不安静"。
+	await _isolate_lan_discovery("联机大厅")
+	# 负对照（`=2`）：隔离之后仍然塞一行进去 ⇒ 下面那条"初始为空"**必须**红。
+	if OS.get_environment("GW2_SELFTEST_INJECT_LAN_ROOM") == "2":
+		await _inject_stray_room()
 	_command("exit_replay_lobby")
 	await _frames(2)
 	_command("multiplayer")
@@ -261,8 +399,10 @@ func _test_lan_lobby() -> void:
 		_expect(false, "LanLobby 存在")
 		return
 	_expect(screen.visible, "LanLobby 可见")
+	_diag_line("lan_enter")
 	_command("show_global")
 	await _frames(2)
+	_diag_line("lan_global")
 	var list := screen.find_child("GraphwarLanVBox", true, false)
 	_expect(list != null, "LanLobby 有 GraphwarLanVBox")
 	var rooms := 0
@@ -300,10 +440,15 @@ func _test_lan_lobby() -> void:
 	_expect(players_ok == rooms, "Players 列是整数而不是 `--`（实际 %d/%d 行）" % [players_ok, rooms])
 	_command("show_local")
 	await _frames(2)
+	_diag_line("lan_local")
 	var local_rooms := 0
 	for c in list.get_children():
 		if c is HBoxContainer:
 			local_rooms += 1
+	# 前提 = 本函数开头那次 `_isolate_lan_discovery()`（房间表已清空、且已切到私有端口）。
+	# 判据**没变**：本地页在没有房间数据时画 **0** 行。它防的是"上一把的房间挂在大厅里"
+	# 那类真回归（`docs/144` §1：`local_room` / `state.players` 泄漏进列表）——
+	# 那一类现在仍然会红（负对照：`GW2_SELFTEST_INJECT_LAN_ROOM=2`，见 docs/18 §10.3.4）。
 	_expect(local_rooms == 0, "本地房间列表初始为空（实际 %d）" % local_rooms)
 
 ## 本轮（docs/129）新增：**界面文本不许泄漏内部说明** + 玩家页/联机大厅的实测几何。
@@ -380,8 +525,15 @@ func _test_ui_text_and_measured_geometry() -> void:
 				if c is Label and (c as Label).horizontal_alignment == HORIZONTAL_ALIGNMENT_CENTER:
 					centered += 1
 		_expect(centered == 3, "联机大厅表头三列都居中（实际 %d/3）" % centered)
-		var join_btn := lobby.find_child("JoinButton", true, false) as Control
+		# 底部那个 " Join IP " 按钮：**按 `input_text == "join_ip"` 找**，不能按节点名找。
+		# 为什么（`docs/18` §10.3.4 的原始记录）：房间条目里也有一个 `JoinButton`
+		# （`game_room_entry.tscn`），而 `find_child("JoinButton")` 给的是**深度优先的第一个**
+		# ——列表里只要有一行，量到的就是**行里**那个 JoinButton（它的 `custom_minimum_size.x`
+		# 是 0，不受 `LobbyButtonContainer` 管），于是这条断言会因为"本地页多了一行"而红，
+		# 跟它真正要量的东西（底栏按钮 = 屏宽×0.2）**无关**。判据与期望值一字未改。
+		var join_btn := _lobby_join_ip_button(lobby)
 		var vw := lobby.get_viewport_rect().size.x
+		_diag_line("geom_join")
 		_expect(join_btn != null and absf(join_btn.custom_minimum_size.x - vw * 0.2) < 0.01,
 			"底部 Join IP 宽度 = 屏宽×0.2（LobbyButtonContainer.gd，期望 %.1f）"
 			% (vw * 0.2))
@@ -4299,6 +4451,21 @@ func _lobby_list() -> VBoxContainer:
 	if lobby == null:
 		return null
 	return lobby.find_child("GraphwarLanVBox", true, false) as VBoxContainer
+
+## 底栏那个 " Join IP " 按钮（`LobbyButtonContainer.gd` 把它的宽度设成 屏宽×0.2）。
+##
+## **按 `input_text` 找，不按节点名找**：一屏里叫 `JoinButton` 的节点不止一个 ——
+## 每个房间条目里也有一个（`game_room_entry.tscn` 的 `JoinButtonContainer/JoinButton`），
+## 而 `find_child("JoinButton")` 返回的是**深度优先的第一个**。列表里有行时它拿到的是
+## **行里**那个（宽度 0），这正是 2026-11-10 那条"成对红"的第二条（`docs/18` §10.3.4）。
+## 底栏按钮的 `input_text == GwCommands.JOIN_IP`（"join_ip"），房间行的 Join 没有命令。
+func _lobby_join_ip_button(lobby: Node) -> Control:
+	if lobby == null:
+		return null
+	for n in lobby.find_children("JoinButton", "", true, false):
+		if n is GwButton and String((n as GwButton).input_text) == GwCommands.JOIN_IP:
+			return n as Control
+	return null
 
 func _lobby_row_count(list: VBoxContainer) -> int:
 	if list == null:
