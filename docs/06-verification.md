@@ -6085,6 +6085,11 @@ $PY tools/gw2_step_drive.py --display 127.0.0.1:95 --data-dir $R/gamedata \
   **三种都是 0 个构造点** ⇒ 这个变体在这份构建里是**被搬来搬去**的（`Event` 一旦建好就不再重写判别式），
   或者用了本文没扫到的形态。**这条不影响 ① 的结论**（两条 `fnpoints` 的差别在 `event+0x10` 的**值**上，
   而值由 `0x3cb760` 原样输出），但下一轮若要从"构造点"反查生产者，得先把这个形态找出来。
+  > 🔁 **上面这段是 87 号用当时的旧工具（三形态，没有形态④）得出的，留着原文以便看出它被复核过。**
+  > **88 号已用 83 修好的四形态工具 + 五种扩展形态 + store 判据 + 反向取证复扫：结论不翻转，
+  > 而且升级为硬结论 —— 这份构建里 `FunctionPoints`（tag 37）没有构造点。**
+  > 那句"或者用了本文没扫到的形态"**要改口**：不是"没扫到"，是**算术上构造不出来**。
+  > 全部证据、正对照与缺口见 **§50**。
 
 **两条各自的信封**：
 
@@ -6552,3 +6557,284 @@ cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/li
 **本轮没有改动**：`src/game.rs`、`src/_scaffold/root_wiring.rs`、`src/_scaffold/graphwar_root_node_class.rs`、
 `client/src/**`（`play_screen.gd` 只在变异测试里临时改过，已逐字节还原：`git diff` 为空）、
 `dispatch/`、`fixtures/guardrails.json`。
+
+## 50. **`FunctionPoints`（tag 37）没有构造点** —— 四形态复扫 + 五种扩展形态 + store 判据 + 反向取证**全部为 0**；87 号那条负结论**不翻转**，从"有界否定"升级为**硬结论**（2026-11-10，`dispatch/88`）
+
+> 任务书：[`dispatch/88-functionpoints-rescan.md`](../dispatch/88-functionpoints-rescan.md)。起点 `CG@38cb827`，
+> 分支 `agent/functionpoints-rescan`，私有 `CARGO_HOME` / `CARGO_TARGET_DIR`。目标构建：`libgraphwarrust.so`
+> sha256 **`9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`**（= `steam/2026-08-28`）。
+> 本节地址一律**虚地址**（vaddr = 模块内偏移 = `gw+…`），`.text` 的 vaddr 比文件偏移大 `0x1000`。
+>
+> **为什么这一节（一条依赖关系）**：§47 里那条负结论是 87 号用**当时的三形态工具**扫出来的；而 83 号
+> 恰好修掉了第四形态（`movabs 0x8000…000` + `add rax,n`，见 [`07-protocol.md`](07-protocol.md) §7.1.1），
+> 修前那批点全被记进 **tag 0**、修后**换桶 129 处**。⇒ **87 那句"构造点扫不到"必须先复扫才算数**，
+> 不能当定论往下一轮传。本节就是那次复扫：**答案是"仍然 0"，但这次带正对照，而且范围比 87 大得多。**
+
+### 50.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | **tag 37 的构造点有没有** | **没有**。四形态扫描命中 **1 处**（`0x4758b5`，形态③直写），而它是 `cmp` 的**比较操作数**（下一条 `0x4758bf cmp [rsi],rax`）；**store 判据 0 处**（没有任何一条 store 把 tag word 写进内存）；值追踪 + store + escapes + 反向取证**四种玩法都为 0** | **逐位**（指令）+ **观测**（扫描读数） |
+| ② | **87 那条负结论翻不翻** | **不翻转**，且升级：87 说"三种形态都是 0"，现改为"**四形态 + 五种扩展形态 + store 判据 + 反向取证全为 0**"；87 那句"**或者用了本文没扫到的形态**"要改口 —— 不是没扫到，是**算术上构造不出来**（§50.4 的封闭证明），而且"**被搬来搬去**"那半句**被支持**（只有比较，没有写入） | **逐位**（`imm64` 全库唯一 + 封闭枚举） |
+| ③ | **正对照（这次扫描器真的会命中吗）** | 6 条，全绿：**A1 变异**（拿 tag 15 的真字节把 `add rax,0xf` 的立即数改成 `0x25` ⇒ 同一条判据必须报 **tag 37**）、**B0** 形态③、**C0** 0x4758b5 之后是 `cmp`、**D0** 值追踪认 tag 15、**E0** 两步累加 `2^63+0x20+5` ⇒ tag 37、**S1/S2** store 判据在 tag 44 上给出 `0x4729cc`/`0x472e43`（**与 §37 ① 的两个生产者逐址相同**） | **逐位**（变异体 + 已知真值） |
+| ④ | **四份构建都给数** | 本机**只有 2 份** `.so`（`2026-08-28` x86-64 + `android-2.0.60` arm64）；任务书列的 `windows-2.0.60` / `windows-early2026` **不存在**（与 07 §7.1.1 同一条）。⇒ 全量复扫**只覆盖 x86-64**；arm64 只做了定点抽查（tag 37 **未查**，标**未知**） | — |
+| ⑤ | **还缺什么** | (a) arm64 全量（工具 x86-only）；(b) 值追踪不跟 XMM / 不跟跨函数 / 不跟 `memcpy`（三条各自的兜底见 §50.7）；(c) **全库有 12 个 tag 也没有 store 站点**（`25/32/36/37/38/39/47/62/63/65/72/73`）⇒ "没有 store"**单独不足以**证明"没有构造"，真正的证据是 §50.4 的算术封闭 | — |
+
+一句话：**这个二进制里，tag 37 的 word 只被"读"，从来没有被"写"** ——
+它唯一的 materialize 点 `0x4758b5` 紧接着就是 `cmp [rsi], rax`（`match event { FunctionPoints(..) => … }`），
+而全库**没有任何一条** `add/or/lea` 能把 `2^63` 补成 `2^63|0x25`、也没有任何一条 store 写下过这个值。
+
+### 50.1 四形态复扫（83 修好的工具，原样口径）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+export GW2_SO=<WS>/.reference/steam/2026-08-28/libgraphwarrust.so      # sha256 9a538115…
+$PY tools/addr_probe.py tags --only 37
+```
+
+原样输出（节选）：
+
+```text
+== 全 .text 的 `0x8000…|n` materialize 点（四种形态）：67 个 tag ==
+
+ tag 37  0x8000000000000025   1 处
+   in 0x4758b0  x1  0x4758b5  src/graphwar_game_state_manager.rs x2
+
+== 形态计数（判据见本节开头注释）==
+  MAX+add   x140      movabs    x3049      BASE+or   x25      BASE+lea  x9
+  MAX+inc   x61       BASE+add  x54        BASE+inc  x41
+  合计 3379 处（含 tag>73 的桶）
+
+== 正对照 ==
+  tag 42 @0x3f20f0 (queue_destroy_obstacle)   : OK
+  tag 41 @0x3f1b30 (destroy_obstacle)          : OK
+  tag 44 生产点 @0x472470 + 消费者 0x4bf09b/0x4e2dd4: OK
+  tag 15 形态④ 0x474b8d (add_soldier_to_player)  : OK
+```
+
+* **tag 37 = 1 处，地址与 87 报的完全一致**（`0x4758b5`）；`kind` 是 `movabs`（= 形态③ 直写），
+  **不是** 形态④。⇒ **83 的修复没有给 tag 37 增加任何构造点**，87 的读数在修后**逐址不变**。
+* 形态④ 的四类合计 `54+25+41+9 = 129`，与 07 §7.1.1"换桶 129 处"同值（旁证：本节用的是同一份工具）。
+* 四条内置正对照**全 OK** ⇒ 扫描器本身这次没坏（这已经排掉"扫法坏了"这一种解释）。
+
+### 50.2 那唯一一处到底在干什么（指令级）
+
+```text
+4758b0  push  rbx                          ; ← FDE 起点 = 函数入口
+4758b1  sub   rsp, 0x50
+4758b5  movabs rax, 0x8000000000000025     ; ★ 全库唯一的 tag 37 materialize
+4758bf  cmp   qword ptr [rsi], rax         ; ★★ 立刻拿去**比较** —— 不是写
+4758c2  jne   0x4759ba                     ; 不是 FunctionPoints 就走别的臂
+4758c8  movzx ecx, byte ptr [rdi + 0x120]
+```
+
+⇒ 这是 `if event.tag == FunctionPoints { … }` 的 match 臂（87 的原话），本节只补两条它当时没有的证据：
+
+1. **原始字节层面**：`25 00 00 00 00 00 00 80`（小端）在**整份 10 227 896 字节的文件里只出现 1 次**，
+   文件偏移 `0x4748b7`（= vaddr `0x4758b5` + 2，即那条 `movabs` 的立即数字段）。
+   `.rodata` / `.data.rel.ro` 里**没有**这个值 ⇒ **"tag 从常量表 load 进来"这条路也不存在**
+   （不是"没扫到表"，是表里根本没这个数）。
+2. **用法层面**：`movabs` 之后的下一条就是 `cmp`，值进了标志位、**没有进内存**。
+
+### 50.3 四形态之外还可能有的写法（83 口径刻意取窄的坑）与复扫结果
+
+`addr_probe.py` 里 `_tag_after_base()` 只认**同一个寄存器**上的 `add/or/inc/lea`，而且只看 **12 条**窗口；
+`_tag_of_reg()` 遇到**寄存器源**直接返回 None。这两条取窄口径，正好会给"扫不到构造点"留口子：
+
+| # | 形态 | 例子 | 83 口径 | 本节怎么扫 |
+|---|---|---|---|---|
+| ⑤ | `lea` 到**另一个**寄存器 | `movabs rax,2^63; lea rdx,[rax+0x25]` | ✗ 漏 | 值追踪的 `copy` 分支 |
+| ⑥ | 先 `mov` 拷贝再补 | `movabs rax,2^63; mov rdx,rax; add rdx,0x25` | ✗ 漏 | 同上 |
+| ⑦ | **多步**累加 | `…+0x20` 再 `+5` | ✗ 只认第一次写 ⇒ 记成 tag 32 | 值追踪逐步累加（`multi-step`） |
+| ⑧ | **寄存器源**（通用构造器） | `movabs rax,2^63; or rax, rcx`（rcx=37） | ✗ 返回 None ⇒ 记进 tag 0 | `generic` 子命令**单独列全库** |
+| ⑨ | 先造低位再置 bit63 | `mov eax,0x25; bts rax,0x3f` | ✗ 漏 | 单独统计 `bts/btc/btr r,63` |
+
+为此新增 [`tools/tag_ctor_gaps.py`](../tools/tag_ctor_gaps.py)（**只新增，不改 `addr_probe.py` 的任何计数口径**）：
+
+```bash
+$PY tools/tag_ctor_gaps.py scan    --tag 37   # ① 值追踪全库，报该 tag 的全部站点 + 每站点的**下一条用法**
+$PY tools/tag_ctor_gaps.py stores  --tag 37   # ② 构造点判据：tag word 被**写进内存**的站点
+$PY tools/tag_ctor_gaps.py prov    --tag 37   # ③ 反向：全库所有"补 n / 补 n+1"的算术点 + 源寄存器溯源
+$PY tools/tag_ctor_gaps.py generic            # ④ 家族常量 ⊕ 寄存器的站点（通用构造器候选）
+$PY tools/tag_ctor_gaps.py --self-test        # ⑤ 正对照（变异真字节，见 §50.5）
+```
+
+读数（原样）：
+
+```text
+== 值追踪（四形态 + ⑤⑥⑦⑧⑨）==
+   基本块 83182 个；命中 tag 数：66；总站点 3529；家族常量⊕寄存器站点 89
+   形态计数：BASE+add x182, BASE+inc x102, BASE+lea x9, BASE+or x30, copy x29, movabs x3177
+
+== tag 37 (0x8000000000000025) ==
+   0x4758b5  movabs        base movabs@0x4758b5  in 0x4758b0  src/graphwar_game_state_manager.rs x2
+        0x4758bf  cmp      qword ptr [rsi], rax
+        0x4758c2  jne      0x4759ba
+        0x4758c8  movzx    ecx, byte ptr [rdi + 0x120]
+
+== 家族值 store 到内存：全库 1324 处，覆盖 66 个 tag ==
+   （值流出 push/XMM：全库 1312 处，其中 tag 37 的 0 处）
+== tag 37 ==
+   **0 处**：没有任何一条 store 把 tag 37 写进内存 ⇒ 没有构造点
+```
+
+⇒ 五种扩展形态全试过：**tag 37 仍然只有 `0x4758b5` 一处，而且它不写内存**。
+⚠️ 值追踪的总站点数（3529）**不能**与 07 §7.1.1 的 3379 相加或相减：本节的口径是"值在寄存器里
+每变一次就记一次"，83 是"每个 `movabs` 记一次"；两者**只在 tag 37 上给同一个答案**（1 处、同一地址）。
+
+**为什么要按基本块（一个真实踩到的假阳性）**：第一版值追踪是"整段 `.text` 线性扫"，它把
+`0x5e4b50` 这个带跳转表的函数里**互斥的两个臂**接起来累加 —— `0x5e4c99 add rbx,0xf` 与
+`0x5e4db7 add rbx,0xa` 落在不同的 jump-table 臂上，线性相加恰好凑出 `2^63+0x19` 之类的假 tag。
+改成"**按 FDE 解码 + 走到 `jmp`/`ret`/`int3` 就停**"之后，`0x5e4db7` / `0x606dc7` 两个假 tag 37
+**当场消失**（这两处其实是 `2^63` 当**长度/下标的哨兵**在用，与事件判别值无关）。
+
+### 50.4 反向取证：不依赖"从哪个 `movabs` 出发"（这条把口子堵死）
+
+前面都是"从哨兵常量往外走"。反过来问更硬：**要造出 `2^63|0x25`，全库有哪些指令能做到？**
+`2^63|0x25` 只能由 `2^63 + 0x25` 或 `i64::MAX + 0x26`（或它们的 `or`/`lea` 等价写法）得到 ⇒
+`prov --tag 37` 把全库**所有**立即数 ∈ {`0x25`,`0x26`} 且写到寄存器的 `add`/`or`/`lea` 全列出来，逐条溯源：
+
+| 站点 | 指令 | 源寄存器上一个写者 | 判决 |
+|---|---|---|---|
+| `0x3b0cd3` | `lea rax,[r13+0x25]` | `lea rax,[r13+0x15]` | 地址算术（同一基址两次加） |
+| `0x3b0d06` | `lea rax,[r13+0x25]` | `call 0x3bb690` | 返回值 |
+| `0x3e8cc3` | `add rbx,0x26` | `add rbx,6` | 长度累加 |
+| `0x4569d3` | `lea rax,[r8+0x26]` | `shl rax,4` | 结构体偏移 |
+| `0x456cd3` | `lea rax,[r9+0x25]` | `add rax,0x10` | 结构体偏移 |
+| `0x4a0929` 等 4 处 | `add r14,0x26` | （窗口内无写者） | std 内部计数 |
+| `0x5f94c5` | `lea rax,[rsp+0x25]` | `lea rax,[rsp+0x24]` | **栈槽** |
+| `0x4aaaa9` 等 3 处 | `lea rax,[r14+0x26]` | `call [slot]` | 返回值 |
+| `0x4b0c10` / `0x6a58ed` / `0x6a5ccf` / `0x8806f0` | `lea rsi,[rsp+0x..]` | `call [slot]` | **栈槽**（不是 tag） |
+| `0x6ba813` / `0x6ba846` | `lea rax,[r13+0x26]` | `lea rax,[r13+0x16]` / `call` | 地址算术 |
+| `0x82211f` / `0x8259d2` | `lea rdx,[rdi+0x26]` | （窗口内无写者） | 指针算术 |
+| `0x6b02d0` / `0x6b077f` / `0x919ece` | `add r10d/esi/ecx,0x26` | `mov r..,eax` / `mov rcx,rsi` | **32 位**再加（高位早被截断） |
+| `0x920507` | `lea rcx,[rsi+0x26]` | `add rcx,r11` | 指针算术 |
+
+上面这张表就是 `prov --tag 37` 的**全部 25 行**（`1+1+1+1+1+4+1+3+4+2+2+3+1 = 25`，无删减）；
+**没有一处**的源寄存器来自 `0x7fffffffffffffff` / `0x8000000000000000`（没有一行出现"家族常量"）。
+配套两条：
+
+* **`bts/btc/btr reg, 63` 全库 0 处** ⇒ "先造低位 `0x25` 再置 bit63"这条也堵住了；
+* **通用构造器（家族常量 ⊕ 寄存器）= 89 处**（`xor` 32 / `or` 6 / `add` 4 / `lea`+索引 47），
+  逐个看：**落在 game 模块的只有 2 个函数** —— `0x3d3630`(`graphwar_event_handler.rs`) 与
+  `0x45aab0`(`graphwar_server_connection_handler.rs`)，两者是**同一个惯用法**：
+
+  ```text
+  3d3821  mov    r14, rcx                 ; rcx = [事件+0] 的判别值（**读**进来的）
+  3d3824  movabs rax, 0x8000000000000000
+  3d382e  xor    r14, rax                 ; = tag ^ 2^63  ⇒ 变体下标 n
+  3d3831  test   rcx, rcx
+  3d3834  mov    eax, 0x3e               ; 非负 ⇒ 0x3e（= 62，"不是事件 tag"）
+  3d3839  cmovns r14, rax
+  ```
+  `0x3e2830` 里同一条（`lea rbp,[r13+1]` ⇒ `xor rcx,rbp`）后面跟着 `cmp r12,0x45` 的范围检查 ⇒
+  这是**把已有的 tag word 折成变体下标**（消费），不是造 tag。其余 84 处全在 std/core：
+  cpuid 特性探测（`0x91aa9f` 一带）、`Arc` 计数打包（`0x54f08c` / `0x6823ac` 的
+  `lea rdi,[rax+1]; or rdi,rdx; lock cmpxchg`）、跳转表偏移（`0x7e90e1` 一带）。
+
+⇒ **封闭性**：一个 64 位 tag word 只能有三条来路 —— ① 立即数 materialize（§50.1/§50.2：全库唯一一处，
+且是 `cmp` 的操作数）；② 由家族常量做算术（§50.4：25 处全枚举、无一接哨兵，且 89 处寄存器合成里
+game 模块只有 2 处消费）；③ 从数据表 load（§50.2：那个值在文件里根本不存在）。
+**三条全关** ⇒ tag 37 在这份构建里构造不出来。
+
+### 50.5 正对照（负结论的必要条件：证明扫描器这次**真的会命中**）
+
+`--self-test` 拿**真字节**做变异，不靠"应该能行"：
+
+| # | 对照 | 期望 | 结果 |
+|---|---|---|---|
+| **A0** | `0x474b8d` 原字节（`movabs 2^63` + `add rax,0xf`，tag 15 的真实形态④） | tag 15 | **OK** |
+| **A1** | **同一条指令把立即数 `0x0f` 改成 `0x25`** | **tag 37** | **OK** ⇒ 判据对 `0x25` 这个立即数**确实是敏感的**（这一条是本节的核心正对照） |
+| **B0** | 形态③ 直写：tag 42 的站点存在 | True | **OK** |
+| **C0** | `0x4758b5` 的下一条 | `cmp` | **OK** ⇒ tag 37 只被**消费** |
+| **D0** | 值追踪把 `0x474b8d/0x474b97` 认成 tag 15 | True | **OK**（两套判据互证） |
+| **E0** | 合成 `2^63 + 0x20 + 5`（两步累加，形态⑦） | tag 37 | **OK** |
+| **S1** | `stores --tag 44` | `0x4729cc` / `0x472e43` | **OK**，与 §37 ① 的"tag44 有 2 个生产者"**逐址相同** |
+| **S2** | `stores --tag 15` | `0x45560a` / `0x474b9b` | **OK**（`0x474b8d`+`0x474b97` 那一对的落点） |
+
+`$PY tools/tag_ctor_gaps.py --self-test` → **rc=0**（6 条全过，见上表 A0–E0）。
+⇒ **本节的 0 不是"扫描器坏了"的 0**：同一条判据在变异样本上、在别的 tag 上、在同一族形态上都**会命中**。
+
+### 50.6 判决：**不翻转**，并且 87 那句要改
+
+87 的原文（§47.1 的 ⚠ 条）与本节的意见逐句对：
+
+| 87 原句 | 本节判决 | 新证据 |
+|---|---|---|
+| "判别式在 `.text` 里只出现 1 次，在 `0x4758b5`" | **成立，且更强** | 扩到**整份文件**（含 `.rodata`/`.data`）仍只有 1 次（§50.2） |
+| "而且是一条 `cmp`… **不是构造点**" | **成立** | `0x4758bf cmp [rsi],rax`（§50.2） |
+| "我按**三种**形态扫过构造点…**三种都是 0**" | **数字对，口径已过期** | 四形态：tag 37 也只有那 1 处（§50.1） |
+| "…⇒ 这个变体是**被搬来搬去**的（`Event` 一旦建好就不再重写判别式）" | **成立（被支持）** | `stores --tag 37` = **0 处**：全库没有一条 store 写下过这个 word（§50.3） |
+| "**或者用了本文没扫到的形态**" | **要改口** | 五种扩展形态 + 反向取证 + 通用构造器 + `bts` 全关（§50.3–§50.4）⇒ **不是"没扫到"，是构造不出来** |
+
+⇒ 建议把 87 那句改成："**这份构建里 tag 37 没有构造点**：四形态命中 1 处且那处是比较操作数，
+store 判据 0 处，反向取证 25 处全不接哨兵，通用构造器 89 处里 game 模块只有 2 处且都是消费（§50）。"
+
+**一条推论（标明档位：推断）**：tag word 在本进程内**从不被写出** ⇒ `FunctionPoints` 事件在本进程里
+**只被消费**（`0x4758b5` 的 match、`0x3e2830`/`0x3d3630` 的变体下标提取、`0x3e3347` 抄进点位表 §47.3）。
+"那第一条 `FunctionPoints` 事件从哪来"（是不是从收到的报文里**整块拷贝**一个已经带 tag 的结构）
+**本节没有证据** —— 要证它得在 `0x4758b5` 与 `0x3e3347` 上挂运行时探针，看 `[rsi]` 指向谁写的内存。
+⚠️ 这与 §45.7/§47 的 1 ulp 线**无关**（那条差在 `event+0x10` 的**值**上，本节一个字都没动那里的结论）。
+
+### 50.7 诚实清单（这一节**没有**证明的东西）
+
+| # | 项 | 档 | 缺什么 |
+|---|---|---|---|
+| 1 | **arm64**（`android-2.0.60`）上 tag 37 有没有构造点 | **未知** | `tools/addr_probe.py` / 本节新工具都是 x86-only（capstone x86 解码）；arm64 要另写 `movz/movk` 版本。任务书要的 4 份构建本机只有 2 份（`windows-2.0.60`/`windows-early2026` 不存在，同 07 §7.1.1） |
+| 2 | 值追踪**不跟**的三类 | 兜底 | XMM（`movq xmm,rax` 之后 16 字节整块写）→ 本节统计了 `escapes`，**tag 37 的 escapes = 0**；跨函数（一个函数造 tag 返回）→ §50.4 的**反向全枚举**不依赖调用关系；`memcpy`/`rep movs` → §50.2 的"`imm64` 全库唯一"堵住 |
+| 3 | "没有 store ⇒ 没有构造"**不能单独用** | 观测 | 全库有 **12 个** tag 也没有 store 站点（`25/32/36/37/38/39/47/62/63/65/72/73`，其中 63/65 本来就没有名字，见 07 §7.1）⇒ 有些变体确实走了本节没建模的写法。**本节的硬结论靠的是 §50.4 的算术封闭**，store 判据只是旁证 |
+| 4 | 那 12 个 tag 里其余 11 个为什么也没有 store | **未知** | 不在本节范围（会不会是"由变量拼 tag"的通用写法、或是 `Event` 之外的载体），留下一轮 |
+| 5 | 87 的"被搬来搬去"具体是哪条 `memcpy` | **未知** | 本节只证"没有写出"，没证"怎么进来的"（见 §50.6 的推断段） |
+
+### 50.8 复跑（每条都能原地跑）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+export GW2_SO=<WS>/.reference/steam/2026-08-28/libgraphwarrust.so    # sha256 9a538115…
+
+$PY tools/addr_probe.py tags --only 37          # ① 四形态：tag 37 = 1 处，形态③
+$PY tools/addr_probe.py tags                    #    形态计数 + 4 条内置正对照
+$PY tools/tag_ctor_gaps.py scan   --tag 37      # ② 值追踪：仍 1 处，下一条是 cmp
+$PY tools/tag_ctor_gaps.py stores --tag 37      # ③ store 判据：0 处
+$PY tools/tag_ctor_gaps.py prov   --tag 37      # ④ 反向取证：25 处，无一接哨兵
+$PY tools/tag_ctor_gaps.py generic              # ⑤ 通用构造器候选：89 处（game 模块 2 处，都是消费）
+$PY tools/tag_ctor_gaps.py --self-test          # ⑥ 正对照：rc=0
+$PY tools/addr_probe.py dis 0x4758b0            # ⑦ 人工复核：movabs → cmp
+$PY tools/tag_ctor_gaps.py stores --tag 44      # ⑧ 旁证：0x4729cc/0x472e43 = §37 的两个生产者
+```
+
+原始字节那条（不依赖任何工具）：
+
+```bash
+python3 -c "import struct;d=open('<WS>/.reference/steam/2026-08-28/libgraphwarrust.so','rb').read();\
+n=struct.pack('<Q',0x8000000000000025);print([hex(i) for i in range(len(d)) if d.startswith(n,i)])"
+# => ['0x4748b7']   唯一一处 = vaddr 0x4758b5 那条 movabs 的立即数字段
+```
+
+### 50.9 本轮改动清单与验收
+
+| 文件 | 内容 |
+|---|---|
+| [`tools/tag_ctor_gaps.py`](../tools/tag_ctor_gaps.py) | **新增**：值追踪（形态③④⑤⑥⑦+`xor`）、store 判据、反向取证、通用构造器扫描、`--self-test` 变异正对照。**按 FDE 解码 + 基本块边界**（换来的是"不造假阳性"）。**没有改 `addr_probe.py`**（83 的计数口径一位未动） |
+| [`docs/06-verification.md`](06-verification.md) | 新增本节（§50）＋ §47.1 那条 ⚠ 负结论**就地加注"基于旧工具"并指向本节**（原文保留） |
+| [`fixtures/tag37_rescan88.tsv`](../fixtures/tag37_rescan88.tsv) | **新增**（纯文本）：本节全部读数的一行一项存档，供下一轮直接复算/比对 |
+
+**没有改动**：`src/`（`cargo test` 1753 一位未动）、`client/`、`dispatch/`、`fixtures/guardrails.json`、
+`tools/addr_probe.py`（83 的口径）。
+
+| 项 | 值 | 复跑命令 |
+|---|---|---|
+| `cargo test --offline` | **1753 / 0 failed** | `cargo test --offline` |
+| 三轴 `fire` / `batch` / `batch_conv` | **647 / 647 / 637**（内容命中；语料 403 份指纹未变：286 份可读 / 1080 批） | `replay_attrib --drive fire｜batch --policy default --json`、`batch_conv --policy strict` |
+| headless 14 脚本 | **1911 / 14 脚本全部 0 failed**（基线 1923；**差 12 条见下**） | 14 个 `--script` 逐个跑（命令同 §49.6） |
+| `selftest` | **539 passed / 7 failed / 26 skipped**（基线 716 / 0 / 1；**本沙箱不可比，见下**） | `"$GODOT" --headless --path client -- --selftest` |
+
+⚠️ **本节的 headless / selftest 与基线不可比，原因在沙箱不在代码**：本工作树的沙箱**不能创建**
+`$HOME/.local/share/godot/app_userdata/…`（Godot 打 `ERROR: Could not create directory`），于是
+① 需要 `user://` 落盘的那几条（`写入 level_7 成功`、`campaign.save`、`muted 落盘`）必失败；
+② 需要真回放样本 `1793897298` / `1783255495` 的那几条跳过；③ 音频资产缺失的 8 组跳过。
+**14 个 headless 脚本全部 `NNN passed, 0 failed`**（逐脚本日志求和 = **1911**）。少掉的 12 条：
+**已知** `play_flow` **199 → 195**（差 4，那两组要真回放样本 `1793897298`，与 §49.6 的 ⚠️ 同一个口径差）；
+**其余 8 条本节未逐脚本对齐基线**（未证是环境还是别的，下一轮要对就把 14 个脚本的基线逐条登记）。
+本轮**没有改任何 `.gd`/`.rs`**
+（`git status` 只有 `docs/06`、`tools/tag_ctor_gaps.py`、`fixtures/tag37_rescan88.tsv`）⇒ 这 12 条与本节无关。
