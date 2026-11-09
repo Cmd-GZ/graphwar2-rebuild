@@ -29,12 +29,34 @@
             已派 4 份、**全部被我 interrupt 暂停**（因装 GPU 插件要重启 dsh），工作树见 §7
             未派 4 份：57 新证据 / 58 调用图角色 / 61 GPU 相似度 / 62 全语料对拍
 
-护栏（2026-11-10 02:00 实测；**以 fixtures/guardrails.json 为准**）
+护栏（2026-11-10 06:10 实测；**以 fixtures/guardrails.json 为准**）
   fire 647/1080 ｜ batch 647/1080 ｜ batch_conv 637/1080（种类 1075×3）
   死亡 366/385 ｜ 挖洞 207/294 ｜ 语料指纹 403 文件/401 回放（冻结）
-  cargo test **1753** / 0 failed ｜ --features gdext-bindings **1859** / 0 failed
-  headless **14** 个脚本 **1923** 条（process_loop **66** / play_flow **199** / assemble 241 / entity 366）
-  selftest **716 / 0 / 1 skipped**
+  cargo test **1756** / 0 failed ｜ --features gdext-bindings **1862** / 0 failed
+  headless **14** 个脚本 **1930** 条（play_flow **206** / process_loop 66 / assemble 241 / entity 366）
+  selftest **717 / 0 / 1 skipped**
+  coverage 527 可归属：逐位 88 / 观测 439 / 推断 0 / 未做 0
+  manager 档位 **19 wired / 2 layout / 1 assembled / 0 stub**（最后一格 = GSM，卡 src/game.rs 禁区）
+
+✅ **两条 selftest flake 都已修**：
+  ① 关卡种子骰子（76 号，`ONLINE_TEST_SEED=8`）
+  ② **LAN 大厅成对红**（90 号）—— 真因是 **LAN 房间表多一行**：
+     `App._install_net()` 启动就绑 UDP **42968**，任何往那个端口广播的进程都会塞一行；
+     且 `find_child("JoinButton")` 会撞上**房间行里的同名按钮**。
+     ⚠️ **污染源之一是我们自己的 `tools/gate5_serve.py`**（默认 `--udp-port 42968`）⇒ 边跑门⑤ 工具边跑 selftest 会假红。
+     ⇒ 现在 `_isolate_lan_discovery()` 会用私有端口；但**同时跑这两件事仍有风险**。
+
+⚠️ **生成物跨分支合并会带回旧版**：第十八轮 91 号基于旧基点，合并后 `coverage_matrix --check` 报不一致
+  ⇒ **每次合并后都要跑 `--check`，不一致就重生成**（不改源码）。
+⚠️ **`drive_frame` 决定不接**（85 号）：触发条件与落地顺序在 `docs/16` §58.3 + `process_loop_check.gd` 第 9 组 tripwire。
+  ⚠️ **先删 `_advance_curve` 会一帧两倍速**。
+⚠️ **`addr_probe.py tags` 已修两处**：第四形态（83 号）、形态③′（91 号）。
+  总数 **3379 不变**、tag 桶 **66**（tag 62 已空）。**还有 12 个 tag 没有 store 站点，其中 11 个原因未知。**
+  ✅ `tags --pe <dll>` 已能扫 PE（91 号，判据与 Linux 一致）。
+⚠️ **门⑤ 在真房源里不命中**（92 号：5 局 7 进程，`PlayerInfo` 先、`BotAdded` 后，Bot 的 conn 恒随请求方）
+  ⇒ 五道门的叙述要按"**可达但不触发**"来读。
+⚠️ **指纹默认 3 列**（78 号）⇒ 复现旧 12,736 夹具要加 `--featset full`。
+⚠️ **造 bot 局别用"档 5"**（82 号）。
   coverage 527 可归属：逐位 88 / 观测 439 / 推断 0 / 未做 0
   manager 档位 **19 wired / 2 layout / 1 assembled / 0 stub**（最后一格 = GSM，卡 src/game.rs 禁区）
 
