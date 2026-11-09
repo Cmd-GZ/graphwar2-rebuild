@@ -815,3 +815,35 @@ GSM       别碰 —— 不是缺证据，是卡 src/game.rs 禁区
 ④ headless 只跑 `extends SceneTree` 的脚本（14 个）；`selftest` 的两种降级见 `docs/18` §10.3.3；
 ⑤ 新样本一律 `.agent-work/replay-*`，**不许进冻结快照**。
 ```
+
+---
+
+# 第十八轮（2026-11-10）
+
+第十七轮：83 挖出工具盲区根因（**capstone 对 `add` 只回 EFLAGS**）；84 把旧局面机 426→66 行；
+85 **决定不接** `drive_frame` 并用变异测试钉成断言；86 门⑤命中分支可达、最后一格不升；
+87 有界否定 1 ulp。报告 §9 点出一条**依赖关系**：83 修好后必须复扫 `FunctionPoints`。
+
+| # | 分支 | 主题 | 类型 | 优先级 |
+|---|---|---|---|---|
+| **88** | `agent/functionpoints-rescan` | 用**修好的** tag 工具复扫 `FunctionPoints` 构造点（87 的负结论可能翻转） | 静态 | **P0** |
+| 89 | `agent/replay-retire-finish` | 改 `play_screen.gd` 那 4 行 ⇒ **整份删掉** `replay_player.gd` | 工程 | P1 |
+| 90 | `agent/lan-lobby-flake` | 修**第二条** selftest flake（LAN 大厅成对红） | 测试 | P1 |
+| 91 | `agent/addrprobe-form3` | `addr_probe.py tags` 形态③之后的修饰（`or rdx,4` 这类，**会改前三形态计数**） | 静态 | P2 |
+| 92 | `agent/gate5-real-lobby` | 门⑤ 的**真房源顺序**（真服务器抓一次"加 Bot"） | 运行时 | P2 |
+
+## 两条依赖/风险
+
+```
+① 88 是**别的前提**：87 用旧工具扫出 0，新工具可能命中 ⇒ 结论会翻转；所以它排第一
+② 91 **会改历史计数**（占 83 号范围之外的那一块），所以要求"每次变动点名 + 总数必须仍是 3379"
+```
+
+## 通行纪律
+
+```
+· headless 只跑 `extends SceneTree` 的脚本（14 个，1923 条）
+· `selftest` 的两种降级见 `docs/18` §10.3.3；`63x/7` 先重跑再判
+· 新样本一律 `.agent-work/replay-*`，不许进冻结快照
+· 提交信息用 `-F 文件`
+```
