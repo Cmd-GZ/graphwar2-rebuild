@@ -29,8 +29,9 @@ extends SceneTree
 ## | 12 | **按 tick 推进**：`pumps ≡ ticks`、0-tick 帧泵 0 次、60 fps 每帧 1 tick、长帧追赶无上限 | **观测**（`docs/06` §44.2/§44.3/§44.4；5 次运行 12 856 个 tick） |
 ## | 13 | **结算批在 tick 时钟上的落地**：只在 `ExecutingResults` 那一拍结算、长帧按序跨多批、`seek` 不报结算 | **观测**（同 §44.4 的追赶；批窗口来自 `replaydiff::split_batches`） |
 ## | 14 | 驱动吐出的事件序列与**本脚本独立扫描**的结果逐条相同 | 交叉验证（两份实现，两份语言） |
-## | 15 | 真实回放（本机样本）上的同一批事实 + `canonical` 与旧 GDScript 局面机逐字符相同 | 局面 **推断**（`docs/133` §3）+ 三端同格式（§5） |
+## | 15 | 真实回放（本机样本）上的同一批事实 + `canonical`/游标 = `fixtures/replay_player84.txt`（**旧局面机固化**下来的期望值） | 局面 **推断**（`docs/133` §3）+ 三端同格式（§5） |
 ## | 16 | 播放屏源码：旧回放驱动写法消失、新驱动入口出现 | **观测**（读文件文本） |
+## | 17 | **旧局面机已退役**：`GwReplayPlayer` 不再有 `setup/advance_dt/canonical/apply_event/…`，源文件 ≤ 80 行、无局面写法 | **观测**（运行时方法表 + 读文件文本；`dispatch/84`） |
 ##
 ## # 为什么没有"端到端打一枪"
 ##
@@ -76,6 +77,23 @@ const FLOW_CLASS := "GwShotFlow"
 const CLOCK_CLASS := "GwTurnClock"
 const BOT_CLASS := "GwBotTurn"
 const REPLAY_DRIVER_CLASS := "GwReplayDriver"
+## 84 号固化的夹具：**旧 GDScript 局面机**（`GwReplayPlayer`，426 行）算出来的期望值。
+## 旧代码退役之后，它就是对拍旧实现的**唯一**对照物（先固化、再删，`docs/16-client.md` §57）。
+const REPLAY_FIXTURE := "fixtures/replay_player84.txt"
+## 旧局面机的类名与文件（用来钉"它不许把局面/时钟带回来"）。
+const REPLAY_OLD_PLAYER_CLASS := "GwReplayPlayer"
+const REPLAY_OLD_PLAYER_PATH := "res://src/play/replay_player.gd"
+## 旧局面机的方法（84 号删掉的那批）：再出现任何一个都说明它又长回来了。
+const REPLAY_STATE_MACHINE_METHODS := [
+	"setup", "advance_dt", "advance_to", "apply_event", "canonical", "seek",
+	"step_event", "step_back_event", "actors", "obstacles_for_view", "target_positions",
+	"current_tick", "progress", "finished", "mode_indices", "team_index",
+]
+## 旧局面机的源码写法（同一个意思，防它换个名字长回来）。
+const REPLAY_STATE_MACHINE_SOURCE := [
+	"func apply_event", "func canonical", "func advance_dt", "func _reset_state",
+	"\"obstacles\": []", "\"shots\": []", "TICKS_PER_SECOND",
+]
 ## 本类的方法表（少一个就说明驱动又退回 GDScript 了）。
 const REPLAY_METHODS := [
 	"load", "load_text", "ok", "error", "first_tick", "last_tick", "tick", "cursor",
@@ -672,18 +690,24 @@ func _initialize() -> void:
 		ok(bool(real.call("load", real_path))
 			and int(real.call("event_count")) == 104,
 			"真实回放能加载：104 条事件（实际 %d）" % int(real.call("event_count")))
-		# 与**旧 GDScript 局面机**在同一个 tick 上的 canonical 逐字符相同 ——
-		# 两份独立实现（Rust 内核模块 ↔ 这份 .gd），三端格式见 `docs/133` §5。
+		# 与**旧 GDScript 局面机**对拍的替代品：`fixtures/replay_player84.txt`。
+		# 84 号把旧实现（`GwReplayPlayer`，426 行，已退役）算出来的局面**先固化**成这份夹具，
+		# 再让 selftest 改打驱动 ⇒ 旧代码删了，对照物还在（`docs/16-client.md` §57）。
 		var f := GwReplayFile.load_path(real_path)
 		if f.ok():
-			var gd := GwReplayPlayer.new().setup(f)
-			var same := true
+			var fx := _replay_fixture()
+			var same := fx.size() >= 20
+			var bad_tick := -1
 			for t in [550, 2168, 2169, 2276]:
 				real.call("seek", int(t))
-				gd.seek(int(t))
-				if String(real.call("canonical")) != gd.canonical():
+				if String(real.call("canonical")) != String(fx.get("canonical_tick_%d" % t, "<缺键>")) \
+					or int(real.call("cursor")) != int(String(fx.get("cursor_tick_%d" % t, "-1"))):
 					same = false
-			ok(same, "回放驱动与旧 GDScript 局面机在 tick 550/2168/2169/2276 上 canonical 逐字符相同")
+					bad_tick = int(t)
+			ok(same, "回放驱动在 tick 550/2168/2169/2276 上的 canonical + 游标 = 旧局面机固化的夹具（%s，%d 键）"
+				% [REPLAY_FIXTURE, fx.size()])
+			if not same:
+				print("      首个不符的 tick：%d（实际 %s）" % [bad_tick, String(real.call("canonical"))])
 			var rb: Array = real.call("batches")
 			var wb := _expected_batches_raw(f)
 			ok(_batch_bounds(rb) == _batch_bounds(wb) and rb.size() > 0,
@@ -709,6 +733,32 @@ func _initialize() -> void:
 	for pat in REPLAY_CALLS:
 		ok(src.contains(pat), "源码里确实调新驱动入口：`%s`" % pat)
 
+	# ---------------- 17. 旧局面机退役（`dispatch/84`，`docs/16-client.md` §57） ----------------
+	# 防止有人把那份 426 行的 GDScript 局面机又加回来：**时钟 / 事件规则 / 对拍串**一个都不许在。
+	if ClassDB.class_exists(REPLAY_OLD_PLAYER_CLASS):
+		var old_player: Object = ClassDB.instantiate(REPLAY_OLD_PLAYER_CLASS)
+		var back := PackedStringArray()
+		for m in REPLAY_STATE_MACHINE_METHODS:
+			if _methods_of(old_player).has(String(m)):
+				back.append(String(m))
+		ok(back.is_empty(),
+			"旧局面机已退役：`%s` 不再有局面/时钟方法（又出现的：%s）"
+			% [REPLAY_OLD_PLAYER_CLASS, str(back)])
+	else:
+		ok(true, "旧局面机 `%s` 整个类都不在了（局面只剩 Rust 一份）"
+			% REPLAY_OLD_PLAYER_CLASS)
+	var old_src := FileAccess.get_file_as_string(REPLAY_OLD_PLAYER_PATH)
+	var left := PackedStringArray()
+	var old_lines := 0
+	if old_src != "":
+		old_lines = old_src.split("\n").size()
+		for pat in REPLAY_STATE_MACHINE_SOURCE:
+			if old_src.contains(pat):
+				left.append(pat)
+	ok(old_src == "" or (left.is_empty() and old_lines <= 80),
+		"`%s` 只剩纯查表（%d 行 ≤ 80、无局面写法；又出现的：%s）"
+		% [REPLAY_OLD_PLAYER_PATH, old_lines, str(left)])
+
 	_finish()
 
 ## 本机原版存档目录里的那个样本的**绝对路径**（没有则返回空串）。
@@ -729,6 +779,25 @@ func _driver_fresh() -> Object:
 	d.call("load_text", SYNTHETIC_REPLAY)
 	d.call("play")
 	return d
+
+## 读 84 号固化的夹具（`key<TAB>value`；`#` 注释、空行忽略）。
+##
+## `res://` 是 `client/`，运行时读不到仓库根的 `fixtures/` ⇒ 用绝对路径
+## （`ProjectSettings.globalize_path("res://")` 的上一级；与 `selftest.gd::_repo_root()` 同一条路）。
+func _replay_fixture() -> Dictionary:
+	var out := {}
+	var root: String = ProjectSettings.globalize_path("res://").path_join("..")
+	var f := FileAccess.open(root.path_join(REPLAY_FIXTURE), FileAccess.READ)
+	if f == null:
+		return out
+	while not f.eof_reached():
+		var line := f.get_line()
+		if line.begins_with("#") or line.strip_edges() == "":
+			continue
+		var parts := line.split("\t")
+		if parts.size() == 2:
+			out[parts[0]] = parts[1]
+	return out
 
 ## 事件名在不在一个**字符串数组**里（驱动报告里的 `kinds`）。
 func _has_kind_arr(kinds: Array, kind: String) -> bool:

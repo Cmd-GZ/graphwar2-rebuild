@@ -2134,13 +2134,61 @@ func _test_fire_fx() -> void:
 ## （tick 2169 靶子被打掉）、tick 单调，而且弹道能用内核重算（微分方程局不行）。
 const REPLAY_SAMPLE := "1793897298"
 
-## 三份**期望局面串**来自 `tools/replay_state.py` 的同口径参考实现（Python），
-## 并由内核 C ABI（`gw2_replay_state_at`）逐字符复核过 —— 三方同格式见 `docs/133` §5.2。
-## 复现：见 `docs/133` §5.2 的两条命令。
-const GOLDEN_TICK_550 := "tick=550|O=|E=229,Team1,1,,,;230,Team1,1,-5.156307,-9.889981,0.500000;231,Team1,1,,,;232,Team2,1,9.782073,4.595394,0.500000|F=230=x+2sin(20x)"
-const GOLDEN_TICK_2168 := "tick=2168|O=|E=229,Team1,1,,,;230,Team1,1,-5.156307,-9.889981,0.500000;231,Team1,1,,,;232,Team2,1,9.782073,4.595394,0.500000|F=230=x+2sin(10x)"
-const GOLDEN_TICK_2169 := "tick=2169|O=|E=229,Team1,1,,,;230,Team1,1,-5.156307,-9.889981,0.500000;231,Team1,1,,,;232,Team2,0,9.782073,4.595394,0.500000|F=230=x+2sin(10x)"
-const GOLDEN_TICK_2276 := "tick=2276|O=|E=229,Team1,1,,,;230,Team1,1,-5.156307,-9.889981,0.500000;231,Team1,1,,,;232,Team2,0,9.782073,4.595394,0.500000|F=230=x+2sin(10x)"
+## 84 号起，**期望值不在本文件里写常量了**，改成读 `fixtures/replay_player84.txt`。
+##
+## 那份夹具是**旧 GDScript 局面机**（`client/src/play/replay_player.gd::GwReplayPlayer`，
+## 426 行，84 号删除）算出来的同一批量固化的：tick 时钟（起始/终点/0.5 s/暂停/2×）、
+## 五个 tick 的 `canonical()` 与游标、靶子 232 的 alive、`step_event`/`step_back_event`。
+## 顺序是**先固化、再改打**：夹具里没有一行来自新驱动 `GwReplayDriver`，否则就成了
+## "新实现自证"（`docs/16-client.md` §57）。
+##
+## 四个 `canonical` 串本身另有**独立**出处：`tools/replay_state.py`（Python 参考实现）与
+## 内核 C ABI（`gw2_replay_state_at`）逐字符复核过 —— 三端同格式见 `docs/133` §5.2；
+## 夹具里那四行与它们**逐字符相同**，等于三端对拍仍然成立。
+const REPLAY_FIXTURE := "fixtures/replay_player84.txt"
+## 被验的实现：回放驱动（`src/_scaffold/replay_driver.rs` + `replay_driver_class.rs`）。
+const REPLAY_DRIVER_CLASS := "GwReplayDriver"
+
+var _replay_fixture_cache := {}
+
+## 仓库根的绝对路径（`res://` = `<repo>/client`，运行时读不到 `res://../fixtures`，
+## 但绝对路径能读 —— 与 `_find_server_binary()` 同一条路）。
+func _repo_root() -> String:
+	return ProjectSettings.globalize_path("res://").path_join("..")
+
+## 读 84 号固化的夹具（`key<TAB>value`；`#` 注释、空行忽略）。第一次读之后走缓存。
+func _replay_fixture() -> Dictionary:
+	if not _replay_fixture_cache.is_empty():
+		return _replay_fixture_cache
+	var f := FileAccess.open(_repo_root().path_join(REPLAY_FIXTURE), FileAccess.READ)
+	if f == null:
+		return {}
+	while not f.eof_reached():
+		var line := f.get_line()
+		if line.begins_with("#") or line.strip_edges() == "":
+			continue
+		var parts := line.split("\t")
+		if parts.size() == 2:
+			_replay_fixture_cache[parts[0]] = parts[1]
+	return _replay_fixture_cache
+
+## 夹具里的整数项（缺键 ⇒ -1，让断言红、并在消息里看见）。
+func _fx_int(fx: Dictionary, key: String) -> int:
+	return int(String(fx.get(key, "-1")))
+
+## 驱动器**当前**的（canonical, 游标）是否**逐字符**等于夹具里那个 tick 的两行。
+## 两件一起判：夹具里两件都固化了，分开判只会多一条计数、不多一分证据。
+func _driver_at_fixture(drv: Object, fx: Dictionary, tick: int) -> bool:
+	return String(drv.call("canonical")) == String(fx.get("canonical_tick_%d" % tick, "<缺键>")) \
+		and int(drv.call("cursor")) == _fx_int(fx, "cursor_tick_%d" % tick)
+
+## 驱动器里某个实体是否活着（从 `actors()` 取；没有 `PosInfo` 的实体画不出来、也不在这张表里）。
+func _driver_alive(drv: Object, id: int) -> bool:
+	for a in drv.call("actors"):
+		var d: Dictionary = a
+		if int(d.get("id", -1)) == id:
+			return bool(d.get("alive", false))
+	return false
 
 ## 本机原版存档目录（**只读**；仓库里不放任何回放文件）。
 func _real_replay_dir() -> String:
@@ -2192,51 +2240,77 @@ func _test_replay_player() -> void:
 	_expect(f.targets.has(232), "TargetInfo{232} 收进靶子集合")
 
 	# ---------------- 3. 播放模型：tick 驱动（不是墙钟逐事件） ----------------
-	var player := GwReplayPlayer.new().setup(f)
-	_expect(player.current_tick() == 1, "回放起点 = 第一条事件的 tick（实际 %d）" % player.current_tick())
-	_expect(player.last_tick == 2276, "回放终点 = 最后一条事件的 tick（实际 %d）" % player.last_tick)
-	player.play()
-	player.advance_dt(0.5)
-	_expect(player.current_tick() == 31,
-		"0.5 秒 = 30 tick（60 tick/秒，docs/35；实际 tick %d）" % player.current_tick())
-	player.pause()
-	var t_paused := player.current_tick()
-	player.advance_dt(1.0)
-	_expect(player.current_tick() == t_paused, "暂停时不推进（实际 %d）" % player.current_tick())
-	player.speed = 2.0
-	player.play()
-	player.advance_dt(0.5)
-	_expect(player.current_tick() == t_paused + 60,
-		"2× 倍速 0.5 秒 = 60 tick（实际 %d）" % player.current_tick())
-	player.speed = 1.0
-	player.pause()
+	# 84 号：这一段原来打的是**旧 GDScript 局面机**（`GwReplayPlayer.new().setup(f)`）。
+	# 现在打 `GwReplayDriver`，**判据一条没改**（同样的 tick 时钟、同样的 60 tick/秒），
+	# 期望值全部来自 `fixtures/replay_player84.txt` —— 那份是旧实现算出来的。
+	var fx := _replay_fixture()
+	_expect(fx.size() >= 20, "84 号夹具 %s 可读（%d 个键）" % [REPLAY_FIXTURE, fx.size()])
+	var drv: Object = ClassDB.instantiate(REPLAY_DRIVER_CLASS)
+	var drv_ok := drv != null and bool(drv.call("load", path))
+	_expect(drv_ok, "回放驱动 %s 载入同一份样本（error='%s'）"
+		% [REPLAY_DRIVER_CLASS, String(drv.call("error")) if drv != null else "<无此类>"])
+	if not drv_ok:
+		return
+	_expect(int(drv.call("tick")) == _fx_int(fx, "tick_after_setup"),
+		"回放起点 = 第一条事件的 tick（实际 %d）" % int(drv.call("tick")))
+	_expect(int(drv.call("last_tick")) == _fx_int(fx, "last_tick"),
+		"回放终点 = 最后一条事件的 tick（实际 %d）" % int(drv.call("last_tick")))
+	drv.call("play")
+	drv.call("advance_dt", 0.5)
+	_expect(int(drv.call("tick")) == _fx_int(fx, "tick_after_half_second"),
+		"0.5 秒 = 30 tick（60 tick/秒，docs/35；实际 tick %d）" % int(drv.call("tick")))
+	drv.call("pause")
+	drv.call("advance_dt", 1.0)
+	_expect(int(drv.call("tick")) == _fx_int(fx, "tick_after_pause_1s"),
+		"暂停时不推进（实际 %d）" % int(drv.call("tick")))
+	drv.call("set_speed", 2.0)
+	drv.call("play")
+	drv.call("advance_dt", 0.5)
+	_expect(int(drv.call("tick")) == _fx_int(fx, "tick_after_2x_half_second"),
+		"2× 倍速 0.5 秒 = 60 tick（实际 %d）" % int(drv.call("tick")))
+	drv.call("set_speed", 1.0)
+	drv.call("pause")
 
-	# ---------------- 4. 局面还原：与 tools/replay_state.py 对拍 ----------------
-	player.seek(550)
-	_expect(player.canonical() == GOLDEN_TICK_550,
-		"tick 550 的局面 = replay_state.py 的口径（实际 %s）" % player.canonical())
-	player.seek(2168)
-	_expect(player.canonical() == GOLDEN_TICK_2168,
-		"tick 2168（死亡前一拍）局面一致（实际 %s）" % player.canonical())
-	player.seek(2169)
-	_expect(player.canonical() == GOLDEN_TICK_2169,
-		"tick 2169（靶子阵亡那一拍）局面一致（实际 %s）" % player.canonical())
-	_expect(bool(player.state.alive.get(232, true)) == false,
-		"tick 2169 之后靶子 232 的 alive 翻成 false（覆盖到死亡事件）")
-	player.seek(2276)
-	_expect(player.canonical() == GOLDEN_TICK_2276,
-		"tick 2276（结尾）局面一致（实际 %s）" % player.canonical())
-	# 往回跳 = 从头重放：与新建播放器逐字符相同（不留增量漂移）
-	player.seek(1000)
-	var fresh := GwReplayPlayer.new().setup(f)
-	fresh.seek(1000)
-	_expect(player.canonical() == fresh.canonical(), "往回跳与从头重放结果一致")
+	# ---------------- 4. 局面还原：期望值 = 旧实现固化的夹具 ----------------
+	# `_driver_at_fixture()` 一次判两件：`canonical()`（逐字符）与游标。
+	drv.call("seek", 550)
+	_expect(_driver_at_fixture(drv, fx, 550),
+		"tick 550 的局面 = 旧局面机固化的夹具（实际 %s）" % String(drv.call("canonical")))
+	drv.call("seek", 2168)
+	_expect(_driver_at_fixture(drv, fx, 2168),
+		"tick 2168（死亡前一拍）局面一致（实际 %s）" % String(drv.call("canonical")))
+	drv.call("seek", 2169)
+	_expect(_driver_at_fixture(drv, fx, 2169),
+		"tick 2169（靶子阵亡那一拍）局面一致（实际 %s）" % String(drv.call("canonical")))
+	# 死亡事件：`actors()` 里靶子 232 的 alive 从 1 翻成 0（两个期望值都在夹具里）
+	drv.call("seek", 2168)
+	var alive_before := _driver_alive(drv, 232)
+	drv.call("seek", 2169)
+	var alive_after := _driver_alive(drv, 232)
+	_expect(alive_before == (_fx_int(fx, "alive_232_tick_2168") == 1)
+		and alive_after == (_fx_int(fx, "alive_232_tick_2169") == 1),
+		"tick 2169 之后靶子 232 的 alive 翻成 false（实际 %s → %s）"
+		% [str(alive_before), str(alive_after)])
+	drv.call("seek", 2276)
+	_expect(_driver_at_fixture(drv, fx, 2276),
+		"tick 2276（结尾）局面一致（实际 %s）" % String(drv.call("canonical")))
+	# 往回跳 = 从头重放：与新建驱动器逐字符相同，且**都**等于夹具里 tick 1000 的局面
+	drv.call("seek", 1000)
+	var fresh: Object = ClassDB.instantiate(REPLAY_DRIVER_CLASS)
+	var fresh_ok := fresh != null and bool(fresh.call("load", path))
+	if fresh_ok:
+		fresh.call("seek", 1000)
+	_expect(fresh_ok and _driver_at_fixture(drv, fx, 1000) and _driver_at_fixture(fresh, fx, 1000),
+		"往回跳与从头重放结果一致，且都 = 夹具 tick 1000（实际 %s）"
+		% String(drv.call("canonical")))
 	# 「上一事件 / 下一事件」
-	player.seek(1)
-	var next_tick := player.step_event()
-	_expect(next_tick == 2, "「下一事件」跳到下一条事件的 tick（实际 %d）" % next_tick)
-	var prev_tick := player.step_back_event()
-	_expect(prev_tick == 1, "「上一事件」退回上一条事件的 tick（实际 %d）" % prev_tick)
+	drv.call("seek", 1)
+	var next_tick := int(drv.call("step_event"))
+	_expect(next_tick == _fx_int(fx, "next_event_tick_from_tick_1"),
+		"「下一事件」跳到下一条事件的 tick（实际 %d）" % next_tick)
+	var prev_tick := int(drv.call("step_back_event"))
+	_expect(prev_tick == _fx_int(fx, "prev_event_tick_from_that_tick"),
+		"「上一事件」退回上一条事件的 tick（实际 %d）" % prev_tick)
 
 	# ---------------- 5. ReplayLobby 能列出真实回放目录（只读） ----------------
 	var lobby := _screen("ReplayLobby")
