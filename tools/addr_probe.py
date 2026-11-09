@@ -391,6 +391,7 @@ def cmd_jt(ctx, a, base=None, owner=None):
 #   ① `movabs r, 0x7fffffffffffffff` + `add r, n+1`（n+1 ≤ 63 时常用）
 #   ② `movabs r, 0x7fffffffffffffff` + `inc r`         ← tag 恰好 0x8000…0 时
 #   ③ `movabs r, 0x8000…|n` 直写                          ← 少数（如 tag 42）
+#   ③′ ③ 之后再修饰一次（`add/or/inc/lea` 立即数）—— `51 | 4 = 55` 那类（见下）
 #   ④ `movabs r, 0x8000000000000000` + `add r, n`（`n = 0` 就是基址本身，无后修饰）
 #      同族的还有 `or r, n` / `inc r` / `lea r, [r + n]` —— 基址是 **2^63 本身**、
 #      不是 i64::MAX，所以 n **从 0 起算**，比 ① 少减一。
@@ -403,12 +404,30 @@ def cmd_jt(ctx, a, base=None, owner=None):
 # `add_soldier_to_player`（0x474a10）里的 `0x474b8d movabs 0x8000…000` +
 # `0x474b97 add rax,0xf` = tag 15，修前被记成 tag 0（docs/161 C10 就是这么登记的）。
 #
+# ⚠ **形态③′（③ 之后再修饰）是 2026-11-10 补上的（dispatch/91）**：LLVM 会先把 tag 立即数
+# 算成**基支**，再在另一支上用一条小立即数指令把它推到**目标 tag**，三支共用同一段提交代码：
+#
+#     0x468e93  movabs rax, 0x8000…033                ⇒ tag 51（skin）
+#     0x468ef8  movabs rcx, 0x8000…033 + 0x468f02 add rcx,2   ⇒ tag **53**（face）
+#     0x469035  movabs rdx, 0x8000…033 + 0x46903f or  rdx,4   ⇒ tag **55**（hat）
+#
+# 修之前后两者都被记成 **51**（"算完即记账"），于是 `graphwar_graphics_manager.rs` 的三支
+# 事件在工具眼里全挤在一个桶里。判据见 `_mod_after()` / `_tag_after_form3()`。
+# **关键取舍**：折（fold）需要**正面证据** —— 光看算术形状分不开事件判别值和 std/依赖 crate 的
+# 哨兵算术（全库 35 处 positive 候选里只有 3 处落在 `src/*.rs` 投票的函数里，另 32 处见
+# docs/07 §7.1.1）；所以只折"所在函数被 `panic::Location` 投票指向 `src/*.rs`"的点，
+# 折不了就照旧记 ③ 的基址 tag（**不新增任何构造点**，保守方向）。
+#
 # 正对照（自带，扫不到就说明扫法坏了）：
 #   tag 42 = `0x800000000000002a` 必须命中 0x3f20f0（`GraphwarObstacleManager::queue_destroy_obstacle`）
 #   tag 41 = `0x8000000000000029` 必须命中 0x3f1b30（`GraphwarObstacleManager::destroy_obstacle`）
 #   tag 44 = `0x800000000000002c` 必须有生产点（`execute_results`，0x472470 体内）**且**
 #            命中 2 个消费者（0x4bf09b / 0x4e2dd4）——「N 个生产者」这类负结论的样板
 #   tag 15 形态④ = 0x474b8d 必须被认成 tag 15（修形态④之前它落在 tag 0 ⇒ 这条会红）
+#   tag 55 形态③′ = 0x469035 必须被认成 **55**（tag_site = 0x46903f 那条 `or rdx,4`）
+#                   —— 91 号新增；修之前它被记成 tag 51
+#   反面对照（保证不误伤）：`0x7840b9 movabs 0x8000…001` + `or rax,2` 在**无** `src/*.rs`
+#                   投票的函数里 ⇒ 必须仍记 tag 1，**不许**冒出 tag 3
 TAG_SENTINEL = 0x7fffffffffffffff
 TAG_BASE = 0x8000000000000000
 # 形态④ 判出来的判别值上界：`GraphwarEvent` 只有 0..=73，这里留到 0x7f —— 实测有一处
@@ -423,6 +442,13 @@ def _tag_of_reg(ins_list, i, reg, span=60):
     返回 `(tag, tag_site, kind)`，kind ∈ {"MAX+add", "MAX+inc"}；认不出返回 None。
     `span=60` 是**历史口径**（LLVM 常把 `add` 排在参数搬运之后），刻意不改小 ——
     改小就会动到既有 tag 计数，见 dispatch/83。
+
+    ⚠ **基址换算恒等式（dispatch/91 §6 的裁决就靠这一行）**：
+        基址是 `i64::MAX = 0x7fff_ffff_ffff_ffff`（**不是** 2^63），所以
+        `0x7fff… + imm = 0x8000…|（imm − 1）` ⇒ **tag = imm − 1**。
+    实例（`GraphwarLocalPlayerManager::handle_player_info`，基址 `0x519f4e movabs rbp,0x7fffffffffffffff`）：
+        `0x51a443 add rbp,0x43` ⇒ `0x8000…042` = **66**（不是 67）；`0x51a3e7 lea rax,[rbp+0x37]`
+        ⇒ `0x8000…036` = **54**（不是 55）。"差 1"来自把基址当成 2^63（那是形态④，`n` 从 0 起算）。
     """
     for j in range(i + 1, min(i + span, len(ins_list))):
         y = ins_list[j]
@@ -462,21 +488,27 @@ def _writes_reg(ins, reg):
     return name in _IMPLICIT_WRITERS.get(ins.mnemonic, ())
 
 
-def _tag_after_base(ins_list, i, reg, span=12):
-    # span = **向后看几条指令**（不含 movabs 本身）；12 是实测够用的窗口。
-    """形态④：从 `movabs reg, 0x8000…000` 出发，把紧随其后的那次"补 n"折成 tag。
+def _mod_after(ins_list, i, reg, base_n, span=12, allow_noop=False):
+    """从 `movabs reg, 0x8000…|base_n` 出发，把紧随其后的那次"补 n"折进 tag 值。
 
-    只认**第一个写 `reg` 的指令**；它必须是下面四条之一，否则返回 None（该点仍是 tag 0）：
+    **本文所有"再修饰"只有这一套判据**（83 号的形态④ = `base_n == 0` 的特例，91 号的形态③′
+    = `base_n ≠ 0`）。只认**第一个写 `reg` 的指令**；它必须是下面四条之一：
 
-        `add reg, n`  0 ≤ n ≤ TAG_N_MAX          （n = 0 是空操作，等于基址，仍是 tag 0）
-        `or  reg, n`  1 ≤ n ≤ TAG_N_MAX          （基址低 63 位全 0 ⇒ or 与 add 等价）
-        `inc reg`     ⇒ n = 1
-        `lea reg, [reg + n]`  0 ≤ n ≤ TAG_N_MAX
+        `add reg, imm`  0 ≤ imm ≤ TAG_N_MAX      ⇒ 值 = base_n + imm
+        `or  reg, imm`  1 ≤ imm ≤ TAG_N_MAX      ⇒ 值 = base_n **|** imm（base_n ≠ 0 时 ≠ 加法！）
+        `inc reg`                                ⇒ 值 = base_n + 1
+        `lea reg, [reg + disp]` 0 ≤ disp ≤ TAG_N_MAX  ⇒ 值 = base_n + disp
 
-    负立即数（`add reg, -0x11` 把值拉回 i64::MAX 一族）、`sub`/`dec`/`xor`/`mov` 一律不算
-    —— 那批是 std 里 `i64::MIN + k` 的算术，不是事件判别值。
+    一律**不算**修饰的（返回 None，调用方照旧记基址 tag）：
+      * 负立即数 —— `add reg, -0x11` 把 `i64::MIN` 一族拉回 `i64::MAX` 一族（全库 58 处
+        `add rcx,-0x11`），那批是 std 的哨兵算术，不是事件判别值；
+      * `sub` / `dec` / `xor` / `mov` / `cmp` —— 值已经不再是"基址 ⊕ 小常数"；
+      * 折出来的值 > TAG_N_MAX(0x7f) —— 超出 `GraphwarEvent` 的值域；
+      * 值**没变**（`or` 撞上 base_n 里已有的位）—— 那不是"再修饰"，基址就是终值
+        （`allow_noop=True` 时例外：形态④ 的 `add reg,0` / `lea [reg+0]` 历史上就算作
+        "补 n（n=0）"，这里**刻意保留 83 号的读数**，以免把 BASE+add 的站点数改掉）。
 
-    返回 `(tag, tag_site, kind)`，kind ∈ {"BASE+add", "BASE+or", "BASE+inc", "BASE+lea"}。
+    返回 `(n, site, mnemonic)`，`n` 是**最终**判别值（不含 2^63），`site` 是那条修饰指令。
     """
     for j in range(i + 1, min(i + 1 + span, len(ins_list))):
         y = ins_list[j]
@@ -488,32 +520,97 @@ def _tag_after_base(ins_list, i, reg, span=12):
             continue                    # store / 与 reg 无关的指令：跳过
         if y.mnemonic in ("add", "or") and len(ops) == 2 and ops[1].type == X86_OP_IMM:
             imm = ops[1].imm            # 有符号：负立即数直接判死
-            if 0 <= imm <= TAG_N_MAX and (y.mnemonic == "add" or imm > 0):
-                return (TAG_BASE + imm, y.address, "BASE+" + y.mnemonic)
-            return None
-        if y.mnemonic == "inc":
-            return (TAG_BASE + 1, y.address, "BASE+inc")
-        if (y.mnemonic == "lea" and len(ops) == 2 and ops[1].type == X86_OP_MEM
+            if not (0 <= imm <= TAG_N_MAX and (y.mnemonic == "add" or imm > 0)):
+                return None
+            n = base_n + imm if y.mnemonic == "add" else (base_n | imm)
+        elif y.mnemonic == "inc":
+            n = base_n + 1
+        elif (y.mnemonic == "lea" and len(ops) == 2 and ops[1].type == X86_OP_MEM
                 and ops[1].mem.base == reg and ops[1].mem.index == 0
                 and 0 <= ops[1].mem.disp <= TAG_N_MAX):
-            return (TAG_BASE + ops[1].mem.disp, y.address, "BASE+lea")
-        return None                     # cmp/test/mov/sub/dec/…：不是 tag 构造
+            n = base_n + ops[1].mem.disp
+        else:
+            return None                 # cmp/test/mov/sub/dec/…：不是 tag 构造
+        if n > TAG_N_MAX or (n == base_n and not allow_noop):
+            return None
+        return (n, y.address, y.mnemonic)
     return None
+
+
+def _tag_after_base(ins_list, i, reg, span=12):
+    # span = **向后看几条指令**（不含 movabs 本身）；12 是实测够用的窗口。
+    """形态④：从 `movabs reg, 0x8000…000` 出发，把紧随其后的那次"补 n"折成 tag。
+
+    判据全在 `_mod_after()`（这里只是 `base_n = 0` 的特例）；返回
+    `(tag, tag_site, kind)`，kind ∈ {"BASE+add", "BASE+or", "BASE+inc", "BASE+lea"}。
+    """
+    got = _mod_after(ins_list, i, reg, 0, span, allow_noop=True)
+    if not got:
+        return None
+    n, site, mnem = got
+    return (TAG_BASE + n, site, "BASE+" + mnem)
+
+
+_GAME_SIDE_CACHE = {}
+
+
+def _game_side(ctx, va):
+    """`va` 所在函数是不是**本仓库自己的 crate 代码**（`panic::Location` 投票指向 `src/*.rs`）。
+
+    ⚠ 只用于形态③′ 的折判据，**不动**形态①②④ 的口径。理由：算术形状分不开"事件判别值"
+    和 std / 依赖 crate 里的哨兵算术 —— 全库 35 处 positive 候选里，32 处所在函数一个
+    `src/*.rs` 投票都没有（0x52c296…0x81e7fd，全部落在被投票函数地址覆盖
+    `[0x3a2e10, 0x523c18]` **之外**），折它们等于凭空造出 tag 2..16 的"构造点"。
+    ⇒ 折需要正面证据；没有证据就**不折**（照旧记基址 tag，不新增构造点）。
+
+    局限（照实记）：`maybe_location()` 只解析 `src/` 开头的路径，所以 std / 依赖 crate 的
+    panic 点解析不出来 ⇒ "无投票"**不能**反证"不是 game 代码"（13430 个 FDE 里只有 527 个
+    有投票）。这条判据只保证"折了的点一定在 game 模块里"，不保证"game 里没有漏折的点"。
+    """
+    o = ctx.owner(va)
+    if not o:
+        return False
+    if o not in _GAME_SIDE_CACHE:
+        ex = ctx.fde_extent(o)
+        _GAME_SIDE_CACHE[o] = bool(_owner_loc(ctx, o, ex[1] if ex else o + 0x400))
+    return _GAME_SIDE_CACHE[o]
+
+
+def _tag_after_form3(ctx, ins_list, i, reg, base):
+    """形态③′：`movabs reg, 0x8000…|n`（n ≠ 0）之后再 `add/or/inc/lea` 一次。
+
+    判据 = `_mod_after()` 的算术规则 **＋** `_game_side()` 这一条正面证据（见其 docstring）。
+    返回 `(got, why)`：
+      * 折成功 ⇒ `((tag, tag_site, kind), "folded")`，kind ∈ {"FORM3+add/or/inc/lea"}；
+      * 折不了 ⇒ `(None, why)`，`why ∈ {"no_mod", "not_game"}` —— 调用方照旧把该点记成形态③
+        的基址 tag（**不新增构造点**）。
+    """
+    got = _mod_after(ins_list, i, reg, base & 0x7FFFFFFF)
+    if not got:
+        return (None, "no_mod")
+    if not _game_side(ctx, ins_list[i].address):
+        return (None, "not_game")
+    n, site, mnem = got
+    return ((TAG_BASE + n, site, "FORM3+" + mnem), "folded")
 
 
 def cmd_tags(ctx, only=None, show_uses=False, json_path=None, tsv_path=None,
              counts_path=None):
-    """扫全 `.text`：`0x8000000000000000|n` 的**四种** materialize 形态。
+    """扫全 `.text`：`0x8000000000000000|n` 的**五种** materialize 形态（①②③③′④）。
 
     形态见本节开头注释；每个 tag 给出生产点地址 + 落在哪个函数 + 模块归属。
     一条 `movabs 0x8000…000` 若后面没有"补 n"（形态④ 判不出），仍按形态③ 记进 tag 0
     —— 与补形态④ 之前完全一致，所以**只有形态④ 那批点会换桶**。
+    一条 `movabs 0x8000…|n`（n ≠ 0）若后面没有"再修饰"或没通过 game 判据（形态③′ 判不出），
+    仍按形态③ 记进 n 本身 —— 同理，**只有形态③′ 那批点会换桶**。
 
-    `--tsv` / `--counts` 写夹具时每个站点额外带一列 `tag_legacy`：**补形态④ 之前**
-    这个点会落在哪个 tag（= 2^63，即 tag 0）。于是"修前/修后"对照可以从同一份扫描
-    直接算出来，不需要第二遍扫描，也不需要把老版本留在仓库里。
+    `--tsv` / `--counts` 写夹具时每个站点额外带一列 `tag_legacy`：**还没折"再修饰"之前**
+    这个点会落在哪个 tag（形态③ = 基址 n 本身、形态④ = tag 0）。于是"修前/修后"对照可以
+    从同一份扫描直接算出来，不需要第二遍扫描，也不需要把老版本留在仓库里。
     """
     found = {}          # tag -> [(site, tag_site, kind, tag_legacy)]
+    f3 = Counter()      # 形态③′ 的三种结局：folded / not_game / no_mod
+    f3_sites = []       # [(site, base_n, result)]，folded 的逐条明细（打印 + 写文档用）
     for lo, hi in ctx.exec_ranges:
         ins_list = dis_list(ctx, lo, hi)
         for i, ins in enumerate(ins_list):
@@ -533,9 +630,17 @@ def cmd_tags(ctx, only=None, show_uses=False, json_path=None, tsv_path=None,
                     found.setdefault(got[0], []).append((ins.address, got[1], got[2], v))
                 else:
                     found.setdefault(v, []).append((ins.address, ins.address, "movabs", v))
-            elif v >> 32 == 0x80000000:                 # 形态③（直写 0x8000…|n，n≠0）
-                found.setdefault(v, []).append((ins.address, ins.address, "movabs", v))
-    print("== 全 .text 的 `0x8000…|n` materialize 点（四种形态）：%d 个 tag ==" % len(found))
+            elif v >> 32 == 0x80000000:                 # 形态③ / ③′（直写 0x8000…|n，n≠0）
+                got, why = _tag_after_form3(ctx, ins_list, i, d.reg, v)
+                if got:
+                    found.setdefault(got[0], []).append((ins.address, got[1], got[2], v))
+                    f3["folded"] += 1
+                    f3_sites.append((ins.address, v & 0x7FFFFFFF, got[0] & 0x7FFFFFFF,
+                                     got[1], got[2]))
+                else:
+                    f3[why] += 1
+                    found.setdefault(v, []).append((ins.address, ins.address, "movabs", v))
+    print("== 全 .text 的 `0x8000…|n` materialize 点（五种形态 ①②③③′④）：%d 个 tag ==" % len(found))
     for tag in sorted(found):
         n = tag & 0x7FFFFFFF
         sites = found[tag]
@@ -555,9 +660,18 @@ def cmd_tags(ctx, only=None, show_uses=False, json_path=None, tsv_path=None,
             print("   in %#x  x%-2d %s%s" % (o or 0, k, addrs, loc))
     kinds = Counter(k for v in found.values() for _, _, k, _ in v)
     print("\n== 形态计数（判据见本节开头注释）==")
-    for k in ("MAX+add", "MAX+inc", "movabs", "BASE+add", "BASE+or", "BASE+inc", "BASE+lea"):
+    for k in ("MAX+add", "MAX+inc", "movabs", "BASE+add", "BASE+or", "BASE+inc", "BASE+lea",
+              "FORM3+add", "FORM3+or", "FORM3+inc", "FORM3+lea"):
         print("  %-9s x%d" % (k, kinds.get(k, 0)))
     print("  合计 %d 处（含 tag>73 的桶）" % sum(len(v) for v in found.values()))
+    # ------------------------------------------------- 形态③′ 的逐条明细（91 号）
+    print("\n== 形态③ 再修饰（③′）：候选 %d 处（有正立即数的 add/or/inc/lea），"
+          "折 %d / 非 game 模块不折 %d / 无修饰 %d =="
+          % (f3["folded"] + f3["not_game"], f3["folded"], f3["not_game"], f3["no_mod"]))
+    for site, base_n, tag_n, tag_site, kind in sorted(f3_sites):
+        o = ctx.owner(site) or 0
+        print("  %#x  movabs 0x8000…|%-2d + %#010x %-4s ⇒ tag %-2d   in %#x"
+              % (site, base_n, tag_site, kind.split("+")[1], tag_n, o))
     # ---------------------------------------------------------------- 正对照
     # 三条老对照（形态①②③）+ 一条形态④ 的对照；任何一条红都说明扫法坏了，不是"没生产者"。
     def has(tag, addr):
@@ -571,6 +685,11 @@ def cmd_tags(ctx, only=None, show_uses=False, json_path=None, tsv_path=None,
     ok44 = ok44_prod and ok44_cons
     ok15 = any(a == 0x474B8D and k.startswith("BASE+")
                for a, _, k, _ in found.get(0x800000000000000F, []))
+    # 91 号：形态③′ 正对照（0x469035 → 55，tag_site 必须是 0x46903f 那条 `or rdx,4`）
+    ok55 = any(a == 0x469035 and b == 0x46903F and k == "FORM3+or"
+               for a, b, k, _ in found.get(0x8000000000000037, []))
+    # 91 号：反面（std/依赖 crate 里同形状的 `0x7840b9 or rax,2` 必须**不折**，仍记 tag 1）
+    ok_no53 = (has(0x8000000000000001, 0x7840B9) and not has(0x8000000000000003, 0x7840B9))
     print("\n== 正对照 ==")
     print("  tag 42 @0x3f20f0 (queue_destroy_obstacle)   : %s" % ("OK" if ok42 else "**失败**"))
     print("  tag 41 @0x3f1b30 (destroy_obstacle)          : %s" % ("OK" if ok41 else "**失败**"))
@@ -579,21 +698,30 @@ def cmd_tags(ctx, only=None, show_uses=False, json_path=None, tsv_path=None,
              "" if ok44 else "（生产点 %s / 消费者 %s）"
              % ("有" if ok44_prod else "缺", "有" if ok44_cons else "缺")))
     print("  tag 15 形态④ 0x474b8d (add_soldier_to_player)  : %s" % ("OK" if ok15 else "**失败**"))
+    print("  tag 55 形态③′ 0x469035 + 0x46903f or rdx,4     : %s" % ("OK" if ok55 else "**失败**"))
+    print("  反面：std 侧 0x7840b9 (+or 2) 仍记 tag 1 不折 tag 3: %s"
+          % ("OK" if ok_no53 else "**失败**"))
     if json_path:
         import json
         json.dump({"so": ctx.so,
                    "tags": {"%d" % t: [[a, b, k, lg] for a, b, k, lg in v]
                             for t, v in sorted(found.items())},
                    "counts": {"%d" % t: len(v) for t, v in sorted(found.items())},
-                   "kinds": dict(kinds)}, open(json_path, "w"), indent=1)
+                   "kinds": dict(kinds),
+                   "form3_mod": {"folded": f3["folded"], "not_game": f3["not_game"],
+                                 "no_mod": f3["no_mod"],
+                                 "sites": [[a, b, c, d, e] for a, b, c, d, e in f3_sites]}},
+                  open(json_path, "w"), indent=1)
         print("\nJSON 已写入 %s" % json_path)
     if tsv_path:
         # 每站点一行：tsv 里 `tag_legacy` = 补形态④ 之前落进的桶（2^63 = tag 0）
         with open(tsv_path, "w") as fh:
             fh.write("# 由 tools/addr_probe.py tags --tsv 生成，不要手改（重跑会覆盖）。\n")
             fh.write("# so=%s\n" % ctx.so)
-            fh.write("# 形态：MAX+add/MAX+inc = ①②；movabs = ③；BASE+add/or/inc/lea = ④\n")
-            fh.write("# tag_legacy = 补形态④ 之前该点落进的 tag（只有形态④ 那批会 != tag）\n")
+            fh.write("# 形态：MAX+add/MAX+inc = ①②；movabs = ③；"
+                     "BASE+add/or/inc/lea = ④；FORM3+add/or/inc/lea = ③′（③ 之后再修饰）\n")
+            fh.write("# tag_legacy = 还没折「再修饰」之前该点落进的 tag"
+                     "（只有形态④ 与 ③′ 那两批会 != tag）\n")
             fh.write("tag\tn\tkind\tsite\ttag_site\ttag_legacy\tn_legacy\towner\tmodules\n")
             for t, v in sorted(found.items()):
                 for a, b, k, lg in v:
@@ -610,15 +738,137 @@ def cmd_tags(ctx, only=None, show_uses=False, json_path=None, tsv_path=None,
         after = Counter()
         for t, v in found.items():
             after[t] += len(v)
+        # after83 = 把形态③′ 折回它的基址 tag（= 83 号当时的口径），好让"91 这一轮的净变化"
+        # 与 83 那轮的 129 处换桶分开点名
+        after83 = Counter()
+        for t, v in found.items():
+            for _, _, k, lg in v:
+                after83[lg if k.startswith("FORM3+") else t] += 1
         with open(counts_path, "w") as fh:
             fh.write("# 由 tools/addr_probe.py tags --counts 生成，不要手改（重跑会覆盖）。\n")
-            fh.write("# so=%s  （口径：四种形态；before = 只认形态①②③）\n" % ctx.so)
-            fh.write("n\tbefore\tafter\tdelta\n")
-            for t in sorted(set(before) | set(after)):
-                fh.write("%d\t%d\t%d\t%+d\n" % (t & 0x7FFFFFFF, before.get(t, 0),
-                                                  after.get(t, 0), after.get(t, 0) - before.get(t, 0)))
+            fh.write("# so=%s\n" % ctx.so)
+            fh.write("# 口径：五种形态。before  = 只认形态①②③ 的直写（形态④ 与 ③′ 都还没折）\n")
+            fh.write("#        after83 = 只折形态④（83 号口径）\n")
+            fh.write("#        after/after91 = 五种全折（91 号现在的口径）；delta91 = 91 号这一轮造成的净变化\n")
+            fh.write("n\tbefore\tafter\tdelta\tafter83\tdelta91\n")
+            for t in sorted(set(before) | set(after) | set(after83)):
+                fh.write("%d\t%d\t%d\t%+d\t%d\t%+d\n"
+                         % (t & 0x7FFFFFFF, before.get(t, 0), after.get(t, 0),
+                            after.get(t, 0) - before.get(t, 0), after83.get(t, 0),
+                            after.get(t, 0) - after83.get(t, 0)))
         print("计数 TSV 已写入 %s" % counts_path)
-    return 0 if (ok42 and ok41 and ok44 and ok15) else 1
+    return 0 if (ok42 and ok41 and ok44 and ok15 and ok55 and ok_no53) else 1
+
+
+def cmd_tags_pe(pe_path, only=None):
+    """同一套五种形态判据，跑在 **PE（Windows `graphwarrust*.dll`）** 上。
+
+    为什么要它：判据必须能跨构建复核（`dispatch/91` §1.5）。ELF 侧靠 `.eh_frame` FDE，
+    PE 侧靠 `.pdata` 的 `RUNTIME_FUNCTION`；**game 侧判据**也换成 PE 特有的**COFF 符号表**：
+
+        一个站点算 game 侧 ⇔ 它所在 `.pdata` 函数里**有**属于 `graphwarrust` crate 的符号，
+        或者它前面最近的符号名里带 `graphwarrust`（两条取并：`/O2` 下同一函数常被拆到
+        多个 `RUNTIME_FUNCTION`，只看一条会漏，见 docs/07 §7.1.1b 的跨构建小节）。
+
+    与 ELF 侧的差别（照实记）：PE 侧**没有** `panic::Location`，符号归属按"函数"而不是按
+    "投票"，粒度更粗；所以 PE 上折出来的点数**不能**与 ELF 的 3 处直接比大小。
+    地址一律打印 **RVA**（`ImageBase = 0x180000000`，与 `tools/pe_dis.py` 同口径）。
+    """
+    import bisect
+    import pe_dis as P
+    from capstone import Cs, CS_ARCH_X86, CS_MODE_64
+
+    pe = P.PE(pe_path)
+    sec = pe.text
+    md = Cs(CS_ARCH_X86, CS_MODE_64)
+    md.detail = True
+    ins_list = list(md.disasm(pe.read(sec["vaddr"], sec["rawsize"]),
+                              pe.image_base + sec["vaddr"]))
+    # `.pdata` → 精确函数边界；再给每条边界打 "里面有没有 graphwarrust 符号"
+    pr = next((x for x in pe.secs if x["name"] == ".pdata"), None)
+    ranges = []
+    if pr:
+        raw = pe.read(pr["vaddr"], pr["rawsize"])
+        for o in range(0, len(raw) - 11, 12):
+            b, e, _u = struct.unpack_from("<III", raw, o)
+            if b and e and e > b:
+                ranges.append((b, e))
+        ranges.sort()
+    rstarts = [b for b, _ in ranges]
+    game_rng = set()
+    for a, nm in pe.syms:
+        if "graphwarrust" not in nm:
+            continue
+        i = bisect.bisect_right(rstarts, a) - 1
+        if 0 <= i < len(ranges) and ranges[i][0] <= a < ranges[i][1]:
+            game_rng.add(ranges[i][0])
+
+    def is_game(rva):
+        nm, delta = pe.name_at(rva)
+        if nm and "graphwarrust" in nm:
+            return True
+        i = bisect.bisect_right(rstarts, rva) - 1
+        return 0 <= i < len(ranges) and ranges[i][0] in game_rng
+
+    found, f3, folds = {}, Counter(), []
+    for i, ins in enumerate(ins_list):
+        if ins.mnemonic != "movabs" or len(ins.operands) != 2:
+            continue
+        d, s = ins.operands
+        if d.type != X86_OP_REG or s.type != X86_OP_IMM:
+            continue
+        v = s.imm & 0xFFFFFFFFFFFFFFFF
+        rva = ins.address - pe.image_base
+        if v == TAG_SENTINEL:
+            got = _tag_of_reg(ins_list, i, d.reg)
+            if got:                      # 形态①② 的 legacy = 折出来的 tag（不是 v！）
+                found.setdefault(got[0], []).append((rva, got[2], got[0]))
+        elif v == TAG_BASE:
+            got = _tag_after_base(ins_list, i, d.reg)
+            if got:
+                found.setdefault(got[0], []).append((rva, got[2], v))
+            else:
+                found.setdefault(v, []).append((rva, "movabs", v))
+        elif v >> 32 == 0x80000000:
+            got = _mod_after(ins_list, i, d.reg, v & 0x7FFFFFFF)
+            if got and is_game(rva):
+                n, site, mnem = got
+                found.setdefault(TAG_BASE + n, []).append((rva, "FORM3+" + mnem, v))
+                f3["folded"] += 1
+                folds.append((rva, v & 0x7FFFFFFF, n, site - pe.image_base, mnem,
+                              pe.name_at(rva)[0]))
+            else:
+                f3["not_game" if got else "no_mod"] += 1
+                found.setdefault(v, []).append((rva, "movabs", v))
+    kinds = Counter(k for v in found.values() for _, k, _ in v)
+    before = Counter(lg for v in found.values() for _, _, lg in v)
+    after = Counter({t: len(v) for t, v in found.items()})
+    print("== %s（PE）：五种形态 ①②③③′④ ==" % os.path.basename(pe_path))
+    print("  站点总数 %d；tag 桶 %d" % (sum(len(v) for v in found.values()), len(found)))
+    for k in ("MAX+add", "MAX+inc", "movabs", "BASE+add", "BASE+or", "BASE+inc", "BASE+lea",
+              "FORM3+add", "FORM3+or", "FORM3+inc", "FORM3+lea"):
+        print("  %-9s x%d" % (k, kinds.get(k, 0)))
+    print("  ③′：候选 %d 处（折 %d / 非 game %d / 无修饰 %d）"
+          % (f3["folded"] + f3["not_game"], f3["folded"], f3["not_game"], f3["no_mod"]))
+    for r, bn, n, sr, mnem, sym in sorted(folds):
+        print("    %#09x  movabs 0x8000…|%-2d + %#09x %-4s ⇒ tag %-2d  %s"
+              % (r, bn, sr, mnem, n, P.short(sym) if sym else "?"))
+    # after83 = 把 ③′ 折回基址 tag（= 83 号口径），好把 83 与 91 两轮的换桶分开点名
+    after83 = Counter()
+    for t, v in found.items():
+        for _, k, lg in v:
+            after83[lg if k.startswith("FORM3+") else t] += 1
+    print("  换桶（①②③ 直写 → 83 口径 → 91 口径；只列有变化的 tag）：")
+    for t in sorted(set(after) | set(before) | set(after83)):
+        if only is not None and (t & 0x7FFFFFFF) != only:
+            continue
+        if before.get(t, 0) != after83.get(t, 0) or after83.get(t, 0) != after.get(t, 0):
+            print("    tag %-3d  %d → %d → %d%s"
+                  % (t & 0x7FFFFFFF, before.get(t, 0), after83.get(t, 0), after.get(t, 0),
+                     "   ← 91 号这一轮" if after83.get(t, 0) != after.get(t, 0) else ""))
+    print("  合计：%d → %d → %d" % (sum(before.values()), sum(after83.values()),
+                                    sum(after.values())))
+    return 0
 
 
 def _owner_loc(ctx, start, end):
@@ -653,14 +903,17 @@ def main(argv):
     p = sub.add_parser("jt"); p.add_argument("va")
     p.add_argument("--owner", default=None, help="只保留落在该函数 FDE 范围内的目标")
     p.set_defaults(fn=lambda c, x: cmd_jt(c, int(x.va, 16), None, x.owner))
-    p = sub.add_parser("tags", help="扫全 .text 的事件 tag 生产点（四种 materialize 形态）")
+    p = sub.add_parser("tags", help="扫全 .text 的事件 tag 生产点（五种 materialize 形态）")
+    p.add_argument("--pe", default=None, metavar="DLL",
+                   help="改在 PE（Windows graphwarrust*.dll）上跑同一套判据；地址打印 RVA")
     p.add_argument("--only", type=lambda s: int(s, 0), default=None, help="只看某个判别值 n")
     p.add_argument("--json", default=None, metavar="PATH",
                    help="把扫描结果（tag → 站点/形态 + 形态计数）写成 JSON，供 fixtures 复扫对拍")
     p.add_argument("--tsv", default=None, metavar="PATH", help="每站点一行写 TSV（带 tag_legacy 列）")
     p.add_argument("--counts", default=None, metavar="PATH", help="每 tag 一行写 TSV：修前/修后/差")
-    p.set_defaults(fn=lambda c, x: cmd_tags(c, x.only, json_path=x.json,
-                                            tsv_path=x.tsv, counts_path=x.counts))
+    p.set_defaults(fn=lambda c, x: (cmd_tags_pe(x.pe, x.only) if x.pe else
+                                    cmd_tags(c, x.only, json_path=x.json,
+                                             tsv_path=x.tsv, counts_path=x.counts)))
     args = ap.parse_args(argv)
     return args.fn(Ctx(args.so), args)
 
