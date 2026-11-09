@@ -6031,3 +6031,157 @@ $PY tools/gw2_step_drive.py --display 127.0.0.1:95 --data-dir $R/gamedata \
 ../.venv/bin/python tools/addr_probe.py dis     0x4785f0    # handle_tick：读 3 / 写 3
 ../.venv/bin/python tools/addr_probe.py dis     0x479520    # turn_info 三道门 + spawn + 写 1
 ```
+
+---
+
+## 47. 门⑤的**命中分支打到了**（`0x51a0e0`）：自建协议服务器把"本连接的第一个 `player_info` 是 Bot"造出来（2026-11-10，`dispatch/86`）
+
+> 任务书：[`dispatch/86-last-tier-and-gate5.md`](../dispatch/86-last-tier-and-gate5.md)。分支 `agent/last-tier`，
+> 基于 `CG@7323124`，私有 `CARGO_HOME` / `CARGO_TARGET_DIR`。
+> 目标构建 `libgraphwarrust.so` sha256 **`9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`**
+> （与 §46 同一份，`sha256sum .reference/game/libgraphwarrust.so` 复核过）。地址一律 **vaddr**。
+
+### 47.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | §46.5 留下的"命中分支没走到"补上了吗 | **补上了**：4 局受控实验里 **2 局**打出 `gate5_found`（`0x51a0e0`） | **观测**（真游戏 + 真帧格式 + frida 逐条读数） |
+| ② | 用什么局打中的 | **自建服务器**（[`tools/gate5_serve.py`](../tools/gate5_serve.py)）按真帧格式发 `BotAdded` → 再发**第一发** `PlayerInfo`（Bot 的 `player_id`）；真游戏客户端当**加入方**（LAN 列表里点 `Join`） | 观测 |
+| ③ | 命中时**做了什么** | 门⑤ 命中 ⇒ `0x51a0e0` 直接收尾：`LocalPlayerManager` 那 5 条请求（59/50/52/54/66）**零次**发出 | 观测，**两条独立证据**（frida `send` 钩子 0 次 + 线上 0 帧） |
+| ④ | 原版局面为什么打不到（§46.5 结论） | **现场复现**：第一发是本机玩家（229）之后，Bot 的 `player_info` 连门⑤ 都**不求值**（门④ `0x519f9d` 旧 len != 0 先拦）| 观测 |
+| ⑤ | §46.5 提的"**连接重建**"这条路 | **成立**：第二条 `NewConnection` ⇒ 客户端**第二次** `connected_to_server_event`（`ev08` = 新 id）⇒ 门④ 的旧 len 清 0 ⇒ 下一个 `player_info` 又走门⑤，**命中** | 观测 |
+| ⑥ | 这证明了原版服务器会产出这种顺序吗 | **不证明**（见 47.6）：顺序是我们造的；命中分支的**可达性与行为**是观测，原版 LAN 局的**发生概率**仍是 `未知` | — |
+
+### 47.1 为什么走"自建服务器"（三条更"真"的路都堵着）
+
+| 路 | 结论 | 依据 |
+|---|---|---|
+| 两个真客户端，A 建房加 Bot、B 加入 | **推断：结构上打不到** —— 门③ 要求 `player_info.connection_id == 本连接 id`（`0x519f71`），而 §46.3 的运行时原文里 Bot 232 的 `player_info` 是 `conn=228`（= 房主的连接）⇒ B 的这道门对 Bot 不成立；A 自己的**第一发**又永远是 A 自己。⚠️ **本轮没有跑这一局**，所以这条是**推断**（缺的那一步是"第二台真客户端加入 + 抓 B 收到的 `player_info` 序列"） | §46.3 + §46.5（推断） |
+| 纯 Bot 客户端 | **不存在**：客户端 UI 只能以"玩家"身份加入，"只当 Bot"没有入口 | `docs/09` §1（LAN 流程） |
+| 让原版客户端连**我们的** broker | **已证死**：CLI 参数是死的（`std::env::args()` 从 `lang_start` 取，GDExtension 里从不运行）+ TLS 根证书编进 rodata | `docs/09` §6.6.2（6 组受控实验） |
+| **LAN 发现 + 自建 TCP 对局服务器** | **成了**：LAN 列表接受裸 9 字段 `GameInfo`（变体 C），点 `Join` 就连它 `address` 里的 `host:port` | `docs/09` §6.6.3（真客户端当加入方，我们控制报文序） |
+
+### 47.2 造局：一条命令一局（约 60–90 s）
+
+```text
+① LAN 发现：UDP 灌一条 9 字段 `GameInfo`（`docs/09` §1.1.1 的格式，结尾带 "\n"，无长度前缀）
+   room_name="gate5" / game_state="Setup" / current_player_count=2 /
+   address="127.0.0.1:46701" / axis_mode="EveryUnit" / function_mode="NormalFunction" /
+   turn_mode="SequentialTurns" / time_mode="Timer1m" / locked=false
+   ⇒ LAN 大厅出现一行 `gate5  2`（截图：右侧 `Join` 按钮在 1920×1160 的 (1842, 209)）
+   ⚠️ 同时发给 127.0.0.1 与 255.255.255.255 时列表里会出现**两行**（同一房间两次广播）——
+      这不是 bug，是按两条 target 各灌一次的结果。
+② 对局通信：TCP，`u16` 大端长度 + JSON（`docs/09` §1.1）。先按 `docs/archive/33` §1 的顺序回 7 条
+   （`NewConnection` + 6 条 `*Info`），再按 `--mode` 决定后面发什么。
+③ 探针仍是 `tools/frida_cpm_gates.js`（17 个钩子，装好时自校验 `bytes_519fb1 = 49 8d 7e 30 e8` 等三处）。
+```
+
+`--mode` 的四种（就是 47.3 那张表）：
+
+```text
+hit         BotAdded{232} → (等 2 s) → PlayerInfo{232, conn}      ← 第一发是 Bot
+nobot       不发 BotAdded → PlayerInfo{232, conn}                 ← 第一发不是 Bot（表空）
+selffirst   PlayerInfo{229} → BotAdded{232} → PlayerInfo{232}     ← 复现原版局面（Bot 晚到）
+rebuild     PlayerInfo{229} → BotAdded{232} → NewConnection{231} → PlayerInfo{232, 231}
+```
+
+### 47.3 四局矩阵（判据 = frida 逐条 + 线上帧，两者分开记）
+
+| 局 | 第一发 `player_info` | 门⑤ 求值次数 | 出口 | frida `send`（5 个调用点） | 线上收到的那 5 条请求 |
+|---|---|---|---|---|---|
+| **hit** | Bot 232，**表里已有** | 1 | **`gate5_found`**（`0x51a0e0`） | **0 次** | 只有 CPM 自己申报的那 5 条（值是 Bot 的真名，见 47.4） |
+| nobot | 232，表空 | 1 | `gate5_miss`（`0x51a084`） | **5 次**（`pid` 全 232） | 同样的 5 条，但值是**客户端默认值**（`CG`/`yellow`/`regular_eyes`/`soldier_helmet`/`rank 0`） |
+| selffirst | 229（本机玩家） | **1**（只在那发上） | miss | 5 次（`pid` 全 229） | 第二发（Bot 232）**连门⑤ 都没到**（门④ 拦，`vec_len=1`）⇒ 它之后线上**一条新请求都没有**（232 那 5 条是 `BotAdded` 之后 **65 ms** CPM 自申报的，见 47.4） |
+| rebuild | 229 先；重建后 232 | **2** | miss → **`gate5_found`** | 5 次（`pid` 全 229） | 重建后那发 Bot 的 `player_info` 之后**零新增请求**（232 的 5 条同样来自 CPM 自申报） |
+
+> 判读要点：`hit` 那一局线上**确实**出现了 5 条请求，但它们的值是真名（`ChatGPT` / `bot_5` / `no_face` /
+> `no_hat` / `rank=null`）且在 `BotAdded` 之后 **59 ms** 就到了 —— 那是 `add_computer_player`（`0x478fc0`）
+> 的**自申报**（§2 第 18 行的 59/50/52/54/66 五个 `add_event` 点），**不是** `LocalPlayerManager` 发的；
+> 后者那 5 个调用点（`0x51a170`/`0x51a247`/`0x51a31e`/`0x51a3f5`/`0x51a451`）在这一局**一次都没执行**。
+
+### 47.4 命中那一局的原文（`--mode hit`）
+
+```text
+服务器 → 客户端（时间 = 服务器单调钟，同一条连接）
+  NewConnectionRequest{major_version:"2.0", minor_version:"60"}      ← 客户端先说
+  ← NewConnection{connection_id:230} + TurnModeInfo/GameStateInfo/GameNameInfo/
+    AxisModeInfo/FunctionModeInfo/TimeModeInfo（7 条，顺序照 docs/archive/33 §1）
+  NewPlayerRequest{connection_id:230}                                ← 客户端 +61 ms 自己发的
+  ← BotAdded{connection_id:230, player_id:232, level:1000}
+  NameRequest{232,"ChatGPT"} / SkinGraphicsRequest{232,"bot_5"} /
+  FaceGraphicsRequest{232,"no_face"} / HatGraphicsRequest{232,"no_hat"} /
+  RankRequest{232,null}                                              ← +59 ms，CPM 自申报（frida send 钩子 0 次）
+  ← PlayerInfo{player_id:232, connection_id:230}                     ← 本连接的第一发，+2.0 s
+  （此后 20 s 只有 1 Hz 的 TickRequest，**没有**任何 59/50/52/54/66）
+```
+
+```text
+frida（同一局，逐条原文；`t` = 探针自己的单调钟 ms）
+{"type":"connected_to_server","tag":"8000000000000007","ev08":230,"ev0c":32687,"t":30441}
+{"type":"get_module_wk","ret":"0x28ec1d60","cpm_box":"0x28ec1d60","match_cpm":true,"t":30537}   ← bot_added 分派那条
+{"type":"cpm_add","key":232,"level":1000,"s":50,"n":5,"limit":200,"t":30537}
+{"type":"bot_key","key":232,"state":3,"raw":"e8000000 72400c01 03000000 … e8030000 32000000 05000000 c8000000","t":30537}
+{"type":"player_info","pid":232,"conn":230,"connected":1,"my_conn":230,"vec_len":0,
+ "pid_in_bot_table":true,"bot_table_keys":"232","hit_state":3,"t":32491}                      ← 五道门的现场取值
+{"type":"gate5_enter","weak_target":"0x26e5d0a0","cpm_box":"0x1f0c9710","t":32491}
+{"type":"get_module_wk","ret":"0x1f0c9710","cpm_box":"0x1f0c9710","match_cpm":true,"t":32491}  ← 门里那一条
+{"type":"gate5_found","t":32491}                                                               ← ★ 命中出口
+```
+
+`raw` 那 120 字节与 §46.3 的表逐字段同形：`+0x00` key = `e8 00 00 00` = 232、`+0x08` state = 3、
+`+0x60` level = 1000、`+0x64` 精英 = 50、`+0x68` 每槽 = 5、`+0x6c` limit = 200。
+
+### 47.5 正对照（两条，都在同一套 harness 里跑）
+
+1. **同一条链仍完整打出**：`hit`/`nobot`/`selffirst`/`rebuild` 四局的 `gate5_enter`（`0x519fb1`）都打出来了，
+   且门里那次 `get_module_wk`（`0x46c5a0`）的返回值**逐次等于** CPM 盒基（`match_cpm=true`，4/4）——
+   与 §46.2 ④ 一致 ⇒ 探针与判据本身没坏。
+2. **未命中出口仍会发 5 条**：`nobot` 局同一发 `player_info` 走 `0x51a084` ⇒ frida `send` 5 次
+   （`raw` 里 `3b…`/`32…`/`34…`/`36…`/`42…` = tag 59/50/52/54/66，`pid` 全是 232），线上 99 ms 后收到同样 5 条。
+   ⇒ "命中 = 不发"这个判断不是靠"什么都没看到"得出的，而是**同一实验条件下有对照**。
+
+### 47.6 边界：这**不**证明原版服务器会产出这种顺序
+
+命中分支**可达**（真二进制、真帧格式、合法枚举值）与**命中时的行为**（一条不发）现在都是观测；
+但"原版 LAN 局里会不会出现'本连接第一发是 Bot'"**仍未观测到**，理由照 §46.5 原样成立：
+原版服务器把 Bot 挂在**房主**连接上、AI/Bot 只能在 `GameSetup` 里加，而房主自己的第一发永远是自己。
+⇒ 剩下的缺口只有一个：**原版那台服务器是否会先广播 Bot 的 `player_info`**。要闭合它，得在真房源上
+抓一次"加 Bot 时的报文顺序"（`tools/capture_net_raw.js` 现成），看 `BotAdded` 与 `PlayerInfo` 的先后与连接归属。
+
+**本轮实际跑了什么 / 没跑什么**（免得后面的人误读上面的表）：
+
+* 跑了的四局全部是**我们当服务器**（4 局 × 一次连接，`gate5_enter` 共 5 次、`gate5_found` 2 次）；
+* **没跑**：两台真客户端互连（47.1 第 1 行，推断）、纯 Bot 客户端（入口不存在）、
+  把原版客户端指向自家 broker（已由 `docs/09` §6.6.2 证死，本轮没有重试）；
+* 原版 LAN 局（人+Bot / AI-vs-AI / 战役）那三局的读数来自 §46，本轮**没有**重跑。
+
+### 47.7 顺带观测：`connected_to_server_event` 是**客户端本地**产生的
+
+`docs/07` §3.3 给 `ConnectedToServer` 标的证据档是"逐位（无抓包）"。本轮 4 局里 **3 局**
+（`hit`/`selffirst`/`rebuild`）服务器**只**发了那 7 条握手，客户端仍在 `NewConnection` 之后 **59–61 ms**
+自己发出 `NewPlayerRequest{conn}` ⇒ `connected_to_server_event`（tag 7）由客户端在收到 `NewConnection` 时
+**本地**产生，不依赖线上那条 `ConnectedToServer`；线上那条**也收**（`nobot` 局服务器先读到一帧
+`TickRequest`，于是多发了一条 `ConnectedToServer{230}`，客户端随后同样发出 `NewPlayerRequest{230}`）。
+⇒ 两条来源**不互斥**，"必须先收到线上 `ConnectedToServer`"这条推断**不成立**。
+
+### 47.8 复跑（每条都能原地跑；样本只写 `.agent-work/`，不进冻结快照）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+# ① 一局（Xvfb 私有 display；自建服务器 + 真游戏 + frida 必须**同一条命令**里起，见 §42.8 第 4 条）
+$PY tools/gate5_serve.py --mode hit --out $R/serve.jsonl --collect 20 &   # LAN 广播 + 脚本化报文
+$PY tools/gw2_step_drive.py --display 127.0.0.1:95 --data-dir $R/gamedata \
+    --out $R/game.jsonl --snap-dir $R/snaps --js tools/frida_cpm_gates.js --settle 22 --keep-alive 8 \
+    --steps 'w1, c 1344 622, w3, c 1842 209, w8, s afterjoin, w12, r mark'
+#    `--mode nobot|selffirst|rebuild` 就是另外三局（47.3 的表）
+# ② 判据（不用 frida 也能判：线上那 5 条请求在不在）
+grep -c '"tag_name": "NameRequest"' $R/serve.jsonl        # hit=5（CPM 自申报）/ 另外看玩家 pid
+grep -o '"type": "gate5[a-z_]*"' $R/game.jsonl | sort | uniq -c
+```
+
+* **样本**：`.agent-work/cg/fh86/logs/{serve,game}_{hit,nobot,selffirst,rebuild}*.jsonl`（**没进冻结快照**，
+  也没写 `fixtures/`）。
+* **驱动退出码 139 不代表失败**（`nobot` 局就是 139）：那是 `dev.kill(pid)` 之后的 SIGSEGV（§46.8 第 3 条），
+  JSONL 完整 ⇒ 判"打到没有"看 JSONL 的类型计数。
+* **本轮改动**：新增 [`tools/gate5_serve.py`](../tools/gate5_serve.py)（自建协议服务器 + LAN 广播，只写日志、
+  不改游戏内存）；本文本节。`src/` 只动了 `_scaffold/root_wiring.rs` 的**注释**（档位分布口径 19/2/1/0）。

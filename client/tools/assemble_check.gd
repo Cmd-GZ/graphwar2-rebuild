@@ -240,7 +240,7 @@ func _initialize() -> void:
 			% (WIRED.size() - PACKAGED.size()))
 	ok(int(root_node.call("container_stub_manager_count")) == PACKAGED.size(),
 		("容器类型是 `_scaffold` 包装/标记的槽 == %d（SlotKind::Stub；"
-			+ "**不是**档位 stub 的那 1 个）") % PACKAGED.size())
+			+ "**不是**档位 stub —— 任务 86 起档位 stub = 0 个）") % PACKAGED.size())
 
 	# —— 档位（四个词）：这里断总数与词表，逐槽在下面那个 22 循环里断 ——
 	var tally := {"wired": 0, "layout": 0, "assembled": 0, "stub": 0}
@@ -256,7 +256,9 @@ func _initialize() -> void:
 		and int(tally["layout"]) == int(TIER_TALLY["layout"])
 		and int(tally["assembled"]) == int(TIER_TALLY["assembled"])
 		and int(tally["stub"]) == int(TIER_TALLY["stub"]),
-		"四档计数 == wired 18 / layout 2 / assembled 2 / stub 0（实际 %s）" % tally)
+		("四档计数 == wired %d / layout %d / assembled %d / stub %d（实际 %s）"
+			% [TIER_TALLY["wired"], TIER_TALLY["layout"], TIER_TALLY["assembled"],
+				TIER_TALLY["stub"], tally]))
 	ok(int(tally["wired"]) + int(tally["layout"]) + int(tally["assembled"]) + int(tally["stub"])
 		== WIRED.size(), "四档合计 == %d（每个槽只报一档）" % WIRED.size())
 	ok(outside.is_empty(),
