@@ -29,12 +29,31 @@
             已派 4 份、**全部被我 interrupt 暂停**（因装 GPU 插件要重启 dsh），工作树见 §7
             未派 4 份：57 新证据 / 58 调用图角色 / 61 GPU 相似度 / 62 全语料对拍
 
-护栏（2026-11-09 18:30 实测；**以 fixtures/guardrails.json 为准**）
+护栏（2026-11-09 22:00 实测；**以 fixtures/guardrails.json 为准**）
   fire 647/1080 ｜ batch 647/1080 ｜ batch_conv 637/1080（种类 1075×3）
   死亡 366/385 ｜ 挖洞 207/294 ｜ 语料指纹 403 文件/401 回放（冻结）
-  cargo test **1710** / 0 failed ｜ --features gdext-bindings **1816** / 0 failed
-  headless **14** 个脚本 **1827** 条断言（assemble_check **226** / play_flow 135 / entity_drawer 366）
-  selftest **714 / 0 / 1 skipped**
+  cargo test **1753** / 0 failed ｜ --features gdext-bindings **1859** / 0 failed
+  headless **14** 个脚本 **1890** 条（play_flow **183** / assemble_check **241**）
+  selftest **714 / 0 / 1 skipped**（**flake 已修，现在可信**）
+  coverage 527 可归属：逐位 88 / 观测 439 / 推断 0 / 未做 0
+  manager 档位 **19 wired / 2 layout / 1 assembled / 0 stub**
+
+⚠️ **`selftest` 为什么现在可信**（第十六轮 76 号）：真因是"关卡种子是骰子、3.5% 抽到 0 障碍"，
+  现已钉死 `ONLINE_TEST_SEED=8`；`GW2_SELFTEST_MATCH_SEED=89` 可**确定性复现**那个红（`696/1/2`）。
+  ⇒ **报红就是真红**；万一怀疑，重跑一次并注明次数。
+
+⚠️ **指纹默认打分集已从 5 列改成 3 列**（第十六轮 78 号：`gram+scal+caller` 打平 88.15%，显存 −77%）。
+  ⇒ **复现旧 12,736 夹具必须加 `--featset full`**，否则结果不同且**不报错**。
+
+⚠️ **`tools/addr_probe.py tags` 有已知盲区**（第十六轮 77 号）：漏第四种 materialize 形态
+  `movabs 0x8000…000` + `add rax,N`（N≠1）⇒ 这些点全记进 tag 0（2235 处）。
+  **凡用该工具下过"某 tag 只有 N 处"的结论都要复查。**
+
+⚠️ **档位表四处必须同步**：`root_wiring.rs` 的 `status()` 臂 / 四个计数常量（编译期 assert 和==22）/
+  `assemble_check.gd` 的 `WIRED_TIER[22]`+`TIER_TALLY` / `docs/161-manager-gaps.md`。
+⚠️ **造 bot 局别再用"档 5"**（82 号：同一弹窗格子 6 次给 5 个不同 Bot，图标不决定难度）。
+⚠️ **回放界面时序仍是"我方自定"**（81 号：`0x4c6f40` 播放时钟未解）；只有**节奏**是观测的（80 号 §44）。
+⚠️ **口径纪律**：并发跑的墙钟一律作废；测量串行 + 限线程；CUDA 分阶段计时必须 `synchronize()`。
   coverage 527 可归属：逐位 88 / 观测 439 / 推断 0 / 未做 0
   manager 档位 **14 wired / 2 layout / 6 assembled / 0 stub**（第十五轮 74 号升了三格）
 
