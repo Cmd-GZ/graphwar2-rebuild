@@ -10269,3 +10269,72 @@ A/B：把本轮改动全部 `git stash` 回基线（426 行旧局面机仍在）
 | 3 | selftest 的 **LAN 大厅 flake**（2 条成对红，≈1/4） | 已 A/B 定位到**基线也有** | 另开任务（本轮允许范围里没有它） |
 | 4 | `advance_dt` 的 `dt > 1.0 s`：旧实现夹、驱动不夹 | **刻意偏离**（§57.5） | 要改语义就另开任务（`dispatch/84` §5 明令不许"顺手修成一致"） |
 | 5 | 回放界面的时序与控件 | **未知** | 与 §56.6 #7 同一条（`0x4c6f40` 的播放时钟没解） |
+
+## 58. **此处故意不接**：`KernelBus::drive_frame` 不进播放屏（决策 + 触发条件），并把它钉成会红的断言（2026-11-10，任务 85）
+
+> 数字与实测证据在 [`06-verification.md`](06-verification.md) **§49**；本节只写**客户端这一侧**的结论、
+> 不许再动的地方、以及下一轮怎么接着做。
+> 相关前史：§44（原版节奏真值）、§48（那条循环的逐指令形态）、§52.5 / §53.6（两次评估后没接）、
+> §56（回放已经改成按 tick 推）、§57（旧回放局面机退役）。
+
+### 58.1 结论
+
+**不接。** `client/src/screens/play_screen.gd` 的 `_process` 里**不出现** `drive_frame`，
+`src/_scaffold/...` 那两处候选接线点（Rust 根节点的 `process`、播放屏的 `_process`）**本轮一处都没动**。
+
+一句话判据：**接线会改"读数"，不会改"画面"**（`docs/06` §49.1 实测：内核钟从 0.49 推到 60，
+画出来的准备圈弧**逐位没变**），而**可见时序的真缺口在消费者**——
+曲线的揭示仍走 `_advance_curve(delta)` 的**帧累加**（`play_screen.gd:1038`），
+原版那条路是 `get_fractional_tick`（`0x519530`）每帧喂 `GraphwarPlane::draw` 的喂点循环。
+先把驱动接上 = 屏幕上什么都没变、`frames()/ticks()` 却从 0 变成每秒 +65/+60，
+**下一个人会以为曲线是 tick 驱动的**。这种"看起来接上了"比"诚实地空着"贵得多（`AGENTS.md` §0 第 6 条）。
+
+### 58.2 `V` 到底是哪一支（本轮实测，替换 §52.5 第 2 条的措辞）
+
+| | 谁在供 `V` | 生产里会不会走到 | 依据 |
+|---|---|---|---|
+| **代偿支**（现在走的） | `set_ring(id, …, v=_curve_tick)` + `set_ring_base(id, _curve_tick)`（`play_screen.gd:1246–1249`） | **会** | `_curve_tick` 是帧 delta 累加、每发重置、到 `_curve_final_tick` 饱和的**假钟** |
+| **真查询支** | `EntityDrawer::kernel_clock()` → `KernelBus::fractional_tick()`（`entity_drawer_class.rs:1288`，原版 `0x4b2e10`） | **不会**：要求"位置表非空 **且** 门 attach"，生产里两者都没有 | `client/src/**` 72 个 `.gd` 里 0 处 `pos_set_position`/`kernel_push_position`/`gate_attach` |
+
+⇒ §52.5 说的"接上会静默改 `V`"要**拆成两半**：**读数**会被改（`fractional_tick` 0 → 60·t），
+**画面**不会改。而"把 V 单独接到内核钟"有确定后果：`H = min(π/6 + (V − base)/60, 1.0733775)`，
+`base` 还是 `_curve_tick`（≈1）⇒ H **立刻饱和**，准备圈永远全开（实测张开 1.0472 → 2.1468 rad）。
+**V 与 base 是一对相位**，只能同一支钟、同一改动里换。
+
+### 58.3 触发条件（写成可执行的三条 + 一条会红的断言）
+
+```text
+T1  V 与 base 同时换支：`set_fractional_tick(_, _curve_tick)` / `set_ring(…, _curve_tick)` /
+    `set_ring_base(_, _curve_tick)` 三处实参同时不再用 `_curve_tick`，
+    或 EntityDrawer 位置表出现生产写入者（`kernel_push_position`；原版在 0x3e3347）
+T2  门有对应物：在**联机局**与**回放局**各量一次 0x518400 的每秒次数
+    （原版门 = `0x515dd1` 判 `[backend+0x1e0]`；我方只有 `_running`，而它在联机/回放也为真）
+T3  生产路径出现 `tick_event` 的订阅者（否则泵只是在抽干队列：实测无订阅者时投递 0 条）
+
+落地顺序（**别跳步**）：T1 → 同一改动里加 `if <对局中>: drive_frame(delta)` → 再删 `_advance_curve` 的累加。
+先删后接会有一帧两倍速；先接后删 = 两只钟并存一版。
+```
+
+`client/tools/play_flow_check.gd` **5.1 组的最后一条**就是 T1 的 tripwire：T1 一到它变红并指回本节。
+同一处还有两条**不许悄悄改**的前提断言：播放屏里没有 `drive_frame`、曲线仍按帧 delta 推。
+
+### 58.4 本轮新增/改动的断言（回归保护，不是复原证据）
+
+| 脚本 | 组 | 新增 | 条数 |
+|---|---|---|---:|
+| `client/tools/process_loop_check.gd` | 第 9 组「生产路径不接驱动」 | ① 生产源码扫描（`client/src/**` 72 个 `.gd`，0 命中；正对照 = 本脚本自己在调 `drive_frame`）② 无订阅者时泵照跑但队列被抽干、投递 0 条 ③ **接上之后 5 个读数变成什么**（65 帧 / 1 秒 ⇒ 60 tick、60 泵、125 探针、5 帧 0 tick） | **49 → 66** |
+| `client/tools/play_flow_check.gd` | 5.1 / 5.2 组 | V 的三处实参、位置表无生产者、T1 tripwire、**弧逐位不变**、正对照**饱和**（`last_arc` 的 12 个实参） | **185 → 199** |
+
+**变异测试**（证明这两组不是"永远绿"）：在 `_process` 里插一行 `drive_frame` ⇒
+`PROCESS_LOOP 64 passed, 2 failed` / `PLAY_FLOW 198 passed, 1 failed`；把 `set_ring` 的实参改成 `0.0`
+（假装 T1 到达）⇒ `PLAY_FLOW 197 passed, 2 failed`（含 tripwire）。两处还原后全绿。
+
+### 58.5 遗留 / 未做
+
+| # | 项 | 状态 | 缺什么 |
+|---|---|---|---|
+| 1 | 播放屏 `_process` 接驱动 | **故意不接**（本节） | §58.3 的 T1/T2/T3 |
+| 2 | 曲线揭示改成"按 `fractional_tick`" | 未做（`_advance_curve` 仍是帧 delta） | 原版喂点循环（`GraphwarPlane::draw` 的喂点段）逐条读出来 |
+| 3 | `EntityDrawer` 位置表的生产写入者（原版 `0x3e3347`，远端事件处理器） | 未接 | `graphwar_remote_event_handler` 那个模块 |
+| 4 | 原版 `base`（`map[i]`）的写入者 | **未知**（§46.6） | 与 §58.2 的"同一支钟"是同一件事，先解它 |
+| 5 | 回放里同时有两个 tick 源会不会打架 | **推断**（`GwReplayDriver` 自己按 tick 推） | 跨线程观测（原版服务端线程另有 60/s 的泵，`0x451be5`） |

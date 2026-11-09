@@ -19,7 +19,7 @@ extends SceneTree
 ## | 2 | 射手轮转（先自增再取 / 跳过死兵 / 全灭 -1 / 双玩家交替 / `setup_flat` 归组） | **逐位**（`0x463da0`：`0x463f40`–`0x463f58`、`0x463fc7`–`0x463fca`、`0x463fb6`、`0x464016`） |
 ## | 3 | 同时回合制的收集（公告顺序 / 重复 / 不在表里 / 攒齐 / 关轮） | **观测**（`docs/141` §4：130/130 批按公告顺序） |
 ## | 4 | 播放屏源码里**不再有**旧流程分支，且确实调的是 Rust 的两个入口 | **观测**（读文件文本，等价于 `grep`） |
-## | 5 | `KernelBus::drive_frame` 能不能在播放屏 `_process` 接上（**评估**，本轮**没有**接） | **观测**（真引擎里驱动出来的 tick 数） |
+## | 5 | `KernelBus::drive_frame` **接不接**：决策 = **不接**（§58.3 给了可执行触发条件）；本节仍验"内核那一侧能驱动"，另加 V 的实测（读数变了、画面没变） | **观测**（真引擎里驱动出来的 tick 数 + 真 `_draw` 的弧实参） |
 ## | 6 | **弹道生命周期**（`GwShotFlow`）：命中按点序号落地 / 飞完 / 只结算一次 / 整批结算 | 落地时序 **观测**（`0x472814` 死亡块取点序号；`docs/14` §7.3 106/106 按 `start_tick` 升序） |
 ## | 7 | **回合超时**（`GwTurnClock`）：六档时长 + 三个合取项 + 我方闩 | 谓词 **观测**（`0x470989`–`0x4709ec`）；闩是**我方**兜底 |
 ## | 8 | **AI 回合闸门**（`GwBotTurn`）：思考倒计时 + 一发直线 | **我方自定**（原版是 `aigen` 进化器，时序未观测） |
@@ -358,10 +358,10 @@ func _initialize() -> void:
 	ok(src.contains("func _check_match_over") and src.contains("_last_verdict"),
 		"播放屏仍保留 `_check_match_over()` —— 但它只**应用** Rust 的结论（排版/结束标志）")
 
-	# ---------------- 5. `drive_frame` 能不能接到播放屏 `_process`（**评估**） ----------------
-	# 结论写在 `docs/16-client.md` §52.5：**技术上能接**（下面三行就是全部接线），本轮**没接**，
-	# 因为 `tick` 在播放屏里还没有消费者（曲线的揭示仍按帧 delta 推）且 `EntityDrawer` 的 `V`
-	# 与这条总线是**同一台** tick handler ⇒ 先接会静默改掉它的读数，没有真帧可对。
+	# ---------------- 5. `drive_frame` 的接线**决策**（§58，任务 85）：**不接** ----------------
+	# 下面四条仍然验"内核那一侧能驱动"（= 80 号 §44.7 的方案技术上可执行）；
+	# **本轮的决策是不接**，判据与可执行触发条件在 `docs/16-client.md` §58.3。为什么不接，
+	# 由 5.1（源码前提）与 5.2（实测：读数变了、画面没变）两组钉住。
 	if ClassDB.class_exists("KernelProcessHost"):
 		var host: Object = ClassDB.instantiate("KernelProcessHost")
 		host.call("reset")
@@ -382,6 +382,77 @@ func _initialize() -> void:
 		host = null
 	else:
 		ok(false, "KernelProcessHost 不在扩展里（应随 --features gdext-bindings 注册）")
+
+	# ---------------- 5.1 决策钉死：`V` 的来源 / 前提 / 触发条件（§58.2–§58.3） ----------------
+	# 80 号的五条真值（`docs/06` §44）说的是**原版**：每帧一次 `drive_frame`、泵跟着 tick。
+	# 我方**现在不接**，因为可见时序的真缺口不在"谁来驱动"，而在"谁来消费"：
+	# 曲线的揭示仍按**帧 delta** 累加 `_curve_tick`（`_advance_curve()`），一帧都没读过 tick handler。
+	# 下面几条把"现在不接"的**前提**钉住 —— 前提一变，断言就红，指回 §58.3 的落地顺序。
+	ok(src.contains("set_fractional_tick\", _curve_tick"),
+		"V（喂给 `GraphwarPlane`）的实参仍是 `_curve_tick`（帧 delta 累加）")
+	ok(src.contains("SOLDIER_HIT_RADIUS, _curve_tick"),
+		"V（喂给 `EntityDrawer.set_ring`）的实参仍是 `_curve_tick`")
+	ok(src.contains("seconds * CURVE_TICKS_PER_SECOND"),
+		"曲线仍按帧 delta 推（`_advance_curve(seconds)`），不是按 tick ⇒ 此刻接驱动就是两只钟并存")
+	ok(not src.contains("drive_frame"), "播放屏里**没有** `drive_frame` 调用（这条就是决策本身）")
+	var writers: PackedStringArray = _scan_src_symbols(
+		["pos_set_position(", "kernel_push_position", "gate_attach"])
+	ok(writers.is_empty(),
+		"生产路径**没有**位置表/门的生产者（`client/src/**` 命中：%s）⇒ `EntityDrawer` 的 V 走代偿支、不读内核钟"
+			% [writers])
+	var t1_reached: bool = (not (src.contains("set_fractional_tick\", _curve_tick")
+			and src.contains("SOLDIER_HIT_RADIUS, _curve_tick"))) or not writers.is_empty()
+	ok(not t1_reached,
+		"**触发条件 T1 未到达**：V 仍由 `_curve_tick` 供给 ⇒ 决策「不接」仍成立（红了先读 §58.3）")
+
+	# ---------------- 5.2 实测：内核钟推 60 格，画面**一位不变**；一旦 V 由它供给就**饱和** ----------------
+	# 探针 = 真 `EntityDrawer._draw` 发出去的弧（`last_arc()` 的 12 个实参；[3]/[4] = 起止角）。
+	#   生产口径（位置表空 + 门没 attach）⇒ V 取 `prep` 里的 `_curve_tick`，内核钟读数**没人读**；
+	#   正对照（填表 + attach 门）⇒ 同一条弧立刻改由内核钟决定，而且**饱和**
+	#   （`H = min(π/6 + (V − base)/60, 1.0733775)`，V = 60、base 仍是 `_curve_tick` 的 1.0）
+	#   ⇒ "只把 V 接到内核钟"会让准备圈**永远全开**：V 与 base 必须同一支钟，两处一起改。
+	if ClassDB.class_exists("KernelProcessHost"):
+		var host2: Object = ClassDB.instantiate("KernelProcessHost")
+		host2.call("reset")
+		var ed: Control = ClassDB.instantiate("EntityDrawer")
+		ok(ed != null, "`EntityDrawer` 可用于摆一具准备态（V 的消费者）")
+		if ed != null:
+			ed.set_size(Vector2(1000.0, 600.0))
+			root.add_child(ed)
+			await process_frame
+			# = `play_screen.gd` 那两处实参（这里用 1.0 代替 `_curve_tick`）
+			ed.call("set_ring", 7, 5.0, 5.0, 2.0, 1.0)
+			ed.call("set_ring_base", 7, 1.0)
+			await process_frame
+			await process_frame
+			var a0: PackedFloat64Array = ed.call("last_arc", 0)
+			ok(a0.size() == 12 and absf((a0[4] - a0[3]) - 2.0 * PI / 6.0) < 1e-6,
+				"生产口径：H = π/6 ⇒ 张开 %.9f rad（V = base = 1.0）" % (a0[4] - a0[3]))
+			ok(String(ed.call("kernel_clock_source")) == "tick_handler",
+				"内核钟读数来自真 tick handler（不是验收用的 override）")
+			host2.call("set_elapsed_nanos", 60 * 16_666_666)
+			var n60: int = int(host2.call("drive_frame", 0.0))
+			await process_frame
+			await process_frame
+			var a1: PackedFloat64Array = ed.call("last_arc", 0)
+			ok(n60 == 60 and absf(float(host2.call("fractional_tick")) - 60.0) < 1e-6,
+				"驱动到 60 个 tick（内核钟读数确实变了：%.1f）" % float(host2.call("fractional_tick")))
+			ok(a0 == a1,
+				"**画出来的弧逐位没变** ⇒ V 不读内核钟（读数变了、画面没变 = §58.2 的结论）")
+			# 正对照：把表填上 + attach 门 ⇒ 同一段弧改由内核钟决定
+			ok(bool(ed.call("gate_attach")) == true, "正对照：attach Life/Turn 两份 manager")
+			ed.call("gate_set_alive", 7, true)
+			ed.call("gate_set_turn", 9001, PackedInt64Array([7]))
+			ed.call("pos_set_position", 7, 5.0, 5.0, 2.0)
+			await process_frame
+			await process_frame
+			var a2: PackedFloat64Array = ed.call("last_arc", 0)
+			var spread2: float = a2[4] - a2[3]
+			ok(String(ed.call("gate_source")) == "managers" and spread2 > (a0[4] - a0[3]) + 1.0,
+				"正对照：V 改由内核钟（60）供给 ⇒ 张开 %.9f rad（探针有判别力）" % spread2)
+			ok(absf(spread2 - 2.0 * 1.0733774899765125) < 1e-5,
+				"H **饱和**在 1.0733775 rad（base 仍是 `_curve_tick` 的 1.0）⇒ V 与 base 必须同一支钟")
+			ed.queue_free()
 
 	# ---------------- 6. 弹道生命周期（`GwShotFlow` → `ShotLifecycle`） ----------------
 	# 这一组钉的是"哪条命中什么时候落地 / 算不算飞完 / 结算几次"——
@@ -760,6 +831,39 @@ func _initialize() -> void:
 		% [REPLAY_OLD_PLAYER_PATH, old_lines, str(left)])
 
 	_finish()
+
+## 在 `client/src/**` 里搜一组符号，返回 `文件:符号` 的命中清单（空 = 生产路径里没有这些调用）。
+##
+## 负结论必须配正对照（`AGENTS.md` 合并纪律 A.4）：调用方先在 `client/src` 里数 `.gd` 的个数，
+## 个数为 0 时"没命中"没有意义 —— 调用处断言了扫描面非空。
+func _scan_src_symbols(symbols: Array) -> PackedStringArray:
+	var files := PackedStringArray()
+	_gd_files("res://src", files)
+	if files.size() <= 20:
+		push_error("[gw2] 源码扫描面只有 %d 个 .gd，负结论不可信" % files.size())
+	var hits := PackedStringArray()
+	for path in files:
+		var text: String = FileAccess.get_file_as_string(path)
+		for sym in symbols:
+			if text.contains(String(sym)):
+				hits.append("%s:%s" % [path, sym])
+	return hits
+
+func _gd_files(dir_path: String, out: PackedStringArray) -> void:
+	var d := DirAccess.open(dir_path)
+	if d == null:
+		return
+	d.list_dir_begin()
+	var entry := d.get_next()
+	while entry != "":
+		if not entry.begins_with("."):
+			var p := dir_path.path_join(entry)
+			if d.current_is_dir():
+				_gd_files(p, out)
+			elif entry.ends_with(".gd"):
+				out.append(p)
+		entry = d.get_next()
+	d.list_dir_end()
 
 ## 本机原版存档目录里的那个样本的**绝对路径**（没有则返回空串）。
 ##
