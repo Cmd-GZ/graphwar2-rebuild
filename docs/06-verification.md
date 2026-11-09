@@ -6031,3 +6031,229 @@ $PY tools/gw2_step_drive.py --display 127.0.0.1:95 --data-dir $R/gamedata \
 ../.venv/bin/python tools/addr_probe.py dis     0x4785f0    # handle_tick：读 3 / 写 3
 ../.venv/bin/python tools/addr_probe.py dis     0x479520    # turn_info 三道门 + spawn + 写 1
 ```
+
+## 47. **`y0` 不是"算两遍"，是"从一张表里抄两遍"**：采样器在 `0x3c2bc0` 里**只有一处**调用点、`y0` 是 `[rsp+0x108]` 从 `GraphwarPlanePosManager` 表项 `+0x10` **逐字节拷贝**的；那张表**全库只有 2 个写入者**，两个都是字节拷贝 ⇒ 82 号那 1 ulp **不产生在 `0x3c2bc0` 里、也不产生在表的写入处**；与语料那 13 批**不是同一个观测量**（那批差在 `x`）（2026-11-09，`dispatch/87`）
+
+> 任务书：[`dispatch/87-1ulp-y0-twice.md`](../dispatch/87-1ulp-y0-twice.md)。起点 `CG@7323124`，分支 `agent/1ulp-y0`，
+> 私有 `CARGO_HOME` / `CARGO_TARGET_DIR`。目标构建：`libgraphwarrust.so` sha256
+> **`9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187`**（= `steam/2026-08-28`）。
+> 本节地址一律 **虚地址**（vaddr = 模块内偏移 = `gw+…`），Ghidra 地址 = 本地址 + `0x100000`。
+>
+> **为什么是这一节**：§45.7 里 82 号量到"同一士兵、同一 `x0` 进 `0x3c2530` 时，开火那次采样的 `y0`
+> 与评分那几次相差正好 1 ulp（run1 **4/4**，run2/run3 **0 ulp**）"，并给了两条 `FunctionPoints` 的
+> 序列化调用者（`gw+504559` / `gw+3d59c4`）。任务书要的是**指令级**：这两条 `y0` 各自由谁给、
+> 在哪一步分叉。本节把它查到了"**能指到指令**"，同时**否掉**了两个最像的候选位置，并给出剩下的唯一缺口。
+
+### 47.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 两条 `FunctionPoints`（`gw+504559` / `gw+3d59c4`）的生产点与算式 | **两条走的是同一个序列化器 `0x50eb20`**（`{"FunctionPoints":{"owner_id":…,"start_x":…,"start_y":…,"end_x":…}}`，`start_y` = `event+0x10`，由 f64 写出器 `0x3cb760` 落笔）。区别只在**谁来叫它、包成什么信封**：`gw+504559` 在 `0x504500`（一次性把**一个 Event** 变成字符串）里 ← 槽 `0x9bafb8` ← `0x3d89e0`（Event→JSON，6 个调用点 = `remote_event_handler` / `client_connection_handler` / `server_connection_handler` / broker，都是"要发出去/转出去"的地方）= **网络报文**；`gw+3d59c4` 在 **`0x3d5740..0x3d6076` = `graphwar_game_recorder.rs`**（Location `150:81`）里，写的是 `{"event":<Event>,"tick":<n>}` = **回放文件记录**。**算式：两条都没有算式** —— 都是把 `event+0x10` 那 8 字节交给同一个 f64 写出器 ⇒ **1 ulp 不在这两个点上产生，在结构体里** | **逐位**（指令）+ **观测**（82 的两条报文） |
+| ② | 两条路径的 `y0` 在哪一步分叉 | **不在 `0x3c2bc0` 里**：它体内对采样器槽 `0x9bac98` 的引用**全函数只有 1 处**（`0x3c30c1`），`y0` = `xmm1 ← [rsp+0x108]`，而 `[rsp+0x108]` 在采样器之前只被 `0x3c2f35` 写过一次（另一处 `0x3c414b` 是后面组装结果时复用同一栈槽，47.2 有说明）—— 值来自**表项 `[r8-0x10]`**（= 表项 `+0x10`），`x0` 来自同一表项 `[r8-0x18]`。**`y0` 是抄的，没有任何运算**。**也不在表的写入处**：那张表（`GraphwarPlanePosManager` 的 `HashMap<u32,(f64,f64,f64)>`）全库**只有 2 个写入者**，两个都是 `movups/movq` 逐字节拷贝（见 47.3）。⇒ 分叉只能在**"两条路各自拿到的是哪一张表/哪一刻的表"**（47.4） | **逐位**（指令） |
+| ③ | 与语料那 13 批是否同源 | **不同源**（就观测量而言已证）：§38.5 那 13 批是 **`x` 侧**（把 point.x 向零挪 1 ulp，13/13 复现回放），而本节这条是 **`y` 侧**；而且那 13 批的差是 **NaN vs 数**，NaN 来自 `f(x0)`（`sin(u)/u` 在 `u=0`），**是 `x` 的函数，有限的 `y0` 动不了它**；量级上也对不上（1 ulp 的 `y0` ≈ 1e-15，比 `c` 的 ulp 与 `{:.3}` 边界低 12 个量级）。**是否"同一类机制"（同一个 `Point` 被两条路各算一遍）仍未证** —— 见 47.5 | **推断**（结构论证 + §38 的 13/13 复现，未做反事实） |
+| ④ | 能不能指到分叉指令 | **没有**。得到的是**有界否定**：`0x3c2bc0` 内不可能（唯一采样点 + 纯拷贝）；表的两个写入者不可能（字节拷贝）；`calculate_shot_results` 全库**只有 2 个调用点**（开火 / AI 评分），**两条采样是两次不同的调用，不是一次调用里的两遍**。剩下唯一缺口：**AI 那条路的计算器输入里那张表是哪一个对象**（47.6 给了 3 行 frida 就能定的配方） | — |
+
+一句话：**"`y0` 算两遍"这句话在指令级不成立** —— 它只被**抄**两遍（两次 `calculate_shot_results` 调用各抄一次），
+而"抄"的两端都不是算术；所以 82 号量到的 1 ulp 要么来自**两条路读的表不是同一张**，要么来自
+**两次采样之间表被改写过一次**，二者都没有静态证据能定。这条线**降级但不能关**。
+
+### 47.1 两条 `FunctionPoints` 的序列化点（①）
+
+**同一个序列化器**：`0x50eb20`（`FunctionPointsEvent`），字段名与顺序由 `.rodata` 字面量定死：
+
+| 字面量 vaddr | 内容 | 谁读它 |
+|---|---|---|
+| `0x1c55e9` (len 14) | `FunctionPoints` | `0x50eb54` 写外层名 |
+| `0x19f6c8` (len 8) | `owner_id` | `lea rsi` @ `0x50ebb3`，值 = `event+0x20`（i64，`call 0x3cc060` @ `0x50ebc4`） |
+| `0x1c506b` (len 7) | `start_x` | `lea rsi` @ `0x50ebd2`，值 = `event+0x8`（f64，`call 0x3cb760` @ `0x50ebe6`） |
+| `0x1c5072` (len 7) | `start_y` | `lea rsi` @ `0x50ebf4`，**值 = `event+0x10`**（f64，`call 0x3cb760` @ `0x50ec05`） |
+| `0x1c5079` (len 5) | `end_x` | `lea rsi` @ `0x50ec13`，值 = `event+0x18`（f64，`call 0x3cb760` @ `0x50ec27`） |
+
+（`0x3cb760` 管 f64、`0x3cc060` 管整数 —— 旁证：回放信封的 `tick` 字段（`0x1b925c`，len 4）走的就是
+`0x3cc060`（`0x3d59e6`），而 `tick` 是整数。）
+
+* 变体下标 = **37**：`0x504640` 用 `[rdi]` 当判别式，`test/cmovs` 把负数 `^ 0x8000…` 再查跳表 `0x1c48d0`；
+  第 **37** 项 → `0x5046c9` → `jmp 0x50eb20`。与 [`src/events.rs`](../src/events.rs) 的
+  `FunctionPoints = 37` **对得上**（**逐位**：跳表条目）。
+* ⚠ 顺带一条**负结论**（老实记）：`FunctionPoints` 的判别式 `0x8000000000000025` 在整个 `.text` 里
+  **只出现 1 次**，在 `0x4758b5`，而且是一条 `cmp`（`if event.tag == FunctionPoints` 的 match 臂），
+  **不是构造点**。我按三种形态扫过构造点（`movabs imm64` / `movabs 0x8000…+add 0x25` / `or`），
+  **三种都是 0 个构造点** ⇒ 这个变体在这份构建里是**被搬来搬去**的（`Event` 一旦建好就不再重写判别式），
+  或者用了本文没扫到的形态。**这条不影响 ① 的结论**（两条 `fnpoints` 的差别在 `event+0x10` 的**值**上，
+  而值由 `0x3cb760` 原样输出），但下一轮若要从"构造点"反查生产者，得先把这个形态找出来。
+
+**两条各自的信封**：
+
+| | 序列化点 | 信封 | 谁调它 |
+|---|---|---|---|
+| **网络** | `0x504554 call 0x504640` → ret `gw+504559` | `{"FunctionPoints":{…}}`（一个 Event 就是一个字符串） | `0x504500` 的唯一用户是**重定位槽 `0x9bafb8`**（`R_X86_64_RELATIVE`，addend `0x504500`），使用点 `0x3d89f6` in **`0x3d89e0`**（Event→JSON 字符串）；`0x3d89e0` 的 6 个调用者：`0x3dee00`(`graphwar_remote_event_handler.rs`)、`0x437ce0`(`server_broker_request_connection`/`server_broker_handler`)、`0x4592d0`(`client_connection_handler`)、`0x459690`、`0x45a560`、`0x45aab0`(`server_connection_handler`) |
+| **回放** | `0x3d59bf call 0x3cb910`（该函数末尾 `jmp 0x504640`）→ ret `gw+3d59c4` | `{"event":<Event>,"tick":<n>}`：字段名 `event` @ `0x1bf7d2`(5) → 再 `tick` @ `0x1b925c`(4) | `0x3d5740..0x3d6076` = **`graphwar_game_recorder.rs`**（Location `150:81`）；调用者 `0x3a5760` / `0x3b0830`（`graphwar_root_node.rs`）、`0x3d4fa0`（`graphwar_game_recorder.rs`） |
+
+⇒ ① 的判决：两条 `fnpoints` 的**生产点**是 `0x3d89e0`（网络）与 `0x3d5740`（回放），**算式都是"无"**
+——同一个 `0x3cb760` 把 `event+0x10` 打印出来。82 号那 1 ulp 差在**结构体**里，往上游找才有意义。
+（本节比 §45.7 多的是：**两个 ret 各自挂在哪个函数、包成什么信封、走哪个模块**，都是第一次落到地址。）
+
+### 47.2 `y0` 在 `0x3c2bc0` 里是**抄**的，不是算的（② 的前半）
+
+`0x3c2bc0` = `GraphwarShotCalculator::calculate_shot_results`（FDE `[0x3c2bc0, 0x3c5c4d)`，12 432 B）。
+它按一个 `Vec<u32>`（士兵 id）循环（`0x3c2db5: mov r12d,[rbp]`），每个 id 做一次采样。**采样调用点全函数唯一**：
+
+```text
+3c3099  lea   rdi,[rsp+0xb0]          ; sret
+3c30a1  movq  xmm0,[rsp+0x90]         ; x0
+3c30aa  movq  xmm1,[rsp+0x108]        ; y0      ← ★
+3c30b3  lea   rsi,[rsp+0x10]          ; &Vec<Token>（从 map B 的 get 结果拷来）
+3c30b8  movq  xmm2,[rsp+0x110]        ; step（= [arg2+0]，开火路径实测 0.01）
+3c30c1  call  [0x9bac98]              ; calculate_function（0x3c2530）
+```
+
+`[rsp+0x108]`（`y0`）与 `[rsp+0x90]`（`x0`）在**采样器之前**只有一处写入，而且就是相邻两条指令：
+
+```text
+3c2f20  movsd xmm0,[r8-0x18]          ; 表项 +0x8  → x0
+3c2f26  movsd [rsp+0x90],xmm0
+3c2f2f  movq  xmm0,[r8-0x10]          ; 表项 +0x10 → y0     ← ★
+3c2f35  movq  [rsp+0x108],xmm0
+3c2f3e  mov   r14b,1                  ; "表里查到了"
+```
+
+⚠ 这两个栈槽在**后面**（组装结果那一段 `0x3c413a` / `0x3c414b`）会被复用，所以"只写一次"的说法
+不成立；但采样器只从"表项命中"那条路径进（`0x3c2f3e: r14b=1` → `0x3c305b: test r14b,al`），
+那条路径上它读到的**必是本轮刚抄的那份**。
+
+`r8` 是 hashbrown 桶：`r8 = ctrl − idx*0x20`，`cmp r12d,[r8-0x20]` 是 key（`u32` sold id），
+所以表项布局是 **`{u32 key@0, f64 @+8, f64 @+0x10, f64 @+0x18}`（stride 0x20）**，
+`x0`/`y0` 就是 `+8`/`+0x10` 那两个 f64。**中间没有任何算术**（没有 `addsd`/`mulsd`/`subsd` 碰过这两个栈槽）。
+
+**交叉验证**（不靠"看起来像"）：这个布局与那张表的 `get` 完全对得上 —— `0x3c62b0`
+（`graphwar_plane_pos_manager.rs:116`）在命中时是
+
+```text
+3c63bb  mov   rax,[r9-0x8]            ; 第三个 f64
+3c63bf  mov   [rbx+0x18],rax          ; → out+0x18
+3c63c3  movdqu xmm0,[r9-0x18]         ; 前 16 字节 = x,y
+3c63c9  movdqu [rbx+0x8],xmm0         ; → out+0x8 (x) / out+0x10 (y)
+3c63ce  mov   ecx,1                   ; Option::Some
+```
+
+⇒ 表的值类型 = `(f64 x, f64 y, f64 z)`，`get` 返回 `Option<(f64,f64,f64)>`；
+`0x3c2bc0` 取的 `+8/+0x10` 与 `get` 的 `out+8/out+0x10` **是同一对偏移**。
+
+### 47.3 那张表是谁的、谁写它（② 的后半）
+
+**是谁的**：`GraphwarPlanePosManager`（`docs/02-module-map.md` §22.3：x86 `add/get/wk` =
+`0x46a0d0` / `0x46ad30` / **`0x46c9e0`**，`size_of` = **24**）。三条独立的指针链把它钉死：
+
+1. 开火路径 `fire_functions`（`0x470eb0`）在 `0x471095` / `0x47159d` 两次 `call 0x46c9e0`
+   （= `get_module_wk::<GraphwarPlanePosManager>`），把 **`[wk+0x28]`** 放进给计算器的输入结构
+   （`0x4715dc: [rsp] = [rax+0x28]` → `0x4717d2/0x4717d6: [rsp+0x58] = [rsp]`，而 `[rsp+0x58]` 就是
+   输入结构的 **`+0x10`** 字段 —— 与 `0x3c2bc0` 读的 `[arg2+0x10]` 同一格）。
+2. 那个 `[wk+0x28]` 的**被锁地址**与 `0x3c2bc0` 锁的地址**同形**：两边都是
+   `p = …; lea rcx,[p+0x10]; lock cmpxchg [rcx]`，且 `[p+0x30]` 是 len、`[p+0x18]` 是 ctrl。
+3. 表的 `insert` `0x3c64c0` 也是取 `[rdi+0x10]` 当表指针（`0x3c64e8`），而它被
+   `0x3e331d: rdi = wk + 0x18` 调用 —— `wk+0x18+0x10 = wk+0x28`，**同一个字段**。
+
+**谁写它（全库只有 2 个调用者，都是字节拷贝）**：
+
+| 写入者 | 写什么 | 形态 |
+|---|---|---|
+| 关卡生成器 `0x465a70` @ **`0x465f85`**（`graphwar_level_generator.rs`，9 个 Location） | `(x, y, 0.5)`：`x ← [rsp+0x70]`、`y ← [rsp+0x90]`、第三位 = `movabs 0x3fe0000000000000`（**0.5**） | `movaps`/`movsd` 两个栈槽拷进 24 字节临时值，再 `insert(id, &值)` |
+| 事件处理器 `0x3e2830` @ **`0x3e3347`**（`graphwar_remote_event_handler.rs`，89 个 Location） | **`FunctionPoints` 事件的 `start_x/start_y/end_x` 原样**：`movups xmm0,[rbx+8]`（16 B）+ `movq xmm0,[rbx+0x18]`（8 B）→ `[rsp+0x30..0x48]`；key = `mov ebp,DWORD PTR [rbx+0x20]`（`owner_id` 的**低 32 位**） | 纯 `movups`/`movq` 拷贝，**没有任何浮点运算** |
+
+⇒ ② 的判决（有界否定）：**`0x3c2bc0` 内部不可能产生 1 ulp**（唯一采样点 + 纯拷贝）；
+**表的两个写入者也不可能产生 1 ulp**（唯一形态是字节拷贝；`0x3c64c0` 只有这 2 个调用者）。
+所以 82 号量到的"同一 `x0`、两个 `y0`"只能来自 **两条路读的不是同一张表 / 不是同一刻的表**。
+
+**顺带一条新观测（原版源码级事实）**：这张表把**关卡生成器的出生点**和**上一次
+`FunctionPoints` 事件的三元组**存在同一格里 —— 于是第三位 `z` 前一种是 **0.5**、后一种是 **`end_x`**。
+所以"士兵的起点"不是从实体读的，**是从这张表读的**；一次开火之后，表里那格就被这条
+`FunctionPoints` 的 `start_x/start_y/end_x` 覆盖。（这也解释了为什么 §45.7 里
+"执行路径、报文 `start_y`、`pts[0].y` 三者自洽"：它们本来就是同一个数被抄出来的。）
+
+### 47.4 两次采样是**两次调用**，不是一次调用里的两遍（② 的定位）
+
+`calculate_shot_results` 全库**只有 1 个入口槽 `0x9bacb0`、只有 2 个使用点**（`addr_probe.py callers 0x3c2bc0`）：
+
+| 调用点 | 所在函数 | 模块（Location 投票） | 计算器输入结构从哪来 |
+|---|---|---|---|
+| **`0x471825`** | `0x470eb0` | `graphwar_game_state_manager.rs`（31 个 Location） | **栈上现搭**：`0x4717cd..0x47180e` 铺 `[rsp+0x48]` —— `+0x00` = `movabs 0x3f847ae147ae147b`（**0.01**）、`+0x10` = `[rsp]`（= PlanePosManager 的 `[wk+0x28]`）、`+0x28` = `rbp`、`+0x30` = `r13`、`+0x39` = mode |
+| **`0x51a9a1`** | `0x51a750` | `graphwar_function_evolutionator.rs`（即 AI 评分；§42.3 的 `0x51a750`） | **调用方给的**：`rsi = rbx+0x18`（`rbx` = 本轮的 `rsi`），只把 `step` 现写一次（`0x51a994: [rbx+0x18] = xmm0`），其余字段（含 `+0x10` 那张表）都是**外面传进来的** |
+
+层层向上：`0x51a750` ← `0x51b440` / `0x51d080`（都只有 1 个调用者 `0x47a300`）← 更外层。
+**在整个 AI 区 `0x51a000..0x51f000` 里，`0x46c9e0` / `0x3c62b0` / `0x3c64c0` / `0x3c66a0`
+的 `call rel32` 是 0 条**（扫法：全 `.text` 的 `call` 按目标过滤；正对照 = 同一扫法在
+`0x470eb0` / `0x3e2830` / `0x465a70` 里各命中 1~2 条）⇒ **AI 那条路自己不碰这张表，
+表是外面传进来的**。所以 ② 的缺口只剩一句话：**传进去的是不是同一个对象、同一刻的同一张表**。
+
+### 47.5 与语料那 13 批是否同源（③）
+
+**不同源**（就"差在哪个观测量"而言已证；"是不是同一类机制"仍未证）。三条依据：
+
+1. **§38.5 已经把语料那 13 批钉在 `x` 上**：喂真 `0x3c5f70` 时只把 `point.x` 向零挪 1 ulp，
+   **13/13 复现回放**（`docs/06` §38.0 的"真二进制喂别的点"一行）。本节这条是 **`y`**
+   （`start_y` / `pts[0].y`），而且 82 的 `pt_eq_start_exact` 是 6/6 **0 ulp**。
+2. **结构上 `y0` 动不了那 13 批**：那 13 批的差是 **NaN vs 数**，NaN 来自 `f(x0)`
+   （`sin(u)/u` 在 `u=0` 处 `0/0`，§38.3(b)）—— `f` 只吃 `x`；`c = y0 − f(x0)` 在 `y0` 有限时
+   该是 NaN 就是 NaN，改 `y0` 不会把 NaN 变成 `1.197`。
+3. **量级上也对不上**：1 ulp 的 `y0`（`y≈12` 时 ≈ 1.8e-15）比 `c` 自己的 ulp、比 `{:.3}` 的
+   四舍五入边界（§45.5 实测 1.99e-4~3.81e-4）低 12 个量级；在 `|c| ≥ 1e13` 那种定标点上
+   **直接就被吸收掉**（`y0` 那点差异连 `c` 的最低位都碰不到）。
+
+⇒ 结论：**这两条 1 ulp 是两个不同观测量的两条线**，不能互相解释。剩下没证的只有"它们是不是
+同一个**类型**的毛病（同一个 `Point` 被两条路各算/各抄一遍）"—— 若要合并，需要**一批同时
+在 `start_y` 与 `c` 上都差 1 ulp 的样本**，目前**一批都没有**（本节与 §38 都是零交叉）。
+
+### 47.6 缺什么（下一轮照这 3 步就能收）
+
+1. **表的对象身份**（本节唯一缺口）：在 `0x471825` 与 `0x51a9a1` 两个调用点，各读一次
+   `[[&self]+0x10]`（表的 `Arc` 指针）与"该 soldier id 的表项 16 字节"。**同一发里两个指针不等
+   ⇒ 分叉 = 两张表；相等 ⇒ 分叉 = 两次采样之间有人改过表（那时再去抓 `0x3e3347` 的写入时刻）**。
+   三行 frida（挂 `0x471825` / `0x51a9a1` 的 `onEnter`，读 `this.context.rsi` 的 `+0x10`，
+   再对 id 做一次 `0x3c62b0` 直调）就够，**不需要重开 AI-vs-AI 局**：人打的一发也能比。
+2. **82 的原始 JSONL 已经没了**：`.agent-work/cg/wt-82` 整棵被回收，本节**没有**复核 82 的
+   逐发数字（`8605a07314912840` vs `8705a07314912840` 等 3 对 hex 是照抄 §45.7 的）。要复核只能重跑
+   §45.9 那条配方（约 4 min / 局）。
+3. **"没有第三个写入者"这条是"扫到 2 个调用者"级别的否定**：`0x3c64c0` 的 `call rel32` = 2、
+   重定位槽 = 0、`lea/movabs` = 0（`plane_pos_chain.py` ⑧）。**但**若有人绕过 `insert` 用
+   `get_mut`/`entry` 原地改表项，本节**没有扫**（`0x3c6b40` 里的 `0x486610` 只看不改）。
+   要补：对 `HashMap<u32,(f64,f64,f64)>` 的 `RawTable` 写入口全扫一遍（没做）。
+
+### 47.7 复跑（每条都能原地跑）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+export GW2_SO=<WS>/.reference/steam/2026-08-28/libgraphwarrust.so    # sha256 9a538115…
+
+# ① 本节的**全部**静态断言（sha 不对就直接退，不会给你假绿）
+$PY tools/plane_pos_chain.py             # 8 组断言 + ②b「槽 0x9bac98 只 1 处」+ ⑧「insert 只 2 个调用者」
+$PY tools/plane_pos_chain.py --self-test # 正对照：故意写错的期望必须被抓到
+$PY tools/plane_pos_chain.py --verbose   # 每条断言附上实际指令
+
+# ② 人工复核（和工具无关的三条）
+$PY tools/addr_probe.py callers 0x3c2bc0   # 只 2 处：0x471825 / 0x51a9a1
+$PY tools/addr_probe.py callers 0x3c64c0   # 只 2 处：0x3e3347 / 0x465f85
+$PY tools/addr_probe.py locs    0x3d5740   # => graphwar_game_recorder.rs
+$PY tools/addr_probe.py dis     0x50eb20   # start_y 落在 event+0x10
+```
+
+### 47.8 本轮改动清单（`src/` **一个字节没动**）
+
+| 文件 | 内容 |
+|---|---|
+| [`tools/plane_pos_chain.py`](../tools/plane_pos_chain.py) | **新增**：把 §47 的整条链（计算器只认 `[arg2+0x10]` / 唯一采样点 / 两个栈槽是表项的拷贝 / `get` 的 24 字节三拷贝 / `insert` 的 24 字节值 + u32 key / 事件处理器的原样抄写 / 关卡生成器的 0.5 第三位 / `insert` 只有 2 个调用者 / 槽 `0x9bac98` 在 `0x3c2bc0` 内只 1 处）做成**指令级断言**；`.so` 的 sha256 先比，不符直接非 0；带 `--self-test` 正对照 |
+| [`docs/06-verification.md`](06-verification.md) | **新增本节（§47）** |
+
+**没有改动**：`src/`、`client/`、`fixtures/`、`fixtures/guardrails.json`、`dispatch/`；
+`.agent-work/` 里只有反汇编缓存与探针草稿（不入库）。
+
+### 47.9 验收
+
+| 项 | 结果 |
+|---|---|
+| ① 两条 fnpoints 的生产点与算式 | **网络** = `0x3d89e0`（Event→JSON）← 槽 `0x9bafb8` ← `0x504500`，ret `gw+504559`，信封 `{"FunctionPoints":{…}}`；**回放** = `0x3d5740`(`graphwar_game_recorder.rs`)，ret `gw+3d59c4`，信封 `{"event":…,"tick":…}`；**两条共用序列化器 `0x50eb20`，`start_y` = `event+0x10` 由 `0x3cb760` 原样输出 ⇒ 算式 = 无** |
+| ② 分叉点 | **指不到单一指令，但两侧都被否掉**：`0x3c2bc0` 内对采样器只有 1 处引用（`0x3c30c1`），`y0` = `[rsp+0x108]` ← 表项 `[r8-0x10]`（纯拷贝，无算术）；表的写入者只有 2 个（`0x465f85` / `0x3e3347`），都是字节拷贝；`calculate_shot_results` 只有 2 个调用点（开火 / AI 评分） |
+| ③ 与语料那 13 批同源吗 | **不同源**（`x` 侧 vs `y` 侧；NaN 只由 `f(x0)` 决定；量级低 12 个数量级）—— **"同一类机制"未证**（无一批同时差两侧） |
+| ④ 缺什么 | 表的**对象身份**（3 行 frida：两个调用点各读 `[[&self]+0x10]` + 该 id 的表项）；82 的原始 JSONL 已被回收（本轮未复核）；未扫 `get_mut`/`entry` 这类绕过 `insert` 的原地写 |
+| `cargo test --offline` | **1753 passed / 0 failed**（`src/` 未动；复跑命令见 §47.7 上方环境） |
+| `tools/plane_pos_chain.py` | **rc=0**（8 组断言全过）；`--self-test` **rc=0** |
+| `tools/check_doc_refs.py` | **rc=0** |
