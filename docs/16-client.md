@@ -9863,7 +9863,8 @@ cargo test --offline --lib -- graphwar_play_screen_control                  # 30
    （`0x474b65`），再 `0x474b8d movabs 0x8000…000` + `0x474b97 add rax,0xf` → `0x474ba5` 发 (15)。
    ⇒ **键值极性 = 士兵 → 主人**（观测），旧文档的"默认广播/推断"升级为观测。
    ⚠️ 这条同时暴露 `tools/addr_probe.py tags` 的**盲区**：`movabs 0x8000…000 + add rax,N` 被记进 tag 0，
-   所以按 tag 数点数会漏掉它（`docs/161` C10）。
+   所以按 tag 数点数会漏掉它（`docs/161` C10）。**任务 83 已修**（认第四形态）：tag 0 2235 → **2106**、
+   tag 15 45 → **46** 处，`0x474b8d` 现在由工具直接归到 tag 15 ⇒ 本节这条结论**不变**，且可复跑。
 3. **`Graphics` 的 168 B（旧说法"`0xa8` 之后还有 `0x30` 字节"）是错的**：`0xa8 = 168` 正好是
    `size_of`，三张表 `+0x18/+0x48/+0x78` 各 `0x30` 铺到 `+0xa8` 结束；没解的是**表前面**的 `0x18` 头
    （`+0x00` 弱自句柄 / `+0x08` 事件通道 Rc / `+0x10` 容器 Weak，建盒 `0x522710` 逐条写）。
@@ -9871,7 +9872,8 @@ cargo test --offline --lib -- graphwar_play_screen_control                  # 30
    三支共用提交代码（`0x46910e` 从 `rsp+0x10` 取 tag）⇒ 这才是"字面量扫描只看到基址"的原因。
 4. **`FunctionHistoryRecorder` 的 33/35 裁决（G5）= 35**：订阅名串 `0x1bfccd` = `function_info_event`
    （全文唯一引用点）+ 处理器闸 `isize::MAX+0x24` = `0x8000…0023` = 35；`function_fire_event`(33) 的串
-   只有 2 个引用点（都在名字↔tag 表里）、tag 33 的 3 处 materialize 也**没有订阅者**。
+   只有 2 个引用点（都在名字↔tag 表里）、tag 33 的 3 处 materialize 也**没有订阅者**
+   〔任务 83 四形态复扫：tag 33 仍**恰好 3 处** `0x3cab13/0x3caba7/0x470f3a` ⇒ 不变〕。
    ⇒ 常量改名 `EVENT_FUNCTION_INFO_TAG`（值仍是 35），旧名 `EVENT_FIRE_TAG` 留作别名
    （`tests/last_five.rs` 在用，本任务不许改 `tests/`）。48 B 布局同批解出：
    `Vec`（cap/ptr/len 三个字）+ 弱自句柄 + 事件通道 + 容器 Weak。

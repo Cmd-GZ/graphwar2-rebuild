@@ -555,6 +555,68 @@ x86 版是 stripped，拿不到符号；arm64 版有符号，可以直接读 `Se
 `tests/events.rs`（新增「名字 → 判别值」全表钉死）、本文、`tools/event_tags.py`（复现脚本）。
 **`cargo test` 205 → 206 全绿**。
 
+#### 7.1.1 生产点计数的新口径（2026-11-10，任务 83 —— **引用 tag 计数前先读这一段**）
+
+判别值（tag word）在 x86 上是 `i64::MIN | n`，LLVM 有**四种** materialize 写法，
+`tools/addr_probe.py tags` 现在四种都认：
+
+| 形态 | 写法 | 判据 |
+|---|---|---|
+| ① | `movabs r, 0x7fffffffffffffff` + `add r, n+1` | 基址 `i64::MAX`，`tag = 0x8000…0 + imm − 1` |
+| ② | `movabs r, 0x7fffffffffffffff` + `inc r` | 基址 `i64::MAX`，`inc` ⇒ tag 0 |
+| ③ | `movabs r, 0x8000…\|n` 直写 | 立即数直接就是 tag |
+| ④ | `movabs r, 0x8000000000000000` + `add r, n`（同族 `or r, n` / `inc r` / `lea r, [r+n]`） | 基址是 **2^63 本身**，`n` **从 0 起算**；`n = 0`（无后修饰）就是 tag 0 |
+
+**修形态④ 之前**，第四类点全被记进 **tag 0**（修前 2235 处），于是"某 tag 只有 N 处"的
+结论**系统性偏低**。修后（`_tag_after_base()`，见 `tools/addr_probe.py`）：
+
+* tag 0 **2235 → 2106**（−129）；全仓 materialize 站点总数 **3379 不变**（没有丢点，只有换桶）；
+* 129 处换桶落在 **33 个 tag** 上，最大三处：tag 1 +50、tag 6 +10、tag 3 +7；
+* 逐 tag 对照 `fixtures/tag_counts83.tsv`（`before`/`after`/`delta`），逐站点 `fixtures/tag_sites83.tsv`
+  （`tag_legacy` 列 = 修前口径，所以这份夹具能同时复现修前/修后）；
+* 复跑：`../.venv/bin/python tools/addr_probe.py tags --counts fixtures/tag_counts83.tsv --tsv fixtures/tag_sites83.tsv`
+  —— 自带 4 条正对照（tag 42 `0x3f20f0`、tag 41 `0x3f1b30`、tag 44 生产点 + 2 消费者、tag 15 形态④ `0x474b8d`）。
+
+**构建覆盖（照实写）**：本机 `<WS>/.reference/steam/` 只有 **2 份不同的 `.so`** ——
+`2026-08-28`（**x86-64**，本文全部数字的来源）与 `android-2.0.60`（**arm64**，独立构建）；
+`upstream/`、`analysis-repo/` 是指向 `2026-08-28` 的符号链接，`game/` 是同一份文件
+（sha256 前 16 位都是 `9a53811518e74b75`）。任务书列的 4 份里
+`windows-2.0.60` / `windows-early2026` 本机**不存在** ⇒ 全量复扫**只覆盖 x86-64 那一份**。
+arm64 侧只做了定点抽查（`arm64_sym.py find 'add_soldier'` + capstone AArch64 解码
+`GraphwarGameStateManager::add_soldier_to_player`）：该函数在 arm64 上也构 `0x8000…0038`
+（= tag 56，`0x4ab0a0`/`0x4ab124`/`0x4ab274` 的 `mov x8,#0x38` + `movk x8,#0x8000,lsl#48`），
+与 x86 的 2 处同址功能（`0x475113`/`0x4751ff`）互证；**tag 15 的 arm64 构造点未找到（未知）**。
+
+**互验（17/17）**：形态④ 修好后，扫描器在名字↔tag 分派函数 `0x3d38f0` 体内认出 **17** 个 tag word，
+tag 集合 = `{3,4,22,29,34,35,50,51,52,53,54,55,59,60,64,70,71}`，与 §7.2 表「tag」列的 17 行
+**完全一致**（那 17 行的 tag 是从 `%ebx` 判别值独立推出的）⇒ 本节结论与扫描器互相背书。
+
+**复扫新认出、但语义未定的站点**（只是"生产点位置"，不是本文 72 条名字的证据，交下一轮）：
+
+| tag | 站点 | 所在函数 | 说明 |
+|---|---|---|---|
+| 15 | `0x474b8d` → `0x474b97 add rax,0xf` | `0x474a10` | `add_soldier_to_player` 内联发 `soldier_info_event`（`docs/16` §55.2②） |
+| 56 | `0x475113`→`0x47511d add rax,0x38` / `0x4751ff`→`0x475209 add rax,0x38` | `0x474a10` | 同一函数体内还构了 2 处 `entity_effect_info_event` 判别值，**未定性** |
+| 60 | `0x5193af`→`0x5193da add rax,0x3c` | `0x519350` | `graphwar_name_manager.rs` 里构 `name_info_event` 判别值，**未定性** |
+| 6 | `0x45a580`→`0x45a5a3 add rax,6` | `0x45a560` | `graphwar_server_connection_handler.rs` 里构 `connection_removed_event`，**未定性** |
+| 74 | `0x3d3656` → `0x3d3660 add rdx,0x4a` | `0x3d3630` | `graphwar_event_handler.rs` 的 hashbrown 探针值；**74 超出 `0..=73`**，是否真是判别值**未证** |
+
+#### 7.1.2 历史结论复核（任务 83，**逐条点名** —— 不许无声改数）
+
+`grep` 全库"某 tag 只有 N 处 / 共 N 处 / 全仓唯一"类断言，逐条按新口径复算：
+
+| 出处 | 原断言 | 复扫读数 | 判决 |
+|---|---|---|---|
+| `docs/161` §2.2② 注 / C10 | 第四形态这批点被记进 tag 0，共 **2235 处** | tag 0 = **2106 处**（−129，换桶 129 处） | **数字要改**；"tag 0 混着第四形态"这个诊断**仍成立** |
+| `docs/161` C10 | 旧工具眼里"tag 15 只有 **1 处**在 soldier 模块" | tag 15 全仓 **45 → 46 处**；新增的就是 `0x474b8d`（`0x474a10` 体内，`Location` 投票指向 `graphwar_game_state_manager.rs`），soldier_manager 自己的 `0x455570` 里那处 `0x455600` **不变** | **数字要改**（45→46）；"`add_soldier` 会发 (15)" **仍成立**，且现在工具直接给出 |
+| `docs/161` §2.2④ | tag 33 的 materialize 只有 **3 处**（`0x3cab13`/`0x3caba7`/`0x470f3a`），没有订阅者 | tag 33 **仍是这 3 处**，地址一字不差 | **成立**（未变） |
+| `docs/16` §55.2④ | tag 33 的 **3 处** materialize 没有订阅者 | 同上 3 处 | **成立**（未变） |
+| `docs/06` §37 | 只有 **2 个** tag44 生产者；裸 `0x8000…2c` **2 处**且都是消费者 | tag 44 共 **4 处** = 生产 `0x4729be`/`0x472e35` + 消费 `0x4bf09b`/`0x4e2dd4`，地址不变 | **成立**（未变） |
+| `docs/06` §37 | 同一套 `tags` 扫描报出 **40+ 个变体** | 修前 **59** 个 tag 桶 → 修后 **67** 个 | **成立**（更多） |
+| `docs/00` §0.4 第 4 条 | tag44 生产者"需换路子找" | 已在 `docs/07` §10 结案；"裸常量 2 处都是消费者"读数不变 | **已作废**（不是本轮推翻，是 `§10` 早就结案、00 没回填；本轮就地补注） |
+| `docs/10` §15.5 | **arm64** 全量扫 tag 35 只有两处 | arm64 **未复扫**（工具 x86-only）；x86 侧 tag 35 **1 → 2 处**，新增那处 `0x3d4153` 在名字↔tag 分派函数里（tag word，不是生产者） | **未复核**；x86 侧"非分派构造点仍只有 1 处（`0x456377`）"与原意**同向** |
+| `docs/02` §（TargetInfo） | 全二进制只有 **2 处**构造 `TargetInfo` | tag 23 修前修后**都是 28 处**（`0x46580e` 仍是其中之一） | **成立**（未变） |
+
 ---
 
 ### 7.2 全表（72 条，按判别值升序）

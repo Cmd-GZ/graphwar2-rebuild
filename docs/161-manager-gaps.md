@@ -179,8 +179,12 @@ x86 侧没有独立函数：正文内联进 GraphwarGameStateManager::add_soldie
 ```
 
 > ⚠️ 旧普查（`addr_probe.py tags`）只认三种 materialize 形态，**漏了第四种**
-> `movabs 0x8000…000 ; add rax,N`：它把这批记进 **tag 0**（2235 处），所以上一轮只看到
+> `movabs 0x8000…000 ; add rax,N`：它把这批记进 **tag 0**（修前 2235 处），所以上一轮只看到
 > `send_all_info_events` 的 1 处、误以为 `add_soldier` 不发。判据见 §7 C10。
+>
+> ✅ **2026-11-10 任务 83 已修**：`tags` 认第四形态后 tag 0 = **2106** 处（−129），
+> `0x474b8d` 归 tag 15（tag 15 由 45 → **46** 处），本文这条结论**不变**、且现在用工具就能复现。
+> 新口径与全量复扫表见 [`docs/07`](07-protocol.md) §7.1.1 + `fixtures/tag_counts83.tsv`。
 
 **③ `Graphics` 的 168 B 与第三处重播（G-16）**
 
@@ -208,6 +212,7 @@ new = 0x3f10a0（alloc 0x48 = 16 + 8 + 48）
   处理器闸 0x3f0e4e/0x3f0e58 lea rax,[isize::MAX+0x24] = 0x8000…0023 = 35
   33 的反证：串 0x1bf607 只有 2 个引用点（0x3d53d4 / 0x3dca26，都在名字↔tag 表里），
              tag 33 的 materialize 只有 3 处（0x3cab13/0x3caba7/0x470f3a），**没有任何订阅者**
+             〔任务 83 用四形态复扫复核：**仍是这 3 处**，地址一字不差 ⇒ 这条不变〕
 ⇒ 常量改名 EVENT_FUNCTION_INFO_TAG（值仍是 35），旧名 EVENT_FIRE_TAG 保留为别名（tests/last_five.rs 在用）
 ```
 
@@ -455,7 +460,7 @@ Bot 只能更晚加进来。要打中它需要"本连接的第一个玩家是 Bo
 
 | C8 | 本文 §2 第 16 行 / §3.5（`Graphics`） | "168 B 里三张表以外还有 **4 个字**（到 `0xa8` 之间有 `0x30` 字节）没解"、"`0xa8` 之后还有 `0x30` 字节" | **表后面没有字节**：`0xa8 = 168` 正好是 `size_of`，三张表 `+0x18/+0x48/+0x78` 各 `0x30` 铺到 `+0xa8` 就结束；没解的是**表前面**的 `0x18` 头（`+0x00` 弱自句柄 / `+0x08` 事件通道 Rc / `+0x10` 容器 Weak，建盒 `0x522710` 逐条写） | **任务 77 就地更正**（§2.2 ③ 与 `src/graphwar_graphics_manager.rs` §2.2） |
 | C9 | 本文 §3.5 / §2 第 16 行（`Graphics`） | 第三处重播 tag "是间接载入（`mov rax,[rsp+0x10]`）⇒ 按模块文档是 55，**未逐位复核**" | **逐位复核完**：`0x469035 movabs rdx,0x8000…0033` + `0x46903f or rdx,4` = **55**；三支共用提交代码，tag 从 `rsp+0x10` 取（这就是"字面量扫描只看到基址"的原因） | **任务 77 就地更正**（§2.2 ③） |
-| C10 | `tools/addr_probe.py tags`（**工具盲区，不是本文的错**） | 该命令自称扫"三种 materialize 形态"，于是"tag 15 只有 1 处在 soldier 模块" | **漏了第四种**：`movabs 0x8000000000000000` + `add rax,N`。这类全被记进 **tag 0**（2235 处）。`add_soldier` 的 (15) 就是这么漏掉的（`0x474b8d`+`0x474b97`） | 登记：**凡是用 `tags` 下的"某 tag 只有 N 处"结论都要复查这个形态**。修工具不在本任务允许改动的目录里（`tools/`），下一位改 `tools/` 的人顺手加一条 `_tag_of_reg` 的 `0x8000…000 + add` 分支 |
+| C10 | `tools/addr_probe.py tags`（**工具盲区，不是本文的错**） | 该命令自称扫"三种 materialize 形态"，于是"tag 15 只有 1 处在 soldier 模块" | **漏了第四种**：`movabs 0x8000000000000000` + `add rax,N`。这类全被记进 **tag 0**（修前 2235 处）。`add_soldier` 的 (15) 就是这么漏掉的（`0x474b8d`+`0x474b97`） | ✅ **任务 83 已修**：`_tag_after_base()` 认四种形态（`add/or/inc/lea reg,[reg+n]`，`n` 从 0 起算；`n=0` 即基址本身仍是 tag 0），正对照 4/4 全绿（42/41/44 + tag 15 形态④）。全量复扫：**tag 0 2235 → 2106（−129）**，tag 15 **45 → 46**，129 处换桶落在 33 个 tag 上；逐 tag 对照见 `fixtures/tag_counts83.tsv`，站点表 `fixtures/tag_sites83.tsv`（`tag_legacy` 列 = 修前口径）。**旧"某 tag 只有 N 处"的结论已逐条复核，详见 `docs/07` §7.1.1** |
 | C11 | `src/graphwar_soldier_manager.rs` §2（旧） | "`+0x10/+0x14` 是锁字与 poison 字节（`Mutex`）" | **没有锁**：`+0x10` 是 `RefCell` 的借用字（`0` = 未借、`-1` = 写借），逐条见 `0x4555d9`/`0x474b3d`/`0x474b48` | **任务 77 就地更正**（该文件 §2） |
 | C12 | 本文 §2 第 18 行 / `src/graphwar_computer_player_manager.rs` §6（旧） | Bot 表是 `HashMap<u32 /*connection_id*/, BotData>` | **key = `player_id`**：运行时 key 232 的 Bot，其 `player_info_event` 是 `(player_id=232, connection_id=228)`，228 是**房主（我）的连接**；LPM 门⑤ 比的也是 `event+0x08`（`player_id`） | **任务 79 就地更正**（模块文档 §6 + 本文 §2.3 ①） |
 | C13 | 同上 | 状态在 `BotData+0x08` | 状态在桶内 `entry+0x08` = **`BotData+0x00`**（`0x479610` / `0x4786ab` / `0x479dfa` 三条指令同一口径）；`BotData+0x60`/`+0x64`/`+0x68`/`+0x6c` = level/精英/每槽/limit | **任务 79 就地更正**（模块文档 §6） |
