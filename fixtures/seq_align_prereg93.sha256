@@ -1,0 +1,7 @@
+# 任务 93 预注册指纹（与 fixtures/seq_align_prereg93.md 同一次 commit）
+# PREREG 规范 JSON（json.dumps(sort_keys=True, ensure_ascii=False)）的 sha256：
+prereg_sha256 = 5091edb4bddee8dc48e6d24a224afe0321b9918f8f375afb9549052117f8c467
+prereg_version = 93-v2
+# tools/seq_align.py 在本 commit 时的 sha256（实现指纹；commit 之后若要改实现，必须在本文件追加一行并说明）：
+tool_sha256 = 40530b4484bcbaaa3a00bf0ee1ffb78f7fdbe5a2b7c56be09fa427d5bc69f4f6
+# 复核：python3 tools/seq_align.py print-config 应打印同一 prereg_sha256；sha256sum tools/seq_align.py 应打印同一 tool_sha256
