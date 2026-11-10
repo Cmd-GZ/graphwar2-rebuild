@@ -46,18 +46,33 @@ def load_truth():
 
 
 def load_align(path):
+    """**表头驱动**：支持任意列顺序（93 号的表是 x86_addr/x86_size/in_target/arm64_addr/
+    arm64_name/size_ratio/q_match/margin/tier/source）。缺哪列就按空处理。"""
     out = {}
+    cols = None
     for r in rows(path):
-        if r[0].lower().startswith("x86_addr"):
-            continue
+        if cols is None:
+            low = [c.strip().lower() for c in r]
+            if "x86_addr" in low:
+                cols = low
+                continue
+            cols = ["x86_addr", "arm64_addr", "arm64_name", "arm64_size", "x86_size", "confidence"]
+        def get(name):
+            try:
+                return r[cols.index(name)].strip()
+            except (ValueError, IndexError):
+                return ""
         try:
-            addr = int(r[0], 16)
+            addr = int(get("x86_addr"), 16)
         except ValueError:
             continue
-        arm_addr = int(r[1], 16) if len(r) > 1 and r[1].strip() else None
-        arm_name = r[2].strip() if len(r) > 2 else ""
-        conf = r[5].strip() if len(r) > 5 else ""
-        out[addr] = dict(arm64_addr=arm_addr, arm64_name=arm_name, confidence=conf)
+        a = get("arm64_addr")
+        out[addr] = dict(
+            arm64_addr=int(a, 16) if a else None,
+            arm64_name=get("arm64_name"),
+            confidence=get("tier") or get("confidence"),
+            in_target=get("in_target"),
+        )
     return out
 
 

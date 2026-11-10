@@ -28,43 +28,108 @@ func run(main: Control) -> int:
 		await _inject_stray_room()
 		_diag_line("injected")
 
+	# 每组前后各打一行 `@@SELFTEST_GROUP`（组名 + 本组断言数 + 累计），
+	# 最后与下面的 `GROUP_EXPECT` 对账 —— 为什么要这一段见 `docs/18` §10.3.3。
+	_group_begin("boot")
 	_test_boot()
+	_group_end()
+	_group_begin("main_menu")
 	await _test_main_menu()
+	_group_end()
+	_group_begin("campaign")
 	await _test_campaign()
+	_group_end()
+	_group_begin("player_screen")
 	await _test_player_screen()
+	_group_end()
+	_group_begin("replay_lobby")
 	await _test_replay_lobby()
+	_group_end()
+	_group_begin("lan_lobby")
 	await _test_lan_lobby()
+	_group_end()
+	_group_begin("ui_text_and_measured_geometry")
 	await _test_ui_text_and_measured_geometry()
+	_group_end()
+	_group_begin("tab_fix")
 	await _test_tab_fix()
+	_group_end()
+	_group_begin("game_setup")
 	await _test_game_setup()
+	_group_end()
+	_group_begin("pixel_truth_geometry")
 	await _test_pixel_truth_geometry()
+	_group_end()
+	_group_begin("play_screen")
 	await _test_play_screen()
+	_group_end()
+	_group_begin("endgame")
 	await _test_endgame()
+	_group_end()
+	_group_begin("fonts_and_icons")
 	_test_fonts_and_icons()
+	_group_end()
+	_group_begin("assets_and_original_settings")
 	_test_assets_and_original_settings()
+	_group_end()
+	_group_begin("geometry_and_campaign_save")
 	_test_geometry_and_campaign_save()
+	_group_end()
+	_group_begin("core_path_mode")
 	_test_core_path_mode()
+	_group_end()
+	_group_begin("audio")
 	await _test_audio()
+	_group_end()
+	_group_begin("level_rules")
 	await _test_level_rules()
+	_group_end()
+	_group_begin("fire_fx")
 	await _test_fire_fx()
+	_group_end()
+	_group_begin("play_flow")
 	await _test_play_flow()
+	_group_end()
 
+	_group_begin("replay_player")
 	await _test_replay_player()
+	_group_end()
+	_group_begin("replay_ode")
 	await _test_replay_ode()
+	_group_end()
 	# 联机（docs/134）：分帧/解析 → 假服务器 → 失败路径 → LAN 发现 → broker → 真服务端
+	_group_begin("net_framing")
 	await _test_net_framing()
+	_group_end()
+	_group_begin("net_join_fake_server")
 	await _test_net_join_fake_server()
+	_group_end()
+	_group_begin("net_failure_path")
 	await _test_net_failure_path()
+	_group_end()
+	_group_begin("net_link_retry")
 	await _test_net_link_retry()
+	_group_end()
+	_group_begin("net_mid_session_disconnect")
 	await _test_net_mid_session_disconnect()
+	_group_end()
+	_group_begin("net_lan_discovery")
 	await _test_net_lan_discovery()
+	_group_end()
+	_group_begin("net_broker_global")
 	await _test_net_broker_global()
+	_group_end()
+	_group_begin("net_real_server")
 	await _test_net_real_server()
-	await _test_play_online()
+	_group_end()
+	await _test_play_online()          # 里面自带两个子组的进/出（play_online_*）
 	# 用户实测的四条 bug（docs/144）：房间残留 / 占位行 Join / Players 列 / 关卡弹窗几何
+	_group_begin("lobby_fixes")
 	await _test_lobby_fixes()
+	_group_end()
 	_diag_line("end")
 
+	_coverage_report()
 	var passed := _checks - _failures.size()
 	if _skipped.is_empty():
 		print("SELFTEST %d passed, %d failed" % [passed, _failures.size()])
@@ -109,6 +174,172 @@ func _command(cmd: String) -> void:
 func _find_button(root: Node, node_name: String) -> GwButton:
 	var n := root.find_child(node_name, true, false)
 	return n as GwButton
+
+# ---------------------------------------------------------------- 组级记账（覆盖护栏）
+#
+# 为什么要有这一层（`docs/18` §10.3.3）：`SELFTEST n passed` 只报**跑了的**条数，
+# 不报**该跑没跑的**条数。真实事故：整组提前 `return`，读数成了 `632 passed / 7 failed`
+# （断言总数 639，全量 717 ⇒ **78 条一条没跑**），而 639 与"缺 serve_match 那一档"的 641
+# 只差 2 ⇒ **看数字分不清降级与回归**。
+#
+# 现在每组前后各打一行 `@@SELFTEST_GROUP`（组名 / 本组断言数 / 本组 skip 与 FAIL 数），
+# 收尾与下面冻结的 `GROUP_EXPECT` 对账，判据只有一条：
+#
+#   **每一条"没跑"的断言，都必须有一条 skip 或一条 FAIL 认领它。**
+#
+#   · 认领了 ⇒ `@@SELFTEST_GROUP_SHORT … reason=claimed|declared` + `DEGRADED` 横幅
+#     （退出码不变：缺资产/缺 Rust 产物是**已声明**的降级，不是回归）
+#   · 没人认领 ⇒ `reason=SILENT`，记一条 FAIL（退出码 1）——"绿着但少跑了"到这就结束了
+#
+# ⚠️ 加/删断言时**必须**同步改 `GROUP_EXPECT`：不同步的话这条护栏自己会报红，
+#    报错文本里带着期望值与实际值，照抄进去就行（改完再跑一次确认为 0）。
+#
+# 重新生成这张表（四前置齐 + 全绿时）：
+#     GW2_SELFTEST_GROUP_DUMP=1 bash client/run.sh selftest 2>&1 | sed -n '/@@SELFTEST_GROUP_DUMP/,/@@SELFTEST_COVERAGE/p'
+# 表里的数就是**全绿那一次的实测值**（2026-11-10 首跑，合计 717）。
+const GROUP_EXPECT := {
+	"boot": 2,
+	"main_menu": 14,
+	"campaign": 16,
+	"player_screen": 11,
+	"replay_lobby": 2,
+	"lan_lobby": 8,
+	"ui_text_and_measured_geometry": 10,
+	"tab_fix": 12,
+	"game_setup": 20,
+	"pixel_truth_geometry": 25,
+	"play_screen": 21,
+	"endgame": 5,
+	"fonts_and_icons": 3,
+	"assets_and_original_settings": 6,
+	"geometry_and_campaign_save": 47,
+	"core_path_mode": 11,
+	"audio": 35,
+	"level_rules": 51,
+	"fire_fx": 72,
+	"play_flow": 55,
+	"replay_player": 52,
+	"replay_ode": 16,
+	"net_framing": 33,
+	"net_join_fake_server": 29,
+	"net_failure_path": 11,
+	"net_link_retry": 4,
+	"net_mid_session_disconnect": 7,
+	"net_lan_discovery": 19,
+	"net_broker_global": 9,
+	"net_real_server": 36,
+	"play_online_real_server": 40,
+	"play_online_lifeinfo_fake_server": 11,
+	"lobby_fixes": 24,
+}
+
+var _group := ""
+var _group_start := 0
+var _group_fail_start := 0
+var _group_skip_start := 0
+var _group_checks := {}            # 组名 → 本组断言数
+var _group_fails := {}             # 组名 → 本组 FAIL 数
+var _group_skips := {}             # 组名 → 本组 skip 数
+var _group_degraded := {}          # 组名 → true：本组声明了"前置没齐，余下断言不跑"
+
+func _group_begin(name: String) -> void:
+	_group = name
+	_group_start = _checks
+	_group_fail_start = _failures.size()
+	_group_skip_start = _skipped.size()
+
+func _group_end() -> void:
+	var n := _checks - _group_start
+	var nf := _failures.size() - _group_fail_start
+	var ns := _skipped.size() - _group_skip_start
+	_group_checks[_group] = int(_group_checks.get(_group, 0)) + n
+	_group_fails[_group] = int(_group_fails.get(_group, 0)) + nf
+	_group_skips[_group] = int(_group_skips.get(_group, 0)) + ns
+	print("@@SELFTEST_GROUP %-28s checks=%-3d fails=%d skips=%d total=%d"
+		% [_group, n, nf, ns, _checks])
+	_group = ""
+
+## "本组前置没齐，余下断言不跑" —— 与 `_skip()` 的区别只在**记账口径**：
+##
+## * `_skip(x)`：跳过的是**一条**断言（1:1 替换），少跑 1 条由它自己认领；
+## * `_degrade(x)`：本组**整段**不跑（后面有 `return`），少跑多少条只有对账时才知道 ——
+##   所以它把本组标成"已声明降级"，对账时不再把它算成静默少跑。
+##
+## ⚠️ 只能用在"缺外部前置（资产 / Rust 产物 / 回放样本 / user://）"这种**真降级**上。
+##    连不上、时序不对、断言不成立 —— 那些是回归，**不许**用这个函数盖掉。
+func _degrade(what: String) -> void:
+	_group_degraded[_group] = true
+	_skip(what)
+
+## 本组按 `GROUP_EXPECT` 还应跑多少条（给"余下 N 条不跑"那句话用）。
+func _group_remaining(expected_key: String) -> int:
+	return maxi(0, int(GROUP_EXPECT.get(expected_key, 0)) - (_checks - _group_start))
+
+## 收尾对账：见上面那段注释。**不改任何判据**，只把"少跑"变成看得见的东西。
+func _coverage_report() -> void:
+	_group_dump()
+	var expected_total := 0
+	var missing_claimed := 0          # 少跑、且有 skip/FAIL 认领
+	var missing_declared := 0         # 少跑、且本组声明了降级
+	var missing_silent := 0           # 少跑、而且没人认领 ⇒ 变红
+	var claimed: Array[String] = []
+	var declared: Array[String] = []
+	for key in GROUP_EXPECT:
+		var name := String(key)
+		var expected := int(GROUP_EXPECT[key])
+		var actual := int(_group_checks.get(name, 0))
+		expected_total += expected
+		if actual >= expected:
+			if actual > expected:
+				print("@@SELFTEST_GROUP_LONG %s expected=%d actual=%d（表比实际旧了，改 GROUP_EXPECT）"
+					% [name, expected, actual])
+			continue
+		var missing := expected - actual
+		var fails := int(_group_fails.get(name, 0))
+		var skips := int(_group_skips.get(name, 0))
+		var why := "组 %s 少跑了 %d 条（期望 %d／实际 %d，skip %d、FAIL %d）" \
+			% [name, missing, expected, actual, skips, fails]
+		# 认领规则（两条，先看第一条）：
+		#   ① 本组声明过 `_degrade()` ⇒ 整组降级，缺多少都算"已声明"；
+		#   ② 否则"一条 skip / 一条 FAIL 最多认领一条没跑的断言"。
+		var claimed_here := missing <= fails + skips
+		var declared_here := bool(_group_degraded.get(name, false))
+		var tag := "declared" if declared_here else ("claimed" if claimed_here else "SILENT")
+		print("@@SELFTEST_GROUP_SHORT %s expected=%d actual=%d missing=%d reason=%s"
+			% [name, expected, actual, missing, tag])
+		if declared_here:
+			missing_declared += missing
+			declared.append(why)
+		elif claimed_here:
+			missing_claimed += missing
+			claimed.append(why)
+		else:
+			missing_silent += missing
+			# 没有 skip、也没有 FAIL 却少跑了 ⇒ 与真红等价：记一条 FAIL，退出码变 1。
+			_expect(false, why + " —— 本组没有任何 skip/FAIL 认领它（静默少跑）")
+	print("@@SELFTEST_COVERAGE groups=%d checks=%d expected=%d missing=%d(claimed %d / degraded %d / silent %d)"
+		% [GROUP_EXPECT.size(), _checks, expected_total,
+			missing_claimed + missing_declared + missing_silent,
+			missing_claimed, missing_declared, missing_silent])
+	if not claimed.is_empty():
+		print("DEGRADED（已声明原因，逐条 skip/FAIL 见上）：")
+		for s in claimed:
+			print("  - %s" % s)
+	if not declared.is_empty():
+		print("DEGRADED（前置没齐，整组没跑）：")
+		for s in declared:
+			print("  - %s" % s)
+
+## 每组的实测条数与 `GROUP_EXPECT` 的差值（供人肉更新表用）：
+## `GW2_SELFTEST_GROUP_DUMP=1` 时把可直接粘进 `GROUP_EXPECT` 的那几行打出来。
+func _group_dump() -> void:
+	if OS.get_environment("GW2_SELFTEST_GROUP_DUMP") != "1":
+		return
+	var names := _group_checks.keys()
+	names.sort()
+	print("@@SELFTEST_GROUP_DUMP 可直接粘进 GROUP_EXPECT：")
+	for n in names:
+		print("\t\"%s\": %d," % [String(n), int(_group_checks[n])])
 
 # ---------------------------------------------------------------- 诊断（只读，不参与判定）
 #
@@ -918,6 +1149,14 @@ func _test_pixel_truth_geometry() -> void:
 			probe.apply_original_player_config()
 			_expect(int(probe.profile["skin"]) == saved_skin,
 				"player.config 里未知皮肤名 ⇒ 保留默认（原版会让那一层不画，我们只告警，docs/137 §6.4）")
+		else:
+			# 没有 else 的话这条断言是**静默消失**的（`docs/18` §10.3.3 的第二种少跑形态）。
+			_skip("player.config 里未知皮肤名 ⇒ 保留默认（user:// 写不进去，这条无从验）")
+	else:
+		# 同理：`user://` 不可写时，上面两条断言曾经**一条都不跑、也不留话**。
+		_skip("player.config `skin: red` ⇒ 皮肤 red（user:// 写不进去，这条无从验）")
+		_skip("player.config 只写 skin ⇒ 脸/帽子仍是默认（user:// 写不进去，这条无从验）")
+		_skip("player.config 里未知皮肤名 ⇒ 保留默认（user:// 写不进去，这条无从验）")
 	if had_cfg:
 		var fr := FileAccess.open(cfg_path, FileAccess.WRITE)
 		if fr != null:
@@ -1310,6 +1549,11 @@ func _test_geometry_and_campaign_save() -> void:
 		_expect(text == "level_7", "写入内容恰好是 'level_7'（实际 '%s'）" % text)
 		_expect(raw.size() == 7, "写入字节数 = 7（没有尾换行/尾空格；实际 %d）" % raw.size())
 		_expect(not text.ends_with("\n"), "写入内容没有尾换行")
+	else:
+		# 同上：`user://` 不可写时这 3 条曾经**一条都不跑、也不留话**。
+		_skip("campaign.save 写入内容恰好是 'level_7'（user:// 写不进去，这条无从验）")
+		_skip("campaign.save 写入字节数 = 7（user:// 写不进去，这条无从验）")
+		_skip("campaign.save 写入内容没有尾换行（user:// 写不进去，这条无从验）")
 	# (c) 单调：更小的值不写
 	_expect(not store.save_campaign_progress(3), "单调：level_3 不会覆盖 level_7")
 	var f2 := FileAccess.open(probe, FileAccess.READ)
@@ -1336,7 +1580,7 @@ func _test_geometry_and_campaign_save() -> void:
 
 	# --- 6. Campaign 屏：21 个数字用原版手写体 + 空 stylebox（没有圆角底）---
 	if not _main.assets_ok:
-		_skip("Campaign 关卡数字字体/底色（缺 client/assets/）")
+		_degrade("Campaign 关卡数字字体/底色（缺 client/assets/）")
 		return
 	var campaign := _screen("Campaign")
 	var b0 := campaign.find_child("level_0", true, false) as GwButton if campaign != null else null
@@ -1498,7 +1742,7 @@ func _test_audio() -> void:
 	var miss := audio.missing()
 	if not miss.is_empty():
 		for m in miss:
-			_skip("音频 %s：资产缺失（先跑 client/src/audio/extract_audio.py）" % m)
+			_degrade("音频 %s：资产缺失（先跑 client/src/audio/extract_audio.py）" % m)
 		return
 	_expect(audio.loaded_names().size() == GwAudio.SOUNDS.size(),
 		"音频：10 个音效全部加载成功（实际 %d）" % audio.loaded_names().size())
@@ -1915,7 +2159,7 @@ func _test_core_path_mode() -> void:
 	_expect(GwCore.calculate_path("sin(x)", start, 1.0, "nope").get("ok", true) == false,
 		"弹道模式：未知 mode 直接 ok:false（不猜 normal）")
 	if not GwCore.kernel_has_path_calculate_mode():
-		_skip("弹道模式：内核没有 path_calculate_mode（先 cargo build 并覆盖 client/libgw2_rebuild.so）")
+		_degrade("弹道模式：内核没有 path_calculate_mode（先 cargo build 并覆盖 client/libgw2_rebuild.so）")
 		return
 	# 同一表达式、同一起点：ODE 与 normal 必须给出不同的点序列
 	var ode := GwCore.calculate_path("sin(x)", start, 1.0, "ode")
@@ -2373,11 +2617,11 @@ func _test_replay_player() -> void:
 	# ---------------- 2. 真实回放：格式 ----------------
 	var dir := _real_replay_dir()
 	if dir == "":
-		_skip("回放：本机没有原版存档目录，真实回放的三方对拍无从验证（docs/133 §5.3）")
+		_degrade("回放：本机没有原版存档目录，真实回放的三方对拍无从验证（docs/133 §5.3）")
 		return
 	var path := dir.path_join(REPLAY_SAMPLE)
 	if not FileAccess.file_exists(path):
-		_skip("回放：约定的样本 %s 不在 %s" % [REPLAY_SAMPLE, dir])
+		_degrade("回放：约定的样本 %s 不在 %s" % [REPLAY_SAMPLE, dir])
 		return
 	var f := GwReplayFile.load_path(path)
 	_expect(f.ok(), "真实回放能读（%s）" % f.error)
@@ -2713,6 +2957,21 @@ func _spawn_server(bin: String, seed: int) -> Dictionary:
 		% [OS.get_process_id(), _server_seq, seed])
 	DirAccess.remove_absolute(log_path)
 	var pid := -1
+	var out := {"ok": false, "pid": 0, "addr": "", "port": 0, "log": log_path, "err": ""}
+	# ---- ① 先证明"日志文件写得进去" ----
+	#
+	# 这件事必须**先**查：`LISTEN` 那一行只存在于这个日志文件里，文件写不进去 ⇒
+	# 服务端其实起来了，自检照样只会看见"起不来"，然后两组真服务端各跑 2 条就收摊
+	# —— `docs/18` §10.3.3 那个 `632 passed / 7 failed`（78 条没跑）就是这么来的，
+	# 而且当时**没有任何一行**说得出原因（v1 只把 `ok=false` 传回去）。
+	var probe := FileAccess.open(log_path, FileAccess.WRITE)
+	if probe == null:
+		out["err"] = "服务端日志写不进去（%s）—— user:// 不可写：磁盘满 / 目录只读 / HOME(XDG_DATA_HOME) 不对" % log_path
+		print("[gw2/selftest] 起服务端失败：%s" % String(out["err"]))
+		return out
+	probe.store_string("")
+	probe.close()
+	DirAccess.remove_absolute(log_path)
 	var prev_seed := OS.get_environment("GW2_MATCH_SEED")
 	# 子进程继承父进程的环境（`OS.create_process` 没有 env 参数），所以先摆好再起，
 	# 起完立刻还原 —— 别的用例读到的是它们自己的设置。
@@ -2725,8 +2984,10 @@ func _spawn_server(bin: String, seed: int) -> Dictionary:
 	else:
 		pid = OS.create_process(bin, ["127.0.0.1:0"])
 	OS.set_environment("GW2_MATCH_SEED", prev_seed)
-	var out := {"ok": false, "pid": pid, "addr": "", "port": 0, "log": log_path}
+	out["pid"] = pid
 	if pid <= 0:
+		out["err"] = "OS.create_process 返回 %d（二进制不可执行？%s）" % [pid, bin]
+		print("[gw2/selftest] 起服务端失败：%s" % String(out["err"]))
 		return out
 	# 等 `LISTEN <host:port>`（= 服务端 bind 成功那条线）。600 帧 ≈ 10 s，远大于实测 30 ms。
 	for i in 600:
@@ -2753,8 +3014,11 @@ func _spawn_server(bin: String, seed: int) -> Dictionary:
 			out["ok"] = true
 			return out
 		if not _pid_alive(pid):
+			out["err"] = "服务端进程在 LISTEN 之前就退出了（pid=%d，二进制 %s）" % [pid, bin]
 			break
 		await _frames(1)
+	if String(out["err"]).is_empty():
+		out["err"] = "600 帧内没等到 LISTEN 行（服务端还在跑，只是没 bind 上：pid=%d）" % pid
 	return out
 
 ## pid 还在跑吗（**僵尸不算**）。Linux 读 `/proc/<pid>/stat` 的状态位；别的平台退回引擎。
@@ -3385,7 +3649,7 @@ func _test_net_real_server() -> void:
 	await _net_reset()
 	var bin := _find_server_binary()
 	if bin.is_empty():
-		_skip("联机端到端：没找到 examples/serve_match（先 `cargo build --offline --example serve_match`，"
+		_degrade("联机端到端：没找到 examples/serve_match（先 `cargo build --offline --example serve_match`，"
 			+ "或用 GW2_NET_SERVER 指定路径）")
 		return
 	var match_seed := _match_seed()
@@ -3396,7 +3660,12 @@ func _test_net_real_server() -> void:
 	_expect(pid > 0 and bool(srv["ok"]),
 		"真服务端：把 %s 拉起来了（pid=%d，seed=%d）" % [bin.get_file(), pid, match_seed])
 	if pid <= 0 or not bool(srv["ok"]):
+		print("[gw2/selftest] 真服务端：起不来 —— %s" % String(srv.get("err", "")))
 		_dump_server_log(String(srv["log"]), "真服务端：服务端起不来")
+		# 起不来 ⇒ 本组余下 N 条**不跑**。这不是"通过"，但也不该让它们凭空消失：
+		# 记成**已声明降级**（skip 一行带原因 + 收尾 DEGRADED 横幅带条数）。
+		_degrade("联机端到端：真服务端起不来（%s）⇒ 本组余下 %d 条断言未跑"
+			% [String(srv.get("err", "")), _group_remaining("net_real_server")])
 		await _kill_server(pid)
 		await _net_reset()
 		return
@@ -3561,8 +3830,14 @@ func _test_net_real_server() -> void:
 
 func _test_play_online() -> void:
 	# 种子的设置/还原在 `_spawn_server()` 里做（起子进程之前摆好、起完立刻还原）。
+	# 两个子组各自进出：A 段（真服务端）与 B 段（进程内假服务器）的**前置不一样**，
+	# 合在一起记账就看不出"A 段整段没跑、B 段照跑"这件事。
+	_group_begin("play_online_real_server")
 	await _test_play_online_real_server()
+	_group_end()
+	_group_begin("play_online_lifeinfo_fake_server")
 	await _test_play_online_lifeinfo_fake_server()
+	_group_end()
 
 ## 挑一条"能打中敌人"的函数：**用内核**预演服务端会怎么判。
 ##
@@ -3750,7 +4025,7 @@ func _test_play_online_real_server() -> void:
 	await _net_reset()
 	var bin := _find_server_binary()
 	if bin.is_empty():
-		_skip("联机 PlayScreen：没找到 examples/serve_match（先 `cargo build --offline --example serve_match`，"
+		_degrade("联机 PlayScreen：没找到 examples/serve_match（先 `cargo build --offline --example serve_match`，"
 			+ "或用 GW2_NET_SERVER 指定路径）")
 		return
 	# ---- 先找一局**打得出去**的 ----
@@ -3770,6 +4045,7 @@ func _test_play_online_real_server() -> void:
 	var st := {}
 	var expr := ""
 	var attempts := 0
+	var spawn_err := ""       # 最近一次"服务端起不来"的原因（收尾时拿来当降级理由）
 	# 种子已钉死（`ONLINE_TEST_SEED`）⇒ 第 1 次尝试就拿到那份已知能打的布局；
 	# 循环保留下来只当兜底（例如服务端起不来时换一台重试），不再是撞概率。
 	for attempt in 6:
@@ -3777,6 +4053,8 @@ func _test_play_online_real_server() -> void:
 		srv = await _spawn_server(bin, _match_seed())
 		pid = int(srv["pid"])
 		if pid <= 0 or not bool(srv["ok"]):
+			spawn_err = String(srv.get("err", ""))
+			print("[gw2/selftest] 联机 PlayScreen：起不来 —— %s" % spawn_err)
 			_dump_server_log(String(srv["log"]), "联机 PlayScreen：服务端起不来")
 			pid = -1
 			await _kill_server(int(srv["pid"]))
@@ -3826,6 +4104,11 @@ func _test_play_online_real_server() -> void:
 		if pid > 0:
 			await _kill_server(pid)
 		await _net_reset()
+		if not spawn_err.is_empty():
+			# 六次尝试里一次都没把服务端拉起来 ⇒ 剩下的断言**无从验**：
+			# 显式记成已声明降级（不是"通过"，但也不再是静默少跑，docs/18 §10.3.3）。
+			_degrade("联机 PlayScreen：真服务端起不来（%s）⇒ 本组余下 %d 条断言未跑"
+				% [spawn_err, _group_remaining("play_online_real_server")])
 		return
 	_expect(int(session.my_connection_id) == 228,
 		"联机 PlayScreen：NewConnection.connection_id = 228")
@@ -4104,11 +4387,11 @@ const DIFFEQ_FIRST_SHOT_END_X := -2.7599786229272687
 func _test_replay_ode() -> void:
 	var dir := _real_replay_dir()
 	if dir == "":
-		_skip("回放（Ode）：本机没有原版存档目录")
+		_degrade("回放（Ode）：本机没有原版存档目录")
 		return
 	var path := dir.path_join(REPLAY_DIFFEQ_SAMPLE)
 	if not FileAccess.file_exists(path):
-		_skip("回放（Ode）：样本 %s 不在 %s" % [REPLAY_DIFFEQ_SAMPLE, dir])
+		_degrade("回放（Ode）：样本 %s 不在 %s" % [REPLAY_DIFFEQ_SAMPLE, dir])
 		return
 	# 内核必须真的暴露了带模式的那条路
 	var methods := GwCore.kernel_methods()
@@ -4282,7 +4565,7 @@ func _test_play_flow() -> void:
 
 	# ---------------- 2. 音效（槽位逐位、音效自定，docs/143 §4） ----------------
 	if app_node.audio == null or not app_node.audio.loaded("explosion"):
-		_skip("对局流程：音效 —— 音频资产缺失（先跑 client/src/audio/extract_audio.py）")
+		_degrade("对局流程：音效 —— 音频资产缺失（先跑 client/src/audio/extract_audio.py）")
 	else:
 		var found_boom := false
 		for e in sounds:

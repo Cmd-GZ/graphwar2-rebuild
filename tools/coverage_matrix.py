@@ -442,8 +442,10 @@ mod("graphwar_game_recorder.rs", "graphwar", ("src/graphwar_game_recorder.rs",),
     "3：订 32 条服务端广播事件（24 条 *_info_event + 8 条不带 info 的；*_request_event 一条不订）；GameStateInfo==6 EndingGame 上升沿落盘 user://replays/<unix 秒>（gzip + 每行 {event,tick}），==1 Setup 且上一条是 6 时清缓冲（docs/16 §32）")
 mod("graphwar_game_server.rs", "graphwar", ("src/graphwar_game_server.rs", "src/server.rs"), "逐位",
     "docs/43/46：一回合 12 条报文与抓包逐字节一致；docs/62 真实 TCP 跑到 EndingGame")
-mod("graphwar_game_state_manager.rs", "graphwar", ("src/game.rs", "src/turnstate.rs"), "逐位",
-    "docs/41：6 状态 7 事件、13 次迁移在真实对局里逐个相同")
+mod("graphwar_game_state_manager.rs", "graphwar",
+    ("src/game.rs", "src/turnstate.rs", "src/graphwar_game_state_manager.rs"), "逐位",
+    "docs/41：6 状态 7 事件、13 次迁移在真实对局里逐个相同；"
+    "**任务 95** 起事件层（7 条订阅 + 3 个处理器）在 src/graphwar_game_state_manager.rs（文件名 = 原版模块名）")
 mod("graphwar_graphics_manager.rs", "graphwar", ("src/graphwar_graphics_manager.rs",), "观测",
     "6 函数。**TextureLoader 不在本模块**——它是独立模块 graphwar_texture_loader（三张 HashMap<String,Gd<Texture2D>> @ +0x150/+0x180/+0x1b0，按名字 memcmp 索引，GraphwarRootNode 的 INode impl 里 0x39a328 唯一构造、21KB 饿汉加载）。本模块只管 player_id→名字 三张表（+0x18/+0x48/+0x78）与 51/53/55 三条 info 事件（docs/16 §31）")
 mod("graphwar_lan_broadcaster_v6.rs", "graphwar", ("src/graphwar_lan_broadcaster_v6.rs",), "观测",

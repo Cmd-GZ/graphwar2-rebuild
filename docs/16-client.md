@@ -10480,3 +10480,167 @@ cargo run --release --offline -q --example batch_conv   -- --dir <快照> --poli
 | 2 | "下标 → 界面档位"这一步 | **观测 + 推断**（§59.2） | 直接观测：原版把 `AxisModeInfo` 落到 `TurnTimeButton`/`AxisModeButton` 档位的运行时证据（回放里换模式后按一下 UI 反查） |
 | 3 | `docs/133` §3.3 的取值分布是否仍是最新 | 沿用 84 号的 400 份样本口径 | 快照语料是冻结的 401 份，没有新样本 ⇒ 分布不变 |
 | 4 | `GwReplayDriver` 的 `#[func]` 现为 47 个（43 + 4） | 已改 | 若将来把"模式表"独立成一个 `GwWireModes` 类（按原版模块名归位）更贴近原版分层，但**原版没有这个类名的证据** ⇒ 本轮不猜 |
+
+## 60. `GraphwarGameStateManager` 的事件层搬出 `src/game.rs`：3 个处理器 + 7 条订阅（2026-11-10，任务 95）
+
+**一句话**：最后一格 `assembled` 的**位置问题**解决了 —— 7 条订阅（`SUBSCRIBED_EVENTS`）+
+发件箱/入件（`GsmEvents`）+ **3 个真有实体的处理器**搬进 `src/graphwar_game_state_manager.rs`，
+容器里装的仍是 `game::Match`（**没加壳**），三轴一位未动；但**档位仍是 19 / 2 / 1 / 0**，
+因为复核发现另外 **4/7 个处理器在我方一行实现都没有**（缺的是**行为**，不是位置）。
+
+### 60.1 判据与前提的证伪
+
+任务 86 的结论是"卡 `src/game.rs` 禁区、缺的是实现位置不是证据"。任务 95 只放开"搬移"，
+于是先复核前提："`src/game.rs` 里现有 **7 处** `fn …handler` / `handle_tick` 形态的实现"
+—— **不成立**：
+
+```text
+grep -nE "fn .*handle" src/game.rs          → 2 处（handle_tick / handle_entity_removed）
++ note_skin_graphics（名字里没有 handle）    → 共 3 处
+```
+
+另外 4 个处理器（`new_connection` `0x477140` / `connection_removed` `0x477540` /
+`function_points` `0x4758b0` / `chat_message` `0x473d00`）在 `src/` 里**一行都没有**，
+不是"写在别处的同一个逻辑" ⇒ 本轮**不搬、也不写**（写就是**新行为**，越了"只许搬移"的红线）。
+
+### 60.2 搬了什么（函数体一字未改）
+
+| 处理器 | 原地址 | 原位置 | 现位置 |
+|---|---|---|---|
+| `handle_tick` | `0x470840` / 816 B | `Match::handle_tick`（`src/game.rs`） | `src/graphwar_game_state_manager.rs` 的 `impl Match` |
+| `handle_graphics_info`（`skin_graphics_info_event`） | `0x4741a0`（arm64 `0x4aa304`） | `Match::note_skin_graphics` | 同上 |
+| `entity_removed` 的处理器 | `0x476a20` | `Match::handle_entity_removed` | 同上 |
+
+搬过去的三处**只多了一行** `self.events.deliver(...)`（入方向：这条事件真的到了这个处理器）。
+`src/game.rs` 侧只留 `// 原版边界：…（已搬走，见 …）` 的横幅与一个 `pub events: GsmEvents` 字段 +
+`new()` 里一行初始化 —— 那是**事件层本身的落点**（86 号说的"要加 `outbox`"就是它），不是新行为。
+
+### 60.3 事件层的形状
+
+```text
+src/graphwar_game_state_manager.rs
+  SUBSCRIBED_EVENTS[7]  ← 名字 / 判别值 / 原版处理器名 / 订阅点 0x477c92… / 处理器入口 / 体内 add_event 数 / 我方有没有实现
+  GsmEvents { subscribed, outbox, delivered } + take_outbox / outbox_len
+  impl Match { handle_tick, note_skin_graphics, handle_entity_removed, subscribed_events, take_outbox, outbox_len, delivered_events }
+```
+
+7 条订阅、10 处 `add_event` 的分布是**本轮自己复跑**的（不再抄 86 号的表）：
+
+```bash
+$PY tools/addr_probe.py --so ../.reference/game/libgraphwarrust.so dis 0x477bc0 | grep -c "slot 0x9bac88"   # 7
+for a in 0x470840 0x477140 0x476a20 0x477540 0x4758b0 0x4741a0 0x473d00; do … grep -c "slot 0x9bac80"; done
+# → 1 4 1 2 1 1 0（合计 10，与 86 号逐条相同）
+```
+
+三个**判别值**也读出来了：`0x470a49` → 30 `GameStateInfo{1}`、`0x476bbe` → 44 `EffectInfo`、
+`0x4742b9` → 56 `EntityEffectInfo{id, 3=Ash}`。⇒ 订阅方向 7/7 落进代码；发方向只有
+`handle_tick` 那一类（到期的 `DestroyObstacle`(41)）真的落地，另外两处**没有接**（照实记 `0`）。
+
+### 60.4 数字（本人重跑，私有 target；`src/game.rs` 只减不增）
+
+| 项 | 改前 | 改后 |
+|---|---|---|
+| 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **647 / 647 / 637**（每搬完一轮都重跑） |
+| `cargo test --offline` | 1756 | **1761**（+5：新文件的 5 条 inline 测试） |
+| `cargo test --offline --features gdext-bindings` | 1862 | **1867**（同上） |
+| `client/tools/assemble_check.gd` | 241 / 0 | **244 / 0**（+3：`game_state` 的 订阅 / 发布 / 状态） |
+| 交互读数（`manager_probe_selftest`） | 145 条 / 19 个 manager | **151 条 / 20 个 manager**（+6 条 `game_state.*`） |
+| headless 14 个脚本合计 | 1930 | **1933**（只有 `assemble_check` 241→244，其余 13 个逐项不变） |
+| `selftest` | 717 / 0 / 1 skip | **717 / 0 / 1 skip**（`selftest.gd` **没动**） |
+| 档位分布 | 19 / 2 / 1 / 0 | **19 / 2 / 1 / 0**（不升，理由见 §60.5） |
+
+### 60.5 为什么仍不升档
+
+`wired` 的判据是"接容器 + **事件流两个方向都指到指令** + 有最小交互断言"。
+本轮 ① ③ 都齐了（① 一直齐、③ 从 0 → 6 条），② 只有**订阅方向**落地：
+
+* 4/7 个处理器**没有实现**（要写新行为）；
+* 已实现的 2 个登记表处理器（`entity_removed` / `skin_graphics_info`）在原版体内**各发 1 条**
+  事件（44 / 56），我方**不发**。
+
+⇒ 把这一格报成 `wired` 就是"把 4 个没写的处理器当成已接"。判断与缺口都写在
+[`161-manager-gaps.md`](161-manager-gaps.md) §2.4，下一轮要做的四件事也在那里。
+
+### 60.6 两处**超出允许清单**的改动（都不是行为）
+
+| 文件 | 改了什么 | 为什么必须改 |
+|---|---|---|
+| `src/lib.rs` | **+1 行** `pub mod graphwar_game_state_manager;` | 新文件的模块声明；不加这一行文件根本不编译（任务书的允许清单漏了这一行，按"新增复原模块"的最小需求补） |
+| `tools/coverage_matrix.py` | 把新文件加进 `graphwar_game_state_manager.rs` 那条映射（`mod()` 的 ours 元组） | 否则新文件的函数**不属于任何模块**，两份生成物会漏报 —— 生成物的正确性由 `--check` 保证 |
+
+> `docs/coverage-matrix.tsv` 与 `docs/149-coverage-matrix.md` 已按 `COVERAGE_MATRIX_UPSTREAM`
+> 指向 `.reference/upstream` 重跑；`--check` 通过。该模块行现在是
+> `src/game.rs+src/turnstate.rs+src/graphwar_game_state_manager.rs`，`ours_funcs` 119 → **136**。
+
+## 61. 客户端第一次拿到**像素级真值**：主菜单 0 像素差；回放列表/回放屏/播完三屏不过 —— 缺的是**元素**不是"差一点"（2026-11-10，任务 94）
+
+> 判据与全部数字在 [`docs/06` §53](06-verification.md)。本节只写**客户端侧要改什么**、以及哪些
+> 结论还**没有**证据。工具：[`tools/frame_capture.py`](../tools/frame_capture.py)（采一侧）、
+> [`tools/frame_diff.py`](../tools/frame_diff.py)（三层判据）。
+> 门槛预注册：[`fixtures/frame_diff_thresholds.txt`](../fixtures/frame_diff_thresholds.txt)
+> （sha256 `9cc9fcda…`）+ 增补 1（`6933d288…`）。**门槛在跑之前提交，跑完没改**。
+
+### 61.1 一句话
+
+以前客户端的所有断言都是**结构级**（节点在不在、字段对不对）；本轮把原版真帧和我们的帧
+放到同一把尺子（L1 尺寸/主色 → L2 6×4 分区 → L3 逐像素）下量，第一次得到：
+
+| 屏 | 结论 | 差在 |
+|---|---|---|
+| 主菜单 | **像素级一致**（0/2 227 200 像素，跨 3 次运行同 sha256） | —— |
+| 回放列表 `ReplayLobby` | 不过 | **行的列集合不同**：我方多"文件名""大小×2"，少"关卡名"，日期没秒，图标按钮是**空框** |
+| 回放播放屏 `PlayScreen`（回放模式） | 不过 | **士兵精灵 / 靶子 / 名字标签 全没画出来**；键盘与 Fire 还在；多了状态行；棋盘几何差 248/353 px |
+| 播完（等 45 s） | 不过 | **原版不自动播放**（45 s 只动了 270 px 光标），我方直接跑到 `tick 2276/2276` |
+
+⇒ 这三屏**不是"配色/字号差一点"**：最差块的平均色差 20.9–235.3 / 255，逐像素最大差 255。
+主菜单能对上，说明**资产、字体、锚点那套基础设施是对的**；差的是**回放模式这一条线**。
+
+### 61.2 回放屏：我方与原版的版式对照（同一份回放 `1793897298`）
+
+| 位置 | 原版 | 我方 | 归属（改哪儿） |
+|---|---|---|---|
+| 左侧 | `⏮ ▶ ⏭` 三个**回放控制键** | 完整**表达式键盘**（C/π/e、数字、运算符 24 键） | `play_screen.gd` 没有"回放模式版式"这一层：键盘是常驻的（`LeftControls`）；原版回放屏把它换成三个播放键 |
+| 右上 | 3 个竖排按钮（棋盘预览 / 皮肤 / 录像） | `Fire!` + 键盘右列 | 同上 |
+| 底部 | `f(x) =` ＋ **大号函数文本** ＋ 修正常数 | `00:00 f(x) =` 输入框 ＋ **状态行**「回放 Level 0 / tick 124/2276 / 事件 64/104 / 播放中」 | 状态行是我方**自造**的（原版没有），它把 `f(x)=` 那行挤成了输入框 |
+| 棋盘白底 | `x 303–1575`、`y 198–959`（1273×762），轴线交点 `(939,578)` | `x 303–1638`、`y 131–1140`（1336×1010），交点 `(971,931)` | 左锚点 `303` 两边相同 ⇒ **水平锚点对、垂直尺寸/锚点不对**（回放模式下平面的高度约束要按原版再定一次） |
+
+### 61.3 缺元素：士兵 / 靶子 / 名字标签
+
+同一帧里，我方**画了**准备圈的 3 个红箭头（虚线弧 + 箭头，位置比原版偏右上约 55 px），
+但**没画**：
+
+* 士兵精灵（帽子 / 脸 / 身体三段贴图 + 手脚），原版尺寸约 50 px 宽；
+* 士兵名字标签（`cmdgz`，字体与位置在原版帧里很清楚）；
+* 靶子（蓝环 + 红心双层圆）。
+
+⇒ **能确定的事实**：实体表里"有这具士兵"（否则准备圈不该画出来），但**精灵与标签没落地**。
+**不能确定的**：这是"实体表没喂给 `EntityDrawer`"还是"喂了但贴图/缩放算错"或"画到视口外"。
+`client/tools/entity_drawer_check.gd` 里的 13 条断言是**自洽**的（喂它输入、看它发什么图元），
+它证明不了"屏幕上有没有"—— 这正是本轮补上的那一层。**待查**：在回放模式下把
+`EntityDrawer` 的输入表（实体数 / 皮肤 / 位置 / 队伍色）打出来，和原版帧里的位置对一次。
+
+### 61.4 时钟：`load()` 之后该不该自己走
+
+原版进回放屏后**停住**（45.0 s 只变了 270 个像素，bbox 是输入框光标那条 3×90 的竖条），
+▶ 仍是"播放"图标；手工按下 ▶ 之后弹道才从下往上逐点揭示。
+我方 `GwReplayDriver.load()` 的时钟停在第一条事件的 tick 上并**立刻开始按 60 tick/s 推进**（§56.5 第 3 条）。
+
+⇒ 这是 `docs/06` §53 里 S3/S4 两屏"不过"的**直接原因**，也是"同一 tick 对拍"卡住的地方。
+**要改的是 `GwReplayDriver` 的初始播放状态**（`load()` 之后应处于暂停），但**证据只有画面**
+（原版停在载入态 + 按 ▶ 才动），**没有**指令级证据说明它内部的 `playing` 标志初值
+⇒ 这条按 `观测` 记，改之前先看 §56.6 第 7 条（原版播放时钟 `0x4c6f40` 未解）。
+
+### 61.5 诚实清单（本轮**没有**证明的）
+
+| # | 没证明的 | 缺什么 |
+|---|---|---|
+| 1 | "缺士兵/靶子"是渲染层还是数据层 | 回放模式下 `EntityDrawer` 输入表的运行时打印（headless dump 也行，但要和真帧位置对） |
+| 2 | 回放模式该不该有键盘 | 原版**结构**证据（节点树）没有，只有真帧；`docs/78` 的场景名不覆盖这一层 |
+| 3 | 棋盘几何在**联机/战役**模式下对不对 | 战役关卡位置**不可复现**（`docs/06` §53.5 第 1 条），本轮拍不了同局面对拍 |
+| 4 | 引擎补丁版（4.7.0 vs 4.7.2）对像素的贡献 | 用原版 `Graphwar.x86_64` 跑我方工程做同引擎对照（未做） |
+| 5 | 主菜单"0 像素"能否推广到别的屏 | 只有主菜单这一屏做到了；其余三屏差得很远，**不能**推 |
+
+### 61.6 复跑
+
+见 [`docs/06` §53.8](06-verification.md) 的 4 条命令（两侧采集 → 三层判据 → 门槛 sha 自检 → 快照 403 份复核）。
+两侧都是**同一条点击串**驱动（`xdotool`），没有任何"手工对准"的步骤；截图**不入库**（只入库 TSV 数字）。

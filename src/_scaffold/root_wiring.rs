@@ -34,7 +34,7 @@
 //! | 4 | `GraphwarPlayerManager` | 72 | `0x49d170` | [`GraphwarPlayerManager`] | `wired` | 类型**观测**；事件流**指令级**（任务 40，§50） |
 //! | 5 | `GraphwarSoldierManager` | 72 | `0x49d590` | [`SoldierTable`] | `wired` | 类型**观测**；布局**逐字段观测**（72 B = 0x18 头 + 48 表，模块 §2）；事件流**指令级**（x86 `0x455760`，含 `add_soldier` 内联块 `0x474a10`） |
 //! | 6 | `GraphwarPlanePosManager` | 24 | `0x3b89a0` | [`PlanePosManagerSlot`]（内含 [`GraphwarPlanePosManager`]） | `wired` | 类型**观测**；布局**逐字段观测**（24 B / 3 字段，`docs/16` §44） |
-//! | 7 | `GraphwarGameStateManager` | 296 | `0x4ade6c` | [`Match`] | `assembled` | 类型**观测** |
+//! | 7 | `GraphwarGameStateManager` | 296 | `0x4ade6c` | [`Match`] | `assembled` | 类型**观测**；事件流订阅方向**指令级**（7/7，任务 95 落进 `src/graphwar_game_state_manager.rs`）；发布方向只有 1 类（10 处 `add_event` 里 4 个处理器**无实现**） |
 //! | 8 | `GraphwarFunctionManager` | 32 | 内联（arm64 `0x419c80` / x86 `0x5236e0`，由 `0x40a158` / `0x517b9f` 调用） | [`FunctionManagerSlot`]：`layout` = 原版 32 字节布局（**任务 22 解开**，4 字段）+ `table` = 我方行为表 | `layout` | 类型**观测**；布局**逐字段观测**（`docs/16` §46） |
 //! | 9 | `GraphwarTargetManager` | 72 | `0x3dae34` | [`GraphwarTargetManager`] | `wired` | 类型**观测** |
 //! | 10 | `GraphwarTeamManager` | 32 | `0x49960c` | [`TeamTable`] | `wired` | 类型**观测**；事件流**指令级**（任务 40，§50） |
@@ -72,13 +72,13 @@
 //! |---|---|---|
 //! | [`SLOT_WIRED`] | 已接容器 **+** 已接事件流 **+** 有最小交互断言（[`RootWiring::interaction_selftest`] 覆盖这一槽） | **19** |
 //! | [`SLOT_LAYOUT`] | 原版字段布局**已逐字段解出**（有证据档），但**不满足** `wired` | **2** |
-//! | [`SLOT_ASSEMBLED`] | 容器里装的是**我方复原类型**（`our_type` 非 `—`，能按类型取回并调用），但**不满足**上面两条 | **2** |
+//! | [`SLOT_ASSEMBLED`] | 容器里装的是**我方复原类型**（`our_type` 非 `—`，能按类型取回并调用），但**不满足**上面两条 | **1** |
 //! | [`SLOT_STUB`] | 以上都不是：**我方形状占位**，原版字段布局**未知** | **0** |
 //!
 //! ```text
 //! 结构轴：stub（布局未知） ──→ layout（布局逐字段解出）
 //! 行为轴：assembled（装上我方复原类型） ──→ wired（+ 事件流 + 最小交互断言）
-//! 一个槽只报**它达到的更高那一档**；两条轴都到顶 = wired（**18** + 2 + **2** + 0 = 22）。
+//! 一个槽只报**它达到的更高那一档**；两条轴都到顶 = wired（**19** + 2 + **1** + 0 = 22）。
 //! ⇒ "结构已解但行为未做" = layout；"结构也没解" = stub —— 这两个词的分工就是本轮要根治的模糊。
 //! ```
 //!
@@ -95,10 +95,17 @@
 //!
 //! ⚠️ **任务 79**：`ComputerPlayer` **18 / 2 / 2 / 0 → 19 / 2 / 1 / 0**（`state` 3/1 结案 +
 //! `docs/06` §46 的运行时读数 ⇒ 交互断言补齐，见 `docs/161` §2.3）。
-//! **任务 86 复核（本轮）**：分布仍是 **19 / 2 / 1 / 0**，最后那 1 格 `assembled` 是
+//! **任务 86 复核**：分布仍是 **19 / 2 / 1 / 0**，最后那 1 格 `assembled` 是
 //! **`GraphwarGameStateManager`**，**不是证据缺**——它的事件层必须落进 `src/game.rs` 的
-//! [`Match`]（结算内核，本轮禁区），交互断言又必须落进 `client/tools/selftest.gd`（另一个任务的
+//! [`Match`]（结算内核，当时禁区），交互断言又必须落进 `client/tools/selftest.gd`（另一个任务的
 //! 文件）⇒ 两处都不许碰，所以**不升**，理由与"两条绕路为什么已被否掉"见 `docs/161` §2 第 7 行 / §7 C15。
+//!
+//! **任务 95（本轮）**：`src/game.rs` 解禁（**只许搬移**）⇒ `GraphwarGameStateManager` 的位置问题
+//! 解决了：7 条订阅 + `outbox`/`delivered` + **3 个真有实体的处理器**搬进
+//! `src/graphwar_game_state_manager.rs`，容器里装的仍是 [`Match`]（**没加壳**），
+//! `interaction_selftest` 也补了 6 条 `game_state.*`。**但档位仍是 19 / 2 / 1 / 0**：
+//! 复核发现另外 **4/7 个处理器我方一行实现都没有**（`new_connection` / `connection_removed` /
+//! `function_points` / `chat_message`）⇒ 剩下的缺口是**行为**（要新写），不是位置，见 `docs/161` §2.4。
 //!
 //! 三条读法（每条都有反例撑着，别合并省略）：
 //!
@@ -110,10 +117,11 @@
 //!    我方 [`FunctionTable`] 一条都不发）⇒ 它停在 `layout`；`ClientConnectionHandler` 才是
 //!    "布局全解、行为一行没写"。
 //! 3. **`assembled` 不等于"复原了"**：只剩 **1** 个（`GraphwarGameStateManager`），它只有
-//!    "类型 + 部分行为 + 按类型可调"，原版布局**没**逐字段解出、事件流没接
+//!    "类型 + 部分行为 + 按类型可调"，原版布局**没**逐字段解出、事件流只接了一半
 //!    （任务 40 之后 6 个升到 `wired`，见 §50；任务 74 又升 3 个，见 §54；任务 77 再升 4 个，
-//!    任务 79 升 1 个。`GameStateManager` 因为事件层在 `src/game.rs`（禁区）仍停在 `assembled`；
-//!    任务 86 复核过：**缺的是实现位置，不是证据**，见 `docs/161` §2 第 7 行）。
+//!    任务 79 升 1 个。`GameStateManager` 任务 95 把事件层与 3 个处理器搬进
+//!    `src/graphwar_game_state_manager.rs`，但 **4/7 个处理器没有实现** ⇒ 仍停在 `assembled`，
+//!    见 `docs/161` §2.4）。
 //!
 //! ⚠️ 与本文件里的 [`SlotKind`] **不是一回事**：`SlotKind` 回答"容器里放的是原版模块类型本身、
 //! 还是 `_scaffold` 的包装"（**容器类型来源**的二分类，17 / 5，
@@ -607,9 +615,10 @@ impl Wired {
     ///    `FunctionManager`（32 B / 4 字段全解，容器 + 6 条交互断言都在，但**发方向**
     ///    的事件流没接：原版 3 个 `set_*` 各发一条 `FunctionInfo` 类事件，我方的
     ///    [`FunctionTable`] 一条都不发）；
-    /// 3. `assembled` —— 容器里是我方复原类型（**1** 个：`GameStateManager`，
-    ///    它的事件层在 `src/game.rs`，本轮是禁区 ⇒ 停在 `assembled`，见 `docs/16` §50.4 与
-    ///    `docs/161` §2 第 7 行：缺的是实现位置，不是证据）；
+    /// 3. `assembled` —— 容器里是我方复原类型（**1** 个：`GameStateManager`）。任务 95 把
+    ///    事件层（7 条订阅 + `outbox` + 3 个处理器）搬进 `src/graphwar_game_state_manager.rs`、
+    ///    并补了 6 条交互断言，但 **4/7 个处理器我方一行实现都没有** ⇒ 缺的是**行为**，
+    ///    仍停在 `assembled`，见 `docs/161` §2.4）；
     /// 4. `stub` —— 都不是：**任务 36 起 0 个**（最后一个 `PlanePosManager` 已升 `wired`；
     ///    24 B 布局逐字段解出，见 `src/graphwar_plane_pos_manager.rs`）。
     ///
@@ -2222,6 +2231,41 @@ impl RootWiring {
             out.push(("computer.removed", m.handle_entity_removed_event(9046).to_string()));
         }
 
+        // ㉑ GameStateManager（任务 95）：**订阅** 7 条 → **入方向**（`tick_event` 真的到了
+        //    处理器）→ **发方向**（我方这个入口没有到期对象 ⇒ 不发；原版体内那 1 处
+        //    `add_event` 属未落地的第 ③ 段，见 `docs/161` §2.4）→ **状态/发布**
+        //    （`set_turn_count` 发 `TurnCountInfo`(58) 并读回 7，末尾复位到 0）。
+        //
+        //    事件层与 3 个已搬的处理器在 `src/graphwar_game_state_manager.rs`
+        //    （`SUBSCRIBED_EVENTS[7]` / `GsmEvents` 的 `outbox`+`delivered`）。
+        if let Some(game) = self.game_state() {
+            let mut g = game.borrow_mut();
+            let _ = g.take_outbox();
+            let delivered_before = g.delivered_events().len();
+            out.push(("game_state.subs", g.subscribed_events().len().to_string()));
+            let due = g.handle_tick(0);
+            out.push(("game_state.due", due.len().to_string()));
+            out.push((
+                "game_state.delivered_tag",
+                g.delivered_events()
+                    .get(delivered_before)
+                    .map(|e| e.wire_tag().to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+            ));
+            out.push(("game_state.outbox", g.outbox_len().to_string()));
+            let msgs = g.set_turn_count(7);
+            out.push((
+                "game_state.publish_tag",
+                match msgs.first() {
+                    Some(m) if m.contains("TurnCountInfo") => "58".to_string(),
+                    _ => "other".to_string(),
+                },
+            ));
+            out.push(("game_state.turn_count", g.turn_count.to_string()));
+            let _ = g.set_turn_count(0); // 复位（连调两次返回同一串）
+            let _ = g.take_outbox();
+        }
+
         out
     }
 
@@ -2745,7 +2789,8 @@ mod tests {
         assert_eq!(
             slot_status("GraphwarGameStateManager"),
             SLOT_ASSEMBLED,
-            "容器里是 `game::Match`，事件层在 `src/game.rs`（本轮禁区）⇒ 停在 assembled"
+            "容器里是 `game::Match`，事件层已在 `graphwar_game_state_manager.rs`，\
+             但 4/7 个处理器没有实现 ⇒ 停在 assembled（docs/161 §2.4）"
         );
         // 胡编的名字
         assert_eq!(slot_status("nonsense"), SLOT_UNKNOWN);
@@ -2787,7 +2832,7 @@ mod tests {
                 SLOT_WIRED,     // 4  PlayerManager（订 2 发 2 + 6 条交互，任务 40）
                 SLOT_WIRED,     // 5  SoldierManager（订 2 + add_soldier 发 15 + 级联 14 + 7 条交互，任务 77）
                 SLOT_WIRED,     // 6  PlanePosManager（24 B 布局全解 + 事件流两方向 + 9 条交互，任务 36）
-                SLOT_ASSEMBLED, // 7  GameStateManager（禁区 src/game.rs）
+                SLOT_ASSEMBLED, // 7  GameStateManager（任务 95：事件层已搬，4/7 个处理器无实现）
                 SLOT_LAYOUT,    // 8  FunctionManager（布局全解，发方向未接）
                 SLOT_WIRED,     // 9  TargetManager（订 2 发 1 + 5 条）
                 SLOT_WIRED,     // 10 TeamManager（订 2 发 2 + 7 条交互，任务 40）
@@ -2982,7 +3027,7 @@ mod tests {
     // headless 那一侧（`client/tools/assemble_check.gd` 的 `manager_probe_selftest`）
     // 读的是同一个 [`RootWiring::interaction_selftest`]，**两边数字必须一致**。
 
-    /// 期望值：`interaction_selftest()` 的完整输出（**135 条**，顺序即 18 个 manager 的序：
+    /// 期望值：`interaction_selftest()` 的完整输出（**151 条**，顺序即 21 个 manager 的序：
     /// 任务 19 的 5 个 27 条 + 任务 40 的 6 个 38 条 + 任务 36 的 9 条
     /// + 任务 74 的 29 条 + 任务 77 的四格 32 条；**旧条目一个字都没动**，新条目只往后追加）。
     fn expected_selftest() -> Vec<(&'static str, String)> {
@@ -3152,6 +3197,14 @@ mod tests {
             ("computer.reset", "1"),
             ("computer.state_after_tick", "3"),
             ("computer.removed", "true"),
+            // ㉑ GameStateManager（任务 95）：订阅 7 / 入方向 tick(0) / 无到期不发 /
+            // 发布 TurnCountInfo(58) / 状态写读 7（末尾复位）
+            ("game_state.subs", "7"),
+            ("game_state.due", "0"),
+            ("game_state.delivered_tag", "0"),
+            ("game_state.outbox", "0"),
+            ("game_state.publish_tag", "58"),
+            ("game_state.turn_count", "7"),
         ]
         .into_iter()
         .map(|(k, v)| (k, v.to_string()))
@@ -3182,7 +3235,7 @@ mod tests {
         assert!(Rc::ptr_eq(&a, &b));
     }
 
-    /// **一次最小交互后取回正确值**：**145** 条逐条比对（这就是 headless probe 的期望串；
+    /// **一次最小交互后取回正确值**：**151** 条逐条比对（这就是 headless probe 的期望串；
     /// 任务 36 之前是 65 条（+`PlanePosManager` 9 条 = 74）；任务 74 再加 29 条
     /// （`Rank` 9 + `Name` 8 + `LocalPlayer` 12）；任务 77 再加 32 条；任务 79 再加 10 条（`Computer`）。
     #[test]
@@ -3231,7 +3284,7 @@ mod tests {
         let first = wiring.interaction_selftest_strings();
         let second = wiring.interaction_selftest_strings();
         assert_eq!(first, second, "重复调用必须给出同一串 名字=值");
-        assert_eq!(first.len(), 145);
+        assert_eq!(first.len(), 151);
         assert_eq!(first[0], "life.alive=1");
         assert_eq!(first[64], "effect.outbox=1");
         // 任务 36 新增的 9 条（顺序接在 ⑪ 之后）
@@ -3253,6 +3306,9 @@ mod tests {
         assert_eq!(first[126], "graphics.subs=2");
         assert_eq!(first[127], "history.recorded=true");
         assert_eq!(first[134], "history.subs=1");
+        // 任务 80 的 10 条（computer.*）之后，任务 95 新增的 6 条（game_state.*）
+        assert_eq!(first[145], "game_state.subs=7");
+        assert_eq!(first[150], "game_state.turn_count=7");
     }
 
     /// 取回来的值不是常量：换一个输入，读回来的就变了（防"probe 直接 return 常量"）。

@@ -23,9 +23,10 @@
              但这只是 13,263 个 Ghidra 函数里的 4.0% —— 见 §3「信息天花板」
 真名         348 / 527（三份符号表并集）；无名 179 = 138 族级 + 41 未知
 协议         74 / 74 全字段 + 74 条判别值 + 7 个线上枚举全集（无未知）
-GDExtension  **原版 12 类**（`docs/02` §16.2）+ 我方 3 = **15 个，全部节点化**；headless 14 个 SceneTree 脚本 / **1930** 条 / 0 failed（play_flow 199、process_loop 66、assemble 241）
-cargo        **1756** / 0（`--features gdext-bindings` 1862 / 0）
-selftest     **717 / 0 / 1 skip**（**前置**：`client/assets/` + 编好 `examples/serve_match`；
+GDExtension  **原版 12 类**（`docs/02` §16.2）+ 我方 3 = **15 个，全部节点化**；headless 14 个 SceneTree 脚本 / **1933** 条 / 0 failed（play_flow 206、process_loop 66、assemble 244）
+cargo        **1761** / 0（`--features gdext-bindings` 1867 / 0）
+selftest     **717 / 0 / 1 skip**（**别预设 `XDG_*`**：`run.sh` 会把它们指到工作区内；
+             预设成 `~/.local/share` 会因沙箱写不进去 ⇒ `missing=78`、`632/7`，见 `docs/18` §10.3.3）（**前置**：`client/assets/` + 编好 `examples/serve_match`；
              没有 serve_match 时 638 / 2 skip；缺 assets 掉到 591–667；
              **两种已知降级见 `docs/18` §10.3.3** —— `63x/7` 是服务端/LAN 未就绪，先重跑再判）
 
