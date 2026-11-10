@@ -391,41 +391,157 @@ export CARGO_HOME=/path/.cargo-home CARGO_TARGET_DIR=$CARGO_HOME/target   # ✗
 打开时只关掉手写入口模块；`gdext_class.rs` / `axis_drawer_class.rs` / `capi.rs` 照旧编译，
 只是没人调（类不会注册）。这是**唯一**为兼容性做的让步。
 
-### 10.3 a) 两种 feature 各跑一遍（2026-11-07 深夜本机复测）
+### 10.3 a) 两种 feature 各跑一遍（2026-11-10 复测；括号里是 2026-11-07 的当轮值）
 
 ```text
-$ cargo test --offline
-  69 个测试二进制（含 doc-tests）；总计 1585 passed / 0 failed
-$ cargo test --offline --features gdext-bindings
-  69 个测试二进制（含 doc-tests）；总计 1669 passed / 0 failed
+$ cargo test --offline                              1756 passed / 0 failed   （1585）
+$ cargo test --offline --features gdext-bindings    1862 passed / 0 failed   （1669）
 $ cargo tree | wc -l
   1                       # 仍然零依赖（只有 gw2-rebuild 自己）
 $ bash client/run.sh selftest
-  SELFTEST 709 passed, 0 failed        # 前置条件见 
-#### 10.3.3 `selftest` 仍有一种**未定因**的降级（2026-11-09 实测，签名固定）
-
-在**刚从 `--features gdext-bindings` release 构建 + `--import` + 连跑 14 个 headless 脚本**之后，
-紧接着连跑三次 `selftest` 都得到 **629 passed / 7 failed / 1 skipped**；此后（无任何代码改动）
-连跑三次又都回到 **714 / 0 / 1 skip**。
-
-```
-签名  629 + 7 = 636 ⇒ **正好是"没有 serve_match"那一档的分母**
-含义  serve_match 被找到了（否则会 skip），但那 7 条"真服务端"用例**连不上**
-      ⇒ 不是断言错，是**起服务/连服务**这一层没就绪
-已知  76 号已经把"关卡种子是骰子"那条彻底钉死（连续 20 次全绿），这一条是**另一件事**
-处置  重跑一次即可恢复；但**不许把 7 failed 当成代码回归**（也不是 skip）
+  SELFTEST 717 passed, 0 failed, 1 skipped           # 前置条件见 §10.3.1（709）
+$ cargo test --offline 2>&1 | grep '^test result'    # 求和 "ok. N" 即得总数
 ```
 
-⚠️ 这一条与 §10.3.4 那个「LAN 大厅成对红」**不是同一件事**：那个恰好掉 2 条、名字固定
-（`本地房间列表初始为空` + `底部 Join IP 宽度`），已在 §10.3.4 修掉；本节这个 signature 是
-`passed` 掉 85 条（7 条真服务端用例整组连不上），**仍未定因**。
+#### 10.3.3 **整组"少跑"**：`632/7` 那一档的定因与处置（2026-11-10 新增，**已做成显式**）
 
-**判据**：出现 `629/7` 时，先看 `client/run.sh` 用的那颗 `serve_match` 是哪一份
-（`CARGO_TARGET_DIR/release/examples/` → `debug/examples/` 的回退顺序），再重跑一次；
-两次都不行才当回归查。
+> **一句话**：这一档**不是"红了几条"，是"有一整组断言根本没跑"** —— 绿着/红着都看不出来。
+> 真身是 **`632 passed / 7 failed / 1 skipped`，断言总数 639，而全量 717 ⇒ 78 条一条没跑**。
+>
+> 根因（**观测**，可确定性复现）：**`user://` 不可写** ⇒ `serve_match` 的 `LISTEN` 那行从来没落进日志文件
+> ⇒ 两组"真服务端"**各跑 2 条就 `return`**（少 **34 + 38 = 72** 条）；另有 6 条是第二种形态：
+> **`if <文件打开成功>: <断言>` 没有 `else`**（`pixel_truth_geometry` 3 条 + `campaign.save` 3 条）。
+>
+> 处置（**判据一条没改、断言一条没删**）：给 `selftest` 加**组级对账** —— 每条"没跑"的断言都必须有一条
+> skip 或 FAIL 认领它，**没人认领 ⇒ 记 FAIL、退出码 1**；整组降级 ⇒ 打 `DEGRADED` 横幅 + 逐条 skip 带原因。
 
-§10.3.1，缺一样就不是这个数
+##### (1) 先把读数分清：五种"降级"各是什么、少的是哪几条（本机实测 2026-11-10）
+
+| 读数（`bash client/run.sh selftest`） | 断言总数 | 少跑 | 少的组（`@@SELFTEST_GROUP_SHORT` 逐行） | 认领者 | rc |
+|---|---|---|---|---|---|
+| `717 passed, 0 failed, 1 skipped` | 717 | 0 | — | 唯一那条 skip：本局没有靶子 | 0 |
+| `641 passed, 0 failed, 3 skipped` | 641 | 76 | `net_real_server` 36 + `play_online_real_server` 40 | 2 条 skip：没找到 `examples/serve_match` | 0 |
+| `654 passed, 0 failed, 3 skipped` | 654 | 63 | `replay_player` 47 + `replay_ode` 16 | 2 条 skip：回放样本不在 `$HOME/.local/share/…/Graphwar/replays` | 0 |
+| `689 passed, 3 failed, 22 skipped`（缺 `client/assets/`） | 692 | 25 | `fonts_and_icons` 3 / `assets_and_original_settings` 6 / `audio` 6 / `geometry_and_campaign_save` 8 / `play_flow` 2 | 21 条 skip + 3 FAIL（+1 条既有 skip） | 1 |
+| **`632 passed, 7 failed, 9 skipped` + `DEGRADED`（`user://` 不可写）** | **639** | **78** | `net_real_server` **34** + `play_online_real_server` **38** + `pixel_truth_geometry` 3 + `geometry_and_campaign_save` 3 | 8 条 skip（带原因）+ 4 行 SHORT；**改前是 0 认领** | 1 |
+| `642 passed, 3 failed, 3 skipped`（`GW2_NET_SERVER=/bin/false`，故意坏） | 645 | 72 | 同上两组，各 2 条 | 2 条 skip："进程在 LISTEN 之前就退出了" | 1 |
+
+> **判据只有一条**：`@@SELFTEST_COVERAGE … missing=0` 才是"真全跑"。
+> `passed` 数**不能**当判据 —— 上表里 `639`（78 条没跑）与 `641`（76 条没跑）只差 2，
+> 历史上正是因此把"两套联机整段 skip"和"两组各跑 2 条就收摊"看成了同一件事。
+
+##### (2) `629/7` 到底是什么（取证）：它**不是一个真实读数**
+
+- 全工作区 `grep -rn "629 passed"` 只命中**一份日志**：第 31 轮的 `.agent-work/cg/self31_after5.log`，
+  写的是 **`SELFTEST 629 passed, 0 failed, 2 skipped`** + 两条 `SKIP 联机…没找到 examples/serve_match`
+  ⇒ 那是**"缺 serve_match"那一档**，`failed` 是 **0**，不是 7。
+- `grep -rn "629 passed, 7 failed"` / `"632 passed"` 在**任何日志**里都零命中（`632 passed` 只出现在
+  `dispatch/` 的任务书与报告正文里，无原始输出）。
+- 所以旧版本节那句「`629 + 7 = 636` ⇒ 正好是『没有 serve_match』那一档的分母」**建立在两个不同运行的
+  拼接上**：`629` 来自"缺服务端"那一档，`7` 来自另一处，`636` 这个分母也不存在（2026-11-10 复测："缺 serve_match"那一档是 **641**）。
+  **这一条按 `AGENTS.md` §0.6 就地更正**：旧签名作废，换成 (1) 表里那三档实测读数。
+- 「78 条」这个数是对的（`717 − 639`），「632 + 7 + 1 = 640 ⇒ 少 78」的算法**不对**：
+  skip 不是断言，正确算式是 **`717 − (632 + 7) = 78`**。
+
+##### (3) 逐前置抽掉：各少跑多少条、少的是哪几条（2026-11-10 本机实测）
+
+四前置 = ① `client/assets/`（gitignore）② 回放样本（`$HOME/.local/share/godot/app_userdata/Graphwar/replays`）
+③ `cargo build --examples serve_match`（且 `CARGO_TARGET_DIR` 指到它）④ `$CARGO_TARGET_DIR/release/libgw2_rebuild.so`
+覆盖 `client/libgw2_rebuild.so` 且 `--import` 过。**抽掉一个的后果**：
+
+| 抽掉的 | 读数 | 少跑 | **少的组：条数** | 机制（改前） |
+|---|---|---|---|---|
+| ① `client/assets/` | `689/3/22` | 25 | `fonts_and_icons` 3、`assets_and_original_settings` 6、`audio` 6、`geometry_and_campaign_save` 8、`play_flow` 2 | 资产组的 `_skip` + `return`（**已声明**，本来就有） |
+| ② 回放样本 | `654/0/3` | 63 | `replay_player` 47、`replay_ode` 16 | 同上（**已声明**） |
+| ③ `serve_match` | `641/0/3` | 76 | `net_real_server` 36、`play_online_real_server` 40 | 同上（**已声明**） |
+| ③' 只抽 `CARGO_TARGET_DIR` | `641/0/3` | 76 | 同上 | 同上（**同一档**：找不到二进制） |
+| ① + ③ | `613/3/24` | 101 | 上两行合并 | 已声明 |
+| **`user://` 不可写** | **`632/7/9`** | **78** | `net_real_server` **34**、`play_online_real_server` **38**、`pixel_truth_geometry` 3、`geometry_and_campaign_save` 3 | **静默**（本次要修的） |
+| `GW2_NET_SERVER=/bin/false` | `642/3/3` | 72 | 同上两组，各 2 条 | 改前静默；改后 2 条 skip 带原因（"进程在 LISTEN 之前就退出了"）+ 2 条前置仍红 |
+
+两条算术值得写在纸上：
+
+- `25 + 76 = 101`：资产档与联机档**互不重叠**，加得起来 ⇒ 两个前置是独立的。
+- `78 = 72 + 6`：`72` = 两组真服务端各跑 2 条（36−34、40−38），`6` = 两处守卫块。
+  它比"缺 serve_match 那一档的 76" **只多 2**，却**红 7 条 vs 绿 0 条** —— 这就是从
+  `passed`/`skipped` 数上分不出这两档的原因，也是这条洞最危险的地方。
+
+##### (4) 根因链（观测）
+
+```text
+user:// 不可写（目录只读 / 磁盘满 / HOME·XDG_DATA_HOME 指错）
+  └─ `_spawn_server()` 里 `FileAccess.open(<user://serve_match_logs/…log>, WRITE)` 失败
+       └─ 于是 `2> <log>` 也写不进去 ⇒ 服务端**就算起来了也没有 LISTEN 那行可读**
+            └─ 600 帧后 `ok == false`、`port == 0`
+                 ├─ `_test_net_real_server`：2 条 `_expect` 后 `return`  ⇒ **少 34 条**
+                 └─ `_test_play_online_real_server`：6 次尝试全败后 `return` ⇒ **少 38 条**
 ```
+
+同一时刻 `user://` 上的**另外四类写**也会红，正好凑出那 7 条：
+`campaign.save` 3 条（`写入 level_7 成功`／`能打开刚写入的 campaign.save`／`单调写入后文件仍是 'level_7'`）
++ 1 条 `静音：muted 落盘后可被新的 GwStore 读回` + 2 + 1（两组真服务端的前置）。
+**这 7 条不是代码回归**，但改前它们**无法**告诉你"还有 78 条根本没跑"。
+
+**为什么在这台机器上"套跑顺序"本身复现不出来（否定证据）**：按任务书的场景
+（`cargo build --release --features gdext-bindings` → `cp .so client/` → `--import` → 连跑 **14** 个
+`*_check.gd` headless 脚本 → 紧接着 3 次 `selftest`）本机 **3/3 都是 `717/0/1`**
+（14 个脚本全 `rc=0`、断言合计 1930；随后 3 次 selftest 的 `@@SELFTEST_COVERAGE` 都是 `missing=0`）。
+⇒ **不是"跑完 headless 就会降级"**，触发条件是**前置层**（`user://` 可写性 / 服务端日志可读性）；
+上游那两次具体是什么让 `user://` 写不进去，**没有日志可查 ⇒ 标「未知」**（不猜）。
+
+##### (5) 修法：把"少跑"变成看得见的东西（判据零改动）
+
+三件事，都在 `client/tools/selftest.gd`：
+
+1. **组级进出 + 冻结表**：`run()` 里每组前后 `_group_begin()/_group_end()`，打一行
+   `@@SELFTEST_GROUP <组名> checks=N fails=F skips=S total=T`；收尾拿 `GROUP_EXPECT`（33 组，合计 717）对账。
+2. **一条铁律**：`missing <= fails + skips` 才算"认领过了"；本组调过 `_degrade()` 则整组算"已声明降级"；
+   **否则记一条 FAIL（`组 X 少跑了 M 条（期望 E／实际 A）—— 本组没有任何 skip/FAIL 认领它（静默少跑）`）**，
+   退出码变 1。⇒ **"绿着但少跑了"在数学上不可能再出现**。
+3. **两种"少跑"形态各自补上出口**：
+   - 整组降级 ⇒ 新函数 `_degrade(reason)`（= `_skip` + 把本组标成"已声明降级"），
+     用在 12 处：10 处原本就是"前置缺 ⇒ `_skip` + `return`"，另 2 处是"真服务端起不来"；
+   - 守卫块 ⇒ 给 `if <文件打开成功>:` 补 `else:` 的 `_skip(...)`（`pixel_truth_geometry` 3 处、
+     `campaign.save` 3 处），不再让断言在 `f == null` 时凭空消失；
+   - `_spawn_server()` 增加**起服务端之前的前置探针**与**失败原因** `srv["err"]`
+     （"日志写不进去（user:// 不可写…）"／"进程在 LISTEN 之前就退出了"／"600 帧内没等到 LISTEN"），
+     两组的失败分支把它打进 skip 行 —— 下次遇到同一档，**原因直接写在输出里**。
+
+**计数（`_expect(` / `_skip(` / `_degrade(` 的语句级调用点）**：
+
+| | 改前 | 改后 | 说明 |
+|---|---|---|---|
+| `_expect(` | 697 | **698** | 多的 1 条是覆盖护栏自己（只在"静默少跑"时触发，全绿路径不跑） |
+| `_skip(` | 21 | **19** | −10 处改叫 `_degrade(`；+7 处"守卫块没有 else"的显式跳过；+1 是 `_degrade()` 内部的 `_skip()` |
+| `_degrade(` | 0 | **12** | 10 处整组前置 + 2 处真服务端起不来 |
+| 全量断言 | 717 | **717** | **一条没删、一条没加**（`GROUP_EXPECT` 合计 = 717） |
+
+**没有做的事（红线）**：没有把任何一条断言改成 skip 来对齐总数；`user://` 不可写时
+**退出码仍是 1**（那 4 类写失败还在红）；`serve_match` 起不来时**也仍是 1**（"你自己刚构建的那份
+服务端起不来"是回归信号，不该被 skip 盖掉）—— 只是现在它**顺带说清**"余下 34/38 条没跑"。
+
+##### (6) 下一个人怎么用（判据速查）
+
+```bash
+bash client/run.sh selftest 2>&1 | grep -E '^SELFTEST|@@SELFTEST_COVERAGE|@@SELFTEST_GROUP_SHORT|^DEGRADED|^  - '
+# ① missing=0            ⇒ 真全跑（这一行是判据，`passed` 数不是）
+# ② missing>0 且 reason=SILENT  ⇒ **静默少跑**（改前就是这样被漏掉的）→ 已自动记成 FAIL
+# ③ reason=declared/claimed + DEGRADED 横幅 ⇒ 已声明的降级：横幅里逐组写着差多少条、为什么
+# ④ 组数：本机 33 行 @@SELFTEST_GROUP；合计 717
+```
+
+⚠️ **加/删断言时同步改 `GROUP_EXPECT`**（`GW2_SELFTEST_GROUP_DUMP=1` 会把可直接粘的 33 行打出来）；
+不同步的话护栏自己会红 `@@SELFTEST_GROUP_LONG`／`SHORT`，报错里带期望值与实际值。
+
+##### (7) 连跑记录（2026-11-10，四前置齐，`agent/selftest-78`）
+
+```text
+run  1..10 | rc=0 | SELFTEST 717 passed, 0 failed, 1 skipped | @@SELFTEST_COVERAGE missing=0 | 10–16 s
+```
+
+同一台机器上**另跑过的档**（不是常态，是取证）：`641/0/3`（缺 serve_match）、`654/0/3`（缺回放）、
+`689/3/22`（缺 assets）、`613/3/24`（缺 assets + serve_match）、`632/7/9`（user:// 不可写）、
+`642/3/3`（故意坏的服务端）—— 六档**每一档的 78/76/63/25/101/72 条去向都在输出里点得出来**。
 
 > ⚠️ **审计 2026-11-08 改了这一段**：原记「65 个二进制（lib 464 / 539）、总计 **1520** / **1595**、
 > `SELFTEST 694`」。现按本机复测替换：`cargo test --offline` = **1585**、`--features gdext-bindings`
@@ -441,6 +557,13 @@ $ bash client/run.sh selftest
 > 补进更多单测。**条数是回归保护，不是复原进度**（`AGENTS.md` §0.2）。
 
 ### 10.3.1 `selftest` 的两个口径：**694 需要什么前置条件**（2026-11-07 深夜，本机四组实测）
+
+> **现行读数（2026-11-10 复测，四前置齐）**：**`717 passed, 0 failed, 1 skipped`**。
+> 四个前置各自的档位现在是 **717 / 641（缺 serve_match 或 `CARGO_TARGET_DIR`）/ 689（缺 assets）/
+> 613（缺 assets + serve_match）**，逐前置"少跑哪些组、各几条"的表在 **§10.3.3 (1)(3)**。
+> ⚠️ 判据从今天起不是 `passed` 数，而是 `@@SELFTEST_COVERAGE … missing=0`（见 §10.3.3 (6)）；
+> 另：缺 assets 时固定红的那两条如今是**三条**（多的一条是 `外观：皮肤层贴图来自真资源`，
+> 同样依赖真资产，不是回归）。
 
 一句话：**694 不是版本号，是"前置条件全齐"的读数**；缺一样就落到别的数上，四个数都实测过
 （⚠️ **审计 2026-11-08**：下面的 694 是 2026-11-07 的**当轮**基数，"全齐"档现已涨到 **709**
@@ -733,8 +856,9 @@ headless 下按帧数等会读到 0，所以那里必须用墙钟。机器**极�
 | 红的两条 | `本地房间列表初始为空（实际 1）` / `底部 Join IP 宽度 = 屏宽×0.2（LobbyButtonContainer.gd，期望 12.8）` |
 | 本机裸跑（`CG@38cb827`，工作树 `agent/lan-lobby-flake`） | **10 次全绿**（(4) 的原始表）⇒ 这条**要触发条件**，不是"改坏了" |
 
-⚠️ 与本文件 §10.3.3 那个 `629/7` **不是同一件事**：那个是 **7 条、全在"真服务端"那一组**（连不上），
-本条的 signature 是**恰好 2 条**且名字固定。（本节没有改 §10.3.3 那条，它**仍未定因**。）
+⚠️ 与本文件 §10.3.3 那一档（`632/7`，78 条根本没跑）**不是同一件事**：那个掉的是**整组**（两组"真服务端"
+各跑 2 条就 `return`，另 6 条是守卫块静默），根因是 `user://` 不可写、**已在 §10.3.3 定因并做成显式**
+（`@@SELFTEST_COVERAGE missing=0` 才是判据）；本条的 signature 是**恰好 2 条**且名字固定。
 
 #### (2) 根因（观测）：房间表里多了一行 ⇒ 两条断言同时红
 
