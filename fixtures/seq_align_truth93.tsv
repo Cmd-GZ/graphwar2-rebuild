@@ -1,0 +1,348 @@
+# 任务 93 · 留出验证真值：control_pairs('android','linux') 严格 Location join = 344 对
+# **只用于验证**，不参与对齐、不参与选参（预注册见 fixtures/seq_align_prereg93.tsv/md）
+# meta={"strict": 344}
+x86_addr	arm64_addr	arm64_name	x86_name
+0x3a2e10	0x39a6f0	<graphwarrust::graphwar_root_node::GraphwarRootNode as godot_core::gen::classes::node::re_export::INode>::ready	GraphwarRootNode::ready
+0x3a5660	0x39c6e0	<graphwarrust::graphwar_root_node::GraphwarRootNode as godot_core::gen::classes::node::re_export::INode>::ready::_{{closure}}	GraphwarRootNode::ready
+0x3a5760	0x39c8a0	<graphwarrust::graphwar_root_node::GraphwarRootNode as godot_core::gen::classes::node::re_export::INode>::process	GraphwarRootNode::process
+0x3afb00	0x3a610c	graphwarrust::graphwar_root_node::GraphwarRootNode::purchase_denied	GraphwarRootNode::purchase_denied
+0x3afcf0	0x3a62ec	graphwarrust::graphwar_root_node::GraphwarRootNode::check_save_level	GraphwarRootNode::check_save_level
+0x3afe90	0x3a64e4	graphwarrust::graphwar_root_node::GraphwarRootNode::purchase_confirmed	GraphwarRootNode::purchase_confirmed
+0x3b00d0	0x3a670c	graphwarrust::graphwar_root_node::GraphwarRootNode::get_media_storage_path	GraphwarRootNode::get_media_storage_path
+0x3b0830	0x3a6d48	graphwarrust::graphwar_root_node::GraphwarRootNode::process_button_pressed	GraphwarRootNode::process_button_pressed
+0x3b4ec0	0x3aae7c	graphwarrust::graphwar_root_node::GraphwarRootNode::request_permissions_result	GraphwarRootNode::request_permissions_result
+0x3b56c0	0x3ab55c	graphwarrust::graphwar_root_node::_::__init::__inner_init	
+0x3b5ac0	0x3abad8	graphwarrust::graphwar_root_node::_::__init::__inner_init	::_::__init::__inner_init
+0x3b6c70	0x3ac5d4	std::thread::local::LocalKey<T>::with	
+0x3bfdd0	0x3b417c	<alloc::vec::Vec<T> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<T,I>>::from_iter	
+0x3c17d0	0x498f8c	graphwarrust::graphwar_team_manager::GraphwarTeamManager::add_to_team	GraphwarTeamManager::add_to_team
+0x3c1980	0x499154	graphwarrust::graphwar_team_manager::GraphwarTeamManager::remove_from_team	GraphwarTeamManager::remove_from_team
+0x3c1cf0	0x49933c	graphwarrust::graphwar_team_manager::GraphwarTeamManager::send_all_info_events	GraphwarTeamManager::send_all_info_events
+0x3c1f40	0x499570	graphwarrust::graphwar_team_manager::GraphwarTeamManager::handle_entity_removed_event	GraphwarTeamManager::handle_entity_removed_event
+0x3c1fc0	0x49960c	graphwarrust::graphwar_team_manager::GraphwarTeamManager::new	GraphwarTeamManager::new
+0x3c2120	0x499798	graphwarrust::graphwar_team_manager::GraphwarTeamManager::get_team	GraphwarTeamManager::get_team
+0x3c2bc0	0x3b5770	graphwarrust::graphwar_shot_calculator::GraphwarShotCalculator::calculate_shot_results	GraphwarShotCalculator::calculate_shot_results
+0x3c62b0	0x3b7f58	graphwarrust::graphwar_plane_pos_manager::GraphwarPlanePosManager::get_position	GraphwarPlanePosManager::get_position
+0x3c64c0	0x3b8160	graphwarrust::graphwar_plane_pos_manager::GraphwarPlanePosManager::set_position	GraphwarPlanePosManager::set_position
+0x3c66a0	0x3b8348	graphwarrust::graphwar_plane_pos_manager::GraphwarPlanePosManager::get_all_positions	GraphwarPlanePosManager::get_all_positions
+0x3c6a10	0x3b8660	graphwarrust::graphwar_plane_pos_manager::GraphwarPlanePosManager::send_all_info_events	GraphwarPlanePosManager::send_all_info_events
+0x3c6b40	0x3b8798	graphwarrust::graphwar_plane_pos_manager::GraphwarPlanePosManager::handle_entity_removed_event	GraphwarPlanePosManager::handle_entity_removed_event
+0x3c6d30	0x3b89a0	graphwarrust::graphwar_plane_pos_manager::GraphwarPlanePosManager::new	GraphwarPlanePosManager::new
+0x3caa20	0x3bc2cc	alloc::vec::Vec<T,A>::retain	
+0x3d3630	0x486970	graphwarrust::graphwar_event_handler::GraphwarEventHandler::process_events	GraphwarEventHandler::process_events
+0x3d38f0	0x486bc8	graphwarrust::graphwar_event_handler::GraphwarEventHandler::subscribe_to_event	GraphwarEventHandler::subscribe_to_event
+0x3d4fa0	0x3d7b54	graphwarrust::graphwar_game_recorder::GraphwarGameRecorder::subscribe_to_events::_{{closure}}	GraphwarGameRecorder::subscribe_to_events
+0x3d5740	0x3d8184	graphwarrust::graphwar_game_recorder::GraphwarGameRecorder::save_game	GraphwarGameRecorder::save_game
+0x3d6080	0x3d8c24	graphwarrust::graphwar_replay_player::GraphwarReplayPlayer::toggle_pause	GraphwarReplayPlayer::toggle_pause
+0x3d68b0	0x3d929c	graphwarrust::graphwar_replay_player::GraphwarReplayPlayer::go_to_next_checkpoint	GraphwarReplayPlayer::go_to_next_checkpoint
+0x3d6a40	0x3d94a0	graphwarrust::graphwar_replay_player::GraphwarReplayPlayer::go_to_first_checkpoint	GraphwarReplayPlayer::go_to_first_checkpoint
+0x3d6bb0	0x3d9658	graphwarrust::graphwar_replay_player::GraphwarReplayPlayer::go_to_previous_checkpoint	GraphwarReplayPlayer::go_to_previous_checkpoint
+0x3d7270	0x3d9cbc	graphwarrust::graphwar_replay_player::GraphwarReplayPlayer::pause	GraphwarReplayPlayer::pause
+0x3d7380	0x3d9e1c	graphwarrust::graphwar_replay_player::GraphwarReplayPlayer::process	GraphwarReplayPlayer::process
+0x3d7630	0x3da094	graphwarrust::graphwar_replay_player::GraphwarReplayPlayer::is_paused	GraphwarReplayPlayer::is_paused
+0x3d9000	0x3deb3c	graphwarrust::graphwar_play_screen_control::GraphwarPlayScreenControl::add_tie_icon	GraphwarPlayScreenControl::add_tie_icon
+0x3d9b50	0x3df60c	graphwarrust::graphwar_play_screen_control::GraphwarPlayScreenControl::enable_replay_buttons	GraphwarPlayScreenControl::enable_replay_buttons
+0x3d9e40	0x3df8dc	graphwarrust::graphwar_play_screen_control::GraphwarPlayScreenControl::disable_replay_buttons	GraphwarPlayScreenControl::disable_replay_buttons
+0x3da130	0x3dfbac	graphwarrust::graphwar_play_screen_control::GraphwarPlayScreenControl::update_end_game_pop_up	GraphwarPlayScreenControl::update_end_game_pop_up
+0x3db3e0	0x3e0b64	graphwarrust::graphwar_play_screen_control::GraphwarPlayScreenControl::add_player_victory_icon	GraphwarPlayScreenControl::add_player_victory_icon
+0x3dc470	0x3e1718	ZN12graphwarrust28graphwar_play_screen_control25GraphwarPlayScreenControl27update_names_button_texture17h29fd60901ee5836cE	GraphwarPlayScreenControl::update_names_button_texture
+0x3dc630	0x3e18d0	ZN12graphwarrust28graphwar_play_screen_control25GraphwarPlayScreenControl35update_view_function_button_texture17h1aa6cb3eedf71e97E	GraphwarPlayScreenControl::update_view_function_button_texture
+0x3dc7f0	0x3e1a88	graphwarrust::graphwar_play_screen_control::GraphwarPlayScreenControl::new	GraphwarPlayScreenControl::new
+0x3dcbb0	0x3e1ea0	graphwarrust::graphwar_play_screen_control::GraphwarPlayScreenControl::process	GraphwarPlayScreenControl::process
+0x3dee00	0x3e3ad0	graphwarrust::graphwar_remote_event_handler::GraphwarRemoteEventHandler::handle_client_remote_event	GraphwarRemoteEventHandler::handle_client_remote_event
+0x3e5910	0x3e995c	graphwarrust::graphwar_remote_event_handler::GraphwarRemoteEventHandler::is_leader	GraphwarRemoteEventHandler::is_leader
+0x3ee190	0x422590	graphwarrust::obstacle_drawer::ObstacleDrawer::update	ObstacleDrawer::update
+0x3ef990	0x423de4	graphwarrust::graphwar_lobby_control::GraphwarLobbyControl::new	GraphwarLobbyControl::new
+0x3f0270	0x42464c	graphwarrust::function_button_manager::FunctionButtonManager::new	FunctionButtonManager::new
+0x3f06b0	0x4249e8	graphwarrust::function_button_manager::FunctionButtonManager::new::_{{closure}}	FunctionButtonManager::new
+0x3f0e40	0x49d71c	graphwarrust::function_history_recorder::FunctionHistoryRecorder::handle_function_fire_event	FunctionHistoryRecorder::handle_function_fire_event
+0x3f11e0	0x4251e0	ZN12graphwarrust25graphwar_obstacle_manager20GraphwarObstacleData11draw_circle17h2e9b5bd987dcd55bE	GraphwarObstacleData::draw_circle
+0x3f15b0	0x425474	graphwarrust::graphwar_obstacle_manager::GraphwarObstacleManager::is_obstacle	GraphwarObstacleManager::is_obstacle
+0x3f17a0	0x425684	graphwarrust::graphwar_obstacle_manager::GraphwarObstacleManager::add_obstacle	GraphwarObstacleManager::add_obstacle
+0x3f19a0	0x425870	graphwarrust::graphwar_obstacle_manager::GraphwarObstacleManager::clear_obstacles	GraphwarObstacleManager::clear_obstacles
+0x3f1b30	0x425a34	graphwarrust::graphwar_obstacle_manager::GraphwarObstacleManager::destroy_obstacle	GraphwarObstacleManager::destroy_obstacle
+0x3f1d30	0x425c20	graphwarrust::graphwar_obstacle_manager::GraphwarObstacleManager::handle_tick_event	GraphwarObstacleManager::handle_tick_event
+0x3f20f0	0x426094	graphwarrust::graphwar_obstacle_manager::GraphwarObstacleManager::queue_destroy_obstacle	GraphwarObstacleManager::queue_destroy_obstacle
+0x3f2360	0x426300	graphwarrust::graphwar_obstacle_manager::GraphwarObstacleManager::new	GraphwarObstacleManager::new
+0x418820	0x393558	ZN12graphwarrust25graphwar_campaign_control23GraphwarCampaignControl25show_hide_campaign_levels17he7e8b73cdc207992E	GraphwarCampaignControl::show_hide_campaign_levels
+0x437ce0	0x48e130	std::sys::backtrace::__rust_begin_short_backtrace	ServerBrokerRequestConnectionClient::new
+0x438880	0x48dcac	std::sys::backtrace::__rust_begin_short_backtrace	
+0x444fd0	0x468224	hashbrown::map::HashMap<K,V,S,A>::retain	
+0x44dd60	0x45bce0	graphwarrust::graphwar_logger::GraphwarLogger::new	GraphwarLogger::new
+0x44e8f0	0x4820a8	graphwarrust::graphwar_game_server::GameServerData::subscribe_to_room_info_updates::_{{closure}}	GameServerData::subscribe_to_room_info_updates
+0x44f990	0x483090	graphwarrust::graphwar_game_server::GraphwarGameServer::start	GraphwarGameServer::start
+0x4500c0	0x483574	graphwarrust::graphwar_game_server::game_server_thread	_::game_server_thread
+0x453a60	0x496af0	graphwarrust::graphwar_life_manager::GraphwarLifeManager::get_death_tick	GraphwarLifeManager::get_death_tick
+0x453c60	0x496d0c	graphwarrust::graphwar_life_manager::GraphwarLifeManager::get_all_entities	GraphwarLifeManager::get_all_entities
+0x453de0	0x496ea4	graphwarrust::graphwar_life_manager::GraphwarLifeManager::set_queued_death	GraphwarLifeManager::set_queued_death
+0x454020	0x4970e4	graphwarrust::graphwar_life_manager::GraphwarLifeManager::handle_tick_event	GraphwarLifeManager::handle_tick_event
+0x454120	0x4971dc	graphwarrust::graphwar_life_manager::GraphwarLifeManager::send_all_info_events	GraphwarLifeManager::send_all_info_events
+0x454420	0x4974a0	graphwarrust::graphwar_life_manager::GraphwarLifeManager::handle_entity_removed_event	GraphwarLifeManager::handle_entity_removed_event
+0x454790	0x4977b8	graphwarrust::graphwar_life_manager::GraphwarLifeManager::new	GraphwarLifeManager::new
+0x454950	0x4979a8	graphwarrust::graphwar_life_manager::GraphwarLifeManager::get_alive	GraphwarLifeManager::get_alive
+0x454b40	0x497bb0	graphwarrust::graphwar_life_manager::GraphwarLifeManager::set_alive	GraphwarLifeManager::set_alive
+0x454d80	0x498b5c	graphwarrust::graphwar_rank_manager::GraphwarRankManager::send_all_info_events	GraphwarRankManager::send_all_info_events
+0x454e80	0x498c58	graphwarrust::graphwar_rank_manager::GraphwarRankManager::handle_entity_removed_event	GraphwarRankManager::handle_entity_removed_event
+0x454f30	0x498d2c	graphwarrust::graphwar_rank_manager::GraphwarRankManager::new	GraphwarRankManager::new
+0x455090	0x498eb8	graphwarrust::graphwar_rank_manager::GraphwarRankManager::set_rank	GraphwarRankManager::set_rank
+0x455160	0x49ceb0	graphwarrust::graphwar_player_manager::GraphwarPlayerManager::send_all_info_events	GraphwarPlayerManager::send_all_info_events
+0x455250	0x49cfa0	graphwarrust::graphwar_player_manager::GraphwarPlayerManager::handle_entity_removed_event	GraphwarPlayerManager::handle_entity_removed_event
+0x455410	0x49d170	graphwarrust::graphwar_player_manager::GraphwarPlayerManager::new	GraphwarPlayerManager::new
+0x455570	0x49d38c	graphwarrust::graphwar_soldier_manager::GraphwarSoldierManager::send_all_info_events	GraphwarSoldierManager::send_all_info_events
+0x4556d0	0x49d4d4	graphwarrust::graphwar_soldier_manager::GraphwarSoldierManager::handle_entity_removed_event	GraphwarSoldierManager::handle_entity_removed_event
+0x455760	0x49d590	graphwarrust::graphwar_soldier_manager::GraphwarSoldierManager::new	GraphwarSoldierManager::new
+0x455b60	0x4887f4	graphwarrust::graphwar_function_manager::GraphwarFunctionManager::get_function	GraphwarFunctionManager::get_function
+0x455e30	0x488a9c	graphwarrust::graphwar_function_manager::GraphwarFunctionManager::set_function	GraphwarFunctionManager::set_function
+0x4565f0	0x489050	graphwarrust::graphwar_function_manager::GraphwarFunctionManager::get_function_text	GraphwarFunctionManager::get_function_text
+0x456810	0x489278	graphwarrust::graphwar_function_manager::GraphwarFunctionManager::set_function_points	GraphwarFunctionManager::set_function_points
+0x456b80	0x4895ec	graphwarrust::graphwar_function_manager::GraphwarFunctionManager::set_function_active_tick	GraphwarFunctionManager::set_function_active_tick
+0x456df0	0x489858	graphwarrust::graphwar_function_manager::GraphwarFunctionManager::get_active_functions_on_tick	GraphwarFunctionManager::get_active_functions_on_tick
+0x456f80	0x4899f8	graphwarrust::graphwar_function_manager::GraphwarFunctionManager::get_active_functions_on_tick_no_fade	GraphwarFunctionManager::get_active_functions_on_tick_no_fade
+0x4572c0	0x3ddeb4	graphwarrust::graphwar_lan_broadcaster_v6::GraphwarLanBroadcasterV6::set_room_info	GraphwarLanBroadcasterV6::set_room_info
+0x457480	0x3de064	graphwarrust::graphwar_lan_broadcaster_v6::GraphwarLanBroadcasterV6::new	GraphwarLanBroadcasterV6::new
+0x457600	0x3de19c	graphwarrust::graphwar_lan_broadcaster_v6::GraphwarLanBroadcasterV6::start	GraphwarLanBroadcasterV6::start
+0x457790	0x3de310	graphwarrust::graphwar_lan_broadcaster_v6::GraphwarLanBroadcasterV6::process	GraphwarLanBroadcasterV6::process
+0x4586d0	0x489e50	graphwarrust::graphwar_server_broker_handler::GraphwarServerBrokerHandler::stop	GraphwarServerBrokerHandler::stop
+0x4588d0	0x48a078	graphwarrust::graphwar_server_broker_handler::GraphwarServerBrokerHandler::process	GraphwarServerBrokerHandler::process
+0x4592d0	0x48a8a0	graphwarrust::graphwar_client_connection_handler::GraphwarClientConnectionHandler::disconnect	GraphwarClientConnectionHandler::disconnect
+0x459690	0x48ac54	graphwarrust::graphwar_client_connection_handler::GraphwarClientConnectionHandler::forward_event	GraphwarClientConnectionHandler::forward_event
+0x459840	0x48ae24	graphwarrust::graphwar_client_connection_handler::GraphwarClientConnectionHandler::get_connection_state	GraphwarClientConnectionHandler::get_connection_state
+0x459950	0x48af7c	graphwarrust::graphwar_client_connection_handler::GraphwarClientConnectionHandler::handle_connected_to_server	GraphwarClientConnectionHandler::handle_connected_to_server
+0x4599f0	0x48b048	graphwarrust::graphwar_client_connection_handler::GraphwarClientConnectionHandler::new	GraphwarClientConnectionHandler::new
+0x459f20	0x48b468	graphwarrust::graphwar_client_connection_handler::GraphwarClientConnectionHandler::tick	GraphwarClientConnectionHandler::tick
+0x45a340	0x48b8a4	graphwarrust::graphwar_client_connection_handler::GraphwarClientConnectionHandler::connect	GraphwarClientConnectionHandler::connect
+0x45a560	0x48badc	graphwarrust::graphwar_server_connection_handler::GraphwarServerConnectionHandler::forward_event	GraphwarServerConnectionHandler::forward_event
+0x45a6b0	0x48bc28	graphwarrust::graphwar_server_connection_handler::GraphwarServerConnectionHandler::handle_clear_bans_request_event	GraphwarServerConnectionHandler::handle_clear_bans_request_event
+0x45a7b0	0x48bd30	graphwarrust::graphwar_server_connection_handler::GraphwarServerConnectionHandler::handle_connection_removed_event	GraphwarServerConnectionHandler::handle_connection_removed_event
+0x45aab0	0x48c02c	graphwarrust::graphwar_server_connection_handler::GraphwarServerConnectionHandler::forward_connection_specific_event	GraphwarServerConnectionHandler::forward_connection_specific_event
+0x45ad30	0x48c32c	graphwarrust::graphwar_server_connection_handler::GraphwarServerConnectionHandler::handle_ban_connection_request_event	GraphwarServerConnectionHandler::handle_ban_connection_request_event
+0x45b020	0x48c644	graphwarrust::graphwar_server_connection_handler::GraphwarServerConnectionHandler::tick	GraphwarServerConnectionHandler::tick
+0x4627c0	0x499c74	graphwarrust::graphwar_turn_manager::GraphwarTurnData::get_current_turn_players	GraphwarTurnData::get_current_turn_players
+0x4628d0	0x499d7c	graphwarrust::graphwar_turn_manager::GraphwarTurnData::get_current_turn_soldiers	GraphwarTurnData::get_current_turn_soldiers
+0x462c10	0x49a0a8	graphwarrust::graphwar_turn_manager::GraphwarTurnManager::get_turn_mode	GraphwarTurnManager::get_turn_mode
+0x462d20	0x49a1f4	graphwarrust::graphwar_turn_manager::GraphwarTurnManager::set_turn_mode	GraphwarTurnManager::set_turn_mode
+0x462ec0	0x49a3d4	graphwarrust::graphwar_turn_manager::GraphwarTurnManager::get_end_of_turn_tick	GraphwarTurnManager::get_end_of_turn_tick
+0x462fe0	0x49a53c	graphwarrust::graphwar_turn_manager::GraphwarTurnManager::send_all_info_events	GraphwarTurnManager::send_all_info_events
+0x463170	0x49a708	graphwarrust::graphwar_turn_manager::GraphwarTurnManager::set_end_of_turn_tick	GraphwarTurnManager::set_end_of_turn_tick
+0x463340	0x49a918	graphwarrust::graphwar_turn_manager::GraphwarTurnManager::get_current_turn_players	GraphwarTurnManager::get_current_turn_players
+0x463460	0x49aa78	graphwarrust::graphwar_turn_manager::GraphwarTurnManager::get_current_turn_soldiers	GraphwarTurnManager::get_current_turn_soldiers
+0x463580	0x49abd8	graphwarrust::graphwar_turn_manager::GraphwarTurnManager::handle_entity_removed_event	GraphwarTurnManager::handle_entity_removed_event
+0x463790	0x49adf8	graphwarrust::graphwar_turn_manager::GraphwarTurnManager::new	GraphwarTurnManager::new
+0x4638f0	0x49af84	graphwarrust::graphwar_turn_manager::GraphwarTurnManager::set_turn	GraphwarTurnManager::set_turn
+0x463da0	0x49b3e8	graphwarrust::graphwar_turn_manager::GraphwarTurnManager::next_turn	GraphwarTurnManager::next_turn
+0x464d10	0x49c244	graphwarrust::graphwar_color_manager::GraphwarColorManager::add_team_color	GraphwarColorManager::add_team_color
+0x465460	0x49ca10	graphwarrust::graphwar_color_manager::GraphwarColorManager::send_all_info_events	GraphwarColorManager::send_all_info_events
+0x465570	0x49cb14	graphwarrust::graphwar_color_manager::GraphwarColorManager::handle_entity_removed_event	GraphwarColorManager::handle_entity_removed_event
+0x465620	0x49cbe8	graphwarrust::graphwar_color_manager::GraphwarColorManager::new	GraphwarColorManager::new
+0x465780	0x3da9bc	ZN12graphwarrust23graphwar_target_manager21GraphwarTargetManager33subscribe_to_events_event_handler28_{{closure}}17hb39773186c0132b5E	GraphwarTargetManager::subscribe_to_events_event_handler
+0x465870	0x3daca0	ZN12graphwarrust23graphwar_target_manager21GraphwarTargetManager33subscribe_to_events_event_handler28_{{closure}}17hced52509dd5826a3E	GraphwarTargetManager::subscribe_to_events_event_handler
+0x465910	0x3dae34	graphwarrust::graphwar_target_manager::GraphwarTargetManager::new	GraphwarTargetManager::new
+0x465a70	0x3dafc0	graphwarrust::graphwar_level_generator::GraphwarLevelGenerator::place_entity	GraphwarLevelGenerator::place_entity
+0x4661a0	0x3db8a8	ZN12graphwarrust24graphwar_level_generator22GraphwarLevelGenerator14generate_level28_{{closure}}17h5eaeb392871fec31E	GraphwarLevelGenerator::generate_level
+0x466c40	0x3dc164	graphwarrust::graphwar_level_generator::GraphwarLevelGenerator::generate_terrain	GraphwarLevelGenerator::generate_terrain
+0x466d20	0x3dc29c	graphwarrust::graphwar_level_generator::GraphwarLevelGenerator::generate_level_custom	GraphwarLevelGenerator::generate_level_custom
+0x467530	0x3dca1c	graphwarrust::graphwar_path_calculator::GraphwarPathCalculator::calculate_paths	GraphwarPathCalculator::calculate_paths
+0x468a50	0x49dad8	graphwarrust::graphwar_graphics_manager::GraphwarGraphicsManager::set_hat_graphics	GraphwarGraphicsManager::set_hat_graphics
+0x468b60	0x49dbec	graphwarrust::graphwar_graphics_manager::GraphwarGraphicsManager::set_face_graphics	GraphwarGraphicsManager::set_face_graphics
+0x468c70	0x49dd00	graphwarrust::graphwar_graphics_manager::GraphwarGraphicsManager::set_skin_graphics	GraphwarGraphicsManager::set_skin_graphics
+0x468d80	0x49de14	graphwarrust::graphwar_graphics_manager::GraphwarGraphicsManager::send_all_info_events	GraphwarGraphicsManager::send_all_info_events
+0x469220	0x49e220	graphwarrust::graphwar_graphics_manager::GraphwarGraphicsManager::handle_entity_removed_event	GraphwarGraphicsManager::handle_entity_removed_event
+0x469390	0x49e394	graphwarrust::graphwar_graphics_manager::GraphwarGraphicsManager::new	GraphwarGraphicsManager::new
+0x46f310	0x4a5704	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::add_target	GraphwarGameStateManager::add_target
+0x46f690	0x4a5b38	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::start_game	GraphwarGameStateManager::start_game
+0x470840	0x4a6ad4	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::handle_tick	GraphwarGameStateManager::handle_tick
+0x470b70	0x4a6de4	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::set_all_alive	GraphwarGameStateManager::set_all_alive
+0x470eb0	0x4a7160	ZN12graphwarrust27graphwar_game_state_manager24GraphwarGameStateManager14fire_functions17h942268ec2d96926eE	GraphwarGameStateManager::fire_functions
+0x472470	0x4a8558	ZN12graphwarrust27graphwar_game_state_manager24GraphwarGameStateManager15execute_results17hfcf151f01f507c9cE	GraphwarGameStateManager::execute_results
+0x473520	0x4a93d8	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::get_alive_teams	GraphwarGameStateManager::get_alive_teams
+0x4737a0	0x4a9680	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::remove_all_players	GraphwarGameStateManager::remove_all_players
+0x473d00	0x4a9de0	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::handle_chat_message	GraphwarGameStateManager::handle_chat_message
+0x473e50	0x4a9f5c	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::request_change_team	GraphwarGameStateManager::request_change_team
+0x4741a0	0x4aa304	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::handle_graphics_info	GraphwarGameStateManager::handle_graphics_info
+0x474490	0x4aa614	ZN12graphwarrust27graphwar_game_state_manager24GraphwarGameStateManager20setup_and_start_game17h10ee2687759cf566E	GraphwarGameStateManager::setup_and_start_game
+0x474a10	0x4aaab4	ZN12graphwarrust27graphwar_game_state_manager24GraphwarGameStateManager21add_soldier_to_player17h593372160f4f6b4eE	GraphwarGameStateManager::add_soldier_to_player
+0x4754c0	0x4ab6c8	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::request_fire_function	GraphwarGameStateManager::request_fire_function
+0x475590	0x4ab7a8	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::request_remove_player	GraphwarGameStateManager::request_remove_player
+0x4758b0	0x4abad4	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::handle_function_points	GraphwarGameStateManager::handle_function_points
+0x4759f0	0x4abc00	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::queue_end_turn_trigger::_{{closure}}	GraphwarGameStateManager::queue_end_turn_trigger
+0x475f50	0x4ac18c	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::request_update_function	GraphwarGameStateManager::request_update_function
+0x476320	0x4ac520	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::set_player_num_soldiers	GraphwarGameStateManager::set_player_num_soldiers
+0x4764b0	0x4ac6ec	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::request_axis_mode_change	GraphwarGameStateManager::request_axis_mode_change
+0x4765f0	0x4ac868	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::request_time_mode_change	GraphwarGameStateManager::request_time_mode_change
+0x476730	0x4ac9e8	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::request_turn_mode_change	GraphwarGameStateManager::request_turn_mode_change
+0x476830	0x4acb34	ZN12graphwarrust27graphwar_game_state_manager24GraphwarGameStateManager26remove_soldier_from_player17h7a5eb00eb52eaa63E	GraphwarGameStateManager::remove_soldier_from_player
+0x476a20	0x4acd44	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::handle_entity_removed_event	GraphwarGameStateManager::handle_entity_removed_event
+0x477140	0x4ad3b4	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::handle_new_connection_event	GraphwarGameStateManager::handle_new_connection_event
+0x477410	0x4ad698	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::request_function_mode_change	GraphwarGameStateManager::request_function_mode_change
+0x477540	0x4ad808	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::handle_connection_removed_event	GraphwarGameStateManager::handle_connection_removed_event
+0x477bc0	0x4ade6c	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::new	GraphwarGameStateManager::new
+0x4780c0	0x4ae398	graphwarrust::graphwar_game_state_manager::GraphwarGameStateManager::set_state	GraphwarGameStateManager::set_state
+0x4782f0	0x3e9c58	ZN12graphwarrust30graphwar_entity_effect_manager27GraphwarEntityEffectManager33subscribe_to_events_event_handler28_{{closure}}17ha902f6348ceee0e5E	GraphwarEntityEffectManager::subscribe_to_events_event_handler
+0x4783f0	0x3e9ac4	ZN12graphwarrust30graphwar_entity_effect_manager27GraphwarEntityEffectManager33subscribe_to_events_event_handler28_{{closure}}17h91e7ef3816d25545E	GraphwarEntityEffectManager::subscribe_to_events_event_handler
+0x478490	0x3e9f40	graphwarrust::graphwar_entity_effect_manager::GraphwarEntityEffectManager::new	GraphwarEntityEffectManager::new
+0x4785f0	0x4ae624	graphwarrust::graphwar_computer_player_manager::GraphwarComputerPlayerManager::handle_tick	GraphwarComputerPlayerManager::handle_tick
+0x478fc0	0x4aedb8	graphwarrust::graphwar_computer_player_manager::GraphwarComputerPlayerManager::add_computer_player	GraphwarComputerPlayerManager::add_computer_player
+0x479520	0x4af258	graphwarrust::graphwar_computer_player_manager::GraphwarComputerPlayerManager::handle_turn_info_event	GraphwarComputerPlayerManager::handle_turn_info_event
+0x47a520	0x4b0098	graphwarrust::graphwar_computer_player_manager::GraphwarComputerPlayerManager::handle_entity_removed_event	GraphwarComputerPlayerManager::handle_entity_removed_event
+0x47a720	0x4b02a4	graphwarrust::graphwar_computer_player_manager::GraphwarComputerPlayerManager::new	GraphwarComputerPlayerManager::new
+0x498c70	0x390b40	graphwarrust::function_drawer::FunctionDrawer::update_function	FunctionDrawer::update_function
+0x499740	0x3f0644	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level	GraphwarLevelManager::setup_level
+0x49e570	0x3f5a7c	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_0::_{{closure}}	GraphwarLevelManager::setup_level_0
+0x49e650	0x3f5820	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_0::_{{closure}}	GraphwarLevelManager::setup_level_0
+0x49e880	0x3f5ba8	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_1::_{{closure}}	GraphwarLevelManager::setup_level_1
+0x49eab0	0x3f5e04	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_1::_{{closure}}	GraphwarLevelManager::setup_level_1
+0x49eb90	0x3f5f30	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_2::_{{closure}}	GraphwarLevelManager::setup_level_2
+0x49f1c0	0x3f64ec	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_2::_{{closure}}	GraphwarLevelManager::setup_level_2
+0x49f370	0x3f676c	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_3::_{{closure}}	GraphwarLevelManager::setup_level_3
+0x49f510	0x3f69e4	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_4	GraphwarLevelManager::setup_level_4
+0x49fea0	0x3f7400	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_4::_{{closure}}	GraphwarLevelManager::setup_level_4
+0x4a04d0	0x3f79fc	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_5	GraphwarLevelManager::setup_level_5
+0x4a0db0	0x3f8370	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_5::_{{closure}}	GraphwarLevelManager::setup_level_5
+0x4a1310	0x3f87fc	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_6	GraphwarLevelManager::setup_level_6
+0x4a1cd0	0x3f9298	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_6::_{{closure}}	GraphwarLevelManager::setup_level_6
+0x4a2430	0x3f98e0	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_7	GraphwarLevelManager::setup_level_7
+0x4a2dc0	0x3fa31c	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_7::_{{closure}}	GraphwarLevelManager::setup_level_7
+0x4a33f0	0x3fa8f4	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_8	GraphwarLevelManager::setup_level_8
+0x4a3df0	0x3fb3a8	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_8::_{{closure}}	GraphwarLevelManager::setup_level_8
+0x4a43a0	0x3fb8f8	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_9	GraphwarLevelManager::setup_level_9
+0x4a4c80	0x3fc26c	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_9::_{{closure}}	GraphwarLevelManager::setup_level_9
+0x4a5390	0x3fc898	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_10::_{{closure}}	GraphwarLevelManager::setup_level_10
+0x4a5940	0x3fcde8	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_11::_{{closure}}	GraphwarLevelManager::setup_level_11
+0x4a5e80	0x3fd610	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_12::_{{closure}}	GraphwarLevelManager::setup_level_12
+0x4a6020	0x3fd250	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_12::_{{closure}}	GraphwarLevelManager::setup_level_12
+0x4a63d0	0x3fd888	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_13::_{{closure}}	GraphwarLevelManager::setup_level_13
+0x4a6980	0x3fddd8	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_14	GraphwarLevelManager::setup_level_14
+0x4a73b0	0x3fe8b0	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_14::_{{closure}}	GraphwarLevelManager::setup_level_14
+0x4a78f0	0x3fed18	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_15	GraphwarLevelManager::setup_level_15
+0x4a8320	0x3ff7ec	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_15::_{{closure}}	GraphwarLevelManager::setup_level_15
+0x4a8860	0x3ffc54	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_16	GraphwarLevelManager::setup_level_16
+0x4a91b0	0x400794	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_16::_{{closure}}	GraphwarLevelManager::setup_level_16
+0x4a93e0	0x400668	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_16::_{{closure}}	GraphwarLevelManager::setup_level_16
+0x4a94c0	0x4009f0	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_17	GraphwarLevelManager::setup_level_17
+0x4a9f00	0x4014e4	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_17::_{{closure}}	GraphwarLevelManager::setup_level_17
+0x4aa640	0x401b2c	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_18	GraphwarLevelManager::setup_level_18
+0x4aafc0	0x40252c	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_18::_{{closure}}	GraphwarLevelManager::setup_level_18
+0x4ab500	0x402994	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_19	GraphwarLevelManager::setup_level_19
+0x4abf00	0x403414	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_19::_{{closure}}	GraphwarLevelManager::setup_level_19
+0x4ac440	0x40387c	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_20	GraphwarLevelManager::setup_level_20
+0x4ace40	0x4042f8	graphwarrust::graphwar_level_manager::GraphwarLevelManager::setup_level_20::_{{closure}}	GraphwarLevelManager::setup_level_20
+0x4b2890	0x4b9430	<graphwarrust::entity_drawer::EntityDrawer as godot_core::gen::classes::control::re_export::IControl>::draw	EntityDrawer::draw
+0x4b4130	0x4bab44	<graphwarrust::entity_drawer::EntityDrawer as godot_core::gen::classes::control::re_export::IControl>::ready	EntityDrawer::ready
+0x4b4b60	0x4bb508	<graphwarrust::entity_drawer::EntityDrawer as godot_core::gen::classes::control::re_export::IControl>::process	EntityDrawer::process
+0x4b5df0	0x4bc54c	<graphwarrust::graphwar_plane::GraphwarPlane as godot_core::gen::classes::control::re_export::IControl>::draw	GraphwarPlane::draw
+0x4b7380	0x4bd73c	<graphwarrust::graphwar_plane::GraphwarPlane as godot_core::gen::classes::control::re_export::IControl>::init	GraphwarPlane::init
+0x4b7a70	0x4bdc74	<graphwarrust::graphwar_plane::GraphwarPlane as godot_core::gen::classes::control::re_export::IControl>::ready	GraphwarPlane::ready
+0x4b83f0	0x4be534	<graphwarrust::graphwar_plane::GraphwarPlane as godot_core::gen::classes::control::re_export::IControl>::process	GraphwarPlane::process
+0x4b9530	0x4bf418	graphwarrust::entity_drawer::EntityDrawer::update_sprite	EntityDrawer::update_sprite
+0x4b9e70	0x4bfbb0	graphwarrust::entity_drawer::EntityDrawer::get_entity_hat_sprite	EntityDrawer::get_entity_hat_sprite
+0x4ba4a0	0x4c0084	graphwarrust::entity_drawer::EntityDrawer::get_entity_name_label	EntityDrawer::get_entity_name_label
+0x4bb0a0	0x4c0b94	graphwarrust::entity_drawer::EntityDrawer::get_entity_face_sprite	EntityDrawer::get_entity_face_sprite
+0x4bb6b0	0x4c1068	graphwarrust::entity_drawer::EntityDrawer::get_entity_skin_sprite	EntityDrawer::get_entity_skin_sprite
+0x4bbcc0	0x4c153c	graphwarrust::entity_drawer::_::__init::__inner_init	
+0x4bc240	0x4c1a88	graphwarrust::entity_drawer::_::__init::__inner_init	
+0x4bc490	0x4c1e28	graphwarrust::graphwar_plane::_::__init::__inner_init	
+0x4bc860	0x4c1c58	graphwarrust::graphwar_plane::_::__init::__inner_init	
+0x4bcc60	0x4c28b8	graphwarrust::graphwar_setup_control::_::__init::__inner_init	::_::__init::__inner_init
+0x4bd030	0x4c2534	graphwarrust::graphwar_setup_control::_::__init::__inner_init	
+0x4bd430	0x4c2fd4	graphwarrust::graphwar_long_press_animation::_::__init::__inner_init	::_::__init::__inner_init
+0x4bd800	0x4c2e04	graphwarrust::graphwar_long_press_animation::_::__init::__inner_init	
+0x4be3e0	0x4c38d8	graphwarrust::graphwar_plane::GraphwarPlane::obstacle_partial_update_event	GraphwarPlane::obstacle_partial_update_event
+0x4be6e0	0x4c3b38	graphwarrust::graphwar_draw_util::GraphwarDrawUtil::get_team_overview	GraphwarDrawUtil::get_team_overview
+0x4bef20	0x4c42c8	graphwarrust::graphwar_audio_control::GraphwarAudioControl::game_state_event	GraphwarAudioControl::game_state_event
+0x4bf090	0x4c442c	graphwarrust::graphwar_audio_control::GraphwarAudioControl::effect_info_event	GraphwarAudioControl::effect_info_event
+0x4bf550	0x4c4964	graphwarrust::graphwar_audio_control::GraphwarAudioControl::new	GraphwarAudioControl::new
+0x4bfe10	0x4c5040	graphwarrust::graphwar_audio_control::GraphwarAudioControl::process	GraphwarAudioControl::process
+0x4c11d0	0x4c60ec	graphwarrust::graphwar_audio_control::GraphwarAudioControl::set_muted	GraphwarAudioControl::set_muted
+0x4c1e40	0x4c6b9c	graphwarrust::graphwar_setup_control::GraphwarSetupControl::update_name	GraphwarSetupControl::update_name
+0x4c2140	0x4c6eb4	graphwarrust::graphwar_setup_control::GraphwarSetupControl::update_rank	GraphwarSetupControl::update_rank
+0x4c27f0	0x4c74e0	graphwarrust::graphwar_setup_control::GraphwarSetupControl::on_text_change	GraphwarSetupControl::on_text_change
+0x4c2b90	0x4c7840	graphwarrust::graphwar_setup_control::GraphwarSetupControl::is_leader_local	GraphwarSetupControl::is_leader_local
+0x4c2ef0	0x4c7c1c	graphwarrust::graphwar_setup_control::GraphwarSetupControl::update_soldiers	GraphwarSetupControl::update_soldiers
+0x4c44b0	0x4c8aec	graphwarrust::graphwar_setup_control::GraphwarSetupControl::on_chat_submitted	GraphwarSetupControl::on_chat_submitted
+0x4c4850	0x4c8e54	graphwarrust::graphwar_setup_control::GraphwarSetupControl::force_title_update	GraphwarSetupControl::force_title_update
+0x4c4c20	0x4c9270	graphwarrust::graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons	GraphwarSetupControl::connect_entry_buttons
+0x4c6f40	0x4cb138	graphwarrust::graphwar_replay_control::GraphwarReplayScreenControl::process	GraphwarReplayScreenControl::process
+0x4cf670	0x4cceb8	<graphwarrust::graphwar_setup_control::GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::ready	GraphwarSetupControl::ready
+0x4d1f10	0x4cfa30	<graphwarrust::graphwar_setup_control::GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::ready::_{{closure}}	GraphwarSetupControl::ready
+0x4d2600	0x4cef94	<graphwarrust::graphwar_setup_control::GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::ready::_{{closure}}	GraphwarSetupControl::ready
+0x4d2f70	0x4cf804	<graphwarrust::graphwar_setup_control::GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::ready::_{{closure}}	GraphwarSetupControl::ready
+0x4d3180	0x4d00a8	<graphwarrust::graphwar_setup_control::GraphwarSetupControl as godot_core::gen::classes::control::re_export::IControl>::process	GraphwarSetupControl::process
+0x4d8100	0x4d44f4	<graphwarrust::graphwar_long_press_animation::GraphwarLongPressAnimation as godot_core::gen::classes::control::re_export::IControl>::draw	GraphwarLongPressAnimation::draw
+0x4e1520	0x43c578	<graphwarrust::effect_drawer::EffectDrawer as godot_core::gen::classes::control::re_export::IControl>::draw	EffectDrawer::draw
+0x4e25b0	0x43d294	<graphwarrust::effect_drawer::EffectDrawer as godot_core::gen::classes::control::re_export::IControl>::ready	EffectDrawer::ready
+0x4e2a30	0x43d930	<graphwarrust::effect_drawer::EffectDrawer as godot_core::gen::classes::control::re_export::IControl>::ready::_{{closure}}	EffectDrawer::ready
+0x4e2d50	0x43d748	<graphwarrust::effect_drawer::EffectDrawer as godot_core::gen::classes::control::re_export::IControl>::ready::_{{closure}}	EffectDrawer::ready
+0x4e2f80	0x43dbf4	<graphwarrust::effect_drawer::EffectDrawer as godot_core::gen::classes::control::re_export::IControl>::process	EffectDrawer::process
+0x4e5400	0x43fe7c	<graphwarrust::player_showcase::PlayerShowcase as godot_core::gen::classes::control::re_export::IControl>::draw	PlayerShowcase::draw
+0x4e6480	0x4408d8	<graphwarrust::player_showcase::PlayerShowcase as godot_core::gen::classes::control::re_export::IControl>::ready	PlayerShowcase::ready
+0x4e68f0	0x440d2c	<graphwarrust::player_showcase::PlayerShowcase as godot_core::gen::classes::control::re_export::IControl>::process	PlayerShowcase::process
+0x4e7260	0x4414b0	graphwarrust::axis_drawer::_::__init::__inner_init	
+0x4e7470	0x441a14	graphwarrust::axis_drawer::_::__init::__inner_init	::_::__init::__inner_init
+0x4e7bc0	0x442178	graphwarrust::effect_drawer::_::__init::__inner_init	::_::__init::__inner_init
+0x4e7e10	0x441c14	graphwarrust::effect_drawer::_::__init::__inner_init	
+0x4e8020	0x4428e4	graphwarrust::graphwar_button::_::__init::__inner_init	::_::__init::__inner_init
+0x4e8580	0x442524	graphwarrust::graphwar_button::_::__init::__inner_init	
+0x4e8b20	0x443040	graphwarrust::player_showcase::_::__init::__inner_init	
+0x4e8d70	0x442c88	graphwarrust::player_showcase::_::__init::__inner_init	
+0x4e8f80	0x443240	graphwarrust::graphwar_lan_vbox::_::__init::__inner_init	
+0x4e9380	0x443440	graphwarrust::graphwar_lan_vbox::_::__init::__inner_init	
+0x4e98e0	0x443b50	graphwarrust::graphwar_ad_switch::_::__init::__inner_init	
+0x4e9c90	0x443f08	graphwarrust::graphwar_ad_switch::_::__init::__inner_init	::_::__init::__inner_init
+0x4ea080	0x4442c8	graphwarrust::graphwar_function_input::_::__init::__inner_init	
+0x4ea480	0x444674	graphwarrust::graphwar_function_input::_::__init::__inner_init	::_::__init::__inner_init
+0x4eb86a	0x44510c	graphwarrust::math_function::MathFunction::remove_offset	MathFunction::remove_offset
+0x4eccb3	0x445a38	ZN12graphwarrust13math_function12MathFunction19to_string_recursive17h8bbeebb4c1e427edE	MathFunction::to_string_recursive
+0x4ed670	0x446c4c	graphwarrust::math_function::MathFunction::new	MathFunction::new
+0x4ee720	0x4478bc	ZN12graphwarrust13math_function18FunctionRandomizer16mutate_fine_tune17hfa716b038bf60678E	FunctionRandomizer::mutate_fine_tune
+0x4efd70	0x448d10	graphwarrust::player_showcase::PlayerShowcase::on_text_change	PlayerShowcase::on_text_change
+0x4f0610	0x4494e4	graphwarrust::graphwar_video_writer::GraphwarVideoWriter::write_video	GraphwarVideoWriter::write_video
+0x4f0bb0	0x449964	graphwarrust::graphwar_video_writer::GraphwarVideoWriter::new	GraphwarVideoWriter::new
+0x4f0e20	0x449b74	graphwarrust::graphwar_video_writer::GraphwarVideoWriter::add_frame	GraphwarVideoWriter::add_frame
+0x4f2200	0x44ac3c	graphwarrust::graphwar_function_input::GraphwarFunctionInput::force_update_cb	GraphwarFunctionInput::force_update_cb
+0x4f3210	0x44b9c0	graphwarrust::graphwar_function_input::GraphwarFunctionInput::move_caret_left	GraphwarFunctionInput::move_caret_left
+0x4f3910	0x44c054	graphwarrust::graphwar_function_input::GraphwarFunctionInput::move_caret_right	GraphwarFunctionInput::move_caret_right
+0x4f44c0	0x44ccc0	graphwarrust::graphwar_function_input::GraphwarFunctionInput::delete_token_at_caret	GraphwarFunctionInput::delete_token_at_caret
+0x4f4a60	0x44d218	graphwarrust::graphwar_function_input::GraphwarFunctionInput::delete_token_after_caret	GraphwarFunctionInput::delete_token_after_caret
+0x4f5450	0x44db78	graphwarrust::polish_notation_converter::PolishNotationConverter::reorder_recursive	PolishNotationConverter::reorder_recursive
+0x4f57d0	0x44ded0	graphwarrust::graphwar_player_screen_control::GraphwarPlayerScreenControl::load_items	GraphwarPlayerScreenControl::load_items
+0x4f77a0	0x44f5fc	graphwarrust::graphwar_player_screen_control::GraphwarPlayerScreenControl::hat_button_pressed	GraphwarPlayerScreenControl::hat_button_pressed
+0x4f7870	0x44f6d0	graphwarrust::graphwar_player_screen_control::GraphwarPlayerScreenControl::face_button_pressed	GraphwarPlayerScreenControl::face_button_pressed
+0x4f7940	0x44f7a4	graphwarrust::graphwar_player_screen_control::GraphwarPlayerScreenControl::skin_button_pressed	GraphwarPlayerScreenControl::skin_button_pressed
+0x4f8050	0x44fe3c	graphwarrust::graphwar_player_screen_control::GraphwarPlayerScreenControl::update_buttons_background	GraphwarPlayerScreenControl::update_buttons_background
+0x4f8850	0x4504bc	graphwarrust::graphwar_player_screen_control::GraphwarPlayerScreenControl::lock	GraphwarPlayerScreenControl::lock
+0x4f8990	0x450600	graphwarrust::graphwar_player_screen_control::GraphwarPlayerScreenControl::unlock	GraphwarPlayerScreenControl::unlock
+0x4f8ad0	0x450744	graphwarrust::graphwar_player_screen_control::GraphwarPlayerScreenControl::pending	GraphwarPlayerScreenControl::pending
+0x4f90b0	0x450c20	<graphwarrust::graphwar_lan_vbox::GraphwarLanVBox as godot_core::gen::classes::v_box_container::re_export::IVBoxContainer>::process	GraphwarLanVBox::process
+0x4fd1b0	0x4544dc	<graphwarrust::graphwar_function_input::GraphwarFunctionInput as godot_core::gen::classes::line_edit::re_export::ILineEdit>::ready	GraphwarFunctionInput::ready
+0x4fd4a0	0x4547a0	<graphwarrust::graphwar_function_input::GraphwarFunctionInput as godot_core::gen::classes::line_edit::re_export::ILineEdit>::process	GraphwarFunctionInput::process
+0x514a10	0x406d3c	graphwarrust::graphwar_backend::GraphwarBackend::button_pressed	GraphwarBackend::button_pressed
+0x514b40	0x406e80	graphwarrust::graphwar_backend::GraphwarBackend::subscribe_to_event	GraphwarBackend::subscribe_to_event
+0x514d80	0x407114	ZN12graphwarrust16graphwar_backend15GraphwarBackend21resubscribe_to_events17hc67f31a6674293cbE	GraphwarBackend::resubscribe_to_events
+0x514f20	0x4072b0	graphwarrust::graphwar_backend::GraphwarBackend::start_client_to_replay	GraphwarBackend::start_client_to_replay
+0x515dc0	0x407ef0	graphwarrust::graphwar_backend::GraphwarBackend::process	GraphwarBackend::process
+0x516370	0x4087fc	graphwarrust::graphwar_game_client::GraphwarGameClient::disconnect	GraphwarGameClient::disconnect
+0x516510	0x408a0c	graphwarrust::graphwar_game_client::GraphwarGameClient::fire_function	GraphwarGameClient::fire_function
+0x516970	0x408e7c	graphwarrust::graphwar_game_client::GraphwarGameClient::request_add_bot	GraphwarGameClient::request_add_bot
+0x516ad0	0x409028	graphwarrust::graphwar_game_client::GraphwarGameClient::update_function	GraphwarGameClient::update_function
+0x516fd0	0x4094ec	graphwarrust::graphwar_game_client::GraphwarGameClient::wait_for_players	GraphwarGameClient::wait_for_players
+0x5172d0	0x409818	graphwarrust::graphwar_game_client::GraphwarGameClient::send_chat_message	GraphwarGameClient::send_chat_message
+0x517490	0x409a30	graphwarrust::graphwar_game_client::GraphwarGameClient::request_lock_change	GraphwarGameClient::request_lock_change
+0x517690	0x409c70	graphwarrust::graphwar_game_client::GraphwarGameClient::new	GraphwarGameClient::new
+0x518320	0x40aae0	graphwarrust::graphwar_game_client::GraphwarGameClient::connect	GraphwarGameClient::connect
+0x518400	0x40ac00	graphwarrust::graphwar_game_client::GraphwarGameClient::process	GraphwarGameClient::process
+0x5185a0	0x497f3c	graphwarrust::graphwar_mode_manager::GraphwarModeManager::send_all_info_events	GraphwarModeManager::send_all_info_events
+0x518f10	0x40ad58	graphwarrust::graphwar_name_manager::GraphwarNameManager::send_all_info_events	GraphwarNameManager::send_all_info_events
+0x519030	0x40ae74	graphwarrust::graphwar_name_manager::GraphwarNameManager::handle_entity_removed_event	GraphwarNameManager::handle_entity_removed_event
+0x519350	0x40b190	graphwarrust::graphwar_name_manager::GraphwarNameManager::set_name	GraphwarNameManager::set_name
+0x519630	0x40b4b8	graphwarrust::graphwar_tick_handler::GraphwarTickHandler::handle_connected_to_server_event	GraphwarTickHandler::handle_connected_to_server_event
+0x519d80	0x40bdd4	graphwarrust::graphwar_effect_manager::GraphwarEffectManager::tick	GraphwarEffectManager::tick
+0x519f40	0x4115d0	graphwarrust::graphwar_local_player_manager::GraphwarLocalPlayerManager::handle_player_info	GraphwarLocalPlayerManager::handle_player_info
+0x51a570	0x411be8	graphwarrust::graphwar_local_player_manager::GraphwarLocalPlayerManager::handle_connected_to_server	GraphwarLocalPlayerManager::handle_connected_to_server
+0x51a610	0x411c9c	graphwarrust::graphwar_local_player_manager::GraphwarLocalPlayerManager::handle_entity_removed_event	GraphwarLocalPlayerManager::handle_entity_removed_event
+0x51a750	0x411ddc	graphwarrust::graphwar_function_evolutionator::GraphwarFunctionEvolutionator::score_function	GraphwarFunctionEvolutionator::score_function
+0x51b440	0x412900	graphwarrust::graphwar_function_evolutionator::GraphwarFunctionEvolutionator::calculate_functions	GraphwarFunctionEvolutionator::calculate_functions
+0x51d080	0x413da0	graphwarrust::graphwar_function_evolutionator::GraphwarFunctionEvolutionator::calculate_functions_old	GraphwarFunctionEvolutionator::calculate_functions_old
+0x51eb90	0x415158	graphwarrust::graphwar_function_evolutionator::GraphwarFunctionEvolutionator::new	GraphwarFunctionEvolutionator::new
+0x522070	0x41830c	alloc::rc::Rc<T,A>::new_cyclic_in	
+0x523410	0x419fbc	alloc::rc::Rc<T,A>::new_cyclic_in	
+0x5238c0	0x41921c	alloc::rc::Rc<T,A>::new_cyclic_in	
