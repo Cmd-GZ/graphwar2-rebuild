@@ -7249,3 +7249,255 @@ $PY tools/tag_ctor_gaps.py --self-test        # §50 那套扩展形态的自检
 > ⇒ 必须 `export XDG_DATA_HOME=$PWD/.agent-work/xdg`（否则 `user://` 相关断言必失败）。
 > 这两个坑都不是代码问题，但**不设就会得出"退了很多"的假结论**。
 
+
+## 53. 视觉帧对拍：**原版真机 vs 我方客户端**，同一屏同一串点击下的三层判据（客户端第一次有"视觉真值"）——主菜单 **0 像素差**；回放列表/回放屏/播完三屏**都不过**，差在"缺元素 + 版式"，不是"差一点"（2026-11-10，`dispatch/94`）
+
+> 任务书：[`dispatch/94-visual-frame-diff.md`](../dispatch/94-visual-frame-diff.md)。分支 `agent/visual-frame-diff`，
+> 基于 `CG@9576c3c`，私有 `CARGO_HOME` / `CARGO_TARGET_DIR`（`.agent-work/cg/target94`）。
+> 原版 = `.reference/game/{Graphwar.x86_64, Graphwar.pck, libgraphwarrust.so}`（Graphwar II Linux **2.0.60**，
+> 内嵌 **Godot 4.7.stable.official.5b4e0cb0f**）；我方 = `client/` + `libgw2_rebuild.so`
+> （**Godot 4.7.2.stable.official.ed1daf0bf**）。两路同机、同 1920×1160、同 OpenGL3(llvmpipe)。
+>
+> **为什么这一节重要**：此前所有客户端断言都是**结构级**（节点在不在、字段对不对）。
+> 本节是第一次拿**原版的像素**当判据 —— 它一句话就否掉了一堆"headless 全绿"的错觉：
+> 我方回放屏上**根本没有士兵、没有靶子**，而 14 个 headless 脚本 + selftest 一条都不报。
+
+### 53.0 一页结论
+
+| # | 屏 | 判定（预注册门槛） | 跨侧差异像素 | 差在哪（一句话） |
+|---|---|---|---|---|
+| ① | `S1 menu` 主菜单 | **过**（L1/L2/L3 全过） | **0 / 2 227 200** | 无差异：两帧**逐字节相同**（sha256 `32fb5095…`，两侧连跑 3 帧都是它） |
+| ② | `S2 replay_lobby` 回放列表 | **不过（L1）** | 91 625（4.114 %） | 只差**列表行**（`y ≤ 237`）：多出"文件名 + 大小×2"两列、日期**没有秒**、**没有关卡名**、4 个图标按钮变成**空框**、▶ 变小 |
+| ③ | `S3 replay_play` 回放播放屏 | **不过（L1）** | 920 469（41.328 %） | **我方没有士兵精灵（只有准备圈的 3 个红箭头）、没有靶子、没有名字标签**；整屏版式不同（我方保留表达式键盘 + Fire + 底部状态栏；原版是 ⏮▶⏭ 三键 + `f(x)=` 行）；棋盘几何也不一样 |
+| ④ | `S4 replay_end` 播完（等 45 s） | **不过（L1）** | 1 168 387（52.460 %） | **行为差**：原版这 45 s **根本没走**（全屏只有 270 个像素变了 = 输入框光标闪），我方播到 `tick 2276/2276`（35.33 % 的像素变了） |
+
+**三屏都不过 —— 但每一屏都给出了"差在哪个区域、差的是什么元素"**，这就是本轮要的东西（`dispatch/94` §0 说
+"客户端层唯一的硬证据"）。L3 只在 L1/L2 都过时才算数，所以 ②③④ 的 L3 数字**只是参考量**，不参与判定。
+
+### 53.1 预注册（两份文件，**都在跑之前提交**）
+
+| 文件 | sha256 | 内容 |
+|---|---|---|
+| [`fixtures/frame_diff_thresholds.txt`](../fixtures/frame_diff_thresholds.txt) | **`9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873`**（commit `758931b`） | 门槛本体：L1（尺寸 + 三通道全局均值 ≤ 2.0/255 + 第一主色同色且占比差 ≤ 2.0 pp）、L2（6×4=24 块，每块每通道均值 ≤ 2.0/255，24 块全过）、L3（差异像素 ≤ 0.10 % 且 max\|Δ\| ≤ 8/255）；固定条件；三屏点击脚本 |
+| [`fixtures/frame_diff_thresholds_amend1.txt`](../fixtures/frame_diff_thresholds_amend1.txt) | `6933d28827752b06913a1eea82f5dceb7dc0cf6cfaa7534869bf274245c25e62`（commit `7b0a30e`） | **只换局面来源**：战役关卡位置不可复现（见 §53.5 第 1 条）⇒ 改用冻结快照回放。**门槛一个数没改** |
+
+`tools/frame_diff.py` 里写死了上表第一个 sha256，跑的时候会核对门槛文件；不一致会打警告并在结果里留痕。
+**跑完没有改过任何一个阈值** —— ②③④ 三个"不过"就是按 2.0/255 判出来的，没有倒推。
+
+### 53.2 固定条件与复跑（命令级）
+
+| 项 | 两路一致吗 | 值 |
+|---|---|---|
+| Xvfb | ✅ 各自私有 display | `Xvfb :81`（原版）/ `:82`（我方），`-screen 0 1920x1160x24 -listen tcp -ac -nolisten unix` |
+| 渲染后端 | ✅ | 都走 **OpenGL3**（Vulkan 不可用，引擎自己回落；两侧日志里都有 `switching to OpenGL 3`） |
+| mesa | ✅ | `__EGL_VENDOR_LIBRARY_FILENAMES=…/50_mesa.json`、`LIBGLX_VENDOR_LIBRARY_NAME=mesa`、`LIBGL_ALWAYS_SOFTWARE=1`（llvmpipe 软渲染） |
+| 窗口 | ✅ | `--resolution 1920x1160 --position 0,0` ⇒ 两路窗口都是 `1920x1160+0+0`（`manifest.json` 的 `window.geometry`） |
+| 取帧 | ✅ | ImageMagick **`import -window <窗口 id>`**（无合成器的 Xvfb 上 `-window root` 抓出来是全黑，实测） |
+| 引擎 | ❌ **补丁版不同** | 原版内嵌 **4.7.0**（`5b4e0cb0f`）／我方 **4.7.2**（`ed1daf0bf`）。**已知混淆项**，登记不改（同引擎对照实验列为未做，见 §53.5） |
+| 局面 | ✅ | 冻结快照回放 `1793897298`（`Level 0`：1 士兵 `cmdgz` + 1 靶子，`ClearObstacles`，104 事件 / 2276 tick），两侧**同一份文件**、`user://replays` 各拷一份（**不写快照**：快照跑完仍是 403 份） |
+
+```bash
+# 两路各一条（脚本自己起 Xvfb → 起游戏 → 点击 → 每屏 3 帧 → 收摊）
+python3 tools/frame_capture.py --side original --flow replay --seed-replays --out .agent-work/…/cap_orig_rp --display-num 81
+python3 tools/frame_capture.py --side ours     --flow replay --seed-replays --out .agent-work/…/cap_mine_rp --display-num 82
+# 三层判据（Pillow + numpy；**别用 .reference/venv**，它没有 PIL）
+python3 tools/frame_diff.py --orig .agent-work/…/cap_orig_rp --mine .agent-work/…/cap_mine_rp \
+    --screens menu,replay_lobby,replay_play,replay_end \
+    --out fixtures/frame_diff_results.tsv --blocks-out fixtures/frame_diff_blocks.tsv --json <工作区>/frame_diff.json
+```
+
+两侧点击串（**语义同一串**；回放行播放键的坐标不同，因为两边的行本身长得不一样）：
+
+```
+S1 menu          启动后 4.0 s，不点任何东西
+S2 replay_lobby  点 Replays(1343,749) → 等 2.0 s
+S3 replay_play   点列表第 1 行的播放键（原版 1805,132 ／ 我方 1619,124）→ 等 2.0 s
+S4 replay_end    不再点，等 45.0 s（2276 tick ÷ 60 = 37.9 s）
+```
+
+每屏 **3 帧**、帧间隔 **1.2 s**（3 帧的用途是量"同一侧自己的抖动"＝噪声地板，见 §53.3 第 3 行）。
+
+### 53.3 实测数字（入库：[`fixtures/frame_diff_results.tsv`](../fixtures/frame_diff_results.tsv) + [`fixtures/frame_diff_blocks.tsv`](../fixtures/frame_diff_blocks.tsv)）
+
+**逐屏（L1/L2/L3）**
+
+| 屏 | 判定 | L1 全局均值 \|Δ\|（最大通道） | 第一主色（原版／我方） | 主色占比差 | L2 超限块 | L2 最差块 | L3 差异像素 | L3 max\|Δ\| | 噪声地板（原版／我方） |
+|---|---|---|---|---|---|---|---|---|---|
+| `menu` | **过** | **0.000** | `#0E251C` ／ `#0E251C` | 0.000 pp | **0 / 24** | — | **0（0.0000 %）** | 0 | 0.000 % ／ 0.000 % |
+| `replay_lobby` | 不过（L1） | 2.204 ✗ | `#0E251C` ／ `#0E251C` | 1.692 pp ✓ | 5 / 24 | `(0,4)` **20.914** | 91 625（4.1139 %） | 255 | 0.000 % ／ 0.000 % |
+| `replay_play` | 不过（L1） | 19.382 ✗ | `#0E251C` ／ **`#FFFFFF`** ✗ | 4.839 pp | 19 / 24 | `(0,4)` **60.454** | 920 469（41.3285 %） | 255 | 0.000 % ／ **0.125 %** |
+| `replay_end` | 不过（L1） | 53.466 ✗ | `#0E251C` ／ **`#FFFFFF`** ✗ | 19.167 pp | 22 / 24 | `(0,5)` **235.263** | 1 168 387（52.4599 %） | 255 | 0.000 % ／ 0.000 % |
+
+三条读法：
+
+1. **`replay_lobby` 是"差一点但确实不过"**：全局均值 2.204 只超 0.204，可 L2 直接把问题点到 5 块、
+   最差 20.914 —— 说明**差异是局部的、成块的**，不是"整体偏一点"。这正是 L2 存在的理由。
+2. **`replay_play` 的第一主色从深绿变成纯白**：原版白像素占屏 **39.91 %**、我方 **44.89 %**
+   （阈值 >250 的三通道同时满足）⇒ 我方棋盘占屏比原版大得多，整屏的"重心"都不一样了。
+3. **噪声地板**：原版四屏**每屏 3 帧逐字节相同**（`manifest.json` 里同一屏 3 帧 sha256 全一样）⇒ 原版在
+   回放屏是**完全静止**的；我方 `replay_play` 3 帧 sha256 各不相同（自身抖动 0.125 %，弹道正在逐 tick 揭示）
+   ⇒ 我方那一屏在动。S1/S4 我方也静止（0.000 %）。
+
+**逐块（超限的块，`row,col` 从 0 起、左上角为 `0,0`，每块 320×290）**
+
+| 屏 | 超限块（dmean > 2.0/255） | 说明 |
+|---|---|---|
+| `replay_lobby` | `(0,0)` 10.04、`(0,1)` 16.74、`(0,3)` 2.84、`(0,4)` **20.91**、`(0,5)` 2.98 —— **其余 18 块 0 像素差** | 差异**全部**落在第一横带（`y < 290`）＝ 列表行；标题与返回键所在的上沿、以及整个下部**一个像素都不差** |
+| `replay_play` | 19 块超限；只有 `(1,1)` 0.76、`(1,2)` 1.08、`(1,3)` 0.46、`(2,1)` 0.18、`(2,3)` 1.31 **达标** —— 那 5 块正好是棋盘正中**纯白网格**那一片 | 差得最多的是 `(0,4)` 60.45、`(1,5)` 57.29、`(0,1)` 54.79、`(0,2)` 54.28、`(0,3)` 52.55（上沿与右侧） |
+| `replay_end` | 22 块超限；只有 `(0,0)` 1.93、`(1,2)` 1.01 达标 | 最差 `(0,5)` 235.26、`(1,5)` 225.77、`(2,5)` 222.12（右侧一列）—— 我方那一列是键盘，原版是空的 |
+
+### 53.4 差在哪（逐屏，能指到元素）
+
+**① `S1 menu` —— 一模一样（0 像素）**
+
+两侧每屏 3 帧的 sha256 **全部等于** `32fb509574af6a8d490673d73bd8d074f9e55e5bc7e6d01b6cebd344a0d0b9dd`
+（1.8 MB 里 0 个像素不同）。而且这条**跨两次独立运行**成立：本轮两次 `--side original` + 一次 `--side ours`
+跑出来的主菜单帧都是这个 sha256。⇒ 主菜单（标题图 + 4 个按钮 + 版本文本 `2.0.60`）是**像素级复原**，
+这也是客户端目前**唯一**能这么说的屏。
+
+**② `S2 replay_lobby` —— 只差列表行，行内是"列都不一样"**
+
+同一条 1920×1160 画面里，**返回键、`REPLAYS` 标题、下半屏三个部分一个像素都不差**；差异的
+91 625 个像素全部落在 `y ∈ [0,237]` 的两行上。逐列对照（同一份回放文件）：
+
+| 列 | 原版 | 我方 |
+|---|---|---|
+| 第 1 列 | （无） | **文件名的数字串** `1793897298` |
+| 第 2 列 | 日期时间 **带秒** `2026-11-05 16:48:18` | 日期时间 **不带秒** + 字节数 `2026-11-05 16:48 / 1276 B` |
+| 第 3 列 | **关卡名** `Level 0` | **没有**（缺失） |
+| 第 4 列 | 4 个**有图**的图标按钮（棋盘缩略图 / `f(x)=` / 模式 / `∞`），最后 1 个是 ▶ | 6 个**空框**（图标纹理没画出来 / 尺寸压扁），▶ 另起一列且**更小** |
+| 第 5 列 | （无） | **字节数再来一次** `1276 B` |
+
+⇒ 这不是配色/字号问题，是**行的列集合不同**（我方多 2 列、少 1 列、图标没画出来）。
+
+**③ `S3 replay_play` —— 缺元素 + 版式不同 + 棋盘几何不同（三重）**
+
+用同一份回放（`1793897298`，士兵在棋盘左下、靶子在右上）拍：
+
+| 元素 | 原版 | 我方 |
+|---|---|---|
+| 士兵精灵（帽子/脸/身体）+ 名字标签 `cmdgz` | **有**：彩色像素 bbox `(771,783)–(843,854)`，1 850 个彩色像素 | **没有** |
+| 靶子（蓝环 + 红心） | **有**：bbox `(1177,448)–(1202,473)`（26×26），421 个彩色像素 | **没有**（同区域只有 15 个像素，且是网格线上的杂点） |
+| 准备圈的 3 个红箭头 | 回放屏**不画** | **画了**：bbox `(811,765)–(864,827)`，296 个彩色像素（比原版士兵的中心**偏右 ~30 px、偏上 ~22 px**） |
+| 左侧 | `⏮ ▶ ⏭` 三个回放键 | 完整的**表达式键盘**（C/π/e、1–9、运算符…） |
+| 右侧 | 3 个竖排按钮 | 表达式键盘右列 + Fire! 按钮 |
+| 底部 | `f(x) =` ＋ 函数文本 `x+2sin(20x)` ＋ 修正常数 `- 3.694` | `00:00 f(x) =` 输入框 ＋ **状态行**「回放 Level 0 / tick 124/2276 / 事件 64/104 / 播放中」 |
+| 棋盘（白底矩形） | `x 303–1575`、`y 198–959` ⇒ **1273×762** | `x 303–1638`、`y 131–1140` ⇒ **1336×1010** |
+| 轴线交点 | `(939, 578)` | `(971, 931)` |
+
+⇒ 左边界 `303` **两个都一样**（说明平面左锚点是对的），但**高度差 248 px、上边界差 67 px、
+横轴差 353 px** —— 我方把棋盘铺得比原版高一截、并且整体上移。上面那 5 块"达标"的块
+（棋盘正中一片白网格）正好是两边都只是白底 + 网格的地方。
+
+**④ `S4 replay_end` —— 45 秒之后，原版一动没动，我方走完全程**
+
+| 量 | 原版 | 我方 |
+|---|---|---|
+| 45 s 前后的帧差 | **270 像素（0.0121 %）**，bbox `x 1182–1184, y 1066–1155`（3×90 的竖条 = **输入框光标**闪了一下） | **786 898 像素（35.3313 %）**（弹道整条画出来） |
+| 画面状态 | 仍停在载入态：`f(x) = x+2sin(20x)`、修正 `- 3.694`、**没有弹道**、▶ 仍是"播放"图标 | 底部状态行 `tick 2276/2276 / 事件 104/104`、**暂停**、弹道已画完 |
+
+⇒ **原版进入回放屏后不自动播放**（要按 ▶ 才走；本轮手工验过：按下 ▶ 后 6 s 内弹道从下往上逐点揭示）。
+我方 `GwReplayDriver` 一 `load()` 就按 60 tick/s 跑（§56）。**这条是行为差异，不是渲染差异**，
+而且它把 S3 的 tick 对齐彻底卡住（见 §53.5 第 2 条）。
+
+### 53.5 抓不到 / 不可比（诚实清单）
+
+| # | 项 | 状态 | 卡在哪 |
+|---|---|---|---|
+| 1 | **战役关卡的"同一局面"** | **不可比**（如实判） | 同一条点击串（`Campaign(534,629)` → 关卡节点 0 `(241,228)` → `Start(1074,1009)`）跑两次，士兵/靶子落点不同（一次左下、一次正中；修正常数 `10.365` / `- 0.061`）⇒ 原版这一层**没有外部可钉的种子**（`GW2_MATCH_SEED` 是**我方服务端**的旋钮，对原版无效）。原登记的三屏因此按红线②判"不可比"，改用回放（§53.1 的增补 1） |
+| 2 | **S3 的"同一 tick"** | **没做到** | 原版载入即**暂停**（位置无法从外部读到）、我方载入即**播放**（tick 从 0 开始跑）。⇒ S3 只能判"两边的回放屏长什么样"，**不是**"同一 tick 的画面"。要真对齐，得用 frida 挂 tick 钩子把原版冻在 tick T、再让 `GwReplayDriver.seek(T)` —— 本轮没做（`tools/frame_capture.py` 完全没上 frida，纯 `xdotool` + `import`） |
+| 3 | **同一引擎版本** | **不可比的部分已声明** | 原版内嵌 Godot **4.7.0**、我方 **4.7.2**。主菜单 0 像素说明这一屏不受补丁版影响；**不能**据此说别的屏也不受影响。补做办法：用原版的 `Graphwar.x86_64`（它本身是 Godot 4.7 + gdext）跑我方工程，把这一维度消掉 —— 本轮**未做** |
+| 4 | 会话内 3 帧的"动画相位" | 已量化 | 噪声地板（§53.3 第 3 行）：原版四屏 0.000 %、我方仅 `replay_play` 0.125 %。跨侧差异 4–52 % **远大于**噪声地板 ⇒ 差异不可能是相位噪声 |
+| 5 | 原版"播到文件末尾"的样子 | 拍到了，但**不是终局** | 因为原版不自动播放（§53.4 ④），45 s 后仍停在载入态；"播完会怎样"本轮**没拍到**（手工那一次点 ▶ 之后没等到底就退出了） |
+
+### 53.6 这批数字能支撑什么、不能支撑什么
+
+| 结论 | 证据 | 档 |
+|---|---|---|
+| 主菜单与我方**像素级一致**（1.8 MB 内 0 像素差，且跨 3 次运行同 sha256） | 本节 ①② | **观测**（真机真帧） |
+| 我方**回放列表行**的结构与原版不同（列集合、图标、秒数、关卡名） | §53.4 ② + 5 块 L2 超限 | **观测** |
+| 我方**回放屏缺士兵/靶子/名字标签**，且多画了准备圈箭头、保留了比赛用键盘 | §53.4 ③ + 19/24 块超限 | **观测** |
+| 我方回放屏的**棋盘几何**与原版不同（高 +248 px、横轴 +353 px） | §53.4 ③ 的白底矩形与轴线交点 | **观测** |
+| 原版进回放屏**不自动播放**，我方自动播放 | §53.4 ④（45 s 内 270 px vs 786 898 px） | **观测** |
+| 这三屏"差的是元素"，不是"差一点亮度/抗锯齿" | L2 每块 20–235/255、L3 max\|Δ\|=255 | **观测** |
+| 我方回放屏"缺元素"是**渲染层**问题还是**喂数据**问题 | —— | **未知**（本轮只拍到画面，没有 dump 我方 `EntityDrawer` 的输入表；`client/tools/entity_drawer_check.gd` 能查，但它的断言是自洽的，不能代替真机帧） |
+
+### 53.7 踩的坑（三条都是环境，不是代码）
+
+1. **原版是 Godot 4.7，不是 3.x**：脚本给两侧都设了 `XDG_DATA_HOME`，所以原版的 `user://` 落在
+   `<home>/data/godot/app_userdata/Graphwar/`，**不是** `~/.local/share/...`。第一次把回放拷进后者
+   ⇒ 原版回放列表**空的**（0 行），S2/S3/S4 全成了"跟空列表比"。`tools/frame_capture.py` 里
+   `seed_replays()` 两个落点都拷，只为不再踩。
+2. **逐命令 PID namespace**：`nohup … &` 起的游戏/`cargo` 在**下一条命令**里就不存在了（窗口 id 查得到、
+   进程没了；`import` 会挂死 60 s）。⇒ 要么用后台作业，要么像 `tools/frame_capture.py` 那样**一个进程树跑完**
+   （起 Xvfb → 起游戏 → 点 → 截 → 收摊）。
+3. **环境里自带 `DISPLAY=:0` 和 `WAYLAND_DISPLAY=wayland-1`**：不显式盖掉，Godot 会跑在 Wayland 上，
+   窗口根本不在 Xvfb 里（`xdotool search` 返回空）。脚本里两路都**写死** `DISPLAY` 并 `unset WAYLAND_DISPLAY`。
+
+### 53.8 复跑清单（4 条命令 + 1 条自检）
+
+```bash
+# ① 门槛自检（脚本里写死的 sha256 与仓库里的门槛文件必须一致；不一致会打警告）
+python3 -c "import hashlib;print(hashlib.sha256(open('fixtures/frame_diff_thresholds.txt','rb').read()).hexdigest())"
+#    → 9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873
+
+# ② 两侧采集（各 ~80 s；两路**不同 display 号**，别共用）
+python3 tools/frame_capture.py --side original --flow replay --seed-replays --out $W/cap_orig --display-num 81
+python3 tools/frame_capture.py --side ours     --flow replay --seed-replays --out $W/cap_mine --display-num 82
+
+# ③ 三层判据 → 本节的 TSV（`fixtures/` 里那两份就是它产出的）
+python3 tools/frame_diff.py --orig $W/cap_orig --mine $W/cap_mine \
+    --screens menu,replay_lobby,replay_play,replay_end \
+    --out fixtures/frame_diff_results.tsv --blocks-out fixtures/frame_diff_blocks.tsv --json $W/frame_diff.json
+
+# ④ 快照没被写（三轴的分母；跑完必须还是 403 份）
+ls .reference/replays/gw2-replays-snapshot/replays | wc -l   # → 403
+```
+
+### 53.9 验收：数字没有退（本轮**没动** `src/`、`client/`、`fixtures/guardrails.json`、`dispatch/`）
+
+`git diff --name-only CG@9576c3c..HEAD` 只有 `tools/frame_capture.py`、`tools/frame_diff.py`、
+`fixtures/frame_diff_*.{txt,tsv}`、`docs/06`、`docs/16`（外加两份预注册提交）——所以下面的数字
+**按构造**不可能被本轮改动影响；仍然全部自己跑了一遍：
+
+| 项 | 本轮实测 | 基线（任务书/§52） | 判 |
+|---|---|---|---|
+| `cargo test --offline` | **1756 passed / 0 failed** | 1756 | **一致** |
+| `cargo test --offline --features gdext-bindings` | **1862 passed / 0 failed** | （§56 记过 1853，其后两轮 merge 涨到 1862） | 0 failed |
+| 三轴 `fire` | **内容命中 647**（文件 286 / 读失败 117 / 结算批 1080） | 647 | **一致** |
+| 三轴 `batch` | **内容命中 647**（结算批 1080） | 647 | **一致** |
+| 三轴 `batch_conv` | **内容命中 637 / 1080**（种类 1075 / 1080） | 637 | **一致** |
+| 快照语料 | `.reference/replays/gw2-replays-snapshot/replays` 仍是 **403** 份（本轮只往外**拷**，未写回） | 403 | **一致** |
+| headless 14 脚本 | **1930 passed / 0 failed**（`assemble 241 / base 117 / curve 96 / draw 235 / entity 366 / function 132 / gdext 24 / obstacle 116 / plane 96 / play_flow 206 / process 66 / recovered 57 / signal 155 / spike 23`） | 1930 | **一致** |
+| `selftest` | **0 failed**（干净 `user://replays`：**654 / 0 / 3skip**；`$XDG_DATA_HOME` 里带历史存档、回放目录清空：**641 / 0 / 3skip**） | 717 / 0 / 1 | **0 failed 一致，条数不可直接比**（见下） |
+
+⚠️ **`selftest` 的条数随环境变，别把 717 当固定分母**（本轮实测三次，同一棵树）：
+
+| 环境 | 结果 | 差异原因 |
+|---|---|---|
+| `user://replays` 里**空**、`$XDG_DATA_HOME` 干净 | **654 / 0 / 3skip** | 3 条 skip 是"本沙箱缺 `$HOME` 下那份原版回放样本" |
+| `user://replays` **空**、`$XDG_DATA_HOME` 带历次跑留下的存档 | **641 / 0 / 3skip** | 存档存在时少掉 13 条"空存档"分支的断言 |
+| `user://replays` 里塞了本轮采集用的 **2 份回放** | **716 / 1 / 1skip** | 多出 ~75 条**按行展开**的回放列表断言；其中 `回放列表空时只剩标题一个 Label` 必然红 —— 那是**我自己把回放放进去**的环境，不是代码退化（`client/`、`src/` 一个字节没动） |
+
+⇒ 结论只写能站住的那句：**`0 failed`**；"717 / 0 / 1skip"这个数在本沙箱**没有原样复现**，
+原因是断言总数跟着 `user://replays` 里的文件数与存档状态走（641 ↔ 716）。要复现它：先把
+`$HOME/.local/share/godot/app_userdata/Graphwar/replays` 与 `user://replays` 都清成**基线那个状态**再跑。
+
+```bash
+export CARGO_HOME=<ws>/.reference/cargo-home CARGO_TARGET_DIR=<ws>/.agent-work/cg/target94
+cargo test --offline                                   # 1756 / 0
+cargo test --offline --features gdext-bindings          # 1862 / 0
+cargo build --offline --features gdext-bindings --example serve_match   # selftest 的前置之一
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --import
+for f in assemble_check base_classes_check curve_on_screen_check draw_classes_check entity_drawer_check \
+         function_drawer_check gdext_check obstacle_drawer_check plane_on_screen_check play_flow_check \
+         process_loop_check recovered_view_check signal_classes_check spike_class_check; do
+  "$GODOT" --headless --path client --script res://tools/$f.gd      # 合计 1930 / 0
+done
+"$GODOT" --headless --path client -- --selftest                      # 0 failed（条数见上表）
+# 三轴（各自单独跑，别混口径）
+cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive fire  --policy default --json /tmp/f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive batch --policy default --json /tmp/b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir <快照> --policy strict
+```
