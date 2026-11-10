@@ -1,0 +1,9 @@
+# 94 号视觉帧对拍实测（原版真机 vs 我方客户端，1920x1160，OpenGL3/llvmpipe，import -window 取窗）
+# 局面 = 冻结快照回放 1793897298(Level 0)：S1 menu / S2 replay_lobby / S3 replay_play / S4 replay_end（增补 1 的四屏）
+# 复跑：python3 tools/frame_capture.py --side {original|ours} --flow replay --seed-replays --out <dir> 然后 tools/frame_diff.py
+# 门槛 = fixtures/frame_diff_thresholds.txt sha256 9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873（预注册）
+screen	verdict	l1_size_ok	l1_ok	l1_dmean_max	l1_dmean	l1_top_color	l1_top_share_pp	l2_ok	l2_blocks_over	l2_max_block_dmean	l2_worst_block	l3_evaluated	l3_diff_px	l3_diff_ratio	l3_max_channel_diff	l3_bbox	noise_max_orig	noise_max_mine
+menu	过	True	True	0.0	0.0,0.0,0.0	#0E251C,#0E251C	0.0	True	0	0.0	0,0	True	0	0.0	0	None	0.0	0.0
+replay_lobby	不过（L1 主色/均值）	True	False	2.204	2.204,2.09,2.122	#0E251C,#0E251C	1.692	False	5	20.914	0,4	False	91625	0.041139	255	0,0,1916,237	0.0	0.0
+replay_play	不过（L1 主色/均值）	True	False	19.382	19.382,14.749,16.379	#0E251C,#FFFFFF	4.839	False	19	60.454	0,4	False	920469	0.413285	255	0,0,1919,1159	0.0	0.00125
+replay_end	不过（L1 主色/均值）	True	False	53.466	53.466,46.632,48.275	#0E251C,#FFFFFF	19.167	False	22	235.263	0,5	False	1168387	0.524599	255	0,0,1919,1159	0.0	0.0
