@@ -10480,3 +10480,94 @@ cargo run --release --offline -q --example batch_conv   -- --dir <快照> --poli
 | 2 | "下标 → 界面档位"这一步 | **观测 + 推断**（§59.2） | 直接观测：原版把 `AxisModeInfo` 落到 `TurnTimeButton`/`AxisModeButton` 档位的运行时证据（回放里换模式后按一下 UI 反查） |
 | 3 | `docs/133` §3.3 的取值分布是否仍是最新 | 沿用 84 号的 400 份样本口径 | 快照语料是冻结的 401 份，没有新样本 ⇒ 分布不变 |
 | 4 | `GwReplayDriver` 的 `#[func]` 现为 47 个（43 + 4） | 已改 | 若将来把"模式表"独立成一个 `GwWireModes` 类（按原版模块名归位）更贴近原版分层，但**原版没有这个类名的证据** ⇒ 本轮不猜 |
+
+## 60. `GraphwarGameStateManager` 的事件层搬出 `src/game.rs`：3 个处理器 + 7 条订阅（2026-11-10，任务 95）
+
+**一句话**：最后一格 `assembled` 的**位置问题**解决了 —— 7 条订阅（`SUBSCRIBED_EVENTS`）+
+发件箱/入件（`GsmEvents`）+ **3 个真有实体的处理器**搬进 `src/graphwar_game_state_manager.rs`，
+容器里装的仍是 `game::Match`（**没加壳**），三轴一位未动；但**档位仍是 19 / 2 / 1 / 0**，
+因为复核发现另外 **4/7 个处理器在我方一行实现都没有**（缺的是**行为**，不是位置）。
+
+### 60.1 判据与前提的证伪
+
+任务 86 的结论是"卡 `src/game.rs` 禁区、缺的是实现位置不是证据"。任务 95 只放开"搬移"，
+于是先复核前提："`src/game.rs` 里现有 **7 处** `fn …handler` / `handle_tick` 形态的实现"
+—— **不成立**：
+
+```text
+grep -nE "fn .*handle" src/game.rs          → 2 处（handle_tick / handle_entity_removed）
++ note_skin_graphics（名字里没有 handle）    → 共 3 处
+```
+
+另外 4 个处理器（`new_connection` `0x477140` / `connection_removed` `0x477540` /
+`function_points` `0x4758b0` / `chat_message` `0x473d00`）在 `src/` 里**一行都没有**，
+不是"写在别处的同一个逻辑" ⇒ 本轮**不搬、也不写**（写就是**新行为**，越了"只许搬移"的红线）。
+
+### 60.2 搬了什么（函数体一字未改）
+
+| 处理器 | 原地址 | 原位置 | 现位置 |
+|---|---|---|---|
+| `handle_tick` | `0x470840` / 816 B | `Match::handle_tick`（`src/game.rs`） | `src/graphwar_game_state_manager.rs` 的 `impl Match` |
+| `handle_graphics_info`（`skin_graphics_info_event`） | `0x4741a0`（arm64 `0x4aa304`） | `Match::note_skin_graphics` | 同上 |
+| `entity_removed` 的处理器 | `0x476a20` | `Match::handle_entity_removed` | 同上 |
+
+搬过去的三处**只多了一行** `self.events.deliver(...)`（入方向：这条事件真的到了这个处理器）。
+`src/game.rs` 侧只留 `// 原版边界：…（已搬走，见 …）` 的横幅与一个 `pub events: GsmEvents` 字段 +
+`new()` 里一行初始化 —— 那是**事件层本身的落点**（86 号说的"要加 `outbox`"就是它），不是新行为。
+
+### 60.3 事件层的形状
+
+```text
+src/graphwar_game_state_manager.rs
+  SUBSCRIBED_EVENTS[7]  ← 名字 / 判别值 / 原版处理器名 / 订阅点 0x477c92… / 处理器入口 / 体内 add_event 数 / 我方有没有实现
+  GsmEvents { subscribed, outbox, delivered } + take_outbox / outbox_len
+  impl Match { handle_tick, note_skin_graphics, handle_entity_removed, subscribed_events, take_outbox, outbox_len, delivered_events }
+```
+
+7 条订阅、10 处 `add_event` 的分布是**本轮自己复跑**的（不再抄 86 号的表）：
+
+```bash
+$PY tools/addr_probe.py --so ../.reference/game/libgraphwarrust.so dis 0x477bc0 | grep -c "slot 0x9bac88"   # 7
+for a in 0x470840 0x477140 0x476a20 0x477540 0x4758b0 0x4741a0 0x473d00; do … grep -c "slot 0x9bac80"; done
+# → 1 4 1 2 1 1 0（合计 10，与 86 号逐条相同）
+```
+
+三个**判别值**也读出来了：`0x470a49` → 30 `GameStateInfo{1}`、`0x476bbe` → 44 `EffectInfo`、
+`0x4742b9` → 56 `EntityEffectInfo{id, 3=Ash}`。⇒ 订阅方向 7/7 落进代码；发方向只有
+`handle_tick` 那一类（到期的 `DestroyObstacle`(41)）真的落地，另外两处**没有接**（照实记 `0`）。
+
+### 60.4 数字（本人重跑，私有 target；`src/game.rs` 只减不增）
+
+| 项 | 改前 | 改后 |
+|---|---|---|
+| 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **647 / 647 / 637**（每搬完一轮都重跑） |
+| `cargo test --offline` | 1756 | **1761**（+5：新文件的 5 条 inline 测试） |
+| `cargo test --offline --features gdext-bindings` | 1862 | **1867**（同上） |
+| `client/tools/assemble_check.gd` | 241 / 0 | **244 / 0**（+3：`game_state` 的 订阅 / 发布 / 状态） |
+| 交互读数（`manager_probe_selftest`） | 145 条 / 19 个 manager | **151 条 / 20 个 manager**（+6 条 `game_state.*`） |
+| headless 14 个脚本合计 | 1930 | **1933**（只有 `assemble_check` 241→244，其余 13 个逐项不变） |
+| `selftest` | 717 / 0 / 1 skip | **717 / 0 / 1 skip**（`selftest.gd` **没动**） |
+| 档位分布 | 19 / 2 / 1 / 0 | **19 / 2 / 1 / 0**（不升，理由见 §60.5） |
+
+### 60.5 为什么仍不升档
+
+`wired` 的判据是"接容器 + **事件流两个方向都指到指令** + 有最小交互断言"。
+本轮 ① ③ 都齐了（① 一直齐、③ 从 0 → 6 条），② 只有**订阅方向**落地：
+
+* 4/7 个处理器**没有实现**（要写新行为）；
+* 已实现的 2 个登记表处理器（`entity_removed` / `skin_graphics_info`）在原版体内**各发 1 条**
+  事件（44 / 56），我方**不发**。
+
+⇒ 把这一格报成 `wired` 就是"把 4 个没写的处理器当成已接"。判断与缺口都写在
+[`161-manager-gaps.md`](161-manager-gaps.md) §2.4，下一轮要做的四件事也在那里。
+
+### 60.6 两处**超出允许清单**的改动（都不是行为）
+
+| 文件 | 改了什么 | 为什么必须改 |
+|---|---|---|
+| `src/lib.rs` | **+1 行** `pub mod graphwar_game_state_manager;` | 新文件的模块声明；不加这一行文件根本不编译（任务书的允许清单漏了这一行，按"新增复原模块"的最小需求补） |
+| `tools/coverage_matrix.py` | 把新文件加进 `graphwar_game_state_manager.rs` 那条映射（`mod()` 的 ours 元组） | 否则新文件的函数**不属于任何模块**，两份生成物会漏报 —— 生成物的正确性由 `--check` 保证 |
+
+> `docs/coverage-matrix.tsv` 与 `docs/149-coverage-matrix.md` 已按 `COVERAGE_MATRIX_UPSTREAM`
+> 指向 `.reference/upstream` 重跑；`--check` 通过。该模块行现在是
+> `src/game.rs+src/turnstate.rs+src/graphwar_game_state_manager.rs`，`ours_funcs` 119 → **136**。
