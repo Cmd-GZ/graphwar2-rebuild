@@ -128,6 +128,7 @@ pub mod graphwar_tick_handler;
 pub mod game;
 pub mod graphwar_level_generator;
 pub mod graphwar_game_server;
+pub mod graphwar_game_state_manager;
 pub mod graphwar_function_evolutionator;
 pub mod graphwar_setup_control;
 pub mod graphwar_client_connection_handler;

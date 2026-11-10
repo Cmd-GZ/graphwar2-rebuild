@@ -84,7 +84,11 @@ const WIRED_TIER := [
 	"wired",
 	# 6  PlanePosManager      24 B / 3 字段全解 + 订 2 发 1 处理 1 + 9 条交互（任务 36，§44）
 	"wired",
-	# 7  GameStateManager
+	# 7  GameStateManager    任务 95：7 条订阅已落地（`graphwar_game_state_manager.rs` 的
+	#                         SUBSCRIBED_EVENTS + GsmEvents）、3 个处理器搬出 game.rs 并接上入方向；
+	#                         **但 4/7 个处理器我方没有实现**（new_connection / connection_removed /
+	#                         function_points / chat），发方向只有 DestroyObstacle(41) 一类
+	#                         ⇒ 缺的是**行为**不是位置，仍是 assembled（docs/161 §2.4）
 	"assembled",
 	# 8  FunctionManager      32 B / 4 字段全解，容器 + 6 条交互都在，但**发方向**事件流没接
 	"layout",
@@ -122,6 +126,7 @@ const WIRED_TIER := [
 	"wired",
 ]
 ## 四档现值计数（顺序固定：wired / layout / assembled / stub；合计 = 22）。
+## 任务 95 复核后**仍是**这组数：那一格卡的是"4/7 个处理器没有实现"，不是"搬不动"。
 const TIER_TALLY := {"wired": 19, "layout": 2, "assembled": 1, "stub": 0}
 ## 容器里**什么都没有**的两个槽（纯标记）：只有它们的 `manager_impl_type()` 回 `"—"`。
 const EMPTY_IMPL := ["GraphwarClientConnectionHandler"]
@@ -335,8 +340,8 @@ func _initialize() -> void:
 	#
 	# 上面 2) 那一段只证明"22 个槽都能按类型取回"——**取回来的是活对象**这件事，
 	# 得真调一个入口再读回来才算。这里用 `manager_probe_selftest()`（**我方自造**的
-	# 观测口，原版没有；理由见 §44）：它在容器里对 18 个 manager 各跑一遍
-	# "取回 → 写 → 读回"，返回 135 条 `名字=值`。
+	# 观测口，原版没有；理由见 §44）：它在容器里对 21 个 manager 各跑一遍
+	# "取回 → 写 → 读回"，返回 151 条 `名字=值`。
 	#
 	# ⚠️ 期望值**不是**从返回值抄下来的：它们逐条对应 `root_wiring.rs` 的单测
 	# `one_minimal_interaction_per_manager_reads_back_the_written_value`，
@@ -422,13 +427,18 @@ func _initialize() -> void:
 		"computer.state_add=3", "computer.think=9046,9050,200", "computer.state_spawn=1",
 		"computer.blocked_while_running=true", "computer.reset=1",
 		"computer.state_after_tick=3", "computer.removed=true",
+		# ㉑ GameStateManager（任务 95）：订 7 条 → tick 入方向 → 无到期不发 →
+		#    发布 TurnCountInfo(58) → 状态写读 7（末尾复位）。事件层见
+		#    `src/graphwar_game_state_manager.rs`（SUBSCRIBED_EVENTS[7] + GsmEvents）
+		"game_state.subs=7", "game_state.due=0", "game_state.delivered_tag=0",
+		"game_state.outbox=0", "game_state.publish_tag=58", "game_state.turn_count=7",
 	]
 	var probe: PackedStringArray = root_node.call("manager_probe_selftest")
 	print("      manager_probe_selftest() 给出 %d 条（期望 %d 条）" % [probe.size(), expected_probe.size()])
 	ok(probe == PackedStringArray(expected_probe),
-		"19 个 manager 的最小交互结果 == 145 条 名字=值（实际 %s）" % probe)
+		"20 个 manager 的最小交互结果 == 151 条 名字=值（实际 %s）" % probe)
 	ok(probe.size() == expected_probe.size(),
-		"交互条数 == 145（19 个 manager：5+5+7+6+4 + 6+6+7+5+7+7 + 9 + 9+8+12 + 8+7+9+8 + 10）")
+		"交互条数 == 151（20 个 manager：5+5+7+6+4 + 6+6+7+5+7+7 + 9 + 9+8+12 + 8+7+9+8 + 10 + 6）")
 
 	# 逐个 manager 各取一条最关键的值再查一遍（单条查询口）
 	ok(String(root_node.call("manager_probe", "life.alive")) == "1",
@@ -539,6 +549,13 @@ func _initialize() -> void:
 	ok(String(root_node.call("manager_probe", "computer.level")) == "1000"
 		and String(root_node.call("manager_probe", "computer.limit")) == "200",
 		"ComputerPlayerManager「订阅」3 条（tick/turn_info/entity_removed）+ 难度档 1000→limit 200 落表")
+	ok(String(root_node.call("manager_probe", "game_state.subs")) == "7",
+		"GameStateManager「订阅」7 条（0x477bc0 体内 7 次 call [0x9bac88]：tick/new_connection/entity_removed/connection_removed/function_points/skin_graphics_info/chat_message）")
+	ok(String(root_node.call("manager_probe", "game_state.publish_tag")) == "58",
+		"GameStateManager「发布」set_turn_count 发 TurnCountInfo(58)；处理器体内 10 处 add_event 的清单见 docs/161 §2.4（我方只落地 DestroyObstacle 一类）")
+	ok(String(root_node.call("manager_probe", "game_state.turn_count")) == "7"
+		and String(root_node.call("manager_probe", "game_state.delivered_tag")) == "0",
+		"GameStateManager「状态/入方向」turn_count 写 7 读回 7（末尾复位）+ handle_tick 收到 TickEvent(0)")
 
 	# 反面对照（任务 28 重判）：这 5 个 `SlotKind::Stub` 槽的档位**跟着事实走**，
 	# 不再是清一色 `stub`——"能交互"不等于"复原了原版结构"，两件事分开记（§43 / §47）：

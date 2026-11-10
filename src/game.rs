@@ -171,6 +171,12 @@ pub struct Match {
     /// 见 `graphwar_entity_effect_manager` §6 的 6 个写入点与
     /// [`Match::note_skin_graphics`]。
     pub entity_effects: GraphwarEntityEffectManager,
+    /// **事件层**（原版 `GraphwarGameStateManager::new` 里那 7 条 `subscribe_to_event`
+    /// 的落地：订阅名 + 发件箱 + 入件记录）。
+    ///
+    /// 实现全部在 [`crate::graphwar_game_state_manager`]（任务 95 从本文件搬出去的那一半：
+    /// 订阅表 + 3 个处理器 + `take_outbox`）。容器里装的仍是 `Match` 本体，**没有加壳**。
+    pub events: crate::graphwar_game_state_manager::GsmEvents,
 }
 
 /// 进化种群的归属（`docs/98` §6-A **未定**）。
@@ -791,8 +797,9 @@ impl Match {
     // `new_connection_event` / `entity_removed_event` / `tick_event` /
     // `connection_removed_event` / `function_points_event` /
     // `skin_graphics_info_event` / `chat_message_event`），也就是 arm64 上那 7 个
-    // `subscribe_to_events_event_handler::{{closure}}`；我们**没有事件总线**，
-    // 这一段没有对应物（`docs/14` §11.7）。
+    // `subscribe_to_events_event_handler::{{closure}}`）；我们**没有事件总线**，
+    // 这 7 条订阅现在落在 [`crate::graphwar_game_state_manager::SUBSCRIBED_EVENTS`]
+    // 与 [`Match::events`]（任务 95 搬过去的那一半），`docs/14` §11.7 的分工表据此更新。
     // ─────────────────────────────────────────────────────────────────────
     pub fn new(
         room: RoomState,
@@ -839,6 +846,9 @@ impl Match {
             bots: std::collections::BTreeSet::new(),
             evolutions: 0,
             entity_effects,
+            // 原版 `new` 在这里做 7 次 `subscribe_to_event`（`0x477c92` … `0x477e96`）；
+            // 我方把订阅表落进事件层，见 `crate::graphwar_game_state_manager`。
+            events: crate::graphwar_game_state_manager::GsmEvents::new(),
         }
     }
 
@@ -1231,29 +1241,13 @@ impl Match {
         }
     }
 
-    /// **迟到的皮肤信息**（原版 `GraphwarGameStateManager::handle_graphics_info`，
-    /// arm64 **`0x4aa304`**）：`SkinGraphicsInfo{graphics_str}` 决定这个实体的死亡特效。
-    ///
-    /// 只看两条闸门（逐位，见 `graphwar_entity_effect_manager` §6.3）：
-    ///
-    /// * 事件的 tag 必须是 **51 `SkinGraphicsInfo`**（调用方负责）；
-    /// * `graphics_str` **长度 ≥ 4 且以 `bot_` 开头**才改写，否则原版**什么都不做**
-    ///   （`0x4aa358` 的 `b.ne`）。
-    ///
-    /// 返回是否真的改写了登记表。
     // ─────────────────────────────────────────────────────────────────────
-    // 原版边界：`handle_graphics_info`（`0x4aa304`，784 字节）里那次
-    // `add_entity_effect(_, AshEffect)` 循环（`0x4aa410`–`0x4aa47c`）。
-    // 我方：`Match::note_skin_graphics`。**没有接线**：本仓库没有事件总线，
-    // `SkinGraphicsInfo` 由调用方逐条喂进来（回放对拍器的 `replaydiff::Predictor`
-    // 现在不喂，见 `docs/16-client.md` §33.5）。
+    // 原版边界：`handle_graphics_info`（`0x4aa304`，784 字节；订阅表里的处理器入口
+    // `0x4741a0`）里那次 `add_entity_effect(_, AshEffect)` 循环（`0x4aa410`–`0x4aa47c`）。
+    // **已搬走**（任务 95）：`Match::note_skin_graphics` 现在在
+    // [`crate::graphwar_game_state_manager`]，连它体内那 1 处 `add_event`
+    // （tag 56 `EntityEffectInfo`，`0x4742b9`）的地址一起搬过去。本文件不再留副本。
     // ─────────────────────────────────────────────────────────────────────
-    pub fn note_skin_graphics(&mut self, id: i64, graphics_str: &str) -> bool {
-        match u32::try_from(id) {
-            Ok(eid) => self.entity_effects.apply_skin_graphics(eid, graphics_str),
-            Err(_) => false,
-        }
-    }
 
     /// 实体特效登记表的投影（测试与对拍器用）：`None` = 这个实体**没有登记**，
     /// 死亡时原版一条特效都不发。
@@ -1261,18 +1255,12 @@ impl Match {
         u32::try_from(id).ok().and_then(|e| self.entity_effects.get(e))
     }
 
-    /// 原版 `entity_removed_event` 的处理（判定值 **14**，`0x3e9ac4`）：**只删表项**。
-    ///
-    /// 死亡**不**走这里（`0x4a8cb0` 只查表、不删），所以活着登记的类型能一直用到
-    /// 死亡结算那一刻。
-    pub fn handle_entity_removed(&mut self, id: i64) {
-        if let Ok(eid) = u32::try_from(id) {
-            let _ = self.entity_effects.handle_entity_removed_event(
-                crate::graphwar_entity_effect_manager::ENTITY_REMOVED_TAG,
-                eid,
-            );
-        }
-    }
+    // ─────────────────────────────────────────────────────────────────────
+    // 原版边界：`entity_removed_event` 的处理器（判定值 14；处理器入口 `0x476a20`）。
+    // **已搬走**（任务 95）：`Match::handle_entity_removed` 现在在
+    // [`crate::graphwar_game_state_manager`]（含它体内那 1 处 `add_event` = tag 44
+    // `EffectInfo`，`0x476bbe`）。本文件不再留副本。
+    // ─────────────────────────────────────────────────────────────────────
 
     /// 靶子被打死（等价于一条 `LifeInfo{alive:false}`）。返回是否真的从活翻成死。
     pub fn kill_target(&mut self, id: i64) -> bool {
@@ -1545,27 +1533,14 @@ impl Match {
         due
     }
 
-    /// 原版 `GraphwarGameStateManager::handle_tick`（**`0x470840`**，816 字节）。
-    ///
-    /// 真值这一个函数干三件事（反汇编见 `docs/14` §11.3）：
-    ///
-    /// 1. **把 tick 事件转给订阅者**（`0x470880`–`0x470989`：取订阅者表，逐个
-    ///    `call [vtable+0x20]`，然后释放）—— 我们**没有**事件总线，这一段没搬；
-    /// 2. **回合截止 ⇒ 自动开火**（`0x470989`–`0x4709f1`）：`state == WaitingForFunctions`
-    ///    ∧ `now_tick >= TurnManager::get_end_of_turn_tick()` ∧ `[self+0x11c] != 0`
-    ///    ⇒ `fire_functions`。这条判据已落成纯函数
-    ///    [`crate::turnstate::should_auto_fire`]（**未接线**：我们仍由调用方决定开火，
-    ///    因为 `Match` 上没有 `[+0x11c]` 那一位）；
-    /// 3. **时间上限到期 ⇒ 回 `Setup`**（`0x470a04`–`0x470a61`）：`[self+0xc0] == 1`
-    ///    ∧ `now_tick > [self+0xc4]` ∧ `[self+0x11c] != 0` ⇒ 清 `[+0xc0]`、
-    ///    `state = 1`（`Setup`）、推一条事件。**未落地**：`[+0xc0]`/`[+0xc4]` 这对
-    ///    (标志, 截止 tick) 只在 `set_lock` 一族里见过写点，语义仍是推断。
-    ///
-    /// 本方法因此只做**已落地的那部分**：把 [`Match::tick`] 的到期动作走一遍。
-    /// 加它不是为了多一层壳，而是让"原版 `handle_tick` 该在这里"这件事在代码里可见。
-    pub fn handle_tick(&mut self, now_tick: i64) -> Vec<String> {
-        self.tick(now_tick)
-    }
+    // ─────────────────────────────────────────────────────────────────────
+    // 原版边界：`handle_tick`（`0x470840`，816 字节）。
+    // **已搬走**（任务 95）：`Match::handle_tick` 现在在
+    // [`crate::graphwar_game_state_manager`]（三段职责逐段标注、含体内那 1 处
+    // `add_event` = tag 30 `GameStateInfo{1}`，`0x470a49`）。
+    // 留在本文件的是它用到的机制 [`Match::tick`]（到期 `DestroyObstacle`），
+    // 因为那个队列（`pending_destroy`）是结算侧的字段。
+    // ─────────────────────────────────────────────────────────────────────
 
     /// 处理一次开火，返回要广播的消息（顺序见模块注释）。
     ///
