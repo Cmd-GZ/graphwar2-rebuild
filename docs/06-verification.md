@@ -5262,6 +5262,12 @@ $PY tools/lan_ai_triple.py --jsonl $R/lan_ai.jsonl --label lanAI --oracle 1 \
 | `cargo test --offline` | **1693 passed / 0 failed** |
 | `tools/check_doc_refs.py` | **rc=0** |
 
+> **编号说明（§43 空号，别重编号）**：本节之前的 `§43` 是**故意留空**的 —— 82 号当初要新增一节时，
+> `§42`（LAN+AI）正文里已经在引用 `docs/02` 的 `§43.x`（结构指纹配置那一节），
+> 两者撞号会造成"同一份文档里 §43 指两处"的歧义，所以直接跳到 §44。
+> 全库另有 **7 处**引用 `docs/06` §44–§49（含 `docs/161` 引用 §47 门⑤ / §46 G7），
+> **重编号的代价大于收益** ⇒ 保留空号，用本注说明。
+
 ## 44. `GraphwarGameClient::process`（`0x518400`）的**节奏真值**：帧 30–67 fps 时 tick 恒 **60.00/s**；每帧 **0/1/2** 个 tick、长帧按 `gap ÷ 16.667 ms` 成比例追赶；泵**只跟着 tick 走**（不是每帧一次）；引擎给的 `delta` **从不被读**（`--fixed-fps 10` 下 delta 恒 0.1 s，tick 仍跟墙钟）（2026-11-09，`dispatch/80`）
 
 > 任务书：[`dispatch/80-drive-frame-cadence.md`](../dispatch/80-drive-frame-cadence.md)。起点 `CG@e150ccd`，

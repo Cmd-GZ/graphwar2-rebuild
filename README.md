@@ -84,7 +84,7 @@
 
 | # | 缺口 | 性质 |
 |---|---|---|
-| 1 | **客户端控制器迁回 Rust** —— **78 个模块名已权威确定**（`docs/02` §18），**GDExtension 类 15 个已还原且节点化**（原版 12 + 我方 3）；视图层已换 24 个原版脚本。余下的是 `client/src/screens/*.gd` **≈6,062 行仿制流程**（回合推进 / 准备态 / 联机 / 回放驱动 / 关卡坐标）。54 + 67 号已搬走胜负判定 / 射手轮转 / 弹道生命周期 / 回合超时 / AI 闸门（`play_flow_check` 135 条），**继续保持"进 Rust 的是状态机、留 GDScript 的是节点属性"这条边界** |
+| 1 | **客户端控制器迁回 Rust** —— **78 个模块名已权威确定**（`docs/02` §18），**GDExtension 类 15 个已还原且节点化**（原版 12 + 我方 3）；视图层已换 24 个原版脚本。余下的是 `client/src/screens/*.gd` **≈6,062 行仿制流程**（回合推进 / 准备态 / 联机 / 回放驱动 / 关卡坐标）。54 + 67 号已搬走胜负判定 / 射手轮转 / 弹道生命周期 / 回合超时 / AI 闸门（`play_flow_check` 199 条），**继续保持"进 Rust 的是状态机、留 GDScript 的是节点属性"这条边界** |
 | 2 | **死亡集合 / `AshEffect` 发射器** | 对拍剩余失败的**主要来源**：37 个失败里 19 个是"死亡块整块是 `AshEffect`"、18 个是"死亡集合漏报"（`docs/141`） |
 | 3 | **同时回合制的 A 类**：`TurnInfo` 那组玩家排列（HashMap 迭代序） | 缺一份未捕获的熵；批内其它顺序**已定死**（130/130） |
 | 4 | **界面像素**：主菜单 sha256 相同、弹窗 0.00–1.7%、玩家页 0.007%；但仍有屏缺真值 | 见 `docs/130`/`docs/137` |
@@ -159,7 +159,7 @@ python3 tools/bit_exact_attrib.py --json b.jsonl      # 延迟段两条 + 失败
 | | 现状 |
 |---|---|
 | **12 个 GDExtension 类的逻辑** | ✅ 全部还原（在 `src/`，纯 Rust、可测） |
-| **把它们变成真 Godot 节点** | ✅ **全部节点化**。headless 断言按脚本计（**14** 个脚本、共 **1,827** 条）：`entity_drawer_check` 366 / `assemble_check` 226 / `draw_classes_check` 235 / `signal_classes_check` 155 / `play_flow_check` 135 / `function_drawer_check` 132 / `base_classes_check` 117 / `obstacle_drawer_check` 116 / `plane_on_screen_check` 96 / `curve_on_screen_check` 96 / `recovered_view_check` 57 / `process_loop_check` 49 / `gdext_check` 24 / `spike_class_check` 23 —— 全 **0 failed** |
+| **把它们变成真 Godot 节点** | ✅ **全部节点化**。headless 断言按脚本计（**14** 个脚本、共 **1,930** 条）：`entity_drawer_check` 366 / `assemble_check` 241 / `draw_classes_check` 235 / `signal_classes_check` 155 / `play_flow_check` 199 / `function_drawer_check` 132 / `base_classes_check` 117 / `obstacle_drawer_check` 116 / `plane_on_screen_check` 96 / `curve_on_screen_check` 96 / `recovered_view_check` 57 / `process_loop_check` 66 / `gdext_check` 24 / `spike_class_check` 23 —— 全 **0 failed** |
 
 绑定层有两条路，**已量化**（`docs/18-build.md` §10）：
 
