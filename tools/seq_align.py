@@ -302,7 +302,7 @@ def load_truth(work):
 # ===========================================================================
 # 3. 匹配质量 + 带状 DP（log 域 sum-product）
 # ===========================================================================
-def build_q(sa, sb, band, cfg=None):
+def build_q(sa, sb, band, cfg=None, center=None):
     """返回 (Q, J0, M)：Q[i,k] 是 A[i] 与 B[J0[i]+k] 的匹配质量（带外 / 越界为 -inf 语义 ⇒ 0 分但不匹配）。
 
     Q 用 float32；不可匹配（越界或 S=0）记 0 —— 0 分匹配在 DP 里等价于"不匹配但白拿两格"，
@@ -313,7 +313,9 @@ def build_q(sa, sb, band, cfg=None):
     M = 2 * band + 1
     la = np.log(np.maximum(sa, cfg["size_floor"]).astype(np.float64))
     lb = np.log(np.maximum(sb, cfg["size_floor"]).astype(np.float64))
-    center = np.rint(np.arange(na) * (nb / float(na))).astype(np.int64)
+    if center is None:
+        center = np.rint(np.arange(na) * (nb / float(na))).astype(np.int64)
+    center = np.asarray(center, dtype=np.int64)
     K = np.arange(-band, band + 1, dtype=np.int64)
     J = (center[:, None] + K[None, :]).astype(np.int32)    # (na, M)
     valid = (J >= 0) & (J < nb)
@@ -386,15 +388,14 @@ def forward(Q, nb, band, center, gap, order=None):
         v = np.where(okm, prev[np.clip(idx, 0, M - 1)], NEG)
         Fprev[i] = v
         a1 = v + Q[i]
+        if order is not None:                          # 锚点约束只约束**匹配**，不约束跳过
+            a1 = np.where(order.allowed(i, jj), a1, NEG)
         # ② 跳过 A[i]：从 F[i-1][j] 来
         idx2 = jj - prev_lo
         ok2 = ok & (idx2 >= 0) & (idx2 < M)
         a2 = np.where(ok2, prev[np.clip(idx2, 0, M - 1)], NEG) - gap
         A = np.maximum(a1, a2)
         ch = np.where(a1 >= a2, 0, 1).astype(np.uint8)
-        if order is not None:
-            bad = ~order.allowed(i, jj)
-            A = np.where(bad, NEG, A)
         # ③ 行内跳 B[j]
         b = np.where(ok, A + gap * jj.astype(np.float64), NEG)
         kb = -1 - (ci - band)                  # 虚拟列 j=-1（F[i][-1] = -gap*(i+1)）
@@ -442,12 +443,12 @@ def backward(Q, nb, band, center, gap, order=None):
         idxm = (jj + 1) - nxt_lo
         okm = ok & (k2 >= 0) & (k2 < M) & (idxm >= 0) & (idxm < M)
         A1 = np.where(okm, nxt[np.clip(idxm, 0, M - 1)] + Q[i + 1][np.clip(k2, 0, M - 1)], NEG)
+        if order is not None:                          # 同上：只约束匹配
+            A1 = np.where(order.allowed(i + 1, jj + 1), A1, NEG)
         idx2 = jj - nxt_lo
         ok2 = ok & (idx2 >= 0) & (idx2 < M)
         A2 = np.where(ok2, nxt[np.clip(idx2, 0, M - 1)], NEG) - gap
         A = np.maximum(A1, A2)
-        if order is not None:
-            A = np.where(order.allowed(i, jj), A, NEG)
         b = np.where(ok, A - gap * jj.astype(np.float64), NEG)
         kb = nb - (ci - band)                  # 虚拟列 j=nb：只**存**、不参与本行
         u = np.maximum.accumulate(b[::-1])[::-1]
@@ -473,8 +474,11 @@ class AnchorOrder(object):
         self.aj = [p[1] for p in self.pairs]
 
     def allowed(self, i, jj):
+        """行 i 允许的 j：夹在相邻两个锚点之间；**锚点行只允许它自己的 j**。"""
         import bisect
         s = bisect.bisect_left(self.ai, i)
+        if s < len(self.ai) and self.ai[s] == i:
+            return jj == self.aj[s]
         lo_j = self.aj[s - 1] if s > 0 else -1
         ok = jj > lo_j
         if s < len(self.ai):
@@ -502,6 +506,34 @@ def longest_increasing(seq):
     return out[::-1]
 
 
+def center_from_anchors(anchors, na, nb):
+    """锚点分段 + 段内 DP 的**中心曲线**：把锚点 (i,j) 做分段线性插值，两头接到 (‑1,‑1)/(na,nb)。"""
+    pts = [(-1, -1)] + sorted((int(a), int(b)) for a, b in anchors) + [(na, nb)]
+    xs = np.array([p[0] for p in pts], dtype=np.float64)
+    ys = np.array([p[1] for p in pts], dtype=np.float64)
+    i = np.arange(na, dtype=np.float64)
+    return np.rint(np.interp(i, xs, ys)).astype(np.int64)
+
+
+def center_from_path(path, na, nb, smooth=0):
+    """**两遍法**的中心曲线：用第 1 遍（宽带）Viterbi 路径当中心，第 2 遍用窄带。
+
+    `path` 是 `(i, j)` 列表（可来自 `fixtures/seq_align.tsv` 的 argmax 路径或另一遍的输出）。
+    没被覆盖的行用线性插值补（首尾接 (‑1,‑1)/(na,nb)）。
+    """
+    pts = [(-1, -1)] + sorted((int(a), int(b)) for a, b in path) + [(na, nb)]
+    xs = np.array([p[0] for p in pts], dtype=np.float64)
+    ys = np.array([p[1] for p in pts], dtype=np.float64)
+    i = np.arange(na, dtype=np.float64)
+    c = np.rint(np.interp(i, xs, ys)).astype(np.int64)
+    if smooth and smooth > 1:                      # 可选滑动中位数，压掉单个离群点
+        k = int(smooth) | 1
+        pad = k // 2
+        ext = np.concatenate([np.full(pad, c[0]), c, np.full(pad, c[-1])])
+        c = np.array([int(np.median(ext[t:t + k])) for t in range(na)], dtype=np.int64)
+    return c
+
+
 def align(sa, sb, cfg=None, anchors=None, verbose=False):
     """跑一遍：返回 (js, qbest, margin, matched, stats, aux)。
 
@@ -514,10 +546,15 @@ def align(sa, sb, cfg=None, anchors=None, verbose=False):
     cfg = cfg or PREREG
     band, gap = int(cfg["band"]), float(cfg["gap"])
     na, nb = len(sa), len(sb)
-    Q, j0, M, center = build_q(sa, sb, band, cfg)
+    curve = None
     order = None
     if anchors:
-        order = AnchorOrder(anchors, cfg)
+        order = AnchorOrder(anchors, cfg)          # 先把锚点单调化，**再用它造中心曲线**
+        curve = center_from_anchors(order.pairs, na, nb)
+    elif cfg.get("center_from"):
+        curve = center_from_path(cfg["center_from"], na, nb, cfg.get("center_smooth", 0))
+    Q, j0, M, center = build_q(sa, sb, band, cfg, center=curve)
+    if order is not None:
         for (ai, aj) in order.pairs:                  # 强制锚点被匹配
             if 0 <= ai < na:
                 k = aj - (int(center[ai]) - band)
@@ -743,6 +780,10 @@ def cmd_run(args):
         cfg["band"] = args.band
     if args.gap is not None:
         cfg["gap"] = args.gap
+    if args.center_from:
+        cfg["center_from"] = [(int(r["x86_addr"], 16), int(r["arm64_addr"], 16))
+                              for r in read_tsv(args.center_from) if r.get("arm64_addr")]
+        cfg["center_smooth"] = args.center_smooth
     apairs = None
     if args.anchors:
         which = "anchors_tune.tsv" if args.anchors == "tune" else "holdout.tsv"
@@ -842,7 +883,9 @@ def cmd_verify(args):
     print("   分档：" + "  ".join("%s %d/%d=%.1f%%" % (t, per_tier_ok[t], per_tier[t],
                                                     100.0 * per_tier_ok[t] / max(1, per_tier[t]))
                                 for t in ("A", "B", "C", "none") if per_tier[t]))
-    print("   锚点变体 holdout 半：%d/%d = %.2f%%" % (h_ok, h_n, 100.0 * h_ok / max(1, h_n)))
+    print("   %s：%d/%d = %.2f%%" % ("holdout 半" if args.tag != "anchored" else
+                                    "锚点变体（锚=tune 半）在 holdout 半",
+                                    h_ok, h_n, 100.0 * h_ok / max(1, h_n)))
     print("② 覆盖率：目标集合 %d" % len(tgt))
     for t in ("A", "B", "C", "none"):
         print("   %-5s %6d  %5.1f%%" % (t, cov[t], 100.0 * cov[t] / max(1, len(tgt))))
@@ -864,39 +907,49 @@ def cmd_verify(args):
     return ok_addr, n
 
 
+_SW = {}
+
+
+def _sweep_init(xa, sa, sb, truth, hold, arms_addrs):
+    _SW.update(xa=xa, sa=sa, sb=sb, truth=truth, hold=hold, arms=arms_addrs)
+
+
+def _sweep_one(cb):
+    """单个网格点：只在 **tune 半** 上计分，holdout 半也一并算出来（但选择不看它）。"""
+    b, g = cb
+    cfg = dict(PREREG)
+    cfg["band"], cfg["gap"] = b, g
+    sa, sb = _SW["sa"], _SW["sb"]
+    js, qb, mg, fo, st, _ = align(sa, sb, cfg)
+    got = {_SW["xa"][i]: _SW["arms"][int(js[i])] for i in range(len(sa)) if int(js[i]) >= 0}
+    tune_ok = tune_n = hold_ok = hold_n = 0
+    hold = _SW["hold"]
+    for a, andr in _SW["truth"]:
+        good = 1 if got.get(a) == andr else 0
+        if a in hold:
+            hold_n += 1
+            hold_ok += good
+        else:
+            tune_n += 1
+            tune_ok += good
+    return (b, g, tune_ok, tune_n, hold_ok, hold_n, st["cells"])
+
+
 def cmd_sweep(args):
     """预注册网格：配置在 **tune 半**上选，选中后报 holdout 半（headline 不用选中值）。"""
     import multiprocessing as mp
     work = args.work
     xs, arms = load_work(work)
-    sa = [s for _a, s in xs]
+    sa = [a for a, _s in xs]
     sb = [s for _a, s, _n in arms]
+    aa = [a for a, _s, _n in arms]
     truth = load_truth(work)
     hold = {int(r["x86_addr"], 16) for r in read_tsv(wpath(work, "holdout.tsv"))}
     combos = [(b, g) for b in PREREG["grid"]["band"] for g in PREREG["grid"]["gap"]]
-
-    def one(cb):
-        b, g = cb
-        cfg = dict(PREREG)
-        cfg["band"], cfg["gap"] = b, g
-        js, qb, mg, fo, st, _ = align(sa, sb, cfg)
-        got = {}
-        for i, (a, _s) in enumerate(xs):
-            if int(js[i]) >= 0:
-                got[a] = arms[int(js[i])][0]
-        tune_ok = tune_n = hold_ok = hold_n = 0
-        for a, andr in truth:
-            good = 1 if got.get(a) == andr else 0
-            if a in hold:
-                hold_n += 1
-                hold_ok += good
-            else:
-                tune_n += 1
-                tune_ok += good
-        return (b, g, tune_ok, tune_n, hold_ok, hold_n, st["cells"])
-
-    with mp.Pool(min(args.jobs, 12)) as pool:
-        res = pool.map(one, combos)
+    _SW.update(xa=sa, sa=[s for _a, s in xs], sb=sb, truth=truth, hold=hold, arms=aa)
+    with mp.Pool(min(args.jobs, 12), initializer=_sweep_init,
+                 initargs=(sa, [s for _a, s in xs], sb, truth, hold, aa)) as pool:
+        res = pool.map(_sweep_one, combos)
     for r in sorted(res, key=lambda z: (-z[2] / max(1, z[3]), z[0], z[4])):
         print("band=%-5d gap=%-5s tune=%3d/%3d=%6.2f%%  holdout=%3d/%3d=%6.2f%%  cells=%d"
               % (r[0], r[1], r[2], r[3], 100.0 * r[2] / max(1, r[3]), r[4], r[5],
@@ -987,6 +1040,8 @@ def main():
     r.add_argument("--band", type=int, default=None)
     r.add_argument("--gap", type=float, default=None)
     r.add_argument("--anchors", default=None, help="'tune' 或 'holdout'")
+    r.add_argument("--center-from", default=None, help="两遍法：用该 TSV 的路径当中心曲线")
+    r.add_argument("--center-smooth", type=int, default=0)
     r.set_defaults(fn=cmd_run)
     v = sub.add_parser("verify")
     v.add_argument("--align", default=os.path.join(ROOT, "fixtures/seq_align.tsv"))
