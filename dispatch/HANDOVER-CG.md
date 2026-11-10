@@ -29,12 +29,34 @@
             已派 4 份、**全部被我 interrupt 暂停**（因装 GPU 插件要重启 dsh），工作树见 §7
             未派 4 份：57 新证据 / 58 调用图角色 / 61 GPU 相似度 / 62 全语料对拍
 
-护栏（2026-11-10 06:10 实测；**以 fixtures/guardrails.json 为准**）
+护栏（2026-11-10 18:40 实测；**以 fixtures/guardrails.json 为准**）
   fire 647/1080 ｜ batch 647/1080 ｜ batch_conv 637/1080（种类 1075×3）
   死亡 366/385 ｜ 挖洞 207/294 ｜ 语料指纹 403 文件/401 回放（冻结）
-  cargo test **1756** / 0 failed ｜ --features gdext-bindings **1862** / 0 failed
-  headless **14** 个脚本 **1930** 条（play_flow **206** / process_loop 66 / assemble 241 / entity 366）
-  selftest **717 / 0 / 1 skipped**
+  cargo test **1761** / 0 failed ｜ --features gdext-bindings **1867** / 0 failed
+  headless **14** 个脚本 **1933** 条（assemble **244** / play_flow 206 / process_loop 66 / entity 366）
+  selftest **717 / 0 / 1 skipped**，且必须看 **`@@SELFTEST_COVERAGE … missing=0`**
+  coverage 527 可归属：逐位 88 / 观测 439 / 推断 0 / 未做 0
+  manager 档位 **19 wired / 2 layout / 1 assembled / 0 stub**
+
+🔑 **selftest 现在会自己报"少跑了多少"**（96 号）：`@@SELFTEST_COVERAGE groups=33 checks=? expected=717 missing=?`
+  + `silent=` 必须为 **0**；故障时打 `DEGRADED` 横幅 + 逐组 `@@SELFTEST_GROUP_SHORT`。
+  ⇒ **只看 passed 数会被骗**（639/641 只差 2，但少跑 78 vs 76）。判据是 **missing=0 / silent=0**。
+
+✅ **三条 selftest flake 全部定因**：
+  ① 关卡种子骰子（76 号）② **LAN 大厅成对红**（90 号：LAN 房间表多一行 + `find_child` 撞同名按钮；
+     污染源之一是 `tools/gate5_serve.py` 默认往 42968 广播）③ **`user://` 不可写**（96 号：现在会被显式认领）
+
+⚠️ **每次收尾必做**（连续两轮踩到）：**全部合并结束后**再跑 `coverage_matrix.py --check`，
+  不一致就从合并后源码重生成（分支基于旧基点会带回旧生成物）。
+⚠️ **`sym_match.py` 的"79% 相邻对索引差相同"是块内性质，不能当全局**（93 号）——
+  凡旧文档引用它当全局结论的都要复查。
+⚠️ **顺序轴天花板 = 50.6%**（93 号：344 对真值秩对 LIS 174/344；两份构建"块内保序、块间置换"）
+  ⇒ 下一步只能**先解块置换**再块内窄带 DP（半监督天花板已量成 47.4%）。
+⚠️ **视觉对拍已有真值**（94 号）：主菜单**逐字节相同**；另三屏不过，差异区域在 `docs/06` §53 / `docs/16` §61。
+  ⚠️ 混淆项未消：原版内嵌 **Godot 4.7.0**，我方 **4.7.2**。
+⚠️ **`drive_frame` 决定不接**（85 号，触发条件在 `docs/16` §58.3 + process_loop 第 9 组 tripwire）。
+⚠️ **指纹默认 3 列**（78 号）⇒ 复现旧 12,736 夹具要加 `--featset full`。
+⚠️ **造 bot 局别用"档 5"**（82 号）。
   coverage 527 可归属：逐位 88 / 观测 439 / 推断 0 / 未做 0
   manager 档位 **19 wired / 2 layout / 1 assembled / 0 stub**（最后一格 = GSM，卡 src/game.rs 禁区）
 
