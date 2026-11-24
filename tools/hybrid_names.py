@@ -57,6 +57,8 @@
    每格给 `n / 命中 / 比例 / Wilson95`；另附 D1（测量域）与 D2（可部署域）两套划分
 3. `fixtures/hybrid_names_conflicts.tsv` —— 全部 13,263 行里两种证据给出不同名字的地址（R3 只报不裁）；
    `fixtures/hybrid_names_conflicts_holdout.tsv` —— 其中落在留出半 326 行里的那些，附可核对真值
+4. `fixtures/hybrid_names_holdout_rows.tsv` —— 留出半**逐行审计**（两条轴各自对错 + 混合采用谁 + 真值），
+   上面三张表的每一个数都能从这张表逐行加出来（**报告用；不改任何规则**，是预注册 commit 之后补的输出）
 
 ## 复跑
 
@@ -103,6 +105,7 @@ FIXTURES = os.path.join(ROOT, "fixtures")
 OUT_HYBRID = os.path.join(FIXTURES, "hybrid_names.tsv")
 OUT_EVAL = os.path.join(FIXTURES, "hybrid_names_eval.tsv")
 OUT_CONFLICTS = os.path.join(FIXTURES, "hybrid_names_conflicts.tsv")
+OUT_ROWS = os.path.join(FIXTURES, "hybrid_names_holdout_rows.tsv")
 
 PREREG_VERSION = "hybrid-names-1"
 
@@ -359,7 +362,7 @@ def decide(addr, order_row, fp_pred, order_canon, fp_canon, anchors):
         basis = "R2:D2-family-nontierA" if d2 else "R2:outside-D2"
     else:
         mode, name, conf = MODE_NONE, None, ""
-        basis = "R4:no-canon-name" + ("(D2-family" if d2 else "")
+        basis = "R4:no-canon-name" + ("(D2-family)" if d2 else "")
     conflict = None
     if order_canon and fp_canon and order_canon != fp_canon:
         conflict = dict(order=order_canon, fp=fp_canon)
@@ -537,6 +540,24 @@ def cmd_eval(args):
                     sum(1 for r in c_rows if r["fp_right"] and not r["order_right"]),
                     sum(1 for r in c_rows if not r["order_right"] and not r["fp_right"])))
         fh.write("# 结论规则：%s\n" % CONCLUSION_RULE)
+    with open(OUT_ROWS, "w", encoding="utf-8") as fh:
+        fh.write("# 留出半逐行审计（326 行）：两条轴各自的名字与对错 + 混合采用谁。\n")
+        fh.write("# ok 列 = 规范名与真值严格相等；'-' = 该轴没给出名字（= 未命中，R6）\n")
+        fh.write("x86_addr\tD1_family\tD2_family\torder_tier\torder_name\torder_ok\t"
+                 "fp_name\tfp_score\tfp_ok\tmode\tadopted_name\tadopted_ok\tconflict\ttruth_name\n")
+        for a in addrs:
+            on, fn = pure["pure_order"].get(a), pure["pure_fp"].get(a)
+            an = pure["hybrid"].get(a)
+            r = lambda v: "1" if v else "0"
+            fh.write("0x%x\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n"
+                     % (a, r(d1[a]), r(d2[a]), (order.get(a) or {}).get("tier", ""),
+                        fmt_canon(on), "-" if on is None else r(on == truth[a]),
+                        fmt_canon(fn),
+                        "" if (preds.get(a) or {}).get("top1_score") is None
+                        else "%.6f" % preds[a]["top1_score"],
+                        "-" if fn is None else r(fn == truth[a]),
+                        conf[a][0], fmt_canon(an), r(an == truth[a]),
+                        r(bool(conf[a][3])), fmt_canon(truth[a])))
     with open(args.conflicts_out, "w", encoding="utf-8") as fh:
         fh.write("# 留出半的冲突明细（两轴都有名字且不同）：**只报不裁**；truth 只用于事后核对\n")
         fh.write("x86_addr\torder_tier\torder_name\tfp_name\ttruth_name\torder_right\tfp_right\tadopted_mode\n")
