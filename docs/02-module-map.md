@@ -728,8 +728,23 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 ## 17. 我们的 `src/` ↔ 原版模块（文件级对照）
 
 > 为什么要有这一节：`src/` 原来用的是**我们自己的架构名**（`game.rs` / `api.rs` / `shot.rs`…），
-> 而原版是 **58 个 `graphwar_*.rs` + 12 个非 `graphwar_` 模块**。文件名言不达意，读者就得自己猜
+> 而原版是 **78 个模块 = `scope=graphwar` 62 + `scope=other` 16**（`docs/coverage-matrix.tsv` 的
+> `scope` 列，`tools/coverage_matrix.py` 生成、`--check` 通过）。文件名言不达意，读者就得自己猜
 > 对应关系。本节把对应关系写成表，并把能定为 1:1 的**用原版名重命名**（`git mv`，历史可 `--follow`）。
+
+> 📌 **口径（现值的唯一算法，别再抄旧读数）**
+> ```bash
+> awk -F'\t' '$2=="graphwar"' docs/coverage-matrix.tsv | wc -l   # 62 个 graphwar 作用域模块
+> awk -F'\t' '$2=="other"'    docs/coverage-matrix.tsv | wc -l   # 16 个 scope=other 模块
+> ls src/graphwar_*.rs | wc -l                                   # 59 个同名文件（扁平，不含子目录）
+> ```
+> 62 = **58 个有同名文件的模块** + **4 个没有同名文件的模块**（内容在 `src/events.rs` / `src/server.rs`：
+> `graphwar_event.rs` / `graphwar_event_handler.rs` / `graphwar_remote_event_handler.rs` /
+> `graphwar_server_connection_handler.rs`）；59 = 58 + **`graphwar_texture_loader.rs`**（它带前缀，
+> 但在矩阵里是 `scope=other`，见 §17.2）。
+> **过期的旧读数：**「58 个 `graphwar_*.rs` + 12 个非 `graphwar_` 模块」（那是按文件名前缀数的旧口径，
+> 既漏了 5 个后来定性的模块，又把 `graphwar_texture_loader.rs` 算进了 graphwar）；总账一律以
+> [`149-coverage-matrix.md`](149-coverage-matrix.md)（生成物）为准。
 
 > ⚠️ **本节所有模块名都是从 `.rodata` 残留串反推的。**
 > 2026-11 拿到了 **2024-07-30 版未 strip 的符号表**，从中读出 78 个模块、165 个类型、290 个方法名，
@@ -775,7 +790,18 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 > "把已做完的写成没做"那类虚报的样本）。
 > 每一行的**依据列**（锚点 / 文档 / 已解出的判据）仍然有效，仍可当该模块的入口读。
 
-### 17.1 58 个 `graphwar_*.rs`
+### 17.1 `scope=graphwar` 的 62 个模块（我方 `src/` 顶层 59 个 `graphwar_*.rs`）
+
+> 本节**按原版模块列**（= 矩阵里 62 个 `scope=graphwar` 模块，一行一个），不按文件列：
+> 4 个模块没有同名文件（内容在 `src/events.rs` / `src/server.rs`，见 §17.4），所以「表里的模块数 ≠ 文件数」。
+> `graphwar_texture_loader.rs` 虽带 `graphwar_` 前缀，但矩阵把它归 `scope=other` ⇒ 只在 §17.2 出现。
+> 逐行核对（差集必须为空）：
+> ```bash
+> awk -F'\t' '$2=="graphwar"{print $1}' docs/coverage-matrix.tsv | sort > /tmp/m.txt
+> sed -n '/^### 17.1/,/^### 17.2/p' docs/02-module-map.md | grep -o '^| `graphwar_[a-z0-9_]*\.rs`（' \
+>   | sed 's/^| `//; s/`（.*//' | sort > /tmp/d.txt
+> comm -3 /tmp/m.txt /tmp/d.txt
+> ```
 
 | 原版模块（函数/锚点） | 我们的文件 | 依据（锚点 / 函数名 / 文档） | 状态 |
 |---|---|---|---|
@@ -786,20 +812,18 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 | `graphwar_path_calculator.rs`（1/9） | `src/graphwar_path_calculator.rs` | 采样器 `0x3c2530`（`docs/04`）+ `docs/91`（补 `hi = mid2` 后 24/24 用例整条点序列逐位相等）。⚠ 采样器本体**没有** panic 锚（**§20 复核结论不变**：`0x3c2530` 1,680 B 全函数体 0 个 Location 引用）；但「本模块只归属到 1 个辅助函数（0x469630/0x4696d0）」已被 **§20 更正**——本模块自己的 9 个 Location 锚**全部**落在 **`0x467530`**（= `calculate_paths`，5,408 B），`0x469630`/`0x4696d0` 只是 160 B 的 panic/drop 胶水。⇒ 「采样器 `0x3c2530` 属于本模块」仍是文档级归属，**不是**锚点归属（§20.5 / §20.7 第 2 条）。原文件 `path.rs` | `一一对应` |
 | `graphwar_replay_player.rs`（5/18） | `src/graphwar_replay_player.rs` | 锚点 5 个（0x3d6d70、0x3d7380、0x3d76f0 写 `user://replays/`）；`docs/133` §2（gzip+JSONL 格式）、`docs/136/142`（400 份回放消息级对拍，71 份完全一致）。原文件 `replay.rs`。⚠ 文件内 `ReplayPlayer`（播放时钟）是我方自定模型，见 §17.4 | `一一对应` |
 | `graphwar_tick_handler.rs`（2/3） | `src/graphwar_tick_handler.rs` | `docs/35`（113 个 `TickReply` 样本逐字节）+ `docs/42`（TimeMode → 回合时长）。原文件 `tick.rs`。⚠ **待核实**：本模块的锚函数是 0x51a610 / 0x51a750 / 0x3d76f0（后两个与回放写盘同址、`contested` 与 replay_player 共有），与本文件实现的"60Hz tick 时钟 + 时长表"**没有函数级对应**；现在的对应来自矩阵旧行与模块名，属**推断**。**2026-11 复核（`tools/addr_probe.py locs`，`docs/151` 第 27 条）⇒ 核实失败**：`0x51a750`（`0xcf0` B）体内 5 条 `panic::Location` 全指 `src/graphwar_function_evolutionator.rs`（⇒ 它是**进化器**的函数，不可能是 tick_handler）；`0x51a610`（`0xd6` B）只有 1 条且指 `src/graphwar_local_player_manager.rs`；`0x3d76f0`（`0x254` B）**零** Location。三个锚都撑不住本行，函数级定位要重找 | `⚠核实失败（锚不属本模块）` |
-
-| `src/graphwar_level_manager.rs` | 原版 `graphwar_level_manager.rs` + **可能属于 `graphwar_campaign_control.rs`** 的 `level_info`(`0x4ad380`) 与 `campaign.save` 簇(`0x417ef0`/`0x418170`/`0x4183b0`) | 这三处**都没有 Location 锚**；`docs/10` §12.6 | 无锚 ⇒ 归属只能靠调用形态，证据不足。暂时承载并登记，等 `graphwar_campaign_control.rs` 有锚点再决定搬不搬 |
 | `graphwar_level_generator.rs`（4/26） | `src/graphwar_level_generator.rs` + `src/graphwar_level_generator/tables.rs` | 锚点 26 个（0x466d20/0x467530 等）；`docs/55/56/61`（障碍 x/y/r 的 `to_bits()` 13/13 逐位）、`docs/103/126`（种子语义）。原文件 `levelgen.rs` + `levelgen_tables.rs`（ziggurat 表）——**同一个原版文件，我方按"逻辑 / 常量表"拆成两份**，主文件用原版名，表放同名目录 | `一一对应` |
 | `graphwar_shot_calculator.rs`（1/12） | `src/graphwar_shot_calculator.rs` + `src/graphwar_shot_calculator/settle.rs` | 锚点 12 个（0x3c5f70 修正常数、0x3c62b0 等）；`docs/05`（修正 `c = y0 − f(±x0)`）、`docs/86 §14`（82 发并集 152/152）、`docs/122`（按 id 排除射手）。原文件 `shot.rs` + `settle.rs`——**同一个原版文件**（0x3c2bc0 主函数 + 0x3c5f70 修正），我方按主题拆两份。⚠ **本节原写「`0x3c2bc0` 本体没有 panic 锚」，该条已被 §20 证否**：它有 **13 个 `src/*.rs` 锚**（12 个 `graphwar_shot_calculator.rs` + 1 个 `graphwar_obstacle_manager.rs`），其中 **11 个双向唯一**⇒ 本函数已由锚点定名为 `GraphwarShotCalculator::calculate_shot_results`（`观测`，§20.5）；"settle 属于本模块"不再只靠 `docs/86` 的行为证据 | `一一对应` |
-| `graphwar_event.rs`（0/0） | `src/events.rs` | `enum Event` **74** 个具名变体（**审计 2026-11-08**：原记 72；`docs/07` §5.1 已用 arm64 跳转表把 74 格全部具名）+ `GameInfo`（`docs/114`：判别值逐条解出、两道自校验；`docs/07 §3.1` 9 个字段）。⚠ 本模块**零锚点**（纯数据），对应关系靠职责与 `docs/114`。同文件还收了 event_handler 的名字表 → 见 §17.4 | `混装（待拆）` |
+| `graphwar_event.rs`（0/0） | `src/events.rs` | `enum Event` **74** 个具名变体（**审计 2026-11-08**：原记 72；`docs/07` §5.1 已用 arm64 跳转表把 74 格全部具名）。⚠ 本模块**零锚点**（纯数据），对应关系靠职责与 `docs/114`。同文件还收了 event_handler 的名字表、以及 `GameInfo` —— 后者的原版归属是 `graphwar_game_info.rs`（serde impl 全路径，`docs/16` §30.9），目前**没搬** ⇒ 见 §17.4 | `混装（待拆）` |
 | `graphwar_event_handler.rs`（2/4） | `src/events.rs` | 只落了一张表：`DISPATCH_NAME_TAGS` + `from_dispatch_name`（从 `0x3d38f0` 逐字节解出的"事件名 → 判别值"，`docs/114` §3）。⚠ `0x3d3630`（用常量 key 订阅 `HashMap<u64,_>`）**未实现**，所以本模块**没有** handler 行为，只有数据 | `混装（待拆）` |
 | `graphwar_remote_event_handler.rs`（3/171） | `src/events.rs` | 只落了枚举与名字表（同上）。本模块 171 个锚点是全二进制第三密，我方**未实现**其分发/订阅行为；旧矩阵把 `events.rs` 记成它的实现，口径偏宽 —— 本轮按"没有 handler 代码"重记 | `混装（待拆）` |
-| `graphwar_game_state_manager.rs`（33/207） | `src/game.rs` + `src/turnstate.rs` | `docs/41`（6 状态 7 事件、13 次迁移在真实对局里逐个相同）、`docs/150`（胜负判定）。两个我方文件都属本模块，但 `game.rs` 还含 function_manager 的内容 → 见 §17.4 | `混装（待拆）` |
-| `graphwar_function_manager.rs`（7/12） | `src/game.rs` | `SoldierFunctions`（`HashMap<u32, 112 字节>`、entry 120、value 开头 `Vec<Token>`）逐条读自 `docs/112` §0/§2.1；7 个锚函数在 0x455b60…0x456f80。⚠ 与 game_state_manager 混在同一文件 | `混装（待拆）` |
+| `graphwar_game_state_manager.rs`（33/207） | `src/game.rs` + `src/turnstate.rs` + `src/graphwar_game_state_manager.rs` | `docs/41`（6 状态 7 事件、13 次迁移在真实对局里逐个相同）、`docs/150`（胜负判定）。三份我方文件都属本模块：前两份是**运行实体 / 迁移表**，第三份是**事件层**（`SUBSCRIBED_EVENTS[7]` + `GsmEvents`，`docs/161` §2.4）；但 `game.rs` 还含 function_manager 的内容 → 见 §17.4 | `混装（待拆）` |
+| `graphwar_function_manager.rs`（7/12） | `src/game.rs` + `src/graphwar_function_manager.rs` | `SoldierFunctions`（`HashMap<u32, 112 字节>`、entry 120、value 开头 `Vec<Token>`）逐条读自 `docs/112` §0/§2.1；7 个锚函数在 0x455b60…0x456f80。⚠ 行为与 game_state_manager 混在 `game.rs`；`graphwar_function_manager.rs` 只放 **32 B 布局**（`size_of`/`offset_of` 编译期断言，文件头自述）⇒ 见 §17.4 | `混装（待拆）` |
 | `graphwar_game_server.rs`（3/86） | `src/graphwar_game_server.rs` + `src/server.rs` | `docs/43/46`（一回合 12 条报文与抓包逐字节）、`docs/62`（真实 TCP 跑到 EndingGame）、`docs/117`（回合推进接线）。原文件 `serverloop.rs`（主循环）+ `server.rs`（首包同步，与 server_connection_handler 共有） | `混装（待拆）` |
 | `graphwar_server_connection_handler.rs`（6/24） | `src/server.rs` | `docs/33`（新连接 7 条状态同步逐字节一致）；`docs/112` §15.3 指出建事件名数组的 `0x4500c0` 就在本模块。⚠ `server.rs` 里还有 `on_tick_request`（tick 应答）→ 见 §17.4 | `混装（待拆）` |
-| `graphwar_plane.rs`（10/19） | `src/plane.rs` | `docs/08/39`（掩膜光栅化与 `is_occupied` 逐字节 / 300 随机点一致）；`px = x*1000/50 + 500` 来自 `0x4be3e0`。⚠ 同文件还含 plane_pos_manager 与（疑似的）obstacle_manager 内容 → §17.4 | `混装（待拆）` |
-| `graphwar_plane_pos_manager.rs`（6/9） | `src/plane.rs` | `docs/140`：`px = 20x + 500` 由常量反查得出。⚠ 本模块的锚函数在 `0x3c7330…0x3c7cb0`（与 path_calculator / shot_calculator 同区段），与 `plane.rs` 里那条换算**没有**做过函数级对齐 ⇒ "plane.rs 属于本模块"是**推断**。**2026-11 复核（`docs/151` 第 28 条）**：`0x3c7330` 只有 `0x2f`（47）字节、`0x3c7cb0` 是 `0x8d9` B，**两者都零 `panic::Location`** ⇒ 函数级对齐仍然做不到，缺的是非锚证据（结构/体量/常量指纹） | `混装（待拆，锚无效）` |
-| `graphwar_obstacle_manager.rs`（8/10） | `src/plane.rs`（只有掩膜部分） | **2026-11-07 更正（`docs/16` §24.4 第 1/1b 行）**：本模块的锚函数是 **10 个** —— `0x3c2bc0 0x3ee190 0x3f11e0 0x3f15b0 0x3f17a0 0x3f19a0 0x3f1b30 0x3f1d30 0x3f20f0 0x3f2360`（= `fixtures/module_funcs.tsv` 本模块 10 行）。旧文那 4 个（`0x3c64c0/0x3f00b0/0x3f2480/0x3f27d0`）是 `class_probe` v1 的 `+0x1000` 平移 artifact。**旧「两处证据冲突」可结案**：`0x4f15b0` 是 Ghidra 口径，其 ELF 虚地址 `0x3f15b0` **就是**本模块锚函数之一；所谓冲突是地址空间混用 + v1 平移共同造成的。`docs/08/39` 覆盖的光栅化 / `is_occupied`（摧毁 = 挖 r=0.5 洞）不变。障碍的生成与生命周期仍未落码 | `混装（待拆）` |
+| `graphwar_plane.rs`（10/19） | `src/graphwar_plane.rs` + `src/plane.rs` | 像素变换 `px = x*1000/50 + 500` 来自 `0x4be3e0`，函数体在 `src/graphwar_plane.rs`（`plane.rs` 头部自述「已搬走……本文件保留 `pub use` 再导出」）；`docs/08/39`（掩膜光栅化与 `is_occupied` 逐字节 / 300 随机点一致）在 `plane.rs`。⚠ `plane.rs` 还含 obstacle_manager 的掩膜 → §17.4 | `混装（待拆）` |
+| `graphwar_plane_pos_manager.rs`（6/9） | `src/plane.rs` + `src/graphwar_plane_pos_manager.rs` | `docs/140`：`px = 20x + 500` 由常量反查得出（换算在 `plane.rs`）；`src/graphwar_plane_pos_manager.rs` 是 **24 B 布局 + `PosInfo` 两方向**（文件头：三份构建交叉验证）。⚠ 本模块的锚函数在 `0x3c7330…0x3c7cb0`（与 path_calculator / shot_calculator 同区段），与 `plane.rs` 里那条换算**没有**做过函数级对齐 ⇒ "plane.rs 属于本模块"是**推断**。**2026-11 复核（`docs/151` 第 28 条）**：`0x3c7330` 只有 `0x2f`（47）字节、`0x3c7cb0` 是 `0x8d9` B，**两者都零 `panic::Location`** ⇒ 函数级对齐仍然做不到，缺的是非锚证据（结构/体量/常量指纹） | `混装（待拆，锚无效）` |
+| `graphwar_obstacle_manager.rs`（8/10） | `src/plane.rs`（掩膜）+ `src/graphwar_obstacle_manager.rs`（80 B 布局） | **2026-11-07 更正（`docs/16` §24.4 第 1/1b 行）**：本模块的锚函数是 **10 个** —— `0x3c2bc0 0x3ee190 0x3f11e0 0x3f15b0 0x3f17a0 0x3f19a0 0x3f1b30 0x3f1d30 0x3f20f0 0x3f2360`（= `fixtures/module_funcs.tsv` 本模块 10 行）。旧文那 4 个（`0x3c64c0/0x3f00b0/0x3f2480/0x3f27d0`）是 `class_probe` v1 的 `+0x1000` 平移 artifact。**旧「两处证据冲突」可结案**：`0x4f15b0` 是 Ghidra 口径，其 ELF 虚地址 `0x3f15b0` **就是**本模块锚函数之一；所谓冲突是地址空间混用 + v1 平移共同造成的。`docs/08/39` 覆盖的光栅化 / `is_occupied`（摧毁 = 挖 r=0.5 洞）不变。障碍的生成与生命周期仍未落码 | `混装（待拆）` |
 | `graphwar_ad_switch.rs`（6/3） | — | `docs/19`/`docs/132`：判据只有 `are_ads_enabled() = !owned`；AdMob 在 `.gdc` 插件侧 | `未实现` |
 | `graphwar_audio_control.rs`（7/16） | — | `docs/111`：SoundHandler / `-15f` / `-5f` / 32767 归一化已还原，但没接进 `src/`（`client/` 是仿制） | `未实现` |
 | `graphwar_backend.rs`（6/12） | — | `docs/19` §3：联机层**不是**广告；读出 15 个方法名（`start_server` / `lan_broadcaster` / `broker`…），不是 Godot 类 | `未实现` |
@@ -813,7 +837,9 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 | `graphwar_effect_manager.rs`（1/3） | — | `docs/02 §16.3`：全仓库零线索（1 个锚） | `未实现` |
 | `graphwar_entity_effect_manager.rs`（3/4） | — | `docs/02 §16.3`：3 个锚，无字符串线索 | `未实现` |
 | `graphwar_function_input.rs`（13/33） | — | `docs/02 §16.3`/`docs/149`：解析器 `0x4ed670` 体内唯一的 Location 锚是 `math_function.rs:75/285` ⇒ 解析器**不是**本模块的代码；本模块本体（13 个归属函数）未复原 | `未实现` |
+| `graphwar_event_queue.rs`（0/0） | `src/graphwar_event_queue.rs` | **不是 manager**：`GraphwarGameClient` 以 `Rc<RefCell<>>` 持有（`new+0xcdc`），其余 manager 拿 `Weak`；`add_event` 有 200 余个直接调用点 ⇒ 全游戏发件箱。反常：`send_buffer` 只 1 个直接调用者（`docs/16` §33） | `观测` |
 | `graphwar_game_client.rs`（36/59） | `src/graphwar_game_client.rs` | 归属函数最多的模块（36 个）；只有 `docs/archive` 的调用形态观测 | `观测` |
+| `graphwar_game_info.rs`（0/0） | `src/graphwar_game_info.rs` | `GameInfo`（9 字段）的原版归属地 —— serde impl 全路径 `graphwarrust::graphwar_game_info::…`（`docs/16` §30.9）；我方结构体仍在 `src/events.rs`，本文件只 `pub use` 复用 ⇒ 见 §17.4 | `观测` |
 | `graphwar_game_recorder.rs`（2/4） | — | `docs/02 §16.3`：2 个锚；"对局录制"只是按名字猜的 | `未实现` |
 | `graphwar_graphics_manager.rs`（6/8） | — | `docs/02 §16.3`：6 个锚，无字符串线索；与 texture_loader 的分工未分辨 | `未实现` |
 | `graphwar_lan_broadcaster_v6.rs`（4/4） | — | `docs/07/24`：局域网广播报文已抓包；`src/` 无实现 | `未实现` |
@@ -824,6 +850,7 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 | `graphwar_logger.rs`（2/2） | — | `docs/112` §15.2.6：log 入口结构观测（0x3b6c70/0x44dd60）；无实现 | `未实现` |
 | `graphwar_long_press_animation.rs`（7/7） | — | `docs/02 §16.3`：类名 + 5 个锚；动画常量未解 | `未实现` |
 | `graphwar_mode_manager.rs`（2/6） | — | `docs/88` §7：TurnMode/FunctionMode/AxisMode/TimeMode 的取值已解；模块本体未复原 | `未实现` |
+| `graphwar_player_config.rs`（0/0） | `src/graphwar_player_config.rs` | `PlayerShowcase` 读的 config（名字 `+0x00` / 皮肤 `+0x60` / 脸 `+0x78` / 帽 `+0x90` / 变更计数 `+0xa8`）；存档分隔符未解（`docs/16` §33） | `观测` |
 | `graphwar_module_container.rs`（20/1） | `src/graphwar_module_container.rs` | `docs/02 §22`（2026-11 全解）：类型本体 = `HashMap<TypeId, Rc<dyn Any>>`（48 字节 / 1 字段，**没有任何 manager 偏移**）；3 个泛型方法 × 25 型 = 68 个单态化，两架构地址全定名；`add_module`/`get_module` 零 Location 锚是**正确结果**（无 panic 点） | `观测` |
 | `graphwar_name_manager.rs`（3/3） | — | `docs/112` §0/§15.2.2：`HashMap<u32,String>`、`name_info_event`=60 逐位解出；无实现 | `未实现` |
 | `graphwar_nodes.rs`（11/1） | — | `docs/112` 有结构观测；无实现 | `未实现` |
@@ -831,24 +858,32 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 | `graphwar_player_screen_control.rs`（8/22） | — | `docs/02 §16.3`：弹窗名串池（推断）；界面在 `client/` GDScript | `未实现` |
 | `graphwar_rank_manager.rs`（4/4） | — | `docs/112` §5：`RankInfo` 判别值 67、结构观测；段位算法在本模块内**算不出来**（负结果） | `未实现` |
 | `graphwar_replay_control.rs`（2/9） | — | `docs/133` 的回放播放器在 `client/` GDScript。⚠ `graphwar_replay_player.rs` 里的 `ReplayPlayer` 是**我方自定**的播放模型（§17.4），不能算作本模块 | `未实现` |
+| `graphwar_replay_reader.rs`（0/0） | `src/graphwar_replay_reader.rs` | 2/2：**文件读取**归它（`FileAccess::open` + `get_buffer` + `GzDecoder` + `StrSearcher` 逐行 → `Vec<EventInfo>`，被调者里零时间函数）；**时钟**归 `graphwar_replay_player.rs`（`tick += dt*60*speed`）（`docs/09` §12） | `观测` |
 | `graphwar_root_node.rs`（23/178） | `src/graphwar_root_node.rs` | 主场景节点；`docs/125` 只有调用形态观测 | `观测` |
 | `graphwar_server_broker_handler.rs`（3/5） | — | 原模块是**客户端侧**的 broker 处理器；`src/_scaffold/broker.rs` 是我方自建的服务端，**不是**它的复原（`docs/115`） | `未实现` |
+| `graphwar_stream_buffer.rs`（0/0） | `src/graphwar_stream_buffer.rs` | 2/2：**不是 TCP 拆包队列** —— 内部无字节队列，靠 `TcpStream::peek` 前瞻。写侧 u16 大端(len) + 两段 `write_all`（限 0xffff）；读侧 peek 2 → 校验 ≤0x1000 → peek(len+2) 不足即 `Ok(None)`（**一个字节都不消费**）→ `read_exact` 整帧取走。顺带结掉 `docs/09` §11.7#4：`…4a` 是「整帧未到」，不是 EOF（`docs/09` §12） | `观测` |
 | `graphwar_setup_control.rs`（21/70） | `src/graphwar_setup_control.rs` | `docs/137` 有像素级观测；界面在 `client/` GDScript | `观测` |
 | `graphwar_soldier_manager.rs`（4/5） | — | `docs/02 §16.3`：`RemoveSoldierButton` 串池（推断）；4 个锚未解 | `未实现` |
 | `graphwar_target_manager.rs`（3/4） | — | `docs/123`：重置规则形状已钉住，判定点未知（397 份回放 0 次部分命中）；`src/` 只有 `Target` 数据结构 | `未实现` |
 | `graphwar_team_manager.rs`（7/10） | — | `docs/02 §16.3`：`Team1Container`/`Team2Container` 串池（推断）；7 个锚未解 | `未实现` |
-| `graphwar_texture_loader.rs`（1/1） | — | `docs/02 §16.3`：`0x4d3180` 一对多复用 ⇒ 归属天然有歧义；无实现 | `未实现` |
 | `graphwar_video_writer.rs`（3/4） | — | `docs/02 §16.3`：3 个锚，无字符串线索 | `未实现` |
 
-### 17.2 非 `graphwar_` 模块（`other` 作用域）
+### 17.2 `scope=other` 的 16 个模块（15 个不带 `graphwar_` 前缀 + `graphwar_texture_loader.rs`）
 
-> ⚠️ **审计 2026-11-08**：标题原写「**12** 个」，但 `docs/coverage-matrix.tsv` 里 `scope=other` 是 **16** 行
-> = 下表 12 个 + `backtracer.rs` / `function_token.rs` / `graphwar_texture_loader.rs`（这三个表中缺）+ `weak_caller.rs`。
-> 注意 **`graphwar_texture_loader.rs` 是带 `graphwar_` 前缀的**，所以"非 `graphwar_`"这个说法本身不准确；
-> 准确的口径是 **`scope=other` 的 16 个模块**（`docs/149` 表里那 16 行、合计 97 个可归属函数）。
+> **口径**：`scope=other` 的模块数 **16**（`awk -F'\t' '$2=="other"' docs/coverage-matrix.tsv | wc -l`），
+> 合计 **97** 个可归属函数。标题里旧的「12 个」是按文件名前缀数出来的，既不代表模块数、也不代表函数数；
+> 「非 `graphwar_`」这个说法同样不准确 —— **`graphwar_texture_loader.rs` 带前缀，但在矩阵里是 `scope=other`**
+> （它的 Location 一对多复用，归属天然有歧义，见该行）。
 
-下表这 12 个文件名不带 `graphwar_` 前缀，但**是游戏自己的模块**（§9 提醒过：`entity_drawer.rs` /
-`effect_drawer.rs` 虽无前缀，确实是游戏代码）。缺的 3 个见 [`149-coverage-matrix.md`](149-coverage-matrix.md)。
+下表 15 个文件名不带 `graphwar_` 前缀，但**是游戏自己的模块**（§9 提醒过：`entity_drawer.rs` /
+`effect_drawer.rs` 虽无前缀，确实是游戏代码）；第 16 个（`graphwar_texture_loader.rs`）按矩阵归在 `other`。
+**逐行核对**（差集必须为空）：
+```bash
+awk -F'\t' '$2=="other"{print $1}' docs/coverage-matrix.tsv | sort > /tmp/o.txt
+sed -n '/^### 17.2/,/^### 17.3/p' docs/02-module-map.md \
+  | grep -o '^| `[a-z0-9_]*\.rs`（' | sed 's/^| `//; s/`（.*//' | sort > /tmp/d.txt
+comm -3 /tmp/o.txt /tmp/d.txt
+```
 
 | 原版模块（函数/锚点） | 我们的文件 | 依据（锚点 / 函数名 / 文档） | 状态 |
 |---|---|---|---|
@@ -864,8 +899,12 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 | `function_history_recorder.rs`（1/3） | — | 除模块名外没有任何观测 | `未实现` |
 | `player_showcase.rs`（10/18） | — | 除模块名外没有任何观测（`PlayerShowcase` 类名见 `docs/02 §16.2`） | `未实现` |
 | `server_broker_request_connection.rs`（0/1） | — | `docs/115` 只覆盖 broker 线格式；这个连接对象本身没看过 | `未实现` |
+| `backtracer.rs`（0/0） | `src/backtracer.rs` | panic 钩子写 `user://crash_log.txt`；**两侧都没有 `Backtrace::capture`**（名字误导）（`docs/16` §33） | `观测` |
+| `function_token.rs`（0/0） | `src/function_token.rs` | 16 B token `{tag,value}` + 字符串表；tag 20 = 无效、`(` = 18、`)` = 19、**`ˆ`(U+02C6) 也是 `^`**（`docs/16` §33） | `观测` |
+| `graphwar_texture_loader.rs`（1/1） | `src/graphwar_texture_loader.rs` | 归属天然有歧义：`0x4d3180` 一对多复用（`docs/02` §16.3）。**4 个函数，不是 1**（旧记 1 是 Location 口径下限：三个 getter 从不 panic）。三张 `HashMap<String,_>` @ `+0x150/+0x180/+0x1b0`（步长 `0x30`、表项 `0x28`），按名字 memcmp，21 KB 饿汉加载；唯一构造点 `0x39a328` 在 `GraphwarRootNode` 的 `INode` impl 里（`docs/16` §31/§32） | `观测` |
+| `weak_caller.rs`（39/2） | `src/weak_caller.rs` | 结构 = `Weak<RefCell<T>>`，一个类型参数、8 字节、`self` 按值消费（尾部自减弱计数，调用方必须 clone）；`upgrade()==None` ⇒ 静默跳过返回 `()`；唯一 panic 是 `RefCell` 已被可变借出。是 `call_0<F>` / `call<A,F>` **两个**泛型 × 26 个类型，不是回调派发器；39/39 个单态化在 x86 目标里（23 个 `call` + 16 个 `call_0`，两块各自无空洞），第 40 个符号 `0x3d4fa0` 查明是内联了 `call` 的 `GraphwarGameRecorder` 方法（§34） | `观测` |
 
-> `weak_caller.rs`（39 个函数）不在上表里。~~它是第三方依赖库，不算游戏代码~~ —— **审计 2026-11-08 更正**：这条旧判据已被 **§34** 推翻（符号表里 `graphwarrust::weak_caller` 的 27 个 direct 符号 ⇒ **crate 内模块**，不是第三方），所以它的 39 个可归属函数**要计入**总账（`docs/149` 的 scope=`other` 一档 97 个里就含它；430 + 97 = 527）。旧口径 `dep` / 40 个函数均已作废。
+> `weak_caller.rs`（39 个函数）**已补进上表末行**（`39/2`，`orig_funcs=39` / `anchors=2`）。~~它是第三方依赖库，不算游戏代码~~ —— **审计 2026-11-08 更正**：这条旧判据已被 **§34** 推翻（符号表里 `graphwarrust::weak_caller` 的 27 个 direct 符号 ⇒ **crate 内模块**，不是第三方），所以它的 39 个可归属函数**要计入**总账（`docs/149` 的 scope=`other` 一档 97 个里就含它；430 + 97 = 527）。旧口径 `dep` / 40 个函数均已作废。
 
 ### 17.3 我方自造（`src/_scaffold/`，无原版对应）
 
@@ -878,7 +917,7 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 | `src/_scaffold/protocol.rs` | 报文编解码装配层（`Frame` / `parse_message` / `emit_*`）；原版没有同名模块，编解码分散在各 handler 里 | `docs/07`/`docs/33` 的抓包口径 | `我方自造（无原版对应）` |
 | `src/_scaffold/broker.rs` | **我们自己的一台** broker 服务端；原版只有连 broker 的客户端，没有服务端 | `docs/115` | `我方自造（无原版对应）` |
 | `src/_scaffold/capi.rs` | C ABI，纯为把实现暴露出去做对拍（ctypes）；原版无此物 | — | `我方自造（无原版对应）` |
-| `src/_scaffold/gdext.rs` | GDExtension 入口脚手架（`gdext_rust_init`）；原版入口在 Godot 模块侧，不在 58+12 个文件里 | `docs/116` | `我方自造（无原版对应）` |
+| `src/_scaffold/gdext.rs` | GDExtension 入口脚手架（`gdext_rust_init`）；原版入口在 Godot 模块侧，不在 §17.1/§17.2 那 78 个模块里 | `docs/116` | `我方自造（无原版对应）` |
 | `src/_scaffold/gdext_class.rs` | `classdb_register_extension_class4` 的封装（同上） | `docs/116` §3 | `我方自造（无原版对应）` |
 | `src/_scaffold/rng.rs` | ChaCha12 的重写；原版是 `rand_chacha` crate，不是游戏模块 | `docs/53` | `我方自造（无原版对应）` |
 | `src/_scaffold/replay_inflate.rs` | 手写 DEFLATE / gzip；原版用第三方 crate | `docs/133` §6 | `我方自造（无原版对应）` |
@@ -886,8 +925,15 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 | `src/_scaffold/diffconv.rs` | 上一条的收敛层（工具） | `docs/142` | `我方自造（无原版对应）` |
 | `src/_scaffold/ai_explain.rs` | AI 决策链解释器（工具）：把 evolutionator 的零件按原版顺序跑一遍并留痕 | `docs/147` | `我方自造（无原版对应）` |
 
-**为什么 `events.rs` 不在这里**：它是原版 `graphwar_event.rs` 的复原（72 个具名变体 + 判别值），
+**为什么 `events.rs` 不在这里**：它是原版 `graphwar_event.rs` 的复原（**74** 个具名变体 + 判别值，见 §17.1），
 不是桥接层。`game.rs` / `plane.rs` / `server.rs` / `turnstate.rs` 同理。
+
+> 📌 **`src/_scaffold/` 的规模（现值）**：`ls src/_scaffold/*.rs | wc -l` = **31** 个 `.rs`。上表只列
+> **桥接 / 工具**那 11 个；其余是：**17 个 `*_class.rs`**（GDExtension 类壳，逐个在 `docs/16` 各节登记，
+> 例：`axis_drawer_class.rs` → `docs/16` §31、`entity_drawer_class.rs` → §34、三个「基类不是 `Control`」的 → §35、
+> `graphwar_button_class.rs` → §36）、`play_flow_class.rs`
+> （播放屏/回合驱动的外壳，`docs/16` §52）、`replay_driver.rs` / `replay_driver_class.rs`（`docs/16` §57）、
+> `gdext_mod.rs`、`mod.rs`。**判据不变**：凡在 `_scaffold/` 下就是自造物，不许挂原版名。
 
 > **`src/_scaffold/root_wiring.rs` / `graphwar_root_node_class.rs` 不在上表**：它们是
 > **22 个 manager 的装配器 + 它在 Godot 侧的观测口**（原版这两件事在 `GraphwarGameClient::new`
@@ -908,18 +954,58 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 ### 17.4 混装与待拆（`AGENTS.md` 铁律 2 的登记表）
 
 一个文件里混了原版**多个**模块、而"边界在哪"没有证据 ⇒ **不猜、不搬**，登记在这里。
+**反向也成立**：原版一个模块被我方按主题拆进两个文件、或某个构造的归属与"原版在哪个模块"对不上，
+同样登记 —— 否则下一个人会按文件名误读归属。
 
 | 我方文件 | 混了哪些原版内容 | 证据 | 为什么现在不拆 |
 |---|---|---|---|
-| `src/events.rs` | graphwar_event.rs（主体：`enum Event` 72 变体 + `GameInfo`）+ graphwar_event_handler.rs（`DISPATCH_NAME_TAGS` 名字→判别值表） | `docs/114` §3 | 表只有约 70 行数据；拆出去会让 `graphwar_event_handler.rs` 只剩一张表、没有 handler 行为，反而误导 |
-| `src/game.rs` | graphwar_game_state_manager.rs（主体：一局的状态/开火/胜负）+ graphwar_function_manager.rs（`SoldierFunctions`、`FunctionSlot`） | `docs/41`/`docs/112` §2.1 | 两者共用同一个 `Match`，槽表是它的字段；按函数切会让两边互相引用 |
-| `src/plane.rs` | graphwar_plane.rs（像素变换）+ graphwar_plane_pos_manager.rs（`px = 20x + 500`）+ graphwar_obstacle_manager.rs 的掩膜（⚠ 归属见 §17.1 该行的冲突） | `docs/08`/`docs/39`/`docs/140` | 三者的函数在二进制里就是分开的，但我方只实现了"点/掩膜"这一层，尚未逐函数对齐 |
-| `src/server.rs` | graphwar_server_connection_handler.rs（主体：新连接 7 条同步，`0x4500c0`）+ graphwar_tick_handler.rs（`on_tick_request`） | `docs/33`/`docs/112` §15.3 | tick 应答只有 5 行；等 `graphwar_tick_handler.rs` 的锚点核实完再拆 |
-| `src/turnstate.rs` | graphwar_game_state_manager.rs（与 `src/game.rs` 同模块：状态枚举 + 迁移表） | `docs/41` | 与 `game.rs` 同属一个原版模块，我方按"迁移表 / 运行实体"拆成两份；原版名已被 `game.rs` 占用（见 §17.4 说明） |
-| `src/graphwar_function_evolutionator.rs` | 原版 graphwar_function_evolutionator.rs + **我方接线层** `SoldierEvolver` / `FunctionSlot` / `SoldierFunctions` 的用法 | `docs/98` §3/§7、`docs/117` | 接线层（把进化结果写进哪个槽、什么时候跑）在原版的 computer_player_manager 里，**未还原**；现在混在进化器文件尾部，待 `computer_player_manager` 落地后迁出 |
-| `src/graphwar_replay_player.rs` | 原版 graphwar_replay_player.rs（文件读取/解析/推进）+ **我方自定**的 `ReplayPlayer` 播放时钟 | `docs/133` §4（自述"我们自定，原版未观测"） | 播放时钟是我们为了让客户端能播而设计的，原版没有对应函数；等 `graphwar_replay_control.rs` 落地后迁进 `_scaffold/` |
+| `src/events.rs` | graphwar_event.rs（主体：`enum Event` **74** 变体）+ graphwar_event_handler.rs（`DISPATCH_NAME_TAGS` 名字→判别值表）+ **`GameInfo`**（原版属 graphwar_game_info.rs） | `docs/114` §3；`GameInfo` 的 serde impl 全路径是 `graphwarrust::graphwar_game_info::…`（`docs/16` §30.9） | 判据表只有约 70 行数据；拆出去会让 `graphwar_event_handler.rs` 只剩一张表、没有 handler 行为，反而误导。`GameInfo` 的**边界有证据**（serde impl 路径），但搬它会动 `events.rs` 的公开路径 ⇒ 留给能一起改调用方的任务 |
+| `src/game.rs` | graphwar_game_state_manager.rs（主体：一局的状态/开火/胜负）+ graphwar_function_manager.rs（`SoldierFunctions`、`FunctionSlot`） | `docs/41`/`docs/112` §2.1 | 两者共用同一个 `Match`，槽表是它的字段；按函数切会让两边互相引用。⚠ 同模块的**事件层**已独立成 `src/graphwar_game_state_manager.rs`（`docs/161` §2.4），剩下的是"运行实体"这一半 |
+| `src/plane.rs` | graphwar_plane.rs（**只剩掩膜**：像素变换已搬走）+ graphwar_plane_pos_manager.rs（`px = 20x + 500` 的换算）+ graphwar_obstacle_manager.rs 的掩膜 | `docs/08`/`docs/39`/`docs/140`；`plane.rs` 文件头自述变换「已搬走……保留 `pub use` 再导出」 | 三者的函数在二进制里就是分开的，但我方只实现了"点/掩膜"这一层，尚未逐函数对齐。⚠ `graphwar_plane_pos_manager.rs`（24 B 布局 + `PosInfo` 两方向）与 `graphwar_obstacle_manager.rs`（80 B 布局）已各自建文件，**布局归各文件、掩膜逻辑仍在本文件** |
+| `src/server.rs` | graphwar_server_connection_handler.rs（主体：新连接 7 条同步，`0x4500c0`）+ graphwar_tick_handler.rs（`on_tick_request`，`src/server.rs:112`） | `docs/33`/`docs/112` §15.3；`on_tick_request` 现在只是转调 `graphwar_tick_handler::tick_at` | tick 应答只剩这一层薄封装（tick 公式本体已在 `src/graphwar_tick_handler.rs`）；等 `graphwar_tick_handler.rs` 的锚点核实完再决定要不要删这层 |
+| `src/turnstate.rs` | graphwar_game_state_manager.rs（与 `src/game.rs` 同模块：状态枚举 + 迁移表） | `docs/41` | 与 `game.rs` 同属一个原版模块，我方按"迁移表 / 运行实体"拆成两份；原版名现在落在 `src/graphwar_game_state_manager.rs`（事件层），本文件与 `game.rs` 是同一模块的另两半 ⇒ 登记但不拆 |
+| `src/graphwar_function_evolutionator.rs` | 原版 graphwar_function_evolutionator.rs + **我方接线层** `SoldierEvolver`（`:884`）/ `FunctionSlot`（`:773`）/ `SoldierFunctions`（`:795`）的用法 | `docs/98` §3/§7、`docs/117` | 接线层（把进化结果写进哪个槽、什么时候跑）在原版的 computer_player_manager 里，**未还原**；现在混在进化器文件尾部，待 `computer_player_manager` 落地后迁出 |
+| `src/graphwar_replay_player.rs` | 原版 graphwar_replay_player.rs（解析/推进）+ **我方自定**的 `ReplayPlayer` 播放时钟（`:660`） | `docs/133` §4（自述"我们自定，原版未观测"） | 播放时钟是我们为了让客户端能播而设计的，原版没有对应函数；等 `graphwar_replay_control.rs` 落地后迁进 `_scaffold/`。⚠ 文件**读取**已切开：归 `src/graphwar_replay_reader.rs`（`docs/09` §12） |
 | `src/graphwar_shot_calculator/settle.rs` | 原版 graphwar_shot_calculator.rs 的 `0x3c2bc0`（开火结算主函数） | `docs/86`/`docs/122` | `0x3c2bc0` 没有 panic 锚，函数体也**没有**逐条还原（逐位的是行为）；边界只能按主题切 |
 | `src/graphwar_level_generator/tables.rs` | 原版 graphwar_level_generator.rs 的 ziggurat 常量表 | `docs/53`/`docs/55` | 纯数据；拆出来只为让主文件可读，不需要边界判断 |
+| `src/graphwar_level_manager.rs` | 原版 graphwar_level_manager.rs + **可能属于 `graphwar_campaign_control.rs`** 的 `level_info`(`0x4ad380`) 与 `campaign.save` 簇(`0x417ef0`/`0x418170`/`0x4183b0`) | 这三处**都没有 Location 锚**；`docs/10` §12.6 | 无锚 ⇒ 归属只能靠调用形态，证据不足。`src/graphwar_campaign_control.rs` 已按 §17.4 的规矩落了**自己那份**（`LEVEL_INFO` / `encode_save`），但 `level_manager` 里那份**没删**，两份由 `tests/campaign_data.rs` 的 `table_matches_level_manager_copy`（`:538`）逐字段钉住（⚠ 文件头另写了一条 `save_cluster_matches_level_manager_copy`，全库零命中 —— 见 §17.4 末尾的「判不清」清单）；删旧副本留给能改 `level_manager.rs` 的任务 |
+| `src/graphwar_play_screen_control.rs` | 原版 graphwar_play_screen_control.rs（10 个可归属函数）+ **`ShotLifecycle`**（弹道生命周期 = 播放屏 6 个函数的"决定"部分） | `docs/00` §「缺工程」表、`docs/HANDOVER.md` §遗留（原文：原版在 `game_state_manager`，我方落在 `play_screen_control`） | 归属与"原版在 `game_state_manager`"对不上，但边界要靠 **`Location` 再切一次**才能定；**缺**：`ShotLifecycle` 各方法的 `Location` 归属证据 ⇒ 按铁律 2 原地保留。⚠ `src/_scaffold/play_flow_class.rs` 只是**引用**它（`flow: ShotLifecycle`），不是它的归属地 |
+
+> 📌 **现值核对（`src/` 实测；只记"现在在哪"，不改上面任何一行的判据）**
+>
+> | 我方文件 | 现在到哪了 | 依据 |
+> |---|---|---|
+> | `events.rs` | **未拆**：`enum Event` + `DISPATCH_NAME_TAGS`（`:249`）+ `GameInfo`（`:356`）仍在同一文件 | `grep -n 'DISPATCH_NAME_TAGS\|pub struct GameInfo' src/events.rs` |
+> | `game.rs` / `turnstate.rs` | **部分拆**：事件层已独立（`src/graphwar_game_state_manager.rs`，`pub mod` 在 `src/lib.rs:131`）；`SoldierFunctions` 的字段仍在 `Match` 里 | `grep -n 'graphwar_game_state_manager' src/lib.rs`；`grep -n 'SoldierFunctions' src/game.rs` |
+> | `plane.rs` | **部分拆**：像素变换在 `src/graphwar_plane.rs`（`plane.rs` 只剩 `pub use` 再导出）；**掩膜仍在 `plane.rs`** | `grep -n '已搬走' src/plane.rs` |
+> | `server.rs` | **未拆**：`on_tick_request` 在 `:112`，转调 `graphwar_tick_handler::tick_at` | `grep -n 'fn on_tick_request' src/server.rs` |
+> | `graphwar_function_evolutionator.rs` | **未拆**：`FunctionSlot` `:773` / `SoldierFunctions` `:795` / `SoldierEvolver` `:884` 仍在文件内 | `grep -nE 'pub struct (FunctionSlot\|SoldierFunctions\|SoldierEvolver)' src/graphwar_function_evolutionator.rs` |
+> | `graphwar_replay_player.rs` | **未拆**：`ReplayPlayer` 在 `:660`；文件读取已归 `graphwar_replay_reader.rs` | `grep -n 'pub struct ReplayPlayer' src/graphwar_replay_player.rs` |
+> | `graphwar_shot_calculator/settle.rs` / `graphwar_level_generator/tables.rs` | **不拆**（按主题/按数据切，见上表理由） | — |
+> | `graphwar_level_manager.rs` | **未拆**：`campaign_control` 那份已落地但旧副本未删（两侧由 `table_matches_level_manager_copy` 钉住） | `grep -n 'fn table_matches_level_manager_copy' tests/campaign_data.rs` |
+> | `graphwar_play_screen_control.rs` | **未拆**：`ShotLifecycle` 定义在 `:700` | `grep -n 'pub struct ShotLifecycle' src/graphwar_play_screen_control.rs` |
+
+> ⚖️ **判不清 / 不在本任务允许清单的（并列保留，给协调者裁；不改、不猜）**
+>
+> 1. **§17.1 的 33 行 + §17.2 的 10 行「`未实现` / `—`」**（上方 2026-11-08 审计块写的「44 行」是那时全表的
+>    §17.1 34 + §17.2 10；现在 33 + 10 = **43**，差 1 行是 `graphwar_texture_loader.rs` —— 它按矩阵属
+>    `scope=other`，只在 §17.2 出现）：这些模块的文件**现在全部存在**
+>    （规则：模块名 = `src/<模块名>.rs`，逐行验证用 §17.5 第 1 条），但**状态词没有逐行改**——
+>    把「未实现」改成「一一对应 / 部分」是**结构判断**（要逐模块判"有没有别的东西混进来"），
+>    不是"抄文件是否存在"。⇒ 现值一律看 §17 开头的 📌 口径块与 `docs/149`（生成物）。
+> 2. **`tools/coverage_matrix.py` 有 3 处 `ours_file` 指旧文件**：`graphwar_function_manager.rs` →
+>    `src/game.rs`（`:435`）、`graphwar_obstacle_manager.rs` → `src/plane.rs`（`:484`）、
+>    `graphwar_plane_pos_manager.rs` → `src/plane.rs`（`:492`），而三个同名文件都已存在
+>    ⇒ 生成物与 `src/` 在这 3 行上不一致。工具是禁区，**未改**。
+> 3. **`docs/149` §0 的生成文案自相矛盾**：表头写「58 个 `graphwar_*.rs`」、同表模块数是 **62**
+>    （同一根因：`tools/coverage_matrix.py` 里那条打印标签写死了 `58`，旁边打印的模块数却是算出来的）。生成物**不要手改**。
+> 4. **`AGENTS.md` 两处仍写「58 个 `graphwar_*.rs` + 12 个非 `graphwar_` 游戏模块」**（§0 铁律 4、
+>    「目录」一节；现值 **62 + 16 = 78**）。该文件不在本任务的允许清单里。
+> 5. **两个 src 文件头过期**：`src/graphwar_function_manager.rs` / `src/graphwar_obstacle_manager.rs`
+>    仍写「`src/lib.rs` 在禁区，本文件用 `#[path]` 从 `_scaffold::root_wiring` 挂进 crate」，
+>    而 `src/lib.rs:149/150` 已经是 `pub mod graphwar_function_manager;` / `pub mod graphwar_obstacle_manager;`。
+> 6. **`src/graphwar_campaign_control.rs:34` 点名的 `save_cluster_matches_level_manager_copy`** 全库零命中
+>    （`tests/campaign_data.rs` 里只有 `table_matches_level_manager_copy`）—— 要么测试没写、要么被更名。
 
 ### 17.5 自查（改完必须重跑）
 
@@ -934,10 +1020,18 @@ grep -rInE 'src/(api|broker|capi|diffconv|gdext|gdext_class|protocol|replay_infl
 rng|ai_explain|turn|aigen|play_control|life|path|tick|replay|shot|settle|levelgen|levelgen_tables|
 function/mod|function/to_text)\.rs' --include='*.md' --include='*.rs' --include='*.py' \
   --include='*.toml' --include='*.gd' . | grep -v 'src/_scaffold/' | grep -v 'docs/02-module-map.md'
+
+# 3) §17.1/§17.2 两张表的模块名必须覆盖 `coverage-matrix.tsv` 的全部 78 个模块（差集必须为空）
+awk -F'\t' '$1!="module" && $1!~/^#/{print $1}' docs/coverage-matrix.tsv | sort > /tmp/all.txt
+sed -n '/^## 17\./,/^## 18\./p' docs/02-module-map.md \
+  | grep -o '^| `[a-z0-9_]*\.rs`（' | sed 's/^| `//; s/`（.*//' | sort -u > /tmp/doc.txt
+comm -23 /tmp/all.txt /tmp/doc.txt
 ```
 
 > 第 1 条是**真检查**：表里写了 `src/xxx.rs` 而文件不在，就说明改名没改完。
 > 第 2 条只查**旧的我方文件名**（`graphwar_*.rs` 这类**原版名**会合法地出现在文档里，不能一刀切）。
+> 第 3 条查**漏登记**：矩阵里有、本节两张表里没有 = 该模块在映射表里查不到（差集必须为空）。
+> 那 43 行「`未实现` / `—`」状态词为什么不逐行改，见 §17.4 末尾「判不清」第 1 条。
 > 改完还要跑 `cargo build --offline` / `cargo test --offline` /
 > `python3 tools/coverage_matrix.py --check`（见 §17.6 与 `docs/149`）。
 
@@ -2814,7 +2908,16 @@ get_module_wk<M>(container: &Weak<RefCell<Self>>)        arm64 0x4a20a4
 
 **数字结论留在主文档**（其余全是过程与逐函数证据）：并集 **351** 个地址、**527 内 348**
 （索引见 §20/§21 与 [`149-coverage-matrix.md`](149-coverage-matrix.md)）；`sym_match` 复算的
-**762**（unique 681 + weak 81 = 63.0%）与"327 单表"的差别在 `157` §40.2。
+**762** 唯一匹配（unique 681 + weak 81）、**落地 819/1300 = 63.0%** 与"327 单表"的差别在 `157` §40.2。
+
+⚠ **63.0% 的口径是"名字落地率"，不是准确率**。用入库夹具可直接复算（`confidence` 是第 5 列）：
+```bash
+grep -v '^#' fixtures/sym_match.tsv | tail -n +2 \
+  | awk -F'\t' '$5!="none" && $5!="multi"' | wc -l    # 819 = 681 unique + 81 weak + 33 split + 24 merge
+grep -v '^#' fixtures/sym_match.tsv | tail -n +2 | wc -l   # 1300 ⇒ 819/1300 = 63.0%
+```
+**它不能当"匹配器有多准"引用**，更不能和顺序证据的 79% 混着用 —— 那个 79% 是**块内 / 族内**性质，
+按域拆开的现值见 §35.12b（族内 84% / 族外 11%）。
 
 ## 35. 没有 `Location` 的 12,736 个函数：结构身份指纹 —— **引用口径：留出半 top-1 76.4%（预注册 `scal=0.25`）/ 78.2%（并列桶最高）**；纯结构特征基线 72.7%、高置信档 95.8%、逐条待核（跨 ISA 6.5% 是负结论）；旧口径 84.2% 含泄漏**已作废**；不给名字（2026-11，接 §37 / §39 / §40）
 
@@ -5609,9 +5712,14 @@ Viterbi 路径本身在 P0 上匹配 9,648 / 跳过 3,615（13,263 里）。
 | win_old ↔ win（同 ISA + 跨版本） | **57/231 = 24.7%** | ⇒ **换版本就足够把块序打散** |
 
 **这一条是本轮最该记住的负结论**：`tools/sym_match.py` 观察到的"79% 相邻对索引差相同"和
-"全局保序对齐只有 1%"**不矛盾** —— 前者是**块内**性质，后者是**块间**性质。
+"全局保序对齐只有 1%"**不矛盾** —— 前者是**块内 / 族内**性质，后者是**块间 / 全局**性质。
 把局部性质当全局性质，就是本轮预注册 P0 失败的根因（也是我一开始估错 band 的原因：
 真值偏移跨 ±2,300，而预注册只给了 ±256）。
+
+⇒ **顺序证据按域读的现值写在本文件 §35.12b**：
+**近孪生族 37/44 = 84%（tier A 28/28 = 100%）/ 其它 31/282 = 11% / 全库 20.9%**。
+那个 79%（以及本节的 72.0%「`di == dj`」）都只能当"块内仍在保序"的证据，**不能**当"顺序轴全局准确率"引用；
+族外那 11% 才是"给 12,736 定名"时的上限。
 
 ### 49.5 规模与墙钟（单机、DP 串行、网格 6 进程）
 
