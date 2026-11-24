@@ -1,0 +1,40 @@
+# 混合定名器（hybrid-names-1）留出验证：纯指纹 / 纯顺序 / 混合 三列对照
+# 人群 = fixtures/name_to_addr.tsv 有地址的 326 条真名（**只验证、不参与任何决策**）
+# 口径 = 规范名严格相等（module::Type::method）；分母 = 全体；无名字 = 未命中（R6）
+# cmp=bench 是 B 表：两轴都有名字的可比子集（98 行）
+criterion	table	domain	mode	n	hits	acc	wilson_lo	wilson_hi
+strict_canon	A_all	D1_family	pure_fp	44	25	0.5682	0.4222	0.7032
+strict_canon	A_all	D1_family	pure_order	44	37	0.8409	0.7063	0.9207
+strict_canon	A_all	D1_family	hybrid	44	42	0.9545	0.8486	0.9874
+strict_canon	A_all	D1_outside	pure_fp	282	247	0.8759	0.8323	0.9094
+strict_canon	A_all	D1_outside	pure_order	282	31	0.1099	0.0785	0.1518
+strict_canon	A_all	D1_outside	hybrid	282	246	0.8723	0.8283	0.9063
+strict_canon	A_all	all	pure_fp	326	272	0.8344	0.7902	0.8708
+strict_canon	A_all	all	pure_order	326	68	0.2086	0.1680	0.2560
+strict_canon	A_all	all	hybrid	326	288	0.8834	0.8441	0.9139
+strict_canon	A_all	D2_family	pure_fp	45	26	0.5778	0.4330	0.7103
+strict_canon	A_all	D2_family	pure_order	45	37	0.8222	0.6867	0.9071
+strict_canon	A_all	D2_family	hybrid	45	42	0.9333	0.8214	0.9771
+strict_canon	A_all	D2_outside	pure_fp	281	246	0.8754	0.8317	0.9091
+strict_canon	A_all	D2_outside	pure_order	281	31	0.1103	0.0788	0.1523
+strict_canon	A_all	D2_outside	hybrid	281	246	0.8754	0.8317	0.9091
+strict_canon	B_comparable	D1_family	pure_fp	37	18	0.4865	0.3345	0.6411
+strict_canon	B_comparable	D1_family	pure_order	37	37	1.0000	0.9059	1.0000
+strict_canon	B_comparable	D1_family	hybrid	37	35	0.9459	0.8230	0.9850
+strict_canon	B_comparable	D1_outside	pure_fp	61	58	0.9508	0.8651	0.9831
+strict_canon	B_comparable	D1_outside	pure_order	61	31	0.5082	0.3860	0.6294
+strict_canon	B_comparable	D1_outside	hybrid	61	57	0.9344	0.8432	0.9742
+strict_canon	B_comparable	all	pure_fp	98	76	0.7755	0.6834	0.8468
+strict_canon	B_comparable	all	pure_order	98	68	0.6939	0.5968	0.7764
+strict_canon	B_comparable	all	hybrid	98	92	0.9388	0.8728	0.9716
+strict_canon	B_comparable	D2_family	pure_fp	40	21	0.5250	0.3750	0.6706
+strict_canon	B_comparable	D2_family	pure_order	40	37	0.9250	0.8014	0.9742
+strict_canon	B_comparable	D2_family	hybrid	40	37	0.9250	0.8014	0.9742
+strict_canon	B_comparable	D2_outside	pure_fp	58	55	0.9483	0.8586	0.9823
+strict_canon	B_comparable	D2_outside	pure_order	58	31	0.5345	0.4080	0.6567
+strict_canon	B_comparable	D2_outside	hybrid	58	55	0.9483	0.8586	0.9823
+loose_substring	A_all	D1_family	pure_order	44	37	0.8409	0.7063	0.9207
+loose_substring	A_all	D1_outside	pure_order	282	31	0.1099	0.0785	0.1518
+loose_substring	A_all	all	pure_order	326	68	0.2086	0.1680	0.2560
+# 附加：冲突 51 条（其中 顺序对 21 / 指纹对 29 / 都错 1）
+# 结论规则：混合族内 > 纯指纹族内 且 混合族外 >= 纯指纹族外 ⇒ 报「族内可从 51.9% 提到 X%」；否则报「不可提，因为…」
