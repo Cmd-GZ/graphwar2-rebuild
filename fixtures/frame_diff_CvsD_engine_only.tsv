@@ -1,0 +1,9 @@
+# 组别 = C vs D　｜　C = 我方 + 4.7.0 pck　D = 我方 + 4.7.2 pck（**同一份导出 pck、同一个 libgw2_rebuild.so**）
+# 这一组 = **只换引擎**的单变量对照（跑法、包、.so 全同）
+# 固定条件逐条沿用 94 号预注册（Xvfb 1920x1160 / OpenGL3+llvmpipe / import -window / 四屏点击脚本 / 每屏 3 帧 / 冻结快照回放 1793897298）；本轮只换'用哪个引擎、怎么部署'
+# 门槛 = fixtures/frame_diff_thresholds.txt sha256 9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873（预注册）
+screen	verdict	l1_size_ok	l1_ok	l1_dmean_max	l1_dmean	l1_top_color	l1_top_share_pp	l2_ok	l2_blocks_over	l2_max_block_dmean	l2_worst_block	l3_evaluated	l3_diff_px	l3_diff_ratio	l3_max_channel_diff	l3_bbox	noise_max_orig	noise_max_mine
+menu	过	True	True	0.0	0.0,0.0,0.0	#0E251C,#0E251C	0.0	True	0	0.0	0,0	True	0	0.0	0	None	0.0	0.0
+replay_lobby	过	True	True	0.0	0.0,0.0,0.0	#0E251C,#0E251C	0.0	True	0	0.0	0,0	True	0	0.0	0	None	0.0	0.0
+replay_play	不过（L3）	True	True	0.011	0.011,0.01,0.01	#FFFFFF,#FFFFFF	0.006	True	0	0.265	3,2	True	1062	0.000477	241	680,1094,718,1141	0.013013	0.012911
+replay_end	不过（L1 主色/均值）	True	False	5.7	5.7,5.33,5.431	#FFFFFF,#FFFFFF	2.991	False	16	15.606	2,5	False	348373	0.156417	255	300,0,1919,1147	0.00106	0.000659
