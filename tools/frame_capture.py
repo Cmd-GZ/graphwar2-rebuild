@@ -26,6 +26,22 @@
 `--side ours` 需要 `client/libgw2_rebuild.so` 已就位（`cargo build --features gdext-bindings`
 之后拷进去），否则 gdext 类全空、界面起不来。
 
+§T2（2026-11-24，`dispatch/T2` 消引擎版本混淆项）新增的三组开关
+------------------------------------------------------------------
+门槛一个数没改（仍是 `fixtures/frame_diff_thresholds.txt`）；本脚本只是多了一种"用哪个引擎跑"：
+
+    --engine <bin>          我方侧引擎（默认 4.7.2 编辑器）
+    --game-dir <dir>        原版游戏目录（默认自动探测工作区根）
+    --snapshot <dir>        冻结回放快照（默认自动探测 `dist/gw2-replays-snapshot/replays`）
+    --ours-mode {project,pck}
+    --ours-pck-dir <dir>    pck 模式的部署目录（`<引擎同名>.pck` + `libgw2_rebuild.so`）
+
+`pck` 模式为什么必须存在：**原版那份 4.7.0 二进制是 release export template**，编译时带了
+`disable_path_overrides=yes` ⇒ `--path` / `--main-pack` / 位置参数 `project.godot` 全部被拒
+（实测报错原文见 docs/06 §54.2）。它只认"二进制旁边同名 .pck"这一种输入，也就是它自己
+出货时的形态。所以用它跑我方工程的唯一办法是：4.7.2 编辑器 `--export-pack` 出 `<stem>.pck`，
+把 4.7.0 模板拷成 `<stem>.x86_64`、`libgw2_rebuild.so` 一起放同目录。
+
 **只观测**：不改游戏、不改客户端代码，只发 X 事件与截图。
 """
 import argparse
@@ -42,6 +58,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def _find_repo():
+    """重建仓库根 = 含 `client/project.godot` 的目录（94 号时的判据 `.reference/game` 已不存在，
+    见下面 `_find_ws()`；两个判据都留着，旧的仍然优先，以免改变 94 号那次的行为）。"""
     d = HERE
     for _ in range(12):
         if os.path.isdir(os.path.join(d, '.reference', 'game')):
@@ -50,12 +68,61 @@ def _find_repo():
         if nd == d:
             break
         d = nd
+    d = HERE
+    for _ in range(12):
+        if os.path.isfile(os.path.join(d, 'client', 'project.godot')):
+            return d
+        nd = os.path.dirname(d)
+        if nd == d:
+            break
+        d = nd
     return os.path.dirname(HERE)
 
 
+def _find_ws():
+    """工作区根 = 含原版 `Graphwar.x86_64` 的目录（向上最多 12 层）。
+
+    **T2 起才需要**：94 号那一轮原版三件套在 `<ws>/.reference/game/`，现在它们直接躺在
+    工作区根（`Graphwar.x86_64` / `Graphwar.pck` / `libgraphwarrust.so`），4.7.2 编辑器在
+    `<ws>/tools/`，冻结回放在 `<ws>/dist/gw2-replays-snapshot/replays/`。
+    """
+    d = HERE
+    for _ in range(12):
+        if os.path.exists(os.path.join(d, 'Graphwar.x86_64')):
+            return d
+        nd = os.path.dirname(d)
+        if nd == d:
+            break
+        d = nd
+    return os.path.dirname(HERE)
+
+
+def _first_existing(*cands):
+    for c in cands:
+        if c and os.path.exists(c):
+            return c
+    return cands[0] if cands else ''
+
+
 REPO = _find_repo()
-GAME_DIR = os.path.join(REPO, '.reference', 'game')
-GODOT = os.path.join(REPO, '.reference', 'godot', 'Godot_v4.7.2-stable_linux.x86_64')
+_WS = _find_ws()
+
+# 三件路径都可以被「环境变量」或「命令行参数」覆盖（`--engine` / `--game-dir` / `--snapshot`）：
+#   GW2_GAME_DIR  原版游戏目录（内有 Graphwar.x86_64 + Graphwar.pck + libgraphwarrust.so）
+#   GW2_ENGINE    「我方」侧默认用的引擎二进制（4.7.2 编辑器；4.7.0 由 --engine 显式指定）
+#   GW2_SNAPSHOT  冻结回放快照目录（回放屏的"固定局面"，见 fixtures/frame_diff_thresholds_amend1.txt §2）
+GAME_DIR = _first_existing(os.environ.get('GW2_GAME_DIR', ''),
+                           os.path.join(REPO, '.reference', 'game'),
+                           _WS)
+GODOT = _first_existing(os.environ.get('GW2_ENGINE', ''),
+                        os.path.join(REPO, '.reference', 'godot',
+                                     'Godot_v4.7.2-stable_linux.x86_64'),
+                        os.path.join(_WS, 'tools', 'Godot_v4.7.2-stable_linux.x86_64'))
+# 冻结快照的落点：94 号在 `.reference/replays/gw2-replays-snapshot/replays`，现在在 `dist/` 下同名目录
+SNAPSHOT = _first_existing(os.environ.get('GW2_SNAPSHOT', ''),
+                           os.path.join(REPO, '.reference', 'replays',
+                                        'gw2-replays-snapshot', 'replays'),
+                           os.path.join(_WS, 'dist', 'gw2-replays-snapshot', 'replays'))
 CLIENT = os.path.join(REPO, 'client')
 
 # ── 1920x1160 下的点击坐标（两路**同一串**；来自原版实测帧，见 docs/06 §33 / §52）──────
@@ -79,8 +146,11 @@ REPLAY_END_WAIT = 45.0             # 2276 tick ÷ 60 = 37.9 s ⇒ 45 s 一定播
 SNAPSHOT_REPLAYS = ['1793897298', '1783255495']
 
 
-def snapshot_dir():
-    return os.path.join(REPO, '.reference', 'replays', 'gw2-replays-snapshot', 'replays')
+def snapshot_dir(override=None):
+    """冻结快照回放目录（**只读**；显式 `--snapshot` > 环境变量 > 两个已知落点）。"""
+    if override:
+        return os.path.abspath(override)
+    return SNAPSHOT
 
 
 def user_replays_dir(side, home):
@@ -106,9 +176,9 @@ def legacy_replays_dir(side, home):
                         'Graphwar', 'replays')
 
 
-def seed_replays(side, home):
+def seed_replays(side, home, snapshot=None):
     """把快照里的两份回放拷进该侧的 user://replays；返回拷进去的文件名。"""
-    src = snapshot_dir()
+    src = snapshot_dir(snapshot)
     dirs = [user_replays_dir(side, home)]
     legacy = legacy_replays_dir(side, home)
     if legacy:
@@ -246,26 +316,58 @@ def start_xvfb(num, log_path):
     return proc, display, env, f
 
 
-def start_game(side, display, home, log_path, extra_args):
+def engine_version(binary):
+    """跑 `<引擎> --version` 拿版本串（**留证用**：本轮的重点就是引擎版本）。"""
+    try:
+        p = subprocess.run([binary, '--version'], capture_output=True, text=True, timeout=30)
+        out = (p.stdout or '').strip().splitlines()
+        return out[0].strip() if out else ''
+    except Exception:  # noqa: BLE001
+        return ''
+
+
+def start_game(side, display, home, log_path, extra_args, engine=None, game_dir=None,
+               ours_mode='project', ours_pck_dir=None):
+    """起游戏。`ours` 侧有两种部署形态（**本轮新增第二种，见文件头 §T2**）：
+
+    * `project`（94 号那种）= `godot --path client`，需要带编辑器功能的引擎（4.7.2 编辑器）；
+    * `pck` = 导出模板 + 同名 `.pck`。**原版那份 4.7.0 二进制是 release export template，
+      编进了 `disable_path_overrides=yes`**（`--path` / `--main-pack` / 位置参数全被拒），
+      所以想让它跑我方工程，只有这一条合法路子：把工程导出成 `<basename>.pck` 放在
+      二进制旁边（`<basename>.x86_64` + `<basename>.pck` + `libgw2_rebuild.so` 三件同目录）。
+    """
     env = dict(os.environ, **MESA_ENV)
     env.pop('WAYLAND_DISPLAY', None)
     env['DISPLAY'] = display
     env['HOME'] = home
     if side == 'original':
+        gdir = os.path.abspath(game_dir or GAME_DIR)
         env['XDG_DATA_HOME'] = os.path.join(home, 'data')
         env['XDG_CACHE_HOME'] = os.path.join(home, 'cache')
         env['XDG_CONFIG_HOME'] = os.path.join(home, 'config')
-        argv = [os.path.join(GAME_DIR, 'Graphwar.x86_64'),
+        argv = [os.path.join(gdir, 'Graphwar.x86_64'),
                 '--resolution', '1920x1160', '--position', '0,0'] + extra_args
-        cwd = GAME_DIR
+        cwd = gdir
         title = 'Graphwar'
     else:
+        eng = os.path.abspath(engine or GODOT)
         env['XDG_DATA_HOME'] = os.path.join(home, 'data')
         env['XDG_CACHE_HOME'] = os.path.join(home, 'cache')
         env['XDG_CONFIG_HOME'] = os.path.join(home, 'config')
-        argv = [GODOT, '--path', CLIENT, '--rendering-driver', 'opengl3',
-                '--resolution', '1920x1160', '--position', '0,0'] + extra_args
-        cwd = CLIENT
+        if ours_mode == 'pck':
+            cwd = os.path.abspath(ours_pck_dir or '')
+            if not os.path.isdir(cwd):
+                raise RuntimeError('--ours-mode pck 需要 --ours-pck-dir（放 <basename>.pck 的目录）')
+            base = os.path.basename(eng)
+            stem = base[:-len('.x86_64')] if base.endswith('.x86_64') else base
+            if not os.path.exists(os.path.join(cwd, stem + '.pck')):
+                raise RuntimeError('%s/%s.pck 不存在（导出模板只认"二进制同名 .pck"）' % (cwd, stem))
+            argv = [eng, '--rendering-driver', 'opengl3',
+                    '--resolution', '1920x1160', '--position', '0,0'] + extra_args
+        else:
+            cwd = CLIENT
+            argv = [eng, '--path', CLIENT, '--rendering-driver', 'opengl3',
+                    '--resolution', '1920x1160', '--position', '0,0'] + extra_args
         title = 'Graphwar'
     for d in ('data', 'cache', 'config'):
         os.makedirs(os.path.join(home, d), exist_ok=True)
@@ -289,6 +391,17 @@ def main(argv=None):
                     help='点法：replay = 增补 1 的四屏（回放局面，默认）；campaign = 原登记的三屏')
     ap.add_argument('--seed-replays', action='store_true',
                     help='把冻结快照里的两份回放拷进该侧 user://replays（不写快照）')
+    # ── T2（消引擎版本混淆项）新增：都不给 ⇒ 行为与 94 号那一轮完全一致 ──────────────
+    ap.add_argument('--engine', default=None,
+                    help='「我方」侧引擎二进制（默认 <ws>/tools/Godot_v4.7.2-stable_linux.x86_64）')
+    ap.add_argument('--game-dir', default=None,
+                    help='原版游戏目录（内有 Graphwar.x86_64 + Graphwar.pck；默认自动探测）')
+    ap.add_argument('--snapshot', default=None, help='冻结回放快照目录（默认自动探测）')
+    ap.add_argument('--ours-mode', choices=['project', 'pck'], default='project',
+                    help='我方侧部署形态：project = `godot --path client`（需要编辑器版引擎）；'
+                         'pck = 导出模板 + 同名 .pck（4.7.0 release export template 只认这种）')
+    ap.add_argument('--ours-pck-dir', default=None,
+                    help='--ours-mode pck 时：放 <引擎同名词>.pck 与 libgw2_rebuild.so 的目录')
     args = ap.parse_args(argv)
 
     out = os.path.abspath(args.out)
@@ -297,15 +410,23 @@ def main(argv=None):
     for d in (out, frames_dir, home):
         os.makedirs(d, exist_ok=True)
 
+    engine_bin = os.path.abspath(args.engine or GODOT) if args.side == 'ours' else None
     manifest = {'side': args.side, 'flow': args.flow,
                 'display': '127.0.0.1:%d' % args.display_num,
                 'out': out, 'frames_dir': frames_dir, 'home': home,
                 'started_at': time.strftime('%Y-%m-%dT%H:%M:%S'),
                 'frames_per_screen': FRAMES_PER_SCREEN, 'frame_gap_s': FRAME_GAP_S,
-                'steps': [], 'frames': [], 'notes': []}
+                'steps': [], 'frames': [], 'notes': [],
+                # 引擎身份（**T2 的对照量**：原版 4.7.0 / 我方 4.7.2 的混淆项就消在这一行）
+                'ours_mode': args.ours_mode,
+                'engine': engine_bin,
+                'engine_version': engine_version(engine_bin) if engine_bin else
+                                  engine_version(os.path.join(os.path.abspath(args.game_dir or GAME_DIR),
+                                                              'Graphwar.x86_64')),
+                'game_dir': os.path.abspath(args.game_dir or GAME_DIR)}
 
     if args.seed_replays:
-        manifest['replays_seeded'] = seed_replays(args.side, home)
+        manifest['replays_seeded'] = seed_replays(args.side, home, args.snapshot)
         log('回放已就位: %s' % manifest['replays_seeded'])
 
     xvfb = game = None
@@ -318,7 +439,10 @@ def main(argv=None):
         log('Xvfb %s 就绪' % display)
 
         game, genv, title, flog = start_game(args.side, display, home,
-                                             os.path.join(out, 'game.log'), args.game_arg)
+                                             os.path.join(out, 'game.log'), args.game_arg,
+                                             engine=args.engine, game_dir=args.game_dir,
+                                             ours_mode=args.ours_mode,
+                                             ours_pck_dir=args.ours_pck_dir)
         win = wait_window(display, genv, title)
         if not win:
             raise RuntimeError('等不到游戏窗口（见 game.log）')

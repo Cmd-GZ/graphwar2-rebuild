@@ -1,0 +1,9 @@
+# 组别 = A vs B　｜　A = 原版真机（内嵌 4.7.0）　B = 我方 client 跑在 Godot 4.7.2 上、用 `--path client` 编辑器态跑法（= 94 号那一轮的跑法）
+# 这一组 = 94 号那一套对照的**复现**（两个变量都不同：引擎 4.7.0↔4.7.2、跑法 原版↔我方）⇒ 只能当"旧数"，不能拆出单一变量的影响
+# 固定条件逐条沿用 94 号预注册（Xvfb 1920x1160 / OpenGL3+llvmpipe / import -window / 四屏点击脚本 / 每屏 3 帧 / 冻结快照回放 1793897298）
+# 门槛 = fixtures/frame_diff_thresholds.txt sha256 9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873（预注册）
+screen	verdict	l1_size_ok	l1_ok	l1_dmean_max	l1_dmean	l1_top_color	l1_top_share_pp	l2_ok	l2_blocks_over	l2_max_block_dmean	l2_worst_block	l3_evaluated	l3_diff_px	l3_diff_ratio	l3_max_channel_diff	l3_bbox	noise_max_orig	noise_max_mine
+menu	过	True	True	0.0	0.0,0.0,0.0	#0E251C,#0E251C	0.0	True	0	0.0	0,0	True	0	0.0	0	None	0.0	0.0
+replay_lobby	不过（L1 主色/均值）	True	False	2.204	2.204,2.09,2.122	#0E251C,#0E251C	1.692	False	5	20.914	0,4	False	91625	0.041139	255	0,0,1916,237	0.0	0.0
+replay_play	不过（L1 主色/均值）	True	False	10.156	10.156,6.099,7.499	#0E251C,#FFFFFF	0.932	False	17	42.298	1,0	False	849169	0.381272	255	0,0,1919,1159	0.000121	0.000849
+replay_end	不过（L1 主色/均值）	True	False	16.634	16.634,12.123,13.191	#0E251C,#FFFFFF	4.074	False	21	57.858	0,4	False	924688	0.41518	255	0,0,1919,1159	0.000121	0.001672

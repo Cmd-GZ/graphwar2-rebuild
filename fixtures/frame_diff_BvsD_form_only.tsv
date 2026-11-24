@@ -1,0 +1,9 @@
+# 组别 = B vs D　｜　B = 我方 + Godot 4.7.2、`--path client`　D = 我方 + Godot 4.7.2、导出 pck（**同一个引擎**）
+# 这一组 = **只换部署形态**的单变量对照（引擎同为 4.7.2；`--path` 编辑器态 vs 导出 pck 出货形态）
+# 固定条件逐条沿用 94 号预注册（Xvfb 1920x1160 / OpenGL3+llvmpipe / import -window / 四屏点击脚本 / 每屏 3 帧 / 冻结快照回放 1793897298）
+# 门槛 = fixtures/frame_diff_thresholds.txt sha256 9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873（预注册）
+screen	verdict	l1_size_ok	l1_ok	l1_dmean_max	l1_dmean	l1_top_color	l1_top_share_pp	l2_ok	l2_blocks_over	l2_max_block_dmean	l2_worst_block	l3_evaluated	l3_diff_px	l3_diff_ratio	l3_max_channel_diff	l3_bbox	noise_max_orig	noise_max_mine
+menu	过	True	True	0.0	0.0,0.0,0.0	#0E251C,#0E251C	0.0	True	0	0.0	0,0	True	0	0.0	0	None	0.0	0.0
+replay_lobby	过	True	True	0.0	0.0,0.0,0.0	#0E251C,#0E251C	0.0	True	0	0.0	0,0	True	0	0.0	0	None	0.0	0.0
+replay_play	不过（L2，1 块超限）	True	True	0.086	0.086,0.079,0.082	#FFFFFF,#FFFFFF	0.034	False	1	3.627	3,5	False	28781	0.012923	241	644,1086,1893,1147	0.000849	0.012911
+replay_end	不过（L1 主色/均值）	True	False	5.661	5.661,5.294,5.394	#FFFFFF,#FFFFFF	2.977	False	16	15.606	2,5	False	348874	0.156642	255	300,0,1919,1147	0.001672	0.000659

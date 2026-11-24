@@ -7501,3 +7501,289 @@ cargo run --release --offline -q --example replay_attrib -- --dir <快照> --dri
 cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive batch --policy default --json /tmp/b.jsonl
 cargo run --release --offline -q --example batch_conv   -- --dir <快照> --policy strict
 ```
+
+## 54. 引擎版本混淆项**消除**：让原版那份 **Godot 4.7.0** 跑我方工程 —— 三屏差异**既不是**引擎版本、**也不是**部署形态造成的（2026-11-24，`dispatch/T2`）
+
+> 前情：**§53** 只留下**一个**没消的混淆项：原版内嵌
+> **Godot 4.7.0**（`4.7.stable.official.5b4e0cb0f`）、我方 **4.7.2**（`4.7.2.stable.official.ed1daf0bf`），
+> 而"同一引擎对照实验"被登记成**未做**（§53.5 第 3 条）。本节把它做掉：**让我方 `client/` 直接跑在原版那份
+> 二进制上**，做"原版/我方 × 4.7.0/4.7.2"的四路对照。
+> 门槛**一个数没改** —— 仍是 `fixtures/frame_diff_thresholds.txt`（sha256 `9cc9fcda…`）的 §3，
+> 本轮只换了"用哪个引擎跑、怎么部署"，没有碰任何判据。
+>
+> ⚠️ **本节做过一次审计往返**（2026-11-24，lead 复核打回）：第一版把两组对照的**文件名写成"只写引擎、不写谁比谁"**
+> （`frame_diff_results_engine470.tsv` / `frame_diff_engine_control.tsv`），复核时把 **C-vs-D 的数读成了 A-vs-C**，
+> 于是看起来像"§54.3 的数与夹具自相矛盾"。**数据本身没错**（同一批采集重跑，数字逐字相同），错的是**名字**：
+> 现在四个对照各一个文件、第一行就是 `组别 = X vs Y` 加"哪个变量被固定"（§54.3 / §54.10）；
+> 并补上了原来缺的那一格 **B vs D（只换部署形态）** —— 它把"跑法差异"也单独量了出来。
+
+### 54.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 原版那份 **4.7.0** 引擎能不能跑我方工程？ | **能**，但只有一条路：导出 **pck + 同名二进制**（它是 *release export template*，`--path` / `--main-pack` / 位置参数全被编掉，见 §54.1） | **观测** |
+| ② | **引擎版本**（4.7.0 vs 4.7.2）单独对三屏有没有影响？ | **无影响**：同一份 pck 只换引擎，`menu` / `replay_lobby` 两屏 **PNG 逐字节相同**（C vs D） | **观测** |
+| ③ | **采集/部署形态**（`--path client` 编辑器态 vs 导出 pck）单独有没有影响？ | **也无影响**：同一个引擎（4.7.2）只换跑法，`menu` / `replay_lobby` 同样 **0 像素**（B vs D） | **观测** |
+| ④ | 那"三屏不过"是谁造成的？ | **我方 UI 本身**（缺元素 + 版式）：换引擎前后跨侧数**几乎逐位相同**（`replay_lobby` 上 A-vs-B ≡ A-vs-C，连超限块编号都一样） | **观测** |
+
+**② 的证据**（同一份导出 pck ＋ 同一个 `libgw2_rebuild.so`，只换引擎）：
+
+| 屏 | 两版引擎的差异像素 | 差在哪 |
+|---|---|---|
+| `menu` | **0**（PNG **逐字节相同**） | —— |
+| `replay_lobby` | **0**（PNG **逐字节相同**，24 块全 0） | —— |
+| `replay_play` | 1 062（0.0477 %） | bbox `x 680–718, y 1094–1141` ⇒ **只有底部状态行里那个 `tick` 数字**（`347/2276` vs `327/2276`） |
+| `replay_end` | 348 373（15.6417 %） | **播放相位**：`tick 1553/2276` vs `tick 1208/2276`（版式、键盘、状态行、棋盘逐像素相同） |
+
+**③ 的证据**（同一个引擎 4.7.2，只换部署形态：`--path client` vs 导出 pck）：`menu` / `replay_lobby` **0 像素**
+（PNG 逐字节相同）；`replay_play` 28 781 px（1.2923 %）、`replay_end` 348 874 px —— 而这两屏的差**跟着播放位置走**
+（B 的 tick `104` / `1927` vs D 的 `327` / `1208`），不是版式或颜色。
+
+⇒ **②③ 两条单变量对照在静态屏上都给出"逐字节相同"**，所以"三屏不过"既不是引擎版本、也不是跑法的锅；
+它是**我方缺元素/版式不同**（§53.4）—— 换引擎既不掩盖也不放大它
+（`replay_lobby` 上 A-vs-B 与 A-vs-C 的 dmean、超限块数、最差块、差异像素**每一个数字都相同**）。
+
+### 54.1 先过"跑不起来"这一关：4.7.0 引擎怎么跑我方工程
+
+原版二进制 `/…/Graphwar.x86_64` 的 `--version` = `4.7.stable.official.5b4e0cb0f`；它自己 `--help` 的第一行写着
+**`Option legend (this build = release export template)`** —— 这一行就是本节的钥匙。三条实测：
+
+```bash
+$ ./Graphwar.x86_64 --headless probe0/project.godot
+ERROR: `project.godot` path was specified on the command line, but this Godot binary was compiled
+       without support for path overrides. Aborting.
+       (To be able to use it, use the `disable_path_overrides=no` SCons option when compiling Godot.)
+$ ./Graphwar.x86_64 --headless --main-pack x.pck
+ERROR: `--main-pack` was specified on the command line, but this Godot binary was compiled without
+       support for path overrides. Aborting.
+$ ./Graphwar.x86_64 --help | grep -c -- --path      # → 0（这个开关根本不在它的选项表里）
+```
+
+⇒ **这一类不是"Godot API 差异"，也不是 gdext 版本问题**，是**原版把"路径覆盖"整个编掉了**
+（导出模板的默认构建选项），它只认"**二进制旁边的同名 `.pck`**"——也就是它自己出货时的形态。于是唯一可行的路径是：
+
+```bash
+# ① 用 4.7.2 编辑器把**我方工程**导出成 pck（导出器只管写包，与用哪个模板跑无关）
+"$WS/tools/Godot_v4.7.2-stable_linux.x86_64" --headless --path <app> --export-pack "Linux" client470.pck
+# ② 三件同目录、二进制改成与 pck 同名（模板只按自己的 basename 找 pck）
+<dir>/client470.x86_64   # = 原版 Graphwar.x86_64 的拷贝（4.7.0 模板）
+<dir>/client470.pck      # = 我方工程的导出包（5.8 MB；`assets/*` 与 `.godot/imported/*` 已按 include_filter 打包）
+<dir>/libgw2_rebuild.so  # = cargo build --features gdext-bindings 的产物
+```
+
+跑起来之后**没有任何引擎级不兼容**，日志第一行就把两件事实钉住：
+
+```
+Initialize godot-rust (API v4.6.stable.official, runtime v4.7.stable.official, safeguards strict)
+Godot Engine v4.7.stable.official.5b4e0cb0f - https://godotengine.org
+```
+
+* **gdext 兼容**：`libgw2_rebuild.so` 是按 godot-rust 的 **API 4.6** 编的，在 4.7.0 上按 `compatibility_minimum = 4.1`
+  正常注册，`GwStore` / `GwReplayDriver` 全部可用（否则回放屏根本起不来）；
+* **GDScript / 资源格式**：4.7.2 导出的 pck（`script_export_mode=2`，压缩二进制 token）被 4.7.0 **原样读入**，
+  没有脚本/资源版本报错；
+* 唯一的"缺"是**音频**：`res://assets/sounds/*` 那 10 条的 `.mp3str/.sample` 进了包，但 `.remap` 没生成 ⇒
+  客户端 10 条日志全是"缺资产，跳过"（`gw2_audio`）。**C/D 两路缺得一模一样**，而且音频不参与像素，
+  所以对拍是**对称**的；但"音频路径"这一维本轮**没有覆盖**（§54.7）。
+
+### 54.2 四路采集（`tools/frame_capture.py` 只加开关，默认行为与 94 号那一轮完全一致）
+
+| 代号 | 侧 | 引擎 | 部署形态 | 引擎版本串 |
+|---|---|---|---|---|
+| **A** | 原版真机 | `Graphwar.x86_64` | 原版自带 | `4.7.stable.official.5b4e0cb0f` |
+| **B** | 我方 `client/` | `tools/Godot_v4.7.2…` | `--path client`（**94 号那种**） | `4.7.2.stable.official.ed1daf0bf` |
+| **C** | 我方 `client/` | **A 那个二进制的拷贝** | 导出 pck | `4.7.stable.official.5b4e0cb0f` |
+| **D** | 我方 `client/` | `tools/Godot_v4.7.2…` | 导出 pck（**与 C 同一份包**） | `4.7.2.stable.official.ed1daf0bf` |
+
+**其余固定条件逐条沿用 §53.2**（私有 Xvfb 1920×1160、OpenGL3 + llvmpipe、`import -window <id>` 取帧、
+四屏点击脚本与坐标、每屏 3 帧、帧间隔 1.2 s、冻结快照回放 `1793897298`）。`--engine` / `--game-dir` /
+`--snapshot` / `--ours-mode pck` / `--ours-pck-dir` 是本轮新加的开关（`tools/frame_capture.py` 文件头 §T2），
+**不给这些开关时行为与 94 号那一轮一模一样**；引擎版本串与 argv 都写进了每份 `manifest.json`。
+
+```bash
+# 四路采集（各一条；display 号别共用）
+python3 tools/frame_capture.py --side original --flow replay --seed-replays --out $W/A --display-num 81
+python3 tools/frame_capture.py --side ours     --flow replay --seed-replays --out $W/B --display-num 82
+python3 tools/frame_capture.py --side ours     --flow replay --seed-replays --out $W/C --display-num 83 \
+    --engine $W/run470/client470.x86_64 --ours-mode pck --ours-pck-dir $W/run470
+python3 tools/frame_capture.py --side ours     --flow replay --seed-replays --out $W/D --display-num 84 \
+    --engine $W/run472/client472.x86_64 --ours-mode pck --ours-pck-dir $W/run472
+# 三层判据（同一个 frame_diff.py、同一个门槛）；**每个对照一个文件，文件名带"谁 vs 谁"**
+python3 tools/frame_diff.py --orig $W/A --mine $W/B --screens menu,replay_lobby,replay_play,replay_end \
+    --out fixtures/frame_diff_AvsB_ours472path.tsv  --blocks-out fixtures/frame_diff_blocks_AvsB_ours472path.tsv
+python3 tools/frame_diff.py --orig $W/A --mine $W/C --screens menu,replay_lobby,replay_play,replay_end \
+    --out fixtures/frame_diff_AvsC_ours470pck.tsv   --blocks-out fixtures/frame_diff_blocks_AvsC_ours470pck.tsv
+python3 tools/frame_diff.py --orig $W/C --mine $W/D --screens menu,replay_lobby,replay_play,replay_end \
+    --out fixtures/frame_diff_CvsD_engine_only.tsv   # 只换引擎
+python3 tools/frame_diff.py --orig $W/B --mine $W/D --screens menu,replay_lobby,replay_play,replay_end \
+    --out fixtures/frame_diff_BvsD_form_only.tsv     # 只换部署形态（同一个引擎）
+```
+
+2×2 因式设计（**这正是"归因"能站住的原因**）：
+
+|  | `--path client`（编辑器态） | 导出 pck |
+|---|---|---|
+| **Godot 4.7.0** | **做不到**（那份二进制是导出模板，编掉了 `--path`，§54.1） | **C** |
+| **Godot 4.7.2** | **B** | **D** |
+
+⇒ 能拆的单变量只有两条：**C vs D = 只换引擎**、**B vs D = 只换部署形态**；
+A-vs-B / A-vs-C 是"跨侧"对照（同时差着引擎/跑法其中一项或两项），只能回答"我方与原版差多少"。
+
+### 54.3 四组对照（数值全部由 `frame_diff.py` 写出，本表用脚本从四个 TSV 生成）
+
+**表 54.3-a 四组对照（2×2 因式设计，四个文件各一组；**数值由 `frame_diff.py` 直接写出，本表用脚本从四个 TSV 生成，未手打**）**
+
+| 屏 | A vs B（旧跑法+旧引擎） | **A vs C（换 4.7.0 引擎）** | C vs D（只换引擎） | B vs D（只换跑法） |
+|---|---|---|---|---|
+| `menu` | 过 · dmean 0.0 · 0 块 · 0 px（0.0000 %） | 过 · dmean 0.0 · 0 块 · 0 px（0.0000 %） | 过 · dmean 0.0 · 0 块 · 0 px（0.0000 %） | 过 · dmean 0.0 · 0 块 · 0 px（0.0000 %） |
+| `replay_lobby` | 不过（L1 主色/均值） · dmean 2.204 · 5 块 · 91,625 px（4.1139 %） | 不过（L1 主色/均值） · dmean 2.204 · 5 块 · 91,625 px（4.1139 %） | 过 · dmean 0.0 · 0 块 · 0 px（0.0000 %） | 过 · dmean 0.0 · 0 块 · 0 px（0.0000 %） |
+| `replay_play` | 不过（L1 主色/均值） · dmean 10.156 · 17 块 · 849,169 px（38.1272 %） | 不过（L1 主色/均值） · dmean 10.081 · 17 块 · 849,010 px（38.1201 %） | 不过（L3） · dmean 0.011 · 0 块 · 1,062 px（0.0477 %） | 不过（L2，1 块超限） · dmean 0.086 · 1 块 · 28,781 px（1.2923 %） |
+| `replay_end` | 不过（L1 主色/均值） · dmean 16.634 · 21 块 · 924,688 px（41.5180 %） | 不过（L1 主色/均值） · dmean 16.673 · 21 块 · 924,688 px（41.5180 %） | 不过（L1 主色/均值） · dmean 5.7 · 16 块 · 348,373 px（15.6417 %） | 不过（L1 主色/均值） · dmean 5.661 · 16 块 · 348,874 px（15.6642 %） |
+
+四组各自固定了什么（**这是这张表的全部意义**）：
+
+| 组 | 左 | 右 | 变了的只有 | 入库文件 |
+|---|---|---|---|---|
+| **A vs B** | 原版真机（内嵌 4.7.0） | 我方 + 4.7.2、`--path client`（**94 号那种**） | **两个都变**（引擎 + 跑法）⇒ 只能当"旧数" | [`frame_diff_AvsB_ours472path.tsv`](../fixtures/frame_diff_AvsB_ours472path.tsv) |
+| **A vs C** | 原版真机 | 我方 + **4.7.0**、导出 pck | 引擎已对齐 ⇒ 剩下的全是"我方 UI 本身" | [`frame_diff_AvsC_ours470pck.tsv`](../fixtures/frame_diff_AvsC_ours470pck.tsv) |
+| **C vs D** | 我方 + 4.7.0 pck | 我方 + 4.7.2 pck（**同一份 pck、同一个 `.so`**） | **只有引擎** | [`frame_diff_CvsD_engine_only.tsv`](../fixtures/frame_diff_CvsD_engine_only.tsv) |
+| **B vs D** | 我方 + 4.7.2 `--path` | 我方 + 4.7.2 pck（**同一个引擎**） | **只有部署形态** | [`frame_diff_BvsD_form_only.tsv`](../fixtures/frame_diff_BvsD_form_only.tsv) |
+
+逐块明细（24 块的 dmean/bbox）：[`fixtures/frame_diff_blocks_AvsC_ours470pck.tsv`](../fixtures/frame_diff_blocks_AvsC_ours470pck.tsv)、
+[`fixtures/frame_diff_blocks_AvsB_ours472path.tsv`](../fixtures/frame_diff_blocks_AvsB_ours472path.tsv)。
+
+**表 54.3-b 与 §53.3 发表值的对照（只比 A-vs-B 这一列，因为 §53 那次跑的就是 A-vs-B）**
+
+| 屏 | §53.3 发表（2026-11-10） | 本轮复现 A vs B | 判 |
+|---|---|---|---|
+| `menu` | 过 / 0 像素 | 过 / 0 像素 | **一致** |
+| `replay_lobby` | 不过(L1) dmean **2.204** / 5 块 / 91 625 px（4.1139 %） | 不过(L1) dmean **2.204** / 5 块 / 91 625 px（4.1139 %），**连 5 个超限块的编号与最差块的 20.914 都一样** | **逐位一致** |
+| `replay_play` | 不过(L1) dmean **19.382** / 19 块 / 920 469 px（41.3285 %） | dmean 10.156 / 17 块 / 849 169 px（38.1272 %） | 同为"不过(L1)"，数字更小 ⇒ **相位**（§54.5） |
+| `replay_end` | 不过(L1) dmean **53.466** / 22 块 / 1 168 387 px（52.4599 %） | dmean 16.634 / 21 块 / 924 688 px（41.518 %） | 同上 |
+
+读法（三条，**每一句都指到表 54.3-a 的某一格**）：
+
+1. **静态屏是"干净屏"**：`menu` 在任何两路之间都是 0 像素；`replay_lobby` 在 **A-vs-B 与 A-vs-C 之间逐位相同**
+   （dmean 2.204、5 块、最差块 `(0,4)` 20.914、91 625 px），在 **C-vs-D 与 B-vs-D 之间是 0 像素**。
+   ⇒ 横向比（跨侧）差得**一模一样**，纵向比（单变量）**差零** ⇒ 这条屏上的差 100 % 来自**我方 UI 本身**。
+2. **`replay_play` / `replay_end` 的跨侧数比 §53.3 发表的小，但不是任何一个单变量的锅**：A-vs-B（38.1272 %）
+   与 A-vs-C（38.1201 %）只差 0.007 pp，而播放相位本身能带来 1.3 % 的抖动（§54.5）；
+   C-vs-D 的 1 062 px / B-vs-D 的 28 781 px 也**跟着两边的 tick 差走**（347↔327、104↔327）。
+   ⇒ 这两屏**不能**用来判"引擎/跑法有没有影响"，能判的是 ②③ 那两条静态屏证据。
+3. **"跑法影响很大"这条假设被 B-vs-D 否掉了**：如果"`--path client` 编辑器态"会显著改变画面，那么
+   B-vs-D（同引擎、只换跑法）在静态屏上就该有差；实测是 **0 像素、PNG 逐字节相同**。
+   （第一版正文里我把"跑法"与"UI 缺元素"混在一起说，这一版把它拆开并量掉了。）
+
+**主菜单这一条现在比 §53.4 更强**：四张图（A/B/C/D）的 PNG sha256 **全部等于** `3d6b776c9d16c7682…`
+（113 780 字节）⇒ 主菜单在"原版 vs 我方"**和**"4.7.0 vs 4.7.2"**和**"`--path` vs pck"三个维度上都是同一个字节流。
+
+### 54.4 结构差也一样与引擎无关（同一把尺子量四张 `replay_play`）
+
+用一把**只用白像素长列/长行**的尺子（列/行内近白像素占比 > 30 %，允许 ≤ 10 列的断续以跳过网格线与轴线）量"棋盘白底矩形"，
+再在矩形内找最长的暗行/暗列当轴线：
+
+| 图 | 棋盘白底 | 轴线交点 |
+|---|---|---|
+| **A** 原版 4.7.0 | `x 304–1575`、`y 199–959` = **1272×761** | **(939, 578)** |
+| **B** 我方 4.7.2 `--path` | `x 303–1575`、`y 150–911` = **1273×762** | (939, 530) |
+| **C** 我方 4.7.0 pck | 与 B **逐位相同** | (939, 530) |
+| **D** 我方 4.7.2 pck | 与 B **逐位相同** | (939, 530) |
+
+⇒ 我方棋盘与原版**同尺寸（±1 px）**、**整体上移 48–49 px**；而且这个差在"两版引擎 × 两种部署形态"的
+三张我方图上**完全一样** ⇒ 版式差异与引擎无关，是客户端自己的（§53.4 ③ 里那些"缺士兵/缺靶子/多画键盘"
+同理：它们在同引擎下**全部照旧**）。
+
+### 54.5 顺手量到的：S3/S4 的"播到第几 tick"**本身不可复现**（对 §53.5 第 2 条的加强）
+
+从每张 `replay_end` 帧的底部状态行直接读出的 tick：
+
+| 跑法 | 45 s 后我方播放到 |
+|---|---|
+| §53 那次（A vs B，2026-11-10） | **2276 / 2276（播完）** |
+| 本轮 **B**（4.7.2 `--path`） | 1927 / 2276 |
+| 本轮 **C**（4.7.0 pck） | 1553 / 2276 |
+| 本轮 **D**（4.7.2 pck） | 1208 / 2276 |
+
+同一套点击脚本、同一台机、同一个客户端，**45 s 后播到第几 tick 在 1208–2276 之间飘**。所以：
+
+* §53.5 第 2 条写的"S3 的 tick 对不齐"要**再降一档**：不只是"两侧对不齐"，**我方自己也不可复现**；
+  `replay_play` / `replay_end` 的跨侧数字只能当**参考量**（噪声地板 1.3 % 上下），不能当"渲染差异"的证据；
+  真要拿来判渲染，得按 §53.5 第 2 条那条 frida 路子先把 tick 钉死。
+* 唯一"能看出引擎差异"的通道是**帧率**（同一份 pck、同样的 45 s：4.7.0 到 1553、4.7.2 到 1208）——
+  但**同引擎换部署形态**的抖动更大（4.7.2 上 1927 vs 1208）⇒ 这条**不能**写成"4.7.0 更快"的结论，
+  只能记成"S3/S4 的读数里混着帧率"。**§53.4 ④ 里"我方播到 `tick 2276/2276`"是那一次运行的偶然**，不是稳定行为。
+
+### 54.6 与 §53 记录**不符**的两处（如实登记，不偷偷改）
+
+| # | 项 | §53 原记录 | 本轮实测 | 处理 |
+|---|---|---|---|---|
+| 1 | 我方 `replay_play` 的**棋盘几何** | `x 303–1638`、`y 131–1140` ⇒ **1336×1010**；轴线交点 **(971, 931)** | **1273×762**（`x 303–1575`、`y 150–911`）；轴线交点 **(939, 530)**；且 B/C/D 三张我方图**逐位相同** | **待裁决**。同一把尺子量原版得 1272×761 / (939,578)，与 §53 记录的原版侧数字（1273×762 / (939,578)）**一致（±1 px）** ⇒ 尺子没问题；§53 的原图不入库（截图不入库是那条纪律），所以**无法复核**旧图。方向不变：我方棋盘与原版不同，但差的是**位置（上移 48–49 px）**，不是"高 +248 px / 横轴 +353 px" |
+| 2 | 主菜单 PNG 的 sha256 | `32fb5095…` | 本轮 A/B/C/D 四张都是 `3d6b776c…` | 像素结论一致（0 像素差）；**文件字节**不同说明 `import` 的编码/环境与那一次有差异（未追，不影响判据 —— 判据是像素不是 PNG 字节） |
+
+### 54.7 抓不到 / 本轮没覆盖（诚实清单）
+
+| # | 项 | 状态 | 卡在哪 |
+|---|---|---|---|
+| 1 | **"原版跑在我方引擎上"** | 没做 | 原版只有 pck；要让它跑在 4.7.2 模板上得重新打包原版的资源（还要处理 4.7.0→4.7.2 的 `project.binary` 与 `.gdc` 版本），且**没有必要**：A 就是原版在 4.7.0 上的原生形态，与 C 一比就把引擎维消掉了 |
+| 2 | **导出包的音频** | 缺，两路对称 | `assets/sounds/*` 的 hydrated 产物进了包但 `.remap` 没生成 ⇒ 10 条音频全跳过。C/D 一样缺 ⇒ 不影响像素对拍；但"音频路径"这一维**未覆盖** |
+| 3 | **S3/S4 的 tick 对齐** | 仍未做 | 同 §53.5 第 2 条（frida 冻 tick）；本轮只把它的严重程度量清楚了（§54.5） |
+| 4 | 我方回放屏"缺元素"是**渲染层**还是**喂数据层** | **未知** | 同 §53.6 最后一行；本轮只拍到"换引擎后照样缺" |
+| 5 | 4.7.0 模板跑我方工程**只能**走 pck | 已定因 | `disable_path_overrides=yes`（§54.1）；没有别的路，除非自己编一个 4.7.0 模板 —— 那就不再是"原版那份二进制"了 |
+
+### 54.8 复跑清单
+
+```bash
+WS=<工作区>; W=<可写工作目录>
+# ① 门槛自检（**必须仍是这个 sha256**；本轮一个数没改）
+python3 -c "import hashlib;print(hashlib.sha256(open('fixtures/frame_diff_thresholds.txt','rb').read()).hexdigest())"
+#    → 9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873
+# ② 我方内核（本轮没动 src/，但 C/D 要 client/libgw2_rebuild.so）
+export CARGO_HOME=$WS/.cargo-home CARGO_TARGET_DIR=$W/target
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+"$WS/tools/Godot_v4.7.2-stable_linux.x86_64" --headless --path client --import
+# ③ 导出 + 部署两套（C = 4.7.0 模板，D = 4.7.2，同一个 pck）
+python3 tools/extract_assets.py --pck $WS/Graphwar.pck      # 首次必做（资产从你自己的 pck 解）
+mkdir -p $W/app && cp -a client/. $W/app/                   # 加一份 export_presets.cfg（Linux/export_filter=all_resources/include_filter="assets/*,.godot/imported/*"）
+"$WS/tools/Godot_v4.7.2-stable_linux.x86_64" --headless --path $W/app --export-pack "Linux" $W/client470.pck
+mkdir -p $W/run470 $W/run472
+cp $WS/Graphwar.x86_64          $W/run470/client470.x86_64 && cp $W/client470.pck $W/run470/
+cp "$WS/tools/Godot_v4.7.2-stable_linux.x86_64" $W/run472/client472.x86_64 && cp $W/client470.pck $W/run472/client472.pck
+cp client/libgw2_rebuild.so $W/run470/ && cp client/libgw2_rebuild.so $W/run472/
+# ④ 四路采集 + 两个判据表（= 入库那两份 TSV）
+#    见 §54.2 的四条 frame_capture.py 与两条 frame_diff.py
+# ⑤ 快照没被写（分母不变）
+ls $WS/dist/gw2-replays-snapshot/replays | wc -l
+```
+
+### 54.9 验收
+
+`git diff --name-only master..HEAD` 只含 `tools/frame_capture.py`（**只加开关**，默认行为不变）、
+`fixtures/frame_diff_{AvsB_ours472path,AvsC_ours470pck,CvsD_engine_only,BvsD_form_only}.tsv` 与
+两份 `frame_diff_blocks_*.tsv`（**全部新增**）、`docs/06`（本节）—— `src/`、`client/**`、
+既有 `fixtures/` 文件**一个字节没动**，所以 §53.9 那批回归数字（`cargo test` / 三轴 / headless 14 脚本 /
+`selftest`）**按构造不变**；本轮仍然自己跑了一遍 `python3 tools/check_doc_refs.py`（rc=0）与门槛 sha256 自检。
+
+**本节只支撑这三句话**：① 4.7.0 引擎能跑我方工程（pck 形态，gdext 无兼容问题）；
+② 引擎版本（C↔D）与部署形态（B↔D）**各自单独都没有像素影响**（静态屏逐字节相同）；
+③ 换引擎**不会**让三屏变过 —— 要过还得回到"补元素 + 改版式"（§53.4）。
+
+### 54.10 一次审计往返：文件名的锅，不是数的锅（2026-11-24）
+
+复核打回时提出的矛盾是"§54.3 的 A-vs-C 列写 `replay_lobby` 不过(L1) dmean 2.204，而夹具里是 0 差异 / 1062 px"。
+**核对结果：两组数据各自都对，是文件名指错了对象。** 证据是"内容指纹"而不是记忆：
+
+| 判据 | 结果 |
+|---|---|
+| `dmean 2.204` 只出现在**跨侧**两组（A-vs-B / A-vs-C）与 94 号的原表里 | 命中 `frame_diff_AvsB_*.tsv`、`frame_diff_AvsC_*.tsv`、`frame_diff_results.tsv`；**不在** `CvsD` / `BvsD` 里 |
+| `1062 px / 0.0477 %` 只属于**只换引擎**那组 | 只命中 `frame_diff_CvsD_engine_only.tsv` |
+| 用同一批采集**重跑**四组 `frame_diff.py` | 数字与本版正文**逐字相同**（重跑前后 `diff` 为空） |
+
+⇒ 事故链：旧文件名 `frame_diff_results_engine470.tsv` / `frame_diff_engine_control.tsv` **只说了"引擎"、
+没说"谁 vs 谁"**，复核时把后者的数当成了前者。**处置**（宁可改名字，不改数）：
+
+1. 四个对照各自一个文件，文件名直接带 `AvsB` / `AvsC` / `CvsD` / `BvsD`；
+2. 每个文件**第一行**就是 `组别 = X vs Y　｜　…` 加"这一组固定了什么、只变了什么"；
+3. 补了原来缺的那一格 **B vs D（只换部署形态）** —— 它顺手把复核里提出的"是不是跑法造成的"这条假设**否掉**了
+   （静态屏 0 像素）；
+4. §54.0 的结论由"两句"改成"四问"（②引擎 / ③跑法 / ④那到底是谁），**归因不再混着说**。
+
