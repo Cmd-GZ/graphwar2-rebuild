@@ -7941,7 +7941,9 @@ GW2_REPLAY=<快照>/1793897298 "$GODOT" --headless --path client --script res://
 
 ⇒ **数据层与位置都对**；我方帧上却只有**一条 2 px 宽的竖线**（实测士兵区彩色像素 6 个 @x807、y835–840）。
 根因在**渲染层**：`entity_drawer::sprite_transform`（x86 `update_sprite` `0x4b9530`）的缩放是
-`scale = ((s/60)·(128/tex_w), (k/−60)·(128/tex_w))` ⇒ **任何贴图的精灵宽度恒为 `128/60 = 2.13 px`**
+`scale = ((s·k/60)·(128/tex_w), (k/−60)·(128/tex_w))` ⇒ 精灵宽度 = `(size.x/50)/60·128 ≈ 54 px`
+> ⚠️ **2026-11-26**：本节写作时公式里 x 分量漏了 `k`（当时按"恒 2.13 px"当根因），已按指令更正
+> —— 见 `docs/06` §58（含 x86/arm64 两架构的指令复核）。**根因修好后精灵真的画出来了**。
 （与 `size`、与贴图尺寸都无关），而原版真帧的士兵精灵是 **46×37 px**、靶子 26×26 px。
 **这条公式不可能画出真帧**（比例差 20 倍以上），而 `tests/entity_drawer.rs` 与
 `client/tools/entity_drawer_check.gd` 都是在**同一条公式**上自洽断言 ⇒ 又一次"自写断言只证明自洽"
@@ -8417,3 +8419,91 @@ python3 tools/frame_diff.py --orig <dir>/orig_r --mine <dir>/mine_r --screens me
 > 工作树里没有 `.reference/`，于是 `REPO` 会解析到**主工作区** ⇒ `--side ours` 会静默跑**主工作区**的
 > `client/`（改了本工作树不生效）。本轮的做法是在工作树里放一个 `.reference → 主工作区/.reference`
 > 的**符号链接**（gitignore 之外、不入库），让 `REPO` 落回本工作树。**没有改脚本的路径逻辑。**
+
+## 58. `update_sprite`（`0x4b9530`）的**复原错误**：`scale.x` 漏了 `k` —— 客户端像素对拍抓到的第一个源码级 bug（2026-11-26，lead 亲自修）
+
+> 前情：§55（t4）把回放屏从 41.33% 差到 **8.07%**，剩下的差值里"士兵/靶子没画"是最显眼的一块；
+> t4 的诊断给了方向（`entity_drawer::sprite_transform` 的 x 缩放 = `(s/60)·(128/tex_w)` ⇒ 精灵恒 2.13 px 宽），
+> 但它按规矩没动原版模块文件。本节把这条**修了**：先取指令证据，再改代码/断言/镜像/文档。
+
+### 58.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 精灵恒 2.13 px 宽，是"没画"还是"公式错"？ | **公式错**：`scale.x` 漏了一个 `k`（`size.x/50`）⇒ 宽度与高度差 25 倍，肉眼就是一条线 | **逐位（指令 + 常量）** |
+| ② | 正确公式 | `scale = ( (s·k/60)·(128/tex_w) , (k/−60)·(128/tex_w) )`，`k = size.x/50` | **逐位**（x86 全部指令 + arm64 结构一致） |
+| ③ | 修完画出来了吗？ | **画出来了**：士兵彩色像素 **6 → 521**、靶子 **0 → 408**（靶子 bbox 与真帧差 ≤2 px） | **观测**（真帧） |
+| ④ | 回放屏还差多少 | `replay_play` 8.062% → **8.059%**、L2 超限块 **2 → 1** | **观测** |
+| ⑤ | 剩下的 8% 是什么 | **76% 落在棋盘区**（`1272×761` vs 原版 `1273×762`、轴交点差 1 px ⇒ 每条网格线整体错 1 px）；其余 = 底部行（`f(x)` 文本/修正常数 Δ10）+ 士兵的 hat/body 两个部件 + 名字标签 | **观测** |
+
+### 58.1 指令复核（x86 `0x4b9530`，常量都从 `.rodata` 读出来验过）
+
+```text
+4b9674  movss  xmm3,[rsp]        ; size.x
+4b9679  divss  xmm3,[0x1b9fc8]   ; k = size.x / 50.0        （50.0f = 0x42480000）
+4b9681  movaps xmm4,[0x19e880]   ; {−0.0,−0.0,−0.0,−0.0}
+4b9688  xorps  xmm4,xmm3         ; −k
+4b968e  test dl,1 / 4b9693 movaps xmm1,xmm3   ; 镜像判定 ⇒ ±k
+4b96ab  movaps xmm4,xmm1
+4b96ae  movaps [rsp+0x60],xmm4   ; **把 ±k 存起来**（后面 scale.x 用）
+4b9714  movaps xmm0,[0x19c630]   ; {0.0, 128.0, 0.0, 0.0}
+4b9720  movss  xmm0,xmm2         ; xmm0 = {±k, 128.0, …}   ← 低 lane 被写成 ±k
+4b9724  movaps xmm2,[0x19d1b0]   ; {60.0, 0, 0, 0}         （60.0f = 0x42700000）
+4b972b  unpcklps xmm2,xmm1       ; {60.0, tex_w, …}
+4b972e  divps  xmm0,xmm2         ; {±k/60, 128/tex_w, …}
+4b9731  movaps xmm2,[rsp+0x20]   ; {k,0,0,0}
+4b9736  divss  xmm2,[0x1baacc]   ; k / (−60)               （−60.0f = 0xC2700000）
+4b9741  shufps xmm1,xmm0,0x55    ; xmm1 = 128/tex_w
+4b9745  mulss  xmm0,xmm1         ; scale.x = (±k/60)·(128/tex_w)   ← **带 k**
+4b9749  mulss  xmm1,xmm2         ; scale.y = (128/tex_w)·(k/−60)
+4b974d  call   set_scale(Vector2)
+```
+
+**arm64（`0x4bf418`）结构一致**：`fdiv s12,s11,s0`（`k = size.x/50`）→ `fneg s0,s12` →
+`fcsel s13,s0,s12,ne`（±k）→ 两个 `fmul` 都以 `s1 = 128/tex_w` 收尾（`fmul s0,s0,s1` /
+`fmul s1,s2,s1`）⇒ **两个分量都乘 `k`**。
+
+⇒ 旧代码 `((s / 60.0) * unit)` 是**复原错误**（不是实现选择）。改后的等价断言：
+**同一张 128×128 贴图等比缩放 ⇒ `|scale.x| == |scale.y|`**，这条已加进 `tests/entity_drawer.rs`。
+
+### 58.2 改了什么（三处必须同步，否则互相自洽地错下去）
+
+| # | 位置 | 改法 |
+|---|---|---|
+| 1 | `src/entity_drawer.rs::sprite_transform` + 文档 | `s*k/60`；公式与"2026-11-26 更正"段（含上面那段指令）写进函数文档 |
+| 2 | `tests/entity_drawer.rs` | 期望值跟着改，并新增一条"两分量绝对值相等"的断言（**旧断言就是在错公式上自洽**） |
+| 3 | `client/tools/entity_drawer_check.gd` | GDScript 镜像同步（它本来就是"独立重算对拍"的，镜像错了检查就全绿） |
+
+> ⚠️ **这条错活过了三轮**：`docs/16` §33/§40 写着"`update_sprite` 的全部算术已复原"，
+> 而它是**逐位标注**的函数 —— 三轮里没有任何一条断言问过"这具精灵在屏幕上有多大"。
+> ⇒ 说明 `docs/06` §53/§54 那套**像素级真值**不只是改 UI 的尺子，它能抓**源码复原错误**。
+
+### 58.3 实测（同一份冻结回放 `1793897298`、同机、display 81/82）
+
+| 量 | 修前 | 修后 | 原版 |
+|---|---|---|---|
+| 士兵彩色像素 / bbox | 6 px / (807,835)-(807,840) | **521 px / (794,820)-(819,845)** | 1811 px / **(771,783)-(843,854)** |
+| 靶子彩色像素 / bbox | 0 | **408 px / (1176,450)-(1201,475)** | 408 px / (1177,448)-(1202,473) |
+| `replay_play` 差异比例 | 8.062 % | **8.059 %** | —— |
+| `replay_play` L2 超限块 | 2 | **1** | —— |
+| `replay_end` L2 超限块 | 2 | **1** | —— |
+
+**剩下 8.06% 的成分**（逐块统计，`d>0` 计数）：棋盘区 `y∈[190,970]` 占 **136 190 / 179 484 = 75.9%**
+（因为棋盘底 `1272×761` 比原版 `1273×762` 小 1 px、轴交点 `(938,579)` vs `(939,578)` ⇒ **每条网格线整体错 1 px**）；
+底部行 `y>1040` 20 278 px（`f(x)` 文本与修正常数 `Δ10 px`）；
+士兵 hat/body 两个部件 + 名字标签仍未画（face 只有 26 px 见方，原版三件套合成 73×72）。
+⇒ **下一步就三件**：棋盘几何取整（1 px 也不能差）、底部修正列、士兵三件套 + 标签。
+
+### 58.4 复跑
+
+```bash
+export CARGO_HOME=$PWD/.reference/cargo-home CARGO_TARGET_DIR=$PWD/.reference/cargo-home/target
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+G=$PWD/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+XDG_DATA_HOME=$PWD/.agent-work/client/data "$G" --headless --path client --import
+XDG_DATA_HOME=$PWD/.agent-work/client/data "$G" --headless --path client --script res://tools/entity_drawer_check.gd
+python3 tools/frame_capture.py --side original --flow replay --seed-replays --out <W>/orig --display-num 81
+python3 tools/frame_capture.py --side ours     --flow replay --seed-replays --out <W>/mine --display-num 82
+python3 tools/frame_diff.py --orig <W>/orig --mine <W>/mine --screens menu,replay_lobby,replay_play,replay_end \
+  --out <W>/fd.tsv --blocks-out <W>/fdb.tsv --json <W>/fd.json
+```

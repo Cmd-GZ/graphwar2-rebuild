@@ -142,7 +142,9 @@ func _same_ids(a: PackedInt64Array, b: PackedInt64Array) -> bool:
 ## ```text
 ## k = size.x / 50
 ## position = ( size.x/2 + s·k·x ,  size.y/2 − k·y )
-## scale    = ( (s/60)·(128/tex_w) ,  (k/−60)·(128/tex_w) )
+## scale    = ( (s·k/60)·(128/tex_w) ,  (k/−60)·(128/tex_w) )
+##   ⚠️ 2026-11-26 更正：x 分量原来漏了 `k`（旧版写 `s/60`）⇒ 精灵恒 2.13 px 宽。
+##   指令级复核见 `src/entity_drawer.rs::sprite_transform` 的"2026-11-26 更正"一段。
 ## flip_h   = x > 0
 ## ```
 ## 它与 `src/entity_drawer.rs::sprite_transform` 是**同一条算式**——两边算出来不一样就是有一边错了。
@@ -152,7 +154,7 @@ func expect_sprite(size: Vector2, packed_color: int, tex_width: int, x: float, y
 	var unit: float = 128.0 / float(tex_width)
 	return {
 		"position": Vector2(size.x * 0.5 + s * k * x, size.y * 0.5 - k * y),
-		"scale": Vector2((s / 60.0) * unit, (k / -60.0) * unit),
+		"scale": Vector2((s * k / 60.0) * unit, (k / -60.0) * unit),
 		"flip_h": x > 0.0,
 	}
 
@@ -335,7 +337,7 @@ func _initialize() -> void:
 	ok(kids[0].position.is_equal_approx(want["position"]),
 		"位置 == (300, 100)（k=10: 250+10·5, 150−10·5；与 tex_w 无关）")
 	ok(kids[0].scale.is_equal_approx(want["scale"]),
-		"缩放 == ((1/60)·(128/%d), (10/−60)·(128/%d))（读出的是这一层自己的 tex_w）"
+		"缩放 == ((±k/60)·(128/%d), (k/−60)·(128/%d))（读出的是这一层自己的 tex_w）"
 		% [tex_w0, tex_w0])
 	ok(kids[0].flip_h == true, "x > 0 ⇒ flip_h = true")
 	ok(kids[1].position.is_equal_approx(kids[0].position)

@@ -2971,7 +2971,7 @@ CanvasItem::queue_redraw()    // 0x7e6da0
 
 ```text
 position = ( w/2 + s·k·x ,  h/2 − k·y )
-scale    = ( (s/60)·(128/tex_w) ,  (k/−60)·(128/tex_w) )
+scale    = ( (s·k/60)·(128/tex_w) ,  (k/−60)·(128/tex_w) )   ← 2026-11-26 更正（旧式漏了 x 的 k，见 `docs/06` §58）
 flip_h   = x > 0.0
 ```
 
@@ -7998,7 +7998,8 @@ python3 tools/bit_exact_attrib.py --json b.jsonl
 原版 `update_sprite`（x86 `0x4b9530`）对**每一层**读**它自己**贴图的宽度：
 
 ```text
-scale = ( (s/60)·(128/tex_w) , (k/−60)·(128/tex_w) )       k = size.x/50、s = 队伍镜像符号 ±1
+scale = ( (s·k/60)·(128/tex_w) , (k/−60)·(128/tex_w) )       k = size.x/50、s = 队伍镜像符号 ±1
+> ⚠️ **2026-11-26 更正**：x 分量原来写成 `s/60`、漏了 `k` ⇒ 精灵恒 2.13 px 宽。见 `docs/06` §58。
 ```
 
 以前三层都是 8×8 纯色 ⇒ `unit` 恒 16 ⇒ 这条"每层各读各的"**从来没有被测到过**。
@@ -10728,6 +10729,8 @@ _replay.pause()
   `face_paint_2 / asian / asian_hat`）；③ 回放模式**不填 `prep` 表** ⇒ 准备圈箭头不画
   （真帧：原版棋盘上 0 个纯红像素）。
 * **渲染层画不出来**：`entity_drawer::sprite_transform` 的 x 缩放是 `(s/60)·(128/tex_w)`
+  （⚠ 2026-11-26：这行是**错的公式**，已修成 `(s·k/60)·(128/tex_w)`，见 `docs/06` §58；
+  修好后 face 精灵 26×26 已画出来，**仍缺 hat / body 两个部件与名字标签**）
   ⇒ 精灵宽度恒为 `128/60 = 2.13 px`（与 `size`、与贴图尺寸都无关），真帧是 46×37 px。
   这条公式来自 x86 `update_sprite`（`0x4b9530`）的读数，但**它画不出真帧**；而
   `tests/entity_drawer.rs` 与 `client/tools/entity_drawer_check.gd` 都在同一条公式上自洽断言

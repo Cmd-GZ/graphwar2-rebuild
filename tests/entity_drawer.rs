@@ -521,7 +521,8 @@ fn sprite_transform_matches_update_sprite_arithmetic() {
                 (300.0_f32 * 0.5 - k * (-2.0)) as f64,
             ),
             scale: Vec2::new(
-                ((1.0_f32 / 60.0) * (128.0_f32 / 256.0)) as f64,
+                // 2026-11-26 更正：x 分量带 k（旧断言漏了 k，见 src/entity_drawer.rs 的更正段）
+                ((k / 60.0) * (128.0_f32 / 256.0)) as f64,
                 ((k / -60.0) * (128.0_f32 / 256.0)) as f64,
             ),
             flip_h: true, // x = 3 > 0
@@ -533,6 +534,9 @@ fn sprite_transform_matches_update_sprite_arithmetic() {
     // scale.y 天然为负（屏幕 y 向下 / 棋盘 y 向上）
     assert!(t.scale.y < 0.0);
     assert!(t.scale.x > 0.0);
+    // 2026-11-26：两个分量的**绝对值必须相等**（同一张 128×128 贴图等比缩放）
+    // —— 旧公式漏了 x 的 k，二者差 25 倍，这就是"精灵恒 2.13 px 宽"的根因。
+    assert!((t.scale.x.abs() - t.scale.y.abs()).abs() < 1e-6);
 
     // 镜像（c = 0x0000_0100 ⇒ sign = -1）⇒ x 反向、scale.x 反号
     let m = sprite_transform(size, 0x0000_0100, 256, 3.0, -2.0);

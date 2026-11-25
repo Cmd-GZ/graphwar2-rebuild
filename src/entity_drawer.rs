@@ -526,9 +526,41 @@ pub struct SpriteTransform {
 ///
 /// ```text
 /// position = ( size.x/2 + s·k·x ,  size.y/2 − k·y )
-/// scale    = ( (s/60)·(128/tex_w) ,  (k/−60)·(128/tex_w) )
+/// scale    = ( (s·k/60)·(128/tex_w) ,  (k/−60)·(128/tex_w) )
 /// flip_h   = x > 0.0
 /// ```
+///
+/// # 2026-11-26 更正：x 分量原来**漏了 `k`**（真 bug，两个架构都对过）
+///
+/// 旧版写的是 `scale.x = (s/60)·(128/tex_w)` —— 于是一具士兵的精灵恒为
+/// `128 × (1/60) ≈ 2.13 px` 宽（而真机帧里是 **46–54 px 量级**），看起来像"根本没画"。
+/// 这个错是**客户端像素对拍**发现的（`docs/06` §55：回放屏 8.07% 差异里最重的一块就是士兵）。
+///
+/// 指令级复核（x86，`0x4b9530` 的尾部；常量都是我读 `.rodata` 验过的）：
+/// ```text
+/// 4b9674  movss  xmm3,[rsp]        ; size.x
+/// 4b9679  divss  xmm3,[0x1b9fc8]   ; k = size.x / 50.0        （50.0f）
+/// 4b9681  movaps xmm4,[0x19e880]   ; {−0.0,−0.0,−0.0,−0.0}
+/// 4b9688  xorps  xmm4,xmm3         ; −k
+/// 4b968e  test dl,1 / 4b9693 movaps xmm1,xmm3   ; ±k（团队镜像选择）
+/// 4b96ab  movaps xmm4,xmm1         ; xmm4 = ±k
+/// 4b96ae  movaps [rsp+0x60],xmm4   ; **存 ±k**（后面 scale.x 用）
+/// 4b9714  movaps xmm0,[0x19c630]   ; {0.0, 128.0, 0.0, 0.0}
+/// 4b9720  movss  xmm0,xmm2         ; xmm0 = {±k, 128.0, …}    ← 低 lane 是 ±k
+/// 4b9724  movaps xmm2,[0x19d1b0]   ; {60.0, 0, 0, 0}
+/// 4b972b  unpcklps xmm2,xmm1       ; {60.0, tex_w, …}
+/// 4b972e  divps  xmm0,xmm2         ; {±k/60, 128/tex_w, …}
+/// 4b9731  movaps xmm2,[rsp+0x20]   ; {k,0,0,0}
+/// 4b9736  divss  xmm2,[0x1baacc]   ; k / (−60)
+/// 4b9741  shufps xmm1,xmm0,0x55    ; xmm1 = 128/tex_w
+/// 4b9745  mulss  xmm0,xmm1         ; scale.x = (±k/60)·(128/tex_w)   ← 带 k
+/// 4b9749  mulss  xmm1,xmm2         ; scale.y = (128/tex_w)·(k/−60)
+/// 4b974d  call   set_scale(Vector2)
+/// ```
+/// **arm64（`0x4bf418`）结构相同**：`fdiv s12,s11,s0`（k=size.x/50）→ `fneg`
+/// → `fcsel s13,s0,s12,ne`（±k）→ 两个 `fmul` 都以 `s1 = 128/tex_w` 收尾
+/// （`fmul s0,s0,s1` / `fmul s1,s2,s1`），即两个分量都带 `k`。
+/// ⇒ 旧公式是**复原错误**，不是实现选择；已按指令改回。
 ///
 /// 逐条指令对应见 [`sprite_transform`]。**观测**（除"这套变换的含义"是 **推断**）
 pub fn sprite_transform(
@@ -550,7 +582,9 @@ pub fn sprite_transform(
             (size.y as f32 * 0.5 - k * fy) as f64,
         ),
         scale: Vec2::new(
-            ((s / SPRITE_SCALE_DIVISOR) * unit) as f64,
+            // ⚠️ **2026-11-26 更正**：x 分量原来漏了 `k`（写成 `s/60`），见本函数文档的
+            // "2026-11-26 更正"一段 —— 两个架构的指令都表明 x 分量是 `±k/60`。
+            ((s * k / SPRITE_SCALE_DIVISOR) * unit) as f64,
             ((k / SPRITE_SCALE_DIVISOR_NEG) * unit) as f64,
         ),
         flip_h: x > 0.0,

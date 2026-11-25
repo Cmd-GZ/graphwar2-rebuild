@@ -2485,7 +2485,10 @@ mod tests {
     /// 控件 `500×300`、队伍色 `0x000000ff`（不翻面）、贴图宽 `8`、棋盘 `(5, 5)`：
     /// `k = 500/50 = 10`、`unit = 128/8 = 16`
     /// ⇒ `position = (250 + 1·10·5, 150 − 10·5) = (300, 100)`
-    /// ⇒ `scale = (16/60, (10/−60)·16) = (0.2667, −2.6667)`、`flip_h = true`。
+    /// ⇒ `scale = ((1·10/60)·16, (10/−60)·16) = (160/60, −160/60) = (2.6667, −2.6667)`、`flip_h = true`。
+    /// ⚠️ **2026-11-26 更正**：旧期望是 `(16/60, −160/60)` —— x 分量漏了 `k`（复原错误，
+    /// 见 `src/entity_drawer.rs::sprite_transform` 的"2026-11-26 更正"段与 `docs/06` §58）。
+    /// 本条在 `--features gdext-bindings` 下才编译，所以默认 `cargo test` 抓不到它。
     #[test]
     fn sprite_transform_matches_the_hand_computed_expectation() {
         let t = entity_drawer::sprite_transform(
@@ -2497,8 +2500,10 @@ mod tests {
         );
         assert!((t.position.x - 300.0).abs() < 1e-4, "x={}", t.position.x);
         assert!((t.position.y - 100.0).abs() < 1e-4, "y={}", t.position.y);
-        assert!((t.scale.x - 16.0 / 60.0).abs() < 1e-6, "sx={}", t.scale.x);
+        assert!((t.scale.x - 160.0 / 60.0).abs() < 1e-6, "sx={}", t.scale.x);
         assert!((t.scale.y + 160.0 / 60.0).abs() < 1e-6, "sy={}", t.scale.y);
+        // 同一张贴图等比：两分量绝对值相等（旧公式下二者差 10 倍）
+        assert!((t.scale.x.abs() - t.scale.y.abs()).abs() < 1e-6);
         assert!(t.flip_h, "x > 0 ⇒ flip_h");
     }
 
