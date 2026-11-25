@@ -525,3 +525,359 @@ mod inline_tests {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// 6. 弹道生命周期：交给 **game_state_manager**（2026-11-26 按证据搬家）
+// ---------------------------------------------------------------------------
+//
+// 这一段**原来**在 `graphwar_play_screen_control.rs`。搬家的依据（`docs/02` §17.4 原登记项）：
+// 它对应的原版逻辑是 `graphwar_game_state_manager::handle_tick`（`0x470840`）
+// + `execute_results`（`0x472470`）的状态推进 —— 两个函数的 `panic::Location` 都落在
+// `src/graphwar_game_state_manager.rs`（`tools/class_probe.py func 0x472470` / `0x470840`，
+// 输出里两条 `rdi, [rip+…]  'src/graphwar_game_state_manager.rs'`）。
+// ⇒ 按 `AGENTS.md` 铁律「文件名就是证据」，它该住在 GSM 里，不该住在播放屏控制器里。
+//
+// 档位与逐条指令依据见下面每个类型/方法的注释（**观测**为主，标了"推断"的不要当结论）。
+
+/// 一发弹道的阶段。
+///
+/// 对应原版状态机里的两段（`docs/14` §2）：
+/// * [`ShotPhase::Idle`] ≈ `WaitingForFunctions`（没有弹道在飞）；
+/// * [`ShotPhase::InFlight`] ≈ `ExecutingResults`（弹道在飞，服务端也不收新开火）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShotPhase {
+    Idle,
+    InFlight,
+}
+
+/// 命中类别（原版死亡块里 `+0x18` 那个判别字段的两档之一）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KillKind {
+    /// 士兵阵亡（`LifeQueuedDeath` + `LifeInfo{alive:false}`）。
+    Soldier,
+    /// 靶子被打掉（`docs/150` §Q1：靶子也是**生命表**里的实体）。
+    Target,
+}
+
+/// 一条**已计划、未落地**的命中（原版 `LifeQueuedDeath{entity_id, tick}` 的本地对应物）。
+///
+/// `point` = **弹道点序号**：弹道揭示到这个点，这条命中才落地。这就是 `0x472814`
+/// 那个死亡块记录里的 `+0x10` 字段（`shl $0x4` 后当 16 字节/点的下标用）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlannedKill {
+    /// 弹道点序号（从 0 起）。
+    pub point: usize,
+    pub kind: KillKind,
+    /// [`KillKind::Soldier`] 时是**士兵下标**；靶子时无意义（`-1`）。
+    pub index: i64,
+    /// [`KillKind::Target`] 时是**靶子 id**；士兵时无意义（`-1`）。
+    pub target_id: i64,
+    /// 死者站位 —— **不是**弹道停点（`docs/15` §1.2 观测）。
+    pub pos: (f64, f64),
+}
+
+impl PlannedKill {
+    /// 士兵阵亡。
+    pub fn soldier(point: usize, index: i64, pos: (f64, f64)) -> Self {
+        PlannedKill { point, kind: KillKind::Soldier, index, target_id: -1, pos }
+    }
+
+    /// 靶子被打掉。
+    pub fn target(point: usize, target_id: i64, pos: (f64, f64)) -> Self {
+        PlannedKill { point, kind: KillKind::Target, index: -1, target_id, pos }
+    }
+}
+
+/// 推进一帧（或一次结算）时吐出的事件。**顺序即弹道先后**。
+#[derive(Debug, Clone, PartialEq)]
+pub enum ShotEvent {
+    /// 一名士兵阵亡（视图层据此置 `alive=false` + 摆死亡特效）。
+    SoldierKilled { point: usize, index: i64, pos: (f64, f64) },
+    /// 一个靶子被打掉（视图层据此销毁实体 + 摆火花）。
+    TargetKilled { point: usize, target_id: i64, pos: (f64, f64) },
+    /// 弹道飞完（视图层据此在**停止点**炸、清曲线、并在 `settle` 为真时收回合）。
+    Arrived { stop: (f64, f64) },
+}
+
+/// [`ShotLifecycle::settle`] 的结论。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SettleOutcome {
+    /// 这一次调用**真的**结算了一个回合（`false` = 这一发已经结算过 ⇒ 不重复算）。
+    pub settled: bool,
+    /// 累计已结算的回合数（`TurnCountInfo.turn_count` 的本地对应物）。
+    pub turns_used: i64,
+}
+
+/// 一发弹道的生命周期（= 播放屏那 6 个函数的"决定"部分）。
+///
+/// 视图层只做三件不再判断的事：把数据递进来（[`ShotLifecycle::begin`]）、
+/// 把"画到第几个点"递进来（[`ShotLifecycle::advance`]）、执行吐回来的事件。
+#[derive(Debug, Clone)]
+pub struct ShotLifecycle {
+    phase: ShotPhase,
+    /// 这条弹道的总点数（`FunctionPoints.points.len()`）。
+    total_points: usize,
+    /// 已经揭示到的点数（由视图层从真 `Line2D` 读出来喂进来）。
+    reveal: usize,
+    /// 还没落地的命中，**按点序号升序**。
+    pending: std::collections::VecDeque<PlannedKill>,
+    /// 弹道停止点（爆炸点，`docs/14` §12.1：503/503 与爆炸点相同）。
+    stop: (f64, f64),
+    /// 这一发**是否已经结算过**（旧 `.gd` 的 `_logic_settled`）。
+    settled: bool,
+    turns_used: i64,
+    /// 本发已经落地的士兵下标 / 靶子 id（同一发内同一受害者只落一次）。
+    hit_soldiers: Vec<i64>,
+    hit_targets: Vec<i64>,
+    kills_landed: i64,
+    targets_landed: i64,
+}
+
+impl Default for ShotLifecycle {
+    fn default() -> Self {
+        ShotLifecycle::new()
+    }
+}
+
+impl ShotLifecycle {
+    /// 空状态：没有弹道在飞、回合数 0。
+    pub fn new() -> Self {
+        ShotLifecycle {
+            phase: ShotPhase::Idle,
+            total_points: 0,
+            reveal: 0,
+            pending: std::collections::VecDeque::new(),
+            stop: (0.0, 0.0),
+            settled: false,
+            turns_used: 0,
+            hit_soldiers: Vec::new(),
+            hit_targets: Vec::new(),
+            kills_landed: 0,
+            targets_landed: 0,
+        }
+    }
+
+    /// 换局 / 退出对局：连回合数一起归零（旧 `.gd` 的 `_reset_shot_state`）。
+    pub fn reset(&mut self) {
+        *self = ShotLifecycle::new();
+    }
+
+    /// 开始放一发。
+    ///
+    /// * `total_points` —— 这条弹道**画上去的**总点数（截断后的那条，不是采样全量）；
+    /// * `kills` / `target_kills` —— 已算好的命中表（顺序无要求，本层按点序号排并合并）；
+    /// * `stop` —— 弹道停止点（爆炸点）；
+    /// * `already_settled` —— 压平模式（automation）/ 联机：本地不再结算，到达时只收尾。
+    pub fn begin(
+        &mut self,
+        total_points: usize,
+        kills: Vec<PlannedKill>,
+        target_kills: Vec<PlannedKill>,
+        stop: (f64, f64),
+        already_settled: bool,
+    ) {
+        self.phase = ShotPhase::InFlight;
+        self.total_points = total_points;
+        self.reveal = 0;
+        self.stop = stop;
+        self.settled = already_settled;
+        self.hit_soldiers.clear();
+        self.hit_targets.clear();
+        self.kills_landed = 0;
+        self.targets_landed = 0;
+        self.pending = kills.into_iter().chain(target_kills).collect();
+        // 按点序号升序 —— 先被打到的先落地（`docs/14` §7.3：106/106 按 `start_tick` 升序）。
+        self.pending
+            .make_contiguous()
+            .sort_by(|a, b| a.point.cmp(&b.point).then(a.kind_index().cmp(&b.kind_index())));
+    }
+
+    /// 这一发一共多少点。
+    pub fn total_points(&self) -> usize {
+        self.total_points
+    }
+
+    /// "飞完了" —— 与旧 `.gd` 的 `_curve_finished()` **逐字对应**：
+    /// 点数 < 2 直接算完（一条线都没有），否则揭示点数 >= 总点数。
+    pub fn arrived(&self) -> bool {
+        self.total_points < 2 || self.reveal >= self.total_points
+    }
+
+    /// 推进"画到第几个点"，吐回这一帧该执行的事件。
+    ///
+    /// 已经不在飞（或已飞完）⇒ 空表（幂等，视图层不需要自己判重复）。
+    pub fn advance(&mut self, reveal: usize) -> Vec<ShotEvent> {
+        let mut out = Vec::new();
+        if self.phase != ShotPhase::InFlight {
+            return out;
+        }
+        if reveal > self.reveal {
+            self.reveal = reveal;
+        }
+        // ① 落地"弹道已经走到的那一段"里的命中。
+        self.land_until(self.reveal, &mut out);
+        // ② 飞完了没有（到达事件只吐一次）。
+        if self.arrived() {
+            // 到达前先把**剩下的全部**落完 —— 旧 `.gd` 的 `_on_shot_arrived()` 里
+            // 那句 `_apply_kills_up_to(1 << 30)`（越界的命中不会因为它排在弹道之外就丢掉）。
+            self.reveal = self.reveal.max(self.total_points);
+            self.land_until(usize::MAX, &mut out);
+            self.phase = ShotPhase::Idle;
+            out.push(ShotEvent::Arrived { stop: self.stop });
+        }
+        out
+    }
+
+    /// 把点序号 `<= upto` 的命中落地，按队列顺序（已按点序号升序）。
+    fn land_until(&mut self, upto: usize, out: &mut Vec<ShotEvent>) {
+        while let Some(k) = self.pending.front() {
+            if k.point > upto {
+                break;
+            }
+            let k = self.pending.pop_front().expect("front 已判空");
+            // 同一发里同一受害者只落一次（原版 `if alive` 守卫的等价物：
+            // 命中表是**开火那一刻**对着存活表算的，所以陈旧只可能来自同一发内部的重复）。
+            match k.kind {
+                KillKind::Soldier => {
+                    if self.hit_soldiers.contains(&k.index) {
+                        continue;
+                    }
+                    self.hit_soldiers.push(k.index);
+                    self.kills_landed += 1;
+                    out.push(ShotEvent::SoldierKilled { point: k.point, index: k.index, pos: k.pos });
+                }
+                KillKind::Target => {
+                    if self.hit_targets.contains(&k.target_id) {
+                        continue;
+                    }
+                    self.hit_targets.push(k.target_id);
+                    self.targets_landed += 1;
+                    out.push(ShotEvent::TargetKilled {
+                        point: k.point,
+                        target_id: k.target_id,
+                        pos: k.pos,
+                    });
+                }
+            }
+        }
+    }
+
+    /// 把在飞的那一发**直接跑完**（旧 `.gd` 的 `flush_shot()`：自检/诊断用）。
+    pub fn flush(&mut self) -> Vec<ShotEvent> {
+        self.advance(usize::MAX)
+    }
+
+    /// 把还没落地的命中**全部**落地，**不吐到达事件**，阶段仍是 InFlight。
+    ///
+    /// 两条路用它：
+    /// * **压平模式**（automation）：开火当刻落地，但曲线照放 —— 到达与收尾仍由
+    ///   后面每帧的 [`ShotLifecycle::advance`] 给（旧 `.gd` 的 `_logic_settled` 口径）；
+    /// * **整批结算**（同时回合攒齐 / 外部来弹）：那一批里没有单条弹道在飞，
+    ///   既没有"到达"也没有爆炸与清线（旧 `.gd` 的 `_resolve_shots()`），
+    ///   调用方接 [`ShotLifecycle::abort`] 收尾。
+    pub fn land_all(&mut self) -> Vec<ShotEvent> {
+        let mut out = Vec::new();
+        if self.phase != ShotPhase::InFlight {
+            return out;
+        }
+        self.land_until(usize::MAX, &mut out);
+        out
+    }
+
+    /// 收一个回合。**同一发只收一次**（`settled` 闩，旧 `.gd` 的 `_logic_settled`）。
+    pub fn settle(&mut self) -> SettleOutcome {
+        if self.settled {
+            return SettleOutcome { settled: false, turns_used: self.turns_used };
+        }
+        self.settled = true;
+        self.turns_used += 1;
+        SettleOutcome { settled: true, turns_used: self.turns_used }
+    }
+
+    /// 半路丢弃（换局 / 联机断线）。
+    pub fn abort(&mut self) {
+        self.phase = ShotPhase::Idle;
+        self.pending.clear();
+    }
+
+    pub fn phase(&self) -> ShotPhase {
+        self.phase
+    }
+
+    pub fn in_flight(&self) -> bool {
+        self.phase == ShotPhase::InFlight
+    }
+
+    pub fn revealed(&self) -> usize {
+        self.reveal
+    }
+
+    /// 还没落地的命中条数（士兵 + 靶子）。
+    pub fn pending_count(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// 还没落地的**士兵**命中条数（`level_state()["pending_kills"]`）。
+    pub fn pending_soldiers(&self) -> usize {
+        self.pending.iter().filter(|k| k.kind == KillKind::Soldier).count()
+    }
+
+    /// 还没落地的**靶子**命中条数。
+    pub fn pending_targets(&self) -> usize {
+        self.pending.iter().filter(|k| k.kind == KillKind::Target).count()
+    }
+
+    pub fn kills_landed(&self) -> i64 {
+        self.kills_landed
+    }
+
+    pub fn targets_landed(&self) -> i64 {
+        self.targets_landed
+    }
+
+    pub fn settled(&self) -> bool {
+        self.settled
+    }
+
+    pub fn turns_used(&self) -> i64 {
+        self.turns_used
+    }
+
+    /// 只读快照（自检/诊断）。
+    pub fn snapshot(&self) -> LifecycleSnapshot {
+        LifecycleSnapshot {
+            in_flight: self.in_flight(),
+            revealed: self.reveal,
+            total_points: self.total_points,
+            pending: self.pending.len(),
+            kills_landed: self.kills_landed,
+            targets_landed: self.targets_landed,
+            settled: self.settled,
+            turns_used: self.turns_used,
+        }
+    }
+}
+
+impl PlannedKill {
+    /// 排序用的类别序号（同点序号时士兵先于靶子 —— 原版死亡块在前、靶子块在后）。
+    fn kind_index(&self) -> u8 {
+        match self.kind {
+            KillKind::Soldier => 0,
+            KillKind::Target => 1,
+        }
+    }
+}
+
+/// [`ShotLifecycle::snapshot`] 的只读形状。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LifecycleSnapshot {
+    pub in_flight: bool,
+    pub revealed: usize,
+    pub total_points: usize,
+    pub pending: usize,
+    pub kills_landed: i64,
+    pub targets_landed: i64,
+    pub settled: bool,
+    pub turns_used: i64,
+}
+

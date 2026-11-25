@@ -96,7 +96,7 @@
 | `graphwar_game_info.rs` | 0 | 0 | `src/graphwar_game_info.rs` | 0 | 观测 |
 | `graphwar_game_recorder.rs` | 2 | 4 | `src/graphwar_game_recorder.rs` | 14 | 观测 |
 | `graphwar_game_server.rs` | 3 | 86 | `src/graphwar_game_server.rs+src/server.rs` | 23 | 逐位 |
-| `graphwar_game_state_manager.rs` | 33 | 207 | `src/game.rs+src/turnstate.rs+src/graphwar_game_state_manager.rs` | 136 | 逐位 |
+| `graphwar_game_state_manager.rs` | 33 | 207 | `src/game.rs+src/turnstate.rs+src/graphwar_game_state_manager.rs` | 162 | 逐位 |
 | `graphwar_graphics_manager.rs` | 6 | 8 | `src/graphwar_graphics_manager.rs` | 25 | 观测 |
 | `graphwar_lan_broadcaster_v6.rs` | 4 | 4 | `src/graphwar_lan_broadcaster_v6.rs` | 20 | 观测 |
 | `graphwar_lan_vbox.rs` | 11 | 19 | `src/graphwar_lan_vbox.rs` | 37 | 观测 |
@@ -115,7 +115,7 @@
 | `graphwar_path_calculator.rs` | 1 | 9 | `src/graphwar_path_calculator.rs` | 2 | 逐位 |
 | `graphwar_plane.rs` | 10 | 19 | `src/graphwar_plane.rs+src/plane.rs` | 37 | 观测 |
 | `graphwar_plane_pos_manager.rs` | 6 | 9 | `src/graphwar_plane_pos_manager.rs` | 20 | 观测 |
-| `graphwar_play_screen_control.rs` | 10 | 64 | `src/graphwar_play_screen_control.rs` | 95 | 观测 |
+| `graphwar_play_screen_control.rs` | 10 | 64 | `src/graphwar_play_screen_control.rs` | 69 | 观测 |
 | `graphwar_player_config.rs` | 0 | 0 | `src/graphwar_player_config.rs` | 8 | 观测 |
 | `graphwar_player_manager.rs` | 3 | 6 | `src/graphwar_player_manager.rs` | 19 | 观测 |
 | `graphwar_player_screen_control.rs` | 8 | 22 | `src/graphwar_player_screen_control.rs` | 19 | 观测 |
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（114 个文件、3148 条 `fn`） | `92a029747217d24d71304188b9fdb8a4be319a0f5bea9371aa4fda8fe407ea27` |
+| `src/` 树（114 个文件、3148 条 `fn`） | `4585c54447d58eaf4af044e0c91be3025eb65c31f69b3d6ae0d2acbd542c007b` |
 

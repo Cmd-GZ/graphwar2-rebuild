@@ -32,9 +32,9 @@
 use godot::classes::RefCounted;
 use godot::prelude::*;
 
+use crate::graphwar_game_state_manager::{PlannedKill, ShotEvent, ShotLifecycle};
 use crate::graphwar_play_screen_control::{
-    BotTurn, LevelKind, LevelRules, MatchState, PlannedKill, ShotEvent, ShotLifecycle, TurnAction,
-    TurnClock, TARGET_TEAM,
+    BotTurn, LevelKind, LevelRules, MatchState, TurnAction, TurnClock, TARGET_TEAM,
 };
 use crate::graphwar_turn_manager::{PlayerTurns, RoundCollection, SubmitResult, SOLDIER_ID_NONE};
 
@@ -544,7 +544,7 @@ mod tests {
 // **不是原版的东西**：原版没有这个类；它是"把 `_begin_shot` / `_advance_presentation` /
 // `_apply_kills_up_to` / `_on_shot_arrived` / `_finish_round` / `flush_shot` 的**判断**
 // 挪到 Rust"之后留下的那台状态机外壳。逻辑本体在
-// [`crate::graphwar_play_screen_control::ShotLifecycle`]。
+// [`crate::graphwar_game_state_manager::ShotLifecycle`]（2026-11-26 按 `Location` 证据搬家的落点）。
 //
 // 视图层只剩三件事：递数据（`begin`）、递"画到第几个点"（`advance`）、执行事件。
 

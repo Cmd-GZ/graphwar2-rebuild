@@ -101,7 +101,7 @@ selftest     **717 / 0 / 1 skip**（2026-11-26 master `778a312` 实跑；判据 
 | **Ａ 缺工程** | ① **客户端像素保真**：回放三屏有真值（`docs/06` §53/§54）——`replay_lobby` 4.114%（只差列表行）、`replay_play` 41.330%、`replay_end` 52.460%；静态屏（战役选择/关卡弹窗）**还没拍过** | **当前主线**（t4/t5/t6 在做）；判据 = 预注册门槛 + 元素 bbox |
 |  | ② `client/src/screens/*.gd` **≈6,062 行**仿制流程；控制器要迁回 Rust（按原模块名） | 量大，按切片推进 |
 |  | ③ **1 个 manager 仍是 `assembled`**（**19 wired / 2 layout / 1 assembled / 0 stub = 22**）——余 1 格 = GSM，卡 `src/game.rs` 禁区 | 见 `docs/161` |
-|  | ④ `ShotLifecycle` 文件归属（原版在 `game_state_manager`，我方在 `play_screen_control`） | 边界要靠 `Location` 再切一次 |
+|  | ~~④ `ShotLifecycle` 文件归属~~ **2026-11-26 已结案**（按 `Location` 证据搬进 `graphwar_game_state_manager.rs`） | `LevelRules` 仍无归属证据，留在原地 |
 | **Ｂ 缺样本（易得）** | 目前**空**（Level 18–20 / flip=1 / 部分命中 都已补齐） | 找人打一局即可 |
 | **Ｃ 缺样本（难造）** | 1 ulp 正主 —— **四条路都没复现**、打印级判据结构性没有判别力 ⇒ 停做（**不是证明它不存在**） | — |
 | **Ｄ 缺真值（可运行时挖）** | libm 边界；`0x4c6f40` 回放播放时钟（内部 `playing` 初值目前只有画面证据） | 开游戏 + frida |

@@ -969,7 +969,7 @@ comm -3 /tmp/o.txt /tmp/d.txt
 | `src/graphwar_shot_calculator/settle.rs` | 原版 graphwar_shot_calculator.rs 的 `0x3c2bc0`（开火结算主函数） | `docs/86`/`docs/122` | `0x3c2bc0` 没有 panic 锚，函数体也**没有**逐条还原（逐位的是行为）；边界只能按主题切 |
 | `src/graphwar_level_generator/tables.rs` | 原版 graphwar_level_generator.rs 的 ziggurat 常量表 | `docs/53`/`docs/55` | 纯数据；拆出来只为让主文件可读，不需要边界判断 |
 | `src/graphwar_level_manager.rs` | 原版 graphwar_level_manager.rs + **可能属于 `graphwar_campaign_control.rs`** 的 `level_info`(`0x4ad380`) 与 `campaign.save` 簇(`0x417ef0`/`0x418170`/`0x4183b0`) | 这三处**都没有 Location 锚**；`docs/10` §12.6 | 无锚 ⇒ 归属只能靠调用形态，证据不足。`src/graphwar_campaign_control.rs` 已按 §17.4 的规矩落了**自己那份**（`LEVEL_INFO` / `encode_save`），但 `level_manager` 里那份**没删**，两份由 `tests/campaign_data.rs` 的 `table_matches_level_manager_copy`（`:538`）逐字段钉住（⚠ 文件头另写的 `save_cluster_matches_level_manager_copy` **2026-11-26 已补写** —— 此前全库零命中，见 §17.4 末尾「判不清」第 6 条）；删旧副本留给能改 `level_manager.rs` 的任务 |
-| `src/graphwar_play_screen_control.rs` | 原版 graphwar_play_screen_control.rs（10 个可归属函数）+ **`ShotLifecycle`**（弹道生命周期 = 播放屏 6 个函数的"决定"部分） | `docs/00` §「缺工程」表、`docs/HANDOVER.md` §遗留（原文：原版在 `game_state_manager`，我方落在 `play_screen_control`） | 归属与"原版在 `game_state_manager`"对不上，但边界要靠 **`Location` 再切一次**才能定；**缺**：`ShotLifecycle` 各方法的 `Location` 归属证据 ⇒ 按铁律 2 原地保留。⚠ `src/_scaffold/play_flow_class.rs` 只是**引用**它（`flow: ShotLifecycle`），不是它的归属地 |
+| ~~`src/graphwar_play_screen_control.rs`~~ | ~~原版 graphwar_play_screen_control.rs（10 个可归属函数）+ **`ShotLifecycle`**~~ | **2026-11-26 已按 `Location` 证据搬走**：`handle_tick`（`0x470840`，`[0x470840,0x470b70)`）与 `execute_results`（`0x472470`，`[0x472470,0x473520)`）的 `panic::Location` 都指向 **`src/graphwar_game_state_manager.rs`**（`tools/class_probe.py func 0x470840` / `func 0x472470`，输出里两条 `'src/graphwar_game_state_manager.rs'`） | **已结案**：`ShotLifecycle` + `ShotPhase` / `KillKind` / `PlannedKill` / `ShotEvent` / `SettleOutcome` / `LifecycleSnapshot` 全部搬进 `src/graphwar_game_state_manager.rs` §6；`play_screen_control.rs` 只剩播放屏自己的东西（节点名 / 控件模式 / 订阅 / 胜负横幅）+ 一段指针注释。行数 1754→**1396**，GSM 527→**883**；`cargo test` 1762/0 不变 |
 
 > 📌 **现值核对（`src/` 实测；只记"现在在哪"，不改上面任何一行的判据）**
 >
@@ -983,7 +983,7 @@ comm -3 /tmp/o.txt /tmp/d.txt
 > | `graphwar_replay_player.rs` | **未拆**：`ReplayPlayer` 在 `:660`；文件读取已归 `graphwar_replay_reader.rs` | `grep -n 'pub struct ReplayPlayer' src/graphwar_replay_player.rs` |
 > | `graphwar_shot_calculator/settle.rs` / `graphwar_level_generator/tables.rs` | **不拆**（按主题/按数据切，见上表理由） | — |
 > | `graphwar_level_manager.rs` | **未拆**：`campaign_control` 那份已落地但旧副本未删（两侧由 `table_matches_level_manager_copy` 钉住） | `grep -n 'fn table_matches_level_manager_copy' tests/campaign_data.rs` |
-> | `graphwar_play_screen_control.rs` | **未拆**：`ShotLifecycle` 定义在 `:700` | `grep -n 'pub struct ShotLifecycle' src/graphwar_play_screen_control.rs` |
+> | `graphwar_play_screen_control.rs` | **已拆（2026-11-26）**：`ShotLifecycle` 现在在 `src/graphwar_game_state_manager.rs`；本文件留指针注释 | `grep -n 'pub struct ShotLifecycle' src/graphwar_game_state_manager.rs` |
 
 > ⚖️ **判不清 / 不在本任务允许清单的（并列保留，给协调者裁；不改、不猜）**
 >

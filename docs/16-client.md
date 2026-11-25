@@ -9619,14 +9619,18 @@ cargo test --offline --lib -- play_screen_control                            # 7
 | 5 | `client/src/screens/play_screen.gd`（只删流程、留视图） | —— | —— |
 | 6 | `client/tools/play_flow_check.gd`（**61 → 135 条断言**） | —— | **验收工具** |
 
-⚠️ **文件归属（诚实标注，不是结论）**：原版这台状态机**不叫这个名**——它是
+⚠️ **文件归属（2026-11-26 已按证据搬正）**：原版这台状态机**不叫这个名**——它是
 `graphwar_game_state_manager.rs` 的 `handle_tick`（`0x470840`）+ `execute_results`
-（`0x472470`）。本轮把它放在 `graphwar_play_screen_control.rs`，理由有两条：
-(a) 54 号已经把同类的"客户端本地权威"（`LevelRules`）放在这里，保持一处；
-(b) 内核那份 `handle_tick` 在 `src/game.rs`，**本轮 65 号拥有它，不许改**。
-⇒ 这是**待拆**项：等 `src/game.rs` 那侧空出来，`ShotLifecycle` 应当并回
-`graphwar_game_state_manager` 的对应函数（届时 `LevelRules` 同样处理）。
-本轮的实现**不改** `src/game.rs` 一个字节，所以内核/客户端的口径没有分叉风险。
+（`0x472470`）。67 号落地时**暂时**放在 `graphwar_play_screen_control.rs`
+（理由：54 号把 `LevelRules` 放在那里、且当时 `src/game.rs` 在别的任务手里不许改）。
+**现在搬了**：`tools/class_probe.py func 0x470840` / `func 0x472470` 显示两个函数的
+`panic::Location` 都在 `src/graphwar_game_state_manager.rs`
+⇒ 按 `AGENTS.md` 铁律「文件名就是证据」，`ShotLifecycle`（及 `ShotPhase` / `KillKind` /
+`PlannedKill` / `ShotEvent` / `SettleOutcome` / `LifecycleSnapshot`）整体搬进
+`src/graphwar_game_state_manager.rs` §6；`play_screen_control.rs` 1754→**1396** 行、
+GSM 527→**883** 行，`cargo test` **1762 / 0** 一位不动。
+⚠️ **`LevelRules` 仍在 `play_screen_control.rs`**：它的归属**没有**新证据（胜负判定那条线
+对应哪个原版函数未定），按铁律 2 **不搬**（`docs/02` §17.4）。
 
 ### 53.3 三块流程的 before → after
 
