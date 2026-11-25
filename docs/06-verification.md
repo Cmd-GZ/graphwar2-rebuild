@@ -7787,3 +7787,196 @@ ls $WS/dist/gw2-replays-snapshot/replays | wc -l
    （静态屏 0 像素）；
 4. §54.0 的结论由"两句"改成"四问"（②引擎 / ③跑法 / ④那到底是谁），**归因不再混着说**。
 
+
+
+## 57. 视觉真值扩到**静态两屏**：战役选择屏 + 关卡弹窗都做到 **0 像素**（2026-11-26，任务 T6）
+
+> 前情：**§53/§54** 只覆盖**回放流**的四屏（`menu` / `replay_lobby` / `replay_play` / `replay_end`）。
+> 本轮把仪表扩到**静态屏**——`campaign`（主菜单点 Campaign 之后的战役选择屏）与
+> `level_popup`（再点关卡 0 之后的关卡说明弹窗）。这两屏**不含棋盘局面、不含骰子、不含 tick**，
+> 因此不受 §53 那条"原版战役关卡里士兵/靶子落点不可钉"的限制（`fixtures/frame_diff_thresholds_amend1.txt` §1）。
+>
+> 门槛**一个数没改**：仍是 `fixtures/frame_diff_thresholds.txt`（sha256 `9cc9fcda…`）§3 的三层判据；
+> 判据本身**先于任何一次跨侧比较**写定并提交（`fixtures/static_screens_targets.txt`，提交 `62c60ec`）。
+
+### 57.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 静态两屏能不能拿到真值？ | **能**：`--flow static` 两侧各跑一次（各约 15 s），`manifest.ok=true`，每屏 3 帧 | **观测** |
+| ② | `campaign` 改前 | 跨侧 **3979 px（0.1787 %）、max\|Δ\|=32**；L1/L2 过、**L3 不过** | **观测** |
+| ③ | `level_popup` 改前 | 跨侧 **2396 px（0.1076 %）、max\|Δ\|=22**；L1/L2 过、**L3 不过** | **观测** |
+| ④ | 改后 | **两屏都 0 像素、max\|Δ\|=0**，24 块全 0 ⇒ L1/L2/L3 **全过**（与主菜单同级） | **观测** |
+| ⑤ | 差在哪 | 两处，都不是"版式差一点"：① 21 个关卡数字的**字色**（原版 223/242/255 三态，我方一律 255）；② 返回键**圆角外侧 8 个角**（原版 = 页面底色，我方 = 面板色），每屏 152 px | **观测**（字色机理=**推断**，见 §57.4） |
+| ⑥ | 既有回放流有没有被改坏 | **没有**：四屏数与 94 号夹具逐项相同，唯一变化是"每屏少 152 px"（正是②那 8 个角被修掉） | **观测** |
+
+### 57.1 预注册与门槛（先提交后跑）
+
+* 预注册：`fixtures/static_screens_targets.txt`（提交 `62c60ec`，"先于任何一次 `campaign` /
+  `level_popup` 跨侧比较"）。里面写定：两屏都要过 L1（尺寸/全局均值/第一主色）、L2（6×4 每块）、
+  L3（差异像素 ≤0.10 % 且 max\|Δ\| ≤8）——**原文照抄** §3，没有新定阈值。
+* 门槛文件 sha256 仍是 `9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873`；
+  `tools/frame_diff.py --thresholds` 自检通过（脚本内常数与该文件一致，TSV 里只记录"门槛 = 该 sha256"）。
+* 帧选择规则不变：每屏 3 帧，**第 1 帧**跨侧比较，第 2/3 帧只量同侧噪声地板。
+
+### 57.2 新 flow 是什么（`tools/frame_capture.py` **只加不改**）
+
+```python
+if flow == 'static':
+    return [
+        ('campaign',    [('click', CAMPAIGN_BTN, 2.0)]),   # (534,629)：既有常量
+        ('level_popup', [('click', LEVEL_NODE_0, 2.0)]),   # (241,228)：既有常量
+    ]
+```
+
+* 点击坐标**没有新造**：`CAMPAIGN_BTN=(534,629)` / `LEVEL_NODE_0=(241,228)` 是 94 号从原版帧量出来的
+  既有常量（`docs/06` §33/§52 那条点击串的前两步）；**不点** `START_BTN=(1074,1009)`，那一步才进对局。
+* `--flow replay` / `--flow campaign` 两个既有分支**一行未改**（本轮 replay 流的复跑数字见 §57.6）。
+* 每侧固定条件与 §1 完全一致：私有 Xvfb `1920x1160x24`（本轮用 **display 85=原版 / 86=我方**）、
+  两路强制 OpenGL3、mesa llvmpipe、`import -window <id>` 取窗、`--resolution 1920x1160 --position 0,0`。
+* 两侧输入状态**相同且干净**：`HOME` 都是新建的，没有 `user://campaign.save` ⇒ 两侧都只解锁第 0 关
+  （真帧里 21 格里只有一枚 `0` 可见，其余 20 格 `font_disabled_color` 的 alpha=0）。不 `--seed-replays`。
+
+复跑（两屏各 3 帧；本轮实测每侧约 15 s）：
+
+```bash
+python3 tools/frame_capture.py --side original --flow static --out <dir>/orig --display-num 85
+python3 tools/frame_capture.py --side ours     --flow static --out <dir>/mine --display-num 86
+python3 tools/frame_diff.py --orig <dir>/orig --mine <dir>/mine --screens campaign,level_popup \
+  --out fixtures/frame_diff_results_static.tsv --blocks-out fixtures/frame_diff_blocks_static.tsv
+```
+
+### 57.3 改前的数字与"差在哪"（**观测**，本轮实测）
+
+| 屏 | L1 | L2 | L3 | 差异 bbox | 结论 |
+|---|---|---|---|---|---|
+| `campaign` | 过（`\|Δmean\|max=0.051`，第一主色两侧都是 `#0E251C`，占比差 0.003 pp） | 过（0 块超限，最差块 `0,0` = 1.227） | **不过**：3979 px = **0.1787 %**、max\|Δ\|=**32** | `[0,0,279,271]` | 不过（L3） |
+| `level_popup` | 过（`\|Δmean\|max=0.013`，第一主色两侧都是 `#1A3B2D`，占比差 0.003 pp） | 过（0 块超限，最差块 `0,0` = 0.309） | **不过**：2396 px = **0.1076 %**、max\|Δ\|=**22** | `[0,0,242,271]` | 不过（L3） |
+
+两屏的差异**全部落在左上角一个 320×320 的小范围里**，拆开只有两种成分：
+
+1. **关卡数字的"字色"**（`campaign` 3827 px / `level_popup` 2244 px）
+   原版真帧里那枚 `0` 是 `(223,223,223)`；我方是 `(255,255,255)`。字形、字号、位置**逐像素相同**
+   （把边缘抗锯齿像素按"覆盖率"反解，两侧同为 42 %），差别**只在颜色**。
+   `level_popup` 帧里同一枚 `0`（在弹窗面板左外侧，被面板右边缘裁到 x=242）原版是 `(242,242,242)` ——
+   同一枚数字在两屏里**两种颜色**，这一条促成了 §57.4 的探针。
+2. **返回键圆角外侧的 8 个角**（两屏各 **152 px**，max\|Δ\|=22）
+   原版：(0,0) 是页面底色 `(14,37,28)`；我方 `(26,59,45)`（面板色）。即我方把**方角**的底涂到了
+   圆角外侧。原版 `.tscn` 里那两个 `GraphwarButton` 都写着 `clip_children = 2`，我方没有那一行
+   （机制与修法见 `docs/16` §62.2）。
+
+### 57.4 鼠标状态探针：223 / 242 / 255 是**三档状态色**（**观测**）
+
+为了分清"同一枚数字为什么两屏两个颜色"，本轮用一次性探针（不改仓库脚本，只在
+`.agent-work/` 下跑）对**原版**量了 5 个鼠标状态，每态截一张，取样 `(241,228)` 附近：
+
+| 状态 | 探针帧 | 数字颜色 | 归一化 |
+|---|---|---|---|
+| 点完 Campaign 后鼠标停在主菜单按钮上（**不在**关卡上） | `a_nowhere` | `(223,223,223)` | 0.87451 |
+| 鼠标移到关卡 0 上、**不按** | `b_hover` | `(242,242,242)` | 0.94902 |
+| 在关卡 0 上**按住** | `c_pressed` | `(255,255,255)` | 1.0 |
+| 松开（弹窗出现）后鼠标**仍停在**关卡 0 上 | `d_popup` | `(242,242,242)` | 0.94902 |
+| 弹窗出现后把鼠标**移开** | `e_popup_away` | `(223,223,223)` | 0.87451 |
+
+⇒ 223/242/255 = **normal / hover / pressed** 三档。而且这三个数**逐位等于引擎默认主题的
+`Button/font_color|font_hover_color|font_pressed_color`**（用同一个 Godot 4.7.2 跑
+`ThemeDB.get_default_theme().get_color(...)` 实测：`0.875 / 0.95 / 1.0`）。
+**所以 `level_popup` 帧里的 242 不是"弹窗自己画的"，而是底屏那枚按钮**停在 hover 态**
+（鼠标还压在它上面，弹窗没遮住那个位置）。**推断**（缺证据）：原版 `GraphwarButton`（Rust 类）取字色
+时没走完整 theme 链、落到了默认主题 —— 没有反汇编证据，登记为未知；能确定的只有"原版实测三态 = 默认主题三档"。
+
+我方为什么是 255：我方这 21 个按钮是**真 Godot `Button`**，会正常继承我们的 app 主题
+（`Button/font_color = 白`），于是三态全白。修法见 `docs/16` §62.3 —— 在**关卡按钮那份主题**上显式写
+三档色（不动全局 app 主题，主菜单仍是 0 像素）。
+
+### 57.5 改后的数字（**观测**，入 `fixtures/frame_diff_results_static.tsv`）
+
+| 屏 | L1 | L2 | L3 | 判定 |
+|---|---|---|---|---|
+| `campaign` | 过（`\|Δmean\|max=0.0`，第一主色 `#0E251C` 同色，占比差 0.0 pp） | 过（24 块**每块** `dmean_max=0.0`） | **差异像素 0 / 0.0000 %、max\|Δ\|=0** | **过** |
+| `level_popup` | 过（`\|Δmean\|max=0.0`，第一主色 `#1A3B2D` 同色，占比差 0.0 pp） | 过（24 块全 0） | **差异像素 0、max\|Δ\|=0** | **过** |
+
+* 两屏 **第 1 帧逐像素相同**（`l3_bbox = None`，即"没有任何一个像素不同"）；
+* 同侧噪声地板（帧 2/3 互相差）两屏两侧都是 **0.000 %** ⇒ 静态屏确实静止，0 像素不是"碰巧截到同一相"；
+* 24 块明细见 `fixtures/frame_diff_blocks_static.tsv`（两屏 × 24 块全 `0.0`）。
+
+**补测：另一种存档状态（21 关全解锁）也是 0 像素**（同一轮事后补跑，**输入**换了、门槛没换）。
+两侧 `HOME` 里都预置同一份 `user://campaign.save` = `level_20`（原版
+`.../app_userdata/Graphwar/campaign.save`，我方 `.../app_userdata/Graphwar II — Client Rebuild/campaign.save`，
+内容逐字节相同、无尾换行），再跑同一串点击：
+
+| 判据 | `campaign` | `level_popup` |
+|---|---|---|
+| 亮度 >150 的像素数（原版 / 我方） | **88503 / 88503** | 同左（弹窗态） |
+| 数字占据的范围 bbox | `x 185..1760, y 157..821`（21 枚，8 列蛇形） | 同左 |
+| 跨侧差异像素 / max\|Δ\| | **0 / 0** | **0 / 0** |
+| L1 / L2（24 块）/ L3 | 全过 | 全过 |
+
+⇒ 21 枚数字（`level_20` ⇒ 全解锁 ⇒ 21 个都是 normal 态 `223`）与整张网格的几何、字色都逐像素相同；
+"只显示一枚 `0`"不是运气好，两个存档状态都过。
+
+### 57.6 既有回放流没被改坏的证据（改前/改后同一命令）
+
+`python3 tools/frame_capture.py --side {original|ours} --flow replay --seed-replays ...` +
+`tools/frame_diff.py --screens menu,replay_lobby,replay_play,replay_end`，本轮（改后）实测 vs
+入库夹具 `fixtures/frame_diff_results.tsv`（94 号，改前）：
+
+| 屏 | 改后（本轮） | 夹具（94 号） | 差 |
+|---|---|---|---|
+| `menu` | 0 px / 0 块 / L1 0.0 | 0 px / 0 块 / L1 0.0 | 无 |
+| `replay_lobby` | L1 **2.204** / **5 块** / 4.1071 % | L1 2.204 / 5 块 / 4.1139 % | **少 152 px**（= 6.8e-5，正是 §57.3 第 2 条那 8 个角） |
+| `replay_play` | L1 **19.389** / **19 块** / 41.3217 % | L1 19.382 / 19 块 / 41.3285 % | 少 152 px；L1 漂 +0.007（该屏 tick 相位噪声，同侧噪声地板 0.124 %） |
+| `replay_end` | L1 **53.466** / **22 块** / 52.4531 % | L1 53.466 / 22 块 / 52.4599 % | 少 152 px |
+
+⇒ 四屏的**超限块数一个没变**、`menu` 仍 0 像素；差异比例**每屏恰好少 152 px**
+（`152 / 1920×1160 = 6.8e-5`，与三屏的差逐位吻合）——这正好是"返回键圆角被修好"的那 152 个像素，
+不是新差异。`replay_play` 的 L1 小数漂移 0.007 属于该屏**已知的 tick 相位不可对齐**（§53.3 的登记项，
+94 号自己的噪声地板就有 0.12 % 量级），块数与判定都不变。
+
+其余护栏（同一工作树、同一 target 目录）：
+
+| 检查 | 结果 |
+|---|---|
+| `cargo test --offline` | **1761 passed / 0 failed** |
+| `selftest`（`$GODOT --headless --path client -- --selftest`；`HOME` 里备好两份回放 + `serve_match`） | **717 passed / 0 failed / 1 skipped**，`missing=0(claimed 0 / degraded 0 / silent 0)` |
+| 门槛文件 sha256 | `9cc9fcda…`（未改） |
+| `python3 tools/check_doc_refs.py` | rc=0 |
+
+### 57.7 诚实清单（本轮**没有**证明的）
+
+1. **原版为什么用默认主题三档色**：只观测到"三态真帧 = 引擎默认主题三档"，机制（Rust 类取色是否走
+   theme 链）**没有**反汇编证据 ⇒ **推断/未知**。
+2. **存档状态：两种都测了，但锁定那一段没测**。主表是无存档（只解锁第 0 关）⇒ 只显示一枚 `0`；
+   §57.5 的补测是 `level_20`（21 关全解锁）⇒ 21 枚数字，两个状态都 **0 像素**。**没测**的是"部分解锁"
+   （例如 `level_7` ⇒ 8 枚可见 + 13 枚 alpha=0）—— 它能覆盖"解锁字色 vs 锁定不可见"的边界，
+   本轮没有采样。⇒ 下一手：两侧同预置一份 `level_7` 存档再采一轮（仍是**输入**、不动门槛）。
+3. **`level_popup` 的 242 是"底屏按钮的 hover 态"，不是弹窗元素**：两侧现在都在同一位置停留同一状态，
+   所以 0 像素；但"弹窗打开时底屏按钮还保持 hover"这件事本身是**副作用/推断**，没有测试它。
+4. **只测了一个分辨率/一个 DPI**（1920×1160、无 WM、llvmpipe）：其它尺寸没有覆盖。
+5. 帧 2/3 **不参与判定**（门槛 §2 原样）；它们只证明噪声地板为 0。
+
+### 57.8 复跑清单
+
+```bash
+# ① 预注册 + 门槛（都不改，只核对）
+sha256sum fixtures/frame_diff_thresholds.txt   # 9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873
+# ② 我方内核（本轮没动 src/，但截图要 client/libgw2_rebuild.so 是 gdext 版）
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+grep -a -c line_instance_id client/libgw2_rebuild.so      # 3
+"$GODOT" --headless --path client --import
+# ③ 两侧静态两屏（display 85 = 原版，86 = 我方）
+python3 tools/frame_capture.py --side original --flow static --out <dir>/orig --display-num 85
+python3 tools/frame_capture.py --side ours     --flow static --out <dir>/mine --display-num 86
+python3 tools/frame_diff.py --orig <dir>/orig --mine <dir>/mine --screens campaign,level_popup \
+  --out fixtures/frame_diff_results_static.tsv --blocks-out fixtures/frame_diff_blocks_static.tsv
+# ④ 既有回放流（证明没改坏；数字见 §57.6）
+python3 tools/frame_capture.py --side original --flow replay --seed-replays --out <dir>/orig_r --display-num 85
+python3 tools/frame_capture.py --side ours     --flow replay --seed-replays --out <dir>/mine_r --display-num 86
+python3 tools/frame_diff.py --orig <dir>/orig_r --mine <dir>/mine_r --screens menu,replay_lobby,replay_play,replay_end
+```
+
+> ⚠️ **工作树注记**（给下一个在 `.agent-work/` 工作树里跑这套仪表的人）：`tools/frame_capture.py` 的
+> `REPO/CLIENT/GAME_DIR/SNAPSHOT` 是"从 `tools/` 往上找 `.reference/game` 或 `client/project.godot`"。
+> 工作树里没有 `.reference/`，于是 `REPO` 会解析到**主工作区** ⇒ `--side ours` 会静默跑**主工作区**的
+> `client/`（改了本工作树不生效）。本轮的做法是在工作树里放一个 `.reference → 主工作区/.reference`
+> 的**符号链接**（gitignore 之外、不入库），让 `REPO` 落回本工作树。**没有改脚本的路径逻辑。**

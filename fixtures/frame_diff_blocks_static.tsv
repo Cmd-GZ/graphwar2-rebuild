@@ -1,0 +1,56 @@
+# T6 静态两屏（campaign / level_popup）：原版真机 vs 我方客户端，1920x1160、OpenGL3/llvmpipe、import -window 取窗（条件同 fixtures/frame_diff_thresholds.txt §1）
+# 预注册 = fixtures/static_screens_targets.txt（先提交后跑）；门槛 = fixtures/frame_diff_thresholds.txt §3 原样，一个数没改
+# 复跑：python3 tools/frame_capture.py --side {original|ours} --flow static --out <dir> --display-num {85|86}，然后 tools/frame_diff.py --screens campaign,level_popup
+# 改前（同一原版帧 vs 未修的 client）：campaign 3979 px = 0.1787%、max|Δ|=32、L2 最差块 0,0=1.227、L1/L2 过但 L3 不过；level_popup 2396 px = 0.1076%、max|Δ|=22、L3 不过
+# 改后（本表）：两屏 0 像素、max|Δ|=0，L1/L2/L3 全过 —— 与主菜单同级
+# 存档状态：本表两侧 HOME 均无 campaign.save（只解锁第 0 关）；另补测两侧都预置 level_20（21 关全解锁）也是 0 像素 / max|Δ|=0（docs/06 §57.5）
+# 门槛 = fixtures/frame_diff_thresholds.txt sha256 9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873（预注册）
+screen	row	col	dmean_max	dmean_rgb	diff_px	diff_ratio	max_channel_diff	over	bbox
+campaign	0	0	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	0	1	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	0	2	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	0	3	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	0	4	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	0	5	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	1	0	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	1	1	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	1	2	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	1	3	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	1	4	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	1	5	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	2	0	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	2	1	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	2	2	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	2	3	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	2	4	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	2	5	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	3	0	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	3	1	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	3	2	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	3	3	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	3	4	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+campaign	3	5	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	0	0	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	0	1	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	0	2	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	0	3	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	0	4	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	0	5	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	1	0	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	1	1	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	1	2	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	1	3	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	1	4	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	1	5	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	2	0	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	2	1	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	2	2	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	2	3	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	2	4	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	2	5	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	3	0	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	3	1	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	3	2	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	3	3	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	3	4	0.0	0.0,0.0,0.0	0	0.0	0	False	None
+level_popup	3	5	0.0	0.0,0.0,0.0	0	0.0	0	False	None
