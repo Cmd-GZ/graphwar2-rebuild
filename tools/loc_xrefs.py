@@ -96,9 +96,31 @@ import re
 import struct
 import sys
 
-DEFAULT_SO = os.environ.get(
-    "GW2_TARGET_SO",
-    "/home/user/MyProject/gw2/.reference/steam/2026-08-28/libgraphwarrust.so")
+def _default_so():
+    """逆向目标 `.so` 的落点：环境变量 > 本仓库已知的候选（**别再写死某台机器的绝对路径**）。
+
+    2026-11-26 修：原值写死 `/home/user/MyProject/gw2/...`（旧机器的布局），
+    换机器后所有走 DEFAULT_SO 的工具都会 `FileNotFoundError` —— 是本项目"文档/工具里
+    的路径假设会静默失效"那一类的又一例（见 `docs/HANDOVER.md` §7 ⑨）。
+    """
+    env = os.environ.get("GW2_TARGET_SO")
+    if env:
+        return env
+    here = os.path.dirname(os.path.abspath(__file__))
+    repo = os.path.dirname(here)
+    cands = [
+        os.path.join(repo, ".reference", "steam", "2026-08-28", "libgraphwarrust.so"),
+        # `.reference/game/` 那份与内嵌目标**逐字节相同**（docs/18 §1），可当兜底
+        os.path.join(repo, ".reference", "game", "libgraphwarrust.so"),
+        os.path.join(repo, ".reference", "upstream", "libgraphwarrust.so"),
+    ]
+    for c in cands:
+        if os.path.exists(c):
+            return c
+    return cands[0]
+
+
+DEFAULT_SO = _default_so()
 
 # 已知良好目标的指纹：换 `.so` 时 `stats` 会明着提醒（不阻断，因为要能扫其它构建）。
 KNOWN_SHA256 = "9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187"

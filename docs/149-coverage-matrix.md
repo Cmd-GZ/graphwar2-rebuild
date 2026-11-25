@@ -5,14 +5,14 @@
 ## 0. 一句话总账
 
 ```
-原版可归属函数 527 个，分布在 78 个模块（58 个 graphwar_*.rs 占 430、16 个 scope=other 的模块占 97）；我们已实现 527 个函数，其中 逐位 88 / 观测 439 / 推断 0；未做 0；完全未知的模块 0 个（graphwar 里 0 个）。
+原版可归属函数 527 个，分布在 78 个模块（58 个有同名 `graphwar_*.rs` 文件的占 430、16 个 scope=other 的模块占 97）；我们已实现 527 个函数，其中 逐位 88 / 观测 439 / 推断 0；未做 0；完全未知的模块 0 个（graphwar 里 0 个）。
 ```
 
 拆成两个口径（下面的数字全部由脚本算出，重跑即复现）：
 
 | 口径 | 模块数 | 可归属函数 | 已实现 | 逐位 | 观测 | 推断 | 未做 | 未知模块 |
 |---|---|---|---|---|---|---|---|---|
-| 58 个 `graphwar_*.rs` | 62 | 430 | 430 | 81 | 349 | 0 | 0 | 0 |
+| 58 个有同名 `graphwar_*.rs` 文件的模块（`scope=graphwar` 共 62 个） | 62 | 430 | 430 | 81 | 349 | 0 | 0 | 0 |
 | 16 个 `scope=other` 的模块（15 个不带 `graphwar_` 前缀 + `graphwar_texture_loader.rs`） | 16 | 97 | 97 | 7 | 90 | 0 | 0 | 0 |
 
 `weak_caller.rs` 在上表里算进 **scope=`other`** 那一档（39 个 `orig_funcs`，TSV 里单列一行）。**审计 2026-11-08 更正**：旧文写「40 个归属函数 …… **不计入**任何合计」，两处都不对——① 表值是 **39**（`docs/coverage-matrix.tsv` 的 `orig_funcs` 列，另 1 个符号查明是内联进 `GraphwarGameRecorder` 的方法，不是本模块的函数）；② 它**确实**计入 `other` 的 97 与总数的 527（430 + 97 = 527）。它也不是第三方依赖：`docs/02` §34 已按符号表判它是 crate 内模块（`graphwarrust::weak_caller`），只是文件名不带 `graphwar_` 前缀。
@@ -70,7 +70,7 @@
 ## 2. 逐模块矩阵
 `ours_funcs` 是整个文件的 `fn` 条数，**不是**「这个模块实现了多少个函数」；`src/game.rs` 一个文件服务多个原版模块，所以那些行会重复出现同一个数。
 
-### 2.1 58 个 `graphwar_*.rs`
+### 2.1 58 个有同名 `graphwar_*.rs` 文件的模块
 
 | module | orig_funcs | anchors | ours_file | ours_funcs | status |
 |---|---|---|---|---|---|
@@ -91,7 +91,7 @@
 | `graphwar_event_queue.rs` | 0 | 0 | `src/graphwar_event_queue.rs` | 5 | 观测 |
 | `graphwar_function_evolutionator.rs` | 16 | 25 | `src/graphwar_function_evolutionator.rs` | 88 | 观测 |
 | `graphwar_function_input.rs` | 13 | 33 | `src/graphwar_function_input.rs` | 41 | 观测 |
-| `graphwar_function_manager.rs` | 7 | 12 | `src/game.rs` | 107 | 观测 |
+| `graphwar_function_manager.rs` | 7 | 12 | `src/graphwar_function_manager.rs` | 5 | 观测 |
 | `graphwar_game_client.rs` | 36 | 59 | `src/graphwar_game_client.rs` | 31 | 观测 |
 | `graphwar_game_info.rs` | 0 | 0 | `src/graphwar_game_info.rs` | 0 | 观测 |
 | `graphwar_game_recorder.rs` | 2 | 4 | `src/graphwar_game_recorder.rs` | 14 | 观测 |
@@ -111,10 +111,10 @@
 | `graphwar_module_container.rs` | 20 | 1 | `src/graphwar_module_container.rs` | 17 | 观测 |
 | `graphwar_name_manager.rs` | 3 | 3 | `src/graphwar_name_manager.rs` | 17 | 观测 |
 | `graphwar_nodes.rs` | 11 | 1 | `src/graphwar_nodes.rs` | 17 | 观测 |
-| `graphwar_obstacle_manager.rs` | 8 | 14 | `src/plane.rs` | 16 | 逐位 |
+| `graphwar_obstacle_manager.rs` | 8 | 14 | `src/graphwar_obstacle_manager.rs` | 7 | 逐位 |
 | `graphwar_path_calculator.rs` | 1 | 9 | `src/graphwar_path_calculator.rs` | 2 | 逐位 |
 | `graphwar_plane.rs` | 10 | 19 | `src/graphwar_plane.rs+src/plane.rs` | 37 | 观测 |
-| `graphwar_plane_pos_manager.rs` | 6 | 9 | `src/plane.rs` | 16 | 观测 |
+| `graphwar_plane_pos_manager.rs` | 6 | 9 | `src/graphwar_plane_pos_manager.rs` | 20 | 观测 |
 | `graphwar_play_screen_control.rs` | 10 | 64 | `src/graphwar_play_screen_control.rs` | 95 | 观测 |
 | `graphwar_player_config.rs` | 0 | 0 | `src/graphwar_player_config.rs` | 8 | 观测 |
 | `graphwar_player_manager.rs` | 3 | 6 | `src/graphwar_player_manager.rs` | 19 | 观测 |
@@ -161,7 +161,7 @@
 完整的 evidence（每行一句话的依据）在 `docs/coverage-matrix.tsv`，那张表是本脚本的唯一真源，本页的表格由它渲染。
 
 ## 3. 哪些模块连「它干什么」都不知道（问题 1）
-**58 个 `graphwar_*.rs` 里有 0 个**属于这一类 —— 判据是：没有实现、且除模块名之外**没有任何**能指到地址/报文/真机的观测。
+**58 个有同名文件的 graphwar 模块里有 0 个**属于这一类 —— 判据是：没有实现、且除模块名之外**没有任何**能指到地址/报文/真机的观测。
 
 | module | orig_funcs | anchors | 现状 |
 |---|---|---|---|
@@ -182,7 +182,7 @@
 | `src/_scaffold/diffconv.rs` | 上一条的收敛层；同上 |
 | `src/_scaffold/replay_inflate.rs` | 手写 DEFLATE/gzip；原版用的是第三方 crate，不是游戏模块 |
 | `src/_scaffold/rng.rs` | ChaCha12 的重写；原版是 rand_chacha crate，不是游戏模块 |
-| `src/_scaffold/gdext.rs` | GDExtension 入口脚手架（原版的入口在 Godot 模块侧，不在这 58+12 个文件里） |
+| `src/_scaffold/gdext.rs` | GDExtension 入口脚手架（原版的入口在 Godot 模块侧，不在这 78 个模块里） |
 | `src/_scaffold/gdext_class.rs` | 同上：classdb_register_extension_class4 的封装 |
 | `src/_scaffold/broker.rs` | **我们自己的一台 broker 服务端**；原版只有连 broker 的客户端，没有服务端 |
 | `src/_scaffold/protocol.rs` | 报文编解码装配层；原版没有同名模块，编解码分散在各 handler 里 |
@@ -205,7 +205,7 @@
 ## 6. 怎么读这把尺（以及它现在量不了什么）
 
 1. **不要**把 `orig_funcs` 相加当「原版函数总数」。它是可归属下限，而且系统性漏掉所有纯计算模块（求值器、采样器就是现成的反例）。
-2. **模块级分母（58）比函数级分母更可信，但它也是下限**：58 个名字是从二进制里的 `src/graphwar_*.rs` 字面量直接读出来的，只要模块里有一个 panic 点就会被列出来；**完全没有 panic 的模块不会出现**，所以真实的模块数只能 ≥ 58。函数级归属则只有 4.0%。
+2. **模块级分母（58 个有同名文件的；`scope=graphwar` 共 62）比函数级分母更可信，但它也是下限**：这些名字是从二进制里的 `src/graphwar_*.rs` 字面量直接读出来的，只要模块里有一个 panic 点就会被列出来；**完全没有 panic 的模块不会出现**，所以真实的模块数只能 ≥ 这个数。函数级归属则只有 4.0%。
 3. 想提高函数级覆盖，只有两条路：(a) 把 `0x3c2bc0` / `0x3c2530` 这类无锚函数**逐个反编译并人工归属**；(b) 沿调用图从锚点扩散 —— 但那是**推断**，`docs/02` §10 做过（885/13263，6.7%，hub 节点被高估），不能进总账。
 4. 一次 `--check` 只要几秒到一分钟（取决于 capstone 扫 `.text`），**`src/` 一改，`ours_funcs` 就会漂，`--check` 会失败** —— 这是故意的：过期矩阵比没有矩阵更糟。
 
@@ -215,9 +215,9 @@
 |---|---|---|
 | 「544 个函数归属 / 56 个模块」 | `docs/02` §8 | 那张表把引用两个模块的函数在两个模块下**各算一次**。本表压平后不重复计数，并把跨模块数单独列为 `contested` |
 | 「885/13263，观测 441 + 推断 444」 | `docs/02` §10 | 那是**调用图扩散**，属推断层。本表只收硬证据，不把扩散数写进总账 |
-| 「57 个模块」 | 各处 | 按 `src/graphwar_[a-z_]+\.rs` 数是 57；**加数字字符后是 58**（`graphwar_lan_broadcaster_v6.rs` 被漏了）。本表用 58 |
+| 「57 个模块」 | 各处 | 按 `src/graphwar_[a-z_]+\.rs` 数是 57；**加数字字符后是 58**（`graphwar_lan_broadcaster_v6.rs` 被漏了）。本表一律算出来、不写死 |
 | 「`fixtures/module_funcs.tsv` 的地址清单」 | `docs/02` §14.2 | 那张表已自我更正为「不能判定函数身份」；本表用 Ghidra 边界 + 冲突压平重算 |
-| 「解析器 `0x4ed670` 在 `graphwar_function_input.rs`」 | `docs/02` §1 | 该函数体内唯一的 Location 锚是 `math_function.rs:75`，按证据归 `math_function.rs`；所以函数语言的实现落在本表的 `other` 口径，不在 58 个 graphwar 模块里 |
+| 「解析器 `0x4ed670` 在 `graphwar_function_input.rs`」 | `docs/02` §1 | 该函数体内唯一的 Location 锚是 `math_function.rs:75`，按证据归 `math_function.rs`；所以函数语言的实现落在本表的 `other` 口径，不在带前缀的那 58 个模块里 |
 
 ## 8. 复现
 
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（114 个文件、3148 条 `fn`） | `ce5e3da0602c464f80f70465c362ea986979b025fc9e29ae2a5150fdba523fb5` |
+| `src/` 树（114 个文件、3148 条 `fn`） | `92a029747217d24d71304188b9fdb8a4be319a0f5bea9371aa4fda8fe407ea27` |
 

@@ -31,8 +31,9 @@
 //! `level_info()` 与 `campaign.save` 那一簇**没有 `panic::Location` 锚**，暂时挂在
 //! `graphwar_level_manager.rs` 名下，并写明"`graphwar_campaign_control.rs` 落地时必须搬走"。
 //! 本轮落地了本文件的版本，但**没有**删 `level_manager` 里那份（本轮只允许改本文件）——
-//! 两份由 `tests/campaign_data.rs` 的 `table_matches_level_manager_copy` /
-//! `save_cluster_matches_level_manager_copy` 逐字段钉住，谁先漂就会被测出来。
+//! 两份由 `tests/campaign_data.rs` 钉住：`table_matches_level_manager_copy`（表）
+//! + `save_cluster_matches_level_manager_copy`（`campaign.save` 那一簇，**2026-11-26 补写** ——
+//! 这条测试在本注释写下时并不存在，全库零命中，见 `docs/02` §17.4「判不清」第 6 条）。
 //! 搬迁（删旧副本）留给下一次能改 `level_manager.rs` 的任务。
 //!
 //! ## 缺的两处归属（沿用旧结论，不重推）

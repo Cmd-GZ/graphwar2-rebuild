@@ -4,12 +4,11 @@
 //! 本文件只放**布局**（`size_of` / `offset_of` 会被断言）：原版这个模块的**行为**
 //! （`FunctionState` 里到底存什么、淡出曲线怎么算）**仍未复原**，见文末"仍是未知"。
 //!
-//! ⚠️ **挂载方式（临时）**：本轮 `src/lib.rs` 在禁区，所以本文件不是从 `lib.rs` 里
-//! `pub mod` 进来的，而是由 `src/_scaffold/root_wiring.rs` 用
-//! `#[path = "../graphwar_function_manager.rs"] pub mod graphwar_function_manager;` 挂进
-//! crate。`lib.rs` 一旦可改，把那两行换成 `pub mod graphwar_function_manager;` 即可，
-//! 本文件**不用改**（届时路径从 `_scaffold::root_wiring::graphwar_function_manager`
-//! 提到 crate 根）。
+//! **挂载方式（已转正，2026-11-26 更正本文）**：早期 `src/lib.rs` 在禁区时，本文件是用
+//! `#[path = "../graphwar_function_manager.rs"] pub mod graphwar_function_manager;` 从
+//! `src/_scaffold/root_wiring.rs` 临时挂进 crate 的；**现在 `src/lib.rs` 已经直接
+//! `pub mod graphwar_function_manager;` / `pub mod graphwar_obstacle_manager;`**
+//! （同一批迁回 crate 根，两个文件一行没改），本段旧描述已过期。
 //!
 //! # 一、这个模块里有什么（`观测`，arm64 2.0.60 `.symtab` 原文）
 //!

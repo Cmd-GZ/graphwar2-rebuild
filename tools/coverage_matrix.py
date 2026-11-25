@@ -399,7 +399,24 @@ def mod(module, scope, ours, status, evidence):
                      status=status, evidence=evidence)
 
 
-# ---- 58 个 graphwar_*.rs（`[a-z_]+` 的正则会漏掉带数字的 v6，实际是 58 个）----
+def graphwar_prefixed():
+    """**有同名文件**的 `scope=graphwar` 模块数（现值 **58**）。
+
+    2026-11-26 修：本文件原来把 58 写死在 9 处文案里（`docs/149` 因此出现
+    "表头 58 / 模块数 62"的自相矛盾）。**数字一律算出来**，别再手写。
+
+    口径（`docs/02` §17 开头）：`scope=graphwar` 共 **62** 个模块 = **58 个有同名
+    `src/graphwar_*.rs` 文件的** + 4 个没有同名文件的（`graphwar_event` /
+    `graphwar_event_handler` / `graphwar_remote_event_handler` /
+    `graphwar_server_connection_handler`，内容在 `src/events.rs` / `src/server.rs`）。
+    另有 `src/graphwar_*.rs` 共 **59** 个：多出来的是 `graphwar_texture_loader.rs`
+    （矩阵里 `scope=other`，见 `docs/02` §17.2）。
+    """
+    return sum(1 for k, v in M.items()
+               if v["scope"] == "graphwar" and ("src/" + k) in v["ours"])
+
+
+# ---- graphwar 作用域模块（62 个；其中 58 个带 `graphwar_` 前缀 —— 正则别用 `[a-z_]+`，会漏 `graphwar_lan_broadcaster_v6`）----
 mod("graphwar_ad_switch.rs", "graphwar", ("src/graphwar_ad_switch.rs",), "观测",
     "6 条全是 gdext 惰性注册驱动；两个 getter trampoline + owned(+0x18) 已钉死")
 mod("graphwar_audio_control.rs", "graphwar", ("src/graphwar_audio_control.rs",), "观测",
@@ -432,7 +449,7 @@ mod("graphwar_function_evolutionator.rs", "graphwar", ("src/graphwar_function_ev
     "docs/AI.md：权重/长度/装配/交叉/变异/适应度全部从反汇编 + 40 万次运行时抽样得出；无逐字节对拍")
 mod("graphwar_function_input.rs", "graphwar", ("src/graphwar_function_input.rs",), "观测",
     "17 条函数；7 个原版名 + gui_input 0x4fedc0；**输入框只做一步预处理：删空格**（docs/03 §13）")
-mod("graphwar_function_manager.rs", "graphwar", ("src/game.rs",), "观测",
+mod("graphwar_function_manager.rs", "graphwar", ("src/graphwar_function_manager.rs",), "观测",
     "docs/112 §2.1：7 个函数的存取结构逐条读出（HashMap<u32, 112 字节>、Vec<Token>）；"
     "我方 Match::functions 同构，但没有逐字节对拍")
 mod("graphwar_game_client.rs", "graphwar", ("src/graphwar_game_client.rs",), "观测",
@@ -481,7 +498,7 @@ mod("graphwar_name_manager.rs", "graphwar", ("src/graphwar_name_manager.rs",), "
     "4/4：HashMap<u32,String>，**名字的权威源**（graphics_manager 三张表是皮肤/脸/帽资源名，不是名字）。改名链路：59 NameRequest 进 -> set_name（唯一调用者 remote_event_handler）-> 60 NameInfo 广播（docs/10 §15）")
 mod("graphwar_nodes.rs", "graphwar", ("src/graphwar_nodes.rs",), "观测",
     "11/11：**不造节点**，是全客户端唯一的「按名字/按类型在场景树里找节点」入口——get_node_by_name::<T>（11 个单态化薄壳）/ get_node_by_name_rec（17）/ get_node_by_type_rec（1）；另给 40 个节点名 + 80 个调用点三张表（docs/16 §28）")
-mod("graphwar_obstacle_manager.rs", "graphwar", ("src/plane.rs",), "逐位",
+mod("graphwar_obstacle_manager.rs", "graphwar", ("src/graphwar_obstacle_manager.rs",), "逐位",
     "只覆盖掩膜部分：0x4f15b0 光栅化与 is_occupied 与真二进制逐字节 / 300 随机点一致"
     "（docs/39/08），摧毁 = 挖 r=0.5 洞；障碍的生成与生命周期未落 src/。"
     "⚠ 文件级归属未定：class_probe 给出的本模块锚函数是 0x3c64c0/0x3f00b0/0x3f2480/0x3f27d0，"
@@ -489,7 +506,7 @@ mod("graphwar_obstacle_manager.rs", "graphwar", ("src/plane.rs",), "逐位",
 mod("graphwar_path_calculator.rs", "graphwar", ("src/graphwar_path_calculator.rs",), "逐位",
     "docs/91：补上 hi=mid2 后 24/24 用例整条点序列与真二进制逐位相等。注意：采样器 "
     "0x3c2530 本体无 panic 锚 ⇒ 只归属到 1 个辅助函数，orig_funcs 远小于模块规模")
-mod("graphwar_plane_pos_manager.rs", "graphwar", ("src/plane.rs",), "观测",
+mod("graphwar_plane_pos_manager.rs", "graphwar", ("src/graphwar_plane_pos_manager.rs",), "观测",
     "docs/140：px = 20x + 500 由常量反查得出、准备圈画法已扒出；没有端到端逐位对拍")
 mod("graphwar_plane.rs", "graphwar", ("src/graphwar_plane.rs", "src/plane.rs"), "观测",
     "12 个 GDExtension 类里的第 4 个，本轮补齐（docs/16-client.md §26）：8 个方法 + 1 个 "
@@ -628,7 +645,7 @@ SELF_MADE = [
     ("src/_scaffold/diffconv.rs", "上一条的收敛层；同上"),
     ("src/_scaffold/replay_inflate.rs", "手写 DEFLATE/gzip；原版用的是第三方 crate，不是游戏模块"),
     ("src/_scaffold/rng.rs", "ChaCha12 的重写；原版是 rand_chacha crate，不是游戏模块"),
-    ("src/_scaffold/gdext.rs", "GDExtension 入口脚手架（原版的入口在 Godot 模块侧，不在这 58+12 个文件里）"),
+    ("src/_scaffold/gdext.rs", "GDExtension 入口脚手架（原版的入口在 Godot 模块侧，不在这 78 个模块里）"),
     ("src/_scaffold/gdext_class.rs", "同上：classdb_register_extension_class4 的封装"),
     ("src/_scaffold/broker.rs", "**我们自己的一台 broker 服务端**；原版只有连 broker 的客户端，没有服务端"),
     ("src/_scaffold/protocol.rs", "报文编解码装配层；原版没有同名模块，编解码分散在各 handler 里"),
@@ -793,7 +810,8 @@ def render_md(rows, spot_rows, totals, grand, meta):
     A("拆成两个口径（下面的数字全部由脚本算出，重跑即复现）：\n")
     A("| 口径 | 模块数 | 可归属函数 | 已实现 | 逐位 | 观测 | 推断 | 未做 | 未知模块 |")
     A("|---|---|---|---|---|---|---|---|---|")
-    for name, t in (("58 个 `graphwar_*.rs`", g), ("%d 个 `scope=other` 的模块（15 个不带 `graphwar_` 前缀 + `graphwar_texture_loader.rs`）" % o["modules"], o)):
+    for name, t in (("%d 个有同名 `graphwar_*.rs` 文件的模块（`scope=graphwar` 共 %d 个）" % (graphwar_prefixed(), g["modules"]), g),
+                    ("%d 个 `scope=other` 的模块（15 个不带 `graphwar_` 前缀 + `graphwar_texture_loader.rs`）" % o["modules"], o)):
         A("| %s | %d | %d | %d | %d | %d | %d | %d | %d |"
           % (name, t["modules"], t["attributed"], t["implemented"],
              t["by_status"]["逐位"], t["by_status"]["观测"], t["by_status"]["推断"],
@@ -869,7 +887,7 @@ def render_md(rows, spot_rows, totals, grand, meta):
     A("## 2. 逐模块矩阵\n")
     A("`ours_funcs` 是整个文件的 `fn` 条数，**不是**「这个模块实现了多少个函数」；"
       "`src/game.rs` 一个文件服务多个原版模块，所以那些行会重复出现同一个数。\n")
-    for scope, title in (("graphwar", "2.1 58 个 `graphwar_*.rs`"),
+    for scope, title in (("graphwar", "2.1 %d 个有同名 `graphwar_*.rs` 文件的模块" % graphwar_prefixed()),
                          ("other", "2.2 非 `graphwar_` 前缀的游戏模块")):
         sel = [r for r in rows if r["scope"] == scope]
         A("### %s\n" % title)
@@ -885,8 +903,9 @@ def render_md(rows, spot_rows, totals, grand, meta):
       "那张表是本脚本的唯一真源，本页的表格由它渲染。\n")
     A("## 3. 哪些模块连「它干什么」都不知道（问题 1）\n")
     unknown = [r for r in rows if r["status"] == "未知" and r["scope"] == "graphwar"]
-    A("**58 个 `graphwar_*.rs` 里有 %d 个**属于这一类 —— 判据是：没有实现、"
-      "且除模块名之外**没有任何**能指到地址/报文/真机的观测。\n" % len(unknown))
+    A("**%d 个有同名文件的 graphwar 模块里有 %d 个**属于这一类 —— 判据是：没有实现、"
+      "且除模块名之外**没有任何**能指到地址/报文/真机的观测。\n"
+      % (graphwar_prefixed(), len(unknown)))
     A("| module | orig_funcs | anchors | 现状 |")
     A("|---|---|---|---|")
     for r in unknown:
@@ -925,10 +944,10 @@ def render_md(rows, spot_rows, totals, grand, meta):
     A("## 6. 怎么读这把尺（以及它现在量不了什么）\n")
     A("1. **不要**把 `orig_funcs` 相加当「原版函数总数」。它是可归属下限，"
       "而且系统性漏掉所有纯计算模块（求值器、采样器就是现成的反例）。")
-    A("2. **模块级分母（58）比函数级分母更可信，但它也是下限**：58 个名字是从二进制里的 "
+    A("2. **模块级分母（%d 个有同名文件的；`scope=graphwar` 共 %d）比函数级分母更可信，但它也是下限**：这些名字是从二进制里的 "
       "`src/graphwar_*.rs` 字面量直接读出来的，只要模块里有一个 panic 点就会被列出来；"
-      "**完全没有 panic 的模块不会出现**，所以真实的模块数只能 ≥ 58。函数级归属则只有 %s。"
-      % fmt_pct(meta["attributed_funcs"], meta["funcstarts_n"]))
+      "**完全没有 panic 的模块不会出现**，所以真实的模块数只能 ≥ 这个数。函数级归属则只有 %s。"
+      % (graphwar_prefixed(), g["modules"], fmt_pct(meta["attributed_funcs"], meta["funcstarts_n"])))
     A("3. 想提高函数级覆盖，只有两条路：(a) 把 `0x3c2bc0` / `0x3c2530` 这类无锚函数"
       "**逐个反编译并人工归属**；(b) 沿调用图从锚点扩散 —— 但那是**推断**，"
       "`docs/02` §10 做过（885/13263，6.7%，hub 节点被高估），不能进总账。")
@@ -943,12 +962,13 @@ def render_md(rows, spot_rows, totals, grand, meta):
     A("| 「885/13263，观测 441 + 推断 444」 | `docs/02` §10 | 那是**调用图扩散**，属推断层。本表只收硬证据，"
       "不把扩散数写进总账 |")
     A("| 「57 个模块」 | 各处 | 按 `src/graphwar_[a-z_]+\\.rs` 数是 57；"
-      "**加数字字符后是 58**（`graphwar_lan_broadcaster_v6.rs` 被漏了）。本表用 58 |")
+      "**加数字字符后是 %d**（`graphwar_lan_broadcaster_v6.rs` 被漏了）。本表一律算出来、不写死 |"
+      % graphwar_prefixed())
     A("| 「`fixtures/module_funcs.tsv` 的地址清单」 | `docs/02` §14.2 | 那张表已自我更正为「不能判定函数身份」；"
       "本表用 Ghidra 边界 + 冲突压平重算 |")
     A("| 「解析器 `0x4ed670` 在 `graphwar_function_input.rs`」 | `docs/02` §1 | "
       "该函数体内唯一的 Location 锚是 `math_function.rs:75`，按证据归 `math_function.rs`；"
-      "所以函数语言的实现落在本表的 `other` 口径，不在 58 个 graphwar 模块里 |")
+      "所以函数语言的实现落在本表的 `other` 口径，不在带前缀的那 %d 个模块里 |" % graphwar_prefixed())
     A("")
     A("## 8. 复现\n")
     A("```bash")
@@ -1083,10 +1103,10 @@ def main(argv):
 
 
 def grand_line(grand):
-    return ("原版可归属函数 %d 个，分布在 %d 个模块（58 个 graphwar_*.rs 占 %d、"
+    return ("原版可归属函数 %d 个，分布在 %d 个模块（%d 个有同名 `graphwar_*.rs` 文件的占 %d、"
             "%d 个 scope=other 的模块占 %d）；我们已实现 %d 个函数，其中 逐位 %d / 观测 %d / "
             "推断 %d；未做 %d；完全未知的模块 %d 个（graphwar 里 %d 个）。"
-            % (grand["attributed"], grand["modules"],
+            % (grand["attributed"], grand["modules"], graphwar_prefixed(),
                grand["graphwar"]["attributed"], grand["other"]["modules"],
                grand["other"]["attributed"], grand["implemented"],
                grand["by_status"]["逐位"], grand["by_status"]["观测"], grand["by_status"]["推断"],

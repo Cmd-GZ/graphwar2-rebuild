@@ -968,7 +968,7 @@ comm -3 /tmp/o.txt /tmp/d.txt
 | `src/graphwar_replay_player.rs` | 原版 graphwar_replay_player.rs（解析/推进）+ **我方自定**的 `ReplayPlayer` 播放时钟（`:660`） | `docs/133` §4（自述"我们自定，原版未观测"） | 播放时钟是我们为了让客户端能播而设计的，原版没有对应函数；等 `graphwar_replay_control.rs` 落地后迁进 `_scaffold/`。⚠ 文件**读取**已切开：归 `src/graphwar_replay_reader.rs`（`docs/09` §12） |
 | `src/graphwar_shot_calculator/settle.rs` | 原版 graphwar_shot_calculator.rs 的 `0x3c2bc0`（开火结算主函数） | `docs/86`/`docs/122` | `0x3c2bc0` 没有 panic 锚，函数体也**没有**逐条还原（逐位的是行为）；边界只能按主题切 |
 | `src/graphwar_level_generator/tables.rs` | 原版 graphwar_level_generator.rs 的 ziggurat 常量表 | `docs/53`/`docs/55` | 纯数据；拆出来只为让主文件可读，不需要边界判断 |
-| `src/graphwar_level_manager.rs` | 原版 graphwar_level_manager.rs + **可能属于 `graphwar_campaign_control.rs`** 的 `level_info`(`0x4ad380`) 与 `campaign.save` 簇(`0x417ef0`/`0x418170`/`0x4183b0`) | 这三处**都没有 Location 锚**；`docs/10` §12.6 | 无锚 ⇒ 归属只能靠调用形态，证据不足。`src/graphwar_campaign_control.rs` 已按 §17.4 的规矩落了**自己那份**（`LEVEL_INFO` / `encode_save`），但 `level_manager` 里那份**没删**，两份由 `tests/campaign_data.rs` 的 `table_matches_level_manager_copy`（`:538`）逐字段钉住（⚠ 文件头另写了一条 `save_cluster_matches_level_manager_copy`，全库零命中 —— 见 §17.4 末尾的「判不清」清单）；删旧副本留给能改 `level_manager.rs` 的任务 |
+| `src/graphwar_level_manager.rs` | 原版 graphwar_level_manager.rs + **可能属于 `graphwar_campaign_control.rs`** 的 `level_info`(`0x4ad380`) 与 `campaign.save` 簇(`0x417ef0`/`0x418170`/`0x4183b0`) | 这三处**都没有 Location 锚**；`docs/10` §12.6 | 无锚 ⇒ 归属只能靠调用形态，证据不足。`src/graphwar_campaign_control.rs` 已按 §17.4 的规矩落了**自己那份**（`LEVEL_INFO` / `encode_save`），但 `level_manager` 里那份**没删**，两份由 `tests/campaign_data.rs` 的 `table_matches_level_manager_copy`（`:538`）逐字段钉住（⚠ 文件头另写的 `save_cluster_matches_level_manager_copy` **2026-11-26 已补写** —— 此前全库零命中，见 §17.4 末尾「判不清」第 6 条）；删旧副本留给能改 `level_manager.rs` 的任务 |
 | `src/graphwar_play_screen_control.rs` | 原版 graphwar_play_screen_control.rs（10 个可归属函数）+ **`ShotLifecycle`**（弹道生命周期 = 播放屏 6 个函数的"决定"部分） | `docs/00` §「缺工程」表、`docs/HANDOVER.md` §遗留（原文：原版在 `game_state_manager`，我方落在 `play_screen_control`） | 归属与"原版在 `game_state_manager`"对不上，但边界要靠 **`Location` 再切一次**才能定；**缺**：`ShotLifecycle` 各方法的 `Location` 归属证据 ⇒ 按铁律 2 原地保留。⚠ `src/_scaffold/play_flow_class.rs` 只是**引用**它（`flow: ShotLifecycle`），不是它的归属地 |
 
 > 📌 **现值核对（`src/` 实测；只记"现在在哪"，不改上面任何一行的判据）**
@@ -1006,6 +1006,19 @@ comm -3 /tmp/o.txt /tmp/d.txt
 >    而 `src/lib.rs:149/150` 已经是 `pub mod graphwar_function_manager;` / `pub mod graphwar_obstacle_manager;`。
 > 6. **`src/graphwar_campaign_control.rs:34` 点名的 `save_cluster_matches_level_manager_copy`** 全库零命中
 >    （`tests/campaign_data.rs` 里只有 `table_matches_level_manager_copy`）—— 要么测试没写、要么被更名。
+
+> ✅ **2026-11-26 逐条处置**（本机主线；改完的状态如下 —— 上面 6 条原文保留以便对照）
+>
+> | 原第几条 | 处置 | 复验 |
+> |---|---|---|
+> | 2 | **已修**：`tools/coverage_matrix.py` 三处 `ours_file` 指向已存在的同名文件（`graphwar_function_manager.rs` / `graphwar_obstacle_manager.rs` / `graphwar_plane_pos_manager.rs`），生成物重跑 | `python3 tools/coverage_matrix.py --check` → OK |
+> | 3 | **已修**：脚本里 9 处写死的 `58` 改成 `graphwar_prefixed()` **算出来**（口径：58 = **有同名文件的** `scope=graphwar` 模块数，≠ `ls src/graphwar_*.rs` 的 59 —— 多的那个是 `graphwar_texture_loader.rs`，矩阵里 `scope=other`） | 同上；`docs/149` §0 不再自相矛盾 |
+> | 4 | **已修**：`AGENTS.md` §0 铁律 4 + 「目录」一节 → **78 = 62 + 16**，并注明旧读数「58 + 12」作废 | `grep -n "58 个" AGENTS.md` |
+> | 5 | **已修**：`src/graphwar_function_manager.rs` / `src/graphwar_obstacle_manager.rs` 的文件头 → "已由 `src/lib.rs` 直接 `pub mod`，旧描述过期" | `sed -n '145,152p' src/lib.rs` |
+> | 6 | **已修**：`tests/campaign_data.rs` 新增 `save_cluster_matches_level_manager_copy` —— 两份 `campaign.save` 实现在 **17 个样本 × 全组合**上逐项相等（`parse_level_key` / `decode_save` / `encode_save` / `save_action` / `save_level` / `refresh_index`） | `cargo test --offline --test campaign_data` → **14 passed / 0 failed** |
+>
+> 剩下 **1（状态词没有逐行改）** 仍未做：那是**结构判断**（要逐模块判"有没有别的东西混进来"），
+> 不是"抄文件是否存在"，保持原样。
 
 ### 17.5 自查（改完必须重跑）
 

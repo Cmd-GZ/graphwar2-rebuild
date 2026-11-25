@@ -944,3 +944,116 @@ fn client_campaign_table_matches_the_kernel_table() {
         );
     }
 }
+
+// ===========================================================================
+// 4. `campaign.save` 那一簇：**两份拷贝互相钉住**（2026-11-26 新增）
+// ===========================================================================
+//
+// 背景（`docs/02-module-map.md` §17.4）：`level_info()`(`0x4ad380`) 与
+// `campaign.save` 簇(`0x417ef0`/`0x418170`/`0x4183b0`) **没有 `panic::Location` 锚**，
+// 所以当初暂时挂在 `graphwar_level_manager.rs`；`graphwar_campaign_control.rs` 落地后
+// 应当搬走旧副本，但那次任务只允许改自己那份 ⇒ 两份并存。
+//
+// `src/graphwar_campaign_control.rs` 的文件头**原来**就写着"两份由
+// `save_cluster_matches_level_manager_copy` 逐字段钉住" —— 但全库**零命中**：
+// 这个测试从来没有被写出来（`docs/02` §17.4「判不清」第 6 条记的就是这件事）。
+// 本条把它补上：两份实现必须在**整个输入空间**上给出同一个答案，
+// 谁先漂、漂在哪一类输入上，断言会点名。
+
+/// 一串精心挑的 `campaign.save` 内容（合法 / 边界 / 脏数据）——两份实现都要在这些输入上一致。
+const SAVE_SAMPLES: &[&str] = &[
+    "",                 // 空文件
+    "level_0",
+    "level_1",
+    "level_9",
+    "level_10",
+    "level_20",
+    "level_4294967295", // u32::MAX，`refresh_index` 会夹到 20
+    "level_4294967296", // 溢出 u32 ⇒ 解析失败
+    "level_20\n",       // 尾换行：最后一段是 "20\n"，`parse::<u32>` 失败（原版不宽容）
+    " level_20",        // 前导空格同样失败
+    "level_",           // 缺数字
+    "level_007",        // 前导零，仍可解析
+    "level_-1",         // 负号：u32 解析失败
+    "junk",             // 完全没有 `_`
+    "anything_7",       // 最后一个 `_` 之后是 7（原版取最后一段）
+    "a_b_c_12",         // 多段
+];
+
+fn cc_action(existing: Option<&str>, new_text: &str) -> bool {
+    matches!(
+        cc::save_action(existing, new_text),
+        cc::SaveAction::Write
+    )
+}
+
+fn lm_action(existing: Option<&str>, new_text: &str) -> bool {
+    matches!(
+        lm::save_action(existing, new_text),
+        lm::SaveAction::Write
+    )
+}
+
+#[test]
+fn save_cluster_matches_level_manager_copy() {
+    // ① 解析：cc::parse_level_key ≡ lm::parse_level_key
+    for s in SAVE_SAMPLES {
+        assert_eq!(
+            cc::parse_level_key(s),
+            lm::parse_level_key(s),
+            "{s:?}：parse_level_key"
+        );
+    }
+
+    // ② 生成：cc::encode_save ≡ lm::encode_save（0..=20 的合法档 + 两个越界值）
+    for level in (0u32..=20).chain([u32::MAX - 1, u32::MAX]) {
+        assert_eq!(
+            cc::encode_save(level),
+            lm::encode_save(level),
+            "level={level}：encode_save"
+        );
+    }
+
+    // ③ 读：cc 的 parse 失败语义 ≡ lm::decode_save 的"失败读 0"
+    for s in SAVE_SAMPLES {
+        assert_eq!(
+            cc::parse_level_key(s).unwrap_or(0),
+            lm::decode_save(Some(s)),
+            "{s:?}：decode_save"
+        );
+    }
+    assert_eq!(lm::decode_save(None), 0, "文件打不开 ⇒ 进度 0");
+
+    // ④ 写不写：**全组合**（17 个旧值含 None） × 17 个新串 = 8 个方向
+    for old in std::iter::once(None).chain(SAVE_SAMPLES.iter().copied().map(Some)) {
+        for new_text in SAVE_SAMPLES {
+            assert_eq!(
+                cc_action(old, new_text),
+                lm_action(old, new_text),
+                "old={old:?} new={new_text:?}：save_action 的 Write/Skip"
+            );
+        }
+    }
+
+    // ⑤ 该写什么：save_level 的返回值（`None` = 不写）逐格一致
+    for old in std::iter::once(None).chain(SAVE_SAMPLES.iter().copied().map(Some)) {
+        for level in [0u32, 1, 9, 10, 20, u32::MAX] {
+            assert_eq!(
+                cc::save_level(old, level),
+                lm::save_level(old, level),
+                "old={old:?} level={level}：save_level"
+            );
+        }
+    }
+
+    // ⑥ 刷新下标：cc::refresh_index ≡ lm::refresh_index，且 20 之后被夹住
+    for new_level in (0u32..=20).chain([u32::MAX - 1, u32::MAX]) {
+        assert_eq!(
+            cc::refresh_index(new_level),
+            lm::refresh_index(new_level),
+            "new_level={new_level}：refresh_index"
+        );
+    }
+    assert_eq!(cc::refresh_index(20), 20, "20 之后再 +1 被夹到 20");
+    assert_eq!(cc::refresh_index(0), 1, "打完第 1 关（level_0）刷新到下标 1");
+}

@@ -4,9 +4,9 @@
 //! 本文件只放**布局**（`size_of` / `offset_of` 会被断言）。障碍**光栅化/挖洞**的纯逻辑仍在
 //! `src/plane.rs`（`docs/39`）；本文件**不**重复实现它。
 //!
-//! ⚠️ **挂载方式（临时）**：与 `graphwar_function_manager.rs` 相同——本轮 `src/lib.rs` 在禁区，
-//! 由 `src/_scaffold/root_wiring.rs` 用 `#[path = "../graphwar_obstacle_manager.rs"]` 挂进 crate。
-//! `lib.rs` 可改之后换成 `pub mod graphwar_obstacle_manager;`，本文件不用改。
+//! **挂载方式（已转正，2026-11-26 更正本文）**：与 `graphwar_function_manager.rs` 相同 ——
+//! 早先靠 `src/_scaffold/root_wiring.rs` 的 `#[path = "../graphwar_obstacle_manager.rs"]`
+//! 临时挂进 crate，**现在 `src/lib.rs` 已直接 `pub mod graphwar_obstacle_manager;`**，本段旧描述已过期。
 //!
 //! # 一、这个模块里有什么（`观测`，arm64 2.0.60 `.symtab` 原文）
 //!
