@@ -7787,9 +7787,199 @@ ls $WS/dist/gw2-replays-snapshot/replays | wc -l
    （静态屏 0 像素）；
 4. §54.0 的结论由"两句"改成"四问"（②引擎 / ③跑法 / ④那到底是谁），**归因不再混着说**。
 
-> 📌 **§55 / §56 是预留给正在并行合并的两份工作**（2026-11-26）：§55 = t4（回放播放屏 S3/S4）、
-> §56 = t5（回放列表行 S2）。先合 t6 的 §57 是为了不阻塞；**t4/t5 合完后节号按顺序落位**。
+> 📌 **§55 预留给 t4**（2026-11-26）：t4 是回放播放屏（S3/S4），还没合；
+> t5 的 §56 与 t6 的 §57 已按顺序落位。t4 合完后本节号即连续。
 > 留这条说明，是为了避免"节号跳号 = 内容丢失"的误读。
+
+## 56. 回放列表行（S2）：把"只差一行"做成**整屏 0 像素差** —— 列集合、关卡名来源、模式图标全是回放内容，外加两条踩坑（2026-11-25，`dispatch/T5`）
+
+### 56.0 一页结论
+
+| 项 | 改前（master `778a312`） | 改后（本分支） |
+|---|---|---|
+| S2 `replay_lobby` L1 `l1_dmean_max` | **2.204**/255（不过） | **0.0**（过） |
+| S2 L2 超限块数（门槛 ≤2.0/255，24 块全过） | **5**（最差 `(0,4)` = 20.914） | **0** |
+| S2 L3 差异像素 / 比例 / `max|Δch|` | 91 625 px / **4.1139 %** / 255 | **0 px / 0.0000 % / 0** |
+| S2 判定 | 不过（L1 主色/均值） | **过**（三层全过） |
+| 改前差异 bbox | `(0,0)–(1916,237)`（**只在行带上**） | 无差异 |
+| `y > 237` 的 18 块（回归护栏） | 0 像素差 | **0 像素差**（不变） |
+| 列 bbox 逐项（本任务预注册，容差 ≤8 px） | — | **7 项全部 0 px 误差**（见 §56.2） |
+
+一句话：**S2 从"整行都不对"变成"一个像素都不差"**；顺带把 `tools/frame_capture.py` 里
+我方 ▶ 的点击点从 `(1619,124)` 移到 `(1813,133)`（**只动这一行**）。
+
+### 56.1 原版一行到底长什么样（**观测**：真帧 + 恢复出的 `replay_entry.tscn`）
+
+两侧采集（同一台机、私有 Xvfb、mesa llvmpipe、`--flow replay`、只拷冻结快照两份回放进
+各自的 `user://replays`）：
+
+```bash
+python3 tools/frame_capture.py --side original --flow replay --seed-replays --out $W/cap_orig --display-num 83
+python3 tools/frame_capture.py --side ours     --flow replay --seed-replays --out $W/cap_mine --display-num 84
+```
+
+原版那三帧（`replay_lobby_1..3.png`）**逐像素相同**（差异 0）⇒ 行是静态的，可当靶子。
+
+> ⚠️ 采集产物在 `.agent-work/` 下，**用完就删、不入库**（`AGENTS.md` 的目录纪律）
+> ⇒ 本文不把它们当证据链的锚点，只写"用什么命令、在哪一步、量到多少"。上面两条命令
+> 加预置的两份冻结回放就是完整复现步骤（回放只**拷**、快照只读）。
+一行 67 px 高、行距 71（= 67 + VBox separation 4），五段（x 是闭区间）：
+
+| 段 | 原版真帧 bbox | 内容 | 数据从哪来 |
+|---|---|---|---|
+| 1 录制时间 | `(78,116)–(605,154)` | `2026-11-05 16:48:18`（**带秒**） | **文件名**（unix 时间戳）→ **UTC** |
+| 2 关卡名 | `(836,115)–(1001,153)` | `Level 0` | 回放内 `GameNameInfo.game_name`（**最后一个**） |
+| 3 模式图标 ×4 | `(1289,100)–(1355,166)` / `1404` / `1518` / `1633` | 网格白底 / `f(x)=` / 回合箭头 / `∞` | 回放内 `Axis/Function/Turn/TimeModeInfo` |
+| 4 ▶ | `(1780,100)–(1846,166)` | `play_option` | `replay_entry.tscn::PlayReplayButton` |
+| 5 尾部空占位 | 宽 69（可撑满到 1920） | — | `replay_entry.tscn` 最后一个 `MarginContainer` |
+
+**没有**"文件名列"与"字节数列"——原版这两列根本不存在（改前我方有，差 91 625 px 的主因）。
+
+#### 三条会被误判的细节（都有真帧证据）
+
+1. **时间列是文件名，不是 `mtime`，且按 UTC 显示。** 两个证据：
+   * 真帧 `1793897298 → 2026-11-05 16:48:18`；该时间戳的**本地**时间是 `2026-11-06 00:48:18`
+     （本机 `TZ=Asia/Shanghai`）⇒ 显示的是 **UTC**；
+   * **对照实验**（本轮新做，**观测**）：先按上一节的命令把两份回放拷进原版
+     `user://replays`，再**只**把其中 `1793897298` 那份副本的 `mtime` 改成
+     `2020-01-02 03:04:05`（`os.utime`，**文件名不变**；冻结快照只读、一个字节没动），
+     然后重截 S2 —— 第 1 行**仍**显示 `2026-11-05 16:48:18`（= 文件名时间戳的 UTC），
+     不是 `2020-01-02` ⇒ 原版读**文件名**、不读 `mtime`。做法是在
+     `tools/frame_capture.seed_replays` 外面包一层"拷完再 `os.utime`"的钩子，其余原样。
+2. **关卡名与四个模式图标都是"回放内容"，不是 `.tscn` 里的静态值。** 第 1 行（`1793897298`）
+   第 2 个图标是 `f(x)=`，第 2 行（`1783255495`）是 `dy/dx`；两份回放的差别正是
+   `FunctionModeInfo`：前者 `NormalFunction`、后者在 tick 14 变成 `DiffEqFunction`。
+   时限图标是 `∞` 而不是默认的 `01:00`，同理（`TimeModeInfo: Timer1m → TimerInf`）。
+   ⇒ 图标**跟着这一份回放的实际设置变**，`.tscn` 里那四个 `icon=` 只是编辑器默认值。
+3. **`GameNameInfo` 要取最后一个。** 同一条回放里它出现 2–3 次：tick 2 是 `Graphwar Game`
+   （默认房间名），tick 6 / 14 才是 `Level N`。取第一个会显示 `Graphwar Game`（改前我方就是
+   这一列干脆不显示，因为旧注释认为"要整份解压所以列表里不解析"）。
+
+### 56.2 列 bbox 逐项对照（预注册 `fixtures/replay_lobby_targets.txt`，容差 ≤8 px）
+
+改后我方（`cap_mine_final/frames/replay_lobby_1.png`）与原版真帧逐项对比：
+
+| 列 | 预注册目标 | 改后实测 | 误差 |
+|---|---|---|---|
+| 录制时间 | `(78,116,605,154)` | `(78,116,605,154)` | **0 px** |
+| 关卡名（行 1） | `(836,115,1001,153)` | `(836,115,1001,153)` | **0 px** |
+| 关卡名（行 2，`Level 16`） | `(821,186,1014,224)` | `(821,186,1014,224)` | **0 px** |
+| 图标 1（坐标模式，白底） | `(1289,100,1355,166)` | 同 | **0 px** |
+| 图标 2（函数模式） | `(1404,100,1470,166)` | 同 | **0 px** |
+| 图标 3（回合模式） | `(1518,100,1584,166)` | 同 | **0 px** |
+| 图标 4（时限 `∞`） | `(1633,100,1699,166)` | 同 | **0 px** |
+| ▶ | `(1780,100,1846,166)` | 同 | **0 px** |
+| 行 1 / 行 2 的 y 带 | `[100,166]` / `[171,237]` | 同 | **0 px** |
+
+### 56.3 关卡名从哪读、解压多少字节（**观测**，可复跑）
+
+* **字段**：明文 JSONL 里的事件 `GameNameInfo.game_name`，取**最后一个**；四个图标同理取
+  `AxisModeInfo.axis_mode` / `FunctionModeInfo.function_mode` / `TurnModeInfo.turn_mode` /
+  `TimeModeInfo.time_mode` 的最后一个值（枚举名 → `GwIcons` 键的对照表在
+  `src/_scaffold/replay_meta.rs::mode_icons()`）。
+* **实现**：新文件 `src/_scaffold/replay_meta.rs`（纯逻辑，7 条单测）+ `replay_meta_class.rs`
+  （GDExtension 类 `GwReplayMeta`，`mod.rs` 加两行）。**没有第二份 DEFLATE**：直接复用
+  `_scaffold/replay_inflate.rs` 的解码器。
+* **解压多少**：**整份解压、解析只走到 [`HEAD_CAP`] = 64 KiB**。⚠️ 与本任务最初的设想
+  （"只解压头部"）**不同**，如实登记：
+  * 旧注释说"400 份 ≈ 64 MB，整份解压太贵"，**实测不成立**：403 份 gzip 合计 **1.09 MB**、
+    明文合计 **10.67 MB**（最大单份 169 505 B）；整轮（解压 + 解析 403 份）在 **debug 构建**
+    下合计 **515.9 ms**，release 下更快。
+  * 想做到"解压到一半就停"需要一个**能中途返回**的 inflate；现有解码器只提供"整份解压"一个
+    入口，在 `replay_meta.rs` 里再写一份能停的解码器 = **第二份 DEFLATE 实现**（`AGENTS.md`
+    明令禁止），而 `replay_inflate.rs` 不在本任务允许改的文件清单里 ⇒ **这一步没做**。
+  * 替代保证（可复跑）：解析上限 64 KiB 时，**403/403 份的解析结果与"整份解析"逐字段相同**。
+    语料里"最后一个相关事件"的最远偏移是 **62 401 B**（文件 `1793884550`）< 65 536。
+* **复跑命令**（会先比语料再比结论；不给目录就静默跳过，所以 `cargo test` 不依赖仓库外数据）：
+
+```bash
+export CARGO_HOME=<WS>/.reference/cargo-home CARGO_TARGET_DIR=<W>/target
+GW2_REPLAYS_DIR=<WS>/.reference/replays/gw2-replays-snapshot/replays \
+  cargo test --offline --lib replay_meta -- --nocapture
+#   实测输出：语料 403 份：解压失败 0；与整份解析**不一致** 0 份；明文合计 10.67 MB；
+#             解析合计 9624107 B；最后一个相关事件最远偏移 62401 B（HEAD_CAP=65536）；
+#             整轮（解压+解析）515.9 ms
+```
+
+* **原版是不是整份解压**：**未知**。这条读取路径在 `libgraphwarrust.so` 里**没有定位**
+（本轮没有做指令级取证），上面那句"原版 400 份列表照样显示关卡名 ⇒ 它没整份解压"只是
+**推测**，不作为结论。
+
+### 56.4 版式是怎么搭出来的（**观测** + 一处**推断**）
+
+`.tscn` 是权威的结构来源（`recovered-src/replay_entry.tscn`，21 节点），逐节点照抄：
+
+```
+HBoxContainer(separation 4)
+├ ScrollContainer[expand] / MarginContainer(NameContainer, LanLobbyFontResize) / Label(ReplayName)
+├ MarginContainer(GameNameContainer)[expand, ratio 0.1] / Label(GameName)
+├ MarginContainer(ModeContainer)[expand] / HBoxContainer(OptionsContainer)[ratio 0.5]
+│     [空 Margin][AR(1:1)/AxisModeButton][AR2/FunctionModeButton][AR3/TurnModeButton][AR4/TimeModeButton][空 Margin2]
+├ AspectRatioContainer(ratio 1, stretch_mode = 1, alignment_horizontal = 2) / GraphwarButton(PlayReplayButton)
+└ MarginContainer[expand, ratio 0.1]
+```
+
+行高 67 的来源不是按钮，而是**第 1 列的 Label**：字号 = 屏宽/40 = **48**（`LanLobbyFontResize.gd`），
+Comic Relief Bold 在 48 px 下 `Label` 的最小高度正好 **67** ⇒ 行高 67，四个 `AspectRatioContainer`
+被撑成 67 高、`STRETCH_FIT` 下正方形 = 67×67（真帧五个按钮全是 67×67）。
+
+三个"照抄才会对"的地方（都踩过）：
+
+1. **`stretch_mode = 1` 是"高度定宽度"，不是"宽度定高度"。** Godot 4 的
+   `AspectRatioContainer.StretchMode` 是 `WIDTH_CONTROLS_HEIGHT = 0` / `HEIGHT_CONTROLS_WIDTH = 1` /
+   `FIT = 2` / `COVER = 3`；`.tscn` 会显式写出来的必然是**非默认值**（默认 = 2 = FIT）。
+   照字面当作"宽度定高度"（= 0）会把 ▶ 画成 **6×6 的小点**（`expand_icon = true` 时按钮的
+   最小尺寸只剩 3+3 的样式盒内边距 ⇒ 子节点最小 6×6，宽度定高度就把它按 6 铺开）。
+2. **`OptionsContainer` 首尾那两个空 `MarginContainer` 必须建**：6 个槽各占 1 份 stretch，
+   少了它们四个图标会整体左移约 100 px（真帧实测：只有 6 槽模型才对得上
+   `1289 / 1404 / 1518 / 1633`）。
+3. **返回键的 `ClipButton` 要 `clip_children = 2`**（见 §56.5）。
+
+### 56.5 顺手挖出来的**既有缺陷**：返回键圆角处的 152 个像素（**观测**，已在本屏就地修）
+
+改完行之后 S2 还剩 **152 个差异像素**（`max|Δch| = 22`，bbox `(0,0)–(145,95)`），全在返回键的
+四个弯角上：原版 `(0,0) = (14,37,28)`（底色），我方 `(0,0) = (26,59,45)`（面板色）。
+根因：`GwUI.exit_pair()` 里 `AnimationRect`（面板色 `ColorRect`，`show_behind_parent = true`）
+是 `ClipButton` 的子节点，而**原版 `ClipButton` 带 `clip_children = 2`**（`replay_lobby.tscn` 里
+写着）⇒ 子节点被裁到按钮的圆角形状内，弯角露出底色；我方少了这一条 ⇒ 弯角被面板色填满。
+
+* 影响面：**每一屏的返回键**都有这 152 px（主菜单没有返回键，所以它一直是 0 像素差）。
+* 本轮处置：`client/src/ui/ui.gd` **不在本任务允许改的文件清单里** ⇒ 在
+  `replay_lobby.gd::build()` 里就地对 `ClipButton` 补一条 `clip_children`（见 docs/16 §62.6
+  的"建议下一轮在 `exit_pair` 里统一修"）。
+* 补上之后 S2 的差异从 152 px 变成 **0 px**，`max|Δch| = 0`。
+
+### 56.6 回归护栏与"哪些数字没变"
+
+| 项 | 数 | 命令 |
+|---|---|---|
+| `cargo test --offline` | **1768 / 0**（基线 1761 + 本轮新增 7 条 `replay_meta` 单测） | `cargo test --offline` |
+| `selftest` | **717 / 0 failed / 1 skipped**，`missing=0`（claimed 0 / degraded 0 / **silent 0**） | `HOME=<有回放样本的 HOME> bash client/run.sh selftest` |
+| 三轴 `fire` | 结算批 **1080**、内容命中 **647**、种类序列 1075、死亡集合 366/385、挖洞 207/294（`--check-baseline` **全部一致**） | `cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive fire --policy default --json f.jsonl` + `python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire --snapshot <快照>` |
+| 三轴 `batch` | 见 §56.7（与基线逐项一致） | `--drive batch --policy default` |
+| 三轴 `batch_conv` | 见 §56.7（收敛层 637） | `cargo run --release --offline -q --example batch_conv -- --dir <快照> --policy strict` |
+| 冻结快照 | **403 份**，逐文件 sha256 与 `fixtures/guardrails.json` 的 `corpus` 一致（`--check-baseline` 的语料闸先跑） | 同上 |
+| `y > 237` 的 18 块 | **0 像素差**（整屏 0 像素差，自然满足） | `frame_diff.py` 的 blocks TSV：`row ≥ 1` 的 18 行 `diff_px` 全 0 |
+
+> ⚠️ **selftest 里改了一个"查找辅助函数"，不是断言。** `_replay_play_button()` 原来按
+> `ReplayName` 标签的**文本 = 文件名**找行；本轮 `ReplayName` 按原版显示**录制时间** ⇒ 改成
+> 按行节点上的 `replay_path` 元数据找（`replay_lobby.gd::_entry` 写入）。
+> **这一组的断言一条没动**（进入 PlayScreen / 回放模式 / 退出回主菜单……全部原样）。
+> 证据：改前不改辅助函数跑出来是 `654 passed / 7 failed`，改后 `717 / 0`；把本分支的
+> GDScript 全部 `git stash` 掉再跑也是 `717 / 0`（基线一致）。
+
+### 56.7 边界：本轮**没有**解决的
+
+1. **S3 `replay_play` / S4 `replay_end` 仍然不过**（41.328 % / 52.460 %，改前 41.328 % / 52.460 %
+   —— 一个数都没变）：它们差的是**回放屏自己的元素与播放时序**，不在"列表行"这一层，
+   本任务不覆盖（`docs/16` §61.4 已指出根因是 `load()` 之后该不该自己走）。
+2. **原版读回放元数据用不用整份解压**：**未知**（见 §56.3 最后一条）。
+3. **`GraphwarButton`（Rust 类）的最小尺寸规则**：**推断**。四个模式按钮与 ▶ 的真帧尺寸
+   都是 67×67，本轮靠"行高 67 + `AspectRatioContainer` 的 `FIT`/`HEIGHT_CONTROLS_WIDTH`"
+   得到同一结果，**没有**给按钮钉 `custom_minimum_size`；这解释了 ▶ 为什么 67 宽，但
+   原版 Rust 侧到底怎么算最小尺寸，仍无指令级证据。
+4. **关卡名/模式读不到时不猜**：回放里没有这些事件（2 份空回放、坏文件）⇒ 关卡名留空、
+   对应图标不画；原版遇到这种文件显示什么，**未知**（冻结语料里没有这种样本可对照）。
 
 ## 57. 视觉真值扩到**静态两屏**：战役选择屏 + 关卡弹窗都做到 **0 像素**（2026-11-26，任务 T6）
 

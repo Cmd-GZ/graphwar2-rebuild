@@ -2820,14 +2820,20 @@ func _test_replay_player() -> void:
 	await _frames(2)
 	get_node("/root/App").state.reset_lan()
 
-## 在 ReplayLobby 里找"标题 = 文件名"那一行的播放键。
+## 在 ReplayLobby 里找"文件名 = `title`"那一行的播放键。
+##
+## ⚠️ T5 改版后这里**按行的元数据找**，不再比 `ReplayName` 的文本：
+## 原版 `ReplayName` 显示的是**录制时间**（`2026-11-05 16:48:18`），不是文件名
+## （详见 `docs/06` §56.1 的真帧证据）。`replay_lobby.gd::_entry` 把
+## `replay_path` / `replay_ts` 写在行节点的 meta 上，本函数改读它。
+## **只改了"怎么找这一行"；这一组的断言一条没动**（docs/16 §62.7）。
 func _replay_play_button(lobby: Node, title: String) -> GwButton:
 	var box := lobby.find_child("ReplaysContainer", true, false)
 	if box == null:
 		return null
 	for row in box.get_children():
-		var name_label := (row as Node).find_child("ReplayName", true, false) as Label
-		if name_label == null or String(name_label.text) != title:
+		var p := String((row as Node).get_meta("replay_path", ""))
+		if p == "" or p.get_file() != title:
 			continue
 		return (row as Node).find_child("PlayReplayButton", true, false) as GwButton
 	return null

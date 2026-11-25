@@ -106,5 +106,10 @@ pub mod replay_driver;
 #[cfg(feature = "gdext-bindings")]
 pub mod replay_driver_class;
 pub mod replay_inflate;
+// 回放**列表行**的元数据（关卡名 / 四个模式 / 文件名时间戳），纯逻辑，
+// `cargo test` 直接测（`docs/06` §56）。GDExtension 外壳在 `replay_meta_class.rs`。
+pub mod replay_meta;
+#[cfg(feature = "gdext-bindings")]
+pub mod replay_meta_class;
 pub mod replaydiff;
 pub mod rng;

@@ -466,6 +466,14 @@ HOME=$H bash client/run.sh selftest
 ```
 ⇒ **判据 = `missing=0` 且 `silent=0`**（不是 `passed` 数）；`client/assets/` 是第三个前置（缺了图标/字体断言会显式跳过）。
 
+**⑤ 反向的一条：客户端自己的 `user://replays` 必须干净**（2026-11-26 踩到）。
+`selftest` 有一条 `回放列表空时只剩标题一个 Label`；为了跑 headless 把两份冻结回放拷进
+`<XDG_DATA_HOME>/godot/app_userdata/Graphwar II — Client Rebuild/replays/` 之后，这条会
+**FAIL**（列表里冒出 2 行 ⇒ 716/1/1skip，而 `missing=0` 仍然是 0 —— 说明它是**真红**不是降级）。
+⇒ 需要"真回放"的是 **`$HOME/.local/share/godot/app_userdata/Graphwar/replays/`**（原版目录，只读、
+给 `replay_player` / `play_flow_check` 用）；**我们客户端自己的 `user://replays` 要保持空**。
+一条命令自查：`ls "$XDG_DATA_HOME/godot/app_userdata/Graphwar II — Client Rebuild/replays"`。
+
 ## 11. 跨平台编译验证：Windows x86_64 / Android arm64（2026-11）
 
 ### 11.1 结论

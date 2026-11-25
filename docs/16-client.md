@@ -10652,9 +10652,9 @@ for a in 0x470840 0x477140 0x476a20 0x477540 0x4758b0 0x4741a0 0x473d00; do … 
 
 ## 62. 战役选择屏 / 关卡弹窗：两处**源码级**修正让两屏做到**逐像素相同**（2026-11-26，任务 T6）
 
-> **编号说明**：任务书给这一节预留的是 **64 号**（62、63 号留给 t4/t5，还没合进本分支）。
-> `tools/check_doc_refs.py` 要求 `## NN.` **连续无空洞**，所以本分支里先落到 **62 号**；
-> 内容与预留的 64 号完全一致，**合并 t4/t5 后由 lead 顺延重编为 64 号**（正文里对它的引用都写成
+> **编号**：本节现为 **62 号**（t6 先合）；**t4 合并时**会顺延为 **64 号**（t4=62、t5=63、t6=64），
+> 届时正文引用一起改。当前 master 的编号是连续的（§61 → §62 本节 → §63 = t5 的回放列表行）。
+> 正文里对它的引用都写成
 > `docs/16` 的 62 号，重编时一并改）。
 >
 > 前情：`fixtures/frame_diff_thresholds.txt` 那套三层判据（§61 / `docs/06` §53、§54）此前只覆盖回放流四屏。
@@ -10770,3 +10770,95 @@ t.set_color("font_focus_color",   "Button", Color(0.95,  0.95,  0.95,  1.0))   #
 
 见 `docs/06` §57.8（两侧 `--flow static` + `frame_diff.py --screens campaign,level_popup`）。
 本条的两个改动都是 `.gd`，**不需要**重编 `libgw2_rebuild.so`，也不需要 `--import`（没有新文件）。
+
+## 63. 回放列表（S2）行结构按原版重做：五段 = [录制时间(带秒·UTC)] [关卡名] [4 个模式图标] [▶]；**整屏 0 像素差**（2026-11-25，`dispatch/T5`）
+
+### 63.1 结论与改动面
+
+`client/src/screens/replay_lobby.gd` 的 `_entry()` **整段重写**（原来是 5 个自造列：文件名 /
+日期+字节 / 6 个空框 / ▶ / 字节），现在按 `recovered-src/replay_entry.tscn` 的 21 个节点逐段照抄：
+
+```text
+HBoxContainer(separation 4)
+├ ScrollContainer / MarginContainer(NameContainer, LanLobbyFontResize.gd) / Label(ReplayName) ← 录制时间(UTC,带秒)
+├ MarginContainer(GameNameContainer) / Label(GameName)                                        ← 关卡名
+├ MarginContainer(ModeContainer) / HBoxContainer(OptionsContainer) / [空][AR×4][空]        ← 4 个模式图标
+├ AspectRatioContainer(ratio 1, stretch_mode=1, align_h=END) / GwButton(PlayReplayButton)  ← ▶
+└ MarginContainer                                                                          ← 尾部等宽占位
+```
+
+视觉效果：`docs/06` §56.0 一页结论（L1 2.204 → **0.0**；L2 5 块 → **0**；L3 91 625 px /
+4.1139 % → **0 px / 0 % / max|Δch| 0**；`y>237` 的 18 块仍 0 像素差）。
+
+### 63.2 新增的 Rust 侧：`GwReplayMeta`（列表行要的两样东西都只在回放内容里）
+
+| 文件 | 作用 | 证据档 |
+|---|---|---|
+| `src/_scaffold/replay_meta.rs` | 抽 `GameNameInfo.game_name` + 四个模式枚举（**取最后一个**）、文件名时间戳 → UTC 字符串 | 字段选择 **观测**（真帧 `Level 0`/`Level 16`、第 2 行 `dy/dx` 图标）；"原版整份还是头部解压" **未知** |
+| `src/_scaffold/replay_meta_class.rs` | GDExtension 类 `GwReplayMeta`（`read` / `game_name()` / `mode_icons()` / `format_utc()` …） | 搬运层，无新逻辑 |
+| `src/_scaffold/mod.rs` | 两行 `pub mod` | — |
+
+**没有第二份 DEFLATE**：解压复用 `_scaffold/replay_inflate.rs`，解析只在头部 64 KiB 内进行
+（403 份语料上"头部结果 == 整份结果"逐份成立，复跑命令见 `docs/06` §56.3）。
+
+### 63.3 客户端侧改了什么
+
+| 文件 | 改动 |
+|---|---|
+| `client/src/screens/replay_lobby.gd` | `_entry()` 重写；`_recorded_at()`（文件名→UTC 到秒）；`_meta_for()`（带缓存）；`_scale_game_label()`（原版 `GameNameContainer.gd` 的 宽/40 + 宽×0.24）；`_rescale()`；返回键 `ClipButton` 补 `clip_children`（见 §63.6）；行节点挂 `replay_path`/`replay_ts` 元数据 |
+| `client/src/play/replay_file.gd` | `list_dir()` 每项多一个 `ts`（文件名解析出的 unix 时间戳，非数字名字为 `-1`）——**只加字段，旧键全在** |
+| `client/tools/selftest.gd` | **只改一个查找辅助函数**（`_replay_play_button`：按 `ReplayName` 文本 → 按行 `replay_path` 元数据）；**断言一条没动**（见 §63.7） |
+| `tools/frame_capture.py` | **只改 `REPLAY_ROW1_PLAY['ours']` 一个数**：`(1619,124)` → `(1813,133)`（行版式变了，▶ 跟着移到与原版同位置；`--flow replay` 的其它逻辑、`original` 那个键都没动） |
+| `fixtures/replay_lobby_targets.txt` | **新增（先于任何改动单独提交）**：列 bbox 目标 + 容差 ≤8 px + 三条不变项 |
+
+### 63.4 顺手纠正的一条旧注释（**本项目文档纪律要求的"就地改正"**）
+
+旧 `replay_lobby.gd` 文件头写着：
+
+> 房间名/四个模式**不在列表里解析**：那要把每份 gzip 整个解压一遍（400 份 ≈ 64 MB），
+> 打开回放时才有那个信息。列表里只给文件名 + 字节数 + 录制时间。
+
+**这条与观测矛盾**，已删并改写：① 原版真帧里 400 份级别（本轮 2 份）的列表**照样显示关卡名**；
+② 语料实测 403 份 gzip **1.09 MB** / 明文 **10.67 MB**，整轮解压+解析 403 份在 debug 构建下
+**515.9 ms**（`docs/06` §56.3），"64 MB"这个数字本身也不对。现在由 Rust 侧逐文件读一次。
+
+### 63.5 本客户端没有 `GameNameContainer.gd` 视图脚本，所以行为是"照抄"而不是"挂原版"
+
+`client/src/views/` 里只有 `LanLobbyFontResize.gd`（第 1 列挂它 ✓），**没有** `GameNameContainer.gd`。
+原版那份脚本的两条逻辑（`custom_minimum_size.x = 屏宽×0.24`、字号 = 屏宽/40）在
+`replay_lobby.gd::_scale_game_label()` 里照抄实现。**没做**的：给它单独建一份
+`client/src/views/GameNameContainer.gd`（需要改 `views/` 目录，不在本任务允许的文件清单里；
+等下一轮统一处理时删掉 `_scale_game_label()` 即可）。
+
+### 63.6 发现的**既有缺陷**：返回键 `ClipButton` 少了 `clip_children = 2`（建议统一修）
+
+* 现象：S2 行改完后仍剩 **152 个差异像素**（`max|Δch|=22`），全在返回键四个弯角；
+  原版弯角是底色 `(14,37,28)`，我方是面板色 `(26,59,45)`。
+* 根因：`GwUI.exit_pair()`（`client/src/ui/ui.gd`）里 `AnimationRect`（面板色 `ColorRect`）
+  是 `ClipButton` 的子节点；原版 `.tscn` 给 `ClipButton` 写了 `clip_children = 2`
+  （`CLIP_CHILDREN_ONLY`）⇒ 子节点被裁进按钮圆角形状，弯角露底色。
+* 影响面：**每一屏的返回键**（主菜单没有返回键，所以它一直是 0 像素差，掩盖了这条）。
+* 本轮处置：`ui.gd` 不在允许改的文件里 ⇒ 在 `replay_lobby.gd::build()` 里就地补一条
+  （带注释与证据）。**建议下一轮在 `exit_pair()` 里统一加这一行**，然后把 `replay_lobby.gd`
+  里那段就地补丁删掉。
+
+### 63.7 selftest：改的是"怎么找那一行"，不是断言
+
+`client/tools/selftest.gd::_replay_play_button()` 原来用 `ReplayName` 标签的**文本 = 文件名**
+来找回放行。本轮 `ReplayName` 按原版显示**录制时间**，这个选择器就失效了（实测：
+辅助函数不改的话 selftest 是 `654 passed / 7 failed`，失败的全是"按播放 → 进 PlayScreen"之后的断言，
+因为按钮根本没被点到）。改法：行节点挂 `replay_path` 元数据，辅助函数按它匹配。
+
+* **断言零改动**：`717 passed / 0 failed / 1 skipped`、`missing=0`（claimed 0 / degraded 0 / silent 0）；
+* 对照：把本分支的 GDScript 全部 `git stash` 掉再跑，同样是 `717 / 0 / 1 skip`（基线一致）。
+
+### 63.8 遗留 / 未做（诚实清单）
+
+| # | 没做的 | 原因 / 缺什么 |
+|---|---|---|
+| 1 | **只解压头部**（不是"整份解压 + 头部解析"） | 要一个能中途返回的 inflate；现有解码器只有"整份"入口，另写一份 = 第二份 DEFLATE（禁止），而 `replay_inflate.rs` 不在允许改的文件里。替代保证：64 KiB 上限下 403/403 与整份同结果 |
+| 2 | 原版到底整份还是头部解压 | **未知**：这条读取路径在 `libgraphwarrust.so` 里未定位（本轮没做指令级取证） |
+| 3 | 原版 `GraphwarButton` 的最小尺寸规则 | **推断**：真帧五个按钮都是 67×67，本轮由"行高 67 + 两个 AspectRatioContainer 的 stretch 模式"得到同样结果，没有给按钮钉死尺寸；Rust 侧算法无证据 |
+| 4 | 4 个图标的**枚举→图标**对照的指令级证据 | 本轮用"回放枚举名 → `GwIcons` 键"的映射（`replay_meta.rs::mode_icons()`），依据是真帧两行图标不同 + `docs/118` §7.1 / `docs/92` §6 的档位顺序；**没有**从二进制里读出这张表 |
+| 5 | 关卡名/模式缺失时原版画什么 | **未知**：冻结语料里没有"没有这些事件的非空回放"样本可对照；我方选择"留空不猜" |
+| 6 | S3/S4（回放屏/播完屏） | 不在本任务范围（`docs/16` §61.4 已指出根因）；本轮这两屏的数一个都没变（41.328 % / 52.460 %） |

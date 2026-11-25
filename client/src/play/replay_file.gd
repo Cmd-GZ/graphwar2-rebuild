@@ -170,7 +170,13 @@ func kind_counts() -> Dictionary:
 # ---------------------------------------------------------------- 目录列举
 
 ## 列出 `dir` 里的回放文件（**不按扩展名过滤**：真实回放的文件名是纯 unix 时间戳，
-## 没有扩展名，`docs/78` §1）。返回每项 `{title, size, mtime, path}`，新的在前。
+## 没有扩展名，`docs/78` §1）。返回每项 `{title, size, mtime, path, ts}`，新的在前。
+##
+## `ts` = **文件名**解析出的 unix 时间戳（纯数字文件名才有，否则 -1）。
+## 列表行显示录制时间用的是它而不是 `mtime`，两条证据（`docs/06` §56.1，**观测**）：
+## ① 真帧 `1793897298` 显示成 `2026-11-05 16:48:18` = 该时间戳的 **UTC**；
+## ② 对照实验：只把副本的 `mtime` 改成 2020-01-02、文件名不动，原版显示**没变**
+##    ⇒ 读的是文件名。`mtime` 仍保留在本字典里，只做兜底（文件名不是数字时）。
 static func list_dir(dir: String) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	var d := DirAccess.open(dir)
@@ -185,6 +191,7 @@ static func list_dir(dir: String) -> Array[Dictionary]:
 			"title": f,
 			"size": int(FileAccess.get_file_as_bytes(full).size()),
 			"mtime": int(FileAccess.get_modified_time(full)),
+			"ts": GwReplayMeta.timestamp_from_name(f),
 			"path": full,
 		})
 	return out
