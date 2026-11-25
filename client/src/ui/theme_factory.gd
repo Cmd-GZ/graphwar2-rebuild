@@ -176,9 +176,30 @@ static func mode_icon_stylebox(on_white: bool) -> StyleBoxFlat:
 ##   Button/colors/font_disabled_color = (0.87451, 0.87451, 0.87451, **0**) ← alpha 0 ⇒ 锁住的关看不见
 ##   Button/colors/icon_normal_color   = (1, 1, 1, 0)
 ##
-## **没有** 覆盖 `font_color` ⇒ 白色是从上层 app 主题继承下来的（用户截图里 21 个数字全白，
-## 正是这个原因）。旧实现给每个格子画了一个灰色圆角按钮 + 我们自己的无衬线粗体，
-## 与原版完全不是一回事（docs/124 §3）。
+## **没有** 覆盖 `font_color`（用户截图里 21 个数字是白的，旧实现据此以为"继承 app 主题的
+## 白色"）。旧实现给每个格子画了一个灰色圆角按钮 + 我们自己的无衬线粗体，与原版不是一回事
+## （docs/124 §3）。
+##
+## ## 数字的**颜色**（2026-11-26 T6 真帧实测，观测）
+##
+## 原版真帧里同一个 "0" 在三种鼠标状态下是**三个不同的颜色**（两屏都能量到，见
+## `docs/06` §57 / `docs/16` §62）：
+##
+## | 状态 | 原版真帧 | 归一化 | Godot 默认主题 `Button/font_*`（4.7.2 实测） |
+## |---|---|---|---|
+## | normal（鼠标不在上面） | `(223,223,223)` | 0.87451 | `font_color = (0.875,…)` |
+## | hover（鼠标停在上面） | `(242,242,242)` | 0.94902 | `font_hover_color = (0.95,…)` |
+## | pressed（按住） | `(255,255,255)` | 1.0 | `font_pressed_color = (1,1,1)` |
+##
+## ⇒ **这三个数就是引擎默认主题的 `Button` 字色**（用同一个 4.7.2 跑
+## `ThemeDB.get_default_theme().get_color(...)` 实测，见 `docs/16` §62）。也就是说这 21 个
+## `GraphwarButton` 的**字色走的是默认主题**，不是 app 主题（app 主题是白 `(1,1,1)`，
+## 与 223/242 对不上）。**推断**（缺证）：原版 `GraphwarButton`（Rust 类）取色时没走完整
+## 的 theme 链；没有反汇编证据，登记为未知。
+##
+## 为什么要显式写：我方这套 21 个按钮是**真 Godot `Button`**，会正常继承我们的 app 主题
+## （`Button/font_color = 白`），不显式覆盖就永远画 255 —— 实测 campaign 屏差 3979 px、
+## 全部落在这一枚数字上。
 static func campaign_level_theme() -> Theme:
 	var t := Theme.new()
 	var f := title_font()
@@ -186,6 +207,12 @@ static func campaign_level_theme() -> Theme:
 		t.default_font = f
 	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
 		t.set_stylebox(state, "Button", StyleBoxEmpty.new())
+	# 字色 = 引擎默认主题的 Button 四档（原版真帧三档实测 + 4.7.2 默认主题查询）。
+	t.set_color("font_color", "Button", Color(0.875, 0.875, 0.875, 1.0))
+	t.set_color("font_hover_color", "Button", Color(0.95, 0.95, 0.95, 1.0))
+	t.set_color("font_pressed_color", "Button", Color(1.0, 1.0, 1.0, 1.0))
+	t.set_color("font_focus_color", "Button", Color(0.95, 0.95, 0.95, 1.0))
+	# disabled 的 alpha=0 来自恢复出的 `campaign_button_theme_2.tres`（逐字节，见上）。
 	t.set_color("font_disabled_color", "Button", Color(0.87451, 0.87451, 0.87451, 0.0))
 	t.set_color("icon_normal_color", "Button", Color(1, 1, 1, 0.0))
 	return t

@@ -184,6 +184,13 @@ static func exit_pair(cmd: String) -> MarginContainer:
 	clip.icon = GwIcons.get_icon("return")
 	clip.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# 原版 `campaign.tscn` 的这两个 `GraphwarButton` 都写了 `clip_children = 2`
+	# （= `CanvasItem.CLIP_CHILDREN_AND_DRAW`）：子节点按**父节点自己画出来的形状**裁，
+	# 也就是按 stylebox 的**圆角矩形**裁。返回键那层深绿 `AnimationRect` 是子节点，
+	# 没有这一行它就是一个**方角**满矩形 —— 四个圆角外侧于是被涂成 #1A3B2D，
+	# 而原版真帧那里是页面底色 #0E251C（实测 campaign/level_popup 两屏各差 152 px，
+	# 差的就是 8 个角的角外区域，见 docs/06 §57）。
+	clip.clip_children = CanvasItem.CLIP_CHILDREN_AND_DRAW
 	for st in ["normal", "hover", "pressed", "disabled"]:
 		clip.add_theme_stylebox_override(st, sb_clip)
 	container.add_child(clip)
@@ -204,6 +211,9 @@ static func exit_pair(cmd: String) -> MarginContainer:
 	press.name = "LongPressButton"
 	press.icon = GwIcons.get_icon("return")
 	press.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# 原版同一个 `.tscn` 里 `LongPressButton` 也写了 `clip_children = 2`（照抄；它没有子节点，
+	# 所以对像素没有影响，但源码级要对得上）。
+	press.clip_children = CanvasItem.CLIP_CHILDREN_AND_DRAW
 	press.add_theme_stylebox_override("normal", sb_press)
 	press.add_theme_stylebox_override("hover", sb_press_active)
 	press.add_theme_stylebox_override("pressed", sb_press_active)

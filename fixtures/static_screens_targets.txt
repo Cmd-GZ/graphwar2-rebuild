@@ -1,0 +1,76 @@
+# 视觉帧对拍 · 预注册**静态两屏**（T6，2026-11-26）
+
+> 这份文件**先于任何一次 `campaign` / `level_popup` 两屏的跨侧比较**写定并提交。
+> 门槛**一个字没改**：仍然是 `fixtures/frame_diff_thresholds.txt`
+> （sha256 `9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873`，提交 `758931b`）§3 的三层判据。
+> 本文件只登记"比哪两屏、怎么点、判据是什么"。
+
+## 1. 为什么扩到这两屏（依据：`docs/06` §53/§54，**观测**）
+
+回放流的四屏（`menu` / `replay_lobby` / `replay_play` / `replay_end`）已经证明这套仪表是硬的
+（`menu` 0 像素）。静态屏是"最容易做到 0 像素"的一类：**没有棋盘局面、没有骰子、没有 tick**，
+不受原版战役关卡里士兵/靶子落点不可钉（`fixtures/frame_diff_thresholds_amend1.txt` §1）的影响。
+只要版式/资产对，两帧就应该逐字节相同。
+
+## 2. 两屏与点击脚本（两路**同一串**坐标，无 seed、无回放）
+
+```
+S5 campaign     启动等 4.0 s（既有 `--settle-boot`）→ 点主菜单 Campaign(534,629) → 等 2.0 s
+S6 level_popup  再点关卡网格第 0 关(241,228)                              → 等 2.0 s
+                （**不点** Start(1074,1009)：那才进对局）
+```
+
+- 坐标沿用 `tools/frame_capture.py` 里既有的常量 `CAMPAIGN_BTN` / `LEVEL_NODE_0`
+  （来自原版实测帧，见 `docs/06` §33 / §52；本文件不新造坐标）；
+- 每屏 **3 帧**、帧间隔 **1.2 s**（与 §2 一致）；**第 1 帧**参与跨侧比较，
+  第 2/3 帧只量同一侧噪声地板（不是门槛）；
+- 新的 flow 名 = `static`（`tools/frame_capture.py --flow static`）。
+  `--flow replay` / `--flow campaign` 的既有行为**一行不改**（红线②）。
+
+## 3. 判据（预注册，原文照抄 `fixtures/frame_diff_thresholds.txt` §3）
+
+两屏**都要**同时满足：
+
+```
+L1  尺寸都恰好 1920x1160
+    每通道全局均值 |Δmean| ≤ 2.0/255
+    第一主色（像素数最多的 RGB）同色，且占比差 ≤ 2.0 个百分点
+L2  6x4 = 24 块（x 每块 320 px、y 每块 290 px），每块每通道均值 |Δ| ≤ 2.0/255；24 块全过
+L3  只在 L1/L2 都过时算：差异像素比例 ≤ 0.10 % ∧ 全图 max|Δchannel| ≤ 8/255
+判定：L1 不过 ⇒ 不过(L1)；L1 过、L2 有块超限 ⇒ 不过(L2)+报块号；都过 ⇒ 看 L3
+```
+
+**这些数字不许改、不许放宽**；跑完也不许回头调。达不到就按 §4 如实报。
+
+## 4. 达不到时怎么报（预先讲好，避免事后找理由）
+
+- 逐块列出 L2 超限块号（`row,col`，左上为 `0,0`）与该块 `dmean_max`；
+- 对人眼可辨的差异区域给出**差异 bbox**，并指到"原版帧里的哪个元素 / 哪个坐标"；
+- 资产缺失（图标/字体/贴图）**如实写"资产缺失"**，不许画自造图形冒充；
+- 证据分档：真帧 ⇒ **观测**；没量到/没证的 ⇒ 写"推断 + 缺什么证据"。
+
+## 5. 产物
+
+- `fixtures/frame_diff_results_static.tsv`（逐屏结论）
+- `fixtures/frame_diff_blocks_static.tsv`（24 块明细）
+- 截图**不入库**（只在 `.agent-work/` 下作临时产物）。
+
+## 6. 复跑命令（跑之前定死，跑完不改）
+
+```bash
+export CARGO_HOME=<WS>/.reference/cargo-home CARGO_TARGET_DIR=<WS>/.agent-work/cg/target-t6
+export GODOT=<WS>/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+$GODOT --headless --path client --import
+W=<WS>/.agent-work/cg/work-t6; mkdir -p $W
+python3 tools/frame_capture.py --side original --flow static --out $W/cap_orig --display-num 85
+python3 tools/frame_capture.py --side ours     --flow static --out $W/cap_mine --display-num 86
+python3 tools/frame_diff.py --orig $W/cap_orig --mine $W/cap_mine --screens campaign,level_popup \
+  --out fixtures/frame_diff_results_static.tsv --blocks-out fixtures/frame_diff_blocks_static.tsv \
+  --json $W/fd_static.json --png $W/fd_static.png
+```
+
+> 工作树注记：本工作树不含 `.reference/`（gitignore）。为了让 `frame_capture.py` 的
+> `REPO/CLIENT/GAME_DIR/SNAPSHOT` 解析到**本工作树**而不是主工作区（否则 `--side ours`
+> 会静默跑主工作区的 `client/`，等于"改了没生效"），`tools/frame_capture.py` 的路径探测
+> 之外另加了工作树内的 `.reference` → 主工作区 `.reference` 的符号链接（不在版本库里）。
