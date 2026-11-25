@@ -58,16 +58,17 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 
 def _find_repo():
-    """重建仓库根 = 含 `client/project.godot` 的目录（94 号时的判据 `.reference/game` 已不存在，
-    见下面 `_find_ws()`；两个判据都留着，旧的仍然优先，以免改变 94 号那次的行为）。"""
-    d = HERE
-    for _ in range(12):
-        if os.path.isdir(os.path.join(d, '.reference', 'game')):
-            return d
-        nd = os.path.dirname(d)
-        if nd == d:
-            break
-        d = nd
+    """**被测量的那棵树** = 本脚本所在的 checkout（`<repo>/tools/frame_capture.py` ⇒ `<repo>`）。
+
+    2026-11-26 修（t6 发现的真陷阱）：原来的第一判据是"从脚本位置向上第一个含
+    `.reference/game` 的目录"。在 `git worktree` 里跑时，工作树本身**没有** `.reference/`
+    （外部件是 gitignore 的，只在主 checkout 里）⇒ 会一路走到**主 checkout** ⇒
+    `CLIENT` 指向**主 checkout 的 client/**，于是 `--side ours` **静默拍"没改过的那份客户端"**，
+    而报告里看不出任何异常（数字"稳定不变"反而像是改动没生效）。
+
+    现在：**被测树 = 脚本自己所在的 checkout**；外部件另用 `_find_external()` 向上找。
+    "测哪棵树"与"外部件在哪"是两个概念，别混。
+    """
     d = HERE
     for _ in range(12):
         if os.path.isfile(os.path.join(d, 'client', 'project.godot')):
@@ -77,6 +78,23 @@ def _find_repo():
             break
         d = nd
     return os.path.dirname(HERE)
+
+
+def _find_external():
+    """外部件（原版三件套 / 冻结回放 / 引擎）所在的树：从脚本位置向上找 `.reference/`。
+
+    主 checkout 与 `git worktree` 共享同一份 `.reference/`（工作树里通常没有，就向上走到主
+    checkout）。找不到就退回被测树本身。
+    """
+    d = HERE
+    for _ in range(12):
+        if os.path.isdir(os.path.join(d, '.reference')):
+            return d
+        nd = os.path.dirname(d)
+        if nd == d:
+            break
+        d = nd
+    return _find_repo()
 
 
 def _find_ws():
@@ -104,7 +122,8 @@ def _first_existing(*cands):
     return cands[0] if cands else ''
 
 
-REPO = _find_repo()
+REPO = _find_repo()          # ← 被测树（`CLIENT = <REPO>/client`）
+_EXT = _find_external()      # ← 外部件所在的树（通常 = 主 checkout）
 _WS = _find_ws()
 
 # 三件路径都可以被「环境变量」或「命令行参数」覆盖（`--engine` / `--game-dir` / `--snapshot`）：
@@ -113,14 +132,19 @@ _WS = _find_ws()
 #   GW2_SNAPSHOT  冻结回放快照目录（回放屏的"固定局面"，见 fixtures/frame_diff_thresholds_amend1.txt §2）
 GAME_DIR = _first_existing(os.environ.get('GW2_GAME_DIR', ''),
                            os.path.join(REPO, '.reference', 'game'),
+                           os.path.join(_EXT, '.reference', 'game'),
                            _WS)
 GODOT = _first_existing(os.environ.get('GW2_ENGINE', ''),
                         os.path.join(REPO, '.reference', 'godot',
+                                     'Godot_v4.7.2-stable_linux.x86_64'),
+                        os.path.join(_EXT, '.reference', 'godot',
                                      'Godot_v4.7.2-stable_linux.x86_64'),
                         os.path.join(_WS, 'tools', 'Godot_v4.7.2-stable_linux.x86_64'))
 # 冻结快照的落点：94 号在 `.reference/replays/gw2-replays-snapshot/replays`，现在在 `dist/` 下同名目录
 SNAPSHOT = _first_existing(os.environ.get('GW2_SNAPSHOT', ''),
                            os.path.join(REPO, '.reference', 'replays',
+                                        'gw2-replays-snapshot', 'replays'),
+                           os.path.join(_EXT, '.reference', 'replays',
                                         'gw2-replays-snapshot', 'replays'),
                            os.path.join(_WS, 'dist', 'gw2-replays-snapshot', 'replays'))
 CLIENT = os.path.join(REPO, 'client')
@@ -423,7 +447,11 @@ def main(argv=None):
                 'engine_version': engine_version(engine_bin) if engine_bin else
                                   engine_version(os.path.join(os.path.abspath(args.game_dir or GAME_DIR),
                                                               'Graphwar.x86_64')),
-                'game_dir': os.path.abspath(args.game_dir or GAME_DIR)}
+                'game_dir': os.path.abspath(args.game_dir or GAME_DIR),
+                # 2026-11-26：**把"测的是哪棵树"写进 manifest** —— 工作树里跑时原来的
+                # `_find_repo()` 会走到主 checkout（见 `_find_repo` 的 docstring），
+                # 拍出来的是旧客户端却不报错；现在事后可以只查这一行。
+                'repo': REPO, 'client': CLIENT, 'external': _EXT}
 
     if args.seed_replays:
         manifest['replays_seeded'] = seed_replays(args.side, home, args.snapshot)
