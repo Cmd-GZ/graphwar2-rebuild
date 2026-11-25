@@ -428,6 +428,44 @@ $ cargo test --offline 2>&1 | grep '^test result'    # 求和 "ok. N" 即得总�
 4. "少跑"现在**不会静默**了（`silent 0`），这是 96 号真正的贡献。
 
 
+#### 10.3.4 本机（`.reference/` 在 checkout 里）的两个前置：`run.sh` 路径探测 + 回放样本（2026-11-26）
+
+2026-11-26 在本机（checkout = `graphwar2-rebuild/`，原版三件套 / Godot / venv **全在 checkout 内的 `.reference/`**）
+第一次跑 `bash client/run.sh selftest`，拿到的是 **654 / 0 / 3 skip**、
+`@@SELFTEST_COVERAGE … missing=63(claimed 0 / degraded 63 / silent 0)`。两个**互相独立**的原因：
+
+**① `run.sh` 的 `ws` 探测写死了"checkout 在 ws 下一层"**（工具缺陷，**已修**）
+```
+旧：ws="$(cd "$here/../.." && pwd)"          # 本机 = /home/CG/Myprojects（checkout 的**父目录**）
+  ⇒ XDG_DATA_HOME/CACHE/CONFIG 指到 checkout **外**、且不在沙箱可写区 ⇒ Godot 的 user:// 写不进去
+新：repo = checkout 根；XDG 恒指 $repo/.agent-work/client/{data,cache,config}；
+    Godot 按候选表探测：$repo/.reference/godot/… ← $ws/tools/… ← $repo/tools/…
+```
+> 为什么以前没撞到：§10.3.3 那台机器上 `<ws>/<checkout>/` 布局里 `here/../..` 正好是 ws，
+> 而 `.agent-work` 在 ws 下 ⇒ 可写。**换布局就会静默降级**，这正是"改了但没生效"那一类。
+
+**② selftest 的 replay 两组需要"真回放"**（环境前置，不是缺陷）
+```
+client/tools/selftest.gd:2594 读 $HOME/.local/share/godot/app_userdata/Graphwar/replays（只读）
+本机 $HOME 只读、假 home 是空的 ⇒ 组 replay_player 少 47 条 + 组 replay_ode 少 16 条 = 63
+                              （**全部 degraded，silent 0** —— 96 号的显式认领在这里起了作用）
+补法：把冻结快照里那两份回放拷进 $HOME 的那个目录（见下面的命令）
+```
+
+**实测（master `778a312`，2026-11-26）**
+```bash
+export CARGO_HOME=$PWD/.reference/cargo-home CARGO_TARGET_DIR=$PWD/.reference/cargo-home/target
+cargo build --offline --example serve_match            # 前置 ①
+H=$PWD/.agent-work/fakehome                            # 前置 ②：可写 HOME + 两份真回放
+mkdir -p $H/.local/share/godot/app_userdata/Graphwar/replays
+cp .reference/replays/gw2-replays-snapshot/replays/{1793897298,1783255495} \
+   $H/.local/share/godot/app_userdata/Graphwar/replays/
+HOME=$H bash client/run.sh selftest
+# → SELFTEST 717 passed, 0 failed, 1 skipped
+# → @@SELFTEST_COVERAGE groups=33 checks=717 expected=717 missing=0(claimed 0 / degraded 0 / silent 0)
+```
+⇒ **判据 = `missing=0` 且 `silent=0`**（不是 `passed` 数）；`client/assets/` 是第三个前置（缺了图标/字体断言会显式跳过）。
+
 ## 11. 跨平台编译验证：Windows x86_64 / Android arm64（2026-11）
 
 ### 11.1 结论

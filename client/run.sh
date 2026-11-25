@@ -3,22 +3,42 @@
 #
 #   bash client/run.sh assets    # 从你的 Graphwar.pck 解出图标/字体到 client/assets/（首次必做）
 #   bash client/run.sh           # 正常启动（需要显示器 / DISPLAY）
-#   bash client/run.sh selftest  # 无显示器自检（93 条断言，退出码 0/1）
+#   bash client/run.sh selftest  # 无显示器自检（条数以 @@SELFTEST_COVERAGE 为准，退出码 0/1）
 #   bash client/run.sh dump      # 打印节点树
 #   bash client/run.sh shots     # 逐界面截图（需要 Xvfb）
 #
-# Godot 路径默认取仓库根的 tools/Godot_v4.7.2-stable_linux.x86_64，可用 GODOT=... 覆盖。
+# 路径探测（2026-11-26 修）：本仓库在不同机器上出现过两种布局 ——
+#   ① `<ws>/<checkout>/`：原版三件套与 Godot 在 checkout **外**的那一层（`<ws>/tools/…`）
+#   ② `<ws>/<checkout>/` 且**所有外部件都在 checkout 里**（`<repo>/.reference/godot/…`，本机即此）
+# 以前 `ws="$here/../.."` 只认 ①，在 ② 上会把 XDG 目录指到 checkout **外**的只读/不存在位置
+# ⇒ `user://` 不可写 ⇒ `selftest` 静默降级成 `missing=78`（2026-11-26 实测：632/7 + 一串 SKIP）。
+# 现在：`repo` 恒定 = checkout 根；XDG 目录恒在 `$repo/.agent-work/client/`；Godot 按候选表探测。
+# 仍可用环境变量覆盖：`GODOT=/path/to/godot`、`GW2_WS=/path/to/ws`。
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ws="$(cd "$here/../.." && pwd)"
-godot="${GODOT:-$ws/tools/Godot_v4.7.2-stable_linux.x86_64}"
-extract="$here/../tools/extract_assets.py"
+repo="$(cd "$here/.." && pwd)"
+parent="$(cd "$repo/.." && pwd)"
+
+first_existing() { for c in "$@"; do [ -n "$c" ] && [ -e "$c" ] && { printf '%s' "$c"; return 0; }; done; return 0; }
+ws="${GW2_WS:-$(first_existing "$repo" "$parent")}"
+godot="${GODOT:-$(first_existing \
+    "$repo/.reference/godot/Godot_v4.7.2-stable_linux.x86_64" \
+    "$ws/tools/Godot_v4.7.2-stable_linux.x86_64" \
+    "$repo/tools/Godot_v4.7.2-stable_linux.x86_64" \
+    "$parent/tools/Godot_v4.7.2-stable_linux.x86_64")}"
+extract="$repo/tools/extract_assets.py"
 assets="$here/assets"
 
-# Godot 会往 XDG 目录写东西；指到工作区里，别污染 ~（本机家目录受限）
-export XDG_DATA_HOME="${XDG_DATA_HOME:-$ws/.agent-work/client/data}"
-export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$ws/.agent-work/client/cache}"
-export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$ws/.agent-work/client/config}"
+if [ ! -x "${godot:-/nonexistent}" ]; then
+    echo "[run.sh] 找不到 Godot 4.7.2 可执行文件；用 GODOT=/path/to/Godot_v4.7.2-stable_linux.x86_64 指定" >&2
+    exit 3
+fi
+
+# Godot 会往 XDG 目录写东西；**恒指到 checkout 内**（本机家目录与 checkout 外都受限）
+export XDG_DATA_HOME="${XDG_DATA_HOME:-$repo/.agent-work/client/data}"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$repo/.agent-work/client/cache}"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$repo/.agent-work/client/config}"
+mkdir -p "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME"
 
 missing_assets_hint() {
     cat >&2 <<EOF
@@ -54,7 +74,7 @@ case "$mode" in
         ;;
     shots)
         if ! assets_ready; then missing_assets_hint; exit 4; fi
-        exec bash "$here/tools/shots.sh" "${2:-$ws/.agent-work/client/shots}"
+        exec bash "$here/tools/shots.sh" "${2:-$repo/.agent-work/client/shots}"
         ;;
     selftest|dump)
         # 自检在缺资产时**照样跑**，但会显式跳过并报告图标/字体断言（docs/121 §6.3）。

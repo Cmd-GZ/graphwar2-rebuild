@@ -88,8 +88,8 @@
 | 2 | **死亡集合 / `AshEffect` 发射器** | 对拍剩余失败的**主要来源**：37 个失败里 19 个是"死亡块整块是 `AshEffect`"、18 个是"死亡集合漏报"（`docs/141`） |
 | 3 | **同时回合制的 A 类**：`TurnInfo` 那组玩家排列（HashMap 迭代序） | 缺一份未捕获的熵；批内其它顺序**已定死**（130/130） |
 | 4 | **界面像素**：主菜单 sha256 相同、弹窗 0.00–1.7%、玩家页 0.007%；但仍有屏缺真值 | 见 `docs/130`/`docs/137` |
-| 5 | **6 个 manager 仍是 `assembled`**（**14 wired / 2 layout / 6 assembled / 0 stub = 22**） | 只构造注册、没接事件流。已升档：**Rank / Name / LocalPlayer**（`docs/162` 独立复核：六处口径同值、证据充分）。余 6 格见 `docs/161`；**GSM 卡 `src/game.rs` 禁区，别派** |
-| 6 | **收敛层 `diffconv` 未跟上 S3** | 内核按**到达序逐发挖洞**已落地，收敛层还没跟 ⇒ 两层口径会分叉（已派 `dispatch/73`） |
+| 5 | **1 个 manager 仍是 `assembled`**（**19 wired / 2 layout / 1 assembled / 0 stub = 22**） | 只构造注册、没接事件流。已升档：**Rank / Name / LocalPlayer**（74）+ **Color / Soldier / Graphics / FHR**（77）+ LocalPlayer 五道门（79）；余 1 格见 `docs/161`；**GSM 卡 `src/game.rs` 禁区，别派** |
+| 6 | ~~收敛层 `diffconv` 未跟上 S3~~ | ✅ 已结案：`batch_conv` 内容 **637 / 1080**、种类 **1075 / 1080**、逐批对照「变好 128 / 变差 0」（`docs/06` §34c） |
 | 7 | **跨平台**：Win x86_64 / Android arm64 的 **check + build 都已成立**（`docs/18` §11）；仍未验的是**真机加载**（只有 wine）、APK 打包、macOS、arm64 Win/Linux，以及**跨架构逐位一致** | `docs/18` §11 |
 | 8 | **B 类**（25 s 墙钟、多客户端竞态） | 只能做统计验收，永远做不到"逐位" |
 
@@ -159,7 +159,7 @@ python3 tools/bit_exact_attrib.py --json b.jsonl      # 延迟段两条 + 失败
 | | 现状 |
 |---|---|
 | **12 个 GDExtension 类的逻辑** | ✅ 全部还原（在 `src/`，纯 Rust、可测） |
-| **把它们变成真 Godot 节点** | ✅ **全部节点化**。headless 断言按脚本计（**14** 个脚本、共 **1,933** 条）：`entity_drawer_check` 366 / `assemble_check` 244 / `draw_classes_check` 235 / `signal_classes_check` 155 / `play_flow_check` 199 / `function_drawer_check` 132 / `base_classes_check` 117 / `obstacle_drawer_check` 116 / `plane_on_screen_check` 96 / `curve_on_screen_check` 96 / `recovered_view_check` 57 / `process_loop_check` 66 / `gdext_check` 24 / `spike_class_check` 23 —— 全 **0 failed** |
+| **把它们变成真 Godot 节点** | ✅ **全部节点化**。headless 断言按脚本计（**14** 个脚本、共 **1,933** 条）：`entity_drawer_check` 366 / `assemble_check` 244 / `draw_classes_check` 235 / `signal_classes_check` 155 / `play_flow_check` 206 / `function_drawer_check` 132 / `base_classes_check` 117 / `obstacle_drawer_check` 116 / `plane_on_screen_check` 96 / `curve_on_screen_check` 96 / `recovered_view_check` 57 / `process_loop_check` 66 / `gdext_check` 24 / `spike_class_check` 23 —— 全 **0 failed** |
 
 绑定层有两条路，**已量化**（`docs/18-build.md` §10）：
 
@@ -206,29 +206,29 @@ python3 tools/bit_exact_attrib.py --json b.jsonl      # 延迟段两条 + 失败
 `graphwar_replay_player` / `graphwar_game_server` / `game` / `server` / `graphwar_play_screen_control`
 均已可运行；桥接层在 `src/_scaffold/`（`api` / `protocol` / `broker` / `capi` / `gdext*`）。
 **`cargo test --offline` 全绿**（条数每轮在变，**别把它当进度**——见 `AGENTS.md` §0.2）；
-`src/` 根目录现有 76 个 `*.rs`（55 个 `graphwar_*.rs`）＋ 3 个同名子目录，另有 `src/_scaffold/` 里 **25 个**我方自造文件。
-### 客户端自检的两个口径（`bash client/run.sh selftest`）
+`src/` 根目录现有 **80 个 `*.rs`（其中 59 个 `graphwar_*.rs`）＋ 4 个同名子目录**，另有 `src/_scaffold/` 里 **31 个**我方自造 `.rs`。⚠️ 原版模块总数是 **78 = 62 个 `scope=graphwar` + 16 个 `scope=other`**（`docs/coverage-matrix.tsv`），**旧读数「58 个 `graphwar_*.rs` + 12 个非前缀模块」已作废**；口径与复算命令见 [`docs/02`](docs/02-module-map.md) §17 开头。
+### 客户端自检的口径（`bash client/run.sh selftest`）
 
-**714 不是版本号，是"前置条件全齐"的读数**：少一样就落到别的数上，四个数都跑过（详见 [`docs/18`](docs/18-build.md) §10.3.1）：
+**717 不是版本号，是"四个前置条件全齐"的读数**（2026-11-26 在 master `778a312` 上实跑；
+详见 [`docs/18`](docs/18-build.md) §10.3.4）：
 
-| `client/assets/` | 编了 `examples/serve_match` | 结果 |
-|---|---|---|
-| ✅ | ✅ | **714 passed / 0 failed / 1 skipped** ← 完整口径 |
-| ✅ | ❌ | **618 passed / 0 failed / 2 skipped**（少的 76 条 = 两条联机套件整段 skip） |
-| ❌ | ✅ | **667 passed / 2 failed / 21 skipped** |
-| ❌ | ❌ | **591 passed / 2 failed / 23 skipped** |
+```text
+@@SELFTEST_COVERAGE groups=33 checks=717 expected=717 missing=0(claimed 0 / degraded 0 / silent 0)
+SELFTEST 717 passed, 0 failed, 1 skipped
+```
 
-两条恒等式把前置条件钉死：**714 = 618 + 96**、**667 = 591 + 76**（差额来自各轮新增的节点/流程断言）。
+四个前置（**全部是环境，不是代码**）：
+①`client/assets/` 齐备（用**你自己的** `Graphwar.pck` 解，**音频要先解再 `--import`**）；
+②`cargo build --offline --example serve_match`；
+③可写 `HOME`；
+④真回放在 `$HOME/.local/share/godot/app_userdata/Graphwar/replays/`（`selftest.gd` 只读这个原版路径）。
 
-**694 的三个前置条件**：①`client/assets/` 齐备（用**你自己的** `Graphwar.pck` 解，**音频要先解再 `--import`**）；
-②`cargo build --offline --example serve_match`；③用 `run.sh` 自己的 `XDG_*` 默认值（手改会让 `user://replays` 指空）。
+**缺一个就降级，而且现在会自己报出来**（96 号：`missing` / `silent`）：
+缺 ④ 实测 `654 / 0 / 3 skip`、`missing=63(degraded 63 / silent 0)`；缺 ① 的历史三档是
+`591 / 667 / 618`（2026-11-07 当轮读数，**本轮未复测**）。缺 assets 时 `failed == 2` 的两条是
+**逐字固定**的（皮肤图标取不到 / 缺字体宽度）——它们不是回归。
 
-**没有 assets 时应该期待什么**：`failed == 2`，两条**逐字固定**且与 `.so` 无关 ——
-①`点 Skins 页的第 -1 号皮肤 ⇒ Faces/Hats 42 格立刻换成它（实际 42）`（皮肤图标取不到 ⇒ `target` 停在 `-1`；
-括号里的 42 是**格数**不是"通过"）；②`Cancel = 194 宽 / Start = 218 宽（真帧；实际 184 / 167）`（缺字体 ⇒ 184/167）。
-这两条**不是回归**：用未改动基线对拍过（`530/2/25`，两条逐字相同）⇒ **基线自带 + 依赖真资产**。
-⚠️ **`passed` 数会随前置条件漂移**：缺 `assets` 时实测 `591/2/23` 或 `667/2/21`，不要拿别的机器上的数当基线
-⇒ **判据只有"failed == 2 且就是这两条"，别拿 passed 数当判据**。
+⚠️ **判据只有 `missing==0` 且 `silent==0`**，别拿 `passed` 数当判据，也别拿别的机器上的数当基线。
 模块全集与行号下界见 [`docs/02-module-map.md`](docs/02-module-map.md)。
 
 ## 文档

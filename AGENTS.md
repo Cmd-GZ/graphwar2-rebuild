@@ -9,8 +9,9 @@
 
 由此推出六条硬标准：
 
-1. **没有什么是"不重要"的。** 原版 `libgraphwarrust.so` 有 **13503 个函数、58 个
-   `graphwar_*.rs` 模块**，全部在范围内。准备圈、弹窗高度、图标底色**都是源码**——
+1. **没有什么是"不重要"的。** 原版 `libgraphwarrust.so` 有 **13503 个函数**（Ghidra 侧 **13,263** 个）、
+   **78 个模块 = 62 个 `scope=graphwar` + 16 个 `scope=other`**（我方 `src/` 顶层有 **59 个**同名 `graphwar_*.rs`；
+   口径与复算命令见 `docs/02-module-map.md` §17 开头 **，旧读数「58 + 12」已作废**），全部在范围内。准备圈、弹窗高度、图标底色**都是源码**——
    它们分别属于 `entity_drawer` / `play_screen_control` 等模块，不是"可以不管的外观细节"。
 2. **进度按原版的分母算，不按我们自己的测试条数算。**
    `cargo test` / `selftest` 的条数**是回归保护，不是复原证据**。
@@ -52,7 +53,8 @@
    上游 `AGENTS.md` 有同样的规则，理由也适用于此处（体积 + 版权）。
 
 4. **文件名就是证据：复原文件用原版名，自造的进 `src/_scaffold/`。**
-   原版是 **58 个 `graphwar_*.rs` + 12 个非 `graphwar_` 游戏模块**（`docs/coverage-matrix.tsv`）。
+   原版是 **78 个模块 = 62 个 `scope=graphwar` + 16 个 `scope=other`**（`docs/coverage-matrix.tsv`；
+   我方 `src/` 顶层 59 个同名 `graphwar_*.rs`，**旧读数「58 + 12」已作废**）。
    `src/` 根目录下的每个文件都必须能指到其中某一个（`docs/02-module-map.md` §17）；
    指不到的（GDExtension 入口、C ABI、报文装配、对拍器、ChaCha12、gzip、broker 服务端）
    只能放 `src/_scaffold/`，并在那里说明"这不是原版的东西"。
@@ -61,10 +63,10 @@
 ## 目录
 
 ```
-src/          Rust 复原实现。**文件名 = 原版模块名**（`graphwar_*.rs` × 58 + 12 个非
-              `graphwar_` 游戏模块；对照表见 docs/02-module-map.md §17）；
+src/          Rust 复原实现。**文件名 = 原版模块名**（78 个原版模块：59 个同名 `graphwar_*.rs`
+              + 其余落在非前缀文件里；对照表见 docs/02-module-map.md §17）；
               我方自造的桥接/工具全部在 src/_scaffold/（原版没有对应物）
-tests/        与真二进制对齐的验收（11 个 test 二进制；条数会变，别写死在这里）
+tests/        与真二进制对齐的验收（**70 个 test 二进制**，`tests/*.rs` 自动发现；条数会变，别写死在这里）
 fixtures/     真值夹具（已入库；重新生成见 tools/gen_fixtures.py）
 examples/     可跑的小工具（serve_match / replay_diff / diff_conv / ai_explain …）
 tools/        分析脚本（callers/ptr_slots/const_xrefs/pck_extract/module_map/propagate/
@@ -82,13 +84,19 @@ rsc/          ← gitignore，用 tools/pck_extract.py 生成
 ## 常用命令
 
 ```bash
-export CARGO_HOME=$PWD/../.cargo-home CARGO_TARGET_DIR=$PWD/../.cargo-home/target
+# 本机（2026-11-26 起的主线机）的外部件**全在 `$PWD/.reference/`**（已 gitignore）：
+#   .reference/cargo-home   .reference/venv   .reference/godot   .reference/game
+#   .reference/replays/gw2-replays-snapshot   .reference/steam   .reference/upstream
+# ⚠️ 旧写法 `$PWD/../.cargo-home` / `../.venv` 是**另一套布局**（checkout 在 ws 下一层），本机上不成立。
+export CARGO_HOME=$PWD/.reference/cargo-home
+export CARGO_TARGET_DIR=$PWD/.reference/cargo-home/target     # ⚠️ 必须单独一行
 cargo test --offline                      # 全绿即可，别把条数当进度（见 §0.2）
 
-../.venv/bin/python tools/callers.py --module graphwar_turn_manager.rs
-../.venv/bin/python tools/ptr_slots.py 0x3c2bc0      # 函数指针派发
-../.venv/bin/python tools/const_xrefs.py 50.0 30.0   # 常量反查
-../.venv/bin/python tools/pck_extract.py --verify    # 还原 rsc/
+$PWD/.reference/venv/bin/python tools/callers.py --module graphwar_turn_manager.rs
+$PWD/.reference/venv/bin/python tools/ptr_slots.py 0x3c2bc0      # 函数指针派发
+$PWD/.reference/venv/bin/python tools/const_xrefs.py 50.0 30.0   # 常量反查
+python3 tools/pck_extract.py --verify                            # 还原 rsc/（纯标准库）
+# 客户端自检（四个前置见 docs/18 §10.3.4）：HOME=<可写目录> bash client/run.sh selftest
 ```
 
 ## 反复踩过的坑（"改了但没生效"这一类的必须一次记全）
@@ -182,7 +190,7 @@ cargo run --release --offline -q --example batch_conv   -- --dir <快照> --poli
 不要直接 `git push`（本机 ssh 配置有权限问题）：
 
 ```bash
-GIT_SSH_COMMAND="ssh -F /dev/null" git push origin main
+GIT_SSH_COMMAND="ssh -F /dev/null" git push origin master   # 主线分支名是 master（不是 main）
 ```
 
 上游 `Cmd-GZ/graphwar2-analysis`（= `../`）与本仓库互不包含；本仓库的内容**绝不**提交到上游。

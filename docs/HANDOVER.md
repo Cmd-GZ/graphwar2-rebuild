@@ -12,7 +12,9 @@
 `libgraphwarrust.so`（sha256 `9a538115…`，stripped）。**行为一致只是第一步，源码级还原才是终点。**
 判据见 `AGENTS.md` §0（六条硬标准）——尤其：**`cargo test` / `selftest` 的条数是回归保护，不是复原证据。**
 
-我的角色：**派活 + 合并前审查**（`AGENTS.md` 合并纪律 A/B/C/D）。分析与实现派给子 agent 或下游。
+我的角色（2026-11-26 起）：**主线 `master` 的负责人** —— 定位缺口、派 teammate、复核数字、合并、写文档。
+派活走 **agent teams**（共享任务板 + 各自 worktree/分支），合并仍按 `AGENTS.md` 合并纪律 A/B/C/D。
+⚠️ **`dispatch/` 那套任务书/报告流程已退役**（它只在旧的 CG 下游分支上；master 里一份都没有），规格/交付直接写在工作区 `.agent-work/specs/` 与文档里。
 
 ---
 
@@ -22,13 +24,16 @@
 可归属函数   527 / 527 = 100%（逐位 88 / 观测 439 / 推断 0）｜78 模块｜未做 0
              但这只是 13,263 个 Ghidra 函数里的 4.0% —— 见 §3「信息天花板」
 真名         348 / 527（三份符号表并集）；无名 179 = 138 族级 + 41 未知
+名字候选     混合定名器（T1，2026-11-24，`docs/02` §35.12c）：13,263 行输出 mode=order 31 / fp 1,558 / none 11,674
+             （fp/order 都是**推断级候选名，逐条待核**）；近孪生族留出 56.8%→**95.5%**、可部署域 57.8%→93.3%、族外 −1 行（已定位）
 协议         74 / 74 全字段 + 74 条判别值 + 7 个线上枚举全集（无未知）
-GDExtension  **原版 12 类**（`docs/02` §16.2）+ 我方 3 = **15 个，全部节点化**；headless 14 个 SceneTree 脚本 / **1933** 条 / 0 failed（play_flow 206、process_loop 66、assemble 244）
+GDExtension  **原版 12 类**（`docs/02` §16.2）+ 我方 3 = **15 个，全部节点化**；headless 14 个 SceneTree 脚本 / **1933** 条 / 0 failed（2026-11-26 本机实跑；play_flow 206 需要 ④ 那份回放，否则 202）
 cargo        **1761** / 0（`--features gdext-bindings` 1867 / 0）
-selftest     **717 / 0 / 1 skip**（**别预设 `XDG_*`**：`run.sh` 会把它们指到工作区内；
-             预设成 `~/.local/share` 会因沙箱写不进去 ⇒ `missing=78`、`632/7`，见 `docs/18` §10.3.3）（**前置**：`client/assets/` + 编好 `examples/serve_match`；
-             没有 serve_match 时 638 / 2 skip；缺 assets 掉到 591–667；
-             **两种已知降级见 `docs/18` §10.3.3** —— `63x/7` 是服务端/LAN 未就绪，先重跑再判）
+selftest     **717 / 0 / 1 skip**（2026-11-26 master `778a312` 实跑；判据 = `missing=0` 且 `silent=0`）
+             **四个前置**：① `client/assets/` 齐 ② `cargo build --example serve_match` ③ 可写 `HOME`
+             ④ 真回放在 `$HOME/.local/share/godot/app_userdata/Graphwar/replays/`
+             缺 ④ = `654 / 0 / 3 skip`（missing=63 全 degraded / silent 0）；缺 ① 的三档历史读数是 591/667/618。
+             **别预设 `XDG_*`**（预设到工作区外 ⇒ `user://` 不可写 ⇒ 632/7）。命令与判据见 `docs/18` §10.3.4
 
 行为一致     fire **647** / batch **647** / batch_conv **637**（分母都 1080，内容命中）
 种类序列     三轴都 **1075 / 1080**（≠ 进度：只说明消息种类顺序对）
@@ -79,7 +84,9 @@ selftest     **717 / 0 / 1 skip**（**别预设 `XDG_*`**：`run.sh` 会把它�
    · 换编码已到顶（71 号：边际只在 `gram`/`scal`，`size`/`consts` 纯冗余）
    · **换证据类型也试过了，三条全不通**（crash 栈 / campaign 表 / 真机帧，见 §2）
    · 已知的**族内失效**：关卡闭包族 **14/27 = 51.9%** vs 族外 407/454 = 89.6%（p=2.6e-6），错 19/19 全在族内
-     ⇒ 这一族结构上分不开，只能靠 campaign 表那种非结构证据（覆盖仅 27 行）⇒ **接受现状**（`docs/02` §35.12）
+     ✅ **2026-11-24 已用「两轴盲区互补」解掉**：结构指纹（族内 56.8%）+ 顺序轴（族内 84.1%）分域混合 ⇒
+     **族内 95.5%（可部署域 93.3%）**、族外与指纹逐格相同、代价 −1 行（已定位 `0x466c40`）⇒ `docs/02` §35.12c
+     （算法/超参先 commit `6a85b1e` 再跑留出；`tools/hybrid_names.py`，13,263 行输出表 `fixtures/hybrid_names.tsv`）
 · 服务端撮合逻辑：客户端二进制里**没有**（我们 `src/_scaffold/broker.rs` 是自建的，不是复原）
 · 美术**源文件**（`.svg`/`.ttf`）：包里只有产物（167 `.ctex` / 7 `.fontdata`）。
   **但图能用** —— `.ctex` 内部就是 WebP（实测首字节 `GST2…RIFF…WEBP`），`client/assets/` 已在用
@@ -91,47 +98,57 @@ selftest     **717 / 0 / 1 skip**（**别预设 `XDG_*`**：`run.sh` 会把它�
 
 | 档 | 内容 | 备注 |
 |---|---|---|
-| **Ａ 缺工程** | ① `client/src/screens/*.gd` **≈6,062 行**仿制流程（原版控制器在 Rust 里）；② **1 个 manager 仍是 `assembled`**（**19 wired / 2 layout / 1 assembled / 0 stub = 22**）—— Rank/Name/LocalPlayer（74）+ Color/Soldier/Graphics/FHR（77）+ LocalPlayer 的门（79）；余 1 格见 `docs/161`；**GSM 卡 `src/game.rs` 禁区别派**；③ `ShotLifecycle` 文件归属（原版在 `game_state_manager`） | 证据齐了只差写 |
+| **Ａ 缺工程** | ① **客户端像素保真**：回放三屏有真值（`docs/06` §53/§54）——`replay_lobby` 4.114%（只差列表行）、`replay_play` 41.330%、`replay_end` 52.460%；静态屏（战役选择/关卡弹窗）**还没拍过** | **当前主线**（t4/t5/t6 在做）；判据 = 预注册门槛 + 元素 bbox |
+|  | ② `client/src/screens/*.gd` **≈6,062 行**仿制流程；控制器要迁回 Rust（按原模块名） | 量大，按切片推进 |
+|  | ③ **1 个 manager 仍是 `assembled`**（**19 wired / 2 layout / 1 assembled / 0 stub = 22**）——余 1 格 = GSM，卡 `src/game.rs` 禁区 | 见 `docs/161` |
+|  | ④ `ShotLifecycle` 文件归属（原版在 `game_state_manager`，我方在 `play_screen_control`） | 边界要靠 `Location` 再切一次 |
 | **Ｂ 缺样本（易得）** | 目前**空**（Level 18–20 / flip=1 / 部分命中 都已补齐） | 找人打一局即可 |
-| **Ｃ 缺样本（难造）** | 1 ulp 正主 —— 但目前证据表明**它可能根本不在链上**，别再立项 | — |
-| **Ｄ 缺真值（可运行时挖）** | `drive_frame` 的**节奏真值**（钩 `0x518400` + 泵函数数调用）；libm 边界 | 开游戏 + frida |
-| **Ｅ 物理不可得** | 服务端撮合、`.svg`/`.ttf` 源、12,736 个名字 | **别立项** |
+| **Ｃ 缺样本（难造）** | 1 ulp 正主 —— **四条路都没复现**、打印级判据结构性没有判别力 ⇒ 停做（**不是证明它不存在**） | — |
+| **Ｄ 缺真值（可运行时挖）** | libm 边界；`0x4c6f40` 回放播放时钟（内部 `playing` 初值目前只有画面证据） | 开游戏 + frida |
+| **Ｅ 物理不可得** | 服务端撮合、`.svg`/`.ttf` 源 | **别立项**；名字已由 T1 给出「推断级候选」（1,589 / 13,263） |
 
-**当前在派的两件**（都是 Ａ 档）：
-**① manager 升档**（74 号完成 Rank / Name / LocalPlayer；77 号在做 Color / Soldier / Graphics / FHR）；
-**② 跑得起来的那几块工程**：`selftest` 的 flake 修复（76）、回放驱动搬进 Rust（81）、
-`drive_frame` 节奏真值（80）、LocalPlayer 第五道门（79）。
-
----
+**当前在做（2026-11-26，三个 teammate）**：
+**t4** 回放播放屏（载入即暂停 + 回放版式 + 棋盘几何 + 士兵/靶子/名字）、
+**t5** 回放列表行（列集合 + 关卡名 + 4 图标）、
+**t6** 视觉真值扩到静态屏（战役选择屏 + 关卡弹窗）并修到过门槛。
 
 ## 5. 干活时必须遵守的（都是踩出来的）
 
-### 合并 CG 之前（`AGENTS.md` 合并纪律 A）
+### 合并 teammate 分支之前（`AGENTS.md` 合并纪律 A）
 
-```bash
-python3 tools/merge_check.py --cg origin/CG     # ①报告 §遗留/§建议全文 ②范围/禁区 ③污染 ④四件套
-```
-- **必须读报告的 §7/§8（遗留/建议）**——跳过它我漏过"准备圈画面上没有了"这种真回退；
-- 合并命令要剔 `dispatch/`：`git merge --no-commit origin/CG && git rm -r -q --cached dispatch && rm -rf dispatch`；
-- 合完 `head -1 docs/HANDOVER.md` 必须是「给上下文压缩后的自己」（CG 会静默覆盖，已发生三次）；
-- 生成物冲突（`docs/coverage-matrix.*`）重跑 `python3 tools/coverage_matrix.py` 而不是手改。
+> 2026-11-26 起流程变了：**没有 `dispatch/` 任务书、没有 CG 下游分支**。teammate 在自己的
+> worktree/分支（`agent/<topic>`，从 `master` 切）里干活，我在 master 上合并。
+> `merge_check.py --cg` 那条是给旧 CG 分支用的，现在**只保留它的三个机器检查思路**：
+> 范围（`git diff --name-only <分叉点>..<分支>`）、污染（二进制/大文件）、四件套（§下面 B）。
+
+- **必须读它的验收报告，先读「遗留/未做」与「我写错了」两节** —— 跳过它我漏过"准备圈画面上没有了"这种真回退；
+- 范围核对用 `git diff --name-only $(git merge-base master <branch>)..<branch>`（**永远用分叉点**，别用 `master..`）；
+- 生成物冲突（`docs/coverage-matrix.*`）**重跑 `python3 tools/coverage_matrix.py`**，绝不"取一边"；
+- 合并顺序：先无依赖的，再 rebase 有重叠的；**每个分支合完都要重跑四件套**。
 
 ### 合并之后（纪律 B）
 
 ```bash
-export CARGO_HOME=<WS>/.cargo-home CARGO_TARGET_DIR=<WS>/.cargo-home/target
-cargo test --offline                                  # 1694
-python3 tools/coverage_matrix.py --check
-python3 tools/check_doc_refs.py
-cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive fire  --policy default --json f.jsonl
-cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive batch --policy default --json b.jsonl
-python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire
-bash client/run.sh selftest                           # 717 / 0 / 1 skip
+export CARGO_HOME=$PWD/.reference/cargo-home CARGO_TARGET_DIR=$PWD/.reference/cargo-home/target
+cargo test --offline                                  # 2026-11-26 实测 1761 / 0 / 1 ignored
+cargo test --offline --features gdext-bindings        # 2026-11-26 实测 1867 / 0 / 1 ignored
+python3 tools/coverage_matrix.py --check              # 527 可归属 / 逐位 88 / 观测 439
+python3 tools/check_doc_refs.py                       # rc=0
+R=.reference/replays/gw2-replays-snapshot/replays     # 403 个文件（401 回放 + 2 元数据），只读
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir $R --policy strict
+python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire   # 三轴各自一条
+bash client/run.sh selftest                           # 717 / 0 / 1 skip（四个前置见 docs/18 §10.3.4）
 ```
 
-**headless 巡检**只喂 `extends SceneTree` 的脚本（`client/tools/*_check.gd`，14 个）：
+**护栏（2026-11-26 本机实测，报数带轴名）**：
+`fire` 内容 **647** / 种类 1075 ｜ `batch` 内容 **647** / 种类 1075 ｜ `batch_conv` 内容 **637** / 种类 1075；
+死亡 **366 / 385**、挖洞 **207 / 294**。
+
+**headless 巡检**只喂 `extends SceneTree` 的脚本（`client/tools/*_check.gd`，**14 个 / 1933 条**）：
 拿 `plane_on_screen.gd` / `screenshots.gd` / `selftest.gd` 去 `--script` 会**弹 ALERT 并留僵尸实例**，
 后续结果被污染（我踩过：selftest 报 704/4，干净重跑是 714/0）。
+跑 headless 时若不给可写 `HOME`，`play_flow_check` 会少 4 条（202 而不是 206）。
 
 ### 三条硬约束
 
@@ -174,6 +191,12 @@ GPU 口径      比"计算时间"还是"进程墙钟"？（后者含 `import tor
 ⑥ 拿"并列桶最高值"当新纪录 ⇒ 78.2 是 23 组里挑最大，预注册值是 76.4
 ⑦ 用 helper 脚本喂 `--script` ⇒ ALERT 弹窗 + 僵尸实例污染后续 selftest
 ⑧ README/文档写成 git 日志 ⇒ 文档只写"现在是什么"，历史归 git
+⑨ 把"文档里的路径"当成通行 ⇒ 2026-11-26 `client/run.sh` 里 `ws="$here/../.."` 只认一种目录布局，
+   换到本机（外部件在 checkout 内的 `.reference/`）就把 XDG 指到只读区 ⇒ `user://` 不可写 ⇒ selftest 静默降级。
+   **修法与证据**：`docs/18` §10.3.4（Godot 按候选表探测、XDG 恒指 checkout 内）
+⑩ 前置条件只写一半 ⇒ selftest 的**第四个前置**（真回放在 `$HOME/.local/share/godot/app_userdata/Graphwar/replays/`）
+   以前没写进 README/HANDOVER，照着文档跑会少 63 条（654/0/3skip，`missing=63` 全 degraded）。
+   ⇒ **判据永远是 `missing=0` + `silent=0`**，不是 `passed` 数
 ```
 
 ---
@@ -181,11 +204,17 @@ GPU 口径      比"计算时间"还是"进程墙钟"？（后者含 `import tor
 ## 8. 现在的协作状态
 
 ```
-上游（本机）  派活 + 审查 + 合并 + 文档           16 核 / 15 GB / 无独显
-下游（CG）    执行任务，提交到 CG 分支            32 GB / Ryzen 9 7945HX(16C32T) / RTX 4060
-              dispatch/ 只在 CG 上；**master 里一份都没有**（每轮合并必剔）
-在跑的        第十六轮 7 份：76 selftest flake（P0）｜77 manager 再升 4 格（P0）｜78 特征瘦身
-             79 LocalPlayer 门 + Computer state｜80 drive_frame 节奏真值｜81 回放驱动｜82 1ulp 收敛解
-关键文档      docs/00 状态总览 · docs/02 模块图 · docs/06 验证记录 · docs/161 manager 缺口
-             docs/158/159/160 三份对抗性审计 · docs/guide/ 攻略手册
+主线（本机）  **32 核 / 30 GB / RTX 4060 / 无显示器（Xvfb 做视觉对拍）**；2026-11-26 起
+              **我直接负责 `master`**：定位缺口 → spawn teammate（各自 worktree + 分支 + 共享任务板）
+              → 我自己复现数字 → 合并 → 写文档。不再有"上游派活/下游执行"的两段式。
+历史          `CG` 分支 = 2026-11-10 之前的"下游执行侧"，上面有 `dispatch/`（任务书 + 每轮报告）。
+              master **不合并 `dispatch/`**；新活一律从 `master` 切 `agent/<topic>` 分支。
+              旧文档里 `dispatch/NN` 的引用是**历史出处**（master 上没有那些文件），不是可点的路径。
+
+在跑的（2026-11-26）  t4 回放播放屏（`agent/replay-play-screen`）
+                      t5 回放列表行（`agent/replay-lobby-row`）
+                      t6 视觉真值扩到静态屏（`agent/static-screens`）
+
+关键文档      docs/00 状态总览 · docs/02 模块图 · docs/06 验证记录 · docs/16 客户端（§61/§62 视觉帧）
+              docs/18 构建与自检前置（§10.3.4） · docs/161 manager 缺口 · docs/guide/ 攻略手册
 ```
