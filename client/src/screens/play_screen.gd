@@ -297,6 +297,24 @@ var _replay_progress: ProgressBar = null
 var _replay_label: Label = null
 ## 回放里的"当前这一发"（诊断 / 状态行用）。
 var _replay_shot_status := ""
+## 回放版式是否已应用（`_set_replay_layout()`）。
+var _replay_layout := false
+## 左侧 `LeftReplaysButtonsGrid` 上面那一格空占位。
+##
+## 原版 `play_screen.tscn` 的 `LeftReplaysButtonsGrid` 是 `columns = 3` 的 GridContainer，
+## 里面**六**个 child：`⇤ ← ⌫` 三个文字键 + 三个 `AspectRatioContainer/GraphwarButton`（⏮▶⏭）。
+## 真帧上可见的 ⏮▶⏭ 落在 `y 581..676`，而"整块居中"只能解释到 `y 529`（见
+## `fixtures/replay_screen_targets.txt` §三 `left_replay_btns`）⇒ 第一行**占位但不可见**。
+## 我方用一个等高（key+4）的空 Control 复现同一位置；**机制未知**（Godot 的
+## GridContainer 会跳过 `visible=false` 的子节点 ⇒ 原版第一行不是靠 visible 隐藏的）。
+var _replay_left_pad: Control = null
+## 左侧 ⏮▶⏭ / 右侧三键所在的容器（只在回放模式可见）。
+var _replay_play_btn: GwButton = null
+## 键盘/开火行的持有者 —— 回放模式要整块藏掉（原版回放屏没有键盘、没有 Fire）。
+var _left_grid_holder: Control = null
+var _right_grid_holder: Control = null
+var _fire_row: Control = null
+var _fire_stack: Control = null
 
 # --- 联机模式（`docs/139`；落实 `docs/134` §7.1 的交接清单） ---
 #
@@ -361,9 +379,19 @@ func build() -> void:
 	var left_top := GwUI.hbox("LeftTopButtonsContainer", 4, left)
 	var exit_pair := GwUI.exit_pair(GwCommands.ASK_EXIT_PLAY)
 	left_top.add_child(exit_pair)
-	_show_extra_button = GwButton.make("")
+	# 原版 `play_screen.tscn`：`ShowExtraButtons` 的 `text = "     "`（**五个空格**），
+	# 它决定这颗键的最小宽度（实测真帧 146×96，与返回键同宽）；`ExitButtonContainer` 与本
+	# MarginContainer 都是 `size_flags_horizontal = 3` ⇒ 两颗键各占一半（298/2 = 149 ≈ 146）。
+	# 以前这里是 `GwButton.make("")` ⇒ 我方这颗键只有 96 宽，顶上中间那四个开关整组右移 35 px
+	# （`fixtures/replay_screen_targets.txt` §二 的两侧顶部对照）。
+	_show_extra_button = GwButton.make("     ")
 	_show_extra_button.name = "ShowExtraButtons"
 	_show_extra_button.icon = GwIcons.get_icon("show_extra_buttons")
+	# 图标居中：`GwButton.make` 只给了 `expand_icon`，`icon_alignment` 是默认的 LEFT ——
+	# 带 5 个空格的文本 + LEFT 对齐时 Godot 不给图标留宽度 ⇒ **图标一个像素都不画**
+	# （实测：v3 帧上这颗键是一整块纯底色）。顶上那 4 个开关走 `_extra_button()`，
+	# 那里显式写了 CENTER，所以它们正常。
+	_show_extra_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_show_extra_button.tooltip_text = "显示/隐藏顶栏附加按钮（ShowExtraButtons.gd）"
 	_show_extra_button.pressed.connect(_toggle_extra_buttons)
 	left_top.add_child(_show_extra_button)
@@ -374,13 +402,29 @@ func build() -> void:
 	var left_top_pad := GwUI.margin("MarginContainer", 0, left)
 	left_top_pad.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_left_grid = _make_grid("LeftButtonGrid", left)
+	_left_grid_holder = _left_grid.get_parent()
 	_fill_grid(_left_grid, LEFT_KEYS)
+	# `LeftReplaysButtonsGrid`（原版这一块是 `columns = 3` 的 GridContainer：第一行 3 个文字键
+	# 在真帧上不可见但**占位**，第二行才是 ⏮▶⏭ ⇒ 用一个等高空占位复现同一位置）。
+	#
+	# ⚠️ **顺序就是几何**：原版 `LeftControls` 的五个 child 是
+	# `[LeftTopButtonsContainer][MarginContainer(expand)][LeftButtonGrid][LeftReplaysButtonsGrid][MarginContainer2(expand)]`
+	# —— 回放块夹在两个展开垫中间 ⇒ 竖直居中。以前我方把回放块加在**最后一个** child 位置，
+	# 两个展开垫就把它一路推到屏幕底部（实测 y 964，原版 581）。
+	var left_replay_box := GwUI.vbox("LeftReplaysBox", 0, left)
+	# `GwUI.vbox` 默认 `size_flags_vertical = EXPAND_FILL`；回放键这一块是"贴内容高度"的方块
+	# ⇒ 退回 FILL，否则它自己也去抢剩余高度。
+	left_replay_box.size_flags_vertical = Control.SIZE_FILL
+	_replay_left_pad = Control.new()
+	_replay_left_pad.name = "ReplayGridRowPad"
+	_replay_left_pad.custom_minimum_size = Vector2.ZERO
+	left_replay_box.add_child(_replay_left_pad)
+	_replay_left = _build_replay_controls("LeftReplaysButtonsGrid", ["prev", "play_pause", "next"], false)
+	left_replay_box.add_child(_replay_left)
 	var left_filler := Control.new()
 	left_filler.name = "Filler"
 	left_filler.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	left.add_child(left_filler)
-	_replay_left = _build_replay_controls("LeftReplaysButtonsGrid", ["prev", "play_pause", "next"])
-	(left as VBoxContainer).add_child(_replay_left)
 
 	# ---------------- 战场 ----------------
 	_plane_container = GwUI.margin("PlaneContainer", 0, main_hbox)
@@ -460,11 +504,13 @@ func build() -> void:
 	var right := GwUI.vbox("RightControls", 4, main_hbox)
 	right.size_flags_horizontal = Control.SIZE_FILL
 	var fire_row := GwUI.hbox("HBoxContainer", 4, right)
+	_fire_row = fire_row
 	var fire_margin := GwUI.margin("FireContainer", 0)
 	fire_margin.name = "FireContainer"
 	fire_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var fire_stack := Control.new()
 	fire_stack.name = "FireStack"
+	_fire_stack = fire_stack
 	fire_stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	# 原版 `FireContainer.gd`（`client/src/views/`）给子节点写 `custom_minimum_size.x = x*0.07`
 	# 和字号 宽/30；高度由文字撑到与左上按钮行同高（实测 FireButton = 337×96 @1920）。
@@ -488,7 +534,14 @@ func build() -> void:
 	var right_top_pad := GwUI.margin("MarginContainer", 0, right)
 	right_top_pad.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_right_grid = _make_grid("RightButtonGrid", right)
+	_right_grid_holder = _right_grid.get_parent()
 	_fill_grid(_right_grid, RIGHT_KEYS)
+	# 右列同理：原版 `[HBoxContainer(Fire)][MarginContainer(exp)][RightButtonGrid][RightReplaysButtonsGrid][MarginContainer2(exp)]`
+	# ⇒ 回放三键夹在两个展开垫中间。这里把块**先**加在 filler 之前（见左列的注释）。
+	_replay_right = _build_replay_controls("RightReplaysButtonsGrid",
+		["save_screenshot", "save_summary", "save_clip"], true)
+	_replay_right.size_flags_vertical = Control.SIZE_FILL
+	(right as VBoxContainer).add_child(_replay_right)
 	var right_filler := Control.new()
 	right_filler.name = "Filler"
 	right_filler.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -498,8 +551,9 @@ func build() -> void:
 	if y_button != null:
 		(y_button as GwButton).disabled = true
 		(y_button as GwButton).tooltip_text = "原版里这颗键在 Normal/DiffEq 两种模式下都恒为 disabled（原因未知，docs/92 §8）"
-	_replay_right = _build_replay_controls("RightReplaysButtonsGrid", ["save_screenshot", "save_summary", "save_clip"])
-	(right as VBoxContainer).add_child(_replay_right)
+	# 原版 `RightReplaysButtonsGrid` 是**没有 columns 的 GridContainer**（默认 1 列）⇒ 三颗键
+	# **竖排**（真帧：三块 337×96 在 x1583..1919、y433/533/633）。宽度来自 `.tscn` 的
+	# `text = "        "`（八个空格）在字号 x/30 下撑出来的 337 —— 这里直接写同一个数。
 
 	# ---------------- 底部信息行 ----------------
 	var info := GwUI.hbox("HBoxContainer2", 4, vbox)
@@ -624,8 +678,11 @@ func _extra_button(node_name: String, cmd: String, icon_name: String) -> GwButto
 	return b
 
 ## 回放专用按钮组（原版两处 `*ReplaysButtonsGrid`，只在回放模式显示）。
-func _build_replay_controls(node_name: String, icons: Array) -> Control:
-	var box := GwUI.hbox(node_name, 4)
+##
+## `vertical`：原版右侧那块是 1 列 GridContainer（三颗键竖排），左侧那块是 3 列
+## GridContainer 的第二行（三颗键横排）—— 所以两个方向都要能搭。
+func _build_replay_controls(node_name: String, icons: Array, vertical: bool) -> Control:
+	var box: Control = (GwUI.vbox(node_name, 4) if vertical else GwUI.hbox(node_name, 4))
 	box.visible = false
 	for icon_name in icons:
 		var cmd := ""
@@ -651,8 +708,70 @@ func _build_replay_controls(node_name: String, icons: Array) -> Control:
 		b.tooltip_text = "原版命令键：%s" % cmd
 		if playback:
 			b.pressed.connect(_on_replay_button.bind(cmd))
+		if cmd == GwCommands.PLAY_PAUSE:
+			_replay_play_btn = b
 		box.add_child(b)
 	return box
+
+## 回放版式：**原版回放屏长什么样，就摆成什么样**（`fixtures/replay_screen_targets.txt` §三）。
+##
+## 原版 `play_screen.tscn` 里这几块是**静态节点**，靠运行时 `visible` 切换
+## （`LeftButtonGrid` / `RightButtonGrid` / `FireContainer` 那一行 / `*ReplaysButtonsGrid`）；
+## 底部的 `TimerLabel` 不隐藏而是**空文本**（真帧上 `f(x) =` 仍在 x169..249，
+## 说明 TimerContainer 那 140 px 还在，只是没有字符）。
+##
+## 我方自造的 `ReplayStatusBar` 一律不显示：原版底部只有 `f(x) =` + 大号函数文本 +
+## 修正常数**一行**（§53.4 ③），读数改走 `replay_state()`（不画任何东西）。
+func _set_replay_layout(on: bool) -> void:
+	_replay_layout = on
+	var w := get_viewport_rect().size.x
+	var key := w * 0.15 / 3.0
+	for n in [_left_grid_holder, _right_grid_holder]:
+		if n != null:
+			n.visible = not on
+	# Fire 行：原版回放屏**右上角是空的但有那一行的高度**（真帧右三键落在 y433/533/633
+	# = 顶行 96 + 居中；若整行藏掉会整体上移 ~52 px）⇒ 藏按钮、留行高。
+	if _fire_row != null:
+		_fire_row.visible = true
+		_fire_row.custom_minimum_size = Vector2(0, key) if on else Vector2.ZERO
+	if _fire_stack != null:
+		_fire_stack.visible = not on
+	if _replay_left != null:
+		_replay_left.visible = on
+		for b in _replay_left.get_children():
+			(b as Control).custom_minimum_size = Vector2(key, key)
+	if _replay_right != null:
+		_replay_right.visible = on
+		_replay_right.size_flags_vertical = Control.SIZE_FILL
+		for b in _replay_right.get_children():
+			# 337/1920 = 0.175521 —— 原版 `.tscn` 的 `text = "        "`（8 空格）撑出来的宽度
+			(b as Control).custom_minimum_size = Vector2(w * 0.175521, key)
+	if _replay_left_pad != null:
+		_replay_left_pad.custom_minimum_size = Vector2(0, key + 4) if on else Vector2.ZERO
+	if _replay_bar != null:
+		_replay_bar.visible = false        # 原版没有这条（我方自造，永不显示）
+	# 回放模式下这两颗顶栏键是**禁用态**（观测：真帧上它们是灰面 `#383838` + 暗图标
+	# `#888888`，而另外两颗是绿面 `#1A3B2D` + 白图标 ⇒ 只有这两颗 disabled）。
+	# 语义也说得通（**推断**）：回放里没有聊天会话、也没有"附加按钮"可展开。
+	if _show_extra_button != null:
+		_show_extra_button.disabled = on
+	if _chat_button != null:
+		_chat_button.disabled = on
+	if _timer_label != null and on:
+		_timer_label.text = ""             # 原版回放屏底部没有 00:00
+	if _input != null:
+		# 回放屏的函数框是**只读**的（原版按不可编辑态画文字：灰 0.875×α0.5）
+		_input.read_only = on
+	_update_replay_pause_icon()
+
+## 播放/暂停键的图标：原版 `PlayPauseButton` 的 `icon` 在 `play_option`（▶）与
+## `pause_option`（⏸）之间切（`docs/121` §4 的资产名映射；`GwIcons.FIXED` 里
+## `play_pause → pause_option`、`play_option → play_option`）。
+func _update_replay_pause_icon() -> void:
+	if _replay_play_btn == null:
+		return
+	var playing := (_replay != null and bool(_replay.playing()))
+	_replay_play_btn.icon = GwIcons.get_icon("play_pause" if playing else "play_option")
 
 # ---------------------------------------------------------------- 尺寸（照原版脚本的比例）
 
@@ -732,6 +851,7 @@ func begin_match() -> void:
 		_replay = null
 		if _replay_bar != null:
 			_replay_bar.visible = false
+		_set_replay_layout(false)
 		_set_replay_input_enabled(true)
 		_begin_online(app_node)
 		return
@@ -739,6 +859,7 @@ func begin_match() -> void:
 	_replay_mode = false
 	_replay = null
 	_replay_bar.visible = false
+	_set_replay_layout(false)
 	_set_replay_input_enabled(true)
 	_functions.clear()
 	_shot_queue.clear()
@@ -835,6 +956,7 @@ func end_match() -> void:
 	_replay = null
 	if _replay_bar != null:
 		_replay_bar.visible = false
+	_set_replay_layout(false)
 	_set_replay_input_enabled(true)
 	_clear_curve()
 	_reset_shot_state()
@@ -1014,9 +1136,38 @@ func _set_curve(points: PackedVector2Array, color: Color, player_id: int) -> voi
 	_plane.call("set_function_points", player_id, flat, 0, _packed_color(color))
 	# 起飞 tick（原版 `GraphwarFunctionManager` 的 value+0x74）取 0 —— **我方选择**：
 	# 那个模块还没有 `src/` 文件。`is_active_function` 要求 `active_tick < tick`（严格），
-	# 所以正常对局从第 1 个 tick 开始长；回放里这一发**已经打完了**，只是重画出来
-	# ⇒ 直接给到"揭完"那个 tick（没有 tick 动画可放）。
-	_curve_tick = (_curve_final_tick if _replay_mode else 1.0)
+	# 所以正常对局从第 1 个 tick 开始长。
+	#
+	# **回放不走墙钟**：曲线的揭示量是 `回放 tick − active_tick`（原版 `GraphwarPlane::draw`
+	# 把 `GraphwarTickHandler::get_fractional_tick` 喂给喂点循环，而 `is_active_function`
+	# 拿它和 `active_tick` 比）。以前这里给"揭完"⇒ 载入态就把整条弹道画了出来，
+	# 而真帧上原版载入态**没有弹道**（`docs/06` §53.4 ④）。
+	_curve_tick = (_replay_curve_tick() if _replay_mode else 1.0)
+	_plane.call("set_fractional_tick", _curve_tick)
+	_feed_curve()
+
+## 回放模式下"这一条弹道已经揭到第几个 tick" = `回放 tick − active_tick`（夹到 0..揭完）。
+##
+## `active_tick` 来自 `FunctionActive` 事件（本样本 = 615）；没有那条事件 ⇒ 退回"已揭完"
+## （只在回放确实缺 `FunctionActive` 时出现，不编造 0）。
+func _replay_curve_tick() -> float:
+	if _replay == null:
+		return 0.0
+	var snap: Dictionary = _replay.snapshot()
+	var active := int(snap.get("active_tick", -1))
+	if active < 0:
+		return _curve_final_tick
+	var elapsed := float(int(snap.get("tick", 0)) - active)
+	return clampf(elapsed, 0.0, _curve_final_tick)
+
+## 回放每走一个 tick 就把曲线往前揭一格（暂停时**不动**）。
+func _replay_advance_curve() -> void:
+	if _plane == null or _curve_total < 2:
+		return
+	var t := _replay_curve_tick()
+	if is_equal_approx(t, _curve_tick):
+		return
+	_curve_tick = t
 	_plane.call("set_fractional_tick", _curve_tick)
 	_feed_curve()
 
@@ -1038,6 +1189,8 @@ func _feed_curve() -> void:
 func _advance_curve(seconds: float) -> void:
 	if _plane == null or _curve_total < 2:
 		return
+	if _replay_mode:
+		return        # 回放的揭示量由 `_replay_advance_curve()` 按 tick 推（不走墙钟）
 	if _curve_tick >= _curve_final_tick:
 		return
 	_curve_tick = minf(_curve_tick + seconds * CURVE_TICKS_PER_SECOND, _curve_final_tick)
@@ -1230,13 +1383,26 @@ func _sync_entities() -> void:
 		# ⚠️ 这是**我方接线**，原版是 graphics 事件驱动的（`docs/16` §44.0）。
 		if id >= TARGET_ID_BASE:
 			_entities.call("set_entity_look", id, "target", "no_face", "no_hat")
+		elif _replay_mode and _replay != null:
+			# 回放里**外观是录下来的**：`SkinGraphicsInfo` / `FaceGraphicsInfo` / `HatGraphicsInfo`
+			# 三条事件按实体 id 记着名字（本样本：士兵 230 = face_paint_2 / asian / asian_hat）。
+			# 以前这里只给靶子设外观、士兵一律用 `spawn_entity` 的默认三件套
+			# （yellow/regular_eyes/soldier_helmet）⇒ 真帧对拍会差一整个精灵。
+			# ⚠️ 这是**我方接线**：原版由 `GraphwarGraphicsManager` → `EntityDrawer` 的
+			# `set_{skin,face,hat}_graphics` 事件写表（`docs/16` §44.0），那条链路还没接。
+			var sk := String(_replay.graphics("skin", id))
+			if sk != "":
+				_entities.call("set_entity_look", id, sk,
+					String(_replay.graphics("face", id)), String(_replay.graphics("hat", id)))
 	# ---- 准备圈：**填 `prep` 表**（`docs/16` §50.6）----
 	#
 	# 原版 `EntityDrawer::draw`（`0x4b2890`）只画 `prep` 哈希表里的实体，而填表的是
 	# `GraphwarBackend` 的 `pos_info_event` —— 那条链路还没接。这里**由播放屏按回合状态代填**：
 	# 只给"本回合行动的士兵"一条，其余清掉。⚠️ 这是**我方接线**，不是观测到的原版路径。
 	var ring_id := -1
-	if _active_soldier_idx >= 0 and _active_soldier_idx < _soldiers.size():
+	# **回放模式不画准备圈**（原版真帧：棋盘上 0 个红箭头 —— `docs/06` §53.4 ③、§55.3）。
+	# 我方以前按"本回合行动的士兵"代填 `prep` 表 ⇒ 回放屏上多出 3 个红箭头（276 px @811,765）。
+	if not _replay_mode and _active_soldier_idx >= 0 and _active_soldier_idx < _soldiers.size():
 		var acting: Dictionary = _soldiers[_active_soldier_idx]
 		if bool(acting.get("alive", true)) and want.has(_active_soldier_idx):
 			ring_id = _active_soldier_idx
@@ -2178,17 +2344,61 @@ func _begin_replay(path: String) -> void:
 	# 回放不做胜负判定（录像自己会发 `GameStateInfo{EndingGame}`），这里只占位。
 	_rules = GwLevelRules.new()
 	_rules.from_versus(0)
-	# 驱动器的 `load()` 已经把时钟停在第一条事件上、并把那一拍的事件消费掉了
-	# （旧实现是显式一句 `seek(first_tick)`；现在在 `ReplayDriver::with_replay` 里，
-	# 语义相同，少一次调用）。
+	# ---- 载入即**暂停**（原版行为，`docs/06` §53.4 ④ 观测：进屏 45 s 只变 270 px）----
+	#
+	# 两件事：
+	# ① **不调 `play()`** —— `ReplayPlayer::new` 的 `playing` 本来就是 false，
+	#    以前是本函数末尾一句 `_replay.play()` 把它打开的（我方自定交互）。
+	# ② 时钟放到**载入态**那个 tick：`ReplayDriver::with_replay` 停的是 `first_tick`（=1），
+	#    而 `PosInfo` 全部在 tick 6 ⇒ tick 1 时 `actors()` 是空的（士兵/靶子一个都没有）。
+	#    真帧上原版载入态**有**士兵、靶子、名字标签，且底部函数文本 = 第 1 发
+	#    （`x+2sin(20x)` / `- 3.694`，tick 550 的 `FunctionInfo`），而**没有弹道**
+	#    （`FunctionActive.active_tick` = 615）⇒ 载入 tick ∈ [550, 615)。取"第 1 个结算批的
+	#    `exec_tick`"（本样本 = 558）是**推断**，缺 frida 冻 tick 的证据（§53.5 第 2 条）。
+	var load_tick := _replay_load_tick()
+	if load_tick != int(_replay.tick()):
+		_replay.seek(load_tick)
+	_replay.pause()
 	_realize_replay_state()
-	_replay.play()
+	_set_replay_layout(true)
+	_replay_sync_bottom_text()
 	_update_replay_ui()
 	_status(_replay_status_text())
-	# 同上：覆盖 `app.gd` 里那句占位气泡（`回放播放未实现`）。
-	notify("回放 %s ／ %d 条事件 ／ tick %d–%d ／ %d 个结算批" % [
-		String(snap.game_name) if String(snap.game_name) != "" else _replay_path.get_file(),
-		int(snap.events), int(snap.first_tick), int(snap.last_tick), int(snap.batches)])
+	# **不弹气泡**：原版进回放屏什么都不弹（真帧底部只有 `f(x) =` 那一行）；以前这句
+	# 自造的 `notify()` 会在底部中央留一条 5 s 的橙色提示（实测 6117 px 的白/橙像素），
+	# 属于"多出来的元素"。诊断信息仍走隐藏的 `_status()`（`_status_label` 永不显示）。
+
+## 载入态那个 tick（见 `_begin_replay()` 的注释）。
+##
+## 有结算批 ⇒ 取第 1 批的 `exec_tick`（"第一批执行完"这一拍：布局/外观/位置都已落地，
+## 弹道还没开始揭示）；切不出批 ⇒ 退回 `first_tick`（不假装知道）。
+func _replay_load_tick() -> int:
+	if _replay == null:
+		return 1
+	var fits: Array = _replay.batches()
+	if fits.is_empty():
+		return int(_replay.first_tick())
+	var b: Dictionary = fits[0]
+	return int(b.get("exec_tick", b.get("start_tick", _replay.first_tick())))
+
+## 底部那一行：**大号函数文本**（原版回放屏底部中间那一串）+ 修正常数（右下角）。
+##
+## 文本取**这一发**的函数文本（`last_shot()["function"]`，本样本 `x+2sin(20x)`）；
+## 不取 `corrected`：真帧上 `- 3.694` 是**另起一列**（OffsetContainer，x1764..1883），
+## 函数串里没有它（`fixtures/replay_screen_targets.txt` 的 `func_text_bbox` / `offset_text_bbox`）。
+## 光标停在末尾 —— 原版载入态那个 270 px 的变化就是它（§53.4 ④：bbox x1182–1184）。
+func _replay_sync_bottom_text() -> void:
+	if _input == null:
+		return
+	var shot: Dictionary = _replay.last_shot() if _replay != null else {}
+	var text := String(shot.get("function", ""))
+	if text == "" and _replay != null:
+		text = String(_replay.function_of(int(shot.get("owner", -1))))
+	if _input.text != text:
+		_suppress_offset_clear = true
+		_input.text = text
+		_suppress_offset_clear = false
+	_input.key_input(GwCommands.KEY_END)      # 光标到末尾（原版载入态光标就在末尾）
 
 ## 主循环里的回放推进（`_process` 的回放分支）。
 ##
@@ -2196,7 +2406,9 @@ func _begin_replay(path: String) -> void:
 func _replay_tick(delta: float) -> void:
 	if _replay == null:
 		return
-	_apply_replay_events(_replay.advance_dt(delta))
+	var report: Dictionary = _replay.advance_dt(delta)
+	_apply_replay_events(report)
+	_replay_advance_curve()
 	_update_replay_ui()
 
 ## 执行一次驱动报告：**只看 Rust 给的"该重画哪层"三个标志摆节点，不再看事件名**。
@@ -2369,6 +2581,7 @@ func _update_replay_ui() -> void:
 		String(snap.game_name), String(snap.summary),
 		"（已到结尾）" if bool(snap.finished) else "",
 	]
+	_update_replay_pause_icon()
 
 ## 左侧三颗播放键（prev / play_pause / next）。**我们自定的接线**，见 `docs/133` §4.3。
 ##
@@ -2382,11 +2595,14 @@ func _on_replay_button(cmd: String) -> void:
 		GwCommands.PLAY_PAUSE:
 			_replay.toggle()
 		GwCommands.KEY_PREV:
+			_replay.pause()          # 步进 = 停在那一拍（原版 pause 图标 stays ▶）
 			_replay.step_back_event()
 			_realize_replay_state()
 		GwCommands.KEY_NEXT:
+			_replay.pause()
 			_replay.step_event()
 			_realize_replay_state()
+	_replay_sync_bottom_text()
 	_update_replay_ui()
 
 ## 回放模式下把输入类控件**显式禁用**（而不是"按了没反应"）。
@@ -2434,6 +2650,14 @@ func replay_state() -> Dictionary:
 		"soldiers": _soldiers.size(),
 		"canonical": String(snap.canonical),
 		"shot_status": _replay_shot_status,
+		# 载入态 / 弹道揭示（`docs/06` §55）：`active_tick` 来自 `FunctionActive`，
+		# `curve_tick` / `curve_reveal` 是"这条弹道已经揭到第几 tick / 几个点"
+		# （回放里由 tick 推，暂停时不动 —— 与墙钟无关）。
+		"active_tick": int(snap.get("active_tick", -1)),
+		"curve_tick": _curve_tick,
+		"curve_total": _curve_total,
+		"curve_reveal": _curve_reveal(),
+		"layout": _replay_layout,
 		# 新增（`docs/16` §56）：驱动侧的事实，给自检与状态行看。
 		"phase": String(_replay.phase()),
 		"batches": int(snap.batches),

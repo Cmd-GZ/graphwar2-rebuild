@@ -17,6 +17,17 @@ signal text_submitted(new_text: String)
 ## 长度上限：原版上限未知（未观测）。这里取 128，超过就拒绝输入并把边框标红。
 const MAX_LENGTH := 128
 
+## 只读态的文字色 = Godot 默认 `LineEdit/colors/font_uneditable_color`
+## （`graphwar_theme.tres` 没有覆盖它 ⇒ 就是这个默认值；实测叠色见 `read_only` 的注释）。
+const COL_TEXT_UNEDITABLE := Color(0.875, 0.875, 0.875, 0.5)
+
+## 只读态的**底色**（观测）：真帧上原版回放屏输入框内部是 `(17,33,27)` = `#11211B`，
+## 占屏 **5.936 %**（1480×89 px，正好是输入框那块矩形），而页面底色是 `#0E251C`(14,37,28)。
+## 主题里 `LineEdit/styles/normal` 的 `bg_color` 是 `(0.6,0.6,0.6,0)`（**alpha 0**）⇒
+## 这层底色不是主题给的，是控件自己画的（原版那个 Rust 自绘控件）。不画它的话
+## `frame_diff` 的 L1「第一主色占比差」会差 **5.7 pp**（门槛 2.0 pp）。
+const COL_BG_READ_ONLY := Color(17.0 / 255.0, 33.0 / 255.0, 27.0 / 255.0)
+
 var text := "":
 	set(value):
 		if text == value:
@@ -29,6 +40,17 @@ var text := "":
 var _caret := 0
 var _caret_blink := 0.0
 var _rejected := false
+## 只读态（回放模式）：原版回放屏的函数框是**不可编辑**的，Godot 用
+## `LineEdit/colors/font_uneditable_color`（默认 `(0.875, 0.875, 0.875, 0.5)`）画文字
+## —— 实测真帧：函数串在 `x822..1181` 上的颜色 = `(120,128,125)`，
+## 正好等于 0.875 灰 × α0.5 叠在输入框底色 `(17,33,27)` 上
+## （`120=17+(223-17)*0.5`、`128=33+(223-33)*0.5`、`125=27+(223-27)*0.5`）。
+var read_only := false:
+	set(value):
+		if read_only == value:
+			return
+		read_only = value
+		queue_redraw()
 
 func _ready() -> void:
 	custom_minimum_size = Vector2(200, 44)
@@ -119,7 +141,7 @@ func _draw() -> void:
 	# （`graphwar_theme.tres` 的 StyleBoxFlat；实测边界 x=262..1742 内只有 3px 黑框，
 	#  框内颜色与 clear_color 相同 ⇒ 没有自己的底色）。
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0, 0, 0, 0)
+	sb.bg_color = (COL_BG_READ_ONLY if read_only else Color(0, 0, 0, 0))
 	sb.border_color = GwThemeFactory.COL_BAD if _rejected else GwThemeFactory.COL_PANEL_EDGE
 	sb.set_border_width_all(GwThemeFactory.PANEL_BORDER)
 	sb.set_corner_radius_all(GwThemeFactory.PANEL_RADIUS)
@@ -129,9 +151,11 @@ func _draw() -> void:
 	var origin := _text_x(font, fsize)
 	# 原版 `alignment = 1` ⇒ 文本水平居中（实测 "-7.49" 的中心与控件中心重合）。
 	draw_string(font, Vector2(origin, baseline), text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, fsize,
-		GwThemeFactory.COL_TEXT)
+		COL_TEXT_UNEDITABLE if read_only else GwThemeFactory.COL_TEXT)
 	var caret_x := origin + font.get_string_size(text.substr(0, _caret),
 		HORIZONTAL_ALIGNMENT_LEFT, -1, fsize).x
 	if _caret_blink < 0.28:
-		draw_line(Vector2(caret_x, size.y * 0.18), Vector2(caret_x, size.y * 0.82),
-			GwThemeFactory.COL_TEXT, maxf(1.5, size.y * 0.04))
+		# 高度：真帧上原版光标是 3×90（bbox x1182–1184、y1066–1155）⇒ 几乎满高
+		# （输入框 98 px 高、上下各留 4 px）。宽度用主题的 `caret_width = 3`。
+		draw_line(Vector2(caret_x, size.y * 0.04), Vector2(caret_x, size.y * 0.96),
+			GwThemeFactory.COL_TEXT, 3.0)

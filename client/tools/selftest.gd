@@ -2739,26 +2739,39 @@ func _test_replay_player() -> void:
 	var rs: Dictionary = play.call("replay_state")
 	_expect(bool(rs.get("mode", false)), "PlayScreen 进入回放模式（docs/133 §4.1）")
 	_expect(int(rs.get("events", 0)) == 104, "回放模式载入 104 条事件（实际 %d）" % int(rs.get("events", 0)))
-	_expect(bool(rs.get("playing", false)), "进入回放即开始播放（我们自定的交互）")
+	# ⚠️ 78 号那版这里断言的是"**进入回放即开始播放**（我们自定的交互）"，并按它写了下游几步。
+	# 74 号（2026-11-26，`docs/06` §55）用**原版真帧**推翻了这条：原版进回放屏**不自动播放**
+	# （45 s 内只变 270 px = 输入框光标；§53.4 ④）。断言改成"载入即暂停"，并把"进屏 5 s 后
+	# tick 不动"塞进同一条里 —— 条数不变（717），判据换成正的观测值。
+	var tick_at_load := int(rs.get("tick", -1))
+	var consumed := int(play.call("replay_advance_for_test", 5.0))       # 5 s 墙钟
+	var tick_after_5s := int(play.call("replay_state").get("tick", -2))
+	_expect(not bool(rs.get("playing", false)) and tick_after_5s == tick_at_load and consumed == 0,
+		"进入回放即**暂停**：playing=false 且 5 s 墙钟后 tick 不动（%d → %d，消费 %d 条）"
+		% [tick_at_load, tick_after_5s, consumed])
 	var bar := play.find_child("ReplayStatusBar", true, false) as Control
-	_expect(bar != null and bar.visible, "回放进度条可见（我们自定，docs/133 §4.2）")
+	_expect(bar != null and not bar.visible,
+		"自造的 ReplayStatusBar 在回放模式**不显示**（原版底部只有 f(x)= 那一行，docs/06 §53.4 ③）")
 	var prog := play.find_child("ReplayProgress", true, false) as ProgressBar
 	_expect(prog != null and prog.value >= 0.0 and prog.value <= 1.0,
 		"回放进度条取值在 0..1（实际 %s）" % (str(prog.value) if prog != null else "<null>"))
 	var tick_label := play.find_child("ReplayTickLabel", true, false) as Label
-	_expect(tick_label != null and String(tick_label.text).contains("tick"),
-		"回放状态显示当前 tick（实际 '%s'）" % (tick_label.text if tick_label != null else "<null>"))
+	var rs_tick := int(play.call("replay_state").get("tick", -1))
+	_expect(tick_label != null and rs_tick == int(rs.get("tick", -3)),
+		"tick 读数走**不进画面**的只读接口 replay_state()（tick %d；不显示的原版没有 tick 行）" % rs_tick)
 
 	# 输入不接管：按键不改变函数框、开火什么都不做
 	var canon_before := String(rs.get("canonical", ""))
 	var input := play.find_child("GraphwarFunctionInput", true, false) as GwFunctionInput
 	_command("sin(")
 	await _frames(1)
-	_expect(input != null and input.text == "",
-		"回放模式不接管键盘输入（函数框仍是 '%s'）" % (input.text if input != null else "<null>"))
+	# 回放模式确实**会**在函数框里显示录下来的函数（原版底部那一行），所以判据从
+	# "仍是空"改成"仍是录下来的那串"（键盘没有把 `sin(` 写进去）。
+	_expect(input != null and input.text == "x+2sin(20x)",
+		"回放模式不接管键盘输入（函数框仍是录下来的 '%s'）" % (input.text if input != null else "<null>"))
 	var fire_button := _find_button(play, "FireButton")
 	_expect(fire_button != null and fire_button.disabled, "回放模式下 Fire 按钮被显式禁用")
-	play.call("replay_press_for_test", "play_pause")      # 先暂停，排除 tick 推进的干扰
+	# 已经暂停（载入即暂停）⇒ 这里**不**再按播放键（按一下会开始播放，污染下面那条）
 	var canon_paused := String(play.call("replay_state").get("canonical", ""))
 	play.call("fire")
 	await _frames(1)
@@ -2775,11 +2788,14 @@ func _test_replay_player() -> void:
 		play.call("replay_seek_for_test", 2169)
 		_expect(int(play.call("plane_state").get("targets", -1)) == 0,
 			"tick 2169 靶子被打掉、从棋盘上消失（实际 %d 个）" % int(play.call("plane_state").get("targets", -1)))
-		# 弹道：回放不带点序列 ⇒ 用内核按（起点 + 函数文本 + 队伍方向）重算
-		play.call("replay_seek_for_test", 550)
+		# 弹道：回放不带点序列 ⇒ 用内核按（起点 + 函数文本 + 队伍方向）重算。
+		# 揭示量现在**跟着回放 tick 走**（`tick − active_tick`，`docs/06` §55.3）：
+		# tick 550 是 `FunctionPoints` 那一拍、`active_tick` = 615 ⇒ 那一刻**一个点都不画**
+		# （原版真帧同一条：载入态没有弹道）。所以这里挪到 615 之后才断言"画得出来"。
+		play.call("replay_seek_for_test", 700)
 		var rp: PackedVector2Array = play.call("plane_points")
 		_expect(rp.size() > 1,
-			"tick 550 的弹道由内核重算出来（%d 点／状态：%s）"
+			"tick 700（> active_tick 615）的弹道由内核重算出来（%d 点／状态：%s）"
 			% [rp.size(), String(play.call("replay_state").get("shot_status", ""))])
 		var offset_label := play.find_child("OffsetLabel", true, false) as Label
 		var off := String(offset_label.text).replace(" ", "") if offset_label != null else ""

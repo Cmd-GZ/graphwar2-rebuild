@@ -10644,3 +10644,101 @@ for a in 0x470840 0x477140 0x476a20 0x477540 0x4758b0 0x4741a0 0x473d00; do … 
 
 见 [`docs/06` §53.8](06-verification.md) 的 4 条命令（两侧采集 → 三层判据 → 门槛 sha 自检 → 快照 403 份复核）。
 两侧都是**同一条点击串**驱动（`xdotool`），没有任何"手工对准"的步骤；截图**不入库**（只入库 TSV 数字）。
+
+## 62. 客户端侧接线：回放屏**载入即暂停** + 回放版式 + 底部只读函数框（2026-11-26，任务 T4）
+
+> 真帧证据与逐元素数字在 **`docs/06` §55**（那一节是验收，本节是**怎么接的**）。
+> 只讲客户端的三处改动：`client/src/screens/play_screen.gd`、
+> `client/src/play/function_input.gd`、`src/_scaffold/replay_driver_class.rs`（只加一个快照键）。
+
+### 62.1 `_begin_replay()`：不 `play()`、时钟放到"载入态"，曲线按 tick 揭示
+
+改前：`_realize_replay_state()` → `_replay.play()` → 界面上按 60 tick/s 自己走完
+（§53.4 ④ 就是这个差异）。改后三句：
+
+```gdscript
+var load_tick := _replay_load_tick()      # = 第 1 个结算批的 exec_tick（本样本 558）
+if load_tick != int(_replay.tick()):
+    _replay.seek(load_tick)
+_replay.pause()
+```
+
+* **为什么不是 `first_tick`**：`with_replay` 把时钟停在 `first_tick`(1)，而这份回放的位置
+  （`PosInfo`）全在 tick 6 ⇒ 停在 1 时 `actors()` 是**空表**，屏幕上没有士兵也没有靶子。
+  真帧上原版载入态是有它们的。载入 tick 的可证区间是 [550,615)（详见 `docs/06` §55.2），
+  实现取"第一批 `exec_tick`"（`_replay_load_tick()`，一处可改）。
+* **曲线揭示量**：以前 `_set_curve()` 在回放模式直接把 `_curve_tick = _curve_final_tick`
+  （"这一发已经打完了，只是重画出来"）⇒ 载入态就把整条弹道画了出来。现在
+  `_replay_curve_tick()` 返回 `回放 tick − active_tick`（夹到 0..揭完），`_advance_curve()`
+  在回放模式**不走墙钟**，改由 `_replay_advance_curve()` 每走一个 tick 推一格。
+  `active_tick` 是 `FunctionActive{active_tick}` 事件（`ReplayState.active_tick`）——
+  `GwReplayDriver::snapshot()` 新增了这一个键（`src/_scaffold/replay_driver_class.rs`），
+  GDScript 侧没有第二份。
+* **状态行**：`ReplayStatusBar` / `ReplayTickLabel` / `ReplayProgress` 三个自造节点**保留但永不显示**
+  （`_set_replay_layout()` 里写死 `visible = false`），读数改走 `replay_state()`（新增
+  `active_tick` / `curve_tick` / `curve_total` / `curve_reveal` / `layout` 五个键，都不进画面）。
+
+### 62.2 `_set_replay_layout(on)`：一块开关，全部按 `play_screen.tscn` 的静态结构摆
+
+| 节点 | 回放模式 | 依据 |
+|---|---|---|
+| `LeftButtonGrid` / `RightButtonGrid` 的持有者（`_make_grid` 造的 MarginContainer） | `visible = false` | 真帧没有键盘 |
+| `FireStack`（Fire 按钮那一摞） | `visible = false`，但 `HBoxContainer` 那**一行保留 96 px** | 真帧右上角是空的、可是右三键的 y 只有按"顶行 96 + 居中"才对得上（429 vs 实测 433） |
+| `LeftReplaysButtonsGrid` 的三个键 | 96×96，`icon` = `skip_backward_option` / `pause_option`↔`play_option` / `skip_forward_option` | `.tscn` 的 `icon=` + `GwIcons.FIXED` |
+| `RightReplaysButtonsGrid` | **竖排**三颗 337×96（`custom_minimum_size` = `w*0.175521` = 原版 8 空格文本撑出来的宽） | `.tscn`：无 `columns` 的 GridContainer = 1 列；`text = "        "` |
+| `ReplayGridRowPad`（左列，新增的空 Control） | `custom_minimum_size.y = key + 4` | 真帧：`LeftReplaysButtonsGrid` 有 6 个 child / `columns = 3`，第一行**占位但看不见**（机制未知，见 `docs/06` §55.3 第 2 条） |
+| `TimerLabel` | 文本清空（**容器保留**） | 真帧：`00:00` 没有字符，但 `f(x)=` 仍从 x169 起（TimerContainer 那 140 px 还在） |
+| `ShowExtraButtons` / `ChatButtonPlay` | `disabled = true`（灰面 + 暗图标 = 主题的 disabled 皮肤） | 真帧：这两颗是 `#383838`/`#888888`，另两颗是 `#1A3B2D`/白 |
+| `ReplayStatusBar` | 恒 `visible = false` | `.tscn` 里没有这个节点 |
+
+**顺序就是几何**（这条踩过一次，写下来）：原版 `LeftControls` / `RightControls` 的 child 顺序是
+`[…][展开垫][键盘 grid][回放 grid][展开垫]` —— 回放块夹在**两个**展开垫中间才是竖直居中。
+我方原来把回放块加在**最后一个** child 位置，两个展开垫把它一路推到屏幕底部（实测 y 964 vs 原版 581）。
+另外 `GwUI.vbox()` 默认 `size_flags_vertical = EXPAND_FILL`，给"贴内容高度"的块用之前必须退回 `SIZE_FILL`。
+
+**`ShowExtraButtons` 的两个坑**：① `.tscn` 里它是 `text = "     "`（五个空格 ⇒ 与返回键同宽 146），
+我方以前是空文本（96 宽）⇒ 顶上四个开关整组右移 35 px；② `icon_alignment` 默认 LEFT，与"5 个空格 +
+`expand_icon`"一起用时 Godot **不给图标留宽度** ⇒ 图标一个像素都不画（现在显式写 CENTER）。
+
+### 62.3 `GwFunctionInput.read_only`：只读态按"不可编辑"画（颜色 + 底色 + 光标）
+
+原版回放屏的函数框是**不可编辑**的，真帧上：文字 `(120,128,125)`、底色 `(17,33,27)`、光标 3×90。
+
+* 文字色 = Godot 默认 `LineEdit/colors/font_uneditable_color` `(0.875,0.875,0.875,0.5)`
+  叠在底色上（`120=17+206·0.5` 等三条同时成立）；`graphwar_theme.tres` 没有覆盖这个键；
+* 底色：主题的 `LineEdit/styles/normal` 是 `bg_color = (0.6,0.6,0.6,**0**)`（透明）⇒
+  `#11211B` 那层**不是主题给的**，是控件自己画的；不画它 `frame_diff` 的 L1
+  「第一主色占比差」差 **5.735 pp**（门槛 2.0 pp，这一条单独就把 L1 判死）；
+* 光标：主题 `LineEdit/constants/caret_width = 3`，真帧高度 90 px（输入框 98 高、上下各留 4）。
+
+三处都在 `client/src/play/function_input.gd` 的 `_draw()` 里，由新开关 `read_only` 分支
+（`play_screen.gd::_set_replay_layout()` 里与版式一起开关）。**非回放路径一个像素没变**
+（`read_only = false` 时颜色/底色/光标都还是原来那套）。
+
+### 62.4 实体：数据层已接、渲染层是 `src/entity_drawer.rs` 的缺陷（本任务未修）
+
+* `_sync_entities()` 现在做三件事（都能在 `client/tools/replay_entity_dump.gd` 的 dump 里读到数字）：
+  ① 士兵/靶子都 `spawn_entity`（靶子的来源是 `_replay.target_positions()`，**不是**一条缺失的
+  `set_targets()` 调用）；② 外观从回放的 `Skin/Face/HatGraphicsInfo` 读
+  （`_replay.graphics("skin"/"face"/"hat", id)` → `set_entity_look()`，本样本士兵 =
+  `face_paint_2 / asian / asian_hat`）；③ 回放模式**不填 `prep` 表** ⇒ 准备圈箭头不画
+  （真帧：原版棋盘上 0 个纯红像素）。
+* **渲染层画不出来**：`entity_drawer::sprite_transform` 的 x 缩放是 `(s/60)·(128/tex_w)`
+  ⇒ 精灵宽度恒为 `128/60 = 2.13 px`（与 `size`、与贴图尺寸都无关），真帧是 46×37 px。
+  这条公式来自 x86 `update_sprite`（`0x4b9530`）的读数，但**它画不出真帧**；而
+  `tests/entity_drawer.rs` 与 `client/tools/entity_drawer_check.gd` 都在同一条公式上自洽断言
+  ⇒ 又一次"自写断言只证明自洽"（`AGENTS.md` §0.5）。修它要动 `src/entity_drawer.rs` +
+  两处既有断言，**超出 T4 的授权**，故只留诊断（`docs/06` §55.5 / §55.8 第 2 条）。
+
+### 62.5 `selftest.gd` 里被**改掉的 4 条旧断言**（条数不变：717 → 717）
+
+它们断的正是被真帧推翻的"我方自定交互"，不是回归保护的一部分，逐条写明：
+
+| 旧断言 | 新断言 | 为什么 |
+|---|---|---|
+| 「进入回放即**开始播放**（我们自定的交互）」 | 「进入回放即**暂停**：`playing=false` 且 5 s 墙钟后 tick 不动」 | 原版不自动播放（§53.4 ④ + 本次 `docs/06` §55.0 ①） |
+| 「回放进度条**可见**（我们自定）」 | 「自造的 `ReplayStatusBar` **不显示**」 | 原版底部只有一行（§53.4 ③） |
+| 「回放状态显示当前 tick」读 `ReplayTickLabel.text` | 改读 `replay_state()["tick"]`（不进画面的只读接口） | 同上 |
+| 「tick 550 的弹道由内核重算出来（>1 点）」 | 挪到「tick 700（> `active_tick` 615）」 | 揭示量现在跟 tick 走；550 那一刻**一个点都不该画** |
+
+另外 `client/tools/play_flow_check.gd` / `entity_drawer_check.gd` 等**一个字没动**。

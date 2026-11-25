@@ -253,6 +253,14 @@ impl GwReplayDriver {
         d.set("obstacles", st.obstacles.len() as i64);
         d.set("holes", st.holes.len() as i64);
         d.set("shots", st.shots.len() as i64);
+        // `FunctionActive{active_tick}`：弹道**从哪个 tick 开始揭示**（-1 = 还没有）。
+        //
+        // 为什么快照要带它：回放屏的曲线不能按墙钟长（那是"边放边画"的对局口径），
+        // 原版是 `GraphwarPlane::draw` 拿 `fractional_tick` 与 `active_tick` 比
+        // （`is_active_function` 要求 `active_tick < tick`）⇒ 只有 tick 走过 active_tick
+        // 才开始逐点揭示。载入即暂停时 tick 还在 active_tick 之前 ⇒ **一条都不画**
+        // （`docs/06` §55.3 第 3 条：真帧上载入态没有弹道，而两发 `FunctionPoints` 都已录在案）。
+        d.set("active_tick", st.active_tick.unwrap_or(-1));
         d.set("effects", st.effects.len() as i64);
         d.set("canonical", &GString::from(drv.canonical().as_str()));
         d.set("summary", &GString::from(drv.summary().as_str()));

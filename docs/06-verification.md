@@ -7787,3 +7787,249 @@ ls $WS/dist/gw2-replays-snapshot/replays | wc -l
    （静态屏 0 像素）；
 4. §54.0 的结论由"两句"改成"四问"（②引擎 / ③跑法 / ④那到底是谁），**归因不再混着说**。
 
+
+## 55. 回放播放屏（S3/S4）第一次**载入即暂停**并与原版帧逐元素对齐：跨侧差异 41.33 % → **8.07 %**，L1 **过**、L2 超限块 **19 → 2**；棋盘几何四个数落到 1–2 px（2026-11-26，任务 T4）
+
+> 前情：**§53** 第一次拿原版真帧当判据，结论是"回放屏缺元素 + 版式不同"；**§54** 把"引擎版本 / 部署形态"
+> 两个混淆项消掉了，剩下"就是我方 UI 本身"。本节把 §53.4 ③④ 的账**做掉一半**：
+> 行为（载入即暂停）与版式（三键 / 无键盘 / 无 Fire / 无状态行 / 底部一行）**按真帧对齐**，
+> 棋盘几何第一次落进预注册容差；**实体只做到数据层**（渲染层发现 `EntityDrawer` 的 sprite
+> 缩放公式与真帧不符，见 §55.5，本任务范围内**没修**）。
+>
+> 分支 `agent/replay-play-screen`（基于 master `778a312`），工作树 `.agent-work/cg/wt-t4`，
+> 私有 `CARGO_HOME`/`CARGO_TARGET_DIR`（`.agent-work/cg/target-t4`）。
+> **预注册在写任何行为/版式改动之前单独提交**：`fixtures/replay_screen_targets.txt`
+> （sha256 `a570bafdfcfbf7ec4d2f3cd06bb0faa90678b38811bcc1d3de239e514acc04bc`，commit `e7d4b1d`）。
+> 跑完**一个容差都没改**。
+
+### 55.0 一页结论
+
+| # | 项 | 改前（同一份冻结回放、同一台机） | 改后 | 档 |
+|---|---|---|---|---|
+| ① | 进屏是否自动播放 | **播放**（3 帧 sha256 各不同，噪声地板 0.130 %） | **不播**（`replay_play` / `replay_end` 各 3 帧 sha256 **全同** = `42c7eb581b56c4af…`，噪声地板 0.000 %；45 s 前后帧差 **0 px = 0.0000 %**，原版同一次采集也是 0 px，§53 记录的是 0.0121 %） | **观测**（真机真帧） |
+| ② | 版式 | 键盘 36 键 + Fire + `00:00` + 自造状态行 | 左 `⏮▶⏭` 96×96 @(0/100/200,582)、右 3 键 338×96 @(1582,432/532/632)、无键盘、无 Fire、无状态行 | **观测**（逐元素 bbox ≤1 px） |
+| ③ | 棋盘白底 + 轴线交点 | 1336×800 @(303,131)、交点 (970,530) | **1272×761 @(303,200)、交点 (938,579)** | **观测**（四个数 Δ≤2 px） |
+| ④ | 实体 | 无士兵/无靶子/多 3 个红箭头 | 数据层落地（`actors()`=2、位置与原版帧差 1–2 px）、红箭头**消失**；**渲染层 sprite 仍画不出**（§55.5） | 数据层 **观测**；渲染层 **未做成** |
+| ⑤ | `frame_diff` L1（`replay_play`） | **19.382**（不过）/ 19 块超限 / 最差 (0,4) 60.454 | **0.229（L1 过）** / **2 块超限** / 最差 (2,2) 3.381 | **观测** |
+| ⑤ | `frame_diff` L1（`replay_end`） | **53.437** / 22 块 / (0,5) 235.263 | **0.229（L1 过）** / **2 块** / 3.381 | **观测**（与 `replay_play` **逐位相同**：两边都静止了） |
+
+`replay_play` 的 L1 从 **19.382 → 0.229**（**−98.8 %**）、主色占比差 4.839 pp → **0.156 pp**（门槛 2.0）、
+差异像素 920 469 → **179 629**（41.33 % → **8.07 %**）。**L1 三层判据全过**；
+L2 只剩 2 块超限，两块都落在**实体渲染**上（§55.5、§55.6）。
+`replay_lobby` / `menu` 两屏**一个数都没动**（T5 的活，§53.4 ②）：4.114 % / 5 块、0.000 % / 0 块。
+
+### 55.1 先裁决 §53 与 §54 关于"我方棋盘"的矛盾（本机重测，同一把尺子）
+
+同一把尺子（列/行近白占比 > 30 %，允许 15 px 空洞取最长段；轴线 = 矩形内平均灰度最低的一行/列，
+实测轴线灰 51 / 网格线灰 177）量**本机**两侧：
+
+| 量 | §53（2026-11-10） | §54（2026-11-24） | **本机重测（本节）** |
+|---|---|---|---|
+| 原版白底 | x303–1575、y198–959 = 1273×762 | x304–1575、y199–959 = 1272×761 | **x303–1575、y198–959 = 1273×762** |
+| 原版交点 | (939,578) | (939,578) | **(939,578)** |
+| 我方白底 | x303–1638、y131–1140 = 1336×1010 | x303–1575、y150–911 = 1273×762 | **x303–1638、y131–930 = 1336×800** |
+| 我方交点 | (971,931) | (939,530) | **(970,530)** |
+
+**裁决**：原版侧三方一致 ⇒ 尺子没问题。两处"我方"的旧数**在本机都复现不出来**：
+§53 的 1336×1010 长宽比只有 1.32（与 `BOARD_ASPECT = 1.667` 自相矛盾）——那是把底部输入框/状态行的白像素
+并进了棋盘；§54 的 1273×762 @y150 与本机帧不符。**本机我方真实值 = 1336×800（比例 1.670）**
+⇒ 错的是**尺寸与位置**（比原版宽 +63、高 +38、上移 67），不是长宽比。
+⇒ 目标一律用**原版**那一列；§54.10 的"待裁决"这一条到此**关闭**（结论：§53 的我方数有测量缺陷，
+§54 的我方数不可复现；两者的**原版**数都对）。
+
+### 55.2 ① 行为：载入即暂停（缺的是**时钟起点**，不只是 `play()`）
+
+改法三句（`client/src/screens/play_screen.gd`）：
+
+1. `_begin_replay()` 末尾**删掉 `_replay.play()`** —— `ReplayPlayer::new` 的 `playing` 本来就是 `false`，
+   是这一句把它打开的（我方自定交互）；
+2. 时钟放到**载入态**那个 tick（`_replay_load_tick()`）：真帧上原版载入态**有**士兵/靶子/名字标签，
+   而 `PosInfo` 全部在 tick 6 ⇒ 停在 `first_tick`(1) 时 `actors()` 是**空的**；
+3. 曲线揭示量改成 `回放 tick − active_tick`（见 §55.3 第 3 条），暂停时**不动**。
+
+**载入 tick 是推断出来的**，三条真帧证据把它夹在一个区间里：
+
+| 证据 | 说明 |
+|---|---|
+| 布局已应用 | 士兵彩色 bbox (771,783)–(843,854) / 靶子 (1177,448)–(1202,473) 正好是**最后一条** `PosInfo`（tick 6，`(-5.156,-9.890)` / `(9.782,4.595)`）在 1273×762 上的投影（手算 808/831、1188/464，实测 807/818 与 1189/460） |
+| 底部函数文本 | `x+2sin(20x)` + `- 3.694` = tick **550** 的 `FunctionInfo`（第 2 发是 `x+2sin(10x)` / `- 2.808`，tick 1485） |
+| 没有弹道 | `FunctionActive.active_tick` = **615**，而画面里一条曲线都没有 ⇒ 载入 tick < 615 |
+
+⇒ 载入 tick ∈ [550, 615)。实现取**第 1 个结算批的 `exec_tick`**（本样本 = **558**，批表
+`[{550,558,1485},{1485,1492,2276}]`）。**这是推断**：缺 frida 冻 tick 的证据（§53.5 第 2 条那条路子仍未做）。
+如果将来冻住了 tick 发现是别的值，改的是 `_replay_load_tick()` 一处。
+
+**§53.5 第 2 条（S3 的 tick 对不齐）因此降级**：我方现在是**静止帧**，S3 第一次变成"版式差异"而不是
+"播放相位差异"。附带把 §54.5 的"45 s 后播到第几 tick 在 1208–2276 之间飘"这条**变成历史**：
+不播就不会飘；`replay_play` / `replay_end` 的跨侧数字现在是**可复跑**的（本节改后两次采集逐位相同）。
+
+### 55.3 ② 版式：逐项对齐（目标坐标全在预注册文件里）
+
+原版回放屏的静态结构不是猜的：`recovered-src/play_screen.tscn` 里有全部节点。三处**关键**读取：
+
+1. `LeftControls` 的五个 child 是 `[LeftTopButtonsContainer][MarginContainer(exp)][LeftButtonGrid]`
+   `[LeftReplaysButtonsGrid][MarginContainer2(exp)]` —— **回放块夹在两个展开垫中间**（竖直居中）。
+   我方以前把它加在**最后一个** child 位置，两个展开垫就把它一路推到屏幕底部（实测 y 964 vs 原版 581）。
+2. `LeftReplaysButtonsGrid` 是 `columns = 3`、**六个** child（`⇤ ← ⌫` 三个文字键 + 三个
+   `AspectRatioContainer/GraphwarButton`）。真帧上只能看见第二行的 `⏮▶⏭`，且落在 y581..676 ——
+   而"整块 96 高居中"只能算到 529 ⇒ **第一行占位但不可见**。我方用一个 `key+4` 高的空 Control 复现
+   （**机制未知**：Godot 的 `GridContainer` 会跳过 `visible=false` 的子节点，实测如此，所以原版第一行
+   不是靠 `visible` 藏起来的）。
+3. `RightReplaysButtonsGrid` 是**没有 `columns`** 的 GridContainer（默认 1 列）⇒ 三颗键**竖排**；
+   每颗 `text = "        "`（**八个空格**）在字号 `x/30` 下撑出 **337 px** 宽。我方按同一个数写
+   `custom_minimum_size`（337/1920 = 0.175521）。
+
+| 元素 | 原版（本机真帧） | 我方（改后） | Δ | 依据 |
+|---|---|---|---|---|
+| 左 `⏮▶⏭` | 3×(96×96) 黑边 @y581、x=0/100/200 | 3×(96×96) @y582、x=0/100/200 | **1 px** | `.tscn` 结构 + 真帧 |
+| 右 3 键 | 3×(337×96) @x1583、y=433/533/633 | 3×(338×96) @x1582、y=432/532/632 | **1 px** | 同上 |
+| 键盘 | **没有** | 灰键 0 个 | ✓ | 真帧 |
+| `Fire!` | **没有**（右上角空，但**那一行的高度还在**） | 藏按钮、留行高 96 | ✓ | 真帧（右三键的 y 只有按"顶行 96 + 居中"才对得上：429 vs 实测 433） |
+| `00:00` | **没有字符**（TimerContainer 那 140 px 还在：`f(x)=` 仍从 x169 起） | `TimerLabel.text = ""` | ✓ | 真帧 |
+| 自造 `ReplayStatusBar` | 原版**没有**这条 | 永不显示（读数改走 `replay_state()`） | ✓ | `.tscn` 无此节点 + 真帧 |
+| `f(x) =` 图标 | 白字形 x169–249、y1098–1127 | x171–247、y1100–1126 | **2 px** | 真帧 |
+| 大号函数文本 | 灰 `(120,128,125)`、x822–1181、y1087–1149 | x822–1180、y1084–1146 | **3 px** | 见下 |
+| 修正常数 | `- 3.694` x1764–1883 | x1774–1893 | **10 px ✗** | 见 §55.6 遗留 |
+
+**函数文本为什么是灰的**：原版回放屏的输入框是**不可编辑**态 ⇒ Godot 用
+`LineEdit/colors/font_uneditable_color`（`graphwar_theme.tres` **没有**覆盖它 ⇒ 默认
+`(0.875,0.875,0.875,0.5)`）。实测真帧文本色 `(120,128,125)` 正好等于
+`0.875 灰 × α0.5` 叠在输入框底色 `(17,33,27)` 上：`120=17+206·0.5`、`128=33+190·0.5`、`125=27+196·0.5`。
+⇒ 我方 `GwFunctionInput` 新增 `read_only` 开关，回放模式按同一个颜色画（**观测**）。
+光标也按真帧改成 3×90（`LineEdit/constants/caret_width = 3`；真帧 bbox x1182–1184、y1066–1155
+⇒ §53.4 ④ 那个"45 s 只变 270 px"就是它：3×90 = 270）。
+
+**顶上两颗键是禁用态**：真帧上 `ShowExtraButtons`（∨）与 `ChatButtonPlay` 是灰面 `#383838` +
+暗图标 `#888888`（= 主题的 disabled 皮肤；`0.4 α` 白图标叠灰面），另外两颗是绿面 `#1A3B2D` + 白图标
+⇒ 回放模式下**只有这两颗 disabled**（语义解释见文档里的"推断"）。另外 `ShowExtraButtons` 在
+`.tscn` 里 `text = "     "`（五个空格 ⇒ 与返回键同宽 146）—— 我方以前是空文本（96 宽），
+顶上四个开关于是整组右移 35 px；这一条也是**逐位**（`.tscn` 原文）。
+
+**删掉的自造元素**：`_begin_replay()` 末尾那句 `notify("回放 … ／ N 条事件 …")`。它是**我们加的**气泡
+（原版进回放屏什么都不弹），在帧上是底部中央一条 5 s 的橙色提示（实测 6117 px 白/橙像素）。删掉后
+底部条（y1102–1160）的近白像素从 **20567 → 1251**（原版 1227）。
+
+### 55.4 ③ 棋盘几何：错的是**右列宽度**，不是比例
+
+四个数与目标差 1–2 px（见 55.0 表）。成因一句话：**右边那列太窄**（改前右列 ≈282 px、
+原版 337）⇒ `AspectRatioContainer` 把棋盘撑成 1336×800；把右三键按原版 337 摆上之后，
+宽度自动回到 1272，竖直方向也随之落回 200（`ExtraOptionPad` = 顶行高 96，棋盘在剩下的 962 里居中 ⇒
+96 + (962−761)/2 = 196，实测 200；原版 198）。
+
+⇒ **`BOARD_ASPECT` 一直是对的**（真帧两边比例都 1.667±0.005），错的只是"每列多宽"。
+这条同时否掉了 §53.4 ③ 里"我方把棋盘铺得比原版高一截"的读法（那是我方**在同一块画布上被挤压**的表象）。
+
+### 55.5 ④ 实体：**数据层成了，渲染层没成**（先 dump 输入表，再判）
+
+`client/tools/replay_entity_dump.gd`（本节新增的诊断工具，本机可复跑）：
+
+```bash
+GW2_REPLAY=<快照>/1793897298 "$GODOT" --headless --path client --script res://tools/replay_entity_dump.gd
+```
+
+输出（**运行时读数**，不是推断）：
+
+* `actors()` = **2**：`id=230 pos=(-5.156,-9.890) alive=true is_target=false team=0 name='cmdgz'`、
+  `id=232 pos=(9.782,4.595) is_target=true`；`target_positions()` = 1；
+* `EntityDrawer.entity_count()` = **2**；`assets_available()=true`、`missing_assets()=[]`、
+  `texture_stats()=[6,0,0]`（6 张真贴图、0 张纯色兜底）；
+* 每具实体的 4 个子节点：3 个 `Sprite2D` **(512×512 真资产)** + 1 个 `RichTextLabel`（text='cmdgz'）；
+  位置 `(396.87,497.80)` / `(695.64,208.09)`（1000×600 画布）⇒ 投影到 1272×761 的棋盘上
+  = **(808,831)** / **(1188,464)**，与原版真帧的士兵 (807,818–831) / 靶子 (1189,460) **差 1–2 px**。
+
+⇒ **数据层与位置都对**；我方帧上却只有**一条 2 px 宽的竖线**（实测士兵区彩色像素 6 个 @x807、y835–840）。
+根因在**渲染层**：`entity_drawer::sprite_transform`（x86 `update_sprite` `0x4b9530`）的缩放是
+`scale = ((s/60)·(128/tex_w), (k/−60)·(128/tex_w))` ⇒ **任何贴图的精灵宽度恒为 `128/60 = 2.13 px`**
+（与 `size`、与贴图尺寸都无关），而原版真帧的士兵精灵是 **46×37 px**、靶子 26×26 px。
+**这条公式不可能画出真帧**（比例差 20 倍以上），而 `tests/entity_drawer.rs` 与
+`client/tools/entity_drawer_check.gd` 都是在**同一条公式**上自洽断言 ⇒ 又一次"自写断言只证明自洽"
+（`AGENTS.md` §0.5 的原话）。
+
+**没修的理由**：改它要动 `src/entity_drawer.rs`（原版模块名文件，规格要求"只在有指令级证据时才动"）
+＋ `tests/entity_drawer.rs` 与 `client/tools/entity_drawer_check.gd` 的**既有断言**（红线②禁止）。
+⇒ 本任务把它记成**未做成**，缺的证据是：`update_sprite` 的 **x 分量到底乘不乘 `k`**
+（或 `128/tex_w` 到底作用在哪一侧）的**指令级**复核；工具与输入表已就位，下一步是拆 `0x4b9530`
+的 632 B（`divss`/`mulss` 的寄存器来源）。
+
+**已经做成的两条**（都在真帧上验过）：
+
+1. **准备圈箭头在回放模式关掉**：真帧上原版棋盘**一个纯红像素都没有**（排除靶子框后 0 px），
+   我方改前 **276 px @(811,765)-(864,827)**；改后 **0 px**。
+2. **外观真的从回放里读**：真帧的士兵是 `face_paint_2 / asian / asian_hat`（回放的
+   `SkinGraphicsInfo` / `FaceGraphicsInfo` / `HatGraphicsInfo`，tick 6），靶子是 `target/no_face/no_hat`。
+   我方以前只给靶子设外观、士兵一律默认三件套 ⇒ 现在按 `_replay.graphics("skin"/"face"/"hat", id)`
+   喂 `set_entity_look()`（**我方接线**：原版走 `GraphwarGraphicsManager` 那条事件链，未接）。
+
+**给后来者的提醒**：`set_targets()` 这条怀疑**不成立** —— 回放分支里靶子早就有路：
+`_view_targets()` 在 `_replay_mode` 下读 `_replay.target_positions()`，`_sync_entities()` 会把它们
+`spawn_entity` + `set_entity_look("target", ...)`。真正缺的是**渲染层**，不是"没有 `set_targets()` 调用点"。
+
+### 55.6 ⑤ 逐块：还剩哪 5 块、各自差什么
+
+`replay_play` 与 `replay_end` 现在**逐位相同**（两边都静止）。改后**只剩 2 块超限**
+（块 = 320×290，`row,col` 从 0 起；门槛每块每通道 ≤ 2.0/255）：
+
+| 块 | dmean(RGB) | 差在哪（都能指到元素） |
+|---|---|---|
+| `(2,2)` **3.381** | 0.617 / 1.231 / 3.381 | **士兵精灵**：原版 46×37 的彩色精灵 vs 我方 2 px 竖线（§55.5 的渲染层缺陷） |
+| `(1,3)` **2.016** | 1.885 / 2.016 / 1.287 | **靶子**：同一件事（26×26 精灵 vs 2 px 竖线） |
+
+改前那 19 块里，`(0,0)` 4.773（`ShowExtraButtons` 灰面/图标）、`(0,3)` 3.444（`ChatButtonPlay` 灰面）、
+`(0,2)` 2.383（顶栏图标）三块在补上"回放模式两颗禁用键 + 图标居中"之后**已经达标**（现在分别是
+1.5 以下）。已经**达标**的块里最差的是 `(0,1)` 1.672、`(0,4)` 1.807、`(0,2)` 1.927 —— 它们都还带着"整套网格线"
+的差：我方把 1000×600 的画布缩放到 1272×761（1 px 线变成 1.27 px 抗锯齿），原版直接在 1273×762 上画
+（1 px 实线）。这条在 L2 上只值 ~1.0–1.5，**不足以单独把块推过 2.0**，所以本轮没动画布模型
+（`docs/16` §43.6(d) 第 3 条那个"我方选择"）。要不要换成"按棋盘实际尺寸画、不缩放"，是**下一步**的事
+（改它要同时改 `PIXEL_OFFSET`/`CURVE_SCALE` 与 `_fit_canvas`，风险面比收益大）。
+
+### 55.7 复跑清单（每条都在本机跑过）
+
+```bash
+WS=<工作树>; W=$WS/../work-t4; mkdir -p $W
+export CARGO_HOME=/home/CG/Myprojects/graphwar2-rebuild/.reference/cargo-home
+export CARGO_TARGET_DIR=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/target-t4
+export GODOT=/home/CG/Myprojects/graphwar2-rebuild/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+# ① 内核三步（缺一步 = 假结果）
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+"$GODOT" --headless --path client --import
+# ② 两侧真帧（**只用 display 81/82**；`--side ours` 必须吃**本工作树**的 client/，见下）
+python3 tools/frame_capture.py --side original --flow replay --seed-replays --out $W/cap_orig --display-num 81
+python3 tools/frame_capture.py --side ours     --flow replay --seed-replays --out $W/cap_mine --display-num 82
+# ③ 三层判据（同一个 frame_diff.py、同一个门槛文件）
+python3 tools/frame_diff.py --orig $W/cap_orig --mine $W/cap_mine \
+    --screens menu,replay_lobby,replay_play,replay_end \
+    --out $W/fd.tsv --blocks-out $W/fdb.tsv --json $W/fd.json
+# ④ 行为判据（**不看画面也能判**：三帧 sha256 全同 = 静止）
+python3 -c "import hashlib,glob;[print(f,hashlib.sha256(open(f,'rb').read()).hexdigest()[:16]) for f in sorted(glob.glob('$W/cap_mine/frames/replay_play_*.png'))]"
+# ⑤ 实体输入表 dump
+GW2_REPLAY=$WS/.reference/replays/gw2-replays-snapshot/replays/1793897298 \
+    "$GODOT" --headless --path client --script res://tools/replay_entity_dump.gd
+# ⑥ 回归
+cargo test --offline                    # 1761 / 0 / 1 ignored
+HOME=$W/home bash client/run.sh selftest    # 717 / 0 / 1 skipped，missing=0 silent=0
+#   （`HOME` 必须是**可写**目录且里面有 `replays/1793897298`：`selftest` 的 `_real_replay_dir()`
+#     直接读 `$HOME/.local/share/godot/app_userdata/Graphwar/replays`；本机的那个目录是只读的）
+# ⑦ 三轴护栏（三条轴分开跑、分开报）
+cargo run --release --offline -q --example replay_attrib -- --dir <.reference/replays/gw2-replays-snapshot/replays> --drive fire  --policy default --json /tmp/f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir <.reference/replays/gw2-replays-snapshot/replays> --drive batch --policy default --json /tmp/b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir <.reference/replays/gw2-replays-snapshot/replays> --policy strict
+```
+
+⚠️ **踩到的坑（t6 也踩到，写在这里免得第三个人再踩）**：`tools/frame_capture.py` 的
+`_find_repo()` 是"从脚本位置向上找**第一个**含 `.reference/game` 的目录" —— 工作树在
+`<主仓>/.agent-work/cg/wt-t4` 下，向上走会先命中**主仓**的 `.reference/` ⇒ `CLIENT` 变成主仓的
+`client/`，`--side ours` 拍的**是没改过的客户端**。绕过办法（本工作树就是这么做的、不入库）：
+在工作树根建符号链接 `ln -s <主仓>/.reference .reference`。判别法：`--side ours` 的
+`manifest.json`/日志里 `frames_dir` 在 `../work-t4/` 下且帧内容确实变了。本节所有"改后"的数
+**都是在工作树内测的**（v1 那次踩坑的采集已作废重跑）。
+
+### 55.8 抓不到 / 本轮没做（诚实清单）
+
+| # | 项 | 状态 | 卡在哪 |
+|---|---|---|---|
+| 1 | 载入态的**精确 tick** | **推断**（区间可证） | 真帧只能夹到 [550,615)；取第一批 `exec_tick`=558 是自然候选。缺 frida 冻 tick（§53.5 第 2 条） |
+| 2 | 实体**渲染层**（sprite 缩放） | **未做成** | `sprite_transform` 的 x 分量与真帧差 20 倍（§55.5）；要拆 `0x4b9530` 的 632 B，且改动会碰既有断言 |
+| 3 | 修正常数**文本位置** | **10 px 未达标**（预注册容差 8 px） | 我方 `OffsetContainer` = `0.09·x` = 172.8（原版 `.gd` 明写）；真帧等效 **179 px**，还有约 4 px 是文本居中的差。差的 6 px 牵到 `FxContainer` 宽度（我方 96 / 原版 ≈107，原版把 `FxTextureButton` 包在 `AspectRatioContainer` 里、我方直接放） |
+| 4 | 顶栏 4 个开关的图标形状 | 已达标（块 dmean < 2.0），但**逐像素仍不同** | `no_chat` 那颗我方渲染出来的形状与原版帧不同（同一张 `no_chat.ctex`，差在 `expand_icon` 的取整/留白？未追） |
+| 5 | **画布模型**（1000×600 缩放 vs 原版按实尺寸画） | 没动 | 网格线 1 px vs 1.27 px 抗锯齿；L2 上只值 1.0–1.5/块，本轮收益 < 风险（§55.6 末） |
+| 6 | 原版"播到文件末尾"的样子 | 仍没拍到 | 原版不自动播放；本轮没做"帮原版按一下 ▶ 再等 40 s"的分支（`tools/frame_capture.py` 不归我改） |
