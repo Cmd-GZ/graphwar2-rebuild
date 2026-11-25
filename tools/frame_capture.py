@@ -210,6 +210,16 @@ def steps_for(flow, side):
                 ('hold', FIRE_BTN, 2.0, 6.0),
             ]),
         ]
+    if flow == 'static':
+        # §T6（2026-11-26）：**纯静态两屏** —— 主菜单点 Campaign 之后的战役选择屏，再点关卡 0
+        # 之后的关卡说明弹窗。不含棋盘局面/骰子/tick ⇒ 不需要固定局面、不需要 `--seed-replays`；
+        # 坐标沿用既有常量（`CAMPAIGN_BTN` / `LEVEL_NODE_0`，来自原版实测帧 docs/06 §33/§52）。
+        # 点击后各等 2.0 s（`fixtures/static_screens_targets.txt` §2 预注册）；每屏仍 3 帧。
+        # ⚠️ 不点 `START_BTN`：那一步才进对局。
+        return [
+            ('campaign', [('click', CAMPAIGN_BTN, 2.0)]),
+            ('level_popup', [('click', LEVEL_NODE_0, 2.0)]),
+        ]
     if flow == 'replay':
         return [
             ('menu', []),
@@ -387,8 +397,9 @@ def main(argv=None):
     ap.add_argument('--home', default=None, help='HOME（默认 <out>/home）')
     ap.add_argument('--game-arg', action='append', default=[], help='透传给游戏的额外参数')
     ap.add_argument('--shots', default=None, help='截图输出子目录（默认 <out>/frames）')
-    ap.add_argument('--flow', choices=['campaign', 'replay'], default='replay',
-                    help='点法：replay = 增补 1 的四屏（回放局面，默认）；campaign = 原登记的三屏')
+    ap.add_argument('--flow', choices=['campaign', 'replay', 'static'], default='replay',
+                    help='点法：replay = 增补 1 的四屏（回放局面，默认）；campaign = 原登记的三屏；'
+                         'static = T6 的静态两屏（campaign / level_popup，见 fixtures/static_screens_targets.txt）')
     ap.add_argument('--seed-replays', action='store_true',
                     help='把冻结快照里的两份回放拷进该侧 user://replays（不写快照）')
     # ── T2（消引擎版本混淆项）新增：都不给 ⇒ 行为与 94 号那一轮完全一致 ──────────────
