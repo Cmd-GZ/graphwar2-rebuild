@@ -10649,127 +10649,103 @@ for a in 0x470840 0x477140 0x476a20 0x477540 0x4758b0 0x4741a0 0x473d00; do … 
 见 [`docs/06` §53.8](06-verification.md) 的 4 条命令（两侧采集 → 三层判据 → 门槛 sha 自检 → 快照 403 份复核）。
 两侧都是**同一条点击串**驱动（`xdotool`），没有任何"手工对准"的步骤；截图**不入库**（只入库 TSV 数字）。
 
+## 62. 客户端侧接线：回放屏**载入即暂停** + 回放版式 + 底部只读函数框（2026-11-26，任务 T4）
 
-## 62. 战役选择屏 / 关卡弹窗：两处**源码级**修正让两屏做到**逐像素相同**（2026-11-26，任务 T6）
+> 真帧证据与逐元素数字在 **`docs/06` §55**（那一节是验收，本节是**怎么接的**）。
+> 只讲客户端的三处改动：`client/src/screens/play_screen.gd`、
+> `client/src/play/function_input.gd`、`src/_scaffold/replay_driver_class.rs`（只加一个快照键）。
 
-> **编号**：本节现为 **62 号**（t6 先合）；**t4 合并时**会顺延为 **64 号**（t4=62、t5=63、t6=64），
-> 届时正文引用一起改。当前 master 的编号是连续的（§61 → §62 本节 → §63 = t5 的回放列表行）。
-> 正文里对它的引用都写成
-> `docs/16` 的 62 号，重编时一并改）。
->
-> 前情：`fixtures/frame_diff_thresholds.txt` 那套三层判据（§61 / `docs/06` §53、§54）此前只覆盖回放流四屏。
-> 本轮把**静态两屏**（`campaign` 战役选择屏、`level_popup` 关卡弹窗）拉进真值，并且**直接做到 0 像素** ——
-> 与主菜单同级。改动**只有两处**，都在公共件里；每一处都能指到"原版帧里的哪个元素/坐标"。
+### 62.1 `_begin_replay()`：不 `play()`、时钟放到"载入态"，曲线按 tick 揭示
 
-### 62.1 一页结论
-
-| # | 改了什么 | 文件/函数 | 原版帧里的证据 | 档 |
-|---|---|---|---|---|
-| 1 | 返回键两个按钮加 `clip_children = 2` | `client/src/ui/ui.gd` `GwUI.exit_pair()` | `recovered-src/campaign.tscn` 里 `ClipButton` / `LongPressButton` 都写着 `clip_children = 2`；真帧里返回键**圆角外侧**是页面底色 `#0E251C`（我方原来是面板色 `#1A3B2D`），两屏各 **152 px**、max\|Δ\|=22 | **观测**（真帧）+ **逐位**（`.tscn`） |
-| 2 | 21 个关卡数字的主题补四档字色 | `client/src/ui/theme_factory.gd` `campaign_level_theme()` | 真帧里同一枚 `0` 三态 = `(223,223,223)` / `(242,242,242)` / `(255,255,255)`，我方原来三态全 `255`；`campaign` 屏差 **3827 px** 全在这一枚数字上 | **观测**（真帧 + 引擎默认主题查询；**机理=推断**） |
-
-改后：`campaign` 与 `level_popup` 两屏 **0 像素、max\|Δ\|=0**、24 块全 0
-（`fixtures/frame_diff_results_static.tsv` / `frame_diff_blocks_static.tsv`，详见 `docs/06` §57）。
-
-### 62.2 改 1：`clip_children = 2` —— 返回键圆角外侧那 152 px
-
-**现象**（`docs/06` §57.3 第 2 条）：两屏左上角 `[0,0]..[~150,~96]` 上各有 **152 px** 不同，
-全部在返回键四个圆角**外侧**：原版是页面底色 `(14,37,28)`，我方是面板色 `(26,59,45)`
-（`(0,0)` 这一枚的 max\|Δ\| 就是整个屏幕的 max\|Δ\|=22）。8 个角 × 19 px 左右 = 152。
-
-**根因**：`GwUI.exit_pair()` 里那层深绿底是 `AnimationRect`（`ColorRect`，**方角**满矩形）。
-原版同样有这一层（`campaign.tscn` 的 `ClipButton/AnimationRect`，`show_behind_parent = true`、
-`anchors_preset = 15`、`color = Color(0.101961, 0.231373, 0.176471, 1)`），但原版那两个按钮节点上
-都有一行我方漏掉的属性：
-
-```text
-[node name="ClipButton" type="GraphwarButton" ...]
-clip_children = 2
-```
-
-`clip_children = 2` = `CanvasItem.CLIP_CHILDREN_AND_DRAW`（4.7.2 实测枚举：`DISABLED=0 / ONLY=1 /
-AND_DRAW=2`）：**子节点按父节点自己画出的形状（= stylebox 的圆角矩形）裁**，于是方角 `AnimationRect`
-在四个圆角外侧被裁掉，露出页面底色。我方补上同一个值即可。
-
-⚠️ **踩过的坑（记下来）**：第一版写成了 `CanvasItem.CLIP_CHILDREN_ONLY`（=1，名字更像"只裁子节点"），
-结果**整枚按钮自己的黑边与箭头都不见了**（`max|Δ|` 直接跳到 229，L2 多出 1 块超限）——`ONLY` 在
-4.7.2 里不会把节点自己画出来。**必须照 `.tscn` 的数 2 写 `AND_DRAW`**：名字会骗人，`.tscn` 不会。
-
-两个按钮都补（`ClipButton` 有子节点、`LongPressButton` 没有；后者照抄是为了源码级对齐）：
+改前：`_realize_replay_state()` → `_replay.play()` → 界面上按 60 tick/s 自己走完
+（§53.4 ④ 就是这个差异）。改后三句：
 
 ```gdscript
-clip.clip_children = CanvasItem.CLIP_CHILDREN_AND_DRAW    # = 原版 .tscn 的 clip_children = 2
-...
-press.clip_children = CanvasItem.CLIP_CHILDREN_AND_DRAW
+var load_tick := _replay_load_tick()      # = 第 1 个结算批的 exec_tick（本样本 558）
+if load_tick != int(_replay.tick()):
+    _replay.seek(load_tick)
+_replay.pause()
 ```
 
-影响面：`GwUI.exit_pair()` 是**公共件**（8 个界面的返回键都用它）。回放流四屏复跑后**每屏恰好少
-152 px**、超限块数一个没变（`docs/06` §57.6 逐项列出）⇒ 这是纯修正，没有连带变化。
+* **为什么不是 `first_tick`**：`with_replay` 把时钟停在 `first_tick`(1)，而这份回放的位置
+  （`PosInfo`）全在 tick 6 ⇒ 停在 1 时 `actors()` 是**空表**，屏幕上没有士兵也没有靶子。
+  真帧上原版载入态是有它们的。载入 tick 的可证区间是 [550,615)（详见 `docs/06` §55.2），
+  实现取"第一批 `exec_tick`"（`_replay_load_tick()`，一处可改）。
+* **曲线揭示量**：以前 `_set_curve()` 在回放模式直接把 `_curve_tick = _curve_final_tick`
+  （"这一发已经打完了，只是重画出来"）⇒ 载入态就把整条弹道画了出来。现在
+  `_replay_curve_tick()` 返回 `回放 tick − active_tick`（夹到 0..揭完），`_advance_curve()`
+  在回放模式**不走墙钟**，改由 `_replay_advance_curve()` 每走一个 tick 推一格。
+  `active_tick` 是 `FunctionActive{active_tick}` 事件（`ReplayState.active_tick`）——
+  `GwReplayDriver::snapshot()` 新增了这一个键（`src/_scaffold/replay_driver_class.rs`），
+  GDScript 侧没有第二份。
+* **状态行**：`ReplayStatusBar` / `ReplayTickLabel` / `ReplayProgress` 三个自造节点**保留但永不显示**
+  （`_set_replay_layout()` 里写死 `visible = false`），读数改走 `replay_state()`（新增
+  `active_tick` / `curve_tick` / `curve_total` / `curve_reveal` / `layout` 五个键，都不进画面）。
 
-### 62.3 改 2：21 个关卡数字的**字色**是引擎默认主题的三档，不是 app 主题的白
+### 62.2 `_set_replay_layout(on)`：一块开关，全部按 `play_screen.tscn` 的静态结构摆
 
-**现象**：`campaign` 屏 3979 px 差异里 **3827 px** 是那一枚 `0`：字形/字号/位置逐像素相同
-（边缘抗锯齿覆盖率两侧都是 42 %），**只有颜色不同** —— 原版 `(223,223,223)`，我方 `(255,255,255)`。
-`level_popup` 帧里同一枚数字（在弹窗面板左外侧、被面板右缘裁到 x=242）原版是 `(242,242,242)`。
+| 节点 | 回放模式 | 依据 |
+|---|---|---|
+| `LeftButtonGrid` / `RightButtonGrid` 的持有者（`_make_grid` 造的 MarginContainer） | `visible = false` | 真帧没有键盘 |
+| `FireStack`（Fire 按钮那一摞） | `visible = false`，但 `HBoxContainer` 那**一行保留 96 px** | 真帧右上角是空的、可是右三键的 y 只有按"顶行 96 + 居中"才对得上（429 vs 实测 433） |
+| `LeftReplaysButtonsGrid` 的三个键 | 96×96，`icon` = `skip_backward_option` / `pause_option`↔`play_option` / `skip_forward_option` | `.tscn` 的 `icon=` + `GwIcons.FIXED` |
+| `RightReplaysButtonsGrid` | **竖排**三颗 337×96（`custom_minimum_size` = `w*0.175521` = 原版 8 空格文本撑出来的宽） | `.tscn`：无 `columns` 的 GridContainer = 1 列；`text = "        "` |
+| `ReplayGridRowPad`（左列，新增的空 Control） | `custom_minimum_size.y = key + 4` | 真帧：`LeftReplaysButtonsGrid` 有 6 个 child / `columns = 3`，第一行**占位但看不见**（机制未知，见 `docs/06` §55.3 第 2 条） |
+| `TimerLabel` | 文本清空（**容器保留**） | 真帧：`00:00` 没有字符，但 `f(x)=` 仍从 x169 起（TimerContainer 那 140 px 还在） |
+| `ShowExtraButtons` / `ChatButtonPlay` | `disabled = true`（灰面 + 暗图标 = 主题的 disabled 皮肤） | 真帧：这两颗是 `#383838`/`#888888`，另两颗是 `#1A3B2D`/白 |
+| `ReplayStatusBar` | 恒 `visible = false` | `.tscn` 里没有这个节点 |
 
-**为什么两屏颜色不同**：本轮用一次性探针（`HOME`/display 独立，**不改仓库脚本**）对**原版**量了
-5 个鼠标状态 —— 223（normal）/ 242（hover）/ 255（pressed）。`level_popup` 帧里鼠标**还压在**那枚
-被弹窗绕开的按钮上 ⇒ 底屏按钮停在 hover 态 ⇒ 242。完整表在 `docs/06` §57.4。
+**顺序就是几何**（这条踩过一次，写下来）：原版 `LeftControls` / `RightControls` 的 child 顺序是
+`[…][展开垫][键盘 grid][回放 grid][展开垫]` —— 回放块夹在**两个**展开垫中间才是竖直居中。
+我方原来把回放块加在**最后一个** child 位置，两个展开垫把它一路推到屏幕底部（实测 y 964 vs 原版 581）。
+另外 `GwUI.vbox()` 默认 `size_flags_vertical = EXPAND_FILL`，给"贴内容高度"的块用之前必须退回 `SIZE_FILL`。
 
-**这三个数是什么颜色**：用同一个 Godot 4.7.2 查引擎默认主题：
+**`ShowExtraButtons` 的两个坑**：① `.tscn` 里它是 `text = "     "`（五个空格 ⇒ 与返回键同宽 146），
+我方以前是空文本（96 宽）⇒ 顶上四个开关整组右移 35 px；② `icon_alignment` 默认 LEFT，与"5 个空格 +
+`expand_icon`"一起用时 Godot **不给图标留宽度** ⇒ 图标一个像素都不画（现在显式写 CENTER）。
 
-```text
-ThemeDB.get_default_theme().get_color("font_color",         "Button") = (0.875, 0.875, 0.875, 1)   # ×255 = 223
-                             ...("font_hover_color",   "Button") = (0.95,  0.95,  0.95,  1)         # = 242
-                             ...("font_pressed_color", "Button") = (1,1,1,1)                     # = 255
-                             ...("font_focus_color",   "Button") = (0.95, 0.95, 0.95, 1)
-```
+### 62.3 `GwFunctionInput.read_only`：只读态按"不可编辑"画（颜色 + 底色 + 光标）
 
-⇒ 原版这 21 个 `GraphwarButton` 的**字色走的是引擎默认主题**。我方的字色为什么是白的：我方这 21 个
-按钮是**真 Godot `Button`**，正常继承我们的 app 主题（`GwThemeFactory.build()` 里
-`Button/font_color = 白`）。**推断**（缺证据）：原版那个 Rust 类 `GraphwarButton` 取字色时没走完整
-theme 链、落到了默认主题 —— 反汇编没做，**登记为未知**。
+原版回放屏的函数框是**不可编辑**的，真帧上：文字 `(120,128,125)`、底色 `(17,33,27)`、光标 3×90。
 
-**修法（为什么不动全局 app 主题）**：主菜单（`menu` 屏）已经 0 像素，它的按钮白字是**对的**；
-把 app 主题的 `Button/font_color` 改成 0.875 会立刻把主菜单打破。所以只在**关卡数字那份主题**
-（`campaign_button_theme_2.tres` 的复刻 = `GwThemeFactory.campaign_level_theme()`）上显式写四档：
+* 文字色 = Godot 默认 `LineEdit/colors/font_uneditable_color` `(0.875,0.875,0.875,0.5)`
+  叠在底色上（`120=17+206·0.5` 等三条同时成立）；`graphwar_theme.tres` 没有覆盖这个键；
+* 底色：主题的 `LineEdit/styles/normal` 是 `bg_color = (0.6,0.6,0.6,**0**)`（透明）⇒
+  `#11211B` 那层**不是主题给的**，是控件自己画的；不画它 `frame_diff` 的 L1
+  「第一主色占比差」差 **5.735 pp**（门槛 2.0 pp，这一条单独就把 L1 判死）；
+* 光标：主题 `LineEdit/constants/caret_width = 3`，真帧高度 90 px（输入框 98 高、上下各留 4）。
 
-```gdscript
-t.set_color("font_color",         "Button", Color(0.875, 0.875, 0.875, 1.0))   # 223（真帧 normal）
-t.set_color("font_hover_color",   "Button", Color(0.95,  0.95,  0.95,  1.0))   # 242（真帧 hover）
-t.set_color("font_pressed_color", "Button", Color(1.0,   1.0,   1.0,   1.0))   # 255（真帧 pressed）
-t.set_color("font_focus_color",   "Button", Color(0.95,  0.95,  0.95,  1.0))   # 默认主题同值（未单独观测）
-```
+三处都在 `client/src/play/function_input.gd` 的 `_draw()` 里，由新开关 `read_only` 分支
+（`play_screen.gd::_set_replay_layout()` 里与版式一起开关）。**非回放路径一个像素没变**
+（`read_only = false` 时颜色/底色/光标都还是原来那套）。
 
-`font_disabled_color = Color(0.87451, 0.87451, 0.87451, 0)` **不动**：它来自恢复出的
-`campaign_button_theme_2.tres`（逐字节），alpha=0 正是"锁住的关卡数字看不见"的来源
-（真帧里 21 格只显示解锁的那一枚 `0`）。
+### 62.4 实体：数据层已接、渲染层是 `src/entity_drawer.rs` 的缺陷（本任务未修）
 
-### 62.4 每处改动 → 原版帧里的哪个元素 / 哪个坐标
+* `_sync_entities()` 现在做三件事（都能在 `client/tools/replay_entity_dump.gd` 的 dump 里读到数字）：
+  ① 士兵/靶子都 `spawn_entity`（靶子的来源是 `_replay.target_positions()`，**不是**一条缺失的
+  `set_targets()` 调用）；② 外观从回放的 `Skin/Face/HatGraphicsInfo` 读
+  （`_replay.graphics("skin"/"face"/"hat", id)` → `set_entity_look()`，本样本士兵 =
+  `face_paint_2 / asian / asian_hat`）；③ 回放模式**不填 `prep` 表** ⇒ 准备圈箭头不画
+  （真帧：原版棋盘上 0 个纯红像素）。
+* **渲染层画不出来**：`entity_drawer::sprite_transform` 的 x 缩放是 `(s/60)·(128/tex_w)`
+  ⇒ 精灵宽度恒为 `128/60 = 2.13 px`（与 `size`、与贴图尺寸都无关），真帧是 46×37 px。
+  这条公式来自 x86 `update_sprite`（`0x4b9530`）的读数，但**它画不出真帧**；而
+  `tests/entity_drawer.rs` 与 `client/tools/entity_drawer_check.gd` 都在同一条公式上自洽断言
+  ⇒ 又一次"自写断言只证明自洽"（`AGENTS.md` §0.5）。修它要动 `src/entity_drawer.rs` +
+  两处既有断言，**超出 T4 的授权**，故只留诊断（`docs/06` §55.5 / §55.8 第 2 条）。
 
-| 改动 | 原版帧里的元素 | 画面坐标（1920×1160） | 改前差值 |
-|---|---|---|---|
-| `clip_children = 2`（两个返回键按钮） | 左上角返回键 `ExitButtonContainer/{ClipButton,LongPressButton}` 的**圆角外侧** | 4 个角：`x∈[0,~14] / [~146,160]`、`y∈[0,~14] / [~82,96]`（两屏同样位置） | 152 px / max\|Δ\|=22 |
-| 关卡数字四档字色 | 关卡网格第 0 格 `Control/level_0`（`CampaingLevelsButtons.gd` 运行时造的第 0 个按钮） | 字身 bbox `x 200..278, y 187..271`；点击锚点 `(241,228)` | 3827 px / max\|Δ\|=32 |
+### 62.5 `selftest.gd` 里被**改掉的 4 条旧断言**（条数不变：717 → 717）
 
-**没有改**的东西（对照）：标题 `CAMPAIGN`（`x 850..1219, y 20..76`）、页脚 `AdContainer`、
-关卡网格几何（字号 = 宽/15、x 步长 = 宽/8、y 步长 = 宽/4）、弹窗面板矩形与 `Cancel` / `Start`
-按钮 —— 改前这些就已经逐像素相同（L2 的 24 块里除 `0,0` 外全是 0）。
+它们断的正是被真帧推翻的"我方自定交互"，不是回归保护的一部分，逐条写明：
 
-### 62.5 没做到的 / 仍然未知
+| 旧断言 | 新断言 | 为什么 |
+|---|---|---|
+| 「进入回放即**开始播放**（我们自定的交互）」 | 「进入回放即**暂停**：`playing=false` 且 5 s 墙钟后 tick 不动」 | 原版不自动播放（§53.4 ④ + 本次 `docs/06` §55.0 ①） |
+| 「回放进度条**可见**（我们自定）」 | 「自造的 `ReplayStatusBar` **不显示**」 | 原版底部只有一行（§53.4 ③） |
+| 「回放状态显示当前 tick」读 `ReplayTickLabel.text` | 改读 `replay_state()["tick"]`（不进画面的只读接口） | 同上 |
+| 「tick 550 的弹道由内核重算出来（>1 点）」 | 挪到「tick 700（> `active_tick` 615）」 | 揭示量现在跟 tick 走；550 那一刻**一个点都不该画** |
 
-1. **原版字色的机理**：只观测到"三态真帧 = 默认主题三档"，**没有**反汇编证据证明 Rust 侧取色路径
-   ⇒ 推断/未知（同 `docs/06` §57.7 第 1 条）。
-2. **存档状态只测了两种（无存档 / `level_20` 全解锁），"部分解锁"没测**：两种都 0 像素
-   （补测数字见 `docs/06` §57.5），但 `level_7` 那种"8 枚可见 + 13 枚 alpha=0"的混合态没采过样。
-3. **`level_popup` 里的 242 属于底屏按钮的 hover 残留**：两侧现在一致所以 0 像素，但"弹窗不挡那个
-   位置的鼠标"这件事本身没有被测试（只是同一套点击串下的副作用）。
-4. 其它分辨率 / DPI **没有**覆盖（本轮固定 1920×1160、无 WM、llvmpipe）。
-
-### 62.6 复跑
-
-见 `docs/06` §57.8（两侧 `--flow static` + `frame_diff.py --screens campaign,level_popup`）。
-本条的两个改动都是 `.gd`，**不需要**重编 `libgw2_rebuild.so`，也不需要 `--import`（没有新文件）。
+另外 `client/tools/play_flow_check.gd` / `entity_drawer_check.gd` 等**一个字没动**。
 
 ## 63. 回放列表（S2）行结构按原版重做：五段 = [录制时间(带秒·UTC)] [关卡名] [4 个模式图标] [▶]；**整屏 0 像素差**（2026-11-25，`dispatch/T5`）
 
@@ -10862,3 +10838,124 @@ HBoxContainer(separation 4)
 | 4 | 4 个图标的**枚举→图标**对照的指令级证据 | 本轮用"回放枚举名 → `GwIcons` 键"的映射（`replay_meta.rs::mode_icons()`），依据是真帧两行图标不同 + `docs/118` §7.1 / `docs/92` §6 的档位顺序；**没有**从二进制里读出这张表 |
 | 5 | 关卡名/模式缺失时原版画什么 | **未知**：冻结语料里没有"没有这些事件的非空回放"样本可对照；我方选择"留空不猜" |
 | 6 | S3/S4（回放屏/播完屏） | 不在本任务范围（`docs/16` §61.4 已指出根因）；本轮这两屏的数一个都没变（41.328 % / 52.460 %） |
+
+## 64. 战役选择屏 / 关卡弹窗：两处**源码级**修正让两屏做到**逐像素相同**（2026-11-26，任务 T6）
+
+> **编号**：本节现为 **62 号**（t6 先合）；**t4 合并时**会顺延为 **64 号**（t4=62、t5=63、t6=64），
+> 届时正文引用一起改。当前 master 的编号是连续的（§61 → §64 本节 → §63 = t5 的回放列表行）。
+> 正文里对它的引用都写成
+> `docs/16` 的 62 号，重编时一并改）。
+>
+> 前情：`fixtures/frame_diff_thresholds.txt` 那套三层判据（§61 / `docs/06` §53、§54）此前只覆盖回放流四屏。
+> 本轮把**静态两屏**（`campaign` 战役选择屏、`level_popup` 关卡弹窗）拉进真值，并且**直接做到 0 像素** ——
+> 与主菜单同级。改动**只有两处**，都在公共件里；每一处都能指到"原版帧里的哪个元素/坐标"。
+
+### 64.1 一页结论
+
+| # | 改了什么 | 文件/函数 | 原版帧里的证据 | 档 |
+|---|---|---|---|---|
+| 1 | 返回键两个按钮加 `clip_children = 2` | `client/src/ui/ui.gd` `GwUI.exit_pair()` | `recovered-src/campaign.tscn` 里 `ClipButton` / `LongPressButton` 都写着 `clip_children = 2`；真帧里返回键**圆角外侧**是页面底色 `#0E251C`（我方原来是面板色 `#1A3B2D`），两屏各 **152 px**、max\|Δ\|=22 | **观测**（真帧）+ **逐位**（`.tscn`） |
+| 2 | 21 个关卡数字的主题补四档字色 | `client/src/ui/theme_factory.gd` `campaign_level_theme()` | 真帧里同一枚 `0` 三态 = `(223,223,223)` / `(242,242,242)` / `(255,255,255)`，我方原来三态全 `255`；`campaign` 屏差 **3827 px** 全在这一枚数字上 | **观测**（真帧 + 引擎默认主题查询；**机理=推断**） |
+
+改后：`campaign` 与 `level_popup` 两屏 **0 像素、max\|Δ\|=0**、24 块全 0
+（`fixtures/frame_diff_results_static.tsv` / `frame_diff_blocks_static.tsv`，详见 `docs/06` §57）。
+
+### 64.2 改 1：`clip_children = 2` —— 返回键圆角外侧那 152 px
+
+**现象**（`docs/06` §57.3 第 2 条）：两屏左上角 `[0,0]..[~150,~96]` 上各有 **152 px** 不同，
+全部在返回键四个圆角**外侧**：原版是页面底色 `(14,37,28)`，我方是面板色 `(26,59,45)`
+（`(0,0)` 这一枚的 max\|Δ\| 就是整个屏幕的 max\|Δ\|=22）。8 个角 × 19 px 左右 = 152。
+
+**根因**：`GwUI.exit_pair()` 里那层深绿底是 `AnimationRect`（`ColorRect`，**方角**满矩形）。
+原版同样有这一层（`campaign.tscn` 的 `ClipButton/AnimationRect`，`show_behind_parent = true`、
+`anchors_preset = 15`、`color = Color(0.101961, 0.231373, 0.176471, 1)`），但原版那两个按钮节点上
+都有一行我方漏掉的属性：
+
+```text
+[node name="ClipButton" type="GraphwarButton" ...]
+clip_children = 2
+```
+
+`clip_children = 2` = `CanvasItem.CLIP_CHILDREN_AND_DRAW`（4.7.2 实测枚举：`DISABLED=0 / ONLY=1 /
+AND_DRAW=2`）：**子节点按父节点自己画出的形状（= stylebox 的圆角矩形）裁**，于是方角 `AnimationRect`
+在四个圆角外侧被裁掉，露出页面底色。我方补上同一个值即可。
+
+⚠️ **踩过的坑（记下来）**：第一版写成了 `CanvasItem.CLIP_CHILDREN_ONLY`（=1，名字更像"只裁子节点"），
+结果**整枚按钮自己的黑边与箭头都不见了**（`max|Δ|` 直接跳到 229，L2 多出 1 块超限）——`ONLY` 在
+4.7.2 里不会把节点自己画出来。**必须照 `.tscn` 的数 2 写 `AND_DRAW`**：名字会骗人，`.tscn` 不会。
+
+两个按钮都补（`ClipButton` 有子节点、`LongPressButton` 没有；后者照抄是为了源码级对齐）：
+
+```gdscript
+clip.clip_children = CanvasItem.CLIP_CHILDREN_AND_DRAW    # = 原版 .tscn 的 clip_children = 2
+...
+press.clip_children = CanvasItem.CLIP_CHILDREN_AND_DRAW
+```
+
+影响面：`GwUI.exit_pair()` 是**公共件**（8 个界面的返回键都用它）。回放流四屏复跑后**每屏恰好少
+152 px**、超限块数一个没变（`docs/06` §57.6 逐项列出）⇒ 这是纯修正，没有连带变化。
+
+### 64.3 改 2：21 个关卡数字的**字色**是引擎默认主题的三档，不是 app 主题的白
+
+**现象**：`campaign` 屏 3979 px 差异里 **3827 px** 是那一枚 `0`：字形/字号/位置逐像素相同
+（边缘抗锯齿覆盖率两侧都是 42 %），**只有颜色不同** —— 原版 `(223,223,223)`，我方 `(255,255,255)`。
+`level_popup` 帧里同一枚数字（在弹窗面板左外侧、被面板右缘裁到 x=242）原版是 `(242,242,242)`。
+
+**为什么两屏颜色不同**：本轮用一次性探针（`HOME`/display 独立，**不改仓库脚本**）对**原版**量了
+5 个鼠标状态 —— 223（normal）/ 242（hover）/ 255（pressed）。`level_popup` 帧里鼠标**还压在**那枚
+被弹窗绕开的按钮上 ⇒ 底屏按钮停在 hover 态 ⇒ 242。完整表在 `docs/06` §57.4。
+
+**这三个数是什么颜色**：用同一个 Godot 4.7.2 查引擎默认主题：
+
+```text
+ThemeDB.get_default_theme().get_color("font_color",         "Button") = (0.875, 0.875, 0.875, 1)   # ×255 = 223
+                             ...("font_hover_color",   "Button") = (0.95,  0.95,  0.95,  1)         # = 242
+                             ...("font_pressed_color", "Button") = (1,1,1,1)                     # = 255
+                             ...("font_focus_color",   "Button") = (0.95, 0.95, 0.95, 1)
+```
+
+⇒ 原版这 21 个 `GraphwarButton` 的**字色走的是引擎默认主题**。我方的字色为什么是白的：我方这 21 个
+按钮是**真 Godot `Button`**，正常继承我们的 app 主题（`GwThemeFactory.build()` 里
+`Button/font_color = 白`）。**推断**（缺证据）：原版那个 Rust 类 `GraphwarButton` 取字色时没走完整
+theme 链、落到了默认主题 —— 反汇编没做，**登记为未知**。
+
+**修法（为什么不动全局 app 主题）**：主菜单（`menu` 屏）已经 0 像素，它的按钮白字是**对的**；
+把 app 主题的 `Button/font_color` 改成 0.875 会立刻把主菜单打破。所以只在**关卡数字那份主题**
+（`campaign_button_theme_2.tres` 的复刻 = `GwThemeFactory.campaign_level_theme()`）上显式写四档：
+
+```gdscript
+t.set_color("font_color",         "Button", Color(0.875, 0.875, 0.875, 1.0))   # 223（真帧 normal）
+t.set_color("font_hover_color",   "Button", Color(0.95,  0.95,  0.95,  1.0))   # 242（真帧 hover）
+t.set_color("font_pressed_color", "Button", Color(1.0,   1.0,   1.0,   1.0))   # 255（真帧 pressed）
+t.set_color("font_focus_color",   "Button", Color(0.95,  0.95,  0.95,  1.0))   # 默认主题同值（未单独观测）
+```
+
+`font_disabled_color = Color(0.87451, 0.87451, 0.87451, 0)` **不动**：它来自恢复出的
+`campaign_button_theme_2.tres`（逐字节），alpha=0 正是"锁住的关卡数字看不见"的来源
+（真帧里 21 格只显示解锁的那一枚 `0`）。
+
+### 64.4 每处改动 → 原版帧里的哪个元素 / 哪个坐标
+
+| 改动 | 原版帧里的元素 | 画面坐标（1920×1160） | 改前差值 |
+|---|---|---|---|
+| `clip_children = 2`（两个返回键按钮） | 左上角返回键 `ExitButtonContainer/{ClipButton,LongPressButton}` 的**圆角外侧** | 4 个角：`x∈[0,~14] / [~146,160]`、`y∈[0,~14] / [~82,96]`（两屏同样位置） | 152 px / max\|Δ\|=22 |
+| 关卡数字四档字色 | 关卡网格第 0 格 `Control/level_0`（`CampaingLevelsButtons.gd` 运行时造的第 0 个按钮） | 字身 bbox `x 200..278, y 187..271`；点击锚点 `(241,228)` | 3827 px / max\|Δ\|=32 |
+
+**没有改**的东西（对照）：标题 `CAMPAIGN`（`x 850..1219, y 20..76`）、页脚 `AdContainer`、
+关卡网格几何（字号 = 宽/15、x 步长 = 宽/8、y 步长 = 宽/4）、弹窗面板矩形与 `Cancel` / `Start`
+按钮 —— 改前这些就已经逐像素相同（L2 的 24 块里除 `0,0` 外全是 0）。
+
+### 64.5 没做到的 / 仍然未知
+
+1. **原版字色的机理**：只观测到"三态真帧 = 默认主题三档"，**没有**反汇编证据证明 Rust 侧取色路径
+   ⇒ 推断/未知（同 `docs/06` §57.7 第 1 条）。
+2. **存档状态只测了两种（无存档 / `level_20` 全解锁），"部分解锁"没测**：两种都 0 像素
+   （补测数字见 `docs/06` §57.5），但 `level_7` 那种"8 枚可见 + 13 枚 alpha=0"的混合态没采过样。
+3. **`level_popup` 里的 242 属于底屏按钮的 hover 残留**：两侧现在一致所以 0 像素，但"弹窗不挡那个
+   位置的鼠标"这件事本身没有被测试（只是同一套点击串下的副作用）。
+4. 其它分辨率 / DPI **没有**覆盖（本轮固定 1920×1160、无 WM、llvmpipe）。
+
+### 64.6 复跑
+
+见 `docs/06` §57.8（两侧 `--flow static` + `frame_diff.py --screens campaign,level_popup`）。
+本条的两个改动都是 `.gd`，**不需要**重编 `libgw2_rebuild.so`，也不需要 `--import`（没有新文件）。
