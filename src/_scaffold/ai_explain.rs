@@ -37,8 +37,8 @@
 //! * 本模块的输出是**回归保护**，不是复原证据（见 `AGENTS.md` §0.2）。
 
 use crate::graphwar_function_evolutionator::{
-    self, cross_from, mutate, random_function, Params, VarMode, COARSE_STEP, DIST_SENTINEL,
-    FINE_RANKS, FINE_STEP,
+    self, factory_child, mutate, random_individual, Params, VarMode, COARSE_STEP,
+    DIST_SENTINEL, FINE_RANKS, FINE_STEP,
 };
 use crate::math_function::to_text;
 use crate::graphwar_path_calculator::{calculate, Mode};
@@ -248,7 +248,7 @@ pub fn evaluate(tokens: &[Token], sit: &Situation, step: f64) -> Score {
 pub enum Origin {
     /// 上一个存活者的精确克隆（`0x51b8c5` 的 `memcpy`）。
     Clone,
-    /// 工厂子代：从**同一个父代**取一棵子树再变异（`0x4ee3a0`）。
+    /// 工厂子代：从**同一个父代**取一段再变异（`0x4ee3a0`）。
     Factory,
     /// 槽号 ≥ 上一代长度 ⇒ 随机新生（`0x51b82c jbe 0x51b900`）。
     RandomParent,
@@ -435,7 +435,7 @@ pub fn explain(sit: &Situation, settings: &Settings, seed: u64) -> Report {
                 (prev[slot].tokens.clone(), Origin::Clone)
             } else {
                 // `0x51b90f` → `0x51b923` → `0x51b95c`：随机函数 → 补齐 → 再变异一次
-                let mut t = random_function(&mut next, mode);
+                let mut t = random_individual(&mut next, mode);
                 mutate(&mut t, &mut next);
                 (t, Origin::RandomParent)
             };
@@ -446,14 +446,15 @@ pub fn explain(sit: &Situation, settings: &Settings, seed: u64) -> Report {
 
             // ② per_slot − 1 个工厂子代，**共用同一个父代**（`0x4ee3a0` 只有三个参数）
             for _ in 1..per_slot {
-                let (tokens, origin) = if parent_tokens.len() < 20 {
-                    // `0x4ee470`：父代太短 ⇒ 直接随机重生
-                    (random_function(&mut next, mode), Origin::FactoryRebirth)
+                // ⚠️ 真二进制是三路选择（变异 / 重生 / 交叉）且交叉后不再变异（`0x4ee42a`、
+                // `0x4ee449`、`0x4ee463`、`0x4ee5c9`→`0x4ee61d`），但那段数据流本轮没读通
+                // ⇒ 这里仍用旧的两路（`docs/06` §77.4 已登记）。
+                let origin = if parent_tokens.len() < 20 {
+                    Origin::FactoryRebirth
                 } else {
-                    let mut child = cross_from(&parent_tokens, mode, &mut next);
-                    mutate(&mut child, &mut next);
-                    (child, Origin::Factory)
+                    Origin::Factory
                 };
+                let tokens = factory_child(&parent_tokens, mode, &mut next);
                 let score = evaluate(&tokens, sit, COARSE_STEP);
                 evaluations += 1;
                 born.push(Candidate::new(tokens, score, origin, slot));
@@ -487,7 +488,7 @@ pub fn explain(sit: &Situation, settings: &Settings, seed: u64) -> Report {
                 fine.dist,
             ));
             // 换新 = 随机 → 补齐 → 变异（`0x51c3f6`/`0x51c40a`/`0x51c44c`），分数留旧值
-            let mut t = random_function(&mut next, mode);
+            let mut t = random_individual(&mut next, mode);
             mutate(&mut t, &mut next);
             let slot = born[rank].slot;
             born[rank] = Candidate::new(t, coarse, Origin::Replaced, slot);
