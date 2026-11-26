@@ -173,6 +173,27 @@ LAN_JOIN_ROW1 = {'original': (1842, 209), 'ours': (1842, 209)}
 # 两侧同一条时间线 ⇒ 相位差只来自各自动画实现，噪声地板会量它。
 MATCH_PLAY_WAIT = 5.0
 
+# ── T18（`--flow endgame`）：结算弹窗（`fixtures/frame_endgame_events.txt` 预注册）──────────
+# 主菜单 Play / LAN 第 1 行 Join / phase2 的等待**全部复用上面 `--flow match` 那串常量**：
+# 结算是「对局屏再往前走一步」，前面那两屏必须与 T8 逐字节同条件（否则就不是同一台戏了）。
+# S9（`endgame_popup`）的等待：phase3 触发后服务器还要等 `[meta] phase_gap_s`(1.0 s) 才发那 20 帧，
+# 其中最后三帧是收场（`LifeInfo{232,false}` → `TurnCountInfo{2}` → `GameStateInfo{EndingGame}`）。
+# 20 帧 × `--frame-gap`(0.02 s) ≈ 0.4 s ⇒ 1.0 + 0.4 ≈ 1.4 s 后结算已经落地；
+# 再等 `ENDGAME_WAIT` 秒让弹窗画完 / 让"等弹道落地才亮弹窗"那条路也走完
+# （第二发的 `active_tick=1550`、命中/爆炸 `start_tick=2169/2216` 都在服务端 tick 轴上，
+#  从 phase3 的 tick 基准 1485 起按 60 Hz 走 ⇒ tick 2169 大约在 phase3 开始后 11.4 s）。
+# 取 14 s：既覆盖"立即亮"，也覆盖"等第二发落地（tick 2216 ≈ 12.2 s）才亮"。
+# 两侧**完全同一条时间线**，所以这不会给对拍加偏向；它只是让某一侧"还没亮"变成"两侧都亮"。
+ENDGAME_WAIT = 14.0
+# 服务器在**发完最后一个相位之后**还要把连接留着多久（`match_serve.py --collect`）。
+# 为什么必须有这一条：`match_serve` 的默认 `--collect` 是 8 s，发完 phase3 之后 8 s 就
+# `conn.close()`。我方客户端把「对端关连接」翻成 `disconnected` ⇒ 弹 `DisconnectedPopUp`，
+# 于是 14 s 后拍到的是**断线弹窗**而不是结算屏 —— 那是**管线造成的**假象，不是被测行为。
+# 真服务器在结算后会等客户端自己走，所以这里把连接留到采集结束之后（120 s）。
+# ⚠️ 这条对两侧**同值**（同一个服务器脚本、同一条时间线），不是给我方开小灶：
+#    原版侧在 collect=8 s 那次跑里结算弹窗照样留着（`docs/06` §68 有对照）。
+ENDGAME_SERVER_COLLECT = 120.0
+
 # ── 增补 1（`fixtures/frame_diff_thresholds_amend1.txt` §3）：用冻结回放当"固定局面" ──
 REPLAYS_BTN = (1343, 749)          # 主菜单 Replays
 # 回放列表第 1 行（局面 `1793897298`，Level 0）的播放键。
@@ -235,8 +256,14 @@ def seed_replays(side, home, snapshot=None):
     return got
 
 
-def steps_for(flow, side):
-    """返回 [(屏名, [ ('click', xy, settle) | ('hold', xy, hold, settle) | ('wait', s) ])]。"""
+def count_phases(fixture_path):
+    """fixture 里有几个 `[phaseN:屏名]` 小节 = 服务器要发几个相位（T18：`--flow endgame` 用）。"""
+    with open(fixture_path, encoding='utf-8') as f:
+        return sum(1 for ln in f if ln.lstrip().startswith('[phase'))
+
+
+def steps_for(flow, side, endgame_wait=None):
+    """返回 [(屏名, [ ('click', xy, settle) | ('hold', xy, hold, settle) | ('wait', s) | ('trigger', i) ])]。"""
     if flow == 'campaign':
         return [
             ('menu', []),
@@ -281,6 +308,26 @@ def steps_for(flow, side):
             ('match_play', [
                 ('trigger', None),
                 ('wait', MATCH_PLAY_WAIT),
+            ]),
+        ]
+    if flow == 'endgame':
+        # §T18（2026-11-26）：**结算弹窗**（`fixtures/frame_endgame_events.txt` 预注册）。
+        # 前两屏与 `--flow match` **同一条点击串、同一份 phase1/phase2 字节**（fixture 里那两节
+        # 与 `frame_match_events.txt` 逐字节相同）⇒ match_ready/match_play 是本轮的**对照**：
+        # 它们必须复现 T8 的数字，否则说明管线被改坏了、endgame 那屏的数字也不可信。
+        # 第三屏 = phase3 那 20 帧（第二回合 + 第二发 + 靶子死 + `EndingGame`）之后。
+        return [
+            ('match_ready', [
+                ('click', MENU_PLAY, 2.5),
+                ('click', LAN_JOIN_ROW1[side], 3.0),
+            ]),
+            ('match_play', [
+                ('trigger', None),
+                ('wait', MATCH_PLAY_WAIT),
+            ]),
+            ('endgame_popup', [
+                ('trigger', 1),                      # 第 2 个触发文件 = phase3
+                ('wait', ENDGAME_WAIT if endgame_wait is None else float(endgame_wait)),
             ]),
         ]
     raise SystemExit('未知 flow: %s' % flow)
@@ -443,7 +490,8 @@ def start_game(side, display, home, log_path, extra_args, engine=None, game_dir=
 
 
 def start_match_server(side, out, fixture, tcp_port, udp_port, trigger_file,
-                       server_duration=300.0, log_path=None):
+                       server_duration=300.0, log_path=None, trigger_files=None,
+                       collect=None):
     """起**脚本化对局服务器**（§T8）：`tools/match_serve.py`，把局面钉死在 fixture 那份剧本上。
 
     为什么必须由本脚本起（而不是另开一条命令）：本机每条 bash 命令是独立 PID namespace，
@@ -452,6 +500,9 @@ def start_match_server(side, out, fixture, tcp_port, udp_port, trigger_file,
 
     服务器自己写逐帧发送日志（`<out>/serve.jsonl`）；stdout/stderr 另存
     `<out>/serve.stderr.log`（里面也有同内容，便于 `tail` 看进度）。
+
+    §T18：`trigger_files` 给了（多相位，`--flow endgame`）就用 `--trigger-files`；
+    **不给（`--flow match`）时命令行与 T8 逐字相同**（仍是单数 `--trigger-file`）。
     """
     script = os.path.join(REPO, 'tools', 'match_serve.py')
     if not os.path.exists(script):
@@ -461,11 +512,16 @@ def start_match_server(side, out, fixture, tcp_port, udp_port, trigger_file,
     cmd = [sys.executable, script,
            '--fixture', fixture,
            '--out', srv_log,
-           '--side', side,
-           '--trigger-file', trigger_file,
-           '--tcp-port', str(tcp_port),
-           '--udp-port', str(udp_port),
-           '--duration', str(server_duration)]
+           '--side', side]
+    if trigger_files:
+        cmd += ['--trigger-files', ','.join(trigger_files)]
+    else:
+        cmd += ['--trigger-file', trigger_file]
+    cmd += ['--tcp-port', str(tcp_port),
+            '--udp-port', str(udp_port),
+            '--duration', str(server_duration)]
+    if collect is not None:          # §T18：只在显式给了值时才传（match 流保持 T8 的默认 8 s）
+        cmd += ['--collect', str(collect)]
     f = open(err_log, 'wb')
     proc = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT)
     return proc, srv_log, err_log, f
@@ -497,13 +553,22 @@ def main(argv=None):
     ap.add_argument('--home', default=None, help='HOME（默认 <out>/home）')
     ap.add_argument('--game-arg', action='append', default=[], help='透传给游戏的额外参数')
     ap.add_argument('--shots', default=None, help='截图输出子目录（默认 <out>/frames）')
-    ap.add_argument('--flow', choices=['campaign', 'replay', 'static', 'match'], default='replay',
+    ap.add_argument('--flow', choices=['campaign', 'replay', 'static', 'match', 'endgame'],
+                    default='replay',
                     help='点法：replay = 增补 1 的四屏（回放局面，默认）；campaign = 原登记的三屏；'
                          'static = T6 的静态两屏（campaign / level_popup，见 fixtures/static_screens_targets.txt）；'
-                         'match = T8 的对局屏两屏（match_ready / match_play，见 fixtures/frame_match_events.txt）')
+                         'match = T8 的对局屏两屏（match_ready / match_play，见 fixtures/frame_match_events.txt）；'
+                         'endgame = T18 的**三屏**（match_ready / match_play / endgame_popup，'
+                         '见 fixtures/frame_endgame_events.txt）')
     # ── T8（`--flow match` 专用；不给 ⇒ 行为与既有三支完全一致）────────────────────────
     ap.add_argument('--match-fixture', default=None,
-                    help='对局屏的事件序列 fixture（默认 <repo>/fixtures/frame_match_events.txt）')
+                    help='对局屏的事件序列 fixture（默认按 flow 取：match ⇒ fixtures/frame_match_events.txt，'
+                         'endgame ⇒ fixtures/frame_endgame_events.txt）')
+    ap.add_argument('--endgame-wait', type=float, default=None,
+                    help='T18：phase3 发出后到拍 endgame_popup 之间等多久（默认 ENDGAME_WAIT 常量）')
+    ap.add_argument('--match-collect', type=float, default=None,
+                    help='T18：服务器发完最后一相位后把连接留多久（秒）。不给 ⇒ match 流用服务器默认 8；'
+                         'endgame 流默认 ENDGAME_SERVER_COLLECT（120）—— 否则拍到的是断线弹窗')
     ap.add_argument('--match-tcp-port', type=int, default=46702,
                     help='脚本化服务器的 TCP 端口（必须与 fixture [meta] tcp_port 一致，'
                          '否则 LAN 广播里的 address 指向错的地方）')
@@ -556,28 +621,46 @@ def main(argv=None):
         log('回放已就位: %s' % manifest['replays_seeded'])
 
     # ── T8：`--flow match` 要一台脚本化服务器把局面钉死（只在这条分支上做，既有三支不受影响）──
+    # ── T18：`--flow endgame` 走**同一条**分支，只是 fixture 换成三相位那份、触发文件多一个 ──
     match_srv = None
     match_srv_files = None
     trigger_file = os.path.join(out, 'phase2.trigger')
-    if args.flow == 'match':
+    trigger_files = []
+    if args.flow in ('match', 'endgame'):
+        default_fixture = ('frame_endgame_events.txt' if args.flow == 'endgame'
+                           else 'frame_match_events.txt')
         fixture = os.path.abspath(args.match_fixture or os.path.join(
-            REPO, 'fixtures', 'frame_match_events.txt'))
+            REPO, 'fixtures', default_fixture))
         if not os.path.exists(fixture):
             raise SystemExit('找不到对局屏 fixture: %s' % fixture)
-        # 上一轮留下的触发文件必须删掉，否则服务器会以为"已经可以发 phase2 了"
-        if os.path.exists(trigger_file):
-            os.remove(trigger_file)
+        # 有几个相位 ⇒ 有几个触发文件（相位 2..N 各一个；名字与 T8 的 phase2.trigger 同一套）
+        n_phases = count_phases(fixture)
+        trigger_files = [os.path.join(out, 'phase%d.trigger' % (i + 2))
+                         for i in range(n_phases - 1)]
+        # 上一轮留下的触发文件必须删掉，否则服务器会以为"已经可以发下一相位了"
+        for tf in trigger_files:
+            if os.path.exists(tf):
+                os.remove(tf)
+        # 单相位/无相位（不该发生）时不传任何触发；两相位时**仍走 T8 的单数参数**，命令行逐字不变
+        multi = trigger_files if len(trigger_files) > 1 else None
+        collect = args.match_collect
+        if collect is None and args.flow == 'endgame':
+            collect = ENDGAME_SERVER_COLLECT     # 只在 endgame 流上兜底（match 流仍不传 = T8 的 8 s）
         match_srv, srv_log, err_log, srv_handle = start_match_server(
             args.side, out, fixture, args.match_tcp_port, args.match_udp_port, trigger_file,
-            server_duration=args.match_server_duration)
+            server_duration=args.match_server_duration, trigger_files=multi, collect=collect)
         match_srv_files = (srv_log, err_log, srv_handle)
         if not wait_server_listening(srv_log):
             raise SystemExit('脚本化服务器起不来（见 %s）' % err_log)
-        log('脚本化服务器就绪：tcp=%d udp=%d fixture=%s' %
-            (args.match_tcp_port, args.match_udp_port, os.path.basename(fixture)))
+        log('脚本化服务器就绪：tcp=%d udp=%d fixture=%s（%d 个相位，%d 个触发文件）' %
+            (args.match_tcp_port, args.match_udp_port, os.path.basename(fixture),
+             n_phases, len(trigger_files)))
         manifest['match'] = {'fixture': fixture, 'server_log': srv_log,
                              'server_stderr': err_log, 'trigger_file': trigger_file,
                              'tcp_port': args.match_tcp_port, 'udp_port': args.match_udp_port}
+        if len(trigger_files) > 1:            # T18：多相位多出来的字段（match 那份 manifest 不变）
+            manifest['match']['trigger_files'] = trigger_files
+            manifest['match']['phases'] = n_phases
 
     xvfb = game = None
     xlog = flog = None
@@ -602,7 +685,7 @@ def main(argv=None):
                                           geo.get('X'), geo.get('Y')))
         time.sleep(args.settle_boot)
 
-        for screen, steps in steps_for(args.flow, args.side):
+        for screen, steps in steps_for(args.flow, args.side, args.endgame_wait):
             for st in steps:
                 if st[0] == 'click':
                     click(genv, st[1], st[2])
@@ -621,10 +704,14 @@ def main(argv=None):
                 elif st[0] == 'trigger':
                     # §T8：`--flow match` 专用 —— 拍完 S7 之后 touch 触发文件，
                     # 服务器看到它就发 phase2（比 sleep 稳：不会与截图抢时间）
-                    with open(trigger_file, 'w') as tf:
+                    # §T18：步里可以带序号（`('trigger', 1)` = 第 2 个触发文件 = phase3）；
+                    # 不带/`None` ⇒ 0 ⇒ 仍是 `phase2.trigger` 那一个，T8 行为不变。
+                    ti = st[1] if len(st) > 1 and st[1] is not None else 0
+                    tf_path = trigger_files[ti] if ti < len(trigger_files) else trigger_file
+                    with open(tf_path, 'w') as tf:
                         tf.write('%s %s\n' % (screen, time.strftime('%Y-%m-%dT%H:%M:%S')))
                     manifest['steps'].append({'screen': screen, 'action': 'trigger',
-                                              'file': trigger_file})
+                                              'file': tf_path})
                 log('%s: %s' % (screen, st[0]))
             for i in range(FRAMES_PER_SCREEN):
                 path = os.path.join(frames_dir, '%s_%d.png' % (screen, i + 1))
