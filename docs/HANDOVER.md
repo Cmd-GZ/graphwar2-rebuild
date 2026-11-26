@@ -60,6 +60,14 @@ P4  命名 —— 真名 348/527；179 无名（138 族级 + 41 未知）
 我据此写了"回放两屏归零"，被 t47 的独立发现推翻。已给 `frame_capture.py` 加硬闸、写进 `AGENTS.md` 的坑清单，
 并把"**任何两侧都停在同一个错误画面的采集都会假装通过**"作为通则记下。**凡是"突然变 0 / 突然变完美"的读数，先怀疑采样**。
 
+**收尾前新增的一条已解决结论（T51，`docs/06` §101）**：回放屏 **2.710 % 是真回归**（正对照证明 T21 的 0.1858 % 不是空画面）。
+bisect 把窗口收窄到 **(a3ed8c7, 5f74a29]**；**60 367 px 里 98.6 % 是右三键列整体下移 48 px**
+（`RightControls` 的 `save_screenshot`/`save_summary`/`save_clip`：宽 337、高 96、步距 100 都与原版逐项相同，
+只有 y 差 48；病根指到 `_set_replay_layout()` 的 `_fire_row.custom_minimum_size` 补丁，**推断**无指令证据）。
+**下一会话第一件事**：从 `564d558`(T44) 起验（窗口内唯一整体替换 `play_screen` 节点树的 merge），
+用 selftest dump `RightControls` 5 个节点的 `rect` 定案后修到 **≤1 714 px / L2 0**。
+⚠️ **新坑**：共享 `CARGO_TARGET_DIR` 跨 worktree 会让 `cargo build` **静默不重建**（7 棵树拿到同一个 `.so`）⇒ 会测出 59.99 % 的假巨大差异；每点必须 `touch` + 核对 `.so` md5，或每树独立 target dir。
+
 **收尾时仍在跑的两条（下一条会话先看它们的通知或分支）**：
 - `agent/replay-regress`（t51）：回放屏 2.710 % 的 **bisect** —— 先判"记录的 0.186 % 是不是也是空画面"，
   再定位 2.7 % 属于哪一层。`fixtures/replay_regression_bisect.tsv`
