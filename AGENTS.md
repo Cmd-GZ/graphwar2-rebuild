@@ -130,7 +130,14 @@ python3 tools/pck_extract.py --verify                            # 还原 rsc/�
 
 ### A. 合并**前**，在分支侧验（少一条都不许合）
 
-0. **先跑 `python3 tools/merge_check.py --cg origin/CG`** —— 它把下面 3b（报告 §遗留/§建议 全文）、1（范围/禁区）、5（污染）做成机器检查；**缺节、碰禁区、二进制、dispatch 会进 master 一律非 0**，别绕过。
+0. **先跑合并前机器检查** —— 它把下面 3b（报告 §遗留/§建议）、1（范围/禁区）、5（污染）做成机器检查；
+   **缺节、碰禁区、二进制、dispatch 会进 master 一律非 0**，别绕过。
+   ```bash
+   # 2026-11-26 起的 agent/<topic> 分支（没有 dispatch/ 报告）：A 节跳过，报告由 lead 从任务板/chat 读
+   python3 tools/merge_check.py --branch agent/<topic> --base master --no-report
+   # 想让它替你检查工作区里那份验收报告：换 --report-md <path>
+   # 旧 CG 分支仍用：python3 tools/merge_check.py --cg origin/CG
+   ```
 
 1. **范围核对**：`git diff --name-only <merge-base>..<分支>` 对照任务书的"允许改的文件"。
    碰禁区（`src/lib.rs`、别人的 `*_class.rs`、`client/src/**`、既有断言）就**退回**。
