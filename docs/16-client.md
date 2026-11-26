@@ -12707,7 +12707,7 @@ python3 $WT/tools/frame_capture.py --side ours --flow match ...  # ⚠️ 必须
 ### 84.1 现在 `client/scenes/screens/` 是什么
 
 16 份 `.tscn` **全部**与 `recovered-src/` 逐字节相同（T41 装 2 份、T43 装 6 份、T44 装 `play_screen`、
-本轮 T47 装最后 7 份），合计 **3 933 行 / 692 个 `[node]`**，**12 行存根 0 份**。
+本轮 T47 装最后 7 份），合计 **3 933 行 / 601 个 `[node]`**，**12 行存根 0 份**。
 每一屏的**静态**节点树（含 `GraphwarButton`、`theme = ExtResource(...)`、`z_index`、
 `theme_override_font_sizes/font_size`、`offset_*`）现在都是原版字节，不再是 `.gd::build()` 手抄。
 

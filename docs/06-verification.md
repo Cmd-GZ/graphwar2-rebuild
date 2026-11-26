@@ -16631,7 +16631,7 @@ $MAIN/.reference/venv/bin/python tools/bit_exact_attrib.py --json f.jsonl --chec
 | 问题 | 答案 |
 |---|---|
 | 7 份装了几份 | **7 / 7**（每份 `cmp` 与 `recovered-src/` **逐字节相同**） |
-| `client/scenes/screens/` 里 12 行存根还剩几个 | **0 个**（16 份全部与原版逐字节相同，合计 **3 933 行 / 692 节点**） |
+| `client/scenes/screens/` 里 12 行存根还剩几个 | **0 个**（16 份全部与原版逐字节相同，合计 **3 933 行 / 601 个 `[node]`**；`game_setup.tscn` 对应的原版文件名是 **`GameSetup.tscn`**，大小写不同而已） |
 | 手抄节点树共删多少行 | **净 −391 行**（`git diff --numstat`：删 **728** / 增 **337**；增的部分是"接线说明 + 节点句柄 + FN 接线"的注释与代码） |
 | `FN_SHOW_VICTORY 0x3da130` 接线 | **做了**（见 §97.4：内核出节点表 → GDScript 只按那张表取原版 `.tscn` 里的同名节点，取不到就 `push_error`） |
 | 门槛 | selftest **717/0/1skip**（missing=0 silent=0）、headless **1961/0**、cargo **1795/0/1ignored** / gdext **1917/0/1ignored**、三轴 **647/647/637** |
@@ -16744,7 +16744,11 @@ cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/li
 "$GODOT" --headless --path client --import
 
 # 1) 逐字节核对：16 份屏场景 + 别名层
-for f in client/scenes/screens/*.tscn; do cmp "$f" "recovered-src/$(basename "$f")" || echo "DIFF $f"; done
+#    ⚠️ `game_setup.tscn` ↔ `recovered-src/GameSetup.tscn`（原版文件名首字母大写，只有这一个不同名）
+for f in client/scenes/screens/*.tscn; do b=$(basename "$f"); [ "$b" = game_setup.tscn ] && b=GameSetup.tscn
+  cmp "$f" "recovered-src/$b" || echo "DIFF $f"; done
+#    别名层那 16 份 aliases 里有两份**是 shim 不是副本**（campaign_button_theme_2 / game_menu_icon_theme，
+#    骨架主题的字形图集被导出器丢了，T41 §81.2 记过）⇒ 这两份 cmp 会 DIFF，属预期
 for f in MainMenuButtonResize TitleSize VersionLabel PlayerNameLineEdit PlayerTabContainer \
          ShowcaseMarginContainer UnlockButtonSize ShopButtonsSize HBoxVictoryIcon; do
   cmp "client/$f.gd" "recovered-src/$f.gd" || echo "DIFF $f.gd"; done
