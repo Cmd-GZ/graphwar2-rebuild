@@ -11252,3 +11252,130 @@ _right_grid_holder.custom_minimum_size = Vector2(_right_grid_natural_w, 0.0)   #
 * 名字标签的描边宽（`outline_size = 4`）是**推断**（取自同工程 `ViewFunctionsLabel` 的
   `[outline_size=4]`），原版给 name_label 设描边的那条调用没找到。
 * 回放屏右三键（存截图/存摘要/存片段）的**语义**本来就未观测，本轮只动它们的图标对齐。
+## 69. **弹道不是绘图原语画的**：`Line2D` 子节点 + 逐点 `add_point`，揭示量 = `(fractional_tick − active_tick) × 30`（2026-11-26，任务 T14）
+
+> 结的是 `docs/00` §3「弹道用什么原语画」和本节 §12.2 ⑭ 那条 `未知`。
+> 一次性复算：`tools/unknowns_report.py --only plot`（产物 `fixtures/unknowns_plot.tsv`）。
+> 本节所有地址是 **ELF vaddr**（= RVA）；⚠ 不要 `±0x100000`（那只是 Ghidra/REA 反编译文本的口径，
+> 见 `AGENTS.md`「地址空间」）。
+
+### 69.1 一页结论
+
+| # | 问题 | 结论 | 档 |
+|---|---|---|---|
+| ① | 弹道用哪个 CanvasItem 绘图原语？ | **一个都不用**。全二进制（**整文件字节扫描**，不是 `strings`）里 `draw_polyline` / `draw_multiline` / `draw_dashed_line` / `draw_primitive` / `draw_mesh` / `draw_colored_polygon` / `draw_string` / `draw_char` **各 0 命中** ⇒ 不存在 | **逐位**（负结果 + 正对照） |
+| ② | 那曲线是怎么出来的？ | **`Line2D` 子节点**：`Line2D::add_point` 全 `.text` **只有 1 处引用**（`0x498f6e`），在 `FunctionDrawer::update_function`（**`0x498c70`**，Location `src/function_drawer.rs:45:38`）体内，`0x498fab` 上是那个循环里的间接调用 | **观测**（GOT 槽 + 全 `.text` 扫描） |
+| ③ | 谁喂它？ | `GraphwarPlane::draw`（**`0x4b5df0`**，`src/graphwar_plane.rs`）每帧调 `0x498c70` **+** `0x499050` / `0x4992b0` / `0x4993c0`（三者都只有它一个直接调用者） | **观测** |
+| ④ | 一帧揭示几个点？ | `reveal = min(points.len, (fractional_tick − active_tick) × 30.0)`，`(double)→usize` 带饱和（`<0 ⇒ 0`、`>2^64 ⇒ usize::MAX`） | **观测 + 立即数逐位** |
+| ⑤ | 线宽/接头/颜色 | `Line2D::set_width(**0.125**)`（f32 槽 `0x1baff8`）、`set_joint_mode(**2** = ROUND)`、`set_default_color(打包 u32 三通道 /255)`、`CanvasItem::set_z_index`（值取 `self+0x40`） | **立即数逐位** |
+| ⑥ | 与真帧线宽 2.83 px 对得上吗？ | **同量级**：`0.125 × 20 px/单位 = 2.5 px`，`2.83` 是"45° 斜线横向跨 4 px × sin45°"的**估算**，不是线宽本身 | **推断**（缺逐帧量 `Line2D.width × 节点 scale` 的运行时数据） |
+| ⑦ | `EntityDrawer::draw`（`0x4b2890`）画弹道吗？ | **不画**。它只画 `draw_arc`×3 + 实心多边形×3（走 `0x4b9a70`），**零** `draw_line` / `add_point` 调用 | **观测** |
+
+一句话：**原版把弹道做成"`Line2D` 节点 + 每帧把新点 `add_point` 进去"，不是每帧重画一条折线。**
+所以我们客户端现在用 `draw_line`/`draw_polyline` 仿制的那条线，**抗锯齿、端点、拐角（joint）、
+线宽单位（节点 scale 内的 0.125）全都跟原版不同** —— 这是像素保真的根因，不是"差几个参数"。
+
+### 69.2 证据链（逐条可复跑）
+
+```text
+# ① 整文件字节扫描：这些名字在 .so 里根本不存在（0 命中）
+$GW2_TARGET_SO 全文件扫：draw_polyline / draw_polyline_colors / draw_multiline /
+  draw_multiline_colors / draw_dashed_line / draw_primitive / draw_mesh /
+  draw_colored_polygon / draw_string / draw_char / set_point_position /
+  clear_points / set_begin_cap_mode / set_end_cap_mode / set_points
+# 存在的只有（写成 (类名, 方法名) 常量对，gdext 生成的包装）：
+#   draw_line 0x29ef7a / draw_rect 0x29ef83 / draw_circle 0x29ef8c /
+#   draw_polygon 0x29ef97 / draw_texture_rect 0x29efd8 / draw_set_transform 0x29efe9 /
+#   draw_arc 0x19f9d0（单独一片）/ Line2D: add_point 0x29f39f, set_width 0x29f346,
+#   set_default_color 0x29f3c5, set_joint_mode 0x29f3a8, get_point_count 0x29f3b6, …
+```
+
+字面量 → 包装 → GOT 槽 → 调用点的全表（`tools/unknowns_report.py --only plot` 直接打印，
+**正对照** = `draw_arc`：`0x19f9d0 → 0x8abca0 → 槽 0x9bc020 → 5 处调用，其中 3 处在 `0x4b2890`**）：
+
+| 方法 | 字面量 | 包装 | GOT 槽 | 引用/调用点 | 落在哪个函数 |
+|---|---|---|---|---|---|
+| `draw_line` | `0x29ef7a` | `0x8abff0` | `0x9bc228` | 9（含 1 处 `mov slot,%rbp` 供 2 次寄存器间接调用） | `AxisDrawer::draw` `0x4e05b0` ×8、`EffectDrawer::draw` `0x4e1520` ×2 |
+| `draw_rect` | `0x29ef83` | `0x8ac350` | `0x9bc028` | 2 | `GraphwarPlane::draw` `0x4b5df0` ×1（棋盘边框 `0x4b61ab`）、`0x4e05b0` ×1 |
+| `draw_circle` | `0x29ef8c` | `0x8ac690` | `0x9bbfc0` | 9 | `0x4993c0` ×5、`0x4e1520` ×4 |
+| `draw_polygon` | `0x29ef97` | `0x8aca10` | `0x9bc238` | 1 | `EffectDrawer::draw` `0x4e1520`（`0x4e1d8f`） |
+| `draw_texture_rect` | `0x29efd8` | `0x8ad590` | `0x9bc248` | 3 | `PlayerShowcase::draw` `0x4e5400` ×3 |
+| `draw_set_transform` | `0x29efe9` | `0x8ad940` | `0x9bc018` | 4 | `0x4b2890` / `0x4b5df0` / `0x4e05b0` / `0x4e1520` 各 1 |
+| **`add_point`** | **`0x29f39f`** | **`0x8b7210`** | **`0x9bbf98`** | **1**（`0x498f6e mov rbp,[rip+0x523023]` → 间接调用 `0x498fab`） | **`0x498c70`（`function_drawer.rs:45`）** |
+| `set_width` | `0x29f346` | `0x8b7fe0` | `0x9bbfa0` | 2（`0x49911c` / `0x49921c`） | `0x499050` |
+| `set_default_color` | `0x29f3c5` | `0x8b7a70` | `0x9bbf90` | 2（`0x498e30` / `0x4993a3`） | `0x498c70` / `0x4992b0` |
+| `set_joint_mode` | `0x29f3a8` | `0x8b74f0` | `0x9bbfa8` | 2（`0x49915d` / `0x49925f`，参数 `esi=2`） | `0x499050` |
+
+**调用方向**（`tools/unknowns_probe.py fn <addr>`）：
+
+* `0x498c70`（`update_function`，span `0x3e0`）唯一直接调用者 = `0x4b5df0`（`0x4b69ec`）；
+* `0x499050` / `0x4992b0` / `0x4993c0` 唯一直接调用者也都 = `0x4b5df0`（`0x4b6147` / `0x4b6a0e` / `0x4b6bd8`）；
+* `0x4b5df0`（`GraphwarPlane::draw`，span `0x1590`）**直接调用者 0**，只经槽 `0x9bb7f0` 被调（`0x42937a` in `0x429320`）
+  —— 那是 `CanvasItem::_draw` 虚方法派发，即**引擎每帧回调**。
+
+### 69.3 揭示公式（`0x4b5df0` 内，`0x4b67a0`–`0x4b6815`）
+
+```text
+0x4b67a0  mov   eax, dword ptr [r12 - 4]      ; 「本 tick 生效函数」表里的一个 u32 字段（起爆 tick，**语义推断**见 §69.5）
+0x4b67a8  cvtsi2sd xmm0, rax
+0x4b67ad  movsd xmm1, qword ptr [rsp + 0x130] ; = get_fractional_tick()（0x519530，本帧的小数 tick）
+0x4b67b6  subsd xmm1, xmm0                    ; elapsed = fractional_tick − active_tick
+0x4b67ba  mulsd xmm1, qword ptr [0x19ef90]    ; × 30.0        ← f64 常量，立即数逐位
+0x4b67c2  cvttsd2si rax, xmm1                 ; Rust `as usize`：先截断，再按下面两条饱和
+0x4b67e9  ucomisd xmm1, 0 / 0x4b67f3 cmovae r13, rdx     ; < 0     ⇒ 0
+0x4b67f7  ucomisd xmm1, [0x19f008] = 2^64    / 0x4b6806 cmova r13, -1 ; > 2^64 ⇒ usize::MAX
+0x4b680a  mov   r12, qword ptr [rsp + 0x138]  ; r12 = points.len()
+0x4b6812  cmp   r12, r13 / 0x4b6815 cmovb r13, r12       ; reveal = min(len, elapsed×30)
+```
+
+⇒ **每 tick 揭示 30 个采样点**。与 `docs/04` 的采样弦长 `0.01`、`docs/16` §12.1「每 tick 前进
+0.29 棋盘单位」交叉：`30 × 0.01 = 0.30`，与 0.29 的实测差 = 最后一段不满 0.01 的残段。
+（这一条交叉**不是**独立证明：两条都还没在真机帧上逐帧对拍过 ⇒ 见 §69.5。）
+
+喂进 `0x498c70` 的六个参数（`0x4b69d4`–`0x4b69ec`）：`rdi` = drawer 对象、`esi` = soldier id、
+`rdx` = 点数组（每点 16 字节 = 两个 f64）、`rcx` = `points.len`、`r8` = 上一行算出的
+`reveal`、`r9d` = 打包颜色（`b` / `g<<8` / `r<<16`，`0x4b69be`–`0x4b69d1`）。
+`0x498c70` 内部：按 id 在 `self` 的 `HashMap` 里取/建 `Line2D`（`0x498caa call 0x47dec0` = 哈希，
+`0x498ce5` 起是探测循环），`set_default_color`（`0x498e30`）、
+`set_z_index`（`0x498e46`）、然后 `for p in points[prev..reveal] { Line2D::add_point(p) }`（`0x498f80`–`0x498fb4`），
+最后把 `entry[+0x20] = reveal` 记成下一帧的起点（`0x498fb6`–`0x498fbb`，`r14` = entry+0x28）
+——**所以它是"只追加、不重画"**。
+越界（`reveal > rcx`）走 `0x498fd1` 的 `panic::Location function_drawer.rs:45`（切片越界检查）。
+
+### 69.4 对客户端的具体含义（像素保真）
+
+1. **别再逐帧 `draw_line` 重画整条弹道**。原版是 `Line2D` 子节点、逐点追加：
+   抗锯齿由 `Line2D` 的纹理/AA 模式决定，**拐角是 ROUND joint**（`set_joint_mode(2)`），
+   线宽是**节点局部单位 0.125**（再乘节点 `scale`），不是画布像素。
+2. 节点的 `position` / `scale` 每帧由 `0x499050` 设（`Node2D::set_position` 包装 `0x892890`、
+   `Node2D::set_scale` 包装 `0x892b50`；后者在两个分支里分别传 `+scale` 与 `−scale`，
+   参数 `esi∈{0,1}` 选分支 —— 镜像/翻转，**哪一队镜像**没定，见 §69.5）。
+3. 起点/朝向：`add_point` 的第一个点是 `points[prev]`，第 2 个参数 `esi = -1` = 追加。
+4. **`EntityDrawer::draw` 不画弹道**（§12.3.1 的"不画"这次补上了正向证据：
+   它体内 `draw_line` / `add_point` 的引用数 = **0**）。
+
+### 69.5 仍未证的（照实写）
+
+1. **`[r12-4]` 那个 u32 是不是 `FunctionActive.active_tick`**：只看得出它来自
+   `get_active_functions_on_tick`（`0x456df0`）返回的表；与 `docs/07` 的 `FunctionActive{owner_id,active_tick}`
+   对上是**推断**（缺：读那张表的构造点）。
+2. **真机帧上"逐点长出来"没有对拍**：公式是观测，`Line2D` 的实际 `points` 数组逐帧没读
+   ⇒ 缺的证据 = 运行时 hook `Line2D::add_point` / 读 `points`（frida 脚本已有基础，
+   见 `tools/frida_*.js`）。**下次手段**：在 `0x498fab` 下断，记 `(tick, reveal)` 序列，
+   与回放里的 `FunctionActive.active_tick` 对拍。
+3. **`set_scale` 的正负号选择**（`esi` 那个参数）语义未定：只在 `0x4b6147` 一处调用，
+   `esi = dl`，来自 `0x4b6114`–`0x4b612b` 那一小段位运算（看着像"要不要翻转"）。
+   **缺**：那一小段的输入含义（谁给了那个 bool）。
+4. **`0x4993c0`（5 次 `draw_circle` + 引用 `"Write a function of x to hit the target"`）到底是干嘛的**：
+   它也被 `0x4b5df0` 每帧调，且没有 Location。**未知**。
+5. **`set_z_index` 的取值 `self+0x40`** 是什么（每兵图层序？）—— 未追。
+
+### 69.6 复跑
+
+```bash
+export GW2_TARGET_SO=$PWD/.reference/game/libgraphwarrust.so
+$PWD/.reference/venv/bin/python tools/unknowns_report.py --only plot        # 打印全链 + 正对照
+$PWD/.reference/venv/bin/python tools/unknowns_probe.py chain add_point     # 任意方法名的全链
+$PWD/.reference/venv/bin/python tools/unknowns_probe.py dis 0x498c70 --len 0x3e0
+$PWD/.reference/venv/bin/python tools/unknowns_probe.py dis 0x4b67a0 --len 0x90
+```

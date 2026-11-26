@@ -9874,3 +9874,167 @@ $PY tools/bitexact_report.py --work .bitexact_work --write
    要把这 199 个也点出名字，得另做一版 `class_probe`（本轮没做）。
 8. **没碰**：`src/**`（红线段，一处没改）、`client/**`、`tools/posy_unicorn.py`、
    护栏/快照、`docs/00-status.md`、`docs/HANDOVER.md`、`docs/coverage-matrix.*`。
+## 65. `docs/00` §3「明确未知」里四条**静态可攻**的：弹道原语 / `LevelRules` 归属 / 掩膜生命周期 / `RankInfo` 字段数 + 段位 E 档（2026-11-26，任务 T14）
+
+> 本条是这四条的**总账**（一页结论 + 地址链 + 复跑）；展开写在
+> `docs/16` §65（①）、`docs/08` §12（③）、`docs/02` §15.1 第 3 条与 §17.4（②④）。
+> 一次性复算：`tools/unknowns_report.py`（产物 `fixtures/unknowns_{plot,levelrules,mask,rank}.tsv`）。
+> **地址口径**：全部 **ELF vaddr = RVA**，不要 `±0x100000`
+> （本机 2026-11-26 复核：`analysis/funcstarts_ghidra_va.pkl` 装的就是 vaddr，
+> 见 `AGENTS.md`「地址空间」；`0x4b2890`/`0x4eb9d0`/`0x4ed670` 等全部直接可反汇编）。
+
+### 65.0 一页结论（四条各一句）
+
+| # | 缺口（`docs/00` §3 原文） | 结论 | 档 |
+|---|---|---|---|
+| ① | 弹道用什么原语画（`draw_polyline` 字符串不存在） | **一个 `draw_*` 都不用**：弹道是 **`Line2D` 子节点**，`Line2D::add_point` 经 GOT 槽 `0x9bbf98` 在 `FunctionDrawer::update_function`（`0x498c70`，`function_drawer.rs:45`）里逐点追加，由 `GraphwarPlane::draw`（`0x4b5df0`）每帧喂；**每 tick 揭示 `min(len, (fractional_tick − active_tick) × 30.0)` 个点** | **观测 + 立即数逐位**（`docs/16` §65） |
+| ② | `LevelRules` 的文件归属 | **`graphwar_game_state_manager.rs`**。判据函数 `0x473520`（`get_alive_teams`）5 条 Location = `:867/:868/:869/:875/:876`；入口 `0x4759f0` 12 条 = `:191/:256/:839/:840/:847/:848/:851/:852/:859/:860/:905/:906`；胜方字节函数 `0x4780c0` 5 条 = `:223/:224/:230/:231/:256`。**没有一条落在 `play_screen_control.rs`** | **观测**（`Location`，自校验 OK） |
+| ③ | 掩膜的持有者与生命周期 | 持有者 = **`GraphwarObstacleManager` 的 `self+0x18`**（`ArcInner<Mutex<Vec<u8>>>`，锁字 `+0x10`，数据 `+0x20`/`+0x28`）；创建 = `0x523020`（alloc 600000 + memset 0xFF）← `0x3f2360`(`obstacle_manager.rs:208`) ← `GameClient::new` `0x517690` / `0x4500c0`；**没有每帧重建**，只有「关卡构造整表建一次」+「事件增量加/挖」+「tick 队列挖洞」 | **观测**（`docs/08` §12） |
+| ④ | 段位算法 + `RankInfo` 字段数 2 vs 3 | **线上字段 = 2**（`entity_id`, `rank: i64\|null`）：二进制自带 serde 串 `struct RankInfoEvent with 2 elements`（`0x1bbda7`）+ 真实抓包里就是 2 个键。**"3 个 dword" 是内存布局**（`Option` 判别值 u32 + 值 u32 + `entity_id` u32），**不是第 3 个字段**。**段位算法不在客户端 ⇒ 改判 E 档（服务端算）** | **逐位**（serde 串 + 抓包）/ **观测**（生产点指令） |
+
+一句话：**四条里三条"指到地址"（①②③），第四条钉住了字段数并把算法判给服务端（E 档）。**
+
+### 65.1 ① 弹道（详情 `docs/16` §65）
+
+```text
+draw_polyline / draw_multiline / draw_dashed_line / draw_primitive / draw_mesh /
+draw_colored_polygon / draw_string / draw_char   → 整文件字节扫描 0 命中（不存在）
+Line2D::add_point  字面量 0x29f39f → 包装 0x8b7210 → GOT 槽 0x9bbf98
+  → 全 .text 唯一引用 0x498f6e（mov rbp,[rip+0x523023]）→ 间接调用 0x498fab
+  → 在 FunctionDrawer::update_function 0x498c70 内（Location src/function_drawer.rs:45:38）
+  → 唯一直接调用者 GraphwarPlane::draw 0x4b5df0（每帧 _draw，经槽 0x9bb7f0）
+揭示量：0x4b67ba mulsd xmm1,[0x19ef90]=30.0 ；0x4b6815 cmovb r13,r12 = min(points.len, …)
+线宽：Line2D::set_width(0.125f32 @0x1baff8)；接头 set_joint_mode(2=ROUND)
+```
+
+### 65.2 ② `LevelRules` 归属（`panic::Location`，逐址）
+
+**自校验先跑**（`AGENTS.md`「函数归属」第 2 条）：
+
+```text
+0x4eb9d0 求值器 → src/math_function.rs:75      ✓
+0x4ed670 解析器 → src/math_function.rs:75      ✓
+```
+
+再查判据函数（`tools/unknowns_report.py --only levelrules`，每条都打印引用指令地址）：
+
+| 函数 | span | Location（全部） | 结论 |
+|---|---|---|---|
+| `0x473520` `get_alive_teams` | `0x280` | `src/graphwar_game_state_manager.rs` **:867 :868 :869 :875 :876** | 同模块 |
+| `0x4759f0` `evaluate`（上限 `0x475a64`、两队 `0x475a80`/`0x475a88` 在其中） | `0x560` | 同上 **:191 :256 :839 :840 :847 :848 :851 :852 :859 :860 :905 :906** | 同模块 |
+| `0x4780c0` 胜方字节（表 `0x478133`–`0x478236`） | `0x230` | 同上 **:223 :224 :230 :231 :256** | 同模块 |
+| 对照：`0x470840` `handle_tick` / `0x472470` `execute_results` | — | 同上（`docs/02` §17.4 已结案） | 同模块 |
+
+`graphwar_game_state_manager.rs` 有 Location 的函数共 **50 个**，地址簇 `0x3caa20`–`0x4ac440`，
+上面三个都在簇内。⇒ **`LevelRules`（连同 `LevelKind` / `MatchState` / `Verdict` / `TARGET_TEAM`）
+原版归属 = `graphwar_game_state_manager.rs`**；我方现在仍在 `src/graphwar_play_screen_control.rs`
+（`docs/16` §53.2 末尾那条"归属没有新证据"**已被本轮推翻**），搬迁留给能改 `src/` 的任务。
+
+**证不到的（② 的一半）**：`0x4759f0` 的唯一直接调用者是一个 **16 字节 thunk `0x47b190`**，
+而该 thunk 的直接调用者 = 0、函数指针槽 = 0 ⇒ **"谁在什么时机调 `evaluate`" 仍未知**。
+下次手段：在 `0x47b190` 下 frida 断点（它是 `jmp 0x4759f0` 形态，断到就等于断到 evaluate）。
+
+### 65.3 ③ 掩膜（详情 `docs/08` §12）
+
+见 `docs/08` §12.2 的取锁序与 §12.3 的生命周期全图；这里只留一句：
+**`self+0x18` → `ArcInner{strong +0x00, weak +0x08, 锁字 +0x10, 毒 +0x14, cap +0x18, ptr +0x20, len +0x28}`，
+三处（读 `0x3f15b0` / 加 `0x3f17a0` / 挖 `0x3f1b30`）用同一段 `lock cmpxchg [r14+0x10],1` 取锁。**
+
+### 65.4 ④ `RankInfo` 字段数 + 段位 E 档（详情 `docs/02` §15.1 第 3 条）
+
+**(a) 线上 2 字段（逐位）**
+
+```text
+.rodata 0x1bbda7  "struct RankInfoEvent with 2 elements"     ← serde 的 expecting 串，二进制自己说的
+.rodata 0x1bc043  "struct RankRequestEvent with 2 elements"
+真实抓包 fixtures/protocol_match.jsonl：
+  {"RankInfo":{"entity_id":229,"rank":0}}
+  {"RankInfo":{"entity_id":232,"rank":null}}      ← 2 个键，rank 可为 null
+```
+
+**(b) "3 个 dword" 是内存布局，不是第 3 个字段（观测，逐指令）**
+
+```text
+0x454e0c  mov  dword ptr [rsp+8], 1        ; +8  = Option 判别值（1 = Some）★
+0x454e14  pshufd xmm0,xmm0,0xe1           ; map entry 的 (key,value) 交换
+0x454e19  movq [rsp+0xc], xmm0            ; +0xc = rank(u32), +0x10 = entity_id(u32)
+0x454e1f  movabs rax,0x8000000000000043   ; +0  = Event 判别值 67
+set 路径（0x455090）：+0x18 = 判别值(edx) / +0x1c = rank(ecx) / +0x20 = entity_id(esi)
+0x4550b0  cmp edx,1 / jne 0x4550c3        ; 判别值 ≠ 1 ⇒ 走"删条目"分支 ⇒ 线上 rank:null
+```
+
+⇒ 内存里那三个 dword = **`entity_id` + `Option<u32>` 的 (判别值, 值)**；线上仍只序列化
+`entity_id` 与 `rank` 两个键（`null` ⇔ 判别值 ≠ 1）。**"2 vs 3" 的矛盾到此收敛，2。**
+
+**(c) 段位算法：客户端没有 ⇒ E 档（服务端）**
+
+| 证据 | 内容 | 档 |
+|---|---|---|
+| `rank_manager` 四个函数（`0x454d80`/`0x454e80`/`0x454f30`/`0x455090`，Location 全在 `src/graphwar_rank_manager.rs`） | 只有「`HashMap<u32,u32>` 存取 + 发 `rank_info_event`(67) + 订阅 `new_connection`/`entity_removed`」。**指令计数（`--only rank` 自带正对照）**：67 / 36 / 91 / 70 条指令，**浮点四则 + 除法/取模 = 0**；对照 `GraphwarPlane::draw` 1158 条里 `divss`2 `mulss`4 `subsd`2 `mulsd`1 `cvtsi2sd`1 `imul`2 | **观测（负结果 + 正对照）** |
+| 值的来源 | 唯一写入口 `0x455090` 的两个调用点都在**收包侧**：`0x3e0757`（`src/graphwar_remote_event_handler.rs:143…`）与 `0x3e2a6f`（事件分派 `0x3e2830`）。后者在调用前刚把**来报 payload 的三个 dword** 读进寄存器：`0x3e2a29 [rbx+8]` / `0x3e2a2c [rbx+0xc]` / `0x3e2a30 [rbx+0x10]` → `esi/edx/ecx` | **观测** |
+| 段位相关的全部 `.rodata` 数据 | 只有 **22 条**资源路径 `res://ranks/rank_0.svg` … `rank_21.svg`（`0x1c3481` 起，每隔 0x16 字节一条；加载点 `0x4c9190`，22 个 `lea`） | **观测** |
+| 段位名/阈值表 | `Bronze/Silver/Platinum/Diamond/Grandmaster/bronze/silver/elite/leaderboard/rating/mmr` 整文件扫描 **0 命中**；`Gold`/`Silver`/`Master`/`elo` 的少数命中全部落在**别的词里**（TLS 的 `ExtendedMasterSecret`、`hello`、`logical`、二进制块） | **逐位（负结果）** |
+
+⇒ **改判：段位不是客户端算的，是服务端下发的数字（E 档 = 客户端外）。**
+客户端只做三件事：收 → 存 `HashMap<entity_id, rank>` → 广播给其它客户端（tag 67）；
+以及用这个数字当**图标下标**（`rank_0..rank_21`，22 张）。
+**推断（未证）**：段位值域 `0..21`（图标数给出上界），代码里**没看到** clamp/取模 ⇒
+`rank > 21` 时怎么办（越界？不画？）**未知**。
+
+### 65.5 四条的正对照（"负结果"必须先证明扫法有效）
+
+| 扫法 | 正对照 | 结果 |
+|---|---|---|
+| 字面量 → 包装 → GOT 槽 → 调用点 | `draw_arc`（文档值 `0x19f9d0 → 0x8abca0 → 0x9bc020 → 3 处在 0x4b2890`） | **复现成功**（`tools/unknowns_report.py --only plot` 打印 `正对照 draw_arc: OK`） |
+| `panic::Location` 归属 | `0x4eb9d0` / `0x4ed670` → `src/math_function.rs` | **OK** |
+| 整文件字节扫描（负结果用） | 同一次扫描里 `draw_arc` / `add_point` 等 13 个名字**命中** | **OK**（不是"扫不到任何东西"） |
+| `rank_manager` 无算术（`tools/unknowns_report.py --only rank` 自带） | 同一次扫描里 `GraphwarPlane::draw` `0x4b5df0`（1158 条指令：`divss`2 `mulss`4 `imul`2 `subsd`2 `mulsd`1 `cvtsi2sd`1）、`EntityDrawer::draw` `0x4b2890`（1274 条：`addsd`7 `subsd`4 `divsd`2 `divss`1 `mulss`3 `imul`1 `mulsd`1 `cvtsi2ss`1）**都有算术**，而 `rank_manager` 四个函数（67/36/91/70 条指令）**浮点四则 + 除法/取模 = 0** | **OK** |
+
+### 65.6 复跑（四条各一条命令）
+
+```bash
+export GW2_TARGET_SO=$PWD/.reference/game/libgraphwarrust.so
+PY=$PWD/.reference/venv/bin/python
+$PY tools/unknowns_report.py                 # 四条全跑（一页结论所需的所有行）
+$PY tools/unknowns_report.py --emit          # 顺手写 fixtures/unknowns_{plot,levelrules,mask,rank}.tsv
+$PY tools/unknowns_report.py --only plot     # ①（含正对照断言）
+$PY tools/unknowns_report.py --only levelrules   # ②
+$PY tools/unknowns_report.py --only mask     # ③
+$PY tools/unknowns_report.py --only rank     # ④
+$PY tools/unknowns_probe.py chain <方法名>    # 交互式：任意引擎方法名的全链
+$PY tools/unknowns_probe.py fn <addr>        # 交互式：函数 span/Location/调用者
+python3 tools/check_doc_refs.py              # rc=0（改了 docs/16 必须跑）
+python3 tools/coverage_matrix.py --check     # OK（改了 docs/02 必须跑）
+```
+
+### 65.7 遗留 / 未做（照实写）
+
+1. **① 只到"指令级 + 公式"**：没有真机逐帧对拍 `Line2D.points` 的增长率
+   ⇒ "每 tick 长 30 个点"是**观测推出来的**，不是帧上量的。缺 frida hook（`0x498fab`）。
+2. **② 只到归属**：`evaluate` 的**调用时机**仍未知（thunk `0x47b190` 无人调）；`src/` 里的搬迁没做
+   （本任务禁止改 `src/**`）。
+3. **③ 只到"谁持有 + 三处写入"**：`0x3f1d30` 的订阅者登记处（订阅表里存哪个地址）没有静态证据；
+   `0x3c2bc0` 是否先拷工作副本仍未知。
+4. **④ 段位**：只证明"不在客户端"。**服务端**怎么算（阈值/胜负增量/封顶）**完全没有证据**——
+   服务端程序不在本机语料里（只有 `libgraphwarrust.so` + 401 份单人回放；
+   403 份回放里 `RankInfo` **0 条**，见 59.8）。
+5. **`docs/00` §3 那四行本身没改**（`docs/00-status.md` 在本任务禁区里）——
+   需要 lead 按本条把四行状态改掉。
+
+### 65.8 我写错了 / 任务前提被证伪
+
+1. **任务书给的节号不可用**：`docs/06` 的 `## 65.`（当时最大是 §58）、`docs/16` 的 `## 69.`
+   （`check_doc_refs.py` 要求 `## NN.` **连续无空洞**，§69 会直接判失败）、`docs/08` 的 `## 8.`
+   （§8 已被「方法学备忘」占用）⇒ 实际落成 **`docs/06` §59 / `docs/16` §65 / `docs/08` §12**。
+2. **`docs/16` §12.2 ⑭「弹道原语没扒到」与 §53.2 末尾「`LevelRules` 归属没有新证据」两处结论
+   已被本轮推翻**（前者：不是原语、是 `Line2D`；后者：有 Location 证据了 = GSM）。
+   两处原文保留（历史轨迹），本条是覆盖它的新证据。
+3. **`docs/02` §15.1 第 3 条「2 vs 3 未收敛」结案**：3 个 dword 里第 1 个是 `Option` 判别值。
+4. **`docs/02` §17.4 把 `0x4500c0` 记在 `server_connection_handler` 名下**，但它的
+   `panic::Location` 是 `src/graphwar_game_server.rs:219–222` ⇒ **两处不一致，本条只按 Location 记**；
+   §17.4 那一行本任务无权改（只许改 `LevelRules` / rank 行）。
+5. **`docs/00` §3「段位怎么算」那一行**应改成 **E 档（服务端）**，同样留给 lead。
+6. **401/403 份回放里 `RankInfo` 0 条**：所以 ④ 的线上字段数**不是**从回放语料来的，
+   而是 `fixtures/protocol*.jsonl`（真实抓包，`docs/07` §3 说它们是抓包）+ 二进制里的 serde 串。
+   （本轮实测：403 个 gzip 回放解压后逐行 JSON 解析，`RankInfo` 字段名集合 = 空 ⇒ 0 条。
+   别把"回放里没有"读成"事件不存在"。）
