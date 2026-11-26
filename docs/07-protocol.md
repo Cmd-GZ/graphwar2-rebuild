@@ -70,18 +70,73 @@ call <serialize_field 单态> ; 同一单态 ⇒ 同一值类型
 
 ⇒ **按地址顺序收 `lea rsi` 那一串 = 线上键序**。`serialize_struct("XxxEvent", N)` 的
 名字在 `serde_json` 里**被丢掉**（只进错误串），所以线上看不到 `…Event`。
+⚠️ **连 N 一起被丢掉**：`serde_json` 的 `serialize_struct(self, name, len)` 既不用 `name`
+也不用 `len`，内联后 LLVM 把这两组立即数**当死代码删掉**（只剩一条 `mov byte ptr […], 0x7b`
+直接写 `{`）⇒ **在 `Serialize` 侧搜 N 立即数是 0 命中，不是扫描器坏了**。
+要拿 N 的立即数必须去**反序列化侧**：`deserialize_struct(self, name, fields, visitor)` 里
+`fields.len` 没被 DCE（见下面 ①）。
 
-三道交叉验证（都跑在 `tools/wire_fields.py --verify` 里）：
+三道交叉验证（`tools/wire_fields.py --verify` + `tools/protocol_recount.py`）：
 
 | # | 验证 | 结果 |
 |---|---|---|
-| ① | 字段个数 == `.rodata` 里 `struct <Name>Event with N elements` 的 N | **67/67** |
-| ② | `Deserialize` 的 `visit_map` 里能找到同名键的字节比较 | **67/67 全部字段** |
-| ③ | 真实抓包（`fixtures/protocol*.jsonl`）的键序 == 本表 | **48 种事件 + 1 条 LAN 广播，全部相同** |
+| ① | 字段个数 == `Deserialize` 侧 `deserialize_struct(…, fields, …)` 的 `fields.len`**编译期立即数** N（旁证：`.rodata` 里 `struct <Name>Event with N elements` 的 N） | **64/64 有字段事件**（74 个事件里 10 个是空体，N=0）；另 3 个**非事件**负载结构体也对上 §3.4（`GameInfo` 9 / `GraphwarColor` 3 / `EventInfo` 2）⇒ N 串共 **67 条 = 64 + 3** |
+| ② | `Deserialize` 的 `visit_map` 里能找到同名键的字节比较 | **67/67 全部字段**（2026-11-26 复核：**本轮未逐字段复测**，只重跑了上一轮工具的同一项自检，读数不变） |
+| ③ | 真实抓包（`fixtures/protocol*.jsonl`）的键序 == 本表 | **48 种事件 + 1 条 LAN 广播，全部相同**（2026-11-26 复核：**本轮未复测**） |
 
-`N` 串只有 67 条：另外 **7 个事件的 `Serialize` 一次 `serialize_field` 都不调**
-（体恒为 `{}`，空体结构体本来就不需要 `invalid_length` 文案）——
-这就是"事件字段数"与"N 串条数"对不上的原因，不是缺数据。
+`N` 串只有 **67** 条，而事件有 **74** 个 —— 两个差额方向相反，别混：
+**74 = 64 有字段 + 10 空体**；**67 = 64 事件结构体 + 3 负载结构体**。
+差的那 **10** 个是空体事件（`TickRequest`/`AxisModeChangeRequest`/`FunctionModeChangeRequest`/
+`TurnModeChangeRequest`/`TimeModeChangeRequest`/`GameStartRequest`/`FunctionsCalculated`/
+`ClearObstacles`/`GameHeartbeat`/`ClearBansRequest`）：**0 字段结构体不产出 `with N elements`
+文案**，只有短形式 `struct <Name>Event`，所以它压根**没有** N 串 —— 不是缺数据。
+逐事件的 `WIRE_SPEC / 实测 N / serialize_field 次数 / §3.3` 四列对照见
+`fixtures/protocol_field_recount.tsv`（74 行，全 ✓）。
+
+⚠️ **扫这 67 条时的坑（会得出 57 或 0）**：`.rodata` 里这些字面量**紧邻拼接、没有 NUL**，
+措辞还互相重叠（`…with 1 element` 后面紧跟 `struct …`）。⇒ `strings(1)` 行扫描、
+"整行必须匹配"的正则、以及**非重叠**的 `re.finditer` 都会漏计（`elements?` 会把下一个
+字面量的 `struct` 的首字母 `s` 吃掉，导致后续匹配整体错位）。三种口径实测：
+**`strings` 行扫描 0 条 / 朴素非重叠 57 条 / 重叠感知 67 条**（只有最后一条是权威读法）。
+
+#### 就地更正（2026-11-26，T16 / 共享任务 `task-13` 复核）
+
+本节原来写的是「① `67/67`」「`N` 串只有 67 条」「另外 **7** 个事件空体」。复核（口径**预注册**在
+`fixtures/protocol_recount_plan.txt`，逐事件结果在 `fixtures/protocol_field_recount.tsv`）后：
+
+| 旧说法 | 实测（可复现） | 差在哪 | 档位 |
+|---|---|---|---|
+| ① `67/67` | **64/64 有字段事件**；另 3 条 N 串属于**非事件**负载结构体（§3.4 的 `GameInfo` 9 / `GraphwarColor` 3 / `EventInfo` 2） | 把"67 条 N 串"当成了"67 个事件"；事件分母是 74 | 逐位 |
+| 「`N` 串只有 **67** 条」 | **对**：67 = 64 事件结构体 + 3 负载结构体 | 数字对，构成没写清 | 逐位 |
+| 「另外 **7** 个事件空体」 | **10 个**（与 §3.3 表自报的空体数一致） | 少 3 个：`GameHeartbeat`/`FunctionsCalculated`/`ClearBansRequest` 也是空体 | 逐位 |
+| ② `67/67 全部字段` | 本轮**未复测**（只重跑上一轮工具的同一项自检：`反序列化侧未比出的键 = 0 条`） | — | — |
+| ③ 48 种事件 + 1 条 LAN 广播 | 本轮**未复测** | — | — |
+
+**0 字段结构体为什么没有 N 串**：`.rodata` 里 **77** 个结构体（74 个事件 +
+`GameInfo`/`GraphwarColor`/`EventInfo`）**各有一条**短形式 `expecting` 文案 `struct <Name>`
+（每条只被一处瘦函数引用：`lea rsi,[rip+…]` + `mov edx,<len>` + `jmp <GOT 槽>`）；
+其中**恰好 67 个**（= 全部有字段的）**另有**一条 `struct <Name> with N elements`。
+⇒ **"有字段"与"有 N 串"在 77 个结构体上 100% 同现**，10 个 0 字段事件只拿到短形式
+—— 所以"没 N 串"是**形式不同**，不是缺数据。
+机制是**推断**（未展开宏证实）：serde_derive **1.0.204**（二进制里带 `serde-1.0.204` /
+`serde_json-1.0.121` 字面量）把 `with N elements` 后缀只在
+`deserialize_seq` / `deserialize_seq_in_place` 里拼，0 字段结构体的 seq 分支不产出它。
+**缺的证据**：没有把 0 字段结构体的宏展开拿出来对。
+
+**改了哪些字**：① 的 `67/67` → `64/64 有字段事件`（+3 个负载结构体的说明）；"7 个"→"10 个"；
+补上"`Serialize` 侧的 N 被 DCE、必须去 `Deserialize` 侧取"与"N 串三种扫法的坑（0 / 57 / 67）"。
+**§3.3 全表一个字没动**（74 行逐行与实测对过，全部一致）。
+
+复跑（三条，缺一条都不算复现）：
+
+```bash
+cd /home/CG/Myprojects/graphwar2-rebuild     # 或任一 checkout（.reference/ 要在本机）
+PY=$PWD/.reference/venv/bin/python
+$PY tools/protocol_recount.py --check-shape            # Serialize 侧 serialize_struct 立即数：0 命中（=被 DCE，不是扫描失败）
+$PY tools/protocol_recount.py                          # 74 行 × A/B/WIRE_SPEC/§3.3 逐列比 + 统计
+$PY tools/protocol_recount.py --tsv fixtures/protocol_field_recount.tsv
+$PY tools/wire_fields.py --verify                      # 上一轮的工具（已修成无 xrefs.pkl 也能跑）：N 自校验失败 0 条
+```
 
 ### 3.3 全表（74 条，按判别值升序；查找请按名字）
 
@@ -201,7 +256,13 @@ LAN 广播（UDP 发现，§1）的负载**就是** `GameInfo` 这 9 个字段�
 |---|---|---|
 | 抓包键序 == 二进制 `serialize_field` 顺序？ | **一致（13/13 个强类型事件，40 行）** | 逐位 + 观测 |
 | 其余抓到的事件呢？ | **一致（48 种单键事件 + 1 条裸 LAN 广播，共 133 行）** | 逐位 + 观测 |
-| 出现 `rename` / `skip_serializing_if` 了吗？ | **没有**：67 个事件的 `serialize_field` 次数与 `struct … with N elements` 的 N 逐个相等，且键名与 Rust 字段名同名（无改名痕迹） | 逐位 |
+| 出现 `rename` / `skip_serializing_if` 了吗？ | **没有**：**64 个有字段事件**（74 个事件里的 10 个空体事件，`serialize_field` 次数本来就是 0）的 `serialize_field` 次数与 `deserialize_struct` 的 `fields.len` 立即数 **逐个相等**（`struct … with N elements` 的 N 作为旁证也逐个相等）；键名与 Rust 字段名同名（无改名痕迹） | 逐位 |
+
+> 2026-11-26（T16）就地更正：这一行原写「**67 个事件**的 `serialize_field` 次数与
+> `struct … with N elements` 的 N 逐个相等」。实测：事件分母是 **74**，其中 10 个空体事件的
+> 次数是 0（它们**没有** N 串，见 §3.2）；逐个相等的是 **64 个有字段事件**。
+> 另 **3** 条 N 串属于非事件的负载结构体（`GameInfo`/`GraphwarColor`/`EventInfo`），
+> 校验时**不能**与事件混着数。
 
 ⇒ **"serde 按声明顺序序列化"在本二进制上成立**，而且线上键序现在有**两个互相独立**的
 证据源（产出报文的代码 / 真实抓包）。若哪天两者不一致，会先炸
@@ -210,7 +271,11 @@ LAN 广播（UDP 发现，§1）的负载**就是** `GameInfo` 这 9 个字段�
 复现：
 
 ```bash
-GW2_UPSTREAM=.. ../.venv/bin/python tools/wire_fields.py --verify   # 表 + 三道自校验
+# ① 上一轮的工具（2026-11-26 修过：xrefs.pkl 缺失时现场重建索引，本机可直接跑）
+../.reference/venv/bin/python tools/wire_fields.py --verify     # 表 + 三道自校验（N 自校验失败 0 条）
+# ② 本轮逐事件重数（两个独立方向 + N 串三口径），74 行
+../.reference/venv/bin/python tools/protocol_recount.py
+../.reference/venv/bin/python tools/protocol_recount.py --tsv fixtures/protocol_field_recount.tsv
 cargo test --offline --test wire_format                              # 与抓包/与表对账
 ```
 
