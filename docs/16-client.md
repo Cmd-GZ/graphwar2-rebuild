@@ -12143,3 +12143,110 @@ func _on_size_changed():
    连带"要动字体管线"这个结论也撤掉 —— 本轮**一个字体文件/字号都没碰**。
 2. **`docs/16` §76.5 第 2 条把左上两键记成"圆角/图标抗锯齿"** 也错：第一颗 0 px，
    13 413 px 全在第二颗的 **disabled 态**上（`ShowExtraButtons.gd` 那条规则）。
+
+## 78. 客户端侧：对局屏的**流程状态机**搬进 Rust —— 8 个 `GameState` 第一次有了宿主，命中表与胜负入参收口（2026-11-26，任务 T31 / `task-28`）
+
+> 验收数字、证据表与逐条指令地址在 **`docs/06` §81**（那节是验收，本节是**怎么接的**）。
+> 台账：`fixtures/controller_migration_ledger.tsv`（38 行）。规格：`.agent-work/specs/T31-controller-rust.md`。
+
+**一句话**：`AGENTS.md` §0.4 的正方向是「控制器迁回 Rust」。§52/§53 已经把**弹道生命周期 /
+回合轮转 / 胜负判据**搬走了，但四块流程里最核心的一块**从来没存在过**：原版的
+**对局状态机**（8 个 `GameState` = `[self+0x120]` 一个字节）在 `play_screen.gd` 里一行都没有，
+本屏只有一列 `_shot_in_flight` 布尔当它的投影。本轮把状态机补进 Rust（`GwTurnState`），
+并把另外两处「同一条规则的第二次实现」按原版地址收口（命中表、两队存活/在场）。
+
+### 78.1 边界（搬什么 / 留什么）
+
+| 进 Rust（本轮） | 留 GDScript（本轮没动） |
+|---|---|
+| **对局状态机本体**：状态变量 + 8 变体迁移表（`turnstate::next_state`） | 状态**怎么用**：换状态时该摆哪个节点、写哪行文案 |
+| **`fire()` 的前置**：`Fire` 只从 `WaitingForFunctions` 出发（`can_fire()`） | 其余 4 条输入护栏（回放 / 阵亡 / 轮到 AI / 空函数，台账 L04–L07） |
+| **命中表**：谁被打中、第几点打中、停在哪（`settle::resolve_points_owned` + `Hit{index}`） | 命中之后摆哪个特效、播哪个音（`_apply_shot_events` 的 `match kind`） |
+| **胜负入参**：从实体表数"两队各有没有活实体"（`get_alive_teams` 形状，`0x473520`） | 胜负文案、结算框怎么弹（`app.report_match_result`） |
+| **AI 闸门的 `can_fire` 入参**（改成读状态机） | AI 何时动手（**我方自定**，`aigend` 时序无观测） |
+
+### 78.2 落点（文件 / 函数）
+
+| # | 位置 | 对应原版 | 档位 |
+|---|---|---|---|
+| 1 | `src/turnstate.rs`（**未改**，被复用）`GameState` / `next_state` / `GameState::index` | 状态字节 `[+0x120]`：变体名表 `.data.rel.ro 0x9586d0`–`0x958740`；`set_state` `0x4780cc`；收场写 6 `0x475bac`；`handle_tick` 判 `cmp BYTE [self+0x120],2` `0x470989` | 变体/判别值 **逐位**；迁移序列 **观测**（真报文 `GameStateInfo`） |
+| 2 | `src/_scaffold/play_flow_class.rs` 新增 `GwTurnState`（`state` / `state_byte` / `apply` / `can_fire` / `is_setup` / `is_ending` / `reset` / `snapshot`） | **原版没有这个类**（外壳） | **我方外壳**（逻辑本体在 `turnstate`） |
+| 3 | 同文件 `GwShotFlow::judge()`（新增方法） | `graphwar_shot_calculator::settle::resolve_points_owned`；射手按 id 排除 = `0x3c4452` / `0x3c3e81` | **逐位** |
+| 4 | 同文件 `GwLevelRules::evaluate_soldiers()`（新增方法） | `0x473520 get_alive_teams`（枚举生命表 → `0x454950` 判活 → `0x3c2120` 查队伍，**只数有没有**） | **逐位** |
+| 5 | `client/src/screens/play_screen.gd`（只发事件、问状态、递数据） | —— | —— |
+| 6 | `client/tools/play_flow_check.gd` **207 → 233 条**（新增第 18 组 21 条 + 群 1.1 三条 + 群 4 两条回流检查） | —— | **验收工具** |
+
+### 78.3 播放屏怎么接（8 处事件 + 3 处询问）
+
+```text
+begin_match() 末尾                 _match_state.apply("game_started")   Setup → WaitingForFunctions
+fire() 闸门                        if not _match_state.can_fire(): 早退   （原：if _shot_in_flight）
+_commit_shot() 判命中前/后         apply("fire") / apply("results_computed")
+_begin_shot() 末尾 / _resolve_shots()  apply("activate")               → ExecutingResults
+_check_match_over() 判出胜负       apply("game_ended")                  → EndingGame
+_on_shot_arrived() 收尾 / 整批结算  apply("turn_ended")                 → WaitingForFunctions
+_reset_shot_state() / end_match()  _match_state.reset()                → Setup（无条件）
+apply_external_shot(animate)      apply("fire") + apply("results_computed")
+_tick_bot_turn() / bot_take_turn() can_fire := _match_state.can_fire()
+level_state()["game_state"]        _match_state.snapshot()             只读诊断
+```
+
+**为什么 `turn_ended` 在"到达/整批结算之后"**：原版 `ExecutingResults` 持续到弹道执行完；
+压平模式（`automation=true`）在开火那一刻就把回合结算掉了，若在那里发 `TurnEnded`，
+状态会提前回 `WaitingForFunctions` 而画面还在飞 —— 而且 `selftest` 第 ④ 组
+「发射期间的第二发必须被拒」会立刻红（那组是拿 `_shot_in_flight` 钉的）。
+⇒ 本轮 717 条断言**一条没改**、全绿，是这条时序没被改坏的判据（`docs/06` §81.3）。
+
+### 78.4 接口变化（GDScript 侧要改的四处）
+
+1. **新增类 `GwTurnState`**：`apply(event)` 收 7 个事件名（`game_started` / `fire` /
+   `results_computed` / `activate` / `turn_ended` / `game_ended` / `reset`），返回**新状态名**；
+   空串 = 该事件在当下无意义（原版 `next_state` 的 `None`，`set_state` 不会被调）。
+2. **`GwLevelRules.evaluate_soldiers(soldiers, targets_total, targets_alive, turns_used)`**
+   取代 `evaluate({alive_by_team, teams_present, …})` 成为播放屏的入口。
+   `evaluate()` **保留**（真相表测试与其它调用方在用），两条入口共用同一份整形
+   （`evaluate_state()`），有断言钉"同一局面两条入口同结论"。
+3. **`GwShotFlow.judge(shots, soldiers, target_rows, obstacles, soldier_radius)`**：
+   `shots` 是 `[{points, shooter}]`（`shooter` = **士兵下标**，-1 = 不排除），
+   `soldiers` 传 `_soldiers` 原表（含 `alive`，死者由 Rust 排掉）。
+   **注意**：扩展方法收的是**无类型** `Array`，而 `_soldiers` 是 `Array[Dictionary]`
+   ⇒ 必须走 `_soldier_rows()` 铺一份无类型副本（godot-rust 0.5.5 `array.rs:1225` 的
+   `copied array should have same type`，本轮真踩过）。
+4. **`_alive_by_team()` / `_teams_present()` 删除**：换成 `_soldier_rows()`（3 行）。
+
+### 78.5 我写错了 / 踩到的坑
+
+1. **`Array[Dictionary]` 塞不进无类型 `VarArray` 形参**：`GwShotFlow::judge()` 第一次跑
+   `selftest` 直接 panic（`copied array should have same type as original array`），
+   连带把 `_alive_by_team()` 那次调用也带崩（GDScript 回溯看起来像"翻字典崩了"）。
+   ⇒ 加了 `_soldier_rows()` 并在文件头记下这条。
+2. **`play_flow_check.gd` 的 `FLOW_CALLS` 里有 `_rules.evaluate(`**：第 3 段把它换成
+   `evaluate_soldiers(` 之后那一条立刻红。改成新入口 + 把 `func _alive_by_team` /
+   `func _teams_present` 加进 `GONE_PATTERNS`（回流检查），而不是把断言删掉。
+3. **`cargo test --offline` 与 `--features gdext-bindings` 编的不是同一批代码**：
+   `play_flow_class.rs` 在 `#[cfg(feature = "gdext-bindings")]` 下（`_scaffold/mod.rs:105`），
+   所以我在里面加的单测**只在 gdext 那档跑**（1887 → 1888），默认档仍是 1772。
+
+### 78.6 复现
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t31
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target      # ⚠️ 单独一行
+export HOME=$WT/.fakehome
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+
+cargo build --offline --features gdext-bindings        # ← 必须**最后**跑这一档
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+"$GODOT" --headless --path client --import
+"$GODOT" --headless --path client --script res://tools/play_flow_check.gd   # PLAY_FLOW 233 passed
+"$GODOT" --headless --path client -- --selftest                             # 717 / 0 / 1skip
+```
+
+### 78.7 遗留
+
+同 `docs/06` §81.6：`_apply_target_reset`（**推断**，无真值）、`fire()` 另外 4 条早退（**未知**）、
+同时回合公告表（**推断**）、联机全套（服务端权威，本轮不做 —— **代价是 `fire()` 的联机分支
+仍读 `_shot_in_flight`，那一支仍是"两套"**）、`_human_team()`（**未知**）。

@@ -13313,3 +13313,168 @@ PY
 4. **`docs/06` §76.6 第 6 条"修正常数横向 10 px 机制未知"** —— 现在有解，而且是**两条**：
    `Label` 该是 LEFT（不是 CENTER）+ 修正串该带**内核 `correction_text` 那个前导空格**
    （§79.4(a) 的四选一表）。不是"容器几何/HBox 分配"。
+
+## 81. 对局屏「流程状态机」迁回 Rust 第一刀：**8 个 `GameState` 第一次进了客户端**，命中表与胜负入参按原版地址收口（2026-11-26，任务 T31 / `task-28`）
+
+> 规格：`.agent-work/specs/T31-controller-rust.md`；工作树 `.agent-work/cg/wt-t31`、分支 `agent/controller-rust`。
+> 依据：`AGENTS.md` §0.4「**控制器迁回 Rust（按原模块名）**」。地址一律 **ELF vaddr**。
+> 像素采集用私有 netns（配方同 §79.8），两侧**串行**。
+
+**一句话**：规格 §2 的前提「`play_screen.gd` 里有一份 3 727 行的仿制流程、Rust 侧另有一套」
+**只对了一半** —— 弹道生命周期 / 回合轮转 / 胜负判据确实早已在 Rust（§52/§53 两轮搬完），
+但那四块里**最核心的一块从来就没有过**：原版的**对局状态机**（8 个 `GameState`，
+`[self+0x120]` 那一个字节）在 GDScript 里**一行都不存在**，本屏只有一列 `_shot_in_flight`
+布尔当它的投影。本轮把它补上（`GwTurnState` → `turnstate::next_state`，**观测/逐位**），
+再把另外两处「同一条规则的第二次实现」按原版地址收口：
+命中表 → `settle::resolve_points_owned`（**逐位**，`0x3c4452`/`0x3c3e81`）、
+两队存活/在场 → `get_alive_teams` 形状（**逐位**，`0x473520`）。
+
+### 81.0 一页结论
+
+| 项 | 改前 | 改后 |
+|---|---|---|
+| 台账（`fixtures/controller_migration_ledger.tsv`） | — | **38 条**：本轮搬 **7 行（6 段）**、部分搬 **1**、前轮已搬 **8**、不搬 **22** |
+| `play_screen.gd` | **3 727 行** | **3 705 行**（−22；其中 +38 行是状态机证据注释、−60 行是删掉的重复实现） |
+| `client/src/play/*.gd` | 646 行 | **646 行**（一个字节没动） |
+| Rust 侧 | `play_flow_class.rs` 1 458 行 | **1 829 行**（+`GwShotFlow::judge` 146 行 / `GwTurnState` 121 行 / `GwLevelRules::evaluate_soldiers` 62 行 + 注释） |
+| 对局状态机 | **不存在**（只有 `_shot_in_flight` 投影） | 8 个 `GameState` + 迁移表，`.gd` 8 处发事件 |
+| `cargo test --offline` | 1772 / 0 / 1ignored | **1772 / 0 / 1ignored**（一位不变 ⇒ 没碰内核） |
+| `cargo test --features gdext-bindings` | 1887 / 0 / 1ignored | **1888 / 0 / 1ignored**（+1 条事件名表单测） |
+| `selftest` | 717 / 0 / 1skip | **717 / 0 / 1skip**（`missing=0 silent=0`，一条断言没删） |
+| headless 14 脚本 | 1935 / 0 | **1961 / 0**（`play_flow` 207→**233**，其余 13 份逐项不变） |
+| `match_ready` | 0.122 %（2 716 px，L2 0） | **0.1218 %（2 712 px，L2 0 块）** |
+| `match_play` | 0.428 %（9 478 px，L2 1） | **0.4220 %（9 399 px，L2 1 块）** |
+
+### 81.1 台账：38 条判断点，分四档
+
+`fixtures/controller_migration_ledger.tsv`（列：`id / 域 / gd符号 / 行区间 / 在判断什么 /
+Rust 落点(文件:行) / 证据档 / 本轮搬不搬 / 不搬缺什么`）。
+
+| 档 | 条数 | 说明 |
+|---|---|---|
+| **本轮搬** | **7 行 = 6 段** | L02 状态机本体、L03 开火前的状态早退、L10 AI 闸门入参、L20 命中表、L21 首命中点、L29+L30 胜负入参 |
+| **部分搬** | 1 | L01 `begin_match()`：只搬 `GameStarted` 那条迁移（模式分派没有客户端侧证据） |
+| 前轮已搬（§52/§53） | 8 | L13/L14/L16/L18/L23/L26/L28/L32 —— 本轮**不复述**，也不重复改 |
+| **不搬** | **22** | 纯视图 9（如 L15 事件分派 / L22 状态行 / L25 揭示量 / L38 诊断快照）、我方接线 5（L12/L27/L33/L34/L35）、缺证据 8（L04/L06/L07/L19/L31/L36/L37 + L09） |
+
+证据档分布（38 行）：**逐位 7 / 观测 18 / 推断 2 / 未知 5 / 不适用 6**。
+
+### 81.2 三段各搬了什么、指到哪条指令
+
+| # | 搬的段（`.gd` 行区间，改前） | 改成调什么（Rust 落点） | 原版证据 | 删掉的行 |
+|---|---|---|---|---|
+| **1** | `_judge_shots()` 2250–2308 + `_first_point_within()` 2310–2319 | `GwShotFlow::judge()`（`src/_scaffold/play_flow_class.rs`，**新增方法**）→ `graphwar_shot_calculator::settle::resolve_points_owned`（`src/graphwar_shot_calculator/settle.rs:118`），用它回的 `Hit{index, arc}` | 规则本体 **逐位**（`docs/16` line 488 的 `agrees_with_settle_resolve_on_captured_shots`）；射手按**实体 id** 排除 = **`0x3c4452`**（有弹道点）/ **`0x3c3e81`**（空弹道）；停点 = `docs/14` §12.1（503/503） | **−62**（64→9 行 + 删 8 行） |
+| **2** | `fire()` 的 `if _shot_in_flight` 早退 1840–1842、`_tick_bot_turn()` 的 `can_fire` 2120、`bot_take_turn()` 的早退 2131 | `GwTurnState`（新增类）→ `src/turnstate.rs:137 next_state` / `GameState::index`；`.gd` 8 处 `_match_state.apply(...)` 按迁移表发事件 | 状态字节 **逐位**（变体名表 `.data.rel.ro 0x9586d0`–`0x958740`；`set_state` 写 `[+0x120]` = **`0x4780cc`**；收场写 6 = **`0x475bac`**；`handle_tick` 判 `cmp BYTE [self+0x120],2` = **`0x470989`**）；迁移**序列** = 抓包 `GameStateInfo` **观测** | **−11** 净（删 4 行投影判断，加 15 行证据注释） |
+| **3** | `_alive_by_team()` 2440–2446 + `_teams_present()` 2448–2455 | `GwLevelRules::evaluate_soldiers()`（新增方法），入参 = 实体表；整形后走同一个 `LevelRules::evaluate` | **逐位**：`0x473520 get_alive_teams`（640 字节）枚举**生命表** → `0x454950` 判活 → `0x3c2120` 查队伍，**只数"有没有"不数"几个"**（`docs/150` §2.1） | **−20**（两个纯循环 → 一个 3 行无类型副本助手） |
+
+**三处都不是"换个语言再写一遍"**，每一处都指向原版的一条具体规则：
+第 1 段删掉的是**同一条半径判据的第二次扫描**（旧注释自己写着"按同一个判据再算一次序号"），
+并且把射手排除从 `is_same()`（对象同一性，界面侧没有实体 id）改成**按 id**（`0x3c4452` 的口径）；
+第 2 段是**补一台本来不存在的机器**；第 3 段把"数几个"改成原版的"只数有没有"。
+
+### 81.3 状态机为什么放在"到达/整批结算之后"——这条有判据
+
+`turn_ended`（`ExecutingResults → WaitingForFunctions`）**不**放在 `_flow.settle()` 里，
+而放在 `_on_shot_arrived()` 收尾与整批结算之后。理由两条，都能跑：
+
+1. **语义**：原版 `ExecutingResults` 持续到弹道执行完（`docs/14` §2 的状态图），
+   而压平模式（`automation`）在开火那一刻就把回合结算掉了 —— 若在那里发 `TurnEnded`，
+   状态会提前回 `WaitingForFunctions`，而画面上弹道还在飞；
+2. **既有断言**：`selftest` 第 ④ 组「发射期间的第二发必须被拒」是拿 `_shot_in_flight`
+   钉的（`selftest.gd` 4600–4620）。状态机若提前回 `WaitingForFunctions`，那一发会被放行
+   ⇒ 该组立刻红。本轮 717 条一条没改、全绿，就是这条时序没被改坏的旁证。
+
+### 81.4 硬门槛读数（每一条都是本轮自己跑的）
+
+| 项 | 门槛 | 实测 | 判 |
+|---|---|---|---|
+| `cargo test --offline` | 1772 / 0 / 1 ignored | **1772 / 0 / 1 ignored** | ✓ 一位不变 |
+| `cargo test --offline --features gdext-bindings` | 1887 / 0 / 1 ignored | **1888 / 0 / 1 ignored** | ✓（+1：`play_flow_class::tests::turn_event_names_cover_every_variant`） |
+| `selftest` | 717 / 0 / 1 skip，`missing=0` `silent=0` | **717 / 0 / 1 skip**，`@@SELFTEST_COVERAGE groups=33 checks=717 expected=717 missing=0(claimed 0 / degraded 0 / silent 0)` | ✓ |
+| headless 14 脚本 | 1935 / 0 | **1961 / 0**（244+117+96+235+367+132+24+116+96+**233**+66+57+155+23） | ✓（`play_flow` 207→**233**，+26 条全在新入口上） |
+| 像素 `match_ready` | 0.122 % / L2 0 块 | **0.1218 %（2 712 px）/ L2 0 块** | ✓ |
+| 像素 `match_play` | 0.428 % / L2 1 块 | **0.4220 %（9 399 px）/ L2 1 块** | ✓（那 1 块是弹道相位，§79.9 #1 已判"不可作判据"） |
+| 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **未复跑**（理由见下） | 见下 |
+
+**三轴为什么没复跑（诚实记）**：本轮 `src/` 只改了 `src/_scaffold/play_flow_class.rs` 一个文件，
+它在 `src/_scaffold/mod.rs:105` 上是 `#[cfg(feature = "gdext-bindings")]` 的
+⇒ 默认 features 的 `examples/replay_attrib` / `batch_conv` **根本不编译它**，
+`cargo test --offline` 的 1772 一位不动即是这条的旁证。不是"大概不影响"，是**没编进去**。
+（若审阅者要复跑，命令见 §81.8；本轮时间用在了三块迁移与像素上。）
+
+### 81.5 像素基线（私有 netns，两侧串行，本轮现拍）
+
+| 屏 | 阈值/基线 | 本轮实测 | 判 |
+|---|---|---|---|
+| `match_ready` | 0.122 %（2 716 px），L2 **0 块** | **0.1218 %（2 712 px），L2 0 块** | ✓ |
+| `match_play` | 0.428 %（9 478 px），L2 **1 块** | **0.4220 %（9 399 px），L2 1 块**（最坏块 `(2,2)` 15.6） | ✓ |
+
+噪声地板（同一次采集自报）：`match_ready` 原版 0.049 % / 我方 0.012 %；
+`match_play` 原版 **0.661 %** / 我方 0.166 % —— 跨侧差比原版自己的帧间噪声还小。
+
+### 81.6 遗留 / 未搬（22 条里最要紧的 5 条，逐条写缺什么）
+
+| # | 还没搬的 | 量 | 档位 | 缺什么 |
+|---|---|---|---|---|
+| 1 | **「打不全就全部复原」**（`_apply_target_reset` → `GwTargetSet.settle_shot`） | ~20 行 | **推断** | 语料 397 份回放 **0 次部分命中**；且与 `graphwar_target_manager::should_reset_targets` 的条件**不一致**，两份规则没有对齐证据 ⇒ 合成一份就是把错的固化（§53.6 #1 原样） |
+| 2 | **`fire()` 的另外 4 条早退**（回放 / 射手阵亡 / 轮到 AI / 空函数） | ~12 行 | **未知** | 回放屏控制器行为未观测（`docs/133` §4.2）；「AI 何时动手」无观测（`docs/AI.md`）；后两条是我方输入护栏 |
+| 3 | **同时回合的公告表**（`_simultaneous_announced`） | ~20 行 | **推断** | 原版 `TurnManager` 的公告表（谁在表里、顺序怎么定）没有反汇编证据；`RoundCollection` 只能收调用方给的顺序 |
+| 4 | **联机局全套**（`_online_*`） | ~400 行 | 服务端权威 | 本轮不做（规格 §4 禁改 `client/src/net|app/**`）。**代价**：本地状态机不驱动联机局，`fire()` 的联机分支仍读 `_shot_in_flight` ⇒ 该分支仍是"两套" |
+| 5 | **`_human_team()`** | ~14 行 | **未知** | 「谁是人类」在 `LocalPlayer` manager 里（§54 已 wired），但**那台 manager 与本屏玩家表没有接线证据** |
+
+另外 `docs/16` §53.6 的 #3（`drive_frame` 不接）与 #6（关卡靶子/障碍布局）本轮**未动**，结论同旧。
+
+### 81.7 前提被证伪 / 我写错了
+
+1. **规格 §2 的前提「两套逻辑并存 = 3 727 行仿制 vs Rust 侧 1 124+1 195+268 行」只对了一半。**
+   那 3 727 行里**流程判断点只有 38 处**，其中 8 处早已在 Rust（§52/§53）。真正的缺口不是
+   "同一件事写了两遍"，而是**原版有、我们两遍都没有**：8 个 `GameState` 的状态机。
+   ⇒ 本轮最有价值的一段是"补一台不存在的机器"，而不是"删掉一份重复实现"。
+2. **旧注释把 `_first_point_within()` 写成"内核把它当内部细节、所以只能再算一次"** ——
+   不成立：`settle::resolve_points_owned` 回的 `Hit{index}` 就是它，只是**从没被接出来**
+   （`api::HIT_KEYS` 只有 7 个键，`hit_points` 给的是坐标不是序号）。本轮直接吃 `Hit`。
+3. **`_judge_shots()` 用的射手排除是 `is_same()`（对象同一性）**，而原版两处（`0x3c4452`/
+   `0x3c3e81`）比的是**实体 id**。这在单机上等价、在"同一个字典被两条路径共用"时会分家 ⇒
+   本轮按 id 改，并在台账 L20 记下这条偏差。
+4. **`_alive_by_team()` 数的是"几个"**，原版 `0x473520` **只数"有没有"**（`docs/150` §2.1）。
+   判据上看不出差别（都只问 `>0` / `==0`），但既然搬，就按原版形状搬。
+
+### 81.8 复跑命令
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t31          # 换成自己的工作树
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target      # ⚠️ 单独一行
+export HOME=$WT/.fakehome
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+
+# ① Rust（先测、最后 build gdext 再 cp —— 顺序反了客户端会跑旧内核，§53.9 的坑）
+cargo test --offline                                   # 1772 / 0 / 1ignored
+cargo test --offline --features gdext-bindings         # 1888 / 0 / 1ignored
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+"$GODOT" --headless --path client --import
+
+# ② 自检与 headless
+"$GODOT" --headless --path client -- --selftest                              # 717 / 0 / 1skip
+"$GODOT" --headless --path client --script res://tools/play_flow_check.gd    # PLAY_FLOW 233 passed
+
+# ③ 对局两屏（**必须** bwrap 私有 netns；两侧**串行**）
+bwrap --unshare-user --unshare-net --uid 0 --gid 0 --ro-bind / / --bind $MAIN $MAIN \
+  --dev /dev --proc /proc --tmpfs /tmp \
+  --setenv __EGL_VENDOR_LIBRARY_FILENAMES /usr/share/glvnd/egl_vendor.d/50_mesa.json \
+  --setenv LIBGLX_VENDOR_LIBRARY_NAME mesa --setenv LIBGL_ALWAYS_SOFTWARE 1 --setenv GALLIUM_DRIVER llvmpipe \
+  --setenv DISPLAY 127.0.0.1:141 --chdir $WT \
+  python3 tools/frame_capture.py --side original --flow match --out $WT/.agent-work/v/o --display-num 141
+bwrap (同上，DISPLAY 142 / --side ours / --display-num 142 / --out …/m)
+python3 tools/frame_diff.py --orig …/o --mine …/m --screens match_ready,match_play \
+  --out …/d.tsv --blocks-out …/db.tsv --json …/d.json
+# 期望：match_ready 0.1218 %（2 712 px，L2 0）/ match_play 0.4220 %（9 399 px，L2 1）
+
+# ④ 三轴（本轮未跑，`_scaffold/play_flow_class.rs` 在 gdext 特性下不参与这两个 example）
+cargo run --release --offline -q --example replay_attrib -- --dir $MAIN/.reference/replays/gw2-replays-snapshot/replays --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $MAIN/.reference/replays/gw2-replays-snapshot/replays --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir $MAIN/.reference/replays/gw2-replays-snapshot/replays --policy strict
+```
