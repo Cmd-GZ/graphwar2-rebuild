@@ -13367,9 +13367,9 @@ PY
 
 | 文件 | 搬进来（`git mv` 级别的内容搬迁） | 留在旧文件 | 公开路径怎么保 |
 |---|---|---|---|
-| `src/graphwar_event_handler.rs`（新，`197` 行） | `DISPATCH_NAME_TAGS`、`NAMED_VARIANT_COUNT`、`impl Event { from_dispatch_name }` | `src/events.rs`：`enum Event`(74) / `ALL_VARIANTS` / `VARIANT_COUNT` / `Event::wire_tag` / `GameInfo` / `GAME_INFO_FIELD_COUNT` | `events.rs` 里 `pub use crate::graphwar_event_handler::{DISPATCH_NAME_TAGS, NAMED_VARIANT_COUNT};`；**同 crate 的 `impl` 块分居两文件**，`Event::from_dispatch_name` 路径不变 |
-| `src/graphwar_remote_event_handler.rs`（新，`~170` 行） | 证据行：`MODULE` / `SOURCE_FILE` / `Link` / `Func` / `FUNCTIONS`(2 条) + `is_leader` 的指令级观测 | —（本模块我方**没有任何代码**） | 无公开项 ⇒ 不需要再导出 |
-| `src/graphwar_server_connection_handler.rs`（新，`~250` 行） | `RoomState`、`on_new_connection`、`to_wire`、`tests{state_sync_matches_captured_bytes, wire_encoding_matches_frame_layout}`（断言与期望值**一个字没改**） | `src/server.rs`：`on_tick_request` + `tick_tests`（`docs/06` §74.4 的建议） | `server.rs` 里 `pub use crate::graphwar_server_connection_handler::{on_new_connection, to_wire, RoomState};` |
+| `src/graphwar_event_handler.rs`（新，**159** 行） | `DISPATCH_NAME_TAGS`、`NAMED_VARIANT_COUNT`、`impl Event { from_dispatch_name }` | `src/events.rs`：`enum Event`(74) / `ALL_VARIANTS` / `VARIANT_COUNT` / `Event::wire_tag` / `GameInfo` / `GAME_INFO_FIELD_COUNT` | `events.rs` 里 `pub use crate::graphwar_event_handler::{DISPATCH_NAME_TAGS, NAMED_VARIANT_COUNT};`；**同 crate 的 `impl` 块分居两文件**，`Event::from_dispatch_name` 路径不变 |
+| `src/graphwar_remote_event_handler.rs`（新，**126** 行） | 证据行：`MODULE` / `SOURCE_FILE` / `Link` / `Func` / `FUNCTIONS`(2 条) + `is_leader` 的指令级观测 | —（本模块我方**没有任何代码**） | 无公开项 ⇒ 不需要再导出 |
+| `src/graphwar_server_connection_handler.rs`（新，**225** 行） | `RoomState`、`on_new_connection`、`to_wire`、`tests{state_sync_matches_captured_bytes, wire_encoding_matches_frame_layout}`（断言与期望值**一个字没改**） | `src/server.rs`：`on_tick_request` + `tick_tests`（`docs/06` §74.4 的建议） | `server.rs` 里 `pub use crate::graphwar_server_connection_handler::{on_new_connection, to_wire, RoomState};` |
 
 `src/lib.rs` 加三行 `pub mod`。**调用方一个都没改**：`tests/events.rs` 的
 `use gw2_rebuild::events::{…DISPATCH_NAME_TAGS…}`、`src/game.rs` / `src/graphwar_game_server.rs`
