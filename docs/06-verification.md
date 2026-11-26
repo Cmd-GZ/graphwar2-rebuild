@@ -8522,7 +8522,7 @@ python3 tools/frame_diff.py --orig <W>/orig --mine <W>/mine --screens menu,repla
 
 ### 62.1 台账：52 份的分布与"新增的那条硬证据"
 
-[`fixtures/view_layer_ledger.tsv`](../fixtures/view_layer_ledger.tsv)（52 数据行 × 7 列；
+[`fixtures/view_layer_ledger.tsv`](../fixtures/view_layer_ledger.tsv) 有 52 个数据行 × 7 列。
 `why` / `need` 两列是人写的判断；机械列（`lines` / `shipped_scn_refs` / `client_path`）与
 "status 与是否逐字节在场"这条不变量可以用下面这条命令**原地复算**（不依赖任何 `.agent-work` 里的脚本）：
 
@@ -8659,12 +8659,14 @@ _content.resized.connect(_resync_options_height)   # 里面就是 _options.call_
 | 组 | 份数 | 缺的具体东西 | 谁受影响 |
 |---|---:|---|---|
 | **A. AdMob / IAP 平台桥** | 7 | ① 包内**零个**原生插件二进制（`find rsc -name '*.so' -o -name '*.aar' -o -name '*.jar' -o -name '*.gdap'` ⇒ **空**）⇒ `Ad_holder.gd` 是 52 份里**唯一解析都过不去**的（7 个 AdMob 原生类型）；② `/root/GraphwarRootNode` 这个节点 + 它的 `log(String)` 方法（5 份都在第一行 `get_node("/root/GraphwarRootNode")`；我方主场景根是 `Main`(`main.gd`)） | `Ad_holder` `AdContainer` `android_iap` `Android_mediastore_holder` `IAP_holder` `IAP_IOS` `IOS_album_holder` |
-| **B. 红线（别人的屏）** | 8 | `client/src/screens/play_screen.gd` / `client/src/play/**`（7 份）、`replay_lobby.gd`（1 份）、`campaign.gd`（1 份，且另卡 `GwButton`↔`GraphwarButton` 派发） | `ButtonGrid` `ExtraOptionPad` `ExtraOptionsHBox` `HBoxContainer` `ShowExtraButtons` `ViewFunctionPad` `ViewFunctionsLabel` `GameNameContainer` `CampaingLevelsButtons`（其中 `ButtonGrid` 等 6 份的**节点名/类型我方已经全对**，只差 `GwViews.attach()` 一行） |
+| **B. 红线（别人的屏）** | 9 | `play_screen.gd` / `client/src/play/**` **7 份**（`ButtonGrid` `ExtraOptionPad` `ExtraOptionsHBox` `HBoxContainer` `ShowExtraButtons` `ViewFunctionPad` `ViewFunctionsLabel`）、`replay_lobby.gd` **1 份**（`GameNameContainer`）、`campaign.gd` **1 份**（`CampaingLevelsButtons`，还另卡 `GwButton`↔`GraphwarButton` 派发） | `ButtonGrid` `ExtraOptionPad` `ExtraOptionsHBox` `HBoxContainer` `ShowExtraButtons` `ViewFunctionPad` `ViewFunctionsLabel` `GameNameContainer` `CampaingLevelsButtons`（其中 `ButtonGrid` 等 6 份的**节点名/类型我方已经全对**，只差 `GwViews.attach()` 一行） |
 | **C. 包内死文件** | 7 | 无需接线：31 份 `.scn` 零引用（见 §62.1） | `CampaingButtonSize` `ExtraOptionsVbox` `LevelTitleContainer` `OffsetLabel` `ResizeContainer` `UnlockButton` `endgame_pop_up` |
 | **D. 被既有断言挡住** | 1 | `ShopButtonsSize.gd` 没有下限（原版 105 份里 `maxi`/`max(` 出现 0 次），而 `client/tools/selftest.gd:717` 把 **32 下限**写进了期望值 ⇒ headless 视口 64 px 下原版算出 **−6**、断言要 **32** | `ShopButtonsSize` |
 | **E. 结构 + 无真值** | 1 | `SoldierIconMarginContainer.gd`：原版每个槽是**叠在同一点**的 4 个 `TextureRect`（Skin/Face/Hat/Empty）+ 负 margin；我方每槽 1 个合成图标（负 margin 会让相邻槽压叠）。且 `game_setup` 屏**没有像素真值**（§57 只做了 campaign / level_popup）⇒ 改了也没法验收 | `SoldierIconMarginContainer` |
-| **F. Rust 侧还没接** | 1 | `endgame_pop_up.gd` 是 9 行空壳（那份 `.scn` 的根节点**根本没有脚本**），内容由 Rust 填：`src/graphwar_play_screen_control.rs` 的 `NODE_FUNCS` 把 `VictoryPlayerContainer*` / `TeamVictoryLabel` / `SelfVictoryLabel` 映到 `0x3d9000`(FN_READY_LABELS) / `0x3da130`(FN_SHOW_VICTORY)。**现在换上去 = 弹窗变空壳**，所以我方那 211 行仿制控制器**保留**并明确标注"这是仿制、不是复原" | `endgame_pop_up` |
+| **F. Rust 侧还没接** | （与 C 同一份） | `endgame_pop_up.gd` 是 9 行空壳（那份 `.scn` 的根节点**根本没有脚本**），内容由 Rust 填：`src/graphwar_play_screen_control.rs` 的 `NODE_FUNCS` 把 `VictoryPlayerContainer*` / `TeamVictoryLabel` / `SelfVictoryLabel` 映到 `0x3d9000`(FN_READY_LABELS) / `0x3da130`(FN_SHOW_VICTORY)。**现在换上去 = 弹窗变空壳**，所以我方那 211 行仿制控制器**保留**并明确标注"这是仿制、不是复原" | `endgame_pop_up` |
 
+> 上表 A–E 互不重叠：**7 + 9 + 7 + 1 + 1 = 25**；F 那行说的是其中 `endgame_pop_up.gd`（已在 C 里）
+> 除"包内死文件"之外的**真正缺口**（Rust 侧没接），不是第 26 份。
 > 逐份的完整理由 + 需要的具体东西在台账的 `why` / `need` 两列（25 行全覆盖）。
 
 ### 62.5 复跑（在 worktree `WT` 里，一条不漏）

@@ -10975,7 +10975,7 @@ t.set_color("font_focus_color",   "Button", Color(0.95,  0.95,  0.95,  1.0))   #
 | 类别 | 份数 | 在我方客户端里的状态 |
 |---|---:|---|
 | **原版字节 + 已接线** | **27** | `client/src/views/*.gd`（24 份 §43 + 3 份本轮），`cmp` 与 `recovered-src/` 逐字节相同；运行时 **82 个实例**（§43.2 的 79 + 本轮 3，逐文件数一位不差），由 `GwViews.attach()` 挂到节点上 |
-| 仍是我们写的 | **25** | 其中 8 份只是"红线/别人正在改"，6 份只差一行 attach（play_screen 组），7 份是**包内死文件**（根本不该接线），4 份有真缺口（见 §67.3） |
+| 仍是我们写的 | **25** | 分三块：**9 份是红线**（别人的屏正在改，其中 6 份已"只差一行 attach"）、**7 份是包内死文件**（根本不该接线）、**9 份有真缺口**（平台桥 7 + `ShopButtonsSize` 1 + `SoldierIconMarginContainer` 1；`endgame_pop_up` 既是死文件又缺 Rust 侧，见 §67.3） |
 
 ⚠️ **"原版字节在场"≠"行为已复原"。** 这些视图脚本全是**布局/字号**（`size_changed` → 写
 `font_size` / `custom_minimum_size` / `margin`），**一个按钮行为都没有** —— 行为在 Rust 控制器里
@@ -11002,12 +11002,14 @@ t.set_color("font_focus_color",   "Button", Color(0.95,  0.95,  0.95,  1.0))   #
 | 缺口 | 份数 | 说明 |
 |---|---:|---|
 | **A. AdMob / IAP 平台桥** | 7 | 包里**一个原生插件二进制都没有**（`.so/.aar/.jar/.gdap` 全空）⇒ `Ad_holder.gd` 解析都过不去；另外 5 份第一行就要 `/root/GraphwarRootNode` + 它的 `log()`（我方主场景根是 `Main`）。**这是"包里没有"，不是"我们没复原"** |
-| **B. play_screen 组（红线）** | 6 | `ButtonGrid` / `ExtraOptionPad` / `ExtraOptionsHBox` / `HBoxContainer` / `ViewFunctionPad` / `ViewFunctionsLabel`。节点名我逐个核对过**都在**，只差 `attach`（`ButtonGrid`/`HBoxContainer` 还要把 `_make_grid()` 拆成四步）。等 t7 的 S3 归零提交之后再动 |
+| **B. play_screen 组（红线）** | 7 | `ButtonGrid` / `ExtraOptionPad` / `ExtraOptionsHBox` / `HBoxContainer` / `ShowExtraButtons` / `ViewFunctionPad` / `ViewFunctionsLabel`。节点名我逐个核对过**都在**，只差 `attach`（`ButtonGrid`/`HBoxContainer` 还要把 `_make_grid()` 拆成四步；`ShowExtraButtons` 另卡"扩展类按钮 + 2 个 `.svg` 资产"）。等 t7 的 S3 归零提交之后再动 |
 | **C. 别的屏（红线）** | 2 | `GameNameContainer`（`replay_lobby.gd`，刚做成整屏 0 像素）、`CampaingLevelsButtons`（`campaign.gd`，另卡 `GwButton` ↔ `GraphwarButton` 派发） |
 | **D. 包内死文件** | 7 | 31 份原版 `.scn` **零引用**（严格前缀 grep）：`CampaingButtonSize` `ExtraOptionsVbox`（1 字节空文件）`LevelTitleContainer` `OffsetLabel` `ResizeContainer` `UnlockButton` `endgame_pop_up` |
 | **E. 被既有断言挡住** | 1 | `ShopButtonsSize`：原版无下限，`selftest.gd:717` 把 `maxf(32, …)` 写进期望值（headless 64 px 下原版算出 −6） |
 | **F. 结构 + 无真值** | 1 | `SoldierIconMarginContainer`：原版每槽 4 个叠放的 `TextureRect` + 负 margin；我方每槽 1 个合成图标，且 `game_setup` 屏没有像素真值 |
-| **G. Rust 侧未接** | 1 | `endgame_pop_up.gd`：9 行空壳、那份 `.scn` 的根节点**根本没脚本**，内容由 `src/graphwar_play_screen_control.rs` 的 `0x3d9000`/`0x3da130` 填。**在那两个函数接到节点层之前，我方 211 行仿制控制器必须保留**——它是现在唯一让弹窗有内容的东西 |
+| **G. Rust 侧未接** | （与 D 同一份） | `endgame_pop_up.gd`：9 行空壳、那份 `.scn` 的根节点**根本没脚本**，内容由 `src/graphwar_play_screen_control.rs` 的 `0x3d9000`/`0x3da130` 填。**在那两个函数接到节点层之前，我方 211 行仿制控制器必须保留**——它是现在唯一让弹窗有内容的东西 |
+
+> 计数口径：A–F **7 + 7 + 2 + 7 + 1 + 1 = 25**（G 说的是其中 `endgame_pop_up` 的**真正缺口**，不是第 26 份）。
 
 ### 67.4 这一节改变了什么（对旧文档的更正，逐条）
 
