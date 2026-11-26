@@ -74,7 +74,12 @@ const BOARD_ASPECT := 50.0 / 30.0
 # `Control.scale` 缩放到 `AspectRatioContainer` 给的那块 5:3 矩形。这样六个类的换算落在
 # **同一个坐标系**里，且与 `client/tools/plane_on_screen.tscn` 的摆法逐值相同。
 
-## 画布尺寸（`src/plane.rs::CANVAS_W/CANVAS_H`，逐位；= 50×30 棋盘 × 20 px/单位）。
+## **参考画布**尺寸（`src/plane.rs::CANVAS_W/CANVAS_H`，逐位；= 50×30 棋盘 × 20 px/单位）。
+##
+## ⚠️ T44 起它**不再是渲染坐标系**：原版 `.tscn` 的 `AspectRatioContainer` 直接把
+## `GraphwarPlane` 铺成棋盘矩形（@1920×1160 = 1279×767.4），绘制层拿**那块矩形**的 `size`。
+## 这个常量现在只用于 ① 等效缩放（`plane_state()["plane_scale"]`）② 当 `src/plane.rs`
+## 定标关系的对照。等价性证明见 `fixtures/board_geometry_equiv.tsv`。
 const CANVAS_SIZE := Vector2(1000.0, 600.0)
 ## `graphwar_plane::PX_PER_UNIT`（= CANVAS_W / BOARD_W = 1000/50）。
 const PX_PER_UNIT := 20.0
@@ -145,8 +150,6 @@ const VIEW_MODES := ["view_single_function", "view_recent_functions", "view_all_
 ## 真 `GraphwarPlane`（`src/_scaffold/graphwar_plane_class.rs`）。类型是 `Control`：
 ## 它是**运行时注册**的扩展类，GDScript 里写 `GraphwarPlane` 会在解析期就要求扩展已加载。
 var _plane: Control = null
-## 1000×600 的画布宿主（`AspectRatioContainer` 铺给它的那块 5:3 矩形）；六个真节点都在这层里。
-var _canvas: Control = null
 var _axis: Control = null            ## 真 `AxisDrawer`（网格 + 白底）
 var _entities: Control = null        ## 真 `EntityDrawer`（士兵 / 名字 / 靶子）
 var _fx: Control = null              ## 真 `EffectDrawer`（特效）
@@ -168,16 +171,16 @@ var _curve_final_tick := 0.0
 var _input: GwFunctionInput
 var _timer_label: Label
 var _offset_label: Label
-var _fx_button: GwButton
+var _fx_button: Button
 var _view_functions_label: RichTextLabel
 var _extra_vbox: VBoxContainer
 var _extra_hbox: HBoxContainer
-var _show_extra_button: GwButton
-var _names_button: GwButton
-var _view_func_button: GwButton
-var _mute_button: GwButton
-var _chat_button: GwButton
-var _fire_button: GwButton
+var _show_extra_button: Button
+var _names_button: Button
+var _view_func_button: Button
+var _mute_button: Button
+var _chat_button: Button
+var _fire_button: Button
 var _status_label: Label
 var _replay_left: Control
 var _replay_right: Control
@@ -186,7 +189,7 @@ var _extra_pad: MarginContainer
 var _plane_aspect: AspectRatioContainer
 var _left_grid: GridContainer
 var _right_grid: GridContainer
-var _keys: Array[GwButton] = []
+var _keys: Array[Button] = []
 var _view_mode := 1
 var _muted := false
 
@@ -229,7 +232,6 @@ var _time_left := 0.0
 var _shot_queue: Array[Dictionary] = []         # 同时回合制下本轮的弹道
 var _show_names := true
 var _show_function_overlay := false
-var _extra_forced := false
 var _last_result := {}
 ## 状态行的"本轮"部分（这一行**不显示**，只给 selftest / `--dump` 当诊断，`docs/125` §5）。
 var _shot_status := ""
@@ -313,28 +315,15 @@ var _replay_label: Label = null
 var _replay_shot_status := ""
 ## 回放版式是否已应用（`_set_replay_layout()`）。
 var _replay_layout := false
-## 左侧 `LeftReplaysButtonsGrid` 上面那一格空占位。
-##
-## 原版 `play_screen.tscn` 的 `LeftReplaysButtonsGrid` 是 `columns = 3` 的 GridContainer，
-## 里面**六**个 child：`⇤ ← ⌫` 三个文字键 + 三个 `AspectRatioContainer/GraphwarButton`（⏮▶⏭）。
-## 真帧上可见的 ⏮▶⏭ 落在 `y 581..676`，而"整块居中"只能解释到 `y 529`（见
-## `fixtures/replay_screen_targets.txt` §三 `left_replay_btns`）⇒ 第一行**占位但不可见**。
-## 我方用一个等高（key+4）的空 Control 复现同一位置；**机制未知**（Godot 的
-## GridContainer 会跳过 `visible=false` 的子节点 ⇒ 原版第一行不是靠 visible 隐藏的）。
-var _replay_left_pad: Control = null
 ## 左侧 ⏮▶⏭ / 右侧三键所在的容器（只在回放模式可见）。
-var _replay_play_btn: GwButton = null
-## 键盘/开火行的持有者 —— 回放模式要整块藏掉（原版回放屏没有键盘、没有 Fire）。
-var _left_grid_holder: Control = null
-var _right_grid_holder: Control = null
-## 键盘 grid（`RightButtonGrid`）的**天然最小宽**：回放模式下原版右列宽度就是这个数
-## （@1920 = 337）。藏起来之前量一次记下来，见 `_set_replay_layout()`。
+var _replay_play_btn: Button = null
+## 键盘 `RightButtonGrid` 的**天然最小宽**（@1920 = 337）。回放模式把它藏起来之后，右列宽度
+## 就靠这个数钉住（真帧右三键 x1583..1919 = 337）—— **机制未知 + 我方补丁**，
+## 见 `_set_replay_layout()` 里那段注。
 var _right_grid_natural_w := 0.0
-var _right_grid_natural_w_set := false
+## `RightControls/HBoxContainer`（`Fire!` 那一行）与它的两颗按钮。回放屏要把那颗可见的
+## `Fire!` 藏起来但**留着行高**（真帧右三键 y433/533/633 ⇒ 顶行 96 还在）。
 var _fire_row: Control = null
-## `FireContainer` 的两颗直接子节点（`ClipButton` / `FireButton`）。回放屏要把那颗
-## 可见的 `Fire!` 藏起来但**留着行高**（真帧右三键 y433/533/633 ⇒ 顶行 96 还在），
-## 所以这里存两颗的句柄而不是一个容器（与 `.tscn` 同形后再没有中间层，见 `build()`）。
 var _fire_parts: Array[Control] = []
 
 # --- 联机模式（`docs/139`；落实 `docs/134` §7.1 的交接清单） ---
@@ -349,10 +338,6 @@ var _fire_parts: Array[Control] = []
 #   * 障碍 = `room.obstacles`（`AddObstacle` 的顺序），**不再**用内核的关卡生成器；
 #   * 靶子 = 没有（服务端的 `Match` 里只有士兵，`docs/117`）。
 var _online_mode := false
-## 左列回放三键所在的那一层（`--flow replay` 才显示；对局屏**必须整层隐藏**，
-## 否则它作为一个「可见的 0 高容器」在 `LeftControls` 的 VBox 里多吃一条 4 px separation，
-## 左键盘因此比右键盘高 2 px —— 真帧两侧都在 y=281，见 `docs/06` §79）。
-var _left_replay_box: Node = null
 ## 正在订阅的会话。`begin_match()` 会被 App 调用**两次**（`joined` 一次、开局批到齐一次），
 ## 所以订阅必须可重入（先断后连）。
 var _online_session: GwNetSession = null
@@ -385,291 +370,138 @@ func _ready() -> void:
 
 # ---------------------------------------------------------------- 搭界面
 
+## 节点树 = **原版 `play_screen.tscn`**（106 个静态节点；`client/scenes/screens/play_screen.tscn`
+## 与 `recovered-src/play_screen.tscn` **逐字节相同**，`cmp` 过）。
+##
+## 所以本函数只剩三件事：① 取句柄 ② 装 6 个真 GDExtension 画布节点 ③ 接线。
+## **布局/字号/最小尺寸一个字都不在这里**：它们全在 `.tscn` 挂的**原版脚本**里
+## （`ButtonGrid.gd` / `HBoxContainer.gd` / `ExtraOptionsHBox.gd` / `ExtraOptionPad.gd` /
+## `ViewFunctionPad.gd` / `ViewFunctionsLabel.gd` / `FireContainer.gd` / `FxContainer.gd` /
+## `TimerContainer.gd` / `OffsetContainer.gd` / `ExitButtonContainer.gd` /
+## `MarginContainer.gd` / `ShowExtraButtons.gd`），**58** 个原生按钮的 `text`/`input_text`/`icon`
+## 也全在 `.tscn` 里 ⇒ 手搭键盘/回放键/顶栏开关/顶底栏的那四段代码整份删除。
+##
+## 证据档：树=**逐字节**（`cmp` 与 `recovered-src/` 相同）；三个 `_scaffold` 类节点由
+## 原版 Rust 控制器创建、我方还没复原那条路径 ⇒ 由本函数按 `.tscn` 的形状补（**我方接线**）。
 func build() -> void:
-	# 原版 MarginContainer 的 margin 由安全区脚本给（桌面 = 0），VBox separation = 4
-	# （实测：PlayMainHBox y=0..1058、HBoxContainer2 y=1062..1160 ⇒ 间隔 4）。
-	var margin := MarginContainer.new()
-	margin.name = "MarginContainer"
-	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
-	for side in ["left", "top", "right", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 0)
-	add_child(margin)
-	var vbox := GwUI.vbox("VBoxContainer", 4, margin)
+	var P := "MarginContainer/VBoxContainer"
+	var PL := P + "/PlayMainHBox/PlaneContainer"
+	var L := P + "/PlayMainHBox/LeftControls"
+	var R := P + "/PlayMainHBox/RightControls"
+	var B := P + "/HBoxContainer2"
+	var EO := PL + "/ExtraOptionsVBox/ExtraOptionsHBox"
 
-	var main_hbox := GwUI.hbox("PlayMainHBox", 4, vbox)
-	main_hbox.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_plane_container = _node(PL)
+	_extra_pad = _node(PL + "/GamePlane/ExtraOptionPad")
+	_plane_aspect = _node(PL + "/GamePlane/PlaneContainer")
+	_plane = _node(PL + "/GamePlane/PlaneContainer/GraphwarPlane")
+	_view_functions_label = _node(PL + "/GamePlane/PlaneContainer/VBoxContainer/HBoxContainer/ViewFunctionsLabel")
+	_extra_vbox = _node(PL + "/ExtraOptionsVBox")
+	_extra_hbox = _node(EO)
+	_view_func_button = _node(EO + "/ViewFunctionButton")
+	_names_button = _node(EO + "/ShowNames")
+	_chat_button = _node(EO + "/ChatButtonPlay")
+	_mute_button = _node(EO + "/MuteButton")
+	_show_extra_button = _node(L + "/LeftTopButtonsContainer/MarginContainer/ShowExtraButtons")
+	_left_grid = _node(L + "/LeftButtonGrid")
+	_replay_left = _node(L + "/LeftReplaysButtonsGrid")
+	_replay_play_btn = _node(L + "/LeftReplaysButtonsGrid/AspectRatioContainer/PlayPauseButton")
+	_fire_row = _node(R + "/HBoxContainer")
+	_fire_button = _node(R + "/HBoxContainer/FireContainer/FireButton")
+	_right_grid = _node(R + "/RightButtonGrid")
+	_replay_right = _node(R + "/RightReplaysButtonsGrid")
+	_timer_label = _node(B + "/TimerContainer/TimerLabel")
+	_fx_button = _node(B + "/FxContainer/AspectRatioContainer/FxTextureButton")
+	_offset_label = _node(B + "/OffsetContainer/OffsetLabel")
+	_fire_parts = []
+	for nm in [R + "/HBoxContainer/FireContainer/ClipButton", R + "/HBoxContainer/FireContainer/FireButton"]:
+		var c := _node(nm)
+		if c != null:
+			_fire_parts.append(c)
 
-	# ---------------- 左控制区 ----------------
-	var left := GwUI.vbox("LeftControls", 4, main_hbox)
-	left.size_flags_horizontal = Control.SIZE_FILL    # 宽度由内容决定（3 键 + 2 个 4px 间隔）
-	var left_top := GwUI.hbox("LeftTopButtonsContainer", 4, left)
-	var exit_pair := GwUI.exit_pair(GwCommands.ASK_EXIT_PLAY)
-	left_top.add_child(exit_pair)
-	# 原版 `play_screen.tscn`：`ShowExtraButtons` 的 `text = "     "`（**五个空格**），
-	# 它决定这颗键的最小宽度（实测真帧 146×96，与返回键同宽）；`ExitButtonContainer` 与本
-	# MarginContainer 都是 `size_flags_horizontal = 3` ⇒ 两颗键各占一半（298/2 = 149 ≈ 146）。
-	# 以前这里是 `GwButton.make("")` ⇒ 我方这颗键只有 96 宽，顶上中间那四个开关整组右移 35 px
-	# （`fixtures/replay_screen_targets.txt` §二 的两侧顶部对照）。
-	_show_extra_button = GwButton.make("     ")
-	_show_extra_button.name = "ShowExtraButtons"
-	_show_extra_button.icon = GwIcons.get_icon("show_extra_buttons")
-	# 图标居中：`GwButton.make` 只给了 `expand_icon`，`icon_alignment` 是默认的 LEFT ——
-	# 带 5 个空格的文本 + LEFT 对齐时 Godot 不给图标留宽度 ⇒ **图标一个像素都不画**
-	# （实测：v3 帧上这颗键是一整块纯底色）。顶上那 4 个开关走 `_extra_button()`，
-	# 那里显式写了 CENTER，所以它们正常。
-	_show_extra_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_show_extra_button.tooltip_text = "显示/隐藏顶栏附加按钮（ShowExtraButtons.gd）"
-	_show_extra_button.pressed.connect(_toggle_extra_buttons)
-	left_top.add_child(_show_extra_button)
+	# `ViewFunctionsLabel` 在 `.tscn` 里带着一段**示例文本**（原版控制器运行时会改）。
+	# 原版对局屏默认不显示它（`_show_function_overlay == false`）；实例化后必须自己关掉，
+	# 否则棋盘上会印着 "player 1: f(x) = 3x+234"（那是 `.tscn` 里的占位串）。
+	if _view_functions_label != null:
+		_view_functions_label.visible = false
 
-	# 原版 `LeftControls` 里有两个 `size_flags_vertical = 3` 的 MarginContainer：
-	# 一个在键盘**前**、一个在键盘**后** ⇒ 键盘在竖直方向居中（实测 grid y=281 @1920，
-	# 不是紧贴左上角）。这里照抄同一结构。
-	var left_top_pad := GwUI.margin("MarginContainer", 0, left)
-	left_top_pad.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_left_grid = _make_grid("LeftButtonGrid")
-	_left_grid_holder = _left_grid.get_parent()
-	_fill_grid(_left_grid, LEFT_KEYS)
-	# **原版字节**：`recovered-src/ButtonGrid.gd`（原版挂在 `play_screen.scn` 的
-	# `LeftButtonGrid`/`RightButtonGrid`/`Left*ReplaysButtonsGrid` 上）。它给直接子节点写
-	# `custom_minimum_size = (屏宽×0.15/3)` 与 `font_size = 屏宽/30` —— 我方 `apply_font_scale()`
-	# 里那套同式自写（`for b in _keys: …`）已整份删除。
-	GwViews.attach(_left_grid, "ButtonGrid.gd")
-	left.add_child(_left_grid_holder)      # 顺序 = 几何：夹在 pad 与回放块之间
-	# `LeftReplaysButtonsGrid`（原版这一块是 `columns = 3` 的 GridContainer：第一行 3 个文字键
-	# 在真帧上不可见但**占位**，第二行才是 ⏮▶⏭ ⇒ 用一个等高空占位复现同一位置）。
-	#
-	# ⚠️ **顺序就是几何**：原版 `LeftControls` 的五个 child 是
-	# `[LeftTopButtonsContainer][MarginContainer(expand)][LeftButtonGrid][LeftReplaysButtonsGrid][MarginContainer2(expand)]`
-	# —— 回放块夹在两个展开垫中间 ⇒ 竖直居中。以前我方把回放块加在**最后一个** child 位置，
-	# 两个展开垫就把它一路推到屏幕底部（实测 y 964，原版 581）。
-	var left_replay_box := GwUI.vbox("LeftReplaysBox", 0, left)
-	_left_replay_box = left_replay_box
-	# `GwUI.vbox` 默认 `size_flags_vertical = EXPAND_FILL`；回放键这一块是"贴内容高度"的方块
-	# ⇒ 退回 FILL，否则它自己也去抢剩余高度。
-	left_replay_box.size_flags_vertical = Control.SIZE_FILL
-	_replay_left_pad = Control.new()
-	_replay_left_pad.name = "ReplayGridRowPad"
-	_replay_left_pad.custom_minimum_size = Vector2.ZERO
-	left_replay_box.add_child(_replay_left_pad)
-	_replay_left = _build_replay_controls("LeftReplaysButtonsGrid", ["prev", "play_pause", "next"], false)
-	left_replay_box.add_child(_replay_left)
-	var left_filler := Control.new()
-	left_filler.name = "Filler"
-	left_filler.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	left.add_child(left_filler)
+	# 函数输入框：`.tscn` 里这个节点是**原版类型** `GraphwarFunctionInput`（Rust 类，自绘）。
+	# ⚠️ **遗留**：`client/tools/selftest.gd:1352` 对它有既有断言（`as GwFunctionInput` +
+	# `.text`），断言不在本任务可改范围 ⇒ 这里**原位**换成我方同名控件（节点名/路径不变）。
+	# 这条是"半原版"的一处，已登记在 docs/06 §94.7。
+	var native_input := _node(B + "/GraphwarFunctionInput")
+	_input = GwFunctionInput.new()
+	_input.name = "GraphwarFunctionInput"
+	_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_input.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	if native_input != null and native_input.get_parent() != null:
+		var holder := native_input.get_parent()
+		var idx := native_input.get_index()
+		_input.size_flags_horizontal = native_input.size_flags_horizontal
+		_input.size_flags_vertical = native_input.size_flags_vertical
+		holder.remove_child(native_input)
+		native_input.queue_free()
+		holder.add_child(_input)
+		holder.move_child(_input, idx)
+	elif _node(B) != null:
+		(_node(B) as Control).add_child(_input)
+	_input.text_changed.connect(_on_function_text_changed)
+	_input.text_submitted.connect(_on_function_text_submitted)
 
-	# ---------------- 战场 ----------------
-	_plane_container = GwUI.margin("PlaneContainer", 0, main_hbox)
-	_plane_container.name = "PlaneContainer"
-	_plane_container.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_plane_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	# 键盘/回放键的句柄（禁用态、回放版式用）。它们都是 `.tscn` 的**原生 `GraphwarButton`**。
+	_keys.clear()
+	for g in [_left_grid, _right_grid]:
+		if g == null:
+			continue
+		for c in g.get_children():
+			if c is Button:
+				_keys.append(c as Button)
+	# `YButton(y)`：原版 Normal/DiffEq 两种模式下都恒为 disabled（`docs/92` §4.10 观测）。
+	if _right_grid != null:
+		var y := _right_grid.get_node_or_null("YButton") as Button
+		if y != null:
+			y.disabled = true
+			y.tooltip_text = "原版里这颗键在 Normal/DiffEq 两种模式下都恒为 disabled（原因未知，docs/92 §8）"
 
-	# 原版：MarginContainer 会把**所有**子节点铺成同一块矩形 ⇒ GamePlane 与
-	# ExtraOptionsVBox 天然叠放；AspectRatioContainer 同样把每个子节点铺成同一块矩形 ⇒
-	# GraphwarPlane 与函数列表覆盖层叠放。这里照原版结构搭，不另造叠放容器。
-	var game_plane := GwUI.vbox("GamePlane", 4, _plane_container)
-	# ⚠️ `ExtraOptionPad.gd` / `ViewFunctionPad.gd` / `ExtraOptionsHBox.gd` 这三份本轮**没能换**
-	# （详见 `fixtures/view_unblock_plan.tsv` 与本轮 docs/06 §83 的"前提被证伪"一节）：
-	# 它们都在 `PlaneContainer.item_rect_changed` 上回写 `custom_minimum_size`，而**我方**这一带的
-	# 容器形状与原版 `.scn` 不同（`GamePlane` 是 VBox + `AspectRatioContainer` 参与 min-size 协商）
-	# ⇒ 形成 `min-size ↔ item_rect_changed` 正反馈，实测把 Godot 的消息队列打爆：
-	#   `Failed method: Control::_update_minimum_size. Message queue out of memory.` → SIGSEGV。
-	# 要换必须先按原版 `.scn` 重建 GamePlane/PlaneContainer 那两层（不在本轮允许范围内）。
-	_extra_pad = GwUI.margin("ExtraOptionPad", 0, game_plane)
-	_extra_pad.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-
-	_plane_aspect = AspectRatioContainer.new()
-	_plane_aspect.name = "PlaneContainer"
-	_plane_aspect.ratio = BOARD_ASPECT
-	_plane_aspect.stretch_mode = AspectRatioContainer.STRETCH_FIT
-	_plane_aspect.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_plane_aspect.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	game_plane.add_child(_plane_aspect)
-
-	# ---- 战场：六个**真** GDExtension 节点（docs/16 §48；原来这里是 `GwPlaneView` + `GwFireFx`） ----
-	#
-	# 画布宿主：`AspectRatioContainer` 会把它铺成 5:3 的矩形 ⇒ 它就是"棋盘在屏幕上的那块地方"。
-	# 裁剪也交给它（等价于原版棋盘外的部分看不见；`docs/126` §4.2 对旧控件量过同一条）。
-	_canvas = Control.new()
-	_canvas.name = "PlaneCanvas"
-	_canvas.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_canvas.clip_contents = true
-	_canvas.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_canvas.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_plane_aspect.add_child(_canvas)
-	_canvas.resized.connect(_fit_canvas)
+	# 装 6 个真节点（平面本身是 `.tscn` 里的节点 ⇒ 这里只装它下面的绘制层）。
 	_install_plane_nodes()
-
-	# 效果层：**只剩适配**（种类记账 + 派给真 `EffectDrawer`）。名字保留 `EffectLayer`，
+	# 效果层：**只剩适配**（按种类记账 + 派给真 `EffectDrawer`）。名字保留 `EffectLayer`，
 	# 因为自检按名字找它（`docs/143` §1）。
 	_effects = GwEffectLayer.new()
 	_effects.name = "EffectLayer"
 	_effects.bind(_fx)
 	if _plane != null:
 		_plane.add_child(_effects)
+	if _plane != null:
+		_plane.resized.connect(_layout_plane_children)
+	if _plane_container != null:
+		_plane_container.resized.connect(_update_view_geometry)
+	_isolate_extra_options_feedback()
 
-	var overlay := GwUI.vbox("VBoxContainer", 2, _plane_aspect)
-	overlay.alignment = BoxContainer.ALIGNMENT_BEGIN
-	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var function_pad := GwUI.margin("ViewFunctionPad", 2, overlay)
-	function_pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var label_row := GwUI.hbox("HBoxContainer", 4, function_pad)
-	var lm := GwUI.margin("MarginContainer", 2, label_row)
-	lm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_view_functions_label = GwUI.rich(16)
-	_view_functions_label.name = "ViewFunctionsLabel"
-	_view_functions_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_view_functions_label.visible = false
-	lm.add_child(_view_functions_label)
+	# ---------------- 接线 ----------------
+	# ① 54 颗原生按钮的 `input_text` → `App.command`（过渡桥，`client/src/ui/gw_button.gd` 的
+	#    `bind_native()`：`input_selected` / `long_press_finished` 两条自造信号）。
+	GwButton.bind_native(self)
+	# ② `Fire!`：原版只有 `long_press_input_text = "fire"`（长按派发，已由 ① 接上）；
+	#    单击也要能开火（`GwButton._on_pressed` 的同一条约定）。
+	#    ⚠️ 必须用**字符串形** `connect("pressed", …)`：原生类的 `#[func] pressed()` 与
+	#    `BaseButton` 的 `pressed` 信号同名，`.pressed.connect()` 会解析到那个方法上。
+	if _fire_button != null:
+		_fire_button.connect("pressed", Callable(self, "_on_fire_pressed"))
+	# ③ 回放三颗播放键：`.tscn` 的 `input_text` 就是原版的命令字面量（`⏮︎` / `play_pause` / `⏭`）。
+	#    这三条**不走命令总线**（`app.gd` 对它们是占位提示）⇒ 直接接本屏播放器。
+	var replay_cmds := {
+		"⏮︎": GwCommands.KEY_PREV, "play_pause": GwCommands.PLAY_PAUSE, "⏭": GwCommands.KEY_NEXT,
+	}
+	if _replay_left != null:
+		for n in _replay_left.find_children("*", "GraphwarButton", true, false):
+			var txt := String(n.get("input_text"))
+			if replay_cmds.has(txt):
+				n.connect("pressed", Callable(self, "_on_replay_button").bind(replay_cmds[txt]))
 
-	# 顶栏 4 个开关（ExtraOptionsVBox/ExtraOptionsHBox，居中、z_index=10）
-	_extra_vbox = GwUI.vbox("ExtraOptionsVBox", 0, _plane_container)
-	_extra_vbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	(_extra_vbox as VBoxContainer).size_flags_vertical = Control.SIZE_FILL
-	_extra_hbox = GwUI.hbox("ExtraOptionsHBox", 4, _extra_vbox)
-	_extra_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	_extra_hbox.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_extra_hbox.z_index = 10
-	_view_func_button = _extra_button("ViewFunctionButton", "toggle_view_functions",
-		VIEW_MODES[_view_mode])
-	_names_button = _extra_button("ShowNames", "toggle_names", "view_names")
-	_chat_button = _extra_button("ChatButtonPlay", "toggle_chat", "no_chat")
-	_mute_button = _extra_button("MuteButton", "toggle_mute", "unmute")
-	for b in [_view_func_button, _names_button, _chat_button, _mute_button]:
-		_extra_hbox.add_child(b)
-	_extra_vbox.visible = true          # 原版默认可见（`play_screen.tscn` 里 ExtraOptionsVBox 没有 visible=false）
-
-	# ---------------- 右控制区 ----------------
-	var right := GwUI.vbox("RightControls", 4, main_hbox)
-	right.size_flags_horizontal = Control.SIZE_FILL
-	var fire_row := GwUI.hbox("HBoxContainer", 4, right)
-	_fire_row = fire_row
-	var fire_margin := GwUI.margin("FireContainer", 0)
-	fire_margin.name = "FireContainer"
-	fire_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# 原版 `FireContainer.gd`（`client/src/views/`）给**直接子节点**写
-	# `custom_minimum_size.x = 屏宽×0.07` 和字号 `屏宽/30`；高度由文字撑到与左上按钮行同高
-	# （实测 FireButton = 337×96 @1920）。
-	#
-	# ⚠️ **2026-11-26（T26）修**：`.tscn` 里 `FireContainer` 的直接子节点就是两个
-	# —— `ClipButton`（幽灵底板 + AnimationRect）与 `FireButton`（可见的那颗）。
-	# 我方以前多插了一层 `Control("FireStack")` 当叠放容器，而 `FireContainer.gd::update_sizes()`
-	# 只遍历 `get_children()` ⇒ 字号覆盖从没落到两颗按钮上：它们一直用主题默认
-	# `default_font_size = 24`，而原版是 **屏宽/30 = 64**。
-	# 真帧判据：`(1636,4)-(1916,112)` 内近白像素 **原版 1 857 / 我方 261**（`docs/06` §60.5），
-	# 块 `(0,5)` 的 `|Δmean| = 5.71` 就是这么来的。⇒ 去掉中间层，与 `.tscn` 同形。
-	# 两个子节点由 `MarginContainer` 摆成**同一块矩形**（容器把每个子节点都铺满内容区）
-	# ⇒ 叠放顺序 = 添加顺序（ClipButton 在下、FireButton 在上），与原版一致。
-	var clip := GwButton.make(" Fire! ")
-	clip.name = "ClipButton"
-	clip.flat = true
-	clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	clip.add_child(_anim_rect())
-	fire_margin.add_child(clip)
-	_fire_button = GwButton.make(" Fire! ")
-	_fire_button.name = "FireButton"
-	_fire_button.long_press_input_text = GwCommands.FIRE   # 原版：FireButton 只有 long_press_input_text
-	_fire_button.tooltip_text = "开火（fire）"
-	fire_margin.add_child(_fire_button)
-	_fire_parts = [clip, _fire_button]
-	GwViews.attach(fire_margin, "FireContainer.gd")   # 最小宽 = 屏宽×0.07，字号 = 宽/30
-	fire_row.add_child(fire_margin)
-
-	var right_top_pad := GwUI.margin("MarginContainer", 0, right)
-	right_top_pad.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_right_grid = _make_grid("RightButtonGrid")
-	_right_grid_holder = _right_grid.get_parent()
-	_fill_grid(_right_grid, RIGHT_KEYS)
-	GwViews.attach(_right_grid, "ButtonGrid.gd")   # 同左：原版字节
-	right.add_child(_right_grid_holder)
-	# 右列同理：原版 `[HBoxContainer(Fire)][MarginContainer(exp)][RightButtonGrid][RightReplaysButtonsGrid][MarginContainer2(exp)]`
-	# ⇒ 回放三键夹在两个展开垫中间。这里把块**先**加在 filler 之前（见左列的注释）。
-	_replay_right = _build_replay_controls("RightReplaysButtonsGrid",
-		["save_screenshot", "save_summary", "save_clip"], true)
-	_replay_right.size_flags_vertical = Control.SIZE_FILL
-	(right as VBoxContainer).add_child(_replay_right)
-	var right_filler := Control.new()
-	right_filler.name = "Filler"
-	right_filler.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	right.add_child(right_filler)
-	# YButton(y)：原版两种模式下都恒为 disabled（docs/92 §4.10 观测）。
-	var y_button := _right_grid.get_node_or_null("YButton")
-	if y_button != null:
-		(y_button as GwButton).disabled = true
-		(y_button as GwButton).tooltip_text = "原版里这颗键在 Normal/DiffEq 两种模式下都恒为 disabled（原因未知，docs/92 §8）"
-	# 原版 `RightReplaysButtonsGrid` 是**没有 columns 的 GridContainer**（默认 1 列）⇒ 三颗键
-	# **竖排**（真帧：三块 337×96 在 x1583..1919、y433/533/633）。宽度来自 `.tscn` 的
-	# `text = "        "`（八个空格）在字号 x/30 下撑出来的 337 —— 这里直接写同一个数。
-
-	# ---------------- 底部信息行 ----------------
-	var info := GwUI.hbox("HBoxContainer2", 4, vbox)
-	var timer_m := GwUI.margin("TimerContainer", 0)
-	timer_m.size_flags_horizontal = Control.SIZE_FILL     # 原版：只有函数输入框抢水平空间
-	_timer_label = GwUI.label("00:00", 0, HORIZONTAL_ALIGNMENT_CENTER)
-	_timer_label.name = "TimerLabel"
-	timer_m.add_child(_timer_label)
-	GwViews.attach(timer_m, "TimerContainer.gd")   # 字号 = 宽/30
-	info.add_child(timer_m)
-	var pad := GwUI.margin("MarginContainer", 0, info)
-	pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	pad.size_flags_stretch_ratio = 0.01       # OffsetContainer.gd 的兄弟间隔：实测 14 px @1920
-
-	# f(x) = 是一个**图标**（`fx_option.svg` 里就画着 "f(x) ="，DiffEq 用 dy/dx 那张），
-	# 不是一个 Label + 一个小图标 —— 原版 FxLabel 实测 visible=0。
-	var fx_m := GwUI.margin("FxContainer", 0)
-	fx_m.size_flags_horizontal = Control.SIZE_FILL
-	# 原版结构（`recovered-src/play_screen.tscn:736-773`，逐个节点）：
-	#   FxContainer(MarginContainer) → [FxLabel(visible=0), FxTexture(visible=0),
-	#                                   AspectRatioContainer(stretch_mode=1) → FxTextureButton]
-	# 我方 T29 之前省了 AR 那层、直接放按钮 ⇒ 底栏最小高 96（原版 98，GEOM 真值
-	# `docs/archive/125` §4「底栏 y/高 1062/98」「f(x)= 图标 96×98」），连带
-	# PlayMainHBox 高 1060（原版 1058）⇒ 棋盘整体下移 1 px、左右键盘各错 1 px。
-	var fx_ar := AspectRatioContainer.new()
-	fx_ar.name = "AspectRatioContainer"
-	# `.tscn` 里写的是 `stretch_mode = 1` = **STRETCH_HEIGHT_CONTROLS_WIDTH**（高定宽），
-	# 不是 0。区别能量出来：底栏高 98 ⇒ 子节点 98×98（居中溢出 1 px 左右），
-	# 而 mode 0 给 96×96 ⇒ `f(x)=` 图标比原版小 1 px（真帧墨迹 原版 x170..249 / 我方 x170..248）。
-	fx_ar.stretch_mode = AspectRatioContainer.STRETCH_HEIGHT_CONTROLS_WIDTH
-	fx_m.add_child(fx_ar)
-	# `.tscn` 的 `text = "         "`（**九个空格**）+ `icon = fx_option`
-	_fx_button = GwButton.make("         ")
-	_fx_button.name = "FxTextureButton"
-	_fx_button.flat = true
-	_fx_button.icon = GwIcons.get_icon("fx_option")
-	_fx_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_fx_button.expand_icon = true
-	_fx_button.tooltip_text = "函数模式指示（Normal / DiffEq）"
-	fx_ar.add_child(_fx_button)
-	GwViews.attach(fx_m, "FxContainer.gd")   # 字号 = 宽/60
-	info.add_child(fx_m)
-
-	_input = GwFunctionInput.new()
-	_input.name = "GraphwarFunctionInput"
-	_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_input.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_input.text_changed.connect(_on_function_text_changed)
-	_input.text_submitted.connect(_on_function_text_submitted)
-	info.add_child(_input)
-
-	var offset_m := GwUI.margin("OffsetContainer", 0)
-	offset_m.size_flags_horizontal = Control.SIZE_FILL
-	# 原版 `.tscn` 的 `OffsetLabel` **没有**写 `horizontal_alignment` ⇒ Label 默认 LEFT。
-	# （改前我方写成 CENTER ⇒ 修正文本比原版右 9 px；四条候选的算账见 `_offset_display()`。）
-	_offset_label = GwUI.label("", 0, HORIZONTAL_ALIGNMENT_LEFT)
-	_offset_label.name = "OffsetLabel"
-	_offset_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	offset_m.add_child(_offset_label)
-	# 原版 `OffsetContainer.gd`：子节点最小宽 = 屏宽×0.09、字号 = 宽/60
-	# （`OffsetLabel.gd` 本身没有被任何 `.tscn` 引用，原版也是运行时 new() 的 ⇒ 不挂）
-	GwViews.attach(offset_m, "OffsetContainer.gd")
-	info.add_child(offset_m)
-
-	# ---------------- 回放进度（**我们自定**，原版回放界面未观测；`docs/133` §4.2） ----------------
-	# 原版 `play_screen.tscn` 里**没有**这条：左侧 `LeftReplaysButtonsGrid` 只有
-	# prev/play_pause/next 三颗键（`docs/92` §4.10）。进度条与 tick 计数是我们加的，
-	# 因为"放到第几个 tick"是回放唯一的时间轴（`docs/35`：60 tick/秒），没有它无法定位。
-	_replay_bar = GwUI.hbox("ReplayStatusBar", 6, vbox)
+	# ---------------- 我方自造的两块（原版没有，见各自的注释） ----------------
+	# 回放进度条：原版回放界面没有这条（`docs/133` §4.2）。永不显示。
+	_replay_bar = GwUI.hbox("ReplayStatusBar", 6, _node(P))
 	_replay_bar.visible = false
 	_replay_label = GwUI.label("", 0, HORIZONTAL_ALIGNMENT_LEFT)
 	_replay_label.name = "ReplayTickLabel"
@@ -684,141 +516,57 @@ func build() -> void:
 	_replay_progress.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_replay_progress.custom_minimum_size = Vector2(0, 10)
 	_replay_bar.add_child(_replay_progress)
-
-	# 原版**没有**这行状态字（用户实测：底部多了一行说明）。保留节点但永不显示，
-	# 只给 selftest / --dump 当诊断用（`docs/125` §5 登记）。
+	# 状态行：原版**没有**这行字（用户实测：底部多了一行说明）。保留节点但永不显示，
+	# 只给 selftest / `--dump` 当诊断用（`docs/125` §5 登记）。
 	_status_label = GwUI.label("", 12, HORIZONTAL_ALIGNMENT_LEFT)
 	_status_label.name = "StatusLabel"
 	_status_label.visible = false
 	_status_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_status_label)
 
-	_plane_container.resized.connect(_update_view_geometry)
+## 从 `.tscn` 里按路径取一个节点（取不到就报错并返回 `null` —— 宁可不画也不静默降级）。
+func _node(path: String) -> Control:
+	var n := get_node_or_null(path)
+	if n == null:
+		push_error("[gw2] play_screen.tscn 里找不到节点 " + path)
+		return null
+	return n as Control
 
-
-func _anim_rect() -> ColorRect:
-	var r := ColorRect.new()
-	r.name = "AnimationRect"
-	r.color = Color(0, 0, 0, 0)
-	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	r.set_anchors_preset(Control.PRESET_FULL_RECT)
-	return r
-
-## 键盘网格（原版 `play_screen.scn` 的 `LeftButtonGrid` / `RightButtonGrid`）。
+## 把 `ExtraOptionPad.gd` / `ExtraOptionsHBox.gd` / `ViewFunctionPad.gd` / `ShowExtraButtons.gd`
+## 挂在 `item_rect_changed` 上的处理器**摘掉**，改由本屏 `_update_view_geometry()` 驱动同一套判据。
 ##
-## ⚠️ **返回时整个 holder 还没进树**，由调用方在「填完键 → `GwViews.attach()`」之后再
-## `add_child()`：原版 `ButtonGrid.gd` 的 `_ready` 才去遍历 `get_children()` 写最小尺寸/字号，
-## 而 `GwViews.attach()` 对**已进树**的节点不补发 `_ready`（`client/src/ui/gw_views.gd` 的注释）。
-func _make_grid(node_name: String) -> GridContainer:
-	var holder := GwUI.margin("MarginContainer", 0)
-	holder.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	var grid := GridContainer.new()
-	grid.name = node_name
-	grid.columns = 3
-	grid.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	holder.add_child(grid)
-	return grid
-
-func _fill_grid(grid: GridContainer, keys: Array) -> void:
-	for i in keys.size():
-		var spec: Dictionary = keys[i]
-		var b: GwButton
-		if spec.has("text"):
-			b = GwButton.make(String(spec.text), String(spec.cmd))
-		else:
-			b = GwButton.make("", String(spec.cmd))
-			b.icon = GwIcons.get_icon(String(spec.icon))
-			# 纯图标键：图标在**内容矩形里居中**（原版真帧的判据见下）。
-			#
-			# 真帧量法：右键盘第 6 行三颗图标键，原版图标墨迹 bbox 的中心与按钮
-			# **内容矩形**（`rect` 去掉 3px 边框）的中心在 x 上相差 ≤1.5 px；
-			# 我方默认 `icon_alignment`（LEFT）下三颗分别偏左 7.5 / 4 / 11 px
-			# ⇒ 把对齐写成 CENTER，三颗一次对上（`docs/06` §79 的改前/改后表）。
-			b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		b.name = "GraphwarButton%d" % (i + 1)
-		if String(spec.cmd) == "y":
-			b.name = "YButton"
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		grid.add_child(b)
-		_keys.append(b)
-
-func _extra_button(node_name: String, cmd: String, icon_name: String) -> GwButton:
-	var b := GwButton.make("     ")      # 原版的 5 个空格 —— 它决定了按钮的最小宽度（实测 146px @1920）
-	b.name = node_name
-	b.input_text = cmd
-	b.icon = GwIcons.get_icon(icon_name)
-	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	b.expand_icon = true
-	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	return b
-
-## 回放专用按钮组（原版两处 `*ReplaysButtonsGrid`，只在回放模式显示）。
+## 为什么（**实测**，`docs/06` §94.6）：这四份原版脚本的判据是
+##   `extra_y = plane_container.size.y − plane_container.size.x/1.66667`，然后回写自己的
+##   `custom_minimum_size.y`/`visible`。`custom_minimum_size` 又会通过 VBox 反向改变
+##   `plane_container` 的矩形 ⇒ **正反馈**。在真实窗口（1920×1160，`extra_y = 190 ≫ target 96`）
+##   这个不动点稳定；但 **headless 自检的视口是 64×64**，`extra_y` 恰好落在阈值附近 ⇒
+##   每帧在 `pc=(56,72)` 与 `pc=(13,72)` 两个状态间来回跳，一帧内排进几万条排布/重绘消息，
+##   最后 `Message queue out of memory` → SIGSEGV（本轮实测 29 000+ 次 `resized`）。
 ##
-## `vertical`：原版右侧那块是 1 列 GridContainer（三颗键竖排），左侧那块是 3 列
-## GridContainer 的第二行（三颗键横排）—— 所以两个方向都要能搭。
-func _build_replay_controls(node_name: String, icons: Array, vertical: bool) -> Control:
-	var box: Control = (GwUI.vbox(node_name, 4) if vertical else GwUI.hbox(node_name, 4))
-	box.visible = false
-	for icon_name in icons:
-		var cmd := ""
-		match String(icon_name):
-			"prev": cmd = GwCommands.KEY_PREV
-			"play_pause": cmd = GwCommands.PLAY_PAUSE
-			"next": cmd = GwCommands.KEY_NEXT
-			"save_screenshot": cmd = GwCommands.SAVE_SCREENSHOT
-			"save_summary": cmd = GwCommands.SAVE_SUMMARY
-			"save_clip": cmd = GwCommands.SAVE_CLIP
-		# ⚠️ **实现偏离（`docs/133` §4.3）**：左侧三颗播放键**不走 App 命令总线**。
-		# 原版命令键（`play_pause` / `key_prev` / `key_next`）记在 `meta` 里；但 `app.gd`
-		# 对这三个键的分支仍是 `notify("回放播放未实现")` 的占位，而 `app.gd` 不在
-		# 本轮可改范围 ⇒ 直接接本界面的播放器，免得按一下弹一个假提示。
-		# 右侧三颗（存截图/存摘要/存片段）保持原样，它们的语义本来就**未观测**。
-		var playback := cmd == GwCommands.PLAY_PAUSE or cmd == GwCommands.KEY_PREV \
-			or cmd == GwCommands.KEY_NEXT
-		var b := GwButton.make("", "" if playback else cmd)
-		b.name = "GraphwarButton"
-		b.set_meta("observed_input_text", cmd)
-		b.icon = GwIcons.get_icon(String(icon_name))
-		# 原版 `.tscn` 里这六颗键**每一颗**都写 `icon_alignment = 1`（CENTER，逐位）。
-		# 对 96×96 的方键（左三颗）LEFT 与 CENTER 结果相同（图标被高度限制、内容左右各留 3），
-		# 但右三颗是 **337 宽**的横条：LEFT 会把图标甩到左边 61 px（实测真帧图标居中在
-		# x1708..1794，我方改前 1647..1733）⇒ 三颗键各错 ~7 200 px。
-		b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.tooltip_text = "原版命令键：%s" % cmd
-		if playback:
-			b.pressed.connect(_on_replay_button.bind(cmd))
-		if cmd == GwCommands.PLAY_PAUSE:
-			_replay_play_btn = b
-		box.add_child(b)
-	return box
+## ⇒ 判据**照抄**（同一个式子、同一个 `target_y`），只把"触发源"从 `item_rect_changed`
+## 换成"本屏尺寸变化时算一次"，反馈回路因此断开。语义等价性：1920×1160 下 `show = true`、
+## `pad.min.y = 96`，与原版脚本给的值逐项相同（T26/T29 的真帧读数就是这么来的）。
+func _isolate_extra_options_feedback() -> void:
+	for nm in [_plane_container_path(), "MarginContainer/VBoxContainer/PlayMainHBox/LeftControls/LeftTopButtonsContainer"]:
+		var nd := get_node_or_null(nm)
+		if nd == null:
+			continue
+		for c in nd.get_signal_connection_list("item_rect_changed"):
+			var cb: Callable = c["callable"]
+			var obj: Object = cb.get_object()
+			if obj == null or obj == nd:
+				continue            # 引擎自己的 `Control::_size_changed` 不能摘
+			if obj.get_script() == null:
+				continue
+			nd.disconnect("item_rect_changed", cb)
 
-## 右回放三键的最小宽度 = **原版 `.tscn` 那串空格的宽度**（不是"右列宽度"）。
-##
-## 原版 `RightReplaysButtonsGrid` 的三颗键在 `play_screen.tscn` 里写的是
-## `text = "        "`（**八个空格**，逐位：`recovered-src/play_screen.tscn` 第 688/699/710 行），
-## 字号由 `ButtonGrid.gd` 的 `font_size = screen_size.x / 30` 给（= 64 @1920）；
-## Button 的最小宽 = 文本 advance + 主题 `Button/styles/normal` 左右各 3 px 边
-## （`graphwar_theme.tres` 的 StyleBoxFlat `border_width_left/right = 3`）
-## ⇒ 8 个空格 224 + 6 = **230 px @1920**（同一把尺子的旁证：五个空格的 `ShowExtraButtons`
-## 140+6 = 146，与真帧量到的 146×96 **逐项相同**）。
-##
-## ⚠️ **改前这里写的是 `w * 0.175521`（= 337.00032）**，理由是"337/1920"取自真帧的右列宽。
-## 但右列宽**不是这几颗键撑出来的**：`RightControls` 这个 VBox 的最小宽 = max(键盘
-## `RightButtonGrid`, 回放 grid)，而键盘 grid（回放时隐藏但**仍然贡献最小宽**）的天然
-## 最小宽就是 **337** ⇒ 右列 337、棋盘列 1279。写 337.00032 之后 `GridContainer` 向上取整
-## 成 **338**，右列变 338 ⇒ 棋盘列 1278 ⇒ 白底 1272（原版 1273）、轴线交点 (938,·) 而不是
-## (939,·) —— 这就是 `docs/06` §58.3 里占 75.9 % 的那条"每条网格线整体错 1 px"。
-func _replay_button_width() -> float:
-	var w := get_viewport_rect().size.x
-	var fs := int(w / 30.0)
-	var font := GwThemeFactory.font()
-	var blank := ""
-	for i in 8:
-		blank += " "
-	# + 6 = 主题 StyleBoxFlat 的左右边框（各 3 px）
-	return font.get_string_size(blank, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x + 2.0 * GwThemeFactory.PANEL_BORDER
+func _plane_container_path() -> String:
+	return "MarginContainer/VBoxContainer/PlayMainHBox/PlaneContainer"
+
+## `Fire!` 单击 → 开火（原版契约：`FireButton` 只有 `long_press_input_text`，
+## 长按那条由 `GwButton.bind_native()` 接；单击这条是我方补的，见 `build()` ②）。
+func _on_fire_pressed() -> void:
+	fire()
 
 ## 回放版式：**原版回放屏长什么样，就摆成什么样**（`fixtures/replay_screen_targets.txt` §三）。
 ##
@@ -833,53 +581,40 @@ func _set_replay_layout(on: bool) -> void:
 	_replay_layout = on
 	var w := get_viewport_rect().size.x
 	var key := w * 0.15 / 3.0
-	if _left_grid_holder != null:
-		_left_grid_holder.visible = not on
-	# 右列：原版回放屏**不画键盘**，但右列宽度仍然是键盘 grid 的天然最小宽 **337**
-	# （真帧：右三键落在 x1583..1919 = 337 宽 ⇒ 棋盘列 1279、白底 1273）。
-	#
-	# ⚠️ **机制未知**（T4 记成"机制未知"，本轮只把这条观测做实）：如果只是把 holder
-	# `visible = false`，Godot 的 `Container` 会把整根子节点从最小宽里剔掉（本机实测），
-	# 右列于是缩到回放 grid 自己的 230 ⇒ 棋盘列变 1386，整块版式崩塌。原版"宽度还在、
-	# 高度不在"这一条**没有源码证据**（推断：原版可能在 Rust 侧只把键藏起来、或者
-	# `visible` 之后容器缓存没失效）。这里如实复现观测：holder 保持 `visible`（继续参与
-	# 最小宽）+ 把 grid 藏掉（高度归 0）+ 把 holder 的最小宽钉成 grid 藏之前量到的天然最小宽。
-	if _right_grid != null and _right_grid_holder != null:
+	# 原版这几块都是 `.tscn` 里的**静态节点**，靠运行时 `visible` 切（`docs/06` §53.4）：
+	# 对局屏 = 键盘 + Fire + 隐藏的回放键组；回放屏 = 反过来。
+	if _left_grid != null:
+		_left_grid.visible = not on
+	if _right_grid != null and _replay_right != null:
+		# ⚠️ **机制未知 + 我方补丁**：把 `RightButtonGrid` 藏掉之后，Godot 的 `Container`
+		# 会把整根子节点从最小宽里剔掉 ⇒ 右列缩到回放组自己的天然宽（@1920 = 230），
+		# 棋盘列因此变宽、整块版式崩塌（本机实测过）。原版回放屏右列仍是 **337**
+		# （= 键盘 grid 的天然最小宽），但"宽度还在、高度不在"这一步**没有源码证据**。
+		# 这里如实复现观测：藏键盘之前量一次它的天然最小宽，回放时把同一个宽度钉在
+		# **可见的**回放组上。
 		if on:
-			if not _right_grid_natural_w_set:
+			if _right_grid_natural_w <= 0.0:
 				_right_grid_natural_w = _right_grid.get_combined_minimum_size().x
-				_right_grid_natural_w_set = true
 			_right_grid.visible = false
-			_right_grid_holder.visible = true
-			_right_grid_holder.custom_minimum_size = Vector2(_right_grid_natural_w, 0.0)
+			_replay_right.custom_minimum_size = Vector2(_right_grid_natural_w, 0.0)
 		else:
 			_right_grid.visible = true
-			_right_grid_holder.visible = true
-			_right_grid_holder.custom_minimum_size = Vector2.ZERO
+			_replay_right.custom_minimum_size = Vector2.ZERO
 	# Fire 行：原版回放屏**右上角是空的但有那一行的高度**（真帧右三键落在 y433/533/633
 	# = 顶行 96 + 居中；若整行藏掉会整体上移 ~52 px）⇒ 藏按钮、留行高。
 	if _fire_row != null:
 		_fire_row.visible = true
 		_fire_row.custom_minimum_size = Vector2(0, key) if on else Vector2.ZERO
 	for part in _fire_parts:
-		part.visible = not on
-	if _left_replay_box != null:
-		# 原版 `LeftControls` / `RightControls` 各 5 个 child，`*ReplaysButtonsGrid` 在对局屏
-		# `visible = false` ⇒ 两侧都只剩 4 个可见 child ⇒ 列内算术完全对称。
-		_left_replay_box.visible = on
+		if part != null:
+			part.visible = not on
 	if _replay_left != null:
-		_replay_left.visible = on
-		for b in _replay_left.get_children():
-			(b as Control).custom_minimum_size = Vector2(key, key)
+		_replay_left.visible = on        # `.tscn` 里默认 `visible = false`（对局屏不显示）
 	if _replay_right != null:
 		_replay_right.visible = on
 		_replay_right.size_flags_vertical = Control.SIZE_FILL
-		for b in _replay_right.get_children():
-			(b as Control).custom_minimum_size = Vector2(_replay_button_width(), key)
-	if _replay_left_pad != null:
-		_replay_left_pad.custom_minimum_size = Vector2(0, key + 4) if on else Vector2.ZERO
 	if _replay_bar != null:
-		_replay_bar.visible = false        # 原版没有这条（我方自造，永不显示）
+		_replay_bar.visible = false      # 原版没有这条（我方自造，永不显示）
 	# 回放模式下这两颗顶栏键是**禁用态**（观测：真帧上它们是灰面 `#383838` + 暗图标
 	# `#888888`，而另外两颗是绿面 `#1A3B2D` + 白图标 ⇒ 只有这两颗 disabled）。
 	# 语义也说得通（**推断**）：回放里没有聊天会话、也没有"附加按钮"可展开。
@@ -905,8 +640,11 @@ func _update_replay_pause_icon() -> void:
 
 # ---------------------------------------------------------------- 尺寸（照原版脚本的比例）
 
-## 原版各脚本的规则都写成 `screen_size.x / N`，所以这里在每次 resize 时重算。
-## `_apply_font_scale` 由基类在 viewport resize 时调用，这里接在后面。
+## 字号：**几乎全在原版脚本里**（`ButtonGrid.gd` = 宽/30、`ExtraOptionsHBox.gd` = 宽/30、
+## `FireContainer.gd` = 宽/30、`FxContainer.gd` = 宽/60、`TimerContainer.gd` = 宽/30、
+## `OffsetContainer.gd` = 宽/60、`ExitButtonContainer.gd` = 宽/30 …，都是 `.tscn` 挂上去的）。
+## 基类 `apply_font_scale()` 会把 `res://src/views/` 与 `res://<Name>.gd` 别名两种形态都认成
+## "原版脚本"并整棵跳过 ⇒ 这里只剩**我方控件**的三处。
 func apply_font_scale() -> void:
 	super.apply_font_scale()
 	# `EntityDrawer` 的名字标签**不走本屏的字号表**：原版那一层是 `name_label.tscn` 的
@@ -914,8 +652,6 @@ func apply_font_scale() -> void:
 	# 真帧上 `cmdgz` 的墨迹高 ~22 px 就是它）。基类 `_apply_size_recursive()` 会遍历整棵树给
 	# **所有** `RichTextLabel` 写 `normal_font_size = 宽/N × 0.85`；本屏 N 小 ⇒ 那串被放大到
 	# ~68 px（实测我方名字墨迹 202 px 宽 vs 原版 72 px）。这里把那层覆盖撤掉。
-	# 为什么回放屏以前"看起来是对的"：回放的名字标签是在 `apply_font_scale()` **之后**才
-	# `spawn_entity` 出来的，没吃到那次遍历 —— 也就是**顺序碰巧**，不是设计；这里把它定死。
 	if _entities != null:
 		for child in _entities.get_children():
 			if child is RichTextLabel:
@@ -926,21 +662,6 @@ func apply_font_scale() -> void:
 	if w <= 0.0:
 		return
 	var key := w * 0.15 / 3.0
-	# ⚠️ 键盘键（`_keys` = 两个 `*ButtonGrid` 的子节点）的最小尺寸与字号现在由**原版**
-	# `ButtonGrid.gd` 写（所以这里不再遍历 `_keys`）。下面这 5 颗仍是我们的代码：
-	# `ExtraOptionsHBox.gd` 没换上（见 `build()` 的注）、`ShowExtraButtons.gd` 挂不上
-	# （extends `GraphwarButton` + 要 `res://show_extra_buttons.svg` 资产）。
-	for b in [_show_extra_button, _view_func_button, _names_button, _chat_button, _mute_button]:
-		if b != null:
-			b.custom_minimum_size = Vector2(key, key)
-	var exit_pair := find_child("ExitButtonContainer", true, false)
-	if exit_pair != null:
-		(exit_pair as Control).custom_minimum_size = Vector2(key, key)
-	if _fx_button != null:
-		# 只钉**宽**（= key = 96 = 原版九个空格在字号 24 下的自然最小宽 90+6）。
-		# **不钉高**：高度由 `AspectRatioContainer`（`stretch_mode=1`，高定宽）从底栏
-		# 高度算出来（98 ⇒ 子节点 98×98）；钉成 96 会让 `f(x)=` 图标比原版小 1 px。
-		_fx_button.custom_minimum_size = Vector2(key, 0.0)
 	if _input != null:
 		# **只给宽度**：高度必须由 `GwFunctionInput._get_minimum_size()` 按 LineEdit 的规则
 		# 算（字体高 + 样式盒上下 content_margin ⇒ 只读 98 / 可编辑 96）。改前这里写死 `key`
@@ -948,23 +669,18 @@ func apply_font_scale() -> void:
 		# 棋盘整体下移 2 px（`docs/06` §58.3 的竖直分量）。
 		_input.custom_minimum_size = Vector2(key * 2.0, 0.0)
 		_input.call("refresh_minimum_size")
+	_update_view_geometry()
 	if _timer_label != null:
 		# 观测：原版**无限时限**时 TimerLabel 也占 140 px @1920（0.0729·x）宽度，只是没有字符
 		# （`orig_campaign_play.png` 左下角一片空白，但 GEOM 里 TimerContainer = 140 px）。
 		# 这里同样保留宽度，否则整条底栏会整体左移 ~140 px（docs/125 §4）。
 		_timer_label.custom_minimum_size = Vector2(w * 0.0729, 0)
-	if _offset_label != null:
-		# 字号（`screen.x / 60`，无下限）现在由**原版** `OffsetContainer.gd` 写，
-		# 这里只保留最小宽那一条（与原版同值 0.09·x，重复写不会打架）。
-		_offset_label.custom_minimum_size = Vector2(w * 0.09, 0)
-	# `Fire!` 那一行不再有 `FireStack` 中间层（item ⑤ 与 `.tscn` 同形）⇒ 它的最小尺寸由
-	# 原版 `FireContainer.gd` 直接写给两颗子节点（0.07·屏宽），这里不再插手。
-	if _view_functions_label != null:
-		_view_functions_label.add_theme_font_size_override("normal_font_size", maxi(8, int(w / 60.0)))
-	_update_view_geometry()
 
-## `ExtraOptionPad.gd` / `ExtraOptionsHBox.gd` 的同一条判据：
-##   余高 = plane.h - plane.w / 1.66667；余高 >= 工具栏高 ⇒ 工具栏显示，并给顶上留出同高空位。
+## `ExtraOptionPad.gd` / `ExtraOptionsHBox.gd` / `ViewFunctionPad.gd` / `ShowExtraButtons.gd`
+## 的**同一个判据**（`docs/archive/125` §4）：
+##   余高 `extra_y = plane_container.size.y − plane_container.size.x/1.66667`；
+##   余高 ≥ 左上按钮行高 `target_y` ⇒ 附加按钮区展开（`ExtraOptionPad` 撑 `target_y` 高）。
+## 触发源换成"本屏尺寸变化"，见 [`_isolate_extra_options_feedback`] 的理由。
 func _update_view_geometry() -> void:
 	if _plane_container == null or _extra_hbox == null:
 		return
@@ -972,26 +688,15 @@ func _update_view_geometry() -> void:
 	if pc.x <= 1.0 or pc.y <= 1.0:
 		return
 	var w := get_viewport_rect().size.x
-	var toolbar_h := w * 0.15 / 3.0
+	var target_y := w * 0.15 / 3.0          # = `LeftTopButtonsContainer.size.y`（左上按钮行高）
 	var extra_y := pc.y - pc.x / BOARD_ASPECT
-	var show := extra_y >= toolbar_h or _extra_forced
-	# ⚠️ 这一段仍是**我们的代码**，不是原版字节：`ExtraOptionsHBox.gd` / `ExtraOptionPad.gd` /
-	# `ViewFunctionPad.gd` 三份在**当前容器形状**下挂不上（attach 会把消息队列打爆，见 `build()`
-	# 里那段注）。判据与原版同式（余高 = plane.h − plane.w/1.66667 vs 左上按钮行高），
-	# 所以像素上等价 —— 但它**不算复原**。
+	var show := extra_y >= target_y
 	_extra_hbox.visible = show
 	if _extra_pad != null:
-		_extra_pad.custom_minimum_size = Vector2(0, toolbar_h if show else 0)
+		_extra_pad.custom_minimum_size = Vector2(0, target_y if show else 0)
 		_extra_pad.visible = show
-	# `ShowExtraButtons` 的 disabled 是**原版脚本自己算的**，不是回放模式专有：
-	# `recovered-src/ShowExtraButtons.gd::_on_size_changed()`（挂在 `plane_container.
-	# item_rect_changed` 上）——
-	#   `extra_y = plane.size.y − plane.size.x/1.66667`，
-	#   `extra_y >= LeftTopButtonsContainer.size.y` ⇒ `self.disabled = true`。
-	# 也就是说**竖直余量够（附加按钮区已经自动展开）时这颗开关是灰的**（按不动），
-	# 竖直余量不够时才可点。判据（**观测**）：真帧上它是灰面 `#383838` + 暗图标
-	# `#888888`，而我们此前把它画成可用的绿面白图标 —— 单这一颗 12 560 px（`docs/06` §79）。
-	# 我方 `show` 用的就是同一个谓词（余量够 ⇒ 附加按钮区显示）⇒ 直接复用。
+	# `ShowExtraButtons` 的 disabled 是原版脚本自己算的（`ShowExtraButtons.gd::_on_size_changed`）：
+	# 竖直余量够（附加按钮区已自动展开）时这颗开关是灰的。判据同上。
 	if _show_extra_button != null:
 		_show_extra_button.disabled = show
 
@@ -1190,74 +895,75 @@ func _refresh_plane() -> void:
 
 # ---------------------------------------------------------------- 六个真节点（docs/16 §48）
 
-## 装 6 个真 GDExtension 节点。`ClassDB.instantiate` 与 `client/src/core/core_bridge.gd`
-## 走同一条路径：**运行时按名取类**，所以扩展没加载时这里是 `null` + 一条明确错误，
-## 而不是解析期就崩。
+## 装 5 个绘制层节点到**原版 `.tscn` 的那个 `GraphwarPlane`** 下面。
+##
+## 平面本身不再是 `ClassDB.instantiate` 出来的：它就是 `.tscn` 的静态节点
+## （`.../GamePlane/PlaneContainer/GraphwarPlane`），`AspectRatioContainer` 直接把它铺成
+## 棋盘矩形（1279×767.4 @1920×1160，与真帧黑框逐项相同）。
+## 三个 `FunctionDrawer` 由平面自己在 `_ready` 里建（原版 `init_children`），这里只 `build_children()`
+## 补调一次；`AxisDrawer` / `EntityDrawer` / `EffectDrawer` / `ObstacleDrawer` 原版是控制器建的
+## （`docs/16` §48.5），我方还没复原那条路径 ⇒ 由本函数造，**按平面矩形铺满**。
+##
+## 换算为什么成立（T44 §2① 的等价性证明，`fixtures/board_geometry_equiv.tsv`）：
+## 六个类都是**按自己控件的 `size` 换算**（`unit = size.x/50`、中心 `size/2`）。以前它们统一
+## 摆在 1000×600 画布上、由父节点 `Control.scale = size.x/1000` 缩放；现在直接把 `size` 给成
+## 平面矩形。两条链在 `size = 1279×767.4` 上**逐值相同**（差 ≤0.02 px = `ratio 1.6667` 的取整）。
 func _install_plane_nodes() -> void:
-	_plane = _make_node("GraphwarPlane")
 	if _plane == null:
 		return
-	_plane.name = "GraphwarPlane"
-	_canvas.add_child(_plane)
-	_plane.position = Vector2.ZERO
-	_plane.size = CANVAS_SIZE
-	_plane.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# `#[export]` 属性：`board_scale` / `flip_y`（与 `plane_on_screen.tscn` 同值）。
+	# `#[export]` 属性：原版 `GraphwarPlane` 的默认值就是这两个（`board_scale` 只在
+	# `size.x/50` 算不出来时当兜底；`flip_y` = 原版"棋盘 y 向上"那条永远取负）。
 	_plane.set("board_scale", PX_PER_UNIT)
 	_plane.set("flip_y", true)
-
-	# ① 3 个 `FunctionDrawer`：原版在 `init` 里建，本类在 `ready`；显式调一次（幂等），
-	#    这样 `set_function_points()` 当场就有节点可喂（§40）。
+	# 棋盘黑框的**半边在矩形外面**（`draw_rect` 的 0.2 单位描边以边线为中心，@1279 宽 = 5.12 px）
+	# ⇒ 真帧上只看见矩形内侧那 ~3 px（`docs/06` §94.5 的两侧逐像素扫描：原版黑框 300..302、
+	# 外侧 297..299 是背景色）。剪到平面矩形上就是把外半边去掉，与真帧同形。
+	_plane.clip_contents = true
+	# 3 个 `FunctionDrawer`：原版在 `init` 里建，本类在 `ready`；显式调一次（幂等），
+	# 这样 `set_function_points()` 当场就有节点可喂（§40）。
+	# ⚠️ **不给它们设 size**：原版这 3 个节点的 `size` 就是 `(0,0)`（T44 实测：原版 tscn
+	# 实例化后 `@FunctionDrawer@N size=(0,0)`），变换由平面把 `(size×0.5, size.x/50, flip)`
+	# 喂给 `update_transform()`（`0x4b6147`）。
 	_plane.call("build_children")
-	for fd in _plane.get_children():
-		if String(fd.get_class()) == "FunctionDrawer":
-			var drawer := fd as Control
-			drawer.size = CANVAS_SIZE
-			drawer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			drawer.z_index = Z_CURVE
 
-	# ② `AxisDrawer`：白底 + 网格。`z_as_relative = false` + `z_index = -1` ⇒ 画在
+	# ① `AxisDrawer`：白底 + 网格。`z_as_relative = false` + `z_index = -1` ⇒ 画在
 	#    棋盘框**之下**（框是平面自己的 `_draw`，引擎先画父再画子）。
 	_axis = _make_node("AxisDrawer")
 	if _axis != null:
 		_axis.name = "AxisDrawer"
 		_plane.add_child(_axis)
-		_axis.size = CANVAS_SIZE
 		_axis.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_axis.z_as_relative = false
 		_axis.z_index = Z_AXIS
 		_axis.set("axis_mode", int(GwModes.AXIS_DEFAULT))
 
-	# ③ `ObstacleDrawer`：由平面建（原版这一层是平面的字段，`§45.5` 说明为什么不自动建）。
+	# ② `ObstacleDrawer`：由平面建（原版这一层是平面的字段，`§45.5` 说明为什么不自动建）。
 	_plane.call("build_obstacle_drawer")
 	for ch in _plane.get_children():
 		if String(ch.get_class()) == "ObstacleDrawer":
 			_obstacle_layer = ch as Control
 	if _obstacle_layer != null:
-		_obstacle_layer.size = CANVAS_SIZE
 		_obstacle_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_obstacle_layer.z_index = Z_OBSTACLE
 
-	# ④ `EntityDrawer`：士兵 / 名字 / 靶子。
+	# ③ `EntityDrawer`：士兵 / 名字 / 靶子。
 	_entities = _make_node("EntityDrawer")
 	if _entities != null:
 		_entities.name = "EntityDrawer"
 		_plane.add_child(_entities)
-		_entities.size = CANVAS_SIZE
 		_entities.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_entities.z_index = Z_ENTITY
 
-	# ⑤ `EffectDrawer`：特效。`flip_y = true` 与棋盘 y 向上一致
+	# ④ `EffectDrawer`：特效。`flip_y = true` 与棋盘 y 向上一致
 	#    （`effect_drawer::draw_transform` 的第二个实参就是它）。
 	_fx = _make_node("EffectDrawer")
 	if _fx != null:
 		_fx.name = "EffectDrawer"
 		_plane.add_child(_fx)
-		_fx.size = CANVAS_SIZE
 		_fx.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_fx.z_index = Z_FX
 		_fx.set("flip_y", true)
-	_fit_canvas()
+	_layout_plane_children()
 
 ## 按类名造一个扩展类节点；扩展没加载时返回 `null` 并记下原因。
 func _make_node(cls: String) -> Control:
@@ -1272,18 +978,28 @@ func _make_node(cls: String) -> Control:
 		return null
 	return node as Control
 
-## 把 1000×600 的画布缩放进 `AspectRatioContainer` 给的那块 5:3 矩形。
+## 把四个绘制层铺成**平面矩形**（`GraphwarPlane` 的 `size`）。
 ##
-## 为什么是"缩放整个平面"而不是"把尺寸告诉六个类"：六个类的换算各自硬编码了除数和中心
-## （`/50`、`size/2`、`/1000`），改尺寸会让它们互相错开；缩一个父节点则**一处**解决问题。
-func _fit_canvas() -> void:
-	if _plane == null or _canvas == null:
+## 以前这里是 `_fit_canvas()`：把 1000×600 的画布用 `Control.scale` 缩进
+## `AspectRatioContainer` 给的矩形。装原版 `.tscn` 之后不需要缩放了 —— 平面自己就是那块矩形，
+## 绘制层跟着它走同一组 `size`（各类的换算式都是 `size.x/50`、`size/2`，见 `docs/16` §48.2）。
+## 判据：`fixtures/board_geometry_equiv.tsv`（两套公式在同一块矩形上逐值相同）。
+func _layout_plane_children() -> void:
+	if _plane == null:
 		return
-	var box := _canvas.size
-	if box.x <= 1.0 or box.y <= 1.0:
+	var sz := _plane.size
+	if sz.x <= 1.0 or sz.y <= 1.0:
 		return
-	var f := minf(box.x / CANVAS_SIZE.x, box.y / CANVAS_SIZE.y)
-	_plane.scale = Vector2(f, f)
+	for n in [_axis, _obstacle_layer, _entities, _fx]:
+		if n != null:
+			(n as Control).position = Vector2.ZERO
+			(n as Control).size = sz
+
+## 棋盘绘制层铺出来的矩形（诊断 / 自检用）。
+func plane_rect() -> Vector2:
+	if _plane == null:
+		return Vector2.ZERO
+	return _plane.size
 
 ## 真节点装上了没有（`null` = 扩展没加载；诊断/自检用）。
 func plane_nodes_ready() -> bool:
@@ -1360,9 +1076,16 @@ func _feed_curve() -> void:
 	if _plane == null:
 		return
 	_plane.call("feed_functions")
+	# 变换的四个实参**从平面矩形派生**（原版 `update_transform` `0x4b6147`：`x = size.x×0.5`、
+	# `y = size.y×0.5`、`s = size.x/50.0`、`flip`），不再写死 `(500, 300, 20, -20)`
+	# —— 那组数只在参考画布 1000×600 上成立。
+	var sz := _plane.size
+	if sz.x <= 1.0:
+		return
+	var unit := sz.x / 50.0
 	for fd in _plane.get_children():
 		if String(fd.get_class()) == "FunctionDrawer":
-			fd.call("update_transform", PIXEL_OFFSET.x, PIXEL_OFFSET.y, CURVE_SCALE, false)
+			fd.call("update_transform", sz.x * 0.5, sz.y * 0.5, Vector2(unit, -unit), false)
 	_plane.queue_redraw()
 
 ## 按秒推进曲线（`ticks = 秒 × 60`），到"揭完"那个 tick 就停住（不越过后面的淡出窗口）。
@@ -1492,10 +1215,12 @@ func plane_state() -> Dictionary:
 	var occupied := (int(_obstacle_layer.call("occupied_pixels")) if _obstacle_layer != null else -1)
 	return {
 		"nodes_ready": plane_nodes_ready(),
-		# 画布宿主被 `AspectRatioContainer` 铺了多大的矩形、平面按多比缩 —— 两个都读到才说明
-		# `_fit_canvas()` 真的跑过（headless 视口 64×64，比例仍应 > 0）。
-		"canvas_size": (_canvas.size if _canvas != null else Vector2.ZERO),
-		"plane_scale": (_plane.scale if _plane != null else Vector2.ZERO),
+		# 棋盘矩形（`AspectRatioContainer` 铺给 `GraphwarPlane` 的那块）与**等效缩放**
+		# （矩形 / 参考画布 1000×600）。T44 之前这里读 `_canvas.size` 与 `Control.scale`；
+		# 装原版 `.tscn` 之后平面自己就是那块矩形、不再有 `Control.scale` ⇒ 用同一组量纲的
+		# 等价量（两个键的语义与自检断言 `canvas>1 且 scale>0` 一致）。
+		"canvas_size": (_plane.size if _plane != null else Vector2.ZERO),
+		"plane_scale": (Vector2(_plane.size.x / CANVAS_SIZE.x, _plane.size.y / CANVAS_SIZE.y) if _plane != null else Vector2.ZERO),
 		"nodes_error": _nodes_error,
 		"path_points": curve.size(),
 		"path_reveal": _curve_reveal(),
@@ -3660,12 +3385,6 @@ func _update_timer_label() -> void:
 # ---------------------------------------------------------------- 附加按钮与显示开关
 
 ## 复刻 `ShowExtraButtons.gd`：按下 → 取反 force_show、切图标、重排顶上留白。
-func _toggle_extra_buttons() -> void:
-	_extra_forced = not _extra_forced
-	_show_extra_button.icon = GwIcons.get_icon(
-		"hide_extra_buttons" if _extra_forced else "show_extra_buttons")
-	_update_view_geometry()
-
 func toggle_names() -> void:
 	_show_names = not _show_names
 	_set_show_names(_show_names)

@@ -12635,3 +12635,64 @@ $MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path client
 `team2_entry` / `shop_button_entry` 四份**行/格场景**也装上（这样动态行也来自原版字节）；③`GwButton.bind_native()`
 那条过渡桥（`input_selected` → `App.command`）换成 Rust 侧订阅（原版 `GraphwarButton::subscribe` 的闭包表）。
 ⚠️ 中间态**必须留 `.gd` 里的 `input_text` 派发语义**，否则一屏之内"原版按钮能点、仿制按钮能点"会不一致。
+
+---
+
+## 83. 客户端侧：**播放屏的节点树回到原版** —— 原版 `.tscn` 装上之后，"代码手搭的界面"和"原版场景"差在哪、以及三个必须知道的机（2026-11-26，任务 T44 / `task-41`）
+
+### 83.1 一句话
+
+`client/scenes/screens/play_screen.tscn` 现在是 `recovered-src/play_screen.tscn` 的**逐字节副本**
+（780 行 / 106 节点 / **58** 个原生 `GraphwarButton` / 16 份原版视图脚本），
+`client/src/screens/play_screen.gd` 只剩"取句柄 + 装 6 个 GDExtension 绘制节点 + 接线"，
+手搭节点树的 **566 行**删掉，`match_ready`/`match_play` 两个基线各降 0.04 pp（`docs/06` §94）。
+
+### 83.2 装原版 `.tscn` 之后，"界面"到底剩下什么是我方代码
+
+| 层 | 谁给的 | 证据 |
+|---|---|---|
+| 节点树 / 布局 / 最小尺寸 / 字号 / 图标 / 文案 / `input_text` | **原版 `.tscn`**（逐字节） | `cmp`；`grep -c '^\[node'` = 106 |
+| 布局脚本（`ButtonGrid.gd` / `ExtraOptionsHBox.gd` / `ExtraOptionPad.gd` / `ViewFunctionPad.gd` / `FireContainer.gd` / `FxContainer.gd` / `TimerContainer.gd` / `OffsetContainer.gd` / `ExitButtonContainer.gd` / `MarginContainer.gd` / `ShowExtraButtons.gd` / `ViewFunctionsLabel.gd` / `HBoxContainer.gd`） | **原版字节**（`client/<Name>.gd` 是 T41 铺的符号链接别名层，指向 `client/src/views/`） | `.tscn` 里 16 条 `script = ExtResource(...)` |
+| 按钮 → 行为 | **过渡桥**：`GwButton.bind_native()` 把原生 `input_selected(text)` / `long_press_finished` 接到 `App.command` | 我方（原版的订阅者表在 Rust 控制器里，还没复原） |
+| 6 个绘制节点（平面是 `.tscn` 的，另外 4 个 `AxisDrawer`/`EntityDrawer`/`EffectDrawer`/`ObstacleDrawer` 由代码建） | **我方接线** | 原版由 `play_screen_control` 建，那条路径未复原 |
+| 4 份"余高判据"脚本的触发（`item_rect_changed`） | **我方接管**（见 83.4 第 2 条） | 实测正反馈，`docs/06` §94.5 |
+| 函数输入框本体 | **我方 `GwFunctionInput`**（原位替换 `.tscn` 的原生 `GraphwarFunctionInput`） | `selftest.gd:1352` 的既有断言要求 `as GwFunctionInput` |
+
+### 83.3 三个"改了但没生效 / 会静默出错"的坑（本轮全部踩过）
+
+1. **`frame_capture.py` 量的是"它自己所在的 checkout"**。工作树里跑
+   `python3 $MAIN/tools/frame_capture.py` ⇒ `REPO = $MAIN` ⇒ `CLIENT = $MAIN/client`
+   ⇒ **静默拍"没改过的那份客户端"**（t6 已修过一次，本轮又踩：第一次重拍数字一动不动）。
+   正确写法：`python3 $WT/tools/frame_capture.py`（工作树的 `tools/` 与主 checkout 同内容）。
+2. **原生按钮的 `pressed` 要用字符串形 `connect`**：`GraphwarButton` 的 `#[func] pressed()` 与
+   `BaseButton` 的 `pressed` 信号**同名**，`b.pressed.connect(...)` 会解析到那个方法上（T43 踩过，本轮沿用）。
+3. **`.so` 不是在 `client/` 里长出来的**：`cargo build --features gdext-bindings` 之后必须
+   `cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/`，否则客户端跑的是旧内核
+   （本轮用 `cp -al` 把上一个完工工作树的热 target 硬链接过来，重建只花 35 s）。
+
+### 83.4 装完之后的三个客户端机制（都在 `docs/06` §94.5 有实测）
+
+1. **棋盘黑框的 3 px 是裁剪出来的**：黑框描边是 `draw_rect(width=0.2)`，在 `scale = size.x/50`
+   下 = 5.12 px、**以边线为中心** ⇒ 一半在矩形外。T44 之前那半被 `PlaneCanvas.clip_contents = true`
+   裁掉（画布与棋盘同尺寸）；装原版场景后平面自己就是承载矩形 ⇒ 外半露出来（+12 312 px）。
+   修法：`_plane.clip_contents = true`。
+2. **原版四份脚本的 `item_rect_changed` 正反馈**：`ExtraOptionPad.gd` / `ExtraOptionsHBox.gd` /
+   `ViewFunctionPad.gd` / `ShowExtraButtons.gd` 会用 `plane_container` 的矩形算
+   `extra_y = h − w/1.66667` 再回写自己的 `custom_minimum_size.y` ⇒ 改 min-size 又改容器矩形。
+   真窗口（1920×1160）不动点稳定；**headless 64×64** 下在 `pc=(56,72)` / `(13,72)` 两态间跳，
+   29 000+ 次 `resized` 之后 `Message queue out of memory` → SIGSEGV。
+   处置：`_isolate_extra_options_feedback()` 摘掉这四份脚本的处理器（**引擎自己的
+   `Control::_size_changed` 不能摘**），`_update_view_geometry()` 用同一判据驱动。
+3. **回放模式的右列宽度**：藏掉 `RightButtonGrid` 后 `Container` 会把它从最小宽里剔掉 ⇒ 右列 337→230、
+   棋盘列变宽、整块版式崩。原版"宽度还在、高度不在"无源码证据 ⇒ 我方在藏之前量一次天然最小宽、
+   回放时把这个宽度钉在**可见的**回放组上（机制标**未知**）。
+
+### 83.5 复跑
+
+见 `docs/06` §94.8（等价性表 / 结构普查 / 四道门槛 / 两侧像素），关键三条：
+
+```bash
+cmp client/scenes/screens/play_screen.tscn recovered-src/play_screen.tscn
+bash client/run.sh selftest | grep -E "SELFTEST|COVERAGE"      # 717 / 0 / 1 skip，missing=0 silent=0
+python3 $WT/tools/frame_capture.py --side ours --flow match ...  # ⚠️ 必须用**本工作树的** tools/
+```

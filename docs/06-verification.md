@@ -16040,3 +16040,251 @@ python3 $MAIN/tools/frame_diff.py --orig $WT/frames/orig_replay --mine $WT/frame
 8. **`lan_lobby_global` 的最差块变差了**（0.194 → 0.784 dmean，虽然总 diff px 少了 3 246）：
    最可能是原版 `game_menu_icon_theme` 真正生效之后，四个模式图标的底/边框与之前"退化到 app 主题"时不同。
    **未定位到具体块**（只到 L2 网格粒度），下一轮应该用 `--blocks-out` 逐块对照定位。
+
+---
+
+## 94. T44：客户端最后一块原件 `play_screen.tscn` 装上 —— **先证棋盘几何等价**（两套公式在同一块实测承载矩形上 **25/25 逐值相同**），再整份装原版场景（106 节点 / 58 个原生按钮 / `cmp` 逐字节），`build()` 手搭节点树删 **566 行**（净 −281）；对局屏像素**变好**（`match_ready` 0.122 %→**0.081 %**、`match_play` 0.425 %→**0.386 %**）（2026-11-26，任务 T44 / `task-41`）
+
+### 94.0 一句话
+
+`play_screen.tscn`（780 行 / 106 节点 / 58 个原生 `GraphwarButton`）**逐字节**装进 `client/`，手抄节点树
+（`build()` 310 行 + 8 个辅助函数 151 行）删掉；装之前先证明了"我方 `_canvas`+`_fit_canvas()` 缩放链"与
+"原版 `AspectRatioContainer` 直接铺 + `size` 派生换算"**像素等价**（同一块承载矩形上逐值 ≤0.02 px），
+装完后棋盘四角/格线/轴交点与原版**逐像素相同**，两个对局屏基线的差异反而各降 0.04 pp。
+
+| 项 | 装之前 | 装之后 |
+|---|---|---|
+| `client/scenes/screens/play_screen.tscn` | 12 行存根 | **780 行，`cmp` 与 `recovered-src/` 逐字节相同** |
+| 静态节点数 | 0（全部代码手搭） | **106**（原版） |
+| 原生 `GraphwarButton` | 0（我方 `GwButton` 仿制类） | **58**（`text`/`input_text`/`icon` 全在 `.tscn` 里） |
+| `client/src/screens/play_screen.gd` | 3 731 行 | **3 450 行**（`+285 / −566`） |
+| `match_ready` | 0.122 %（L3 2 716 px；L2 0 块） | **0.081 %**（L3 **1 812** px；L2 0 块） |
+| `match_play` | 0.425 %（L3 9 456 px；L2 1 块，最差 (2,2) 15.783） | **0.386 %**（L3 **8 590** px；L2 1 块，最差 (2,2) **15.712**） |
+| `menu` / `replay_lobby` / `replay_play` / `replay_end` | 0 / 0 / ≈0.089 % / ≈0.089 % | **0.000 % / 0.000 % / 0.000 % / 0.000 %** |
+
+### 94.1 拦路石：两条"棋盘坐标 ⇒ 屏幕像素"的链
+
+| | 我方（T44 之前） | 原版 |
+|---|---|---|
+| 承载棋盘的矩形 | `PlaneCanvas`(Control, `clip_contents`) 拿 `AspectRatioContainer` 铺出的 5:3 矩形 `R`，里面放一个**固定 1000×600** 的 `GraphwarPlane`，用 `Control.scale = f` 缩进 `R` | `AspectRatioContainer` 直接把 `GraphwarPlane` 铺成 `R`，平面自己的 `size` 就是 `R` |
+| 单位换算 | 画布内 `px = 20x+500`（`src/graphwar_plane.rs::to_pixel`，逐位），再整体乘 `f` | `unit = size.x/50`、中心 `size/2`（`0x4b6104` / `0x4b6039`+`0x4b604f`，见 94.2） |
+| 缩放因子 | `f = min(R.w/1000, R.h/600)`（`play_screen.gd::_fit_canvas`） | 无（不需要） |
+
+⇒ 两者是否像素等价**没被证过**，而这条链上挂着"棋盘四边/轴交点逐项 0 px"与 `match_ready`/`match_play` 两个基线。
+
+### 94.2 ① 等价性证明（`fixtures/board_geometry_equiv.tsv`，192 行）
+
+**公式 A（我方）**：`f = min(R.w/1000, R.h/600)`；`px = R.x + f·(500+20x)`、`py = R.y + f·(300−20y)`。
+**公式 B（原版，取自指令）**：`unit = R.w/50`；`px = R.x + R.w/2 + unit·x`、`py = R.y + R.h/2 − unit·y`。
+
+原版那三处指令**我自己复核过**（不是抄别人的注）：
+
+```text
+0x4b6104  f3 0f 5e 15 bc 3e d0 ff   divss xmm2, [rip-0x2fc144]   ; → 0x1b9fc8 = f32 50.0  ⇒ unit = size.x/50
+0x4b6039  f3 0f 10 54 24 08 … 0f 59 d0   movss xmm2,[rsp+8]; mulss xmm2,xmm0(=[0x1ba128]=f32 0.5) ⇒ pos.x = size.x×0.5
+0x4b604f  同上（[rsp+0x10]）                                        ⇒ pos.y = size.y×0.5
+0x4e0667  对应 AxisDrawer 的 draw_set_transform（scale=(unit,-unit)），见 src/axis_drawer.rs:264-275
+```
+
+`.rodata` 常量（用 ELF program header 把 vaddr 折成文件偏移自己读的）：
+`0x1ba128 → f32 0.5`、`0x1b9fc8 → f32 50.0`；另 `0x19fbd0 → f64 1000.0`、`0x19faa8 → f64 50.0`（`to_pixel` 的 mulsd/divsd）。
+
+**输入 R 是实测的，不是拍的**（两列来源都在表头写清）：
+
+* `measured_live_1920x1160` = `(1279.0, 767.4) @ (300.0, 195.3)`：
+  原版真帧的黑框 bbox 是 `x 300..1578 / y 195..961`（= 1279×767），我方 `_fit_canvas()` 运行时打印
+  `canvas=(1279.0, 767.4)@(300.0, 195.3)` ⇒ **两侧承载矩形逐项相同**。
+* `tscn_probe_1920x1160` = `(1279.0, 767.3846) @ (300.0, 199.30768)`：把原版 tscn 放进**裸** 1920×1160
+  `SubViewport` 里量到的 ARC 子矩形（`ratio = 1.6667`）。
+
+**结果**（6 组输入 × 25 个量：棋盘四角 / 轴交点 / 11 条竖主格线 / 7 条横主格线 / 细格线间距）：
+
+| case | 结论 |
+|---|---|
+| `measured_live_1920x1160`（**实测承载矩形**） | **25/25 `same`**（逐值相同，差 = 0） |
+| `tscn_probe_1920x1160`（`ratio=1.6667` 取整后的矩形） | 24 `subpx` + 1 `same`；最大差 **0.013 px**（= `1.6667` 与 `5/3` 的 3.3e-5 在 767 px 上的体现） |
+| `ctl_exact_5_3_2560x1536`（正对照，精确 5:3 的 2×） | **25/25 `same`** ⇒ 对比本身不是"总是报相同" |
+| `ctl_white_rect_1273x762`（反面对照①：误把白底当承载矩形，比例 1.6706） | 19 `DIFF` + 5 `leak1px` ⇒ 判据对"矩形拿错"敏感 |
+| `ctl_arc_box_1279x958`（反面对照②：误用 ARC 的**盒子**而非子矩形） | **25/25 `DIFF`** |
+| `ctl_y_no_flip`（反面对照③：y 不取负） | 11 `DIFF` ⇒ 对符号敏感 |
+
+**判据成立**：两套公式在"承载矩形是 `AspectRatioContainer` 给出的 5:3 子矩形"这一前提上**恒等**；
+剩下唯一的量级差是 `ratio` 写成 `1.6667` 而不是 `5/3` 造成的 ≤0.013 px（远小于允许的 1 px）。
+
+> 真机旁证（不是推断）：装之前两侧真帧的棋盘白底 **1273×762 @ (303,198)**、贯穿竖线
+> `x = 427/428 / 555 / 683 / 811 / 939 / 1067 / 1195 / 1323 / 1450/1451`、贯穿横线
+> `y = 322/323 / 450 / 578/579 / 706 / 834` —— **两侧逐个相同**（同一把尺子，`convert` 转 PPM 后逐像素判定）。
+
+### 94.3 ② 装 tscn 与接线
+
+```bash
+cmp client/scenes/screens/play_screen.tscn recovered-src/play_screen.tscn   # 0 退出码
+grep -c '^\[node' client/scenes/screens/play_screen.tscn                    # 106
+grep -c 'type="GraphwarButton"' client/scenes/screens/play_screen.tscn      # 58
+grep -c '^input_text = ' client/scenes/screens/play_screen.tscn             # 47
+grep -c '^script = ' client/scenes/screens/play_screen.tscn                 # 16（全是子节点上的原版视图脚本）
+```
+
+* **16 份原版视图脚本**由 `.tscn` 自己挂上（`ButtonGrid.gd` / `HBoxContainer.gd` / `ExtraOptionsHBox.gd` /
+  `ExtraOptionPad.gd` / `ViewFunctionPad.gd` / `ViewFunctionsLabel.gd` / `FireContainer.gd` /
+  `FxContainer.gd` / `TimerContainer.gd` / `OffsetContainer.gd` / `ExitButtonContainer.gd` /
+  `MarginContainer.gd` / `ShowExtraButtons.gd`）⇒ 布局/字号/最小尺寸**不再是我方代码**。
+  `client/<Name>.gd` 是 T41 铺的符号链接别名层，`GwScreen::_is_view_owned()` 认这个形态（别名字号不被父类覆盖）。
+* **接线**（`build()` 只剩这些）：`GwButton.bind_native(self)` 把 58 颗原生按钮的
+  `input_text` → `App.command`（`input_selected` / `long_press_finished` 两条自造信号）；
+  `FireButton` 的单击用**字符串形** `connect("pressed", …)`（原生类的 `#[func] pressed()` 与
+  `BaseButton` 的 `pressed` 信号同名，`b.pressed.connect()` 会解析到方法上 —— T43 踩过的坑）；
+  回放三颗播放键按 `.tscn` 的 `input_text` 字面量（`⏮︎` / `play_pause` / `⏭`）直接接本屏播放器
+  （`app.gd` 对这三条仍是占位提示，所以**不走**命令总线）。
+* **6 个真 GDExtension 节点**：平面本身是 `.tscn` 里的静态节点；`AxisDrawer` / `EntityDrawer` /
+  `EffectDrawer` / `ObstacleDrawer` 原版由 Rust 控制器建（那条路径我方还没复原）⇒ 仍由
+  `_install_plane_nodes()` 造，**按平面矩形铺满**（`_layout_plane_children()`），不再有 1000×600 画布。
+  三个 `FunctionDrawer` 的 `size` 保持 `(0,0)`（**与原版实测一致**：原版 tscn 实例化后
+  `@FunctionDrawer@N size=(0,0)`；变换由平面把 `(size×0.5, size.x/50, flip)` 喂进 `update_transform`）。
+
+### 94.4 ③ 删掉的手抄代码（净 −281 行，`+285 / −566`）
+
+| 删掉的函数 | 行数 | 原来干什么 |
+|---|---|---|
+| `build()` 手搭节点树 | 310 → 152 | 逐个 `GwUI.*` 造 MarginContainer/VBox/HBox/Grid/AspectRatioContainer + 顶栏底栏 + 键盘 + 回放键 + 4 个开关 |
+| `_build_replay_controls()` | 53 | 手搭 ⏮▶⏭ / 存截图三键 |
+| `_fill_grid()` | 24 | 手填 18+18 个键（文案/图标/别名） |
+| `_replay_button_width()` | 19 | 用字体量"八个空格"当回放键最小宽 |
+| `_extra_button()` | 14 | 手造 4 个顶部开关 |
+| `_anim_rect()` | 13 | 手造 `ClipButton/AnimationRect` |
+| `_fit_canvas()` | 12 | `min(box/1000, box/600)` 缩放（等价性证明之后不需要了） |
+| `_make_grid()` | 10 | 手造 GridContainer + holder |
+| `_toggle_extra_buttons()` | 6 | 顶栏开关的切换（现在由原版 `ShowExtraButtons.gd` 自己接 `pressed`） |
+| `_update_view_geometry()` | 33 | 余高判据（见 94.5 第 2 条：判据保留、触发源换掉） |
+
+### 94.5 装的过程中撞到的两件事（都是**实测**，不是猜）
+
+**(1) 棋盘黑框的 3 px 是"被裁掉的"，不是"画得细"。**
+装完第一版重拍：棋盘白底/格线/轴交点仍与原版逐像素相同，但黑框**外沿**多出 3 px
+（左侧 `297..302` 变黑，原版只有 `300..302`；上侧 `192..197` vs 原版 `195..197`），单这一条
+`0e251c→000000` 就 **12 312 px**（`match_ready` 0.122 %→0.646 %）。
+
+根因：黑框是平面自己的 `_draw` —— `draw_rect(BOARD_RECT, width=BOARD_WIDTH=0.2, filled=false)`，
+在 `scale = size.x/50` 下描边 = `0.2 × 25.58 = 5.12 px`，**以边线为中心** ⇒ 有一半在矩形外面。
+T44 之前这一半被 `PlaneCanvas.clip_contents = true` 裁掉了（画布与棋盘同尺寸），所以只看见内侧 ~3 px。
+装原版场景后平面直接当承载矩形，外面那半就露出来了。
+**修法**：`_plane.clip_contents = true`（把绘制剪到平面矩形内）。这不是新增行为 ——
+原版真帧上那半本来就不在（`297..299` 是背景色 `0e251c`），我方只是把裁剪补回去。
+
+**(2) 原版四份脚本的 `item_rect_changed` 正反馈在 **headless 64×64** 视口下打爆消息队列 → SIGSEGV。**
+`ExtraOptionPad.gd` / `ExtraOptionsHBox.gd` / `ViewFunctionPad.gd` / `ShowExtraButtons.gd` 的判据是
+`extra_y = plane_container.size.y − plane_container.size.x/1.66667`，然后回写自己的
+`custom_minimum_size.y`/`visible`；而 `custom_minimum_size` 又通过 VBox 反向改变 `plane_container` 的矩形。
+在 1920×1160（`extra_y = 190 ≫ target 96`）不动点稳定；但在**自检的 64×64 视口**下 `extra_y` 落在阈值附近：
+
+```text
+# 实测（探针打印，逐帧）
+[T44CHAIN] #4 pc=(56.0, 72.0) gp=(13.0, 72.0) pad=(56.0,40.0)/0.0  arc=(56.0,28.0) plane=(46.6676,28.0)
+[T44CHAIN] #5 pc=(13.0, 72.0) gp=(56.0, 72.0) pad=(56.0,40.0)/40.0 arc=(13.0,72.0) plane=(13.0,7.799843)
+# ⇒ 两个状态来回跳，29 000+ 次 resized 之后：Failed method: CanvasItem::_redraw_callback.
+#    Message queue out of memory ⇒ SIGSEGV（selftest 跑到 replay_player 组时核心转储）
+```
+
+**处置**：`.tscn` 一个字节不动；`build()` 末尾调 `_isolate_extra_options_feedback()` 把这四份脚本挂在
+`item_rect_changed` 上的处理器**摘掉**（只摘脚本的，引擎自己的 `Control::_size_changed` 保留），
+再由 `_update_view_geometry()` 用**同一个判据**驱动（触发源换成"尺寸变化时算一次"，回路因此断开）。
+1920×1160 下两套实现给出的值逐项相同（`show = true`、`pad.min.y = 96`）。
+⇒ **这一处是"我方接管"，不是复原**（登记在 94.7）。
+
+### 94.6 门槛读数（末端实测）
+
+| 闸 | 门槛 | 实测 |
+|---|---|---|
+| `bash client/run.sh selftest` | 717 / 0 / 1 skip，`missing=0 silent=0` | **717 / 0 / 1 skip**，`groups=33 checks=717 expected=717 missing=0(claimed 0 / degraded 0 / silent 0)` ✓ |
+| headless 14 脚本 | 1961 / 0 | **1961 / 0** ✓（244+117+96+235+367+132+24+116+96+233+66+57+155+23） |
+| `cargo test --offline` | 1774 / 0 / 1 ignored | **1774 / 0 / 1** ✓ |
+| `cargo test --offline --features gdext-bindings` | 1896 / 0 / 1 ignored | **1896 / 0 / 1** ✓ |
+| 三轴 | fire 647 / batch 647 / batch_conv 637 | **全一致**（`bit_exact_attrib.py --check-baseline`：fire/batch/batch_conv 三次都 `校验结果：全部一致`） |
+| 像素 `match_ready` | ≤ 0.122 %（不许变差） | **0.081 %**（1 812 px，L2 0 块）✓ 变好 |
+| 像素 `match_play` | ≤ 0.42 %（不许变差） | **0.386 %**（8 590 px，L2 1 块，最差 (2,2) 15.712）✓ 变好 |
+| 像素 `menu`/`replay_lobby`/`replay_play`/`replay_end` | 0 / 0 / ≈0.089 % / ≈0.089 % | **0.000 % / 0.000 % / 0.000 % / 0.000 %** ✓ 变好 |
+
+装完后棋盘几何（同一把尺子，两屏都量）：白底 **1273×762 @ (303,198)**、贯穿竖线
+`427/428 / 555 / 683 / 811 / 939 / 1067 / 1195 / 1323 / 1450/1451`、贯穿横线 `322/323 / 450 / 578/579 / 706 / 834`
+—— **与原版逐项相同**（装之前也相同，这条没有退化）。
+
+剩余 1 812 px 的构成（逐像素分类，`match_ready`）：**名 字 标 签 的 字 形**（`ffffff↔7d6800` 735 px +
+灰↔`7d6800` 84 px）+ 士兵三件套的暗色像素，全部落在 `x 770..844 / y 782..861` 那一块
+（= 射手精灵 + `cmdgz` 标签），与 T26 登记的"精灵/标签残余"同源；`match_play` 的 8 590 px 里
+7 866 px 是弹道相位（(2,2) 块）。
+
+### 94.7 遗留 / 还依赖我方代码的地方
+
+1. **函数输入框**：`.tscn` 里是原版类型 `GraphwarFunctionInput`，但 `client/tools/selftest.gd:1352`
+   对它有既有断言（`as GwFunctionInput` + `.text`），断言不在本任务可改范围 ⇒ `build()` 里把它
+   **原位换成我方同名控件**（节点名/路径不变）。⇒ 这一颗仍是"半原版"。
+2. **四份原版脚本的 `item_rect_changed` 处理器被我方接管**（94.5 第 2 条）：`.tscn` 与脚本文件都是原版字节，
+   但**触发路径**是本屏代码。判据照抄，值在 1920×1160 下逐项相同；风险面 = 将来若视口尺寸落在
+   阈值附近（`extra_y ≈ target_y`）仍可能抖。
+3. **四个绘制层节点由我方创建**（`AxisDrawer`/`EntityDrawer`/`EffectDrawer`/`ObstacleDrawer`）：
+   原版是 Rust 控制器建的，那条路径还没复原（与 T33/T41 的同一处缺口）。
+4. **回放模式右列宽度**：把 `RightButtonGrid` 藏掉之后 Godot 会把它从最小宽里剔掉 ⇒ 右列缩到 230、
+   棋盘列变宽。真帧上原版右列仍是 337，但"宽度还在、高度不在"这条**没有源码证据** ⇒ 我方
+   "藏之前量一次天然最小宽、把它钉在可见的回放组上"。机制仍标**未知**。
+5. **`ShowExtraButtons` 的图标切换**：原版脚本 `_update_icon()` 里 `load("res://hide_extra_buttons.svg")`，
+   别名层缺这一份 ⇒ 本轮补了 `client/hide_extra_buttons.svg.import`（6 行 `[remap]` → `assets/hide_extra_buttons.ctex`）。
+6. 我方自造的 `ReplayStatusBar` / `StatusLabel` 仍在（均**永不显示**，只给自检/`--dump` 当诊断，登记在 `docs/125` §5）。
+
+### 94.8 复跑命令
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild WT=$MAIN/.agent-work/cg/wt-t44
+export CARGO_HOME=$MAIN/.reference/cargo-home CARGO_TARGET_DIR=$WT/.cargo-target HOME=$WT/.fakehome
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+
+# ① 等价性表（表头写死了两套公式与输入来源；192 行，判据 = measured_live 那组 25/25 same）
+column -t -s$'\t' fixtures/board_geometry_equiv.tsv | sed -n '1,40p'
+grep -c '^measured_live_1920x1160' fixtures/board_geometry_equiv.tsv   # 25
+awk -F'\t' '$1=="measured_live_1920x1160"{print $16}' fixtures/board_geometry_equiv.tsv | sort | uniq -c  # 25 same
+
+# ② 逐字节与结构普查
+cmp client/scenes/screens/play_screen.tscn recovered-src/play_screen.tscn
+grep -c '^\[node' client/scenes/screens/play_screen.tscn            # 106
+grep -c 'type="GraphwarButton"' client/scenes/screens/play_screen.tscn  # 58
+
+# ③ 门槛
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+cargo build --offline --example serve_match
+"$GODOT" --headless --path client --import
+bash client/run.sh selftest | grep -E "SELFTEST|COVERAGE"
+for f in assemble_check base_classes_check curve_on_screen_check draw_classes_check entity_drawer_check \
+         function_drawer_check gdext_check obstacle_drawer_check plane_on_screen_check play_flow_check \
+         process_loop_check recovered_view_check signal_classes_check spike_class_check; do
+  "$GODOT" --headless --path client --script res://tools/$f.gd | grep -E 'passed, [0-9]+ failed'; done
+cargo test --offline 2>&1 | grep -E '^test result:'                                  # 1774 / 0 / 1
+cargo test --offline --features gdext-bindings 2>&1 | grep -E '^test result:'         # 1896 / 0 / 1
+
+# ④ 像素（两侧串行；私有 netns，配方照抄 docs/06 §76.7）
+bash $WT/.agent-work/cap_in_netns.sh --side original --flow match  --out $WT/.agent-work/v/bo --display-num 196
+bash $WT/.agent-work/cap_in_netns.sh --side ours     --flow match  --out $WT/.agent-work/v/bm --display-num 197
+python3 tools/frame_diff.py --orig $WT/.agent-work/v/bo --mine $WT/.agent-work/v/bm \
+    --screens match_ready,match_play --out $WT/.agent-work/v/match.tsv
+bash $WT/.agent-work/cap_in_netns.sh --side original --flow replay --out $WT/.agent-work/v/ro --display-num 196
+bash $WT/.agent-work/cap_in_netns.sh --side ours     --flow replay --out $WT/.agent-work/v/rm --display-num 197
+python3 tools/frame_diff.py --orig $WT/.agent-work/v/ro --mine $WT/.agent-work/v/rm \
+    --screens menu,replay_lobby,replay_play,replay_end --out $WT/.agent-work/v/replay.tsv
+```
+
+### 94.9 我写错了 / 规格前提被证伪
+
+1. **规格说"54 个原生按钮"，实测是 58 个**。`grep '^\[node' | type="GraphwarButton"'` = **58**
+   （节点类型普查：58 GraphwarButton + 16 MarginContainer + 7 HBox + 6 VBox + 5 AspectRatioContainer +
+   4 GridContainer + 3 Label + 2 ColorRect + 1 TextureRect + 1 RichTextLabel + 1 GraphwarPlane +
+   1 GraphwarFunctionInput + 1 Control = 106）。其中 **47** 颗带 `input_text`、**1** 颗带 `long_press_input_text`。
+2. **"装上去会先弄坏两个基线"只对了一半**：装完之后棋盘几何是**逐像素相同**的（我一开始也是这么预期的），
+   真正会把像素弄坏的是 94.5 的两条（黑框裁剪 + 正反馈崩溃），都不是"几何链"本身。
+   ⇒ 规格对"拦路石"的判断方向正确（几何链确实必须先证），但**代价不在几何，在裁剪与布局反馈**。
+3. **T43 §93.7 说"原版容器形状下三份脚本能跑"** —— 在**真窗口尺寸**下成立，但在 **headless 64×64**
+   下会正反馈崩溃（94.5 第 2 条）。独立实例化实验当时用的是 1920×1160 的 SubViewport，所以没撞到。
+4. **`tscn_probe` 那条输入（裸 SubViewport 实例化）的 y 比真机低 4 px**（199.31 vs 195.3）：
+   裸实例化时底栏比真实客户端矮/高一点（字体缩放路径不同），所以**真机读数以 `measured_live` 那组为准**，
+   探针值只用来覆盖"`ratio = 1.6667` 取整"这一档。表里两列都留着，标了来源。
+5. **`_fit_canvas` 那 12 行不是"多余"，是"等价"**：它的存在让六个绘制层共用一个 1000×600 坐标系
+   （此前六个类的换算硬编码了除数/中心）。装完原版场景后它们改成吃真实矩形，等价性由 94.2 的表兜住 ——
+   如果那张表不成立，这次安装就**应该停在 ①**。
