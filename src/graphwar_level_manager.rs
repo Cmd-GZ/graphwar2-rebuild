@@ -470,9 +470,848 @@ pub struct LevelSetup {
     pub turn_limit: Option<u32>,
 }
 
+// ---------------------------------------------------------------------------
+// 4a. 21 关的开场臂 = 原版的 21 个 `setup_level_N`（**每个都有自己的函数边界**）
+// ---------------------------------------------------------------------------
+//
+// 这一段替换掉了旧形态「一张 `SETUPS` 数据表 + 一个 `level_setup(index)`」—— 旧形态把原版
+// **整个函数族压没了**（T38 `docs/06` §87：本模块 gap 31/40，几乎全是 `setup_level_N`）。
+//
+// ## 原版结构（证据见 `fixtures/level_setup_anchors.tsv`，逐地址可复算）
+//
+// * **21 个 `GraphwarLevelManager::setup_level_N`** + **1 个分派 `setup_level`**（`0x499740`）。
+// * 其中 **13 个是独立函数**（自己一条 `.eh_frame` FDE + 自己一组 `panic::Location` 锚）：
+//   关卡 4/5/6/7/8/9/14/15/16/17/18/19/20。分派用 **`jmp` 尾跳**进它们。
+// * 另 **8 个没有独立指令范围**：关卡 0/1/2/3/10/11/12/13 的体被内联进 `setup_level`，
+//   臂起点分别是 `0x499957` / `0x49a3f2` / `0x49af3c` / `0x49bb63` /
+//   `0x499e1e` / `0x49a924` / `0x49b472` / `0x49bf41`。它们**在源码里仍然是独立函数**
+//   （Windows early2026 构建有独立符号），所以这里照样给独立 `fn`，并在每个函数的文档里
+//   写明「本构建内联了它、臂区间在哪」。
+// * 每关的公共形状：5~7 次 `modules.get_module::<T>()` → **1 次 `call 0x466d20`**
+//   （`GraphwarLevelGenerator::generate_level_custom`，关卡开场驱动）→ 士兵 / 靶子 / 回合上限。
+//   21 关合计 **21 条** `call 0x466d20`：8 条在 `setup_level` 内、13 条在各自函数内 ——
+//   这是「21 个函数都在」的**计数证据**（不是靠形状相似猜的）。
+//
+// ## 本层怎么承载
+//
+// * 每个 `setup_level_N` 是 `const fn`，返回该关的 [`LevelSetup`]。原版返回 `()` 且直接改
+//   manager 状态；我们的 manager 对象图**没复原**，所以参数走返回值（不改语义，只换承载）。
+// * [`SETUPS`] **保留**，但每一格改成 `GraphwarLevelManager::setup_level_N()` 的调用 ——
+//   数据只有**一个来源**（那 21 个函数），表不再是独立的真值。
+// * [`level_setup`] **签名不变**（调用方 0 改动）：内部走一遍
+//   [`GraphwarLevelManager::setup_level`] 的 21 臂分派再取静态引用。
+/// 原版的关卡管理器类型。
+///
+/// **字段集未知**：`GraphwarLevelManager` 在本仓库里没有任何偏移 / 尺寸 / `panic::Location` 证据
+/// ⇒ 不建模字段（不编）。本类型只承载它的 **22 个方法边界** —— 21 个
+/// `setup_level_N` 加上 1 个分派 `setup_level`。原版这个类型由
+/// `GraphwarModuleContainer` 持有（`docs/02` §22，`add_module` / `get_module` 的 25 个单态里
+/// 没有它 ⇒ 它更可能是被容器**值持有**的字段或更外层类型的方法，本层不定）。
+pub struct GraphwarLevelManager;
+
+impl GraphwarLevelManager {
+    /// 关卡命令分派（原版 `GraphwarLevelManager::setup_level`）。
+    ///
+    /// * **入口 `0x499740`**，FDE `0x499740..0x49e56a`（**20010 B**）。这是本模块唯一一条
+    ///   把 21 个关卡键分派出去的函数，调用者只有 1 处（`0x452419`，在
+    ///   FDE `0x4500c0..0x453a59` 里）。
+    /// * 二进制形状（`objdump` 直接可读）：先按**键长度**分 `7` / `8` 两支
+    ///   （`cmp $0x7,%rsi` @`0x499763`、`cmp $0x8,%rsi` @`0x499759`），再逐字节比
+    ///   `level_<n>`（`.rodata` 里那 21 个字面量，立即数如 `0x305f6c65` = `el_0`）；
+    ///   命中后**分两种落法**：
+    ///   - **8 关的体被内联进来** —— `je 0x499957`(关 0) / `0x499e1e`(关 10) / `0x49a3f2`(关 1) /
+    ///     `0x49a924`(关 11) / `0x49af3c`(关 2) / `0x49b472`(关 12) / `0x49bb63`(关 3) /
+    ///     `0x49bf41`(关 13)，这 8 条臂里各有**恰好一条** `call 0x466d20`；
+    ///   - **13 关是独立函数，用 `jmp` 尾跳**（`0x49c688`→`0x49f510`(关 4) … `0x49ca64`→`0x4ab500`(关 19)，
+    ///     另 `0x499860`→`0x4a43a0`(关 9)、`0x499952`→`0x4ac440`(关 20) 在跳表前段）。
+    ///     ⚠️ 是 `jmp` 不是 `call` —— 用 `grep 'call <vaddr>'` 找调用者会得出「没人调用」的错结论。
+    /// * 分派键是 `level_<n>` 字符串（`docs/10` §3），不是下标。本函数保留**下标**入参
+    ///   （我们的调用方只有下标；键 → 下标的解析在 [`parse_level_key`]/[`level_by_key`] 那一层）。
+    ///
+    /// 证据档：**观测**（`objdump -d --no-show-raw-insn` + `.eh_frame` FDE）。
+    pub fn setup_level(index: usize) -> Option<LevelSetup> {
+        // 0x499740
+        let setup = match index {
+            0 => Self::setup_level_0(),
+            1 => Self::setup_level_1(),
+            2 => Self::setup_level_2(),
+            3 => Self::setup_level_3(),
+            4 => Self::setup_level_4(),
+            5 => Self::setup_level_5(),
+            6 => Self::setup_level_6(),
+            7 => Self::setup_level_7(),
+            8 => Self::setup_level_8(),
+            9 => Self::setup_level_9(),
+            10 => Self::setup_level_10(),
+            11 => Self::setup_level_11(),
+            12 => Self::setup_level_12(),
+            13 => Self::setup_level_13(),
+            14 => Self::setup_level_14(),
+            15 => Self::setup_level_15(),
+            16 => Self::setup_level_16(),
+            17 => Self::setup_level_17(),
+            18 => Self::setup_level_18(),
+            19 => Self::setup_level_19(),
+            20 => Self::setup_level_20(),
+            _ => return None,
+        };
+        Some(setup)
+    }
+
+    /// 关卡 0 的开场臂（原版 `GraphwarLevelManager::setup_level_0`）。
+    ///
+    /// ⚠️ **本函数在 Linux 2.0.60 构建里没有自己的指令范围**：体被内联进了
+    /// [`Self::setup_level`]（`0x499740`），臂起点 `0x499957`、臂跨度 `0x499957..0x499e1e`（1223 B）。
+    /// 三条证据：① `setup_level` 体内**恰好 8 条** `call 0x466d20`，本关那条在 `0x499db5`；
+    /// ② 臂内 `borrow_mut` / `unwrap` 的 panic 跳转落在 `121:37`… 那组 Location 上（见下表）；
+    /// ③ Windows early2026 构建里它是**独立符号**（`fixtures/name_to_addr_v2.tsv`「跨版本锚」）。
+    /// ⇒ 源码结构上它是独立函数，**函数边界按源码还原、不按某一次构建的机器码**。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `121..169`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x499db5`（本关**唯一**一次） |
+    /// | 模块 getter | 7 次：GameState@`0x49997f`、Player@`0x4999a6`、Team@`0x4999ce`、Mode@`0x4999f6`、Target@`0x499a1e`、Soldier@`0x499a46`、PlanePos@`0x499a6e` |
+    /// | 回合模式 | 没调 `0x462d20`（顺序回合，沿用默认） |
+    /// | 障碍预设 | `None`：闭包 `setup_level_0::{{closure}}` `0x49e570`（`0x49e570..0x49e649`（**217 B**），源行 148-149），**只 `reset_mask` 不放障碍** |
+    /// | 第二闭包 | `setup_level_0::{{closure}}` `0x49e650` `0x49e650..0x49e87a`（**554 B**），源行 `153-161` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 1 / 1 / 无 / 无上限（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 0 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_0() -> LevelSetup {
+        // 0x499957
+        LevelSetup {
+            start_fn: 0x499957,
+            preset_fn: 0x49e570,
+            preset: ObstaclePreset::None,
+            second_fn: 0x49e650,
+            soldiers: 1,
+            targets: 1,
+            bot: None,
+            turn_limit: None,
+        }
+    }
+
+    /// 关卡 1 的开场臂（原版 `GraphwarLevelManager::setup_level_1`）。
+    ///
+    /// ⚠️ **本函数在 Linux 2.0.60 构建里没有自己的指令范围**：体被内联进了
+    /// [`Self::setup_level`]（`0x499740`），臂起点 `0x49a3f2`、臂跨度 `0x49a3f2..0x49a924`（1330 B）。
+    /// 三条证据：① `setup_level` 体内**恰好 8 条** `call 0x466d20`，本关那条在 `0x49a8bb`；
+    /// ② 臂内 `borrow_mut` / `unwrap` 的 panic 跳转落在 `190:37`… 那组 Location 上（见下表）；
+    /// ③ Windows early2026 构建里它是**独立符号**（`fixtures/name_to_addr_v2.tsv`「跨版本锚」）。
+    /// ⇒ 源码结构上它是独立函数，**函数边界按源码还原、不按某一次构建的机器码**。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `190..239`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x49a8bb`（本关**唯一**一次） |
+    /// | 模块 getter | 7 次：GameState@`0x49a41a`、Player@`0x49a441`、Team@`0x49a469`、Mode@`0x49a491`、Target@`0x49a4b9`、Soldier@`0x49a4e1`、PlanePos@`0x49a509` |
+    /// | 回合模式 | 没调 `0x462d20`（顺序回合，沿用默认） |
+    /// | 障碍预设 | `None`：闭包 `setup_level_1::{{closure}}` `0x49eab0`（`0x49eab0..0x49eb89`（**217 B**），源行 218-219），**只 `reset_mask` 不放障碍** |
+    /// | 第二闭包 | `setup_level_1::{{closure}}` `0x49e880` `0x49e880..0x49eaaa`（**554 B**），源行 `223-231` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 1 / 1 / 无 / 5（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 1 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_1() -> LevelSetup {
+        // 0x49a3f2
+        LevelSetup {
+            start_fn: 0x49a3f2,
+            preset_fn: 0x49eab0,
+            preset: ObstaclePreset::None,
+            second_fn: 0x49e880,
+            soldiers: 1,
+            targets: 1,
+            bot: None,
+            turn_limit: Some(5),
+        }
+    }
+
+    /// 关卡 2 的开场臂（原版 `GraphwarLevelManager::setup_level_2`）。
+    ///
+    /// ⚠️ **本函数在 Linux 2.0.60 构建里没有自己的指令范围**：体被内联进了
+    /// [`Self::setup_level`]（`0x499740`），臂起点 `0x49af3c`、臂跨度 `0x49af3c..0x49b472`（1334 B）。
+    /// 三条证据：① `setup_level` 体内**恰好 8 条** `call 0x466d20`，本关那条在 `0x49b409`；
+    /// ② 臂内 `borrow_mut` / `unwrap` 的 panic 跳转落在 `258:37`… 那组 Location 上（见下表）；
+    /// ③ Windows early2026 构建里它是**独立符号**（`fixtures/name_to_addr_v2.tsv`「跨版本锚」）。
+    /// ⇒ 源码结构上它是独立函数，**函数边界按源码还原、不按某一次构建的机器码**。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `258..332`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x49b409`（本关**唯一**一次） |
+    /// | 模块 getter | 7 次：GameState@`0x49af64`、Player@`0x49af8b`、Team@`0x49afb3`、Mode@`0x49afdb`、Target@`0x49b003`、Soldier@`0x49b02b`、PlanePos@`0x49b053` |
+    /// | 回合模式 | 没调 `0x462d20`（顺序回合，沿用默认） |
+    /// | 障碍预设 | `CentreSingle`：闭包 `setup_level_2::{{closure}}` `0x49f1c0`（`0x49f1c0..0x49f351`（**401 B**），源行 286-289），`reset_mask` → `place_obstacle(原点, u*5.0+3.0)` |
+    /// | 第二闭包 | `setup_level_2::{{closure}}` `0x49eb90` `0x49eb90..0x49f1ba`（**1578 B**），源行 `293-310` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 1 / 1 / 无 / 5（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 2 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_2() -> LevelSetup {
+        // 0x49af3c
+        LevelSetup {
+            start_fn: 0x49af3c,
+            preset_fn: 0x49f1c0,
+            preset: ObstaclePreset::CentreSingle,
+            second_fn: 0x49eb90,
+            soldiers: 1,
+            targets: 1,
+            bot: None,
+            turn_limit: Some(5),
+        }
+    }
+
+    /// 关卡 3 的开场臂（原版 `GraphwarLevelManager::setup_level_3`）。
+    ///
+    /// ⚠️ **本函数在 Linux 2.0.60 构建里没有自己的指令范围**：体被内联进了
+    /// [`Self::setup_level`]（`0x499740`），臂起点 `0x49bb63`、臂跨度 `0x49bb63..0x49bf41`（990 B）。
+    /// 三条证据：① `setup_level` 体内**恰好 8 条** `call 0x466d20`，本关那条在 `0x49beee`；
+    /// ② 臂内 `borrow_mut` / `unwrap` 的 panic 跳转落在 `352:37`… 那组 Location 上（见下表）；
+    /// ③ Windows early2026 构建里它是**独立符号**（`fixtures/name_to_addr_v2.tsv`「跨版本锚」）。
+    /// ⇒ 源码结构上它是独立函数，**函数边界按源码还原、不按某一次构建的机器码**。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `352..390`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x49beee`（本关**唯一**一次） |
+    /// | 模块 getter | 4 次：GameState@`0x49bb8b`、Player@`0x49bbb3`、Team@`0x49bbdb`、Mode@`0x49bc03` |
+    /// | 回合模式 | 没调 `0x462d20`（顺序回合，沿用默认） |
+    /// | 障碍预设 | `CentreSingle`：闭包 `setup_level_3::{{closure}}` `0x49f370`（`0x49f370..0x49f501`（**401 B**），源行 379-382），`reset_mask` → `place_obstacle(原点, u*5.0+3.0)` |
+    /// | 第二闭包 | `setup_level_3::{{closure}}` `0x49f360` `0x49f360..0x49f370`（**16 B**），源行 `unknown(无锚)` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 2 / 3 / 无 / 10（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 3 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_3() -> LevelSetup {
+        // 0x49bb63
+        LevelSetup {
+            start_fn: 0x49bb63,
+            preset_fn: 0x49f370,
+            preset: ObstaclePreset::CentreSingle,
+            second_fn: 0x49f360,
+            soldiers: 2,
+            targets: 3,
+            bot: None,
+            turn_limit: Some(10),
+        }
+    }
+
+    /// 关卡 4 的开场臂（原版 `GraphwarLevelManager::setup_level_4`）。
+    ///
+    /// * **入口 `0x49f510`**，FDE `0x49f510..0x49fe72`（**2402 B**）；原版源行 `src/graphwar_level_manager.rs:409..483`。
+    /// * 被 [`Self::setup_level`] 用 **`jmp` 尾跳**进入（不是 `call`）。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `409..483`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x49f9f3`（本关**唯一**一次） |
+    /// | 模块 getter | 7 次：GameState@`0x49f54e`、Player@`0x49f576`、Team@`0x49f59e`、Mode@`0x49f5c6`、Target@`0x49f5ee`、Soldier@`0x49f616`、PlanePos@`0x49f63e` |
+    /// | 回合模式 | 没调 `0x462d20`（顺序回合，沿用默认） |
+    /// | 障碍预设 | `Scatter{min_count:15}`：**32 字节形参** `0x49fe80`（`mov esi, 15` 的立即数；本体是 `graphwar_level_generator` 里的散布生产者，见 `docs/11` §1）——**不是函数** |
+    /// | 第二闭包 | `setup_level_4::{{closure}}` `0x49fea0` `0x49fea0..0x4a04cf`（**1583 B**），源行 `441-458` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 1 / 1 / 无 / 10（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 4 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_4() -> LevelSetup {
+        // 0x49f510
+        LevelSetup {
+            start_fn: 0x49f510,
+            preset_fn: 0x49fe80,
+            preset: ObstaclePreset::Scatter { min_count: 15 },
+            second_fn: 0x49fea0,
+            soldiers: 1,
+            targets: 1,
+            bot: None,
+            turn_limit: Some(10),
+        }
+    }
+
+    /// 关卡 5 的开场臂（原版 `GraphwarLevelManager::setup_level_5`）。
+    ///
+    /// * **入口 `0x4a04d0`**，FDE `0x4a04d0..0x4a0da2`（**2258 B**）；原版源行 `src/graphwar_level_manager.rs:501..561`。
+    /// * 被 [`Self::setup_level`] 用 **`jmp` 尾跳**进入（不是 `call`）。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `501..561`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x4a09eb`（本关**唯一**一次） |
+    /// | 模块 getter | 5 次：GameState@`0x4a050d`、Player@`0x4a0535`、Team@`0x4a055d`、Mode@`0x4a0585`、Soldier@`0x4a05ad` |
+    /// | 回合模式 | 没调 `0x462d20`（顺序回合，沿用默认） |
+    /// | 障碍预设 | `Scatter{min_count:5}`：**32 字节形参** `0x4a12f0`（`mov esi, 5` 的立即数；本体是 `graphwar_level_generator` 里的散布生产者，见 `docs/11` §1）——**不是函数** |
+    /// | 第二闭包 | `setup_level_5::{{closure}}` `0x4a0db0` `0x4a0db0..0x4a12ec`（**1340 B**），源行 `540` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 2 / 0 / 3 / 无上限（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 5 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_5() -> LevelSetup {
+        // 0x4a04d0
+        LevelSetup {
+            start_fn: 0x4a04d0,
+            preset_fn: 0x4a12f0,
+            preset: ObstaclePreset::Scatter { min_count: 5 },
+            second_fn: 0x4a0db0,
+            soldiers: 2,
+            targets: 0,
+            bot: Some(3),
+            turn_limit: None,
+        }
+    }
+
+    /// 关卡 6 的开场臂（原版 `GraphwarLevelManager::setup_level_6`）。
+    ///
+    /// * **入口 `0x4a1310`**，FDE `0x4a1310..0x4a1cce`（**2494 B**）；原版源行 `src/graphwar_level_manager.rs:581..671`。
+    /// * 被 [`Self::setup_level`] 用 **`jmp` 尾跳**进入（不是 `call`）。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `581..671`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x4a1835`（本关**唯一**一次） |
+    /// | 模块 getter | 7 次：GameState@`0x4a134e`、Player@`0x4a1376`、Team@`0x4a139e`、Mode@`0x4a13c6`、Target@`0x4a13ee`、Soldier@`0x4a1416`、PlanePos@`0x4a143e` |
+    /// | 回合模式 | 没调 `0x462d20`（顺序回合，沿用默认） |
+    /// | 障碍预设 | `Scatter{min_count:10}`：**32 字节形参** `0x4a2410`（`mov esi, 10` 的立即数；本体是 `graphwar_level_generator` 里的散布生产者，见 `docs/11` §1）——**不是函数** |
+    /// | 第二闭包 | `setup_level_6::{{closure}}` `0x4a1cd0` `0x4a1cd0..0x4a2405`（**1845 B**），源行 `615-639` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 1 / 2 / 无 / 6（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 6 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_6() -> LevelSetup {
+        // 0x4a1310
+        LevelSetup {
+            start_fn: 0x4a1310,
+            preset_fn: 0x4a2410,
+            preset: ObstaclePreset::Scatter { min_count: 10 },
+            second_fn: 0x4a1cd0,
+            soldiers: 1,
+            targets: 2,
+            bot: None,
+            turn_limit: Some(6),
+        }
+    }
+
+    /// 关卡 7 的开场臂（原版 `GraphwarLevelManager::setup_level_7`）。
+    ///
+    /// * **入口 `0x4a2430`**，FDE `0x4a2430..0x4a2d92`（**2402 B**）；原版源行 `src/graphwar_level_manager.rs:689..763`。
+    /// * 被 [`Self::setup_level`] 用 **`jmp` 尾跳**进入（不是 `call`）。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `689..763`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x4a2913`（本关**唯一**一次） |
+    /// | 模块 getter | 7 次：GameState@`0x4a246e`、Player@`0x4a2496`、Team@`0x4a24be`、Mode@`0x4a24e6`、Target@`0x4a250e`、Soldier@`0x4a2536`、PlanePos@`0x4a255e` |
+    /// | 回合模式 | 没调 `0x462d20`（顺序回合，沿用默认） |
+    /// | 障碍预设 | `Scatter{min_count:6}`：**32 字节形参** `0x4a2da0`（`mov esi, 6` 的立即数；本体是 `graphwar_level_generator` 里的散布生产者，见 `docs/11` §1）——**不是函数** |
+    /// | 第二闭包 | `setup_level_7::{{closure}}` `0x4a2dc0` `0x4a2dc0..0x4a33ef`（**1583 B**），源行 `721-738` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 1 / 1 / 无 / 1（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 7 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_7() -> LevelSetup {
+        // 0x4a2430
+        LevelSetup {
+            start_fn: 0x4a2430,
+            preset_fn: 0x4a2da0,
+            preset: ObstaclePreset::Scatter { min_count: 6 },
+            second_fn: 0x4a2dc0,
+            soldiers: 1,
+            targets: 1,
+            bot: None,
+            turn_limit: Some(1),
+        }
+    }
+
+    /// 关卡 8 的开场臂（原版 `GraphwarLevelManager::setup_level_8`）。
+    ///
+    /// * **入口 `0x4a33f0`**，FDE `0x4a33f0..0x4a3de4`（**2548 B**）；原版源行 `src/graphwar_level_manager.rs:782..861`。
+    /// * 被 [`Self::setup_level`] 用 **`jmp` 尾跳**进入（不是 `call`）。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `782..861`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x4a3940`（本关**唯一**一次） |
+    /// | 模块 getter | 7 次：GameState@`0x4a342e`、Player@`0x4a3456`、Team@`0x4a347e`、Mode@`0x4a34a6`、Target@`0x4a34ce`、Soldier@`0x4a34f6`、PlanePos@`0x4a351e` |
+    /// | 回合模式 | 没调 `0x462d20`（顺序回合，沿用默认） |
+    /// | 障碍预设 | `Scatter{min_count:10}`：**32 字节形参** `0x4a2410`（`mov esi, 10` 的立即数；本体是 `graphwar_level_generator` 里的散布生产者，见 `docs/11` §1）——**不是函数** |
+    /// | 第二闭包 | `setup_level_8::{{closure}}` `0x4a3df0` `0x4a3df0..0x4a439b`（**1451 B**），源行 `817-824` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 1 / 3 / 无 / 6（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 8 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_8() -> LevelSetup {
+        // 0x4a33f0
+        LevelSetup {
+            start_fn: 0x4a33f0,
+            preset_fn: 0x4a2410,
+            preset: ObstaclePreset::Scatter { min_count: 10 },
+            second_fn: 0x4a3df0,
+            soldiers: 1,
+            targets: 3,
+            bot: None,
+            turn_limit: Some(6),
+        }
+    }
+
+    /// 关卡 9 的开场臂（原版 `GraphwarLevelManager::setup_level_9`）。
+    ///
+    /// * **入口 `0x4a43a0`**，FDE `0x4a43a0..0x4a4c72`（**2258 B**）；原版源行 `src/graphwar_level_manager.rs:879..939`。
+    /// * 被 [`Self::setup_level`] 用 **`jmp` 尾跳**进入（不是 `call`）。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `879..939`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x4a48bb`（本关**唯一**一次） |
+    /// | 模块 getter | 5 次：GameState@`0x4a43dd`、Player@`0x4a4405`、Team@`0x4a442d`、Mode@`0x4a4455`、Soldier@`0x4a447d` |
+    /// | 回合模式 | 没调 `0x462d20`（顺序回合，沿用默认） |
+    /// | 障碍预设 | `Scatter{min_count:5}`：**32 字节形参** `0x4a12f0`（`mov esi, 5` 的立即数；本体是 `graphwar_level_generator` 里的散布生产者，见 `docs/11` §1）——**不是函数** |
+    /// | 第二闭包 | `setup_level_9::{{closure}}` `0x4a4c80` `0x4a4c80..0x4a51bc`（**1340 B**），源行 `918` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 3 / 0 / 25 / 无上限（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 9 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_9() -> LevelSetup {
+        // 0x4a43a0
+        LevelSetup {
+            start_fn: 0x4a43a0,
+            preset_fn: 0x4a12f0,
+            preset: ObstaclePreset::Scatter { min_count: 5 },
+            second_fn: 0x4a4c80,
+            soldiers: 3,
+            targets: 0,
+            bot: Some(25),
+            turn_limit: None,
+        }
+    }
+
+    /// 关卡 10 的开场臂（原版 `GraphwarLevelManager::setup_level_10`）。
+    ///
+    /// ⚠️ **本函数在 Linux 2.0.60 构建里没有自己的指令范围**：体被内联进了
+    /// [`Self::setup_level`]（`0x499740`），臂起点 `0x499e1e`、臂跨度 `0x499e1e..0x49a3f2`（1492 B）。
+    /// 三条证据：① `setup_level` 体内**恰好 8 条** `call 0x466d20`，本关那条在 `0x49a389`；
+    /// ② 臂内 `borrow_mut` / `unwrap` 的 panic 跳转落在 `959:37`… 那组 Location 上（见下表）；
+    /// ③ Windows early2026 构建里它是**独立符号**（`fixtures/name_to_addr_v2.tsv`「跨版本锚」）。
+    /// ⇒ 源码结构上它是独立函数，**函数边界按源码还原、不按某一次构建的机器码**。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `959..1039`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x49a389`（本关**唯一**一次） |
+    /// | 模块 getter | 7 次：GameState@`0x499e46`、Player@`0x499e6d`、Team@`0x499e95`、Mode@`0x499ebd`、Target@`0x499ee5`、Soldier@`0x499f0d`、PlanePos@`0x499f35` |
+    /// | 回合模式 | 没调 `0x462d20`（顺序回合，沿用默认） |
+    /// | 障碍预设 | `Scatter{min_count:10}`：**32 字节形参** `0x4a2410`（`mov esi, 10` 的立即数；本体是 `graphwar_level_generator` 里的散布生产者，见 `docs/11` §1）——**不是函数** |
+    /// | 第二闭包 | `setup_level_10::{{closure}}` `0x4a5390` `0x4a5390..0x4a593b`（**1451 B**），源行 `995-1002` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 1 / 2 / 无 / 6（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 10 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_10() -> LevelSetup {
+        // 0x499e1e
+        LevelSetup {
+            start_fn: 0x499e1e,
+            preset_fn: 0x4a2410,
+            preset: ObstaclePreset::Scatter { min_count: 10 },
+            second_fn: 0x4a5390,
+            soldiers: 1,
+            targets: 2,
+            bot: None,
+            turn_limit: Some(6),
+        }
+    }
+
+    /// 关卡 11 的开场臂（原版 `GraphwarLevelManager::setup_level_11`）。
+    ///
+    /// ⚠️ **本函数在 Linux 2.0.60 构建里没有自己的指令范围**：体被内联进了
+    /// [`Self::setup_level`]（`0x499740`），臂起点 `0x49a924`、臂跨度 `0x49a924..0x49af3c`（1560 B）。
+    /// 三条证据：① `setup_level` 体内**恰好 8 条** `call 0x466d20`，本关那条在 `0x49aed2`；
+    /// ② 臂内 `borrow_mut` / `unwrap` 的 panic 跳转落在 `1057:37`… 那组 Location 上（见下表）；
+    /// ③ Windows early2026 构建里它是**独立符号**（`fixtures/name_to_addr_v2.tsv`「跨版本锚」）。
+    /// ⇒ 源码结构上它是独立函数，**函数边界按源码还原、不按某一次构建的机器码**。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `1057..1120`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x49aed2`（本关**唯一**一次） |
+    /// | 模块 getter | 6 次：GameState@`0x49a94c`、Player@`0x49a974`、Team@`0x49a99c`、Mode@`0x49a9c4`、Turn@`0x49a9ec`、Soldier@`0x49aa14` |
+    /// | 回合模式 | `call 0x462d20` @`0x49ae2b`（`GraphwarTurnManager::set_turn_mode`）—— 本关是**同时回合** |
+    /// | 障碍预设 | `Scatter{min_count:5}`：**32 字节形参** `0x4a12f0`（`mov esi, 5` 的立即数；本体是 `graphwar_level_generator` 里的散布生产者，见 `docs/11` §1）——**不是函数** |
+    /// | 第二闭包 | `setup_level_11::{{closure}}` `0x4a5940` `0x4a5940..0x4a5e7c`（**1340 B**），源行 `1099` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 3 / 0 / 50 / 无上限（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 11 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_11() -> LevelSetup {
+        // 0x49a924
+        LevelSetup {
+            start_fn: 0x49a924,
+            preset_fn: 0x4a12f0,
+            preset: ObstaclePreset::Scatter { min_count: 5 },
+            second_fn: 0x4a5940,
+            soldiers: 3,
+            targets: 0,
+            bot: Some(50),
+            turn_limit: None,
+        }
+    }
+
+    /// 关卡 12 的开场臂（原版 `GraphwarLevelManager::setup_level_12`）。
+    ///
+    /// ⚠️ **本函数在 Linux 2.0.60 构建里没有自己的指令范围**：体被内联进了
+    /// [`Self::setup_level`]（`0x499740`），臂起点 `0x49b472`、臂跨度 `0x49b472..0x49bb63`（1777 B）。
+    /// 三条证据：① `setup_level` 体内**恰好 8 条** `call 0x466d20`，本关那条在 `0x49b9a6`；
+    /// ② 臂内 `borrow_mut` / `unwrap` 的 panic 跳转落在 `1139:37`… 那组 Location 上（见下表）；
+    /// ③ Windows early2026 构建里它是**独立符号**（`fixtures/name_to_addr_v2.tsv`「跨版本锚」）。
+    /// ⇒ 源码结构上它是独立函数，**函数边界按源码还原、不按某一次构建的机器码**。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `1139..1204`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x49b9a6`（本关**唯一**一次） |
+    /// | 模块 getter | 7 次：GameState@`0x49b49a`、Player@`0x49b4c1`、Team@`0x49b4e9`、Mode@`0x49b511`、Target@`0x49b539`、Soldier@`0x49b561`、PlanePos@`0x49b589` |
+    /// | 回合模式 | 没调 `0x462d20`（顺序回合，沿用默认） |
+    /// | 障碍预设 | `CentreSingle`：闭包 `setup_level_12::{{closure}}` `0x4a5e80`（`0x4a5e80..0x4a6011`（**401 B**），源行 1168-1171），`reset_mask` → `place_obstacle(原点, u*5.0+3.0)` |
+    /// | 第二闭包 | `setup_level_12::{{closure}}` `0x4a6020` `0x4a6020..0x4a63cb`（**939 B**），源行 `1175-1191` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 1 / 1 / 无 / 5（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 12 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_12() -> LevelSetup {
+        // 0x49b472
+        LevelSetup {
+            start_fn: 0x49b472,
+            preset_fn: 0x4a5e80,
+            preset: ObstaclePreset::CentreSingle,
+            second_fn: 0x4a6020,
+            soldiers: 1,
+            targets: 1,
+            bot: None,
+            turn_limit: Some(5),
+        }
+    }
+
+    /// 关卡 13 的开场臂（原版 `GraphwarLevelManager::setup_level_13`）。
+    ///
+    /// ⚠️ **本函数在 Linux 2.0.60 构建里没有自己的指令范围**：体被内联进了
+    /// [`Self::setup_level`]（`0x499740`），臂起点 `0x49bf41`、臂跨度 `0x49bf41..0x49c688`（1863 B）。
+    /// 三条证据：① `setup_level` 体内**恰好 8 条** `call 0x466d20`，本关那条在 `0x49c4b5`；
+    /// ② 臂内 `borrow_mut` / `unwrap` 的 panic 跳转落在 `1223:37`… 那组 Location 上（见下表）；
+    /// ③ Windows early2026 构建里它是**独立符号**（`fixtures/name_to_addr_v2.tsv`「跨版本锚」）。
+    /// ⇒ 源码结构上它是独立函数，**函数边界按源码还原、不按某一次构建的机器码**。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `1223..1302`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x49c4b5`（本关**唯一**一次） |
+    /// | 模块 getter | 7 次：GameState@`0x49bf69`、Player@`0x49bf90`、Team@`0x49bfb8`、Mode@`0x49bfe0`、Target@`0x49c008`、Soldier@`0x49c030`、PlanePos@`0x49c058` |
+    /// | 回合模式 | 没调 `0x462d20`（顺序回合，沿用默认） |
+    /// | 障碍预设 | `Scatter{min_count:10}`：**32 字节形参** `0x4a2410`（`mov esi, 10` 的立即数；本体是 `graphwar_level_generator` 里的散布生产者，见 `docs/11` §1）——**不是函数** |
+    /// | 第二闭包 | `setup_level_13::{{closure}}` `0x4a63d0` `0x4a63d0..0x4a697b`（**1451 B**），源行 `1258-1265` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 1 / 2 / 无 / 5（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 13 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_13() -> LevelSetup {
+        // 0x49bf41
+        LevelSetup {
+            start_fn: 0x49bf41,
+            preset_fn: 0x4a2410,
+            preset: ObstaclePreset::Scatter { min_count: 10 },
+            second_fn: 0x4a63d0,
+            soldiers: 1,
+            targets: 2,
+            bot: None,
+            turn_limit: Some(5),
+        }
+    }
+
+    /// 关卡 14 的开场臂（原版 `GraphwarLevelManager::setup_level_14`）。
+    ///
+    /// * **入口 `0x4a6980`**，FDE `0x4a6980..0x4a73ae`（**2606 B**）；原版源行 `src/graphwar_level_manager.rs:1320..1383`。
+    /// * 被 [`Self::setup_level`] 用 **`jmp` 尾跳**进入（不是 `call`）。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `1320..1383`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x4a6f59`（本关**唯一**一次） |
+    /// | 模块 getter | 6 次：GameState@`0x4a69c0`、Player@`0x4a69e7`、Team@`0x4a6a0f`、Mode@`0x4a6a37`、Soldier@`0x4a6a5f`、Turn@`0x4a6a87` |
+    /// | 回合模式 | `call 0x462d20` @`0x4a6eb0`（`GraphwarTurnManager::set_turn_mode`）—— 本关是**同时回合** |
+    /// | 障碍预设 | `Scatter{min_count:5}`：**32 字节形参** `0x4a12f0`（`mov esi, 5` 的立即数；本体是 `graphwar_level_generator` 里的散布生产者，见 `docs/11` §1）——**不是函数** |
+    /// | 第二闭包 | `setup_level_14::{{closure}}` `0x4a73b0` `0x4a73b0..0x4a78ec`（**1340 B**），源行 `1362` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 4 / 0 / 100 / 无上限（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 14 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_14() -> LevelSetup {
+        // 0x4a6980
+        LevelSetup {
+            start_fn: 0x4a6980,
+            preset_fn: 0x4a12f0,
+            preset: ObstaclePreset::Scatter { min_count: 5 },
+            second_fn: 0x4a73b0,
+            soldiers: 4,
+            targets: 0,
+            bot: Some(100),
+            turn_limit: None,
+        }
+    }
+
+    /// 关卡 15 的开场臂（原版 `GraphwarLevelManager::setup_level_15`）。
+    ///
+    /// * **入口 `0x4a78f0`**，FDE `0x4a78f0..0x4a831b`（**2603 B**）；原版源行 `src/graphwar_level_manager.rs:1403..1466`。
+    /// * 被 [`Self::setup_level`] 用 **`jmp` 尾跳**进入（不是 `call`）。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `1403..1466`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x4a7ec6`（本关**唯一**一次） |
+    /// | 模块 getter | 6 次：GameState@`0x4a7930`、Player@`0x4a7957`、Team@`0x4a797f`、Mode@`0x4a79a7`、Soldier@`0x4a79cf`、Turn@`0x4a79f7` |
+    /// | 回合模式 | `call 0x462d20` @`0x4a7e1d`（`GraphwarTurnManager::set_turn_mode`）—— 本关是**同时回合** |
+    /// | 障碍预设 | `Scatter{min_count:10}`：**32 字节形参** `0x4a2410`（`mov esi, 10` 的立即数；本体是 `graphwar_level_generator` 里的散布生产者，见 `docs/11` §1）——**不是函数** |
+    /// | 第二闭包 | `setup_level_15::{{closure}}` `0x4a8320` `0x4a8320..0x4a885c`（**1340 B**），源行 `1445` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 5 / 0 / 250 / 无上限（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 15 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_15() -> LevelSetup {
+        // 0x4a78f0
+        LevelSetup {
+            start_fn: 0x4a78f0,
+            preset_fn: 0x4a2410,
+            preset: ObstaclePreset::Scatter { min_count: 10 },
+            second_fn: 0x4a8320,
+            soldiers: 5,
+            targets: 0,
+            bot: Some(250),
+            turn_limit: None,
+        }
+    }
+
+    /// 关卡 16 的开场臂（原版 `GraphwarLevelManager::setup_level_16`）。
+    ///
+    /// * **入口 `0x4a8860`**，FDE `0x4a8860..0x4a91af`（**2383 B**）；原版源行 `src/graphwar_level_manager.rs:1488..1537`。
+    /// * 被 [`Self::setup_level`] 用 **`jmp` 尾跳**进入（不是 `call`）。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `1488..1537`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x4a8d30`（本关**唯一**一次） |
+    /// | 模块 getter | 7 次：GameState@`0x4a889e`、Player@`0x4a88c6`、Team@`0x4a88ee`、Mode@`0x4a8916`、Target@`0x4a893e`、Soldier@`0x4a8966`、PlanePos@`0x4a898e` |
+    /// | 回合模式 | 没调 `0x462d20`（顺序回合，沿用默认） |
+    /// | 障碍预设 | `None`：闭包 `setup_level_16::{{closure}}` `0x4a93e0`（`0x4a93e0..0x4a94b9`（**217 B**），源行 1516-1517），**只 `reset_mask` 不放障碍** |
+    /// | 第二闭包 | `setup_level_16::{{closure}}` `0x4a91b0` `0x4a91b0..0x4a93da`（**554 B**），源行 `1521-1529` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 1 / 1 / 无 / 无上限（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 16 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_16() -> LevelSetup {
+        // 0x4a8860
+        LevelSetup {
+            start_fn: 0x4a8860,
+            preset_fn: 0x4a93e0,
+            preset: ObstaclePreset::None,
+            second_fn: 0x4a91b0,
+            soldiers: 1,
+            targets: 1,
+            bot: None,
+            turn_limit: None,
+        }
+    }
+
+    /// 关卡 17 的开场臂（原版 `GraphwarLevelManager::setup_level_17`）。
+    ///
+    /// * **入口 `0x4a94c0`**，FDE `0x4a94c0..0x4a9ef8`（**2616 B**）；原版源行 `src/graphwar_level_manager.rs:1555..1646`。
+    /// * 被 [`Self::setup_level`] 用 **`jmp` 尾跳**进入（不是 `call`）。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `1555..1646`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x4a9a3f`（本关**唯一**一次） |
+    /// | 模块 getter | 7 次：GameState@`0x4a94fe`、Player@`0x4a9526`、Team@`0x4a954e`、Mode@`0x4a9576`、Target@`0x4a959e`、Soldier@`0x4a95c6`、PlanePos@`0x4a95ee` |
+    /// | 回合模式 | 没调 `0x462d20`（顺序回合，沿用默认） |
+    /// | 障碍预设 | `Scatter{min_count:10}`：**32 字节形参** `0x4a2410`（`mov esi, 10` 的立即数；本体是 `graphwar_level_generator` 里的散布生产者，见 `docs/11` §1）——**不是函数** |
+    /// | 第二闭包 | `setup_level_17::{{closure}}` `0x4a9f00` `0x4a9f00..0x4aa635`（**1845 B**），源行 `1590-1614` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 1 / 2 / 无 / 6（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 17 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_17() -> LevelSetup {
+        // 0x4a94c0
+        LevelSetup {
+            start_fn: 0x4a94c0,
+            preset_fn: 0x4a2410,
+            preset: ObstaclePreset::Scatter { min_count: 10 },
+            second_fn: 0x4a9f00,
+            soldiers: 1,
+            targets: 2,
+            bot: None,
+            turn_limit: Some(6),
+        }
+    }
+
+    /// 关卡 18 的开场臂（原版 `GraphwarLevelManager::setup_level_18`）。
+    ///
+    /// * **入口 `0x4aa640`**，FDE `0x4aa640..0x4aafb2`（**2418 B**）；原版源行 `src/graphwar_level_manager.rs:1664..1725`。
+    /// * 被 [`Self::setup_level`] 用 **`jmp` 尾跳**进入（不是 `call`）。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `1664..1725`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x4aabcc`（本关**唯一**一次） |
+    /// | 模块 getter | 5 次：GameState@`0x4aa680`、Player@`0x4aa6a8`、Team@`0x4aa6d0`、Mode@`0x4aa6f8`、Soldier@`0x4aa720` |
+    /// | 回合模式 | 没调 `0x462d20`（顺序回合，沿用默认） |
+    /// | 障碍预设 | `Scatter{min_count:10}`：**32 字节形参** `0x4a2410`（`mov esi, 10` 的立即数；本体是 `graphwar_level_generator` 里的散布生产者，见 `docs/11` §1）——**不是函数** |
+    /// | 第二闭包 | `setup_level_18::{{closure}}` `0x4aafc0` `0x4aafc0..0x4ab4fc`（**1340 B**），源行 `1704` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 3 / 0 / 100 / 无上限（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 18 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_18() -> LevelSetup {
+        // 0x4aa640
+        LevelSetup {
+            start_fn: 0x4aa640,
+            preset_fn: 0x4a2410,
+            preset: ObstaclePreset::Scatter { min_count: 10 },
+            second_fn: 0x4aafc0,
+            soldiers: 3,
+            targets: 0,
+            bot: Some(100),
+            turn_limit: None,
+        }
+    }
+
+    /// 关卡 19 的开场臂（原版 `GraphwarLevelManager::setup_level_19`）。
+    ///
+    /// * **入口 `0x4ab500`**，FDE `0x4ab500..0x4abef9`（**2553 B**）；原版源行 `src/graphwar_level_manager.rs:1744..1806`。
+    /// * 被 [`Self::setup_level`] 用 **`jmp` 尾跳**进入（不是 `call`）。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `1744..1806`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x4abaea`（本关**唯一**一次） |
+    /// | 模块 getter | 5 次：GameState@`0x4ab540`、Player@`0x4ab568`、Team@`0x4ab590`、Mode@`0x4ab5b8`、Soldier@`0x4ab5e0` |
+    /// | 回合模式 | 没调 `0x462d20`（顺序回合，沿用默认） |
+    /// | 障碍预设 | `Scatter{min_count:10}`：**32 字节形参** `0x4a2410`（`mov esi, 10` 的立即数；本体是 `graphwar_level_generator` 里的散布生产者，见 `docs/11` §1）——**不是函数** |
+    /// | 第二闭包 | `setup_level_19::{{closure}}` `0x4abf00` `0x4abf00..0x4ac43c`（**1340 B**），源行 `1785` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 4 / 0 / 100 / 无上限（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 19 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_19() -> LevelSetup {
+        // 0x4ab500
+        LevelSetup {
+            start_fn: 0x4ab500,
+            preset_fn: 0x4a2410,
+            preset: ObstaclePreset::Scatter { min_count: 10 },
+            second_fn: 0x4abf00,
+            soldiers: 4,
+            targets: 0,
+            bot: Some(100),
+            turn_limit: None,
+        }
+    }
+
+    /// 关卡 20 的开场臂（原版 `GraphwarLevelManager::setup_level_20`）。
+    ///
+    /// * **入口 `0x4ac440`**，FDE `0x4ac440..0x4ace39`（**2553 B**）；原版源行 `src/graphwar_level_manager.rs:1826..1888`。
+    /// * 被 [`Self::setup_level`] 用 **`jmp` 尾跳**进入（不是 `call`）。
+    ///
+    /// | 项 | 值（可复算） |
+    /// |---|---|
+    /// | 源行锚点 | `1826..1888`（本函数自己引用的 panic Location 覆盖到的首/末行） |
+    /// | 开场驱动 | `call 0x466d20` @`0x4aca2a`（本关**唯一**一次） |
+    /// | 模块 getter | 5 次：GameState@`0x4ac480`、Player@`0x4ac4a8`、Team@`0x4ac4d0`、Mode@`0x4ac4f8`、Soldier@`0x4ac520` |
+    /// | 回合模式 | 没调 `0x462d20`（顺序回合，沿用默认） |
+    /// | 障碍预设 | `Scatter{min_count:15}`：**32 字节形参** `0x49fe80`（`mov esi, 15` 的立即数；本体是 `graphwar_level_generator` 里的散布生产者，见 `docs/11` §1）——**不是函数** |
+    /// | 第二闭包 | `setup_level_20::{{closure}}` `0x4ace40` `0x4ace40..0x4ad37c`（**1340 B**），源行 `1867` |
+    /// | 士兵 / 靶子 / Bot / 回合上限 | 5 / 0 / 250 / 无上限（`0x476320` 的 `edx`、`0x46f310` 的调用次数、
+    /// `bot_added_event` 载荷、`turn_limit_info` 载荷） |
+    ///
+    /// 证据档：**观测**。台账 `fixtures/level_setup_anchors.tsv` 第 20 行。
+    ///
+    /// 原版这个函数返回 `()` 并**直接改 manager 状态**；本层把已经解出来的参数作为返回值承载
+    /// （那 8~10 次设置调用的**操作数含义**仍未定，见模块文档「明确没做到的」——不编）。
+    pub const fn setup_level_20() -> LevelSetup {
+        // 0x4ac440
+        LevelSetup {
+            start_fn: 0x4ac440,
+            preset_fn: 0x49fe80,
+            preset: ObstaclePreset::Scatter { min_count: 15 },
+            second_fn: 0x4ace40,
+            soldiers: 5,
+            targets: 0,
+            bot: Some(250),
+            turn_limit: None,
+        }
+    }
+
+}
 /// 21 关的开局参数，按关卡下标排列。
 ///
-/// 每一格的来源：
+/// ⚠️ **这张表不再是独立的真值**：每一格都是 [`GraphwarLevelManager::setup_level_N`] 的
+/// 编译期求值结果 —— 数据来源在**那 21 个函数**里（每个函数的文档写着它的 `vaddr` / FDE
+/// 范围 / 原版源行 / 观察到的那一次 `call 0x466d20`）。
+///
+/// 单元格含义与来源（与改造前一致，未改语义）：
 /// * `start_fn` / `preset_fn` / `second_fn`：`.data.rel.ro` 的 21 条闭包记录
 ///   （`0x95a350`…`0x95deb0`，记录里 `+0x20` 是调用的槽位）；
 /// * `preset` + `min_count`：预设闭包本体（见 [`ObstaclePreset`]）；
@@ -481,223 +1320,37 @@ pub struct LevelSetup {
 /// 复算方式：`python3 tools/campaign_params.py`（需要仓库根目录的原版 `.so`）。
 /// 交叉验证：385 份回放的运行时事件，21/21 一致（`docs/10` §4）。
 pub const SETUPS: [LevelSetup; LEVEL_COUNT] = [
-    // 0：无障碍，1 兵 1 靶，无对手，无回合上限
-    LevelSetup {
-        start_fn: 0x499957,
-        preset_fn: 0x49e570,
-        preset: ObstaclePreset::None,
-        second_fn: 0x49e650,
-        soldiers: 1,
-        targets: 1,
-        bot: None,
-        turn_limit: None,
-    },
-    LevelSetup {
-        start_fn: 0x49a3f2,
-        preset_fn: 0x49eab0,
-        preset: ObstaclePreset::None,
-        second_fn: 0x49e880,
-        soldiers: 1,
-        targets: 1,
-        bot: None,
-        turn_limit: Some(5),
-    },
-    LevelSetup {
-        start_fn: 0x49af3c,
-        preset_fn: 0x49f1c0,
-        preset: ObstaclePreset::CentreSingle,
-        second_fn: 0x49eb90,
-        soldiers: 1,
-        targets: 1,
-        bot: None,
-        turn_limit: Some(5),
-    },
-    LevelSetup {
-        start_fn: 0x49bb63,
-        preset_fn: 0x49f370,
-        preset: ObstaclePreset::CentreSingle,
-        // 这一关的第二闭包 `0x49f360` 没有 Location 锚，不在 FUNCTIONS 的 40 个里。
-        second_fn: 0x49f360,
-        soldiers: 2,
-        targets: 3,
-        bot: None,
-        turn_limit: Some(10),
-    },
-    LevelSetup {
-        start_fn: 0x49f510,
-        preset_fn: 0x49fe80,
-        preset: ObstaclePreset::Scatter { min_count: 15 },
-        second_fn: 0x49fea0,
-        soldiers: 1,
-        targets: 1,
-        bot: None,
-        turn_limit: Some(10),
-    },
-    LevelSetup {
-        start_fn: 0x4a04d0,
-        preset_fn: 0x4a12f0,
-        preset: ObstaclePreset::Scatter { min_count: 5 },
-        second_fn: 0x4a0db0,
-        soldiers: 2,
-        targets: 0,
-        bot: Some(3),
-        turn_limit: None,
-    },
-    LevelSetup {
-        start_fn: 0x4a1310,
-        preset_fn: 0x4a2410,
-        preset: ObstaclePreset::Scatter { min_count: 10 },
-        second_fn: 0x4a1cd0,
-        soldiers: 1,
-        targets: 2,
-        bot: None,
-        turn_limit: Some(6),
-    },
-    LevelSetup {
-        start_fn: 0x4a2430,
-        preset_fn: 0x4a2da0,
-        preset: ObstaclePreset::Scatter { min_count: 6 },
-        second_fn: 0x4a2dc0,
-        soldiers: 1,
-        targets: 1,
-        bot: None,
-        turn_limit: Some(1),
-    },
-    LevelSetup {
-        start_fn: 0x4a33f0,
-        preset_fn: 0x4a2410,
-        preset: ObstaclePreset::Scatter { min_count: 10 },
-        second_fn: 0x4a3df0,
-        soldiers: 1,
-        targets: 3,
-        bot: None,
-        turn_limit: Some(6),
-    },
-    LevelSetup {
-        start_fn: 0x4a43a0,
-        preset_fn: 0x4a12f0,
-        preset: ObstaclePreset::Scatter { min_count: 5 },
-        second_fn: 0x4a4c80,
-        soldiers: 3,
-        targets: 0,
-        bot: Some(25),
-        turn_limit: None,
-    },
-    LevelSetup {
-        start_fn: 0x499e1e,
-        preset_fn: 0x4a2410,
-        preset: ObstaclePreset::Scatter { min_count: 10 },
-        second_fn: 0x4a5390,
-        soldiers: 1,
-        targets: 2,
-        bot: None,
-        turn_limit: Some(6),
-    },
-    LevelSetup {
-        start_fn: 0x49a924,
-        preset_fn: 0x4a12f0,
-        preset: ObstaclePreset::Scatter { min_count: 5 },
-        second_fn: 0x4a5940,
-        soldiers: 3,
-        targets: 0,
-        bot: Some(50),
-        turn_limit: None,
-    },
-    LevelSetup {
-        start_fn: 0x49b472,
-        preset_fn: 0x4a5e80,
-        preset: ObstaclePreset::CentreSingle,
-        second_fn: 0x4a6020,
-        soldiers: 1,
-        targets: 1,
-        bot: None,
-        turn_limit: Some(5),
-    },
-    LevelSetup {
-        start_fn: 0x49bf41,
-        preset_fn: 0x4a2410,
-        preset: ObstaclePreset::Scatter { min_count: 10 },
-        second_fn: 0x4a63d0,
-        soldiers: 1,
-        targets: 2,
-        bot: None,
-        turn_limit: Some(5),
-    },
-    LevelSetup {
-        start_fn: 0x4a6980,
-        preset_fn: 0x4a12f0,
-        preset: ObstaclePreset::Scatter { min_count: 5 },
-        second_fn: 0x4a73b0,
-        soldiers: 4,
-        targets: 0,
-        bot: Some(100),
-        turn_limit: None,
-    },
-    LevelSetup {
-        start_fn: 0x4a78f0,
-        preset_fn: 0x4a2410,
-        preset: ObstaclePreset::Scatter { min_count: 10 },
-        second_fn: 0x4a8320,
-        soldiers: 5,
-        targets: 0,
-        bot: Some(250),
-        turn_limit: None,
-    },
-    LevelSetup {
-        start_fn: 0x4a8860,
-        preset_fn: 0x4a93e0,
-        preset: ObstaclePreset::None,
-        second_fn: 0x4a91b0,
-        soldiers: 1,
-        targets: 1,
-        bot: None,
-        turn_limit: None,
-    },
-    LevelSetup {
-        start_fn: 0x4a94c0,
-        preset_fn: 0x4a2410,
-        preset: ObstaclePreset::Scatter { min_count: 10 },
-        second_fn: 0x4a9f00,
-        soldiers: 1,
-        targets: 2,
-        bot: None,
-        turn_limit: Some(6),
-    },
-    LevelSetup {
-        start_fn: 0x4aa640,
-        preset_fn: 0x4a2410,
-        preset: ObstaclePreset::Scatter { min_count: 10 },
-        second_fn: 0x4aafc0,
-        soldiers: 3,
-        targets: 0,
-        bot: Some(100),
-        turn_limit: None,
-    },
-    LevelSetup {
-        start_fn: 0x4ab500,
-        preset_fn: 0x4a2410,
-        preset: ObstaclePreset::Scatter { min_count: 10 },
-        second_fn: 0x4abf00,
-        soldiers: 4,
-        targets: 0,
-        bot: Some(100),
-        turn_limit: None,
-    },
-    LevelSetup {
-        start_fn: 0x4ac440,
-        preset_fn: 0x49fe80,
-        preset: ObstaclePreset::Scatter { min_count: 15 },
-        second_fn: 0x4ace40,
-        soldiers: 5,
-        targets: 0,
-        bot: Some(250),
-        turn_limit: None,
-    },
+    GraphwarLevelManager::setup_level_0(),
+    GraphwarLevelManager::setup_level_1(),
+    GraphwarLevelManager::setup_level_2(),
+    GraphwarLevelManager::setup_level_3(),
+    GraphwarLevelManager::setup_level_4(),
+    GraphwarLevelManager::setup_level_5(),
+    GraphwarLevelManager::setup_level_6(),
+    GraphwarLevelManager::setup_level_7(),
+    GraphwarLevelManager::setup_level_8(),
+    GraphwarLevelManager::setup_level_9(),
+    GraphwarLevelManager::setup_level_10(),
+    GraphwarLevelManager::setup_level_11(),
+    GraphwarLevelManager::setup_level_12(),
+    GraphwarLevelManager::setup_level_13(),
+    GraphwarLevelManager::setup_level_14(),
+    GraphwarLevelManager::setup_level_15(),
+    GraphwarLevelManager::setup_level_16(),
+    GraphwarLevelManager::setup_level_17(),
+    GraphwarLevelManager::setup_level_18(),
+    GraphwarLevelManager::setup_level_19(),
+    GraphwarLevelManager::setup_level_20(),
 ];
 
-/// 一关的开局参数。
+/// 一关的开局参数（**调用方 API：签名与语义都与改造前完全一致**）。
+///
+/// 分发方式（改造后）：先走原版分派函数 [`GraphwarLevelManager::setup_level`]（`0x499740`）的
+/// 21 臂 `match`，命中后取 [`SETUPS`] 里**同一格**的静态引用 —— 而那一格就是该臂
+/// `setup_level_N()` 的编译期结果，所以「走分派」与「取表」是同一份数据，不会漂。
+/// 越界（`index >= 21`）返回 `None`，与改造前一致。
 pub fn level_setup(index: usize) -> Option<&'static LevelSetup> {
-    SETUPS.get(index)
+    GraphwarLevelManager::setup_level(index).map(|_| &SETUPS[index])
 }
 
 // ---------------------------------------------------------------------------
