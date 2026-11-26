@@ -1,0 +1,44 @@
+# T33 / task-30 —— 25 份 blocked 原版 .gd 的**重判分档 + 清障计划**（2026-11-26）
+#
+# 输入：fixtures/view_layer_ledger.tsv 的 25 行 blocked（逐份读它的 `need` 列，不按规格复述）。
+# 三档定义（本轮只认这三档，不许出现第 4 档）：
+#   unblockable   = 缺的东西**本轮能补**：Rust 侧方法/类、挂载时序、节点形状、归属放开
+#   impossible    = 缺**物理不可得**的东西：包内零个原生二进制（AdMob / Android mediastore / IAP 单例）
+#   dead-in-package = 31 份随包 .scn 的原始字节里 `res://<name>.gd` 出现 **0** 次，且 .so 的
+#                     84480 行字符串表里 `res://*.gd` = 0 次（无任何加载证据）⇒ 作者遗留的死文件
+#
+# 机械列（`shipped_scn_refs`）本轮**自己重算了一遍**，与 ledger 逐份相同（正对照：`ExitButtonContainer`
+# 数出 14、`MarginContainer` 数出 8，说明扫描器不是"什么都数 0"）：
+#   python3 -c "import glob,os;m='/home/CG/Myprojects/graphwar2-rebuild';s={os.path.basename(p):open(p,'rb').read() for p in glob.glob(m+'/rsc/.godot/exported/133200997/*.scn')};[print(n,sum(('res://'+n).encode() in v for v in s.values())) for n in sorted(os.path.basename(p) for p in glob.glob('recovered-src/*.gd'))]"
+#
+# 列（制表符分隔）：
+#   recovered_path / scn_refs / bucket / blocker / need（要补的具体方法名·信号·资产）/ forged_to_delete / plan
+#   plan = swap（本轮换上去并验三条门槛）| hold（判 unblockable 但本轮不动，理由写清）
+#
+# 分档计数：unblockable 16 / impossible 2 / dead-in-package 7 = 25
+recovered_path	scn_refs	bucket	blocker	need	forged_to_delete	plan
+recovered-src/Ad_holder.gd	1	impossible	52 份里**唯一连解析都过不去**的一份：extends Control 却直接用 AdView/MobileAds/AdSize/AdPosition/AdRequest/AdListener/LoadAdError 这 7 个 AdMob 插件类型	AdMob 插件的**原生库**（addons/admob 下的 .so/.aar/.gdap）。包内零个原生二进制（find rsc -name '*.so' -o -name '*.aar' -o -name '*.jar' -o -name '*.gdap' ⇒ 空），只有 plugin.cfg + .gdc 壳 ⇒ 不是没复原，是导出包没带	无（我方没有对应实现）	hold（物理不可得；桌面运行时永远不需要它）
+recovered-src/AdContainer.gd	12	impossible	算式只有一句 custom_minimum_size = Ad_holder.ad_size，但 _ready/_on_ad_loaded 都 get_node(/root/GraphwarRootNode/Ad_holder) 再读 **ad_loaded 信号**与 **ad_size 属性**	同上（AdMob 原生插件）+ Ad_holder.gd 能否解析。二者缺一，挂上只有 stderr 里的 Invalid access on null	client/src/ui/ui.gd 的 GwUI.ad_slot()（我方给同形状 0×0 占位节点）—— **保留**，它顶着这个缺口	hold（依赖 Ad_holder.gd，同 impossible）
+recovered-src/Android_mediastore_holder.gd	1	unblockable	_ready 第一行 get_node("/root/GraphwarRootNode")；我方主场景根是 Main(main.gd)，这条路径不存在	① `/root/GraphwarRootNode` 节点（本轮：主场景根改成原版的 GraphwarRootNode 类节点）；② 它的 `log(String)` 方法（`src/_scaffold/graphwar_root_node_class.rs` 新增 #[func]）；无	forged 无仿制，纯接线	swap
+recovered-src/IOS_album_holder.gd	1	unblockable	同上（_ready 只 get_node + 有单例才取）	同上 ①②。桌面行为 = 完全不做事（原版桌面亦如此）；无	forged 无仿制	swap
+recovered-src/IAP_IOS.gd	1	unblockable	_ready 第一行 get_node("/root/GraphwarRootNode")，桌面上走 else 分支 root.log("InAppStore: No app store plugin.")	同上 ①②；真机另需 InAppStore 单例（包内没有，但桌面分支不碰它）；无	forged 无仿制	swap
+recovered-src/android_iap.gd	1	unblockable	_ready: get_node("/root/GraphwarRootNode") → await 1 s → run_iapp_billing()（has_singleton(AndroidIAPP) 为假 ⇒ 整段跳过）	同上 ①②。254 行里桌面只走 `root = get_node(...)` 这一条 + 之后全部被 has_singleton 包住；无	forged 无仿制	swap
+recovered-src/IAP_holder.gd	1	unblockable	_ready 连 $IAP_Android / $IAP_IOS 两个子节点的 3+3 个信号 ⇒ 子脚本能不能跑决定它	① 上面两份脚本能跑（同 A 组）；② 节点形状：IAP_holder(Control) 下挂 IAP_Android(Node)+IAP_IOS(Node)，与原版 main.tscn 逐属性一致（visible=false）；无	forged 无仿制	swap
+recovered-src/ButtonGrid.gd	1	unblockable	① 归属（play_screen 已放开）；② 时序：我方 _make_grid() 是"先 add_child 再 _fill_grid()"，键在进树后才有，而原版 _ready 只遍历当次的 get_children()	把 _make_grid() 拆成"建 → 填 → GwViews.attach → add_child"；4 个 GridContainer 节点名/类型已全对	client/src/screens/play_screen.gd 的 _apply_grid_metrics()（每键 min = x*0.15/3、字号 x/30 那套自写算式）	swap
+recovered-src/HBoxContainer.gd	1	unblockable	同 ButtonGrid（右列 …/RightReplaysButtonsGrid/HBoxContainer；算式重复）	同 ButtonGrid 的四步化	同上（同一段自写算式覆盖两个脚本）	swap
+recovered-src/ExtraOptionsHBox.gd	1	unblockable	连 ../../../LeftControls/LeftTopButtonsContainer 与 ../../../PlaneContainer 的 item_rect_changed，给子节点写 0.15x/3 最小尺寸 + x/30 字号	attach + 兄弟 ShowExtraButtons.gd 调 set_show_extra_buttons()（那份 hold，见下）	client/src/screens/play_screen.gd 的 _update_extra_options()（我方同式自写）	swap
+recovered-src/ExtraOptionPad.gd	1	unblockable	靠 find_parent(*PlayMainHBox) 找 PlaneContainer / LeftControls，按棋盘余高决定显隐	attach（4 个节点名都在）；与 ExtraOptionsHBox.gd 一起换	play_screen.gd 里 ExtraOptionPad 的 min.y 自写段	swap
+recovered-src/ViewFunctionPad.gd	1	unblockable	靠 find_parent(*PlayMainHBox) 读棋盘余高 + **ExtraOptionsHBox.force_show** 决定显隐	必须与 ExtraOptionsHBox.gd 一起换（读它的 force_show 字段）	play_screen.gd 里 ViewFunctionPad 显隐自写段	swap
+recovered-src/ViewFunctionsLabel.gd	1	unblockable	extends RichTextLabel，update_child_sizes() 遍历的是子节点（RichTextLabel 没有 Control 子节点）⇒ 挂上是**空操作**	attach 即可；验收必须写"挂上了但不可观测"，别把空操作记成复原	无（我方这一格没有字号代码）	swap
+recovered-src/GameNameContainer.gd	1	unblockable	归属（replay_lobby 已放开）；我方那行的关卡名走 replay_lobby.gd::_scale_game_label()（同一套除数，但是我们的代码）	attach 到 MarginContainer(GameNameContainer)；节点形状我方已对	client/src/screens/replay_lobby.gd 的 _scale_game_label() 两处调用 + 定义	swap
+recovered-src/CampaingLevelsButtons.gd	1	unblockable	① 归属（campaign 已放开）；② `GraphwarButton.new()` 造 21 个按钮 —— 我方 21 个关卡按钮是 **GwButton**（GDScript，负责把 input_text 送进命令总线），原版是扩展类 ⇒ 换上去就丢派发（selftest 的 level_N text/input_text 断言全崩）	**先裁定命令派发归属**：要么把 input_text→命令总线做进 src/_scaffold/graphwar_button_class.rs，要么承认视图层用我们的按钮。这是"控制器迁回 Rust"那件事的一部分，不是视图层能单独解决的	按现状不能删（campaign.gd 的 21 个按钮是派发载体）	hold（缺派发归属决策，越权）
+recovered-src/ShowExtraButtons.gd	1	unblockable	三处：① extends GraphwarButton（我方那个按钮是 GwButton，引擎拒绝 set_script）；② 深层节点路径；③ set_button_icon(load(res://show_extra_buttons.svg)) / hide_extra_buttons.svg —— 包里只有 .svg.import + .ctex，**源 .svg 不在包内**	① 那个按钮改成扩展类 GraphwarButton（同上派发问题）；② 两份 svg 需要资产层落地（tools/extract_assets.py 的产物里才可能解出）	无（我方这一格是"禁用"状态，见 git b462919）	hold（缺资产 + 缺 GraphwarButton 派发归属）
+recovered-src/SoldierIconMarginContainer.gd	2	unblockable	① 我方每槽是 1 个合成图标（40×40），原版每槽是**叠在同一点**的 4 个 TextureRect（Skin/Face/Hat/Empty）+ margin = -视口宽/100；负 margin 会让相邻槽互相压叠；② **game_setup 屏没有任何像素真值**（docs/06 §57 只做了 campaign/level_popup）⇒ 改了是"改好看了还是改坏了"都无从判定	① 士兵槽改成原版形状；② 先补 game_setup 屏真机帧。两条都不在本轮允许的改动范围（要素真值 + 无判据）	无（我方槽形状要重写，不是删段）	hold（无判据，宁可不动）
+recovered-src/ShopButtonsSize.gd	1	unblockable	算式本身可换；卡的是 `client/tools/selftest.gd:717` 把 **maxf(32,…) 下限**写进了期望值（原版 105 份里 maxi/max( 出现 0 次），headless 视口 64 px 下原版算出 −6、断言要 32	**改 selftest 那一条期望值**（去掉 32 下限、与原版同式）。selftest 是护栏 ⇒ 禁区，本轮不动	client/src/screens/player_screen.gd:413 的 maxf(32.0, …)	hold（护栏禁区，等 lead 裁定 headless 小视口口径）
+recovered-src/CampaingButtonSize.gd	0	dead-in-package	包里没有任何 .scn 引用它；21 个关卡按钮的字号现在由 campaign.gd 的 apply_font_scale() 给	无需接线。若有人要动，先拿"原版哪条路径加载它"的证据（目前零证据）	无（我方没有对应节点，也不为它凭空造节点）	hold（登记死文件）
+recovered-src/ExtraOptionsVbox.gd	0	dead-in-package	**1 字节的空文件**（只有换行，连 extends 都没有 ⇒ new() 出来不是 Node）；零 .scn 引用；play_screen.scn 里叫 ExtraOptionsVBox 的节点**没有脚本**	无需接线（作者把它清空后忘了删）	无	hold（登记死文件）
+recovered-src/LevelTitleContainer.gd	0	dead-in-package	11 行空壳（_ready/_process 都 pass），零 .scn 引用	无需接线	无	hold（登记死文件）
+recovered-src/OffsetLabel.gd	0	dead-in-package	17 行（给子节点写 min.x = 屏宽×0.12），零 .scn 引用；play_screen.scn 里叫 OffsetLabel 的 Label 节点**没有脚本**	无需接线。play_screen.gd:599 那行"原版是运行时 new() 的"注释应改成"包里零引用"（该文件本轮只删被替换的仿制段，不顺手改注释）	无	hold（登记死文件）
+recovered-src/ResizeContainer.gd	0	dead-in-package	17 行（custom_minimum_size = 整个视口），零 .scn 引用	无需接线	无	hold（登记死文件）
+recovered-src/UnlockButton.gd	0	dead-in-package	11 行空壳（extends GraphwarButton，_ready/_process 都 pass），零 .scn 引用；player_screen.scn 里那个 UnlockButton 按钮节点**没有脚本**（它所在的 HBox 挂的是已换上的 UnlockButtonSize.gd）	无需接线；即使接也挂不上（extends GraphwarButton ≠ GwButton）	无	hold（登记死文件）
+recovered-src/endgame_pop_up.gd	0	dead-in-package	**名字最容易看错**：原版是 9 行空壳，零 .scn 引用（endgame_pop_up.scn 的根节点 EndgamePopUp 本身没有脚本）。真正填内容的是 Rust 的 graphwar_play_screen_control：NODE_FUNCS 把 VictoryPlayerContainer*/TeamVictoryLabel/SelfVictoryLabel 映到 0x3d9000(FN_READY_LABELS)/0x3da130(FN_SHOW_VICTORY)	**真正缺口在 Rust 侧**：把 FN_SHOW_VICTORY / FN_READY_LABELS 接到节点层（现在只有纯逻辑、没有挂节点的口）。接上之前换上去 = 弹窗变空壳 ⇒ 我方 client/src/screens/endgame_pop_up.gd（236 行仿制控制器）**保留并明确标注仿制**	无（不能删：删了弹窗就空了）	hold（死文件 + Rust 节点层未接）
