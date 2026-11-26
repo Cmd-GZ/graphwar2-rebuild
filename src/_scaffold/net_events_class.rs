@@ -377,6 +377,10 @@ pub fn dispatch(ev: &WireEvent<'_>) -> Calls {
             }
         }
         WireEvent::QueueDestroyObstacle { x, y, radius, tick } => {
+            // T49：原版 `queue_destroy_obstacle`（`0x3f20f0`）的**键就是线上载荷里的 tick**
+            // （`0x3f20fe mov ebx,edx`，体内没有 `now + delay`）⇒ 这里把 tick 直接当键传；
+            // 负数 tick（线上不会出现）按 0 处理，不 panic。
+            let tick = u32::try_from(tick).unwrap_or(0);
             if let Some(m) = manager(&bus, |w| w.obstacle_manager()) {
                 m.borrow_mut().table.queue_destroy_obstacle(tick, x, y, radius);
                 calls.push("obstacle_manager::queue_destroy_obstacle");

@@ -967,139 +967,16 @@ impl FunctionTable {
     }
 }
 
-/// 障碍表：**我方形状**，接的是原版 `GraphwarObstacleManager` 的那几个入口
-/// （`fixtures/name_to_addr.tsv`：`new` `0x3f2360`、`add_obstacle` `0x3f17a0`、
-/// `destroy_obstacle` `0x3f1b30`、`clear_obstacles` `0x3f19a0`、
-/// `queue_destroy_obstacle` `0x3f20f0`、`handle_tick_event` `0x3f1d30`、
-/// `is_obstacle` `0x3f15b0`/`GraphwarObstacleData::draw_circle` `0x3f11e0`）。
+/// 障碍表：**我方形状**的类型名，**定义已经搬回原版模块**（T49 / `task-45`）。
 ///
-/// 掩膜本身不是这里实现的：光栅化用 `plane::rasterize`（与 `0x3f11e0` 同构，
-/// 已被 unicorn 对拍过），单点查询用 `plane::is_occupied`（与 `0x3f15b0` 同构）。
+/// 原版把"掩膜 + 排队销毁"这两个状态写成 `GraphwarObstacleManager` 自己的方法
+/// （`src/graphwar_obstacle_manager.rs`，`impl` 就在那个文件里）；我方历史上写在**本文件**，
+/// 违反 `AGENTS.md` §4「文件名就是证据」——T36 审计（`docs/06` §86.4）把这列成第 ① 处。
 ///
-/// **实证到的**（x86 2026-08-28，`观测`）：
-///
-/// ```text
-// new                    0x3f2360  末尾 subscribe 'tick_event'（len 0xa）⇒ 只订阅 1 条
-// add_obstacle           0x3f17a0  0x3f1876 0x7fff…+0x29 → tag 0x…28 = 40 AddObstacle
-// destroy_obstacle       0x3f1b30  0x3f1c09 0x7fff…+0x2a → tag 0x…29 = 41 DestroyObstacle
-// queue_destroy_obstacle 0x3f20f0  0x3f22b2 movabs 0x800000000000002a = 42 QueueDestroyObstacle
-// handle_tick_event      0x3f1d30  取 event[+8]（TickEvent 的 tick），按 0x18 步长遍历到期项，
-//                                  逐个调 destroy_obstacle（0x3f1dd0）
-// ```
-///
-/// ⚠️ 到期时刻的算法：`queue_destroy_obstacle` 里那张表**没逐条解**；
-/// 本层用 `docs/44` 实测的 165 tick（`game.rs::DESTROY_DELAY_TICKS`）当延迟，
-/// 这是**推断**（缺的证据：`0x3f20f0` 里那个加法）。
-pub struct ObstacleTable {
-    mask: Vec<u8>,
-    /// 还在场上的障碍（中心 + 半径，与 `plane::rasterize` 的入参同口径）。
-    obstacles: Vec<(f64, f64, f64)>,
-    /// 排队待销毁：`(到期 tick, x, y, 半径)`。
-    pending: Vec<(i64, f64, f64, f64)>,
-    /// 订阅名（`tick_event`，来自 `new` 的那条 `subscribe`）。
-    pub subscribed: Vec<&'static str>,
-    /// 发件箱。
-    pub outbox: Vec<Event>,
-}
-
-impl Default for ObstacleTable {
-    fn default() -> Self {
-        Self {
-            mask: empty_mask(),
-            obstacles: Vec::new(),
-            pending: Vec::new(),
-            subscribed: vec!["tick_event"],
-            outbox: Vec::new(),
-        }
-    }
-}
-
-impl ObstacleTable {
-    /// `new`（`0x3f2360`）：空掩膜 + 空表 + 一条订阅。
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// `add_obstacle`（`0x3f17a0`）：往掩膜里画实心圆（`fill = 0x00`）+ 发 `AddObstacle`(40)。
-    pub fn add_obstacle(&mut self, x: f64, y: f64, radius: f64) {
-        rasterize(&mut self.mask, x, y, radius, 0x00);
-        self.obstacles.push((x, y, radius));
-        self.outbox.push(Event::AddObstacle);
-    }
-
-    /// `is_obstacle`（`0x3f15b0`）：单点碰撞。**越界算命中**（`plane::is_occupied` 的口径）。
-    pub fn is_obstacle(&self, x: f64, y: f64) -> bool {
-        is_occupied(&self.mask, x, y)
-    }
-
-    /// `queue_destroy_obstacle`（`0x3f20f0`）：登记一条**延迟**销毁 + 发
-    /// `QueueDestroyObstacle`(42)。延迟取 `DESTROY_DELAY_TICKS`（165，**推断**，见类型文档）。
-    pub fn queue_destroy_obstacle(&mut self, now_tick: i64, x: f64, y: f64, radius: f64) {
-        self.pending.push((now_tick + DESTROY_DELAY_TICKS, x, y, radius));
-        self.outbox.push(Event::QueueDestroyObstacle);
-    }
-
-    /// `destroy_obstacle`（`0x3f1b30`）：立刻挖洞（把掩膜刷回 `0xFF`）+ 发 `DestroyObstacle`(41)。
-    pub fn destroy_obstacle(&mut self, x: f64, y: f64, radius: f64) {
-        rasterize(&mut self.mask, x, y, radius, 0xFF);
-        self.obstacles.retain(|&(ox, oy, or)| !(ox == x && oy == y && or == radius));
-        self.outbox.push(Event::DestroyObstacle);
-    }
-
-    /// `clear_obstacles`（`0x3f19a0`）：整张掩膜刷空 + 发 `ClearObstacles`(39)。
-    pub fn clear_obstacles(&mut self) {
-        self.mask = empty_mask();
-        self.obstacles.clear();
-        self.pending.clear();
-        self.outbox.push(Event::ClearObstacles);
-    }
-
-    /// `handle_tick_event`（`0x3f1d30`）：判别值必须是 **0**（`tick_event`）；
-    /// 把 `due <= now` 的排队项逐个 `destroy_obstacle` 掉，返回这次销毁的坐标。
-    pub fn handle_tick_event(&mut self, tag: u16, now: i64) -> Result<Vec<(f64, f64)>, ()> {
-        if tag != TICK_EVENT_TAG {
-            return Err(());
-        }
-        let mut due: Vec<(i64, f64, f64, f64)> = Vec::new();
-        self.pending.retain(|e| {
-            if e.0 <= now {
-                due.push(*e);
-                false
-            } else {
-                true
-            }
-        });
-        due.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-        let mut out = Vec::with_capacity(due.len());
-        for (_, x, y, r) in due {
-            self.destroy_obstacle(x, y, r);
-            out.push((x, y));
-        }
-        Ok(out)
-    }
-
-    /// 掩膜（只读；验收/单测用）。
-    pub fn mask(&self) -> &[u8] {
-        &self.mask
-    }
-
-    pub fn obstacles(&self) -> &[(f64, f64, f64)] {
-        &self.obstacles
-    }
-
-    /// 还在排队的销毁条数。
-    pub fn pending_len(&self) -> usize {
-        self.pending.len()
-    }
-
-    pub fn take_outbox(&mut self) -> Vec<Event> {
-        std::mem::take(&mut self.outbox)
-    }
-
-    pub fn outbox_len(&self) -> usize {
-        self.outbox.len()
-    }
-}
+/// 现在：类型与 6 个方法体都在 [`crate::graphwar_obstacle_manager::ObstacleTable`]，
+/// 本文件只 `pub use` 再导出 ⇒ **调用方（`net_events_class`、交互断言、`assemble_check.gd`）
+/// 一字未改**（路径 `root_wiring::ObstacleTable` 不变）。
+pub use crate::graphwar_obstacle_manager::ObstacleTable;
 
 // ---------------------------------------------------------------------------
 // 4. 演示数据（**我方选择**：不是原版的对局数据）
@@ -1682,13 +1559,18 @@ impl RootWiring {
         }
 
         // ③ ObstacleManager：`add_obstacle` → `is_obstacle` → 排队销毁 → 到期挖洞
+        //
+        // T49：`queue_destroy_obstacle` 的键**就是实参 tick**（原版 `0x3f20fe`，体内无加法）
+        // ⇒ 探针直接登记 `165`，于是 `164` 什么也不销毁、`165` 销毁 1 条。
+        // 期望字符串（本函数末尾的 `expected_selftest` 与 `client/tools/assemble_check.gd`）
+        // 因此**一个字都不用改**。
         if let Some(obstacle) = self.obstacle_manager() {
             let mut obstacle = obstacle.borrow_mut();
             obstacle.table.clear_obstacles();
             obstacle.table.add_obstacle(0.0, 0.0, 1.0);
             out.push(("obstacle.hit_after_add", obstacle.table.is_obstacle(0.0, 0.0).to_string()));
             out.push(("obstacle.hit_far", obstacle.table.is_obstacle(20.0, 12.0).to_string()));
-            obstacle.table.queue_destroy_obstacle(0, 0.0, 0.0, 1.0);
+            obstacle.table.queue_destroy_obstacle(165, 0.0, 0.0, 1.0);
             out.push(("obstacle.pending", obstacle.table.pending_len().to_string()));
             let early = obstacle.table.handle_tick_event(TICK_EVENT_TAG, 164).map(|v| v.len()).unwrap_or(0);
             out.push(("obstacle.due_164", early.to_string()));

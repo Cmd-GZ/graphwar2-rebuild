@@ -85,19 +85,42 @@
 //!
 //! | 项 | 档位 | 缺什么 |
 //! |---|---|---|
-//! | `draw_circle` 写入网格的**具体字节值** | **推断**（非 `0xff`） | 没逐条读 660 字节函数体里的 `strb` 常量 |
+//! | `draw_circle` 写入网格的**具体字节值** | ~~推断~~ → **逐位**（T49 更正） | **不是常量，是第 5 个实参**：`0x3f143a mov byte ptr [r8+r12], dil`（`dil` = 入口 `edx` 存到 `[rsp+0x10]` 的那个字节，`0x3f1411` 取回）。两个调用点各自传常量：`add_obstacle` `0x3f1815 xor edx,edx` = **0x00**；`destroy_obstacle` `0x3f1ba5 mov edx,0xff` = **0xff** |
 //! | 网格索引公式的**出处**（`1000/50`、`+500`、`+300`） | **观测**（常量与算式） | 常量含义（棋盘 50 单位 → 1000 像素）是**推断** |
-//! | `Vec<[f64;3]>` 里三个 f64 的**语义** | **推断**（中心 x/y + 半径） | `is_destruction_queued` 只做逐分量 `ucomisd` 比较，没有语义；`draw_circle` 的入参是 `(x, y, r)` 但**顺序未证** |
-//! | `queue_destroy_obstacle` 的**到期时间算法** | **未知** | 键是"tick"这一点由 `handle_tick_event` 用 tick 查表**观测**到；`now + ?` 的加法没解（§44.7 照旧） |
-//! | 我们这份布局的**行为** | 未做 | 掩膜/挖洞纯逻辑仍在 `src/plane.rs`；本文件只有布局 |
+//! | `Vec<[f64;3]>` 里三个 f64 的**语义** | ~~推断~~ → **逐位**（T49 更正） | 顺序 = **(x, y, radius)**：`0x3f2275 movups [rax+rcx*8], xmm1`（xmm1 = `[r15]` 两个 f64 = 位置对）、`0x3f227f movsd [rax+rcx*8+0x10], xmm0`（xmm0 = 入口的第一实参 = 半径） |
+//! | `queue_destroy_obstacle` 的**到期时间算法** | ~~未知~~ → **逐位**（T49 更正） | **函数体内没有那个加法**：`0x3f20fe mov ebx,edx` 直接把**第三实参 tick** 当 HashMap 键（`0x3f210c` 起用它做 `hash_one`）。"延迟多久"由**调用方**决定，不在本模块 |
+//! | **`handle_tick_event` 的错误路径** | **逐位** | 判别值必须 = `0x8000000000000000`（**tag 0 = `TickEvent`**），否则 `0x3f1d40 cmp rax,0x8000000000000000; jno → 0x3f1e08` 走 **`explicit panic`**（串 `0x1bfcbf`，长度 `0xe`）。我方保留 `Result` 返回形状（调用方不动），`Err` 分支注明原版是 panic |
+//! | 我们这份布局的**行为** | **已落码**（T49） | 见 §六：`ObstacleTable` 的 6 个方法（原位在 `_scaffold/root_wiring.rs`） |
+//!
+//! # 六、行为层 `ObstacleTable`（T49：从 `_scaffold/root_wiring.rs` 搬回本模块）
+//!
+//! ⚠️ **这个类型名不是原版的**：原版把行为写成 `GraphwarObstacleManager` 自己的方法（`impl` 就在
+//! 本文件）。我方历史上把它写成了 `_scaffold/root_wiring.rs` 里的一张"表"，违反
+//! `AGENTS.md` §4「文件名就是证据」——T36 审计（`docs/06` §86.4）把它列为第 ① 处。
+//! 本轮（T49）把**方法体**搬回本模块，`_scaffold/root_wiring.rs` 只留
+//! `pub use crate::graphwar_obstacle_manager::ObstacleTable;`，**调用方零改动**。
+//!
+//! 搬过来时按指令改了三处**我方自造**的语义（不是原样搬迁）：
+//!
+//! 1. `queue_destroy_obstacle` 的键改成**实参 tick**（原先我方写 `now_tick + DESTROY_DELAY_TICKS`）；
+//! 2. `handle_tick_event` 改成**按键等值删整条**（原先我方扫"所有 `due <= now`"）；
+//! 3. `pending` 从 `Vec<(i64, x, y, r)>` 换成原版 `+0x20` 那个 `HashMap<u32, Vec<[f64; 3]>>`。
+//!
+//! 另外删掉了我方发明的第二个状态 `obstacles: Vec<(f64, f64, f64)>`（原版 80 字节里**没有**
+//! 这张表，见 §二），掩膜改为持有原版内层类型 [`GraphwarObstacleData`]（就是 `+0x18` 里那把
+//! `Arc<Mutex<_>>` 装的东西）。
+
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex};
 
+use crate::events::Event;
 use crate::graphwar_event_queue::GraphwarEventQueue;
+use crate::graphwar_life_manager::TICK_EVENT_TAG;
 use crate::graphwar_module_container::GraphwarModuleContainer;
+use crate::plane::{empty_mask, is_occupied, rasterize};
 
 /// 原版 `GraphwarObstacleData`（**24 字节**，`观测`）：一张 1000×600 的字节网格。
 ///
@@ -180,6 +203,166 @@ impl GraphwarObstacleManager {
             data: Arc::new(Mutex::new(GraphwarObstacleData::new())),
             pending_destroy: HashMap::new(),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 行为层（原版 `GraphwarObstacleManager` 的 6 个方法；T49 从 `_scaffold/root_wiring.rs` 搬回）
+// ---------------------------------------------------------------------------
+
+/// 障碍管理的**行为**：掩膜网格 + 排队销毁表 + 发件箱。
+///
+/// 见 §六：类型名是我方的（原版没有独立类型，行为是 `GraphwarObstacleManager` 自己的方法），
+/// 但**每个方法体都在下面指到了原版 vaddr**，且都是按指令校正过的语义。
+///
+/// 与布局类型 [`GraphwarObstacleManager`] 的分工：那个是**字段布局**（`size_of == 80` 硬闸），
+/// 这个是**行为**；两者字段并不一一对应（布局里的 `event_queue`/`container`/`self_weak` 是
+/// 接线用的对象图，本层没有对象图 ⇒ 用 `subscribed`/`outbox` 的观测形状代替，这是
+/// **我方接线**，不是复原物）。
+pub struct ObstacleTable {
+    /// 原版 `+0x18` 那把 `Arc<Mutex<…>>` 的内层数据（1000×600 网格，`0xff` = 空）。
+    ///
+    /// 原版是 `Rc` 里共享的（`new` 造、5 个方法各自 `lock`）；本层没有共享者 ⇒ 直接持有值。
+    data: GraphwarObstacleData,
+    /// 原版 `+0x20`（48 B）：`tick → 该 tick 要销毁的圆`。
+    ///
+    /// 键 = **调用方传进来的 tick**（`0x3f20fe`）；值元素 = `[x, y, radius]`（`0x3f2275`/`0x3f227f`）。
+    pending: HashMap<u32, Vec<[f64; 3]>>,
+    /// 订阅名（原版 `new` 末尾那一条 `tick_event`，`0x3f23f0` 经 GOT `0x9bac88`）。
+    pub subscribed: Vec<&'static str>,
+    /// 发件箱（原版是共享 `GraphwarEventQueue` 上的 `add_event`；本层先存后搬）。
+    pub outbox: Vec<Event>,
+}
+
+impl Default for ObstacleTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ObstacleTable {
+    /// 原版 `GraphwarObstacleManager::new`（x86 **`0x3f2360`**）：空网格 + 空排队表 + 1 条订阅。
+    pub fn new() -> Self {
+        // 0x3f2360 — 网格 `memset(0xff, 600000)`、`pending` 空、末尾 subscribe('tick_event')
+        Self {
+            data: GraphwarObstacleData::new(),
+            pending: HashMap::new(),
+            subscribed: vec!["tick_event"],
+            outbox: Vec::new(),
+        }
+    }
+
+    /// 原版 `add_obstacle`（x86 **`0x3f17a0`**）：往网格里画实心圆 + 发 `AddObstacle`(40)。
+    ///
+    /// 实参：`(radius: f64, pos: &(f64, f64))`（`xmm0` / `rsi`，见 `0x3f17ae`–`0x3f1803`）；
+    /// fill 常量 = **`0x00`**（`0x3f1815 xor edx,edx`）；载荷 = `pos` 对 + `radius`
+    /// （`0x3f186b [rsp+0x28]`、`0x3f1870 [rsp+0x38]`）；tag = 40（`0x3f1876 add r13,0x29`）。
+    pub fn add_obstacle(&mut self, x: f64, y: f64, radius: f64) {
+        // 0x3f17a0 — draw_circle(fill=0x00) 然后 add_event(tag 40)
+        rasterize(&mut self.data.cells, x, y, radius, 0x00);
+        self.outbox.push(Event::AddObstacle);
+    }
+
+    /// 原版 `is_obstacle`（x86 **`0x3f15b0`**）：单点是否被挡。
+    ///
+    /// 语义（**逐位**）：先算 `ix = sat_i32(1000*x/50 + 500)`、`iy = sat_i32(1000*y/50 + 300)`；
+    /// **越界直接算命中**（`0x3f1669 mov al,1` 在两条 `cmp …; ja` **之前**）；界内
+    /// `grid[iy*1000+ix] != 0xff`（`0x3f1697 cmp byte ptr [rax+rdi],0xff` / `setne`）。
+    ///
+    /// 这正是 `plane::is_occupied` 的语义（那个函数是同一地址的逐行对照版），所以直接复用。
+    pub fn is_obstacle(&self, x: f64, y: f64) -> bool {
+        // 0x3f15b0 — 越界=真；界内 grid[idx] != 0xff
+        is_occupied(&self.data.cells, x, y)
+    }
+
+    /// 原版 `queue_destroy_obstacle`（x86 **`0x3f20f0`**）：把"到期销毁"登记进 `pending[tick]`。
+    ///
+    /// 实参（**逐位**）：`(pos: &(f64, f64) = rsi, radius: f64 = xmm0, tick: u32 = edx)`；
+    /// `0x3f20fe mov ebx,edx` ⇒ **键就是这个 tick，函数体内没有 `now + delay`**；
+    /// 值插入 `(x, y, radius)`；随后发 `QueueDestroyObstacle`(42)（`0x3f22b2 movabs 0x800000000000002a`，
+    /// 载荷 = `pos` + `radius` + `tick`：`0x3f22a3`/`0x3f22a8`/`0x3f22ae`）。
+    ///
+    /// ⚠️ **就地更正**：原先本方法（在 `_scaffold`）写的是 `now_tick + DESTROY_DELAY_TICKS`（165），
+    /// 那是我方从实测倒推出来的**推断**，指令里没有这个加法。延迟多少由**调用方**决定。
+    pub fn queue_destroy_obstacle(&mut self, tick: u32, x: f64, y: f64, radius: f64) {
+        // 0x3f20f0 — pending[tick].push([x,y,radius])，然后 add_event(tag 42)
+        self.pending.entry(tick).or_default().push([x, y, radius]);
+        self.outbox.push(Event::QueueDestroyObstacle);
+    }
+
+    /// 原版 `destroy_obstacle`（x86 **`0x3f1b30`**）：立刻挖洞 + 发 `DestroyObstacle`(41)。
+    ///
+    /// fill 常量 = **`0xff`**（`0x3f1ba5 mov edx,0xff` ⇒ 刷回"空"）；tag = 41（`0x3f1c09 add r13,0x2a`）。
+    pub fn destroy_obstacle(&mut self, x: f64, y: f64, radius: f64) {
+        // 0x3f1b30 — draw_circle(fill=0xff) 然后 add_event(tag 41)
+        rasterize(&mut self.data.cells, x, y, radius, 0xFF);
+        self.outbox.push(Event::DestroyObstacle);
+    }
+
+    /// 原版 `clear_obstacles`（x86 **`0x3f19a0`**）：整张网格刷回 `0xff` + 发 `ClearObstacles`。
+    ///
+    /// `0x3f19fa mov esi,0xff` → `memset(ptr, 0xff, len)`（GOT `0x9bad08`）；
+    /// tag = 39（`docs/02-module-map.md` 的事件表，`Event::ClearObstacles`）。
+    pub fn clear_obstacles(&mut self) {
+        // 0x3f19a0 — memset(0xff) 然后 add_event(tag 39)
+        self.data.cells = empty_mask();
+        self.outbox.push(Event::ClearObstacles);
+    }
+
+    /// 原版 `handle_tick_event`（x86 **`0x3f1d30`**）：收到 `TickEvent` ⇒ 销毁**这个 tick** 登记的那些圆。
+    ///
+    /// **逐位**：
+    /// * `0x3f1d40 cmp rax,0x8000000000000000; jno → 0x3f1e08` ⇒ 判别值必须是 **0**，
+    ///   否则走 `explicit panic`（原版**没有**"忽略坏事件"的分支）；
+    /// * `0x3f1d56 mov eax,[rsi+8]` ⇒ 键 = 载荷里的 tick；
+    /// * `0x3f1d80 call 0x4863a0` = `remove_entry`（**按键等值删整条**，不是扫 `due <= now`）；
+    /// * 然后按 `0x18` 步长遍历该 `Vec<[f64;3]>`，每个元素调 `destroy_obstacle`（`0x3f1dd0`）。
+    ///
+    /// 返回这次销毁掉的 `(x, y)`（原版返回 `()`；这里保留 `Result` 形状是为了不改调用方，
+    /// `Err` = 原版 panic 的那条路径）。
+    pub fn handle_tick_event(&mut self, tag: u16, tick: u32) -> Result<Vec<(f64, f64)>, ()> {
+        // 0x3f1d30 — 判别值必须 = TickEvent(0)（原版否则 panic）；remove_entry(tick) 后逐个 destroy
+        if tag != TICK_EVENT_TAG {
+            return Err(());
+        }
+        let Some(entry) = self.pending.remove(&tick) else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::with_capacity(entry.len());
+        for [x, y, r] in entry {
+            self.destroy_obstacle(x, y, r);
+            out.push((x, y));
+        }
+        Ok(out)
+    }
+
+    /// 掩膜（只读；验收/单测用）。原版没有这个 getter，它读的是 `+0x18` 那个 `Arc` 里的 `Vec`。
+    pub fn mask(&self) -> &[u8] {
+        &self.data.cells
+    }
+
+    /// 还在排队的销毁条数（`pending` 里所有 `Vec` 的长度和）。
+    ///
+    /// ⚠️ 原版没有这个方法；它存在的理由是 `assemble_check.gd` 的既有断言读它。
+    pub fn pending_len(&self) -> usize {
+        self.pending.values().map(|v| v.len()).sum()
+    }
+
+    /// 排队表里**有哪些 tick**（升序）。原版没有 getter；验收用。
+    pub fn pending_ticks(&self) -> Vec<u32> {
+        let mut ticks: Vec<u32> = self.pending.keys().copied().collect();
+        ticks.sort_unstable();
+        ticks
+    }
+
+    /// 取走发件箱。
+    pub fn take_outbox(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// 发件箱里有几条。
+    pub fn outbox_len(&self) -> usize {
+        self.outbox.len()
     }
 }
 
