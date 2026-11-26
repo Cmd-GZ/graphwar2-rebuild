@@ -8507,3 +8507,262 @@ python3 tools/frame_capture.py --side ours     --flow replay --seed-replays --ou
 python3 tools/frame_diff.py --orig <W>/orig --mine <W>/mine --screens menu,replay_lobby,replay_play,replay_end \
   --out <W>/fd.tsv --blocks-out <W>/fdb.tsv --json <W>/fd.json
 ```
+
+## 63. 回放播放时钟**解出来了**：`GraphwarTickHandler` 的 16 666 666 ns 定步 + `nanos==1e9` 的暂停标记 —— "载入即暂停"从**画面**升到**指令 × 真机双证**（2026-11-26，任务 T12 / `task-9`）
+
+> 任务书：`.agent-work/specs/T12-replay-clock.md`（共享任务 `task-9`）。分支 `agent/frida-truth`，基于 master `2f64674`。
+> 前情：**§56.6 #7 / `docs/16` §61.4** 里"原版回放界面的时序与控件"= **未知**；T4（§55）把"载入即暂停"定成
+> `观测`（只有真帧：45 s 帧差 0 px、▶ 图标不变），并写明"缺指令级证据说明它内部的 `playing` 标志初值"。
+> 本节把那条缺口补上：**时钟形状逐条读出来了，并且用 frida 在真机上把同一批字段读出来对照**。
+>
+> 工具（都在本轮入库）：
+> * 静态：[`tools/replay_clock_disasm.py`](../tools/replay_clock_disasm.py)（新）—— 本文件只做四件事：`fde` / `func`（带**重定位已应用**的 `panic::Location`、GOT 槽真值、`.rodata` 常量解码）/ `imm` / `locs`；
+> * 动态：[`tools/frida_replay_clock.js`](../tools/frida_replay_clock.js) + [`tools/frida_replay_clock.py`](../tools/frida_replay_clock.py)（新）—— 一个进程树里跑完"起 Xvfb（TCP）→ 起原版 → attach → 点进回放屏 → 读数 → 收 JSONL"；
+> * 真值表：[`fixtures/replay_clock_observations.tsv`](../fixtures/replay_clock_observations.tsv)（新，569 行：`summary` 结论行 + `event` 钩子事件 + `sample` 每 100 ms 时基快照）。
+
+### 63.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | **播放时钟是什么形状** | **不是**浮点累加器，也不是"每帧 `delta × 60`"。全游戏只有**一个**时基 `GraphwarTickHandler`（`graphwar_tick_handler.rs`）：`(secs:u64, nanos:u32)` 三元组 + `tick: u32`。`tick()` 每次把**排程对**加 **`16_666_666 ns`**（`0xfe502a`）再 `tick += 1`；`GameClient::process` 的循环是 `while get_time_to_tick() != 未到期 { GameClient::tick(); 事件泵(); }`。**回放播放头 = 这个 `tick` 计数器的值**（回放器 `process` 每帧把它镜像到自己的 `+0x58`） | **观测**（指令）+ **观测**（真机，两次独立运行） |
+| ② | **进屏时 `playing` 初值** | **暂停**（`playing = false`）。"暂停"不是布尔，而是**时基的第 3 个 `(secs,nanos)` 对**：`nanos == 1_000_000_000`(1e9) ⇒ **没暂停**；否则**暂停中**，且这个值就是"暂停那一刻的 `Instant`"。`is_paused()` 的指令就是 `cmp`(1e9)+`setne`。真机读数：进屏后 **5.61 s / 3.00 s 内 `tick` 一动没动（0.00 tick/s）**，而暂停标记**已置**（58/58、32/32 采样） | **观测**（指令 + 真机） ⇒ 比 T4 的"画面"**升了一档** |
+| ③ | **谁来置的** | 载入路径调 **`ReplayPlayer::go_to_next_checkpoint`**（真机 `caller=0x515057`，调用点 `0x515052`，宿主是一个 `graphwar_backend.rs` 函数 `0x514f20`；**不是** `go_to_first_checkpoint`，后者本轮 0 次调用）。该函数尾部：**"若当前没暂停，就把暂停标记写成本刻的 `now()`"**（`0x3d697a cmp` / `0x3d6994 call now` / `0x3d699e`+`0x3d69a2` 两次 store） | **观测**（指令 + 真机调用者） |
+| ④ | **推进速率** | **60.0 tick/s**：6.55 s/394 tick = **60.13**；3.00 s/181 = **60.29**；2.11 s/127 = **60.30**；2.15 s/129 = **60.03**。并且**排程对每 tick 的增量实测 = `16 666 666.000 ns`**（两次独立运行，394 / 181 tick 上算出来都是整数 16 666 666）⇒ 与 §44 的 **60.00 tick/s** 一致，且把"为什么是 60"落到一条立即数上 | **观测**（真机）+ **观测**（指令） |
+| ⑤ | **⏮/⏭ 一次跳多少** | 跳转**不是**"走多少个 tick"，是**直接改写播放头 + 把中间的事件全部注入一遍**。检查点表真机读出来 = **`[558, 1290, 1492, 2225, 2276]`**（u32 数组）。实测一次 ⏭ 跳 `997→1290`(+293)、`1290→1492`(+202)、`779→1290`(+511)；⏮ 跳 `1492→1290`(−202)。**跳完就暂停**（见 ③ 的同一段尾部） | **观测**（真机 + 指令） |
+| ⑥ | **载入停在第几 tick** | **558**。T4（§55.2）当时只能"推断"到区间 `[550, 615)` 并取"第 1 个结算批的 `exec_tick`=558"——本轮**真机直接读到 `tick=558`**，且载入那次 `inject_events(start=0, until_tick=558, 事件数=104)` 的钩子记录把它钉死 | **观测**（真机） ⇒ T4 那条 `推断` 升 `观测` |
+| ⑦ | **静态与 frida 一致吗** | **七个字段/五个常数/四条控制流全部一致**，无一处矛盾（逐项见 §63.6）。三处**必须靠真机才能定**的地方（谁是载入调用者、跳转量、`is_paused` 返回值）也一致 | —— |
+
+### 63.1 先纠两条**任务前提**（都证伪了，都不是"口径不同"）
+
+| # | 任务书/旧文档的说法 | 实测 | 怎么判的 |
+|---|---|---|---|
+| 1 | 任务书写"`GraphwarReplayScreenControl::process` = Ghidra `0x4c6f40` = **ELF vaddr `0x3c6f40`**，Ghidra 地址 = vaddr + `0x100000`" | **`0x4c6f40` 本身就是 ELF vaddr**（FDE `0x4c6f40..0x4c918b` = **8779 字节**，任务书写 8784；有标准序言 `push rbp/r15/.../sub rsp,0x278`）。按任务书减 `0x100000` 会落到 **`0x3c6f40`——那是另一个函数的中段**（FDE `0x3c6e90..0x3c6fff`，且 `panic::Location` 一个都不引用 `graphwar_replay_control.rs`） | `tools/replay_clock_disasm.py fde 0x4c6f40` / `locs 0x4c6f40`（= 8 条 `src/graphwar_replay_control.rs` 锚，含 `:100:76` 即 `fn process` 声明处）与 `locs 0x3c6f40`（= 空）对照 |
+| 2 | `docs/16` §56.6 #7 / §61.4 把"回放播放时钟没解"挂在 **`0x4c6f40`** 名下 | **时钟根本不在 `0x4c6f40` 里**。该函数 188 个 `call`（其中 94 条间接调用，91 条能经 `.rela.dyn` 解出 GOT 槽目标）里**没有一条**指向时基（`0x519450/0x519840/0x519530`）或回放播放器的任何方法；整函数**零条 `xmm` 指令**。时钟在 **`graphwar_tick_handler.rs`**（`get_time_to_tick` / `tick` / `get_fractional_tick`）+ **`graphwar_replay_player.rs`**（`process` / `inject_events` / `go_to_*_checkpoint` / `toggle_pause` / `pause` / `is_paused`）+ **`graphwar_game_client.rs`**（`process` 的 tick 循环，§44 已读）三处 | 正对照：同一套 GOT 槽解析在**别的**函数上能解出目标（91/94），所以"没解出来"不是扫描器坏了 |
+
+⇒ 由此得出**给后续任务的一条结论**：想读回放时钟，**别再盯 `0x4c6f40`**；那是纯 UI（版式/按钮/文本），
+`docs/16` §65 会写它该怎么改。
+
+### 63.2 时基的形状：`GraphwarTickHandler`（`src/graphwar_tick_handler.rs`）
+
+字段偏移是**从指令的裸偏移**读出来的（`Rc<RefCell<…>>` 里的 `value` 起点 = `RcBox + 0x18`；`+0x10` 是 `RefCell` 借用标志、`[0]` 是强引用计数）：
+
+| 偏移（值内） | 类型 | 含义 | 指令证据 |
+|---|---|---|---|
+| `+0x00` / `+0x08` | `u64` / `u32` | **pair#1**：`now − pair#2`（缓存下来的"已经过时间"） | `0x51945f` 起把 pair#1 当被减数；`0x3d669a/0x3d669e` 写完 pair#1 |
+| `+0x10` / `+0x18` | `u64` / `u32` | **pair#2**：**排程时间**，每次 `tick()` 加 `16_666_666 ns`（nanos 溢出则 `secs += 1`） | `0x51984a` `mov rcx,[rdi+0x10]` / `0x51984e` `mov eax,[rdi+0x18]`；`0x51986c` `add eax,0xfe502a`；`0x519865` `add eax,0xc563862a`(= −983 333 334)+`inc rcx`；`0x519871/0x519875` 存回 |
+| `+0x20` / `+0x28` | `u64` / `u32` | **pair#3 = 暂停标记**。`nanos == 1e9` ⇔ **没暂停**；否则 = 暂停开始那一刻的 `Instant` | `0x519454` `mov esi,[rdi+0x28]`+`0x519457` `cmp esi,0x3b9aca00`；`0x519475` `mov rdi,[rbx+0x20]` |
+| `+0x38` | `Rc<RefCell<Vec<(u32, isize)>>>`-形 | **tick 历史队列**：每 tick 压一条 `(tick, isize::MIN)`，**每 60 tick 多压一条** `(tick, isize::MIN+1)`（= 每秒一条） | `0x519880`..`0x5198f5`：`0x5198c0` `imul ecx,ebp,0xeeeeeeef / ror ecx,2 / cmp ecx,0x4444444` 即 `tick % 60 == 0`（本机按同一算式验过：`x∈[0,200)` 成立的正好是 `0,60,120,180`） |
+| `+0x40` | `u32` | **`tick` 计数器**（★ 回放播放头就是它） | `0x519878` `mov ebp,[rdi+0x40]` / `0x51987b` `inc ebp` / `0x51987d` 存回；`0x3d73e8` `mov ebx,[r12+0x58]`（= 值内 `+0x40`）读它 |
+
+三个方法（`fixtures/module_funcs.tsv` / `fixtures/windows_name_to_addr.tsv` 的名字锚）：
+
+| RVA | 名字 | FDE 大小 | 干什么 |
+|---|---|---|---|
+| `0x519450` | `get_time_to_tick` | 217 B | 判决："到点了吗、还差多少"。**暂停时用 pair#3 当 `now()`**（`0x519475`）⇒ **时间被冻住**；没暂停时用 `0x9ba8f8`→`0x8f3a10`（`Instant::now()`）。返回 `Duration`，其 `nanos == 1e9` 表示**没到期** |
+| `0x519840` | `tick` | 267 B | 排程对 `+= 16_666_666 ns`（带进位）+ `tick += 1` + 往 `+0x38` 压历史（每 60 tick 多压一条） |
+| `0x519530` | `get_fractional_tick` | 267 B（`0x519530..0x51963b`） | `tick + (已过时间/0.016666666)` 的 `f64`（`0x5195da` `divsd xmm2,[.rodata 0x19f7f8]`；`0x5195e2` `mov eax,[rbx+0x40]`+`cvtsi2sd`+`addsd`） |
+
+**常量位置（逐条）**：
+
+| 常量 | 值 | 在哪 | 出现在哪条指令 |
+|---|---|---|---|
+| 一个 tick 的纳秒数 | **`16_666_666`** = `0xFE502A` | 立即数（不在 `.rodata`） | `0x51986c`（`tick`）、`0x5194b2`（`get_time_to_tick`）、`0x3d6470`（`inject_events` 里内联的那份 `tick`） |
+| 进位阈值 | `983_333_334` = `0x3A9C79D6` = `1e9 − 16_666_666` | 立即数 | `0x519851`（`tick`）/ `0x51948f`（`get_time_to_tick`）/ `0x3d6452`（内联那份） |
+| nanos 哨兵 | `1_000_000_000` = `0x3B9ACA00` | 立即数 | `0x519457`、`0x51848e`（§44 已登记）、`0x3d72c2`/`0x3d60dc`/`0x3d66a1`/`0x3d697a`/`0x3d6ad0`/`0x3d7685` … |
+| `f64` 周期（`fractional_tick` 用） | `0.016666666` | **`.rodata 0x19f7f8`**（bytes `21 09 9d 05 11 11 91 3f`） | 唯一引用点 `0x5195da` `divsd xmm2,[rip-0x379dea]` |
+| `f64` `1e9` / `2^52` | `1000000000.0` / `4503599627370496.0` | `.rodata 0x19eff8` / `0x19c000` | `0x5195ce` / `0x5195b6`（`u64→f64` 那条经典 `2^52` 技巧） |
+
+⚠️ 注意 `0.016666666` 是**截断**的 `1/60`（真值 `0.0166666666…`），而周期用的是**整数 `16_666_666 ns`**（真值 `16_666_666.67 ns`）
+⇒ 时钟名义频率 = `1e9/16_666_666` = **60.0000024 Hz**，比 60 快 **2.4e-6 相对误差**——这就是 §44 五次运行量到 `59.94–60.01` 的来源，
+**不是**抖动，是**常数就写成这样**。
+
+### 63.3 tick 循环与"delta 从不被读"的位置（§44 的邻居）
+
+`GraphwarGameClient::process`（`0x518400`，295 B，`src/graphwar_game_client.rs:130/132` 的 `panic::Location` 在尾部）：
+
+```
+0x518434  call 0x46aa50                 ; upgrade 时基（Weak→Rc），null ⇒ panic 130:41
+0x518470  <loop>
+0x518470    cmp qword [r12+0x10],0     ; RefCell 借用标志
+0x518484    call 0x519450              ; get_time_to_tick(&mut 时基) → (rax:secs, edx:nanos)
+0x51848e    cmp edx,0x3b9aca00         ; ★ nanos == 1e9 ⇒ 没到期 ⇒ 退出循环
+0x518494    jne  (到期)
+0x518499    call r13                   ; r13 = [GOT 0x9baf38] = 0x518240 GameClient::tick
+0x51849f    call rbp                   ; rbp = [GOT 0x9baef8] = 0x3d3630 事件泵
+0x5184a1    jmp 0x518470               ; 一次循环 = 一个 tick
+```
+
+**整函数零条 `xmm`**——§44 ⑥ 的"`delta` 从不被读"在本轮再确认（这条不变）。
+
+### 63.4 回放播放器：playhead 在哪、怎么走、怎么跳
+
+`GraphwarReplayPlayer`（`src/graphwar_replay_player.rs`）的状态字段（`value` 起点同上；3 处独立函数互相印证）：
+
+| 偏移 | 类型 | 含义 | 指令证据 |
+|---|---|---|---|
+| `+0x00` | 枚举 tag（写 `qword 1`、读 `byte`/`dword`） | 播放状态；根节点侧判 `== 2` 时跳过播放控制 | `0x3d744a` `mov qword [r15],1`；`0x3d73f6` `cmp byte [r15],0`；`0x3b1568` `cmp ecx,2` |
+| `+0x08` | `usize` | 事件游标 | `0x3d7451` `mov [r15+8],rbp` |
+| `+0x18` / `+0x20` | ptr / `usize` | 事件表（**步长 `0x50`**，`event.tick` = `u32 @ +0x48`） | `0x3d73fa` `mov r12,[r15+0x20]`；`0x3d7440` `cmp dword [r13+0x48],ebx`；`0x3d7433` `add r13,0x50` |
+| `+0x30` / `+0x38` | ptr / `usize` | **检查点 tick 表**（`u32[]`，升序） | `0x3d68bc/0x3d68c0`；`0x3d6916` `mov edx,[rax+rdx*4]` |
+| `+0x58` | `u32` | **播放头 = 时基 `tick` 的镜像** | `0x3d73e8` 读时基；`0x3d7583` `mov dword [r15+0x58],ebx` 写回 |
+| `+0x1e0`(+`0x40` 内) | 句柄 | 时基的 `Weak`；`upgrade` 后拿到 `GraphwarTickHandler` | `0x3d73a0` `mov r14,[rsi+0x40]`；`0x3d73bf` `call 0x46aa50` |
+
+**四条控制流（全部指令级）**：
+
+1. **每帧 `process`（`0x3d7380`）**：`ebx = 时基.tick` → 从游标开始，把 `event.tick <= ebx` 的事件按文件顺序
+   **逐条注入**（`0x3d74be call 0x3e2830` = `remote_event_handler`）→ 最后 `self.tick = ebx`。
+   **它自己不推进时钟**（没有 `tick++`、没有 `now()`、没有一条 `xmm`）。
+   ⇒ 播放速度**完全等于时基的速度**，也就是 `GameClient::process` 那条 tick 循环。
+2. **`inject_events(self, start=rsi, until_tick=rdx, host=rcx)`（`0x3d61a0`，1803 B）**：批量注入到 `until_tick`。
+   它里面有**一份内联的 `tick()`**（`0x3d644a`..`0x3d6484`：排程对 `+16_666_666`、`tick += 1`），
+   还有一段 `while 时基.tick < until_tick { GameClient::tick(); 泵(); }`（`0x3d6630`..`0x3d6661`）。
+   收尾：`self.tick = until_tick`（`0x3d666b`）、pair#1 = `now − pair#2`（`0x3d6694` 调 `[GOT 0x9baf40]`→`0x90c740`，`0x3d669a/0x3d669e` 存）、
+   **若"当前暂停中"就把暂停标记刷新成 `now()`**（`0x3d66a1 cmp 1e9` / `0x3d66aa call now` / `0x3d66b0/0x3d66b4` store）。
+3. **`go_to_next_checkpoint`（`0x3d68b0`）/ `go_to_previous_checkpoint`（`0x3d6bb0`）**：对检查点表做**二分**
+   （以 `self.tick` 为键）找到上/下一个检查点 `T`，`inject_events(游标, T)`；
+   收尾与 `inject_events` 同款：**"没暂停的话，把暂停标记写成本刻 `now()`"** ⇒ **跳转即暂停**。
+   `go_to_first_checkpoint`（`0x3d6a40`）更直接：`0x3d6aab mov dword [rbx+0x58],edx`（**直接把时基 `tick` 写成 `checkpoints[0]`**）
+   然后 `inject_events(0, checkpoints[0])`，同样收尾置暂停。
+4. **暂停三件套**：
+   * `is_paused`（`0x3d7630`）：`0x3d7674 mov ebp,[rbx+0x40]` → `0x3d7685 cmp ebp,0x3b9aca00` → `0x3d768b setne al`
+     ⇒ **`is_paused() = (暂停标记.nanos != 1e9)`**；
+   * `pause`（`0x3d7270`）：`0x3d72c2 cmp [rbx+0x40],1e9` → `jne`（**已经暂停就什么都不做**）→ `0x3d72dc call now()` → 写 pair#3；
+   * `toggle_pause`（`0x3d6080`）：标记 `== 1e9`（在播）→ `0x3d60e4 call now()` 写 pair#3（**暂停**）；
+     否则（暂停中）→ `0x3d60f0 call now()`、`0x3d6100 call [GOT 0x9baf28]`（`now − 标记`）、
+     `0x3d6110 call [GOT 0x9baf30]`（把这段`暂停时长`加进时基，避免恢复瞬间"欠一堆 tick"）、`0x3d6116 mov edx,1e9`（**清标记 = 恢复**）。
+
+**为什么"暂停"能把时钟冻住（这是本节最关键的机制）**：`get_time_to_tick` 里
+`0x519457 cmp esi,1e9` 分支——**标记没置就取 `Instant::now()` 当基准，置了就拿标记当基准**（`0x519475 mov rdi,[rbx+0x20]`）。
+于是"已过时间"恒定不变 ⇒ 判决永远"没到期" ⇒ tick 循环**一次都不进**。真机上就是"进屏后 5.61 s 一个 tick 都没有"。
+
+### 63.5 真机读数（原版 `steam/2026-08-28`，私有 Xvfb TCP `127.0.0.1:9x`，mesa llvmpipe，1920×1160）
+
+两轮独立运行（`clock` / `clock2`，第二轮多挂三个检查点钩子）。全部原始行在 `fixtures/replay_clock_observations.tsv`。
+
+**A. 相位表（点击串：主菜单 → Replays `(1343,749)` → 第 1 行 ▶ `(1805,132)` → 播放屏 ⏮`(48,629)` ▶`(148,629)` ⏭`(248,629)`）**
+
+| 相位 | 时长 | Δtick | **tick/s** | 暂停标记 | 采样 |
+|---|---|---:|---:|---|---|
+| 进屏后**不点任何键**（载入态） | 5.61 s | **0** | **0.00** | 已置（≠1e9） | 58/58 |
+| 同上（第二轮） | 3.00 s | **0** | **0.00** | 已置 | 32/32 |
+| 按 ▶ 之后 | 6.55 s | 394 | **60.13** | 已清（=1e9） | 67/67 |
+| 按 ▶ 之后（第二轮） | 3.00 s | 181 | **60.29** | 已清 | 32/32 |
+| ⏭ 跳完静止 | — | **+202 一次跳**（不是走出来） | —— | **已置（跳完就暂停）** | 10/10 |
+| 跳转后再按 ▶ | 2.11 s | 127 | 60.30 | 已清 | 23/23 |
+| 跳转后再按 ▶（第二轮） | 2.15 s | 129 | **60.03** | 已清 | 24/24 |
+
+**B. 排程对增量 = 一个 tick 的纳秒数（本节的"逐位级"校验）**：
+在第一段播放窗口里取首末采样，`(p2s·1e9+p2n)` 的差 / `Δtick`：
+`6 566 666 404 / 394 = **16 666 666.000 ns**`；第二轮 `3 016 666 546 / 181 = **16 666 666.000 ns`**。
+⇒ **静态的 `0xfe502a` 与真机逐 tick 增量完全吻合**，且 60.0000024 Hz 与 §44 的 60.00 一致。
+
+**C. 检查点表（真机直接读 `player+0x30`/`+0x38`）= `[558, 1290, 1492, 2225, 2276]`（5 个），
+载入后播放头 `tick = 558`**。跳转钩子（`inject_events` 的入参）：
+
+| 触发 | `until_tick` | 跳前 `self.tick` | Δ | `inject` 起点游标 | 事件数 |
+|---|---:|---:|---:|---:|---:|
+| **载入回放**（`go_to_next_checkpoint`，`caller=0x515057`） | **558** | **0** | +558 | 0 | 104 |
+| ⏭ 第 1 次（`caller=0x3b0c2b`） | 1290 | 997 | **+293** | 84 | 104 |
+| ⏭ 第 2 次（`caller=0x3b0c2b`） | 1492 | 1290 | **+202** | 84 | 104 |
+| ⏮ 第 1 次（`caller=0x3b0bb4`） | 1290 | 1492 | **−202** | 0 | 104 |
+| （第二轮）⏭ | 1290 | 779 | **+511** | 84 | 104 |
+
+**D. `is_paused()` 的真机返回值**：两轮各 2 次调用，都发生在 ▶ 之后
+（`caller=0x3b1581` = 根节点 `0x3b0830`，调用点 `0x3b157c`；紧接着 `0x3b15f7` 调 `is_paused` 并把返回值喂给
+`0x4bf000(node+0x18, al)`——即"按暂停态刷新 UI"）。此时标记 `= 1e9`，**返回 `0`**；
+钩在 `0x3d7674`（`mov ebp,[rbx+0x40]`）那条指令上读到同一个值 `1e9` ⇒ **指令规则与返回值一致**：
+`is_paused() == false` ⇔ `nanos == 1e9`。同一钩子还证明"进屏那一刻标记存在"（下表 E）。
+
+**E. 进屏那一刻的时基快照（两组运行，`mark enter_play_screen`）**
+
+| 运行 | `tick` | pair#1 `(s,n)` | pair#2 `(s,n)` | **pair#3 `(s,n)`** | 解释 |
+|---|---:|---|---|---|---|
+| clock | **558** | 1461.323755885 | 9.199999632 | **1470.523801831** | pair#3 ≈ `now` ⇒ 暂停标记 = 载入时刻 |
+| clock2 | **558** | 1564.591407373 | 9.199999632 | **1573.791436691** | 同上（两轮相隔 100 s，差值对得上墙钟） |
+
+⇒ **"进屏那一刻 `playing` 初值 = false（暂停）"现在是 指令（`is_paused` 的 `setne`）+ 真机（0 tick/s + 标记已置 + 画面 ▶ 图标） 双证。**
+
+**F. UI 侧的旁证（只用于交叉核对，不当主证据）**：`03_enter_play_screen` 帧上左三键中间那颗是 **▶（播放）**、
+棋盘上只有一具士兵 + 一个蓝靶环、底部 `f(x) = x+2sin(20x) − 3.694`、**没有任何弹道曲线**；
+按 ▶ 之后 `06_after_play` 帧上同一颗键变成 **⏸（两条竖杠）**、曲线出现——与 `is_paused()` 的返回值、与 §55 的"载入态"版式都对得上。
+
+### 63.6 静态 × 真机 逐项一致性核对
+
+| 项 | 静态（指令） | 真机 | 一致? |
+|---|---|---|---|
+| 一 tick = `16_666_666 ns` | `0x51986c` / `0x5194b2` / `0x3d6470` 立即数 `0xfe502a` | 排程对增量 = `16 666 666.000 ns`（394 / 181 tick 两次） | ✓ |
+| tick 率 ≈ 60/s | `1e9/16_666_666 = 60.0000024` | 60.13 / 60.29 / 60.30 / 60.03 | ✓（差值 = 采样窗口 ±0.3 s 的量化，不是频率差） |
+| 暂停 ⇔ `pair#3.nanos != 1e9` | `0x3d7685 cmp`+`0x3d768b setne`；`0x519457` 分支 | 载入态 58/58+32/32 采样标记 ≠1e9 且 0 tick/s；▶ 后 67/67+32/32 =1e9 且 60 tick/s | ✓ |
+| 暂停能把时钟冻住 | `get_time_to_tick` 用 pair#3 当 `now()`（`0x519475`） | 载入态 pair#1 恒定（`…323755885` 不动）、`tick` 恒定 | ✓ |
+| 跳转 = 改播放头 + 批量注入 | `0x3d6aab`（写 `+0x58`）/ `0x3d692c`（调 `inject_events`） | 载入 `tick: 0→558`，`inject(0,558)`，104 事件；⏭/⏮ 数值见 C 表 | ✓ |
+| 跳完就暂停 | 三个 `go_to_*` 尾部"未暂停则写 pair#3 = now"（`0x3d697a`..`0x3d69a2`） | ⏭/⏮ 之后标记立即 ≠1e9（`14767931` / `733651919` / `435948044`），随后 tick 不动 | ✓ |
+| `is_paused` 返回值 | `setne`（nanos≠1e9 ⇒ true） | 标记 =1e9 时返回 **0** | ✓ |
+| 播放头镜像 | `0x3d7583 mov [self+0x58],ebx` | `process` 每帧调用（995/1403 次）期间 `self.tick` 与时钟 `tick` 同步（钩子采样一致） | ✓ |
+| 时钟**不在** `0x4c6f40` | 188 个 call 无一指向时基/播放器（91/94 间接调用可解 GOT 目标） | 回放屏每帧 `screen` 计数 1199/2567 次，而 `tick` 只在播放时增长 | ✓ |
+
+### 63.7 结论（带档位）
+
+1. **播放时钟 = `GraphwarTickHandler` 的 `u32 tick` 计数器 + 每 tick `+16_666_666 ns` 的排程对**，由
+   `GraphwarGameClient::process` 的 tick 循环推进；**回放器只是"读播放头 + 注入到期事件"**，它自己**不产生时间**。档：**观测（指令）+ 观测（真机）**。
+2. **暂停 = 时基的 pair#3 标记**（不是布尔量）：`nanos == 1e9` ⇔ 未暂停。`is_paused()` 就是 `setne`。档：**观测（指令 + 真机）**。
+3. **载入即暂停成立**，机制是 `go_to_next_checkpoint` 的尾部"未暂停则记下暂停时刻"；载入播放头 = **558**。档：
+   **观测（指令 + 真机）** —— T4 的 `观测（真机帧）` 与"载入 tick `[550,615)` 推断"两条都**升档**（前者补了内部状态，后者变成实测 558）。
+4. **⏮/⏭ 的语义 = "跳到上/下一个检查点 tick + 把中间事件全注入 + 暂停"**，不是"前进/后退 N 个 tick"，也不是"前进一帧"。
+   检查点表真机读出来是 `[558,1290,1492,2225,2276]`（本样本）。档：**观测（指令 + 真机）**；
+   "这 5 个数来自回放文件里 `Checkpoint` 那类事件的 `tick`" 这一层是 **推断**（没打开文件逐条比）。
+5. `0.016666666`（`.rodata 0x19f7f8`）只被 `get_fractional_tick` 用；时钟本身**不读任何 `f64`**。
+   附：`f64 60.0`（`.rodata 0x19f918`）全 `.text` 有 6 处引用，全在 `0x3cb080` / `0x4b2890`（`EntityDrawer::draw`）/ `0x4eb450`，
+   **时基与回放播放器一条都没有** ⇒ "60 tick/s" 在这个代码库里**不是**一个浮点常数，是"每 tick 加 `16_666_666 ns`"的整数结果。档：**观测（指令）**。
+
+### 63.8 没证到的边界（诚实清单）
+
+| # | 没证到的 | 卡在哪 |
+|---|---|---|
+| 1 | `GraphwarReplayPlayer::process`（`0x3d7380`）的**第一个参数到底是谁**：真机调用点 `0x515df0` 传的是 `(rdi=self, rsi=&self+0x1e0)`，而 `+0x40` 处的时基句柄与 `GameClient::process` 用的**是同一个**；`self` 与 `GameClient` 的从属关系（内嵌？同一个对象？）**只到"同一个时基、同一个宿主指针"这一层** | 需要 `Gd<T>`/`RefCell` 容器身份（`0x46aa50` 是 hashbrown 探测 + 引用计数，没解出它查的是哪张表） |
+| 2 | `go_to_first_checkpoint`（`0x3d6a40`）**在本轮流程里 0 次调用**（钩子已装、同一批里 `next/prev` 都命中，**正对照成立**）。它什么时候用（回放播到末尾后重放？）**未知** | 需要"播到 2276 之后再点 ⏭/⏮"的一条真机路径（本轮没跑） |
+| 3 | 时基 `+0x38` 那个 tick 历史队列（每 tick 一条、每 60 tick 多一条）**谁消费** | 只读到了写入点（`0x519880`..`0x5198f5`）与"每 60"这个谓词；消费者没找 |
+| 4 | `inject_events` 尾部"暂停中就把标记刷新成 `now()`"的**目的**：它让"冻结基准"跟着墙钟走，但只在**跳转**时执行（平时不执行，所以暂停仍然冻得死）。是"跳转即视为重新对齐"还是别的，**未证** | 缺一个"暂停中跳转"之后 `get_time_to_tick` 的连续读数（本轮跳转前都已暂停，但没单独隔离这一条） |
+| 5 | 钩子 `onLeave` 里读 `rdi` 得到的 `self.tick` 有 3 次是垃圾（`access violation accessing 0x59`）——**这是我方探针的缺陷**（`rdi` 在函数体内被改写过），不是目标行为；表中只用 `onEnter` 与 100 ms 采样 | —— |
+| 6 | `0x3d7380` 里 `r14 == -1` 那条备用分支（`0x3d74f0`）什么时候走 | 没构造出来 |
+
+### 63.9 复跑（两条命令，照抄即可）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export PY=$MAIN/.reference/venv/bin/python
+cd $MAIN/.agent-work/cg/wt-t12          # 或任意 checkout；工具会自己向上找 `.reference/`
+
+# ① 静态：函数范围 / 逐条带注解的反汇编 / panic::Location / 立即数
+$PY tools/replay_clock_disasm.py fde  0x4c6f40
+$PY tools/replay_clock_disasm.py fde  0x519840
+$PY tools/replay_clock_disasm.py func 0x519840        # tick：+0xfe502a、tick++
+$PY tools/replay_clock_disasm.py func 0x519450        # get_time_to_tick：1e9 哨兵分支
+$PY tools/replay_clock_disasm.py func 0x3d61a0        # inject_events：内联 tick + 收尾置暂停
+$PY tools/replay_clock_disasm.py func 0x3d68b0        # go_to_next_checkpoint：二分 + 注入 + 暂停
+$PY tools/replay_clock_disasm.py func 0x3d7630        # is_paused：cmp 1e9 / setne
+$PY tools/replay_clock_disasm.py imm  0xfe502a        # 全 .text 找 16_666_666（3 处）
+$PY tools/replay_clock_disasm.py f64  0.016666666     # .rodata 0x19f7f8（唯一引用点 0x5195da）
+
+# ② 动态：起 Xvfb(TCP) → 起原版 → attach → 点进回放屏 → 读数 → JSONL
+$PY tools/frida_replay_clock.py \
+    --out .agent-work/t12/dyn/clock.jsonl \
+    --data-dir .agent-work/t12/dyn/gd --display-num 91   # ~50 s；回放由脚本自己拷进 user://replays
+
+# ③ 把 JSONL 折成入库真值表（可原地复跑，不需要真机）
+$PY tools/frida_replay_clock.py --tsv .agent-work/t12/dyn/clock.jsonl \
+    .agent-work/t12/dyn/clock2.jsonl > fixtures/replay_clock_observations.tsv
+```
+
+⚠️ 复跑注意三个**必踩**的坑（本轮全踩过）：`/tmp` 逐命令 tmpfs ⇒ 起 Xvfb/起游戏/attach **必须在同一条命令**里；
+Xvfb 必须 `-listen tcp` 且 `DISPLAY=127.0.0.1:<n>` + `unset WAYLAND_DISPLAY`；
+`user://` 的落点 = **`$XDG_DATA_HOME/godot/app_userdata/Graphwar/replays`**（第一跑把回放拷到 `$HOME/data/...` 而
+`XDG_DATA_HOME` 指别处 ⇒ 回放列表 0 行、点击全打在空气上；见 `tools/frida_replay_clock.py` 里那段注释）。
+
+### 63.10 遗留 / 未做
+
+| # | 项 | 状态 |
+|---|---|---|
+| 1 | **libm 边界（`pow` 的真机读数）** —— 任务书 §2 ③ 的可选项 | **未做**。本轮的 frida 配方已经能 attach 原版（上面两条命令就是），下一轮把 `pow` 的调用点一钩、对一组具体输入比 `unicorn` 复算即可；本轮**优先保证时钟那条线**跑完两轮 |
+| 2 | `0x4c6f40` 的 UI 语义（按钮/文本/版式） | 不在本节范围（T4/T6 已做像素级对齐）；本轮只证明它**不含时钟** |
+| 3 | 真机侧"播放到 2276（文件末尾）之后"的行为 | 未跑（§55 的 45 s 静止帧是**载入态**，不是"播完态"；两者不是一回事） |
+| 4 | 把本节结论落到我方 `ReplayDriver` | **只写建议，不改代码**（`src/**` 是禁区）⇒ 见 `docs/16` §65 |
