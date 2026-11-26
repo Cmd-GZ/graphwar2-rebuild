@@ -484,11 +484,12 @@ struct EntityNodes {
 //
 // 本文件只做**两件**纯接线的事，两件都标了档位：
 //
-// 1. **坐标**：棋盘坐标 → 控件像素。原版 `draw` 里 `[rsp+0xb0]/[rsp+0xa8]` 是不是已经是像素
-//    **未知**（`docs/140` §2.2 只读到"来自士兵坐标"）；这里复用 [`ring_center_px`]
-//    —— 也就是 `sprite_transform` 那条**同一份**投影（`k = size.x/50`、y 轴翻转、镜像符号）。
-//    半径按**同一个 `k`** 放大（假设 `pos_radius` 与中心的 x/y 同单位，因为它们同属一个 `PosInfo`）。
-//    **推断**：若哪天证出 `PosInfo` 已经是像素，把这里的 `k` 换成 1.0 即可，算术一个字不用动。
+// 1. **坐标**：**不用接线 —— 原版就是棋盘单位**。`EntityDrawer::draw` 在 `0x4b2af8` 调
+//    `draw_set_transform(pos = size×0.5, rotation = 0, scale = (mirror ? -k : k, -k))`、
+//    `k = size.x/50`（`0x4b2a80 divss [0x1b9fc8]`），**所有** `draw_arc` / `draw_polygon`
+//    的实参都在这条变换之下 ⇒ `[rsp+0xb0]/[rsp+0xa8]` 是 `PosInfo` 的 f64 原值（棋盘单位），
+//    半径 = `pos_radius × 1.5` 棋盘单位，线宽 `0.3` 也是棋盘单位。见 [`ring_transform`]。
+//    （2026-11-26 本轮由指令定死；旧版这里标的是"未知/推断"，做法是逐条预投影成像素。）
 // 2. **颜色**：原版从哈希表取打包 RGB；这里用导出属性 `team_color`（**我方接线**）。
 
 /// 一具士兵一次 `_draw` 发出的图元条数：**3 个箭头（`draw_polygon`）+ 3 段弧（`draw_arc`）**。
@@ -498,6 +499,9 @@ struct EntityNodes {
 pub const RING_PRIMITIVES_PER_ENTITY: usize = 6;
 
 /// 棋盘坐标 → **控件像素**：`(size.x/2 + s·k·x, size.y/2 − k·y)`。
+///
+/// **`draw()` 现在不走这条了**（原版走 `draw_set_transform`，见 [`ring_transform`]）：
+/// 本函数是那条变换的**等价形式**，留给单元测试做对拍。
 ///
 /// 直接把 [`entity_drawer::sprite_transform`] 的 `position` 拿来用 ——
 /// 这样"环心落在士兵身上"靠的是**同一条**算式，而不是本文件里第二份投影
@@ -511,9 +515,47 @@ pub fn ring_center_px(size: BoardVec2, packed: u32, board: BoardVec2) -> BoardVe
 
 /// 棋盘单位 → 控件像素的比例 `k = size.x / 50`（与 [`ring_center_px`] 里那个 `k` 同一个）。
 ///
-/// 半径用它放大：`r_px = drawn_radius(pos_radius) × k`。**推断**（同 [`ring_center_px`] 的说明）。
+/// **`draw()` 现在不用它了**（改为让引擎的 `draw_set_transform` 乘这个比例，见
+/// [`ring_transform`]）；留着是为了给单元测试/别的消费者做"两条路等价"的对拍。
 pub fn ring_canvas_scale(size: BoardVec2) -> f64 {
     (size.x as f32 / entity_drawer::PIXELS_PER_UNIT_DIVISOR) as f64
+}
+
+/// `EntityDrawer::draw` 开头那条 `draw_set_transform` 的四个实参
+/// `(pos.x, pos.y, scale.x, scale.y)`。**`rotation` 恒 `0.0`**（`xorps xmm2,xmm2`）。
+///
+/// 指令（x86 `0x4b2af8` 的调用点，槽 `0x9bc018` = `CanvasItem::draw_set_transform`）：
+///
+/// ```text
+/// 4b2a3d  call   get_size()             ; 槽 0x9bb000 ⇒ Control::get_size（w/xmm0、h/xmm1）
+/// 4b2a43  movss  [rsp+0xb8],xmm0        ; w
+/// 4b2a4c  movss  [rsp+0x68],xmm1        ; h
+/// 4b2a5a  call   0x4be6e0               ; get_team_overview ⇒ packed 色（镜像位）
+/// 4b2a80  divss  xmm1,[0x1b9fc8]        ; k = w / 50.0f           （50.0f 与 update_sprite 同一个槽）
+/// 4b2a88  movss  xmm3,[0x1ba128]        ; 0.5f
+/// 4b2ac0  movss  xmm0,[rsp+0xb8]        ; pos.x = w * 0.5
+/// 4b2ac9  mulss  xmm0,xmm3
+/// 4b2acd  movss  xmm1,[rsp+0x68]        ; pos.y = h * 0.5
+/// 4b2ad3  mulss  xmm1,xmm3
+/// 4b2ad7  movss  [rsp+0x68],xmm1
+/// 4b2aea  lea    rdi,[rsp+0x78]
+/// 4b2aef  xorps  xmm2,xmm2              ; rotation = 0.0
+/// 4b2af2  movss  xmm1,[rsp+0x68]
+/// 4b2af8  call   *[0x9bc018]            ; draw_set_transform(pos, rot=0, scale=(xmm3, xmm4))
+/// ```
+///
+/// `scale` 的两个分量：`xmm4 = -k` 恒定；`xmm3` = 镜像判据（`get_team_overview` 的
+/// `(c&0x101)==0x100`）选 `-k` 还是 `±k` —— 与 [`entity_drawer::team_mirror`] 同一条判据
+/// （`0x4b2a9a`–`0x4b2ae7` 与 `0x4b9892`–`0x4b98c7` 逐条同型）。⇒ **y 永远取负**。
+///
+/// ⇒ **由此定死一条此前标"未知"的事**：`EntityDrawer::draw` 里 `draw_arc` / `draw_polygon`
+/// 收到的坐标**是棋盘单位**（`-25..25` / `PosInfo` 的 f64 原值），不是像素；投影由这条变换做。
+/// **观测（逐条指令 + 常量槽）**
+pub fn ring_transform(size: Vector2, packed: u32) -> (f32, f32, f32, f32) {
+    let k = size.x / entity_drawer::PIXELS_PER_UNIT_DIVISOR as f32;
+    let flip = entity_drawer::team_mirror(packed);
+    let sx = if flip { -k } else { k };
+    (size.x * 0.5, size.y * 0.5, sx, -k)
 }
 
 /// 把纯逻辑的 [`entity_drawer::Color`]（RGBA 四个 f32）搬成 Godot 的 `Color`。
@@ -651,6 +693,23 @@ pub struct EntityDrawer {
     #[export]
     gate_query_enabled: bool,
 
+    /// **箭头开关**（默认 `true`）：`_draw` 发不发那 3 个 `draw_polygon`（准备圈的外凸箭头）。
+    ///
+    /// 原版箭头与三段弧**各有各的门**（同一次 `_draw` 里两段互不相干的控制流）：
+    /// * 弧侧：`0x4b32e2 test %r14b,%r14b` → `0x4b32e5 je 0x4b37f0`（假 ⇒ 这具士兵不发弧）；
+    /// * 箭头侧：先在 `get_all_positions()` 的 `Vec` 里找到 id（`0x4b2f65 je 0x4b2fa1`），
+    ///   再拿 id 去 **`[[rsp+0x120]+0x20]` 那张 `Vec<u32>`** 里顺序查（`0x4b2fc0 cmp [rax+rdx],ebx`
+    ///   / `0x4b2fc3 je 0x4b37f0`）——**查不到就整块跳过**（连弧都不发）。
+    ///   那张表是什么（回合顺序？准备顺序？）= **未知**。
+    /// ⇒ 回放真帧（本样本，冻结回放 `1793897298`）上**只有三段弧、没有箭头**：
+    /// 径向直方图在 `r ∈ [15.3, 23.3] px` 之外**一个像素都没有**（箭头外沿会到 `r+0.5` 单位
+    /// ≈ 32 px）。⇒ 播放屏把本属性设成 `false`。**观测**（真帧径向分布）；
+    /// 机制（那张表的内容）**未知**。
+    ///
+    /// 这是**我方接线**（原版没有这个开关）：门没解出来之前，只能由调用方按"观测到的形态"选。
+    #[export]
+    show_ring_arrows: bool,
+
     /// 实体 id → 4 个子节点。`BTreeMap` 而不是 `HashMap`：遍历顺序稳定，日志/断言可复现。
     entities: BTreeMap<i64, EntityNodes>,
 
@@ -718,10 +777,14 @@ pub struct EntityDrawer {
     arc_total: i64,
     /// 累计发出的 `draw_polygon` 个数（观测点）。
     polygon_total: i64,
-    /// 最近一次 `_draw` 发出的弧实参（**引擎真正收到的 f32 值**）。
+    /// 最近一次 `_draw` 发出的弧实参（**引擎真正收到的 f32 值**，单位 = **棋盘单位**
+    /// —— 因为原版把投影交给 `draw_set_transform`，见 [`ring_transform`]）。
     last_arcs: Vec<ArcRecord>,
-    /// 最近一次 `_draw` 发出的箭头顶点（**画布像素**）。
+    /// 最近一次 `_draw` 发出的箭头顶点（同样是**棋盘单位**）。
     last_polys: Vec<Vec<Vector2>>,
+    /// 最近一次 `_draw` 用的 `draw_set_transform` 实参：`[pos.x, pos.y, scale.x, scale.y]`
+    /// （`rotation` 恒 0，所以不记）。**引擎真正收到的那四个 f32**。
+    last_transform: [f64; 4],
 
     /// `_ready` 被调用过几次（观测点）。
     ready_calls: i64,
@@ -759,6 +822,8 @@ impl IControl for EntityDrawer {
             assets_root: GString::from(DEFAULT_ASSETS_ROOT),
             pos_table_enabled: true,
             gate_query_enabled: true,
+            // 原版箭头与弧各有各的门（见字段文档）；默认发箭头 = 与上一轮行为逐字相同。
+            show_ring_arrows: true,
             entities: BTreeMap::new(),
             // 原版这个对象由 `GraphwarRootNode` 构造一次（arm64 `0x39a44c`）；本切片每实例一份。
             loader: GraphwarTextureLoader::new(),
@@ -783,6 +848,7 @@ impl IControl for EntityDrawer {
             polygon_total: 0,
             last_arcs: Vec::new(),
             last_polys: Vec::new(),
+            last_transform: [0.0; 4],
             ready_calls: 0,
             process_calls: 0,
             resized_calls: 0,
@@ -846,9 +912,8 @@ impl IControl for EntityDrawer {
     /// 图元来源：entity_drawer::entity_primitives(EntityRingInput)
     ///           = arrow_primitives (3 × Polygon)  ++  ring_primitives (3 × Arc)
     /// 实参来源：Arc{radius,start,end,point_count,width,antialiased}  ← 全是立即数（docs/140 §2）
-    /// 本文件新增的两步（都是接线，不是算术）：
-    ///   center   棋盘坐标 → 画布像素  = ring_center_px(…)
-    ///   radius   × k（k = size.x/50）= ring_canvas_scale(…)
+    /// 投影：一条 draw_set_transform（0x4b2af8，槽 0x9bc018）—— 实参保持**棋盘单位**，
+    ///       见 [`ring_transform`]；本文件不逐条预投影（2026-11-26 更正，见函数体注释）。
     /// ```
     ///
     /// ⚠️ **要画东西得先有准备态**：`prep` 空表时这里一条图元都不发（原版也只看自己的哈希表）。
@@ -859,13 +924,19 @@ impl IControl for EntityDrawer {
     fn draw(&mut self) {
         self.draw_calls += 1;
 
-        // ① 先把这一帧要发的图元**全部算成实参**：纯逻辑（`entity_primitives`）+ 投影。
+        // ① 先把这一帧要发的图元**全部算成实参**：纯逻辑（`entity_primitives`）。
         //    `self.base_mut()` 会独占借用 `&mut self`，那段里碰不到 `self.xxx`（`E0499`）。
+        //
+        // **2026-11-26 更正（本轮）**：实参一律保持**棋盘单位**，投影交给 `draw_set_transform`
+        // ——这就是原版的结构（见 [`ring_transform`] 的指令证据）。以前这里把每个实参逐条
+        // 预投影成画布像素（`ring_center_px` / `radius × k`），漏了两件**只有变换才能正确
+        // 表达**的事：① 线宽 `0.3` 是棋盘单位（要变成 `0.3 × k` 像素）；② y 轴在变换里被
+        // 取负（镜像/上下翻转），角度也跟着翻 —— 预投影时角度原样送进去 ⇒ 三段弧的**方位
+        // 是上下镜像的**。两条都在同一处坏，而当时环是"看不见"的（线宽 0.3 px），所以没暴露。
         let size = self.base().get_size();
-        let control_size = BoardVec2::new(size.x as f64, size.y as f64);
         let packed = self.team_color as u32;
-        let scale = ring_canvas_scale(control_size);
         let ring_color = entity_drawer::Color::from_packed_rgb(packed);
+        let arrows_on = self.show_ring_arrows;
 
         // **位置表就接在这里**：原版 `draw` 的循环头（`0x4b3130`）就是从
         // `get_all_positions` 的 `Vec<u32>` 里取 id（见 `rings_for_frame` 的文档）。
@@ -875,7 +946,6 @@ impl IControl for EntityDrawer {
         let mut polys: Vec<(Vec<Vector2>, Color)> = Vec::new();
 
         for (_id, prep) in &rings {
-            let center_px = ring_center_px(control_size, packed, prep.board);
             let input = entity_drawer::EntityRingInput {
                 center: prep.board,
                 pos_radius: prep.pos_radius,
@@ -897,26 +967,30 @@ impl IControl for EntityDrawer {
                         ..
                     } => {
                         arcs.push(ArcRecord {
-                            center: (center_px.x as f32, center_px.y as f32),
-                            // `radius` 已经是 `f32(pos_radius) × 1.5f32`，这里只差棋盘→像素那一乘。
-                            radius: (radius * scale) as f32,
-                            // 角度**不改**：原版直接送 `A_i ∓ H`（`subsd`/`addsd` 之后 cvtsd2ss）。
+                            // 环心 = `PosInfo` 的 x/y（棋盘单位，`[rsp+0xb0]/[rsp+0xa8]`）。
+                            center: (prep.board.x as f32, prep.board.y as f32),
+                            // `radius` 已经是 `f32(pos_radius) × 1.5f32`（棋盘单位）。
+                            radius: radius as f32,
+                            // 角度**不改**：原版直接送 `A_i ∓ H`（`subsd`/`addsd` 之后 cvtsd2ss），
+                            // y 翻转由 `draw_set_transform` 的 `-k` 完成。
                             start_angle: start_angle as f32,
                             end_angle: end_angle as f32,
                             point_count: point_count as i32,
+                            // 线宽 `0.3` 是**棋盘单位**（槽 `0x1bb2b4`），变换会乘成 `0.3×k` 像素。
                             width: width as f32,
                             antialiased,
                             color: (arc_color.r, arc_color.g, arc_color.b, arc_color.a),
                         });
                     }
                     entity_drawer::Primitive::Polygon { points, colors } => {
-                        // 顶点在棋盘坐标里算（`r`、`r+0.5`、`θ∓6°`），逐点投影到画布像素。
+                        if !arrows_on {
+                            // 原版箭头侧另有一道门（见 `show_ring_arrows` 的文档）；关掉时
+                            // 只画三段弧 —— 这就是回放真帧上的形态。
+                            continue;
+                        }
                         let pts: Vec<Vector2> = points
                             .iter()
-                            .map(|p| {
-                                let q = ring_center_px(control_size, packed, *p);
-                                Vector2::new(q.x as f32, q.y as f32)
-                            })
+                            .map(|p| Vector2::new(p.x as f32, p.y as f32))
                             .collect();
                         let c = colors.first().copied().unwrap_or(ring_color);
                         polys.push((pts, color_of(c)));
@@ -929,7 +1003,15 @@ impl IControl for EntityDrawer {
         let mut arc_n = 0i64;
         let mut poly_n = 0i64;
         {
+            let (tx, ty, sx, sy) = ring_transform(size, packed);
+            self.last_transform = [tx as f64, ty as f64, sx as f64, sy as f64];
             let mut base = self.base_mut();
+            // 原版 `0x4b2af8` 的 `draw_set_transform`（槽 `0x9bc018`）：
+            // `pos = size × 0.5`、`rotation = 0`、`scale = (mirror ? -k : k, -k)`、`k = size.x/50`。
+            base.draw_set_transform_ex(Vector2::new(tx, ty))
+                .rotation(0.0)
+                .scale(Vector2::new(sx, sy))
+                .done();
             for a in &arcs {
                 // 后三个参数在 Godot 4 有默认值 ⇒ gdext 生成的是 `draw_arc_ex` builder。
                 // 这里三个都显式给：`width` 是 0.3、`antialiased` 是 false —— 都是立即数。
@@ -966,6 +1048,12 @@ impl IControl for EntityDrawer {
                 base.draw_polygon(&pv, &cv);
                 poly_n += 1;
             }
+            // 复位（**我方防御**）：原版 `_draw` 里只有这一个变换、发完就结束，没有复位那一句；
+            // 这里复位一句，免得本类将来在同一帧里加别的图元时被这条变换带歪。
+            base.draw_set_transform_ex(Vector2::new(0.0, 0.0))
+                .rotation(0.0)
+                .scale(Vector2::new(1.0, 1.0))
+                .done();
         }
 
         self.arc_total += arc_n;
@@ -1837,13 +1925,29 @@ impl EntityDrawer {
         self.last_arcs.len() as i64
     }
 
+    /// 最近一次 `_draw` 用的 `draw_set_transform` 实参 `[pos.x, pos.y, scale.x, scale.y]`
+    /// （`rotation` 恒 0 ⇒ 不返回；还没画过 ⇒ 四个 0）。
+    ///
+    /// 期望值 = [`ring_transform`]：`pos = size × 0.5`、`scale = (mirror ? -k : k, -k)`、
+    /// `k = size.x / 50`。
+    #[func]
+    fn last_transform(&self) -> PackedFloat64Array {
+        let mut out = PackedFloat64Array::new();
+        for v in self.last_transform {
+            out.push(v);
+        }
+        out
+    }
+
     /// 最近一次 `_draw` 的第 `index` 条弧的**全部实参**，按 `draw_arc` 的形参序：
     ///
     /// ```text
     /// [cx, cy, radius, start_angle, end_angle, point_count, width, antialiased, r, g, b, a]
     /// ```
     ///
-    /// 都是 **f32 加宽成 f64**的值 = 引擎真正收到的数。越界返回空数组。
+    /// 都是 **f32 加宽成 f64**的值 = 引擎真正收到的数。⚠️ 单位是**棋盘单位**（不是画布像素）：
+    /// 原版把投影交给 `draw_set_transform`（见 [`ring_transform`]），所以 `cx/cy` 就是
+    /// `PosInfo` 的 x/y 原值、`radius = pos_radius × 1.5`、`width = 0.3`。越界返回空数组。
     #[func]
     fn last_arc(&self, index: i64) -> PackedFloat64Array {
         let mut out = PackedFloat64Array::new();
