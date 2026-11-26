@@ -215,7 +215,7 @@
 |---|---|---|
 | 「544 个函数归属 / 56 个模块」 | `docs/02` §8 | 那张表把引用两个模块的函数在两个模块下**各算一次**。本表压平后不重复计数，并把跨模块数单独列为 `contested` |
 | 「885/13263，观测 441 + 推断 444」 | `docs/02` §10 | 那是**调用图扩散**，属推断层。本表只收硬证据，不把扩散数写进总账 |
-| 「57 个模块」 | 各处 | 按 `src/graphwar_[a-z_]+\.rs` 数是 57；**加数字字符后是 58**（`graphwar_lan_broadcaster_v6.rs` 被漏了）。本表一律算出来、不写死 |
+| 「57 个模块」 | 各处 | 按 `src/graphwar_[a-z_]+\.rs` 数是 **58**；**加数字字符后是 59**（`graphwar_lan_broadcaster_v6.rs` 被漏了）。本表一律算出来、不写死 |
 | 「`fixtures/module_funcs.tsv` 的地址清单」 | `docs/02` §14.2 | 那张表已自我更正为「不能判定函数身份」；本表用 Ghidra 边界 + 冲突压平重算 |
 | 「解析器 `0x4ed670` 在 `graphwar_function_input.rs`」 | `docs/02` §1 | 该函数体内唯一的 Location 锚是 `math_function.rs:75`，按证据归 `math_function.rs`；所以函数语言的实现落在本表的 `other` 口径，不在带前缀的那 58 个模块里 |
 
