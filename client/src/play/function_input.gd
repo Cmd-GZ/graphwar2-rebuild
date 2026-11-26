@@ -39,6 +39,18 @@ var text := "":
 
 var _caret := 0
 var _caret_blink := 0.0
+## 主题 `LineEdit/constants/caret_width` 的默认值（真帧宽度逐值 = 3 px）。
+const CARET_WIDTH := 3.0
+## 主题 `LineEdit/constants/caret_blink_interval` 的**引擎默认值**（秒）。
+##
+## 为什么用它：原版 `recovered-src/play_screen.tscn` 的 `GraphwarFunctionInput` 节点上
+## **逐位**写着 `caret_blink = true` + `caret_force_displayed = true`
+## ⇒ 原版光标**按引擎默认周期闪**（不是常亮、也不是靠焦点）。
+##
+## ⚠️ **相位不可控**：本机两轮真帧（同一份冻结回放、同一串点击）拿到的是**两个相位**
+## —— 第一轮 `replay_play` 亮 / `replay_end` 灭；第二轮两屏**都灭**。闪的起点取决于进程
+## 起来后的墙钟 ⇒ 这是一个**逐运行随机**的量（见 `docs/06` §71）。
+const CARET_BLINK_INTERVAL := 0.5
 var _rejected := false
 ## 只读态（回放模式）：原版回放屏的函数框是**不可编辑**的，Godot 用
 ## `LineEdit/colors/font_uneditable_color`（默认 `(0.875, 0.875, 0.875, 0.5)`）画文字
@@ -62,10 +74,19 @@ func _ready() -> void:
 	set_process(true)
 	focus_mode = Control.FOCUS_NONE
 
+## 光标此刻亮不亮：每个 `CARET_BLINK_INTERVAL` 周期的**前半**亮（`LineEdit` 的口径）。
+func caret_on() -> bool:
+	return _caret_blink < CARET_BLINK_INTERVAL * 0.5
+
+## **2026-11-26（T21）更正**：以前只在"累计 > 0.55 s 就归零"那一刻 `queue_redraw()`，
+## 而那一刻 `_caret_blink == 0.0`（在亮的半周期里）⇒ **每次重画都画亮的光标**，看上去是
+## 常亮、实际从不熄灭。现在按半周期**翻边时**重画一次，才是真的闪。
 func _process(delta: float) -> void:
+	var was_on := caret_on()
 	_caret_blink += delta
-	if _caret_blink > 0.55:
-		_caret_blink = 0.0
+	if _caret_blink >= CARET_BLINK_INTERVAL:
+		_caret_blink = fmod(_caret_blink, CARET_BLINK_INTERVAL)
+	if caret_on() != was_on:
 		queue_redraw()
 
 func caret_index() -> int:
@@ -203,9 +224,16 @@ func _draw() -> void:
 		COL_TEXT_UNEDITABLE if read_only else GwThemeFactory.COL_TEXT)
 	var caret_x := origin + font.get_string_size(text.substr(0, _caret),
 		HORIZONTAL_ALIGNMENT_LEFT, -1, fsize).x
-	if _caret_blink < 0.28:
+	if caret_on():
 		# 高度：真帧上原版光标是 3×90（bbox x1182–1184、y1066–1155）⇒ 正好是
 		# **内容矩形**（样式盒上下各 content_margin 4 ⇒ 98−8 = 90）；宽度用主题的
 		# `LineEdit/constants/caret_width = 3`。
-		draw_line(Vector2(caret_x, content_top), Vector2(caret_x, size.y - sb.get_content_margin(SIDE_BOTTOM)),
-			GwThemeFactory.COL_TEXT, 3.0)
+		#
+		# ⚠️ **2026-11-26（T21）更正**：以前是 `draw_line(..., 3.0)` —— 那条线是**以
+		# `caret_x` 为中心**的（占 `caret_x−1 … caret_x+1`，实测我方 1181..1183），而真帧是
+		# `1182..1184`（左边界**正好落在文本 advance 上**，即 `[caret_x, caret_x+3)`）。
+		# 引擎的 `LineEdit` 画的是一个**宽 `caret_width` 的矩形**（`Rect2(x, y, caret_width, h)`），
+		# 不是居中的线 ⇒ 这里改成同样的矩形。两次独立运行都量到 `1182..1184`（横坐标稳定）。
+		var caret_h := size.y - sb.get_content_margin(SIDE_BOTTOM) - content_top
+		draw_rect(Rect2(Vector2(caret_x, content_top), Vector2(CARET_WIDTH, caret_h)),
+			GwThemeFactory.COL_TEXT)
