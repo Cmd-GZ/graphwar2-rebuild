@@ -1,0 +1,20 @@
+id	pri	file	test	域	为什么最会掩盖错误	改前期望值来源	预注册真值来源	取证手段（工具 + 命令）	目标档
+A01	1	src/plane.rs	raster_is_symmetric	坐标变换/掩膜	纯对称性自查：实现整体歪掉也仍然对称 ⇒ "歪得对称"照样绿	我方实现自洽	真二进制 `0x3f11e0`（光栅化自由函数，签名 f(x,y,size,mask_ptr,mask_len,fill)）	unicorn 直调 `0x3f11e0` → 整张 1000×600 掩膜 sha256 + 43×43 邻域逐字节	逐位
+A02	2	src/plane.rs	raster_edge_values_match_the_binary	掩膜	只有 2 个像素有真值，其余 40×40 全靠自查	真二进制（2 点）+ 自查	同上：43×43 邻域整块 sha256	同上	逐位
+A03	3	src/plane.rs	occupied_helper_sees_rasterized_pixels	命中/掩膜	"我的掩膜 + 我的判据"互相印证 ⇒ 两边同错也绿	我方实现自洽	真二进制 `0x3f15b0`（单点碰撞/越界算命中）	unicorn 直调 `0x3f15b0`，输入 = `0x3f11e0` 产出的真掩膜	逐位
+A04	4	src/plane.rs	raster_center_is_filled_and_bounded	掩膜	只查圆心与远端两点；行填边界/抗锯齿环没真值	我方实现自洽	真二进制 `0x3f11e0`	同上：整张掩膜 sha256 + 非空像素计数	逐位
+A05	5	src/plane.rs	raster_respects_fill_value	掩膜	fill 参数只查 1 个像素	我方实现自洽	真二进制 `0x3f11e0`（fill=0x10）	同上	逐位
+A06	6	src/plane.rs	raster_clips_at_canvas_edge	掩膜/裁剪	"碰过 = 有痕迹"近乎恒真：真填错位置也能绿	我方实现自洽	真二进制 `0x3f11e0`（圆心贴右下角 24.5,14.0）	同上：sha256 + 非空像素计数	逐位
+B01	7	src/graphwar_shot_calculator.rs	no_obstacles_means_no_hit	弹道	`point_count > 100` 近乎恒真；点值一个都没钉	我方实现自洽	真采样器 `0x3c2530`（逐位点数组）	unicorn 直调 `0x3c2530`：token=[Add,Const(c),Sin,VarX]、x0=5 y0=2 step=0.01 flip=0 mode=0	逐位
+B02	8	src/graphwar_shot_calculator.rs	obstacle_on_the_curve_is_hit	弹道/命中	`hit_index.is_some()` 恒真式：命中的是第几点、那点坐标多少全没钉	我方实现自洽	`0x3c2530` 点数组 + `0x3f11e0` 掩膜 + `0x3f15b0` 单点测试	三个真函数串起来（**组合方式仍是我方推断**，逐条标出）	逐位（原语）
+B03	9	src/graphwar_shot_calculator.rs	obstacle_away_from_the_curve_is_missed	弹道/命中	实现退化成"弹道只剩 1 点"时 `None` 照样绿	我方实现自洽	同上	同上	逐位（原语）
+C01	10	src/_scaffold/diffconv.rs	two_shot_batch_is_grouped_by_type	协议/结算批	期望种类序列是照我方模型写的；三轴事故就在这一带（括号不平衡 ⇒ 弹道 1 点）	我方模型 + docs/141	冻结语料真批：replay 1782642582 的两发批（真实报文顺序 + 真实 FunctionPoints.end_x）	解析 frozen snapshot（sha256 登记在 fixtures/guardrails.json）→ 逐条 kind + end_x 位	观测
+C02	11	src/_scaffold/diffconv.rs	death_block_follows_flight_time	回合/结算批	"死亡块按飞行时间排"是我方规则；真批里死亡块顺序从没对过	我方模型	冻结语料真批：replay 1782642986 三发批的 DeathEffect 顺序与坐标	同上	观测
+C03	12	src/_scaffold/diffconv.rs	single_shot_is_byte_identical_to_fire_batch	协议/结算批	只比"我方两条路径彼此相等" ⇒ 两条路径一起错也绿	我方模型	冻结语料真单发批：replay 1782640359 的单发批报文	settle 侧改成"两条路径都必须复现真批的 kind 序列 + end_x 位"	观测
+D01	13	src/graphwar_life_manager.rs	queued_death_is_taken_only_after_its_tick	命中/死亡时序	tick 165 是编的；真实排队 tick 与 DeathEffect 对齐没进来	我方实现自洽	真实抓包 fixtures/protocol_death.jsonl（231@238、230@953，DeathEffect.start_tick 对齐）	读夹具原文（sha256 入报告）	观测
+D02	14	src/graphwar_life_manager.rs	life_table_round_trip	存活表	表操作自洽；三态（1/0/查不到 2）没和真机样本对齐	我方实现自洽	真实抓包 protocol_death.jsonl 的 alive true/false + 反编译字面量 2	夹具 + 反编译字面量	观测
+E01	15	tests/entity_drawer.rs	sprite_transform_matches_update_sprite_arithmetic	精灵几何	**AGENTS §0.5 的实证 #1**：期望值与实现逐字同式 ⇒ 数学上不可能变红（漏 k 活 19 天/557 commit）	我方实现同式镜像	真帧：1920×1160 下三层 sprite 各 **54.6 屏幕 px**（docs/06 §59.8 第 1 条 / §71.1）	`tools/frame_capture.py --side original`（真帧读数，坐标见 docs/06）	观测
+F01	16	src/graphwar_turn_manager.rs	cursor_increments_before_reading	回合轮转	"先自增再取"只有我方断言；初值 0 时首取 index 1 没在真回放里对过	我方实现自洽	冻结语料：replay 1782764906 玩家 5272、1782673653 玩家 401164 的全活轮转	解析 snapshot：SoldierInfo 顺序 + TurnInfo 序列	观测
+F02	17	src/graphwar_turn_manager.rs	explicit_initial_cursor_is_honoured	回合轮转	with_index 是脚手架，但断言语义=游标先自增	我方实现自洽	冻结语料 replay 1782673653 玩家 401060 的 5 兵轮转（含跳过阵亡）	同上	观测
+H01	18	tests/half_step.rs	normal_recheck_fires_on_a_constructed_case	弹道	构造用例的点数与退回次数全是我方模型给的	我方实现自洽	真采样器 `0x3c2530`：`sin(60*x)` (0,0) step=0.01 Normal	unicorn 直调（同输入真点数组，含点数与末点位）	逐位
+H02	19	tests/half_step.rs	probe_matches_production_on_all_fixtures	弹道	主断言是"复制品 == 生产"（自洽）；真值只顺带核	我方自洽（+ 顺带核夹具）	真采样器 `0x3c2530` 对 224 例抽样（≥16 例全点逐位）	unicorn 直调	逐位
