@@ -38,16 +38,15 @@ headless     14 个 `client/tools/*_check.gd`（`extends SceneTree`）合计 **1
              缺 ④ = `654 / 0 / 3 skip`（missing=63 全 degraded / silent 0）；缺 ① 的三档历史读数是 591/667/618。
              **别预设 `XDG_*`**（预设到工作区外 ⇒ `user://` 不可写 ⇒ 632/7）。命令与判据见 `docs/18` §10.3.4
 
-客户端像素   **18 屏有真值**（`docs/06` §53–§77）。**0 px**：主菜单 / 回放列表 / 战役选择 / 关卡弹窗 / `join_level_popup` /
-             `player_skins`；**结算框面板区 955×690 = 0 px**（整屏 4.05 %，残余全是对局屏底图）。
-             `replay_play`+`replay_end` **0.186–0.198 %**（L2 0 块）；`player_faces`/`hats` 0.053 %；`lan_lobby_local` 0.135 %；
-             `game_setup` 1.05–1.25 %；**对局屏** `match_ready` **6.19 %**（L2 1 块）/ `match_play` **6.45 %**（L2 2 块）。
-             ⇒ 剩下唯一的大项就是**对局屏底图**：棋盘格线 1 px 13 006、左右键盘字形 37 397、左上两键 13 413、`f(x)` 行 6 230。
-             ⚠️ 数字必须带**树号**；**L3 在文本屏结构不可达**（文本栅格化 / 抗锯齿），别当"快成了"。
-             ⚠️ 采集四条前置：**UDP 42968 可能被泄漏 cgroup scope 占用**（→ 私有 netns `bwrap --unshare-user --unshare-net` +
-             四个 MESA 变量 + 继承的 `DISPLAY` 指向新 Xvfb）；新工作树缺 `client/.godot` ⇒ 全空白帧；
-             **改 `src/` 必须重建并覆盖 `client/libgw2_rebuild.so`**（否则 headless 脚本 `SCRIPT ERROR` 后挂住）；
-             **两侧采集串行**（并行会抢端口）。
+客户端像素   **18 屏有真值**（`docs/06` §53–§79）。**逐像素 0 px 八屏**：主菜单 / 回放列表 / **回放播放** / **回放结束** /
+             战役选择 / 关卡弹窗 / `join_level_popup` / `player_skins`；**结算框面板区 955×690 = 0 px**（整屏 4.05 %）。
+             **对局屏** `match_ready` **0.122 %（L2 0 块）** / `match_play` **0.428 %（L2 1 块）**；
+             `player_faces`/`hats` 0.053 %；`lan_lobby_local` 0.135 %；`game_setup` 1.05–1.25 %。
+             ⇒ **像素这条线基本收口**，剩下三块：①对局屏精灵/名字标签 ~2.4 k px（字号与 `outline_size` 两自由度一个方程）
+             ②准备圈箭头角度 ~1.2 k px ③`lan_lobby_global`（要真 broker）与 `game_setup` 本机地址（数据不在客户端）——后两条**物理不可得**。
+             ⚠️ **`match_play` 那块 L2 不可判**：原版自己三帧噪声地板 0.70 % > 两侧跨侧差 0.43 %。
+             ⚠️ 采集前置四条：UDP 42968 可能被泄漏 scope 占（→ 私有 netns）、新树缺 `client/.godot` ⇒ 空白帧、
+             改 `src/` 必须重建覆盖 `.so`、两侧**串行**。
 
 **两张最容易混的口径**：`527 vs 13,263`（可归属 vs 全部函数）、`1075 vs 647`（种类 vs 内容）。
 
