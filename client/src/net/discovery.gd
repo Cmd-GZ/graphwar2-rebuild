@@ -17,10 +17,15 @@ class_name GwLanDiscovery
 ## 所以自检/端到端里由测试自己发一条同形状的报文把"房主"演出来 ——
 ## 这正是 `docs/115` §5.3 用原版客户端做的实验，反过来做。
 ##
-## # 三个"本项目选择"（都写进 docs/134）
+## # 两件"本项目选择" + 一条**已经拿到真值**的（都写进 docs/134）
 ##
-## 1. `ROOM_TTL_MS` —— 房间多久没更新就认为没了。原版广播周期/超时**未知**
-##    （`GameHeartbeat` 从未抓到，`docs/96` §3）。
+## 1. `room_ttl_ms` —— 房间多久没更新就认为没了。**已有逐位真值：10 s**。旧注释写"原版
+##    广播周期/超时**未知**（`GameHeartbeat` 从未抓到）"——**那条结论已作废**：
+##    `graphwar_lan_broadcaster_v6::process` 每帧扫表，`Instant::now() − entry.instant`
+##    的 `secs >= 10` 就删（arm64 `0x3de6d4 bl Instant::now` → `0x3de6e0 bl Sub for Instant`
+##    → `0x3de6e4 cmp x0,#0xa` + `0x3de6e8 b.lo`），同一函数的**广播周期是 1 s**
+##    （`0x3de7c8`–`0x3de7d4`）。值经 `GwNetConsts` 从 Rust 取，本文件**不写数字**
+##    （改前是自造的 `12000`）。见 `docs/06` §92。
 ## 2. `rooms()` 的顺序 —— 按 `address` 排序。原版列表顺序**未知**；
 ##    排序只是为了可复现，不作为复原结论（与 `src/_scaffold/broker.rs` 的口径一致）。
 ## 3. 「枚举值不在已知集合里就整条丢弃」—— 这是从原版受控实验反推的行为
@@ -32,7 +37,10 @@ signal failed(reason: String)        ## 绑定失败等
 ## 原版 LanLobby 监听的端口（观测，`docs/115` §5.3）。端口冲突是常态
 ## （同一台机器再开一个原版客户端也会绑它），所以绑定失败**不算致命错**。
 const DEFAULT_PORT := 42968
-const ROOM_TTL_MS := 12000
+## 房间条目的存活时间（毫秒）= **原版 `ENTRY_TTL_SECS = 10` × 1000**，从 Rust 取
+## （`GwNetConsts.entry_ttl_ms()` ← `graphwar_lan_broadcaster_v6::ENTRY_TTL_SECS`，
+## arm64 `0x3de6e4 cmp x0,#0xa`；逐位）。**这里不许写数字**（T42；改前是自造的 `12000`）。
+var room_ttl_ms := GwNetConsts.entry_ttl_ms()
 const MAX_ROOMS := 64
 
 ## 已知的 `time_mode` 取值形状。抓包实际只观测到 `Timer1m` / `Timer3m`
@@ -125,7 +133,7 @@ static func _same_row(a: Dictionary, b: Dictionary) -> bool:
 func _expire() -> bool:
 	var dead: Array[String] = []
 	for k in _rooms:
-		if _clock_ms - int(_rooms[k]["last_seen_ms"]) > ROOM_TTL_MS:
+		if _clock_ms - int(_rooms[k]["last_seen_ms"]) > room_ttl_ms:
 			dead.append(String(k))
 	for k in dead:
 		_rooms.erase(k)

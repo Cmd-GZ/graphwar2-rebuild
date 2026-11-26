@@ -93,9 +93,11 @@ pub mod obstacle_drawer_class;
 // manager 方法"的证据表把那条断链接上（`GwNetEvents`），只在 `gdext-bindings` 下编译。
 #[cfg(feature = "gdext-bindings")]
 pub mod net_events_class;
-// **原版 Rust 模块里本来就有**的时间常量的取值口（T42）：连接超时
-// `graphwar_client_connection_handler::CONNECT_TIMEOUT_SECS = 30`（arm64 `0x48dccc mov w1,#0x1e`）。
-// `client/src/net/link.gd` 以前自己编了 3 s，现在经这里问 Rust 要。只在 `gdext-bindings` 下编译。
+// 两个**原版 Rust 模块里本来就有**的时间常量的取值口（T42）：连接超时
+// `graphwar_client_connection_handler::CONNECT_TIMEOUT_SECS = 30`（arm64 `0x48dccc mov w1,#0x1e`）
+// 与 LAN 房间 TTL `graphwar_lan_broadcaster_v6::ENTRY_TTL_SECS = 10`（arm64 `0x3de6e4 cmp x0,#0xa`）。
+// `client/src/net/*.gd` 以前自己编了 3 s / 12 s，现在一律经这里问 Rust 要。
+// 只在 `gdext-bindings` 下编译。
 #[cfg(feature = "gdext-bindings")]
 pub mod net_constants_class;
 // `PlayerShowcase` 的真节点类（§39）：读档案 + 三层 `draw_texture_rect` + 计数器闸门。
