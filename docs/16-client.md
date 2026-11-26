@@ -11084,3 +11084,91 @@ t.set_color("font_focus_color",   "Button", Color(0.95,  0.95,  0.95,  1.0))   #
 见 `docs/06` §62.5（含"27 份 `cmp` + 台账复算 + 三档验收 + 像素"的完整命令）。
 ⚠️ 本轮新增了 3 个 `.gd` ⇒ **必须** `godot --headless --path client --import` 一次，
 否则 Godot 静默不加载（`docs/18` 的那条老坑）。
+
+## 67. 客户端"收到线上事件之后干什么"：原版是 `GraphwarRemoteEventHandler`（`0x3e6df0`），我方此前**没有这一层**；本轮补成 `GwNetEvents` 桥 + `session.gd` 的实体模型修正（2026-11-26，任务 T17）
+
+> 数据与像素结论在 `docs/06` §64（含逐块表与两侧复跑命令）。本节只讲**客户端侧怎么接的**。
+
+### 67.0 断点在哪
+
+```text
+服务端报文 ──TCP u16 大端长度 + JSON──▶ GwNetLink ──▶ GwNetSession._on_frame
+                                                         │
+                                    解析（GwNetFrame）/ 记账（session.room）
+                                                         │
+     ❌ 这里断了：原版是 GraphwarRemoteEventHandler::handle_server_remote_event
+        （x86 0x3e6df0 / arm64 0x3e2830，switch 落在 tag-2）→ 22 个 manager 的 setter
+        ⇒ 复原出来的 GraphwarPlanePosManager / NameManager / GraphicsManager /
+          TargetManager / EntityEffectManager / EffectManager / ColorManager /
+          ColorManager / TurnManager / ModeManager / FunctionManager / TeamManager /
+          SoldierManager / PlayerManager / LifeManager / ObstacleTable 一个字节都收不到
+```
+
+`docs/02-module-map.md` §17 把 `graphwar_remote_event_handler.rs` 记成"只落了枚举与名字表、
+171 个锚点的分发/订阅行为未实现（混装待拆）" ⇒ 客户端侧这条链路**从来没有接通**。
+所以以前"缺 12 个事件处理器"只是**症状**：即使把那 12 个分支写进 `session.gd`，数据也到不了绘制层。
+
+### 67.1 接法（三段，每段职责单一）
+
+| 段 | 文件 | 职责 | 有没有第二份语义 |
+|---|---|---|---|
+| ① 解析 + 我方模型 | `client/src/net/session.gd`（`_apply`） | 线上字段 → `room` 的那几张表（界面层要读的） | 有（但只是"我方模型"，**不是**游戏规则） |
+| ② 派发 | 同文件 `_feed_managers()` + `GwNetEvents`（`src/_scaffold/net_events_class.rs`） | 线上字段 → **复原 manager 的具体方法**（一事件一方法，落点逐条带地址） | **没有**：不重算任何规则 |
+| ③ 消费 | `EntityDrawer` / `EffectDrawer` / `GraphwarPlane` …（既有类） | 从 manager 表拉数据画 | 有（`play_screen.gd` 的两处代偿还在，见 §67.4） |
+
+`GwNetEvents` 的用法（GDScript）：
+
+```gdscript
+var ev := ClassDB.instantiate("GwNetEvents") as RefCounted   # 懒建，跨局复用
+ev.call("reset")                                             # 装内核通道（幂等）
+ev.call("pos_info", 230, -5.156306989169929, -9.889980889323086, 0.5)
+#   → 返回这次调到的 manager 方法（"plane_pos_manager::set_position"），空串 = 这条没有落点
+ev.call("dump")                                              # 各表快照（自检/取证）
+```
+
+`entity_removed` 是**扇出**：一次调用落到 9 个 manager 各自的 `handle_entity_removed_event`
+（每个 manager 的模块文档里都有自己那条订阅，顺序固定，`cargo test` 有断言钉住）。
+
+### 67.2 `session.gd` 的实体模型修正（**这条直接改了像素**）
+
+| 改之前 | 改之后 | 后果 |
+|---|---|---|
+| `_ensure_entity()` 默认 `kind = "soldier"` | 默认 `kind = ""`；只有 `SoldierInfo` 造 soldier、`TargetInfo` 标 target | 玩家实体 229 与已删除的士兵 231 不再变成"停在 `(0,0)` 的士兵" |
+| `TeamInfo` 无条件建实体 | **不建实体**（`TeamInfo` 的 `entity_id` 也可能是"玩家自己"） | 同上；棋盘正中那具假士兵 + 假准备圈消失 |
+| `EntityRemoved` / `RemoveTeam` 没处理器 | 真的从 `entities`、玩家的 `soldiers`、边表里删 | 死人不复活、圈不再落到尸体上 |
+| `ColorInfo` 是 `pass` | 记账（原版 `color_manager::set_color` 是**直接采纳**服务端颜色） | 界面层还没读（§67.4 第 3 条） |
+| 没有"先到的事实"这一层 | 新增边表 `targets/teams/names/look/colors/entity_effects/effects/shots/active_ticks` | 事件乱序（`TeamInfo` 比 `SoldierInfo` 先到）也不丢信息 |
+
+**为什么准备圈以前画在棋盘正中**（t8 §60.5 只记了现象）：`_soldiers` 原来是 `[229, 230, 231, 232]`
+（四个"士兵"，前两个在原点），`play_screen::_refresh_plane()` 的 `_active_soldier_idx` 来自
+`_turn_driver.first_shooter(alive)` ⇒ 取**第一个活着的** = 下标 0 = 实体 229 = `(0,0)`。
+本轮之后 `_soldiers = [230]`，圈落在射手身上（**观测**：两侧真机真帧）。
+
+### 67.3 复跑（怎么自己验这一层）
+
+```bash
+MAIN=/home/CG/Myprojects/graphwar2-rebuild; WT=$MAIN/.agent-work/cg/wt-t17
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target          # 单独一行
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+HOME=$WT/.fakehome "$GODOT" --headless --path client --import     # 少这一步 Godot 静默不加载
+# ① 映射表 + 落表结果（不碰引擎，纯 Rust）
+cargo test --offline --features gdext-bindings net_events
+# ② 两侧像素（流程与数字见 docs/06 §64.4）
+python3 tools/frame_capture.py --side ours --flow match --out $WT/.agent-work/v/match-mine --display-num 96
+```
+
+### 67.4 遗留（三条都需要改 `play_screen.gd`，本轮按任务书**没改**）
+
+1. **靶子图层**：`_begin_online()` 里 `_targets = GwTargetSet.new()` 之后**从不填** ⇒ 联机局画不出靶子。
+   数据已经在 `session.room["targets"]`（+ 对应 `PosInfo`）；最小改法是在 `_begin_online()` 里
+   `_targets.setup(...)` 一次。**副作用**：靶子以前被当成士兵画出来（错得"像"），改完之后那块会
+   从"错元素"变成"缺元素"——`docs/06` §64.5 的 `(1,3)` 块就是这么变差的，别只看总数字。
+2. **名字标签**：`_online_player_name()` 读 `app_node.state.players[pi].name`（= 本地 profile 名），
+   **不读** `room["names"][entity_id]`（`NameInfo` 的真值 `cmdgz` 已经落在那里、也进了
+   `GraphwarNameManager`）。原版方向是标签文本从 `NameManager` 拉（`docs/16` §44 那条链）。
+3. **id 空间**（总根因）：`_sync_entities()` 给 `EntityDrawer` 的 id 是**士兵下标**与
+   `TARGET_ID_BASE+tid`，而事件/manager 用的是**实体 id**。⇒ 外观/名字/颜色即便全部进了 manager
+   也**没有消费者**。要么播放屏改用实体 id，要么在桥里加一张"下标 → 实体 id"的别名表并由播放屏填。

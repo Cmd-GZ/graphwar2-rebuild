@@ -81,6 +81,12 @@ pub mod long_press_animation_class;
 // 只在 `gdext-bindings` 下编译。
 #[cfg(feature = "gdext-bindings")]
 pub mod obstacle_drawer_class;
+// 客户端侧「线上事件 → 复原 manager」的**派发桥**（`docs/06` §64 那一轮）：
+// 原版 `GraphwarRemoteEventHandler::handle_server_remote_event`（x86 `0x3e6df0`）那个模块
+// 我方**没有复元**，客户端收到事件后 22 个 manager 一个字节都拿不到。本模块按"线上事件 →
+// manager 方法"的证据表把那条断链接上（`GwNetEvents`），只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod net_events_class;
 // `PlayerShowcase` 的真节点类（§39）：读档案 + 三层 `draw_texture_rect` + 计数器闸门。
 #[cfg(feature = "gdext-bindings")]
 pub mod player_showcase_class;
