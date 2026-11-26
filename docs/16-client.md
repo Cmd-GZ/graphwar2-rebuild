@@ -10963,12 +10963,15 @@ t.set_color("font_focus_color",   "Button", Color(0.95,  0.95,  0.95,  1.0))   #
 见 `docs/06` §57.8（两侧 `--flow static` + `frame_diff.py --screens campaign,level_popup`）。
 本条的两个改动都是 `.gd`，**不需要**重编 `libgw2_rebuild.so`，也不需要 `--import`（没有新文件）。
 
-## 66. `tools/frame_capture.py --flow match`：**对局屏**怎么采（脚本化协议服务器 + 两侧同一份剧本）（2026-11-26，任务 T8）
+## 65. `tools/frame_capture.py --flow match`：**对局屏**怎么采（脚本化协议服务器 + 两侧同一份剧本）（2026-11-26，任务 T8）
 
 > 数字、逐元素差异与结论在 `docs/06` §60。本节只讲**怎么用**这个 flow、两侧怎么起、已知限制。
-> 编号说明：本节按任务书定为 **66**；master 当前最后一节是 §64（t7 的 §65 先合则顺延，正文引用一并改）。
+>
+> **编号说明**（照 §64 的先例如实记）：任务书让我写 **66 号**（预设另一名 teammate 的客户端改动先合、
+> 占掉 65）。但本分支上 `tools/check_doc_refs.py` 要求小节编号**连续**，所以这里落 **65**；
+> 若合并时别人的那节先占 65，则本节顺延为 **66**，正文引用一并改。
 
-### 66.1 它解决的问题
+### 65.1 它解决的问题
 
 `--flow campaign/replay/static` 覆盖的屏都不需要"服务端"：战役关卡的落点**不可复现**（`docs/06` §53.5 第 1 条），
 所以对局屏（准备圈 / 棋盘 / 回合 HUD）一直没有真值。`--flow match` 把局面钉死在**一份写死的事件序列**上：
@@ -10983,7 +10986,7 @@ frame_capture 每屏 3 帧、间隔 1.2 s → tools/frame_diff.py（既有三层
 
 `--flow match` **只新增分支**：`campaign` / `replay` / `static` 三支一字未改，`tools/frame_diff.py` 一字未动。
 
-### 66.2 两侧各一条命令（服务器由采集脚本自己起，**不要**另开一个终端起）
+### 65.2 两侧各一条命令（服务器由采集脚本自己起，**不要**另开一个终端起）
 
 ```bash
 export MAIN=/home/CG/Myprojects/graphwar2-rebuild
@@ -11005,7 +11008,7 @@ python3 tools/frame_diff.py --orig $W/match-orig --mine $W/match-mine --screens 
 所以**Xvfb → 脚本化服务器 → 游戏 → 截图**都在 `frame_capture.py` 这一个进程树里起。
 `--side ours` 还需要 `client/libgw2_rebuild.so` 已就位（`cargo build --features gdext-bindings` 后拷进去）+ 跑过一次 `--import`。
 
-### 66.3 新增开关（都有默认值，不传就和既有三支完全无关）
+### 65.3 新增开关（都有默认值，不传就和既有三支完全无关）
 
 | 开关 | 默认 | 说明 |
 |---|---|---|
@@ -11028,7 +11031,7 @@ touch <out>/phase2.trigger → 等 5.0 s              ← 服务器看到触发�
 `(1344,622)` 与 `(1842,209)` 是**原版真机**实测坐标（`docs/06` §48.8 的点击串）；我方主菜单与原版**整屏 0 像素差**
 （`docs/06` §53.0 ①），LAN 列表第 1 行的 `Join` 本轮实测也落在同一格 ⇒ 两侧用同一串坐标。
 
-### 66.4 服务器怎么说话（`tools/match_serve.py`）
+### 65.4 服务器怎么说话（`tools/match_serve.py`）
 
 * **LAN 发现**：UDP 裸 9 字段 `GameInfo` + 结尾 `"\n"`，每 0.5 s 一次（变体 C，`docs/06` §48.2 ①：
   加事件外壳的 `{"GameInfo":…}` 会被真客户端丢弃）。`address` 字段用 `127.0.0.1:<tcp_port>`；
@@ -11049,7 +11052,7 @@ python3 tools/match_serve.py --fixture fixtures/frame_match_events.txt \
 # 另一个终端（同机）真客户端进 LAN 大厅点 Join 即可；触发文件不出现时可用 --auto-phase2 12 兜底
 ```
 
-### 66.5 已知限制（都在 `docs/06` §60.8/§60.9 有更细的记录）
+### 65.5 已知限制（都在 `docs/06` §60.8/§60.9 有更细的记录）
 
 1. **一次只服务一"侧"**：LAN 发现要绑 `UDP 42968`，同机同时跑两个实例会互抢 ⇒ 两侧**分两次**跑，
    靠"同一份 fixture + 同一份 sha256"保证可比（`--connections N` 只为客户端重连准备，不是给两侧同时用的）。
