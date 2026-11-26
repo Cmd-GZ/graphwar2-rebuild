@@ -13957,3 +13957,152 @@ $PWD/.reference/venv/bin/python tools/addr_probe.py locs 0x4b2890     # 抽样�
 **没有改动**：`src/**`、`client/**`、`tests/**`、`fixtures/guardrails.json`、`fixtures/frame_diff_thresholds*`、
 `docs/00-status.md`、`docs/HANDOVER.md`、`README.md`、`docs/coverage-matrix.*`、冻结快照、`recovered-src/`。
 **新增**：`fixtures/source_audit_src.tsv`、`tools/audit_src.py`、本节（`docs/06` 只追加）。
+---
+
+## 92. 两处 `.gd` 自造值换回 Rust 真值（连接超时 3 s → **30 s**、房间 TTL 12 s → **10 s**）+ 函数输入/键盘规则迁回 Rust（2026-11-26，任务 T42 / `task-39`）
+
+> 规格：`.agent-work/specs/T42-truth-fixes.md`。**三件**：①②是"我们写了个自造值、把逐位真值丢了"；
+> ③是"同一规则两处实现"（`AGENTS.md` §0.4 说的仿制品形态）。三件都要求**值/规则回到 Rust**，
+> 不是"把 `.gd` 里的数字/分支改一改"——那仍然是"我们的值"。
+
+### 92.1 两处真值：改前 → 真值 → 出处
+
+| # | `.gd`（改前） | 改前写的值 | 改前注释怎么说 | **原版真值** | 出处（ELF vaddr，arm64 2.0.60） | 档位 |
+|---|---|---|---|---|---|---|
+| ① | `client/src/net/link.gd:36` `var connect_timeout := 3.0` | 3 s | "**本项目选择**，非观测值" | **30 s** | `0x48dccc mov w1,#0x1e`（Duration.secs=30）+ `0x48dcd0 mov w2,wzr`（nanos=0）+ `0x48dcd4 bl 0x80b238` = `std::net::tcp::TcpStream::connect_timeout` | **逐位** |
+| ② | `client/src/net/discovery.gd:35` `const ROOM_TTL_MS := 12000` | 12 s | "原版广播周期/超时**未知**（`GameHeartbeat` 从未抓到）" ← **已证伪** | **10 s**（广播周期 **1 s**） | `0x3de6d4 bl 0x80b0e0`(`Instant::now`) → `0x3de6e0 bl 0x81f044`(`<Instant as Sub>::sub`) → `0x3de6e4 cmp x0,#0xa` + `0x3de6e8 b.lo`（`secs < 10` 保留，否则删）；周期 `0x3de7c8 cbz x0` / `0x3de7cc cmp x0,#1` / `0x3de7d0 b.ne` / `0x3de7d4 cbz w1` ⇒ `elapsed > 1 s` | **逐位** |
+
+两个常量**本来就已经**在复原的 Rust 模块里（`src/graphwar_client_connection_handler.rs:261`、
+`src/graphwar_lan_broadcaster_v6.rs:154`/`:158`），所以本轮**不新增判据、不改 Rust 语义**。
+
+### 92.2 真值我自己核了一遍（不看 T35 的报告），并更正一处口径
+
+⚠️ **T35 给的两个地址是 arm64 版**（`.reference/steam/android-2.0.60/libgraphwarrust.so`）的 vaddr，
+**不是** x86-64 那份的。同两个数字在 x86-64 `.so` 上**落在别的指令中间**——实测
+`tools/addr_probe.py dis 0x3de6e4` 出来的是 `add byte ptr [rax-0x73], cl`（不是 `cmp`）。
+按"x86 版"去读会得出一个看起来很像的错结论（`AGENTS.md` 的地址陷阱又多一条：
+**先确认是哪一份构建**）。
+
+复现（arm64 段：`readelf -sW` + capstone 按 vaddr 反汇编）：
+
+```bash
+A=.reference/steam/android-2.0.60/libgraphwarrust.so
+readelf -sW $A | grep -E " 000000000080b238 | 000000000080b0e0 | 000000000081f044 "
+#   000000000080b238  1084 FUNC LOCAL DEFAULT 13 _RNvMNtNtCs6rkJRWCxwoI_3std3net3tcpNtB2_9TcpStream15connect_timeout
+#   000000000080b0e0     8 FUNC LOCAL DEFAULT 13 _RNvMNtCs6rkJRWCxwoI_3std4timeNtB2_7Instant3now
+#   000000000081f044    80 FUNC LOCAL DEFAULT 13 _RNvXs3_..._7InstantNtNtNtCsgJbzUFjrMEO_4core3ops5arith3Sub3sub
+# 反汇编（vaddr 直接当 ELF 虚拟地址；section .text addr=0x3497c0 → 文件偏移 = vaddr - 0x3497c0 + sh_offset）：
+#   0x3de6d4 bl 0x80b0e0   ; Instant::now
+#   0x3de6e0 bl 0x81f044   ; Sub for Instant → Duration{secs=x0, nanos=x1}
+#   0x3de6e4 cmp x0,#0xa   ; secs >= 10 ?
+#   0x3de6e8 b.lo 0x3de68c ; 保留
+#   0x48dcc8 add x8,sp,#8  ; sret（Result）
+#   0x48dccc mov w1,#0x1e  ; Duration.secs = 30
+#   0x48dcd0 mov w2,wzr    ; Duration.nanos = 0
+#   0x48dcd4 bl 0x80b238   ; TcpStream::connect_timeout
+```
+
+### 92.3 改法：**值从 Rust 来**（`.gd` 里不再有数字）
+
+新增脚手架类 `GwNetConsts`（`src/_scaffold/net_constants_class.rs`，**原版没有这个类**，见文件头）：
+
+```gdscript
+GwNetConsts.connect_timeout_secs()   # 30.0（= CONNECT_TIMEOUT_SECS）
+GwNetConsts.entry_ttl_ms()           # 10000（= ENTRY_TTL_SECS × 1000，毫秒换算在 Rust 侧做一次）
+GwNetConsts.entry_ttl_secs()         # 10.0
+GwNetConsts.broadcast_period_secs()  # 1.0
+GwNetConsts.provenance()             # 值 + 每个值的来源常量 + 证据地址 + 档位（自检/文档复核用）
+```
+
+`.gd` 侧（每个文件一行）：`var connect_timeout := GwNetConsts.connect_timeout_secs()`、
+`var room_ttl_ms := GwNetConsts.entry_ttl_ms()`（原来的 `const ROOM_TTL_MS` 改成 `var`，唯一使用点
+`_expire()` 跟着改）。**`retries` / `retry_delay` 仍然是"本项目选择"**（原版重试策略无观测），
+注释里已经和 30 s 那条区分开，不许混。
+
+运行时读数（探针 `client/tools/truth_fixes_probe.gd`，23 条断言全过）：
+
+```text
+ok   connect_timeout_secs = 30（实际 30.0）      ok   entry_ttl_ms = 10000（实际 10000）
+ok   broadcast_period_secs = 1                   ok   GwNetLink.connect_timeout == 30 s（不再是 3 s）
+ok   GwLanDiscovery.room_ttl_ms == 10000 ms（不再是 12000 ms）
+T42PROBE 23 passed, 0 failed
+```
+
+### 92.4 ③ 函数输入 / 键盘：台账先行，搬 5 段，`.gd` **403 → 344** 行
+
+台账 `fixtures/function_input_migration.tsv`（30 段：move **5** / partial **3** / keep **22**；
+每段给 `.gd` 行号、Rust 侧文件:行、证据档、不搬缺什么）。搬走的 5 段落成 Rust 侧 **2 个规则函数**，
+外壳是新脚手架类 `GwFunctionEdit`（`src/_scaffold/function_input_rules_class.rs`）：
+
+| 搬走的东西 | 落到 Rust | 原版证据 |
+|---|---|---|
+| `function_input.gd:109-136 key_input()` 的 **8 个 `match` 分支**（清空/左删/右删/左右移/两端/插入/长度拒绝） | `apply_command_impl` ← `graphwar_function_input::Buffer` | `move_caret_left` `0x4f3210`、`move_caret_right` `0x4f3910`、`delete_char_at_caret`（字面量 `0x1c44a2`，`delete_token_at_caret` `0x4f44c0` 里调它）、`insert_text_at_caret`（原样插）；`C`/`⌦`/`⇤`/`⇥` 是**推断** |
+| `keyboard_input.gd:64-68 PRINTABLE`、`70-71 REPLACEMENTS`、`104-118 _char_of`、`120-130 filter_char` | `key_text_impl` ← `graphwar_function_input::classify_key` + `COMPOSED_FOLDS` | `gui_input` 跳转表 `0x1c3d5c`（198 项里 28 项不落默认分支）—— **观测**；白名单/替换是**本项目选择** |
+
+**这是本轮唯一真正升档的地方**：改前 `.gd` **没有**那张 28 条折叠表（`filter_char()` 只查自己的
+`PRINTABLE` 串），所以 AZERTY/QWERTZ 死键合成的 `â ê î ô û`、`Ĉ Ĝ Ĥ Ĵ Ŝ Ŵ Ŷ` 与上标 `² ³ ¹`、`·`
+被**整条丢掉**；原版会把它们折回 ASCII 再插入。现在 `â ⇒ a`、`² ⇒ 2`、`ŷ ⇒ y`（探针 3 条断言）。
+`.gd` 只留视图（自绘/闪烁/样式盒/字体度量/鼠标定位）与**输入接线**（编辑键→屏上命令那段
+`match` 留原地：那是"哪个物理键 = 哪条屏上命令"，不是游戏规则）。
+
+行数：`function_input.gd` **273 → 264**、`keyboard_input.gd` **130 → 80**，合计 **403 → 344**（-59）。
+
+### 92.5 门槛读数（三件全部就位后；`git status` 干净时测）
+
+| 门槛 | 基线 | 本轮 | 备注 |
+|---|---|---|---|
+| `cargo test --offline` | 1772 / 0 / 1ignored | **1772 / 0 / 1ignored** | 新增测试全在 gdext 门下 ⇒ 默认口径不变 |
+| `cargo test --features gdext-bindings` | 1887 / 0 / 1ignored | **1893 / 0 / 1ignored** | +6 = `function_input_rules_class.rs` 的纯逻辑单测（插入/左右删/四键/长度上限/28 折叠/ASCII 口径） |
+| `selftest` | 717 / 0 / 1skip（missing=0 silent=0） | **717 / 0 / 1skip（missing=0 silent=0）** | 含原有的 9 条键盘断言（`GwKeyInput.command_for` 行为未变） |
+| headless 14 脚本 | 1935 / 0 | **1935 / 0** | 探针脚本**不在**这 14 个清单里（有意，见 §92.7 第 3 条） |
+| 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **647 / 647 / 637** | 本轮没碰内核（`src/graphwar_*.rs` 一个语义都没改） |
+| 像素（私有 netns、两侧串行重拍） | match_ready 0.122 %(L2 0) / match_play 0.428 %(L2 1) / lan_lobby_local 0.135 % | **match_ready 0.122 %(L2 0) / match_play 0.421 %(L2 1) / lan_lobby_local 0.135 %(L2 0)** | 三个数与基线同值（match_play 差 0.007 pt 在 ±15 px 噪声地板内）|
+| 像素：回放两屏 | 见 §92.6（**归因实验**） | `replay_play` 0.077 % / `replay_end` 0.089 %（L2 0 块） | **与本轮改动无关**：把 4 个 `.gd` 退回 base（`43bf4f8`）重拍同一支流，读数逐位相同（0.077 / 0.089） |
+
+### 92.6 像素：重拍了哪几屏、为什么其余屏**不可能**变
+
+改动只碰 4 个 `.gd` + 2 个新脚手架类。按**实例化/调用点**算爆炸半径（`grep` 可复核）：
+
+* `GwFunctionInput` / `GwKeyInput` —— 只有 `client/src/screens/play_screen.gd` 用（`:622` / `:1723`）
+  ⇒ 只可能影响**对局屏与回放屏**；
+* `GwNetLink` —— 只有 `client/src/net/session.gd:148`、`broker.gd:50` 用（网络层，不画东西）；
+* `GwLanDiscovery` —— `net.gd` 启动时装、`lan_lobby.gd` 显示房间行 ⇒ 只可能影响 **LAN 大厅**。
+
+所以重拍的屏 = 对局两屏（`match`）+ 回放两屏（`replay`）+ LAN 大厅两页（`lobby`）。
+**没有**重拍主菜单 / 回放列表 / 战役选择 / 关卡弹窗 / `join_level_popup` / `player_skins`
+（这六屏一行相关代码都不走；`lan_listen` 只在启动时挂监听，不产生绘制）。
+⚠️ 这是一条**代码路径推断**，不是逐屏重拍 —— 若 lead 要求"八屏全部重拍"，那是另一轮的事（见 §92.8）。
+
+### 92.7 中途踩的三个坑（都真踩了，写下来省下一个人半小时）
+
+1. **`--match-udp-port` 不能改**：我方 `LanLobby` 把 UDP **42968** 写死在 `discovery.gd`
+   （`DEFAULT_PORT`）。我第一次为了"避免抢端口"把两侧都改成 46812/46814 ⇒ 房间广播发到没人听的端口
+   ⇒ **两侧都停在 LAN 大厅**，`frame_diff` 报 **0.000 %**——**比真值好看得多**的假通过。
+   正解就是文档里那条：私有 netns（`bwrap --unshare-net`）+ 两侧各自默认端口。
+2. **`$MAIN/tools/frame_capture.py` 在 worktree 里会拍错树**：`_find_repo()` = **脚本所在的 checkout**
+   ⇒ 从主 checkout 调它，`--side ours` 拍的是**主 checkout 的 `client/`**（本轮实测：主 checkout 的
+   `.so` 是旧的 / 或 `play_screen.gd` 是另一版本 ⇒ `Parse Error` ⇒ 整屏纯背景、差 65 %/0.000 %）。
+   **必须用 `$WT/tools/frame_capture.py`**（被测树 = 自己的 worktree）。
+3. **探针脚本故意不叫 `*_check.gd`**：`client/tools/truth_fixes_probe.gd` 不在 §49.6 那 14 个脚本
+   门槛清单里，所以 headless 门槛口径仍是 **14 脚本 / 1935**（加进去会改口径）。要纳入门槛请 lead 定。
+
+### 92.8 遗留 / 未做
+
+| # | 项 | 量 | 状态 | 理由 / 缺什么 |
+|---|---|---|---|---|
+| 1 | `client/src/net/broker.gd:51` 还写着 `_link.connect_timeout = 3.0` | 1 行 | **未改** | **不在本任务的允许改文件清单里**。后果：走 broker 的连接把 Rust 的 30 s 又盖回 3 s ⇒ ①只修好了 `link.gd` 的默认值，`broker` 这条路径仍是自造值。**建议 lead 一行派人改掉**（改成不写，或写 `GwNetConsts.connect_timeout_secs()`） |
+| 2 | `docs/archive/134-net-client.md:258/260` 把「连接超时 3 s」「LAN 房间 TTL 12 s」记成 **自定** | 2 行 | **未改**（归档文档不在可改范围） | 现在这两条**都是错的**（已证伪）；按 `AGENTS.md` §0.6 应就地改正，请 lead 处置 |
+| 3 | 主菜单/回放列表/战役选择/关卡弹窗/`join_level_popup`/`player_skins` 六屏 | — | **未重拍** | 代码路径不经过本轮改动（§92.6）；要逐屏证据得再跑 4 支 flow |
+| 4 | `lan_lobby_global` 6.474 % | — | **既有残差**（非本轮引入） | 我方 Global 页是**静态占位**（`commands.gd::SHOW_GLOBAL` 标 🔶；原版那页来自公网列表，离线不可得）。本轮改动不涉及该页 |
+| 5 | `client/src/play/keyboard_input.gd` 里"编辑键 → 屏上命令"那段 `match` 仍在 `.gd` | ~14 行 | **有意保留** | 它是**输入接线**（Godot Key 枚举 → 命令字面量），不是游戏规则；原版这层在引擎 `LineEdit` 里（无 Rust 函数可搬） |
+
+### 92.9 我写错了 / 规格前提被证伪（三条）
+
+1. **规格说"Rust 侧没有就补上" —— 前提被证伪**：两个常量**都已经在**复原模块里且带出处
+   （`graphwar_client_connection_handler.rs:261`、`graphwar_lan_broadcaster_v6.rs:154`/`:158`）。
+   本轮实际做的是"**暴露 + 取值**"，`src/graphwar_*.rs` 一行没改（`git diff --stat` 可验）。
+2. **规格把 ① 的出处写成"`.rodata`/立即数" —— 实际是纯指令立即数**（`mov w1,#0x1e`），
+   `.rodata` 里没有这个值；且两个地址都是 **arm64** 版的（§92.2）。按 x86 版读会读到别的指令中间。
+3. **我自己也写错过一次口径**：第一次跑像素对拍时把 UDP 端口改掉，结果 `frame_diff` 报 0.000 %
+   （假通过）；第二次又误用主 checkout 的 `frame_capture.py`，同样得到"0.000 %/65 %"这类无意义数。
+   两次都记在 §92.7 —— **0.000 % 这个读数本身就应当怀疑**，先看两侧帧的 `uniq` 颜色数（纯背景 = 假通过）。
