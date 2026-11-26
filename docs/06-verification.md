@@ -16040,3 +16040,161 @@ python3 $MAIN/tools/frame_diff.py --orig $WT/frames/orig_replay --mine $WT/frame
 8. **`lan_lobby_global` 的最差块变差了**（0.194 → 0.784 dmean，虽然总 diff px 少了 3 246）：
    最可能是原版 `game_menu_icon_theme` 真正生效之后，四个模式图标的底/边框与之前"退化到 app 主题"时不同。
    **未定位到具体块**（只到 L2 网格粒度），下一轮应该用 `--blocks-out` 逐块对照定位。
+
+## 96. 把 **19 条 S-self 测试**的期望值换成真二进制 / 冻结语料 / 真帧真值 —— **15 条 S-self 直接换掉**，`真 bug 报告 0 条`；挖到的不是实现错误而是 **3 条"我方模型与真机的口径差"**（2026-11-26，任务 T46 / `task-42`）
+
+### 96.1 一句话结论
+
+T37（§85、`fixtures/source_audit_tests.tsv`）判出 **341 条 `S-self`**（期望值来自我方实现 ⇒ 零证据、
+且会掩盖错误）。本批按"**最会掩盖错误**"挑了 **19 条**（不按文件顺序，按行为核心度），
+把期望值换成三类真值：**unicorn 直调真二进制**（`0x3f11e0` / `0x3f15b0` / `0x3c2530` / `0x4eb9d0` / `0x4ed670`）、
+**冻结语料真实报文**（403 份快照里的真回放批）、**真实抓包**（`fixtures/protocol_death.jsonl`）、
+**真帧像素读数**（`docs/06` §59.8 的 54.6 屏幕 px）。
+
+**结果：19 条全部换成真值，全部仍绿；真 bug 报告 0 条。**
+这不是"挑得保守"的托词 —— 上一轮的实证（§58 的 `update_sprite` 漏 `k`）之所以能活 557 个 commit，
+是因为**那些函数当时没有真值**。本批挑的邻域（掩膜/弹道/结算批/轮转）**原语早已逐位对拍**
+（`docs/08` §5.9 的 5 组 0 差异、`fixtures/path.tsv` 的 331 例、三轴护栏 647/647/637），
+所以自洽层**搭在已证原语之上**，没有可掩盖的错误。真正还没被真值照过的，是**没有二进制对应物的那些模型**
+（`play_screen_control` 的弹道生命周期/时钟、`game.rs` 的结算流程、`protocol.rs` 的 9 条合成样本）——
+见 §96.7 的下一批清单。
+
+### 96.2 预注册（`fixtures/test_expectation_plan.tsv`，单独 commit `819fbe9`）
+
+19 行，每行写死：`为什么最会掩盖错误` / `改前期望值来源` / `预注册真值来源` / `取证手段` / `目标档`。
+跑完**没有为了对上而改判据**；落空的一条如实登记在 §96.8。
+
+### 96.3 逐条：改前 → 改后 → 真值来源 → 结果
+
+真值表在 `fixtures/test_expectation_truth.tsv`（111 行，`section/key/value/source/note`），
+由 `tools/gen_test_expectations.py` 生成（`--check` 只比对不写）。
+
+| # | 测试 | 改前（S-self 形态） | 改后（真值） | 真值来源 / 复算命令 | 结果 |
+|---|---|---|---|---|---|
+| A01 | `plane::raster_is_symmetric` | 纯对称性自查（实现整体歪掉仍对称） | 整张掩膜 FNV-1a 64 = `02b3fa207a593a42`；对称性降为推论 | unicorn `0x3f11e0`：`tools/gen_test_expectations.py` → `plane/A01` | 仍绿 |
+| A02 | `plane::raster_edge_values_match_the_binary` | 2 个像素有真值，其余 40×40 自查 | 43×43 邻域 FNV `c59ec7f3ced7568f` + 第二个形态 `raster(-7.5,3.25,0.6)`：整张 `0c8cecf0b8679dde`／邻域 `9b4da9559b9b22af`／非空 517 | 同上 | 仍绿 |
+| A03 | `plane::occupied_helper_sees_rasterized_pixels` | 我方掩膜 + 我方判据互相印证 | 真 `0x3f15b0` 在**真掩膜**上的判决：`(0,0)→1`、`(24,14)→0`、`(-0.05,0)→1`、`(24.99,14.99)→0` | unicorn `0x3f15b0`（`self+0x18→ArcInner`，坐标走指针 `rsi`） | 仍绿 |
+| A04 | `plane::raster_center_is_filled_and_bounded` | 2 个自查点 | 整张 FNV `02b3fa207a593a42` + 非空 **1369** | unicorn `0x3f11e0` | 仍绿 |
+| A05 | `plane::raster_respects_fill_value` | 只查圆心 1 像素 | `fill=0x10` 整张 FNV `79451d1cbca12e52`（非空同为 1369，但环值全不同） | 同上 | 仍绿 |
+| A06 | `plane::raster_clips_at_canvas_edge` | "碰过 = 有痕迹"（近乎恒真） | `raster(24.5,14.0,1.0)` 整张 FNV `632a27f5d728a664` + 非空 **1053** | 同上 | 仍绿 |
+| B01 | `graphwar_shot_calculator::no_obstacles_means_no_hit` | `point_count > 100` | **2471** 点 + 5 个抽样点逐位（`pts[1]`=`401408f5c28f5c29/400005288903d7b2`、末点 `4038ff851eb85168/40069903c94a8282` …） | unicorn `0x3c2530`（token=`[Add,Const(c),Sin,VarX]`，`c` 由 `0x4eb9d0` 算） | 仍绿 |
+| B02 | `…obstacle_on_the_curve_is_hit` | `hit_index.is_some()` | 首个命中点序号 **341**、命中点坐标位 `401ed5c28f5c2946/400f965100411e3c`、`ob.y` 位 `400f961525825a2c` | `0x3c2530`+`0x3f11e0`+`0x3f15b0` 串起来（**组合方式是推断**） | 仍绿 |
+| B03 | `…obstacle_away_from_the_curve_is_missed` | `hit_index == None`（实现退化成 1 点也绿） | `None` **且** 点数 2471 | 同上 | 仍绿 |
+| C01 | `diffconv::two_shot_batch_is_grouped_by_type` | 期望序列照我方模型 + `docs/141` 抄 | 期望 = 回放 `1782642582` 第 0 批（sha256 `fbed66ca…`）**逐条原文**；`compare_batch`+`strict_policy()` 全绿；两发 `end_x` = `bff7f0a70e88efc8`／`c027ffca6c264a52` | 冻结语料；`--example batch_conv` 同一套比对 | 仍绿 |
+| C02 | `diffconv::death_block_follows_flight_time` | 死者顺序/位置全照我方模型编 | 第 0 批接着喂出第 1 批（回放 `1782642582` 第 1 批，tick 30774）：`DeathEffect` 恰 1 条、位置 = 153430 的**批开始**坐标；死者集合 `{153430}` | 冻结语料 | 仍绿（改的过程里修正了我方 2 处断言口径，见 §96.8 ④） |
+| C03 | `diffconv::single_shot_is_byte_identical_to_fire_batch` | 只比"我方两条路径彼此相等" | 两条路径都必须复现回放 `1782640359`（sha256 `b4615ff7…`）第 0 批；`end_x` = `4.988566611566738` | 冻结语料 | 仍绿 |
+| D01 | `life_manager::queued_death_is_taken_only_after_its_tick` | 自造实体 3 / tick 165 | 真抓包 `protocol_death.jsonl`（sha256 `dad9fabb…`）：**231@238**、**230@953**，两条都验 | 真实抓包 | 仍绿 |
+| D02 | `life_manager::life_table_round_trip` | 自造实体 1/2、tick 77 | 同上：231@238 / 230@953 的两张表往返 | 真实抓包 | 仍绿 |
+| E01 | `entity_drawer::sprite_transform_matches_update_sprite_arithmetic` | 期望值与实现**逐字同式**（§0.5 实证 #1） | **新增"屏幕上多大"**：512×512 贴图 × `scale 0.083333` = 42.67 画布 px × (1273/1000) = **54.31 屏幕 px**，与真帧量到的 **54.6 px** 差 ≤0.4 px；漏 `k` 的实现给 2.7 px ⇒ 必红 | 真帧（`docs/06` §59.1 白底 1273 px、§86 的 `scale/512`、§59.8 的 54.6 px） | 仍绿 |
+| F01 | `turn_manager::cursor_increments_before_reading` | 自造 `[10,20,30]` | 真回放 `1782764906`（sha256 `d01bb2fe…`）玩家 5272：roster `[5274,5273]`、6 次 TurnInfo = `5273,5274,5273,5274,5273,5274`（首取下标 1）；另加 `1782673653` 玩家 401164 同结论 | 冻结语料 | 仍绿 |
+| F02 | `turn_manager::explicit_initial_cursor_is_honoured` | 只有 `with_index` 的算术自校 | 加真回放 `1782673653` 玩家 401060 的 **5 兵轮转**：`401061→401062→401152→401153(跨死者回绕)→401062(跳过刚死的)→401152` | 冻结语料 | 仍绿 |
+| H01 | `half_step::normal_recheck_fires_on_a_constructed_case`（+ 新增 `production_matches_the_real_sampler_on_the_constructed_case`） | `rejects == 62` 是我方模型的数 | 同输入喂真采样器 `0x3c2530`：**20001** 点 + 5 个抽样点逐位（`pts[20000]`=`4014a68a3d709db0/3fee7631b396abbc`） | unicorn `0x3c2530` | 仍绿 |
+| H02 | `half_step::probe_matches_production_on_all_fixtures` | 主断言是"复制品 == 生产" | 把**真值夹具**提到第一断言（`got==c.expected`、`want==c.expected`），"复制品 == 生产"降为第二。**没有新增真值**（夹具本来是真值） | `fixtures/path.tsv`（unicorn 产物） | 仍绿 |
+
+### 96.4 反面对照（证明这些断言**不是恒真**）
+
+改完跑绿之后，故意把两条期望值改错，确认会**变红**，再改回来：
+
+| # | 改坏的地方 | 故意写错成 | 实测结果 |
+|---|---|---|---|
+| 反 1 | `plane::raster_center_is_filled_and_bounded` 的整张掩膜指纹 | `02b3fa207a593a43`（末位 +1） | **红**：`left "02b3fa207a593a42" / right "02b3fa207a593a43"` |
+| 反 2 | `diffconv::two_shot_batch_is_grouped_by_type` 的第一发 `end_x` | `-1.4962530677575999`（差 1 ulp） | **红**：`left 13832789380785827784 / right 13832789380785827808`（即 `bff7f0a70e88efc8` vs `…e0`） |
+
+⇒ 连 **1 ulp** 的期望值错误都能抓住；A/E 两组不是"怎么写都绿"。
+
+### 96.5 真值怎么复算（一条命令）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild   # 外部件全在 $MAIN/.reference/
+$MAIN/.reference/venv/bin/python tools/gen_test_expectations.py            # 写 fixtures/test_expectation_truth.tsv
+$MAIN/.reference/venv/bin/python tools/gen_test_expectations.py --check    # 只比对
+```
+
+脚本里的四个 oracle（都是 **unicorn 直调真二进制**，`analysis/gwemu.py` 把 `.so` 映射进内存）：
+
+| 地址（ELF vaddr） | 函数 | 调用约定（本批实测） |
+|---|---|---|
+| `0x3f11e0` | 光栅化 | `f(x, y, size, mask_ptr, mask_len, fill)`：`x/y/size` 走 xmm0-2，`rdi/rsi/edx` 是后三个 |
+| `0x3f15b0` | `GraphwarObstacleManager::is_obstacle` | `rdi` = manager（`+0x18` → `ArcInner`，锁字 `+0x10`、`{cap,ptr,len}` 在 `+0x18/+0x20/+0x28`）；**坐标走指针 `rsi`**（`rdi` 不是坐标） |
+| `0x3c2530` | 弹道采样器 | `(tokens_vec, x0, y0, step, edx=flip, ecx=mode)` → `Vec<Vec2>`（`{cap,ptr,len}` sret） |
+| `0x4eb9d0` / `0x4ed670` | 求值器 / 解析器 | token = 16 B `{tag: u64, value: f64}`；`tag` 见 `src/lib.rs::Function`（Add=3 / Sin=14 / Const=17 / VarX=0） |
+
+⚠️ `0x3f15b0` 的调用约定是本轮**试出来的**：`docs/08` §12.2 只给了取锁序，
+第一次按"xmm0/xmm1 传坐标"调用时**所有输入都返回 1**（看似"全都命中"），
+按 `rsi` 传坐标指针后才对。写在这里，免得下一个人再踩。
+
+### 96.6 门槛读数（每批都跑）
+
+| 门槛 | 基线 | 本批实测 | 结论 |
+|---|---|---|---|
+| `cargo test --offline` | 1774 / 0 / 1 ignored | **1775 / 0 / 0 ignored** | 条数 **+1**（新增 `production_matches_the_real_sampler_on_the_constructed_case`），无红 |
+| `cargo test --offline --features gdext-bindings` | 1896 / 0 / 1 ignored | **1897 / 0 / 0 ignored** | +1，无红 |
+| 三轴 `fire`（`replay_attrib --drive fire --policy default`） | 内容 647 / 种类 1075 / 挖洞 207/294 / 死亡 366/385 | **647 / 1075 / 207 / 366** | `bit_exact_attrib --check-baseline --axis fire`：**全部一致**，语料 digest `2f85d813…` 冻结 |
+| 三轴 `batch`（`--drive batch`） | 同上 | **647 / 1075 / 207 / 366** | `--axis batch`：全部一致 |
+| 三轴 `batch_conv`（`batch_conv --policy strict`） | 内容 **637** / 种类 1075 / 挖洞 207/294 / 死亡 347/385 | **637 / 1075 / 207 / 347** | `--axis batch_conv`：全部一致 |
+| `tools/check_doc_refs.py` | rc=0 | **rc=0** | 无死链 |
+
+三轴可复跑命令（**必须带轴名**）：
+```bash
+SNAP=$MAIN/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv    -- --dir $SNAP --policy strict --json c.jsonl
+$MAIN/.reference/venv/bin/python tools/bit_exact_attrib.py --json f.jsonl --check-baseline --snapshot $SNAP --axis fire
+```
+
+### 96.7 遗留：还有多少条 S-self、下一批挑什么
+
+本批动了 **19 条**（其中 **15 条是 T37 判的 `S-self`**，另 4 条是"半真值 → 全真值"）。
+按 T37 的 341 条分母，**还剩约 326 条**。按文件（`fixtures/source_audit_tests.tsv` 的判词）排序，
+下一批应该按下面这个顺序挑 —— **越靠前越"没有二进制对应物"、越会掩盖错误**：
+
+| 排位 | 文件 | S-self 条数 | 为什么下一批优先 | 换真值的路（已探明/未探明） |
+|---|---|---|---|---|
+| 1 | `src/graphwar_play_screen_control.rs` | **18** | 弹道生命周期 + 时钟状态机是**我方重建的行为**，期待值只能由我方模型给 | 部分可换：回放里 `FunctionActive.active_tick` / `EffectInfo.start_tick` 的**相对偏移**（本批观测：真机 = 批 tick +95 / +141）可作为锚 |
+| 2 | `src/game.rs` | **12** | 结算流程内部一致性 | 本批已证明 `ConvPredictor` 能吃真批；`game.rs` 的 `Match` 路径同理可锚到 `fixtures/protocol_match.jsonl` + 回放批 |
+| 3 | `src/_scaffold/protocol.rs` | **60** | 数量最大 | ⚠️ **已探明 9 条换不了**：23 个补齐事件里 14 种有真实抓包字节（那 51 条本来就锚在真报文上），剩 `LockInfo`/`LockRequest`/`ChatMessage`/`ChatMessageRequest`/`GameHeartbeat`/`GameRemoved`/`TurnLimitInfo`/`ClearBansRequest`/`BanConnectionRequest` **9 种的冻结语料里一条真实帧都没有** ⇒ 缺的是"抓一次官方服务端这 9 种事件的报文"，不是缺方法 |
+| 4 | `src/_scaffold/broker.rs`(10) / `graphwar_level_generator.rs`(11) / `graphwar_function_evolutionator.rs`(10) | 31 | 关卡生成/AI 评分 | 关卡几何可由 403 份回放的 `AddObstacle`/`PosInfo` 统计锚（本批的 `REAL_OBSTACLES` 就是一条样本） |
+| 5 | `tests/misc_modules.rs`(15) / `tests/win_rule.rs`(4) / `src/graphwar_team_manager.rs`(4) | 23 | 胜负判据 | ⚠️ `win_rule` 换不了：403 份回放里 **`EndingGame` 出现 0 次**（回放都停在结束前），判据 `0x473520` 要局面对象 ⇒ `needs_state`。缺的是**一份打到结束的整局回放** |
+| 6 | `src/_scaffold/diffconv.rs` 余下 7 条 / `tests/diffconv_parity.rs`(2) | 9 | 与真批对拍 | 本批已给出模板（`REAL_BATCH*` 常量 + `compare_batch`） |
+| 7 | `tests/half_step.rs` 余下 3 条 / `src/plane.rs` 余 0 条 / 其余 | ~10 | 收集/统计类 | 多为"语料不复检 / stats 自洽"，需要新造测量而不是新真值 |
+
+### 96.8 我写错了 / 规格前提被证伪（**这一节比上面的数字重要**）
+
+① **`真 bug 报告 0 条` —— 规格 §0 期待的那三个"自洽掩盖真错误"实证，在本批挑的邻域里一个都没复现。**
+   原因不是"挑得保守"，是**这三个邻域的原语本来就被真值压着**：掩膜有 `docs/08` §5.9 的 5 组 0 差异、
+   弹道有 `fixtures/path.tsv` 的 331 例、护栏有三轴 647/647/637。自洽层是**搭在已证原语之上**的，
+   底下没有可掩盖的错误。⇒ **§0.5 那条纪律的正确用法不是"把自洽断言换成真值"就够了**，
+   而是"**先问这条断言底下有没有真值**"——有真值的自洽断言只是冗余，没真值的自洽断言才是雷。
+   下一批的取舍应该按"这条断言的**被测对象**有没有二进制对应物"排，而不是按"它是不是 S-self"排。
+
+② `fixtures/source_audit_tests.tsv` 的 S-self 合计我复算是 **342**（T37 报 **341**），差 1 条。
+   我按 T37 的 341 报，但**这一条差异我没查清**（可能是某行判词里两条同类只算了一条）。登记在此。
+
+③ **H02 只做了"断言顺序翻转"，没有新增真值** ⇒ 记**部分落空**（预注册时写的是"真采样器对 224 例抽样 16 例全点逐位"，
+   实际没做：224 例的全点数组体量太大，而 `c.expected` 本身就是 unicorn 产物）。下一批若要补，
+   应该按 `fixtures/path.tsv` 抽 8 例、每例钉点数 + 首末 3 点 + 一条点数组指纹。
+
+④ 本批**改了我方两处断言口径**（不是实现，也不是容差），必须点名：
+   - `two_shot_batch_is_grouped_by_type`：原先直接比"我方报文种类序列"，现在先用
+     `Policy::is_unobserved` **投影掉回放不记的种类**（`QueueDestroyObstacle`）再比。
+     理由：`strict_policy()` 的 `unobserved_kinds` 早就写着这些种类**回放记录域里不收**，
+     不投影会拿"我方多产一条"当失败 —— 那是口径错，不是实现错。
+   - `death_block_follows_flight_time`：原先断言"第几发打死了谁"，
+     但**真回放只记一条 `DeathEffect`、不记是哪一发打死的** ⇒ 那个断言在真值里没有对应物。
+     改成只断言"死的集合 = {153430}" + "DeathEffect 位置 = 批次开始坐标"。
+
+⑤ 三条**口径事实**（本批新观测到、都已有文档登记，列在这里免得被当成新 bug）：
+   1. 我方 `FunctionActive.active_tick` / `EffectInfo.start_tick` 发的是**当前 tick**，
+      真机是 **+95 / +141**（`docs/06` §17.2 把 tick 字段记为 B 类墙钟、比较时跳过）；
+   2. `QueueDestroyObstacle` / `LifeQueuedDeath` 我方会产、**回放永不记**（`Policy::unobserved_kinds`）；
+   3. 死亡特效类型**由皮肤决定**（`target`→`SparkEffect`、`bot_*`→`AshEffect`、人类皮肤→`DeathEffect`，
+      `_scaffold/diffconv.rs::death_effect_type`）。本批第一次跑真批时"单发批"红，就是因为我方
+      **没把回放里的 `SkinGraphicsInfo` 喂进预测器**（不是实现错，是**测试场景缺输入**）——
+      这条对下一批是个提醒：**真值测试的输入态要按工具链同一个口径重建**（`Inputs::scan`），
+      少喂一条事件就会把"场景不全"误判成"实现错"。
+
+⑥ 真帧那一条（E01）用的是 `docs/06` **已登记**的读数（54.6 px / 1273 px / 512 贴图），
+   本轮**没有重拍真帧**。⇒ 档位是 **观测（转录）**，不是"本轮新观测"。
+   若要把 E01 升成"本轮亲自量到的像素"，必须重跑 `tools/frame_capture.py --side original`（私有 Xvfb），
+   本轮没做（时间/机器占用都给了别的链路）。

@@ -257,17 +257,36 @@ pub const fn is_drawable_alive_byte(state: u8) -> bool {
 mod tests {
     use super::*;
 
+    /// 两张表的往返 —— 期望值换成**真实抓包**里的实体与 tick。
+    ///
+    /// ## 真值来源（观测，真实抓包）
+    ///
+    /// `fixtures/protocol_death.jsonl`（sha256
+    /// **`dad9fabb35f34d8fb41e8639c2fd7f77c8a1fcb9b044a7afba337bcd8981152a`**）原文：
+    /// ```text
+    /// {"LifeQueuedDeath":{"entity_id":231,"tick":238}}
+    /// {"LifeQueuedDeath":{"entity_id":230,"tick":953}}
+    /// {"EffectInfo":{"effect_id":236,…,"effect_type":"DeathEffect","start_tick":238}}
+    /// {"LifeInfo":{"entity_id":231,"alive":false}}
+    /// ```
+    /// ⇒ 真机确实把"排队死亡"存在**第二张表**里，键是实体号、值是 tick（238 / 953），
+    /// 且同一 tick 会出现在 `DeathEffect.start_tick` 上（本文件 `wiring_tests` 已就那条对齐断言）。
+    /// 改前这里是自造的实体 1/2 与 tick 77 —— 期望值全部来自我方实现。
     #[test]
     fn life_table_round_trip() {
         let mut life = LifeState::default();
-        assert_eq!(life.status(1), None, "没记录就是未知，不默认成任何一边");
-        life.set(1, Status::Alive, None);
-        assert_eq!(life.status(1), Some(Status::Alive));
+        assert_eq!(life.status(231), None, "没记录就是未知，不默认成任何一边");
+        // 真抓包：231 先活着（LifeInfo alive:true），随后被排队死亡
+        life.set(231, Status::Alive, None);
+        assert_eq!(life.status(231), Some(Status::Alive));
         assert_eq!(life.lens(), (1, 0));
-        // mode == 1 的那条路：同时写第二张表
-        life.set(2, Status::Dead, Some(77));
-        assert_eq!(life.take_queued_death(2), Some(77));
-        assert_eq!(life.take_queued_death(2), None);
+        // 真抓包的两条排队死亡：231@238、230@953
+        life.set(231, Status::Dead, Some(238));
+        life.set(230, Status::Dead, Some(953));
+        assert_eq!(life.take_queued_death(231), Some(238), "真抓包里 231 的 tick 是 238");
+        assert_eq!(life.take_queued_death(230), Some(953), "真抓包里 230 的 tick 是 953");
+        assert_eq!(life.take_queued_death(231), None, "取过一次就没了");
+        assert_eq!(life.status(230), Some(Status::Dead));
     }
 
     /// `docs/98` §1.3：`& 1` 为真才算活，查不到（2）与死（0）同属"不可开火"。
@@ -332,20 +351,30 @@ mod wiring_tests {
 
     /// `set_queued_death` 写两张表 + 发 `LifeQueuedDeath`(28)；
     /// `handle_tick_event` 只在 tick 到点后把它取出来。
+    /// ## 真值来源（观测，真实抓包）
+    ///
+    /// 实体与 tick 都换成 `fixtures/protocol_death.jsonl`（sha256 `dad9fabb…`）的原文：
+    /// 231 排在 **tick 238**、230 排在 **tick 953**；同一 tick 上真机还发了
+    /// `DeathEffect{start_tick:238}` / `DeathEffect{start_tick:953}`。
+    /// 改前这里是自造的实体 3 / tick 165。
     #[test]
     fn queued_death_is_taken_only_after_its_tick() {
         let mut life = LifeState::new();
-        life.set_queued_death(3, 165);
-        assert_eq!(life.get_alive(3), 0, "排队死亡已经把第一张表写成死");
-        assert_eq!(life.get_death_tick(3), Some(165));
+        life.set_queued_death(231, 238);
+        assert_eq!(life.get_alive(231), 0, "排队死亡已经把第一张表写成死");
+        assert_eq!(life.get_death_tick(231), Some(238));
         assert_eq!(life.take_outbox(), vec![Event::LifeQueuedDeath]);
-        // tick 还没到：什么都不取
-        assert_eq!(life.handle_tick_event(TICK_EVENT_TAG, 164), Ok(vec![]));
-        assert_eq!(life.get_death_tick(3), Some(165));
+        // tick 还没到（真抓包里 238 前一 tick 的 TickReply 当然不会把它取出来）：什么都不取
+        assert_eq!(life.handle_tick_event(TICK_EVENT_TAG, 237), Ok(vec![]));
+        assert_eq!(life.get_death_tick(231), Some(238));
         // 到点：取出来并移除
-        assert_eq!(life.handle_tick_event(TICK_EVENT_TAG, 165), Ok(vec![(3, 165)]));
-        assert_eq!(life.get_death_tick(3), None);
-        assert_eq!(life.handle_tick_event(TICK_EVENT_TAG, 165), Ok(vec![]), "取过一次就没了");
+        assert_eq!(life.handle_tick_event(TICK_EVENT_TAG, 238), Ok(vec![(231, 238)]));
+        assert_eq!(life.get_death_tick(231), None);
+        assert_eq!(life.handle_tick_event(TICK_EVENT_TAG, 238), Ok(vec![]), "取过一次就没了");
+        // 第二条真抓包样本：230@953（与 231 互不影响）
+        life.set_queued_death(230, 953);
+        assert_eq!(life.handle_tick_event(TICK_EVENT_TAG, 952), Ok(vec![]));
+        assert_eq!(life.handle_tick_event(TICK_EVENT_TAG, 953), Ok(vec![(230, 953)]));
     }
 
     /// 判别值不对时必须报错（原版那三条闭包都带断言，`entity_removed_event` 里是 `panic!()`）。

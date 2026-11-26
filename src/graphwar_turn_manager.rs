@@ -1098,24 +1098,83 @@ mod tests {
     // ① 轮转顺序：先自增再取
     // -----------------------------------------------------------------------
 
-    /// `docs/98` §1.2 第 ① 步：游标**先自增**，所以初值 0 时首取 `soldiers[1]`。
+    /// **游标先自增**（首取 `soldiers[1]`）—— 真值 = 冻结语料里两个真实的全活轮转。
+    ///
+    /// ## 真值来源（观测，冻结语料）
+    ///
+    /// ① `.reference/replays/gw2-replays-snapshot/replays/1782764906`
+    ///    （sha256 **`d01bb2fee997fda2fb36734e5fe502d010f38d5f874d6b131f971e7268fedb4d`**）
+    ///    玩家 **5272**：`SoldierInfo` 首见顺序 = `[5274, 5273]`；
+    ///    之后该玩家的 `TurnInfo.soldier_id` 依次是
+    ///    **`5273`(tick 27265) → `5274`(28684) → `5273`(30452) → `5274`(32192) → `5273`(37965) → `5274`(41407)**，
+    ///    这 6 次之间没有任何 5273/5274 的 `LifeInfo{alive:false}` ⇒ 全程两人都活。
+    ///    首取是**下标 1**（5273），不是下标 0 ⇒ 游标先自增。
+    /// ② `…/1782673653`（sha256
+    ///    **`d5845e4f9bac8ddc3c2ef745b4696176348b73ef5196793c6bd19cf30428b597`**）玩家 401164：
+    ///    首见 `[401165, 401166]`，`TurnInfo` 依次 `401166`(18356) → `401165`(25373) → `401166`(30265)
+    ///    → `401165`(34220) → … 同样是"首取下标 1"。
+    ///
+    /// 复算：`.reference/venv/bin/python tools/replay_state.py <快照>/1782764906 --index 0`
+    /// 加 `grep -o '"TurnInfo":{[^}]*}' <快照>/1782764906`。
+    /// 改前这里是自造的 `[10,20,30]`，期望值只能由我方实现给出。
     #[test]
     fn cursor_increments_before_reading() {
-        let mut p = PlayerTurns::new(vec![10, 20, 30]);
-        assert_eq!(p.index(), 0);
+        // ① 1782764906 / 玩家 5272：两人全活，6 次严格交替
+        let mut p = PlayerTurns::new(vec![5274, 5273]);
+        assert_eq!(p.index(), 0, "初值 0（从没被写过的游标）");
         let mut got = Vec::new();
-        for _ in 0..4 {
+        for _ in 0..6 {
             got.push(p.next_shooter_by_state(all_alive).unwrap());
         }
-        assert_eq!(got, vec![20, 30, 10, 20], "先自增再取，且按 len 回绕");
-        assert_eq!(p.index(), 1, "游标写回的是取到的位置");
+        assert_eq!(got, vec![5273, 5274, 5273, 5274, 5273, 5274], "真回放 1782764906 的 TurnInfo 序列");
+        assert_eq!(p.index(), 0, "6 次取完游标回到 0（2 人轮转，偶数次）");
+
+        // ② 1782673653 / 玩家 401164：另一局同一结论
+        let mut q = PlayerTurns::new(vec![401165, 401166]);
+        let mut got2 = Vec::new();
+        for _ in 0..4 {
+            got2.push(q.next_shooter_by_state(all_alive).unwrap());
+        }
+        assert_eq!(got2, vec![401166, 401165, 401166, 401165], "真回放 1782673653 的 TurnInfo 序列");
     }
 
-    /// 用 `with_index` 指定别的初值（`docs/98` §6-B：初值本身未定）。
+    /// 游标初值 + **跳过阵亡 + 回绕** —— 真值 = 冻结语料里一个真实的 5 兵轮转。
+    ///
+    /// ## 真值来源（观测，冻结语料）
+    ///
+    /// `…/1782673653`（sha256 `d5845e4f…`，同上）玩家 **401060**：
+    /// `SoldierInfo` 首见顺序 = `[401153, 401061, 401062, 401152, 401154]`；
+    /// `TurnInfo.soldier_id` 依次 **`401061`(22128) → `401062`(29305) → `401152`(31835)
+    /// → `401153`(38258) → `401062`(45505) → `401152`(51364)**，
+    /// 期间 `LifeInfo{alive:false}` 的时点：`401154`@31273、`401061`@45195。
+    ///
+    /// ⇒ 第 4 发（38258）时下标 4 的 401154 已死 ⇒ 跳过并**回绕到下标 0** 取 401153；
+    /// 第 5 发（45505）时下标 1 的 401061 已死 ⇒ 再跳到下标 2 取 401062。
+    /// 这两步同时钉住"先自增"、"跳过阵亡"、"按 len 回绕"三件事。
+    ///
+    /// `with_index` 本身是我方脚手架（`docs/98` §6-B：初值未定），只保留一条算术自校。
     #[test]
     fn explicit_initial_cursor_is_honoured() {
+        // 脚手架语义自校：给定初值 2 时首取 (2+1)%3 = 0
         let mut p = PlayerTurns::with_index(vec![10, 20, 30], 2);
         assert_eq!(p.next_shooter_by_state(all_alive), Some(10), "(2+1)%3 = 0");
+
+        // ★ 真值：1782673653 / 玩家 401060 的 5 兵轮转（含跳过阵亡 + 回绕）
+        let mut q = PlayerTurns::new(vec![401153, 401061, 401062, 401152, 401154]);
+        let alive_all = [401153, 401061, 401062, 401152, 401154];
+        let live_before_4th = [401153, 401061, 401062, 401152]; // 401154 死于 tick 31273
+        let live_before_5th = [401153, 401062, 401152]; // 401061 死于 tick 45195
+        let got = |t: &mut PlayerTurns, alive: &[i64]| t.next_shooter_by_state(alive_set(alive)).unwrap();
+        // 第 1~3 发：全员活
+        assert_eq!(got(&mut q, &alive_all), 401061, "真回放第 1 发（tick 22128）");
+        assert_eq!(got(&mut q, &alive_all), 401062, "真回放第 2 发（tick 29305）");
+        assert_eq!(got(&mut q, &alive_all), 401152, "真回放第 3 发（tick 31835）");
+        // 第 4 发：下标 4 的 401154 已死 ⇒ 回绕到下标 0
+        assert_eq!(got(&mut q, &live_before_4th), 401153, "真回放第 4 发（tick 38258，跨过死者回绕）");
+        // 第 5 发：下标 1 的 401061 已死 ⇒ 跳到下标 2
+        assert_eq!(got(&mut q, &live_before_5th), 401062, "真回放第 5 发（tick 45505，跳过刚死的 401061）");
+        // 第 6 发：仍取 401152
+        assert_eq!(got(&mut q, &live_before_5th), 401152, "真回放第 6 发（tick 51364）");
     }
 
     // -----------------------------------------------------------------------

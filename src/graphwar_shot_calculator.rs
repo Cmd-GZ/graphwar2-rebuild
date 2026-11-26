@@ -133,26 +133,70 @@ pub const MASK_BYTES: usize = CANVAS_W as usize * CANVAS_H as usize;
 mod tests {
     use super::*;
 
+    // -----------------------------------------------------------------------
+    // 真值来源（本模块三条 shot 测试共用）
+    // -----------------------------------------------------------------------
+    //
+    // **逐位**：`unicorn` 直调真二进制三个函数串起来 ——
+    //   ① 求值器 `0x4eb9d0` 算修正常数 `c = y0 - f(x0)`；
+    //   ② 采样器 `0x3c2530` 出整条点数组（`edx=flip`、`ecx=mode`）；
+    //   ③ 光栅化 `0x3f11e0` 出真掩膜、单点碰撞 `0x3f15b0` 逐点查。
+    // 复算：`.reference/venv/bin/python tools/gen_test_expectations.py`
+    //   → `fixtures/test_expectation_truth.tsv` 的 `shot/B01..B03` 段。
+    // ⚠️ 只有**组合方式**（把三个原语按"建掩膜→沿点查"拼起来）是我方推断，
+    //    二进制里没找到对应的开火循环（见本文件 §"拼装方式"的说明）。
+
+    /// `sin(x)` + 修正、从 (5,2)、step=0.01、不反向：真二进制给 **2471** 点，
+    /// 末点 = `(4038ff851eb85168, 40069903c94a8282)`；整条点数组 FNV 另记在夹具表里。
     #[test]
     fn no_obstacles_means_no_hit() {
         let r = simulate("sin(x)", 5.0, 2.0, 0.01, false, Mode::Normal, &[]);
         assert_eq!(r.hit_index, None);
-        assert!(r.point_count > 100);
+        // ★ 改前只有 `point_count > 100`（近乎恒真）；现在钉真二进制的点数
+        assert_eq!(r.point_count, 2471, "点数与真采样器 0x3c2530 不一致");
+        // 点值也钉住（真采样器逐位输出）
+        let pts = shot_points("sin(x)", 5.0, 2.0, 0.01, false, Mode::Normal, true);
+        let b = |v: f64| v.to_bits();
+        assert_eq!(pts.len(), 2471);
+        assert_eq!((b(pts[0].0), b(pts[0].1)), (0x4014_0000_0000_0000, 0x4000_0000_0000_0000));
+        assert_eq!((b(pts[1].0), b(pts[1].1)), (0x4014_08f5_c28f_5c29, 0x4000_0528_8903_d7b2));
+        assert_eq!((b(pts[100].0), b(pts[100].1)), (0x4017_4000_0000_0012, 0x4004_0b1d_5cb3_4366));
+        assert_eq!((b(pts[300].0), b(pts[300].1)), (0x401d_6000_0000_004b, 0x400e_a706_aa23_0e22));
+        assert_eq!((b(pts[2470].0), b(pts[2470].1)), (0x4038_ff85_1eb8_5168, 0x4006_9903_c94a_8282));
     }
 
+    /// 曲线上放障碍 ⇒ 命中。
+    ///
+    /// 真值（`unicorn`）：`c` 位 = `4007abe07d78264d`；障碍中心 `ob.y` 位 = `400f961525825a2c`；
+    /// 真掩膜 + 真点数组 + 真单点碰撞 ⇒ **首个命中点序号 341**，
+    /// 该点坐标 = `(401ed5c28f5c2946, 400f965100411e3c)`。
     #[test]
     fn obstacle_on_the_curve_is_hit() {
         // sin(x) 在 x=5 附近 y≈-0.959 + 修正 2.9589 ≈ 2.0（起点在曲线上）
         let curve_y = (5.0f64).sin() * 1.0;
         let c = 2.0 - curve_y;
+        let ob = Obstacle { x: 8.0, y: (8.0f64).sin() + c, size: 0.3 };
+        assert_eq!(ob.y.to_bits(), 0x400f_9615_2582_5a2c, "障碍中心与真求值器不一致");
         let r = simulate(
             "sin(x)", 5.0, 2.0, 0.01, false, Mode::Normal,
-            &[Obstacle { x: 8.0, y: (8.0f64).sin() + c, size: 0.3 }],
+            &[ob],
         );
         assert!(r.hit_index.is_some(), "曲线上放了障碍却没命中");
         assert!(r.hit_index.unwrap() > 1, "不应在起点就命中");
+        // ★ 改前只有 `is_some()` / `> 1`；现在钉真二进制判出来的序号与坐标
+        assert_eq!(r.hit_index, Some(341), "首个命中点序号与真二进制不一致");
+        let pts = shot_points("sin(x)", 5.0, 2.0, 0.01, false, Mode::Normal, true);
+        assert_eq!(
+            (pts[341].0.to_bits(), pts[341].1.to_bits()),
+            (0x401e_d5c2_8f5c_2946, 0x400f_9651_0041_1e3c),
+            "命中点坐标与真采样器不一致"
+        );
     }
 
+    /// 障碍远离曲线 ⇒ 不命中（真二进制：整条 2471 点里一个都不撞）。
+    ///
+    /// 改前这条只有 `hit_index == None`：**实现退化成"弹道只剩 1 点"时也会绿**
+    /// （`AGENTS.md` §0.5 引的那次事故就是这种退化）。现在同时钉点数。
     #[test]
     fn obstacle_away_from_the_curve_is_missed() {
         let r = simulate(
@@ -160,6 +204,8 @@ mod tests {
             &[Obstacle { x: 8.0, y: -12.0, size: 0.3 }],
         );
         assert_eq!(r.hit_index, None, "障碍远离曲线却命中了");
+        // ★ 真采样器：这条弹道是 2471 点（不是 1 点、也不是 0 点）
+        assert_eq!(r.point_count, 2471, "点数与真采样器 0x3c2530 不一致");
     }
 
     #[test]
