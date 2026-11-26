@@ -11,35 +11,35 @@
 #   图标/字体在assets = 引用的 res://*.svg / *.ttf 在 client/assets/MANIFEST.tsv 里有同名产物（需 .import shim）
 #   风险             = BLOCK-ASSET（引用了 repos 里没有的资产，物理装不上）> HIGH-THEME（依赖骨架 .tres）>
 #                      MED-SCRIPT（依赖未挂的原版脚本）> MED-SIZE（节点 ≥40，改我方 .gd 面大）> LOW
-原版文件	原版行数	节点数	ext_refs	根节点	根有script	脚本已在views	脚本待挂	tres可装	tres骨架(需shim)	图标在assets	图标缺	字体在assets	字体缺	嵌套场景	风险	我方对应存根	我方 .gd::build() 手抄区间
-GameSetup.tscn	273	47	20	Control:Control	yes	5	1	6	0	8	0	0	0	0	MED-SCRIPT		game_setup.gd build() 48-240 (193 行, 33 次造节点调用)
-add_bot_pop_up.tscn	254	45	14	AddBotPopUp:Control	yes	3	1	3	0	7	0	0	0	0	MED-SCRIPT	add_bot_pop_up.tscn (12 行)	add_bot_pop_up.gd build() 41-81 (41 行, 7 次造节点调用)
-addons/admob/sample/Banner.tscn	90	17	1	Banner:VBoxContainer	yes	0	1	0	0	0	0	0	0	0	MED-SCRIPT		
-addons/admob/sample/Interstitial.tscn	24	4	1	Interstitial:VBoxContainer	yes	0	1	0	0	0	0	0	0	0	MED-SCRIPT		
-addons/admob/sample/Main.tscn	197	27	13	Main:Control	yes	0	2	1	0	0	4	0	0	5	BLOCK-ASSET		
-addons/admob/sample/Rewarded.tscn	24	4	1	Rewarded:VBoxContainer	yes	0	1	0	0	0	0	0	0	0	MED-SCRIPT		
-addons/admob/sample/RewardedInterstitial.tscn	24	4	1	RewardedInterstitial:VBoxContainer	yes	0	1	0	0	0	0	0	0	0	MED-SCRIPT		
-addons/admob/sample/Ump.tscn	17	3	1	UMP:VBoxContainer	yes	0	1	0	0	0	0	0	0	0	MED-SCRIPT		
-campaign.tscn	92	12	10	Campaign:Control	yes	3	2	3	1	1	0	0	0	0	HIGH-THEME	campaign.tscn (12 行)	campaign.gd build() 37-66 (30 行, 5 次造节点调用)
-chat_pop_up.tscn	214	7	9	Control:Control	yes	3	0	5	1	0	0	0	0	0	HIGH-THEME	chat_pop_up.tscn (12 行)	chat_pop_up.gd build() 37-98 (62 行, 9 次造节点调用)
-confirm_exit_pop_up.tscn	176	31	8	ConfirmExitPopUp:Control	yes	3	1	3	0	1	0	0	0	0	MED-SCRIPT	confirm_exit_pop_up.tscn (12 行)	confirm_exit_pop_up.gd build() 32-90 (59 行, 12 次造节点调用)
-connecting_pop_up.tscn	159	28	8	ConnectingPopUp:Control	yes	3	1	3	0	1	0	0	0	0	MED-SCRIPT	connecting_pop_up.tscn (12 行)	connect_popups.gd build() 37-66 (30 行, 6 次造节点调用)
-disconnected_pop_up.tscn	160	28	8	DisconnectedPopUp:Control	yes	3	1	3	0	1	0	0	0	0	MED-SCRIPT	disconnected_pop_up.tscn (12 行)	connect_popups.gd build() 37-66 (30 行, 6 次造节点调用)
-endgame_pop_up.tscn	349	69	10	EndgamePopUp:Control	yes	4	0	4	0	2	0	0	0	0	MED-SIZE	endgame_pop_up.tscn (12 行)	endgame_pop_up.gd build() 63-119 (57 行, 12 次造节点调用)
-function_buttons.tscn	429	31	0	Control:Control	no	0	0	0	0	0	0	0	0	0	LOW		
-function_buttons_no_control.tscn	394	31	0	Node:Node	no	0	0	0	0	0	0	0	0	0	LOW		
-game_room_entry.tscn	119	20	8	HBoxContainer:HBoxContainer	yes	1	0	2	1	4	0	0	0	0	HIGH-THEME		
-join_ip_pop_up.tscn	172	31	8	JoinIpPopUp:Control	yes	3	1	3	0	1	0	0	0	0	MED-SCRIPT	join_ip_pop_up.tscn (12 行)	connect_popups.gd build() 37-66 (30 行, 6 次造节点调用)
-join_level_pop_up.tscn	258	42	18	JoinLevelPopUp:Control	yes	7	1	5	1	4	0	0	0	0	HIGH-THEME	join_level_pop_up.tscn (12 行)	join_level_pop_up.gd build() 70-282 (213 行, 35 次造节点调用)
-lan_lobby.tscn	213	32	10	LanLobby:Control	yes	5	1	3	0	1	0	0	0	0	MED-SCRIPT	lan_lobby.tscn (12 行)	lan_lobby.gd build() 97-182 (86 行, 20 次造节点调用)
-line_2d.tscn	3	1	0	Line2D:Line2D	no	0	0	0	0	0	0	0	0	0	LOW		
-main.tscn	146	25	21	GraphwarRootNode:GraphwarRootNode	yes	0	6	0	0	0	0	0	0	15	MED-SCRIPT		
-main_menu.tscn	138	25	7	MainMenu:Control	yes	4	1	2	0	0	0	0	0	0	MED-SCRIPT	main_menu.tscn (12 行)	main_menu.gd build() 60-137 (78 行, 13 次造节点调用)
-name_label.tscn	24	1	0	RichTextLabel:RichTextLabel	no	0	0	0	0	0	0	0	0	0	LOW		
-play_screen.tscn	780	106	38	PlayScreen:Control	yes	6	7	5	1	19	0	0	0	0	HIGH-THEME	play_screen.tscn (12 行)	play_screen.gd build() 378-673 (296 行, 48 次造节点调用)
-player_screen.tscn	473	64	20	PlayerScreen:Control	yes	8	2	8	1	1	0	0	0	0	HIGH-THEME	player_screen.tscn (12 行)	player_screen.gd build() 83-120 (38 行, 4 次造节点调用)
-replay_entry.tscn	130	21	10	HBoxContainer:HBoxContainer	yes	1	1	2	1	5	0	0	0	0	HIGH-THEME		
-replay_lobby.tscn	92	13	8	ReplayLobby:Control	yes	3	1	3	0	1	0	0	0	0	MED-SCRIPT	replay_lobby.tscn (12 行)	replay_lobby.gd build() 72-95 (24 行, 5 次造节点调用)
-shop_button_entry.tscn	288	5	7	Control:Control	no	0	0	5	1	1	0	0	0	0	HIGH-THEME		
-team1_entry.tscn	233	48	8	HBoxContainer:HBoxContainer	yes	1	1	1	0	5	0	0	0	0	MED-SCRIPT		
-team2_entry.tscn	243	46	8	HBoxContainer:HBoxContainer	yes	1	1	1	0	5	0	0	0	0	MED-SCRIPT		
+原版文件	原版行数	节点数	ext_refs	根节点	根有script	脚本已在views	脚本待挂	tres可装	tres骨架(需shim)	图标在assets	图标缺	字体在assets	字体缺	嵌套场景	风险	我方对应存根	我方 .gd::build() 手抄区间	T43结果	T43 cmp	T43 删掉的手抄行
+GameSetup.tscn	273	47	20	Control:Control	yes	5	1	6	0	8	0	0	0	0	MED-SCRIPT		game_setup.gd build() 48-240 (193 行, 33 次造节点调用)	已装（273 行/47 节点，内容挂在 Rust 类 GraphwarSetupControl 下）	逐字节相同	game_setup.gd 543→392（删 151）
+add_bot_pop_up.tscn	254	45	14	AddBotPopUp:Control	yes	3	1	3	0	7	0	0	0	0	MED-SCRIPT	add_bot_pop_up.tscn (12 行)	add_bot_pop_up.gd build() 41-81 (41 行, 7 次造节点调用)	已装（254 行/45 节点）	逐字节相同	add_bot_pop_up.gd 140→40（删 100）
+addons/admob/sample/Banner.tscn	90	17	1	Banner:VBoxContainer	yes	0	1	0	0	0	0	0	0	0	MED-SCRIPT			不装：AdMob 5 份：包内零个原生二进制 ⇒ 物理不可得（T41 结论，本轮复核：recovered-src/addons 里无 .so/.dll）	—	—
+addons/admob/sample/Interstitial.tscn	24	4	1	Interstitial:VBoxContainer	yes	0	1	0	0	0	0	0	0	0	MED-SCRIPT			不装：AdMob 5 份：物理不可得	—	—
+addons/admob/sample/Main.tscn	197	27	13	Main:Control	yes	0	2	1	0	0	4	0	0	5	BLOCK-ASSET			不装：AdMob 5 份：物理不可得	—	—
+addons/admob/sample/Rewarded.tscn	24	4	1	Rewarded:VBoxContainer	yes	0	1	0	0	0	0	0	0	0	MED-SCRIPT			不装：AdMob 5 份：物理不可得	—	—
+addons/admob/sample/RewardedInterstitial.tscn	24	4	1	RewardedInterstitial:VBoxContainer	yes	0	1	0	0	0	0	0	0	0	MED-SCRIPT			不装：AdMob 5 份：物理不可得	—	—
+addons/admob/sample/Ump.tscn	17	3	1	UMP:VBoxContainer	yes	0	1	0	0	0	0	0	0	0	MED-SCRIPT			不装：AdMob 5 份：物理不可得	—	—
+campaign.tscn	92	12	10	Campaign:Control	yes	3	2	3	1	1	0	0	0	0	HIGH-THEME	campaign.tscn (12 行)	campaign.gd build() 37-66 (30 行, 5 次造节点调用)	已装（92 行/12 节点+运行时 21 个原生 GraphwarButton）	逐字节相同	campaign.gd 129→85（删 44）
+chat_pop_up.tscn	214	7	9	Control:Control	yes	3	0	5	1	0	0	0	0	0	HIGH-THEME	chat_pop_up.tscn (12 行)	chat_pop_up.gd build() 37-98 (62 行, 9 次造节点调用)	T41 已装（本轮未动）	（T41 逐字节相同）	—
+confirm_exit_pop_up.tscn	176	31	8	ConfirmExitPopUp:Control	yes	3	1	3	0	1	0	0	0	0	MED-SCRIPT	confirm_exit_pop_up.tscn (12 行)	confirm_exit_pop_up.gd build() 32-90 (59 行, 12 次造节点调用)	不装：屏，但不在本轮任务清单（主线 8 份仍是 12 行存根）	—	—
+connecting_pop_up.tscn	159	28	8	ConnectingPopUp:Control	yes	3	1	3	0	1	0	0	0	0	MED-SCRIPT	connecting_pop_up.tscn (12 行)	connect_popups.gd build() 37-66 (30 行, 6 次造节点调用)	不装：屏，不在本轮清单	—	—
+disconnected_pop_up.tscn	160	28	8	DisconnectedPopUp:Control	yes	3	1	3	0	1	0	0	0	0	MED-SCRIPT	disconnected_pop_up.tscn (12 行)	connect_popups.gd build() 37-66 (30 行, 6 次造节点调用)	不装：屏，不在本轮清单	—	—
+endgame_pop_up.tscn	349	69	10	EndgamePopUp:Control	yes	4	0	4	0	2	0	0	0	0	MED-SIZE	endgame_pop_up.tscn (12 行)	endgame_pop_up.gd build() 63-119 (57 行, 12 次造节点调用)	不装：屏，不在本轮清单	—	—
+function_buttons.tscn	429	31	0	Control:Control	no	0	0	0	0	0	0	0	0	0	LOW			不装：非屏：无消费者	—	—
+function_buttons_no_control.tscn	394	31	0	Node:Node	no	0	0	0	0	0	0	0	0	0	LOW			不装：非屏：无消费者	—	—
+game_room_entry.tscn	119	20	8	HBoxContainer:HBoxContainer	yes	1	0	2	1	4	0	0	0	0	HIGH-THEME			不装：**有消费者但本轮未装**：LanLobby 的行仍由 lan_lobby.gd::_room_entry 手搭（下一份该装的）	—	—
+join_ip_pop_up.tscn	172	31	8	JoinIpPopUp:Control	yes	3	1	3	0	1	0	0	0	0	MED-SCRIPT	join_ip_pop_up.tscn (12 行)	connect_popups.gd build() 37-66 (30 行, 6 次造节点调用)	不装：屏，不在本轮清单	—	—
+join_level_pop_up.tscn	258	42	18	JoinLevelPopUp:Control	yes	7	1	5	1	4	0	0	0	0	HIGH-THEME	join_level_pop_up.tscn (12 行)	join_level_pop_up.gd build() 70-282 (213 行, 35 次造节点调用)	已装（258 行/42 节点）	逐字节相同	join_level_pop_up.gd 338→188（删 150）
+lan_lobby.tscn	213	32	10	LanLobby:Control	yes	5	1	3	0	1	0	0	0	0	MED-SCRIPT	lan_lobby.tscn (12 行)	lan_lobby.gd build() 97-182 (86 行, 20 次造节点调用)	已装（213 行/32 节点）	逐字节相同	lan_lobby.gd 435→358（删 77）
+line_2d.tscn	3	1	0	Line2D:Line2D	no	0	0	0	0	0	0	0	0	0	LOW			不装：非屏：无消费者	—	—
+main.tscn	146	25	21	GraphwarRootNode:GraphwarRootNode	yes	0	6	0	0	0	0	0	0	15	MED-SCRIPT			不装：非屏场景：client 有消费者（main.gd 自己搭），装它=改根节点结构，不在本轮范围（T41 判「不装」）	—	—
+main_menu.tscn	138	25	7	MainMenu:Control	yes	4	1	2	0	0	0	0	0	0	MED-SCRIPT	main_menu.tscn (12 行)	main_menu.gd build() 60-137 (78 行, 13 次造节点调用)	不装：屏，不在本轮清单	—	—
+name_label.tscn	24	1	0	RichTextLabel:RichTextLabel	no	0	0	0	0	0	0	0	0	0	LOW			不装：非屏：无消费者	—	—
+play_screen.tscn	780	106	38	PlayScreen:Control	yes	6	7	5	1	19	0	0	0	0	HIGH-THEME	play_screen.tscn (12 行)	play_screen.gd build() 378-673 (296 行, 48 次造节点调用)	**本轮未装** —— 见 docs/06 §92.7（12 个成员与 _canvas/_fit_canvas 几何链需要重做，且棋盘像素基线会动）	—	—
+player_screen.tscn	473	64	20	PlayerScreen:Control	yes	8	2	8	1	1	0	0	0	0	HIGH-THEME	player_screen.tscn (12 行)	player_screen.gd build() 83-120 (38 行, 4 次造节点调用)	不装：屏，不在本轮清单	—	—
+replay_entry.tscn	130	21	10	HBoxContainer:HBoxContainer	yes	1	1	2	1	5	0	0	0	0	HIGH-THEME			已装成**行模板**（130 行/21 节点；replay_lobby 每行实例化它）	逐字节相同	replay_lobby.gd::_entry 手抄树 262→205（删 57）
+replay_lobby.tscn	92	13	8	ReplayLobby:Control	yes	3	1	3	0	1	0	0	0	0	MED-SCRIPT	replay_lobby.tscn (12 行)	replay_lobby.gd build() 72-95 (24 行, 5 次造节点调用)	T41 已装（本轮未动）	（T41 逐字节相同）	—
+shop_button_entry.tscn	288	5	7	Control:Control	no	0	0	5	1	1	0	0	0	0	HIGH-THEME			不装：非屏：无消费者（player_screen 的格子是 GwButton 手搭）	—	—
+team1_entry.tscn	233	48	8	HBoxContainer:HBoxContainer	yes	1	1	1	0	5	0	0	0	0	MED-SCRIPT			不装：非屏：无消费者（玩家行是我方 _player_row 手搭，未换成 team1_entry）	—	—
+team2_entry.tscn	243	46	8	HBoxContainer:HBoxContainer	yes	1	1	1	0	5	0	0	0	0	MED-SCRIPT			不装：非屏：无消费者（同上）	—	—
