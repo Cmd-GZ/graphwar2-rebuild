@@ -1,0 +1,59 @@
+kind	subject	addr	detail	extra	evidence	note
+levelrules	get_alive_teams	0x473520	src/graphwar_game_state_manager.rs	['src/graphwar_game_state_manager.rs']	observed	
+levelrules	evaluate（含上限/两队入口 0x475a64/0x475a80/0x475a88）	0x4759f0	src/graphwar_game_state_manager.rs	['src/graphwar_game_state_manager.rs']	observed	
+levelrules	winner_byte 表（0x478133–0x478236）	0x4780c0	src/graphwar_game_state_manager.rs	['src/graphwar_game_state_manager.rs']	observed	
+levelrules	handle_tick（对照，已结案）	0x470840	src/graphwar_game_state_manager.rs	['src/graphwar_game_state_manager.rs']	observed	
+levelrules	execute_results（对照，已结案）	0x472470	src/graphwar_effect_manager.rs	['src/graphwar_effect_manager.rs', 'src/graphwar_game_state_manager.rs']	observed	
+levelrules	SELF-CHECK 求值器	0x4eb9d0	src/math_function.rs	['src/math_function.rs']	observed	
+levelrules	SELF-CHECK 解析器	0x4ed670	src/math_function.rs	['/home/lucas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/regex-automata-0.4.7/src/util/pool.rs', 'src/math_function.rs']	observed	
+levelrules-control	math_function.rs	0x4eb9d0,0x4ed670		{5159376: ['src/math_function.rs'], 5166704: ['/home/lucas/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/regex-automata-0.4.7/src/util/pool.rs', 'src/math_function.rs']}	ok	
+gsm-funcs	0x3caa20	0x430			location	
+gsm-funcs	0x3e2830	0x30e0			location	
+gsm-funcs	0x4500c0	0x39a0			location	
+gsm-funcs	0x46f310	0x380			location	
+gsm-funcs	0x46f690	0x11b0			location	
+gsm-funcs	0x470840	0x330			location	
+gsm-funcs	0x470b70	0x340			location	
+gsm-funcs	0x470eb0	0x1550			location	
+gsm-funcs	0x472400	0x70			location	
+gsm-funcs	0x472470	0x10b0			location	
+gsm-funcs	0x473520	0x280			location	
+gsm-funcs	0x4737a0	0x220			location	
+gsm-funcs	0x4739c0	0x340			location	
+gsm-funcs	0x473d00	0x150			location	
+gsm-funcs	0x473e50	0x350			location	
+gsm-funcs	0x4741a0	0x2f0			location	
+gsm-funcs	0x474490	0x580			location	
+gsm-funcs	0x474a10	0xab0			location	
+gsm-funcs	0x4754c0	0xd0			location	
+gsm-funcs	0x475590	0x320			location	
+gsm-funcs	0x4758b0	0x140			location	
+gsm-funcs	0x4759f0	0x560			location	
+gsm-funcs	0x475f50	0x3d0			location	
+gsm-funcs	0x476320	0x190			location	
+gsm-funcs	0x4764b0	0x140			location	
+gsm-funcs	0x4765f0	0x140			location	
+gsm-funcs	0x476730	0x100			location	
+gsm-funcs	0x476830	0x1f0			location	
+gsm-funcs	0x476a20	0x720			location	
+gsm-funcs	0x477140	0x2d0			location	
+gsm-funcs	0x477410	0x130			location	
+gsm-funcs	0x477540	0x5a0			location	
+gsm-funcs	0x477bc0	0x3e0			location	
+gsm-funcs	0x477fa0	0x70			location	
+gsm-funcs	0x478010	0xb0			location	
+gsm-funcs	0x4780c0	0x230			location	
+gsm-funcs	0x499740	0x4e30			location	
+gsm-funcs	0x49f510	0x970			location	
+gsm-funcs	0x4a04d0	0x8e0			location	
+gsm-funcs	0x4a1310	0x9c0			location	
+gsm-funcs	0x4a2430	0x970			location	
+gsm-funcs	0x4a33f0	0xa00			location	
+gsm-funcs	0x4a43a0	0x8e0			location	
+gsm-funcs	0x4a6980	0xa30			location	
+gsm-funcs	0x4a78f0	0xa30			location	
+gsm-funcs	0x4a8860	0x950			location	
+gsm-funcs	0x4a94c0	0xa40			location	
+gsm-funcs	0x4aa640	0x980			location	
+gsm-funcs	0x4ab500	0xa00			location	
+gsm-funcs	0x4ac440	0xa00			location	
