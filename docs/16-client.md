@@ -11700,7 +11700,7 @@ last_transform() -> PackedFloat64Array   # [pos.x, pos.y, scale.x, scale.y]（ro
 
 ⇒ 播放屏在回放分支：`set_ring` + `set_ring_base`（`V = base = _replay.tick()`）+ `show_ring_arrows = false`。
 `V` 的语义（`0x4b2e10 call 0x519530` = `get_fractional_tick`）与真帧反解出的 **558**
-（= 载入 tick，§63.0⑥ 的真机读数）独立吻合 —— 这也是"回放播放头就是那个 tick"的第三个旁证。
+（= 载入 tick，[`docs/06-verification.md`](06-verification.md) §63.0⑥ 的真机读数）独立吻合 —— 这也是"回放播放头就是那个 tick"的第三个旁证。
 
 **门没解出来之前只能按观测选**：环画给"回放里所有活着的士兵"（原版是 `get_alive` ∧ `is_on_turn`，
 回放侧没有 turn 状态源）。本样本 1 具士兵 ⇒ 与真帧一致；多士兵回放**可能多画**。
