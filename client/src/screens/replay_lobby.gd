@@ -51,15 +51,8 @@ var _list: VBoxContainer
 var _selected := ""
 ## 扫哪个目录。默认 `user://replays`；自检可以指向真实存档目录做**只读**列举。
 var _scan_dir := "user://replays"
-## 当前每行的 `GameName` 标签（自检/对拍用；也是 `_rescale()` 要改 `custom_minimum_size` 的那批）。
-var _game_labels: Array[Label] = []
 ## 本屏的"条目元数据"缓存：`path → GwReplayMeta`（重进屏时复用，不重复解压）。
 var _meta_cache := {}
-
-## 原版 `ReplayName` / `GameName` 的字号除数（`LanLobbyFontResize.gd` / `GameNameContainer.gd`:
-## 两者都是 `屏宽 / 40`；GameNameContainer 还额外给子节点钉 `custom_minimum_size.x = 屏宽 × 0.24`）。
-const FONT_DIVISOR_ROW := 40
-const GAME_NAME_WIDTH_RATIO := 0.24
 
 ## 四个模式图标的节点名（`replay_entry.tscn` 的顺序，不带 `2/3/4` 后缀的那个是第一格）。
 const MODE_NODE_NAMES := ["AxisModeButton", "FunctionModeButton", "TurnModeButton", "TimeModeButton"]
@@ -67,7 +60,6 @@ const MODE_NODE_NAMES := ["AxisModeButton", "FunctionModeButton", "TurnModeButto
 func _ready() -> void:
 	font_divisor = 30        # 标题/返回键的除数由各自的视图脚本管；这里只兜底
 	super()
-	get_tree().root.size_changed.connect(_rescale)
 
 func build() -> void:
 	var f := GwUI.frame(self)
@@ -99,7 +91,6 @@ func on_enter() -> void:
 func _rebuild() -> void:
 	for c in _list.get_children():
 		c.queue_free()
-	_game_labels.clear()
 	_ensure_dir()
 	var entries := GwReplayFile.list_dir(_scan_dir)
 	_selected = ""
@@ -111,8 +102,8 @@ func _rebuild() -> void:
 	# 行是**运行时**建的（不在 `_ready` 那个时点），所以字号要自己补一次：
 	# `GwScreen.apply_font_scale()` 只在 `_ready` / 窗口尺寸变化时跑，晚建出来的标签
 	# 它会漏掉（实测：关卡名停在主题默认 24 ⇒ 行高 34 而不是 67）。
-	# 关卡名另走 `_scale_game_label()`（原版 `GameNameContainer.gd` 的 宽/40 + 宽×0.24），
-	# 这里这一句是给本屏其它晚建的文本兜底。
+	# 这里这一句只给本屏其它**晚建的文本**兜底（关卡名现在由原版 `GameNameContainer.gd`
+	# 自己算，见 `_entry()`）。
 	apply_font_scale()
 
 # ---------------------------------------------------------------- 一行
@@ -157,14 +148,13 @@ func _entry(entry: Dictionary) -> HBoxContainer:
 	var game_label := GwUI.label(String(meta.game_name()), 0, HORIZONTAL_ALIGNMENT_CENTER)
 	game_label.name = "GameName"
 	game_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	# 原版 `GameNameContainer.gd` 的两条（本客户端没有这个视图脚本文件，行为照抄，
-	# 见 docs/16 §62.5）：字号 = 屏宽/40；子节点 `custom_minimum_size = (屏宽×0.24, 0)`。
-	# ⚠️ 必须**显式**写字号：本屏的行是 `on_enter()` 里建的，那时 `GwScreen` 的
-	# `apply_font_scale()` 早已跑过（它只在 `_ready` / 窗口尺寸变化时跑），
-	# 靠 `meta("font_divisor")` 会停在主题默认 24（实测：标签高 34 而不是 67）。
-	_scale_game_label(game_label)
+	# **原版字节**：`recovered-src/GameNameContainer.gd` 挂在 `replay_entry.scn` 的这个
+	# `MarginContainer(GameNameContainer)` 上（观测：31 份 .scn 里 `res://GameNameContainer.gd`
+	# 只出现在 replay_entry.scn）。它自己算两条：子节点 `min.x = 屏宽×0.24`、字号 `屏宽/40`
+	# —— 我方原来的 `_scale_game_label()`（含自加的 `maxi(10, …)` 下限）已整份删除。
+	# 挂法：建 → 填子节点 → attach → 再 add_child（原版 `_ready` 只遍历当次的 get_children()）。
 	game_m.add_child(game_label)
-	_game_labels.append(game_label)
+	GwViews.attach(game_m, "GameNameContainer.gd")
 	row.add_child(game_m)
 
 	# ---- 第 3 段：四个模式图标 --------------------------------------------
@@ -257,25 +247,6 @@ func _meta_for(path: String) -> GwReplayMeta:
 	m.read(ProjectSettings.globalize_path(path))
 	_meta_cache[path] = m
 	return m
-
-## 把原版 `GameNameContainer.gd` 的两条规则应用到关卡名标签上。
-func _scale_game_label(lbl: Label) -> void:
-	var w := _viewport_width()
-	lbl.custom_minimum_size = Vector2(w * GAME_NAME_WIDTH_RATIO, 0)
-	lbl.add_theme_font_size_override("font_size", maxi(10, int(w / float(FONT_DIVISOR_ROW))))
-
-func _viewport_width() -> float:
-	var w := get_viewport_rect().size.x
-	if w <= 0.0:
-		w = 1920.0
-	return w
-
-## 窗口尺寸变了：原版 `GameNameContainer.gd` 按屏宽重算**字号**与
-## `custom_minimum_size`（两条都是 屏宽 的函数）⇒ 这里照做。
-func _rescale() -> void:
-	for lbl in _game_labels:
-		if is_instance_valid(lbl):
-			_scale_game_label(lbl)
 
 func _ensure_dir() -> void:
 	if not DirAccess.dir_exists_absolute(_scan_dir):

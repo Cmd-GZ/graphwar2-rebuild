@@ -13313,3 +13313,193 @@ PY
 4. **`docs/06` §76.6 第 6 条"修正常数横向 10 px 机制未知"** —— 现在有解，而且是**两条**：
    `Label` 该是 LEFT（不是 CENTER）+ 修正串该带**内核 `correction_text` 那个前导空格**
    （§79.4(a) 的四选一表）。不是"容器几何/HBox 分配"。
+
+## 83. 视图层第三轮：25 份 blocked 重判三档 + 换上 **7 份**原版 `.gd`（`client/src/views/` 27 → **34**）+ 一条**前提被证伪**（play_screen 那 3 份"只差一行 attach" ⇒ 一 attach 就崩）（2026-11-26，任务 T33 / `task-30`）
+
+> 规格 `.agent-work/specs/T33-unblock-views.md`；工作树 `.agent-work/cg/wt-t33`、分支 `agent/unblock-views`。
+> 原版 = `.reference/game/{Graphwar.x86_64,Graphwar.pck,libgraphwarrust.so}`（2.0.60）；
+> 我方 = `client/` + `libgw2_rebuild.so`（Godot 4.7.2）。地址一律 **vaddr**；证据档按 `AGENTS.md` §0.3 标。
+> 判据一句话：**这行代码是原版字节，还是我们写的。**
+
+**一句话**：把 §62 台账里 25 份 blocked 逐份重判成 **unblockable 16 / impossible 2 / dead-in-package 7**
+（`fixtures/view_unblock_plan.tsv`），然后真正清掉其中 **7 份**的障碍：① 补 Rust 侧
+`GraphwarRootNode.log(String)`（注册点 `0x3b7328`）+ 主场景根换成**原版那个类**，让 `/root/GraphwarRootNode`
+这条原版绝对路径成立 ⇒ 5 份平台桥（IAP / mediastore / album）换成原版字节；② `replay_lobby` 的关卡名换成
+`GameNameContainer.gd` 并**删掉**我方 `_scale_game_label()`（−29 行）；③ 两个键盘网格换成 `ButtonGrid.gd`
+并删掉同式自写（1920 下数值完全相同 ⇒ 像素不变）。
+**代价是零**：`cargo test` 1772/0/1ignored、gdext 1887/0/1ignored、`selftest` 717/0/1skip（missing=0）、
+14 个 `*_check.gd` **1935/0**、三轴 **647 / 647 / 637**、像素 `menu` **0 px** / `replay_lobby` **0 px** /
+`match_ready` **0.1218 %（L2 0 块）** / `match_play` **0.4232 %（L2 1 块）**。
+
+### 83.1 25 份的三档重判（`fixtures/view_unblock_plan.tsv`，逐份给"要补什么"）
+
+机械列（`shipped_scn_refs`）本轮**自己重算**过（读主工作区 `rsc/.godot/exported/133200997/*.scn`
+31 份原始字节，grep `res://<name>.gd`），与 §62.1 逐份相同。**正对照**：`ExitButtonContainer` 数出 14、
+`MarginContainer` 数出 8 ⇒ 扫描器不是"恒数 0"。
+
+| 档 | 份数 | 判据 | 清单 |
+|---|---:|---|---|
+| `unblockable` | **16** | 缺的东西本轮能补（Rust 方法 / 时序 / 节点形状 / 归属已放开） | A 组 5（`IAP_holder` `android_iap` `IAP_IOS` `IOS_album_holder` `Android_mediastore_holder`）+ play_screen 7（`ButtonGrid` `ExtraOptionPad` `ExtraOptionsHBox` `HBoxContainer` `ShowExtraButtons` `ViewFunctionPad` `ViewFunctionsLabel`）+ `GameNameContainer` + `CampaingLevelsButtons` + `ShopButtonsSize` + `SoldierIconMarginContainer` |
+| `impossible` | **2** | 缺**物理不可得**：包内零个原生二进制（`find rsc -name '*.so' -o -name '*.aar' -o -name '*.jar' -o -name '*.gdap'` ⇒ 空） | `Ad_holder`（连解析都过不去：7 个 AdMob 原生类型）、`AdContainer`（读 `Ad_holder.ad_loaded` / `ad_size`） |
+| `dead-in-package` | **7** | 31 份 `.scn` 零引用 **且** `.so` 的 84480 行字符串表里 `res://*.gd` = 0 次（无任何加载证据） | `CampaingButtonSize` `ExtraOptionsVbox` `LevelTitleContainer` `OffsetLabel` `ResizeContainer` `UnlockButton` `endgame_pop_up`（最后一份另有真缺口：Rust 侧 `FN_SHOW_VICTORY 0x3da130` 未接节点层） |
+
+> 16 + 2 + 7 = 25。16 份 `unblockable` 里本轮换成 **7 份**，另 9 份 `hold`，
+> **每一份都写了 hold 的具体理由**（见 §83.5）。
+
+### 83.2 换上的 7 份（`cmp` 逐字节、可观测效果、删掉了我方哪段）
+
+`client/src/views/*.gd` 现在 **34 份**，全部与 `recovered-src/` 逐字节相同：
+
+```bash
+for f in client/src/views/*.gd; do cmp "$f" "recovered-src/$(basename $f)" || echo "DIFF $f"; done   # 无输出
+```
+
+| 原版脚本 | 缺什么 → 补了什么 | 挂在哪（原版 `.scn`/`main.tscn` 的同一位置） | 删掉的我方代码 | 可观测效果（探针/真帧） |
+|---|---|---|---|---|
+| `IAP_holder.gd`(33) | `/root/GraphwarRootNode` + `log()`；`$IAP_Android`/`$IAP_IOS` 两个子节点 | `main.tscn` 根下 `IAP_holder`(Control, visible=false, offset 64/40/104) | 无（我方此前没有内购实现） | `_ready` 真的给两个子节点**各连上 3 条信号**（`get_signal_connection_list(sig).size()==1` ×6 条断言） |
+| `android_iap.gd`(254) | 同上 | `IAP_holder/IAP_Android`(Node) | 无 | 桌面：`get_node` → `await 1 s` → `has_singleton("AndroidIAPP")` 假 ⇒ 整段跳过（`root` 变量已赋值，1 s 后 0 报错） |
+| `IAP_IOS.gd`(94) | 同上 | `IAP_holder/IAP_IOS`(Node) | 无 | 桌面走 else ⇒ `root.log("InAppStore: No app store plugin.")`，**真的落到根节点缓冲**（`log_count()==1`） |
+| `IOS_album_holder.gd`(22) | 同上 | `main.tscn` 根下（visible=false） | 无 | 只 `get_node` 一次；桌面无副作用 |
+| `Android_mediastore_holder.gd`(22) | 同上 | `main.tscn` 根下（visible=false） | 无 | 同上 |
+| `GameNameContainer.gd`(19) | 归属（`replay_lobby` 已放开）+ 挂载顺序 | `replay_entry` 行的 `MarginContainer(GameNameContainer)` | `_scale_game_label()` + `_rescale()` + 两个常量 + 一个数组（**304 → 275 行，−29**） | 像素 `replay_lobby` **0.000 % / max\|Δ\|=0** |
+| `ButtonGrid.gd`(26) | 归属 + `_make_grid()` 四步化 | `LeftButtonGrid` / `RightButtonGrid`（**4 个挂载点里的 2 个**） | `apply_font_scale()` 的 `for b in _keys: custom_minimum_size = 0.15x/3`（−3 行） | 1920 下原版算 96×96 / 字号 64 = 我方同式；`match_ready`/`match_play` 在噪声内 |
+
+**Rust 侧新增（`src/_scaffold/graphwar_root_node_class.rs`，只加不改）**：
+
+```text
+#[func] log(message: String)  —— 原版 5 份平台桥 .gd 在**桌面分支**上唯一会执行的那一行
+#[func] log_count() -> int    —— 观测点（出口未知，只能从缓冲读）
+#[func] log_take() -> PackedStringArray
+```
+
+出处（**观测**）：`GraphwarRootNode` 的类注册块在 `0x3b7328` 附近同时出现
+`lea 0x1bdb95("log"), len=3` 与 `lea 0x19e490("GraphwarRootNode"), len=0x10`，随后
+`classdb_register_extension_class_method` 收到 ptrcall `0x3b6010` / call_func `0x3b6340`，
+且 `mov $1,%r8d` + `push $1` ⇒ **1 个参数**；另两处同形注册块 `0x3b604a` / `0x3b6387`。
+原版 `.gd` 侧共 **20 处** `root.log("…")`（5 份文件）。
+**方法体 = 推断**：落点 `graphwar_logger::GraphwarLogger::log`（`log` 与 `GraphwarLogger` 的
+`Rc<RefCell<_>>` 都在 `<GraphwarRootNode as INode>::init` 里建；arm64 `0x45bc5c` 的数据面是
+`RawVec<OsString>::grow_one`）。缺的证据：x86 侧没把 body 与 `0x45bc5c` 对上（只拿到注册回调）。
+**出口 = 未知**（原版走 `tiny_http` 端点，报文格式未读出）⇒ 这里不猜：**不打印、不开端口**，只做数据面。
+
+**主场景结构（`client/scenes/main.tscn`）**：根节点从 `Main`(Control) 换成**原版那个类**
+`GraphwarRootNode`（与 `recovered-src/main.tscn` 的 `[node name="GraphwarRootNode" type="GraphwarRootNode"]`
+同名同类型），我们自己的 `main.gd` 降为它下面的 `Main` 子节点 ⇒ `/root/GraphwarRootNode` 这条
+**原版绝对路径**成立。5 个平台桥节点按 `recovered-src/main.tscn` 的**逐属性**照抄
+（`visible=false` / `layout_mode=3` / `anchors_preset=0` / 四个 offset 全同）。
+`Ad_holder` **没抄**：`Ad_holder.gd` 连解析都过不去（AdMob 原生插件）⇒ impossible。
+
+### 83.3 门槛读数（本轮全量）
+
+| 项 | 本轮值 | 任务书基线 | 结论 |
+|---|---|---|---|
+| `cargo test --offline` | **1772 / 0 / 1 ignored** | 1772/0/1 | 一致 |
+| `cargo test --offline --features gdext-bindings` | **1887 / 0 / 1 ignored** | 1887/0/1 | 一致（本轮动了 `src/_scaffold/` ⇒ 必须重编重测） |
+| `bash client/run.sh selftest` | **717 passed / 0 failed / 1 skipped**，`missing=0(claimed 0 / degraded 0 / silent 0)` | 717/0/1skip missing=0 | 一致 |
+| `client/tools/*_check.gd` 全量（14 个） | **1935 / 0**（逐脚本：assemble 244 / base_classes 117 / curve 96 / draw_classes 235 / entity_drawer 367 / function_drawer 132 / gdext 24 / obstacle_drawer 116 / plane_on_screen 96 / play_flow 207 / process_loop 66 / recovered_view 57 / signal_classes 155 / spike 23） | 1935/0 | 一致 |
+| 三轴 `fire` | **内容命中 647**（`bit_exact_attrib --check-baseline --axis fire`：5 项指标逐项 **OK**，语料 403 份指纹一致） | 647 | 一致 |
+| 三轴 `batch` | **内容命中 647**（同上，`--axis batch` 全 OK） | 647 | 一致 |
+| 三轴 `batch_conv` | **内容命中 637 / 1080（59.0 %）**，种类序列 1075/1080 | 637 | 一致 |
+
+像素（原版侧与本侧**串行**采集，私有 netns；门槛文件 `fixtures/frame_diff_thresholds.txt` sha256 未变）：
+
+| 屏 | 跨侧差异 | L2 | 判据 |
+|---|---|---|---|
+| `menu`（`--flow replay` 第 1 屏） | **0.000 % / max\|Δ\|=0** | 0 块 | **过** —— 主场景根节点换类**一个像素都没动** |
+| `replay_lobby` | **0.000 % / max\|Δ\|=0** | 0 块 | **过** —— `GameNameContainer` 换上去 = 像素完全相同 |
+| `replay_play` / `replay_end` | 0.077 %（1714 px） | 0 块 | 不过 L3；差异 bbox `(770,447)-(1202,846)` **全在棋盘内**= 弹道/实体相位（同 §79.9 第 1 条那一类；本侧相邻两帧自差 270 px，画面在动） |
+| `match_ready` | **0.1218 %（2713 px）** | **0 块** | 与上轮 0.1219 % 同轴（噪声地板 ±15 px） |
+| `match_play` | **0.4232 %（9426 px）** | 1 块（弹道相位） | 与上轮 0.4256 % 同轴 |
+
+### 83.4 前提被证伪：play_screen 那 3 份不是"只差一行 attach"
+
+§62.6 第 3 条写「`ButtonGrid`/`ExtraOptionPad`/`ExtraOptionsHBox`/`HBoxContainer`/`ViewFunctionPad`/
+`ViewFunctionsLabel` 这 6 份**只差一行 attach**：节点名我一个一个核对过都在」。**节点名都在是真的，
+"只差一行 attach"是错的。**
+
+按"建 → 填 → attach → add"挂上 `ExtraOptionsHBox.gd` + `ExtraOptionPad.gd` + `ViewFunctionPad.gd`
+之后，`selftest` **不是红，是崩**：
+
+```text
+Failed method: Control::_update_minimum_size. Message queue out of memory.
+   Try increasing 'memory/limits/message_queue/max_size_mb' in project settings.
+handle_crash: Program crashed with signal 11          ⇒ exit 134（SIGSEGV）
+GDScript backtrace: [0] _on_size_changed (res://src/views/ExtraOptionPad.gd:20)
+```
+
+**根因（推断，但复现稳定）**：这三份都在 `PlaneContainer.item_rect_changed` 上回写
+`custom_minimum_size`（`ExtraOptionPad` 写自己、`ExtraOptionsHBox` 写自己、`ViewFunctionPad` 写自己），
+而**我方**这一带的容器形状与原版 `.scn` 不同 —— 原版 `GamePlane` 那层只装 `ExtraOptionPad` +
+`PlaneContainer(AspectRatioContainer)`，我方是 `VBox(GamePlane)` 里再塞 `AspectRatioContainer` 并让它
+参与 min-size 协商 ⇒ 写 `min.y` 会反过来改 `PlaneContainer` 的尺寸 ⇒ 再次触发 `item_rect_changed`，
+形成 `min-size ↔ item_rect_changed` 正反馈，把主线程消息队列灌爆。**正对照**：只挂 `ButtonGrid.gd`
+（它连的是 `get_tree().root.size_changed`，root 尺寸不会被自己写的 min-size 改）⇒ `selftest` 717/0 全绿、
+14 个 check 脚本 1935/0 ⇒ 崩溃来自"item_rect_changed 回写"这一条，不是 `attach` 本身。
+
+⇒ 这 3 份已被降级为 `hold`，正确路径是**先按 `recovered-src/play_screen.tscn` 重建
+`GamePlane`/`PlaneContainer` 那两层**（`ExtraOptionsVBox` 直接是 `PlaneContainer` 的孩子、
+`GamePlane` 是 `VBoxContainer` 且**不**含 `AspectRatioContainer`），再挂。那属于"按 `.scn` 重排对局屏
+版式"，会动 §79 刚收口到 0.1219 % 的版式 ⇒ 单独一轮做，不在本轮范围。
+
+### 83.5 遗留（**必读**：16 份 unblockable 里 9 份为什么还是 hold）
+
+| # | 份 | 还缺什么 | 我判断该谁做 |
+|---|---|---|---|
+| 1 | `ExtraOptionsHBox` / `ExtraOptionPad` / `ViewFunctionPad` | 先重建 `GamePlane`/`PlaneContainer` 两层（见 §83.4） | 下一轮视图层（要动 §79 收口的版式） |
+| 2 | `HBoxContainer.gd` | 挂载点不存在：原版 `RightReplaysButtonsGrid/HBoxContainer` 那层我方没有（我方是 VBox 直接装键）；算式与 `ButtonGrid` 完全重复 | 同上（改回原版三层形状时一起） |
+| 3 | `ViewFunctionsLabel.gd` | 挂上反而无据：它只给**子节点**写字号（RichTextLabel 无 Control 子节点 ⇒ 空操作），而 `GwViews.owns()` 会让基类跳过整棵 ⇒ 字号从 `w/60=32` 掉回 16。原版这一格真字号**没有真值** | 需要先补这一格的墨迹真值 |
+| 4 | `ShowExtraButtons.gd` | ① extends `GraphwarButton`（我方那颗是 `GwButton`）；② `set_button_icon(load("res://show_extra_buttons.svg"))` 的两份 **源 `.svg` 不在包内**（只有 `.import` + `.ctex`） | 资产层 + `graphwar_button_class` 派发归属 |
+| 5 | `CampaingLevelsButtons.gd` | 21 个按钮的 `input_text`→命令总线派发现在挂在 `GwButton` 上；原版 `GraphwarButton.new()` | "控制器迁回 Rust"那条线 |
+| 6 | `ShopButtonsSize.gd` | 算式可换，但 `client/tools/selftest.gd:717` 把 `maxf(32, …)` 下限写进了期望值（原版 105 份里 `maxi`/`max(` = 0 次）⇒ 换上去断言必红 | **lead 裁定**护栏口径（禁区，本轮不动） |
+| 7 | `SoldierIconMarginContainer.gd` | 槽形状要改成"4 个 TextureRect 叠放 + 负 margin"，而 `game_setup` 屏**没有像素真值** | 先补真机帧 |
+| 8 | `Ad_holder` / `AdContainer` | AdMob 原生插件（包内零个原生二进制） | **物理不可得**，桌面运行时永远不需要 |
+| 9 | 7 份 `dead-in-package` | 包里零引用；`endgame_pop_up` 另有 Rust 侧 `FN_SHOW_VICTORY`(0x3da130) 未接节点层 | 死文件登记；endgame 归 play_screen_control 那条线 |
+
+**明确登记的"半分原版半分仿制"**（不许当成已复原）：
+* `play_screen` 的两个键盘 grid 是原版 `ButtonGrid.gd`，**回放三键那两块不是**（4 个挂载点只挂 2 个）；
+* `play_screen` 顶栏 4 个开关 + `ShowExtraButtons` 的最小尺寸/字号、以及 `ExtraOptionsVBox`/`ExtraOptionPad`
+  的显隐判据**仍是我们的代码**（`apply_font_scale()` / `_update_view_geometry()`，同式等价但不算复原）；
+* `replay_lobby` 只有关卡名容器是原版，时间列/模式图标/播放键仍是我们的形状；
+* `endgame_pop_up.gd` 那份 9 行空壳挂不上也无意义，**真正的填充逻辑在 Rust 侧且未接节点层**；
+  我方 `client/src/screens/endgame_pop_up.gd`（236 行）**仍是仿制控制器**。
+
+### 83.6 复跑（在 worktree `WT` 里，一条不漏）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t33
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target          # ⚠️ 单独一行
+export HOME=$WT/.fakehome
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+
+# ① 34 份原版副本逐字节（无输出才是过）+ 台账不变量
+for f in client/src/views/*.gd; do cmp "$f" "recovered-src/$(basename $f)" || echo "DIFF $f"; done
+
+# ② 本轮动了 src/_scaffold/ ⇒ 三步缺一（不 import 就静默不加载）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+$GODOT --headless --path client --import
+
+# ③ 门槛
+cargo build --offline --example serve_match        # 不编 ⇒ selftest 641/0/3skip（missing=76）
+cargo test --offline                               # 1772/0/1ignored
+cargo test --offline --features gdext-bindings     # 1887/0/1ignored
+bash client/run.sh selftest                        # 717/0/1skip missing=0
+for f in client/tools/*_check.gd; do "$GODOT" --headless --path client --script "res://tools/$(basename $f)"; done   # 1935/0
+
+# ④ 三轴（三条轴分开跑、分开报）
+SNAP=$MAIN/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict
+python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire  --snapshot $SNAP   # 全部一致
+python3 tools/bit_exact_attrib.py --json b.jsonl --check-baseline --axis batch --snapshot $SNAP   # 全部一致
+
+# ⑤ 像素（两侧**串行**、私有 netns；模板见 §79.8 的 bwrap 行，把 flow 换成 replay / match）
+#   replay：menu / replay_lobby / replay_play / replay_end（要 --seed-replays）
+#   match ：match_ready / match_play / lan_lobby_global
+python3 tools/frame_diff.py --orig <o> --mine <m> --out r.tsv --blocks-out rb.tsv --json r.json \
+  --screens menu,replay_lobby,replay_play,replay_end
+```

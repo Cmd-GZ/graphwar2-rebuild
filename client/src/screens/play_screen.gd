@@ -417,9 +417,15 @@ func build() -> void:
 	# 不是紧贴左上角）。这里照抄同一结构。
 	var left_top_pad := GwUI.margin("MarginContainer", 0, left)
 	left_top_pad.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_left_grid = _make_grid("LeftButtonGrid", left)
+	_left_grid = _make_grid("LeftButtonGrid")
 	_left_grid_holder = _left_grid.get_parent()
 	_fill_grid(_left_grid, LEFT_KEYS)
+	# **原版字节**：`recovered-src/ButtonGrid.gd`（原版挂在 `play_screen.scn` 的
+	# `LeftButtonGrid`/`RightButtonGrid`/`Left*ReplaysButtonsGrid` 上）。它给直接子节点写
+	# `custom_minimum_size = (屏宽×0.15/3)` 与 `font_size = 屏宽/30` —— 我方 `apply_font_scale()`
+	# 里那套同式自写（`for b in _keys: …`）已整份删除。
+	GwViews.attach(_left_grid, "ButtonGrid.gd")
+	left.add_child(_left_grid_holder)      # 顺序 = 几何：夹在 pad 与回放块之间
 	# `LeftReplaysButtonsGrid`（原版这一块是 `columns = 3` 的 GridContainer：第一行 3 个文字键
 	# 在真帧上不可见但**占位**，第二行才是 ⏮▶⏭ ⇒ 用一个等高空占位复现同一位置）。
 	#
@@ -453,6 +459,13 @@ func build() -> void:
 	# ExtraOptionsVBox 天然叠放；AspectRatioContainer 同样把每个子节点铺成同一块矩形 ⇒
 	# GraphwarPlane 与函数列表覆盖层叠放。这里照原版结构搭，不另造叠放容器。
 	var game_plane := GwUI.vbox("GamePlane", 4, _plane_container)
+	# ⚠️ `ExtraOptionPad.gd` / `ViewFunctionPad.gd` / `ExtraOptionsHBox.gd` 这三份本轮**没能换**
+	# （详见 `fixtures/view_unblock_plan.tsv` 与本轮 docs/06 §83 的"前提被证伪"一节）：
+	# 它们都在 `PlaneContainer.item_rect_changed` 上回写 `custom_minimum_size`，而**我方**这一带的
+	# 容器形状与原版 `.scn` 不同（`GamePlane` 是 VBox + `AspectRatioContainer` 参与 min-size 协商）
+	# ⇒ 形成 `min-size ↔ item_rect_changed` 正反馈，实测把 Godot 的消息队列打爆：
+	#   `Failed method: Control::_update_minimum_size. Message queue out of memory.` → SIGSEGV。
+	# 要换必须先按原版 `.scn` 重建 GamePlane/PlaneContainer 那两层（不在本轮允许范围内）。
 	_extra_pad = GwUI.margin("ExtraOptionPad", 0, game_plane)
 	_extra_pad.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 
@@ -555,9 +568,11 @@ func build() -> void:
 
 	var right_top_pad := GwUI.margin("MarginContainer", 0, right)
 	right_top_pad.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_right_grid = _make_grid("RightButtonGrid", right)
+	_right_grid = _make_grid("RightButtonGrid")
 	_right_grid_holder = _right_grid.get_parent()
 	_fill_grid(_right_grid, RIGHT_KEYS)
+	GwViews.attach(_right_grid, "ButtonGrid.gd")   # 同左：原版字节
+	right.add_child(_right_grid_holder)
 	# 右列同理：原版 `[HBoxContainer(Fire)][MarginContainer(exp)][RightButtonGrid][RightReplaysButtonsGrid][MarginContainer2(exp)]`
 	# ⇒ 回放三键夹在两个展开垫中间。这里把块**先**加在 filler 之前（见左列的注释）。
 	_replay_right = _build_replay_controls("RightReplaysButtonsGrid",
@@ -679,8 +694,13 @@ func _anim_rect() -> ColorRect:
 	r.set_anchors_preset(Control.PRESET_FULL_RECT)
 	return r
 
-func _make_grid(node_name: String, parent: Node) -> GridContainer:
-	var holder := GwUI.margin("MarginContainer", 0, parent)
+## 键盘网格（原版 `play_screen.scn` 的 `LeftButtonGrid` / `RightButtonGrid`）。
+##
+## ⚠️ **返回时整个 holder 还没进树**，由调用方在「填完键 → `GwViews.attach()`」之后再
+## `add_child()`：原版 `ButtonGrid.gd` 的 `_ready` 才去遍历 `get_children()` 写最小尺寸/字号，
+## 而 `GwViews.attach()` 对**已进树**的节点不补发 `_ready`（`client/src/ui/gw_views.gd` 的注释）。
+func _make_grid(node_name: String) -> GridContainer:
+	var holder := GwUI.margin("MarginContainer", 0)
 	holder.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	var grid := GridContainer.new()
 	grid.name = node_name
@@ -895,9 +915,11 @@ func apply_font_scale() -> void:
 	var w := get_viewport_rect().size.x
 	if w <= 0.0:
 		return
-	var key := w * 0.15 / 3.0                       # ButtonGrid.gd / ExtraOptionsHBox.gd
-	for b in _keys:
-		b.custom_minimum_size = Vector2(key, key)
+	var key := w * 0.15 / 3.0
+	# ⚠️ 键盘键（`_keys` = 两个 `*ButtonGrid` 的子节点）的最小尺寸与字号现在由**原版**
+	# `ButtonGrid.gd` 写（所以这里不再遍历 `_keys`）。下面这 5 颗仍是我们的代码：
+	# `ExtraOptionsHBox.gd` 没换上（见 `build()` 的注）、`ShowExtraButtons.gd` 挂不上
+	# （extends `GraphwarButton` + 要 `res://show_extra_buttons.svg` 资产）。
 	for b in [_show_extra_button, _view_func_button, _names_button, _chat_button, _mute_button]:
 		if b != null:
 			b.custom_minimum_size = Vector2(key, key)
@@ -943,6 +965,10 @@ func _update_view_geometry() -> void:
 	var toolbar_h := w * 0.15 / 3.0
 	var extra_y := pc.y - pc.x / BOARD_ASPECT
 	var show := extra_y >= toolbar_h or _extra_forced
+	# ⚠️ 这一段仍是**我们的代码**，不是原版字节：`ExtraOptionsHBox.gd` / `ExtraOptionPad.gd` /
+	# `ViewFunctionPad.gd` 三份在**当前容器形状**下挂不上（attach 会把消息队列打爆，见 `build()`
+	# 里那段注）。判据与原版同式（余高 = plane.h − plane.w/1.66667 vs 左上按钮行高），
+	# 所以像素上等价 —— 但它**不算复原**。
 	_extra_hbox.visible = show
 	if _extra_pad != null:
 		_extra_pad.custom_minimum_size = Vector2(0, toolbar_h if show else 0)

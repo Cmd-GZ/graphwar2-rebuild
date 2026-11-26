@@ -12143,3 +12143,105 @@ func _on_size_changed():
    连带"要动字体管线"这个结论也撤掉 —— 本轮**一个字体文件/字号都没碰**。
 2. **`docs/16` §76.5 第 2 条把左上两键记成"圆角/图标抗锯齿"** 也错：第一颗 0 px，
    13 413 px 全在第二颗的 **disabled 态**上（`ShowExtraButtons.gd` 那条规则）。
+
+## 79. 客户端侧：主场景根换成**原版 `GraphwarRootNode` 类**（`/root/GraphwarRootNode` 这条路终于成立）+ 平台桥 5 份原版 `.gd` 挂上去（2026-11-26，任务 T33 / `task-30`）
+
+> 数值/门槛/复跑命令在 `docs/06` §83；本节只讲**客户端结构**：挂载点、时序、以及"我方树 vs 原版 `main.tscn`"的差异清单。
+
+### 79.1 为什么先动根节点：5 份 `.gd` 的 `_ready` 第一行就是绝对路径
+
+原版包里那 5 份平台桥脚本（`IAP_holder.gd` / `android_iap.gd` / `IAP_IOS.gd` /
+`IOS_album_holder.gd` / `Android_mediastore_holder.gd`）的 `_ready` 第一行一律是：
+
+```gdscript
+root = get_node("/root/GraphwarRootNode")
+```
+
+而 `recovered-src/main.tscn` 的根节点是 `[node name="GraphwarRootNode" type="GraphwarRootNode"]`。
+我方客户端此前的主场景根是 `Main`(Control, `src/main.gd`) ⇒ 这条路径**不存在** ⇒ 5 份都挂不上。
+
+**改法（本轮）**：`client/scenes/main.tscn` 的根节点改成**原版那个类**（GDExtension 类
+`GraphwarRootNode`，`src/_scaffold/graphwar_root_node_class.rs`），我们自己的 `main.gd` 降为它下面的
+`Main` 子节点。树的形状因此变成：
+
+```text
+/root
+└── GraphwarRootNode                      ← **原版类**（`src/_scaffold/graphwar_root_node_class.rs`）
+    ├── Main (Control, src/main.gd)       ← ⚠️ **不是原版的东西**：我们自己的控制器壳
+    │   └── VBoxContainer/ScreensControl  ← 15 个屏（原版是 GraphwarRootNode/VBoxContainer/ScreensControl）
+    ├── IAP_holder (Control, visible=false)        ← 原版字节 IAP_holder.gd
+    │   ├── IAP_Android (Node)                     ← 原版字节 android_iap.gd
+    │   └── IAP_IOS (Node)                         ← 原版字节 IAP_IOS.gd
+    ├── IOS_album_holder (Control, visible=false)  ← 原版字节
+    ├── Android_mediastore_holder (Control, …)     ← 原版字节
+    └── (运行时) ScreensControl / IAP_holder / Ad_holder / GraphwarModuleContainer ← 那个类自己的 `_ready` 建的骨架
+```
+
+* 5 个平台桥节点的**四个 offset / `visible=false` / `layout_mode` / `anchors_preset`** 全部照抄
+  `recovered-src/main.tscn`（`IAP_holder` 是 `offset_top=64 / offset_right=40 / offset_bottom=104`，
+  另两个是 `0/0/40/40`）；
+* `Ad_holder` 节点**没抄**：它的脚本 `Ad_holder.gd` 依赖 7 个 AdMob 原生类型，包内零个原生二进制
+  ⇒ 连解析都过不去（登记 `impossible`）；
+* 那个类自己的 `_ready` 还会在根下建 `ScreensControl` / `IAP_holder` / `Ad_holder` /
+  `GraphwarModuleContainer`（它的骨架，全部 `visible=false` 或空 `Node`）⇒ 与我方 3 个同名 holder
+  **重名**，引擎把**后加的那个**改名（`IAP_holder2` 之类）。无害，但下一轮要做"控制器迁回 Rust"时
+  必须把这两套合成一套（现在两套同时存在是**已知的过渡态**）。
+
+### 79.2 `GraphwarRootNode.log(String)`：方法名有指令级证据，方法体只有推断
+
+5 份 `.gd` 在桌面上真正执行到的**只有** `root.log("…")` 这一行（`Engine.has_singleton(...)` 全是假）。
+所以必须先有这个方法。本轮的实现与证据档：
+
+| 项 | 档 | 证据 |
+|---|---|---|
+| 方法存在 + **1 个参数** | **观测** | 类注册块 `0x3b7328`：`lea 0x1bdb95("log"), len=3` 与 `lea 0x19e490("GraphwarRootNode"), len=0x10` 同块，随后 `classdb_register_extension_class_method` 收到 ptrcall `0x3b6010` / call_func `0x3b6340`、flags 槽 `0x9524f0`；`mov $1,%r8d` + `push $1` ⇒ 1 个参数。另两处同形块 `0x3b604a` / `0x3b6387` |
+| 调用点形状 `log(String)` | **观测** | 原版 `.gd` 字节：5 份文件共 20 处 `root.log("…")`，实参全是字符串字面量或 `JSON.stringify(...)` |
+| 落点 = `graphwar_logger::GraphwarLogger::log` | **推断** | `GraphwarLogger` 的 `Rc<RefCell<_>>` 在 `<GraphwarRootNode as INode>::init` 里建；arm64 `0x45bc5c` 的数据面是 `RawVec<OsString>::grow_one`（一行进 `Vec`）。**缺**：x86 侧没把 body 与它对上（我拿到的是注册回调，不是 body 归属） |
+| 出口 | **未知** | 原版是 `tiny_http` 端点（arm64 `0x45bce0` `new` 里 2 次 `Server::new`），HTTP 报文格式未读出 |
+
+实现因此**只做数据面**：`log()` 把一行塞进 class 内的 `GraphwarLogger`，`log_count()` / `log_take()`
+是两个观测点；**不打印、不开端口**（不猜）。探针实测 `IAP_IOS` 桌面分支那一行真的进来了：
+`log_take() == ["InAppStore: No app store plugin."]`。
+
+### 79.3 `GwViews.attach()` 的规矩在"已经进树的父节点"下要四步化
+
+`GwScreen._ready()` 里跑 `build()` ⇒ **build 期间屏已经在树里**，所以任何
+`GwUI.hbox(name, sep, parent)` 建出来的节点**立刻进树**；此后 `set_script()` 不会补发 `_ready`
+（`client/src/ui/gw_views.gd` 的注释），原版脚本就静默不跑。
+
+本轮 `play_screen` 的两个键盘网格正好踩这条：`_make_grid()` 以前是
+`GwUI.margin(..., parent)` + `holder.add_child(grid)` ⇒ grid 建好就在树里，只能挂不上。
+改法 = **四步化**：`_make_grid(name)` 只造一个**不挂父**的 holder（内含 grid）→ 调用方 `_fill_grid()`
+填 18 个键 → `GwViews.attach(grid, "ButtonGrid.gd")` → 最后 `add_child(holder)`。
+**顺序即几何**：`left.add_child(_left_grid_holder)` 必须落在 `left_top_pad` 与 `left_replay_box`
+之间，否则键盘在列里换位置（§79.2 那条 96→98 的历史坑就是"位置差 1 px"）。
+
+### 79.4 `replay_lobby`：原版 `GameNameContainer.gd` 接管关卡名，删掉我方 29 行
+
+`replay_entry` 那一行的 `MarginContainer(GameNameContainer)` 在原版挂 `GameNameContainer.gd`
+（`子节点 min.x = 屏宽×0.24`、`字号 = 屏宽/40`）。我方原来是 `_scale_game_label()`：同式**外加**
+`maxi(10, …)` 下限（原版 105 份脚本里 `maxi`/`max(` 出现 0 次）+ 自己接 `root.size_changed` 重算。
+本轮改成 `game_m.add_child(game_label)` → `GwViews.attach(game_m, "GameNameContainer.gd")` →
+`row.add_child(game_m)`，并**整份删除** `_scale_game_label()` / `_rescale()` / 两个常量 / `_game_labels` 数组
+（`replay_lobby.gd` **304 → 275 行**）。像素判据：`replay_lobby` 跨侧 **0.000 % / max|Δ|=0**。
+
+### 79.5 现在**明确不是**原版的那几处（下一轮的入口）
+
+| 位置 | 现在是谁的代码 | 差什么 |
+|---|---|---|
+| `/root/GraphwarRootNode/Main` + `VBoxContainer/ScreensControl` | 我们的（`src/main.gd`） | 原版是 `GraphwarRootNode/VBoxContainer/ScreensControl` 直接挂屏 ⇒ main.gd 要迁进 Rust 那个类 |
+| `play_screen` 顶栏 4 个开关 + `ShowExtraButtons` 的 min/字号 | 我们的（`apply_font_scale()`） | 原版 `ExtraOptionsHBox.gd` / `ShowExtraButtons.gd`；前者 attach 会崩（`docs/06` §83.4），后者缺资产+类 |
+| `play_screen` `ExtraOptionsVBox`/`ExtraOptionPad` 的显隐与 `min.y` | 我们的（`_update_view_geometry()`） | 同上 |
+| `play_screen` 回放三键那两块（`*ReplaysButtonsGrid`） | 我们的 BoxContainer | 原版是 `GridContainer`（左 3 列 / 右 1 列）+ `HBoxContainer.gd` ⇒ `ButtonGrid.gd` 只挂了 2/4 |
+| `replay_lobby` 时间列 / 模式图标 / 播放键 | 我们的 | 只剩关卡名是真原版 |
+| 整个对局屏控制器 + `endgame_pop_up` | 我们的（`client/src/screens/*.gd` 合计 3 727 + 236 行） | 原版在 Rust（`graphwar_play_screen_control`）；`FN_SHOW_VICTORY(0x3da130)` 还没接节点层 |
+
+### 79.6 我写错了 / 前提被证伪
+
+1. **§62.6 第 3 条「play_screen 那 6 份只差一行 attach」是错的**（本轮实测 attach 即崩，
+   根因与正确路径见 `docs/06` §83.4）。"节点名都在"是对的，"只差一行 attach"不是。
+2. **§62.4 把 `GameSetupPlayerEntry` 之后的下一个"最容易做"判成 play_screen 那 6 份，顺序也该反过来**：
+   真正"只差挂"的是 `GameNameContainer`（1 行 attach + 删 29 行）和 `ButtonGrid`（四步化后挂 2/4），
+   它们都**不需要**动版式。play_screen 那几份要动的是**容器形状**，代价高一档。
+3. **`log()` 的方法体我只有推断**（见 §79.2 那张表）。如果下一轮能定位 x86 侧 body，请把它换掉 ——
+   现在的实现只保证"原版脚本调用它不会报错 + 有可观测缓冲"。
