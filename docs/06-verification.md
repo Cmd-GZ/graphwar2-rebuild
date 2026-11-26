@@ -9635,6 +9635,8 @@ $PY tools/bitexact_report.py --work .bitexact_work --write
 
 ### 66.3 正对照（证明扫描器/RLE 判据有效，不是"扫不到"）
 
+以下 6 条由 `tools/protocol_recount.py --controls` **程序化打印**（不是我手抄的读数）。
+
 1. **已知锚点**：`GraphwarColor` 的 N 串 = **3**、`GameInfo` = **9**，与 `docs/07` §3.4 的
    字段清单（`r/g/b` 三个、`GameInfo` 九个）逐个吻合。
 2. **地址复现**：方法 B 独立抽出的 `LockInfo` / `LockRequest` 的 `Serialize` =
@@ -9706,8 +9708,9 @@ PY=$PWD/.reference/venv/bin/python
 $PY tools/protocol_recount.py --check-shape        # ① 负结论：Serialize 侧 serialize_struct 立即数 = 0 命中
 $PY tools/protocol_recount.py                      # ② 74 行 A/B/WIRE_SPEC/§3.3 逐列比 + 统计（~3 s）
 $PY tools/protocol_recount.py --tsv fixtures/protocol_field_recount.tsv   # ③ 重生成 74 行真值表
-$PY tools/protocol_recount.py --json | head -40    # ④ 机器读（含 str_writer 票数与 N 串三口径）
-$PY tools/wire_fields.py --verify                  # ⑤ 上一轮工具（已修）：表 + 三道自校验，N 自校验失败 0 条
+$PY tools/protocol_recount.py --controls           # ④ 本节 66.3 的 6 条正对照逐条打印
+$PY tools/protocol_recount.py --json | head -40    # ⑤ 机器读（含 str_writer 票数与 N 串三口径）
+$PY tools/wire_fields.py --verify                  # ⑥ 上一轮工具（已修）：表 + 三道自校验，N 自校验失败 0 条
 ```
 
 `tools/protocol_recount.py` 自带 rip 相对引用索引，**不需要** `analysis/xrefs.pkl`

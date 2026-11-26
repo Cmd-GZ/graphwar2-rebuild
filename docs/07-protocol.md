@@ -134,6 +134,7 @@ cd /home/CG/Myprojects/graphwar2-rebuild     # 或任一 checkout（.reference/ 
 PY=$PWD/.reference/venv/bin/python
 $PY tools/protocol_recount.py --check-shape            # Serialize 侧 serialize_struct 立即数：0 命中（=被 DCE，不是扫描失败）
 $PY tools/protocol_recount.py                          # 74 行 × A/B/WIRE_SPEC/§3.3 逐列比 + 统计
+$PY tools/protocol_recount.py --controls               # 6 条正对照逐条打印（锚点/地址/独立传输/空体/77→67+10）
 $PY tools/protocol_recount.py --tsv fixtures/protocol_field_recount.tsv
 $PY tools/wire_fields.py --verify                      # 上一轮的工具（已修成无 xrefs.pkl 也能跑）：N 自校验失败 0 条
 ```

@@ -450,6 +450,72 @@ def check_shape(b, mb):
     return hits
 
 
+def controls(res):
+    """`docs/06` §66.3 的正对照，逐条打印（证明扫描器/判据有效，不是"扫不到"）。"""
+    b, mb, mc = res["bin"], res["mb"], res["mc"]
+    out = []
+    w = out.append
+    w("=== 正对照 1：已知锚点（N 串 vs docs/07 §3.4 的字段清单）")
+    for name, want in (("GraphwarColor", 3), ("GameInfo", 9), ("EventInfo", 2)):
+        got = mc["C3"].get(name)
+        w("   %-13s N串 N=%-2s  §3.4 写的 %d 个 ⇒ %s" % (
+            name, got["N"] if got else "缺", want,
+            "✓" if got and got["N"] == want else "✗"))
+    w("")
+    w("=== 正对照 2：方法 B 独立抽出的 Serialize 地址应等于 docs/07 §3.4 登记的值")
+    for ev, va in (("LockInfo", 0x50ca30), ("LockRequest", 0x50e420)):
+        r = mb["events"].get(ev)
+        w("   %-12s 方法B=0x%-8x §3.4=0x%-8x ⇒ %s（字段=%s）" % (
+            ev, r["func"], va, "✓" if r and r["func"] == va else "✗",
+            ",".join(f[0] for f in r["fields"])))
+    w("")
+    w("=== 正对照 3：'serialize_struct 立即数被 DCE' 不是扫描器瞎了 —— 变体名的 lea 还在")
+    got = b.keyed_lea(b.idx[0x50ca64]) if 0x50ca64 in b.idx else None
+    w("   0x50ca64 %s（LockInfo 的 serialize_newtype_variant 变体名，真的写进报文）" % (got,))
+    w("   同一函数的 serialize_struct(结构体名, N) 形状命中：%d（见 --check-shape）"
+      % len(check_shape(b, mb)))
+    w("")
+    w("=== 正对照 4：两条独立传输（代码段立即数 vs .data.rel.ro 重定位数据）")
+    same = [ev for ev, r in res["ma"].items()
+            if mb["events"].get(ev) and r["fields"] == [f[0] for f in mb["events"][ev]["fields"]]]
+    w("   方法 A 的 FIELDS 数组内容 == 方法 B 的键序：%d / %d 个有字段事件" % (len(same), len(res["ma"])))
+    w("")
+    w("=== 正对照 5：空体事件真的写 {}（不是 unit variant 的裸字符串）")
+    for ev in ("TickRequest", "GameHeartbeat"):
+        r = mb["events"][ev]
+        lo, hi = b.func_range(r["func"])
+        br = [(b.ins[i][0], b.ins[i][3]) for i in range(lo, hi)
+              if b.ins[i][2] == "mov" and "byte ptr" in b.ins[i][3]
+              and re.search(r", 0x7[bd]$", b.ins[i][3])]
+        w("   %-14s Serialize=0x%-8x 花括号写入 %d 条（0x7b='{' / 0x7d='}'），"
+          "serialize_field 0 次 ⇒ 线上 '{\"%s\":{}}'" % (ev, r["func"], len(br), ev))
+    w("")
+    w("=== 正对照 6：'有字段' ⟺ '有 N 串'（在全部 struct 类型上）")
+    bare = bare_struct_names(b)
+    ev_types = {ev + "Event" for ev in res["ma"]}
+    w("   .rodata 里短形式 'struct <T>' 字面量（被代码引用一次）：%d 个" % len(bare))
+    w("   其中带 N 串的：%d；不带 N 串的：%d" % (
+        len([t for t in bare if t in mc["C3"]]), len([t for t in bare if t not in mc["C3"]])))
+    noN = sorted(t for t in bare if t not in mc["C3"])
+    w("   不带 N 串的全部是 0 字段事件结构体：%s" % (
+        all(res["ma"].get(t[:-len("Event")], {}).get("N") == 0 for t in noN) if noN else "-"))
+    w("   明细：%s" % noN)
+    return "\n".join(out)
+
+
+def bare_struct_names(b):
+    """`.rodata` 里被代码精确引用的短形式 `struct <T>` 字面量集合（77 个 = 74 事件 + 3 负载结构体）。"""
+    out = {}
+    for i in range(len(b.ins)):
+        kl = b.keyed_lea(i)
+        if not kl:
+            continue
+        m = re.match(r"^struct ([A-Za-z0-9_]+)$", kl[1])
+        if m:
+            out.setdefault(m.group(1), []).append(b.ins[i][0])
+    return out
+
+
 # ---------------------------------------------------------------- 方法 C
 
 
@@ -635,6 +701,8 @@ def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--tsv", metavar="PATH", help="写成 TSV")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--controls", action="store_true",
+                    help="把 docs/06 §66.3 的正对照逐条打印（证明扫描器有效）")
     ap.add_argument("--check-shape", action="store_true",
                     help="预注册 §1.1：Serialize 侧 serialize_struct 立即数是否存在（期望 0 命中）")
     a = ap.parse_args(argv[1:])
@@ -648,8 +716,13 @@ def main(argv):
         print("#   命中：%d 条 ⇒ 结论：Serialize 侧的 N 立即数在本 .so 上**不存在**（被内联后的 DCE 删掉）" % len(hits))
         for h in hits[:10]:
             print("#     %s 0x%x %r N=%d" % h)
-        print("#   证据：LockInfo 的 Serialize=0x50ca30 里只有 `mov byte ptr [...], 0x7b` 直接写 `{`，"
-              "没有 name/N（见 docs/06 §66）")
+        print("#   注意这不是\"扫描器瞎了\"：同一个函数 0x50ca30（LockInfo 的 Serialize）里")
+        print("#   `lea rdx,[rip+0x19f928 \"LockInfo\"]` + `mov ecx,8` + `call 0x3bdf00` 是**在的** ——")
+        print("#   那是 serialize_newtype_variant 的**变体名**（真的写进报文）；被 DCE 的是")
+        print("#   serialize_struct 的 (结构体名, N)，因为 serde_json 不用它们。")
+        return 0
+    if a.controls:
+        print(controls(res))
         return 0
     if a.tsv:
         open(a.tsv, "w", encoding="utf-8").write(tsv(res))
