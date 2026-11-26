@@ -1,0 +1,145 @@
+# fixtures/frame_match_events.txt —— **对局屏（S7 准备态 / S8 对局中）视觉真值的预注册事件序列**（任务 T8）
+#
+# ## 这份文件是什么
+#
+# 「视觉真值」到本轮为止只覆盖主菜单 + 回放流四屏 + 静态两屏（`fixtures/frame_diff_results*.tsv`）。
+# 对局屏（准备圈 / 棋盘 / 回合 HUD）**没有真值**，因为原版战役关卡的士兵/靶子落点不可复现
+# （`docs/06` §53.5 第 1 条：`GW2_MATCH_SEED` 只对我方服务端有效）。
+#
+# 本轮的办法（`docs/06` §48 / §51 已经走通过的那条路）：**自建一台说同一套协议的对局服务器**，
+# 由它按**一份写死的事件序列**控帧，两侧（原版真机 / 我方 client）各连一次这台服务器，
+# 于是"局面"由服务器钉死，两侧截同一屏再对拍。
+#
+# 这份文件**先于任何一次采集写定并单独提交**（预注册）。采集脚本（`tools/match_serve.py`）
+# 只做"把本文件的字节按顺序发出去"，不另造事件；对拍用既有门槛
+# `fixtures/frame_diff_thresholds.txt`（sha256 `9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873`），
+# **一个数都没改**。若实测不过，只许如实记录数字，不许改门槛或改本序列来"让它过"。
+#
+# ## 字节布局从哪来（不许自己发明编码）
+#
+# * 帧格式：TCP，`u16` **大端长度** + 一个 JSON 对象 `{"<EventName>":{…}}`（`docs/09` §1.1、`docs/07` §1）；
+# * 事件名 / 字段名 / 字段顺序：`src/_scaffold/protocol.rs`（74/74 事件逐位）+ `docs/07` §3.3 全表；
+# * **事件取值与事件顺序**：直接抄一份**真回放**的事件流（见下 §来源），不是编的。
+#
+# ## 来源（逐条可查）
+#
+# 局面与事件顺序 = 冻结快照里的**真回放** `1793897298`（`Level 0`，1 士兵 + 1 靶子，
+# `ClearObstacles`，104 事件 / 2276 tick；同一份文件在 `docs/06` §53.2 里也被当"固定局面"用过）。
+# 下面每条 `[seq]` 行的末尾 `#` 注释写的是它在那份回放里的 **(tick, 事件序 1-based)**，
+# 以及本文件对它的**唯一改动**（若有）。
+#
+# 握手 7 条 = `client/src/net/wire_samples.gd::STATE_SYNC`（真抓包，
+# `fixtures/protocol_match.jsonl:22/23/30/32/25/26/27`）+ `docs/33` §1 的顺序。
+#
+# ## 两侧必须吃到**同一份字节**
+#
+# `tools/match_serve.py` 读本文件的 `[seq]` 行原样发（不重排、不改值）。
+# 两侧唯一的差别 = 「哪一侧在跑」与它的点击坐标，**服务器发的东西一模一样**。
+#
+# ## 判据（引用既有预注册文件，不新增门槛）
+#
+# | 层 | 判据 | 出处 |
+# |---|---|---|
+# | L1 | 尺寸 1920×1160；三通道全局均值 \|Δ\| ≤ 2.0/255；第一主色同色且占比差 ≤ 2.0 pp | `fixtures/frame_diff_thresholds.txt` §3 L1 |
+# | L2 | 6×4=24 块，每块每通道均值 \|Δ\| ≤ 2.0/255（24 块全过） | 同上 §3 L2 |
+# | L3 | 差异像素 ≤ 0.10 % 且 max\|Δ\| ≤ 8/255（**只在 L1/L2 都过时才算数**） | 同上 §3 L3 |
+# | 固定条件 | 私有 Xvfb 1920x1160x24 TCP、llvmpipe 软渲染、`import -window <id>`、每屏 3 帧 / 帧间隔 1.2 s | 同上 §1、§2 |
+#
+# 屏名（本文件定义的、`tools/frame_capture.py --flow match` 写进 manifest 的名字）：
+#
+# * `match_ready` = **S7 准备态**：棋盘上有士兵（带准备圈）与靶子、回合 HUD 显示"轮到谁"，
+#   但**还没开火**（最后一次状态迁移是 `GameStateInfo{WaitingForFunctions}`）；
+# * `match_play`  = **S8 对局中**：收到 `FunctionFire` 之后进入 `CalculatingResults`，
+#   并带一条真实的修正函数 / 落点 / 爆炸点（弹道与爆炸特效在飞）。
+#
+# ---------------------------------------------------------------------------
+
+[meta]
+# 服务器对两侧都用的同一组参数（`tools/match_serve.py --fixture` 读这里）
+room={"room_name":"Graphwar Game","game_state":"Setup","current_player_count":1,"address":"127.0.0.1:{tcp_port}","axis_mode":"EveryUnit","function_mode":"NormalFunction","turn_mode":"SequentialTurns","time_mode":"Timer1m","locked":false}
+tcp_port=46702
+udp_port=42968
+connection_id=228
+my_player_id=229
+expected_screens=match_ready,match_play
+frames_per_screen=3
+frame_gap_s=1.2
+# 相位之间的间隔：`--phase-gap` 默认值（秒）。phase2 在采集脚本 touch 触发文件后立刻发。
+phase_gap_s=1.0
+# tick 轴（服务器回 `TickReply` 用；两个基准都是**真回放 1793897298 里的 tick 值**）：
+#   phase1 期间 = 快照那一刻 = 6（回放事件 17..62 的 tick）
+#   phase2 期间 = 第一发那一刻 = 550（回放事件 76..80 的 tick，其后按 60 Hz 走；
+#                 active_tick=615 / start_tick=1281 都在这条轴上）
+tick_phase1=6
+tick_phase2=550
+tick_hz=60
+# 一句话说明每个相位在屏幕上应该看到什么（人读；也给报告用）
+phase1_expect=棋盘 + 士兵 230（带准备圈）+ 靶子 232 + 回合 HUD（轮到 player 229 / soldier 230）+ 函数框空
+phase2_expect=棋盘 + 弹道（修正函数 x+2sin(20x) - 3.694，落点 x=2.5793570733273476）+ 爆炸特效
+
+[phase1:match_ready]
+# 期望屏名 = match_ready（S7 准备态）。事件顺序 = 真回放 1793897298 的 tick 1..6 快照段，
+# 去掉只对"发起方自身"有意义的 Connecting 段，并把握手的 7 条按真抓包顺序放在最前面。
+# 唯一的**重排**：7 条握手按 `wire_samples.STATE_SYNC` 的顺序（真抓包顺序）发送，
+# 这与回放里 tick1/2 的 7 条内容一致、顺序也一致（`NewConnection` 在回放里不出现，
+# 因为它是对**新连接**的应答）。
+[seq]
+{"NewConnection":{"connection_id":228}}                                                            # handshake 1/7（wire_samples.STATE_SYNC[0]；protocol_match.jsonl:22）
+{"TurnModeInfo":{"turn_mode":"SequentialTurns"}}                                                   # handshake 2/7（jsonl:23）
+{"GameStateInfo":{"game_state":"Setup"}}                                                           # handshake 3/7（jsonl:30；回放 tick2 同值）
+{"GameNameInfo":{"game_name":"Graphwar Game"}}                                                     # handshake 4/7（jsonl:32；回放 tick2 同值）
+{"AxisModeInfo":{"axis_mode":"EveryUnit"}}                                                         # handshake 5/7（jsonl:25；回放 tick2 同值）
+{"FunctionModeInfo":{"function_mode":"NormalFunction"}}                                            # handshake 6/7（jsonl:26；回放 tick2 同值）
+{"TimeModeInfo":{"time_mode":"Timer1m"}}                                                           # handshake 7/7（jsonl:27；回放 tick2 同值）
+{"PlayerInfo":{"player_id":229,"connection_id":228}}                                               # 回放 tick5 #8（本机玩家 = 229，conn = 228）
+{"TeamInfo":{"entity_id":229,"team":"Team1"}}                                                      # 回放 tick5 #9
+{"ColorInfo":{"entity_id":229,"color":{"r":125,"g":104,"b":0}}}                                    # 回放 tick5 #10（真回放给的颜色）
+{"SoldierInfo":{"soldier_id":230,"player_id":229}}                                                 # 回放 tick5 #11（士兵 230 属于玩家 229）
+{"TeamInfo":{"entity_id":230,"team":"Team1"}}                                                      # 回放 tick5 #12
+{"EntityEffectInfo":{"entity_id":230,"effect_type":"DeathEffect"}}                                 # 回放 tick5 #13
+{"SoldierInfo":{"soldier_id":231,"player_id":229}}                                                 # 回放 tick5 #14（第 2 具士兵，tick6 被删）
+{"TeamInfo":{"entity_id":231,"team":"Team1"}}                                                      # 回放 tick5 #15
+{"EntityEffectInfo":{"entity_id":231,"effect_type":"DeathEffect"}}                                 # 回放 tick5 #16
+{"GameNameInfo":{"game_name":"Level 0"}}                                                           # 回放 tick6 #17（关卡名最终值）
+{"TeamInfo":{"entity_id":229,"team":"Team1"}}                                                      # 回放 tick6 #18
+{"EntityRemoved":{"entity_id":231}}                                                                # 回放 tick6 #19（第 2 具士兵被删掉）
+{"RemoveTeam":{"entity_id":231}}                                                                   # 回放 tick6 #20
+{"TargetInfo":{"target_id":232}}                                                                   # 回放 tick6 #21（靶子 232）
+{"TeamInfo":{"entity_id":232,"team":"Team2"}}                                                      # 回放 tick6 #22
+{"SkinGraphicsInfo":{"entity_id":232,"graphics_str":"target"}}                                     # 回放 tick6 #23（靶子外观）
+{"EntityEffectInfo":{"entity_id":232,"effect_type":"SparkEffect"}}                                 # 回放 tick6 #24
+{"TimeModeInfo":{"time_mode":"TimerInf"}}                                                          # 回放 tick6 #25（本关真值 TimerInf）
+{"ClearObstacles":{}}                                                                              # 回放 tick6 #26
+{"PosInfo":{"entity_id":230,"pos_x":-5.156306989169929,"pos_y":-9.889980889323086,"radius":0.5}}   # 回放 tick6 #29（士兵 230 落点）
+{"PosInfo":{"entity_id":232,"pos_x":9.782072976693868,"pos_y":4.595393963132992,"radius":0.5}}     # 回放 tick6 #32（靶子 232 落点）
+{"LifeInfo":{"entity_id":230,"alive":true}}                                                        # 回放 tick6 #33
+{"LifeInfo":{"entity_id":232,"alive":true}}                                                        # 回放 tick6 #34
+{"FunctionInfo":{"owner_id":230,"function":"","corrected_function":null}}                          # 回放 tick6 #35（函数框空）
+{"TurnCountInfo":{"turn_count":0}}                                                                 # 回放 tick6 #36
+{"TurnInfo":{"player_id":229,"soldier_id":230}}                                                    # 回放 tick6 #38（轮到 229 / 士兵 230）
+{"EndOfTurnInfo":{"end_of_turn_tick":0,"time_mode":"TimerInf"}}                                    # 回放 tick6 #39
+{"GameStateInfo":{"game_state":"WaitingForFunctions"}}                                             # 回放 tick6 #40（★ 进入准备态）
+{"NameInfo":{"entity_id":229,"name":"cmdgz"}}                                                      # 回放 tick6 #56（真回放里的玩家名）
+{"SkinGraphicsInfo":{"entity_id":229,"graphics_str":"face_paint_2"}}                               # 回放 tick6 #57
+{"SkinGraphicsInfo":{"entity_id":230,"graphics_str":"face_paint_2"}}                               # 回放 tick6 #58
+{"FaceGraphicsInfo":{"entity_id":229,"graphics_str":"asian"}}                                      # 回放 tick6 #59
+{"FaceGraphicsInfo":{"entity_id":230,"graphics_str":"asian"}}                                      # 回放 tick6 #60
+{"HatGraphicsInfo":{"entity_id":229,"graphics_str":"asian_hat"}}                                   # 回放 tick6 #61
+{"HatGraphicsInfo":{"entity_id":230,"graphics_str":"asian_hat"}}                                   # 回放 tick6 #62
+[endseq]
+
+[phase2:match_play]
+# 期望屏名 = match_play（S8 对局中）。事件顺序 = 真回放 1793897298 的**第一发**（tick 550），
+# 一条不多一条不少：FunctionFire → CalculatingResults → 修正函数 → FunctionPoints →
+# SynchronizingResults → FunctionActive → EffectInfo(Explosion) → ExecutingResults
+# （与 `docs/07` §8.1/§8.2 的"一回合报文顺序"一致）。
+[seq]
+{"FunctionFire":{"soldier_id":230}}                                                                # 回放 tick550 #76（★ 开火）
+{"GameStateInfo":{"game_state":"CalculatingResults"}}                                              # 回放 tick550 #77（★ 进入对局中）
+{"FunctionInfo":{"owner_id":230,"function":"x+2sin(20x)","corrected_function":"x+2sin(20x) - 3.694"}}  # 回放 tick550 #78
+{"FunctionPoints":{"owner_id":230,"start_x":-5.156306989169929,"start_y":-9.889980889323086,"end_x":2.5793570733273476}}  # 回放 tick550 #79
+{"GameStateInfo":{"game_state":"SynchronizingResults"}}                                            # 回放 tick550 #80
+{"FunctionActive":{"owner_id":230,"active_tick":615}}                                              # 回放 tick558 #81
+{"EffectInfo":{"effect_id":234,"pos_x":2.5793570733273476,"pos_y":0.8236080576517795,"effect_type":"ExplosionEffect","start_tick":1281}}  # 回放 tick558 #82
+{"GameStateInfo":{"game_state":"ExecutingResults"}}                                                # 回放 tick558 #83
+[endseq]
