@@ -15315,70 +15315,6 @@ $PWD/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path client 
 # ⑤ 控制器在 Rust 里（57 条 Location 字面量 + 16 个屏根节点无 script）
 grep -ao 'src/graphwar_[a-z_]*\.rs' .reference/game/libgraphwarrust.so | sort -u | wc -l
 grep -c 'script =' recovered-src/play_screen.tscn     # 16（全是**子节点**；根节点块 0 条）
-<<<<<<< HEAD
-# ① Rust（先测、最后 build gdext 再 cp —— 顺序反了客户端会跑旧内核，§53.9 的坑）
-cargo test --offline                                   # 1772 / 0 / 1ignored
-cargo test --offline --features gdext-bindings         # 1888 / 0 / 1ignored
-cargo build --offline --features gdext-bindings
-cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
-"$GODOT" --headless --path client --import
-
-# ② 自检与 headless
-"$GODOT" --headless --path client -- --selftest                              # 717 / 0 / 1skip
-"$GODOT" --headless --path client --script res://tools/play_flow_check.gd    # PLAY_FLOW 233 passed
-
-# ③ 对局两屏（**必须** bwrap 私有 netns；两侧**串行**）
-bwrap --unshare-user --unshare-net --uid 0 --gid 0 --ro-bind / / --bind $MAIN $MAIN \
-  --dev /dev --proc /proc --tmpfs /tmp \
-  --setenv __EGL_VENDOR_LIBRARY_FILENAMES /usr/share/glvnd/egl_vendor.d/50_mesa.json \
-  --setenv LIBGLX_VENDOR_LIBRARY_NAME mesa --setenv LIBGL_ALWAYS_SOFTWARE 1 --setenv GALLIUM_DRIVER llvmpipe \
-  --setenv DISPLAY 127.0.0.1:141 --chdir $WT \
-  python3 tools/frame_capture.py --side original --flow match --out $WT/.agent-work/v/o --display-num 141
-bwrap (同上，DISPLAY 142 / --side ours / --display-num 142 / --out …/m)
-python3 tools/frame_diff.py --orig …/o --mine …/m --screens match_ready,match_play \
-  --out …/d.tsv --blocks-out …/db.tsv --json …/d.json
-# 期望：match_ready 0.1218 %（2 712 px，L2 0）/ match_play 0.4220 %（9 399 px，L2 1）
-
-# ④ 三轴（本轮未跑，`_scaffold/play_flow_class.rs` 在 gdext 特性下不参与这两个 example）
-cargo run --release --offline -q --example replay_attrib -- --dir $MAIN/.reference/replays/gw2-replays-snapshot/replays --drive fire  --policy default --json f.jsonl
-cargo run --release --offline -q --example replay_attrib -- --dir $MAIN/.reference/replays/gw2-replays-snapshot/replays --drive batch --policy default --json b.jsonl
-cargo run --release --offline -q --example batch_conv   -- --dir $MAIN/.reference/replays/gw2-replays-snapshot/replays --policy strict
-```
-
-### 81.9 像素基线的**八屏复测**（含一处**前置残差**的反事实证明）
-
-同一天、同一配方（私有 netns、两侧串行、`--seed-replays`），四条 flow 各采一次两侧：
-
-| 屏 | 入库基线 | 本轮实测 | 判 |
-|---|---|---|---|
-| `menu`（主菜单） | **0** | **0 px** | ✓ |
-| `replay_lobby`（回放列表） | **0** | **0 px** | ✓ |
-| `replay_play`（回放播放） | 0（§79.6） | **1 714 px / 0.0770 %**（差区 `x770..1202 y447..846`） | **前置残差**，见下 |
-| `replay_end`（回放结束） | 0（§79.6） | **1 714 px / 0.0770 %** | 同上 |
-| `campaign`（战役选择） | **0** | **0 px** | ✓ |
-| `level_popup`（关卡弹窗） | **0** | **0 px** | ✓ |
-| `join_level_popup`（`--flow level`，与 `static` 的 `level_popup` 同一个 `.tscn`） | **0** | **0 px** | ✓ |
-| `player_skins` | **0** | **0 px** | ✓ |
-| `player_faces` / `player_hats` | 0.0528 %（1 176 px） | **0.0528 %（1 176 px）** | ✓ 与基线**逐 px 同值** |
-| `endgame_popup` 面板区 `(483,235) 956×691` | **0 px** | **0 px**（三帧全 0） | ✓ |
-| `endgame_popup` 整屏 | 4.053 %（90 268 px，§77） | **384 px / 0.017 %**（三帧 384/384/120） | ✓ **变好**（§79 那条底栏根因连带） |
-
-**`replay_play` / `replay_end` 那 1 714 px 不是本轮引入的 —— 反事实证明**：
-把本轮三个 commit 对 `client/src/screens/play_screen.gd` 的改动**整份撤掉**
-（`git checkout master -- client/src/screens/play_screen.gd`，其余不变），重采 `ours` 侧：
-
-```text
-原版 vs master 版 play_screen.gd（无本轮改动）：replay_play 1714 px  bbox x770..1202 y447..846
-原版 vs 本分支（有本轮改动）              ：replay_play 1714 px  bbox 完全相同
-本分支 vs master 版（= 本轮改动的影响）    ：replay_play    0 px / replay_end  270 px（x1182..1184 一条 3 px 宽的竖条 = 底部时钟数字）
-```
-
-⇒ 这一块残差**在本轮之前就有**，差区是**棋盘中央的目标精灵（蓝环红心）与名字标签描边**
-（人工比对图见本轮采集目录的 `replay_play_cmp.png`，红=差异掩膜）。§79.6 记的 `0 px` 那一轮
-自述是"这一轮采样两侧光标态又恰好相同" —— 它当时就承认是采样运气，不是稳定读数。
-
-**本轮改动在非对局屏上的影响 = 0 px**（上面第三行），这是"改的是对局屏流程、没碰别的屏"的判据。
-=======
 ## 91. T41：把**原版 `.tscn` 装回 `client/`** 的第一批 —— 2 份**逐字节装上并接通**（`chat_pop_up` 214 行／`replay_lobby` 92 行），13 份屏的拦路石是**我们自己的断言**（2026-11-26，任务 T41 / `task-38`）
 
 > 判据/口径：`.agent-work/specs/T41-tscn-import.md`。工作树 `.agent-work/cg/wt-t41`、分支 `agent/tscn-import`，
@@ -15520,4 +15456,65 @@ python3 $MAIN/tools/frame_diff.py --orig $WT/frames/orig --mine $WT/frames/mine 
    `_rebuild()` 里仍是我方的行构造。这是下一份该装的（台账风险 `HIGH-THEME`：它引用 `campaign_spacer_theme.tres` 骨架）。
 7. **我犯的一个错**：本轮把 §91 第一次追加到了**主工作区**（`/home/CG/Myprojects/graphwar2-rebuild/docs/06`）而不是工作树，
    发现后已 `git checkout --` 还原主工作区（`git status` 干净），本节内容是在工作树里重写的。
->>>>>>> agent/tscn-import
+# ① Rust（先测、最后 build gdext 再 cp —— 顺序反了客户端会跑旧内核，§53.9 的坑）
+cargo test --offline                                   # 1772 / 0 / 1ignored
+cargo test --offline --features gdext-bindings         # 1888 / 0 / 1ignored
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+"$GODOT" --headless --path client --import
+
+# ② 自检与 headless
+"$GODOT" --headless --path client -- --selftest                              # 717 / 0 / 1skip
+"$GODOT" --headless --path client --script res://tools/play_flow_check.gd    # PLAY_FLOW 233 passed
+
+# ③ 对局两屏（**必须** bwrap 私有 netns；两侧**串行**）
+bwrap --unshare-user --unshare-net --uid 0 --gid 0 --ro-bind / / --bind $MAIN $MAIN \
+  --dev /dev --proc /proc --tmpfs /tmp \
+  --setenv __EGL_VENDOR_LIBRARY_FILENAMES /usr/share/glvnd/egl_vendor.d/50_mesa.json \
+  --setenv LIBGLX_VENDOR_LIBRARY_NAME mesa --setenv LIBGL_ALWAYS_SOFTWARE 1 --setenv GALLIUM_DRIVER llvmpipe \
+  --setenv DISPLAY 127.0.0.1:141 --chdir $WT \
+  python3 tools/frame_capture.py --side original --flow match --out $WT/.agent-work/v/o --display-num 141
+bwrap (同上，DISPLAY 142 / --side ours / --display-num 142 / --out …/m)
+python3 tools/frame_diff.py --orig …/o --mine …/m --screens match_ready,match_play \
+  --out …/d.tsv --blocks-out …/db.tsv --json …/d.json
+# 期望：match_ready 0.1218 %（2 712 px，L2 0）/ match_play 0.4220 %（9 399 px，L2 1）
+
+# ④ 三轴（本轮未跑，`_scaffold/play_flow_class.rs` 在 gdext 特性下不参与这两个 example）
+cargo run --release --offline -q --example replay_attrib -- --dir $MAIN/.reference/replays/gw2-replays-snapshot/replays --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $MAIN/.reference/replays/gw2-replays-snapshot/replays --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir $MAIN/.reference/replays/gw2-replays-snapshot/replays --policy strict
+```
+
+### 81.9 像素基线的**八屏复测**（含一处**前置残差**的反事实证明）
+
+同一天、同一配方（私有 netns、两侧串行、`--seed-replays`），四条 flow 各采一次两侧：
+
+| 屏 | 入库基线 | 本轮实测 | 判 |
+|---|---|---|---|
+| `menu`（主菜单） | **0** | **0 px** | ✓ |
+| `replay_lobby`（回放列表） | **0** | **0 px** | ✓ |
+| `replay_play`（回放播放） | 0（§79.6） | **1 714 px / 0.0770 %**（差区 `x770..1202 y447..846`） | **前置残差**，见下 |
+| `replay_end`（回放结束） | 0（§79.6） | **1 714 px / 0.0770 %** | 同上 |
+| `campaign`（战役选择） | **0** | **0 px** | ✓ |
+| `level_popup`（关卡弹窗） | **0** | **0 px** | ✓ |
+| `join_level_popup`（`--flow level`，与 `static` 的 `level_popup` 同一个 `.tscn`） | **0** | **0 px** | ✓ |
+| `player_skins` | **0** | **0 px** | ✓ |
+| `player_faces` / `player_hats` | 0.0528 %（1 176 px） | **0.0528 %（1 176 px）** | ✓ 与基线**逐 px 同值** |
+| `endgame_popup` 面板区 `(483,235) 956×691` | **0 px** | **0 px**（三帧全 0） | ✓ |
+| `endgame_popup` 整屏 | 4.053 %（90 268 px，§77） | **384 px / 0.017 %**（三帧 384/384/120） | ✓ **变好**（§79 那条底栏根因连带） |
+
+**`replay_play` / `replay_end` 那 1 714 px 不是本轮引入的 —— 反事实证明**：
+把本轮三个 commit 对 `client/src/screens/play_screen.gd` 的改动**整份撤掉**
+（`git checkout master -- client/src/screens/play_screen.gd`，其余不变），重采 `ours` 侧：
+
+```text
+原版 vs master 版 play_screen.gd（无本轮改动）：replay_play 1714 px  bbox x770..1202 y447..846
+原版 vs 本分支（有本轮改动）              ：replay_play 1714 px  bbox 完全相同
+本分支 vs master 版（= 本轮改动的影响）    ：replay_play    0 px / replay_end  270 px（x1182..1184 一条 3 px 宽的竖条 = 底部时钟数字）
+```
+
+⇒ 这一块残差**在本轮之前就有**，差区是**棋盘中央的目标精灵（蓝环红心）与名字标签描边**
+（人工比对图见本轮采集目录的 `replay_play_cmp.png`，红=差异掩膜）。§79.6 记的 `0 px` 那一轮
+自述是"这一轮采样两侧光标态又恰好相同" —— 它当时就承认是采样运气，不是稳定读数。
+
+**本轮改动在非对局屏上的影响 = 0 px**（上面第三行），这是"改的是对局屏流程、没碰别的屏"的判据。
