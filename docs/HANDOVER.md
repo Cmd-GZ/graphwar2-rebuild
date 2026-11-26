@@ -38,19 +38,16 @@ headless     14 个 `client/tools/*_check.gd`（`extends SceneTree`）合计 **1
              缺 ④ = `654 / 0 / 3 skip`（missing=63 全 degraded / silent 0）；缺 ① 的三档历史读数是 591/667/618。
              **别预设 `XDG_*`**（预设到工作区外 ⇒ `user://` 不可写 ⇒ 632/7）。命令与判据见 `docs/18` §10.3.4
 
-客户端像素   **18 屏有真值**（`docs/06` §53–§76）。**逐像素 0 px 六屏**：主菜单 / 回放列表 / 战役选择 / 关卡弹窗 /
-             `join_level_popup` / `player_skins`。`replay_play`+`replay_end` **0.186–0.198 %**（L2 **0 块**）；
-             `player_faces`/`hats` **0.053 %**；`lan_lobby_local` **0.135 %**、`game_setup` **1.25 %**（原 7.10 %）；
-             **对局屏** `match_ready` **6.19 %**（L2 **1 块**）/ `match_play` **6.45 %**（L2 2 块）——
-             ⚠️ 数字必须带**树号**（t8 的 6.357/6.823 是 `2f64674` 树；t17 后 6.45/6.88；t26 后 6.19/6.45）；
-             `endgame_popup` **33.6 %** = **我方根本不弹结算框**（`app.gd:738` 唯一调用点被挡）。
-             残余四类：结算框链路 / 对局屏版式（棋盘格线 13 006 px、左右键盘字形 37 397 px、左上两键 13 413 px）/ 
-             `lan_lobby_global` 要真 broker（物理不可得）/ `game_setup` 本机地址（数据不在客户端）。
-             **L3（`max|Δch|≤8`）在文本屏结构不可达**（文本栅格化 ~1 100 px、抗锯齿），别当"快成了"。
-             ⚠️ 采集三条前置：**UDP 42968 可能被泄漏的 cgroup scope 占用**（会静默拍成"大厅 0 行/32 % 假差异"；
-             解法 = `bwrap --unshare-user --unshare-net` 私有 netns + 四个 MESA 变量 + 继承的 `DISPLAY` 指向新 Xvfb）、
-             新工作树缺 `client/.godot` 会拍出全空白帧、**改了 `src/` 必须重建并覆盖 `client/libgw2_rebuild.so`**
-             （否则 headless 脚本会 `SCRIPT ERROR` 后挂住——本轮踩过，`entity_drawer_check` 超时就是这个）
+客户端像素   **18 屏有真值**（`docs/06` §53–§77）。**0 px**：主菜单 / 回放列表 / 战役选择 / 关卡弹窗 / `join_level_popup` /
+             `player_skins`；**结算框面板区 955×690 = 0 px**（整屏 4.05 %，残余全是对局屏底图）。
+             `replay_play`+`replay_end` **0.186–0.198 %**（L2 0 块）；`player_faces`/`hats` 0.053 %；`lan_lobby_local` 0.135 %；
+             `game_setup` 1.05–1.25 %；**对局屏** `match_ready` **6.19 %**（L2 1 块）/ `match_play` **6.45 %**（L2 2 块）。
+             ⇒ 剩下唯一的大项就是**对局屏底图**：棋盘格线 1 px 13 006、左右键盘字形 37 397、左上两键 13 413、`f(x)` 行 6 230。
+             ⚠️ 数字必须带**树号**；**L3 在文本屏结构不可达**（文本栅格化 / 抗锯齿），别当"快成了"。
+             ⚠️ 采集四条前置：**UDP 42968 可能被泄漏 cgroup scope 占用**（→ 私有 netns `bwrap --unshare-user --unshare-net` +
+             四个 MESA 变量 + 继承的 `DISPLAY` 指向新 Xvfb）；新工作树缺 `client/.godot` ⇒ 全空白帧；
+             **改 `src/` 必须重建并覆盖 `client/libgw2_rebuild.so`**（否则 headless 脚本 `SCRIPT ERROR` 后挂住）；
+             **两侧采集串行**（并行会抢端口）。
 
 **两张最容易混的口径**：`527 vs 13,263`（可归属 vs 全部函数）、`1075 vs 647`（种类 vs 内容）。
 
