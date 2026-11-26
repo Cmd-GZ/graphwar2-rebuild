@@ -1,0 +1,120 @@
+# boundary_split_plan.txt —— T30「把 10 条 mismatch 按 Location 切出来」的**预注册**
+#
+# 状态：**预注册**（先写这份、单独 commit，然后才动 src/）。本文件是计划，不是结果；
+#       搬家完成后的实测读数写在 docs/06 §80。
+# 任务板：task-27    分支：agent/boundary-split    规格：.agent-work/specs/T30-boundary-split.md
+# 台账（唯一真源）：fixtures/boundary_audit.tsv（T24 生成，527 行）
+# 判据：AGENTS.md §4「文件名就是证据」+ §0「没有什么是'不重要'的」；边界无证据 ⇒ 不猜、不搬。
+#
+# ---------------------------------------------------------------------------
+# 0. 为什么要做（证据侧）
+# ---------------------------------------------------------------------------
+# T24 的逐函数边界审计（docs/06 §74）在 527 个可归属函数里判出 10 条 mismatch：
+# 它们的 panic::Location **单模块、一边倒**地指向三个原版文件，而本仓库**没有**这三个同名文件
+# —— 实现全塞在 src/events.rs 与 src/server.rs 里（docs/02 §17.4「混装（待拆）」）。
+#   graphwar_event_handler.rs             2 条（0x3d3630 / 0x3d38f0）  -> src/events.rs
+#   graphwar_remote_event_handler.rs      2 条（0x3dee00 / 0x3e5910）  -> src/events.rs
+#   graphwar_server_connection_handler.rs 6 条（0x45a560/6b0/7b0/ab0/ad0 + 0x45b020 -> src/server.rs
+# 本任务只处理这 10 条。**multi 86 条一律不碰**（边界无证据不猜不搬，AGENTS.md §4）。
+#
+# ---------------------------------------------------------------------------
+# 1. 新建三个文件，各装什么
+# ---------------------------------------------------------------------------
+# 【A】src/graphwar_event_handler.rs —— 原版 GraphwarEventHandler
+#   装（从 src/events.rs 搬，带 Location 证据的两条都是本模块）：
+#     * DISPATCH_NAME_TAGS        名字 -> 判别值全表（72 条）
+#                                 证据：0x3d38f0 = GraphwarEventHandler::subscribe_to_event
+#                                 （Location src/graphwar_event_handler.rs，锚点 396/407/454）；
+#                                 表的每一行来自该函数里的逐字节相等比较 + mov $N,%ebx（docs/114 §3）
+#     * impl Event { from_dispatch_name }   同一张表的查表端（等价于 0x3d38f0 的比较分支）
+#     * NAMED_VARIANT_COUNT = 72  具名派发变体数（就是上表的行数；0x3d38f0 解出 72 条）
+#   不装（留 src/events.rs，它们是 graphwar_event.rs 的主体，不在本任务范围）：
+#     enum Event(74) / ALL_VARIANTS / VARIANT_COUNT / Event::wire_tag / GameInfo / GAME_INFO_FIELD_COUNT
+#   另一条函数 0x3d3630 = process_events（Location 同文件，锚点 :467）在我方**没有独立函数体**：
+#   泵的实现在 src/_scaffold/root_wiring.rs（我方自造桥接，「不是原版的东西」⇒ 按 §4 不搬），
+#   抽象声明在 src/graphwar_game_client.rs 的 EventHost::process_events（那是 game_client 的 trait）。
+#   ⇒ 本文件里给 process_events 只写「落点表 + 我方现状」，**不伪造函数体**。
+#
+# 【B】src/graphwar_remote_event_handler.rs —— 原版 GraphwarRemoteEventHandler
+#   装（该模块两个函数的**落点表 + 证据**）：
+#     * 0x3dee00 handle_client_remote_event（Location 主文件 :143 起，80 个锚点，孤模块）
+#     * 0x3e5910 is_leader（Location :135/:136，2 个锚点）
+#     * is_leader 前 40 条指令的观测（capstone，tools/addr_probe.py dis 0x3e5910）：
+#       call 0x46d8c0（module_container 的 get_module_wk 单态化族，docs/archive/157）
+#       -> Rc 强计数 +0x10 自增 -> hashbrown SIMD 控制字节扫描（pmovmskb/tzcnt）按 u32 参数查表
+#       ⇒ **观测**：形如 is_leader(u32) -> bool，查表后比字段；语义仍是**推断**（缺 arm64 对照）。
+#   ⚠ 本文件**没有 fn**：这两个函数体我方从未落码。客户端侧"收到服务端事件 -> 落到 manager"这条链路
+#     现在只有 src/_scaffold/net_events_class.rs 的断链接线（scaffold，自述"不是复原物"），
+#     按 AGENTS.md §4 不进 src/ 复原层，也不在本任务的允许清单里。
+#   ⚠ 台账判 match 只说"文件名/布局对上"，**不是**"函数行为复原"（docs/06 §74.3 同一口径）。
+#
+# 【C】src/graphwar_server_connection_handler.rs —— 原版 GraphwarServerConnectionHandler
+#   装（从 src/server.rs 搬，docs/02 §17.4 早已把"新连接 7 条同步"记为它的主体）：
+#     * RoomState 结构 + on_new_connection（新连接时按固定顺序回 7 条，抓包逐字节一致，docs/33）
+#     * to_wire（每帧 u16 大端长度 + JSON —— 这段的发送端；本身无独立 Location 锚，跟着唯一用户走）
+#     * 文件内的 2 条 test（state_sync_matches_captured_bytes / wire_encoding_matches_frame_layout）
+#       以及它们用的 captured_state_sync 辅助
+#   不装（留 src/server.rs）：on_tick_request + tick_tests —— docs/06 §74.4 的建议是
+#     "server.rs 只留 tick 薄封装"（tick 公式本体已在 src/graphwar_tick_handler.rs）。
+#   本模块 6 个 Location 函数的落点表写进文件头（0x45a560/0x45a6b0/0x45a7b0/0x45aab0/0x45ad30/0x45b020）。
+#
+# ---------------------------------------------------------------------------
+# 2. 公开路径怎么保持（调用方 0 改动）
+# ---------------------------------------------------------------------------
+# 老路径                     新家                                        保路径的做法
+# -------------------------  ------------------------------------------  ----------------------------------
+# crate::events::DISPATCH_NAME_TAGS        graphwar_event_handler      src/events.rs 里 pub use 再导出
+# crate::events::NAMED_VARIANT_COUNT       graphwar_event_handler      src/events.rs 里 pub use 再导出
+# Event::from_dispatch_name                graphwar_event_handler      同 crate 的 impl 块搬到新文件，路径不变
+# crate::server::RoomState                 graphwar_server_conn...     src/server.rs 里 pub use 再导出
+# crate::server::on_new_connection         graphwar_server_conn...     src/server.rs 里 pub use 再导出
+# crate::server::to_wire                   graphwar_server_conn...     src/server.rs 里 pub use 再导出
+# graphwar_remote_event_handler            新建、无公开项（0 个 fn）     无需再导出
+# 逐条核对过的既有调用方（一个都不改）：
+#   tests/events.rs:3            use gw2_rebuild::events::{Event, GameInfo, DISPATCH_NAME_TAGS,
+#                                                            GAME_INFO_FIELD_COUNT, NAMED_VARIANT_COUNT}
+#   src/graphwar_game_client.rs   use crate::events::Event
+#   src/graphwar_event_queue.rs / graphwar_*_manager.rs 等 20+ 处  use crate::events::Event
+#   src/_scaffold/root_wiring.rs  :174 use crate::events::Event; :2363/:2601 crate::events::DISPATCH_NAME_TAGS
+#   src/_scaffold/entity_drawer_class.rs :2273/:2784 crate::events::Event::from_dispatch_name
+#   src/_scaffold/net_events_class.rs :75 use crate::events::Event
+#   src/game.rs / graphwar_game_server.rs :49 / graphwar_game_state_manager.rs / _scaffold/root_wiring.rs
+#                                :203 / _scaffold/diffconv.rs / _scaffold/replaydiff.rs
+#                                / tests/{graphwar_game_state_manager,live_hits,replay_diff,sim_turns,win_rule}.rs
+#                                / examples/serve_handshake.rs   -> crate::server::{RoomState,on_new_connection,to_wire}
+#
+# ---------------------------------------------------------------------------
+# 3. 台账/矩阵这两处生成物怎么转（都是重跑工具，不手改）
+# ---------------------------------------------------------------------------
+# * tools/coverage_matrix.py 的 M 表（唯一的人工判断部分）：
+#     graphwar_event_handler.rs            ours ("src/events.rs",) -> ("src/graphwar_event_handler.rs",)
+#     graphwar_remote_event_handler.rs     ours ("src/events.rs",) -> ("src/graphwar_remote_event_handler.rs",)
+#     graphwar_server_connection_handler.rs ours ("src/server.rs",) -> ("src/graphwar_server_connection_handler.rs",)
+#   判据就是本任务这 10 行的 loc_main_file（docs/06 §74.4 那张表）。
+#   改完必须重跑 `tools/coverage_matrix.py` 生成 docs/coverage-matrix.tsv / docs/149（`--check` 才 OK）。
+# * fixtures/boundary_audit.tsv 由 tools/boundary_audit.py 重算：mismatch 10 -> 0（match 431 -> 441）。
+#   每搬一个文件重跑一次，逐步看 mismatch 10 -> 8 -> 6 -> 0。
+# * docs/02 §17.1 的 ours_file 行 + §17.4 的"混装（待拆）"三行 -> "已拆"；docs/06 追加 §80 收口。
+#
+# ---------------------------------------------------------------------------
+# 4. 每搬一个都要过的门槛（一位不许退）
+# ---------------------------------------------------------------------------
+#   cargo test --offline                                 1772 passed / 0 failed / 1 ignored
+#   cargo test --offline --features gdext-bindings       1887 passed / 0 failed / 1 ignored
+#   $PY tools/boundary_audit.py --check                  OK（mismatch 逐步 -> 0）
+#   $PY tools/coverage_matrix.py --check                 OK（改了 src/ 必须重跑生成物）
+#   python3 tools/check_doc_refs.py                      rc=0
+#   三轴（冻结快照 .reference/replays/gw2-replays-snapshot/replays）：
+#     replay_attrib --drive fire   647    replay_attrib --drive batch  647    batch_conv --policy strict  637
+#
+# ---------------------------------------------------------------------------
+# 5. 不做 / 边界（写死，防以后的人顺手扩）
+# ---------------------------------------------------------------------------
+# * multi 86 条：**一律不碰**。典型 0x3e2830 handle_server_remote_event（主文件 remote_event_handler
+#   88 锚 + 另 8 个模块各 1–5 锚）、0x4500c0 new（game_server 54 + 另 4 个模块）——跨文件锚点混装，
+#   主文件证据占优但没有一边倒的边界证据，动它就是猜。
+# * split-N 44 条（GSM 23 / plane 9 / math_function 7 / level_generator 3 / game_server 2）：文件名已对上，
+#   "具体函数落在拆开的哪一份"没有证据 ⇒ 不搬。
+# * GameInfo 归属 graphwar_game_info.rs 有证据，但那是**另一个模块**的搬家，不在本任务（§4 允许清单）。
+# * 不新建 src/graphwar_event.rs：本任务只搬 10 条 mismatch，`graphwar_event` 模块没有 mismatch 行；
+#   枚举继续住 src/events.rs（矩阵里 graphwar_event.rs 的 ours_file 不变）。

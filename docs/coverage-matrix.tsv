@@ -7,13 +7,13 @@
 # tool_version: 1
 # binary_sha256: 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
 # funcstarts_sha256: b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a
-# src_tree_sha256: e6cd11b8c9b0eb646e2d31bcb93c5a7369a54847e9711401358f59969b3da355
+# src_tree_sha256: 79eb3315dcdf4242a673e489a53aa367793d79f46ffcedf197d67f0036a12074
 # funcstarts_n: 13263
 # src_modules: 246
 # loc_structs: 2042
 # attributed_funcs: 527
 # contested_funcs: 86
-# src_files: 118
+# src_files: 121
 # src_fns: 3282
 module	scope	orig_funcs	contested	anchors	ours_file	ours_funcs	status	evidence
 graphwar_ad_switch.rs	graphwar	6	0	3	src/graphwar_ad_switch.rs	21	观测	6 条全是 gdext 惰性注册驱动；两个 getter trampoline + owned(+0x18) 已钉死
@@ -28,8 +28,8 @@ graphwar_crash_reporter.rs	graphwar	0	0	0	src/graphwar_crash_reporter.rs	2	观�
 graphwar_draw_util.rs	graphwar	1	1	4	src/graphwar_draw_util.rs	1	观测	只有 get_team_overview(0x4be6e0)，**不画东西**（有界否定）（docs/16 §33）
 graphwar_effect_manager.rs	graphwar	1	0	3	src/graphwar_effect_manager.rs	16	观测	5（含 EffectType::deserialize）：EffectType 4 个取值已穷举（ExplosionEffect/DeathEffect/SparkEffect/AshEffect）（docs/16 §32）
 graphwar_entity_effect_manager.rs	graphwar	3	0	4	src/graphwar_entity_effect_manager.rs	17	观测	3 + 内联 add_entity_effect。登记表 = u32->u8 的 entity_effect_map（全库唯一，桶距 8）；**死亡特效照抄出生登记**：execute_results 用 effect_type=map[entity_id]，查不到就一条都不发（0x4a8c38）=> Ash/Death 的分界在出生登记处，正是 docs/141 那 19 例的成因（docs/16 §32）
-graphwar_event.rs	graphwar	0	0	0	src/events.rs	2	观测	docs/114：72 个判别值实测；但 serde 键序只在 41 行抓包上同序，仍是推断（docs/96 §9.1）
-graphwar_event_handler.rs	graphwar	2	0	4	src/events.rs	2	观测	docs/114：0x3d38f0 的「事件名 → 判别值」表逐条解出（四道自校验）；事件枚举与分派已落码
+graphwar_event.rs	graphwar	0	0	0	src/events.rs	1	观测	docs/114：72 个判别值实测；但 serde 键序只在 41 行抓包上同序，仍是推断（docs/96 §9.1）
+graphwar_event_handler.rs	graphwar	2	0	4	src/graphwar_event_handler.rs	1	观测	docs/114：0x3d38f0 的「事件名 → 判别值」表逐条解出（四道自校验）；表 + 查表端已落码。**2026-11-26 T30 切出同名文件**：0x3d3630/0x3d38f0 两条 panic::Location 全落 src/graphwar_event_handler.rs（fixtures/boundary_audit.tsv），故从 src/events.rs 搬入 `DISPATCH_NAME_TAGS` / `NAMED_VARIANT_COUNT` / `Event::from_dispatch_name`，老路径由 pub use 保持；⚠ process_events 仍**无独立函数体**（泵在 _scaffold/root_wiring.rs，docs/06 §80）
 graphwar_event_queue.rs	graphwar	0	0	0	src/graphwar_event_queue.rs	5	观测	**不是 manager**：GraphwarGameClient 以 Rc<RefCell<>> 持有（new+0xcdc），其余 manager 拿 Weak；add_event 有 200 余个直接调用点 => 全游戏发件箱。反常：send_buffer 只 1 个直接调用者（docs/16 §33）
 graphwar_function_evolutionator.rs	graphwar	16	0	25	src/graphwar_function_evolutionator.rs	112	观测	docs/AI.md：权重/长度/装配/交叉/变异/适应度全部从反汇编 + 40 万次运行时抽样得出；无逐字节对拍
 graphwar_function_input.rs	graphwar	13	2	33	src/graphwar_function_input.rs	41	观测	17 条函数；7 个原版名 + gui_input 0x4fedc0；**输入框只做一步预处理：删空格**（docs/03 §13）
@@ -37,7 +37,7 @@ graphwar_function_manager.rs	graphwar	7	0	12	src/graphwar_function_manager.rs	5	
 graphwar_game_client.rs	graphwar	36	19	59	src/graphwar_game_client.rs	31	观测	36 个函数分 8 类（docs/16 §17）：8 种请求事件判别值 11/12/16/17/18/19/20/21 + 0x48 记录形状 + add_bot_0..5 -> 3/10/25/100/250/1000 + 0x517690 的 3 订阅名/14 manager；6 个入口函数语义未知
 graphwar_game_info.rs	graphwar	0	0	0	src/graphwar_game_info.rs	0	观测	GameInfo 结构体（9 字段）在此模块，**不在** graphwar_event.rs；我方只做 pub use 复用（docs/16 §33）
 graphwar_game_recorder.rs	graphwar	2	1	4	src/graphwar_game_recorder.rs	14	观测	3：订 32 条服务端广播事件（24 条 *_info_event + 8 条不带 info 的；*_request_event 一条不订）；GameStateInfo==6 EndingGame 上升沿落盘 user://replays/<unix 秒>（gzip + 每行 {event,tick}），==1 Setup 且上一条是 6 时清缓冲（docs/16 §32）
-graphwar_game_server.rs	graphwar	3	1	86	src/graphwar_game_server.rs+src/server.rs	23	逐位	docs/43/46：一回合 12 条报文与抓包逐字节一致；docs/62 真实 TCP 跑到 EndingGame
+graphwar_game_server.rs	graphwar	3	1	86	src/graphwar_game_server.rs+src/server.rs	18	逐位	docs/43/46：一回合 12 条报文与抓包逐字节一致；docs/62 真实 TCP 跑到 EndingGame
 graphwar_game_state_manager.rs	graphwar	33	10	207	src/game.rs+src/turnstate.rs+src/graphwar_game_state_manager.rs	173	逐位	docs/41：6 状态 7 事件、13 次迁移在真实对局里逐个相同；**任务 95** 起事件层（7 条订阅 + 3 个处理器）在 src/graphwar_game_state_manager.rs（文件名 = 原版模块名）
 graphwar_graphics_manager.rs	graphwar	6	0	8	src/graphwar_graphics_manager.rs	25	观测	6 函数。**TextureLoader 不在本模块**——它是独立模块 graphwar_texture_loader（三张 HashMap<String,Gd<Texture2D>> @ +0x150/+0x180/+0x1b0，按名字 memcmp 索引，GraphwarRootNode 的 INode impl 里 0x39a328 唯一构造、21KB 饿汉加载）。本模块只管 player_id→名字 三张表（+0x18/+0x48/+0x78）与 51/53/55 三条 info 事件（docs/16 §31）
 graphwar_lan_broadcaster_v6.rs	graphwar	4	0	4	src/graphwar_lan_broadcaster_v6.rs	20	观测	5/5（get_game_info 两侧都无锚，不给 x86 地址）。广播周期 **1 秒**（elapsed > 1s，正好 1.000s 不发）；收侧去重 = 房间表键发送方 SocketAddr + **10 秒 TTL**（cmp x0,#0xa）；**广播的 address 恒为 [::1]:<port>**（set_room_info 里 IpAddr::from_str(「::1」)）（docs/09 §12）
@@ -62,13 +62,13 @@ graphwar_player_config.rs	graphwar	0	0	0	src/graphwar_player_config.rs	8	观测	
 graphwar_player_manager.rs	graphwar	3	0	6	src/graphwar_player_manager.rs	19	观测	4/4（旧记 3，add_player 在 x86 被内联、arm64 有独立符号）：player_id -> connection_id；该连接最后一人被删时级联 ConnectionRemoved(6)（docs/10 §15）
 graphwar_player_screen_control.rs	graphwar	8	0	22	src/graphwar_player_screen_control.rs	19	观测	8/8：**就是写 GraphwarPlayerConfig 的地方**——set_skin/set_face/set_hat 三条具名 bl 直证，三个 setter 写 +0x60/+0x78/+0x90 且 inc dword [+0xa8]，与 docs/16 §22.9 布局逐字段吻合（§29）
 graphwar_rank_manager.rs	graphwar	4	0	4	src/graphwar_rank_manager.rs	17	观测	4 函数。段位**只从远端事件进**（RemoteEventHandler::handle_{client,server}_remote_event 各一处 set_rank），模块内零换算；RankInfo(67) = 三个 dword（+8 标志 / +0xc 段位 / +0x10 player_id）；66 由 local_player_manager 发（推断）（docs/10 §14）
-graphwar_remote_event_handler.rs	graphwar	3	1	171	src/events.rs	2	观测	docs/110/96：远端事件名与判别值已解；我方 events.rs 实现枚举 + 编解码，无逐字节对拍
+graphwar_remote_event_handler.rs	graphwar	3	1	171	src/graphwar_remote_event_handler.rs	0	推断	docs/110/96：远端事件名与判别值已解。**2026-11-26 T30 切出同名文件**：0x3dee00/0x3e5910 两条 panic::Location 全落本文件（fixtures/boundary_audit.tsv），故从 events.rs 的混装里拆出独立文件，文件里装 MODULE/SOURCE_FILE/2 条 Func 证据行 + is_leader 指令级观测。⚠ **两个函数体仍未落码（0 个 fn）** ⇒ 本行只记到 `推断`（`观测`/`逐位` 都要求'有 src/ 实现'，见本脚本文件头的 status 表）；缺的证据：arm64 2.0.60 对照、0x46d8c0 是哪个单态化实例、调用点分析（docs/06 §80 遗留 2）
 graphwar_replay_control.rs	graphwar	2	0	9	src/graphwar_replay_control.rs	6	观测	4：回放控制；时钟字段仍未解（docs/16 §32.7）
 graphwar_replay_player.rs	graphwar	5	5	18	src/graphwar_replay_player.rs	53	观测	docs/136/142：消息级对拍 400 份回放里 71 份完全一致 ⇒ 已实现但未到逐位
 graphwar_replay_reader.rs	graphwar	0	0	0	src/graphwar_replay_reader.rs	11	观测	2/2：文件归它（FileAccess::open + get_buffer + GzDecoder + StrSearcher 逐行 -> Vec<EventInfo>，被调者里**零时间函数**）；时钟归 replay_player（tick += dt*60*speed）（docs/09 §12）
 graphwar_root_node.rs	graphwar	23	3	178	src/graphwar_root_node.rs	57	观测	Screen×15 + Command×12 + 0x3af850 切屏决策表 + 构造初值（docs/16 §15.10）；0x3a5760 主体 20288B 刻意未猜
 graphwar_server_broker_handler.rs	graphwar	3	1	5	src/graphwar_server_broker_handler.rs	19	观测	6/6（含线程体；get_game_info/new 无锚不给地址）。Global 一路无 TTL 扫描——疑靠 GameRemoved，该报文从未抓到（docs/09 §12）
-graphwar_server_connection_handler.rs	graphwar	6	0	24	src/server.rs	7	逐位	docs/33：新连接的状态同步与真实客户端逐字节一致
+graphwar_server_connection_handler.rs	graphwar	6	0	24	src/graphwar_server_connection_handler.rs	5	逐位	docs/33：新连接的状态同步与真实客户端逐字节一致。**2026-11-26 T30 切出同名文件**：0x45a560/6b0/7b0/ab0/ad0/b020 六条 panic::Location 全落本文件（fixtures/boundary_audit.tsv），故 RoomState/on_new_connection/to_wire 从 src/server.rs 搬入（server.rs 只留 tick 薄封装 + pub use 再导出）；⚠ 那 6 个有锚函数的**函数体**仍未落码（docs/06 §80）
 graphwar_setup_control.rs	graphwar	21	8	70	src/graphwar_setup_control.rs	48	观测	70 锚 -> 37 函数（矩阵的 21 是压平口径）；四格模式/时间档/玩家条目/Start-Cancel 已落码（docs/16 §16），18 个 gdext 薄壳与 3 个事件回呼语义未知
 graphwar_shot_calculator.rs	graphwar	1	1	12	src/graphwar_shot_calculator.rs+src/graphwar_shot_calculator/settle.rs	36	逐位	docs/86 §14：82 发并集 152/152、漏报 0、时刻判决 38:0；docs/122 按 id 排除射手是指令级。注意：0x3c2bc0 那个 12 KB 主函数**没有逐条还原**，逐位的是行为不是函数体
 graphwar_soldier_manager.rs	graphwar	4	0	5	src/graphwar_soldier_manager.rs	21	观测	5/6 定位：HashMap<u32,u32>（士兵→主人）。只管「谁的」，**轮转不查它**（turn_manager 自持 Vec<soldier_id>）；entity_removed 时比值命中就发键 => 玩家没了士兵跟着消失（docs/10 §13）

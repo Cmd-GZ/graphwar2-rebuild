@@ -55,6 +55,30 @@
 //! **旧写法作废**：曾说"`enum Event` 至少有 75 个变体"并把 `0x800000000000004a`(74)
 //! 当成第 75 个——那个常量不在 `GraphwarEvent` 的判别值空间里（是别处的 `HashMap<u64,_>` 键）。
 
+//! ## 2026-11-26（T30 / `task-27`）：本文件只管 `graphwar_event.rs`
+//!
+//! 逐函数边界审计（`docs/06` §74、`fixtures/boundary_audit.tsv`）判出本文件里混了三个原版模块，
+//! 其中两条 `mismatch` 的 `panic::Location` 落在 **`graphwar_event_handler.rs`**
+//! （`0x3d3630` `process_events` / `0x3d38f0` `subscribe_to_event`）⇒ 那一半已按
+//! `AGENTS.md` §4「文件名就是证据」搬进 **`src/graphwar_event_handler.rs`**：
+//!
+//! * `DISPATCH_NAME_TAGS`（72 条 名字→判别值）、`NAMED_VARIANT_COUNT`、`Event::from_dispatch_name`
+//!   —— 下面用 `pub use` / 同 crate 的 `impl` 块保**老路径不变**（调用方零改动）。
+//!
+//! 本文件现在装的是 **`graphwar_event.rs` 的主体**：`enum Event`（74 变体）、`ALL_VARIANTS`、
+//! `VARIANT_COUNT`、`Event::wire_tag`。还剩一处**有证据但不在本任务范围**的混装：
+//! `GameInfo` / `GAME_INFO_FIELD_COUNT` 原版属 `graphwar_game_info.rs`
+//! （serde impl 全路径 `graphwarrust::graphwar_game_info::…`，`docs/16` §30.9），
+//! 现已由 `src/graphwar_game_info.rs` `pub use` 再导出；就地留下见 `docs/02` §17.4。
+
+// ---- graphwar_event_handler.rs 的再导出（保老路径，调用方零改动）----
+//
+// 判据：`0x3d38f0` = `GraphwarEventHandler::subscribe_to_event`，`panic::Location` 落在
+// `src/graphwar_event_handler.rs`（`fixtures/boundary_audit.tsv`），所以那张表与查表端
+// 已搬到同名文件；下面两条 `pub use` 让 `crate::events::DISPATCH_NAME_TAGS` /
+// `crate::events::NAMED_VARIANT_COUNT` 这两条老路径继续有效。
+pub use crate::graphwar_event_handler::{DISPATCH_NAME_TAGS, NAMED_VARIANT_COUNT};
+
 /// 联机事件枚举。
 ///
 /// 判别值 = `0x3d38f0` 里 `mov $N,%ebx` 的立即数（`docs/114` §3 全表）。
@@ -241,86 +265,6 @@ pub const ALL_VARIANTS: [Event; VARIANT_COUNT] = [
     Event::BanConnectionRequest, Event::ClearBansRequest,
 ];
 
-/// `0x3d38f0` 里被比较的**名字**与判别值的对照（`docs/114` §3）。
-///
-/// 这张表是「名字 → 判别值」两侧的唯一对照：左边是 `.rodata`/立即数里逐字节
-/// 重建出来的名字，右边是该分支 `mov $N,%ebx` 的立即数。
-/// 按判别值升序；**长度不是 72 就是抄错了**（`tests/events.rs` 会断言）。
-pub const DISPATCH_NAME_TAGS: &[(&str, Event)] = &[
-    ("tick_event", Event::TickEvent),
-    ("tick_request_event", Event::TickRequest),
-    ("tick_reply_event", Event::TickReply),
-    ("subscribe_event", Event::Subscribe),
-    ("new_connection_request_event", Event::NewConnectionRequest),
-    ("new_connection_event", Event::NewConnection),
-    ("connection_removed_event", Event::ConnectionRemoved),
-    ("connected_to_server_event", Event::ConnectedToServer),
-    ("new_player_request_event", Event::NewPlayerRequest),
-    ("new_bot_request_event", Event::NewBotRequest),
-    ("bot_added_event", Event::BotAdded),
-    ("change_team_request_event", Event::ChangeTeamRequest),
-    ("remove_player_request_event", Event::RemovePlayerRequest),
-    ("player_info_event", Event::PlayerInfo),
-    ("entity_removed_event", Event::EntityRemoved),
-    ("soldier_info_event", Event::SoldierInfo),
-    ("add_soldier_request_event", Event::AddSoldierRequest),
-    ("remove_soldier_request_event", Event::RemoveSoldierRequest),
-    ("axis_mode_change_request_event", Event::AxisModeChangeRequest),
-    ("function_mode_change_request_event", Event::FunctionModeChangeRequest),
-    ("turn_mode_change_request_event", Event::TurnModeChangeRequest),
-    ("time_mode_change_request_event", Event::TimeModeChangeRequest),
-    ("game_name_request_event", Event::GameNameRequest),
-    ("target_info_event", Event::TargetInfo),
-    ("team_info_event", Event::TeamInfo),
-    ("remove_team_event", Event::RemoveTeam),
-    ("pos_info_event", Event::PosInfo),
-    ("life_info_event", Event::LifeInfo),
-    ("life_queued_death_event", Event::LifeQueuedDeath),
-    ("game_name_info_event", Event::GameNameInfo),
-    ("game_state_info_event", Event::GameStateInfo),
-    ("game_start_request_event", Event::GameStartRequest),
-    ("function_fire_request_event", Event::FunctionFireRequest),
-    ("function_fire_event", Event::FunctionFire),
-    ("function_update_request_event", Event::FunctionUpdateRequest),
-    ("function_info_event", Event::FunctionInfo),
-    ("function_active_event", Event::FunctionActive),
-    ("function_points_event", Event::FunctionPoints),
-    ("functions_calculated_event", Event::FunctionsCalculated),
-    ("clear_obstacles_event", Event::ClearObstacles),
-    ("add_obstacle_event", Event::AddObstacle),
-    ("destroy_obstacle_event", Event::DestroyObstacle),
-    ("queue_destroy_obstacle_event", Event::QueueDestroyObstacle),
-    ("turn_info_event", Event::TurnInfo),
-    ("effect_info_event", Event::EffectInfo),
-    ("axis_mode_info_event", Event::AxisModeInfo),
-    ("function_mode_info_event", Event::FunctionModeInfo),
-    ("turn_mode_info_event", Event::TurnModeInfo),
-    ("time_mode_info_event", Event::TimeModeInfo),
-    ("end_of_turn_info_event", Event::EndOfTurnInfo),
-    ("skin_graphics_request_event", Event::SkinGraphicsRequest),
-    ("skin_graphics_info_event", Event::SkinGraphicsInfo),
-    ("face_graphics_request_event", Event::FaceGraphicsRequest),
-    ("face_graphics_info_event", Event::FaceGraphicsInfo),
-    ("hat_graphics_request_event", Event::HatGraphicsRequest),
-    ("hat_graphics_info_event", Event::HatGraphicsInfo),
-    ("entity_effect_info_event", Event::EntityEffectInfo),
-    ("turn_limit_info_event", Event::TurnLimitInfo),
-    ("turn_count_info_event", Event::TurnCountInfo),
-    ("name_request_event", Event::NameRequest),
-    ("name_info_event", Event::NameInfo),
-    ("color_info_event", Event::ColorInfo),
-    ("game_info_event", Event::GameInfo),
-    ("game_removed_event", Event::GameRemoved),
-    ("rank_request_event", Event::RankRequest),
-    ("rank_info_event", Event::RankInfo),
-    ("lock_request_event", Event::LockRequest),
-    ("lock_info_event", Event::LockInfo),
-    ("chat_message_request_event", Event::ChatMessageRequest),
-    ("chat_message_event", Event::ChatMessage),
-    ("ban_connection_request_event", Event::BanConnectionRequest),
-    ("clear_bans_request_event", Event::ClearBansRequest),
-];
-
 impl Event {
     /// 判别值（`0x3d38f0` 里 `mov $N,%ebx` 的立即数）。
     ///
@@ -328,22 +272,7 @@ impl Event {
     pub const fn wire_tag(self) -> u16 {
         self as u16
     }
-
-    /// 按 `0x3d38f0` 比较的 snake_case 名字反查变体（内部派发层用）。
-    pub fn from_dispatch_name(name: &str) -> Option<Event> {
-        DISPATCH_NAME_TAGS
-            .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, e)| *e)
-    }
 }
-
-/// 具名变体的个数（实测口径：`0x3d38f0` 解出 72 条）。
-/// **有派发名字**（`*_event`，即 `0x3d38f0` 那张表里出现过的）的变体数 = 72。
-///
-/// ⚠️ 与 [`VARIANT_COUNT`] 不同：`GameHeartbeat`(63) 与 `VersionInfo`(65) **没有**
-/// `*_event` 名字、也不进名字分派表（它们只被序列化上线），所以枚举有 74 个、具名派发的只有 72 个。
-pub const NAMED_VARIANT_COUNT: usize = 72;
 
 /// `enum Event` 的**变体总数** = 74（判别值 `0..=73` 连续无缺号，2026-11-07 定死）。
 pub const VARIANT_COUNT: usize = 74;

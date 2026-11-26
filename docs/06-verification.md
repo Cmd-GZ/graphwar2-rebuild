@@ -13313,3 +13313,173 @@ PY
 4. **`docs/06` §76.6 第 6 条"修正常数横向 10 px 机制未知"** —— 现在有解，而且是**两条**：
    `Label` 该是 LEFT（不是 CENTER）+ 修正串该带**内核 `correction_text` 那个前导空格**
    （§79.4(a) 的四选一表）。不是"容器几何/HBox 分配"。
+
+---
+
+## 80. 10 条 `mismatch` 按 `panic::Location` 切出 **3 个原版同名文件**：台账 `mismatch` **10 → 0**（2026-11-26，任务 T30 / `task-27`）
+
+> 这一节是 §74 的**执行侧收口**：§74.4 把 10 条 `mismatch` 逐条登记并写了"为什么这一轮不搬"，
+> 并把"建议的下一步"留给"能同时改 `events.rs` / `server.rs` 的任务"。本任务就是那一步。
+
+### 80.1 一句话结论
+
+`fixtures/boundary_audit.tsv`（527 行，`tools/boundary_audit.py` 判据 = `panic::Location` 硬归属）
+的 `mismatch` 从 **10 → 0**（`match` **431 → 441**、`multi` **86 不变**），做法是按 `AGENTS.md` §4
+「文件名就是证据」新建三个原版同名文件、把落在它们名下的函数/类型搬进去，旧文件留 `pub use`
+**保公开路径，调用方 0 改动**：
+
+| 新建文件 | 装了什么（有代码的部分） | 只装证据、没有函数体的部分 |
+|---|---|---|
+| `src/graphwar_event_handler.rs` | `DISPATCH_NAME_TAGS`（72 条名字→判别值）、`NAMED_VARIANT_COUNT`、`Event::from_dispatch_name` | `0x3d3630` `process_events`（泵在 `_scaffold/root_wiring.rs`，自造桥接不搬） |
+| `src/graphwar_remote_event_handler.rs` | **0 个 `fn`** —— 只有 `MODULE`/`SOURCE_FILE`/2 条 `Func` 证据行 + `is_leader` 的指令级观测 | `0x3dee00` `handle_client_remote_event`（80 锚）、`0x3e5910` `is_leader`（2 锚） |
+| `src/graphwar_server_connection_handler.rs` | `RoomState`、`on_new_connection`（新连接 7 条同步，逐字节）、`to_wire` + 它们的 2 条 test | 6 个有锚函数（`0x45a560`/`0x45a6b0`/`0x45a7b0`/`0x45aab0`/`0x45ad30`/`0x45b020`）的函数体 |
+
+### 80.2 判据与取数链（没有新判据，全部沿用 §74）
+
+* 判据：`fixtures/boundary_audit.tsv` 的 `loc_main_file` 列 —— 每条 `mismatch` 的 `panic::Location`
+  主文件**单模块、一边倒**（§74.4 的表），所以边界没有歧义，缺的只是"我方那个文件还不存在"。
+* `tools/boundary_audit.py` 的 `match` 判据是"`src/<模块>` ∈ 矩阵的 `ours_file`" ⇒ 本任务必须同时
+  改 **`tools/coverage_matrix.py` 的 `M` 表**（那一节是脚本里唯一的人工判断部分）三个模块的 `ours` 元组。
+  三个模块的 `ours` 改动逐条都只对着这 10 行的 `loc_main_file`，没有顺手改别的模块。
+* 生成物一律**重跑工具**、不手改：`fixtures/boundary_audit.tsv`、`docs/coverage-matrix.tsv`、`docs/149`。
+
+### 80.3 逐函数落点（10 条，搬完后的台账原文）
+
+| 地址 | 符号名（三向真名） | 原版 Location 主文件 | 我方新落点 | 锚点行数 | 搬前 → 搬后 |
+|---|---|---|---|---|---|
+| `0x3d3630` | `GraphwarEventHandler::process_events` | `src/graphwar_event_handler.rs` | 同名文件（**无函数体**） | 1（`:467`） | mismatch → **match/clean** |
+| `0x3d38f0` | `…::subscribe_to_event` | 同上 | 同名文件（表 + 查表端） | 3（`:396 :407 :454`） | mismatch → **match/clean** |
+| `0x3dee00` | `GraphwarRemoteEventHandler::handle_client_remote_event` | `src/graphwar_remote_event_handler.rs` | 同名文件（**无函数体**） | **80** | mismatch → **match/clean** |
+| `0x3e5910` | `…::is_leader` | 同上 | 同名文件（**无函数体**，有指令级观测） | 2（`:135 :136`） | mismatch → **match/clean** |
+| `0x45a560` | `GraphwarServerConnectionHandler::forward_event` | `src/graphwar_server_connection_handler.rs` | 同名文件（**无函数体**） | 1（`:350`） | mismatch → **match/clean** |
+| `0x45a6b0` | `…::handle_clear_bans_request_event` | 同上 | 同上 | 2（`:247 :248`） | mismatch → **match/clean** |
+| `0x45a7b0` | `…::handle_connection_removed_event` | 同上 | 同上 | 3（`:224 :225 :316`） | mismatch → **match/clean** |
+| `0x45aab0` | `…::forward_connection_specific_event` | 同上 | 同上 | 2（`:326 :336`） | mismatch → **match/clean** |
+| `0x45ad30` | `…::handle_ban_connection_request_event` | 同上 | 同上 | 4（`:233 :234 :238 :242`） | mismatch → **match/clean** |
+| `0x45b020` | `…::tick` | 同上 | 同上 | **8**（`:206 :207 :208 :258 :259 :291 :292 :303`） | mismatch → **match/clean** |
+
+⚠ **"搬完"= 文件名/布局对上，不是行为复原。** 10 条里**只有 1 条**（`0x3d38f0` `subscribe_to_event`）
+我方有对应实现可搬（那张表就是它体内逐字节相等比较的产物）；其余 9 条在我方**从来没有函数体**，
+台账转 `match` 只表示"原版那个文件我们现在也有同名文件" —— 口径与 §74.3 完全一致（`match` 431 说的是
+"能被 Location 钉住的函数里原版文件与我方布局同名"，不是"复原了 431 个函数的行为"）。
+
+### 80.4 每个文件：搬了什么 / 留下什么 / 怎么保路径（调用方 0 改动）
+
+| 文件 | 搬进来（`git mv` 级别的内容搬迁） | 留在旧文件 | 公开路径怎么保 |
+|---|---|---|---|
+| `src/graphwar_event_handler.rs`（新，**159** 行） | `DISPATCH_NAME_TAGS`、`NAMED_VARIANT_COUNT`、`impl Event { from_dispatch_name }` | `src/events.rs`：`enum Event`(74) / `ALL_VARIANTS` / `VARIANT_COUNT` / `Event::wire_tag` / `GameInfo` / `GAME_INFO_FIELD_COUNT` | `events.rs` 里 `pub use crate::graphwar_event_handler::{DISPATCH_NAME_TAGS, NAMED_VARIANT_COUNT};`；**同 crate 的 `impl` 块分居两文件**，`Event::from_dispatch_name` 路径不变 |
+| `src/graphwar_remote_event_handler.rs`（新，**126** 行） | 证据行：`MODULE` / `SOURCE_FILE` / `Link` / `Func` / `FUNCTIONS`(2 条) + `is_leader` 的指令级观测 | —（本模块我方**没有任何代码**） | 无公开项 ⇒ 不需要再导出 |
+| `src/graphwar_server_connection_handler.rs`（新，**225** 行） | `RoomState`、`on_new_connection`、`to_wire`、`tests{state_sync_matches_captured_bytes, wire_encoding_matches_frame_layout}`（断言与期望值**一个字没改**） | `src/server.rs`：`on_tick_request` + `tick_tests`（`docs/06` §74.4 的建议） | `server.rs` 里 `pub use crate::graphwar_server_connection_handler::{on_new_connection, to_wire, RoomState};` |
+
+`src/lib.rs` 加三行 `pub mod`。**调用方一个都没改**：`tests/events.rs` 的
+`use gw2_rebuild::events::{…DISPATCH_NAME_TAGS…}`、`src/game.rs` / `src/graphwar_game_server.rs`
+的 `use crate::server::{on_new_connection, on_tick_request, RoomState}`、`src/_scaffold/*` 的
+`crate::events::*` 与 `crate::server::*`、`examples/serve_handshake.rs` 全部靠再导出生效
+（逐条清单在 `fixtures/boundary_split_plan.txt` §2）。
+
+### 80.5 一个必须记住的坑：`src/events.rs` 被 13 个测试二进制用 `#[path]` 直接编译
+
+`tests/graphwar_{audio_control,color_manager,effect_manager,entity_effect_manager,game_recorder,graphics_manager,local_player_manager,name_manager,player_manager,rank_manager,replay_control,replay_reader,target_manager}.rs`
+都写了 `#[path = "../src/events.rs"] mod events;` —— 那种测试 crate 里**没有** `crate::graphwar_event_handler`，
+所以 `events.rs` 新加的 `pub use` 会让它们以 `E0432 unresolved import` 全炸（第一次跑就踩到：
+`cargo test` 报 `tests/../src/events.rs:80:16 could not find graphwar_event_handler in the crate root`）。
+
+修法**只动 import 布线**（不改任何断言）：13 个文件各加两行
+`#[path = "../src/graphwar_event_handler.rs"] mod graphwar_event_handler;`。
+⇒ 以后谁再在 `src/events.rs`（或任何被 `#[path]` 编进测试的文件）里加**指向 crate 根的 `pub use`**，
+都要先 `grep -rl 'path = "../src/<file>"' tests/`。
+
+### 80.6 门槛读数（每搬一个都跑；逐轴逐条）
+
+| 步骤 | `cargo test --offline` | `--features gdext-bindings` | `boundary_audit --check` | `coverage_matrix --check` | `check_doc_refs` |
+|---|---|---|---|---|---|
+| 改前（分支基线 `be64c72`） | **1772** / 0 / 1 ignored | **1887** / 0 / 1 ignored | OK，match 431 / **mismatch 10** / multi 86 | OK（58 个同名文件） | rc=0 |
+| ① 建 `graphwar_event_handler.rs`（搬 2 条） | **1772** / 0 / 1 ignored | （见下） | OK，match 433 / **mismatch 8** | OK（59 个同名） | rc=0 |
+| ② 建 `graphwar_remote_event_handler.rs`（搬 2 条） | 见下 | | OK，match 435 / **mismatch 6** | OK（60 个同名） | rc=0 |
+| ③ 建 `graphwar_server_connection_handler.rs`（搬 6 条） | **1772** / 0 / 1 ignored（72 个测试二进制） | **1887** / 0 / 1 ignored（72 个） | OK，match 441 / **mismatch 0** / multi 86 | OK（**61** 个同名） | rc=0 |
+
+* 中间两步的 `cargo` 读数**没有单独留**（生成物只能按"最终态"一次性重算，见 §80.7 第 1 条）：
+  第①②步的改动只是"新增文件 + `pub use` + `#[path]` 两行"，编译面被最终态覆盖；`1772`/`1887`
+  这两个数与改前**逐位相同**（`#[test]` 条数没变，本轮搬的是函数归属、不增删测试）。
+* 矩阵 `status` 配比有**一处主动降档**：`graphwar_remote_event_handler.rs` 由 `观测` 改 **`推断`**
+  （该模块 3 个可归属函数的权重一起动 ⇒ 总账 `观测 438 → 435`、`推断 0 → 3`）。理由见 §80.8 第 2 条。
+
+三轴（冻结快照 `.reference/replays/gw2-replays-snapshot/replays`，403 份）：
+
+| 轴 | 读数 | 与改前比 |
+|---|---|---|
+| `fire`（`replay_attrib --drive fire --policy default`） | 内容命中 **647** / 结算批 1080 | 不变 |
+| `batch`（`replay_attrib --drive batch --policy default`） | 内容命中 **647** / 结算批 1080 | 不变 |
+| `batch_conv`（`batch_conv --policy strict`） | 内容命中 **637** / 1080 | 不变 |
+
+（本轮是纯**代码搬家**：没有改任何算式、常量、收发路径，所以三轴不动是预期结果；一位没退。）
+
+### 80.7 复跑命令（照抄可跑）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t30          # 或任意 checkout
+export PY=$MAIN/.reference/venv/bin/python
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target       # 必须单独一行
+cd $WT
+
+# ①② 台账与矩阵（改了 src/ 必须重跑生成物，不要手改）
+$PY tools/boundary_audit.py                     # 重算 fixtures/boundary_audit.tsv + 打印 441/0/86
+$PY tools/boundary_audit.py --check             # 只校验（本分支应为 OK）
+COVERAGE_MATRIX_UPSTREAM=$MAIN/.reference/upstream $PY tools/coverage_matrix.py          # 重算 docs/coverage-matrix.tsv + docs/149
+COVERAGE_MATRIX_UPSTREAM=$MAIN/.reference/upstream $PY tools/coverage_matrix.py --check  # 只校验
+
+# ③ 四条门槛
+cargo test --offline                            # 1772 passed / 0 failed / 1 ignored（72 个二进制）
+cargo test --offline --features gdext-bindings  # 1887 passed / 0 failed / 1 ignored
+python3 tools/check_doc_refs.py                 # rc=0
+
+# ④ 三轴（冻结快照；新样本另开目录，不许混进快照）
+SNAP=$MAIN/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json fire.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json batch.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict
+```
+
+单条证据复跑：`$PY tools/addr_probe.py dis 0x3e5910`（`is_leader` 的前 40 条指令）、
+`$PY tools/addr_probe.py locs <addr>`（某地址引用了哪些 `Location`）。
+
+### 80.8 遗留 / 未做（**没有一条是"忘了"**）
+
+1. **`multi` 86 条一律不碰**（`AGENTS.md` §4）：跨 ≥2 个原版模块的锚点没有"一边倒"的边界证据。
+   典型 `0x3e2830` `handle_server_remote_event`（主文件 88 锚 + 另 8 个模块各 1–5 锚）、
+   `0x4500c0` `new`（`graphwar_game_server.rs` 54 + 另 4 个模块）—— 后者在 `fixtures/name_to_addr_v2.tsv`
+   的候选模块里还写着本任务的 `graphwar_server_connection_handler`，**按 Location 不属它**
+   （§74.4 / `docs/06` §65 §72），已写进新文件的 §1.1 免得下一个人重查。
+2. **9 条函数的函数体仍未落码**（10 条里只有 `0x3d38f0` 有实现可搬）。这是本任务**最大的遗留**，
+   也是**规格前提被证伪**的地方：规格说"把 10 个函数搬过去"，但盘下来我方只有 1 条有代码；
+   台账判 `mismatch` 的机制只看**文件名**，与"函数体存在"无关。⇒ 台账 `mismatch 0` 不能当"10 个函数复原了"。
+3. **矩阵的 status 档位表达不了"文件已就位、行为 0"**：`未做`/`未知` 强制 `ours_file` 为空（`--check` 不变式），
+   可那样台账又会判回 `mismatch`。本轮选了最保守的可选档 `推断` 并在 `evidence` 里写死"0 个 fn"。
+   要更准得给工具加第六档 —— **`tools/coverage_matrix.py` 的档位语义不是本任务能改的口径**，留给协调者。
+4. **`GameInfo` 仍住在 `src/events.rs`**：它的原版归属 `graphwar_game_info.rs` 有 serde impl 全路径证据
+   （`docs/16` §30.9），但那是**另一个模块**的搬家（不在本任务允许清单）；`src/graphwar_game_info.rs`
+   已用 `pub use` 再导出它，所以公开路径没问题。⇒ `docs/02` §17.4 的 `src/events.rs` 行只降到"仅剩 GameInfo"。
+5. **`split-N` 44 条**（GSM 23 / plane 9 / math_function 7 / level_generator 3 / game_server 2）：
+   文件名已经对上（`match`），"具体函数落在拆开的哪一份"没有证据 ⇒ 不搬，`basis` 里保持 `split-N`。
+6. **`0x3dee00` 的 80 个锚里有大量别的模块的内联**：那条函数是"事件 → manager"的大分派体
+   （`docs/14` §10.5：11 个 `play_screen_control` 的行号被内联进它体内）。要落码它，
+   得先把 22 个 manager 的事件入口逐条对上 —— 那是**另一个量级**的任务，不是搬文件能顺带做的。
+
+### 80.9 我写错了 / 规格前提被证伪（给下一个人省时间）
+
+1. **规格前提①「10 个函数都在 `events.rs` / `server.rs` 里有实现」—— 不成立。**
+   实际只有 `0x3d38f0`（名字表）与 `server.rs` 的新连接同步那一段有代码；`events.rs` 里从来没有
+   `process_events` / `handle_client_remote_event` / `is_leader` 的函数体（`events.rs` 只有
+   `enum Event` + 一张表 + `GameInfo`，共 369 行）。**台账的 `ours_file` 是"模块级归属"，
+   不是"这个文件的哪一行实现了这个函数"** —— §74.3 已经写过这条口径，本轮又撞了一次。
+2. **`docs/02` §17.4 当时"不拆"的第一条理由在搬完后自动失效**（"拆出去会让 `graphwar_event_handler.rs`
+   只剩一张表、没有 handler 行为，反而误导"）：确实只剩一张表 —— 但**同名文件存在本身**就是
+   `AGENTS.md` §4 要的证据，而且新文件的文件头把它"只有数据、没有 handler 行为"写在第一屏。
+   ⇒ 旧理由保留在 §17.4 的 strikethrough 原文里以免失忆，结论改成"已拆（部分结案）"。
+3. **`docs/02` §17 开头的"59 个同名 `graphwar_*.rs`"过期**（加 3 个文件后是 **62**；
+   "62 = 58 有同名 + 4 没有"变成 **"62 = 61 + 1（只剩 `graphwar_event.rs`）"**）。已就地改正，
+   `AGENTS.md` §0/目录里那两处同样的旧读数**不在本任务允许清单**，未动。
+4. **`docs/02` §17.4 的两处旧"现值核对"行**（`events.rs` / `server.rs` 都写"未拆"）已按实测改掉，
+   并附了可复跑的单行判据。

@@ -16,6 +16,11 @@
 
 #[path = "../src/events.rs"]
 mod events;
+
+// `src/events.rs` 把 graphwar_event_handler 的表/查表端 `pub use` 出去（2026-11-26 T30），
+// 用 `#[path]` 编进本测试二进制时那个模块也得一起进来，否则 crate::graphwar_event_handler 不存在。
+#[path = "../src/graphwar_event_handler.rs"]
+mod graphwar_event_handler;
 #[path = "../src/graphwar_name_manager.rs"]
 mod graphwar_name_manager;
 
