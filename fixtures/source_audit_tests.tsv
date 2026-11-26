@@ -1,0 +1,272 @@
+id	夹具/测试	类型	期望值来源档	判据	条数
+F001	ai_behaviour_plan.txt	plan	G-binary	预注册：docs/13 结论档位表 + 判据（地址来自真二进制）	1
+F002	ai_behaviour_runs.tsv	truth	G-binary	25 s 预算实测（真二进制侧跑，tools/ai_budget_probe.py）	1
+F003	ai_gen_parity.tsv	expect	G-binary	tools/ai_gen_parity.py：注入 ChaCha key 后真二进制生成的 token 流（src/graphwar_function_evolutionator.rs:1592 读它）	1
+F004	ai_params_crosscheck.tsv	truth	G-binary	tools/ai_params_crosscheck.py：.rodata 常量逐位对表	1
+F005	ai_src_fix_plan.txt	expect	G-binary	8 条差异台账，每条带反汇编地址（docs/06 §78）；src/graphwar_function_evolutionator.rs:618 引用	1
+F006	audio_event_map.tsv	truth	G-binary	真机 audio 句柄↔事件映射（tools/frida_audio_map.py + audio_replay_align.py）	1
+F007	audio_event_map_plan.txt	plan	G-binary	预注册：音频映射的探针计划	1
+F008	batch_cross_probe_55.tsv	measure	S-self	三轴跨驱动 probe（我方驱动在语料上的读数）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F009	bit_exact_inputs.txt	truth	G-binary	输入集（工具生成的输入，不是期望值）	1
+F010	bit_exact_plan.txt	plan	G-binary	预注册：439 函数清单 + 可执行性分类器（地址/Location 来自真二进制）	1
+F011	bit_exact_sweep.tsv	truth	G-binary	439 个观测级函数与真二进制逐位对拍（tools/bitexact_run.py + unicorn）	1
+F012	bit_exact_sweep_diffs.md	truth	G-binary	上表的真差异清单（真二进制 vs 我方）	1
+F013	boundary_audit.tsv	truth	G-binary	527 函数 Location 分布 + coverage-matrix 对照	1
+F014	callgraph_fingerprint.tsv	measure	S-self	我方指纹算法在真二进制上的输出（输入 G-binary，数字是我方算法的）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F015	callgraph_fingerprint_gpu_ctl348.tsv	measure	S-self	我方指纹 GPU 仿真的对照输出｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F016	callgraph_fingerprint_gpu_ctl348_scal05.tsv	measure	S-self	同上（0.5 缩放）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F017	callgraph_indirect.tsv	truth	G-binary	真二进制间接调用点（capstone）	1
+F018	callgraph_indirect_bench70.tsv	truth	G-binary	间接调用识别基准（真二进制字节）	1
+F019	callgraph_indirect_cov70.tsv	truth	G-binary	同上（覆盖）	1
+F020	callgraph_indirect_discrim70.tsv	truth	G-binary	同上（判别力）	1
+F021	callgraph_indirect_pairs70.tsv	truth	G-binary	同上（配对）	1
+F022	callgraph_roles.tsv	truth	G-binary	真二进制函数角色归堆	1
+F023	callgraph_roles_control.tsv	truth	G-binary	同上（对照组）	1
+F024	campaign_anchors75.tsv	measure	S-self	战役锚点（我方匹配器给出）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F025	crossarch_funcs.tsv	truth	G-binary	x86-64 与 arm64 真机器码 unicorn 同输入执行（tools/crossarch_funcs.py）	1
+F026	crossarch_plan.txt	plan	G-binary	预注册：两路执行体的函数清单与输入集	1
+F027	crossarch_tables.tsv	truth	G-binary	三份原版构建 .rodata 数据表逐字节对照（tools/crossarch_tables.py）	1
+F028	effectinfo_posy_sample.jsonl	capture	G-binary	tools/posy_batches.py：真解析器 0x4ed670 + 真采样器 0x3c2530 跑出来的末点 vs 回放报文 pos_*	1
+F029	eval.tsv	expect	G-binary	tools/gen_fixtures.py:56-64,136-143 用 analysis/gwemu.py(unicorn) 直接 call 0x4eb9d0 读回 f64 位模式	1
+F030	evidence_holdout75.tsv	measure	S-self	定名 holdout（我方算法）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F031	evidence_sources75.tsv	measure	S-self	证据来源台账（我方整理，内容是真二进制地址）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F032	feature_cleanup78_configs.tsv	measure	S-self	特征清理实验配置（我方）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F033	feature_cleanup78_coverage.tsv	measure	S-self	特征清理覆盖（我方）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F034	feature_cleanup78_coverage_pos_tgt.tsv	measure	S-self	特征清理覆盖正/靶集（我方）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F035	feature_cleanup78_greedy.tsv	measure	S-self	特征清理贪心（我方）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F036	feature_cleanup78_hits.tsv	measure	S-self	特征清理命中（我方）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F037	feature_cleanup78_ladder.tsv	measure	S-self	特征清理阶梯（我方）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F038	feature_cleanup78_prereg.md	plan	G-binary	预注册：特征清理实验	1
+F039	feature_cleanup78_scale.tsv	measure	S-self	特征清理规模（我方）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F040	fingerprint_ablation63.tsv	measure	S-self	指纹消融实验（我方算法）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F041	fingerprint_ci63.tsv	measure	S-self	指纹置信区间（我方算法）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F042	fingerprint_holdout72.tsv	measure	S-self	指纹 holdout（我方算法）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F043	fingerprint_holdout72_samples.tsv	measure	S-self	指纹 holdout 样本（我方算法）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F044	fingerprint_newev.tsv	measure	S-self	我方指纹法在新事件上的评测｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F045	fingerprint_newev_coverage.tsv	measure	S-self	同上（覆盖）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F046	fingerprint_range_audit63.tsv	measure	S-self	指纹范围审计（我方算法）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F047	frame_diff_AvsB_ours472path.tsv	measure	G-binary	两侧真帧对拍（原版侧=真机真帧）⇒ 差异量是实测，不是期望值	1
+F048	frame_diff_AvsC_ours470pck.tsv	measure	G-binary	两侧真帧对拍（原版侧=真机真帧）⇒ 差异量是实测，不是期望值	1
+F049	frame_diff_BvsD_form_only.tsv	measure	G-binary	两侧真帧对拍（原版侧=真机真帧）⇒ 差异量是实测，不是期望值	1
+F050	frame_diff_CvsD_engine_only.tsv	measure	G-binary	两侧真帧对拍（原版侧=真机真帧）⇒ 差异量是实测，不是期望值	1
+F051	frame_diff_blocks.tsv	measure	G-binary	两侧真帧对拍（原版侧=真机真帧）⇒ 差异量是实测，不是期望值	1
+F052	frame_diff_blocks_AvsB_ours472path.tsv	measure	G-binary	两侧真帧对拍（原版侧=真机真帧）⇒ 差异量是实测，不是期望值	1
+F053	frame_diff_blocks_AvsC_ours470pck.tsv	measure	G-binary	两侧真帧对拍（原版侧=真机真帧）⇒ 差异量是实测，不是期望值	1
+F054	frame_diff_blocks_endgame.tsv	measure	G-binary	两侧真帧对拍（原版侧=真机真帧）⇒ 差异量是实测，不是期望值	1
+F055	frame_diff_blocks_match.tsv	measure	G-binary	两侧真帧对拍（原版侧=真机真帧）⇒ 差异量是实测，不是期望值	1
+F056	frame_diff_blocks_rest.tsv	measure	G-binary	两侧真帧对拍（原版侧=真机真帧）⇒ 差异量是实测，不是期望值	1
+F057	frame_diff_blocks_static.tsv	measure	G-binary	两侧真帧对拍（原版侧=真机真帧）⇒ 差异量是实测，不是期望值	1
+F058	frame_diff_results.tsv	measure	G-binary	两侧真帧对拍（原版侧=真机真帧）⇒ 差异量是实测，不是期望值	1
+F059	frame_diff_results_endgame.tsv	measure	G-binary	两侧真帧对拍结果（原版侧=真机真帧）	1
+F060	frame_diff_results_match.tsv	measure	G-binary	两侧真帧对拍（原版侧=真机真帧）⇒ 差异量是实测，不是期望值	1
+F061	frame_diff_results_rest.tsv	measure	G-binary	两侧真帧对拍（原版侧=真机真帧）⇒ 差异量是实测，不是期望值	1
+F062	frame_diff_results_static.tsv	measure	G-binary	两侧真帧对拍（原版侧=真机真帧）⇒ 差异量是实测，不是期望值	1
+F063	frame_diff_thresholds.txt	plan	S-self	预注册**门槛**是我方设定的（基线数字来自真帧对拍，但门槛本身是我方决策）⇒ 不是真值	1
+F064	frame_diff_thresholds_amend1.txt	plan	S-self	预注册**门槛**是我方设定的（基线数字来自真帧对拍，但门槛本身是我方决策）⇒ 不是真值	1
+F065	frame_endgame_events.txt	input	S-self	同上（结算屏事件序列）	1
+F066	frame_match_events.txt	input	S-self	预注册**输入脚本**（对局屏事件序列）——不是期望值；字段布局来自 docs/07 + 我方 protocol.rs	1
+F067	frame_rest_targets.txt	expect	G-binary	13 屏元素 bbox 目标，数值来自真机真帧测量（tools/frame_capture.py --side original）	1
+F068	frida_array_divergence_sample.jsonl	capture	G-binary	frida 挂真游戏抓的采样器两装配点数组（docs/06 §30.1）	1
+F069	frida_endx_sample.jsonl	capture	G-binary	frida 真机样本（end_x/pos_x 分叉）	1
+F070	frida_flip_normal_l05.jsonl	capture	G-binary	frida 真机样本（flip=1，docs/06 §31）	1
+F071	frida_flip_sample.jsonl	capture	G-binary	frida 真机样本（flip）	1
+F072	frida_ode_edge_l16.jsonl	capture	G-binary	frida 真机样本（Ode 边界 L16）	1
+F073	frida_ode_edge_l17.jsonl	capture	G-binary	frida 真机样本（Ode 边界 L17）	1
+F074	frida_ode_sample.jsonl	capture	G-binary	frida 真机样本（Ode 采样器）	1
+F075	frida_point_array_sample.jsonl	capture	G-binary	frida 真机样本（点数组）	1
+F076	frida_ptr_pair_sample.jsonl	capture	G-binary	frida 真机样本（函数指针槽配对）	1
+F077	frida_token_at_fire_sample.jsonl	capture	G-binary	frida 真机样本（开火瞬间 token 流）	1
+F078	frida_triple_capture_sample.jsonl	capture	G-binary	frida 真机样本（三连抓）	1
+F079	guardrails.json	expect	S-self	三轴基线 647/647/637 是**我方实现**在 403 份语料上的输出（tools/bit_exact_attrib.py --check-baseline）；语料指纹（corpus 的 403 条 sha256）才是 G-corpus。tests/fire_batch_driver.rs 读它	1
+F080	hybrid_names.tsv	measure	S-self	混合定名器输出（我方算法；输入=两份 .so 字节）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F081	hybrid_names_conflicts.tsv	measure	S-self	定名冲突（我方算法）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F082	hybrid_names_conflicts_holdout.tsv	measure	S-self	定名冲突 holdout（我方算法）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F083	hybrid_names_eval.tsv	measure	S-self	定名评测（我方算法）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F084	hybrid_names_holdout_rows.tsv	measure	S-self	定名 holdout 行（我方算法）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F085	hybrid_names_prereg.md	plan	G-binary	预注册：定名器方法与判据	1
+F086	hybrid_names_prereg.sha256	plan	G-binary	预注册件指纹	1
+F087	hypothesis_sweep.tsv	measure	S-self	假设扫描结果（我方算法）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F088	lan_ai_triple_sample.jsonl	capture	G-binary	frida 真机样本（LAN+AI 三连，tools/lan_ai_triple.py）	1
+F089	levelgen_draws.txt	expect	G-binary	文件头『真实抓包：某次运行的随机流前 120 个 64 位值』；src/graphwar_level_generator.rs:367 读它	1
+F090	levelgen_obstacles.txt	expect	G-binary	同一抓包批次的障碍生成结果（docs/11 §275/332）；src/graphwar_level_generator.rs:376 读它	1
+F091	module_audit.tsv	truth	G-binary	模块审计（输入=ELF 符号/xref）	1
+F092	module_funcs.tsv	expect	G-binary	tools/module_map.py：capstone rip-relative xref + .eh_frame 边界 + src/*.rs 串 ⇒ 函数→文件归堆	1
+F093	module_map.tsv	expect	G-binary	tools/module_map.py 输出（同上）	1
+F094	module_map_audit.tsv	truth	G-binary	docs/02 §17 台账审计（真值=coverage-matrix + 归档路径实测）	1
+F095	module_map_propagated.tsv	truth	G-binary	模块归属传播（输入=ELF xref）	1
+F096	name_crate_audit.tsv	truth	G-binary	arm64 .symtab 真名 × crate 归属审计	1
+F097	name_to_addr.tsv	expect	G-binary	tools/name_bridge.py：arm64 .symtab 名 + x86 panic::Location(.data.rel.ro+.rela.dyn) 配出的唯一锚；52 处引用	1
+F098	name_to_addr_v2.tsv	truth	G-binary	tools/name_bridge.py v2 口径（arm64 符号 + x86 Location）	1
+F099	nan_batches.tsv	truth	G-binary	tools/nan_batches.py：真二进制 / 我方 / 回放 三方逐发对照（docs/06 §38）	1
+F100	net_event_handlers.tsv	expect	G-binary	台账：12 条缺处理器事件，『原版收到它之后做什么』列带证据出处（docs/06 §67）	1
+F101	obstacle_destroy_pairs.jsonl	capture	G-binary	回放语料里的障碍破坏对（tools/obstacle_room_extract.py）	1
+F102	parse.tsv	expect	G-binary	tools/gen_fixtures.py:104-109 用 analysis/graphwar_curve.py::parse_function；该参照实现对二进制做过 90 例对拍（间接）	1
+F103	parse_matrix.jsonl	capture	G-binary	差分矩阵输入（原文 + 输入集）；真值在 parse_matrix_truth.tsv	1
+F104	parse_matrix_truth.tsv	expect	G-binary	tools/parse_matrix.py 头注释：x86 真二进制 0x4ed670/0x4eb9d0 由 unicorn 逐条指令模拟	1
+F105	path.tsv	expect	G-binary	tools/gen_fixtures.py:170-181 用 unicorn call 0x3c2530 读回点数组	1
+F106	play_screen_final_targets.txt	expect	G-binary	对局屏六项 bbox，来自真机真帧	1
+F107	protocol.jsonl	expect	G-binary	真实抓包（tools/capture_net*.js）；tests/wire_format.rs:304 include_str!	1
+F108	protocol_death.jsonl	expect	G-binary	真实抓包（死亡链）；tests/wire_format.rs:306	1
+F109	protocol_field_recount.tsv	truth	G-binary	74 事件字段数重测（tools/protocol_recount.py 读序列化指令）	1
+F110	protocol_match.jsonl	expect	G-binary	真实抓包（对局中）；tests/wire_format.rs:305、tests/broker.rs:3 引用行号	1
+F111	protocol_recount_plan.txt	plan	G-binary	预注册：§66 先写死方法与口径	1
+F112	replay_clock_observations.tsv	truth	G-binary	frida 真机读数（回放时钟，docs/06 §63）	1
+F113	replay_lobby_targets.txt	expect	G-binary	回放列表行元素 bbox，来自真机真帧	1
+F114	replay_player84.txt	expect	S-self	文件头明写『来源（全部由旧实现算出，不是新驱动自己给的）』⇒ 我方 GDScript GwReplayPlayer 的期望值	1
+F115	replay_screen_targets.txt	expect	G-binary	回放屏元素 bbox，来自真机真帧	1
+F116	seq_align.tsv	measure	S-self	顺序对齐结果（我方算法；输入=两份 .so）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F117	seq_align_conv93.tsv	measure	S-self	顺序对齐收敛（我方算法）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F118	seq_align_prereg93.md	plan	G-binary	预注册：顺序对齐方法	1
+F119	seq_align_prereg93.sha256	plan	G-binary	预注册件指纹	1
+F120	seq_align_truth93.tsv	measure	S-self	顺序对齐真值表（我方算法）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F121	settle_order_matrix_65.tsv	measure	S-self	我方结算顺序策略 × 三轴 × 语料（**我方实现**的命中率）｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F122	shots_vs_fail.tsv	measure	S-self	我方 replay_attrib 在语料上的失败率统计｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F123	sim_tensor71_ceiling.tsv	measure	S-self	我方仿真上限｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F124	sim_tensor71_configs.tsv	measure	S-self	我方仿真配置与命中｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F125	sim_tensor71_marginal.tsv	measure	S-self	我方仿真边际｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F126	sim_tensor71_wallclock.tsv	measure	S-self	我方仿真墙钟｜输入是物证、**数字是我方产出** ⇒ 只作回归保护	1
+F127	static_screens_targets.txt	expect	G-binary	静态两屏元素 bbox，来自真机真帧	1
+F128	sym_match.tsv	expect	G-binary	tools/sym_match.py build：arm64 .symtab 名 × 两份 .so 的字节特征对到 x86（--verify 用 326 条唯一锚交叉）	1
+F129	tag37_rescan88.tsv	truth	G-binary	tag 37 四形态重扫（capstone）	1
+F130	tag_counts83.tsv	truth	G-binary	tag 计数	1
+F131	tag_counts91.tsv	truth	G-binary	tag 计数重扫	1
+F132	tag_sites83.tsv	truth	G-binary	tag 构造点全扫（capstone）	1
+F133	tag_sites91.tsv	truth	G-binary	tag 构造点重扫	1
+F134	ticks.tsv	expect	G-binary	文件头『真实抓包：TickReply 的时间戳与 current_tick』（docs/14-turn.md:29）	1
+F135	to_text.tsv	expect	G-binary	tools/gen_to_text_fixture.py 头注释：unicorn 直接 call 0x4ec160 读回 String	1
+F136	to_text_roundtrip.tsv	expect	G-binary	同上：两代文本都取自真二进制 0x4ec160	1
+F137	unknowns_levelrules.tsv	truth	G-binary	LevelRules 归属（panic::Location 取证）	1
+F138	unknowns_mask.tsv	truth	G-binary	掩膜生命周期扫描	1
+F139	unknowns_plot.tsv	truth	G-binary	弹道绘图原语扫描（字面量→包装→GOT 槽→调用点）	1
+F140	unknowns_rank.tsv	truth	G-binary	rank 段位/字段数取证	1
+F141	unnamed_attrib.tsv	truth	G-binary	未定名函数的归属（capstone xref，tools/unnamed_attrib.py）	1
+F142	view_layer_ledger.tsv	truth	G-binary	台账：52 份原版 .gd 的 status/why/need（真值=recovered-src 逐字节）	1
+F143	windows_name_to_addr.tsv	truth	G-binary	Windows DLL 符号↔地址（tools/pe_dis.py / win_names.py）	1
+T144	src/_scaffold/api.rs	测试	G-binary 0 / G-corpus 0 / S-self 43 / U 0	契约测试：我方 API 与 core_bridge.gd 逐字一致 + 我方两条管线（api vs shot_points）互相相等 ⇒ S-self｜断言 199 条，带锚 11 条	43
+T145	src/_scaffold/axis_drawer_class.rs	测试	G-binary 0 / G-corpus 0 / S-self 8 / U 0	自动锚定率 0% + 自洽关键词 0 条｜断言 39 条，带锚 0 条	8
+T146	src/_scaffold/broker.rs	测试	G-binary 3 / G-corpus 3 / S-self 10 / U 0	broker 是我方自造的服务端；协议形状来自抓包（G），行为/表语义是我方实现（S）｜断言 33 条，带锚 0 条	16
+T147	src/_scaffold/capi.rs	测试	G-binary 0 / G-corpus 0 / S-self 4 / U 0	自动锚定率 0% + 自洽关键词 0 条｜断言 6 条，带锚 0 条	4
+T148	src/_scaffold/diffconv.rs	测试	G-binary 2 / G-corpus 0 / S-self 10 / U 0	收敛层是我方实现；测试比的是它与内核是否一致 ⇒ S-self｜断言 50 条，带锚 3 条	12
+T149	src/_scaffold/gdext.rs	测试	G-binary 0 / G-corpus 0 / S-self 4 / U 0	自动锚定率 0% + 自洽关键词 0 条｜断言 10 条，带锚 0 条	4
+T150	src/_scaffold/protocol.rs	测试	G-binary 230 / G-corpus 0 / S-self 60 / U 0	绝大多数对 fixtures/protocol*.jsonl 的**真实帧**逐字节比对 ⇒ G-binary；我方 encode→我方 decode 往返/未知字段原样回发/未知 kind 拒绝 是自洽｜断言 122 条，带锚 0 条	290
+T151	src/_scaffold/replay_driver.rs	测试	G-binary 0 / G-corpus 0 / S-self 20 / U 0	我方自造的 replay 驱动（_scaffold），期望值只能来自它自己 ⇒ S-self｜断言 102 条，带锚 0 条	20
+T152	src/_scaffold/replay_inflate.rs	测试	G-binary 0 / G-corpus 6 / S-self 6 / U 0	gzip 真流（回放）是外部数据（G-corpus 型）；往返解压是我方实现｜断言 9 条，带锚 0 条	12
+T153	src/_scaffold/replay_meta.rs	测试	G-binary 7 / G-corpus 0 / S-self 0 / U 0	自动锚定率 0%（0/30 断言带锚）+ 文件头物证来源标记 3 处｜断言 30 条，带锚 0 条	7
+T154	src/_scaffold/rng.rs	测试	G-binary 0 / G-corpus 0 / S-self 3 / U 0	自动锚定率 0% + 自洽关键词 0 条｜断言 6 条，带锚 0 条	3
+T155	src/function_history_recorder.rs	测试	G-binary 6 / G-corpus 0 / S-self 0 / U 0	自动锚定率 33%（7/21 断言带锚）+ 文件头物证来源标记 1 处｜断言 21 条，带锚 7 条	6
+T156	src/function_token.rs	测试	G-binary 12 / G-corpus 0 / S-self 2 / U 0	TOKEN_PATTERN 77 字节 /.rodata 正则与跳表 ⇒ G；2 条 match 顺序自洽｜断言 14 条，带锚 0 条	14
+T157	src/game.rs	测试	G-binary 20 / G-corpus 5 / S-self 12 / U 0	抓包协议行 + 三轴语料基线 ⇒ G/G-corpus；12 条是结算流程内部一致性｜断言 159 条，带锚 8 条	37
+T158	src/graphwar_ad_switch.rs	测试	G-binary 9 / G-corpus 0 / S-self 0 / U 0	自动锚定率 15%（6/41 断言带锚）+ 文件头物证来源标记 6 处｜断言 41 条，带锚 6 条	9
+T159	src/graphwar_audio_control.rs	测试	G-binary 6 / G-corpus 0 / S-self 0 / U 0	自动锚定率 0%（0/9 断言带锚）+ 文件头物证来源标记 7 处｜断言 9 条，带锚 0 条	6
+T160	src/graphwar_color_manager.rs	测试	G-binary 12 / G-corpus 0 / S-self 0 / U 0	自动锚定率 12%（4/32 断言带锚）+ 文件头物证来源标记 5 处｜断言 32 条，带锚 4 条	12
+T161	src/graphwar_computer_player_manager.rs	测试	G-binary 18 / G-corpus 0 / S-self 0 / U 0	自动锚定率 2%（1/56 断言带锚）+ 文件头物证来源标记 6 处｜断言 56 条，带锚 1 条	18
+T162	src/graphwar_effect_manager.rs	测试	G-binary 6 / G-corpus 0 / S-self 0 / U 0	自动锚定率 0%（0/13 断言带锚）+ 文件头物证来源标记 6 处｜断言 13 条，带锚 0 条	6
+T163	src/graphwar_entity_effect_manager.rs	测试	G-binary 6 / G-corpus 0 / S-self 0 / U 0	自动锚定率 0%（0/17 断言带锚）+ 文件头物证来源标记 6 处｜断言 17 条，带锚 0 条	6
+T164	src/graphwar_function_evolutionator.rs	测试	G-binary 28 / G-corpus 0 / S-self 10 / U 2	主体对 fixtures/ai_gen_parity.tsv（注入 ChaCha key 后真二进制的 token 流）⇒ G；10 条是生成器内部不变量（长度/修复/代数），2 条判不出｜断言 131 条，带锚 6 条	40
+T165	src/graphwar_function_input.rs	测试	G-binary 17 / G-corpus 0 / S-self 0 / U 0	自动锚定率 7%（6/81 断言带锚）+ 文件头物证来源标记 8 处｜断言 81 条，带锚 6 条	17
+T166	src/graphwar_function_manager.rs	测试	G-binary 0 / G-corpus 0 / S-self 3 / U 0	自动锚定率 0% + 自洽关键词 0 条｜断言 16 条，带锚 0 条	3
+T167	src/graphwar_game_client.rs	测试	G-binary 10 / G-corpus 0 / S-self 0 / U 0	自动锚定率 3%（1/35 断言带锚）+ 文件头物证来源标记 3 处｜断言 35 条，带锚 1 条	10
+T168	src/graphwar_game_state_manager.rs	测试	G-binary 5 / G-corpus 0 / S-self 0 / U 0	自动锚定率 0%（0/34 断言带锚）+ 文件头物证来源标记 5 处｜断言 34 条，带锚 0 条	5
+T169	src/graphwar_graphics_manager.rs	测试	G-binary 10 / G-corpus 0 / S-self 0 / U 0	自动锚定率 4%（1/27 断言带锚）+ 文件头物证来源标记 7 处｜断言 27 条，带锚 1 条	10
+T170	src/graphwar_lan_broadcaster_v6.rs	测试	G-binary 14 / G-corpus 0 / S-self 0 / U 0	自动锚定率 0%（0/41 断言带锚）+ 文件头物证来源标记 7 处｜断言 41 条，带锚 0 条	14
+T171	src/graphwar_lan_vbox.rs	测试	G-binary 13 / G-corpus 0 / S-self 0 / U 0	自动锚定率 7%（7/102 断言带锚）+ 文件头物证来源标记 11 处｜断言 102 条，带锚 7 条	13
+T172	src/graphwar_level_generator.rs	测试	G-binary 4 / G-corpus 0 / S-self 11 / U 0	混合：自动锚定率 25%（13/52）⇒ 按比例拆｜断言 52 条，带锚 13 条	15
+T173	src/graphwar_level_manager.rs	测试	G-binary 8 / G-corpus 0 / S-self 0 / U 0	自动锚定率 0%（0/53 断言带锚）+ 文件头物证来源标记 3 处｜断言 53 条，带锚 0 条	8
+T174	src/graphwar_life_manager.rs	测试	G-binary 5 / G-corpus 0 / S-self 3 / U 0	生命状态两表/位掩码来自 .rodata；3 条是表操作自洽｜断言 48 条，带锚 1 条	8
+T175	src/graphwar_lobby_control.rs	测试	G-binary 4 / G-corpus 0 / S-self 0 / U 0	自动锚定率 0%（0/6 断言带锚）+ 文件头物证来源标记 5 处｜断言 6 条，带锚 0 条	4
+T176	src/graphwar_local_player_manager.rs	测试	G-binary 14 / G-corpus 0 / S-self 0 / U 0	自动锚定率 4%（1/27 断言带锚）+ 文件头物证来源标记 5 处｜断言 27 条，带锚 1 条	14
+T177	src/graphwar_mode_manager.rs	测试	G-binary 4 / G-corpus 0 / S-self 2 / U 0	模式判别值/icon 表来自 .rodata；2 条是 setter 自洽｜断言 20 条，带锚 1 条	6
+T178	src/graphwar_module_container.rs	测试	G-binary 0 / G-corpus 0 / S-self 1 / U 0	自动锚定率 0% + 自洽关键词 0 条｜断言 5 条，带锚 0 条	1
+T179	src/graphwar_name_manager.rs	测试	G-binary 10 / G-corpus 0 / S-self 0 / U 0	自动锚定率 7%（2/27 断言带锚）+ 文件头物证来源标记 6 处｜断言 27 条，带锚 2 条	10
+T180	src/graphwar_nodes.rs	测试	G-binary 24 / G-corpus 0 / S-self 3 / U 0	11 thunk/符号/调用点来自二进制；3 条是表内部一致｜断言 46 条，带锚 0 条	27
+T181	src/graphwar_obstacle_manager.rs	测试	G-binary 0 / G-corpus 0 / S-self 3 / U 0	自动锚定率 0% + 自洽关键词 0 条｜断言 23 条，带锚 0 条	3
+T182	src/graphwar_plane.rs	测试	G-binary 9 / G-corpus 0 / S-self 0 / U 0	自动锚定率 3%（1/29 断言带锚）+ 文件头物证来源标记 3 处｜断言 29 条，带锚 1 条	9
+T183	src/graphwar_plane_pos_manager.rs	测试	G-binary 6 / G-corpus 0 / S-self 0 / U 0	自动锚定率 0%（0/48 断言带锚）+ 文件头物证来源标记 4 处｜断言 48 条，带锚 0 条	6
+T184	src/graphwar_play_screen_control.rs	测试	G-binary 12 / G-corpus 0 / S-self 18 / U 0	winner_byte / panic 行 561 / 六档时长 来自二进制 ⇒ G；弹道生命周期与时钟状态机 18 条是我方重建的行为，期望值只能由我方模型给出｜断言 124 条，带锚 2 条	30
+T185	src/graphwar_player_manager.rs	测试	G-binary 10 / G-corpus 0 / S-self 0 / U 0	自动锚定率 7%（2/27 断言带锚）+ 文件头物证来源标记 5 处｜断言 27 条，带锚 2 条	10
+T186	src/graphwar_player_screen_control.rs	测试	G-binary 16 / G-corpus 0 / S-self 0 / U 0	自动锚定率 0%（0/59 断言带锚）+ 文件头物证来源标记 7 处｜断言 59 条，带锚 0 条	16
+T187	src/graphwar_rank_manager.rs	测试	G-binary 8 / G-corpus 0 / S-self 0 / U 0	自动锚定率 12%（2/17 断言带锚）+ 文件头物证来源标记 6 处｜断言 17 条，带锚 2 条	8
+T188	src/graphwar_replay_player.rs	测试	G-binary 0 / G-corpus 6 / S-self 6 / U 0	回放驱动的 tick 推进来自真回放（G-corpus）；6 条是我方状态机自洽｜断言 61 条，带锚 0 条	12
+T189	src/graphwar_root_node.rs	测试	G-binary 23 / G-corpus 0 / S-self 2 / U 0	15 屏 .rodata 地址 / init word 来自二进制；2 条是环回自洽｜断言 136 条，带锚 19 条	25
+T190	src/graphwar_server_broker_handler.rs	测试	G-binary 14 / G-corpus 0 / S-self 0 / U 0	自动锚定率 5%（2/41 断言带锚）+ 文件头物证来源标记 7 处｜断言 41 条，带锚 2 条	14
+T191	src/graphwar_shot_calculator.rs	测试	G-binary 16 / G-corpus 0 / S-self 3 / U 0	点数组/停止判据来自真二进制与夹具；3 条是内部一致性｜断言 23 条，带锚 0 条	19
+T192	src/graphwar_soldier_manager.rs	测试	G-binary 12 / G-corpus 0 / S-self 0 / U 0	自动锚定率 0%（0/28 断言带锚）+ 文件头物证来源标记 5 处｜断言 28 条，带锚 0 条	12
+T193	src/graphwar_stream_buffer.rs	测试	G-binary 28 / G-corpus 0 / S-self 4 / U 0	帧格式字面量来自 .rodata；4 条是我方 read/write 往返｜断言 29 条，带锚 3 条	32
+T194	src/graphwar_team_manager.rs	测试	G-binary 16 / G-corpus 0 / S-self 4 / U 0	少人侧/tag 位型来自二进制；4 条是分配过程自洽｜断言 42 条，带锚 0 条	20
+T195	src/graphwar_tick_handler.rs	测试	G-binary 15 / G-corpus 0 / S-self 0 / U 0	G-binary：16 666 666 ns 定步（立即数）+ frida 真机读数（docs/06 §63）｜断言 54 条，带锚 5 条	15
+T196	src/graphwar_turn_manager.rs	测试	G-binary 23 / G-corpus 6 / S-self 6 / U 0	6 条 replay_1782…/1793… 的轮转序列是**真回放**里读出来的 ⇒ G-corpus；6 条是我方游标行为自洽｜断言 164 条，带锚 8 条	35
+T197	src/math_function.rs	测试	G-binary 13 / G-corpus 0 / S-self 0 / U 0	G-binary：求值器/解析器有 fixtures/eval.tsv|parse.tsv|parse_matrix_truth.tsv（unicorn）｜断言 46 条，带锚 0 条	13
+T198	src/plane.rs	测试	G-binary 5 / G-corpus 0 / S-self 2 / U 0	20 px/单位、1000×600 画布来自二进制常量；2 条是掩膜自洽｜断言 15 条，带锚 0 条	7
+T199	src/server.rs	测试	G-binary 3 / G-corpus 0 / S-self 0 / U 0	自动锚定率 0%（0/7 断言带锚）+ 文件头物证来源标记 4 处｜断言 7 条，带锚 0 条	3
+T200	src/server_broker_request_connection.rs	测试	G-binary 12 / G-corpus 0 / S-self 0 / U 0	自动锚定率 0%（0/18 断言带锚）+ 文件头物证来源标记 6 处｜断言 18 条，带锚 0 条	12
+T201	src/turnstate.rs	测试	G-binary 12 / G-corpus 0 / S-self 0 / U 0	自动锚定率 0%（0/5 断言带锚）+ 文件头物证来源标记 4 处｜断言 5 条，带锚 0 条	12
+T202	tests/ai_explain.rs	测试	G-binary 9 / G-corpus 0 / S-self 4 / U 0	4 条是确定性/种子敏感性/内部一致性（同境同种子必须同解、换种子必须不同、档位表能映射回分档）；其余钉难度分档/评分常数（docs/147 地址）｜断言 42 条，带锚 1 条	13
+T203	tests/axis_drawer.rs	测试	G-binary 11 / G-corpus 0 / S-self 0 / U 0	常数/.rodata 颜色四元组/地址区间 0x4e05b0+0x670｜断言 80 条，带锚 5 条	11
+T204	tests/broker.rs	测试	G-binary 3 / G-corpus 0 / S-self 0 / U 1	3 条对真实抓包 protocol_match.jsonl:83-86；room_table_expires 是内部语义（判不出档）｜断言 14 条，带锚 0 条	4
+T205	tests/campaign_data.rs	测试	G-binary 10 / G-corpus 0 / S-self 4 / U 0	对 docs/archive/118 §7.1（每格带 C 立即数地址 / R 回放统计）⇒ G；4 条是『我方 kernel vs 我方 client / level_manager 副本』parity｜断言 139 条，带锚 0 条	14
+T206	tests/diff_conv.rs	测试	G-binary 0 / G-corpus 10 / S-self 1 / U 1	值来自回放（逐位 / 修正文本 / 爆炸点）⇒ G-corpus；strict_policy 是策略自洽；real_corpus_* 缺语料时跳过｜断言 48 条，带锚 6 条	12
+T207	tests/diffconv_parity.rs	测试	G-binary 0 / G-corpus 0 / S-self 2 / U 0	比的不是我方 vs 真值，是**我方收敛层 vs 我方内核**两条路径逐位一致 ⇒ 纯 S-self｜断言 10 条，带锚 0 条	2
+T208	tests/effect_drawer.rs	测试	G-binary 14 / G-corpus 0 / S-self 0 / U 0	48 字节布局/1-600 定步/7 phase/槽 0x1ba860｜断言 116 条，带锚 19 条	14
+T209	tests/entity_drawer.rs	测试	G-binary 18 / G-corpus 0 / S-self 1 / U 0	18 条钉 .rodata 槽/指令立即数；sprite_transform_matches_update_sprite_arithmetic 把公式重抄当期望 ⇒ docs/06 §58 那条活了 557 个 commit 的错断言（现由指令复核背书，形态仍是镜像）｜断言 168 条，带锚 20 条	19
+T210	tests/events.rs	测试	G-binary 6 / G-corpus 0 / S-self 0 / U 0	dispatch 名表/判别值来自 0x3d38f0 解出（真二进制）｜断言 30 条，带锚 1 条	6
+T211	tests/evidence.rs	测试	G-binary 6 / G-corpus 0 / S-self 0 / U 0	常量位型（.rodata 原始比特）｜断言 13 条，带锚 4 条	6
+T212	tests/fire_batch_driver.rs	测试	G-binary 0 / G-corpus 3 / S-self 1 / U 0	批内 +3 GameStateInfo / 一个批一次广播来自 130 份真回放实测（docs/141 §3）⇒ G-corpus；criterion_is_the_batch_not_the_file 是内部一致性｜断言 11 条，带锚 0 条	4
+T213	tests/golden.rs	测试	G-binary 3 / G-corpus 0 / S-self 1 / U 0	parse/eval/path 三个夹具=unicorn 真二进制；end_to_end_shot_is_stable 只断言点数和弦长（不变量）｜断言 14 条，带锚 0 条	4
+T214	tests/graphwar_ad_switch.rs	测试	G-binary 8 / G-corpus 0 / S-self 0 / U 0	字段偏移 0x18 / 38 字节 ad_unit_id / 6 函数｜断言 42 条，带锚 4 条	8
+T215	tests/graphwar_audio_control.rs	测试	G-binary 11 / G-corpus 0 / S-self 2 / U 0	vtable/立即数/元素步长 0x18 来自二进制；2 条 mute/清队列行为自洽｜断言 76 条，带锚 1 条	13
+T216	tests/graphwar_backend.rs	测试	G-binary 8 / G-corpus 0 / S-self 0 / U 0	18 方法/4 锚/字段偏移 0x110/0x228｜断言 45 条，带锚 2 条	8
+T217	tests/graphwar_button.rs	测试	G-binary 18 / G-corpus 0 / S-self 0 / U 0	6 方法地址/信号槽 .rodata/偏移 0x18/0x40/0x50｜断言 115 条，带锚 26 条	18
+T218	tests/graphwar_client_connection_handler.rs	测试	G-binary 11 / G-corpus 0 / S-self 0 / U 0	11 函数 arm64 size / 16 条 Location / 标签位 0x8000…｜断言 65 条，带锚 8 条	11
+T219	tests/graphwar_color_manager.rs	测试	G-binary 7 / G-corpus 0 / S-self 2 / U 0	两张 6 色表/偏移/载荷来自 .rodata；tables_are_disjoint 是内部一致性｜断言 39 条，带锚 1 条	9
+T220	tests/graphwar_computer_player_manager.rs	测试	G-binary 6 / G-corpus 0 / S-self 2 / U 0	分档边界/种群来自 .rodata；elite=pop/5 与名字池是内部推导｜断言 47 条，带锚 2 条	8
+T221	tests/graphwar_effect_manager.rs	测试	G-binary 5 / G-corpus 0 / S-self 2 / U 0	寿命 3600/类型码/订阅来自立即数与 .rodata；tick_emits_nothing 等是行为自洽｜断言 38 条，带锚 0 条	7
+T222	tests/graphwar_entity_effect_manager.rs	测试	G-binary 7 / G-corpus 0 / S-self 2 / U 0	皮肤前缀/类型映射来自 .rodata 串与表；两条是空表/计数自洽｜断言 50 条，带锚 0 条	9
+T223	tests/graphwar_function_input.rs	测试	G-binary 11 / G-corpus 0 / S-self 1 / U 0	23 锚/28 折叠表/字节立即数；1 条 unknowns_are_declared 自洽｜断言 55 条，带锚 5 条	12
+T224	tests/graphwar_game_client.rs	测试	G-binary 19 / G-corpus 0 / S-self 0 / U 0	36 函数/8 对请求构造器/命令键立即数 0xa/0x4 来自反汇编｜断言 81 条，带锚 17 条	19
+T225	tests/graphwar_game_recorder.rs	测试	G-binary 7 / G-corpus 0 / S-self 0 / U 0	32 订阅/状态 6/路径字面量/一行 JSON 序｜断言 36 条，带锚 1 条	7
+T226	tests/graphwar_game_state_manager.rs	测试	G-binary 9 / G-corpus 0 / S-self 4 / U 0	钉 GameState 表/winner_byte/auto_fire 的 ⇒ G；4 条是我方两路径 parity（fire vs batch、纯几何、execute_results、handle_tick）｜断言 65 条，带锚 0 条	13
+T227	tests/graphwar_graphics_manager.rs	测试	G-binary 7 / G-corpus 0 / S-self 2 / U 0	三张表偏移 0x150/0x180/0x1b0 与 tag 位来自二进制｜断言 56 条，带锚 6 条	9
+T228	tests/graphwar_lan_broadcaster_v6.rs	测试	G-binary 8 / G-corpus 0 / S-self 1 / U 0	组播地址/1s 周期/10s TTL/结构 0xc0 来自二进制｜断言 48 条，带锚 0 条	9
+T229	tests/graphwar_lan_vbox.rs	测试	G-binary 12 / G-corpus 0 / S-self 2 / U 0	节点名/偏移/Location 锚来自 .rodata/.symtab；2 条自洽｜断言 93 条，带锚 7 条	14
+T230	tests/graphwar_level_manager.rs	测试	G-binary 12 / G-corpus 0 / S-self 0 / U 0	21 关权威表（docs/10 §4，C 列立即数）/存档 7 字节｜断言 63 条，带锚 5 条	12
+T231	tests/graphwar_lobby_control.rs	测试	G-binary 6 / G-corpus 0 / S-self 0 / U 0	节点名/回调偏移 0x48/互斥按钮（cmp 结构）｜断言 22 条，带锚 0 条	6
+T232	tests/graphwar_local_player_manager.rs	测试	G-binary 7 / G-corpus 0 / S-self 0 / U 0	5 条请求 tag 59/50/52/54/66 与载荷｜断言 45 条，带锚 0 条	7
+T233	tests/graphwar_long_press_animation.rs	测试	G-binary 12 / G-corpus 0 / S-self 0 / U 0	7 函数/常量 .rodata 位型/几何 10.0/30.0/15.0｜断言 86 条，带锚 16 条	12
+T234	tests/graphwar_module_container.rs	测试	G-binary 15 / G-corpus 0 / S-self 2 / U 0	25/23/20 计数与块地址来自 .symtab；2 条是容器行为自洽｜断言 117 条，带锚 1 条	17
+T235	tests/graphwar_name_manager.rs	测试	G-binary 6 / G-corpus 0 / S-self 0 / U 0	订阅/tag/载荷 0x20｜断言 33 条，带锚 1 条	6
+T236	tests/graphwar_nodes.rs	测试	G-binary 11 / G-corpus 0 / S-self 0 / U 0	11 thunk 地址/arm64 符号/调用点｜断言 50 条，带锚 11 条	11
+T237	tests/graphwar_plane.rs	测试	G-binary 17 / G-corpus 0 / S-self 0 / U 1	变换/槽 0x9bc018…/符号名都是二进制物证；1 条 gdext 入口是推断｜断言 57 条，带锚 14 条	18
+T238	tests/graphwar_player_manager.rs	测试	G-binary 6 / G-corpus 0 / S-self 0 / U 0	4 方法/载荷 8/级联 (6)｜断言 30 条，带锚 3 条	6
+T239	tests/graphwar_player_screen_control.rs	测试	G-binary 11 / G-corpus 0 / S-self 0 / U 0	8 锚/22 行号/节点访问器（Location+xref）｜断言 69 条，带锚 9 条	11
+T240	tests/graphwar_rank_manager.rs	测试	G-binary 8 / G-corpus 0 / S-self 0 / U 0	载荷 12/tag 66/67/表偏移 0x18｜断言 43 条，带锚 1 条	8
+T241	tests/graphwar_replay_control.rs	测试	G-binary 5 / G-corpus 0 / S-self 0 / U 0	4 模式按钮/场景字面量/按 tick 推进｜断言 24 条，带锚 0 条	5
+T242	tests/graphwar_replay_reader.rs	测试	G-binary 9 / G-corpus 0 / S-self 0 / U 0	字面量/目录名/帧格式来自 .rodata 与 gzip 真流｜断言 35 条，带锚 0 条	9
+T243	tests/graphwar_root_node.rs	测试	G-binary 11 / G-corpus 0 / S-self 0 / U 0	15 屏 .rodata 地址 / 12 命令键长度 / init word 0x08010000｜断言 52 条，带锚 18 条	11
+T244	tests/graphwar_server_broker_handler.rs	测试	G-binary 6 / G-corpus 0 / S-self 1 / U 0	6 函数/阈值位型 0x3f747ae147ae147b；1 条 start/stop 行为自洽｜断言 40 条，带锚 2 条	7
+T245	tests/graphwar_setup_control.rs	测试	G-binary 21 / G-corpus 0 / S-self 2 / U 0	钉 .rodata 图标/名字表/长度立即数/抓包串 ⇒ G；2 条自洽｜断言 141 条，带锚 5 条	23
+T246	tests/graphwar_soldier_manager.rs	测试	G-binary 6 / G-corpus 0 / S-self 0 / U 0	两列行/级联 tag 14/载荷 8｜断言 23 条，带锚 0 条	6
+T247	tests/graphwar_stream_buffer.rs	测试	G-binary 8 / G-corpus 0 / S-self 1 / U 0	大端长度前缀 0x00 0x31/4096 上限/错误串 .rodata；1 条我方 read-write 往返｜断言 39 条，带锚 4 条	9
+T248	tests/graphwar_target_manager.rs	测试	G-binary 7 / G-corpus 0 / S-self 0 / U 0	tag 14/23 + queue_end_turn_trigger 的内联判断｜断言 31 条，带锚 0 条	7
+T249	tests/graphwar_team_manager.rs	测试	G-binary 7 / G-corpus 0 / S-self 0 / U 0	少人侧入队/tag 24/25 位型｜断言 22 条，带锚 2 条	7
+T250	tests/graphwar_texture_loader.rs	测试	G-binary 6 / G-corpus 0 / S-self 0 / U 0	三表偏移/23/17/28 条 res:// 串/双斜杠 typo｜断言 33 条，带锚 0 条	6
+T251	tests/graphwar_video_writer.rs	测试	G-binary 6 / G-corpus 0 / S-self 0 / U 0	track 名 13 字节/60 fps/偶数对齐｜断言 31 条，带锚 1 条	6
+T252	tests/half_step.rs	测试	G-binary 2 / G-corpus 0 / S-self 5 / U 0	probe 与生产逐位相同 / 语料不复检 / 构造用例退回次数 / stats 自洽都是我方自洽；ode_with_recheck_diverges_at_point_78_on_divx 与 documented_real_case 的期望值来自 path.tsv（真二进制）｜断言 47 条，带锚 0 条	7
+T253	tests/last_five.rs	测试	G-binary 21 / G-corpus 0 / S-self 2 / U 0	arm64 .symtab 真名/地址/`.rodata` 字面量/Location 行号 ⇒ G；2 条是我方表内部一致（合计 8 之类）｜断言 141 条，带锚 44 条	23
+T254	tests/live_hits.rs	测试	G-binary 13 / G-corpus 0 / S-self 0 / U 0	士兵/障碍/命中点全部来自 tools/capture_net_raw.js 的一次真实对局抓包｜断言 36 条，带锚 0 条	13
+T255	tests/misc_modules.rs	测试	G-binary 30 / G-corpus 0 / S-self 15 / U 2	钉 .rodata/立即数的（token 正则 77 字节、优先级表、掩码 0x3fe27…）是 G；15 条是自洽（我方 parse→reorder→我方输出、round_trip、幂等、FIFO）；2 条判不出｜断言 119 条，带锚 3 条	47
+T256	tests/ode_stop.rs	测试	G-binary 6 / G-corpus 0 / S-self 0 / U 0	停止判据逐指令（±25/±15、NaN、预算 20000）｜断言 24 条，带锚 0 条	6
+T257	tests/parse_stray_paren.rs	测试	G-binary 3 / G-corpus 0 / S-self 0 / U 0	真值来自 unicorn 直接 call 0x4ed670｜断言 7 条，带锚 0 条	3
+T258	tests/plane.rs	测试	G-binary 6 / G-corpus 0 / S-self 0 / U 0	变换式与掩膜语义来自 docs/08 的 Ghidra 伪代码（观测）｜断言 17 条，带锚 0 条	6
+T259	tests/play_control.rs	测试	G-binary 8 / G-corpus 0 / S-self 0 / U 0	5 个 widget 取反/15 个 remote 事件名/行号 561｜断言 32 条，带锚 9 条	8
+T260	tests/player_showcase.rs	测试	G-binary 21 / G-corpus 0 / S-self 1 / U 0	10 函数/21 锚点/偏移全部来自符号表与 Location｜断言 168 条，带锚 24 条	22
+T261	tests/print_roundtrip_chain.rs	测试	G-binary 5 / G-corpus 0 / S-self 0 / U 0	输入=回放报文原文/位模式；舍入语义来自真二进制 {:.3}｜断言 17 条，带锚 8 条	5
+T262	tests/replay_diff.rs	测试	G-binary 1 / G-corpus 8 / S-self 2 / U 1	回放字节是真值；两条比对器负样本=我方构造；1 条缺语料跳过｜断言 38 条，带锚 0 条	12
+T263	tests/residual_fold.rs	测试	G-binary 3 / G-corpus 0 / S-self 0 / U 0	期望值=回放报文原文与位模式（外部数据）｜断言 5 条，带锚 2 条	3
+T264	tests/server_broker_request_connection.rs	测试	G-binary 4 / G-corpus 0 / S-self 1 / U 0	帧长 u16 大端/身份串/Location；1 条读侧行为自洽｜断言 28 条，带锚 2 条	5
+T265	tests/server_match.rs	测试	G-binary 0 / G-corpus 0 / S-self 4 / U 0	真 TCP 端到端只证明『我方服务端+我方客户端能跑完一局』⇒ 全是 S-self（判据是能跑通，不是与真值对拍）｜断言 48 条，带锚 0 条	4
+T266	tests/sim_turns.rs	测试	G-binary 0 / G-corpus 14 / S-self 3 / U 0	批内分组/顺序来自 130 份真回放（docs/141）；3 条是收集器不变量｜断言 97 条，带锚 0 条	17
+T267	tests/sym_match.rs	测试	G-binary 5 / G-corpus 0 / S-self 0 / U 0	对 sym_match.tsv 的一致性 + 已知锚 0x3dca1c（夹具来自两架构字节）｜断言 15 条，带锚 4 条	5
+T268	tests/to_text.rs	测试	G-binary 5 / G-corpus 0 / S-self 2 / U 0	5 条对真二进制 0x4ec160 夹具；往返结构/语义两条是自洽｜断言 24 条，带锚 0 条	7
+T269	tests/weak_caller.rs	测试	G-binary 17 / G-corpus 0 / S-self 0 / U 0	39/35/26 单态化与 Location 行号来自符号表与 .rela.dyn｜断言 78 条，带锚 8 条	17
+T270	tests/win_rule.rs	测试	G-binary 6 / G-corpus 0 / S-self 4 / U 0	胜负判据的**结构**（一条判据）已由 docs/150 指到二进制，但 4 条是『我方两种关卡走同一条路径』的自洽｜断言 46 条，带锚 0 条	10
+T271	tests/wire_format.rs	测试	G-binary 9 / G-corpus 0 / S-self 0 / U 0	三方对账：serialize_field 指令序 + WIRE_SPEC + 真实抓包｜断言 45 条，带锚 0 条	9
