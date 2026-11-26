@@ -9384,3 +9384,209 @@ $PY tools/crossarch_funcs.py --libm-probe && $PY tools/crossarch_funcs.py --cont
 | **预注册里 T7/T8 我把"非表"注册成了表** | T7 是字符串池片段、T8 是标量常量簇，二者都不该用"表"的口径判。跑完**没有改预测**，而是在 TSV 的 D2/D3 段把性质写清并说明"不参与结论"。 |
 | **"数常量出现几次"这条口径** | 复算 §19 §4.0.3 的数字**完全复现**（0.01=2/2/1、0.001=1/1/2、200.0=1/0/3…）⇒ 那条旧结论是对的，本轮只是换了个能判的口径（比整张表 / 比函数输出）。 |
 | **地址口径** | 规格与旧文档写的 "Ghidra 地址 = ELF vaddr + `0x100000`" 在"从文档取地址去 `.so` 里定位"这个方向上**是错的**（lead 2026-11-26 更正）。本轮**全程按 ELF vaddr 同址装载**，没做任何 `±0x100000` 平移（`0x4eb9d0`/`0x3c2530`/`0x4ed670` 直接当 vaddr 用，命中 `pt_load`/`.symtab` 自洽）。 |
+---
+
+## 64. 证据升档 sweep：439 个 `观测` 级函数里**只有 1 个**能真正隔离对拍（`0x4f5450`，18/18 逐位）—— 其余按「不能跑」的原因分类，这就是 439 分母的**可及上限**（2026-11-26，任务 T13）
+
+> 权威规格 = 共享任务 `task-10` 的任务书（`task-10` 的执行者 = teammate t13，分支 `agent/bit-exact-sweep`）。
+> 一句话：**`观测` 级函数的绝大多数**不是"没去对拍"，而是**本质上无法隔离执行**——
+> 它们要么要一个活着的 Godot 引擎，要么要 `thread_rng`/TLS，要么本体是 gdext 生成的
+> 事件闭包与 `std` 单态化（没有可比的"我方实现"）。本轮把这件事**量化**了，
+> 并把唯一真正可隔离的那个（`PolishNotationConverter::reorder_recursive`）对成了 `逐位`。
+
+### 64.1 结论（先看这 5 行）
+
+| 问题 | 答案 |
+|---|---|
+| 439 里**本质可隔离执行**的 | **129**（`executable` 26 + `needs_state` 103 中状态是纯数据、可造的；判据见 §64.3） |
+| 实际**逐位对拍成**的 | **1**（`0x4f5450` `PolishNotationConverter::reorder_recursive`，18 组输入全等）→ 档位 `观测` → **`逐位`** |
+| 发现**真差异** | **1 条**（解析结果里**非 CONST token 的 `value` 字段**：原版是未初始化内存残渣，我方恒 `0.0`）；另有 1 条**假差异**是我自己 hook 的锅，已修正并记账 |
+| 439 分母的**可及上限** | **≈ 129 / 439 = 29.4 %**，其中**能真正落地对拍的上限**还要再砍：26 个 `executable` 里有 20 个是 `module_container` 的 `get_module::<T>` 单态化（要一个真的 `HashMap<TypeId, Rc<dyn Any>>` 才能跑），**真正「纯标量进出」的一个都没有** |
+| 正对照 | 求值器 `0x4eb9d0` **20/20**、采样器 `0x3c2530` **4/4**、解析器 `0x4ed670` tag 流 **14/14** 逐位相同；两处 ±1 ulp 变异**都报出了差异**（§64.4） |
+
+### 64.2 口径更正（**先记这一条，它决定本轮所有数字有效**）
+
+**地址口径**（2026-11-26 lead 更正，我核实后确认本任务**没有踩到**）：
+
+* `funcstarts_ghidra_va.pkl` 的 13263 条起点，**`min = 0x37b940` 正好是 `.text` 段首、
+  `max = 0x94eb70` 是 `.text` 段尾** ⇒ pkl 里装的就是 **ELF vaddr（模块内偏移）**，
+  文件名里的 `_ghidra_va` 是误导。
+* **文档/pkl 里的地址直接喂 unicorn，不要做 `-0x100000`。** 只有 Ghidra/REA **反编译产出**的
+  `_DAT_xxxx` / `FUN_xxxx` 才是 +0x100000 口径。
+* 本任务的 harness 是**对**的，且是**先验过再跑的**：`analysis/emu.py` 按
+  `mem_map(p_vaddr & ~0xfff, …)` + `mem_write(p_vaddr, blob)` 装载，`emu_start(addr)` 直接用
+  ELF vaddr；`tools/bitexact_*.py` 里**一处 `-0x100000` 都没有**（`grep` 可验）。
+  自证：`0x4f5450` / `0x4eb9d0` / `0x3c2530` / `0x4ed670` 取到的首 8 字节分别是
+  `5541574156415541` / `41574156534883ec` / `5541574156415541` / `5541574156415541`，
+  全是 `push r15/r14/…` 一类的正规 prologue；而 `-0x100000` 后的 `0x2c2530` **落在 `.text` 之外**。
+* 顺带一条**分母口径**：`docs/coverage-matrix.tsv` 的 `status`（`逐位`/`观测`）是**按模块**判的，
+  所以「439 个观测级函数」严格说是「落在观测级模块里的 439 个可归属函数」
+  （67 个模块的 `orig_funcs` 之和）。本节的 439 全部由 `tools/coverage_matrix.py` 的
+  `attribute()` 重算，并用 `assert len(obs) == 439` 钉死。
+
+### 64.3 分类器：三档 + 10 条判据（每条都能指到指令/符号）
+
+产物：`fixtures/bit_exact_plan.txt`（预注册，**先 commit 再跑**，commit `483dbcb`）。
+脚本：`tools/bitexact_classify.py`（capstone 静态扫，只判"能不能隔离执行"，不比任何输出）。
+
+| 档位 | 个数 | 定义 |
+|---|---|---|
+| `executable` | **26** | 指针参数只有「只读输入」与「只写输出」两种 ⇒ 不需要任何既有状态 |
+| `needs_state` | **103** | 有既被读又被写的指针参数（`&mut self` 一类）或写全局 ⇒ 状态是纯数据、**可造** |
+| `isolated_impossible` | **310** | 本体或热路径传递调用里出现引擎派发 / TLS / sys_io / thread / unwind |
+
+**⚠️ 一处分类器 bug（跑完之后才发现，如实记账）**：第一版把 `call` 之后的寄存器来源缓存
+**整表清空**了，连 `rbx`/`rbp`/`r12-r15` 这些 **callee-saved** 寄存器也一起清掉 ——
+于是「`mov %rdi,%rbx` → call → `mov %r14,0x60(%rbx)`」这种「调用后再写回 self」的函数被误判成
+`executable`（实测 `0x4be3e0`）。修法是调用后只清 caller-saved。**影响**：三档从
+`33 / 101 / 304` 变成 `26 / 103 / 310`（`executable` 少了 7 个，全是本该是 `needs_state` 的）。
+**本轮唯一跑的函数 `0x4f5450` 的档位不受影响**（它是 `inout_self:rdi,rdx`，本来就不是 `executable`），
+所以 18/18 的结论**不变**；上面表里的数字已是修后的值。**判据本身没改**，改的是它的实现 bug。
+
+**判据（原文在 `fixtures/bit_exact_plan.txt` §B；这里只留最要紧的三条）**：
+
+1. **`engine_dispatch`（46 个直接命中）** —— `call *off(%reg)` 而 `%reg` 从**运行时才填的全局槽**
+   读出。实测这就是 gdext 的引擎接口表：`0x8abca0`（`draw_arc` 的包装）里
+   `mov 0x10e9a0(%rip),%r15  # 0x9ba6b0` → `movzbl 0x14f0(%r15)`；隔离环境里 `[0x9ba6b0]` 恒 0。
+2. **间接调用要**全部**静态解析，否则会得出相反的结论** —— `.rela.dyn` 的
+   `R_X86_64_RELATIVE` 里有 **8231 条** addend 指向 `.text`：`.got` 基本上就是内部函数指针表，
+   所以 `call *0x…(%rip)` **不是黑盒**（`0x9bc020 → 0x8abca0` 就是 AGENTS.md 那条 `draw_arc` 链）；
+   `GLOB_DAT`/`JUMP_SLOT` 给 libc 导入名；`call *%reg` 回溯 ≤15 条找 `mov %reg,[%rip+G]` 再判。
+   回溯不出 ⇒ `indirect_unknown`，**按 `needs_state` 处理，不许假装能跑**。
+3. **panic 路径不能连坐（这条不做，439 会全灭）** ——
+   * `call *slot` 的下一条指令是 `int3`/`ud2` 的，是 panic / `print_error` 收尾
+     （实测 `0x925660` = `__rust_alloc_error_handler`：`call *0x9ba698 ; int3`），**不参与**致命性传递；
+   * 函数体里**没有 `ret`** 且自身致命的节点（`0x94b340` = panic 入口）**不向上传播**。
+   不做这两条：439 个里 **264 个**被 panic 连坐 → `isolated_impossible` 439/439。
+
+**`isolated_impossible` 的 310 个按原因分布**（这决定分母的可及上限）：
+
+| 原因 | 个数 | 说明 |
+|---|---|---|
+| `via:`（热路径传递到引擎边界） | 264 | 自己干净，调用的东西要引擎。**大头是 gdext 的 `Variant`/`String`/`Gd<T>` 转换与绘制包装** |
+| `engine_dispatch`（本体直接派发） | 46 | 本体就有 `call *off(%全局)` |
+| 合计 | **310** | |
+
+按模块看最集中的几处：`graphwar_level_manager` 40 个里 40 个不能跑、`graphwar_game_client` 36/36、
+`graphwar_root_node` 23/23、`graphwar_setup_control` 21/21、`entity_drawer` 14/14、`effect_drawer` 11/11
+—— 全是 GDExtension 类方法（`ready`/`process`/`draw`/`*_info_event` 闭包），
+**它们要的是 Godot 的 `NOTIFICATION` 与场景树，不是"一组数"**。
+⚠️ 这条也直接解释了 `update_sprite`（`0x4b9530`，`docs/06` §58 那个 bug）**为什么躲过三轮**：
+它在 `isolated_impossible` 里（要 `Sprite2D`），本轮 sweep **够不到它**，只能靠客户端像素对拍。
+
+### 64.4 正对照（**跑之前就定了，跑完没改**）
+
+产物：`fixtures/bit_exact_inputs.txt`（预注册输入集，`plan` §C：18 个 `f64` 位模式 +
+18 组 `Vec<FunctionToken>`）；驱动：`tools/bitexact_report.py`。
+
+| 对照 | 真函数 | 我方 | 组数 | 结果 |
+|---|---|---|---|---|
+| P1 求值器 | `0x4eb9d0` | `math_function::eval` | 20 | **20/20 逐位相同** |
+| P2 解析器 | `0x4ed670` | `math_function::parse` | 14 | **tag 流 14/14 逐位相同**（`value` 字段见 §64.5 D3） |
+| P3 采样器 | `0x3c2530` | `graphwar_path_calculator::calculate` | 4 | **4/4 点序列逐位相同** |
+
+**变异对照（证明 harness 不是"永远报相同"）**：
+
+* `eval` 的 `e14`（`x = π`）把 `x` **+1 ulp**、**只改真侧输入** ⇒ harness 报 **1 处不同** ✓
+  （第一次我用的是 `e01`（`x = +0.0`）：`+1 ulp = 5e-324` 是 denormal，`sin()` 之后结果仍是 `3.0`
+  —— 那不是 harness 失灵，是输入**真的没变**。选变异点要选"1 ulp 会传到输出"的地方。）
+* `pnc` 的 `c03` 把 `CONST 1.0` 改成 `1.0+1ulp`、只改真侧 ⇒ harness 报 **1 处不同** ✓
+
+### 64.5 真差异清单（**只报告，没改 `src/`**；全文见 `fixtures/bit_exact_sweep_diffs.md`）
+
+**D3（唯一真差异）：`MathFunction` 解析结果里非 `CONST` token 的 `value` 字段**
+
+* 我方 `Token.value` 对非 `CONST` tag 恒 `0.0`；**原版那 8 字节是未初始化内存残渣**。
+* 证据（14 组里 13 组不同，tag 流 14/14 相同）：
+
+  | case | 表达式 | 原版 value（每 token） |
+  |---|---|---|
+  | p01 | `x` | `0x0000000000000004` |
+  | p05 | `(x+y)*3` | 全 `0x…08` |
+  | p06 | `sqrt(x^2+y^2)` | `0x…10` 与 `2.0` 混杂 |
+  | p12 | `abs(x)+ln(x)+log(x)+tan(x)` | 全 `0x…20` |
+  | p14 | `pi*x` | 全 `3.141592653589793` |
+
+* 判"不是我方写错"的三条：① 取值随**输入串长度**单调变大（1 字符→`0x4`、7 字符→`0x8`、
+  9–12 字符→`0x10`、30 字符→`0x20`），**同一串内各 token 还不同** ⇒ 是分配残渣不是语义值；
+  ② **每例换一台干净的 unicorn**（新 `Gw()`、堆页全新）结果**一模一样** ⇒ 不是 harness 的堆复用假象
+  （这条我先怀疑并实测排除了）；③ `value` 只在 tag 17(`CONST`) 时被求值器/转换器使用。
+* **分档**：tag 流 = `逐位`；"原版那 8 字节是未初始化内存" = **`推断`**
+  （**缺的证据**：读不到真机进程里那块的绝对地址与内容；要坐实得在 arm64 未 strip 版上
+  对 `FunctionToken::new` 的返回值逐字段下断点）。
+* **影响面**：语义无影响；但**字节级复现**（把 token 数组当报文/哈希/比较输入）**不可能逐字节相同**
+  —— 不要把这一项写成 `逐位`。
+* 最小复现（`fixtures/bit_exact_sweep_diffs.md` §D3 有完整命令）：
+  `bitexact_run.py real --mode parse` 与 `--mode ours` 各跑一遍再 `diff`，
+  第 3 列起的 `value` 位不同；把 `tag:bits` 的 `:bits` 去掉再 diff 就是 0 条。
+
+**D4（假差异，已修，记账防复踩）**：`analysis/emu.py` 的 libm hook 用的是 **Python 的 `math`**
+（`_safe(math.sin)`，异常吞成 `float('nan')` = **+NaN**），而 glibc 的 `sin(±inf)` 给 **−NaN**
+⇒ 第一版 `eval` 的 2 组 `sin(±inf)+3` 报"不同"。**改成 `ctypes` 直调 `libm.so.6` 后逐位相同。**
+教训：**正对照不过先怀疑自己的 hook，别急着报差异。**
+
+### 64.6 产物与复跑命令（照抄可跑）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$(git rev-parse --show-toplevel)     # 本分支 agent/bit-exact-sweep 的 checkout
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target      # ⚠️ 单独一行
+export HOME=$WT/.fakehome
+export PY=$MAIN/.reference/venv/bin/python      # unicorn 2.1.4 / capstone
+cd $WT
+
+# ① 分类（只读，55 s；判据在脚本 docstring 与 fixtures/bit_exact_plan.txt §B）
+$PY tools/bitexact_classify.py --json .bitexact_classify.json
+# ② 我方侧 harness
+cargo build --release --offline -q --example bitexact_harness
+# ③ 正对照 + 变异对照 + sweep + 生成两份 fixture（约 3 min）
+$PY tools/bitexact_report.py --work .bitexact_work --write
+```
+
+产物（都已入库）：
+
+| 文件 | 内容 |
+|---|---|
+| `fixtures/bit_exact_plan.txt` | 预注册：439 行分类表 + 10 条判据 + 输入集 + 执行清单（commit `483dbcb`） |
+| `fixtures/bit_exact_inputs.txt` | 预注册输入集：`[parse]`14 / `[eval]`20 / `[path]`4 / `[pnc]`18 |
+| `fixtures/bit_exact_sweep.tsv` | **442 行** = 439 + 3 条正对照；列：函数名/地址/模块/我方文件:行/档位/**跑没跑**/**是否全逐位相同**/首个不一致/hex/备注 |
+| `fixtures/bit_exact_sweep_diffs.md` | 差异清单 D1–D4 + 最小复现 |
+| `tools/bitexact_classify.py` | 静态分类器（capstone） |
+| `tools/bitexact_plan.py` | 预注册清单生成器 |
+| `tools/bitexact_run.py` | 真二进制侧（unicorn 直调）+ 我侧 + 逐行 diff |
+| `tools/bitexact_report.py` | 正对照 / 变异对照 / 统计 / 两份产物生成 |
+| `examples/bitexact_harness.rs` | 我方侧入口（`--mode parse\|eval\|path\|pnc`，**新文件**） |
+
+### 64.7 遗留 / 未做（**这部分比上面的数字重要**）
+
+1. **只升档了 1 个函数**，别把它读成"439 已经被扫过"。
+   439 的构成：**310 不能跑**（310 = 264 传递 + 46 本体，全是引擎/TLS/IO 边界）、
+   **26 可跑但没跑**、**103 需要状态且本轮没造**。TSV 里逐行写着 `跑没跑`。
+2. **26 个 `executable` 为什么没跑**：其中 **20 个是 `graphwar_module_container` 的
+   `get_module::<T>` 单态化**（`&HashMap<TypeId, Rc<dyn Any>>` 查表）——要跑就得在 unicorn 里
+   造一个**真的 hashbrown `RawTable`**（`ctrl` 指针 + 桶掩码 + `growth_left`），造空表也够不到
+   「命中」那条分支；剩下 6 个（`graphwar_function_evolutionator` 4 个 + `graphwar_audio_control` 1 个
+   + `graphwar_remote_event_handler` 1 个）的 ABI 我还没逐个落定，
+   **没落定就不喂**（猜着喂出来的「相同」没有意义）。
+3. **`0x4600e0` / `0x4602f0` 查明不是模块逻辑**：`imul $0x150` + 三段自递归 +
+   `lea (%rax,%rax,2)` ⇒ 是 **`core::slice::sort` 的 merge-sort 单态化**（元素 0x150 = 336 B），
+   我方没有对应实现 ⇒ **不可比**。同类还有 `weak_caller` 的 39 个单态化（`Weak<RefCell<T>>`
+   `upgrade` 语义）、`module_container` 的 20 个。⇒ 439 里有一大块**根本没有"我方实现"可比**，
+   这一层应当从"可升档分母"里再扣掉。
+4. **下一个最值得跑的**：`0x4be3e0`（`graphwar_plane.rs`，87 条指令，分类 `needs_state`/`inout_self:rdi`）——
+   `mov (%rsi),%rax` 取 tag、`xor 0x8000000000000000` 归一化后比 `0x28`/`0x29`；
+   `movsd 0x18(%rsi),%xmm0` → `call *0x9bb288`（libc 数学，可 hook）→ `mulsd 0x19fbd0`
+   → `divsd 0x19faa8` → `maxsd/minsd 0x19fbc0/0x19f7e0` → `cvttsd2si`；再对 `+0x8`/`+0x10`
+   两个 f64 走**向量化** `mulpd 0x19d420` / `divpd 0x19ce00` / `addpd 0x19ee90` + 同样 clamp。
+   **纯数值**（`px = …`），无引擎依赖。只差"`rdi` 是 `&mut self` 还是输出缓冲"这一步判定。
+5. **`pow` / `atan2` 的 hook 仍走 Python `math`**（`_do_import` 里写死的分支，不在 `MATH` 字典里），
+   本轮输入没用到；要用之前得照 §64.5 D4 的办法换成 `ctypes` libm，否则会再报假差异。
+6. **`analysis/emu.py` 的 libm hook 是上游文件**，我没改它（红线：不改上游），
+   只在 `tools/bitexact_run.py` 里 patch `emu.MATH`。⇒ 任何**直接**用 `tools/posy_unicorn.py`
+   跑 ±inf/NaN 输入的结论都要打折。
+7. **`docs/02-module-map.md` §18 的地址↔源位置表只覆盖 240/439**，另 199 个是匿名单态化/闭包
+   （`weak_caller` 39 + `module_container` 20 + 事件闭包…），TSV 里 `函数名` 列是 `-`。
+   要把这 199 个也点出名字，得另做一版 `class_probe`（本轮没做）。
+8. **没碰**：`src/**`（红线段，一处没改）、`client/**`、`tools/posy_unicorn.py`、
+   护栏/快照、`docs/00-status.md`、`docs/HANDOVER.md`、`docs/coverage-matrix.*`。
