@@ -39,6 +39,8 @@ var lan_port := GwLanDiscovery.DEFAULT_PORT
 var broker_address := ""
 
 var _was_joined := false
+## 本局已经**正常结束**（`GameStateInfo{EndingGame}` 到达过）。见 `_on_session_closed()`。
+var _ended := false
 
 
 func _ready() -> void:
@@ -69,6 +71,7 @@ func _process(delta: float) -> void:
 func join(host: String, port: int, opts := {}) -> bool:
 	leave()
 	_was_joined = false
+	_ended = false
 	var s := GwNetSession.new()
 	s.auto_start = bool(opts.get("auto_start", true))
 	s.request_player = bool(opts.get("request_player", true))
@@ -88,6 +91,7 @@ func leave() -> void:
 		session.abort()
 		session = null
 	_was_joined = false
+	_ended = false
 
 
 func is_online() -> bool:
@@ -111,12 +115,20 @@ func _on_session_failed(reason: String) -> void:
 func _on_session_closed(reason: String) -> void:
 	if _was_joined:
 		_was_joined = false
+		# **正常结束之后的关连接不是断线**（`docs/06` §77 两侧各验一次）：
+		# 真服务端在 `GameStateInfo{EndingGame}` 之后才关 socket，那不是"你被断开了"。
+		# 第一道闸在 `GwNetSession._on_link_closed()`（`phase == "ended"` 直接 return），
+		# 这里是第二道：即便 `closed` 还是发出来了，也不再翻成 `DisconnectedPopUp`。
+		if _ended:
+			print("[gw2/net] 对局已正常结束，忽略随后的关连接：%s" % reason)
+			return
 		disconnected.emit(reason)
 	else:
 		join_failed.emit(reason)
 
 
 func _on_session_ended(reason: String) -> void:
+	_ended = true
 	ended.emit(reason)
 
 
