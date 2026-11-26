@@ -348,10 +348,29 @@ pub const NAMED_VARIANT_COUNT: usize = 72;
 /// `enum Event` 的**变体总数** = 74（判别值 `0..=73` 连续无缺号，2026-11-07 定死）。
 pub const VARIANT_COUNT: usize = 74;
 
-/// `GameInfo` 结构体（`docs/07` §3.1，观测到 **9 个字段**）。
+/// `GameInfo` 结构体（`docs/07` §3.1，**9 个字段** —— `struct GameInfo with 9 elements`）。
 ///
-/// 字段名来自 serde 字段名表；字段**类型**未证实，这里用的类型是按名字和
-/// 上下文挑的最小表示，**不是**从二进制读出来的布局。
+/// **字段名与顺序：`逐位`**（`tools/wire_fields.py --struct 0x5060d0`：`GameInfo::serialize`
+/// 的 `lea rsi / mov edx,LEN / call <serialize_field 单态>` 序列）。
+///
+/// ⚠️ **本结构体下方这些字段类型不是从二进制读出来的**，是按名字和上下文挑的最小表示。
+/// 每种类型在二进制里都有 `serialize_field` 单态作证（同单态 = 同类型），实测是：
+///
+/// ```text
+/// 0x3cb250  room_name            0x3cc260  game_state            ← enum GameState
+/// 0x3cc060  current_player_count ← 整数族（i64/u64/usize 未分）
+/// 0x3cbab0  address              ← 与 room_name **不是同一个串类型**（两个单态）
+/// 0x3cb560  axis_mode            ← enum AxisMode
+/// 0x3cb670  function_mode        ← enum FunctionMode
+/// 0x3cbf70  turn_mode            ← enum TurnMode
+/// 0x3cbce0  time_mode            ← enum TimeMode
+/// 0x3cbb80  locked               ← bool
+/// ```
+///
+/// ⇒ 原版这 9 个字段里有 **5 个是枚举**、1 个是整数、2 个是**不同**的串类型。
+/// 本结构体用 `u8`/`u32`/`String` 表示属于**源码级偏差**，已在 `docs/06` §82.4 登记
+/// （改它要引入 5 个枚举并先清理我方 7 处重复的 `AxisMode`/`TurnMode`/`TimeMode`/`GameState`，
+/// 是重构不是"修一处字段"）。**行为无影响**（线上形状仍是字符串/整数，与抓包一致）。
 #[derive(Debug, Clone, Default)]
 pub struct GameInfo {
     pub room_name: String,
