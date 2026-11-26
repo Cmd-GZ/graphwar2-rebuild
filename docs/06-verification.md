@@ -13313,3 +13313,256 @@ PY
 4. **`docs/06` §76.6 第 6 条"修正常数横向 10 px 机制未知"** —— 现在有解，而且是**两条**：
    `Label` 该是 LEFT（不是 CENTER）+ 修正串该带**内核 `correction_text` 那个前导空格**
    （§79.4(a) 的四选一表）。不是"容器几何/HBox 分配"。
+
+## 90. 审计面 ①：`client/` —— 我们自己的 **27 348 行** GDScript 里 **4 941 行是原版规则/数据的第二份实现**（其中 4 523 行是纯游戏规则）、**8 799 行"原版有对应物但没用"**（其中 5 385 行是把原版 `.tscn` 抄成代码）；原版视图层 **27/27 逐字节、真挂在节点上**（2026-11-26，审计员 t35 / 面 ①）
+
+> 判据：`.agent-work/specs/AUDIT-CRITERIA.md`（A–E 分档）+ `AUDIT-1-client.md`（本面怎么做）。
+> 工作树 `.agent-work/cg/wt-t35`、分支 `agent/audit-client`、基线 master `8dddfc4`；**本轮只审计、零改 `client/**`**。
+> 产物：`fixtures/source_audit_client.tsv`（**138 行**，每行一个"函数簇"）+ `tools/audit_client.py`（生成器/自校验器）。
+> 复跑：`python3 tools/audit_client.py`（它自己会重做 27+52 份 `cmp`、重算每个文件的行覆盖、并打印下面所有数字）。
+> 地址口径一律 **ELF vaddr（RVA）**；证据档按 `AGENTS.md` §0.3 标「逐位/观测/推断/未知」。
+> ⚠️ 本节序号取 **90** 是为了避开正在进行的 §80–§84；若与其他审计面撞号，以本标题为准（lead 可重排）。
+
+### 90.0 一页结论
+
+**判决（一句话）：`client/` 现在是「**原版视图脚本（27 份，逐字节，真挂在节点上）+ 我们的控制器**」，
+不是「原版视图 + 原版控制器」。**具体是这七段控制器在我们手里：①屏表路由 + 命令总线（`app/app.gd`，原版
+`graphwar_root_node`）②六个屏的控制器（`screens/{play_screen,lan_lobby,campaign,game_setup,player_screen,
+replay_lobby}.gd` + 8 个弹窗，原版 `graphwar_{play_screen,lobby,campaign,setup,player_screen,replay}_control`）
+③联机协议栈（`net/**` 881+237+212+207+175+165 行，原版 `graphwar_client_connection_handler` /
+`graphwar_remote_event_handler` / `graphwar_stream_buffer`）④函数输入编辑（`play/{function_input,keyboard_input}.gd`，
+原版 `graphwar_function_input`）⑤音频播放（`audio/gw_audio.gd`，原版 `graphwar_audio_control`）⑥四套模式/21 关/
+存档这三张数据表（`app/{modes,campaign,store}.gd`，原版 `graphwar_{mode_manager,campaign_control,player_config}`）
+⑦内核桥（`core/**`，原版没有这一层）。**Rust 侧这七段都有复原实现（多数带地址），但没有一段在管界面。** 原版那 16 个界面控制器的宿主（`.tscn` 根节点、`main.tscn` 的 `GraphwarRootNode`）
+在原版里**没有 GDScript**（90.1 三条判据），所以凡是写在 `client/src/{screens,app,net,play,game,audio,ui,core}/` 里的
+流程/规则，在原版源码里**都不存在**——它们要么属于 Rust 控制器的某个模块（⇒ 我们写了两份 ⇒ **C**），
+要么属于原版 `.tscn`/`.tres`（⇒ 我们把它抄成了代码 ⇒ **B**）。
+
+**我们的代码多少行 / A·B·C 各多少**（`tools/audit_client.py` 现算；行数为"该档覆盖的行数"）：
+
+| 区块 | 行数 | A | B | C | D | N |
+|---|---|---|---|---|---|---|
+| `client/src/`（生产代码，**不含** 27 份原版视图） | **14 000** | **353** | **8 532** | **4 941** | 174 | 0 |
+| `client/tools/*.gd`（headless 验收 + 取证工具） | 12 991 | 447 | 0 | 0 | 11 870 | 674 |
+| `client/scenes/*.tscn` + `project.godot` + `run.sh` | 357 | 0 | 267 | 0 | 0 | 90 |
+| **我们的代码合计** | **27 348** | **800** | **8 799** | **4 941** | **12 044** | **764** |
+| 原版字节（**不算**我们的）：`client/src/views/` 27 份 + `client/tools/recovered/` 52 份 | 1 992 | 1 992 | — | — | — | — |
+| 原版字节但**没挂**（该挂没挂） | 845 | — | 845 | — | — | — |
+
+- **A（353 行，全在 `client/src/`）**＝只有三处：`ui/icons.gd`（172 行，图标名→原版 `res://` 路径映射，出处是
+  31 个 `.tscn` 的 99 处 `icon=`/`texture=` + `.so` `.rodata`）、`ui/assets.gd`（115 行，从使用者 pck 解出的目录按
+  原版路径取资产、缺失就报错**不做占位图**）、`net/wire_samples.gd`（66 行，真实抓包原文当黄金样本）。
+  **这三处都不是"规则"，而是真值数据/加载器**——`client/src/` 里**没有一处**"游戏规则"达到 A。
+- **C（4 941 行，27 段）**＝同一条规则在 Rust 与 GDScript 各有一份，且 **Rust 那份带地址/逐位证据**
+  （其中纯规则 4 523 行、数据表 324 行、控件契约 94 行）。
+  最大五段：`net/session.gd:1-520`（线上事件→状态模型，520 行）、`screens/play_screen.gd:1831-2321`
+  （开火闸门+命中+结算，491 行）、`audio/gw_audio.gd:1-400`、`play/function_input.gd:1-273`、
+  `screens/play_screen.gd:122-370`（玩家配色 249 行）。
+- **B（8 799 行）**＝原版对应物**存在但我们没用/没法用**，于是重写：**视图树手抄 5 385 行**（15 个界面 + 主菜单 +
+  `ui/ui.gd` 积木 + `ui/theme_factory.gd` 主题）、**接缝 2 391 行**（把 Rust 算出来的东西搬上节点；原版不需要这层，
+  因为控制器直接在树上）、**只有 GDScript 版的规则 686 行**（房间表排序/过滤、Join IP 校验、靶子复位、
+  `LevelRules` 的输入侧统计…）、**自造数据 337 行**。
+- **D（12 044 行）**＝headless 验收脚本（`client/tools/*.gd`，期望值由我们自己写，见 §0.5）；
+  **N（764 行）**＝纯工具（dump/截图/资产提取/启动器）。它们**不是复原证据**，但也不是"跑偏"——
+  本节把它们与 A/B/C 分开算，就是为了不把"测试条数"混进进度。
+
+**最该先搬回 Rust 的 10 段**（判据：①是游戏规则 ②**Rust 侧已经有复原实现**，括号里是证据档 ③越大越靠前；
+排序分 = 规则度 × 证据档(逐位3/观测2/推断1) × 行数/100，只是排序辅助、不是证据）：
+
+| # | 段（行） | 落点（Rust 原版模块） | 判据/地址 |
+|---|---|---|---|
+| 1 | `play/function_input.gd` + `play/keyboard_input.gd`（403） | `graphwar_function_input.rs` 的 `Buffer`/`classify_key` | `0x4f3210 move_caret_left`、`0x4f44c0 delete_token_at_caret`（观测，`:228-234`） |
+| 2 | `audio/gw_audio.gd`（400） | `graphwar_audio_control.rs` | `.so` 里有 `[src/graphwar_audio_control.rs:241:17]` 字面量（观测） |
+| 3 | `app/app.gd:1-352`（352） | `graphwar_root_node.rs`：`apply_show_screen`/`Command` | `FN_SHOW_SCREEN=0x3a_f850`、`FN_COMMAND_BUS=0x3b_0830`、`SCREEN_TABLE` 15 个屏名带 `.rodata` 地址 |
+| 4 | `core/expr.gd`（229） | `math_function.rs`（解析器/求值器） | `0x4ed670` 解析器、`0x4eb9d0` 求值器（`docs/02` §17 自校验项，逐位） |
+| 5 | `net/link.gd`（212） | `graphwar_client_connection_handler.rs` | `CONNECT_TIMEOUT_SECS=30`（逐位 arm64 `0x48dccc mov w1,#0x1e`）；**我方写 3 s** ⇒ 见 90.4 |
+| 6 | `net/discovery.gd`（207） | `graphwar_lan_broadcaster_v6.rs` | `ENTRY_TTL_SECS=10`（逐位 `0x3de6e4 cmp x0,#0xa`）、周期 1 s；**我方写 12 s** ⇒ 见 90.4 |
+| 7 | `play_screen.gd:1831-2321`+`2350-2486`（约 180） | `ShotLifecycle`/`TurnClock`/`get_alive_teams` | `0x473520`（逐位同构，`src/game.rs:1352`）、`0x478133`–`0x478236`（逐位） |
+| 8 | `net/frame.gd`（175） | `graphwar_stream_buffer.rs` | `LEN_PREFIX_LEN=2`、`MAX_FRAME_PAYLOAD=0xffff`、5 条错误原文（逐位） |
+| 9 | `play_screen.gd:122-370`（249） | `graphwar_color_manager.rs::pick` | `TEAM_POOL_LEN=6`、`RANDOM_COLOR_MODULO=180`、`udiv/msub`（观测） |
+| 10 | `app/campaign.gd`（157） | `graphwar_campaign_control.rs::LEVEL_INFO` | `level_info()` = `0x4ad380`（逐位+运行时三源 21/21） |
+
+候补（同样是规则、Rust 侧也有，体积小或证据低一档）：`net/broker.gd`(165)、`app/store.gd:154-339`(185)、
+`app/modes.gd`(91)、`play_screen.gd:3021-3436`(联机建模/派发 216)、`app/game_state.gd`(114)、
+`ui/gw_button.gd`(94)、`app/commands.gd`(76)、`game/target_set.gd`(149，判定点缺证据)。
+
+### 90.1 判据①：「原版控制器在 Rust 里、`client/src/screens/*.gd` 是仿制品」——我自己复核了三条
+
+`AGENTS.md` §0.4 的说法成立与否决定整节的方向，所以不能照抄，要自己核（三条都可复跑）：
+
+1. **16 个控制器屏的 `.tscn` 根节点上没有 `script =`**。判据：读 `recovered-src/{play_screen,lan_lobby,campaign,
+   GameSetup,player_screen,replay_lobby,main_menu,endgame_pop_up,join_level_pop_up,add_bot_pop_up,chat_pop_up,
+   confirm_exit_pop_up,connecting_pop_up,disconnected_pop_up,join_ip_pop_up,main}.tscn` 的**第一个 `[node`** 块，
+   16/16 **没有** `script =`（对照：同一批文件里**子节点**上有 **97 处** `path="res://*.gd"`、共 **45 个不同脚本**）。
+   ⇒ 原版这些屏的"根行为"不是 GDScript。
+2. **`main.tscn` 的根节点是扩展类**：`recovered-src/main.tscn:3` = `[node name="GraphwarRootNode"
+   type="GraphwarRootNode"]` —— `type` 是自定义类名 ⇒ 来自 GDExtension。
+3. **`.so` 里能逐字面量看到控制器的 Rust 源文件名**：
+   `grep -ao 'src/graphwar_[a-z_]*\.rs' .reference/game/libgraphwarrust.so | sort -u` ⇒ **57 条**，
+   其中 `graphwar_play_screen_control.rs`、`graphwar_lobby_control.rs`、`graphwar_campaign_control.rs`、
+   `graphwar_player_screen_control.rs`、`graphwar_setup_control.rs`、`graphwar_replay_control.rs`、
+   `graphwar_root_node.rs` 都在（这些是 `panic::Location` 的 `file!()` 字面量）。
+   反向对照：105 份原版 `.gd` 里**没有**任何一个名字含 `play_screen`/`lan_lobby`/`replay_lobby`/`setup_control`/
+   `player_screen`/`root_node`（52 份顶层 `.gd` 全是小控件 + AdMob/IAP）。
+
+**结论**：原版 = 「`.tscn`（视图树）+ 45 个不同小控件 `.gd` + **Rust 控制器**」；我们 = 「12 行存根 `.tscn` +
+**全部在 GDScript 里的控制器** + 27 份小控件 `.gd`」。**结构上差的那一层就是控制器。**
+
+### 90.2 判据②：原版视图层的真值（`.tscn`/`.tres`）**一份都没进 `client/`**
+
+| 原版真值 | 份数/行数 | 我方用了没有 | 判据 |
+|---|---|---|---|
+| `.tscn`（界面视图树） | 31 份，最短 92 行、最长 780 行 | **没有**：`client/scenes/screens/*.tscn` 是 15 个 **12 行存根**（根 `Control` + `script=res://src/screens/*.gd`） | `cmp client/scenes/screens/play_screen.tscn recovered-src/play_screen.tscn` ⇒ 12 vs **780** |
+| `.tres`（主题/字体样式盒） | 22 份 | **没有**：样式盒在 `client/src/ui/theme_factory.gd` 里用代码重建 | `recovered-src/*.tres` 有 `button_font.tres`/`campaign_button_theme*.tres`/`axis_*_theme.tres`/…，`client/` 里零引用（`grep -r '\.tres' client/src` 只命中注释） |
+| `.gd` 小控件 | 45 份被 `.tscn` 引用 | **27 份挂上了（逐字节），18 份没挂** | 见 90.3 |
+
+**节点数对照**（证明"手抄"抄得有多认真 —— 这是"行为重建"的典型形态：结果对得上，但原件不在源码里）：
+
+| 界面 | 原版 `.tscn` 行/节点 | 我方 dump 节点数（`godot --headless -- --dump-tree`） |
+|---|---|---|
+| `play_screen` | 780 / 106 | **111** |
+| `GameSetup` | 273 / 47 | **47** |
+| `player_screen` | 473 / 64 | 264（含动态 Skins/Faces/Hats 格） |
+| `lan_lobby` | 213 / 32 | 30 |
+| `main_menu` | 138 / 25 | **25** |
+| `campaign` | 92 / 12 | 33（12 静态 + 21 手造关卡按钮） |
+| `endgame_pop_up` | 349 / 69 | **69** |
+| `join_level_pop_up` / `add_bot_pop_up` / `chat_pop_up` / `confirm_exit_pop_up` | 258/42、254/45、214/7、176/31 | 42 / 45 / 7 / 31 |
+
+⇒ 节点树**逐节点对上了**（这也是为什么像素能收到 0.12 %）。但**源码级还原要的是那 31 份 `.tscn`**：
+它们的每一行（`offset_*`/`anchors_preset`/`size_flags_*`/`theme=`/`icon=`）都是原版作者写的，
+现在被译成了 GDScript 里 `GwUI.*` 的调用序列 —— **原件（`.tscn` 文本）明明已经恢复出来了，却没进项目**。
+这是本节 B 类（8 799 行）里最大的一块：**视图手抄 5 385 行**。
+
+**为什么没进**：`.tscn` 里的 `res://` 依赖（`.tres`、`.svg`、`.ttf`、各 scene 互相实例化）在本项目里没有同名资源
+——包里的美术只有 `.ctex`（导入产物）与 5 份被剔除内嵌图集/字体的 `.tres` 骨架。⇒ 换用原版 `.tscn`
+需要先做一层 **res:// 路径 + import/remap 还原**（`client/assets/` 已按原版路径落盘 313 个文件，缺的是
+`.import`/`.remap` 那一层与 `.svg` 原件）。这是**可控工程**，不是"不可得"。
+
+### 90.3 判据③：27 份原版视图脚本 —— **逐字节相同、真挂在节点上、没有被我们的 screens 覆盖**
+
+这是本面唯一**已经达标**的一大块，也是全场唯一的"正对照"来源。
+
+**(a) 逐字节**：`cmp client/src/views/<X>.gd recovered-src/<X>.gd` ⇒ **27/27 相同**
+（工具里逐份重做，任何一份不同会打 `**不同（FAIL）**` 并以非 0 退出）。
+另：`client/tools/recovered/` 的 52 份副本也 **52/52 相同**（`recovered_view_check.gd` A 段复验）。
+
+**(b) 真挂在节点上**：27 份**每一份**都有 `GwViews.attach()` 调用点（工具按 `GwViews\.attach\(...,"X.gd"\)` 逐份扫，
+零缺失；调用点最多的 `LanLobbyTitle.gd` 8 处、`IpPopUpMargin.gd` 8 处）。
+时序也有保护：`gw_views.gd:47-49` 对"已进树再 `set_script`"直接 `push_error`（原版 `_ready` 不会补发）。
+
+**(c) 没有被我们的 screens 覆盖**：`client/src/screens/screen.gd:84-99` 的
+`_apply_size_recursive` 见到 `GwViews.owns(node)` 就**整棵 return** ⇒ 我方那套 `maxi(10, 宽/N)` 不会盖原版字号。
+反向证据：原版 105 个 `.gd` 里 `maxi`/`max(` 出现 **0** 次（原版字号**没有下限**），我们的 `maxi(10,…)` 是自加的。
+
+**(d) 运行期真跑**（本轮实跑，不是引旧文档）：
+`godot --headless --path client --script res://tools/recovered_view_check.gd` ⇒ **`RECOVERED_VIEW 57 passed, 0 failed`**；
+其中 C 段逐份断言 `_ready` 的**可观测副作用**（`font_size == int(视口宽/N)`：w/8、w/10、w/15、w/20、w/30、w/40、
+w/50、w/60 逐档对上；`ButtonGrid` 的 `custom_minimum_size`、`HBoxVictoryIcon` 的 `separation = −宽/10` 等）。
+**正对照**：同一脚本的 D③ 段把缺的两个成员用 stub 补上后，`AdContainer.gd` 的 `_update_size()` 立刻
+写出 `(320,50)`/`(640,100)` ⇒ 证明"断言确实能看到原版脚本的效果"，不是因为没跑才"通过"。
+
+**(e) 但原版 `.tscn` 引用的 45 份里，我们只挂了 27 份 ⇒ 18 份没挂**（合计 845 行）：
+
+| 类别 | 份数 | 清单 | 现在这活是谁干的 |
+|---|---|---|---|
+| **实测能跑、只是没挂** | 5 | `CampaingLevelsButtons.gd`、`ButtonGrid.gd`、`HBoxContainer.gd`、`ViewFunctionsLabel.gd`、`SoldierIconMarginContainer.gd` | 我们手写的：`campaign.gd::place_buttons`（21 个关卡按钮）、`play_screen.gd` 的键盘/函数列表/额外按钮 |
+| **未逐个验**（需补测） | 6 | `ExtraOptionPad.gd`、`ExtraOptionsHBox.gd`、`GameNameContainer.gd`、`ShopButtonsSize.gd`、`ShowExtraButtons.gd`、`ViewFunctionPad.gd` | 同上（手写） |
+| **物理不可得**（AdMob/IAP 原生插件） | 7 | `AdContainer.gd`、`Ad_holder.gd`、`android_iap.gd`、`IAP_holder.gd`、`IAP_IOS.gd`、`Android_mediastore_holder.gd`、`IOS_album_holder.gd` | 我方是"广告槽空着 + 内购报不可用"；`.so` 里 8 个原生类**一个都不在 ClassDB**（E 段实测） |
+
+另外 **7 份原版脚本没有任何 `.tscn` 引用**（`CampaingButtonSize.gd`、`OffsetLabel.gd`、`ResizeContainer.gd`、
+`UnlockButton.gd`、`LevelTitleContainer.gd`、`ExtraOptionsVbox.gd`（1 字节空文件）、`endgame_pop_up.gd`（`_ready`/`_process`
+都是 `pass`））—— 它们**只能是运行时由 Rust 挂上去的**（`add_child` + `set_script`），
+本地没有证据能说清挂点 ⇒ 登记为 **E（未知：挂载点）**，不作为本轮结论。
+
+### 90.4 两条"真错"：真值早在 Rust 里，GDScript 却用了自选值（这是"行为重建"最硬的物证）
+
+| # | 我方 GDScript | Rust 侧真值 | 差多少 | 影响 |
+|---|---|---|---|---|
+| 1 | `client/src/net/link.gd:36` `connect_timeout := 3.0`（本文件自注"本项目选择"） | `src/graphwar_client_connection_handler.rs:261` `CONNECT_TIMEOUT_SECS = 30`（**逐位**：arm64 `0x48dccc mov w1,#0x1e` → `TcpStream::connect_timeout(Duration{30,0})`） | **10×** | 连真服务器时 3 s 就报失败（原版等 30 s）⇒ `ConnectingPopUp` 停留时长、失败提示时机都与原版不同 |
+| 2 | `client/src/net/discovery.gd:35` `ROOM_TTL_MS := 12000`（自注"原版广播周期/超时未知"） | `src/graphwar_lan_broadcaster_v6.rs:154` `ENTRY_TTL_SECS = 10`（**逐位** `0x3de6e4 cmp x0,#0xa`）、`:158` 周期 1 s（逐位） | **+2 s** | LAN 房间表里"已经消失的房间"多留 2 s ⇒ 列表行数与顺序可观测不同 |
+
+这两条不是"还没做"，是**已经做完了却没被用上**：Rust 那两份实现带指令级证据，GDScript 这两份是凭观测自选的数。
+⇒ 归类 **C-duplicated + 口径分叉**，也是"以行为重建代替源码还原"的具体后果：**行为看着对，真值被丢在另一份代码里**。
+
+### 90.5 统计（工具现算；A–E 各几条、各几行）
+
+| 档 | 段数 | 行数 | 含义（本节口径） |
+|---|---|---|---|
+| **A** | 32 | 2 792 | 达标：1 992 行是原版字节副本（27+52 份），800 行是真值数据/加载器（图标表/资产层/抓包样本）+ 验收脚本 |
+| **B** | 56 | 9 644 | 原版对应物存在/可得但没用：**视图手抄**（8 532 行里绝大多数）+ 只有 GDScript 版的规则 + 845 行"该挂没挂"的原版脚本 |
+| **C** | **27** | **4 941** | 同一条规则两处实现，Rust 那份带地址/逐位 |
+| **D** | 16 | 12 044 | headless 验收脚本（期望值自写 ⇒ 不构成复原证据） |
+| **N** | 7 | 764 | 纯工具（dump/截图/启动器），无复原主张 |
+| 合计 | 138 | **30 185** | = 我们的 27 348 行 + 原版字节 1 992 行 + "该挂没挂"的原版脚本 845 行（后者计入 B） |
+
+**按类别**（含原版字节行）：视图 62 段/6 855 行（其中 531 行是 27 份原版副本、845 行是"该挂没挂"）、
+规则 29 段/5 209 行、数据 10 段/1 014 行、接缝 12 段/2 391 行、测试 18 段/14 452 行
+（含 52 份原版副本 1 461 行）、工具 7 段/764 行。
+
+**"类别 × 档位"矩阵（只算我们的代码 27 348 行，不含原版字节 1 992 行与"该挂没挂"845 行）**：
+
+| 类别 | A | B | C | D | N | 小计 |
+|---|---|---|---|---|---|---|
+| 视图 | 0 | **5 385** | 94 | 0 | 0 | 5 479 |
+| 规则 | 0 | **686** | **4 523** | 0 | 0 | 5 209 |
+| 数据 | **353** | 337 | 324 | 0 | 0 | 1 014 |
+| 接缝 | 0 | 2 391 | 0 | 0 | 0 | 2 391 |
+| 测试 | 447 | 0 | 0 | **12 044** | 0 | 12 491 |
+| 工具 | 0 | 0 | 0 | 0 | 764 | 764 |
+| **小计** | **800** | **8 799** | **4 941** | **12 044** | **764** | **27 348** |
+
+单独看 `client/src/`（生产代码 14 000 行）：**A=353、B=8 532、C=4 941、D=174、N=0**。
+
+### 90.6 我这条审计方法本身可能漏什么（必读，别把上面的数字当成"完备"）
+
+1. **我只能判"这段是视图还是规则"，判不了"规则语义对不对"。** 语义对拍是审计面 ②（`src/`）与 ③（`tests/`）的活；
+   本节说"`_judge_shots` 在 Rust 里有对应实现"≠"GDScript 那份算错了"。
+2. **行数不是价值权重。** 一段 3 行的 `if` 可能是核心规则（例如 `_check_match_over` 的 `if _online_mode: return`），
+   一段 249 行的常量表可能价值更低。我用行数是因为它**可复核**，不是因为它是正确的度量。
+3. **"Rust 侧已有复原实现"是我判 C 的前提，而这个前提本身可能过宽。** 例如 `graphwar_play_screen_control.rs`
+   只有 1 124 行，里面并没有把 `fire()` 闸门逐指令复原 ——
+   我把它判成 C（"两处实现"）而不是 B（"只有 GDScript"），**是因为闸门两侧确实都存在**；但严格说
+   Rust 那份的**入口边界**还没钉死。这类边界我在 TSV 的"判据"列里逐条写了证据，判重了就是我的错。
+4. **`^func` 边界口径会漏函数内部的"规则段"。** GDScript 没有内联函数，所以按函数切是安全的；
+   但一个函数里可能"前 20 行搭节点、后 30 行判规则"（`build()` 里最典型），我一律整函数归到**类别里占多数**的那一半
+   —— 这类"混装函数"的规则部分会漏判。工具没法自动发现，靠人读（我读了 `play_screen.gd` 全部 141 个函数头 +
+   关键函数体，其余 900 多个函数只读了头部注释与调用点）。
+5. **死代码没测。** 我只能看静态调用点 + 两次 headless 运行；哪段在真机路径上根本不执行（例如内核缺席时的
+   `_preview`/`_approx_hits` 兜底、`_fast_forward` 压平时序的分支）没有运行期覆盖率
+   ⇒ 这类"兜底规则"我判 B 但**没证明它会被执行**。
+6. **快照时点会漂。** 本节基线 master `8dddfc4`；同期 `task-27`（切出 `graphwar_{event,remote_event,
+   server_connection}_handler.rs`）、`task-28`/T31（控制器迁回 Rust）、`task-30`（换 25 份原版脚本）都在改
+   `src/`/`client/` ⇒ **90.3(e) 的 18 份与 90.0 的 C 行数会变**；合并后应重跑 `python3 tools/audit_client.py`
+   并只改数字、不改判据。
+7. **"挂上了"我核到"有 attach 调用点 + 运行期 `_ready` 有效果"，但没核"每个节点在 1920×1160 下逐屏正确"。**
+   后者是像素对拍（已有 §55–§79 的读数）；本节不重复采帧，也没在私有 netns 下跑对局屏。
+8. **`client/tools/*.gd` 的断言自洽性我没审**（那是审计面 ③ 的清单）；本节只把他们整体判 D 并算清行数。
+   同理 `client/assets/` 的提取正确性（`tools/extract_assets.py` 是 Python，在 `client/` 之外）没审。
+9. **27 份"逐字节相同"是对 `recovered-src` 的**，而 `recovered-src` 本身是**从 `.gdc` 反编译**回来的
+   （损失面见 `recovered-src/MANIFEST.tsv` 的 31 份`部分`/5 份`省略`）⇒ 我的"逐字节"只证明"我们没改它"，
+   **不证明它等于原作者的源码**。
+
+### 90.7 复跑命令（全部只读）
+
+```bash
+# ① 全量审计表 + 统计（138 行；自己会重做 27+52 份 cmp 与行覆盖断言）
+python3 tools/audit_client.py
+
+# ② 27 份原版视图脚本是否逐字节（任一份不同即非 0 退出）
+for f in client/src/views/*.gd; do cmp "$f" "recovered-src/$(basename "$f")" || echo "DIFF $f"; done
+
+# ③ 原版视图脚本运行期是否真跑（headless；XDG 三个目录必须指向可写处）
+export XDG_DATA_HOME=$PWD/.agent-work/client/data XDG_CACHE_HOME=$PWD/.agent-work/client/cache \
+       XDG_CONFIG_HOME=$PWD/.agent-work/client/config HOME=$PWD/.agent-work/client/home
+$PWD/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path client --import
+$PWD/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path client \
+    --script res://tools/recovered_view_check.gd          # ⇒ RECOVERED_VIEW 57 passed, 0 failed
+
+# ④ 我方节点树 vs 原版 .tscn 节点数
+$PWD/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path client -- --dump-tree | grep -c 'ScreensControl/PlayScreen'
+
+# ⑤ 控制器在 Rust 里（57 条 Location 字面量 + 16 个屏根节点无 script）
+grep -ao 'src/graphwar_[a-z_]*\.rs' .reference/game/libgraphwarrust.so | sort -u | wc -l
+grep -c 'script =' recovered-src/play_screen.tscn     # 16（全是**子节点**；根节点块 0 条）
+```
