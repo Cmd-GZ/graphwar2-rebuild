@@ -11184,3 +11184,71 @@ python3 tools/match_serve.py --fixture fixtures/frame_match_events.txt \
 4. **我方三帧同 sha256**（S7）：我方准备圈不随时间动 —— 这是"我方没接那条链"，不是采集问题。
 5. 本轮**没有**用 `--game-arg` 传地址（地址走 LAN 广播就够了；原版的 CLI 参数是死的，`docs/06` §48.1）。
 
+## 68. 客户端侧接线：回放屏的**右列宽 / 底栏高 / 函数框只读态 / 士兵外观与名字标签**（2026-11-26，任务 T7）
+
+> 真帧证据、逐块数字、改前改后三层判据在 **`docs/06` §59**（那节是验收，本节是**怎么接的**）。
+> 本节只讲 `client/` 侧的接线，面向"读 `client/` 的人"。
+
+### 68.1 `play_screen.gd::_set_replay_layout()`：右列宽与底部行的两个实参
+
+回放模式把键盘 / Fire / 状态行藏掉之后，**两处尺寸**必须显式钉，否则整块棋盘会错 1–2 px
+（`docs/06` §59.1 的四个数）：
+
+```gdscript
+# ① 右三键的最小宽度 = 原版 .tscn 那串空格的宽度（八个空格 + 主题左右各 3 px 边 = 230）
+(b as Control).custom_minimum_size = Vector2(_replay_button_width(), key)
+# ② 右列宽 337 = 键盘 RightButtonGrid 的天然最小宽（它不画出来，但宽度还参与计算）
+_right_grid.visible = false                       # 高度归 0
+_right_grid_holder.visible = true                 # 但 holder 仍然 visible…
+_right_grid_holder.custom_minimum_size = Vector2(_right_grid_natural_w, 0.0)   # …宽度钉 337
+```
+
+* **为什么不是 `visible = false` 了事**：Godot 的 `Container` 会把 `visible=false` 的子节点
+  从最小宽/最小高里**整根剔掉**（本机实测）。原版在真帧上是"键盘不画、但右列还是 337"，
+  这一条**没有源码证据**（记 **未知**），所以这里按观测复现，并把它关在一个函数里。
+* `_replay_button_width()` 不写死 337：它按 `.tscn` 的 `text = "        "`（8 空格）与
+  `ButtonGrid.gd` 的 `font_size = screen_size.x / 30` 现算 advance + `2 * PANEL_BORDER`。
+  **同一把尺子的旁证**：五个空格的 `ShowExtraButtons` 算出来 146，与真帧逐项相同。
+* 底栏高**不在这一层写**：它由函数输入框的最小高决定（见 68.2）。
+
+### 68.2 `play/function_input.gd`：按 `LineEdit` 的规则量、按 `LineEdit` 的样式盒画
+
+原版 `GraphwarFunctionInput` 是 **`LineEdit` 的 Rust 子类**（`src/graphwar_function_input.rs`
+文件头：`ILineEdit` + 自绘文字状态、无 `LineEdit` 子节点），所以它**不是**"随便一个 Control"：
+
+| 项 | 规则（引擎行为 + 主题） | @1920 的读数 |
+|---|---|---|
+| 最小高 | `字体高 + 样式盒的上下 content_margin` | 可编辑 90+2·3 = **96**；只读 90+2·4 = **98** |
+| 只读态样式 | `graphwar_theme.tres` **没有** `LineEdit/styles/read_only` ⇒ 落到 **Godot 默认主题**：`bg (0.1,0.1,0.1,0.3)`、**只有下边框 2 px**、content_margin 4 | 真帧输入框内部 = (17,33,27)（三通道验算见 `docs/06` §59.2-A） |
+| 文本基线 | `content_top + (内容高 − 字体高)/2 + font_ascent` | 墨迹 y1087..1149（改前高 3 px） |
+| 光标高 | 内容矩形 = `size.y − 上下 content_margin` | 3×90 @y1066..1155 |
+
+`read_only` 的 setter 里会 `update_minimum_size()`：只读/可编辑两态的样式盒不同 ⇒ 最小高
+98/96 也不同，**开关这个状态必须让父容器重排**。`play_screen.gd` 侧只给宽度
+（`Vector2(key*2, 0)`），高度**不许**再写死 —— 改前就是拿"左上键宽 96"当输入框高，
+于是底栏 96、`PlayMainHBox` 1060、棋盘整体下移 2 px。
+
+### 68.3 回放屏的士兵与名字标签：id、颜色、摆位
+
+`_sync_entities()` 现在做四件事（都在 `docs/06` §59.3 有帧/运行时证据）：
+
+1. `spawn_entity(id, x, y)`：士兵的 id 是**数组下标**（`EntityDrawer` 只认 i32，没有"种类"）；
+2. 外观：`_replay.graphics("skin"/"face"/"hat", <回放实体 id>)` → `set_entity_look()`。
+   ⚠️ 必须用**回放自己的实体 id**（本样本 230），**不是**数组下标 —— 改前拿下标去问，
+   永远查不到 ⇒ 士兵一直穿 `spawn_entity` 的默认三件套；
+3. 名字：`set_entity_name()` + **`set_entity_name_color(id, 队色)`**。真帧上名字笔画色 =
+   那名士兵 `ColorInfo` 的颜色（本样本 `(125,104,0)`）⇒ 用这个玩家自己的队色，不是
+   `EntityDrawer` 那个全局 `team_color`。颜色来源**未解**（记 **推断/我方接线**）；
+4. 准备圈：回放模式**不填 `prep` 表**（原版回放屏棋盘上 0 个纯红像素）。
+
+名字标签的**位置**在 Rust 侧（`_scaffold/entity_drawer_class.rs::relayout()`），
+摆位算法的第一个实参是 **`EntityDrawer` 自己的尺寸**（`k = w/50`），不是标签自己的尺寸 ——
+改前传错这个实参，标签被夹到控件左上角（跑出棋盘外，等于"没有名字"）。
+
+### 68.4 没接的东西（读 `client/` 的人会问的三条）
+
+* `GraphwarGraphicsManager` 那条**事件链**（`Skin/Face/HatGraphicsInfo` 的 51/53/55 事件）
+  仍然没接：外观与名字颜色都是播放屏**按局面代填**的（`docs/16` §44.0 的同一笔账）。
+* 名字标签的描边宽（`outline_size = 4`）是**推断**（取自同工程 `ViewFunctionsLabel` 的
+  `[outline_size=4]`），原版给 name_label 设描边的那条调用没找到。
+* 回放屏右三键（存截图/存摘要/存片段）的**语义**本来就未观测，本轮只动它们的图标对齐。

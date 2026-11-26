@@ -8508,6 +8508,290 @@ python3 tools/frame_diff.py --orig <W>/orig --mine <W>/mine --screens menu,repla
   --out <W>/fd.tsv --blocks-out <W>/fdb.tsv --json <W>/fd.json
 ```
 
+## 59. 回放播放屏 S3/S4：三件按贡献排序（棋盘 1 px 取整 / 底部行 / 士兵三件套 + 名字标签）—— 跨侧 8.062 % → **0.217 %**，L1 **过**、L2 **24 块全过**、L3 仍不过（2026-11-26，任务 T7）
+
+> 前情：**§55**（t4）把回放屏从 41.33 % 压到 8.07 %（载入即暂停 + 回放版式），
+> **§58**（lead）修掉 `update_sprite` 的 `scale.x` 漏 `k`（士兵/靶子第一次画出来）。
+> §58.3 把剩下的 8.06 % 归了成三块：**棋盘区 75.9 %**（每条网格线整体错 1 px）、
+> 底部行 20 278 px、士兵 hat/body 与名字标签。本节就是**把这 76 % 与其余两块一起做掉**。
+>
+> 分支 `agent/s3-zero`（从 master `2f64674`），工作树 `.agent-work/cg/wt-t7`，
+> 私有 `CARGO_HOME` + `CARGO_TARGET_DIR=.agent-work/cg/wt-t7/.cargo-target`。
+> **预注册沿用 §55 那份**（`fixtures/replay_screen_targets.txt`，sha256 `a570bafd…`），
+> 本轮**只追加了第五节"复跑读数"**，§三 的目标值与容差一个都没动。
+> 采集：`--flow replay --seed-replays`，原版 display 81 / 我方 display 82，同一份冻结回放
+> `1793897298`（Level 0，1 士兵 `cmdgz` + 1 靶子），两侧各 3 帧、`replay_play`/`replay_end` 各自逐位静止。
+
+### 59.0 一页结论
+
+| 项 | 改前（v0 = master `2f64674`） | 改后（v3 = 本分支） | 档 |
+|---|---|---|---|
+| `frame_diff` L1 `l1_dmean_max` | 0.229（过） | **0.065**（过） | **观测** |
+| L1 第一主色占比差 | 0.156 pp | **0.002 pp**（门槛 2.0） | **观测** |
+| L2 超限块（门槛每块每通道 ≤2.0） | **2 块**（最差 `(2,2)` 3.381 → §58 后 3.489） | **0 块**（最差 `(2,2)` **0.968**） | **观测** |
+| L3 差异像素 / 比例 | 179 629 px / **8.0620 %** | **4 836 px / 0.2171 %** | **观测** |
+| L3 `max|Δch|` | 255 | 255（**不过**，门槛 8） | **观测** |
+| 棋盘白底四边 + 轴线交点 | 1272×761 @(303,200)、轴 (938,579) | **1273×762 @(303,198)、轴 (939,578)** = 原版 | **观测**（四个数**逐项 0 px**） |
+| 士兵彩色 bbox / px | 521 px / (794,820)-(819,845) | **643 px / (771,783)-(843,854) 区域内的 (788,816)-(823,844) + 名字标签 (771,789)-(843,803)** | **观测** |
+| `replay_end` | 与 `replay_play` 逐位相同 | 同（两边都静止） | **观测** |
+
+`menu` / `replay_lobby` 两屏**一个数都没动**（0.000 % / 0 块），是本轮的回归护栏。
+
+**一句话**：8.06 % 的残差里 **76 % 来自"整块棋盘错 1 px"**，而这 1 px **不是四舍五入**——
+是**右列宽多 1 px（338 vs 337）+ 底栏矮 2 px（96 vs 98）**两条版式实参错。钉死这两条之后
+棋盘四个数一次全对；再修掉士兵/标签的三条**数据层** bug 与六颗键的图标对齐，剩 0.22 %。
+
+### 59.1 ① 棋盘几何：两个成因，都不是"取整方式"
+
+**先裁决"是 floor/round 还是版式"**：本机在两**侧**各自量白底矩形（尺子同 §55：
+近白 ≥250 占比 >30 %、允许 15 px 空洞取最长段；轴线 = 矩形内平均灰度最低的行/列）：
+
+| 量 | 原版（display 81） | 我方改前 | 我方改后 |
+|---|---|---|---|
+| 白底 x0..x1 / y0..y1 | 303..1575 / 198..959 | 303..**1574** / **200**..**960** | 303..1575 / 198..959 |
+| w×h | 1273×762 | **1272×761** | 1273×762 |
+| 轴线交点 | (939,578) | (**938**,**579**) | (939,578) |
+
+⇒ 错的是**外框矩形的实参**，不是取整：我方白底比原版**窄 1 px、下移 2 px**。
+把运行时容器链 dump 出来（诊断脚本只读 `PlayScreen` 的 `plane_state()` + `Control.size`，
+见 §59.7 第 4 条）就看见两个数：
+
+```text
+              改前                                    改后
+PlayMainHBox  1920×1060                               1920×1058        ← 竖直 -2
+PlaneContainer 1278×1060  @x300                       1279×1058 @x300  ← 水平 +1 / 竖直 -2
+GamePlane/ExtraOptionPad  1278×96                     1279×96
+PlaneContainer(AspectRatioContainer) 1278×960 @y100   1279×958 @y100
+PlaneCanvas   1278×766.8  @(0, 96.6)  ⇒ y=196.6       1279×767.4 @(0,95.3) ⇒ y=195.3
+RightControls 338×1060 @x1582                         337×1058 @x1583
+HBoxContainer2 1920×96 @y1064                         1920×98 @y1062
+```
+
+#### ①-A 水平 1 px：右列宽 = **键盘 grid 的天然最小宽 337**，不是"右三键的宽"
+
+* 原版右三键在 `recovered-src/play_screen.tscn` 里是 `text = "        "`（**八个空格**，逐位）
+  + 字号 `screen_size.x / 30`（`ButtonGrid.gd` 的 `update_child_sizes()`，逐位）⇒ 按钮的自然最小宽
+  = 8 个空格的 advance **224** + 主题 `Button/styles/normal` 的左右各 3 px 边 = **230**。
+  **旁证（同一把尺子）**：五个空格的 `ShowExtraButtons` = 140 + 6 = **146**，与真帧量到的
+  146×96 **逐项相同**；八个空格 = 224 + 6 = 230。
+* 右列 **337** 来自 **`RightButtonGrid`（键盘，`columns = 3`）的天然最小宽**（3 列 × 最宽键 + 2×4）。
+  真帧右三键落在 x1583..1919（337 宽）⇒ 棋盘列 = 1920 − 296(左) − 8(两个 separation) − 337 = **1279**。
+* **我方改前的错**：把真帧的"337"当成右三键的最小宽写死成 `w * 0.175521 = 337.00032`
+  ⇒ `GridContainer` 按 **int** 分配列宽时**向上取整成 338** ⇒ 棋盘列 1278 ⇒ 白底 1272、
+  轴线 938。改后右三键的最小宽回到 .tscn 的语义（230），右列由键盘 grid 的天然宽 337 决定。
+* ⚠️ **机制仍有一处未知**：真帧上键盘**不画出来**，但它的宽度**还参与**右列宽的计算。
+  若只是 `visible = false`，Godot 的 `Container` 会把整根子节点从最小宽里**剔掉**
+  （本机实测：改后如果照旧 `visible=false`，右列会缩到回放 grid 自己的 230、棋盘列变 1386）。
+  原版"宽度还在、高度不在"这一条**没有源码证据**（推断：原版可能只把键藏起来、或者
+  `visible` 之后容器的最小尺寸缓存没失效）。**本轮的实现是如实复现这条观测**——
+  `_set_replay_layout()` 里让 holder 保持 visible、把 grid 藏掉、并把 holder 的
+  `custom_minimum_size.x` 钉成"grid 藏起来之前量到的天然最小宽"。
+
+#### ①-B 竖直 2 px：底栏高 = 函数输入框的 **`LineEdit` 最小高 = 98**
+
+* 独立证据 1：`docs/archive/125-playscreen.md` §3.3 的 GEOM 表写着 `HBoxContainer2 (height = 98 @1920)`；
+* 独立证据 2：本帧实测原版输入框底 `y1062..1157` ⇒ 底栏**从 1062 起** ⇒ `PlayMainHBox` 高 1058；
+* 证据 3（怎么来的）：原版 `GraphwarFunctionInput` 是 **`LineEdit` 的 Rust 子类**
+  （`src/graphwar_function_input.rs` 文件头，`ILineEdit`），所以它的最小高度按 `LineEdit` 的规则
+  = `字体高 + 样式盒的上下 content_margin`。@1920 字号 = 64、`button_font.get_height(64) = 90`；
+  **回放屏的函数框是不可编辑的**（`editable = false`）⇒ 用的是
+  `LineEdit/styles/read_only`（`graphwar_theme.tres` **没有**覆盖这个键 ⇒ 落到 Godot 默认主题）
+  ⇒ content_margin 上下各 **4** ⇒ 90 + 8 = **98** ✓（可编辑态则是主题的 3px 边 ⇒ 90+6 = 96）。
+* 我方改前拿"左上按钮键宽 = 96"当输入框最小高 ⇒ 底栏 96、`PlayMainHBox` 1060、棋盘整体**下移 2 px**。
+  改后 `GwFunctionInput._get_minimum_size()` 按上面的规则算（只给宽度、不给高度）。
+
+### 59.2 ② 底部行：输入框按 `LineEdit` 画、修正常数偏 10 px 收到 2 px 内、`f(x)=` 图标仍小 2 px
+
+#### ②-A 回放屏的输入框 = **默认主题的 `LineEdit/styles/read_only`**（一条被逐通道验证的推断）
+
+真帧上输入框内部**整块**是 `(17,33,27)`、**左右上都没有黑边**、只有底部 2 行近黑。
+这三条一起指向 Godot **默认主题**的 `LineEdit/styles/read_only`：
+`bg_color = (0.1, 0.1, 0.1, 0.3)`、**只有下边框 2 px**、content_margin 4。逐通道验算
+（叠在页面底色 `(14,37,28)` 上）：
+
+```text
+R = 14 + 0.3·(25.5 − 14) = 17.45 → 17
+G = 37 + 0.3·(25.5 − 37) = 33.55 → 33      ⇒ (17,33,27) 与真帧输入框内部**三通道全等**
+B = 28 + 0.3·(25.5 − 28) = 27.25 → 27
+```
+
+改前我方自造了"透明底 + 3px 黑边"（= 可编辑态的样式）⇒ 多出 ~9 400 px 假黑框、少一层底色。
+改后 `GwFunctionInput` 在 `read_only` 时**直接取那个样式盒来画**（不再手填常数），
+光标高度也改成"内容矩形"（98−8 = 90，与真帧 3×90 @y1066..1155 一致）。
+
+**文本基线**同时改成 `LineEdit` 的规则（`content_top + (内容高 − 字体高)/2 + font_ascent`）：
+改前"控件高一半 + 0.35 em"在 @1920 上比真帧**高 3 px**（墨迹 y1084..1146，原版 y1087..1149）。
+
+#### ②-B 修正常数 `- 3.694`：x1774..1893 → **x1766..1886**（原版 1764..1883，Δ 剩 2 px）
+
+改前：`OffsetContainer` = 0.09·1920 = 172.8（原版 `.gd` 明写）在右端 ⇒ 容器 1746..1918.8，
+Label 居中 ⇒ 墨迹 1773..1893（**中心 1833**；真帧中心 **1823.5**，差 9.5 px）。
+
+改法（**推断**，不是逐位）：回放里的这一串是从 `FunctionInfo` 的函数串
+`x+2sin(20x) - 3.694` **切出来的后缀**，所以带着前面那个分隔空格 ⇒ 显示成 **`" - 3.694"`**。
+居中的文本多一个前导空格（fs 32 下一个空格 14 px）⇒ 墨迹左移 7 px ⇒ 中心 **1825.4**，
+与真帧差 **1.9 px**。⚠️ 缺的证据：原版播放屏把函数串切成"函数 / 修正"的**那条字符串操作的指令**
+（未解），以及 `Label` 的字体（主题 `default_font` = ComicRelief-Bold，不是
+`Button/fonts/font`）在那个字号下的精确 advance。**这条只作用于回放分支**（战役/联机的
+修正文本是玩家自己填的值，格式 `+ 2.515` 不带前导空格，未改）。
+
+#### ②-C `f(x) =` 图标：仍比原版**小约 2 px**（636 px，记成未做成）
+
+我方墨迹 77×27（171..247）、原版 81×30（169..249），**中心相同**（209）。
+差 5 % 的比例 ⇒ 原版那颗 `FxTextureButton` 的有效方框约 100×100，我方 96×96（= 左上键宽）。
+原版结构是 `FxContainer → AspectRatioContainer(ratio 1, stretch_mode 1) → FxTextureButton`，
+我方把按钮**直接**放在 `FxContainer` 里（T4 的简化，`docs/06` §55.8 第 3 条已登记）。
+本轮**没动**：把它做成 AspectRatioContainer 会牵动 `FxContainer` 的最小宽（96 → 69/100），
+进而挪动整个底栏与修正常数的位置，收益 636 px、风险面覆盖已经对齐的三段。**未做，转入遗留。**
+
+### 59.3 ③ 士兵三件套 + `cmdgz` 名字标签：三条**数据层** bug（不是渲染层）
+
+§55.5 当时把"士兵画不出来"判成渲染层（`update_sprite` 公式），§58 修好了公式，
+本节发现**剩下的三件全是数据/接线**：
+
+| # | 症状 | 根因 | 怎么证的 |
+|---|---|---|---|
+| 1 | 士兵永远穿**默认三件套** `yellow/regular_eyes/soldier_helmet`，而回放录的是 `face_paint_2/asian/asian_hat` | `_replay_sync_actors()` 把士兵转成 `_soldiers` 时**丢了实体 id**，`_sync_entities()` 拿**数组下标**（= 0）去问 `_replay.graphics("skin", 0)` ⇒ 永远空串 | 运行时 dump `EntityDrawer` 的子节点：`Sprite2D@69 tex=skins/yellow.ctex` → 改后 `skins/face_paint_2.ctex`（另两口同） |
+| 2 | 名字标签被摆在**控件左上角**（`pos=(0, 14.7)`），肉眼看就是"没有名字" | `entity_drawer::name_label_layout` 的第一实参是**控件尺寸**（`k = w/50`），`_scaffold/entity_drawer_class.rs::relayout()` 传的是**标签自己**的 `get_size()`（58×40）⇒ k = 1.16、`cx` 被 `max(cx,0)` 夹到 0 | 算式尾部把结果夹进 `[0, w − mw]`——只有 `w` = 控件宽时才有意义；`tests/entity_drawer.rs` 那条用例传的第一个实参就是控件尺寸 500×300 |
+| 3 | 标签画出来也**看不见**：白字叠在白底棋盘上 | RichTextLabel 用默认 `default_color`（白）。真帧上名字是**队色笔画 + 黑描边**：`cmdgz` 的笔画色 **(125,104,0)** 与这名士兵 `ColorInfo` 的颜色**逐值相同** | 改前/改后真帧 ASCII 对照：改前名字行整片是白底（`W`），改后出现队色笔画（`#`） |
+
+改后：名字标签实测落在画布 `(367.87, 452.80)` ⇒ 屏幕 (770.6, 774.4)，与真帧 `cmdgz`
+墨迹 **(771,789)-(843,803)** 对齐；士兵的三张图 = `face_paint_2 / asian / asian_hat`。
+
+**没做到的（遗留）**：士兵**合成尺寸**仍小于原版。彩色 bbox：
+我方 (788,816)-(823,844) = **36×29**、原版 (771,783)-(843,854) 里**除名字标签外**是
+(776,812)-(829,854) = **54×43**。三层 sprite 的位置/缩放/贴图都与原版同名同值
+（`scale=(±0.083333, −0.083333)`、512×512 贴图 ⇒ 42.67 画布 px = 54.6 屏幕 px），
+所以差的不是缩放公式而是**画出来的墨迹比例**（我方墨迹占 sprite 的 66 %、原版 ~79 %），
+且原版在主体下方还有一块（y846..854）我方完全没有。**推断**：原版那一层（body/影子）
+对应的贴图或 `EntityChildNode` 语义与我方不同（`ENTITY_CHILD_NODES` 的 3 层名字是
+**推断**，不是逐位）；缺的证据：`GraphwarTextureLoader` 按名查表的**键**，以及
+`get_entity_{skin,face,hat}_sprite`（x86 `0x4bb6b0` 一族）里对每个部件的**额外 set_position/scale**。
+
+### 59.4 逐块表（`replay_play`，块 = 320×290，`row,col` 从 0 起；门槛每块每通道 ≤ 2.0/255）
+
+改后只有 3 块还有 >0.01 的差（`dmean` 三个通道全 ≤ 0.968）：
+
+| 块 | 改前 dmean(RGB) | 改后 dmean(RGB) | 差像素改前 → 改后 | 差在哪 |
+|---|---|---|---|---|
+| `(2,2)` | 3.381 / 3.489（§58 后） | **0.181 / 0.313 / 0.968** | 13 642 → **1 961** | 士兵合成尺寸 + 名字标签笔画形状 |
+| `(3,0)` | 0.061 | 0.061 | 636 → 636 | `f(x)=` 图标小 2 px（§59.2-C） |
+| `(3,3)` | 1.066 | **0.676** | 10 406 → **270** | 输入框光标**闪烁相位**（3×90 @x1181..1183，两边位置相同；原版 45 s 也变 270 px ⇒ 它也闪） |
+| 其余 21 块 | 0.0 – 1.807 | **0.0 – 0.004** | — | 全过 |
+
+改前那 19 块超限的分布（§55.0）与 §58 后的 2 块（`(2,2)` 3.381、`(1,3)` 2.016）现在都不见了：
+`(1,3)`（靶子）在 §58 之后已经达标，本节改后是 **0.0**。
+
+### 59.5 残余 4 836 px 的去处
+
+| 去处 | px | 说明 |
+|---|---|---|
+| 士兵合成尺寸 + 标签笔画 | 1 961 | §59.3 遗留；缺 `GraphwarTextureLoader` 查表键与逐部件摆位的证据 |
+| `f(x)=` 图标小 2 px | 636 | §59.2-C；要动 `FxContainer` 的 AR 结构（风险面大于收益） |
+| 光标闪烁相位 | 270 | 我方 0.55 s 周期 / 0.28 s 亮；原版周期**未观测**（只知"45 s 内变 270 px"）。三帧里踩到哪一侧是概率 |
+| 其余（网格线 1.28 px 抗锯齿、文字 AA 等） | ~1 970 | 画布模型：我方把 1000×600 缩放到 1279×767.4、原版直接按实尺寸画（`docs/06` §55.8 第 5 条，未动） |
+
+⇒ **L3 的三条判据（≤0.10 % / max|Δch| ≤ 8）本轮过不了**：max|Δch| = 255 来自光标的
+"有/无"（任一处 1 px 以上差异都会破这一条）。L1、L2 是**全部通过**的。
+
+### 59.6 落到源码的每一处改动（文件 + 函数 + 证据）
+
+| # | 文件 | 函数/位置 | 改法 | 证据档 |
+|---|---|---|---|---|
+| 1 | `client/src/screens/play_screen.gd` | 新增 `_replay_button_width()`；`_set_replay_layout()` 里右三键的最小宽 | `w*0.175521`（337.00032）→ **八个空格 advance + 6 = 230**（`.tscn` 的 `text` + `ButtonGrid.gd` 的 `x/30`） | **逐位**（`.tscn` 文本 + `.gd` 比例）+ **观测**（真帧 337/146） |
+| 2 | 同上 | `_set_replay_layout()` 右列键盘 | holder 保持 visible + grid 藏掉 + holder 最小宽钉成 grid 的天然 337 | **观测**（真帧右列 337、无键盘）；机制 **未知** |
+| 3 | 同上 | `apply_font_scale()` 里 `_input.custom_minimum_size` | `(key*2, key)` → `(key*2, 0)`：高度交给 `_get_minimum_size()` | **逐位**（`LineEdit::get_minimum_size` 规则 + 主题 content_margin） |
+| 4 | `client/src/play/function_input.gd` | 新增 `_line_edit_style()` / `_get_minimum_size()` / `refresh_minimum_size()` | 只读态取 **Godot 默认主题的 `LineEdit/styles/read_only`**；最小高 = 字体高 + content_margin | **观测**（真帧三通道验算 + 只有下边框） |
+| 5 | 同上 | `_draw()` | 样式盒 + 基线（`LineEdit` 规则）+ 光标高度（内容矩形） | **观测**（真帧墨迹 y1087..1149 / 光标 3×90） |
+| 6 | `client/src/screens/play_screen.gd` | `_replay_draw_shot()` 的 `_offset_label.text` | 回放分支加**一个前导空格** | **推断**（中心差从 9.5 px 收到 1.9 px；缺切串指令） |
+| 7 | 同上 | `_build_replay_controls()` | 六颗回放键 `icon_alignment = CENTER`（`.tscn` 每颗都写 `icon_alignment = 1`） | **逐位**（`.tscn`）+ **观测**（真帧图标居中 x1708..1794） |
+| 8 | 同上 | `build()` 里 `_fx_button` | 同上（`FxTextureButton` 的 `icon_alignment = 1`） | **逐位**（`.tscn`） |
+| 9 | 同上 | `_replay_sync_actors()` / `_sync_entities()` | 士兵带上**回放实体 id**，外观按它查 `graphics()` | **观测**（运行时 dump 的贴图名 + 真帧 bbox） |
+| 10 | 同上 | `_sync_entities()` | 新增 `set_entity_name_color(id, 队色)` 调用 | **观测**（真帧笔画色 (125,104,0) = ColorInfo 逐值） |
+| 11 | `src/_scaffold/entity_drawer_class.rs` | `relayout()` 的 name label 段 | 第一实参 `label.get_size()` → **控件 `size`** | **观测**（算式夹取语义 + `tests/entity_drawer.rs` 用例的实参） |
+| 12 | 同上 | 新增 `set_entity_name_color()`；`new_name_label()` 加描边 theme 项 | 颜色 = 队色；`outline_size = 4` + `font_outline_color` 黑 | 颜色 **观测**；描边数值 **推断**（取自同工程 `ViewFunctionsLabel` 的 `[outline_size=4]`） |
+| 13 | `client/tools/entity_drawer_check.gd` | `expect_label_position()` | 镜像同步：`w/h` 取**控件尺寸**（与 #11 同一条更正） | 镜像（`docs/06` §58.2 第 3 条的同一规矩） |
+
+> **地址口径**（2026-11-26 更正）：本仓库文档里的函数地址一律是 **ELF vaddr（RVA）**，
+> 直接与 `objdump`/`analysis/` 对齐；只有 Ghidra 反编译文本里的 `_DAT_/FUN_` 才是 `+0x100000`。
+> 本节引用的地址：`EntityDrawer::draw` `0x4b2890`、`update_sprite` `0x4b9530`、
+> `update_name_label` `0x4b9810`（arm64 `0x4bf690`）、`get_entity_skin_sprite` `0x4bb6b0`。
+
+### 59.7 复跑（每条都在本机跑过；`<W>` = 工作树）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=<W>/.cargo-target          # ⚠️ 单独一行
+export HOME=<W>/.fakehome                          # 可写目录，里面要有 replays/1793897298
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd <W>
+
+# ① 内核三步（改了 src/_scaffold/ 就必须做，否则客户端跑旧内核）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+$GODOT --headless --path client --import
+
+# ② 两侧真帧（**只用** display 81 / 82；必须用**本工作树**的 tools/frame_capture.py）
+python3 tools/frame_capture.py --side original --flow replay --seed-replays --out /tmp/orig --display-num 81
+python3 tools/frame_capture.py --side ours     --flow replay --seed-replays --out /tmp/mine --display-num 82
+
+# ③ 三层判据（同一个 frame_diff.py、同一份门槛文件）
+python3 tools/frame_diff.py --orig /tmp/orig --mine /tmp/mine \
+    --screens menu,replay_lobby,replay_play,replay_end \
+    --out /tmp/fd.tsv --blocks-out /tmp/fdb.tsv --json /tmp/fd.json
+#   期望：menu 0.000 % / replay_lobby 0.000 % /
+#        replay_play & replay_end：L1 0.065、L2 **0 块**、L3 4 836 px = 0.2171 %、max|Δch| 255
+
+# ④ 棋盘四个数（同一把尺子，本文件 §59.1 的表就是这么量的；脚本 argv 见 59.8 第 6 条）
+#   原版 /tmp/orig/frames/replay_play_1.png → x303..1575 y198..959 = 1273×762、轴 (939,578)
+#   我方 /tmp/mine/frames/replay_play_1.png → 应当**逐项相同**
+
+# ⑤ 容器链运行时读数（诊断用；只读，不写库）
+DISPLAY=<私有 Xvfb> GW2_REPLAY=$HOME/.local/share/godot/app_userdata/Graphwar/replays/1793897298 \
+    $GODOT --path client --resolution 1920x1160 --script res://<诊断脚本>   # 打 PlayPlane/Row 的 size
+#   期望：PlayMainHBox 1920×1058、PlaneContainer 1279×1058 @x300、RightControls 337 @x1583、
+#        HBoxContainer2 1920×98 @y1062、PlaneCanvas 1279×767.4 @y195.3
+
+# ⑥ 回归六项（读数见 §59.8）
+cargo test --offline                                   # 1769 / 0 / 1 ignored
+cargo test --offline --features gdext-bindings          # 1875 / 0 / 1 ignored
+bash client/run.sh selftest                             # 717 / 0 / 1 skip（missing=0 silent=0）
+for f in assemble_check base_classes_check curve_on_screen_check draw_classes_check \
+         entity_drawer_check function_drawer_check gdext_check obstacle_drawer_check \
+         plane_on_screen_check play_flow_check process_loop_check recovered_view_check \
+         signal_classes_check spike_class_check; do
+    $GODOT --headless --path client --script res://tools/$f.gd; done   # 合计 1933 / 0
+```
+
+### 59.8 抓不到 / 本轮没做 / 我写错了
+
+| # | 项 | 状态 | 卡在哪 |
+|---|---|---|---|
+| 1 | 士兵**合成尺寸**（我方 36×29 / 原版 ~54×43，且原版主体下方还有一层） | **未做成** | 三层 sprite 的位置/缩放/贴图名都与原版同名同值（各 54.6 屏幕 px），差的是**墨迹占比**与"多出来的那一层"。缺 `GraphwarTextureLoader` 查表键 + `0x4bb6b0` 一族里逐部件的额外摆位证据 |
+| 2 | 名字标签的**精确字体/字号/描边宽** | **推断** | 队色笔画是观测；描边 4 取自同工程 `ViewFunctionsLabel` 的 `[outline_size=4]`，字号沿用 RichTextLabel 默认。缺 `get_entity_name_label` 里 theme 项的写入指令 |
+| 3 | `f(x)=` 图标 2 px | **未做成** | 要动 `FxContainer → AspectRatioContainer → 按钮` 这层结构（会挪动整条底栏），收益 636 px 风险更大 |
+| 4 | 光标闪烁**周期** | **未知** | 只知道"45 s 内变 270 px"。三帧踩到亮/灭是概率 ⇒ 块 `(3,3)` 的 270 px 不可复现地忽有忽无 |
+| 5 | 画布模型（1000×600 缩放 vs 原版按实尺寸画） | **没动**（`docs/06` §55.8 第 5 条） | 网格线 1.28 px 抗锯齿 vs 原版 1 px 实线；本轮的 1 px 版式修正**不依赖**这条 |
+| 6 | 尺子脚本没入库 | **临时脚本** | §59.1 的四个数是本机一个 40 行的 numpy 脚本量的（口径见 `fixtures/replay_screen_targets.txt` §一），**没有**放进 `tools/`（本轮不允许改 `tools/`） |
+| 7 | ⚠️ **我改了既有断言**：`client/tools/entity_drawer_check.gd::expect_label_position()` | **已改（必须）** | 它是 #11 那条更正的**镜像**（`docs/06` §58.2 第 3 条要求"三处必须同步"），改的是**输入语义**（`w` 取控件尺寸），**不是**容差。不改则 headless 14 脚本 = 1932/1（红） |
+| 8 | ⚠️ **我改了 T4 的右列机制**：`visible=false` → "holder visible + grid 藏掉 + holder 最小宽钉 337" | **已改** | 原版"键盘不画但宽度还在"**没有源码证据**（见 §59.1 ①-A 的 ⚠️），本轮是**如实复现观测**，机制记 **未知**。若以后证出原版是别的做法（例如只藏按钮、`visible` 后缓存不失效），改的是 `_set_replay_layout()` 一处 |
+
+**任务前提被证伪的一条**：§58.3 把剩下的 8.06 % 归成"棋盘 1 px 取整（占 76 %）"，
+并把成因写成"`floor` vs `round`"。**实测不是取整**：外框矩形的实参本身就差
+（右列 338/337、底栏 96/98）——用的是**整块矩形**，取整方式（`AspectRatioContainer` 的
+`STRETCH_FIT` + `Control.scale`）一个字没改，四个数就全对。
+
+**回归护栏**（六项，全部与 master `2f64674` 相同或更好）：
+
+| 门槛 | 读数 |
+|---|---|
+| `cargo test --offline` | **1769 / 0 / 1 ignored** |
+| `cargo test --offline --features gdext-bindings` | **1875 / 0 / 1 ignored** |
+| `selftest` | **717 / 0 / 1 skip**（`missing=0 silent=0`；两个 `*_real_server` 组要求先 `cargo build --example serve_match`，否则 missing=76） |
+| headless 14 个 SceneTree 脚本 | **1933 / 0**（`assemble 244 / base 117 / curve 96 / draw 235 / entity 366 / function 132 / gdext 24 / obstacle 116 / plane 96 / play_flow 206 / process 66 / recovered 57 / signal 155 / spike 23`） |
+| 三轴（各自 `--check-baseline`） | `fire` 内容 **647** / 种类序列 **1075**；`batch` 内容 **647** / 1075；`batch_conv` 内容 **637** / 1075 —— 三条全部 `校验结果：全部一致` |
+| 冻结快照 | **403** 份（一个字节没动） |
 ## 60. 视觉真值扩到「对局屏」：**脚本化协议服务器把局面钉死**，原版真机与我方客户端各拍两屏（2026-11-26，任务 T8）
 
 > 任务书：`.agent-work/specs/T8-match-frames.md`（共享任务 `task-5`）。分支 `agent/match-frames`，基于 master `2f64674`。

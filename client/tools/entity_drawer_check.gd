@@ -168,9 +168,15 @@ func _team_mirror(packed_color: int) -> bool:
 ##
 ## 入参 `label` 只用来读两个引擎值：`size`（= 原版的 `label_size`）与 `get_minimum_size()`
 ## （= 原版的 `mw/mh`，`fit_content = true` 时它跟着文本走）。
-func expect_label_position(label: RichTextLabel, packed_color: int, x: float, y: float) -> Vector2:
-	var w: float = label.size.x
-	var h: float = label.size.y
+## ⚠️ **2026-11-26 更正（T7，`docs/06` §59）**：`update_name_label` 的 `k = w/50` 里的 `w`
+## 是**控件尺寸**（`EntityDrawer::get_size()`，1000×600 ⇒ k = 20），**不是标签自己的尺寸**。
+## 依据：算式末尾把结果夹进 `[0, w − mw]`——只有 `w` = 控件宽时 `[0, w−mw]` 才是一个有意义
+## 的取值区间（`tests/entity_drawer.rs::name_label_layout_matches_update_name_label_arithmetic`
+## 传的第一个实参就是控件尺寸 500×300）。这个镜像以前跟着 `src/_scaffold` 里同一个错误
+## 一起用 `label.size` 当 `w`（k 变成 58/50）⇒ 检查"全绿"而画面上名字标签被夹到控件左上角。
+func expect_label_position(label: RichTextLabel, ctrl: Vector2, packed_color: int, x: float, y: float) -> Vector2:
+	var w: float = ctrl.x
+	var h: float = ctrl.y
 	var mw: float = label.get_minimum_size().x
 	var mh: float = label.get_minimum_size().y
 	var k: float = w / 50.0
@@ -354,7 +360,7 @@ func _initialize() -> void:
 
 	drawer.call("set_entity_name", 0, "Bob")
 	ok(String(label.text) == "Bob", "set_entity_name 后 text == \"Bob\"（实际 \"%s\"）" % label.text)
-	var want_label: Vector2 = expect_label_position(label, TEAM_COLOR, 5.0, 5.0)
+	var want_label: Vector2 = expect_label_position(label, Vector2(W, H), TEAM_COLOR, 5.0, 5.0)
 	print("      label position=%s（期望 %s）min_size=%s"
 		% [label.position, want_label, label.get_minimum_size()])
 	ok(label.position.is_equal_approx(want_label), "名字标签位置 == name_label_layout 的手算结果")
