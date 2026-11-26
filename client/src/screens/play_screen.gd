@@ -235,8 +235,6 @@ var _last_result := {}
 var _shot_status := ""
 ## 状态行当前文本（`_status()` 写入；诊断用）。
 var _status_text := ""
-## 程序化改写输入框（换手时回填）期间不要清 OffsetLabel —— 否则会把刚算出来的修正抹掉。
-var _suppress_offset_clear := false
 
 # ---------------------------------------------------------------- 一发弹道的生命周期（docs/143）
 #
@@ -893,9 +891,8 @@ func apply_font_scale() -> void:
 		# 字号（`screen.x / 60`，无下限）现在由**原版** `OffsetContainer.gd` 写，
 		# 这里只保留最小宽那一条（与原版同值 0.09·x，重复写不会打架）。
 		_offset_label.custom_minimum_size = Vector2(w * 0.09, 0)
-	var fire_stack := find_child("FireStack", true, false)
-	if fire_stack != null:
-		(fire_stack as Control).custom_minimum_size = Vector2(key * 1.4, key)
+	# `Fire!` 那一行不再有 `FireStack` 中间层（item ⑤ 与 `.tscn` 同形）⇒ 它的最小尺寸由
+	# 原版 `FireContainer.gd` 直接写给两颗子节点（0.07·屏宽），这里不再插手。
 	if _view_functions_label != null:
 		_view_functions_label.add_theme_font_size_override("normal_font_size", maxi(8, int(w / 60.0)))
 	_update_view_geometry()
@@ -1713,8 +1710,8 @@ func _on_function_text_changed(new_text: String) -> void:
 	_functions[_active] = new_text
 	# 右下修正常数**跟着当前输入重算**（旧实现是"手改就清空"，那样 S7 空函数一开始就永远是空的，
 	# 而原版 S7 常显 `- 9.890` = `y0 − f(x0)` 在 `f ≡ 0` 时的值）。
-	# `_suppress_offset_clear` 的旧用途（"程序化改写时别把刚算出来的修正抹掉"）随之一并取消：
-	# 现在**唯一**来源是"当前输入 + 当前射手"，重算不会抹掉任何东西。
+	# 旧实现里那个 `_suppress_offset_clear` 开关（"程序化改写时别把刚算出来的修正抹掉"）
+	# 随之一并删掉：现在**唯一**来源是"当前输入 + 当前射手"，重算不会抹掉任何东西。
 	_refresh_offset_label()
 	_refresh_function_list()
 
@@ -2343,9 +2340,7 @@ func _next_turn(advance: bool) -> void:
 func _load_active_function() -> void:
 	if _input == null:
 		return
-	_suppress_offset_clear = true
 	_input.text = String(_functions.get(_active, ""))
-	_suppress_offset_clear = false
 	# 换手 = 换射手 ⇒ 修正常数也要重算（原版换手时右下那串**不消失**，它跟着"当前输入 + 当前射手"变）。
 	_refresh_offset_label()
 
@@ -2635,9 +2630,7 @@ func _replay_sync_bottom_text() -> void:
 	if text == "" and _replay != null:
 		text = String(_replay.function_of(int(shot.get("owner", -1))))
 	if _input.text != text:
-		_suppress_offset_clear = true
 		_input.text = text
-		_suppress_offset_clear = false
 	_input.key_input(GwCommands.KEY_END)      # 光标到末尾（原版载入态光标就在末尾）
 
 ## 主循环里的回放推进（`_process` 的回放分支）。
@@ -2878,9 +2871,7 @@ func _set_replay_input_enabled(enabled: bool) -> void:
 	if _input != null and not enabled:
 		# `GwFunctionInput` 不是 LineEdit（自绘，没有 `editable`），禁用的做法是清空 +
 		# `key_input()`/`fire()` 两个入口直接 return。
-		_suppress_offset_clear = true
 		_input.text = ""
-		_suppress_offset_clear = false
 
 # ---- 自检 / 诊断用的只读入口（不参与游戏逻辑） ----
 
