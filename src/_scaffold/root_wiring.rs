@@ -816,156 +816,21 @@ pub struct ObstacleManagerSlot {
 // 3b. 两个"我方形状"的表（**不是**原版的类型）
 // ---------------------------------------------------------------------------
 
-/// 函数槽表：**我方形状**，接的是原版 `GraphwarFunctionManager` 的那几个入口
-/// （`fixtures/name_to_addr.tsv`：`set_function` `0x455e30`、`get_function` `0x455b60`、
-/// `get_function_text` `0x4565f0`、`set_function_active_tick` `0x456b80`、
-/// `set_function_points` `0x456810`、`get_active_functions_on_tick` `0x456df0`）。
+/// 函数槽表：**我方形状**的类型名 —— **定义已经搬回原版模块**（T49 / `task-45`）。
 ///
-/// **实证到的三条**（`观测`）：
+/// 原版把行为写成 `GraphwarFunctionManager` 自己的 6 个方法（`impl` 就在
+/// `src/graphwar_function_manager.rs`）；我方历史上写在**本文件**，违反 `AGENTS.md` §4
+/// 「文件名就是证据」——T36 审计（`docs/06` §86.4）把这列成第 ② 处。
 ///
-/// * 这个模块**没有** `subscribe_to_events_event_handler`（`docs/02` §18.5 的方法表），
-///   构造路径（arm64 `0x419c80` / x86 `0x5236e0`，`GraphwarClient::new` 在 `0x517b9f` 调它、
-///   紧接着 `add_module::<GraphwarFunctionManager>` `0x469db0`）体内**没有任何**
-///   `EventHandler::subscribe`（`0x3d38f0`）调用；
-/// * ⚠️ **2026-11 任务 22 就地更正（`AGENTS.md` §0.6）**：上一轮这里写「四个 `set_*` 体内
-///   **没有** `GraphwarEventQueue::add_event`（`0x3d3530`）⇒ 它**不发事件**」。**这条是错的**，
-///   而且是 `AGENTS.md`「间接调用」那个坑的复发：`add_event` 在 x86 上是**经 GOT 槽
-///   `0x9bac80` 的间接调用**，只扫 `call rel32` 会漏：
+/// 现在：类型与 6 个方法体都在 [`crate::graphwar_function_manager::FunctionTable`]，
+/// 本文件只 `pub use` 再导出 ⇒ **调用方（`net_events_class`、交互断言、`assemble_check.gd`）
+/// 一字未改**（路径 `root_wiring::FunctionTable` 不变）。
 ///
-///   ```text
-///   x86 0x455e30 set_function            0x45638f  call qword [rip+..] slot 0x9bac80 -> 0x3d3530
-///   x86 0x456810 set_function_points     0x4569e1  同上
-///   x86 0x456b80 set_function_active_tick 0x456ce1 同上
-///   arm64 0x488a9c set_function          0x488e30  bl 0x3d7a40（.symtab 名 = add_event）
-///   ```
-///
-///   `set_function` 发的是 **tag `0x23` = 35 = `FunctionInfo`**（arm64 `0x488e18`
-///   `mov x8,#0x23; movk x8,#0x8000,lsl #48`，载荷 = `(id, 文本, tick)`），
-///   与 `docs/02-module-map.md:524` 对 `0x455e30` 的既有记载一致。
-/// * ⇒ 本表的 `outbox` **不再声明"恒空"**：它现在只装"我方探针显式写进去的东西"，
-///   **不**代表原版不发事件。
-///
-/// ⚠️ **2026-11 任务 28 就地更正**：上面这条更正只把**注释**改对了，**代码没接**——
-/// 原版那 3 条 `FunctionInfo` 类事件我方一条都没写进 `outbox`。这一条正是
-/// [`FunctionManagerSlot`] 的档位停在 `layout` 而不是 `wired` 的原因（见那个槽的文档）。
-/// 要升档就把 `set_function` / `set_function_points` / `set_function_active_tick` 的
-/// 发事件补齐（载荷按 §46.0：`set_function` 是 `(id, 文本, tick)`）。
-///
-/// ⇒ 所以 `subscribed` 恒空是"正面证据"（真的不订阅），
-/// 正对照见 `addr_probe.py dis 0x454790`（life）等四个 manager 的 `new`，
-/// 同一条命令能看到它们的 `subscribe` 调用。
-#[derive(Debug)]
-pub struct FunctionTable {
-    /// `soldier_id → token 序列`（原版一格一士兵，`docs/98` §3.1）。
-    slots: HashMap<u32, Vec<Token>>,
-    /// `set_function_active_tick` 写进去的那个 tick。
-    active_tick: HashMap<u32, u32>,
-    /// `set_function_points` 写进去的终点（`FunctionPoints.end_x/end_y`）。
-    points: HashMap<u32, (f64, f64)>,
-    /// 订阅名（恒空 = 原版这一型也不订阅，**正面证据**，见上面的类型文档）。
-    pub subscribed: Vec<&'static str>,
-    /// 发件箱。**原版会发**（3 个 `set_*` 各一条 `FunctionInfo` 类事件），
-    /// 我方**还没接**发方向（档位因此是 `layout`，见 [`FunctionManagerSlot`]）；
-    /// 这里只装探针显式写进去的东西。
-    pub outbox: Vec<Event>,
-}
-
-impl Default for FunctionTable {
-    fn default() -> Self {
-        Self {
-            slots: HashMap::new(),
-            active_tick: HashMap::new(),
-            points: HashMap::new(),
-            subscribed: Vec::new(),
-            outbox: Vec::new(),
-        }
-    }
-}
-
-impl FunctionTable {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// `set_function`（`0x455e30`）：写一格。
-    pub fn set_function(&mut self, soldier_id: u32, tokens: Vec<Token>) {
-        self.slots.insert(soldier_id, tokens);
-    }
-
-    /// `get_function`（`0x455b60`）：读一格。
-    pub fn get_function(&self, soldier_id: u32) -> Option<&[Token]> {
-        self.slots.get(&soldier_id).map(|v| v.as_slice())
-    }
-
-    /// `get_function_text`（`0x4565f0`）：那一格的文本（走 `math_function::to_text`，
-    /// 与 `Match::function_text` 同一个函数，`docs/119` 1032/1032 对拍）。
-    pub fn get_function_text(&self, soldier_id: u32) -> Option<String> {
-        self.get_function(soldier_id).map(math_function::to_text)
-    }
-
-    /// `set_function_active_tick`（`0x456b80`）：记下这条曲线从哪个 tick 起在场。
-    pub fn set_function_active_tick(&mut self, soldier_id: u32, tick: u32) {
-        self.active_tick.insert(soldier_id, tick);
-    }
-
-    /// 读回 `active_tick`（原版没有单独的 getter，`get_active_functions_on_tick` 内联读它）。
-    pub fn active_tick_of(&self, soldier_id: u32) -> Option<u32> {
-        self.active_tick.get(&soldier_id).copied()
-    }
-
-    /// `set_function_points`（`0x456810`）：记下曲线终点。
-    pub fn set_function_points(&mut self, soldier_id: u32, x: f64, y: f64) {
-        self.points.insert(soldier_id, (x, y));
-    }
-
-    /// 读回终点。
-    pub fn points_of(&self, soldier_id: u32) -> Option<(f64, f64)> {
-        self.points.get(&soldier_id).copied()
-    }
-
-    /// `get_active_functions_on_tick`（`0x456df0`）的**在场判据**（`docs/16-client.md` §42.2
-    /// 的三条指令级结论）：`tick > active_tick` **严格**大于，且
-    /// `30*(tick-active_tick) < points.len() + 1800`。
-    ///
-    /// 本表不存点（曲线点由 `FunctionDrawer` 那边持有），所以这里用 `points_of` 只有终点
-    /// ⇒ **点的条数按 0 算**，窗口 = `1800/30 = 60` tick。缺的证据写在
-    /// `docs/16-client.md` §43 的"仍是推断"表里。
-    pub fn get_active_functions_on_tick(&self, tick: u32) -> Vec<u32> {
-        let mut ids: Vec<u32> = self
-            .active_tick
-            .iter()
-            .filter(|&(_id, &active)| {
-                if tick <= active {
-                    return false;
-                }
-                let d = tick - active;
-                30u64 * d as u64 <= 1800
-            })
-            .map(|(&id, _)| id)
-            .collect();
-        ids.sort_unstable();
-        ids
-    }
-
-    pub fn len(&self) -> usize {
-        self.slots.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.slots.is_empty()
-    }
-
-    /// 取走发件箱。⚠️ 我方**还没接**发方向（原版会发，见类型文档与 [`FunctionManagerSlot`]），
-    /// 所以这里现在恒空；"恒空"是**我方缺陷**，不是原版行为。
-    pub fn take_outbox(&mut self) -> Vec<Event> {
-        std::mem::take(&mut self.outbox)
-    }
-
-    /// 发件箱里有几条（现在恒 0 = 发方向未接，见类型文档）。
-    pub fn outbox_len(&self) -> usize {
-        self.outbox.len()
-    }
-}
+/// ⚠️ 搬过去时按指令补上了"发方向"：三个 `set_*` 各发一条事件（tag 35 / 36 / 37，
+/// 立即数见那个文件的 §七）。**但档位字符串仍是 `layout`**：它被
+/// `client/tools/assemble_check.gd:144` 与 `TIER_TALLY` 钉死，本任务禁止改 `client/**`
+/// ⇒ 升档要两边同时改（登记在 `docs/06` §99 遗留）。
+pub use crate::graphwar_function_manager::FunctionTable;
 
 /// 障碍表：**我方形状**的类型名，**定义已经搬回原版模块**（T49 / `task-45`）。
 ///

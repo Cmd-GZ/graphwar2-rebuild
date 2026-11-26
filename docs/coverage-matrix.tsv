@@ -7,7 +7,7 @@
 # tool_version: 1
 # binary_sha256: 9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187
 # funcstarts_sha256: b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a
-# src_tree_sha256: 593d217b5eac89da7f318e5c5a311e3ff599831e16c7971ab4b39b19df957786
+# src_tree_sha256: 5bd04166fb2fb8cd56c0e6c083100ce5f106f305fb3d79f2a308897ee99d157a
 # funcstarts_n: 13263
 # src_modules: 246
 # loc_structs: 2042
@@ -33,7 +33,7 @@ graphwar_event_handler.rs	graphwar	2	0	4	src/graphwar_event_handler.rs	1	观测	
 graphwar_event_queue.rs	graphwar	0	0	0	src/graphwar_event_queue.rs	5	观测	**不是 manager**：GraphwarGameClient 以 Rc<RefCell<>> 持有（new+0xcdc），其余 manager 拿 Weak；add_event 有 200 余个直接调用点 => 全游戏发件箱。反常：send_buffer 只 1 个直接调用者（docs/16 §33）
 graphwar_function_evolutionator.rs	graphwar	16	0	25	src/graphwar_function_evolutionator.rs	114	观测	docs/AI.md：权重/长度/装配/交叉/变异/适应度全部从反汇编 + 40 万次运行时抽样得出；无逐字节对拍
 graphwar_function_input.rs	graphwar	13	2	33	src/graphwar_function_input.rs	41	观测	17 条函数；7 个原版名 + gui_input 0x4fedc0；**输入框只做一步预处理：删空格**（docs/03 §13）
-graphwar_function_manager.rs	graphwar	7	0	12	src/graphwar_function_manager.rs	5	观测	docs/112 §2.1：7 个函数的存取结构逐条读出（HashMap<u32, 112 字节>、Vec<Token>）；我方 Match::functions 同构，但没有逐字节对拍
+graphwar_function_manager.rs	graphwar	7	0	12	src/graphwar_function_manager.rs	19	观测	docs/112 §2.1：7 个函数的存取结构逐条读出（HashMap<u32, 112 字节>、Vec<Token>）；我方 Match::functions 同构，但没有逐字节对拍
 graphwar_game_client.rs	graphwar	36	19	59	src/graphwar_game_client.rs	31	观测	36 个函数分 8 类（docs/16 §17）：8 种请求事件判别值 11/12/16/17/18/19/20/21 + 0x48 记录形状 + add_bot_0..5 -> 3/10/25/100/250/1000 + 0x517690 的 3 订阅名/14 manager；6 个入口函数语义未知
 graphwar_game_info.rs	graphwar	0	0	0	src/graphwar_game_info.rs	0	观测	GameInfo 结构体（9 字段）在此模块，**不在** graphwar_event.rs；我方只做 pub use 复用（docs/16 §33）
 graphwar_game_recorder.rs	graphwar	2	1	4	src/graphwar_game_recorder.rs	14	观测	3：订 32 条服务端广播事件（24 条 *_info_event + 8 条不带 info 的；*_request_event 一条不订）；GameStateInfo==6 EndingGame 上升沿落盘 user://replays/<unix 秒>（gzip + 每行 {event,tick}），==1 Setup 且上一条是 6 时清缓冲（docs/16 §32）
