@@ -12598,7 +12598,6 @@ cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive 
 cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict
 ```
 
-<<<<<<< HEAD
 ## 77. `EndGamePopUp` 接通：33.636 % → **4.053 %**，面板区 **0 px** —— 顺带更正一条"事件名"的错前提（2026-11-26，任务 T27 / `task-24`）
 
 > 规格：`.agent-work/specs/T27-endgame-wiring.md`。工作树 `.agent-work/cg/wt-t27`，分支 `agent/endgame-wiring`。
@@ -12845,7 +12844,6 @@ cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy 
    还画在面板之上）。改成"会话对象还在 + `last_result["online"]`"之后才对。
 4. **`z_index` 不是我该"推断"的东西**：原版 `.tscn` 里就写着 `z_index = 5`，我第一版漏了它，
    结果是精灵压在面板上（`docs/16` §76.3）。**先抄 `.tscn`，再谈推断**。
-=======
 ## 78. AI 进化器：抽样层/生成层升到**逐位**（C3 闭合：27 行逐 token 相同）＋ 适应度里那项未定性的减法**定性**（2026-11-26，任务 T28 / `task-25`）
 
 > 起点 = master `eba333d`；分支 `agent/ai-src-fixes`。**本轮第一次"按对拍结果改原版模块"**，
@@ -13050,7 +13048,6 @@ python3 tools/bit_exact_attrib.py --json c.jsonl --check-baseline --axis batch_c
 
 **没有改动**：`client/**`、`tests/` 的既有断言、`fixtures/guardrails.json`、
 `fixtures/frame_diff_thresholds*`、`docs/00`/`docs/HANDOVER`/`README`、冻结快照、`src/lib.rs`。
->>>>>>> agent/ai-src-fixes
 
 ## 79. 对局屏**底图**收口：`match_ready` 6.189 % → **0.1219 %**、`match_play` 6.462 % → **0.4256 %**，`(0,0)` 块**归零**（2026-11-26，任务 T29 / `task-26`）
 
@@ -13483,3 +13480,275 @@ cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy 
    `AGENTS.md` §0/目录里那两处同样的旧读数**不在本任务允许清单**，未动。
 4. **`docs/02` §17.4 的两处旧"现值核对"行**（`events.rs` / `server.rs` 都写"未拆"）已按实测改掉，
    并附了可复跑的单行判据。
+## 86. 审计面②（`src/`）结构保真度：**文件名叫对了、函数能跑，不等于源码级还原** —— 348 个原版真名里只有 **106 个**落在同名模块文件、**1163 个生产函数（48.7 %）住在 `_scaffold/`**、9 条规则两处实现（2026-11-26，审计员 t36 / `task-33`）
+
+> 审计任务，**只审计不修**：本轮 `src/**`、`client/**`、`tests/**`、护栏/门槛、`docs/00`/`HANDOVER`/`README` 一个字节都没改。
+> 产出：[`fixtures/source_audit_src.tsv`](../fixtures/source_audit_src.tsv)（55 行判定）+ 新工具 [`tools/audit_src.py`](../tools/audit_src.py)（只读取证器）+ 本节。
+> 判据全部来自**已有物证**：`docs/coverage-matrix.tsv`、`fixtures/boundary_audit.tsv`、
+> 三份名字夹具（`fixtures/name_to_addr.tsv` / `name_to_addr_v2.tsv` / `windows_name_to_addr.tsv`）、源码行号；
+> 抽样处用 `tools/addr_probe.py locs <vaddr>` **自己核**，不采信台账的结论字段。**没有做任何新逆向。**
+
+### 86.0 一句话判决
+
+**`src/` 现在是「原版文件名 + 我们的内部结构」。** 文件名对了（78 个模块都有同名/可指的落点），
+但**函数边界、函数名、以及"哪段代码住在哪个文件"这三层都还是我们自己的切分**：
+
+* **结构偏离最重的 6 个模块**：`graphwar_play_screen_control`（10 个原版函数里 7 个在 `src/` 里根本没有实现）、
+  `graphwar_level_manager`（22 条 `setup_level*` 合并成 1 张表）、`graphwar_obstacle_manager`（6/8 方法住 scaffold）、
+  `graphwar_function_manager`（6/7 住 scaffold）、`graphwar_game_state_manager`（33 个原版函数被铺进
+  `game.rs`+`turnstate.rs`+自己 三处、台账口径 173 个 fn）、`entity_drawer`（8 个可要求真名里 5 个改名）。
+* **规模**：`src/` 生产函数 **2388** 个，其中 **1223 个（51.2 %）** 在与原版模块对应的文件里，
+  **1163 个（48.7 %）住在 `src/_scaffold/`**（`*_class.rs` 20 个文件占 **692**）、`lib.rs` 2 个。
+  换句话说：**一半的生产代码住在一个"原版没有对应物"的目录里**，而 `AGENTS.md` 铁律 4 说那里只该放桥接/工具。
+* **不是所有 scaffold 都有问题**：`api.rs`（转发）、`endgame_class.rs`（转发 + 逐行标推断）、`play_flow_class.rs`（无第二份算法）是**合格形态**（§86.8 正对照）。
+  问题集中在 **20 个 `*_class.rs`（gdext 节点类）与 `root_wiring.rs`**：原版把"类的方法体"写在
+  `graphwar_*.rs` 同一个文件里（Location 就是证据），我们把它拆进了 scaffold。
+
+### 86.1 判据与方法（为什么不能拿 `ours_funcs` 直接读）
+
+`docs/coverage-matrix.tsv` 的 `ours_funcs` = **整个文件的 `fn` 条数**（工具自己在
+`tools/coverage_matrix.py:914` 写了这句），它把 `#[cfg(test)]` 块里的测试也数进去。
+拿"`ours_funcs` 明显多 ⇒ 自造 helper"直接读，**会把测试当自造**。本次复算（同一 78 行、同一批文件）：
+
+| 口径 | 数值 |
+|---|---|
+| 台账 `sum(ours_funcs)` | **1757** |
+| 同 78 行的**生产函数**（挖掉测试块） | **1229** |
+| 同 78 行的**测试函数** | **530** |
+| `sum(orig_funcs)`（527 个可归属函数的模块归属） | **527** |
+
+> ⚠️ 口径坑（我自己第一版就踩了）：`src/graphwar_play_screen_control.rs:324` 是一条 **`#[cfg(test)] use`**，
+> 只作用于一个 `use`，后面还有 800 行生产代码。按"第一个 `#[cfg(test)]` 之前算生产"会把该文件的
+> **prod 27 数成 prod 5**。`tools/audit_src.py` 现在按**括号匹配整块**挖掉测试块。
+
+所以本审计用**三条互相独立的判据**，任何一条都不依赖台账的 `status`/`evidence` 字段：
+
+1. **生产函数 vs `orig_funcs`（`python3 tools/audit_src.py modules`）**——
+   多 = 疑自造 helper/拆分，少 = 疑合并/漏（但见 §86.10 第 3 条：`orig_funcs` 是 Location 下限，锚点稀疏的模块"多"是分母缺失）。
+2. **真名落点（`python3 tools/audit_src.py names`）**——三份名字夹具的地址并集 ∩ 527 = **348**
+   （复算：并集 358 个地址、∩527 **348**；与 `docs/00-status.md:251` 的 348 一致）。
+   其中 **53** 条是编译器/宏生成名（28 个 `{{closure}}`、16 个 `_::_`、8 个 `__init::__inner_init`、1 个 `panic_cold_explicit`），
+   **不要求我方有同名函数** ⇒ 可要求的真名 **295** 条。对每条判"我方哪个文件里有同名 `fn`"。
+3. **scaffold 逐文件人工判定（`python3 tools/audit_src.py scaffold` + 逐条读代码）**——
+   凡"判断游戏规则"的代码，问两句：①这条规则在 `src/graphwar_*.rs` 里有对应实现吗？没有 ⇒ **B**；
+   有 ⇒ 两条实现 ⇒ **C**。
+
+### 86.2 78 模块的 `orig_funcs` vs `ours_funcs` 分布
+
+`prod` = 台账 `ours_file` 里挖掉测试块之后的生产函数。**分布（78 模块，`prod/orig`）**：
+
+| 档 | 台账口径（`ours`） | 生产函数口径（`prod`） |
+|---|---|---|
+| `< 0.6×`（明显少 ⇒ 疑合并/漏） | 2 | **6** |
+| `0.6–1.0×` | 9 | **3** |
+| `1.0–1.5×`（健康） | 2 | **7** |
+| `1.5–2.5×` | 11 | **14** |
+| `2.5–4×` | 12 | **15** |
+| `> 4×`（明显多 ⇒ 疑自造/拆分） | **32** | **23** |
+| `orig = 0`（无锚点，倍数无意义） | 10 | 10 |
+
+**两个口径的差就是测试**：台账口径把 5 个模块从"健康"推成"`>4×`"。生产函数口径下仍然 `>4×` 且
+`orig ≥ 3` 的 10 个（按倍数）：
+
+| 模块 | orig | prod | 倍数 | 说明 |
+|---|---|---|---|---|
+| `graphwar_effect_manager.rs` | 1 | 14 | 14.0 | 模块级只有 1 个可归属函数，多出来的是装配/订阅面 |
+| `graphwar_shot_calculator.rs` | 1 | 17 | 17.0 | 12 KB 主函数没逐条还原，改成 settle/shot_points/simulate 分解（B26） |
+| `graphwar_tick_handler.rs` | 2 | 20 | 10.0 | 见 B22 |
+| `graphwar_replay_player.rs` | 5 | 39 | 7.8 | 混装 reader 的解析职责（C01） |
+| `graphwar_color_manager.rs` | 4 | 27 | 6.75 | 分配规则 + 表 |
+| `graphwar_game_server.rs` | 3 | 18 | 6.0 | 报文装配在协议层（C03） |
+| `math_function.rs` | 7 | 39 | 5.57 | 含 `to_text.rs` 派生模块 |
+| `graphwar_computer_player_manager.rs` | 5 | 24 | 4.8 | |
+| `player_showcase.rs` | 10 | 44 | 4.4 | 方法体在 scaffold（B12） |
+| `graphwar_turn_manager.rs` | 14 | 61 | 4.36 | 原版 32 字节结构被铺成 61 个函数（E01） |
+
+**明显少（生产函数 < `orig_funcs`）的 9 个模块**——"文件名叫对了，但原版的函数不在这个文件里"：
+
+| 模块 | orig | prod | 真因 |
+|---|---|---|---|
+| `graphwar_function_manager.rs` | 7 | 2 | 6/7 方法在 `_scaffold/root_wiring.rs`（B02） |
+| `graphwar_obstacle_manager.rs` | 8 | 4 | 6/8 在 `root_wiring.rs`，掩膜在 `plane.rs`（B01/C04） |
+| `graphwar_level_manager.rs` | 40 | 12 | 22 条 `setup_level*` 合并成表（B19） |
+| `graphwar_game_client.rs` | 36 | 15 | 请求/入口压成三张表（B20） |
+| `graphwar_nodes.rs` | 11 | 8 | 单态化薄壳 |
+| `graphwar_module_container.rs` | 20 | 16 | 泛型单态化（A04） |
+| `graphwar_remote_event_handler.rs` | 3 | 2 | 该模块没有文件，实现 = `events.rs`+scaffold（B17/B27） |
+| `graphwar_server_connection_handler.rs` | 6 | 2 | 同上（`server.rs` 混装） |
+| `weak_caller.rs` | 39 | 8 | 泛型单态化（A05） |
+
+### 86.3 348 个原版真名落在我方哪里（295 条可要求）
+
+| 落点 | 条数 | 占比 | 含义 |
+|---|---|---|---|
+| **本模块文件里有同名 `fn`** | **106** | 35.9 % | 名字对上了（仍不代表语义对） |
+| **只在 `src/_scaffold/` 里有同名 `fn`** | **57** | 19.3 % | **方法体住错地方**（B 档 15 条） |
+| 在我方别的 `src/*.rs` 里 | 7 | 2.4 % | 混装/搬错 |
+| **我方没有任何同名 `fn`** | **125** | 42.4 % | 改名（结构偏差）或没实现（见下） |
+
+那 **125 条**抽样核查（`python3 tools/audit_src.py names` 全表在工具输出里）分三类：
+
+* **改名**：`next_turn`→`begin_turn/announce`、`set_state`→`turnstate::next_state`、`toggle_pause`→`toggle`、
+  `update_sprite`→`apply_look`、`MathFunction::new`→`parse`、`calculate_shot_results`→`settle`、
+  `score_function`→`evaluate`、`next_shooter`…（B23/B24/B25/B26，语义在、名字不在 ⇒ 结构偏差）；
+* **合并成表**：`setup_level_0..20`（22 条）→ `SETUPS` 表 + `generate_obstacles`（B19）；
+  `GraphwarGameStateManager` 的 21 个 `request_*/handle_*` → `game.rs` 的 `fire/turnstate` 一族（E02）；
+* **真的没有实现**：`graphwar_play_screen_control` 的 7 条（`add_tie_icon` / `enable_replay_buttons` /
+  `disable_replay_buttons` / `update_end_game_pop_up` / `update_names_button_texture` /
+  `update_view_function_button_texture` / `process`）—— `src/` 与 `client/` 里都找不到对应物（B21）。
+  **这 7 条现在被算在"已实现 527"里**（台账按模块级 `观测` 整块计入）。
+
+### 86.4 `src/_scaffold/` 里装了多少**游戏语义**（这是本轮最大的结构问题）
+
+`_scaffold/` 共 35 个文件、**1163 个生产函数**（+373 测试）= 全部生产函数的 **48.7 %**。
+按"是不是游戏规则"逐文件判完，分成三类：
+
+**(a) 合格（纯桥接/工具/转发，10 个文件）**：`api.rs`、`endgame_class.rs`、`play_flow_class.rs`、
+`capi.rs`、`gdext.rs`、`gdext_class.rs`、`gdext_mod.rs`、`broker.rs`（原版没有 broker 服务端）、
+`rng.rs`（原版用 `rand_chacha`）、`replay_inflate.rs`（原版用 `flate2`）——**这些留在 scaffold 是对的**。
+
+**(b) 装着原版模块的方法体（20 个 `*_class.rs`，692 个生产函数 = 29 %）**：
+
+| scaffold 文件 | 生产 fn | 装的是哪个原版模块的语义（证据：名字夹具 / Location） |
+|---|---|---|
+| `entity_drawer_class.rs` | 97 | `EntityDrawer::{ready 0x4b4130, process 0x4b4b60, draw 0x4b2890, update_sprite 0x4b9530, get_entity_*_sprite 0x4b9e70…0x4bb6b0}`（B05） |
+| `graphwar_plane_class.rs` | 50 | `GraphwarPlane::{init 0x4b7380, ready 0x4b7a70, process 0x4b83f0, draw 0x4b5df0}` + 时钟口/队色池（B06/B07） |
+| `graphwar_setup_control_class.rs` | 50 | `GraphwarSetupControl::{on_text_change 0x4c27f0, on_chat_submitted 0x4c44b0, force_title_update 0x4c4850}`（B08） |
+| `graphwar_root_node_class.rs` | 45 | `GraphwarRootNode::{process 0x3a5760, purchase_confirmed 0x3afe90, purchase_denied 0x3afb00}`（B10） |
+| `graphwar_button_class.rs` | 34 | `GraphwarButton::{ready, pressed, button_down, button_up}` |
+| `graphwar_function_input_class.rs` | 32 | `GraphwarFunctionInput::{ready 0x4fd1b0, process 0x4fd4a0, force_update_cb 0x4f2200}`（B09） |
+| `player_showcase_class.rs` | 31 | `PlayerShowcase::{ready 0x4e6480, process 0x4e68f0, draw 0x4e5400, on_text_change 0x4efd70}`（B12） |
+| `obstacle_drawer_class.rs` | 26 | `ObstacleDrawer::update 0x3ee190`（B11） |
+| `effect_drawer_class.rs` | 25 | `EffectDrawer::{draw 0x4e1520, ready 0x4e25b0/0x4e2d50, process 0x4e2f80}` |
+| `axis_drawer_class.rs` | 24 | `AxisDrawer::{draw, ready, process}` |
+| `graphwar_lan_vbox_class.rs` | 23 | `GraphwarLanVBox::process 0x4f90b0`（B13） |
+| `long_press_animation_class.rs` | 18 | `GraphwarLongPressAnimation::draw 0x4d8100` |
+| `function_drawer_class.rs` | 18 | `FunctionDrawer::{update_function, init}` |
+| `replay_driver_class.rs` / `replay_meta_class.rs` | 51 / 14 | 我方自造的驱动/元数据（B15/B16） |
+| `graphwar_ad_switch_class.rs` | 7 | `GraphwarAdSwitch` |
+
+> **判"错位"的依据**：这些原版函数的 `panic::Location` 指向 `src/graphwar_*.rs`**本身**
+> （例：`tools/addr_probe.py locs 0x4b2890` → `src/entity_drawer.rs`）⇒ 原版那个文件里
+> **既有一行 `#[derive(GodotClass)] struct`，也有方法体**。我们把它拆成"纯逻辑在同名模块 + 方法体在 scaffold"，
+> 这是我们自己的分层，不是原版的。**37 条通用名（ready/process/draw/init/new/tick）的"仅 scaffold"就是这个形态。**
+
+**(c) 装着整层/整块游戏规则（5 个文件，最该先修）**：
+
+| scaffold 位置 | 生产 fn | 装的是什么规则 | 档 |
+|---|---|---|---|
+| `root_wiring.rs:993 ObstacleTable` | 127（整文件） | `GraphwarObstacleManager` 的 6/8 方法名 + 行为（add/is/queue_destroy/destroy/clear/handle_tick） | **B01** |
+| `root_wiring.rs:819 FunctionTable` | 同上 | `GraphwarFunctionManager` 的 6/7 方法名 + 行为（get/set/.../get_active_functions_on_tick） | **B02** |
+| `root_wiring.rs:2318 KernelBus`（`process_events:2553`） | 同上 | `GraphwarEventHandler::process_events 0x3d3630` + `subscribe_to_event 0x3d38f0` | **B03** |
+| `root_wiring.rs:234/364/496 RootWiring` | 同上 | `GraphwarGameClient::new 0x517690` 的 22 条 `add_module` 注册序 + `game_server_thread 0x4500c0` 的装配 | **B04** |
+| `net_events_class.rs` | 53 | 整个"线上事件 → manager"派发层 = 原版 `GraphwarRemoteEventHandler::{handle_server_remote_event 0x3e6df0, is_leader 0x3e5910}`（**我方没有这个文件**） | **B17** |
+| `replay_driver.rs` / `replay_meta.rs` / `diffconv.rs` / `ai_explain.rs` | 41 / 21 / 29 / 22 | 回放时钟（B15）、回放元数据（B16）、第三轴收敛层复刻开火（C06）、AI 评分复刻（C07） | B/C |
+
+### 86.5 同一条规则两处实现（C 档 9 条）
+
+| id | 规则 | 两处 |
+|---|---|---|
+| C01 | 回放文件解析（gzip + 逐行 JSON + 坏行跳过） | `graphwar_replay_reader.rs:175/190/204` **vs** `graphwar_replay_player.rs:147/194`（两处都是 `is_gzip → gunzip → protocol::parse_message` 循环） |
+| C02 | 回放时钟（60 tick/s） | `graphwar_replay_player.rs:745 advance_dt`（f64 累加）**vs** `_scaffold/replay_driver.rs:365 drive_frame`（整数 ns 定步；两者取整不同） |
+| C03 | 事件字段集合 / tag / 名字 | `events.rs`（74 tag + 72 分派名）**+** `protocol.rs`（74 行 `WIRE_SPEC` + 每事件 struct）**+** `net_events_class.rs`（`WireEvent` 变体 + tag/name 双表）⇒ 同一事件手抄 **3–4 遍**（原版是 serde 派生，一处定义） |
+| C04 | 障碍掩膜 | `plane.rs`（rasterize/is_occupied）+ `graphwar_obstacle_manager.rs`（index_of）+ `root_wiring.rs`（ObstacleTable）⇒ **三份**；原版 `draw_circle 0x3f11e0` / `is_obstacle 0x3f15b0` 同模块 |
+| C05 | 线上值→枚举 | `net_events_class.rs:parse_team/parse_turn_mode`（字符串）**vs** `graphwar_team_manager.rs:172 from_byte` / `graphwar_mode_manager.rs from_u8` |
+| C06 | 开火/结算路径 | `_scaffold/diffconv.rs:fire/fire_batch` **vs** `game.rs Match::fire/fire_batch`（第三轴 `batch_conv` 的复刻） |
+| C07 | AI 评分 | `_scaffold/ai_explain.rs:192 evaluate` **vs** `graphwar_function_evolutionator.rs::evaluate/ScoringContext` |
+| C08 | 「订阅」结构 | 8 个模块各有 `struct Subscription`（audio_control/color_manager/game_state_manager/graphics_manager/local_player_manager/name_manager/player_manager/rank_manager）；原版没有这个类型 |
+| C09 | 回放全局表预扫描 | `graphwar_replay_player.rs:147-190`（NameInfo/SoldierInfo/TargetInfo 三表）与原版 reader 职责重叠 |
+
+### 86.6 数据结构「够用就行」嫌疑（E 档 8 条，与 t32 的正式审计互补，这里只标嫌疑）
+
+判据：`struct/enum` 的定义**既没有 serde 串、也没有偏移/大小证据** ⇒ E，并写清缺什么。抽样结果：
+
+* **E01 `graphwar_turn_manager.rs:493/504/556`**：原版 `GraphwarTurnManager` 是 **32 字节**（`Vec<soldier_id>`+游标）；
+  我方多出 `PlayerEntry`/`TurnDecision`/`SkipReason` 一套"每玩家表 + 判决枚举" ⇒ 缺 32 字节怎么摆的证据，
+  而且**语义上多了一层原版没有的"玩家轮转"**（`_scaffold/play_flow_class.rs` 的 `cursor` 自己标了"未知"，B18）。
+* **E02 `game.rs:87 Match`**：原版是 `GraphwarGameStateManager`（296 字节）+ 各 manager 自持表；
+  我方把 obstacles/soldiers/teams/targets/mask/turn_limit/turn_count 全塞进一个结构。只有 `function_mode`(+0x32)
+  等个别字段有指令证据 ⇒ **字段归属**本身缺证据。
+* E03 `BotData`(0x58)/`BotProfile`、E04 `Replay/Circle/FiredShot/Effect`、E05 `PlayerEntry`/`SimShot`/`SimRound`、
+  E06 `GraphicsInfo`/`TextureGetter`、E07 `Status`/`FunctionData`：字段集合/取值枚举无证据。
+* **正例（不是"够用就行"）**：`RankInfo`（三 dword + `PAYLOAD_SIZE=12`，A06）、`EffectType`（4 个取值已穷举）。
+
+### 86.7 台账/口径问题（D 档 4 条 —— 这几条会误导后来人）
+
+* **D01 `ours_funcs` 不是"该模块实现了几函数"**：它是整文件 fn 数（含测试）。78 行合计 1757，其中 530 是测试。
+  **建议**：矩阵加 `prod`/`test` 两列，或改口径后重算 §17 的分布。
+* **D02 `docs/00` §0.2「已实现 527（逐位 89 / 观测 438）｜未做 0」**：`status` 是**模块级证据档**，
+  按 `orig_funcs` 整块计入 ⇒ "已实现 527" ≠ "527 个函数都写成了源码"。反例就是 B21（10 个里 7 个没有实现）
+  与 125 条没有同名实现的真名。**建议**：台账补一列"有实现证据的函数数"，把"读过"与"写成源码"分开。
+* **D03** `src/*.rs` 里的 **898** 个测试函数（27 %）与实现同文件，其期望值是否来自真二进制属审计面③。
+* **D04** 数生产函数必须按 `#[cfg(test)]` **块**切（`play_screen_control.rs:324` 是 `#[cfg(test)] use`）。
+
+### 86.8 正对照（证明本审计方法能把"对"的判对）
+
+1. **名字命中链**：`GraphwarTeamManager::add_to_team`（0x3c17d0）→ `src/graphwar_team_manager.rs:323 fn add_to_team`、
+   `get_team`（0x3c2120）→ `:344` ⇒ 判 `A/本模块文件`（与 `boundary_audit.tsv` 的 `match` 一致）。
+2. **地址链**：`tools/addr_probe.py locs 0x4ed670` → `src/math_function.rs:75:10`；
+   `locs 0x4eb9d0` → `src/math_function.rs:184:24`（与 `docs/02` 的自校验口径一致）。
+3. **边界链**：`locs 0x473520 / 0x4759f0 / 0x4780c0` → 全部 `src/graphwar_game_state_manager.rs`（x5/x12/x5），
+   与 T24 搬 `LevelRules` 的结论一致（A07）。
+4. **负对照**：`grep -c 'fn setup_level' src/graphwar_level_manager.rs` = **0**，而名字夹具里
+   22 条 `setup_level*` 有 Location ⇒ 我的"改名/合并"判定不是漏扫。
+5. **"不是所有 scaffold 都有罪"**：`api.rs::hit_test` 与 `endgame_class.rs` 被判 A（转发 + 无第二份实现），
+   说明本方法不是"见 scaffold 就判 B"。
+
+### 86.9 A–E 统计与**最该先修的 10 处**
+
+`fixtures/source_audit_src.tsv` 共 **55 条**：**A 7 / B 27 / C 9 / D 4 / E 8**。
+
+**最该先修的 10 处**（优先级 = 是游戏语义 **且** 现在住在 scaffold/错误模块 **且** 已有物证能直接指到）：
+
+| # | id | 位置 | 为什么排这个位置 |
+|---|---|---|---|
+| 1 | B01 | `_scaffold/root_wiring.rs:993` `ObstacleTable`（6 个方法名 + 行为） | 原版 **6/8** 方法的地址都在名字夹具里（`0x3f15b0/0x3f17a0/0x3f19a0/0x3f1b30/0x3f1d30/0x3f20f0`），搬回去即可逐条对照 |
+| 2 | B02 | `root_wiring.rs:819` `FunctionTable`（6/7 方法名） | 同上（`0x455b60/0x455e30/0x4565f0/0x456810/0x456b80/0x456df0`） |
+| 3 | B03 | `root_wiring.rs:2553 process_events` + `subscribe` | 原版 `GraphwarEventHandler` 是**独立模块**（171 个 Location 锚），现在连文件都没有 |
+| 4 | B17 | `_scaffold/net_events_class.rs`（53 个生产 fn） | 整层派发 = `GraphwarRemoteEventHandler`（`0x3e6df0/0x3e5910`），同样没有文件；T30 正在拆 |
+| 5 | B05 | `_scaffold/entity_drawer_class.rs`（97 个生产 fn） | `EntityDrawer::update_sprite 0x4b9530` 等 5 个真名无同名实现；`draw/ready/process` 的 Location 就在 `entity_drawer.rs` |
+| 6 | B14 | 20 个 `*_class.rs`（692 个生产 fn = 29 %） | 系统性：37 条通用真名只在 scaffold；一次改一个模块 |
+| 7 | B19 | `graphwar_level_manager.rs` 22 条 `setup_level*` → 1 表 + 1 分派 | 函数边界是源码级还原的硬要求（`AGENTS.md` §0），且 22 条 Location 齐全 |
+| 8 | C01 | 回放解析两份（reader vs player） | 同一文件格式两套实现，**没有一处能叫"原版那一份"**；先收敛再谈复原 |
+| 9 | C02 | 回放时钟两份（f64 vs 整数 ns） | 两条路径的取整不同 ⇒ 像素/行为对拍会永远有 ±1 tick 的差 |
+| 10 | C03 | 事件 schema 3–4 份（74 事件） | 每加一个事件要改 4 处；原版一处 serde 定义 |
+
+> 与修复清单并列、但**不属于"搬代码"**的三件事：D01（`ours_funcs` 口径）、D02（「已实现 527」的虚报）、B21（7 个函数没实现却被算进 527）。
+
+### 86.10 我这条审计方法本身可能漏什么
+
+1. **只看 leaf 名**：同名不同实现 / 不同名相同实现都会误判。我把"无同名"一律记成**结构偏差**而不是"未实现"，
+   但仍可能把正常改名记成缺陷（B22 的 `tick_at` 就只到"B + 待证"，不是"已证实改名"）。
+2. **`prod/test` 切分靠 `#[cfg(test)]` 块括号匹配**：宏生成（`macro_rules!`/`include!`）的函数不计入，
+   `#[cfg(feature)]` 条件编译块里的 fn 仍算生产 ⇒ 极端文件上两边都可能差几个。
+3. **`orig_funcs` 是 Location 下限（527/13263 = 4 %）**：对锚点稀疏的模块（`replay_reader` orig=0、
+   `stream_buffer` orig=0、`crash_reporter` orig=0…）"prod ≫ orig"**完全不代表自造**，那 10 个 `orig=0` 模块的倍数没有意义。
+4. **"原版把类方法体写在同一个 `graphwar_*.rs`"这条推理**，我用 3 个正例（`EntityDrawer::draw/ready/process` 的
+   Location）验证过，但**没有反例**能证明"原版每个 gdext 类都只有一份源文件"。若原版其实也有"逻辑/节点"两层，
+   B14 的量级会下调。
+5. **本审计只判"位置/名字/边界/重复"，不判语义对错**：一条 A 也可能是错的（反过来，一条 B 的语义可能完全对）。
+   语义仍要逐位/对拍面去证（`AGENTS.md` §0 第 3 条）。
+6. **没有系统交叉 Rust ↔ GDScript**：C 档里"同一规则两份实现"我只查了 `src/` 内部；
+   `client/src/screens/*.gd` 那份流程（`play_screen.gd` 的 `_on_replay_button`/`_replay_left` 等）属审计面①，
+   本表只在 B21 顺带记了一句。
+7. **名字夹具本身是"配对结果"**，不是原始符号：`docs/02` §35 自报高置信档 95.8 %（且只对已定名 348 那批）。
+   我刻意**只用 `v2*` 三向匹配名，不用 `hyb:*` 预测名**（预测名不当结论），所以"可要求真名"只有 295 条，
+   剩下 179 个无名函数**完全没进名字判据**。
+8. **没有复核 78 模块名单本身**（是否漏模块、`scope=other` 的 16 个边界），只用它的 `orig_funcs` 数值。
+9. **样本偏向大文件**：`root_wiring.rs`/`entity_drawer_class.rs`/`play_flow_class.rs`/`net_events_class.rs`/`api.rs`/
+   `replay_*` 是我逐条读过代码的；小 `*_class.rs` 只做了名字比对 + 大小排序，没有逐函数读。
+
+### 86.11 复跑命令
+
+```bash
+cd /home/CG/Myprojects/graphwar2-rebuild
+python3 tools/audit_src.py modules     # 78 模块 orig / 生产函数 / 测试函数 / 台账口径
+python3 tools/audit_src.py names       # 348 真名 → 295 可要求 → 落点分布 + 逐条清单
+python3 tools/audit_src.py scaffold    # 35 个 scaffold 文件：生产/测试/转发调用/规则味函数
+python3 tools/audit_src.py names --module graphwar_obstacle_manager    # 单模块抽查
+$PWD/.reference/venv/bin/python tools/addr_probe.py locs 0x4b2890     # 抽样复核（应落 src/entity_drawer.rs）
+```
+
+**没有改动**：`src/**`、`client/**`、`tests/**`、`fixtures/guardrails.json`、`fixtures/frame_diff_thresholds*`、
+`docs/00-status.md`、`docs/HANDOVER.md`、`README.md`、`docs/coverage-matrix.*`、冻结快照、`recovered-src/`。
+**新增**：`fixtures/source_audit_src.tsv`、`tools/audit_src.py`、本节（`docs/06` 只追加）。
