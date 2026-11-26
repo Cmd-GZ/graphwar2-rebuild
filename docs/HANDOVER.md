@@ -71,9 +71,8 @@ bisect 把窗口收窄到 **(a3ed8c7, 5f74a29]**；**60 367 px 里 98.6 % 是右
 **收尾时仍在跑的两条（下一条会话先看它们的通知或分支）**：
 - `agent/replay-regress`（t51）：回放屏 2.710 % 的 **bisect** —— 先判"记录的 0.186 % 是不是也是空画面"，
   再定位 2.7 % 属于哪一层。`fixtures/replay_regression_bisect.tsv`
-- `agent/f3-client-handler`（t52）：F3 按 T48 给的依赖顺序 —— `client_connection_handler`(7) → `setup_control`(9)。
-  `fixtures/client_handler_anchors.tsv`
-两条都**未 commit**（收尾时只在工作树里），合并前必须**自己复跑**它们报告的数字。
+- `agent/f3-client-handler`（t52，**已合并**）：`client_connection_handler` F3 **7/8→0/8**（7 条按 vaddr 落码）；
+  仍剩 `setup_control` 9 条 + `game_client` 2 条（台账 `fixtures/client_handler_anchors.tsv`，仍在板上）。
 
 ---
 
@@ -81,7 +80,7 @@ bisect 把窗口收窄到 **(a3ed8c7, 5f74a29]**；**60 367 px 里 98.6 % 是右
 
 ```
 可归属函数   **模块级** 527/527（每模块都有文件+档位；逐位 89 / 观测 438 是模块档位加权）
-             **函数级 181/527 = 34.3%**（`docs/06` §87 首次实测 131/527；T45/T48/T49 之后 181）｜F3 缺口 235→**199**（T48 诚实拆账：`level_manager` 的 40/40 里只有 14 条是外层函数、26 条是闭包行，27 个闭包未还原）
+             **函数级 202/527 = 38.3%**（`docs/06` §87 首次实测 131/527；T45/T48/T49/T52 之后 **F1 202 / F2 137 / F3 188**，从 `fixtures/function_coverage.tsv` 复算）｜F3 缺口 249→**188**（T48 诚实拆账：`level_manager` 的 40/40 里只有 14 条是外层函数、26 条是闭包行，27 个闭包未还原）
              （2026-11-26：`polish_notation_converter` 唯一可归属函数 `0x4f5450` 对拍成 18/18 逐位 ⇒ 88→89）
              **439 里本质可隔离执行的只有 129（29.4%）**，其余 310 要 Godot/分配器 ⇒ 这是「观测」分母的可及上限（`docs/06` §64）
              但这只是 13,263 个 Ghidra 函数里的 4.0% —— 见 §3「信息天花板」
@@ -90,7 +89,7 @@ bisect 把窗口收窄到 **(a3ed8c7, 5f74a29]**；**60 367 px 里 98.6 % 是右
              （fp/order 都是**推断级候选名，逐条待核**）；近孪生族留出 56.8%→**95.5%**、可部署域 57.8%→93.3%、族外 −1 行（已定位）
 协议         74 / 74 全字段 + 74 条判别值 + 7 个线上枚举全集（无未知）
 GDExtension  **原版 12 类**（`docs/02` §16.2）+ 我方 3 = **15 个，全部节点化**；headless 14 个 SceneTree 脚本 / **1933** 条 / 0 failed（2026-11-26 本机实跑；play_flow 233）
-cargo        **1799** / 0 / 1 ignored（`--features gdext-bindings` **1921** / 0 / 1）；2026-11-26 收尾实测
+cargo        **1826** / 0 / 1 ignored（`--features gdext-bindings` **1956** / 0 / 1）；2026-11-26 收尾实测
 selftest     **717 / 0 / 1 skip**（2026-11-26 本轮实测；判据 = `missing=0` 且 `silent=0`）
 headless     14 个 `client/tools/*_check.gd`（`extends SceneTree`）合计 **1978 / 0**（T50 去镜像后 1961→1978）
              **四个前置**：① `client/assets/` 齐 ② `cargo build --example serve_match` ③ 可写 `HOME`
