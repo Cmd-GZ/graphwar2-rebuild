@@ -11891,3 +11891,245 @@ $MAIN/.reference/venv/bin/python tools/ai_budget_probe.py --runs --reps 3 --budg
 $MAIN/.reference/venv/bin/python tools/ai_rng_inject.py            # mode=0
 $MAIN/.reference/venv/bin/python tools/ai_rng_inject.py --mode 1   # DiffEq
 ```
+
+## 74. 「函数 → 真实源文件」边界全量审计：527 行 `match` **431** / `mismatch` **10** / `multi` **86**；`LevelRules` 按 `Location` 搬进 `graphwar_game_state_manager`（2026-11-26，任务 T24 / `task-21`）
+
+> 这一节是**项目目标本身**那条线的进度读数：`AGENTS.md` §0 说"文件 / 模块 / **函数边界**能对上才是终点"。
+> 在它之前，`docs/coverage-matrix.tsv` 只到**模块**粒度（这一行有几个可归属函数、ours_file 是哪个文件），
+> 判不了"**某个具体函数**的原版 `Location` 和我们放它的文件对不对得上"。本轮把它做成 527 行逐函数台账。
+
+### 74.1 判据与取数链（三档判定 + 两个必须说清的口径）
+
+台账：`fixtures/boundary_audit.tsv`（527 行，**机器生成，不手改**）；工具：`tools/boundary_audit.py`。
+
+* **函数边界 = Ghidra 的 13,263 个 funcstarts**（`analysis/funcstarts_ghidra_va.pkl`），
+  与 `tools/coverage_matrix.py` **同口径** ⇒ 总数必须都是 **527 / 86**（脚本里是断言，不是注释）。
+* **反汇编按函数起点逐个重新同步**（区间 `[funcstart_i, funcstart_{i+1})`），不是从 `.text` 头一路线扫。
+  两者在这个二进制上给出**完全相同**的 527 个函数与 86 个跨模块函数（断言钉住）；重同步不会因前面的数据块失步。
+* **名字**：`fixtures/name_to_addr_v2.tsv`（三向符号匹配的真名，312 条命中 527）优先，
+  否则 `fixtures/hybrid_names.tsv` 的结构指纹**候选名**（176 条，按高置信/推断/歧义/未知标档），
+  剩下 **39 条无名**。候选名不当结论。
+
+判定三档（`AGENTS.md` §4「边界无证据时不猜、不搬」）：
+
+| 判定 | 条件 | 处置 |
+|---|---|---|
+| `match` | 单模块，且我方布局里**有一份同名文件** `src/<模块>`（在矩阵的 `ours_file` 里） | 不动；`basis` 再分 `clean` / `split-N` |
+| `mismatch` | 单模块，但我方**没有**这个模块名的文件 ⇒ 我们的实现住在另一个名字的文件里 | 登记；有强证据且**目标文件在允许清单里**才搬 |
+| `multi` | 该函数的 Location 锚点**跨 ≥2 个原版模块文件**（内联/闭包把别的文件的行号带了进来） | **一律不搬**，只登记 |
+
+`match` 的两级（不改判定，只写进 `basis`）：`clean` = 该模块只对应 1 个我方文件（逐函数边界干净）；
+`split-N` = 该模块被我方拆进 N 个文件（`docs/02` §17.4 的「混装（待拆）」那一类）⇒ 文件名对得上，
+但**具体函数落在哪个文件**没有证据，仍不搬。
+
+台账列：`addr | name | name_src | loc_main_file | loc_main_lines | loc_main_anchors | loc_other_files |
+ours_file | ours_hit | verdict | basis`。其中 `loc_main_lines` 是原版**行号**（可直接拿去 diff 原版），
+`ours_hit` = 主文件锚点占该函数全部锚点的比例。
+
+### 74.2 正对照：`0x4ed670` 过，`0x4eb9d0` **按 Ghidra 边界其实没有锚**（一条旧口径被证伪）
+
+| 锚 | 结果 |
+|---|---|
+| `0x4ed670`（解析器） | → `src/math_function.rs`（`:75:10`）✓ 取数链有效 |
+| `0x473520` / `0x4759f0` / `0x4780c0`（LevelRules 三个判据函数） | → `src/graphwar_game_state_manager.rs`，锚点行数 **5 / 12 / 5**，与 `docs/02` §17.4 记的完全一致 ✓ |
+| `0x4eb9d0`（求值器） | **不在 527 里** —— 见下 |
+
+`AGENTS.md`「间接调用与函数归属」第 2 条与 `docs/02` §17.4 都把 `0x4eb9d0` 写成"应落 `math_function.rs`"的
+自校验锚。实测**按 Ghidra 函数边界它没有锚**：
+
+```text
+.eh_frame FDE  : 0x4eb9d0 .. 0x4ebbe0（一个 FDE）
+Ghidra 入口    : 0x4eb9d0 / 0x4ebb01 / 0x4ebb59 / 0x4ebb68（同一 FDE 被切成 4 段）
+0x4ebbce       : lea rdx, [rip+0x4742bb]  ->  0x95fe90 = Location{src/math_function.rs, line=184, col=24}
+⇒ 该 Location 按 Ghidra 边界归 0x4ebb68（它在 527 里，判 match）
+```
+
+`tools/addr_probe.py locs 0x4eb9d0` 用 **FDE 边界**（`0x4eb9d0..0x4ebbe0`），所以它会报
+`src/math_function.rs x1` —— **两个都对，口径不同**。`tools/coverage_matrix.py` 里那条
+`assert 0x4EB9D0 not in per_func` 也是 Ghidra 口径，因此并没有错。
+⇒ 结论：**"求值器 `0x4eb9d0` 整个函数体里没有 Location"这句只在 Ghidra 口径下成立**；
+拿它当"取数链自校验"的说服力弱于 `0x4ed670`（后者才是真正落在自己边界内的）。
+`docs/02` §17.4 那处口径本轮已就地更正（见 §74.10 第 5 条）。
+
+### 74.3 527 行的分布
+
+| 判定 | 条数 | 细分 |
+|---|---|---|
+| `match` | **431** | `clean` **387** + `split-2` **21**（plane 9 / math_function 7 / level_generator 3 / game_server 2） + `split-3` **23**（全在 GSM） |
+| `mismatch` | **10** | 全部集中在 3 个"我方没有同名文件"的模块：`graphwar_event_handler.rs` 2 + `graphwar_remote_event_handler.rs` 2（都在 `src/events.rs`）、`graphwar_server_connection_handler.rs` 6（在 `src/server.rs`） |
+| `multi` | **86** | 跨 2 文件 64 / 跨 3 文件 20 / 跨 5 文件 1（`0x4500c0`）/ 跨 9 文件 1（`0x3e2830`）；其中 85 条的主模块我方有同名文件，1 条没有 |
+
+补充读数：名字覆盖 = **真名 312**（`v2唯一锚` 285 + `v2跨版本` 27）+ **候选名 176** + **无名 39**；
+**8 条**函数的"符号名里的模块" ≠ "Location 主文件"（内联/外联边界，已在 `basis` 里标出）。
+按 Location 主文件排的行数前八：`graphwar_level_manager.rs` 40、`weak_caller.rs` 39、`graphwar_game_client.rs` 36、
+`graphwar_game_state_manager.rs` 33、`graphwar_root_node.rs` 23、`graphwar_setup_control.rs` 21、
+`graphwar_module_container.rs` 20、`graphwar_function_evolutionator.rs` 16。
+
+⚠️ 老规矩：`orig_funcs` / 这里的 527 **都是可度量下限**（只有带 panic 点的函数才留锚），
+不是"模块规模"。所以 `match` 431 说的是"**能被 Location 钉住的函数里**，431 个的原版文件与我方布局同名"，
+不是"我们复原了 431 个函数的行为"。
+
+### 74.4 `mismatch` 10 条：清单、证据、处置（**一条都没搬**，为什么）
+
+| 地址 | 符号名（三向匹配） | Location 主文件 | 我们放在 | 锚点数 | 处置 |
+|---|---|---|---|---|---|
+| `0x3d3630` | `GraphwarEventHandler::process_events` | `src/graphwar_event_handler.rs` | `src/events.rs` | 1 | 登记 |
+| `0x3d38f0` | `GraphwarEventHandler::subscribe_to_event` | 同上 | `src/events.rs` | 3 | 登记 |
+| `0x3dee00` | `GraphwarRemoteEventHandler::handle_client_remote_event` | `src/graphwar_remote_event_handler.rs` | `src/events.rs` | **80** | 登记 |
+| `0x3e5910` | `GraphwarRemoteEventHandler::is_leader` | 同上 | `src/events.rs` | 2 | 登记 |
+| `0x45a560` | `GraphwarServerConnectionHandler::forward_event` | `src/graphwar_server_connection_handler.rs` | `src/server.rs` | 1 | 登记 |
+| `0x45a6b0` | `…::handle_clear_bans_request_event` | 同上 | `src/server.rs` | 2 | 登记 |
+| `0x45a7b0` | `…::handle_connection_removed_event` | 同上 | `src/server.rs` | 3 | 登记 |
+| `0x45aab0` | `…::forward_connection_specific_event` | 同上 | `src/server.rs` | 2 | 登记 |
+| `0x45ad30` | `…::handle_ban_connection_request_event` | 同上 | `src/server.rs` | 4 | 登记 |
+| `0x45b020` | `GraphwarServerConnectionHandler::tick` | 同上 | `src/server.rs` | 8 | 登记 |
+
+**证据是单模块、一边倒**（不存在"多文件混杂"的问题），所以它们是**真 mismatch**，不是噪声：
+原版这三个模块各有一个源文件，我们一个都没有，代码全塞进了 `events.rs` / `server.rs`。
+
+**为什么不搬**（按 `AGENTS.md` §4 + 本轮允许清单）：
+
+1. 目标文件 `src/graphwar_event_handler.rs` / `src/graphwar_remote_event_handler.rs` /
+   `src/graphwar_server_connection_handler.rs` **都不存在**，要把函数搬过去得**新建 3 个文件**并从
+   `events.rs` / `server.rs` 里切出对应代码；而这两个文件**不在本任务的允许清单里**
+   （规格只许 `graphwar_play_screen_control.rs` / `graphwar_game_state_manager.rs` / `lib.rs` 与带证据的 `graphwar_*.rs`）。
+2. `docs/02` §17.4 早把这两处登记成「混装（待拆）」并写明了**当时的**不拆理由
+   （`events.rs` 拆完 `graphwar_event_handler.rs` 只剩一张表；`server.rs` 的 `on_tick_request` 只剩薄封装）。
+   本轮给它补上了**逐函数证据**（4 条 + 6 条，见 §17.4 那两行），但**边界怎么切**仍要能一起改调用方才行。
+3. 搬错文件比不搬更糟：`0x3dee00` 一个函数就 80 个锚、`events.rs` 里事件/处理器/判据表互相咬合，
+   只搬 2 个入口函数会把"一张表 + 两个入口"拆成两半、反而更难读。
+
+⇒ **建议的下一步**（留给能同时改 `events.rs` / `server.rs` 的任务）：
+新建这 3 个同名文件，把上表 10 个函数（连同它们独占的字段/表）搬过去，`events.rs` 只留 `enum Event` +
+`DISPATCH_NAME_TAGS`，`server.rs` 只留 tick 薄封装；判据就是本台账这 10 行的 `loc_main_file`。
+
+### 74.5 `multi` 86 条：**一律不搬**（`AGENTS.md` §4）
+
+`multi` 的来源是内联：一个函数体里既有本文件的行号，也有被内联进来的别的文件的行号。
+典型：`0x3e2830`（`handle_server_remote_event`）主文件 `graphwar_remote_event_handler.rs` 88 行锚点，
+另混进 8 个模块各 1–5 个（GSM 5 / mode_manager 3 / color·effect·entity_effect·player·soldier·target 各 1）；
+`0x4500c0`（`new`）主文件 `graphwar_game_server.rs` 54 个，另混 4 个模块（含 `graphwar_server_connection_handler.rs` 3 个 ——
+该模块**没有**我方同名文件）。两个都只登记、不搬。
+
+`multi` 里 85 条的主模块我方有同名文件（`ours_hit` 多在 50%–93%），对它们的处置一律是
+**按主模块不动**：主文件证据占优但没有"一边倒"的边界证据，动它就是猜。
+
+### 74.6 `LevelRules` 搬家：diff 摘要与自检读数（**必修项**）
+
+判据（`docs/02` §17.4 已登记很久的"未搬"，本轮结案）：三个判据函数的 `panic::Location`
+**全落 `graphwar_game_state_manager.rs`、一个都不落播放屏模块**（锚点数 5 / 12 / 5，行号见 §74.2）。
+⇒ `LevelRules` / `LevelKind` / `MatchState` / `Verdict` / `TARGET_TEAM` 原版属 **graphwar_game_state_manager.rs**。
+
+| 项 | 搬前 | 搬后 |
+|---|---|---|
+| 代码位置 | `src/graphwar_play_screen_control.rs` §5（行 297–591） | `src/graphwar_game_state_manager.rs` §7（末尾） |
+| 文件行数 | play_screen_control **1396** / GSM **883** | play_screen_control **1124** / GSM **1195**（`wc -l`） |
+| 矩阵 `ours_funcs` | 69 / 162 | **58 / 173**（净变化 0，`docs/coverage-matrix.tsv` 按工具重跑） |
+| 公开路径 | — | **不变**：`play_screen_control` 留 `pub use crate::graphwar_game_state_manager::{LevelKind, LevelRules, MatchState, TARGET_TEAM, Verdict};` |
+| 调用方改动 | — | **0 行**（`src/_scaffold/play_flow_class.rs` 的 import 与本文 test 模块都照旧，靠再导出生效） |
+| 证据注释 | 「为什么这一段在 play_screen_control 里」 | 改成「为什么这一段在 graphwar_game_state_manager.rs 里」+ 三行 Location 证据表（行号 / 锚点数 / 符号名） |
+
+门槛（每搬一项都跑，四条全绿）。两组读数**都记**（分支基线与合入 master 后不同，别混着引用）：
+
+| 树 | `cargo test --offline` | `--features gdext-bindings` | `coverage_matrix --check` | `check_doc_refs` |
+|---|---|---|---|---|
+| 分支基线 `e912939`（搬完那一步） | 1769 / 0 / 1 ignored | **1875** / 0 / 1 ignored | OK | rc=0 |
+| 合 master `0722ef1` 之后（**本分支现态**） | **1769** / 0 / 1 ignored | **1880** / 0 / 1 ignored | OK | rc=0 |
+
+差的 +5 全部来自 master 那 11 条（T17/T20 等），与本轮改动无关：`#[test]` 条数在两棵树上**同为 1454**
+（本轮搬的是函数归属，**不新增也不删测试**）。
+⚠️ 搬 `src/` 会改 `docs/coverage-matrix.tsv` 的 `ours_funcs` / `src_tree_sha256`，所以**按工具重跑那两个生成物**
+（`python3 tools/coverage_matrix.py`）——这是生成物的唯一正确修法，不是手改。
+
+### 74.7 补充轴（**线索档**）：我方文件自己点名的原版地址归哪个模块
+
+`tools/boundary_audit.py --citations` 把我方 `src/*.rs` 里点名的原版地址映射回本台账的
+`loc_main_file`，回答"**这个文件里混着别的模块的行为吗**"。它是**线索**（注释可能过期），
+但正好补上 527 行台账判不到的一类：**我方自己重写的、没有对应原版"函数"的包装类型**。
+
+`LevelRules` 就是这一类 —— 它在 527 行里**没有**对应行（三个原版函数的重建体 `get_alive_teams` /
+`set_state` 早已正确落在 `src/game.rs` / `src/turnstate.rs`），所以**全量审计本身判不出它放错了文件**；
+判它的是"文件里点名了谁"。播放屏文件的读数：
+
+| 我方文件 | 点名总数 | 本模块 | 点名到的别的模块（次数） |
+|---|---|---|---|
+| `src/graphwar_play_screen_control.rs`（**搬前**） | 75 | 58 | `graphwar_game_state_manager.rs` **10**（`0x470840` `handle_tick`、`0x470eb0` `fire_functions`、`0x472470` `execute_results`、`0x473520` / `0x4759f0` / `0x4780c0` = 那三个判据函数）、`graphwar_root_node.rs` 6、`graphwar_turn_manager.rs` 1 |
+| `src/graphwar_play_screen_control.rs`（**搬后**） | 71 | 58 | `graphwar_game_state_manager.rs` **6**、`graphwar_root_node.rs` 6、`graphwar_turn_manager.rs` 1 |
+| `src/events.rs` | 7 | 0 | `graphwar_event_handler.rs` 7（= §74.4 那 4 条 `mismatch` 的证据侧） |
+| `src/graphwar_game_state_manager.rs`（搬后） | 73 | 70 | `graphwar_event_handler.rs` 2、`graphwar_module_container.rs` 1 |
+
+⇒ 搬完后播放屏文件里对 GSM 那 6 处点名**全部在注释里**（`§5` 的证据表 + `§6` 的指针注释），
+**代码里一处都不剩**；这是本轮附带的"注释与归属同步"读数。剩下的 6 处 `graphwar_root_node.rs` 与 1 处
+`graphwar_turn_manager.rs` 同理是注释（那些函数本来就属别的模块，播放屏只是被它们调用）。
+
+### 74.8 复跑命令（照抄可跑）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t24          # 或任意 checkout
+export PY=$MAIN/.reference/venv/bin/python      # capstone
+cd $WT
+
+$PY tools/boundary_audit.py                     # 重算台账 + 打印 match/mismatch/multi 与清单
+$PY tools/boundary_audit.py --check             # 只校验 fixtures/boundary_audit.tsv 是否还一致
+$PY tools/boundary_audit.py --control           # 只跑正对照（0x4ed670 / 0x4eb9d0 / LevelRules 三条）
+$PY tools/boundary_audit.py --citations         # 补充轴：我方文件点名的原版地址归属（线索档）
+$PY tools/addr_probe.py locs 0x473520           # 单条证据：> 0x4ebbce 那条 FDE 口径的对照也在这里看
+$PY tools/addr_probe.py fde 0x4eb9d0            # FDE 0x4eb9d0..0x4ebbe0（对照 Ghidra 的 4 个入口）
+
+# 四条门槛
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target       # 单独一行
+cargo test --offline
+cargo test --offline --features gdext-bindings
+COVERAGE_MATRIX_UPSTREAM=$MAIN/.reference/upstream $PY tools/coverage_matrix.py --check
+python3 tools/check_doc_refs.py                 # rc=0
+```
+
+### 74.9 遗留 / 未做
+
+1. **10 条 `mismatch` 一条都没搬**（§74.4）：需要新建 3 个同名模块文件并切 `events.rs` / `server.rs`，
+   而这两个文件不在本轮允许清单里。已把逐函数证据写进 `docs/02` §17.4 对应行。
+2. **`split-N` 的 44 条**（GSM 23 / plane 9 / math_function 7 / level_generator 3 / game_server 2）：
+   文件名对得上，但"这个函数在我方拆开的哪一份里"没有证据 ⇒ 不搬、不猜。
+3. **`multi` 86 条**只登记。要让它们可判，需要"以原版 `(file,line,col)` 为键"的我方对照表
+   （我方函数标注自己对应哪几条原版 Location），现在没有这套元数据。
+4. **39 条函数完全无名**、**176 条只有候选名**：台账的 `name` 列对它们只是占位。
+   真名要靠三向符号匹配扩表（`tools/three_way_match.py`），不是本轮范围。
+5. **8 条"名字模块 ≠ Location 主文件"**（内联/外联边界）未逐条裁决：
+   `0x3d6080` / `0x3d7380` / `0x3d7630`（名字 `graphwar_replay_player.rs`，Location `graphwar_game_client.rs`）、
+   `0x3ee190`（`graphwar_obstacle_manager.rs` vs `obstacle_drawer.rs`）、
+   `0x437ce0`（`server_broker_request_connection.rs` vs `graphwar_server_broker_handler.rs`）、
+   `0x4500c0`（`graphwar_server_connection_handler.rs` vs `graphwar_game_server.rs`，`docs/06` §65/§72 已按 Location 结案）、
+   `0x4b7380`（`graphwar_plane.rs` vs `obstacle_drawer.rs`）、`0x514a10`（`graphwar_backend.rs` vs `graphwar_game_client.rs`）。
+6. **补充轴是线索档**（注释会过期）：`--citations` 不能当判据，只能排优先级。
+7. `docs/02` **§17.2 第 826 行**把 `0x3dee00` 列成 `graphwar_play_screen_control.rs` 的锚点之一，
+   而本台账的 `loc_main_file` 是 `graphwar_remote_event_handler.rs`（§74.4 那 10 条之一）。
+   §17.2 不在本轮"只改 §17.4"的范围内，**没动**，登记在此。
+
+### 74.10 我写错了 / 规格前提被证伪（照实记）
+
+1. **规格/`AGENTS.md` 的"`0x4eb9d0` 应落 `math_function.rs`"按 Ghidra 函数边界不成立**：
+   它自己没有锚（那条 Location 在 `0x4ebbce`，属同一 FDE 的另一个入口 `0x4ebb68`）。见 §74.2。
+   自校验改用 `0x4ed670` + LevelRules 三条（脚本里都是断言）。
+2. **规格说"527 个可归属函数逐个与 `ours_file` 对照"** —— 但 `ours_file` 是**模块级**映射，
+   逐函数对照只能到"该函数的主模块在我方有没有同名文件 / 被拆成几份"这个粒度。台账把它照实分成
+   `clean` / `split-N`；**`ours_hit` 因此定义为"主文件锚点占比"**，不是"我方实现命中率"
+   （后者没有元数据可算，见 §74.9 第 3 条）。这条口径差规格里没写，补在这。
+3. **规格预判"其余 `mismatch` 只搬证据强的（≥5:1）"** —— 实际单模块 `mismatch` 只有 10 条，
+   且全落禁区文件（`events.rs` / `server.rs`），**证据再强也搬不了**；而**必修的 `LevelRules` 根本不在 527 行里**
+   （它不是原版函数，是我方重写的包装类型）。所以"全量审计"不能替 `LevelRules` 提供判决，
+   它的判决来自三个函数的 Location + 我方文件里的点名（§74.7）。规格把这两件事写成一条线，实际是两条。
+4. **没有"口径打架"**：我的逐函数重同步扫描与 `coverage_matrix.py` 的线扫给出**相同集合**（527 / 86），
+   自校验里钉住了。所以不存在"两套 527"的隐患。
+5. **`docs/02` §17.4 里 `0x4eb9d0` 的自校验口径写错**（"`0x4eb9d0`/`0x4ed670` → `math_function.rs` 通过"），
+   本轮已就地更正为 `0x4ed670` 通过 + `0x4eb9d0` 的 Ghidra/FDE 双口径说明（`AGENTS.md` §0 第 6 条）。
+6. **（已闭环，留档）master 曾经把 9 个未解的冲突标记提交进 `docs/06-verification.md`**
+   （T17/T20/T23 三次合并留下的是**嵌套**标记，普通三路解冲突只能解外层）。本轮合 master 时先撞上它，
+   我按"去掉标记行逐行比对、'只在 master 有' = 0"完整重建过一版；**随后 lead 在 `f5ac864` 用
+   「干净基线 + 各分支节按编号重排」修好了 master**。本分支最终**以 lead 的重建版为基底、只追加 §74**
+   （`git diff master -- docs/06-verification.md` = **+241 行，全是 §74**），我上一版重建已作废。
+   方法本身可复用：跨分支合 `docs/06` 时，先确认"只在对方有"的行数为 0，再看编号连续。
+7. **`docs/06` §72.6 第 1 条说"master 上 `coverage_matrix --check` 是红的"** —— 本轮实测**基线（master）上是 OK 的**；
+   红色是我搬 `src/` 引起的（`ours_funcs` / `src_tree_sha256` 变），按工具重跑生成物后恢复 OK。
+   两件事不矛盾，但那句话现在读起来会误导，登记在此（§72 是别人写的历史节，本轮不改它）。
