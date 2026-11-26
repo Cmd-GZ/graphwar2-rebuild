@@ -1,0 +1,573 @@
+# fixtures/bit_exact_plan.txt —— T13「证据升档 sweep」**预注册清单**
+#
+# 这张表在**跑任何东西之前**写定并单独 commit（任务书 ① ）。跑完不改判据；
+# 要加要改必须另起 commit 并写明为什么。生成它的是 tools/bitexact_plan.py，
+# 分类判据在 tools/bitexact_classify.py 的 docstring 里（判据 1-8，每条都要能指到指令/符号）。
+#
+# 口径：`观测` 级函数 = docs/coverage-matrix.tsv 里 status=观测 的 67 个模块的
+# `orig_funcs` 之和 = 439（tools/coverage_matrix.py 的 panic::Location 归属口径，
+# 地址是 **ELF vaddr**；Ghidra/REA 地址 = 本地址 + 0x100000，只加一次）。
+# ⚠️ 档位是**按模块**判的（matrix 的 status 列），不是按函数判的 —— 所以
+#   「439 个观测级函数」严格说是「落在观测级模块里的 439 个可归属函数」。
+#
+# 三档定义：
+#   executable           指针参数只有「只读输入」与「只写输出」两种，不需要任何既有状态
+#   needs_state          有既被读又被写的指针参数（`&mut self` 一类）或写全局 —— 状态是纯数据、可造
+#   isolated_impossible  本体或热路径传递调用里出现引擎派发 / TLS / sys_io / thread / unwind
+#
+# 统计：{'isolated_impossible': 304, 'needs_state': 102, 'executable': 33}（合计 439）
+
+====================================================================================================
+A. 全部 439 个函数的分类（地址 | 模块 | 函数名 | 我方源位置 | 档位 | 理由 | 指令数）
+====================================================================================================
+# 函数名 / 我方源位置 来自 docs/02-module-map.md §18 的「方法|类型|x86 地址|源位置」表；
+# 表里没有的（`-`）就是 199 个**匿名单态化/闭包**（weak_caller 39、module_container 20 等），
+# 只能按地址 + 模块 + 锚点数定位。
+addr       module                                     fn                                 our_src                                  tier                 reason                         ninsn
+0x4dcd70   axis_drawer.rs                             -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4dcef0   axis_drawer.rs                             -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4e70c0   axis_drawer.rs                             -                                  -                                        isolated_impossible  via:0x8f5cc0                   97
+0x4e7260   axis_drawer.rs                             -                                  -                                        isolated_impossible  via:0x8f5cc0                   121
+0x4e7470   axis_drawer.rs                             -                                  -                                        isolated_impossible  via:0x8f5cc0                   126
+0x4e76c0   axis_drawer.rs                             -                                  -                                        isolated_impossible  via:0x8f5cc0                   92
+0x3aae60   button_manager.rs                          -                                  -                                        needs_state          inout_self:rdi                 19
+0x3b70b0   button_manager.rs                          -                                  -                                        needs_state          inout_self:rdi                 50
+0x4e02b0   effect_drawer.rs                           -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4e0430   effect_drawer.rs                           -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4e1520   effect_drawer.rs                           draw                               src/effect_drawer.rs:356                 isolated_impossible  via:0x3ab590                   822
+0x4e25b0   effect_drawer.rs                           ready                              src/effect_drawer.rs:479                 isolated_impossible  via:0x3ab590                   279
+0x4e2a30   effect_drawer.rs                           ready                              src/effect_drawer.rs:291                 isolated_impossible  via:0x406520                   183
+0x4e2d50   effect_drawer.rs                           ready                              src/effect_drawer.rs:456                 isolated_impossible  via:0x406520                   132
+0x4e2f80   effect_drawer.rs                           process                            src/effect_drawer.rs:250                 isolated_impossible  via:0x3ab590                   638
+0x4e7870   effect_drawer.rs                           -                                  -                                        isolated_impossible  via:0x8f5cc0                   92
+0x4e7a20   effect_drawer.rs                           -                                  -                                        isolated_impossible  via:0x8f5cc0                   97
+0x4e7bc0   effect_drawer.rs                           -                                  -                                        isolated_impossible  via:0x8f5cc0                   126
+0x4e7e10   effect_drawer.rs                           -                                  -                                        isolated_impossible  via:0x8f5cc0                   121
+0x4b1f60   entity_drawer.rs                           -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4b20e0   entity_drawer.rs                           -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4b2890   entity_drawer.rs                           draw                               src/entity_drawer.rs:244                 isolated_impossible  via:0x3ab590                   1274
+0x4b4130   entity_drawer.rs                           ready                              src/entity_drawer.rs:532                 isolated_impossible  via:0x3ab590                   477
+0x4b4b60   entity_drawer.rs                           process                            src/entity_drawer.rs:60                  isolated_impossible  via:0x3ab590                   852
+0x4b9530   entity_drawer.rs                           update_sprite                      src/entity_drawer.rs:192                 isolated_impossible  via:0x8cf3e0                   169
+0x4b9e70   entity_drawer.rs                           get_entity_hat_sprite              src/entity_drawer.rs:369                 isolated_impossible  engine_dispatch                361
+0x4ba4a0   entity_drawer.rs                           get_entity_name_label              src/entity_drawer.rs:398                 isolated_impossible  via:0x8cf3e0                   698
+0x4bb0a0   entity_drawer.rs                           get_entity_face_sprite             src/entity_drawer.rs:346                 isolated_impossible  engine_dispatch                360
+0x4bb6b0   entity_drawer.rs                           get_entity_skin_sprite             src/entity_drawer.rs:323                 isolated_impossible  engine_dispatch                360
+0x4bbcc0   entity_drawer.rs                           -                                  -                                        isolated_impossible  via:0x8f5cc0                   122
+0x4bbee0   entity_drawer.rs                           -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4bc090   entity_drawer.rs                           -                                  -                                        isolated_impossible  via:0x8f5cc0                   91
+0x4bc240   entity_drawer.rs                           -                                  -                                        isolated_impossible  via:0x8f5cc0                   127
+0x3f0270   function_button_manager.rs                 new                                src/function_button_manager.rs:28        isolated_impossible  via:0x3f00b0                   228
+0x3f06b0   function_button_manager.rs                 new                                src/function_button_manager.rs:33        isolated_impossible  via:0x4f4a60                   420
+0x498c70   function_drawer.rs                         update_function                    src/function_drawer.rs:45                isolated_impossible  via:0x420740                   249
+0x3f0e40   function_history_recorder.rs               handle_function_fire_event         src/function_history_recorder.rs:66      needs_state          inout_self:rsi                 154
+0x4e5100   graphwar_ad_switch.rs                      -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4e5280   graphwar_ad_switch.rs                      -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4e9730   graphwar_ad_switch.rs                      -                                  -                                        isolated_impossible  via:0x8f5cc0                   91
+0x4e98e0   graphwar_ad_switch.rs                      -                                  -                                        isolated_impossible  via:0x8f5cc0                   121
+0x4e9af0   graphwar_ad_switch.rs                      -                                  -                                        isolated_impossible  via:0x8f5cc0                   97
+0x4e9c90   graphwar_ad_switch.rs                      -                                  -                                        isolated_impossible  via:0x8f5cc0                   126
+0x3bfdd0   graphwar_audio_control.rs                  -                                  -                                        executable           scalar_io                      145
+0x4bef20   graphwar_audio_control.rs                  game_state_event                   src/graphwar_audio_control.rs:351        isolated_impossible  via:0x4db930                   71
+0x4bf090   graphwar_audio_control.rs                  effect_info_event                  src/graphwar_audio_control.rs:328        isolated_impossible  via:0x4db930                   173
+0x4bf550   graphwar_audio_control.rs                  new                                src/graphwar_audio_control.rs:245        isolated_impossible  via:0x5238c0                   457
+0x4bfe10   graphwar_audio_control.rs                  process                            src/graphwar_audio_control.rs:170        isolated_impossible  via:0x456f80                   1066
+0x4c11d0   graphwar_audio_control.rs                  set_muted                          src/graphwar_audio_control.rs:362        isolated_impossible  via:0x8cf3e0                   154
+0x5238c0   graphwar_audio_control.rs                  -                                  -                                        isolated_impossible  via:0x3ab390                   196
+0x514b40   graphwar_backend.rs                        subscribe_to_event                 src/graphwar_backend.rs:344              isolated_impossible  via:0x515320                   133
+0x514d80   graphwar_backend.rs                        resubscribe_to_events              src/graphwar_backend.rs:350              isolated_impossible  via:0x515320                   85
+0x514f20   graphwar_backend.rs                        start_client_to_replay             src/graphwar_backend.rs:173              isolated_impossible  via:0x517690                   125
+0x5153f0   graphwar_backend.rs                        -                                  -                                        needs_state          inout_self:rdi                 80
+0x515dc0   graphwar_backend.rs                        process                            src/graphwar_backend.rs:79               isolated_impossible  via:0x4588d0                   342
+0x520100   graphwar_backend.rs                        -                                  -                                        isolated_impossible  via:0x526870                   320
+0x4e0e60   graphwar_button.rs                         -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4e0fe0   graphwar_button.rs                         -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4e8020   graphwar_button.rs                         -                                  -                                        isolated_impossible  via:0x8f5cc0                   121
+0x4e8230   graphwar_button.rs                         -                                  -                                        isolated_impossible  via:0x8f5cc0                   97
+0x4e83d0   graphwar_button.rs                         -                                  -                                        isolated_impossible  via:0x8f5cc0                   91
+0x4e8580   graphwar_button.rs                         -                                  -                                        isolated_impossible  via:0x8f5cc0                   126
+0x418820   graphwar_campaign_control.rs               show_hide_campaign_levels          src/graphwar_campaign_control.rs:94      isolated_impossible  engine_dispatch                184
+0x438880   graphwar_client_connection_handler.rs      -                                  -                                        isolated_impossible  via:0x8f5cc0                   266
+0x4592d0   graphwar_client_connection_handler.rs      disconnect                         src/graphwar_client_connection_handler.rs:150 isolated_impossible  via:0x3d89e0                   233
+0x459690   graphwar_client_connection_handler.rs      forward_event                      src/graphwar_client_connection_handler.rs:255 isolated_impossible  via:0x3e2830                   124
+0x459840   graphwar_client_connection_handler.rs      get_connection_state               src/graphwar_client_connection_handler.rs:161 isolated_impossible  via:0x8f5cc0                   86
+0x459950   graphwar_client_connection_handler.rs      handle_connected_to_server         src/graphwar_client_connection_handler.rs:249 needs_state          inout_self:rsi                 22
+0x4599f0   graphwar_client_connection_handler.rs      new                                src/graphwar_client_connection_handler.rs:65 isolated_impossible  via:0x3d38f0                   243
+0x459f20   graphwar_client_connection_handler.rs      tick                               src/graphwar_client_connection_handler.rs:190 isolated_impossible  via:0x3e2830                   250
+0x45a340   graphwar_client_connection_handler.rs      connect                            src/graphwar_client_connection_handler.rs:124 isolated_impossible  via:0x439e80                   131
+0x464d10   graphwar_color_manager.rs                  add_team_color                     src/graphwar_color_manager.rs:92         needs_state          inout_self:rcx,rdi,rdx         231
+0x465460   graphwar_color_manager.rs                  send_all_info_events               src/graphwar_color_manager.rs:124        needs_state          inout_self:rdi                 80
+0x465570   graphwar_color_manager.rs                  handle_entity_removed_event        src/graphwar_color_manager.rs:134        needs_state          inout_self:rsi                 36
+0x465620   graphwar_color_manager.rs                  new                                src/graphwar_color_manager.rs:46         isolated_impossible  via:0x524140                   91
+0x4785f0   graphwar_computer_player_manager.rs        handle_tick                        src/graphwar_computer_player_manager.rs:221 isolated_impossible  via:0x404df0                   548
+0x478fc0   graphwar_computer_player_manager.rs        add_computer_player                src/graphwar_computer_player_manager.rs:195 isolated_impossible  via:0x907bc0                   294
+0x479520   graphwar_computer_player_manager.rs        handle_turn_info_event             src/graphwar_computer_player_manager.rs:276 isolated_impossible  via:0x438d20                   734
+0x47a520   graphwar_computer_player_manager.rs        handle_entity_removed_event        src/graphwar_computer_player_manager.rs:331 isolated_impossible  via:0x480820                   114
+0x47a720   graphwar_computer_player_manager.rs        new                                src/graphwar_computer_player_manager.rs:84 isolated_impossible  via:0x522890                   151
+0x4be6e0   graphwar_draw_util.rs                      get_team_overview                  src/graphwar_draw_util.rs:28             isolated_impossible  via:0x463340                   393
+0x519d80   graphwar_effect_manager.rs                 tick                               src/graphwar_effect_manager.rs:103       needs_state          inout_self:rdx                 119
+0x4782f0   graphwar_entity_effect_manager.rs          subscribe_to_events_event_handler  src/graphwar_entity_effect_manager.rs:67 needs_state          inout_self:rdi                 76
+0x4783f0   graphwar_entity_effect_manager.rs          subscribe_to_events_event_handler  src/graphwar_entity_effect_manager.rs:77 needs_state          inout_self:rsi                 27
+0x478490   graphwar_entity_effect_manager.rs          new                                src/graphwar_entity_effect_manager.rs:35 isolated_impossible  via:0x522890                   91
+0x3d3630   graphwar_event_handler.rs                  process_events                     src/graphwar_event_handler.rs:467        needs_state          inout_self:rcx                 174
+0x3d38f0   graphwar_event_handler.rs                  subscribe_to_event                 src/graphwar_event_handler.rs:396        isolated_impossible  via:0x907bc0                   1118
+0x41a9d0   graphwar_function_evolutionator.rs         -                                  -                                        executable           in:rcx,rdi,rdx;out:rsi         96
+0x41ab40   graphwar_function_evolutionator.rs         -                                  -                                        executable           in:rcx,rdi,rdx;out:rsi         96
+0x41b500   graphwar_function_evolutionator.rs         -                                  -                                        needs_state          inout_self:rdi,rsi             92
+0x41b720   graphwar_function_evolutionator.rs         -                                  -                                        needs_state          inout_self:rdi,rsi             92
+0x41b880   graphwar_function_evolutionator.rs         -                                  -                                        needs_state          inout_self:rdi,rsi             345
+0x41bdf0   graphwar_function_evolutionator.rs         -                                  -                                        needs_state          inout_self:rdi,rsi             345
+0x4600e0   graphwar_function_evolutionator.rs         -                                  -                                        executable           in:rdi,rdx                     75
+0x4602f0   graphwar_function_evolutionator.rs         -                                  -                                        executable           in:rdi,rdx                     75
+0x481140   graphwar_function_evolutionator.rs         -                                  -                                        needs_state          inout_self:rdx,rsi             457
+0x481870   graphwar_function_evolutionator.rs         -                                  -                                        needs_state          inout_self:rdx,rsi             457
+0x4825b0   graphwar_function_evolutionator.rs         -                                  -                                        needs_state          inout_self:rcx,rdx             389
+0x482c20   graphwar_function_evolutionator.rs         -                                  -                                        needs_state          inout_self:rcx,rdx             389
+0x51a750   graphwar_function_evolutionator.rs         score_function                     src/graphwar_function_evolutionator.rs:306 isolated_impossible  via:0x3c2bc0                   743
+0x51b440   graphwar_function_evolutionator.rs         calculate_functions                src/graphwar_function_evolutionator.rs:106 isolated_impossible  engine_dispatch                1494
+0x51d080   graphwar_function_evolutionator.rs         calculate_functions_old            src/graphwar_function_evolutionator.rs:203 isolated_impossible  engine_dispatch                1417
+0x51eb90   graphwar_function_evolutionator.rs         new                                src/graphwar_function_evolutionator.rs:67 isolated_impossible  via:0x8f5cc0                   855
+0x4e6dc0   graphwar_function_input.rs                 -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4e6f40   graphwar_function_input.rs                 -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4e9ee0   graphwar_function_input.rs                 -                                  -                                        isolated_impossible  via:0x8f5cc0                   97
+0x4ea080   graphwar_function_input.rs                 -                                  -                                        isolated_impossible  via:0x8f5cc0                   126
+0x4ea2d0   graphwar_function_input.rs                 -                                  -                                        isolated_impossible  via:0x8f5cc0                   91
+0x4ea480   graphwar_function_input.rs                 -                                  -                                        isolated_impossible  via:0x8f5cc0                   121
+0x4f2200   graphwar_function_input.rs                 force_update_cb                    src/graphwar_function_input.rs:327       isolated_impossible  via:0x92c750                   781
+0x4f3210   graphwar_function_input.rs                 move_caret_left                    src/graphwar_function_input.rs:253       isolated_impossible  via:0x8b8d30                   421
+0x4f3910   graphwar_function_input.rs                 move_caret_right                   src/graphwar_function_input.rs:145       isolated_impossible  via:0x8b8d30                   501
+0x4f44c0   graphwar_function_input.rs                 delete_token_at_caret              src/graphwar_function_input.rs:97        isolated_impossible  via:0x8b8d30                   333
+0x4f4a60   graphwar_function_input.rs                 delete_token_after_caret           src/graphwar_function_input.rs:198       isolated_impossible  via:0x8b8d30                   513
+0x4fd1b0   graphwar_function_input.rs                 ready                              src/graphwar_function_input.rs:508       isolated_impossible  engine_dispatch                167
+0x4fd4a0   graphwar_function_input.rs                 process                            src/graphwar_function_input.rs:521       isolated_impossible  via:0x3ab590                   1367
+0x455b60   graphwar_function_manager.rs               get_function                       src/graphwar_function_manager.rs:165     isolated_impossible  via:0x45ef10                   184
+0x455e30   graphwar_function_manager.rs               set_function                       src/graphwar_function_manager.rs:152     isolated_impossible  via:0x45ef10                   440
+0x4565f0   graphwar_function_manager.rs               get_function_text                  src/graphwar_function_manager.rs:169     isolated_impossible  via:0x45ef10                   150
+0x456810   graphwar_function_manager.rs               set_function_points                src/graphwar_function_manager.rs:192     isolated_impossible  via:0x45ef10                   227
+0x456b80   graphwar_function_manager.rs               set_function_active_tick           src/graphwar_function_manager.rs:181     isolated_impossible  via:0x45ef10                   157
+0x456df0   graphwar_function_manager.rs               get_active_functions_on_tick       src/graphwar_function_manager.rs:208     isolated_impossible  via:0x45ef10                   112
+0x456f80   graphwar_function_manager.rs               get_active_functions_on_tick_no_fade src/graphwar_function_manager.rs:213     isolated_impossible  via:0x45ef10                   112
+0x3d6080   graphwar_game_client.rs                    toggle_pause                       src/graphwar_replay_player.rs:244        needs_state          inout_self:rsi                 76
+0x3d7380   graphwar_game_client.rs                    process                            src/graphwar_replay_player.rs:78         isolated_impossible  via:0x3e2830                   163
+0x3d7630   graphwar_game_client.rs                    is_paused                          src/graphwar_replay_player.rs:256        needs_state          inout_self:rsi                 54
+0x4c5b50   graphwar_game_client.rs                    -                                  -                                        needs_state          inout_self:rdi                 49
+0x4c5c00   graphwar_game_client.rs                    -                                  -                                        needs_state          inout_self:rdi                 49
+0x4c5cb0   graphwar_game_client.rs                    -                                  -                                        needs_state          inout_self:rdi                 49
+0x4c5d60   graphwar_game_client.rs                    -                                  -                                        needs_state          inout_self:rdi                 49
+0x4d1ca0   graphwar_game_client.rs                    -                                  -                                        needs_state          inout_self:rdi                 54
+0x4d1d50   graphwar_game_client.rs                    -                                  -                                        needs_state          inout_self:rdi                 54
+0x4d1e60   graphwar_game_client.rs                    -                                  -                                        needs_state          inout_self:rdi                 54
+0x4d2550   graphwar_game_client.rs                    -                                  -                                        needs_state          inout_self:rdi                 54
+0x4d8a00   graphwar_game_client.rs                    -                                  -                                        isolated_impossible  via:0x525f60                   76
+0x4d8d30   graphwar_game_client.rs                    -                                  -                                        isolated_impossible  via:0x525f60                   76
+0x4d8ff0   graphwar_game_client.rs                    -                                  -                                        isolated_impossible  via:0x525f60                   61
+0x4d9270   graphwar_game_client.rs                    -                                  -                                        isolated_impossible  via:0x525f60                   76
+0x4d9370   graphwar_game_client.rs                    -                                  -                                        isolated_impossible  via:0x525f60                   76
+0x4d9500   graphwar_game_client.rs                    -                                  -                                        isolated_impossible  via:0x525f60                   61
+0x4d95f0   graphwar_game_client.rs                    -                                  -                                        isolated_impossible  via:0x525f60                   61
+0x4d96e0   graphwar_game_client.rs                    -                                  -                                        isolated_impossible  via:0x525f60                   89
+0x514a10   graphwar_game_client.rs                    button_pressed                     src/graphwar_game_client.rs:186          isolated_impossible  via:0x516510                   77
+0x515590   graphwar_game_client.rs                    -                                  -                                        isolated_impossible  via:0x517690                   213
+0x5159a0   graphwar_game_client.rs                    -                                  -                                        isolated_impossible  via:0x517690                   96
+0x516370   graphwar_game_client.rs                    disconnect                         src/graphwar_game_client.rs:118          isolated_impossible  via:0x4592d0                   61
+0x516450   graphwar_game_client.rs                    -                                  -                                        needs_state          inout_self:rdi                 28
+0x5164b0   graphwar_game_client.rs                    -                                  -                                        needs_state          inout_self:rdi                 28
+0x516510   graphwar_game_client.rs                    fire_function                      src/graphwar_game_client.rs:152          isolated_impossible  via:0x463340                   275
+0x516970   graphwar_game_client.rs                    request_add_bot                    src/graphwar_game_client.rs:152          needs_state          inout_self:rdi                 100
+0x516ad0   graphwar_game_client.rs                    update_function                    src/graphwar_game_client.rs:152          isolated_impossible  via:0x463340                   308
+0x516fd0   graphwar_game_client.rs                    wait_for_players                   src/graphwar_game_client.rs:101          needs_state          inout_self:rdi;indirect_unknown:2 202
+0x5172d0   graphwar_game_client.rs                    send_chat_message                  src/graphwar_game_client.rs:152          needs_state          inout_self:rdi                 122
+0x517490   graphwar_game_client.rs                    request_lock_change                src/graphwar_game_client.rs:152          needs_state          inout_self:rdi                 73
+0x5175b0   graphwar_game_client.rs                    -                                  -                                        needs_state          inout_self:rdi                 70
+0x517690   graphwar_game_client.rs                    new                                src/graphwar_game_client.rs:53           isolated_impossible  via:0x477bc0                   679
+0x518240   graphwar_game_client.rs                    tick                               src/graphwar_game_client.rs:139          needs_state          inout_self:rdi                 64
+0x518320   graphwar_game_client.rs                    connect                            src/graphwar_game_client.rs:93           isolated_impossible  via:0x45a340                   61
+0x518400   graphwar_game_client.rs                    process                            src/graphwar_game_client.rs:130          needs_state          inout_self:rdi;indirect_unknown:2 86
+0x3d4fa0   graphwar_game_recorder.rs                  subscribe_to_events                src/graphwar_game_recorder.rs:107        isolated_impossible  via:0x3d5740                   173
+0x3d5740   graphwar_game_recorder.rs                  save_game                          src/graphwar_game_recorder.rs:150        isolated_impossible  via:0x8cf3e0                   494
+0x468a50   graphwar_graphics_manager.rs               set_hat_graphics                   src/graphwar_graphics_manager.rs:78      needs_state          inout_self:rdi                 77
+0x468b60   graphwar_graphics_manager.rs               set_face_graphics                  src/graphwar_graphics_manager.rs:69      needs_state          inout_self:rdi                 77
+0x468c70   graphwar_graphics_manager.rs               set_skin_graphics                  src/graphwar_graphics_manager.rs:60      needs_state          inout_self:rdi                 77
+0x468d80   graphwar_graphics_manager.rs               send_all_info_events               src/graphwar_graphics_manager.rs:88      needs_state          inout_self:rcx,rdx             289
+0x469220   graphwar_graphics_manager.rs               handle_entity_removed_event        src/graphwar_graphics_manager.rs:108     needs_state          inout_self:rsi                 80
+0x469390   graphwar_graphics_manager.rs               new                                src/graphwar_graphics_manager.rs:38      isolated_impossible  via:0x522710                   91
+0x4572c0   graphwar_lan_broadcaster_v6.rs             set_room_info                      src/graphwar_lan_broadcaster_v6.rs:141   executable           in:rsi                         108
+0x457480   graphwar_lan_broadcaster_v6.rs             new                                src/graphwar_lan_broadcaster_v6.rs:35    isolated_impossible  via:0x907bc0                   86
+0x457600   graphwar_lan_broadcaster_v6.rs             start                              src/graphwar_lan_broadcaster_v6.rs:59    executable           scalar_io                      108
+0x457790   graphwar_lan_broadcaster_v6.rs             process                            src/graphwar_lan_broadcaster_v6.rs:86    isolated_impossible  via:0x906630                   441
+0x4dec00   graphwar_lan_vbox.rs                       -                                  -                                        isolated_impossible  via:0x893820                   119
+0x4e3b00   graphwar_lan_vbox.rs                       -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4e3c80   graphwar_lan_vbox.rs                       -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4e8f80   graphwar_lan_vbox.rs                       -                                  -                                        isolated_impossible  via:0x8f5cc0                   126
+0x4e91d0   graphwar_lan_vbox.rs                       -                                  -                                        isolated_impossible  via:0x8f5cc0                   92
+0x4e9380   graphwar_lan_vbox.rs                       -                                  -                                        isolated_impossible  via:0x8f5cc0                   121
+0x4e9590   graphwar_lan_vbox.rs                       -                                  -                                        isolated_impossible  via:0x8f5cc0                   97
+0x4f01c0   graphwar_lan_vbox.rs                       -                                  -                                        isolated_impossible  via:0x3f4970                   65
+0x4f90b0   graphwar_lan_vbox.rs                       process                            src/graphwar_lan_vbox.rs:90              isolated_impossible  engine_dispatch                3332
+0x500070   graphwar_lan_vbox.rs                       -                                  -                                        isolated_impossible  via:0x525f60                   87
+0x5005b0   graphwar_lan_vbox.rs                       -                                  -                                        isolated_impossible  via:0x8a0b80                   115
+0x499740   graphwar_level_manager.rs                  setup_level                        src/graphwar_level_manager.rs:121        isolated_impossible  via:0x46f690                   4151
+0x49e570   graphwar_level_manager.rs                  setup_level_0                      src/graphwar_level_manager.rs:148        isolated_impossible  via:0x3f19a0                   63
+0x49e650   graphwar_level_manager.rs                  setup_level_0                      src/graphwar_level_manager.rs:153        isolated_impossible  via:0x3c62b0                   140
+0x49e880   graphwar_level_manager.rs                  setup_level_1                      src/graphwar_level_manager.rs:223        isolated_impossible  via:0x3c62b0                   140
+0x49eab0   graphwar_level_manager.rs                  setup_level_1                      src/graphwar_level_manager.rs:218        isolated_impossible  via:0x3f19a0                   63
+0x49eb90   graphwar_level_manager.rs                  setup_level_2                      src/graphwar_level_manager.rs:293        isolated_impossible  via:0x467530                   377
+0x49f1c0   graphwar_level_manager.rs                  setup_level_2                      src/graphwar_level_manager.rs:286        isolated_impossible  via:0x3f19a0                   108
+0x49f370   graphwar_level_manager.rs                  setup_level_3                      src/graphwar_level_manager.rs:379        isolated_impossible  via:0x3f19a0                   108
+0x49f510   graphwar_level_manager.rs                  setup_level_4                      src/graphwar_level_manager.rs:409        isolated_impossible  via:0x46f690                   526
+0x49fea0   graphwar_level_manager.rs                  setup_level_4                      src/graphwar_level_manager.rs:441        isolated_impossible  via:0x467530                   375
+0x4a04d0   graphwar_level_manager.rs                  setup_level_5                      src/graphwar_level_manager.rs:501        isolated_impossible  via:0x46f690                   499
+0x4a0db0   graphwar_level_manager.rs                  setup_level_5                      src/graphwar_level_manager.rs:540        isolated_impossible  via:0x467530                   320
+0x4a1310   graphwar_level_manager.rs                  setup_level_6                      src/graphwar_level_manager.rs:581        isolated_impossible  via:0x46f690                   531
+0x4a1cd0   graphwar_level_manager.rs                  setup_level_6                      src/graphwar_level_manager.rs:615        isolated_impossible  via:0x467530                   441
+0x4a2430   graphwar_level_manager.rs                  setup_level_7                      src/graphwar_level_manager.rs:689        isolated_impossible  via:0x46f690                   526
+0x4a2dc0   graphwar_level_manager.rs                  setup_level_7                      src/graphwar_level_manager.rs:721        isolated_impossible  via:0x467530                   375
+0x4a33f0   graphwar_level_manager.rs                  setup_level_8                      src/graphwar_level_manager.rs:782        isolated_impossible  via:0x46f690                   552
+0x4a3df0   graphwar_level_manager.rs                  setup_level_8                      src/graphwar_level_manager.rs:817        isolated_impossible  via:0x467530                   365
+0x4a43a0   graphwar_level_manager.rs                  setup_level_9                      src/graphwar_level_manager.rs:879        isolated_impossible  via:0x46f690                   499
+0x4a4c80   graphwar_level_manager.rs                  setup_level_9                      src/graphwar_level_manager.rs:918        isolated_impossible  via:0x467530                   320
+0x4a5390   graphwar_level_manager.rs                  setup_level_10                     src/graphwar_level_manager.rs:995        isolated_impossible  via:0x467530                   365
+0x4a5940   graphwar_level_manager.rs                  setup_level_11                     src/graphwar_level_manager.rs:1099       isolated_impossible  via:0x467530                   320
+0x4a5e80   graphwar_level_manager.rs                  setup_level_12                     src/graphwar_level_manager.rs:1168       isolated_impossible  via:0x3f19a0                   108
+0x4a6020   graphwar_level_manager.rs                  setup_level_12                     src/graphwar_level_manager.rs:1175       isolated_impossible  via:0x3f15b0                   225
+0x4a63d0   graphwar_level_manager.rs                  setup_level_13                     src/graphwar_level_manager.rs:1258       isolated_impossible  via:0x467530                   365
+0x4a6980   graphwar_level_manager.rs                  setup_level_14                     src/graphwar_level_manager.rs:1320       isolated_impossible  via:0x46f690                   552
+0x4a73b0   graphwar_level_manager.rs                  setup_level_14                     src/graphwar_level_manager.rs:1362       isolated_impossible  via:0x467530                   320
+0x4a78f0   graphwar_level_manager.rs                  setup_level_15                     src/graphwar_level_manager.rs:1403       isolated_impossible  via:0x46f690                   555
+0x4a8320   graphwar_level_manager.rs                  setup_level_15                     src/graphwar_level_manager.rs:1445       isolated_impossible  via:0x467530                   320
+0x4a8860   graphwar_level_manager.rs                  setup_level_16                     src/graphwar_level_manager.rs:1488       isolated_impossible  via:0x46f690                   511
+0x4a91b0   graphwar_level_manager.rs                  setup_level_16                     src/graphwar_level_manager.rs:1521       isolated_impossible  via:0x3c62b0                   140
+0x4a93e0   graphwar_level_manager.rs                  setup_level_16                     src/graphwar_level_manager.rs:1516       isolated_impossible  via:0x3f19a0                   63
+0x4a94c0   graphwar_level_manager.rs                  setup_level_17                     src/graphwar_level_manager.rs:1555       isolated_impossible  via:0x46f690                   562
+0x4a9f00   graphwar_level_manager.rs                  setup_level_17                     src/graphwar_level_manager.rs:1590       isolated_impossible  via:0x467530                   441
+0x4aa640   graphwar_level_manager.rs                  setup_level_18                     src/graphwar_level_manager.rs:1664       isolated_impossible  via:0x46f690                   524
+0x4aafc0   graphwar_level_manager.rs                  setup_level_18                     src/graphwar_level_manager.rs:1704       isolated_impossible  via:0x467530                   320
+0x4ab500   graphwar_level_manager.rs                  setup_level_19                     src/graphwar_level_manager.rs:1744       isolated_impossible  via:0x46f690                   542
+0x4abf00   graphwar_level_manager.rs                  setup_level_19                     src/graphwar_level_manager.rs:1785       isolated_impossible  via:0x467530                   320
+0x4ac440   graphwar_level_manager.rs                  setup_level_20                     src/graphwar_level_manager.rs:1826       isolated_impossible  via:0x46f690                   542
+0x4ace40   graphwar_level_manager.rs                  setup_level_20                     src/graphwar_level_manager.rs:1867       isolated_impossible  via:0x467530                   320
+0x3ef990   graphwar_lobby_control.rs                  new                                src/graphwar_lobby_control.rs:28         isolated_impossible  via:0x3aaea0                   381
+0x519f40   graphwar_local_player_manager.rs           handle_player_info                 src/graphwar_local_player_manager.rs:107 isolated_impossible  via:0x418170                   385
+0x51a570   graphwar_local_player_manager.rs           handle_connected_to_server         src/graphwar_local_player_manager.rs:76  needs_state          inout_self:rdi,rsi             44
+0x51a610   graphwar_local_player_manager.rs           handle_entity_removed_event        src/graphwar_local_player_manager.rs:146 needs_state          inout_self:rdi,rsi             73
+0x3b6c70   graphwar_logger.rs                         -                                  -                                        isolated_impossible  via:0x525200                   59
+0x44dd60   graphwar_logger.rs                         new                                src/graphwar_logger.rs:44                isolated_impossible  via:0x6de750                   327
+0x4bd430   graphwar_long_press_animation.rs           -                                  -                                        isolated_impossible  via:0x8f5cc0                   122
+0x4bd650   graphwar_long_press_animation.rs           -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4bd800   graphwar_long_press_animation.rs           -                                  -                                        isolated_impossible  via:0x8f5cc0                   127
+0x4bda50   graphwar_long_press_animation.rs           -                                  -                                        isolated_impossible  via:0x8f5cc0                   97
+0x4d7bc0   graphwar_long_press_animation.rs           -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4d7d40   graphwar_long_press_animation.rs           -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4d8100   graphwar_long_press_animation.rs           draw                               src/graphwar_long_press_animation.rs:52  isolated_impossible  via:0x8ae770                   266
+0x518530   graphwar_mode_manager.rs                   set_time_mode                      src/graphwar_mode_manager.rs:113         needs_state          inout_self:rdi                 36
+0x5185a0   graphwar_mode_manager.rs                   send_all_info_events               src/graphwar_mode_manager.rs:132         needs_state          inout_self:rdi                 63
+0x46c5a0   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46c7c0   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46c9e0   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46cc00   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46ce20   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46d040   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46d260   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46d480   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46d6a0   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46d8c0   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46dae0   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46dd00   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46df20   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46e140   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46e360   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46e580   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46e7a0   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46e9c0   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46ebe0   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x46ee00   graphwar_module_container.rs               -                                  -                                        executable           in:rdi,rdx;out:rcx             146
+0x518f10   graphwar_name_manager.rs                   send_all_info_events               src/graphwar_name_manager.rs:69          needs_state          inout_self:rdi                 71
+0x519030   graphwar_name_manager.rs                   handle_entity_removed_event        src/graphwar_name_manager.rs:79          needs_state          inout_self:rsi                 40
+0x519350   graphwar_name_manager.rs                   set_name                           src/graphwar_name_manager.rs:57          executable           scalar_io                      75
+0x3aaea0   graphwar_nodes.rs                          -                                  -                                        isolated_impossible  via:0x3ad570                   68
+0x3aafa0   graphwar_nodes.rs                          -                                  -                                        isolated_impossible  via:0x3ab990                   68
+0x3ab0a0   graphwar_nodes.rs                          -                                  -                                        isolated_impossible  via:0x3ad220                   66
+0x3ab190   graphwar_nodes.rs                          -                                  -                                        isolated_impossible  via:0x3acb00                   68
+0x3ab290   graphwar_nodes.rs                          -                                  -                                        isolated_impossible  via:0x3ac770                   68
+0x3ab390   graphwar_nodes.rs                          -                                  -                                        isolated_impossible  via:0x3af0a0                   68
+0x3ab490   graphwar_nodes.rs                          -                                  -                                        isolated_impossible  via:0x3ac3e0                   68
+0x3ab590   graphwar_nodes.rs                          -                                  -                                        isolated_impossible  via:0x3ae650                   68
+0x3ab690   graphwar_nodes.rs                          -                                  -                                        isolated_impossible  via:0x3ace90                   68
+0x3ab790   graphwar_nodes.rs                          -                                  -                                        isolated_impossible  via:0x3ac050                   68
+0x3ab890   graphwar_nodes.rs                          -                                  -                                        isolated_impossible  via:0x3adc50                   68
+0x4b2260   graphwar_plane.rs                          -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4b23e0   graphwar_plane.rs                          -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4b5df0   graphwar_plane.rs                          draw                               src/graphwar_plane.rs:84                 isolated_impossible  via:0x3ab590                   1158
+0x4b7a70   graphwar_plane.rs                          ready                              src/graphwar_plane.rs:218                isolated_impossible  via:0x3ab590                   336
+0x4b83f0   graphwar_plane.rs                          process                            src/graphwar_plane.rs:254                isolated_impossible  via:0x3ab590                   253
+0x4bc490   graphwar_plane.rs                          -                                  -                                        isolated_impossible  via:0x8f5cc0                   122
+0x4bc6b0   graphwar_plane.rs                          -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4bc860   graphwar_plane.rs                          -                                  -                                        isolated_impossible  via:0x8f5cc0                   127
+0x4bcab0   graphwar_plane.rs                          -                                  -                                        isolated_impossible  via:0x8f5cc0                   91
+0x4be3e0   graphwar_plane.rs                          obstacle_partial_update_event      src/graphwar_plane.rs:174                executable           in:rsi                         87
+0x3c62b0   graphwar_plane_pos_manager.rs              get_position                       src/graphwar_plane_pos_manager.rs:116    isolated_impossible  via:0x8f5cc0                   144
+0x3c64c0   graphwar_plane_pos_manager.rs              set_position                       src/graphwar_plane_pos_manager.rs:111    isolated_impossible  via:0x8f5cc0                   120
+0x3c66a0   graphwar_plane_pos_manager.rs              get_all_positions                  src/graphwar_plane_pos_manager.rs:120    isolated_impossible  via:0x8f5cc0                   216
+0x3c6a10   graphwar_plane_pos_manager.rs              send_all_info_events               src/graphwar_plane_pos_manager.rs:133    isolated_impossible  via:0x3c66a0                   83
+0x3c6b40   graphwar_plane_pos_manager.rs              handle_entity_removed_event        src/graphwar_plane_pos_manager.rs:142    isolated_impossible  via:0x8f5cc0                   111
+0x3c6d30   graphwar_plane_pos_manager.rs              new                                src/graphwar_plane_pos_manager.rs:81     isolated_impossible  via:0x523250                   93
+0x3d9000   graphwar_play_screen_control.rs            add_tie_icon                       src/graphwar_play_screen_control.rs:265  isolated_impossible  via:0x3acb00                   214
+0x3d9b50   graphwar_play_screen_control.rs            enable_replay_buttons              src/graphwar_play_screen_control.rs:591  isolated_impossible  via:0x3ab190                   182
+0x3d9e40   graphwar_play_screen_control.rs            disable_replay_buttons             src/graphwar_play_screen_control.rs:605  isolated_impossible  via:0x3ab190                   183
+0x3da130   graphwar_play_screen_control.rs            update_end_game_pop_up             src/graphwar_play_screen_control.rs:119  isolated_impossible  engine_dispatch                1006
+0x3db3e0   graphwar_play_screen_control.rs            add_player_victory_icon            src/graphwar_play_screen_control.rs:233  isolated_impossible  engine_dispatch                933
+0x3dc470   graphwar_play_screen_control.rs            update_names_button_texture        src/graphwar_play_screen_control.rs:625  isolated_impossible  via:0x8cf3e0                   108
+0x3dc630   graphwar_play_screen_control.rs            update_view_function_button_texture src/graphwar_play_screen_control.rs:619  isolated_impossible  via:0x8cf3e0                   108
+0x3dc7f0   graphwar_play_screen_control.rs            new                                src/graphwar_play_screen_control.rs:71   isolated_impossible  via:0x522070                   235
+0x3dcbb0   graphwar_play_screen_control.rs            process                            src/graphwar_play_screen_control.rs:275  isolated_impossible  via:0x4565f0                   1810
+0x522070   graphwar_play_screen_control.rs            -                                  -                                        isolated_impossible  via:0x3ab390                   280
+0x455160   graphwar_player_manager.rs                 send_all_info_events               src/graphwar_player_manager.rs:91        needs_state          inout_self:rdi                 68
+0x455250   graphwar_player_manager.rs                 handle_entity_removed_event        src/graphwar_player_manager.rs:120       needs_state          inout_self:rsi                 94
+0x455410   graphwar_player_manager.rs                 new                                src/graphwar_player_manager.rs:36        isolated_impossible  via:0x522890                   91
+0x4f57d0   graphwar_player_screen_control.rs          load_items                         src/graphwar_player_screen_control.rs:113 isolated_impossible  via:0x44a600                   1576
+0x4f77a0   graphwar_player_screen_control.rs          hat_button_pressed                 src/graphwar_player_screen_control.rs:131 isolated_impossible  via:0x417c70                   67
+0x4f7870   graphwar_player_screen_control.rs          face_button_pressed                src/graphwar_player_screen_control.rs:127 isolated_impossible  via:0x417d50                   67
+0x4f7940   graphwar_player_screen_control.rs          skin_button_pressed                src/graphwar_player_screen_control.rs:118 isolated_impossible  via:0x3ab590                   152
+0x4f8050   graphwar_player_screen_control.rs          update_buttons_background          src/graphwar_player_screen_control.rs:230 isolated_impossible  engine_dispatch                187
+0x4f8850   graphwar_player_screen_control.rs          lock                               src/graphwar_player_screen_control.rs:252 isolated_impossible  via:0x3ab190                   91
+0x4f8990   graphwar_player_screen_control.rs          unlock                             src/graphwar_player_screen_control.rs:268 isolated_impossible  via:0x3ab190                   84
+0x4f8ad0   graphwar_player_screen_control.rs          pending                            src/graphwar_player_screen_control.rs:260 isolated_impossible  via:0x3ab190                   81
+0x454d80   graphwar_rank_manager.rs                   send_all_info_events               src/graphwar_rank_manager.rs:73          needs_state          inout_self:rdi                 67
+0x454e80   graphwar_rank_manager.rs                   handle_entity_removed_event        src/graphwar_rank_manager.rs:83          needs_state          inout_self:rsi                 36
+0x454f30   graphwar_rank_manager.rs                   new                                src/graphwar_rank_manager.rs:33          isolated_impossible  via:0x522890                   91
+0x455090   graphwar_rank_manager.rs                   set_rank                           src/graphwar_rank_manager.rs:61          executable           in:rdi                         70
+0x3dee00   graphwar_remote_event_handler.rs           handle_client_remote_event         src/graphwar_remote_event_handler.rs:143 isolated_impossible  via:0x472470                   3128
+0x3e2830   graphwar_remote_event_handler.rs           set_color                          src/graphwar_color_manager.rs:114        isolated_impossible  via:0x456b80                   2562
+0x3e5910   graphwar_remote_event_handler.rs           is_leader                          src/graphwar_remote_event_handler.rs:135 executable           in:rcx,rdx,rsi                 103
+0x4c6f40   graphwar_replay_control.rs                 process                            src/graphwar_replay_control.rs:100       isolated_impossible  engine_dispatch                1697
+0x523410   graphwar_replay_control.rs                 -                                  -                                        isolated_impossible  via:0x3ab990                   167
+0x3d61a0   graphwar_replay_player.rs                  inject_events                      src/graphwar_replay_player.rs:210        isolated_impossible  engine_dispatch                408
+0x3d68b0   graphwar_replay_player.rs                  go_to_next_checkpoint              src/graphwar_replay_player.rs:181        isolated_impossible  via:0x3d61a0                   117
+0x3d6a40   graphwar_replay_player.rs                  go_to_first_checkpoint             src/graphwar_replay_player.rs:151        isolated_impossible  via:0x3d61a0                   105
+0x3d6bb0   graphwar_replay_player.rs                  go_to_previous_checkpoint          src/graphwar_replay_player.rs:162        isolated_impossible  via:0x3d61a0                   119
+0x3d7270   graphwar_replay_player.rs                  pause                              src/graphwar_replay_player.rs:249        needs_state          inout_self:rsi                 71
+0x3a2e10   graphwar_root_node.rs                      ready                              src/graphwar_root_node.rs:1302           isolated_impossible  engine_dispatch                1848
+0x3a54e0   graphwar_root_node.rs                      -                                  -                                        isolated_impossible  via:0x516ad0                   66
+0x3a55e0   graphwar_root_node.rs                      -                                  -                                        isolated_impossible  via:0x514a10                   19
+0x3a5620   graphwar_root_node.rs                      -                                  -                                        isolated_impossible  via:0x514a10                   19
+0x3a5660   graphwar_root_node.rs                      ready                              src/graphwar_root_node.rs:1338           isolated_impossible  via:0x3f3890                   77
+0x3a5760   graphwar_root_node.rs                      process                            src/graphwar_root_node.rs:635            isolated_impossible  via:0x3b0830                   3982
+0x3aa6a0   graphwar_root_node.rs                      -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x3aa820   graphwar_root_node.rs                      -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x3afb00   graphwar_root_node.rs                      purchase_denied                    src/graphwar_root_node.rs:892            isolated_impossible  via:0x4f8850                   114
+0x3afcf0   graphwar_root_node.rs                      check_save_level                   src/graphwar_root_node.rs:656            isolated_impossible  via:0x4183b0                   98
+0x3afe90   graphwar_root_node.rs                      purchase_confirmed                 src/graphwar_root_node.rs:868            isolated_impossible  via:0x4f8990                   124
+0x3b00d0   graphwar_root_node.rs                      get_media_storage_path             src/graphwar_root_node.rs:904            isolated_impossible  via:0x525200                   401
+0x3b0830   graphwar_root_node.rs                      process_button_pressed             src/graphwar_root_node.rs:225            isolated_impossible  via:0x3af0a0                   3490
+0x3b4ec0   graphwar_root_node.rs                      request_permissions_result         src/graphwar_root_node.rs:861            executable           scalar_io                      219
+0x3b56c0   graphwar_root_node.rs                      -                                  -                                        isolated_impossible  via:0x8f5cc0                   127
+0x3b5910   graphwar_root_node.rs                      -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x3b5ac0   graphwar_root_node.rs                      -                                  -                                        isolated_impossible  via:0x8f5cc0                   122
+0x3b5ce0   graphwar_root_node.rs                      -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x3b6e00   graphwar_root_node.rs                      -                                  -                                        isolated_impossible  via:0x525f60                   50
+0x3b6ed0   graphwar_root_node.rs                      -                                  -                                        isolated_impossible  via:0x525f60                   88
+0x3b7020   graphwar_root_node.rs                      -                                  -                                        isolated_impossible  via:0x525f60                   50
+0x426430   graphwar_root_node.rs                      -                                  -                                        isolated_impossible  via:0x4f8ad0                   190
+0x433c00   graphwar_root_node.rs                      -                                  -                                        isolated_impossible  via:0x4f8ad0                   251
+0x437ce0   graphwar_server_broker_handler.rs          -                                  -                                        isolated_impossible  via:0x3d89e0                   288
+0x4586d0   graphwar_server_broker_handler.rs          stop                               src/graphwar_server_broker_handler.rs:90 isolated_impossible  via:0x45ef10                   82
+0x4588d0   graphwar_server_broker_handler.rs          process                            src/graphwar_server_broker_handler.rs:98 isolated_impossible  via:0x45ef10                   533
+0x4b88d0   graphwar_setup_control.rs                  -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4b8a50   graphwar_setup_control.rs                  -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4bcc60   graphwar_setup_control.rs                  -                                  -                                        isolated_impossible  via:0x8f5cc0                   122
+0x4bce80   graphwar_setup_control.rs                  -                                  -                                        isolated_impossible  via:0x8f5cc0                   91
+0x4bd030   graphwar_setup_control.rs                  -                                  -                                        isolated_impossible  via:0x8f5cc0                   127
+0x4bd280   graphwar_setup_control.rs                  -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4c1e40   graphwar_setup_control.rs                  update_name                        src/graphwar_setup_control.rs:178        isolated_impossible  via:0x3ac770                   186
+0x4c2140   graphwar_setup_control.rs                  update_rank                        src/graphwar_setup_control.rs:187        isolated_impossible  via:0x3acb00                   392
+0x4c27f0   graphwar_setup_control.rs                  on_text_change                     src/graphwar_setup_control.rs:462        isolated_impossible  via:0x3ab590                   193
+0x4c2b90   graphwar_setup_control.rs                  is_leader_local                    src/graphwar_setup_control.rs:310        needs_state          inout_self:rcx,rdi             236
+0x4c2ef0   graphwar_setup_control.rs                  update_soldiers                    src/graphwar_setup_control.rs:202        isolated_impossible  engine_dispatch                1131
+0x4c44b0   graphwar_setup_control.rs                  on_chat_submitted                  src/graphwar_setup_control.rs:494        isolated_impossible  via:0x3ab590                   204
+0x4c4850   graphwar_setup_control.rs                  force_title_update                 src/graphwar_setup_control.rs:474        isolated_impossible  via:0x3ab590                   197
+0x4c4c20   graphwar_setup_control.rs                  connect_entry_buttons              src/graphwar_setup_control.rs:257        isolated_impossible  via:0x3ab590                   761
+0x4cf670   graphwar_setup_control.rs                  ready                              src/graphwar_setup_control.rs:652        isolated_impossible  via:0x3ab590                   1872
+0x4d1e00   graphwar_setup_control.rs                  -                                  -                                        needs_state          inout_self:rdi                 31
+0x4d1f10   graphwar_setup_control.rs                  ready                              src/graphwar_setup_control.rs:728        isolated_impossible  via:0x8cf3e0                   335
+0x4d2600   graphwar_setup_control.rs                  ready                              src/graphwar_setup_control.rs:793        isolated_impossible  via:0x8cf3e0                   510
+0x4d2f70   graphwar_setup_control.rs                  ready                              src/graphwar_setup_control.rs:772        isolated_impossible  via:0x407100                   118
+0x4d3180   graphwar_setup_control.rs                  process                            src/graphwar_setup_control.rs:100        isolated_impossible  via:0x3af430                   3337
+0x4d88b0   graphwar_setup_control.rs                  -                                  -                                        isolated_impossible  via:0x525f60                   57
+0x444fd0   graphwar_soldier_manager.rs                -                                  -                                        needs_state          inout_self:rdi                 126
+0x455570   graphwar_soldier_manager.rs                send_all_info_events               src/graphwar_soldier_manager.rs:87       needs_state          inout_self:rdi                 68
+0x4556d0   graphwar_soldier_manager.rs                handle_entity_removed_event        src/graphwar_soldier_manager.rs:105      needs_state          inout_self:rsi                 28
+0x455760   graphwar_soldier_manager.rs                new                                src/graphwar_soldier_manager.rs:35       isolated_impossible  via:0x522890                   91
+0x465780   graphwar_target_manager.rs                 subscribe_to_events_event_handler  src/graphwar_target_manager.rs:74        needs_state          inout_self:rdi                 70
+0x465870   graphwar_target_manager.rs                 subscribe_to_events_event_handler  src/graphwar_target_manager.rs:84        needs_state          inout_self:rsi                 27
+0x465910   graphwar_target_manager.rs                 new                                src/graphwar_target_manager.rs:35        isolated_impossible  via:0x522890                   91
+0x3c17d0   graphwar_team_manager.rs                   add_to_team                        src/graphwar_team_manager.rs:89          isolated_impossible  via:0x8f5cc0                   117
+0x3c1980   graphwar_team_manager.rs                   remove_from_team                   src/graphwar_team_manager.rs:96          isolated_impossible  via:0x8f5cc0                   114
+0x3c1b40   graphwar_team_manager.rs                   -                                  -                                        isolated_impossible  via:0x8f5cc0                   116
+0x3c1cf0   graphwar_team_manager.rs                   send_all_info_events               src/graphwar_team_manager.rs:127         isolated_impossible  via:0x8f5cc0                   153
+0x3c1f40   graphwar_team_manager.rs                   handle_entity_removed_event        src/graphwar_team_manager.rs:139         isolated_impossible  via:0x3c1980                   25
+0x3c1fc0   graphwar_team_manager.rs                   new                                src/graphwar_team_manager.rs:63          isolated_impossible  via:0x522e50                   91
+0x3c2120   graphwar_team_manager.rs                   get_team                           src/graphwar_team_manager.rs:103         isolated_impossible  via:0x8f5cc0                   135
+0x4c1ae0   graphwar_texture_loader.rs                 clear_state                        src/graphwar_texture_loader.rs:145       isolated_impossible  via:0x8cf3e0                   207
+0x4f0610   graphwar_video_writer.rs                   write_video                        src/graphwar_video_writer.rs:154         isolated_impossible  via:0x8cf3e0                   318
+0x4f0bb0   graphwar_video_writer.rs                   new                                src/graphwar_video_writer.rs:61          executable           scalar_io                      142
+0x4f0e20   graphwar_video_writer.rs                   add_frame                          src/graphwar_video_writer.rs:125         needs_state          indirect_unknown:1             334
+0x3ee190   obstacle_drawer.rs                         update                             src/obstacle_drawer.rs:51                isolated_impossible  engine_dispatch                1103
+0x4b7380   obstacle_drawer.rs                         init                               src/obstacle_drawer.rs:37                isolated_impossible  via:0x44a930                   354
+0x4e1160   player_showcase.rs                         -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4e12e0   player_showcase.rs                         -                                  -                                        isolated_impossible  via:0x8f5cc0                   98
+0x4e5400   player_showcase.rs                         draw                               src/player_showcase.rs:72                isolated_impossible  engine_dispatch                888
+0x4e6480   player_showcase.rs                         ready                              src/player_showcase.rs:18                isolated_impossible  via:0x3ab590                   254
+0x4e68f0   player_showcase.rs                         process                            src/player_showcase.rs:59                isolated_impossible  via:0x3ab590                   149
+0x4e87d0   player_showcase.rs                         -                                  -                                        isolated_impossible  via:0x8f5cc0                   97
+0x4e8970   player_showcase.rs                         -                                  -                                        isolated_impossible  via:0x8f5cc0                   91
+0x4e8b20   player_showcase.rs                         -                                  -                                        isolated_impossible  via:0x8f5cc0                   126
+0x4e8d70   player_showcase.rs                         -                                  -                                        isolated_impossible  via:0x8f5cc0                   121
+0x4efd70   player_showcase.rs                         on_text_change                     src/player_showcase.rs:31                isolated_impossible  via:0x3ab590                   165
+0x4f5450   polish_notation_converter.rs               reorder_recursive                  src/polish_notation_converter.rs:36      needs_state          inout_self:rdi,rdx;indirect_unknown:1 218
+0x3d10e0   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 73
+0x3d11d0   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d12c0   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d13b0   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 67
+0x3d1490   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d1580   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d1670   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d1760   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d1850   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d1940   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d1a30   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d1b20   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d1c10   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d1d00   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d1df0   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d1ee0   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d1fd0   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d20c0   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d21b0   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d22a0   weak_caller.rs                             -                                  -                                        isolated_impossible  via:0x527740                   52
+0x3d2340   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d2430   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d2520   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 75
+0x3d2610   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 63
+0x3d26f0   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 63
+0x3d27d0   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 63
+0x3d28b0   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 63
+0x3d2990   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 63
+0x3d2a70   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 63
+0x3d2b50   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 63
+0x3d2c30   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 63
+0x3d2d10   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 63
+0x3d2df0   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 63
+0x3d2ed0   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 63
+0x3d2fb0   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 63
+0x3d3090   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 63
+0x3d3170   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 63
+0x3d3250   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 63
+0x3d3330   weak_caller.rs                             -                                  -                                        needs_state          inout_self:rdi;indirect_unknown:1 63
+
+====================================================================================================
+B. 分类判据（可复核；每条都能指到指令/符号）
+====================================================================================================
+1 engine_dispatch  `call *off(%reg)` 而 %reg 从「运行时才填的全局槽」读出。实测就是 gdext 的引擎接口表：
+                   0x8abca0（draw_arc 包装）`mov 0x10e9a0(%rip),%r15  # 9ba6b0` → `movzbl 0x14f0(%r15)`。
+                   隔离环境里 [0x9ba6b0] 恒 0 ⇒ 必崩。判据落在 call 指令地址 + 全局槽地址上（分类器 --json 可复现）。
+2 runtime_ptr      `call *0x…(%rip)` 的槽在 .rela.dyn 里**连重定位都没有** ⇒ 只可能由 GDExtension 入口运行时写。
+3 tls              任何 `fs:`/`gs:` 段内存操作数，或直接调用 `__tls_get_addr`（thread_rng / std::io 在这里）。
+4 sys_io           直接调用 read/write/socket/send/recv/open/statx/mmap64/clock_gettime/syscall/…（名单在脚本里）。
+5 thread           pthread_create/join/detach/key_*/setspecific/self。
+6 unwind           _Unwind_* / __cxa_thread_atexit_impl。
+7 冷路径不传播     `call *slot` 的下一条指令是 int3/ud2 的是 panic/print_error 收尾（实测 0x925660 =
+                   __rust_alloc_error_handler：`call *0x9ba698 ; int3`）。这类边**不参与**致命性传递。
+7b 非返回错误路径  函数体里**没有 ret** 且自身致命（0x94b340 = panic 入口）的节点，致命性**不向上传播**。
+                   不做这条会把整个二进制连坐：439 个里 264 个是这么被 panic 连坐的。
+8 传递            直接 call / 可解析的间接 call 边向上传播最坏档；**只走非冷边**。
+                  间接 call 解析：.rela.dyn 的 R_X86_64_RELATIVE 有 addend（实测 8231 条指向 .text）⇒ 直接得目标；
+                  GLOB_DAT/JUMP_SLOT ⇒ libc 导入名；`call *%reg` 回溯 ≤15 条找 `mov %reg,[%rip+G]`。
+                  回溯不出 ⇒ indirect_unknown，**按 needs_state 处理，不许假装能跑**。
+9 needs_state 判据 某指针参数「既被读又被写」（读=作基址访问或 lea 取地址；写=作目的基址）⇒ `&mut self` 一类；
+                  或有写全局（`mov [%rip+全局], …`）。
+10 executable 判据 指针参数只有「只读输入」与「只写输出」；无全局写；无 indirect_unknown。
+
+====================================================================================================
+C. 输入集生成方式（预注册；**≥16 组**，跑之前定死）
+====================================================================================================
+C1. f64 标量（18 组，全部按 u64 位模式给，两侧都按位喂，避免十进制往返）：
+    +0.0                     0x0000000000000000
+    -0.0                     0x8000000000000000
+    +1.0                     0x3ff0000000000000
+    -1.0                     0xbff0000000000000
+    min_denormal             0x0000000000000001
+    min_normal               0x0010000000000000
+    max_finite               0x7fefffffffffffff
+    +inf                     0x7ff0000000000000
+    -inf                     0xfff0000000000000
+    qNaN                     0x7ff8000000000000
+    -qNaN                    0xfff8000000000000
+    1.0+1ulp                 0x3ff0000000000001
+    1.0-1ulp                 0x3fefffffffffffff
+    pi                       0x400921fb54442d18
+    0.5                      0x3fe0000000000000
+    1e308                    0x7fe1ccf385ebc8a0
+    1e-308                   0x000fffffffffffff
+    1234567890123456789.0    0x43e123456789abcd
+
+C2. Vec<FunctionToken>（16B/token = {tag: u64, value: f64}）输入序列（18 组）：
+     1  空序列（调用方不调，见 convert）
+     2  单个原子 CONST
+     3  单个原子 VAR_X
+     4  bal:+ - * / ^ 各一条二元表达式
+     5  嵌套括号 (x+(y*z))
+     6  括号不配对：多 )
+     7  括号不配对：多 (
+     8  一元 sqrt/ln/exp/abs/sin/cos/tan 各一条
+     9  一元 neg(-)
+    10  平级左结合 a-b+c
+    11  平级右结合 a-(b+c)
+    12  + 缺左操作数
+    13  + 缺右操作数
+    14  - 缺左操作数
+    15  未知 tag（20/21/0xdead）
+    16  深嵌套 32 层括号
+    17  CONST 值取 NaN/±0/±inf/1ulp（值不影响根的选择，但必须逐位保留）
+    18  长序列 64 token 混合表达式
+
+比较口径：**逐位**。f64 用 `to_bits()` 比 u64；整数/字节直接比；
+Vec 输出比 (len, 每个 token 的 tag u64 与 value 的 u64 位模式)。**不用 abs diff < eps**。
+
+====================================================================================================
+D. 预注册的**执行清单**（跑哪些 + 每组怎么喂）
+====================================================================================================
+D-A 确定能跑（ABI 已由反汇编逐指令读出，输入状态是可造纯数据）
+  A1  0x4f5450  PolishNotationConverter::reorder_recursive
+      我方 src/polish_notation_converter.rs（同名 recusive；docs/02 §18 记 :36）
+      真侧 ABI：rdi=&mut self{ input Vec @+0x00/+0x08/+0x10, output Vec @+0x18/+0x20/+0x28 }，
+               rsi=start(usize), rdx=end(usize 闭区间)。insn `0x4f545e cmp %rdx,%rsi; jbe`
+               与 `0x4f54ca mov 0x10(%rdi),%rsi` / `0x4f54a2 movsd %xmm0,0x8(%rax,%rcx,1)`
+               把两个 Vec 的 (cap,ptr,len) 与 16B/token 落点全部钉死。
+      输入：input Vec 用 C2 的 18 组序列（gwemu 的 make_vec 造真 Vec 布局）；
+            output Vec = {cap=0, ptr=8(dangling), len=0}，与 `0x4edce9..0x4edcf9` 三句 movq 一致。
+      输出：读回 output 的 (ptr@+0x20, len@+0x28) 前 len 个 16B token。
+      我方：`PolishNotationConverter::reorder(input)`（内部就是
+            `if !input.is_empty() { reorder_recursive(0, len-1) }`，与原版调用点同口径）。
+  A2  0x41a9d0 / 0x41ab40  graphwar_function_evolutionator
+      ABI 待**反汇编逐指令确认**（argv 形态初步是 in:rcx,rdi,rdx / out:rsi）。
+      规则：装不上就记「没跑成」，不许猜。
+  A3  0x4600e0 / 0x4602f0  graphwar_function_evolutionator（in:rdi,rdx）同上。
+D-B 尝试（状态可造但需要真 HashMap/Weak，代价高；跑不成如实记）
+  B1  0x465870 graphwar_target_manager / 0x4783f0 graphwar_entity_effect_manager /
+      0x4556d0 graphwar_soldier_manager / 0x518530 graphwar_mode_manager
+      —— 事件分派型（tag 比较 + 写 1~2 字节），self 是纯字节表。
+  B2  0x3d3250（weak_caller 的一个单态化）—— Weak<RefCell<T>> 语义，strong=0/1 两态。
+D-C **不跑**（如实记账，绝不假装跑过）
+  * 304 个 isolated_impossible：要 Godot 引擎 / TLS / sys_io，隔离执行不可能；
+  * 102 个 needs_state 中状态造不出来（真 HashMap<TypeId,Rc<dyn Any>>、真 Rc 图、真 mpsc 通道）的；
+  * 任何 ABI 定不下来的（记「ABI 未知」而不是猜着喂）。
+
+====================================================================================================
+E. 正对照（跑之前就要过）
+====================================================================================================
+挑 3 个 docs/06 已标「逐位」的**真函数**（都不在 439 里，是外部基准）：
+  P1 0x4eb9d0 求值器（docs/06 §35 自校验点，gwemu.call_eval 已在用）
+  P2 0x4ed670 解析器（math_function.rs 的 panic 锚落点）
+  P3 0x3c2530 采样器（docs/91：24/24 用例整条点序列逐位相等）
+要求：① 我方/真侧在同一组输入上 **100% 报相同**；
+     ② 把某一个输入**人为改 1 ulp**，harness 必须报**差异**（证明不是"永远报相同"）。
