@@ -1,0 +1,80 @@
+# AI 进化器 参数/常量层逐位对表 —— 真值=.reference/game/libgraphwarrust.so (sha256 9a53811518e74b75…)
+# 生成：.reference/venv/bin/python tools/ai_params_crosscheck.py
+# 行数 76：DIFF-BEHAVIOUR=4，INFO=1，MATCH=71
+id	item	ours	binary	ours_bits	bin_bits	verdict	evidence(vaddr)	note
+W.total	权重模数（random % N）	85	85	-	-	MATCH	0x4ef1bb `imul $0x55`	生成器 0x4ef1bb 的模数立即数
+W.normal.VarX	权重区间 Normal / tag 0 VarX	[(11, 21)]	[(11, 21)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.normal.Add	权重区间 Normal / tag 3 Add	[(21, 31)]	[(21, 31)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.normal.Sub	权重区间 Normal / tag 4 Sub	[(31, 36)]	[(31, 36)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.normal.Mul	权重区间 Normal / tag 6 Mul	[(36, 47)]	[(36, 47)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.normal.Divide	权重区间 Normal / tag 7 Divide	[(47, 54)]	[(47, 54)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.normal.Pow	权重区间 Normal / tag 8 Pow	[(54, 56)]	[(54, 56)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.normal.Sqrt	权重区间 Normal / tag 9 Sqrt	[(56, 57)]	[(56, 57)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.normal.Log	权重区间 Normal / tag 10 Log	[(57, 58)]	[(57, 58)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.normal.Ln	权重区间 Normal / tag 11 Ln	[(58, 59)]	[(58, 59)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.normal.Exp	权重区间 Normal / tag 12 Exp	[(59, 65)]	[(59, 65)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.normal.Abs	权重区间 Normal / tag 13 Abs	[(65, 72)]	[(65, 72)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.normal.Sin	权重区间 Normal / tag 14 Sin	[(72, 79)]	[(72, 79)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.normal.Cos	权重区间 Normal / tag 15 Cos	[(79, 84)]	[(79, 84)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.normal.Tan	权重区间 Normal / tag 16 Tan	[(84, 85)]	[(84, 85)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.normal.Const	权重区间 Normal / tag 17 Const	[(0, 11)]	[(0, 11)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.diffeq.VarX	权重区间 DiffEq / tag 0 VarX	[(11, 17)]	[(11, 17)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.diffeq.VarY	权重区间 DiffEq / tag 1 VarY	[(17, 21)]	[(17, 21)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.diffeq.Add	权重区间 DiffEq / tag 3 Add	[(21, 31)]	[(21, 31)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.diffeq.Sub	权重区间 DiffEq / tag 4 Sub	[(31, 36)]	[(31, 36)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.diffeq.Mul	权重区间 DiffEq / tag 6 Mul	[(36, 47)]	[(36, 47)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.diffeq.Divide	权重区间 DiffEq / tag 7 Divide	[(47, 54)]	[(47, 54)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.diffeq.Pow	权重区间 DiffEq / tag 8 Pow	[(54, 56)]	[(54, 56)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.diffeq.Sqrt	权重区间 DiffEq / tag 9 Sqrt	[(56, 57)]	[(56, 57)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.diffeq.Log	权重区间 DiffEq / tag 10 Log	[(57, 58)]	[(57, 58)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.diffeq.Ln	权重区间 DiffEq / tag 11 Ln	[(58, 59)]	[(58, 59)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.diffeq.Exp	权重区间 DiffEq / tag 12 Exp	[(59, 65)]	[(59, 65)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.diffeq.Abs	权重区间 DiffEq / tag 13 Abs	[(65, 72)]	[(65, 72)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.diffeq.Sin	权重区间 DiffEq / tag 14 Sin	[(72, 79)]	[(72, 79)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.diffeq.Cos	权重区间 DiffEq / tag 15 Cos	[(79, 84)]	[(79, 84)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.diffeq.Tan	权重区间 DiffEq / tag 16 Tan	[(84, 85)]	[(84, 85)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.diffeq.Const	权重区间 DiffEq / tag 17 Const	[(0, 11)]	[(0, 11)]	-	-	MATCH	区间链 0x4ef1c1,0x4ef220,0x4ef235,0x4ef241,0x4ef24d,0x4ef259,0x4ef265,0x4ef271,0x4ef277,0x4ef28c,0x4ef298,0x4ef2a4,0x4ef2d0	区间集合逐段比（相邻段先合并；不是只看宽度）
+W.var_mode	变量槽 = mode&1（Normal→x / DiffEq→y）	VarMode::Normal/DiffEq 双表	tag0 6 格 + (mode&1) 4 格	-	-	MATCH	0x4ef0c7 `and $1` → 0x4ef230 取回（tag=栈上 mode&1）	值层同构：Normal 下 17..20 这段 tag=0，DiffEq 下 tag=1
+G.len_mul	随机长度 ×5.0	5	5	4617315517961601024	4617315517961601024	MATCH	0x4ef08e `mulsd` → 0x19f698	截断见 0x4ef0b2 cvttsd2si
+G.len_add	随机长度 +10.0	10	10	4621819117588971520	4621819117588971520	MATCH	0x4ef096 `addsd` → 0x19f6a0	
+G.const_scale	常数 token 缩放	10.199999999999999	10.199999999999999	4621931707579655782	4621931707579655782	MATCH	0x4ef1dc `mulsd` → 0x19f758	生成器 / 补齐 / 变异三处共用同一个 .rodata 常量
+G.len_trunc	长度截断方向 = 向零（i32）	as i32	cvttsd2si	-	-	MATCH	0x4ef0b2	cvttsd2si 是截断到零，与 Rust `as i32` 同义
+P.mod	补齐抽样模数	50	50	-	-	MATCH	0x4ee24e `imul $0x32`（0*50 取模）	编译器把 %50 展开成 imul+shr+imul
+P.thr_const	补齐：常数分支上界	25	25	-	-	MATCH	0x4ee254 `cmp $0x19`	rand%50 < 25 → 常数
+P.thr_x	补齐：x 分支上界	42	42	-	-	MATCH	0x4ee2c0 `cmp $0x2a`	25..41 → x
+P.const_tag	补齐：追加常数的 tag	17	17	-	-	MATCH	0x4ee2a3 `mov $0x11,%r12d`	
+P.mode_bit	补齐：第三段 tag = mode&1	mode&1（Normal→VarX）	1	-	-	MATCH	0x4ee152 `and $1`	42..49 → mode&1
+P.arity	arity-1 表（tag 0..17）	arity() 函数	表 @0x1c47d0	-	-	MATCH	0x1c47d0 u32×20 = [-1, -1, -1, 1, 1, 0, 1, 1]	全部 tag 的 arity-1 都对上
+F.len20	工厂：父代长度阈值（<N 走重生）	20	20	-	-	MATCH	0x4ee463 `cmp $0x14`	20 token
+F.sign	工厂：u32 符号 → 变异分支	无此分支（我方恒走交叉+变异）	js	-	-	DIFF-BEHAVIOUR	0x4ee44b `js`（0x4ee42a 处取的 u32）	**行为不一致**：真二进制是三路选择（符号/mutate、<20/重生、否则/交叉）
+F.cut	工厂：交叉切点两次取模	r1=next()%N, r2=next()%(N-r1)	r1=%N, r2=%(N-r1)	-	-	MATCH	0x4ee50f / 0x4ee51c 两处 `div`	我方多一个 `.max(1)`（r2=0 时真二进制会得到空片段→补齐成一个叶子）
+F.mutate_after_cross	工厂：交叉后再变异？	有（mutate(&mut child)）	无（0x4ee5c9→0x4ee61d 直接补齐）	-	-	DIFF-BEHAVIOUR	0x4ee61d `call 0x4ee0e0`（补齐）跟在 0x4ee5c9 `call 0x3be7d0`（取片段）之后	**行为不一致**：真二进制交叉完只补齐，不再变异
+F.subtree	工厂：取片段方式	按 arity 走出一棵完整子树	裸切片 [r1,r2) 后补齐	-	-	DIFF-BEHAVIOUR	0x4ee565..0x4ee5b7 按 16 字节元素拷区间 → 0x4ee61d 补齐	**行为不一致**（我方是 GW1 语义的近似）
+M.value_tags	变异：候选值 token 的 tag	{VarX,VarY,Const}	{0,1,17}	-	-	MATCH	0x4ee798 `cmp esi,1` / `cmp esi,0x11`（tag0 走 test）	
+M.op_tags	变异：包一层用的算子 tag	Add/Mul/Divide	3 / 6 / 7	-	-	MATCH	写入点 0x4ee9db→3,0x4eeab2→7,0x4eeaf1→6	两次符号抽样 ⇒ 50/25/25
+M.op_split	变异：算子概率	50/25/25	两次 u32 符号判定	-	-	MATCH	0x4ee9a0 / 0x4eea29 两处 `js`	第二次符号 <0 → Mul、>=0 → Divide（与我方同向）
+M.const_scale	变异：新常数缩放	10.199999999999999	10.199999999999999	4621931707579655782	4621931707579655782	MATCH	0x4ee8a8 `mulsd` → 0x19f758	
+S.coarse	粗评步长	0.5	0.5	4602678819172646912	4602678819172646912	MATCH	0x51bc8b `movq` → 0x19f6d0	两处载入：0x51bc8b,0x51c0c1
+S.fine	精评步长	0.01	0.01	4576918229304087675	4576918229304087675	MATCH	0x51c3ab / 0x51c6e6 / 0x51c9a0 三处 `movsd`	**三段展开**，没有循环常量
+S.fine_ranks	精评名次数	3	3	-	-	MATCH	三处独立的 0.01 载入点	二进制里没有字面量 3，是展开的代码 ⇒ 以载入点个数为真值
+S.tol	一致性容差（复用粗评步长常量）	0.5	0.5	4602678819172646912	4602678819172646912	MATCH	0x51c3dc `ucomisd` → 0x19f6d0	三个 ucomisd 点：0x51c3dc,0x51c717,0x51c9d1
+S.score_calls	评分核心调用点（变体 A 内）	—	7 处	-	-	INFO	0x51bc93,0x51c0c9,0x51c3b3,0x51c6ee,0x51c9a8,0x51d960,0x51dcce	2 粗评 + 3 精评 + 2 变体 B = 7
+S.hit2e6	适应度：命中项系数	2000000	2000000	4701340746312056832	4701340746312056832	MATCH	0x51b0b1 `mulsd` → 0x19fc00	
+S.dist1e6	适应度：距离项初值（哨兵）	1000000	1000000	4696837146684686336	4696837146684686336	MATCH	0x51afdf → 0x19fb30（另有 0x51ab35 写入点）	我方分数写成 −1e6，二进制写成 −dist（初值 1e6）⇒ 同值
+S.v2div100	适应度：token 数平方的除数	100	100	4636737291354636288	4636737291354636288	MATCH	0x51b079 `movsd` → 0x19f6d8；0x51b0eb `divsd` 用它除 V²	除数在 `.rodata 0x19f6d8`，不是立即数 100
+S.limit_penalty	适应度：超限罚分	-50000000	-50000000	13945351733111685120	13945351733111685120	MATCH	0x51b100 `addsd` → 0x19f478	二进制是 `+= -5e7`（不是减 5e7，等价）
+S.limit_guard	适应度：`V > limit` 判定	v as u32 > limit	cmp rdx,rcx / jbe（limit 来自 ctx+0x58）	-	-	MATCH	0x51b0f3..0x51b0fe	**注意**：`V*V/100` 之前还有一项 `esi*step*100` 的减法（0x51b08f..0x51b0a1），我方没有这一项 —— 见文档 §不一致清单（未定性，缺 esi 语义）
+B.secs	墙钟预算上限（秒）	25.0	25	-	-	MATCH	0x51b7cf / 0x51b7e0 `cmp $0x19`	立即数 25，六档共用（非配置）
+B.duration	比较对象 = 整 Duration（秒+纳秒）	as_secs_f64() > 25.0	cmp secs / test nanos	-	-	MATCH	0x51b7d3 `jne` + 0x51b7d5 `test edx,edx`	二进制先比秒、再比纳秒 ⇒ 等价于 `elapsed > 25 s`
+B.clock	取时间来源 = CLOCK_MONOTONIC 墙钟	std::time::Instant	clock_gettime(CLOCK_MONOTONIC=1)	-	-	MATCH	GOT 0x9bafe8→elapsed 0x8f3a20→0x8f5bf0→GOT 0x9bf6d0(clock_gettime)，clockid=1 @0x8f3a2c	链：0x51b7b6 取指针 → 0x51b7cd 调用 → elapsed → clock_gettime
+B.per_gen	预算检查位置 = 每代顶部一次	for 循环顶部一次	回边 0x51b7d3→0x51b7e0，检查点 0x51b7cf	-	-	MATCH	0x51b7b6 取 elapsed 指针 / 0x51b7cd 调用 / 0x51cb67 代循环回边	全函数只有 1 处调用取时间函数（变体 B 另有一处 0x51d398）
+T.thresholds	难度分档阈值（difficulty < N 进下一档）	4 11 26 101 251	4 11 26 101 251	-	-	MATCH	0x3e3da0,0x3e3daf,0x3e3db9,0x3e456d,0x3e458d	0x3e3da0/0x3e3daf/0x3e3db9/0x3e456d/0x3e458d
+T.s	每档槽数 s（精英数 = s）	10 20 30 40 50	10 20 30 40 50	-	-	MATCH	0x3e3d95,0x3e3daa,0x3e3dc3,0x3e4573,0x3e45a3	最后一档（>=251）没有自己的 `mov ecx`，沿用上一档的 50
+T.limit	每档复杂度上限	5 5 10 15 25 200	5 5 10 15 25 200	-	-	MATCH	0x3e3d9a,0x3e3dc8,0x3e4578,0x3e4599，cmovb @0x3e459f（25/200）	第 2 档沿用第 1 档的 5（r9d 没被重写）；最后一档 cmovb 在 25/200 间选
+T.per_slot	每槽个体数（1 克隆 + 4 子代）	5	5	-	-	MATCH	0x3e45c7 `mov r8d,5`	第 5 实参写进表项；种群 = s × 5
+T.gens	代数 = 难度值本身（不分档）	params.generations	edx=r14d（难度值）	-	-	MATCH	0x3e45c4 `mov edx,r14d`	它成为第 3 实参，最终变成代循环上限
+T.loop	代循环计数与上限	for _ in 0..generations	inc ebx / cmp ebx,[rsp+0x118] / jne 回边	-	-	MATCH	0x51cb2f / 0x51cb49	r8d 就是 0x51b459 存下的第 5 实参（evolve 的代数）
+T.six_levels	六档表 = difficulty_params(难度值) 的组合	六档 (代, 种群, 上限)	由分档表 + per_slot 推得	-	-	MATCH	上两行 + per_slot=5	难度 3/10/25/100/250/1000 六档全部等于分档表组合（代=难度值）
+R.tag_draw	每次 token 抽样的 RNG 粒度	1 个 u64（=2 个 u32 字）	1 个 u32	-	-	DIFF-BEHAVIOUR	0x4ef193 `mov 0x10(%r13,%rcx,4),%r12d` + `inc`（0x4ef198）	**行为不一致**：二进制每抽一个 tag 只前进 1 个字；我方闭包是 next_u64 ⇒ 2 个字
+R.u64_draw	u64 抽样（下标/切点）的粒度	1 个 u64	1 个 u64（2 字）	-	-	MATCH	0x502b20 `mov rbx,[r15+rax*4+0x10]`（qword 载入）+ idx+=2	0x47f700 同构（索引在 +0x100）
+R.state	RNG 状态布局	ChaCha12（我方 _scaffold/rng.rs）	块缓冲 +0x10（64 个字）/ 游标 +0x110	-	-	MATCH	0x4ef127 `mov 0x110(%rax),%rcx` / 0x4ef193	⇒ **状态可以在 unicorn 里注入**（C 层的钥匙）
