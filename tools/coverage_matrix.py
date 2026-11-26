@@ -466,8 +466,8 @@ mod("graphwar_effect_manager.rs", "graphwar", ("src/graphwar_effect_manager.rs",
     "5（含 EffectType::deserialize）：EffectType 4 个取值已穷举（ExplosionEffect/DeathEffect/SparkEffect/AshEffect）（docs/16 §32）")
 mod("graphwar_entity_effect_manager.rs", "graphwar", ("src/graphwar_entity_effect_manager.rs",), "观测",
     "3 + 内联 add_entity_effect。登记表 = u32->u8 的 entity_effect_map（全库唯一，桶距 8）；**死亡特效照抄出生登记**：execute_results 用 effect_type=map[entity_id]，查不到就一条都不发（0x4a8c38）=> Ash/Death 的分界在出生登记处，正是 docs/141 那 19 例的成因（docs/16 §32）")
-mod("graphwar_event_handler.rs", "graphwar", ("src/events.rs",), "观测",
-    "docs/114：0x3d38f0 的「事件名 → 判别值」表逐条解出（四道自校验）；事件枚举与分派已落码")
+mod("graphwar_event_handler.rs", "graphwar", ("src/graphwar_event_handler.rs",), "观测",
+    "docs/114：0x3d38f0 的「事件名 → 判别值」表逐条解出（四道自校验）；表 + 查表端已落码。**2026-11-26 T30 切出同名文件**：0x3d3630/0x3d38f0 两条 panic::Location 全落 src/graphwar_event_handler.rs（fixtures/boundary_audit.tsv），故从 src/events.rs 搬入 `DISPATCH_NAME_TAGS` / `NAMED_VARIANT_COUNT` / `Event::from_dispatch_name`，老路径由 pub use 保持；⚠ process_events 仍**无独立函数体**（泵在 _scaffold/root_wiring.rs，docs/06 §80）")
 mod("graphwar_event.rs", "graphwar", ("src/events.rs",), "观测",
     "docs/114：72 个判别值实测；但 serde 键序只在 41 行抓包上同序，仍是推断（docs/96 §9.1）")
 mod("graphwar_function_evolutionator.rs", "graphwar", ("src/graphwar_function_evolutionator.rs",), "观测",
@@ -551,8 +551,8 @@ mod("graphwar_play_screen_control.rs", "graphwar", ("src/graphwar_play_screen_co
     "但控制器本体已落在 src/graphwar_play_screen_control.rs。旧行写「未做」与 src/lib.rs/文件头冲突 ⇒ 按代码更正")
 mod("graphwar_rank_manager.rs", "graphwar", ("src/graphwar_rank_manager.rs",), "观测",
     "4 函数。段位**只从远端事件进**（RemoteEventHandler::handle_{client,server}_remote_event 各一处 set_rank），模块内零换算；RankInfo(67) = 三个 dword（+8 标志 / +0xc 段位 / +0x10 player_id）；66 由 local_player_manager 发（推断）（docs/10 §14）")
-mod("graphwar_remote_event_handler.rs", "graphwar", ("src/events.rs",), "观测",
-    "docs/110/96：远端事件名与判别值已解；我方 events.rs 实现枚举 + 编解码，无逐字节对拍")
+mod("graphwar_remote_event_handler.rs", "graphwar", ("src/graphwar_remote_event_handler.rs",), "推断",
+    "docs/110/96：远端事件名与判别值已解。**2026-11-26 T30 切出同名文件**：0x3dee00/0x3e5910 两条 panic::Location 全落本文件（fixtures/boundary_audit.tsv），故从 events.rs 的混装里拆出独立文件，文件里装 MODULE/SOURCE_FILE/2 条 Func 证据行 + is_leader 指令级观测。⚠ **两个函数体仍未落码（0 个 fn）** ⇒ 本行只记到 `推断`（`观测`/`逐位` 都要求'有 src/ 实现'，见本脚本文件头的 status 表）；缺的证据：arm64 2.0.60 对照、0x46d8c0 是哪个单态化实例、调用点分析（docs/06 §80 遗留 2）")
 mod("graphwar_replay_control.rs", "graphwar", ("src/graphwar_replay_control.rs",), "观测",
     "4：回放控制；时钟字段仍未解（docs/16 §32.7）")
 mod("graphwar_replay_player.rs", "graphwar", ("src/graphwar_replay_player.rs",), "观测",
@@ -562,8 +562,8 @@ mod("graphwar_root_node.rs", "graphwar", ("src/graphwar_root_node.rs",), "观测
     "0x3a5760 主体 20288B 刻意未猜")
 mod("graphwar_server_broker_handler.rs", "graphwar", ("src/graphwar_server_broker_handler.rs",), "观测",
     "6/6（含线程体；get_game_info/new 无锚不给地址）。Global 一路无 TTL 扫描——疑靠 GameRemoved，该报文从未抓到（docs/09 §12）")
-mod("graphwar_server_connection_handler.rs", "graphwar", ("src/server.rs",), "逐位",
-    "docs/33：新连接的状态同步与真实客户端逐字节一致")
+mod("graphwar_server_connection_handler.rs", "graphwar", ("src/graphwar_server_connection_handler.rs",), "逐位",
+    "docs/33：新连接的状态同步与真实客户端逐字节一致。**2026-11-26 T30 切出同名文件**：0x45a560/6b0/7b0/ab0/ad0/b020 六条 panic::Location 全落本文件（fixtures/boundary_audit.tsv），故 RoomState/on_new_connection/to_wire 从 src/server.rs 搬入（server.rs 只留 tick 薄封装 + pub use 再导出）；⚠ 那 6 个有锚函数的**函数体**仍未落码（docs/06 §80）")
 mod("graphwar_setup_control.rs", "graphwar", ("src/graphwar_setup_control.rs",), "观测",
     "70 锚 -> 37 函数（矩阵的 21 是压平口径）；四格模式/时间档/玩家条目/Start-Cancel 已落码（docs/16 §16），"
     "18 个 gdext 薄壳与 3 个事件回呼语义未知")

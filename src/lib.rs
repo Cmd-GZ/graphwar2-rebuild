@@ -121,9 +121,21 @@ pub mod plane;
 /// 原版 `entity_drawer.rs` 的图元级复原（`EntityDrawer::draw` = vaddr `0x4b2890`）。
 pub mod entity_drawer;
 pub mod events;
+/// 原版 `graphwar_event_handler.rs`：事件名 → **判别值**的分派层
+/// （`0x3d3630` `process_events` / `0x3d38f0` `subscribe_to_event` 的 `panic::Location`
+/// 就落在这个文件上 —— `fixtures/boundary_audit.tsv`；2026-11-26 T30 从 `events.rs` 切出）。
+pub mod graphwar_event_handler;
+/// 原版 `graphwar_remote_event_handler.rs`：远端事件处理器
+/// （`0x3dee00` `handle_client_remote_event` / `0x3e5910` `is_leader` 的 `panic::Location`
+/// 落在这个文件上 —— `fixtures/boundary_audit.tsv`）。
+/// ⚠️ **两个函数体尚未落码**，本文件目前装的是证据行（见文件头 §2「我方现状」）。
+pub mod graphwar_remote_event_handler;
 pub mod graphwar_life_manager;
 pub mod graphwar_turn_manager;
 pub mod server;
+/// 原版 `graphwar_server_connection_handler.rs`：服务端每连接处理器
+/// （台账 6 条 mismatch 的 `panic::Location` 主文件全是它；2026-11-26 T30 从 `server.rs` 切出）。
+pub mod graphwar_server_connection_handler;
 pub mod graphwar_tick_handler;
 pub mod game;
 pub mod graphwar_level_generator;
