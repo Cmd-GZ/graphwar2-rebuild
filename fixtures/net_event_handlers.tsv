@@ -1,0 +1,90 @@
+# fixtures/net_event_handlers.tsv —— 线上事件 × 我方客户端处理器 × 原版语义（任务 T17，2026-11-26）
+#
+# 用途：把「客户端收到一条线上事件之后该做什么」这件事**逐事件**钉到证据上，作为
+#       `client/src/net/session.gd::_apply` / `_feed_managers` 与
+#       `src/_scaffold/net_events_class.rs` 的台账。
+#
+# 口径：
+#   * 事件名 / tag / 字段：`src/_scaffold/protocol.rs::WIRE_SPEC`（74 条，逐位）+ `docs/07` §3.3；
+#     `tag` 列由 `_scaffold::net_events_class::tests::tags_match_the_wire_spec` 与本表同源复核。
+#   * 剧本 = `fixtures/frame_match_events.txt`（预注册，50 条 / 30 个事件名）。
+#   * 证据档：观测 = 能指到反汇编地址或真机真帧；推断 = 有依据未证（缺什么写在正文里）。
+#   * "做完" 指 2026-11-26 任务 T17 这一轮；"T17 前" = master `3567098` 上的 `session.gd`（23 个事件名有分支 = 22 个 match 臂）。
+#
+# 复算：
+#   python3 tools/frame_diff.py ...（像素）；cargo test --offline --features gdext-bindings net_events（映射表）
+事件名	线上tag	剧本用到	我方T17前有处理器	原版收到它之后做什么（证据出处）	本轮做没做	落到的 manager 方法
+AddObstacle	40	否	有	`ObstacleTable::add_obstacle`（`GraphwarObstacleManager`，x86 侧写到 1000×600 字节网格）（`graphwar_obstacle_manager`）【观测】	做了（本轮起喂 manager）	obstacle_manager::add_obstacle
+AddSoldierRequest	16	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+AxisModeChangeRequest	18	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+AxisModeInfo	45	是	有	`GraphwarModeManager::set_axis_mode`——调用点 = `GraphwarRemoteEventHandler::handle_server_remote_event`（`graphwar_mode_manager` 模块文档）【观测】	做了（本轮起喂 manager）	mode_manager::set_axis_mode
+BanConnectionRequest	72	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+BotAdded	10	否	无	—（服务器侧事件（客户端不该收到））	不用做	—
+ChangeTeamRequest	11	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+ChatMessage	71	否	无	—（服务器侧事件（客户端不该收到））	不用做	—
+ChatMessageRequest	70	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+ClearBansRequest	73	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+ClearObstacles	39	是	有	`ObstacleTable::clear_obstacles`【观测】	做了（本轮起喂 manager）	obstacle_manager::clear_obstacles
+ColorInfo	61	是	有	颜色直接采纳：`GraphwarColorManager::set_color`，调用点 `remote_event_handler::handle_server_remote_event` `0x3e7e9c`（`graphwar_color_manager` 模块文档）【观测】	做了（T17 前是 `pass`）	color_manager::set_color
+ConnectedToServer	7	否	无	—（服务器侧事件（客户端不该收到））	不用做	—
+ConnectionRemoved	6	否	无	—（服务器侧事件（客户端不该收到））	不用做	—
+DestroyObstacle	41	否	有	`ObstacleTable::destroy_obstacle`【观测】	做了（本轮起喂 manager）	obstacle_manager::destroy_obstacle
+EffectInfo	44	是	无	登记特效：`GraphwarEffectManager::add_effect`（登记一条 + 广播 `EffectInfo`；产生者是 `0x472470`/`0x476a20` 内联）（`graphwar_effect_manager` §1）【观测】	做了（本轮新增）	effect_manager::add_effect
+EndOfTurnInfo	49	是	有	回合截止 tick：界面倒计时用；我方不发 `TickRequest` ⇒ 只记账（`docs/139` §7 未做）	不用做（界面层自己用）	—（session.room 记账）
+EntityEffectInfo	56	是	无	登记实体特效：`GraphwarEntityEffectManager::add_entity_effect`，调用点 `0x3e8554` 照抄载荷（`graphwar_entity_effect_manager` §5 第 6 行）【观测】	做了（本轮新增）	entity_effect_manager::add_entity_effect
+EntityRemoved	14	是	无	每个 manager 自己都订了 `entity_removed_event`：`name_manager::handle_entity_removed_event`、`target_manager` 闭包 `0x3daca0`（断言判别值 14 再删号）、`team_manager::handle_entity_removed_event`（`0x3c1f40`→`remove_from_team` `0x3c1980`）、`graphics_manager`（`0x3e9c58` 一带）、`color_manager`、`entity_effect_manager`、`plane_pos_manager`、`turn_manager`、`life_manager`（逐模块文档）【观测】	做了（本轮新增，扇出 9 个 manager）	plane_pos/name/graphics/target/entity_effect/life/color/team/turn 各自的 handle_entity_removed_event
+FaceGraphicsInfo	53	是	无	写脸表：`set_face_graphics`（`0x3e794c`）（`graphwar_graphics_manager` §4）【观测】	做了（本轮新增）	graphics_manager::set_face_graphics
+FaceGraphicsRequest	52	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+FunctionActive	36	是	无	`FunctionActive.owner_id` = `soldier_id`（`graphwar_function_evolutionator` §2）；落到 `FunctionManager` 的 active-tick 槽（`active_tick_of`/`set_function_active_tick`）【推断】	做了（推断档）	function_manager::set_function_active_tick
+FunctionFire	33	是	无	**没有证据**：不在 `GraphwarGameStateManager` 订阅的 7 条里，也不是任何 manager 的广播输入（唯一生产者是服务端 `Match::fire`）。弹道由 `FunctionPoints`/`FunctionActive`/`EffectInfo` 三条驱动 ⇒ 不猜	没做（只记账；证据缺口）	—（未接）
+FunctionFireRequest	32	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+FunctionInfo	35	是	有	函数槽：`GraphwarFunctionManager` 的 `set_function`；文本 → token 的解析器 = `math_function::parse`（`0x4ed670` 逐位）。**客户端收到 `FunctionInfo` 调谁**没有直接证据（服务端 `set_*` 也会发同一条）【推断】	做了（推断档）	function_manager::set_function
+FunctionModeChangeRequest	19	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+FunctionModeInfo	46	是	有	`GraphwarModeManager::set_function_mode`（同上）【观测】	做了（本轮起喂 manager）	mode_manager::set_function_mode
+FunctionPoints	37	是	无	订阅 `function_points_event`(37)：`GraphwarGameStateManager::handle_function_points`（`0x4758b0`，**只做转发**）（`graphwar_game_state_manager` §1 第 5 条）【观测·订阅】/【推断·转发到哪张表】	做了（推断档）	function_manager::set_function_points
+FunctionUpdateRequest	34	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+FunctionsCalculated	38	否	无	—（服务器侧事件（客户端不该收到））	不用做	—
+GameHeartbeat	63	否	无	—（服务器侧事件（客户端不该收到））	不用做	—
+GameInfo	62	否	无	—（服务器侧事件（客户端不该收到））	不用做	—
+GameNameInfo	29	是	有	房间名：`RoomState.game_name`（`docs/33`）；没有专门 manager（`GraphwarGameStateManager` 的 room 字段）	不用做（界面层自己用）	—（session.room 记账）
+GameNameRequest	22	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+GameRemoved	64	否	无	—（服务器侧事件（客户端不该收到））	不用做	—
+GameStartRequest	31	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+GameStateInfo	30	是	有	状态机迁移：`GraphwarGameStateManager`（`Match`）的 `game_state` 字段；它的订阅表里**没有** `GameStateInfo`（7 条里不含它）⇒ 客户端侧由界面层驱动（`docs/139`）	不用做（界面层自己用）	—（session.room 记账）
+HatGraphicsInfo	55	是	无	写帽子表：`set_hat_graphics`（`0x3e7f18`）（`graphwar_graphics_manager` §4）【观测】	做了（本轮新增）	graphics_manager::set_hat_graphics
+HatGraphicsRequest	54	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+LifeInfo	27	是	有	`LifeState::set_alive`（`LifeInfo` 的唯一生产者就是它，`graphwar_life_manager`）；客户端侧收到后的落点没有单独证据【推断】	做了（推断档）	life_manager::set_alive
+LifeQueuedDeath	28	否	无	`LifeState::set_queued_death`（到期才收尸，`docs/30` §5 无 tick 队列）（`graphwar_life_manager` 的 `set_queued_death`）【推断】	做了（推断档）	life_manager::set_queued_death
+LockInfo	69	否	无	—（服务器侧事件（客户端不该收到））	不用做	—
+LockRequest	68	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+NameInfo	60	是	无	写名字表：`GraphwarNameManager::set_name`（`0x40b190`/arm64 `0x519350`）。arm64 全量扫 `bl set_name` 只有两个调用点，其一 = `handle_server_remote_event` `0x3e707c`（`graphwar_name_manager` §4）【观测·负结果扫法】	做了（本轮新增）	name_manager::set_name
+NameRequest	59	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+NewBotRequest	9	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+NewConnection	5	是	有	各 manager 的 `handle_new_connection_event`（整表重播）是**服务端**侧行为；客户端收到只记 `connection_id`（界面层自己做）	不用做（无 manager 落点）	—（session.room 记账）
+NewConnectionRequest	4	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+NewPlayerRequest	8	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+PlayerInfo	13	是	有	`GraphwarPlayerManager::add_player`——x86 侧被**内联进** `remote_event_handler`（`graphwar_player_manager` 模块文档）【推断】	做了（本轮起喂 manager）	player_manager::add_player
+PosInfo	26	是	有	写位置表：`GraphwarPlanePosManager::set_position`（x86 `0x3c64c0`）——调用点 = `graphwar_remote_event_handler` `0x3e2830` 内 `0x3e3347`（`graphwar_plane_pos_manager` 模块文档"谁调 set_position"）【观测】	做了（T17 前只落 room，现在同时喂 manager）	plane_pos_manager::set_position
+QueueDestroyObstacle	42	否	有	`ObstacleTable::queue_destroy_obstacle`（带 `tick`，到期才擦）（`graphwar_obstacle_manager`）【观测】	做了（本轮起喂 manager）	obstacle_manager::queue_destroy_obstacle
+RankInfo	67	否	无	—（服务器侧事件（客户端不该收到））	不用做	—
+RankRequest	66	否	无	—（服务器侧事件（客户端不该收到））	不用做	—
+RemovePlayerRequest	12	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+RemoveSoldierRequest	17	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+RemoveTeam	25	是	无	删队伍那一格：`TeamTable::remove_from_team`（`0x3c1980`）——该函数"**删到了才**广播 `RemoveTeam`"（`graphwar_team_manager` §1）⇒ 收到同一条要在本地删同一格【观测】	做了（本轮新增）	team_manager::remove_from_team
+SkinGraphicsInfo	51	是	无	写皮肤表：`GraphwarGraphicsManager::set_skin_graphics`（`0x3e6f34`）；副作用 = `GraphwarGameStateManager::handle_graphics_info`（`0x4741a0`）对 `bot_*` 皮肤登记 `AshEffect`（`0x4aa464`）（`graphwar_graphics_manager` §4 / `graphwar_game_state_manager` §1 第 6 条）【观测】	做了（本轮新增）	graphics_manager::set_skin_graphics (+ entity_effect_manager::add_entity_effect(Ash) 当 `bot_*`)
+SkinGraphicsRequest	50	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+SoldierInfo	15	是	有	归属表：`SoldierTable::add_soldier`（内联块 `0x474a10`）（`graphwar_soldier_manager`）【观测】	做了（本轮起喂 manager）	soldier_manager::add_soldier
+Subscribe	3	否	无	—（服务器侧事件（客户端不该收到））	不用做	—
+TargetInfo	23	是	无	靶子登记：`GraphwarTargetManager::add_target`（无独立函数体，内联进 `0x46f310`；`target_manager` 唯一写操作是 `entity_removed_event` 的 `remove`）（`graphwar_target_manager` §1/§2）。**客户端收到 `TargetInfo` 到底调谁没有直接证据**（缺 `remote_event_handler` 分派表的逐位对照）	做了（推断档）	target_manager::add_target
+TeamInfo	24	是	有	写队伍表：`TeamTable::add_to_team`（`0x3c17d0`，写表 + 广播 `TeamInfo`）（`graphwar_team_manager` §1）【观测】	做了（T17 前只落 room，现在同时喂 manager）	team_manager::add_to_team
+Tick	0	否	无	—（服务器侧事件（客户端不该收到））	不用做	—
+TickReply	2	否	有	tick 轴：客户端据此推进动画时钟（`docs/06` §60.2.1 观测：不补 `TickReply` 时原版 S8 没有弹道）。**我方客户端不发 `TickRequest`**（`docs/06` §60.8 第 2 条）⇒ 本事件恒不出现	没做（我方不发 TickRequest，链路断在发送侧）	—
+TickRequest	1	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+TimeModeChangeRequest	21	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+TimeModeInfo	48	是	有	`GraphwarModeManager::set_time_mode`（同上）【观测】	做了（本轮起喂 manager）	mode_manager::set_time_mode
+TurnCountInfo	58	是	有	回合计数：`GraphwarTurnData` 之外的显示量；本项目按界面层记账（`docs/139` §7）	不用做（界面层自己用）	—（session.room 记账）
+TurnInfo	43	是	有	写回合：`TurnData::set_turn`（`0x4638f0`，公告"这个玩家现在用这个士兵"；`graphwar_turn_manager`）【观测·写操作】/【推断·客户端入口】	做了（本轮起喂 manager）	turn_manager::set_turn
+TurnLimitInfo	57	否	无	—（服务器侧事件（客户端不该收到））	不用做	—
+TurnModeChangeRequest	20	否	有	—（上行请求（客户端→服务端），客户端不发这条）	不用做	—
+TurnModeInfo	47	是	有	`GraphwarTurnManager::set_turn_mode`（`0x462d20`）——写入点含远端事件处理器 `TurnModeInfo` `0x3e41ae`（`graphwar_turn_manager`）【观测】	做了（本轮起喂 manager）	turn_manager::set_turn_mode
+VersionInfo	65	否	无	—（服务器侧事件（客户端不该收到））	不用做	—

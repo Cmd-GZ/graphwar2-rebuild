@@ -10192,6 +10192,244 @@ $PY tools/wire_fields.py --verify                  # ⑥ 上一轮工具（已�
    读数就是 67；只是它**看不见** `.rodata` 里被 `strings` 行扫描/非重叠正则漏掉的东西，
    而这两条正是得出 57 / 0 / 47 的路径。**没有为了对上 67 改任何口径。**
 
+
+## 67. 对局屏（S7/S8）第一刀：**客户端收到事件之后干什么**有了台账，12 条缺处理器的事件全部接进复原 manager；跨侧差异 6.3574 % → **6.3091 %**、6.8344 % → **6.7734 %**（2026-11-26，任务 T17）
+
+> 任务书：`.agent-work/specs/T17-net-events.md`（共享任务 `task-14`）。分支 `agent/net-events`，基于 master `3567098`。
+> 工作树 `.agent-work/cg/wt-t17`（私有 `CARGO_HOME` / `CARGO_TARGET_DIR=$WT/.cargo-target`）。
+> 原版 = `.reference/game/{Graphwar.x86_64, Graphwar.pck, libgraphwarrust.so}`（Graphwar II Linux **2.0.60**，内嵌 Godot 4.7.0）；
+> 我方 = `client/` + `libgw2_rebuild.so`（Godot **4.7.2**）。地址一律 **vaddr**；证据档按 `AGENTS.md` §0.3 标。
+
+**一句话**：t8 的观测（我方 `session.gd::_apply` 缺 12 个事件处理器）**成立且是本轮修的对象**，但**"补处理器"本身并不等于"画面对齐"**：
+本轮的实质产出是 ①一张**逐事件的证据台账**（`fixtures/net_event_handlers.tsv`，74 条线上事件）、
+②一个**把线上事件派发答复原 manager** 的桥（`GwNetEvents`，`src/_scaffold/net_events_class.rs`，12 条缺的 + 11 条已有的全部接上）、
+③`session.gd` 的**实体模型修正**（这一条才真正动了像素：棋盘正中那具假士兵与假准备圈没了）。
+像素只降了 **0.048 pp / 0.061 pp**，L2 超限块数 **4 / 3 没变** —— 剩下的差异**不在事件层**（见 §67.5 的三条硬结论）。
+
+### 67.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 我方到底收了几个事件、缺几个 | **23 个事件名有分支**（22 个 `match` 臂，`QueueDestroyObstacle`/`DestroyObstacle` 共用一个；t8 报的"21"是旧读数）；剧本 30 个名字里 **12 个没有处理器**（复算见 §67.1） | **观测**（读代码 + 复算） |
+| ② | 12 个缺的都补了吗 | **11 个接进了复原 manager**，`FunctionFire` **故意不接**（客户端收到它之后原版做什么**没有证据**，不猜；见 §67.6 第 1 条） | **观测**（`cargo test` 的映射表断言）/ **未知**（`FunctionFire`） |
+| ③ | 补的东西进的是哪一层 | `GwNetEvents` → `KernelBus` 的 22 个 manager（名字/外观/靶子/位置/队伍/生命/颜色/实体特效/特效/回合/模式/函数槽/障碍）——**GDScript 里没有第二份游戏语义** | **观测** |
+| ④ | 像素变好了吗 | `match_ready` **6.3574 % → 6.3091 %**（141 591 → 140 516 px，−1 075）；`match_play` **6.8344 % → 6.7734 %**（152 216 → 150 857 px，−1 359）。L1 仍过、L2 仍不过（**4 块 / 3 块**，与基线同） | **观测** |
+| ⑤ | 逐元素：靶子/标签/准备圈修好了吗 | **准备圈修好了（位置上）**：假士兵 229/231 与棋盘正中的假圈**都没了**，圈落到射手 230 身上；**靶子仍画不出**（界面层 `_targets` 空，缺 play_screen 接线）；**名字标签仍没有**（文本框来自 `store.profile.name`，不是 `NameInfo`） | **观测**（真机真帧 + 逐块表） |
+| ⑥ | 那剩下的 6.3 % 是什么 | `Fire!` 字号/颜色、棋盘格线整体错 1 px + 多画一层虚线网格、左右键盘字形、右下偏移量标签、`f(x)` 行光标 —— **全是界面层（`play_screen.gd`）的版式/字体问题**，不在事件层 | **观测**（§67.5 逐块） |
+
+### 67.1 台账：`fixtures/net_event_handlers.tsv`（74 条线上事件）
+
+7 列：`事件名 / 线上tag / 剧本用到 / 我方T17前有处理器 / 原版收到它之后做什么（证据出处）/ 本轮做没做 / 落到的 manager 方法`。
+
+* 事件名 / tag / 字段的权威来源：`src/_scaffold/protocol.rs::WIRE_SPEC`（74 条，逐位）+ `docs/07` §3.3；
+  **tag 列与本表同源这件事有机器校验**：`cargo test --offline --features gdext-bindings net_events`
+  的 `tags_match_the_wire_spec` 把剧本里每条事件的 `Event::wire_tag()` 与 `WIRE_SPEC` 逐条比。
+* 剧本 = `fixtures/frame_match_events.txt`（t8 预注册；50 条 / 30 个事件名，本轮**一字未改**）。
+* "原版收到它之后做什么"**逐条给地址**（74 条里 30 条剧本事件全部有出处），档位分 **观测**（能指到
+  `remote_event_handler` 的调用点或某个 manager 的订阅/广播方向）与 **推断**（有依据未证，缺什么写在列里）。
+
+复算（不用任何 `.agent-work` 脚本）：
+
+```bash
+MAIN=/home/CG/Myprojects/graphwar2-rebuild
+# ① 剧本里用到的事件名有哪 30 个
+python3 - <<'PY'
+import json
+on=False; names=set()
+for ln in open('fixtures/frame_match_events.txt',encoding='utf-8'):
+    s=ln.strip()
+    if s.startswith('[seq]'): on=True; continue
+    if s.startswith('[endseq]'): on=False; continue
+    if on and s: names |= set(json.loads(s.split('#')[0].strip()))
+print(len(names), sorted(names))
+PY
+# ② T17 前 session.gd 处理了哪些（master 版）
+git show master:client/src/net/session.gd | sed -n '/^func _apply(/,/^func _ensure_player/p' | grep -o '"[A-Za-z]*"' | sort -u | wc -l
+# ③ 台账自校验：tag 唯一、行数 = 74
+awk -F'\t' '!/^#/{print $1"\t"$2}' fixtures/net_event_handlers.tsv | tail -n +2 | sort | uniq -d | wc -l
+awk -F'\t' '!/^#/' fixtures/net_event_handlers.tsv | wc -l    # 75 = 1 表头 + 74 事件
+```
+
+### 67.2 派发桥：`src/_scaffold/net_events_class.rs`（**scaffold，不是复原物**）
+
+原版那条链是 **`GraphwarRemoteEventHandler::handle_server_remote_event`**（x86 **`0x3e6df0`** / arm64 **`0x3e2830`**）。
+我方这个模块**没复元**（`docs/02-module-map.md` §17 记的是"只落了枚举与名字表，171 个锚点的分发/订阅行为未实现；重记为混装待拆"），
+所以客户端收到事件后 22 个 manager **一个字节都拿不到** —— 这是比"缺 12 个 GDScript 处理器"更根本的断点。
+
+本轮的桥按"一条线上事件 → 一个 `#[func]` → 一个/多个 manager 方法"接上，**每个落点都在文件头表里带地址**：
+
+| 线上事件 | 落到的 manager 方法 | 证据（最硬的一条） | 档 |
+|---|---|---|---|
+| `PosInfo`(26) | `GraphwarPlanePosManager::set_position` (`0x3c64c0`) | 调用点 `0x3e3347`（`graphwar_plane_pos_manager` 模块文档） | **观测** |
+| `NameInfo`(60) | `GraphwarNameManager::set_name` (`0x40b190`) | `0x3e707c`（arm64 全量扫 `bl set_name` 只有两个调用点，其一即此） | **观测** |
+| `Skin/Face/HatGraphicsInfo`(51/53/55) | `GraphwarGraphicsManager::set_{skin,face,hat}_graphics` | `0x3e6f34` / `0x3e794c` / `0x3e7f18` | **观测** |
+| `SkinGraphicsInfo{bot_*}` | `GraphwarEntityEffectManager::add_entity_effect(id, Ash)` | `0x4aa464`（`GameStateManager::handle_graphics_info`） | **观测** |
+| `EntityEffectInfo`(56) | `add_entity_effect` | `0x3e8554`（照抄载荷） | **观测** |
+| `EffectInfo`(44) | `GraphwarEffectManager::add_effect` | 登记 + 广播 `EffectInfo`（`graphwar_effect_manager` §1） | **观测** |
+| `EntityRemoved`(14) | **9 个 manager** 各自的 `handle_entity_removed_event` | 每个模块文档都有自己那条订阅（`target_manager` 闭包 `0x3daca0` 断言判别值 14 等） | **观测** |
+| `RemoveTeam`(25) | `TeamTable::remove_from_team` (`0x3c1980`) | 该函数"删到了才广播 `RemoveTeam`" | **观测** |
+| `TeamInfo` / `ColorInfo` / `SoldierInfo` / `PlayerInfo` / `LifeInfo` / `TurnInfo` / `TurnModeInfo` / 三个 `*ModeInfo` / 障碍四条 / `FunctionPoints` / `FunctionActive` / `FunctionInfo` | 见台账第 7 列 | 逐条在台账里 | **观测 / 推断**（台账逐行标） |
+| `TargetInfo`(23) | `GraphwarTargetManager::add_target` | 广播端是 `TargetInfo`，但**客户端收到它调谁没有直接证据** | **推断** |
+| `FunctionFire`(33) | **没有落点** | 不在 `GameStateManager` 的 7 条订阅里、也不是任何 manager 的广播输入 | **未知** |
+
+`GwNetEvents` 还暴露 `last_calls()`（这次调到了哪些 manager 方法）、`applied_of(名)`、`dump()`（各表快照），
+**验收不再依赖注释**：`cargo test --offline --features gdext-bindings net_events` 里有 5 条断言，
+其中 `the_pitch_lands_in_the_manager_tables` 把 `fixtures/frame_match_events.txt` 的 30 个事件喂进去，
+再逐表读回（名字 `cmdgz`、外观 `face_paint_2/asian/asian_hat`、靶子 232、位置 −5.156…/−9.889…、
+队伍 229/230=Team1 且 231 被删、实体特效 Death/Spark、特效 234@1281、函数槽 615、颜色 (125,104,0)）。
+
+### 67.3 GDScript 侧：`client/src/net/session.gd`（**只改这一个文件**）
+
+1. 12 条缺的处理器全部补上，并**同时**做两件事：落 `room`（界面层要读）+ `_feed_managers()`（喂 Rust）。
+   `_feed_managers()` **只做字段搬运**（一事件一行，参数顺序 = `WIRE_SPEC`），不解释语义。
+2. **实体模型修正（这条才是像素改动的来源）**：
+   * `_ensure_entity()` 的默认种类从 `"soldier"` 改成 `""`（未知）。原来只被 `TeamInfo` 提到的**玩家实体 229**
+     和**已删除的士兵 231** 都被当成士兵停在 `(0,0)`；`_turn_driver.first_shooter()` 于是选中下标 0
+     ⇒ **准备圈画在棋盘正中**、棋盘上多两具假精灵（t8 §60.5 的三处差异就是这两条链）。
+   * `TeamInfo` **不再建实体**（它既可能指士兵、也可能指"玩家自己"）；`SoldierInfo` 才是 soldier 的判据，
+     `TargetInfo` 标记 target。
+   * `EntityRemoved` / `RemoveTeam` 真的从 `entities` / 玩家的 `soldiers` 列表 / 边表里删掉。
+   * 新增边表 `room.targets / teams / names / look / colors / entity_effects / effects / shots / active_ticks`：
+     `TeamInfo`/`ColorInfo`/`NameInfo` 可能比 `SoldierInfo` **先到**（真回放里就是），先记事实、建实体时回填。
+3. `ColorInfo` 从 `pass` 改成记账（原版是**直接采纳**服务端颜色）。
+
+### 67.4 两侧重拍（同条件：私有 Xvfb TCP、1920×1160、llvmpipe、每屏 3 帧）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t17
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target          # 单独一行
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+# ① 我方内核（改了 src/_scaffold ⇒ 三步）
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+HOME=$WT/.fakehome "$GODOT" --headless --path client --import
+# ② 两侧采集（**注意 UDP 42968 是独占的**：别的 agent 同时在跑 match 流会撞端口，
+#    症状 = 我方日志 `LAN 发现不可用：UDP 端口 42968 绑定失败（2）` + 截到的是 LAN 大厅，不是对局屏。
+#    重跑一次即可；两次成功的服务器日志里 fixture_sha256 都是 2278c30d…）
+python3 tools/frame_capture.py --side original --flow match --out $WT/.agent-work/v/match-orig --display-num 97
+python3 tools/frame_capture.py --side ours     --flow match --out $WT/.agent-work/v/match-mine --display-num 96
+# ③ 三层判据（门槛文件未改）
+python3 tools/frame_diff.py --orig $WT/.agent-work/v/match-orig --mine $WT/.agent-work/v/match-mine \
+  --screens match_ready,match_play --out $WT/.agent-work/v/results_after.tsv \
+  --blocks-out $WT/.agent-work/v/blocks_after.tsv --json $WT/.agent-work/v/diff_after.json
+```
+
+### 67.5 数字（L1 / L2 / L3）与逐块
+
+| 屏 | 基线（t8 §60.4） | 本轮 | 变化 |
+|---|---|---|---|
+| `match_ready` 跨侧差异 | 141 591 px = **6.3574 %** | **140 516 px = 6.3091 %** | **−1 075 px / −0.0483 pp** |
+| `match_ready` L2 | 不过，4 块超限，最差 `(0,5)` 5.71 | 不过，**4 块**，最差 `(0,5)` 5.71 | 块数不变 |
+| `match_play` 跨侧差异 | 152 216 px = **6.8344 %** | **150 857 px = 6.7734 %** | **−1 359 px / −0.0610 pp** |
+| `match_play` L2 | 不过，3 块，最差 `(2,2)` 18.138 | 不过，**3 块**，最差 `(2,2)` **17.391** | 块数不变，最差块 −0.747 |
+| L1（尺寸/平均色/第一主色/占比） | 两屏都过 | 两屏都过（\|Δmean\| 0.314 / 0.609，≤2.0） | 仍过 |
+
+逐块（6×4 网格，`|Δmean|`；只列有变化的）：
+
+| 屏 | 块 | 基線 | 本轮 | 变化 | 画面上是什么 |
+|---|---|---|---|---|---|
+| 两屏 | `(1,1)` | 1.116 | **0.723** | −0.393 | 棋盘左上格线区域（假实体/假圈消失后的连带） |
+| 两屏 | `(1,2)` | 0.279 | 0.696 | **+0.417** | 棋盘正中：假士兵 229/231 与假准备圈原来在这里（差异像素 −448，但剩下的格线差异占比升高） |
+| 两屏 | `(1,3)` | 0.824 | 1.584 | **+0.760** | **靶子 232**：它以前被画成士兵（错），现在**什么都不画**（原版是蓝环红心 ⇒ 整块缺元素） |
+| `match_play` | `(2,2)` | 18.138 | **17.391** | −0.747 | 射手 + 弹道 |
+| `match_ready` | `(2,2)` | 2.530 | 2.697 | **+0.167** | 射手 + 准备圈：圈**位置修对了**（原来在棋盘正中），但颜色仍是界面自定的红（原版橄榄色，= 玩家色 `ColorInfo{125,104,0}`） |
+
+⇒ **"修对语义"不一定立刻"变好看"**：靶子那一块就是反例（错的东西比"没有"更接近原版，因为它至少占了位置）。
+这一条写在这里，免得下一个人只看总数字就以为"靶子已经没事了"。
+
+### 67.6 这批数字能支撑什么、不能支撑什么
+
+| 结论 | 证据 | 档 |
+|---|---|---|
+| 12 条缺处理器的事件里 **11 条** 有了"线上事件 → 复原 manager 方法"的落点，且落表结果可复算 | `cargo test ... net_events` 5 条断言 + 台账 | **观测** |
+| 我方**棋盘正中那具假士兵 + 假准备圈**已消失，准备圈落到射手 230 身上 | 两侧真机真帧（S7）+ 逐块 `(1,1)/(1,2)/(2,2)` | **观测** |
+| 总差异**确实降了**（两屏都降），但 **L2 超限块数没变** | §67.5 表 | **观测** |
+| "补 12 个处理器"是这 6.3 % 的**主因** | —— | **被证伪**（见 §67.7 第 1 条：真因是界面层版式/字体 + 我方 id 空间） |
+| 靶子/名字标签能靠事件层修好 | —— | **被证伪**：两条都缺界面层接线（§67.8 第 1/2 条） |
+
+### 67.7 卡点 / 任务前提被证伪
+
+| # | 前提（任务书或旧文档） | 实际 |
+|---|---|---|
+| 1 | 「我方差 6.3 % 的根因是缺 12 个事件处理器」 | **只对了一半**。事件层确实断（本轮已接），但这 6.3 % 的大头是**界面层**：`Fire!` 按钮 3 096 px、棋盘格线 13 343 px、左右键盘 37 396 px、`f(x)` 行 8 349 px、右下偏移量 1 336 px —— 全部由 `play_screen.gd` 的版式/字体决定，**把事件接得再全也动不了** |
+| 2 | 「t8 的管线已在 master 上」 | **不成立**：`tools/match_serve.py` / `--flow match` / `fixtures/frame_match_events.txt` 只在 `agent/match-frames`（t8 分支）上。本分支把它 **merge 进基线**（见 §67.9），`docs/06`/`docs/16` 的冲突按"保留 master 版"解决（t8 那两节编号与本树现有 §62/§63（docs/06）、§65/§66（docs/16）相撞，留给 lead 单独合 t8 时处理） |
+| 3 | 「我方 `_apply` 处理 21 个事件」 | **23 个事件名有分支**（22 个 `match` 臂），t8 的"21"是旧读数 |
+| 4 | 「准备圈画错位置 ⇒ 加个事件处理器就好」 | 真因是 `_ensure_entity()` 的**默认种类**（见 §67.3 第 2 条），不是缺处理器 |
+
+### 67.8 遗留 / 未做（需要 lead 决定的三条都在这里）
+
+1. **靶子那一层画不出来**：原版靶子是独立图层（`GwTargetSet` → `EntityDrawer` 的 `TARGET_ID_BASE + target_id`），
+   而 `play_screen.gd::_begin_online()` 里是 `_targets = GwTargetSet.new()` —— **联机分支从不填它**。
+   本轮已把靶子事实落进 `room.targets` / `room.entities[id].kind = "target"`，**但要真正画出来必须改 `play_screen.gd`**：
+   `_begin_online()` 里加一句 `_targets.setup(...)`（数据源 = `session.room["targets"]` 与对应 `PosInfo`）。
+   **我没有改**（t7 正在动那个文件）。
+2. **名字标签仍是空的**：`_online_player_name()` 读 `app_node.state.players[pi].name`（= `store.profile.name`，
+   默认 `"user"`），**不读 `room["names"]`**（`NameInfo` 的真值 `cmdgz` 已经落在那里，也进了 `NameManager`）。
+   要修得在 `play_screen.gd::_build_online_soldiers()` 里把名字源换成 `room["names"][entity_id]`，
+   或者把 `EntityDrawer` 的标签文本改成从 `NameManager` 拉（原版方向，见 `docs/16` §44）。
+   附带一条**观测**：我方标签即使有文字也不可见（默认主题字色 = 白，棋盘白底），原版标签字色 = 玩家色
+   （原版帧上 `cmdgz` 的像素色与 `ColorInfo{125,104,0}` 同族）。
+3. **id 空间不一致（这是"事件全接上也画不对"的总根因）**：`play_screen.gd::_sync_entities()` 给 `EntityDrawer`
+   用的 id 是**士兵下标**（0,1,2…）与 `TARGET_ID_BASE + target_id`，而所有 manager（位置/外观/名字/颜色）
+   与线上事件用的是**实体 id**（229/230/231/232）。⇒ 本轮喂进 manager 的外观/名字/颜色**没有消费者**。
+   要接上必须让播放屏改用实体 id 当 `EntityDrawer` 的 id（`s["entity_id"]`），或给桥加一张
+   `下标 → 实体 id` 的别名表并由播放屏填。**这两条都要改 `play_screen.gd`**，本轮不动。
+4. **`FunctionFire` 没有落点**（证据缺口，见 §67.6 第 1 行说明）。
+5. **S8 的弹道相位两边仍不是同一 tick**（t8 §60.8 第 2 条未变）：我方不发 `TickRequest`，`TickReply` 恒 0 条。
+6. 只测了 **1 个局面**（真回放 `1793897298` 的 `Level 0`）；多士兵 / 有障碍 / 同时回合的局面没测。
+
+### 67.9 本轮改动的文件
+
+```text
+fixtures/net_event_handlers.tsv           新增（台账，74 条线上事件 × 7 列）
+src/_scaffold/net_events_class.rs         新增（派发桥；5 条 cargo 断言）
+src/_scaffold/mod.rs                      + 3 行（模块声明）
+client/src/net/session.gd                 12 条处理器 + 实体模型修正 + `_feed_managers()`（唯一改的客户端文件）
+docs/06-verification.md                   本节（§67）
+docs/16-client.md                         §67（客户端侧怎么接的、复跑命令）
+tools/match_serve.py / tools/frame_capture.py / fixtures/frame_match_events.txt  ← 来自 t8 分支（merge 进基线，非本轮新写）
+```
+
+**没有改**：`client/src/screens/play_screen.gd`（t7 在改）、`src/*.rs` 原版模块文件、
+`fixtures/frame_match_events.txt` / `fixtures/frame_diff_thresholds*.txt` / 既有的
+`fixtures/frame_diff_results*.tsv` / `tests/**` 断言 / `docs/00` / `docs/HANDOVER.md`。
+
+### 67.10 并入 master（`c636bad`）之后的重测：我方这一刀的相对收益是 **−0.81 pp / −0.79 pp**，L2 超限 **6 → 4 / 6 → 3**
+
+§67.5 的数字是在本分支的旧基线（master `3567098`）上量的。收尾时 master 已经前进到 `c636bad`
+（其中 t7 改了 `play_screen.gd` 的棋盘取整/图标对齐，**并且补上了名字标签的显示**），
+所以"同一棵树上的对照"必须重做一次 —— 而且这次能**把本轮改动单独隔离出来**（同一棵 master 树上，
+只把 `session.gd` 换回 master 版再拍一次）。
+
+| 变体（原版侧帧不变，我方侧同条件重采） | `match_ready` | L2 超限 | `match_play` | L2 超限 |
+|---|---|---|---|---|
+| ① master `c636bad` 原样（= **没有**本轮改动） | **161 617 px = 7.2565 %**（L1 主色/占比也**不过**） | **6 块** | **170 711 px = 7.6648 %** | **6 块** |
+| ② master + 本轮改动（本分支 HEAD） | **143 563 px = 6.4459 %** | **4 块** | **153 205 px = 6.8788 %** | **3 块** |
+| **差值（②−①）** | **−18 054 px / −0.8106 pp** | 6 → 4 | **−17 506 px / −0.7860 pp** | 6 → 3 |
+
+> ① → ② 是**同一棵 master 树、同一台机、同一条命令、同一份剧本**（`fixture_sha256 2278c30d…`）的两侧采集，
+> 差别只有 `client/src/net/session.gd` 这一个文件。复跑命令见 §67.4（把 `session.gd` 换成
+> `git checkout master -- client/src/net/session.gd` 即 ①）。
+
+逐元素（同一原版帧，ROI 内差异像素 / 平均 |Δ|）：
+
+| ROI | ① 没有本轮改动 | ② 有本轮改动 | 说明 |
+|---|---|---|---|
+| 棋盘正中 `(0,0)` | 6 643 px / 55.67 | **1 242 px / 4.55** | 假士兵 229+231 与假准备圈消失（剩下的 1 242 是棋盘格线自身的差） |
+| 靶子 | 4 239 px / 43.99 | **1 565 px / 7.46** | 不再被画成士兵（但仍画不出靶子本身，见 §67.8） |
+| 射手 + 名字 + 准备圈 | 8 080 px / 22.34 | 8 225 px / 23.13 | **略差**：准备圈位置对了但颜色仍是界面自定红；名字标签现在画的是本地 profile 名 `user`（原版是 `cmdgz`） |
+| 棋盘格线 | 13 981 px / 4.23 | 12 989 px / 3.32 | 连带（我方的假实体把连线/标签压在格线上） |
+| `Fire!` / 右键盘 | 3 096 / 21 674 px | 3 096 / 21 674 px | **一格不变**（版式/字体问题，事件层动不了） |
+
+**两条必须一起读的结论**：
+1. **本轮改动在"同一棵树"上的收益是有意义的**：−0.81 pp / −0.79 pp，L2 超限块 6→4 / 6→3，且把
+   t7 补上名字标签之后新出现的"4 个实体都画标签"这条回归消掉了（①里 L1 的主色占比都不过）。
+2. **但绝对数字仍略高于 t8 §60.4 的 6.3574 % / 6.8344 %**：master 上 t7 那次棋盘取整/名字标签的改动
+   把对局屏的基线整体推高了（6.3574 → 7.2565），本轮只把其中一部分收回来（→ 6.4459）。
+   ⇒ **"6.3574 % 不是现在的基线"**，谁要用这个数，得说明是哪棵树的哪一次采集。
+
 ## 68. 视觉真值扩到「结算弹窗」：**原版第一次走进填满的 `EndGamePopUp`**，我方**没有这条路**（2026-11-26，任务 T18 / `task-15`）
 
 > 任务书：`.agent-work/specs/T18-endgame-popup.md`。分支 `agent/endgame-popup`（基于 master `5b9795b`，即 T8 刚合进来的那一条）。
@@ -10900,6 +11138,268 @@ $PWD/.reference/venv/bin/python tools/addr_probe.py locs 0x4500c0
    真正的结构判断是「我们的文件」列的 `—`（谁的文件、混没混别的模块）。两件事已在文档里分开写清。
 5. **行号整体漂了 +14**（上一轮 808–1527 ↔ 本轮 822–1541）⇒ 按判据扫、不按行号扫是对的；台账里的行号一律是**改前基准** `c636bad`。
 6. **`docs/71`、`docs/74` 不在 `docs/archive/` 顶层**，在 `docs/archive/ai/` 里 —— 只判"归档顶层有没有"会漏这 2 处（我第一版扫法就漏了，已改成递归）。
+
+## 69. 视觉真值铺满**剩余 13 屏**：LAN 大厅两页 / 玩家三页 / 对局设置 / 加 Bot / 连接三弹窗 / 聊天 / 退出确认 / 关卡弹窗 —— **1 屏逐像素过、12 屏不过，而四个小弹窗本身几乎逐像素相同**（2026-11-26，任务 T20）
+
+> 前情：§53–§60 覆盖 主菜单 / 回放流四屏 / 战役选择 / 关卡弹窗 / 对局屏 S7+S8。
+> 本轮把剩下的 13 屏一次补齐。**只测量 + 归因**：`client/**`、`src/**`、`tests/**` 一行没改
+> （`git diff --name-only master..HEAD` 只有 `tools/frame_capture.py` + `fixtures/*` + 本文 + `docs/16` §68）。
+
+### 69.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 13 屏都拍到了吗 | **全拍到了**（两侧各 6 条新 flow、同一串点击、同一套固定条件）| **观测**（真帧） |
+| ② | 几屏"过" | **1 / 13**：`join_level_popup` 逐像素 **0**（它就是 §57 的 `level_popup`，同一个 `.tscn`）| 观测 |
+| ③ | 差异最大的三屏 | `game_setup` **7.1054 %**、`chat_popup` **6.9948 %**、`confirm_exit` **5.1297 %** | 观测 |
+| ④ | 差异最小的三屏 | `player_skins` **0.0850 %**、`player_faces`/`player_hats` 各 **0.1378 %**（三屏的差异**全部**落在 NAME 那一处字形 + 卡片边缘灰阶）| 观测 |
+| ⑤ | **最重要的发现** | 四个小弹窗**本身几乎逐像素相同**：`add_bot` 面板 **1 px**、`connecting`/`disconnected` 面板四角 **38 px**（max\|Δ\| ≤ 15）、`join_ip` 面板 179 px、`confirm_exit` 面板 1725 px（占该屏差异的 1.5 %）、`chat_popup` 聊天条带 **136 px**。⇒ 这 5 屏的百分比**几乎全是"底图残差"**，下一轮该改的是 LAN 大厅 / GameSetup / 对局屏，**不是弹窗** | 观测 |
+| ⑥ | "多数 < 0.5 %" 成立吗 | **不成立**（对这批屏）：13 屏里 < 0.5 % 的只有 **4 屏**（30.8 %），而且其中 3 屏 L3 还是不过（`max\|Δ\|=241`）。详见 §69.5 | 观测 |
+| ⑦ | 有两屏拍不到吗 | **没有**。没有需要联网/账号才出的屏；但有 3 个采集期的坑与 1 处"我方浮层盖住开关"的卡点，见 §69.6 | 观测 |
+
+### 69.1 预注册（先提交，后采集）
+
+* `fixtures/frame_rest_targets.txt`（提交 `b7ca2b0`）：13 屏清单 + 每屏**进入路径与坐标来源** + 每屏**先写死的期望（过/不过）**；
+* 判据**只引用**既有预注册门槛 `fixtures/frame_diff_thresholds.txt`（sha256 `9cc9fcda…`）§3 的 L1/L2/L3，
+  **一个数没改**（`tools/frame_diff.py` 自己核对 sha256，TSV 头两行记着它）；
+* 采集脚本 `tools/frame_capture.py` **只加新 flow**：新增 `lobby` / `player` / `setup` / `connect` / `matchpop` / `level`
+  六条分支 + 一个"只 accept 不发字节"的静默 TCP 监听子进程 + 一处端口等待/重试。
+  既有 `campaign` / `replay` / `static` / `match` 四支的**步骤定义一行未改**（`git diff` 里对既有代码只有 3 处
+  等价替换：`--flow` 的 `choices` 列表、`if args.flow == 'match'` → `needs_server = args.flow in (...)`、
+  步骤分发里新增 `type` / `key` 两个 `elif` 分支）。
+
+### 69.2 六条新 flow 与三条"环境钉死"
+
+| flow | 屏（写进 `manifest.json` 的屏名） | 除游戏外还要什么 |
+|---|---|---|
+| `lobby` | `lan_lobby_local` / `lan_lobby_global` | UDP 房间广播（§69.2 ②） |
+| `player` | `player_skins` / `player_faces` / `player_hats` | 无 |
+| `setup` | `game_setup` / `add_bot` | UDP 房间广播 |
+| `connect` | `join_ip` / `connecting` / `disconnected` | UDP 房间广播 + 静默 TCP 监听（§69.2 ③） |
+| `matchpop` | `confirm_exit` / `chat_popup` | 脚本化对局服务器（§69.2 ①，**不触发 phase2**） |
+| `level` | `join_level_popup` | 无 |
+
+**三条"环境钉死"**（都只把**服务端数据/等待**钉死，不改被测代码）：
+
+1. **对局服务器**：`tools/match_serve.py` + `fixtures/frame_match_events.txt`（**只读、不改**，与 `--flow match` 同一份剧本）。
+   `matchpop` 这一支**不 touch 触发文件** ⇒ 一直停在 S7 准备态（弹窗期间底图不会突然开火）。
+2. **UDP 房间广播**：LAN 大厅的"房间行"是**服务端数据**；不加广播时**原版自己也会广播自己的房间**，
+   于是"有几行"会抖（本轮探路实测：不加广播时 5 次里 3 次有 1 行、2 次 0 行；加了广播后 6 次里 2 次出现
+   **原版 2 行 / 我方 1 行**）。⇒ 房间行数用"两侧都吃到同一条广播"钉死，**采集后逐帧核对行数**（`§69.6` 坑 1）。
+3. **静默 TCP 监听**：`127.0.0.1:46799` 只 `accept()` 不发字节 ⇒ `ConnectingPopUp` 停在屏幕上（否则 1 s 内就变断线）；
+   `127.0.0.1:1` 没人听 ⇒ 立刻被拒 ⇒ `DisconnectedPopUp`。两侧同一份。
+
+固定条件与 §53 完全一致：私有 Xvfb `1920x1160x24` TCP（本轮原版 `:101` / 我方 `:102`）、两路 `--rendering-driver opengl3`
++ mesa llvmpipe、`--resolution 1920x1160 --position 0,0`、`import -window <id>`、每屏 3 帧 / 帧间隔 1.2 s、`HOME` 两侧都是新建空目录。
+
+### 69.3 逐屏数字（入库 [`fixtures/frame_diff_results_rest.tsv`](../fixtures/frame_diff_results_rest.tsv) / [`frame_diff_blocks_rest.tsv`](../fixtures/frame_diff_blocks_rest.tsv)）
+
+| 屏 | 判定 | L1 \|Δmean\|max | L1 第一主色 | L2 超限块 | L2 最差块 \|Δmean\| | 差异像素 | 差异比例 | max\|Δ\| | 噪声地板（原版／我方） |
+|---|---|---|---|---|---|---|---|---|---|
+| `lan_lobby_local` | **不过（L3）** | **0.000** ✓ | `#0E251C` / 同 ✓ | 0 | 1.613 `(0,4)` | 33 213 | **1.4912 %** | 255 | 0.000 % / 0.000 % |
+| `lan_lobby_global` | **不过（L3）** | 0.016 ✓ | `#0E251C` ✓ | 0 | 1.438 `(0,4)` | 75 544 | **3.3492 %** | 255 | 0.000 % / 0.000 % |
+| `player_skins` | **不过（L3）** | 0.023 ✓ | `#0E251C` ✓ | 0 | 0.781 `(0,4)` | 1 894 | **0.0850 %** | **241** | 0.000 % / 0.000 % |
+| `player_faces` | **不过（L3）** | 0.008 ✓ | `#0E251C` ✓ | 0 | 0.781 `(0,4)` | 3 070 | **0.1378 %** | 241 | 0.000 % / 0.000 % |
+| `player_hats` | **不过（L3）** | 0.008 ✓ | `#0E251C` ✓ | 0 | 0.781 `(0,4)` | 3 070 | **0.1378 %** | 241 | 0.000 % / 0.000 % |
+| `game_setup` | **不过（L2，4 块）** | 0.789 ✓ | `#0E251C` ✓（占比差 1.81 pp） | **4** | **5.471** `(3,2)` | 158 251 | **7.1054 %** | 255 | 0.000 % / 0.000 % |
+| `add_bot` | **不过（L2，4 块）** | 0.319 ✓ | `#1A3B2D` ✓ | **4** | 4.490 `(3,2)` | 90 802 | **4.0770 %** | 255 | 0.000 % / 0.000 % |
+| `join_ip` | **不过（L2，1 块）** | 0.226 ✓ | `#0E251C` ✓ | **1** | 3.720 `(3,3)` | 40 817 | **1.8327 %** | 255 | 0.000 % / 0.000 % |
+| `connecting` | **不过（L3）** | **0.000** ✓ | `#0E251C` ✓ | 0 | 1.613 `(0,4)` | 33 329 | **1.4965 %** | 255 | 0.000 % / **0.7131 %** |
+| `disconnected` | **不过（L3）** | **0.000** ✓ | `#0E251C` ✓ | 0 | 1.613 `(0,4)` | 33 329 | **1.4965 %** | 255 | 0.000 % / 0.000 % |
+| `confirm_exit` | **不过（L2，4 块）** | 0.242 ✓ | `#0E251C` ✓ | **4** | **5.710** `(0,5)` | 114 249 | **5.1297 %** | 255 | 0.050 % / 0.000 % |
+| `chat_popup` | **不过（L2，4 块）** | 0.671 ✓ | `#5F5F5F` / 同 ✓ | **4** | **10.890** `(1,1)` | 155 789 | **6.9948 %** | 255 | 0.051 % / 0.000 % |
+| `join_level_popup` | **过** | **0.000** ✓ | `#1A3B2D` ✓ | 0 | **0.000** | **0** | **0** | **0** | 0.000 % / 0.000 % |
+
+**L1 13/13 全过**（尺寸、全局均值、第一主色全对）；不过的 12 屏分两类：**L2 有块超限 5 屏**、**L1/L2 都过但 L3 不过 7 屏**。
+超限块逐个（6×4 网格，块 = 320×290 px，`(row,col)` 左上为 `0,0`）：
+
+| 屏 | 超限块 → \|Δmean\|max | 块在画面上是什么 |
+|---|---|---|
+| `game_setup` | `(0,1)` 4.009 / `(3,0)` 5.433 / `(3,2)` 5.471 / `(3,3)` 4.829 | 标题带 / 底部设置排（左右两半）+ `Start` |
+| `add_bot` | `(3,0)` 3.843 / `(3,1)` 3.055 / `(3,2)` 4.490 / `(3,3)` 3.925 | 同上（**弹窗自己在 (1,x) 一带，差异 0**）|
+| `join_ip` | `(3,3)` 3.720 | 右下 = LAN 大厅底排 ` Join IP ` 按钮（hover 态）|
+| `confirm_exit` | `(0,0)` 2.875 / `(0,5)` 5.710 / `(2,2)` 3.931 / `(3,5)` 2.724 | 与 §60.4 `match_ready` **同一组同一数**（(0,5) `Fire!` 5.71 一位不差）|
+| `chat_popup` | `(0,0)` 2.457 / `(0,1)` 7.547 / `(0,5)` 5.681 / `(1,1)` 10.890 | §60.5 那组 + 我方多出的白色叠字 |
+
+### 69.4 逐屏归因（这就是下一轮派活的输入）
+
+**先看这一张总表**（"弹窗自己"= 该元素的 ROI 内差异；"底图"= 其余）：
+
+| 屏 | 差异像素 | 其中"**弹窗/浮层自己**" | 其中"**底图**" | 归因三选一 |
+|---|---|---|---|---|
+| `add_bot` | 90 802 | **1 px**（面板 243,103–1662,1046，max\|Δ\|=12；六个 bot 格 0 px；`Cancel` 0 px）| 90 801 | **底图**（GameSetup）|
+| `connecting` | 33 329 | **58 px**（面板四角 38 px max\|Δ\|=9 + 返回键四角 20 px max\|Δ\|≤3）| 33 213（= `lan_lobby_local` 的差异，一位不差）| **底图**（LAN 大厅表区）|
+| `disconnected` | 33 329 | **58 px**（面板四角 38 px max\|Δ\|=15 + 返回键四角 20 px）| 33 213 | **底图**（同上）|
+| `join_ip` | 40 817 | **179 px**（面板）+ 底部 ` Join IP ` 按钮 5 075 px（hover 态）| 35 563 | **底图 + 按钮状态色** |
+| `confirm_exit` | 114 249 | **1 725 px**（面板 482,386–1437,768）＝整屏差异的 **1.5 %** | 112 524 | **底图**（对局屏，见 §60.5）|
+| `chat_popup` | 155 789 | **136 px**（聊天第二条带 0,96–1919,158）| 155 653 | **底图 + 我方多画的白色叠字** |
+
+**逐屏细节**（坐标一律 1920×1160；量法：差异掩膜按 y 切条带 + 列带，再用 ROI 逐个框；脚本在 `.agent-work/`，不入库）：
+
+1. **`lan_lobby_local`（1.4912 %）—— 版式（不是缺元素）**
+   差异**全部**落在 y 115..243 这一条带（表头 + 房间行）。逐列量（本轮实测）：
+
+   | 元素 | 原版 x 区间 | 我方 x 区间 | Δ |
+   |---|---|---|---|
+   | 左上返回键 / `Local` / `Global` 页签 | 41..104 / 516..664 / 1386..1566 | **完全相同** | **0** |
+   | 表头 `Room Name` | 268..533 | 285..550 | **+17 px** |
+   | 表头 `Players` | 807..969 | 842..1004 | **+35 px** |
+   | 表头 `Game Mode` | 1243..1507 | 1297..1560 | **+53 px** |
+   | 行内房间名 | 232..590 | 240..598 | +8 px |
+   | 行内 `Players` 的 `1` | 877..893 | 877..893 | **0** |
+   | 行内四个模式图标 | 1118..1184 / 1260..1317 / 1404..1451 / 1537..1595 | 1107..1173 / 1252..1309 / 1399..1446 / 1533..1591 | **−4…−11 px** |
+   | 行内 `Join` | 1801..1893 | 1801..1893 | **0** |
+
+   ⇒ **三列表头整体右移且与行内列不对齐**（`Players` 列/`Join` 列本身是对齐的）。不是缺元素、不是字色。
+2. **`lan_lobby_global`（3.3492 %）—— 数据 + 版式**
+   差异带 y 115..474（表头 + 四行）。四行内容（真帧）：原版 `US Room 1 / US Room 2 / EU Room 2 / EU Room 1`
+   vs 我方 `US Room 3 / EU Room 1 / EU Room 2 / US Room 2`
+   ⇒ **一条名字错**（原版没有 `US Room 3`）+ **行序不同**（`client/src/screens/lan_lobby.gd::GLOBAL_ROOMS` 是硬编码占位）。
+   这四行是**服务端数据**（原版离线时也画这四行固定的），本质上不可能归零；能归零的是上面 §1 的版式与这一条名字/顺序。
+3. **`player_skins`（0.0850 %）—— 只有一处：字串**
+   差异 = y 130..169 × x 1254..1350 一处，就是 **NAME 输入框里的字**：原版 `cg`（= OS 登录名），
+   我方 `user`（`client/src/app/store.gd:72` 硬编码）。`max|Δ|=241` 全部来自这一处字形。
+   其余整页（15 张白卡、30 个图标、滚动条、三个页签）**逐像素相同**。
+4. **`player_faces` / `player_hats`（各 0.1378 %）—— 字串 + 卡片边缘灰阶**
+   同样那处 NAME 字（1894 px）+ 四条**行缝**上的卡片边缘差：y 215..225 / 507..532 / 814..839 / 1121..1146，
+   x 17..27 / 309..334 / 616..641 / 923..933，每条 168–336 px、`max|Δ|=61`。
+   实测 (20,510)：原版 `RGB(55,55,55)` vs 我方 `RGB(31,31,31)` ⇒ **卡片边框/投影的灰阶**；
+   格子位置、图标、滚动条位置都逐像素对齐（不是版式错位）。
+5. **`game_setup`（7.1054 %）—— 缺元素 2 处 + 版式 2 处**（三段 y 条带）
+   * y 21..78（标题 `GRAPHWAR GAME`）：12 794 px、`max|Δ|=**32**` ⇒ 只是字形抗锯齿，非版式；
+   * y 180..246（玩家行）：23 746 px ⇒ 原版 `X 0 CG [+] 🍈🍈 [−] [→]`，我方 `X user [小+] 🍈 [小−] [小→]`：
+     **缺** rank 数字 `0`、**少**一个 melon（原版 2 → 我方 1）、`+`/`−`/`→` 三颗键**没有底板**（原版是 3 px 黑边的大键）；
+   * y 918..1152（底部设置排 + `Start` + 左下角地址）：121 711 px ⇒ ① 左下角**原版有本机地址** `192.168.31.224:41329`，
+     我方**一个字都没有**（缺元素）；② 整排设置键与 `Start` **纵向不对齐**（我方偏低，`Start` 被压到屏幕底边 1105 起）；
+     ③ 我方 `Start` 是 **disabled 外观**（灰字+深灰底），原版是**正常态**大按钮 —— 原版无 Bot 时 `Start` 可点但静默无操作
+     （`docs/22` §5.1），我方把 `can_start()` 直接做成了按钮 `disabled`。
+6. **`add_bot`（4.0770 %）—— 底图，弹窗本身 1 px**
+   面板 ROI `(243,103)-(1662,1046)` 内差异 **1 px**（`max|Δ|=12`）；六个 bot 格 `(512,190)-(1410,820)` **0 px**；
+   `Cancel` `(870,975)-(1051,1038)` **0 px**。⇒ 4.077 % **全是** `game_setup` 的残差（见 §5）。**这一屏不该派给"弹窗"**。
+7. **`join_ip`（1.8327 %）—— 底图 + 输入框圆角 + 按钮 hover 态**
+   面板 `(243,386)-(1668,768)` 内 179 px（其中输入框四角各约 10 px、`max|Δ|=255`）；
+   底部 ` Join IP ` 按钮 `(1000,1063)-(1383,1152)` 5 075 px（`max|Δ|=204`）—— 点击后鼠标停在这颗键上，
+   **两侧的 hover/焦点态不一样**；其余 35 563 px = LAN 大厅表区（同 §1）。
+8. **`connecting` / `disconnected`（各 1.4965 %）—— 弹窗本身几乎逐像素相同**
+   面板四角各 38 px（`max|Δ|` 分别 **9** / **15**，是圆角抗锯齿）+ 左上返回键四角 20 px（`max|Δ|` ≤3）；
+   剩下 33 213 px **一位不差地等于** `lan_lobby_local` 的差异 ⇒ 全是底图。
+   ⚠️ 我方 `ConnectingPopUp` **第 2/3 帧已经自己切到了 `DisconnectedPopUp`**（我方噪声地板 0.7131 %）：
+   我方握手超时约 2 s，原版不超时（>10 s 仍停在 Connecting）——**这是实现差异，不是采集问题**。
+9. **`confirm_exit`（5.1297 %）—— 底图（对局屏），弹窗只占 1.5 %**
+   面板 `(482,386)-(1437,768)` 内 1 725 px；四个超限块 `(0,0)/(0,5)/(2,2)/(3,5)` 与 §60.4 的 `match_ready`
+   **同一组、同一个数**（`(0,5)` = `Fire!` **5.71 一位不差**）⇒ 归因直接看 §60.5（`Fire!` 字号、`- 9.890` 缺失、
+   棋盘格线错 1 px、射手/靶子是圆点/士兵、`f(x)` 里多一根光标）。
+10. **`chat_popup`（6.9948 %）—— 底图 + 我方多画的白色叠字**
+    聊天浮层第二条带 `(0,96)-(1919,158)` 内只有 **136 px**（几乎逐像素相同）；
+    多出来的是：**我方在棋盘左上角叠着两串白色文字**（`Player …` 与 `… = 1` 叠在同一处；
+    实测 ROI `(305,245)-(611,339)` 白像素 **11 063**，原版同一 ROI **0**）。
+    这正是 §60.5 已登记的"实体默认坐标 (0,0) + 名字标签"问题在这里被放大：聊天浮层把底图压暗，
+    而白标签画在压暗层**之上**，于是它在灰度底上一眼就能看见。
+11. **`join_level_popup`（0 px）—— 逐像素相同**（与 §57 的 `level_popup` 同一 `.tscn`、同一串点击；本轮重采仍是 0）。
+
+### 69.5 "多数 < 0.5 %" 这条旧账（`docs/00-status.md` §4 那句）
+
+`docs/00` §4 表里写着"逐屏残差多数 < 0.5 %，`EndGamePopUp` 仍 ~9.8 %"。本轮**不改** `docs/00`（按任务约定由 lead 改），
+只用这批实测回答两件事：
+
+| 问 | 答 |
+|---|---|
+| 这 13 屏里差异比例 < 0.5 % 的有几屏 | **4 / 13**（`player_skins` 0.0850 %、`player_faces` 0.1378 %、`player_hats` 0.1378 %、`join_level_popup` 0）⇒ **"多数" 不成立** |
+| 这 4 屏里有几屏真的"过" | **1 / 4**。另外 3 屏 L3 不过：差异比例只有 0.085 %，但 `max\|Δ\|=241`（NAME 那一处字形）——**比例小 ≠ 一样** |
+
+结论分两句（不许混）：① 就**这批 13 屏**而言，"多数 < 0.5 %"**不成立**（30.8 %）；
+② 这句话写作时的分母（当时只有主菜单 / 回放四屏 / 战役选择 / 关卡弹窗）**不在本轮实测范围内**，本轮**没有**推翻它，
+只证明它**不能外推到**大厅 / 设置 / 弹窗这批屏。
+另外：12 屏"不过"里有 **5 屏的百分比几乎全是底图残差**（四个小弹窗 + `join_ip`），也就是说"看起来 4 %–7 % 很差"
+并不等于"这一屏的元素画错了"——**这个区分比百分比本身重要**。
+
+### 69.6 拍不到的屏 / 卡点（诚实清单）
+
+**13 屏全部拍到**，没有需要联网 / 账号 / 真机才出的屏。但采集期有 4 个坑，复跑一定再遇到，全写在这里：
+
+1. **原版 LAN 大厅会把自己的房间也广播出去** ⇒ 有时原版 **2 行**、我方 **1 行**（本轮实测：加广播后 6 次采集里 2 次）。
+   这是**环境噪声**（原版自播房间），不是被测代码 ⇒ 本轮 `lobby` / `connect` 各重采一次，取"两侧都 1 行"的那次
+   （重采命令相同，只多一步"数行数"的核对；判据与期望值没动）。
+2. **Global 页切过去之后四行要 >1.5 s 才画全**：第 1 帧与第 2/3 帧差 **39 681 px**，第 2/3 帧互相**逐字节相同**
+   ⇒ 预注册写的 settle 1.5 s 拍到的是"还没画完"的帧，改成 **3.0 s** 重采（判据没动）。
+3. **连续跑两条都要起 `tools/match_serve.py` 的 flow 会撞 `OSError: [Errno 98] Address already in use`**
+   （上一条的监听端口还没放干净）⇒ 已在采集脚本里加"先等端口空 + 起不来就重试 3 次 + 失败就当场收掉子进程"。
+4. **我方 `ChatPopUp` 是整屏浮层、盖住了顶栏那颗 `toggle_chat` 开关** ⇒ 预注册 §1.5 写的"先开聊天、再点左上返回"
+   那一串点击在**我方走不通**（同一串在原版能关聊天，在我方点不到那颗键）。改成"**先拍退出框 → 点 `No` 关掉 → 再开聊天**"，
+   判据与期望值一个没改；这一条**本身是发现**（我方浮层的范围/z 序与原版不同，`docs/16` §68 记了要改哪一行）。
+
+**拍不到 / 拍不干净的（不是卡点，是本质）**：
+* 服务端数据类元素（房间行的名字/人数/本机地址端口）**永远不可能归零**；
+* 我方 `ConnectingPopUp` 只能取**第 1 帧**（2 s 后自己切 Disconnected，属我方实现差异）。
+
+### 69.7 复跑（照抄即可；本轮实测：单侧 6 条 flow 约 3 分钟，两侧约 6 分钟）
+
+```bash
+WS=/home/CG/Myprojects/graphwar2-rebuild
+WT=$WS/.agent-work/cg/wt-t20
+export CARGO_HOME=$WS/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target
+export GODOT=$WS/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+# ① 我方内核库就位（三件缺一不可，见 AGENTS.md「改了没生效」三条）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+$GODOT --headless --path client --import
+# ② 两侧各 6 条 flow（对局服务器 / UDP 房间广播 / 静默监听都由采集脚本自己起，同一个进程树）
+W=$WT/.agent-work/v
+for f in lobby player setup connect matchpop level; do
+  python3 tools/frame_capture.py --side original --flow $f --out $W/$f-orig --display-num 101
+  sleep 2
+  python3 tools/frame_capture.py --side ours     --flow $f --out $W/$f-mine --display-num 102
+  sleep 2
+done
+# ③ 逐 flow 对拍（系统 python3 —— venv 里没有 numpy）
+python3 tools/frame_diff.py --orig $W/lobby-orig    --mine $W/lobby-mine    --screens lan_lobby_local,lan_lobby_global      --out $W/diff/f1.tsv --blocks-out $W/diff/b1.tsv
+python3 tools/frame_diff.py --orig $W/player-orig   --mine $W/player-mine   --screens player_skins,player_faces,player_hats   --out $W/diff/f2.tsv --blocks-out $W/diff/b2.tsv
+python3 tools/frame_diff.py --orig $W/setup-orig    --mine $W/setup-mine    --screens game_setup,add_bot                     --out $W/diff/f3.tsv --blocks-out $W/diff/b3.tsv
+python3 tools/frame_diff.py --orig $W/connect-orig  --mine $W/connect-mine  --screens join_ip,connecting,disconnected         --out $W/diff/f4.tsv --blocks-out $W/diff/b4.tsv
+python3 tools/frame_diff.py --orig $W/matchpop-orig --mine $W/matchpop-mine --screens confirm_exit,chat_popup                --out $W/diff/f5.tsv --blocks-out $W/diff/b5.tsv
+python3 tools/frame_diff.py --orig $W/level-orig    --mine $W/level-mine    --screens join_level_popup                       --out $W/diff/f6.tsv --blocks-out $W/diff/b6.tsv
+# ④ 合并进入库 TSV（保留一份注释头）
+python3 .agent-work/merge_rest_tsv.py fixtures/frame_diff_results_rest.tsv /dev/null \
+    $W/diff/f1.tsv $W/diff/f2.tsv $W/diff/f3.tsv $W/diff/f4.tsv $W/diff/f5.tsv $W/diff/f6.tsv
+```
+
+> `tools/frame_diff.py` 会自己核对门槛文件 sha256（`9cc9fcda…`），不符会在 TSV 里写 `门槛文件 sha256 与脚本内常数不符`。
+
+### 69.8 遗留 / 未做（**下一轮之前先读这一节**）
+
+1. **一处界面也没改**（任务约定"只测量"）：13 屏的差异**没有一条被修**，包括最便宜的
+   `GLOBAL_ROOMS` 一条名字 + 顺序、`Start` 的 `disabled`、`Player 1: user` 叠字、LAN 表头右移。
+2. **只测了一个局面**（`fixtures/frame_match_events.txt` 的 S7）⇒ `confirm_exit` / `chat_popup` 的底图残差只对这一个局面成立。
+3. **没测"换皮肤之后"** 的 Faces / Hats（本轮都是默认 `yellow`）。
+4. `lan_lobby_global` 那四行是**原版离线时的固定内容**；broker 真返回房间时的样子**未知**（本项目不发外网请求）。
+5. **两屏的百分比不能按字面读**：`add_bot` 4.077 % 里弹窗只占 1 px、`confirm_exit` 5.13 % 里面板只占 1.5 %。
+   下一轮若要"看到数字下降"，必须先改底图。
+6. 本轮**没有**把 `.agent-work/` 下的截图入库（按仓库规矩：截图不入库）；证据只以数字 + 坐标 + 复跑命令形式留在本文与两份 TSV 里。
+
+### 69.9 我写错了 / 任务前提被证伪
+
+| # | 前提 | 裁决 |
+|---|---|---|
+| ① | 规格 §2："这些屏**从没拍过**" | **对 `join_level_pop_up` 不成立**：它就是 `--flow static` 的 `level_popup`（同一个 `.tscn`），§57 已测到 **0 像素**；本轮重采仍是 0（13 屏里唯一"过"的那一屏）|
+| ② | 规格 §2 的文件行数 | 两个过期：`game_setup.gd` 现 **447** 行（规格写 436）、`join_level_pop_up.gd` 现 **338** 行（规格写 324）；其余 6 个对得上（412/472/161/140/138/121）|
+| ③ | `docs/archive/129` §6.2："GameSetup / 六个弹窗……原版要点到'建房 / 进关卡 / 联机'才出得来，**离线点什么都没反应**" | **被证伪**：本轮**完全没有网络对端**，`Create Game(765,1107)` 一发就进 GameSetup、`Join IP` 进 JoinIpPopUp、GameSetup 底排第五格进 AddBotPopUp，全部可用（真帧 + `manifest.json` 步进记录）。上一轮为什么"点不动"**未知**——**推断**：上一轮用的是 `x 581..1041`（= 我方旧按钮框），不是原版的 `535..995`；缺上一轮的点击日志，无法定案 |
+| ④ | 预注册的 settle 与点击次序 | 现场各改过一次（Global 1.5→3.0 s、"先聊天后退出"→"先退出后聊天"）。两次都是**采集机制**修正，**判据与"期望过/不过"一个没改**，改动点写在 §69.6 的坑 2 / 坑 4 |
+| ⑤ | 规格 §3 ⑤ 让我裁决 "多数 < 0.5 %" | 见 §69.5：**这批屏不成立**；但**不改 `docs/00`**（约定由 lead 改）|
+
+### 69.10 本轮门槛读数（自跑，不是抄文档）
+
+| 门 | 读数 | 与规格给的值 |
+|---|---|---|
+| `cargo test --offline` | **1769 passed / 0 failed / 1 ignored** | 一致 |
+| `cargo test --offline --features gdext-bindings` | **1875 passed / 0 failed / 1 ignored** | 一致 |
+| selftest（`HOME` 指可写目录） | **717 passed / 0 failed / 1 skipped**；`groups=33 checks=717 expected=717 missing=0(claimed 0 / degraded 0 / silent 0)` | 一致 |
+| headless 14 脚本 | **1933 passed / 0 failed**（`assemble 244 / base 117 / curve 96 / draw 235 / entity 366 / function 132 / gdext 24 / obstacle 116 / plane 96 / play_flow 206 / process 66 / recovered 57 / signal 155 / spike 23`）| 一致 |
+| 三轴 `fire` / `batch` / `batch_conv`（403 份冻结快照） | **本轮没跑**：本轮零改动 `src/**`，三轴分母是 `src/` 的实现，按定义不变；但按"不许把结论写成陈述句"，这一条记 **未复跑**（要跑跑 §C 的三条命令）| — |
+
+> 注：本文**没有**改 `src/**` / `client/**` / `tests/**`，所以上面两个 cargo 读数是"没被本轮碰过"的复核，
+> 不是本轮的成绩。
 
 ## 74. 「函数 → 真实源文件」边界全量审计：527 行 `match` **431** / `mismatch` **10** / `multi` **86**；`LevelRules` 按 `Location` 搬进 `graphwar_game_state_manager`（2026-11-26，任务 T24 / `task-21`）
 

@@ -112,6 +112,20 @@ func _reset_room() -> void:
 		# owner_id(=soldier_id) -> {"function": String, "corrected": String}
 		"functions": {},
 		"ending": false,
+		# ---- 以下边表是 T17 新增（`docs/06` §64）：`TeamInfo`/`ColorInfo`/`NameInfo` 可能
+		# 比 `SoldierInfo`/`PosInfo` **先到**（原版也用同一批事件描述"玩家"与"士兵"两种实体），
+		# 所以"实体还没建出来"时先把事实记在这里，等实体建好时 `_ensure_entity()` 再回填。
+		# target_id 列表（`TargetInfo`；原版靶子是独立图层，`docs/131`）
+		"targets": [],
+		"teams": {},            # entity_id -> 0/1（实体还没建出来时的队伍）
+		"names": {},            # entity_id -> String（`NameInfo`；玩家名/士兵名）
+		"look": {},             # entity_id -> {"skin": String, "face": String, "hat": String}
+		"colors": {},           # entity_id -> {"r": int, "g": int, "b": int}
+		"entity_effects": {},   # entity_id -> String（`EntityEffectInfo.effect_type`）
+		"effects": [],          # [{effect_id, x, y, type, start_tick}]（`EffectInfo`）
+		"fired": {},            # soldier_id -> true（`FunctionFire`；只是记账，见 §64 遗留）
+		"shots": {},            # owner_id -> {start_x, start_y, end_x}（`FunctionPoints`）
+		"active_ticks": {},     # owner_id -> int（`FunctionActive`）
 	}
 
 
@@ -220,9 +234,23 @@ func _note(kind: String) -> void:
 		_state_seen[kind] = true
 
 
-## 把一条事件落到 `room` 上。**只解析抓包里见过的字段**；未知事件只记录不猜。
+## 把一条事件落到 `room` 上，并**同时喂进 Rust 侧的复原 manager**（T17，`docs/06` §64）。
+##
+## 两层分工，别混：
+##
+## * **本层** = 线上事件 → 我方模型（字段解析、`room` 里的那几张表）。只解析抓包里见过的字段，
+##   未知事件只记录不猜。
+## * **manager 层** = `GwNetEvents`（`src/_scaffold/net_events_class.rs`）：按
+##   「线上事件 → 复原 manager 的哪个方法」那张**证据表**派发（原版那条
+##   `GraphwarRemoteEventHandler::handle_server_remote_event` x86 `0x3e6df0` 我方没复元，
+##   这里是它的接线桥）。**这里没有第二套游戏语义**：凡是能"喂给 manager"的都不在 GDScript 里重算。
+##
+## 一个事件的两步顺序：先 `_feed_managers()`（把原始字段交给 Rust），再 `match` 落 `room`。
+## 反过来也行 —— 但先喂 Rust 能把"事件先到、实体后建"这类顺序问题留在 Rust 侧，
+## GDScript 只负责它自己那张表。
 func _apply(kind: String, body: Dictionary) -> void:
 	var changed := true
+	_feed_managers(kind, body)
 	match kind:
 		"NewConnection":
 			my_connection_id = GwNetFrame.body_int(body, "connection_id", -1)
@@ -246,30 +274,76 @@ func _apply(kind: String, body: Dictionary) -> void:
 			if pid >= 0:
 				var p := _ensure_player(pid)
 				p["connection_id"] = cid
+				if (room["teams"] as Dictionary).has(pid):
+					p["team"] = int((room["teams"] as Dictionary)[pid])
 				if cid >= 0 and cid == my_connection_id:
 					my_player_id = pid
 		"TeamInfo":
-			var eid := GwNetFrame.body_int(body, "entity_id", -1)
-			if eid >= 0:
-				var e := _ensure_entity(eid)
-				e["team"] = team_index(GwNetFrame.body_str(body, "team"))
+			# ⚠️ **不建实体**：`TeamInfo{entity_id}` 的 `entity_id` 既可能是士兵、也可能是
+			# "玩家自己"这个实体（本剧本的 229）。以前无条件 `_ensure_entity()` 会把它变成
+			# 一具停在 (0,0) 的士兵（`docs/06` §60.5）。
+			var teid := GwNetFrame.body_int(body, "entity_id", -1)
+			if teid >= 0:
+				var team := team_index(GwNetFrame.body_str(body, "team"))
+				var entities: Dictionary = room["entities"]
+				if entities.has(teid):
+					(entities[teid] as Dictionary)["team"] = team
+				elif (room["players"] as Dictionary).has(teid):
+					(room["players"] as Dictionary)[teid]["team"] = team
+				elif (room["targets"] as Array).has(teid):
+					# 靶子先到（`TargetInfo` → `TeamInfo` 的顺序在真回放里就是这样）：
+					_ensure_entity(teid, "target")["team"] = team
+				else:
+					(room["teams"] as Dictionary)[teid] = team
+		"RemoveTeam":
+			# `RemoveTeam{entity_id}`：原版 `remove_from_team` **删到了才**广播它
+			# （`graphwar_team_manager` §1，观测）⇒ 收到就删本地那一格。
+			var reid := GwNetFrame.body_int(body, "entity_id", -1)
+			if reid >= 0:
+				(room["teams"] as Dictionary).erase(reid)
+				var rentities: Dictionary = room["entities"]
+				if rentities.has(reid):
+					(rentities[reid] as Dictionary)["team"] = 0
+				if (room["players"] as Dictionary).has(reid):
+					(room["players"] as Dictionary)[reid]["team"] = 0
 		"ColorInfo":
-			pass          # `color{r,g,b}`：颜色由界面侧按队色表分配，这里不覆盖
+			# 服务端颜色**直接采纳**（原版 `color_manager::set_color`，观测 `0x3e7e9c`）；
+			# 以前这里 `pass`，颜色全靠界面自定 ⇒ 准备圈的颜色跟原版对不上（`docs/06` §64）。
+			var ceid := GwNetFrame.body_int(body, "entity_id", -1)
+			var col: Dictionary = body.get("color", {})
+			if ceid >= 0 and col is Dictionary:
+				(room["colors"] as Dictionary)[ceid] = {
+					"r": int(col.get("r", 0)), "g": int(col.get("g", 0)), "b": int(col.get("b", 0)),
+				}
 		"SoldierInfo":
 			var sid := GwNetFrame.body_int(body, "soldier_id", -1)
 			var owner := GwNetFrame.body_int(body, "player_id", -1)
 			if sid >= 0:
-				var se := _ensure_entity(sid)
+				var se := _ensure_entity(sid, "soldier")
 				se["kind"] = "soldier"
 				se["player_id"] = owner
 				if owner >= 0:
 					var sp := _ensure_player(owner)
 					if not (sp["soldiers"] as Array).has(sid):
 						(sp["soldiers"] as Array).append(sid)
+		"TargetInfo":
+			# `TargetInfo{target_id}`：原版靶子是**独立图层**（`docs/131`），不跟士兵混。
+			# ⚠️ 缺口：`play_screen.gd` 的 `_targets`（`GwTargetSet`）在联机分支里从不填
+			# （`_begin_online()` 里是 `_targets = GwTargetSet.new()`）⇒ 本客户端**还画不出**
+			# 靶子那一层；这里先把事实落进 `room.targets` / 实体种类，等界面侧接线。
+			var tid := GwNetFrame.body_int(body, "target_id", -1)
+			if tid >= 0:
+				if not (room["targets"] as Array).has(tid):
+					(room["targets"] as Array).append(tid)
+				_ensure_entity(tid, "target")["kind"] = "target"
+		"EntityRemoved":
+			# `EntityRemoved{entity_id}`：原版每个 manager 都订了这条（逐 manager 证据见
+			# `net_events_class.rs` 文件头）⇒ 这里把 `room` 里那份也删干净。
+			_remove_entity(GwNetFrame.body_int(body, "entity_id", -1))
 		"PosInfo":
 			var peid := GwNetFrame.body_int(body, "entity_id", -1)
 			if peid >= 0:
-				var pe := _ensure_entity(peid)
+				var pe := _ensure_entity(peid, "soldier" if _is_soldier(peid) else "")
 				pe["x"] = GwNetFrame.body_float(body, "pos_x")
 				pe["y"] = GwNetFrame.body_float(body, "pos_y")
 				pe["radius"] = GwNetFrame.body_float(body, "radius", 0.5)
@@ -277,6 +351,62 @@ func _apply(kind: String, body: Dictionary) -> void:
 			var leid := GwNetFrame.body_int(body, "entity_id", -1)
 			if leid >= 0:
 				_ensure_entity(leid)["alive"] = GwNetFrame.body_bool(body, "alive", true)
+		"LifeQueuedDeath":
+			# 线上致死那一批是 `LifeQueuedDeath{entity_id, tick}` + `EffectInfo(DeathEffect)`
+			# （`docs/31` §1、`docs/43`）—— 它**不**带 `alive` 字段，语义是"到期才收尸"，
+			# 本客户端没有 tick 队列（`docs/30` §5）⇒ 只记账，不在这里判死。
+			pass
+		"NameInfo":
+			var neid := GwNetFrame.body_int(body, "entity_id", -1)
+			var nm := GwNetFrame.body_str(body, "name")
+			if neid >= 0:
+				(room["names"] as Dictionary)[neid] = nm
+				var nentities: Dictionary = room["entities"]
+				if nentities.has(neid):
+					(nentities[neid] as Dictionary)["name"] = nm
+		"SkinGraphicsInfo":
+			_set_look(GwNetFrame.body_int(body, "entity_id", -1), "skin",
+				GwNetFrame.body_str(body, "graphics_str"))
+		"FaceGraphicsInfo":
+			_set_look(GwNetFrame.body_int(body, "entity_id", -1), "face",
+				GwNetFrame.body_str(body, "graphics_str"))
+		"HatGraphicsInfo":
+			_set_look(GwNetFrame.body_int(body, "entity_id", -1), "hat",
+				GwNetFrame.body_str(body, "graphics_str"))
+		"EntityEffectInfo":
+			# 原版：`entity_id → effect kind` 那张表（`graphwar_entity_effect_manager`），
+			# 士兵出生登记 `DeathEffect`/`AshEffect`、靶子 `SparkEffect`。
+			var xeeid := GwNetFrame.body_int(body, "entity_id", -1)
+			if xeeid >= 0:
+				(room["entity_effects"] as Dictionary)[xeeid] = GwNetFrame.body_str(body, "effect_type")
+		"FunctionFire":
+			# `FunctionFire{soldier_id}`：开火公告。**客户端收到它之后原版做什么没有证据**
+			# （不是 `GameStateManager` 订阅的 7 条之一；弹道由 FunctionPoints/FunctionActive/
+			# EffectInfo 三条驱动）⇒ 只记账，不在这里推任何状态（`docs/06` §64 遗留 §1）。
+			var fsid := GwNetFrame.body_int(body, "soldier_id", -1)
+			if fsid >= 0:
+				(room["fired"] as Dictionary)[fsid] = true
+		"FunctionPoints":
+			var foid := GwNetFrame.body_int(body, "owner_id", -1)
+			if foid >= 0:
+				(room["shots"] as Dictionary)[foid] = {
+					"start_x": GwNetFrame.body_float(body, "start_x"),
+					"start_y": GwNetFrame.body_float(body, "start_y"),
+					"end_x": GwNetFrame.body_float(body, "end_x"),
+				}
+		"FunctionActive":
+			var aoid := GwNetFrame.body_int(body, "owner_id", -1)
+			if aoid >= 0:
+				(room["active_ticks"] as Dictionary)[aoid] = \
+					GwNetFrame.body_int(body, "active_tick", 0)
+		"EffectInfo":
+			(room["effects"] as Array).append({
+				"effect_id": GwNetFrame.body_int(body, "effect_id", -1),
+				"x": GwNetFrame.body_float(body, "pos_x"),
+				"y": GwNetFrame.body_float(body, "pos_y"),
+				"type": GwNetFrame.body_str(body, "effect_type"),
+				"start_tick": GwNetFrame.body_int(body, "start_tick", 0),
+			})
 		"AddObstacle":
 			var obs := {
 				"x": GwNetFrame.body_float(body, "pos_x"),
@@ -319,9 +449,195 @@ func _apply(kind: String, body: Dictionary) -> void:
 			ended.emit("EndingGame")
 			return
 		_:
-			changed = false      # 结算/特效类（FunctionPoints/EffectInfo/…）只记录名
+			changed = false      # 其余（本局用不到的事件）只记录名
 	if changed:
 		room_changed.emit()
+
+
+# ---------------------------------------------------------------- 喂给 Rust 侧（T17）
+#
+# 这一段的**唯一职责**是把线上字段按 `src/_scaffold/protocol.rs::WIRE_SPEC` 的**字段顺序**
+# 传给 `GwNetEvents`（`src/_scaffold/net_events_class.rs`）。那个类里是"线上事件 → 哪个
+# manager 的哪个方法"的**证据表**；本文件这里不解释任何游戏语义。
+#
+# 为什么必须在 GDScript 里做这一层：内核那条 `GraphwarRemoteEventHandler` 我方没复元
+# （`docs/02-module-map.md` §17），而事件是 JSON —— 解析在 `GwNetFrame` 已经有了，
+# 所以"解析在 GDScript、语义在 Rust"是当前唯一不重复造语义的接法。
+
+## 懒建的 `GwNetEvents` 实例（跨局复用；`_reset_room()` 不销毁它，通道是幂等的）。
+var net_events: RefCounted = null
+
+
+## 取（必要时建）派发桥。内核没加载 ⇒ 返回 `null`，整条链路静默降级（界面照旧跑）。
+func _net_events() -> RefCounted:
+	if net_events == null:
+		if not ClassDB.class_exists("GwNetEvents"):
+			return null
+		net_events = ClassDB.instantiate("GwNetEvents") as RefCounted
+		if net_events != null and net_events.has_method("reset"):
+			net_events.call("reset")
+	return net_events
+
+
+## 内核派发桥装上了没有（界面/自检可用来区分"链路断了"与"事件没来"）。
+func net_events_ready() -> bool:
+	var ev := _net_events()
+	return ev != null and bool(ev.call("installed"))
+
+
+## 已经喂进 Rust manager 的事件条数。
+func net_events_applied() -> int:
+	var ev := _net_events()
+	return int(ev.call("applied")) if ev != null else 0
+
+
+## manager 表的快照（自检/取证用；键见 `net_events_class.rs::dump`）。
+func net_events_dump() -> Dictionary:
+	var ev := _net_events()
+	return ev.call("dump") if ev != null else {}
+
+
+## 一条事件 → `GwNetEvents` 的对应方法（**一事件一行**，参数顺序 = `WIRE_SPEC`）。
+func _feed_managers(kind: String, body: Dictionary) -> void:
+	var ev := _net_events()
+	if ev == null:
+		return
+	match kind:
+		"NewConnection":
+			ev.call("new_connection", GwNetFrame.body_int(body, "connection_id", -1))
+		"PlayerInfo":
+			ev.call("player_info", GwNetFrame.body_int(body, "player_id", -1),
+				GwNetFrame.body_int(body, "connection_id", -1))
+		"SoldierInfo":
+			ev.call("soldier_info", GwNetFrame.body_int(body, "soldier_id", -1),
+				GwNetFrame.body_int(body, "player_id", -1))
+		"TargetInfo":
+			ev.call("target_info", GwNetFrame.body_int(body, "target_id", -1))
+		"TeamInfo":
+			ev.call("team_info", GwNetFrame.body_int(body, "entity_id", -1),
+				GwNetFrame.body_str(body, "team"))
+		"RemoveTeam":
+			ev.call("remove_team", GwNetFrame.body_int(body, "entity_id", -1))
+		"EntityRemoved":
+			ev.call("entity_removed", GwNetFrame.body_int(body, "entity_id", -1))
+		"PosInfo":
+			ev.call("pos_info", GwNetFrame.body_int(body, "entity_id", -1),
+				GwNetFrame.body_float(body, "pos_x"), GwNetFrame.body_float(body, "pos_y"),
+				GwNetFrame.body_float(body, "radius", 0.5))
+		"LifeInfo":
+			ev.call("life_info", GwNetFrame.body_int(body, "entity_id", -1),
+				GwNetFrame.body_bool(body, "alive", true))
+		"LifeQueuedDeath":
+			ev.call("life_queued_death", GwNetFrame.body_int(body, "entity_id", -1),
+				GwNetFrame.body_int(body, "tick", 0))
+		"AddObstacle":
+			ev.call("add_obstacle", GwNetFrame.body_float(body, "pos_x"),
+				GwNetFrame.body_float(body, "pos_y"), GwNetFrame.body_float(body, "radius"))
+		"ClearObstacles":
+			ev.call("clear_obstacles")
+		"QueueDestroyObstacle":
+			ev.call("queue_destroy_obstacle", GwNetFrame.body_float(body, "pos_x"),
+				GwNetFrame.body_float(body, "pos_y"), GwNetFrame.body_float(body, "radius"),
+				GwNetFrame.body_int(body, "tick", 0))
+		"DestroyObstacle":
+			ev.call("destroy_obstacle", GwNetFrame.body_float(body, "pos_x"),
+				GwNetFrame.body_float(body, "pos_y"), GwNetFrame.body_float(body, "radius"))
+		"TurnInfo":
+			ev.call("turn_info", GwNetFrame.body_int(body, "player_id", -1),
+				GwNetFrame.body_int(body, "soldier_id", -1))
+		"TurnModeInfo":
+			ev.call("turn_mode_info", GwNetFrame.body_str(body, "turn_mode"))
+		"AxisModeInfo":
+			ev.call("axis_mode_info", GwNetFrame.body_str(body, "axis_mode"))
+		"FunctionModeInfo":
+			ev.call("function_mode_info", GwNetFrame.body_str(body, "function_mode"))
+		"TimeModeInfo":
+			ev.call("time_mode_info", GwNetFrame.body_str(body, "time_mode"))
+		"SkinGraphicsInfo":
+			ev.call("skin_graphics_info", GwNetFrame.body_int(body, "entity_id", -1),
+				GwNetFrame.body_str(body, "graphics_str"))
+		"FaceGraphicsInfo":
+			ev.call("face_graphics_info", GwNetFrame.body_int(body, "entity_id", -1),
+				GwNetFrame.body_str(body, "graphics_str"))
+		"HatGraphicsInfo":
+			ev.call("hat_graphics_info", GwNetFrame.body_int(body, "entity_id", -1),
+				GwNetFrame.body_str(body, "graphics_str"))
+		"EntityEffectInfo":
+			ev.call("entity_effect_info", GwNetFrame.body_int(body, "entity_id", -1),
+				GwNetFrame.body_str(body, "effect_type"))
+		"NameInfo":
+			ev.call("name_info", GwNetFrame.body_int(body, "entity_id", -1),
+				GwNetFrame.body_str(body, "name"))
+		"ColorInfo":
+			var col: Dictionary = body.get("color", {})
+			ev.call("color_info", GwNetFrame.body_int(body, "entity_id", -1),
+				int(col.get("r", 0)) if col is Dictionary else 0,
+				int(col.get("g", 0)) if col is Dictionary else 0,
+				int(col.get("b", 0)) if col is Dictionary else 0)
+		"FunctionFire":
+			ev.call("function_fire", GwNetFrame.body_int(body, "soldier_id", -1))
+		"FunctionInfo":
+			ev.call("function_info", GwNetFrame.body_int(body, "owner_id", -1),
+				GwNetFrame.body_str(body, "function"),
+				GwNetFrame.body_str(body, "corrected_function"))
+		"FunctionActive":
+			ev.call("function_active", GwNetFrame.body_int(body, "owner_id", -1),
+				GwNetFrame.body_int(body, "active_tick", 0))
+		"FunctionPoints":
+			ev.call("function_points", GwNetFrame.body_int(body, "owner_id", -1),
+				GwNetFrame.body_float(body, "start_x"), GwNetFrame.body_float(body, "start_y"),
+				GwNetFrame.body_float(body, "end_x"))
+		"EffectInfo":
+			ev.call("effect_info", GwNetFrame.body_int(body, "effect_id", -1),
+				GwNetFrame.body_float(body, "pos_x"), GwNetFrame.body_float(body, "pos_y"),
+				GwNetFrame.body_str(body, "effect_type"),
+				GwNetFrame.body_int(body, "start_tick", 0))
+		_:
+			pass
+
+
+## 实体被删：从 `entities`、玩家的 `soldiers` 列表、以及那几张边表里一起清掉。
+func _remove_entity(eid: int) -> void:
+	if eid < 0:
+		return
+	(room["entities"] as Dictionary).erase(eid)
+	(room["teams"] as Dictionary).erase(eid)
+	(room["names"] as Dictionary).erase(eid)
+	(room["look"] as Dictionary).erase(eid)
+	(room["colors"] as Dictionary).erase(eid)
+	(room["entity_effects"] as Dictionary).erase(eid)
+	var targets: Array = room["targets"]
+	var ti := targets.find(eid)
+	if ti >= 0:
+		targets.remove_at(ti)
+	var players: Dictionary = room["players"]
+	for pid in players:
+		var lst: Array = (players[pid] as Dictionary)["soldiers"]
+		var idx := lst.find(eid)
+		if idx >= 0:
+			lst.remove_at(idx)
+
+
+## 记账：某实体的外观三件套之一（原版由 graphics 事件写进 `EntityDrawer` 的三张表）。
+func _set_look(eid: int, layer: String, value: String) -> void:
+	if eid < 0:
+		return
+	var looks: Dictionary = room["look"]
+	if not looks.has(eid):
+		looks[eid] = {"skin": "", "face": "", "hat": ""}
+	(looks[eid] as Dictionary)[layer] = value
+
+
+## 这个实体是不是士兵（看已有事实：`SoldierInfo` 建过、或玩家表里挂着它）。
+func _is_soldier(eid: int) -> bool:
+	var entities: Dictionary = room["entities"]
+	if entities.has(eid) and String((entities[eid] as Dictionary).get("kind", "")) == "soldier":
+		return true
+	var players: Dictionary = room["players"]
+	for pid in players:
+		if (players[pid] as Dictionary).get("soldiers", []).has(eid):
+			return true
+	return false
 
 
 func _ensure_player(pid: int) -> Dictionary:
@@ -331,13 +647,29 @@ func _ensure_player(pid: int) -> Dictionary:
 	return players[pid]
 
 
-func _ensure_entity(eid: int) -> Dictionary:
+## 建/取一个实体。
+##
+## `kind` 缺席时**不给默认种类** —— T17 改：以前默认 `"soldier"` 会把"只被 `TeamInfo`
+## 提到过的玩家实体"（本剧本的 229）与"已删除的士兵"（231）都变成一具停在 (0,0) 的士兵，
+## 于是准备圈画在棋盘正中、棋盘上多两个假精灵（`docs/06` §60.5 的三处差异就来自这里）。
+## 现在只有 `SoldierInfo` 说它是 soldier、`TargetInfo` 说它是 target，其余一律 `""`（未知）。
+func _ensure_entity(eid: int, p_kind := "") -> Dictionary:
 	var entities: Dictionary = room["entities"]
 	if not entities.has(eid):
-		entities[eid] = {
-			"kind": "soldier", "x": 0.0, "y": 0.0, "radius": 0.5,
-			"team": 0, "player_id": -1, "alive": true,
+		var e := {
+			"kind": "", "x": 0.0, "y": 0.0, "radius": 0.5,
+			"team": 0, "player_id": -1, "alive": true, "name": "",
 		}
+		# 边表里先到的那些事实（队伍/名字/外观/颜色/实体特效）在这里回填一次。
+		var teams: Dictionary = room["teams"]
+		if teams.has(eid):
+			e["team"] = int(teams[eid])
+		var names: Dictionary = room["names"]
+		if names.has(eid):
+			e["name"] = String(names[eid])
+		entities[eid] = e
+	if p_kind != "" and String(entities[eid]["kind"]) != p_kind:
+		entities[eid]["kind"] = p_kind
 	return entities[eid]
 
 

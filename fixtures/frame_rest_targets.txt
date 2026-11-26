@@ -1,0 +1,179 @@
+# 视觉帧对拍 · 预注册**剩余屏**（T20，2026-11-26）
+
+> 这份文件**先于任何一次"剩余屏"的跨侧比较**写定并提交。
+> 门槛**一个字没改**：仍然是 `fixtures/frame_diff_thresholds.txt`
+> （sha256 `9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873`）§3 的三层判据。
+> 本文件只登记三件事：**比哪些屏、每屏怎么点进去、判据与"期望过/不过"**。
+> 三层判据的一行不在这里重写（原文照抄见 §3），**跑完不许回头改**。
+
+## 0. 这一轮补的是哪一块
+
+`docs/06` §53–§60 已经覆盖：主菜单 / 回放列表 / 回放播放 / 回放结束 / 战役选择 / 关卡弹窗 /
+对局屏 S7+S8。**没覆盖**（`client/src/screens/` 下这些文件对应的屏）：
+
+```
+lan_lobby.gd        player_screen.gd    game_setup.gd     join_level_pop_up.gd
+connect_popups.gd（含 join_ip/connecting/disconnected 三屏）
+add_bot_pop_up.gd   chat_pop_up.gd      confirm_exit_pop_up.gd
+```
+
+本文件把这 13 屏（`connect_popups.gd` 一份实现 ⇒ 三屏）一次登记完。
+`endgame_pop_up.gd` **不在本轮范围**（已另派 task-15），本文件不登记、不采集。
+
+### 0.1 写本文件时"已经知道"的事（诚实登记，避免事后说"判据是看着结果定的"）
+
+* **判据数值与判定规则**：全部来自既有的预注册门槛文件（`9cc9fcda…`），本轮**一个数没动**；
+* **进入路径**：本轮**先探路**量出来的（拿原版真机点、截图、看画面），量的是"哪个坐标是哪颗按钮"，
+  **不是**跨侧差异。探路阶段没有跑过 `tools/frame_diff.py`，也没有做过任何跨侧的逐像素统计
+  （唯一碰到过的数字是两侧 PNG 的**文件字节数**，用于确认"点进去的那一屏真的变了"）；
+* **历史读数**（来自 `docs/16` §7.2/§7.3/§7.4、`docs/archive/129` §6、`docs/archive/130`）：
+  这些是**更早一轮用另一套口径**量的（"面板区"矩形内的差异占比 / 根窗口截图），
+  与本轮的 L1/L2/L3 **不是同一个口径**，只能当"大概在什么量级"的参考，不能当预期值；
+* 因此 §1 的"期望"是**按机理推的**（哪里必然不同、哪里不该不同），不是抄历史数字。
+
+## 1. 13 屏 · 进入路径 · 期望（**先写死再跑**）
+
+坐标一律是 **1920×1160 窗口内**的绝对像素；"坐标来源"写清是**既有常量**、**既有文档的真机点击串**，
+还是**本轮从原版真帧量出来的**。
+
+### 1.1 `--flow lobby`（LAN 大厅两页；需要一条 UDP 房间广播，见 §2.2）
+
+| # | 屏名 | 进入路径（起始屏 → 点击串） | 坐标来源 | 期望 |
+|---|---|---|---|---|
+| 1 | `lan_lobby_local` | 主菜单 → `Play(1344,622)` 等 3.0 s | `Play` = `docs/06` §48.8 真机点击串 | **不过（L3）**：房间行是"服务端数据"渲染的，我方 4 个模式图标/`Join` 的像素级形制未见得逐像素相同 |
+| 2 | `lan_lobby_global` | 承上 → `Global` 页签 `(1480,50)` 等 1.5 s | 本轮从原版真帧量（顶部右半页签 1048..1907） | **不过（L3）**：公网页四行是固定数据（原版 `US Room 1 / US Room 2 / EU Room 2 / EU Room 1`，Players 全 0），但行内容的图标形制与我方占位行可能不同 |
+
+### 1.2 `--flow player`（玩家选择 / 商店；不需要服务器）
+
+| # | 屏名 | 进入路径 | 坐标来源 | 期望 |
+|---|---|---|---|---|
+| 3 | `player_skins` | 主菜单 → `Character(536,749)` 等 2.0 s | `docs/16` §7.5.1 真机点击串 `click 536 749` | **过**（历史口径 0.007 %；本轮若因字形抗锯齿过不了 L3 的 0.10 % 就如实写） |
+| 4 | `player_faces` | 承上 → `Faces` 页签 `(470,150)` 等 1.5 s | `docs/16` §7.5.1 `click 470 150` | **不过（L3）**（历史口径 0.060 %，> L3 的 0.10 % 门槛附近） |
+| 5 | `player_hats` | 承上 → `Hats` 页签 `(790,150)` 等 1.5 s | 本轮从原版真帧量（第三个页签） | **不过（L3）**（历史口径 0.060 %） |
+
+### 1.3 `--flow setup`（建房 → 对局设置 → 加 Bot 弹窗；需要 UDP 房间广播）
+
+| # | 屏名 | 进入路径 | 坐标来源 | 期望 |
+|---|---|---|---|---|
+| 6 | `game_setup` | 主菜单 → `Play(1344,622)` 2.5 s → `Create Game(765,1107)` 2.5 s | `Create Game` 边框 535..995 × 1063..1152（本轮量） | **不过（L3）**：屏上有**服务端数据**——左下角会显示本机地址 `IP:端口`，端口每次随机 ⇒ 这一块**必然不同**（口径见 §4.2） |
+| 7 | `add_bot` | 承上 → 底排右侧"加 Bot"格 `(1646,989)` 等 2.0 s | 本轮量（底排第五格 1574..1718 × 923..1055） | **不过（L3）**：六个 Bot 格子里的图标 + 面板/三段带比例，历史口径 1.676 % |
+
+### 1.4 `--flow connect`（三个连接弹窗；需要 UDP 房间广播 + 一条静默 TCP 监听）
+
+| # | 屏名 | 进入路径 | 坐标来源 | 期望 |
+|---|---|---|---|---|
+| 8 | `join_ip` | 主菜单 → `Play(1344,622)` 2.5 s → `Join IP(1192,1107)` 2.0 s | 边框 1000..1383 × 1063..1152（本轮量） | **过**（面板 243×386 + 1434×383 是 `.tscn` 逐节点重建的，`docs/archive/130` §3.2） |
+| 9 | `connecting` | 承上 → 点输入框 `(900,530)` 0.6 s → 输入 `127.0.0.1:46799` → 点 `Join(1065,728)` 2.5 s | 输入框 347..1665 × 495..564、`Join` 971..1158 × 697..760（本轮量） | **过**（同 §10；历史口径 0.000 %） |
+| 10 | `disconnected` | 承上 → `Cancel(851,728)` 2.0 s → `Join IP(1192,1107)` 2.0 s → 输入框 `(900,530)` → `ctrl+a` → 输入 `127.0.0.1:1` → `Join(1065,728)` 3.0 s | 同上 | **过**（历史口径 0.000 %） |
+
+> `127.0.0.1:46799` 上有一条**只 accept、不发任何字节**的 TCP 监听 ⇒ `ConnectingPopUp` 停在屏幕上；
+> `127.0.0.1:1` 没有监听 ⇒ 立刻被拒 ⇒ `DisconnectedPopUp`。两侧同一串。（见 §2.3）
+
+### 1.5 `--flow matchpop`（对局中才会出现的两个弹窗；需要脚本化对局服务器）
+
+| # | 屏名 | 进入路径 | 坐标来源 | 期望 |
+|---|---|---|---|---|
+| 11 | `chat_popup` | 主菜单 → `Play(1344,622)` 2.5 s → LAN 第 1 行 `Join(1842,209)` 4.0 s（进 S7）→ 顶栏第 3 颗开关 `(1013,48)` 2.5 s | `Join` = `docs/06` §48.2 ①；`(1013,48)` 本轮从原版 PlayScreen 真帧量（顶栏开关 941..1086） | **不过（L3/L2）**：底图是对局屏，士兵手脚在转（噪声地板非 0），且本屏是**整屏浮层**，历史口径不可直接引用 |
+| 12 | `confirm_exit` | 承上 → 再点 `(1013,48)` 1.5 s 关聊天 → 左上返回键 `(73,48)` 2.0 s | 返回键 0..145 × 0..95（本轮量） | **不过（L3）**：同上（底图士兵动画 + 对局屏本身的残差） |
+
+### 1.6 `--flow level`（关卡弹窗；不需要服务器）
+
+| # | 屏名 | 进入路径 | 坐标来源 | 期望 |
+|---|---|---|---|---|
+| 13 | `join_level_popup` | 主菜单 → `Campaign(534,629)` 2.0 s → 关卡网格第 0 关 `(241,228)` 2.0 s | 两个都是既有常量（`CAMPAIGN_BTN` / `LEVEL_NODE_0`，`docs/06` §33/§52） | **过**（`docs/06` §57 用同一条点击串量到"两屏 0 像素"；本轮重复采一次是为了让本文件的 13 屏口径一致，**若不一致以本轮实测为准并写明冲突**） |
+
+> ⚠️ 这一屏与既有 `--flow static` 的 `level_popup` **是同一个画面**（同一个 `.tscn`
+> = `join_level_pop_up.tscn`）。本轮**不改** `static` 分支，也不重写它的 TSV；只是在本轮 TSV 里
+> 用 `join_level_popup` 这个名字再登记一次并给出本轮读数。
+
+## 2. 固定条件（两路必须一致；与 `frame_diff_thresholds.txt` §1 相同，另加三条**本轮新增**的）
+
+| 项 | 值 |
+|---|---|
+| Xvfb | 各自私有 display：`Xvfb :NN -screen 0 1920x1160x24 -listen tcp -ac -nolisten unix`（本轮 `:101` 原版 / `:102` 我方） |
+| 渲染后端 | 两路都 `--rendering-driver opengl3`（llvmpipe 软渲染，mesa 环境变量见 `tools/frame_capture.py::MESA_ENV`） |
+| 窗口 | `--resolution 1920x1160 --position 0,0` |
+| 取帧 | ImageMagick `import -window <游戏窗口 id>` |
+| 每屏帧数与间隔 | 3 帧、帧间隔 1.2 s；**第 1 帧**参与跨侧比较，第 2/3 帧只量同侧噪声地板 |
+| `HOME` | 两侧都是新建空目录（没有 `user://` 存档 / 回放） |
+
+**本轮新增的三条**（只在新 flow 上用，既有四支 `campaign`/`replay`/`static`/`match` 一行不改）：
+
+### 2.1 对局服务器（`--flow matchpop`）
+`tools/match_serve.py` + `fixtures/frame_match_events.txt`（**只读、不改**），与 `--flow match` 同一份剧本；
+本轮**不触发 phase2**（不 touch 触发文件）⇒ 一直停在 S7 准备态，弹窗期间底图不会突然开火。
+
+### 2.2 UDP 房间广播（`--flow lobby` / `--flow setup` / `--flow connect`）
+LAN 大厅的"房间行"是**服务端数据**，离线时原版可能一行都没有，行数还会随"原版自播房间"
+出现的时机抖动（本轮探路实测：不加广播时 5 次里 3 次有 1 行、2 次 0 行）。
+⇒ 三个 flow 都由 `tools/match_serve.py` 起一条**固定的**房间广播（同一份 fixture 的 `[meta] room=`，
+`udp_targets=127.0.0.1`、周期 0.5 s），**两侧吃到同一条房间记录**，于是"有几行"不再随机。
+这不改任何被测代码，只是把"服务端数据"钉死（`docs/06` §48/§51/§60 都是这个办法）。
+
+### 2.3 静默 TCP 监听（`--flow connect`）
+`127.0.0.1:46799` 只 `accept()`、**不发任何字节**：让"连接中"停在屏幕上而不是 1 秒内变断线。
+它是**环境**不是被测对象，两侧同一份。
+
+## 3. 判据（预注册，原文照抄 `fixtures/frame_diff_thresholds.txt` §3）
+
+13 屏**每一屏**都要同时满足：
+
+```
+L1  两张 PNG 都恰好 1920x1160
+    每通道全局均值 |Δmean| ≤ 2.0/255
+    第一主色（像素数最多的 RGB）同色，且占比差 ≤ 2.0 个百分点
+L2  6x4 = 24 块（x 每块 320 px、y 每块 290 px），每块每通道均值 |Δ| ≤ 2.0/255；24 块全过
+L3  只在 L1/L2 都过时算：差异像素比例 ≤ 0.10 % ∧ 全图 max|Δchannel| ≤ 8/255
+判定：L1 不过 ⇒ 不过(L1)；L1 过、L2 有块超限 ⇒ 不过(L2)+报块号；都过 ⇒ 看 L3
+```
+
+**这些数字不许改、不许放宽、不许按屏"特批"**；跑完也不许回头调。达不到就按 §4 如实报。
+
+## 4. 达不到时怎么报（预先讲好，避免事后找理由）
+
+1. 逐块列出 L2 超限块号（`row,col`，左上为 `0,0`）与该块 `dmean_max`；
+2. 对人眼可辨的差异区域给**差异 bbox**，并指到"原版帧里的哪个元素 / 哪个坐标"；
+3. 每屏额外给一档**归因**：缺元素 / 版式（位置·尺寸·比例） / 字色·图标 / 服务端数据（不可归零）——
+   这是下一轮派活的输入；
+4. 证据分档（`AGENTS.md`）：真帧 ⇒ **观测**；只靠推导 ⇒ **推断**（写明缺什么）；
+   没量到的 ⇒ **未知**。**不许把推断写成陈述句**。
+
+### 4.1 "多数 < 0.5 %"这条旧账怎么判
+`docs/00-status.md` §4 里写着"逐屏残差多数 < 0.5 %"。本轮**不改** `docs/00`，只回答两件事：
+
+* 本轮 13 屏里**有多少屏**的差异像素比例 < 0.5 %（按本轮实测）；
+* 其中**有多少屏**同时满足 L3 的 0.10 % 门槛（两者不是一回事）。
+
+## 5. 产物
+
+- `fixtures/frame_diff_results_rest.tsv`（逐屏结论）
+- `fixtures/frame_diff_blocks_rest.tsv`（24 块明细）
+- 截图**不入库**（只作 `.agent-work/` 下的临时产物）。
+- 文档：`docs/06-verification.md` 只追加一节 `## 69.`；`docs/16-client.md` 只追加一节 `## 72.`。
+
+## 6. 复跑命令（跑之前定死，跑完不改）
+
+```bash
+WS=/home/CG/Myprojects/graphwar2-rebuild
+WT=$WS/.agent-work/cg/wt-t20
+export CARGO_HOME=$WS/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target
+export GODOT=$WS/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+# ① 我方内核库就位（三件缺一不可，见 AGENTS.md「改了没生效」三条）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+$GODOT --headless --path client --import
+# ② 两侧各跑 6 条 flow（服务器/广播/静默监听都由 frame_capture.py 自己起，同一个进程树）
+W=$WT/.agent-work/v
+for f in lobby player setup connect matchpop level; do
+  python3 tools/frame_capture.py --side original --flow $f --out $W/$f-orig --display-num 101
+  python3 tools/frame_capture.py --side ours     --flow $f --out $W/$f-mine --display-num 102
+done
+# ③ 对拍（系统 python3 —— venv 里没有 numpy）
+python3 tools/frame_diff.py --orig $W/lobby-orig --mine $W/lobby-mine \
+  --screens lan_lobby_local,lan_lobby_global --out /tmp/x.tsv
+# 全量一次（13 屏分属 6 个 flow 目录，逐 flow 跑；最终合并进 fixture TSV 见 docs/06 §69）
+```
+
+> 单侧 6 条 flow 约 3 分钟（`matchpop` 最慢：要等 Join + 握手）；两侧约 6 分钟。

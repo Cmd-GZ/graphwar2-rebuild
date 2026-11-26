@@ -11184,6 +11184,7 @@ python3 tools/match_serve.py --fixture fixtures/frame_match_events.txt \
 4. **我方三帧同 sha256**（S7）：我方准备圈不随时间动 —— 这是"我方没接那条链"，不是采集问题。
 5. 本轮**没有**用 `--game-arg` 传地址（地址走 LAN 广播就够了；原版的 CLI 参数是死的，`docs/06` §48.1）。
 
+<<<<<<< HEAD
 ## 68. 客户端侧接线：回放屏的**右列宽 / 底栏高 / 函数框只读态 / 士兵外观与名字标签**（2026-11-26，任务 T7）
 
 > 真帧证据、逐块数字、改前改后三层判据在 **`docs/06` §59**（那节是验收，本节是**怎么接的**）。
@@ -11483,3 +11484,181 @@ $PWD/.reference/venv/bin/python tools/unknowns_probe.py dis 0x4b67a0 --len 0x90
 3. "弹窗在收到 `EndingGame` 之后第几帧出现"没量（本轮单点采样，`--endgame-wait` 可调）。
 4. `_online_ending` 这个死变量是**本轮新发现的**；它连注释都没有，`docs/143` §5 想要的那条
    "结算完成前不结束"因此**只做了一半**（记了标记、没人读）。
+## 71. 客户端"收到线上事件之后干什么"：原版是 `GraphwarRemoteEventHandler`（`0x3e6df0`），我方此前**没有这一层**；本轮补成 `GwNetEvents` 桥 + `session.gd` 的实体模型修正（2026-11-26，任务 T17）
+
+> 数据与像素结论在 `docs/06` §67（含逐块表与两侧复跑命令）。本节只讲**客户端侧怎么接的**。
+
+### 71.0 断点在哪
+
+```text
+服务端报文 ──TCP u16 大端长度 + JSON──▶ GwNetLink ──▶ GwNetSession._on_frame
+                                                         │
+                                    解析（GwNetFrame）/ 记账（session.room）
+                                                         │
+     ❌ 这里断了：原版是 GraphwarRemoteEventHandler::handle_server_remote_event
+        （x86 0x3e6df0 / arm64 0x3e2830，switch 落在 tag-2）→ 22 个 manager 的 setter
+        ⇒ 复原出来的 GraphwarPlanePosManager / NameManager / GraphicsManager /
+          TargetManager / EntityEffectManager / EffectManager / ColorManager /
+          ColorManager / TurnManager / ModeManager / FunctionManager / TeamManager /
+          SoldierManager / PlayerManager / LifeManager / ObstacleTable 一个字节都收不到
+```
+
+`docs/02-module-map.md` §17 把 `graphwar_remote_event_handler.rs` 记成"只落了枚举与名字表、
+171 个锚点的分发/订阅行为未实现（混装待拆）" ⇒ 客户端侧这条链路**从来没有接通**。
+所以以前"缺 12 个事件处理器"只是**症状**：即使把那 12 个分支写进 `session.gd`，数据也到不了绘制层。
+
+### 71.1 接法（三段，每段职责单一）
+
+| 段 | 文件 | 职责 | 有没有第二份语义 |
+|---|---|---|---|
+| ① 解析 + 我方模型 | `client/src/net/session.gd`（`_apply`） | 线上字段 → `room` 的那几张表（界面层要读的） | 有（但只是"我方模型"，**不是**游戏规则） |
+| ② 派发 | 同文件 `_feed_managers()` + `GwNetEvents`（`src/_scaffold/net_events_class.rs`） | 线上字段 → **复原 manager 的具体方法**（一事件一方法，落点逐条带地址） | **没有**：不重算任何规则 |
+| ③ 消费 | `EntityDrawer` / `EffectDrawer` / `GraphwarPlane` …（既有类） | 从 manager 表拉数据画 | 有（`play_screen.gd` 的两处代偿还在，见 §71.4） |
+
+`GwNetEvents` 的用法（GDScript）：
+
+```gdscript
+var ev := ClassDB.instantiate("GwNetEvents") as RefCounted   # 懒建，跨局复用
+ev.call("reset")                                             # 装内核通道（幂等）
+ev.call("pos_info", 230, -5.156306989169929, -9.889980889323086, 0.5)
+#   → 返回这次调到的 manager 方法（"plane_pos_manager::set_position"），空串 = 这条没有落点
+ev.call("dump")                                              # 各表快照（自检/取证）
+```
+
+`entity_removed` 是**扇出**：一次调用落到 9 个 manager 各自的 `handle_entity_removed_event`
+（每个 manager 的模块文档里都有自己那条订阅，顺序固定，`cargo test` 有断言钉住）。
+
+### 71.2 `session.gd` 的实体模型修正（**这条直接改了像素**）
+
+| 改之前 | 改之后 | 后果 |
+|---|---|---|
+| `_ensure_entity()` 默认 `kind = "soldier"` | 默认 `kind = ""`；只有 `SoldierInfo` 造 soldier、`TargetInfo` 标 target | 玩家实体 229 与已删除的士兵 231 不再变成"停在 `(0,0)` 的士兵" |
+| `TeamInfo` 无条件建实体 | **不建实体**（`TeamInfo` 的 `entity_id` 也可能是"玩家自己"） | 同上；棋盘正中那具假士兵 + 假准备圈消失 |
+| `EntityRemoved` / `RemoveTeam` 没处理器 | 真的从 `entities`、玩家的 `soldiers`、边表里删 | 死人不复活、圈不再落到尸体上 |
+| `ColorInfo` 是 `pass` | 记账（原版 `color_manager::set_color` 是**直接采纳**服务端颜色） | 界面层还没读（§71.4 第 3 条） |
+| 没有"先到的事实"这一层 | 新增边表 `targets/teams/names/look/colors/entity_effects/effects/shots/active_ticks` | 事件乱序（`TeamInfo` 比 `SoldierInfo` 先到）也不丢信息 |
+
+**为什么准备圈以前画在棋盘正中**（t8 §60.5 只记了现象）：`_soldiers` 原来是 `[229, 230, 231, 232]`
+（四个"士兵"，前两个在原点），`play_screen::_refresh_plane()` 的 `_active_soldier_idx` 来自
+`_turn_driver.first_shooter(alive)` ⇒ 取**第一个活着的** = 下标 0 = 实体 229 = `(0,0)`。
+本轮之后 `_soldiers = [230]`，圈落在射手身上（**观测**：两侧真机真帧）。
+
+### 71.3 复跑（怎么自己验这一层）
+
+```bash
+MAIN=/home/CG/Myprojects/graphwar2-rebuild; WT=$MAIN/.agent-work/cg/wt-t17
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target          # 单独一行
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+HOME=$WT/.fakehome "$GODOT" --headless --path client --import     # 少这一步 Godot 静默不加载
+# ① 映射表 + 落表结果（不碰引擎，纯 Rust）
+cargo test --offline --features gdext-bindings net_events
+# ② 两侧像素（流程与数字见 docs/06 §67.4）
+python3 tools/frame_capture.py --side ours --flow match --out $WT/.agent-work/v/match-mine --display-num 96
+```
+
+### 71.4 遗留（三条都需要改 `play_screen.gd`，本轮按任务书**没改**）
+
+1. **靶子图层**：`_begin_online()` 里 `_targets = GwTargetSet.new()` 之后**从不填** ⇒ 联机局画不出靶子。
+   数据已经在 `session.room["targets"]`（+ 对应 `PosInfo`）；最小改法是在 `_begin_online()` 里
+   `_targets.setup(...)` 一次。**副作用**：靶子以前被当成士兵画出来（错得"像"），改完之后那块会
+   从"错元素"变成"缺元素"——`docs/06` §67.5 的 `(1,3)` 块就是这么变差的，别只看总数字。
+2. **名字标签**：`_online_player_name()` 读 `app_node.state.players[pi].name`（= 本地 profile 名），
+   **不读** `room["names"][entity_id]`（`NameInfo` 的真值 `cmdgz` 已经落在那里、也进了
+   `GraphwarNameManager`）。原版方向是标签文本从 `NameManager` 拉（`docs/16` §44 那条链）。
+3. **id 空间**（总根因）：`_sync_entities()` 给 `EntityDrawer` 的 id 是**士兵下标**与
+   `TARGET_ID_BASE+tid`，而事件/manager 用的是**实体 id**。⇒ 外观/名字/颜色即便全部进了 manager
+   也**没有消费者**。要么播放屏改用实体 id，要么在桥里加一张"下标 → 实体 id"的别名表并由播放屏填。
+
+### 71.5 并入 master 之后的重测（同一棵树上的对照）
+
+`docs/06` §67.10 是这一节的数字版：把 `session.gd` 换回 master 版再拍一次，**别的都不动**，
+得到 `match_ready` 7.2565 % → **6.4459 %**（L2 超限 6 → 4）、`match_play` 7.6648 % → **6.8788 %**（6 → 3）。
+也就是说：本轮这一层（事件派发 + 实体模型）单独值 **−0.81 pp / −0.79 pp**；
+`Fire!` / 键盘 / `f(x)` 行 / 右下偏移量几块**一格都没变**（那些要改播放屏的版式与字体）。
+=======
+## 72. 剩余 13 屏第一次有像素真值：**四个小弹窗本身几乎逐像素相同**，残差全在 LAN 大厅 / GameSetup / 对局屏三块底图；附 6 条**客户端视角**的发现（2026-11-26，任务 T20）
+
+> 数字与逐屏归因在 `docs/06` **§69**（含入库 TSV `fixtures/frame_diff_results_rest.tsv` / `frame_diff_blocks_rest.tsv`）。
+> 本节只写**客户端侧**：这批差异分别落在哪个文件/哪个函数上，以及采集过程中发现的 6 条
+> "我方行为与原版不同"的观测。**本轮不改客户端一行**（任务约定），所以下面全是**待办**，不是已完成。
+
+### 72.0 一页结论
+
+| # | 结论 | 证据 |
+|---|---|---|
+| ① | 13 屏里只有 `join_level_popup` 逐像素过（0 px）；其余 12 屏不过，但 **L1 13/13 全过**（尺寸/全局均值/第一主色都对）| `docs/06` §69.3 |
+| ② | **弹窗不是问题**：`add_bot` 面板 1 px、`connecting`/`disconnected` 面板四角 38 px（`max\|Δ\|≤15`）、`join_ip` 面板 179 px、`confirm_exit` 面板 1 725 px、`chat_popup` 聊天条带 136 px | `docs/06` §69.4 |
+| ③ | 残差几乎全在**三块底图**：LAN 大厅表区（33 213 px，在两屏里一位不差地重复出现）、GameSetup（90 801 px）、对局屏（§60.5 已归因）| 同上 |
+| ④ | 最便宜、最该先改的 4 条：`GLOBAL_ROOMS` 一条名字 + 行序、`Start` 的 `disabled`、默认玩家名 `user`→OS 登录名、LAN 表头三列右移 | §68.1 |
+| ⑤ | 发现 6 条**行为**差异（不是版式）：聊天浮层盖住顶栏开关、默认名硬编码、`Start` 被 disabled、缺本机地址、Connecting 2 s 自超时、Global 占位行内容 | §68.2 |
+
+### 72.1 逐屏 → 落到哪个文件/函数（下一轮直接照这张表派活）
+
+| 屏 | 差异比例 | 归因 | 客户端侧落点（**待改，本轮没改**）|
+|---|---|---|---|
+| `lan_lobby_local` | 1.4912 % | 版式：表头三列右移 **+17 / +35 / +53 px**，行内模式图标 **−4…−11 px**（`Players` 列与 `Join` 列本身对齐）| `client/src/screens/lan_lobby.gd` 的**表头行**（`NameContainer/PlayersContainer/ModeContainer` 的 `size_flags_stretch_ratio` 与标签对齐）+ 行内 `ModeContainer` 的四个 `AspectRatioContainer` |
+| `lan_lobby_global` | 3.3492 % | 数据：四行内容/行序错（原版 `US Room 1 / US Room 2 / EU Room 2 / EU Room 1`；我方 `US Room 3 / EU Room 1 / EU Room 2 / US Room 2`）+ 上一条的版式 | `lan_lobby.gd::GLOBAL_ROOMS`（`client/src/screens/lan_lobby.gd:66`）—— **一条名字错（`US Room 3` 原版没有）+ 行序不同** |
+| `player_skins` | 0.0850 % | 字串：NAME 输入框 | `client/src/app/store.gd:72`（`"name": "user"` 硬编码）——原版取 **OS 登录名**（本机 `CG`）；整页其余**逐像素相同** |
+| `player_faces` | 0.1378 % | 同上 + 卡片边缘灰阶（`(20,510)` 原版 `(55,55,55)` vs 我方 `(31,31,31)`，`max\|Δ\|=61`）| 同上；边缘灰阶在 `client/src/ui/theme_factory.gd` 的 `shop_theme`（`Button/styles/normal` 的边框/阴影）|
+| `player_hats` | 0.1378 % | 同 `player_faces`（数值一模一样）| 同上 |
+| `game_setup` | **7.1054 %** | 缺元素 2 处 + 版式 2 处（详见下行）| `client/src/screens/game_setup.gd` |
+| —— 玩家行 | 23 746 px | 原版 `X 0 CG [+] 🍈🍈 [−] [→]`；我方 `X user [小+] 🍈 [小−] [小→]` | 缺 **rank 数字**、**少一个 melon**、`+`/`−`/`→` 三键**没有底板**（`_player_row()` 一带）|
+| —— 底部排 + Start + 地址 | 121 711 px | ① 左下角**本机地址文本整条缺失**；② 整排与 `Start` 纵向偏低（`Start` 压到 1105 起）；③ `Start` 是 **disabled 外观** | ① `game_setup.gd` 没有"本机地址"这个 `Label`（原版从 `start_graphwar.sh` 那台服务器取 `ip:port`）；②③ `_bottom_row()` / `Start` 按钮的 `disabled = not state.can_start()` |
+| `add_bot` | 4.0770 % | **底图**（GameSetup）；弹窗本身 **1 px** | 不用改 `add_bot_pop_up.gd`；改 `game_setup.gd` 就会掉 |
+| `join_ip` | 1.8327 % | 底图 LAN 大厅 + 输入框四角（179 px）+ 底部 ` Join IP ` 按钮 **hover 态** 5 075 px | `client/src/screens/connect_popups.gd` 的 `LineEdit` 圆角（`StyleBoxFlat` 的 `corner_radius`）+ LAN 大厅底排按钮的 hover 主题 |
+| `connecting` | 1.4965 % | 弹窗本身四角 38 px（`max\|Δ\|=9`）+ 底图 | 基本不用改；见 §68.2 ⑤ 的超时行为 |
+| `disconnected` | 1.4965 % | 同上（四角 38 px，`max\|Δ\|=15`）| 同上 |
+| `confirm_exit` | 5.1297 % | **底图**（对局屏），弹窗只占 1 725 px / 1.5 % | 不用改 `confirm_exit_pop_up.gd`；改对局屏（§60.5 的清单）|
+| `chat_popup` | 6.9948 % | 浮层第二条带 136 px；多出的是**我方叠在白板上的两串白字** | `client/src/screens/chat_pop_up.gd`（消息区初始内容）+ 对局屏的名字标签接线（§60.5）；另见 §68.2 ① |
+| `join_level_popup` | **0** | 逐像素相同 | 不用改 |
+
+### 72.2 采集过程中发现的 6 条**客户端行为**差异（不是版式，都是真帧上看到的）
+
+1. **我方 `ChatPopUp` 是整屏浮层，把顶栏那颗 `toggle_chat` 开关盖住了**（原版不盖：原版聊天浮层打开后，
+   顶栏那排开关仍然**亮**、还能再点一次把聊天关掉）。证据：同一串点击 `(1013,48)` 在原版能关掉聊天、
+   在我方点不到那颗键（我方帧里那颗键被压暗，属浮层内）。**影响**：预注册写的点击次序在我方走不通，
+   本轮改成"先拍退出框再开聊天"（`docs/06` §69.6 坑 4）。
+   ⇒ 待查：`chat_pop_up.gd` 的根节点是否 `set_anchors_preset(PRESET_FULL_RECT)` 且 `z_index` 高于
+   `PlayScreen` 的 `ExtraOptionsVBox`（原版是 `ScreensControl` 的**兄弟**节点、聊天层在**顶栏之下**的画法）。
+2. **默认玩家名硬编码 `user`**（`client/src/app/store.gd:72`）⇒ 玩家页 NAME 输入框、GameSetup 玩家行、
+   聊天里的名字全跟着错（原版取 **OS 登录名** = 本机 `CG`）。这一条**一次能修三屏**的差异。
+3. **`Start` 被做成 `disabled`**：原版无 Bot 时按钮是**正常态**、点了**静默无操作**（`docs/22` §5.1），
+   我方把 `can_start()` 直接接到 `disabled` ⇒ 外观与状态都不对（`game_setup.gd` 的 `_start_game` 附近）。
+4. **GameSetup 左下角缺"本机地址 `ip:port`"** 那条 `Label`（原版有，`192.168.31.224:41329`；端口每次随机）。
+5. **我方 `ConnectingPopUp` 约 2 s 自己就切到 `DisconnectedPopUp`**（噪声地板 0.7131 %：第 2/3 帧已经不是 Connecting）；
+   原版**不超时**（实测 >10 s 仍停在 Connecting）。⇒ 握手超时的时长要有出处，不能自定。
+6. **Global 页四行占位**：`GLOBAL_ROOMS` 一条名字（`US Room 3`）原版真帧里没有，且行序与原版不同
+   （原版 `US Room 1 / US Room 2 / EU Room 2 / EU Room 1`）。这一页原版**离线时也画这四行固定内容**（真帧），
+   所以它可以做到更接近 —— 但这四行的**来源**（是否 hardcode 在原版 Rust 里）**未知**，本轮只记观测。
+
+### 72.3 复跑（客户端侧注意：三件必须就位）
+
+```bash
+WS=/home/CG/Myprojects/graphwar2-rebuild; WT=$WS/.agent-work/cg/wt-t20
+export CARGO_HOME=$WS/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target
+export GODOT=$WS/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/     # ← 不拷 = 跑旧内核，且不报错
+$GODOT --headless --path client --import                 # ← 不 import = 新 .gd 静默不加载
+python3 tools/frame_capture.py --side ours --flow setup --out $WT/.agent-work/v/setup-mine --display-num 102
+```
+
+* 我方客户端的 `HOME` 必须可写（`tools/frame_capture.py` 会给它一个新建空目录）；
+  `client/assets/` 必须已用 `python3 tools/extract_assets.py` 从 `Graphwar.pck` 解出来（仓库不含媒体文件）。
+* 完整 6 条 flow 的两侧复跑命令在 `docs/06` **§69.7**（照抄即可）。
+
+### 72.4 遗留 / 未做
+
+1. **客户端一处也没改**（任务约定"只测量 + 归因"）：§68.1 的 12 行全是**待办**。
+2. 只测了一个局面（`fixtures/frame_match_events.txt` 的 S7）；`confirm_exit` / `chat_popup` 的底图残差只对这一个局面成立。
+3. 没测"换过皮肤之后"的 Faces / Hats（本轮都是默认 `yellow`）。
+4. **`ChatPopUp` 的 z 序/浮层范围**只从"点不到那颗开关"反推出"我方浮层盖住顶栏"，
+   具体是哪个节点/哪一层挡住**没有 dump**（**推断**：`chat_pop_up.gd` 的根节点满屏 + `z_index` 高于顶栏）。
+5. 断线后原版停在哪一屏**仍未观测**（我方是"回主菜单"，`app.gd` 里已标"自定"）；本轮只拍到 `DisconnectedPopUp` 本身。
+
+>>>>>>> agent/pixel-rest
