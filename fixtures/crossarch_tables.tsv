@@ -1,0 +1,62 @@
+# 由 tools/crossarch_tables.py 生成，不要手改（重跑会覆盖）。
+# 输入 = fixtures/crossarch_plan.txt（预注册件）sha256 51741666fc0cdc3dab7adae2ed91c60b1888f8b5dcf2e5d4d5d1ebbc0890e5a6
+# 三份构建（与 [bin] 同源，sha256 已按预注册核对）：
+#   L  linux-2.0.60（我方全部复原证据的基准）  sha256=9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187  size=10227896  x86-64 ELF .so, stripped
+#   S  steam-2026-08-28（**与 L 逐字节相同**）  sha256=9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187  size=10227896  x86-64 ELF .so, stripped
+#   A  android-2.0.60（arm64，**未 strip**：18,670 个 FUNC 符号）  sha256=8a612e954a030f86184667e88ec25797c9af538c2ab28b63549fe2b46b9554df  size=14979192  aarch64 ELF .so, NDK r27-beta2
+#   W  windows-2.0.60（Steam depot 3066842，x86-64 PE）  sha256=ab490af6686122487656966997c4bae396098dd18fb4af67213d4f5236b69fb8  size=41259197  x86-64 PE32+ DLL, COFF 符号表在
+# 口径：表 = 一段连续数组/字符串；定位 = 内容锚（先 32B→16B→8B）；比较 = 整段逐字节。
+# 证据等级：**逐位**（与真二进制逐字节对拍；不是 cargo test）。
+#
+# 列：table_id / name / linux_section / linux_off / linux_va / length / a64_off / a64_anchor / a64_candidates / a64_diff_bytes / a64_first_diff / win_off / win_anchor / win_candidates / win_diff_bytes / win_first_diff / verdict
+T1	ziggurat ZIG_NORM_X（257×f64，rand 的 ziggurat 表 X）	.rodata	0x25b428	0x25b428	2056	0x22ff68	32	1	0	-	0x15c3198	32	1	0	-	A:identical; W:identical
+T2	ziggurat ZIG_NORM_F（256×f64，F[1..=256]）	.rodata	0x25ac20	0x25ac20	2048	0x22f760	32	1	0	-	0x15c2990	32	1	0	-	A:identical; W:identical
+T3	战役 21 关描述串（关 0–8、10–20 首尾相接）	.rodata	0x1c21b1	0x1c21b1	1545	0x19c3c5	32	1	0	-	0x14d1340	32	1	837	650	A:identical; W:DIFF(837 B, first=650)
+T4	战役关 9 描述串（不在连写区，独立一处）	.rodata	0x1bcaa0	0x1bcaa0	32	0x1999b0	32	1	0	-	0x14d15ca	32	1	0	-	A:identical; W:identical
+T5	serde 变体名 Team1/Team2（GraphwarTeam 的判别名）	.rodata	0x1be2c0	0x1be2c0	10	0x1a0b41	10	1	0	-	0x14d4280	10	1	0	-	A:identical; W:identical
+T6	`Level discriminant: ` 串（serde 错误路径，97 个 panic 位置串之一）	.rodata	0x1b423c	0x1b423c	20	0x1800a1	20	2	0	-	0x169cf9c	20	2	0	-	A:identical; W:identical
+T7	关卡标题前缀 `Level ` 与 `LevelDescriptionUnfinished`	.rodata	0x19e830	0x19e830	26	-	-	0	-	-	0x14e85a0	16	2	10	16	A:not-located; W:DIFF(10 B, first=16)
+T8	采样器常量簇（`.rodata` 首部：0.001 / 200.0 / ±25 / ±15 / 6.0 附近 4 KB 窗）	.rodata	0x19f000	0x19f000	4096	-	-	0	-	-	0x14c99b8	8	1	3548	8	A:not-located; W:DIFF(3548 B, first=8)
+T9	全 .rodata 块级覆盖（≥32 B 最大公共块；统计项，不逐表判）	.rodata	0x19c000	0x19c000	1129484	-	-	1756	107858	-	-	-	2927	154048	-	L/A: 1021626/1129484 B 逐字节存在 (90.45%); L/W: 975436/1129484 B (86.36%)
+#
+# --- 对照（AGENTS.md 合并纪律 A.4：负结论必须先证扫法有效）---
+# C1	L.rodata vs L.rodata（自身）	期望=100% 匹配	实测=100.00%	OK
+# C2	L.rodata vs L.text	期望=< 1% 匹配	实测=0.0282%	OK
+# C3	A 拷贝里 T1 第 40 字节 ^0xFF（锚外）	期望=未改=0 差异；改后=1 处差异且首个偏移 40	实测=未改 diff=0；改后 diff=1 first=40	OK
+# C3b	A 拷贝里 T1 第 0 字节 ^0xFF（锚内）	期望=定位失败(not-located) 或报差异；不许报"相同"	实测=not-located	OK
+#
+# --- T9 覆盖细节 ---
+# L .rodata=1129484 B / A .rodata=1063380 B / W .rdata=2659328 B
+# L 侧匹配到 A 的块数=1756，最大 5 块：
+#   L 0x0c65b0 -> A 0x0bc658  len 219151
+#   L 0x050ea5 -> A 0x04bea5  len 151899
+#   L 0x08ba77 -> A 0x0851f7  len 141083
+#   L 0x02dce5 -> A 0x0290d2  len 65902
+#   L 0x07c840 -> A 0x075fb6  len 45085
+# L 侧匹配到 W 的块数=2927，最大 5 块：
+#   L 0x050ea5 -> W 0x25dea5  len 151899
+#   L 0x02dce8 -> W 0x029130  len 65640
+#   L 0x08ba77 -> W 0x0afa6f  len 61893
+#   L 0x09ac3b -> W 0x0becd7  len 61065
+#   L 0x07fa8c -> W 0x0a3448  len 32208
+# 未匹配区里"8 字节窗口取值像绝对地址"的窗口数：L/A 18/13488，L/W 25/19272 （像地址的说明是重定位/布局相关，本来就不该跨构建相同）
+#
+# --- 差异诊断（事后补充；判据未改，只解释上面那几行差异）---
+# D1	T3 的 21 段战役描述串（按 docs/10 §3 的 21 个 (偏移,长度) 取出，逐串原文搜全文件）
+# D1	A 侧找到 21/21 段、W 侧找到 21/21 段 ⇒ 内容三份相同；T3 在 W 报 837 B 差异是**摆法**不同：
+# D1	L 的连写区(0x1c21b1..)里**没有**关 9 描述 b'Play against a smarter opponent.'（docs/10 §3 早记过它在 0x1bcaa0）；
+# D1	W 侧对应区段把这两段**拼成一个 0..20 顺序的连写区**（关 9 的描述插在里面）⇒ 长度多 32 B、偏移 ≥650 之后整体移位，所以"差异字节数"大但**没有一个字符不同**。
+# D2	b'LevelDescriptionUnfinished' 全文件出现次数 L=1 A=0 W=0
+# D2	b'Level ' 全文件出现次数 L=25 A=3 W=39
+# D2	⇒ T7 报 not-located 的性质：这 32 B 窗是**字符串池里的一段**（后面紧跟着别的串），A 那份根本没有 `LevelDescriptionUnfinished` 这个串 ⇒ 这是"字符串池不同"，**不是"某张数据表不同"**。T7 是本轮**注册失误**，不参与结论。
+# D3	T8 的性质：这 4 KB 不是数组，是一簇**标量常量**；复算 docs/19 §4.0.3 的"物化次数"：
+# D3	常量	L	A	W	（8 字节位模式在**只读数据节**里的出现次数）
+# D3	0.01	2	2	1
+# D3	0.001	1	1	2
+# D3	200.0	1	0	3
+# D3	25.0	1	0	2
+# D3	15.0	1	1	4
+# D3	6.0	1	0	2
+# D3	2^-53	1	0	2
+# D3	⇒ 次数三份不同且不稳定（同一常量在 A/W 变成 `fmov`/`movz:movk` 立即数就落不进数据节），所以 T8 用"4 KB 窗逐字节"判**不成立**——这与 docs/19 §4.0.3 的结论一致；
+# D3	   这些常量的**语义**是否相同，由 F6/F7（采样器输出点数组逐位）兜底，那一档才是有效判据。

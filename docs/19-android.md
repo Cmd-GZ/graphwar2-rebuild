@@ -898,3 +898,178 @@ func _ready():
 我们的重建版**没有实现广告**，也不需要——`19-android.md` §2 已证广告与采样器/掩膜/命中/生命/目标/回合
 **零引用**。
 
+
+---
+
+## 8. 跨架构逐位一致：三份构建的**数据表**与**数值核心**对拍（2026-11-26，任务 T9）
+
+> 本节把 §6.1 第 1 条「跨架构是否逐位一致 —— 未验证，本文不承诺」从**未验证**改成
+> **有数的结论 + 明确边界**。预注册清单：`fixtures/crossarch_plan.txt`；结果：
+> `fixtures/crossarch_tables.tsv`、`fixtures/crossarch_funcs.tsv`；
+> 工具：`tools/crossarch_emu.py` / `tools/crossarch_tables.py` / `tools/crossarch_funcs.py`。
+> 验证体例与踩坑记在 [`06`](06-verification.md) §61。
+
+### 8.1 三份构建的元信息（外加一份逐字节重复件）
+
+| id | 文件 | sha256 | 大小 | 架构 / 工具链 |
+|---|---|---|---|---|
+| **L** | `.reference/game/libgraphwarrust.so` | `9a53811518e74b75…cabed187` | 10,227,896 | x86-64 ELF `.so`，**已 strip** |
+| **S** | `.reference/steam/2026-08-28/libgraphwarrust.so` | **与 L 完全相同** | 10,227,896 | 同上 |
+| **A** | `.reference/steam/android-2.0.60/libgraphwarrust.so` | `8a612e954a030f86…b9554df` | 14,979,192 | aarch64 ELF `.so`，NDK r27-beta2，**未 strip：18,670 个 FUNC 符号** |
+| **W** | `.reference/windows/graphwarrust-2.0.60.dll` | `ab490af668612248…36b69fb8` | 41,259,197 | x86-64 PE32+ DLL（COFF 符号表在） |
+
+⇒ **"Steam 版"就是同一份文件**（sha256 相同）⇒ 真正要对的架构只有三种：
+**x86-64(ELF) / aarch64(ELF) / x86-64(PE)**。"四份构建"这个说法作废。
+
+**为什么 A 那份是本轮的关键**：它**没被 strip**，函数入口不是猜的 ——
+`GraphwarShotCalculator::calculate_function` @`0x3b5374`、
+`MathFunction::evaluate_recursive` @`0x4452d4`、`MathFunction::new` @`0x446c4c`
+都是 `.symtab` 里的名字（归属交叉核对 `fixtures/name_to_addr_v2.tsv`、`fixtures/sym_match.tsv`，
+键是 `panic::Location`）。x86 那份被 strip，只能靠 `panic::Location` + `objdump` 定位。
+
+> **地址口径（2026-11-26 lead 更正，已按此执行）**：文档/pkl 里写的地址**直接当 ELF vaddr
+> （= 文件里的 RVA）** 用，**不做** `±0x100000` 平移；只有 Ghidra/REA 反编译产出
+> （`_DAT_xxxx` / `FUN_xxxx`）才需要 `+0x100000`。本节与两个工具全程按 **ELF vaddr 一致映射**
+> 装载（`PT_LOAD.p_vaddr → 内存同址`），arm64 侧直接用 `.symtab` 的 `st_value`。
+
+### 8.2 数据表：**7 张里有 5 张三份逐字节相同，1 张只差"摆法"，2 张是注册失误**
+
+判据：表 = 一段连续数组/字符串；定位用**内容锚**（先 32 B → 16 B → 8 B，允许换位置）；
+比较的是**整段长度**逐字节。证据等级 **逐位**。
+
+| id | 表 | L 偏移 / 长度 | A（arm64） | W（PE） |
+|---|---|---|---|---|
+| T1 | ziggurat `ZIG_NORM_X`（257×f64） | `0x25b428` / 2056 B | **逐字节相同** | **逐字节相同** |
+| T2 | ziggurat `ZIG_NORM_F`（256×f64） | `0x25ac20` / 2048 B | **逐字节相同** | **逐字节相同** |
+| T3 | 战役 21 关描述串（关 0–8、10–20 连写） | `0x1c21b1` / 1545 B | **逐字节相同** | 差 837 B（首个 `+650`）——**只是摆法**，见下 |
+| T4 | 战役关 9 描述串（独立一处） | `0x1bcaa0` / 32 B | **逐字节相同** | **逐字节相同** |
+| T5 | serde 变体名 `Team1`/`Team2` | `0x1be2c0` / 10 B | **逐字节相同** | **逐字节相同** |
+| T6 | `Level discriminant: ` 串 | `0x1b423c` / 20 B | **逐字节相同** | **逐字节相同** |
+| T7 | `LevelDescriptionUnfinished` 附近 26 B | `0x19e830` / 26 B | **串根本不存在** | 只按 16 B 锚命中，10 B 不同 |
+| T8 | 采样器常量簇 4 KB 窗 | `0x19f000` / 4096 B | **定位失败** | 只按 8 B 锚命中，3548 B 不同 |
+
+**T3 的差异是真差异但无害**（`crossarch_tables.tsv` 的 D1 段）：把 21 段描述串**按原文逐串**
+在 A、W 里搜，**21/21 全部逐字节存在**。差的是**排列**——
+L/A 把**关 9** 那段（`Play against a smarter opponent.`）放在另一处 `0x1bcaa0`（`docs/10` §3 早就记过），
+而 **W 把它按 0..20 的顺序插进连写区**，于是从 `+650`（= 关 10 描述处）起整体后移 32 B。
+⇒ **"某段字节不同"不等于"内容不同"**；这也是把"差异字节数"和"首个差异偏移"一起报的原因。
+
+**T7/T8 是本次的注册失误，不参与结论**（如实记，见 `crossarch_tables.tsv` 的 D2/D3 段）：
+* T7 是一段**字符串池里的片段**（后面紧接别的串），A 那份根本没有 `LevelDescriptionUnfinished`
+  这个串（全文件 `L=1 / A=0 / W=0`）⇒ 这是"字符串池不同"，**不是"数据表不同"**；
+* T8 的 4 KB **不是数组，是一簇标量常量**。复算 `docs/19` §4.0.3 的"物化次数"（只读数据节内
+  8 字节位模式出现次数）得到 **完全一致**的数字：`0.01` = 2/2/1、`0.001` = 1/1/2、`200.0` = 1/0/3、
+  `25.0` = 1/0/2、`15.0` = 1/1/4 ⇒ 三份**确实**把同一个常量物化在不同地方（aarch64 用 `fmov` /
+  `movz:movk` 立即数就不落数据节）。所以**"拿单个常量判跨架构一致"这条口径是错的**，
+  有效判据只能在函数输出上（§8.3 的 F6/F7 就是）。
+
+**全 `.rodata` 块级覆盖**（≥32 B 最大公共块，允许任意位置任意顺序）：
+L 的 `.rodata` 有 **90.45 %（1,021,626 / 1,129,484 B）** 逐字节存在于 A 的 `.rodata`，
+**86.36 %（975,436 B）** 存在于 W 的 `.rdata`；最大单块 219,151 B（L `0x0c65b0` → A `0x0bc658`）。
+未匹配部分里"8 字节窗口取值像绝对地址"的只有 18/13,488 与 25/19,272 ⇒ 未匹配主要是
+**编译单元/内联组合不同带来的字符串集合差异**（与 §4.0.2 的差集统计一致），不是数据被改。
+
+### 8.3 数值核心：175 组输入，**168 组逐位相同，7 组只差 NaN 的符号位，0 组"没跑成"**
+
+两路执行体：x86-64 = `analysis/gwemu.py`（我方 88 条「逐位」结论用的同一个执行体，
+`docs/06` 里所有 x86 数值证据都出自它）；arm64 = `tools/crossarch_emu.py`（unicorn ARM64
+跑 A 那份的**真机器码**）。**两路的 libm/内存导入用同一份实现**（真 glibc `libm.so.6`，
+理由见 `docs/06` §30：python `math` 对定义域外**抛异常**、真 libm **返回值**）。
+判据 `bit-identical`：f64 比 64 位、点数组比**每个点的 16 字节**、token 流比 16 B/条、字符串比全部字节。
+
+| id | 函数（x86 → arm64） | 组数 | 逐位相同 | 只差 NaN 符号 | blocked |
+|---|---|---|---|---|---|
+| F1 | `evaluate_recursive` 纯算术（`+ - * / neg`） | 24 | 23 | 1 | 0 |
+| F2 | 同上 · `sqrt`/`abs`（硬件 IEEE 指令） | 18 | 17 | 1 | 0 |
+| F3 | 同上 · 超越函数（`sin/cos/tan/exp/ln/log10`） | 25 | **25** | 0 | 0 |
+| F4 | 同上 · `pow` 边界 | 18 | **18** | 0 | 0 |
+| F5 | 同上 · NaN/±0/±inf 传播 | 18 | 13 | 5 | 0 |
+| **F6** | **采样器 `calculate_function`（Normal）** `0x3c2530 → 0x3b5374` | 18 | **18** | 0 | 0 |
+| **F7** | **同上 · DiffEq = ODE（RK4 一步）** | 18 | **18** | 0 | 0 |
+| F8 | 真解析器 `MathFunction::new` `0x4ed670 → 0x446c4c` | 20 | **20** | 0 | 0 |
+| F9 | pos_y/修正量外壳 `calculate_corrected_function` + `calculate_function_offset_str` | 16 | **16** | 0 | 0 |
+
+**采样器那两行是本轮最硬的结论**：Normal 18 组（含 `sin(x)` 步长 0.001 的 **50,000 点**、
+`const 0` 的 101 点、`x³`、`exp`、`ln+sqrt`、`flip=1` 两组）与 ODE/RK4 18 组
+（含 `y+1`、`x·y`、`sin(x)·y`、`y²`、`y'` 项、`flip=1` 两组、步长 0.01 一组）——
+**点数组长度相同、每个点的 x/y 64 位全同**。`F8` 的 20 段文本（含 `3x` 隐式乘、`x^2^3` 左结合、`pi`）
+解析出的 token 流也**每条 16 字节全同**。`F9` 两边都给出同一个修正串
+（例：`sin(x)` + 起点 (1,0) ⇒ `sin(x) - 0.841`；`cos(x)`·`0.25` ⇒ `sin(cos(x)) - 0.824`）。
+
+**唯一的跨架构差异 = NaN 的产生位模式**（7 组，`cls = DIFF:nan-only`）：
+invalid 运算产生的 quiet NaN，**x86-64 是 `0xFFF8000000000000`（负号，"QNaN indefinite"），
+AArch64 是 `0x7FF8000000000000`（正号）**。IEEE-754 不规定 NaN 的符号/载荷，两条都是 NaN。
+**注意"产生"与"传播"要分开**：`nan_plus_1`、`nan*0`、`-nan`、`abs(nan)`、`y=NaN`、`y'=NaN`
+这 6 组**逐位相同** ⇒ **NaN 的传播两架构一致，只有 NaN 的生成差一个符号位**。
+下游只要不拿 NaN 做**位比较**（`is_nan()`/`nan` 判断都不受影响），这 7 组不产生行为差异。
+
+### 8.4 结论：**跨架构一致吗？**
+
+**代码与算术层面：一致（逐位）。** 在模拟器下执行两份**真机器码**，采样器（Normal + RK4）、
+求值器、解析器、修正量外壳在 175 组预注册输入上输出**逐位相同**；
+数据表里凡是**数组/字符串**（ziggurat X/F、21 段战役描述、serde 变体名）三份**逐字节相同**。
+⇒ **"我方全部复原证据来自 Linux x86-64，换到 arm64 会悄悄错"这个担心，在代码路径上没有发生**
+（`docs/00` §3 那一行可以改口径了）。
+
+**两条已知的、量到过的差异（都不影响玩法参数）：**
+1. **invalid 运算生成的 NaN 符号位**：x86 负、AArch64 正（7/175 组，见 §8.3）。
+2. **libm 的 ULP 差异**（见 §8.5）：两路**共用同一份 libm** 才逐位相同；bionic 的
+   `sin/cos/exp/ln/pow` 与 glibc 到底差不差、差多少，**本轮没测到**（本机没有 bionic libm 的
+   二进制：NDK sysroot 的 `libm.so` 只是链接桩，不含代码）。
+
+**数据表层面：一致。** 预注册的 7 张表里，凡是真的"表"（数组/字符串）都逐字节相同；
+唯一一处字节差异（T3/W）经逐串复核是**同一批字符串换了摆法**，21/21 内容相同。
+两处"不同"（T7/T8）是注册失误（不是表），已在 §8.2 与 TSV 的 D2/D3 段如实标注。
+
+### 8.5 边界：证到什么、没证到什么
+
+**证到了（逐位，在模拟器下）：**
+* 采样器 `calculate_function` 的 **Normal 与 ODE(RK4)** 两条路，输入含 libm 超越函数的用例，
+  输出点数组逐位相同（36 组）；
+* 求值器 / 解析器 / 修正量外壳的输出逐位相同（105 组）；
+* `sqrt`/`abs` 这类**硬件 IEEE 指令**的路径逐位相同（`sqrtsd` vs `fsqrt` 都是正确舍入）；
+* `.rodata` 的数组/字符串表三份逐字节相同（`fixtures/crossarch_tables.tsv`）；
+* 负结论的正对照：块匹配器对自己 100 %、对 `.text` 0.0282 %；改 1 字节必报差异；
+  **把 A 拷贝里 `Vector2D::length` 的 `fsqrt` 改成 `fneg`（4 字节）后 6/18 个采样器用例
+  立刻变** ⇒ arm64 那一路跑的确实是真机器码（`docs/06` §61 的 C1–C6）。
+
+**没证到（别当已证）：**
+1. **bionic 的 libm 与 glibc 的 libm 是否逐位相同 —— 未验证。** 本机拿不到 bionic 的 libm
+   二进制。本轮改成了**风险量化**（`crossarch_funcs.tsv` 的「libm 风险量化」段）：
+   只把 **arm64 一侧**每个超越结果整体 ±1 ulp（模拟 bionic≠glibc 的系统性偏移），再看两路差多少：
+   * **139 / 175 组完全不动** ⇒ 这些结论**与 libm 是哪一份无关**（强结论）；
+   * Normal 采样器 **4/18 组**动：`sin(x)` 步长 0.01 的 100,000 个分量里 **49,999 个差 1 ulp**，
+     **点数不变**；`sin(x)` 步长 0.001（50,000 点）、`tan`、`ln+sqrt` 也是"点数不变、部分 y 差 1 ulp"；
+   * ODE/RK4 **4/18 组**动，其中 `x·y`… 等 **2 组直接变点数**（239→1、64→1）——
+     说明 ODE 模式对 1 ulp 级输入差异**会放大**，这是本轮最该被下一轮盯住的地方。
+   ⇒ 在真机上，**Normal 模式的弹道最坏是"y 坐标差 1 ulp"**；**ODE 模式的轨迹可能整体不同**。
+   这条要把 `docs/00` §3 / §6.1 的"不承诺"改成"**Normal 已量化上界、ODE 未证**"。
+2. **真机/真 ARM 硬件上没跑过。** unicorn 是**模拟器**：它保证执行的是 A 那份的机器码，
+   但 FPSIMD 的**个别边界**（如非规格化数 FTZ/默认 NaN 的硬件行为）由 QEMU 实现决定，
+   **不等于**真机 CPU；ARM 硬件默认可配置的 `FPCR`（FZ/DN）在游戏里是否被改过，本轮没查。
+3. **Windows 那份只做了数据表，没做函数对拍**（它是 x86-64，和 L 同 ISA，但本轮没有
+   第二套 PE 装载器）。W 与 L 的"代码是否一致"仍**未验证**，只有 `.rdata` 86.36 % 的字节覆盖。
+4. **只覆盖了预注册的 9 个函数 / 175 组输入**。13503 个函数里其余的部分没碰。
+5. `.data.rel.ro` 里的**指针表**（函数指针槽、vtable、`panic::Location` 表）没做逐字节比较
+   （跨构建重定位后值本来就不同，比较要先把重定位解出来 —— 那是另一件事）。
+
+### 8.6 复跑命令
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild   # 主工作区（或任何 checkout）
+export PY=$MAIN/.reference/venv/bin/python
+cd $MAIN
+
+# ① 数据表（纯 python，不需要 unicorn；约 1 min）
+$PY tools/crossarch_tables.py                # 写 fixtures/crossarch_tables.tsv
+$PY tools/crossarch_tables.py --controls     # 只跑 C1/C2/C3/C3b 四条对照
+
+# ② 函数（unicorn 两路；全量约 2.5 min，带 libm 探针约 4 min）
+$PY tools/crossarch_funcs.py                 # 写 fixtures/crossarch_funcs.tsv
+$PY tools/crossarch_funcs.py --only F6 F7    # 只跑采样器
+$PY tools/crossarch_funcs.py --libm-probe    # 追加「libm 风险量化」段
+$PY tools/crossarch_funcs.py --controls      # 只跑 C4/C5/C6 三条对照
+```
+
+两个工具都会**先核对 `fixtures/crossarch_plan.txt` 里登记的 sha256**（二进制换了就报错退出），
+并把 plan 的 sha256 写进产出 TSV 的表头 —— 改了输入集立刻能查出来。
