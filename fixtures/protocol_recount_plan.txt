@@ -1,0 +1,128 @@
+# 协议字段数复核 —— 口径预注册（T16 / task-13，2026-11-26）
+
+本文件在**跑最终表之前**写下口径。跑完只允许把结果填进 TSV / docs，**不允许回头改这里的判据**。
+若某行对不上，如实标 `✗` 并在 docs/06 §66 列出；**不许为了对上旧文档的 67 而调口径**。
+
+被测对象（只读）：
+  - 原版 `libgraphwarrust.so`（`.reference/game/libgraphwarrust.so`，x86-64）
+  - `src/_scaffold/protocol.rs` 的 `WIRE_SPEC`（74 条）
+  - `docs/07-protocol.md` §3.3 全表（74 行）
+待解释的旧断言（`docs/07` §3.2）：
+  「① 字段个数 == `.rodata` 里 `struct <Name>Event with N elements` 的 N = **67/67**」
+  「`N` 串只有 **67** 条：另外 **7 个事件**的 `Serialize` 一次 `serialize_field` 都不调」
+
+--------------------------------------------------------------------------------
+## 0. 事件分母与"字段数"的定义（先定死）
+--------------------------------------------------------------------------------
+- **事件分母 = 74**：`WIRE_SPEC` 74 条；`docs/07` §3.3 表 74 行（tag 0..=73 各一行）。两者按**事件名**对齐。
+- **字段数** := 该事件线上 JSON 体里出现的**键的个数**（按 serde `serialize_field` 的调用次数计）。
+  空体事件（`WIRE_SPEC.fields` 为空）字段数 = **0**。
+- 一个事件算"有字段事件"当且仅当字段数 ≥ 1。**分母不因为"没有 N 串"而缩小。**
+
+--------------------------------------------------------------------------------
+## 1. 方法 A（首选）：`Deserialize` 侧 `deserialize_struct` 参数块里的**编译期立即数 N**
+--------------------------------------------------------------------------------
+### 1.1 为什么不是规格里写的 `Serialize` 侧的 `serialize_struct(name_ptr, N)`
+规格建议"从 `Serialize` impl 里 `serialize_struct(name_ptr, N)` 的立即数取 N"。
+**本 `.so` 上这条不成立**，我（t16）在预注册前做了形状勘察，结论如下（勘察脚本与命中数一并留档）：
+
+- `serde_json::Serializer::serialize_struct(self, name: &'static str, len: usize)`
+  **既不使用 `name` 也不使用 `len`**（它只写 `{`，把 `len` 丢给 `serialize_map` 的提示）；
+- 因此 LLVM 在把 `serialize_struct` 内联进 `<Name>Event::serialize` 之后，**把 name 的
+  `lea`、name 的 `mov edx,len`、以及 N 的 `mov ecx,N` 全部当死代码删掉**，只剩一条
+  `mov byte ptr [...], 0x7b` 直接写 `{`；
+- 机械判据（预注册前已跑）：在 74 个事件 serializer 的函数体里搜
+  「`lea rsi,[rip+字面量]` ＋ 其后 3 条内 `mov <len_reg>, IMM` ＋ 再出现第二个 `mov <len_reg>, IMM`」
+  = **0 命中**（`tools/protocol_recount.py --check-shape`）。
+  ⇒ 方法 A 必须以 **`Serialize` 侧的 N 立即数不存在** 作为结论之一记录，**不是**"扫描失败"。
+
+### 1.2 采用的替代：`Deserialize` 侧同样是 serde derive 生成的**编译期立即数**
+`<Name>Event` 的 `Deserialize` 走
+`Deserializer::deserialize_struct(self, name: &'static str, fields: &'static [&'static str], visitor)`，
+`fields.len`（= 声明的字段数）在这个二进制里**没有被 DCE**，以立即数出现。
+两种寄存器布局都收（由返回类型是否走 sret 决定）：
+
+**布局 S（有字段事件，Result 大 ⇒ sret 在 rdi）**
+```
+lea  rdx, [rip+name]        ; name.ptr  ── name = "<Name>Event"，长度由下面 ecx 精确给出
+lea  r8,  [rip+FIELDS]      ; fields.ptr ── 必须在 .data.rel.ro
+mov  rdi, <sret>            ; 可缺省（偶见省略）
+mov  ecx, <name_len>        ; name.len  —— 自校验：必须 == 从文件读到的字节数
+mov  r9d, <N>               ; fields.len —— **这是 N，编译期立即数**
+mov  rsi, <self>            ; 可缺省
+call <该结构体自己的 Deserialize 辅助函数>
+```
+**布局 Z（空体事件，Result<零字段结构体> 走寄存器返回 ⇒ 无 sret）**
+```
+lea  rsi, [rip+name]
+mov  edx, <name_len>
+mov  ecx, 8                 ; fields.ptr —— 空切片的悬垂指针（align_of::<&str>() == 8）
+mov  rdi, <self>
+xor  r8d, r8d               ; fields.len = **0**
+call <…>
+```
+
+### 1.3 判据（写死，跑完不改）
+1. **名字**：`lea` 指向 `.rodata`；按紧随其后的长度立即数**精确**读字节；必须全可打印、
+   必须整个匹配 `^[A-Za-z0-9_]+Event$`。长度立即数与实际字节数不符 ⇒ 该块丢弃。
+2. **N**：布局 S 取 `mov r9d, IMM`；布局 Z 取 `xor r8d, r8d`（=0）。其它形态（`r9d` 已是变量等）丢弃。
+3. **FIELDS 交叉（只对 N>0）**：`fields.ptr` 必须落在 `.data.rel.ro`；按
+   `R_X86_64_RELATIVE` **重定位后的**指针读前 N 个 `(ptr,len)`，每个必须是精确可打印字面量。
+   **读出的 N 个名字序列必须与方法 B 的键序逐项相同**（这是 A 与 B 的独立对撞）。
+4. **唯一性**：同一个 `<Name>Event` 只允许一个块；出现两个⇒报冲突。
+5. **覆盖率**：74 个事件里，方法 A 必须给出 74 个（64 走布局 S + 10 走布局 Z）；缺谁点名。
+
+--------------------------------------------------------------------------------
+## 2. 方法 B：`Serialize` impl 里 `serialize_field` 的**调用次数**
+--------------------------------------------------------------------------------
+复用 `tools/wire_fields.py` 的判据（**原样移植**，不改判据）：
+- 写带引号字符串的辅助函数 `str_writer = 0x3bdf00`（多数票选出，与上一轮相同）；
+- 以「`call 0x3bdf00` 的所在函数」为事件 serializer 候选（函数边界用
+  `analysis/funcstarts_ghidra_va.pkl`，**已证实是 ELF vaddr**）；
+- 在函数体内按**花括号深度**（`mov byte ptr […], 0x7b` 加、`0x7d` 减）区分"事件名"与"字段名"：
+  深度 ≥1 的第一个 `rdx/edx + 串写` = 事件名；深度 ≥2 的 `rsi/esi + 串写` = 字段；
+- 字段名必须匹配 `^[A-Za-z_][A-Za-z0-9_]*$`（挡掉浮点路径多写的 `}` 字面量）；
+- 同一函数内按**地址顺序**收集 ⇒ **次数 = 字段数**，序列 = **线上键序**。
+- 判据要点：`counter` 用**调用点计数**，不是"不同字符串"去重计数。
+
+--------------------------------------------------------------------------------
+## 3. 方法 C（只用于解释"N 串"，不用于取 N）
+`.rodata` 里 `struct <Name>Event with N elements` 字面量的三种口径，全部记录、互不替代：
+- **C1 `strings(1)` 行扫描**（旧轮很可能用的）：字面量紧邻拼接、无 NUL ⇒ 整行几乎不可能
+  恰好等于一句 ⇒ **严重漏计**；
+- **C2 朴素非重叠正则** `re.finditer`：相邻字面量 `...1 element` + `struct ...` 时，
+  `elements?` 会把下一个字的 `s` 吃掉 ⇒ 后续匹配整体错位 ⇒ **漏计**；
+- **C3 重叠感知扫描**（本任务采用，逐字节找 `struct ` 起点、`PAT.match` 逼到该偏移，
+  起点前进 1 而不是 1+len）：这条是**唯一不依赖字面量边界知识**的口径，作为"N 串条数"的权威读法。
+- N 串的**用途**：它只是 serde `expecting()` 的报错文案，**N 是 derive 从字段数写死的常量**，
+  所以它**可以**当独立旁证（数据侧），但**不作为方法 A 的替代**。
+
+--------------------------------------------------------------------------------
+## 4. 一致性判据（每行 4 个数：A / B / WIRE_SPEC / §3.3）
+- `✓`：A == B == WIRE_SPEC == §3.3；
+- `✗`：任何一个不等（**逐列写明哪一对不等**）；
+- `-`：该方法对这不适用（例如空体事件没有 N 串 ⇒ "N 串的 N" 列记 `-`）。
+- 统计口径：分母 74；分别报 "A==B 的行数"、"A==WIRE_SPEC 的行数"、"A==§3.3 的行数"。
+
+--------------------------------------------------------------------------------
+## 5. 预注册前已做的勘察（披露，避免"事后才知道"）
+1. A 的两种布局 S/Z 已各看了一例并逐指令核对过寄存器与立即数语义（见本文件 §1.2 的反汇编模板）；
+2. `Serialize` 侧 `serialize_struct` 立即数形状 = 0 命中（§1.1）；
+3. C 的三种口径的差异已量过（C1=0 行、C2 与 C3 不等），**只用于解释**，不参与取 N；
+4. 知道 74 个 serializer 的字段数**大致**与 `WIRE_SPEC` 一致，但**统计值与逐行一致性在
+   本文件 commit 之后才跑**；若最终出现不一致行，按 §4 标 ✗ 并上报。
+
+--------------------------------------------------------------------------------
+## 6. 复跑命令（预注册这套判据的可执行实现）
+```bash
+MAIN=/home/CG/Myprojects/graphwar2-rebuild
+PY=$MAIN/.reference/venv/bin/python
+cd $MAIN/.agent-work/cg/wt-t16
+
+$PY tools/protocol_recount.py --check-shape   # 方法 A 的形状勘察（打印 serialize_struct 立即数命中数 = 0）
+$PY tools/protocol_recount.py                 # 权威表：人读 + 统计
+$PY tools/protocol_recount.py --tsv fixtures/protocol_field_recount.tsv   # 重新生成 74 行 TSV
+$PY tools/protocol_recount.py --json | head   # 机器读
+```
+实现只依赖 capstone（`.reference/venv`）与 `analysis/elf.py`；**不需要** `xrefs.pkl`
+（上游目录里没有，本工具自带 rip-xref 索引）。

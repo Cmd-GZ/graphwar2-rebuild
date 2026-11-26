@@ -66,8 +66,20 @@ Rust 字面量**不以 NUL 结尾**，`strings` 会把相邻两个字面量粘�
     ../.venv/bin/python tools/wire_fields.py --verify    # 只跑自校验，不自洽则退出码非 0
     ../.venv/bin/python tools/wire_fields.py --struct 0x5060d0   # 任意 struct 的键序（GameInfo 示例）
 
-需要上游目录里的 `libgraphwarrust.so` + `analysis/{xrefs,funcstarts_ghidra_va}.pkl`
-（都不入库）。用 `GW2_UPSTREAM=/path/to/gw2` 硬指，或从本脚本位置逐级上溯。
+需要上游目录里的 `libgraphwarrust.so` + `analysis/funcstarts_ghidra_va.pkl`（都不入库）。
+用 `GW2_UPSTREAM=/path/to/gw2` 硬指，或从本脚本位置逐级上溯。
+
+⚠️ **2026-11-26（T16）修的两处**（此前 `--verify` 在本机直接跑不起来）：
+1. `find_upstream()` 原来要求 `xrefs.pkl` 与 `.so` 同处 `analysis/` 下 —— 本机布局里
+   `.so` 在 `.reference/upstream/`、`analysis/elf.py` 在 `.reference/analysis-repo/analysis/`、
+   而 `xrefs.pkl` **根本没有**（它是上游 `analysis/build_index.py` 的产物，不入库）。
+   现在：`.so` 与 `funcstarts_ghidra_va.pkl` 分别找；`xrefs.pkl` 缺失时**现场反汇编 `.text`
+   重建同样的倒排索引**（约 150 万条指令 / 3 s），有 pkl 时优先用 pkl（行为完全不变）。
+2. 补一条**空体事件**的说明：`.rodata` 里 `struct <Name>Event with N elements` 共 **67** 条
+   = **64 个有字段事件** + **3 个负载结构体**（`GameInfo` 9 / `GraphwarColor` 3 / `EventInfo` 2）；
+   **10 个空体事件没有这条串**（0 字段结构体走 `expecting` 短形式 `struct <Name>Event`）。
+   所以"事件字段数"与"N 串条数"本来就不是一一对应，`N 自校验` 的**分母是有字段事件 64**。
+   逐事件复核见 `tools/protocol_recount.py` + `fixtures/protocol_field_recount.tsv`（`docs/06` §66）。
 """
 
 import argparse
@@ -93,16 +105,57 @@ IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def find_upstream():
+    """返回 (含 libgraphwarrust.so 的目录, 含 funcstarts_ghidra_va.pkl 的 analysis 目录)。
+
+    2026-11-26（T16）：原来要求 `xrefs.pkl` 与 `.so` 同处一个 `analysis/`，
+    本机布局里那条根本不成立（so 在 `.reference/upstream/`，elf.py 在
+    `.reference/analysis-repo/analysis/`，`xrefs.pkl` 不存在）。现在分开找。
+    """
     cands = [os.environ.get("GW2_UPSTREAM")]
     d = REPO
     for _ in range(4):
         cands.append(d)
         d = os.path.dirname(d)
-    for c in cands:
-        if c and os.path.exists(os.path.join(c, "libgraphwarrust.so")) \
-                and os.path.exists(os.path.join(c, "analysis", "xrefs.pkl")):
-            return c
-    raise SystemExit("找不到上游目录（libgraphwarrust.so + analysis/*.pkl）；用 GW2_UPSTREAM 指定")
+    for base in (os.path.join(REPO, ".reference"), REPO, os.path.dirname(REPO)):
+        cands += [os.path.join(base, "upstream"), os.path.join(base, "game"),
+                  os.path.join(base, "analysis-repo"), base]
+    sodir = next((c for c in cands if c and os.path.exists(os.path.join(c, "libgraphwarrust.so"))), None)
+    ana = next((os.path.join(c, "analysis") for c in cands
+                if c and os.path.exists(os.path.join(c, "analysis", "funcstarts_ghidra_va.pkl"))), None)
+    # elf.py 是上游 analysis 仓库里的模块，不一定与 .so / pkl 同处一个目录
+    elfdir = next((os.path.join(c, "analysis") for c in cands
+                   if c and os.path.exists(os.path.join(c, "analysis", "elf.py"))), ana)
+    if sodir is None or ana is None:
+        raise SystemExit("找不到上游目录（libgraphwarrust.so + analysis/funcstarts_ghidra_va.pkl）；"
+                         "用 GW2_UPSTREAM 指定")
+    return sodir, ana, elfdir
+
+
+def build_xrefs(E):
+    """`analysis/xrefs.pkl` 缺失时现场重建同一个倒排索引（`analysis/build_index.py` 的同款逻辑）。
+
+    pkl 不入库（上游 `.gitignore` 挡 `*.pkl`），所以"复跑命令"必须能在没有 pkl 的机器上跑。
+    """
+    import pickle
+    from capstone import Cs, CS_ARCH_X86, CS_MODE_64, CS_OPT_SYNTAX_INTEL
+    from capstone.x86 import X86_OP_MEM, X86_OP_IMM, X86_REG_RIP
+    t = E.sec('.text')
+    md = Cs(CS_ARCH_X86, CS_MODE_64)
+    md.detail = True
+    md.syntax = CS_OPT_SYNTAX_INTEL
+    x = {}
+    for ins in md.disasm(E.data[t['offset']:t['offset'] + t['size']], t['addr']):
+        for op in ins.operands:
+            if op.type == X86_OP_MEM and op.mem.base == X86_REG_RIP:
+                x.setdefault(ins.address + ins.size + op.mem.disp, []).append(
+                    (ins.address, 'rip', ins.mnemonic, ins.op_str))
+            elif op.type == X86_OP_IMM:
+                if op.imm > 0x1000:
+                    x.setdefault(op.imm & 0xffffffffffffffff, []).append(
+                        (ins.address, 'imm', ins.mnemonic, ins.op_str))
+    sys.stderr.write("# xrefs.pkl 缺失 ⇒ 现场重建：%d 个引用目标\n" % len(x))
+    return x
+
 
 
 def printable(b):
@@ -112,15 +165,17 @@ def printable(b):
 class Wire:
     def __init__(self):
         import pickle
-        up = find_upstream()
-        sys.path.insert(0, os.path.join(up, "analysis"))
+        sodir, ana, elfdir = find_upstream()
+        sys.path.insert(0, elfdir)                               # elf.py 可能不在 so 旁边
         from elf import Elf                                     # noqa: E402
         from capstone import Cs, CS_ARCH_X86, CS_MODE_64, CS_OPT_SYNTAX_INTEL  # noqa: E402
-        self.E = Elf(os.path.join(up, "libgraphwarrust.so"))
+        self.E = Elf(os.path.join(sodir, "libgraphwarrust.so"))
         self.data = self.E.data
-        self.xrefs = pickle.load(open(os.path.join(up, "analysis", "xrefs.pkl"), "rb"))
+        xrefs_pkl = os.path.join(ana, "xrefs.pkl")
+        self.xrefs = (pickle.load(open(xrefs_pkl, "rb")) if os.path.exists(xrefs_pkl)
+                      else build_xrefs(self.E))
         self.funcstarts = sorted(pickle.load(
-            open(os.path.join(up, "analysis", "funcstarts_ghidra_va.pkl"), "rb")))
+            open(os.path.join(ana, "funcstarts_ghidra_va.pkl"), "rb")))
         self.md = Cs(CS_ARCH_X86, CS_MODE_64)
         self.md.detail = True
         self.md.syntax = CS_OPT_SYNTAX_INTEL

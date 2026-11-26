@@ -10038,3 +10038,156 @@ python3 tools/coverage_matrix.py --check     # OK（改了 docs/02 必须跑）
    而是 `fixtures/protocol*.jsonl`（真实抓包，`docs/07` §3 说它们是抓包）+ 二进制里的 serde 串。
    （本轮实测：403 个 gzip 回放解压后逐行 JSON 解析，`RankInfo` 字段名集合 = 空 ⇒ 0 条。
    别把"回放里没有"读成"事件不存在"。）
+
+## 66. 协议「74/74 全字段」的 ① 号验证重做：`67/67` 其实是「67 条 N 串」被当成「67 个事件」，而「7 个空体」应为 **10**（2026-11-26，任务 T16 / `task-13`）
+
+**一句话**：`docs/07` §3.2 的结论（74 个事件 + 字段清单）**站得住**，而且现在有**两条互相独立的
+指令级证据**撑住 74/74；但那里的三个读数只有一个是原样的：`N` 串 **67 条是对的**、
+`67/67` 是**把"N 串条数"当成了"事件个数"**（事件分母 74，有字段的 64）、
+「另外 **7** 个事件空体」是**错的，应为 10**（§3.3 表自己写的就是 10）。
+**没有任何一个事件的字段数错。**
+
+### 66.1 冲突：任务书给的四个数，两个复现不出
+
+| 说法的出处 | 说法 | 本轮实测 | 判 |
+|---|---|---|---|
+| `docs/07` §3.2 ① | 字段数 == N 串的 N = **67/67** | **64/64 有字段事件**（74 事件里 10 个空体）；另 3 条 N 串属于非事件负载结构体 | 标签错 |
+| `docs/07` §3.2 | `N` 串只有 **67** 条 | **67 条**（重叠感知扫描）；且 67 条都落在 `.data.rel.ro` 的 `(ptr,len)` 槽里 | **对** |
+| `docs/07` §3.2 | 另外 **7** 个事件空体 | **10 个**（与 §3.3 表一致） | **错** |
+| 任务书（lead 实测） | `.so` 里 N 串只有 **47** 条、**19** 个有字段事件没有 N 串 | **复现不出**（见 66.4 的口径表） | 未复现 |
+
+### 66.2 方法（**预注册**在 `fixtures/protocol_recount_plan.txt`，commit 早于跑最终表）
+
+* **方法 A（新）**：`Deserialize` 侧 `Deserializer::deserialize_struct(self, name, fields, visitor)`
+  参数块里的 **`fields.len` 编译期立即数**。两种寄存器布局（由返回类型是否 sret 决定）：
+
+  ```text
+  布局 S（64 个有字段事件）             布局 Z（10 个空体事件）
+  lea  rdx,[rip+"<Name>Event"]          lea  rsi,[rip+"<Name>Event"]
+  lea  r8, [rip+FIELDS]   ; .data.rel.ro mov edx,<name_len>
+  mov  ecx,<name_len>                   mov ecx,8      ; 空切片悬垂 ptr = align_of::<&str>()
+  mov  r9d,<N>            ; ← N 立即数  mov rdi,<self>
+  mov  rsi,<deserializer>               xor r8d,r8d    ; ← N = 0
+  call <该结构体自己的 Deserialize 助手> call <…>
+  ```
+
+  自校验两条：`name` 的 `(ptr,len)` 必须**精确**读成 `<X>Event`；`FIELDS` 数组按
+  `R_X86_64_RELATIVE` **重定位后**读前 N 个 `&str`，必须与方法 B 的键序**逐项相同**。
+* **方法 B**：`Serialize` impl 里 `serialize_field` 的**调用次数**（判据原样沿用
+  `tools/wire_fields.py`：`str_writer=0x3bdf00`（多数票 79）、花括号深度区分事件名/字段名）。
+* **方法 C（只用来说明 N 串，不用于取 N）**：`.rodata` 里 `struct <Name> with N elements`。
+* **为什么不按任务书首选走 `serialize_struct` 的立即数**：`serde_json::Serializer::serialize_struct(self, name, len)`
+  **既不使用 `name` 也不使用 `len`**，内联后 LLVM 把它们**当死代码删掉**，只剩
+  `mov byte ptr […], 0x7b` 直接写 `{` ⇒ 在 74 个事件 serializer 里按该形状扫描 = **0 命中**。
+  这是**负结论**，专门做了正对照（66.3 ③）。N 立即数在**反序列化侧**才活下来。
+
+### 66.3 正对照（证明扫描器/RLE 判据有效，不是"扫不到"）
+
+以下 6 条由 `tools/protocol_recount.py --controls` **程序化打印**（不是我手抄的读数）。
+
+1. **已知锚点**：`GraphwarColor` 的 N 串 = **3**、`GameInfo` = **9**，与 `docs/07` §3.4 的
+   字段清单（`r/g/b` 三个、`GameInfo` 九个）逐个吻合。
+2. **地址复现**：方法 B 独立抽出的 `LockInfo` / `LockRequest` 的 `Serialize` =
+   **`0x50ca30` / `0x50e420`**，与 §3.4 早就登记的地址**逐字相同**；`LockInfo` 的字段 = `lock`
+   （4 字节字面量在 `0x1ba58c`），与 §3.4 那条就地更正一致。
+3. **"serialize_struct 立即数不存在"这条负结论的正对照**：同一个函数 `0x50ca30` 里
+   `lea rdx,[rip+0x19f928]`("LockInfo") + `mov ecx,8` + `call 0x3bdf00` 是**在的**
+   （`serialize_newtype_variant` 真的用这个变体名）⇒ 扫描器并不瞎，LLVM 只删了**没被用**的
+   `(name,len)`。另外同一条"lea+立即数+call"的匹配器在**反序列化侧**命中 **74** 处（方法 A）。
+4. **两条独立传输**：方法 A 的 N 来自**代码段立即数**，方法 A 的字段名来自
+   **`.data.rel.ro` 里重定位后的数据**，方法 B 的字段名/次数来自**另一段代码的调用点**；
+   三者 74/74 键序相同、64/64 计数相同 ⇒ 不是自洽，是三份不同来源的物证。
+5. **空体事件真的写 `{}`**：`TickRequest` 的 `Serialize`=`0x511fb0` 里只有
+   `mov byte ptr […], 0x7b` ×2（外层对象 + 内层体）与 `0x7d` ×2，**没有任何 `serialize_field`**
+   ⇒ 线上是 `{"TickRequest":{}}`，不是 unit variant（那会是裸字符串 `"TickRequest"`）。
+
+### 66.4 逐行对不齐的行（`fixtures/protocol_field_recount.tsv`，74 行 + 表头）
+
+* **全四列（A / B / `WIRE_SPEC` / §3.3）一致的：74 / 74 行。「对不齐」的行：0 行。**
+* 分项：`A==B` 74/74；`A==WIRE_SPEC` 74/74；`A==§3.3` 74/74；`A键序==B键序` 74/74；
+  `N串==A` **适用 64 / 相等 64**（10 个空体事件没有 N 串，该列记 `-`）。
+* 权威字段数合计：**74 个事件、114 个字段**；分布
+  「0 字段 10 个 / 1 字段 27 / 2 字段 29 / 3 字段 4 / 4 字段 3 / 5 字段 1」。
+  布局：S=64、Z=10。
+* **47 / 19 复现不出的口径表**（我试过的全列在这里，方便下一轮别再踩）：
+
+  | 扫法 | 读数 |
+  |---|---|
+  | `strings(1)` 行扫描（≥4 可打印、整行必须恰好是这句话） | **0** |
+  | `strings` 行里以 `struct ` 开头 / 含 ` with `+` element` | 5 / 4 |
+  | 朴素非重叠 `re.finditer('struct … with N element')`（`elements?` 会吃掉下一句的首字母 `s`） | **57** |
+  | 重叠感知扫描（逐字节找 `struct `，在该偏移 `match`，起点前进 1） | **67** |
+  | `.data.rel.ro` 的 `(ptr,len)` 槽里 `^struct … with N elements?$` 精确匹配（上一轮工具口径） | **67**（`64 *Event` + `GameInfo`/`GraphwarColor`/`EventInfo`） |
+
+  ⇒ **47 我没能用任何口径复现出来**；能复现的是 0 / 57 / 67。**67 是权威值**，
+  但它的**构成**是 64+3，不是"67 个事件"。
+
+### 66.5 为什么 10 个事件没有 N 串（不是缺数据）
+
+`.rodata` 里 **77** 个结构体（74 事件 + `GameInfo`/`GraphwarColor`/`EventInfo`）**各有一条**
+短形式 `expecting` 文案 `struct <Name>`，每条只被一处瘦函数引用
+（`mov rdi,rsi` + `lea rsi,[rip+…]` + `mov edx,<len>` + `jmp <GOT 槽>`，例如 `Tick` → `0x5067a0`）；
+其中**恰好 67 个**（= 全部**有字段**的）**另有**一条 `struct <Name> with N elements`。
+⇒ **"有字段" ⟺ "有 N 串"，在 77 个结构体上 100% 同现**；10 个 0 字段事件只拿到短形式。
+**机制是推断**（未证实）：serde_derive **1.0.204**（二进制里带 `serde-1.0.204` /
+`serde_json-1.0.121` 字面量）把 `with N elements` 后缀只在 `deserialize_seq` /
+`deserialize_seq_in_place` 里拼，0 字段结构体的 seq 分支不产出该后缀。
+**缺的证据**：没有把 0 字段结构体的宏展开拿出来对（不影响字段数结论，字段数由 A/B 直接给）。
+
+### 66.6 结论
+
+1. **74/74 站得住**：74 个事件的字段个数与 `WIRE_SPEC`、`docs/07` §3.3 **逐行相等**，
+   而且 A（反序列化侧立即数）与 B（序列化侧调用计数）**两个方向独立同值**。
+2. **权威字段数**：64 个有字段事件共 **114** 个字段（1 字段 27 个 / 2 字段 29 / 3 字段 4 /
+   4 字段 3 / 5 字段 1 ⇒ 27+58+12+12+5 = 114），10 个空体事件 0 字段；全表 **114** 个字段槽。
+3. **没有任何事件"真的错了"**：§3.3 全表 74 行**一个字没改**（本轮逐行对过）。
+4. 该改的只有 `docs/07` §3.2/§3.5 的**三项标签**：`67/67` → `64/64 有字段事件`；
+   「7 个空体」→ 「10 个」；补「`Serialize` 侧 N 被 DCE」「N 串三种扫法 = 0 / 57 / 67」。
+   `N` 串 **67 条**这个数**保留**（并补上 67 = 64 + 3 的构成）。
+5. 证据档：A 的 N/键名 = **逐位**（指令 + `.data.rel.ro` 重定位数据）；B = **逐位**（调用点计数，亦可视作观测）；
+   C = **逐位**（`.rodata` 字节 + 重定位）；"0 字段走短形式"的**机制** = **推断**。
+
+### 66.7 复跑
+
+```bash
+cd /home/CG/Myprojects/graphwar2-rebuild     # 或任一 checkout（.reference/ 要在本机）
+PY=$PWD/.reference/venv/bin/python
+
+$PY tools/protocol_recount.py --check-shape        # ① 负结论：Serialize 侧 serialize_struct 立即数 = 0 命中
+$PY tools/protocol_recount.py                      # ② 74 行 A/B/WIRE_SPEC/§3.3 逐列比 + 统计（~3 s）
+$PY tools/protocol_recount.py --tsv fixtures/protocol_field_recount.tsv   # ③ 重生成 74 行真值表
+$PY tools/protocol_recount.py --controls           # ④ 本节 66.3 的 6 条正对照逐条打印
+$PY tools/protocol_recount.py --json | head -40    # ⑤ 机器读（含 str_writer 票数与 N 串三口径）
+$PY tools/wire_fields.py --verify                  # ⑥ 上一轮工具（已修）：表 + 三道自校验，N 自校验失败 0 条
+```
+
+`tools/protocol_recount.py` 自带 rip 相对引用索引，**不需要** `analysis/xrefs.pkl`
+（该 pkl 不入库、本机也没有）；`tools/wire_fields.py` 本轮修好了同一件事（缺 pkl 时现场重建，
+有 pkl 时行为不变），改动写在它的模块 docstring 里。
+
+### 66.8 遗留 / 未做
+
+* **② 号验证（`Deserialize` 的 `visit_map` 键名比较）没有逐字段复测**：只重跑了上一轮工具的
+  同一项自检（`反序列化侧未比出的键 = 0 条`），**不是独立复核**。要独立做，得改成"从字节比较的
+  常量窗口反推键名"再与 A/B 的键序对齐。
+* **③ 号验证（真实抓包键序）本轮没复测**（不碰抓包语料）。
+* **0 字段结构体走短形式的机制是推断**（缺宏展开对照），但不影响任何字段数结论。
+* **没碰 `src/`（尤其 `WIRE_SPEC` 一个字节没改）、`tests/`、`client/`**；§3.3 表零改动（已用
+  `git show master:docs/07-protocol.md` 逐字节比对验证）。
+* `analysis/xrefs.pkl` 依然没生成（本机上游目录里只有 `funcstarts_ghidra_va.pkl`）。
+  两个工具现在都能不依赖它跑，但会各花 ~3 s 现场反汇编；要提速可在上游跑
+  `analysis/build_index.py`（产物不入库）。
+
+### 66.9 我写错了 / 任务前提被证伪（照实记）
+
+1. **任务书前提「三个数都复现不出」只成立 1/3**：`67`（N 串条数）**是对的**；`7` 错；
+   `67/67` 是**标签错**（不是数字错）。任务书要我"把验证数字算准"，算准的结果是**只改标签 + 改 7→10**。
+2. **任务书前提「19 个有字段事件完全没有这条串」不成立**：**64 个有字段事件全部都有 N 串**，
+   而且都能精确读到 N（`fixtures/protocol_field_recount.tsv`）。那 19（我这边是 20）来自
+   **扫法的假象**：字面量紧邻拼接 + 非重叠正则吃掉下一个字的 `s`（66.4 口径表）。
+3. **任务书首选的方法 A（`serialize_struct` 的立即数）在本 `.so` 上不存在**（66.2 末段、66.3 ③）。
+   我用的是它在反序列化侧的镜像（`deserialize_struct` 的 `fields.len`），**这在跑最终表之前
+   就写进预注册了**，不是事后换口径。
+4. **`_struct_counts`（上一轮工具的 N 串口径）本身没错**，它读的是 `.data.rel.ro` 的 `(ptr,len)` 槽，
+   读数就是 67；只是它**看不见** `.rodata` 里被 `strings` 行扫描/非重叠正则漏掉的东西，
+   而这两条正是得出 57 / 0 / 47 的路径。**没有为了对上 67 改任何口径。**
