@@ -9590,3 +9590,265 @@ $PY tools/bitexact_report.py --work .bitexact_work --write
    要把这 199 个也点出名字，得另做一版 `class_probe`（本轮没做）。
 8. **没碰**：`src/**`（红线段，一处没改）、`client/**`、`tools/posy_unicorn.py`、
    护栏/快照、`docs/00-status.md`、`docs/HANDOVER.md`、`docs/coverage-matrix.*`。
+
+## 69. 视觉真值铺满**剩余 13 屏**：LAN 大厅两页 / 玩家三页 / 对局设置 / 加 Bot / 连接三弹窗 / 聊天 / 退出确认 / 关卡弹窗 —— **1 屏逐像素过、12 屏不过，而四个小弹窗本身几乎逐像素相同**（2026-11-26，任务 T20）
+
+> 前情：§53–§60 覆盖 主菜单 / 回放流四屏 / 战役选择 / 关卡弹窗 / 对局屏 S7+S8。
+> 本轮把剩下的 13 屏一次补齐。**只测量 + 归因**：`client/**`、`src/**`、`tests/**` 一行没改
+> （`git diff --name-only master..HEAD` 只有 `tools/frame_capture.py` + `fixtures/*` + 本文 + `docs/16` §68）。
+
+### 69.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 13 屏都拍到了吗 | **全拍到了**（两侧各 6 条新 flow、同一串点击、同一套固定条件）| **观测**（真帧） |
+| ② | 几屏"过" | **1 / 13**：`join_level_popup` 逐像素 **0**（它就是 §57 的 `level_popup`，同一个 `.tscn`）| 观测 |
+| ③ | 差异最大的三屏 | `game_setup` **7.1054 %**、`chat_popup` **6.9948 %**、`confirm_exit` **5.1297 %** | 观测 |
+| ④ | 差异最小的三屏 | `player_skins` **0.0850 %**、`player_faces`/`player_hats` 各 **0.1378 %**（三屏的差异**全部**落在 NAME 那一处字形 + 卡片边缘灰阶）| 观测 |
+| ⑤ | **最重要的发现** | 四个小弹窗**本身几乎逐像素相同**：`add_bot` 面板 **1 px**、`connecting`/`disconnected` 面板四角 **38 px**（max\|Δ\| ≤ 15）、`join_ip` 面板 179 px、`confirm_exit` 面板 1725 px（占该屏差异的 1.5 %）、`chat_popup` 聊天条带 **136 px**。⇒ 这 5 屏的百分比**几乎全是"底图残差"**，下一轮该改的是 LAN 大厅 / GameSetup / 对局屏，**不是弹窗** | 观测 |
+| ⑥ | "多数 < 0.5 %" 成立吗 | **不成立**（对这批屏）：13 屏里 < 0.5 % 的只有 **4 屏**（30.8 %），而且其中 3 屏 L3 还是不过（`max\|Δ\|=241`）。详见 §69.5 | 观测 |
+| ⑦ | 有两屏拍不到吗 | **没有**。没有需要联网/账号才出的屏；但有 3 个采集期的坑与 1 处"我方浮层盖住开关"的卡点，见 §69.6 | 观测 |
+
+### 69.1 预注册（先提交，后采集）
+
+* `fixtures/frame_rest_targets.txt`（提交 `b7ca2b0`）：13 屏清单 + 每屏**进入路径与坐标来源** + 每屏**先写死的期望（过/不过）**；
+* 判据**只引用**既有预注册门槛 `fixtures/frame_diff_thresholds.txt`（sha256 `9cc9fcda…`）§3 的 L1/L2/L3，
+  **一个数没改**（`tools/frame_diff.py` 自己核对 sha256，TSV 头两行记着它）；
+* 采集脚本 `tools/frame_capture.py` **只加新 flow**：新增 `lobby` / `player` / `setup` / `connect` / `matchpop` / `level`
+  六条分支 + 一个"只 accept 不发字节"的静默 TCP 监听子进程 + 一处端口等待/重试。
+  既有 `campaign` / `replay` / `static` / `match` 四支的**步骤定义一行未改**（`git diff` 里对既有代码只有 3 处
+  等价替换：`--flow` 的 `choices` 列表、`if args.flow == 'match'` → `needs_server = args.flow in (...)`、
+  步骤分发里新增 `type` / `key` 两个 `elif` 分支）。
+
+### 69.2 六条新 flow 与三条"环境钉死"
+
+| flow | 屏（写进 `manifest.json` 的屏名） | 除游戏外还要什么 |
+|---|---|---|
+| `lobby` | `lan_lobby_local` / `lan_lobby_global` | UDP 房间广播（§69.2 ②） |
+| `player` | `player_skins` / `player_faces` / `player_hats` | 无 |
+| `setup` | `game_setup` / `add_bot` | UDP 房间广播 |
+| `connect` | `join_ip` / `connecting` / `disconnected` | UDP 房间广播 + 静默 TCP 监听（§69.2 ③） |
+| `matchpop` | `confirm_exit` / `chat_popup` | 脚本化对局服务器（§69.2 ①，**不触发 phase2**） |
+| `level` | `join_level_popup` | 无 |
+
+**三条"环境钉死"**（都只把**服务端数据/等待**钉死，不改被测代码）：
+
+1. **对局服务器**：`tools/match_serve.py` + `fixtures/frame_match_events.txt`（**只读、不改**，与 `--flow match` 同一份剧本）。
+   `matchpop` 这一支**不 touch 触发文件** ⇒ 一直停在 S7 准备态（弹窗期间底图不会突然开火）。
+2. **UDP 房间广播**：LAN 大厅的"房间行"是**服务端数据**；不加广播时**原版自己也会广播自己的房间**，
+   于是"有几行"会抖（本轮探路实测：不加广播时 5 次里 3 次有 1 行、2 次 0 行；加了广播后 6 次里 2 次出现
+   **原版 2 行 / 我方 1 行**）。⇒ 房间行数用"两侧都吃到同一条广播"钉死，**采集后逐帧核对行数**（`§69.6` 坑 1）。
+3. **静默 TCP 监听**：`127.0.0.1:46799` 只 `accept()` 不发字节 ⇒ `ConnectingPopUp` 停在屏幕上（否则 1 s 内就变断线）；
+   `127.0.0.1:1` 没人听 ⇒ 立刻被拒 ⇒ `DisconnectedPopUp`。两侧同一份。
+
+固定条件与 §53 完全一致：私有 Xvfb `1920x1160x24` TCP（本轮原版 `:101` / 我方 `:102`）、两路 `--rendering-driver opengl3`
++ mesa llvmpipe、`--resolution 1920x1160 --position 0,0`、`import -window <id>`、每屏 3 帧 / 帧间隔 1.2 s、`HOME` 两侧都是新建空目录。
+
+### 69.3 逐屏数字（入库 [`fixtures/frame_diff_results_rest.tsv`](../fixtures/frame_diff_results_rest.tsv) / [`frame_diff_blocks_rest.tsv`](../fixtures/frame_diff_blocks_rest.tsv)）
+
+| 屏 | 判定 | L1 \|Δmean\|max | L1 第一主色 | L2 超限块 | L2 最差块 \|Δmean\| | 差异像素 | 差异比例 | max\|Δ\| | 噪声地板（原版／我方） |
+|---|---|---|---|---|---|---|---|---|---|
+| `lan_lobby_local` | **不过（L3）** | **0.000** ✓ | `#0E251C` / 同 ✓ | 0 | 1.613 `(0,4)` | 33 213 | **1.4912 %** | 255 | 0.000 % / 0.000 % |
+| `lan_lobby_global` | **不过（L3）** | 0.016 ✓ | `#0E251C` ✓ | 0 | 1.438 `(0,4)` | 75 544 | **3.3492 %** | 255 | 0.000 % / 0.000 % |
+| `player_skins` | **不过（L3）** | 0.023 ✓ | `#0E251C` ✓ | 0 | 0.781 `(0,4)` | 1 894 | **0.0850 %** | **241** | 0.000 % / 0.000 % |
+| `player_faces` | **不过（L3）** | 0.008 ✓ | `#0E251C` ✓ | 0 | 0.781 `(0,4)` | 3 070 | **0.1378 %** | 241 | 0.000 % / 0.000 % |
+| `player_hats` | **不过（L3）** | 0.008 ✓ | `#0E251C` ✓ | 0 | 0.781 `(0,4)` | 3 070 | **0.1378 %** | 241 | 0.000 % / 0.000 % |
+| `game_setup` | **不过（L2，4 块）** | 0.789 ✓ | `#0E251C` ✓（占比差 1.81 pp） | **4** | **5.471** `(3,2)` | 158 251 | **7.1054 %** | 255 | 0.000 % / 0.000 % |
+| `add_bot` | **不过（L2，4 块）** | 0.319 ✓ | `#1A3B2D` ✓ | **4** | 4.490 `(3,2)` | 90 802 | **4.0770 %** | 255 | 0.000 % / 0.000 % |
+| `join_ip` | **不过（L2，1 块）** | 0.226 ✓ | `#0E251C` ✓ | **1** | 3.720 `(3,3)` | 40 817 | **1.8327 %** | 255 | 0.000 % / 0.000 % |
+| `connecting` | **不过（L3）** | **0.000** ✓ | `#0E251C` ✓ | 0 | 1.613 `(0,4)` | 33 329 | **1.4965 %** | 255 | 0.000 % / **0.7131 %** |
+| `disconnected` | **不过（L3）** | **0.000** ✓ | `#0E251C` ✓ | 0 | 1.613 `(0,4)` | 33 329 | **1.4965 %** | 255 | 0.000 % / 0.000 % |
+| `confirm_exit` | **不过（L2，4 块）** | 0.242 ✓ | `#0E251C` ✓ | **4** | **5.710** `(0,5)` | 114 249 | **5.1297 %** | 255 | 0.050 % / 0.000 % |
+| `chat_popup` | **不过（L2，4 块）** | 0.671 ✓ | `#5F5F5F` / 同 ✓ | **4** | **10.890** `(1,1)` | 155 789 | **6.9948 %** | 255 | 0.051 % / 0.000 % |
+| `join_level_popup` | **过** | **0.000** ✓ | `#1A3B2D` ✓ | 0 | **0.000** | **0** | **0** | **0** | 0.000 % / 0.000 % |
+
+**L1 13/13 全过**（尺寸、全局均值、第一主色全对）；不过的 12 屏分两类：**L2 有块超限 5 屏**、**L1/L2 都过但 L3 不过 7 屏**。
+超限块逐个（6×4 网格，块 = 320×290 px，`(row,col)` 左上为 `0,0`）：
+
+| 屏 | 超限块 → \|Δmean\|max | 块在画面上是什么 |
+|---|---|---|
+| `game_setup` | `(0,1)` 4.009 / `(3,0)` 5.433 / `(3,2)` 5.471 / `(3,3)` 4.829 | 标题带 / 底部设置排（左右两半）+ `Start` |
+| `add_bot` | `(3,0)` 3.843 / `(3,1)` 3.055 / `(3,2)` 4.490 / `(3,3)` 3.925 | 同上（**弹窗自己在 (1,x) 一带，差异 0**）|
+| `join_ip` | `(3,3)` 3.720 | 右下 = LAN 大厅底排 ` Join IP ` 按钮（hover 态）|
+| `confirm_exit` | `(0,0)` 2.875 / `(0,5)` 5.710 / `(2,2)` 3.931 / `(3,5)` 2.724 | 与 §60.4 `match_ready` **同一组同一数**（(0,5) `Fire!` 5.71 一位不差）|
+| `chat_popup` | `(0,0)` 2.457 / `(0,1)` 7.547 / `(0,5)` 5.681 / `(1,1)` 10.890 | §60.5 那组 + 我方多出的白色叠字 |
+
+### 69.4 逐屏归因（这就是下一轮派活的输入）
+
+**先看这一张总表**（"弹窗自己"= 该元素的 ROI 内差异；"底图"= 其余）：
+
+| 屏 | 差异像素 | 其中"**弹窗/浮层自己**" | 其中"**底图**" | 归因三选一 |
+|---|---|---|---|---|
+| `add_bot` | 90 802 | **1 px**（面板 243,103–1662,1046，max\|Δ\|=12；六个 bot 格 0 px；`Cancel` 0 px）| 90 801 | **底图**（GameSetup）|
+| `connecting` | 33 329 | **58 px**（面板四角 38 px max\|Δ\|=9 + 返回键四角 20 px max\|Δ\|≤3）| 33 213（= `lan_lobby_local` 的差异，一位不差）| **底图**（LAN 大厅表区）|
+| `disconnected` | 33 329 | **58 px**（面板四角 38 px max\|Δ\|=15 + 返回键四角 20 px）| 33 213 | **底图**（同上）|
+| `join_ip` | 40 817 | **179 px**（面板）+ 底部 ` Join IP ` 按钮 5 075 px（hover 态）| 35 563 | **底图 + 按钮状态色** |
+| `confirm_exit` | 114 249 | **1 725 px**（面板 482,386–1437,768）＝整屏差异的 **1.5 %** | 112 524 | **底图**（对局屏，见 §60.5）|
+| `chat_popup` | 155 789 | **136 px**（聊天第二条带 0,96–1919,158）| 155 653 | **底图 + 我方多画的白色叠字** |
+
+**逐屏细节**（坐标一律 1920×1160；量法：差异掩膜按 y 切条带 + 列带，再用 ROI 逐个框；脚本在 `.agent-work/`，不入库）：
+
+1. **`lan_lobby_local`（1.4912 %）—— 版式（不是缺元素）**
+   差异**全部**落在 y 115..243 这一条带（表头 + 房间行）。逐列量（本轮实测）：
+
+   | 元素 | 原版 x 区间 | 我方 x 区间 | Δ |
+   |---|---|---|---|
+   | 左上返回键 / `Local` / `Global` 页签 | 41..104 / 516..664 / 1386..1566 | **完全相同** | **0** |
+   | 表头 `Room Name` | 268..533 | 285..550 | **+17 px** |
+   | 表头 `Players` | 807..969 | 842..1004 | **+35 px** |
+   | 表头 `Game Mode` | 1243..1507 | 1297..1560 | **+53 px** |
+   | 行内房间名 | 232..590 | 240..598 | +8 px |
+   | 行内 `Players` 的 `1` | 877..893 | 877..893 | **0** |
+   | 行内四个模式图标 | 1118..1184 / 1260..1317 / 1404..1451 / 1537..1595 | 1107..1173 / 1252..1309 / 1399..1446 / 1533..1591 | **−4…−11 px** |
+   | 行内 `Join` | 1801..1893 | 1801..1893 | **0** |
+
+   ⇒ **三列表头整体右移且与行内列不对齐**（`Players` 列/`Join` 列本身是对齐的）。不是缺元素、不是字色。
+2. **`lan_lobby_global`（3.3492 %）—— 数据 + 版式**
+   差异带 y 115..474（表头 + 四行）。四行内容（真帧）：原版 `US Room 1 / US Room 2 / EU Room 2 / EU Room 1`
+   vs 我方 `US Room 3 / EU Room 1 / EU Room 2 / US Room 2`
+   ⇒ **一条名字错**（原版没有 `US Room 3`）+ **行序不同**（`client/src/screens/lan_lobby.gd::GLOBAL_ROOMS` 是硬编码占位）。
+   这四行是**服务端数据**（原版离线时也画这四行固定的），本质上不可能归零；能归零的是上面 §1 的版式与这一条名字/顺序。
+3. **`player_skins`（0.0850 %）—— 只有一处：字串**
+   差异 = y 130..169 × x 1254..1350 一处，就是 **NAME 输入框里的字**：原版 `cg`（= OS 登录名），
+   我方 `user`（`client/src/app/store.gd:72` 硬编码）。`max|Δ|=241` 全部来自这一处字形。
+   其余整页（15 张白卡、30 个图标、滚动条、三个页签）**逐像素相同**。
+4. **`player_faces` / `player_hats`（各 0.1378 %）—— 字串 + 卡片边缘灰阶**
+   同样那处 NAME 字（1894 px）+ 四条**行缝**上的卡片边缘差：y 215..225 / 507..532 / 814..839 / 1121..1146，
+   x 17..27 / 309..334 / 616..641 / 923..933，每条 168–336 px、`max|Δ|=61`。
+   实测 (20,510)：原版 `RGB(55,55,55)` vs 我方 `RGB(31,31,31)` ⇒ **卡片边框/投影的灰阶**；
+   格子位置、图标、滚动条位置都逐像素对齐（不是版式错位）。
+5. **`game_setup`（7.1054 %）—— 缺元素 2 处 + 版式 2 处**（三段 y 条带）
+   * y 21..78（标题 `GRAPHWAR GAME`）：12 794 px、`max|Δ|=**32**` ⇒ 只是字形抗锯齿，非版式；
+   * y 180..246（玩家行）：23 746 px ⇒ 原版 `X 0 CG [+] 🍈🍈 [−] [→]`，我方 `X user [小+] 🍈 [小−] [小→]`：
+     **缺** rank 数字 `0`、**少**一个 melon（原版 2 → 我方 1）、`+`/`−`/`→` 三颗键**没有底板**（原版是 3 px 黑边的大键）；
+   * y 918..1152（底部设置排 + `Start` + 左下角地址）：121 711 px ⇒ ① 左下角**原版有本机地址** `192.168.31.224:41329`，
+     我方**一个字都没有**（缺元素）；② 整排设置键与 `Start` **纵向不对齐**（我方偏低，`Start` 被压到屏幕底边 1105 起）；
+     ③ 我方 `Start` 是 **disabled 外观**（灰字+深灰底），原版是**正常态**大按钮 —— 原版无 Bot 时 `Start` 可点但静默无操作
+     （`docs/22` §5.1），我方把 `can_start()` 直接做成了按钮 `disabled`。
+6. **`add_bot`（4.0770 %）—— 底图，弹窗本身 1 px**
+   面板 ROI `(243,103)-(1662,1046)` 内差异 **1 px**（`max|Δ|=12`）；六个 bot 格 `(512,190)-(1410,820)` **0 px**；
+   `Cancel` `(870,975)-(1051,1038)` **0 px**。⇒ 4.077 % **全是** `game_setup` 的残差（见 §5）。**这一屏不该派给"弹窗"**。
+7. **`join_ip`（1.8327 %）—— 底图 + 输入框圆角 + 按钮 hover 态**
+   面板 `(243,386)-(1668,768)` 内 179 px（其中输入框四角各约 10 px、`max|Δ|=255`）；
+   底部 ` Join IP ` 按钮 `(1000,1063)-(1383,1152)` 5 075 px（`max|Δ|=204`）—— 点击后鼠标停在这颗键上，
+   **两侧的 hover/焦点态不一样**；其余 35 563 px = LAN 大厅表区（同 §1）。
+8. **`connecting` / `disconnected`（各 1.4965 %）—— 弹窗本身几乎逐像素相同**
+   面板四角各 38 px（`max|Δ|` 分别 **9** / **15**，是圆角抗锯齿）+ 左上返回键四角 20 px（`max|Δ|` ≤3）；
+   剩下 33 213 px **一位不差地等于** `lan_lobby_local` 的差异 ⇒ 全是底图。
+   ⚠️ 我方 `ConnectingPopUp` **第 2/3 帧已经自己切到了 `DisconnectedPopUp`**（我方噪声地板 0.7131 %）：
+   我方握手超时约 2 s，原版不超时（>10 s 仍停在 Connecting）——**这是实现差异，不是采集问题**。
+9. **`confirm_exit`（5.1297 %）—— 底图（对局屏），弹窗只占 1.5 %**
+   面板 `(482,386)-(1437,768)` 内 1 725 px；四个超限块 `(0,0)/(0,5)/(2,2)/(3,5)` 与 §60.4 的 `match_ready`
+   **同一组、同一个数**（`(0,5)` = `Fire!` **5.71 一位不差**）⇒ 归因直接看 §60.5（`Fire!` 字号、`- 9.890` 缺失、
+   棋盘格线错 1 px、射手/靶子是圆点/士兵、`f(x)` 里多一根光标）。
+10. **`chat_popup`（6.9948 %）—— 底图 + 我方多画的白色叠字**
+    聊天浮层第二条带 `(0,96)-(1919,158)` 内只有 **136 px**（几乎逐像素相同）；
+    多出来的是：**我方在棋盘左上角叠着两串白色文字**（`Player …` 与 `… = 1` 叠在同一处；
+    实测 ROI `(305,245)-(611,339)` 白像素 **11 063**，原版同一 ROI **0**）。
+    这正是 §60.5 已登记的"实体默认坐标 (0,0) + 名字标签"问题在这里被放大：聊天浮层把底图压暗，
+    而白标签画在压暗层**之上**，于是它在灰度底上一眼就能看见。
+11. **`join_level_popup`（0 px）—— 逐像素相同**（与 §57 的 `level_popup` 同一 `.tscn`、同一串点击；本轮重采仍是 0）。
+
+### 69.5 "多数 < 0.5 %" 这条旧账（`docs/00-status.md` §4 那句）
+
+`docs/00` §4 表里写着"逐屏残差多数 < 0.5 %，`EndGamePopUp` 仍 ~9.8 %"。本轮**不改** `docs/00`（按任务约定由 lead 改），
+只用这批实测回答两件事：
+
+| 问 | 答 |
+|---|---|
+| 这 13 屏里差异比例 < 0.5 % 的有几屏 | **4 / 13**（`player_skins` 0.0850 %、`player_faces` 0.1378 %、`player_hats` 0.1378 %、`join_level_popup` 0）⇒ **"多数" 不成立** |
+| 这 4 屏里有几屏真的"过" | **1 / 4**。另外 3 屏 L3 不过：差异比例只有 0.085 %，但 `max\|Δ\|=241`（NAME 那一处字形）——**比例小 ≠ 一样** |
+
+结论分两句（不许混）：① 就**这批 13 屏**而言，"多数 < 0.5 %"**不成立**（30.8 %）；
+② 这句话写作时的分母（当时只有主菜单 / 回放四屏 / 战役选择 / 关卡弹窗）**不在本轮实测范围内**，本轮**没有**推翻它，
+只证明它**不能外推到**大厅 / 设置 / 弹窗这批屏。
+另外：12 屏"不过"里有 **5 屏的百分比几乎全是底图残差**（四个小弹窗 + `join_ip`），也就是说"看起来 4 %–7 % 很差"
+并不等于"这一屏的元素画错了"——**这个区分比百分比本身重要**。
+
+### 69.6 拍不到的屏 / 卡点（诚实清单）
+
+**13 屏全部拍到**，没有需要联网 / 账号 / 真机才出的屏。但采集期有 4 个坑，复跑一定再遇到，全写在这里：
+
+1. **原版 LAN 大厅会把自己的房间也广播出去** ⇒ 有时原版 **2 行**、我方 **1 行**（本轮实测：加广播后 6 次采集里 2 次）。
+   这是**环境噪声**（原版自播房间），不是被测代码 ⇒ 本轮 `lobby` / `connect` 各重采一次，取"两侧都 1 行"的那次
+   （重采命令相同，只多一步"数行数"的核对；判据与期望值没动）。
+2. **Global 页切过去之后四行要 >1.5 s 才画全**：第 1 帧与第 2/3 帧差 **39 681 px**，第 2/3 帧互相**逐字节相同**
+   ⇒ 预注册写的 settle 1.5 s 拍到的是"还没画完"的帧，改成 **3.0 s** 重采（判据没动）。
+3. **连续跑两条都要起 `tools/match_serve.py` 的 flow 会撞 `OSError: [Errno 98] Address already in use`**
+   （上一条的监听端口还没放干净）⇒ 已在采集脚本里加"先等端口空 + 起不来就重试 3 次 + 失败就当场收掉子进程"。
+4. **我方 `ChatPopUp` 是整屏浮层、盖住了顶栏那颗 `toggle_chat` 开关** ⇒ 预注册 §1.5 写的"先开聊天、再点左上返回"
+   那一串点击在**我方走不通**（同一串在原版能关聊天，在我方点不到那颗键）。改成"**先拍退出框 → 点 `No` 关掉 → 再开聊天**"，
+   判据与期望值一个没改；这一条**本身是发现**（我方浮层的范围/z 序与原版不同，`docs/16` §68 记了要改哪一行）。
+
+**拍不到 / 拍不干净的（不是卡点，是本质）**：
+* 服务端数据类元素（房间行的名字/人数/本机地址端口）**永远不可能归零**；
+* 我方 `ConnectingPopUp` 只能取**第 1 帧**（2 s 后自己切 Disconnected，属我方实现差异）。
+
+### 69.7 复跑（照抄即可；本轮实测：单侧 6 条 flow 约 3 分钟，两侧约 6 分钟）
+
+```bash
+WS=/home/CG/Myprojects/graphwar2-rebuild
+WT=$WS/.agent-work/cg/wt-t20
+export CARGO_HOME=$WS/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target
+export GODOT=$WS/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+# ① 我方内核库就位（三件缺一不可，见 AGENTS.md「改了没生效」三条）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+$GODOT --headless --path client --import
+# ② 两侧各 6 条 flow（对局服务器 / UDP 房间广播 / 静默监听都由采集脚本自己起，同一个进程树）
+W=$WT/.agent-work/v
+for f in lobby player setup connect matchpop level; do
+  python3 tools/frame_capture.py --side original --flow $f --out $W/$f-orig --display-num 101
+  sleep 2
+  python3 tools/frame_capture.py --side ours     --flow $f --out $W/$f-mine --display-num 102
+  sleep 2
+done
+# ③ 逐 flow 对拍（系统 python3 —— venv 里没有 numpy）
+python3 tools/frame_diff.py --orig $W/lobby-orig    --mine $W/lobby-mine    --screens lan_lobby_local,lan_lobby_global      --out $W/diff/f1.tsv --blocks-out $W/diff/b1.tsv
+python3 tools/frame_diff.py --orig $W/player-orig   --mine $W/player-mine   --screens player_skins,player_faces,player_hats   --out $W/diff/f2.tsv --blocks-out $W/diff/b2.tsv
+python3 tools/frame_diff.py --orig $W/setup-orig    --mine $W/setup-mine    --screens game_setup,add_bot                     --out $W/diff/f3.tsv --blocks-out $W/diff/b3.tsv
+python3 tools/frame_diff.py --orig $W/connect-orig  --mine $W/connect-mine  --screens join_ip,connecting,disconnected         --out $W/diff/f4.tsv --blocks-out $W/diff/b4.tsv
+python3 tools/frame_diff.py --orig $W/matchpop-orig --mine $W/matchpop-mine --screens confirm_exit,chat_popup                --out $W/diff/f5.tsv --blocks-out $W/diff/b5.tsv
+python3 tools/frame_diff.py --orig $W/level-orig    --mine $W/level-mine    --screens join_level_popup                       --out $W/diff/f6.tsv --blocks-out $W/diff/b6.tsv
+# ④ 合并进入库 TSV（保留一份注释头）
+python3 .agent-work/merge_rest_tsv.py fixtures/frame_diff_results_rest.tsv /dev/null \
+    $W/diff/f1.tsv $W/diff/f2.tsv $W/diff/f3.tsv $W/diff/f4.tsv $W/diff/f5.tsv $W/diff/f6.tsv
+```
+
+> `tools/frame_diff.py` 会自己核对门槛文件 sha256（`9cc9fcda…`），不符会在 TSV 里写 `门槛文件 sha256 与脚本内常数不符`。
+
+### 69.8 遗留 / 未做（**下一轮之前先读这一节**）
+
+1. **一处界面也没改**（任务约定"只测量"）：13 屏的差异**没有一条被修**，包括最便宜的
+   `GLOBAL_ROOMS` 一条名字 + 顺序、`Start` 的 `disabled`、`Player 1: user` 叠字、LAN 表头右移。
+2. **只测了一个局面**（`fixtures/frame_match_events.txt` 的 S7）⇒ `confirm_exit` / `chat_popup` 的底图残差只对这一个局面成立。
+3. **没测"换皮肤之后"** 的 Faces / Hats（本轮都是默认 `yellow`）。
+4. `lan_lobby_global` 那四行是**原版离线时的固定内容**；broker 真返回房间时的样子**未知**（本项目不发外网请求）。
+5. **两屏的百分比不能按字面读**：`add_bot` 4.077 % 里弹窗只占 1 px、`confirm_exit` 5.13 % 里面板只占 1.5 %。
+   下一轮若要"看到数字下降"，必须先改底图。
+6. 本轮**没有**把 `.agent-work/` 下的截图入库（按仓库规矩：截图不入库）；证据只以数字 + 坐标 + 复跑命令形式留在本文与两份 TSV 里。
+
+### 69.9 我写错了 / 任务前提被证伪
+
+| # | 前提 | 裁决 |
+|---|---|---|
+| ① | 规格 §2："这些屏**从没拍过**" | **对 `join_level_pop_up` 不成立**：它就是 `--flow static` 的 `level_popup`（同一个 `.tscn`），§57 已测到 **0 像素**；本轮重采仍是 0（13 屏里唯一"过"的那一屏）|
+| ② | 规格 §2 的文件行数 | 两个过期：`game_setup.gd` 现 **447** 行（规格写 436）、`join_level_pop_up.gd` 现 **338** 行（规格写 324）；其余 6 个对得上（412/472/161/140/138/121）|
+| ③ | `docs/archive/129` §6.2："GameSetup / 六个弹窗……原版要点到'建房 / 进关卡 / 联机'才出得来，**离线点什么都没反应**" | **被证伪**：本轮**完全没有网络对端**，`Create Game(765,1107)` 一发就进 GameSetup、`Join IP` 进 JoinIpPopUp、GameSetup 底排第五格进 AddBotPopUp，全部可用（真帧 + `manifest.json` 步进记录）。上一轮为什么"点不动"**未知**——**推断**：上一轮用的是 `x 581..1041`（= 我方旧按钮框），不是原版的 `535..995`；缺上一轮的点击日志，无法定案 |
+| ④ | 预注册的 settle 与点击次序 | 现场各改过一次（Global 1.5→3.0 s、"先聊天后退出"→"先退出后聊天"）。两次都是**采集机制**修正，**判据与"期望过/不过"一个没改**，改动点写在 §69.6 的坑 2 / 坑 4 |
+| ⑤ | 规格 §3 ⑤ 让我裁决 "多数 < 0.5 %" | 见 §69.5：**这批屏不成立**；但**不改 `docs/00`**（约定由 lead 改）|
+
+### 69.10 本轮门槛读数（自跑，不是抄文档）
+
+| 门 | 读数 | 与规格给的值 |
+|---|---|---|
+| `cargo test --offline` | **1769 passed / 0 failed / 1 ignored** | 一致 |
+| `cargo test --offline --features gdext-bindings` | **1875 passed / 0 failed / 1 ignored** | 一致 |
+| selftest（`HOME` 指可写目录） | **717 passed / 0 failed / 1 skipped**；`groups=33 checks=717 expected=717 missing=0(claimed 0 / degraded 0 / silent 0)` | 一致 |
+| headless 14 脚本 | **1933 passed / 0 failed**（`assemble 244 / base 117 / curve 96 / draw 235 / entity 366 / function 132 / gdext 24 / obstacle 116 / plane 96 / play_flow 206 / process 66 / recovered 57 / signal 155 / spike 23`）| 一致 |
+| 三轴 `fire` / `batch` / `batch_conv`（403 份冻结快照） | **本轮没跑**：本轮零改动 `src/**`，三轴分母是 `src/` 的实现，按定义不变；但按"不许把结论写成陈述句"，这一条记 **未复跑**（要跑跑 §C 的三条命令）| — |
+
+> 注：本文**没有**改 `src/**` / `client/**` / `tests/**`，所以上面两个 cargo 读数是"没被本轮碰过"的复核，
+> 不是本轮的成绩。

@@ -11184,3 +11184,85 @@ python3 tools/match_serve.py --fixture fixtures/frame_match_events.txt \
 4. **我方三帧同 sha256**（S7）：我方准备圈不随时间动 —— 这是"我方没接那条链"，不是采集问题。
 5. 本轮**没有**用 `--game-arg` 传地址（地址走 LAN 广播就够了；原版的 CLI 参数是死的，`docs/06` §48.1）。
 
+## 68. 剩余 13 屏第一次有像素真值：**四个小弹窗本身几乎逐像素相同**，残差全在 LAN 大厅 / GameSetup / 对局屏三块底图；附 6 条**客户端视角**的发现（2026-11-26，任务 T20）
+
+> 数字与逐屏归因在 `docs/06` **§69**（含入库 TSV `fixtures/frame_diff_results_rest.tsv` / `frame_diff_blocks_rest.tsv`）。
+> 本节只写**客户端侧**：这批差异分别落在哪个文件/哪个函数上，以及采集过程中发现的 6 条
+> "我方行为与原版不同"的观测。**本轮不改客户端一行**（任务约定），所以下面全是**待办**，不是已完成。
+
+### 68.0 一页结论
+
+| # | 结论 | 证据 |
+|---|---|---|
+| ① | 13 屏里只有 `join_level_popup` 逐像素过（0 px）；其余 12 屏不过，但 **L1 13/13 全过**（尺寸/全局均值/第一主色都对）| `docs/06` §69.3 |
+| ② | **弹窗不是问题**：`add_bot` 面板 1 px、`connecting`/`disconnected` 面板四角 38 px（`max\|Δ\|≤15`）、`join_ip` 面板 179 px、`confirm_exit` 面板 1 725 px、`chat_popup` 聊天条带 136 px | `docs/06` §69.4 |
+| ③ | 残差几乎全在**三块底图**：LAN 大厅表区（33 213 px，在两屏里一位不差地重复出现）、GameSetup（90 801 px）、对局屏（§60.5 已归因）| 同上 |
+| ④ | 最便宜、最该先改的 4 条：`GLOBAL_ROOMS` 一条名字 + 行序、`Start` 的 `disabled`、默认玩家名 `user`→OS 登录名、LAN 表头三列右移 | §68.1 |
+| ⑤ | 发现 6 条**行为**差异（不是版式）：聊天浮层盖住顶栏开关、默认名硬编码、`Start` 被 disabled、缺本机地址、Connecting 2 s 自超时、Global 占位行内容 | §68.2 |
+
+### 68.1 逐屏 → 落到哪个文件/函数（下一轮直接照这张表派活）
+
+| 屏 | 差异比例 | 归因 | 客户端侧落点（**待改，本轮没改**）|
+|---|---|---|---|
+| `lan_lobby_local` | 1.4912 % | 版式：表头三列右移 **+17 / +35 / +53 px**，行内模式图标 **−4…−11 px**（`Players` 列与 `Join` 列本身对齐）| `client/src/screens/lan_lobby.gd` 的**表头行**（`NameContainer/PlayersContainer/ModeContainer` 的 `size_flags_stretch_ratio` 与标签对齐）+ 行内 `ModeContainer` 的四个 `AspectRatioContainer` |
+| `lan_lobby_global` | 3.3492 % | 数据：四行内容/行序错（原版 `US Room 1 / US Room 2 / EU Room 2 / EU Room 1`；我方 `US Room 3 / EU Room 1 / EU Room 2 / US Room 2`）+ 上一条的版式 | `lan_lobby.gd::GLOBAL_ROOMS`（`client/src/screens/lan_lobby.gd:66`）—— **一条名字错（`US Room 3` 原版没有）+ 行序不同** |
+| `player_skins` | 0.0850 % | 字串：NAME 输入框 | `client/src/app/store.gd:72`（`"name": "user"` 硬编码）——原版取 **OS 登录名**（本机 `CG`）；整页其余**逐像素相同** |
+| `player_faces` | 0.1378 % | 同上 + 卡片边缘灰阶（`(20,510)` 原版 `(55,55,55)` vs 我方 `(31,31,31)`，`max\|Δ\|=61`）| 同上；边缘灰阶在 `client/src/ui/theme_factory.gd` 的 `shop_theme`（`Button/styles/normal` 的边框/阴影）|
+| `player_hats` | 0.1378 % | 同 `player_faces`（数值一模一样）| 同上 |
+| `game_setup` | **7.1054 %** | 缺元素 2 处 + 版式 2 处（详见下行）| `client/src/screens/game_setup.gd` |
+| —— 玩家行 | 23 746 px | 原版 `X 0 CG [+] 🍈🍈 [−] [→]`；我方 `X user [小+] 🍈 [小−] [小→]` | 缺 **rank 数字**、**少一个 melon**、`+`/`−`/`→` 三键**没有底板**（`_player_row()` 一带）|
+| —— 底部排 + Start + 地址 | 121 711 px | ① 左下角**本机地址文本整条缺失**；② 整排与 `Start` 纵向偏低（`Start` 压到 1105 起）；③ `Start` 是 **disabled 外观** | ① `game_setup.gd` 没有"本机地址"这个 `Label`（原版从 `start_graphwar.sh` 那台服务器取 `ip:port`）；②③ `_bottom_row()` / `Start` 按钮的 `disabled = not state.can_start()` |
+| `add_bot` | 4.0770 % | **底图**（GameSetup）；弹窗本身 **1 px** | 不用改 `add_bot_pop_up.gd`；改 `game_setup.gd` 就会掉 |
+| `join_ip` | 1.8327 % | 底图 LAN 大厅 + 输入框四角（179 px）+ 底部 ` Join IP ` 按钮 **hover 态** 5 075 px | `client/src/screens/connect_popups.gd` 的 `LineEdit` 圆角（`StyleBoxFlat` 的 `corner_radius`）+ LAN 大厅底排按钮的 hover 主题 |
+| `connecting` | 1.4965 % | 弹窗本身四角 38 px（`max\|Δ\|=9`）+ 底图 | 基本不用改；见 §68.2 ⑤ 的超时行为 |
+| `disconnected` | 1.4965 % | 同上（四角 38 px，`max\|Δ\|=15`）| 同上 |
+| `confirm_exit` | 5.1297 % | **底图**（对局屏），弹窗只占 1 725 px / 1.5 % | 不用改 `confirm_exit_pop_up.gd`；改对局屏（§60.5 的清单）|
+| `chat_popup` | 6.9948 % | 浮层第二条带 136 px；多出的是**我方叠在白板上的两串白字** | `client/src/screens/chat_pop_up.gd`（消息区初始内容）+ 对局屏的名字标签接线（§60.5）；另见 §68.2 ① |
+| `join_level_popup` | **0** | 逐像素相同 | 不用改 |
+
+### 68.2 采集过程中发现的 6 条**客户端行为**差异（不是版式，都是真帧上看到的）
+
+1. **我方 `ChatPopUp` 是整屏浮层，把顶栏那颗 `toggle_chat` 开关盖住了**（原版不盖：原版聊天浮层打开后，
+   顶栏那排开关仍然**亮**、还能再点一次把聊天关掉）。证据：同一串点击 `(1013,48)` 在原版能关掉聊天、
+   在我方点不到那颗键（我方帧里那颗键被压暗，属浮层内）。**影响**：预注册写的点击次序在我方走不通，
+   本轮改成"先拍退出框再开聊天"（`docs/06` §69.6 坑 4）。
+   ⇒ 待查：`chat_pop_up.gd` 的根节点是否 `set_anchors_preset(PRESET_FULL_RECT)` 且 `z_index` 高于
+   `PlayScreen` 的 `ExtraOptionsVBox`（原版是 `ScreensControl` 的**兄弟**节点、聊天层在**顶栏之下**的画法）。
+2. **默认玩家名硬编码 `user`**（`client/src/app/store.gd:72`）⇒ 玩家页 NAME 输入框、GameSetup 玩家行、
+   聊天里的名字全跟着错（原版取 **OS 登录名** = 本机 `CG`）。这一条**一次能修三屏**的差异。
+3. **`Start` 被做成 `disabled`**：原版无 Bot 时按钮是**正常态**、点了**静默无操作**（`docs/22` §5.1），
+   我方把 `can_start()` 直接接到 `disabled` ⇒ 外观与状态都不对（`game_setup.gd` 的 `_start_game` 附近）。
+4. **GameSetup 左下角缺"本机地址 `ip:port`"** 那条 `Label`（原版有，`192.168.31.224:41329`；端口每次随机）。
+5. **我方 `ConnectingPopUp` 约 2 s 自己就切到 `DisconnectedPopUp`**（噪声地板 0.7131 %：第 2/3 帧已经不是 Connecting）；
+   原版**不超时**（实测 >10 s 仍停在 Connecting）。⇒ 握手超时的时长要有出处，不能自定。
+6. **Global 页四行占位**：`GLOBAL_ROOMS` 一条名字（`US Room 3`）原版真帧里没有，且行序与原版不同
+   （原版 `US Room 1 / US Room 2 / EU Room 2 / EU Room 1`）。这一页原版**离线时也画这四行固定内容**（真帧），
+   所以它可以做到更接近 —— 但这四行的**来源**（是否 hardcode 在原版 Rust 里）**未知**，本轮只记观测。
+
+### 68.3 复跑（客户端侧注意：三件必须就位）
+
+```bash
+WS=/home/CG/Myprojects/graphwar2-rebuild; WT=$WS/.agent-work/cg/wt-t20
+export CARGO_HOME=$WS/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target
+export GODOT=$WS/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/     # ← 不拷 = 跑旧内核，且不报错
+$GODOT --headless --path client --import                 # ← 不 import = 新 .gd 静默不加载
+python3 tools/frame_capture.py --side ours --flow setup --out $WT/.agent-work/v/setup-mine --display-num 102
+```
+
+* 我方客户端的 `HOME` 必须可写（`tools/frame_capture.py` 会给它一个新建空目录）；
+  `client/assets/` 必须已用 `python3 tools/extract_assets.py` 从 `Graphwar.pck` 解出来（仓库不含媒体文件）。
+* 完整 6 条 flow 的两侧复跑命令在 `docs/06` **§69.7**（照抄即可）。
+
+### 68.4 遗留 / 未做
+
+1. **客户端一处也没改**（任务约定"只测量 + 归因"）：§68.1 的 12 行全是**待办**。
+2. 只测了一个局面（`fixtures/frame_match_events.txt` 的 S7）；`confirm_exit` / `chat_popup` 的底图残差只对这一个局面成立。
+3. 没测"换过皮肤之后"的 Faces / Hats（本轮都是默认 `yellow`）。
+4. **`ChatPopUp` 的 z 序/浮层范围**只从"点不到那颗开关"反推出"我方浮层盖住顶栏"，
+   具体是哪个节点/哪一层挡住**没有 dump**（**推断**：`chat_pop_up.gd` 的根节点满屏 + `z_index` 高于顶栏）。
+5. 断线后原版停在哪一屏**仍未观测**（我方是"回主菜单"，`app.gd` 里已标"自定"）；本轮只拍到 `DisconnectedPopUp` 本身。
+

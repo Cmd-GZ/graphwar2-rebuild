@@ -185,6 +185,121 @@ REPLAY_END_WAIT = 45.0             # 2276 tick ÷ 60 = 37.9 s ⇒ 45 s 一定播
 # 冻结快照里的两份回放（**只拷、不改**；快照本身是全仓库三轴数字的分母，禁止往里写）
 SNAPSHOT_REPLAYS = ['1793897298', '1783255495']
 
+# ── T20（`--flow lobby/player/setup/connect/matchpop/level`，2026-11-26）──────────────
+# **剩余 13 屏**的点击坐标，全部是 1920×1160 窗口内绝对像素。预注册与"每屏期望"在
+# `fixtures/frame_rest_targets.txt`（§1 的表），判据仍是 `fixtures/frame_diff_thresholds.txt`
+# （sha256 9cc9fcda…）§3 —— **门槛一个数没改**。
+# 每条坐标后面注明来源：既有常量 / 既有文档里的真机点击串 / **本轮从原版真帧量出来的**。
+LAN_CREATE_GAME = (765, 1107)    # LAN 大厅底排 " Create Game "（边框 535..995 × 1063..1152，本轮量）
+LAN_JOIN_IP = (1192, 1107)       # LAN 大厅底排 " Join IP "（边框 1000..1383，本轮量）
+LAN_TAB_GLOBAL = (1480, 50)      # 顶部 "Global" 页签（右半 1048..1907，本轮量）
+GAMESETUP_ADD_BOT = (1646, 989)  # GameSetup 底排第五格 = 加 Bot（1574..1718 × 923..1055，本轮量）
+ADDBOT_CANCEL = (960, 1006)      # AddBotPopUp 面板下方 " Cancel "（870..1051 × 975..1038，本轮量）
+JOINIP_EDIT = (900, 530)         # JoinIpPopUp 的 Ip 输入框（347..1665 × 495..564，本轮量）
+JOINIP_JOIN = (1065, 728)        # JoinIpPopUp 的 " Join "（971..1158 × 697..760，本轮量）
+CONNECTING_CANCEL = (851, 728)   # ConnectingPopUp 的 " Cancel "（同上一行口径，本轮量）
+PLAY_CHAT = (1013, 48)           # 对局屏顶栏第 3 颗开关 = 聊天（941..1086 × 0..95，本轮量）
+PLAY_BACK = (73, 48)             # 对局屏左上返回键（0..145 × 0..95，本轮量）
+CONFIRM_NO = (764, 703)          # 退出确认框的 " No "（面板 482..1437 × 386..768 内，本轮量）
+PLAYER_BTN = (536, 749)          # 主菜单 CharacterButton → PlayerScreen（docs/16 §7.5.1 真机点击串）
+PLAYER_TAB_SKINS = (150, 150)    # 玩家页 Skins 页签（进屏默认就是它 ⇒ 本 flow 不需要点）
+PLAYER_TAB_FACES = (470, 150)    # 玩家页 Faces 页签（docs/16 §7.5.1 真机点击串）
+PLAYER_TAB_HATS = (790, 150)     # 玩家页 Hats 页签（第三个页签，本轮量）
+# `--flow connect` 的两个地址（预注册 §1.4）：有静默监听 ⇒ 停在 Connecting；没人听 ⇒ 立刻 Disconnected
+CONNECT_SILENT_PORT = 46799
+CONNECT_SILENT_ADDRESS = '127.0.0.1:%d' % CONNECT_SILENT_PORT
+CONNECT_DEAD_ADDRESS = '127.0.0.1:1'
+
+
+def silent_listener_source():
+    """`--flow connect` 专用子进程源码：**只 accept、不发任何字节**的 TCP 监听。
+
+    为什么需要它：`ConnectingPopUp` 只有在"连上了但还没握手完"时才停在屏幕上；
+    没有监听就立刻被拒（直接跳 Disconnected），有真服务器就又太快握手完成。
+    它只是**环境**，两侧同一份；不碰被测代码。
+    """
+    return (
+        'import socket, sys, time\n'
+        'srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n'
+        "srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
+        "srv.bind(('127.0.0.1', int(sys.argv[1])))\n"
+        'srv.listen(8)\n'
+        "print('listening', flush=True)\n"
+        'conns = []\n'
+        'while True:\n'
+        '    try:\n'
+        '        c, _ = srv.accept()\n'
+        '        conns.append(c)\n'      # 收下就攥着，**不读也不写**
+        '    except OSError:\n'
+        '        time.sleep(0.1)\n')
+
+
+def start_silent_listener(port, out, log_path=None):
+    """起静默 TCP 监听子进程（同一个进程树：本机逐命令 PID namespace，见文件头）。"""
+    log_path = log_path or os.path.join(out, 'silent_listener.log')
+    f = open(log_path, 'wb')
+    proc = subprocess.Popen([sys.executable, '-u', '-c', silent_listener_source(), str(port)],
+                            stdout=f, stderr=subprocess.STDOUT)
+    return proc, (log_path, f)
+
+
+def wait_listening(log_path, seconds=10.0):
+    """等静默监听把 `listening` 写进日志（= 端口已经在听）。"""
+    t0 = time.time()
+    while time.time() - t0 < seconds:
+        if os.path.exists(log_path):
+            try:
+                with open(log_path, encoding='utf-8', errors='replace') as f:
+                    if 'listening' in f.read():
+                        return True
+            except OSError:
+                pass
+        time.sleep(0.1)
+    return False
+
+
+def wait_tcp_port_free(port, seconds=30.0):
+    """等 `127.0.0.1:<port>` 不再有人 listen（**T20 新 flow 专用**）。
+
+    为什么需要：连续跑两条都要起 `tools/match_serve.py` 的 flow 时，上一条收摊的 SIGTERM
+    到内核真正释放监听之间有一个很短的窗口 ⇒ 下一条会 `OSError: [Errno 98] Address already
+    in use` 而**静默**变成"服务器起不来"（本轮实测踩过：`setup`/`connect` 两条连跑时）。
+    既有 `--flow match` 的行为一位不动，这个等待只加在 T20 新增的 flow 上。
+    """
+    import socket as _socket
+    t0 = time.time()
+    while time.time() - t0 < seconds:
+        s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        s.settimeout(0.3)
+        try:
+            if s.connect_ex(('127.0.0.1', port)) != 0:
+                return True          # 连不上 ⇒ 没人在听 ⇒ 端口空着
+        finally:
+            s.close()
+        time.sleep(0.2)
+    return False
+
+
+def kill_proc(proc, name='子进程'):
+    """SIGTERM → 等 10 s → SIGKILL；返回它有没有被收掉。"""
+    if proc is None:
+        return True
+    try:
+        if proc.poll() is None:
+            proc.send_signal(signal.SIGTERM)
+            try:
+                proc.wait(timeout=10)
+            except Exception:  # noqa: BLE001
+                proc.kill()
+                try:
+                    proc.wait(timeout=5)
+                except Exception:  # noqa: BLE001
+                    pass
+    except Exception as e:  # noqa: BLE001
+        log('收%s失败：%s' % (name, e))
+        return False
+    return proc.poll() is not None
+
 
 def snapshot_dir(override=None):
     """冻结快照回放目录（**只读**；显式 `--snapshot` > 环境变量 > 两个已知落点）。"""
@@ -282,6 +397,75 @@ def steps_for(flow, side):
                 ('trigger', None),
                 ('wait', MATCH_PLAY_WAIT),
             ]),
+        ]
+    # ── T20（2026-11-26）：**剩余 13 屏**，预注册 = `fixtures/frame_rest_targets.txt` §1 ──
+    # 既有四支（campaign/replay/static/match）以上/以下**一行未改**；下面全是新增分支。
+    if flow == 'lobby':
+        # §1.1：LAN 大厅两页。房间行是服务端数据 ⇒ 由本脚本起一条**固定**的 UDP 房间广播
+        # （`tools/match_serve.py` + `fixtures/frame_match_events.txt` 的 `[meta] room=`，只读）。
+        return [
+            ('lan_lobby_local', [('click', MENU_PLAY, 3.0)]),
+            # ⚠️ settle 1.5 s → 3.0 s：预注册 §1.1 写的是 1.5 s，实测原版切到 Global 页之后
+            # 四行要**过 1.5 s 才画全**（第 1 帧与第 2/3 帧差 39 681 px，第 2/3 帧互相逐字节相同）
+            # ⇒ 拍早了会拿"还没画完"的帧去比。判据一个数没改，只是等到屏稳定。
+            ('lan_lobby_global', [('click', LAN_TAB_GLOBAL, 3.0)]),
+        ]
+    if flow == 'player':
+        # §1.2：玩家选择/商店三页（Skins 是进屏默认页 ⇒ 不需要点）
+        return [
+            ('player_skins', [('click', PLAYER_BTN, 2.0)]),
+            ('player_faces', [('click', PLAYER_TAB_FACES, 1.5)]),
+            ('player_hats', [('click', PLAYER_TAB_HATS, 1.5)]),
+        ]
+    if flow == 'setup':
+        # §1.3：建房 → 对局设置屏；再点底排"加 Bot"格 → AddBotPopUp
+        return [
+            ('game_setup', [('click', MENU_PLAY, 2.5), ('click', LAN_CREATE_GAME, 2.5)]),
+            ('add_bot', [('click', GAMESETUP_ADD_BOT, 2.0)]),
+        ]
+    if flow == 'connect':
+        # §1.4：三个连接弹窗。`ConnectingPopUp` 靠"静默 TCP 监听"停在屏幕上；
+        # `DisconnectedPopUp` 靠"没人听的端口"立刻被拒。点回来之前先 `ctrl+a` 清空输入框
+        # （原版**不会**自己清 —— 探路实测：重开 JoinIpPopUp 时上一次的地址还在）。
+        return [
+            ('join_ip', [('click', MENU_PLAY, 2.5), ('click', LAN_JOIN_IP, 2.0)]),
+            ('connecting', [
+                ('click', JOINIP_EDIT, 0.6),
+                ('type', CONNECT_SILENT_ADDRESS),
+                ('click', JOINIP_JOIN, 2.5),
+            ]),
+            ('disconnected', [
+                ('click', CONNECTING_CANCEL, 2.0),
+                ('click', LAN_JOIN_IP, 2.0),
+                ('click', JOINIP_EDIT, 0.6),
+                ('key', 'ctrl+a'),
+                ('type', CONNECT_DEAD_ADDRESS),
+                ('click', JOINIP_JOIN, 3.0),
+            ]),
+        ]
+    if flow == 'matchpop':
+        # §1.5：对局中才会出现的那两个弹窗。服务器由本脚本起（同 `--flow match`），
+        # 但**不 touch 触发文件** ⇒ 一直停在 S7 准备态，弹窗期间底图不会突然开火。
+        # ⚠️ 次序与预注册 §1.5 相反（**先退出框、再聊天框**）：预注册写的是"先开聊天再点返回"，
+        # 去采集时发现**我方 ChatPopUp 是整屏浮层、盖住了顶栏那颗开关** ⇒ 同一串点击在原版
+        # 能把聊天关掉、在我方关不掉（这一条本身是发现，写进 docs/06 §69）。改成"退出框先拍，
+        # 关掉它（No）之后再开聊天" ⇒ 两侧同一串点击都能走通。判据与期望值一个没改。
+        return [
+            ('confirm_exit', [
+                ('click', MENU_PLAY, 2.5),
+                ('click', LAN_JOIN_ROW1[side], 4.0),
+                ('click', PLAY_BACK, 2.0),
+            ]),
+            ('chat_popup', [
+                ('click', CONFIRM_NO, 1.5),      # 关掉退出确认框（" No "）
+                ('click', PLAY_CHAT, 2.5),
+            ]),
+        ]
+    if flow == 'level':
+        # §1.6：关卡弹窗（= 既有 `--flow static` 的 `level_popup`，同一个 .tscn）。
+        # 两个坐标都是既有常量；本轮重复采一次只为 13 屏口径一致（static 分支不改）。
+        return [
+            ('join_level_popup', [('click', CAMPAIGN_BTN, 2.0), ('click', LEVEL_NODE_0, 2.0)]),
         ]
     raise SystemExit('未知 flow: %s' % flow)
 
@@ -497,10 +681,14 @@ def main(argv=None):
     ap.add_argument('--home', default=None, help='HOME（默认 <out>/home）')
     ap.add_argument('--game-arg', action='append', default=[], help='透传给游戏的额外参数')
     ap.add_argument('--shots', default=None, help='截图输出子目录（默认 <out>/frames）')
-    ap.add_argument('--flow', choices=['campaign', 'replay', 'static', 'match'], default='replay',
+    ap.add_argument('--flow', default='replay',
+                    choices=['campaign', 'replay', 'static', 'match',
+                             'lobby', 'player', 'setup', 'connect', 'matchpop', 'level'],
                     help='点法：replay = 增补 1 的四屏（回放局面，默认）；campaign = 原登记的三屏；'
                          'static = T6 的静态两屏（campaign / level_popup，见 fixtures/static_screens_targets.txt）；'
-                         'match = T8 的对局屏两屏（match_ready / match_play，见 fixtures/frame_match_events.txt）')
+                         'match = T8 的对局屏两屏（match_ready / match_play，见 fixtures/frame_match_events.txt）；'
+                         'lobby/player/setup/connect/matchpop/level = T20 的剩余 13 屏'
+                         '（见 fixtures/frame_rest_targets.txt §1）')
     # ── T8（`--flow match` 专用；不给 ⇒ 行为与既有三支完全一致）────────────────────────
     ap.add_argument('--match-fixture', default=None,
                     help='对局屏的事件序列 fixture（默认 <repo>/fixtures/frame_match_events.txt）')
@@ -556,10 +744,19 @@ def main(argv=None):
         log('回放已就位: %s' % manifest['replays_seeded'])
 
     # ── T8：`--flow match` 要一台脚本化服务器把局面钉死（只在这条分支上做，既有三支不受影响）──
+    # ── T20：`lobby`/`setup`/`connect`/`matchpop` 也要它 —— 前三条只用它的 **UDP 房间广播**
+    #    把 LAN 大厅的行数钉死（预注册 §2.2），`matchpop` 用它把局面钉死后进对局屏（§2.1）。
+    #    加进来的都是**新增 flow**，`match` 这一支的行为一位没变。
+    needs_server = args.flow in ('match', 'lobby', 'setup', 'connect', 'matchpop')
     match_srv = None
     match_srv_files = None
     trigger_file = os.path.join(out, 'phase2.trigger')
-    if args.flow == 'match':
+    if needs_server:
+        # §T20：T20 新增的 flow 可能连着跑（都起同一个 TCP 端口）⇒ 先等上一条把端口放掉。
+        # `--flow match` 的行为一位不改（不放这个等待进去）。
+        if args.flow != 'match' and not wait_tcp_port_free(args.match_tcp_port):
+            raise SystemExit('TCP %d 一直被人占着（上一条 flow 的服务器没收干净）'
+                             % args.match_tcp_port)
         fixture = os.path.abspath(args.match_fixture or os.path.join(
             REPO, 'fixtures', 'frame_match_events.txt'))
         if not os.path.exists(fixture):
@@ -571,13 +768,42 @@ def main(argv=None):
             args.side, out, fixture, args.match_tcp_port, args.match_udp_port, trigger_file,
             server_duration=args.match_server_duration)
         match_srv_files = (srv_log, err_log, srv_handle)
+        attempt = 0
+        while not wait_server_listening(srv_log) and attempt < 3:
+            # 起不来就**当场收掉**再重试（否则它会一直占着 46702，下一条 flow 起不来 —— 本轮实测踩过）。
+            # T20 新增的 flow 连着跑时，上一条的服务器端口释放与本条的 bind 之间会有很短的窗口
+            # ⇒ `OSError: [Errno 98] Address already in use`。既有 `--flow match` 不重试。
+            kill_proc(match_srv, '脚本化服务器')
+            if args.flow == 'match':
+                break
+            attempt += 1
+            log('脚本化服务器起不来，%.1f s 后重试（第 %d 次）' % (5.0 * attempt, attempt))
+            time.sleep(5.0 * attempt)
+            if not wait_tcp_port_free(args.match_tcp_port):
+                continue
+            match_srv, srv_log, err_log, srv_handle = start_match_server(
+                args.side, out, fixture, args.match_tcp_port, args.match_udp_port, trigger_file,
+                server_duration=args.match_server_duration)
+            match_srv_files = (srv_log, err_log, srv_handle)
         if not wait_server_listening(srv_log):
+            kill_proc(match_srv, '脚本化服务器')
             raise SystemExit('脚本化服务器起不来（见 %s）' % err_log)
         log('脚本化服务器就绪：tcp=%d udp=%d fixture=%s' %
             (args.match_tcp_port, args.match_udp_port, os.path.basename(fixture)))
         manifest['match'] = {'fixture': fixture, 'server_log': srv_log,
                              'server_stderr': err_log, 'trigger_file': trigger_file,
                              'tcp_port': args.match_tcp_port, 'udp_port': args.match_udp_port}
+
+    # ── T20：`--flow connect` 需要一条"只 accept、不发字节"的 TCP 监听（预注册 §2.3）──
+    silent_srv = None
+    silent_files = None
+    if args.flow == 'connect':
+        silent_srv, silent_files = start_silent_listener(CONNECT_SILENT_PORT, out)
+        if not wait_listening(silent_files[0]):
+            kill_proc(silent_srv, '静默 TCP 监听')
+            raise SystemExit('静默 TCP 监听起不来（见 %s）' % silent_files[0])
+        log('静默 TCP 监听就绪：127.0.0.1:%d（只收不发）' % CONNECT_SILENT_PORT)
+        manifest['silent_listener'] = {'port': CONNECT_SILENT_PORT, 'log': silent_files[0]}
 
     xvfb = game = None
     xlog = flog = None
@@ -625,6 +851,19 @@ def main(argv=None):
                         tf.write('%s %s\n' % (screen, time.strftime('%Y-%m-%dT%H:%M:%S')))
                     manifest['steps'].append({'screen': screen, 'action': 'trigger',
                                               'file': trigger_file})
+                elif st[0] == 'type':
+                    # §T20：`--flow connect` 往 JoinIpPopUp 的输入框里打字
+                    # （`--delay 120` 与既有工具的口径一致；打太快 Godot 会丢字符）
+                    xdo(genv, 'type', '--delay', '120', st[1])
+                    time.sleep(0.4)
+                    manifest['steps'].append({'screen': screen, 'action': 'type',
+                                              'text': st[1]})
+                elif st[0] == 'key':
+                    # §T20：`key ctrl+a` = 清空输入框（原版**不会**自己清）
+                    xdo(genv, 'key', st[1])
+                    time.sleep(0.3)
+                    manifest['steps'].append({'screen': screen, 'action': 'key',
+                                              'key': st[1]})
                 log('%s: %s' % (screen, st[0]))
             for i in range(FRAMES_PER_SCREEN):
                 path = os.path.join(frames_dir, '%s_%d.png' % (screen, i + 1))
@@ -674,6 +913,24 @@ def main(argv=None):
                 pass
             manifest.setdefault('match', {})['server_rc'] = (
                 match_srv.returncode if match_srv is not None else None)
+        # §T20：静默 TCP 监听收摊（`--flow connect` 专用；不收拾会占着 46799 让下一轮起不来）
+        if silent_srv is not None:
+            try:
+                if silent_srv.poll() is None:
+                    silent_srv.send_signal(signal.SIGTERM)
+                    try:
+                        silent_srv.wait(timeout=10)
+                    except Exception:  # noqa: BLE001
+                        silent_srv.kill()
+            except Exception as e:  # noqa: BLE001
+                log('收静默监听失败：%s' % e)
+        if silent_files is not None:
+            try:
+                silent_files[1].close()
+            except Exception:  # noqa: BLE001
+                pass
+            manifest.setdefault('silent_listener', {})['rc'] = (
+                silent_srv.returncode if silent_srv is not None else None)
         manifest.pop('_t0', None)
         manifest['ok'] = ok
         manifest['finished_at'] = time.strftime('%Y-%m-%dT%H:%M:%S')
