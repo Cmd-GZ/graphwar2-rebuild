@@ -8569,6 +8569,22 @@ python3 tools/frame_diff.py --orig <W>/orig --mine <W>/mine --screens menu,repla
 for f in client/src/views/*.gd; do cmp "$f" "recovered-src/$(basename $f)" || echo "DIFF $f"; done   # 无输出
 ```
 
+#### 62.2.0 运行实例数：**27 个文件 / 82 个实例**（证明"不是只把文件拷进来"）
+
+临时探针（`extends SceneTree`，跑完删除、不入库）：实例化 `scenes/main.tscn` → 依次进 13 屏
+（`main_menu`/`campaign`/`join_level`/`lan_lobby`/`create_game`/`player_screen`/`replay_lobby`/
+`chat`/`join_ip`/`connecting`/`disconnected`/`add_bot`/`endgame`）→ 遍历整棵树，按
+`GwViews.owns(node)` 的同一条判据（脚本 `resource_path` 前缀 `res://src/views/`）计数：
+
+```text
+@@VIEW_FILES 27  INSTANCES 82
+MarginContainer 7 · ExitButtonContainer 14 · IpPopUpMargin 18 · LanLobbyTitle 11 ·
+MarginContainerPopUpBack 6 · LanLobbyFontResize 4 · MainMenuButtonResize 2 · 其余 20 个各 1
+```
+
+**交叉核对**：§43.2 当轮量的是 **24 份 / 79 个实例**；本轮新增 3 份各 1 个实例 ⇒ **79 + 3 = 82**，
+逐文件的实例数（7/14/18/11/6/4/2/1…）与 §43.2 那张表**一位不差** ⇒ 上一轮 24 份没有悄悄掉线。
+
 #### 62.2.1 挂载顺序：`OptionsContainer` 为什么必须"先建再挂后 add"
 
 `GwViews.attach()` 的规矩（`client/src/ui/gw_views.gd`，§43.4 记过）：`set_script()` 对**已进树**的节点
