@@ -10962,3 +10962,68 @@ t.set_color("font_focus_color",   "Button", Color(0.95,  0.95,  0.95,  1.0))   #
 
 见 `docs/06` §57.8（两侧 `--flow static` + `frame_diff.py --screens campaign,level_popup`）。
 本条的两个改动都是 `.gd`，**不需要**重编 `libgw2_rebuild.so`，也不需要 `--import`（没有新文件）。
+
+## 67. 视图层的现状（2026-11-26，任务 T10）：27 份是**原版字节**、25 份仍是我们写的，逐份理由在台账里
+
+> 前情：§39 回答"这些原版 `.gd` **能不能跑**"，§43 回答"**换不换得进去**"（换了 24 份、跳 15 份）。
+> 本节回答第三问：**现在这 52 份各自的归属是什么、剩下来的每一份卡在哪**。
+> 全部数字的唯一来源 = [`fixtures/view_layer_ledger.tsv`](../fixtures/view_layer_ledger.tsv)（52 行 × 7 列），
+> 验收读数见 `docs/06` §62。
+
+### 67.1 一句话现状
+
+| 类别 | 份数 | 在我方客户端里的状态 |
+|---|---:|---|
+| **原版字节 + 已接线** | **27** | `client/src/views/*.gd`（24 份 §43 + 3 份本轮），`cmp` 与 `recovered-src/` 逐字节相同，运行时由 `GwViews.attach()` 挂到节点上 |
+| 仍是我们写的 | **25** | 其中 8 份只是"红线/别人正在改"，6 份只差一行 attach（play_screen 组），7 份是**包内死文件**（根本不该接线），4 份有真缺口（见 §67.3） |
+
+⚠️ **"原版字节在场"≠"行为已复原"。** 这些视图脚本全是**布局/字号**（`size_changed` → 写
+`font_size` / `custom_minimum_size` / `margin`），**一个按钮行为都没有** —— 行为在 Rust 控制器里
+（`play_screen_control` / `graphwar_root_node` 那些模块）。所以本节只能说"某个节点的字号/内边距现在由原版代码给"，
+不能说"这一屏复原了"。
+
+### 67.2 本轮的 3 份新换（本地挂着，不是"加了个文件"）
+
+| 原版脚本 | 挂在哪 | 为什么之前没换 / 这次为什么能换 | 验到什么 |
+|---|---|---|---|
+| `OptionsContainer.gd` | `join_level_pop_up` 的 `OptionsContainer` | §43.7 第 1 条就是要"删掉我方 `_update_options_height()` 的兜底再挂"。这次按 `GwViews` 的规矩重建节点（建 → 填 → 挂 → `add_child`）并删掉整份自写算式 | selftest 的 `min.y == 0.25×父高` 过；`level_popup` 像素 **0.000 %** |
+| `TurnLimitText.gd` | `join_level_pop_up` 的 `AspectRatioContainer4` | §39.4 当时判"我方没有第 5 个读出格"——**数错了**：原版第 4 格（`AspectRatioContainer4`）自己挂着这份脚本，我方节点名/顺序逐字相同 | `TimeModeButton.font_size = 64/20 = 3`；像素 **0.000 %** |
+| `GameSetupPlayerEntry.gd` | `game_setup` 玩家行里包 `PlayerNameLabel` 的 `MarginContainer` | §43.3 判"玩家行是 `HBoxContainer` ⇒ 类型不符"——**读错了节点**：该脚本 `extends MarginContainer`，原版挂在行的**第 5 个孩子**上，就是我方包名字的那个 `MarginContainer` | `PlayerNameLabel.font_size = 64/40 = 1`（换前是 `maxi(10, 64/30)=10`）；`game_setup` **无像素真值**，未验像素 |
+
+三份共同的写法约束（都会**静默**失效，必须记住）：
+
+1. `set_script()` 对**已经进树**的节点**不补发** `_ready` ⇒ 必须"建节点 → 填子节点 → `GwViews.attach()` → `add_child()`"；
+2. 原版脚本的 `_ready` 只遍历**当次**的 `get_children()` ⇒ 子节点必须**先就位**；
+3. 挂上之后那棵子树归原版管：`GwScreen._apply_size_recursive()` 见到 `GwViews.owns(node)` 就整棵跳过
+   （我方那套 `maxi(10, 宽/N)` 不再碰它）。本轮 `GameSetupPlayerEntry` 正是靠这条把 `w/30` 换成 `w/40` 的。
+
+### 67.3 还没换的 25 份：按缺口分类（细节在台账 `need` 列）
+
+| 缺口 | 份数 | 说明 |
+|---|---:|---|
+| **A. AdMob / IAP 平台桥** | 7 | 包里**一个原生插件二进制都没有**（`.so/.aar/.jar/.gdap` 全空）⇒ `Ad_holder.gd` 解析都过不去；另外 5 份第一行就要 `/root/GraphwarRootNode` + 它的 `log()`（我方主场景根是 `Main`）。**这是"包里没有"，不是"我们没复原"** |
+| **B. play_screen 组（红线）** | 6 | `ButtonGrid` / `ExtraOptionPad` / `ExtraOptionsHBox` / `HBoxContainer` / `ViewFunctionPad` / `ViewFunctionsLabel`。节点名我逐个核对过**都在**，只差 `attach`（`ButtonGrid`/`HBoxContainer` 还要把 `_make_grid()` 拆成四步）。等 t7 的 S3 归零提交之后再动 |
+| **C. 别的屏（红线）** | 2 | `GameNameContainer`（`replay_lobby.gd`，刚做成整屏 0 像素）、`CampaingLevelsButtons`（`campaign.gd`，另卡 `GwButton` ↔ `GraphwarButton` 派发） |
+| **D. 包内死文件** | 7 | 31 份原版 `.scn` **零引用**（严格前缀 grep）：`CampaingButtonSize` `ExtraOptionsVbox`（1 字节空文件）`LevelTitleContainer` `OffsetLabel` `ResizeContainer` `UnlockButton` `endgame_pop_up` |
+| **E. 被既有断言挡住** | 1 | `ShopButtonsSize`：原版无下限，`selftest.gd:717` 把 `maxf(32, …)` 写进期望值（headless 64 px 下原版算出 −6） |
+| **F. 结构 + 无真值** | 1 | `SoldierIconMarginContainer`：原版每槽 4 个叠放的 `TextureRect` + 负 margin；我方每槽 1 个合成图标，且 `game_setup` 屏没有像素真值 |
+| **G. Rust 侧未接** | 1 | `endgame_pop_up.gd`：9 行空壳、那份 `.scn` 的根节点**根本没脚本**，内容由 `src/graphwar_play_screen_control.rs` 的 `0x3d9000`/`0x3da130` 填。**在那两个函数接到节点层之前，我方 211 行仿制控制器必须保留**——它是现在唯一让弹窗有内容的东西 |
+
+### 67.4 这一节改变了什么（对旧文档的更正，逐条）
+
+1. **§43.3 / §43.7 第 3 条**：`GameSetupPlayerEntry.gd` 的"类型不符"是**读错节点**（该挂的是包名字的
+   `MarginContainer`，不是行根 `HBoxContainer`）⇒ 已换，前提作废。
+2. **§39.4 / §43.3**：`TurnLimitText.gd` 的"没有第 5 个读出格"是**数错**（第 4 格自带这份脚本）⇒ 已换。
+3. **§43.3**：`CampaingButtonSize` / `LevelTitleContainer` / `OffsetLabel` / `ResizeContainer`
+   的"原版是 Rust 运行时 `new()` 的"是**推断**，本轮用两条硬证据收紧成"**包内零引用**"：
+   ① 31 份 `.scn` 原始字节里零命中；② `.so` 的 84480 行字符串表里 `res://*.gd` **0 次**
+   ⇒ 没有证据表明 Rust 按路径加载过 GDScript。**这不等于证明作者没用它们**，只等于"没有任何加载证据"。
+4. **§43.7 第 1 条**（`OptionsContainer`）已做完；**第 3 条**（玩家行结构）前提作废、而且
+   `GameSetupPlayerEntry` 这一半其实不需要改结构就能换；**第 2 条**（`ButtonGrid`+`HBoxContainer`）
+   与**第 4 条**（`CampaingLevelsButtons`+`UnlockButton`）**仍未做**，原因没变（红线 / 派发层）。
+
+### 67.5 复跑
+
+见 `docs/06` §62.5（含"27 份 `cmp` + 台账复算 + 三档验收 + 像素"的完整命令）。
+⚠️ 本轮新增了 3 个 `.gd` ⇒ **必须** `godot --headless --path client --import` 一次，
+否则 Godot 静默不加载（`docs/18` 的那条老坑）。

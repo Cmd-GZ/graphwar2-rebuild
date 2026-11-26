@@ -8507,3 +8507,205 @@ python3 tools/frame_capture.py --side ours     --flow replay --seed-replays --ou
 python3 tools/frame_diff.py --orig <W>/orig --mine <W>/mine --screens menu,replay_lobby,replay_play,replay_end \
   --out <W>/fd.tsv --blocks-out <W>/fdb.tsv --json <W>/fd.json
 ```
+
+## 62. 视图层第二轮：52 份原版 `.gd` 逐份台账 + 新换 3 份（`OptionsContainer` / `TurnLimitText` / `GameSetupPlayerEntry`），`level_popup` 仍 **0 像素**（2026-11-26，任务 T10）
+
+> **一句话**：把 §43（上一轮 gdswap）跳过的 15 份 + 上一轮没进表的 13 份（7 份 AdMob/IAP 平台桥 +
+> 5 份 play_screen 专属 + `GameNameContainer`）全部逐份判定完，写成
+> [`fixtures/view_layer_ledger.tsv`](../fixtures/view_layer_ledger.tsv)：**already-original 24 / swap 3 / blocked 25**。
+> 本轮实际换上去 **3 份**（`OptionsContainer.gd` / `TurnLimitText.gd` / `GameSetupPlayerEntry.gd`），
+> 并删掉我方对应的两份自写算式。px 口径：`campaign` **0.000 %**、`level_popup` **0.000 %**（max|Δ|=0），
+> 与 §57 的 0 像素基线**逐像素相同** —— 换上去反而更省代码，没换来任何像素代价。
+
+> 档位同前几节：**观测** = 能指到原版字节/真帧；**推断** = 有依据未证。原版 `.gd` 是 `.gdc` 反编译产物
+> ⇒ 本轮所有"换上去"都是**观测级"原版字节在场"**，**不是**"行为已复原"。
+
+### 62.1 台账：52 份的分布与"新增的那条硬证据"
+
+[`fixtures/view_layer_ledger.tsv`](../fixtures/view_layer_ledger.tsv)（52 数据行 × 7 列；
+生成器 `.agent-work/ledger/gen.py` 会断言"status 与是否逐字节在场"一致 —— 标 blocked 却在场直接失败）。
+
+| status | 份数 | 含义 |
+|---|---:|---|
+| `already-original` | **24** | §43 已换；本轮复核 `cmp` 逐字节相同 **且**运行时真的挂上（`GwViews.attach()`） |
+| `swap` | **3** | 本轮换上并验过（见 §62.3） |
+| `blocked` | **25** | 换不了；每一行都写了**缺什么**（见 §62.4） |
+
+**这一轮新加的判据（比 §43 更硬）**：不再靠"有没有同名文件"，而是直接读**原版二进制场景**——
+主工作区 `rsc/.godot/exported/133200997/*.scn`（31 份，只读）的**原始字节**里 grep
+`res://<脚本名>.gd`，严格前缀匹配：
+
+```text
+45/52 份被至少一份随包场景引用；**0 引用的有 7 份**：
+  CampaingButtonSize.gd  ExtraOptionsVbox.gd  LevelTitleContainer.gd  OffsetLabel.gd
+  ResizeContainer.gd     UnlockButton.gd      endgame_pop_up.gd
+```
+
+两条坑（都真踩到，写下来省下一个人的时间）：
+
+1. **子串匹配会把数算多**。第一遍用裸文件名的 `in bytes` 判，`MarginContainer.gd` 数出 **10** 场——
+   多出来的两场是 `team1_entry.scn` / `team2_entry.scn`，命中的其实是 `SoldierIconMarginContainer.gd`
+   的后缀。改成 `res://` + 全名之后是 **8** 场，与 §43.2 的"8 个界面根节点"**一位不差**。
+2. **"包里没场景挂它"≠"Rust 运行时 `new()` 它"**。§43.3 对 `CampaingButtonSize` / `LevelTitleContainer` /
+   `OffsetLabel` / `ResizeContainer` 写的是推断"原版是 Rust 控制器运行时 `new()` 的"。本轮补了一条反证：
+   `libgraphwarrust.so` 的 **84480 行**字符串表里 `res://*.gd` 出现 **0 次** ⇒ **没有任何证据**表明 Rust
+   按路径加载过 GDScript。所以这 4 份（外加 `UnlockButton` / `ExtraOptionsVbox` / `endgame_pop_up`）
+   的正确表述是**包内死文件**（作者遗留），既没被场景挂、也没有 Rust 侧加载证据。
+
+### 62.2 换上去的 3 份（各改了谁、删了什么、验了什么）
+
+判据（三条，缺一不算）：① 原版 `.scn` 里能读出该脚本挂在**哪个节点**（路径 + 类型）；
+② 我方树里有**同名同类型同形状**的节点；③ 挂上之后 `client/tools/*.gd` 全量 + `selftest` + 该屏像素**一条不退**。
+
+| 原版脚本 | 原版挂在哪个节点（观测：`.scn` 字节 + `recovered-src/*.tscn`） | 我方挂在哪儿 | 删掉的我方实现 | 可观测效果（headless 64 px，临时探针实测） |
+|---|---|---|---|---|
+| `OptionsContainer.gd`（13 行） | `join_level_pop_up.scn` 的 `OptionsContainer`（HBox） | `join_level_pop_up.gd` 的 `OptionsContainer` | **`_update_options_height()` 整份删除**（含"弹窗未布局时按预测父高兜底"那一支） | `custom_minimum_size.y = 17.75 = 0.25 × 71`（父 VBox 高） |
+| `TurnLimitText.gd`（18 行） | `OptionsContainer/AspectRatioContainer4`（第 4 格 = `TimeModeButton` 那一格） | 同名同位置的那个 `AspectRatioContainer4` | 无（我方这一格原来**没有任何字号代码**） | 子节点 `TimeModeButton.font_size = 3 = 64/20` |
+| `GameSetupPlayerEntry.gd`（19 行） | `team1_entry.scn`/`team2_entry.scn` 里**包 `PlayerNameLabel` 的那个** `MarginContainer`（根 `HBoxContainer` 的第 5 个孩子） | `game_setup.gd::_player_row()` 里包 `PlayerNameLabel` 的 `MarginContainer` | 无（字号原来由 `GwScreen._apply_size_recursive()` 的 `maxi(10, 宽/30)` 给） | `PlayerNameLabel.font_size = 1 = 64/40`（换之前是 `maxi(10, 64/30) = 10`） |
+
+`client/src/views/` 现在是 **27 份**（24 + 3），27 份**全部**与 `recovered-src/` 逐字节相同：
+
+```bash
+for f in client/src/views/*.gd; do cmp "$f" "recovered-src/$(basename $f)" || echo "DIFF $f"; done   # 无输出
+```
+
+#### 62.2.1 挂载顺序：`OptionsContainer` 为什么必须"先建再挂后 add"
+
+`GwViews.attach()` 的规矩（`client/src/ui/gw_views.gd`，§43.4 记过）：`set_script()` 对**已进树**的节点
+不补发 `_ready`，而原版 `OptionsContainer.gd` 的 `_ready` 里才有 `self.resized.connect(...)`。
+本轮 `_options` 原来是 `GwUI.hbox(..., _content)`（建的时候直接挂进 `_content`），
+改成 `GwUI.hbox(...)`（不挂父）→ 填 6 个槽 → `GwViews.attach()` → 最后 `_content.add_child(_options)`。
+
+> 说清楚**为什么**要改：这些屏的 `build()` 是在**还没进树**的时候跑的（证据：三处 `GwViews.attach()`
+> 全都没触发"已经在树里"那条 `push_error`，stderr 也 0 命中），所以严格说"这次"不改顺序也能挂上。
+> 改成这个形状的理由是另外两条：① 原版 `_ready` 只遍历**当次**的 `get_children()` ⇒ 子节点必须先就位；
+> ② "父节点此刻在不在树里"是**隐含前提**，而 `GwViews.attach()` 的正确用法只有
+> "建 → 填 → 挂 → `add_child()`"这一种，不依赖任何隐含前提。`GameSetupPlayerEntry` 那处同理。
+
+#### 62.2.2 一条**接线**（不是算式）：父容器换高时催一次原版自己的 `set_minimum_size()`
+
+只换脚本时 `selftest` 有 1 条红（实测 **25.2 vs 22.8**）：
+
+```text
+FAIL 弹窗：OptionsContainer.min.y = 0.25 × 父高（25.2 vs 22.8）
+```
+
+差的是"父高从 100.8 变成 91.2 那一次没重算"：原版**只**连自己那条 `resized`，
+父容器的高度变化若发生在它最后一次重算**之后**（说明文字写进去把父高挤小），那个值就停在旧父高上。
+我们的处理**没有重写任何高度算式**，只加了一句接线：
+
+```gdscript
+_content.resized.connect(_resync_options_height)   # 里面就是 _options.call_deferred("set_minimum_size")
+```
+
+`set_minimum_size()` 是 `recovered-src/OptionsContainer.gd` **自己的**方法（`call_deferred("set_minimum_size")`
+是原版 `_on_size_changed` 里那一行），所以算式仍是原版那 4 行。加了之后 `selftest` 回到 **717 / 0 / 1 skip**。
+⚠️ 这条接线是**我方加的触发**（原版没有监听父容器），登记在 §62.7 第 1 条，别当成原版行为。
+
+### 62.3 验收读数（本轮全量，命令见 §62.5）
+
+| 项 | 本轮值 | 基线（任务书） | 结论 |
+|---|---|---|---|
+| `cargo test --offline` | **1769 / 0 / 1 ignored** | 1769 / 0 / 1 | 一致（本轮没动 `src/`） |
+| `cargo test --offline --features gdext-bindings` | **1875 / 0 / 1 ignored** | 1875 / 0 / 1 | 一致 |
+| `bash client/run.sh selftest` | **717 passed / 0 failed / 1 skipped**，`@@SELFTEST_COVERAGE groups=33 checks=717 expected=717 missing=0(claimed 0 / degraded 0 / silent 0)` | 717 / 0 / 1 skip，missing=0 silent=0 | 一致 |
+| `client/tools/*_check.gd` 全量（14 个脚本） | **1933 passed / 0 failed**，14 个 rc=0 | 1933 / 0 | 一致（逐脚本：assemble 244 / base_classes 117 / curve 96 / draw_classes 235 / entity_drawer 366 / function_drawer 132 / gdext 24 / obstacle_drawer 116 / plane_on_screen 96 / play_flow 206 / process_loop 66 / recovered_view 57 / signal_classes 155 / spike 23） |
+| `stderr`（selftest 全量日志里 grep `SCRIPT ERROR|Invalid call|Invalid access|Node not found|GwViews`） | **0 命中** | 0 | 一致 |
+| 像素 `campaign` | **0.000 % / max\|Δ\|=0 / L2 超限 0 块** | 0 %（§57） | 一致 |
+| 像素 `level_popup` | **0.000 % / max\|Δ\|=0 / L2 超限 0 块** | 0 %（§57） | 一致（本轮唯一被换脚本影响的屏） |
+
+> ⚠️ **`selftest` 要 717 条的前提**：`examples/serve_match` 必须编好（`cargo build --offline --example serve_match`）。
+> 没编就是 `641 / 0 / 3 skipped` + `missing=76(claimed 0 / degraded 76 / silent 0)`（两组联机端到端整组降级）。
+> 这是前置问题，**不是**本轮改坏的 —— 改前改后都是"编了 = 717，没编 = 641"。
+
+### 62.4 blocked 的 25 份：按"缺什么"分组（这是下一轮的输入）
+
+| 组 | 份数 | 缺的具体东西 | 谁受影响 |
+|---|---:|---|---|
+| **A. AdMob / IAP 平台桥** | 7 | ① 包内**零个**原生插件二进制（`find rsc -name '*.so' -o -name '*.aar' -o -name '*.jar' -o -name '*.gdap'` ⇒ **空**）⇒ `Ad_holder.gd` 是 52 份里**唯一解析都过不去**的（7 个 AdMob 原生类型）；② `/root/GraphwarRootNode` 这个节点 + 它的 `log(String)` 方法（5 份都在第一行 `get_node("/root/GraphwarRootNode")`；我方主场景根是 `Main`(`main.gd`)） | `Ad_holder` `AdContainer` `android_iap` `Android_mediastore_holder` `IAP_holder` `IAP_IOS` `IOS_album_holder` |
+| **B. 红线（别人的屏）** | 8 | `client/src/screens/play_screen.gd` / `client/src/play/**`（7 份）、`replay_lobby.gd`（1 份）、`campaign.gd`（1 份，且另卡 `GwButton`↔`GraphwarButton` 派发） | `ButtonGrid` `ExtraOptionPad` `ExtraOptionsHBox` `HBoxContainer` `ShowExtraButtons` `ViewFunctionPad` `ViewFunctionsLabel` `GameNameContainer` `CampaingLevelsButtons`（其中 `ButtonGrid` 等 6 份的**节点名/类型我方已经全对**，只差 `GwViews.attach()` 一行） |
+| **C. 包内死文件** | 7 | 无需接线：31 份 `.scn` 零引用（见 §62.1） | `CampaingButtonSize` `ExtraOptionsVbox` `LevelTitleContainer` `OffsetLabel` `ResizeContainer` `UnlockButton` `endgame_pop_up` |
+| **D. 被既有断言挡住** | 1 | `ShopButtonsSize.gd` 没有下限（原版 105 份里 `maxi`/`max(` 出现 0 次），而 `client/tools/selftest.gd:717` 把 **32 下限**写进了期望值 ⇒ headless 视口 64 px 下原版算出 **−6**、断言要 **32** | `ShopButtonsSize` |
+| **E. 结构 + 无真值** | 1 | `SoldierIconMarginContainer.gd`：原版每个槽是**叠在同一点**的 4 个 `TextureRect`（Skin/Face/Hat/Empty）+ 负 margin；我方每槽 1 个合成图标（负 margin 会让相邻槽压叠）。且 `game_setup` 屏**没有像素真值**（§57 只做了 campaign / level_popup）⇒ 改了也没法验收 | `SoldierIconMarginContainer` |
+| **F. Rust 侧还没接** | 1 | `endgame_pop_up.gd` 是 9 行空壳（那份 `.scn` 的根节点**根本没有脚本**），内容由 Rust 填：`src/graphwar_play_screen_control.rs` 的 `NODE_FUNCS` 把 `VictoryPlayerContainer*` / `TeamVictoryLabel` / `SelfVictoryLabel` 映到 `0x3d9000`(FN_READY_LABELS) / `0x3da130`(FN_SHOW_VICTORY)。**现在换上去 = 弹窗变空壳**，所以我方那 211 行仿制控制器**保留**并明确标注"这是仿制、不是复原" | `endgame_pop_up` |
+
+> 逐份的完整理由 + 需要的具体东西在台账的 `why` / `need` 两列（25 行全覆盖）。
+
+### 62.5 复跑（在 worktree `WT` 里，一条不漏）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t10
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target          # ⚠️ 单独一行
+export HOME=$WT/.fakehome
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+
+# ① 原版副本逐字节（27 份，无输出才是过）
+for f in client/src/views/*.gd; do cmp "$f" "recovered-src/$(basename $f)" || echo "DIFF $f"; done
+
+# ② 台账与判据复算（读主工作区 rsc/ 下 31 份 .scn 的原始字节，只读）
+python3 .agent-work/ledger/gen.py                  # 重写 fixtures/view_layer_ledger.tsv 并断言 status 自洽
+
+# ③ 内核 + 绑定（本轮没动 src/，但 selftest 要 gdext 版 .so + serve_match）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+cargo build --offline --example serve_match
+"$GODOT" --headless --path client --import        # 新增 3 个 .gd ⇒ 必须 import
+cargo test --offline
+cargo test --offline --features gdext-bindings
+bash client/run.sh selftest                       # 717 / 0 / 1 skip
+for f in client/tools/*_check.gd; do "$GODOT" --headless --path client --script "res://tools/$(basename $f)"; done   # 1933 / 0
+
+# ④ 像素（只有 level_popup 被本轮改到；campaign 一起拍，作对照）
+python3 tools/frame_capture.py --side original --flow static --out $WT/.agent-work/frames/orig --display-num 85
+python3 tools/frame_capture.py --side ours     --flow static --out $WT/.agent-work/frames/mine --display-num 86
+python3 tools/frame_diff.py --orig $WT/.agent-work/frames/orig --mine $WT/.agent-work/frames/mine \
+  --screens campaign,level_popup --out $WT/.agent-work/frames/out/results.tsv \
+  --blocks-out $WT/.agent-work/frames/out/blocks.tsv --json $WT/.agent-work/frames/out/diff.json
+```
+
+⚠️ `tools/frame_diff.py` **要用系统 `python3`**（有 numpy+Pillow）；`.reference/venv` 里**没有** numpy（实测 `ModuleNotFoundError`）。
+⚠️ 工作树里跑 `frame_capture.py` 靠 `$WT/.reference → 主工作区/.reference` 这个符号链接把 `REPO` 落回**本工作树**
+（§57.8 的注记，本轮同样适用）。
+
+### 62.6 遗留 / 未做（**必读**）
+
+1. **`OptionsContainer` 那一条"接线"是我方加的触发**（父容器 `resized` 时催原版 `set_minimum_size()`）：
+   原版只监听自己。1920×1160 下父高 956 是稳的、一次重算就到位，所以这条在真机上"不必要"；
+   但 headless 小视口会溢出、需要它才收敛。**它算接线、不算复原**，谁要严格 1:1 就该把它删掉并改 selftest 那一行的口径。
+2. **`game_setup` 屏没有像素真值**：`GameSetupPlayerEntry.gd` 换上去只验了字号（`w/40`）与 selftest，
+   **没验像素**。同理 `SoldierIconMarginContainer` 的"改了会不会更好看"完全无从判定 ——
+   下一轮若要动这一屏，先补真机帧。
+3. **play_screen 那 6 份（`ButtonGrid`/`ExtraOptionPad`/`ExtraOptionsHBox`/`HBoxContainer`/`ViewFunctionPad`/`ViewFunctionsLabel`）
+   只差一行 attach**：节点名我一个一个核对过都在（`PlayMainHBox`/`PlaneContainer`/`LeftControls`/
+   `LeftTopButtonsContainer`/`ExtraOptionsVBox`/`ExtraOptionsHBox`/`GamePlane`/`4 个 *ButtonGrid`）。
+   `ButtonGrid`/`HBoxContainer` 还要先把 `_make_grid()` 拆成"建 → 填 → 挂 → add"。**本轮不能碰那个文件**。
+4. **半分原版半分仿制的地方（明确登记）**：
+   * `join_level_pop_up`：`OptionsContainer`/`TurnLimitText` 是原版，**其余仍是我们的代码**；
+   * `game_setup` 玩家行：名字容器是原版，**图标盒/槽/按钮仍是我们的形状**（原版 `team1_entry` 是 48 节点的行）；
+   * `endgame_pop_up`：**整份控制器还是仿制**（见 §62.4 F）。
+5. `ExtraOptionsVbox.gd` / `LevelTitleContainer.gd` / `ResizeContainer.gd` / `CampaingButtonSize.gd` /
+   `OffsetLabel.gd` / `UnlockButton.gd` 这 6 份**不建议接线**（包内零引用）。若有人要动，
+   先拿"哪条路径加载它"的证据。
+
+### 62.7 我写错了 / 任务前提被证伪
+
+1. **§43.3 说 `GameSetupPlayerEntry.gd` "我们的玩家行是 `HBoxContainer` ⇒ 类型不符，引擎拒绝"——读错了节点。**
+   那个脚本 `extends MarginContainer`，原版挂在 `team1_entry.tscn` 里**包 `PlayerNameLabel` 的那个
+   `MarginContainer`**（根 `HBoxContainer` 的第 **5** 个孩子）上，**不是**行根。我方玩家行里包
+   `PlayerNameLabel` 的正好是同名同类型节点 ⇒ 直接就能挂（本轮已换，字号 `w/40` 生效）。
+   §43.7 第 3 条的前提"需要先把玩家行改回 `team1_entry.tscn` 的形状（根 = `MarginContainer`）"因此**作废**：
+   那个 `.tscn` 的根是 `HBoxContainer`，`MarginContainer` 是它的孩子。
+2. **§43.3 对 `OffsetLabel.gd` / `CampaingButtonSize.gd` / `LevelTitleContainer.gd` / `ResizeContainer.gd`
+   写的"原版是 Rust 控制器运行时 `new()` 的"是**推断**，本轮给了反证**收紧**成"包内零引用"
+   （`.so` 字符串表 `res://*.gd` = 0 次）。**仍然不是"证明作者没用它们"**，只是"没有任何加载证据"。
+3. **§39.4 把 `TurnLimitText.gd` 判成"`join_level` 只有 4 个模式格、没有第 5 个读出格 ⇒ 换不了"——数错了。**
+   原版 `join_level_pop_up.tscn` 的 `OptionsContainer` 里就是 **6 个槽**：`MarginContainer` +
+   4 个 `AspectRatioContainer` + `MarginContainer2`，而第 4 个 `AspectRatioContainer4`（名字就叫这个）
+   **自己挂着 `TurnLimitText.gd`**，里面是 `TimeModeButton`。我方那 4 格的名字/顺序与原版逐字相同
+   ⇒ 本轮直接挂上（视觉零变化：子节点是 `text=""` 的图标按钮）。
+4. **任务书说的"换上去了 24 个"仍然成立**，但**不是**"40 个能换"：§43.1 已把"40 行"更正成"39 个文件"，
+   本轮再把"能换"的判据落到"原版 `.scn` 里能读出节点 + 我方有同名同类型同形状节点 + 三条验收不退"，
+   结论是 24 + 3 = **27 份在场**，剩下 25 份**逐份**都有具体缺件（不是"懒得换"）。

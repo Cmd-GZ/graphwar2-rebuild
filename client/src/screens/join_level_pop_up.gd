@@ -175,7 +175,12 @@ func build() -> void:
 	# 底色：真值里只有 **第一格（坐标模式）是白底**，另外三格是面板色。两格用的主题
 	# （`axis_button_theme.tres` / `game_menu_icon_theme.tres`）除底色外逐字段相同，
 	# 所以这里挂同一份 `mode_icon_stylebox()` 的两个变体即可（docs/144 §4）。
-	_options = GwUI.hbox("OptionsContainer", 4, _content)
+	# ⚠️ `_options` **先不挂父**：原版 `OptionsContainer.gd` 的 `_ready` 要连 `self.resized`，
+	# 而 `set_script()` 对已进树的节点**不补发** `_ready`（`GwViews.attach()` 会响亮报错）。
+	# 所以按 `GwViews` 的规矩来：建节点 → 填子节点 → `attach()` → 最后 `add_child()`。
+	# 挂载顺序也照原版 `.tscn`：`MarginContainer` / `AspectRatioContainer`(轴) / `…2`(函数) /
+	# `…3`(回合) / `…4`(时间，**这个节点挂 `TurnLimitText.gd`**) / `MarginContainer2`。
+	_options = GwUI.hbox("OptionsContainer", 4)
 	_options.size_flags_vertical = Control.SIZE_EXPAND_FILL   # 真值 flags=V-EXPAND
 	_options.size_flags_stretch_ratio = 0.5                   # 真值 ratio=0.50
 	var mode_index := 0
@@ -200,6 +205,14 @@ func build() -> void:
 		for state in ["normal", "hover", "pressed", "disabled"]:
 			b.add_theme_stylebox_override(state, sb)
 		holder.add_child(b)
+		# 原版 `join_level_pop_up.tscn` 的第 4 个 `AspectRatioContainer`（名字就是
+		# `AspectRatioContainer4`，里面是 `TimeModeButton`）**挂着 `TurnLimitText.gd`**
+		# （观测：`recovered-src/join_level_pop_up.tscn` 第 17 号 ext_resource =
+		# `res://TurnLimitText.gd`，`script = ExtResource("17_vd70i")` 落在该节点上）。
+		# 它只给子节点写 `font_size = 视口宽/20` —— 这里子节点是**纯图标按钮**（`text = ""`），
+		# 所以视觉上没有任何变化；换上去是为了让节点-脚本对应关系与原版一致。
+		if mode_index == 3:
+			GwViews.attach(holder, "TurnLimitText.gd")
 		_options.add_child(holder)
 		_mode_buttons[String(spec.key)] = b
 		mode_index += 1
@@ -209,6 +222,19 @@ func build() -> void:
 	_options.move_child(lead, 0)
 	var trail := GwUI.margin("MarginContainer2", 0, _options)
 	trail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# 原版 `OptionsContainer.gd`（`recovered-src/OptionsContainer.gd`，逐字节副本）：
+	# `resized` → `call_deferred("set_minimum_size")` → `custom_minimum_size.y = 0.25 × 父高`。
+	# 我们自己那份 `_update_options_height()` 已**整份删掉**（含"弹窗未布局时用预测高度兜底"那一支）。
+	GwViews.attach(_options, "OptionsContainer.gd")
+	_content.add_child(_options)
+	# **接线（不是算式）**：原版只连了自己那条 `resized`。父 `VBox` 的高度变化若发生在
+	# 它最后一次重算**之后**（例如说明文字写进去把父高挤小），原版那个值就停在旧父高上。
+	# 所以我们只做一件事：父容器 `resized` 时**再调一次原版自己的** `set_minimum_size()`
+	# —— 算式仍然是 `OptionsContainer.gd` 里那 4 行，我们一行都没重写。
+	# （没有这条时 `selftest` 的 `min.y == 0.25×父高` 实测 25.2 vs 22.8，差的正是"父高
+	#  从 100.8 变成 91.2 那一次没重算"。headless 视口只有 64 px，容器会溢出；
+	#  1920×1160 下父高 956 是稳的，一次重算就到位。）
+	_content.resized.connect(_resync_options_height)
 
 	# Cancel / Start：底部居中、尺寸由文字决定（原版 " Cancel " / "  Start  "，含空格）。
 	# `HBoxContainer3` **没有** separation 覆盖 ⇒ 默认 4；两个按钮各在一个 10 px 的
@@ -246,9 +272,6 @@ func build() -> void:
 
 	(vbox as VBoxContainer).add_child(GwUI.ad_bar())
 
-	_content.resized.connect(_update_options_height)
-	_options.resized.connect(_update_options_height)
-
 ## 上下两条留白带的高度（1920 宽 ⇒ 96）。
 ##
 ## 真值（`docs/145` §2.1，两条管线一致）：顶部带 96 = `ExitButtonContainer` 的高度
@@ -265,28 +288,15 @@ func _band_height() -> float:
 		return 96.0
 	return floorf(w * 0.05)
 
-## `OptionsContainer.gd`：`custom_minimum_size.y = 0.25 * 父高`（父 = 面板里的 VBox）。
-## 真值 239 = 0.25 × 956。**注意**：这行的 min 一旦定下来，剩余高度就全部落到说明行
-## （真值 522），所以 options 行**不能**同时吃剩余空间 —— 否则它会跟著变大
-## （`docs/145` §2.4 记了这条与 `.tscn` 里 `size_flags_vertical = 3` 的差别）。
-func _update_options_height() -> void:
-	if _options == null or _content == null:
-		return
-	var parent_h := _content.size.y
-	# 面板还没布局（弹窗隐藏时 size 为 0）就先用**真值结构**兜底：
-	# 面板高 = 视口高 − 2×（屏宽×0.05 的上/下两行）− 3×4 的分隔 ⇒ 1920×1160 下 = 956。
-	if parent_h <= 1.0:
-		var vp := get_viewport_rect().size
-		parent_h = vp.y - 2.0 * (vp.x * 0.05) - 12.0
-	var want := 0.25 * parent_h
-	if absf(_options.custom_minimum_size.y - want) > 0.5:
-		_options.custom_minimum_size = Vector2(0, want)
-		# 改了最小高度会触发新一轮布局，再收敛一次（有 0.5px 门限，不会无限递归）
-		_update_options_height.call_deferred()
-
 ## 面板带在"还没布局"时的预测高度：视口高 − 2×带高 − 3×4（真值 1160−96−96−12 = 956）。
 func _viewport_band_height() -> float:
 	return maxf(1.0, get_viewport_rect().size.y - 2.0 * _band_height() - 12.0)
+
+## 父容器换了高度 ⇒ 让**原版** `OptionsContainer.gd` 自己再算一次（它自己的函数名）。
+## 这里**没有**任何高度算式：算的是 `recovered-src/OptionsContainer.gd::set_minimum_size`。
+func _resync_options_height() -> void:
+	if _options != null and _options.has_method("set_minimum_size"):
+		_options.call_deferred("set_minimum_size")
 
 func on_enter() -> void:
 	var app_node := app()
@@ -297,7 +307,11 @@ func on_enter() -> void:
 	_title.text = String(level.title)
 	_description.text = String(level.description)
 	_update_mode_icons(level)
-	_update_options_height()
+	# 高度由**原版** `OptionsContainer.gd` 自己算；这里只催它一次（复用它的
+	# `set_minimum_size()`，不是另写一份算式）。跨屏重进时父高会变，而 `resized`
+	# 只在尺寸真的变化时才发 —— 门没变就什么都不会发，所以显式催一次。
+	if _options != null:
+		_options.call_deferred("set_minimum_size")
 
 func apply_font_scale() -> void:
 	super.apply_font_scale()
