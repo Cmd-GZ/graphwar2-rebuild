@@ -43,7 +43,8 @@ P4  命名 —— 真名 348/527；179 无名（138 族级 + 41 未知）
 ## 1. 现在的数（报数**必须带轴名/前置条件**，否则等于没报）
 
 ```
-可归属函数   527 / 527 = 100%（**逐位 89 / 观测 438 / 推断 0**）｜78 模块｜未做 0
+可归属函数   **模块级** 527/527（每模块都有文件+档位；逐位 89 / 观测 438 是模块档位加权）
+             **函数级 131/527 = 24.9%**（`docs/06` §87，2026-11-26 首次实测）｜147 有码指不到｜**249（47.2%）源码层无函数体**
              （2026-11-26：`polish_notation_converter` 唯一可归属函数 `0x4f5450` 对拍成 18/18 逐位 ⇒ 88→89）
              **439 里本质可隔离执行的只有 129（29.4%）**，其余 310 要 Godot/分配器 ⇒ 这是「观测」分母的可及上限（`docs/06` §64）
              但这只是 13,263 个 Ghidra 函数里的 4.0% —— 见 §3「信息天花板」
@@ -179,7 +180,7 @@ t6 静态两屏（0 像素）；另由 lead 修掉 `update_sprite` 的源码级�
 export CARGO_HOME=$PWD/.reference/cargo-home CARGO_TARGET_DIR=$PWD/.reference/cargo-home/target
 cargo test --offline                                  # 2026-11-26 实测 1761 / 0 / 1 ignored
 cargo test --offline --features gdext-bindings        # 2026-11-26 实测 1867 / 0 / 1 ignored
-python3 tools/coverage_matrix.py --check              # 527 可归属 / 逐位 88 / 观测 439
+python3 tools/coverage_matrix.py --check              # 527 可归属（**模块级**）/ 逐位 89 / 观测 438；函数级见 §87
 python3 tools/check_doc_refs.py                       # rc=0
 R=.reference/replays/gw2-replays-snapshot/replays     # 403 个文件（401 回放 + 2 元数据），只读
 cargo run --release --offline -q --example replay_attrib -- --dir $R --drive fire  --policy default --json f.jsonl
