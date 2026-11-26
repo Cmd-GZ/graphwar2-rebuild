@@ -1,0 +1,219 @@
+# fixtures/frame_endgame_events.txt —— **结算弹窗（EndGamePopUp）视觉真值的预注册事件序列**（任务 T18）
+#
+# ## 这份文件是什么
+#
+# T8（`fixtures/frame_match_events.txt` + `tools/match_serve.py` + `--flow match`）把视觉真值
+# 扩到了对局屏两屏（S7 准备态 / S8 对局中），但**停在了 `CalculatingResults`**：
+# 从来没有一轮让两侧真的走进「一局结束 → 结算弹窗」那一屏。
+# `docs/00` 交付表里因此挂着一条「`EndGamePopUp` 仍 ~9.8 %」—— 它的真值**不是**真机对局，
+# 是 `docs/130` 的**宿主工程**（弹窗单独盖在原版纯底色上）+ **只在"面板区"矩形里比**，
+# 而且原版那一侧是**空结算框**（十个胜利者格子 `visible=false`、两个 Label 空串），
+# 我方那一侧是**填满**的（`YOU lOST` / `Team N Victory!` / 头像）—— 口径根本不同。
+# 本文件回答的是**另一个问题**：两侧从**同一个真实局面**出发、发**同一份真回放收场事件**，
+# 会不会进到**同一屏**结算弹窗？那一屏的三层判据（L1/L2/L3）是多少？
+#
+# ## 字节布局从哪来（不许自己发明编码）
+#
+# * 帧格式：TCP，`u16` **大端长度** + 一个 JSON 对象 `{"<EventName>":{…}}`（`docs/09` §1.1、`docs/07` §1）；
+# * 事件名 / 字段名 / 字段顺序：`src/_scaffold/protocol.rs` 的 `WIRE_SPEC`（74/74 事件逐位）+ `docs/07` §3.3 全表；
+# * `game_state` 的取值集合：`WIRE_VALUE_ENUMS["GameState"]` =
+#   `Connecting / Setup / WaitingForFunctions / CalculatingResults / SynchronizingResults /
+#    ExecutingResults / EndingGame / Disconnected`（8 个，`.data.rel.ro 0x9586d0` 逐项校准，`docs/14` §11）；
+# * **事件取值与事件顺序**：`[phase3]` 逐条抄**同一份真回放**的尾部（见下 §来源），不是编的。
+#
+# ## 来源（逐条可查）
+#
+# 局面/事件顺序 = 冻结快照里的**真回放** `1793897298`（`Level 0`：1 士兵 230 + 靶子 232，
+# `ClearObstacles`，104 事件 / 2276 tick；**只读**，跑完快照仍 403 份；与 T8 用的是**同一份**，
+# 所以 phase1/phase2 与 `fixtures/frame_match_events.txt` 逐字节相同）。
+#
+# 本局的收场是**真结算**，不是"发一条 `EndingGame` 试试"：
+#
+# | 回放里 | tick | 事件 | 含义 |
+# |---|---|---|---|
+# | #102 | 2169 | `LifeInfo{entity_id:232, alive:false}` | 第二发命中**靶子 232** ⇒ Team2 零活实体 |
+# | #103 | 2276 | `TurnCountInfo{turn_count:2}` | 回合计数 2 |
+# | #104 | 2276 | `GameStateInfo{game_state:"EndingGame"}` | **一局结束** |
+#
+# ⇒ 原版客户端收到这一串之后，它的 `set_state(EndingGame)` 会按**自己的**生命表算胜方字节
+# （`0x478136 call get_alive_teams` → `[self+0x11f]`；`docs/14` §11.4 的四行表）：
+# Team1（士兵 230）还有人、Team2（靶子 232）没了 ⇒ 字节 **0 = Team1 胜**。
+# 也就是说这一屏**有确定的胜方**，不是"两边都活着"那种 2（没人赢）。
+#
+# ## 三个相位 / 三个屏
+#
+# | 相位 | 屏名（`--flow endgame` 写进 manifest 的名字） | 内容 | 帧数 |
+# |---|---|---|---|
+# | `[phase1:match_ready]` 42 帧 | `match_ready` | S7 准备态（棋盘 + 士兵 230 + 靶子 232 + 回合 HUD） | 3 |
+# | `[phase2:match_play]` 8 帧 | `match_play` | S8 第一发（`x+2sin(20x) - 3.694`）在飞 | 3 |
+# | `[phase3:endgame_popup]` 20 帧 | `endgame_popup` | **第二回合 + 第二发 + 靶子被击毁 + `EndingGame` ⇒ 结算弹窗** | 3 |
+#
+# 屏名 `endgame_popup` = 原版 `res://endgame_pop_up.tscn` 那个界面（`recovered-src/endgame_pop_up.tscn`、
+# `docs/92` §4.13，根节点 `EndgamePopUp`）。**名字对齐原版场景名，不另造。**
+#
+# ## 为什么 phase3 是 20 条而不是只发收场 3 条
+#
+# 收场那 3 条（#102/#103/#104）在真回放里发生在**第二发之后**，状态机当时在 `ExecutingResults`。
+# 只发那 3 条 = 把状态机从"第一发的 ExecutingResults"直接跳到"第二发打完的 EndingGame"，
+# 中间**缺一个真实回合**（`TurnCountInfo{1}` → `WaitingForFunctions` → 第二发）。
+# 所以 `[phase3]` 取**连续无缺口**的 #85..#104（20 条，一条不多一条不少），
+# 与 phase1/phase2 拼起来 = 真回放 `#1..#104`，**唯一被省掉的**是 #63..#75 那 12 条
+# **打字过程**的 `FunctionInfo`（`"x"` → `"x+"` → … → `"x+2sin(20x)"`，T8 在
+# `fixtures/frame_match_events.txt` 里已经说明过这处压缩，本文件沿用同一处压缩、不新增压缩）。
+# phase3 内部 #89..#92 同样是打字过程，但它们在**连续区间内**，所以**原样保留**（不挑不删）。
+#
+# ## 两侧必须吃到**同一份字节**
+#
+# `tools/match_serve.py` 读本文件的原样字节按顺序发；两侧唯一的差别是 `--side` 与点击坐标。
+#
+# ## 判据（引用既有预注册文件，**一个数不许改**）
+#
+# | 层 | 判据 | 出处 |
+# |---|---|---|
+# | L1 | 尺寸 1920×1160；三通道全局均值 \|Δ\| ≤ 2.0/255；第一主色同色且占比差 ≤ 2.0 pp | `fixtures/frame_diff_thresholds.txt` §3 L1 |
+# | L2 | 6×4=24 块，每块每通道均值 \|Δ\| ≤ 2.0/255（24 块全过） | 同上 §3 L2 |
+# | L3 | 差异像素 ≤ 0.10 % 且 max\|Δ\| ≤ 8/255（**只在 L1/L2 都过时才算数**） | 同上 §3 L3 |
+# | 固定条件 | 私有 Xvfb 1920x1160x24 TCP、llvmpipe 软渲染、`import -window <id>`、每屏 3 帧 / 帧间隔 1.2 s | 同上 §1、§2 |
+#
+# 门槛文件 sha256 `9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873`（预注册，不改）。
+#
+# ## 预注册的**期望**（写于任何一次采集之前，允许被实测推翻 —— 推翻也是结论）
+#
+# * `match_ready` / `match_play`：应**复现** `fixtures/frame_diff_results_match.tsv`（T8：L1 过、
+#   L2 不过 4 块 / 3 块，L3 141 591 / 152 216 px）。这两屏在本轮是**对照**（证明管线没被改坏）。
+# * `endgame_popup`：**未知**。本轮第一次测。
+#   预注册的**方向性预测**（读代码得到的，跑完要如实判它成立不成立）：
+#   - **原版**：收到 `EndingGame` 后应亮 `EndgamePopUp`（`docs/02` 有
+#     `GraphwarPlayScreenControl::update_end_game_pop_up` @ `0x3da130`）；但**能否在
+#     3 帧窗口里抓到**、以及它是否要等弹道落地才亮 = **未知**。
+#   - **我方**（master `5b9795b` 的 `client/`）：**预测进不去**。依据（观测：读代码）：
+#     `session.gd` 收到 `EndingGame` 只 `ended.emit()`；`play_screen.gd:3008` 把它记进
+#     `_online_ending`，而该变量**只被赋值、从不被读**（全文 3 处：声明 352 / 复位 2754 /
+#     赋值 3008）；`_on_shot_arrived()` 在 `phase == "online"` 时**直接 return**（不结算）；
+#     `_check_match_over()` 在 `_online_mode` 下**直接 return**；`app.gd::_on_net_ended()`
+#     只 `print` + `online = false`，**不 open_popup**。⇒ 联机模式下**没有任何一条**
+#     `EndingGame → open_popup("EndGamePopUp")` 的通路；`open_popup("EndGamePopUp")` 全网只有
+#     `app.gd:738`（`report_match_result()` 里）一个调用点，而它的上游是
+#     `play_screen._check_match_over()`（联机时被挡）。跑出来若确实没弹窗 ⇒ 预测成立。
+#
+# ---------------------------------------------------------------------------
+
+[meta]
+# 服务器对两侧都用的同一组参数（`tools/match_serve.py --fixture` 读这里）
+room={"room_name":"Graphwar Game","game_state":"Setup","current_player_count":1,"address":"127.0.0.1:{tcp_port}","axis_mode":"EveryUnit","function_mode":"NormalFunction","turn_mode":"SequentialTurns","time_mode":"Timer1m","locked":false}
+tcp_port=46702
+udp_port=42968
+connection_id=228
+my_player_id=229
+expected_screens=match_ready,match_play,endgame_popup
+frames_per_screen=3
+frame_gap_s=1.2
+phase_gap_s=1.0
+# tick 轴（服务器回 `TickReply` 用）。三个基准都是**真回放 1793897298 里的 tick 值**：
+#   phase1 = 快照那一刻 = 6（回放事件 #17..#62 的 tick）
+#   phase2 = 第一发 = 550（回放 #76..#84；其后按 60 Hz 走）
+#   phase3 = 第二发 = 1485（回放 #93..#104 的 tick 基准；active_tick=1550 / start_tick=2169,2216
+#            都在这条轴上，所以第二发的"命中/爆炸"是走到 tick 2169 才发生的 —— 见 phase3_expect）
+tick_phase1=6
+tick_phase2=550
+tick_phase3=1485
+tick_hz=60
+phase1_expect=棋盘 + 士兵 230（带准备圈）+ 靶子 232 + 回合 HUD（轮到 player 229 / soldier 230）+ 函数框空
+phase2_expect=棋盘 + 第一发弹道（修正函数 x+2sin(20x) - 3.694，落点 x=2.5793570733273476）+ 爆炸特效
+phase3_expect=第二回合 + 第二发 + 靶子 232 被击毁（tick2169）+ EndingGame(tick2276) ⇒ 结算弹窗：面板 (483,235) 956×691、Team1 胜（胜方字节 0）
+
+[phase1:match_ready]
+# 期望屏名 = match_ready（S7 准备态）。事件顺序 = 真回放 1793897298 的 tick 1..6 快照段，
+# 去掉只对"发起方自身"有意义的 Connecting 段，并把握手的 7 条按真抓包顺序放在最前面。
+# 唯一的**重排**：7 条握手按 `wire_samples.STATE_SYNC` 的顺序（真抓包顺序）发送，
+# 这与回放里 tick1/2 的 7 条内容一致、顺序也一致（`NewConnection` 在回放里不出现，
+# 因为它是对**新连接**的应答）。
+[seq]
+{"NewConnection":{"connection_id":228}}                                                            # handshake 1/7（wire_samples.STATE_SYNC[0]；protocol_match.jsonl:22）
+{"TurnModeInfo":{"turn_mode":"SequentialTurns"}}                                                   # handshake 2/7（jsonl:23）
+{"GameStateInfo":{"game_state":"Setup"}}                                                           # handshake 3/7（jsonl:30；回放 tick2 同值）
+{"GameNameInfo":{"game_name":"Graphwar Game"}}                                                     # handshake 4/7（jsonl:32；回放 tick2 同值）
+{"AxisModeInfo":{"axis_mode":"EveryUnit"}}                                                         # handshake 5/7（jsonl:25；回放 tick2 同值）
+{"FunctionModeInfo":{"function_mode":"NormalFunction"}}                                            # handshake 6/7（jsonl:26；回放 tick2 同值）
+{"TimeModeInfo":{"time_mode":"Timer1m"}}                                                           # handshake 7/7（jsonl:27；回放 tick2 同值）
+{"PlayerInfo":{"player_id":229,"connection_id":228}}                                               # 回放 tick5 #8（本机玩家 = 229，conn = 228）
+{"TeamInfo":{"entity_id":229,"team":"Team1"}}                                                      # 回放 tick5 #9
+{"ColorInfo":{"entity_id":229,"color":{"r":125,"g":104,"b":0}}}                                    # 回放 tick5 #10（真回放给的颜色）
+{"SoldierInfo":{"soldier_id":230,"player_id":229}}                                                 # 回放 tick5 #11（士兵 230 属于玩家 229）
+{"TeamInfo":{"entity_id":230,"team":"Team1"}}                                                      # 回放 tick5 #12
+{"EntityEffectInfo":{"entity_id":230,"effect_type":"DeathEffect"}}                                 # 回放 tick5 #13
+{"SoldierInfo":{"soldier_id":231,"player_id":229}}                                                 # 回放 tick5 #14（第 2 具士兵，tick6 被删）
+{"TeamInfo":{"entity_id":231,"team":"Team1"}}                                                      # 回放 tick5 #15
+{"EntityEffectInfo":{"entity_id":231,"effect_type":"DeathEffect"}}                                 # 回放 tick5 #16
+{"GameNameInfo":{"game_name":"Level 0"}}                                                           # 回放 tick6 #17（关卡名最终值）
+{"TeamInfo":{"entity_id":229,"team":"Team1"}}                                                      # 回放 tick6 #18
+{"EntityRemoved":{"entity_id":231}}                                                                # 回放 tick6 #19（第 2 具士兵被删掉）
+{"RemoveTeam":{"entity_id":231}}                                                                   # 回放 tick6 #20
+{"TargetInfo":{"target_id":232}}                                                                   # 回放 tick6 #21（靶子 232）
+{"TeamInfo":{"entity_id":232,"team":"Team2"}}                                                      # 回放 tick6 #22
+{"SkinGraphicsInfo":{"entity_id":232,"graphics_str":"target"}}                                     # 回放 tick6 #23（靶子外观）
+{"EntityEffectInfo":{"entity_id":232,"effect_type":"SparkEffect"}}                                 # 回放 tick6 #24
+{"TimeModeInfo":{"time_mode":"TimerInf"}}                                                          # 回放 tick6 #25（本关真值 TimerInf）
+{"ClearObstacles":{}}                                                                              # 回放 tick6 #26
+{"PosInfo":{"entity_id":230,"pos_x":-5.156306989169929,"pos_y":-9.889980889323086,"radius":0.5}}   # 回放 tick6 #29（士兵 230 落点）
+{"PosInfo":{"entity_id":232,"pos_x":9.782072976693868,"pos_y":4.595393963132992,"radius":0.5}}     # 回放 tick6 #32（靶子 232 落点）
+{"LifeInfo":{"entity_id":230,"alive":true}}                                                        # 回放 tick6 #33
+{"LifeInfo":{"entity_id":232,"alive":true}}                                                        # 回放 tick6 #34
+{"FunctionInfo":{"owner_id":230,"function":"","corrected_function":null}}                          # 回放 tick6 #35（函数框空）
+{"TurnCountInfo":{"turn_count":0}}                                                                 # 回放 tick6 #36
+{"TurnInfo":{"player_id":229,"soldier_id":230}}                                                    # 回放 tick6 #38（轮到 229 / 士兵 230）
+{"EndOfTurnInfo":{"end_of_turn_tick":0,"time_mode":"TimerInf"}}                                    # 回放 tick6 #39
+{"GameStateInfo":{"game_state":"WaitingForFunctions"}}                                             # 回放 tick6 #40（★ 进入准备态）
+{"NameInfo":{"entity_id":229,"name":"cmdgz"}}                                                      # 回放 tick6 #56（真回放里的玩家名）
+{"SkinGraphicsInfo":{"entity_id":229,"graphics_str":"face_paint_2"}}                               # 回放 tick6 #57
+{"SkinGraphicsInfo":{"entity_id":230,"graphics_str":"face_paint_2"}}                               # 回放 tick6 #58
+{"FaceGraphicsInfo":{"entity_id":229,"graphics_str":"asian"}}                                      # 回放 tick6 #59
+{"FaceGraphicsInfo":{"entity_id":230,"graphics_str":"asian"}}                                      # 回放 tick6 #60
+{"HatGraphicsInfo":{"entity_id":229,"graphics_str":"asian_hat"}}                                   # 回放 tick6 #61
+{"HatGraphicsInfo":{"entity_id":230,"graphics_str":"asian_hat"}}                                   # 回放 tick6 #62
+[endseq]
+
+[phase2:match_play]
+# 期望屏名 = match_play（S8 对局中）。事件顺序 = 真回放 1793897298 的**第一发**（tick 550），
+# 一条不多一条不少：FunctionFire → CalculatingResults → 修正函数 → FunctionPoints →
+# SynchronizingResults → FunctionActive → EffectInfo(Explosion) → ExecutingResults
+# （与 `docs/07` §8.1/§8.2 的"一回合报文顺序"一致）。
+[seq]
+{"FunctionFire":{"soldier_id":230}}                                                                # 回放 tick550 #76（★ 开火）
+{"GameStateInfo":{"game_state":"CalculatingResults"}}                                              # 回放 tick550 #77（★ 进入对局中）
+{"FunctionInfo":{"owner_id":230,"function":"x+2sin(20x)","corrected_function":"x+2sin(20x) - 3.694"}}  # 回放 tick550 #78
+{"FunctionPoints":{"owner_id":230,"start_x":-5.156306989169929,"start_y":-9.889980889323086,"end_x":2.5793570733273476}}  # 回放 tick550 #79
+{"GameStateInfo":{"game_state":"SynchronizingResults"}}                                            # 回放 tick550 #80
+{"FunctionActive":{"owner_id":230,"active_tick":615}}                                              # 回放 tick558 #81
+{"EffectInfo":{"effect_id":234,"pos_x":2.5793570733273476,"pos_y":0.8236080576517795,"effect_type":"ExplosionEffect","start_tick":1281}}  # 回放 tick558 #82
+{"GameStateInfo":{"game_state":"ExecutingResults"}}                                                # 回放 tick558 #83
+[endseq]
+
+[phase3:endgame_popup]
+# 期望屏名 = endgame_popup。事件顺序 = 真回放 1793897298 的**第二回合 + 第二发 + 收场**，
+# 即回放 #85..#104，**连续无缺口**、一条不多一条不少（原始 tick / 事件序见每行注释）。
+# 状态机路径：ExecutingResults → TurnCountInfo(1) → WaitingForFunctions →
+#   FunctionFire(第二发) → CalculatingResults → SynchronizingResults → ExecutingResults →
+#   LifeInfo(靶子 232 死) → TurnCountInfo(2) → **EndingGame**（`docs/07` §8.1/§8.2 的报文顺序）。
+[seq]
+{"TurnCountInfo":{"turn_count":1}}    # 回放 tick1341 #85（第一发结算完 ⇒ 回合 +1）
+{"TurnInfo":{"player_id":229,"soldier_id":230}}    # 回放 tick1341 #86
+{"EndOfTurnInfo":{"end_of_turn_tick":0,"time_mode":"TimerInf"}}    # 回放 tick1341 #87
+{"GameStateInfo":{"game_state":"WaitingForFunctions"}}    # 回放 tick1341 #88（★ 回到准备态 = 第二回合开始）
+{"FunctionInfo":{"owner_id":230,"function":"x+2sin(20x)","corrected_function":null}}    # 回放 tick1348 #89（玩家在输入框里改函数；此后 3 条是打字过程）
+{"FunctionInfo":{"owner_id":230,"function":"x+2sin(0x)","corrected_function":null}}    # 回放 tick1397 #90
+{"FunctionInfo":{"owner_id":230,"function":"x+2sin(10x)","corrected_function":null}}    # 回放 tick1432 #91
+{"FunctionInfo":{"owner_id":230,"function":"x+2sin(10x)","corrected_function":null}}    # 回放 tick1485 #92
+{"FunctionFire":{"soldier_id":230}}    # 回放 tick1485 #93（★ 第二发开火）
+{"GameStateInfo":{"game_state":"CalculatingResults"}}    # 回放 tick1485 #94
+{"FunctionInfo":{"owner_id":230,"function":"x+2sin(10x)","corrected_function":"x+2sin(10x) - 2.808"}}    # 回放 tick1485 #95
+{"FunctionPoints":{"owner_id":230,"start_x":-5.156306989169929,"start_y":-9.889980889323086,"end_x":10.359005510824831}}    # 回放 tick1485 #96
+{"GameStateInfo":{"game_state":"SynchronizingResults"}}    # 回放 tick1485 #97
+{"EffectInfo":{"effect_id":235,"pos_x":9.782072976693868,"pos_y":4.595393963132992,"effect_type":"SparkEffect","start_tick":2169}}    # 回放 tick1492 #98（火花落在**靶子** (9.782073,4.595394) 上）
+{"FunctionActive":{"owner_id":230,"active_tick":1550}}    # 回放 tick1492 #99
+{"EffectInfo":{"effect_id":236,"pos_x":10.359005510824831,"pos_y":7.715823306330336,"effect_type":"ExplosionEffect","start_tick":2216}}    # 回放 tick1492 #100
+{"GameStateInfo":{"game_state":"ExecutingResults"}}    # 回放 tick1492 #101
+{"LifeInfo":{"entity_id":232,"alive":false}}    # 回放 tick2169 #102（★ 靶子 232 命中 ⇒ Team2 零活实体）
+{"TurnCountInfo":{"turn_count":2}}    # 回放 tick2276 #103
+{"GameStateInfo":{"game_state":"EndingGame"}}    # 回放 tick2276 #104（★ 进结算：EndingGame）
+[endseq]
