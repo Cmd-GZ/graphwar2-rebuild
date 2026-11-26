@@ -73,8 +73,12 @@ tools/        分析脚本（callers/ptr_slots/const_xrefs/pck_extract/module_ma
               campaign_data/campaign_params/event_tags/replay_state/gdc_* …）
 client/       Godot 客户端 ⚠️ **不是原版源码**，见 §0 第 4 条
 docs/         观测/推断/决策/操作说明 —— **索引在 docs/INDEX.md**，不在 README
-docs/guide/   （规划中）攻略向行为手册
-recovered-src/（规划中）从 pck 回收的原版文本源码：.gd/.tscn/.tres/project.godot
+docs/guide/   攻略向行为手册（**已建成**：8 章 + bot 单篇 + README，每条结论带四档证据标记，
+              索引在 docs/guide/README.md，元文档/矛盾台账是 docs/21-guide-manual.md；
+              行数别写死，现算：`wc -l docs/guide/*.md`）
+recovered-src/从 pck 回收的原版文本源码（**已生成并入库**，共 164 个文件：105 个 `.gd` + 31 个 `.tscn`
+              + 22 个 `.tres` + `project.godot` / `Graphwar.gdextension` / `addons/**/plugin.cfg` / `MANIFEST.tsv`；
+              由 `tools/pck_extract.py` 生成，构成与来源见 `recovered-src/README.md`）
 rsc/          ← gitignore，用 tools/pck_extract.py 生成
 .agent-work/  ← gitignore，子 agent 隔离工作区与证据
 ```
