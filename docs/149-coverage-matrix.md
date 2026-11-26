@@ -118,7 +118,7 @@
 | `graphwar_play_screen_control.rs` | 10 | 64 | `src/graphwar_play_screen_control.rs` | 58 | 观测 |
 | `graphwar_player_config.rs` | 0 | 0 | `src/graphwar_player_config.rs` | 8 | 观测 |
 | `graphwar_player_manager.rs` | 3 | 6 | `src/graphwar_player_manager.rs` | 19 | 观测 |
-| `graphwar_player_screen_control.rs` | 8 | 22 | `src/graphwar_player_screen_control.rs` | 19 | 观测 |
+| `graphwar_player_screen_control.rs` | 8 | 22 | `src/graphwar_player_screen_control.rs` | 48 | 观测 |
 | `graphwar_rank_manager.rs` | 4 | 4 | `src/graphwar_rank_manager.rs` | 17 | 观测 |
 | `graphwar_remote_event_handler.rs` | 3 | 171 | `src/graphwar_remote_event_handler.rs` | 0 | 推断 |
 | `graphwar_replay_control.rs` | 2 | 9 | `src/graphwar_replay_control.rs` | 6 | 观测 |
@@ -126,7 +126,7 @@
 | `graphwar_replay_reader.rs` | 0 | 0 | `src/graphwar_replay_reader.rs` | 11 | 观测 |
 | `graphwar_root_node.rs` | 23 | 178 | `src/graphwar_root_node.rs` | 57 | 观测 |
 | `graphwar_server_broker_handler.rs` | 3 | 5 | `src/graphwar_server_broker_handler.rs` | 19 | 观测 |
-| `graphwar_server_connection_handler.rs` | 6 | 24 | `src/graphwar_server_connection_handler.rs` | 5 | 逐位 |
+| `graphwar_server_connection_handler.rs` | 6 | 24 | `src/graphwar_server_connection_handler.rs` | 31 | 逐位 |
 | `graphwar_setup_control.rs` | 21 | 70 | `src/graphwar_setup_control.rs` | 48 | 观测 |
 | `graphwar_shot_calculator.rs` | 1 | 12 | `src/graphwar_shot_calculator.rs+src/graphwar_shot_calculator/settle.rs` | 36 | 逐位 |
 | `graphwar_soldier_manager.rs` | 4 | 5 | `src/graphwar_soldier_manager.rs` | 21 | 观测 |
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（123 个文件、3320 条 `fn`） | `a1deb5d7cc35b7465cab602b04870d1eff58c17ba71c84819f9b7ca8da803a43` |
+| `src/` 树（123 个文件、3375 条 `fn`） | `bae941658029080dc1f1e12738d4e44b827d8a8665dc68e288241d64e10f0d17` |
 
