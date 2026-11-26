@@ -8522,10 +8522,10 @@ python3 tools/frame_diff.py --orig <W>/orig --mine <W>/mine --screens menu,repla
 
 | 问题 | 答案 |
 |---|---|
-| 439 里**本质可隔离执行**的 | **134**（`executable` 33 + `needs_state` 101 中状态是纯数据、可造的；判据见 §64.3） |
+| 439 里**本质可隔离执行**的 | **129**（`executable` 26 + `needs_state` 103 中状态是纯数据、可造的；判据见 §64.3） |
 | 实际**逐位对拍成**的 | **1**（`0x4f5450` `PolishNotationConverter::reorder_recursive`，18 组输入全等）→ 档位 `观测` → **`逐位`** |
 | 发现**真差异** | **1 条**（解析结果里**非 CONST token 的 `value` 字段**：原版是未初始化内存残渣，我方恒 `0.0`）；另有 1 条**假差异**是我自己 hook 的锅，已修正并记账 |
-| 439 分母的**可及上限** | **≈ 134 / 439 = 30.5 %**，其中**能真正落地对拍的上限**还要再砍：33 个 `executable` 里有 20 个是 `module_container` 的 `get_module::<T>` 单态化（要一个真的 `HashMap<TypeId, Rc<dyn Any>>` 才能跑），真正"纯标量进出"的一个都没有 |
+| 439 分母的**可及上限** | **≈ 129 / 439 = 29.4 %**，其中**能真正落地对拍的上限**还要再砍：26 个 `executable` 里有 20 个是 `module_container` 的 `get_module::<T>` 单态化（要一个真的 `HashMap<TypeId, Rc<dyn Any>>` 才能跑），**真正「纯标量进出」的一个都没有** |
 | 正对照 | 求值器 `0x4eb9d0` **20/20**、采样器 `0x3c2530` **4/4**、解析器 `0x4ed670` tag 流 **14/14** 逐位相同；两处 ±1 ulp 变异**都报出了差异**（§64.4） |
 
 ### 64.2 口径更正（**先记这一条，它决定本轮所有数字有效**）
@@ -8555,9 +8555,17 @@ python3 tools/frame_diff.py --orig <W>/orig --mine <W>/mine --screens menu,repla
 
 | 档位 | 个数 | 定义 |
 |---|---|---|
-| `executable` | **33** | 指针参数只有「只读输入」与「只写输出」两种 ⇒ 不需要任何既有状态 |
-| `needs_state` | **101** | 有既被读又被写的指针参数（`&mut self` 一类）或写全局 ⇒ 状态是纯数据、**可造** |
-| `isolated_impossible` | **304** | 本体或热路径传递调用里出现引擎派发 / TLS / sys_io / thread / unwind |
+| `executable` | **26** | 指针参数只有「只读输入」与「只写输出」两种 ⇒ 不需要任何既有状态 |
+| `needs_state` | **103** | 有既被读又被写的指针参数（`&mut self` 一类）或写全局 ⇒ 状态是纯数据、**可造** |
+| `isolated_impossible` | **310** | 本体或热路径传递调用里出现引擎派发 / TLS / sys_io / thread / unwind |
+
+**⚠️ 一处分类器 bug（跑完之后才发现，如实记账）**：第一版把 `call` 之后的寄存器来源缓存
+**整表清空**了，连 `rbx`/`rbp`/`r12-r15` 这些 **callee-saved** 寄存器也一起清掉 ——
+于是「`mov %rdi,%rbx` → call → `mov %r14,0x60(%rbx)`」这种「调用后再写回 self」的函数被误判成
+`executable`（实测 `0x4be3e0`）。修法是调用后只清 caller-saved。**影响**：三档从
+`33 / 101 / 304` 变成 `26 / 103 / 310`（`executable` 少了 7 个，全是本该是 `needs_state` 的）。
+**本轮唯一跑的函数 `0x4f5450` 的档位不受影响**（它是 `inout_self:rdi,rdx`，本来就不是 `executable`），
+所以 18/18 的结论**不变**；上面表里的数字已是修后的值。**判据本身没改**，改的是它的实现 bug。
 
 **判据（原文在 `fixtures/bit_exact_plan.txt` §B；这里只留最要紧的三条）**：
 
@@ -8575,13 +8583,13 @@ python3 tools/frame_diff.py --orig <W>/orig --mine <W>/mine --screens menu,repla
    * 函数体里**没有 `ret`** 且自身致命的节点（`0x94b340` = panic 入口）**不向上传播**。
    不做这两条：439 个里 **264 个**被 panic 连坐 → `isolated_impossible` 439/439。
 
-**`isolated_impossible` 的 304 个按原因分布**（这决定分母的可及上限）：
+**`isolated_impossible` 的 310 个按原因分布**（这决定分母的可及上限）：
 
 | 原因 | 个数 | 说明 |
 |---|---|---|
-| `via:`（热路径传递到引擎边界） | 258 | 自己干净，调用的东西要引擎。**大头是 gdext 的 `Variant`/`String`/`Gd<T>` 转换与绘制包装** |
+| `via:`（热路径传递到引擎边界） | 264 | 自己干净，调用的东西要引擎。**大头是 gdext 的 `Variant`/`String`/`Gd<T>` 转换与绘制包装** |
 | `engine_dispatch`（本体直接派发） | 46 | 本体就有 `call *off(%全局)` |
-| 合计 | **304** | |
+| 合计 | **310** | |
 
 按模块看最集中的几处：`graphwar_level_manager` 40 个里 40 个不能跑、`graphwar_game_client` 36/36、
 `graphwar_root_node` 23/23、`graphwar_setup_control` 21/21、`entity_drawer` 14/14、`effect_drawer` 11/11
@@ -8677,20 +8685,20 @@ $PY tools/bitexact_report.py --work .bitexact_work --write
 ### 64.7 遗留 / 未做（**这部分比上面的数字重要**）
 
 1. **只升档了 1 个函数**，别把它读成"439 已经被扫过"。
-   439 的构成：**304 不能跑**（304 = 258 传递 + 46 本体，全是引擎/TLS/IO 边界）、
-   **33 可跑但没跑**、**101 需要状态且本轮没造**。TSV 里逐行写着 `跑没跑`。
-2. **33 个 `executable` 为什么没跑**：其中 **20 个是 `graphwar_module_container` 的
+   439 的构成：**310 不能跑**（310 = 264 传递 + 46 本体，全是引擎/TLS/IO 边界）、
+   **26 可跑但没跑**、**103 需要状态且本轮没造**。TSV 里逐行写着 `跑没跑`。
+2. **26 个 `executable` 为什么没跑**：其中 **20 个是 `graphwar_module_container` 的
    `get_module::<T>` 单态化**（`&HashMap<TypeId, Rc<dyn Any>>` 查表）——要跑就得在 unicorn 里
    造一个**真的 hashbrown `RawTable`**（`ctrl` 指针 + 桶掩码 + `growth_left`），造空表也够不到
-   "命中"那条分支；剩下 13 个（`rank_manager`/`name_manager`/`evolutionator`/`video_writer`/
-   `lan_broadcaster`/`audio_control`/`remote_event_handler`/`plane`/`root_node`）的 ABI 我还没
-   逐个落定，**没落定就不喂**（猜着喂出来的"相同"没有意义）。
+   「命中」那条分支；剩下 6 个（`graphwar_function_evolutionator` 4 个 + `graphwar_audio_control` 1 个
+   + `graphwar_remote_event_handler` 1 个）的 ABI 我还没逐个落定，
+   **没落定就不喂**（猜着喂出来的「相同」没有意义）。
 3. **`0x4600e0` / `0x4602f0` 查明不是模块逻辑**：`imul $0x150` + 三段自递归 +
    `lea (%rax,%rax,2)` ⇒ 是 **`core::slice::sort` 的 merge-sort 单态化**（元素 0x150 = 336 B），
    我方没有对应实现 ⇒ **不可比**。同类还有 `weak_caller` 的 39 个单态化（`Weak<RefCell<T>>`
    `upgrade` 语义）、`module_container` 的 20 个。⇒ 439 里有一大块**根本没有"我方实现"可比**，
    这一层应当从"可升档分母"里再扣掉。
-4. **下一个最值得跑的**：`0x4be3e0`（`graphwar_plane.rs`，87 条指令，分类 `executable`/`in:rsi`）——
+4. **下一个最值得跑的**：`0x4be3e0`（`graphwar_plane.rs`，87 条指令，分类 `needs_state`/`inout_self:rdi`）——
    `mov (%rsi),%rax` 取 tag、`xor 0x8000000000000000` 归一化后比 `0x28`/`0x29`；
    `movsd 0x18(%rsi),%xmm0` → `call *0x9bb288`（libc 数学，可 hook）→ `mulsd 0x19fbd0`
    → `divsd 0x19faa8` → `maxsd/minsd 0x19fbc0/0x19f7e0` → `cvttsd2si`；再对 `+0x8`/`+0x10`

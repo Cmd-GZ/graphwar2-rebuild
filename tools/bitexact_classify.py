@@ -61,6 +61,7 @@ from capstone.x86 import (  # noqa: E402
     X86_OP_IMM, X86_OP_MEM, X86_OP_REG, X86_REG_RIP, X86_REG_FS, X86_REG_GS,
     X86_REG_RDI, X86_REG_RSI, X86_REG_RDX, X86_REG_RCX, X86_REG_R8, X86_REG_R9,
     X86_REG_RAX, X86_REG_EAX, X86_REG_XMM0, X86_REG_RSP, X86_REG_RBP,
+    X86_REG_RBX, X86_REG_R12, X86_REG_R13, X86_REG_R14, X86_REG_R15,
 )
 
 SYS_IO = set("""
@@ -228,8 +229,15 @@ def scan(data, byname, funcstarts):
                 else:
                     ft["calls"].append((insn.address, ("indirect_unknown", p), cold))
                     ft["indirect_unknown"].append((insn.address, insn.mnemonic, insn.op_str))
-            # 调用会破坏 caller-saved 寄存器
-            prov.clear()
+            # 调用只破坏 **caller-saved** 寄存器；rbx/rbp/r12-r15 是 callee-saved，
+            # 调用之后它们仍指着我方参数派生的地址 —— 早先在这里 `prov.clear()` 把这条
+            # 线索一起抹了，导致「调用后写回 self」的函数被误判成 executable（实测 0x4be3e0：
+            # `mov %rdi,%rbx` → call → `mov %r14,0x60(%rbx)`，本应 inout_self）。
+            for r in tuple(prov):
+                # 只清 caller-saved：rbx/rbp/r12-r15 跨调用仍有效
+                if r not in (X86_REG_RBX, X86_REG_RBP, X86_REG_R12, X86_REG_R13,
+                             X86_REG_R14, X86_REG_R15, X86_REG_RSP):
+                    prov.pop(r, None)
             continue
         # 内存操作数特征
         for oi, op in enumerate(insn.operands):
