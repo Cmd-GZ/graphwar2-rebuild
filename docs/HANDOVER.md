@@ -38,14 +38,19 @@ headless     14 个 `client/tools/*_check.gd`（`extends SceneTree`）合计 **1
              缺 ④ = `654 / 0 / 3 skip`（missing=63 全 degraded / silent 0）；缺 ① 的三档历史读数是 591/667/618。
              **别预设 `XDG_*`**（预设到工作区外 ⇒ `user://` 不可写 ⇒ 632/7）。命令与判据见 `docs/18` §10.3.4
 
-客户端像素   **18 屏有真值**（`docs/06` §53–§75）。**逐像素 0 px 六屏**：主菜单 / 回放列表 / 战役选择 / 关卡弹窗 /
-             `join_level_popup` / `player_skins`。`replay_play`+`replay_end` **0.186–0.198 %**（L2 **0 块**、L3 结构性不过）；
-             `player_faces`/`player_hats` **0.053 %**；`lan_lobby_local` **0.135 %**、`game_setup` **1.25 %**（原 7.10 %）；
-             **对局屏** `match_ready` **6.45 %** / `match_play` **6.88 %**（L2 4/3 块）⚠️ 数字必须带**树号**——
-             t8 在 `2f64674` 上量的 6.357/6.823 已被 t7 的棋盘/标签改动位移过，以"当前 master + 同一采集命令"为准；
+客户端像素   **18 屏有真值**（`docs/06` §53–§76）。**逐像素 0 px 六屏**：主菜单 / 回放列表 / 战役选择 / 关卡弹窗 /
+             `join_level_popup` / `player_skins`。`replay_play`+`replay_end` **0.186–0.198 %**（L2 **0 块**）；
+             `player_faces`/`hats` **0.053 %**；`lan_lobby_local` **0.135 %**、`game_setup` **1.25 %**（原 7.10 %）；
+             **对局屏** `match_ready` **6.19 %**（L2 **1 块**）/ `match_play` **6.45 %**（L2 2 块）——
+             ⚠️ 数字必须带**树号**（t8 的 6.357/6.823 是 `2f64674` 树；t17 后 6.45/6.88；t26 后 6.19/6.45）；
              `endgame_popup` **33.6 %** = **我方根本不弹结算框**（`app.gd:738` 唯一调用点被挡）。
-             **L3（`max|Δch|≤8`）在文本屏上结构不可达**（文本栅格化 ~1 100 px / 抗锯齿），别把它当"快成了"的信号。
-             ⚠️ 采集前必查 **UDP 42968 是否被别的进程占**（会静默拍成"大厅 0 行/32 % 假差异"）
+             残余四类：结算框链路 / 对局屏版式（棋盘格线 13 006 px、左右键盘字形 37 397 px、左上两键 13 413 px）/ 
+             `lan_lobby_global` 要真 broker（物理不可得）/ `game_setup` 本机地址（数据不在客户端）。
+             **L3（`max|Δch|≤8`）在文本屏结构不可达**（文本栅格化 ~1 100 px、抗锯齿），别当"快成了"。
+             ⚠️ 采集三条前置：**UDP 42968 可能被泄漏的 cgroup scope 占用**（会静默拍成"大厅 0 行/32 % 假差异"；
+             解法 = `bwrap --unshare-user --unshare-net` 私有 netns + 四个 MESA 变量 + 继承的 `DISPLAY` 指向新 Xvfb）、
+             新工作树缺 `client/.godot` 会拍出全空白帧、**改了 `src/` 必须重建并覆盖 `client/libgw2_rebuild.so`**
+             （否则 headless 脚本会 `SCRIPT ERROR` 后挂住——本轮踩过，`entity_drawer_check` 超时就是这个）
 
 **两张最容易混的口径**：`527 vs 13,263`（可归属 vs 全部函数）、`1075 vs 647`（种类 vs 内容）。
 
