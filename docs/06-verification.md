@@ -8508,6 +8508,244 @@ python3 tools/frame_diff.py --orig <W>/orig --mine <W>/mine --screens menu,repla
   --out <W>/fd.tsv --blocks-out <W>/fdb.tsv --json <W>/fd.json
 ```
 
+## 60. 视觉真值扩到「对局屏」：**脚本化协议服务器把局面钉死**，原版真机与我方客户端各拍两屏（2026-11-26，任务 T8）
+
+> 任务书：`.agent-work/specs/T8-match-frames.md`（共享任务 `task-5`）。分支 `agent/match-frames`，基于 master `2f64674`。
+> 工作树 `.agent-work/cg/wt-t8`（私有 `CARGO_HOME` / `CARGO_TARGET_DIR=$WT/.cargo-target`）。
+> 原版 = `.reference/game/{Graphwar.x86_64, Graphwar.pck, libgraphwarrust.so}`（Graphwar II Linux **2.0.60**，
+> 内嵌 Godot **4.7.stable.official.5b4e0cb0f**）；我方 = `client/` + `libgw2_rebuild.so`（Godot **4.7.2**）。
+> 地址一律 **vaddr**；证据档按 `AGENTS.md` §0.3 标（**逐位** / **观测** / **推断** / **未知**）。
+
+**一句话**：**两侧都进到了同一屏** —— S7 准备态（`match_ready`）与 S8 对局中（`match_play`）。
+两屏都**不过**既有三层判据，但 **L1 全过**（尺寸 / 平均色 / 第一主色都对得上）⇒ 差的是**元素**，不是"差一点亮度"。
+跨侧差异 **6.3574 % / 6.8344 %**，而两侧**噪声地板**只有 **0.049 % / 0.000 %** 与 **0.674 % / 0.150 %** ⇒ 差异不是动画相位噪声。
+
+### 60.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 对局屏有真值了吗 | **有了**：`fixtures/frame_match_events.txt`（预注册剧本）+ `tools/match_serve.py`（脚本化服务器）+ `--flow match`（采集）+ `fixtures/frame_diff_results_match.tsv`（数字） | **观测** |
+| ② | 两侧都进到同一屏了吗 | **都进了**，屏名 `match_ready` / `match_play`（定义见 60.1）。证据：两侧各自 `manifest.json` 的 `ok=true`、窗口 `1920x1160+0+0`、每屏 3 帧落盘；服务器日志里两侧都**收到同一份 50 帧剧本**并各自回话（原版回 `FunctionsCalculated{}`、我方回 `GameStartRequest{}`，见 60.3） | **观测** |
+| ③ | 差异数字 | `match_ready` 跨侧 **141 591 px = 6.3574 %**（max\|Δ\|=255）；`match_play` **152 216 px = 6.8344 %**。L1 **过**、L2 **不过**（4 块 / 3 块超限）、L3 按门槛不算数 | **观测** |
+| ④ | 差在哪些元素 | 士兵精灵（我方 ≈20×20 px 圆点 vs 原版 ≈73×72 完整精灵+名字标签）、**多一个落在棋盘正中 (0,0) 的实体且准备圈画在它身上**（原版那里什么都没有、准备圈在射手 230 身上）、**靶子被画成士兵**（原版蓝环红心）、弹道样式/配色、`Fire!` 字号与颜色、右下偏移量标签（原版 `- 9.890` 常显 / 我方 S7 无、S8 显示 `- 3.694`）、键盘字形与 `y` 键底板、棋盘网格 1 px | **观测**（真机真帧 + 逐 ROI 差异计数） |
+| ⑤ | 为什么差这些 | 我方 `client/src/net/session.gd::_apply` **只处理 21 个事件**，而剧本里 30 个事件名中有 **12 个没有处理器**（`EntityRemoved`/`RemoveTeam`/`TargetInfo`/`NameInfo`/`SkinGraphicsInfo`/`FaceGraphicsInfo`/`HatGraphicsInfo`/`EntityEffectInfo`/`FunctionFire`/`FunctionPoints`/`FunctionActive`/`EffectInfo`）⇒ 名字/外观/靶子/实体删除/爆炸进不到界面层 | 列表 **观测**（读代码）；"这就是差异成因"是 **推断**（本轮没有 dump 我方 `EntityDrawer` 的输入表，同 `docs/06` §53.6 最后一行口径） |
+| ⑥ | 原版会接受我方服务器吗 | **会**。§48 那条路（LAN 发现变体 C + TCP `u16` 大端长度 + JSON）在**对局屏**这一层继续成立：真客户端连上后走完了握手 + 42 帧局面快照 + 8 帧开火剧本 | **观测** |
+
+### 60.1 预注册：事件序列 = **真回放的事件流**（先提交、后采集）
+
+文件 [`fixtures/frame_match_events.txt`](../fixtures/frame_match_events.txt)（commit `a45fd93`，**采集之前**提交）。
+它不是一个"示意图"，是**逐条可查的真值**：
+
+| 项 | 内容 | 来源 |
+|---|---|---|
+| 局面/顺序 | 冻结快照里的**真回放** `1793897298`（`Level 0`：1 士兵 230 + 靶子 232、`ClearObstacles`、104 事件 / 2276 tick） | `.reference/replays/gw2-replays-snapshot/replays/1793897298`（**只读**，跑完仍 403 份） |
+| 握手 7 条 | `NewConnection` + 6 条 `*Info`，**顺序即真抓包顺序** | `client/src/net/wire_samples.gd::STATE_SYNC` = `fixtures/protocol_match.jsonl:22/23/30/32/25/26/27`、`docs/07` §1 |
+| 字节布局 | `u16` 大端长度 + `{"<EventName>":{…}}` | `src/_scaffold/protocol.rs`（74/74 事件**逐位**）、`docs/07` §3.3 全表、`docs/09` §1.1 |
+| 自校验 | 剧本 50 条里 **49 条在真回放里逐字段命中**，唯一例外 `NewConnection{228}` 来自真抓包握手 | 复跑：拿回放 `json.dumps(sort_keys=True)` 建池逐条比对（命令见 60.7 ④） |
+
+两个屏的**定义**（本文件定义、`--flow match` 写进 manifest）：
+
+| 屏名 | = 哪一态 | 剧本相位 | 判据 |
+|---|---|---|---|
+| `match_ready`（**S7 准备态**） | 棋盘上有士兵（带准备圈）与靶子、回合 HUD 显示轮到谁，**还没开火**：最后一次状态迁移是 `GameStateInfo{WaitingForFunctions}` | `[phase1]` 42 帧 | L1/L2/L3 引 [`fixtures/frame_diff_thresholds.txt`](../fixtures/frame_diff_thresholds.txt)（sha256 `9cc9fcda…`，**一个数没改**） |
+| `match_play`（**S8 对局中**） | 收到 `FunctionFire` 之后进入 `CalculatingResults`，带真修正函数 `x+2sin(20x) - 3.694`、落点 `end_x=2.5793570733273476`、爆炸点 `(2.579357, 0.823608)` | `[phase2]` 8 帧 | 同上 |
+
+### 60.2 管线（一图 + 三件工具）
+
+```text
+tools/match_serve.py（脚本化服务器，**读 fixture 原样发**）
+  ├ UDP 127.0.0.1:42968 ← 裸 9 字段 GameInfo + "\n"（变体 C，§48.2 ①）⇒ 客户端 LAN 列表出现一行
+  ├ TCP 127.0.0.1:46702：收 NewConnectionRequest → 发 [phase1] 42 帧（逐帧 20 ms 间隔）
+  │                      ⇒ 客户端进对局屏（S7）
+  ├ 等 <工作区>/phase2.trigger 出现（采集脚本拍完 S7 后 touch）→ 等 1.0 s → 发 [phase2] 8 帧 ⇒ S8
+  └ 全程回答客户端的 TickRequest（TickReply，tick 轴见 60.2.1），并记录**每一帧**（时刻/事件名/字节数/完整载荷）
+
+tools/frame_capture.py --flow match（**只新增这一支**，campaign/replay/static 一字未改）
+  └ 同一个进程树里：起服务器 → 起私有 Xvfb 1920x1160x24(TCP) → 起游戏 → 点 主菜单 Play(1344,622)
+    → 点 LAN 第 1 行 Join(1842,209) → 等 3.0 s → 每屏 3 帧（间隔 1.2 s）→ 拍完 S7 就 touch 触发文件
+    → 等 5.0 s → 拍 S8 → 收摊（服务器 SIGTERM）
+
+tools/frame_diff.py（**未改**，一字未动）→ fixtures/frame_diff_results_match.tsv + fixtures/frame_diff_blocks_match.tsv
+```
+
+**为什么服务器必须由采集脚本起**：本机每条 bash 命令是独立 PID namespace（§53.7 第 2 条），
+上一条命令里 `nohup` 起的进程在下一条就不存在 ⇒ "起服务器 → 起游戏 → 点 → 截"必须在**同一个进程树**里。
+
+#### 60.2.1 本轮唯一一次"改管线"：`TickReply`（**不是**改门槛、不是改剧本）
+
+第一次跑原版侧时 `[phase2]` 发出去了，但画面上**没有弹道**：S8 与 S7 只差 **1 186 px**（差在准备圈长完，见 60.5 第 3 行）。
+原因是客户端的动画时钟 = **服务端 tick 轴**：剧本取自真回放第一发（`FunctionActive.active_tick=615`、
+爆炸 `EffectInfo.start_tick=1281`），而客户端刚连上时 tick ≈ 0 ⇒ 615 还没到，弹道当然不开始。
+
+真服务器对 `TickRequest`（原版客户端 1 Hz 发）回 `TickReply`（`docs/07` 判别值 2，「逐位 + 观测（4 行）」），
+所以**补上 TickReply 是更接近原版**，而不是"为了让画面好看"：
+
+* tick 基准**不是我编的**：phase1 期间 = **6**（回放里快照那段的 tick）、phase2 期间 = **550**（回放里第一发的 tick），
+  之后按 **60 Hz** 走 —— 两个数都写在 fixture 的 `[meta]` 里，出处写在旁边；
+* 补上之后：原版侧收到 14 条 `TickReply`，S8 与 S7 的差异从 1 186 px 变 **11 616 px**，画面出现弹道（60.5 第 3 行）；
+* 我方客户端**不发** `TickRequest`（那是它与原版的一个真实差别）⇒ 我方那次 `TickReply` = **0 条**，
+  它靠本地时钟走动画。⇒ S8 的"弹道相位"两边**不是同一时刻**，只能比"画出来的形状/位置"（见 60.8 第 2 条）。
+
+### 60.3 两侧各进到哪一屏（证据）
+
+两侧**同一份剧本、逐字节相同**：两次运行的服务器日志首行都写着
+`fixture_sha256 = 2278c30d54836167c36136225c2ffb931ab7c478df5db7fcfed908ec43555396`，
+`[phase1]` 都是 **42 帧 / 2273 字节**、`[phase2]` 都是 **8 帧 / 620 字节**。
+
+| 项 | 原版（`--side original`） | 我方（`--side ours`） |
+|---|---|---|
+| 窗口 | `1920x1160+0+0`（`manifest.json.window`） | `1920x1160+0+0` |
+| 采集 `ok` | `true` | `true` |
+| 连上服务器 | t=7.563 s，先发 `NewConnectionRequest{major:2.0,minor:60}` | t=7.548 s，**同样**先发 `NewConnectionRequest` |
+| 收到的剧本 | 42 + 8 帧（服务器逐帧记了载荷） | 42 + 8 帧（**同一份 sha256**） |
+| 客户端回话（证明它真的进了对局状态机） | `NewPlayerRequest{228}` → `NameRequest{229,"CG"}`/`SkinRequest`/`FaceRequest`/`HatRequest`/`RankRequest{0}` → `FunctionUpdateRequest{229,""}` → `TickRequest`×N → **`FunctionsCalculated{}`**（t=14.59，就在 `[phase2]` 发完那一刻！= 它处理了 `FunctionFire` + `CalculatingResults`） | `NewPlayerRequest{228}` → **`GameStartRequest{}`**（我方客户端连自己的服务器时会自己开局，`session.gd::auto_start`），**不发** `TickRequest` |
+| 画面 | 对局屏：棋盘 + 士兵精灵（黄，带名字 `cmdgz`）+ 橄榄色准备圈 + 蓝环红心靶子 + `Fire!` 白色粗体 + 键盘 + `f(x)=` 行 + 右下 `- 9.890` | 对局屏：棋盘（同样尺寸）+ 三个 ≈20×20 px 的圆点（其中一个是**已删除士兵 231 在原点**）+ **红色**准备圈 + 键盘 + `Fire!`（小号深色）+ `f(x)=` 行（S7 无偏移量、S8 显示 `- 3.694`） |
+| 证据档 | **观测**（真机真帧 + 线上原文） | **观测**（真机真帧 + 线上原文） |
+
+> ⚠️ 两侧是**分两次**跑的（同一台机、不同 display 83/84），不是同时跑；因为 LAN 发现要绑 `UDP 42968`，同时跑会互抢。
+> 两条命令见 60.7，**各自把服务器也起一遍**、喂**同一份 fixture**。
+
+### 60.4 L1 / L2 / L3 数字（入库：[`fixtures/frame_diff_results_match.tsv`](../fixtures/frame_diff_results_match.tsv)）
+
+| 屏 | 判定 | L1 尺寸 | L1 平均色 \|Δ\|max | L1 第一主色 | L1 占比差 | L2 超限块 | L2 最差块 | L2 最差 \|Δmean\| | L3 差异像素 | L3 max\|Δ\| | 噪声地板（原版／我方） |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `match_ready` | **不过（L2，4 块）** | ✅ 1920×1160 两侧 | **0.345** ✓（≤2.0） | `#FFFFFF` / `#FFFFFF` ✓ | **0.011 pp** ✓ | **4 / 24** | `(0,5)` | **5.71** | 141 591（**6.3574 %**） | 255 | **0.049 %** / **0.000 %** |
+| `match_play` | **不过（L2，3 块）** | ✅ | **0.553** ✓ | `#FFFFFF` / `#FFFFFF` ✓ | **0.265 pp** ✓ | **3 / 24** | `(2,2)` | **18.138** | 152 216（**6.8344 %**） | 255 | **0.674 %** / **0.150 %** |
+
+**复现性**（同一台机、同一棵树、同一条命令各再跑一遍，实测两轮）：
+
+| 复跑的是哪一侧 | `match_ready` L3 像素 | `match_play` L3 像素 | `l2_blocks_over` | 最差块 \|Δmean\| |
+|---|---|---|---|---|
+| 首跑（本表数字） | 141 591（6.3574 %） | 152 216（6.8344 %） | 4 / 3 | 5.71 / 18.138 |
+| **我方侧**重采 | **141 591**（一位不差） | **152 216**（一位不差） | 4 / 3 | 5.71 / 18.138 |
+| **原版侧**重采 | 141 596（+5 px） | 151 933（−283 px） | 4 / 3 | 5.71 / 17.225 |
+
+⇒ 我方侧那三帧 `match_ready` 逐字节相同（`sha256 ed6c9627…`），数字可复现到**一位不差**；
+原版侧的差来自**准备圈在动**（S7 三帧互不相同、噪声地板 0.049 %），浮动 ≤0.2 %。
+判定（L1 过 / L2 不过、超限块集合）两轮完全一致 —— 结论不受动画相位影响。
+
+**L1 全过、L2 不过**这个组合本身就是结论：**版式骨架对得上，元素没对上**。
+L3（差异像素 ≤ 0.10 %、max\|Δ\| ≤ 8）按门槛**只在 L1/L2 都过时才算数**，所以两屏的 L3 数字只是参考量。
+
+超限块（6×4 网格，块宽 320 px、块高 290 px）→ 画面上是什么：
+
+| 屏 | 块 `(row,col)` | 像素范围 | \|Δmean\|max | 屏上元素 | 差在哪 |
+|---|---|---|---|---|---|
+| 两屏 | `(0,0)` | x 0..319, y 0..289 | 2.865 | 左上 **返回(↩) / 确认(∨)** 两个按钮 | 底板圆角与图标边缘（`max|Δ|=30`，纯细节；色板完全相同） |
+| 两屏 | `(0,5)` | x 1600..1919, y 0..289 | **5.71** | **`Fire!` 按钮** | 原版 = 白色**粗体大字**（按钮文字区白像素 **1857**），我方 = 小号**深色**字（白像素 **261**）⇒ 字号与字色都不对（`max|Δ|=229`） |
+| `match_ready` | `(2,2)` | x 640..959, y 580..869 | 2.53 | 射手 + 准备圈 | 逐元素见 60.5 |
+| `match_play` | `(2,2)` | 同上 | **18.138** | 射手 + **弹道** | 弹道样式/配色/相位差（原版金色尖峰、我方绿色尖峰） |
+| `match_ready` | `(3,5)` | x 1600..1919, y 870..1159 | 2.724 | 右下 **偏移量标签** | 原版常显 `- 9.890`；我方 S7 这个位置是空的 |
+
+### 60.5 逐元素差异清单（ROI 计数 + 画面元素）
+
+ROI 是人工框的（框内 `d>0` 的像素占比），用来把"整屏 6.36 %"拆到元素上：
+
+| 元素 | ROI (x0,y0)-(x1,y1) | `match_ready` 差异 | `match_play` 差异 | 原版长什么样 | 我方长什么样 |
+|---|---|---|---|---|---|
+| 棋盘**几何**（白底矩形） | 整块 | — | — | x **303..1575**、y **198..959**（1273×762） | x **303..1575**、y **199..960**（**下边差 1 px**） |
+| 棋盘**格线**（含左上带） | (303,198)-(1100,420) | **13 343 px / 7.54 %** | 同 | 均匀灰格线（`#E6E6E6` 次线 / `#B2B2B2` 主线） | 同色，但**整体错 1 px**；且在 x≈300..640 / y≈240..300 出现**错位虚线网格片段**（我方多画了一层） |
+| **射手精灵** | (760,730)-(900,880) | **3 923 px / 18.68 %** | **8 132 px / 38.72 %** | 完整士兵精灵（帽子+脸+身体，≈73×72）**+ 名字标签 `cmdgz`** | ≈**20×20 px** 的圆点（绿帽黄脸），**无名字标签** |
+| **准备圈** | 同上 | 同上 | 同上 | 橄榄色（= 玩家色）弧 + **2 个箭头尖**，画在**射手 230** 身上 | **红色**（3 个箭头 + 虚线圆），画在棋盘正中 `(0,0)` 那一处、**不在射手身上**。根因链：① `EntityRemoved{231}` 无处理器 ⇒ 被删的士兵 231 留在实体表；② `_ensure_entity()` 给**任何**被事件提到的实体默认 `kind="soldier"`、默认坐标 `(0,0)` ⇒ 只出现在 `TeamInfo{entity_id:229}` 里的**玩家实体 229** 也成了一具"士兵"停在原点。⇒ 原点上叠着 **229 与 231 两具**；圈具体落在哪一具（`_turn_driver.first_shooter()` 选了谁）**本轮没有 dump，标推断** |
+| **靶子** | (1140,400)-(1250,510) | **1 627 px / 13.45 %** | 同 | 蓝环 + 红心的**靶子**（`SkinGraphicsInfo{graphics_str:"target"}`） | **画成了士兵**（绿帽黄脸）—— `TargetInfo` 没处理器，实体保留默认 `kind="soldier"` |
+| **弹道/特效** | 射手区 + 中心区 | ——（S7 无弹道，两侧一致） | 见 `(2,2)` 块 | 金色尖峰曲线（`x+2sin(20x)` 高频振荡），随 tick 从 `active_tick=615` 长出来 | 绿色尖峰曲线，**一次画完**再动（我方不发 `TickRequest`、不接 `FunctionPoints`/`FunctionActive`） |
+| **`Fire!` 按钮** | (1636,4)-(1916,112) | **3 096 px / 10.24 %** | 同 | 白色粗体大字 | 小号深色字（同一 ROI 里白像素 1857 → 261） |
+| **右下偏移量标签** | (1740,1080)-(1916,1140) | **1 336 px / 12.65 %** | **1 858 px / 17.59 %** | 两个屏都显示 **`- 9.890`**（= 射手 y `-9.88998` 的显示值，`推断`：这是"发射基点偏移"，不是修正常数） | S7 **不显示**；S8 显示 **`- 3.694`**（= 修正函数里的常数项）⇒ 数值与出现时机都不同 |
+| **左键盘** | (0,276)-(300,1010) | **15 722 px / 7.14 %** | 同 | 同版式 | 字形轮廓差（抗锯齿/1 px），按键行列位置**对齐到 1 px 内** |
+| **右键盘** | (1580,276)-(1920,1010) | **21 674 px / 8.68 %** | 同 | 同上 | 同上 + **`y` 键底板**整块不同 |
+| 顶部四图标（非棋盘左侧） | (700,4)-(1330,112) | **0 px / 0.00 %** | 0.00 % | 四个圆角图标（网格/f(x)/弹道/喇叭） | **完全相同** |
+| `f(x)` 行 | (140,1030)-(1920,1160) | 8 349 px / 3.61 % | 8 871 px / 3.83 % | `f(x) =` + 输入框 + 右上偏移量 | 输入框**中间多一根光标竖线**（x≈1004，S7/S8 都在），框宽/位置差几 px |
+
+**根因线索（12 个没有处理器的事件）**：我方 `client/src/net/session.gd::_apply` 处理 **21** 个事件名；
+剧本用到的 **30** 个事件名里，**12 个完全没有处理器**：
+`EntityRemoved` / `RemoveTeam` / `TargetInfo` / `NameInfo` / `SkinGraphicsInfo` / `FaceGraphicsInfo` /
+`HatGraphicsInfo` / `EntityEffectInfo` / `FunctionFire` / `FunctionPoints` / `FunctionActive` / `EffectInfo`。
+⇒ 名字标签、外观、靶子身份、实体删除、**开火→弹道点→爆炸**这条链，全都到不了界面层。
+（这是**观测**：读代码 + 线上原文；"差异就是这么来的"是**推断** —— 本轮没有 dump 我方 `EntityDrawer` 的输入表。）
+
+### 60.6 这批数字能支撑什么、不能支撑什么
+
+| 结论 | 证据 | 档 |
+|---|---|---|
+| **对局屏第一次有了像素真值**：同一份剧本下两侧都进到 S7/S8，可以逐块逐元素比 | 60.3 + 60.4 | **观测** |
+| 版式骨架（棋盘几何、键盘、`Fire` 位、`f(x)` 位）**已经对得上**：L1 全过，棋盘矩形两侧差 ≤1 px | `l1_ok=True` 两屏 + 白底矩形 `303..1575` vs `303..1575` | **观测** |
+| 差异是**元素级**的（6.4–6.8 %），**不是**相位噪声（噪声地板 ≤0.67 %） | 60.4 | **观测** |
+| 我方**把靶子画成士兵**、**在棋盘正中 (0,0) 多画了实体（229/231 叠在一起）**、**准备圈不在射手身上** | 60.5 三个 ROI + 我方代码（`TargetInfo`/`EntityRemoved` 无处理器；`_ensure_entity` 默认 `kind=soldier`、默认坐标 `(0,0)`） | **观测**（画面 + 代码）；"圈落在 229 还是 231" = **推断** |
+| `TickReply` 是原版动画时钟的输入 | 同一剧本两次运行：无 TickReply ⇒ 弹道 0 px；有 ⇒ 11 616 px 且画面出现弹道 | **观测**（两次运行的对照） |
+| 我方"缺 12 个事件处理器"就是这些差异的**唯一**成因 | —— | **推断**（还可能有 `play_screen` 自己的版式问题；见 60.5 的 `Fire!`/光标/网格片段三项） |
+
+### 60.7 跑一遍（照抄；两路各一条命令，服务器由脚本自己起）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t8
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target          # 单独一行
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+export PY=$MAIN/.reference/venv/bin/python
+cd $WT
+W=$WT/.agent-work/frames                              # 产物目录（.agent-work 可丢，数字在 fixtures/）
+
+# ① 前置：我方内核（改了 src/ 才需要重做）
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+HOME=$WT/.fakehome "$GODOT" --headless --path client --import
+
+# ② 两侧采集（各 ~40 s；两路不同 display 号；各起一台自己的脚本化服务器，喂**同一份** fixture）
+python3 tools/frame_capture.py --side original --flow match --out $W/match-orig --display-num 83
+python3 tools/frame_capture.py --side ours     --flow match --out $W/match-mine --display-num 84
+
+# ③ 三层判据（**门槛文件未改**，脚本会核对 sha256）
+python3 tools/frame_diff.py --orig $W/match-orig --mine $W/match-mine --screens match_ready,match_play \
+  --out fixtures/frame_diff_results_match.tsv --blocks-out fixtures/frame_diff_blocks_match.tsv \
+  --json $W/frame_diff_match.json
+#   → 期望：match_ready 不过（L2，4 块）6.3574 %；match_play 不过（L2，3 块）6.8344 %
+
+# ④ 剧本自校验（50 条里 49 条必须与真回放逐字段相同；唯一例外 NewConnection 来自真抓包握手）
+python3 - <<'EOF'
+import gzip, json
+txt = open('fixtures/frame_match_events.txt', encoding='utf-8').read()
+seq, on = [], False
+for ln in txt.splitlines():
+    s = ln.strip()
+    if s.startswith('[seq]'): on = True; continue
+    if s.startswith('[endseq]'): on = False; continue
+    if on and s: seq.append(json.loads(s.split('#')[0].strip()))
+p = '/home/CG/Myprojects/graphwar2-rebuild/.reference/replays/gw2-replays-snapshot/replays/1793897298'
+evs = [json.loads(l) for l in gzip.decompress(open(p,'rb').read()).decode().splitlines() if l.strip()]
+pool = {json.dumps(e['event'], sort_keys=True) for e in evs}
+miss = [s for s in seq if json.dumps(s, sort_keys=True) not in pool]
+print('剧本 %d 条，不在真回放里的 %d 条：%s' % (len(seq), len(miss), miss))
+EOF
+
+# ⑤ 冻结快照没被写（三轴的分母）
+ls $MAIN/.reference/replays/gw2-replays-snapshot/replays | wc -l    # → 403
+```
+
+产物在哪（**都不入库**，`.agent-work/` 可丢）：每侧 `<out>/frames/{match_ready,match_play}_{1,2,3}.png`、
+`<out>/manifest.json`（窗口 id/几何/每帧 sha256/点击步骤）、`<out>/serve.jsonl`（**逐帧发送日志**）。
+
+### 60.8 遗留 / 未做
+
+1. **只有 1 个局面**（真回放 `1793897298` 的 `Level 0`：1 士兵 + 1 靶子 + `ClearObstacles`）。**没有**采：
+   2 人对局 / 多士兵 / 带障碍（`AddObstacle`）/ 同时回合 / 靶子被击毁后的那一屏。剧本换真回放就能加，管线不用改。
+2. **S8 的弹道相位两边不是同一时刻**：原版靠服务端 tick 轴（`TickReply`）推、我方靠本地时钟 ⇒ 只能比"形状/位置/配色"，
+   不能比"同一 tick 的同一段曲线"。要真对齐要么给我方客户端也接 `TickRequest/TickReply`，要么用 frida 把原版冻在 tick T（§53.5 第 2 条同款缺口）。
+3. **我方 S7 三帧 sha256 完全相同**（`ed6c9627…`×3）：我方准备圈**不随时间动**，原版在动（噪声地板 0.049 %）。⇒ 准备圈动画（`set_ring_base` 那条链）我方还没接。
+4. **同一引擎对照没做**：本轮仍是原版 4.7.0 vs 我方 4.7.2（§53.5 第 3 条的混淆项）。
+   `--flow match` 与 §54 那套 `--ours-mode pck` **可以叠加**（`--flow` 与 `--ours-mode` 正交），但本轮没跑。
+5. **`--game-arg` 传地址这条没用到**：地址走 LAN 发现的 `address` 字段就够（而且原版的 CLI 参数是死的，§48.1）。
+   想不走 LAN 发现，可以改用两边都有的 `Join IP` 弹窗（原版坐标见 §51.1），本轮没做。
+6. 按差异改界面**不在本轮范围**（任务书 §3 明令）：本轮只建管线 + 测量。
+
+### 60.9 卡点 / 任务前提被证伪
+
+| # | 项 | 结论 |
+|---|---|---|
+| 1 | 「原版会拒绝我方服务器的对局层握手」 | **没有发生**，前提不成立（不需要卡点）。§48 只证明到"握手 + BotAdded"，本轮把**整份局面快照 + 开火剧本**也喂进去了，原版照收、还回了 `FunctionsCalculated{}` |
+| 2 | 「两侧必须同时跑才能比」 | **不需要**：分两次跑、喂同一份 fixture 就够了（60.3 的 sha256 相同即证据）。同时跑反而会撞 `UDP 42968` |
+| 3 | 真正卡住过的一步 | **动画时钟**：不补 `TickReply` 时 S8 里**没有弹道**（1 186 px），曾一度以为"原版不画弹道"。补法是照真服务器的行为回 `TickReply`（tick 基准取真回放的 6 / 550），**不是**改门槛或改剧本 |
+| 4 | 仍缺的情报 | ① 我方客户端为什么不发 `TickRequest`（是没实现还是设计选择）—— **未知**，本轮不许改 `client/**` 所以没查；② 原版 `- 9.890` 那个标签的语义（发射基点 vs 别的）—— **推断**，缺反汇编/口径证据 |
+
 ## 62. 视图层第二轮：52 份原版 `.gd` 逐份台账 + 新换 3 份（`OptionsContainer` / `TurnLimitText` / `GameSetupPlayerEntry`），`level_popup` 仍 **0 像素**（2026-11-26，任务 T10）
 
 > **一句话**：把 §43（上一轮 gdswap）跳过的 15 份 + 上一轮没进表的 13 份（7 份 AdMob/IAP 平台桥 +

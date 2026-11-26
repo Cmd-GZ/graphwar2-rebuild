@@ -159,6 +159,20 @@ FIRE_BTN = (1855, 55)         # Fire!（**long_press**：必须 mousedown→slee
 FRAMES_PER_SCREEN = 3
 FRAME_GAP_S = 1.2
 
+# ── T8（`--flow match`）：**对局屏**的两屏。局面由 `tools/match_serve.py` 钉死，两侧同一份剧本 ──
+# 主菜单 "Play"（进 LAN 大厅）：`docs/06` §48.8 的点击串里那一发 `c 1344 622`（原版真机实测）。
+# 我方主菜单与原版**整屏 0 像素差**（`docs/06` §53.0 ①）⇒ 同一个坐标。
+MENU_PLAY = (1344, 622)
+# LAN 列表第 1 行的 `Join`：`docs/06` §48.2 ① 量出来的原版坐标（1920×1160 的 (1842, 209)）。
+# 我方这一个流**实测也用同一格**（T8：`--side ours` 一发点中，服务器 t=7.548 s 收到
+# `NewConnectionRequest`；见 `docs/06` §60.3）⇒ 两侧同一串坐标，不分开配。
+LAN_JOIN_ROW1 = {'original': (1842, 209), 'ours': (1842, 209)}
+# S8 的等待：phase2 触发后服务器还要等 `[meta] phase_gap_s`(1.0 s) 才发那 8 帧，
+# 再等 5.0 s 让服务端 tick 轴走过 `FunctionActive.active_tick=615`、弹道长出来
+# （**这条等待是必要的**：1.6 s 时 client tick 还没到 615，S8 里看不到弹道，见 docs/06 §60.2.1）。
+# 两侧同一条时间线 ⇒ 相位差只来自各自动画实现，噪声地板会量它。
+MATCH_PLAY_WAIT = 5.0
+
 # ── 增补 1（`fixtures/frame_diff_thresholds_amend1.txt` §3）：用冻结回放当"固定局面" ──
 REPLAYS_BTN = (1343, 749)          # 主菜单 Replays
 # 回放列表第 1 行（局面 `1793897298`，Level 0）的播放键。
@@ -252,6 +266,22 @@ def steps_for(flow, side):
             ('replay_lobby', [('click', REPLAYS_BTN, 2.0)]),
             ('replay_play', [('click', REPLAY_ROW1_PLAY[side], 2.0)]),
             ('replay_end', [('wait', REPLAY_END_WAIT)]),
+        ]
+    if flow == 'match':
+        # §T8（2026-11-26）：**对局屏两屏**（`fixtures/frame_match_events.txt` 预注册）。
+        # 服务器由本脚本起（同一个进程树：本机逐命令 PID namespace，见文件头 §53.7 第 2 条）。
+        # 点法：主菜单 Play → LAN 大厅（服务器在灌 UDP 房间记录）→ 点第 1 行 Join →
+        # 服务器按剧本发 phase1 ⇒ 进对局屏（S7）⇒ 拍 3 帧 ⇒ `trigger` 让服务器发 phase2
+        # ⇒ 进对局中（S8）⇒ 拍 3 帧。
+        return [
+            ('match_ready', [
+                ('click', MENU_PLAY, 2.5),
+                ('click', LAN_JOIN_ROW1[side], 3.0),
+            ]),
+            ('match_play', [
+                ('trigger', None),
+                ('wait', MATCH_PLAY_WAIT),
+            ]),
         ]
     raise SystemExit('未知 flow: %s' % flow)
 
@@ -412,6 +442,50 @@ def start_game(side, display, home, log_path, extra_args, engine=None, game_dir=
     return proc, env, title, f
 
 
+def start_match_server(side, out, fixture, tcp_port, udp_port, trigger_file,
+                       server_duration=300.0, log_path=None):
+    """起**脚本化对局服务器**（§T8）：`tools/match_serve.py`，把局面钉死在 fixture 那份剧本上。
+
+    为什么必须由本脚本起（而不是另开一条命令）：本机每条 bash 命令是独立 PID namespace，
+    上一条命令里 `nohup` 起的进程在下一条里就不存在（文件头 §53.7 第 2 条）；
+    "起服务器 → 起游戏 → 点 → 截"必须在**同一个进程树**里完成。
+
+    服务器自己写逐帧发送日志（`<out>/serve.jsonl`）；stdout/stderr 另存
+    `<out>/serve.stderr.log`（里面也有同内容，便于 `tail` 看进度）。
+    """
+    script = os.path.join(REPO, 'tools', 'match_serve.py')
+    if not os.path.exists(script):
+        raise RuntimeError('找不到 %s' % script)
+    srv_log = os.path.join(out, 'serve.jsonl')
+    err_log = log_path or os.path.join(out, 'serve.stderr.log')
+    cmd = [sys.executable, script,
+           '--fixture', fixture,
+           '--out', srv_log,
+           '--side', side,
+           '--trigger-file', trigger_file,
+           '--tcp-port', str(tcp_port),
+           '--udp-port', str(udp_port),
+           '--duration', str(server_duration)]
+    f = open(err_log, 'wb')
+    proc = subprocess.Popen(cmd, stdout=f, stderr=subprocess.STDOUT)
+    return proc, srv_log, err_log, f
+
+
+def wait_server_listening(srv_log, seconds=15.0):
+    """等服务器把 `listening` 写进日志（= 它的 TCP 已经在听、UDP 已经在灌）。"""
+    t0 = time.time()
+    while time.time() - t0 < seconds:
+        if os.path.exists(srv_log):
+            try:
+                with open(srv_log, encoding='utf-8', errors='replace') as f:
+                    if '"listening"' in f.read():
+                        return True
+            except OSError:
+                pass
+        time.sleep(0.1)
+    return False
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -423,9 +497,20 @@ def main(argv=None):
     ap.add_argument('--home', default=None, help='HOME（默认 <out>/home）')
     ap.add_argument('--game-arg', action='append', default=[], help='透传给游戏的额外参数')
     ap.add_argument('--shots', default=None, help='截图输出子目录（默认 <out>/frames）')
-    ap.add_argument('--flow', choices=['campaign', 'replay', 'static'], default='replay',
+    ap.add_argument('--flow', choices=['campaign', 'replay', 'static', 'match'], default='replay',
                     help='点法：replay = 增补 1 的四屏（回放局面，默认）；campaign = 原登记的三屏；'
-                         'static = T6 的静态两屏（campaign / level_popup，见 fixtures/static_screens_targets.txt）')
+                         'static = T6 的静态两屏（campaign / level_popup，见 fixtures/static_screens_targets.txt）；'
+                         'match = T8 的对局屏两屏（match_ready / match_play，见 fixtures/frame_match_events.txt）')
+    # ── T8（`--flow match` 专用；不给 ⇒ 行为与既有三支完全一致）────────────────────────
+    ap.add_argument('--match-fixture', default=None,
+                    help='对局屏的事件序列 fixture（默认 <repo>/fixtures/frame_match_events.txt）')
+    ap.add_argument('--match-tcp-port', type=int, default=46702,
+                    help='脚本化服务器的 TCP 端口（必须与 fixture [meta] tcp_port 一致，'
+                         '否则 LAN 广播里的 address 指向错的地方）')
+    ap.add_argument('--match-udp-port', type=int, default=42968,
+                    help='LAN 发现端口（原版 LAN 大厅绑 42968，观测值）')
+    ap.add_argument('--match-server-duration', type=float, default=300.0,
+                    help='服务器进程活多久（秒）；采集全程通常 < 120 s')
     ap.add_argument('--seed-replays', action='store_true',
                     help='把冻结快照里的两份回放拷进该侧 user://replays（不写快照）')
     # ── T2（消引擎版本混淆项）新增：都不给 ⇒ 行为与 94 号那一轮完全一致 ──────────────
@@ -470,6 +555,30 @@ def main(argv=None):
         manifest['replays_seeded'] = seed_replays(args.side, home, args.snapshot)
         log('回放已就位: %s' % manifest['replays_seeded'])
 
+    # ── T8：`--flow match` 要一台脚本化服务器把局面钉死（只在这条分支上做，既有三支不受影响）──
+    match_srv = None
+    match_srv_files = None
+    trigger_file = os.path.join(out, 'phase2.trigger')
+    if args.flow == 'match':
+        fixture = os.path.abspath(args.match_fixture or os.path.join(
+            REPO, 'fixtures', 'frame_match_events.txt'))
+        if not os.path.exists(fixture):
+            raise SystemExit('找不到对局屏 fixture: %s' % fixture)
+        # 上一轮留下的触发文件必须删掉，否则服务器会以为"已经可以发 phase2 了"
+        if os.path.exists(trigger_file):
+            os.remove(trigger_file)
+        match_srv, srv_log, err_log, srv_handle = start_match_server(
+            args.side, out, fixture, args.match_tcp_port, args.match_udp_port, trigger_file,
+            server_duration=args.match_server_duration)
+        match_srv_files = (srv_log, err_log, srv_handle)
+        if not wait_server_listening(srv_log):
+            raise SystemExit('脚本化服务器起不来（见 %s）' % err_log)
+        log('脚本化服务器就绪：tcp=%d udp=%d fixture=%s' %
+            (args.match_tcp_port, args.match_udp_port, os.path.basename(fixture)))
+        manifest['match'] = {'fixture': fixture, 'server_log': srv_log,
+                             'server_stderr': err_log, 'trigger_file': trigger_file,
+                             'tcp_port': args.match_tcp_port, 'udp_port': args.match_udp_port}
+
     xvfb = game = None
     xlog = flog = None
     ok = False
@@ -509,6 +618,13 @@ def main(argv=None):
                     manifest['steps'].append({'screen': screen, 'action': 'hold',
                                               'xy': list(st[1]), 'hold_s': st[2],
                                               'settle_s': st[3]})
+                elif st[0] == 'trigger':
+                    # §T8：`--flow match` 专用 —— 拍完 S7 之后 touch 触发文件，
+                    # 服务器看到它就发 phase2（比 sleep 稳：不会与截图抢时间）
+                    with open(trigger_file, 'w') as tf:
+                        tf.write('%s %s\n' % (screen, time.strftime('%Y-%m-%dT%H:%M:%S')))
+                    manifest['steps'].append({'screen': screen, 'action': 'trigger',
+                                              'file': trigger_file})
                 log('%s: %s' % (screen, st[0]))
             for i in range(FRAMES_PER_SCREEN):
                 path = os.path.join(frames_dir, '%s_%d.png' % (screen, i + 1))
@@ -540,6 +656,24 @@ def main(argv=None):
                     f.close()
                 except Exception:  # noqa: BLE001
                     pass
+        # §T8：脚本化服务器收摊（它自己会把 summary 写进 serve.jsonl）
+        if match_srv is not None:
+            try:
+                if match_srv.poll() is None:
+                    match_srv.send_signal(signal.SIGTERM)
+                    try:
+                        match_srv.wait(timeout=10)
+                    except Exception:  # noqa: BLE001
+                        match_srv.kill()
+            except Exception as e:  # noqa: BLE001
+                log('收服务器失败：%s' % e)
+        if match_srv_files is not None:
+            try:
+                match_srv_files[2].close()
+            except Exception:  # noqa: BLE001
+                pass
+            manifest.setdefault('match', {})['server_rc'] = (
+                match_srv.returncode if match_srv is not None else None)
         manifest.pop('_t0', None)
         manifest['ok'] = ok
         manifest['finished_at'] = time.strftime('%Y-%m-%dT%H:%M:%S')
