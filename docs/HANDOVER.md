@@ -38,13 +38,42 @@ P4  命名 —— 真名 348/527；179 无名（138 族级 + 41 未知）
 **别再把"像素全 0"当主目标**：像素对拍的最大价值是**抓源码级复原错误**（已抓到 `update_sprite` 的 `scale.x` 漏 `k`、
 `name_label_layout` 实参语义错、`draw_set_transform` 棋盘单位、底栏最小高 96 vs 98 等）——用它的产出反推源码，而不是为了让截图一样。
 
+### 0.0.1 今天（2026-11-26）这一程干了什么（下一条会话先读这段）
+
+**用户纠正了两次方向，两次都对，别再犯**：
+1. "这是源码级还原项目，不是行为重建" ⇒ 已写进 §0.0 优先级梯子。
+2. "既然你都能在 `AGENTS.md` 白纸黑字下犯错，别的 agent 也可能" ⇒ **派出 5 个独立审计面**，
+   产出 **[`docs/AUDIT-2026-11-26-source-vs-behaviour.md`](AUDIT-2026-11-26-source-vs-behaviour.md)**（人可读、含"哪些真奔源码、哪些把行为当终点"）。
+
+**审计的判决（要记住结论，别重跑）**：
+- `client/` = **原版视图脚本 + 我们的控制器**；`client/src/` 生产 14 000 行里 **A 353 / B 8 532 / C 4 941**，**游戏规则达 A 档 = 0 行**；原版 **31 份 `.tscn` 当时一份没进**（现已 **16/16 全进**）。
+- `src/` = **原版文件名 + 我们的内部结构**；生产函数 2 388 里 **48.7% 在 `_scaffold`**（T49 已搬回 4 处、1191→1150）。
+- 测试：1772 条里 **341 条纯自洽**，**真正逐值对拍仅 ~9.6%**；`client/tools/*_check.gd` 那 1 961 条**从没审过**（T50 已审，修 24 条 M 镜像 → 1978）。
+- 文档：抽样 122 条，**27.9% 档位与物证不匹配**；最不可信的恰是最常读的三篇（`docs/00`/`docs/16`/`HANDOVER`）——已按清单改正。
+- **招牌 `527/527` 是模块级口径**，函数级当时只有 **131/527**（现 181）。
+
+**今天新增的工具（别重复造）**：`tools/docsec.py`（按节号合并 docs，**同号拒跑**，为此丢过一节正文）、
+`tools/headless_audit.py`（headless 断言 M/C/G 分档）、`tools/function_coverage.py`、`tools/struct_audit.py`、
+`tools/audit_src.py`、`tools/audit_client.py`、`tools/audit_tests_scan.py`、`tools/file_structure.py`、`tools/ai_gen_parity.py`。
+
+**今天最大的教训（我自己的）**：`--flow replay` 不加 `--seed-replays` ⇒ 两侧都拍空回放列表 ⇒ **假 0 px**。
+我据此写了"回放两屏归零"，被 t47 的独立发现推翻。已给 `frame_capture.py` 加硬闸、写进 `AGENTS.md` 的坑清单，
+并把"**任何两侧都停在同一个错误画面的采集都会假装通过**"作为通则记下。**凡是"突然变 0 / 突然变完美"的读数，先怀疑采样**。
+
+**收尾时仍在跑的两条（下一条会话先看它们的通知或分支）**：
+- `agent/replay-regress`（t51）：回放屏 2.710 % 的 **bisect** —— 先判"记录的 0.186 % 是不是也是空画面"，
+  再定位 2.7 % 属于哪一层。`fixtures/replay_regression_bisect.tsv`
+- `agent/f3-client-handler`（t52）：F3 按 T48 给的依赖顺序 —— `client_connection_handler`(7) → `setup_control`(9)。
+  `fixtures/client_handler_anchors.tsv`
+两条都**未 commit**（收尾时只在工作树里），合并前必须**自己复跑**它们报告的数字。
+
 ---
 
 ## 1. 现在的数（报数**必须带轴名/前置条件**，否则等于没报）
 
 ```
 可归属函数   **模块级** 527/527（每模块都有文件+档位；逐位 89 / 观测 438 是模块档位加权）
-             **函数级 131/527 = 24.9%**（`docs/06` §87，2026-11-26 首次实测）｜147 有码指不到｜**249（47.2%）源码层无函数体**
+             **函数级 181/527 = 34.3%**（`docs/06` §87 首次实测 131/527；T45/T48/T49 之后 181）｜F3 缺口 235→**199**（T48 诚实拆账：`level_manager` 的 40/40 里只有 14 条是外层函数、26 条是闭包行，27 个闭包未还原）
              （2026-11-26：`polish_notation_converter` 唯一可归属函数 `0x4f5450` 对拍成 18/18 逐位 ⇒ 88→89）
              **439 里本质可隔离执行的只有 129（29.4%）**，其余 310 要 Godot/分配器 ⇒ 这是「观测」分母的可及上限（`docs/06` §64）
              但这只是 13,263 个 Ghidra 函数里的 4.0% —— 见 §3「信息天花板」
@@ -52,10 +81,10 @@ P4  命名 —— 真名 348/527；179 无名（138 族级 + 41 未知）
 名字候选     混合定名器（T1，2026-11-24，`docs/02` §35.12c）：13,263 行输出 mode=order 31 / fp 1,558 / none 11,674
              （fp/order 都是**推断级候选名，逐条待核**）；近孪生族留出 56.8%→**95.5%**、可部署域 57.8%→93.3%、族外 −1 行（已定位）
 协议         74 / 74 全字段 + 74 条判别值 + 7 个线上枚举全集（无未知）
-GDExtension  **原版 12 类**（`docs/02` §16.2）+ 我方 3 = **15 个，全部节点化**；headless 14 个 SceneTree 脚本 / **1933** 条 / 0 failed（2026-11-26 本机实跑；play_flow 206 需要 ④ 那份回放，否则 202）
-cargo        **1769** / 0 / 1 ignored（`--features gdext-bindings` **1875** / 0 / 1）；2026-11-26 本机实测
+GDExtension  **原版 12 类**（`docs/02` §16.2）+ 我方 3 = **15 个，全部节点化**；headless 14 个 SceneTree 脚本 / **1933** 条 / 0 failed（2026-11-26 本机实跑；play_flow 233）
+cargo        **1799** / 0 / 1 ignored（`--features gdext-bindings` **1921** / 0 / 1）；2026-11-26 收尾实测
 selftest     **717 / 0 / 1 skip**（2026-11-26 本轮实测；判据 = `missing=0` 且 `silent=0`）
-headless     14 个 `client/tools/*_check.gd`（`extends SceneTree`）合计 **1933 / 0**
+headless     14 个 `client/tools/*_check.gd`（`extends SceneTree`）合计 **1978 / 0**（T50 去镜像后 1961→1978）
              **四个前置**：① `client/assets/` 齐 ② `cargo build --example serve_match` ③ 可写 `HOME`
              ④ 真回放在 `$HOME/.local/share/godot/app_userdata/Graphwar/replays/`
              缺 ④ = `654 / 0 / 3 skip`（missing=63 全 degraded / silent 0）；缺 ① 的三档历史读数是 591/667/618。
