@@ -1,0 +1,130 @@
+[gd_scene format=3]
+
+[ext_resource type="Theme" path="res://graphwar_theme.tres" id="1_qg7xe"]
+[ext_resource type="Script" path="res://LanLobbyFontResize.gd" id="2_a2qko"]
+[ext_resource type="Script" path="res://GameNameContainer.gd" id="3_xpqnv"]
+[ext_resource type="Theme" path="res://axis_button_theme.tres" id="4_sbti1"]
+[ext_resource type="Texture2D" path="res://axis_option_3.svg" id="5_aal4b"]
+[ext_resource type="Theme" path="res://game_menu_icon_theme.tres" id="6_6yi52"]
+[ext_resource type="Texture2D" path="res://fx_option.svg" id="7_o1oya"]
+[ext_resource type="Texture2D" path="res://turns_simultaneous.svg" id="8_vcni1"]
+[ext_resource type="Texture2D" path="res://turn_1m.svg" id="9_15bu3"]
+[ext_resource type="Texture2D" path="res://play_option.svg" id="10_cwy1b"]
+
+[node name="HBoxContainer" type="HBoxContainer"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = ExtResource("1_qg7xe")
+
+[node name="ScrollContainer" type="ScrollContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+vertical_scroll_mode = 0
+
+[node name="NameContainer" type="MarginContainer" parent="ScrollContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+script = ExtResource("2_a2qko")
+
+[node name="ReplayName" type="Label" parent="ScrollContainer/NameContainer"]
+layout_mode = 2
+text = "Replay Name"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="GameNameContainer" type="MarginContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.1
+script = ExtResource("3_xpqnv")
+
+[node name="GameName" type="Label" parent="GameNameContainer"]
+layout_mode = 2
+text = "Game Name"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="ModeContainer" type="MarginContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+script = ExtResource("2_a2qko")
+
+[node name="OptionsContainer" type="HBoxContainer" parent="ModeContainer"]
+layout_mode = 2
+size_flags_stretch_ratio = 0.5
+
+[node name="MarginContainer" type="MarginContainer" parent="ModeContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AspectRatioContainer" type="AspectRatioContainer" parent="ModeContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AxisModeButton" type="GraphwarButton" parent="ModeContainer/OptionsContainer/AspectRatioContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+theme = ExtResource("4_sbti1")
+icon = ExtResource("5_aal4b")
+icon_alignment = 1
+expand_icon = true
+
+[node name="AspectRatioContainer2" type="AspectRatioContainer" parent="ModeContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="FunctionModeButton" type="GraphwarButton" parent="ModeContainer/OptionsContainer/AspectRatioContainer2"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+theme = ExtResource("6_6yi52")
+icon = ExtResource("7_o1oya")
+expand_icon = true
+
+[node name="AspectRatioContainer3" type="AspectRatioContainer" parent="ModeContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="TurnModeButton" type="GraphwarButton" parent="ModeContainer/OptionsContainer/AspectRatioContainer3"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+theme = ExtResource("6_6yi52")
+icon = ExtResource("8_vcni1")
+expand_icon = true
+
+[node name="AspectRatioContainer4" type="AspectRatioContainer" parent="ModeContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="TimeModeButton" type="GraphwarButton" parent="ModeContainer/OptionsContainer/AspectRatioContainer4"]
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 1
+theme = ExtResource("6_6yi52")
+icon = ExtResource("9_15bu3")
+expand_icon = true
+
+[node name="MarginContainer2" type="MarginContainer" parent="ModeContainer/OptionsContainer"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="AspectRatioContainer" type="AspectRatioContainer" parent="."]
+layout_mode = 2
+stretch_mode = 1
+alignment_horizontal = 2
+
+[node name="PlayReplayButton" type="GraphwarButton" parent="AspectRatioContainer"]
+input_text = "play_replay"
+layout_mode = 2
+icon = ExtResource("10_cwy1b")
+icon_alignment = 1
+expand_icon = true
+
+[node name="MarginContainer" type="MarginContainer" parent="."]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_stretch_ratio = 0.1

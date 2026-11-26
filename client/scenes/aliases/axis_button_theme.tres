@@ -1,0 +1,40 @@
+[gd_resource type="Theme" format=3]
+
+[ext_resource type="FontFile" path="res://button_font.tres" id="1_a22gf"]
+[ext_resource type="StyleBox" path="res://axis_menu_icon_theme.tres" id="2_c5gwe"]
+[ext_resource type="StyleBox" path="res://graphwar_style_box_flat_pressed.tres" id="3_r1u3u"]
+[ext_resource type="FontFile" path="res://ComicRelief-Bold.ttf" id="4_0lreh"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_oxxq5"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_c3pm7"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_bw5kj"]
+bg_color = Color(1, 1, 1, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0, 0, 0, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[resource]
+default_font = ExtResource("4_0lreh")
+default_font_size = 24
+Button/colors/font_color = Color(1, 1, 1, 1)
+Button/fonts/font = ExtResource("1_a22gf")
+Button/styles/disabled = ExtResource("2_c5gwe")
+Button/styles/focus = SubResource("StyleBoxEmpty_oxxq5")
+Button/styles/hover = ExtResource("2_c5gwe")
+Button/styles/normal = ExtResource("2_c5gwe")
+Button/styles/pressed = ExtResource("2_c5gwe")
+LineEdit/colors/caret_color = Color(1, 1, 1, 1)
+LineEdit/colors/font_color = Color(1, 1, 1, 1)
+LineEdit/styles/focus = SubResource("StyleBoxEmpty_c3pm7")
+LineEdit/styles/normal = SubResource("StyleBoxFlat_bw5kj")
+Panel/styles/panel = ExtResource("3_r1u3u")
+TextEdit/fonts/font = ExtResource("4_0lreh")
+TextEdit/styles/normal = SubResource("StyleBoxFlat_bw5kj")

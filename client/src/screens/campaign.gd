@@ -1,33 +1,41 @@
 extends GwScreen
 ## Campaign —— 战役关卡选择（21 关）。
 ##
-## 结构（恢复出的 `campaign.tscn` 12 个静态节点，逐节点照抄）：
-##   MarginContainer/VBoxContainer
-##     ├ HBoxContainer
-##     │   ├ ExitButtonContainer/{ClipButton, LongPressButton}   ← 左上角返回箭头
-##     │   └ MarginContainer/Label("CAMPAIGN")                   ← 字号 = 宽/30（LanLobbyTitle.gd）
-##     ├ Control          ← theme = campaign_button_theme_2.tres（关键！见下）
-##     ├ 21 个按钮       ← 运行时由 CampaingLevelsButtons.gd 造
-##     └ AdContainer      ← 运行时 0×0，没有文字
+## **节点树来自原版 `.tscn`**：`client/scenes/screens/campaign.tscn` 与
+## `recovered-src/campaign.tscn` **逐字节相同**（92 行 / 12 个静态节点 + 运行时 21 个按钮）。
+## 我方这层只剩"进屏时刷解锁状态"，`build()` 不再手抄任何节点（docs/06 §92）。
 ##
-## 21 个按钮的**几何**（`CampaingLevelsButtons.gd`，真源码）：
-##   字号 = 容器宽 / 15；x 步长 = 宽/8；y 步长 = 高/4；起点 (x/8, y/8)
-##   每次只写 `size.x`，位置再用 `pos - size/2` 居中；x 越过 9/10 或落到 1/10 以下就反向换行。
+## 原版的接线**全在 `.tscn` 里**（每一处都指向 `recovered-src/` 的原文，不是我方接线）：
+##   MarginContainer            ← 原版 `MarginContainer.gd`（安全区 margin）
+##     VBoxContainer
+##       HBoxContainer
+##         ExitButtonContainer  ← 原版 `ExitButtonContainer.gd`（字号 宽/30）
+##           ClipButton         ← 原生 `GraphwarButton`（`clip_children=2` 的回弹层）
+##             AnimationRect    ← `ColorRect`（`show_behind_parent=true`）
+##           LongPressButton    ← 原生 `GraphwarButton`，`input_text = "exit_campaign"`
+##         MarginContainer      ← 原版 `LanLobbyTitle.gd`（字号 宽/30）
+##           Label              ← 文本 "CAMPAIGN"，`title_theme.tres`（Eraser 手写体）
+##       Control                ← 原版 `CampaingLevelsButtons.gd` + `campaign_button_theme_2.tres`
+##         level_0..level_20      它 `_ready` 里造 **21 个原生 `GraphwarButton`**：
+##                                字号 = 宽/15、x 步长 = 宽/8、y 步长 = 高/4、起点 (x/8, y/8)
+##       AdContainer            ← 原版 `AdContainer.gd`（广告位，原版也是 0×0）
 ##
-## 21 个数字的**外观**（`campaign_button_theme_2.tres`，逐属性照抄进
-## `GwThemeFactory.campaign_level_theme()`）：
-##   * 手写体 `Eraser`（font_name 是明写的）—— 和标题 logo 同一套；
-##   * normal/hover/pressed/disabled/focus **五个 stylebox 全是 StyleBoxEmpty**
-##     ⇒ 没有圆角矩形底、没有边框，数字直接浮在深绿背景上；
-##   * `font_disabled_color` 的 alpha = 0 ⇒ 锁住的关卡数字**根本看不见**；
-##   * 没有覆盖 `font_color` ⇒ 白色从上层 app 主题继承下来。
-## 旧实现给每格画了灰色圆角按钮 + 我们自己的无衬线粗体，那是自造的（docs/124 §3）。
+## 21 个数字的**外观**来自原版 `campaign_button_theme_2.tres`（1 点名 + 5 个 StyleBoxEmpty，
+## 见 `comments`）：normal/hover/pressed/disabled/focus **全是 StyleBoxEmpty** ⇒ 没有圆角底、
+## 没有边框，数字直接浮在深绿背景上；`font_disabled_color` 的 alpha = 0 ⇒ 锁住的关卡数字
+## **根本看不见**；没有覆盖 `font_color` ⇒ 白色从上层 app 主题继承下来。
+## ⚠️ 那份主题的 2.44 MB 内嵌字形图集被导出器丢掉了 —— 装上的是**我方 shim**
+## （`client/scenes/aliases/campaign_button_theme_2.tres`：把内嵌 FontFile 换成
+## `assets/EraserRegular.fontdata`，Theme 层 6 个属性逐条照抄原版）。证据档：结构=观测、
+## 字形度量=**推断**（见该文件的头注释与 docs/06 §92.3）。
 
+## 关卡的字体除数：原版 `CampaingLevelsButtons.gd` 用 **宽/15**（本屏标题/返回是 宽/30）。
 const FONT_DIVISOR_LEVEL_BUTTON := 15
 
+## 造 21 个关卡按钮的那个 `Control`（原版 `.tscn` 里的节点，挂 `CampaingLevelsButtons.gd`）。
 var _area: Control
-var _buttons: Array[GwButton] = []
-var _level_theme: Theme
+## 21 个关卡按钮：**原生 `GraphwarButton`**（由原版脚本 `_ready` 里 `GraphwarButton.new()` 造）。
+var _buttons: Array[Button] = []
 
 func _ready() -> void:
 	# 只有 21 个关卡按钮用 宽/15；标题/返回用 宽/30（LanLobbyTitle.gd、ExitButtonContainer.gd）。
@@ -35,45 +43,30 @@ func _ready() -> void:
 	super()
 
 func build() -> void:
-	var f := GwUI.frame(self)
-	var vbox: VBoxContainer = f.vbox
-	# 标题字体：campaign.tscn 的 Label 挂的是 title_theme.tres（EraserRegular）。
-	build_header(vbox, "CAMPAIGN", GwCommands.EXIT_CAMPAIGN, true)
-
-	_area = Control.new()
-	_area.name = "Control"
-	_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_area.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_area.clip_contents = false
-	# 主题挂在容器上（原版就是这么挂的），21 个按钮运行时造出来时自动继承。
-	_level_theme = GwThemeFactory.campaign_level_theme()
-	_area.theme = _level_theme
-	_area.resized.connect(_on_area_resized)
-	vbox.add_child(_area)
-
-	for i in GwCampaign.LEVEL_COUNT:
-		var level := GwCampaign.level(i)
-		var b := GwButton.make(str(i), GwCommands.LEVEL_PREFIX + str(i))
-		b.name = "level_%d" % i
-		b.text = str(i)
-		b.focus_mode = Control.FOCUS_NONE
-		b.tooltip_text = "%s（占位关卡，数据未知）" % String(level.title)
-		_area.add_child(b)
-		_buttons.append(b)
-
-	vbox.add_child(GwUI.ad_slot())
-	call_deferred("place_buttons")
-
-func _on_area_resized() -> void:
-	# 原版：`self.resized.connect(_on_size_changed)` → `call_deferred("place_buttons")`
-	call_deferred("place_buttons")
+	# 树来自原版 `.tscn`，这里只取句柄。⚠️ 本函数的调用点在父类 `_ready` 里，而子节点的
+	# `_ready` 先跑 ⇒ 原版脚本造好的 21 个按钮此时已经挂在 `Control` 下。
+	_area = get_node_or_null("MarginContainer/VBoxContainer/Control") as Control
+	if _area == null:
+		push_error("[gw2] campaign.tscn 里找不到 MarginContainer/VBoxContainer/Control")
+		return
+	# 这棵子树的字号归原版脚本算（宽/15）。父类 `apply_font_scale()` 只把
+	# `res://src/views/` 路径当"原版脚本"（`GwViews.owns`），而 `.tscn` 引用的是
+	# `res://CampaingLevelsButtons.gd` 这条别名 ⇒ 认不出来，用 meta 显式告诉它这一层的除数。
+	_area.set_meta("font_divisor", FONT_DIVISOR_LEVEL_BUTTON)
+	_buttons.clear()
+	for c in _area.get_children():
+		if c is Button:
+			_buttons.append(c as Button)
 
 func on_enter() -> void:
 	refresh_unlock_state()
-	call_deferred("place_buttons")
 
 ## 解锁状态：**读原版存档** `user://campaign.save`（`level_<n>` = 最后通关的一关）。
 ## 存档里说 `level_20` ⇒ 21 关全解锁，21 个数字全是白色（用户真机截图就是这个样子）。
+##
+## 证据档：**推断**。原版"哪一关该 disabled"的判定点在 Rust 侧，我方还没定位到那条指令；
+## 这里是由两点反推的：①主题里 `font_disabled_color` 的 alpha = 0（锁住的数字看不见），
+## ②存档格式是原版的（`GwStore.read_campaign_progress`）。**不是**观测到的原版行为。
 func refresh_unlock_state() -> void:
 	var app_node := app()
 	if app_node != null and app_node.store != null:
@@ -84,46 +77,9 @@ func refresh_unlock_state() -> void:
 		if app_node != null and app_node.store != null:
 			unlocked = app_node.store.is_level_unlocked(i)
 		# 锁定 ⇒ disabled ⇒ 走主题里的 font_disabled_color（alpha = 0）⇒ 数字不可见。
-		# 这是我们照主题推出来的行为（原版没有被观测过），docs/124 §3 标为推断。
 		b.disabled = not unlocked
 		b.modulate = Color(1, 1, 1, 1)
 		if unlocked:
 			b.tooltip_text = "Level %d（占位关卡：真实关卡数据未知）" % i
 		else:
 			b.tooltip_text = "Level %d — locked（原版存档里还没有通关到这一关）" % i
-
-## 位置与字号：照抄 `CampaingLevelsButtons.gd::place_buttons`。
-func place_buttons() -> void:
-	if _area == null or _buttons.is_empty():
-		return
-	var area := _area.size
-	if area.x <= 1.0 or area.y <= 1.0:
-		return
-	var layout := GwCampaign.layout_buttons(area)
-	for i in _buttons.size():
-		var item: Dictionary = layout[i]
-		var b := _buttons[i]
-		b.add_theme_font_size_override("font_size", maxi(10, int(float(item.font_size))))
-		# 原版只写 `size.x`，高度交给最小尺寸（= 字号决定的行高）。
-		b.size.x = float(item.size_x)
-		var h := b.get_combined_minimum_size().y
-		var anchor: Vector2 = item.anchor
-		b.position = anchor - Vector2(b.size.x, h) / 2.0
-		b.size.y = h
-
-## 字号：先按基类把整屏设成 宽/30，再把 21 个关卡数字单独改回 宽/15。
-func apply_font_scale() -> void:
-	super()
-	if not _built:
-		return
-	_apply_level_font_sizes()
-
-func _apply_level_font_sizes() -> void:
-	if _area == null or _buttons.is_empty():
-		return
-	var width := _area.size.x if _area.size.x > 0.0 else get_viewport_rect().size.x
-	if width <= 0.0:
-		return
-	var size := maxi(10, int(width / float(FONT_DIVISOR_LEVEL_BUTTON)))
-	for b in _buttons:
-		b.add_theme_font_size_override("font_size", size)

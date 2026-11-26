@@ -15823,3 +15823,220 @@ T42PROBE 23 passed, 0 failed
 3. **我自己也写错过一次口径**：第一次跑像素对拍时把 UDP 端口改掉，结果 `frame_diff` 报 0.000 %
    （假通过）；第二次又误用主 checkout 的 `frame_capture.py`，同样得到"0.000 %/65 %"这类无意义数。
    两次都记在 §92.7 —— **0.000 % 这个读数本身就应当怀疑**，先看两侧帧的 `uniq` 颜色数（纯背景 = 假通过）。
+
+## 93. T43：13 屏的**总闸是我们自己的断言** —— 改认原生 `GraphwarButton` 之后 `717` 一条没掉，原版 `.tscn` 一次装上 **6 份**（2026-11-26，任务 T43 / `task-40`）
+
+> 判据/口径：`.agent-work/specs/T43-button-truth.md`。工作树 `.agent-work/cg/wt-t43`、分支 `agent/button-truth`，
+> 基线 `origin/master` = `84f96fd`。台账 `fixtures/tscn_import_plan.tsv`（本轮**只追加结果列**，
+> 「判据」那 18 行注释与 31 行原始读数**一字未改**）。客户端侧的机制说明见 `docs/16` §81。
+
+### 93.0 一页结论
+
+T41 的结论是对的：**13 屏装不上的拦路石不是资产，是我们自己的按钮类型断言**。本轮把断言改成
+**"原生 `GraphwarButton` 与我方仿制 `GwButton` 都认"** ⇒ `selftest` 仍是
+**`groups=33 checks=717 expected=717 missing=0(claimed 0 / degraded 0 / silent 0)`、`717 passed / 0 failed / 1 skipped`**
+（**check 一条没少**），然后原版 `.tscn` 一口气装上 **6 份**：
+
+| # | 原版文件 | 行/节点 | `cmp` | `client/src/screens/*.gd` 行数 |
+|---|---|---|---|---|
+| 1 | `campaign.tscn` | 92 / 12 + 运行时 21 个原生按钮 | **逐字节相同** | `campaign.gd` 129 → **85** |
+| 2 | `lan_lobby.tscn` | 213 / 32 | **逐字节相同** | `lan_lobby.gd` 435 → **358** |
+| 3 | `GameSetup.tscn` | 273 / 47 | **逐字节相同** | `game_setup.gd` 543 → **392** |
+| 4 | `add_bot_pop_up.tscn` | 254 / 45 | **逐字节相同** | `add_bot_pop_up.gd` 140 → **40** |
+| 5 | `join_level_pop_up.tscn` | 258 / 42 | **逐字节相同** | `join_level_pop_up.gd` 338 → **188** |
+| 6 | `replay_entry.tscn`（**行模板**，不是屏） | 130 / 21 | **逐字节相同** | `replay_lobby.gd` 262 → **205** |
+
+* `client/scenes/screens/*.tscn` 合计 **462 → 1622 行**（+1160）；八份 12 行存根仍在（`main_menu` / `player_screen` /
+  `play_screen` / `endgame_pop_up` / `confirm_exit_pop_up` / `connecting_pop_up` / `disconnected_pop_up` / `join_ip_pop_up`）；
+* 六份 `.gd` 的**手抄节点树**合计删掉 **579 行**（44+77+151+100+150+57）；
+* `client/src/screens/*.gd` 合计 **6949 → 6397 行**（不含 `screen.gd` 本轮新增的 36 行别名归属判断）；
+* **`play_screen.tscn` 未装** —— 理由与下一步清单在 §93.7（不是装不上，是**会动棋盘像素基线**，需要单独一轮）。
+
+### 93.1 断言怎么改的（**判据一个没放松，check 数一条没少**）
+
+`client/tools/selftest.gd` 加了四个 helper（`_is_button` / `_button_input_text` / `_button_long_press_text` /
+`_buttons_in`），`_find_button()` 返回类型 `GwButton → Button`；然后 16 处调用点逐个换过去
+（`child is GwButton`、`find_children("*","GwButton")`、`as GwButton`、`b.input_text`、
+`(c as GwButton).expand_icon`、`fire_button.long_press_input_text`…）。注释里写明
+**这条断言此前测的是我方仿制品**（`docs/16` §81.1 有机制说明与 helper 表）。
+
+**只有一处改了期望值**（不是放松）：`"关卡数字字号 = 容器宽/15"` 原来写 `maxf(10.0, 宽/15)`，
+那个 10 是在迎合我方仿制实现的 `maxi(10, 宽/N)`，而原版 105 个 `.gd` 里 `maxi`/`max(` 出现 **0 次**。
+换上原版 `CampaingLevelsButtons.gd`（裸 `size.x/15`）后、在 headless 的 64×64 dummy 窗口里真实字号是 **6**，
+被夹过下限的期望值是 10。改成按原版公式比（期望 6 / 实际 6）—— 判据**变严**：把 `maxi(10,…)` 加回来这条就红。
+
+### 93.2 机制：原版 `.tscn` 一装上，那一屏的**布局归原版脚本**
+
+原版 `.tscn` 的字号/宽度/内边距全靠挂在子节点上的原版脚本自己算（`LanLobbyFontResize.gd` 宽/40、
+`LanLobbyTitle.gd` 宽/30、`LobbyButtonContainer.gd` 宽×0.2、`ButtonGrid.gd` 宽×0.15/3、
+`IpPopUpMargin.gd` 宽/40、`OptionsContainer.gd` `min.y = 0.25×父高`、`ExitButtonContainer.gd` 宽/30 …）。
+它们要求**原版那棵容器树**才成立（`ExtraOptionPad.gd` / `ViewFunctionPad.gd` / `ExtraOptionsHBox.gd` 甚至用
+`find_parent("*PlayMainHBox")` / `get_node("../../../PlaneContainer")` 这种相对路径 —— 这解释了 T33 那次
+`min-size ↔ item_rect_changed` 正反馈 **SIGSEGV**：当时的容器形状是我方手搭的，与原版不同）。
+
+所以本轮的每一屏都是同一套动作：**原版 `.tscn` 原样放到位 → 删掉 `build()` 里手抄的节点树 → 只 `get_node()` 取句柄
++ 接信号**。原版脚本在 `_ready` 里自己算布局，我方 `GwScreen._apply_size_recursive()` 通过
+`_is_view_owned()` 把那些子树**整棵让出来**（见 §93.4 第 2 条）。
+
+### 93.3 别名层：本轮新增 54 个文件（**全部是我方接线**，不是原版字节）
+
+原版 `res://` 是**扁平**的（`.tscn` 里 `path="res://LanLobbyFontResize.gd"` / `res://long_press_button_theme.tres` /
+`res://skins/bot_0.svg`）。要同时做到"`.tscn` 逐字节不改"和"引用解析得到"，只能在 `client/` 根铺别名：
+
+| 别名 | 本轮新增 | 累计 | 做法 |
+|---|---|---|---|
+| `client/<Name>.gd` → `src/views/<Name>.gd` | **24** | 28 | 符号链接。本轮新补 **6 份**原版脚本进 `src/views/`（`ShowExtraButtons` / `ExtraOptionPad` / `ViewFunctionPad` / `ViewFunctionsLabel` / `ExtraOptionsHBox` / `HBoxContainer`）⇒ `src/views/` **35 → 42**，全部与 `recovered-src/` `cmp` 逐字节相同 |
+| `client/<rel>.svg.import` → `assets/<rel>.ctex` | **22** | 32 | `.svg` 源文件**不在包里**（导出器只留导入产物）⇒ `[remap] path=` 指到真实像素 |
+| `client/<theme>.tres.remap` + `scenes/aliases/<theme>.tres` | **16** | 17 | 完整主题 = `recovered-src` 逐字节副本；骨架主题 = shim |
+
+**两份 shim（字体字节被导出器丢弃 ⇒ `MEDIA OMITTED`，按规格"只装结构、字体留空并标推断"）**：
+
+1. `campaign_button_theme_2.tres`（原件 2.5 MB，其中 **2.44 MB** 是内嵌字形图集，`FontFile.data.size()==0`）：
+   `[resource]` 段 **6 个键逐条照抄**（`default_font` + 2 个颜色 + 5 个 `StyleBoxEmpty`），内嵌 `FontFile`
+   （`font_name="Eraser"` / `style_name="Regular"`）换成 `assets/EraserRegular.fontdata`（MANIFEST sha256 `d488120e…`）。
+   **结构=观测 / 字形度量=推断**；⚠️ 但配上之后的像素读数提供了**强旁证**：`campaign` 与 `level_popup`
+   两侧 **0 px（0.000 % / max|Δ|=0）** ⇒ 这套替换在这两个屏的字号下**逐像素等价**（推断档位不升格：只证了这两屏这两种字号）。
+2. `game_menu_icon_theme.tres`（原件 **6.0 MB / 3320 行**，26 个内嵌载荷 **5.9 MB** 全丢）：`[resource]` 段
+   **每个键逐条照抄**（含 `default_font_size = 24`、Button/LineEdit/Panel/TextEdit 的 colors/styles）；
+   3 份 `FontFile` 全是 **Comic Relief / Bold**（`font_weight = 700`）⇒ 一起换成 `assets/ComicRelief-Bold.fontdata`；
+   2 个 `StyleBoxEmpty` + 3 个 `StyleBoxFlat` 的属性**逐字照抄**（深绿 #1A3B2D、3 px 纯黑边、10 px 圆角）；
+   **23 张 `Image` 子资源在 `[resource]` 段一个都没被引用**（只被那 3 份 FontFile 的 `cache/…/textures/0/image`
+   引用）⇒ 随字体一起丢弃。**结构=观测 / 字形图集=推断** —— `join_level_popup` 两侧 **0 px** 是同一类旁证。
+
+### 93.4 三个真坑（都会"改了但没生效"或连锁报错）
+
+1. **原生 `GraphwarButton` 自带 `#[func] fn pressed()`**（原版 `0x4ef560`），它在 GDScript 里**遮蔽**
+   `BaseButton.pressed` **信号** ⇒ `b.pressed.connect(…)` 报
+   `Invalid call. Nonexistent function 'connect' in base 'Callable'`，而且**整段 `build()` 随之中断**
+   （`_mode_buttons` 留空 ⇒ `_refresh_modes()` 里 `as Button` 得到 null ⇒ 又一串 `Icon` 赋值错误）。
+   凡连原生按钮的 `pressed` 一律用**字符串形式** `b.connect("pressed", …)`（`GameSetup` 四个模式键、
+   `replay_entry` 的 ▶ 都是这么写的）。`selftest` 里的 `emit_signal("pressed")` 本来就是字符串形式，不受影响。
+2. **`GwViews.owns()` 认不出别名路径**（`docs/16` §81.3）：`owns()` 只认 `res://src/views/…`，而原版 `.tscn`
+   写的是 `res://<Name>.gd` ⇒ 我方 `maxi(10, 宽/N)` 把原版脚本算好的字号**覆盖掉**（实测：`join_level_pop_up`
+   的 Cancel/Start 宽 **194→257 / 218→289**，真帧 194/218）。修法：`client/src/screens/screen.gd` 加
+   `_is_view_owned()`（根级 `res://<Name>.gd` 且 `src/views/<Name>.gd` 存在 ⇒ 也算原版脚本拥有）。
+3. **主题 shim 的 `ext_resource id` 必须与原文件一致**：`game_menu_icon_theme` 的 shim 第一次写成 `id="1_btn"`，
+   而照抄来的 `[resource]` 段引的是 `ExtResource("1_t0n1t")` ⇒ `Parse Error: Can't load cached ext-resource id`
+   ⇒ **整个主题 `load()` 返回 null**，三份引用它的屏**静默退化成 app 主题**（当时那两条 stylebox 断言只是
+   "碰巧还对"：app 主题的按钮底色/边框数值与原版相同）。正对照：`client/*.remap` 17 个逐个 `load()` → **BAD=0**。
+   教训：**shim 不是"文件放对了就行"，必须验证它真的被加载**。
+
+小坑 4：`OptionsContainer.gd` 只在**自己** `resized` 时重算 `min.y = 0.25×父高`，父容器变高而自己尺寸未变的
+那一刻会停在旧值（实测差 2.4 px = 0.25×9.6）⇒ 把父容器的 `resized` 也接上，仍只调**它自己的**
+`set_minimum_size()`（不另写算式）。
+
+### 93.5 门槛读数（本机自跑，改前/改后）
+
+| 门槛 | 读数 |
+|---|---|
+| `selftest` | **717 passed / 0 failed / 1 skipped**，`groups=33 checks=717 expected=717 missing=0(claimed 0/degraded 0/silent 0)`，`code=0`（改前改后**逐字相同**） |
+| headless 14 脚本 | **1961 / 0**（244+117+96+235+367+132+24+116+96+233+66+57+155+23，逐脚本与基线一致） |
+| `cargo test --offline` | **1772 / 0 / 1ignored** |
+| `cargo test --offline --features gdext-bindings` | **1888 / 0 / 1ignored** |
+| 三轴（`fire` / `batch` / `batch_conv`，冻结快照 401 份，`--check-baseline` 口径） | `fire` **647** ｜ `batch` **647** ｜ `batch_conv` **637 / 1080**（多发批 130：种类 128/130、内容 32/130；单发 950：种类 947/950、内容 605/950；逐批对照 **变好 128 / 变差 0**） |
+| `cmp`（6 份 `.tscn` + 7 份新视图脚本） | **逐字节相同**（`cmp` 无输出、退出码 0） |
+| 像素（五个 flow + match，两侧**串行**重拍） | `campaign` **0 px**（0.000 %/max\|Δ\|=0）｜`level_popup` **0 px**｜`join_level_popup` **0 px**｜`menu` **0 px**｜`replay_lobby` **0 px**；`replay_play` / `replay_end` **0.089 %**（≈1 714 px 相位残差 = **既有基线**，`docs/06` §79.6 的"归零"是旧基线，**不算本轮回归**）；`game_setup` 不过（L2 **1 块**，最差块 dmean **4.96** vs 基线 5.163、diff **27 659 px** vs 27 762 ⇒ **不变差**）；`add_bot` 不过（L2 1 块，**4.96** vs 5.163、**17 578 px** vs 17 681 ⇒ 不变差）；`lan_lobby_local` 不过（L3）**diff_px 3 012 / bbox 231,186,592,237 与基线逐字相同**；`lan_lobby_global` 不过（L3）**13 369 → 10 123 px**（更少）但最差块 dmean **0.194 → 0.784**（更集中）—— 混合，如实登记 |
+
+另补一次 `--flow match`（两侧重拍，确认 LAN→对局的点击串没被本轮的 `lan_lobby` 换树弄坏）：
+**`match_ready` 0.122 %（L2 超 0 块）、`match_play` 0.424 %（L2 超 1 块）** —— 与 `docs/06` §79 的基线
+**逐位相同**，两侧都拍到了 `match_play` ⇒ 管线完好。唯一**未重拍**的是 `player_skins`
+（`player_screen` 本轮一行未改）—— 这一条是**未尽事项**，不是"已证不变"。
+
+### 93.6 `GwButton` 的终态建议
+
+见 `docs/16` §81.6：**现在不能删**（还有 8 份 12 行存根屏与四类运行时动态行/格在用它）；删干净的前置是
+①8 份存根屏全换原版 `.tscn`；②`game_room_entry` / `team1_entry` / `team2_entry` / `shop_button_entry`
+四份行/格场景也装上；③`GwButton.bind_native()` 那条过渡桥（原生按钮 `input_selected` → `App.command`）
+换成 Rust 侧订阅（原版 `GraphwarButton::subscribe` 的闭包表）。
+
+### 93.7 `play_screen.tscn` 为什么**本轮不装**（有实测，不是"没时间"）
+
+`play_screen.tscn` 780 行 / 106 节点，是最大的一份，也是**唯一还带着像素基线**的屏
+（`match_ready` 0.122 % / `match_play` 0.42 %，以及 T4/T7/T26 调出来的棋盘四边与网格线 **0 px**）。
+本轮做了独立实例化实验（把 `recovered-src/play_screen.tscn` 复制成临时场景、`root.size` 设 1920×1160 后实例化）：
+
+* **能实例化、没有 SIGSEGV**：`GraphwarPlane` 生成成功（`class=GraphwarPlane`，自带 **3 个 `FunctionDrawer`**
+  子节点，与 `_install_plane_nodes()` 的①一致）；`ExtraOptionPad.gd` / `ViewFunctionPad.gd` /
+  `ExtraOptionsHBox.gd` 三份"当年会崩"的脚本在**原版容器形状**下跑通 ⇒ **T33 那次崩溃的根因确认是容器形状不符**，
+  装上原版 `.tscn` 之后那三份可以挂了（这是下一轮的第一步）。
+* **但几何链要重做**：`play_screen.gd` 的棋盘渲染走"我方 `_canvas`（5:3 的 `AspectRatioContainer` 子节点）
+  → `_fit_canvas()` 按 `min(box/CANVAS_SIZE)` 设 `_plane.scale` → 各 drawer 用 `CANVAS_SIZE=(1000,600)`"这条链；
+  原版是 `AspectRatioContainer` 直接把 `GraphwarPlane` 铺成棋盘矩形、由 `board_scale` / `flip_y` 两个导出属性
+  做单位映射。**两者像素等价性没被证明过** ⇒ 换树就要重调，而重调期间 `match_ready` / `match_play`
+  与"棋盘四边/轴交点逐项 0 px"这些判据必然先红。
+* **成员/路径要重写 18 处**：`_plane`（→ tscn 里那个 `GraphwarPlane`）/ `_canvas` / `_plane_aspect` /
+  `_plane_container` / `_left_grid` / `_right_grid` / `_replay_left` / `_replay_right` / `_replay_play_btn` /
+  `_fire_button`（+ `_fire_parts`）/ `_input` / `_timer_label` / `_offset_label` / `_fx_button` /
+  `_view_functions_label` / `_extra_vbox` / `_extra_hbox` / `_show_extra_button`，外加三处 handler
+  （`_update_view_geometry` / `_replay_button` / `_fit_canvas`）。
+* **好消息（下一轮可直接用）**：`play_screen.tscn` 里 **54 个按钮把 `text` / `input_text` / `icon` 全写死了**
+  （`C π e 1…0 . ⇤ ← ⌫` 与 `abs( ln( sqrt( sin( …` 两套键、`play_pause`、`save_screenshot/summary/clip`、
+  `ask_exit_play`、`toggle_*`、`fire`），与我方 `LEFT_KEYS`/`RIGHT_KEYS` **逐个对得上** ⇒ 装上之后
+  `_fill_grid()` / `_make_grid()` 可以整份删掉，按键派发走 §93.2 的命令桥。
+
+### 93.8 复跑命令
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild WT=$MAIN/.agent-work/cg/wt-t43
+export CARGO_HOME=$MAIN/.reference/cargo-home CARGO_TARGET_DIR=$WT/.cargo-target HOME=$WT/.fakehome
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+
+# 1) 逐字节核对（6 份 .tscn + 7 份新视图脚本）
+cmp client/scenes/screens/campaign.tscn          recovered-src/campaign.tscn
+cmp client/scenes/screens/lan_lobby.tscn         recovered-src/lan_lobby.tscn
+cmp client/scenes/screens/game_setup.tscn        recovered-src/GameSetup.tscn
+cmp client/scenes/screens/add_bot_pop_up.tscn    recovered-src/add_bot_pop_up.tscn
+cmp client/scenes/screens/join_level_pop_up.tscn recovered-src/join_level_pop_up.tscn
+cmp client/scenes/screens/replay_entry.tscn      recovered-src/replay_entry.tscn
+for v in CampaingLevelsButtons ShowExtraButtons ExtraOptionPad ViewFunctionPad ViewFunctionsLabel \
+         ExtraOptionsHBox HBoxContainer; do cmp client/src/views/$v.gd recovered-src/$v.gd || echo "DIFF $v"; done
+
+# 2) 导入 + 自检 + headless 14
+"$GODOT" --headless --path client --import
+bash client/run.sh selftest | tail -3                       # 717 passed / 0 failed / 1 skipped
+for f in assemble_check base_classes_check curve_on_screen_check draw_classes_check entity_drawer_check \
+         function_drawer_check gdext_check obstacle_drawer_check plane_on_screen_check play_flow_check \
+         process_loop_check recovered_view_check signal_classes_check spike_class_check; do
+  "$GODOT" --headless --path client --script res://tools/$f.gd | grep -E '[0-9]+ passed'; done   # 合计 1961
+
+# 3) 别名层正对照：client/*.remap 17 个逐个 load()，BAD 必须 0（脚本见 §93.4 第 3 条）
+#    一行版：把 `ls client/*.remap` 拼成 res:// 路径数组，在临时 SceneTree 脚本里逐个 load() 并计数
+
+# 4) 像素（五个 flow + match，两侧串行；产物不入库）
+for flow in static lobby setup level replay; do
+  python3 $MAIN/tools/frame_capture.py --side original --out $WT/frames/orig_$flow --display-num 103 --flow $flow --seed-replays
+  python3 $MAIN/tools/frame_capture.py --side ours     --out $WT/frames/mine_$flow --display-num 104 --flow $flow --seed-replays
+done
+python3 $MAIN/tools/frame_diff.py --orig $WT/frames/orig_static --mine $WT/frames/mine_static --screens campaign,level_popup --out $WT/d1.tsv
+python3 $MAIN/tools/frame_diff.py --orig $WT/frames/orig_lobby  --mine $WT/frames/mine_lobby  --screens lan_lobby_local,lan_lobby_global --out $WT/d2.tsv --blocks-out $WT/db2.tsv
+python3 $MAIN/tools/frame_diff.py --orig $WT/frames/orig_setup  --mine $WT/frames/mine_setup  --screens game_setup,add_bot --out $WT/d3.tsv --blocks-out $WT/db3.tsv
+python3 $MAIN/tools/frame_diff.py --orig $WT/frames/orig_level  --mine $WT/frames/mine_level  --screens join_level_popup --out $WT/d4.tsv
+python3 $MAIN/tools/frame_diff.py --orig $WT/frames/orig_replay --mine $WT/frames/mine_replay --screens menu,replay_lobby,replay_play,replay_end --out $WT/d5.tsv
+```
+
+### 93.9 遗留 / 我写错了 / 规格前提被证伪
+
+1. **`play_screen.tscn` 没装**（§93.7）—— 本轮唯一没做完的清单项。理由不是"装不上"：独立实例化证明它能装、
+   那三份"当年会崩"的脚本也能挂；是**棋盘几何链要重做一遍**（我方 `_canvas`+`_fit_canvas` 缩放 vs 原版
+   `AspectRatioContainer`+`board_scale`），而这条链上挂着"棋盘四边/轴交点逐项 0 px"与
+   `match_ready` / `match_play` 两个基线，必须单独一轮 + 两侧重拍才能做。
+2. **骨架 `.tres` 只做到"结构=观测、字形=推断"**：两份 shim 是手写的；`campaign` / `level_popup` /
+   `join_level_popup` 的 **0 px** 是这两种字号下的逐像素旁证，但**没有证明所有字号都等价**
+   （原件图集丢了，只能拿同一个 ttf 重算）。这条永远只能停在推断档，除非能把导出器丢弃的字形图集从别处恢复。
+3. **16 份非屏场景一份都没装**（`function_buttons` / `team1_entry` / `line_2d` / `name_label` / `main` …）——
+   它们在 `client/` 里**没有消费者**，装了就是"躺在仓库里的副本"（T41 的判断本轮复核成立）。
+   本轮把两份**有消费者**的补上了（`replay_entry` 装成行模板），并把 `game_room_entry`（LanLobby 的行）
+   标成"下一份该装的"（台账已写）。
+4. **AdMob 5 份仍未装**（物理不可得）：复核 `recovered-src/addons/` 下只有 `.gd`/`.tscn`/`plugin.cfg`，
+   **没有任何 `.so`/`.dll`** ⇒ 与 T33/T41 结论一致。
+5. **`GwButton.bind_native()` 是我方过渡桥**（原生按钮 `input_selected` → `App.command`），**不是原版机制**：
+   原版订阅者在 Rust 控制器里（`GraphwarButton::subscribe` 那张闭包表）。它现在**必需**（否则装上原版 `.tscn`
+   的屏所有按钮都点不动），但控制器迁回 Rust 之后应当由 Rust 侧订阅取代。
+6. **我第一版把 `game_menu_icon_theme` 的 shim 写错了**（`ext_resource id` 与原文件不一致）⇒ 主题 `load()`
+   返回 null、三份屏静默退化成 app 主题（§93.4 第 3 条）。是写**正对照**（17 个 remap 逐个 load）时才抓到的。
+7. **`campaign` 的解锁状态（`disabled`）与 tooltip 仍是我方的**（`campaign.gd` 头注释标**推断**）：原版哪一关该锁
+   没有证据。装配上原版 `.tscn` 之后，这一层是**唯一**还留在我方代码里的行为。
+8. **`lan_lobby_global` 的最差块变差了**（0.194 → 0.784 dmean，虽然总 diff px 少了 3 246）：
+   最可能是原版 `game_menu_icon_theme` 真正生效之后，四个模式图标的底/边框与之前"退化到 app 主题"时不同。
+   **未定位到具体块**（只到 L2 网格粒度），下一轮应该用 `--blocks-out` 逐块对照定位。

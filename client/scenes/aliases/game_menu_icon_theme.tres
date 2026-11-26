@@ -1,0 +1,80 @@
+; ！！这是我方 shim，**不是原版字节** —— 原版 `game_menu_icon_theme.tres` 是 6.0 MB / 3320 行，
+; 导出器把 **26 个内嵌载荷（5.9 MB：3 份 FontFile 的字形图集 + 23 张 Image）全丢了**：
+; `recovered-src/` 里那份一加载就刷 `Invalid image: image is empty`，字形与图标全空
+; ⇒ 原件**物理装不上**（docs/06 §91.5 的 B 类；本屏的 3 份 `.tscn` 都引用它）。
+;
+; 做法（与 `campaign_button_theme_2` shim 同一套）：
+;   ① `[resource]` 段的**每一个键逐条照抄原版**（`default_font_size = 24`、Button/LineEdit/
+;      Panel/TextEdit 的 colors/styles 全部保留）；
+;   ② 3 份被丢弃的 `FontFile` 子资源全是 **Comic Relief / Bold**（原文件里 `font_name = "Comic Relief"`,
+;      `style_name = "Bold"`, `font_weight = 700`）⇒ 一起换成 `assets/ComicRelief-Bold.fontdata`
+;      （MANIFEST 登记，sha256 7c4217d3…）；
+;   ③ 2 个 `StyleBoxEmpty` + 3 个 `StyleBoxFlat` 的属性**逐字照抄**（深绿底 #1A3B2D、3 px 纯黑边、
+;      10 px 圆角）—— 它们不含任何媒体数据；
+;   ④ 23 张 `Image` 子资源**在 `[resource]` 段里一个都没被引用**（只被那 3 份 FontFile 的
+;      `cache/.../textures/0/image` 引用）⇒ 随字体一起丢弃，不影响主题键。
+;
+; 证据档：键集合与属性 = **观测**（逐条抄自原版）；字形图集 = **推断**（原件丢了，
+; 只能由同一个 ttf 的导入器重算 ⇒ 抗锯齿/字宽可能与原件差 1 px，只能靠真帧像素对拍验证）。
+[gd_resource type="Theme" load_steps=8 format=3]
+
+[ext_resource type="StyleBox" path="res://game_menu_icon_button_theme.tres" id="1_t0n1t"]
+[ext_resource type="FontFile" path="res://assets/ComicRelief-Bold.fontdata" id="2_comic"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_db4vv"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_hmg6y"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_qfoih"]
+bg_color = Color(0.101961, 0.231373, 0.176471, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0, 0, 0, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_3bdvv"]
+bg_color = Color(0.101961, 0.231373, 0.176471, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0, 0, 0, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_r1m3y"]
+bg_color = Color(0.101961, 0.231373, 0.176471, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0, 0, 0, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[resource]
+default_font = ExtResource("2_comic")
+default_font_size = 24
+Button/colors/font_color = Color(1, 1, 1, 1)
+Button/fonts/font = ExtResource("2_comic")
+Button/styles/disabled = ExtResource("1_t0n1t")
+Button/styles/focus = SubResource("StyleBoxEmpty_db4vv")
+Button/styles/hover = ExtResource("1_t0n1t")
+Button/styles/normal = ExtResource("1_t0n1t")
+Button/styles/pressed = ExtResource("1_t0n1t")
+LineEdit/colors/caret_color = Color(1, 1, 1, 1)
+LineEdit/colors/font_color = Color(1, 1, 1, 1)
+LineEdit/styles/focus = SubResource("StyleBoxEmpty_hmg6y")
+LineEdit/styles/normal = SubResource("StyleBoxFlat_qfoih")
+Panel/styles/panel = SubResource("StyleBoxFlat_3bdvv")
+TextEdit/fonts/font = ExtResource("2_comic")
+TextEdit/styles/normal = SubResource("StyleBoxFlat_r1m3y")

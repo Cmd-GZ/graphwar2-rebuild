@@ -171,9 +171,59 @@ func _screen(name: String) -> Control:
 func _command(cmd: String) -> void:
 	get_node("/root/App").command(cmd)
 
-func _find_button(root: Node, node_name: String) -> GwButton:
+## ---------------------------------------------------------------- 按钮：**两种类都认**
+##
+## 为什么必须认两种（`docs/06` §92.1）：原版 `.tscn` 里的按钮是 **GDExtension 原生类
+## `GraphwarButton`**（`recovered-src/*.tscn` 的 `type="GraphwarButton"` 极密：`play_screen`
+## 58 处、`GameSetup` 11、`add_bot_pop_up` 9、`join_level_pop_up` 8、`lan_lobby` 7…），
+## 而 `GwButton` 只是 `extends Button` 的**我方仿制类**（`client/src/ui/gw_button.gd` 自述
+## "复刻原版契约，不是实现"）。原版 `.tscn` 一装进 `client/`，那一屏的按钮就不再是 `GwButton`。
+##
+## ⇒ 下面这几条断言**此前测的是我方仿制品**（而不是原版类）。现在改成"原版类与我方仿制类
+##   都算按钮"，判据（节点名 / `input_text` / 数量 / 布局）一个字都没放松，条数只增不减。
+func _is_button(n: Node) -> bool:
+	if n == null:
+		return false
+	if n is GwButton:
+		return true
+	return n.get_class() == "GraphwarButton"
+
+## 取按钮的 `input_text`：原生类读导出属性（`get("input_text")`），仿制类直接读字段。
+func _button_input_text(n: Node) -> String:
+	if n == null:
+		return ""
+	if n is GwButton:
+		return String((n as GwButton).input_text)
+	if n.get_class() == "GraphwarButton":
+		return String(n.get("input_text"))
+	return ""
+
+## 取按钮的**长按**命令键（`FireButton` 是 `long_press_input_text = "fire"`）。
+func _button_long_press_text(n: Node) -> String:
+	if n == null:
+		return ""
+	if n is GwButton:
+		return String((n as GwButton).long_press_input_text)
+	if n.get_class() == "GraphwarButton":
+		return String(n.get("long_press_input_text"))
+	return ""
+
+## 递归收集子树里的按钮（两种类都算）。顺序 = 深度优先前序，与 `find_children` 一致。
+func _buttons_in(root: Node) -> Array:
+	var out: Array = []
+	if root != null:
+		_collect_buttons(root, out)
+	return out
+
+func _collect_buttons(n: Node, out: Array) -> void:
+	for c in n.get_children():
+		if _is_button(c):
+			out.append(c)
+		_collect_buttons(c, out)
+
+func _find_button(root: Node, node_name: String) -> Button:
 	var n := root.find_child(node_name, true, false)
-	return n as GwButton
+	return n as Button
 
 # ---------------------------------------------------------------- 组级记账（覆盖护栏）
 #
@@ -506,9 +556,10 @@ func _test_main_menu() -> void:
 			continue
 		_expect(b.text == String(specs[node_name][0]),
 			"MainMenu/%s 文本 = %s（实际 '%s'）" % [node_name, specs[node_name][0], b.text])
-		_expect(b.input_text == String(specs[node_name][1]),
-			"MainMenu/%s input_text = %s（实际 %s）" % [node_name, specs[node_name][1], b.input_text])
-	# 真的"按"一下 Campaign 按钮（走 GwButton→App.command 的真实路径）
+		_expect(_button_input_text(b) == String(specs[node_name][1]),
+			"MainMenu/%s input_text = %s（实际 %s）"
+			% [node_name, specs[node_name][1], _button_input_text(b)])
+	# 真的"按"一下 Campaign 按钮（走 按钮→App.command 的真实路径；按钮可能是原生类或仿制类）
 	var play := _find_button(menu, "PlayButton")
 	if play != null:
 		play.emit_signal("pressed")
@@ -524,13 +575,13 @@ func _test_campaign() -> void:
 	_expect(area != null, "Campaign 有按钮容器 Control")
 	var level_buttons := 0
 	for child in area.get_children() if area != null else []:
-		if child is GwButton and String(child.name).begins_with("level_"):
+		if _is_button(child) and String(child.name).begins_with("level_"):
 			level_buttons += 1
 	_expect(level_buttons == 21, "Campaign 生成 21 个关卡按钮（实际 %d）" % level_buttons)
 	for i in [0, 7, 20]:
 		var b := _find_button(campaign, "level_%d" % i)
 		_expect(b != null and b.text == str(i), "Campaign level_%d 的 text = %d" % [i, i])
-		_expect(b != null and b.input_text == "level_%d" % i, "Campaign level_%d 的 input_text" % i)
+		_expect(b != null and _button_input_text(b) == "level_%d" % i, "Campaign level_%d 的 input_text" % i)
 
 	# 布局算法（docs/101 §4.1）：8 列 4 行、字号 = 宽/15、碰边回弹
 	var layout := GwCampaign.layout_buttons(Vector2(1600, 800))
@@ -722,7 +773,7 @@ func _test_ui_text_and_measured_geometry() -> void:
 		if skins_vbox != null:
 			for row in skins_vbox.get_children():
 				for b in row.get_children():
-					if b is GwButton:
+					if _is_button(b):
 						cells += 1
 						if absf((b as Control).custom_minimum_size.x - want_cell) < 0.01:
 							cell_ok += 1
@@ -1073,13 +1124,13 @@ func _test_game_setup() -> void:
 			break
 	for t in 6:
 		var any_of_tier := false
-		for b in bot_popup.find_children("*", "GwButton", true, false):
-			if String((b as GwButton).input_text) == "add_bot_%d" % t:
+		for b in _buttons_in(bot_popup):
+			if _button_input_text(b) == "add_bot_%d" % t:
 				any_of_tier = true
 		_expect(any_of_tier, "AddBotPopUp 有 add_bot_%d 按钮" % t)
 	var tier2 = null
-	for b in bot_popup.find_children("*", "GwButton", true, false):
-		if String((b as GwButton).input_text) == "add_bot_2":
+	for b in _buttons_in(bot_popup):
+		if _button_input_text(b) == "add_bot_2":
 			tier2 = b
 			break
 	if tier2 != null:
@@ -1216,7 +1267,7 @@ func _test_pixel_truth_geometry() -> void:
 		_expect(axis_sb is StyleBoxFlat and (axis_sb as StyleBoxFlat).bg_color == Color(1, 1, 1),
 			"AxisModeButton 是**白卡**（原版 axis_button_theme → axis_menu_icon_theme 白底）")
 		var opts: Node = null
-		for b in gs.find_children("*", "GwButton", true, false):
+		for b in _buttons_in(gs):
 			if String(b.name) == "AxisModeButton":
 				opts = b.get_parent()
 		if opts != null:
@@ -1224,7 +1275,7 @@ func _test_pixel_truth_geometry() -> void:
 				"选项行 11 个子节点 = 6 个空 Margin + 5 个按钮（实际 %d）" % opts.get_child_count())
 			var fixed := 0
 			for c in opts.get_children():
-				if c is GwButton and not (c as GwButton).expand_icon:
+				if _is_button(c) and not (c as Button).expand_icon:
 					fixed += 1
 			_expect(fixed == 5, "5 个选项按钮都 expand_icon=false（图标参与最小尺寸 ⇒ 134×134，实际 %d）" % fixed)
 
@@ -1276,8 +1327,8 @@ func _test_play_screen() -> void:
 	# 键盘：18 + 18 个键
 	var left_keys := 0
 	var right_keys := 0
-	for b in play.find_children("*", "GwButton", true, false):
-		var grid := (b as GwButton).get_parent()
+	for b in _buttons_in(play):
+		var grid := (b as Node).get_parent()
 		if grid != null and String(grid.name) == "LeftButtonGrid":
 			left_keys += 1
 		elif grid != null and String(grid.name) == "RightButtonGrid":
@@ -1305,7 +1356,7 @@ func _test_play_screen() -> void:
 	# 开火
 	var fire_button := _find_button(play, "FireButton")
 	_expect(fire_button != null, "有 FireButton")
-	_expect(fire_button != null and fire_button.long_press_input_text == "fire",
+	_expect(fire_button != null and _button_long_press_text(fire_button) == "fire",
 		"FireButton 的 long_press_input_text = fire（原版契约）")
 	if fire_button != null:
 		fire_button.emit_signal("pressed")
@@ -1583,7 +1634,7 @@ func _test_geometry_and_campaign_save() -> void:
 		_degrade("Campaign 关卡数字字体/底色（缺 client/assets/）")
 		return
 	var campaign := _screen("Campaign")
-	var b0 := campaign.find_child("level_0", true, false) as GwButton if campaign != null else null
+	var b0 := campaign.find_child("level_0", true, false) as Button if campaign != null else null
 	_expect(b0 != null, "Campaign 有 level_0 按钮")
 	if b0 != null:
 		var sb := b0.get_theme_stylebox("normal")
@@ -1596,7 +1647,11 @@ func _test_geometry_and_campaign_save() -> void:
 		var lvl_font := b0.get_theme_font("font")
 		_expect(lvl_font != null and lvl_font == GwThemeFactory.title_font(),
 			"关卡数字字体 = 原版手写体 Eraser（title_theme 同一套）")
-		var want := int(maxf(10.0, campaign.find_child("Control", true, false).size.x / 15.0))
+		# ⚠️ 期望值**不夹下限**：原版 `CampaingLevelsButtons.gd` 写的是裸 `size.x / 15`，
+		# 而原版 105 个 `.gd` 里 `maxi`/`max(` 出现 **0 次** ⇒ 没有 10 px 这种人工下限。
+		# 此前这里写 `maxf(10.0, …)` 是为了迎合我方仿制实现的 `maxi(10, 宽/N)`（`docs/16` §39.6）；
+		# 换上原版脚本后照原版公式比 —— headless 视口只有 64×64 ⇒ 期望 6，不是 10。
+		var want := int((campaign.find_child("Control", true, false) as Control).size.x / 15.0)
 		var got := int(b0.get_theme_font_size("font_size"))
 		_expect(absi(got - want) <= 1,
 			"关卡数字字号 = 容器宽/15（期望 %d，实际 %d）" % [want, got])
@@ -1613,12 +1668,7 @@ func _color_str(c: Color) -> String:
 	return "(%.6f, %.6f, %.6f, %.1f)" % [c.r, c.g, c.b, c.a]
 
 func _count_buttons(node: Node) -> int:
-	if node == null:
-		return 0
-	var n := 0
-	for b in node.find_children("*", "GwButton", true, false):
-		n += 1
-	return n
+	return _buttons_in(node).size()
 
 func _count_entries(node: Node) -> int:
 	if node == null:
@@ -2843,7 +2893,7 @@ func _test_replay_player() -> void:
 ## （详见 `docs/06` §56.1 的真帧证据）。`replay_lobby.gd::_entry` 把
 ## `replay_path` / `replay_ts` 写在行节点的 meta 上，本函数改读它。
 ## **只改了"怎么找这一行"；这一组的断言一条没动**（docs/16 §62.7）。
-func _replay_play_button(lobby: Node, title: String) -> GwButton:
+func _replay_play_button(lobby: Node, title: String) -> Button:
 	var box := lobby.find_child("ReplaysContainer", true, false)
 	if box == null:
 		return null
@@ -2851,7 +2901,7 @@ func _replay_play_button(lobby: Node, title: String) -> GwButton:
 		var p := String((row as Node).get_meta("replay_path", ""))
 		if p == "" or p.get_file() != title:
 			continue
-		return (row as Node).find_child("PlayReplayButton", true, false) as GwButton
+		return (row as Node).find_child("PlayReplayButton", true, false) as Button
 	return null
 # ================================================================ 联机（docs/134）
 #
@@ -3521,10 +3571,10 @@ func _test_net_lan_discovery() -> void:
 
 	# 点这一行的 Join → 真的去连它广播里的 address
 	var lobby_list := _screen("LanLobby").find_child("GraphwarLanVBox", true, false)
-	var join_btn: GwButton = null
+	var join_btn: Button = null
 	for c in lobby_list.get_children():
 		if c is HBoxContainer:
-			join_btn = (c as Node).find_child("JoinButton", true, false) as GwButton
+			join_btn = (c as Node).find_child("JoinButton", true, false) as Button
 			break
 	_expect(join_btn != null, "LAN：行里有 Join 按钮")
 	if join_btn != null:
@@ -3729,7 +3779,7 @@ func _test_net_real_server() -> void:
 	var seen_addr := ""
 	for c in lobby_list.get_children():
 		if c is HBoxContainer:
-			var jb := (c as Node).find_child("JoinButton", true, false) as GwButton
+			var jb := (c as Node).find_child("JoinButton", true, false) as Button
 			if jb != null:
 				seen_addr = String(jb.get_meta("room_address", ""))
 	_expect(seen_addr == addr, "真服务端：Local 页那一行的 address 就是它（%s）" % seen_addr)
@@ -3740,10 +3790,10 @@ func _test_net_real_server() -> void:
 		# 服务端已经被确认 `LISTEN` 了（`_spawn_server` 读到了那一行），所以这里不再
 		# 用 0.25 s 墙钟睡眠赌它 bind 好了；留重试只给"握手慢/连接被拒"兜底。
 		await _frames(2)
-		var btn: GwButton = null
+		var btn: Button = null
 		for c in _screen("LanLobby").find_child("GraphwarLanVBox", true, false).get_children():
 			if c is HBoxContainer:
-				btn = (c as Node).find_child("JoinButton", true, false) as GwButton
+				btn = (c as Node).find_child("JoinButton", true, false) as Button
 				if btn != null:
 					break
 		if btn != null:
@@ -4768,7 +4818,7 @@ func _lobby_join_ip_button(lobby: Node) -> Control:
 	if lobby == null:
 		return null
 	for n in lobby.find_children("JoinButton", "", true, false):
-		if n is GwButton and String((n as GwButton).input_text) == GwCommands.JOIN_IP:
+		if _is_button(n) and _button_input_text(n) == GwCommands.JOIN_IP:
 			return n as Control
 	return null
 
@@ -4870,7 +4920,7 @@ func _test_lobby_fixes() -> void:
 	for c in list.get_children():
 		if not (c is HBoxContainer):
 			continue
-		var jb := (c as Node).find_child("JoinButton", true, false) as GwButton
+		var jb := (c as Node).find_child("JoinButton", true, false) as Button
 		if jb == null:
 			continue
 		var addr := String(jb.get_meta("room_address", ""))

@@ -73,8 +73,9 @@ const GLOBAL_ROOMS := [
 ## `game_room_entry.tscn` 的四个模式图标（顺序就是节点顺序）。
 const MODE_ICONS := ["axis_option_3", "fx_option", "turns_sequential", "turn_1m"]
 
-var _local_button: GwButton
-var _global_button: GwButton
+## Local / Global 两个切换键：**原生 `GraphwarButton`**（原版 `.tscn` 里的节点）。
+var _local_button: Button
+var _global_button: Button
 var _list: VBoxContainer
 var _bottom_row: HBoxContainer
 ## 当前画出来的行：`key` 的序列 + 每行的两个文本标签。
@@ -94,102 +95,23 @@ func _ready() -> void:
 	super()
 	set_process(true)
 
+## 节点树来自原版 `.tscn`（`client/scenes/screens/lan_lobby.tscn` 与
+## `recovered-src/lan_lobby.tscn` **逐字节相同**，213 行 / 32 节点）。这里只取句柄：
+## 表头四格、Local/Global、返回键、Create/Join 的布局与字号**全部由原版脚本在 `_ready` 里算**
+## （`LanLobbyFontResize.gd` 宽/40、`LanLobbyTitle.gd` 宽/30、`LobbyButtonContainer.gd` 宽×0.2），
+## 我方不再手抄任何一行（docs/06 §92）。
+const PATH_LIST := "MarginContainer/VBoxContainer/MarginContainer2/VBoxContainer/ScrollContainer/GraphwarLanVBox"
+const PATH_LOCAL := "MarginContainer/VBoxContainer/HBoxContainer/ShowLocalContainer/ShowLocalButton"
+const PATH_GLOBAL := "MarginContainer/VBoxContainer/HBoxContainer/ShowGlobalContainer/ShowGlobalButton"
+const PATH_BOTTOM := "MarginContainer/VBoxContainer/MarginContainer/HBoxContainer"
+
 func build() -> void:
-	var f := GwUI.frame(self)
-	var vbox: VBoxContainer = f.vbox
-
-	# --- 顶部：返回 + Local/Global 切换 ---
-	var top := GwUI.hbox("HBoxContainer", GwUI.SEPARATION, vbox)
-	top.add_child(GwUI.exit_pair(GwCommands.EXIT_LAN_LOBBY))
-	# 原版 [返回][Local][Global] 横向铺满整行，Local / Global 各占剩余宽度的一半
-	# （真帧：Local 文字 516..664、Global 1385..1566，各自半区居中）。
-	# 顺序要紧：**先建子节点 → 挂原版脚本 → 最后 add_child**。原版脚本的 `_ready` 在节点
-	# 进树时跑一次，那时 `get_children()` 必须已经有内容，否则它算的是空集（静默什么都没做）。
-	var local_holder := GwUI.margin("ShowLocalContainer", 0)
-	local_holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_local_button = GwButton.make("Local", GwCommands.SHOW_LOCAL)
-	_local_button.name = "ShowLocalButton"
-	_local_button.toggle_mode = true
-	_local_button.button_pressed = true
-	local_holder.add_child(_local_button)
-	GwViews.attach(local_holder, "LanLobbyTitle.gd")      # 字号 = 宽/30（原版脚本自己算）
-	top.add_child(local_holder)
-	var global_holder := GwUI.margin("ShowGlobalContainer", 0)
-	global_holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_global_button = GwButton.make("Global", GwCommands.SHOW_GLOBAL)
-	_global_button.name = "ShowGlobalButton"
-	_global_button.toggle_mode = true
-	global_holder.add_child(_global_button)
-	GwViews.attach(global_holder, "LanLobbyTitle.gd")     # 字号 = 宽/30
-	top.add_child(global_holder)
-
-	# --- 表头 ---
-	var header := GwUI.hbox("HBoxContainer", GwUI.SEPARATION, vbox)
-	header.add_child(_header_cell("NameContainer", "RoomName", "Room Name", 1.0))
-	header.add_child(_header_cell("PlayersContainer", "RoomName", "Players", 0.1))
-	header.add_child(_header_cell("ModeContainer", "GameMode", "Game Mode", 1.0))
-	# 第四格在 `.tscn` 里是一个**全透明主题**的 " Join " 按钮（字号 48）：只为把 Join 列的
-	# 宽度撑出来，屏幕上什么都看不见（Theme_hffrm 的 font_color alpha = 0、五个 stylebox 全空）。
-	# ⚠️ 顺序是**语义要求**，不是风格：`LanLobbyFontResize.gd` 在 `_ready` 里
-	# `for node in get_children(): node.add_theme_font_size_override("font_size", 宽/40)`。
-	# 所以脚本必须在**子节点已经齐了之后**才进树 —— 否则它遍历到的是空集，静默什么都不做，
-	# 那颗 ghost " Join " 就按主题默认字号 24 算最小宽度（真帧 136 px、我们 68 px），
-	# 表头三格的可用宽度因此多出 71 px，被 1 : 0.1 : 1 分掉：
-	# `Room Name` +17 / `Players` +35 / `Game Mode` +53 px（`docs/06` §69.4 的实测值）。
-	var join_head := GwUI.margin("JoinButtonContainer", 0)
-	join_head.size_flags_horizontal = Control.SIZE_FILL
-	var ghost := GwButton.make(" Join ")
-	ghost.name = "GraphwarButton"
-	ghost.disabled = true
-	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
-		ghost.add_theme_stylebox_override(state, StyleBoxEmpty.new())
-	ghost.add_theme_color_override("font_color", Color(0, 0, 0, 0))
-	ghost.add_theme_color_override("font_disabled_color", Color(0, 0, 0, 0))
-	join_head.add_child(ghost)
-	GwViews.attach(join_head, "LanLobbyFontResize.gd")   # 字号 = 宽/40（子节点先在）
-	header.add_child(join_head)
-
-	# --- 房间列表 ---
-	var scroll := GwUI.scroll("ScrollContainer")
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_list = GwUI.vbox("GraphwarLanVBox", GwUI.SEPARATION)
-	_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.add_child(_list)
-	vbox.add_child(scroll)
-
-	# --- 底部：建房 / 加 IP ---
-	var bottom := GwUI.margin("MarginContainer", 0, vbox)
-	var bottom_row := GwUI.hbox("HBoxContainer", GwUI.SEPARATION)
-	_bottom_row = bottom_row
-	var pad := GwUI.margin("MarginContainer", 0, bottom_row)
-	pad.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var create := GwButton.make(" Create Game ", GwCommands.CREATE_GAME)
-	create.name = "CreateButton"
-	bottom_row.add_child(create)
-	var join := GwButton.make(" Join IP ", GwCommands.JOIN_IP)
-	join.name = "JoinButton"
-	bottom_row.add_child(join)
-	var pad2 := GwUI.margin("MarginContainer2", 0, bottom_row)
-	pad2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# 四个子节点都齐了再挂 `LobbyButtonContainer.gd`、最后进树：它给**每个**子节点（两个弹性
-	# 垫片也算）宽度 = 屏宽×0.2、字号 = 宽/30 —— 这就是 " Join IP " 384 px 宽的来源。
-	# 我们不再自己算（原来的 `_apply_lobby_button_widths()` 已删）。
-	GwViews.attach(bottom_row, "LobbyButtonContainer.gd")
-	bottom.add_child(bottom_row)
-
-	vbox.add_child(GwUI.ad_slot())
-
-func _header_cell(node_name: String, label_name: String, text_: String, ratio: float) -> MarginContainer:
-	var m := GwUI.margin(node_name, 0)
-	m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	m.size_flags_stretch_ratio = ratio
-	var l := GwUI.label(text_, 0, HORIZONTAL_ALIGNMENT_CENTER)
-	l.name = label_name
-	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	m.add_child(l)
-	GwViews.attach(m, "LanLobbyFontResize.gd")   # 表头：字号 = 宽/40
-	return m
+	_list = get_node_or_null(PATH_LIST) as VBoxContainer
+	if _list == null:
+		push_error("[gw2] lan_lobby.tscn 里找不到 %s" % PATH_LIST)
+	_local_button = get_node_or_null(PATH_LOCAL) as Button
+	_global_button = get_node_or_null(PATH_GLOBAL) as Button
+	_bottom_row = get_node_or_null(PATH_BOTTOM) as HBoxContainer
 
 func on_enter() -> void:
 	var app_node := app()
@@ -433,3 +355,4 @@ func _on_join_pressed(address: String = "") -> void:
 	if app_node == null:
 		return
 	app_node.call("connect_to", address)
+

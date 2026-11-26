@@ -12542,3 +12542,96 @@ $MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path client
    `LineEdit` 里，没有对应的 Rust 函数可搬；要搬得先把 Godot `Key` 枚举在 Rust 侧表达出来。
 3. 光标闪烁节奏（`CARET_BLINK_INTERVAL` 0.5 / 整周期 1.0）仍在 `.gd`：原版 `process`（`0x4fd4a0`，
    6.4 KB / 60 块）**未逐块解**，所以没有 Rust 侧依据可搬（台账 F08/F11 标 `不解`）。
+
+## 82. 客户端侧：13 屏的总闸是**我们自己的断言** —— 断言改认原生 `GraphwarButton` 之后，原版 `.tscn` 一次装上 **6 份**（2026-11-26，任务 T43 / `task-40`）
+
+> 判据/口径：`.agent-work/specs/T43-button-truth.md`。工作树 `.agent-work/cg/wt-t43`、分支 `agent/button-truth`，
+> 基线 `origin/master` = `84f96fd`。台账 `fixtures/tscn_import_plan.tsv`（本轮**只追加了结果列**，判据行一字未改）。
+
+### 82.1 这道闸的机制（为什么 T41 一装就 697/14）
+
+原版 `.tscn` 里的按钮是 **GDExtension 原生类 `GraphwarButton`**（`src/_scaffold/graphwar_button_class.rs`，
+`#[class(base = Button)]`），而 `client/src/ui/gw_button.gd` 的 `GwButton` 只是 `extends Button` 的**我方仿制类**。
+`selftest.gd` 当时用三种写法认按钮：`child is GwButton`、`_find_button(...) as GwButton`、
+`find_children("*", "GwButton")` —— 换成原版场景后**一条都认不出来** ⇒ 19 条断言连锁红。
+
+改法（**只改"怎么认"，判据一个没放松**）：新增四个 helper，其余调用点逐个换过去 ——
+
+| helper | 判据 |
+|---|---|
+| `_is_button(n)` | `n is GwButton` **或** `n.get_class() == "GraphwarButton"` |
+| `_button_input_text(n)` | 仿制类读字段；原生类 `get("input_text")`（`#[export]` 属性） |
+| `_button_long_press_text(n)` | 同上，读 `long_press_input_text`（`FireButton` = `"fire"`） |
+| `_buttons_in(root)` | 深度优先前序收集**两种类**，替代 `find_children("*", "GwButton")` |
+
+`_find_button()` 的返回类型从 `GwButton` 改成 `Button`（`GwButton` 与 `GraphwarButton` 都是 `Button` 子类），
+所以 `.text` / `.disabled` / `.expand_icon` 这些**原生属性**照旧可用。
+
+**读数**：`groups=33 checks=717 expected=717 missing=0(claimed 0 / degraded 0 / silent 0)`，
+`SELFTEST 717 passed, 0 failed, 1 skipped` —— 与改前**逐字相同**（check 数一条没少）。
+
+### 82.2 唯一一处**期望值**修正（不是放松判据，是把"我方人工下限"去掉）
+
+`"关卡数字字号 = 容器宽/15"` 这条原来的期望值是 `maxf(10.0, Control.size.x / 15)` —— 那个 `10` 是在迎合
+**我方仿制实现**里的 `maxi(10, 宽/N)` 下限，而原版 105 个 `.gd` 里 `maxi`/`max(` 出现 **0 次**（`docs/16` §39.6）。
+换上原版 `CampaingLevelsButtons.gd` 后它算的是裸 `size.x/15`，而自检跑在 headless 的 **64×64** dummy 窗口里
+（`get_window().size == (64,64)` 实测）⇒ 容器宽 91 px ⇒ 真实字号 **6**，被夹过下限的期望值是 10。
+于是改成按原版公式比（`int(size.x/15)`，期望 6，实际 6）。**判据变严了**：谁再把 `maxi(10, …)` 加回来，这条就红。
+
+### 82.3 装上原版 `.tscn` 之后，**原版脚本自己接管**子树 —— `GwViews.owns()` 必须认别名
+
+原版 `.tscn` 的布局/字号全靠挂在子节点上的**原版脚本**（`LanLobbyFontResize.gd` 宽/40、`LanLobbyTitle.gd` 宽/30、
+`LobbyButtonContainer.gd` 宽×0.2、`ButtonGrid.gd` 宽×0.15/3、`IpPopUpMargin.gd` 宽/40、`OptionsContainer.gd`
+`min.y=0.25×父高` …）。而 `GwScreen._apply_size_recursive()` 靠 `GwViews.owns(node)` 判断"这棵子树归原版管"，
+`gw_views.gd::owns()` 只认 `res://src/views/...` 这一种路径 —— 原版 `.tscn` 里写的却是 `res://<Name>.gd`，
+`client/<Name>.gd` 是**指向 `src/views/<Name>.gd` 的符号链接**（T41 铺的别名层）⇒ **认不出来**。
+
+后果是本轮实测到的：`join_level_pop_up` 的 Cancel/Start 被 `IpPopUpMargin.gd` 算成 宽/40=48 px 后，
+又被我方那套 `maxi(10, 宽/30)` **覆盖成 64 px** ⇒ 按钮宽 **194→257 / 218→289**（真帧 194/218）。
+修法：`client/src/screens/screen.gd` 新增 `_is_view_owned()`，除 `GwViews.owns()` 外再认一条 ——
+`script.resource_path` 形如 `res://<Name>.gd`（**根级、无子目录**）且 `src/views/<Name>.gd` 存在。
+
+### 82.4 三个真坑（都会静默或报错，且都不是"资产缺失"）
+
+1. **原生 `GraphwarButton` 自带 `#[func] fn pressed()`**（原版 `0x4ef560`），它在 GDScript 里**遮蔽**
+   `BaseButton.pressed` **信号** ⇒ `b.pressed.connect(...)` 报
+   `Invalid call. Nonexistent function 'connect' in base 'Callable'`，并且**整段 `build()` 会中断**
+   （`_mode_buttons` 留空 ⇒ 后续 `_refresh_modes()` 里 `as Button` 得到 null ⇒ 又一串 `Icon` 赋值错误）。
+   全项目凡连原生按钮的 `pressed` 一律用**字符串形式** `b.connect("pressed", ...)`（`GameSetup` 四个模式键、
+   `replay_entry` 的 ▶ 都是这么写的）。
+2. **主题 shim 的 `ext_resource id` 必须与原文件一致**：`game_menu_icon_theme.tres` 的 shim 第一次写成
+   `id="1_btn"`，而 `[resource]` 段（逐条照抄原版）里引的是 `ExtResource("1_t0n1t")` ⇒
+   `Parse Error: Can't load cached ext-resource id` ⇒ **整个主题 `load()` 返回 null**，
+   三份引用它的屏**静默退化成 app 主题**（`join_level_pop_up` 的两条 stylebox 断言当时只是"碰巧还对"，
+   因为 app 主题的按钮底色/边框数值与原版相同）。正对照：`client/*.remap` 17 个逐个 `load()`，**BAD=0**。
+3. **`OptionsContainer.gd` 只在"自己" resized 时重算 `min.y`**：父容器变高而自己尺寸未变的那一刻会停在旧值
+   （实测差 2.4 px = 0.25×9.6）。把父容器的 `resized` 也接上，仍然只调**它自己的** `set_minimum_size()`。
+
+### 82.5 别名层本轮新增的 54 个文件（**全部是我方接线，不是原版字节**）
+
+| 类型 | 数量 | 做法 |
+|---|---|---|
+| `client/<Name>.gd` 符号链接 → `src/views/<Name>.gd` | 24（累计 28） | 视图脚本是原版字节，只换住的位置；本轮新补 6 份进 `src/views/`（`ShowExtraButtons` / `ExtraOptionPad` / `ViewFunctionPad` / `ViewFunctionsLabel` / `ExtraOptionsHBox` / `HBoxContainer`）⇒ `src/views/` 35 → **42** |
+| `client/<name>.svg.import` → `assets/<path>.ctex` | 22（累计 32） | `.svg` 源文件不在包里（导出器只留导入产物），`.import` 的 `path=` 指到真实像素 |
+| `client/<theme>.tres.remap` → `scenes/aliases/<theme>.tres` | 16（累计 17） | 完整主题 = `recovered-src` 逐字节副本；骨架主题 = shim |
+| `scenes/aliases/*.tres` | 16（累计 17） | 副本/ shim |
+
+两份 **shim**（字体字节被导出器丢弃，`MEDIA OMITTED`）：
+
+* `campaign_button_theme_2.tres`（原件 2.5 MB，其中 2.44 MB 是内嵌字形图集）：`[resource]` 段 6 个键逐条照抄，
+  内嵌 `FontFile`（`font_name="Eraser"`）换成 `assets/EraserRegular.fontdata` ⇒ **结构=观测 / 字形度量=推断**；
+* `game_menu_icon_theme.tres`（原件 6.0 MB / 3320 行，26 个内嵌载荷 5.9 MB 全丢）：3 份 `FontFile` 全是
+  **Comic Relief / Bold**（`font_weight=700`）⇒ 换成 `assets/ComicRelief-Bold.fontdata`；
+  23 张 `Image` 子资源在 `[resource]` 段**一个都没被引用**（只被那 3 份 FontFile 的 `cache/.../image` 引用）
+  ⇒ 随字体一起丢弃。**结构=观测 / 字形图集=推断**。
+
+### 82.6 `GwButton` 的终态建议
+
+`GwButton` 现在只服务**我方自己 new 出来的按钮**（键盘补丁、动态行、`GwUI.*` 搭的控件）。原版 `.tscn` 一装上，
+那一屏的按钮就全是原生类 ⇒ 每装一屏，`GwButton` 的用处就少一块。它**现在不能删**，因为还有 8 份 12 行存根屏
+（`main_menu` / `player_screen` / `play_screen` / `endgame_pop_up` / `confirm_exit_pop_up` / `connecting_pop_up` /
+`disconnected_pop_up` / `join_ip_pop_up`）与**运行时动态行**（LAN 房间行、GameSetup 玩家行、player_screen 皮肤格）
+还在用它。**删干净的前置条件**有三条：①8 份存根屏全换成原版 `.tscn`；②`game_room_entry` / `team1_entry` /
+`team2_entry` / `shop_button_entry` 四份**行/格场景**也装上（这样动态行也来自原版字节）；③`GwButton.bind_native()`
+那条过渡桥（`input_selected` → `App.command`）换成 Rust 侧订阅（原版 `GraphwarButton::subscribe` 的闭包表）。
+⚠️ 中间态**必须留 `.gd` 里的 `input_text` 派发语义**，否则一屏之内"原版按钮能点、仿制按钮能点"会不一致。
