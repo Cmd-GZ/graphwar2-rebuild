@@ -1,0 +1,52 @@
+# fixtures/function_input_migration.tsv —— 「函数输入 / 键盘」规则从 client/ 迁回 Rust 的逐段台账
+# （任务 T42 ③，2026-11-26；规格 `.agent-work/specs/T42-truth-fixes.md`）
+#
+# 为什么要这份台账：`AGENTS.md` §0.4 说原版的界面控制器在 Rust 里，而 `client/src/play/*.gd`
+# 是仿制品。仿制品最坏的地方不是"画得不像"，而是**把同一条规则在 GDScript 里又写了一遍**
+# —— 同一规则两个真相源，Rust 侧修好了 `.gd` 不会跟着变（T35 审计揪出的两处"自造值"就是这个病）。
+# 本表逐段判：这段是**规则**还是**视图**？规则在 Rust 侧有没有**带地址**的复原实现？搬不搬？
+#
+# 口径：
+#   * 行号 = **改前**（HEAD 的 `client/src/play/function_input.gd` 273 行 /
+#     `keyboard_input.gd` 130 行），改动后行数以 `git diff --stat` 为准；
+#   * 地址一律 **ELF vaddr**（`AGENTS.md` 的口径；Ghidra/REA 地址 = 本表 + 0x100000）；
+#   * `verdict` 只有三种：`move`（搬进 Rust）/ `keep`（留在 .gd，写清理由）/ `partial`（搬一部分）；
+#   * `evidence` 四档：`逐位` / `观测` / `推断` / `不解`（我方未知）+ `自造`（本项目自己的选择，
+#     **不是**复原结论；留在 .gd 或搬进 scaffold 都不改变它的档位）。
+#
+# 统计（本表 30 行）：move 5 段 / partial 3 段 / keep 22 段。
+# 搬走的 5 段落成 Rust 侧 **2 个规则函数**：`apply_command_impl`（编辑语义）、`key_text_impl`
+# （按键→字符：原版 28 折叠 + 我方白名单）；外壳 = `src/_scaffold/function_input_rules_class.rs`
+# 的 `GwFunctionEdit`（关联函数，GDScript 直接调）。
+#
+# id	file	lines_pre	segment（这段在判断什么）	rust_side（文件:行 / 函数）	evidence	verdict	moved_to	missing_if_kept
+F01	function_input.gd	8-12	编辑语义清单（C 清空 / ⌫ 删左 / ⌦ 删右 / ←→ 移光标 / ⇤⇥ 两端 / 其余字面插入）	src/graphwar_function_input.rs:715 Buffer 一族 + 705 delete_chars_at_caret_plan	观测(⌫←→插入)+推断(C ⌦ ⇤ ⇥)	partial	GwFunctionEdit.apply_command 的文件头规则表	文字清单本身留 .gd（它是给人读的对照表），判断逻辑搬走
+F02	function_input.gd	17-18	插入长度上限 MAX_LENGTH = 128	src/ 无对应：原版上限**未观测**（`graphwar_function_input::UNKNOWNS` 里没有这条，但也没有任何上限常量）	自造	keep	—（作为参数传给 GwFunctionEdit.apply_command）	缺"原版上限"的任何证据；把它搬进 Rust 只会让自造值伪装成复原结论
+F03	function_input.gd	20-22	只读态文字色 = 引擎默认 `LineEdit/colors/font_uneditable_color`	src/ 无（引擎主题）	观测（真帧通道值 = 0.875 灰 × α0.5 叠底）	keep	—	视图/主题，不属于游戏规则
+F04	function_input.gd	24-29	只读态底色 = `LineEdit/styles/read_only` 叠页面底色 ⇒ (17,33,27)	src/ 无（引擎主题）	观测（真帧三通道）	keep	—	视图/主题
+F05	function_input.gd	31-38	`text` 属性 + setter（clamp 光标、发 text_changed）	src/_scaffold/graphwar_function_input_class.rs（同族 Rust 类已有）	观测（`text_changed → on_text_change` 连接对）	keep	—	节点属性宿主 = 引擎侧；原版也是 `LineEdit` 存文本
+F06	function_input.gd	40-41	`_caret` / `_caret_blink` 两个界面状态	src/graphwar_function_input.rs:715 `Buffer.caret`（只借算法，状态宿主不同）	观测（光标 API `set_caret_column`/`get_caret_column` 在 .so 字符串池）	keep	—	状态宿主在引擎（LineEdit），Rust 侧只提供"算完的值"——本轮就是这么接的
+F07	function_input.gd	43	光标宽 CARET_WIDTH = 3.0	src/ 无（引擎主题 `LineEdit/constants/caret_width`）	观测（真帧 3 px）	keep	—	视图/主题
+F08	function_input.gd	44-63	光标闪烁节奏（interval 0.5 / 整周期 1.0）	src/graphwar_function_input.rs:521 `process`（0x4fd4a0）**未逐块解**（`UNKNOWNS` 第 6 条）	不解	keep	—	缺 process 6.4 KB 的逐块语义；现在这个节奏是我方按引擎默认值 + 真帧采样推的
+F09	function_input.gd	64-79	`_rejected`（超长标红）与 `read_only` 两态	src/ 无	自造 / 观测（只读态有真帧证据）	keep	—	UI 状态；`_rejected` 的**判据**在 Rust（apply_command 返回 rejected）
+F10	function_input.gd	80-85	`_ready` 里的最小尺寸/焦点策略	src/ 无（节点属性）	自造	keep	—	视图
+F11	function_input.gd	87-103	`caret_on()` + `_process` 闪烁推进	src/ 无（同 F08）	不解 / 观测（引擎 `caret_blink_interval` 口径）	keep	—	动画；缺 process 的逐块证据
+F12	function_input.gd	105-106	`caret_index()` 读数（自检用）	src/graphwar_function_input.rs:742 `Buffer.caret`	观测	keep	—	一行读数，视图出口
+F13	function_input.gd	108-136	**`key_input(cmd)` 的 8 个 match 分支**（清空 / 左删 / 右删 / 左右移 / 两端 / 插入 / 长度拒绝）	src/graphwar_function_input.rs:715-820 Buffer（move_caret_left 0x4f3210 / move_caret_right 0x4f3910 / delete_chars_at_caret ← delete_char_at_caret 0x1c44a2 / insert_text_at_caret）	观测(⌫←→插入)+推断(C ⌦ ⇤ ⇥)	move	GwFunctionEdit.apply_command（src/_scaffold/function_input_rules_class.rs:151 apply_command_impl）	—
+F14	function_input.gd	138-139	`submit()` → `text_submitted` 信号	src/graphwar_function_input.rs:833 `submit_intent`（"fire" 字面量 0x1b97c8）	观测	keep	—	信号是**引擎侧**接线（`.gd` 发信号给 play_screen），Rust 侧那条 dyn 回调路径见 graphwar_function_input_class.rs
+F15	function_input.gd	141-145	鼠标点击 → 光标定位	src/ 无	不解（原版是否支持鼠标定位未观测）	keep	—	缺观测；我方自己加的便利
+F16	function_input.gd	147-148	取字体（GwThemeFactory）	src/ 无	观测（字体资源）	keep	—	视图
+F17	function_input.gd	150-195	按 read_only 选样式盒 + content_margin = 4	src/ 无	观测（真帧 98 = 90+2×4 等三条独立读数）	keep	—	视图/主题
+F18	function_input.gd	197-211	`_get_minimum_size` = 字体高 + 样式盒上下 margin	src/ 无（LineEdit 规则，引擎侧）	观测（真帧底栏 98）	keep	—	视图
+F19	function_input.gd	213-215	`refresh_minimum_size`	src/ 无	观测	keep	—	视图
+F20	function_input.gd	217-223	字号 = 屏幕宽 / 30	src/ 无	观测（真帧 64 px）	keep	—	视图
+F21	function_input.gd	225-227	文本水平居中的起点 `_text_x`	src/ 无	观测（`alignment = 1`）	keep	—	视图
+F22	function_input.gd	229-239	鼠标 x → 光标下标	src/ 无	自造	keep	—	同 F15
+F23	function_input.gd	241-273	`_draw`：样式盒 + 基线 + 文本 + 光标矩形	src/ 无	观测（基线=LineEdit 规则、光标 3×90、居中对齐）	keep	—	视图
+K01	keyboard_input.gd	1-58	文件头：原版证据 + 我方接法 + 键位表 + 没做的两件事	src/graphwar_function_input.rs:601 COMPOSED_FOLDS / 659 classify_key	观测	partial	规则表搬到 GwFunctionEdit 文件头；.gd 只留"输入接线 + 没做的两件事"	—
+K02	keyboard_input.gd	60-62	`SUBMIT` 哨兵 `"\n"`	src/graphwar_function_input.rs:833 submit_intent（不给哨兵串）	自造	keep	—	哨兵是 .gd 与 play_screen 的内部契约（原版没有这个串）
+K03	keyboard_input.gd	64-68	`PRINTABLE` 可插入字符白名单	src/ 无（原版走 LineEdit 基类**不过滤**）	自造	move	GwFunctionEdit.key_text（PRINTABLE 常量，档位自造）	搬走不改变档位，仍是"本项目选择"；只是让规则只有一处
+K04	keyboard_input.gd	70-71	`REPLACEMENTS`：√ → `sqrt(`	src/ 无	自造	move	GwFunctionEdit.key_text（REPLACEMENTS 常量）	同上；屏上键 `√` 的 input_text 是观测，物理键敲 √ 未观测
+K05	keyboard_input.gd	73-102	`command_for(event)`：修饰键闸门 + 编辑键/回车 → 屏上命令	src/ 无（引擎 Key 枚举 → 命令字面量是输入接线）	观测（命令字面量来自 .tscn）+自造（物理键映射）	partial	特殊键 match 留 .gd；字符分支 → GwFunctionEdit.key_text	原版"哪些物理键对应哪条引擎操作"没有独立观测；这条映射本来就是我们的
+K06	keyboard_input.gd	104-118	`_char_of`：unicode 优先、keycode 兜底	src/graphwar_function_input.rs:659 classify_key（入参就是 `event.unicode` 的 char）	观测（`gui_input` 取 unicode）	move	GwFunctionEdit.key_text（Rust 里判 unicode>0 / keycode 32..126）	—
+K07	keyboard_input.gd	120-130	`filter_char`：**折叠 + 白名单**（改前**没有**用原版 28 条折叠表）	src/graphwar_function_input.rs:601 COMPOSED_FOLDS（跳转表 0x1c3d5c）+ 633 fold_composed	观测（28 条折叠）/自造（白名单）	move	GwFunctionEdit.key_text → classify_key → fold_composed	**这是本轮真正升档的一段**：改前 `â` 这类死键合成字符被白名单丢掉，原版会折成 `a` 再插入
