@@ -1,17 +1,34 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=7 format=3]
 
-[ext_resource type="Script" path="res://src/main.gd" id="1"]
+[ext_resource type="Script" path="res://src/main.gd" id="1_main"]
 
-[node name="Main" type="Control"]
+; 【2026-11-26 task-30】根节点换成**原版的主场景节点类** `GraphwarRootNode`（GDExtension 类，
+; 与 `recovered-src/main.tscn` 的 `[node name="GraphwarRootNode" type="GraphwarRootNode"]` 同名同类型）。
+; 理由：`/root/GraphwarRootNode` 是原版 5 份平台桥 `.gd`（IAP_holder / android_iap / IAP_IOS /
+; IOS_album_holder / Android_mediastore_holder）`_ready` 第一行 `get_node()` 的**绝对路径**；
+; 而 `log(String)` 是那个类上的注册方法（注册点 0x3b7328，见
+; `src/_scaffold/graphwar_root_node_class.rs` 的 `fn log` 注）。
+;
+; ⚠️ `Main`（`src/main.gd`）**不是原版的东西**：它是我们自己的控制器壳（15 个屏的实例化 +
+; 切屏 + 截图/自检入口），最终要迁回 Rust 的 `GraphwarRootNode`。在那之前它挂在原版根节点下面。
+[ext_resource type="Script" path="res://src/views/IAP_holder.gd" id="2_iap"]
+[ext_resource type="Script" path="res://src/views/android_iap.gd" id="3_aiap"]
+[ext_resource type="Script" path="res://src/views/IAP_IOS.gd" id="4_iaplus"]
+[ext_resource type="Script" path="res://src/views/IOS_album_holder.gd" id="5_iosalbum"]
+[ext_resource type="Script" path="res://src/views/Android_mediastore_holder.gd" id="6_ms"]
+
+[node name="GraphwarRootNode" type="GraphwarRootNode"]
+
+[node name="Main" type="Control" parent="."]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-script = ExtResource("1")
+script = ExtResource("1_main")
 
-[node name="VBoxContainer" type="VBoxContainer" parent="."]
+[node name="VBoxContainer" type="VBoxContainer" parent="Main"]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -19,6 +36,42 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="ScreensControl" type="Control" parent="VBoxContainer"]
+[node name="ScreensControl" type="Control" parent="Main/VBoxContainer"]
 layout_mode = 2
 size_flags_vertical = 3
+
+; ---- 以下 5 个节点 = `recovered-src/main.tscn` 里那 5 个平台桥节点的**逐属性照抄** ----
+; （`visible=false` / `layout_mode=3` / `anchors_preset=0` / 四个 offset 都对得上；
+;  Ad_holder 没抄：它的脚本 `Ad_holder.gd` 依赖 AdMob 原生插件，包里零个原生二进制，
+;  连解析都过不去 ⇒ 登记 impossible，见 fixtures/view_unblock_plan.tsv）
+
+[node name="IAP_holder" type="Control" parent="."]
+visible = false
+layout_mode = 3
+anchors_preset = 0
+offset_top = 64.0
+offset_right = 40.0
+offset_bottom = 104.0
+script = ExtResource("2_iap")
+
+[node name="IAP_Android" type="Node" parent="IAP_holder"]
+script = ExtResource("3_aiap")
+
+[node name="IAP_IOS" type="Node" parent="IAP_holder"]
+script = ExtResource("4_iaplus")
+
+[node name="IOS_album_holder" type="Control" parent="."]
+visible = false
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+script = ExtResource("5_iosalbum")
+
+[node name="Android_mediastore_holder" type="Control" parent="."]
+visible = false
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+script = ExtResource("6_ms")
