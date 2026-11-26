@@ -93,6 +93,20 @@ pub mod obstacle_drawer_class;
 // manager 方法"的证据表把那条断链接上（`GwNetEvents`），只在 `gdext-bindings` 下编译。
 #[cfg(feature = "gdext-bindings")]
 pub mod net_events_class;
+// 两个**原版 Rust 模块里本来就有**的时间常量的取值口（T42）：连接超时
+// `graphwar_client_connection_handler::CONNECT_TIMEOUT_SECS = 30`（arm64 `0x48dccc mov w1,#0x1e`）
+// 与 LAN 房间 TTL `graphwar_lan_broadcaster_v6::ENTRY_TTL_SECS = 10`（arm64 `0x3de6e4 cmp x0,#0xa`）。
+// `client/src/net/*.gd` 以前自己编了 3 s / 12 s，现在一律经这里问 Rust 要。
+// 只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod net_constants_class;
+// 函数输入 / 键盘的**规则出口**（T42 ③）：把 `client/src/play/function_input.gd` 的编辑规则
+// （8 个 `match` 分支）与 `keyboard_input.gd` 的"按键 → 字符"规则收进 Rust ——
+// 落点是 `graphwar_function_input::Buffer`（`0x4f3210`/`0x4f3910`/`0x4f44c0`）与
+// `classify_key`（`gui_input` 折叠跳转表 `0x1c3d5c`，198 项里 28 项）。`.gd` 只留视图。
+// 只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod function_input_rules_class;
 // `PlayerShowcase` 的真节点类（§39）：读档案 + 三层 `draw_texture_rect` + 计数器闸门。
 #[cfg(feature = "gdext-bindings")]
 pub mod player_showcase_class;

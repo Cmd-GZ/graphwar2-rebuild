@@ -12443,3 +12443,102 @@ if child is GwButton and String(child.name).begins_with("level_"): level_buttons
 `scenes/aliases/` 那 8 份 `.tres` 是 `recovered-src/` 的**副本**（原版字节，但复制了一份）。
 下游若改 `recovered-src/`，这 8 份不会自动跟 ⇒ 下一轮应把整层别名改成**生成物**
 （`tools/` 里一个小脚本从 `recovered-src/` + `client/assets/MANIFEST.tsv` 生成），并加一条 `cmp` 断言。
+---
+
+## 81. 客户端侧：两个新脚手架类 —— `GwNetConsts`（真值取值口）与 `GwFunctionEdit`（函数输入/键盘规则出口）（2026-11-26，任务 T42 / `task-39`）
+
+> 这两份**不是原版的东西**（原版没有这两个类），它们是 `src/_scaffold/` 的桥接外壳，
+> 存在的唯一目的是：**把"我们的值 / 我们的规则"从 GDScript 里铲走**，让
+> ① 时间常量只有 Rust 一处、② 函数输入的编辑规则只有 Rust 一处。
+> 逐条台账：`fixtures/function_input_migration.tsv`；验证与门槛读数：`docs/06` §92。
+
+### 81.1 为什么要加（不是加功能，是**去掉两个真相源**）
+
+T35 审计的判决是"`client/` 现在是**原版视图 + 我们的控制器（7 层）**"。本轮只动其中两处
+**最典型的"自造值/自造规则"**：
+
+| 病 | 形态 | 后果 |
+|---|---|---|
+| 自造值 | `link.gd` 写 `3.0`、`discovery.gd` 写 `12000` | 真值（30 s / 10 s）在 Rust 里躺着没人用；改 Rust 不会影响客户端 |
+| 自造规则 | `function_input.gd` 用 8 个 `match` 分支重写 `Buffer`、`keyboard_input.gd` 重写 `classify_key` | 同一规则两处实现；原版 28 条死键折叠**根本没实现**（`â` 被丢掉） |
+
+### 81.2 `GwNetConsts`（`src/_scaffold/net_constants_class.rs`，父类 `RefCounted`）
+
+全部是**关联函数**（无 `self`）⇒ GDScript 直接 `GwNetConsts.xxx()`（与 `GwReplayMeta.format_utc()` 同一形态）。
+
+| 方法 | 值 | 来源（**已经在复原模块里**） | 证据 |
+|---|---|---|---|
+| `connect_timeout_secs() -> float` | `30.0` | `graphwar_client_connection_handler::CONNECT_TIMEOUT_SECS`（`src/…:261`） | arm64 `0x48dccc mov w1,#0x1e` → `0x48dcd4 bl TcpStream::connect_timeout`（**逐位**） |
+| `entry_ttl_ms() -> int` | `10000` | `graphwar_lan_broadcaster_v6::ENTRY_TTL_SECS`（`:154`）× 1000 | arm64 `0x3de6e4 cmp x0,#0xa` + `b.lo`（**逐位**） |
+| `entry_ttl_secs() -> float` | `10.0` | 同上 | 同上 |
+| `broadcast_period_secs() -> float` | `1.0` | `BROADCAST_PERIOD_SECS`（`:158`） | arm64 `0x3de7c8`–`0x3de7d4`（**逐位**） |
+| `provenance() -> Dictionary` | 值 + 来源常量名 + 证据地址 + 档位 | — | 自检/文档复核用 |
+
+**这里的数一个都不许在 `.gd` 里再出现**：`link.gd` / `discovery.gd` 只写
+`GwNetConsts.connect_timeout_secs()` / `GwNetConsts.entry_ttl_ms()`。毫秒换算放在 Rust 侧做一次，
+`.gd` 连 `* 1000` 都不写（那也是"我们的数"）。
+
+⚠️ 客户端**没有**"缺类就退回默认值"的兜底：核心里没有 `GwNetConsts`（`.so` 版本不对）时，
+`GwNetLink.new()` 会**当场报错**而不是静默用 3 s——这正是 `AGENTS.md` 那条"改了但没生效"
+陷阱要的失败方向（静默降级比崩溃更难查）。
+
+### 81.3 `GwFunctionEdit`（`src/_scaffold/function_input_rules_class.rs`，父类 `RefCounted`）
+
+| 方法 | 做什么 | Rust 侧落点 | 档位 |
+|---|---|---|---|
+| `apply_command(text, caret, cmd, max_length) -> {text, caret, rejected}` | 一条屏上命令 → 一次编辑（清空/左删/右删/左右移/两端/插入/超长拒绝） | `graphwar_function_input::Buffer`：`move_caret_left` `0x4f3210`、`move_caret_right` `0x4f3910`、`delete_char_at_caret`（字面量 `0x1c44a2`）、`insert_text_at_caret` | ⌫/←/→/插入 **观测**；C/⌦/⇤/⇥ **推断** |
+| `key_text(unicode, keycode) -> String` | 一次按键 → 要插入的串（`""` = 不插入） | `classify_key` + `COMPOSED_FOLDS`（`gui_input` 跳转表 `0x1c3d5c`，198 项里 28 项） | 折叠 **观测**；白名单/`√ → sqrt(` **本项目选择** |
+| `provenance() -> Dictionary` | 每条规则的地址 + 档位 | — | 自检用 |
+
+`MAX_LENGTH`（128）**留在 `.gd` 当参数传进来**：原版上限**未观测**，把它搬进 Rust 只会让
+"我们的值"伪装成复原结论。`PRINTABLE`/`REPLACEMENTS` 搬进 Rust 也只改落点、不改档位（注释里写明是"本项目选择"）。
+
+### 81.4 `.gd` 侧改了什么
+
+| 文件 | 改前 | 改后 | 行数 |
+|---|---|---|---|
+| `client/src/net/link.gd` | `var connect_timeout := 3.0` | `var connect_timeout := GwNetConsts.connect_timeout_secs()` | 212 → 217（注释变长，代码少一个字面量） |
+| `client/src/net/discovery.gd` | `const ROOM_TTL_MS := 12000` | `var room_ttl_ms := GwNetConsts.entry_ttl_ms()`（`_expire()` 跟着改；文件头那条"原版未知"改成**逐位**） | 207 → 215 |
+| `client/src/play/function_input.gd` | `key_input()` 里 8 个 `match` 分支（28 行） | 6 行：调 `GwFunctionEdit.apply_command` + 落状态 + `queue_redraw()` | **273 → 264** |
+| `client/src/play/keyboard_input.gd` | `PRINTABLE`/`REPLACEMENTS`/`filter_char`/`_char_of` 全在 GDScript | 只剩"编辑键 → 屏上命令"的 `match`（= 输入接线）+ 4 行 `_char_of` thunk | **130 → 80** |
+
+合计 **403 → 344** 行。**规则搬走、视图留下**：`_draw` / 样式盒 / 最小尺寸 / 字体度量 / 光标闪烁
+/ 鼠标定位一行没动（台账里 22 段标 `keep`，逐段写了为什么）。
+
+### 81.5 构建 / 部署 / 验证（三步缺一，老坑）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild; export WT=<你的 worktree>
+export CARGO_HOME=$MAIN/.reference/cargo-home CARGO_TARGET_DIR=$WT/.cargo-target
+cd $WT
+cargo build --release --offline --features gdext-bindings          # ① 重建内核
+cp $CARGO_TARGET_DIR/release/libgw2_rebuild.so client/            # ② 覆盖 .so（漏了就还是旧内核）
+$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path client --import   # ③ 重导入
+$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path client \
+    --script res://tools/truth_fixes_probe.gd          # 期望 T42PROBE 23 passed, 0 failed
+```
+
+两个类都不在 `.tscn` 里、也不需要挂节点（纯 `RefCounted` + 关联函数）；注册靠 gdext 宏 +
+`src/_scaffold/mod.rs` 的 `pub mod`（`#[cfg(feature = "gdext-bindings")]`），没有别的手工登记。
+
+### 81.6 别再造第三份
+
+仓库里现在有 **三个**与"函数输入"有关的 Rust 类，职责不同，别搞混：
+
+| 类 | 是什么 | 谁用 |
+|---|---|---|
+| `GraphwarFunctionInput`（`graphwar_function_input_class.rs`，父类 `LineEdit`） | 原版那个类的**节点**形态（信号接线 + 去空格 + `gui_input` 折叠），是"能不能重建 12 个 GDExtension 类"的技术验证 | **客户端一处都没用**（`client/` 用的是自绘 `GwFunctionInput`） |
+| `GwFunctionEdit`（本轮，父类 `RefCounted`） | **纯规则出口**：编辑语义 + 按键→字符 | `client/src/play/function_input.gd`、`keyboard_input.gd` |
+| `GwFunctionInput`（GDScript 自绘控件） | 视图：画输入框/光标、字体度量、鼠标定位 | `play_screen.gd` |
+
+⇒ 以后改"函数输入的行为"，只改 `src/graphwar_function_input.rs` + `GwFunctionEdit`；
+**不要**再往 `client/src/play/*.gd` 里写判断。
+
+### 81.7 遗留（客户端侧）
+
+1. `client/src/net/broker.gd:51` 仍是 `_link.connect_timeout = 3.0`（不在 T42 的可改清单）⇒
+   broker 这条连接的超时还是自造值。
+2. `keyboard_input.gd` 里"编辑键 → 屏上命令"的 `match` 仍是 GDScript（~14 行）：原版这一层在引擎
+   `LineEdit` 里，没有对应的 Rust 函数可搬；要搬得先把 Godot `Key` 枚举在 Rust 侧表达出来。
+3. 光标闪烁节奏（`CARET_BLINK_INTERVAL` 0.5 / 整周期 1.0）仍在 `.gd`：原版 `process`（`0x4fd4a0`，
+   6.4 KB / 60 块）**未逐块解**，所以没有 Rust 侧依据可搬（台账 F08/F11 标 `不解`）。

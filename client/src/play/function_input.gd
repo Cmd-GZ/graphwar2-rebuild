@@ -8,8 +8,14 @@ class_name GwFunctionInput
 ## 编辑语义来自键盘按钮的 `input_text`（`docs/92` §4.10 的 18+18 个键）：
 ##   `C` 清空 · `⌫` 删光标左 · `⌦` 删光标右 · `←/→` 移光标 · `⇤/⇥` 行首/行尾 ·
 ##   其余按字面插入（`sin(`、`π`、`x`、`3`、`e`…）。
-## 原版对这些键的**全部**行为没有逐条观测（例如 `C` 是否等于清空是推断）；
-## 推断的依据是键名与函数文法的常识，见 docs/108 §7。
+##
+## **2026-11-26（T42 ③）规则已迁回 Rust**：这些编辑判断原来写在本文件的 `key_input()`
+## 里（8 个 `match` 分支），是"同一规则两处实现"；现在**唯一实现**在
+## `src/graphwar_function_input.rs` 的 `Buffer`（`move_caret_left` `0x4f3210` /
+## `move_caret_right` `0x4f3910` / `delete_char_at_caret` 字面量 `0x1c44a2` +
+## `delete_token_at_caret` `0x4f44c0`），经 `GwFunctionEdit.apply_command` 暴露。
+## 本文件只剩**视图**：自绘、光标闪烁、样式盒、字体度量、鼠标定位。
+## 逐段台账（哪段搬、哪段不搬、各缺什么证据）见 `fixtures/function_input_migration.tsv`。
 
 signal text_changed(new_text: String)
 signal text_submitted(new_text: String)
@@ -105,34 +111,19 @@ func _process(delta: float) -> void:
 func caret_index() -> int:
 	return _caret
 
-## 键盘命令。`cmd` 就是按钮的 `input_text`。
+## 一条命令 → 一次编辑。**规则在 Rust**（`GwFunctionEdit.apply_command` ←
+## `src/graphwar_function_input.rs::Buffer`，地址见文件头的迁移说明），本方法只把算出来的
+## 文本/光标落到本控件的状态上并重画 —— 它不再做任何编辑判断。
+##
+## `MAX_LENGTH` 是**我们自己的值**（原版上限未观测），所以它留在 GDScript 侧、作为参数传进
+## Rust：这样"哪个值是我们编的"一眼可见，不会被伪装成复原结论。
 func key_input(cmd: String) -> void:
-	_rejected = false
-	match cmd:
-		"C":
-			text = ""
-			_caret = 0
-		"⌫":
-			if _caret > 0:
-				text = text.substr(0, _caret - 1) + text.substr(_caret)
-				_caret -= 1
-		"⌦":
-			if _caret < text.length():
-				text = text.substr(0, _caret) + text.substr(_caret + 1)
-		"←":
-			_caret = maxi(0, _caret - 1)
-		"→":
-			_caret = mini(text.length(), _caret + 1)
-		"⇤":
-			_caret = 0
-		"⇥":
-			_caret = text.length()
-		_:
-			if text.length() + cmd.length() > MAX_LENGTH:
-				_rejected = true
-				return
-			text = text.substr(0, _caret) + cmd + text.substr(_caret)
-			_caret += cmd.length()
+	var r := GwFunctionEdit.apply_command(text, _caret, cmd, MAX_LENGTH)
+	_rejected = bool(r.get("rejected", false))
+	var new_text := String(r.get("text", text))
+	if new_text != text:
+		text = new_text                      # setter 会 clamp 光标 + 发 text_changed
+	_caret = clampi(int(r.get("caret", _caret)), 0, text.length())
 	queue_redraw()
 
 func submit() -> void:
