@@ -11947,3 +11947,110 @@ python3 tools/frame_diff.py --orig $WT/.agent-work/v/mo --mine $WT/.agent-work/v
 | `f(x)=` 图标 636 px | 636 | `build()` 的 `_fx_button`：原版是 `FxContainer → AspectRatioContainer(stretch_mode=1) → FxTextureButton`，我方省了 AR 那层。**会挪动已对齐的输入框**，不做 |
 | 修正常数标签横向 10 px | ~1 100（两屏） | `OffsetContainer` 的容器几何 / 底栏 HBox 分配。本轮量准（17→10 px）并排除 LEFT 对齐、前导空格两条（见 `docs/06` §76.6） |
 | 准备圈箭头 **3 个 vs 原版 2 个** | 环 ROI 内 | `show_ring_arrows` 开关 + `entity_drawer::entity_primitives` 的箭头条数（缺"条数由哪个量决定"的证据） |
+
+## 76. 客户端侧：`EndGamePopUp` **接通** —— 联机收场从"什么都不弹"到 **面板区 0 px 差**（2026-11-26，任务 T27 / `task-24`）
+
+> 判据、三层数字、逐块表、复跑命令在 **`docs/06` §77**；预注册的屏名/事件序列是既有的
+> `fixtures/frame_endgame_events.txt`（**一个字节没动**）。本节只写**客户端这边动了哪几行、
+> 为什么这么动、还剩什么**。
+> 原版 = `.reference/game/{Graphwar.x86_64,Graphwar.pck,libgraphwarrust.so}`（2.0.60，内嵌 Godot 4.7.0）；
+> 我方 = `client/` + `libgw2_rebuild.so`（Godot 4.7.2）。地址一律 **vaddr**；证据档按 `AGENTS.md` §0.3 标。
+
+**一句话**：`docs/16` §70 定位的"四处阻断点"里，**第一处的前提是错的** —— 那条分支从来
+没执行过（线上原文不是事件名 `EndingGame`）；把它改对之后，"收场 → 结算框"这条路才第一次真的存在，
+并且**一次成型**：面板 `(483,235) 956×691` 的区域里两侧 **0 像素差**（改前 98.96 % 不同），
+标题 / 头像三层贴图 / 底部文案的**逐色块像素数都对上了**。
+
+### 76.0 一页结论
+
+| # | 改哪 | 改前 | 改后 | 档 |
+|---|---|---|---|---|
+| ① | `net/session.gd`：**收场事件按线上原文识别** | `match kind:` 里有一条 `"EndingGame"` 分支，而**没有任何报文叫这个名字** ⇒ `phase` 从不变成 `"ended"`、`ended` 信号从不发出 | `GameStateInfo{game_state:"EndingGame"}` → `_end_session()`（置 `ending`/`phase="ended"`、发 `ended`、可重入保护） | **观测**（fixture/回放原文；`docs/06` §77.1） |
+| ② | `net/net.gd`：**正常结束后的关连接不算断线** | `_on_session_closed` 无条件 `disconnected.emit` | `_ended` 之后忽略（第二道闸；**第一道闸在 ① 的 `phase="ended"`** —— `session._on_link_closed()` 直接 return） | **观测**（8 s 关连接的复采里 `disconnected` 一次都没出现） |
+| ③ | `app/app.gd::_on_net_ended()` | 只 `print` + `online=false` | **先**算胜负写 `last_result` → `open_popup("EndGamePopUp")` → 音效；**不**拆战场、**不**走 `_on_net_disconnected()` | **观测**（真机真帧，`docs/06` §77.3） |
+| ④ | `app/app.gd::online_result()`（新） | 没有这条路 | 从 `room["entities"]` 读每队"还有没有活实体" → **调内核** `GwEndGame.winner_byte()` = `turnstate::winner_byte`（`0x478133`–`0x478236`）→ 字节翻队伍号 | **逐位**（四行表）+ **观测**（本局字节 0，与真帧 `YOU WON` / `Team 1 Victory!` 一致） |
+| ⑤ | `screens/endgame_pop_up.gd`：文案 + 展示位 | 文案**我方编的**（注释写着"胜利一侧原文未观测"），还带自定强调色；头像用 `skin_<下标>`，脸/帽子按 `-1` 隐藏 | 文案来自内核 `VICTORY_TEXTS`（`.rodata` 6 条，`0x1bf91e` 起）经 `GwEndGame.label_texts()` 选出；**白字**（不覆盖颜色）；头像三层吃**线上外观事件**的路径（`skins/face_paint_2` / `faces/asian` / `hats/asian_hat`） | **观测**（改后 ink bbox、逐色块像素数与原版相同） |
+| ⑥ | `screens/endgame_pop_up.gd::build()` | 面板没有 `z_index` | `frame.margin.z_index = 5`（**原版 `.tscn` 就是这个值**） | **观测**（不写这一行：士兵精灵/名字/靶子画在面板**之上**） |
+| ⑦ | `screens/play_screen.gd`：`_online_ending` 这个**死变量** | 全文 3 处：声明 / 复位 / 赋值（`"EndingGame"` 分支，同样从不命中）—— **从不被读** | `GameStateInfo{EndingGame}` 置位；读点在 `_on_shot_arrived()` 的联机分支：弹道落地才收尾，不飞就当场停屏（`_running=false`，只挡输入/时钟，不动画面） | **观测**（读代码 + 运行时） |
+| ⑧ | `src/_scaffold/endgame_class.rs`（新，`GwEndGame`） | 无 | 只搬两样已复元的东西：`turnstate::winner_byte` 与 `graphwar_play_screen_control::VICTORY_TEXTS`（+ `VictoryBanner::text()`） | 搬运层；**没有第二套判据** |
+
+> ⚠️ ①③ 是**语义改动**，不只是"接线"：① 让 `phase` 真的到 `ended` 状态（原来永远到不了），
+> ③ 让 `EndingGame` 第一次有界面动作。改完 `match_ready` / `match_play` 的数字**持平**
+> （6.1893 % → 6.1892 % / 6.4608 % → 6.4592 %，`docs/06` §77.3），所以"接线顺带弄坏对局屏"没有发生。
+
+### 76.1 根因更正：线上事件的**名字**不是 `EndingGame`
+
+`docs/16` §70.1 第 1 行写的是「`session.gd:314`（`"EndingGame"` 分支）→ 事件本身**收到了**」。
+**这一句是错的**（本轮就地更正，`AGENTS.md` §0.6）。证据（**观测**）：
+
+* `tools/frame_capture.py` 发的是 `fixtures/frame_endgame_events.txt` 的**原样字节**，那一节的末行是
+  `{"GameStateInfo":{"game_state":"EndingGame"}}`（另见 `docs/07` §3.3 的 74/74 事件表 ——
+  `EndingGame` 是 `GameStateInfo.game_state` 的**取值**，不是事件名）；
+* `client/src/net/frame.gd::parse_message()` 把 JSON 的**唯一键**当 `kind` ⇒ `kind == "GameStateInfo"`；
+* 所以 `match kind:` 里那条 `"EndingGame"` **一次都没命中**（`session.gd` 与 `play_screen.gd` 各有一条，
+  两条都死）。⇒ `ended` 信号从未发出、`phase` 从未变 `"ended"`。
+* **正对照**：同一套匹配里 `"GameStateInfo"` 分支是活的（`room["game_state"]` 一直在更新，界面状态行会显示它）。
+
+这一条同时解释了 `docs/06` §68.2.1 那个"拍到断线弹窗"的现象：那时 `phase` 还是 `"started"`，
+服务器一关连接就被翻成 `disconnected` —— 是**旧 bug 的下游**，不是管线问题（管线仍然需要
+`--collect 120` 才是"同一条件"，见 `docs/06` §77.5，但 8 s 也不会再弹错东西了）。
+
+### 76.2 数据从哪来（三条，逐条标档）
+
+| 展示元素 | 来源 | 档 |
+|---|---|---|
+| `SelfVictoryLabel` / `TeamVictoryLabel` 的**字面量** | `src/graphwar_play_screen_control.rs::VICTORY_TEXTS`（6 条，`.rodata` `0x1bf91e` 起；`"YOU lOST"` 的 `l` 是小写）、`VictoryBanner::text()` | **观测** |
+| 两条文案**选哪一条** | 字节 `0`/`1` + "我在哪队" → `GwEndGame.label_texts()`。**"字节 0 且我在 Team1 ⇒ `YOU WON` + `Team 1 Victory!`"是观测**（本轮真机真帧就是这个组合）；输/平两行是**推断**（字面量都是观测的，缺"哪种结局走哪条"的指令证据，`0x3da130` 里那几处分支的输入未解） | 见左 |
+| 胜利者头像三层贴图 | `room["look"][eid]`（`SkinGraphicsInfo`/`FaceGraphicsInfo`/`HatGraphicsInfo` 的**原样字符串**）→ `res://{skins,faces,hats}/<名>.svg`，与对局屏 `play_screen._look_for()` **同一批名字**；缺项按默认 `yellow/regular_eyes/soldier_helmet` 补 | **观测**（改后逐色块像素数 = 原版：黄底 24 455、斗笠 24 437、红带 3 404） |
+| **几个格子**（展示位数量） | 现在 = 胜方**每个士兵一个**（本局 Team1 只有玩家 229 / 士兵 230 ⇒ 1 格） | **推断**（本样本"玩家数 1 = 士兵数 1"，分不开两种口径；见 §76.6） |
+| 胜负**字节** | `turnstate::winner_byte(t1_alive, t2_alive, turn_limit_set)`（`0x478133`–`0x478236` 四行表，`docs/14` §11.4）；存活口径 = **生命表里的活实体**（士兵与靶子同表，`0x473520` `get_alive_teams`，`docs/14` §11.5） | **逐位** |
+
+### 76.3 `z_index = 5`：唯一的"版式以外"的坑
+
+第一次接通时面板**位置对、文案对，但士兵精灵、名字标签、靶子的蓝环都画在面板之上**。
+根因不是 z 值猜错，而是**原版 `.tscn` 里就有这一行**：
+
+```
+[node name="MarginContainer" type="MarginContainer" parent="."]
+z_index = 5                      ← recovered-src/endgame_pop_up.tscn:28
+```
+
+播放屏的实体层是自己写的 `Z_ENTITY = 3`（`play_screen.gd`），特效 `Z_FX = 4` ⇒ 结算面板的
+内容必须在 **5** 才不会被子层盖住。`GwUI.frame()` 回来的 `MarginContainer` 上写这一行即可
+（`endgame_pop_up.gd::build()`）。⇒ 教训：**别把 `.tscn` 里的 `z_index` 当无关属性删掉**。
+
+### 76.4 关连接的两道闸（两侧各验一次，见 `docs/06` §77.5）
+
+```text
+服务器发 GameStateInfo{EndingGame} ──→ session._end_session()：phase = "ended"
+                                                   │
+对端关 socket ──→ session._on_link_closed()：「phase == "ended" ⇒ return」（**闸 1，观测到生效**）
+                                                   │
+                          （闸 2，防御性）net._on_session_closed()：`_ended` ⇒ 只打日志，不发 disconnected
+```
+
+实测（`--match-collect 8`：服务端在收场后 8 s 关连接，截图在 14 s）：我方 `game.log` 里
+`[gw2/net] match ended (EndingGame)` 之后**没有任何** `disconnected`，三帧都是填满的结算弹窗；
+原版同一条件下也是结算弹窗（面板区同为 `#1A3B2D` 86.88 %）。⇒ **不弹 `DisconnectedPopUp`**。
+
+### 76.5 客户端侧的遗留（与 `docs/06` §77.7 同一张表，这里只列"动哪个函数"）
+
+| # | 项 | 动哪里 | 缺什么 |
+|---|---|---|---|
+| 1 | `EndGamePopUp` 的**控制器仍在 Rust 里没搬**：原版 `0x3da130` 是 Rust 函数，我方是 `.gd` 摆节点 + `GwEndGame` 选文案 | 要搬进 `src/_scaffold/*_class.rs` 或按原模块名落 `graphwar_play_screen_control` | `0x3da130` 里"哪个分支写哪条串"的指令证据（现在只有字面量池 + 一帧观测） |
+| 2 | 展示位数量口径（玩家 vs 士兵）、多胜利者/跨队平局/十格全满都没真值 | `app._victory_winners()` | 换一份"我方输"/"平局"/"多人胜"的真回放收场尾部，管线不用改 |
+| 3 | 结算框弹出的**时机**（收场那一刻 vs 弹道落地之后）没量 | `app._on_net_ended()` 立刻开；`play_screen` 那边只是停屏 | 单点采样（14 s 后），两个时刻的画面已经一样 ⇒ 分不出 |
+| 4 | `GwNetSession.my_player_id` 在真服务端上是 `-1`（`docs/33` §4 我们自己的服务端没实现 `NewPlayerRequest` 的回包）⇒ "我在哪队"要降级 | `app._online_human_team()` | 真服务端（或补服务端那条回包） |
+| 5 | 结算音效（`SFX_WIN`/`SFX_LOSE`）是**我方选择**，不是观测 | `app._on_net_ended()` | 原版这一屏的音效没有证据 |
+
+### 76.6 我写错了 / 规格前提被证伪
+
+1. **`docs/16` §70.1 第 1 行错**（已在 §76.1 就地更正）：`"EndingGame"` 分支**从未执行**。
+   连带：`docs/16` §70.5 第 4 条"`_online_ending` 是死变量"成立，但它**不是唯一**的死链条 ——
+   上游那条按事件名的匹配也是死的。
+2. **规格书 §3 第 1 条建议"胜方由客户端按自己的生命表算"** —— 落地时**没有**另算一张表，
+   而是把"每队还有没有活实体"这两个布尔交给内核 `turnstate::winner_byte`（规格书同一条后半句
+   也是这个意思）。`turn_limit_set` 那一格真值是"**设过**回合上限"，我方只有"两边都还活着"这个
+   等价替代（可达输入上等价，`docs/14` §11.4 的注）⇒ **这一格是推断**。
+3. **上一轮"我方编文案"的理由不成立**：`endgame_pop_up.gd` 原来的注释写"胜利一侧的原文未观测，
+   所以用占位"——可 `"YOU WON"` 一直躺在 `VICTORY_TEXTS` 里（`.rodata` 观测）。本轮换掉。

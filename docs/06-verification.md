@@ -12597,3 +12597,250 @@ cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive 
 cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
 cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict
 ```
+
+## 77. `EndGamePopUp` 接通：33.636 % → **4.053 %**，面板区 **0 px** —— 顺带更正一条"事件名"的错前提（2026-11-26，任务 T27 / `task-24`）
+
+> 规格：`.agent-work/specs/T27-endgame-wiring.md`。工作树 `.agent-work/cg/wt-t27`，分支 `agent/endgame-wiring`。
+> 原版 = `.reference/game/{Graphwar.x86_64,Graphwar.pck,libgraphwarrust.so}`（Graphwar II **2.0.60**，
+> 内嵌 Godot 4.7.0）；我方 = `client/` + `libgw2_rebuild.so`（Godot **4.7.2**）。地址一律 **vaddr**；
+> 证据档按 `AGENTS.md` §0.3 标（**逐位** / **观测** / **推断** / **未知**）。
+> 判据文件 `fixtures/frame_diff_thresholds.txt`（sha256 `9cc9fcda…`）**一个数没改**；
+> 预注册事件序列 `fixtures/frame_endgame_events.txt` **一个字节没动**。
+> 客户端侧"改了哪几行/为什么"在 **`docs/16` §76**，本节写**测量与判据**。
+
+**一句话**：`EndingGame` 这条链在本轮**第一次真的存在** —— 之前不是"接得不好"，是**触发条件写错了**
+（`match` 的是事件名 `EndingGame`，而线上原文是 `GameStateInfo{game_state:"EndingGame"}`，那条分支
+**一次都没命中**）。改对之后一次成型：结算面板 `(483,235) 956×691` 的区域里**两侧 0 像素差**
+（改前该区域 98.96 % 的像素不同），标题 / 胜利者头像三层贴图 / 底部文案的**逐色块像素数完全相同**；
+整屏从 **33.636 % → 4.053 %**，L1 **由不过变过**，L2 超限 **17 块 → 1 块**，而那 1 块
+`(0,0)` **2.873** 与 `match_ready` 同一块同值 —— 是既有的"左上返回/确认两键"项（`docs/16` §76.5 第 2 条），
+**不是结算框带来的**。
+
+### 77.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 弹窗弹出来了吗 | **弹出来了**：`YOU WON` + 1 个胜利者头像（黄底红带 + 橙斗笠 + 绿胡 mustache）+ `Team 1 Victory!`，面板 `(483,235) 956×691`、不压暗背景 | **观测**（真机真帧，两侧同日重采） |
+| ② | 三层判据（`endgame_popup`） | L1 **过**（\|Δmean\| 0.100；主色 `#1A3B2D` / `#1A3B2D`；占比差 0.52 pp）；L2 **1/24 块**超限（`(0,0)` 2.873）；L3 90 268 px（**4.0530 %**） | **观测**（`fixtures/frame_diff_results_endgame.tsv` 尾部三行） |
+| ③ | 面板区差多少 | **(483,235) 955×690 内 0 px**（改前 652 123 px = 98.96 %） | **观测**（本节 §77.3 的脚本口径） |
+| ④ | 另外两屏变差了吗 | **没有**：`match_ready` 6.1893 % → **6.1892 %**、`match_play` 6.4608 % → **6.4592 %**（同日重采） | **观测** |
+| ⑤ | 胜方按什么算 | 内核四行表 `turnstate::winner_byte`（`0x478133`–`0x478236`，`docs/14` §11.4）；存活口径 = 生命表活实体（`0x473520`）；本局运行期日志：`Team1 有活体=true / Team2 有活体=false ⇒ 胜方字节 0` | **逐位**（表）+ **观测**（本局读数） |
+| ⑥ | 正常结束后的关连接会不会被翻成 `DisconnectedPopUp` | **不会**。`--match-collect 8`（服务端收场后 8 s 关连接、14 s 截图）复采：我方与**原版**都是填满的结算弹窗，我方 `game.log` 里 `disconnected` 出现 **0** 次 | **观测**（两侧各一次） |
+| ⑦ | 旧文档哪条错了 | `docs/16` §70.1 第 1 行"事件本身收到了"**是错的** —— 那条分支从未执行（`docs/06` §77.1）。已在 `docs/16` §76.1 就地更正 | **观测** |
+
+### 77.1 前提被证伪：`EndingGame` **不是一条报文**
+
+旧结论（`docs/06` §68.1 ⑤ / `docs/16` §70.1 第 1、4 行）说：
+
+> `session.gd` 的 `"EndingGame"` 分支把事件**收到了、也正确地当成正常结束**；
+> `play_screen.gd` 的 `_online_ending` 是**唯一**的死变量。
+
+前半句**不成立**。三条互相独立的观测：
+
+1. **fixture 原文**（`fixtures/frame_endgame_events.txt` 的 `[phase3]` 末行，逐条抄真回放 `1793897298` #104）：
+   `{"GameStateInfo":{"game_state":"EndingGame"}}` ⇒ 事件名是 `GameStateInfo`，`EndingGame` 是**取值**。
+2. **协议表**：`src/_scaffold/protocol.rs::WIRE_SPEC`（74/74）里没有 `EndingGame` 这个事件；
+   `docs/07` §3.3 的 `GameState` 取值表里有 `EndingGame`。
+3. **解析器**：`client/src/net/frame.gd::parse_message()` 取 JSON 的**唯一键**当 `kind`
+   ⇒ `kind == "GameStateInfo"`。所以 `match kind:` 里的 `"EndingGame"` 分支**永远不命中**
+   （`session.gd` 与 `play_screen.gd` 各一条，两条都是死的）。
+4. **正对照**（证明"没命中"不是扫描方法的问题）：同一段 `match` 里的 `"GameStateInfo"` 分支是活的
+   —— `room["game_state"]` 一直在更新，界面状态行会显示它。
+
+⇒ 后果比旧文档写的更重：`phase` **从未**变成 `"ended"`、`ended` 信号**从未**发出。
+`docs/06` §68.2.1 那个"我方拍到断线弹窗"的现象也因此换一个解释：不是管线给谁开小灶，
+是**旧代码从未进入正常结束态**，服务器一关连接就被 `_on_link_closed()` 正常翻成 `disconnected`。
+改对之后，`session._on_link_closed()` 的 `phase == "ended"` 早退**自己**就挡住了这条路（§77.5）。
+
+### 77.2 改了什么（四处语义 + 一个新搬运类；逐行见 `docs/16` §76.0）
+
+| 文件 | 改动 | 为什么必须改 |
+|---|---|---|
+| `client/src/net/session.gd` | `"GameStateInfo"` 分支里识别 `EndingGame` → `_end_session()`（`room.ending` / `phase="ended"` / `ended.emit`，可重入保护）；删掉按事件名匹配的死分支 | 这是**唯一**能知道"一局正常结束"的地方 |
+| `client/src/net/net.gd` | `_ended` 标记；`_on_session_closed` 在正常结束后只打日志 | 第二道闸（第一道闸在 `session._on_link_closed`） |
+| `client/src/app/app.gd` | `_on_net_ended()`：算胜负 → `last_result` → `open_popup("EndGamePopUp")` → 音效；新增 `online_result()` / `_winner_byte()` / `_winner_team_of()` / `_online_human_team()` / `endgame_math()`；`match_summary()` 多三项（`winner_byte`/`human_team`/`winners`） | 结算框的**唯一**调用点就在这里（原来只 `print`） |
+| `client/src/screens/play_screen.gd` | `GameStateInfo{EndingGame}` → `_online_ending`（真被读了：`_on_shot_arrived()` 的联机分支） | 把死变量接活；顺带更正"联机收场"那条死分支 |
+| `client/src/screens/endgame_pop_up.gd` | 文案吃内核字面量、去掉自定颜色；头像三层吃线上外观；`frame.margin.z_index = 5` | 见 `docs/16` §76.2 / §76.3 |
+| `src/_scaffold/endgame_class.rs`（**新**）+ `mod.rs` | `GwEndGame`：`winner_byte` / `winner_team` / `label_texts` / `victory_texts`，只搬 `turnstate::winner_byte` 与 `VICTORY_TEXTS` | GDScript 够不到内核；**没有第二份判据** |
+
+### 77.3 三层判据：改前 / 改后（两侧同日重采，`--collect 120` 同条件）
+
+| 屏 | 改前（今日实采） | 改后（今日实采） | 变化 |
+|---|---|---|---|
+| `match_ready` | 6.1893 %（137 849 px），L2 **1** 块（`(0,0)` 2.873） | 6.1892 %（137 846 px），L2 **1** 块（`(0,0)` 2.873） | 持平（−3 px，噪声） |
+| `match_play` | 6.4608 %（143 832 px），L2 **2** 块（最差 `(2,2)` 15.105） | 6.4592 %（143 859 px），L2 **2** 块（最差 `(2,2)` 14.982） | 持平（+27 px，弹道相位噪声） |
+| **`endgame_popup`** | **33.4888 %**（744 9xx px），L1 **不过**（\|Δmean\|max **60.91**；主色 `#1A3B2D` vs `#FFFFFF`），L2 **17** 块（最差 `(2,3)` 213.091） | **4.0530 %**（90 268 px），L1 **过**（\|Δmean\|max **0.100**；主色 `#1A3B2D` / `#1A3B2D`；占比差 0.52 pp），L2 **1** 块（`(0,0)` **2.873**） | **−29.44 pp / −87.9 %**；L1 由 ✗ 变 ✓；L2 17→1 |
+
+> `docs/06` §68.4 登记的 33.636 %（749 142 px）是 T18 那天的读数，与今天同机复采的 33.4888 % 差
+> **0.15 pp**（面板外对局屏本身的噪声地板 0.05 %/0.01 % + 弹道相位），属同一屏同一状态；
+> **判据一个数没改**。
+
+**面板区（本节所有"面板内"数字的固定口径）**：`(483,235)` 起 `955×690`（= 面板内框，去 1 px 边框）：
+
+| 侧 | 面板区内差异像素 | 比例 |
+|---|---|---|
+| 改前 | 652 123 | **98.96 %** |
+| 改后 | **0** | **0.00 %** |
+
+**逐元素 ROI**（`d>8` 口径，两侧同一框）：
+
+| ROI | 改前 | 改后 | 原版 ink bbox | 我方 ink bbox |
+|---|---|---|---|---|
+| 标题 `YOU WON` | 面板内全差 | **0 px** | `(796,245)-(1124,309)` **329×65** | **逐值相同** |
+| 胜利者头像（三层合并） | 面板内全差 | **0 px** | `(754,435)-(1148,723)` **395×289**，65 199 px | **逐值相同**（65 199） |
+| 底部文案 `Team 1 Victory!` | 面板内全差 | **0 px** | 行内 ink 与原版同 | **逐值相同** |
+| 单色块：黄底 `#FFCC00` / 斗笠 `#FFBE33` / 红带 `#960000` | — | — | 24 455 / 24 437 / 3 404 px | **24 455 / 24 437 / 3 404 px**（逐值） |
+| 面板**外**（原版 endgame vs 原版 match_play） | — | 10 080 px（0.643 %）在**我方**侧 10 593 px（0.676 %） | ⇒ **面板不压暗背景、底下的对局屏两侧都还在**，只差第二发弹道残迹 |
+
+**逐块（`endgame_popup`，6×4，块 320×290，`|Δmean|`；改后）**：24 块里 **23 块过**，
+唯一超限的是 `(0,0)` **2.873**（左上"返回/确认"两键）—— **同一块**在 `match_ready` 也是 **2.873**
+（`docs/16` §76.5 第 2 条：既有的圆角/图标抗锯齿差，`max|Δ|`=30，色板相同）。
+其余较大值：`(3,2)` 1.547 / `(0,1)(0,3)(3,1)(3,3)` 0.825（都是对局屏既有的键盘字形/`f(x)` 行）。
+**面板正中的 4 块 `(1,2)(1,3)(2,2)(2,3)` 是 0.0 / 0 diff_px**。
+
+**逐块（改前→改后，全部 24 块的在库表见 `fixtures/frame_diff_blocks_endgame.tsv` 尾部）**：
+`(2,3)` 213.091 → **0.0**、`(2,2)` 150.0 级 → **0.0**、`(1,2)`/`(1,3)` 同、`(2,5)` 101.9→**0.309**、
+`(2,4)` → 0.435；**没有一块变差**。
+
+### 77.4 胜方字段：用的是哪一条证据（贴地址）
+
+真值那段（`docs/14` §11.4，**逐位**）：
+
+```text
+0x4780c0  set_state(...)                    ; 判别值 EndingGame 落 [self+0x120]
+0x478136  call get_alive_teams              ; -> (al = Team1 有活体, dl = Team2 有活体)
+0x47813b  test al,1 / 0x47813d je 0x47822f  ; Team1 死 → al = 2 - (dl&1)
+0x478143  xor eax,eax / 0x478148 je 0x478236; Team2 死 → 写 0（Team1 赢）
+0x47814e  cmp DWORD [rbx+0xc8],1 / 0x478155 adc al,1   ; 设过回合上限 ⇒ 1，否则 2
+0x478236  mov BYTE [rbx+0x11f],al           ; ← 胜方字节
+```
+
+* 存活口径 [`0x473520 get_alive_teams`]：`get_all_entities` → `get_alive` → `get_team`
+  ⇒ **士兵与靶子同表**（`docs/14` §11.5、`docs/150` §Q2）。本剧本 `LifeInfo{232,false}` 让
+  Team2（靶子 232）零活实体，Team1（士兵 230）还有 ⇒ 字节 **0**。
+* 我方落成 **`src/turnstate.rs::winner_byte(t1_alive, t2_alive, turn_limit_set)`**（已有，未改语义），
+  由新类 `GwEndGame.winner_byte()` 搬给 GDScript（`src/_scaffold/endgame_class.rs`）。
+  `turn_limit_set` 那一格真值是"**设过**上限"（`[+0xc8] == 1`），我方传"**两边都还有活实体**" ——
+  两者只在"两边都活着却进了 `EndingGame`"这一种收场上分叉，而那种收场**只可能由上限触发**
+  ⇒ 可达输入上等价（`docs/14` §11.4 的注）。**这一格是推断**（服务端不发它，我方没有别的来源）。
+* 文案：`.rodata` `0x1bf91e` 起 6 条 ⇒ `graphwar_play_screen_control::VICTORY_TEXTS`
+  （`"Team 1 Victory!" / "Team 2 Victory!" / "YOU WON" / "YOU DID NOT WIN" / "YOU lOST" / "Tie!"`），
+  由 `VictoryBanner` 选；**哪个结局走哪条**只有"字节 0 + 我在 Team1 ⇒ `YOU WON` + `Team 1 Victory!`"
+  是观测（本帧），其余两行推断。
+* **本局运行期读数**（复跑命令 §77.6，`game.log` 一行）：
+  ```text
+  [gw2/net] 收场判据：Team1 有活体=true / Team2 有活体=false ⇒ 胜方字节 0（0=Team1、1=Team2、2=没人赢）；我方队 0 ⇒ 我方获胜
+  ```
+  与真帧的 `YOU WON` / `Team 1 Victory!` **一致** ⇒ 这张表在本局**被观测复核**了一次。
+
+### 77.5 关连接 → `DisconnectedPopUp`：两侧各验一次
+
+条件：`--match-collect 8`（服务端在发完 phase3 后 **8 s** 关连接；截图在 **14 s** ⇒ 关闭发生在截图之前
+**~4.6 s**）。两侧各跑一次（`short_orig` / `short_mine`）。
+
+| 侧 | 面板区 `#1A3B2D` 占比 | 三帧 | 结论 |
+|---|---|---|---|
+| 原版 | **86.88 %** | 结算弹窗（同屏静态） | 不弹断线框（与 `docs/06` §68.2.1 的"结算弹窗照样留着"一致） |
+| 我方 | **86.88 %** | 结算弹窗（填满） | **不弹断线框**；`game.log` 里 `disconnected` 出现 **0** 次 |
+
+**哪道闸起的作用**（观测）：我方日志只有
+`[gw2/net] match ended (EndingGame)`，**没有** `[gw2/net] 对局已正常结束，忽略随后的关连接`
+⇒ 生效的是**第一道闸**：`GwNetSession._on_link_closed()` 见到 `phase == "ended"` 直接 return，
+`closed` 信号根本没发出来。`GwNet._on_session_closed()` 里那道 `_ended` 判断是**防御性**的
+（本轮**没有触达路径** ⇒ 它的有效性是**推断**，不是观测）。
+
+⚠️ 顺带一条**原版侧**的观察（只在 8 s 关连接这个**人为条件**下出现，不影响判据）：
+原版那一侧的左右键盘在关连接后被**重排成 2 列**（三列被截断），我方没有这个行为 ——
+真服务器不会在收场后 8 s 关连接，所以两侧的对拍只有 `--collect 120` 那组是同条件的。
+这一条**没有查根因**，登记在 §77.7。
+
+### 77.6 复跑命令（照抄即可；**必须用私有 netns**）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t27          # 换成你自己的 worktree
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target
+export HOME=$WT/.fakehome
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+
+# ① 内核（改了 src/ 就必须三步：build → cp .so → --import，缺一步客户端跑旧内核/空帧）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+$GODOT --headless --path client --import
+
+# ② 两侧各采一次（**必须** bwrap --unshare-net：宿主 UDP 42968 可能被泄漏的 scope 占着，
+#    会静默拍成"0 行/32 % 假差异"）。--side original 与 --side ours 分两次跑，别并行。
+bwrap --unshare-user --unshare-net --uid 0 --gid 0 --ro-bind / / --bind $MAIN $MAIN \
+  --dev /dev --proc /proc --tmpfs /tmp \
+  --setenv __EGL_VENDOR_LIBRARY_FILENAMES /usr/share/glvnd/egl_vendor.d/50_mesa.json \
+  --setenv LIBGLX_VENDOR_LIBRARY_NAME mesa --setenv LIBGL_ALWAYS_SOFTWARE 1 --setenv GALLIUM_DRIVER llvmpipe \
+  --setenv DISPLAY 127.0.0.1:105 --chdir $WT \
+  python3 tools/frame_capture.py --side original --flow endgame --out $WT/.agent-work/v/final_orig --display-num 105
+bwrap --unshare-user --unshare-net --uid 0 --gid 0 --ro-bind / / --bind $MAIN $MAIN \
+  --dev /dev --proc /proc --tmpfs /tmp \
+  --setenv __EGL_VENDOR_LIBRARY_FILENAMES /usr/share/glvnd/egl_vendor.d/50_mesa.json \
+  --setenv LIBGLX_VENDOR_LIBRARY_NAME mesa --setenv LIBGL_ALWAYS_SOFTWARE 1 --setenv GALLIUM_DRIVER llvmpipe \
+  --setenv DISPLAY 127.0.0.1:106 --chdir $WT \
+  python3 tools/frame_capture.py --side ours --flow endgame --out $WT/.agent-work/v/final_mine --display-num 106
+
+# ③ 三层判据（系统 python3 跑，venv 里没有 Pillow/numpy）
+python3 tools/frame_diff.py --orig $WT/.agent-work/v/final_orig --mine $WT/.agent-work/v/final_mine \
+  --out $WT/.agent-work/v/final_results.tsv --blocks-out $WT/.agent-work/v/final_blocks.tsv \
+  --json $WT/.agent-work/v/final_diff.json --screens match_ready,match_play,endgame_popup
+
+# ④ 面板区那一格判据（0 px：本节 §77.3 的口径）
+python3 - <<'PY'
+import numpy as np; from PIL import Image
+X0,Y0,X1,Y1=483,235,1438,925
+L=lambda p: np.asarray(Image.open(p).convert('RGB')).astype(np.int16)
+a=L('.agent-work/v/final_orig/frames/endgame_popup_1.png'); b=L('.agent-work/v/final_mine/frames/endgame_popup_1.png')
+d=(np.abs(a[Y0:Y1,X0:X1]-b[Y0:Y1,X0:X1]).max(2)>8)
+print('面板区差异 %d px (%.2f%%)' % (int(d.sum()), 100.0*d.mean()))
+PY
+
+# ⑤ 关连接误判（两侧各一次）：--match-collect 8
+#    其余参数同上，只换 --out 与 --display-num。
+```
+
+判据与复采口径的**行为/硬门槛**（本轮实测，与合并前基线逐项对）：
+
+```bash
+cargo test --offline                                   # 1769 / 0 / 1 ignored
+cargo test --offline --features gdext-bindings         # 1884 / 0 / 1 ignored（基线 1880 + 本轮 4 条 GwEndGame 测试）
+bash client/run.sh selftest                            # 717 / 0 / 1 skip，missing=0 silent=0（需先 cargo build --example serve_match）
+# headless 14 脚本（命令见 §49.6）                        # 1935 / 0（assemble 244 / base 117 / curve 96 / draw 235 /
+                                                       #  entity 367 / function 132 / gdext 24 / obstacle 116 / plane 96 /
+                                                       #  play_flow 207 / process 66 / recovered 57 / signal 155 / spike 23）
+# 三轴（冻结快照 403 份，本轮只读未动）
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json f.jsonl  # 647
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl  # 647
+cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict                                 # 637
+```
+
+### 77.7 遗留 / 未做（含"我判断不该做"的理由）
+
+| # | 项 | 量 | 状态 | 理由 / 缺什么 |
+|---|---|---|---|---|
+| 1 | `endgame_popup` 仍不过（L2 1 块 / L3 4.05 %） | 90 268 px | 遗留 | **不是结算框**：面板区已经 0 px，剩下全是对局屏既有的 6.19 %/6.46 % 那批（键盘字形 15 723+21 674、棋盘 1 px 13 006、左上两键 13 413 …，`docs/16` §76.5）。要降它得做那一屏的版式，不在本任务范围 |
+| 2 | 唯一超限块 `(0,0)` 2.873 | 13 413 px | 遗留 | 与 `match_ready` 同一块同值 = 左上"返回/确认"两键的圆角/图标抗锯齿（`max|Δ|`=30、色板相同）。既知项，**不是本轮引入** |
+| 3 | 展示位是"每个士兵一格"还是"每个玩家一格" | 1 格 | **推断** | 本样本玩家数 1 = 士兵数 1，分不开。缺"多人局"真回放收场 |
+| 4 | 只有一种收场（Team1 胜 / 我在 Team1） | 1/4 组合 | 遗留 | `YOU lOST` / `Tie!` / 字节 2 的**文案与颜色**都没有真值（字面量是观测的，选择是推断）。换一份输局真回放的收场尾部进 `fixtures/frame_endgame_events.txt` 就能采（**管线与本轮判据都不用改**） |
+| 5 | 结算框出现的**时刻**（收场即亮 vs 弹道落地才亮） | — | **未知** | 14 s 单点采样，两个时刻的画面已经一样 ⇒ 分不出。要 timelapse 或缩短 `--endgame-wait` |
+| 6 | 原版在 `--match-collect 8` 下的**键盘重排** | — | **未知** | 只在人为条件下出现（真服务器不这样），本轮只登记现象、没查根因 |
+| 7 | `GwEndGame` 是 scaffold，不是原版形态 | — | 遗留 | 原版这段在 Rust 的 `GraphwarPlayScreenControl`（`0x3da130`）里，直接写节点；我方是"Rust 算数据 + GDScript 摆节点"。要真搬，缺 `0x3da130` 的分支输入证据 |
+| 8 | 音效（`SFX_WIN`/`SFX_LOSE`） | 2 处 | **我方选择** | 原版这一屏放什么声音没有证据 |
+
+### 77.8 我写错了 / 规格前提被证伪
+
+1. **`docs/16` §70.1 第 1 行错**（`docs/06` §77.1 给了四条互相独立的观测）。这条错的**代价**是：
+   前两轮都在"已经收到事件、只是没接下游"这个前提上做设计。
+2. **规格书 §2 的"四处阻断点"少算了上游**：真正阻断的是**第 0 处**（事件名匹配），
+   它一错，后面三处（`ended.emit` 之后）全都执行不到。
+3. **我在第一版接线里踩了一个自己造的坑**：`match_summary()` 是在 `open_popup()` **之后**被调的，
+   而 `_on_net_ended()` 先 `online = false` ⇒ 用 `online` 判断"是不是联机局"会把结算框的头像
+   取成**本地档案**（`skins/blue` 一个蓝圆），第一版实测就是这个（面板里一个蓝圆 + 名字/靶子
+   还画在面板之上）。改成"会话对象还在 + `last_result["online"]`"之后才对。
+4. **`z_index` 不是我该"推断"的东西**：原版 `.tscn` 里就写着 `z_index = 5`，我第一版漏了它，
+   结果是精灵压在面板上（`docs/16` §76.3）。**先抄 `.tscn`，再谈推断**。
