@@ -338,6 +338,17 @@ func _player_row(index: int, p: Dictionary) -> HBoxContainer:
 	name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	name_label.name = "PlayerNameLabel"
 	name_m.add_child(name_label)
+	# 原版 `team1_entry.tscn` / `team2_entry.tscn` 里，**包 `PlayerNameLabel` 的那个**
+	# `MarginContainer` 挂的就是它（观测：`recovered-src/team1_entry.tscn` 里
+	# `[node name="MarginContainer" parent="."]` + `script = ExtResource("3_4xh4q")`，
+	# 3_4xh4q = `res://GameSetupPlayerEntry.gd`；它是根 `HBoxContainer` 的**第 5 个**孩子，
+	# 而 `GameSetupPlayerEntry.gd extends MarginContainer` ⇒ 它只可能挂在这类节点上，
+	# 不是挂在行根上 —— `docs/16` §43.3 当时按"行根 = MarginContainer"判"类型不符"是读错了节点）。
+	# 这个脚本只干一件事：
+	# 给子节点写 `font_size = 视口宽/40` —— 所以节点形状对上就能直接换。
+	# 挂上之后整棵子树由原版管（`GwScreen._apply_size_recursive()` 见到
+	# `GwViews.owns()` 就跳过），我们那套 `maxi(10, 宽/30)` 不再碰这个 Label。
+	GwViews.attach(name_m, "GameSetupPlayerEntry.gd")
 
 	# 加士兵
 	var add := GwButton.make("")
