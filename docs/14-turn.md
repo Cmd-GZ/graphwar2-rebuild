@@ -755,8 +755,8 @@ Ghidra 签名：undefined FUN_004db3e0(long param_1, undefined4 param_2, undefin
 
 ## 11. `graphwar_game_state_manager.rs`：45 个可归属函数 ↔ 地址 ↔ 我方实现
 
-> **本节解决什么问题**：对局状态机（`docs/41`）、回合计数与结束（`docs/45`）、
-> 同时回合制（`docs/86`/`docs/141`）、胜负判定（`docs/150`）这四件事早就逐位对拍过，
+> **本节解决什么问题**：对局状态机（[`docs/archive/41`](archive/41-turn-state-machine.md)）、回合计数与结束（[`docs/archive/45`](archive/45-turn-count-and-ending.md)）、
+> 同时回合制（[`docs/archive/86`](archive/86-simultaneous-turns.md)/[`docs/archive/141`](archive/141-sim-turns.md)）、胜负判定（`docs/150`）这四件事早就逐位对拍过，
 > 但实现一直按"运行实体 / 迁移表"摊在 `src/game.rs` 与 `src/turnstate.rs` 两个文件里，
 > **不是原版的函数边界**。本节把 45 个原版函数逐个落到地址上，说明分别对应我方哪段代码，
 > 并把能补的补掉（`docs/02` §17.4 把这两个文件登记为"混装（待拆）"）。
@@ -829,7 +829,7 @@ Ghidra 签名：undefined FUN_004db3e0(long param_1, undefined4 param_2, undefin
 | 26 | `set_player_num_soldiers` | `0x476320` | 400 | 460 | 唯一 | 转调 `add_soldier_to_player` / `remove_soldier_from_player`（370–371） | 未实现 |
 | 27 | `request_axis_mode_change` | `0x4764b0` | 320 | 380 | 唯一 | 写轴模式 + 一条 info（393–395） | 未实现（`RoomState.axis_mode` 是静态串） |
 | 28 | `request_time_mode_change` | `0x4765f0` | 320 | 384 | 唯一 | 同上（426–428） | 未实现（`time_mode` 是 `begin_turn` 入参） |
-| 29 | `request_turn_mode_change` | `0x476730` | 256 | 332 | 唯一 | `TurnManager::get_turn_mode` + `set_turn_mode`（415–417） | 未实现（`docs/117` §6：写死 `SequentialTurns`） |
+| 29 | `request_turn_mode_change` | `0x476730` | 256 | 332 | 唯一 | `TurnManager::get_turn_mode` + `set_turn_mode`（415–417） | 未实现（[`docs/archive/117`](archive/117-server-wiring.md) §6：写死 `SequentialTurns`） |
 | 30 | `remove_soldier_from_player` | `0x476830` | 496 | 528 | 唯一 | 544–559 | 未实现 |
 | 31 | `handle_entity_removed_event` | `0x476a20` | 1824 | 1648 | 唯一 | `get_alive` + `get_position` + **`fire_functions`**（1064–1086） | 部分：死亡落地在 `execute_results` 尾部 |
 | 32 | `handle_new_connection_event` | `0x477140` | 720 | 740 | 唯一 | 1031–1048 | 未实现 |
@@ -852,7 +852,7 @@ Ghidra 签名：undefined FUN_004db3e0(long param_1, undefined4 param_2, undefin
 
 ### 11.3 `handle_tick`：回合超时的**检测点**在这里
 
-`docs/117` §6 记着"回合超时的**检测**没有证据"。现在有了：检测就在 `0x470840`。
+[`docs/archive/117`](archive/117-server-wiring.md) §6 记着"回合超时的**检测**没有证据"。现在有了：检测就在 `0x470840`。
 这个函数干三件事，第三件是回 `Setup`：
 
 ```text
@@ -869,7 +869,7 @@ Ghidra 签名：undefined FUN_004db3e0(long param_1, undefined4 param_2, undefin
                      → [self+0xc0] = 0; state = 1 (Setup); 推一条事件
 ```
 
-② 判的是**时钟**，不是"谁按了按钮"：`end_of_turn_tick`（`docs/42` 的回合截止时刻）
+② 判的是**时钟**，不是"谁按了按钮"：`end_of_turn_tick`（[`docs/archive/42`](archive/42-end-of-turn.md) 的回合截止时刻）
 一到，就把当前回合士兵已提交的函数打出去 —— 也就是**超时即按已提交内容结算**。
 它有三个合取项（状态 / 截止 tick / `[+0x11c]`），一项都不能省。
 
@@ -878,7 +878,7 @@ arm64 侧的偏移与 x86 完全一致，可以互相印证（`0x4a6bd0 ldrb w8,
 
 落成代码：`turnstate::should_auto_fire(state, now_tick, end_of_turn_tick, waiting)`（纯函数，
 真值表在 `tests/graphwar_game_state_manager.rs`）。**没有接线**：`Match` 上没有 `[+0x11c]`
-那一位，开火仍由调用方在收集阶段决定（`docs/117` §6 的其余两条尾巴不受影响）。
+那一位，开火仍由调用方在收集阶段决定（[`docs/archive/117`](archive/117-server-wiring.md) §6 的其余两条尾巴不受影响）。
 
 ③ 那一对 `[+0xc0]`/`[+0xc4]` 与 `set_turn_limit` 写的 `[+0xc8]`/`[+0xcc]` 是**两对**不同字段
 （前者只在这条分支里读，写点还没找到）⇒ ③ 的**语义仍是推断**，只记结构，不实现。
@@ -946,7 +946,7 @@ x86 上只剩 `set_turn_limit`（`0x472400`，112 字节）：
 ```
 
 ⇒ 它是 **(标志, 上限)** 两个 u32 的 setter，报文里只出现 `turn_limit` 一个字段
-（语料 21 条全是 `{"TurnLimitInfo":{"turn_limit":N}}`，`docs/123` §5.1）。
+（语料 21 条全是 `{"TurnLimitInfo":{"turn_limit":N}}`，[`docs/archive/123`](archive/123-target-reset.md) §5.1）。
 
 **两侧一起看就闭环了**（arm64 的字段偏移与 x86 相同）：
 
@@ -1220,7 +1220,7 @@ d) 的子因（同一套工具输出）：
 |---|---|---|---|
 | 1 | 挖洞事件（判别值 `0x8000…0`）的**生产者** | 顺着事件队列的 `Vec` 写入点反查（`calculate_paths` 一侧），或 frida 在 `0x472c61` 断点抓一次真实撞障碍的记录 | **未知** |
 | 2 | `tick = [模块+0x58] + X/30 + 60` 里三项的语义（尤其 `X` 是点序号、距离还是时间） | 同一批里同时抓到 `active_tick`、`ExplosionEffect.start_tick`、`DestroyObstacle` tick 三者 + 该发点数 | **未知**（`DelayDestroy = 165` 仍是抓包经验值） |
-| 3 | d2/d3 那 8 例的边界差 | 逐像素掩膜对照（`docs/142` §4 的 ring/fill 工具） | **未知** |
+| 3 | d2/d3 那 8 例的边界差 | 逐像素掩膜对照（[`docs/archive/142`](archive/142-diff-converge.md) §4 的 ring/fill 工具） | **未知** |
 | 4 | 反方向（回放挖了、我方没撞） | 本轴只比"我方 blocked 且有销毁点"的批；反向要先有"漏挖"的探针 | **未知** |
 
 ### 12.7 复现（三份产物 + 三条命令）

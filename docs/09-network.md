@@ -48,7 +48,7 @@
 
 长度字段**只算负载**：实测帧头 `0x0031` = 49，后面正好 49 字节 JSON。
 
-#### 1.1.1 LAN 广播样本（观测）
+#### 1.1.2 LAN 广播样本（观测）
 
 ```json
 {"room_name":"Graphwar Game","game_state":"Setup","current_player_count":2,

@@ -1280,7 +1280,7 @@ flipped = Σ ((team as u32) ^ 1)    // 在 0/1 上 = #Team1
 
 ## 14. `graphwar_rank_manager.rs` 规格：段位从哪来 / `RankInfo` 的载荷（本轮新增）
 
-> `docs/112` §5 已经把 4 个函数解到"读写一张表 + 广播"的程度，但留了两个口子：
+> [`docs/archive/112`](archive/112-meta-managers.md) §5 已经把 4 个函数解到"读写一张表 + 广播"的程度，但留了两个口子：
 > §5.3「两张 map 用的助手不同 ⇒ 两个容器」与 §5.4「`RankInfo` 是 2 个字段还是 3 个 dword 未收敛」。
 > 本轮用 arm64 2.0.60 的 `.symtab` 复核，**两个口子都收了**，并补上"段位从哪来"的答案。
 > 代码落在 `src/graphwar_rank_manager.rs`，验收在 `tests/graphwar_rank_manager.rs`。
@@ -1290,7 +1290,7 @@ flipped = Σ ((team as u32) ^ 1)    // 在 0/1 上 = #Team1
 | # | 结论 | 等级 |
 |---|---|---|
 | 1 | 只有**一张**表 `HashMap<u32, u32>`（`player_id → 段位`），在 `self+0x18`，hasher 在 `+0x38` | **逐位** |
-| 2 | `docs/112` §5.3 的"两张 map"是**误读**：`self+0x38` 是同一张表的 hasher，不是第二张表 | **逐位** |
+| 2 | [`docs/archive/112`](archive/112-meta-managers.md) §5.3 的"两张 map"是**误读**：`self+0x38` 是同一张表的 hasher，不是第二张表 | **逐位** |
 | 3 | `RankInfo`(67) 的载荷是**三个 dword**：`+0x08` 标志、`+0x0c` 段位、`+0x10` player_id | **逐位**（两条编码互校） |
 | 4 | `set_rank(player_id, op, rank)`：`op == 1` 写入，否则撤销；**两条路都发一条 (67)** | **逐位** |
 | 5 | 广播时 `+0x08` 恒为 **1**（`send_all_info_events`） | **逐位** |
@@ -1310,7 +1310,7 @@ flipped = Σ ((team as u32) ^ 1)    // 在 0/1 上 = #Team1
 x86 ÷ arm64 = 0.89 / 0.98 / 1.02 / 0.93，全部落在 0.61–1.19 的闸内；
 四条 `panic::Location` 锚双向唯一（`fixtures/name_to_addr.tsv`）。
 
-### 14.3 一张表，不是两张（**修正 `docs/112` §5.3**）
+### 14.3 一张表，不是两张（**修正 [`docs/archive/112`](archive/112-meta-managers.md) §5.3**）
 
 arm64 `set_rank` 的两个分支：
 
@@ -1321,10 +1321,10 @@ cmp w2, #1
 ```
 
 `add x0, x22, #0x38 ; bl <hash>` 取的是**hasher**（表基 0x18 + 0x20），
-不是第二张表 ⇒ `docs/112` §5.3 的"另一张不同类型的容器（`HashMap<u32,u32>` vs 别的）"
+不是第二张表 ⇒ [`docs/archive/112`](archive/112-meta-managers.md) §5.3 的"另一张不同类型的容器（`HashMap<u32,u32>` vs 别的）"
 这一条**作废**。表本身只有一张，`HashMap<u32,u32>`。
 
-### 14.4 `RankInfo` 的三个 dword（**结 `docs/112` §5.4**）
+### 14.4 `RankInfo` 的三个 dword（**结 [`docs/archive/112`](archive/112-meta-managers.md) §5.4**）
 
 | 证据 | 内容 |
 |---|---|
@@ -1348,14 +1348,14 @@ cmp w2, #1
 | `0x3e7000` | `GraphwarRemoteEventHandler::handle_server_remote_event`（`0x3e6df0`） |
 
 ⇒ 段位**只从远端事件进入**，客户端与服务器两条远程事件处理路径各一处。
-**不是**本地存档（`user://campaign.save` 与本模块无关，`docs/112` §7），**也不是**本机算出来的。
+**不是**本地存档（`user://campaign.save` 与本模块无关，[`docs/archive/112`](archive/112-meta-managers.md) §7），**也不是**本机算出来的。
 
 与 tag 66 / 67 的关系：
 
 * **67 `rank_info_event`**：本模块**发**（`set_rank` 发一条、`send_all_info_events` 发全表）。
 * **66 `rank_request_event`**：本模块**不发**（4 个函数里没有 tag 66 的构造）。
   发起侧在 `GraphwarLocalPlayerManager`（x86 `0x519f40`：玩家首次出现时连发 5 个请求
-  —— name 59 / skin 50 / face 52 / hat 54 / rank 66，见 `docs/112` §9.2）。
+  —— name 59 / skin 50 / face 52 / hat 54 / rank 66，见 [`docs/archive/112`](archive/112-meta-managers.md) §9.2）。
   那一侧只有 x86 立即数证据 ⇒ **推断**。
 
 ```
@@ -1365,7 +1365,7 @@ handle_{client,server}_remote_event ──────────┘
         └─> RankManager::set_rank(player_id, op, rank) ─> rank_info_event(67) ─> 客户端 UI
 ```
 
-### 14.6 段位换算：可复现的负结果（`docs/112` §5.5 仍成立）
+### 14.6 段位换算：可复现的负结果（[`docs/archive/112`](archive/112-meta-managers.md) §5.5 仍成立）
 
 4 个函数里没有 `div` / `sdiv` / `udiv`、没有阈值 `cmp` 立即数、没有任何 22 项常量表。
 `set_rank` 把外部给的 `rank` **原样**入表（`insert(key=player_id, value=rank)`），不做任何换算。
@@ -1606,15 +1606,15 @@ show_global_button()  完全镜像
 
 ### 15.7 本轮就地纠正的三处旧结论
 
-1. **`docs/112` §4.3**（"`find` 用 `self+0x38`、`remove` 用 `self+0x18`，两者不是同一个基址"）：
+1. **[`docs/archive/112`](archive/112-meta-managers.md) §4.3**（"`find` 用 `self+0x38`、`remove` 用 `self+0x18`，两者不是同一个基址"）：
    `self+0x38` 是**同一张表的 `RandomState`**。arm64 `handle_entity_removed_event` 里
    `bl <BuildHasher::hash_one>` 的 `x0` 正是 `self+0x38`，随后 `remove_entry(self+0x18, hash)`
    —— 与 `rank_manager` 那条"一张表，不是两张"（§14.3）同一形状。**是误读。**
-2. **`docs/112` §9.3**（"`0x51a610` 只有一条 `panic_fmt` 出口，是空处理"）：
+2. **[`docs/archive/112`](archive/112-meta-managers.md) §9.3**（"`0x51a610` 只有一条 `panic_fmt` 出口，是空处理"）：
    x86 `0x51a610` 与 arm64 `0x411c9c` **两边都是** `Vec::retain` 的紧凑化循环
    （x86 还做了 2 路展开：`cmp %ecx,(%rsi,%rdx,4)` + 后续 `lea 0x2(%rdx)`）。
    **不是空处理。**
-3. **`docs/112` §8**（"`lobby_control` 取按钮/列表节点并**设文本/图标**"）：
+3. **[`docs/archive/112`](archive/112-meta-managers.md) §8**（"`lobby_control` 取按钮/列表节点并**设文本/图标**"）：
    arm64 上只看到 `BaseButton::set_pressed` 两次 + `Node::queue_free` 循环，
    **没有** `set_text` / `set_texture` 调用 ⇒ 那句降级为"未观测"。
 
@@ -1717,7 +1717,7 @@ objdump -d --start-address=0x464d10 --stop-address=0x46500c <x86>/libgraphwarrus
 | `min_count` | `min_count` | `C`（预设 thunk 里 `esi=15/5/10/6`）+ `R`（关 11/18/20 出现过恰好 10、关 5/21 恰好 15） | **逐位 + 运行时** |
 | 士兵数 | `soldiers` | `S` = 开场臂立即数 `edx=N` → `0x476320(mgr, player, N)`；`R` 同值 | **逐位 + 运行时** |
 | 目标数 | `targets` | `S` = `0x46f310(team)` 的调用次数；`R` 同值 | **逐位 + 运行时** |
-| Bot 难度 | `bot.difficulty` / `bot.tier` | `S`（`bot_added_event` 载荷第 3 个 u32）+ `R`（`bot_N` 皮肤、Bot 名字随机） | **逐位 + 运行时**；⚠️ 与 `docs/AI.md` 六档表的映射是**推断**，且关 12 的 `50` 对不上任何一列（§6、118 §12.4，**不圆**） |
+| Bot 难度 | `bot.difficulty` / `bot.tier` | `S`（`bot_added_event` 载荷第 3 个 u32）+ `R`（`bot_N` 皮肤、Bot 名字随机） | **逐位 + 运行时**；⚠️ 与 [`docs/archive/AI.md`](archive/AI.md) 六档表的映射是**推断**，且关 12 的 `50` 对不上任何一列（§6、118 §12.4，**不圆**） |
 | 回合上限 | `turn_limit` | `S` = `turn_limit_info` 载荷 `(1, N)` 的 `N`；`R` = 运行时 `TurnLimitInfo` 21/21 | **逐位 + 运行时** |
 | 标题 + 描述 | `title` / `description` | 21 条 `movabs`/`mov dword` 拼串 + `.rodata` 21 段首尾相接；长度 = `mov qword [rsp+0x38], len` 立即数 21/21 | **逐位** |
 | 模式四字节 | `modes.mode_word` | 21 条 `mov dword [rsp+0x58], imm32`（`0x4ad4dd`…`0x4aefdf`） | **逐位**（`axis` 的方向另由运行时 21/21 佐证） |
