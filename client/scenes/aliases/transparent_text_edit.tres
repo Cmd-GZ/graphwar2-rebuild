@@ -1,0 +1,16 @@
+[gd_resource type="Theme" format=3]
+
+[ext_resource type="FontFile" path="res://ComicRelief-Bold.ttf" id="1_fghod"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_jrmm5"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_vstj7"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_nvgu4"]
+
+[resource]
+default_font = ExtResource("1_fghod")
+TextEdit/colors/font_readonly_color = Color(0.87451, 0.87451, 0.87451, 1)
+TextEdit/styles/focus = SubResource("StyleBoxEmpty_jrmm5")
+TextEdit/styles/normal = SubResource("StyleBoxEmpty_vstj7")
+TextEdit/styles/read_only = SubResource("StyleBoxEmpty_nvgu4")
