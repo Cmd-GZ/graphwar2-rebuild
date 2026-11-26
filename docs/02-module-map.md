@@ -1171,6 +1171,22 @@ comm -23 /tmp/all.txt /tmp/doc.txt
 
 ⚠️ 本节只管**边界**。「那 8~10 次设置调用的操作数含义」仍然**未定**（§17.4 已有登记），
 本轮没有新证据，不重复也不改。
+### 17.8 就地更正（T49，2026-11-26）：`_scaffold` 里 4 处"装着原版方法体"的已搬回同名模块（**只追加，不改上面的既有行**）
+
+`AGENTS.md` §4「文件名就是证据」在 T36 审计（`docs/06` §86.4）里被量化成"`src/_scaffold/` 装了
+一半生产函数"。本轮（T49 / `task-45`）搬了前 4 处，**§17.1 表里那 4 行的事实列本轮不动**（列仍写着
+旧状态，因为改写要逐行核对），差异以本小节为准：
+
+| 模块（§17.1 行） | §17.1 表里现在写的 | T49 之后 |
+|---|---|---|
+| `graphwar_obstacle_manager.rs`（8/10） | "`src/plane.rs`（掩膜）+ `graphwar_obstacle_manager.rs`（80 B 布局）" | **行为层已落码进本模块**：`ObstacleTable` 的 7 个方法（`new 0x3f2360` / `add 0x3f17a0` / `is_obstacle 0x3f15b0` / `queue_destroy 0x3f20f0` / `destroy 0x3f1b30` / `clear 0x3f19a0` / `handle_tick 0x3f1d30`）；掩膜光栅化仍复用 `plane::rasterize`（`0x3f11e0` 的逐行对照版） |
+| `graphwar_function_manager.rs`（7/12） | "只放 32 B 布局" | **行为层已落码进本模块**：`FunctionTable` 的 6 个方法（`0x455b60/0x455e30/0x4565f0/0x456810/0x456b80/0x456df0`），且三个 `set_*` 按指令补上了发事件（tag 35/36/37） |
+| `graphwar_event_handler.rs`（2/4） | "`0x3d3630` 仍无独立函数体（泵在 `_scaffold`）" | **已落码**：`GraphwarEventHandler::{subscribe_to_event 0x3d38f0, process_events 0x3d3630}`；`_scaffold::root_wiring::KernelBus` 只剩薄转发 |
+| `graphwar_remote_event_handler.rs`（3/171） | "0 个函数体（只有证据行）" | **派发层已落码**：`WireEvent`（30 个线上变体）+ `dispatch`（逐事件落到哪个 manager，主锚 `0x3dee00`）+ 6 个 `parse_*` + `is_bot_skin`；`_scaffold/net_events_class.rs` 只剩 GDExtension 外壳（40 个 `#[func]`，原版没有） |
+
+台账（预注册）`fixtures/scaffold_migration_plan.tsv`；判别依据、逐条指令证据、门槛读数与遗留见
+**`docs/06` §97**。`_scaffold` 生产函数同口径复算 **1191 → 1150**（§86 的 1163 是审计时读数）。
+
 
 ## 18. 权威名字清单：未 strip 符号表（2026-11）
 

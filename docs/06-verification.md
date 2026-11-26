@@ -16618,6 +16618,146 @@ $MAIN/.reference/venv/bin/python tools/bit_exact_attrib.py --json f.jsonl --chec
    若要把 E01 升成"本轮亲自量到的像素"，必须重跑 `tools/frame_capture.py --side original`（私有 Xvfb），
    本轮没做（时间/机器占用都给了别的链路）。
 
+## 97. T49：`_scaffold` 里装着的**游戏语义**搬回原版模块（4 处 / 41 个生产函数），并按指令校正被我方写歪的语义（2026-11-26，任务 T49 / `task-45`）
+
+**一句话**：T36 审计（§86.4）判出 `src/_scaffold/` 里有 **1163** 个生产函数（审计时读数）住在"原版没有对应物"的目录里。
+本轮按「是游戏语义 + 已有物证」挑前 4 处搬回同名模块：**4 处全搬成**，`_scaffold` 生产函数
+**1191 → 1150（−41）**（基线用 `tools/audit_src.py scaffold` 在 master `ee7bb5c` 上复算；§86 的 1163 是当时的读数，
+之后 T42–T47 又往 `_scaffold` 加过函数 ⇒ **同一口径下本轮基线是 1191，不是 1163**）。
+搬的过程里从反汇编**新查实 7 条**先前记成"推断/未知"的语义，其中 **2 条是我方写错的**（`now+165` 延迟、`outbox` 恒空）。
+
+### 97.1 台账（预注册，先出台账再搬）
+
+`fixtures/scaffold_migration_plan.tsv`（单独 commit `e357bc8`）：每行 = `scaffold 位置 | 它做的是什么 |
+原版模块 + 函数 + vaddr | 证据档 | 搬不搬 | 调号方怎么保持`。
+预注册统计（38 行）：**搬 26 行（`B` 14 + `M` 12）/ 留原地 11 行（`A`）/ 待拆 1 行（`D`）**。判据只有一条：能指到**原版函数名 + ELF vaddr**
+且它判的是游戏语义（状态/表/规则/事件落点）⇒ 搬；否则（GDExtension 外壳、C ABI、报文装配、thread-local 接线、
+broker、ChaCha12、gzip、或"原版有但我方是无第二份实现的纯转发"）⇒ **留原地并写"A：留 scaffold 是对的"**。
+
+### 97.2 四处逐一（原位置 → 新落点 → 调用方怎么保持）
+
+| # | 原位置 | 新落点（原版模块） | vaddr | 调用方保持方式 |
+|---|---|---|---|---|
+| ① | `_scaffold/root_wiring.rs` `ObstacleTable`（:993，13 fn 含 `Default`） | `src/graphwar_obstacle_manager.rs` | `0x3f2360` new / `0x3f17a0` add / `0x3f15b0` is_obstacle / `0x3f20f0` queue_destroy / `0x3f1b30` destroy / `0x3f19a0` clear / `0x3f1d30` handle_tick | `pub use` 再导出，`root_wiring::ObstacleTable` 路径不变；`net_events_class` 只改一处（tick 转 `u32`） |
+| ② | 同文件 `FunctionTable`（:858，14 fn 含 `Default`） | `src/graphwar_function_manager.rs` | `0x455b60` get / `0x455e30` set / `0x4565f0` get_text / `0x456810` set_points / `0x456b80` set_active_tick / `0x456df0` active_on_tick | 同上，`pub use`；交互断言与 `assemble_check.gd` 一个字符串没改 |
+| ③ | 同文件 `KernelBus::{subscribe, pump}` + `dispatch_name`（:2318 起） | `src/graphwar_event_handler.rs` | `0x3d38f0` subscribe_to_event / `0x3d3630` process_events | `KernelBus` 的 6 个方法改成**薄转发**（签名不变）⇒ 调用方零改动 |
+| ④ | `_scaffold/net_events_class.rs`（53 fn → 40 fn） | `src/graphwar_remote_event_handler.rs` | `0x3dee00` `handle_client_remote_event`（80 个 Location 锚） | `pub use` 再导出 `WireEvent`/`Calls`/`dispatch`/`parse_*`/`is_bot_skin`，老路径一字不变 |
+
+**没搬（并写明理由）**：`api.rs` / `endgame_class.rs` / `play_flow_class.rs`（T36 的正对照，无第二份实现）；
+`capi.rs` / `gdext*.rs`（原版没有 C ABI / GDExtension 入口）；`broker.rs`（我方对局服务器）；
+`rng.rs`（原版用 `rand_chacha`）；`replay_inflate.rs`（原版用 `flate2`）；
+`net_events_class.rs` 里的 `GwNetEvents`（40 个 `#[func]` 的 GDExtension 外壳）与
+`ensure_installed` / `dispatch_installed`（本仓的 thread-local 通道）；`KernelBus` 的队列/时钟/frames/ticks
+（我方接线，原版对象图是 节点→backend→容器）。
+
+### 97.3 搬的时候**按指令校正语义**（不是原样搬迁）——7 条新查实
+
+全部来自 `tools/addr_probe.py dis <vaddr>`（ELF vaddr 口径）：
+
+| # | 函数 | 指令 | 结论 | 档位 | 我方原状 |
+|---|---|---|---|---|---|
+| 1 | `add_obstacle` `0x3f17a0` | `0x3f1815 xor edx,edx` | `draw_circle` 的 **fill 是第 5 实参**，这里传 **`0x00`** | **逐位** | 文档记"推断（非 0xff）" |
+| 2 | `destroy_obstacle` `0x3f1b30` | `0x3f1ba5 mov edx,0xff` | 挖洞传 **`0xff`**（刷回"空"） | **逐位** | 同上是推断，值对 |
+| 3 | `draw_circle` `0x3f11e0` | `0x3f143a mov byte ptr [r8+r12], dil` | 写网格的字节**不是常量**，是入口 `edx` 那个字节 | **逐位** | 记为"未知" |
+| 4 | `queue_destroy_obstacle` `0x3f20f0` | `0x3f20fe mov ebx,edx`（全程无加法） | **键就是调用方传进来的 tick**；"延迟多久"由**调用方**决定 | **逐位** | ⚠️ **写错**：我方 `now_tick + DESTROY_DELAY_TICKS`(165) ⇒ 已改（`docs/44` 的 165 仍是对局侧实测值，只是**不在这个函数里**） |
+| 5 | `handle_tick_event` `0x3f1d30` | `0x3f1d56 [rsi+8]` 键 + `0x3f1d80 remove_entry` | **按 tick 等值删整条**，不是扫 `due <= now` | **逐位** | ⚠️ **写错**：我方扫"所有到期项" ⇒ 已改成等值删 |
+| 6 | 同上 | `0x3f1d40 cmp rax,0x8000000000000000; jno → 0x3f1e08` | 判别值必须 = **tag 0 (`TickEvent`)**，否则原版走 **`explicit panic`**（串 `0x1bfcbf`，长度 `0xe`） | **逐位** | 我方 `Err(())`（保留 `Result` 形状以不动调用方，`Err` 注释写清原版是 panic） |
+| 7 | `set_function` / `set_function_active_tick` / `set_function_points` `0x455e30` / `0x456b80` / `0x456810` | `0x456381 add rax,0x24` / `0x456cd3 lea rax,[r9+0x25]` / `0x4569d3 lea rax,[r8+0x26]` | 三个 `set_*` **各发一条**事件：tag **35 `FunctionInfo`** / **36 `FunctionActive`** / **37 `FunctionPoints`**（投递点 `0x45638f` / `0x456ce1` / `0x4569e1` 都经 GOT `0x9bac80` → `0x3d3530 add_event`） | **逐位** | ⚠️ **写错**：我方 `outbox` 一条都不写（注释承认"发方向未接"，但代码没补）⇒ 已补上 |
+
+此外 `Vec<[f64;3]>` 的元素语义从"推断"升到 **逐位 (x, y, radius)**：
+`0x3f2275 movups [rax+rcx*8], xmm1`（位置对）+ `0x3f227f movsd [rax+rcx*8+0x10], xmm0`（半径）。
+
+**行为改变的边界（诚实登记）**：第 7 条是**唯一**改变可观察行为的一处（`FunctionTable::outbox` 由恒空变成
+按原版推事件）；`net_events_class` 本来就有 `drain(...take_outbox())`，所以事件会顺着既有通道进共享队列，
+不会漏也不会成环。第 4/5 条只改语义、不改对外返回值形状。
+
+### 97.4 门槛读数（每处都跑；命令见 §97.6）
+
+| 门槛 | 基线（master `ee7bb5c`） | 本轮 | 结论 |
+|---|---|---|---|
+| `cargo test --offline` | 1795 / 0 | **1795 / 0** | 一致 |
+| `cargo test --offline --features gdext-bindings` | 1917 / 0 | **1925 / 0** | +8 = 新增 `tests/scaffold_migration.rs`（条数变多是正常的） |
+| `coverage_matrix.py --check` | OK | **OK**（527 / 逐位 89 / 观测 435 / 推断 3，生成物已重跑） | 一致 |
+| `check_doc_refs.py` | rc=0 | **rc=0** | 一致 |
+| 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **647 / 647 / 637** | 一位没退 |
+| `boundary_audit.py --check` | mismatch 0 | **match 441 / mismatch 0 / multi 86** | 一致 |
+| `client/run.sh selftest` | 717 / 0 / 1skip | **717 / 0 / 1skip，missing=0 silent=0** | 一致（改 `_scaffold` 后已 build gdext → `cp` → `--import`） |
+| headless 14 脚本 | 1961 / 0 | **1961 / 0**（`play_flow` 233，其余 13 份逐项同基线） | 一致 |
+
+### 97.5 `_scaffold` 生产函数：1191 → 1150（同一口径复算）
+
+```text
+git worktree add <tmp> ee7bb5c && python3 tools/audit_src.py scaffold   # 基线
+src/_scaffold/net_events_class.rs    53 -> 40   Δ-13
+src/_scaffold/root_wiring.rs        127 -> 99   Δ-28   (ObstacleTable 13 + FunctionTable 14 + dispatch_name 1)
+合计                                1191 -> 1150 Δ-41
+```
+
+⚠️ **别把 41 当成"搬了 41 个原版函数"**：`KernelBus` 的 6 个方法（`subscribe`/`subscriber_count`/`subscribers`/
+`pump`/`delivered`/`pumps`）按"调用方零改动"的要求**留成薄转发**，所以它们仍算在 `_scaffold` 的 1150 里。
+
+### 97.6 复跑命令
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export CARGO_HOME=$MAIN/.reference/cargo-home CARGO_TARGET_DIR=<wt>/.cargo-target
+cd <wt>
+cargo test --offline                                                    # 1795 / 0
+cargo test --offline --features gdext-bindings                          # 1925 / 0（含新增 8 条）
+COVERAGE_MATRIX_UPSTREAM=$MAIN/.reference/upstream \
+  $MAIN/.reference/venv/bin/python tools/coverage_matrix.py --check     # OK
+$MAIN/.reference/venv/bin/python tools/check_doc_refs.py                # rc=0
+$MAIN/.reference/venv/bin/python tools/boundary_audit.py --check        # mismatch 0
+
+# 三轴（冻结快照 403 份，只读）
+SNAP=$MAIN/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json /tmp/f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json /tmp/b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict
+
+# 客户端两档（改过 _scaffold ⇒ 必须重编 + cp + import）
+cargo build --offline --features gdext-bindings
+cp .cargo-target/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+cargo build --offline --example serve_match
+H=$PWD/.fakehome; mkdir -p "$H/.local/share/godot/app_userdata/Graphwar/replays"
+cp $SNAP/{1793897298,1783255495} "$H/.local/share/godot/app_userdata/Graphwar/replays/"
+export HOME=$H
+env -u XDG_DATA_HOME -u XDG_CACHE_HOME -u XDG_CONFIG_HOME bash client/run.sh selftest   # 717 / 0 / 1skip
+for f in client/tools/*_check.gd; do
+  "$GODOT" --headless --path client --script "res://tools/$(basename $f)" | grep -E '[0-9]+ passed'; done   # 合计 1961
+```
+
+### 97.7 遗留（哪些没搬、缺什么）
+
+1. **`KernelBus` 本体（台账 `e-00`，判 `D` 待拆）**：队列、虚拟时钟（`clock_override`）、`frames`/`ticks`/`probes`
+   都是**我方接线**（原版没有"总线一个人扮演三个对象"这种形状）⇒ 留原地。要真搬，得先复原
+   `GraphwarBackend` / `GraphwarGameClient` / 节点的对象图——那需要节点侧的地址证据，本轮没有。
+2. **`dispatch` 仍依赖 scaffold 的容器**：语义搬回 `graphwar_remote_event_handler.rs` 了，但它取 manager 还是
+   经 `_scaffold::root_wiring::{kernel_bus, KernelBus}`（因此那部分用 `#[cfg(feature = "gdext-bindings")]` 闸住）。
+   原版是 `GraphwarBackend +0x220` 的容器直取 ⇒ 缺的是对象图，不是分派表。
+3. **`FunctionManager` 的档位字符串仍是 `layout`**：`set_*` 的发方向已经按原版补齐（本轮第 7 条），
+   但 `slot_status("GraphwarFunctionManager")` 的返回值被 `client/tools/assemble_check.gd:144` 与
+   `TIER_TALLY`（wired 19 / layout 2）钉死，而**本任务禁止改 `client/**`** ⇒ **升档要两边同时改**
+   （`root_wiring.rs` 的槽文档 + 那份 `.gd` 的期望表），建议 lead 另派一条。
+4. **`net_events_class` 里还有 40 个 `#[func]`**：那是 GDExtension 外壳，**原版没有**，按 §4 永远留在 scaffold。
+   它不属于"游戏语义"，不欠账。
+5. **`_scaffold` 剩余 1150 个生产函数里仍有一批"装着原版模块方法体"**（T36 §86.4 的 (b) 类：
+   20 个 `*_class.rs` 共 692 fn 里的大部分）。本轮只做前 4 处；下一批建议按 T36 的排序继续
+   （`entity_drawer_class`（97 fn）、`play_flow_class` 之外的那些真类、`graphwar_plane_class`（50 fn）、
+   `graphwar_root_node_class`（48 fn））。**每搬一处仍要先出台账行 + 指到 vaddr**。
+6. **`queue_destroy_obstacle` 的"谁决定那个 tick"**：原版函数体内没有加法已证；但**调用方**（哪个 manager、
+   加多少）还没逐条读到 ⇒ `docs/44` 的 165 仍是"对局侧实测值"，`DESTROY_DELAY_TICKS` 留在 `game.rs` 未动。
+
+### 97.8 我写错了 / 前提被证伪
+
+* **规格里"这 4 处都是游戏语义"——成立**，而且**比规格说的更严重**：其中 3 处不只是"位置放错"，
+  而是**语义写歪了**（`now+165` 延迟、`due<=now` 扫描、`outbox` 恒空）。如果只做"文件搬家"，
+  这三条错会原样搬到"正确的文件"里 —— 正是 `AGENTS.md` §0.3 警告的那种"看起来复原了"。
+* **规格给的 `## 99.` 章节号过期**：本轮开工时 `docs/06` 最后一节是 `## 96.`（T46），故本节编号用 **97**。
+* **规格给的 `_scaffold` 生产函数 1163 是 T36 审计时读数**：同口径在 master `ee7bb5c` 上复算是 **1191**
+  （T42–T47 又往 `_scaffold` 加过函数）⇒ 本轮的分子/分母都按 **1191 → 1150** 报，不拿 1163 凑数。
+* **`is_obstacle` 的"越界算命中"不是猜测**：`0x3f1669 mov al,1` 在两条 `cmp …; ja` **之前**，
+  这条从"代码注释的断言"升到了**指令级**（`tests/scaffold_migration.rs` 用它做期望值）。
 ## 98. T48：`level_manager` 的 **21 个 `setup_level_N` 从"一张数据表"还原成 22 个函数边界** —— 函数级复原率 145/527 → **181/527**（34.3%），本模块 F3 缺口 **31 → 0**（2026-11-26，任务 T48 / `task-46`）
 
 > 起点：T45 之后本文件 §87 的函数级审计读数 **145/527 = 27.5%**，`F3` 还有 **235** 条。

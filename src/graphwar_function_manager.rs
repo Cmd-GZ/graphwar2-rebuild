@@ -109,15 +109,18 @@
 //! | `FunctionState` 的精确大小 | **推断**（112 B） | 缺「一次性 `memcpy`/`drop` 整结构」或 `size_of` 常量；只有 bucket 步长 `0x78` 反推（见 §四） |
 //! | `+0x00` 弱自句柄**谁在用** | **未知** | 7 个方法**没有一处**读 `m+0x00`；本模块又不订阅事件（构造体内无 `subscribe`）⇒ 只能靠"别的模块替它订阅"来解释，未观测到 |
 //! | `get_active_functions_on_tick` 的两条谓词语义 | **未知** | §42.5 已列（`value+0x70 == 1`、`value+0x50 != i64::MIN`） |
-//! | 我们这份布局的**行为** | 未做 | 本文件只有布局；行为仍在 `src/game.rs` 的自由函数与 `_scaffold/root_wiring.rs` 的 `FunctionTable` 里 |
+//! | 我们这份布局的**行为** | **已落码**（T49） | 见 §七：`FunctionTable` 的 6 个方法（原位在 `_scaffold/root_wiring.rs`）；`src/game.rs` 的自由函数是另一条（对局服务器侧的求值） |
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex};
 
+use crate::events::Event;
 use crate::graphwar_event_queue::GraphwarEventQueue;
 use crate::graphwar_module_container::GraphwarModuleContainer;
+use crate::math_function;
+use crate::Token;
 
 /// 原版 `FunctionState`（`HashMap<u32, FunctionState>` 的值）——**字段未解**。
 ///
@@ -195,6 +198,181 @@ impl GraphwarFunctionManager {
     /// 给验收做只读探针（原版没有这个方法，它只是"布局确实被那个字段占着"的把手）。
     pub fn data_mutex_ptr(&self) -> *const Mutex<GraphwarFunctionData> {
         Arc::as_ptr(&self.data)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 七、行为层 `FunctionTable`（T49：从 `_scaffold/root_wiring.rs` 搬回本模块）
+// ---------------------------------------------------------------------------
+//
+// ⚠️ **类型名不是原版的**：原版把行为写成 `GraphwarFunctionManager` 自己的 6 个方法
+// （`impl` 就在本文件）。我方历史上写成了 `_scaffold/root_wiring.rs` 里的一张"表"，
+// 违反 `AGENTS.md` §4「文件名就是证据」——T36 审计（`docs/06` §86.4）把这列为第 ② 处。
+//
+// 搬过来时**没有原样搬迁**，按指令改了一处最要紧的：
+//
+// **三个 `set_*` 会发事件**（原先我方 `outbox` 一条都不写，档位因此停在 `layout`）。
+// 这条不是我方选择，是原版行为，三处立即数都读到了（**逐位**）：
+//
+// ```text
+// 0x455e30 set_function             0x456377 movabs rax,0x7fffffffffffffff ; 0x456381 add rax,0x24
+//                                   ⇒ 0x8000000000000023 = tag 0x23 = 35 FunctionInfo
+//                                   ; 载荷 [rsp+0x70..0x88] = (id, 文本 ptr/len, tick)
+//                                   ; 0x45638f call [GOT 0x9bac80] -> 0x3d3530 add_event
+// 0x456b80 set_function_active_tick  0x456cd3 lea rax,[r9+0x25]  ⇒ tag 0x24 = 36 FunctionActive
+//                                   ; 载荷 [rsp+0x18]=id, [rsp+0x1c]=active_tick
+// 0x456810 set_function_points       0x4569d3 lea rax,[r8+0x26]  ⇒ tag 0x25 = 37 FunctionPoints
+//                                   ; 载荷 xmm = 两个 f64、[rsp+0x30]=id
+// ```
+//
+// ⇒ 本层的 `outbox` 现在按这三条推进去（载荷里的字段本层还不建结构，只记 tag 对应的变体，
+// 这是**我方形状**的差异，照实登记）。
+//
+// ⚠️ 档位字符串仍是 `layout`（`root_wiring::slot_status("GraphwarFunctionManager")`）：
+// 它被 `client/tools/assemble_check.gd`（`:144` 与 `TIER_TALLY`）钉死，而本任务禁止改
+// `client/**` ⇒ **两边要同时改才能升档**，登记在 `docs/06` §99 的遗留里。
+
+/// 函数槽表：**我方形状**的行为层，接的是原版 `GraphwarFunctionManager` 的 6 个入口。
+///
+/// 字段与布局的关系：原版把状态全装在 `+0x18` 那个 `Arc<Mutex<GraphwarFunctionData>>` 里
+/// （一张 `HashMap<u32, FunctionState>`，`FunctionState` 112 B 未逐字段解出，见 §六）。
+/// 本层把 `FunctionState` 里**已知用途**的三小块拆成三张表：
+/// 文本 token（`set_function` / `get_function` / `get_function_text`）、`active_tick`、
+/// 终点 `(x, y)`——这是**我方形状**，不是原版字段的逐字节对应。
+#[derive(Debug)]
+pub struct FunctionTable {
+    /// `soldier_id → token 序列`（原版一格一士兵，`docs/98` §3.1）。
+    slots: HashMap<u32, Vec<Token>>,
+    /// `set_function_active_tick` 写进去的那个 tick。
+    active_tick: HashMap<u32, u32>,
+    /// `set_function_points` 写进去的终点（`FunctionPoints.end_x/end_y`）。
+    points: HashMap<u32, (f64, f64)>,
+    /// 订阅名（**恒空 = 原版这一型也不订阅**，这是正面证据：构造体内无
+    /// `EventHandler::subscribe`，见模板文档 §三）。
+    pub subscribed: Vec<&'static str>,
+    /// 发件箱：三个 `set_*` 按原版各发一条（tag 35 / 36 / 37，见 §七 的指令表）。
+    pub outbox: Vec<Event>,
+}
+
+impl Default for FunctionTable {
+    fn default() -> Self {
+        Self {
+            slots: HashMap::new(),
+            active_tick: HashMap::new(),
+            points: HashMap::new(),
+            subscribed: Vec::new(),
+            outbox: Vec::new(),
+        }
+    }
+}
+
+impl FunctionTable {
+    /// 原版 `GraphwarFunctionManager::new`（**内联**，x86 `0x5236e0` / arm64 `0x419c80`）。
+    ///
+    /// 原版 `new` 要一条真事件队列 + 容器弱句柄（`Rc::new_cyclic`）；本层只造空表（差异照实登记）。
+    pub fn new() -> Self {
+        // 0x5236e0 — 原版构造体内联在 Rc::new_cyclic_in；本层给空表
+        Self::default()
+    }
+
+    /// 原版 `set_function`（x86 **`0x455e30`**）：写一格 + **发 `FunctionInfo`(35)**。
+    ///
+    /// tag 证据：`0x456377 movabs 0x7fff…ffff` → `0x456381 add rax,0x24` ⇒ `0x8000…0023` = 35；
+    /// 投递：`0x45638f call [GOT 0x9bac80]` → `0x3d3530 GraphwarEventQueue::add_event`。
+    /// 载荷是 `(id, 文本, tick)`（`0x456346`–`0x456370` 的三个字），本层暂只记 tag。
+    pub fn set_function(&mut self, soldier_id: u32, tokens: Vec<Token>) {
+        // 0x455e30 — 写表后 add_event(tag 35 FunctionInfo)
+        self.slots.insert(soldier_id, tokens);
+        self.outbox.push(Event::FunctionInfo);
+    }
+
+    /// 原版 `get_function`（x86 **`0x455b60`**）：读一格（函数体首句读 `self+0x18` 那把锁）。
+    pub fn get_function(&self, soldier_id: u32) -> Option<&[Token]> {
+        // 0x455b60 — 读 self+0x18 的 HashMap 里的一格
+        self.slots.get(&soldier_id).map(|v| v.as_slice())
+    }
+
+    /// 原版 `get_function_text`（x86 **`0x4565f0`**）：那一格的文本。
+    ///
+    /// 文本生成本身走 `math_function::to_text`（`docs/119` 1032/1032 对拍）。
+    pub fn get_function_text(&self, soldier_id: u32) -> Option<String> {
+        // 0x4565f0 — 取那一格再吐文本（Location :169:26）
+        self.get_function(soldier_id).map(math_function::to_text)
+    }
+
+    /// 原版 `set_function_active_tick`（x86 **`0x456b80`**）：记在场起始 tick + **发 `FunctionActive`(36)**。
+    ///
+    /// tag 证据：`0x456cd3 lea rax,[r9+0x25]`（`r9 = 0x7fff…ffff`）⇒ `0x8000…0024` = 36；
+    /// 载荷 `[rsp+0x18]=id`、`[rsp+0x1c]=active_tick`；投递 `0x456ce1`。
+    pub fn set_function_active_tick(&mut self, soldier_id: u32, tick: u32) {
+        // 0x456b80 — 写 active_tick 后 add_event(tag 36 FunctionActive)
+        self.active_tick.insert(soldier_id, tick);
+        self.outbox.push(Event::FunctionActive);
+    }
+
+    /// 读回 `active_tick`（原版没有单独的 getter，`get_active_functions_on_tick` 内联读它）。
+    pub fn active_tick_of(&self, soldier_id: u32) -> Option<u32> {
+        self.active_tick.get(&soldier_id).copied()
+    }
+
+    /// 原版 `set_function_points`（x86 **`0x456810`**）：记终点 + **发 `FunctionPoints`(37)**。
+    ///
+    /// tag 证据：`0x4569d3 lea rax,[r8+0x26]`（`r8 = 0x7fff…ffff`）⇒ `0x8000…0025` = 37；
+    /// 载荷 `xmm` 两个 f64 + `[rsp+0x30]` 的 id；投递 `0x4569e1`。
+    pub fn set_function_points(&mut self, soldier_id: u32, x: f64, y: f64) {
+        // 0x456810 — 写终点后 add_event(tag 37 FunctionPoints)
+        self.points.insert(soldier_id, (x, y));
+        self.outbox.push(Event::FunctionPoints);
+    }
+
+    /// 读回终点（原版没有单独的 getter）。
+    pub fn points_of(&self, soldier_id: u32) -> Option<(f64, f64)> {
+        self.points.get(&soldier_id).copied()
+    }
+
+    /// 原版 `get_active_functions_on_tick`（x86 **`0x456df0`**）：本 tick 还在场的那些 id。
+    ///
+    /// 在场判据（**观测**，`docs/16-client.md` §42.2 的三条指令级结论）：
+    /// `tick > active_tick`（**严格**大于），且 `30*(tick-active_tick) < points.len() + 1800`。
+    ///
+    /// ⚠️ 本表不存整条曲线（曲线点由 `FunctionDrawer` 那边持有）⇒ **点的条数按 0 算**，
+    /// 窗口退化成 `1800/30 = 60` tick。这是本层的**差异**，不是原版行为。
+    pub fn get_active_functions_on_tick(&self, tick: u32) -> Vec<u32> {
+        // 0x456df0 — 谓词：tick > active_tick（严格）且 30*(tick-active) < len+1800
+        let mut ids: Vec<u32> = self
+            .active_tick
+            .iter()
+            .filter(|&(_id, &active)| {
+                if tick <= active {
+                    return false;
+                }
+                let d = tick - active;
+                30u64 * d as u64 <= 1800
+            })
+            .map(|(&id, _)| id)
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// 槽数（原版没有；验收用）。
+    pub fn len(&self) -> usize {
+        self.slots.len()
+    }
+
+    /// 槽是否空（原版没有；验收用）。
+    pub fn is_empty(&self) -> bool {
+        self.slots.is_empty()
+    }
+
+    /// 取走发件箱（三个 `set_*` 各推进去一条，见 §七）。
+    pub fn take_outbox(&mut self) -> Vec<Event> {
+        std::mem::take(&mut self.outbox)
+    }
+
+    /// 发件箱里有几条。
+    pub fn outbox_len(&self) -> usize {
+        self.outbox.len()
     }
 }
 

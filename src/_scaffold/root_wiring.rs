@@ -168,12 +168,11 @@
 //! 引擎那一侧（`GraphwarRootNode`）只调用这些，**不碰 `HashMap` 的内部**。
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::events::Event;
 use crate::function_history_recorder::History;
-use crate::game::{Match, DESTROY_DELAY_TICKS};
+use crate::game::Match;
 use crate::graphwar_color_manager::GraphwarColorManager;
 use crate::graphwar_computer_player_manager::ComputerPlayers;
 use crate::graphwar_effect_manager::{EffectType, GraphwarEffectManager};
@@ -198,8 +197,6 @@ use crate::graphwar_team_manager::{
 };
 use crate::graphwar_tick_handler::{GraphwarTickHandler, TICKS_PER_SECOND};
 use crate::graphwar_turn_manager::{Team, TurnManager};
-use crate::math_function;
-use crate::plane::{empty_mask, is_occupied, rasterize};
 use crate::server::RoomState;
 use crate::Token;
 
@@ -221,6 +218,7 @@ use crate::Token;
 use crate::graphwar_function_manager::GraphwarFunctionManager;
 use crate::graphwar_obstacle_manager::GraphwarObstacleManager;
 // 任务 36：24 B 布局 + 位置表行为（`src/graphwar_plane_pos_manager.rs`，`docs/16` §44）
+use crate::graphwar_event_handler::GraphwarEventHandler;
 use crate::graphwar_event_queue::GraphwarEventQueue;
 // `ENTITY_REMOVED_EVENT_TAG`（= 14）本文件已经从 `graphwar_life_manager` 引进来了，
 // 本模块的同名常量与它同值（`graphwar_plane_pos_manager::tests` 里有一条断言钉住这一点）。
@@ -816,290 +814,32 @@ pub struct ObstacleManagerSlot {
 // 3b. 两个"我方形状"的表（**不是**原版的类型）
 // ---------------------------------------------------------------------------
 
-/// 函数槽表：**我方形状**，接的是原版 `GraphwarFunctionManager` 的那几个入口
-/// （`fixtures/name_to_addr.tsv`：`set_function` `0x455e30`、`get_function` `0x455b60`、
-/// `get_function_text` `0x4565f0`、`set_function_active_tick` `0x456b80`、
-/// `set_function_points` `0x456810`、`get_active_functions_on_tick` `0x456df0`）。
+/// 函数槽表：**我方形状**的类型名 —— **定义已经搬回原版模块**（T49 / `task-45`）。
 ///
-/// **实证到的三条**（`观测`）：
+/// 原版把行为写成 `GraphwarFunctionManager` 自己的 6 个方法（`impl` 就在
+/// `src/graphwar_function_manager.rs`）；我方历史上写在**本文件**，违反 `AGENTS.md` §4
+/// 「文件名就是证据」——T36 审计（`docs/06` §86.4）把这列成第 ② 处。
 ///
-/// * 这个模块**没有** `subscribe_to_events_event_handler`（`docs/02` §18.5 的方法表），
-///   构造路径（arm64 `0x419c80` / x86 `0x5236e0`，`GraphwarClient::new` 在 `0x517b9f` 调它、
-///   紧接着 `add_module::<GraphwarFunctionManager>` `0x469db0`）体内**没有任何**
-///   `EventHandler::subscribe`（`0x3d38f0`）调用；
-/// * ⚠️ **2026-11 任务 22 就地更正（`AGENTS.md` §0.6）**：上一轮这里写「四个 `set_*` 体内
-///   **没有** `GraphwarEventQueue::add_event`（`0x3d3530`）⇒ 它**不发事件**」。**这条是错的**，
-///   而且是 `AGENTS.md`「间接调用」那个坑的复发：`add_event` 在 x86 上是**经 GOT 槽
-///   `0x9bac80` 的间接调用**，只扫 `call rel32` 会漏：
+/// 现在：类型与 6 个方法体都在 [`crate::graphwar_function_manager::FunctionTable`]，
+/// 本文件只 `pub use` 再导出 ⇒ **调用方（`net_events_class`、交互断言、`assemble_check.gd`）
+/// 一字未改**（路径 `root_wiring::FunctionTable` 不变）。
 ///
-///   ```text
-///   x86 0x455e30 set_function            0x45638f  call qword [rip+..] slot 0x9bac80 -> 0x3d3530
-///   x86 0x456810 set_function_points     0x4569e1  同上
-///   x86 0x456b80 set_function_active_tick 0x456ce1 同上
-///   arm64 0x488a9c set_function          0x488e30  bl 0x3d7a40（.symtab 名 = add_event）
-///   ```
+/// ⚠️ 搬过去时按指令补上了"发方向"：三个 `set_*` 各发一条事件（tag 35 / 36 / 37，
+/// 立即数见那个文件的 §七）。**但档位字符串仍是 `layout`**：它被
+/// `client/tools/assemble_check.gd:144` 与 `TIER_TALLY` 钉死，本任务禁止改 `client/**`
+/// ⇒ 升档要两边同时改（登记在 `docs/06` §99 遗留）。
+pub use crate::graphwar_function_manager::FunctionTable;
+
+/// 障碍表：**我方形状**的类型名，**定义已经搬回原版模块**（T49 / `task-45`）。
 ///
-///   `set_function` 发的是 **tag `0x23` = 35 = `FunctionInfo`**（arm64 `0x488e18`
-///   `mov x8,#0x23; movk x8,#0x8000,lsl #48`，载荷 = `(id, 文本, tick)`），
-///   与 `docs/02-module-map.md:524` 对 `0x455e30` 的既有记载一致。
-/// * ⇒ 本表的 `outbox` **不再声明"恒空"**：它现在只装"我方探针显式写进去的东西"，
-///   **不**代表原版不发事件。
+/// 原版把"掩膜 + 排队销毁"这两个状态写成 `GraphwarObstacleManager` 自己的方法
+/// （`src/graphwar_obstacle_manager.rs`，`impl` 就在那个文件里）；我方历史上写在**本文件**，
+/// 违反 `AGENTS.md` §4「文件名就是证据」——T36 审计（`docs/06` §86.4）把这列成第 ① 处。
 ///
-/// ⚠️ **2026-11 任务 28 就地更正**：上面这条更正只把**注释**改对了，**代码没接**——
-/// 原版那 3 条 `FunctionInfo` 类事件我方一条都没写进 `outbox`。这一条正是
-/// [`FunctionManagerSlot`] 的档位停在 `layout` 而不是 `wired` 的原因（见那个槽的文档）。
-/// 要升档就把 `set_function` / `set_function_points` / `set_function_active_tick` 的
-/// 发事件补齐（载荷按 §46.0：`set_function` 是 `(id, 文本, tick)`）。
-///
-/// ⇒ 所以 `subscribed` 恒空是"正面证据"（真的不订阅），
-/// 正对照见 `addr_probe.py dis 0x454790`（life）等四个 manager 的 `new`，
-/// 同一条命令能看到它们的 `subscribe` 调用。
-#[derive(Debug)]
-pub struct FunctionTable {
-    /// `soldier_id → token 序列`（原版一格一士兵，`docs/98` §3.1）。
-    slots: HashMap<u32, Vec<Token>>,
-    /// `set_function_active_tick` 写进去的那个 tick。
-    active_tick: HashMap<u32, u32>,
-    /// `set_function_points` 写进去的终点（`FunctionPoints.end_x/end_y`）。
-    points: HashMap<u32, (f64, f64)>,
-    /// 订阅名（恒空 = 原版这一型也不订阅，**正面证据**，见上面的类型文档）。
-    pub subscribed: Vec<&'static str>,
-    /// 发件箱。**原版会发**（3 个 `set_*` 各一条 `FunctionInfo` 类事件），
-    /// 我方**还没接**发方向（档位因此是 `layout`，见 [`FunctionManagerSlot`]）；
-    /// 这里只装探针显式写进去的东西。
-    pub outbox: Vec<Event>,
-}
-
-impl Default for FunctionTable {
-    fn default() -> Self {
-        Self {
-            slots: HashMap::new(),
-            active_tick: HashMap::new(),
-            points: HashMap::new(),
-            subscribed: Vec::new(),
-            outbox: Vec::new(),
-        }
-    }
-}
-
-impl FunctionTable {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// `set_function`（`0x455e30`）：写一格。
-    pub fn set_function(&mut self, soldier_id: u32, tokens: Vec<Token>) {
-        self.slots.insert(soldier_id, tokens);
-    }
-
-    /// `get_function`（`0x455b60`）：读一格。
-    pub fn get_function(&self, soldier_id: u32) -> Option<&[Token]> {
-        self.slots.get(&soldier_id).map(|v| v.as_slice())
-    }
-
-    /// `get_function_text`（`0x4565f0`）：那一格的文本（走 `math_function::to_text`，
-    /// 与 `Match::function_text` 同一个函数，`docs/119` 1032/1032 对拍）。
-    pub fn get_function_text(&self, soldier_id: u32) -> Option<String> {
-        self.get_function(soldier_id).map(math_function::to_text)
-    }
-
-    /// `set_function_active_tick`（`0x456b80`）：记下这条曲线从哪个 tick 起在场。
-    pub fn set_function_active_tick(&mut self, soldier_id: u32, tick: u32) {
-        self.active_tick.insert(soldier_id, tick);
-    }
-
-    /// 读回 `active_tick`（原版没有单独的 getter，`get_active_functions_on_tick` 内联读它）。
-    pub fn active_tick_of(&self, soldier_id: u32) -> Option<u32> {
-        self.active_tick.get(&soldier_id).copied()
-    }
-
-    /// `set_function_points`（`0x456810`）：记下曲线终点。
-    pub fn set_function_points(&mut self, soldier_id: u32, x: f64, y: f64) {
-        self.points.insert(soldier_id, (x, y));
-    }
-
-    /// 读回终点。
-    pub fn points_of(&self, soldier_id: u32) -> Option<(f64, f64)> {
-        self.points.get(&soldier_id).copied()
-    }
-
-    /// `get_active_functions_on_tick`（`0x456df0`）的**在场判据**（`docs/16-client.md` §42.2
-    /// 的三条指令级结论）：`tick > active_tick` **严格**大于，且
-    /// `30*(tick-active_tick) < points.len() + 1800`。
-    ///
-    /// 本表不存点（曲线点由 `FunctionDrawer` 那边持有），所以这里用 `points_of` 只有终点
-    /// ⇒ **点的条数按 0 算**，窗口 = `1800/30 = 60` tick。缺的证据写在
-    /// `docs/16-client.md` §43 的"仍是推断"表里。
-    pub fn get_active_functions_on_tick(&self, tick: u32) -> Vec<u32> {
-        let mut ids: Vec<u32> = self
-            .active_tick
-            .iter()
-            .filter(|&(_id, &active)| {
-                if tick <= active {
-                    return false;
-                }
-                let d = tick - active;
-                30u64 * d as u64 <= 1800
-            })
-            .map(|(&id, _)| id)
-            .collect();
-        ids.sort_unstable();
-        ids
-    }
-
-    pub fn len(&self) -> usize {
-        self.slots.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.slots.is_empty()
-    }
-
-    /// 取走发件箱。⚠️ 我方**还没接**发方向（原版会发，见类型文档与 [`FunctionManagerSlot`]），
-    /// 所以这里现在恒空；"恒空"是**我方缺陷**，不是原版行为。
-    pub fn take_outbox(&mut self) -> Vec<Event> {
-        std::mem::take(&mut self.outbox)
-    }
-
-    /// 发件箱里有几条（现在恒 0 = 发方向未接，见类型文档）。
-    pub fn outbox_len(&self) -> usize {
-        self.outbox.len()
-    }
-}
-
-/// 障碍表：**我方形状**，接的是原版 `GraphwarObstacleManager` 的那几个入口
-/// （`fixtures/name_to_addr.tsv`：`new` `0x3f2360`、`add_obstacle` `0x3f17a0`、
-/// `destroy_obstacle` `0x3f1b30`、`clear_obstacles` `0x3f19a0`、
-/// `queue_destroy_obstacle` `0x3f20f0`、`handle_tick_event` `0x3f1d30`、
-/// `is_obstacle` `0x3f15b0`/`GraphwarObstacleData::draw_circle` `0x3f11e0`）。
-///
-/// 掩膜本身不是这里实现的：光栅化用 `plane::rasterize`（与 `0x3f11e0` 同构，
-/// 已被 unicorn 对拍过），单点查询用 `plane::is_occupied`（与 `0x3f15b0` 同构）。
-///
-/// **实证到的**（x86 2026-08-28，`观测`）：
-///
-/// ```text
-// new                    0x3f2360  末尾 subscribe 'tick_event'（len 0xa）⇒ 只订阅 1 条
-// add_obstacle           0x3f17a0  0x3f1876 0x7fff…+0x29 → tag 0x…28 = 40 AddObstacle
-// destroy_obstacle       0x3f1b30  0x3f1c09 0x7fff…+0x2a → tag 0x…29 = 41 DestroyObstacle
-// queue_destroy_obstacle 0x3f20f0  0x3f22b2 movabs 0x800000000000002a = 42 QueueDestroyObstacle
-// handle_tick_event      0x3f1d30  取 event[+8]（TickEvent 的 tick），按 0x18 步长遍历到期项，
-//                                  逐个调 destroy_obstacle（0x3f1dd0）
-// ```
-///
-/// ⚠️ 到期时刻的算法：`queue_destroy_obstacle` 里那张表**没逐条解**；
-/// 本层用 `docs/44` 实测的 165 tick（`game.rs::DESTROY_DELAY_TICKS`）当延迟，
-/// 这是**推断**（缺的证据：`0x3f20f0` 里那个加法）。
-pub struct ObstacleTable {
-    mask: Vec<u8>,
-    /// 还在场上的障碍（中心 + 半径，与 `plane::rasterize` 的入参同口径）。
-    obstacles: Vec<(f64, f64, f64)>,
-    /// 排队待销毁：`(到期 tick, x, y, 半径)`。
-    pending: Vec<(i64, f64, f64, f64)>,
-    /// 订阅名（`tick_event`，来自 `new` 的那条 `subscribe`）。
-    pub subscribed: Vec<&'static str>,
-    /// 发件箱。
-    pub outbox: Vec<Event>,
-}
-
-impl Default for ObstacleTable {
-    fn default() -> Self {
-        Self {
-            mask: empty_mask(),
-            obstacles: Vec::new(),
-            pending: Vec::new(),
-            subscribed: vec!["tick_event"],
-            outbox: Vec::new(),
-        }
-    }
-}
-
-impl ObstacleTable {
-    /// `new`（`0x3f2360`）：空掩膜 + 空表 + 一条订阅。
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// `add_obstacle`（`0x3f17a0`）：往掩膜里画实心圆（`fill = 0x00`）+ 发 `AddObstacle`(40)。
-    pub fn add_obstacle(&mut self, x: f64, y: f64, radius: f64) {
-        rasterize(&mut self.mask, x, y, radius, 0x00);
-        self.obstacles.push((x, y, radius));
-        self.outbox.push(Event::AddObstacle);
-    }
-
-    /// `is_obstacle`（`0x3f15b0`）：单点碰撞。**越界算命中**（`plane::is_occupied` 的口径）。
-    pub fn is_obstacle(&self, x: f64, y: f64) -> bool {
-        is_occupied(&self.mask, x, y)
-    }
-
-    /// `queue_destroy_obstacle`（`0x3f20f0`）：登记一条**延迟**销毁 + 发
-    /// `QueueDestroyObstacle`(42)。延迟取 `DESTROY_DELAY_TICKS`（165，**推断**，见类型文档）。
-    pub fn queue_destroy_obstacle(&mut self, now_tick: i64, x: f64, y: f64, radius: f64) {
-        self.pending.push((now_tick + DESTROY_DELAY_TICKS, x, y, radius));
-        self.outbox.push(Event::QueueDestroyObstacle);
-    }
-
-    /// `destroy_obstacle`（`0x3f1b30`）：立刻挖洞（把掩膜刷回 `0xFF`）+ 发 `DestroyObstacle`(41)。
-    pub fn destroy_obstacle(&mut self, x: f64, y: f64, radius: f64) {
-        rasterize(&mut self.mask, x, y, radius, 0xFF);
-        self.obstacles.retain(|&(ox, oy, or)| !(ox == x && oy == y && or == radius));
-        self.outbox.push(Event::DestroyObstacle);
-    }
-
-    /// `clear_obstacles`（`0x3f19a0`）：整张掩膜刷空 + 发 `ClearObstacles`(39)。
-    pub fn clear_obstacles(&mut self) {
-        self.mask = empty_mask();
-        self.obstacles.clear();
-        self.pending.clear();
-        self.outbox.push(Event::ClearObstacles);
-    }
-
-    /// `handle_tick_event`（`0x3f1d30`）：判别值必须是 **0**（`tick_event`）；
-    /// 把 `due <= now` 的排队项逐个 `destroy_obstacle` 掉，返回这次销毁的坐标。
-    pub fn handle_tick_event(&mut self, tag: u16, now: i64) -> Result<Vec<(f64, f64)>, ()> {
-        if tag != TICK_EVENT_TAG {
-            return Err(());
-        }
-        let mut due: Vec<(i64, f64, f64, f64)> = Vec::new();
-        self.pending.retain(|e| {
-            if e.0 <= now {
-                due.push(*e);
-                false
-            } else {
-                true
-            }
-        });
-        due.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-        let mut out = Vec::with_capacity(due.len());
-        for (_, x, y, r) in due {
-            self.destroy_obstacle(x, y, r);
-            out.push((x, y));
-        }
-        Ok(out)
-    }
-
-    /// 掩膜（只读；验收/单测用）。
-    pub fn mask(&self) -> &[u8] {
-        &self.mask
-    }
-
-    pub fn obstacles(&self) -> &[(f64, f64, f64)] {
-        &self.obstacles
-    }
-
-    /// 还在排队的销毁条数。
-    pub fn pending_len(&self) -> usize {
-        self.pending.len()
-    }
-
-    pub fn take_outbox(&mut self) -> Vec<Event> {
-        std::mem::take(&mut self.outbox)
-    }
-
-    pub fn outbox_len(&self) -> usize {
-        self.outbox.len()
-    }
-}
+/// 现在：类型与 6 个方法体都在 [`crate::graphwar_obstacle_manager::ObstacleTable`]，
+/// 本文件只 `pub use` 再导出 ⇒ **调用方（`net_events_class`、交互断言、`assemble_check.gd`）
+/// 一字未改**（路径 `root_wiring::ObstacleTable` 不变）。
+pub use crate::graphwar_obstacle_manager::ObstacleTable;
 
 // ---------------------------------------------------------------------------
 // 4. 演示数据（**我方选择**：不是原版的对局数据）
@@ -1682,13 +1422,18 @@ impl RootWiring {
         }
 
         // ③ ObstacleManager：`add_obstacle` → `is_obstacle` → 排队销毁 → 到期挖洞
+        //
+        // T49：`queue_destroy_obstacle` 的键**就是实参 tick**（原版 `0x3f20fe`，体内无加法）
+        // ⇒ 探针直接登记 `165`，于是 `164` 什么也不销毁、`165` 销毁 1 条。
+        // 期望字符串（本函数末尾的 `expected_selftest` 与 `client/tools/assemble_check.gd`）
+        // 因此**一个字都不用改**。
         if let Some(obstacle) = self.obstacle_manager() {
             let mut obstacle = obstacle.borrow_mut();
             obstacle.table.clear_obstacles();
             obstacle.table.add_obstacle(0.0, 0.0, 1.0);
             out.push(("obstacle.hit_after_add", obstacle.table.is_obstacle(0.0, 0.0).to_string()));
             out.push(("obstacle.hit_far", obstacle.table.is_obstacle(20.0, 12.0).to_string()));
-            obstacle.table.queue_destroy_obstacle(0, 0.0, 0.0, 1.0);
+            obstacle.table.queue_destroy_obstacle(165, 0.0, 0.0, 1.0);
             out.push(("obstacle.pending", obstacle.table.pending_len().to_string()));
             let early = obstacle.table.handle_tick_event(TICK_EVENT_TAG, 164).map(|v| v.len()).unwrap_or(0);
             out.push(("obstacle.due_164", early.to_string()));
@@ -2320,12 +2065,11 @@ pub struct KernelBus {
     queue: Rc<RefCell<GraphwarEventQueue>>,
     /// 容器（22 个 manager，原版 `GraphwarBackend +0x220` 的那个 `Rc<RefCell<…>>`）。
     wiring: RootWiring,
-    /// 事件名 → 订阅者个数（原版 `GraphwarEventHandler` 里那些 `Vec<Box<dyn Fn(&GraphwarEvent)>>`）。
-    subscribers: HashMap<&'static str, usize>,
-    /// 已经投递给本地订阅者的事件（观测点；按投递顺序）。
-    delivered: Vec<Event>,
-    /// `pump()` 被调过几次（观测点）。
-    pumps: i64,
+    /// **原版那两条函数的归属地**（T49 搬回 `src/graphwar_event_handler.rs`）：
+    /// `subscribe_to_event`（`0x3d38f0`）的订阅表 + `process_events`（`0x3d3630`）的投递泵。
+    ///
+    /// 本层剩下的 `frames` / `ticks` / `probes` / `clock_override` 才是**我方接线**。
+    handler: GraphwarEventHandler,
     /// [`KernelBus::drive_frame`] 被调过几次（= 帧数，观测点）。
     frames: i64,
     /// `tick()`（`GraphwarGameClient::tick`，x86 `0x518240`）累计被调过几次（观测点）。
@@ -2355,59 +2099,43 @@ impl KernelBus {
         &self.wiring
     }
 
-    /// 订阅一个事件名（= `GraphwarEventHandler::subscribe_to_event` 的**登记**那一半）。
+    /// 订阅一个事件名 —— **薄转发**到 [`GraphwarEventHandler::subscribe_to_event`]
+    /// （原版 `0x3d38f0`，T49 把方法体搬回 `src/graphwar_event_handler.rs`）。
     ///
     /// 名字必须在 `0x3d38f0` 解出的那张表里（[`crate::events::DISPATCH_NAME_TAGS`]），
     /// 否则返回 `false`（原版那 6 条订阅名全部在表里，见 `docs/16` §46）。
     pub fn subscribe(&mut self, name: &str) -> bool {
-        match crate::events::DISPATCH_NAME_TAGS.iter().find(|(n, _)| *n == name) {
-            Some((n, _)) => {
-                *self.subscribers.entry(n).or_insert(0) += 1;
-                true
-            }
-            None => false,
-        }
+        self.handler.subscribe_to_event(name)
     }
 
-    /// 某个事件名上挂了几个订阅者。
+    /// 某个事件名上挂了几个订阅者（转发）。
     pub fn subscriber_count(&self, name: &str) -> usize {
-        self.subscribers.get(name).copied().unwrap_or(0)
+        self.handler.subscriber_count(name)
     }
 
-    /// 订阅表原样给出（`(名字, 个数)`，按名字排序 —— `HashMap` 序不可依赖）。
+    /// 订阅表原样给出（`(名字, 个数)`，转发）。
     pub fn subscribers(&self) -> Vec<(&'static str, usize)> {
-        let mut out: Vec<(&'static str, usize)> =
-            self.subscribers.iter().map(|(k, v)| (*k, *v)).collect();
-        out.sort_unstable_by_key(|(k, _)| *k);
-        out
+        self.handler.subscribers()
     }
 
-    /// **把出站队列里的事件投递给本地订阅者**（原版 `process_events` 的位置）。
+    /// **把出站队列里的事件投递给本地订阅者** —— **薄转发**到
+    /// [`GraphwarEventHandler::process_events`]（原版 `0x3d3630`；T49 搬回原版模块）。
     ///
     /// 返回值 = 这一次真正投递出去的事件（按队列顺序）。只有**有人订阅**的事件才会被记下来，
-    /// 没订阅的照原版口径丢掉（原版 `process_events` 也只调订阅表里有的那些）。
+    /// 没订阅的照原版口径丢掉。
     pub fn pump(&mut self) -> Vec<Event> {
-        self.pumps += 1;
         let drained = self.queue.borrow_mut().send_buffer();
-        let mut out = Vec::new();
-        for ev in drained {
-            let subscribed = dispatch_name(ev).is_some_and(|n| self.subscribers.contains_key(n));
-            if subscribed {
-                self.delivered.push(ev);
-                out.push(ev);
-            }
-        }
-        out
+        self.handler.process_events(drained)
     }
 
-    /// 已投递事件（按投递顺序）。
+    /// 已投递事件（按投递顺序，转发）。
     pub fn delivered(&self) -> &[Event] {
-        &self.delivered
+        self.handler.delivered()
     }
 
-    /// `pump()` 被调过几次。
+    /// `pump()` 被调过几次（转发）。
     pub fn pumps(&self) -> i64 {
-        self.pumps
+        self.handler.pumps()
     }
 
     /// 队列里还压着几条（没 `pump` 之前）。
@@ -2597,12 +2325,11 @@ impl KernelBus {
 }
 
 /// 事件 → `0x3d38f0` 那张表里的派发名（没有名字的两条 = `GameHeartbeat` / `VersionInfo`）。
-pub fn dispatch_name(event: Event) -> Option<&'static str> {
-    crate::events::DISPATCH_NAME_TAGS
-        .iter()
-        .find(|(_, e)| *e == event)
-        .map(|(name, _)| *name)
-}
+///
+/// **T49**：函数体搬到 [`crate::graphwar_event_handler::dispatch_name`]（它属于
+/// `GraphwarEventHandler` 那张订阅表的反向索引，不是接线层的东西）；这里 `pub use`
+/// 再导出，老路径 `root_wiring::dispatch_name` 不变。
+pub use crate::graphwar_event_handler::dispatch_name;
 
 thread_local! {
     /// 本线程那条事件通道（节点层 [`crate::_scaffold::entity_drawer_class`] 用它）。
@@ -2630,9 +2357,7 @@ pub fn install_kernel_bus() -> Rc<RefCell<KernelBus>> {
     let bus = Rc::new(RefCell::new(KernelBus {
         queue,
         wiring,
-        subscribers: HashMap::new(),
-        delivered: Vec::new(),
-        pumps: 0,
+        handler: GraphwarEventHandler::new(),
         frames: 0,
         ticks: 0,
         probes: 0,
