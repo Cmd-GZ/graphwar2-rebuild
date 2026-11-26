@@ -137,8 +137,8 @@ headless     14 个 `client/tools/*_check.gd`（`extends SceneTree`）合计 **1
 
 | 档 | 内容 | 备注 |
 |---|---|---|
-| **Ａ 缺工程** | ① **客户端像素保真**：回放三屏有真值（`docs/06` §53/§54）——`replay_lobby` 4.114%（只差列表行）、`replay_play` 41.330%、`replay_end` 52.460%；静态屏（战役选择/关卡弹窗）**还没拍过** | **当前主线**（t4/t5/t6 在做）；判据 = 预注册门槛 + 元素 bbox |
-|  | ② `client/src/screens/*.gd` **≈6,062 行**仿制流程；控制器要迁回 Rust（按原模块名） | 量大，按切片推进 |
+| **Ａ 缺工程** | ① **客户端像素保真**：回放三屏有真值（`docs/06` §53/§54）——`replay_lobby` 4.114%（只差列表行）、`replay_play` 41.330%（**2026-11-06 的旧读数，现为 0 px**）、`replay_end` 52.460%；静态屏（战役选择/关卡弹窗）**还没拍过** | **当前主线**（t4/t5/t6 在做）；判据 = 预注册门槛 + 元素 bbox |
+|  | ② `client/src/screens/*.gd` 现 **≈6 397 行**（原 6 950；已删手抄节点树 ≈1 150 行）；控制器要迁回 Rust（按原模块名） | 量大，按切片推进 |
 |  | ③ **1 个 manager 仍是 `assembled`**（**19 wired / 2 layout / 1 assembled / 0 stub = 22**）——余 1 格 = GSM，卡 `src/game.rs` 禁区 | 见 `docs/161` |
 |  | ~~④ `ShotLifecycle` 文件归属~~ **2026-11-26 已结案**（按 `Location` 证据搬进 `graphwar_game_state_manager.rs`） | `LevelRules` 仍无归属证据，留在原地 |
 | **Ｂ 缺样本（易得）** | 目前**空**（Level 18–20 / flip=1 / 部分命中 都已补齐） | 找人打一局即可 |

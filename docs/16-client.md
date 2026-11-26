@@ -60,13 +60,13 @@
 | 项 | 结果 |
 |---|---|
 | 工程位置 | `gw2-rebuild/client/`（Godot **4.7.2**，与游戏同版本） |
-| 界面 | **15/15 全部实现**（7 个基础界面 + 8 个弹窗），可按原版路由互相跳转 |
+| 界面 | 15/15 能启动、可按原版路由跳转（**行为口径**）。⚠️ **源码口径**：8 份是原版 `.tscn`（逐字节），**7 份仍是 12 行存根 + `.gd::build()` 手搭节点树**（`main_menu`/`player_screen`/`endgame_pop_up`/`confirm_exit_pop_up`/`connecting_pop_up`/`disconnected_pop_up`/`join_ip_pop_up`） |
 | 能否启动 | `godot --headless --path client --quit` → **无错误、退出码 0** |
 | 能否开一局 | ✅ 设置对局 → 加 Bot → Start → 键盘输入函数 → Fire → 画弹道 → 命中判定 → 结算框 |
-| 自动验收 | `bash run.sh selftest` → **93 条断言全绿**（退出码 0） |
+| 回归保护 | `bash run.sh selftest` → **717 条全绿**（退出码 0）⚠️ 这是**回归保护，不是复原证据**（`AGENTS.md` §0.2） |
 | 节点树导出 | `bash run.sh dump` → 每个节点一行（格式仿 `16-client.md` 的 `@@N` 行，含 pos/size） |
 | 逐界面截图 | `bash run.sh shots`（Xvfb + OpenGL）→ 11 张 PNG，用于肉眼核对布局 |
-| 游戏资产 | **0 字节**：无 `.tscn`/`.gd`/`.ttf`/`.svg` 原件，无字体文件，图标全部现画 |
+| 游戏资产 | 历史读数「**0 字节**」**已作废**：现 `client/` 里有 **`recovered-src` 的原版 `.tscn`/`.gd`/`.tres` 字节**（截至 2026-11-26：原版 `.tscn` **8 份**、原版 `.gd` 视图脚本 **42 份**，全部逐字节） |
 | 界面逻辑归属 | 仍在 Rust（`16-client.md` §2.3）；本工程通过 `core_bridge.gd` 这一层接缝调用内核 |
 | 弹道 | ~~内核只暴露 `ping()`，所以是界面预览~~ ✅ **已接上**（`16-client.md`）：`client/gw2rebuild.gdextension` 已落地，`GwCore.compute_path()` 的 `source` 现在是 **`kernel`**，PlayScreen 画的就是内核采样器的输出；⚠️ 新增 `.gdextension` 后必须跑一次 `--import` 才会被扫描到 |
 

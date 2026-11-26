@@ -1106,7 +1106,7 @@ python3 tools/residual_fold.py --fold /tmp/fold.jsonl --attrib /tmp/b.jsonl --ta
 | `fire` 轴（`--drive fire --policy default`） | 内容 **647** · 种类 **1075** · 死亡 **366/385** · 挖洞 **207/294** —— `--check-baseline --axis fire` **全部一致** |
 | `batch` 轴（`--drive batch --policy default`） | 同上 **647 / 1075 / 366-385 / 207-294** —— `--check-baseline --axis batch` **全部一致** |
 | `batch_conv`（`--policy strict`） | 内容 **637** · 种类 **1075** —— 与基线一致 |
-| `python3 tools/coverage_matrix.py --check` | **OK**（527 函数；逐位 88 / 观测 439 / 推断 0） |
+| `python3 tools/coverage_matrix.py --check` | **OK**（527 函数；当时读数 逐位 88 / 观测 439 —— 现值 **89 / 438**，且是**模块级**档位加权，见 §85/§87） |
 | `python3 tools/check_doc_refs.py` | 退出码 **0** |
 | `src/`、`client/`、`dispatch/`、`fixtures/guardrails.json` | **零改动** |
 
@@ -4108,7 +4108,7 @@ EffectInfo(Explosion).pos == (start_x, start_y)      28 / 28（逐位）
 | `fire` 轴 | 内容 **647 / 1080**、种类 **1075** |
 | `batch` 轴 | 内容 **647 / 1080**、种类 **1075** |
 | `batch_conv`（`--policy strict`） | 内容 **637 / 1080**、种类 **1075** |
-| `tools/coverage_matrix.py --check` | **OK**（527 个函数 / 78 模块，逐位 88 / 观测 439） |
+| `tools/coverage_matrix.py --check` | **OK**（527 个函数 / 78 模块；当时 88 / 439 —— 现值 **89 / 438**，**模块级**口径） |
 | `tools/check_doc_refs.py` | **rc=0**（无死链） |
 | 正对照 | 30 发含 NaN 里 **17 发**双方逐位一致（含 11 批发全批 `content_ok`）；另 1260 发无 NaN |
 
@@ -4748,7 +4748,7 @@ python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire \
 | `batch_conv` 轴 | `batch_conv --policy strict` + `--axis batch_conv` | **1080 / 637 / 1075 / 347-385 / 207-294** —— 全部一致 |
 | 大文件闸 | `merge_check.py --self-test` | **10/10** 通过（三个阈值各自生效 + `--allow-large` 正反两面） |
 | 回归 | `cargo test --offline` | **1693 passed / 0 failed**（71 个 test 二进制 + 1 个 doc-tests 的 `test result:` 行求和） |
-| 覆盖率 | `coverage_matrix.py --check` | **OK**（原版可归属 527 个函数，逐位 88 / 观测 439 / 推断 0 / 未做 0） |
+| 覆盖率 | `coverage_matrix.py --check` | **OK**（原版可归属 527 个函数；当时 88 / 439 / 0 —— 现值 **89 / 438 / 0**，**模块级**口径 / 未做 0） |
 | 文档引用 | `check_doc_refs.py` | **rc=0**（无死链） |
 | 闸门自身耗时 | `merge_check.py --branch <分支> --base <起点>` | **0.11 s**（`--run-tests` 之外，远低于 1 s 上限） |
 
