@@ -134,6 +134,63 @@ impl GwEndGame {
         d
     }
 
+    /// **`0x3da130`（`FN_SHOW_VICTORY`）的节点表**：它到底去 `.tscn` 里取哪几个节点。
+    ///
+    /// 每一项 = `{name, fn, numbered, evidence}`：
+    /// * `name` —— `.rodata` 里的节点名字面量（**观测**：串 + 取节点调用点，见
+    ///   [`crate::graphwar_play_screen_control::OTHER_NODES`]）；
+    /// * `fn` —— 取这个节点的原版函数地址（`0x3da130` 或 `0x3d9000`；**观测**）；
+    /// * `numbered` —— 该名字是**前缀**（原版 `.tscn` 里是 `VictoryPlayerContainer1..10`，
+    ///   `.rodata` 里既有裸名又有 `…Container1` 两种形态）⇒ **推断**，缺的证据是那处
+    ///   `format`/下标拼接的指令；
+    /// * `evidence` —— `observed` / `inferred`。
+    ///
+    /// 界面侧（`client/src/screens/endgame_pop_up.gd::build()`）拿这张表去**原版 `.tscn`**
+    /// 里逐个取节点：这就是"`FN_SHOW_VICTORY` 接上节点层"那条接线 ——
+    /// 原版这两个函数写的就是这几个节点，我方写的也必须是**同一批同名**节点，
+    /// 少一个就 `push_error`（不许静默退化）。
+    #[func]
+    fn show_victory_nodes(&self) -> VarArray {
+        use crate::graphwar_play_screen_control::{
+            FN_SHOW_VICTORY, OTHER_NODES, VICTORY_ICONS, VICTORY_LABELS,
+        };
+        let mut arr = VarArray::new();
+        let mut push = |name: &str, f: u64, numbered: bool, evidence: &str| {
+            let mut d = VarDictionary::new();
+            d.set("name", &GString::from(name));
+            d.set("fn", f as i64);
+            d.set("numbered", numbered);
+            d.set("evidence", &GString::from(evidence));
+            arr.push(&d);
+        };
+        // 先给两条横幅 + 三个头像层（`VICTORY_LABELS` / `VICTORY_ICONS` 是 `0x3da130` 的
+        // 直接证据：函数里就是这 5 个名字 + `VictoryPlayerContainer` 前缀）。
+        for n in VICTORY_LABELS {
+            push(n, FN_SHOW_VICTORY, false, "observed");
+        }
+        for n in VICTORY_ICONS {
+            push(n, FN_SHOW_VICTORY, false, "observed");
+        }
+        // `OTHER_NODES` 里剩下的（`VictoryPlayerContainer` 前缀 + `VictoryPlayerContainer1`）。
+        for (n, f) in OTHER_NODES {
+            if n.starts_with("VictoryPlayerContainer") {
+                let numbered = n == "VictoryPlayerContainer";
+                push(n, f, numbered, if numbered { "inferred" } else { "observed" });
+            }
+        }
+        arr
+    }
+
+    /// `0x3da130` / `0x3d9000` 的地址（给界面/自检打日志用，值就是常量本身）。
+    #[func]
+    fn show_victory_addrs(&self) -> VarDictionary {
+        use crate::graphwar_play_screen_control::{FN_READY_LABELS, FN_SHOW_VICTORY};
+        let mut d = VarDictionary::new();
+        d.set("show_victory", FN_SHOW_VICTORY as i64);
+        d.set("ready_labels", FN_READY_LABELS as i64);
+        d
+    }
+
     /// `.rodata` 里那 6 条胜负横幅字面量（**观测**，顺序与原版一致）。
     /// 给自检对拍用 —— 界面只经 [`Self::label_texts`] 取文本。
     #[func]

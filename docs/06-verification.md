@@ -16617,3 +16617,213 @@ $MAIN/.reference/venv/bin/python tools/bit_exact_attrib.py --json f.jsonl --chec
    本轮**没有重拍真帧**。⇒ 档位是 **观测（转录）**，不是"本轮新观测"。
    若要把 E01 升成"本轮亲自量到的像素"，必须重跑 `tools/frame_capture.py --side original`（私有 Xvfb），
    本轮没做（时间/机器占用都给了别的链路）。
+
+---
+
+## 97. T47：客户端**最后 7 份 12 行存根**全部装成原版 `.tscn` —— `client/scenes/screens/` 16 份**逐字节全等**、**0 份存根**、手抄节点树净删 **391 行**；`FN_SHOW_VICTORY 0x3da130` 那条死链接上节点层（2026-11-26，任务 T47 / `task-44`）
+
+> 规格：`.agent-work/specs/T47-stub-screens.md`。前四轮（T41/T43/T44）已经把方法跑通并装上 9 份，
+> 本轮把**剩下的 7 份 12 行存根**装完：`main_menu` / `player_screen` / `endgame_pop_up` /
+> `confirm_exit_pop_up` / `connecting_pop_up` / `disconnected_pop_up` / `join_ip_pop_up`。
+
+### 97.0 一页结论
+
+| 问题 | 答案 |
+|---|---|
+| 7 份装了几份 | **7 / 7**（每份 `cmp` 与 `recovered-src/` **逐字节相同**） |
+| `client/scenes/screens/` 里 12 行存根还剩几个 | **0 个**（16 份全部与原版逐字节相同，合计 **3 933 行 / 692 节点**） |
+| 手抄节点树共删多少行 | **净 −391 行**（`git diff --numstat`：删 **728** / 增 **337**；增的部分是"接线说明 + 节点句柄 + FN 接线"的注释与代码） |
+| `FN_SHOW_VICTORY 0x3da130` 接线 | **做了**（见 §97.4：内核出节点表 → GDScript 只按那张表取原版 `.tscn` 里的同名节点，取不到就 `push_error`） |
+| 门槛 | selftest **717/0/1skip**（missing=0 silent=0）、headless **1961/0**、cargo **1795/0/1ignored** / gdext **1917/0/1ignored**、三轴 **647/647/637** |
+| 像素 | **没有一处变差**：`menu` 0→**0**、`player_skins` 0→**0**、`match_ready` **0.0814 %**（L2 0）、`match_play` **0.3891 %**（L2 1）、`endgame_popup` **面板区 0 px**；`replay_play` 60 637→**60 367 px**（微降） |
+
+### 97.1 七份的上表（原版行数/节点数/按钮数 = `recovered-src` 的数，装完 `cmp` 必过）
+
+| 屏 | 原版 | 我方存根（装前） | `cmp` | 我方 `.gd` 变化（`git diff --numstat`） | 装的过程要点 |
+|---|---|---|---|---|---|
+| `main_menu.tscn` | 138 行 / 25 节点 / **4** 原生按钮 | 12 行 | **逐字节相同** | `main_menu.gd` 168 → **79**（−108 / +19，净 −89） | 删 `build()` 整棵 25 节点手抄树 + `_menu_button`/`_v_spacer`/`_h_spacer`；只留"版本号文本"这条我方推断逻辑（`ProjectSettings.application/config/version`，`docs/124` §2.3） |
+| `player_screen.tscn` | 473 / 64 / **3** | 12 行 | **逐字节相同** | `player_screen.gd` 472 → **354**（−228 / +110，净 −118） | 删静态骨架（`build()` 的 frame/header/body/TabContainer/右列/`SkinBlock`/`PendingBlock`）+ `_shop_page`；**留**动态格子填充（见 §97.5 遗留 1）+ 一个 `call_deferred` 补写（见 §97.6 坑①） |
+| `endgame_pop_up.tscn` | 349 / 69 / **2** | 12 行 | **逐字节相同** | `endgame_pop_up.gd` 236 → **237**（−153 / +154，净 +1） | 删 `build()` + `_victory_slot`/`_slot_texture`/`_expander`；改成"按 `0x3da130` 的节点表取句柄"（净行数几乎不变是因为注释写足了证据档） |
+| `confirm_exit_pop_up.tscn` | 176 / 31 / **4** | 12 行 | **逐字节相同** | `confirm_exit_pop_up.gd` 121 → **32**（−103 / +14，净 −89） | 删 `build()` + 4 个骨架小工具，整个文件只剩 `_ready()` 的 `font_divisor` |
+| `connecting_pop_up.tscn` | 159 / 28 / **3** | 12 行 | **逐字节相同** | `connect_popups.gd` 161 → **68**（−124 / +31，净 −93）；`connecting_pop_up.gd` 5 → **4** | 三份连接弹窗共用一份实现；删 `build()`/`_build_text_row`/`_build_button_row`/`_exit_command` + 4 个骨架小工具，只留 ①回车 = `join_join_ip` ②`current_text()` ③进屏给输入框焦点 |
+| `disconnected_pop_up.tscn` | 160 / 28 / **3** | 12 行 | **逐字节相同** | 同上（共用）；`disconnected_pop_up.gd` 5 → **4** | 同上 |
+| `join_ip_pop_up.tscn` | 172 / 31 / **4** | 12 行 | **逐字节相同** | 同上（共用）；`join_ip_pop_up.gd` 5 → **4** | 同上（`JoinIpIpLineEdit` 只有这一份有，节点名原版就是它） |
+
+`client/scenes/screens/` 合计：**15 × 12 行存根 → 16 份原件 / 3 933 行**，逐份 `cmp` 见 §97.7。
+
+### 97.2 别名层：又铺了 9 个 `.gd` 别名 + 1 份 `.tres`
+
+原版 `res://` 是**扁平**的（`.tscn` 里写 `path="res://VersionLabel.gd"`、`res://shop_theme.tres`），
+我方视图脚本住在 `res://src/views/`。沿用 T41 铺的那层别名（`docs/16` §80.1），本轮只补缺的：
+
+| 别名 | 内容 | 为什么 |
+|---|---|---|
+| `client/<Name>.gd` → `src/views/<Name>.gd`（**9 个新符号链接**） | `MainMenuButtonResize` `TitleSize` `VersionLabel` `PlayerNameLineEdit` `PlayerTabContainer` `ShowcaseMarginContainer` `UnlockButtonSize` `ShopButtonsSize` `HBoxVictoryIcon` | 这 9 份原版视图脚本本轮第一次被原版 `.tscn` 引用；`src/views/` 里前 8 份**早就有了**（T33 挂的），只有 `ShopButtonsSize.gd` 是**本轮新拷**（与 `recovered-src/` `cmp` 逐字节相同） |
+| `client/shop_theme.tres.remap` → `res://scenes/aliases/shop_theme.tres` | `recovered-src/shop_theme.tres` 的逐字节副本（118 行；内嵌的全是 `StyleBoxFlat`/`StyleBoxEmpty`，**没有**被导出器丢弃的字形图集 ⇒ `status=完整`） | `player_screen.tscn` 的三个网格 VBox 挂的是它 |
+
+### 97.3 四份"弹窗"装上后的结构实测（这些屏第一次有真值帧）
+
+`--flow connect` 两侧各采一次（私有 netns、串行），弹窗矩形 = 真帧实测的外框 `(243,386) 1434×383`：
+
+| 屏 | 弹窗区差异（3 帧） | 判读 |
+|---|---|---|
+| `join_ip` | 179 px（max\|Δ\|=255） | 差的是 **LineEdit 的光标/焦点态**（我方点进输入框，原版那一帧光标恰好在另一相位） |
+| `connecting` | 第 1/2 帧 **76 px**（max\|Δ\|=**9** = 抗锯齿级）；第 3 帧 15 958 px | 第 3 帧差的不是布局：**我方已经自己切到 `DisconnectedPopUp`**（原版仍停在 `Connecting...`）—— 这是 `docs/06` §69 早已记下的**我方实现差异**（我方没有真握手，见 §97.8 遗留 3），不是本轮引入 |
+| `disconnected` | 76 px（max\|Δ\|=**15**） | 抗锯齿级 |
+
+⚠️ 三屏的**整屏**差异（3 128~7 764 px）几乎全在弹窗之外（`y150..250` = 背后 `lan_lobby` 的房间行、
+`y1050..1150` = 大厅底部两颗按钮）——那两处属于 `lan_lobby` 屏，本轮没碰，也没有真值基线。
+
+### 97.4 `endgame_pop_up`：`FN_SHOW_VICTORY 0x3da130` 的**死链接上了**
+
+T33/T35 记的那条死链是：`src/graphwar_play_screen_control.rs` 里 `OTHER_NODES` 那张
+"节点名 → 归属函数"表**没有任何消费者**，而 `endgame_pop_up.gd` 那 211 行仿制控制器是
+自己拍节点名。本轮把两头接起来（**这不是新语义，是把已有的观测表接到节点层**）：
+
+| 步 | 做了什么 | 证据档 |
+|---|---|---|
+| ① | `src/_scaffold/endgame_class.rs::GwEndGame::show_victory_nodes()` 把 `OTHER_NODES` + `VICTORY_LABELS` + `VICTORY_ICONS` 搬给 GDScript：每项 `{name, fn, numbered, evidence}`，`fn` 就是 `0x3da130`/`0x3d9000` | 节点名与归属函数**观测**（串 + 取节点调用点）；`VictoryPlayerContainer` 是**前缀**（原版 `.tscn` 里是 `…Container1..10`）= **推断**（缺那处 `format`/下标拼接的指令） |
+| ② | `endgame_pop_up.gd::build()` **只按这张表**在原版 `.tscn` 里取节点；一个取不到就 `push_error`（不许静默退化） | 接线本身 |
+| ③ | 之后每次写入（`on_enter()` 写两条横幅 + 10×3 层贴图）都走这些句柄 | — |
+
+⇒ 于是"我方写的节点"与"原版 `0x3da130` 写的节点"是**同一批同名节点**；节点名少一个就会在
+selftest/headless 日志里吵。§97.5 的像素读数（面板区 **0 px**）是它没走样的旁证。
+**仍未做的**：函数体本身（`0x3da130` 的分支如何选横幅）没搬进 Rust —— 见 §97.8 遗留 2。
+
+### 97.5 门槛读数（全部本机自跑）
+
+| 门槛 | 读数 | 基线 | 判 |
+|---|---|---|---|
+| `cmp`（7 份 `.tscn` + 9 个别名 `.gd` + `ShopButtonsSize.gd` + `shop_theme.tres`） | 全部**逐字节相同** | — | ✓ |
+| `selftest` | **717 passed / 0 failed / 1 skipped**，`missing=0(claimed 0 / degraded 0 / silent 0)`，`code=0` | 717/0/1skip | ✓ 一条没掉 |
+| headless 14 脚本 | **1961 / 0**（244+117+96+235+367+132+24+116+96+233+66+57+155+23） | 1961/0 | ✓ |
+| `cargo test --offline` | **1795 passed / 0 failed / 1 ignored** | 1795/0/1ignored | ✓ |
+| `cargo test --offline --features gdext-bindings` | **1917 passed / 0 failed / 1 ignored** | 1917/0/1ignored | ✓ |
+| 三轴 `fire` | 文件 286（读失败 117）、结算批 1080、**内容命中 647** | 647 | ✓ |
+| 三轴 `batch` | **内容命中 647** | 647 | ✓ |
+| 三轴 `batch_conv` | **内容命中 637** | 637 | ✓ |
+
+### 97.6 像素：**没有一处变差**（两侧串行、私有 netns、同一天同一配方）
+
+改前/改后**各采一次**，同一批原版帧对比（`ours` 侧换、原版侧不换）：
+
+| 屏 | 改前 | 改后 | 判 |
+|---|---|---|---|
+| `menu`（`main_menu` 装上） | **0 px** | **0 px** | ✓ 逐字节相同 |
+| `player_skins`（`player_screen` 装上） | **0 px** | **0 px** | ✓ 逐字节相同 |
+| `player_faces` / `player_hats` | 1 176 px（0.0528 %） | **1 176 px（0.0528 %）** | ✓ 逐 px 同值 |
+| `replay_play` | 60 637 px（2.7226 %） | **60 367 px（2.7104 %）** | ✓ 微降（该残差改前就有，见下） |
+| `replay_end` | 60 637 px（2.7226 %） | 60 637 px（2.7226 %） | ✓ 不变 |
+| `match_ready` | —（本轮未改对局屏） | **1 812 px / 0.0814 %，L2 超限 0 块** | ✓ 与入库基线 **0.081 %** 同值 |
+| `match_play` | — | **8 667 px / 0.3891 %，L2 超限 1 块** | ✓ 与入库基线 0.385 % 同档（我方噪声地板 0.162 %） |
+| `endgame_popup` **面板区** `(483,235) 956×691` | — | **0 px（三帧全 0）** | ✓ 与入库基线同值 |
+| `endgame_popup` 整屏 | —（入库 384 px） | **44 / 308 / 44 px**（0.002~0.014 %，差区 `y1065..1156` = 面板之外底栏） | ✓ 变好 |
+| `campaign` | 3 827 px（0.1718 %） | **3 827 px（0.1718 %）** | ✓ 逐 px 同值（**与文档 0 px 不一致，见下**） |
+| `level_popup` / `join_level_popup` | 2 244 px（0.1008 %） | **2 244 px（0.1008 %）** | ✓ 同上 |
+
+**⚠️ 一条必须如实写的前置残差**：`docs/00`/`HANDOVER`/本任务书给的"八屏 0 px"里，
+`replay_play`/`replay_end`（60 637 px）、`campaign`（3 827 px）、`level_popup`/`join_level_popup`
+（2 244 px）**在本机这一版基线上复现不出来**（§97.9 第 1 条给了反事实证明：把本轮 `client/`
+全部改动 `git stash` 掉重采，**数字逐 px 相同**）⇒ 这几个残差**不是本轮引入**，也不是"我改坏了"。
+`menu`/`replay_lobby`/`player_skins`/`match_ready`/`match_play`/`endgame` 面板区则**逐个复现入库基线**。
+
+### 97.7 复跑命令
+
+```bash
+MAIN=/home/CG/Myprojects/graphwar2-rebuild
+WT=$MAIN/.agent-work/cg/wt-t47
+export CARGO_HOME=$MAIN/.reference/cargo-home CARGO_TARGET_DIR=$WT/.cargo-target
+export RUSTUP_HOME=$MAIN/.reference/rustup HOME=$WT/.fakehome
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+
+# 0) Rust（先测，再 build gdext 覆盖 client/ 里那份 —— 顺序反了客户端会跑旧内核）
+cargo test --offline                                    # 1795 / 0 / 1ignored
+cargo test --offline --features gdext-bindings          # 1917 / 0 / 1ignored
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+"$GODOT" --headless --path client --import
+
+# 1) 逐字节核对：16 份屏场景 + 别名层
+for f in client/scenes/screens/*.tscn; do cmp "$f" "recovered-src/$(basename "$f")" || echo "DIFF $f"; done
+for f in MainMenuButtonResize TitleSize VersionLabel PlayerNameLineEdit PlayerTabContainer \
+         ShowcaseMarginContainer UnlockButtonSize ShopButtonsSize HBoxVictoryIcon; do
+  cmp "client/$f.gd" "recovered-src/$f.gd" || echo "DIFF $f.gd"; done
+cmp client/src/views/ShopButtonsSize.gd recovered-src/ShopButtonsSize.gd
+cmp client/scenes/aliases/shop_theme.tres recovered-src/shop_theme.tres
+grep -c '^\[node' client/scenes/screens/player_screen.tscn          # 64
+for f in client/scenes/screens/*.tscn; do [ "$(wc -l < "$f")" -le 12 ] && echo "STUB $f"; done   # 无输出
+
+# 2) 自检与 headless 14
+bash client/run.sh selftest | tail -3                   # 717 passed / 0 failed / 1 skipped
+for f in assemble_check base_classes_check curve_on_screen_check draw_classes_check entity_drawer_check \
+         function_drawer_check gdext_check obstacle_drawer_check plane_on_screen_check play_flow_check \
+         process_loop_check recovered_view_check signal_classes_check spike_class_check; do
+  "$GODOT" --headless --path client --script "res://tools/$f.gd" | grep -E '[0-9]+ passed'; done   # 合计 1961
+
+# 3) 三轴（各一条，别混轴）
+SNAP=$MAIN/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv    -- --dir $SNAP --policy strict
+
+# 4) 像素（两侧串行、私有 netns；`cap.sh` = 下面那条 bwrap）
+cap() { bwrap --unshare-user --unshare-net --uid 0 --gid 0 --ro-bind / / --bind $MAIN $MAIN \
+  --dev /dev --proc /proc --tmpfs /tmp \
+  --setenv __EGL_VENDOR_LIBRARY_FILENAMES /usr/share/glvnd/egl_vendor.d/50_mesa.json \
+  --setenv LIBGLX_VENDOR_LIBRARY_NAME mesa --setenv LIBGL_ALWAYS_SOFTWARE 1 --setenv GALLIUM_DRIVER llvmpipe \
+  --setenv DISPLAY 127.0.0.1:$4 --chdir $WT python3 $MAIN/tools/frame_capture.py \
+  --side $1 --flow $2 --out $3 --display-num $4 $5; }
+cap original replay $WT/.agent-work/a/replay_o 201 --seed-replays
+cap ours     replay $WT/.agent-work/a/replay_m 202 --seed-replays
+cap original player $WT/.agent-work/a/player_o 203
+cap ours     player $WT/.agent-work/a/player_m 204
+cap original connect $WT/.agent-work/a/connect_o 205
+cap ours     connect $WT/.agent-work/a/connect_m 206
+cap original endgame $WT/.agent-work/a/end_o 207
+cap ours     endgame $WT/.agent-work/a/end_m 208
+python3 $MAIN/tools/frame_diff.py --orig $WT/.agent-work/a/replay_o --mine $WT/.agent-work/a/replay_m \
+  --screens menu,replay_lobby,replay_play,replay_end --out /tmp/r.tsv --blocks-out /tmp/rb.tsv
+python3 $MAIN/tools/frame_diff.py --orig $WT/.agent-work/a/player_o --mine $WT/.agent-work/a/player_m \
+  --screens player_skins,player_faces,player_hats --out /tmp/p.tsv --blocks-out /tmp/pb.tsv
+python3 $MAIN/tools/frame_diff.py --orig $WT/.agent-work/a/connect_o --mine $WT/.agent-work/a/connect_m \
+  --screens join_ip,connecting,disconnected --out /tmp/c.tsv --blocks-out /tmp/cb.tsv
+python3 $MAIN/tools/frame_diff.py --orig $WT/.agent-work/a/end_o --mine $WT/.agent-work/a/end_m \
+  --screens endgame_popup --out /tmp/e.tsv --blocks-out /tmp/eb.tsv
+```
+
+### 97.8 遗留 / 未做（按"下次该动谁"排）
+
+1. **`player_screen` 的格子还是我方代码造的**：原版那三个网格容器（`SkinsVbox`/`FacesVbox`/`HatsVbox`）
+   在 `.tscn` 里是**空的**，格子由 `GraphwarPlayerScreenControl::load_items`（`0x4f57d0`）运行时填。
+   T45 已经把 `load_items` 等 8 条按地址落码，但**还没接节点层** ⇒ 本轮只能留着我方
+   `_build_*_page()` 造格子（15+15+27 个 `GwButton`，**不是**原版的 `shop_button_entry` 实例）。
+   要真搬：把 `load_items` 的结果喂进 `SkinsVbox` 等容器，并换用 `shop_button_entry.tscn`。
+2. **`endgame_pop_up` 只接了节点层，函数体仍在 `_scaffold`**：`0x3da130` 里"哪种结局走哪条横幅"的
+   分支输入**仍未解**（`docs/14` §9.5），`GwEndGame::label_texts()` 那张表只有第一行是观测。
+3. **连接三弹窗的行为差**：我方 `ConnectingPopUp` 会在 2 s 左右自己切到 `DisconnectedPopUp`
+   （原版停在 `Connecting...`）—— 我方没有真握手，这条是 `docs/06` §69 已记的旧差，**本轮没动 `client/src/net|app/**`**。
+4. **`PlayerShowcase` 是替身**：原版 `.tscn` 那个节点的类型是 GDExtension 类 `PlayerShowcase`，
+   我方那个类只画**三个纯色方块**（真贴图来源 = 根节点 `+0x16a8` 的档案 + 纹理加载器没接）
+   ⇒ 本轮在 `build()` 里把那个节点**换成** `GwPlayerShowcase`（我方仿制品，用真图标三层合成）。
+   **这是替身，不是复原**。要换回来需要先让那个类能取到真贴图。
+5. **`SkinBlock` 的显隐仍是 `.gd` 里的 `visible = false`**：原版由 `player_screen_control` 的
+   `lock`/`unlock`（`0x4f8850`/`0x4f8990`）决定，节点层没接。
+6. **`connecting` / `disconnected` / `join_ip` 三屏的 76~179 px 弹窗区残差**没逐个像素归因
+   （量级 = 抗锯齿 + 光标相位；要证到 0 需要控制光标闪烁相位）。
+7. **`main_menu` 的 VersionLabel 文本**仍是"我方推断"（读 `ProjectSettings`），`.tscn` 里静态是 `"0.0.0"`。
+
+### 97.9 §我写错了 / 规格前提被证伪
+
+1. **"八屏 0 px"这个基线在本机复现不出来（部分屏）**。反事实证明：把本轮 `client/` 改动
+   `git stash push -u -- client/` 后 `--import` 重采 `ours` 侧，与同一批原版帧对比：
+   `campaign` **3 827 px / level_popup 2 244 / join_level_popup 2 244 / replay_play 60 637 /
+   replay_end 60 637** —— 与改后**逐 px 相同**。⇒ 这些残差先于本轮存在；`docs/00`/`HANDOVER`
+   里"八屏 0 px"应当按**屏**注明哪些是 0、哪些是残差（建议 lead 更正在这两处）。
+2. **四坑一条没踩，但踩了三个新坑**（写在 `docs/16` §84.2）：`ShopButtonsSize.gd` 的 deferred
+   `update_sizes` 在 headless 64×64 下把格子边长写成 **−6**（盖掉我方 32 的下限，selftest 立刻红 1 条）；
+   GDScript `var x := <无类型函数>()` 的**类型推断**会 `Parse Error` 导致整个屏脚本不加载（selftest 掉 2 条，
+   而那两条报错信息并不说"哪个屏"）；我方 `PlayerShowcase` 类与"原版那个节点"行为不等价（§97.8 第 4 条）。
+3. **`player_screen` 的手抄树比台账估的多**：T41 台账按 `build()` 区间记 `38 行 / 4 次造节点调用`，
+   实际静态骨架摊在 `build()` + `_shop_page` + `_build_right_column` + `_build_skin_block` +
+   `_build_pending_block` 五个函数里（净删 **118** 行）。台账的"手抄区间"列只覆盖 `build()`，
+   **对"helper 里造树"的屏会低估**。
