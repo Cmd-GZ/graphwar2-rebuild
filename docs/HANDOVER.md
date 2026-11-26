@@ -171,12 +171,19 @@ bash client/run.sh selftest                           # 717 / 0 / 1 skip（四�
 ## 6. 环境与地址（错了会静默出错）
 
 ```
-地址          Ghidra/REA vaddr = ELF vaddr + 0x100000（`0x3c2530` ↔ Ghidra `0x4c2530`）
-              读 `_DAT_xxxx` 原始字节要减 0x100000
+地址          **本仓库文档 / pkl / 工具输出里的地址，一律是 ELF vaddr（= 模块内偏移 = RVA）**，
+              直接当 vaddr 用、**不要平移**；frida 下断 = `base + RVA`。
+              ⚠️ 2026-11-26 实测更正（旧写法「Ghidra vaddr = ELF + 0x100000」**只对 Ghidra 反编译文本成立**）：
+              `funcstarts_ghidra_va.pkl` 的 13,263 条里 **11,881 条直接命中 `.eh_frame` FDE 起点**、
+              减 0x100000 后只命中 **440**；pkl 最小/最大值 0x37b940/0x94eb70 正好是 `.text` 段两端
+              ⇒ **那个文件名里的 `_ghidra_va` 是误导，它装的是 ELF 地址**。
+              只有 Ghidra/REA **反编译文本**里的 `_DAT_xxxx` / `FUN_xxxx` 才是 ELF+0x100000 口径
+              （`_DAT_004c2530` ↔ ELF `0x3c2530`）。教训：把这条套到文档地址上会定位到**另一个函数**（已踩，见
+              `docs/06` §63.1 与本次 T12 的更正）。
 引擎调用      gdext 走 **GOT 槽**：`call *0x…(%rip)`；只看 `call rel32` 会得出"原版不画任何东西"
               实例：draw_arc 字面量 0x19f9d0 → 包装 0x8abca0 → 槽 0x9bc020
 函数归属      `panic::Location` 在 `.data.rel.ro`（指针是重定位）；解析 `.rela.dyn` 才能还原
-函数起点      用 `analysis/funcstarts_ghidra_va.pkl`；**`funcstarts.pkl` 是错的**（.eh_frame，与 Ghidra 只交 2 个）
+函数起点      用 `analysis/funcstarts_ghidra_va.pkl`（**装的是 ELF 地址**，见上一行）；**`funcstarts.pkl` 是错的**（与上者只交 2 个）
 GPU 口径      比"计算时间"还是"进程墙钟"？（后者含 `import torch` ≈5 s）
               实测：全量 252×；小规模内部 4.83×、进程墙钟 1.25×。**报 GPU 必须同时给口径**
 ```
