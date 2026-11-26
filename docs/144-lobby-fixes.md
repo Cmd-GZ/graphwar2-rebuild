@@ -34,7 +34,7 @@
 
 ### 1.1 原版的数据模型（观测）
 
-Android 那份 `.so` 没 strip（`docs/132` §1.1 已立此先例），`.symtab` 里能直接读到模块名与完整
+Android 那份 `.so` 没 strip（[`docs/archive/132`](archive/132-android-build.md) §1.1 已立此先例），`.symtab` 里能直接读到模块名与完整
 泛型签名。与大厅相关的两个：
 
 ```
@@ -152,11 +152,11 @@ str  x27,[x24,#0x10] ; 复位
 
 ### 2.2 那 4 条占位行是什么
 
-`docs/129` §4.4 的"离线真帧四行"和 `docs/92` §4.4 的"五行"**都不是静态数据**：
+[`docs/archive/129`](archive/129-player-screen.md) §4.4 的"离线真帧四行"和 [`docs/archive/92`](archive/92-ui-inventory.md) §4.4 的"五行"**都不是静态数据**：
 `libgraphwarrust.so` 的 `.rodata` 里**没有** `US Room` / `EU Room` 任何一条（本机实测
 `strings -a libgraphwarrust.so | grep -c "US Room"` = 0），`Graphwar.pck` 里也没有
 （`grep -aob "US Room" Graphwar.pck` 无命中）。⇒ 那些行来自**真实 broker 的推送**，
-每一行都带自己的 `address`。我们的四行是**自定**的离线兜底（`docs/134` §0 已经写明
+每一行都带自己的 `address`。我们的四行是**自定**的离线兜底（[`docs/archive/134`](archive/134-net-client.md) §0 已经写明
 broker 地址默认空是本项目的取舍）。
 
 ### 2.3 改法
@@ -219,14 +219,14 @@ broker 地址默认空是本项目的取舍）。
 > **仍是推断的部分**：原版"别人加入 → 服务端那份 `GameInfo` 被改写"这一环，我们只证到
 > "列表每帧从 `GameInfo` 里取"。`GameInfo` 本身由谁在什么时候更新（服务端回 `NewConnection`
 > 之后哪条路径改 `current_player_count`）本轮**没有查**，因为我们的客户端目前不跑服务端
-> （`docs/134` §0：广播循环在 `src/`，本轮不动）。自检因此把"人数变了"直接模拟在
+> （[`docs/archive/134`](archive/134-net-client.md) §0：广播循环在 `src/`，本轮不动）。自检因此把"人数变了"直接模拟在
 > `state.players` 上，验的是**界面侧的活投影**，不是服务端协议。
 
 ---
 
 ## 4. bug 4：关卡弹窗（`join_level_pop_up.tscn`）
 
-### 4.1 量法（沿用 `docs/130` §1 的真值管线）
+### 4.1 量法（沿用 [`docs/archive/130`](archive/130-popups.md) §1 的真值管线）
 
 正版 `Graphwar.pck` + `libgraphwarrust.so` 喂 stock `Godot_v4.7.2`。本轮**没有**改那条管线，
 只是把它复制到 `.agent-work/lobbyfix/probe/harness/`（另一个 agent 的 `probe/` 没动），
@@ -267,7 +267,7 @@ MarginContainer(满屏) → VBoxContainer(sep 4)
 `bg=(1,1,1,1) + border=(0,0,0,1)×3px + radius=10`；另外三个是
 `bg=(0.102,0.2314,0.1765) = #1A3B2D +` 同样的黑边与圆角。两份 `.tres` 除底色外逐字段相同 ——
 正好是 `client/src/ui/theme_factory.gd::mode_icon_stylebox(on_white)` 已经实现的那一对
-（`docs/129` §4.5 在**大厅房间行**里用过）。
+（[`docs/archive/129`](archive/129-player-screen.md) §4.5 在**大厅房间行**里用过）。
 
 ### 4.2 4a "下面的部分太长"
 
@@ -290,10 +290,10 @@ MarginContainer(满屏) → VBoxContainer(sep 4)
 2. 说明栏补上 1:20:1 的两侧垫片 + 中间那层 10 px 内边距（真值 64 / 1297 / 65）；
 3. `OptionsContainer` 改成 `EXPAND + ratio 0.5`，`custom_minimum_size.y = 0.25 × 父高`
    —— 公式来自**真源码**（`OptionsContainer.gd`：`self.custom_minimum_size.y = 0.25 * parent_size.y`，
-   `docs/101` §4.5 有全文）。
+   [`docs/archive/101`](archive/101-gdc-contents.md) §4.5 有全文）。
 
 **已知残差 14 px**：真值场景里那格 `custom_minimum_size.y` 是 **225.25 = 0.25 × 901**，
-而父容器（面板 VBox）当时已经是 956。901 是 ad 条折叠（`docs/130` §1.2 的 `visible=false→true`）
+而父容器（面板 VBox）当时已经是 956。901 是 ad 条折叠（[`docs/archive/130`](archive/130-popups.md) §1.2 的 `visible=false→true`）
 之前那一次 `resized` 触发的 `call_deferred("set_minimum_size")` 留下的值，之后没有新的
 `resized`，循环就停了 —— 也就是**原版这一次没收敛**。我们按公式求值 ⇒ 239（模式按钮 235×235，
 真值 226×226）。上表里改后模式行上沿 722 vs 真值 733、下沿 954 vs 956，就是这 14 px 的两端分摊。
@@ -305,7 +305,7 @@ MarginContainer(满屏) → VBoxContainer(sep 4)
 改前四个按钮**一个样式盒都没挂** ⇒ 全部落回 app 主题的 `Button/normal`（= #1A3B2D），
 白底那格就没了（真帧改前实测 `axis` 像素 = `(26,59,45)`，即面板色）。
 改后：`GwThemeFactory.mode_icon_stylebox(i == 0)` 挂到四个态上 ⇒ 第一格
-`(255,255,255)`，另外三格 `(26,59,45)`，与真值场景逐像素一致（`docs/130` 的同一对 `.tres`）。
+`(255,255,255)`，另外三格 `(26,59,45)`，与真值场景逐像素一致（[`docs/archive/130`](archive/130-popups.md) 的同一对 `.tres`）。
 
 断言：`弹窗：屏幕级 VBox 有 4 行`、`弹窗：底部那行高 = 返回键高`、
 `弹窗：面板下沿离屏底 = 返回键高 + 两个分隔`（视口 ≥ 800 px 时才量像素，headless 下会溢出）、
@@ -370,4 +370,4 @@ llvm-objdump -d .reference/x/arm64/lib/arm64-v8a/libgraphwarrust.so | less
    按 `GwModes.time_icon(level.time)` 画了 `turn_inf`。真机运行时那格到底由谁填、填什么，
    本轮没验（`join_level_pop_up.tscn` 单独实例化时 Rust 控制器不跑，静态值就是空）。
 7. **大厅真帧的 4/5 条公网房间**：§2.2 只证到"不是静态数据、来自 broker"，具体几次观测
-   各是几条（`docs/92` 5 条、`docs/129` 4 条）没法复核，因为都依赖当时那台 broker。
+   各是几条（[`docs/archive/92`](archive/92-ui-inventory.md) 5 条、[`docs/archive/129`](archive/129-player-screen.md) 4 条）没法复核，因为都依赖当时那台 broker。

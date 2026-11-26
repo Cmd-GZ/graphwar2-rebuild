@@ -11084,12 +11084,307 @@ t.set_color("font_focus_color",   "Button", Color(0.95,  0.95,  0.95,  1.0))   #
 见 `docs/06` §62.5（含"27 份 `cmp` + 台账复算 + 三档验收 + 像素"的完整命令）。
 ⚠️ 本轮新增了 3 个 `.gd` ⇒ **必须** `godot --headless --path client --import` 一次，
 否则 Godot 静默不加载（`docs/18` 的那条老坑）。
+## 67. `tools/frame_capture.py --flow match`：**对局屏**怎么采（脚本化协议服务器 + 两侧同一份剧本）（2026-11-26，任务 T8）
 
-## 67. 客户端"收到线上事件之后干什么"：原版是 `GraphwarRemoteEventHandler`（`0x3e6df0`），我方此前**没有这一层**；本轮补成 `GwNetEvents` 桥 + `session.gd` 的实体模型修正（2026-11-26，任务 T17）
+> 数字、逐元素差异与结论在 `docs/06` §60。本节只讲**怎么用**这个 flow、两侧怎么起、已知限制。
+>
+> **编号说明**（照 §64 的先例如实记）：任务书让我写 **66 号**（预设另一名 teammate 的客户端改动先合、
+> 占掉 65）。但本分支上 `tools/check_doc_refs.py` 要求小节编号**连续**，所以这里落 **65**；
+> 若合并时别人的那节先占 65，则本节顺延为 **66**，正文引用一并改。
 
-> 数据与像素结论在 `docs/06` §64（含逐块表与两侧复跑命令）。本节只讲**客户端侧怎么接的**。
+### 67.1 它解决的问题
 
-### 67.0 断点在哪
+`--flow campaign/replay/static` 覆盖的屏都不需要"服务端"：战役关卡的落点**不可复现**（`docs/06` §53.5 第 1 条），
+所以对局屏（准备圈 / 棋盘 / 回合 HUD）一直没有真值。`--flow match` 把局面钉死在**一份写死的事件序列**上：
+
+```text
+tools/match_serve.py（服务器）  ← 读 fixtures/frame_match_events.txt，**原样发**，不改一个字节
+        ↓ UDP 42968（LAN 发现，裸 9 字段 GameInfo + "\n"）
+        ↓ TCP 46702（u16 大端长度 + {"<EventName>":{…}}）
+client（原版真机 或 我方 client）→ 对局屏
+frame_capture 每屏 3 帧、间隔 1.2 s → tools/frame_diff.py（既有三层判据，未改）
+```
+
+`--flow match` **只新增分支**：`campaign` / `replay` / `static` 三支一字未改，`tools/frame_diff.py` 一字未动。
+
+### 67.2 两侧各一条命令（服务器由采集脚本自己起，**不要**另开一个终端起）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t8
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+W=$WT/.agent-work/frames
+
+python3 tools/frame_capture.py --side original --flow match --out $W/match-orig --display-num 83
+python3 tools/frame_capture.py --side ours     --flow match --out $W/match-mine --display-num 84
+
+python3 tools/frame_diff.py --orig $W/match-orig --mine $W/match-mine --screens match_ready,match_play \
+  --out fixtures/frame_diff_results_match.tsv --blocks-out fixtures/frame_diff_blocks_match.tsv
+```
+
+为什么必须一条命令跑完一侧：本机每条 bash 命令是独立 PID namespace（§53.7 第 2 条），
+所以**Xvfb → 脚本化服务器 → 游戏 → 截图**都在 `frame_capture.py` 这一个进程树里起。
+`--side ours` 还需要 `client/libgw2_rebuild.so` 已就位（`cargo build --features gdext-bindings` 后拷进去）+ 跑过一次 `--import`。
+
+### 67.3 新增开关（都有默认值，不传就和既有三支完全无关）
+
+| 开关 | 默认 | 说明 |
+|---|---|---|
+| `--flow match` | — | 新增的这一支：`match_ready`（S7 准备态）→ `match_play`（S8 对局中） |
+| `--match-fixture` | `<repo>/fixtures/frame_match_events.txt` | 剧本（预注册文件，含 `[meta]` + 两个 `[phaseN:屏名]`） |
+| `--match-tcp-port` | `46702` | 脚本化服务器的 TCP 端口；**必须**与 fixture `[meta] tcp_port` 一致，否则 LAN 广播里的 `address` 指向错的地方 |
+| `--match-udp-port` | `42968` | LAN 发现端口（原版 LAN 大厅绑这个口，观测值） |
+| `--match-server-duration` | `300` | 服务器进程最长活多久（秒） |
+
+点击脚本（两侧同一串坐标，`steps_for('match', side)`）：
+
+```text
+主菜单 Play(1344,622) → 等 2.5 s
+LAN 列表第 1 行 Join(1842,209) → 等 3.0 s          ← 这一发之后服务器已经把 phase1 发完了
+拍 match_ready 3 帧（间隔 1.2 s）
+touch <out>/phase2.trigger → 等 5.0 s              ← 服务器看到触发文件才发 phase2（比 sleep 稳，不会与截图抢时间）
+拍 match_play 3 帧
+```
+
+`(1344,622)` 与 `(1842,209)` 是**原版真机**实测坐标（`docs/06` §48.8 的点击串）；我方主菜单与原版**整屏 0 像素差**
+（`docs/06` §53.0 ①），LAN 列表第 1 行的 `Join` 本轮实测也落在同一格 ⇒ 两侧用同一串坐标。
+
+### 67.4 服务器怎么说话（`tools/match_serve.py`）
+
+* **LAN 发现**：UDP 裸 9 字段 `GameInfo` + 结尾 `"\n"`，每 0.5 s 一次（变体 C，`docs/06` §48.2 ①：
+  加事件外壳的 `{"GameInfo":…}` 会被真客户端丢弃）。`address` 字段用 `127.0.0.1:<tcp_port>`；
+* **对局 TCP**：`u16` 大端长度 + 一个 JSON 对象（`docs/09` §1.1）。收 `NewConnectionRequest` 后发 `[phase1]`，
+  再等触发文件 → 发 `[phase2]`；
+* **`TickReply`**：客户端 1 Hz 发 `TickRequest`，服务器回 `TickReply{current_tick}`。
+  tick 轴**不是我编的**：`[meta] tick_phase1=6`（真回放里快照那段的 tick）、`tick_phase2=550`（第一发的 tick）、`tick_hz=60`。
+  **这一条决定原版的弹道会不会动**：没有它时 S8 里没有弹道（见 `docs/06` §60.2.1）；
+* **逐帧发送日志**：`--out` 指定的 JSONL，每帧一条 `{t, type, phase, index, name, bytes, payload}`，
+  另有 `config`（含 `fixture_sha256`）/`listening`/`recv`/`summary`。
+  **两侧 `fixture_sha256` 相同**就是"喂的是同一份字节"的证据。
+
+单独跑（调试用）：
+
+```bash
+python3 tools/match_serve.py --fixture fixtures/frame_match_events.txt \
+  --out $W/serve.jsonl --trigger-file $W/phase2.trigger --side debug --duration 120
+# 另一个终端（同机）真客户端进 LAN 大厅点 Join 即可；触发文件不出现时可用 --auto-phase2 12 兜底
+```
+
+### 67.5 已知限制（都在 `docs/06` §60.8/§60.9 有更细的记录）
+
+1. **一次只服务一"侧"**：LAN 发现要绑 `UDP 42968`，同机同时跑两个实例会互抢 ⇒ 两侧**分两次**跑，
+   靠"同一份 fixture + 同一份 sha256"保证可比（`--connections N` 只为客户端重连准备，不是给两侧同时用的）。
+2. **弹道相位不可对齐**：原版动画吃服务端 tick（`TickReply`），我方客户端**不发** `TickRequest`、不吃服务端 tick
+   ⇒ S8 只能比形状/位置/配色，不能比"同一 tick"。
+3. **剧本只有一份局面**（真回放 `1793897298` = `Level 0`：1 士兵 + 1 靶子、无障碍）。要多士兵/障碍/2 人对局，
+   换一份真回放的事件流进 fixture 即可，管线不用改。
+4. **我方三帧同 sha256**（S7）：我方准备圈不随时间动 —— 这是"我方没接那条链"，不是采集问题。
+5. 本轮**没有**用 `--game-arg` 传地址（地址走 LAN 广播就够了；原版的 CLI 参数是死的，`docs/06` §48.1）。
+
+## 68. 客户端侧接线：回放屏的**右列宽 / 底栏高 / 函数框只读态 / 士兵外观与名字标签**（2026-11-26，任务 T7）
+
+> 真帧证据、逐块数字、改前改后三层判据在 **`docs/06` §59**（那节是验收，本节是**怎么接的**）。
+> 本节只讲 `client/` 侧的接线，面向"读 `client/` 的人"。
+
+### 68.1 `play_screen.gd::_set_replay_layout()`：右列宽与底部行的两个实参
+
+回放模式把键盘 / Fire / 状态行藏掉之后，**两处尺寸**必须显式钉，否则整块棋盘会错 1–2 px
+（`docs/06` §59.1 的四个数）：
+
+```gdscript
+# ① 右三键的最小宽度 = 原版 .tscn 那串空格的宽度（八个空格 + 主题左右各 3 px 边 = 230）
+(b as Control).custom_minimum_size = Vector2(_replay_button_width(), key)
+# ② 右列宽 337 = 键盘 RightButtonGrid 的天然最小宽（它不画出来，但宽度还参与计算）
+_right_grid.visible = false                       # 高度归 0
+_right_grid_holder.visible = true                 # 但 holder 仍然 visible…
+_right_grid_holder.custom_minimum_size = Vector2(_right_grid_natural_w, 0.0)   # …宽度钉 337
+```
+
+* **为什么不是 `visible = false` 了事**：Godot 的 `Container` 会把 `visible=false` 的子节点
+  从最小宽/最小高里**整根剔掉**（本机实测）。原版在真帧上是"键盘不画、但右列还是 337"，
+  这一条**没有源码证据**（记 **未知**），所以这里按观测复现，并把它关在一个函数里。
+* `_replay_button_width()` 不写死 337：它按 `.tscn` 的 `text = "        "`（8 空格）与
+  `ButtonGrid.gd` 的 `font_size = screen_size.x / 30` 现算 advance + `2 * PANEL_BORDER`。
+  **同一把尺子的旁证**：五个空格的 `ShowExtraButtons` 算出来 146，与真帧逐项相同。
+* 底栏高**不在这一层写**：它由函数输入框的最小高决定（见 68.2）。
+
+### 68.2 `play/function_input.gd`：按 `LineEdit` 的规则量、按 `LineEdit` 的样式盒画
+
+原版 `GraphwarFunctionInput` 是 **`LineEdit` 的 Rust 子类**（`src/graphwar_function_input.rs`
+文件头：`ILineEdit` + 自绘文字状态、无 `LineEdit` 子节点），所以它**不是**"随便一个 Control"：
+
+| 项 | 规则（引擎行为 + 主题） | @1920 的读数 |
+|---|---|---|
+| 最小高 | `字体高 + 样式盒的上下 content_margin` | 可编辑 90+2·3 = **96**；只读 90+2·4 = **98** |
+| 只读态样式 | `graphwar_theme.tres` **没有** `LineEdit/styles/read_only` ⇒ 落到 **Godot 默认主题**：`bg (0.1,0.1,0.1,0.3)`、**只有下边框 2 px**、content_margin 4 | 真帧输入框内部 = (17,33,27)（三通道验算见 `docs/06` §59.2-A） |
+| 文本基线 | `content_top + (内容高 − 字体高)/2 + font_ascent` | 墨迹 y1087..1149（改前高 3 px） |
+| 光标高 | 内容矩形 = `size.y − 上下 content_margin` | 3×90 @y1066..1155 |
+
+`read_only` 的 setter 里会 `update_minimum_size()`：只读/可编辑两态的样式盒不同 ⇒ 最小高
+98/96 也不同，**开关这个状态必须让父容器重排**。`play_screen.gd` 侧只给宽度
+（`Vector2(key*2, 0)`），高度**不许**再写死 —— 改前就是拿"左上键宽 96"当输入框高，
+于是底栏 96、`PlayMainHBox` 1060、棋盘整体下移 2 px。
+
+### 68.3 回放屏的士兵与名字标签：id、颜色、摆位
+
+`_sync_entities()` 现在做四件事（都在 `docs/06` §59.3 有帧/运行时证据）：
+
+1. `spawn_entity(id, x, y)`：士兵的 id 是**数组下标**（`EntityDrawer` 只认 i32，没有"种类"）；
+2. 外观：`_replay.graphics("skin"/"face"/"hat", <回放实体 id>)` → `set_entity_look()`。
+   ⚠️ 必须用**回放自己的实体 id**（本样本 230），**不是**数组下标 —— 改前拿下标去问，
+   永远查不到 ⇒ 士兵一直穿 `spawn_entity` 的默认三件套；
+3. 名字：`set_entity_name()` + **`set_entity_name_color(id, 队色)`**。真帧上名字笔画色 =
+   那名士兵 `ColorInfo` 的颜色（本样本 `(125,104,0)`）⇒ 用这个玩家自己的队色，不是
+   `EntityDrawer` 那个全局 `team_color`。颜色来源**未解**（记 **推断/我方接线**）；
+4. 准备圈：回放模式**不填 `prep` 表**（原版回放屏棋盘上 0 个纯红像素）。
+
+名字标签的**位置**在 Rust 侧（`_scaffold/entity_drawer_class.rs::relayout()`），
+摆位算法的第一个实参是 **`EntityDrawer` 自己的尺寸**（`k = w/50`），不是标签自己的尺寸 ——
+改前传错这个实参，标签被夹到控件左上角（跑出棋盘外，等于"没有名字"）。
+
+### 68.4 没接的东西（读 `client/` 的人会问的三条）
+
+* `GraphwarGraphicsManager` 那条**事件链**（`Skin/Face/HatGraphicsInfo` 的 51/53/55 事件）
+  仍然没接：外观与名字颜色都是播放屏**按局面代填**的（`docs/16` §44.0 的同一笔账）。
+* 名字标签的描边宽（`outline_size = 4`）是**推断**（取自同工程 `ViewFunctionsLabel` 的
+  `[outline_size=4]`），原版给 name_label 设描边的那条调用没找到。
+* 回放屏右三键（存截图/存摘要/存片段）的**语义**本来就未观测，本轮只动它们的图标对齐。
+## 69. **弹道不是绘图原语画的**：`Line2D` 子节点 + 逐点 `add_point`，揭示量 = `(fractional_tick − active_tick) × 30`（2026-11-26，任务 T14）
+
+> 结的是 `docs/00` §3「弹道用什么原语画」和本节 §12.2 ⑭ 那条 `未知`。
+> 一次性复算：`tools/unknowns_report.py --only plot`（产物 `fixtures/unknowns_plot.tsv`）。
+> 本节所有地址是 **ELF vaddr**（= RVA）；⚠ 不要 `±0x100000`（那只是 Ghidra/REA 反编译文本的口径，
+> 见 `AGENTS.md`「地址空间」）。
+
+### 69.1 一页结论
+
+| # | 问题 | 结论 | 档 |
+|---|---|---|---|
+| ① | 弹道用哪个 CanvasItem 绘图原语？ | **一个都不用**。全二进制（**整文件字节扫描**，不是 `strings`）里 `draw_polyline` / `draw_multiline` / `draw_dashed_line` / `draw_primitive` / `draw_mesh` / `draw_colored_polygon` / `draw_string` / `draw_char` **各 0 命中** ⇒ 不存在 | **逐位**（负结果 + 正对照） |
+| ② | 那曲线是怎么出来的？ | **`Line2D` 子节点**：`Line2D::add_point` 全 `.text` **只有 1 处引用**（`0x498f6e`），在 `FunctionDrawer::update_function`（**`0x498c70`**，Location `src/function_drawer.rs:45:38`）体内，`0x498fab` 上是那个循环里的间接调用 | **观测**（GOT 槽 + 全 `.text` 扫描） |
+| ③ | 谁喂它？ | `GraphwarPlane::draw`（**`0x4b5df0`**，`src/graphwar_plane.rs`）每帧调 `0x498c70` **+** `0x499050` / `0x4992b0` / `0x4993c0`（三者都只有它一个直接调用者） | **观测** |
+| ④ | 一帧揭示几个点？ | `reveal = min(points.len, (fractional_tick − active_tick) × 30.0)`，`(double)→usize` 带饱和（`<0 ⇒ 0`、`>2^64 ⇒ usize::MAX`） | **观测 + 立即数逐位** |
+| ⑤ | 线宽/接头/颜色 | `Line2D::set_width(**0.125**)`（f32 槽 `0x1baff8`）、`set_joint_mode(**2** = ROUND)`、`set_default_color(打包 u32 三通道 /255)`、`CanvasItem::set_z_index`（值取 `self+0x40`） | **立即数逐位** |
+| ⑥ | 与真帧线宽 2.83 px 对得上吗？ | **同量级**：`0.125 × 20 px/单位 = 2.5 px`，`2.83` 是"45° 斜线横向跨 4 px × sin45°"的**估算**，不是线宽本身 | **推断**（缺逐帧量 `Line2D.width × 节点 scale` 的运行时数据） |
+| ⑦ | `EntityDrawer::draw`（`0x4b2890`）画弹道吗？ | **不画**。它只画 `draw_arc`×3 + 实心多边形×3（走 `0x4b9a70`），**零** `draw_line` / `add_point` 调用 | **观测** |
+
+一句话：**原版把弹道做成"`Line2D` 节点 + 每帧把新点 `add_point` 进去"，不是每帧重画一条折线。**
+所以我们客户端现在用 `draw_line`/`draw_polyline` 仿制的那条线，**抗锯齿、端点、拐角（joint）、
+线宽单位（节点 scale 内的 0.125）全都跟原版不同** —— 这是像素保真的根因，不是"差几个参数"。
+
+### 69.2 证据链（逐条可复跑）
+
+```text
+# ① 整文件字节扫描：这些名字在 .so 里根本不存在（0 命中）
+$GW2_TARGET_SO 全文件扫：draw_polyline / draw_polyline_colors / draw_multiline /
+  draw_multiline_colors / draw_dashed_line / draw_primitive / draw_mesh /
+  draw_colored_polygon / draw_string / draw_char / set_point_position /
+  clear_points / set_begin_cap_mode / set_end_cap_mode / set_points
+# 存在的只有（写成 (类名, 方法名) 常量对，gdext 生成的包装）：
+#   draw_line 0x29ef7a / draw_rect 0x29ef83 / draw_circle 0x29ef8c /
+#   draw_polygon 0x29ef97 / draw_texture_rect 0x29efd8 / draw_set_transform 0x29efe9 /
+#   draw_arc 0x19f9d0（单独一片）/ Line2D: add_point 0x29f39f, set_width 0x29f346,
+#   set_default_color 0x29f3c5, set_joint_mode 0x29f3a8, get_point_count 0x29f3b6, …
+```
+
+字面量 → 包装 → GOT 槽 → 调用点的全表（`tools/unknowns_report.py --only plot` 直接打印，
+**正对照** = `draw_arc`：`0x19f9d0 → 0x8abca0 → 槽 0x9bc020 → 5 处调用，其中 3 处在 `0x4b2890`**）：
+
+| 方法 | 字面量 | 包装 | GOT 槽 | 引用/调用点 | 落在哪个函数 |
+|---|---|---|---|---|---|
+| `draw_line` | `0x29ef7a` | `0x8abff0` | `0x9bc228` | 9（含 1 处 `mov slot,%rbp` 供 2 次寄存器间接调用） | `AxisDrawer::draw` `0x4e05b0` ×8、`EffectDrawer::draw` `0x4e1520` ×2 |
+| `draw_rect` | `0x29ef83` | `0x8ac350` | `0x9bc028` | 2 | `GraphwarPlane::draw` `0x4b5df0` ×1（棋盘边框 `0x4b61ab`）、`0x4e05b0` ×1 |
+| `draw_circle` | `0x29ef8c` | `0x8ac690` | `0x9bbfc0` | 9 | `0x4993c0` ×5、`0x4e1520` ×4 |
+| `draw_polygon` | `0x29ef97` | `0x8aca10` | `0x9bc238` | 1 | `EffectDrawer::draw` `0x4e1520`（`0x4e1d8f`） |
+| `draw_texture_rect` | `0x29efd8` | `0x8ad590` | `0x9bc248` | 3 | `PlayerShowcase::draw` `0x4e5400` ×3 |
+| `draw_set_transform` | `0x29efe9` | `0x8ad940` | `0x9bc018` | 4 | `0x4b2890` / `0x4b5df0` / `0x4e05b0` / `0x4e1520` 各 1 |
+| **`add_point`** | **`0x29f39f`** | **`0x8b7210`** | **`0x9bbf98`** | **1**（`0x498f6e mov rbp,[rip+0x523023]` → 间接调用 `0x498fab`） | **`0x498c70`（`function_drawer.rs:45`）** |
+| `set_width` | `0x29f346` | `0x8b7fe0` | `0x9bbfa0` | 2（`0x49911c` / `0x49921c`） | `0x499050` |
+| `set_default_color` | `0x29f3c5` | `0x8b7a70` | `0x9bbf90` | 2（`0x498e30` / `0x4993a3`） | `0x498c70` / `0x4992b0` |
+| `set_joint_mode` | `0x29f3a8` | `0x8b74f0` | `0x9bbfa8` | 2（`0x49915d` / `0x49925f`，参数 `esi=2`） | `0x499050` |
+
+**调用方向**（`tools/unknowns_probe.py fn <addr>`）：
+
+* `0x498c70`（`update_function`，span `0x3e0`）唯一直接调用者 = `0x4b5df0`（`0x4b69ec`）；
+* `0x499050` / `0x4992b0` / `0x4993c0` 唯一直接调用者也都 = `0x4b5df0`（`0x4b6147` / `0x4b6a0e` / `0x4b6bd8`）；
+* `0x4b5df0`（`GraphwarPlane::draw`，span `0x1590`）**直接调用者 0**，只经槽 `0x9bb7f0` 被调（`0x42937a` in `0x429320`）
+  —— 那是 `CanvasItem::_draw` 虚方法派发，即**引擎每帧回调**。
+
+### 69.3 揭示公式（`0x4b5df0` 内，`0x4b67a0`–`0x4b6815`）
+
+```text
+0x4b67a0  mov   eax, dword ptr [r12 - 4]      ; 「本 tick 生效函数」表里的一个 u32 字段（起爆 tick，**语义推断**见 §69.5）
+0x4b67a8  cvtsi2sd xmm0, rax
+0x4b67ad  movsd xmm1, qword ptr [rsp + 0x130] ; = get_fractional_tick()（0x519530，本帧的小数 tick）
+0x4b67b6  subsd xmm1, xmm0                    ; elapsed = fractional_tick − active_tick
+0x4b67ba  mulsd xmm1, qword ptr [0x19ef90]    ; × 30.0        ← f64 常量，立即数逐位
+0x4b67c2  cvttsd2si rax, xmm1                 ; Rust `as usize`：先截断，再按下面两条饱和
+0x4b67e9  ucomisd xmm1, 0 / 0x4b67f3 cmovae r13, rdx     ; < 0     ⇒ 0
+0x4b67f7  ucomisd xmm1, [0x19f008] = 2^64    / 0x4b6806 cmova r13, -1 ; > 2^64 ⇒ usize::MAX
+0x4b680a  mov   r12, qword ptr [rsp + 0x138]  ; r12 = points.len()
+0x4b6812  cmp   r12, r13 / 0x4b6815 cmovb r13, r12       ; reveal = min(len, elapsed×30)
+```
+
+⇒ **每 tick 揭示 30 个采样点**。与 `docs/04` 的采样弦长 `0.01`、`docs/16` §12.1「每 tick 前进
+0.29 棋盘单位」交叉：`30 × 0.01 = 0.30`，与 0.29 的实测差 = 最后一段不满 0.01 的残段。
+（这一条交叉**不是**独立证明：两条都还没在真机帧上逐帧对拍过 ⇒ 见 §69.5。）
+
+喂进 `0x498c70` 的六个参数（`0x4b69d4`–`0x4b69ec`）：`rdi` = drawer 对象、`esi` = soldier id、
+`rdx` = 点数组（每点 16 字节 = 两个 f64）、`rcx` = `points.len`、`r8` = 上一行算出的
+`reveal`、`r9d` = 打包颜色（`b` / `g<<8` / `r<<16`，`0x4b69be`–`0x4b69d1`）。
+`0x498c70` 内部：按 id 在 `self` 的 `HashMap` 里取/建 `Line2D`（`0x498caa call 0x47dec0` = 哈希，
+`0x498ce5` 起是探测循环），`set_default_color`（`0x498e30`）、
+`set_z_index`（`0x498e46`）、然后 `for p in points[prev..reveal] { Line2D::add_point(p) }`（`0x498f80`–`0x498fb4`），
+最后把 `entry[+0x20] = reveal` 记成下一帧的起点（`0x498fb6`–`0x498fbb`，`r14` = entry+0x28）
+——**所以它是"只追加、不重画"**。
+越界（`reveal > rcx`）走 `0x498fd1` 的 `panic::Location function_drawer.rs:45`（切片越界检查）。
+
+### 69.4 对客户端的具体含义（像素保真）
+
+1. **别再逐帧 `draw_line` 重画整条弹道**。原版是 `Line2D` 子节点、逐点追加：
+   抗锯齿由 `Line2D` 的纹理/AA 模式决定，**拐角是 ROUND joint**（`set_joint_mode(2)`），
+   线宽是**节点局部单位 0.125**（再乘节点 `scale`），不是画布像素。
+2. 节点的 `position` / `scale` 每帧由 `0x499050` 设（`Node2D::set_position` 包装 `0x892890`、
+   `Node2D::set_scale` 包装 `0x892b50`；后者在两个分支里分别传 `+scale` 与 `−scale`，
+   参数 `esi∈{0,1}` 选分支 —— 镜像/翻转，**哪一队镜像**没定，见 §69.5）。
+3. 起点/朝向：`add_point` 的第一个点是 `points[prev]`，第 2 个参数 `esi = -1` = 追加。
+4. **`EntityDrawer::draw` 不画弹道**（§12.3.1 的"不画"这次补上了正向证据：
+   它体内 `draw_line` / `add_point` 的引用数 = **0**）。
+
+### 69.5 仍未证的（照实写）
+
+1. **`[r12-4]` 那个 u32 是不是 `FunctionActive.active_tick`**：只看得出它来自
+   `get_active_functions_on_tick`（`0x456df0`）返回的表；与 `docs/07` 的 `FunctionActive{owner_id,active_tick}`
+   对上是**推断**（缺：读那张表的构造点）。
+2. **真机帧上"逐点长出来"没有对拍**：公式是观测，`Line2D` 的实际 `points` 数组逐帧没读
+   ⇒ 缺的证据 = 运行时 hook `Line2D::add_point` / 读 `points`（frida 脚本已有基础，
+   见 `tools/frida_*.js`）。**下次手段**：在 `0x498fab` 下断，记 `(tick, reveal)` 序列，
+   与回放里的 `FunctionActive.active_tick` 对拍。
+3. **`set_scale` 的正负号选择**（`esi` 那个参数）语义未定：只在 `0x4b6147` 一处调用，
+   `esi = dl`，来自 `0x4b6114`–`0x4b612b` 那一小段位运算（看着像"要不要翻转"）。
+   **缺**：那一小段的输入含义（谁给了那个 bool）。
+4. **`0x4993c0`（5 次 `draw_circle` + 引用 `"Write a function of x to hit the target"`）到底是干嘛的**：
+   它也被 `0x4b5df0` 每帧调，且没有 Location。**未知**。
+5. **`set_z_index` 的取值 `self+0x40`** 是什么（每兵图层序？）—— 未追。
+
+### 69.6 复跑
+
+```bash
+export GW2_TARGET_SO=$PWD/.reference/game/libgraphwarrust.so
+$PWD/.reference/venv/bin/python tools/unknowns_report.py --only plot        # 打印全链 + 正对照
+$PWD/.reference/venv/bin/python tools/unknowns_probe.py chain add_point     # 任意方法名的全链
+$PWD/.reference/venv/bin/python tools/unknowns_probe.py dis 0x498c70 --len 0x3e0
+$PWD/.reference/venv/bin/python tools/unknowns_probe.py dis 0x4b67a0 --len 0x90
+```
+
+## 70. 客户端"收到线上事件之后干什么"：原版是 `GraphwarRemoteEventHandler`（`0x3e6df0`），我方此前**没有这一层**；本轮补成 `GwNetEvents` 桥 + `session.gd` 的实体模型修正（2026-11-26，任务 T17）
+
+> 数据与像素结论在 `docs/06` §67（含逐块表与两侧复跑命令）。本节只讲**客户端侧怎么接的**。
+
+### 70.0 断点在哪
 
 ```text
 服务端报文 ──TCP u16 大端长度 + JSON──▶ GwNetLink ──▶ GwNetSession._on_frame
@@ -11108,13 +11403,13 @@ t.set_color("font_focus_color",   "Button", Color(0.95,  0.95,  0.95,  1.0))   #
 171 个锚点的分发/订阅行为未实现（混装待拆）" ⇒ 客户端侧这条链路**从来没有接通**。
 所以以前"缺 12 个事件处理器"只是**症状**：即使把那 12 个分支写进 `session.gd`，数据也到不了绘制层。
 
-### 67.1 接法（三段，每段职责单一）
+### 70.1 接法（三段，每段职责单一）
 
 | 段 | 文件 | 职责 | 有没有第二份语义 |
 |---|---|---|---|
 | ① 解析 + 我方模型 | `client/src/net/session.gd`（`_apply`） | 线上字段 → `room` 的那几张表（界面层要读的） | 有（但只是"我方模型"，**不是**游戏规则） |
 | ② 派发 | 同文件 `_feed_managers()` + `GwNetEvents`（`src/_scaffold/net_events_class.rs`） | 线上字段 → **复原 manager 的具体方法**（一事件一方法，落点逐条带地址） | **没有**：不重算任何规则 |
-| ③ 消费 | `EntityDrawer` / `EffectDrawer` / `GraphwarPlane` …（既有类） | 从 manager 表拉数据画 | 有（`play_screen.gd` 的两处代偿还在，见 §67.4） |
+| ③ 消费 | `EntityDrawer` / `EffectDrawer` / `GraphwarPlane` …（既有类） | 从 manager 表拉数据画 | 有（`play_screen.gd` 的两处代偿还在，见 §70.4） |
 
 `GwNetEvents` 的用法（GDScript）：
 
@@ -11129,14 +11424,14 @@ ev.call("dump")                                              # 各表快照（�
 `entity_removed` 是**扇出**：一次调用落到 9 个 manager 各自的 `handle_entity_removed_event`
 （每个 manager 的模块文档里都有自己那条订阅，顺序固定，`cargo test` 有断言钉住）。
 
-### 67.2 `session.gd` 的实体模型修正（**这条直接改了像素**）
+### 70.2 `session.gd` 的实体模型修正（**这条直接改了像素**）
 
 | 改之前 | 改之后 | 后果 |
 |---|---|---|
 | `_ensure_entity()` 默认 `kind = "soldier"` | 默认 `kind = ""`；只有 `SoldierInfo` 造 soldier、`TargetInfo` 标 target | 玩家实体 229 与已删除的士兵 231 不再变成"停在 `(0,0)` 的士兵" |
 | `TeamInfo` 无条件建实体 | **不建实体**（`TeamInfo` 的 `entity_id` 也可能是"玩家自己"） | 同上；棋盘正中那具假士兵 + 假准备圈消失 |
 | `EntityRemoved` / `RemoveTeam` 没处理器 | 真的从 `entities`、玩家的 `soldiers`、边表里删 | 死人不复活、圈不再落到尸体上 |
-| `ColorInfo` 是 `pass` | 记账（原版 `color_manager::set_color` 是**直接采纳**服务端颜色） | 界面层还没读（§67.4 第 3 条） |
+| `ColorInfo` 是 `pass` | 记账（原版 `color_manager::set_color` 是**直接采纳**服务端颜色） | 界面层还没读（§70.4 第 3 条） |
 | 没有"先到的事实"这一层 | 新增边表 `targets/teams/names/look/colors/entity_effects/effects/shots/active_ticks` | 事件乱序（`TeamInfo` 比 `SoldierInfo` 先到）也不丢信息 |
 
 **为什么准备圈以前画在棋盘正中**（t8 §60.5 只记了现象）：`_soldiers` 原来是 `[229, 230, 231, 232]`
@@ -11144,7 +11439,7 @@ ev.call("dump")                                              # 各表快照（�
 `_turn_driver.first_shooter(alive)` ⇒ 取**第一个活着的** = 下标 0 = 实体 229 = `(0,0)`。
 本轮之后 `_soldiers = [230]`，圈落在射手身上（**观测**：两侧真机真帧）。
 
-### 67.3 复跑（怎么自己验这一层）
+### 70.3 复跑（怎么自己验这一层）
 
 ```bash
 MAIN=/home/CG/Myprojects/graphwar2-rebuild; WT=$MAIN/.agent-work/cg/wt-t17
@@ -11156,16 +11451,16 @@ cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/li
 HOME=$WT/.fakehome "$GODOT" --headless --path client --import     # 少这一步 Godot 静默不加载
 # ① 映射表 + 落表结果（不碰引擎，纯 Rust）
 cargo test --offline --features gdext-bindings net_events
-# ② 两侧像素（流程与数字见 docs/06 §64.4）
+# ② 两侧像素（流程与数字见 docs/06 §67.4）
 python3 tools/frame_capture.py --side ours --flow match --out $WT/.agent-work/v/match-mine --display-num 96
 ```
 
-### 67.4 遗留（三条都需要改 `play_screen.gd`，本轮按任务书**没改**）
+### 70.4 遗留（三条都需要改 `play_screen.gd`，本轮按任务书**没改**）
 
 1. **靶子图层**：`_begin_online()` 里 `_targets = GwTargetSet.new()` 之后**从不填** ⇒ 联机局画不出靶子。
    数据已经在 `session.room["targets"]`（+ 对应 `PosInfo`）；最小改法是在 `_begin_online()` 里
    `_targets.setup(...)` 一次。**副作用**：靶子以前被当成士兵画出来（错得"像"），改完之后那块会
-   从"错元素"变成"缺元素"——`docs/06` §64.5 的 `(1,3)` 块就是这么变差的，别只看总数字。
+   从"错元素"变成"缺元素"——`docs/06` §67.5 的 `(1,3)` 块就是这么变差的，别只看总数字。
 2. **名字标签**：`_online_player_name()` 读 `app_node.state.players[pi].name`（= 本地 profile 名），
    **不读** `room["names"][entity_id]`（`NameInfo` 的真值 `cmdgz` 已经落在那里、也进了
    `GraphwarNameManager`）。原版方向是标签文本从 `NameManager` 拉（`docs/16` §44 那条链）。

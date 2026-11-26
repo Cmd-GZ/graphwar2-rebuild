@@ -8508,6 +8508,528 @@ python3 tools/frame_diff.py --orig <W>/orig --mine <W>/mine --screens menu,repla
   --out <W>/fd.tsv --blocks-out <W>/fdb.tsv --json <W>/fd.json
 ```
 
+## 59. 回放播放屏 S3/S4：三件按贡献排序（棋盘 1 px 取整 / 底部行 / 士兵三件套 + 名字标签）—— 跨侧 8.062 % → **0.217 %**，L1 **过**、L2 **24 块全过**、L3 仍不过（2026-11-26，任务 T7）
+
+> 前情：**§55**（t4）把回放屏从 41.33 % 压到 8.07 %（载入即暂停 + 回放版式），
+> **§58**（lead）修掉 `update_sprite` 的 `scale.x` 漏 `k`（士兵/靶子第一次画出来）。
+> §58.3 把剩下的 8.06 % 归了成三块：**棋盘区 75.9 %**（每条网格线整体错 1 px）、
+> 底部行 20 278 px、士兵 hat/body 与名字标签。本节就是**把这 76 % 与其余两块一起做掉**。
+>
+> 分支 `agent/s3-zero`（从 master `2f64674`），工作树 `.agent-work/cg/wt-t7`，
+> 私有 `CARGO_HOME` + `CARGO_TARGET_DIR=.agent-work/cg/wt-t7/.cargo-target`。
+> **预注册沿用 §55 那份**（`fixtures/replay_screen_targets.txt`，sha256 `a570bafd…`），
+> 本轮**只追加了第五节"复跑读数"**，§三 的目标值与容差一个都没动。
+> 采集：`--flow replay --seed-replays`，原版 display 81 / 我方 display 82，同一份冻结回放
+> `1793897298`（Level 0，1 士兵 `cmdgz` + 1 靶子），两侧各 3 帧、`replay_play`/`replay_end` 各自逐位静止。
+
+### 59.0 一页结论
+
+| 项 | 改前（v0 = master `2f64674`） | 改后（v3 = 本分支） | 档 |
+|---|---|---|---|
+| `frame_diff` L1 `l1_dmean_max` | 0.229（过） | **0.065**（过） | **观测** |
+| L1 第一主色占比差 | 0.156 pp | **0.002 pp**（门槛 2.0） | **观测** |
+| L2 超限块（门槛每块每通道 ≤2.0） | **2 块**（最差 `(2,2)` 3.381 → §58 后 3.489） | **0 块**（最差 `(2,2)` **0.968**） | **观测** |
+| L3 差异像素 / 比例 | 179 629 px / **8.0620 %** | **4 836 px / 0.2171 %** | **观测** |
+| L3 `max|Δch|` | 255 | 255（**不过**，门槛 8） | **观测** |
+| 棋盘白底四边 + 轴线交点 | 1272×761 @(303,200)、轴 (938,579) | **1273×762 @(303,198)、轴 (939,578)** = 原版 | **观测**（四个数**逐项 0 px**） |
+| 士兵彩色 bbox / px | 521 px / (794,820)-(819,845) | **643 px / (771,783)-(843,854) 区域内的 (788,816)-(823,844) + 名字标签 (771,789)-(843,803)** | **观测** |
+| `replay_end` | 与 `replay_play` 逐位相同 | 同（两边都静止） | **观测** |
+
+`menu` / `replay_lobby` 两屏**一个数都没动**（0.000 % / 0 块），是本轮的回归护栏。
+
+**一句话**：8.06 % 的残差里 **76 % 来自"整块棋盘错 1 px"**，而这 1 px **不是四舍五入**——
+是**右列宽多 1 px（338 vs 337）+ 底栏矮 2 px（96 vs 98）**两条版式实参错。钉死这两条之后
+棋盘四个数一次全对；再修掉士兵/标签的三条**数据层** bug 与六颗键的图标对齐，剩 0.22 %。
+
+### 59.1 ① 棋盘几何：两个成因，都不是"取整方式"
+
+**先裁决"是 floor/round 还是版式"**：本机在两**侧**各自量白底矩形（尺子同 §55：
+近白 ≥250 占比 >30 %、允许 15 px 空洞取最长段；轴线 = 矩形内平均灰度最低的行/列）：
+
+| 量 | 原版（display 81） | 我方改前 | 我方改后 |
+|---|---|---|---|
+| 白底 x0..x1 / y0..y1 | 303..1575 / 198..959 | 303..**1574** / **200**..**960** | 303..1575 / 198..959 |
+| w×h | 1273×762 | **1272×761** | 1273×762 |
+| 轴线交点 | (939,578) | (**938**,**579**) | (939,578) |
+
+⇒ 错的是**外框矩形的实参**，不是取整：我方白底比原版**窄 1 px、下移 2 px**。
+把运行时容器链 dump 出来（诊断脚本只读 `PlayScreen` 的 `plane_state()` + `Control.size`，
+见 §59.7 第 4 条）就看见两个数：
+
+```text
+              改前                                    改后
+PlayMainHBox  1920×1060                               1920×1058        ← 竖直 -2
+PlaneContainer 1278×1060  @x300                       1279×1058 @x300  ← 水平 +1 / 竖直 -2
+GamePlane/ExtraOptionPad  1278×96                     1279×96
+PlaneContainer(AspectRatioContainer) 1278×960 @y100   1279×958 @y100
+PlaneCanvas   1278×766.8  @(0, 96.6)  ⇒ y=196.6       1279×767.4 @(0,95.3) ⇒ y=195.3
+RightControls 338×1060 @x1582                         337×1058 @x1583
+HBoxContainer2 1920×96 @y1064                         1920×98 @y1062
+```
+
+#### ①-A 水平 1 px：右列宽 = **键盘 grid 的天然最小宽 337**，不是"右三键的宽"
+
+* 原版右三键在 `recovered-src/play_screen.tscn` 里是 `text = "        "`（**八个空格**，逐位）
+  + 字号 `screen_size.x / 30`（`ButtonGrid.gd` 的 `update_child_sizes()`，逐位）⇒ 按钮的自然最小宽
+  = 8 个空格的 advance **224** + 主题 `Button/styles/normal` 的左右各 3 px 边 = **230**。
+  **旁证（同一把尺子）**：五个空格的 `ShowExtraButtons` = 140 + 6 = **146**，与真帧量到的
+  146×96 **逐项相同**；八个空格 = 224 + 6 = 230。
+* 右列 **337** 来自 **`RightButtonGrid`（键盘，`columns = 3`）的天然最小宽**（3 列 × 最宽键 + 2×4）。
+  真帧右三键落在 x1583..1919（337 宽）⇒ 棋盘列 = 1920 − 296(左) − 8(两个 separation) − 337 = **1279**。
+* **我方改前的错**：把真帧的"337"当成右三键的最小宽写死成 `w * 0.175521 = 337.00032`
+  ⇒ `GridContainer` 按 **int** 分配列宽时**向上取整成 338** ⇒ 棋盘列 1278 ⇒ 白底 1272、
+  轴线 938。改后右三键的最小宽回到 .tscn 的语义（230），右列由键盘 grid 的天然宽 337 决定。
+* ⚠️ **机制仍有一处未知**：真帧上键盘**不画出来**，但它的宽度**还参与**右列宽的计算。
+  若只是 `visible = false`，Godot 的 `Container` 会把整根子节点从最小宽里**剔掉**
+  （本机实测：改后如果照旧 `visible=false`，右列会缩到回放 grid 自己的 230、棋盘列变 1386）。
+  原版"宽度还在、高度不在"这一条**没有源码证据**（推断：原版可能只把键藏起来、或者
+  `visible` 之后容器的最小尺寸缓存没失效）。**本轮的实现是如实复现这条观测**——
+  `_set_replay_layout()` 里让 holder 保持 visible、把 grid 藏掉、并把 holder 的
+  `custom_minimum_size.x` 钉成"grid 藏起来之前量到的天然最小宽"。
+
+#### ①-B 竖直 2 px：底栏高 = 函数输入框的 **`LineEdit` 最小高 = 98**
+
+* 独立证据 1：`docs/archive/125-playscreen.md` §3.3 的 GEOM 表写着 `HBoxContainer2 (height = 98 @1920)`；
+* 独立证据 2：本帧实测原版输入框底 `y1062..1157` ⇒ 底栏**从 1062 起** ⇒ `PlayMainHBox` 高 1058；
+* 证据 3（怎么来的）：原版 `GraphwarFunctionInput` 是 **`LineEdit` 的 Rust 子类**
+  （`src/graphwar_function_input.rs` 文件头，`ILineEdit`），所以它的最小高度按 `LineEdit` 的规则
+  = `字体高 + 样式盒的上下 content_margin`。@1920 字号 = 64、`button_font.get_height(64) = 90`；
+  **回放屏的函数框是不可编辑的**（`editable = false`）⇒ 用的是
+  `LineEdit/styles/read_only`（`graphwar_theme.tres` **没有**覆盖这个键 ⇒ 落到 Godot 默认主题）
+  ⇒ content_margin 上下各 **4** ⇒ 90 + 8 = **98** ✓（可编辑态则是主题的 3px 边 ⇒ 90+6 = 96）。
+* 我方改前拿"左上按钮键宽 = 96"当输入框最小高 ⇒ 底栏 96、`PlayMainHBox` 1060、棋盘整体**下移 2 px**。
+  改后 `GwFunctionInput._get_minimum_size()` 按上面的规则算（只给宽度、不给高度）。
+
+### 59.2 ② 底部行：输入框按 `LineEdit` 画、修正常数偏 10 px 收到 2 px 内、`f(x)=` 图标仍小 2 px
+
+#### ②-A 回放屏的输入框 = **默认主题的 `LineEdit/styles/read_only`**（一条被逐通道验证的推断）
+
+真帧上输入框内部**整块**是 `(17,33,27)`、**左右上都没有黑边**、只有底部 2 行近黑。
+这三条一起指向 Godot **默认主题**的 `LineEdit/styles/read_only`：
+`bg_color = (0.1, 0.1, 0.1, 0.3)`、**只有下边框 2 px**、content_margin 4。逐通道验算
+（叠在页面底色 `(14,37,28)` 上）：
+
+```text
+R = 14 + 0.3·(25.5 − 14) = 17.45 → 17
+G = 37 + 0.3·(25.5 − 37) = 33.55 → 33      ⇒ (17,33,27) 与真帧输入框内部**三通道全等**
+B = 28 + 0.3·(25.5 − 28) = 27.25 → 27
+```
+
+改前我方自造了"透明底 + 3px 黑边"（= 可编辑态的样式）⇒ 多出 ~9 400 px 假黑框、少一层底色。
+改后 `GwFunctionInput` 在 `read_only` 时**直接取那个样式盒来画**（不再手填常数），
+光标高度也改成"内容矩形"（98−8 = 90，与真帧 3×90 @y1066..1155 一致）。
+
+**文本基线**同时改成 `LineEdit` 的规则（`content_top + (内容高 − 字体高)/2 + font_ascent`）：
+改前"控件高一半 + 0.35 em"在 @1920 上比真帧**高 3 px**（墨迹 y1084..1146，原版 y1087..1149）。
+
+#### ②-B 修正常数 `- 3.694`：x1774..1893 → **x1766..1886**（原版 1764..1883，Δ 剩 2 px）
+
+改前：`OffsetContainer` = 0.09·1920 = 172.8（原版 `.gd` 明写）在右端 ⇒ 容器 1746..1918.8，
+Label 居中 ⇒ 墨迹 1773..1893（**中心 1833**；真帧中心 **1823.5**，差 9.5 px）。
+
+改法（**推断**，不是逐位）：回放里的这一串是从 `FunctionInfo` 的函数串
+`x+2sin(20x) - 3.694` **切出来的后缀**，所以带着前面那个分隔空格 ⇒ 显示成 **`" - 3.694"`**。
+居中的文本多一个前导空格（fs 32 下一个空格 14 px）⇒ 墨迹左移 7 px ⇒ 中心 **1825.4**，
+与真帧差 **1.9 px**。⚠️ 缺的证据：原版播放屏把函数串切成"函数 / 修正"的**那条字符串操作的指令**
+（未解），以及 `Label` 的字体（主题 `default_font` = ComicRelief-Bold，不是
+`Button/fonts/font`）在那个字号下的精确 advance。**这条只作用于回放分支**（战役/联机的
+修正文本是玩家自己填的值，格式 `+ 2.515` 不带前导空格，未改）。
+
+#### ②-C `f(x) =` 图标：仍比原版**小约 2 px**（636 px，记成未做成）
+
+我方墨迹 77×27（171..247）、原版 81×30（169..249），**中心相同**（209）。
+差 5 % 的比例 ⇒ 原版那颗 `FxTextureButton` 的有效方框约 100×100，我方 96×96（= 左上键宽）。
+原版结构是 `FxContainer → AspectRatioContainer(ratio 1, stretch_mode 1) → FxTextureButton`，
+我方把按钮**直接**放在 `FxContainer` 里（T4 的简化，`docs/06` §55.8 第 3 条已登记）。
+本轮**没动**：把它做成 AspectRatioContainer 会牵动 `FxContainer` 的最小宽（96 → 69/100），
+进而挪动整个底栏与修正常数的位置，收益 636 px、风险面覆盖已经对齐的三段。**未做，转入遗留。**
+
+### 59.3 ③ 士兵三件套 + `cmdgz` 名字标签：三条**数据层** bug（不是渲染层）
+
+§55.5 当时把"士兵画不出来"判成渲染层（`update_sprite` 公式），§58 修好了公式，
+本节发现**剩下的三件全是数据/接线**：
+
+| # | 症状 | 根因 | 怎么证的 |
+|---|---|---|---|
+| 1 | 士兵永远穿**默认三件套** `yellow/regular_eyes/soldier_helmet`，而回放录的是 `face_paint_2/asian/asian_hat` | `_replay_sync_actors()` 把士兵转成 `_soldiers` 时**丢了实体 id**，`_sync_entities()` 拿**数组下标**（= 0）去问 `_replay.graphics("skin", 0)` ⇒ 永远空串 | 运行时 dump `EntityDrawer` 的子节点：`Sprite2D@69 tex=skins/yellow.ctex` → 改后 `skins/face_paint_2.ctex`（另两口同） |
+| 2 | 名字标签被摆在**控件左上角**（`pos=(0, 14.7)`），肉眼看就是"没有名字" | `entity_drawer::name_label_layout` 的第一实参是**控件尺寸**（`k = w/50`），`_scaffold/entity_drawer_class.rs::relayout()` 传的是**标签自己**的 `get_size()`（58×40）⇒ k = 1.16、`cx` 被 `max(cx,0)` 夹到 0 | 算式尾部把结果夹进 `[0, w − mw]`——只有 `w` = 控件宽时才有意义；`tests/entity_drawer.rs` 那条用例传的第一个实参就是控件尺寸 500×300 |
+| 3 | 标签画出来也**看不见**：白字叠在白底棋盘上 | RichTextLabel 用默认 `default_color`（白）。真帧上名字是**队色笔画 + 黑描边**：`cmdgz` 的笔画色 **(125,104,0)** 与这名士兵 `ColorInfo` 的颜色**逐值相同** | 改前/改后真帧 ASCII 对照：改前名字行整片是白底（`W`），改后出现队色笔画（`#`） |
+
+改后：名字标签实测落在画布 `(367.87, 452.80)` ⇒ 屏幕 (770.6, 774.4)，与真帧 `cmdgz`
+墨迹 **(771,789)-(843,803)** 对齐；士兵的三张图 = `face_paint_2 / asian / asian_hat`。
+
+**没做到的（遗留）**：士兵**合成尺寸**仍小于原版。彩色 bbox：
+我方 (788,816)-(823,844) = **36×29**、原版 (771,783)-(843,854) 里**除名字标签外**是
+(776,812)-(829,854) = **54×43**。三层 sprite 的位置/缩放/贴图都与原版同名同值
+（`scale=(±0.083333, −0.083333)`、512×512 贴图 ⇒ 42.67 画布 px = 54.6 屏幕 px），
+所以差的不是缩放公式而是**画出来的墨迹比例**（我方墨迹占 sprite 的 66 %、原版 ~79 %），
+且原版在主体下方还有一块（y846..854）我方完全没有。**推断**：原版那一层（body/影子）
+对应的贴图或 `EntityChildNode` 语义与我方不同（`ENTITY_CHILD_NODES` 的 3 层名字是
+**推断**，不是逐位）；缺的证据：`GraphwarTextureLoader` 按名查表的**键**，以及
+`get_entity_{skin,face,hat}_sprite`（x86 `0x4bb6b0` 一族）里对每个部件的**额外 set_position/scale**。
+
+### 59.4 逐块表（`replay_play`，块 = 320×290，`row,col` 从 0 起；门槛每块每通道 ≤ 2.0/255）
+
+改后只有 3 块还有 >0.01 的差（`dmean` 三个通道全 ≤ 0.968）：
+
+| 块 | 改前 dmean(RGB) | 改后 dmean(RGB) | 差像素改前 → 改后 | 差在哪 |
+|---|---|---|---|---|
+| `(2,2)` | 3.381 / 3.489（§58 后） | **0.181 / 0.313 / 0.968** | 13 642 → **1 961** | 士兵合成尺寸 + 名字标签笔画形状 |
+| `(3,0)` | 0.061 | 0.061 | 636 → 636 | `f(x)=` 图标小 2 px（§59.2-C） |
+| `(3,3)` | 1.066 | **0.676** | 10 406 → **270** | 输入框光标**闪烁相位**（3×90 @x1181..1183，两边位置相同；原版 45 s 也变 270 px ⇒ 它也闪） |
+| 其余 21 块 | 0.0 – 1.807 | **0.0 – 0.004** | — | 全过 |
+
+改前那 19 块超限的分布（§55.0）与 §58 后的 2 块（`(2,2)` 3.381、`(1,3)` 2.016）现在都不见了：
+`(1,3)`（靶子）在 §58 之后已经达标，本节改后是 **0.0**。
+
+### 59.5 残余 4 836 px 的去处
+
+| 去处 | px | 说明 |
+|---|---|---|
+| 士兵合成尺寸 + 标签笔画 | 1 961 | §59.3 遗留；缺 `GraphwarTextureLoader` 查表键与逐部件摆位的证据 |
+| `f(x)=` 图标小 2 px | 636 | §59.2-C；要动 `FxContainer` 的 AR 结构（风险面大于收益） |
+| 光标闪烁相位 | 270 | 我方 0.55 s 周期 / 0.28 s 亮；原版周期**未观测**（只知"45 s 内变 270 px"）。三帧里踩到哪一侧是概率 |
+| 其余（网格线 1.28 px 抗锯齿、文字 AA 等） | ~1 970 | 画布模型：我方把 1000×600 缩放到 1279×767.4、原版直接按实尺寸画（`docs/06` §55.8 第 5 条，未动） |
+
+⇒ **L3 的三条判据（≤0.10 % / max|Δch| ≤ 8）本轮过不了**：max|Δch| = 255 来自光标的
+"有/无"（任一处 1 px 以上差异都会破这一条）。L1、L2 是**全部通过**的。
+
+### 59.6 落到源码的每一处改动（文件 + 函数 + 证据）
+
+| # | 文件 | 函数/位置 | 改法 | 证据档 |
+|---|---|---|---|---|
+| 1 | `client/src/screens/play_screen.gd` | 新增 `_replay_button_width()`；`_set_replay_layout()` 里右三键的最小宽 | `w*0.175521`（337.00032）→ **八个空格 advance + 6 = 230**（`.tscn` 的 `text` + `ButtonGrid.gd` 的 `x/30`） | **逐位**（`.tscn` 文本 + `.gd` 比例）+ **观测**（真帧 337/146） |
+| 2 | 同上 | `_set_replay_layout()` 右列键盘 | holder 保持 visible + grid 藏掉 + holder 最小宽钉成 grid 的天然 337 | **观测**（真帧右列 337、无键盘）；机制 **未知** |
+| 3 | 同上 | `apply_font_scale()` 里 `_input.custom_minimum_size` | `(key*2, key)` → `(key*2, 0)`：高度交给 `_get_minimum_size()` | **逐位**（`LineEdit::get_minimum_size` 规则 + 主题 content_margin） |
+| 4 | `client/src/play/function_input.gd` | 新增 `_line_edit_style()` / `_get_minimum_size()` / `refresh_minimum_size()` | 只读态取 **Godot 默认主题的 `LineEdit/styles/read_only`**；最小高 = 字体高 + content_margin | **观测**（真帧三通道验算 + 只有下边框） |
+| 5 | 同上 | `_draw()` | 样式盒 + 基线（`LineEdit` 规则）+ 光标高度（内容矩形） | **观测**（真帧墨迹 y1087..1149 / 光标 3×90） |
+| 6 | `client/src/screens/play_screen.gd` | `_replay_draw_shot()` 的 `_offset_label.text` | 回放分支加**一个前导空格** | **推断**（中心差从 9.5 px 收到 1.9 px；缺切串指令） |
+| 7 | 同上 | `_build_replay_controls()` | 六颗回放键 `icon_alignment = CENTER`（`.tscn` 每颗都写 `icon_alignment = 1`） | **逐位**（`.tscn`）+ **观测**（真帧图标居中 x1708..1794） |
+| 8 | 同上 | `build()` 里 `_fx_button` | 同上（`FxTextureButton` 的 `icon_alignment = 1`） | **逐位**（`.tscn`） |
+| 9 | 同上 | `_replay_sync_actors()` / `_sync_entities()` | 士兵带上**回放实体 id**，外观按它查 `graphics()` | **观测**（运行时 dump 的贴图名 + 真帧 bbox） |
+| 10 | 同上 | `_sync_entities()` | 新增 `set_entity_name_color(id, 队色)` 调用 | **观测**（真帧笔画色 (125,104,0) = ColorInfo 逐值） |
+| 11 | `src/_scaffold/entity_drawer_class.rs` | `relayout()` 的 name label 段 | 第一实参 `label.get_size()` → **控件 `size`** | **观测**（算式夹取语义 + `tests/entity_drawer.rs` 用例的实参） |
+| 12 | 同上 | 新增 `set_entity_name_color()`；`new_name_label()` 加描边 theme 项 | 颜色 = 队色；`outline_size = 4` + `font_outline_color` 黑 | 颜色 **观测**；描边数值 **推断**（取自同工程 `ViewFunctionsLabel` 的 `[outline_size=4]`） |
+| 13 | `client/tools/entity_drawer_check.gd` | `expect_label_position()` | 镜像同步：`w/h` 取**控件尺寸**（与 #11 同一条更正） | 镜像（`docs/06` §58.2 第 3 条的同一规矩） |
+
+> **地址口径**（2026-11-26 更正）：本仓库文档里的函数地址一律是 **ELF vaddr（RVA）**，
+> 直接与 `objdump`/`analysis/` 对齐；只有 Ghidra 反编译文本里的 `_DAT_/FUN_` 才是 `+0x100000`。
+> 本节引用的地址：`EntityDrawer::draw` `0x4b2890`、`update_sprite` `0x4b9530`、
+> `update_name_label` `0x4b9810`（arm64 `0x4bf690`）、`get_entity_skin_sprite` `0x4bb6b0`。
+
+### 59.7 复跑（每条都在本机跑过；`<W>` = 工作树）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=<W>/.cargo-target          # ⚠️ 单独一行
+export HOME=<W>/.fakehome                          # 可写目录，里面要有 replays/1793897298
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd <W>
+
+# ① 内核三步（改了 src/_scaffold/ 就必须做，否则客户端跑旧内核）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+$GODOT --headless --path client --import
+
+# ② 两侧真帧（**只用** display 81 / 82；必须用**本工作树**的 tools/frame_capture.py）
+python3 tools/frame_capture.py --side original --flow replay --seed-replays --out /tmp/orig --display-num 81
+python3 tools/frame_capture.py --side ours     --flow replay --seed-replays --out /tmp/mine --display-num 82
+
+# ③ 三层判据（同一个 frame_diff.py、同一份门槛文件）
+python3 tools/frame_diff.py --orig /tmp/orig --mine /tmp/mine \
+    --screens menu,replay_lobby,replay_play,replay_end \
+    --out /tmp/fd.tsv --blocks-out /tmp/fdb.tsv --json /tmp/fd.json
+#   期望：menu 0.000 % / replay_lobby 0.000 % /
+#        replay_play & replay_end：L1 0.065、L2 **0 块**、L3 4 836 px = 0.2171 %、max|Δch| 255
+
+# ④ 棋盘四个数（同一把尺子，本文件 §59.1 的表就是这么量的；脚本 argv 见 59.8 第 6 条）
+#   原版 /tmp/orig/frames/replay_play_1.png → x303..1575 y198..959 = 1273×762、轴 (939,578)
+#   我方 /tmp/mine/frames/replay_play_1.png → 应当**逐项相同**
+
+# ⑤ 容器链运行时读数（诊断用；只读，不写库）
+DISPLAY=<私有 Xvfb> GW2_REPLAY=$HOME/.local/share/godot/app_userdata/Graphwar/replays/1793897298 \
+    $GODOT --path client --resolution 1920x1160 --script res://<诊断脚本>   # 打 PlayPlane/Row 的 size
+#   期望：PlayMainHBox 1920×1058、PlaneContainer 1279×1058 @x300、RightControls 337 @x1583、
+#        HBoxContainer2 1920×98 @y1062、PlaneCanvas 1279×767.4 @y195.3
+
+# ⑥ 回归六项（读数见 §59.8）
+cargo test --offline                                   # 1769 / 0 / 1 ignored
+cargo test --offline --features gdext-bindings          # 1875 / 0 / 1 ignored
+bash client/run.sh selftest                             # 717 / 0 / 1 skip（missing=0 silent=0）
+for f in assemble_check base_classes_check curve_on_screen_check draw_classes_check \
+         entity_drawer_check function_drawer_check gdext_check obstacle_drawer_check \
+         plane_on_screen_check play_flow_check process_loop_check recovered_view_check \
+         signal_classes_check spike_class_check; do
+    $GODOT --headless --path client --script res://tools/$f.gd; done   # 合计 1933 / 0
+```
+
+### 59.8 抓不到 / 本轮没做 / 我写错了
+
+| # | 项 | 状态 | 卡在哪 |
+|---|---|---|---|
+| 1 | 士兵**合成尺寸**（我方 36×29 / 原版 ~54×43，且原版主体下方还有一层） | **未做成** | 三层 sprite 的位置/缩放/贴图名都与原版同名同值（各 54.6 屏幕 px），差的是**墨迹占比**与"多出来的那一层"。缺 `GraphwarTextureLoader` 查表键 + `0x4bb6b0` 一族里逐部件的额外摆位证据 |
+| 2 | 名字标签的**精确字体/字号/描边宽** | **推断** | 队色笔画是观测；描边 4 取自同工程 `ViewFunctionsLabel` 的 `[outline_size=4]`，字号沿用 RichTextLabel 默认。缺 `get_entity_name_label` 里 theme 项的写入指令 |
+| 3 | `f(x)=` 图标 2 px | **未做成** | 要动 `FxContainer → AspectRatioContainer → 按钮` 这层结构（会挪动整条底栏），收益 636 px 风险更大 |
+| 4 | 光标闪烁**周期** | **未知** | 只知道"45 s 内变 270 px"。三帧踩到亮/灭是概率 ⇒ 块 `(3,3)` 的 270 px 不可复现地忽有忽无 |
+| 5 | 画布模型（1000×600 缩放 vs 原版按实尺寸画） | **没动**（`docs/06` §55.8 第 5 条） | 网格线 1.28 px 抗锯齿 vs 原版 1 px 实线；本轮的 1 px 版式修正**不依赖**这条 |
+| 6 | 尺子脚本没入库 | **临时脚本** | §59.1 的四个数是本机一个 40 行的 numpy 脚本量的（口径见 `fixtures/replay_screen_targets.txt` §一），**没有**放进 `tools/`（本轮不允许改 `tools/`） |
+| 7 | ⚠️ **我改了既有断言**：`client/tools/entity_drawer_check.gd::expect_label_position()` | **已改（必须）** | 它是 #11 那条更正的**镜像**（`docs/06` §58.2 第 3 条要求"三处必须同步"），改的是**输入语义**（`w` 取控件尺寸），**不是**容差。不改则 headless 14 脚本 = 1932/1（红） |
+| 8 | ⚠️ **我改了 T4 的右列机制**：`visible=false` → "holder visible + grid 藏掉 + holder 最小宽钉 337" | **已改** | 原版"键盘不画但宽度还在"**没有源码证据**（见 §59.1 ①-A 的 ⚠️），本轮是**如实复现观测**，机制记 **未知**。若以后证出原版是别的做法（例如只藏按钮、`visible` 后缓存不失效），改的是 `_set_replay_layout()` 一处 |
+
+**任务前提被证伪的一条**：§58.3 把剩下的 8.06 % 归成"棋盘 1 px 取整（占 76 %）"，
+并把成因写成"`floor` vs `round`"。**实测不是取整**：外框矩形的实参本身就差
+（右列 338/337、底栏 96/98）——用的是**整块矩形**，取整方式（`AspectRatioContainer` 的
+`STRETCH_FIT` + `Control.scale`）一个字没改，四个数就全对。
+
+**回归护栏**（六项，全部与 master `2f64674` 相同或更好）：
+
+| 门槛 | 读数 |
+|---|---|
+| `cargo test --offline` | **1769 / 0 / 1 ignored** |
+| `cargo test --offline --features gdext-bindings` | **1875 / 0 / 1 ignored** |
+| `selftest` | **717 / 0 / 1 skip**（`missing=0 silent=0`；两个 `*_real_server` 组要求先 `cargo build --example serve_match`，否则 missing=76） |
+| headless 14 个 SceneTree 脚本 | **1933 / 0**（`assemble 244 / base 117 / curve 96 / draw 235 / entity 366 / function 132 / gdext 24 / obstacle 116 / plane 96 / play_flow 206 / process 66 / recovered 57 / signal 155 / spike 23`） |
+| 三轴（各自 `--check-baseline`） | `fire` 内容 **647** / 种类序列 **1075**；`batch` 内容 **647** / 1075；`batch_conv` 内容 **637** / 1075 —— 三条全部 `校验结果：全部一致` |
+| 冻结快照 | **403** 份（一个字节没动） |
+## 60. 视觉真值扩到「对局屏」：**脚本化协议服务器把局面钉死**，原版真机与我方客户端各拍两屏（2026-11-26，任务 T8）
+
+> 任务书：`.agent-work/specs/T8-match-frames.md`（共享任务 `task-5`）。分支 `agent/match-frames`，基于 master `2f64674`。
+> 工作树 `.agent-work/cg/wt-t8`（私有 `CARGO_HOME` / `CARGO_TARGET_DIR=$WT/.cargo-target`）。
+> 原版 = `.reference/game/{Graphwar.x86_64, Graphwar.pck, libgraphwarrust.so}`（Graphwar II Linux **2.0.60**，
+> 内嵌 Godot **4.7.stable.official.5b4e0cb0f**）；我方 = `client/` + `libgw2_rebuild.so`（Godot **4.7.2**）。
+> 地址一律 **vaddr**；证据档按 `AGENTS.md` §0.3 标（**逐位** / **观测** / **推断** / **未知**）。
+
+**一句话**：**两侧都进到了同一屏** —— S7 准备态（`match_ready`）与 S8 对局中（`match_play`）。
+两屏都**不过**既有三层判据，但 **L1 全过**（尺寸 / 平均色 / 第一主色都对得上）⇒ 差的是**元素**，不是"差一点亮度"。
+跨侧差异 **6.3574 % / 6.8344 %**，而两侧**噪声地板**只有 **0.049 % / 0.000 %** 与 **0.674 % / 0.150 %** ⇒ 差异不是动画相位噪声。
+
+### 60.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 对局屏有真值了吗 | **有了**：`fixtures/frame_match_events.txt`（预注册剧本）+ `tools/match_serve.py`（脚本化服务器）+ `--flow match`（采集）+ `fixtures/frame_diff_results_match.tsv`（数字） | **观测** |
+| ② | 两侧都进到同一屏了吗 | **都进了**，屏名 `match_ready` / `match_play`（定义见 60.1）。证据：两侧各自 `manifest.json` 的 `ok=true`、窗口 `1920x1160+0+0`、每屏 3 帧落盘；服务器日志里两侧都**收到同一份 50 帧剧本**并各自回话（原版回 `FunctionsCalculated{}`、我方回 `GameStartRequest{}`，见 60.3） | **观测** |
+| ③ | 差异数字 | `match_ready` 跨侧 **141 591 px = 6.3574 %**（max\|Δ\|=255）；`match_play` **152 216 px = 6.8344 %**。L1 **过**、L2 **不过**（4 块 / 3 块超限）、L3 按门槛不算数 | **观测** |
+| ④ | 差在哪些元素 | 士兵精灵（我方 ≈20×20 px 圆点 vs 原版 ≈73×72 完整精灵+名字标签）、**多一个落在棋盘正中 (0,0) 的实体且准备圈画在它身上**（原版那里什么都没有、准备圈在射手 230 身上）、**靶子被画成士兵**（原版蓝环红心）、弹道样式/配色、`Fire!` 字号与颜色、右下偏移量标签（原版 `- 9.890` 常显 / 我方 S7 无、S8 显示 `- 3.694`）、键盘字形与 `y` 键底板、棋盘网格 1 px | **观测**（真机真帧 + 逐 ROI 差异计数） |
+| ⑤ | 为什么差这些 | 我方 `client/src/net/session.gd::_apply` **只处理 21 个事件**，而剧本里 30 个事件名中有 **12 个没有处理器**（`EntityRemoved`/`RemoveTeam`/`TargetInfo`/`NameInfo`/`SkinGraphicsInfo`/`FaceGraphicsInfo`/`HatGraphicsInfo`/`EntityEffectInfo`/`FunctionFire`/`FunctionPoints`/`FunctionActive`/`EffectInfo`）⇒ 名字/外观/靶子/实体删除/爆炸进不到界面层 | 列表 **观测**（读代码）；"这就是差异成因"是 **推断**（本轮没有 dump 我方 `EntityDrawer` 的输入表，同 `docs/06` §53.6 最后一行口径） |
+| ⑥ | 原版会接受我方服务器吗 | **会**。§48 那条路（LAN 发现变体 C + TCP `u16` 大端长度 + JSON）在**对局屏**这一层继续成立：真客户端连上后走完了握手 + 42 帧局面快照 + 8 帧开火剧本 | **观测** |
+
+### 60.1 预注册：事件序列 = **真回放的事件流**（先提交、后采集）
+
+文件 [`fixtures/frame_match_events.txt`](../fixtures/frame_match_events.txt)（commit `a45fd93`，**采集之前**提交）。
+它不是一个"示意图"，是**逐条可查的真值**：
+
+| 项 | 内容 | 来源 |
+|---|---|---|
+| 局面/顺序 | 冻结快照里的**真回放** `1793897298`（`Level 0`：1 士兵 230 + 靶子 232、`ClearObstacles`、104 事件 / 2276 tick） | `.reference/replays/gw2-replays-snapshot/replays/1793897298`（**只读**，跑完仍 403 份） |
+| 握手 7 条 | `NewConnection` + 6 条 `*Info`，**顺序即真抓包顺序** | `client/src/net/wire_samples.gd::STATE_SYNC` = `fixtures/protocol_match.jsonl:22/23/30/32/25/26/27`、`docs/07` §1 |
+| 字节布局 | `u16` 大端长度 + `{"<EventName>":{…}}` | `src/_scaffold/protocol.rs`（74/74 事件**逐位**）、`docs/07` §3.3 全表、`docs/09` §1.1 |
+| 自校验 | 剧本 50 条里 **49 条在真回放里逐字段命中**，唯一例外 `NewConnection{228}` 来自真抓包握手 | 复跑：拿回放 `json.dumps(sort_keys=True)` 建池逐条比对（命令见 60.7 ④） |
+
+两个屏的**定义**（本文件定义、`--flow match` 写进 manifest）：
+
+| 屏名 | = 哪一态 | 剧本相位 | 判据 |
+|---|---|---|---|
+| `match_ready`（**S7 准备态**） | 棋盘上有士兵（带准备圈）与靶子、回合 HUD 显示轮到谁，**还没开火**：最后一次状态迁移是 `GameStateInfo{WaitingForFunctions}` | `[phase1]` 42 帧 | L1/L2/L3 引 [`fixtures/frame_diff_thresholds.txt`](../fixtures/frame_diff_thresholds.txt)（sha256 `9cc9fcda…`，**一个数没改**） |
+| `match_play`（**S8 对局中**） | 收到 `FunctionFire` 之后进入 `CalculatingResults`，带真修正函数 `x+2sin(20x) - 3.694`、落点 `end_x=2.5793570733273476`、爆炸点 `(2.579357, 0.823608)` | `[phase2]` 8 帧 | 同上 |
+
+### 60.2 管线（一图 + 三件工具）
+
+```text
+tools/match_serve.py（脚本化服务器，**读 fixture 原样发**）
+  ├ UDP 127.0.0.1:42968 ← 裸 9 字段 GameInfo + "\n"（变体 C，§48.2 ①）⇒ 客户端 LAN 列表出现一行
+  ├ TCP 127.0.0.1:46702：收 NewConnectionRequest → 发 [phase1] 42 帧（逐帧 20 ms 间隔）
+  │                      ⇒ 客户端进对局屏（S7）
+  ├ 等 <工作区>/phase2.trigger 出现（采集脚本拍完 S7 后 touch）→ 等 1.0 s → 发 [phase2] 8 帧 ⇒ S8
+  └ 全程回答客户端的 TickRequest（TickReply，tick 轴见 60.2.1），并记录**每一帧**（时刻/事件名/字节数/完整载荷）
+
+tools/frame_capture.py --flow match（**只新增这一支**，campaign/replay/static 一字未改）
+  └ 同一个进程树里：起服务器 → 起私有 Xvfb 1920x1160x24(TCP) → 起游戏 → 点 主菜单 Play(1344,622)
+    → 点 LAN 第 1 行 Join(1842,209) → 等 3.0 s → 每屏 3 帧（间隔 1.2 s）→ 拍完 S7 就 touch 触发文件
+    → 等 5.0 s → 拍 S8 → 收摊（服务器 SIGTERM）
+
+tools/frame_diff.py（**未改**，一字未动）→ fixtures/frame_diff_results_match.tsv + fixtures/frame_diff_blocks_match.tsv
+```
+
+**为什么服务器必须由采集脚本起**：本机每条 bash 命令是独立 PID namespace（§53.7 第 2 条），
+上一条命令里 `nohup` 起的进程在下一条就不存在 ⇒ "起服务器 → 起游戏 → 点 → 截"必须在**同一个进程树**里。
+
+#### 60.2.1 本轮唯一一次"改管线"：`TickReply`（**不是**改门槛、不是改剧本）
+
+第一次跑原版侧时 `[phase2]` 发出去了，但画面上**没有弹道**：S8 与 S7 只差 **1 186 px**（差在准备圈长完，见 60.5 第 3 行）。
+原因是客户端的动画时钟 = **服务端 tick 轴**：剧本取自真回放第一发（`FunctionActive.active_tick=615`、
+爆炸 `EffectInfo.start_tick=1281`），而客户端刚连上时 tick ≈ 0 ⇒ 615 还没到，弹道当然不开始。
+
+真服务器对 `TickRequest`（原版客户端 1 Hz 发）回 `TickReply`（`docs/07` 判别值 2，「逐位 + 观测（4 行）」），
+所以**补上 TickReply 是更接近原版**，而不是"为了让画面好看"：
+
+* tick 基准**不是我编的**：phase1 期间 = **6**（回放里快照那段的 tick）、phase2 期间 = **550**（回放里第一发的 tick），
+  之后按 **60 Hz** 走 —— 两个数都写在 fixture 的 `[meta]` 里，出处写在旁边；
+* 补上之后：原版侧收到 14 条 `TickReply`，S8 与 S7 的差异从 1 186 px 变 **11 616 px**，画面出现弹道（60.5 第 3 行）；
+* 我方客户端**不发** `TickRequest`（那是它与原版的一个真实差别）⇒ 我方那次 `TickReply` = **0 条**，
+  它靠本地时钟走动画。⇒ S8 的"弹道相位"两边**不是同一时刻**，只能比"画出来的形状/位置"（见 60.8 第 2 条）。
+
+### 60.3 两侧各进到哪一屏（证据）
+
+两侧**同一份剧本、逐字节相同**：两次运行的服务器日志首行都写着
+`fixture_sha256 = 2278c30d54836167c36136225c2ffb931ab7c478df5db7fcfed908ec43555396`，
+`[phase1]` 都是 **42 帧 / 2273 字节**、`[phase2]` 都是 **8 帧 / 620 字节**。
+
+| 项 | 原版（`--side original`） | 我方（`--side ours`） |
+|---|---|---|
+| 窗口 | `1920x1160+0+0`（`manifest.json.window`） | `1920x1160+0+0` |
+| 采集 `ok` | `true` | `true` |
+| 连上服务器 | t=7.563 s，先发 `NewConnectionRequest{major:2.0,minor:60}` | t=7.548 s，**同样**先发 `NewConnectionRequest` |
+| 收到的剧本 | 42 + 8 帧（服务器逐帧记了载荷） | 42 + 8 帧（**同一份 sha256**） |
+| 客户端回话（证明它真的进了对局状态机） | `NewPlayerRequest{228}` → `NameRequest{229,"CG"}`/`SkinRequest`/`FaceRequest`/`HatRequest`/`RankRequest{0}` → `FunctionUpdateRequest{229,""}` → `TickRequest`×N → **`FunctionsCalculated{}`**（t=14.59，就在 `[phase2]` 发完那一刻！= 它处理了 `FunctionFire` + `CalculatingResults`） | `NewPlayerRequest{228}` → **`GameStartRequest{}`**（我方客户端连自己的服务器时会自己开局，`session.gd::auto_start`），**不发** `TickRequest` |
+| 画面 | 对局屏：棋盘 + 士兵精灵（黄，带名字 `cmdgz`）+ 橄榄色准备圈 + 蓝环红心靶子 + `Fire!` 白色粗体 + 键盘 + `f(x)=` 行 + 右下 `- 9.890` | 对局屏：棋盘（同样尺寸）+ 三个 ≈20×20 px 的圆点（其中一个是**已删除士兵 231 在原点**）+ **红色**准备圈 + 键盘 + `Fire!`（小号深色）+ `f(x)=` 行（S7 无偏移量、S8 显示 `- 3.694`） |
+| 证据档 | **观测**（真机真帧 + 线上原文） | **观测**（真机真帧 + 线上原文） |
+
+> ⚠️ 两侧是**分两次**跑的（同一台机、不同 display 83/84），不是同时跑；因为 LAN 发现要绑 `UDP 42968`，同时跑会互抢。
+> 两条命令见 60.7，**各自把服务器也起一遍**、喂**同一份 fixture**。
+
+### 60.4 L1 / L2 / L3 数字（入库：[`fixtures/frame_diff_results_match.tsv`](../fixtures/frame_diff_results_match.tsv)）
+
+| 屏 | 判定 | L1 尺寸 | L1 平均色 \|Δ\|max | L1 第一主色 | L1 占比差 | L2 超限块 | L2 最差块 | L2 最差 \|Δmean\| | L3 差异像素 | L3 max\|Δ\| | 噪声地板（原版／我方） |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `match_ready` | **不过（L2，4 块）** | ✅ 1920×1160 两侧 | **0.345** ✓（≤2.0） | `#FFFFFF` / `#FFFFFF` ✓ | **0.011 pp** ✓ | **4 / 24** | `(0,5)` | **5.71** | 141 591（**6.3574 %**） | 255 | **0.049 %** / **0.000 %** |
+| `match_play` | **不过（L2，3 块）** | ✅ | **0.553** ✓ | `#FFFFFF` / `#FFFFFF` ✓ | **0.265 pp** ✓ | **3 / 24** | `(2,2)` | **18.138** | 152 216（**6.8344 %**） | 255 | **0.674 %** / **0.150 %** |
+
+**复现性**（同一台机、同一棵树、同一条命令各再跑一遍，实测两轮）：
+
+| 复跑的是哪一侧 | `match_ready` L3 像素 | `match_play` L3 像素 | `l2_blocks_over` | 最差块 \|Δmean\| |
+|---|---|---|---|---|
+| 首跑（本表数字） | 141 591（6.3574 %） | 152 216（6.8344 %） | 4 / 3 | 5.71 / 18.138 |
+| **我方侧**重采 | **141 591**（一位不差） | **152 216**（一位不差） | 4 / 3 | 5.71 / 18.138 |
+| **原版侧**重采 | 141 596（+5 px） | 151 933（−283 px） | 4 / 3 | 5.71 / 17.225 |
+
+⇒ 我方侧那三帧 `match_ready` 逐字节相同（`sha256 ed6c9627…`），数字可复现到**一位不差**；
+原版侧的差来自**准备圈在动**（S7 三帧互不相同、噪声地板 0.049 %），浮动 ≤0.2 %。
+判定（L1 过 / L2 不过、超限块集合）两轮完全一致 —— 结论不受动画相位影响。
+
+**L1 全过、L2 不过**这个组合本身就是结论：**版式骨架对得上，元素没对上**。
+L3（差异像素 ≤ 0.10 %、max\|Δ\| ≤ 8）按门槛**只在 L1/L2 都过时才算数**，所以两屏的 L3 数字只是参考量。
+
+超限块（6×4 网格，块宽 320 px、块高 290 px）→ 画面上是什么：
+
+| 屏 | 块 `(row,col)` | 像素范围 | \|Δmean\|max | 屏上元素 | 差在哪 |
+|---|---|---|---|---|---|
+| 两屏 | `(0,0)` | x 0..319, y 0..289 | 2.865 | 左上 **返回(↩) / 确认(∨)** 两个按钮 | 底板圆角与图标边缘（`max|Δ|=30`，纯细节；色板完全相同） |
+| 两屏 | `(0,5)` | x 1600..1919, y 0..289 | **5.71** | **`Fire!` 按钮** | 原版 = 白色**粗体大字**（按钮文字区白像素 **1857**），我方 = 小号**深色**字（白像素 **261**）⇒ 字号与字色都不对（`max|Δ|=229`） |
+| `match_ready` | `(2,2)` | x 640..959, y 580..869 | 2.53 | 射手 + 准备圈 | 逐元素见 60.5 |
+| `match_play` | `(2,2)` | 同上 | **18.138** | 射手 + **弹道** | 弹道样式/配色/相位差（原版金色尖峰、我方绿色尖峰） |
+| `match_ready` | `(3,5)` | x 1600..1919, y 870..1159 | 2.724 | 右下 **偏移量标签** | 原版常显 `- 9.890`；我方 S7 这个位置是空的 |
+
+### 60.5 逐元素差异清单（ROI 计数 + 画面元素）
+
+ROI 是人工框的（框内 `d>0` 的像素占比），用来把"整屏 6.36 %"拆到元素上：
+
+| 元素 | ROI (x0,y0)-(x1,y1) | `match_ready` 差异 | `match_play` 差异 | 原版长什么样 | 我方长什么样 |
+|---|---|---|---|---|---|
+| 棋盘**几何**（白底矩形） | 整块 | — | — | x **303..1575**、y **198..959**（1273×762） | x **303..1575**、y **199..960**（**下边差 1 px**） |
+| 棋盘**格线**（含左上带） | (303,198)-(1100,420) | **13 343 px / 7.54 %** | 同 | 均匀灰格线（`#E6E6E6` 次线 / `#B2B2B2` 主线） | 同色，但**整体错 1 px**；且在 x≈300..640 / y≈240..300 出现**错位虚线网格片段**（我方多画了一层） |
+| **射手精灵** | (760,730)-(900,880) | **3 923 px / 18.68 %** | **8 132 px / 38.72 %** | 完整士兵精灵（帽子+脸+身体，≈73×72）**+ 名字标签 `cmdgz`** | ≈**20×20 px** 的圆点（绿帽黄脸），**无名字标签** |
+| **准备圈** | 同上 | 同上 | 同上 | 橄榄色（= 玩家色）弧 + **2 个箭头尖**，画在**射手 230** 身上 | **红色**（3 个箭头 + 虚线圆），画在棋盘正中 `(0,0)` 那一处、**不在射手身上**。根因链：① `EntityRemoved{231}` 无处理器 ⇒ 被删的士兵 231 留在实体表；② `_ensure_entity()` 给**任何**被事件提到的实体默认 `kind="soldier"`、默认坐标 `(0,0)` ⇒ 只出现在 `TeamInfo{entity_id:229}` 里的**玩家实体 229** 也成了一具"士兵"停在原点。⇒ 原点上叠着 **229 与 231 两具**；圈具体落在哪一具（`_turn_driver.first_shooter()` 选了谁）**本轮没有 dump，标推断** |
+| **靶子** | (1140,400)-(1250,510) | **1 627 px / 13.45 %** | 同 | 蓝环 + 红心的**靶子**（`SkinGraphicsInfo{graphics_str:"target"}`） | **画成了士兵**（绿帽黄脸）—— `TargetInfo` 没处理器，实体保留默认 `kind="soldier"` |
+| **弹道/特效** | 射手区 + 中心区 | ——（S7 无弹道，两侧一致） | 见 `(2,2)` 块 | 金色尖峰曲线（`x+2sin(20x)` 高频振荡），随 tick 从 `active_tick=615` 长出来 | 绿色尖峰曲线，**一次画完**再动（我方不发 `TickRequest`、不接 `FunctionPoints`/`FunctionActive`） |
+| **`Fire!` 按钮** | (1636,4)-(1916,112) | **3 096 px / 10.24 %** | 同 | 白色粗体大字 | 小号深色字（同一 ROI 里白像素 1857 → 261） |
+| **右下偏移量标签** | (1740,1080)-(1916,1140) | **1 336 px / 12.65 %** | **1 858 px / 17.59 %** | 两个屏都显示 **`- 9.890`**（= 射手 y `-9.88998` 的显示值，`推断`：这是"发射基点偏移"，不是修正常数） | S7 **不显示**；S8 显示 **`- 3.694`**（= 修正函数里的常数项）⇒ 数值与出现时机都不同 |
+| **左键盘** | (0,276)-(300,1010) | **15 722 px / 7.14 %** | 同 | 同版式 | 字形轮廓差（抗锯齿/1 px），按键行列位置**对齐到 1 px 内** |
+| **右键盘** | (1580,276)-(1920,1010) | **21 674 px / 8.68 %** | 同 | 同上 | 同上 + **`y` 键底板**整块不同 |
+| 顶部四图标（非棋盘左侧） | (700,4)-(1330,112) | **0 px / 0.00 %** | 0.00 % | 四个圆角图标（网格/f(x)/弹道/喇叭） | **完全相同** |
+| `f(x)` 行 | (140,1030)-(1920,1160) | 8 349 px / 3.61 % | 8 871 px / 3.83 % | `f(x) =` + 输入框 + 右上偏移量 | 输入框**中间多一根光标竖线**（x≈1004，S7/S8 都在），框宽/位置差几 px |
+
+**根因线索（12 个没有处理器的事件）**：我方 `client/src/net/session.gd::_apply` 处理 **21** 个事件名；
+剧本用到的 **30** 个事件名里，**12 个完全没有处理器**：
+`EntityRemoved` / `RemoveTeam` / `TargetInfo` / `NameInfo` / `SkinGraphicsInfo` / `FaceGraphicsInfo` /
+`HatGraphicsInfo` / `EntityEffectInfo` / `FunctionFire` / `FunctionPoints` / `FunctionActive` / `EffectInfo`。
+⇒ 名字标签、外观、靶子身份、实体删除、**开火→弹道点→爆炸**这条链，全都到不了界面层。
+（这是**观测**：读代码 + 线上原文；"差异就是这么来的"是**推断** —— 本轮没有 dump 我方 `EntityDrawer` 的输入表。）
+
+### 60.6 这批数字能支撑什么、不能支撑什么
+
+| 结论 | 证据 | 档 |
+|---|---|---|
+| **对局屏第一次有了像素真值**：同一份剧本下两侧都进到 S7/S8，可以逐块逐元素比 | 60.3 + 60.4 | **观测** |
+| 版式骨架（棋盘几何、键盘、`Fire` 位、`f(x)` 位）**已经对得上**：L1 全过，棋盘矩形两侧差 ≤1 px | `l1_ok=True` 两屏 + 白底矩形 `303..1575` vs `303..1575` | **观测** |
+| 差异是**元素级**的（6.4–6.8 %），**不是**相位噪声（噪声地板 ≤0.67 %） | 60.4 | **观测** |
+| 我方**把靶子画成士兵**、**在棋盘正中 (0,0) 多画了实体（229/231 叠在一起）**、**准备圈不在射手身上** | 60.5 三个 ROI + 我方代码（`TargetInfo`/`EntityRemoved` 无处理器；`_ensure_entity` 默认 `kind=soldier`、默认坐标 `(0,0)`） | **观测**（画面 + 代码）；"圈落在 229 还是 231" = **推断** |
+| `TickReply` 是原版动画时钟的输入 | 同一剧本两次运行：无 TickReply ⇒ 弹道 0 px；有 ⇒ 11 616 px 且画面出现弹道 | **观测**（两次运行的对照） |
+| 我方"缺 12 个事件处理器"就是这些差异的**唯一**成因 | —— | **推断**（还可能有 `play_screen` 自己的版式问题；见 60.5 的 `Fire!`/光标/网格片段三项） |
+
+### 60.7 跑一遍（照抄；两路各一条命令，服务器由脚本自己起）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t8
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target          # 单独一行
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+export PY=$MAIN/.reference/venv/bin/python
+cd $WT
+W=$WT/.agent-work/frames                              # 产物目录（.agent-work 可丢，数字在 fixtures/）
+
+# ① 前置：我方内核（改了 src/ 才需要重做）
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+HOME=$WT/.fakehome "$GODOT" --headless --path client --import
+
+# ② 两侧采集（各 ~40 s；两路不同 display 号；各起一台自己的脚本化服务器，喂**同一份** fixture）
+python3 tools/frame_capture.py --side original --flow match --out $W/match-orig --display-num 83
+python3 tools/frame_capture.py --side ours     --flow match --out $W/match-mine --display-num 84
+
+# ③ 三层判据（**门槛文件未改**，脚本会核对 sha256）
+python3 tools/frame_diff.py --orig $W/match-orig --mine $W/match-mine --screens match_ready,match_play \
+  --out fixtures/frame_diff_results_match.tsv --blocks-out fixtures/frame_diff_blocks_match.tsv \
+  --json $W/frame_diff_match.json
+#   → 期望：match_ready 不过（L2，4 块）6.3574 %；match_play 不过（L2，3 块）6.8344 %
+
+# ④ 剧本自校验（50 条里 49 条必须与真回放逐字段相同；唯一例外 NewConnection 来自真抓包握手）
+python3 - <<'EOF'
+import gzip, json
+txt = open('fixtures/frame_match_events.txt', encoding='utf-8').read()
+seq, on = [], False
+for ln in txt.splitlines():
+    s = ln.strip()
+    if s.startswith('[seq]'): on = True; continue
+    if s.startswith('[endseq]'): on = False; continue
+    if on and s: seq.append(json.loads(s.split('#')[0].strip()))
+p = '/home/CG/Myprojects/graphwar2-rebuild/.reference/replays/gw2-replays-snapshot/replays/1793897298'
+evs = [json.loads(l) for l in gzip.decompress(open(p,'rb').read()).decode().splitlines() if l.strip()]
+pool = {json.dumps(e['event'], sort_keys=True) for e in evs}
+miss = [s for s in seq if json.dumps(s, sort_keys=True) not in pool]
+print('剧本 %d 条，不在真回放里的 %d 条：%s' % (len(seq), len(miss), miss))
+EOF
+
+# ⑤ 冻结快照没被写（三轴的分母）
+ls $MAIN/.reference/replays/gw2-replays-snapshot/replays | wc -l    # → 403
+```
+
+产物在哪（**都不入库**，`.agent-work/` 可丢）：每侧 `<out>/frames/{match_ready,match_play}_{1,2,3}.png`、
+`<out>/manifest.json`（窗口 id/几何/每帧 sha256/点击步骤）、`<out>/serve.jsonl`（**逐帧发送日志**）。
+
+### 60.8 遗留 / 未做
+
+1. **只有 1 个局面**（真回放 `1793897298` 的 `Level 0`：1 士兵 + 1 靶子 + `ClearObstacles`）。**没有**采：
+   2 人对局 / 多士兵 / 带障碍（`AddObstacle`）/ 同时回合 / 靶子被击毁后的那一屏。剧本换真回放就能加，管线不用改。
+2. **S8 的弹道相位两边不是同一时刻**：原版靠服务端 tick 轴（`TickReply`）推、我方靠本地时钟 ⇒ 只能比"形状/位置/配色"，
+   不能比"同一 tick 的同一段曲线"。要真对齐要么给我方客户端也接 `TickRequest/TickReply`，要么用 frida 把原版冻在 tick T（§53.5 第 2 条同款缺口）。
+3. **我方 S7 三帧 sha256 完全相同**（`ed6c9627…`×3）：我方准备圈**不随时间动**，原版在动（噪声地板 0.049 %）。⇒ 准备圈动画（`set_ring_base` 那条链）我方还没接。
+4. **同一引擎对照没做**：本轮仍是原版 4.7.0 vs 我方 4.7.2（§53.5 第 3 条的混淆项）。
+   `--flow match` 与 §54 那套 `--ours-mode pck` **可以叠加**（`--flow` 与 `--ours-mode` 正交），但本轮没跑。
+5. **`--game-arg` 传地址这条没用到**：地址走 LAN 发现的 `address` 字段就够（而且原版的 CLI 参数是死的，§48.1）。
+   想不走 LAN 发现，可以改用两边都有的 `Join IP` 弹窗（原版坐标见 §51.1），本轮没做。
+6. 按差异改界面**不在本轮范围**（任务书 §3 明令）：本轮只建管线 + 测量。
+
+### 60.9 卡点 / 任务前提被证伪
+
+| # | 项 | 结论 |
+|---|---|---|
+| 1 | 「原版会拒绝我方服务器的对局层握手」 | **没有发生**，前提不成立（不需要卡点）。§48 只证明到"握手 + BotAdded"，本轮把**整份局面快照 + 开火剧本**也喂进去了，原版照收、还回了 `FunctionsCalculated{}` |
+| 2 | 「两侧必须同时跑才能比」 | **不需要**：分两次跑、喂同一份 fixture 就够了（60.3 的 sha256 相同即证据）。同时跑反而会撞 `UDP 42968` |
+| 3 | 真正卡住过的一步 | **动画时钟**：不补 `TickReply` 时 S8 里**没有弹道**（1 186 px），曾一度以为"原版不画弹道"。补法是照真服务器的行为回 `TickReply`（tick 基准取真回放的 6 / 550），**不是**改门槛或改剧本 |
+| 4 | 仍缺的情报 | ① 我方客户端为什么不发 `TickRequest`（是没实现还是设计选择）—— **未知**，本轮不许改 `client/**` 所以没查；② 原版 `- 9.890` 那个标签的语义（发射基点 vs 别的）—— **推断**，缺反汇编/口径证据 |
+
 ## 62. 视图层第二轮：52 份原版 `.gd` 逐份台账 + 新换 3 份（`OptionsContainer` / `TurnLimitText` / `GameSetupPlayerEntry`），`level_popup` 仍 **0 像素**（2026-11-26，任务 T10）
 
 > **一句话**：把 §43（上一轮 gdswap）跳过的 15 份 + 上一轮没进表的 13 份（7 份 AdMob/IAP 平台桥 +
@@ -9005,8 +9527,672 @@ Xvfb 必须 `-listen tcp` 且 `DISPLAY=127.0.0.1:<n>` + `unset WAYLAND_DISPLAY`�
 | 2 | `0x4c6f40` 的 UI 语义（按钮/文本/版式） | 不在本节范围（T4/T6 已做像素级对齐）；本轮只证明它**不含时钟** |
 | 3 | 真机侧"播放到 2276（文件末尾）之后"的行为 | 未跑（§55 的 45 s 静止帧是**载入态**，不是"播完态"；两者不是一回事） |
 | 4 | 把本节结论落到我方 `ReplayDriver` | **只写建议，不改代码**（`src/**` 是禁区）⇒ 见 `docs/16` §65 |
+---
 
-## 64. 对局屏（S7/S8）第一刀：**客户端收到事件之后干什么**有了台账，12 条缺处理器的事件全部接进复原 manager；跨侧差异 6.3574 % → **6.3091 %**、6.8344 % → **6.7734 %**（2026-11-26，任务 T17）
+## 61. 跨架构对拍：x86-64 与 arm64 两份**真机器码**在 unicorn 下同输入执行 —— 175 组里 168 组逐位相同、7 组只差 NaN 符号位、0 组"没跑成"（2026-11-26，任务 T9）
+
+> 结论写在 [`19`](19-android.md) **§8**（本节只记**判据 / 对照 / 数字 / 复跑 / 遗留**）。
+> 预注册：`fixtures/crossarch_plan.txt`（先 commit，后跑；`05f836d`）。
+> 产出：`fixtures/crossarch_tables.tsv`、`fixtures/crossarch_funcs.tsv`。
+> 工具：`tools/crossarch_emu.py`（执行底座）、`tools/crossarch_tables.py`、`tools/crossarch_funcs.py`。
+
+### 61.1 为什么要预注册，以及"注册前我做了什么"
+
+`AGENTS.md` 合并纪律 A.4 要求负结论先证扫法有效；跨架构对拍还有一个更贵的风险：
+**先看到结果再挑输入**，就什么都能"证"出来。所以输入集**写死在 fixture 里**，
+工具**从 fixture 读输入**、并把 fixture 的 sha256 写进 TSV 表头
+（`51741666fc0cdc3dab7adae2ed91c60b1888f8b5dcf2e5d4d5d1ebbc0890e5a6`）。
+
+**如实交代**：注册前我跑过**可行性原型**（只为回答"arm64 那一路能不能跑起来"：
+能不能装载、`x8` 该不该给 sret、`Vec` 的 `{?,ptr@+8,len@+16}` 布局对不对），
+**没有**成果集式的扫参、也没有据此改输入集。原型阶段唯一跑过的成品式用例是
+`const0` 与 `sin(x)` 两个（用来确认两路都能出点数组）；正式一轮的 175 组全部来自冻结件。
+
+### 61.2 判据（只有一档）
+
+| kind | 比什么 | 判据 |
+|---|---|---|
+| `eval` | 返回 f64 的 64 位 + "消耗了几个 token" | 都相同 |
+| `path` | 点数组长度 + **每个点 16 字节** | 全同 |
+| `parse` | token 流长度 + **每条 16 字节**（tag u64 + f64） | 全同 |
+| `textpt` | 返回结构体 64 B 里 16 个字；**指针字换成它指向的那串**（地址不是证据，内容才是） | 全同 |
+
+**差 1 ulp 就算不同。** 跑不起来 = `blocked` + 原因，**绝不记成相同**。
+差异再分两类写清：`DIFF:value`（真数值差异）/ `DIFF:nan-only`（两边都是 NaN，
+只有符号或载荷不同 —— IEEE-754 不规定 NaN 位模式）。
+
+### 61.3 两路执行体，以及为什么"libm 必须同源"
+
+* **x86-64 一路 = `analysis/gwemu.py`**，与本仓库 88 条「逐位」结论用的是**同一个**执行体
+  （不是我另写一个"我喜欢的模拟器"）。
+* **arm64 一路 = `tools/crossarch_emu.py::A64`**：unicorn ARM64，按 `PT_LOAD.p_vaddr` **同址装载**，
+  `.rela.dyn` 的 `RELATIVE/ABS64` 写原值、`GLOB_DAT/JUMP_SLOT` 写陷阱地址。
+  入口全部来自 A 那份**未 strip 的 `.symtab`**。
+* **两处必须照抄的 ABI 事实**（都是读反汇编/实测出来的，不是猜的）：
+  1. arm64 的**结构体返回走 `x8`**（indirect result register），x86-64 SysV 对应的是 `rdi`；
+     ⇒ 同一个 Rust 签名两路调用形态 = `[x8=out] + x0..` vs `[rdi=out] + rsi..`。
+  2. arm64 的 import 走 PLT（`adrp/ldr/br x17`），`x30` 里仍是**调用者的返回地址**
+     ⇒ import hook 做完把 PC 设回 `x30`；x86 那边要从栈顶弹返回地址。
+* **libm 同源**：两路都换成**真 glibc `libm.so.6`**（与 `tools/gen_fixtures.py::install_libm` 同款，
+  理由见 §30：python `math` 对定义域外**抛异常**、真 libm **返回值**，`log(0)`/`exp(1000)`
+  这类边界的位数会因此不同）。⇒ **两路相同的用例，证明的是"代码路径 + 算术"同**；
+  libm 本身是否同，§61.5 单独量化。
+
+### 61.4 正/负对照（跑之前就在 plan 里定死）
+
+| id | 做什么 | 期望 | 实测 |
+|---|---|---|---|
+| C1 | `L.rodata` 与**自己**做块匹配 | 100 % | **100.00 %** ✓ |
+| C2 | `L.rodata` 与 `L.text` 做块匹配 | < 1 % | **0.0282 %** ✓ |
+| C3 | A 的拷贝里 T1（ziggurat X）第 40 字节 `^0xFF`（留在 32 B 锚之外） | 改后恰 1 处差异、首个偏移 40 | 未改 `diff=0`；改后 `diff=1 first=40` ✓ |
+| C3b | 同一处改**锚内**第 0 字节 | 定位失败 或 报差异，**不许**报"相同" | `not-located` ✓ |
+| C4 | x86 同一输入跑两遍 | 100 % 相同 | 相同 ✓ |
+| C5 | 采样器输入 `x0`/`y0`/`step` 各 +1 ulp | 必须报不同 | `x0+1ulp=DIFF`、`y0+1ulp=DIFF`、`step+1ulp=同`（该用例对 step 的 1 ulp 不敏感 —— 如实记）✓ |
+| C6 | A 的拷贝里把 `Vector2D<f64>::length` @`0x7ac7c0` 的 `fsqrt d0,d0` 改成 `fneg d0,d0`（编码 `0x1e61c000`→`0x1e614000`） | 采样器用例必须**成批**报差异 | **6/18 个用例变了** ✓ |
+
+C6 是这轮最关键的一条对照：**改 4 个字节的机器码，输出就变** ⇒ arm64 那一路不是
+"照符号名假装算了一遍"，跑的确实是 A 那份的指令。C1/C2 一起把"块匹配器"夹住：
+既不会漏（对自己 100 %），也不是什么都算匹配（对 `.text` 0.03 %）。
+
+### 61.5 数字（自己跑出来的，不是抄报告）
+
+**数据表**（`fixtures/crossarch_tables.tsv`）：真表 5/5 三份逐字节相同
+（ziggurat X 257×f64、ziggurat F 256×f64、关 9 描述、`Team1/Team2`、`Level discriminant: `）；
+战役 21 关描述串在 A 逐字节相同、在 W 差 837 B 但**逐串复核 21/21 内容全同**（只是把关 9 那段
+换了个位置插进连写区，后面整体移 32 B）；`L.rodata` 有 **90.45 %** 逐字节存在于 A、
+**86.36 %** 存在于 W。
+
+**函数**（`fixtures/crossarch_funcs.tsv`，175 组预注册输入）：
+
+| func | 组数 | 逐位相同 | 只差 NaN 符号 | blocked |
+|---|---|---|---|---|
+| F1 纯算术 | 24 | 23 | 1 | 0 |
+| F2 sqrt/abs | 18 | 17 | 1 | 0 |
+| F3 超越函数 | 25 | 25 | 0 | 0 |
+| F4 pow 边界 | 18 | 18 | 0 | 0 |
+| F5 NaN/±0/±inf | 18 | 13 | 5 | 0 |
+| **F6 采样器 Normal** | 18 | **18** | 0 | 0 |
+| **F7 采样器 ODE(RK4)** | 18 | **18** | 0 | 0 |
+| F8 解析器 | 20 | 20 | 0 | 0 |
+| F9 修正量外壳 | 16 | 16 | 0 | 0 |
+
+F6 里有 **50,000 点**（`sin(x)`、step 0.001）与 **3,083 点**（step 0.01）两组；
+F7 有 1,552 点（`y+1`、step 0.01）一组 —— **点数组逐位相同**，不是"点差不多"。
+
+**唯一的差异族 = NaN 的产生位模式**：x86-64 `0xFFF8000000000000`（负）vs AArch64
+`0x7FF8000000000000`（正）；**传播**（`nan+1`、`nan*0`、`-nan`、`abs(nan)`、`y=NaN`、`y'=NaN`）
+6/6 逐位相同。⇒ 下游若不做 NaN 的**位比较**，这 7 组无行为差异。
+
+### 61.6 libm 风险量化（`docs/19` §6.1 那条的替代方案）
+
+bionic 的 libm 二进制本机拿不到，所以**不假装测过**，改量上界：只把 **arm64 一侧**每个
+超越函数结果整体 **±1 ulp**（系统性偏移，比真实 libm 差异更极端），x86 侧保持 glibc：
+
+* **139 / 175 组输出完全不动** ⇒ 这些用例的"跨架构逐位相同"**与 libm 是哪一份无关**（强结论）；
+* Normal 采样器 **4/18 组动，点数不变**：最坏一例 `sin(x)` step 0.01 —— 100,000 个分量里
+  **49,999 个差 1 ulp**（x 不动、y 差 1 ulp）；
+* ODE/RK4 **4/18 组动，其中 2 组点数直接变**（239→1、64→1）⇒ **ODE 模式对 1 ulp 级
+  libm 差异会放大**，这是留给下一轮的第一号坑。
+
+### 61.7 复跑
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild   # 主工作区（或任何 checkout）
+export PY=$MAIN/.reference/venv/bin/python; cd $MAIN
+$PY tools/crossarch_tables.py && $PY tools/crossarch_tables.py --controls
+$PY tools/crossarch_funcs.py --libm-probe && $PY tools/crossarch_funcs.py --controls
+```
+两个工具开头都会核对预注册件里的 sha256（二进制变了直接报错），产出里带 plan 的 sha256。
+
+### 61.8 遗留 / 未做（照实写，别当已完成）
+
+1. **真机没跑过**：unicorn 是模拟器（执行的是真机器码，但 FPSIMD 的边界行为由 QEMU 决定，
+   不等于真机 CPU）；ARM 硬件上的 `FPCR`（FZ/DN，flush-to-zero / default-NaN）是否被游戏改过，
+   **本轮没查**。要补：真机 frida 在 `calculate_function` 出口抓点数组，与本轮夹具对拍。
+2. **bionic libm 未测**（没有二进制）；只给了 ±1 ulp 的上界，没给"到底差多少"。
+   要补：从 Android 真机 `adb pull /system/lib64/libm.so`（或 bionic 源码构建），
+   用它替换 `crossarch_emu.A64(libm_impl=…)` 里的实现。
+3. **Windows 那份只做了数据表**（`.rdata` 86.36 % 覆盖），**函数没对拍** —— 本轮没写 PE 装载器。
+4. **只覆盖 9 个函数 / 175 组输入**；`.data.rel.ro` 的指针表（函数指针槽、vtable、
+   `panic::Location` 表）没比（要先解重定位才能比，是另一件事）。
+5. **F9 的结构体字段语义仍未知**：`calculate_corrected_function` /
+   `calculate_function_offset_str` 的 sret 布局是实测出来的 `{cap, ptr, len}`（两路一致），
+   但**字段名/类型没有独立证据**；本轮只比了"两路产出同样的字节"。
+
+### 61.9 我写错了 / 任务前提被证伪
+
+| 项 | 说明 |
+|---|---|
+| **规格里"三份（Linux/Steam/Android/Windows）"** | **前提作废**：Linux 与 Steam 两份 sha256 **完全相同**，凑不出第四份；真正对的是 **x86-64(ELF) / aarch64(ELF) / x86-64(PE)** 三种。 |
+| **规格说追加 `docs/19` `## 7.`** | §7 **已经存在**（"为什么桌面端永远不会有广告"），追加会撞号 ⇒ 实际写成 **§8**。 |
+| **预注册里 T7/T8 我把"非表"注册成了表** | T7 是字符串池片段、T8 是标量常量簇，二者都不该用"表"的口径判。跑完**没有改预测**，而是在 TSV 的 D2/D3 段把性质写清并说明"不参与结论"。 |
+| **"数常量出现几次"这条口径** | 复算 §19 §4.0.3 的数字**完全复现**（0.01=2/2/1、0.001=1/1/2、200.0=1/0/3…）⇒ 那条旧结论是对的，本轮只是换了个能判的口径（比整张表 / 比函数输出）。 |
+| **地址口径** | 规格与旧文档写的 "Ghidra 地址 = ELF vaddr + `0x100000`" 在"从文档取地址去 `.so` 里定位"这个方向上**是错的**（lead 2026-11-26 更正）。本轮**全程按 ELF vaddr 同址装载**，没做任何 `±0x100000` 平移（`0x4eb9d0`/`0x3c2530`/`0x4ed670` 直接当 vaddr 用，命中 `pt_load`/`.symtab` 自洽）。 |
+---
+
+## 64. 证据升档 sweep：439 个 `观测` 级函数里**只有 1 个**能真正隔离对拍（`0x4f5450`，18/18 逐位）—— 其余按「不能跑」的原因分类，这就是 439 分母的**可及上限**（2026-11-26，任务 T13）
+
+> 权威规格 = 共享任务 `task-10` 的任务书（`task-10` 的执行者 = teammate t13，分支 `agent/bit-exact-sweep`）。
+> 一句话：**`观测` 级函数的绝大多数**不是"没去对拍"，而是**本质上无法隔离执行**——
+> 它们要么要一个活着的 Godot 引擎，要么要 `thread_rng`/TLS，要么本体是 gdext 生成的
+> 事件闭包与 `std` 单态化（没有可比的"我方实现"）。本轮把这件事**量化**了，
+> 并把唯一真正可隔离的那个（`PolishNotationConverter::reorder_recursive`）对成了 `逐位`。
+
+### 64.1 结论（先看这 5 行）
+
+| 问题 | 答案 |
+|---|---|
+| 439 里**本质可隔离执行**的 | **129**（`executable` 26 + `needs_state` 103 中状态是纯数据、可造的；判据见 §64.3） |
+| 实际**逐位对拍成**的 | **1**（`0x4f5450` `PolishNotationConverter::reorder_recursive`，18 组输入全等）→ 档位 `观测` → **`逐位`** |
+| 发现**真差异** | **1 条**（解析结果里**非 CONST token 的 `value` 字段**：原版是未初始化内存残渣，我方恒 `0.0`）；另有 1 条**假差异**是我自己 hook 的锅，已修正并记账 |
+| 439 分母的**可及上限** | **≈ 129 / 439 = 29.4 %**，其中**能真正落地对拍的上限**还要再砍：26 个 `executable` 里有 20 个是 `module_container` 的 `get_module::<T>` 单态化（要一个真的 `HashMap<TypeId, Rc<dyn Any>>` 才能跑），**真正「纯标量进出」的一个都没有** |
+| 正对照 | 求值器 `0x4eb9d0` **20/20**、采样器 `0x3c2530` **4/4**、解析器 `0x4ed670` tag 流 **14/14** 逐位相同；两处 ±1 ulp 变异**都报出了差异**（§64.4） |
+
+### 64.2 口径更正（**先记这一条，它决定本轮所有数字有效**）
+
+**地址口径**（2026-11-26 lead 更正，我核实后确认本任务**没有踩到**）：
+
+* `funcstarts_ghidra_va.pkl` 的 13263 条起点，**`min = 0x37b940` 正好是 `.text` 段首、
+  `max = 0x94eb70` 是 `.text` 段尾** ⇒ pkl 里装的就是 **ELF vaddr（模块内偏移）**，
+  文件名里的 `_ghidra_va` 是误导。
+* **文档/pkl 里的地址直接喂 unicorn，不要做 `-0x100000`。** 只有 Ghidra/REA **反编译产出**的
+  `_DAT_xxxx` / `FUN_xxxx` 才是 +0x100000 口径。
+* 本任务的 harness 是**对**的，且是**先验过再跑的**：`analysis/emu.py` 按
+  `mem_map(p_vaddr & ~0xfff, …)` + `mem_write(p_vaddr, blob)` 装载，`emu_start(addr)` 直接用
+  ELF vaddr；`tools/bitexact_*.py` 里**一处 `-0x100000` 都没有**（`grep` 可验）。
+  自证：`0x4f5450` / `0x4eb9d0` / `0x3c2530` / `0x4ed670` 取到的首 8 字节分别是
+  `5541574156415541` / `41574156534883ec` / `5541574156415541` / `5541574156415541`，
+  全是 `push r15/r14/…` 一类的正规 prologue；而 `-0x100000` 后的 `0x2c2530` **落在 `.text` 之外**。
+* 顺带一条**分母口径**：`docs/coverage-matrix.tsv` 的 `status`（`逐位`/`观测`）是**按模块**判的，
+  所以「439 个观测级函数」严格说是「落在观测级模块里的 439 个可归属函数」
+  （67 个模块的 `orig_funcs` 之和）。本节的 439 全部由 `tools/coverage_matrix.py` 的
+  `attribute()` 重算，并用 `assert len(obs) == 439` 钉死。
+
+### 64.3 分类器：三档 + 10 条判据（每条都能指到指令/符号）
+
+产物：`fixtures/bit_exact_plan.txt`（预注册，**先 commit 再跑**，commit `483dbcb`）。
+脚本：`tools/bitexact_classify.py`（capstone 静态扫，只判"能不能隔离执行"，不比任何输出）。
+
+| 档位 | 个数 | 定义 |
+|---|---|---|
+| `executable` | **26** | 指针参数只有「只读输入」与「只写输出」两种 ⇒ 不需要任何既有状态 |
+| `needs_state` | **103** | 有既被读又被写的指针参数（`&mut self` 一类）或写全局 ⇒ 状态是纯数据、**可造** |
+| `isolated_impossible` | **310** | 本体或热路径传递调用里出现引擎派发 / TLS / sys_io / thread / unwind |
+
+**⚠️ 一处分类器 bug（跑完之后才发现，如实记账）**：第一版把 `call` 之后的寄存器来源缓存
+**整表清空**了，连 `rbx`/`rbp`/`r12-r15` 这些 **callee-saved** 寄存器也一起清掉 ——
+于是「`mov %rdi,%rbx` → call → `mov %r14,0x60(%rbx)`」这种「调用后再写回 self」的函数被误判成
+`executable`（实测 `0x4be3e0`）。修法是调用后只清 caller-saved。**影响**：三档从
+`33 / 101 / 304` 变成 `26 / 103 / 310`（`executable` 少了 7 个，全是本该是 `needs_state` 的）。
+**本轮唯一跑的函数 `0x4f5450` 的档位不受影响**（它是 `inout_self:rdi,rdx`，本来就不是 `executable`），
+所以 18/18 的结论**不变**；上面表里的数字已是修后的值。**判据本身没改**，改的是它的实现 bug。
+
+**判据（原文在 `fixtures/bit_exact_plan.txt` §B；这里只留最要紧的三条）**：
+
+1. **`engine_dispatch`（46 个直接命中）** —— `call *off(%reg)` 而 `%reg` 从**运行时才填的全局槽**
+   读出。实测这就是 gdext 的引擎接口表：`0x8abca0`（`draw_arc` 的包装）里
+   `mov 0x10e9a0(%rip),%r15  # 0x9ba6b0` → `movzbl 0x14f0(%r15)`；隔离环境里 `[0x9ba6b0]` 恒 0。
+2. **间接调用要**全部**静态解析，否则会得出相反的结论** —— `.rela.dyn` 的
+   `R_X86_64_RELATIVE` 里有 **8231 条** addend 指向 `.text`：`.got` 基本上就是内部函数指针表，
+   所以 `call *0x…(%rip)` **不是黑盒**（`0x9bc020 → 0x8abca0` 就是 AGENTS.md 那条 `draw_arc` 链）；
+   `GLOB_DAT`/`JUMP_SLOT` 给 libc 导入名；`call *%reg` 回溯 ≤15 条找 `mov %reg,[%rip+G]` 再判。
+   回溯不出 ⇒ `indirect_unknown`，**按 `needs_state` 处理，不许假装能跑**。
+3. **panic 路径不能连坐（这条不做，439 会全灭）** ——
+   * `call *slot` 的下一条指令是 `int3`/`ud2` 的，是 panic / `print_error` 收尾
+     （实测 `0x925660` = `__rust_alloc_error_handler`：`call *0x9ba698 ; int3`），**不参与**致命性传递；
+   * 函数体里**没有 `ret`** 且自身致命的节点（`0x94b340` = panic 入口）**不向上传播**。
+   不做这两条：439 个里 **264 个**被 panic 连坐 → `isolated_impossible` 439/439。
+
+**`isolated_impossible` 的 310 个按原因分布**（这决定分母的可及上限）：
+
+| 原因 | 个数 | 说明 |
+|---|---|---|
+| `via:`（热路径传递到引擎边界） | 264 | 自己干净，调用的东西要引擎。**大头是 gdext 的 `Variant`/`String`/`Gd<T>` 转换与绘制包装** |
+| `engine_dispatch`（本体直接派发） | 46 | 本体就有 `call *off(%全局)` |
+| 合计 | **310** | |
+
+按模块看最集中的几处：`graphwar_level_manager` 40 个里 40 个不能跑、`graphwar_game_client` 36/36、
+`graphwar_root_node` 23/23、`graphwar_setup_control` 21/21、`entity_drawer` 14/14、`effect_drawer` 11/11
+—— 全是 GDExtension 类方法（`ready`/`process`/`draw`/`*_info_event` 闭包），
+**它们要的是 Godot 的 `NOTIFICATION` 与场景树，不是"一组数"**。
+⚠️ 这条也直接解释了 `update_sprite`（`0x4b9530`，`docs/06` §58 那个 bug）**为什么躲过三轮**：
+它在 `isolated_impossible` 里（要 `Sprite2D`），本轮 sweep **够不到它**，只能靠客户端像素对拍。
+
+### 64.4 正对照（**跑之前就定了，跑完没改**）
+
+产物：`fixtures/bit_exact_inputs.txt`（预注册输入集，`plan` §C：18 个 `f64` 位模式 +
+18 组 `Vec<FunctionToken>`）；驱动：`tools/bitexact_report.py`。
+
+| 对照 | 真函数 | 我方 | 组数 | 结果 |
+|---|---|---|---|---|
+| P1 求值器 | `0x4eb9d0` | `math_function::eval` | 20 | **20/20 逐位相同** |
+| P2 解析器 | `0x4ed670` | `math_function::parse` | 14 | **tag 流 14/14 逐位相同**（`value` 字段见 §64.5 D3） |
+| P3 采样器 | `0x3c2530` | `graphwar_path_calculator::calculate` | 4 | **4/4 点序列逐位相同** |
+
+**变异对照（证明 harness 不是"永远报相同"）**：
+
+* `eval` 的 `e14`（`x = π`）把 `x` **+1 ulp**、**只改真侧输入** ⇒ harness 报 **1 处不同** ✓
+  （第一次我用的是 `e01`（`x = +0.0`）：`+1 ulp = 5e-324` 是 denormal，`sin()` 之后结果仍是 `3.0`
+  —— 那不是 harness 失灵，是输入**真的没变**。选变异点要选"1 ulp 会传到输出"的地方。）
+* `pnc` 的 `c03` 把 `CONST 1.0` 改成 `1.0+1ulp`、只改真侧 ⇒ harness 报 **1 处不同** ✓
+
+### 64.5 真差异清单（**只报告，没改 `src/`**；全文见 `fixtures/bit_exact_sweep_diffs.md`）
+
+**D3（唯一真差异）：`MathFunction` 解析结果里非 `CONST` token 的 `value` 字段**
+
+* 我方 `Token.value` 对非 `CONST` tag 恒 `0.0`；**原版那 8 字节是未初始化内存残渣**。
+* 证据（14 组里 13 组不同，tag 流 14/14 相同）：
+
+  | case | 表达式 | 原版 value（每 token） |
+  |---|---|---|
+  | p01 | `x` | `0x0000000000000004` |
+  | p05 | `(x+y)*3` | 全 `0x…08` |
+  | p06 | `sqrt(x^2+y^2)` | `0x…10` 与 `2.0` 混杂 |
+  | p12 | `abs(x)+ln(x)+log(x)+tan(x)` | 全 `0x…20` |
+  | p14 | `pi*x` | 全 `3.141592653589793` |
+
+* 判"不是我方写错"的三条：① 取值随**输入串长度**单调变大（1 字符→`0x4`、7 字符→`0x8`、
+  9–12 字符→`0x10`、30 字符→`0x20`），**同一串内各 token 还不同** ⇒ 是分配残渣不是语义值；
+  ② **每例换一台干净的 unicorn**（新 `Gw()`、堆页全新）结果**一模一样** ⇒ 不是 harness 的堆复用假象
+  （这条我先怀疑并实测排除了）；③ `value` 只在 tag 17(`CONST`) 时被求值器/转换器使用。
+* **分档**：tag 流 = `逐位`；"原版那 8 字节是未初始化内存" = **`推断`**
+  （**缺的证据**：读不到真机进程里那块的绝对地址与内容；要坐实得在 arm64 未 strip 版上
+  对 `FunctionToken::new` 的返回值逐字段下断点）。
+* **影响面**：语义无影响；但**字节级复现**（把 token 数组当报文/哈希/比较输入）**不可能逐字节相同**
+  —— 不要把这一项写成 `逐位`。
+* 最小复现（`fixtures/bit_exact_sweep_diffs.md` §D3 有完整命令）：
+  `bitexact_run.py real --mode parse` 与 `--mode ours` 各跑一遍再 `diff`，
+  第 3 列起的 `value` 位不同；把 `tag:bits` 的 `:bits` 去掉再 diff 就是 0 条。
+
+**D4（假差异，已修，记账防复踩）**：`analysis/emu.py` 的 libm hook 用的是 **Python 的 `math`**
+（`_safe(math.sin)`，异常吞成 `float('nan')` = **+NaN**），而 glibc 的 `sin(±inf)` 给 **−NaN**
+⇒ 第一版 `eval` 的 2 组 `sin(±inf)+3` 报"不同"。**改成 `ctypes` 直调 `libm.so.6` 后逐位相同。**
+教训：**正对照不过先怀疑自己的 hook，别急着报差异。**
+
+### 64.6 产物与复跑命令（照抄可跑）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$(git rev-parse --show-toplevel)     # 本分支 agent/bit-exact-sweep 的 checkout
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target      # ⚠️ 单独一行
+export HOME=$WT/.fakehome
+export PY=$MAIN/.reference/venv/bin/python      # unicorn 2.1.4 / capstone
+cd $WT
+
+# ① 分类（只读，55 s；判据在脚本 docstring 与 fixtures/bit_exact_plan.txt §B）
+$PY tools/bitexact_classify.py --json .bitexact_classify.json
+# ② 我方侧 harness
+cargo build --release --offline -q --example bitexact_harness
+# ③ 正对照 + 变异对照 + sweep + 生成两份 fixture（约 3 min）
+$PY tools/bitexact_report.py --work .bitexact_work --write
+```
+
+产物（都已入库）：
+
+| 文件 | 内容 |
+|---|---|
+| `fixtures/bit_exact_plan.txt` | 预注册：439 行分类表 + 10 条判据 + 输入集 + 执行清单（commit `483dbcb`） |
+| `fixtures/bit_exact_inputs.txt` | 预注册输入集：`[parse]`14 / `[eval]`20 / `[path]`4 / `[pnc]`18 |
+| `fixtures/bit_exact_sweep.tsv` | **442 行** = 439 + 3 条正对照；列：函数名/地址/模块/我方文件:行/档位/**跑没跑**/**是否全逐位相同**/首个不一致/hex/备注 |
+| `fixtures/bit_exact_sweep_diffs.md` | 差异清单 D1–D4 + 最小复现 |
+| `tools/bitexact_classify.py` | 静态分类器（capstone） |
+| `tools/bitexact_plan.py` | 预注册清单生成器 |
+| `tools/bitexact_run.py` | 真二进制侧（unicorn 直调）+ 我侧 + 逐行 diff |
+| `tools/bitexact_report.py` | 正对照 / 变异对照 / 统计 / 两份产物生成 |
+| `examples/bitexact_harness.rs` | 我方侧入口（`--mode parse\|eval\|path\|pnc`，**新文件**） |
+
+### 64.7 遗留 / 未做（**这部分比上面的数字重要**）
+
+1. **只升档了 1 个函数**，别把它读成"439 已经被扫过"。
+   439 的构成：**310 不能跑**（310 = 264 传递 + 46 本体，全是引擎/TLS/IO 边界）、
+   **26 可跑但没跑**、**103 需要状态且本轮没造**。TSV 里逐行写着 `跑没跑`。
+2. **26 个 `executable` 为什么没跑**：其中 **20 个是 `graphwar_module_container` 的
+   `get_module::<T>` 单态化**（`&HashMap<TypeId, Rc<dyn Any>>` 查表）——要跑就得在 unicorn 里
+   造一个**真的 hashbrown `RawTable`**（`ctrl` 指针 + 桶掩码 + `growth_left`），造空表也够不到
+   「命中」那条分支；剩下 6 个（`graphwar_function_evolutionator` 4 个 + `graphwar_audio_control` 1 个
+   + `graphwar_remote_event_handler` 1 个）的 ABI 我还没逐个落定，
+   **没落定就不喂**（猜着喂出来的「相同」没有意义）。
+3. **`0x4600e0` / `0x4602f0` 查明不是模块逻辑**：`imul $0x150` + 三段自递归 +
+   `lea (%rax,%rax,2)` ⇒ 是 **`core::slice::sort` 的 merge-sort 单态化**（元素 0x150 = 336 B），
+   我方没有对应实现 ⇒ **不可比**。同类还有 `weak_caller` 的 39 个单态化（`Weak<RefCell<T>>`
+   `upgrade` 语义）、`module_container` 的 20 个。⇒ 439 里有一大块**根本没有"我方实现"可比**，
+   这一层应当从"可升档分母"里再扣掉。
+4. **下一个最值得跑的**：`0x4be3e0`（`graphwar_plane.rs`，87 条指令，分类 `needs_state`/`inout_self:rdi`）——
+   `mov (%rsi),%rax` 取 tag、`xor 0x8000000000000000` 归一化后比 `0x28`/`0x29`；
+   `movsd 0x18(%rsi),%xmm0` → `call *0x9bb288`（libc 数学，可 hook）→ `mulsd 0x19fbd0`
+   → `divsd 0x19faa8` → `maxsd/minsd 0x19fbc0/0x19f7e0` → `cvttsd2si`；再对 `+0x8`/`+0x10`
+   两个 f64 走**向量化** `mulpd 0x19d420` / `divpd 0x19ce00` / `addpd 0x19ee90` + 同样 clamp。
+   **纯数值**（`px = …`），无引擎依赖。只差"`rdi` 是 `&mut self` 还是输出缓冲"这一步判定。
+5. **`pow` / `atan2` 的 hook 仍走 Python `math`**（`_do_import` 里写死的分支，不在 `MATH` 字典里），
+   本轮输入没用到；要用之前得照 §64.5 D4 的办法换成 `ctypes` libm，否则会再报假差异。
+6. **`analysis/emu.py` 的 libm hook 是上游文件**，我没改它（红线：不改上游），
+   只在 `tools/bitexact_run.py` 里 patch `emu.MATH`。⇒ 任何**直接**用 `tools/posy_unicorn.py`
+   跑 ±inf/NaN 输入的结论都要打折。
+7. **`docs/02-module-map.md` §18 的地址↔源位置表只覆盖 240/439**，另 199 个是匿名单态化/闭包
+   （`weak_caller` 39 + `module_container` 20 + 事件闭包…），TSV 里 `函数名` 列是 `-`。
+   要把这 199 个也点出名字，得另做一版 `class_probe`（本轮没做）。
+8. **没碰**：`src/**`（红线段，一处没改）、`client/**`、`tools/posy_unicorn.py`、
+   护栏/快照、`docs/00-status.md`、`docs/HANDOVER.md`、`docs/coverage-matrix.*`。
+## 65. `docs/00` §3「明确未知」里四条**静态可攻**的：弹道原语 / `LevelRules` 归属 / 掩膜生命周期 / `RankInfo` 字段数 + 段位 E 档（2026-11-26，任务 T14）
+
+> 本条是这四条的**总账**（一页结论 + 地址链 + 复跑）；展开写在
+> `docs/16` §65（①）、`docs/08` §12（③）、`docs/02` §15.1 第 3 条与 §17.4（②④）。
+> 一次性复算：`tools/unknowns_report.py`（产物 `fixtures/unknowns_{plot,levelrules,mask,rank}.tsv`）。
+> **地址口径**：全部 **ELF vaddr = RVA**，不要 `±0x100000`
+> （本机 2026-11-26 复核：`analysis/funcstarts_ghidra_va.pkl` 装的就是 vaddr，
+> 见 `AGENTS.md`「地址空间」；`0x4b2890`/`0x4eb9d0`/`0x4ed670` 等全部直接可反汇编）。
+
+### 65.0 一页结论（四条各一句）
+
+| # | 缺口（`docs/00` §3 原文） | 结论 | 档 |
+|---|---|---|---|
+| ① | 弹道用什么原语画（`draw_polyline` 字符串不存在） | **一个 `draw_*` 都不用**：弹道是 **`Line2D` 子节点**，`Line2D::add_point` 经 GOT 槽 `0x9bbf98` 在 `FunctionDrawer::update_function`（`0x498c70`，`function_drawer.rs:45`）里逐点追加，由 `GraphwarPlane::draw`（`0x4b5df0`）每帧喂；**每 tick 揭示 `min(len, (fractional_tick − active_tick) × 30.0)` 个点** | **观测 + 立即数逐位**（`docs/16` §65） |
+| ② | `LevelRules` 的文件归属 | **`graphwar_game_state_manager.rs`**。判据函数 `0x473520`（`get_alive_teams`）5 条 Location = `:867/:868/:869/:875/:876`；入口 `0x4759f0` 12 条 = `:191/:256/:839/:840/:847/:848/:851/:852/:859/:860/:905/:906`；胜方字节函数 `0x4780c0` 5 条 = `:223/:224/:230/:231/:256`。**没有一条落在 `play_screen_control.rs`** | **观测**（`Location`，自校验 OK） |
+| ③ | 掩膜的持有者与生命周期 | 持有者 = **`GraphwarObstacleManager` 的 `self+0x18`**（`ArcInner<Mutex<Vec<u8>>>`，锁字 `+0x10`，数据 `+0x20`/`+0x28`）；创建 = `0x523020`（alloc 600000 + memset 0xFF）← `0x3f2360`(`obstacle_manager.rs:208`) ← `GameClient::new` `0x517690` / `0x4500c0`；**没有每帧重建**，只有「关卡构造整表建一次」+「事件增量加/挖」+「tick 队列挖洞」 | **观测**（`docs/08` §12） |
+| ④ | 段位算法 + `RankInfo` 字段数 2 vs 3 | **线上字段 = 2**（`entity_id`, `rank: i64\|null`）：二进制自带 serde 串 `struct RankInfoEvent with 2 elements`（`0x1bbda7`）+ 真实抓包里就是 2 个键。**"3 个 dword" 是内存布局**（`Option` 判别值 u32 + 值 u32 + `entity_id` u32），**不是第 3 个字段**。**段位算法不在客户端 ⇒ 改判 E 档（服务端算）** | **逐位**（serde 串 + 抓包）/ **观测**（生产点指令） |
+
+一句话：**四条里三条"指到地址"（①②③），第四条钉住了字段数并把算法判给服务端（E 档）。**
+
+### 65.1 ① 弹道（详情 `docs/16` §65）
+
+```text
+draw_polyline / draw_multiline / draw_dashed_line / draw_primitive / draw_mesh /
+draw_colored_polygon / draw_string / draw_char   → 整文件字节扫描 0 命中（不存在）
+Line2D::add_point  字面量 0x29f39f → 包装 0x8b7210 → GOT 槽 0x9bbf98
+  → 全 .text 唯一引用 0x498f6e（mov rbp,[rip+0x523023]）→ 间接调用 0x498fab
+  → 在 FunctionDrawer::update_function 0x498c70 内（Location src/function_drawer.rs:45:38）
+  → 唯一直接调用者 GraphwarPlane::draw 0x4b5df0（每帧 _draw，经槽 0x9bb7f0）
+揭示量：0x4b67ba mulsd xmm1,[0x19ef90]=30.0 ；0x4b6815 cmovb r13,r12 = min(points.len, …)
+线宽：Line2D::set_width(0.125f32 @0x1baff8)；接头 set_joint_mode(2=ROUND)
+```
+
+### 65.2 ② `LevelRules` 归属（`panic::Location`，逐址）
+
+**自校验先跑**（`AGENTS.md`「函数归属」第 2 条）：
+
+```text
+0x4eb9d0 求值器 → src/math_function.rs:75      ✓
+0x4ed670 解析器 → src/math_function.rs:75      ✓
+```
+
+再查判据函数（`tools/unknowns_report.py --only levelrules`，每条都打印引用指令地址）：
+
+| 函数 | span | Location（全部） | 结论 |
+|---|---|---|---|
+| `0x473520` `get_alive_teams` | `0x280` | `src/graphwar_game_state_manager.rs` **:867 :868 :869 :875 :876** | 同模块 |
+| `0x4759f0` `evaluate`（上限 `0x475a64`、两队 `0x475a80`/`0x475a88` 在其中） | `0x560` | 同上 **:191 :256 :839 :840 :847 :848 :851 :852 :859 :860 :905 :906** | 同模块 |
+| `0x4780c0` 胜方字节（表 `0x478133`–`0x478236`） | `0x230` | 同上 **:223 :224 :230 :231 :256** | 同模块 |
+| 对照：`0x470840` `handle_tick` / `0x472470` `execute_results` | — | 同上（`docs/02` §17.4 已结案） | 同模块 |
+
+`graphwar_game_state_manager.rs` 有 Location 的函数共 **50 个**，地址簇 `0x3caa20`–`0x4ac440`，
+上面三个都在簇内。⇒ **`LevelRules`（连同 `LevelKind` / `MatchState` / `Verdict` / `TARGET_TEAM`）
+原版归属 = `graphwar_game_state_manager.rs`**；我方现在仍在 `src/graphwar_play_screen_control.rs`
+（`docs/16` §53.2 末尾那条"归属没有新证据"**已被本轮推翻**），搬迁留给能改 `src/` 的任务。
+
+**证不到的（② 的一半）**：`0x4759f0` 的唯一直接调用者是一个 **16 字节 thunk `0x47b190`**，
+而该 thunk 的直接调用者 = 0、函数指针槽 = 0 ⇒ **"谁在什么时机调 `evaluate`" 仍未知**。
+下次手段：在 `0x47b190` 下 frida 断点（它是 `jmp 0x4759f0` 形态，断到就等于断到 evaluate）。
+
+### 65.3 ③ 掩膜（详情 `docs/08` §12）
+
+见 `docs/08` §12.2 的取锁序与 §12.3 的生命周期全图；这里只留一句：
+**`self+0x18` → `ArcInner{strong +0x00, weak +0x08, 锁字 +0x10, 毒 +0x14, cap +0x18, ptr +0x20, len +0x28}`，
+三处（读 `0x3f15b0` / 加 `0x3f17a0` / 挖 `0x3f1b30`）用同一段 `lock cmpxchg [r14+0x10],1` 取锁。**
+
+### 65.4 ④ `RankInfo` 字段数 + 段位 E 档（详情 `docs/02` §15.1 第 3 条）
+
+**(a) 线上 2 字段（逐位）**
+
+```text
+.rodata 0x1bbda7  "struct RankInfoEvent with 2 elements"     ← serde 的 expecting 串，二进制自己说的
+.rodata 0x1bc043  "struct RankRequestEvent with 2 elements"
+真实抓包 fixtures/protocol_match.jsonl：
+  {"RankInfo":{"entity_id":229,"rank":0}}
+  {"RankInfo":{"entity_id":232,"rank":null}}      ← 2 个键，rank 可为 null
+```
+
+**(b) "3 个 dword" 是内存布局，不是第 3 个字段（观测，逐指令）**
+
+```text
+0x454e0c  mov  dword ptr [rsp+8], 1        ; +8  = Option 判别值（1 = Some）★
+0x454e14  pshufd xmm0,xmm0,0xe1           ; map entry 的 (key,value) 交换
+0x454e19  movq [rsp+0xc], xmm0            ; +0xc = rank(u32), +0x10 = entity_id(u32)
+0x454e1f  movabs rax,0x8000000000000043   ; +0  = Event 判别值 67
+set 路径（0x455090）：+0x18 = 判别值(edx) / +0x1c = rank(ecx) / +0x20 = entity_id(esi)
+0x4550b0  cmp edx,1 / jne 0x4550c3        ; 判别值 ≠ 1 ⇒ 走"删条目"分支 ⇒ 线上 rank:null
+```
+
+⇒ 内存里那三个 dword = **`entity_id` + `Option<u32>` 的 (判别值, 值)**；线上仍只序列化
+`entity_id` 与 `rank` 两个键（`null` ⇔ 判别值 ≠ 1）。**"2 vs 3" 的矛盾到此收敛，2。**
+
+**(c) 段位算法：客户端没有 ⇒ E 档（服务端）**
+
+| 证据 | 内容 | 档 |
+|---|---|---|
+| `rank_manager` 四个函数（`0x454d80`/`0x454e80`/`0x454f30`/`0x455090`，Location 全在 `src/graphwar_rank_manager.rs`） | 只有「`HashMap<u32,u32>` 存取 + 发 `rank_info_event`(67) + 订阅 `new_connection`/`entity_removed`」。**指令计数（`--only rank` 自带正对照）**：67 / 36 / 91 / 70 条指令，**浮点四则 + 除法/取模 = 0**；对照 `GraphwarPlane::draw` 1158 条里 `divss`2 `mulss`4 `subsd`2 `mulsd`1 `cvtsi2sd`1 `imul`2 | **观测（负结果 + 正对照）** |
+| 值的来源 | 唯一写入口 `0x455090` 的两个调用点都在**收包侧**：`0x3e0757`（`src/graphwar_remote_event_handler.rs:143…`）与 `0x3e2a6f`（事件分派 `0x3e2830`）。后者在调用前刚把**来报 payload 的三个 dword** 读进寄存器：`0x3e2a29 [rbx+8]` / `0x3e2a2c [rbx+0xc]` / `0x3e2a30 [rbx+0x10]` → `esi/edx/ecx` | **观测** |
+| 段位相关的全部 `.rodata` 数据 | 只有 **22 条**资源路径 `res://ranks/rank_0.svg` … `rank_21.svg`（`0x1c3481` 起，每隔 0x16 字节一条；加载点 `0x4c9190`，22 个 `lea`） | **观测** |
+| 段位名/阈值表 | `Bronze/Silver/Platinum/Diamond/Grandmaster/bronze/silver/elite/leaderboard/rating/mmr` 整文件扫描 **0 命中**；`Gold`/`Silver`/`Master`/`elo` 的少数命中全部落在**别的词里**（TLS 的 `ExtendedMasterSecret`、`hello`、`logical`、二进制块） | **逐位（负结果）** |
+
+⇒ **改判：段位不是客户端算的，是服务端下发的数字（E 档 = 客户端外）。**
+客户端只做三件事：收 → 存 `HashMap<entity_id, rank>` → 广播给其它客户端（tag 67）；
+以及用这个数字当**图标下标**（`rank_0..rank_21`，22 张）。
+**推断（未证）**：段位值域 `0..21`（图标数给出上界），代码里**没看到** clamp/取模 ⇒
+`rank > 21` 时怎么办（越界？不画？）**未知**。
+
+### 65.5 四条的正对照（"负结果"必须先证明扫法有效）
+
+| 扫法 | 正对照 | 结果 |
+|---|---|---|
+| 字面量 → 包装 → GOT 槽 → 调用点 | `draw_arc`（文档值 `0x19f9d0 → 0x8abca0 → 0x9bc020 → 3 处在 0x4b2890`） | **复现成功**（`tools/unknowns_report.py --only plot` 打印 `正对照 draw_arc: OK`） |
+| `panic::Location` 归属 | `0x4eb9d0` / `0x4ed670` → `src/math_function.rs` | **OK** |
+| 整文件字节扫描（负结果用） | 同一次扫描里 `draw_arc` / `add_point` 等 13 个名字**命中** | **OK**（不是"扫不到任何东西"） |
+| `rank_manager` 无算术（`tools/unknowns_report.py --only rank` 自带） | 同一次扫描里 `GraphwarPlane::draw` `0x4b5df0`（1158 条指令：`divss`2 `mulss`4 `imul`2 `subsd`2 `mulsd`1 `cvtsi2sd`1）、`EntityDrawer::draw` `0x4b2890`（1274 条：`addsd`7 `subsd`4 `divsd`2 `divss`1 `mulss`3 `imul`1 `mulsd`1 `cvtsi2ss`1）**都有算术**，而 `rank_manager` 四个函数（67/36/91/70 条指令）**浮点四则 + 除法/取模 = 0** | **OK** |
+
+### 65.6 复跑（四条各一条命令）
+
+```bash
+export GW2_TARGET_SO=$PWD/.reference/game/libgraphwarrust.so
+PY=$PWD/.reference/venv/bin/python
+$PY tools/unknowns_report.py                 # 四条全跑（一页结论所需的所有行）
+$PY tools/unknowns_report.py --emit          # 顺手写 fixtures/unknowns_{plot,levelrules,mask,rank}.tsv
+$PY tools/unknowns_report.py --only plot     # ①（含正对照断言）
+$PY tools/unknowns_report.py --only levelrules   # ②
+$PY tools/unknowns_report.py --only mask     # ③
+$PY tools/unknowns_report.py --only rank     # ④
+$PY tools/unknowns_probe.py chain <方法名>    # 交互式：任意引擎方法名的全链
+$PY tools/unknowns_probe.py fn <addr>        # 交互式：函数 span/Location/调用者
+python3 tools/check_doc_refs.py              # rc=0（改了 docs/16 必须跑）
+python3 tools/coverage_matrix.py --check     # OK（改了 docs/02 必须跑）
+```
+
+### 65.7 遗留 / 未做（照实写）
+
+1. **① 只到"指令级 + 公式"**：没有真机逐帧对拍 `Line2D.points` 的增长率
+   ⇒ "每 tick 长 30 个点"是**观测推出来的**，不是帧上量的。缺 frida hook（`0x498fab`）。
+2. **② 只到归属**：`evaluate` 的**调用时机**仍未知（thunk `0x47b190` 无人调）；`src/` 里的搬迁没做
+   （本任务禁止改 `src/**`）。
+3. **③ 只到"谁持有 + 三处写入"**：`0x3f1d30` 的订阅者登记处（订阅表里存哪个地址）没有静态证据；
+   `0x3c2bc0` 是否先拷工作副本仍未知。
+4. **④ 段位**：只证明"不在客户端"。**服务端**怎么算（阈值/胜负增量/封顶）**完全没有证据**——
+   服务端程序不在本机语料里（只有 `libgraphwarrust.so` + 401 份单人回放；
+   403 份回放里 `RankInfo` **0 条**，见 59.8）。
+5. **`docs/00` §3 那四行本身没改**（`docs/00-status.md` 在本任务禁区里）——
+   需要 lead 按本条把四行状态改掉。
+
+### 65.8 我写错了 / 任务前提被证伪
+
+1. **任务书给的节号不可用**：`docs/06` 的 `## 65.`（当时最大是 §58）、`docs/16` 的 `## 69.`
+   （`check_doc_refs.py` 要求 `## NN.` **连续无空洞**，§69 会直接判失败）、`docs/08` 的 `## 8.`
+   （§8 已被「方法学备忘」占用）⇒ 实际落成 **`docs/06` §59 / `docs/16` §65 / `docs/08` §12**。
+2. **`docs/16` §12.2 ⑭「弹道原语没扒到」与 §53.2 末尾「`LevelRules` 归属没有新证据」两处结论
+   已被本轮推翻**（前者：不是原语、是 `Line2D`；后者：有 Location 证据了 = GSM）。
+   两处原文保留（历史轨迹），本条是覆盖它的新证据。
+3. **`docs/02` §15.1 第 3 条「2 vs 3 未收敛」结案**：3 个 dword 里第 1 个是 `Option` 判别值。
+4. **`docs/02` §17.4 把 `0x4500c0` 记在 `server_connection_handler` 名下**，但它的
+   `panic::Location` 是 `src/graphwar_game_server.rs:219–222` ⇒ **两处不一致，本条只按 Location 记**；
+   §17.4 那一行本任务无权改（只许改 `LevelRules` / rank 行）。
+5. **`docs/00` §3「段位怎么算」那一行**应改成 **E 档（服务端）**，同样留给 lead。
+6. **401/403 份回放里 `RankInfo` 0 条**：所以 ④ 的线上字段数**不是**从回放语料来的，
+   而是 `fixtures/protocol*.jsonl`（真实抓包，`docs/07` §3 说它们是抓包）+ 二进制里的 serde 串。
+   （本轮实测：403 个 gzip 回放解压后逐行 JSON 解析，`RankInfo` 字段名集合 = 空 ⇒ 0 条。
+   别把"回放里没有"读成"事件不存在"。）
+
+## 66. 协议「74/74 全字段」的 ① 号验证重做：`67/67` 其实是「67 条 N 串」被当成「67 个事件」，而「7 个空体」应为 **10**（2026-11-26，任务 T16 / `task-13`）
+
+**一句话**：`docs/07` §3.2 的结论（74 个事件 + 字段清单）**站得住**，而且现在有**两条互相独立的
+指令级证据**撑住 74/74；但那里的三个读数只有一个是原样的：`N` 串 **67 条是对的**、
+`67/67` 是**把"N 串条数"当成了"事件个数"**（事件分母 74，有字段的 64）、
+「另外 **7** 个事件空体」是**错的，应为 10**（§3.3 表自己写的就是 10）。
+**没有任何一个事件的字段数错。**
+
+### 66.1 冲突：任务书给的四个数，两个复现不出
+
+| 说法的出处 | 说法 | 本轮实测 | 判 |
+|---|---|---|---|
+| `docs/07` §3.2 ① | 字段数 == N 串的 N = **67/67** | **64/64 有字段事件**（74 事件里 10 个空体）；另 3 条 N 串属于非事件负载结构体 | 标签错 |
+| `docs/07` §3.2 | `N` 串只有 **67** 条 | **67 条**（重叠感知扫描）；且 67 条都落在 `.data.rel.ro` 的 `(ptr,len)` 槽里 | **对** |
+| `docs/07` §3.2 | 另外 **7** 个事件空体 | **10 个**（与 §3.3 表一致） | **错** |
+| 任务书（lead 实测） | `.so` 里 N 串只有 **47** 条、**19** 个有字段事件没有 N 串 | **复现不出**（见 66.4 的口径表） | 未复现 |
+
+### 66.2 方法（**预注册**在 `fixtures/protocol_recount_plan.txt`，commit 早于跑最终表）
+
+* **方法 A（新）**：`Deserialize` 侧 `Deserializer::deserialize_struct(self, name, fields, visitor)`
+  参数块里的 **`fields.len` 编译期立即数**。两种寄存器布局（由返回类型是否 sret 决定）：
+
+  ```text
+  布局 S（64 个有字段事件）             布局 Z（10 个空体事件）
+  lea  rdx,[rip+"<Name>Event"]          lea  rsi,[rip+"<Name>Event"]
+  lea  r8, [rip+FIELDS]   ; .data.rel.ro mov edx,<name_len>
+  mov  ecx,<name_len>                   mov ecx,8      ; 空切片悬垂 ptr = align_of::<&str>()
+  mov  r9d,<N>            ; ← N 立即数  mov rdi,<self>
+  mov  rsi,<deserializer>               xor r8d,r8d    ; ← N = 0
+  call <该结构体自己的 Deserialize 助手> call <…>
+  ```
+
+  自校验两条：`name` 的 `(ptr,len)` 必须**精确**读成 `<X>Event`；`FIELDS` 数组按
+  `R_X86_64_RELATIVE` **重定位后**读前 N 个 `&str`，必须与方法 B 的键序**逐项相同**。
+* **方法 B**：`Serialize` impl 里 `serialize_field` 的**调用次数**（判据原样沿用
+  `tools/wire_fields.py`：`str_writer=0x3bdf00`（多数票 79）、花括号深度区分事件名/字段名）。
+* **方法 C（只用来说明 N 串，不用于取 N）**：`.rodata` 里 `struct <Name> with N elements`。
+* **为什么不按任务书首选走 `serialize_struct` 的立即数**：`serde_json::Serializer::serialize_struct(self, name, len)`
+  **既不使用 `name` 也不使用 `len`**，内联后 LLVM 把它们**当死代码删掉**，只剩
+  `mov byte ptr […], 0x7b` 直接写 `{` ⇒ 在 74 个事件 serializer 里按该形状扫描 = **0 命中**。
+  这是**负结论**，专门做了正对照（66.3 ③）。N 立即数在**反序列化侧**才活下来。
+
+### 66.3 正对照（证明扫描器/RLE 判据有效，不是"扫不到"）
+
+以下 6 条由 `tools/protocol_recount.py --controls` **程序化打印**（不是我手抄的读数）。
+
+1. **已知锚点**：`GraphwarColor` 的 N 串 = **3**、`GameInfo` = **9**，与 `docs/07` §3.4 的
+   字段清单（`r/g/b` 三个、`GameInfo` 九个）逐个吻合。
+2. **地址复现**：方法 B 独立抽出的 `LockInfo` / `LockRequest` 的 `Serialize` =
+   **`0x50ca30` / `0x50e420`**，与 §3.4 早就登记的地址**逐字相同**；`LockInfo` 的字段 = `lock`
+   （4 字节字面量在 `0x1ba58c`），与 §3.4 那条就地更正一致。
+3. **"serialize_struct 立即数不存在"这条负结论的正对照**：同一个函数 `0x50ca30` 里
+   `lea rdx,[rip+0x19f928]`("LockInfo") + `mov ecx,8` + `call 0x3bdf00` 是**在的**
+   （`serialize_newtype_variant` 真的用这个变体名）⇒ 扫描器并不瞎，LLVM 只删了**没被用**的
+   `(name,len)`。另外同一条"lea+立即数+call"的匹配器在**反序列化侧**命中 **74** 处（方法 A）。
+4. **两条独立传输**：方法 A 的 N 来自**代码段立即数**，方法 A 的字段名来自
+   **`.data.rel.ro` 里重定位后的数据**，方法 B 的字段名/次数来自**另一段代码的调用点**；
+   三者 74/74 键序相同、64/64 计数相同 ⇒ 不是自洽，是三份不同来源的物证。
+5. **空体事件真的写 `{}`**：`TickRequest` 的 `Serialize`=`0x511fb0` 里只有
+   `mov byte ptr […], 0x7b` ×2（外层对象 + 内层体）与 `0x7d` ×2，**没有任何 `serialize_field`**
+   ⇒ 线上是 `{"TickRequest":{}}`，不是 unit variant（那会是裸字符串 `"TickRequest"`）。
+
+### 66.4 逐行对不齐的行（`fixtures/protocol_field_recount.tsv`，74 行 + 表头）
+
+* **全四列（A / B / `WIRE_SPEC` / §3.3）一致的：74 / 74 行。「对不齐」的行：0 行。**
+* 分项：`A==B` 74/74；`A==WIRE_SPEC` 74/74；`A==§3.3` 74/74；`A键序==B键序` 74/74；
+  `N串==A` **适用 64 / 相等 64**（10 个空体事件没有 N 串，该列记 `-`）。
+* 权威字段数合计：**74 个事件、114 个字段**；分布
+  「0 字段 10 个 / 1 字段 27 / 2 字段 29 / 3 字段 4 / 4 字段 3 / 5 字段 1」。
+  布局：S=64、Z=10。
+* **47 / 19 复现不出的口径表**（我试过的全列在这里，方便下一轮别再踩）：
+
+  | 扫法 | 读数 |
+  |---|---|
+  | `strings(1)` 行扫描（≥4 可打印、整行必须恰好是这句话） | **0** |
+  | `strings` 行里以 `struct ` 开头 / 含 ` with `+` element` | 5 / 4 |
+  | 朴素非重叠 `re.finditer('struct … with N element')`（`elements?` 会吃掉下一句的首字母 `s`） | **57** |
+  | 重叠感知扫描（逐字节找 `struct `，在该偏移 `match`，起点前进 1） | **67** |
+  | `.data.rel.ro` 的 `(ptr,len)` 槽里 `^struct … with N elements?$` 精确匹配（上一轮工具口径） | **67**（`64 *Event` + `GameInfo`/`GraphwarColor`/`EventInfo`） |
+
+  ⇒ **47 我没能用任何口径复现出来**；能复现的是 0 / 57 / 67。**67 是权威值**，
+  但它的**构成**是 64+3，不是"67 个事件"。
+
+### 66.5 为什么 10 个事件没有 N 串（不是缺数据）
+
+`.rodata` 里 **77** 个结构体（74 事件 + `GameInfo`/`GraphwarColor`/`EventInfo`）**各有一条**
+短形式 `expecting` 文案 `struct <Name>`，每条只被一处瘦函数引用
+（`mov rdi,rsi` + `lea rsi,[rip+…]` + `mov edx,<len>` + `jmp <GOT 槽>`，例如 `Tick` → `0x5067a0`）；
+其中**恰好 67 个**（= 全部**有字段**的）**另有**一条 `struct <Name> with N elements`。
+⇒ **"有字段" ⟺ "有 N 串"，在 77 个结构体上 100% 同现**；10 个 0 字段事件只拿到短形式。
+**机制是推断**（未证实）：serde_derive **1.0.204**（二进制里带 `serde-1.0.204` /
+`serde_json-1.0.121` 字面量）把 `with N elements` 后缀只在 `deserialize_seq` /
+`deserialize_seq_in_place` 里拼，0 字段结构体的 seq 分支不产出该后缀。
+**缺的证据**：没有把 0 字段结构体的宏展开拿出来对（不影响字段数结论，字段数由 A/B 直接给）。
+
+### 66.6 结论
+
+1. **74/74 站得住**：74 个事件的字段个数与 `WIRE_SPEC`、`docs/07` §3.3 **逐行相等**，
+   而且 A（反序列化侧立即数）与 B（序列化侧调用计数）**两个方向独立同值**。
+2. **权威字段数**：64 个有字段事件共 **114** 个字段（1 字段 27 个 / 2 字段 29 / 3 字段 4 /
+   4 字段 3 / 5 字段 1 ⇒ 27+58+12+12+5 = 114），10 个空体事件 0 字段；全表 **114** 个字段槽。
+3. **没有任何事件"真的错了"**：§3.3 全表 74 行**一个字没改**（本轮逐行对过）。
+4. 该改的只有 `docs/07` §3.2/§3.5 的**三项标签**：`67/67` → `64/64 有字段事件`；
+   「7 个空体」→ 「10 个」；补「`Serialize` 侧 N 被 DCE」「N 串三种扫法 = 0 / 57 / 67」。
+   `N` 串 **67 条**这个数**保留**（并补上 67 = 64 + 3 的构成）。
+5. 证据档：A 的 N/键名 = **逐位**（指令 + `.data.rel.ro` 重定位数据）；B = **逐位**（调用点计数，亦可视作观测）；
+   C = **逐位**（`.rodata` 字节 + 重定位）；"0 字段走短形式"的**机制** = **推断**。
+
+### 66.7 复跑
+
+```bash
+cd /home/CG/Myprojects/graphwar2-rebuild     # 或任一 checkout（.reference/ 要在本机）
+PY=$PWD/.reference/venv/bin/python
+
+$PY tools/protocol_recount.py --check-shape        # ① 负结论：Serialize 侧 serialize_struct 立即数 = 0 命中
+$PY tools/protocol_recount.py                      # ② 74 行 A/B/WIRE_SPEC/§3.3 逐列比 + 统计（~3 s）
+$PY tools/protocol_recount.py --tsv fixtures/protocol_field_recount.tsv   # ③ 重生成 74 行真值表
+$PY tools/protocol_recount.py --controls           # ④ 本节 66.3 的 6 条正对照逐条打印
+$PY tools/protocol_recount.py --json | head -40    # ⑤ 机器读（含 str_writer 票数与 N 串三口径）
+$PY tools/wire_fields.py --verify                  # ⑥ 上一轮工具（已修）：表 + 三道自校验，N 自校验失败 0 条
+```
+
+`tools/protocol_recount.py` 自带 rip 相对引用索引，**不需要** `analysis/xrefs.pkl`
+（该 pkl 不入库、本机也没有）；`tools/wire_fields.py` 本轮修好了同一件事（缺 pkl 时现场重建，
+有 pkl 时行为不变），改动写在它的模块 docstring 里。
+
+### 66.8 遗留 / 未做
+
+* **② 号验证（`Deserialize` 的 `visit_map` 键名比较）没有逐字段复测**：只重跑了上一轮工具的
+  同一项自检（`反序列化侧未比出的键 = 0 条`），**不是独立复核**。要独立做，得改成"从字节比较的
+  常量窗口反推键名"再与 A/B 的键序对齐。
+* **③ 号验证（真实抓包键序）本轮没复测**（不碰抓包语料）。
+* **0 字段结构体走短形式的机制是推断**（缺宏展开对照），但不影响任何字段数结论。
+* **没碰 `src/`（尤其 `WIRE_SPEC` 一个字节没改）、`tests/`、`client/`**；§3.3 表零改动（已用
+  `git show master:docs/07-protocol.md` 逐字节比对验证）。
+* `analysis/xrefs.pkl` 依然没生成（本机上游目录里只有 `funcstarts_ghidra_va.pkl`）。
+  两个工具现在都能不依赖它跑，但会各花 ~3 s 现场反汇编；要提速可在上游跑
+  `analysis/build_index.py`（产物不入库）。
+
+### 66.9 我写错了 / 任务前提被证伪（照实记）
+
+1. **任务书前提「三个数都复现不出」只成立 1/3**：`67`（N 串条数）**是对的**；`7` 错；
+   `67/67` 是**标签错**（不是数字错）。任务书要我"把验证数字算准"，算准的结果是**只改标签 + 改 7→10**。
+2. **任务书前提「19 个有字段事件完全没有这条串」不成立**：**64 个有字段事件全部都有 N 串**，
+   而且都能精确读到 N（`fixtures/protocol_field_recount.tsv`）。那 19（我这边是 20）来自
+   **扫法的假象**：字面量紧邻拼接 + 非重叠正则吃掉下一个字的 `s`（66.4 口径表）。
+3. **任务书首选的方法 A（`serialize_struct` 的立即数）在本 `.so` 上不存在**（66.2 末段、66.3 ③）。
+   我用的是它在反序列化侧的镜像（`deserialize_struct` 的 `fields.len`），**这在跑最终表之前
+   就写进预注册了**，不是事后换口径。
+4. **`_struct_counts`（上一轮工具的 N 串口径）本身没错**，它读的是 `.data.rel.ro` 的 `(ptr,len)` 槽，
+   读数就是 67；只是它**看不见** `.rodata` 里被 `strings` 行扫描/非重叠正则漏掉的东西，
+   而这两条正是得出 57 / 0 / 47 的路径。**没有为了对上 67 改任何口径。**
+
+## 67. 对局屏（S7/S8）第一刀：**客户端收到事件之后干什么**有了台账，12 条缺处理器的事件全部接进复原 manager；跨侧差异 6.3574 % → **6.3091 %**、6.8344 % → **6.7734 %**（2026-11-26，任务 T17）
 
 > 任务书：`.agent-work/specs/T17-net-events.md`（共享任务 `task-14`）。分支 `agent/net-events`，基于 master `3567098`。
 > 工作树 `.agent-work/cg/wt-t17`（私有 `CARGO_HOME` / `CARGO_TARGET_DIR=$WT/.cargo-target`）。
@@ -9017,20 +10203,20 @@ Xvfb 必须 `-listen tcp` 且 `DISPLAY=127.0.0.1:<n>` + `unset WAYLAND_DISPLAY`�
 本轮的实质产出是 ①一张**逐事件的证据台账**（`fixtures/net_event_handlers.tsv`，74 条线上事件）、
 ②一个**把线上事件派发答复原 manager** 的桥（`GwNetEvents`，`src/_scaffold/net_events_class.rs`，12 条缺的 + 11 条已有的全部接上）、
 ③`session.gd` 的**实体模型修正**（这一条才真正动了像素：棋盘正中那具假士兵与假准备圈没了）。
-像素只降了 **0.048 pp / 0.061 pp**，L2 超限块数 **4 / 3 没变** —— 剩下的差异**不在事件层**（见 §64.5 的三条硬结论）。
+像素只降了 **0.048 pp / 0.061 pp**，L2 超限块数 **4 / 3 没变** —— 剩下的差异**不在事件层**（见 §67.5 的三条硬结论）。
 
-### 64.0 一页结论
+### 67.0 一页结论
 
 | # | 问题 | 答案 | 档 |
 |---|---|---|---|
-| ① | 我方到底收了几个事件、缺几个 | **23 个事件名有分支**（22 个 `match` 臂，`QueueDestroyObstacle`/`DestroyObstacle` 共用一个；t8 报的"21"是旧读数）；剧本 30 个名字里 **12 个没有处理器**（复算见 §64.1） | **观测**（读代码 + 复算） |
-| ② | 12 个缺的都补了吗 | **11 个接进了复原 manager**，`FunctionFire` **故意不接**（客户端收到它之后原版做什么**没有证据**，不猜；见 §64.6 第 1 条） | **观测**（`cargo test` 的映射表断言）/ **未知**（`FunctionFire`） |
+| ① | 我方到底收了几个事件、缺几个 | **23 个事件名有分支**（22 个 `match` 臂，`QueueDestroyObstacle`/`DestroyObstacle` 共用一个；t8 报的"21"是旧读数）；剧本 30 个名字里 **12 个没有处理器**（复算见 §67.1） | **观测**（读代码 + 复算） |
+| ② | 12 个缺的都补了吗 | **11 个接进了复原 manager**，`FunctionFire` **故意不接**（客户端收到它之后原版做什么**没有证据**，不猜；见 §67.6 第 1 条） | **观测**（`cargo test` 的映射表断言）/ **未知**（`FunctionFire`） |
 | ③ | 补的东西进的是哪一层 | `GwNetEvents` → `KernelBus` 的 22 个 manager（名字/外观/靶子/位置/队伍/生命/颜色/实体特效/特效/回合/模式/函数槽/障碍）——**GDScript 里没有第二份游戏语义** | **观测** |
 | ④ | 像素变好了吗 | `match_ready` **6.3574 % → 6.3091 %**（141 591 → 140 516 px，−1 075）；`match_play` **6.8344 % → 6.7734 %**（152 216 → 150 857 px，−1 359）。L1 仍过、L2 仍不过（**4 块 / 3 块**，与基线同） | **观测** |
 | ⑤ | 逐元素：靶子/标签/准备圈修好了吗 | **准备圈修好了（位置上）**：假士兵 229/231 与棋盘正中的假圈**都没了**，圈落到射手 230 身上；**靶子仍画不出**（界面层 `_targets` 空，缺 play_screen 接线）；**名字标签仍没有**（文本框来自 `store.profile.name`，不是 `NameInfo`） | **观测**（真机真帧 + 逐块表） |
-| ⑥ | 那剩下的 6.3 % 是什么 | `Fire!` 字号/颜色、棋盘格线整体错 1 px + 多画一层虚线网格、左右键盘字形、右下偏移量标签、`f(x)` 行光标 —— **全是界面层（`play_screen.gd`）的版式/字体问题**，不在事件层 | **观测**（§64.5 逐块） |
+| ⑥ | 那剩下的 6.3 % 是什么 | `Fire!` 字号/颜色、棋盘格线整体错 1 px + 多画一层虚线网格、左右键盘字形、右下偏移量标签、`f(x)` 行光标 —— **全是界面层（`play_screen.gd`）的版式/字体问题**，不在事件层 | **观测**（§67.5 逐块） |
 
-### 64.1 台账：`fixtures/net_event_handlers.tsv`（74 条线上事件）
+### 67.1 台账：`fixtures/net_event_handlers.tsv`（74 条线上事件）
 
 7 列：`事件名 / 线上tag / 剧本用到 / 我方T17前有处理器 / 原版收到它之后做什么（证据出处）/ 本轮做没做 / 落到的 manager 方法`。
 
@@ -9063,7 +10249,7 @@ awk -F'\t' '!/^#/{print $1"\t"$2}' fixtures/net_event_handlers.tsv | tail -n +2 
 awk -F'\t' '!/^#/' fixtures/net_event_handlers.tsv | wc -l    # 75 = 1 表头 + 74 事件
 ```
 
-### 64.2 派发桥：`src/_scaffold/net_events_class.rs`（**scaffold，不是复原物**）
+### 67.2 派发桥：`src/_scaffold/net_events_class.rs`（**scaffold，不是复原物**）
 
 原版那条链是 **`GraphwarRemoteEventHandler::handle_server_remote_event`**（x86 **`0x3e6df0`** / arm64 **`0x3e2830`**）。
 我方这个模块**没复元**（`docs/02-module-map.md` §17 记的是"只落了枚举与名字表，171 个锚点的分发/订阅行为未实现；重记为混装待拆"），
@@ -9091,7 +10277,7 @@ awk -F'\t' '!/^#/' fixtures/net_event_handlers.tsv | wc -l    # 75 = 1 表头 + 
 再逐表读回（名字 `cmdgz`、外观 `face_paint_2/asian/asian_hat`、靶子 232、位置 −5.156…/−9.889…、
 队伍 229/230=Team1 且 231 被删、实体特效 Death/Spark、特效 234@1281、函数槽 615、颜色 (125,104,0)）。
 
-### 64.3 GDScript 侧：`client/src/net/session.gd`（**只改这一个文件**）
+### 67.3 GDScript 侧：`client/src/net/session.gd`（**只改这一个文件**）
 
 1. 12 条缺的处理器全部补上，并**同时**做两件事：落 `room`（界面层要读）+ `_feed_managers()`（喂 Rust）。
    `_feed_managers()` **只做字段搬运**（一事件一行，参数顺序 = `WIRE_SPEC`），不解释语义。
@@ -9106,7 +10292,7 @@ awk -F'\t' '!/^#/' fixtures/net_event_handlers.tsv | wc -l    # 75 = 1 表头 + 
      `TeamInfo`/`ColorInfo`/`NameInfo` 可能比 `SoldierInfo` **先到**（真回放里就是），先记事实、建实体时回填。
 3. `ColorInfo` 从 `pass` 改成记账（原版是**直接采纳**服务端颜色）。
 
-### 64.4 两侧重拍（同条件：私有 Xvfb TCP、1920×1160、llvmpipe、每屏 3 帧）
+### 67.4 两侧重拍（同条件：私有 Xvfb TCP、1920×1160、llvmpipe、每屏 3 帧）
 
 ```bash
 export MAIN=/home/CG/Myprojects/graphwar2-rebuild
@@ -9129,7 +10315,7 @@ python3 tools/frame_diff.py --orig $WT/.agent-work/v/match-orig --mine $WT/.agen
   --blocks-out $WT/.agent-work/v/blocks_after.tsv --json $WT/.agent-work/v/diff_after.json
 ```
 
-### 64.5 数字（L1 / L2 / L3）与逐块
+### 67.5 数字（L1 / L2 / L3）与逐块
 
 | 屏 | 基线（t8 §60.4） | 本轮 | 变化 |
 |---|---|---|---|
@@ -9152,26 +10338,26 @@ python3 tools/frame_diff.py --orig $WT/.agent-work/v/match-orig --mine $WT/.agen
 ⇒ **"修对语义"不一定立刻"变好看"**：靶子那一块就是反例（错的东西比"没有"更接近原版，因为它至少占了位置）。
 这一条写在这里，免得下一个人只看总数字就以为"靶子已经没事了"。
 
-### 64.6 这批数字能支撑什么、不能支撑什么
+### 67.6 这批数字能支撑什么、不能支撑什么
 
 | 结论 | 证据 | 档 |
 |---|---|---|
 | 12 条缺处理器的事件里 **11 条** 有了"线上事件 → 复原 manager 方法"的落点，且落表结果可复算 | `cargo test ... net_events` 5 条断言 + 台账 | **观测** |
 | 我方**棋盘正中那具假士兵 + 假准备圈**已消失，准备圈落到射手 230 身上 | 两侧真机真帧（S7）+ 逐块 `(1,1)/(1,2)/(2,2)` | **观测** |
-| 总差异**确实降了**（两屏都降），但 **L2 超限块数没变** | §64.5 表 | **观测** |
-| "补 12 个处理器"是这 6.3 % 的**主因** | —— | **被证伪**（见 §64.7 第 1 条：真因是界面层版式/字体 + 我方 id 空间） |
-| 靶子/名字标签能靠事件层修好 | —— | **被证伪**：两条都缺界面层接线（§64.8 第 1/2 条） |
+| 总差异**确实降了**（两屏都降），但 **L2 超限块数没变** | §67.5 表 | **观测** |
+| "补 12 个处理器"是这 6.3 % 的**主因** | —— | **被证伪**（见 §67.7 第 1 条：真因是界面层版式/字体 + 我方 id 空间） |
+| 靶子/名字标签能靠事件层修好 | —— | **被证伪**：两条都缺界面层接线（§67.8 第 1/2 条） |
 
-### 64.7 卡点 / 任务前提被证伪
+### 67.7 卡点 / 任务前提被证伪
 
 | # | 前提（任务书或旧文档） | 实际 |
 |---|---|---|
 | 1 | 「我方差 6.3 % 的根因是缺 12 个事件处理器」 | **只对了一半**。事件层确实断（本轮已接），但这 6.3 % 的大头是**界面层**：`Fire!` 按钮 3 096 px、棋盘格线 13 343 px、左右键盘 37 396 px、`f(x)` 行 8 349 px、右下偏移量 1 336 px —— 全部由 `play_screen.gd` 的版式/字体决定，**把事件接得再全也动不了** |
-| 2 | 「t8 的管线已在 master 上」 | **不成立**：`tools/match_serve.py` / `--flow match` / `fixtures/frame_match_events.txt` 只在 `agent/match-frames`（t8 分支）上。本分支把它 **merge 进基线**（见 §64.9），`docs/06`/`docs/16` 的冲突按"保留 master 版"解决（t8 那两节编号与本树现有 §62/§63（docs/06）、§65/§66（docs/16）相撞，留给 lead 单独合 t8 时处理） |
+| 2 | 「t8 的管线已在 master 上」 | **不成立**：`tools/match_serve.py` / `--flow match` / `fixtures/frame_match_events.txt` 只在 `agent/match-frames`（t8 分支）上。本分支把它 **merge 进基线**（见 §67.9），`docs/06`/`docs/16` 的冲突按"保留 master 版"解决（t8 那两节编号与本树现有 §62/§63（docs/06）、§65/§66（docs/16）相撞，留给 lead 单独合 t8 时处理） |
 | 3 | 「我方 `_apply` 处理 21 个事件」 | **23 个事件名有分支**（22 个 `match` 臂），t8 的"21"是旧读数 |
-| 4 | 「准备圈画错位置 ⇒ 加个事件处理器就好」 | 真因是 `_ensure_entity()` 的**默认种类**（见 §64.3 第 2 条），不是缺处理器 |
+| 4 | 「准备圈画错位置 ⇒ 加个事件处理器就好」 | 真因是 `_ensure_entity()` 的**默认种类**（见 §67.3 第 2 条），不是缺处理器 |
 
-### 64.8 遗留 / 未做（需要 lead 决定的三条都在这里）
+### 67.8 遗留 / 未做（需要 lead 决定的三条都在这里）
 
 1. **靶子那一层画不出来**：原版靶子是独立图层（`GwTargetSet` → `EntityDrawer` 的 `TARGET_ID_BASE + target_id`），
    而 `play_screen.gd::_begin_online()` 里是 `_targets = GwTargetSet.new()` —— **联机分支从不填它**。
@@ -9189,18 +10375,18 @@ python3 tools/frame_diff.py --orig $WT/.agent-work/v/match-orig --mine $WT/.agen
    与线上事件用的是**实体 id**（229/230/231/232）。⇒ 本轮喂进 manager 的外观/名字/颜色**没有消费者**。
    要接上必须让播放屏改用实体 id 当 `EntityDrawer` 的 id（`s["entity_id"]`），或给桥加一张
    `下标 → 实体 id` 的别名表并由播放屏填。**这两条都要改 `play_screen.gd`**，本轮不动。
-4. **`FunctionFire` 没有落点**（证据缺口，见 §64.6 第 1 行说明）。
+4. **`FunctionFire` 没有落点**（证据缺口，见 §67.6 第 1 行说明）。
 5. **S8 的弹道相位两边仍不是同一 tick**（t8 §60.8 第 2 条未变）：我方不发 `TickRequest`，`TickReply` 恒 0 条。
 6. 只测了 **1 个局面**（真回放 `1793897298` 的 `Level 0`）；多士兵 / 有障碍 / 同时回合的局面没测。
 
-### 64.9 本轮改动的文件
+### 67.9 本轮改动的文件
 
 ```text
 fixtures/net_event_handlers.tsv           新增（台账，74 条线上事件 × 7 列）
 src/_scaffold/net_events_class.rs         新增（派发桥；5 条 cargo 断言）
 src/_scaffold/mod.rs                      + 3 行（模块声明）
 client/src/net/session.gd                 12 条处理器 + 实体模型修正 + `_feed_managers()`（唯一改的客户端文件）
-docs/06-verification.md                   本节（§64）
+docs/06-verification.md                   本节（§67）
 docs/16-client.md                         §67（客户端侧怎么接的、复跑命令）
 tools/match_serve.py / tools/frame_capture.py / fixtures/frame_match_events.txt  ← 来自 t8 分支（merge 进基线，非本轮新写）
 ```

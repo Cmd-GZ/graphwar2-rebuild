@@ -572,3 +572,99 @@ arm64 侧同一结论（符号名直接可读）：`place_entity`×3、`calculat
 
 重复报文（"一次挖洞发 2 条"）的成因、以及我方内核"只发 1 条"的差异登记，见
 [`155`](archive/155-round-log.md) §30.5–§30.6。
+
+## 12. 掩膜的持有者与生命周期（结 §7 那条「未知」；2026-11-26，任务 T14）
+
+> 结的是 `docs/00` §3「掩膜的持有者与生命周期 = 未知（带锁结构，不知谁在何时重建）」。
+> 一次性复算：`tools/unknowns_report.py --only mask`（产物 `fixtures/unknowns_mask.tsv`）。
+> 地址是 **ELF vaddr**（= RVA），**不要** `±0x100000`。（本节编号说明见文末。）
+
+### 12.1 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 谁持有？ | **`GraphwarObstacleManager` 的 `self+0x18`** 指向的那块 `ArcInner`：`+0x00` strong / `+0x08` weak / `+0x10` **`Mutex` 锁字（u32）** / `+0x14` 中毒标志 / `+0x18` cap / `+0x20` 数据指针 / `+0x28` len = 600000 | **观测**（三处函数共同的取锁序，见 12.2） |
+| ② | 谁创建？ | `0x523020`：`alloc(0x927c0 = 600000, 1)` + `memset(0xFF)` → 包进上表那个 0x30 字节的 `ArcInner`；调用者 = **`0x3f2360`（`graphwar_obstacle_manager.rs:208`，即 manager 的构造）**；再往上 = **`GraphwarGameClient::new`（`0x517690`，`src/graphwar_game_client.rs:53–60`）** 与 **`0x4500c0`（`src/graphwar_game_server.rs:219–222`）** | **观测** |
+| ③ | 什么时机**重建**？ | **没有"每帧重建"**。三条时机：**(a) 关卡构造时整表建一次**：`0x466c40`（`src/graphwar_level_generator.rs:179–180`）→ `0x3f1e50` → 每条 `0x3f17a0` → 光栅化 `0x3f11e0`；**(b) 事件驱动增量写**：事件分派 `0x3e2830` @`0x3e414c` → `0x3f17a0`（加一个）/ @`0x3e43b1` → `0x3f1b30`（挖洞）；**(c) tick 驱动挖洞**：`0x3f1d30`（`graphwar_obstacle_manager.rs:295`，按 tick 取队列）→ `0x3f1b30` | **观测** |
+| ④ | 谁读？ | `0x3f15b0`（`is_obstacle`，单点查表：`cmp byte [mask + row*1000 + col], 0xff`）。**对局链不直接调它**，`0x3c2bc0` 里内联同一套 `1000/50/500` 换算（§11） | **观测** |
+| ⑤ | 会不会整体重建？ | **未观测到任何"清空 + 逐条重铺"的整表重建**。`0x3f1e50` 那个"按列表"入口事实上是"逐条加"，**不先清零** ⇒ 同一 manager 上重复调用会叠加（**推断**：除非调用前有别的清空路径，未找到） | **观测（负结果）+ 推断** |
+| ⑥ | 早先记的 `0x523020` 归属 | 复核确认：600000 的 `alloc` + `memset 0xFF` 就在 `0x523020`（`0x52307a mov edi,0x927c0` / `0x523096 mov edx,0x927c0` / `0x52309e mov esi,0xff`），由 `graphwar_obstacle_manager.rs:208` 的构造调用 —— **§5.2 那条更正成立** | **观测** |
+
+### 12.2 三处共同的取锁序（逐指令，`0x3f15b0` / `0x3f17a0` / `0x3f1b30` 一模一样）
+
+```text
+0x3f17b4  mov   r15, qword ptr [rdi + 0x18]      ; self+0x18 → 掩膜的 ArcInner 指针
+0x3f17b8  lea   rbx, [r15 + 0x10]                ; 锁字在 +0x10
+0x3f17c3  lock cmpxchg dword ptr [r15 + 0x10], 1 ; ★ Mutex::lock（0 期望 → 1）
+0x3f17cf  jne   0x3f189d                         ; 抢不到 ⇒ 走 futex 慢路径
+0x3f17ee  movzx eax, byte ptr [r15 + 0x14]       ; +0x14 = 中毒（poison）标志
+0x3f17fb  mov   rdi, qword ptr [r15 + 0x20]      ; +0x20 = 数据指针（600000 字节）
+0x3f17ff  mov   rax, qword ptr [r15 + 0x28]      ; +0x28 = 长度
+0x3f1817  call  0x3f11e0                         ; → 光栅化（写）
+```
+
+`is_obstacle`（`0x3f15b0`）与挖洞（`0x3f1b30`）同样从 `[rdi+0x18]` 取、同样 `lock cmpxchg [r14+0x10],1`。
+⇒ **"带锁结构"这个说法落实了：`ArcInner<Mutex<Vec<u8>>>`，锁字在 `ArcInner+0x10`。**
+（`docs/08` §5.3 当时是用 unicorn 伪造上下文时猜出的同一组偏移，本轮在三个真函数里独立复核到。）
+
+### 12.3 生命周期全图（谁在什么时候动这张掩膜）
+
+```text
+创建（一次）：
+  GraphwarGameClient::new 0x517690 (graphwar_game_client.rs:53–60) ─┐
+  0x4500c0 (graphwar_game_server.rs:219–222) ───────────────────────┤
+                                                                    └→ 0x3f2360 (obstacle_manager.rs:208)
+                                                                         └→ 0x523020  alloc 600000 + memset 0xFF
+                                                                              └→ ArcInner{strong,weak,lock,poison,cap,ptr,len}
+
+整表建（关卡构造时，一次）：
+  graphwar_level_generator 0x466c40 (:179–180) → 0x3f1e50 ──逐条──→ 0x3f17a0 → 加锁 → 0x3f11e0（画圆进掩膜）
+
+增量写（对局中）：
+  事件分派器 0x3e2830 @0x3e414c → 0x3f17a0（加一个障碍）
+  事件分派器 0x3e2830 @0x3e43b1 → 0x3f1b30（挖洞；r=0.5 的洞，见 §10）
+  tick 队列   0x3f1d30 (:295)  → 0x3f1b30（按 tick 应用 QueueDestroyObstacle）
+
+读（判定）：
+  0x3f15b0 is_obstacle（直接调用者 9 个，**全在关卡构造/路径/绘制侧**，见 §11）
+  对局内联：0x3c2bc0 里 6 处同样的 pixel 换算 + 直接查字节
+
+销毁：Arc 引用计数（0x3f2360 里 strong/weak 的 inc/dec；弱引用 drop 胶水 = 0x400b00）
+```
+
+`0x3f2360` 还在体内 `call 0x3d38f0`（事件名 → 判别值）订阅了 **`tick_event`**（字面量 `0x1bfce0`
+长度 10，`0x3f23d7` 起），所以 tick 驱动的挖洞（`0x3f1d30`）是**订阅来的**，不是谁每帧显式调。
+
+### 12.4 这条对 `docs/05` §38.2「整批共用掩膜」的意义
+
+`docs/05-shot-pipeline.md` §38.2 讨论"同批更早爆炸那几发是否已经挖了洞"时，把两种口径
+（整批共用 / 逐发重解）列成待定。本节的结论给的是**写入时机**：掩膜只在
+(a) 关卡构造、(b) 事件分派、(c) tick 队列 三处被写，**没有**"每发开火前重建"的路径
+⇒ "批内共享同一张掩膜"在**写入侧**没有任何反证（谁在**什么时候**写出来仍然是 §10 的
+`QueueDestroyObstacle.tick` 决定）。**这一条不改 §38.2 的结论**，只是把它的地形测清了。
+
+### 12.5 仍未证的（照实写）
+
+1. **`0x3f1d30` 的触发者**：直接调用者 = 0、函数指针槽 = 0（`docs/151` §2.5 那种"经订阅表"的形态），
+   所以"订阅表里存的是哪个地址"没静态证据。**缺**：运行时 hook `subscribe_to_event` 的调用记录。
+2. **`0x3f1e50`（按列表）的 `esi` 参数**（`mov ebp, esi`）语义未定，看着像"要不要先清空"；
+   但函数里**没有** `memset`/清空循环 ⇒ 至少它自己不清。**推断**：清空在别处（未找到）。
+3. **`0x4500c0` 的模块归属**：`panic::Location` 是 **`src/graphwar_game_server.rs:219–222`**，
+   而 `docs/02` §17.4 把 `0x4500c0` 记在 `graphwar_server_connection_handler.rs` 名下 ——
+   **两处不一致**，本节只按 Location 记（观测），`docs/02` 那一行留给能改 §17.4 的任务（本任务只能改 rank/LevelRules 行）。
+4. **`self+0x18` 那一层之外还有没有第二份掩膜**（例如 `0x3c2bc0` 里是否先拷一份工作副本）：
+   在 `0x3c2bc0` 里能看到 `0x3c3957 call 0x3f11e0`（它也调光栅化），但**内联的查表**是读哪一份
+   没逐条读 ⇒ **未知**。
+
+### 12.6 复跑
+
+```bash
+export GW2_TARGET_SO=$PWD/.reference/game/libgraphwarrust.so
+$PWD/.reference/venv/bin/python tools/unknowns_report.py --only mask
+$PWD/.reference/venv/bin/python tools/unknowns_probe.py fn 0x3f2360      # ctor + 调用者
+$PWD/.reference/venv/bin/python tools/unknowns_probe.py dis 0x523020 --len 0x180
+$PWD/.reference/venv/bin/python tools/unknowns_probe.py dis 0x3f17a0 --len 0x90
+```
+
+> **本节编号说明**：任务书写"追加 `## 8.`"，但 `docs/08` 的 §8 早已是「方法学备忘（踩过的坑）」，
+> 追加 `## 8.` 会与新内容冲突 ⇒ 本节落成下一个空号 **§12**（§9/§10/§11 均在用）。

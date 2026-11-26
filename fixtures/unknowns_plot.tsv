@@ -1,0 +1,83 @@
+kind	subject	addr	detail	extra	evidence	note
+prim-scan	draw_line		0x29ef7a	.rodata	present	
+prim-scan	draw_polygon		0x1c2bad	.rodata	present	
+prim-scan	draw_polygon		0x29ef97	.rodata	present	
+prim-scan	draw_arc		0x19f9d0	.rodata	present	
+prim-scan	draw_rect		0x29ef83	.rodata	present	
+prim-scan	draw_circle		0x29ef8c	.rodata	present	
+prim-scan	draw_texture_rect		0x29efd8	.rodata	present	
+prim-scan	draw_set_transform		0x29efe9	.rodata	present	
+prim-scan	add_point		0x29f39f	.rodata	present	
+prim-scan	get_point_position		0x29f3d6	.rodata	present	
+prim-scan	get_point_count		0x29f3b6	.rodata	present	
+prim-scan	set_width		0x29f346	.rodata	present	
+prim-scan	set_default_color		0x29f3c5	.rodata	present	
+prim-scan	set_joint_mode		0x29f3a8	.rodata	present	
+prim-scan	draw_polyline				absent	整文件 0 命中
+prim-scan	draw_polyline_colors				absent	整文件 0 命中
+prim-scan	draw_multiline				absent	整文件 0 命中
+prim-scan	draw_multiline_colors				absent	整文件 0 命中
+prim-scan	draw_dashed_line				absent	整文件 0 命中
+prim-scan	draw_primitive				absent	整文件 0 命中
+prim-scan	draw_mesh				absent	整文件 0 命中
+prim-scan	draw_colored_polygon				absent	整文件 0 命中
+prim-scan	draw_string				absent	整文件 0 命中
+prim-scan	draw_char				absent	整文件 0 命中
+prim-scan	set_point_position				absent	整文件 0 命中
+prim-scan	clear_points				absent	整文件 0 命中
+prim-scan	set_begin_cap_mode				absent	整文件 0 命中
+prim-scan	set_end_cap_mode				absent	整文件 0 命中
+prim-scan	set_points				absent	整文件 0 命中
+prim-chain	draw_arc	0x19f9d0	0x8abca0	0x9bc020	0x4b366c	in 0x4b2890
+prim-chain	draw_arc	0x19f9d0	0x8abca0	0x9bc020	0x4b36fd	in 0x4b2890
+prim-chain	draw_arc	0x19f9d0	0x8abca0	0x9bc020	0x4b378a	in 0x4b2890
+prim-chain	draw_arc	0x19f9d0	0x8abca0	0x9bc020	0x4d8485	in 0x4d8100
+prim-chain	draw_arc	0x19f9d0	0x8abca0	0x9bc020	0x4d84ed	in 0x4d8100
+prim-chain	draw_line	0x29ef7a	0x8abff0	0x9bc228	0x4e0700	in 0x4e05b0
+prim-chain	draw_line	0x29ef7a	0x8abff0	0x9bc228	0x4e089f	in 0x4e05b0
+prim-chain	draw_line	0x29ef7a	0x8abff0	0x9bc228	0x4e0944	in 0x4e05b0
+prim-chain	draw_line	0x29ef7a	0x8abff0	0x9bc228	0x4e09c6	in 0x4e05b0
+prim-chain	draw_line	0x29ef7a	0x8abff0	0x9bc228	0x4e0a74	in 0x4e05b0
+prim-chain	draw_line	0x29ef7a	0x8abff0	0x9bc228	0x4e0b02	in 0x4e05b0
+prim-chain	draw_line	0x29ef7a	0x8abff0	0x9bc228	0x4e0b62	in 0x4e05b0
+prim-chain	draw_line	0x29ef7a	0x8abff0	0x9bc228	0x4e2104	in 0x4e1520
+prim-chain	draw_line	0x29ef7a	0x8abff0	0x9bc228	0x4e2234	in 0x4e1520
+prim-chain	draw_rect	0x29ef83	0x8ac350	0x9bc028	0x4b61ab	in 0x4b5df0
+prim-chain	draw_rect	0x29ef83	0x8ac350	0x9bc028	0x4e06ca	in 0x4e05b0
+prim-chain	draw_circle	0x29ef8c	0x8ac690	0x9bbfc0	0x499507	in 0x4993c0
+prim-chain	draw_circle	0x29ef8c	0x8ac690	0x9bbfc0	0x49958d	in 0x4993c0
+prim-chain	draw_circle	0x29ef8c	0x8ac690	0x9bbfc0	0x499613	in 0x4993c0
+prim-chain	draw_circle	0x29ef8c	0x8ac690	0x9bbfc0	0x499699	in 0x4993c0
+prim-chain	draw_circle	0x29ef8c	0x8ac690	0x9bbfc0	0x49971c	in 0x4993c0
+prim-chain	draw_circle	0x29ef8c	0x8ac690	0x9bbfc0	0x4e1a23	in 0x4e1520
+prim-chain	draw_circle	0x29ef8c	0x8ac690	0x9bbfc0	0x4e1ef2	in 0x4e1520
+prim-chain	draw_circle	0x29ef8c	0x8ac690	0x9bbfc0	0x4e1fd2	in 0x4e1520
+prim-chain	draw_circle	0x29ef8c	0x8ac690	0x9bbfc0	0x4e2313	in 0x4e1520
+prim-chain	draw_polygon	0x29ef97	0x8aca10	0x9bc238	0x4e1d8f	in 0x4e1520
+prim-chain	draw_texture_rect	0x29efd8	0x8ad590	0x9bc248	0x4e5d77	in 0x4e5400
+prim-chain	draw_texture_rect	0x29efd8	0x8ad590	0x9bc248	0x4e5ea9	in 0x4e5400
+prim-chain	draw_texture_rect	0x29efd8	0x8ad590	0x9bc248	0x4e5faf	in 0x4e5400
+prim-chain	draw_set_transform	0x29efe9	0x8ad940	0x9bc018	0x4b2af8	in 0x4b2890
+prim-chain	draw_set_transform	0x29efe9	0x8ad940	0x9bc018	0x4b607d	in 0x4b5df0
+prim-chain	draw_set_transform	0x29efe9	0x8ad940	0x9bc018	0x4e0667	in 0x4e05b0
+prim-chain	draw_set_transform	0x29efe9	0x8ad940	0x9bc018	0x4e17c0	in 0x4e1520
+prim-chain	add_point	0x29f39f	0x8b7210	0x9bbf98	0x498f6e	in 0x498c70
+prim-chain	set_width	0x29f346	0x8b7fe0	0x9bbfa0	0x49911c	in 0x499050
+prim-chain	set_width	0x29f346	0x8b7fe0	0x9bbfa0	0x49921c	in 0x499050
+prim-chain	set_default_color	0x29f3c5	0x8b7a70	0x9bbf90	0x498e30	in 0x498c70
+prim-chain	set_default_color	0x29f3c5	0x8b7a70	0x9bbf90	0x4993a3	in 0x4992b0
+prim-chain	set_joint_mode	0x29f3a8	0x8b74f0	0x9bbfa8	0x49915d	in 0x499050
+prim-chain	set_joint_mode	0x29f3a8	0x8b74f0	0x9bbfa8	0x49925f	in 0x499050
+plot-const	Line2D::set_width 的常量	0x1baff8	f32	0.125	ok	期望 0.125
+plot-const	揭示点数乘数 (tick→point)	0x19ef90	f64	30.0	ok	期望 30.0
+plot-const	f64→usize 饱和上界	0x19f008	f64	1.844674407370955e+19	ok	期望 1.8446744073709552e+19
+plot-const	f64→usize 饱和中点	0x19f618	f64	9.223372036854776e+18	ok	期望 9.223372036854776e+18
+plot-reveal	reveal				observed	0x4b67a0  mov  eax, dword ptr [r12 - 4]      ; active_tick (u32)
+plot-reveal	reveal				observed	0x4b67ad  movsd xmm1, [rsp + 0x130]        ; get_fractional_tick() 0x519530
+plot-reveal	reveal				observed	0x4b67b6  subsd xmm1, xmm0                 ; - (double)active_tick
+plot-reveal	reveal				observed	0x4b67ba  mulsd xmm1, [0x19ef90]           ; * 30.0
+plot-reveal	reveal				observed	0x4b67c2  cvttsd2si rax, xmm1              ; trunc → usize（饱和见下）
+plot-reveal	reveal				observed	0x4b67f3  cmovae r13, rdx                  ; <0 ⇒ 0
+plot-reveal	reveal				observed	0x4b6806  cmova  r13, -1                   ; >2^64 ⇒ usize::MAX
+plot-reveal	reveal				observed	0x4b6812  cmp    r12, r13                 ; r12 = points.len
+plot-reveal	reveal				observed	0x4b6815  cmovb  r13, r12                 ; reveal = min(len, …)

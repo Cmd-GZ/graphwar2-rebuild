@@ -21,11 +21,11 @@ const MAX_LENGTH := 128
 ## （`graphwar_theme.tres` 没有覆盖它 ⇒ 就是这个默认值；实测叠色见 `read_only` 的注释）。
 const COL_TEXT_UNEDITABLE := Color(0.875, 0.875, 0.875, 0.5)
 
-## 只读态的**底色**（观测）：真帧上原版回放屏输入框内部是 `(17,33,27)` = `#11211B`，
-## 占屏 **5.936 %**（1480×89 px，正好是输入框那块矩形），而页面底色是 `#0E251C`(14,37,28)。
-## 主题里 `LineEdit/styles/normal` 的 `bg_color` 是 `(0.6,0.6,0.6,0)`（**alpha 0**）⇒
-## 这层底色不是主题给的，是控件自己画的（原版那个 Rust 自绘控件）。不画它的话
-## `frame_diff` 的 L1「第一主色占比差」会差 **5.7 pp**（门槛 2.0 pp）。
+## 只读态那块 `(17,33,27)` = `#11211B` 的**来源**（T7 定案，`docs/06` §59）：
+## **不是**自绘 —— 是 Godot **默认主题** `LineEdit/styles/read_only` 的
+## `bg_color = (0.1, 0.1, 0.1, 0.3)` 叠在页面底色 `#0E251C`(14,37,28) 上的结果：
+## `14+0.3·(25.5−14) = 17.45`、`37−0.3·11.5 = 33.55`、`28−0.3·2.5 = 27.25` ⇒ (17,33,27)。
+## ⇒ 现在由 [`_line_edit_style`] 直接取那个样式盒来画，不再手填这个常数（留作对照/自检）。
 const COL_BG_READ_ONLY := Color(17.0 / 255.0, 33.0 / 255.0, 27.0 / 255.0)
 
 var text := "":
@@ -50,6 +50,9 @@ var read_only := false:
 		if read_only == value:
 			return
 		read_only = value
+		# 只读/可编辑两态的**样式盒不同**（只读落到 Godot 默认主题的 `read_only`，
+		# content_margin 4；可编辑用主题的 `normal`，边框 3）⇒ 最小高 98 / 96 也不同。
+		update_minimum_size()
 		queue_redraw()
 
 func _ready() -> void:
@@ -110,6 +113,52 @@ func _gui_input(event: InputEvent) -> void:
 func _font() -> Font:
 	return GwThemeFactory.font()
 
+## 本控件画的是**哪个 LineEdit 样式盒**（原版 `GraphwarFunctionInput` 是 `LineEdit` 的 Rust
+## 子类，见 `src/graphwar_function_input.rs` 文件头 ⇒ 它不自绘边框，用 `LineEdit/styles/*`）：
+##
+## * **可编辑** ⇒ 主题 `LineEdit/styles/normal` = `graphwar_theme.tres` 里那个 StyleBoxFlat
+##   （`bg_color` 透明 + **3px 黑边** + 圆角 10）；
+## * **只读**（回放屏的函数框是不可编辑的）⇒ `graphwar_theme.tres` **没有**定义
+##   `LineEdit/styles/read_only` 这个键 ⇒ 落到 **Godot 默认主题**的那一个。这条能被真帧
+##   逐通道验证（**观测**）：默认 `read_only` 的 `bg_color = (0.1, 0.1, 0.1, 0.3)`、
+##   只有 **下边框 2 px**、content_margin 4 —— 叠在页面底色 `(14,37,28)` 上得
+##   `14+0.3·11.5 = 17.45`、`37−0.3·11.5 = 33.55`、`28−0.3·2.5 = 27.25` ⇒ **(17,33,27)**，
+##   与真帧输入框内部的整块颜色**三个通道全对上**；而真帧上这个框**左右上都没有黑边、
+##   只有底部 2 行近黑** —— 正是"只有下边框 2 px"。
+##
+## ⇒ 改前我方在只读态自造了"透明底 + 3px 黑边"（等于可编辑态），于是底部行多出
+## ~9 400 px 的假黑框、底色也缺一层（`docs/06` §59 的改前/改后数）。
+func _line_edit_style() -> StyleBox:
+	if read_only:
+		var def := ThemeDB.get_default_theme()
+		if def != null:
+			var ro := def.get_stylebox("read_only", "LineEdit")
+			if ro != null:
+				return ro
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0, 0, 0, 0)
+	sb.border_color = GwThemeFactory.COL_BAD if _rejected else GwThemeFactory.COL_PANEL_EDGE
+	sb.set_border_width_all(GwThemeFactory.PANEL_BORDER)
+	sb.set_corner_radius_all(GwThemeFactory.PANEL_RADIUS)
+	return sb
+
+## 最小尺寸：**LineEdit 的规则** = `字体高 + 样式盒的上下 content_margin`
+## （`LineEdit::get_minimum_size` 的 `font->get_height(font_size) + style minimum size`）。
+##
+## 这条不是凑出来的：@1920 时字号 = 64、字体 `button_font` 的 `get_height(64) = 90`
+## ⇒ 可编辑 90+2·3 = **96**、只读 90+2·4 = **98**。原版回放屏底栏（`HBoxContainer2`）
+## 高 **98**（`docs/archive/125` §3.3 的 GEOM 表 + 真帧输入框底 `1062..1157`）——
+## 我方改前拿"左上按钮键宽 = 96"当输入框最小高 ⇒ 底栏 96、整个 `PlayMainHBox` 变成 1060、
+## 棋盘跟着下移 2 px（`docs/06` §58.3 那条"每条网格线整体错 1 px"的竖直分量）。
+func _get_minimum_size() -> Vector2:
+	var fs := _font_size()
+	var style := _line_edit_style()
+	return Vector2(0.0, _font().get_height(fs) + style.get_minimum_size().y)
+
+## 字号变了（viewport resize）或只读开关变了都要让父容器重排。
+func refresh_minimum_size() -> void:
+	update_minimum_size()
+
 ## 字号 = 屏幕宽 / 30（原版一行函数串在 1920 下约 64 px 高，量自 `orig_play_default.png`）。
 ## 不取主题字号：`GwScreen.apply_font_scale()` 不会遍历到这个自绘控件。
 func _font_size() -> int:
@@ -137,17 +186,17 @@ func _caret_at_position(local_x: float) -> int:
 func _draw() -> void:
 	var font := _font()
 	var fsize := _font_size()
-	# 原版输入框 = 主题的 LineEdit 样式：**透明底** + 3px 黑边 + 圆角 10
-	# （`graphwar_theme.tres` 的 StyleBoxFlat；实测边界 x=262..1742 内只有 3px 黑框，
-	#  框内颜色与 clear_color 相同 ⇒ 没有自己的底色）。
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = (COL_BG_READ_ONLY if read_only else Color(0, 0, 0, 0))
-	sb.border_color = GwThemeFactory.COL_BAD if _rejected else GwThemeFactory.COL_PANEL_EDGE
-	sb.set_border_width_all(GwThemeFactory.PANEL_BORDER)
-	sb.set_corner_radius_all(GwThemeFactory.PANEL_RADIUS)
+	var sb := _line_edit_style()
 	sb.draw(get_canvas_item(), Rect2(Vector2.ZERO, size))
 
-	var baseline := size.y * 0.5 + fsize * 0.35
+	# 基线：**LineEdit 的规则**（`LineEdit::_notification(NOTIFICATION_DRAW)`：
+	# `content_top + (内容高 − 字体高)/2 + font_ascent`），不是"控件高的一半 + 0.35 em"。
+	# 后者在 @1920 上比真帧高 3 px（实测：改前函数串墨迹 y1084..1146、原版 y1087..1149）。
+	var style_min := sb.get_minimum_size()
+	var content_top := sb.get_content_margin(SIDE_TOP)
+	var content_h := size.y - style_min.y
+	var baseline := content_top + maxf(0.0, (content_h - font.get_height(fsize)) * 0.5) \
+		+ font.get_ascent(fsize)
 	var origin := _text_x(font, fsize)
 	# 原版 `alignment = 1` ⇒ 文本水平居中（实测 "-7.49" 的中心与控件中心重合）。
 	draw_string(font, Vector2(origin, baseline), text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, fsize,
@@ -155,7 +204,8 @@ func _draw() -> void:
 	var caret_x := origin + font.get_string_size(text.substr(0, _caret),
 		HORIZONTAL_ALIGNMENT_LEFT, -1, fsize).x
 	if _caret_blink < 0.28:
-		# 高度：真帧上原版光标是 3×90（bbox x1182–1184、y1066–1155）⇒ 几乎满高
-		# （输入框 98 px 高、上下各留 4 px）。宽度用主题的 `caret_width = 3`。
-		draw_line(Vector2(caret_x, size.y * 0.04), Vector2(caret_x, size.y * 0.96),
+		# 高度：真帧上原版光标是 3×90（bbox x1182–1184、y1066–1155）⇒ 正好是
+		# **内容矩形**（样式盒上下各 content_margin 4 ⇒ 98−8 = 90）；宽度用主题的
+		# `LineEdit/constants/caret_width = 3`。
+		draw_line(Vector2(caret_x, content_top), Vector2(caret_x, size.y - sb.get_content_margin(SIDE_BOTTOM)),
 			GwThemeFactory.COL_TEXT, 3.0)

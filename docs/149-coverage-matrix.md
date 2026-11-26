@@ -5,7 +5,7 @@
 ## 0. 一句话总账
 
 ```
-原版可归属函数 527 个，分布在 78 个模块（58 个有同名 `graphwar_*.rs` 文件的占 430、16 个 scope=other 的模块占 97）；我们已实现 527 个函数，其中 逐位 88 / 观测 439 / 推断 0；未做 0；完全未知的模块 0 个（graphwar 里 0 个）。
+原版可归属函数 527 个，分布在 78 个模块（58 个有同名 `graphwar_*.rs` 文件的占 430、16 个 scope=other 的模块占 97）；我们已实现 527 个函数，其中 逐位 89 / 观测 438 / 推断 0；未做 0；完全未知的模块 0 个（graphwar 里 0 个）。
 ```
 
 拆成两个口径（下面的数字全部由脚本算出，重跑即复现）：
@@ -13,7 +13,7 @@
 | 口径 | 模块数 | 可归属函数 | 已实现 | 逐位 | 观测 | 推断 | 未做 | 未知模块 |
 |---|---|---|---|---|---|---|---|---|
 | 58 个有同名 `graphwar_*.rs` 文件的模块（`scope=graphwar` 共 62 个） | 62 | 430 | 430 | 81 | 349 | 0 | 0 | 0 |
-| 16 个 `scope=other` 的模块（15 个不带 `graphwar_` 前缀 + `graphwar_texture_loader.rs`） | 16 | 97 | 97 | 7 | 90 | 0 | 0 | 0 |
+| 16 个 `scope=other` 的模块（15 个不带 `graphwar_` 前缀 + `graphwar_texture_loader.rs`） | 16 | 97 | 97 | 8 | 89 | 0 | 0 | 0 |
 
 `weak_caller.rs` 在上表里算进 **scope=`other`** 那一档（39 个 `orig_funcs`，TSV 里单列一行）。**审计 2026-11-08 更正**：旧文写「40 个归属函数 …… **不计入**任何合计」，两处都不对——① 表值是 **39**（`docs/coverage-matrix.tsv` 的 `orig_funcs` 列，另 1 个符号查明是内联进 `GraphwarGameRecorder` 的方法，不是本模块的函数）；② 它**确实**计入 `other` 的 97 与总数的 527（430 + 97 = 527）。它也不是第三方依赖：`docs/02` §34 已按符号表判它是 crate 内模块（`graphwarrust::weak_caller`），只是文件名不带 `graphwar_` 前缀。
 
@@ -154,7 +154,7 @@
 | `math_function.rs` | 7 | 15 | `src/math_function.rs+src/math_function/to_text.rs` | 54 | 逐位 |
 | `obstacle_drawer.rs` | 2 | 7 | `src/obstacle_drawer.rs` | 4 | 观测 |
 | `player_showcase.rs` | 10 | 18 | `src/player_showcase.rs` | 44 | 观测 |
-| `polish_notation_converter.rs` | 1 | 2 | `src/polish_notation_converter.rs` | 6 | 观测 |
+| `polish_notation_converter.rs` | 1 | 2 | `src/polish_notation_converter.rs` | 6 | 逐位 |
 | `server_broker_request_connection.rs` | 0 | 1 | `src/server_broker_request_connection.rs` | 10 | 观测 |
 | `weak_caller.rs` | 39 | 2 | `src/weak_caller.rs` | 8 | 观测 |
 
@@ -215,7 +215,7 @@
 |---|---|---|
 | 「544 个函数归属 / 56 个模块」 | `docs/02` §8 | 那张表把引用两个模块的函数在两个模块下**各算一次**。本表压平后不重复计数，并把跨模块数单独列为 `contested` |
 | 「885/13263，观测 441 + 推断 444」 | `docs/02` §10 | 那是**调用图扩散**，属推断层。本表只收硬证据，不把扩散数写进总账 |
-| 「57 个模块」 | 各处 | 按 `src/graphwar_[a-z_]+\.rs` 数是 57；**加数字字符后是 58**（`graphwar_lan_broadcaster_v6.rs` 被漏了）。本表一律算出来、不写死 |
+| 「57 个模块」 | 各处 | 按 `src/graphwar_[a-z_]+\.rs` 数是 **58**；**加数字字符后是 59**（`graphwar_lan_broadcaster_v6.rs` 被漏了）。本表一律算出来、不写死 |
 | 「`fixtures/module_funcs.tsv` 的地址清单」 | `docs/02` §14.2 | 那张表已自我更正为「不能判定函数身份」；本表用 Ghidra 边界 + 冲突压平重算 |
 | 「解析器 `0x4ed670` 在 `graphwar_function_input.rs`」 | `docs/02` §1 | 该函数体内唯一的 Location 锚是 `math_function.rs:75`，按证据归 `math_function.rs`；所以函数语言的实现落在本表的 `other` 口径，不在带前缀的那 58 个模块里 |
 

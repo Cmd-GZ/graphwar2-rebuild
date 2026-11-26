@@ -21,23 +21,29 @@
 ## 1. 现在的数（报数**必须带轴名/前置条件**，否则等于没报）
 
 ```
-可归属函数   527 / 527 = 100%（逐位 88 / 观测 439 / 推断 0）｜78 模块｜未做 0
+可归属函数   527 / 527 = 100%（**逐位 89 / 观测 438 / 推断 0**）｜78 模块｜未做 0
+             （2026-11-26：`polish_notation_converter` 唯一可归属函数 `0x4f5450` 对拍成 18/18 逐位 ⇒ 88→89）
+             **439 里本质可隔离执行的只有 129（29.4%）**，其余 310 要 Godot/分配器 ⇒ 这是「观测」分母的可及上限（`docs/06` §64）
              但这只是 13,263 个 Ghidra 函数里的 4.0% —— 见 §3「信息天花板」
 真名         348 / 527（三份符号表并集）；无名 179 = 138 族级 + 41 未知
 名字候选     混合定名器（T1，2026-11-24，`docs/02` §35.12c）：13,263 行输出 mode=order 31 / fp 1,558 / none 11,674
              （fp/order 都是**推断级候选名，逐条待核**）；近孪生族留出 56.8%→**95.5%**、可部署域 57.8%→93.3%、族外 −1 行（已定位）
 协议         74 / 74 全字段 + 74 条判别值 + 7 个线上枚举全集（无未知）
 GDExtension  **原版 12 类**（`docs/02` §16.2）+ 我方 3 = **15 个，全部节点化**；headless 14 个 SceneTree 脚本 / **1933** 条 / 0 failed（2026-11-26 本机实跑；play_flow 206 需要 ④ 那份回放，否则 202）
-cargo        **1761** / 0（`--features gdext-bindings` 1867 / 0）
-selftest     **717 / 0 / 1 skip**（2026-11-26 master `778a312` 实跑；判据 = `missing=0` 且 `silent=0`）
+cargo        **1769** / 0 / 1 ignored（`--features gdext-bindings` **1875** / 0 / 1）；2026-11-26 本机实测
+selftest     **717 / 0 / 1 skip**（2026-11-26 本轮实测；判据 = `missing=0` 且 `silent=0`）
+headless     14 个 `client/tools/*_check.gd`（`extends SceneTree`）合计 **1933 / 0**
              **四个前置**：① `client/assets/` 齐 ② `cargo build --example serve_match` ③ 可写 `HOME`
              ④ 真回放在 `$HOME/.local/share/godot/app_userdata/Graphwar/replays/`
              缺 ④ = `654 / 0 / 3 skip`（missing=63 全 degraded / silent 0）；缺 ① 的三档历史读数是 591/667/618。
              **别预设 `XDG_*`**（预设到工作区外 ⇒ `user://` 不可写 ⇒ 632/7）。命令与判据见 `docs/18` §10.3.4
 
 客户端像素   主菜单 / 回放列表 / 战役选择屏 / 关卡弹窗 **四屏 0 像素**（`docs/06` §53/§56/§57）；
-             `replay_play` / `replay_end` **L1 已过**、仍差 **8.06%**（§55：76% 是棋盘错 1 px）
-行为一致     fire **647** / batch **647** / batch_conv **637**（分母都 1080，内容命中）
+             `replay_play` / `replay_end` **8.059% → 0.217%**（4 836 px），**L1/L2 全过、L3 结构性不过**（§59）；
+             棋盘白底四边 `1273×762 @(303,198)` 与轴交点 `(939,578)` 与原版**逐项 0 px**；
+             **对局屏第一次有真值**（§60）：`match_ready` 6.357% / `match_play` 6.823%，L1 过、L2 超 4/3 块
+             （成因：靶子被画成士兵、士兵无名字标签、准备圈画在棋盘正中、底部行 Δ10 px）
+行为一致     fire **647** / batch **647** / batch_conv **637**（分母都 1080，内容命中；2026-11-26 `--check-baseline` 三轴「全部一致」）
 种类序列     三轴都 **1075 / 1080**（≠ 进度：只说明消息种类顺序对）
 延迟段       死亡 **366 / 385（漏报 0）**、挖洞 **207 / 294**（batch 轴）
 可及上限     悲观 **775** / 乐观 **869** / **硬上界 869**（= 1080 − 211 批已证与我方无关）
@@ -69,6 +75,14 @@ selftest     **717 / 0 / 1 skip**（2026-11-26 master `778a312` 实跑；判据 
 | "视觉三屏差异是引擎版本/部署形态造成的" | **否（2×2 因子实验）** | C↔D（只换引擎）与 B↔D（只换 `--path`↔pck）在静态屏都 **0 像素**；跨侧两组数字**逐位相同** ⇒ **是我方 UI 本身**（`docs/06` §54） |
 | "换证据类型就能再涨"（crash 栈 / campaign 表 / 真机帧） | **三条都不通** | crash 栈：做匹配的那份**无 `.symtab`/`.debug_*`**、仓库 0 份崩溃产物 ⇒ 新锚 0；真机帧：仓库 0 帧、能给的量已被 `.rodata`/`client/`/campaign 覆盖；campaign 表：**能锚但只能当锚**（覆盖率 4.62% vs 0.05% = 84× 偏斜，塞成特征就是 `strs` 同类错误），留出半一格没动 |
 | "换权重/换配置能再涨"（63 号到 3,000 组） | **否（不显著）** | 3,000 组调参半只比 24 组多 3 个样本；预注册口径仍 **76.4%** |
+
+| "原版弹道是用 `draw_*` 画原语画的" | **否** | 一个 `draw_*` 都不用：弹道是 **`Line2D` 子节点逐点追加**。链：`add_point` 字面量 `0x29f39f` → 包装 `0x8b7210` → GOT 槽 `0x9bbf98` → 全 `.text` **唯一**引用 `0x498f6e` ∈ `FunctionDrawer::update_function`（`0x498c70`），唯一直接调用者 = `GraphwarPlane::draw`（`0x4b5df0`）。线宽 f32 **0.125**、joint=ROUND、每帧揭示 `min(len,(tick−active_tick)×30.0)`（`docs/06` §65） |
+| "回放播放时钟是浮点累加器 / 每帧 `delta×60`" | **否** | 全局唯一时基 = `GraphwarTickHandler`（`(secs,nanos)` + `tick:u32`），每 tick **+16 666 666 ns**（`0xfe52a` @`0x51986c`）；**暂停不是布尔量**，是 `pair#3.nanos==1e9` 标记（`is_paused` = `0x3d7685 cmp`+`0x3d768b setne`）；回放播放头只是镜像它的 tick（`0x3d7583`）。真机：进屏 0.00 tick/s、▶ 后 59.8–60.3 tick/s（`docs/06` §63） |
+| "`0x4c6f40` 里有回放时钟" | **否** | 188 个 call（94 间接、91 条解出 GOT 目标）无一指向时基/播放器；整函数零 xmm ⇒ 旧文档把"时钟没解"误挂在它名下 |
+| "换架构（arm64/Windows）会悄悄算错" | **否（数值路径）** | x86-64 与 arm64 两份**真机器码**在 unicorn 下同输入：**175 组里 168 组逐位相同、7 组只差 NaN 符号位**、0 组没跑成；数据表逐字节相同。真差异只有两条：`invalid` 生成的 NaN 符号位（产生差、传播 6/6 相同）与 **libm ULP**（缺 bionic `libm.so`，量到上界：RK4 有 2 组点数会变）⇒ `docs/06` §61 / `docs/19` §8 |
+| "`LevelRules` 归属没有新证据" | **否** | 三个判据函数（`0x473520` / `0x4759f0` / `0x4780c0`）的 `panic::Location` 全落 `graphwar_game_state_manager.rs`，**没有一条落 `play_screen_control.rs`** ⇒ 归属 = GSM（文件仍在 `play_screen_control.rs`，未搬） |
+| "掩膜的持有者与生命周期未知" | **否** | 持有者 = **`GraphwarObstacleManager` 的 `self+0x18`** → `ArcInner`（`Mutex` 锁字 `+0x10`、数据 ptr `+0x20`、len **600000**），读/写/挖三处同一段 `lock cmpxchg`；**没有每帧重建**：整表建一次（`0x466c40`→`0x3f1e50`），之后只有事件增量与 tick 队列。创建者 `GameClient::new 0x517690`（`docs/06` §65、`docs/08` §12） |
+| "段位算法在客户端" | **否 ⇒ E 档** | `rank_manager` 4 个函数**算术指令 = 0**（正对照 `Plane::draw` 1158 条有 div/mul）；写入 `0x455090` 两处调用点都在**收包侧**；`.rodata` 里只有 22 条 `res://ranks/rank_0..21.svg`、档位名/阈值表 0 命中 ⇒ 算法在服务端（`RankInfo` 线上 **2 字段**已定，2 vs 3 收敛） |
 
 **已被证实、且已落地的**（不用重做）：
 `像素级真值能抓源码复原错误`（2026-11-26：`update_sprite` 的 `scale.x` 漏了 `k`，精灵恒 2.13 px 宽，
@@ -114,11 +128,14 @@ selftest     **717 / 0 / 1 skip**（2026-11-26 master `778a312` 实跑；判据 
 **2026-11-26 这一轮已落地**：t4 回放播放屏（载入即暂停 + 版式 + 棋盘几何）、t5 回放列表行（0 像素）、
 t6 静态两屏（0 像素）；另由 lead 修掉 `update_sprite` 的源码级复原错误（`docs/06` §58）。
 
-**下一步三件（按对 S3 的贡献排序，都在 `docs/06` §58.3 有数）**：
-① **棋盘几何取整**：我方 1272×761 @(303,200)、轴交点 (938,579) vs 原版 1273×762 @(303,198)、(939,578)
-   ⇒ 每条网格线整体错 1 px，占剩余差异的 **76%**；
-② **底部行**：`f(x)` 文本与修正常数（`OffsetContainer` 0.09·x=172.8 vs 真帧等效 179，Δ10 px）；
-③ **士兵三件套 + 名字标签**：现在只画出 face（26 px），hat/body 两个部件与 `cmdgz` 标签还没落地。
+**S3/S4 现在只剩结构性残余（`docs/06` §59.6）**：`0.217%` = 4 836 px，`max|Δch|=255`，逐项是
+① 士兵**合成尺寸** 36×29 vs 原版 ~54×43 + 原版主体下方多一层（缺 `GraphwarTextureLoader` 查表键与逐部件摆位证据）；
+② `f(x)=` 图标小 2 px（636 px，要动 `FxContainer` 的 AR 结构）；③ 光标闪烁相位（270 px）；
+④ 画布模型（1000×600 缩放 vs 原版按实尺寸画，格子线 1.28 px 抗锯齿，~1 970 px）。
+**L3 要 `max|Δch|≤8` = 逐像素全等 ⇒ 上述任一处 1 px 差都会破，短期不追。**
+
+**对局屏（新真值，`docs/06` §60）下一步**：① 补我方缺的 **12 个事件处理器**（`TargetInfo`/`NameInfo`/图形三兄弟…）
+② `Fire!` 按钮字号/色 ③ 偏移量标签 ④ 准备圈位置 ⑤ S8 相位对齐（我方不发 `TickRequest`）。
 
 ## 5. 干活时必须遵守的（都是踩出来的）
 
@@ -171,12 +188,19 @@ bash client/run.sh selftest                           # 717 / 0 / 1 skip（四�
 ## 6. 环境与地址（错了会静默出错）
 
 ```
-地址          Ghidra/REA vaddr = ELF vaddr + 0x100000（`0x3c2530` ↔ Ghidra `0x4c2530`）
-              读 `_DAT_xxxx` 原始字节要减 0x100000
+地址          **本仓库文档 / pkl / 工具输出里的地址，一律是 ELF vaddr（= 模块内偏移 = RVA）**，
+              直接当 vaddr 用、**不要平移**；frida 下断 = `base + RVA`。
+              ⚠️ 2026-11-26 实测更正（旧写法「Ghidra vaddr = ELF + 0x100000」**只对 Ghidra 反编译文本成立**）：
+              `funcstarts_ghidra_va.pkl` 的 13,263 条里 **11,881 条直接命中 `.eh_frame` FDE 起点**、
+              减 0x100000 后只命中 **440**；pkl 最小/最大值 0x37b940/0x94eb70 正好是 `.text` 段两端
+              ⇒ **那个文件名里的 `_ghidra_va` 是误导，它装的是 ELF 地址**。
+              只有 Ghidra/REA **反编译文本**里的 `_DAT_xxxx` / `FUN_xxxx` 才是 ELF+0x100000 口径
+              （`_DAT_004c2530` ↔ ELF `0x3c2530`）。教训：把这条套到文档地址上会定位到**另一个函数**（已踩，见
+              `docs/06` §63.1 与本次 T12 的更正）。
 引擎调用      gdext 走 **GOT 槽**：`call *0x…(%rip)`；只看 `call rel32` 会得出"原版不画任何东西"
               实例：draw_arc 字面量 0x19f9d0 → 包装 0x8abca0 → 槽 0x9bc020
 函数归属      `panic::Location` 在 `.data.rel.ro`（指针是重定位）；解析 `.rela.dyn` 才能还原
-函数起点      用 `analysis/funcstarts_ghidra_va.pkl`；**`funcstarts.pkl` 是错的**（.eh_frame，与 Ghidra 只交 2 个）
+函数起点      用 `analysis/funcstarts_ghidra_va.pkl`（**装的是 ELF 地址**，见上一行）；**`funcstarts.pkl` 是错的**（与上者只交 2 个）
 GPU 口径      比"计算时间"还是"进程墙钟"？（后者含 `import torch` ≈5 s）
               实测：全量 252×；小规模内部 4.83×、进程墙钟 1.25×。**报 GPU 必须同时给口径**
 ```
@@ -205,6 +229,16 @@ GPU 口径      比"计算时间"还是"进程墙钟"？（后者含 `import tor
 ⑩ 前置条件只写一半 ⇒ selftest 的**第四个前置**（真回放在 `$HOME/.local/share/godot/app_userdata/Graphwar/replays/`）
    以前没写进 README/HANDOVER，照着文档跑会少 63 条（654/0/3skip，`missing=63` 全 degraded）。
    ⇒ **判据永远是 `missing=0` + `silent=0`**，不是 `passed` 数
+⑪ **把文档里的"现状"直接抄进任务书** ⇒ 2026-11-26 我照 `AGENTS.md` 的"docs/guide/（规划中）"派了"新建攻略手册"，
+   实际那目录**早就有 7 个文件 2042 行**（teammate 发现并只补了真缺的 3 章）。
+   ⇒ 派活前**自己跑一遍 `ls`/`wc -l`/`grep` 核现状**；任务书里写"现状"的地方注明"自己核"。
+⑫ **扫描器没有正对照** ⇒ 我"证明" `.so` 里 `with N element` 串只有 47 条（真值 **67**）：
+   正则写的是复数 `elements`，于是 **N=1 的 `with 1 element` 全被漏掉**，还顺势推出了"19 个有字段事件没有这条串"的假结论。
+   teammate 用重叠扫描 + 三种口径把我推翻。⇒ **凡"扫不到/只有 N 条"的结论，先做正对照 + 换个口径复算**（本节 §2 已列这条代价）。
+⑬ **地址口径写错一次代价很大**：一直以为"文档地址 = Ghidra 地址 = ELF + 0x100000"，实测
+   `funcstarts_ghidra_va.pkl` 的 13,263 条里 **11,881 条直接命中 FDE 起点**、减 0x100000 后只剩 440
+   ⇒ 文档/pkl/工具输出**全是 ELF vaddr**，只有 Ghidra 反编译文本里的 `_DAT_/FUN_` 才是 +0x100000。
+   我按错口径写了任务书，好在 teammate 用 FDE 证伪并全程按 ELF 装载。
 ```
 
 ---
@@ -219,9 +253,11 @@ GPU 口径      比"计算时间"还是"进程墙钟"？（后者含 `import tor
               master **不合并 `dispatch/`**；新活一律从 `master` 切 `agent/<topic>` 分支。
               旧文档里 `dispatch/NN` 的引用是**历史出处**（master 上没有那些文件），不是可点的路径。
 
-在跑的（2026-11-26）  t4 回放播放屏（`agent/replay-play-screen`）
-                      t5 回放列表行（`agent/replay-lobby-row`）
-                      t6 视觉真值扩到静态屏（`agent/static-screens`）
+2026-11-26 本轮      已合 9 个分支：t7 回放屏归零 / t8 对局屏真值 / t9 跨架构 / t10 视图层台账 /
+                      t11 手册 3 章 / t12 回放时钟 / t13 升档 sweep / t14 四条未知 / t15 文档一致性 / t16 协议复核
+                      在跑：t17 补 12 个事件处理器 · t18 结算弹窗真值 · t19 音效↔事件映射 · t20 剩余 8 屏像素真值
+隔离工作区           `.agent-work/cg/wt-<task>`（每任务一 worktree + 独立 `CARGO_TARGET_DIR`，btrfs reflink
+                      几乎不占额外磁盘）；共享任务板 `team_task_*`；规格在 `.agent-work/specs/`（gitignore）
 
 关键文档      docs/00 状态总览 · docs/02 模块图 · docs/06 验证记录 · docs/16 客户端（§61/§62 视觉帧）
               docs/18 构建与自检前置（§10.3.4） · docs/161 manager 缺口 · docs/guide/ 攻略手册

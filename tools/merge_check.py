@@ -206,6 +206,21 @@ def scan_self_disclosure(lines):
     return hits
 
 
+def _check_report_sections(lines):
+    """按 AGENTS 3b 检查报告里有没有 §遗留/未做 与 §建议/下一步 两节（--report-md 用）。"""
+    secs = find_sections(lines)
+    missing = []
+    for key, label in (("leftover", "§遗留"), ("next", "§建议")):
+        found = [s for s in secs if key in s["groups"]]
+        if found:
+            print_section(lines, found[0])
+        else:
+            missing.append(label)
+    if missing:
+        print(paint("  ❗ 报告缺 %s —— 按 AGENTS 3b 不许合" % "、".join(missing), RED))
+    return missing
+
+
 def section_a(repo, cg, args, report_lines_out):
     """返回 (报告路径, 缺节列表, 自曝句列表)。report_lines_out 供 B 判「报告里声明过」。"""
     path, rows = latest_report(repo, cg, args.reports_dir)
@@ -776,6 +791,11 @@ def parse_args(argv):
     ap.add_argument("--base", help="基线分支（默认 origin/master → master → main）")
     ap.add_argument("--repo", help="仓库目录（默认当前目录的 git 顶层）")
     ap.add_argument("--reports-dir", default="dispatch/reports", help="报告目录")
+    ap.add_argument("--no-report", action="store_true",
+                    help="跳过 A 报告体检（2026-11-26 起 agent/<topic> 分支的验收报告走共享任务板/chat，"
+                         "不再提交 dispatch/reports/；审阅人=lead）")
+    ap.add_argument("--report-md", metavar="PATH",
+                    help="用工作区里这份 markdown 当验收报告（替代 A 节从分支上找 dispatch/reports/*.md）")
     ap.add_argument("--allow", action="append", default=[],
                     help="放行某个禁区路径（可重复；只在本次运行生效）")
     ap.add_argument("--allow-large", action="append", default=[], metavar="PATTERN[=理由]",
@@ -832,9 +852,28 @@ def main(argv):
 
     state = {"blockers": []}
     report_lines = []
-    _path, missing, hits = section_a(repo, cg, args, report_lines)
-    if missing:
-        state["blockers"] += ["报告缺 %s" % m for m in missing]
+    hits = []
+    if getattr(args, "no_report", False):
+        head("A", "报告体检 —— 已跳过（--no-report）")
+        bullet("agent/<topic> 分支的验收报告走共享任务板/chat，审阅人 = lead；"
+               "A 节的三条机器检查思路（§遗留/自曝句）由 lead 人工执行")
+    elif getattr(args, "report_md", None):
+        path = args.report_md
+        if not os.path.exists(path):
+            head("A", "报告体检")
+            print(paint("  ❗ --report-md 指定的文件不存在：%s" % path, RED))
+            state["blockers"] += ["报告缺 报告"]
+        else:
+            lines = open(path, encoding="utf-8").read().splitlines()
+            report_lines.extend(lines)
+            head("A", "报告体检 —— %s（%d 行，来自工作区）" % (path, len(lines)))
+            missing = _check_report_sections(lines)
+            if missing:
+                state["blockers"] += ["报告缺 %s" % m for m in missing]
+    else:
+        _path, missing, hits = section_a(repo, cg, args, report_lines)
+        if missing:
+            state["blockers"] += ["报告缺 %s" % m for m in missing]
 
     rows = section_b(repo, mb, cg, args, report_lines, state)
     section_c(repo, mb, cg, rows, args, state)

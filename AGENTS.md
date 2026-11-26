@@ -73,8 +73,12 @@ tools/        分析脚本（callers/ptr_slots/const_xrefs/pck_extract/module_ma
               campaign_data/campaign_params/event_tags/replay_state/gdc_* …）
 client/       Godot 客户端 ⚠️ **不是原版源码**，见 §0 第 4 条
 docs/         观测/推断/决策/操作说明 —— **索引在 docs/INDEX.md**，不在 README
-docs/guide/   （规划中）攻略向行为手册
-recovered-src/（规划中）从 pck 回收的原版文本源码：.gd/.tscn/.tres/project.godot
+docs/guide/   攻略向行为手册（**已建成**：8 章 + bot 单篇 + README，每条结论带四档证据标记，
+              索引在 docs/guide/README.md，元文档/矛盾台账是 docs/21-guide-manual.md；
+              行数别写死，现算：`wc -l docs/guide/*.md`）
+recovered-src/从 pck 回收的原版文本源码（**已生成并入库**，共 164 个文件：105 个 `.gd` + 31 个 `.tscn`
+              + 22 个 `.tres` + `project.godot` / `Graphwar.gdextension` / `addons/**/plugin.cfg` / `MANIFEST.tsv`；
+              由 `tools/pck_extract.py` 生成，构成与来源见 `recovered-src/README.md`）
 rsc/          ← gitignore，用 tools/pck_extract.py 生成
 .agent-work/  ← gitignore，子 agent 隔离工作区与证据
 ```
@@ -101,8 +105,12 @@ python3 tools/pck_extract.py --verify                            # 还原 rsc/�
 
 ## 反复踩过的坑（"改了但没生效"这一类的必须一次记全）
 
-- **地址空间**：反编译里的 `_DAT_xxxx` 是 **Ghidra 地址**，读原始字节要减 `0x100000`；
-  但 `Caller`/`Callee` 类工具返回的也是 Ghidra 地址，别拿虚地址去查。
+- **地址空间**（2026-11-26 实测更正）：**本仓库文档 / `analysis/funcstarts_ghidra_va.pkl` / `tools/` 输出里的地址
+  一律是 ELF vaddr（= 模块内偏移 = RVA），直接当 vaddr 用、不要平移**；frida 下断 = `base + RVA`。
+  实测：pkl 的 13,263 条里 **11,881 条直接命中 `.eh_frame` FDE 起点**，整体减 `0x100000` 后只剩 **440**；
+  pkl 最小/最大 `0x37b940`/`0x94eb70` 正好是 `.text` 段两端 ⇒ **文件名里的 `_ghidra_va` 是误导**。
+  只有 **Ghidra/REA 反编译文本**里的 `_DAT_xxxx` / `FUN_xxxx` 才是 `ELF + 0x100000` 口径
+  （`_DAT_004c2530` ↔ ELF `0x3c2530`）。**把这条套到文档地址上会定位到另一个函数**（已踩，见 `docs/06` §63.1）。
 - **调用图会骗人**：Rust 大量用函数指针派发，直接调用为零**不代表**没被使用。
   写"未观测到调用"，并用 `tools/ptr_slots.py` 补查。
 - **护栏语料必须冻结**：三轴数字（`fire` / `batch` / `batch_conv`）是在
@@ -122,7 +130,14 @@ python3 tools/pck_extract.py --verify                            # 还原 rsc/�
 
 ### A. 合并**前**，在分支侧验（少一条都不许合）
 
-0. **先跑 `python3 tools/merge_check.py --cg origin/CG`** —— 它把下面 3b（报告 §遗留/§建议 全文）、1（范围/禁区）、5（污染）做成机器检查；**缺节、碰禁区、二进制、dispatch 会进 master 一律非 0**，别绕过。
+0. **先跑合并前机器检查** —— 它把下面 3b（报告 §遗留/§建议）、1（范围/禁区）、5（污染）做成机器检查；
+   **缺节、碰禁区、二进制、dispatch 会进 master 一律非 0**，别绕过。
+   ```bash
+   # 2026-11-26 起的 agent/<topic> 分支（没有 dispatch/ 报告）：A 节跳过，报告由 lead 从任务板/chat 读
+   python3 tools/merge_check.py --branch agent/<topic> --base master --no-report
+   # 想让它替你检查工作区里那份验收报告：换 --report-md <path>
+   # 旧 CG 分支仍用：python3 tools/merge_check.py --cg origin/CG
+   ```
 
 1. **范围核对**：`git diff --name-only <merge-base>..<分支>` 对照任务书的"允许改的文件"。
    碰禁区（`src/lib.rs`、别人的 `*_class.rs`、`client/src/**`、既有断言）就**退回**。

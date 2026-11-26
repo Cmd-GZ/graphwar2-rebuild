@@ -496,12 +496,26 @@ SIMD 内联把 20 行 C 展开成 60 行位运算，`SUB161(...)`/`auVar` 满屏
 2. **`NameInfo` 的字段**（Q1）：serde 原文 `struct NameInfoEvent with 2 element`。
    线上事件 `name_info_event` 的判别值 = **60（0x3c）**，payload = `String` @+8 + `u32` @+0x20。
    两处独立命中（构造处 + 反查表），见 §4。〔逐位〕
-3. **`RankInfo` 的字段**（Q2）：判别值 = **67（0x43）**，serde 原文也说 2 个元素，
-   但 `rank_manager` 造出来的 payload 写了 **3 个 dword**（+8/+0xc/+0x10）。
-   **这是一处未收敛的矛盾，按原样记录，不强行圆。** 见 §5.4。〔观测冲突〕
-4. **段位怎么算**（Q2）：**`rank_manager` 里算不出来**。4 个函数里没有任何除法、取模、
-   阈值比较或 22 项常量表；它只是一个 `HashMap<u32,u32>` 的存取 + 广播。
-   22 张 SVG 对应"段位编号 0..21"这一点在本模块内**无法**验证。〔观测（负结果）〕
+3. **`RankInfo` 的字段**（Q2）：判别值 = **67（0x43）**，**线上 2 个字段** ——
+   serde 原文 `struct RankInfoEvent with 2 elements`（`.rodata` **`0x1bbda7`**，二进制自己说的），
+   真实抓包里就是 `{"RankInfo":{"entity_id":229,"rank":0}}` / `{"…":232,"rank":null}` 两个键。
+   **✅ 2026-11-26 结案（任务 T14）：早先记的"3 个 dword"是内存布局，不是第 3 个字段**——
+   三个 dword = `entity_id`(u32) + **`Option<u32>` 的 (判别值 u32, 值 u32)**：
+   广播侧 `0x454e0c mov dword [rsp+8],1`（= Some）、`0x454e19` 放 `(rank, entity_id)`；
+   set 侧 `0x4550b0 cmp edx,1 / jne 0x4550c3`（判别值 ≠ 1 ⇒ 走"删条目"分支 ⇒ 线上 `rank:null`）。
+   所以 **2 vs 3 的矛盾收敛为 2**，见 §5.4 与本行新证据。〔逐位（serde 串 + 抓包）+ 观测（指令）〕
+4. **段位怎么算**（Q2）：**✅ 2026-11-26 改判 E 档（服务端算，客户端只搬运）**。
+   `rank_manager` 里算不出来：4 个函数（`0x454d80`/`0x454e80`/`0x454f30`/`0x455090`，
+   Location 全在 `src/graphwar_rank_manager.rs`）只有 `HashMap<u32,u32>` 存取 + 广播 tag 67；
+   **指令计数（正对照见 `docs/06` §59.5）：67 / 36 / 91 / 70 条指令，浮点四则 + 除法/取模 = 0**，
+   而对照函数 `GraphwarPlane::draw` `0x4b5df0` 的 1158 条里 `divss`×2 `mulss`×4 `subsd`×2 `mulsd`×1。
+   值的来源：唯一写入口 `0x455090` 的两个调用点都在**收包侧**（`0x3e0757` in
+   `src/graphwar_remote_event_handler.rs`；`0x3e2a6f` in 事件分派 `0x3e2830`），后者在调用前
+   刚从**来报 payload** 读三个 dword（`0x3e2a29 [rbx+8]` / `0x3e2a2c [rbx+0xc]` / `0x3e2a30 [rbx+0x10]`）。
+   `.rodata` 里段位相关数据只有 **22 条** `res://ranks/rank_0.svg` … `rank_21.svg`（`0x1c3481` 起，
+   加载点 `0x4c9190` 的 22 个 `lea`）；段位名/阈值表 **0 命中**（`Bronze/Silver/Platinum/…` 整文件扫）。
+   ⇒ 客户端用这个数字只当**图标下标**（0..21，22 张图）。值域 0..21 是**推断**（图标数给上界，
+   代码里没看到 clamp/取模 ⇒ `rank > 21` 的行为**未知**）。〔观测（负结果+正对照）+ 逐位（负结果）〕
 5. **每个士兵的函数存哪**（Q3）：`HashMap<u32 /*player_id*/, 112 字节>`，
    **entry 120（0x78）字节**，value 开头就是一个 `Vec<Token>`（元素 16 字节）。
    `Token = 16 字节` 这一条与 `AGENTS.md` 的硬事实**对得上**。〔逐位〕
@@ -969,7 +983,7 @@ comm -3 /tmp/o.txt /tmp/d.txt
 | `src/graphwar_shot_calculator/settle.rs` | 原版 graphwar_shot_calculator.rs 的 `0x3c2bc0`（开火结算主函数） | `docs/86`/`docs/122` | `0x3c2bc0` 没有 panic 锚，函数体也**没有**逐条还原（逐位的是行为）；边界只能按主题切 |
 | `src/graphwar_level_generator/tables.rs` | 原版 graphwar_level_generator.rs 的 ziggurat 常量表 | `docs/53`/`docs/55` | 纯数据；拆出来只为让主文件可读，不需要边界判断 |
 | `src/graphwar_level_manager.rs` | 原版 graphwar_level_manager.rs + **可能属于 `graphwar_campaign_control.rs`** 的 `level_info`(`0x4ad380`) 与 `campaign.save` 簇(`0x417ef0`/`0x418170`/`0x4183b0`) | 这三处**都没有 Location 锚**；`docs/10` §12.6 | 无锚 ⇒ 归属只能靠调用形态，证据不足。`src/graphwar_campaign_control.rs` 已按 §17.4 的规矩落了**自己那份**（`LEVEL_INFO` / `encode_save`），但 `level_manager` 里那份**没删**，两份由 `tests/campaign_data.rs` 的 `table_matches_level_manager_copy`（`:538`）逐字段钉住（⚠ 文件头另写的 `save_cluster_matches_level_manager_copy` **2026-11-26 已补写** —— 此前全库零命中，见 §17.4 末尾「判不清」第 6 条）；删旧副本留给能改 `level_manager.rs` 的任务 |
-| ~~`src/graphwar_play_screen_control.rs`~~ | ~~原版 graphwar_play_screen_control.rs（10 个可归属函数）+ **`ShotLifecycle`**~~ | **2026-11-26 已按 `Location` 证据搬走**：`handle_tick`（`0x470840`，`[0x470840,0x470b70)`）与 `execute_results`（`0x472470`，`[0x472470,0x473520)`）的 `panic::Location` 都指向 **`src/graphwar_game_state_manager.rs`**（`tools/class_probe.py func 0x470840` / `func 0x472470`，输出里两条 `'src/graphwar_game_state_manager.rs'`） | **已结案**：`ShotLifecycle` + `ShotPhase` / `KillKind` / `PlannedKill` / `ShotEvent` / `SettleOutcome` / `LifecycleSnapshot` 全部搬进 `src/graphwar_game_state_manager.rs` §6；`play_screen_control.rs` 只剩播放屏自己的东西（节点名 / 控件模式 / 订阅 / 胜负横幅）+ 一段指针注释。行数 1754→**1396**，GSM 527→**883**；`cargo test` 1762/0 不变 |
+| ~~`src/graphwar_play_screen_control.rs`~~ | ~~原版 graphwar_play_screen_control.rs（10 个可归属函数）+ **`ShotLifecycle`** + **`LevelRules`**~~ | **2026-11-26 已按 `Location` 证据搬走**：`handle_tick`（`0x470840`，`[0x470840,0x470b70)`）与 `execute_results`（`0x472470`，`[0x472470,0x473520)`）的 `panic::Location` 都指向 **`src/graphwar_game_state_manager.rs`**（`tools/class_probe.py func 0x470840` / `func 0x472470`，输出里两条 `'src/graphwar_game_state_manager.rs'`） | **已结案**：`ShotLifecycle` + `ShotPhase` / `KillKind` / `PlannedKill` / `ShotEvent` / `SettleOutcome` / `LifecycleSnapshot` 全部搬进 `src/graphwar_game_state_manager.rs` §6；`play_screen_control.rs` 只剩播放屏自己的东西（节点名 / 控件模式 / 订阅 / 胜负横幅）+ 一段指针注释。行数 1754→**1396**，GSM 527→**883**；`cargo test` 1762/0 不变。**`LevelRules` 也结案了（2026-11-26，任务 T14）**：胜负判据三个函数的 `panic::Location` **全在 `src/graphwar_game_state_manager.rs`** —— `0x473520`（`get_alive_teams`）= `:867 :868 :869 :875 :876`；入口 `0x4759f0`（含上限 `0x475a64`、两队 `0x475a80`/`0x475a88`）= `:191 :256 :839 :840 :847 :848 :851 :852 :859 :860 :905 :906`；胜方字节 `0x4780c0`（表 `0x478133`–`0x478236`）= `:223 :224 :230 :231 :256`。⇒ `LevelRules` + `LevelKind`/`MatchState`/`Verdict`/`TARGET_TEAM` 原版属 **graphwar_game_state_manager.rs**，**至今仍在 `play_screen_control.rs`（未搬，留给能改 `src/` 的任务）**；`docs/16` §53.2 末尾那句"它的归属没有新证据"**已作废**。证据见 `docs/06` §59.2（`tools/unknowns_report.py --only levelrules`；自校验 `0x4eb9d0`/`0x4ed670` → `math_function.rs` 通过） |
 
 > 📌 **现值核对（`src/` 实测；只记"现在在哪"，不改上面任何一行的判据）**
 >

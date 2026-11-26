@@ -574,8 +574,9 @@ mod("graphwar_video_writer.rs", "graphwar", ("src/graphwar_video_writer.rs",), "
 mod("math_function.rs", "other", ("src/math_function.rs", "src/math_function/to_text.rs"), "逐位",
     "docs/03：90 例文法 + 70 条真值夹具与真二进制对拍。**解析器 0x4ed670 的 panic 锚就落在这个"
     "文件上**（math_function.rs:75）⇒ 函数语言的解析器属于本模块，不属于 graphwar_function_input")
-mod("polish_notation_converter.rs", "other", ("src/polish_notation_converter.rs",), "观测",
-    "**是活代码**：唯一调用者 0x4edd1f（在 MathFunction::new 0x4ed670 内），另有两条自递归。分词产物是**中缀**且含 tag 18/19 括号；括号/优先级/补 CONST 0 全在这里=> docs/03 §13「解析器自己就做分词」只对了一半。原版正则 77B、优先级表 18 项已逐字节拿到（docs/16 §33）")
+mod("polish_notation_converter.rs", "other", ("src/polish_notation_converter.rs",), "逐位",
+    "**是活代码**：唯一调用者 0x4edd1f（在 MathFunction::new 0x4ed670 内），另有两条自递归。分词产物是**中缀**且含 tag 18/19 括号；括号/优先级/补 CONST 0 全在这里=> docs/03 §13「解析器自己就做分词」只对了一半。原版正则 77B、优先级表 18 项已逐字节拿到（docs/16 §33）。"
+    "**2026-11-26 升档（T13）**：本模块唯一可归属函数 0x4f5450 `reorder_recursive` 在 unicorn 下对真二进制跑 18 组输入 **18/18 逐位相同**（正对照：求值器 20/20、采样器 4/4、解析器 tag 流 14/14；±1 ulp 变异必报差异）⇒ 观测→逐位，见 `docs/06` §64 与 `fixtures/bit_exact_sweep.tsv`")
 mod("entity_drawer.rs", "other", ("src/entity_drawer.rs",), "观测",
     "10 个函数全解：draw/ready/process/update_sprite/update_name_label/draw_offset_triangle/get_entity_{hat,name_label,face,skin}。**士兵/靶子不是图元而是子节点**——3 个 Sprite2D"
     "（skin/face/hat 贴图）+ 1 个 RichTextLabel（res://name_label.tscn），懒建缓存于 4 张 HashMap，"
