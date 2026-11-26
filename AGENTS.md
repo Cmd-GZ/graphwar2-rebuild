@@ -105,8 +105,12 @@ python3 tools/pck_extract.py --verify                            # 还原 rsc/�
 
 ## 反复踩过的坑（"改了但没生效"这一类的必须一次记全）
 
-- **地址空间**：反编译里的 `_DAT_xxxx` 是 **Ghidra 地址**，读原始字节要减 `0x100000`；
-  但 `Caller`/`Callee` 类工具返回的也是 Ghidra 地址，别拿虚地址去查。
+- **地址空间**（2026-11-26 实测更正）：**本仓库文档 / `analysis/funcstarts_ghidra_va.pkl` / `tools/` 输出里的地址
+  一律是 ELF vaddr（= 模块内偏移 = RVA），直接当 vaddr 用、不要平移**；frida 下断 = `base + RVA`。
+  实测：pkl 的 13,263 条里 **11,881 条直接命中 `.eh_frame` FDE 起点**，整体减 `0x100000` 后只剩 **440**；
+  pkl 最小/最大 `0x37b940`/`0x94eb70` 正好是 `.text` 段两端 ⇒ **文件名里的 `_ghidra_va` 是误导**。
+  只有 **Ghidra/REA 反编译文本**里的 `_DAT_xxxx` / `FUN_xxxx` 才是 `ELF + 0x100000` 口径
+  （`_DAT_004c2530` ↔ ELF `0x3c2530`）。**把这条套到文档地址上会定位到另一个函数**（已踩，见 `docs/06` §63.1）。
 - **调用图会骗人**：Rust 大量用函数指针派发，直接调用为零**不代表**没被使用。
   写"未观测到调用"，并用 `tools/ptr_slots.py` 补查。
 - **护栏语料必须冻结**：三轴数字（`fire` / `batch` / `batch_conv`）是在
