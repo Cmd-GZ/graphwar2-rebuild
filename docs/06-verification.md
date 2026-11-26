@@ -10192,6 +10192,7 @@ $PY tools/wire_fields.py --verify                  # ⑥ 上一轮工具（已�
    读数就是 67；只是它**看不见** `.rodata` 里被 `strings` 行扫描/非重叠正则漏掉的东西，
    而这两条正是得出 57 / 0 / 47 的路径。**没有为了对上 67 改任何口径。**
 
+<<<<<<< HEAD
 ## 68. 视觉真值扩到「结算弹窗」：**原版第一次走进填满的 `EndGamePopUp`**，我方**没有这条路**（2026-11-26，任务 T18 / `task-15`）
 
 > 任务书：`.agent-work/specs/T18-endgame-popup.md`。分支 `agent/endgame-popup`（基于 master `5b9795b`，即 T8 刚合进来的那一条）。
@@ -10421,10 +10422,118 @@ tools/frame_capture.py --flow endgame（**只新增这一支**；campaign/replay
 ```bash
 export MAIN=/home/CG/Myprojects/graphwar2-rebuild
 export WT=$MAIN/.agent-work/cg/wt-t18
+=======
+## 67. 对局屏（S7/S8）第一刀：**客户端收到事件之后干什么**有了台账，12 条缺处理器的事件全部接进复原 manager；跨侧差异 6.3574 % → **6.3091 %**、6.8344 % → **6.7734 %**（2026-11-26，任务 T17）
+
+> 任务书：`.agent-work/specs/T17-net-events.md`（共享任务 `task-14`）。分支 `agent/net-events`，基于 master `3567098`。
+> 工作树 `.agent-work/cg/wt-t17`（私有 `CARGO_HOME` / `CARGO_TARGET_DIR=$WT/.cargo-target`）。
+> 原版 = `.reference/game/{Graphwar.x86_64, Graphwar.pck, libgraphwarrust.so}`（Graphwar II Linux **2.0.60**，内嵌 Godot 4.7.0）；
+> 我方 = `client/` + `libgw2_rebuild.so`（Godot **4.7.2**）。地址一律 **vaddr**；证据档按 `AGENTS.md` §0.3 标。
+
+**一句话**：t8 的观测（我方 `session.gd::_apply` 缺 12 个事件处理器）**成立且是本轮修的对象**，但**"补处理器"本身并不等于"画面对齐"**：
+本轮的实质产出是 ①一张**逐事件的证据台账**（`fixtures/net_event_handlers.tsv`，74 条线上事件）、
+②一个**把线上事件派发答复原 manager** 的桥（`GwNetEvents`，`src/_scaffold/net_events_class.rs`，12 条缺的 + 11 条已有的全部接上）、
+③`session.gd` 的**实体模型修正**（这一条才真正动了像素：棋盘正中那具假士兵与假准备圈没了）。
+像素只降了 **0.048 pp / 0.061 pp**，L2 超限块数 **4 / 3 没变** —— 剩下的差异**不在事件层**（见 §67.5 的三条硬结论）。
+
+### 67.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 我方到底收了几个事件、缺几个 | **23 个事件名有分支**（22 个 `match` 臂，`QueueDestroyObstacle`/`DestroyObstacle` 共用一个；t8 报的"21"是旧读数）；剧本 30 个名字里 **12 个没有处理器**（复算见 §67.1） | **观测**（读代码 + 复算） |
+| ② | 12 个缺的都补了吗 | **11 个接进了复原 manager**，`FunctionFire` **故意不接**（客户端收到它之后原版做什么**没有证据**，不猜；见 §67.6 第 1 条） | **观测**（`cargo test` 的映射表断言）/ **未知**（`FunctionFire`） |
+| ③ | 补的东西进的是哪一层 | `GwNetEvents` → `KernelBus` 的 22 个 manager（名字/外观/靶子/位置/队伍/生命/颜色/实体特效/特效/回合/模式/函数槽/障碍）——**GDScript 里没有第二份游戏语义** | **观测** |
+| ④ | 像素变好了吗 | `match_ready` **6.3574 % → 6.3091 %**（141 591 → 140 516 px，−1 075）；`match_play` **6.8344 % → 6.7734 %**（152 216 → 150 857 px，−1 359）。L1 仍过、L2 仍不过（**4 块 / 3 块**，与基线同） | **观测** |
+| ⑤ | 逐元素：靶子/标签/准备圈修好了吗 | **准备圈修好了（位置上）**：假士兵 229/231 与棋盘正中的假圈**都没了**，圈落到射手 230 身上；**靶子仍画不出**（界面层 `_targets` 空，缺 play_screen 接线）；**名字标签仍没有**（文本框来自 `store.profile.name`，不是 `NameInfo`） | **观测**（真机真帧 + 逐块表） |
+| ⑥ | 那剩下的 6.3 % 是什么 | `Fire!` 字号/颜色、棋盘格线整体错 1 px + 多画一层虚线网格、左右键盘字形、右下偏移量标签、`f(x)` 行光标 —— **全是界面层（`play_screen.gd`）的版式/字体问题**，不在事件层 | **观测**（§67.5 逐块） |
+
+### 67.1 台账：`fixtures/net_event_handlers.tsv`（74 条线上事件）
+
+7 列：`事件名 / 线上tag / 剧本用到 / 我方T17前有处理器 / 原版收到它之后做什么（证据出处）/ 本轮做没做 / 落到的 manager 方法`。
+
+* 事件名 / tag / 字段的权威来源：`src/_scaffold/protocol.rs::WIRE_SPEC`（74 条，逐位）+ `docs/07` §3.3；
+  **tag 列与本表同源这件事有机器校验**：`cargo test --offline --features gdext-bindings net_events`
+  的 `tags_match_the_wire_spec` 把剧本里每条事件的 `Event::wire_tag()` 与 `WIRE_SPEC` 逐条比。
+* 剧本 = `fixtures/frame_match_events.txt`（t8 预注册；50 条 / 30 个事件名，本轮**一字未改**）。
+* "原版收到它之后做什么"**逐条给地址**（74 条里 30 条剧本事件全部有出处），档位分 **观测**（能指到
+  `remote_event_handler` 的调用点或某个 manager 的订阅/广播方向）与 **推断**（有依据未证，缺什么写在列里）。
+
+复算（不用任何 `.agent-work` 脚本）：
+
+```bash
+MAIN=/home/CG/Myprojects/graphwar2-rebuild
+# ① 剧本里用到的事件名有哪 30 个
+python3 - <<'PY'
+import json
+on=False; names=set()
+for ln in open('fixtures/frame_match_events.txt',encoding='utf-8'):
+    s=ln.strip()
+    if s.startswith('[seq]'): on=True; continue
+    if s.startswith('[endseq]'): on=False; continue
+    if on and s: names |= set(json.loads(s.split('#')[0].strip()))
+print(len(names), sorted(names))
+PY
+# ② T17 前 session.gd 处理了哪些（master 版）
+git show master:client/src/net/session.gd | sed -n '/^func _apply(/,/^func _ensure_player/p' | grep -o '"[A-Za-z]*"' | sort -u | wc -l
+# ③ 台账自校验：tag 唯一、行数 = 74
+awk -F'\t' '!/^#/{print $1"\t"$2}' fixtures/net_event_handlers.tsv | tail -n +2 | sort | uniq -d | wc -l
+awk -F'\t' '!/^#/' fixtures/net_event_handlers.tsv | wc -l    # 75 = 1 表头 + 74 事件
+```
+
+### 67.2 派发桥：`src/_scaffold/net_events_class.rs`（**scaffold，不是复原物**）
+
+原版那条链是 **`GraphwarRemoteEventHandler::handle_server_remote_event`**（x86 **`0x3e6df0`** / arm64 **`0x3e2830`**）。
+我方这个模块**没复元**（`docs/02-module-map.md` §17 记的是"只落了枚举与名字表，171 个锚点的分发/订阅行为未实现；重记为混装待拆"），
+所以客户端收到事件后 22 个 manager **一个字节都拿不到** —— 这是比"缺 12 个 GDScript 处理器"更根本的断点。
+
+本轮的桥按"一条线上事件 → 一个 `#[func]` → 一个/多个 manager 方法"接上，**每个落点都在文件头表里带地址**：
+
+| 线上事件 | 落到的 manager 方法 | 证据（最硬的一条） | 档 |
+|---|---|---|---|
+| `PosInfo`(26) | `GraphwarPlanePosManager::set_position` (`0x3c64c0`) | 调用点 `0x3e3347`（`graphwar_plane_pos_manager` 模块文档） | **观测** |
+| `NameInfo`(60) | `GraphwarNameManager::set_name` (`0x40b190`) | `0x3e707c`（arm64 全量扫 `bl set_name` 只有两个调用点，其一即此） | **观测** |
+| `Skin/Face/HatGraphicsInfo`(51/53/55) | `GraphwarGraphicsManager::set_{skin,face,hat}_graphics` | `0x3e6f34` / `0x3e794c` / `0x3e7f18` | **观测** |
+| `SkinGraphicsInfo{bot_*}` | `GraphwarEntityEffectManager::add_entity_effect(id, Ash)` | `0x4aa464`（`GameStateManager::handle_graphics_info`） | **观测** |
+| `EntityEffectInfo`(56) | `add_entity_effect` | `0x3e8554`（照抄载荷） | **观测** |
+| `EffectInfo`(44) | `GraphwarEffectManager::add_effect` | 登记 + 广播 `EffectInfo`（`graphwar_effect_manager` §1） | **观测** |
+| `EntityRemoved`(14) | **9 个 manager** 各自的 `handle_entity_removed_event` | 每个模块文档都有自己那条订阅（`target_manager` 闭包 `0x3daca0` 断言判别值 14 等） | **观测** |
+| `RemoveTeam`(25) | `TeamTable::remove_from_team` (`0x3c1980`) | 该函数"删到了才广播 `RemoveTeam`" | **观测** |
+| `TeamInfo` / `ColorInfo` / `SoldierInfo` / `PlayerInfo` / `LifeInfo` / `TurnInfo` / `TurnModeInfo` / 三个 `*ModeInfo` / 障碍四条 / `FunctionPoints` / `FunctionActive` / `FunctionInfo` | 见台账第 7 列 | 逐条在台账里 | **观测 / 推断**（台账逐行标） |
+| `TargetInfo`(23) | `GraphwarTargetManager::add_target` | 广播端是 `TargetInfo`，但**客户端收到它调谁没有直接证据** | **推断** |
+| `FunctionFire`(33) | **没有落点** | 不在 `GameStateManager` 的 7 条订阅里、也不是任何 manager 的广播输入 | **未知** |
+
+`GwNetEvents` 还暴露 `last_calls()`（这次调到了哪些 manager 方法）、`applied_of(名)`、`dump()`（各表快照），
+**验收不再依赖注释**：`cargo test --offline --features gdext-bindings net_events` 里有 5 条断言，
+其中 `the_pitch_lands_in_the_manager_tables` 把 `fixtures/frame_match_events.txt` 的 30 个事件喂进去，
+再逐表读回（名字 `cmdgz`、外观 `face_paint_2/asian/asian_hat`、靶子 232、位置 −5.156…/−9.889…、
+队伍 229/230=Team1 且 231 被删、实体特效 Death/Spark、特效 234@1281、函数槽 615、颜色 (125,104,0)）。
+
+### 67.3 GDScript 侧：`client/src/net/session.gd`（**只改这一个文件**）
+
+1. 12 条缺的处理器全部补上，并**同时**做两件事：落 `room`（界面层要读）+ `_feed_managers()`（喂 Rust）。
+   `_feed_managers()` **只做字段搬运**（一事件一行，参数顺序 = `WIRE_SPEC`），不解释语义。
+2. **实体模型修正（这条才是像素改动的来源）**：
+   * `_ensure_entity()` 的默认种类从 `"soldier"` 改成 `""`（未知）。原来只被 `TeamInfo` 提到的**玩家实体 229**
+     和**已删除的士兵 231** 都被当成士兵停在 `(0,0)`；`_turn_driver.first_shooter()` 于是选中下标 0
+     ⇒ **准备圈画在棋盘正中**、棋盘上多两具假精灵（t8 §60.5 的三处差异就是这两条链）。
+   * `TeamInfo` **不再建实体**（它既可能指士兵、也可能指"玩家自己"）；`SoldierInfo` 才是 soldier 的判据，
+     `TargetInfo` 标记 target。
+   * `EntityRemoved` / `RemoveTeam` 真的从 `entities` / 玩家的 `soldiers` 列表 / 边表里删掉。
+   * 新增边表 `room.targets / teams / names / look / colors / entity_effects / effects / shots / active_ticks`：
+     `TeamInfo`/`ColorInfo`/`NameInfo` 可能比 `SoldierInfo` **先到**（真回放里就是），先记事实、建实体时回填。
+3. `ColorInfo` 从 `pass` 改成记账（原版是**直接采纳**服务端颜色）。
+
+### 67.4 两侧重拍（同条件：私有 Xvfb TCP、1920×1160、llvmpipe、每屏 3 帧）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t17
+>>>>>>> agent/net-events
 export CARGO_HOME=$MAIN/.reference/cargo-home
 export CARGO_TARGET_DIR=$WT/.cargo-target          # 单独一行
 export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
 cd $WT
+<<<<<<< HEAD
 W=$WT/.agent-work/v
 
 # ① 前置：我方内核（只有改了 src/ 才需要重做）
@@ -10900,3 +11009,132 @@ $PWD/.reference/venv/bin/python tools/addr_probe.py locs 0x4500c0
    真正的结构判断是「我们的文件」列的 `—`（谁的文件、混没混别的模块）。两件事已在文档里分开写清。
 5. **行号整体漂了 +14**（上一轮 808–1527 ↔ 本轮 822–1541）⇒ 按判据扫、不按行号扫是对的；台账里的行号一律是**改前基准** `c636bad`。
 6. **`docs/71`、`docs/74` 不在 `docs/archive/` 顶层**，在 `docs/archive/ai/` 里 —— 只判"归档顶层有没有"会漏这 2 处（我第一版扫法就漏了，已改成递归）。
+=======
+# ① 我方内核（改了 src/_scaffold ⇒ 三步）
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+HOME=$WT/.fakehome "$GODOT" --headless --path client --import
+# ② 两侧采集（**注意 UDP 42968 是独占的**：别的 agent 同时在跑 match 流会撞端口，
+#    症状 = 我方日志 `LAN 发现不可用：UDP 端口 42968 绑定失败（2）` + 截到的是 LAN 大厅，不是对局屏。
+#    重跑一次即可；两次成功的服务器日志里 fixture_sha256 都是 2278c30d…）
+python3 tools/frame_capture.py --side original --flow match --out $WT/.agent-work/v/match-orig --display-num 97
+python3 tools/frame_capture.py --side ours     --flow match --out $WT/.agent-work/v/match-mine --display-num 96
+# ③ 三层判据（门槛文件未改）
+python3 tools/frame_diff.py --orig $WT/.agent-work/v/match-orig --mine $WT/.agent-work/v/match-mine \
+  --screens match_ready,match_play --out $WT/.agent-work/v/results_after.tsv \
+  --blocks-out $WT/.agent-work/v/blocks_after.tsv --json $WT/.agent-work/v/diff_after.json
+```
+
+### 67.5 数字（L1 / L2 / L3）与逐块
+
+| 屏 | 基线（t8 §60.4） | 本轮 | 变化 |
+|---|---|---|---|
+| `match_ready` 跨侧差异 | 141 591 px = **6.3574 %** | **140 516 px = 6.3091 %** | **−1 075 px / −0.0483 pp** |
+| `match_ready` L2 | 不过，4 块超限，最差 `(0,5)` 5.71 | 不过，**4 块**，最差 `(0,5)` 5.71 | 块数不变 |
+| `match_play` 跨侧差异 | 152 216 px = **6.8344 %** | **150 857 px = 6.7734 %** | **−1 359 px / −0.0610 pp** |
+| `match_play` L2 | 不过，3 块，最差 `(2,2)` 18.138 | 不过，**3 块**，最差 `(2,2)` **17.391** | 块数不变，最差块 −0.747 |
+| L1（尺寸/平均色/第一主色/占比） | 两屏都过 | 两屏都过（\|Δmean\| 0.314 / 0.609，≤2.0） | 仍过 |
+
+逐块（6×4 网格，`|Δmean|`；只列有变化的）：
+
+| 屏 | 块 | 基線 | 本轮 | 变化 | 画面上是什么 |
+|---|---|---|---|---|---|
+| 两屏 | `(1,1)` | 1.116 | **0.723** | −0.393 | 棋盘左上格线区域（假实体/假圈消失后的连带） |
+| 两屏 | `(1,2)` | 0.279 | 0.696 | **+0.417** | 棋盘正中：假士兵 229/231 与假准备圈原来在这里（差异像素 −448，但剩下的格线差异占比升高） |
+| 两屏 | `(1,3)` | 0.824 | 1.584 | **+0.760** | **靶子 232**：它以前被画成士兵（错），现在**什么都不画**（原版是蓝环红心 ⇒ 整块缺元素） |
+| `match_play` | `(2,2)` | 18.138 | **17.391** | −0.747 | 射手 + 弹道 |
+| `match_ready` | `(2,2)` | 2.530 | 2.697 | **+0.167** | 射手 + 准备圈：圈**位置修对了**（原来在棋盘正中），但颜色仍是界面自定的红（原版橄榄色，= 玩家色 `ColorInfo{125,104,0}`） |
+
+⇒ **"修对语义"不一定立刻"变好看"**：靶子那一块就是反例（错的东西比"没有"更接近原版，因为它至少占了位置）。
+这一条写在这里，免得下一个人只看总数字就以为"靶子已经没事了"。
+
+### 67.6 这批数字能支撑什么、不能支撑什么
+
+| 结论 | 证据 | 档 |
+|---|---|---|
+| 12 条缺处理器的事件里 **11 条** 有了"线上事件 → 复原 manager 方法"的落点，且落表结果可复算 | `cargo test ... net_events` 5 条断言 + 台账 | **观测** |
+| 我方**棋盘正中那具假士兵 + 假准备圈**已消失，准备圈落到射手 230 身上 | 两侧真机真帧（S7）+ 逐块 `(1,1)/(1,2)/(2,2)` | **观测** |
+| 总差异**确实降了**（两屏都降），但 **L2 超限块数没变** | §67.5 表 | **观测** |
+| "补 12 个处理器"是这 6.3 % 的**主因** | —— | **被证伪**（见 §67.7 第 1 条：真因是界面层版式/字体 + 我方 id 空间） |
+| 靶子/名字标签能靠事件层修好 | —— | **被证伪**：两条都缺界面层接线（§67.8 第 1/2 条） |
+
+### 67.7 卡点 / 任务前提被证伪
+
+| # | 前提（任务书或旧文档） | 实际 |
+|---|---|---|
+| 1 | 「我方差 6.3 % 的根因是缺 12 个事件处理器」 | **只对了一半**。事件层确实断（本轮已接），但这 6.3 % 的大头是**界面层**：`Fire!` 按钮 3 096 px、棋盘格线 13 343 px、左右键盘 37 396 px、`f(x)` 行 8 349 px、右下偏移量 1 336 px —— 全部由 `play_screen.gd` 的版式/字体决定，**把事件接得再全也动不了** |
+| 2 | 「t8 的管线已在 master 上」 | **不成立**：`tools/match_serve.py` / `--flow match` / `fixtures/frame_match_events.txt` 只在 `agent/match-frames`（t8 分支）上。本分支把它 **merge 进基线**（见 §67.9），`docs/06`/`docs/16` 的冲突按"保留 master 版"解决（t8 那两节编号与本树现有 §62/§63（docs/06）、§65/§66（docs/16）相撞，留给 lead 单独合 t8 时处理） |
+| 3 | 「我方 `_apply` 处理 21 个事件」 | **23 个事件名有分支**（22 个 `match` 臂），t8 的"21"是旧读数 |
+| 4 | 「准备圈画错位置 ⇒ 加个事件处理器就好」 | 真因是 `_ensure_entity()` 的**默认种类**（见 §67.3 第 2 条），不是缺处理器 |
+
+### 67.8 遗留 / 未做（需要 lead 决定的三条都在这里）
+
+1. **靶子那一层画不出来**：原版靶子是独立图层（`GwTargetSet` → `EntityDrawer` 的 `TARGET_ID_BASE + target_id`），
+   而 `play_screen.gd::_begin_online()` 里是 `_targets = GwTargetSet.new()` —— **联机分支从不填它**。
+   本轮已把靶子事实落进 `room.targets` / `room.entities[id].kind = "target"`，**但要真正画出来必须改 `play_screen.gd`**：
+   `_begin_online()` 里加一句 `_targets.setup(...)`（数据源 = `session.room["targets"]` 与对应 `PosInfo`）。
+   **我没有改**（t7 正在动那个文件）。
+2. **名字标签仍是空的**：`_online_player_name()` 读 `app_node.state.players[pi].name`（= `store.profile.name`，
+   默认 `"user"`），**不读 `room["names"]`**（`NameInfo` 的真值 `cmdgz` 已经落在那里，也进了 `NameManager`）。
+   要修得在 `play_screen.gd::_build_online_soldiers()` 里把名字源换成 `room["names"][entity_id]`，
+   或者把 `EntityDrawer` 的标签文本改成从 `NameManager` 拉（原版方向，见 `docs/16` §44）。
+   附带一条**观测**：我方标签即使有文字也不可见（默认主题字色 = 白，棋盘白底），原版标签字色 = 玩家色
+   （原版帧上 `cmdgz` 的像素色与 `ColorInfo{125,104,0}` 同族）。
+3. **id 空间不一致（这是"事件全接上也画不对"的总根因）**：`play_screen.gd::_sync_entities()` 给 `EntityDrawer`
+   用的 id 是**士兵下标**（0,1,2…）与 `TARGET_ID_BASE + target_id`，而所有 manager（位置/外观/名字/颜色）
+   与线上事件用的是**实体 id**（229/230/231/232）。⇒ 本轮喂进 manager 的外观/名字/颜色**没有消费者**。
+   要接上必须让播放屏改用实体 id 当 `EntityDrawer` 的 id（`s["entity_id"]`），或给桥加一张
+   `下标 → 实体 id` 的别名表并由播放屏填。**这两条都要改 `play_screen.gd`**，本轮不动。
+4. **`FunctionFire` 没有落点**（证据缺口，见 §67.6 第 1 行说明）。
+5. **S8 的弹道相位两边仍不是同一 tick**（t8 §60.8 第 2 条未变）：我方不发 `TickRequest`，`TickReply` 恒 0 条。
+6. 只测了 **1 个局面**（真回放 `1793897298` 的 `Level 0`）；多士兵 / 有障碍 / 同时回合的局面没测。
+
+### 67.9 本轮改动的文件
+
+```text
+fixtures/net_event_handlers.tsv           新增（台账，74 条线上事件 × 7 列）
+src/_scaffold/net_events_class.rs         新增（派发桥；5 条 cargo 断言）
+src/_scaffold/mod.rs                      + 3 行（模块声明）
+client/src/net/session.gd                 12 条处理器 + 实体模型修正 + `_feed_managers()`（唯一改的客户端文件）
+docs/06-verification.md                   本节（§67）
+docs/16-client.md                         §67（客户端侧怎么接的、复跑命令）
+tools/match_serve.py / tools/frame_capture.py / fixtures/frame_match_events.txt  ← 来自 t8 分支（merge 进基线，非本轮新写）
+```
+
+**没有改**：`client/src/screens/play_screen.gd`（t7 在改）、`src/*.rs` 原版模块文件、
+`fixtures/frame_match_events.txt` / `fixtures/frame_diff_thresholds*.txt` / 既有的
+`fixtures/frame_diff_results*.tsv` / `tests/**` 断言 / `docs/00` / `docs/HANDOVER.md`。
+
+### 67.10 并入 master（`c636bad`）之后的重测：我方这一刀的相对收益是 **−0.81 pp / −0.79 pp**，L2 超限 **6 → 4 / 6 → 3**
+
+§67.5 的数字是在本分支的旧基线（master `3567098`）上量的。收尾时 master 已经前进到 `c636bad`
+（其中 t7 改了 `play_screen.gd` 的棋盘取整/图标对齐，**并且补上了名字标签的显示**），
+所以"同一棵树上的对照"必须重做一次 —— 而且这次能**把本轮改动单独隔离出来**（同一棵 master 树上，
+只把 `session.gd` 换回 master 版再拍一次）。
+
+| 变体（原版侧帧不变，我方侧同条件重采） | `match_ready` | L2 超限 | `match_play` | L2 超限 |
+|---|---|---|---|---|
+| ① master `c636bad` 原样（= **没有**本轮改动） | **161 617 px = 7.2565 %**（L1 主色/占比也**不过**） | **6 块** | **170 711 px = 7.6648 %** | **6 块** |
+| ② master + 本轮改动（本分支 HEAD） | **143 563 px = 6.4459 %** | **4 块** | **153 205 px = 6.8788 %** | **3 块** |
+| **差值（②−①）** | **−18 054 px / −0.8106 pp** | 6 → 4 | **−17 506 px / −0.7860 pp** | 6 → 3 |
+
+> ① → ② 是**同一棵 master 树、同一台机、同一条命令、同一份剧本**（`fixture_sha256 2278c30d…`）的两侧采集，
+> 差别只有 `client/src/net/session.gd` 这一个文件。复跑命令见 §67.4（把 `session.gd` 换成
+> `git checkout master -- client/src/net/session.gd` 即 ①）。
+
+逐元素（同一原版帧，ROI 内差异像素 / 平均 |Δ|）：
+
+| ROI | ① 没有本轮改动 | ② 有本轮改动 | 说明 |
+|---|---|---|---|
+| 棋盘正中 `(0,0)` | 6 643 px / 55.67 | **1 242 px / 4.55** | 假士兵 229+231 与假准备圈消失（剩下的 1 242 是棋盘格线自身的差） |
+| 靶子 | 4 239 px / 43.99 | **1 565 px / 7.46** | 不再被画成士兵（但仍画不出靶子本身，见 §67.8） |
+| 射手 + 名字 + 准备圈 | 8 080 px / 22.34 | 8 225 px / 23.13 | **略差**：准备圈位置对了但颜色仍是界面自定红；名字标签现在画的是本地 profile 名 `user`（原版是 `cmdgz`） |
+| 棋盘格线 | 13 981 px / 4.23 | 12 989 px / 3.32 | 连带（我方的假实体把连线/标签压在格线上） |
+| `Fire!` / 右键盘 | 3 096 / 21 674 px | 3 096 / 21 674 px | **一格不变**（版式/字体问题，事件层动不了） |
+
+**两条必须一起读的结论**：
+1. **本轮改动在"同一棵树"上的收益是有意义的**：−0.81 pp / −0.79 pp，L2 超限块 6→4 / 6→3，且把
+   t7 补上名字标签之后新出现的"4 个实体都画标签"这条回归消掉了（①里 L1 的主色占比都不过）。
+2. **但绝对数字仍略高于 t8 §60.4 的 6.3574 % / 6.8344 %**：master 上 t7 那次棋盘取整/名字标签的改动
+   把对局屏的基线整体推高了（6.3574 → 7.2565），本轮只把其中一部分收回来（→ 6.4459）。
+   ⇒ **"6.3574 % 不是现在的基线"**，谁要用这个数，得说明是哪棵树的哪一次采集。
+>>>>>>> agent/net-events
