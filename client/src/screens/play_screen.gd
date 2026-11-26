@@ -1468,22 +1468,56 @@ func _sync_entities() -> void:
 	# ---- 准备圈：**填 `prep` 表**（`docs/16` §50.6）----
 	#
 	# 原版 `EntityDrawer::draw`（`0x4b2890`）只画 `prep` 哈希表里的实体，而填表的是
-	# `GraphwarBackend` 的 `pos_info_event` —— 那条链路还没接。这里**由播放屏按回合状态代填**：
-	# 只给"本回合行动的士兵"一条，其余清掉。⚠️ 这是**我方接线**，不是观测到的原版路径。
-	var ring_id := -1
-	# **回放模式不画准备圈**（原版真帧：棋盘上 0 个红箭头 —— `docs/06` §53.4 ③、§55.3）。
-	# 我方以前按"本回合行动的士兵"代填 `prep` 表 ⇒ 回放屏上多出 3 个红箭头（276 px @811,765）。
-	if not _replay_mode and _active_soldier_idx >= 0 and _active_soldier_idx < _soldiers.size():
+	# `GraphwarBackend` 的 `pos_info_event` —— 那条链路还没接。这里**由播放屏按回合状态代填**。
+	# ⚠️ 这是**我方接线**，不是观测到的原版路径。
+	#
+	# ## 2026-11-26（T21）：回放屏**要**画准备圈 —— 旧注释"回放不画"是被证伪的
+	#
+	# 旧注释写"原版真帧：棋盘上 0 个红箭头（§53.4 ③/§55.3）⇒ 回放模式不画准备圈"。真帧复测
+	# （`replay_play_1.png`，本文件 §复跑命令）把话说准了：**红箭头确实没有，但三段弧有**。
+	# 尺子：队色 `(125,104,0)` 的全部像素做圆拟合 ⇒ 环心 `(807.09, 830.93)`、半径 `19.28 px`
+	# （内 15.30 / 外 23.25）、三段弧各张 `59.1°–60.1°`（⇒ H = π/6，`base` 未命中那条分支）、
+	# 方位 `{26.5°, 146.5°, 266.5°}`（⇒ `A0 = V/120`、`V ≈ 558` = 载入 tick）。
+	# **径向直方图在 r ∈ [15.3, 23.3] px 之外一个像素都没有** ⇒ 那 3 个外凸箭头（外沿到
+	# `r+0.5` 单位 ≈ 32 px）真的没画。⇒ 本屏：开环（`set_ring`）、**关箭头**、
+	# `V` = 回放播放头（= `GraphwarTickHandler::get_fractional_tick`，原版 `0x4b2e10`）、
+	# `base` = 同一个 `V`（⇒ `V−base = 0` ⇒ `H = π/6`，与真帧 60° 张角逐值一致）。
+	#
+	# 原版弧的门是 `get_alive` + `is_on_turn`（§46/§48 观测，`0x454950`/`0x462b50`）；回放侧
+	# 没有 turn 状态源（`_turn_driver` 那条链只在本地局走）⇒ 我方按"回放里**所有活着的士兵**"
+	# 画环。本样本只有 1 具士兵 ⇒ 与真帧一致；多士兵回放可能多画，**登记为遗留**（不是观测）。
+	var ring_ids := {}
+	if _replay_mode:
+		for i in _soldiers.size():
+			var s: Dictionary = _soldiers[i]
+			if bool(s.get("alive", true)) and want.has(i):
+				ring_ids[i] = true
+	elif _active_soldier_idx >= 0 and _active_soldier_idx < _soldiers.size():
 		var acting: Dictionary = _soldiers[_active_soldier_idx]
 		if bool(acting.get("alive", true)) and want.has(_active_soldier_idx):
-			ring_id = _active_soldier_idx
+			ring_ids[_active_soldier_idx] = true
+	# 箭头开不开：回放关（真帧径向直方图，见上）；本地局开（`match_ready` 真帧那份"带准备圈"
+	# 的形态里有箭头，`docs/06` §60.1 —— 那一屏还没对齐，开关先保持上一轮的行为）。
+	_entities.set("show_ring_arrows", not _replay_mode)
+	# 回放：`V` = 播放头（`ReplayDriver::tick()`，载入态 = 第 1 批 `exec_tick` = 558）；
+	# 本地局：沿用 `_curve_tick`（我方时钟，不是原版的 `get_fractional_tick`）。
+	var ring_v: float = float(_replay.tick()) if (_replay_mode and _replay != null) else _curve_tick
 	for id in want:
-		if id == ring_id:
+		if ring_ids.has(id):
 			var rp: Vector2 = want[id]["pos"]
-			_entities.call("set_ring", id, rp.x, rp.y, GwCore.SOLDIER_HIT_RADIUS, _curve_tick)
-			if not _ring_base.has(id):
-				_ring_base[id] = _curve_tick
-				_entities.call("set_ring_base", id, _curve_tick)
+			# 环色 = **这具士兵自己的队色**（真帧：环的 377 个像素全是 `(125,104,0)`，
+			# 与这名士兵 `ColorInfo` 的颜色逐值相同）。原版从 `draw` 的两张哈希表里
+			# **逐实体**取打包 RGB；本类的 `team_color` 只有一个 ⇒ 多士兵异色时环会同色
+			# （**登记遗留**：本样本 1 具士兵，够用）。
+			# 打包口径：低字节 = R（`entity_drawer::Color::from_packed_rgb`）。
+			if want[id].has("color"):
+				var rc: Color = want[id]["color"]
+				_entities.set("team_color", (rc.r8 | (rc.g8 << 8) | (rc.b8 << 16)))
+			_entities.call("set_ring", id, rp.x, rp.y, GwCore.SOLDIER_HIT_RADIUS, ring_v)
+			# `base` = 同一个 `V` ⇒ `H` 取到下限 π/6（真帧 60° 张角）。原版 `map[i]` 的来源
+			# 仍是未知（§50.6）；这里给"起始量 = 现在"，张开动画从 0 开始。
+			_entities.call("set_ring_base", id, ring_v)
+			_ring_base[id] = ring_v
 		else:
 			_entities.call("clear_ring", id)
 			_ring_base.erase(id)

@@ -11184,7 +11184,6 @@ python3 tools/match_serve.py --fixture fixtures/frame_match_events.txt \
 4. **我方三帧同 sha256**（S7）：我方准备圈不随时间动 —— 这是"我方没接那条链"，不是采集问题。
 5. 本轮**没有**用 `--game-arg` 传地址（地址走 LAN 广播就够了；原版的 CLI 参数是死的，`docs/06` §48.1）。
 
-<<<<<<< HEAD
 ## 68. 客户端侧接线：回放屏的**右列宽 / 底栏高 / 函数框只读态 / 士兵外观与名字标签**（2026-11-26，任务 T7）
 
 > 真帧证据、逐块数字、改前改后三层判据在 **`docs/06` §59**（那节是验收，本节是**怎么接的**）。
@@ -11484,6 +11483,7 @@ $PWD/.reference/venv/bin/python tools/unknowns_probe.py dis 0x4b67a0 --len 0x90
 3. "弹窗在收到 `EndingGame` 之后第几帧出现"没量（本轮单点采样，`--endgame-wait` 可调）。
 4. `_online_ending` 这个死变量是**本轮新发现的**；它连注释都没有，`docs/143` §5 想要的那条
    "结算完成前不结束"因此**只做了一半**（记了标记、没人读）。
+
 ## 71. 客户端"收到线上事件之后干什么"：原版是 `GraphwarRemoteEventHandler`（`0x3e6df0`），我方此前**没有这一层**；本轮补成 `GwNetEvents` 桥 + `session.gd` 的实体模型修正（2026-11-26，任务 T17）
 
 > 数据与像素结论在 `docs/06` §67（含逐块表与两侧复跑命令）。本节只讲**客户端侧怎么接的**。
@@ -11513,7 +11513,7 @@ $PWD/.reference/venv/bin/python tools/unknowns_probe.py dis 0x4b67a0 --len 0x90
 |---|---|---|---|
 | ① 解析 + 我方模型 | `client/src/net/session.gd`（`_apply`） | 线上字段 → `room` 的那几张表（界面层要读的） | 有（但只是"我方模型"，**不是**游戏规则） |
 | ② 派发 | 同文件 `_feed_managers()` + `GwNetEvents`（`src/_scaffold/net_events_class.rs`） | 线上字段 → **复原 manager 的具体方法**（一事件一方法，落点逐条带地址） | **没有**：不重算任何规则 |
-| ③ 消费 | `EntityDrawer` / `EffectDrawer` / `GraphwarPlane` …（既有类） | 从 manager 表拉数据画 | 有（`play_screen.gd` 的两处代偿还在，见 §71.4） |
+| ③ 消费 | `EntityDrawer` / `EffectDrawer` / `GraphwarPlane` …（既有类） | 从 manager 表拉数据画 | 有（`play_screen.gd` 的两处代偿还在，见 §70.4） |
 
 `GwNetEvents` 的用法（GDScript）：
 
@@ -11535,7 +11535,7 @@ ev.call("dump")                                              # 各表快照（�
 | `_ensure_entity()` 默认 `kind = "soldier"` | 默认 `kind = ""`；只有 `SoldierInfo` 造 soldier、`TargetInfo` 标 target | 玩家实体 229 与已删除的士兵 231 不再变成"停在 `(0,0)` 的士兵" |
 | `TeamInfo` 无条件建实体 | **不建实体**（`TeamInfo` 的 `entity_id` 也可能是"玩家自己"） | 同上；棋盘正中那具假士兵 + 假准备圈消失 |
 | `EntityRemoved` / `RemoveTeam` 没处理器 | 真的从 `entities`、玩家的 `soldiers`、边表里删 | 死人不复活、圈不再落到尸体上 |
-| `ColorInfo` 是 `pass` | 记账（原版 `color_manager::set_color` 是**直接采纳**服务端颜色） | 界面层还没读（§71.4 第 3 条） |
+| `ColorInfo` 是 `pass` | 记账（原版 `color_manager::set_color` 是**直接采纳**服务端颜色） | 界面层还没读（§70.4 第 3 条） |
 | 没有"先到的事实"这一层 | 新增边表 `targets/teams/names/look/colors/entity_effects/effects/shots/active_ticks` | 事件乱序（`TeamInfo` 比 `SoldierInfo` 先到）也不丢信息 |
 
 **为什么准备圈以前画在棋盘正中**（t8 §60.5 只记了现象）：`_soldiers` 原来是 `[229, 230, 231, 232]`
@@ -11578,7 +11578,7 @@ python3 tools/frame_capture.py --side ours --flow match --out $WT/.agent-work/v/
 得到 `match_ready` 7.2565 % → **6.4459 %**（L2 超限 6 → 4）、`match_play` 7.6648 % → **6.8788 %**（6 → 3）。
 也就是说：本轮这一层（事件派发 + 实体模型）单独值 **−0.81 pp / −0.79 pp**；
 `Fire!` / 键盘 / `f(x)` 行 / 右下偏移量几块**一格都没变**（那些要改播放屏的版式与字体）。
-=======
+
 ## 72. 剩余 13 屏第一次有像素真值：**四个小弹窗本身几乎逐像素相同**，残差全在 LAN 大厅 / GameSetup / 对局屏三块底图；附 6 条**客户端视角**的发现（2026-11-26，任务 T20）
 
 > 数字与逐屏归因在 `docs/06` **§69**（含入库 TSV `fixtures/frame_diff_results_rest.tsv` / `frame_diff_blocks_rest.tsv`）。
@@ -11661,4 +11661,71 @@ python3 tools/frame_capture.py --side ours --flow setup --out $WT/.agent-work/v/
    具体是哪个节点/哪一层挡住**没有 dump**（**推断**：`chat_pop_up.gd` 的根节点满屏 + `z_index` 高于顶栏）。
 5. 断线后原版停在哪一屏**仍未观测**（我方是"回主菜单"，`app.gd` 里已标"自定"）；本轮只拍到 `DisconnectedPopUp` 本身。
 
->>>>>>> agent/pixel-rest
+
+## 73. 客户端侧：回放屏的**准备圈**（三段弧）怎么接；光标 3 px 的落点；`EntityDrawer::draw` 的坐标系定死了（2026-11-26，任务 T21）
+
+> 本节只写**客户端侧**的接线与语义（算术在 `src/entity_drawer.rs`，指令证据在
+> `docs/06` §71）。前情：§68（t7）把回放屏的右列宽 / 底栏高 / 无框输入框 / 士兵外观与名字标签接上，
+> 跨侧差异压到 0.217 %；本节补的是**准备圈**那条链路的一个接线缺口。
+
+### 73.1 一条定死的坐标系：`EntityDrawer::draw` 的实参是**棋盘单位**
+
+`0x4b2890` 的第一条图元是 `draw_set_transform`（槽 `0x9bc018`，调用点 **`0x4b2af8`**）：
+`pos = size × 0.5`、`rotation = 0`、`scale = (mirror ? −k : k, −k)`、`k = size.x / 50`
+（`0x4b2a80 divss [0x1b9fc8]`，`0x1b9fc8 = 0x42480000`）⇒ 之后所有
+`draw_arc` / `draw_polygon` 的坐标都是**棋盘单位**。`GraphwarPlane::draw`（`0x4b5df0`）与
+`AxisDrawer::draw`（`0x4e05b0`）**同一条**（前者的调用点 `0x4b607d`）。
+
+这一条同时解释了两件旧账：
+
+* `entity_drawer_class.rs` 里"准星坐标单位是**推断**"那条可以撤了 —— 是棋盘单位，**观测**；
+* 旧实现把 `0.3` 的线宽与角度**原样**当像素送进屏幕坐标系 ⇒ 环只有 0.3 px 宽（看不见）、
+  而且方位是上下镜像的。现在按原版发一条 `draw_set_transform`，实参保持棋盘单位。
+
+```text
+@export show_ring_arrows : bool   # 默认 true（= 与上一轮逐字相同）
+last_transform() -> PackedFloat64Array   # [pos.x, pos.y, scale.x, scale.y]（rotation 恒 0）
+```
+
+### 73.2 回放屏为什么**要**画准备圈（旧注释是被证伪的）
+
+旧注释（`play_screen.gd::_sync_entities`）写"回放模式不画准备圈（原版真帧：棋盘上 0 个红箭头）"。
+真帧复测把这句话说准了：**红箭头确实没有，但三段弧有**（`docs/06` §71.1-B 的圆拟合）。
+两件事一起看才通：
+
+| 图元 | 回放真帧 | 闸门（指令） |
+|---|---|---|
+| 3 段 `draw_arc`（半径 `pos_radius×1.5`、宽 `0.3`、H=π/6、A0=V/120） | **有** | 弧侧 `0x4b32e2 test %r14b,%r14b` |
+| 3 个 `draw_polygon`（外凸箭头） | **无**（径向直方图 r>23.3 px 为 0） | 箭头侧 `0x4b2fc0 cmp [rax+rdx],ebx` / `0x4b2fc3 je 0x4b37f0`：id 不在 `[[rsp+0x120]+0x20]` 那张 `Vec<u32>` 里 ⇒ 整块跳过。**那张表是什么 = 未知** |
+
+⇒ 播放屏在回放分支：`set_ring` + `set_ring_base`（`V = base = _replay.tick()`）+ `show_ring_arrows = false`。
+`V` 的语义（`0x4b2e10 call 0x519530` = `get_fractional_tick`）与真帧反解出的 **558**
+（= 载入 tick，[`docs/06-verification.md`](06-verification.md) §63.0⑥ 的真机读数）独立吻合 —— 这也是"回放播放头就是那个 tick"的第三个旁证。
+
+**门没解出来之前只能按观测选**：环画给"回放里所有活着的士兵"（原版是 `get_alive` ∧ `is_on_turn`，
+回放侧没有 turn 状态源）。本样本 1 具士兵 ⇒ 与真帧一致；多士兵回放**可能多画**。
+环色 = 这具士兵自己的队色（`team_color` 只有一个 ⇒ 异色多士兵会同色，**我方化简**）。
+
+### 73.3 光标：3 px 落在哪里，以及"它为什么永远对不准"
+
+* **落点**：真帧 `x1182..1184 × y1066..1155`。左边界 = 文本 advance 的 x
+  ⇒ 引擎画的是 `Rect2(caret_x, top, 3, 90)`，**不是居中的 3 px 线**（旧实现画线 ⇒ `1181..1183`，偏 1 px）。
+  已改 `client/src/play/function_input.gd::_draw`。
+* **闪烁**：`recovered-src/play_screen.tscn` 的 `GraphwarFunctionInput` 节点上逐位写着
+  `caret_blink = true` + `caret_force_displayed = true` ⇒ 按引擎默认周期（`caret_blink_interval`
+  默认 **0.5 s**）闪。旧实现只在"归零"那一刻 `queue_redraw()`，而那一刻相位在"亮"的半周期
+  ⇒ **每次重画都画亮的**（看上去常亮、实际从不熄灭）。已按半周期翻边重画。
+* ⚠️ **相位逐运行随机**：同一台机、同一份冻结回放，**原版自己两轮**拿到的是两种帧
+  （一轮 `replay_play` 亮 / `replay_end` 灭；另一轮两屏都灭）。所以 `tools/frame_diff.py` 的
+  L3 `max|Δch| ≤ 8` 在这两屏上**没有可复现的解** —— 每轮约 1/2 概率多出 270 px / `max|Δch| = 238`。
+  这不是接线问题，**不去凑相位**（理由见 `docs/06` §71.5-B）。
+
+### 73.4 回放屏残余（客户端侧还没做的三件）
+
+逐块数字与理由见 `docs/06` §71.3 / §71.6，这里只记"改哪个文件"：
+
+| 项 | px | 动手的地方 |
+|---|---|---|
+| 修正常数标签偏右 17 px | 1 788 | `play_screen.gd::_replay_draw_shot` 的 `_offset_label.text` 与 `OffsetContainer` 的最小宽。**机制未知**，别按"凑像素"改 |
+| 名字标签的字形被 1.279× 放大糊掉 | ~1 100 | `play_screen.gd::_fit_canvas` 的 `Control.scale` 画布模型（拆掉它 = 六个类按实尺寸画，`PIXEL_OFFSET`/`PX_PER_UNIT`/`CURVE_SCALE` 三个绝对常量都要改成按 `size` 推） |
+| `f(x)=` 图标 77×27 → 81×30 | 636 | `play_screen.gd::build()` 的 `_fx_button`：原版结构是 `FxContainer → AspectRatioContainer(stretch_mode=1) → FxTextureButton`（`text` 九个空格 + `expand_icon = true`），T4 的简化把 AR 那层省了。**会改 FxContainer 最小宽 ⇒ 挪动已对齐的输入框文本**，没做 |

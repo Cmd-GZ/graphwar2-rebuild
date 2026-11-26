@@ -410,8 +410,13 @@ func _initialize() -> void:
 	# 下面几条把"现在不接"的**前提**钉住 —— 前提一变，断言就红，指回 §58.3 的落地顺序。
 	ok(src.contains("set_fractional_tick\", _curve_tick"),
 		"V（喂给 `GraphwarPlane`）的实参仍是 `_curve_tick`（帧 delta 累加）")
-	ok(src.contains("SOLDIER_HIT_RADIUS, _curve_tick"),
-		"V（喂给 `EntityDrawer.set_ring`）的实参仍是 `_curve_tick`")
+	# 2026-11-26（T21）语义更正：`EntityDrawer` 的 V/base 现在**分两条**——回放分支 =
+	# **回放播放头**（`_replay.tick()`，原版 `get_fractional_tick` 的镜像；真帧三段弧的方位
+	# `A0 = V/120` 反解出 V ≈ 558 = 载入 tick，见 `docs/06` §71），本地局分支仍 = `_curve_tick`。
+	ok(src.contains("SOLDIER_HIT_RADIUS, ring_v"),
+		"V（喂给 `EntityDrawer.set_ring`）的实参是 `ring_v`（回放 = 播放头 / 本地局 = `_curve_tick`）")
+	ok(src.contains("else _curve_tick"),
+		"`ring_v` 的本地局分支仍取 `_curve_tick`（帧 delta 那条钟没被删）")
 	ok(src.contains("seconds * CURVE_TICKS_PER_SECOND"),
 		"曲线仍按帧 delta 推（`_advance_curve(seconds)`），不是按 tick ⇒ 此刻接驱动就是两只钟并存")
 	ok(not src.contains("drive_frame"), "播放屏里**没有** `drive_frame` 调用（这条就是决策本身）")
@@ -420,10 +425,22 @@ func _initialize() -> void:
 	ok(writers.is_empty(),
 		"生产路径**没有**位置表/门的生产者（`client/src/**` 命中：%s）⇒ `EntityDrawer` 的 V 走代偿支、不读内核钟"
 			% [writers])
-	var t1_reached: bool = (not (src.contains("set_fractional_tick\", _curve_tick")
-			and src.contains("SOLDIER_HIT_RADIUS, _curve_tick"))) or not writers.is_empty()
+	# **T1 的 tripwire 按 §49.4 的定义改准**（原来是"两处里任一变了就算到"）：
+	# T1 = 「V 与 base **同时**改由内核钟供给」⇒ 三处实参**同时**换掉，或位置表出现生产写入者。
+	# 2026-11-26（T21）：`EntityDrawer` 的两处在**回放分支**换成了回放播放头，但
+	# ① `set_fractional_tick(_, _curve_tick)` 那一处**没动**；② 回放的钟是 `ReplayDriver`
+	# 自己的定步累加器，**不是** `KernelBus::drive_frame` ⇒ 按 §49.4 **T1 未到达**。
+	var t1_sources := 0
+	if not src.contains("set_fractional_tick\", _curve_tick"):
+		t1_sources += 1
+	if not src.contains("SOLDIER_HIT_RADIUS, _curve_tick"):
+		t1_sources += 1
+	if not src.contains("set_ring_base\", id, _curve_tick"):
+		t1_sources += 1
+	var t1_reached: bool = (t1_sources >= 3) or not writers.is_empty()
 	ok(not t1_reached,
-		"**触发条件 T1 未到达**：V 仍由 `_curve_tick` 供给 ⇒ 决策「不接」仍成立（红了先读 §58.3）")
+		"**触发条件 T1 未到达**（§49.4 三处同时换 / 位置表出现生产者）：已换 %d 处 ⇒ 决策「不接」仍成立"
+			% t1_sources)
 
 	# ---------------- 5.2 实测：内核钟推 60 格，画面**一位不变**；一旦 V 由它供给就**饱和** ----------------
 	# 探针 = 真 `EntityDrawer._draw` 发出去的弧（`last_arc()` 的 12 个实参；[3]/[4] = 起止角）。

@@ -459,20 +459,28 @@ func _initialize() -> void:
 	ok(polys_delta == 3 * draws_delta, "每次 _draw 发 3 个 draw_polygon（一具士兵三个外凸箭头）")
 	ok(int(drawer.call("last_arc_count")) == 3, "最近一次 _draw 的弧条数 == 3")
 
-	# 13.2 逐条对立即数。控件 500×300 ⇒ k = 500/50 = 10；
-	#      圆心 = (250 + 10·5, 150 − 10·5) = (300, 100)（与 sprite 同一条投影）。
+	# 13.2 逐条对立即数。⚠️ **2026-11-26（T21）语义更正**：原版把投影交给
+	#      `draw_set_transform`（`0x4b2af8`：`pos = size×0.5`、`scale = (mirror ? -k : k, -k)`、
+	#      `k = size.x/50`），所以 `draw_arc` / `draw_polygon` 收到的实参是**棋盘单位**：
+	#      圆心就是 `PosInfo` 的 `(5,5)`、半径 `= pos_radius×1.5 = 3.0`（**不是** 30 px）。
+	#      这里改的是**实参语义**（px → 棋盘单位），容差一个数没动；同时补一条断言钉住那条变换。
 	var k: float = W / 50.0
-	var center := Vector2(W * 0.5 + k * 5.0, H * 0.5 - k * 5.0)
-	print("      期望圆心 %s，半径 %.3f" % [center, RING_POS_RADIUS * RADIUS_SCALE * k])
+	var center := Vector2(5.0, 5.0)                       # = PosInfo 的 x/y 原值
+	var tf: PackedFloat64Array = drawer.call("last_transform")
+	print("      期望圆心 %s（棋盘单位）/ 半径 %.3f；变换 = %s" % [center, RING_POS_RADIUS * RADIUS_SCALE, tf])
+	ok(tf.size() == 4
+			and _near(tf[0], W * 0.5) and _near(tf[1], H * 0.5)
+			and _near(tf[2], k) and _near(tf[3], -k),
+		"draw_set_transform == 槽 0x9bc018 的实参 (size×0.5, 0, (k,−k))，k = size.x/50 = %.1f" % k)
 
 	var a0: PackedFloat64Array = drawer.call("last_arc", 0)
 	print("      arc0 = %s" % [a0])
 	ok(a0.size() == 12,
 		"last_arc(0) 返回 12 个数：cx, cy, r, start, end, 折点, 线宽, AA, r, g, b, a")
 	ok(_near(a0[0], center.x) and _near(a0[1], center.y),
-		"第 1 条 draw_arc 的圆心 == (%.1f, %.1f)（棋盘 (5,5) 的投影，k=10）" % [center.x, center.y])
-	ok(_near(a0[2], RING_POS_RADIUS * RADIUS_SCALE * k),
-		"半径 == pos_radius×1.5×k == 30 px（1.5 = 槽 0x1b9b98）")
+		"第 1 条 draw_arc 的圆心 == PosInfo 的 (%.1f, %.1f)（棋盘单位，变换负责投影）" % [center.x, center.y])
+	ok(_near(a0[2], RING_POS_RADIUS * RADIUS_SCALE),
+		"半径 == pos_radius×1.5 == 3.0 棋盘单位（1.5 = 槽 0x1b9b98）")
 	ok(_near(a0[3], -HALF_ANGLE_MIN) and _near(a0[4], HALF_ANGLE_MIN),
 		"第 1 条弧 start/end == ∓π/6（A0 − H / A0 + H：subsd 0x4b3620 / addsd 0x4b362c）")
 	ok(int(a0[5]) == ARC_POINTS, "point_count == 10（mov $0xa,%esi @0x4b3655/0x4b36e6/0x4b3773）")
@@ -494,13 +502,13 @@ func _initialize() -> void:
 	var p0: PackedVector2Array = drawer.call("last_polygon", 0)
 	print("      arrow0 = %s" % [p0])
 	ok(p0.size() == 3, "第 1 个箭头是 3 顶点多边形（原版走 draw_polygon）")
-	ok(_near(p0[0].x, center.x + k * RING_POS_RADIUS * RADIUS_SCALE)
+	ok(_near(p0[0].x, center.x + RING_POS_RADIUS * RADIUS_SCALE)
 			and _near(p0[0].y, center.y),
-		"尖端 == 圆心 + 30 px（θ = A0 = 0 ⇒ 落在 +x 方向）")
-	ok(_near(p0[0].distance_to(center), RING_POS_RADIUS * RADIUS_SCALE * k),
-		"尖端在半径 r 上（30 px = 3.0 棋盘单位 × k）")
-	ok(_near(p0[1].distance_to(center), (RING_POS_RADIUS * RADIUS_SCALE + ARROW_RADIUS_DELTA) * k),
-		"底边两点在 r + 0.5 上（35 px = 3.5 × k；0.5 是槽 0x19f6d0）")
+		"尖端 == 圆心 + 3.0 棋盘单位（θ = A0 = 0 ⇒ 落在 +x 方向）")
+	ok(_near(p0[0].distance_to(center), RING_POS_RADIUS * RADIUS_SCALE),
+		"尖端在半径 r 上（3.0 棋盘单位 = pos_radius×1.5）")
+	ok(_near(p0[1].distance_to(center), RING_POS_RADIUS * RADIUS_SCALE + ARROW_RADIUS_DELTA),
+		"底边两点在 r + 0.5 上（3.5 棋盘单位；0.5 是槽 0x19f6d0）")
 	ok(_near(absf((p0[1] - center).angle_to(p0[2] - center)), 2.0 * ARROW_HALF_SPREAD),
 		"底边张角 == 2×6° = 12°（槽 0x19fb68 / 0x19fc80）")
 
@@ -516,7 +524,7 @@ func _initialize() -> void:
 		"闭合态单段张角 == 2×61.5° = 123°（H 被 minsd 封顶到 1.0733774899765125）")
 	ok(_near((c0[3] + c0[4]) * 0.5, 60.0 / 120.0),
 		"中分角 == V/120 == 0.5（槽 0x19f620 = 120.0）")
-	ok(_near(c0[2], RING_POS_RADIUS * RADIUS_SCALE * k), "半径与 V 无关（仍是 30 px）")
+	ok(_near(c0[2], RING_POS_RADIUS * RADIUS_SCALE), "半径与 V 无关（仍是 3.0 棋盘单位）")
 
 	# 13.5 关掉准备态：一条都不再发（"该有的分支判断"）
 	arcs_before = int(drawer.call("drawn_arc_total"))
@@ -722,13 +730,13 @@ func _initialize() -> void:
 			"表驱动 ⇒ 画的是 id 升序 [0,1,2]（实际 %s）" % [drawn])
 		ok(int(pos_a.call("last_arc_count")) == 9, "3 具 × 3 段弧 == 9 条 draw_arc")
 
-		# 圆心 = 表里 (x,y) 的投影（k = W/50 = 10）；半径 = 表里 radius × 1.5 × k。
-		# 数据：id 0 (0,4,r=1) → 中心 (250,110)、半径 15；id 1 (−4,1,r=3) → (210,140)、45；
-		#       id 2 (2,−3,r=2) → (270,180)、30。
+		# 圆心 = 表里的 (x,y) **原值**（棋盘单位；投影交给 `draw_set_transform`，T21 语义更正）；
+		# 半径 = 表里 radius × 1.5（棋盘单位）。
+		# 数据：id 0 (0,4,r=1) → 中心 (0,4)、半径 1.5；id 1 (−4,1,r=3) → (−4,1)、4.5；
+		#       id 2 (2,−3,r=2) → (2,−3)、3.0。
 		var k_pos: float = W / 50.0
-		var want_centers := [Vector2(250.0, 110.0), Vector2(210.0, 140.0), Vector2(270.0, 180.0)]
-		var want_radii := [1.0 * RADIUS_SCALE * k_pos, 3.0 * RADIUS_SCALE * k_pos,
-			2.0 * RADIUS_SCALE * k_pos]
+		var want_centers := [Vector2(0.0, 4.0), Vector2(-4.0, 1.0), Vector2(2.0, -3.0)]
+		var want_radii := [1.0 * RADIUS_SCALE, 3.0 * RADIUS_SCALE, 2.0 * RADIUS_SCALE]
 		var centers_ok := true
 		var radii_ok := true
 		for e in range(3):
@@ -737,8 +745,8 @@ func _initialize() -> void:
 				centers_ok = false
 			if not _near(arc[2], want_radii[e]):
 				radii_ok = false
-		ok(centers_ok, "三条弧的圆心 == 表里 x/y 的投影（(250,110)/(210,140)/(270,180)），不是 set_ring 的 (0,0)")
-		ok(radii_ok, "半径 == 表里 radius×1.5×k（15 / 45 / 30 px）")
+		ok(centers_ok, "三条弧的圆心 == 表里 x/y 的原值（(0,4)/(−4,1)/(2,−3)），不是 set_ring 的 (0,0)")
+		ok(radii_ok, "半径 == 表里 radius×1.5（1.5 / 4.5 / 3.0 棋盘单位）")
 
 		# 表里有、准备态里没有 ⇒ 不画（门在起作用）
 		ok(bool(pos_a.call("pos_set_position", 7, 1.0, 1.0, 2.0)) == true,
@@ -780,9 +788,9 @@ func _initialize() -> void:
 		ok(int(pos_a.call("last_arc_count")) == 9,
 			"关掉位置表 ⇒ 仍按 prep 画 3 具（代偿路径保留，一条没删）")
 		var fb: PackedFloat64Array = pos_a.call("last_arc", 0)
-		ok(_near(fb[0], 250.0) and _near(fb[1], 150.0),
-			"代偿路径的圆心 == prep 里 (0,0) 的投影 (250,150)")
-		ok(_near(fb[2], 0.25 * RADIUS_SCALE * k_pos), "代偿路径的半径 == prep 的 0.25×1.5×k（3.75 px）")
+		ok(_near(fb[0], 0.0) and _near(fb[1], 0.0),
+			"代偿路径的圆心 == prep 里的 (0,0)（棋盘单位原值）")
+		ok(_near(fb[2], 0.25 * RADIUS_SCALE), "代偿路径的半径 == prep 的 0.25×1.5（0.375 棋盘单位）")
 		pos_a.set("pos_table_enabled", true)
 		await process_frame
 		await process_frame
@@ -866,14 +874,14 @@ func _initialize() -> void:
 	await process_frame
 	await process_frame
 	var k2: float = control.size.x / 50.0
-	var c_center := Vector2(control.size.x * 0.5 + k2 * 5.0, control.size.y * 0.5 - k2 * 5.0)
+	var c_center := Vector2(5.0, 5.0)        # 表里 (pos_x, pos_y) 的原值（棋盘单位）
 	var g0: PackedFloat64Array = drawer.call("last_arc", 0)
 	print("      内核链条 arc0 = %s" % [g0])
 	ok(int(drawer.call("last_arc_count")) == 3, "位置表 1 条 ⇒ `_draw` 发 3 段弧")
 	ok(g0.size() == 12 and _near(g0[0], c_center.x) and _near(g0[1], c_center.y),
-		"圆心 == 位置表的 (pos_x, pos_y) = (5,5) 的投影 (%.1f, %.1f)" % [c_center.x, c_center.y])
-	ok(_near(g0[2], RING_POS_RADIUS * RADIUS_SCALE * k2),
-		"半径 == 位置表的 pos_radius×1.5×k == 30 px（第 3 个 f64 就是半径）")
+		"圆心 == 位置表的 (pos_x, pos_y) = (%.1f, %.1f)（棋盘单位）" % [c_center.x, c_center.y])
+	ok(_near(g0[2], RING_POS_RADIUS * RADIUS_SCALE),
+		"半径 == 位置表的 pos_radius×1.5 == 3.0 棋盘单位（第 3 个 f64 就是半径）")
 	# 驱动量 V 来自 `GraphwarTickHandler::get_fractional_tick`（x86 0x519530）——
 	# 本局那个 tick handler 没推进过 ⇒ V = 0 ⇒ 张开态（∓π/6）。
 	ok(_near(g0[3], -HALF_ANGLE_MIN) and _near(g0[4], HALF_ANGLE_MIN),
@@ -886,14 +894,14 @@ func _initialize() -> void:
 	ok(bool(drawer.call("kernel_push_position", 0, 6.0, -3.0, 1.0)) == true,
 		"位置表改成 (6, -3, 1.0)")
 	ok(int(drawer.call("kernel_pump")) >= 1, "再来一次 pump")
-	var c2 := Vector2(control.size.x * 0.5 + k2 * 6.0, control.size.y * 0.5 - k2 * (-3.0))
+	var c2 := Vector2(6.0, -3.0)             # 表里新值的原值（棋盘单位）
 	await process_frame
 	await process_frame
 	var g1: PackedFloat64Array = drawer.call("last_arc", 0)
 	print("      覆盖之后 arc0 = %s" % [g1])
 	ok(_near(g1[0], c2.x) and _near(g1[1], c2.y),
 		"拉表把手工 set_ring 的 (-5,-5) 覆盖成位置表的 (6,-3)（%.1f, %.1f）" % [c2.x, c2.y])
-	ok(_near(g1[2], 1.0 * RADIUS_SCALE * k2), "半径也跟着变成 1.0×1.5×k == 15 px")
+	ok(_near(g1[2], 1.0 * RADIUS_SCALE), "半径也跟着变成 1.0×1.5 == 1.5 棋盘单位")
 
 	# 16.5 位置表清空 ⇒ 环自己消失（不需要调用方逐个 `clear_ring`）
 	ok(bool(drawer.call("kernel_push_position", 0, 0.0, 0.0, 1.0)) == true, "再写一格")
