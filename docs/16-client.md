@@ -11732,7 +11732,7 @@ last_transform() -> PackedFloat64Array   # [pos.x, pos.y, scale.x, scale.y]（ro
 
 ## 74. 客户端侧：对局屏 S7/S8 的**消费端**接线（id 空间 / 靶子 / 名字 / 队色 / `Fire!` 字号 / 右下偏移量）+ 回放光标的**节奏**（2026-11-26，任务 T26 / `task-23`）
 
-> 验收数字与逐块表在 `docs/06` §75（本节只写**客户端这边动哪个文件、为什么这么动、怎么复跑**）。
+> 验收数字与逐块表在 `docs/06` §76（本节只写**客户端这边动哪个文件、为什么这么动、怎么复跑**）。
 > 预注册判据：`fixtures/play_screen_final_targets.txt`（先于代码改动单独 commit）。
 
 **一句话**：T17 把 11 个事件处理器接进了 `GwNetEvents`，但**消费端没接** —— 播放屏交给
@@ -11788,7 +11788,7 @@ for node in get_children():
 * 我方 T21 的写法把它当"半周期"（`_caret_blink < 0.5 × 0.5`、回绕在 0.5）⇒ 周期 **0.5 s**，快一倍。
   本轮改回 1.0 s（`caret_on()` = `_caret_blink < CARET_BLINK_INTERVAL`、回绕在 `2 × interval`）。
 * **没有**改成常显：原版真帧**同屏内就有两态**（`replay_play_1` 灭、`_2/_3` 亮，差 270 px = 3×90 的光标矩形）
-  ⇒ "`caret_force_displayed = true` ⇒ 常显"这个推论**被实测推翻**（细节与两轮 sha 表见 `docs/06` §75.1）。
+  ⇒ "`caret_force_displayed = true` ⇒ 常显"这个推论**被实测推翻**（细节与两轮 sha 表见 `docs/06` §76.1）。
   若要常显，`caret_on()` 改成 `return true` 一行；代价是两屏各 +270 px（0.1858 % → 0.1979 %），已实测。
 
 ### 74.4 复跑（客户端侧最小集）
@@ -11800,7 +11800,7 @@ export HOME=$WT/.fakehome
 export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
 cd $WT
 
-# ① 新工作树第一次：必须 import（否则我方帧全空白，见 docs/06 §75.8 第 1 条）
+# ① 新工作树第一次：必须 import（否则我方帧全空白，见 docs/06 §76.8 第 1 条）
 $GODOT --headless --path client --import
 
 # ② 回放两屏（我方两轮，看光标稳定度）+ 两侧对拍
@@ -11809,7 +11809,7 @@ python3 tools/frame_capture.py --side ours --flow replay --seed-replays --out $W
 #   判据：6 张帧两轮 sha256 **逐字节相同**（本轮改后成立；改前 replay_end_3 两轮不同）
 
 # ③ 对局两屏（**必须**走私有 netns 包装器：宿主 UDP 42968 被别人泄漏占用时，
-#    直接跑会一直拍到 LAN 大厅；理由与包装器内容见 docs/06 §75.7/§75.8）
+#    直接跑会一直拍到 LAN 大厅；理由与包装器内容见 docs/06 §76.7/§76.8）
 bash .agent-work/cap_in_netns.sh --side original --flow match --out $WT/.agent-work/v/mo --display-num 196
 bash .agent-work/cap_in_netns.sh --side ours     --flow match --out $WT/.agent-work/v/mm --display-num 197
 python3 tools/frame_diff.py --orig $WT/.agent-work/v/mo --mine $WT/.agent-work/v/mm \
@@ -11817,7 +11817,7 @@ python3 tools/frame_diff.py --orig $WT/.agent-work/v/mo --mine $WT/.agent-work/v
     --blocks-out $WT/.agent-work/v/match_blocks.tsv --json $WT/.agent-work/v/match.json
 ```
 
-### 74.5 客户端侧的遗留（与 `docs/06` §75.5 同一张表，这里只列"动哪个函数"）
+### 74.5 客户端侧的遗留（与 `docs/06` §76.5 同一张表，这里只列"动哪个函数"）
 
 | 项 | 量 | 动哪里 |
 |---|---|---|
@@ -11825,5 +11825,5 @@ python3 tools/frame_diff.py --orig $WT/.agent-work/v/mo --mine $WT/.agent-work/v
 | 左上 返回/确认 两键的圆角与图标边缘 | 13 413 px | 那两颗键的 stylebox 底板 / 图标尺寸（不在本轮六项） |
 | 左右键盘字形 | 15 723 + 21 674 px | 字体栅格化（既知项，`docs/06` §59/§62） |
 | `f(x)=` 图标 636 px | 636 | `build()` 的 `_fx_button`：原版是 `FxContainer → AspectRatioContainer(stretch_mode=1) → FxTextureButton`，我方省了 AR 那层。**会挪动已对齐的输入框**，不做 |
-| 修正常数标签横向 10 px | ~1 100（两屏） | `OffsetContainer` 的容器几何 / 底栏 HBox 分配。本轮量准（17→10 px）并排除 LEFT 对齐、前导空格两条（见 `docs/06` §75.6） |
+| 修正常数标签横向 10 px | ~1 100（两屏） | `OffsetContainer` 的容器几何 / 底栏 HBox 分配。本轮量准（17→10 px）并排除 LEFT 对齐、前导空格两条（见 `docs/06` §76.6） |
 | 准备圈箭头 **3 个 vs 原版 2 个** | 环 ROI 内 | `show_ring_arrows` 开关 + `entity_drawer::entity_primitives` 的箭头条数（缺"条数由哪个量决定"的证据） |
