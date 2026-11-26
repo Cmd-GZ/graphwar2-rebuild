@@ -580,6 +580,9 @@ func build() -> void:
 	_fx_button.name = "FxTextureButton"
 	_fx_button.flat = true
 	_fx_button.icon = GwIcons.get_icon("fx_option")
+	# 原版 `FxTextureButton` 在 `.tscn` 里也写 `icon_alignment = 1`（CENTER，逐位）；
+	# FxContainer 只有 96 宽时两者等价，写出来是为了与 .tscn 一致。
+	_fx_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_fx_button.tooltip_text = "函数模式指示（Normal / DiffEq）"
 	_fx_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	fx_m.add_child(_fx_button)
@@ -708,6 +711,11 @@ func _build_replay_controls(node_name: String, icons: Array, vertical: bool) -> 
 		b.name = "GraphwarButton"
 		b.set_meta("observed_input_text", cmd)
 		b.icon = GwIcons.get_icon(String(icon_name))
+		# 原版 `.tscn` 里这六颗键**每一颗**都写 `icon_alignment = 1`（CENTER，逐位）。
+		# 对 96×96 的方键（左三颗）LEFT 与 CENTER 结果相同（图标被高度限制、内容左右各留 3），
+		# 但右三颗是 **337 宽**的横条：LEFT 会把图标甩到左边 61 px（实测真帧图标居中在
+		# x1708..1794，我方改前 1647..1733）⇒ 三颗键各错 ~7 200 px。
+		b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.tooltip_text = "原版命令键：%s" % cmd
 		if playback:
@@ -1413,6 +1421,8 @@ func _sync_entities() -> void:
 			"pos": s.pos,
 			"name": (String(s.name) if _show_names else ""),
 			"dead": (-1 if alive else ENTITY_DEAD_TICKS),
+			"actor_id": int(s.get("id", i)),   # 回放的实体 id（外观表按它索引）
+			"color": s.get("color", Color.WHITE),   # 名字标签的笔画色（队色）
 		}
 	for t in _view_targets():
 		want[int(t["id"])] = {"pos": t["pos"], "name": "", "dead": -1}
@@ -1427,6 +1437,11 @@ func _sync_entities() -> void:
 		var p: Vector2 = e["pos"]
 		_entities.call("spawn_entity", id, p.x, p.y)
 		_entities.call("set_entity_name", id, String(e["name"]))
+		# 名字的颜色 = **这个实体自己的队色**（真帧：士兵名 `cmdgz` 笔画色 (125,104,0) =
+		# 它 `ColorInfo` 的颜色，逐值相同）。**我方接线**：原版这条颜色的来源未解
+		# （见 `EntityDrawer::set_entity_name_color` 的文档）。
+		if String(e["name"]) != "" and e.has("color"):
+			_entities.call("set_entity_name_color", id, e["color"])
 		_entities.call("set_entity_dead_ticks", id, int(e["dead"]))
 		_drawn_entities[id] = true
 		# ---- 外观（`docs/16` §44）：原版由 `set_{skin,face,hat}_graphics` 的 51/53/55 事件喂
@@ -1444,10 +1459,12 @@ func _sync_entities() -> void:
 			# （yellow/regular_eyes/soldier_helmet）⇒ 真帧对拍会差一整个精灵。
 			# ⚠️ 这是**我方接线**：原版由 `GraphwarGraphicsManager` → `EntityDrawer` 的
 			# `set_{skin,face,hat}_graphics` 事件写表（`docs/16` §44.0），那条链路还没接。
-			var sk := String(_replay.graphics("skin", id))
+			var actor_id := int(e.get("actor_id", id))
+			var sk := String(_replay.graphics("skin", actor_id))
 			if sk != "":
 				_entities.call("set_entity_look", id, sk,
-					String(_replay.graphics("face", id)), String(_replay.graphics("hat", id)))
+					String(_replay.graphics("face", actor_id)),
+					String(_replay.graphics("hat", actor_id)))
 	# ---- 准备圈：**填 `prep` 表**（`docs/16` §50.6）----
 	#
 	# 原版 `EntityDrawer::draw`（`0x4b2890`）只画 `prep` 哈希表里的实体，而填表的是
@@ -2519,6 +2536,12 @@ func _replay_sync_actors() -> void:
 		if bool(a.is_target):
 			continue            # 靶子走 `set_targets()`（与原版一样是独立图层，docs/131）
 		list.append({
+			# ⚠️ **回放的实体 id**（本样本士兵 = 230）。以前这里没带出去，`_sync_entities()`
+			# 拿**下标**（= 0）去问 `_replay.graphics("skin", 0)` ⇒ 永远空串 ⇒ 士兵一直用
+			# `spawn_entity` 的默认三件套（yellow/regular_eyes/soldier_helmet），而回放录下来的
+			# 是 `face_paint_2/asian/asian_hat`。真帧对拍差的是**整个精灵**（改前士兵彩色
+			# 521 px / 26×26，原版 1811 px / 73×72）。
+			"id": int(a.id),
 			"name": String(a.name),
 			"pos": a.pos,
 			"alive": bool(a.alive),

@@ -428,6 +428,16 @@ fn new_name_label() -> Gd<RichTextLabel> {
         &style.upcast::<godot::classes::StyleBox>(),
     );
     label.set_theme(&theme);
+    // 描边：**观测**（真帧上名字是"队色笔画 + 黑描边"，`orig` 帧士兵名 `cmdgz` 的笔画色
+    // (125,104,0) = 该士兵 `ColorInfo` 的颜色，笔画四周是黑）。RichTextLabel 的描边由
+    // `outline_size`（constants）+ `font_outline_color`（colors）两个 theme 项给；
+    // **数值是推断**：4 取自同一份 `.tscn` 里 `ViewFunctionsLabel` 用的 `[outline_size=4]`
+    // （同一工程的描边惯例），缺的证据是 `Graphwar` 侧给 name_label 设描边的**那条调用**。
+    label.add_theme_constant_override(&StringName::from("outline_size"), 4);
+    label.add_theme_color_override(
+        &StringName::from("font_outline_color"),
+        Color::from_rgba(0.0, 0.0, 0.0, 1.0),
+    );
     label
 }
 
@@ -1135,10 +1145,18 @@ impl EntityDrawer {
                 None => 1.0,
                 Some(ticks) => entity_drawer::death_alpha(ticks),
             };
-            let label_size = entity.name_label.clone().get_size();
+            //
+            // ⚠️ **第 1 个实参是"控件尺寸"，不是标签自己的尺寸**（2026-11-26 更正）：原版
+            // `update_name_label` 的 `k = label_size.x / 50` 是**棋盘单位 → 像素**的比例，
+            // 只能来自 `EntityDrawer` 自己的 `get_size()`（1000×600 ⇒ k = 20）；公式后两行
+            // 把结果夹进 `[0, w − mw]` 也只有在 `w` = 控件宽时才有意义（`tests/entity_drawer.rs`
+            // 那条 `name_label_layout_matches_update_name_label_arithmetic` 传的就是控件尺寸
+            // 500×300）。以前这里把 `name_label.get_size()`（58×40）当第一个实参 ⇒ k = 1.16、
+            // `cx` 被夹到 0 ⇒ 名字标签被摆到控件**左上角**（实测 `pos=(0, 14.7)`），
+            // 于是士兵头上没有 `cmdgz`（真帧：标签在 (772,783)–(842,854)）。
             let min_size = entity.name_label.clone().get_minimum_size();
             let layout = entity_drawer::name_label_layout(
-                BoardVec2::new(label_size.x as f64, label_size.y as f64),
+                BoardVec2::new(size.x as f64, size.y as f64),
                 BoardVec2::new(min_size.x as f64, min_size.y as f64),
                 packed,
                 board.x,
@@ -1176,6 +1194,27 @@ impl EntityDrawer {
             entity.name_label.clone().set_text(&name);
         }
         self.relayout();
+    }
+
+    /// 给某个实体的名字标签**上色**（队色）。
+    ///
+    /// 真帧观测：士兵名 `cmdgz` 的笔画色 = **(125,104,0)**，与这名士兵 `ColorInfo` 的
+    /// 颜色逐值相同（`_soldiers[i]["color"]`）⇒ 名字用的是**这个玩家自己的队色**，不是
+    /// `EntityDrawer` 那个全局 `team_color`。
+    ///
+    /// ⚠️ **我方接线**（推断）：原版这条颜色从哪来没解出来（`update_name_label` 的算术只
+    /// 产出 modulate 的 alpha，RGB 恒 1；颜色更可能是建 label 时按实体设的 theme override，
+    /// 或者由 graphics/color 事件链写进标签）。缺的证据：`get_entity_name_label`
+    /// （x86 `0x4bb…`）里对 `RichTextLabel` 的颜色/描边 theme 项的写入指令。
+    #[func]
+    fn set_entity_name_color(&mut self, id: i64, color: Color) {
+        let Some(entity) = self.entities.get(&id) else {
+            return;
+        };
+        entity.name_label.clone().add_theme_color_override(
+            &StringName::from("default_color"),
+            color,
+        );
     }
 
     /// 设置"死了多少刻"（`None` 等价 = 还活着），返回这一帧的名字标签不透明度。
