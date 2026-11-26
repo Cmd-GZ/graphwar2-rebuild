@@ -17366,3 +17366,256 @@ for f in assemble_check base_classes_check curve_on_screen_check draw_classes_ch
 * 判据的**口径边界**（可能漏什么）：纯静态判据，只看文本与局部数据流，**不看跑起来会不会红**。
   `C3-frozen` 里仍可能混着"抄错的常量"（恒真）；`R3-two-ours` 用正则识别"两边都不像字面量"，
   可能把"观测值 vs 有出处的字面量"误判成 M（**偏严**，宁多报 M 不漏 M）。
+
+## 101. 回放屏「回归」裁决：**0.1858 % 是真的、不是空画面**；master 的 2.710 % 是**真回归**，窗口已收窄到 `(a3ed8c7, 5f74a29]`，差异 = **右三键列整体下移 48 px**（2026-11-26，任务 T51 / `task-48`）
+
+> 前情：`docs/06` §71（任务 T21）记录 `replay_play` 4 408 px = 0.1979 %、`replay_end` 4 138 px = 0.1858 %（L2 **0** 块）。
+> 2026-11-26 lead 用**带 seed** 的口径（`--flow replay --seed-replays`）在 master 上重测得 `replay_play` **2.710 %**（L2 2 块），
+> 差 14.6 倍。而 `--flow replay` **不带** `--seed-replays` 时两侧都停在空回放列表（亮像素 0.0 %）⇒ `frame_diff` 给**假 0 px**
+> （`tools/frame_capture.py` 已加硬闸）。所以先要判：0.186 % 那次是不是也是空画面？
+>
+> 分支 `agent/replay-regress`，工作树 `.agent-work/cg/wt-t51`（基 `5f74a29`）。**本轮零生产代码改动**：只交
+> `fixtures/replay_regression_bisect.tsv` 与本节的读数。采集全部走私有 `bwrap --unshare-net`、两侧**串行**。
+
+### 101.0 一页结论
+
+| 问题 | 结论 | 档 |
+|---|---|---|
+| 0.1858 % 那次是不是空画面？ | **不是**。在 `57f5266`（T21 记录点）上用**同一套带 seed 的配方**跑出 `replay_end` **4 138 px / 0.1858 %**、`replay_play` **4 408 px / 0.1979 %** —— 与 §71 的表**同值**；两侧 `replay_play_1` 亮像素 **52.5 %**（空画面是 0.0 %） | **观测**（真机真帧 + 逐像素复现） |
+| 那 2.710 % 是真回归吗？ | **是**。同一配方下 `a3ed8c7`(T29) **1 714 px / 0.077 %** → `5f74a29`(HEAD) **60 367 px / 2.710 %**，L2 从 **0 块**变 **2 块**（+34.2 倍） | **观测** |
+| 回归窗口 | **`(a3ed8c7, 5f74a29]`** —— 即 T31…T50 这一段；`a3ed8c7` 及更早是好的 | **观测**（3 个点，见 101.2） |
+| 2.710 % 是什么 | **60 367 px 里 59 511 px（98.6 %）是右三键列**（`RightControls/RightReplaysButtonsGrid` 的三颗 `save_screenshot`/`save_summary`/`save_clip`）**整体下移 48 px**；剩 **856 px** 是士兵名字标签那块**既有残差** | **观测**（bbox + 逐块，见 101.3） |
+| 归到哪一层 | **容器布局层**（不是绘制层、不是数据层）：三颗按钮的**尺寸/图标/颜色/左右边全对**，只有 `y` 差一个恒定 48 px | **观测**；48 的来源 = **推断**（见 101.3-C 缺什么） |
+| 修了吗 | **没修**。lead 收尾令；本轮把病灶收窄到一个容器 + 一个常量级偏移，并给出下一步的判据（101.4） | — |
+
+### 101.1 复现 0.1858 %（这一步是整节的**正对照**）
+
+若"带 seed 的配方"复现不出历史读数，那 101.2 的整张表都不能用。所以先做这一条：
+
+```bash
+# 工作树 = 57f5266（T21 记录点，加 seed；两侧串行，私有 netns）
+git worktree add -f --detach <TMP>/b6_t21 57f5266
+# 该点的 .so 必须是**它自己的构建**（这是本轮踩到的坑，见 101.5）：
+touch src/*.rs src/_scaffold/*.rs Cargo.toml && cargo build --offline --features gdext-bindings
+md5sum $CARGO_TARGET_DIR/debug/libgw2_rebuild.so     # 8b10056c8ac5d46bcc6637a23f9320f6
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/ && $GODOT --headless --path client --import
+bwrap --unshare-user --unshare-net --uid 0 --gid 0 --ro-bind / / --bind $MAIN $MAIN \
+  --dev /dev --proc /proc --tmpfs /tmp --setenv DISPLAY 127.0.0.1:213 --chdir <TMP>/b6_t21 \
+  python3 tools/frame_capture.py --side ours --flow replay --seed-replays --out <OUT> --display-num 213
+python3 tools/frame_diff.py --orig <ORIG> --mine <OUT> \
+  --screens menu,replay_lobby,replay_play,replay_end --out fd.tsv --blocks-out fdb.tsv --json fd.json
+```
+
+结果（`fixtures/replay_regression_bisect.tsv` 第 1 行）：
+
+```text
+replay_play  不过（L3）  4408 px = 0.1979 %  L2 0 块（worst block (3,3) dmean 0.692）  bbox 169,447..1901,1155
+replay_end   不过（L3）  4138 px = 0.1858 %  L2 0 块（worst block (2,2) dmean 0.42）   bbox 169,447..1901,1127
+menu 0 px ｜ replay_lobby 0 px ｜ 噪声地板：原版 0.000 % / 我方 0.012 %
+```
+
+**与 §71 的两行数字逐位相同**（4 408 / 0.1979、4 138 / 0.1858）⇒
+① 那次测量**确实带了 seed**（否则会是 0 px）；② 今天的管线与他那天**同口径**；③ `menu`/`replay_lobby` 两个旁证屏也是 0 px。
+⇒ **"0.186 % 是空画面造成的"这个假设被证伪**。
+
+### 101.2 bisect 表（实测的 3 个点 + 1 个作废点 + 4 个未测点）
+
+完整表（含配方、md5、逐点备注）= `fixtures/replay_regression_bisect.tsv`。摘要：
+
+| merge 点 | commit | 任务 | `replay_play` | L2 超限块 | `replay_end` | 备注 |
+|---|---|---|---|---|---|---|
+| `57f5266` | — | T21（§71 记录点） | 4 408 px / **0.1979 %** | **0** | 4 138 px / **0.1858 %** | 历史读数**逐像素重现** |
+| `a3ed8c7` | — | T29（自报"回放两屏归零"） | 1 714 px / **0.0770 %** | **0** | 1 714 px / 0.0770 % | 带 seed 实测**不是 0**，但比 T21 更小 ⇒ 这一段**变好** |
+| `d4fdf32` | — | T46 | **作废** | — | 作废 | 我方侧黑画面（亮像素 0.0 %）：陈旧 `.so` ⇒ `play_screen.gd` 解析失败（101.5） |
+| `0fa7370` | — | T43 | 未测 | — | 未测 | 收尾令停手 |
+| `564d558` | — | T44（`play_screen.tscn` 装上） | 未测 | — | 未测 | **头号嫌疑点**（见下） |
+| `bdceaa2` | — | T47（16/16 tscn） | 未测 | — | 未测 | 2.710 % 在此点**首次被报出** |
+| `5f74a29` | — | HEAD（lead 的基线） | 60 367 px / **2.7104 %** | **2** （(1,5)+(2,5)，dmean 4.713） | 60 367 px / 2.7104 % | lead 的 2.710 % 复现 |
+
+**两条判读**：
+
+1. **T29 的"归零"是错的，但方向对**：T29 的收口记录写「`replay_play`/`replay_end` 归零（0.186–0.198 % → **0 px**）」；
+   带 seed 实测是 **1 714 px**。那次归零是**缺 seed 的假通过**的第一次出现（比 T44 那次更早），
+   1714 px 这个数在 T44 的报告里也出现过（"1714px 残差真因=平面缺 clip_contents"）—— 两处指同一批像素。
+2. **回归窗口 = (T29, HEAD]**。T44 报的「**回放四屏全部 0.000 %**」同样是缺 seed 的假通过，
+   所以「T47 首次报出 2.710 %」**不等于**「T47 首次发生」—— 真凶在 T31…T47 之间，
+   而其中**唯一整体替换了 `play_screen` 节点树的 merge 是 T44**（`client/scenes/screens/play_screen.tscn`
+   12 行存根 → 780 行原版逐字节 + `play_screen.gd` 重写 1328 行）。**下一步就从 T44 开始验**（101.4）。
+
+### 101.3 2.710 % 的归属：**右三键列下移 48 px（59 511 px，98.6 %）+ 名字标签既有残差 856 px**
+
+#### 101.3-A 逐块（`--blocks-out`，6 列 × 4 行，每块 320×290）
+
+只有 4 个块非零，**全部在第 5/6 列（x ≥ 1583）**：
+
+| 块 (row,col) | 块内 bbox | diff px | dmean | L2 超限 |
+|---|---|---|---|---|
+| (1,4) | (303,143)-(319,289) | 1 260 | 0.075 | 否 |
+| **(1,5)** | (0,143)-(319,289) | **25 158** | **4.713** | **是** |
+| (2,2) | (130,202)-(204,230) | 856 | 0.474 | 否 |
+| (2,4) | (303,0)-(319,196) | 1 466 | 0.075 | 否 |
+| **(2,5)** | (0,0)-(319,196) | **31 627** | **4.713** | **是** |
+| 其余 19 块 | — | **0** | 0.0 | 否 |
+
+#### 101.3-B ROI（人工框，`d>0`，1 帧 = 2 227 200 px）
+
+| ROI | diff px | 占该 ROI |
+|---|---|---|
+| 右三键列 `x∈[1583,1919] y∈[429,782]` | **59 511** | **50.03 %** |
+| 实体/名字区 `x∈[760,860] y∈[770,820]`（块 (2,2)） | **856** | 17.12 % |
+| 棋盘 `(303,198)-(1576,960)`（整块） | 856 | 0.088 % ← 就是上面那 856 px，棋盘本身**一个像素都没差** |
+| 左三键 `x∈[0,300] y∈[560,690]` | **0** | 0 % |
+| 底行 `y∈[1040,1160]`（`f(x)` / 修正常数） | **0** | 0 % |
+| 顶栏 `y∈[0,200]`（左上两键 + 右上四键） | **0** | 0 % |
+| 整屏 | **60 367** | 2.7104 % |
+
+几何量出来的**病根**（真帧，逐键量 `非背景` 行段）：
+
+```text
+                  y 行段（三颗各 96 高、步距 100）          结论
+原版 replay_play   433..528 / 533..628 / 633..728          垂直居中后落在 433
+我方 replay_play   481..576 / 581..676 / 681..776          同样三颗，**整体 +48 px**
+```
+
+三颗按钮的 **宽（337）、高（96）、步距（100）、左边界（1583）、右边界（1919）逐项相同**，
+连图标（`save_screenshot`=带角标的图片 / `save_summary`=层叠方块 / `save_clip`=胶片）也一样 ——
+**所以这不是绘制层也不是数据层，是容器布局层的一次恒定平移。**
+
+#### 101.3-C 归属：`RightControls` 的**垂直余量分配**，不是三颗按钮本身
+
+`client/scenes/screens/play_screen.tscn` 与 `recovered-src/play_screen.tscn` **逐字节相同**（`cmp` 过，本轮复核），
+所以树是原版的。原版这棵树的右列是：
+
+```text
+RightControls (VBoxContainer)
+├── HBoxContainer                     ← Fire 行（回放屏里可见=假 但**留行高**）
+├── MarginContainer     size_flags_vertical = 3   ← 弹性间隔 1
+├── RightButtonGrid                  （回放屏 visible=false，键盘）
+├── RightReplaysButtonsGrid          （回放屏 visible=true，右三键）
+└── MarginContainer2    size_flags_vertical = 3   ← 弹性间隔 2
+```
+
+两个 `size_flags_vertical = 3` 的间隔把"Fire 行以下的余量"**均分** ⇒ 三颗按钮的 `y` 是
+`(列高 + Fire 行高)/2 − 148` 量级的一个**居中量**。设列高 `H`、Fire 行高 `f`、三键组高 296、两条 separation = 4：
+
+```text
+三键 y = f + 4 + (H − f − 296 − 12)/2 + 4
+原版：y=433 ⇒  H + f ≈ 1162     （与 §71.2 记的「PlayMainHBox y=0..1058 + 底行 1062..1160」自洽）
+我方：y=481 ⇒  H + f ≈ 1258     ⇒ 比原版多 96 px
+```
+
+**多出来的正好是 96（= 一个按键行高）**，而平移量 48 = 96/2（居中分配把余量差摊一半）——
+这解释了为什么是"恒定 48 px 而不是尺寸变化"。
+
+**候选（按可能性排序，本轮**未定案**）**：
+① `RightControls/HBoxContainer`（Fire 行）：我方 `_set_replay_layout()` 用 `_fire_parts`（`ClipButton`/`FireButton`）
+   `visible=false` + `custom_minimum_size = Vector2(0, key)`（`key = w*0.15/3 = 96`）来"藏按钮、留行高"。
+   装真 `.tscn` 之后 Fire 行的**天然最小高**可能已经不等于 96（`FireContainer.gd` 的 `min.x = x*0.07` / 字号规则），
+   而这套"补丁"是**为手搭树写的**（T44 之前的树），两者叠加可能变成 ~196 px（= 96 + 100，正好能解释 H+f 多 96）。
+② `RightControls/MarginContainer` / `MarginContainer2` 的余量分配被我方其它写点改过
+   （如 `_replay_right.size_flags_vertical = Control.SIZE_FILL`）。
+③ 原版控制器在回放屏是**换掉 `RightReplaysButtonsGrid` 的父级尺寸策略**而不是"藏 Fire 按钮" ——
+   这一条**没有指令级证据**（原版回放版式的实现在 `GraphwarPlayScreenControl` 的 Rust 里，未解到那一段）。
+
+**缺什么证据**：`_set_replay_layout()` 里那三行（`_fire_row.custom_minimum_size` / `f._fire_parts` /
+`_replay_right.custom_minimum_size`）**一条都指不到原版指令**，全是"照真帧凑出来的补丁"（§53/§71 已这么记）。
+要定案，下一步应当：① 在真引擎里 dump 这 5 个节点的 `rect`（见 101.4 的命令），确认是 Fire 行还是间隔；
+② 到 `0x3c6f40`（`GraphwarReplayScreenControl::process`）附近找"回放版式"那段的字段写入。
+
+### 101.4 没修的 + 下一步（收尾令停手；判据已经给好）
+
+**本轮没有改任何生产代码** —— 只交 `fixtures/replay_regression_bisect.tsv` 与本节。下一步按这个顺序做：
+
+1. **验 T44（`564d558`）**：`git worktree add` 到该点，**每树独立 `CARGO_TARGET_DIR`**（见 101.5），
+   跑 `--flow replay --seed-replays` 两侧。
+   - 若该点 ≫ 1714 px ⇒ 回归就是 T44（`play_screen.tscn` 装 + `play_screen.gd` 重写），
+     病灶在 101.3-C 的三行补丁里；
+   - 若该点仍 ≈ 1714 px ⇒ 回归在 T45…T50（`0fa7370`/`bdceaa2`/`5f74a29` 继续二分）。
+2. **dump 真布局再动手**（不要靠猜）。`--script` 模式**不加载 autoload**（`play_flow_check.gd` 头部已记），
+   所以端到端 dump 要走 **selftest 那条路**（`tools/selftest.gd` 里 `_test_play_flow` 能拿到真屏），
+   或者临门一脚在 `_set_replay_layout()` 末尾挂一帧 `call_deferred` 打印这 6 个节点的 `get_global_rect()`，
+   采一次帧读 `game.log`，**验完就删**（本轮写过这样的探针，但 `--headless --script` 下根窗口是 100×100、
+   量不到 1920×1160 的真实布局，所以没写进结论）。
+3. **修**：目标是 `replay_play`/`replay_end` 回到 **≤1 714 px（0.077 %）** 且 L2 **0 块**，
+   判据 = 三颗按钮 `y` 行段回到 `433..528 / 533..628 / 633..728`（±1 px），
+   并且 `menu`/`replay_lobby`/`match_ready 0.081 %`/`match_play 0.385 %`/结算框面板区 **0 px** 一个都不许变差。
+4. 顺手把 `docs/06` §79.6 与 T29/T44 两处「回放两屏归零」的旧结论**就地改正**为"带 seed 下 1714 px（T29 实测）"
+   —— 本轮**没改**它们（不在允许改的范围内，见下）。
+
+**允许改 / 没改的边界**：本轮按 `task-48` 的写作用域只碰了
+`fixtures/replay_regression_bisect.tsv` 与本节；`client/**`、`src/**`、门槛/护栏、其它 screens **一行未动**。
+
+### 101.5 本轮新踩的坑：**共享 `CARGO_TARGET_DIR` 跨 worktree ⇒ `cargo build` 静默不重建 ⇒ 陈旧 `.so`**
+
+这是 AGENTS「改了但没生效」那三条的**第四例**，而且它会把 bisect **测成假数**：
+
+* 现象：给 7 个 `git worktree`（同一 `CARGO_TARGET_DIR`）逐个 `cargo build`，**每个都 `Finished in 0.01s`**
+  ⇒ 7 棵树里 `client/libgw2_rebuild.so` 是**同一个 md5**；
+* 后果 1：`d4fdf32` 那棵树跑我们的客户端时 `play_screen.gd` **Parse Error**（`Cannot infer the type of "can_fire"`）、
+  `GraphwarRootNode` 缺 `log()`（`log()` 是 **T33 `83f8fc0`** 才加的）⇒ 装的是**比 T33 还早**的内核；
+* 后果 2：客户端起不来 ⇒ 我方侧整屏黑（亮像素 **0.0 %**）⇒ `frame_diff` 报 **59.99 %** 的**假巨大差异**。
+  （反向的假通过是"两侧都空"，这里是"单侧空"，同样漂亮、同样假。）
+* 修法：**每个点 touch 一遍源码再 build，并核对 `.so` md5 变了**：
+  ```bash
+  touch src/*.rs src/_scaffold/*.rs Cargo.toml
+  cargo build --offline --features gdext-bindings
+  md5sum $CARGO_TARGET_DIR/debug/libgw2_rebuild.so   # ← 必须与本树上一轮不同（除非真是同一个 commit）
+  ```
+  更稳的是**每树独立 `CARGO_TARGET_DIR`**（代价是依赖要重编）；
+* 佐证本轮读数没被它污染的判据：`57f5266` 与 `a3ed8c7` 两个点在**强制重建后 md5 分别为
+  `8b10056c…` / `ca7bd519…`**，且 `a3ed8c7` 在"陈旧 .so"与"正确 .so"两次采集下**同值**（1714 px）。
+* 同类陷阱再记一条：**`pkill -f frame_capture.py` 会杀掉自己那条 bash**（`-f` 匹配到自己的命令行，
+  rc=143 静默退出）—— 收尾清进程时用 `pkill -f 'tools/frame_capture\.py --side'` 之类更具体的模式。
+
+### 101.6 复跑命令（照抄；**私有 netns + 两侧串行 + 每树独立/强制重建的 .so**）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export TMP=$MAIN/.agent-work/cg/wt-t51-bisect        # 任选可写目录
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+
+git -C $MAIN worktree add -f --detach $TMP/b6_t21 57f5266
+cd $TMP/b6_t21
+export CARGO_TARGET_DIR=$TMP/b6_t21/.target          # ⚠️ 每树独立，别共享
+touch src/*.rs src/_scaffold/*.rs Cargo.toml
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+$GODOT --headless --path client --import
+
+CAP() {  # CAP <side> <out> <display>
+  bwrap --unshare-user --unshare-net --uid 0 --gid 0 --ro-bind / / --bind $MAIN $MAIN \
+    --dev /dev --proc /proc --tmpfs /tmp \
+    --setenv __EGL_VENDOR_LIBRARY_FILENAMES /usr/share/glvnd/egl_vendor.d/50_mesa.json \
+    --setenv LIBGLX_VENDOR_LIBRARY_NAME mesa --setenv LIBGL_ALWAYS_SOFTWARE 1 \
+    --setenv GALLIUM_DRIVER llvmpipe --setenv DISPLAY 127.0.0.1:$3 --chdir $(pwd) \
+    python3 tools/frame_capture.py --side $1 --flow replay --seed-replays --out $2 --display-num $3
+}
+CAP original $TMP/o 211        # 原版侧：各点可复用（二进制固定、点击串在 57f5266..5f74a29 未变）
+CAP ours     $TMP/m 212        # 我方侧：**每个点都要重采**；两次**别并行**
+python3 tools/frame_diff.py --orig $TMP/o --mine $TMP/m \
+    --screens menu,replay_lobby,replay_play,replay_end \
+    --out $TMP/fd.tsv --blocks-out $TMP/fdb.tsv --json $TMP/fd.json
+# 期望：57f5266 → replay_play 4408/0.1979 %(L2 0)、replay_end 4138/0.1858 %(L2 0)
+#       a3ed8c7 → 1714/0.0770 %(L2 0)
+#       5f74a29 → 60367/2.7104 %(L2 2)
+python3 -c "import json;d=json.load(open('$TMP/fd.json'));print(d)"   # 三层判据原文
+```
+
+### 101.7 遗留 / 我写错了 / 规格前提被证伪
+
+* **规格前提被证伪（对 lead）**：`task-48` 的规格在 §2① 里把 0.1858 % 当作"待判真假"，
+  并建议先二分 `f6440ef/bdceaa2/564d558/0fa7370/d4fdf32`（全是**最近 5 个 merge**）。
+  实测真凶在**更早**：`a3ed8c7`(T29) 就已经只有 1714 px、`57f5266`(T21) 是 4408 px ⇒
+  **按规格给的那 5 个点二分只能得到"每点都 2.6–2.8 %"的假结论**，会误判成"回归不存在"。
+  规格里"若每点都 2.6–2.8 % ⇒ 回归不存在"这个分支**只有在 `a3ed8c7` 也测了才成立**。
+* **没做完**：`0fa7370`(T43) / `564d558`(T44) / `bdceaa2`(T47) 三个点没测（收尾令）；
+  `d4fdf32`(T46) 因陈旧 `.so` 作废，需按 101.5 重跑。
+* **没有一条修复**：本轮**零生产代码改动**。三颗按钮与 48 px 的病根**指到了一行级的怀疑对象**
+  （`_set_replay_layout()` 的 `_fire_row.custom_minimum_size` / `_fire_parts` 那三行），
+  但**没有**指令级证据，按 §0.3 只能标 **推断**。
+* **门槛读数**：因为**没改代码**，本轮**没有**重跑 `cargo test` / `selftest` / headless / 三轴
+  （不是"跑过了"。声称不变动的依据是 `git status` 只多出 `fixtures/replay_regression_bisect.tsv` 与本节）。
+* **一处口径提醒**：lead 记的 `replay_end` **2.723 %** 与本轮 `5f74a29` 的 **2.7104 %** 是两次独立采集
+  （同一屏同一量级，差 0.013 pp = 约 280 px，量级上等于光标闪烁相位那类的逐运行方差，§71.5-B 记过）。
+  引用时以同一次采集的 **2.7104 %** 为准。
