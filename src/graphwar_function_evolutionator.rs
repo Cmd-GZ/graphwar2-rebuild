@@ -407,8 +407,30 @@ impl Phase {
     }
 }
 
-/// 一次评分的三个分量，逐字段对应评分核心的 sret 结构体
-/// （写回点 `0x51b10d` / `0x51b11d` / `0x51b111` / `0x51b114`）。
+/// 一次评分的 **4 个分量**，逐字段对应评分核心的 **24 字节 sret 结构体**。
+///
+/// **`逐位` 判据（2026-11-26，T32 复核）**——评分核心 `0x51a750` 对 sret 指针 `%rcx`
+/// 的四个写回点，就是四个字段的偏移与宽度：
+///
+/// ```text
+/// 0x51b10d  movsd  qword ptr [rcx],      xmm1   ; +0x00  f64  = score
+/// 0x51b11d  movsd  qword ptr [rcx + 8],  xmm0   ; +0x08  f64  = dist
+/// 0x51b111  mov    dword ptr [rcx + 0x10], eax  ; +0x10  u32  = hits
+/// 0x51b114  mov    dword ptr [rcx + 0x14], esi  ; +0x14  u32  = esi（见下）
+/// 0x51b122  add    rsp, 0x168                    ; 函数尾：sret 由调用方提供
+/// ```
+///
+/// **尺寸上下界夹逼**（`推断` 档，T32）：
+///
+/// * 下界：最后一个写回是 `[rcx+0x14]` 宽 4 ⇒ 结构至少 `0x18` = **24 字节**；
+/// * 上界：调用点 `0x51bc93`（在 `0x51b440` 内）用 `lea rdi,[rsp+0x170]` 传 sret，
+///   调用后**只拷 24 字节**出去 —— `0x51bce5 movdqu xmm0,[rsp+0x170]`（16 字节）+
+///   `0x51bcf4 mov rdx,[rsp+0x180]`（8 字节），落进个体的 `+0x18` / `+0x28`。
+///   ⇒ 24 字节。
+///
+/// ⚠️ **本轮补上的第 4 个字段**：改动前本结构体只有前三个字段（20 字节逻辑大小，
+/// 靠 `f64` 的 8 字节对齐被补齐到 24）——**大小碰巧对、字段数不对**。这类偏差
+/// 不会让任何测试变红，但它是源码级的（使用者读源码会以为评分只有三个分量）。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Evaluation {
     /// 排序键（sret `+0x00`）。= `hits*2e6 − dist − V²/100 − (V>limit ? 5e7 : 0)`。
@@ -417,6 +439,19 @@ pub struct Evaluation {
     pub dist: f64,
     /// 命中数项（sret `+0x10`）：适应度里乘 2e6 的整数。
     pub hits: u32,
+    /// 第 4 分量（sret `+0x14`，u32）。**原版字段名未知**（二进制里只看到它被 `%esi` 写），
+    /// 这里按寄存器命名以便回溯。
+    ///
+    /// 语义（`docs/06` §78.3 的指令链）：它是评分遍历"开火结果项"时累加出来的计数器，
+    /// 只由 `kind == i64::MIN+3` 那种结果项的 `payload >> 32` 累加
+    /// （唯一累加点 `0x51acc8 add %eax,[rsp+0x34]`，随后 `0x51b06f mov esi,[rsp+0x34]`）；
+    /// 分数里只以 `−(esi·step·100)` 出现，且**只在"有效命中数 > 0"时加**
+    /// （`0x51b087 jle 0x51b0a5` 跳过整块）。
+    ///
+    /// 本实现里恒为 **0**：那个 kind 的结果项在常规对局里不产生（T23 的 40 秒
+    /// hook 里累加点执行 0 次、56925 次采样全 0），见 `docs/06` §78.3 的两条硬事实。
+    /// **行为影响 0**：`esi = 0` 时该项就是 `+0.0`，与不加逐位相同。
+    pub esi: u32,
 }
 
 impl Evaluation {
@@ -425,7 +460,7 @@ impl Evaluation {
     /// 用它包装"与步长无关"的测试用适应度时，两阶段判据**永不触发**，
     /// 行为与改动前的单次评分完全一致（老测试就是这么过的）。
     pub const fn scalar(score: f64) -> Self {
-        Self { score, dist: DIST_SENTINEL, hits: 0 }
+        Self { score, dist: DIST_SENTINEL, hits: 0, esi: 0 }
     }
 
     /// 精评结果与粗评是否"一致"（= 保留该个体）。
@@ -464,10 +499,15 @@ where
     move |tokens: &[Token], _phase: Phase| Evaluation::scalar(f(tokens))
 }
 
-/// 一个个体：token 序列 + 一次评分的三个分量。
+/// 一个个体：token 序列 + 一次评分的 **4 个分量**。
 ///
-/// 字段布局与二进制里 48 字节的个体逐一对应（`docs/97` §2）：
-/// `Vec<Token>`（24 字节：ptr/len/cap），接着 `score`、`dist`、`hits`、`_`（再来 24 字节）。
+/// 字段布局与二进制里 **48 字节**的个体逐一对应（`docs/97` §2；T32 复算了拷贝点）：
+/// `Vec<Token>`（24 字节：ptr/len/cap），接着 `score`(`+0x18`)、`dist`(`+0x20`)、
+/// `hits`(`+0x28`)、`esi`(`+0x2c`)，共 48 字节。
+///
+/// `逐位` 判据：`0x51bcaf` 起用 `rcx = n*3*16`（= `n*48`）算步长，
+/// 再把 sret 的 24 字节原样拷进 `+0x18` / `+0x20` / `+0x28` 三个槽
+/// （`0x51bce5 movdqu [rsp+0x170]` + `0x51bcf4 mov rdx,[rsp+0x180]`）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Individual {
     pub tokens: Vec<Token>,
@@ -477,22 +517,33 @@ pub struct Individual {
     pub dist: f64,
     /// 命中数项（个体 `+0x28` ← 评分结果 `+0x10`）。
     pub hits: u32,
+    /// 第 4 分量（个体 `+0x2c` ← 评分结果 `+0x14`）。语义见 [`Evaluation::esi`]。
+    ///
+    /// 二进制是**一次 8 字节拷贝**把 `{hits, esi}` 一起写进去的
+    /// （`0x51bcfc mov [rax+rcx+0x28], rdx`）——所以这两项在个体里也是一个
+    /// 8 字节整体，我们按两个 `u32` 落位，偏移一致。
+    pub esi: u32,
 }
 
 impl Individual {
     /// 还没评过分的新个体（分数 0、距离项取哨兵、命中 0）。
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, score: 0.0, dist: DIST_SENTINEL, hits: 0 }
+        Self { tokens, score: 0.0, dist: DIST_SENTINEL, hits: 0, esi: 0 }
     }
 
     /// 带上一次评分结果的个体。
     pub fn with_evaluation(tokens: Vec<Token>, eval: Evaluation) -> Self {
-        Self { tokens, score: eval.score, dist: eval.dist, hits: eval.hits }
+        Self { tokens, score: eval.score, dist: eval.dist, hits: eval.hits, esi: eval.esi }
     }
 
-    /// 取出评分三元组（用于两阶段比对）。
+    /// 取出评分四元组（用于两阶段比对）。
     pub fn evaluation(&self) -> Evaluation {
-        Evaluation { score: self.score, dist: self.dist, hits: self.hits }
+        Evaluation {
+            score: self.score,
+            dist: self.dist,
+            hits: self.hits,
+            esi: self.esi,
+        }
     }
 
     /// 记下一次评分结果。
@@ -500,6 +551,7 @@ impl Individual {
         self.score = eval.score;
         self.dist = eval.dist;
         self.hits = eval.hits;
+        self.esi = eval.esi;
     }
 }
 
@@ -1198,7 +1250,7 @@ pub fn fitness_eval(tokens: &[Token], ctx: &ScoringContext) -> Evaluation {
         score -= 50_000_000.0;
     }
     if tokens.is_empty() {
-        return Evaluation { score, dist: DIST_SENTINEL, hits: 0 };
+        return Evaluation { score, dist: DIST_SENTINEL, hits: 0, esi: 0 };
     }
 
     // 修正后沿弹道走一遍：先判致死（穿过即死、不挡弹道），再判障碍阻挡
@@ -1229,6 +1281,9 @@ pub fn fitness_eval(tokens: &[Token], ctx: &ScoringContext) -> Evaluation {
         score: score + killed.len() as f64 * 2_000_000.0,
         dist,
         hits: killed.len() as u32,
+        // 二进制里这一项来自"结果项 payload>>32"的累加（`0x51acc8`），
+        // 本实现不造那种结果项 ⇒ 恒 0，与实测一致（`docs/06` §78.3）。
+        esi: 0,
     }
 }
 
@@ -1806,19 +1861,45 @@ mod tests {
     }
 
     #[test]
+    fn evaluation_layout_matches_the_sret_stub() {
+        // 评分核心 0x51a750 的四个写回点：
+        //   0x51b10d movsd [rcx]      (f64 score)
+        //   0x51b11d movsd [rcx+8]    (f64 dist)
+        //   0x51b111 mov   [rcx+0x10] (u32 hits)
+        //   0x51b114 mov   [rcx+0x14] (u32 esi)
+        // ⇒ 24 字节 / 4 字段。调用点 0x51bc93 之后只拷 24 字节出去（0x51bce5 + 0x51bcf4）。
+        assert_eq!(std::mem::size_of::<Evaluation>(), 24, "sret 尺寸");
+        assert_eq!(std::mem::offset_of!(Evaluation, score), 0x00);
+        assert_eq!(std::mem::offset_of!(Evaluation, dist), 0x08);
+        assert_eq!(std::mem::offset_of!(Evaluation, hits), 0x10);
+        assert_eq!(std::mem::offset_of!(Evaluation, esi), 0x14);
+    }
+
+    #[test]
+    fn individual_layout_matches_the_48_byte_stride() {
+        // 0x51b440 里 `rcx = n*3*16 = n*48` 是个体步长；评分四元组抄到 +0x18/+0x20/+0x28。
+        assert_eq!(std::mem::size_of::<Individual>(), 48, "个体 sizeof");
+        assert_eq!(std::mem::offset_of!(Individual, tokens), 0x00);
+        assert_eq!(std::mem::offset_of!(Individual, score), 0x18);
+        assert_eq!(std::mem::offset_of!(Individual, dist), 0x20);
+        assert_eq!(std::mem::offset_of!(Individual, hits), 0x28);
+        assert_eq!(std::mem::offset_of!(Individual, esi), 0x2c);
+    }
+
+    #[test]
     fn consistency_rule_matches_the_asm() {
-        let base = Evaluation { score: 0.0, dist: 1_000_000.0, hits: 1 };
+        let base = Evaluation { score: 0.0, dist: 1_000_000.0, hits: 1, esi: 0 };
         // 1) 命中数不同 → 不一致（0x51c3c3 jne）
-        assert!(!Evaluation { score: 1.0, dist: 1_000_000.0, hits: 2 }.consistent_with(&base));
-        assert!(!Evaluation { score: -1.0, dist: 1_000_000.0, hits: 0 }.consistent_with(&base));
+        assert!(!Evaluation { score: 1.0, dist: 1_000_000.0, hits: 2, esi: 0 }.consistent_with(&base));
+        assert!(!Evaluation { score: -1.0, dist: 1_000_000.0, hits: 0, esi: 0 }.consistent_with(&base));
         // 2) 命中数相同、|Δdist| <= 0.5 → 一致（0x51c3e4 jbe）
-        assert!(Evaluation { score: 9.0, dist: 1_000_000.5, hits: 1 }.consistent_with(&base));
-        assert!(Evaluation { score: 9.0, dist: 999_999.5, hits: 1 }.consistent_with(&base));
+        assert!(Evaluation { score: 9.0, dist: 1_000_000.5, hits: 1, esi: 0 }.consistent_with(&base));
+        assert!(Evaluation { score: 9.0, dist: 999_999.5, hits: 1, esi: 0 }.consistent_with(&base));
         // 3) |Δdist| > 0.5 → 不一致
-        assert!(!Evaluation { score: 9.0, dist: 1_000_000.6, hits: 1 }.consistent_with(&base));
-        assert!(!Evaluation { score: 9.0, dist: 999_999.4, hits: 1 }.consistent_with(&base));
+        assert!(!Evaluation { score: 9.0, dist: 1_000_000.6, hits: 1, esi: 0 }.consistent_with(&base));
+        assert!(!Evaluation { score: 9.0, dist: 999_999.4, hits: 1, esi: 0 }.consistent_with(&base));
         // 4) NaN 走 ucomisd 的 unordered ⇒ CF/ZF 置位 ⇒ jbe 成立 ⇒ 算"一致"
-        assert!(Evaluation { score: 9.0, dist: f64::NAN, hits: 1 }.consistent_with(&base));
+        assert!(Evaluation { score: 9.0, dist: f64::NAN, hits: 1, esi: 0 }.consistent_with(&base));
     }
 
     /// 代末前 3 名精评：**粗评看不到、精评看得见的东西** 才会触发换新。
@@ -2057,7 +2138,7 @@ mod tests {
             })
             .collect();
         let out = next_generation(&pop, &p, VarMode::Normal, &mut next, |t, _| {
-            Evaluation { score: 0.0, dist: DIST_SENTINEL, hits: 0 }
+            Evaluation { score: 0.0, dist: DIST_SENTINEL, hits: 0, esi: 0 }
         });
         // 截断到 s = 10/5 = 2
         assert_eq!(out.len(), 2);
