@@ -60,7 +60,9 @@ a-07	src/_scaffold/rng.rs	ChaCha12	—	—	原版用 rand_chacha crate	**A：留
 a-08	src/_scaffold/replay_inflate.rs	gzip 解压	—	—	原版用 flate2	**A：留 scaffold 是对的**	—	同上
 a-09	src/_scaffold/root_wiring.rs 其余（RootWiring 装载器、KernelBus 的队列/时钟/thread-local、Demo 数据）	我方装配体	—	—	原版的对象图不同（节点→backend→容器）	**A：留 scaffold 是对的**	—	本轮只把 ③ 的订阅/投递两格搬走，容器与队列留原地
 #
-# ---- 统计（预注册时写死，跑完核对）----
-# 搬（B/M）：o-00..o-08（9 行，含 1 行访问器附注）、f-00..f-08（9 行）、e-00..e-04（5 行）、n-00..n-03（4 行）= 27 行
-# 留（A）：n-04、n-05、a-01..a-09 = 11 行
-# 待拆（D）：e-00（KernelBus 本体）= 1 行
+# ---- 统计（预注册时写死，跑完核对：`awk -F'\t' '!/^#/ && NF>=7 {dec[$7]++}' 本文件）----
+# 搬（B/M）= 26 行：B 14 + M 12
+#   o-00..o-08（9 行，含 1 行访问器附注） + f-00..f-08（9 行） + e-01..e-04（4 行）+ n-00..n-03（4 行）= 26
+# 留（A）= 11 行：n-04、n-05、a-01..a-09
+# 待拆（D）= 1 行：e-00（KernelBus 本体；本轮只把它的 subscribe/pump 两格搬走）
+# 合计 38 行（跑完核对一致）

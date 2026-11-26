@@ -16630,7 +16630,7 @@ $MAIN/.reference/venv/bin/python tools/bit_exact_attrib.py --json f.jsonl --chec
 
 `fixtures/scaffold_migration_plan.tsv`（单独 commit `e357bc8`）：每行 = `scaffold 位置 | 它做的是什么 |
 原版模块 + 函数 + vaddr | 证据档 | 搬不搬 | 调号方怎么保持`。
-预注册统计：**搬 27 行 / 留原地 11 行 / 待拆 1 行**。判据只有一条：能指到**原版函数名 + ELF vaddr**
+预注册统计（38 行）：**搬 26 行（`B` 14 + `M` 12）/ 留原地 11 行（`A`）/ 待拆 1 行（`D`）**。判据只有一条：能指到**原版函数名 + ELF vaddr**
 且它判的是游戏语义（状态/表/规则/事件落点）⇒ 搬；否则（GDExtension 外壳、C ABI、报文装配、thread-local 接线、
 broker、ChaCha12、gzip、或"原版有但我方是无第二份实现的纯转发"）⇒ **留原地并写"A：留 scaffold 是对的"**。
 
