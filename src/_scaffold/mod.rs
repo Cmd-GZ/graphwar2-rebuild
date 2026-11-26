@@ -62,6 +62,12 @@ pub mod graphwar_setup_control_class;
 // 真的 `draw_circle` / `draw_polygon` / `draw_line` 上。只在 `gdext-bindings` 下编译。
 #[cfg(feature = "gdext-bindings")]
 pub mod effect_drawer_class;
+// 结算弹窗（`EndGamePopUp`）的**数据桥**（`docs/06` §77）：把胜方字节
+// （`turnstate::winner_byte`，`0x478133`–`0x478236`）与 `.rodata` 里那 6 条胜负横幅
+// （`graphwar_play_screen_control::VICTORY_TEXTS`，`0x3da130`）接给 GDScript。
+// 本文件**没有第二份判据**，只搬运算好的东西。只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod endgame_class;
 // 手写入口与 gdext 入口都导出 `gdext_rust_init`，一个 .so 里只能有一个：
 // 打开 `gdext-bindings` 时用官方 gdext 那份（`gdext_mod.rs`），关掉手写这份。
 #[cfg(not(feature = "gdext-bindings"))]

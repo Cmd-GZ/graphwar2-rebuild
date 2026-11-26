@@ -573,10 +573,112 @@ func _on_net_disconnected(reason: String) -> void:
 			play.call("end_match")
 
 
-## 服务端发 `EndingGame`：**正常结束**，不是断线（`src/graphwar_game_server.rs` 之后会关连接）。
+## 服务端发 `GameStateInfo{game_state:"EndingGame"}`：**正常结束**，不是断线
+## （`src/graphwar_game_server.rs` 在它之后才关连接）。所以这条路上**不**走
+## `_on_net_disconnected()`（那条路会弹 `DisconnectedPopUp` 并 `end_match()` 拆掉战场，
+## 而原版这一屏底下那一屏是**留着**的：面板不压暗背景、`docs/06` §68.4 面板外只差 0.67 %）。
+##
+## 三件事，顺序有讲究（`docs/06` §77）：
+## ① **先**算胜负写进 `last_result`（`EndGamePopUp.on_enter()` 读它）；
+## ② 打开结算框 —— 原版收到收场三条之后画的就是它（真机真帧，`docs/06` §68.4）；
+## ③ 音效（胜/负各一）；**不**动战场、**不**关连接（会话自己会在正常结束后忽略对端关闭，
+##    `GwNet._on_session_closed()`）。
 func _on_net_ended(reason: String) -> void:
 	print("[gw2/net] match ended (%s)" % reason)
 	online = false
+	last_result = online_result()
+	# 诊断行（复跑时从 `game.log` 就能读到这一局的判据与结论，不用猜）：
+	print("[gw2/net] 收场判据：Team1 有活体=%s / Team2 有活体=%s ⇒ 胜方字节 %d（0=Team1、1=Team2、2=没人赢）；我方队 %d ⇒ %s" % [
+		bool(last_result.get("alive_team1", false)), bool(last_result.get("alive_team2", false)),
+		int(last_result.get("winner_byte", -1)), int(last_result.get("human_team", -1)),
+		"我方获胜" if bool(last_result.get("human_won", false)) else "我方未获胜"])
+	_sfx(SFX_WIN if bool(last_result.get("human_won", false)) else SFX_LOSE)
+	open_popup("EndGamePopUp")
+
+## 联机收场的胜负 —— **唯一判据是内核那张四行表**
+## （`src/turnstate.rs::winner_byte`，`0x478133`–`0x478236`；`docs/14` §11.4）。
+## 本函数只做两件 GDScript 该做的事：① 从会话模型里读出"每队还有没有活实体"；
+## ② 把胜方字节翻成界面队伍号。**不重算**胜负规则，也不借用本地的 `GwLevelRules`
+## （那是**战役关**的判据：靶子数/回合上限/两边有没有对手，`docs/131` §2）。
+##
+## 存活口径 = **生命表里的活实体**（原版 `get_alive_teams` `0x473520`：`get_all_entities`
+## → `get_alive` → `get_team`）⇒ 士兵与靶子**同表**（靶子有 `LifeInfo`、玩家实体没有；
+## `docs/14` §11.5、`docs/150` §Q2）。`room["entities"]` 就是那张表的镜像
+## （`SoldierInfo` 建行 / `LifeInfo` 翻 alive 位 / `EntityRemoved` 删行）。
+##
+## `turn_limit_set` 传"**两边都还有人**"：真值那一格是"设过回合上限"（`[+0xc8] == 1`），
+## 两者只在"两边都活着却进了 `EndingGame`"这一种收场上分叉，而那种收场**只可能由上限
+## 触发** ⇒ 可达输入上等价（`docs/14` §11.4 的注）。服务端不发这一格，我方没有别的来源。
+func online_result() -> Dictionary:
+	var room := {}
+	var my_pid := -1
+	if net != null and net.session != null:
+		room = net.session.room
+		my_pid = net.session.my_player_id
+	var alive := {0: false, 1: false}
+	var entities: Dictionary = room.get("entities", {})
+	for eid in entities:
+		var e: Dictionary = entities[eid]
+		if not bool(e.get("alive", true)):
+			continue
+		var t := int(e.get("team", 0))
+		if alive.has(t):
+			alive[t] = true
+	var t1 := bool(alive[0])
+	var t2 := bool(alive[1])
+	var byte := _winner_byte(t1, t2, t1 and t2)
+	var team := _winner_team_of(byte)
+	var human_team := _online_human_team(room, my_pid)
+	return {
+		"human_won": team >= 0 and team == human_team,
+		"winner_team": team,
+		"winner_byte": byte,
+		"human_team": human_team,
+		"tie": byte == 2,
+		"online": true,
+		"alive_team1": t1,
+		"alive_team2": t2,
+	}
+
+## 内核结算数学（`GwEndGame`，`src/_scaffold/endgame_class.rs`）。缺内核 ⇒ `null`，
+## 调用方退化成"判不出"（`-1`），**不**在这里补一份表。
+var _endgame_math: RefCounted = null
+
+func endgame_math() -> RefCounted:
+	if _endgame_math == null:
+		if not ClassDB.class_exists("GwEndGame"):
+			return null
+		_endgame_math = ClassDB.instantiate("GwEndGame") as RefCounted
+	return _endgame_math
+
+## 胜方字节（`0` = Team1、`1` = Team2、`2` = 没人赢）。见 `turnstate::winner_byte`。
+func _winner_byte(t1_alive: bool, t2_alive: bool, turn_limit_set: bool) -> int:
+	var m := endgame_math()
+	if m == null:
+		push_error("[gw2] 缺内核类 GwEndGame（没编 gdext-bindings / .so 没覆盖）")
+		return -1
+	return int(m.call("winner_byte", t1_alive, t2_alive, turn_limit_set))
+
+## 胜方字节 → 界面队伍号（字节 `2` ⇒ `-1`）。
+func _winner_team_of(byte: int) -> int:
+	var m := endgame_math()
+	if m == null:
+		return -1
+	return int(m.call("winner_team", byte))
+
+## "我在哪一队"。`PlayerInfo{player_id, connection_id}` 给了我方自己的 player id
+## （本剧本 229 / Team1，`fixtures/frame_endgame_events.txt` 的 phase1），拿它在玩家表里
+## 查队；服务端不发 `PlayerInfo` 时退回 `match_summary()` 的老口径（第一个玩家），
+## 那是**降级**，不是第二套判据。
+func _online_human_team(room: Dictionary, my_pid: int) -> int:
+	var players: Dictionary = room.get("players", {})
+	if my_pid >= 0 and players.has(my_pid):
+		return int((players[my_pid] as Dictionary).get("team", 0))
+	var ids: Array = players.keys()
+	ids.sort()
+	if not ids.is_empty():
+		return int((players[ids[0]] as Dictionary).get("team", 0))
+	return 0
 
 
 func _on_net_rooms_changed(_mode: String) -> void:
@@ -738,18 +840,119 @@ func report_match_result(human_won: bool, team_won: int) -> void:
 	open_popup("EndGamePopUp")
 
 ## 结算框里的展示数据（EndGamePopUp 读它）。
+##
+## 2026-11-26（`docs/06` §77）：多了三项，都是**联机收场**要用、而以前只能靠界面自己猜的：
+## `winner_byte`（内核那张四行表的结果，`2` = 没人赢 ⇒ 文案 `Tie!`）、`human_team`
+## （`online_result()` 已经从 `PlayerInfo` 查过，别再按"第一个非 Bot"重猜）、
+## `winners`（胜利者展示位，一个士兵一格；三层贴图给**资产相对路径**）。
 func match_summary() -> Dictionary:
-	var human_team := 0
-	for p in state.players:
-		if not p.is_bot:
-			human_team = int(p.team)
-			break
+	var human_team := int(last_result.get("human_team", -1))
+	if human_team < 0:
+		human_team = 0
+		for p in state.players:
+			if not p.is_bot:
+				human_team = int(p.team)
+				break
+	var winner_team := int(last_result.get("winner_team", 0))
 	return {
 		"players": state.players,
 		"human_team": human_team,
 		"human_won": bool(last_result.get("human_won", false)),
-		"winner_team": int(last_result.get("winner_team", 0)),
+		"winner_team": winner_team,
+		# 本地/战役没有字节（`report_match_result()` 只给队伍号）⇒ 用队伍号当字节：
+		# 字节的语义就是"哪一队赢"，两者在这条路上是同一个事实。
+		"winner_byte": int(last_result.get("winner_byte", winner_team)),
 		"kind": state.kind,
 		"level": state.level_index,
 		"room_name": state.room_name,
+		"winners": _victory_winners(winner_team),
 	}
+
+## 结算框的"胜利者展示位"：**一个士兵一格**（原版真帧：Team1 只有玩家 229 一具士兵
+## ⇒ 1 个格子；`docs/06` §68.4 的合并墨迹 376×281）。每格三层贴图：
+##
+## | 层 | 联机（线上外观事件） | 本地/战役（玩家档案下标） | 缺省 |
+## |---|---|---|---|
+## | `SkinIcon` | `SkinGraphicsInfo` → `res://skins/<名>.svg` | `p.skin` 下标 | `skins/yellow` |
+## | `FaceIcon` | `FaceGraphicsInfo` → `res://faces/<名>.svg` | `p.face` 下标 | `faces/regular_eyes` |
+## | `HatIcon` | `HatGraphicsInfo` → `res://hats/<名>.svg` | `p.hat` 下标 | `hats/soldier_helmet` |
+##
+## ⚠️ **"一格 = 一个士兵"是推断**：本样本里"Team1 的玩家数（1）"与"其士兵数（1）"相等，
+## 真帧分不开这两种口径（`docs/06` §77 遗留）。
+func _victory_winners(team: int) -> Array:
+	if team < 0:
+		return []
+	# ⚠️ 判"这一局是不是联机"**不能**看 `online`：`_on_net_ended()` 先把它置 false
+	# （`GwNet.is_online()` 也会随 `phase="ended"` 变成 false），而 `match_summary()` 是
+	# 在 `open_popup()` 之后才被调的 ⇒ 那个时刻 `online` 已经是 false 了（§77 踩过）。
+	# 用"会话对象还在 + 收场记录说是联机"。
+	if net != null and net.session != null and bool(last_result.get("online", false)):
+		return _online_victory_winners(team)
+	# 本地/战役：沿用老口径（玩家 × 士兵数），贴图从玩家档案的三个下标来；
+	# 下标 `-1` = 该层不画（与老实现一致，别改成"补默认"—— 那会让档案为空的人突然有脸）。
+	var out := []
+	for p in state.players:
+		if int(p.team) != team:
+			continue
+		# 皮肤：档案里的 `skin` 下标；Bot 的 `skin` 是 `-1`（`state.add_bot()` 的约定）⇒
+		# 回到老口径 `skins/bot_<tier>`，**不改**局部路径的既有行为。
+		var skin_rel := ""
+		if int(p.skin) >= 0:
+			skin_rel = GwIcons.path_for("skin_%d" % int(p.skin))
+		else:
+			skin_rel = GwIcons.path_for("bot_%d" % int(p.get("bot_tier", 0)))
+		# 脸/帽子：`-1` = 该层不画（老行为；与原版"Bot 是 no_face/no_hat 两张透明图"是同一视觉效果）。
+		var face_rel := GwIcons.path_for("face_%d" % int(p.face)) if int(p.face) >= 0 else ""
+		var hat_rel := GwIcons.path_for("hat_%d" % int(p.hat)) if int(p.hat) >= 0 else ""
+		for i in int(p.soldiers):
+			out.append({
+				"name": String(p.name),
+				"skin": skin_rel,
+				"face": face_rel,
+				"hat": hat_rel,
+			})
+	return out
+
+## 联机的胜利者展示位：外观取**线上外观事件**（与对局屏同一个来源，`play_screen._look_for()`）。
+## 实体 id 优先（士兵 = 画面上那个人），其次玩家自己那个实体；两处都没有 ⇒ 补默认三件套
+## （原版 `EntityDrawer::spawn_entity` 的默认 `yellow/regular_eyes/soldier_helmet`）。
+func _online_victory_winners(team: int) -> Array:
+	var room: Dictionary = net.session.room
+	var players: Dictionary = room.get("players", {})
+	var look: Dictionary = room.get("look", {})
+	var names: Dictionary = room.get("names", {})
+	var out := []
+	var ids: Array = players.keys()
+	ids.sort()
+	for pid in ids:
+		var p: Dictionary = players[pid]
+		if int(p.get("team", 0)) != team:
+			continue
+		var soldiers: Array = p.get("soldiers", [])
+		var got := {}
+		for eid in soldiers:
+			if look.has(int(eid)):
+				got = look[int(eid)]
+				break
+		if got.is_empty() and look.has(int(pid)):
+			got = look[int(pid)]
+		var count := maxi(soldiers.size(), 1)
+		for i in count:
+			out.append({
+				"name": String(names.get(int(pid), "Player %d" % int(pid))),
+				"skin": _graphics_path("skins", String(got.get("skin", "")), GwIcons.DEFAULT_SKIN),
+				"face": _graphics_path("faces", String(got.get("face", "")), GwIcons.DEFAULT_FACE),
+				"hat": _graphics_path("hats", String(got.get("hat", "")), GwIcons.DEFAULT_HAT),
+			})
+	return out
+
+## 线上外观名（`"asian_hat"` 这种，不带目录/扩展名）→ 资产相对路径（`"hats/asian_hat"`）。
+## 这个名字口径与 `play_screen._look_for()` 喂给 `EntityDrawer.set_entity_look()` 的**同一批**。
+## 资产里查不到 ⇒ 该层用默认值（**不编路径**，`GwAssets` 只返回真资产）。
+static func _graphics_path(dir_name: String, name: String, fallback: String) -> String:
+	if name == "":
+		return fallback
+	var rel := "%s/%s" % [dir_name, name]
+	if GwAssets.find(rel, GwAssets.TEXTURE_EXTS) != "":
+		return rel
+	return fallback
