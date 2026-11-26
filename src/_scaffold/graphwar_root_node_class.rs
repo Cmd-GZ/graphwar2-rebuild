@@ -131,6 +131,7 @@ use std::collections::BTreeMap;
 use godot::classes::{Control, INode, Node};
 use godot::prelude::*;
 
+use crate::graphwar_logger::GraphwarLogger;
 use crate::graphwar_module_container::{self, MODULES};
 use crate::graphwar_root_node::{apply_show_screen, Screen, ScreenHost, ALL_SCREENS, READY_NODES};
 
@@ -293,6 +294,27 @@ pub struct GraphwarRootNode {
     process_calls: i64,
     /// 累计 `set_visible` 写成功多少次（观测点）。
     visibility_writes: i64,
+    /// 【2026-11-26 新增，task-30】`log(String)` 的落点：`graphwar_logger::GraphwarLogger`。
+    ///
+    /// 原版 `/root/GraphwarRootNode` 上有一个 **1 个参数**的注册方法 `log`，它是 5 份
+    /// 原版平台桥 `.gd`（`android_iap` / `IAP_IOS` / `IAP_holder` 的子节点 /
+    /// `IOS_album_holder` / `Android_mediastore_holder`）在**桌面上唯一会执行**的那一行。
+    ///
+    /// * **观测（二进制）**：注册点 `0x3b7328` 附近 `lea 0x1bdb95("log"), len=3` 与
+    ///   `lea 0x19e490("GraphwarRootNode"), len=0x10` 同块，随后
+    ///   `classdb_register_extension_class_method` 收到 `prtcalls`/`call_func`
+    ///   两个回调 `0x3b6010`（ptrcall，`mov $1,%r8d` + `push $1` ⇒ **1 个参数**）与
+    ///   `0x3b6340`（call_func）、flags 槽 `0x9524f0`。另两处同形注册块在
+    ///   `0x3b604a` / `0x3b6387`；
+    /// * **观测（原版字节）**：5 份 `.gd` 共 20 处 `root.log("…")`；
+    /// * **推断**：落点是 `GraphwarLogger::log`（`log` 与 `GraphwarLogger` 的
+    ///   `Rc<RefCell<_>>` 都在 `<GraphwarRootNode as INode>::init` 里建起来，
+    ///   `docs/16` §30.5 记了 `log` ← `RootNode::process_button_pressed` 一条）。缺的
+    ///   证据：x86 侧没有把 `GraphwarRootNode::log` 的 body 与 `0x45bc5c` 对上（我只拿到
+    ///   注册回调，没拿到 body 归属）⇒ **落点这一跳是推断，不是逐位**。
+    /// * **未知**：日志的出口（原版是 `tiny_http` 端点；HTTP 报文格式未读出）。
+    ///   这里**不猜**：只做数据面（一行进缓冲），不打印、不开端口。
+    logger: GraphwarLogger,
     /// 最近一次 [`GraphwarRootNode::show_screen`] 的屏名。
     last_queried: GString,
 }
@@ -448,6 +470,7 @@ impl INode for GraphwarRootNode {
             ready_calls: 0,
             process_calls: 0,
             visibility_writes: 0,
+            logger: GraphwarLogger::new(0),
             last_queried: GString::new(),
         }
     }
@@ -571,6 +594,40 @@ impl GraphwarRootNode {
         let mut out = PackedStringArray::new();
         for method in self.deferred_log.iter() {
             out.push(method);
+        }
+        out
+    }
+
+    /// `GraphwarRootNode.log(String)` —— 原版 5 份平台桥 `.gd` 在**桌面分支**上调用的唯一一行。
+    ///
+    /// 档位：**观测**（方法存在 + 1 个参数）：注册块在 `0x3b7328`
+    /// （`lea 0x1bdb95("log"), len=3` 与 `lea 0x19e490("GraphwarRootNode"), len=0x10` 同块，
+    /// `mov $1,%r8d` + `push $1` ⇒ 1 个参数），ptrcall `0x3b6010` / call_func `0x3b6340`；
+    /// 原版 `.gd` 侧共 **20 处** `root.log("…")`（5 份文件）。
+    ///
+    /// 方法体 = **推断**：落点是 [`GraphwarLogger::log`]（`GraphwarLogger` 的
+    /// `Rc<RefCell<_>>` 在 `<GraphwarRootNode as INode>::init` 里建，`docs/16` §30.5）。
+    /// 缺的证据：x86 侧没把 body 与 arm64 `0x45bc5c` 对上（只拿到注册回调）。
+    /// 出口（原版 `tiny_http` 端点 + 报文格式）= **未知** ⇒ 这里**不猜**：不打印、不开端口。
+    #[func]
+    fn log(&mut self, message: GString) {
+        // 原版 `GraphwarLogger::log` 收 `OsString`（arm64 `0x45bc5c` 的
+        // `RawVec<OsString>::grow_one`）；Godot 侧一律 String，按"一行一条"落缓冲。
+        self.logger.log(message.to_string());
+    }
+
+    /// `log()` 收到几行（观测点。出口未知 ⇒ 只能从缓冲读）。
+    #[func]
+    fn log_count(&self) -> i64 {
+        self.logger.pending() as i64
+    }
+
+    /// 取走日志缓冲（`GraphwarLogger::process` 的"取走并清空"那一半语义）。
+    #[func]
+    fn log_take(&mut self) -> PackedStringArray {
+        let mut out = PackedStringArray::new();
+        for line in self.logger.process() {
+            out.push(&GString::from(line.as_str()));
         }
         out
     }
