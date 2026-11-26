@@ -16617,3 +16617,152 @@ $MAIN/.reference/venv/bin/python tools/bit_exact_attrib.py --json f.jsonl --chec
    本轮**没有重拍真帧**。⇒ 档位是 **观测（转录）**，不是"本轮新观测"。
    若要把 E01 升成"本轮亲自量到的像素"，必须重跑 `tools/frame_capture.py --side original`（私有 Xvfb），
    本轮没做（时间/机器占用都给了别的链路）。
+
+## 98. T48：`level_manager` 的 **21 个 `setup_level_N` 从"一张数据表"还原成 22 个函数边界** —— 函数级复原率 145/527 → **181/527**（34.3%），本模块 F3 缺口 **31 → 0**（2026-11-26，任务 T48 / `task-46`）
+
+> 起点：T45 之后本文件 §87 的函数级审计读数 **145/527 = 27.5%**，`F3` 还有 **235** 条。
+> 按**绝对条数**排下一个是 `graphwar_level_manager.rs`（**31/40**）：原版有 21 个
+> `GraphwarLevelManager::setup_level_N` + 1 个分派 `setup_level`，我方把它们**压成了一张
+> `SETUPS` 数据表 + 一个 `level_setup(index)`** ⇒ **整族函数边界消失**。
+> 本轮按 `docs/06` §95（T45）同一套方法：**先取证 → 再落码 → 再对门槛**。
+
+### 98.1 一句话结论
+
+**21 个 `setup_level_N` 里 13 个是独立函数、8 个在 Linux 2.0.60 构建里被内联**（不是"都独立"，
+也不是"都不独立"）；22 个外层函数**全部落码**成 `impl GraphwarLevelManager` 下的 `const fn`
+（函数体第一行写 `vaddr`）。本模块 F 档 **F1 4 → 40、F3 36 → 0、gap 31 → 0**；
+函数级复原率 **145/527（27.5%）→ 181/527（34.3%）**，全局 `F3` **235 → 199**、
+`gap`（确证缺函数边界）**147 → 116**。
+**⚠️ 这 40/40 里有 26 条是"闭包行"（见 §98.6 的诚实拆账），不能当成 26 个函数体被还原。**
+
+### 98.2 取证：21 个函数各自的**指令范围**（台账 `fixtures/level_setup_anchors.tsv`，单独 commit）
+
+复算命令（都只读原版 `.so`，不需要 Ghidra）：
+```bash
+SO=/home/CG/Myprojects/graphwar2-rebuild/.reference/upstream/libgraphwarrust.so
+PY=/home/CG/Myprojects/graphwar2-rebuild/.reference/venv/bin/python
+$PY tools/addr_probe.py fde <vaddr>            # ① 函数范围（.eh_frame FDE，独立裁判）
+$PY tools/loc_xrefs.py func <vaddr> …          # ② 该函数引用的 panic::Location（源文件 + 行号）
+grep 'graphwar_level_manager' fixtures/name_to_addr_v2.tsv   # ③ 跨版本符号表里的**真名**
+objdump -d --no-show-raw-insn $SO              # ④ 调用序 / 立即数
+```
+
+**四条硬结论**（口径 ELF vaddr）：
+
+| # | 结论 | 判据 |
+|---|---|---|
+| ① | **13 个是独立函数** | 各自一条 `.eh_frame` FDE（`0x962`/`0x8d2`/`0x9be`/`0x962`/`0x9f4`/`0x8d2`/`0xa2e`/`0xa2b`/`0x94f`/`0xa38`/`0x972`/`0x9f9`/`0x9f9` 字节）+ 各自一组 Location 锚 |
+| ② | **8 个体内联进 `setup_level`（`0x499740`，FDE `0x499740..0x49e56a` = 20010 B）** | `setup_level` 体内**恰好 8 条 `call 0x466d20`**，各落在一个独立臂区间（`0x499957`/`0x499e1e`/`0x49a3f2`/`0x49a924`/`0x49af3c`/`0x49b472`/`0x49bb63`/`0x49bf41`）；且每个臂的 `borrow_mut`/`unwrap` panic 跳转落在**该关自己那 15 条 Location**上（L1→`190-198`、L2→`258-266`、L3→`352-357`、L10→`959-967`、L11→`1057-1065`、L12→`1139-1147`、L13→`1223-1231`；L0 的臂紧接 `0x499740`，用 `121-127` 那组） |
+| ③ | **13 个独立函数是被 `jmp` 尾跳进去的，不是 `call`** | `0x49c688`→`0x49f510`(关 4) … `0x49ca64`→`0x4ab500`(关 19) 共 13 条 `jmp`；另 `0x499860`→`0x4a43a0`(关 9)、`0x499952`→`0x4ac440`(关 20) 在跳表前段 |
+| ④ | **21 关合计 21 条 `call 0x466d20`** | 8（在 `setup_level` 内）+ 13（各函数体内）—— 这是"21 个函数都在"的**计数证据**，少一个函数就少一条 |
+
+**每关的公共形状**：5~7 次 `modules.get_module::<T>()` → **1 次 `call 0x466d20`**
+（`GraphwarLevelGenerator::generate_level_custom`，关卡开场驱动）→ 士兵 / 靶子 / 回合上限。
+`get_module` 的 8 个单态按 `docs/02` §22.3 定名：`0x46a490` Player / `0x46a770` Soldier /
+`0x46abc0` Mode / `0x46ad30` PlanePos / `0x46b740` Turn / `0x46b8b0` Team / `0x46be70` GameState /
+`0x46c150` Target。**只有第 11 / 14 / 15 关**调 `0x462d20`（`set_turn_mode`）。
+
+**那 15 条 Location 是什么**（本轮顺手解掉的一个旧疑点）：`L:37`, `L:91`, `L+1:38`, `L+1:89`…
+成对出现的 7 组 + 1 条 = **7 次 `modules.get_module::<T>()` 的 `RefCell::borrow_mut`（`+0x10` 借用标志）
+与 `unwrap`（None）两条 panic 路径**。证据：每个 getter 调用点后都跟着
+`cmpq $0x0,0x10(%r14)` / `movq $0xffffffffffffffff,0x10(%r14)` / `incq 0x10(%r14)`（= `borrow_mut`），
+失败分支跳到引那两条 Location 的冷段桩。⇒ 15 条 Location 的数量 = **该关取的模块数 × 2 + 1**。
+这解释了"为什么第 5/9/18/19/20 关只有 5 个 getter、块只有 11 条而不是 15 条"。
+
+### 98.3 落码：结构怎么变的
+
+* `SETUPS` **还在**（`tests/campaign_data.rs`、`graphwar_setup_control.rs`、`tests/graphwar_level_manager.rs`
+  都在用），但**每一格改成 `GraphwarLevelManager::setup_level_N()` 的调用** ⇒ 数据只有**一个来源**
+  （那 21 个函数），表不再是独立的第二份真值。
+* 新增 `pub struct GraphwarLevelManager` + `impl` 下 **22 个 `const fn`**：
+  分派 `setup_level(index) -> Option<LevelSetup>`（21 臂 `match`）+ 21 个 `setup_level_N() -> LevelSetup`。
+* **`level_setup(index) -> Option<&'static LevelSetup>` 签名不变**（调用方 0 改动），
+  内部变成 `GraphwarLevelManager::setup_level(index).map(|_| &SETUPS[index])`：
+  **先走原版那 21 臂分派，再取同一格的静态引用**（那一格就是同一次 `setup_level_N()` 的编译期结果）。
+* `GraphwarLevelManager` 的**字段集仍然未知**（没有任何偏移/尺寸/`Location` 证据）⇒ **不建模字段**，
+  类型只承载方法边界。这是有意的：宁可类型是空壳，也不编结构。
+
+### 98.4 门槛读数（逐项，全部本轮实测）
+
+| 门槛 | 读数 | 与改造前 |
+|---|---|---|
+| `cargo test --offline` | **1799 passed / 0 failed / 1 ignored** | 1795 → 1799（+4 条新测试） |
+| `cargo test --offline --features gdext-bindings` | **1921 / 0 / 1 ignored** | 1917 → 1921 |
+| `tools/coverage_matrix.py --check` | **OK**（重新生成后） | — |
+| `tools/check_doc_refs.py` | **rc=0** | — |
+| 三轴 `fire` | **647**（`replay_attrib --drive fire --policy default`） | 647 → 647 |
+| 三轴 `batch` | **647**（`replay_attrib --drive batch --policy default`） | 647 → 647 |
+| 三轴 `batch_conv` | **637**（`batch_conv --policy strict`：多发批 32 + 单发批 605） | 637 → 637 |
+| `tools/boundary_audit.py --check` | **OK**，`match 441 / mismatch 0 / multi 86` | mismatch 0 → 0 |
+| 函数级 `F1 / F2 / F3` | **181 / 147 / 199**（分母 527） | 145/147/235 |
+| `F3` 三组 | ①缺边界 **116**（147→116）②判不了 57 ③宏产物 26 | ①147 |
+
+### 98.5 新增的测试（真值来自二进制，不是自洽断言）
+
+`tests/level_setup_anchors.rs`（4 条，全部读 `fixtures/level_setup_anchors.tsv`）：
+① 台账 21 行、每行名字带正确下标、`inline`/`standalone` = 8/13；② **21 个函数逐个被调用**，
+返回的 `start_fn`/`preset_fn`/`second_fn`/预设种类/士兵/靶子/Bot/回合上限逐字段等于台账里的二进制读数；
+③ `SETUPS` 与分派结果一致（表是函数的产物）；④ 分派边界（21 臂全中、第 22 个 `None`）。
+⇒ 它防的是"再把 21 个函数压回一张表"和"改了参数只改一处"。
+
+### 98.6 **诚实拆账**：40/40 里哪些是真进展（**这段最重要**）
+
+工具把 `level_manager` 的 40 行**全判成 F1**，但成因**不是一种**：
+
+| 类别 | 条数 | 怎么被指认的 | 我的判断 |
+|---|---|---|---|
+| 外层函数（分派 1 + 独立 `setup_level_N` 13） | **14** | P1 真名 → 我方同名 `fn`（`impl GraphwarLevelManager`），地址在文档注释里 | ✅ **真进展**：这 14 个是我落码并钉住地址的 |
+| **闭包行**（`setup_level_N::{{closure}}`） | **26** | P1 走**父函数名**命中（18 条）/ P2 走我在父函数注释里引的**闭包地址**（8 条） | ⚠️ **不算函数体复原**：闭包是编译器子函数，工具把"父函数存在"折成命中；**闭包本体（尤其第二闭包判什么）仍然未知** |
+
+⇒ 说清楚的一句：**gap 31 → 0 是工具口径**；按"函数体真的落了码"的口径，本模块真进展是
+**14 个外层函数**，剩下 **26 条闭包行仍是缩略指认**。26 条里唯一有语义结论的是 6 个**障碍预设闭包**：
+`0xd9`（217 B）那 3 个 = 只 `reset_mask`（`0x3f19a0`）不放障碍、`0x191`（401 B）那 3 个 =
+`reset_mask` → `place_obstacle(原点, u*5.0+3.0)` —— 这两条语义**已经**在
+`graphwar_level_generator::generate_center` 里**逐位**复现（`docs/11` §5.2，13/13 个障碍 `to_bits()` 全等），
+所以这 6 条有对应实现；**20 个第二闭包没有**。
+
+### 98.7 遗留（下次接着做的顺序）
+
+1. **20 个"第二闭包"的语义仍然未知**（判什么、返回 false 后调用方是重抽随机数还是换实体）。
+   已知的形状只有：每关**恰好 1 个**、按体量分 5 档（554 / 939 / 1344 / 1451 / 1583 / 1845 B）、
+   54 个里 16 个调 `0x467530`（`path_calculator`）、3 个"无障碍关"那 554 B 的只调 `0x3c62b0`。
+   **缺的证据**：谓词比较的具体字段（是否撞障碍？离边界多远？）+ 返回 `false` 之后
+   `0x466d20` 的行为（它有个上限 5 的循环 `cmp dword [rsp+0x44],5` @`0x466e10`）。
+2. **21 关开场臂里那 8~10 次设置调用的操作数含义**仍未定（模块文档「明确没做到的」第 1 条）——
+   本轮只确认了"调了哪些模块的 getter、各在哪条指令"，**没解每个 setter 的语义**。
+3. **`level_manager` 的字段集**（`GraphwarLevelManager` 有什么字段）零证据 —— 本轮不建模。
+4. 余力项（`game_client` 24 条、`game_state_manager` 13 条）**本轮没动**（时间全给了取证 + 落码 + 门槛）。
+
+### 98.8 我写错了 / 规格前提被证伪的地方
+
+1. **规格说"原版有 21 个 `setup_level_N` 函数（+21 个闭包）"** —— 前半句对，后半句**不对**：
+   闭包是 **27 个**（15 关各 1 个"第二闭包" + 6 关各 **2** 个（预设 + 第二）），
+   且第 3 关的第二闭包 `0x49f360`（16 B 的 `mov al,1; ret`，恒定 `true` 桩）**没有 Location 锚**，
+   所以 `boundary_audit` 的 527 里只出现 26 个。
+2. **规格的工作树任务板条目 `task-45` 不存在**（板上当时最大是 `task-44`，而 `task-45` 是 T45 自己那条的**标题编号**）
+   ⇒ 按 t42/t43/t44/t45/t46 的先例**由执行者新建并 claim**，拿到的是 **`task-46`**。
+3. **`FUNCTIONS` 表里那句注释"21 关里 0/1/2/3/10/11/12/13 这 8 关的分支体内联"本轮第一次被证到**：
+   以前是推断（靠"没有独立锚"倒推），现在是"8 条 `call 0x466d20` + 8 个臂区间 + 8 组 Location"三条正向证据。
+4. **一个我自己引入又修掉的坑**：第一版把 `0x466c40`（`GraphwarLevelGenerator::generate_terrain`）
+   写进了 21 个函数的文档注释里，`function_coverage.py` 的 **P2（地址引用）会把它钉到
+   `setup_level_4` 上** ⇒ `generate_terrain` 那一行被误判成 F1（145→182 里多了 1 条假的）。
+   已删掉那处地址引用（改成指 `docs/11` §1），重跑后 F1 = 181。
+   **这是本工具的一个真实盲点：注释里引别处的地址会被当成"指认"** —— 以后写注释要注意。
+
+### 98.9 复跑命令（一条都不省略）
+
+```bash
+export CARGO_HOME=/home/CG/Myprojects/graphwar2-rebuild/.reference/cargo-home
+export CARGO_TARGET_DIR=<工作树>/.cargo-target
+SNAP=/home/CG/Myprojects/graphwar2-rebuild/.reference/replays/gw2-replays-snapshot/replays
+PY=/home/CG/Myprojects/graphwar2-rebuild/.reference/venv/bin/python
+cargo test --offline                                       # 1799/0/1
+cargo test --offline --features gdext-bindings              # 1921/0/1
+COVERAGE_MATRIX_UPSTREAM=/home/CG/Myprojects/graphwar2-rebuild/.reference/upstream $PY tools/coverage_matrix.py --check
+$PY tools/check_doc_refs.py                                 # rc=0
+$PY tools/boundary_audit.py --check                          # mismatch 0
+$PY tools/function_coverage.py                              # F1 181 / F2 147 / F3 199
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json f.jsonl   # 647
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl   # 647
+cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict                                  # 637
+```
