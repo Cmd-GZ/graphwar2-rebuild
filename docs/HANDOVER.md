@@ -82,6 +82,7 @@ headless     14 个 `client/tools/*_check.gd`（`extends SceneTree`）合计 **1
 | "`LevelRules` 归属没有新证据" | **否** | 三个判据函数（`0x473520` / `0x4759f0` / `0x4780c0`）的 `panic::Location` 全落 `graphwar_game_state_manager.rs`，**没有一条落 `play_screen_control.rs`** ⇒ 归属 = GSM（文件仍在 `play_screen_control.rs`，未搬） |
 | "掩膜的持有者与生命周期未知" | **否** | 持有者 = **`GraphwarObstacleManager` 的 `self+0x18`** → `ArcInner`（`Mutex` 锁字 `+0x10`、数据 ptr `+0x20`、len **600000**），读/写/挖三处同一段 `lock cmpxchg`；**没有每帧重建**：整表建一次（`0x466c40`→`0x3f1e50`），之后只有事件增量与 tick 队列。创建者 `GameClient::new 0x517690`（`docs/06` §65、`docs/08` §12） |
 | "音效↔事件映射证不到" | **已结案（观测）** | 5 条 mp3 的槽与触发事件钉到**指针级**：`explosion`←`EffectInfo{0}`、`squash`←`EffectInfo{1}`、`spark`←`EffectInfo{2 \| 其余}`（兜底臂）、`pop`←`SoldierInfo`、`unpop`←`EntityRemoved`，音量 −15/−15/−15/0/−5 dB；`humm.wav` 走 generator 归 `FunctionActive`；`GameStateInfo{Setup}` 不出声。对齐用**三轴合证**（资源指针 5 处逐对相等 + payload 与回放 JSON 逐字节相等 + `value==start_tick` 且 play 落在 ±1 tick），真值表 `fixtures/audio_event_map.tsv`（复跑**逐字节可复现**）。新未知：**入队 ≠ 播放**（`Vec::retain(tick<value \|\| is_playing)` 会丢弃同帧条目，`docs/06` §70） |
+| "AI 只有参数对上了" | **扩展了** | 参数层 `逐位` 71/71；**抽样层与生成/装配层也 `逐位`**——注入同一 ChaCha key 后 **27 行逐 token 与真二进制相同**（C3 闭合）；终止判死为**墙钟**（动态 6/6）。**仍未复原**：子代工厂三路选择（指令在、数据流读不通，硬搬会让 `tests/server_match.rs` 两条 TCP 用例变红 ⇒ 回退）；`hits` 二进制是**带符号**计数 |
 | "段位算法在客户端" | **否 ⇒ E 档** | `rank_manager` 4 个函数**算术指令 = 0**（正对照 `Plane::draw` 1158 条有 div/mul）；写入 `0x455090` 两处调用点都在**收包侧**；`.rodata` 里只有 22 条 `res://ranks/rank_0..21.svg`、档位名/阈值表 0 命中 ⇒ 算法在服务端（`RankInfo` 线上 **2 字段**已定，2 vs 3 收敛） |
 
 **已被证实、且已落地的**（不用重做）：

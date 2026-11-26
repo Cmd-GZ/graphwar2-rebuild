@@ -276,7 +276,7 @@ PY
 | tick 时钟 | `src/graphwar_tick_handler.rs` | 113 个真实样本；`TickReply` 逐字节一致 | [`14`](14-turn.md) §1 |
 | 关卡生成 | `src/graphwar_level_generator.rs` | 散布模式**逐位复现 13/13**；中心模式 4 个真值样本 | [`11`](11-levelgen.md) |
 | 战役 21 关数据 | 数据在二进制；全表见 [`10`](10-campaign.md) §4 | 21/21 标题、21/21 描述、每关参数；**385 份回放交叉验证 21/21** | [`10`](10-campaign.md) |
-| AI（进化） | `src/graphwar_function_evolutionator.rs` | 参数/权重/长度/装配/变异/每代构成全部还原；终止 = 代数 ∨ **25 s 墙钟** | [`13`](13-ai.md) |
+| AI（进化） | `src/graphwar_function_evolutionator.rs` | **参数层 `逐位` 71/71**（`.rodata`/立即数逐项对表）；**抽样层与生成/装配层 `逐位`**——注入同一 ChaCha key 后**27 行逐 token 与真二进制相同**（C3 闭合，`fixtures/ai_gen_parity.tsv`）；**终止 = 25 s 墙钟**（`clock_gettime`/`CLOCK_MONOTONIC` + `cmp 25s`，动态注入 6/6 判死）；**未复原**：子代工厂三路选择（交叉后不再变异）——指令在但数据流读不通，硬搬会让两条 TCP 用例变红，已回退并登记；`hits` 项二进制是**带符号**（异队 +1/同队 −1），我方数 `killed.len()` 恒正（未修，需动 `game.rs`） | [`13`](13-ai.md) §26、[`06`](06-verification.md) §78 |
 | GDExtension 入口与构建 | `src/_scaffold/gdext.rs` | 真 Godot 4.7.2 里注册成功；`.pck` 能从包启动 | [`18`](18-build.md) |
 | 客户端 15 界面 + 内核接缝 | `client/` | `bash client/run.sh selftest`（2026-11-26 实跑 **717 / 0 / 1 skip**，`missing=0 silent=0`；前置见 `18-build.md` §10.3.4）；弹道/命中/障碍都走内核 | [`16`](16-client.md) |
 
