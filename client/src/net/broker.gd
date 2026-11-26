@@ -48,7 +48,7 @@ func start(p_host: String, p_port: int) -> void:
 	last_error = ""
 	state = "connecting"
 	_link = GwNetLink.new()
-	_link.connect_timeout = 3.0
+	_link.connect_timeout = GwNetConsts.connect_timeout_secs()  # 原版 30 s（0x48dccc 立即数），不再用自造的 3 s
 	_link.connected.connect(_on_connected)
 	_link.frame_received.connect(_on_frame)
 	_link.link_failed.connect(_on_link_failed)
