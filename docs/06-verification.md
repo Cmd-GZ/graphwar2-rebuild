@@ -9590,3 +9590,214 @@ $PY tools/bitexact_report.py --work .bitexact_work --write
    要把这 199 个也点出名字，得另做一版 `class_probe`（本轮没做）。
 8. **没碰**：`src/**`（红线段，一处没改）、`client/**`、`tools/posy_unicorn.py`、
    护栏/快照、`docs/00-status.md`、`docs/HANDOVER.md`、`docs/coverage-matrix.*`。
+
+## 70. 音效 ↔ 事件的映射**做成真值表**：5 个资源槽 ↔ 5 条 mp3 ↔ 4 条订阅事件，判据是「句柄指针相等 + 回放里的**同一条**事件」；`docs/17` §5.1.1 那条「未知」结案，并纠正「5 个 player 槽」与「`0x4bfe10` 是按事件播放的主函数」两处旧读法（2026-11-26，任务 T19 / `task-16`）
+
+> 权威规格 = 共享任务 `task-16` 的任务书；执行者 = teammate t19，分支 `agent/audio-event-map`。
+> **预注册**（跑真机**之前**写死，且事后不改）：`fixtures/audio_event_map_plan.txt`。
+> **真值表**：`fixtures/audio_event_map.tsv`（rule / inst / cov / cx 四类行，可离线复跑折叠）。
+> 一句话：`docs/17` §5.1.1 挂着「音效 ↔ 事件的映射 = 未知」。本轮用 frida 挂原版真机的
+> **音频播放链路**（`0x4b1da0` load → `0x5238c0` 构造 → `0x41d060` 取槽 → `0x4bed70`
+> `EffectAudioData::new` → `0x3eb8b0` `set_stream` → `0x8ae4c0` `play`）**加 4 个事件处理函数**，
+> 把同一份**冻结回放**的事件序列逐条对上，产出一张**每行都能指到「哪条指令、哪次真机调用、
+> 回放第几行」** 的表。**没有一行是"名字像"** —— 资源身份只认**指针相等**。
+
+### 70.1 结论（先看这张表）
+
+| # | 事件（判别值） | 关键字段 | 槽（`self+`） | 音频资源 | 音量 | 真机实例 | 档位 |
+|---|---|---|---|---|---|---|---|
+| 1 | `EffectInfo`(44) | `effect_type = 0 ExplosionEffect` | `+0x80` | `res://sounds/explosion.mp3` | −15.0 dB | 4 | **观测** |
+| 2 | `EffectInfo`(44) | `effect_type = 1 DeathEffect` | `+0x90` | `res://sounds/squash.mp3` | −15.0 dB | 1 | **观测** |
+| 3 | `EffectInfo`(44) | `effect_type = 2 SparkEffect` | `+0xa0` | `res://sounds/spark.mp3` | −15.0 dB | 1 | **观测** |
+| 4 | `EffectInfo`(44) | `effect_type = 3 AshEffect` | `+0xa0` | `res://sounds/spark.mp3` | −15.0 dB | 2 | **观测** |
+| 5 | `SoldierInfo`(15) | —（不校验判别值之后的字段） | `+0xb0` | `res://sounds/pop.mp3` | 0.0 dB | 11 | **观测** |
+| 6 | `EntityRemoved`(14) | —（同上） | `+0xc0` | `res://sounds/unpop.mp3` | −5.0 dB | 1 | **观测** |
+| 7 | `GameStateInfo`(30) | `state == 1`（= `Setup`） | —（**不出声**） | — | — | 12 / 11 次派发 | **观测**（负结果） |
+
+* 第 3、4 行**撞同一个音频**：`0x4bf090` 是「四臂落三槽」（`effect_type` 的 0→`+0x80`、1→`+0x90`、
+  2→`+0xa0`、**其余**→`+0xa0`）⇒ 第 4 行是 **match 的兜底臂**，不是"另外找了一个音"。
+* 第 7 行 `state == 1` 的语义由 `src/graphwar_game_state_manager.rs` 给（`0x470a44 mov byte [rsp+0x28],1`
+  = `Setup`），运行时只观测到"派发 12/11 次、`EffectAudioData::new` 一次都没进"。
+* **`humm.wav` 不在上表**：它走 `AudioStreamGenerator` 流式路（**不是** 5 个槽之一），
+  触发点是 `FunctionActive.active_tick`（见 §70.3.3），本轮只做观测、不做映射行。
+
+### 70.2 怎么做的（预注册 → 真机 → 离线折叠，三段分开）
+
+1. **预注册**（单独 commit `01d0f51`）：写死观测用的冻结回放、要覆盖的事件清单、hook 点表、
+   判据、对齐方法、以及 **P1–P9 九条可被推翻的预测**（含一条**负预测**：这份局里
+   `DeathEffect` 不会被当死亡特效发出 ⇒ `squash.mp3` 一次都不该响）。
+2. **真机观测**（`tools/frida_audio_map.py` + `tools/frida_audio_map.js`，只读 hook）：
+   私有不死 Xvfb（TCP，`unset WAYLAND_DISPLAY`）→ 起原版 → attach（**进程一起来就 attach**，
+   见 §70.5 第 3 条）→ 点进回放列表第 1 行 → **载入期先观测 5 s（不按键）** → 按 ▶ → 录满整场 → `dump`。
+   共跑 3 轮：**R1** = 冻结回放 `1793897298`、**R2** = 冻结回放 `1782640836`（补 `DeathEffect`/`AshEffect`）、
+   另 1 轮是旧探针版本的试点（它的数字在 R1 里逐条复现，**不入表**）。
+3. **离线折叠**（`tools/audio_replay_align.py`，不跑游戏）：把 JSONL 与同一份冻结回放按判据折成
+   `fixtures/audio_event_map.tsv`。**这一层是纯函数**，所以表可以随时重算，不受真机抖动影响。
+
+两轮的真机计数（`counts`）：
+
+| 轮 | 回放 | `load` | `humm` 读 | `ctor` | `eaud` 入队 | 队列路 `play` | humm 路 `play` |
+|---|---|---|---|---|---|---|---|
+| R1 | `1793897298` | 5 | 1 | 1 | 7 | 4 | 2 |
+| R2 | `1782640836` | 5 | 1 | 1 | 13 | 4 | 2 |
+
+### 70.3 对齐方法：为什么这叫「**同一条**事件」，而不是"顺序对上了"
+
+#### 70.3.1 三条独立指证（全部成立才算 `观测`）
+
+1. **资源**：`ResourceLoader::load`（`0x4b1da0`，参数是 `&'static str` 指针 + 长度；`.rodata`
+   里这 5 条路径**首尾相接、无 NUL**，所以只能按长度截断）的返回句柄，与 `SoundHandler`
+   构造收尾（`0x5238c0`）入参载荷里的 5 对 16 字节句柄、与 `0x41d060(self+槽)` 取出来的句柄、
+   与 `EffectAudioData::new` 里当**资源**传下去的那一对、与 `set_stream` 绑定（`0x3eb8b0`）
+   第二个实参 —— **五处逐对字符串相等**（`0x4bf550` 的载入序 = explosion → squash → spark → pop → unpop，
+   长度 26/23/22/20/22，实测 5/5 对上）。
+2. **事件**：每个 `eaud` 的**返回地址**落在 6 个已知臂之一（`0x4bf1af`→`+0xa0`、`0x4bf1fc`→`+0xa0`、
+   `0x4bf249`→`+0x80`、`0x4bf28f`→`+0x90`、`0x4bf3a3`→`+0xb0`、`0x4bf4e8`→`+0xc0`），
+   而运行时 `qslot` 的 `rdi - self` **直接量出的槽偏移**与它相等。
+3. **时刻/身份**：payload 逐字节解出来与回放的 JSON **同一条事件**相等——
+   `EffectInfo` = `{ tag u64 @0, pos_x f64 @8, pos_y f64 @16, effect_id u32 @0x18,
+   start_tick u32 @0x1c, effect_type u8 @0x20 }`，实测例：
+   `effect_id=234 / start_tick=1281 / pos=(2.579357, 0.823608) / type=0`
+   ↔ 回放第 82 行 `{"EffectInfo":{"effect_id":234,"pos_x":2.5793570733273476,
+   "pos_y":0.8236080576517795,"effect_type":"ExplosionEffect","start_tick":1281}}`。
+   `SoldierInfo` = `{ tag, soldier_id u32 @8, player_id u32 @0xc }`（230/229 ↔ 回放同值）；
+   `EntityRemoved` = `{ tag, entity_id u32 @8 }`（231）；`GameStateInfo` = `{ tag, state u8 @8 }`。
+   ⇒ **不是靠顺序推的**：`effect_id` 与 `start_tick` 是**同一批整数**。
+
+#### 70.3.2 tick 轴（第二轴，独立于事件身份）
+
+`EffectAudioData` 的**值字段** = 回放的 `start_tick`（实测 `1281/2169/2216`、`208/3566/3743/3786/3834`
+与回放逐个相等）⇒ 队列的播放时机就是 `curTick >= value`。实测 play 的时刻与 `start_tick` 的差：
+
+| 触发 tick | 观测到 `play` 的 tick | 差 |
+|---|---|---|
+| 1281 | 1280 | −1 |
+| 2169 | 2168 | −1 |
+| 2216 | 2215 | −1 |
+| 208 | 207 | −1 |
+| **3566** | **3566** | **0** |
+| 3743 | 3742 | −1 |
+
+⇒ **7 次里 6 次 −1、1 次 0**，`|Δ| ≤ 1` **通过预注册的 `≤ 2` 判据**。机制（**推断**）：
+队列循环读的是 `[r14+0x58]`（`0x4c0c2f`）、本探针读的是 `GraphwarTickHandler+0x40` 的 tick 计数，
+两者不是同一个字段、相差 0 或 1 个 tick。**本轮没有把这两个字段的关系闭合，不写成结论。**
+
+#### 70.3.3 `humm` 那一路（不属于 5 个槽）
+
+`SoundHandler::process`（`0x4bfe10`）里还有一条 `AudioStreamGenerator` 路（`set_stream` 调用点
+`0x4c01b9`、`play` 调用点 `0x4c01d8`，返回地址 `0x4c01de`；`set_mix_rate(16000.0f)` /
+`set_buffer_length(0.1f)` / `push_buffer` 都在它里面）。实测每局 2 次，`play` 的 tick
+**恰好等于**回放的 `FunctionActive.active_tick`（615/1550、87/3525，**差 0**）。
+⇒ 它是"弹道在飞时的连续音"，**不挂任何事件**，所以不出映射行（预注册 §7 已如此规定）。
+
+#### 70.3.4 触发源：事件是怎么走到音效侧的（**新解出的派发链**）
+
+4 条订阅各有一个 `dyn FnMut` 胶合 shim（各 32 B，`lea` 出真函数再 `jmp` 到通用
+`call_once` 弹板 `0x3d1df0`）：`0x4bf400`→`0x4bf090`（`effect_info_event`）、
+`0x4bf420`→`0x4bf340`（`soldier_info_event`）、`0x4bf440`→`0x4bef20`（`game_state_event`）、
+`0x4bf460`→`0x4bf480`（`entity_removed_event`）。**这 4 个 shim 的调用者返回地址恒为 `0x5154cc`**
+（落在 `0x5153f0`，`panic::Location` = `src/graphwar_backend.rs:359:49`）⇒ 派发方就是
+`GraphwarBackend` 的订阅派发。再往上（`Thread.backtrace`，从内到外）：
+
+```
+0x5154cc (in 0x5153f0, graphwar_backend.rs:359)   ← 订阅派发
+0x3d3730 (in 0x3d3630, 695 B)                     ← 事件队列派发
+0x3d637c (in 0x3d61a0 = ReplayPlayer::inject_events, 1803 B)
+0x3d6931 (in 0x3d68b0)
+0x515057 (in 0x514f20)
+0x3a6e3f (in 0x3a5760, 20278 B)                   ← 回放/对局的状态驱动者
+0x42a91a (in 0x42a8a0)
+```
+⇒ 「哪个事件放哪个音」这条链**从回放注入一直到 `set_stream` 都有地址**，没有黑盒。
+
+### 70.4 反例检查（预注册要求，逐条做）
+
+| 检查 | 结果 |
+|---|---|
+| **两条事件撞同一音频？** | **有，而且是设计**：`effect_type=2 (SparkEffect)` 与 `=3 (AshEffect)` 都落 `+0xa0` → `spark.mp3`（`0x4bf090` 的兜底臂）。**没有任何其它两两撞车**：5 个槽 ↔ 5 条资源一一对应 |
+| **有音频、没事件？（孤儿）** | 两类：① `humm` generator 路（2 次/局）—— 已归属到 `FunctionActive.active_tick`；② **入队却没播**（见 §70.6，这是本轮唯一的"吓了一跳"） |
+| **有事件、没音频？（沉默）** | `EntityEffectInfo` / `LifeInfo` / `PosInfo` / `FunctionInfo` / `FunctionFire` 在两局里**全都有出现**，但音效侧一次 handler 都没进（只订阅 4 条）⇒ **负对照成立**；`GameStateInfo` 进了 handler 但**不入队** |
+| **负对照（证明钩子有效）** | 每局 `load` **恰好 5 次**（顺序与长度都对）、`FileAccess::get_file_as_bytes` **恰好 1 次**（`res://sounds/humm.wav`）、`ctor` **恰好 1 次** ⇒ "没抓到"可以当"没发生"用 |
+| **预注册 P1–P9** | P1 ✅（载入序/长度精确命中）；P2 ✅ 但**要改口径**（见 §70.5 第 1 条：`+0x80..0xc0` 是**资源**槽不是 player 槽）；P3 ✅ P4 ✅ P5 ✅（pop/unpop 都在载入期入队）；**P6 ✅ 负预测命中**（R1 全程 `squash.mp3` 一次没响）、P6 的补充：R2 里 `DeathEffect` 响了 `squash` ⇒ 负预测只在 R1 成立、R2 把它翻正；P7 ✅；P8 ✅（音量实测 `0xc1700000`=−15.0、`0x00000000`=0.0、`0xc0a00000`=−5.0）；P9 ✅（派发返回地址恒定 `0x5154cc`） |
+
+### 70.5 纠正三处旧读法（都是本轮实测/复算打出来的）
+
+1. **`docs/17` §4.1.5 说 `+0x80…+0xc0` 是「5 个 player 槽」、音量是"逐 player 的静态常量" ⇒ 错一半。**
+   它们是 **5 个资源（`AudioStream` 句柄）槽**：`0x41d060(self+槽)` 返回的那对句柄与 `load` 回来的
+   `explosion/squash/spark/pop/unpop` **逐对相等**（这轮 5 个槽全测到）。`self+0x60` 那一对才是
+   player 侧（`docs/17` §6 已把它标为"具体对象身份推断"，本轮**没能进一步解出**：`set_stream` 的
+   第一个实参每次调用都不同，是 `self+0x60` 经 `0x420840` 变换后的产物）。
+   ⇒ **音量跟着资源走，不跟着 player 走**（同一个 player 上 5 个槽的音量各不相同，实测 3 种值）。
+2. **`docs/17` §5.1.1 说「`0x4bfe10` 是"按事件播放"的主函数（第二参数 `rsi` 是事件数据，
+   入口 `cmpq $0x0,0x1e0(%rsi)`）」⇒ 错。** 真机 hook 计数 + 6 个 `0x4bed70` 的静态调用点证明
+   `0x4bfe10` **从不调用** `0x4bed70`，也**从不调用** `0x4bf090/0x4bf340/0x4bf480`；它只做两件事：
+   ① `humm` 的 generator 泵（`0x4c01b9`/`0x4c01d8`/`0x4c0a5d`）；② **队列的 drain 播放循环**
+   （`0x4c0cba` 的 `play`）。而 `0x3a5760` 是**每帧**调它（实测 `proc` 计数 5653/5727 ≈ 帧数），
+   `rsi` 是状态对象不是事件。真正的"按事件播放"是 `0x4bf090/0x4bf340/0x4bf480`，
+   由 `0x5153f0`（`graphwar_backend`）派发（§70.3.4）。
+3. **探针本身踩过的一个坑（写给后来的人）**：第一版驱动是"**等窗口出现**再 attach"，
+   于是 `SoundHandler` 的构造（5 次 `load` + `ctor`）**有时在 attach 之前就跑完了** ——
+   同一份代码、同一份回放，第一轮抓到 `load×5`、第二轮**一条都没有**。
+   ⇒ 现在 `tools/frida_audio_map.py` 是**进程一起来就 attach**，JS 侧自己轮询
+   `libgraphwarrust.so` 是否加载完。**"钩子挂晚了"和"没有调用"在数据上长得一模一样**，
+   所以本文所有"没抓到"的结论都配了 §70.4 的负对照。
+
+### 70.6 本轮新发现的未知：**入队 ≠ 播放**（`EffectAudioData` 队列的清理路径）
+
+载入回放时，tick 1..6 的那批 `SoldierInfo`/`EntityRemoved` 是**批量注入**的 ⇒ 它们把这个队列
+一次压进 4 条（R1）/ 8 条（R2）`pop`（+ R1 里 1 条 `unpop`）。但实测**只有 1 条**真的调到了
+`play()`：
+
+* 队列布局（实测，`self+0x00` = cap / `+0x08` = ptr / `+0x10` = len，元素 0x18 B）：
+  `{ +0x00 Option<Gd> (16 B), +0x10 u32 触发 tick, +0x14 u8 已启动 }`；
+* 播放循环（`0x4c0c7a`–`0x4c0cc0`）的 3 个闸：`curTick >= entry.tick`、`!entry.已启动`、
+  **`!AudioStreamPlayer::is_playing(entry)`**（`is_playing` 绑定 = GOT 槽 `0x9bad98` → `0x8adc70`，
+  名字串 `.rodata 0x29effb`）；
+* 循环之后的清理 `0x3caef0(self, &tick)` 实为
+  `Vec::retain(|e| tick < e.value || AudioStreamPlayer::is_playing(e))` ⇒
+  **"该播了但 player 不在播"的条目会被直接丢掉**。
+
+实测现象与这条规则一致：载入期那一批里 1 条真的响了（它把自己标成"已启动"，下一帧
+`is_playing` 变 0 后被清理），其余在**同一帧**既没进 play 又在清理里消失。
+**"为什么同一帧里它们既没播又被删"没有闭合** ⇒ 标 **推断**，列为下一步（要 hook 到
+`is_playing` 的逐次返回值 + 每个条目的 player 指针，才能说清是"同一个 player 忙"还是"条目各自
+拿到一个已被回收的 player"）。**这不影响映射表**：映射的证据是"事件 → 槽 → 资源"，与"响了几次"
+是两层；表里每行都如实写了 `play@tick` 或"未观测到 play()"。
+
+### 70.7 复跑命令（照抄可跑）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export PY=$MAIN/.reference/venv/bin/python
+export WT=$MAIN/.agent-work/cg/wt-t19 && cd $WT
+export HOME=$WT/.fakehome && unset WAYLAND_DISPLAY LC_ALL
+
+# ① 真机观测（起 Xvfb + 起游戏 + attach + 点击 + 采样，全在**同一条命令同一个进程树**里）
+$PY tools/frida_audio_map.py --out .work/run4/run4.jsonl --data-dir .work/run4/gd \
+    --display-num 119 --replay 1793897298 --after-play 46 --hold 5
+$PY tools/frida_audio_map.py --out .work/run3/run3.jsonl --data-dir .work/run3/gd \
+    --display-num 119 --replay 1782640836 --after-play 62 --hold 4
+
+# ② 离线折叠成真值表（不跑游戏，纯函数）
+$PY tools/audio_replay_align.py \
+    --run .work/run4/run4.jsonl --replay 1793897298 --label R1 \
+    --run .work/run3/run3.jsonl --replay 1782640836 --label R2 \
+    --replay-dir $MAIN/.reference/replays/gw2-replays-snapshot/replays \
+    --out fixtures/audio_event_map.tsv
+```
+
+### 70.8 遗留 / 未做 / 建议下一步
+
+* **入队≠播放的机制**（§70.6）未闭合 —— 需要 hook `is_playing`（`0x8adc70`）的逐次返回值 + 每条
+  条目里的 player 指针；
+* **`self+0x60` 那对句柄的对象身份**仍未解（`docs/17` §6 就挂着）—— 本轮只确认"5 个槽不是它"，
+  没能确证它就是 `AudioStreamPlayer`；
+* **`effect_type >= 4` 的兜底臂走不到**：`deserialize`（`0x40b834`）的首字符闸 `{E,D,S,A}` 挡住
+  其余串 ⇒ 兜底臂在**正常客户端**里不可达（除非线上事件绕过 serde，本轮没验）；
+* **`tear.mp3` / `humm_2` / `humm_b` / `shepard_2` 仍无引用**：两局里 `load` 只见到 5 条 mp3 +
+  `humm.wav` 一次，与 `docs/17` §5.1.2 的负结果一致（**没有推翻**）；
+* **`0x4bef20`（`game_state_event`）的清队列**只观测到"派发 12/11 次、0 次入队"，
+  `state == 1` 那条分支在两局里是否**真的**清过东西没有直接证据（载入期那一刻队列恰好是空的）
+  ⇒ 仍标 `观测`（行为）+ `推断`（清空动作）；
+* 建议下一步：跑一份**有士兵阵亡 + `DeathEffect`** 的局把第 2 行的实例数从 1 提到多条；
+  以及一份 `AshEffect` 与 `ExplosionEffect` 同时出现的局，验证兜底臂在压力下不串槽。
