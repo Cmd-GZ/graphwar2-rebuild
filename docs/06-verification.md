@@ -8792,3 +8792,738 @@ for f in assemble_check base_classes_check curve_on_screen_check draw_classes_ch
 | headless 14 个 SceneTree 脚本 | **1933 / 0**（`assemble 244 / base 117 / curve 96 / draw 235 / entity 366 / function 132 / gdext 24 / obstacle 116 / plane 96 / play_flow 206 / process 66 / recovered 57 / signal 155 / spike 23`） |
 | 三轴（各自 `--check-baseline`） | `fire` 内容 **647** / 种类序列 **1075**；`batch` 内容 **647** / 1075；`batch_conv` 内容 **637** / 1075 —— 三条全部 `校验结果：全部一致` |
 | 冻结快照 | **403** 份（一个字节没动） |
+## 60. 视觉真值扩到「对局屏」：**脚本化协议服务器把局面钉死**，原版真机与我方客户端各拍两屏（2026-11-26，任务 T8）
+
+> 任务书：`.agent-work/specs/T8-match-frames.md`（共享任务 `task-5`）。分支 `agent/match-frames`，基于 master `2f64674`。
+> 工作树 `.agent-work/cg/wt-t8`（私有 `CARGO_HOME` / `CARGO_TARGET_DIR=$WT/.cargo-target`）。
+> 原版 = `.reference/game/{Graphwar.x86_64, Graphwar.pck, libgraphwarrust.so}`（Graphwar II Linux **2.0.60**，
+> 内嵌 Godot **4.7.stable.official.5b4e0cb0f**）；我方 = `client/` + `libgw2_rebuild.so`（Godot **4.7.2**）。
+> 地址一律 **vaddr**；证据档按 `AGENTS.md` §0.3 标（**逐位** / **观测** / **推断** / **未知**）。
+
+**一句话**：**两侧都进到了同一屏** —— S7 准备态（`match_ready`）与 S8 对局中（`match_play`）。
+两屏都**不过**既有三层判据，但 **L1 全过**（尺寸 / 平均色 / 第一主色都对得上）⇒ 差的是**元素**，不是"差一点亮度"。
+跨侧差异 **6.3574 % / 6.8344 %**，而两侧**噪声地板**只有 **0.049 % / 0.000 %** 与 **0.674 % / 0.150 %** ⇒ 差异不是动画相位噪声。
+
+### 60.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 对局屏有真值了吗 | **有了**：`fixtures/frame_match_events.txt`（预注册剧本）+ `tools/match_serve.py`（脚本化服务器）+ `--flow match`（采集）+ `fixtures/frame_diff_results_match.tsv`（数字） | **观测** |
+| ② | 两侧都进到同一屏了吗 | **都进了**，屏名 `match_ready` / `match_play`（定义见 60.1）。证据：两侧各自 `manifest.json` 的 `ok=true`、窗口 `1920x1160+0+0`、每屏 3 帧落盘；服务器日志里两侧都**收到同一份 50 帧剧本**并各自回话（原版回 `FunctionsCalculated{}`、我方回 `GameStartRequest{}`，见 60.3） | **观测** |
+| ③ | 差异数字 | `match_ready` 跨侧 **141 591 px = 6.3574 %**（max\|Δ\|=255）；`match_play` **152 216 px = 6.8344 %**。L1 **过**、L2 **不过**（4 块 / 3 块超限）、L3 按门槛不算数 | **观测** |
+| ④ | 差在哪些元素 | 士兵精灵（我方 ≈20×20 px 圆点 vs 原版 ≈73×72 完整精灵+名字标签）、**多一个落在棋盘正中 (0,0) 的实体且准备圈画在它身上**（原版那里什么都没有、准备圈在射手 230 身上）、**靶子被画成士兵**（原版蓝环红心）、弹道样式/配色、`Fire!` 字号与颜色、右下偏移量标签（原版 `- 9.890` 常显 / 我方 S7 无、S8 显示 `- 3.694`）、键盘字形与 `y` 键底板、棋盘网格 1 px | **观测**（真机真帧 + 逐 ROI 差异计数） |
+| ⑤ | 为什么差这些 | 我方 `client/src/net/session.gd::_apply` **只处理 21 个事件**，而剧本里 30 个事件名中有 **12 个没有处理器**（`EntityRemoved`/`RemoveTeam`/`TargetInfo`/`NameInfo`/`SkinGraphicsInfo`/`FaceGraphicsInfo`/`HatGraphicsInfo`/`EntityEffectInfo`/`FunctionFire`/`FunctionPoints`/`FunctionActive`/`EffectInfo`）⇒ 名字/外观/靶子/实体删除/爆炸进不到界面层 | 列表 **观测**（读代码）；"这就是差异成因"是 **推断**（本轮没有 dump 我方 `EntityDrawer` 的输入表，同 `docs/06` §53.6 最后一行口径） |
+| ⑥ | 原版会接受我方服务器吗 | **会**。§48 那条路（LAN 发现变体 C + TCP `u16` 大端长度 + JSON）在**对局屏**这一层继续成立：真客户端连上后走完了握手 + 42 帧局面快照 + 8 帧开火剧本 | **观测** |
+
+### 60.1 预注册：事件序列 = **真回放的事件流**（先提交、后采集）
+
+文件 [`fixtures/frame_match_events.txt`](../fixtures/frame_match_events.txt)（commit `a45fd93`，**采集之前**提交）。
+它不是一个"示意图"，是**逐条可查的真值**：
+
+| 项 | 内容 | 来源 |
+|---|---|---|
+| 局面/顺序 | 冻结快照里的**真回放** `1793897298`（`Level 0`：1 士兵 230 + 靶子 232、`ClearObstacles`、104 事件 / 2276 tick） | `.reference/replays/gw2-replays-snapshot/replays/1793897298`（**只读**，跑完仍 403 份） |
+| 握手 7 条 | `NewConnection` + 6 条 `*Info`，**顺序即真抓包顺序** | `client/src/net/wire_samples.gd::STATE_SYNC` = `fixtures/protocol_match.jsonl:22/23/30/32/25/26/27`、`docs/07` §1 |
+| 字节布局 | `u16` 大端长度 + `{"<EventName>":{…}}` | `src/_scaffold/protocol.rs`（74/74 事件**逐位**）、`docs/07` §3.3 全表、`docs/09` §1.1 |
+| 自校验 | 剧本 50 条里 **49 条在真回放里逐字段命中**，唯一例外 `NewConnection{228}` 来自真抓包握手 | 复跑：拿回放 `json.dumps(sort_keys=True)` 建池逐条比对（命令见 60.7 ④） |
+
+两个屏的**定义**（本文件定义、`--flow match` 写进 manifest）：
+
+| 屏名 | = 哪一态 | 剧本相位 | 判据 |
+|---|---|---|---|
+| `match_ready`（**S7 准备态**） | 棋盘上有士兵（带准备圈）与靶子、回合 HUD 显示轮到谁，**还没开火**：最后一次状态迁移是 `GameStateInfo{WaitingForFunctions}` | `[phase1]` 42 帧 | L1/L2/L3 引 [`fixtures/frame_diff_thresholds.txt`](../fixtures/frame_diff_thresholds.txt)（sha256 `9cc9fcda…`，**一个数没改**） |
+| `match_play`（**S8 对局中**） | 收到 `FunctionFire` 之后进入 `CalculatingResults`，带真修正函数 `x+2sin(20x) - 3.694`、落点 `end_x=2.5793570733273476`、爆炸点 `(2.579357, 0.823608)` | `[phase2]` 8 帧 | 同上 |
+
+### 60.2 管线（一图 + 三件工具）
+
+```text
+tools/match_serve.py（脚本化服务器，**读 fixture 原样发**）
+  ├ UDP 127.0.0.1:42968 ← 裸 9 字段 GameInfo + "\n"（变体 C，§48.2 ①）⇒ 客户端 LAN 列表出现一行
+  ├ TCP 127.0.0.1:46702：收 NewConnectionRequest → 发 [phase1] 42 帧（逐帧 20 ms 间隔）
+  │                      ⇒ 客户端进对局屏（S7）
+  ├ 等 <工作区>/phase2.trigger 出现（采集脚本拍完 S7 后 touch）→ 等 1.0 s → 发 [phase2] 8 帧 ⇒ S8
+  └ 全程回答客户端的 TickRequest（TickReply，tick 轴见 60.2.1），并记录**每一帧**（时刻/事件名/字节数/完整载荷）
+
+tools/frame_capture.py --flow match（**只新增这一支**，campaign/replay/static 一字未改）
+  └ 同一个进程树里：起服务器 → 起私有 Xvfb 1920x1160x24(TCP) → 起游戏 → 点 主菜单 Play(1344,622)
+    → 点 LAN 第 1 行 Join(1842,209) → 等 3.0 s → 每屏 3 帧（间隔 1.2 s）→ 拍完 S7 就 touch 触发文件
+    → 等 5.0 s → 拍 S8 → 收摊（服务器 SIGTERM）
+
+tools/frame_diff.py（**未改**，一字未动）→ fixtures/frame_diff_results_match.tsv + fixtures/frame_diff_blocks_match.tsv
+```
+
+**为什么服务器必须由采集脚本起**：本机每条 bash 命令是独立 PID namespace（§53.7 第 2 条），
+上一条命令里 `nohup` 起的进程在下一条就不存在 ⇒ "起服务器 → 起游戏 → 点 → 截"必须在**同一个进程树**里。
+
+#### 60.2.1 本轮唯一一次"改管线"：`TickReply`（**不是**改门槛、不是改剧本）
+
+第一次跑原版侧时 `[phase2]` 发出去了，但画面上**没有弹道**：S8 与 S7 只差 **1 186 px**（差在准备圈长完，见 60.5 第 3 行）。
+原因是客户端的动画时钟 = **服务端 tick 轴**：剧本取自真回放第一发（`FunctionActive.active_tick=615`、
+爆炸 `EffectInfo.start_tick=1281`），而客户端刚连上时 tick ≈ 0 ⇒ 615 还没到，弹道当然不开始。
+
+真服务器对 `TickRequest`（原版客户端 1 Hz 发）回 `TickReply`（`docs/07` 判别值 2，「逐位 + 观测（4 行）」），
+所以**补上 TickReply 是更接近原版**，而不是"为了让画面好看"：
+
+* tick 基准**不是我编的**：phase1 期间 = **6**（回放里快照那段的 tick）、phase2 期间 = **550**（回放里第一发的 tick），
+  之后按 **60 Hz** 走 —— 两个数都写在 fixture 的 `[meta]` 里，出处写在旁边；
+* 补上之后：原版侧收到 14 条 `TickReply`，S8 与 S7 的差异从 1 186 px 变 **11 616 px**，画面出现弹道（60.5 第 3 行）；
+* 我方客户端**不发** `TickRequest`（那是它与原版的一个真实差别）⇒ 我方那次 `TickReply` = **0 条**，
+  它靠本地时钟走动画。⇒ S8 的"弹道相位"两边**不是同一时刻**，只能比"画出来的形状/位置"（见 60.8 第 2 条）。
+
+### 60.3 两侧各进到哪一屏（证据）
+
+两侧**同一份剧本、逐字节相同**：两次运行的服务器日志首行都写着
+`fixture_sha256 = 2278c30d54836167c36136225c2ffb931ab7c478df5db7fcfed908ec43555396`，
+`[phase1]` 都是 **42 帧 / 2273 字节**、`[phase2]` 都是 **8 帧 / 620 字节**。
+
+| 项 | 原版（`--side original`） | 我方（`--side ours`） |
+|---|---|---|
+| 窗口 | `1920x1160+0+0`（`manifest.json.window`） | `1920x1160+0+0` |
+| 采集 `ok` | `true` | `true` |
+| 连上服务器 | t=7.563 s，先发 `NewConnectionRequest{major:2.0,minor:60}` | t=7.548 s，**同样**先发 `NewConnectionRequest` |
+| 收到的剧本 | 42 + 8 帧（服务器逐帧记了载荷） | 42 + 8 帧（**同一份 sha256**） |
+| 客户端回话（证明它真的进了对局状态机） | `NewPlayerRequest{228}` → `NameRequest{229,"CG"}`/`SkinRequest`/`FaceRequest`/`HatRequest`/`RankRequest{0}` → `FunctionUpdateRequest{229,""}` → `TickRequest`×N → **`FunctionsCalculated{}`**（t=14.59，就在 `[phase2]` 发完那一刻！= 它处理了 `FunctionFire` + `CalculatingResults`） | `NewPlayerRequest{228}` → **`GameStartRequest{}`**（我方客户端连自己的服务器时会自己开局，`session.gd::auto_start`），**不发** `TickRequest` |
+| 画面 | 对局屏：棋盘 + 士兵精灵（黄，带名字 `cmdgz`）+ 橄榄色准备圈 + 蓝环红心靶子 + `Fire!` 白色粗体 + 键盘 + `f(x)=` 行 + 右下 `- 9.890` | 对局屏：棋盘（同样尺寸）+ 三个 ≈20×20 px 的圆点（其中一个是**已删除士兵 231 在原点**）+ **红色**准备圈 + 键盘 + `Fire!`（小号深色）+ `f(x)=` 行（S7 无偏移量、S8 显示 `- 3.694`） |
+| 证据档 | **观测**（真机真帧 + 线上原文） | **观测**（真机真帧 + 线上原文） |
+
+> ⚠️ 两侧是**分两次**跑的（同一台机、不同 display 83/84），不是同时跑；因为 LAN 发现要绑 `UDP 42968`，同时跑会互抢。
+> 两条命令见 60.7，**各自把服务器也起一遍**、喂**同一份 fixture**。
+
+### 60.4 L1 / L2 / L3 数字（入库：[`fixtures/frame_diff_results_match.tsv`](../fixtures/frame_diff_results_match.tsv)）
+
+| 屏 | 判定 | L1 尺寸 | L1 平均色 \|Δ\|max | L1 第一主色 | L1 占比差 | L2 超限块 | L2 最差块 | L2 最差 \|Δmean\| | L3 差异像素 | L3 max\|Δ\| | 噪声地板（原版／我方） |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `match_ready` | **不过（L2，4 块）** | ✅ 1920×1160 两侧 | **0.345** ✓（≤2.0） | `#FFFFFF` / `#FFFFFF` ✓ | **0.011 pp** ✓ | **4 / 24** | `(0,5)` | **5.71** | 141 591（**6.3574 %**） | 255 | **0.049 %** / **0.000 %** |
+| `match_play` | **不过（L2，3 块）** | ✅ | **0.553** ✓ | `#FFFFFF` / `#FFFFFF` ✓ | **0.265 pp** ✓ | **3 / 24** | `(2,2)` | **18.138** | 152 216（**6.8344 %**） | 255 | **0.674 %** / **0.150 %** |
+
+**复现性**（同一台机、同一棵树、同一条命令各再跑一遍，实测两轮）：
+
+| 复跑的是哪一侧 | `match_ready` L3 像素 | `match_play` L3 像素 | `l2_blocks_over` | 最差块 \|Δmean\| |
+|---|---|---|---|---|
+| 首跑（本表数字） | 141 591（6.3574 %） | 152 216（6.8344 %） | 4 / 3 | 5.71 / 18.138 |
+| **我方侧**重采 | **141 591**（一位不差） | **152 216**（一位不差） | 4 / 3 | 5.71 / 18.138 |
+| **原版侧**重采 | 141 596（+5 px） | 151 933（−283 px） | 4 / 3 | 5.71 / 17.225 |
+
+⇒ 我方侧那三帧 `match_ready` 逐字节相同（`sha256 ed6c9627…`），数字可复现到**一位不差**；
+原版侧的差来自**准备圈在动**（S7 三帧互不相同、噪声地板 0.049 %），浮动 ≤0.2 %。
+判定（L1 过 / L2 不过、超限块集合）两轮完全一致 —— 结论不受动画相位影响。
+
+**L1 全过、L2 不过**这个组合本身就是结论：**版式骨架对得上，元素没对上**。
+L3（差异像素 ≤ 0.10 %、max\|Δ\| ≤ 8）按门槛**只在 L1/L2 都过时才算数**，所以两屏的 L3 数字只是参考量。
+
+超限块（6×4 网格，块宽 320 px、块高 290 px）→ 画面上是什么：
+
+| 屏 | 块 `(row,col)` | 像素范围 | \|Δmean\|max | 屏上元素 | 差在哪 |
+|---|---|---|---|---|---|
+| 两屏 | `(0,0)` | x 0..319, y 0..289 | 2.865 | 左上 **返回(↩) / 确认(∨)** 两个按钮 | 底板圆角与图标边缘（`max|Δ|=30`，纯细节；色板完全相同） |
+| 两屏 | `(0,5)` | x 1600..1919, y 0..289 | **5.71** | **`Fire!` 按钮** | 原版 = 白色**粗体大字**（按钮文字区白像素 **1857**），我方 = 小号**深色**字（白像素 **261**）⇒ 字号与字色都不对（`max|Δ|=229`） |
+| `match_ready` | `(2,2)` | x 640..959, y 580..869 | 2.53 | 射手 + 准备圈 | 逐元素见 60.5 |
+| `match_play` | `(2,2)` | 同上 | **18.138** | 射手 + **弹道** | 弹道样式/配色/相位差（原版金色尖峰、我方绿色尖峰） |
+| `match_ready` | `(3,5)` | x 1600..1919, y 870..1159 | 2.724 | 右下 **偏移量标签** | 原版常显 `- 9.890`；我方 S7 这个位置是空的 |
+
+### 60.5 逐元素差异清单（ROI 计数 + 画面元素）
+
+ROI 是人工框的（框内 `d>0` 的像素占比），用来把"整屏 6.36 %"拆到元素上：
+
+| 元素 | ROI (x0,y0)-(x1,y1) | `match_ready` 差异 | `match_play` 差异 | 原版长什么样 | 我方长什么样 |
+|---|---|---|---|---|---|
+| 棋盘**几何**（白底矩形） | 整块 | — | — | x **303..1575**、y **198..959**（1273×762） | x **303..1575**、y **199..960**（**下边差 1 px**） |
+| 棋盘**格线**（含左上带） | (303,198)-(1100,420) | **13 343 px / 7.54 %** | 同 | 均匀灰格线（`#E6E6E6` 次线 / `#B2B2B2` 主线） | 同色，但**整体错 1 px**；且在 x≈300..640 / y≈240..300 出现**错位虚线网格片段**（我方多画了一层） |
+| **射手精灵** | (760,730)-(900,880) | **3 923 px / 18.68 %** | **8 132 px / 38.72 %** | 完整士兵精灵（帽子+脸+身体，≈73×72）**+ 名字标签 `cmdgz`** | ≈**20×20 px** 的圆点（绿帽黄脸），**无名字标签** |
+| **准备圈** | 同上 | 同上 | 同上 | 橄榄色（= 玩家色）弧 + **2 个箭头尖**，画在**射手 230** 身上 | **红色**（3 个箭头 + 虚线圆），画在棋盘正中 `(0,0)` 那一处、**不在射手身上**。根因链：① `EntityRemoved{231}` 无处理器 ⇒ 被删的士兵 231 留在实体表；② `_ensure_entity()` 给**任何**被事件提到的实体默认 `kind="soldier"`、默认坐标 `(0,0)` ⇒ 只出现在 `TeamInfo{entity_id:229}` 里的**玩家实体 229** 也成了一具"士兵"停在原点。⇒ 原点上叠着 **229 与 231 两具**；圈具体落在哪一具（`_turn_driver.first_shooter()` 选了谁）**本轮没有 dump，标推断** |
+| **靶子** | (1140,400)-(1250,510) | **1 627 px / 13.45 %** | 同 | 蓝环 + 红心的**靶子**（`SkinGraphicsInfo{graphics_str:"target"}`） | **画成了士兵**（绿帽黄脸）—— `TargetInfo` 没处理器，实体保留默认 `kind="soldier"` |
+| **弹道/特效** | 射手区 + 中心区 | ——（S7 无弹道，两侧一致） | 见 `(2,2)` 块 | 金色尖峰曲线（`x+2sin(20x)` 高频振荡），随 tick 从 `active_tick=615` 长出来 | 绿色尖峰曲线，**一次画完**再动（我方不发 `TickRequest`、不接 `FunctionPoints`/`FunctionActive`） |
+| **`Fire!` 按钮** | (1636,4)-(1916,112) | **3 096 px / 10.24 %** | 同 | 白色粗体大字 | 小号深色字（同一 ROI 里白像素 1857 → 261） |
+| **右下偏移量标签** | (1740,1080)-(1916,1140) | **1 336 px / 12.65 %** | **1 858 px / 17.59 %** | 两个屏都显示 **`- 9.890`**（= 射手 y `-9.88998` 的显示值，`推断`：这是"发射基点偏移"，不是修正常数） | S7 **不显示**；S8 显示 **`- 3.694`**（= 修正函数里的常数项）⇒ 数值与出现时机都不同 |
+| **左键盘** | (0,276)-(300,1010) | **15 722 px / 7.14 %** | 同 | 同版式 | 字形轮廓差（抗锯齿/1 px），按键行列位置**对齐到 1 px 内** |
+| **右键盘** | (1580,276)-(1920,1010) | **21 674 px / 8.68 %** | 同 | 同上 | 同上 + **`y` 键底板**整块不同 |
+| 顶部四图标（非棋盘左侧） | (700,4)-(1330,112) | **0 px / 0.00 %** | 0.00 % | 四个圆角图标（网格/f(x)/弹道/喇叭） | **完全相同** |
+| `f(x)` 行 | (140,1030)-(1920,1160) | 8 349 px / 3.61 % | 8 871 px / 3.83 % | `f(x) =` + 输入框 + 右上偏移量 | 输入框**中间多一根光标竖线**（x≈1004，S7/S8 都在），框宽/位置差几 px |
+
+**根因线索（12 个没有处理器的事件）**：我方 `client/src/net/session.gd::_apply` 处理 **21** 个事件名；
+剧本用到的 **30** 个事件名里，**12 个完全没有处理器**：
+`EntityRemoved` / `RemoveTeam` / `TargetInfo` / `NameInfo` / `SkinGraphicsInfo` / `FaceGraphicsInfo` /
+`HatGraphicsInfo` / `EntityEffectInfo` / `FunctionFire` / `FunctionPoints` / `FunctionActive` / `EffectInfo`。
+⇒ 名字标签、外观、靶子身份、实体删除、**开火→弹道点→爆炸**这条链，全都到不了界面层。
+（这是**观测**：读代码 + 线上原文；"差异就是这么来的"是**推断** —— 本轮没有 dump 我方 `EntityDrawer` 的输入表。）
+
+### 60.6 这批数字能支撑什么、不能支撑什么
+
+| 结论 | 证据 | 档 |
+|---|---|---|
+| **对局屏第一次有了像素真值**：同一份剧本下两侧都进到 S7/S8，可以逐块逐元素比 | 60.3 + 60.4 | **观测** |
+| 版式骨架（棋盘几何、键盘、`Fire` 位、`f(x)` 位）**已经对得上**：L1 全过，棋盘矩形两侧差 ≤1 px | `l1_ok=True` 两屏 + 白底矩形 `303..1575` vs `303..1575` | **观测** |
+| 差异是**元素级**的（6.4–6.8 %），**不是**相位噪声（噪声地板 ≤0.67 %） | 60.4 | **观测** |
+| 我方**把靶子画成士兵**、**在棋盘正中 (0,0) 多画了实体（229/231 叠在一起）**、**准备圈不在射手身上** | 60.5 三个 ROI + 我方代码（`TargetInfo`/`EntityRemoved` 无处理器；`_ensure_entity` 默认 `kind=soldier`、默认坐标 `(0,0)`） | **观测**（画面 + 代码）；"圈落在 229 还是 231" = **推断** |
+| `TickReply` 是原版动画时钟的输入 | 同一剧本两次运行：无 TickReply ⇒ 弹道 0 px；有 ⇒ 11 616 px 且画面出现弹道 | **观测**（两次运行的对照） |
+| 我方"缺 12 个事件处理器"就是这些差异的**唯一**成因 | —— | **推断**（还可能有 `play_screen` 自己的版式问题；见 60.5 的 `Fire!`/光标/网格片段三项） |
+
+### 60.7 跑一遍（照抄；两路各一条命令，服务器由脚本自己起）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t8
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target          # 单独一行
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+export PY=$MAIN/.reference/venv/bin/python
+cd $WT
+W=$WT/.agent-work/frames                              # 产物目录（.agent-work 可丢，数字在 fixtures/）
+
+# ① 前置：我方内核（改了 src/ 才需要重做）
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+HOME=$WT/.fakehome "$GODOT" --headless --path client --import
+
+# ② 两侧采集（各 ~40 s；两路不同 display 号；各起一台自己的脚本化服务器，喂**同一份** fixture）
+python3 tools/frame_capture.py --side original --flow match --out $W/match-orig --display-num 83
+python3 tools/frame_capture.py --side ours     --flow match --out $W/match-mine --display-num 84
+
+# ③ 三层判据（**门槛文件未改**，脚本会核对 sha256）
+python3 tools/frame_diff.py --orig $W/match-orig --mine $W/match-mine --screens match_ready,match_play \
+  --out fixtures/frame_diff_results_match.tsv --blocks-out fixtures/frame_diff_blocks_match.tsv \
+  --json $W/frame_diff_match.json
+#   → 期望：match_ready 不过（L2，4 块）6.3574 %；match_play 不过（L2，3 块）6.8344 %
+
+# ④ 剧本自校验（50 条里 49 条必须与真回放逐字段相同；唯一例外 NewConnection 来自真抓包握手）
+python3 - <<'EOF'
+import gzip, json
+txt = open('fixtures/frame_match_events.txt', encoding='utf-8').read()
+seq, on = [], False
+for ln in txt.splitlines():
+    s = ln.strip()
+    if s.startswith('[seq]'): on = True; continue
+    if s.startswith('[endseq]'): on = False; continue
+    if on and s: seq.append(json.loads(s.split('#')[0].strip()))
+p = '/home/CG/Myprojects/graphwar2-rebuild/.reference/replays/gw2-replays-snapshot/replays/1793897298'
+evs = [json.loads(l) for l in gzip.decompress(open(p,'rb').read()).decode().splitlines() if l.strip()]
+pool = {json.dumps(e['event'], sort_keys=True) for e in evs}
+miss = [s for s in seq if json.dumps(s, sort_keys=True) not in pool]
+print('剧本 %d 条，不在真回放里的 %d 条：%s' % (len(seq), len(miss), miss))
+EOF
+
+# ⑤ 冻结快照没被写（三轴的分母）
+ls $MAIN/.reference/replays/gw2-replays-snapshot/replays | wc -l    # → 403
+```
+
+产物在哪（**都不入库**，`.agent-work/` 可丢）：每侧 `<out>/frames/{match_ready,match_play}_{1,2,3}.png`、
+`<out>/manifest.json`（窗口 id/几何/每帧 sha256/点击步骤）、`<out>/serve.jsonl`（**逐帧发送日志**）。
+
+### 60.8 遗留 / 未做
+
+1. **只有 1 个局面**（真回放 `1793897298` 的 `Level 0`：1 士兵 + 1 靶子 + `ClearObstacles`）。**没有**采：
+   2 人对局 / 多士兵 / 带障碍（`AddObstacle`）/ 同时回合 / 靶子被击毁后的那一屏。剧本换真回放就能加，管线不用改。
+2. **S8 的弹道相位两边不是同一时刻**：原版靠服务端 tick 轴（`TickReply`）推、我方靠本地时钟 ⇒ 只能比"形状/位置/配色"，
+   不能比"同一 tick 的同一段曲线"。要真对齐要么给我方客户端也接 `TickRequest/TickReply`，要么用 frida 把原版冻在 tick T（§53.5 第 2 条同款缺口）。
+3. **我方 S7 三帧 sha256 完全相同**（`ed6c9627…`×3）：我方准备圈**不随时间动**，原版在动（噪声地板 0.049 %）。⇒ 准备圈动画（`set_ring_base` 那条链）我方还没接。
+4. **同一引擎对照没做**：本轮仍是原版 4.7.0 vs 我方 4.7.2（§53.5 第 3 条的混淆项）。
+   `--flow match` 与 §54 那套 `--ours-mode pck` **可以叠加**（`--flow` 与 `--ours-mode` 正交），但本轮没跑。
+5. **`--game-arg` 传地址这条没用到**：地址走 LAN 发现的 `address` 字段就够（而且原版的 CLI 参数是死的，§48.1）。
+   想不走 LAN 发现，可以改用两边都有的 `Join IP` 弹窗（原版坐标见 §51.1），本轮没做。
+6. 按差异改界面**不在本轮范围**（任务书 §3 明令）：本轮只建管线 + 测量。
+
+### 60.9 卡点 / 任务前提被证伪
+
+| # | 项 | 结论 |
+|---|---|---|
+| 1 | 「原版会拒绝我方服务器的对局层握手」 | **没有发生**，前提不成立（不需要卡点）。§48 只证明到"握手 + BotAdded"，本轮把**整份局面快照 + 开火剧本**也喂进去了，原版照收、还回了 `FunctionsCalculated{}` |
+| 2 | 「两侧必须同时跑才能比」 | **不需要**：分两次跑、喂同一份 fixture 就够了（60.3 的 sha256 相同即证据）。同时跑反而会撞 `UDP 42968` |
+| 3 | 真正卡住过的一步 | **动画时钟**：不补 `TickReply` 时 S8 里**没有弹道**（1 186 px），曾一度以为"原版不画弹道"。补法是照真服务器的行为回 `TickReply`（tick 基准取真回放的 6 / 550），**不是**改门槛或改剧本 |
+| 4 | 仍缺的情报 | ① 我方客户端为什么不发 `TickRequest`（是没实现还是设计选择）—— **未知**，本轮不许改 `client/**` 所以没查；② 原版 `- 9.890` 那个标签的语义（发射基点 vs 别的）—— **推断**，缺反汇编/口径证据 |
+
+## 62. 视图层第二轮：52 份原版 `.gd` 逐份台账 + 新换 3 份（`OptionsContainer` / `TurnLimitText` / `GameSetupPlayerEntry`），`level_popup` 仍 **0 像素**（2026-11-26，任务 T10）
+
+> **一句话**：把 §43（上一轮 gdswap）跳过的 15 份 + 上一轮没进表的 13 份（7 份 AdMob/IAP 平台桥 +
+> 5 份 play_screen 专属 + `GameNameContainer`）全部逐份判定完，写成
+> [`fixtures/view_layer_ledger.tsv`](../fixtures/view_layer_ledger.tsv)：**already-original 24 / swap 3 / blocked 25**。
+> 本轮实际换上去 **3 份**（`OptionsContainer.gd` / `TurnLimitText.gd` / `GameSetupPlayerEntry.gd`），
+> 并删掉我方对应的两份自写算式。px 口径：`campaign` **0.000 %**、`level_popup` **0.000 %**（max|Δ|=0），
+> 与 §57 的 0 像素基线**逐像素相同** —— 换上去反而更省代码，没换来任何像素代价。
+
+> 档位同前几节：**观测** = 能指到原版字节/真帧；**推断** = 有依据未证。原版 `.gd` 是 `.gdc` 反编译产物
+> ⇒ 本轮所有"换上去"都是**观测级"原版字节在场"**，**不是**"行为已复原"。
+
+### 62.1 台账：52 份的分布与"新增的那条硬证据"
+
+[`fixtures/view_layer_ledger.tsv`](../fixtures/view_layer_ledger.tsv) 有 52 个数据行 × 7 列。
+`why` / `need` 两列是人写的判断；机械列（`lines` / `shipped_scn_refs` / `client_path`）与
+"status 与是否逐字节在场"这条不变量可以用下面这条命令**原地复算**（不依赖任何 `.agent-work` 里的脚本）：
+
+```bash
+MAIN=/home/CG/Myprojects/graphwar2-rebuild
+python3 - "$MAIN" <<'PY2'
+import glob, os, sys
+main = sys.argv[1]
+scn = {os.path.basename(p).split('-', 2)[-1]: open(p, 'rb').read()
+       for p in glob.glob(os.path.join(main, 'rsc/.godot/exported/133200997/*.scn'))}
+views = {os.path.basename(p) for p in glob.glob('client/src/views/*.gd')}
+for p in sorted(glob.glob('recovered-src/*.gd')):
+    n = os.path.basename(p)
+    refs = sorted(k for k, v in scn.items() if ('res://' + n).encode() in v)
+    same = n in views and open('client/src/views/' + n, 'rb').read() == open(p, 'rb').read()
+    print('%-40s lines=%-3d scn_refs=%-2d view_in_place=%s' % (n, sum(1 for _ in open(p)), len(refs), same))
+PY2
+```
+
+断言（脚本里已核过一遍）：`status ∈ {already-original, swap} ⇔ view_in_place=True`，
+`status = blocked ⇔ view_in_place=False`。
+
+| status | 份数 | 含义 |
+|---|---:|---|
+| `already-original` | **24** | §43 已换；本轮复核 `cmp` 逐字节相同 **且**运行时真的挂上（`GwViews.attach()`） |
+| `swap` | **3** | 本轮换上并验过（见 §62.3） |
+| `blocked` | **25** | 换不了；每一行都写了**缺什么**（见 §62.4） |
+
+**这一轮新加的判据（比 §43 更硬）**：不再靠"有没有同名文件"，而是直接读**原版二进制场景**——
+主工作区 `rsc/.godot/exported/133200997/*.scn`（31 份，只读）的**原始字节**里 grep
+`res://<脚本名>.gd`，严格前缀匹配：
+
+```text
+45/52 份被至少一份随包场景引用；**0 引用的有 7 份**：
+  CampaingButtonSize.gd  ExtraOptionsVbox.gd  LevelTitleContainer.gd  OffsetLabel.gd
+  ResizeContainer.gd     UnlockButton.gd      endgame_pop_up.gd
+```
+
+两条坑（都真踩到，写下来省下一个人的时间）：
+
+1. **子串匹配会把数算多**。第一遍用裸文件名的 `in bytes` 判，`MarginContainer.gd` 数出 **10** 场——
+   多出来的两场是 `team1_entry.scn` / `team2_entry.scn`，命中的其实是 `SoldierIconMarginContainer.gd`
+   的后缀。改成 `res://` + 全名之后是 **8** 场，与 §43.2 的"8 个界面根节点"**一位不差**。
+2. **"包里没场景挂它"≠"Rust 运行时 `new()` 它"**。§43.3 对 `CampaingButtonSize` / `LevelTitleContainer` /
+   `OffsetLabel` / `ResizeContainer` 写的是推断"原版是 Rust 控制器运行时 `new()` 的"。本轮补了一条反证：
+   `libgraphwarrust.so` 的 **84480 行**字符串表里 `res://*.gd` 出现 **0 次** ⇒ **没有任何证据**表明 Rust
+   按路径加载过 GDScript。所以这 4 份（外加 `UnlockButton` / `ExtraOptionsVbox` / `endgame_pop_up`）
+   的正确表述是**包内死文件**（作者遗留），既没被场景挂、也没有 Rust 侧加载证据。
+
+### 62.2 换上去的 3 份（各改了谁、删了什么、验了什么）
+
+判据（三条，缺一不算）：① 原版 `.scn` 里能读出该脚本挂在**哪个节点**（路径 + 类型）；
+② 我方树里有**同名同类型同形状**的节点；③ 挂上之后 `client/tools/*.gd` 全量 + `selftest` + 该屏像素**一条不退**。
+
+| 原版脚本 | 原版挂在哪个节点（观测：`.scn` 字节 + `recovered-src/*.tscn`） | 我方挂在哪儿 | 删掉的我方实现 | 可观测效果（headless 64 px，临时探针实测） |
+|---|---|---|---|---|
+| `OptionsContainer.gd`（13 行） | `join_level_pop_up.scn` 的 `OptionsContainer`（HBox） | `join_level_pop_up.gd` 的 `OptionsContainer` | **`_update_options_height()` 整份删除**（含"弹窗未布局时按预测父高兜底"那一支） | `custom_minimum_size.y = 17.75 = 0.25 × 71`（父 VBox 高） |
+| `TurnLimitText.gd`（18 行） | `OptionsContainer/AspectRatioContainer4`（第 4 格 = `TimeModeButton` 那一格） | 同名同位置的那个 `AspectRatioContainer4` | 无（我方这一格原来**没有任何字号代码**） | 子节点 `TimeModeButton.font_size = 3 = 64/20` |
+| `GameSetupPlayerEntry.gd`（19 行） | `team1_entry.scn`/`team2_entry.scn` 里**包 `PlayerNameLabel` 的那个** `MarginContainer`（根 `HBoxContainer` 的第 5 个孩子） | `game_setup.gd::_player_row()` 里包 `PlayerNameLabel` 的 `MarginContainer` | 无（字号原来由 `GwScreen._apply_size_recursive()` 的 `maxi(10, 宽/30)` 给） | `PlayerNameLabel.font_size = 1 = 64/40`（换之前是 `maxi(10, 64/30) = 10`） |
+
+`client/src/views/` 现在是 **27 份**（24 + 3），27 份**全部**与 `recovered-src/` 逐字节相同：
+
+```bash
+for f in client/src/views/*.gd; do cmp "$f" "recovered-src/$(basename $f)" || echo "DIFF $f"; done   # 无输出
+```
+
+#### 62.2.0 运行实例数：**27 个文件 / 82 个实例**（证明"不是只把文件拷进来"）
+
+临时探针（`extends SceneTree`，跑完删除、不入库）：实例化 `scenes/main.tscn` → 依次进 13 屏
+（`main_menu`/`campaign`/`join_level`/`lan_lobby`/`create_game`/`player_screen`/`replay_lobby`/
+`chat`/`join_ip`/`connecting`/`disconnected`/`add_bot`/`endgame`）→ 遍历整棵树，按
+`GwViews.owns(node)` 的同一条判据（脚本 `resource_path` 前缀 `res://src/views/`）计数：
+
+```text
+@@VIEW_FILES 27  INSTANCES 82
+MarginContainer 7 · ExitButtonContainer 14 · IpPopUpMargin 18 · LanLobbyTitle 11 ·
+MarginContainerPopUpBack 6 · LanLobbyFontResize 4 · MainMenuButtonResize 2 · 其余 20 个各 1
+```
+
+**交叉核对**：§43.2 当轮量的是 **24 份 / 79 个实例**；本轮新增 3 份各 1 个实例 ⇒ **79 + 3 = 82**，
+逐文件的实例数（7/14/18/11/6/4/2/1…）与 §43.2 那张表**一位不差** ⇒ 上一轮 24 份没有悄悄掉线。
+
+#### 62.2.1 挂载顺序：`OptionsContainer` 为什么必须"先建再挂后 add"
+
+`GwViews.attach()` 的规矩（`client/src/ui/gw_views.gd`，§43.4 记过）：`set_script()` 对**已进树**的节点
+不补发 `_ready`，而原版 `OptionsContainer.gd` 的 `_ready` 里才有 `self.resized.connect(...)`。
+本轮 `_options` 原来是 `GwUI.hbox(..., _content)`（建的时候直接挂进 `_content`），
+改成 `GwUI.hbox(...)`（不挂父）→ 填 6 个槽 → `GwViews.attach()` → 最后 `_content.add_child(_options)`。
+
+> 说清楚**为什么**要改：这些屏的 `build()` 是在**还没进树**的时候跑的（证据：三处 `GwViews.attach()`
+> 全都没触发"已经在树里"那条 `push_error`，stderr 也 0 命中），所以严格说"这次"不改顺序也能挂上。
+> 改成这个形状的理由是另外两条：① 原版 `_ready` 只遍历**当次**的 `get_children()` ⇒ 子节点必须先就位；
+> ② "父节点此刻在不在树里"是**隐含前提**，而 `GwViews.attach()` 的正确用法只有
+> "建 → 填 → 挂 → `add_child()`"这一种，不依赖任何隐含前提。`GameSetupPlayerEntry` 那处同理。
+
+#### 62.2.2 一条**接线**（不是算式）：父容器换高时催一次原版自己的 `set_minimum_size()`
+
+只换脚本时 `selftest` 有 1 条红（实测 **25.2 vs 22.8**）：
+
+```text
+FAIL 弹窗：OptionsContainer.min.y = 0.25 × 父高（25.2 vs 22.8）
+```
+
+差的是"父高从 100.8 变成 91.2 那一次没重算"：原版**只**连自己那条 `resized`，
+父容器的高度变化若发生在它最后一次重算**之后**（说明文字写进去把父高挤小），那个值就停在旧父高上。
+我们的处理**没有重写任何高度算式**，只加了一句接线：
+
+```gdscript
+_content.resized.connect(_resync_options_height)   # 里面就是 _options.call_deferred("set_minimum_size")
+```
+
+`set_minimum_size()` 是 `recovered-src/OptionsContainer.gd` **自己的**方法（`call_deferred("set_minimum_size")`
+是原版 `_on_size_changed` 里那一行），所以算式仍是原版那 4 行。加了之后 `selftest` 回到 **717 / 0 / 1 skip**。
+⚠️ 这条接线是**我方加的触发**（原版没有监听父容器），登记在 §62.7 第 1 条，别当成原版行为。
+
+### 62.3 验收读数（本轮全量，命令见 §62.5）
+
+| 项 | 本轮值 | 基线（任务书） | 结论 |
+|---|---|---|---|
+| `cargo test --offline` | **1769 / 0 / 1 ignored** | 1769 / 0 / 1 | 一致（本轮没动 `src/`） |
+| `cargo test --offline --features gdext-bindings` | **1875 / 0 / 1 ignored** | 1875 / 0 / 1 | 一致 |
+| `bash client/run.sh selftest` | **717 passed / 0 failed / 1 skipped**，`@@SELFTEST_COVERAGE groups=33 checks=717 expected=717 missing=0(claimed 0 / degraded 0 / silent 0)` | 717 / 0 / 1 skip，missing=0 silent=0 | 一致 |
+| `client/tools/*_check.gd` 全量（14 个脚本） | **1933 passed / 0 failed**，14 个 rc=0 | 1933 / 0 | 一致（逐脚本：assemble 244 / base_classes 117 / curve 96 / draw_classes 235 / entity_drawer 366 / function_drawer 132 / gdext 24 / obstacle_drawer 116 / plane_on_screen 96 / play_flow 206 / process_loop 66 / recovered_view 57 / signal_classes 155 / spike 23） |
+| `stderr`（selftest 全量日志里 grep `SCRIPT ERROR|Invalid call|Invalid access|Node not found|GwViews`） | **0 命中** | 0 | 一致 |
+| 像素 `campaign` | **0.000 % / max\|Δ\|=0 / L2 超限 0 块** | 0 %（§57） | 一致 |
+| 像素 `level_popup` | **0.000 % / max\|Δ\|=0 / L2 超限 0 块** | 0 %（§57） | 一致（本轮唯一被换脚本影响的屏） |
+
+> ⚠️ **`selftest` 要 717 条的前提**：`examples/serve_match` 必须编好（`cargo build --offline --example serve_match`）。
+> 没编就是 `641 / 0 / 3 skipped` + `missing=76(claimed 0 / degraded 76 / silent 0)`（两组联机端到端整组降级）。
+> 这是前置问题，**不是**本轮改坏的 —— 改前改后都是"编了 = 717，没编 = 641"。
+
+### 62.4 blocked 的 25 份：按"缺什么"分组（这是下一轮的输入）
+
+| 组 | 份数 | 缺的具体东西 | 谁受影响 |
+|---|---:|---|---|
+| **A. AdMob / IAP 平台桥** | 7 | ① 包内**零个**原生插件二进制（`find rsc -name '*.so' -o -name '*.aar' -o -name '*.jar' -o -name '*.gdap'` ⇒ **空**）⇒ `Ad_holder.gd` 是 52 份里**唯一解析都过不去**的（7 个 AdMob 原生类型）；② `/root/GraphwarRootNode` 这个节点 + 它的 `log(String)` 方法（5 份都在第一行 `get_node("/root/GraphwarRootNode")`；我方主场景根是 `Main`(`main.gd`)） | `Ad_holder` `AdContainer` `android_iap` `Android_mediastore_holder` `IAP_holder` `IAP_IOS` `IOS_album_holder` |
+| **B. 红线（别人的屏）** | 9 | `play_screen.gd` / `client/src/play/**` **7 份**（`ButtonGrid` `ExtraOptionPad` `ExtraOptionsHBox` `HBoxContainer` `ShowExtraButtons` `ViewFunctionPad` `ViewFunctionsLabel`）、`replay_lobby.gd` **1 份**（`GameNameContainer`）、`campaign.gd` **1 份**（`CampaingLevelsButtons`，还另卡 `GwButton`↔`GraphwarButton` 派发） | `ButtonGrid` `ExtraOptionPad` `ExtraOptionsHBox` `HBoxContainer` `ShowExtraButtons` `ViewFunctionPad` `ViewFunctionsLabel` `GameNameContainer` `CampaingLevelsButtons`（其中 `ButtonGrid` 等 6 份的**节点名/类型我方已经全对**，只差 `GwViews.attach()` 一行） |
+| **C. 包内死文件** | 7 | 无需接线：31 份 `.scn` 零引用（见 §62.1） | `CampaingButtonSize` `ExtraOptionsVbox` `LevelTitleContainer` `OffsetLabel` `ResizeContainer` `UnlockButton` `endgame_pop_up` |
+| **D. 被既有断言挡住** | 1 | `ShopButtonsSize.gd` 没有下限（原版 105 份里 `maxi`/`max(` 出现 0 次），而 `client/tools/selftest.gd:717` 把 **32 下限**写进了期望值 ⇒ headless 视口 64 px 下原版算出 **−6**、断言要 **32** | `ShopButtonsSize` |
+| **E. 结构 + 无真值** | 1 | `SoldierIconMarginContainer.gd`：原版每个槽是**叠在同一点**的 4 个 `TextureRect`（Skin/Face/Hat/Empty）+ 负 margin；我方每槽 1 个合成图标（负 margin 会让相邻槽压叠）。且 `game_setup` 屏**没有像素真值**（§57 只做了 campaign / level_popup）⇒ 改了也没法验收 | `SoldierIconMarginContainer` |
+| **F. Rust 侧还没接** | （与 C 同一份） | `endgame_pop_up.gd` 是 9 行空壳（那份 `.scn` 的根节点**根本没有脚本**），内容由 Rust 填：`src/graphwar_play_screen_control.rs` 的 `NODE_FUNCS` 把 `VictoryPlayerContainer*` / `TeamVictoryLabel` / `SelfVictoryLabel` 映到 `0x3d9000`(FN_READY_LABELS) / `0x3da130`(FN_SHOW_VICTORY)。**现在换上去 = 弹窗变空壳**，所以我方那 211 行仿制控制器**保留**并明确标注"这是仿制、不是复原" | `endgame_pop_up` |
+
+> 上表 A–E 互不重叠：**7 + 9 + 7 + 1 + 1 = 25**；F 那行说的是其中 `endgame_pop_up.gd`（已在 C 里）
+> 除"包内死文件"之外的**真正缺口**（Rust 侧没接），不是第 26 份。
+> 逐份的完整理由 + 需要的具体东西在台账的 `why` / `need` 两列（25 行全覆盖）。
+
+### 62.5 复跑（在 worktree `WT` 里，一条不漏）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t10
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target          # ⚠️ 单独一行
+export HOME=$WT/.fakehome
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+
+# ① 原版副本逐字节（27 份，无输出才是过）
+for f in client/src/views/*.gd; do cmp "$f" "recovered-src/$(basename $f)" || echo "DIFF $f"; done
+
+# ② 台账的机械列 + "status 与是否在场"不变量（读主工作区 rsc/ 下 31 份 .scn 原始字节，只读）
+#    内联脚本见 §62.1 那个 heredoc —— 不依赖 .agent-work/ 里的任何脚本（那棵树是可丢弃的）
+
+# ③ 内核 + 绑定（本轮没动 src/，但 selftest 要 gdext 版 .so + serve_match）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+cargo build --offline --example serve_match
+"$GODOT" --headless --path client --import        # 新增 3 个 .gd ⇒ 必须 import
+cargo test --offline
+cargo test --offline --features gdext-bindings
+bash client/run.sh selftest                       # 717 / 0 / 1 skip
+for f in client/tools/*_check.gd; do "$GODOT" --headless --path client --script "res://tools/$(basename $f)"; done   # 1933 / 0
+
+# ④ 像素（只有 level_popup 被本轮改到；campaign 一起拍，作对照）
+python3 tools/frame_capture.py --side original --flow static --out $WT/.agent-work/frames/orig --display-num 85
+python3 tools/frame_capture.py --side ours     --flow static --out $WT/.agent-work/frames/mine --display-num 86
+python3 tools/frame_diff.py --orig $WT/.agent-work/frames/orig --mine $WT/.agent-work/frames/mine \
+  --screens campaign,level_popup --out $WT/.agent-work/frames/out/results.tsv \
+  --blocks-out $WT/.agent-work/frames/out/blocks.tsv --json $WT/.agent-work/frames/out/diff.json
+```
+
+⚠️ `tools/frame_diff.py` **要用系统 `python3`**（有 numpy+Pillow）；`.reference/venv` 里**没有** numpy（实测 `ModuleNotFoundError`）。
+⚠️ 工作树里跑 `frame_capture.py` 靠 `$WT/.reference → 主工作区/.reference` 这个符号链接把 `REPO` 落回**本工作树**
+（§57.8 的注记，本轮同样适用）。
+
+### 62.6 遗留 / 未做（**必读**）
+
+1. **`OptionsContainer` 那一条"接线"是我方加的触发**（父容器 `resized` 时催原版 `set_minimum_size()`）：
+   原版只监听自己。1920×1160 下父高 956 是稳的、一次重算就到位，所以这条在真机上"不必要"；
+   但 headless 小视口会溢出、需要它才收敛。**它算接线、不算复原**，谁要严格 1:1 就该把它删掉并改 selftest 那一行的口径。
+2. **`game_setup` 屏没有像素真值**：`GameSetupPlayerEntry.gd` 换上去只验了字号（`w/40`）与 selftest，
+   **没验像素**。同理 `SoldierIconMarginContainer` 的"改了会不会更好看"完全无从判定 ——
+   下一轮若要动这一屏，先补真机帧。
+3. **play_screen 那 6 份（`ButtonGrid`/`ExtraOptionPad`/`ExtraOptionsHBox`/`HBoxContainer`/`ViewFunctionPad`/`ViewFunctionsLabel`）
+   只差一行 attach**：节点名我一个一个核对过都在（`PlayMainHBox`/`PlaneContainer`/`LeftControls`/
+   `LeftTopButtonsContainer`/`ExtraOptionsVBox`/`ExtraOptionsHBox`/`GamePlane`/`4 个 *ButtonGrid`）。
+   `ButtonGrid`/`HBoxContainer` 还要先把 `_make_grid()` 拆成"建 → 填 → 挂 → add"。**本轮不能碰那个文件**。
+4. **半分原版半分仿制的地方（明确登记）**：
+   * `join_level_pop_up`：`OptionsContainer`/`TurnLimitText` 是原版，**其余仍是我们的代码**；
+   * `game_setup` 玩家行：名字容器是原版，**图标盒/槽/按钮仍是我们的形状**（原版 `team1_entry` 是 48 节点的行）；
+   * `endgame_pop_up`：**整份控制器还是仿制**（见 §62.4 F）。
+5. `ExtraOptionsVbox.gd` / `LevelTitleContainer.gd` / `ResizeContainer.gd` / `CampaingButtonSize.gd` /
+   `OffsetLabel.gd` / `UnlockButton.gd` 这 6 份**不建议接线**（包内零引用）。若有人要动，
+   先拿"哪条路径加载它"的证据。
+
+### 62.7 我写错了 / 任务前提被证伪
+
+1. **§43.3 说 `GameSetupPlayerEntry.gd` "我们的玩家行是 `HBoxContainer` ⇒ 类型不符，引擎拒绝"——读错了节点。**
+   那个脚本 `extends MarginContainer`，原版挂在 `team1_entry.tscn` 里**包 `PlayerNameLabel` 的那个
+   `MarginContainer`**（根 `HBoxContainer` 的第 **5** 个孩子）上，**不是**行根。我方玩家行里包
+   `PlayerNameLabel` 的正好是同名同类型节点 ⇒ 直接就能挂（本轮已换，字号 `w/40` 生效）。
+   §43.7 第 3 条的前提"需要先把玩家行改回 `team1_entry.tscn` 的形状（根 = `MarginContainer`）"因此**作废**：
+   那个 `.tscn` 的根是 `HBoxContainer`，`MarginContainer` 是它的孩子。
+2. **§43.3 对 `OffsetLabel.gd` / `CampaingButtonSize.gd` / `LevelTitleContainer.gd` / `ResizeContainer.gd`
+   写的"原版是 Rust 控制器运行时 `new()` 的"是**推断**，本轮给了反证**收紧**成"包内零引用"
+   （`.so` 字符串表 `res://*.gd` = 0 次）。**仍然不是"证明作者没用它们"**，只是"没有任何加载证据"。
+3. **§39.4 把 `TurnLimitText.gd` 判成"`join_level` 只有 4 个模式格、没有第 5 个读出格 ⇒ 换不了"——数错了。**
+   原版 `join_level_pop_up.tscn` 的 `OptionsContainer` 里就是 **6 个槽**：`MarginContainer` +
+   4 个 `AspectRatioContainer` + `MarginContainer2`，而第 4 个 `AspectRatioContainer4`（名字就叫这个）
+   **自己挂着 `TurnLimitText.gd`**，里面是 `TimeModeButton`。我方那 4 格的名字/顺序与原版逐字相同
+   ⇒ 本轮直接挂上（视觉零变化：子节点是 `text=""` 的图标按钮）。
+4. **任务书说的"换上去了 24 个"仍然成立**，但**不是**"40 个能换"：§43.1 已把"40 行"更正成"39 个文件"，
+   本轮再把"能换"的判据落到"原版 `.scn` 里能读出节点 + 我方有同名同类型同形状节点 + 三条验收不退"，
+   结论是 24 + 3 = **27 份在场**，剩下 25 份**逐份**都有具体缺件（不是"懒得换"）。
+## 63. 回放播放时钟**解出来了**：`GraphwarTickHandler` 的 16 666 666 ns 定步 + `nanos==1e9` 的暂停标记 —— "载入即暂停"从**画面**升到**指令 × 真机双证**（2026-11-26，任务 T12 / `task-9`）
+
+> 任务书：`.agent-work/specs/T12-replay-clock.md`（共享任务 `task-9`）。分支 `agent/frida-truth`，基于 master `2f64674`。
+> 前情：**§56.6 #7 / `docs/16` §61.4** 里"原版回放界面的时序与控件"= **未知**；T4（§55）把"载入即暂停"定成
+> `观测`（只有真帧：45 s 帧差 0 px、▶ 图标不变），并写明"缺指令级证据说明它内部的 `playing` 标志初值"。
+> 本节把那条缺口补上：**时钟形状逐条读出来了，并且用 frida 在真机上把同一批字段读出来对照**。
+>
+> 工具（都在本轮入库）：
+> * 静态：[`tools/replay_clock_disasm.py`](../tools/replay_clock_disasm.py)（新）—— 本文件只做四件事：`fde` / `func`（带**重定位已应用**的 `panic::Location`、GOT 槽真值、`.rodata` 常量解码）/ `imm` / `locs`；
+> * 动态：[`tools/frida_replay_clock.js`](../tools/frida_replay_clock.js) + [`tools/frida_replay_clock.py`](../tools/frida_replay_clock.py)（新）—— 一个进程树里跑完"起 Xvfb（TCP）→ 起原版 → attach → 点进回放屏 → 读数 → 收 JSONL"；
+> * 真值表：[`fixtures/replay_clock_observations.tsv`](../fixtures/replay_clock_observations.tsv)（新，569 行：`summary` 结论行 + `event` 钩子事件 + `sample` 每 100 ms 时基快照）。
+
+### 63.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | **播放时钟是什么形状** | **不是**浮点累加器，也不是"每帧 `delta × 60`"。全游戏只有**一个**时基 `GraphwarTickHandler`（`graphwar_tick_handler.rs`）：`(secs:u64, nanos:u32)` 三元组 + `tick: u32`。`tick()` 每次把**排程对**加 **`16_666_666 ns`**（`0xfe502a`）再 `tick += 1`；`GameClient::process` 的循环是 `while get_time_to_tick() != 未到期 { GameClient::tick(); 事件泵(); }`。**回放播放头 = 这个 `tick` 计数器的值**（回放器 `process` 每帧把它镜像到自己的 `+0x58`） | **观测**（指令）+ **观测**（真机，两次独立运行） |
+| ② | **进屏时 `playing` 初值** | **暂停**（`playing = false`）。"暂停"不是布尔，而是**时基的第 3 个 `(secs,nanos)` 对**：`nanos == 1_000_000_000`(1e9) ⇒ **没暂停**；否则**暂停中**，且这个值就是"暂停那一刻的 `Instant`"。`is_paused()` 的指令就是 `cmp`(1e9)+`setne`。真机读数：进屏后 **5.61 s / 3.00 s 内 `tick` 一动没动（0.00 tick/s）**，而暂停标记**已置**（58/58、32/32 采样） | **观测**（指令 + 真机） ⇒ 比 T4 的"画面"**升了一档** |
+| ③ | **谁来置的** | 载入路径调 **`ReplayPlayer::go_to_next_checkpoint`**（真机 `caller=0x515057`，调用点 `0x515052`，宿主是一个 `graphwar_backend.rs` 函数 `0x514f20`；**不是** `go_to_first_checkpoint`，后者本轮 0 次调用）。该函数尾部：**"若当前没暂停，就把暂停标记写成本刻的 `now()`"**（`0x3d697a cmp` / `0x3d6994 call now` / `0x3d699e`+`0x3d69a2` 两次 store） | **观测**（指令 + 真机调用者） |
+| ④ | **推进速率** | **60.0 tick/s**：6.55 s/394 tick = **60.13**；3.00 s/181 = **60.29**；2.11 s/127 = **60.30**；2.15 s/129 = **60.03**。并且**排程对每 tick 的增量实测 = `16 666 666.000 ns`**（两次独立运行，394 / 181 tick 上算出来都是整数 16 666 666）⇒ 与 §44 的 **60.00 tick/s** 一致，且把"为什么是 60"落到一条立即数上 | **观测**（真机）+ **观测**（指令） |
+| ⑤ | **⏮/⏭ 一次跳多少** | 跳转**不是**"走多少个 tick"，是**直接改写播放头 + 把中间的事件全部注入一遍**。检查点表真机读出来 = **`[558, 1290, 1492, 2225, 2276]`**（u32 数组）。实测一次 ⏭ 跳 `997→1290`(+293)、`1290→1492`(+202)、`779→1290`(+511)；⏮ 跳 `1492→1290`(−202)。**跳完就暂停**（见 ③ 的同一段尾部） | **观测**（真机 + 指令） |
+| ⑥ | **载入停在第几 tick** | **558**。T4（§55.2）当时只能"推断"到区间 `[550, 615)` 并取"第 1 个结算批的 `exec_tick`=558"——本轮**真机直接读到 `tick=558`**，且载入那次 `inject_events(start=0, until_tick=558, 事件数=104)` 的钩子记录把它钉死 | **观测**（真机） ⇒ T4 那条 `推断` 升 `观测` |
+| ⑦ | **静态与 frida 一致吗** | **七个字段/五个常数/四条控制流全部一致**，无一处矛盾（逐项见 §63.6）。三处**必须靠真机才能定**的地方（谁是载入调用者、跳转量、`is_paused` 返回值）也一致 | —— |
+
+### 63.1 先纠两条**任务前提**（都证伪了，都不是"口径不同"）
+
+| # | 任务书/旧文档的说法 | 实测 | 怎么判的 |
+|---|---|---|---|
+| 1 | 任务书写"`GraphwarReplayScreenControl::process` = Ghidra `0x4c6f40` = **ELF vaddr `0x3c6f40`**，Ghidra 地址 = vaddr + `0x100000`" | **`0x4c6f40` 本身就是 ELF vaddr**（FDE `0x4c6f40..0x4c918b` = **8779 字节**，任务书写 8784；有标准序言 `push rbp/r15/.../sub rsp,0x278`）。按任务书减 `0x100000` 会落到 **`0x3c6f40`——那是另一个函数的中段**（FDE `0x3c6e90..0x3c6fff`，且 `panic::Location` 一个都不引用 `graphwar_replay_control.rs`） | `tools/replay_clock_disasm.py fde 0x4c6f40` / `locs 0x4c6f40`（= 8 条 `src/graphwar_replay_control.rs` 锚，含 `:100:76` 即 `fn process` 声明处）与 `locs 0x3c6f40`（= 空）对照 |
+| 2 | `docs/16` §56.6 #7 / §61.4 把"回放播放时钟没解"挂在 **`0x4c6f40`** 名下 | **时钟根本不在 `0x4c6f40` 里**。该函数 188 个 `call`（其中 94 条间接调用，91 条能经 `.rela.dyn` 解出 GOT 槽目标）里**没有一条**指向时基（`0x519450/0x519840/0x519530`）或回放播放器的任何方法；整函数**零条 `xmm` 指令**。时钟在 **`graphwar_tick_handler.rs`**（`get_time_to_tick` / `tick` / `get_fractional_tick`）+ **`graphwar_replay_player.rs`**（`process` / `inject_events` / `go_to_*_checkpoint` / `toggle_pause` / `pause` / `is_paused`）+ **`graphwar_game_client.rs`**（`process` 的 tick 循环，§44 已读）三处 | 正对照：同一套 GOT 槽解析在**别的**函数上能解出目标（91/94），所以"没解出来"不是扫描器坏了 |
+
+⇒ 由此得出**给后续任务的一条结论**：想读回放时钟，**别再盯 `0x4c6f40`**；那是纯 UI（版式/按钮/文本），
+`docs/16` §65 会写它该怎么改。
+
+### 63.2 时基的形状：`GraphwarTickHandler`（`src/graphwar_tick_handler.rs`）
+
+字段偏移是**从指令的裸偏移**读出来的（`Rc<RefCell<…>>` 里的 `value` 起点 = `RcBox + 0x18`；`+0x10` 是 `RefCell` 借用标志、`[0]` 是强引用计数）：
+
+| 偏移（值内） | 类型 | 含义 | 指令证据 |
+|---|---|---|---|
+| `+0x00` / `+0x08` | `u64` / `u32` | **pair#1**：`now − pair#2`（缓存下来的"已经过时间"） | `0x51945f` 起把 pair#1 当被减数；`0x3d669a/0x3d669e` 写完 pair#1 |
+| `+0x10` / `+0x18` | `u64` / `u32` | **pair#2**：**排程时间**，每次 `tick()` 加 `16_666_666 ns`（nanos 溢出则 `secs += 1`） | `0x51984a` `mov rcx,[rdi+0x10]` / `0x51984e` `mov eax,[rdi+0x18]`；`0x51986c` `add eax,0xfe502a`；`0x519865` `add eax,0xc563862a`(= −983 333 334)+`inc rcx`；`0x519871/0x519875` 存回 |
+| `+0x20` / `+0x28` | `u64` / `u32` | **pair#3 = 暂停标记**。`nanos == 1e9` ⇔ **没暂停**；否则 = 暂停开始那一刻的 `Instant` | `0x519454` `mov esi,[rdi+0x28]`+`0x519457` `cmp esi,0x3b9aca00`；`0x519475` `mov rdi,[rbx+0x20]` |
+| `+0x38` | `Rc<RefCell<Vec<(u32, isize)>>>`-形 | **tick 历史队列**：每 tick 压一条 `(tick, isize::MIN)`，**每 60 tick 多压一条** `(tick, isize::MIN+1)`（= 每秒一条） | `0x519880`..`0x5198f5`：`0x5198c0` `imul ecx,ebp,0xeeeeeeef / ror ecx,2 / cmp ecx,0x4444444` 即 `tick % 60 == 0`（本机按同一算式验过：`x∈[0,200)` 成立的正好是 `0,60,120,180`） |
+| `+0x40` | `u32` | **`tick` 计数器**（★ 回放播放头就是它） | `0x519878` `mov ebp,[rdi+0x40]` / `0x51987b` `inc ebp` / `0x51987d` 存回；`0x3d73e8` `mov ebx,[r12+0x58]`（= 值内 `+0x40`）读它 |
+
+三个方法（`fixtures/module_funcs.tsv` / `fixtures/windows_name_to_addr.tsv` 的名字锚）：
+
+| RVA | 名字 | FDE 大小 | 干什么 |
+|---|---|---|---|
+| `0x519450` | `get_time_to_tick` | 217 B | 判决："到点了吗、还差多少"。**暂停时用 pair#3 当 `now()`**（`0x519475`）⇒ **时间被冻住**；没暂停时用 `0x9ba8f8`→`0x8f3a10`（`Instant::now()`）。返回 `Duration`，其 `nanos == 1e9` 表示**没到期** |
+| `0x519840` | `tick` | 267 B | 排程对 `+= 16_666_666 ns`（带进位）+ `tick += 1` + 往 `+0x38` 压历史（每 60 tick 多压一条） |
+| `0x519530` | `get_fractional_tick` | 267 B（`0x519530..0x51963b`） | `tick + (已过时间/0.016666666)` 的 `f64`（`0x5195da` `divsd xmm2,[.rodata 0x19f7f8]`；`0x5195e2` `mov eax,[rbx+0x40]`+`cvtsi2sd`+`addsd`） |
+
+**常量位置（逐条）**：
+
+| 常量 | 值 | 在哪 | 出现在哪条指令 |
+|---|---|---|---|
+| 一个 tick 的纳秒数 | **`16_666_666`** = `0xFE502A` | 立即数（不在 `.rodata`） | `0x51986c`（`tick`）、`0x5194b2`（`get_time_to_tick`）、`0x3d6470`（`inject_events` 里内联的那份 `tick`） |
+| 进位阈值 | `983_333_334` = `0x3A9C79D6` = `1e9 − 16_666_666` | 立即数 | `0x519851`（`tick`）/ `0x51948f`（`get_time_to_tick`）/ `0x3d6452`（内联那份） |
+| nanos 哨兵 | `1_000_000_000` = `0x3B9ACA00` | 立即数 | `0x519457`、`0x51848e`（§44 已登记）、`0x3d72c2`/`0x3d60dc`/`0x3d66a1`/`0x3d697a`/`0x3d6ad0`/`0x3d7685` … |
+| `f64` 周期（`fractional_tick` 用） | `0.016666666` | **`.rodata 0x19f7f8`**（bytes `21 09 9d 05 11 11 91 3f`） | 唯一引用点 `0x5195da` `divsd xmm2,[rip-0x379dea]` |
+| `f64` `1e9` / `2^52` | `1000000000.0` / `4503599627370496.0` | `.rodata 0x19eff8` / `0x19c000` | `0x5195ce` / `0x5195b6`（`u64→f64` 那条经典 `2^52` 技巧） |
+
+⚠️ 注意 `0.016666666` 是**截断**的 `1/60`（真值 `0.0166666666…`），而周期用的是**整数 `16_666_666 ns`**（真值 `16_666_666.67 ns`）
+⇒ 时钟名义频率 = `1e9/16_666_666` = **60.0000024 Hz**，比 60 快 **2.4e-6 相对误差**——这就是 §44 五次运行量到 `59.94–60.01` 的来源，
+**不是**抖动，是**常数就写成这样**。
+
+### 63.3 tick 循环与"delta 从不被读"的位置（§44 的邻居）
+
+`GraphwarGameClient::process`（`0x518400`，295 B，`src/graphwar_game_client.rs:130/132` 的 `panic::Location` 在尾部）：
+
+```
+0x518434  call 0x46aa50                 ; upgrade 时基（Weak→Rc），null ⇒ panic 130:41
+0x518470  <loop>
+0x518470    cmp qword [r12+0x10],0     ; RefCell 借用标志
+0x518484    call 0x519450              ; get_time_to_tick(&mut 时基) → (rax:secs, edx:nanos)
+0x51848e    cmp edx,0x3b9aca00         ; ★ nanos == 1e9 ⇒ 没到期 ⇒ 退出循环
+0x518494    jne  (到期)
+0x518499    call r13                   ; r13 = [GOT 0x9baf38] = 0x518240 GameClient::tick
+0x51849f    call rbp                   ; rbp = [GOT 0x9baef8] = 0x3d3630 事件泵
+0x5184a1    jmp 0x518470               ; 一次循环 = 一个 tick
+```
+
+**整函数零条 `xmm`**——§44 ⑥ 的"`delta` 从不被读"在本轮再确认（这条不变）。
+
+### 63.4 回放播放器：playhead 在哪、怎么走、怎么跳
+
+`GraphwarReplayPlayer`（`src/graphwar_replay_player.rs`）的状态字段（`value` 起点同上；3 处独立函数互相印证）：
+
+| 偏移 | 类型 | 含义 | 指令证据 |
+|---|---|---|---|
+| `+0x00` | 枚举 tag（写 `qword 1`、读 `byte`/`dword`） | 播放状态；根节点侧判 `== 2` 时跳过播放控制 | `0x3d744a` `mov qword [r15],1`；`0x3d73f6` `cmp byte [r15],0`；`0x3b1568` `cmp ecx,2` |
+| `+0x08` | `usize` | 事件游标 | `0x3d7451` `mov [r15+8],rbp` |
+| `+0x18` / `+0x20` | ptr / `usize` | 事件表（**步长 `0x50`**，`event.tick` = `u32 @ +0x48`） | `0x3d73fa` `mov r12,[r15+0x20]`；`0x3d7440` `cmp dword [r13+0x48],ebx`；`0x3d7433` `add r13,0x50` |
+| `+0x30` / `+0x38` | ptr / `usize` | **检查点 tick 表**（`u32[]`，升序） | `0x3d68bc/0x3d68c0`；`0x3d6916` `mov edx,[rax+rdx*4]` |
+| `+0x58` | `u32` | **播放头 = 时基 `tick` 的镜像** | `0x3d73e8` 读时基；`0x3d7583` `mov dword [r15+0x58],ebx` 写回 |
+| `+0x1e0`(+`0x40` 内) | 句柄 | 时基的 `Weak`；`upgrade` 后拿到 `GraphwarTickHandler` | `0x3d73a0` `mov r14,[rsi+0x40]`；`0x3d73bf` `call 0x46aa50` |
+
+**四条控制流（全部指令级）**：
+
+1. **每帧 `process`（`0x3d7380`）**：`ebx = 时基.tick` → 从游标开始，把 `event.tick <= ebx` 的事件按文件顺序
+   **逐条注入**（`0x3d74be call 0x3e2830` = `remote_event_handler`）→ 最后 `self.tick = ebx`。
+   **它自己不推进时钟**（没有 `tick++`、没有 `now()`、没有一条 `xmm`）。
+   ⇒ 播放速度**完全等于时基的速度**，也就是 `GameClient::process` 那条 tick 循环。
+2. **`inject_events(self, start=rsi, until_tick=rdx, host=rcx)`（`0x3d61a0`，1803 B）**：批量注入到 `until_tick`。
+   它里面有**一份内联的 `tick()`**（`0x3d644a`..`0x3d6484`：排程对 `+16_666_666`、`tick += 1`），
+   还有一段 `while 时基.tick < until_tick { GameClient::tick(); 泵(); }`（`0x3d6630`..`0x3d6661`）。
+   收尾：`self.tick = until_tick`（`0x3d666b`）、pair#1 = `now − pair#2`（`0x3d6694` 调 `[GOT 0x9baf40]`→`0x90c740`，`0x3d669a/0x3d669e` 存）、
+   **若"当前暂停中"就把暂停标记刷新成 `now()`**（`0x3d66a1 cmp 1e9` / `0x3d66aa call now` / `0x3d66b0/0x3d66b4` store）。
+3. **`go_to_next_checkpoint`（`0x3d68b0`）/ `go_to_previous_checkpoint`（`0x3d6bb0`）**：对检查点表做**二分**
+   （以 `self.tick` 为键）找到上/下一个检查点 `T`，`inject_events(游标, T)`；
+   收尾与 `inject_events` 同款：**"没暂停的话，把暂停标记写成本刻 `now()`"** ⇒ **跳转即暂停**。
+   `go_to_first_checkpoint`（`0x3d6a40`）更直接：`0x3d6aab mov dword [rbx+0x58],edx`（**直接把时基 `tick` 写成 `checkpoints[0]`**）
+   然后 `inject_events(0, checkpoints[0])`，同样收尾置暂停。
+4. **暂停三件套**：
+   * `is_paused`（`0x3d7630`）：`0x3d7674 mov ebp,[rbx+0x40]` → `0x3d7685 cmp ebp,0x3b9aca00` → `0x3d768b setne al`
+     ⇒ **`is_paused() = (暂停标记.nanos != 1e9)`**；
+   * `pause`（`0x3d7270`）：`0x3d72c2 cmp [rbx+0x40],1e9` → `jne`（**已经暂停就什么都不做**）→ `0x3d72dc call now()` → 写 pair#3；
+   * `toggle_pause`（`0x3d6080`）：标记 `== 1e9`（在播）→ `0x3d60e4 call now()` 写 pair#3（**暂停**）；
+     否则（暂停中）→ `0x3d60f0 call now()`、`0x3d6100 call [GOT 0x9baf28]`（`now − 标记`）、
+     `0x3d6110 call [GOT 0x9baf30]`（把这段`暂停时长`加进时基，避免恢复瞬间"欠一堆 tick"）、`0x3d6116 mov edx,1e9`（**清标记 = 恢复**）。
+
+**为什么"暂停"能把时钟冻住（这是本节最关键的机制）**：`get_time_to_tick` 里
+`0x519457 cmp esi,1e9` 分支——**标记没置就取 `Instant::now()` 当基准，置了就拿标记当基准**（`0x519475 mov rdi,[rbx+0x20]`）。
+于是"已过时间"恒定不变 ⇒ 判决永远"没到期" ⇒ tick 循环**一次都不进**。真机上就是"进屏后 5.61 s 一个 tick 都没有"。
+
+### 63.5 真机读数（原版 `steam/2026-08-28`，私有 Xvfb TCP `127.0.0.1:9x`，mesa llvmpipe，1920×1160）
+
+两轮独立运行（`clock` / `clock2`，第二轮多挂三个检查点钩子）。全部原始行在 `fixtures/replay_clock_observations.tsv`。
+
+**A. 相位表（点击串：主菜单 → Replays `(1343,749)` → 第 1 行 ▶ `(1805,132)` → 播放屏 ⏮`(48,629)` ▶`(148,629)` ⏭`(248,629)`）**
+
+| 相位 | 时长 | Δtick | **tick/s** | 暂停标记 | 采样 |
+|---|---|---:|---:|---|---|
+| 进屏后**不点任何键**（载入态） | 5.61 s | **0** | **0.00** | 已置（≠1e9） | 58/58 |
+| 同上（第二轮） | 3.00 s | **0** | **0.00** | 已置 | 32/32 |
+| 按 ▶ 之后 | 6.55 s | 394 | **60.13** | 已清（=1e9） | 67/67 |
+| 按 ▶ 之后（第二轮） | 3.00 s | 181 | **60.29** | 已清 | 32/32 |
+| ⏭ 跳完静止 | — | **+202 一次跳**（不是走出来） | —— | **已置（跳完就暂停）** | 10/10 |
+| 跳转后再按 ▶ | 2.11 s | 127 | 60.30 | 已清 | 23/23 |
+| 跳转后再按 ▶（第二轮） | 2.15 s | 129 | **60.03** | 已清 | 24/24 |
+
+**B. 排程对增量 = 一个 tick 的纳秒数（本节的"逐位级"校验）**：
+在第一段播放窗口里取首末采样，`(p2s·1e9+p2n)` 的差 / `Δtick`：
+`6 566 666 404 / 394 = **16 666 666.000 ns**`；第二轮 `3 016 666 546 / 181 = **16 666 666.000 ns`**。
+⇒ **静态的 `0xfe502a` 与真机逐 tick 增量完全吻合**，且 60.0000024 Hz 与 §44 的 60.00 一致。
+
+**C. 检查点表（真机直接读 `player+0x30`/`+0x38`）= `[558, 1290, 1492, 2225, 2276]`（5 个），
+载入后播放头 `tick = 558`**。跳转钩子（`inject_events` 的入参）：
+
+| 触发 | `until_tick` | 跳前 `self.tick` | Δ | `inject` 起点游标 | 事件数 |
+|---|---:|---:|---:|---:|---:|
+| **载入回放**（`go_to_next_checkpoint`，`caller=0x515057`） | **558** | **0** | +558 | 0 | 104 |
+| ⏭ 第 1 次（`caller=0x3b0c2b`） | 1290 | 997 | **+293** | 84 | 104 |
+| ⏭ 第 2 次（`caller=0x3b0c2b`） | 1492 | 1290 | **+202** | 84 | 104 |
+| ⏮ 第 1 次（`caller=0x3b0bb4`） | 1290 | 1492 | **−202** | 0 | 104 |
+| （第二轮）⏭ | 1290 | 779 | **+511** | 84 | 104 |
+
+**D. `is_paused()` 的真机返回值**：两轮各 2 次调用，都发生在 ▶ 之后
+（`caller=0x3b1581` = 根节点 `0x3b0830`，调用点 `0x3b157c`；紧接着 `0x3b15f7` 调 `is_paused` 并把返回值喂给
+`0x4bf000(node+0x18, al)`——即"按暂停态刷新 UI"）。此时标记 `= 1e9`，**返回 `0`**；
+钩在 `0x3d7674`（`mov ebp,[rbx+0x40]`）那条指令上读到同一个值 `1e9` ⇒ **指令规则与返回值一致**：
+`is_paused() == false` ⇔ `nanos == 1e9`。同一钩子还证明"进屏那一刻标记存在"（下表 E）。
+
+**E. 进屏那一刻的时基快照（两组运行，`mark enter_play_screen`）**
+
+| 运行 | `tick` | pair#1 `(s,n)` | pair#2 `(s,n)` | **pair#3 `(s,n)`** | 解释 |
+|---|---:|---|---|---|---|
+| clock | **558** | 1461.323755885 | 9.199999632 | **1470.523801831** | pair#3 ≈ `now` ⇒ 暂停标记 = 载入时刻 |
+| clock2 | **558** | 1564.591407373 | 9.199999632 | **1573.791436691** | 同上（两轮相隔 100 s，差值对得上墙钟） |
+
+⇒ **"进屏那一刻 `playing` 初值 = false（暂停）"现在是 指令（`is_paused` 的 `setne`）+ 真机（0 tick/s + 标记已置 + 画面 ▶ 图标） 双证。**
+
+**F. UI 侧的旁证（只用于交叉核对，不当主证据）**：`03_enter_play_screen` 帧上左三键中间那颗是 **▶（播放）**、
+棋盘上只有一具士兵 + 一个蓝靶环、底部 `f(x) = x+2sin(20x) − 3.694`、**没有任何弹道曲线**；
+按 ▶ 之后 `06_after_play` 帧上同一颗键变成 **⏸（两条竖杠）**、曲线出现——与 `is_paused()` 的返回值、与 §55 的"载入态"版式都对得上。
+
+### 63.6 静态 × 真机 逐项一致性核对
+
+| 项 | 静态（指令） | 真机 | 一致? |
+|---|---|---|---|
+| 一 tick = `16_666_666 ns` | `0x51986c` / `0x5194b2` / `0x3d6470` 立即数 `0xfe502a` | 排程对增量 = `16 666 666.000 ns`（394 / 181 tick 两次） | ✓ |
+| tick 率 ≈ 60/s | `1e9/16_666_666 = 60.0000024` | 60.13 / 60.29 / 60.30 / 60.03 | ✓（差值 = 采样窗口 ±0.3 s 的量化，不是频率差） |
+| 暂停 ⇔ `pair#3.nanos != 1e9` | `0x3d7685 cmp`+`0x3d768b setne`；`0x519457` 分支 | 载入态 58/58+32/32 采样标记 ≠1e9 且 0 tick/s；▶ 后 67/67+32/32 =1e9 且 60 tick/s | ✓ |
+| 暂停能把时钟冻住 | `get_time_to_tick` 用 pair#3 当 `now()`（`0x519475`） | 载入态 pair#1 恒定（`…323755885` 不动）、`tick` 恒定 | ✓ |
+| 跳转 = 改播放头 + 批量注入 | `0x3d6aab`（写 `+0x58`）/ `0x3d692c`（调 `inject_events`） | 载入 `tick: 0→558`，`inject(0,558)`，104 事件；⏭/⏮ 数值见 C 表 | ✓ |
+| 跳完就暂停 | 三个 `go_to_*` 尾部"未暂停则写 pair#3 = now"（`0x3d697a`..`0x3d69a2`） | ⏭/⏮ 之后标记立即 ≠1e9（`14767931` / `733651919` / `435948044`），随后 tick 不动 | ✓ |
+| `is_paused` 返回值 | `setne`（nanos≠1e9 ⇒ true） | 标记 =1e9 时返回 **0** | ✓ |
+| 播放头镜像 | `0x3d7583 mov [self+0x58],ebx` | `process` 每帧调用（995/1403 次）期间 `self.tick` 与时钟 `tick` 同步（钩子采样一致） | ✓ |
+| 时钟**不在** `0x4c6f40` | 188 个 call 无一指向时基/播放器（91/94 间接调用可解 GOT 目标） | 回放屏每帧 `screen` 计数 1199/2567 次，而 `tick` 只在播放时增长 | ✓ |
+
+### 63.7 结论（带档位）
+
+1. **播放时钟 = `GraphwarTickHandler` 的 `u32 tick` 计数器 + 每 tick `+16_666_666 ns` 的排程对**，由
+   `GraphwarGameClient::process` 的 tick 循环推进；**回放器只是"读播放头 + 注入到期事件"**，它自己**不产生时间**。档：**观测（指令）+ 观测（真机）**。
+2. **暂停 = 时基的 pair#3 标记**（不是布尔量）：`nanos == 1e9` ⇔ 未暂停。`is_paused()` 就是 `setne`。档：**观测（指令 + 真机）**。
+3. **载入即暂停成立**，机制是 `go_to_next_checkpoint` 的尾部"未暂停则记下暂停时刻"；载入播放头 = **558**。档：
+   **观测（指令 + 真机）** —— T4 的 `观测（真机帧）` 与"载入 tick `[550,615)` 推断"两条都**升档**（前者补了内部状态，后者变成实测 558）。
+4. **⏮/⏭ 的语义 = "跳到上/下一个检查点 tick + 把中间事件全注入 + 暂停"**，不是"前进/后退 N 个 tick"，也不是"前进一帧"。
+   检查点表真机读出来是 `[558,1290,1492,2225,2276]`（本样本）。档：**观测（指令 + 真机）**；
+   "这 5 个数来自回放文件里 `Checkpoint` 那类事件的 `tick`" 这一层是 **推断**（没打开文件逐条比）。
+5. `0.016666666`（`.rodata 0x19f7f8`）只被 `get_fractional_tick` 用；时钟本身**不读任何 `f64`**。
+   附：`f64 60.0`（`.rodata 0x19f918`）全 `.text` 有 6 处引用，全在 `0x3cb080` / `0x4b2890`（`EntityDrawer::draw`）/ `0x4eb450`，
+   **时基与回放播放器一条都没有** ⇒ "60 tick/s" 在这个代码库里**不是**一个浮点常数，是"每 tick 加 `16_666_666 ns`"的整数结果。档：**观测（指令）**。
+
+### 63.8 没证到的边界（诚实清单）
+
+| # | 没证到的 | 卡在哪 |
+|---|---|---|
+| 1 | `GraphwarReplayPlayer::process`（`0x3d7380`）的**第一个参数到底是谁**：真机调用点 `0x515df0` 传的是 `(rdi=self, rsi=&self+0x1e0)`，而 `+0x40` 处的时基句柄与 `GameClient::process` 用的**是同一个**；`self` 与 `GameClient` 的从属关系（内嵌？同一个对象？）**只到"同一个时基、同一个宿主指针"这一层** | 需要 `Gd<T>`/`RefCell` 容器身份（`0x46aa50` 是 hashbrown 探测 + 引用计数，没解出它查的是哪张表） |
+| 2 | `go_to_first_checkpoint`（`0x3d6a40`）**在本轮流程里 0 次调用**（钩子已装、同一批里 `next/prev` 都命中，**正对照成立**）。它什么时候用（回放播到末尾后重放？）**未知** | 需要"播到 2276 之后再点 ⏭/⏮"的一条真机路径（本轮没跑） |
+| 3 | 时基 `+0x38` 那个 tick 历史队列（每 tick 一条、每 60 tick 多一条）**谁消费** | 只读到了写入点（`0x519880`..`0x5198f5`）与"每 60"这个谓词；消费者没找 |
+| 4 | `inject_events` 尾部"暂停中就把标记刷新成 `now()`"的**目的**：它让"冻结基准"跟着墙钟走，但只在**跳转**时执行（平时不执行，所以暂停仍然冻得死）。是"跳转即视为重新对齐"还是别的，**未证** | 缺一个"暂停中跳转"之后 `get_time_to_tick` 的连续读数（本轮跳转前都已暂停，但没单独隔离这一条） |
+| 5 | 钩子 `onLeave` 里读 `rdi` 得到的 `self.tick` 有 3 次是垃圾（`access violation accessing 0x59`）——**这是我方探针的缺陷**（`rdi` 在函数体内被改写过），不是目标行为；表中只用 `onEnter` 与 100 ms 采样 | —— |
+| 6 | `0x3d7380` 里 `r14 == -1` 那条备用分支（`0x3d74f0`）什么时候走 | 没构造出来 |
+
+### 63.9 复跑（两条命令，照抄即可）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export PY=$MAIN/.reference/venv/bin/python
+cd $MAIN/.agent-work/cg/wt-t12          # 或任意 checkout；工具会自己向上找 `.reference/`
+
+# ① 静态：函数范围 / 逐条带注解的反汇编 / panic::Location / 立即数
+$PY tools/replay_clock_disasm.py fde  0x4c6f40
+$PY tools/replay_clock_disasm.py fde  0x519840
+$PY tools/replay_clock_disasm.py func 0x519840        # tick：+0xfe502a、tick++
+$PY tools/replay_clock_disasm.py func 0x519450        # get_time_to_tick：1e9 哨兵分支
+$PY tools/replay_clock_disasm.py func 0x3d61a0        # inject_events：内联 tick + 收尾置暂停
+$PY tools/replay_clock_disasm.py func 0x3d68b0        # go_to_next_checkpoint：二分 + 注入 + 暂停
+$PY tools/replay_clock_disasm.py func 0x3d7630        # is_paused：cmp 1e9 / setne
+$PY tools/replay_clock_disasm.py imm  0xfe502a        # 全 .text 找 16_666_666（3 处）
+$PY tools/replay_clock_disasm.py f64  0.016666666     # .rodata 0x19f7f8（唯一引用点 0x5195da）
+
+# ② 动态：起 Xvfb(TCP) → 起原版 → attach → 点进回放屏 → 读数 → JSONL
+$PY tools/frida_replay_clock.py \
+    --out .agent-work/t12/dyn/clock.jsonl \
+    --data-dir .agent-work/t12/dyn/gd --display-num 91   # ~50 s；回放由脚本自己拷进 user://replays
+
+# ③ 把 JSONL 折成入库真值表（可原地复跑，不需要真机）
+$PY tools/frida_replay_clock.py --tsv .agent-work/t12/dyn/clock.jsonl \
+    .agent-work/t12/dyn/clock2.jsonl > fixtures/replay_clock_observations.tsv
+```
+
+⚠️ 复跑注意三个**必踩**的坑（本轮全踩过）：`/tmp` 逐命令 tmpfs ⇒ 起 Xvfb/起游戏/attach **必须在同一条命令**里；
+Xvfb 必须 `-listen tcp` 且 `DISPLAY=127.0.0.1:<n>` + `unset WAYLAND_DISPLAY`；
+`user://` 的落点 = **`$XDG_DATA_HOME/godot/app_userdata/Graphwar/replays`**（第一跑把回放拷到 `$HOME/data/...` 而
+`XDG_DATA_HOME` 指别处 ⇒ 回放列表 0 行、点击全打在空气上；见 `tools/frida_replay_clock.py` 里那段注释）。
+
+### 63.10 遗留 / 未做
+
+| # | 项 | 状态 |
+|---|---|---|
+| 1 | **libm 边界（`pow` 的真机读数）** —— 任务书 §2 ③ 的可选项 | **未做**。本轮的 frida 配方已经能 attach 原版（上面两条命令就是），下一轮把 `pow` 的调用点一钩、对一组具体输入比 `unicorn` 复算即可；本轮**优先保证时钟那条线**跑完两轮 |
+| 2 | `0x4c6f40` 的 UI 语义（按钮/文本/版式） | 不在本节范围（T4/T6 已做像素级对齐）；本轮只证明它**不含时钟** |
+| 3 | 真机侧"播放到 2276（文件末尾）之后"的行为 | 未跑（§55 的 45 s 静止帧是**载入态**，不是"播完态"；两者不是一回事） |
+| 4 | 把本节结论落到我方 `ReplayDriver` | **只写建议，不改代码**（`src/**` 是禁区）⇒ 见 `docs/16` §65 |

@@ -10963,6 +10963,227 @@ t.set_color("font_focus_color",   "Button", Color(0.95,  0.95,  0.95,  1.0))   #
 见 `docs/06` §57.8（两侧 `--flow static` + `frame_diff.py --screens campaign,level_popup`）。
 本条的两个改动都是 `.gd`，**不需要**重编 `libgw2_rebuild.so`，也不需要 `--import`（没有新文件）。
 
+## 65. 原版回放播放时钟的**指令级形状**落回客户端：`ReplayDriver` 该照什么改（**只写建议，本轮没动代码**）（2026-11-26，任务 T12 / `task-9`）
+
+> **编号说明**：任务书写的是用 `## 68.`，但 `tools/check_doc_refs.py` 要求本文件小节编号**连续**
+> （本轮到达时最大是 `## 64.`）⇒ 用 **§65**；任务书/报告里写的「第 68 节」一律指本节。
+
+> 静态指令 + 真机读数全部在 [`docs/06` §63](06-verification.md)（那一节是验收，本节只讲**客户端侧含义**）。
+> 工具：[`tools/replay_clock_disasm.py`](../tools/replay_clock_disasm.py)（静态）、
+> [`tools/frida_replay_clock.py`](../tools/frida_replay_clock.py)（真机）、
+> 真值表 [`fixtures/replay_clock_observations.tsv`](../fixtures/replay_clock_observations.tsv)。
+> ⚠️ 本节**没有**改任何代码：`src/**` / `client/**` 都是本轮禁区（任务书 §3）。
+
+### 65.1 §56.6 第 7 条（"原版回放界面的时序与控件 = 未知"）现在降到什么档
+
+| 子问题 | §56.6 #7 当时的档 | 本轮之后 | 依据 |
+|---|---|---|---|
+| 播放时钟的**形状** | **未知** | **观测（指令 + 真机）** | §63.2/§63.3：`GraphwarTickHandler` = `(secs,nanos)` 三元组 + `tick:u32`，每 tick `+16_666_666 ns` |
+| **载入即暂停**的机制 | **观测**（只有真帧：45 s 0 px） | **观测（指令 + 真机）** | §63.4 ④ + §63.5：`is_paused() = (pair#3.nanos != 1e9)`；载入后 5.61 s/3.00 s **0.00 tick/s** 且标记已置 |
+| 载入停在**第几 tick** | **推断**（区间 `[550,615)`，取 558） | **观测（真机实测 558）** | §63.5 A/E：`tick=558` + `inject(0,558)` |
+| ⏮/⏭ **一步多大** | **未知** | **观测（指令 + 真机）** | §63.5 C：跳上/下一个**检查点**，本样本 `[558,1290,1492,2225,2276]`；跳完即暂停 |
+| **推进速率** | **观测**（§44 借的 60.00 tick/s，是**对局**的时基） | **观测（回放屏自己的时基，60.03–60.30）** | §63.5 A/B：同一个 `GraphwarTickHandler`，实测 60.0 |
+| 回放屏的**版式/控件** | **观测**（T4/T6 的像素级） | 不变（仍是 `观测`） | §55 / `docs/16` §62 |
+| `0x4c6f40` 里有没有时钟 | 旧文档暗示"时钟在这个函数里" | **证伪：没有** | §63.1 #2：188 个 call 无一指向时基/播放器（91/94 间接调用能解 GOT 目标） |
+
+⇒ 一句话：**§56.6 #7 那条"未知"只剩"版式"那半截早就是观测；"时序"这半截本轮封口**。
+建议下一轮把 §56.6 #7 的档位由 `未知` 改成 `观测（指令 + 真机，§63）`，并把 §56.2 的
+"⚠️ 文件归属（诚实标注）"那段里"`graphwar_replay_control::process` 里播放时钟的具体形态没解"**删掉或改写**
+——那句话被本轮证伪了（时钟不在那个函数里）。
+
+### 65.2 我方 `ReplayDriver` 与原版形状的**对照**（不改代码，只列表）
+
+| # | 原版（本节真值） | 我方现状（`src/_scaffold/replay_driver.rs`，§56 记录） | 差在哪 | 建议（下一轮谁接手谁做） |
+|---|---|---|---|---|
+| 1 | 时基 = **墙钟**（`Instant::now()`）驱动的定步，`delta` **从不被读** | 定步累加器 **读引擎 `dt`**（§56.3 偏离 1，理由是 headless 没有墙钟） | **刻意偏离**，且理由仍然成立 | **保持偏离**。但注释里要补一句"原版的时基在 `GraphwarTickHandler`（`0x519840`/`0x519450`），周期立即数 `16_666_666`"，别再写"未解" |
+| 2 | 一 tick = **`16_666_666 ns`**（不是我方写的 `16_666_666` 吗？） | `TICK_PERIOD_NS = 16_666_666`（§56.3 表 1） | **一致**（巧合也是巧合地对了） | 不改。可在断言注释里加"原版同一常数在 `0x51986c` 立即数" |
+| 3 | 载入 = **跳到 `checkpoints[0]` 这个 tick**（`go_to_first_checkpoint` 会直接写时基 `tick`；真机走的 `go_to_next_checkpoint` 版本跳到同一个 558） | `load()` 后时钟停在"第一条事件的 tick"、然后 §62 改成"第 1 个结算批的 `exec_tick`"= 558 | **数值上一致**（558） | 把"第 1 个结算批的 `exec_tick`"这个**间接**口径换成**直接**口径：**"回放文件里的检查点表第 0 项"**（真机读到的就是 `[558,1290,1492,2225,2276]`）。前者是巧合对了，后者是原版语义 |
+| 4 | 载入/跳转之后 = **暂停**，而且暂停是**时基的一个 `(secs,nanos)` 标记**（`nanos==1e9` ⇔ 未暂停） | `load()` 之后 `playing=false`（§62 的改法） | **语义一致、表示不同**（我方是 bool） | 我方**不需要**照抄这个表示（它是原版时基类型的一部分）；但 `ReplayDriver` 的文档里要写清"原版没有 `playing: bool`，`is_paused()` 是 `nanos != 1e9` 的派生量"，否则下一个人会以为我们漏了一个字段 |
+| 5 | ⏮/⏭ = **跳上/下一个检查点 + 把中间事件全部注入 + 停** | `seek(tick)` / `resync_batches`（§56.3 表 5 的"跳转"） | 我方有 `seek`，但**没有"检查点表"这个概念** | 新增（建议）：`ReplayDriver::checkpoints() -> &[u32]` + `seek_next_checkpoint()` / `seek_prev_checkpoint()`，语义照原版（二分、注入到目标、停在目标）。检查点 = 回放里 `Checkpoint` 那类事件的 `tick`（本样本 5 个，真机读数即上表） |
+| 6 | 播放头 = **`u32` tick**（回放器每帧从时基镜像过来） | `tick: i64`（`ReplayEvent.tick` 是 `i64`） | 类型不同 | **不改**：`i64` 更安全（`docs/133` §2.3 记了 7 份回放有 tick 回退），但要在注释里写明"原版是 `u32`，溢出/回退行为未测" |
+| 7 | 回放屏控制器的 `process`（`0x4c6f40`）= **纯 UI**，不做时钟 | `client/src/screens/play_screen.gd` 的 `_replay_tick` 递 `dt` | 结构不同（我方把驱动放在视图层） | 长期方向见 §56.2 的文件归属表；本轮**不改**，只登记"`0x4c6f40` 里没有时钟"这个事实 |
+
+### 65.3 三件**不要**照抄的东西（容易抄错）
+
+1. **不要**把 `nanos == 1e9` 那个哨兵搬进我方类型。它是原版 `Duration` 不变式的"合法空洞"被拿来当 `None` 用
+   （`Duration` 要求 `nanos < 1e9`，恰好 `1e9` 就空出来了）。我方用 `bool` 更清楚；照抄只会让下一个人以为
+   "1e9 是个魔法数，要小心"——它是原版的实现细节，不是**行为**。
+2. **不要**把"跳转即暂停"当成"跳转后清空时钟"。原版跳转**改的是播放头**（`go_to_first_checkpoint` 直接
+   `mov dword [rbx+0x58],edx`），时基的排程对也跟着走到新位置；"暂停"只是把 pair#3 记成本刻。
+3. **不要**以为 ⏭ 是"前进一帧/前进 N tick"。它跳到**下一个检查点**，而检查点是**回放文件里的事件**
+   （本样本 5 个：`558 / 1290 / 1492 / 2225 / 2276`），跟"一屏/一回合"都不是同一个概念。
+   §61.4 里"⏭ 一次跳多少"这个问题（当时无答案）现在有答案了：**一个检查点的距离，本样本 202–511 tick**。
+
+### 65.4 复跑
+
+见 [`docs/06` §63.9](06-verification.md)（静态 3 条 + 真机 1 条 + 折表 1 条）。本节没有代码改动，
+不需要重编 `libgw2_rebuild.so`、不需要 `--import`、也没有新的像素门槛。
+## 66. 视图层的现状（2026-11-26，任务 T10）：27 份是**原版字节**、25 份仍是我们写的，逐份理由在台账里
+
+> 前情：§39 回答"这些原版 `.gd` **能不能跑**"，§43 回答"**换不换得进去**"（换了 24 份、跳 15 份）。
+> 本节回答第三问：**现在这 52 份各自的归属是什么、剩下来的每一份卡在哪**。
+> 全部数字的唯一来源 = [`fixtures/view_layer_ledger.tsv`](../fixtures/view_layer_ledger.tsv)（52 行 × 7 列），
+> 验收读数见 `docs/06` §62。
+
+### 66.1 一句话现状
+
+| 类别 | 份数 | 在我方客户端里的状态 |
+|---|---:|---|
+| **原版字节 + 已接线** | **27** | `client/src/views/*.gd`（24 份 §43 + 3 份本轮），`cmp` 与 `recovered-src/` 逐字节相同；运行时 **82 个实例**（§43.2 的 79 + 本轮 3，逐文件数一位不差），由 `GwViews.attach()` 挂到节点上 |
+| 仍是我们写的 | **25** | 分三块：**9 份是红线**（别人的屏正在改，其中 6 份已"只差一行 attach"）、**7 份是包内死文件**（根本不该接线）、**9 份有真缺口**（平台桥 7 + `ShopButtonsSize` 1 + `SoldierIconMarginContainer` 1；`endgame_pop_up` 既是死文件又缺 Rust 侧，见 §66.3） |
+
+⚠️ **"原版字节在场"≠"行为已复原"。** 这些视图脚本全是**布局/字号**（`size_changed` → 写
+`font_size` / `custom_minimum_size` / `margin`），**一个按钮行为都没有** —— 行为在 Rust 控制器里
+（`play_screen_control` / `graphwar_root_node` 那些模块）。所以本节只能说"某个节点的字号/内边距现在由原版代码给"，
+不能说"这一屏复原了"。
+
+### 66.2 本轮的 3 份新换（本地挂着，不是"加了个文件"）
+
+| 原版脚本 | 挂在哪 | 为什么之前没换 / 这次为什么能换 | 验到什么 |
+|---|---|---|---|
+| `OptionsContainer.gd` | `join_level_pop_up` 的 `OptionsContainer` | §43.7 第 1 条就是要"删掉我方 `_update_options_height()` 的兜底再挂"。这次按 `GwViews` 的规矩重建节点（建 → 填 → 挂 → `add_child`）并删掉整份自写算式 | selftest 的 `min.y == 0.25×父高` 过；`level_popup` 像素 **0.000 %** |
+| `TurnLimitText.gd` | `join_level_pop_up` 的 `AspectRatioContainer4` | §39.4 当时判"我方没有第 5 个读出格"——**数错了**：原版第 4 格（`AspectRatioContainer4`）自己挂着这份脚本，我方节点名/顺序逐字相同 | `TimeModeButton.font_size = 64/20 = 3`；像素 **0.000 %** |
+| `GameSetupPlayerEntry.gd` | `game_setup` 玩家行里包 `PlayerNameLabel` 的 `MarginContainer` | §43.3 判"玩家行是 `HBoxContainer` ⇒ 类型不符"——**读错了节点**：该脚本 `extends MarginContainer`，原版挂在行的**第 5 个孩子**上，就是我方包名字的那个 `MarginContainer` | `PlayerNameLabel.font_size = 64/40 = 1`（换前是 `maxi(10, 64/30)=10`）；`game_setup` **无像素真值**，未验像素 |
+
+三份共同的写法约束（都会**静默**失效，必须记住）：
+
+1. `set_script()` 对**已经进树**的节点**不补发** `_ready` ⇒ 必须"建节点 → 填子节点 → `GwViews.attach()` → `add_child()`"；
+2. 原版脚本的 `_ready` 只遍历**当次**的 `get_children()` ⇒ 子节点必须**先就位**；
+3. 挂上之后那棵子树归原版管：`GwScreen._apply_size_recursive()` 见到 `GwViews.owns(node)` 就整棵跳过
+   （我方那套 `maxi(10, 宽/N)` 不再碰它）。本轮 `GameSetupPlayerEntry` 正是靠这条把 `w/30` 换成 `w/40` 的。
+
+### 66.3 还没换的 25 份：按缺口分类（细节在台账 `need` 列）
+
+| 缺口 | 份数 | 说明 |
+|---|---:|---|
+| **A. AdMob / IAP 平台桥** | 7 | 包里**一个原生插件二进制都没有**（`.so/.aar/.jar/.gdap` 全空）⇒ `Ad_holder.gd` 解析都过不去；另外 5 份第一行就要 `/root/GraphwarRootNode` + 它的 `log()`（我方主场景根是 `Main`）。**这是"包里没有"，不是"我们没复原"** |
+| **B. play_screen 组（红线）** | 7 | `ButtonGrid` / `ExtraOptionPad` / `ExtraOptionsHBox` / `HBoxContainer` / `ShowExtraButtons` / `ViewFunctionPad` / `ViewFunctionsLabel`。节点名我逐个核对过**都在**，只差 `attach`（`ButtonGrid`/`HBoxContainer` 还要把 `_make_grid()` 拆成四步；`ShowExtraButtons` 另卡"扩展类按钮 + 2 个 `.svg` 资产"）。等 t7 的 S3 归零提交之后再动 |
+| **C. 别的屏（红线）** | 2 | `GameNameContainer`（`replay_lobby.gd`，刚做成整屏 0 像素）、`CampaingLevelsButtons`（`campaign.gd`，另卡 `GwButton` ↔ `GraphwarButton` 派发） |
+| **D. 包内死文件** | 7 | 31 份原版 `.scn` **零引用**（严格前缀 grep）：`CampaingButtonSize` `ExtraOptionsVbox`（1 字节空文件）`LevelTitleContainer` `OffsetLabel` `ResizeContainer` `UnlockButton` `endgame_pop_up` |
+| **E. 被既有断言挡住** | 1 | `ShopButtonsSize`：原版无下限，`selftest.gd:717` 把 `maxf(32, …)` 写进期望值（headless 64 px 下原版算出 −6） |
+| **F. 结构 + 无真值** | 1 | `SoldierIconMarginContainer`：原版每槽 4 个叠放的 `TextureRect` + 负 margin；我方每槽 1 个合成图标，且 `game_setup` 屏没有像素真值 |
+| **G. Rust 侧未接** | （与 D 同一份） | `endgame_pop_up.gd`：9 行空壳、那份 `.scn` 的根节点**根本没脚本**，内容由 `src/graphwar_play_screen_control.rs` 的 `0x3d9000`/`0x3da130` 填。**在那两个函数接到节点层之前，我方 211 行仿制控制器必须保留**——它是现在唯一让弹窗有内容的东西 |
+
+> 计数口径：A–F **7 + 7 + 2 + 7 + 1 + 1 = 25**（G 说的是其中 `endgame_pop_up` 的**真正缺口**，不是第 26 份）。
+
+### 66.4 这一节改变了什么（对旧文档的更正，逐条）
+
+1. **§43.3 / §43.7 第 3 条**：`GameSetupPlayerEntry.gd` 的"类型不符"是**读错节点**（该挂的是包名字的
+   `MarginContainer`，不是行根 `HBoxContainer`）⇒ 已换，前提作废。
+2. **§39.4 / §43.3**：`TurnLimitText.gd` 的"没有第 5 个读出格"是**数错**（第 4 格自带这份脚本）⇒ 已换。
+3. **§43.3**：`CampaingButtonSize` / `LevelTitleContainer` / `OffsetLabel` / `ResizeContainer`
+   的"原版是 Rust 运行时 `new()` 的"是**推断**，本轮用两条硬证据收紧成"**包内零引用**"：
+   ① 31 份 `.scn` 原始字节里零命中；② `.so` 的 84480 行字符串表里 `res://*.gd` **0 次**
+   ⇒ 没有证据表明 Rust 按路径加载过 GDScript。**这不等于证明作者没用它们**，只等于"没有任何加载证据"。
+4. **§43.7 第 1 条**（`OptionsContainer`）已做完；**第 3 条**（玩家行结构）前提作废、而且
+   `GameSetupPlayerEntry` 这一半其实不需要改结构就能换；**第 2 条**（`ButtonGrid`+`HBoxContainer`）
+   与**第 4 条**（`CampaingLevelsButtons`+`UnlockButton`）**仍未做**，原因没变（红线 / 派发层）。
+
+### 66.5 复跑
+
+见 `docs/06` §62.5（含"27 份 `cmp` + 台账复算 + 三档验收 + 像素"的完整命令）。
+⚠️ 本轮新增了 3 个 `.gd` ⇒ **必须** `godot --headless --path client --import` 一次，
+否则 Godot 静默不加载（`docs/18` 的那条老坑）。
+## 67. `tools/frame_capture.py --flow match`：**对局屏**怎么采（脚本化协议服务器 + 两侧同一份剧本）（2026-11-26，任务 T8）
+
+> 数字、逐元素差异与结论在 `docs/06` §60。本节只讲**怎么用**这个 flow、两侧怎么起、已知限制。
+>
+> **编号说明**（照 §64 的先例如实记）：任务书让我写 **66 号**（预设另一名 teammate 的客户端改动先合、
+> 占掉 65）。但本分支上 `tools/check_doc_refs.py` 要求小节编号**连续**，所以这里落 **65**；
+> 若合并时别人的那节先占 65，则本节顺延为 **66**，正文引用一并改。
+
+### 67.1 它解决的问题
+
+`--flow campaign/replay/static` 覆盖的屏都不需要"服务端"：战役关卡的落点**不可复现**（`docs/06` §53.5 第 1 条），
+所以对局屏（准备圈 / 棋盘 / 回合 HUD）一直没有真值。`--flow match` 把局面钉死在**一份写死的事件序列**上：
+
+```text
+tools/match_serve.py（服务器）  ← 读 fixtures/frame_match_events.txt，**原样发**，不改一个字节
+        ↓ UDP 42968（LAN 发现，裸 9 字段 GameInfo + "\n"）
+        ↓ TCP 46702（u16 大端长度 + {"<EventName>":{…}}）
+client（原版真机 或 我方 client）→ 对局屏
+frame_capture 每屏 3 帧、间隔 1.2 s → tools/frame_diff.py（既有三层判据，未改）
+```
+
+`--flow match` **只新增分支**：`campaign` / `replay` / `static` 三支一字未改，`tools/frame_diff.py` 一字未动。
+
+### 67.2 两侧各一条命令（服务器由采集脚本自己起，**不要**另开一个终端起）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t8
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+W=$WT/.agent-work/frames
+
+python3 tools/frame_capture.py --side original --flow match --out $W/match-orig --display-num 83
+python3 tools/frame_capture.py --side ours     --flow match --out $W/match-mine --display-num 84
+
+python3 tools/frame_diff.py --orig $W/match-orig --mine $W/match-mine --screens match_ready,match_play \
+  --out fixtures/frame_diff_results_match.tsv --blocks-out fixtures/frame_diff_blocks_match.tsv
+```
+
+为什么必须一条命令跑完一侧：本机每条 bash 命令是独立 PID namespace（§53.7 第 2 条），
+所以**Xvfb → 脚本化服务器 → 游戏 → 截图**都在 `frame_capture.py` 这一个进程树里起。
+`--side ours` 还需要 `client/libgw2_rebuild.so` 已就位（`cargo build --features gdext-bindings` 后拷进去）+ 跑过一次 `--import`。
+
+### 67.3 新增开关（都有默认值，不传就和既有三支完全无关）
+
+| 开关 | 默认 | 说明 |
+|---|---|---|
+| `--flow match` | — | 新增的这一支：`match_ready`（S7 准备态）→ `match_play`（S8 对局中） |
+| `--match-fixture` | `<repo>/fixtures/frame_match_events.txt` | 剧本（预注册文件，含 `[meta]` + 两个 `[phaseN:屏名]`） |
+| `--match-tcp-port` | `46702` | 脚本化服务器的 TCP 端口；**必须**与 fixture `[meta] tcp_port` 一致，否则 LAN 广播里的 `address` 指向错的地方 |
+| `--match-udp-port` | `42968` | LAN 发现端口（原版 LAN 大厅绑这个口，观测值） |
+| `--match-server-duration` | `300` | 服务器进程最长活多久（秒） |
+
+点击脚本（两侧同一串坐标，`steps_for('match', side)`）：
+
+```text
+主菜单 Play(1344,622) → 等 2.5 s
+LAN 列表第 1 行 Join(1842,209) → 等 3.0 s          ← 这一发之后服务器已经把 phase1 发完了
+拍 match_ready 3 帧（间隔 1.2 s）
+touch <out>/phase2.trigger → 等 5.0 s              ← 服务器看到触发文件才发 phase2（比 sleep 稳，不会与截图抢时间）
+拍 match_play 3 帧
+```
+
+`(1344,622)` 与 `(1842,209)` 是**原版真机**实测坐标（`docs/06` §48.8 的点击串）；我方主菜单与原版**整屏 0 像素差**
+（`docs/06` §53.0 ①），LAN 列表第 1 行的 `Join` 本轮实测也落在同一格 ⇒ 两侧用同一串坐标。
+
+### 67.4 服务器怎么说话（`tools/match_serve.py`）
+
+* **LAN 发现**：UDP 裸 9 字段 `GameInfo` + 结尾 `"\n"`，每 0.5 s 一次（变体 C，`docs/06` §48.2 ①：
+  加事件外壳的 `{"GameInfo":…}` 会被真客户端丢弃）。`address` 字段用 `127.0.0.1:<tcp_port>`；
+* **对局 TCP**：`u16` 大端长度 + 一个 JSON 对象（`docs/09` §1.1）。收 `NewConnectionRequest` 后发 `[phase1]`，
+  再等触发文件 → 发 `[phase2]`；
+* **`TickReply`**：客户端 1 Hz 发 `TickRequest`，服务器回 `TickReply{current_tick}`。
+  tick 轴**不是我编的**：`[meta] tick_phase1=6`（真回放里快照那段的 tick）、`tick_phase2=550`（第一发的 tick）、`tick_hz=60`。
+  **这一条决定原版的弹道会不会动**：没有它时 S8 里没有弹道（见 `docs/06` §60.2.1）；
+* **逐帧发送日志**：`--out` 指定的 JSONL，每帧一条 `{t, type, phase, index, name, bytes, payload}`，
+  另有 `config`（含 `fixture_sha256`）/`listening`/`recv`/`summary`。
+  **两侧 `fixture_sha256` 相同**就是"喂的是同一份字节"的证据。
+
+单独跑（调试用）：
+
+```bash
+python3 tools/match_serve.py --fixture fixtures/frame_match_events.txt \
+  --out $W/serve.jsonl --trigger-file $W/phase2.trigger --side debug --duration 120
+# 另一个终端（同机）真客户端进 LAN 大厅点 Join 即可；触发文件不出现时可用 --auto-phase2 12 兜底
+```
+
+### 67.5 已知限制（都在 `docs/06` §60.8/§60.9 有更细的记录）
+
+1. **一次只服务一"侧"**：LAN 发现要绑 `UDP 42968`，同机同时跑两个实例会互抢 ⇒ 两侧**分两次**跑，
+   靠"同一份 fixture + 同一份 sha256"保证可比（`--connections N` 只为客户端重连准备，不是给两侧同时用的）。
+2. **弹道相位不可对齐**：原版动画吃服务端 tick（`TickReply`），我方客户端**不发** `TickRequest`、不吃服务端 tick
+   ⇒ S8 只能比形状/位置/配色，不能比"同一 tick"。
+3. **剧本只有一份局面**（真回放 `1793897298` = `Level 0`：1 士兵 + 1 靶子、无障碍）。要多士兵/障碍/2 人对局，
+   换一份真回放的事件流进 fixture 即可，管线不用改。
+4. **我方三帧同 sha256**（S7）：我方准备圈不随时间动 —— 这是"我方没接那条链"，不是采集问题。
+5. 本轮**没有**用 `--game-arg` 传地址（地址走 LAN 广播就够了；原版的 CLI 参数是死的，`docs/06` §48.1）。
+
 ## 68. 客户端侧接线：回放屏的**右列宽 / 底栏高 / 函数框只读态 / 士兵外观与名字标签**（2026-11-26，任务 T7）
 
 > 真帧证据、逐块数字、改前改后三层判据在 **`docs/06` §59**（那节是验收，本节是**怎么接的**）。
