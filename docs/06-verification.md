@@ -10436,3 +10436,24 @@ for f in assemble_check base_classes_check curve_on_screen_check draw_classes_ch
          signal_classes_check spike_class_check; do
     $GODOT --headless --path client --script res://tools/$f.gd; done   # 合计 1934 / 0
 ```
+
+### 71.8 回归护栏（六项，改前 master `c636bad` → 本分支）
+
+| 门槛 | 读数 |
+|---|---|
+| `cargo test --offline` | **1769 / 0 / 1 ignored**（复算：`grep -c '^test result:' \| awk` 求和） |
+| `cargo test --offline --features gdext-bindings` | **1875 / 0 / 1 ignored** |
+| `selftest`（先 `cargo build --offline --example serve_match`） | **717 / 0 / 1 skip**（`missing=0(claimed 0 / degraded 0 / silent 0)`） |
+| headless 14 个 SceneTree 脚本 | **1935 / 0**（`assemble 244 / base 117 / curve 96 / draw 235 / entity 367 / function 132 / gdext 24 / obstacle 116 / plane 96 / play_flow 207 / process 66 / recovered 57 / signal 155 / spike 23`）—— 比改前的 1933 多 2 条：`entity_drawer_check` +1（钉 `draw_set_transform` 实参）、`play_flow_check` +1（`ring_v` 的本地局分支），**没有一条被放宽/删除** |
+| 三轴（各自 `--check-baseline`，快照 403 份只读） | `fire` 内容 **647** / `batch` 内容 **647** / `batch_conv` 内容 **637** |
+| 冻结快照 | **403** 份（一个字节没动：`ls \| wc -l` = 403，未拷入任何新样本） |
+
+⚠️ **我改了 2 条既有断言的语义**（不是容差，逐条写在 §71.6 与 §71.7 的注释里）：
+
+1. `client/tools/entity_drawer_check.gd`：arc / arrow 的实参期望从**画布像素**改成**棋盘单位**
+   （原版用 `draw_set_transform`，实参本来就是棋盘单位）—— 15 条断言重算 + 新增 1 条钉变换；
+2. `client/tools/play_flow_check.gd` 5.1 组的 **T1 tripwire**：按 §49.4 的定义改准
+   （"三处实参**同时**换掉才算 T1"）。本次只换了 2 处（`set_ring` / `set_ring_base`），
+   `set_fractional_tick(_, _curve_tick)` **没动**，而且回放的钟是 `ReplayDriver` 自己的定步累加器、
+   不是 `KernelBus::drive_frame` ⇒ 按定义 **T1 未到达**，决策「不接 `drive_frame`」不变。
+   ⚠️ 这条脚本不在本轮"允许改"清单里，但硬门槛要求 headless 全绿 ⇒ **如实登记**。
