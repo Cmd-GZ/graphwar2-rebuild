@@ -13480,6 +13480,211 @@ cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy 
    `AGENTS.md` §0/目录里那两处同样的旧读数**不在本任务允许清单**，未动。
 4. **`docs/02` §17.4 的两处旧"现值核对"行**（`events.rs` / `server.rs` 都写"未拆"）已按实测改掉，
    并附了可复跑的单行判据。
+## 85. 审计③：`fixtures/` 与测试的**期望值来源**分档 —— 1772 条里有多少条真正构成复原证据（2026-11-26，审计员 t37 / `task-35`）
+
+> 规格：`.agent-work/specs/AUDIT-3-tests.md` + `AUDIT-CRITERIA.md`。
+> 动机：`AGENTS.md` §0.5 ——「写测试的人不许同时是"判定测试通过标准的人"；自写断言只能证明自洽」。
+> 仓库有 **1772 条可跑测试**（`cargo test -- --list` 实测 **1773 行 = 1772 + 1 `#[ignore]`**）、
+> `fixtures/` **143 个文件**，但**从来没有系统区分**过：期望值是从真二进制/抓包/真帧来的，还是从我们自己的实现抄来的。
+> 产物：`fixtures/source_audit_tests.tsv`（**273 行**：143 夹具 + 128 个测试源文件）、工具 `tools/audit_tests_scan.py`。
+> **只审计不改测试**：本节不改任何 `tests/**`、`fixtures/**` 既有文件。
+
+### 85.0 一页结论
+
+| # | 问题 | 答案 | 档 |
+|---|---|---|---|
+| ① | 1772 条测试里，期望值**能独立于我方实现复核**的有多少 | **1422 条 = 80.3 %**（`G-binary` 1362 + `G-corpus` 61）；另 **342 条 = 19.3 %** 是 `S-self`（自洽，**零复原证据**）、8 条 `U` | **逐条可复核**（判据见 §85.1） |
+| ② | 这 1422 条就"证明复原"了吗 | **不是**。它们钉的是**常量/结构/字段/偏移/坐标**（`.rodata` 位型、立即数、`.symtab` 名、Location 行号、抓包键序、真帧 bbox）。**把"我方函数输出"与真值逐值/逐字节对拍的只有约 170 条 = 9.6 %**（清单 §85.4） | **推断**（"只有 233 条"是下界，口径见 §85.8） |
+| ③ | 夹具呢 | 143 个里 `G-binary` **101** / `G-corpus` **0** / `S-self` **42** / `U` **0**；但其中**只有 24 个是"测试直接当期望值读"的**（其余是取证表/对拍结果/预注册台账/输入脚本） | **逐条**（表在 TSV） |
+| ④ | 找到"自洽掩盖真错误"了吗 | **3 个实例**，两个是**测试/夹具自己错了还全绿**（§85.5）：`update_sprite` 漏 `k`（活了 557 个 commit）、`fixtures/eval.tsv` 3 行真值错（oarcle 假象，全仓从第 1 天起错）、括号不平衡退化弹道（cargo 全绿、三轴红） | **观测 + 逐位** |
+| ⑤ | 一句话判决 | **1772 条里真正构成复原证据的是约 170 条（9.6 %）**；另有 1189 条是"把二进制常量/结构抄准了"的**钉子**（有价值，但不是行为证据），342 条是**纯自洽**（该重做期望值） | — |
+
+### 85.1 判据（四档，定义先写死；跑完不许改）
+
+| 档 | 判据（**期望值能否独立于我方实现复核**） |
+|---|---|
+| `G-binary` | 期望值来自**真二进制/真机/抓包/真帧**：`tools/gen_fixtures.py` 用 unicorn 直接 call `libgraphwarrust.so`（`0x4eb9d0` 求值 / `0x4ed670` 解析 / `0x3c2530` 采点 / `0x4ec160` 打印）；`.rodata` 位型、指令立即数、ELF vaddr、arm64 `.symtab` 真名+长度、`panic::Location`（`.data.rel.ro`+`.rela.dyn`）；frida 真机样本；真实抓包字节；真机真帧坐标 |
+| `G-corpus` | 期望值来自**冻结的 403 份回放语料**的统计量或逐字节内容（回放报文原文/位模式、批形、轮转序列） |
+| `S-self` | 期望值**只能由我方实现给出**：把我方公式/常量重抄一遍当期望（**镜像**）；我方 A 路径 vs 我方 B 路径（**parity**）；我方 `parse`→我方 `to_text` 往返；在实现里定义的**不变量**（单调/排序/长度/确定性/no-panic）；**我方实现在语料上跑出来的基线数字**（如三轴 647/647/637） |
+| `U-unknown` | 判不出（写清缺什么） |
+
+**三步判法**（全部可复跑）：
+
+1. **夹具**：找生成脚本（`tools/*.py`、`examples/*.rs`），读它的真值来源是 unicorn/ELF/抓包，还是 `cargo run`/我方 example。
+   ⚠️ 关键反例：`fixtures/replay_player84.txt` 文件头自述「来源（**全部由旧实现算出**，不是新驱动自己给的）」⇒ 它是
+   **我方 A 实现 vs 我方 B 实现**的期望值 ⇒ `S-self`（虽然它"很硬"、能防退化，但对复原零证据）。
+2. **测试条数**：取 `cargo test -- --list` 的 1773 行，把每条测试按**模块路径**归到**它写在哪个源文件里**
+   （不是归到哪个二进制 —— 大量 `#[path]` 把 `src/x.rs` 的测试编进 `tests/y.rs`，按二进制归会把别人的测试算错）。
+   分母因此是 1772（去掉 1 条 `#[ignore]` 的 `search_ai_seed`）。
+3. **每个源文件**：解析 `#[test]` 块里的断言，算"带物证锚"的断言比例（`0x…` 地址 / `.to_bits()` / `.rodata` /
+   立即数 / `.symtab` / Location / 夹具路径），再叠加**人工复核表**（`tests/` 的 70 个二进制我**逐条读过**；
+   与自动判法分歧处人工覆盖并在 TSV 的「判据」列写明理由）。
+
+### 85.2 正对照（跑法有效吗）
+
+`python3 tools/audit_tests_scan.py --write && python3 tools/audit_tests_scan.py --controls` —— **5/5 判对**：
+
+| 对照 | 我的判法给 | 为什么这是硬对照（不是"看起来像"） |
+|---|---|---|
+| `fixtures/path.tsv` → `G-binary` | ✓ | `tools/gen_fixtures.py:176` 里是 `g.call_path(...)` = unicorn 直调 `0x3c2530` |
+| `fixtures/protocol.jsonl` → `G-binary` | ✓ | `tools/capture_net.js` 在真实对局进程里 hook libc socket 收下来的字节 |
+| `tests/parse_stray_paren.rs` → `G-binary` | ✓ | 文件头明写「真值来自**真二进制** `0x4ed670`，不是我们自己的模型」 |
+| `tests/diffconv_parity.rs` → `S-self` | ✓ | 文件头明写比的是"我方收敛层 vs 我方内核" **两条我方路径** |
+| `fixtures/replay_player84.txt` → `S-self` | ✓ | 文件头明写「**全部由旧实现算出**」 |
+
+### 85.3 统计（两种口径）
+
+**口径 A：按测试条数**（`cargo test -- --list`，分母 **1772** 可跑 + 1 ignored）
+
+| 档 | 条数 | 占比 |
+|---|---|---|
+| `G-binary` | **1362** | 76.9 % |
+| `G-corpus` | **61** | 3.4 % |
+| `S-self` | **341** | 19.3 % |
+| `U-unknown` | **8** | 0.5 % |
+
+**口径 B：按夹具条数**（`fixtures/` 143 个文件）
+
+| 档 | 条数 | 其中"测试直接当期望值读"的（24 个） |
+|---|---|---|
+| `G-binary` | **101** | 24 = `eval/path/parse/to_text/to_text_roundtrip/parse_matrix_truth/protocol{,_match,_death}.jsonl/name_to_addr/module_funcs/module_map/sym_match/ai_gen_parity/ai_src_fix_plan/levelgen_{draws,obstacles}/ticks/net_event_handlers/{frame_rest,replay_screen,replay_lobby,play_screen_final,static_screens}_targets`
+| `G-corpus` | **0** | 0 —— **语料的期望值全是写在测试里的内联常量**（`tests/diff_conv.rs` / `sim_turns.rs` / `fire_batch_driver.rs`），没有落成夹具 |
+| `S-self` | **42** | 2（`guardrails.json` 的三轴数字 = 我方实现的输出；`replay_player84.txt` = 我方旧实现的输出）|
+| `U-unknown` | **0** | 0 |
+
+**口径 B 再按类型切**（143 个里，只有 24 个真正承担"期望值"角色）：
+
+| 类型 | 个数 | G-binary | G-corpus | S-self |
+|---|---|---|---|---|
+| `expect` 测试直接读当期望值 | 26 | 24 | 0 | 2 |
+| `capture` 真机/抓包原始样本 | 15 | 15 | 0 | 0 |
+| `truth` 取证/真值数据表 | 36 | 36 | 0 | 0 |
+| `measure` 对拍/我方算法的测量结果 | 52 | 16 | 0 | 36 |
+| `plan` 预注册/台账 | 12 | 10 | 0 | 2 |
+| `input` 喂给两边的输入脚本 | 2 | 0 | 0 | 2 |
+| **合计** | **143** | **101** | **0** | **42** |
+
+⇒ **`fixtures/` 的 143 个文件里只有 26 个是"期望值夹具"**，其余 117 个是取证表（36 真值 + 15 抓包 + 52 测量 + 12 计划 + 2 输入）。
+`measure` 类的 36 个 `S-self` 尤其要注意：输入是物证、**数字是我方算法/我方实现的产出**，它们只能当回归保护。
+
+### 85.4 真正"行为级对拍"的清单（约 **170 条 = 9.6 %**）——这才是复原证据的主体
+
+| 文件（条数） | 我方"输出" vs 真值 | 真值来源 |
+|---|---|---|
+| `tests/golden.rs`（2） | `eval`/`calculate` 的返回值 | `eval.tsv`/`path.tsv`（unicorn 直调）|
+| `tests/to_text.rs`（2） | `to_text` 输出 | `to_text.tsv`（unicorn `0x4ec160`）|
+| `tests/parse_stray_paren.rs`（3） | `parse` 的 token 流 | unicorn `0x4ed670` |
+| `src/_scaffold/protocol.rs`（19 个唯一函数 × 5 个二进制 = 95） | `serialize` 出的字节串 | `protocol*.jsonl` 真实抓包**逐字节** |
+| `tests/live_hits.rs`（13） | 碰撞链算出的首个命中点 | 一次真实对局的抓包（`capture_net_raw.js`）|
+| `tests/diff_conv.rs`（10） | 收敛层预测的报文 | 403 份回放的逐字节 |
+| `tests/replay_diff.rs`（8） | 回放驱动重放的报文 | 同上 |
+| `tests/sim_turns.rs`（14） | 同时回合的批形/顺序 | 130 份真回放（`docs/141`）|
+| `tests/print_roundtrip_chain.rs`（5）+ `tests/residual_fold.rs`（3） | 打印-回代链的值 | 回放报文的原文与位模式 |
+| `tests/fire_batch_driver.rs`（3）+ `src/graphwar_turn_manager.rs`（6）+ `src/graphwar_replay_player.rs`（6） | 批形 / 轮转序列 / tick 推进 | 403 份回放 |
+
+**其余约 1247 条 `G-binary` 是"钉子"不是"证据"**：它们证明「常量 X 等于二进制里的那 4 个字节」「字段偏移是 0x18」
+「这个函数名在 `Location` 里是 `src/xxx.rs:561`」—— 这些**必须**对，但**对了也不说明算法对**。
+`update_sprite` 就是活教材：它周边 4 个常量全部有 `.rodata` 槽号（`0x1b9fc8`/`0x19c634`/`0x19d1b0`/`0x1baacc`），
+**公式错了 19 天没人发现**（§85.5）。
+
+### 85.5 「自洽掩盖真错误」的三个实例（本节的核心产出）
+
+#### 实例 1（最有力）：`update_sprite` 漏 `k` —— **三个"绿"的东西同时自洽地错**（`docs/06` §58）
+
+- 错误实现：`sprite_transform` 的 `scale.x = (s/60)·unit`，**漏了 `k = size.x/50`** ⇒ 精灵恒 2.13 px 宽。
+- 时间线：`042a27d`（2026-11-06 22:37，补齐 entity_drawer 其余 9 函数时写下）→ `2f64674`（2026-11-26 01:01 修）：
+  **19 天 / 557 个 commit / 10 个以上合并轮**。
+- **当时绿着的三处**（都是"期望值来自我方实现"的典型）：
+  1. `tests/entity_drawer.rs::sprite_transform_matches_update_sprite_arithmetic` —— 期望值写的是
+     `((1.0_f32 / 60.0) * (128.0_f32 / 256.0))`，而同一 commit 的实现是 `((s / 60.0) * unit)`（`s=1.0`、`unit=128/256`）
+     ⇒ **两串表达式逐字同式**，这条断言**在数学上不可能变红**（`git show 042a27d:tests/entity_drawer.rs`）。
+  2. `src/_scaffold/entity_drawer_class.rs::sprite_transform_matches_the_hand_computed_expectation` —— 手算期望
+     `16.0/60.0`（buggy 公式的结果），且**只在 `--features gdext-bindings` 下编译**，默认 `cargo test` 抓不到。
+  3. `client/tools/entity_drawer_check.gd:155` ——`"scale": Vector2((s / 60.0) * unit, …)` 是同一公式的 GDScript 镜像，
+     "独立重算对拍"变成"独立地把同一个错公式再算一遍"。
+- ⇒ **这正是 `AGENTS.md` §0.5 说的那种**：写测试的人按自己的实现写期望，测试全绿 = 自洽，**零复原证据**。
+  抓出它的是**像素对拍**（真机真帧），不是测试。
+
+#### 实例 2：`fixtures/eval.tsv` 的 3 行真值是 **oracle 假象** —— 夹具、实现、测试、文档四方一致地错
+
+- 现象：`log(0)` / `ln(0)` / `ln(-2)` 三行的真值被记成 `7ff8000000000000`（NaN）。
+- 根因（`docs/archive/155-round-log.md` §32.3）：`analysis/emu.py` 把二进制的 `pow/log/exp` 导入映射到 **python 的 `math`**，
+  而 `math.log10(0)` **抛 ValueError**、被 `_safe` 兜成 NaN；真 libm 是**返回值**（`-inf`）。
+- **绿着的是谁**：`tests/golden.rs::eval_matches_binary`（拿 `fixtures/eval.tsv` 当期望）+ `src/math_function.rs`
+  的实现（"照搬上游 python 参照实现"）⇒ 两者同向错，测试恒绿；连 `docs/03` §11 都写着「`log(0) = NaN`，判据是 `v <= 0`」，
+  即**文档也参与了自洽**。抓出它的是 unicorn **直调 `0x4eb9d0`** 的新对拍台（`tools/eval_oracle.py`），
+  修法里 `install_libm()` 换成 `ctypes` 直调 `libm.so.6`，重生成后 `git diff fixtures/` **只有那 3 行**。
+- 时间线：`eval.tsv` 随首版实现入库（`d10911d` 2026-11-05）→ 修（`52c7c5d` 2026-11-07）。
+- ⇒ 这条比实例 1 更狠：**错的不只是断言，连"真值"本身都是从另一个我方参照实现来的**。
+  本审计给 `parse.tsv` 记 `G-binary` 时**特意注明"间接"**（它来自 python 参照实现 + 90 例对拍，不是直接读二进制）。
+
+#### 实例 3：括号不平衡 ⇒ 弹道退化成 1 个点 —— **`cargo test` 全绿，是语料三轴抓出来的**
+
+- `AGENTS.md` 合并纪律的头号事故：「下游报 1074，我只看 `cargo test` 绿就合了…同一批改动里还夹着一个**真 bug**
+  （括号不平衡导致弹道退化成 1 个点）」（`docs/archive/155-round-log.md:647/690/1135`）：函数原文括号不平衡时
+  我方 `parse` **就地截断**，修正常数被整段丢掉 ⇒ 曲线不过 `(x0,y0)` ⇒ 发射退化成一个点、一个死者都打不死。
+- **当时绿着的**：整个 `tests/`（那条规则**没有任何测试覆盖**）+ `tests/golden.rs::parse_matches_reference`
+  （它的 `parse.tsv` 语料里没有"真语料括号不平衡"这一类）。抓出它的是 **403 份回放的三轴**。
+- ⇒ 与实例 1/2 互补：那两条是"**错的期望值**让测试恒绿"，这条是"**根本没有测试覆盖**，全绿说明不了什么"。
+
+### 85.6 最该先修的 10 条（按风险排序：先列"声称覆盖核心规则但期望值其实来自我方实现"的）
+
+| # | 位置 | 现在是 | 为什么要修 |
+|---|---|---|---|
+| 1 | `tests/diffconv_parity.rs`（2 条） | 我方收敛层 vs 我方内核逐位一致 | **纯 parity**，两条都不与真值比。它被写在 `docs/06` §30.5 当"核心验收"——口径要改成"与回放报文比"或明确标"只防退化" |
+| 2 | `src/_scaffold/api.rs`（43 条） | 契约测试 + 我方 `api` vs 我方 `shot_points` | 43 条全是我方自洽；对外是"客户端接缝的验收"，读者会误当复原证据 |
+| 3 | `src/_scaffold/replay_driver.rs`（20 条） | 我方自造驱动的行为 | 时钟模型历史上就是"自定"（`docs/00` §0.1b.2 的 D 档），期望值只能来自它自己 |
+| 4 | `src/graphwar_play_screen_control.rs`（18 条） | 弹道生命周期/回合时钟的状态机 | 这些**流程/时序**正是 `docs/00` 标明"基本没有证据"的部分；测试钉住的是我方重建的语义 ⇒ 读者会以为已复原 |
+| 5 | `src/_scaffold/diffconv.rs`（10 条）+ `src/_scaffold/broker.rs`（10 条） | 我方收敛层 / 我方 broker | scaffold = 原版没有对应物 ⇒ 它们的测试不可能是复原证据（`AGENTS.md` §4）|
+| 6 | `tests/misc_modules.rs`（15 条） | `parse`→`reorder`→我方输出、往返、幂等、FIFO | 该文件头已诚实写"回归保护"，但 15 条占 47 条的 1/3，容易当成模块验收 |
+| 7 | `tests/graphwar_game_state_manager.rs`（4 条） | `fire` vs `batch` parity、纯几何、`execute_results`、`handle_tick` | 这是**规则层**（回合推进/结算）的测试，却只有我方两路径互证 |
+| 8 | `tests/campaign_data.rs`（4 条） | 我方 kernel vs 我方 client / `level_manager` 副本 | 关卡表的主体（10 条）确有 `docs/118` 的 C/R 列背书，但 4 条 parity 不能算 |
+| 9 | `tests/ai_explain.rs`（4 条）+ `tests/win_rule.rs`（4 条） | 确定性/种子敏感性/结构自洽 | AI 的**决策过程**与胜负的**路径唯一性**都是核心规则，靠"同输入同输出"证明不了与二进制一致 |
+| 10 | `fixtures/guardrails.json`（三轴数字）+ `tests/fire_batch_driver.rs` | 647/647/637 是我方实现的输出 | 文档里多处把三轴数字当"对拍结果"引用；口径要写成"**我方基线的回归保护**（语料指纹才是真值）" |
+
+（`replay_player84.txt` 已在 2026 年那轮被明确标成"删旧码前的对照"，属**已声明**的 S-self，不列入待修，但不得引用为证据。）
+
+### 85.7 复跑
+
+```bash
+export CARGO_HOME=$PWD/.reference/cargo-home CARGO_TARGET_DIR=$PWD/.reference/cargo-home/target
+cargo test --offline -- --list > .agent-run/testlist_default.txt     # 1773 行 = 1772 + 1 ignored
+python3 tools/audit_tests_scan.py --write                            # 写 fixtures/source_audit_tests.tsv（273 行）
+python3 tools/audit_tests_scan.py                                    # 打印两种口径的统计
+python3 tools/audit_tests_scan.py --controls                         # 正对照 5/5
+awk -F'\t' '$4 ~ /S-self [1-9]/ {print $1"\t"$2"\t"$4}' fixtures/source_audit_tests.tsv | sort -t' ' -k3 -rn
+```
+
+### 85.8 **我这条审计方法本身可能漏什么**（照实写）
+
+1. **"锚定" ≠ "正确"**：注里给了地址但抄错，本判法照样记 `G-binary`。`tests/` 的 70 个二进制我逐条读过、
+   `src/` 的高密度文件抽了 10 个（`function_token`/`turn_manager`/`stream_buffer`/`play_screen_control`/`protocol`/
+   `api`/`replay_driver`/`function_evolutionator`/`game`/`entity_drawer`），但**没有**逐个复核 1362 条断言里的每个地址/位型。
+2. **镜像公式未必不带锚**：`update_sprite` 就是"周边 4 个常量全带槽号、公式本体是镜像"⇒ 纯自动锚定率会被带偏；
+   这一类只能靠人工，而人工只覆盖了我读过的文件。
+3. **`#[path]` 混编的归属有歧义**：测试写在 `src/a.rs` 却编进 `tests/b.rs`，我归到 `src/a.rs`（"测试写在哪个文件"
+   才是证据责任归属）。实测 `src/_scaffold/protocol.rs` 的 **58** 个测试（含 22 个由 `macro_rules!` 生成的
+   `round_trip_*`）在 **5** 个二进制（lib + 4 个 `#[path]` 引用者）里各跑一遍 ⇒ **290** 条计数；
+   口径是"cargo 条数"，**不是"唯一函数条数"**。按唯一函数算，1772 会缩到 ~1000。
+4. **`G-binary` 的"间接"那一档没细分**：`parse.tsv` 来自 python 参照实现（与二进制对拍过 90 例）、
+   `sym_match.tsv` 来自"两架构字节特征匹配"、`hybrid_names.tsv` 是我方算法——它们的**证据链长度不同**，
+   本审计统一记 `G-binary` 只在 TSV 的判据列里注明"间接"。要更严，得给"直接读二进制 / 派生 / 我方算法"三档。
+5. **"约 170 条行为级"是下界**：我按"输出 vs 真值逐值/逐字节"数，`src/game.rs`、`tests/graphwar_setup_control.rs`
+   里还有一些"抓包字符串/事件名"级的行为断言没算进去；同理，某些 `G-binary` 常量钉子（如 `Location` 行号）
+   对**源码级还原**其实是强证据（它证明"原版这行在第 561 行"），本审计把它算进"钉子"而非"行为证据"是个口径选择。
+6. **没做**：没有验证 403 份语料快照本身是否被污染（`guardrails.json` 的 sha256 只覆盖语料文件，不覆盖"语料里的事件是否被我们改过"）；
+   没有审 `client/tools/*_check.gd`（那是另一面，`tests` 面之外的 717 条 headless 检查），但**实例 1 的第 3 处**
+   说明那一批里也有同样的镜像问题。
+
+### 85.9 遗留（需要 lead 决定）
+
+1. **§85.6 的 10 条要不要重做期望值**：其中 #1/#2/#3/#5 是 scaffold/parity，**重做不了**（我方自造物，没有对应真值），
+   建议只在文档口径上标清楚；#4/#7/#9 是**规则层**，需要新的真值（回放/抓包）才能重做 —— 这是**下一轮的任务**。
+2. **`fixtures/guardrails.json` 的措辞**：三轴数字被多处当"对拍结果"引用。本审计不改它（`fixtures/` 只读），
+   建议在 `docs/00`/`docs/16` 里统一加一句"三轴 = **我方基线**的回归保护"。
+3. **`parse.tsv` 的档位**：它间接来自二进制。是否要按 `tools/eval_oracle.py` 的路子直接用 unicorn 重生成一份
+   （那样可以升成"直接 G-binary"）—— 需要重跑分析仓库，不属于本审计。
+
 ## 86. 审计面②（`src/`）结构保真度：**文件名叫对了、函数能跑，不等于源码级还原** —— 348 个原版真名里只有 **106 个**落在同名模块文件、**1163 个生产函数（48.7 %）住在 `_scaffold/`**、9 条规则两处实现（2026-11-26，审计员 t36 / `task-33`）
 
 > 审计任务，**只审计不修**：本轮 `src/**`、`client/**`、`tests/**`、护栏/门槛、`docs/00`/`HANDOVER`/`README` 一个字节都没改。
@@ -13752,207 +13957,3 @@ $PWD/.reference/venv/bin/python tools/addr_probe.py locs 0x4b2890     # 抽样�
 **没有改动**：`src/**`、`client/**`、`tests/**`、`fixtures/guardrails.json`、`fixtures/frame_diff_thresholds*`、
 `docs/00-status.md`、`docs/HANDOVER.md`、`README.md`、`docs/coverage-matrix.*`、冻结快照、`recovered-src/`。
 **新增**：`fixtures/source_audit_src.tsv`、`tools/audit_src.py`、本节（`docs/06` 只追加）。
-## 85. 审计③：`fixtures/` 与测试的**期望值来源**分档 —— 1772 条里有多少条真正构成复原证据（2026-11-26，审计员 t37 / `task-35`）
-
-> 规格：`.agent-work/specs/AUDIT-3-tests.md` + `AUDIT-CRITERIA.md`。
-> 动机：`AGENTS.md` §0.5 ——「写测试的人不许同时是"判定测试通过标准的人"；自写断言只能证明自洽」。
-> 仓库有 **1772 条可跑测试**（`cargo test -- --list` 实测 **1773 行 = 1772 + 1 `#[ignore]`**）、
-> `fixtures/` **143 个文件**，但**从来没有系统区分**过：期望值是从真二进制/抓包/真帧来的，还是从我们自己的实现抄来的。
-> 产物：`fixtures/source_audit_tests.tsv`（**273 行**：143 夹具 + 128 个测试源文件）、工具 `tools/audit_tests_scan.py`。
-> **只审计不改测试**：本节不改任何 `tests/**`、`fixtures/**` 既有文件。
-
-### 85.0 一页结论
-
-| # | 问题 | 答案 | 档 |
-|---|---|---|---|
-| ① | 1772 条测试里，期望值**能独立于我方实现复核**的有多少 | **1422 条 = 80.3 %**（`G-binary` 1362 + `G-corpus` 61）；另 **342 条 = 19.3 %** 是 `S-self`（自洽，**零复原证据**）、8 条 `U` | **逐条可复核**（判据见 §85.1） |
-| ② | 这 1422 条就"证明复原"了吗 | **不是**。它们钉的是**常量/结构/字段/偏移/坐标**（`.rodata` 位型、立即数、`.symtab` 名、Location 行号、抓包键序、真帧 bbox）。**把"我方函数输出"与真值逐值/逐字节对拍的只有约 170 条 = 9.6 %**（清单 §85.4） | **推断**（"只有 233 条"是下界，口径见 §85.8） |
-| ③ | 夹具呢 | 143 个里 `G-binary` **101** / `G-corpus` **0** / `S-self` **42** / `U` **0**；但其中**只有 24 个是"测试直接当期望值读"的**（其余是取证表/对拍结果/预注册台账/输入脚本） | **逐条**（表在 TSV） |
-| ④ | 找到"自洽掩盖真错误"了吗 | **3 个实例**，两个是**测试/夹具自己错了还全绿**（§85.5）：`update_sprite` 漏 `k`（活了 557 个 commit）、`fixtures/eval.tsv` 3 行真值错（oarcle 假象，全仓从第 1 天起错）、括号不平衡退化弹道（cargo 全绿、三轴红） | **观测 + 逐位** |
-| ⑤ | 一句话判决 | **1772 条里真正构成复原证据的是约 170 条（9.6 %）**；另有 1189 条是"把二进制常量/结构抄准了"的**钉子**（有价值，但不是行为证据），342 条是**纯自洽**（该重做期望值） | — |
-
-### 85.1 判据（四档，定义先写死；跑完不许改）
-
-| 档 | 判据（**期望值能否独立于我方实现复核**） |
-|---|---|
-| `G-binary` | 期望值来自**真二进制/真机/抓包/真帧**：`tools/gen_fixtures.py` 用 unicorn 直接 call `libgraphwarrust.so`（`0x4eb9d0` 求值 / `0x4ed670` 解析 / `0x3c2530` 采点 / `0x4ec160` 打印）；`.rodata` 位型、指令立即数、ELF vaddr、arm64 `.symtab` 真名+长度、`panic::Location`（`.data.rel.ro`+`.rela.dyn`）；frida 真机样本；真实抓包字节；真机真帧坐标 |
-| `G-corpus` | 期望值来自**冻结的 403 份回放语料**的统计量或逐字节内容（回放报文原文/位模式、批形、轮转序列） |
-| `S-self` | 期望值**只能由我方实现给出**：把我方公式/常量重抄一遍当期望（**镜像**）；我方 A 路径 vs 我方 B 路径（**parity**）；我方 `parse`→我方 `to_text` 往返；在实现里定义的**不变量**（单调/排序/长度/确定性/no-panic）；**我方实现在语料上跑出来的基线数字**（如三轴 647/647/637） |
-| `U-unknown` | 判不出（写清缺什么） |
-
-**三步判法**（全部可复跑）：
-
-1. **夹具**：找生成脚本（`tools/*.py`、`examples/*.rs`），读它的真值来源是 unicorn/ELF/抓包，还是 `cargo run`/我方 example。
-   ⚠️ 关键反例：`fixtures/replay_player84.txt` 文件头自述「来源（**全部由旧实现算出**，不是新驱动自己给的）」⇒ 它是
-   **我方 A 实现 vs 我方 B 实现**的期望值 ⇒ `S-self`（虽然它"很硬"、能防退化，但对复原零证据）。
-2. **测试条数**：取 `cargo test -- --list` 的 1773 行，把每条测试按**模块路径**归到**它写在哪个源文件里**
-   （不是归到哪个二进制 —— 大量 `#[path]` 把 `src/x.rs` 的测试编进 `tests/y.rs`，按二进制归会把别人的测试算错）。
-   分母因此是 1772（去掉 1 条 `#[ignore]` 的 `search_ai_seed`）。
-3. **每个源文件**：解析 `#[test]` 块里的断言，算"带物证锚"的断言比例（`0x…` 地址 / `.to_bits()` / `.rodata` /
-   立即数 / `.symtab` / Location / 夹具路径），再叠加**人工复核表**（`tests/` 的 70 个二进制我**逐条读过**；
-   与自动判法分歧处人工覆盖并在 TSV 的「判据」列写明理由）。
-
-### 85.2 正对照（跑法有效吗）
-
-`python3 tools/audit_tests_scan.py --write && python3 tools/audit_tests_scan.py --controls` —— **5/5 判对**：
-
-| 对照 | 我的判法给 | 为什么这是硬对照（不是"看起来像"） |
-|---|---|---|
-| `fixtures/path.tsv` → `G-binary` | ✓ | `tools/gen_fixtures.py:176` 里是 `g.call_path(...)` = unicorn 直调 `0x3c2530` |
-| `fixtures/protocol.jsonl` → `G-binary` | ✓ | `tools/capture_net.js` 在真实对局进程里 hook libc socket 收下来的字节 |
-| `tests/parse_stray_paren.rs` → `G-binary` | ✓ | 文件头明写「真值来自**真二进制** `0x4ed670`，不是我们自己的模型」 |
-| `tests/diffconv_parity.rs` → `S-self` | ✓ | 文件头明写比的是"我方收敛层 vs 我方内核" **两条我方路径** |
-| `fixtures/replay_player84.txt` → `S-self` | ✓ | 文件头明写「**全部由旧实现算出**」 |
-
-### 85.3 统计（两种口径）
-
-**口径 A：按测试条数**（`cargo test -- --list`，分母 **1772** 可跑 + 1 ignored）
-
-| 档 | 条数 | 占比 |
-|---|---|---|
-| `G-binary` | **1362** | 76.9 % |
-| `G-corpus` | **61** | 3.4 % |
-| `S-self` | **341** | 19.3 % |
-| `U-unknown` | **8** | 0.5 % |
-
-**口径 B：按夹具条数**（`fixtures/` 143 个文件）
-
-| 档 | 条数 | 其中"测试直接当期望值读"的（24 个） |
-|---|---|---|
-| `G-binary` | **101** | 24 = `eval/path/parse/to_text/to_text_roundtrip/parse_matrix_truth/protocol{,_match,_death}.jsonl/name_to_addr/module_funcs/module_map/sym_match/ai_gen_parity/ai_src_fix_plan/levelgen_{draws,obstacles}/ticks/net_event_handlers/{frame_rest,replay_screen,replay_lobby,play_screen_final,static_screens}_targets`
-| `G-corpus` | **0** | 0 —— **语料的期望值全是写在测试里的内联常量**（`tests/diff_conv.rs` / `sim_turns.rs` / `fire_batch_driver.rs`），没有落成夹具 |
-| `S-self` | **42** | 2（`guardrails.json` 的三轴数字 = 我方实现的输出；`replay_player84.txt` = 我方旧实现的输出）|
-| `U-unknown` | **0** | 0 |
-
-**口径 B 再按类型切**（143 个里，只有 24 个真正承担"期望值"角色）：
-
-| 类型 | 个数 | G-binary | G-corpus | S-self |
-|---|---|---|---|---|
-| `expect` 测试直接读当期望值 | 26 | 24 | 0 | 2 |
-| `capture` 真机/抓包原始样本 | 15 | 15 | 0 | 0 |
-| `truth` 取证/真值数据表 | 36 | 36 | 0 | 0 |
-| `measure` 对拍/我方算法的测量结果 | 52 | 16 | 0 | 36 |
-| `plan` 预注册/台账 | 12 | 10 | 0 | 2 |
-| `input` 喂给两边的输入脚本 | 2 | 0 | 0 | 2 |
-| **合计** | **143** | **101** | **0** | **42** |
-
-⇒ **`fixtures/` 的 143 个文件里只有 26 个是"期望值夹具"**，其余 117 个是取证表（36 真值 + 15 抓包 + 52 测量 + 12 计划 + 2 输入）。
-`measure` 类的 36 个 `S-self` 尤其要注意：输入是物证、**数字是我方算法/我方实现的产出**，它们只能当回归保护。
-
-### 85.4 真正"行为级对拍"的清单（约 **170 条 = 9.6 %**）——这才是复原证据的主体
-
-| 文件（条数） | 我方"输出" vs 真值 | 真值来源 |
-|---|---|---|
-| `tests/golden.rs`（2） | `eval`/`calculate` 的返回值 | `eval.tsv`/`path.tsv`（unicorn 直调）|
-| `tests/to_text.rs`（2） | `to_text` 输出 | `to_text.tsv`（unicorn `0x4ec160`）|
-| `tests/parse_stray_paren.rs`（3） | `parse` 的 token 流 | unicorn `0x4ed670` |
-| `src/_scaffold/protocol.rs`（19 个唯一函数 × 5 个二进制 = 95） | `serialize` 出的字节串 | `protocol*.jsonl` 真实抓包**逐字节** |
-| `tests/live_hits.rs`（13） | 碰撞链算出的首个命中点 | 一次真实对局的抓包（`capture_net_raw.js`）|
-| `tests/diff_conv.rs`（10） | 收敛层预测的报文 | 403 份回放的逐字节 |
-| `tests/replay_diff.rs`（8） | 回放驱动重放的报文 | 同上 |
-| `tests/sim_turns.rs`（14） | 同时回合的批形/顺序 | 130 份真回放（`docs/141`）|
-| `tests/print_roundtrip_chain.rs`（5）+ `tests/residual_fold.rs`（3） | 打印-回代链的值 | 回放报文的原文与位模式 |
-| `tests/fire_batch_driver.rs`（3）+ `src/graphwar_turn_manager.rs`（6）+ `src/graphwar_replay_player.rs`（6） | 批形 / 轮转序列 / tick 推进 | 403 份回放 |
-
-**其余约 1247 条 `G-binary` 是"钉子"不是"证据"**：它们证明「常量 X 等于二进制里的那 4 个字节」「字段偏移是 0x18」
-「这个函数名在 `Location` 里是 `src/xxx.rs:561`」—— 这些**必须**对，但**对了也不说明算法对**。
-`update_sprite` 就是活教材：它周边 4 个常量全部有 `.rodata` 槽号（`0x1b9fc8`/`0x19c634`/`0x19d1b0`/`0x1baacc`），
-**公式错了 19 天没人发现**（§85.5）。
-
-### 85.5 「自洽掩盖真错误」的三个实例（本节的核心产出）
-
-#### 实例 1（最有力）：`update_sprite` 漏 `k` —— **三个"绿"的东西同时自洽地错**（`docs/06` §58）
-
-- 错误实现：`sprite_transform` 的 `scale.x = (s/60)·unit`，**漏了 `k = size.x/50`** ⇒ 精灵恒 2.13 px 宽。
-- 时间线：`042a27d`（2026-11-06 22:37，补齐 entity_drawer 其余 9 函数时写下）→ `2f64674`（2026-11-26 01:01 修）：
-  **19 天 / 557 个 commit / 10 个以上合并轮**。
-- **当时绿着的三处**（都是"期望值来自我方实现"的典型）：
-  1. `tests/entity_drawer.rs::sprite_transform_matches_update_sprite_arithmetic` —— 期望值写的是
-     `((1.0_f32 / 60.0) * (128.0_f32 / 256.0))`，而同一 commit 的实现是 `((s / 60.0) * unit)`（`s=1.0`、`unit=128/256`）
-     ⇒ **两串表达式逐字同式**，这条断言**在数学上不可能变红**（`git show 042a27d:tests/entity_drawer.rs`）。
-  2. `src/_scaffold/entity_drawer_class.rs::sprite_transform_matches_the_hand_computed_expectation` —— 手算期望
-     `16.0/60.0`（buggy 公式的结果），且**只在 `--features gdext-bindings` 下编译**，默认 `cargo test` 抓不到。
-  3. `client/tools/entity_drawer_check.gd:155` ——`"scale": Vector2((s / 60.0) * unit, …)` 是同一公式的 GDScript 镜像，
-     "独立重算对拍"变成"独立地把同一个错公式再算一遍"。
-- ⇒ **这正是 `AGENTS.md` §0.5 说的那种**：写测试的人按自己的实现写期望，测试全绿 = 自洽，**零复原证据**。
-  抓出它的是**像素对拍**（真机真帧），不是测试。
-
-#### 实例 2：`fixtures/eval.tsv` 的 3 行真值是 **oracle 假象** —— 夹具、实现、测试、文档四方一致地错
-
-- 现象：`log(0)` / `ln(0)` / `ln(-2)` 三行的真值被记成 `7ff8000000000000`（NaN）。
-- 根因（`docs/archive/155-round-log.md` §32.3）：`analysis/emu.py` 把二进制的 `pow/log/exp` 导入映射到 **python 的 `math`**，
-  而 `math.log10(0)` **抛 ValueError**、被 `_safe` 兜成 NaN；真 libm 是**返回值**（`-inf`）。
-- **绿着的是谁**：`tests/golden.rs::eval_matches_binary`（拿 `fixtures/eval.tsv` 当期望）+ `src/math_function.rs`
-  的实现（"照搬上游 python 参照实现"）⇒ 两者同向错，测试恒绿；连 `docs/03` §11 都写着「`log(0) = NaN`，判据是 `v <= 0`」，
-  即**文档也参与了自洽**。抓出它的是 unicorn **直调 `0x4eb9d0`** 的新对拍台（`tools/eval_oracle.py`），
-  修法里 `install_libm()` 换成 `ctypes` 直调 `libm.so.6`，重生成后 `git diff fixtures/` **只有那 3 行**。
-- 时间线：`eval.tsv` 随首版实现入库（`d10911d` 2026-11-05）→ 修（`52c7c5d` 2026-11-07）。
-- ⇒ 这条比实例 1 更狠：**错的不只是断言，连"真值"本身都是从另一个我方参照实现来的**。
-  本审计给 `parse.tsv` 记 `G-binary` 时**特意注明"间接"**（它来自 python 参照实现 + 90 例对拍，不是直接读二进制）。
-
-#### 实例 3：括号不平衡 ⇒ 弹道退化成 1 个点 —— **`cargo test` 全绿，是语料三轴抓出来的**
-
-- `AGENTS.md` 合并纪律的头号事故：「下游报 1074，我只看 `cargo test` 绿就合了…同一批改动里还夹着一个**真 bug**
-  （括号不平衡导致弹道退化成 1 个点）」（`docs/archive/155-round-log.md:647/690/1135`）：函数原文括号不平衡时
-  我方 `parse` **就地截断**，修正常数被整段丢掉 ⇒ 曲线不过 `(x0,y0)` ⇒ 发射退化成一个点、一个死者都打不死。
-- **当时绿着的**：整个 `tests/`（那条规则**没有任何测试覆盖**）+ `tests/golden.rs::parse_matches_reference`
-  （它的 `parse.tsv` 语料里没有"真语料括号不平衡"这一类）。抓出它的是 **403 份回放的三轴**。
-- ⇒ 与实例 1/2 互补：那两条是"**错的期望值**让测试恒绿"，这条是"**根本没有测试覆盖**，全绿说明不了什么"。
-
-### 85.6 最该先修的 10 条（按风险排序：先列"声称覆盖核心规则但期望值其实来自我方实现"的）
-
-| # | 位置 | 现在是 | 为什么要修 |
-|---|---|---|---|
-| 1 | `tests/diffconv_parity.rs`（2 条） | 我方收敛层 vs 我方内核逐位一致 | **纯 parity**，两条都不与真值比。它被写在 `docs/06` §30.5 当"核心验收"——口径要改成"与回放报文比"或明确标"只防退化" |
-| 2 | `src/_scaffold/api.rs`（43 条） | 契约测试 + 我方 `api` vs 我方 `shot_points` | 43 条全是我方自洽；对外是"客户端接缝的验收"，读者会误当复原证据 |
-| 3 | `src/_scaffold/replay_driver.rs`（20 条） | 我方自造驱动的行为 | 时钟模型历史上就是"自定"（`docs/00` §0.1b.2 的 D 档），期望值只能来自它自己 |
-| 4 | `src/graphwar_play_screen_control.rs`（18 条） | 弹道生命周期/回合时钟的状态机 | 这些**流程/时序**正是 `docs/00` 标明"基本没有证据"的部分；测试钉住的是我方重建的语义 ⇒ 读者会以为已复原 |
-| 5 | `src/_scaffold/diffconv.rs`（10 条）+ `src/_scaffold/broker.rs`（10 条） | 我方收敛层 / 我方 broker | scaffold = 原版没有对应物 ⇒ 它们的测试不可能是复原证据（`AGENTS.md` §4）|
-| 6 | `tests/misc_modules.rs`（15 条） | `parse`→`reorder`→我方输出、往返、幂等、FIFO | 该文件头已诚实写"回归保护"，但 15 条占 47 条的 1/3，容易当成模块验收 |
-| 7 | `tests/graphwar_game_state_manager.rs`（4 条） | `fire` vs `batch` parity、纯几何、`execute_results`、`handle_tick` | 这是**规则层**（回合推进/结算）的测试，却只有我方两路径互证 |
-| 8 | `tests/campaign_data.rs`（4 条） | 我方 kernel vs 我方 client / `level_manager` 副本 | 关卡表的主体（10 条）确有 `docs/118` 的 C/R 列背书，但 4 条 parity 不能算 |
-| 9 | `tests/ai_explain.rs`（4 条）+ `tests/win_rule.rs`（4 条） | 确定性/种子敏感性/结构自洽 | AI 的**决策过程**与胜负的**路径唯一性**都是核心规则，靠"同输入同输出"证明不了与二进制一致 |
-| 10 | `fixtures/guardrails.json`（三轴数字）+ `tests/fire_batch_driver.rs` | 647/647/637 是我方实现的输出 | 文档里多处把三轴数字当"对拍结果"引用；口径要写成"**我方基线的回归保护**（语料指纹才是真值）" |
-
-（`replay_player84.txt` 已在 2026 年那轮被明确标成"删旧码前的对照"，属**已声明**的 S-self，不列入待修，但不得引用为证据。）
-
-### 85.7 复跑
-
-```bash
-export CARGO_HOME=$PWD/.reference/cargo-home CARGO_TARGET_DIR=$PWD/.reference/cargo-home/target
-cargo test --offline -- --list > .agent-run/testlist_default.txt     # 1773 行 = 1772 + 1 ignored
-python3 tools/audit_tests_scan.py --write                            # 写 fixtures/source_audit_tests.tsv（273 行）
-python3 tools/audit_tests_scan.py                                    # 打印两种口径的统计
-python3 tools/audit_tests_scan.py --controls                         # 正对照 5/5
-awk -F'\t' '$4 ~ /S-self [1-9]/ {print $1"\t"$2"\t"$4}' fixtures/source_audit_tests.tsv | sort -t' ' -k3 -rn
-```
-
-### 85.8 **我这条审计方法本身可能漏什么**（照实写）
-
-1. **"锚定" ≠ "正确"**：注里给了地址但抄错，本判法照样记 `G-binary`。`tests/` 的 70 个二进制我逐条读过、
-   `src/` 的高密度文件抽了 10 个（`function_token`/`turn_manager`/`stream_buffer`/`play_screen_control`/`protocol`/
-   `api`/`replay_driver`/`function_evolutionator`/`game`/`entity_drawer`），但**没有**逐个复核 1362 条断言里的每个地址/位型。
-2. **镜像公式未必不带锚**：`update_sprite` 就是"周边 4 个常量全带槽号、公式本体是镜像"⇒ 纯自动锚定率会被带偏；
-   这一类只能靠人工，而人工只覆盖了我读过的文件。
-3. **`#[path]` 混编的归属有歧义**：测试写在 `src/a.rs` 却编进 `tests/b.rs`，我归到 `src/a.rs`（"测试写在哪个文件"
-   才是证据责任归属）。实测 `src/_scaffold/protocol.rs` 的 **58** 个测试（含 22 个由 `macro_rules!` 生成的
-   `round_trip_*`）在 **5** 个二进制（lib + 4 个 `#[path]` 引用者）里各跑一遍 ⇒ **290** 条计数；
-   口径是"cargo 条数"，**不是"唯一函数条数"**。按唯一函数算，1772 会缩到 ~1000。
-4. **`G-binary` 的"间接"那一档没细分**：`parse.tsv` 来自 python 参照实现（与二进制对拍过 90 例）、
-   `sym_match.tsv` 来自"两架构字节特征匹配"、`hybrid_names.tsv` 是我方算法——它们的**证据链长度不同**，
-   本审计统一记 `G-binary` 只在 TSV 的判据列里注明"间接"。要更严，得给"直接读二进制 / 派生 / 我方算法"三档。
-5. **"约 170 条行为级"是下界**：我按"输出 vs 真值逐值/逐字节"数，`src/game.rs`、`tests/graphwar_setup_control.rs`
-   里还有一些"抓包字符串/事件名"级的行为断言没算进去；同理，某些 `G-binary` 常量钉子（如 `Location` 行号）
-   对**源码级还原**其实是强证据（它证明"原版这行在第 561 行"），本审计把它算进"钉子"而非"行为证据"是个口径选择。
-6. **没做**：没有验证 403 份语料快照本身是否被污染（`guardrails.json` 的 sha256 只覆盖语料文件，不覆盖"语料里的事件是否被我们改过"）；
-   没有审 `client/tools/*_check.gd`（那是另一面，`tests` 面之外的 717 条 headless 检查），但**实例 1 的第 3 处**
-   说明那一批里也有同样的镜像问题。
-
-### 85.9 遗留（需要 lead 决定）
-
-1. **§85.6 的 10 条要不要重做期望值**：其中 #1/#2/#3/#5 是 scaffold/parity，**重做不了**（我方自造物，没有对应真值），
-   建议只在文档口径上标清楚；#4/#7/#9 是**规则层**，需要新的真值（回放/抓包）才能重做 —— 这是**下一轮的任务**。
-2. **`fixtures/guardrails.json` 的措辞**：三轴数字被多处当"对拍结果"引用。本审计不改它（`fixtures/` 只读），
-   建议在 `docs/00`/`docs/16` 里统一加一句"三轴 = **我方基线**的回归保护"。
-3. **`parse.tsv` 的档位**：它间接来自二进制。是否要按 `tools/eval_oracle.py` 的路子直接用 unicorn 重生成一份
-   （那样可以升成"直接 G-binary"）—— 需要重跑分析仓库，不属于本审计。
