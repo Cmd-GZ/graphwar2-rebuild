@@ -1,0 +1,112 @@
+section	key	value	source	note
+plane/A01	argv	0.0,0.0,1.0,0x00	unicorn 0x3f11e0	raster(0,0,1.0,0x00)
+plane/A01	mask_sha256	63473ff24860b396641f82bfd50116176481cd7711f67b913698fd7bab66b050	unicorn 0x3f11e0	raster(0,0,1.0,0x00)
+plane/A01	region43_sha256	22cf10dba80fef26879cbbb3d9db227c686d7dec647b7bea8b70e89693e8cd57	unicorn 0x3f11e0	raster(0,0,1.0,0x00)
+plane/A01	nonempty_px	1369	unicorn 0x3f11e0	raster(0,0,1.0,0x00)
+plane/A01	mask_fnv1a64	02b3fa207a593a42	unicorn 0x3f11e0	raster(0,0,1.0,0x00)
+plane/A01	region43_fnv1a64	c59ec7f3ced7568f	unicorn 0x3f11e0	raster(0,0,1.0,0x00)
+plane/A03	is_obstacle(0.0,0.0)	1	unicorn 0x3f15b0	掩膜 = raster(0,0,1.0,0x00) 的真输出
+plane/A03	is_obstacle(24.0,14.0)	0	unicorn 0x3f15b0	掩膜 = raster(0,0,1.0,0x00) 的真输出
+plane/A03	is_obstacle(0.0,0.0)	1	unicorn 0x3f15b0	掩膜 = raster(0,0,1.0,0x00) 的真输出
+plane/A03	is_obstacle(-0.05,0.0)	1	unicorn 0x3f15b0	掩膜 = raster(0,0,1.0,0x00) 的真输出
+plane/A03	is_obstacle(0.05,0.0)	1	unicorn 0x3f15b0	掩膜 = raster(0,0,1.0,0x00) 的真输出
+plane/A03	is_obstacle(24.99,14.99)	0	unicorn 0x3f15b0	掩膜 = raster(0,0,1.0,0x00) 的真输出
+plane/A04	argv	0.0,0.0,1.0,0x00	unicorn 0x3f11e0	raster(0,0,1.0,0x00)
+plane/A04	mask_sha256	63473ff24860b396641f82bfd50116176481cd7711f67b913698fd7bab66b050	unicorn 0x3f11e0	raster(0,0,1.0,0x00)
+plane/A04	region43_sha256	22cf10dba80fef26879cbbb3d9db227c686d7dec647b7bea8b70e89693e8cd57	unicorn 0x3f11e0	raster(0,0,1.0,0x00)
+plane/A04	nonempty_px	1369	unicorn 0x3f11e0	raster(0,0,1.0,0x00)
+plane/A04	mask_fnv1a64	02b3fa207a593a42	unicorn 0x3f11e0	raster(0,0,1.0,0x00)
+plane/A04	region43_fnv1a64	c59ec7f3ced7568f	unicorn 0x3f11e0	raster(0,0,1.0,0x00)
+plane/A05	argv	0.0,0.0,1.0,0x10	unicorn 0x3f11e0	raster(0,0,1.0,0x10)
+plane/A05	mask_sha256	93797430c11cbe621be7385ca447e9568f7400e814358513e9dac39d9a9263b8	unicorn 0x3f11e0	raster(0,0,1.0,0x10)
+plane/A05	region43_sha256	00478e308fc6561f209fbd8ca891afabbfb8a1e57fdfdc7ba22560be50d7f666	unicorn 0x3f11e0	raster(0,0,1.0,0x10)
+plane/A05	nonempty_px	1369	unicorn 0x3f11e0	raster(0,0,1.0,0x10)
+plane/A05	mask_fnv1a64	79451d1cbca12e52	unicorn 0x3f11e0	raster(0,0,1.0,0x10)
+plane/A05	region43_fnv1a64	9dda82dcc0dce97f	unicorn 0x3f11e0	raster(0,0,1.0,0x10)
+plane/A06	argv	24.5,14.0,1.0,0x00	unicorn 0x3f11e0	raster(24.5,14.0,1.0,0x00)
+plane/A06	mask_sha256	42c0f5b05b5c55b7f72f6dab766e012542de5648ab99e04a3ebd651deefc2420	unicorn 0x3f11e0	raster(24.5,14.0,1.0,0x00)
+plane/A06	region43_sha256	a397c2ac6ed0da6ce8648ceae7e33ee2f9f32cad294e968f5f36d462b69d251c	unicorn 0x3f11e0	raster(24.5,14.0,1.0,0x00)
+plane/A06	nonempty_px	1053	unicorn 0x3f11e0	raster(24.5,14.0,1.0,0x00)
+plane/A06	mask_fnv1a64	632a27f5d728a664	unicorn 0x3f11e0	raster(24.5,14.0,1.0,0x00)
+plane/A06	region43_fnv1a64	4b4873b0e59697cb	unicorn 0x3f11e0	raster(24.5,14.0,1.0,0x00)
+plane/A02	argv	-7.5,3.25,0.6,0x00	unicorn 0x3f11e0	raster(-7.5,3.25,0.6,0x00)
+plane/A02	mask_sha256	f6a4d4b4f53fa1a08adcfc425d0336d0c7088cd4e876b6ddae9263bb69d12c31	unicorn 0x3f11e0	raster(-7.5,3.25,0.6,0x00)
+plane/A02	region43_sha256	991b0d6c741af3c4c78483020095f0967d183cebbe95a4cb6414f720ce2b6558	unicorn 0x3f11e0	raster(-7.5,3.25,0.6,0x00)
+plane/A02	nonempty_px	517	unicorn 0x3f11e0	raster(-7.5,3.25,0.6,0x00)
+plane/A02	mask_fnv1a64	0c8cecf0b8679dde	unicorn 0x3f11e0	raster(-7.5,3.25,0.6,0x00)
+plane/A02	region43_fnv1a64	9b4da9559b9b22af	unicorn 0x3f11e0	raster(-7.5,3.25,0.6,0x00)
+plane/A03	argv	10.0,-5.0,1.0,0x00	unicorn 0x3f11e0	raster(10.0,-5.0,1.0,0x00)
+plane/A03	mask_sha256	2510c463110df7341cb999c872d82981aa74db66b262047656f66fd94d5ce418	unicorn 0x3f11e0	raster(10.0,-5.0,1.0,0x00)
+plane/A03	region43_sha256	22cf10dba80fef26879cbbb3d9db227c686d7dec647b7bea8b70e89693e8cd57	unicorn 0x3f11e0	raster(10.0,-5.0,1.0,0x00)
+plane/A03	nonempty_px	1369	unicorn 0x3f11e0	raster(10.0,-5.0,1.0,0x00)
+plane/A03	mask_fnv1a64	baf8c112e2982732	unicorn 0x3f11e0	raster(10.0,-5.0,1.0,0x00)
+plane/A03	region43_fnv1a64	c59ec7f3ced7568f	unicorn 0x3f11e0	raster(10.0,-5.0,1.0,0x00)
+shot/B01	c_bits	4007abe07d78264d	unicorn 0x4eb9d0	c = y0 - f(x0)，x0=5 y0=2
+shot/B01	n_points	2471	unicorn 0x3c2530	sin(x)+c 从 (5,2) step=0.01
+shot/B01	pts_sha256	9640807e4cde2de51caf9935bdc03099f2abeb585e8855eb6e715fb415effe1e	unicorn 0x3c2530	整条点数组逐位
+shot/B01	last_x	4038ff851eb85168	unicorn 0x3c2530	
+shot/B01	last_y	40069903c94a8282	unicorn 0x3c2530	
+shot/B01	pt[0]	4014000000000000,4000000000000000	unicorn 0x3c2530	
+shot/B01	pt[1]	401408f5c28f5c29,400005288903d7b2	unicorn 0x3c2530	
+shot/B01	pt[2]	401411eb851eb852,40000a7776089c0c	unicorn 0x3c2530	
+shot/B01	pt[100]	4017400000000012,40040b1d5cb34366	unicorn 0x3c2530	
+shot/B01	pt[300]	401d60000000004b,400ea706aa230e22	unicorn 0x3c2530	
+shot/B01	pt[2470]	4038ff851eb85168,40069903c94a8282	unicorn 0x3c2530	
+shot/B02	obstacle_y	400f961525825a2c	unicorn 0x4eb9d0	ob.y = sin(8)+c
+shot/B02	hit_index	341	unicorn 0x3f11e0+0x3f15b0	真采样器点数组上逐点跑真单点碰撞（**组合方式是我方推断**）
+shot/B02	hit_pt	401ed5c28f5c2946,400f965100411e3c	unicorn 0x3c2530	命中点坐标（逐位）
+shot/B03	hit_index	None	unicorn 0x3f11e0+0x3f15b0	障碍在 (8,-12)
+half/H01	n_points	20001	unicorn 0x3c2530	sin(60*x) (0,0) step=0.01
+half/H01	pts_sha256	1594d582ddc2620cd19d2d3122ddd7aa0519efa423fbe277af849bb4782d16ba	unicorn 0x3c2530	
+half/H01	last_x	4014a68a3d709db0	unicorn 0x3c2530	
+half/H01	last_y	3fee7631b396abbc	unicorn 0x3c2530	
+half/H01	pt[0]	0000000000000000,0000000000000000	unicorn 0x3c2530	
+half/H01	pt[1]	3f247ae147ae147b,3f833320c4a0f4d7	unicorn 0x3c2530	
+half/H01	pt[2]	3f347ae147ae147b,3f9332e97929ed0b	unicorn 0x3c2530	
+half/H01	pt[50]	3f8151eb851eb84e,3fdf19679d566137	unicorn 0x3c2530	
+half/H01	pt[100]	3f978a3d70a3d6fd,3fef6a3ff2fd07f3	unicorn 0x3c2530	
+half/H01	pt[20000]	4014a68a3d709db0,3fee7631b396abbc	unicorn 0x3c2530	
+corpus/C01	replay	1782642582	corpus	冻结快照 .reference/replays/gw2-replays-snapshot/replays/
+corpus/C01	sha256	fbed66caf5dbc2610a28776176366da0a22816f67d47c3e218c722f408d598e9	corpus	与 guardrails.json 的 corpus 同一份
+corpus/C01	batch_index	0	corpus	
+corpus/C01	batch_start_tick	27564	corpus	
+corpus/C01	wire_lines	11	corpus	逐条抄进 src/_scaffold/diffconv.rs 的 REAL_* 常量
+corpus/C01	corrected	 + 3.333	corpus	
+corpus/C01	corrected	-4/(1+exp(999(x-11.3)))+16/(1+(999(x-12))^2) + 1.285	corpus	
+corpus/C01	end_x	bff7f0a70e88efc8	corpus	owner=153655 start=(-19.440003067755988, 3.333280297434261)
+corpus/C01	end_x	c027ffca6c264a52	corpus	owner=153430 start=(3.0996240114927369, -2.7150608537027026)
+corpus/C02	replay	1782642582	corpus	冻结快照 .reference/replays/gw2-replays-snapshot/replays/
+corpus/C02	sha256	fbed66caf5dbc2610a28776176366da0a22816f67d47c3e218c722f408d598e9	corpus	与 guardrails.json 的 corpus 同一份
+corpus/C02	batch_index	1	corpus	
+corpus/C02	batch_start_tick	30774	corpus	
+corpus/C02	wire_lines	12	corpus	逐条抄进 src/_scaffold/diffconv.rs 的 REAL_* 常量
+corpus/C02	corrected	(7.2/4.5)x - 8.101	corpus	
+corpus/C02	corrected	(-6.474)*(1/((1+exp(-42*(x-(-10))))*(1+exp(42*(x-(25))))))+(-12)*(1/((1+exp(-42*(x-(2))))*(1+exp(42*(x-(5))))))+(40)*(1/((1+exp(-42*(x-(19.5))))*(1+exp(42*(x-(25)))))) + 6.474	corpus	
+corpus/C02	end_x	4016618b065986fc	corpus	owner=153656 start=(-1.5197430999618304, -10.532225891038742)
+corpus/C02	end_x	4010f86d293fbd6e	corpus	owner=153431 start=(17.449537510408554, 6.4740191878058901)
+corpus/C03	replay	1782640359	corpus	冻结快照 .reference/replays/gw2-replays-snapshot/replays/
+corpus/C03	sha256	b4615ff7267f9ab657d9bc1907cb2a36ca28622951e4282764c12901898a75d2	corpus	与 guardrails.json 的 corpus 同一份
+corpus/C03	batch_index	0	corpus	
+corpus/C03	batch_start_tick	3422	corpus	
+corpus/C03	wire_lines	8	corpus	逐条抄进 src/_scaffold/diffconv.rs 的 REAL_* 常量
+corpus/C03	corrected	(40)*(1/((1+exp(-42*(x-(5))))*(1+exp(42*(x-(25)))))) - 0.297	corpus	
+corpus/C03	end_x	4013f44ace4a62ff	corpus	owner=348 start=(-2.1413650290582837, -0.29656732812543574)
+corpus/F01a	replay	1782764906	corpus	player=5272
+corpus/F01a	sha256	d01bb2fee997fda2fb36734e5fe502d010f38d5f874d6b131f971e7268fedb4d	corpus	
+corpus/F01a	roster	5274,5273	corpus	SoldierInfo 首见顺序
+corpus/F01a	turninfo	5273@27265;5274@28684;5273@30452;5274@32192;5273@37965;5274@41407	corpus	TurnInfo.soldier_id@tick
+corpus/F01b	replay	1782673653	corpus	player=401164
+corpus/F01b	sha256	d5845e4f9bac8ddc3c2ef745b4696176348b73ef5196793c6bd19cf30428b597	corpus	
+corpus/F01b	roster	401165,401166	corpus	SoldierInfo 首见顺序
+corpus/F01b	turninfo	401166@18356;401165@25373;401166@30265;401165@34220;401166@41933;401165@48899;401166@55226;401165@63385;401166@70745	corpus	TurnInfo.soldier_id@tick
+corpus/F02	replay	1782673653	corpus	player=401060
+corpus/F02	sha256	d5845e4f9bac8ddc3c2ef745b4696176348b73ef5196793c6bd19cf30428b597	corpus	
+corpus/F02	roster	401153,401061,401062,401152,401154	corpus	SoldierInfo 首见顺序
+corpus/F02	turninfo	401061@22128;401062@29305;401152@31835;401153@38258;401062@45505;401152@51364;401062@59593;401152@66963;401062@73142	corpus	TurnInfo.soldier_id@tick
+capture/D01	file	fixtures/protocol_death.jsonl	capture	真实抓包
+capture/D01	sha256	dad9fabb35f34d8fb41e8639c2fd7f77c8a1fcb9b044a7afba337bcd8981152a	capture	
+capture/D01	queued_death	{"LifeQueuedDeath":{"entity_id":231,"tick":238}}	capture	
+capture/D01	queued_death	{"LifeQueuedDeath":{"entity_id":230,"tick":953}}	capture	
+frame/E01	sprite_screen_px	54.6	frame	docs/06 §59.8 第 1 条（三层 sprite 各 54.6 屏幕 px）；重拍：tools/frame_capture.py --side original --flow replay（私有 Xvfb 1920x1160x24）
+frame/E01	canvas_px	42.67	frame	docs/06 §86：scale=(±0.083333, −0.083333)、512×512 贴图 ⇒ 42.67 画布 px
+frame/E01	board_px	1273	frame	docs/06 §59.1 白底矩形 x 303–1575

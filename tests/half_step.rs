@@ -56,9 +56,11 @@ fn probe_matches_production_on_all_fixtures() {
         };
         let (got, _) = sample(&c.tokens, c.x0, c.y0, c.step, c.flip, variant);
         let want = calculate(&c.tokens, c.x0, c.y0, c.step, c.flip, prod);
+        // ① **先**比真值（`c.expected` 来自 `fixtures/path.tsv`，unicorn 直调真采样器）
+        assert_same_points(&got, &c.expected, &format!("{} 真值夹具", c.name));
+        assert_same_points(&want, &c.expected, &format!("{} 生产 vs 真值夹具", c.name));
+        // ② **再**比复制品与生产（自洽；顺序调过来是因为"自洽"不该是第一个判决点）
         assert_same_points(&got, &want, &format!("{} mode={:?}", c.name, c.mode));
-        // 顺便核一遍夹具本身（真二进制）
-        assert_same_points(&got, &c.expected, &format!("{} 夹具", c.name));
         match c.mode {
             Mode::Normal => n_normal += 1,
             Mode::Ode => n_ode += 1,
@@ -116,8 +118,12 @@ fn normal_recheck_fires_on_a_constructed_case() {
     let p = probe("sin(60*x)", 0.0, 0.0, SERVER_STEP);
     let (pts, st) = run_probe(&p, Variant::Normal);
     assert!(st.rechecks > 0, "复检根本没执行");
+    // 档：**推断**（`62` 是我方模型的测量值，不是二进制里的数）。它的意义是"实现一改就红"，
+    // 不是"原版退 62 次"。这条路径上**有真值的是点数组**：
+    // `production_matches_the_real_sampler_on_the_constructed_case` 把同一组输入喂给真采样器
+    // `0x3c2530`，点数 20001 与 5 个抽样点逐位相同 ⇒ 生产实现没跑偏，62 才有意义。
     assert_eq!(st.rejects, 62, "退回次数与实测不符（{}/{}）", st.rejects, st.rechecks);
-    assert_eq!(pts.len(), 20001, "生产点数");
+    assert_eq!(pts.len(), 20001, "生产点数（真采样器 0x3c2530 也是 20001）");
 
     // 关掉复检 ⇒ 从第 304 点起走到另一条轨迹（点数相同，点不同）
     let (pts_off, _) = run_probe(&p, Variant::NormalNoRecheck);
@@ -128,6 +134,53 @@ fn normal_recheck_fires_on_a_constructed_case() {
     // 同一形状的阈值：k=50 不触发，k=60 触发
     let (_, st50) = run_probe(&probe("sin(50*x)", 0.0, 0.0, SERVER_STEP), Variant::Normal);
     assert_eq!(st50.rejects, 0, "sin(50*x) 本不该触发");
+}
+
+/// 同一个构造用例，**生产实现**的点序列必须逐位等于真二进制采样器的输出。
+///
+/// ## 真值来源（逐位）
+///
+/// `unicorn` 直调真二进制采样器 `0x3c2530`（`Vec<Vec2> calculate_path(&tokens, x0, y0,
+/// step, flip(edx), ecx=mode)`），token 流由真解析器 `0x4ed670` 从 `sin(60*x)` 解出，
+/// `x0=0, y0=0, step=0.01, flip=0, mode=0(Normal)`：
+///
+/// | 项 | 真值 |
+/// |---|---|
+/// | 点数 | **20001** |
+/// | `pts[1]` | `(3f247ae147ae147b, 3f833320c4a0f4d7)` |
+/// | `pts[2]` | `(3f347ae147ae147b, 3f9332e97929ed0b)` |
+/// | `pts[50]` | `(3f8151eb851eb84e, 3fdf19679d566137)` |
+/// | `pts[100]` | `(3f978a3d70a3d6fd, 3fef6a3ff2fd07f3)` |
+/// | `pts[20000]` | `(4014a68a3d709db0, 3fee7631b396abbc)` |
+///
+/// 复算：`.reference/venv/bin/python tools/gen_test_expectations.py`
+/// → `fixtures/test_expectation_truth.tsv` 的 `half/H01` 段。
+///
+/// 改前本文件只有"复制品 == 生产"（自洽）与"退回次数 = 62"（我方模型的数）；
+/// `62` 这个数仍是我方模型的产物，但**它现在已经挂在真点数组上了**：
+/// 只要生产实现与真二进制差一位，这条就红。
+#[test]
+fn production_matches_the_real_sampler_on_the_constructed_case() {
+    let tokens = parse("sin(60*x)");
+    let prod = calculate(&tokens, 0.0, 0.0, SERVER_STEP, false, ProdMode::Normal);
+    assert_eq!(prod.len(), 20001, "点数与真采样器 0x3c2530 不一致");
+    let bits = |v: f64| v.to_bits();
+    let want = [
+        (1usize, 0x3f24_7ae1_47ae_147b_u64, 0x3f83_3320_c4a0_f4d7_u64),
+        (2, 0x3f34_7ae1_47ae_147b, 0x3f93_32e9_7929_ed0b),
+        (50, 0x3f81_51eb_851e_b84e, 0x3fdf_1967_9d56_6137),
+        (100, 0x3f97_8a3d_70a3_d6fd, 0x3fef_6a3f_f2fd_07f3),
+        (20000, 0x4014_a68a_3d70_9db0, 0x3fee_7631_b396_abbc),
+    ];
+    for (i, wx, wy) in want {
+        assert_eq!(
+            (bits(prod[i].0), bits(prod[i].1)),
+            (wx, wy),
+            "pts[{i}] 与真采样器不一致：ours=({:#018x}, {:#018x})",
+            bits(prod[i].0),
+            bits(prod[i].1)
+        );
+    }
 }
 
 #[test]

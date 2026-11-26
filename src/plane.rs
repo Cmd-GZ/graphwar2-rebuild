@@ -180,6 +180,56 @@ mod tests {
 
     fn empty() -> Vec<u8> { empty_mask() }
 
+    /// FNV-1a 64：整张掩膜的指纹。
+    ///
+    /// 为什么不是 sha256：测试不该为了一条断言引依赖；指纹只用来**与本文件注释里的
+    /// 真值比对**，真值由 `tools/gen_test_expectations.py` 用同一个 FNV 从真二进制算出来
+    /// （该脚本同时把 sha256 记进 `fixtures/test_expectation_truth.tsv`，可交叉复核）。
+    fn fnv1a64(b: &[u8]) -> u64 {
+        let mut h: u64 = 0xCBF2_9CE4_8422_2325;
+        for &x in b {
+            h ^= x as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01B3);
+        }
+        h
+    }
+
+    /// 与 `0x3f11e0` 开头同式的像素圆心（`trunc` 向零截断）。
+    fn pixel_center(x: f64, y: f64) -> (i32, i32) {
+        (
+            (x * 1000.0 / BOARD_W + 500.0) as i32,
+            (y * 1000.0 / BOARD_W + 300.0) as i32,
+        )
+    }
+
+    /// 以像素圆心为中心的 43×43 邻域（出界不取），逐字节喂给 FNV。
+    fn region43(mask: &[u8], x: f64, y: f64) -> u64 {
+        let (cx, cy) = pixel_center(x, y);
+        let mut v: Vec<u8> = Vec::with_capacity(43 * 43);
+        for dy in -21..=21 {
+            for dx in -21..=21 {
+                let (px, py) = (cx + dx, cy + dy);
+                if in_canvas(px, py) {
+                    v.push(mask[mask_index(px, py)]);
+                }
+            }
+        }
+        fnv1a64(&v)
+    }
+
+    /// 非空（`!= 0xFF`）像素数。
+    fn nonempty(mask: &[u8]) -> usize {
+        mask.iter().filter(|&&b| b != EMPTY).count()
+    }
+
+    /// 圆心被硬填充、半径 20 px 之外为空。
+    ///
+    /// **真值来源（逐位）**：`unicorn` 直调真二进制 `0x3f11e0`
+    /// （`void f(double x, double y, double size, long mask_ptr, ulong mask_len, byte fill)`）：
+    /// 整张掩膜 FNV-1a 64 = `02b3fa207a593a42`、非空像素 **1369**。
+    /// 复算：`.reference/venv/bin/python tools/gen_test_expectations.py`
+    /// （产物 `fixtures/test_expectation_truth.tsv` 的 `plane/A04` 段，
+    /// 二进制 `libgraphwarrust.so` sha256 `9a538115…`，见 `docs/06` §35）。
     #[test]
     fn raster_center_is_filled_and_bounded() {
         let mut m = empty();
@@ -189,8 +239,19 @@ mod tests {
         // 半径 20px：(500±25, 300) 一定在圆外
         assert_eq!(m[mask_index(475, 300)], EMPTY);
         assert_eq!(m[mask_index(525, 300)], EMPTY);
+        // ★ 真二进制：整张掩膜与非空计数（改前这里只有上面三个自查点）
+        assert_eq!(format!("{:016x}", fnv1a64(&m)), "02b3fa207a593a42",
+                   "整张掩膜与真二进制 0x3f11e0 的输出不一致");
+        assert_eq!(nonempty(&m), 1369, "非空像素数与真二进制不一致");
     }
 
+    /// 抗锯齿环的覆盖率值。
+    ///
+    /// **真值来源（逐位）**：`unicorn` 直调 `0x3f11e0`。
+    /// ① `raster(0,0,1.0,0x00)`：圆心 43×43 邻域 FNV = `c59ec7f3ced7568f`（整张 = `02b3fa207a593a42`）；
+    /// ② `raster(-7.5,3.25,0.6,0x00)`（另一个圆心与半径）：整张 FNV = `0c8cecf0b8679dde`，
+    ///    圆心邻域 = `9b4da9559b9b22af`，非空 517。
+    /// 复算命令同 [`raster_center_is_filled_and_bounded`]。
     #[test]
     fn raster_edge_values_match_the_binary() {
         // 以下两个值取自**真二进制**（unicorn 调用 0x3f11e0 的输出）
@@ -198,12 +259,31 @@ mod tests {
         rasterize(&mut m, 0.0, 0.0, 1.0, 0x00);
         assert_eq!(m[mask_index(491, 282)], 0x1f, "抗锯齿覆盖率不符");
         assert_eq!(m[mask_index(489, 283)], 0x3f, "抗锯齿覆盖率不符");
+        // ★ 整块邻域与整张掩膜（改前只有上面两个像素）
+        assert_eq!(format!("{:016x}", region43(&m, 0.0, 0.0)), "c59ec7f3ced7568f",
+                   "43×43 邻域与真二进制不一致");
+        assert_eq!(format!("{:016x}", fnv1a64(&m)), "02b3fa207a593a42");
+
+        // 第二个形态：不同圆心 + 不同半径（size=0.6 ⇒ r = 12 px）
+        let mut m2 = empty();
+        rasterize(&mut m2, -7.5, 3.25, 0.6, 0x00);
+        assert_eq!(nonempty(&m2), 517);
+        assert_eq!(format!("{:016x}", fnv1a64(&m2)), "0c8cecf0b8679dde",
+                   "(-7.5,3.25) r=12 的掩膜与真二进制不一致");
+        assert_eq!(format!("{:016x}", region43(&m2, -7.5, 3.25)), "9b4da9559b9b22af");
     }
 
+    /// 掩膜关于竖直轴对称。
+    ///
+    /// 改前这是**纯对称性自查**（实现整体歪掉也对称 ⇒ 恒真）。
+    /// **真值来源（逐位）**：真二进制 `0x3f11e0` 的整张掩膜 FNV-1a 64 = `02b3fa207a593a42`；
+    /// 对称性现在只是它的**推论**，不是证据本身。
     #[test]
     fn raster_is_symmetric() {
         let mut m = empty();
         rasterize(&mut m, 0.0, 0.0, 1.0, 0x00);
+        assert_eq!(format!("{:016x}", fnv1a64(&m)), "02b3fa207a593a42",
+                   "整张掩膜与真二进制 0x3f11e0 的输出不一致");
         for dy in -21..=21 {
             for dx in -21..=21 {
                 assert_eq!(
@@ -215,13 +295,28 @@ mod tests {
         }
     }
 
+    /// `fill` 是**参数**（可见值不只有 `0x00/0xFF`）。
+    ///
+    /// **真值来源（逐位）**：`unicorn` 直调 `0x3f11e0` 的 `raster(0,0,1.0,0x10)`：
+    /// 整张 FNV = `79451d1cbca12e52`、圆心邻域 = `9dda82dcc0dce97f`、非空 1369
+    /// （与 `fill=0x00` 的非空数相同、但**每个环像素的值不同**）。
     #[test]
     fn raster_respects_fill_value() {
         let mut m = empty();
         rasterize(&mut m, 0.0, 0.0, 1.0, 0x10);
         assert_eq!(m[mask_index(500, 300)], 0x10, "填充值应由参数决定");
+        // ★ 真二进制：整张 + 邻域（改前只查了圆心一个像素）
+        assert_eq!(format!("{:016x}", fnv1a64(&m)), "79451d1cbca12e52",
+                   "fill=0x10 的掩膜与真二进制不一致");
+        assert_eq!(format!("{:016x}", region43(&m, 0.0, 0.0)), "9dda82dcc0dce97f");
+        assert_ne!(format!("{:016x}", fnv1a64(&m)), "02b3fa207a593a42",
+                   "fill 参数没有真正参与混合");
     }
 
+    /// 圆心贴右下角时不写出画布，且画布内留下的痕迹与真二进制逐字节相同。
+    ///
+    /// **真值来源（逐位）**：`unicorn` 直调 `0x3f11e0` 的 `raster(24.5,14.0,1.0,0x00)`：
+    /// 整张 FNV = `632a27f5d728a664`、非空像素 **1053**（全图 600000 ⇒ 绝大多数被裁掉）。
     #[test]
     fn raster_clips_at_canvas_edge() {
         let mut m = empty();
@@ -232,6 +327,10 @@ mod tests {
         let touched = (0..60).any(|d| m[mask_index(999 - d + 0, 599)] != EMPTY
                                      || m[mask_index(999, 599 - d)] != EMPTY);
         assert!(touched, "贴边时应在画布内留下痕迹");
+        // ★ 真二进制：整张掩膜（改前 "touched" 近乎恒真）
+        assert_eq!(nonempty(&m), 1053, "裁剪后的非空像素数与真二进制不一致");
+        assert_eq!(format!("{:016x}", fnv1a64(&m)), "632a27f5d728a664",
+                   "贴边掩膜与真二进制不一致");
     }
 
     #[test]
@@ -246,11 +345,24 @@ mod tests {
         assert!(!is_occupied(&m, 0.0, 0.0));
     }
 
+    /// 单点碰撞判据在**真掩膜**上的判决。
+    ///
+    /// **真值来源（逐位）**：`unicorn` 直调真二进制 `0x3f15b0`
+    /// （`GraphwarObstacleManager::is_obstacle`；`rdi` = manager，`self+0x18` 指向
+    /// `ArcInner`，锁字 `+0x10`、`{cap,ptr,len}` 在 `+0x18/+0x20/+0x28`，坐标走**指针** `rsi`），
+    /// 输入掩膜 = `0x3f11e0` 的 `raster(0,0,1.0,0x00)` 真输出。
+    /// 判决：`(0,0)→1`、`(24,14)→0`、`(-0.05,0)→1`、`(0.05,0)→1`、`(24.99,14.99)→0`。
+    ///
+    /// 改前这条是"我方掩膜 + 我方判据"互相印证 ⇒ 两边同错也绿；现在两边都是真二进制。
     #[test]
     fn occupied_helper_sees_rasterized_pixels() {
         let mut m = empty();
         rasterize(&mut m, 0.0, 0.0, 1.0, 0x00);
         assert!(is_occupied(&m, 0.0, 0.0), "圆心应判为占据");
         assert!(!is_occupied(&m, 24.0, 14.0), "远处仍为空");
+        // ★ 真二进制 0x3f15b0 在这张真掩膜上的判决
+        assert!(is_occupied(&m, -0.05, 0.0), "真值 1");
+        assert!(is_occupied(&m, 0.05, 0.0), "真值 1");
+        assert!(!is_occupied(&m, 24.99, 14.99), "真值 0");
     }
 }

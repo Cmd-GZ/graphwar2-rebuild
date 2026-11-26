@@ -1452,6 +1452,105 @@ mod tests {
 
     /// 两个士兵：1 号在原点、7 号在 **(0, 10)** —— 两条 `y = 常数` 的弹道都不穿过对方
     /// （距离 10 > 半径 0.5），所以这批**一发都打不死**，可以干净地钉报文结构。
+    // =======================================================================
+    // T46：**冻结语料真值**（观测级）
+    // =======================================================================
+    //
+    // 来源：`.reference/replays/gw2-replays-snapshot/replays/`（403 份冻结快照，
+    // 逐份 sha256 登记在 `fixtures/guardrails.json` 的 `corpus`）。
+    // 下面两个回放的 sha256：
+    //   1782642582 = fbed66caf5dbc2610a28776176366da0a22816f67d47c3e218c722f408d598e9
+    //   1782640359 = b4615ff7267f9ab657d9bc1907cb2a36ca28622951e4282764c12901898a75d2
+    // 起点态复算：`tools/replay_state.py <snapshot>/<文件名> --index 0`
+    // （障碍按 `ClearObstacles`/`AddObstacle` 顺序攒、士兵取 `PosInfo` 且 `LifeInfo` 未标死）。
+    // 报文逐条抄自回放原文（只去掉外层 `{"event": …}` 包装）。
+
+    /// `1782642582` 第 0 批之前的 28 个障碍（关卡几何，真值）。
+    const REAL_OBSTACLES: &[(f64, f64, f64)] = &[
+        (-5.0450899771303552, 8.9500544913850071, 0.80000000000000004),
+        (21.289029047055973, -4.8678002684166986, 1.2161121571549691),
+        (-25.906184850856985, 11.628076549992391, 2.6113508711624895),
+        (16.697961214277896, 19.852725942645652, 5.3561594737719842),
+        (27.137773262157847, -12.436709145120943, 6.8426085793553426),
+        (-20.411058570281668, 14.41521919222234, 2.2913859795268263),
+        (15.853051744985869, 2.4560079869838796, 2.203109268225349),
+        (-1.4904262460650128, -20.348157684084544, 3.537061647392056),
+        (-22.89544521767462, -15.488185572124523, 3.1616040247822297),
+        (2.1206728137039303, -9.2415934000673623, 0.80000000000000004),
+        (3.793013347382955, 14.484756004537353, 0.80000000000000004),
+        (2.6947511326485674, 3.9966689558272872, 4.2177213357002596),
+        (19.147423985076365, -5.8991589430792128, 2.3223251770141018),
+        (-13.884867414879761, -13.3829265178107, 4.9394491101577955),
+        (23.181401627255234, 9.7836629755500137, 2.904744683492186),
+        (24.842451321838979, -0.43657516700644133, 0.89375275122357101),
+        (32.510227261003827, 16.965904329756899, 5.8124788067945534),
+        (-25.455321861290663, 0.29487700805985007, 1.3867647370303171),
+        (29.668922220488533, -1.139861769418784, 4.198637187416292),
+        (-23.351557613234945, -7.8055849362409155, 1.6748248646036212),
+        (-2.9313984233878196, 10.827656056048056, 4.5856958979077085),
+        (24.263184751302063, 8.1858719912438573, 5.2764914440183208),
+        (-17.024683070197419, -7.275429265674239, 0.80000000000000004),
+        (-18.125289392058768, 16.103221990614745, 4.3675392287580657),
+        (-15.361425614670171, -13.349131512540009, 1.869104942304028),
+        (13.421151540254725, -16.243765347317122, 2.6311295422934315),
+        (18.336103699291598, -5.9646353267033003, 4.841861928503727),
+        (32.321648507950172, -1.6685262796709228, 5.1448309850835798),
+    ];
+
+    /// `1782642582` 第 0 批之前活着的四名士兵（真值）。
+    const REAL_SOLDIERS: &[Target] = &[
+        Target { id: 153656, x: -1.5197430999618304, y: -10.532225891038742, radius: 0.5 },
+        Target { id: 153431, x: 17.449537510408554, y: 6.4740191878058901, radius: 0.5 },
+        Target { id: 153430, x: 3.0996240114927369, y: -2.7150608537027026, radius: 0.5 },
+        Target { id: 153655, x: -19.440003067755988, y: 3.333280297434261, radius: 0.5 },
+    ];
+
+    /// `1782642582` 第 0 批（tick 27564）的真实报文，逐条原文。
+    const REAL_BATCH0: &[&str] = &[
+        r#"{"GameStateInfo":{"game_state":"CalculatingResults"}}"#,
+        r#"{"FunctionInfo":{"owner_id":153655,"function":"","corrected_function":" + 3.333"}}"#,
+        r#"{"FunctionInfo":{"owner_id":153430,"function":"-4/(1+exp(999(x-11.3)))+16/(1+(999(x-12))^2)","corrected_function":"-4/(1+exp(999(x-11.3)))+16/(1+(999(x-12))^2) + 1.285"}}"#,
+        r#"{"FunctionPoints":{"owner_id":153655,"start_x":-19.44000306775599,"start_y":3.333280297434261,"end_x":-1.4962530677575945}}"#,
+        r#"{"FunctionPoints":{"owner_id":153430,"start_x":3.099624011492737,"start_y":-2.7150608537027026,"end_x":-11.99959123580371}}"#,
+        r#"{"GameStateInfo":{"game_state":"SynchronizingResults"}}"#,
+        r#"{"FunctionActive":{"owner_id":153655,"active_tick":27659}}"#,
+        r#"{"EffectInfo":{"effect_id":153688,"pos_x":-1.4962530677575945,"pos_y":3.333,"effect_type":"ExplosionEffect","start_tick":27722}}"#,
+        r#"{"FunctionActive":{"owner_id":153430,"active_tick":27659}}"#,
+        r#"{"EffectInfo":{"effect_id":153689,"pos_x":-11.99959123580371,"pos_y":14.998257311034074,"effect_type":"ExplosionEffect","start_tick":27772}}"#,
+        r#"{"GameStateInfo":{"game_state":"ExecutingResults"}}"#,
+    ];
+
+    /// `1782642582` 第 1 批（tick 30774）的真实报文，逐条原文。
+    const REAL_BATCH1: &[&str] = &[
+        r#"{"GameStateInfo":{"game_state":"CalculatingResults"}}"#,
+        r#"{"FunctionInfo":{"owner_id":153656,"function":"(7.2/4.5)x","corrected_function":"(7.2/4.5)x - 8.101"}}"#,
+        r#"{"FunctionInfo":{"owner_id":153431,"function":"(-6.474)*(1/((1+exp(-42*(x-(-10))))*(1+exp(42*(x-(25))))))+(-12)*(1/((1+exp(-42*(x-(2))))*(1+exp(42*(x-(5))))))+(40)*(1/((1+exp(-42*(x-(19.5))))*(1+exp(42*(x-(25))))))","corrected_function":"(-6.474)*(1/((1+exp(-42*(x-(-10))))*(1+exp(42*(x-(25))))))+(-12)*(1/((1+exp(-42*(x-(2))))*(1+exp(42*(x-(5))))))+(40)*(1/((1+exp(-42*(x-(19.5))))*(1+exp(42*(x-(25)))))) + 6.474"}}"#,
+        r#"{"FunctionPoints":{"owner_id":153656,"start_x":-1.5197430999618304,"start_y":-10.532225891038742,"end_x":5.595256900038063}}"#,
+        r#"{"FunctionPoints":{"owner_id":153431,"start_x":17.449537510408554,"start_y":6.47401918780589,"end_x":4.242603916659716}}"#,
+        r#"{"GameStateInfo":{"game_state":"SynchronizingResults"}}"#,
+        r#"{"EffectInfo":{"effect_id":153874,"pos_x":3.099624011492737,"pos_y":-2.7150608537027026,"effect_type":"DeathEffect","start_tick":30894}}"#,
+        r#"{"FunctionActive":{"owner_id":153656,"active_tick":30864}}"#,
+        r#"{"EffectInfo":{"effect_id":153875,"pos_x":5.595256900038063,"pos_y":0.8514110400608992,"effect_type":"ExplosionEffect","start_tick":30911}}"#,
+        r#"{"FunctionActive":{"owner_id":153431,"active_tick":30864}}"#,
+        r#"{"EffectInfo":{"effect_id":153876,"pos_x":4.242603916659716,"pos_y":0.0,"effect_type":"ExplosionEffect","start_tick":30931}}"#,
+        r#"{"GameStateInfo":{"game_state":"ExecutingResults"}}"#,
+    ];
+
+    /// `1782640359` 第 0 批（tick 3422）的真实报文，逐条原文（单发；靶子 350 皮肤 `target`
+    /// ⇒ 死亡特效是 `SparkEffect`）。
+    const REAL_SINGLE_SHOT: &[&str] = &[
+        r#"{"GameStateInfo":{"game_state":"CalculatingResults"}}"#,
+        r#"{"FunctionInfo":{"owner_id":348,"function":"(40)*(1/((1+exp(-42*(x-(5))))*(1+exp(42*(x-(25))))))","corrected_function":"(40)*(1/((1+exp(-42*(x-(5))))*(1+exp(42*(x-(25)))))) - 0.297"}}"#,
+        r#"{"FunctionPoints":{"owner_id":348,"start_x":-2.1413650290582837,"start_y":-0.29656732812543574,"end_x":4.988566611566738}}"#,
+        r#"{"GameStateInfo":{"game_state":"SynchronizingResults"}}"#,
+        r#"{"EffectInfo":{"effect_id":352,"pos_x":5.030674058137304,"pos_y":1.6580370528335653,"effect_type":"SparkEffect","start_tick":3515}}"#,
+        r#"{"FunctionActive":{"owner_id":348,"active_tick":3486}}"#,
+        r#"{"EffectInfo":{"effect_id":353,"pos_x":4.988566611566738,"pos_y":14.991174112697315,"effect_type":"ExplosionEffect","start_tick":3561}}"#,
+        r#"{"GameStateInfo":{"game_state":"ExecutingResults"}}"#,
+    ];
+
+    /// 上面三条真批测试里不再用到的小样例构造器（保留给别的测试与人工排查）。
+    #[allow(dead_code)]
     fn two_soldiers() -> ConvPredictor {
         ConvPredictor::new(
             &[],
@@ -1476,34 +1575,133 @@ mod tests {
             .collect()
     }
 
-    /// **单发批逐字节不变**：`fire` ≡ `fire_batch(N=1)`。
+    /// 我方报文**投影**成"回放会记的那些 kind"（按 [`Policy::unobserved_kinds`] 去掉
+    /// 回放记录域里不收的种类，例如 `QueueDestroyObstacle`），`EffectInfo` 展开成
+    /// `EffectInfo/<effect_type>`。投影口径与 `examples/batch_conv.rs` 的
+    /// `project_ours` 同源，所以种类序列可以直接与回放原文逐项比。
+    fn projected_kinds(policy: &Policy, wire: &[String]) -> Vec<String> {
+        wire.iter()
+            .map(|w| Msg::parse_wire(w).expect("我方 emitter 产出了非法 JSON"))
+            .filter(|m| !policy.is_unobserved(m))
+            .map(|m| {
+                if m.kind == "EffectInfo" {
+                    format!("EffectInfo/{}", m.get_str("effect_type").unwrap_or_default())
+                } else {
+                    m.kind
+                }
+            })
+            .collect()
+    }
+
+    /// **单发批**：`fire` ≡ `fire_batch(N=1)`，而且两条路径都必须**复现真回放里那一批**。
     ///
-    /// 这是"接线不许让单发批变差"的**机械化保证**（不是"跑一遍看着没变"）：
-    /// `fire` 现在就是这个函数的一发特例。
+    /// ## 真值来源（观测，冻结语料）
+    ///
+    /// 真值 = replay `1782640359` 的第 0 个结算批（tick 3422，单发）。
+    /// 该文件在冻结快照 `.reference/replays/gw2-replays-snapshot/replays/` 里，
+    /// sha256 **`b4615ff7267f9ab657d9bc1907cb2a36ca28622951e4282764c12901898a75d2`**
+    /// （逐份 sha256 同时登记在 `fixtures/guardrails.json` 的 `corpus`）。
+    /// 起点态由 `tools/replay_state.py <snapshot>/1782640359 --index 0` 复算得
+    /// （0 个障碍；士兵 348 `(-2.1413650290582837, -0.29656732812543574)`、
+    /// 靶子 350 `(5.030674058137304, 1.6580370528335653)`，皮肤 `target` ⇒ `SparkEffect`）。
+    /// 报文逐条抄自回放原文（见下方 `REAL_SINGLE_SHOT`），比较用**同一套**
+    /// `compare_batch` + `strict_policy()`（墙钟 tick / effect_id 计数器按既有口径不比）。
+    ///
+    /// 改前这条只比"我方两条路径彼此相等" ⇒ 两条路径**一起错也绿**。
     #[test]
     fn single_shot_is_byte_identical_to_fire_batch() {
-        let text = "0.00";
-        let (a, oa) = two_soldiers().fire(1, text, 0.0, 0.0, false, 100);
-        let shot = ShotInput { owner: 1, x0: 0.0, y0: 0.0, flip: false, text: text.into() };
-        let (b, ob) = two_soldiers().fire_batch(&[shot], 100);
+        let mk = || {
+            let mut q = ConvPredictor::new(
+                &[],
+                vec![
+                    Target { id: 348, x: -2.1413650290582837, y: -0.29656732812543574, radius: 0.5 },
+                    Target { id: 350, x: 5.0306740581373042, y: 1.6580370528335653, radius: 0.5 },
+                ],
+                Mode::Normal,
+            );
+            q.skin.insert(350, "target".to_string());
+            q
+        };
+        let text = "(40)*(1/((1+exp(-42*(x-(5))))*(1+exp(42*(x-(25))))))";
+        // ① N=1：两条路径逐字节相同
+        let (a, oa) = mk().fire(348, text, -2.1413650290582837, -0.29656732812543574, false, 3422);
+        let shot = ShotInput {
+            owner: 348,
+            x0: -2.1413650290582837,
+            y0: -0.29656732812543574,
+            flip: false,
+            text: text.into(),
+        };
+        let (b, ob) = mk().fire_batch(&[shot], 3422);
         assert_eq!(a, b, "N=1 的报文必须逐字节相同");
         assert_eq!(oa.stop, ob[0].stop);
         assert_eq!(oa.killed, ob[0].killed);
         assert_eq!(oa.corrected, ob[0].corrected);
+
+        // ② ★ 真值：两条路径都必须复现真回放那一批
+        let observed: Vec<Msg> = REAL_SINGLE_SHOT
+            .iter()
+            .map(|l| Msg::parse_wire(l).expect("真报文应能解析"))
+            .collect();
+        for (tag, wire) in [("fire", &a), ("fire_batch", &b)] {
+            let ours: Vec<Msg> = wire
+                .iter()
+                .map(|w| Msg::parse_wire(w).expect("我方 emitter 产出了非法 JSON"))
+                .collect();
+            let v = compare_batch(&ours, &observed, &strict_policy(), 30);
+            assert!(
+                v.kind_seq_ok && v.content_ok && v.order_ok,
+                "{tag} 没有复现 replay 1782640359 的第 0 批（kind_seq={} content={} order={} diffs={:?}）",
+                v.kind_seq_ok,
+                v.content_ok,
+                v.order_ok,
+                v.diffs.iter().map(|d| format!("{} ours={} obs={}", d.path, d.ours, d.observed)).collect::<Vec<_>>()
+            );
+        }
+        // 轨迹末点（FunctionPoints.end_x）也要是真回放里那个值的位
+        let end_x_bits = ob[0].stop.0.to_bits();
+        assert_eq!(end_x_bits, 4.988566611566738_f64.to_bits(), "end_x 与真回放不一致");
     }
 
-    /// 两发一批：**前缀按类型分组、后缀每发一对**（`docs/141` §3.1）。
+    /// 两发一批：**前缀按类型分组、后缀每发一对** —— 真值 = 冻结语料里一个真实的两发批。
+    ///
+    /// ## 真值来源（观测，冻结语料）
+    ///
+    /// 真值 = replay `1782642582` 的第 0 个结算批（tick 27564，两发）。
+    /// 快照文件 sha256 **`fbed66caf5dbc2610a28776176366da0a22816f67d47c3e218c722f408d598e9`**。
+    /// 起点态：`tools/replay_state.py <snapshot>/1782642582 --index 0`
+    /// → 28 个障碍（`REAL_OBSTACLES`）、四名士兵（`REAL_SOLDIERS`）。
+    /// 两发分别是 owner 153655（Team1，空函数）与 153430（Team2，反向）。
+    ///
+    /// 改前这条的期望序列是"照我方模型 + `docs/141` §3.1 抄的" ⇒ 我方模型错则期望一起错；
+    /// 现在期望**逐条来自回放原文**，且用同一套 `compare_batch` + `strict_policy()` 比。
     #[test]
     fn two_shot_batch_is_grouped_by_type() {
+        let mut p = ConvPredictor::new(REAL_OBSTACLES, REAL_SOLDIERS.to_vec(), Mode::Normal);
         let shots = vec![
-            ShotInput { owner: 1, x0: 0.0, y0: 0.0, flip: false, text: "0.00".into() },
-            ShotInput { owner: 7, x0: 0.0, y0: 10.0, flip: true, text: "0.00".into() },
+            ShotInput {
+                owner: 153655,
+                x0: -19.44000306775599,
+                y0: 3.333280297434261,
+                flip: false,
+                text: String::new(),
+            },
+            ShotInput {
+                owner: 153430,
+                x0: 3.099624011492737,
+                y0: -2.7150608537027026,
+                flip: true,
+                text: "-4/(1+exp(999(x-11.3)))+16/(1+(999(x-12))^2)".into(),
+            },
         ];
-        let (wire, outs) = two_soldiers().fire_batch(&shots, 100);
+        let (wire, outs) = p.fire_batch(&shots, 27564);
         assert_eq!(outs.len(), 2);
-        let k = kinds(&wire);
+
+        // 我方种类序列（含 effect_type 细分，投影掉回放不记的 `QueueDestroyObstacle`）
+        let policy = strict_policy();
+        let our_kinds = projected_kinds(&policy, &wire);
         assert_eq!(
-            k,
+            our_kinds,
             vec![
                 "GameStateInfo",
                 "FunctionInfo",
@@ -1517,56 +1715,119 @@ mod tests {
                 "EffectInfo/ExplosionEffect",
                 "GameStateInfo",
             ],
-            "= docs/141 §3.1 的分组：前缀按类型连排、后缀每发一对"
+            "= 真回放 1782642582 第 0 批的分组（前缀按类型连排、后缀每发一对）"
         );
-        // 负样本：逐发各开一个窗口的老写法有 **6** 条 `GameStateInfo`（3/发）
-        let mut old = Vec::new();
-        for s in &shots {
-            let (w, _) = two_soldiers().fire(s.owner, &s.text, s.x0, s.y0, s.flip, 100);
-            old.extend(kinds(&w));
-        }
-        assert_eq!(old.iter().filter(|x| x.as_str() == "GameStateInfo").count(), 6);
-        assert_ne!(old, k);
+
+        // ★ 真值：逐字段与真回放那一批比
+        let observed: Vec<Msg> = REAL_BATCH0
+            .iter()
+            .map(|l| Msg::parse_wire(l).expect("真报文应能解析"))
+            .collect();
+        let ours: Vec<Msg> = wire
+            .iter()
+            .map(|w| Msg::parse_wire(w).expect("我方 emitter 产出了非法 JSON"))
+            .collect();
+        let v = compare_batch(&ours, &observed, &policy, 30);
+        assert!(
+            v.kind_seq_ok && v.content_ok && v.order_ok,
+            "没有复现 replay 1782642582 第 0 批（kind_seq={} content={} order={} diffs={:?}）",
+            v.kind_seq_ok,
+            v.content_ok,
+            v.order_ok,
+            v.diffs.iter().map(|d| format!("{} ours={} obs={}", d.path, d.ours, d.observed)).collect::<Vec<_>>()
+        );
+        // 两发的 end_x 都要是回放里那两位
+        assert_eq!(outs[0].stop.0.to_bits(), (-1.4962530677575945_f64).to_bits());
+        assert_eq!(outs[1].stop.0.to_bits(), (-11.99959123580371_f64).to_bits());
     }
 
-    /// 死亡块**按飞行时间**排、同一士兵只出现一次（`docs/141` §2.2）。
+
+    /// 死亡块**按飞行时间**排、同一士兵只出现一次 —— 真值 = 冻结语料里一个真实的两发批。
+    ///
+    /// ## 真值来源（观测，冻结语料）
+    ///
+    /// 真值 = replay `1782642582` 的**第 1 个**结算批（tick 30774，两发，含一条 `DeathEffect`）。
+    /// 快照 sha256 与第 0 批同一份文件（`fbed66ca…`，见
+    /// [`two_shot_batch_is_grouped_by_type`]）。状态是**从第 0 批接着喂**出来的
+    /// （预测器自带状态：掩膜上已被挖的洞、已死的士兵都在里面），所以这条测试也顺带
+    /// 钉住"跨批状态一致"。
+    ///
+    /// 真回放里这两发的死亡块位置：
+    /// `DeathEffect(pos_x=3.099624011492737, pos_y=-2.7150608537027026)`（= 士兵 153430 的
+    /// **批开始**位置）在 `FunctionActive` 之前，属"前缀按类型连着排"。
+    ///
+    /// 改前这条的期望值与几何（谁先死、死在哪）全是照我方模型编的。
     #[test]
     fn death_block_follows_flight_time() {
-        // 两条弹道都扫过 7 号：发 0 从 1 号出发（先 9 后 7）、发 1 从 9 号出发（先到 7）
-        let mut p = ConvPredictor::new(
-            &[],
-            vec![
-                Target { id: 1, x: 0.0, y: 0.0, radius: 0.5 },
-                Target { id: 9, x: 1.0, y: 0.0, radius: 0.5 },
-                Target { id: 7, x: 15.0, y: 0.0, radius: 0.5 },
-            ],
-            Mode::Normal,
-        );
-        let shots = vec![
-            ShotInput { owner: 1, x0: 0.0, y0: 0.0, flip: false, text: "0.00".into() },
-            ShotInput { owner: 9, x0: 1.0, y0: 0.0, flip: false, text: "0.00".into() },
+        let mut p = ConvPredictor::new(REAL_OBSTACLES, REAL_SOLDIERS.to_vec(), Mode::Normal);
+        // 第 0 批（同 [`two_shot_batch_is_grouped_by_type`]）
+        let b0 = vec![
+            ShotInput {
+                owner: 153655,
+                x0: -19.44000306775599,
+                y0: 3.333280297434261,
+                flip: false,
+                text: String::new(),
+            },
+            ShotInput {
+                owner: 153430,
+                x0: 3.099624011492737,
+                y0: -2.7150608537027026,
+                flip: true,
+                text: "-4/(1+exp(999(x-11.3)))+16/(1+(999(x-12))^2)".into(),
+            },
         ];
-        let (wire, outs) = p.fire_batch(&shots, 100);
-        // 几何并行：两发都对着批开始的士兵表算，谁死不影响别人
-        assert_eq!(outs[0].killed, vec![9, 7]);
-        assert_eq!(outs[1].killed, vec![7]);
-        let mut death_effects: Vec<(f64, f64)> = Vec::new();
-        for w in &wire {
-            let m = Msg::parse_wire(w).unwrap();
-            if m.kind == "EffectInfo" && m.get_str("effect_type").as_deref() == Some("DeathEffect") {
-                death_effects.push((
-                    m.get_f64("pos_x").unwrap_or(f64::NAN),
-                    m.get_f64("pos_y").unwrap_or(f64::NAN),
-                ));
-            }
-        }
-        // 7 号被两发都扫过 ⇒ 只死一次；死者位置来自**批开始**的快照（x = 15，不是 1）
-        assert_eq!(death_effects.len(), 2, "9 号与 7 号各一条");
-        assert_eq!(death_effects[0].0, 1.0);
-        assert_eq!(death_effects[1].0, 15.0);
-        // 状态落地：两名死者都从士兵表里移除
-        assert_eq!(p.soldiers.len(), 1);
-        assert_eq!(p.soldiers[0].id, 1);
+        let (w0, _) = p.fire_batch(&b0, 27564);
+        let obs0: Vec<Msg> = REAL_BATCH0.iter().map(|l| Msg::parse_wire(l).unwrap()).collect();
+        let ours0: Vec<Msg> = w0.iter().map(|w| Msg::parse_wire(w).unwrap()).collect();
+        assert!(compare_batch(&ours0, &obs0, &strict_policy(), 30).content_ok, "第 0 批先要能复现");
+
+        // 第 1 批：真回放里 153430 被 153431 那一发打死
+        let b1 = vec![
+            ShotInput {
+                owner: 153656,
+                x0: -1.5197430999618304,
+                y0: -10.532225891038742,
+                flip: false,
+                text: "(7.2/4.5)x".into(),
+            },
+            ShotInput {
+                owner: 153431,
+                x0: 17.449537510408554,
+                y0: 6.4740191878058901,
+                flip: true,
+                text: "(-6.474)*(1/((1+exp(-42*(x-(-10))))*(1+exp(42*(x-(25))))))+(-12)*(1/((1+exp(-42*(x-(2))))*(1+exp(42*(x-(5))))))+(40)*(1/((1+exp(-42*(x-(19.5))))*(1+exp(42*(x-(25))))))".into(),
+            },
+        ];
+        let (wire, outs) = p.fire_batch(&b1, 30774);
+        let observed: Vec<Msg> = REAL_BATCH1.iter().map(|l| Msg::parse_wire(l).unwrap()).collect();
+        let ours: Vec<Msg> = wire.iter().map(|w| Msg::parse_wire(w).unwrap()).collect();
+        let v = compare_batch(&ours, &observed, &strict_policy(), 30);
+        assert!(
+            v.kind_seq_ok && v.content_ok && v.order_ok,
+            "没有复现 replay 1782642582 第 1 批（kind_seq={} content={} order={} diffs={:?}）",
+            v.kind_seq_ok,
+            v.content_ok,
+            v.order_ok,
+            v.diffs.iter().map(|d| format!("{} ours={} obs={}", d.path, d.ours, d.observed)).collect::<Vec<_>>()
+        );
+        // 真回放只记一条 `DeathEffect`，**不记是哪一发打死的** ⇒ 只断言"死的集合"，
+        // 不去断言"第几发"（那是我方模型内部的概念，回放里没有真值）。
+        let mut killed_union: Vec<i64> = outs.iter().flat_map(|o| o.killed.clone()).collect();
+        killed_union.sort_unstable();
+        killed_union.dedup();
+        assert_eq!(killed_union, vec![153430], "真回放这一批只有 153430 死");
+        let death_effects: Vec<(f64, f64)> = ours
+            .iter()
+            .filter(|m| m.kind == "EffectInfo" && m.get_str("effect_type").as_deref() == Some("DeathEffect"))
+            .map(|m| (m.get_f64("pos_x").unwrap_or(f64::NAN), m.get_f64("pos_y").unwrap_or(f64::NAN)))
+            .collect();
+        assert_eq!(death_effects.len(), 1, "真回放这一批只有一条 DeathEffect");
+        assert_eq!(death_effects[0].0, 3.099624011492737, "死者位置来自批开始快照");
+        assert_eq!(death_effects[0].1, -2.7150608537027026);
+        // 状态落地：153430 从士兵表里移除（真回放后续 `LifeInfo alive:false`）
+        assert_eq!(p.soldiers.len(), 3);
+        assert!(p.soldiers.iter().all(|t| t.id != 153430));
     }
 
     // -----------------------------------------------------------------------
