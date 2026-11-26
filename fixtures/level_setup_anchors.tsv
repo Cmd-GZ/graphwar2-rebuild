@@ -1,0 +1,57 @@
+# level_setup_anchors.tsv —— `graphwar_level_manager` 的关卡开场臂族：**每个函数的真实指令范围**
+#
+# 为什么有这张表：我方曾把原版 21 个 `setup_level_N`（+27 个闭包）**压成一张 `SETUPS` 数据表 +
+# 一个 `level_setup(index)`**，于是整族函数边界消失（T38 `docs/06` §87：本模块 gap 31/40）。
+# 这张表把每一个函数重新钉到它**自己的指令范围**（或钉死"它没有独立范围，被内联了"）。
+#
+# 口径：地址一律 **ELF vaddr（RVA）**，不要减 0x100000。
+#
+# 复算命令（全部只读原版 .so，不需要 Ghidra）：
+#   SO=/home/CG/Myprojects/graphwar2-rebuild/.reference/upstream/libgraphwarrust.so
+#   PY=/home/CG/Myprojects/graphwar2-rebuild/.reference/venv/bin/python
+#   ① 函数范围（FDE，独立裁判）：   $PY tools/addr_probe.py fde 0x49f510
+#   ② 源文件 + 源行号锚点：          $PY tools/loc_xrefs.py func 0x49f510 0x499740 …
+#   ③ 真名（跨版本符号表）：        fixtures/name_to_addr_v2.tsv 里 module=graphwar_level_manager 的行
+#   ④ 调用序/立即数：                objdump -d --no-show-raw-insn $SO   （`call`/`jmp` 的立即数）
+#
+# 列：
+#   level        关卡下标（0 基），与 `SETUPS` 的行号一一对应
+#   kind         standalone = 有**自己独立的 FDE**（是真正的独立函数）
+#                inline     = **没有独立 FDE**：体内联在 `setup_level`（0x499740）里
+#   name         原版真名（跨版本符号表还原：`GraphwarLevelManager::setup_level_N`）
+#   vaddr        standalone = 函数入口；inline = **内联臂在 0x499740 里的起始指令地址**
+#   fde          独立范围；inline 行给的是它寄居的那条 FDE（`setup_level`）
+#   size         standalone = FDE 字节数；inline = 臂的指令跨度（起→下一条臂起点，不是函数尺寸）
+#   src_lines    该函数**自己的** panic::Location 锚点覆盖的源行区间（空 = 该函数没有锚）
+#   gen_call     `call 0x466d20`（关卡开场驱动 GraphwarLevelGenerator::generate_level_custom）的调用点
+#                每关**恰好 1 次**；21 关合计 21 次（8 次在 setup_level 内、13 次在各自函数内）
+#   get_module   前导里 `call 0x46a4xx..0x46c1xx` 的模块容器 getter 序列（地址→类型见 docs/02 §22.3）
+#   set_turn_mode `call 0x462d20`（GraphwarTurnManager::set_turn_mode）的调用点，`-` = 没调
+#   preset_*     障碍预设：closure = `setup_level_N::{{closure}}` 独立函数；param = 32 字节形参（不是函数）
+#   second_*     第二闭包 `setup_level_N::{{closure}}`（返回 bool 的谓词，判什么**未知**）
+#   setups_row   对应 `SETUPS` 的那一行（preset / soldiers / targets / bot / turn_limit）
+#   evidence     证据档
+#
+level	kind	name	vaddr	fde	size	src_lines	gen_call	get_module	set_turn_mode	preset_fn	preset_fde	preset_lines	second_fn	second_fde	second_lines	preset	soldiers	targets	bot	turn_limit	evidence
+0	inline	GraphwarLevelManager::setup_level_0	0x499957	INLINE@0x499740..0x49e56a	0x4c7	121-169	0x499db5	GameState,Player,Team,Mode,Target,Soldier,PlanePos	-	0x49e570	0x49e570..0x49e649(217B)	148-149	0x49e650	0x49e650..0x49e87a(554B)	153-161	None	1	1	-	none	观测
+1	inline	GraphwarLevelManager::setup_level_1	0x49a3f2	INLINE@0x499740..0x49e56a	0x532	190-239	0x49a8bb	GameState,Player,Team,Mode,Target,Soldier,PlanePos	-	0x49eab0	0x49eab0..0x49eb89(217B)	218-219	0x49e880	0x49e880..0x49eaaa(554B)	223-231	None	1	1	-	5	观测
+2	inline	GraphwarLevelManager::setup_level_2	0x49af3c	INLINE@0x499740..0x49e56a	0x536	258-332	0x49b409	GameState,Player,Team,Mode,Target,Soldier,PlanePos	-	0x49f1c0	0x49f1c0..0x49f351(401B)	286-289	0x49eb90	0x49eb90..0x49f1ba(1578B)	293-310	CentreSingle	1	1	-	5	观测
+3	inline	GraphwarLevelManager::setup_level_3	0x49bb63	INLINE@0x499740..0x49e56a	0x3de	352-390	0x49beee	GameState,Player,Team,Mode	-	0x49f370	0x49f370..0x49f501(401B)	379-382	0x49f360	0x49f360..0x49f370(16B)	unknown	CentreSingle	2	3	-	10	观测
+4	standalone	GraphwarLevelManager::setup_level_4	0x49f510	0x49f510..0x49fe72	0x962	409-483	0x49f9f3	GameState,Player,Team,Mode,Target,Soldier,PlanePos	-	0x49fe80	n/a(32B param)	n/a(param)	0x49fea0	0x49fea0..0x4a04cf(1583B)	441-458	Scatter(min_count=15)	1	1	-	10	观测
+5	standalone	GraphwarLevelManager::setup_level_5	0x4a04d0	0x4a04d0..0x4a0da2	0x8d2	501-561	0x4a09eb	GameState,Player,Team,Mode,Soldier	-	0x4a12f0	n/a(32B param)	n/a(param)	0x4a0db0	0x4a0db0..0x4a12ec(1340B)	540	Scatter(min_count=5)	2	0	3	none	观测
+6	standalone	GraphwarLevelManager::setup_level_6	0x4a1310	0x4a1310..0x4a1cce	0x9be	581-671	0x4a1835	GameState,Player,Team,Mode,Target,Soldier,PlanePos	-	0x4a2410	n/a(32B param)	n/a(param)	0x4a1cd0	0x4a1cd0..0x4a2405(1845B)	615-639	Scatter(min_count=10)	1	2	-	6	观测
+7	standalone	GraphwarLevelManager::setup_level_7	0x4a2430	0x4a2430..0x4a2d92	0x962	689-763	0x4a2913	GameState,Player,Team,Mode,Target,Soldier,PlanePos	-	0x4a2da0	n/a(32B param)	n/a(param)	0x4a2dc0	0x4a2dc0..0x4a33ef(1583B)	721-738	Scatter(min_count=6)	1	1	-	1	观测
+8	standalone	GraphwarLevelManager::setup_level_8	0x4a33f0	0x4a33f0..0x4a3de4	0x9f4	782-861	0x4a3940	GameState,Player,Team,Mode,Target,Soldier,PlanePos	-	0x4a2410	n/a(32B param)	n/a(param)	0x4a3df0	0x4a3df0..0x4a439b(1451B)	817-824	Scatter(min_count=10)	1	3	-	6	观测
+9	standalone	GraphwarLevelManager::setup_level_9	0x4a43a0	0x4a43a0..0x4a4c72	0x8d2	879-939	0x4a48bb	GameState,Player,Team,Mode,Soldier	-	0x4a12f0	n/a(32B param)	n/a(param)	0x4a4c80	0x4a4c80..0x4a51bc(1340B)	918	Scatter(min_count=5)	3	0	25	none	观测
+10	inline	GraphwarLevelManager::setup_level_10	0x499e1e	INLINE@0x499740..0x49e56a	0x5d4	959-1039	0x49a389	GameState,Player,Team,Mode,Target,Soldier,PlanePos	-	0x4a2410	n/a(32B param)	n/a(param)	0x4a5390	0x4a5390..0x4a593b(1451B)	995-1002	Scatter(min_count=10)	1	2	-	6	观测
+11	inline	GraphwarLevelManager::setup_level_11	0x49a924	INLINE@0x499740..0x49e56a	0x618	1057-1120	0x49aed2	GameState,Player,Team,Mode,Turn,Soldier	0x49ae2b	0x4a12f0	n/a(32B param)	n/a(param)	0x4a5940	0x4a5940..0x4a5e7c(1340B)	1099	Scatter(min_count=5)	3	0	50	none	观测
+12	inline	GraphwarLevelManager::setup_level_12	0x49b472	INLINE@0x499740..0x49e56a	0x6f1	1139-1204	0x49b9a6	GameState,Player,Team,Mode,Target,Soldier,PlanePos	-	0x4a5e80	0x4a5e80..0x4a6011(401B)	1168-1171	0x4a6020	0x4a6020..0x4a63cb(939B)	1175-1191	CentreSingle	1	1	-	5	观测
+13	inline	GraphwarLevelManager::setup_level_13	0x49bf41	INLINE@0x499740..0x49e56a	0x747	1223-1302	0x49c4b5	GameState,Player,Team,Mode,Target,Soldier,PlanePos	-	0x4a2410	n/a(32B param)	n/a(param)	0x4a63d0	0x4a63d0..0x4a697b(1451B)	1258-1265	Scatter(min_count=10)	1	2	-	5	观测
+14	standalone	GraphwarLevelManager::setup_level_14	0x4a6980	0x4a6980..0x4a73ae	0xa2e	1320-1383	0x4a6f59	GameState,Player,Team,Mode,Soldier,Turn	0x4a6eb0	0x4a12f0	n/a(32B param)	n/a(param)	0x4a73b0	0x4a73b0..0x4a78ec(1340B)	1362	Scatter(min_count=5)	4	0	100	none	观测
+15	standalone	GraphwarLevelManager::setup_level_15	0x4a78f0	0x4a78f0..0x4a831b	0xa2b	1403-1466	0x4a7ec6	GameState,Player,Team,Mode,Soldier,Turn	0x4a7e1d	0x4a2410	n/a(32B param)	n/a(param)	0x4a8320	0x4a8320..0x4a885c(1340B)	1445	Scatter(min_count=10)	5	0	250	none	观测
+16	standalone	GraphwarLevelManager::setup_level_16	0x4a8860	0x4a8860..0x4a91af	0x94f	1488-1537	0x4a8d30	GameState,Player,Team,Mode,Target,Soldier,PlanePos	-	0x4a93e0	0x4a93e0..0x4a94b9(217B)	1516-1517	0x4a91b0	0x4a91b0..0x4a93da(554B)	1521-1529	None	1	1	-	none	观测
+17	standalone	GraphwarLevelManager::setup_level_17	0x4a94c0	0x4a94c0..0x4a9ef8	0xa38	1555-1646	0x4a9a3f	GameState,Player,Team,Mode,Target,Soldier,PlanePos	-	0x4a2410	n/a(32B param)	n/a(param)	0x4a9f00	0x4a9f00..0x4aa635(1845B)	1590-1614	Scatter(min_count=10)	1	2	-	6	观测
+18	standalone	GraphwarLevelManager::setup_level_18	0x4aa640	0x4aa640..0x4aafb2	0x972	1664-1725	0x4aabcc	GameState,Player,Team,Mode,Soldier	-	0x4a2410	n/a(32B param)	n/a(param)	0x4aafc0	0x4aafc0..0x4ab4fc(1340B)	1704	Scatter(min_count=10)	3	0	100	none	观测
+19	standalone	GraphwarLevelManager::setup_level_19	0x4ab500	0x4ab500..0x4abef9	0x9f9	1744-1806	0x4abaea	GameState,Player,Team,Mode,Soldier	-	0x4a2410	n/a(32B param)	n/a(param)	0x4abf00	0x4abf00..0x4ac43c(1340B)	1785	Scatter(min_count=10)	4	0	100	none	观测
+20	standalone	GraphwarLevelManager::setup_level_20	0x4ac440	0x4ac440..0x4ace39	0x9f9	1826-1888	0x4aca2a	GameState,Player,Team,Mode,Soldier	-	0x49fe80	n/a(32B param)	n/a(param)	0x4ace40	0x4ace40..0x4ad37c(1340B)	1867	Scatter(min_count=15)	5	0	250	none	观测
+-	dispatch	GraphwarLevelManager::setup_level	0x499740	0x499740..0x49e56a	0x4e2a	none(no anchor)	8 次（8 条内联臂各 1 次）	同 8 条内联臂（见上）	0x49ae2b（第 11 关，内联）	-	-	-	-	-	-	-	-	-	-	-	观测
