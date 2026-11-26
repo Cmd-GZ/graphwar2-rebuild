@@ -1,0 +1,13 @@
+# B2：我方实现（examples/ai_explain, release）在本机的墙钟实测
+# 生成：.reference/venv/bin/python tools/ai_budget_probe.py --runs
+# 口径：只有本机有效；load1 是跑之前的 1 分钟负载（本机是多 agent 共享的）
+case	rep	gens	population	evaluations	budget_secs	elapsed_s	truncated	rc	cpu	nproc	kernel	load1	note
+difficulty=250	1	250	250	63250		2.938	False	0	AMD Ryzen 9 7945HX with Radeon Graphics	32	7.3.6-2-cachyos	9.62	250 代 × 250 种群
+difficulty=250	2	250	250	63250		2.895	False	0	AMD Ryzen 9 7945HX with Radeon Graphics	32	7.3.6-2-cachyos	9.62	250 代 × 250 种群
+difficulty=250	3	250	250	63250		3.079	False	0	AMD Ryzen 9 7945HX with Radeon Graphics	32	7.3.6-2-cachyos	9.62	250 代 × 250 种群
+difficulty=1000	1	1000	250	253000		13.789	False	0	AMD Ryzen 9 7945HX with Radeon Graphics	32	7.3.6-2-cachyos	9.62	1000 代 × 250 种群（难度 6）
+difficulty=1000	2	1000	250	253000		12.825	False	0	AMD Ryzen 9 7945HX with Radeon Graphics	32	7.3.6-2-cachyos	9.62	1000 代 × 250 种群（难度 6）
+difficulty=1000	3	1000	250	253000		10.684	False	0	AMD Ryzen 9 7945HX with Radeon Graphics	32	7.3.6-2-cachyos	9.62	1000 代 × 250 种群（难度 6）
+difficulty=1000&budget=25.0	1	1000	250	253000	25	10.704	False	0	AMD Ryzen 9 7945HX with Radeon Graphics	32	7.3.6-2-cachyos	9.62	与真游戏同口径（带 25 s 墙钟）
+difficulty=1000&budget=25.0	2	1000	250	253000	25	10.885	False	0	AMD Ryzen 9 7945HX with Radeon Graphics	32	7.3.6-2-cachyos	9.62	与真游戏同口径（带 25 s 墙钟）
+difficulty=1000&budget=25.0	3	1000	250	253000	25	10.656	False	0	AMD Ryzen 9 7945HX with Radeon Graphics	32	7.3.6-2-cachyos	9.62	与真游戏同口径（带 25 s 墙钟）

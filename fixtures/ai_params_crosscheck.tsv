@@ -67,7 +67,7 @@ S.limit_guard	适应度：`V > limit` 判定	v as u32 > limit	cmp rdx,rcx / jbe�
 B.secs	墙钟预算上限（秒）	25.0	25	-	-	MATCH	0x51b7cf / 0x51b7e0 `cmp $0x19`	立即数 25，六档共用（非配置）
 B.duration	比较对象 = 整 Duration（秒+纳秒）	as_secs_f64() > 25.0	cmp secs / test nanos	-	-	MATCH	0x51b7d3 `jne` + 0x51b7d5 `test edx,edx`	二进制先比秒、再比纳秒 ⇒ 等价于 `elapsed > 25 s`
 B.clock	取时间来源 = CLOCK_MONOTONIC 墙钟	std::time::Instant	clock_gettime(CLOCK_MONOTONIC=1)	-	-	MATCH	GOT 0x9bafe8→elapsed 0x8f3a20→0x8f5bf0→GOT 0x9bf6d0(clock_gettime)，clockid=1 @0x8f3a2c	链：0x51b7b6 取指针 → 0x51b7cd 调用 → elapsed → clock_gettime
-B.per_gen	预算检查位置 = 每代顶部一次	for 循环顶部一次	回边 0x51b7d3→0x51b7e0，检查点 0x51b7cf	-	-	MATCH	0x51b7b6 取 elapsed 指针 / 0x51b7cd 调用 / 0x51cb67 代循环回边	全函数只有 1 处调用取时间函数（变体 B 另有一处 0x51d398）
+B.per_gen	预算检查位置 = 每代顶部一次	for 循环顶部一次	回边 0x51cb67→0x51b7c6，检查点 0x51b7cf	-	-	MATCH	0x51b7b6 取 elapsed 指针 / 0x51b7cd 调用 / 0x51cb67 代循环回边	全函数只有 1 处调用取时间函数（变体 B 另有一处 0x51d398）
 T.thresholds	难度分档阈值（difficulty < N 进下一档）	4 11 26 101 251	4 11 26 101 251	-	-	MATCH	0x3e3da0,0x3e3daf,0x3e3db9,0x3e456d,0x3e458d	0x3e3da0/0x3e3daf/0x3e3db9/0x3e456d/0x3e458d
 T.s	每档槽数 s（精英数 = s）	10 20 30 40 50	10 20 30 40 50	-	-	MATCH	0x3e3d95,0x3e3daa,0x3e3dc3,0x3e4573,0x3e45a3	最后一档（>=251）没有自己的 `mov ecx`，沿用上一档的 50
 T.limit	每档复杂度上限	5 5 10 15 25 200	5 5 10 15 25 200	-	-	MATCH	0x3e3d9a,0x3e3dc8,0x3e4578,0x3e4599，cmovb @0x3e459f（25/200）	第 2 档沿用第 1 档的 5（r9d 没被重写）；最后一档 cmovb 在 25/200 间选
