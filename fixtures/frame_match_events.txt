@@ -64,8 +64,15 @@ my_player_id=229
 expected_screens=match_ready,match_play
 frames_per_screen=3
 frame_gap_s=1.2
-# 相位之间的间隔：\`--phase-gap\` 默认值（秒）。phase2 在采集脚本 touch 触发文件后立刻发。
+# 相位之间的间隔：`--phase-gap` 默认值（秒）。phase2 在采集脚本 touch 触发文件后立刻发。
 phase_gap_s=1.0
+# tick 轴（服务器回 `TickReply` 用；两个基准都是**真回放 1793897298 里的 tick 值**）：
+#   phase1 期间 = 快照那一刻 = 6（回放事件 17..62 的 tick）
+#   phase2 期间 = 第一发那一刻 = 550（回放事件 76..80 的 tick，其后按 60 Hz 走；
+#                 active_tick=615 / start_tick=1281 都在这条轴上）
+tick_phase1=6
+tick_phase2=550
+tick_hz=60
 # 一句话说明每个相位在屏幕上应该看到什么（人读；也给报告用）
 phase1_expect=棋盘 + 士兵 230（带准备圈）+ 靶子 232 + 回合 HUD（轮到 player 229 / soldier 230）+ 函数框空
 phase2_expect=棋盘 + 弹道（修正函数 x+2sin(20x) - 3.694，落点 x=2.5793570733273476）+ 爆炸特效

@@ -1,0 +1,5 @@
+# T8 对局屏 2 屏：原版真机 vs 我方 client，同一份 fixtures/frame_match_events.txt 剧本；复跑命令见 docs/06 §60.7
+# 门槛 = fixtures/frame_diff_thresholds.txt sha256 9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873（预注册）
+screen	verdict	l1_size_ok	l1_ok	l1_dmean_max	l1_dmean	l1_top_color	l1_top_share_pp	l2_ok	l2_blocks_over	l2_max_block_dmean	l2_worst_block	l3_evaluated	l3_diff_px	l3_diff_ratio	l3_max_channel_diff	l3_bbox	noise_max_orig	noise_max_mine
+match_ready	不过（L2，4 块超限）	True	True	0.345	0.345,0.122,0.242	#FFFFFF,#FFFFFF	0.011	False	4	5.71	0,5	False	141591	0.063574	255	0,0,1919,1156	0.000493	0.0
+match_play	不过（L2，3 块超限）	True	True	0.553	0.101,0.5,0.553	#FFFFFF,#FFFFFF	0.265	False	3	18.138	2,2	False	152216	0.068344	255	0,0,1919,1156	0.006745	0.001501
