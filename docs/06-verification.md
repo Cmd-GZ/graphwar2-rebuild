@@ -12034,7 +12034,7 @@ Ghidra 入口    : 0x4eb9d0 / 0x4ebb01 / 0x4ebb59 / 0x4ebb68（同一 FDE 被切
 | 树 | `cargo test --offline` | `--features gdext-bindings` | `coverage_matrix --check` | `check_doc_refs` |
 |---|---|---|---|---|
 | 分支基线 `e912939`（搬完那一步） | 1769 / 0 / 1 ignored | **1875** / 0 / 1 ignored | OK | rc=0 |
-| 合 master `a77e7e0` 之后（本分支现态） | **1769** / 0 / 1 ignored | **1880** / 0 / 1 ignored | OK | rc=0 |
+| 合 master `0722ef1` 之后（**本分支现态**） | **1769** / 0 / 1 ignored | **1880** / 0 / 1 ignored | OK | rc=0 |
 
 差的 +5 全部来自 master 那 11 条（T17/T20 等），与本轮改动无关：`#[test]` 条数在两棵树上**同为 1454**
 （本轮搬的是函数归属，**不新增也不删测试**）。
@@ -12124,11 +12124,12 @@ python3 tools/check_doc_refs.py                 # rc=0
    自校验里钉住了。所以不存在"两套 527"的隐患。
 5. **`docs/02` §17.4 里 `0x4eb9d0` 的自校验口径写错**（"`0x4eb9d0`/`0x4ed670` → `math_function.rs` 通过"），
    本轮已就地更正为 `0x4ed670` 通过 + `0x4eb9d0` 的 Ghidra/FDE 双口径说明（`AGENTS.md` §0 第 6 条）。
-6. **master 的 `docs/06-verification.md` 自带 9 个"已提交"的冲突标记**（3 组 `<<<<<<< HEAD` /
-   `=======` / `>>>>>>> agent/net-events` + `>>>>>>> agent/pixel-rest`，来自 T17/T20 那两次合并）——
-   这是本轮合 master 时撞上的：git 见到它们就"冲突套冲突"。本分支**按两侧内容完整重建**（自校验：
-   "只在 master 有"的行 = 0，多出来的只有 §67/§68 两个代码块共用的 4 行），并把这个事实写进 merge commit。
-   ⚠️ 谁再合 master，只要 master 还没修这个文件，就会再撞一次 —— **建议 lead 在本分支合入后以它为准**。
+6. **（已闭环，留档）master 曾经把 9 个未解的冲突标记提交进 `docs/06-verification.md`**
+   （T17/T20/T23 三次合并留下的是**嵌套**标记，普通三路解冲突只能解外层）。本轮合 master 时先撞上它，
+   我按"去掉标记行逐行比对、'只在 master 有' = 0"完整重建过一版；**随后 lead 在 `f5ac864` 用
+   「干净基线 + 各分支节按编号重排」修好了 master**。本分支最终**以 lead 的重建版为基底、只追加 §74**
+   （`git diff master -- docs/06-verification.md` = **+241 行，全是 §74**），我上一版重建已作废。
+   方法本身可复用：跨分支合 `docs/06` 时，先确认"只在对方有"的行数为 0，再看编号连续。
 7. **`docs/06` §72.6 第 1 条说"master 上 `coverage_matrix --check` 是红的"** —— 本轮实测**基线（master）上是 OK 的**；
    红色是我搬 `src/` 引起的（`ours_funcs` / `src_tree_sha256` 变），按工具重跑生成物后恢复 OK。
    两件事不矛盾，但那句话现在读起来会误导，登记在此（§72 是别人写的历史节，本轮不改它）。
