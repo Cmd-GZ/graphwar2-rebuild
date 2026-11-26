@@ -1,0 +1,53 @@
+# 对局屏「流程状态机」迁回 Rust 台账（`AGENTS.md` §0.4 正确方向；任务 T31 / `task-28`）
+#
+# 口径：`client/src/screens/play_screen.gd`（改前 3 727 行）里**每一处"根据游戏状态决定做什么"**
+# 的判断点，逐条对照 Rust 侧是否**已有复原实现**、那份实现能否**指到原版地址**（一律 ELF vaddr，
+# 见 `AGENTS.md` 三条硬规矩之后"反复踩过的坑"第 1 条）。
+#
+# 判据（规格 §3①）：
+#   搬 = Rust 侧已有复原实现 **且** 能指到地址/真报文；`.gd` 只留"把结果画出来"。
+#   不搬 = 下列任一：纯视图（节点属性/颜色/字号/排版）、我方的自动化与联机接线、
+#          原版证据只到"推断"、或 Rust 侧对应的那份实现本身还没还原。
+#
+# 四档证据（`AGENTS.md` §0.3）：逐位 / 观测 / 推断 / 未知。「—」= 不适用（纯视图）。
+#
+# 列：id  域  gd符号  行区间  这段在判断什么  Rust 侧对应（文件:行）  证据档  本轮搬不搬  不搬缺什么
+id	domain	gd_symbol	lines	what_it_judges	rust_side	evidence	tier	move	missing
+L01	①	begin_match	965-1082	【模式分派】REPLAY / online / 本地三支 + 开局初始化（规则装配、时钟档、靶子/障碍）	src/turnstate.rs:137 `next_state`（只有 `GameStarted` 那一行搬）	状态机整表见 L02；模式分派是我方接线	观测	部分（只搬 `GameStarted` 事件）	模式分派（三种 kind）没有客户端侧证据：原版由 `App`/`root_node` 决定，不在本屏
+L02	①②③④	（GDScript 里**没有**这台机器）	—	【对局状态机本体】8 个 `GameState` 变体 + 迁移表（Setup→WaitingForFunctions→CalculatingResults→SynchronizingResults→ExecutingResults→…→EndingGame）	src/turnstate.rs:137-142 `next_state`；:30-112 `GameState`/`index`	变体名表逐位（`.data.rel.ro` `0x9586d0`–`0x958740`，16 字节/项）；判别值 = 声明序（`serialize` 跳表 `.rodata 0x1c17c0`）；`set_state` 写 `[+0x120]` = `0x4780cc`；`handle_tick` 判 `[+0x120]==2` = `0x470989`；`0x475bac` 写 6。**迁移序列** = 抓包 `GameStateInfo` 观测	观测	搬	—
+L03	②	fire 早退「上一发还在飞」	1840	`if _shot_in_flight:` —— 原版是 `GameState != WaitingForFunctions`（`Fire` 事件只从 `WaitingForFunctions` 出发）	L02 的 `GameState`；`TurnClock::decide`（`0x470989` 拿同一个字节）	同 L02；`Fire` 只从 `WaitingForFunctions` 出发 = 抓包序列观测	观测	搬	—
+L04	②	fire 早退「回放模式」	1835-1839	`_replay_mode` ⇒ 不接管输入	`GwReplayDriver` 已复原，但**回放界面**的输入策略未观测	无	未知	不搬	原版回放屏的控制器行为未观测（`docs/133` §4.2）
+L05	②	fire 早退「当前射手已阵亡」	1842-1844	`not active_soldier.alive`	轮转本体已在 Rust（`next_shooter` 只取活人，`0x463fb6`）；这条是兜底	`0x463fb6`（`call 0x454950` + `test $0x1`）	逐位	不搬	**冗余兜底**（Rust 轮转已保证）；删它会动 `_active_soldier()` 的联机兜底分支
+L06	②	fire 早退「现在是 AI 的回合」	1845-1848	`active_soldier.is_bot` ⇒ 人类不许开火	`graphwar_play_screen_control.rs:538` `BotTurn`（只有闸门，没有「轮到 AI」这一位）	`aigen` 是进化器，何时开火无观测（`docs/16` §53.5 末条）	未知	不搬	「AI 何时动手」没有观测（`docs/AI.md`、`docs/143` §6.4）
+L07	②	fire 早退「先输入一个函数」	1849-1852	`expr == ""`	`fire_functions`（`0x470eb0`）内部的行为未解	—	未知	不搬	输入护栏是我方投影；原版由服务端状态机与服务端 `FunctionFire` 拦
+L08	②	_commit_shot 的 TurnMode 分叉	1905-1921	顺序回合（弹道先飞后结算）vs 同时回合（攒齐再结算一次）	`graphwar_turn_manager.rs` `RoundCollection`（收集段已搬）+ `TurnData[+0x58]` = TurnMode 字节	`docs/16` §50（TurnMode 字节 `TurnData[+0x58]`）；收集顺序 130/130 观测	观测	不搬（只留一行比较）	`is_simultaneous()` 只是一次字节比较；再包一层 Rust 换不掉任何判断
+L09	②	_simultaneous_announced	2229-2250	本回合**该交**的玩家 = 每个还有活士兵的玩家（公告顺序）	`RoundCollection::new(ids)` 只吃这张表，**生成本身不在 Rust**	`docs/86`/`docs/141` §1（一回合一人一发）	推断	不搬	原版 `TurnManager` 的公告表（谁在表里、顺序怎么定）没有反汇编证据
+L10	②	_tick_bot_turn 的 can_fire 合取	2120	`_bot.tick(delta, _running and not _shot_in_flight)`	`BotTurn::tick(delta, can_fire)` 的 `can_fire` 由调用方给 ⇒ 改成读 L02 的状态机	同 L02/L03	观测	搬	—
+L11	②	bot_take_turn 的早退	2130-2161	`soldier.is_bot` / 弹道算不出来 ⇒ 不发	`bot_aim_expression` 已搬；「AI 该不该开火」我方自定	无	未知	不搬	同 L06
+L12	②	_fast_forward	1940-1948	`app.automation` ⇒ 压平时序	我方自动化接线（原版没有 `--selftest`）	—	不适用	不搬	我方工具，不属于原版流程
+L13	③	_begin_shot	1980-2000	把总点数/两张命中表/停止点/`already_settled` 递给生命周期	src/graphwar_game_state_manager.rs:671 `ShotLifecycle::begin`	`0x472814`（死亡块取 `+0x10` 点序号）/`docs/14` §7.3	观测	已搬（§53）	—
+L14	③	_advance_presentation	2000-2014	每帧把「画到第几个点」递给 Rust，执行吐回的事件	src/graphwar_game_state_manager.rs:709 `ShotLifecycle::advance`	同上	观测	已搬（§53）	—
+L15	③	_apply_shot_events	2014-2049	`match kind`：事件类型 → 视图动作（摆特效、置 alive）	—	—	不适用	不搬	这是**视图分派**，不是「游戏状态 → 做什么」
+L16	③	_on_shot_arrived	2049-2077	飞完 ⇒ 在停止点炸、清曲线、问 `_flow.settled()`	src/graphwar_game_state_manager.rs:788 `ShotLifecycle::settle`（每发只收一次）	`docs/143` §2/§3	推断（「飞完才判」）	已搬（§53）	—
+L17	③	_finish_round	2077-2082	`_next_turn(true)` + `_settle_round()`	同上 + L18	—	不适用	不搬	两行**应用层**顺序（换手 → 结算），本身不是判断
+L18	③	_settle_round	2161-2183	回合 +1（Rust 闩）→ 靶子复原判断 → 判胜负	src/graphwar_game_state_manager.rs:788 `settle`（回合 +1 已搬）	`docs/131` §4.3（一个回合只能由打发推进）	观测	已搬（§53，回合 +1）	靶子复原见 L19
+L19	③	_apply_target_reset	2183-2205	「打不全就全部复原」	src/graphwar_target_manager.rs:226 `should_reset_targets` 的**条件与这里不同**	用户实测 + `docs/123` §2.2 形状；语料 397 份 **0 次部分命中**	推断	不搬	**没有真值**；且两份规则（`(turn_clamped&1)==0 && t1 && t2 && flag` vs 「打掉的≠全部」）不一致，合成一份就是把错的固化（`docs/16` §53.6 #1）
+L20	③	_judge_shots	2250-2315	【SynchronizingResults】命中表：谁被打中、在第几个点、停在哪、有没有被障碍拦	src/graphwar_shot_calculator/settle.rs:118 `resolve_points_owned`（+ `Hit{index,arc}`）	规则本体逐位（`docs/16` line 488 / `docs/120`：`hit_test` ≡ `resolve_points`）；射手按**实体 id** 排除 = `0x3c4452`（有弹道点）/`0x3c3e81`（空弹道）	逐位	搬	—
+L21	③	_first_point_within	2315-2322	弹道里第一个落进半径的点序号 —— **与内核判死是同一条规则的第二次实现**（源码注释自己写着）	src/graphwar_shot_calculator/settle.rs:118 内的 `d <= radius` 扫描，`Hit.index` 就是它	同 L20	逐位	搬	—
+L22	③	_note_shot_status	2322-2334	命中表 → 状态行文本	—	—	不适用	不搬	视图（`_status_label.visible = false`，只给自检读）
+L23	③	_resolve_shots	2334-2347	整批结算：`begin(0,…)` + `land_all()` + `abort()`	src/graphwar_game_state_manager.rs:778 `land_all` / :798 `abort`	`docs/16` §53.6（旧实现同口径）	观测	已搬（§53）	—
+L24	③	_clip_to_obstacle	2205-2229	弹道在障碍处**画**到哪（`points` 仍是全量）	`plane::is_occupied` 同一张掩膜，但这里的产物只喂绘制	`docs/30` §2	观测	不搬	它只决定**画**多长（视图）；判定用的是 L20 那张表
+L25	③	_set_curve / _advance_curve / _curve_reveal / _curve_finished	1264-1368	揭示点数怎么读（真 `Line2D` 的点数）+ 每帧推 tick	揭示量是**测量**（视图）；「揭完没有」在 `ShotLifecycle`	`docs/16` §69（`(fractional_tick−active_tick)×30`）	观测	不搬	读数来自视图节点；搬它等于把「画到哪」当「飞到哪」
+L26	①	_next_turn	2382-2408	换手：轮转（已 Rust）+ 时钟归零 + AI 闸门 + 载入函数文本	`graphwar_turn_manager.rs` `PlayerTurns::next_shooter`（`0x463da0`）；`TurnClock::restart`	`0x463f40`–`0x463f58`/`0x463fc7`–`0x463fca`/`0x463fb6`/`0x464016` 逐位	逐位	已搬（§52）	剩下的 6 行是**视图调用**（`_load_active_function` / `_update_timer_label` / `_refresh_function_list`）
+L27	①	_next_turn 的 online 早退	2391-2394	联机：换手是服务端 `TurnInfo` 的事	服务端权威（`docs/134`/`docs/139`）	真报文	观测	不搬	联机侧本轮不做（规格 §4 禁改 `net/**`）
+L28	①	_check_match_over	2421-2452	【胜负时机】结算后问规则 ⇒ 结束局 + 上报	src/graphwar_game_state_manager.rs:1113 `LevelRules::evaluate`（已搬）；胜负**时机** = L02 的 `GameEnded` 事件	判据 `0x473520`/`0x4759f0`/`0x478133`–`0x478236`	逐位	已搬（§52）；时机本轮补（L02）	—
+L29	④	_alive_by_team	2452-2461	每队存活**士兵数**（`{0:n, 1:m}`）	src/game.rs:1352 `Match::get_alive_teams`（`0x473520`）	`0x473520` **逐位**（枚举生命表 → `0x454950` 判活 → `0x3c2120` 查队伍）；原版**只数「有没有」不数「几个」**（`docs/150` §2.1）	逐位	搬	—
+L30	④	_teams_present	2461-2473	开局就有士兵的队伍（不是「还活着的队伍」）	src/game.rs:1352 同一函数的两条输出位	同 L29	逐位	搬	—
+L31	④	_human_team	2473-2487	人类玩家所在队伍（第一个非 Bot 玩家）	—	—	未知	不搬	「谁是人类」是客户端会话信息，原版在 `LocalPlayer` manager 里（`docs/16` §54 已升 wired），但那台 manager 与本屏的玩家表没有接线证据
+L32	④	_process 超时支	3620-3638	回合时限到 ⇒ 按原版 `call fire_functions`，打不出去才兜底换手	`graphwar_play_screen_control.rs:462` `TurnClock::decide` → `turnstate::should_auto_fire`	`0x470989`–`0x4709ec`（`cmp [+0x120],2` / `get_end_of_turn_tick` / `cmp now,end` / `cmp [+0x11c],0` → `call 0x470eb0`）	观测	已搬（§53）	兜底分支（「打不出去 ⇒ 换手」）是我方选择
+L33	④	_check_match_over 的联机/回放早退	2423-2430	联机胜负由服务端 `EndingGame` 判；回放由录像 `GameStateInfo` 判	服务端/录像权威	真报文	观测	不搬	同 L27
+L34	其他	_process 的模式分派	3601-3620	replay ⇒ `_replay_tick`；online ⇒ `_online_tick`；本地 ⇒ 时钟 + AI	—	—	不适用	不搬	模式分派是接线，不是判断
+L35	其他	_online_tick / _online_can_fire / _fire_online / _on_online_message / _draw_online_shot	3279-3551	联机：换手/生死/胜负/弹道全由服务端报文驱动	服务端权威（`src/graphwar_game_server.rs`）	真报文（`docs/134`/`docs/139`）	观测	不搬	本轮不做（规格 §4 禁改 `client/src/net/**`；`docs/16` §53.6 #4）
+L36	其他	_begin_replay / _replay_tick / _apply_replay_events / _realize_replay_state	2596-2763	回放：局面与时钟按 tick 推进	`graphwar_replay_player.rs` 已复原；`GwReplayDriver` 已接（§56/§57）	`docs/133` §3/§5	观测	不搬	回放屏控制器行为未观测（`docs/133` §4.2）
+L37	其他	_target_positions / _level_obstacles	1105-1128, 1665-1680	靶子数目 / 障碍坐标	数目逐位（`docs/118` §7.1）；障碍由内核生成器算（`docs/126`）	数目逐位，坐标我方自定	观测	不搬	原版每关坐标是随机的，没有固定值可对（`docs/118` §8 #16）
+L38	其他	level_state / plane_state / online_state / replay_state	1449-1503, 2487-2532, 2946-2983, 3551-3601	诊断快照（自检/`--dump` 读）	—	—	不适用	不搬	只读投影，不是流程判断

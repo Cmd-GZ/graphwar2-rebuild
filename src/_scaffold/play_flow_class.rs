@@ -10,6 +10,10 @@
 //! | `client/src/game/level_rules.gd`（`GwLevelRules`） | 219 | `0x473520` + `0x4759f0` + `0x478133`–`0x478236` | [`GwLevelRules`]（本文件）→ [`crate::graphwar_play_screen_control::LevelRules`] |
 //! | `client/src/game/turn_driver.gd`（`GwTurnDriver`） | 121 | `0x463da0`（`TurnManager::next_turn`） | [`GwTurnDriver`]（本文件）→ [`crate::graphwar_turn_manager`] |
 //!
+//! 第三块（T31 本轮）不是"某份 `.gd` 的替身"，而是**本屏从来就没有过的那个东西**：
+//! 原版的**对局状态机**（8 个 `GameState`，`[self+0x120]` 那一个字节）。播放屏在此之前
+//! 只有一列 `_shot_in_flight` 布尔当投影 ⇒ [`GwTurnState`]（本文件）→ [`crate::turnstate::next_state`]。
+//!
 //! 两个类名**保持不变**（`GwLevelRules` / `GwTurnDriver`），所以播放屏的调用点只需从
 //! "`.gd` 里的实现"换成"扩展类的同名方法"，不需要重命名任何概念。
 //!
@@ -21,6 +25,9 @@
 //! | `GwTurnDriver.next_shooter()` | [`crate::graphwar_turn_manager::PlayerTurns::next_shooter`] | **逐位**（`0x463f40`–`0x463f58` 先自增再取；`0x463fc7` 最多试 len 次；`0x463fb6` 判活；`0x464016` 全灭哨兵 0） |
 //! | `GwTurnDriver.round_*()` | [`crate::graphwar_turn_manager::RoundCollection`] | **观测**（`docs/141` §4：130/130 批按公告顺序） |
 //! | `GwTurnDriver` 的**玩家之间**轮转 | 本文件的 `cursor` | **未知**（原版是 `HashMap` 迭代序，`docs/109` §6-A）；这里固定成调用方给的玩家顺序 |
+//! | `GwShotFlow.judge()` | [`crate::graphwar_shot_calculator::settle::resolve_points_owned`] | **逐位**（规则本体；射手按 id 排除 = `0x3c4452`/`0x3c3e81`） |
+//! | `GwLevelRules.evaluate_soldiers()` | [`crate::game::Match::get_alive_teams`] 的入参整形 + 同一个 `evaluate` | **逐位**（`0x473520`：枚举生命表 → `0x454950` 判活 → `0x3c2120` 查队伍；只数"有没有"） |
+//! | `GwTurnState.apply()` / `can_fire()` | [`crate::turnstate::next_state`] / `GameState::index` | 状态字节 **逐位**（变体表 `.data.rel.ro 0x9586d0`、`set_state` `0x4780cc`、`cmp BYTE [self+0x120],2` `0x470989`）；迁移序列 **观测**（真报文 `GameStateInfo`） |
 //!
 //! # 一处必须说明的编号换算
 //!
@@ -36,10 +43,20 @@ use crate::graphwar_game_state_manager::{PlannedKill, ShotEvent, ShotLifecycle};
 use crate::graphwar_play_screen_control::{
     BotTurn, LevelKind, LevelRules, MatchState, TurnAction, TurnClock, TARGET_TEAM,
 };
+use crate::graphwar_shot_calculator::settle::{resolve_points_owned, Target};
 use crate::graphwar_turn_manager::{PlayerTurns, RoundCollection, SubmitResult, SOLDIER_ID_NONE};
+use crate::turnstate::{GameState, TurnEvent};
 
 /// 士兵下标 → `PlayerTurns` 内部 id 的偏移（见文件头"编号换算"）。
 const SOLDIER_ID_SHIFT: i64 = 1;
+
+/// 靶子 id 在 `Target` 表里的上偏移（区分"士兵下标"与"靶子 id"）。
+///
+/// 数值与 `client/src/screens/play_screen.gd` 的 `TARGET_ID_BASE` **同值**（1000），
+/// 但两处用途不同：界面上它给**实体 id** 编不撞的号；这里只用来把
+/// [`crate::graphwar_shot_calculator::settle::Target`] 的一张表切成两类。
+/// 它是我方的映射约定，**不是**原版常量。
+const TARGET_ID_BASE: i64 = 1000;
 
 /// 从 `Variant` 读一个整数（缺键/类型不对 ⇒ 默认值）。GDScript 的 `int(d.get(k, def))`。
 fn dict_int(d: &VarDictionary, key: &str, default: i64) -> i64 {
@@ -207,7 +224,61 @@ impl GwLevelRules {
             targets_alive: dict_int(&state, "targets_alive", 0),
             turns_used: dict_int(&state, "turns_used", 0),
         };
-        let v = self.rules.evaluate(&st);
+        self.evaluate_state(&st)
+    }
+
+    /// 与 [`GwLevelRules::evaluate`] 同一个判据，但**入参是实体表**而不是已经数好的两队人数。
+    ///
+    /// 这一步原来在 `.gd` 的 `_alive_by_team()` + `_teams_present()` 里：两个纯循环，
+    /// 一个数"每队几个活的"、一个取"开局就有士兵的队伍"。它们的原版对应物是
+    /// **`get_alive_teams`（`0x473520`，640 字节，逐位）**：遍历**生命表**的 id →
+    /// `0x454950` 判活 → `0x3c2120` 查队伍，返回 `(Team1 有活体, Team2 有活体)` 两位。
+    /// 注意原版**只数"有没有"，不数"几个"**（`docs/150` §2.1）—— 所以这里的计数只是
+    /// 中间量，判据仍然只问 `> 0` / `== 0`（[`MatchState::survivors_of`]）。
+    ///
+    /// `soldiers` = `_soldiers` 原表：`[{team: int, alive: bool}, …]`。**开局在场的队伍**
+    /// 来自全表（含已阵亡的），否则一队全灭后 `enemy_present` 永远为假、对战关判不出胜负。
+    #[func]
+    fn evaluate_soldiers(
+        &self,
+        soldiers: VarArray,
+        targets_total: i64,
+        targets_alive: i64,
+        turns_used: i64,
+    ) -> VarDictionary {
+        let mut alive_team0 = 0i64;
+        let mut alive_team1 = 0i64;
+        let mut teams_present: Vec<i64> = Vec::new();
+        for i in 0..soldiers.len() {
+            let Some(v) = soldiers.get(i) else { continue };
+            let d = v.to::<VarDictionary>();
+            let team = dict_int(&d, "team", 0);
+            if !teams_present.contains(&team) {
+                teams_present.push(team);
+            }
+            if !d.get("alive").map(|v| v.to::<bool>()).unwrap_or(false) {
+                continue;
+            }
+            match team {
+                0 => alive_team0 += 1,
+                1 => alive_team1 += 1,
+                _ => {} // 其它队伍号不进 `MatchState` 的两个计数位（与原 `.gd` 同形）
+            }
+        }
+        let st = MatchState {
+            alive_team0,
+            alive_team1,
+            teams_present,
+            targets_total,
+            targets_alive,
+            turns_used,
+        };
+        self.evaluate_state(&st)
+    }
+
+    /// `MatchState` → GDScript 字典（两个入口共用这一份整形，键与旧 `.gd` 一致）。
+    fn evaluate_state(&self, st: &MatchState) -> VarDictionary {
+        let v = self.rules.evaluate(st);
         let mut out = VarDictionary::new();
         out.set("over", v.over);
         out.set("human_won", v.human_won);
@@ -525,7 +596,7 @@ mod tests {
     //! （`PlayerTurns` 的轮转规则本身有它自己的单测）。`VarArray` 之类需要引擎初始化，
     //! 所以这里不测 `#[func]` 的搬运层，那部分由 `client/tools/play_flow_check.gd` 覆盖。
 
-    use super::SOLDIER_ID_SHIFT;
+    use super::{parse_turn_event, SOLDIER_ID_SHIFT};
 
     #[test]
     fn soldier_index_shift_avoids_the_sentinel() {
@@ -534,6 +605,36 @@ mod tests {
         assert_eq!(SOLDIER_ID_SHIFT, 1);
         assert_eq!(0 + SOLDIER_ID_SHIFT, 1, "0 号士兵的内部 id 必须非 0");
         assert_eq!(7 - SOLDIER_ID_SHIFT, 6, "返回值 = 内部 id − 1");
+    }
+
+    /// `GwTurnState` 的字符串事件表必须覆盖 `TurnEvent` 的**每一个**变体。
+    ///
+    /// 这一条防的是"Rust 侧加了变体、GDScript 侧的名字表没跟上"：
+    /// 迁移表本体在 `turnstate::next_state`（有它自己的真值序列测试），这里只钉
+    /// **名字 → 变体**这一层，纯逻辑、不碰引擎。
+    #[test]
+    fn turn_event_names_cover_every_variant() {
+        use crate::turnstate::TurnEvent;
+        let all = [
+            ("fire", TurnEvent::Fire),
+            ("results_computed", TurnEvent::ResultsComputed),
+            ("activate", TurnEvent::Activate),
+            ("turn_ended", TurnEvent::TurnEnded),
+            ("game_ended", TurnEvent::GameEnded),
+            ("game_started", TurnEvent::GameStarted),
+            ("reset", TurnEvent::Reset),
+        ];
+        for (name, ev) in all {
+            assert_eq!(parse_turn_event(name), Some(ev), "事件名 `{name}` 必须映射到 {ev:?}");
+        }
+        assert_eq!(parse_turn_event("nope"), None, "不认识的名字必须给 None（不改状态）");
+        // 反向：每个 `TurnEvent` 变体都得有一个名字（少一个就等于 GDScript 永远发不出它）。
+        for ev in all.iter().map(|(_, e)| *e) {
+            assert!(
+                all.iter().any(|(n, e)| *e == ev && parse_turn_event(n) == Some(ev)),
+                "{ev:?} 没有对应的名字"
+            );
+        }
     }
 }
 
@@ -774,6 +875,166 @@ impl GwShotFlow {
         self.flow.turns_used()
     }
 
+    /// 一次开火的**命中表**（原版 `SynchronizingResults`：服务端在开火那一刻就算完结果）。
+    ///
+    /// 这一格原来在 `.gd` 的 `_judge_shots()` 里 —— 它自己建实体表、自己调内核
+    /// `hit_test`、再**用同一个判据重算一遍点序号**（`_first_point_within()` 的注释
+    /// 写着"与内核判死是同一条规则…所以这里按同一个判据再算一次序号"）。
+    /// 现在判定本体只走 [`crate::graphwar_shot_calculator::settle::resolve_points_owned`]
+    /// **一份**，它回的 `Hit{index, arc}` 就是"第几点打中的"，不需要第二次扫描。
+    ///
+    /// 与 `.gd` 旧实现的三处**语义对齐**（不是改写，是照原版指令）：
+    ///
+    /// 1. **射手按实体 id 排除**：`0x3c4452`（有弹道点的分支）/ `0x3c3e81`（空弹道分支）
+    ///    比较的都是开火记录 `+0x18` 的射手 id；旧 `.gd` 用的是 `is_same()` 对象同一性
+    ///    （界面侧没有实体 id，只能拿字典引用比）。这里改成传**士兵下标**当 id。
+    /// 2. **死者不进表**：命中表是开火那一刻对着存活表算的（原版同样在 `SynchronizingResults`）。
+    /// 3. **`stop` 取弹道实际停点**（撞障碍 = 撞击点，否则最后一点）—— 与 `docs/14` §12.1 一致。
+    ///
+    /// 入参形状（与 `.gd` 一一对应）：
+    ///
+    /// ```text
+    /// shots       [{points: PackedVector2Array, shooter: int}]   # shooter = 士兵下标，-1 = 不排除
+    /// soldiers    _soldiers 原表：[{pos: Vector2, alive: bool}, …]   # 下标 = 士兵下标
+    /// target_rows GwTargetSet.entities()：[{pos, radius, target_id}, …]（只含活的）
+    /// obstacles   _obstacles：[{pos: Vector2, size: float}, …]
+    /// soldier_radius  GwCore.SOLDIER_HIT_RADIUS（PosInfo.radius 恒 0.5，docs/150 §Q1）
+    /// ```
+    ///
+    /// 返回 `{kills, target_kills, stop, blocked, sources, note}`：
+    /// `kills[i] = {kind:"soldier", index, point, pos}`、
+    /// `target_kills[i] = {kind:"target", target_id, point, pos}`（都按 `point` 升序 = 弹道先后）。
+    #[func]
+    fn judge(
+        &mut self,
+        shots: VarArray,
+        soldiers: VarArray,
+        target_rows: VarArray,
+        obstacles: VarArray,
+        soldier_radius: f64,
+    ) -> VarDictionary {
+        // ① 掩膜只放**障碍**（`docs/30` §2：把士兵画进掩膜会让弹道错误地停在士兵处）。
+        let mut mask = crate::plane::empty_mask();
+        for i in 0..obstacles.len() {
+            let Some(v) = obstacles.get(i) else { continue };
+            let o = v.to::<VarDictionary>();
+            let (x, y) = vec2_of(o.get("pos"));
+            let size = o.get("size").map(|v| v.to::<f64>()).unwrap_or(0.0);
+            crate::plane::rasterize(&mut mask, x, y, size, 0x00);
+        }
+
+        // ② 参评实体表：士兵（id = **士兵下标**）+ 靶子（id = TARGET_ID_BASE + target_id）。
+        let mut targets: Vec<Target> = Vec::new();
+        let mut soldier_pos: Vec<(f64, f64)> = vec![(0.0, 0.0); soldiers.len()];
+        for i in 0..soldiers.len() {
+            let Some(v) = soldiers.get(i) else { continue };
+            let s = v.to::<VarDictionary>();
+            let pos = vec2_of(s.get("pos"));
+            soldier_pos[i] = pos;
+            if !s.get("alive").map(|v| v.to::<bool>()).unwrap_or(false) {
+                continue; // 死者不进表（③ 命中表对着**开火那一刻**的存活表算）
+            }
+            targets.push(Target { id: i as i64, x: pos.0, y: pos.1, radius: soldier_radius });
+        }
+        let mut target_pos: Vec<(i64, (f64, f64))> = Vec::new();
+        for i in 0..target_rows.len() {
+            let Some(v) = target_rows.get(i) else { continue };
+            let t = v.to::<VarDictionary>();
+            let pos = vec2_of(t.get("pos"));
+            let radius = t.get("radius").map(|v| v.to::<f64>()).unwrap_or(soldier_radius);
+            let tid = dict_int(&t, "target_id", -1);
+            if tid < 0 {
+                continue;
+            }
+            target_pos.push((tid, pos));
+            targets.push(Target { id: TARGET_ID_BASE + tid, x: pos.0, y: pos.1, radius });
+        }
+
+        // ③ 逐发判定。停点/拦下是**跨发**累计的（同时回合的整批结算要合并成一份）。
+        let mut kills: Vec<(usize, i64, (f64, f64))> = Vec::new();
+        let mut target_kills: Vec<(usize, i64, (f64, f64))> = Vec::new();
+        let mut stop = (0.0f64, 0.0f64);
+        let mut blocked = false;
+        let mut judged: i64 = 0;
+        for i in 0..shots.len() {
+            let Some(v) = shots.get(i) else { continue };
+            let sh = v.to::<VarDictionary>();
+            let points: Vec<(f64, f64)> = match sh.get("points") {
+                Some(p) => p
+                    .to::<PackedVector2Array>()
+                    .as_slice()
+                    .iter()
+                    .map(|p| (p.x as f64, p.y as f64))
+                    .collect(),
+                None => Vec::new(),
+            };
+            if points.is_empty() {
+                continue; // 没有弹道点 ⇒ 这一发不参与（旧 `.gd` 同一个 `continue`）
+            }
+            let shooter = dict_int(&sh, "shooter", -1);
+            let owner = if shooter >= 0 { Some(shooter) } else { None };
+            // ↓ 判定本体：与 `graphwar_shot_calculator::settle::resolve`（以及内核
+            //   `hit_test`）**同一个函数**，这里没有第二份实现。
+            let out = resolve_points_owned(&mask, &targets, &points, owner);
+            judged += 1;
+            blocked = blocked || out.blocked;
+            stop = out.stop;
+            // `hits` 的顺序 = 弹道经过的先后（`Hit.arc` 递增）；`index` = 第几点打中的。
+            for h in &out.hits {
+                if h.id >= TARGET_ID_BASE {
+                    let tid = h.id - TARGET_ID_BASE;
+                    let pos = target_pos
+                        .iter()
+                        .find(|(t, _)| *t == tid)
+                        .map(|(_, p)| *p)
+                        .unwrap_or((0.0, 0.0));
+                    target_kills.push((h.index, tid, pos));
+                } else {
+                    let pos = soldier_pos.get(h.id as usize).copied().unwrap_or((0.0, 0.0));
+                    kills.push((h.index, h.id, pos));
+                }
+            }
+        }
+        // 按**弹道点序号**升序（多个死者时先被打到的先落；`docs/65` §1 的 tick 语义）。
+        kills.sort_by_key(|k| k.0);
+        target_kills.sort_by_key(|k| k.0);
+
+        let mut kill_rows = VarArray::new();
+        for (point, index, pos) in &kills {
+            let mut d = VarDictionary::new();
+            d.set("kind", &GString::from("soldier"));
+            d.set("index", *index);
+            d.set("point", *point as i64);
+            d.set("pos", to_vec2(*pos));
+            kill_rows.push(&d);
+        }
+        let mut target_rows_out = VarArray::new();
+        for (point, tid, pos) in &target_kills {
+            let mut d = VarDictionary::new();
+            d.set("kind", &GString::from("target"));
+            d.set("target_id", *tid);
+            d.set("point", *point as i64);
+            d.set("pos", to_vec2(*pos));
+            target_rows_out.push(&d);
+        }
+        let mut out = VarDictionary::new();
+        out.set("kills", &kill_rows);
+        out.set("target_kills", &target_rows_out);
+        out.set("stop", to_vec2(stop));
+        out.set("blocked", blocked);
+        // `sources` / `note` 只是状态行（`_status_label.visible = false`，自检读）的措辞，
+        // 不参与任何分支；旧 `.gd` 从 `GwCore.hit_test` 拿的那两个键在 gdext 版里
+        // 其实不存在（`HIT_KEYS` 只有 ok/hits/hit_points/first_hit/stop/blocked/error），
+        // 一直是 `"<null>"`。这里给一个真实的来源名。
+        let mut sources = VarArray::new();
+        for _ in 0..judged {
+            sources.push(&GString::from("resolve_points_owned"));
+        }
+        out.set("sources", &sources);
+        out.set("note", &GString::from(""));
+        out
+    }
+
     /// 只读快照（自检/诊断）。
     #[func]
     fn snapshot(&self) -> VarDictionary {
@@ -787,6 +1048,140 @@ impl GwShotFlow {
         d.set("targets_landed", s.targets_landed);
         d.set("settled", s.settled);
         d.set("turns_used", s.turns_used);
+        d
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GwTurnState —— 对局**状态机本体**（8 个 `GameState` + `turnstate::next_state`）
+// ---------------------------------------------------------------------------
+//
+// **不是原版的东西**：原版没有这个类 —— 那台状态机是
+// `graphwar_game_state_manager` 里的一个**字节** `[self+0x120]`（`set_state` = `0x4780cc`），
+// 8 个变体的名字与判别值在 `.data.rel.ro 0x9586d0`–`0x958740` 那张表里。
+// 本类只是把那**一个字节 + 那张迁移表**抬到 GDScript 能问的地方。
+//
+// 逻辑本体在 [`crate::turnstate`]（`GameState` / `TurnEvent` / `next_state`），
+// 本文件**没有**第二份迁移表。
+
+/// 对局状态机（原版 `GraphwarGameState`，8 个变体）。
+///
+/// ```text
+/// var st := GwTurnState.new()          # 初始 = Setup（原版 `[+0x120]` 的新局值）
+/// st.apply("game_started")             # Setup -> WaitingForFunctions
+/// st.can_fire()                        # 只有 WaitingForFunctions 才是 true
+/// st.apply("fire")                     # -> CalculatingResults
+/// st.apply("results_computed")         # -> SynchronizingResults
+/// st.apply("activate")                 # -> ExecutingResults
+/// st.apply("turn_ended")               # -> WaitingForFunctions
+/// st.apply("game_ended")               # -> EndingGame（**只从 ExecutingResults** 出发）
+/// st.state()                           # 状态名（与协议里的 `GameStateInfo` 同名）
+/// st.state_byte()                      # 判别值（写进 `[+0x120]` 的那个字节）
+/// st.reset()                           # 换局 / 退出：**无条件**回 Setup
+/// ```
+///
+/// `apply()` 在"该事件在当前状态下无意义"时返回空串并**不改状态**
+/// （= 原版 `next_state` 的 `None`；`set_state` 不会被调 ⇒ 字节不动）。
+#[derive(GodotClass)]
+#[class(base = RefCounted)]
+pub struct GwTurnState {
+    base: Base<RefCounted>,
+    state: GameState,
+}
+
+#[godot_api]
+impl IRefCounted for GwTurnState {
+    fn init(base: Base<RefCounted>) -> Self {
+        // 原版新局的状态字节是 `Setup`（1）：`0x475bac` 那条 `mov BYTE [self+0x120], 6` 是
+        // 收场（`EndingGame`），开局则由 `root_node` 那侧写 —— 本类取 `turnstate` 表的起点。
+        Self { base, state: GameState::Setup }
+    }
+}
+
+/// GDScript 侧的事件名 → [`TurnEvent`]（名字与 `docs/14` §2 的状态图一一对应）。
+///
+/// `pub(crate)` 只为单测能直接验这张表；`#[func]` 走字符串入口。
+fn parse_turn_event(name: &str) -> Option<TurnEvent> {
+    Some(match name {
+        "fire" => TurnEvent::Fire,
+        "results_computed" => TurnEvent::ResultsComputed,
+        "activate" => TurnEvent::Activate,
+        "turn_ended" => TurnEvent::TurnEnded,
+        "game_ended" => TurnEvent::GameEnded,
+        "game_started" => TurnEvent::GameStarted,
+        "reset" => TurnEvent::Reset,
+        _ => return None,
+    })
+}
+
+#[godot_api]
+impl GwTurnState {
+    /// 当前状态名（= 协议 `GameStateInfo` 里的字符串，`turnstate::GameState::as_str`）。
+    #[func]
+    fn state(&self) -> GString {
+        GString::from(self.state.as_str())
+    }
+
+    /// 判别值（写进 `[+0x120]` 的那个字节；`turnstate::GameState::index`）。
+    #[func]
+    fn state_byte(&self) -> i64 {
+        self.state.index() as i64
+    }
+
+    /// 施加一个事件。返回**新**状态名；空串 = 该事件在当下无意义（状态没变）。
+    #[func]
+    fn apply(&mut self, event: GString) -> GString {
+        let Some(ev) = parse_turn_event(&event.to_string()) else {
+            return GString::new();
+        };
+        match crate::turnstate::next_state(self.state, ev) {
+            Some(next) => {
+                self.state = next;
+                GString::from(next.as_str())
+            }
+            None => GString::new(),
+        }
+    }
+
+    /// 现在能不能开火 = `state == WaitingForFunctions`。
+    ///
+    /// 依据：`turnstate::next_state` 里 `Fire` **只**从 `WaitingForFunctions` 出发；
+    /// 同一个字节也是 `handle_tick` 超时判据的第一项（`0x470989` 的
+    /// `cmp BYTE [self+0x120], 2`）—— 两处读的是**同一格**。
+    #[func]
+    fn can_fire(&self) -> bool {
+        self.state == GameState::WaitingForFunctions
+    }
+
+    /// 是不是开局态（`Setup`）。
+    #[func]
+    fn is_setup(&self) -> bool {
+        self.state == GameState::Setup
+    }
+
+    /// 是不是收场态（`EndingGame`）。
+    #[func]
+    fn is_ending(&self) -> bool {
+        self.state == GameState::EndingGame
+    }
+
+    /// 换局 / 退出对局：**无条件**回 `Setup`。
+    ///
+    /// 与 `apply("reset")` 的区别：迁移表里 `Reset` 只从 `EndingGame` 出发（表里那条），
+    /// 而本屏"中途退出对局"（`end_match()`）可能不在 `EndingGame` ⇒ 这是**我方**的
+    /// 清场入口，不假装它是一条原版迁移。
+    #[func]
+    fn reset(&mut self) {
+        self.state = GameState::Setup;
+    }
+
+    /// 只读快照（自检/诊断）。
+    #[func]
+    fn snapshot(&self) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        d.set("state", &GString::from(self.state.as_str()));
+        d.set("state_byte", self.state.index() as i64);
+        d.set("can_fire", self.can_fire());
         d
     }
 }

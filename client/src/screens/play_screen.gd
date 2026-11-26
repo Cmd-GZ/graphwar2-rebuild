@@ -254,6 +254,16 @@ var _judged: Dictionary = {}
 var _flow := GwShotFlow.new()
 ## 本地回合时钟（超时谓词 `0x470989`–`0x4709ec`）。
 var _turn_clock := GwTurnClock.new()
+## **对局状态机本体**（8 个 `GameState`，原版是 `[self+0x120]` 那一个字节）。
+##
+## 迁移表在 Rust（`GwTurnState` → `src/turnstate.rs::next_state`），本屏只**发事件、问状态**。
+## 在此之前本屏没有这台机器 —— 只有 `_shot_in_flight` 一列布尔当投影，而 `fire()` 的早退
+## 判断（"上一发还在飞"）就是那条投影的读点。现在那个判断改成 `can_fire()`
+## = `state == WaitingForFunctions`（`Fire` 只从这一态出发；同一个字节也是
+## `handle_tick` 超时判据的第一项，`0x470989`）。
+##
+## ⚠️ 联机局不驱动它：那边状态由**服务端** `GameStateInfo` 说了算（`docs/134` §7.1）。
+var _match_state := GwTurnState.new()
 ## AI 回合闸门（**我方自定**：原版 AI 时序未观测）。
 var _bot := GwBotTurn.new()
 ## 效果层（`docs/143` §1）。由 `build()` 挂到棋盘上。
@@ -1102,6 +1112,10 @@ func begin_match() -> void:
 	_turn_clock.set_time_mode(int(st.time_mode))
 	_bot.configure(BOT_THINK_SECONDS)
 	_bot.disarm()
+	# 开局：`Setup --GameStarted--> WaitingForFunctions`（`turnstate::next_state`）。
+	# 原版这一步在 `root_node` 那侧把状态字节写成 2（`0x475bac` 是同族的写点，
+	# 收场写 6）；我们没有那台 root_node，开局点就是这里。
+	_match_state.apply("game_started")
 	_status("关卡规则：%s ／ 靶子 %d ／ 回合上限 %s" % [_rules.kind_name(), _targets.total(),
 		"∞" if _rules.turn_limit() <= 0 else str(_rules.turn_limit())])
 
@@ -1862,8 +1876,11 @@ func fire() -> bool:
 		_status("回放模式不接管输入（这一局的每一发都来自录像）")
 		return false
 	# ① 发射期间不能再发（docs/143 §4）。原版的状态机里 `Fire` 只从
-	# `WaitingForFunctions` 出发，弹道在飞时服务端根本不收 `FunctionFire`。
-	if _shot_in_flight:
+	# `WaitingForFunctions` 出发（`turnstate::next_state`），弹道在飞时服务端根本不收
+	# `FunctionFire`。⇒ 这条早退**问 Rust 的状态机**（`GwTurnState.can_fire()`），
+	# 不再读 `_shot_in_flight` 那条投影。联机局不驱动本地状态机 ⇒ 仍旧读投影。
+	var can_fire := _match_state.can_fire() if not _online_mode else not _shot_in_flight
+	if not can_fire:
 		_status("上一发还在飞（服务端此时是 ExecutingResults）⇒ 不能再发")
 		return false
 	var active_soldier := _active_soldier()
@@ -1925,9 +1942,14 @@ func _commit_shot(shot: Dictionary) -> void:
 	var app_node := app()
 	if app_node == null:
 		return
+	# 状态机：`WaitingForFunctions --Fire--> CalculatingResults`（`turnstate::next_state`）。
+	# 原版这条迁移就是 `set_state`（`0x4780cc`）写 `[self+0x120] = 3`。
+	_match_state.apply("fire")
 	# 命中表在**开火这一刻**就算好（= 原版的 `SynchronizingResults`：服务端立刻算完），
 	# 但**不立刻生效**：哪一发什么时候落地由弹道自己的 tick 决定（`docs/65`）。
 	shot["judged"] = _judge_shots([shot])
+	# `CalculatingResults --ResultsComputed--> SynchronizingResults`（= 4）。
+	_match_state.apply("results_computed")
 	if int(app_node.state.turn_mode) == GwModes.Turn.SIMULTANEOUS:
 		# 同时回合：先全部记下，轮完再结算（真实结算在 src/graphwar_shot_calculator/settle.rs，docs/86）。
 		# **"本回合齐了没有"是流程** ⇒ 由 Rust 的 `RoundCollection` 判（`docs/141` §1：
@@ -1943,6 +1965,7 @@ func _commit_shot(shot: Dictionary) -> void:
 			_turn_driver.round_reset()
 			_next_turn(true)
 			_settle_round()
+			_match_state.apply("turn_ended")   # 整批结算完 ⇒ 回 WaitingForFunctions
 		else:
 			_next_turn(false)
 		return
@@ -1976,6 +1999,7 @@ func _reset_shot_state() -> void:
 	_pending_shot = {}
 	_judged = {}
 	_flow.reset()                     # 生命周期 + 回合计数一起归零（Rust）
+	_match_state.reset()              # 对局状态机回 `Setup`（Rust）
 	_bot.disarm()                     # AI 闸门（Rust）
 	_turn_driver.round_reset()        # 同时回合制的收集器（Rust 侧）
 	_fx_log.clear()
@@ -2018,6 +2042,8 @@ func _begin_shot(shot: Dictionary, already_settled := false) -> void:
 		_judged.get("target_kills", []),
 		_judged.get("stop", Vector2.ZERO),
 		already_settled)
+	# `SynchronizingResults --Activate--> ExecutingResults`（= 5）：弹道开始按 tick 执行。
+	_match_state.apply("activate")
 
 ## 每帧推进：把"画到第几个点"递给 Rust，执行它吐回来的事件。
 ##
@@ -2095,8 +2121,14 @@ func _on_shot_arrived(phase: String, stop: Vector2) -> void:
 			_status("%s ／ 本局已结束（服务端 `EndingGame`）" % _shot_status)
 		return
 	if _flow.settled():
-		return                      # 压平模式：这一发在开火那一刻已经结算过了
+		# 压平模式：这一发在开火那一刻已经结算过了 ⇒ 这里只补"回合结束"这一条迁移。
+		_match_state.apply("turn_ended")
+		return
 	_finish_round()
+	# `ExecutingResults --TurnEnded--> WaitingForFunctions`（= 2）：弹道执行完、回合结束。
+	# 放在 `_finish_round()` **之后**：`_settle_round()` 里的 `_check_match_over()` 可能已经
+	# 把状态推到 `EndingGame`（`ExecutingResults --GameEnded--> EndingGame`），那时这条是空操作。
+	_match_state.apply("turn_ended")
 
 ## 一个回合的收尾：回合轮转 → 回合结算（`_settle_round` 里含判胜负）。
 ## "这一发结算过没有"那个闩在 Rust（`ShotLifecycle::settle`）。
@@ -2143,7 +2175,9 @@ func advance_shot_for_test(seconds: float) -> void:
 func _tick_bot_turn(delta: float) -> void:
 	if _fast_forward():
 		return
-	if _bot.tick(delta, _running and not _shot_in_flight):
+	# `can_fire` 的判据是**状态机**（`Fire` 只从 `WaitingForFunctions` 出发），
+	# 不再是"弹道在飞没有"那条投影 —— 两处在真机时序下等价，但只有前者的语义是原版的。
+	if _bot.tick(delta, _running and _match_state.can_fire()):
 		bot_take_turn()
 
 ## AI 回合：由**它自己**开一发。
@@ -2154,8 +2188,10 @@ func _tick_bot_turn(delta: float) -> void:
 ## 函数串由 Rust 给（`GwBotTurn.aim_expression`：一条过射手、指向最近敌人的直线，
 ## **不是原版 AI** —— 原版是 `aigen` 进化器，`docs/AI.md`/`docs/143` §6.4）。
 func bot_take_turn() -> bool:
-	if not _running or _shot_in_flight or _online_mode or _replay_mode:
+	if not _running or _online_mode or _replay_mode:
 		return false
+	if not _match_state.can_fire():
+		return false            # 状态机不是 `WaitingForFunctions` ⇒ 这一发开不出去
 	var shooter := _active_soldier()
 	if shooter.is_empty() or not bool(shooter.alive) or not bool(shooter.get("is_bot", false)):
 		return false
@@ -2264,85 +2300,25 @@ func _simultaneous_announced() -> Array:
 				break
 	return out
 
-## 命中的**纯计算**（不改任何状态）：谁被打中、弹道第几个点打中的、停在哪。
-## 拆出来是为了让"算结果"（= 原版 `SynchronizingResults`）与"结果落地"
-## （= `ExecutingResults` 的 tick）分开 —— 后者在 Rust 的 `ShotLifecycle`（docs/16 §53）。
+## 命中表（= 原版 **`SynchronizingResults`** 那一步的结果：服务端在开火那一刻就把谁死算完）。
 ##
-## 规则走**内核掩膜**（`docs/120`，真值在 `shot_calculator::settle::resolve_points`）：
-## 障碍决定停点，士兵与靶子都不挡弹道，只在"点落在半径内"时判死；射手本人不参与。
-## ⚠️ 靶子与士兵塞进**同一个** `hit_test` 数组（`docs/131` §3.1）：内核第 3 个入参只当
-## "半径实体"用、回的 `hits` 是**下标**，所以下标 → 实体的映射靠下面的 `owners` 表。
-## **靶子必须在这里**，否则打靶关的靶子只是"画着玩的"（`docs/131` §1 的 bug）。
+## **判定本体在 Rust**：`GwShotFlow.judge()` → `src/graphwar_shot_calculator/settle.rs::resolve_points_owned`
+## —— 与内核 `hit_test`、以及 `settle::resolve` **同一个函数**（`docs/120` 的逐位等价性测试钉住）。
+## 掩膜规则（障碍决定停点、士兵/靶子都不挡弹道、点落进半径即死）、射手排除
+## （`0x3c4452` 有弹道点 / `0x3c3e81` 空弹道，两处比的都是开火记录 `+0x18` 的射手 **id**）、
+## 以及"第几点打中的"（`Hit.index`）全部由它给。
+##
+## 本函数只**递数据、收表**：`_soldiers` 原表（含 `alive`，死者由 Rust 排掉）、
+## `GwTargetSet.entities()`、`_obstacles`；射手用**士兵下标**（-1 = 不排除任何人）。
+## 旧实现里那张 `owners` 表与 `_first_point_within()` 的第二次半径扫描都删了 ——
+## 它们是同一条规则的重复实现（`docs/06` §81）。
 func _judge_shots(shots: Array) -> Dictionary:
-	var kills: Array = []
-	var target_kills: Array = []
-	var sources: Array[String] = []
-	var note := ""
-	var blocked := false
-	var stop := Vector2.ZERO
+	var rows: Array = []
 	for shot in shots:
-		var pts: PackedVector2Array = shot.points
-		var entities: Array = []        # hit_test 第 3 个入参：[{pos, radius}, …]
-		var owners: Array = []          # 与 entities 同下标：{kind: "soldier"/"target", …}
-		for si in _soldiers.size():
-			var s: Dictionary = _soldiers[si]
-			if not bool(s.alive):
-				continue
-			if is_same(s, shot.get("soldier", null)):
-				continue                      # 射手本人不参与致死判定
-			entities.append({"pos": s.pos, "radius": GwCore.SOLDIER_HIT_RADIUS})
-			# `index` = **士兵下标**：Rust 侧的落地队列只拿它认人
-			# （`ShotLifecycle` 不持有 GDScript 字典，见 `docs/16` §53.2）。
-			owners.append({"kind": "soldier", "index": si, "soldier": s, "pos": s.pos,
-				"radius": GwCore.SOLDIER_HIT_RADIUS})
-		for t in _targets.entities():
-			entities.append(t)
-			owners.append({"kind": "target", "target_id": int(t["target_id"]),
-				"pos": t["pos"], "radius": float(t.get("radius", GwTargetSet.HIT_RADIUS))})
-		if pts.size() == 0:
-			continue
-		stop = pts[pts.size() - 1]
-		# 没有实体但**有障碍**也要判：墙会把弹道拦住，实体在墙后就是安全的
-		# （`docs/30`：掩膜决定停点，士兵不挡弹道）。`_obstacles` 与画的是同一个数组。
-		if entities.is_empty() and _obstacles.is_empty():
-			continue
-		var judged := GwCore.hit_test(pts, entities, _obstacles)
-		sources.append(String(judged.source))
-		note = String(judged.note)
-		blocked = blocked or bool(judged.get("blocked", false))
-		var st = judged.get("stop", stop)
-		if st is Vector2:
-			stop = st
-		for idx in judged.hits:
-			var i := int(idx)
-			if i < 0 or i >= owners.size():
-				continue
-			var owner: Dictionary = owners[i]
-			var at := _first_point_within(pts, owner["pos"], float(owner["radius"]))
-			if String(owner["kind"]) == "soldier":
-				kills.append({"soldier": owner["soldier"], "index": int(owner["index"]),
-					"point": at, "pos": owner["pos"], "kind": "soldier"})
-			else:
-				target_kills.append({"target_id": int(owner["target_id"]), "point": at,
-					"pos": owner["pos"], "kind": "target"})
-	# 按**弹道先后**排：多个死者时，先被打到的先落（`docs/65` §1 的 tick 语义）。
-	kills.sort_custom(func(a, b): return int(a["point"]) < int(b["point"]))
-	target_kills.sort_custom(func(a, b): return int(a["point"]) < int(b["point"]))
-	return {
-		"kills": kills, "target_kills": target_kills, "stop": stop,
-		"blocked": blocked, "sources": sources, "note": note,
-	}
-
-## 弹道点序列里**第一个**落进 `radius` 的点序号。
-##
-## 与内核判死是同一条规则（`src/graphwar_shot_calculator/settle.rs::resolve_points`：点落在半径内即死），
-## 只是内核把它当内部细节（`SoldierHit.point` 没有出现在返回的 Dictionary 里），
-## 所以这里按同一个判据再算一次序号。找不到（不该发生）⇒ 取最后一点。
-func _first_point_within(pts: PackedVector2Array, pos: Vector2, radius: float) -> int:
-	for i in pts.size():
-		if pts[i].distance_to(pos) <= radius:
-			return i
-	return maxi(0, pts.size() - 1)
+		rows.append({"points": shot.get("points", PackedVector2Array()),
+			"shooter": _soldiers.find(shot.get("soldier", null))})
+	return _flow.judge(rows, _soldier_rows(), _targets.entities(), _obstacles,
+		GwCore.SOLDIER_HIT_RADIUS)
 
 ## 命中表 → 状态行（`_shot_status` 那一行**不显示**，只给自检/诊断，`docs/125` §5）。
 func _note_shot_status() -> void:
@@ -2366,6 +2342,9 @@ func _resolve_shots(shots: Array) -> void:
 		_judged.get("stop", Vector2.ZERO), false)
 	_apply_shot_events(_flow.land_all())
 	_flow.abort()                     # 这一批没有单条弹道在飞 ⇒ 不收尾、不判到达
+	# 整批也走一次 `Activate`（这一批没有逐 tick 的 `_begin_shot()`）：
+	# `SynchronizingResults --Activate--> ExecutingResults`。之后由调用方换手 + 结算。
+	_match_state.apply("activate")
 	_note_shot_status()
 
 ## 靶子的绘制入口：真 `EntityDrawer` 里的实体表是**唯一**的画布来源，
@@ -2457,16 +2436,18 @@ func _check_match_over() -> void:
 	if _rules == null:
 		_rules = GwLevelRules.new()
 		_rules.from_versus(_human_team())
-	var verdict := _rules.evaluate({
-		"alive_by_team": _alive_by_team(),
-		"teams_present": _teams_present(),
-		"targets_total": _targets.total(),
-		"targets_alive": _targets.alive_count(),
-		"turns_used": _flow.turns_used(),
-	})
+	# 入参是**实体表**，不是"已经数好的两队人数"：`0x473520 get_alive_teams` 的原版行为就是
+	# 遍历生命表 → `0x454950` 判活 → `0x3c2120` 查队伍，只数"有没有"（`docs/150` §2.1）。
+	# 旧实现里的 `_alive_by_team()` / `_teams_present()` 两个循环是同一条规则的第二次实现。
+	var verdict := _rules.evaluate_soldiers(_soldier_rows(), _targets.total(),
+		_targets.alive_count(), _flow.turns_used())
 	_last_verdict = verdict
 	if not bool(verdict.get("over", false)):
 		return
+	# 状态机：`ExecutingResults --GameEnded--> EndingGame`（= 6；`0x475bac` 那条
+	# `mov BYTE [self+0x120], 6` 就是收场写点）。只从 `ExecutingResults` 出发 ⇒
+	# 在 `WaitingForFunctions` 时施加会被忽略（迁移表的 `None`），那正是原版的行为。
+	_match_state.apply("game_ended")
 	_running = false
 	var human_won := bool(verdict.get("human_won", false))
 	var winner := int(verdict.get("winner_team", _human_team()))
@@ -2474,22 +2455,13 @@ func _check_match_over() -> void:
 		String(verdict.get("reason", "?"))])
 	app_node.report_match_result(human_won, winner)
 
-## 每队的**存活士兵数**（键固定 0/1，与旧实现的形状一致）。
-func _alive_by_team() -> Dictionary:
-	var alive := {0: 0, 1: 0}
-	for s in _soldiers:
-		if bool(s.alive):
-			alive[int(s.team)] = int(alive[int(s.team)]) + 1
-	return alive
-
-## **开局时**就有士兵的队伍（不是"当前还活着的队伍" —— 一队全灭后它必须仍在表里，
-## 否则 `enemy_present` 会永远为假，对战关就永远判不出胜负）。
-func _teams_present() -> Array:
-	var out := []
-	for s in _soldiers:
-		if not out.has(int(s.team)):
-			out.append(int(s.team))
-	return out
+## `_soldiers` 的**无类型副本**：扩展方法收的是无类型 `Array`，而 `_soldiers` 是
+## `Array[Dictionary]`（godot-rust 在边界上拒绝"有类型数组塞进无类型形参"，
+## 0.5.5 `array.rs:1225` 的 `copied array should have same type`）。
+func _soldier_rows() -> Array:
+	var rows: Array = []
+	rows.assign(_soldiers)
+	return rows
 
 ## 人类玩家所在队伍。与 `app.gd::match_summary()` 用同一条规则（第一个非 Bot 玩家），
 ## 这样"谁赢了"与结算框的文案永远一致。
@@ -2544,6 +2516,8 @@ func level_state() -> Dictionary:
 		"soldiers": _soldiers.size(),
 		"alive_soldiers": _alive_soldier_count(),
 		"turn_driver": _turn_driver.snapshot(),
+		# --- 对局状态机（T31）：**来自 Rust**（`GwTurnState.snapshot()`），只读 ---
+		"game_state": _match_state.snapshot(),
 		"bot_think_left": _bot.think_left(),
 		"status": _status_text,
 		"path_points": _curve_reveal(),
@@ -2580,7 +2554,10 @@ func apply_external_shot(points: PackedVector2Array, shooter_player: int,
 		_set_curve(drawn.points, shooter.get("color", GwThemeFactory.COL_ACCENT), shooter_player)
 		var shot := {"points": points, "drawn": drawn.points, "team": int(shooter.team),
 			"shooter": shooter_player, "soldier": shooter, "phase": "local"}
+		# 外部来弹同样是"别人的一次 Fire" ⇒ 同一条迁移链（这里没有 `_commit_shot()`）。
+		_match_state.apply("fire")
 		shot["judged"] = _judge_shots([shot])
+		_match_state.apply("results_computed")
 		_begin_shot(shot)
 		return true
 	_resolve_shots([{
@@ -2589,6 +2566,7 @@ func apply_external_shot(points: PackedVector2Array, shooter_player: int,
 	}])
 	_next_turn(true)
 	_settle_round()
+	_match_state.apply("turn_ended")   # 整批结算完 ⇒ 回 WaitingForFunctions
 	return true
 
 ## 某个玩家的（第一个）还活着的士兵；没有就返回空字典。

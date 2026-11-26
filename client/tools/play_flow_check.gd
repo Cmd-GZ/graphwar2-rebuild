@@ -47,12 +47,16 @@ const RULES_CLASS := "GwLevelRules"
 const DRIVER_CLASS := "GwTurnDriver"
 
 ## 播放屏仍然**必须**走的两个 Rust 入口（少一个就说明流程又回 GDScript 了）。
-const FLOW_CALLS := ["_rules.evaluate(", "_turn_driver.next_shooter(", "_turn_driver.setup_flat("]
+## T31 起胜负入口是 `evaluate_soldiers(`（入参 = 实体表，判据 `0x473520` 只数"有没有"）；
+## 旧的 `evaluate(` 需要调用方先把两队人数数好，那一步已经搬进 Rust。
+const FLOW_CALLS := ["_rules.evaluate_soldiers(", "_turn_driver.next_shooter(", "_turn_driver.setup_flat("]
 ## 旧流程里已经被删掉的函数/写法（出现任何一个都算回流）。
 const GONE_PATTERNS := [
 	"func _all_alive_players_shot", "func _shot_owners",
 	"GwLevelRules.for_campaign", "GwLevelRules.for_versus", "GwLevelRules.for_match",
 	"SOLDIER_ID_NONE", "wiped.append",
+	# T31：两队存活/在场那两圈计数搬进 `GwLevelRules.evaluate_soldiers()`（`0x473520`）
+	"func _alive_by_team", "func _teams_present",
 ]
 
 ## 67 号搬走的三块流程（`docs/16-client.md` §53）：出现任何一个都说明流程又回到 GDScript 了。
@@ -74,6 +78,8 @@ const RULES_METHODS := [
 	"evaluate", "snapshot", "target_team",
 ]
 const FLOW_CLASS := "GwShotFlow"
+## 对局**状态机本体**（T31 本轮）：8 个 `GameState` + `turnstate::next_state`。
+const TURN_STATE_CLASS := "GwTurnState"
 const CLOCK_CLASS := "GwTurnClock"
 const BOT_CLASS := "GwBotTurn"
 const REPLAY_DRIVER_CLASS := "GwReplayDriver"
@@ -167,6 +173,9 @@ const SYNTHETIC_REPLAY := """{\"event\":{\"GameNameInfo\":{\"game_name\":\"T\"}}
 {\"event\":{\"GameStateInfo\":{\"game_state\":\"ExecutingResults\"}},\"tick\":110}
 {\"event\":{\"GameStateInfo\":{\"game_state\":\"EndingGame\"}},\"tick\":120}
 """
+const TURN_STATE_METHODS := [
+	"state", "state_byte", "apply", "can_fire", "is_setup", "is_ending", "reset", "snapshot",
+]
 const FLOW_METHODS := [
 	"reset", "begin", "advance", "flush", "land_all", "settle", "abort",
 	"in_flight", "arrived", "revealed", "total_points", "pending_kills",
@@ -272,6 +281,53 @@ func _initialize() -> void:
 	ok(String(rboth.call("kind_name")) == "both",
 		"规则：目标 + 对手 ⇒ both（21 关数据里不存在，docs/131 §2.2）")
 	ok(int(r0.call("target_team")) == 1, "靶子属于 Team2（`0x46f310` 的队伍是入参；docs/150 §Q1）")
+
+	# --- 1.1 `evaluate_soldiers()`：入参是**实体表**（T31；判据 `0x473520` 只数"有没有"）---
+	# 与 `evaluate()`（已数好的两队人数）必须**同结论**：同一份局面用两条入口问一遍。
+	# 表形与播放屏的 `_soldiers` 一致：`[{team: int, alive: bool}, …]`。
+	var pairs := [
+		# [soldiers, targets_total, targets_alive, turns_used, 期望 reason, 期望 over]
+		[[{"team": 0, "alive": true}, {"team": 1, "alive": true}], 0, 0, 0, "playing", false],
+		[[{"team": 0, "alive": true}, {"team": 1, "alive": false}], 0, 0, 1, "enemy_wiped", true],
+		[[{"team": 0, "alive": false}, {"team": 1, "alive": false}], 0, 0, 1, "mutual_wipe", true],
+		[[{"team": 0, "alive": true}, {"team": 1, "alive": false}], 0, 0, 0, "enemy_wiped", true],
+	]
+	var survivors_bad := PackedStringArray()
+	for case in pairs:
+		var got: Dictionary = r5.call("evaluate_soldiers", case[0], int(case[1]), int(case[2]),
+			int(case[3]))
+		if String(got.get("reason", "")) != String(case[4]) or bool(got.get("over", false)) != bool(case[5]):
+			survivors_bad.append("%s⇒%s/%s" % [str(case[0]), str(got.get("reason", "")),
+				str(got.get("over", false))])
+	ok(survivors_bad.is_empty(),
+		"判定入口：`evaluate_soldiers()` 四条局面真相表（含「两队都活 ⇒ 不结束」；不符：%s）"
+		% str(survivors_bad))
+	# 同一份局面、两条入口必须给出**完全相同**的四个字段（不能有两个真相源）。
+	var same_bad := PackedStringArray()
+	for case in pairs:
+		var by_table: Dictionary = r5.call("evaluate_soldiers", case[0], int(case[1]),
+			int(case[2]), int(case[3]))
+		var alive := {0: 0, 1: 0}
+		var present: Array = []
+		for srow in case[0]:
+			if not present.has(int(srow.team)):
+				present.append(int(srow.team))
+			if bool(srow.alive):
+				alive[int(srow.team)] = int(alive[int(srow.team)]) + 1
+		var by_count: Dictionary = r5.call("evaluate", {"alive_by_team": alive,
+			"teams_present": present, "targets_total": int(case[1]),
+			"targets_alive": int(case[2]), "turns_used": int(case[3])})
+		for k in ["over", "human_won", "winner_team", "reason", "verdict_byte"]:
+			if str(by_table.get(k, null)) != str(by_count.get(k, null)):
+				same_bad.append("%s:%s/%s" % [k, str(by_table.get(k, null)), str(by_count.get(k, null))])
+	ok(same_bad.is_empty(),
+		"判定入口：`evaluate_soldiers()` 与 `evaluate()` 在同一局面上同结论（不符：%s）"
+		% str(same_bad))
+	# 在场队伍取**全表**（含已阵亡者）—— 否则一队全灭后永远判不出胜负。
+	var wiped_both: Dictionary = r5.call("evaluate_soldiers",
+		[{"team": 0, "alive": false}, {"team": 1, "alive": false}], 0, 0, 1)
+	ok(bool(wiped_both.over) and String(wiped_both.get("reason", "")) == "mutual_wipe",
+		"判定入口：两队全灭 ⇒ `mutual_wipe`（在场队伍来自全表；实际 %s）" % str(wiped_both))
 
 	var v: Dictionary = r0.call("evaluate",
 		{"alive_by_team": {0: 1}, "teams_present": [0],
@@ -886,6 +942,100 @@ func _initialize() -> void:
 		"`%s` 的 4 个静态查表函数逐值复现旧 `%s` 的表（%d 个用例；不符：%s）"
 		% [REPLAY_DRIVER_CLASS, REPLAY_OLD_PLAYER_CLASS, REPLAY_MODE_CASES.size(),
 			str(mode_wrong)])
+
+	# ---------------- 18. 对局状态机（`GwTurnState` → `turnstate::next_state`，T31） ----------------
+	# 播放屏在此之前**没有**这台机器：原版那 8 个 `GameState` 是 `[self+0x120]` 一个字节
+	# （变体名表 `.data.rel.ro 0x9586d0`；`set_state` `0x4780cc`；`handle_tick` 判
+	# `cmp BYTE [self+0x120],2` = `0x470989`），而本屏只有一列 `_shot_in_flight` 投影。
+	# 本组钉四件事：① 类与方法表在扩展里；② 迁移**真相表**（含"无意义的迁移不许改状态"）；
+	# ③ `can_fire()` 只在 `WaitingForFunctions` 为真；④ 播放屏真的问它（源码回流检查）。
+	ok(ClassDB.class_exists(TURN_STATE_CLASS),
+		"扩展里有对局状态机类 %s（状态与迁移的权威）" % TURN_STATE_CLASS)
+	var st: Object = ClassDB.instantiate(TURN_STATE_CLASS) if ClassDB.class_exists(TURN_STATE_CLASS) else null
+	ok(st != null, "`%s` 能 ClassDB.instantiate" % TURN_STATE_CLASS)
+	if st == null:
+		_finish()
+		return
+	ok(_missing(st, TURN_STATE_METHODS).is_empty(),
+		"`%s` 方法表齐（缺：%s）" % [TURN_STATE_CLASS, _missing(st, TURN_STATE_METHODS)])
+
+	# 18.1 状态字节：8 个变体，判别值 = 声明序（= `.data.rel.ro` 那张表的顺序）
+	st.call("reset")
+	ok(String(st.call("state")) == "Setup" and int(st.call("state_byte")) == 1,
+		"状态机：`reset()` ⇒ `Setup` / 字节 1（实际 %s / %d）"
+		% [String(st.call("state")), int(st.call("state_byte"))])
+	var byte_expect := {"Connecting": 0, "Setup": 1, "WaitingForFunctions": 2,
+		"CalculatingResults": 3, "SynchronizingResults": 4, "ExecutingResults": 5,
+		"EndingGame": 6, "Disconnected": 7}
+	# 逐个用 `apply` 走到那些状态（`Connecting`/`Disconnected` 是连接期状态，对局里走不到）
+	var walk := [
+		["game_started", "WaitingForFunctions"], ["fire", "CalculatingResults"],
+		["results_computed", "SynchronizingResults"], ["activate", "ExecutingResults"],
+		["turn_ended", "WaitingForFunctions"], ["fire", "CalculatingResults"],
+		["results_computed", "SynchronizingResults"], ["activate", "ExecutingResults"],
+		["game_ended", "EndingGame"],
+	]
+	st.call("reset")
+	var walk_bad := PackedStringArray()
+	for step in walk:
+		var got := String(st.call("apply", String(step[0])))
+		if got != String(step[1]):
+			walk_bad.append("%s→%s（期望 %s）" % [String(step[0]), got, String(step[1])])
+	ok(walk_bad.is_empty(),
+		"状态机：抓包那条序列逐迁移复现（真报文 `GameStateInfo`；不符：%s）" % str(walk_bad))
+	ok(int(st.call("state_byte")) == byte_expect["EndingGame"],
+		"状态机：`EndingGame` 的判别值是 6（`0x475bac` 的 `mov BYTE [self+0x120],6`；实际 %d）"
+		% int(st.call("state_byte")))
+	ok(bool(st.call("is_ending")) and not bool(st.call("is_setup")),
+		"状态机：`is_ending()` / `is_setup()` 跟着状态走")
+	ok(not bool(st.call("can_fire")), "状态机：`EndingGame` 下 `can_fire() == false`")
+
+	# 18.2 **无意义的迁移不许改状态**（原版 `next_state` 的 `None` ⇒ `set_state` 不会被调）
+	var before := String(st.call("state"))
+	var ignored := String(st.call("apply", "turn_ended"))
+	ok(ignored == "" and String(st.call("state")) == before,
+		"状态机：`EndingGame` 收到 `turn_ended` ⇒ 空串且状态不变（%s → %s）"
+		% [before, String(st.call("state"))])
+	ok(String(st.call("apply", "nope")) == "",
+		"状态机：不认识的事件名 ⇒ 空串（不改状态）")
+	ok(String(st.call("apply", "reset")) == "Setup",
+		"状态机：`EndingGame --Reset--> Setup`（表里那条）")
+
+	# 18.3 `can_fire()` 真相表：**只有** `WaitingForFunctions` 为真
+	st.call("reset")
+	var fire_true: Array[String] = []
+	var seen_states: Array[String] = []
+	var fire_walk := ["game_started", "fire", "results_computed", "activate", "turn_ended",
+		"fire", "results_computed", "activate", "game_ended"]
+	for event_name in fire_walk:
+		st.call("apply", String(event_name))
+		var name := String(st.call("state"))
+		seen_states.append(name)
+		if bool(st.call("can_fire")):
+			fire_true.append(name)
+	# 判据是"**每一次**为真都必须是 `WaitingForFunctions`"，而不是"只出现一次"——
+	# 那条序列会两次经过 `WaitingForFunctions`（开局 + 一回合一转）。
+	var fire_wrong := PackedStringArray()
+	for nm in fire_true:
+		if nm != "WaitingForFunctions":
+			fire_wrong.append(String(nm))
+	ok(fire_true.size() >= 1 and fire_wrong.is_empty()
+		and seen_states.size() == fire_walk.size(),
+		"状态机：`can_fire()` **只在** `WaitingForFunctions` 为真（走过 %d 态，真值态：%s）"
+		% [seen_states.size(), str(fire_true)])
+
+	# 18.4 播放屏源码：开火闸门真的问状态机，而且**不再**读那条投影
+	var src_st := FileAccess.get_file_as_string("res://src/screens/play_screen.gd")
+	ok(src_st.contains("_match_state.can_fire()"),
+		"源码：`fire()` 的早退问的是 Rust 状态机（`_match_state.can_fire()`）")
+	ok(not src_st.contains("if _shot_in_flight:\n\t\t_status(\"上一发还在飞"),
+		"源码：旧写法 `if _shot_in_flight:` 不再当开火闸门")
+	for pat in ["_match_state.apply(\"game_started\")", "_match_state.apply(\"fire\")",
+			"_match_state.apply(\"results_computed\")", "_match_state.apply(\"activate\")",
+			"_match_state.apply(\"turn_ended\")", "_match_state.apply(\"game_ended\")"]:
+		ok(src_st.contains(pat), "源码：状态机事件按迁移表发出 —— `%s`" % pat)
+	ok(src_st.contains("\"game_state\": _match_state.snapshot()"),
+		"源码：`level_state()` 暴露状态机快照（自检/诊断读它）")
 
 	_finish()
 
