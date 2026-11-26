@@ -12238,9 +12238,9 @@ root = get_node("/root/GraphwarRootNode")
 
 ### 79.6 我写错了 / 前提被证伪
 
-1. **§62.6 第 3 条「play_screen 那 6 份只差一行 attach」是错的**（本轮实测 attach 即崩，
+1. **`docs/06` §62.6 第 3 条「play_screen 那 6 份只差一行 attach」是错的**（本轮实测 attach 即崩，
    根因与正确路径见 `docs/06` §83.4）。"节点名都在"是对的，"只差一行 attach"不是。
-2. **§62.4 把 `GameSetupPlayerEntry` 之后的下一个"最容易做"判成 play_screen 那 6 份，顺序也该反过来**：
+2. **`docs/06` §62.4 把 `GameSetupPlayerEntry` 之后的下一个"最容易做"判成 play_screen 那 6 份，顺序也该反过来**：
    真正"只差挂"的是 `GameNameContainer`（1 行 attach + 删 29 行）和 `ButtonGrid`（四步化后挂 2/4），
    它们都**不需要**动版式。play_screen 那几份要动的是**容器形状**，代价高一档。
 3. **`log()` 的方法体我只有推断**（见 §79.2 那张表）。如果下一轮能定位 x86 侧 body，请把它换掉 ——
