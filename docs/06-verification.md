@@ -12023,7 +12023,7 @@ Ghidra 入口    : 0x4eb9d0 / 0x4ebb01 / 0x4ebb59 / 0x4ebb68（同一 FDE 被切
 | 项 | 搬前 | 搬后 |
 |---|---|---|
 | 代码位置 | `src/graphwar_play_screen_control.rs` §5（行 297–591） | `src/graphwar_game_state_manager.rs` §7（末尾） |
-| 文件行数 | play_screen_control **1396** / GSM **883** | play_screen_control **1125** / GSM **1196** |
+| 文件行数 | play_screen_control **1396** / GSM **883** | play_screen_control **1124** / GSM **1195**（`wc -l`） |
 | 矩阵 `ours_funcs` | 69 / 162 | **58 / 173**（净变化 0，`docs/coverage-matrix.tsv` 按工具重跑） |
 | 公开路径 | — | **不变**：`play_screen_control` 留 `pub use crate::graphwar_game_state_manager::{LevelKind, LevelRules, MatchState, TARGET_TEAM, Verdict};` |
 | 调用方改动 | — | **0 行**（`src/_scaffold/play_flow_class.rs` 的 import 与本文 test 模块都照旧，靠再导出生效） |
