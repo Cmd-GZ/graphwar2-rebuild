@@ -1,0 +1,151 @@
+# T32 数据结构还原审计 · 预注册（fixtures/struct_audit_plan.txt）
+#
+# 生成于 2026-11-26，**提交早于** fixtures/struct_audit.tsv 的判定列。
+# 判据（§1）先写死，跑完不许改；清单（§2/§3）里每条都先写死「我方几个字段、期望对上几个」。
+#
+# ⚠️ 盲测边界（诚实登记，别把这条当免责声明，它决定这份预注册值多少）：
+#   * **E1（字段数，来自 serde 名串 `struct <Name> with N element(s)`）不是盲测**：
+#     写本文件之前，E1 的方法已在 4 个样例上校准（GraphwarColor / GameInfo / TickEvent /
+#     PosInfoEvent），并跑过一次全事件字段数快检。⇒ E1 一列的「期望」是**事后**填的，
+#     它的价值在于**判据可复算**，而不在于盲。
+#   * **E2（字段名 + 顺序，Serialize 的 `lea rsi` 序列）与 E3（偏移）、E4（sret 尺寸）
+#     在写下本文件时一次都没跑过** ⇒ 这两档是**真盲测**。
+#   * 判据里的「自校验」全部可复算：`tools/struct_audit.py`（本工具是新的）与
+#     `tools/wire_fields.py --verify`（既有工具，自校验 N 与长度）。
+
+## 1. 判据（跑完不许改）
+
+### E1 字段数 —— 档位：逐位
+`struct <Name> with N element(s)` 是 `serde_derive` 从**字段个数**直接生成的常量串，
+改一个字段数这个串就变。取证口径**不是**「在 .rodata 里正搜这条串」，而是
+**`.data.rel.ro` 的 `&'static str` 槽**：槽 = `{ptr, len}` 两字，`ptr` 的 `R_X86_64_RELATIVE`
+addend 是串首址、`len` 是编译期长度；必须 `read(addend, len)` **整体**匹配
+`struct <N> with <K> element(s)` 才算命中。
+⚠️ 踩过的坑（必记）：Rust 字面量**没有 NUL 终止**，`.rodata` 里相邻串背靠背 ——
+`struct LockInfoEvent with 1 element` 后面紧跟 `struct NameInfoEvent…`，直接在 .rodata 正搜
+而用贪婪 `elements?` 会把下一个串的首字母 `s` 吃进去，**下一个结构体整体漏掉**；
+实测这样只找到 57/67 条（漏掉的 10 个里就有 `NameInfoEvent`）。
+
+### E2 字段名 + 字段顺序 —— 档位：逐位
+`#[derive(Serialize)]` 生成的代码**就是**线格式定义：一次 `serialize_field(&"名", 值)` 编译成
+`lea rsi,[rip+名] ; mov edx,LEN ; call <单态>` 三条连续指令，**代码顺序 = 声明顺序 = 线上键序**。
+自校验三条：(a) `LEN` 必须等于从文件读到的字节数；(b) 字段个数必须等于 E1 的 N；
+(c) `Deserialize` 侧引用的字段名集合必须是 `Serialize` 侧的子集。
+复算：`../.reference/venv/bin/python tools/wire_fields.py --verify`（既有工具）。
+
+### E3 字段偏移 —— 档位：观测
+`Serialize::serialize(&self)` 里读字段用的是 `self+偏移`（`mov 0xNN(%reg)` / `movsd`）；
+**字段名 `lea` 与读取偏移的相对位置**给出「名字 → 偏移」的对应，偏移由编译器按声明顺序算。
+只用它判**顺序/是否存在空洞**，不据此断言具体标量类型宽度。
+
+### E4 结构体尺寸 —— 档位：推断（只给下限）
+返回结构体（sret）的尺寸由**被调方写回的最后一个偏移**定下限，由**调用方的栈预留**
+（`sub rsp,N` / `lea [rsp+k]` / `movdqu` 的 16 字节宽度）定上限。两者夹逼才敢写「大小」。
+
+### 判定规则
+* `match`：E1 的 N == 我方字段数，**且** E2 的名字集合与顺序与我方一致；
+* `mismatch`：E1 或 E2 任一不一致（**证据一边倒** = E1+E2 同时指向同一结论）；
+* `unknown`：拿不到 E1/E2 之一，或只有 E4 的下限（**只登记，不猜**）。
+* 只修「mismatch 且证据一边倒」的；模棱两可只登记。
+
+## 2. 清单 A：协议结构体（E1+E2 都可取证）—— 先写死我方字段数
+#
+# 我方侧不是「一个事件一个 struct」，而是 `WIRE_SPEC` 表（`src/_scaffold/protocol.rs`），
+# 字段集在表里。**这本身就是一条源码级差异**（见 §4），但字段集合/顺序仍可逐项对表。
+#
+# struct名 | 我方对应(wire 名) | 我方定义位置 | 我方字段数 | 我方字段(顺序) | 取证方法
+AddObstacleEvent            | AddObstacle               | src/_scaffold/protocol.rs:1713  | 3 | pos_x, pos_y, radius | E1+E2
+AddSoldierRequestEvent      | AddSoldierRequest         | src/_scaffold/protocol.rs:1714  | 1 | player_id | E1+E2
+AxisModeInfoEvent           | AxisModeInfo              | src/_scaffold/protocol.rs:1716  | 1 | axis_mode | E1+E2
+BanConnectionRequestEvent   | BanConnectionRequest      | src/_scaffold/protocol.rs:1717  | 2 | player_connection_id, leader_connection_id | E1+E2
+BotAddedEvent               | BotAdded                  | src/_scaffold/protocol.rs:1718  | 3 | connection_id, player_id, level | E1+E2
+ChangeTeamRequestEvent      | ChangeTeamRequest         | src/_scaffold/protocol.rs:1719  | 1 | player_id | E1+E2
+ChatMessageEvent            | ChatMessage               | src/_scaffold/protocol.rs:1720  | 2 | entity_id, message | E1+E2
+ChatMessageRequestEvent     | ChatMessageRequest        | src/_scaffold/protocol.rs:1721  | 2 | entity_id, message | E1+E2
+ColorInfoEvent              | ColorInfo                 | src/_scaffold/protocol.rs:1724  | 2 | entity_id, color | E1+E2
+ConnectedToServerEvent      | ConnectedToServer         | src/_scaffold/protocol.rs:1725  | 1 | connection_id | E1+E2
+ConnectionRemovedEvent      | ConnectionRemoved         | src/_scaffold/protocol.rs:1726  | 2 | connection_id, reason | E1+E2
+DestroyObstacleEvent        | DestroyObstacle           | src/_scaffold/protocol.rs:1727  | 3 | pos_x, pos_y, radius | E1+E2
+EffectInfoEvent             | EffectInfo                | src/_scaffold/protocol.rs:1728  | 5 | effect_id, pos_x, pos_y, effect_type, start_tick | E1+E2
+EndOfTurnInfoEvent          | EndOfTurnInfo             | src/_scaffold/protocol.rs:1729  | 2 | end_of_turn_tick, time_mode | E1+E2
+EntityEffectInfoEvent       | EntityEffectInfo          | src/_scaffold/protocol.rs:1730  | 2 | entity_id, effect_type | E1+E2
+EntityRemovedEvent          | EntityRemoved             | src/_scaffold/protocol.rs:1731  | 1 | entity_id | E1+E2
+EventInfo                   | (无对应)                     | (我方无此结构体)              | ? | ? | E1+E2  ← 预期可能 unknown
+FaceGraphicsInfoEvent       | FaceGraphicsInfo          | src/_scaffold/protocol.rs:1732  | 2 | entity_id, graphics_str | E1+E2
+FaceGraphicsRequestEvent    | FaceGraphicsRequest       | src/_scaffold/protocol.rs:1733  | 2 | entity_id, graphics_str | E1+E2
+FunctionActiveEvent         | FunctionActive            | src/_scaffold/protocol.rs:1734  | 2 | owner_id, active_tick | E1+E2
+FunctionFireEvent           | FunctionFire              | src/_scaffold/protocol.rs:1735  | 1 | soldier_id | E1+E2
+FunctionFireRequestEvent    | FunctionFireRequest       | src/_scaffold/protocol.rs:1736  | 1 | player_id | E1+E2
+FunctionInfoEvent           | FunctionInfo              | src/_scaffold/protocol.rs:1737  | 3 | owner_id, function, corrected_function | E1+E2
+FunctionModeInfoEvent       | FunctionModeInfo          | src/_scaffold/protocol.rs:1739  | 1 | function_mode | E1+E2
+FunctionPointsEvent         | FunctionPoints            | src/_scaffold/protocol.rs:1740  | 4 | owner_id, start_x, start_y, end_x | E1+E2
+FunctionUpdateRequestEvent  | FunctionUpdateRequest     | src/_scaffold/protocol.rs:1741  | 2 | player_id, function | E1+E2
+GameInfo                    | 负载(非事件，见 §3)          | src/_scaffold/protocol.rs:1844  | 9 | room_name, game_state, current_player_count, address, axis_mode, function_mode, turn_mode, time_mode, locked | E1+E2
+GameInfoEvent               | GameInfo                  | src/_scaffold/protocol.rs:1744  | 1 | game_info | E1+E2
+GameNameInfoEvent           | GameNameInfo              | src/_scaffold/protocol.rs:1745  | 1 | game_name | E1+E2
+GameNameRequestEvent        | GameNameRequest           | src/_scaffold/protocol.rs:1746  | 1 | game_name | E1+E2
+GameRemovedEvent            | GameRemoved               | src/_scaffold/protocol.rs:1747  | 1 | game_address | E1+E2
+GameStateInfoEvent          | GameStateInfo             | src/_scaffold/protocol.rs:1749  | 1 | game_state | E1+E2
+GraphwarColor               | 负载(非事件，见 §3)          | src/_scaffold/protocol.rs:1809  | 3 | r, g, b | E1+E2+E3
+GraphwarColor               | 负载(非事件，见 §3)          | src/graphwar_color_manager.rs:261 | 3 | r, g, b | E1+E2+E3
+HatGraphicsInfoEvent        | HatGraphicsInfo           | src/_scaffold/protocol.rs:1750  | 2 | entity_id, graphics_str | E1+E2
+HatGraphicsRequestEvent     | HatGraphicsRequest        | src/_scaffold/protocol.rs:1751  | 2 | entity_id, graphics_str | E1+E2
+LifeInfoEvent               | LifeInfo                  | src/_scaffold/protocol.rs:1752  | 2 | entity_id, alive | E1+E2
+LifeQueuedDeathEvent        | LifeQueuedDeath           | src/_scaffold/protocol.rs:1753  | 2 | entity_id, tick | E1+E2
+LockInfoEvent               | LockInfo                  | src/_scaffold/protocol.rs:1754  | 1 | lock | E1+E2
+LockRequestEvent            | LockRequest               | src/_scaffold/protocol.rs:1755  | 1 | lock | E1+E2
+NameInfoEvent               | NameInfo                  | src/_scaffold/protocol.rs:1756  | 2 | entity_id, name | E1+E2
+NameRequestEvent            | NameRequest               | src/_scaffold/protocol.rs:1757  | 2 | entity_id, name | E1+E2
+NewBotRequestEvent          | NewBotRequest             | src/_scaffold/protocol.rs:1758  | 2 | connection_id, level | E1+E2
+NewConnectionEvent          | NewConnection             | src/_scaffold/protocol.rs:1759  | 1 | connection_id | E1+E2
+NewConnectionRequestEvent   | NewConnectionRequest      | src/_scaffold/protocol.rs:1760  | 2 | major_version, minor_version | E1+E2
+NewPlayerRequestEvent       | NewPlayerRequest          | src/_scaffold/protocol.rs:1761  | 1 | connection_id | E1+E2
+PlayerInfoEvent             | PlayerInfo                | src/_scaffold/protocol.rs:1762  | 2 | player_id, connection_id | E1+E2
+PosInfoEvent                | PosInfo                   | src/_scaffold/protocol.rs:1763  | 4 | entity_id, pos_x, pos_y, radius | E1+E2
+QueueDestroyObstacleEvent   | QueueDestroyObstacle      | src/_scaffold/protocol.rs:1764  | 4 | pos_x, pos_y, radius, tick | E1+E2
+RankInfoEvent               | RankInfo                  | src/_scaffold/protocol.rs:1765  | 2 | entity_id, rank | E1+E2
+RankRequestEvent            | RankRequest               | src/_scaffold/protocol.rs:1766  | 2 | entity_id, rank | E1+E2
+RemovePlayerRequestEvent    | RemovePlayerRequest       | src/_scaffold/protocol.rs:1767  | 1 | player_id | E1+E2
+RemoveSoldierRequestEvent   | RemoveSoldierRequest      | src/_scaffold/protocol.rs:1768  | 1 | player_id | E1+E2
+RemoveTeamEvent             | RemoveTeam                | src/_scaffold/protocol.rs:1769  | 1 | entity_id | E1+E2
+SkinGraphicsInfoEvent       | SkinGraphicsInfo          | src/_scaffold/protocol.rs:1770  | 2 | entity_id, graphics_str | E1+E2
+SkinGraphicsRequestEvent    | SkinGraphicsRequest       | src/_scaffold/protocol.rs:1771  | 2 | entity_id, graphics_str | E1+E2
+SoldierInfoEvent            | SoldierInfo               | src/_scaffold/protocol.rs:1772  | 2 | soldier_id, player_id | E1+E2
+SubscribeEvent              | Subscribe                 | src/_scaffold/protocol.rs:1773  | 2 | subscriber_id, subscribed_event_type | E1+E2
+TargetInfoEvent             | TargetInfo                | src/_scaffold/protocol.rs:1774  | 1 | target_id | E1+E2
+TeamInfoEvent               | TeamInfo                  | src/_scaffold/protocol.rs:1775  | 2 | entity_id, team | E1+E2
+TickEvent                   | Tick                      | src/_scaffold/protocol.rs:1776  | 1 | current_tick | E1+E2
+TickReplyEvent              | TickReply                 | src/_scaffold/protocol.rs:1777  | 1 | current_tick | E1+E2
+TimeModeInfoEvent           | TimeModeInfo              | src/_scaffold/protocol.rs:1780  | 1 | time_mode | E1+E2
+TurnCountInfoEvent          | TurnCountInfo             | src/_scaffold/protocol.rs:1781  | 1 | turn_count | E1+E2
+TurnInfoEvent               | TurnInfo                  | src/_scaffold/protocol.rs:1782  | 2 | player_id, soldier_id | E1+E2
+TurnLimitInfoEvent          | TurnLimitInfo             | src/_scaffold/protocol.rs:1783  | 1 | turn_limit | E1+E2
+TurnModeInfoEvent           | TurnModeInfo              | src/_scaffold/protocol.rs:1785  | 1 | turn_mode | E1+E2
+VersionInfoEvent            | VersionInfo               | src/_scaffold/protocol.rs:1786  | 2 | version, system | E1+E2
+
+## 3. 清单 B：非协议结构体（E2 拿不到，靠 E3/E4）
+
+# 结构体 | 我方位置 | 我方字段数 | 取证方法 | 期望
+Evaluation | src/graphwar_function_evolutionator.rs:413 | 3 | E4 sret 尺寸 + E3 写回偏移 | 24 字节 / 4 字段（T28 已知：score@0, dist@8, hits@0x10, 第四项@0x14）
+Individual | src/graphwar_function_evolutionator.rs:471 | 4 | E3 偏移（个体 48 字节：Vec 24 + 三个评分分量） | Vec@0, score@0x18, dist@0x20, hits@0x28
+GameInfo(protocol) | src/_scaffold/protocol.rs:1844 | 9 | E1(N=9)+E2 键序 | 9 字段，键序 room_name…locked
+GameInfo(events) | src/events.rs:356 | 9 | 同上（同一结构体两处定义） | 9 字段
+GraphwarColor(protocol) | src/_scaffold/protocol.rs:1809 | 3 | E1(N=3)+E2 键序+E3 | r,g,b 三字节
+GraphwarColor(color_manager) | src/graphwar_color_manager.rs:261 | 3 | 同上（同一结构体两处定义） | r,g,b 三字节
+
+## 4. 已知的源码级结构差异（本轮**只登记不改**，理由写在这里）
+
+* **原版：每个事件一个 `#[derive(Serialize, Deserialize)] struct <Name>Event`**（67 个 serde
+  结构体名串为证）；**我方：一张 `WIRE_SPEC` 表**（`&'static [(&'static str, ValType)]`）。
+  字段集合/顺序可以逐项对上，但「结构体」这个语言构造没有对上一个。这叫**源码级差异**，
+  不是行为差异（行为仍可逐字节一致）。改它 = 把 74 行表拆成 74 个结构体 + 重写全部
+  序列化/反序列化路径，是本轮「只修证据一边倒」范围外的重构 ⇒ 只登记，进 §遗留。
+* 我方 `GameInfo` 有**两处**定义（`_scaffold/protocol.rs` 与 `events.rs`），原版只有**一个**
+  `struct GameInfo`（`struct GameInfo with 9 elements` 单条串）⇒ 登记为待合并。
+
+## 5. 预期的 unknown（写在这里，防止事后找补）
+
+* `EventInfo`（N=2）：我方**没有**对应结构体。E1 只能给「2 个字段」，名字要靠 E2；
+  若 E2 拿不到就是 unknown，缺的证据 = 「谁的 Serialize 实现引用它」（需要调用图/运行时分派）。
+* 非 serde 结构体（如 `Match`、各 manager 的 state）：**没有 E1 可用**，只有 E3/E4。
+  本轮只审有 sret/固定偏移证据的那几个；其余标 unknown 并写清缺什么。
