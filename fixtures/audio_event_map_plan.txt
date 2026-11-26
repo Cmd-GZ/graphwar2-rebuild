@@ -1,0 +1,184 @@
+# fixtures/audio_event_map_plan.txt —— **预注册**（T19 / `task-16`，2026-11-26）
+#
+# 本文件在**跑任何真机观测之前**写死：观测对象、hook 点、覆盖清单、判据、对齐方法、
+# 以及**可被推翻的预测**。跑完之后的实际结果写进 `fixtures/audio_event_map.tsv` 与
+# `docs/06-verification.md` §70；**本文件不因结果而修改**（要改就另写一份并说明为什么）。
+#
+# 为什么需要预注册：本项目反复踩的坑是"先看结果、再决定判据"，那样得到的映射表
+# 无法区分"观测到了"与"事后凑出来的"。所以先把判据写死。
+
+## 1. 要回答的问题（`docs/17` §5.1.1 挂着的那条「未知」）
+
+> 「音效 ↔ 事件的映射 | **未知**：播放链路、音量、静音都逐位；"哪个事件放哪个音"证不到」
+
+**现状核实（2026-11-26，自己去核过）**：
+
+* `docs/17` §5.1.1 仍写「未知」，并且明确说"不要把这个（名字与加载顺序的对应）写成结论"。
+* 但 `src/graphwar_audio_control.rs` §3 已经有一张**静态推导**的表
+  （`effect_info_event` 的 `kind`→`+0x80/+0x90/+0xa0`、`soldier_info_event`→`+0xb0`、
+  `entity_removed_event`→`+0xc0`，槽序 = 载入序 explosion/squash/spark/pop/unpop）。
+  它的依据是 **arm64 未 strip 侧的符号名 + 构造函数的载荷字段搬运顺序**，
+  x86 侧只有"6 个 `EffectAudioData::new` 调用点 ↔ 6 次 set_stream"这种间接对应。
+* ⇒ 两张纸之间存在**口径差**：模块文档当它解决了，`docs/17` 当它未知。
+  **本轮不站队**：用真机观测去**判**这张表，能confirm就confirm，能证伪就写出证伪。
+  `src/**` 不改（红线），发现我方实现错了只报告。
+
+## 2. 观测对象（唯一一份冻结回放，只读）
+
+    .reference/replays/gw2-replays-snapshot/replays/1793897298
+
+选它的理由（已核对内容，不是猜）：
+
+* 8617 B gzip → 104 行 JSONL，tick 1..2276（≈38 s @60 tick/s），**短到能整场录完**；
+* 事件类型覆盖面正好是音效侧需要的那几类，且**带绝对 tick**：
+  | tick | 事件 | 与音效的关系（预测，见 §6） |
+  |---|---|---|
+  | 5, 6 | `SoldierInfo` ×3 | → `pop`（`soldier_info_event`） |
+  | 6 | `EntityRemoved` entity=231 | → `unpop`（`entity_removed_event`） |
+  | 6 | `EntityEffectInfo` 230/231 = `DeathEffect`、232 = `SparkEffect` | 只登记，不触发播放 |
+  | 550 | `FunctionFire` | 无音效预测 |
+  | 550 | `FunctionPoints` end_x=2.579 | — |
+  | 558 | `EffectInfo` `ExplosionEffect`, `start_tick=1281`, pos=(2.579, 0.824) | → `explosion` @1281 |
+  | 558 | `FunctionActive` `active_tick=615` | — |
+  | 1341 | `TurnCountInfo`/`TurnInfo`/`GameStateInfo` | 无音效预测 |
+  | 1485 | 第二次 `FunctionFire` | 无音效预测 |
+  | 1492 | `EffectInfo` `SparkEffect`, `start_tick=2169`, pos=(9.782, 4.595) = 靶子 232 坐标 | → `spark` @2169 |
+  | 1492 | `EffectInfo` `ExplosionEffect`, `start_tick=2216`, pos=(10.359, 7.716) | → `explosion` @2216 |
+  | 2169 | `LifeInfo` entity=232 alive=false | 靶子死；它登记的实体特效是 `SparkEffect` ⇒ 死亡特效也走 spark 槽 |
+  | 2276 | `TurnCountInfo` 2 / `EndingGame` | 播完 |
+
+* **`effect_type` 判别值**（`src/graphwar_effect_manager.rs` §6 逐位）：
+  `0=ExplosionEffect 1=DeathEffect 2=SparkEffect 3=AshEffect`。
+* 这份局里**没有** `DeathEffect` 被当作死亡特效发出的机会（靶子登记的是 `SparkEffect`）
+  ⇒ 预测 **`squash.mp3` 本轮一次都不该响**。这是一条**可证伪的负预测**（§6.3）。
+
+## 3. 要覆盖的事件类型（从 `src/_scaffold/protocol.rs` / `src/events.rs` 的 74 个变体里挑）
+
+判据：**音效侧只订阅了 4 个事件**（`src/graphwar_audio_control.rs` §2 逐位：
+`effect_info_event`(44) / `soldier_info_event`(15) / `entity_removed_event`(14) /
+`game_state_info_event`(30)），所以"可能出声"的只有这 4 条变体 + 它们payload 里的
+`effect_type` 分支。清单：
+
+| # | 事件（`events.rs` 里的变体） | 判别值 | 关键字段 | 计划覆盖 |
+|---|---|---|---|---|
+| 1 | `EffectInfo` | 44 | `effect_type` ∈ {Explosion, Death, Spark, Ash} | ✅ 本局有 Explosion×2、Spark×1 |
+| 2 | `SoldierInfo` | 15 | `soldier_id` / `player_id` | ✅ 本局有 ×3 |
+| 3 | `EntityRemoved` | 14 | `entity_id` | ✅ 本局有 ×1（231） |
+| 4 | `GameStateInfo` | 30 | `game_state` | ✅ 本局有 9 次（**预期只清队列，不出声**） |
+| — | `EntityEffectInfo` | — | `effect_type` | ❌ 不订阅（只登记，不出声）——**负对照** |
+| — | `LifeInfo`/`PosInfo`/`FunctionInfo`/`FunctionFire`/`TeamInfo`/`TurnInfo`/`ColorInfo`… | — | — | ❌ 不订阅（**负对照**，本局全都有出现） |
+
+> "覆盖"的定义向下取到**槽**：`EffectInfo` 一个变体要拆成 4 个 `effect_type` 值
+> （本局只跑到 0 和 2），`squash.mp3`（`effect_type=1`）与 `AshEffect`（3）**本轮拿不到**，
+> 见 §7 的"没覆盖清单"。
+
+## 4. hook 点（全部**只读**：`Interceptor.attach`，onLeave 不改返回值、不写目标内存）
+
+地址口径 = **ELF vaddr（RVA）**，下断 = `base + RVA`（Ghidra = RVA + `0x100000`）。
+函数边界全部取自 `.eh_frame` FDE（`tools/replay_clock_disasm.py fde`）。
+
+### 4.1 音频侧（真值：谁把哪个 stream 装到谁身上、谁 play）
+
+| key | RVA | 身份 | 抓什么 |
+|---|---|---|---|
+| `load` | `0x4b1da0` | `ResourceLoader::load` 绑定（`&'static str` + 长度） | **路径字面量 + 长度**（`rdi`/`esi`）+ 返回值 `(rax,rdx)` = 载进来的资源句柄 ⇒ **资源名 ↔ 对象指针**的唯一来源 |
+| `ctor` | `0x5238c0` | `SoundHandler` 构造收尾（`0x4bf550` 尾调用） | 入参 `rdi` = 载荷结构体（5 个 16 字节资源对，**载入序**）；返回 `rax` = 最终 handler 指针 ⇒ **资源槽偏移 ↔ 资源** |
+| `eaud` | `0x4bed70` | `EffectAudioData::new`（6 个调用点唯一的收窄口） | `retaddr`（= 哪一条 match 臂，**静态已知**）+ `rsi/rdx`（16 字节候选一）+ `rcx/r8`（候选二）+ `r9d`（payload 值字段）+ `xmm0`（音量 dB） |
+| `sstr` | `0x3ebb80` | `AudioStreamPlayer::set_stream` 绑定 A | `rdi`/`rsi` 及各自 16 字节窗口 |
+| `sstr2` | `0x3eb8b0` | 同上绑定 B | 同上 |
+| `play` | `0x8ae4c0` | **`AudioStreamPlayer::play`** | `rdi`（player 对象）+ `retaddr` + 当前 tick |
+| `q` | `0x41d060` | 从 `self+slot` 取资源句柄的辅助 | `rdi`（= `self+slot`）+ `retaddr`（call site 决定 slot）+ `(rax,rdx)` |
+
+### 4.2 事件侧（真值：哪个事件触发了哪一条臂）
+
+| key | RVA | 身份 | 抓什么 |
+|---|---|---|---|
+| `eff` | `0x4bf090` | `effect_info_event` 处理函数（681 B） | `self`、payload 指针、`[payload]` tag、`[payload+0x1c]` u32、`[payload+0x20]` **u8 kind**、`retaddr` |
+| `sold` | `0x4bf340` | `soldier_info_event`（188 B） | 同上（预期不校验 tag、kind 无意义） |
+| `entrm` | `0x4bf480` | `entity_removed_event`（193 B） | 同上 |
+| `gst` | `0x4bef20` | `game_state_event`（212 B） | 同上（预期只清队列） |
+| `w_eff`/`w_sold`/`w_gst`/`w_entrm` | `0x4bf400`/`0x4bf420`/`0x4bf440`/`0x4bf460` | 4 条订阅的 `dyn FnMut` 胶合 shim（每个 32 B，`lea` 出上面 4 个真函数） | `retaddr`（**= 谁派发了这条事件**，这是"触发源函数地址"的正面答案）+ `rsi` = payload |
+| `proc` | `0x4bfe10` | `SoundHandler::process`（5052 B，每帧；`humm` 泵 + 队列 play） | 只计数 + 首次抓 `self`/`ev` 指针（60/s，不能逐次记） |
+| `tick` | `0x519840` | `GraphwarTickHandler::tick`（60/s，`[rdi+0x40]` = tick 计数） | 只更新 `curTick`（**时间轴的真值**），不逐次记 |
+
+**为什么 hook 这些而不是 hook 资源名**：音频资源在运行时是 `Ref<AudioStreamMP3>` 的
+对象指针，字符串路径只在 `load` 那一刻以 `&'static str + len` 出现（`.rodata 0x1c2c1a`
+起 5 条路径**首尾相接、无 NUL**，所以 `strings` 会骗人，必须按长度截断）。所以
+"资源名"只能从 `load` 抓，"资源名 ↔ 槽"只能靠**对象指针相等**接起来。
+
+## 5. 对齐方法（**序列号**为主轴，tick 为第二轴；**不用墙钟**）
+
+回放播放有抖动（llvmpipe 软渲染，帧率不稳），所以**墙钟时间戳只做记录、不做对齐**。
+两侧各自有严格单调的序号：
+
+* **音频侧**：`play` 钩子的调用序号 `n_play = 1,2,3…`（同一进程内严格单调，
+  且每个 `play` 前必然有一条 `eaud` 记录 ⇒ `n_eaud` 与 `n_play` 有固定配对关系）。
+* **事件侧**：解压同一份回放得到的 JSONL 行号 `n_ev = 0,1,2…`（= 注入顺序，见
+  `src/graphwar_replay_reader.rs`：逐行 `serde_json` → `Vec<EventInfo>`，**顺序即行序**）；
+  同时每条事件自带 `tick`。
+
+**两级对齐**：
+
+1. **第一级（tick 轴，主判据）**：`play` 发生时读 `GraphwarTickHandler[+0x40]` 得 `t_play`。
+   `EffectInfo` 带 `start_tick`，`FunctionActive` 带 `active_tick` ⇒ 事件侧能给出
+   "这条音效应该在第几 tick 响"的**预测值**。判据：`|t_play - start_tick| <= 2` tick
+   （= 2 帧）算命中；3..8 tick 算"迟"（必须解释）；> 8 tick 不算命中。
+   * 也允许 `play` 发生在 `start_tick` **之后若干 tick**（队列 + 每帧预算），
+     所以还要看 `play` 的**序号**是否与事件序一致。
+2. **第二级（序列号轴，独立校验）**：把两侧的**事件类型序列**写出来，
+   逐项比对单调性：
+   `SoldierInfo×3 → EntityRemoved → (空窗) → Explosion → Spark → Explosion`。
+   音效侧按 `n_play` 排出的槽序列必须与它同形（允许中间插空，不允许换位）。
+   **两条轴都过才算"观测"；只有一条过算"推断"。**
+
+**反例检查（必须做，不是可选）**：
+
+* **撞车**：两条不同的事件（类型或 payload 值不同）是否落到同一个音频资源？
+  （预期**会有**：`effect_type=2` 与 `=3` 都落 `spark` 槽，这是静态已知的"四臂落三槽"。）
+* **孤儿**：有没有音频播放**对不上任何事件**？（预期：`pop`/`unpop` 在**载入回放**
+  那一段（tick 5/6 的事件被批量注入）就该响，若观测到却"对上 5/6 之前"要先解释。）
+* **沉默**：有没有事件**没响**？（负预测：`game_state_info_event`、`EntityEffectInfo`、
+  `LifeInfo`、`PosInfo`、`FunctionInfo` 全部不该响。）
+* **负对照（证明钩子有效）**：`load` 必须恰好 5 次 `res://sounds/*.mp3` + 1 次
+  `res://sounds/humm.wav`（`FileAccess::get_file_as_bytes`，走 `0x3eaa00` 不是 `0x4b1da0`）。
+  若 `load` 一次都没抓到，**先怀疑钩子没挂上**，不能直接下"没有音效"的结论。
+
+## 6. 可被推翻的预测（写在这里，跑完对照）
+
+| # | 预测 | 证伪条件 |
+|---|---|---|
+| P1 | 载入期 `load` 依次是 `res://sounds/explosion.mp3`(26) / `squash.mp3`(23) / `spark.mp3`(22) / `pop.mp3`(20) / `unpop.mp3`(22) | 顺序或次数不符 |
+| P2 | `SoundHandler+0x80/0x90/0xa0/0xb0/0xc0` 依次装 P1 的 1..5 号，且 `+0x60` 是**唯一的 player**（不是 5 个） | 指针不相等 / `+0x60` 每次不同 |
+| P3 | `EffectInfo(ExplosionEffect)` → `+0x80`(explosion) @1281 与 @2216 | 落在别的槽或别的 tick |
+| P4 | `EffectInfo(SparkEffect)` → `+0xa0`(spark) @2169 | 落在别的槽或别的 tick |
+| P5 | `SoldierInfo` → `+0xb0`(pop)，`EntityRemoved` → `+0xc0`(unpop)，都在**载入期**（tick ≈ 5/6） | 落在别的槽，或根本没响 |
+| P6 | `squash.mp3`（`+0x90`）本局**一次都不响** | 它响了 ⇒ 说明 `DeathEffect` 有别的路径 |
+| P7 | `game_state_info_event`/`EntityEffectInfo`/`LifeInfo`/`PosInfo`/`FunctionInfo` **都不出声** | 出声且能对上 |
+| P8 | 音量：`+0x80/+0x90/+0xa0` = `-15.0f`(0xc1700000)、`+0xb0` = `0.0f`、`+0xc0` = `-5.0f`(0xc0a00000) | `xmm0` 不符 |
+| P9 | 4 条订阅 shim 的**调用者返回地址**能指到事件派发函数（同一事件类型恒定） | 每次都不同 / 指不到 |
+
+## 7. 预登记的"可能覆盖不到"清单（下一步需要什么局）
+
+* `effect_type = 1 (DeathEffect)` → `squash.mp3`：需要一个**士兵**（不是靶子）被炸死、
+  且该士兵出生时登记的是 `DeathEffect` 的局（`1793897298` 里士兵没死）。
+* `effect_type = 3 (AshEffect)`：需要实体登记 `AshEffect` 的局（`docs/141` 记了 19 例）。
+* `effect_type >= 4` 的**未知值**落 `+0xa0`（"其余 → spark"臂）：需要一个真的出现
+  非法判别值的局（或直接判"构造上到不了"）。
+* `humm.wav` 的 generator 路（`0x4bfe10`）：它不属于这 5 个槽，本轮只观测"有没有走"，
+  **不产出映射行**（它对应的是"谁在 humm"这种连续状态，不是离散事件）。
+* `tear.mp3` / `humm_2` / `humm_b` / `shepard_2`：本轮**不指望**拿到（`docs/17` §5.1.2
+  的负结果，代码里没有引用点）。
+
+## 8. 判据（一条映射行什么时候可以进 `fixtures/audio_event_map.tsv`）
+
+一条映射要成立，**必须三件事同时为真**：
+
+1. **资源**：该 `play` 前的 `eaud` 里，资源那一侧的 16 字节句柄 == `load` 抓到的
+   `res://sounds/<name>.mp3` 的句柄（**指针相等**，不是名字像）；
+2. **事件**：该 `eaud` 的 `retaddr` 落在**静态已知**的某条臂上（`0x4bf1aa`→`+0x80`、
+   `0x4bf1f7`→`+0xa0`、`0x4bf244`→`+0x80`、`0x4bf28a`→`+0x90`、`0x4bf39e`→`+0xb0`、
+   `0x4bf4e3`→`+0xc0`），且槽偏移与 (1) 的资源指针一致；
+3. **时刻**：tick 与事件侧 `start_tick` 的差 ≤ 2，且序列号单调一致。
+
+三条全过 = **观测**；只过 1+2 = **推断**（写明缺 tick 对齐）；只有 1 = **未知**。
+`cargo test` / 自写断言**不算**任何一级证据。
