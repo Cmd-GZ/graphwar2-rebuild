@@ -13,7 +13,7 @@
 ⚠️ **但有两条必须先说清，否则本文档就是在虚报**：
 
 1. **`client/` 不是原版源码，是照 `.tscn` 与截图重写的 GDScript。**
-   原版的界面控制器在 **Rust 里**（`libgraphwarrust.so` 的 57 个 `graphwar_*.rs` 模块，
+   原版的界面控制器在 **Rust 里**（`libgraphwarrust.so` 的 **59 个** `graphwar_*.rs` 模块，
    含 `play_screen_control` / `entity_drawer` 等）；包里那 105 个 `.gdc` **全是小控件 + AdMob 插件**，
    **没有** `play_screen` / `player_screen` / `lan_lobby` / `campaign` / `GameSetup`。
    ⇒ 所以"回合推进 / 准备态 / 弹道生命周期 / 胜负时机"这些**流程**，在 `client/` 里是**推断出来的**，
@@ -61,7 +61,7 @@
 | 关卡生成 | ✅ 逐位 / 🔶 覆盖面 | 随机散布模式 **13/13 逐位复现**（障碍 `x/y/r` 的 `to_bits()` 全等，[61](docs/archive/61-levelgen-rust.md)）；中心单障碍 **4 个真值样本**（半径 3.34/4.81/6.75/5.69，全在 `u*5+3` 区间）；障碍**无固定坐标**（每份回放都不同）⇒ 关卡 = 参数 + 生成器；"圆盘式"已结案——它不是关卡生成器（[103](docs/archive/103-disk-levelgen.md)） | 中心单障碍只有 **4 个**真值样本（缺更多回放/抓包真值来钉死半径区间 `u*5+3`） |
 | 战役 21 关数据 | ✅ 数据解出 / ✅ 已接进客户端 | **21 关数据硬编码在 Rust 里**（`level_info()` = `0x4ad380` 的 21 分支 `match`）；**21/21 标题、21/21 描述逐字节解出**，每关参数（障碍模式 / `min_count` / 士兵数 / 目标数 / Bot 难度 / 回合上限）**全部解出**，并与 **385 份真实回放交叉验证 21/21 全对**（[118 §7](docs/archive/118-campaign-data.md) 是权威表）；`campaign.save` = 单行 `level_<n>`、**无尾换行**、0 基、语义 = 最后通关关卡、只增不减、启动时不创建（[118 §3](docs/archive/118-campaign-data.md)） | ① 客户端数据源：`client/src/app/campaign.gd` 读 `src/graphwar_campaign_control.rs::LEVEL_INFO`（= 原版 `level_info()` `0x4ad380`）；② 21 关参数表见 `docs/118` §7 |
 | AI 进化 | 🔶 部分 | 权重表（合计 85）/ 长度 `trunc(N(0,1)*5+10)` / 六档参数 / 装配 / 交叉 / 变异 / 每代构成 = 反汇编 + 40 万次运行时抽样；适应度逐条反汇编；终止 = **代数到顶 ∨ 25 s 墙钟**；精英 = 每代前 **20%**，字面量 5 = 每槽 1 克隆 + 4 工厂子代（[AI.md](docs/archive/AI.md)、[93](docs/archive/93-ai-time-budget.md)、[95](docs/archive/95-elite5.md)）；第 0 代**没有独立初始化函数**（种群来自哈希表 move-out），**变体 B = 微分方程局**（[110](docs/archive/110-gen0-and-variantb.md)） | ① **AI 产物上线**：`token → 文本`（`0x4ec160`）**已实现**（`src/math_function/to_text.rs`，与求值器同一源文件的两个方向），[117 §4](docs/archive/117-server-wiring.md) 那条缺口已关闭；② 变体 B 的进化链未接；③ 搜索过程受 25 s 墙钟约束 ⇒ 属下面的 **B 类**，只能统计验收；④ DiffEq × AI 只验了变量槽权重 |
-| **Godot 客户端** | 🔶 能走完整流程，**但不是原版源码** | 15 个界面能开一局、内核已接（`path_calculate` / `hit_test` / `level_obstacles` / `path_calculate_mode`，拔掉 `.so` 才退到 `preview`）；回放播放器、联机客户端、音频、战役数据**都已接**（`docs/133`/`134`/`128`/`125`）。⚠️ **但 `client/` 是照 `.tscn` 与截图重写的 GDScript**：原版界面控制器在 Rust 里，所以"回合推进/准备态/弹道生命周期/胜负时机"这些**流程**是推断出来的，且已实测出多处与原版不符。**下一步：把这些控制器迁回 Rust，视图层改用反编译出的原版 `.gd`**（`docs/146`）。胜负判定 / 射手轮转 / 弹道生命周期 / 回合超时 / AI 闸门**已搬进 Rust**（`play_flow_check` **135 条**断言钉住）；视图层 **24 个原版脚本**已换入（`client/src/views/`）。**仍剩 `client/src/screens/*.gd` ≈6,062 行** | ① 控制器迁回 Rust（57 个模块名已知）；② 视图层用 `recovered-src/` 的原版 `.gd`；③ 流程类 bug 逐条按 Rust 出处修（不要再"看起来合理");④ 新增脚本或 `.gdextension` 后**必须先** `godot --headless --path client --import`，否则静默不加载 |
+| **Godot 客户端** | 🔶 能走完整流程，**但不是原版源码** | 15 个界面能开一局、内核已接（`path_calculate` / `hit_test` / `level_obstacles` / `path_calculate_mode`，拔掉 `.so` 才退到 `preview`）；回放播放器、联机客户端、音频、战役数据**都已接**（`docs/133`/`134`/`128`/`125`）。⚠️ **但 `client/` 是照 `.tscn` 与截图重写的 GDScript**：原版界面控制器在 Rust 里，所以"回合推进/准备态/弹道生命周期/胜负时机"这些**流程**是推断出来的，且已实测出多处与原版不符。**下一步：把这些控制器迁回 Rust，视图层改用反编译出的原版 `.gd`**（`docs/146`）。胜负判定 / 射手轮转 / 弹道生命周期 / 回合超时 / AI 闸门**已搬进 Rust**（`play_flow_check` **206 条**断言钉住）；视图层 **24 个原版脚本**已换入（`client/src/views/`）。**仍剩 `client/src/screens/*.gd`（行数现算 `wc -l client/src/screens/*.gd`，2026-11-26 = **6,587 行**）** | ① 控制器迁回 Rust（**59 个**模块名已知）；② 视图层用 `recovered-src/` 的原版 `.gd`；③ 流程类 bug 逐条按 Rust 出处修（不要再"看起来合理");④ 新增脚本或 `.gdextension` 后**必须先** `godot --headless --path client --import`，否则静默不加载 |
 | **脚本逻辑（`.gdc`）** | 🔶 已定性 | `.gdc` 是 `GDSC`+**zstd** 容器（字符串池 `c^0xb6` 混淆），`tools/gdc_strings.py` **105/105 全解**；51 个非插件脚本里 40 个是字号/间距布局助手、6 个空壳、**只有 5 个有行为**；启动快照 2724 条信号连接中**游戏 UI 只剩 6 条** ⇒ **界面逻辑在 Rust 里，不在脚本里**（[88 §12.0](docs/archive/88-coverage-matrix.md)、[101](docs/archive/101-gdc-contents.md)） | 布局助手的字符串已解出，可直接照抄；真正要做的是**把 Rust 侧的界面逻辑接出来**（我们已经在逆那份二进制），而不是等反编译器 |
 | **资源 / 音频** | 🔶 还原完成，未接 | 资源 **692 文件 md5 全符**（`rsc/MANIFEST.tsv`，[17](docs/17-resources.md)）；音频 **10 个导入产物**（3 `.sample` + 6 `.mp3str` + 1 `.oggvorbisstr`）**四道独立检查全过**（PCK 自带 MD5 692/692、容器账本、mp3 帧链、PCM/Vorbis）；`humm.wav` 确证由 **Rust 侧 hound 解析**（`0x50a080`），走 `AudioStreamGenerator` + `push_buffer`（[111](docs/archive/111-audio.md)）。"有一份 `music.ogg` 损坏"的来源已查明：那是使用者自己 `rebuild_ogg.py` 生成的（granule 全 0、缺 EOS 页），**不是游戏资源** | ① **音频播放链路没接进客户端**（`SoundHandler`、音量 `-15f`/`-5f`、`32767` 归一化都已还原，[111 §4](docs/archive/111-audio.md)）；② **音效 ↔ 游戏事件已解**（`docs/16` §30）：订阅 `effect_info`(44，按 `+0x20` 的 u8 四臂) / `soldier_info`(15) / `entity_removed`(14) / `game_state_info`(30)；槽 `+0x80/90/a0/b0/c0` = explosion/squash/spark/pop/unpop，音量 −15/−15/−15/0/−5 dB；`state==1` 清待播队列；③ 仓库**不含任何媒体文件**（`.svg/.ttf/.png/.tres/.tscn/.pck` 一律不入库），要用自己的 `Graphwar.pck` 跑 `tools/extract_assets.py` 生成 `client/assets/`（gitignored） |
 | **构建产物** | 🔶 部分 | `cargo build --release` 出 cdylib，`gdext_rust_init` 在真 Godot 4.7.2 注册成功；导出 `.pck` 能从包里启动并加载还原的纹理（[18](docs/18-build.md)，原 `19` 已并入其 §6） | 没有可玩的一体化产物：客户端要使用者自己的原版 `Graphwar.pck` 才能取到图标/字体；原扩展对外只有 **12 类 25 个方法**、几乎全是 UI 回调，玩法逻辑完全不开放（[18 §6.5](docs/18-build.md)） |
@@ -78,13 +78,13 @@
 | 整局**完全一致**（消息级对拍） | **1/401 份回放**（`docs/06` §24.2 **当轮**读数，本轮未重算）；旧口径 **71/400 帧** | 两者分母不同（回放 vs 帧），别混着比 |
 | 多发批**批结构** | **130/130**（`docs/141` **当轮**读数） | 剔掉死亡块 |
 | 客户端自检 | **714 passed / 0 failed / 1 skipped**（四个前置全到位时：`client/assets/` 已解出、**解完资产后再 `--import`**、`cargo build --example serve_match`、两个回放样本 1783255495/1793897298 放进 `$HOME/.local/share/godot/app_userdata/Graphwar/replays`）。缺一档就掉：缺回放样本 **686 / 0 / 10** → 缺 assets **606 / 2 / 23** → 再缺 `serve_match` **530 / 2 / 25** （2026-11-08 实测，四处都对得上） | ⚠️ 回归保护，不是复原证据。那 2 条 FAIL **只在缺 assets 时出现**（`点 Skins 页的第 -1 号皮肤`、`Cancel = 194 宽 / Start = 218 宽`），有资产时归零 ⇒ 属缺资产而非回归 |
-| `cargo test` | **1693 条**（默认 feature；`--features gdext-bindings` 的条数见当轮实测） | 单测/集成；同样不是"与原版相同"的证据。**条数每轮都在变**，别拿它当进度（`AGENTS.md` §0.2） |
+| `cargo test` | **1769 条**（默认 feature；`--features gdext-bindings` **1875 条**；2026-11-26 本机实测，条数每轮都变，现算 `cargo test` 即可） | 单测/集成；同样不是"与原版相同"的证据。**条数每轮都在变**，别拿它当进度（`AGENTS.md` §0.2） |
 
 **要补的活**（按"是不是复原"排序，不按工作量）：
 
 | # | 缺口 | 性质 |
 |---|---|---|
-| 1 | **客户端控制器迁回 Rust** —— **78 个模块名已权威确定**（`docs/02` §18），**GDExtension 类 15 个已还原且节点化**（原版 12 + 我方 3）；视图层已换 24 个原版脚本。余下的是 `client/src/screens/*.gd` **≈6,062 行仿制流程**（回合推进 / 准备态 / 联机 / 回放驱动 / 关卡坐标）。54 + 67 号已搬走胜负判定 / 射手轮转 / 弹道生命周期 / 回合超时 / AI 闸门（`play_flow_check` 206 条），**继续保持"进 Rust 的是状态机、留 GDScript 的是节点属性"这条边界** |
+| 1 | **客户端控制器迁回 Rust** —— **78 个模块名已权威确定**（`docs/02` §18），**GDExtension 类 15 个已还原且节点化**（原版 12 + 我方 3）；视图层已换 24 个原版脚本。余下的是 `client/src/screens/*.gd` **（现算 6,587 行）仿制流程**（回合推进 / 准备态 / 联机 / 回放驱动 / 关卡坐标）。54 + 67 号已搬走胜负判定 / 射手轮转 / 弹道生命周期 / 回合超时 / AI 闸门（`play_flow_check` 206 条），**继续保持"进 Rust 的是状态机、留 GDScript 的是节点属性"这条边界** |
 | 2 | **死亡集合 / `AshEffect` 发射器** | 对拍剩余失败的**主要来源**：37 个失败里 19 个是"死亡块整块是 `AshEffect`"、18 个是"死亡集合漏报"（`docs/141`） |
 | 3 | **同时回合制的 A 类**：`TurnInfo` 那组玩家排列（HashMap 迭代序） | 缺一份未捕获的熵；批内其它顺序**已定死**（130/130） |
 | 4 | **界面像素**：主菜单 sha256 相同、弹窗 0.00–1.7%、玩家页 0.007%；但仍有屏缺真值 | 见 `docs/130`/`docs/137` |
@@ -170,7 +170,7 @@ python3 tools/bit_exact_attrib.py --json b.jsonl      # 延迟段两条 + 失败
 | 源码保真 | ✗ 是我们的发明 | ✅ 原版 `.rodata` 里留着 `gdext-…/godot-core/src/registry/class.rs` |
 
 ⇒ 骨架已按 **cargo feature `gdext-bindings`** 并入（**默认关闭，零风险**）：
-关闭时零依赖、**1693** 条测试全绿；`--features gdext-bindings` 时 **1799** 条全绿。所有节点的 `_draw` / `_process` 真被引擎调到。
+关闭时零依赖、**1769** 条测试全绿；`--features gdext-bindings` 时 **1875** 条全绿（2026-11-26 实测）。所有节点的 `_draw` / `_process` 真被引擎调到。
 
 ### 三个"白捡的"证据源（别再从零挖）
 
@@ -206,7 +206,7 @@ python3 tools/bit_exact_attrib.py --json b.jsonl      # 延迟段两条 + 失败
 `graphwar_replay_player` / `graphwar_game_server` / `game` / `server` / `graphwar_play_screen_control`
 均已可运行；桥接层在 `src/_scaffold/`（`api` / `protocol` / `broker` / `capi` / `gdext*`）。
 **`cargo test --offline` 全绿**（条数每轮在变，**别把它当进度**——见 `AGENTS.md` §0.2）；
-`src/` 根目录现有 **80 个 `*.rs`（其中 59 个 `graphwar_*.rs`）＋ 4 个同名子目录**，另有 `src/_scaffold/` 里 **31 个**我方自造 `.rs`。⚠️ 原版模块总数是 **78 = 62 个 `scope=graphwar` + 16 个 `scope=other`**（`docs/coverage-matrix.tsv`），**旧读数「58 个 `graphwar_*.rs` + 12 个非前缀模块」已作废**；口径与复算命令见 [`docs/02`](docs/02-module-map.md) §17 开头。
+`src/` 根目录现有 **80 个 `*.rs`（其中 59 个 `graphwar_*.rs`）＋ 3 个同名子目录**（`graphwar_level_generator/` `graphwar_shot_calculator/` `math_function/`），另有 `src/_scaffold/` 里 **33 个**我方自造 `.rs`（现算：`ls src/_scaffold/*.rs | wc -l`）。⚠️ 原版模块总数是 **78 = 62 个 `scope=graphwar` + 16 个 `scope=other`**（`docs/coverage-matrix.tsv`），**旧读数「58 个 `graphwar_*.rs` + 12 个非前缀模块」已作废**；口径与复算命令见 [`docs/02`](docs/02-module-map.md) §17 开头。
 ### 客户端自检的口径（`bash client/run.sh selftest`）
 
 **717 不是版本号，是"四个前置条件全齐"的读数**（2026-11-26 在 master `778a312` 上实跑；

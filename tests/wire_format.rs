@@ -24,10 +24,13 @@
 //!
 //! ## 三道自校验（都在 `tools/wire_fields.py` 里跑）
 //!
-//! 1. **N**：字段个数 == `.rodata` 里 `struct <Name>Event with N elements` 的 N
-//!    （67/67）。另 7 个事件没有这条串 —— 它们的 `Serialize` 不写任何字段，体是空 `{}`。
+//! 1. **N**：字段个数 == `.rodata` 里 `struct <Name>Event with N element(s)` 的 N
+//!    （**64/64 有字段事件**）。这条串共 **67** 条 = 64 个事件结构体 + 3 个非事件负载
+//!    （`GameInfo`9 / `GraphwarColor`3 / `EventInfo`2）；另 **10** 个事件是空体 `{}`，
+//!    0 字段结构体只产出短形式 `struct <Name>Event`，没有这条串（2026-11-26 复核，见
+//!    `docs/07` §3.2 就地更正 / `docs/06` §66）。
 //! 2. **反序列化侧**：`Deserialize` 的 `visit_map` 里能找到同名键的字节比较
-//!    （67/67，全部字段）。
+//!    （有字段的 64 个事件全部字段）。
 //! 3. **抓包**：本文件 [`capture_key_order_matches_binary`] 逐行验证。
 
 use gw2_rebuild::_scaffold::protocol::{

@@ -408,6 +408,22 @@ def mod(module, scope, ours, status, evidence):
                      status=status, evidence=evidence)
 
 
+def _src_graphwar_files():
+    """`src/` 顶层 `graphwar_*.rs` 的**文件**个数（现算，不写死）。"""
+    import glob
+    return len(glob.glob(os.path.join(ROOT, "src", "graphwar_*.rs")))
+
+
+def _src_graphwar_files_alpha():
+    r"""只匹配 `graphwar_[a-z_]+\.rs` 时的个数 —— 会漏掉带数字的 `graphwar_lan_broadcaster_v6.rs`。"""
+    import re
+    d = os.path.join(ROOT, "src")
+    if not os.path.isdir(d):
+        return 0
+    pat = re.compile(r"^graphwar_[a-z_]+\.rs$")
+    return sum(1 for f in os.listdir(d) if pat.match(f))
+
+
 def graphwar_prefixed():
     """**有同名文件**的 `scope=graphwar` 模块数（现值 **58**）。
 
@@ -971,9 +987,11 @@ def render_md(rows, spot_rows, totals, grand, meta):
       "本表压平后不重复计数，并把跨模块数单独列为 `contested` |")
     A("| 「885/13263，观测 441 + 推断 444」 | `docs/02` §10 | 那是**调用图扩散**，属推断层。本表只收硬证据，"
       "不把扩散数写进总账 |")
-    A("| 「57 个模块」 | 各处 | 按 `src/graphwar_[a-z_]+\\.rs` 数是 57；"
-      "**加数字字符后是 %d**（`graphwar_lan_broadcaster_v6.rs` 被漏了）。本表一律算出来、不写死 |"
-      % graphwar_prefixed())
+    A("| 「57 个模块」 | 各处 | 旧读数 `57` 已作废（连它自己的两个口径都不对）："
+      "按**文件** `src/graphwar_*.rs` 是 **%d** 个；只匹配 `[a-z_]+` 会漏掉"
+      "`graphwar_lan_broadcaster_v6.rs` ⇒ **%d**。本表的口径是**模块**："
+      "有同名文件的模块 **%d** 个（%d 个文件里有一个不是模块名，见 §17）。计数一律算出来、不写死 |"
+      % (_src_graphwar_files(), _src_graphwar_files_alpha(), graphwar_prefixed(), _src_graphwar_files()))
     A("| 「`fixtures/module_funcs.tsv` 的地址清单」 | `docs/02` §14.2 | 那张表已自我更正为「不能判定函数身份」；"
       "本表用 Ghidra 边界 + 冲突压平重算 |")
     A("| 「解析器 `0x4ed670` 在 `graphwar_function_input.rs`」 | `docs/02` §1 | "

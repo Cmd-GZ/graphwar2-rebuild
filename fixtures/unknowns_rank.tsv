@@ -1,0 +1,66 @@
+kind	subject	addr	detail	extra	evidence	note
+rank-fn	broadcast all（遍历 map 发 tag 67）	0x454d80	0x100	src/graphwar_rank_manager.rs:73	observed	
+rank-fn	entity_removed 处理（删 map 条目）	0x454e80	0x70	src/graphwar_rank_manager.rs:83	observed	
+rank-fn	init/订阅 new_connection + entity_removed	0x454f30	0x160	src/graphwar_rank_manager.rs:33	observed	
+rank-fn	set/clear（写 map + 发 tag 67）	0x455090	0xd0	src/graphwar_rank_manager.rs:61	observed	
+rank-fn	远端事件处理器（调 0x455090 的一处）	0x3dee00	0x3a30	src/graphwar_remote_event_handler.rs:143;src/graphwar_remote_event_handler.rs:145;src/graphwar_remote_event_handler.rs:152;src/graphwar_remote_event_handler.rs:156	observed	
+rank-fn	事件分派器（调 0x455090 的另一处）	0x3e2830	0x30e0	src/graphwar_color_manager.rs:114;src/graphwar_effect_manager.rs:87;src/graphwar_entity_effect_manager.rs:57;src/graphwar_game_state_manager.rs:182	observed	
+rank-fn	22 张段位图的加载者	0x4c9190	0x6130		observed	
+rank-wire	struct RankInfoEvent with 2 elements	0x1bbda7			observed	N=2
+rank-wire	struct RankRequestEvent with 2 elements	0x1bc043			observed	N=2
+rank-payload					observed	0x454e14  pshufd xmm0,xmm0,0xe1  ; (rank, entity_id) 交换成 (value,key)
+rank-payload					observed	0x454e19  movq [rsp+0xc],xmm0     ; +0xc = rank(u32), +0x10 = entity_id(u32)
+rank-payload					observed	0x454e0c  mov  dword [rsp+8],1    ; +8 = Option 的判别值（1 = Some）
+rank-payload					observed	0x454e1f  movabs rax,0x8000000000000043  ; +0 = Event 判别值 67
+rank-payload					observed	0x455103  mov [rsp+0x1c],ebx      ; set 路径：+0x1c = value
+rank-payload					observed	0x4550fe  mov [rsp+0x18],r14d     ;          +0x18 = 判别值（edx；==1 ⇒ 存进 map）
+rank-payload					observed	0x455107  mov [rsp+0x20],ebp      ;          +0x20 = entity_id
+rank-payload					observed	0x4550b0  cmp edx,1 / jne 0x4550c3 ; 判别值 != 1 ⇒ 走删条目分支 ⇒ 线上 rank:null
+rank-asset	rank_00	0x1c3481	22	res://ranks/rank_0.svg	observed	
+rank-asset	rank_01	0x1c3497	22	res://ranks/rank_1.svg	observed	
+rank-asset	rank_02	0x1c34ad	22	res://ranks/rank_2.svg	observed	
+rank-asset	rank_03	0x1c34c3	22	res://ranks/rank_3.svg	observed	
+rank-asset	rank_04	0x1c34d9	22	res://ranks/rank_4.svg	observed	
+rank-asset	rank_05	0x1c34ef	22	res://ranks/rank_5.svg	observed	
+rank-asset	rank_06	0x1c3505	22	res://ranks/rank_6.svg	observed	
+rank-asset	rank_07	0x1c351b	22	res://ranks/rank_7.svg	observed	
+rank-asset	rank_08	0x1c3531	22	res://ranks/rank_8.svg	observed	
+rank-asset	rank_09	0x1c3547	22	res://ranks/rank_9.svg	observed	
+rank-asset	rank_10	0x1c355d	23	res://ranks/rank_10.svg	observed	
+rank-asset	rank_11	0x1c3574	23	res://ranks/rank_11.svg	observed	
+rank-asset	rank_12	0x1c358b	23	res://ranks/rank_12.svg	observed	
+rank-asset	rank_13	0x1c35a2	23	res://ranks/rank_13.svg	observed	
+rank-asset	rank_14	0x1c35b9	23	res://ranks/rank_14.svg	observed	
+rank-asset	rank_15	0x1c35d0	23	res://ranks/rank_15.svg	observed	
+rank-asset	rank_16	0x1c35e7	23	res://ranks/rank_16.svg	observed	
+rank-asset	rank_17	0x1c35fe	23	res://ranks/rank_17.svg	observed	
+rank-asset	rank_18	0x1c3615	23	res://ranks/rank_18.svg	observed	
+rank-asset	rank_19	0x1c362c	23	res://ranks/rank_19.svg	observed	
+rank-asset	rank_20	0x1c3643	23	res://ranks/rank_20.svg	observed	
+rank-asset	rank_21	0x1c365a	23	res://ranks/rank_21.svg	observed	
+rank-names	Bronze	0			absent	
+rank-names	Silver	1			present	
+rank-names	Gold	2			present	
+rank-names	Platinum	0			absent	
+rank-names	Diamond	0			absent	
+rank-names	Master	5			present	
+rank-names	Grandmaster	0			absent	
+rank-names	bronze	0			absent	
+rank-names	silver	0			absent	
+rank-names	elite	0			absent	
+rank-names	leaderboard	0			absent	
+rank-names	elo	7			present	
+rank-names	rating	0			absent	
+rank-names	mmr	0			absent	
+rank-arith	rank broadcast	0x454d80	67	{}	ok	期望 arithmetic = 0
+rank-arith	rank remove	0x454e80	36	{}	ok	期望 arithmetic = 0
+rank-arith	rank init	0x454f30	91	{}	ok	期望 arithmetic = 0
+rank-arith	rank set	0x455090	70	{}	ok	期望 arithmetic = 0
+rank-arith	CONTROL GraphwarPlane::draw	0x4b5df0	1158	{'divss': 2, 'mulsd': 1, 'mulss': 4, 'imul': 2, 'subsd': 2, 'cvtsi2sd': 1}	ok	期望 arithmetic > 0
+rank-arith	CONTROL EntityDrawer::draw	0x4b2890	1274	{'divsd': 2, 'divss': 1, 'mulsd': 1, 'mulss': 3, 'imul': 1, 'addsd': 7, 'subsd': 4, 'cvtsi2ss': 1}	ok	期望 arithmetic > 0
+rank-wire-capture	fixtures/protocol.jsonl				observed	{"RankRequest":{"entity_id":229,"rank":0}}
+rank-wire-capture	fixtures/protocol.jsonl				observed	{"RankInfo":{"entity_id":229,"rank":0}}
+rank-wire-capture	fixtures/protocol_match.jsonl				observed	{"RankRequest":{"entity_id":229,"rank":0}}
+rank-wire-capture	fixtures/protocol_match.jsonl				observed	{"RankRequest":{"entity_id":232,"rank":null}}
+rank-wire-capture	fixtures/protocol_match.jsonl				observed	{"RankInfo":{"entity_id":229,"rank":0}}
+rank-wire-capture	fixtures/protocol_match.jsonl				observed	{"RankInfo":{"entity_id":232,"rank":null}}
