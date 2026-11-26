@@ -1,0 +1,48 @@
+﻿# T51 回放屏回归 bisect 台账（task-48 / 分支 agent/replay-regress，2026-11-26）
+#
+# 问题：docs/06 §71（任务 T21）记录 replay_play 4 408 px = 0.1979 %、replay_end 4 138 px = 0.1858 %（L2 0 块）；
+#       2026-11-26 在 master 上用「带 seed」的口径重测得 replay_play 2.710 %（L2 2 块）。差 14.6×。
+#
+# 采集口径（本表每一行都是同一条配方，没有任何一行"省了 seed"）：
+#   export CARGO_HOME=<MAIN>/.reference/cargo-home
+#   export CARGO_TARGET_DIR=<WORKTREE>/.cargo-target
+#   export HOME=<WORKTREE>/.fakehome  GODOT=<MAIN>/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+#   cd <WORKTREE>
+#   cargo build --offline --features gdext-bindings
+#   cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/          # 每个点都重做，并**核对 md5 变了**
+#   $GODOT --headless --path client --import                      # 每个点都重做
+#   bwrap --unshare-user --unshare-net --uid 0 --gid 0 --ro-bind / / --bind <MAIN> <MAIN> \
+#         --dev /dev --proc /proc --tmpfs /tmp --setenv DISPLAY 127.0.0.1:<n> --chdir <WORKTREE> \
+#         python3 tools/frame_capture.py --side {original|ours} --flow replay --seed-replays \
+#                 --out <OUT> --display-num <n>                       # 两侧**串行**
+#   python3 tools/frame_diff.py --orig <ORIG> --mine <MINE> \
+#           --screens menu,replay_lobby,replay_play,replay_end --out .. --blocks-out .. --json ..
+#
+# 原版侧的帧：**一次采集、全部点复用**（不是偷懒，是可核的）——
+#   `--side original` 跑的是 .reference/game 里那份固定二进制，与 merge 点**无关**；
+#   而 frame_capture.py 的 replay 点击串与常量（REPLAYS_BTN / REPLAY_ROW1_PLAY / REPLAY_END_WAIT /
+#   SNAPSHOT_REPLAYS / FRAMES_PER_SCREEN / FRAME_GAP_S）在 `57f5266..5f74a29` 区间**一字未改**：
+#       git diff 57f5266 5f74a29 -- tools/frame_capture.py | grep -E '^[-+].*(REPLAY|MENU_PLAY|SNAPSHOT|FRAMES_PER|FRAME_GAP)'
+#   ⇒ 空。frame_diff.py 与 fixtures/frame_diff_thresholds.txt 同区间也无改动。
+#   我方侧（ours）**每个点都单独采**，且每个点前都重做 build/cp/--import。
+#
+# 帧与分母：frame_diff 取每屏的 frame 1；px = L3 差异像素，分母 1920×1160 = 2 227 200。
+# 亮度自检（防"两侧都空画面"的假 0）：replay_play_1 原版亮像素 52.5 %、我方各点同为 52.5 %。
+#
+# 列：tag | commit | 任务 | replay_play_l3_px | replay_play_pct | replay_play_l2_over |
+#     replay_end_l3_px | replay_end_pct | replay_end_l2_over | menu_px | replay_lobby_px | 结论 / 备注
+tag	commit	task	replay_play_l3_px	replay_play_pct	replay_play_l2_over	replay_end_l3_px	replay_end_pct	replay_end_l2_over	menu_px	replay_lobby_px	note
+b6_t21	57f5266	T21（§71 的 0.1858 % 记录点）	4408	0.1979	0	4138	0.1858	0	0	0	★ 0.1858 % / 0.1979 % 在此点**逐像素重现**（与 docs/06 §71 的表同值）；两侧亮像素 52.5 % ⇒ **不是空画面**。.so md5 8b10056 经 touch 强制重建后 md5 不变 ⇒ 该点内核确为 57f5266 的构建
+b5_t29	a3ed8c7	T29 (match-base，自报"回放两屏归零")	1714	0.0770	0	1714	0.0770	0	0	0	带 seed 实测 **不是 0**（还剩 1714 px，L2 0 块、worst block (2,2) dmean 0.42）；但比 T21 的 4138 px **更小** ⇒ 这一段是变好。.so md5 ca7bd51（touch 强制重建后重采，与陈旧 .so 下同值 ⇒ 该点读数稳健）
+b4_t46	d4fdf32	T46 (test-expectations)	作废	作废	作废	作废	作废	作废	作废	作废	**采集失败，不计入**：我方侧 black（亮像素 0.0 %、差 59.99 %），game.log 里 `play_screen.gd` Parse Error + `GraphwarRootNode` 缺 `log()` ⇒ 装的是**陈旧 .so**（共享 CARGO_TARGET_DIR + 同秒 checkout 的 mtime 让 cargo 静默跳过重建）。该点须换**每树独立 target dir** 重跑
+b3_t43	0fa7370	T43 (button-truth)	未测	未测	未测	未测	未测	未测	未测	未测	lead 收尾指令要求停手，未采
+b2_t44	564d558	T44 (play_screen.tscn 装上)	未测	未测	未测	未测	未测	未测	未测	未测	同上；**本轮判定的头号嫌疑点**（回归窗口 (T29, HEAD] 内、且它是唯一整体替换 play_screen 节点树的 merge）
+b1_t47	bdceaa2	T47 (16/16 tscn)	未测	未测	未测	未测	未测	未测	未测	未测	同上；2.710 % 是在这个点上被首次报出来的（但 T44 的 0.000 % 是缺 seed 的假通过，所以"首次报出"≠"首次发生"）
+b0_head	5f74a29	HEAD（lead 的 2.710 % 基线）	60367	2.7104	2	60367	2.7104	2	0	0	★ 复现 lead 的 2.710 %（lead 记的 replay_end 2.723 % 是另一次采集，同量级）；L2 超限块 = (1,5)+(2,5)，l2_max_block_dmean 4.713
+# ── 逐点结论 ──
+# 1) **0.1858 % 是真的，不是空画面**：在 57f5266 上用同一套带 seed 的配方跑出 4138 px / 0.1858 %（replay_end）
+#    与 4408 px / 0.1979 %（replay_play），与 docs/06 §71 的表**同值**；两侧亮像素 52.5 %（空画面会是 0.0 %）。
+# 2) 因此 2.710 % 是**真回归**，不是"口径差"。窗口已收窄到 **(a3ed8c7, 5f74a29]**：
+#    1714 px / 0.077 % → 60367 px / 2.710 %（+34.2 倍），L2 从 0 块变 2 块。
+# 3) 噪声地板（frame_diff 自报）：原版 0.000 %、我方 0.012 %（12 px 量级）⇒ 4408/1714/60367 都远超噪声。
+# 4) `menu` 与 `replay_lobby` 在**每个测过的点**都是 0 px ⇒ 导航与回放列表没被回归碰到。
