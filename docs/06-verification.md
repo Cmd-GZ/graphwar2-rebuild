@@ -10258,6 +10258,11 @@ tools/frame_capture.py --flow endgame（**只新增这一支**；campaign/replay
     → 点 LAN 第 1 行 Join(1842,209) → 三屏各 3 帧（间隔 1.2 s），屏间用触发文件对齐
 ```
 
+**回归自检（证明"既有四支一字不改"）**：改完工具之后**又跑了一遍 `--flow match`**（2 相位那条老路，
+两侧各一次，服务器日志 `accepted=1`、相位 42+8 帧）：`match_ready` 6.342 % / `match_play` 6.807 %
+（L2 超限块 **4 / 3**，与 T8 同），落在 T8 §60.4 登记的原版侧相位浮动（≤0.2 %）里
+⇒ 既有流的点法/时序/数字都没被本轮动过。
+
 **`match_serve.py` 的改动只有"把 2 相位写成 N 相位"**（`if len(phases) > 1` → `for index in range(1, len(phases))`，
 两相位时循环体恰好跑一次）：`--trigger-files a,b`（多相位，第 i 项 = 相位 i+2 的触发）、
 `phase_tick_base()` 读 `[meta] tick_phase<k>`。**两相位 + `--trigger-file` 的老路（T8 的 `--flow match`）
