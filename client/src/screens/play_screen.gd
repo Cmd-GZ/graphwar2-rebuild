@@ -850,6 +850,17 @@ func _update_replay_pause_icon() -> void:
 ## `_apply_font_scale` 由基类在 viewport resize 时调用，这里接在后面。
 func apply_font_scale() -> void:
 	super.apply_font_scale()
+	# `EntityDrawer` 的名字标签**不走本屏的字号表**：原版那一层是 `name_label.tscn` 的
+	# `RichTextLabel`，字号取**主题默认**（`graphwar_theme.tres` 的 `default_font_size = 24`，
+	# 真帧上 `cmdgz` 的墨迹高 ~22 px 就是它）。基类 `_apply_size_recursive()` 会遍历整棵树给
+	# **所有** `RichTextLabel` 写 `normal_font_size = 宽/N × 0.85`；本屏 N 小 ⇒ 那串被放大到
+	# ~68 px（实测我方名字墨迹 202 px 宽 vs 原版 72 px）。这里把那层覆盖撤掉。
+	# 为什么回放屏以前"看起来是对的"：回放的名字标签是在 `apply_font_scale()` **之后**才
+	# `spawn_entity` 出来的，没吃到那次遍历 —— 也就是**顺序碰巧**，不是设计；这里把它定死。
+	if _entities != null:
+		for child in _entities.get_children():
+			if child is RichTextLabel:
+				(child as RichTextLabel).remove_theme_font_size_override("normal_font_size")
 	if not _built:
 		return
 	var w := get_viewport_rect().size.x
@@ -1460,7 +1471,15 @@ func _sync_entities() -> void:
 		var eid := int(s.get("entity_id", s.get("id", i)))
 		want[eid] = {
 			"pos": s.pos,
-			"name": (String(s.name) if _show_names else ""),
+			# 名字：**`room["names"]` 的真值优先**（`NameInfo` 的实体 id 可能只指玩家、
+			# 也可能指士兵 ⇒ 先实体再 `player_id`，见 `_online_entity_name()`）。
+			# 旧实现读本地 profile 名（`app_node.state.players[pi].name`，默认 `"user"`），
+			# 那不是这一局的真值 —— 真值是 `NameInfo{229:"cmdgz"}`（`docs/06` §67.8 第 2 条）。
+			# **现读**（不是建屏时缓存）：`NameInfo` 比 `begin_match()` 晚到（本剧本事件 36 vs 35），
+			# 每次 `_sync_entities()` 都按 `room` 的当前值算，晚到就能自己补上。
+			"name": (_online_entity_name(eid, int(s.get("player_id", -1)),
+				int(s.get("player", 0)), app()) if _online_mode and _show_names
+				else (String(s.name) if _show_names else "")),
 			"dead": (-1 if alive else ENTITY_DEAD_TICKS),
 			"actor_id": eid,                   # 外观表按实体 id 索引（回放/联机同一个口径）
 			"color": s.get("color", Color.WHITE),   # 名字标签的笔画色（队色）
@@ -3083,10 +3102,28 @@ func _build_online_soldiers(room: Dictionary, app_node) -> void:
 			"color": colors[pi] if pi < colors.size() else GwThemeFactory.COL_ACCENT,
 		})
 
+## 玩家的**本地 profile 名**（`App.state.players[pi].name` ⇒ `store.profile.name`）。
+##
+## ⚠️ 这不是联机局的真值：真值在 `room["names"]`（`NameInfo`）。本函数只当**兜底**
+## （线上没给 `NameInfo` 时才有意义），联机士兵的名字走 `_online_entity_name()`。
 func _online_player_name(pi: int, pid: int, app_node) -> String:
 	if app_node != null and pi >= 0 and pi < app_node.state.players.size():
 		return String(app_node.state.players[pi].name)
 	return "Player %d" % pid
+
+## 联机实体的名字：**线上 `NameInfo` 优先**，其次它的 `player_id` 那条，最后才退回本地 profile 名。
+##
+## 为什么要"先实体再 player_id"：本样本的 `NameInfo` 只有一条
+## `NameInfo{entity_id: 229, name: "cmdgz"}`，而**射手是玩家 229 名下的士兵 230**
+## （`SoldierInfo{230, player_id: 229}`）⇒ 只查 `names[eid]` 会查空。
+## 这条链就是真帧上射手头顶那个 `cmdgz` 的来源（`docs/06` §60.5 的"名字标签"那一行）。
+func _online_entity_name(eid: int, pid: int, pi: int, app_node) -> String:
+	var names: Dictionary = _online_room().get("names", {})
+	if names.has(eid) and String(names[eid]) != "":
+		return String(names[eid])
+	if names.has(pid) and String(names[pid]) != "":
+		return String(names[pid])
+	return _online_player_name(pi, pid, app_node)
 
 ## 联机事件的"外观三件套"（`room["look"][entity_id]`，由 `Skin/Face/HatGraphicsInfo` 落进去）。
 ## 回放那边同一件事由 `_replay.graphics(kind, entity_id)` 提供；本地局没有这条事实 ⇒ 空字典。
