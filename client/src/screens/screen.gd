@@ -81,11 +81,38 @@ func apply_font_scale() -> void:
 		width = 0.0
 	_apply_size_recursive(self, current_font_size(), width)
 
+## 这个节点是不是由**原版视图脚本**驱动（两种挂法都要认）。
+##
+## ① 我方代码直接 `GwViews.attach(node, "<name>.gd")` ⇒ 脚本 `resource_path` 是
+##    `res://src/views/<name>.gd`，`GwViews.owns()` 认的就是这一种；
+## ② 原版 `.tscn` 里写的是 `script = ExtResource("res://<Name>.gd")`，而 `client/<Name>.gd`
+##    是**指向 `src/views/<Name>.gd` 的符号链接**（T41 铺的别名层，见 `docs/16` §80.1）。
+##    这时 `resource_path` 是 `res://<Name>.gd` ⇒ `GwViews.owns()` **认不出来**，
+##    于是本类那套 `maxi(10, 宽/N)` 会把原版脚本刚算好的字号覆盖掉。
+##
+##    本轮实测（`docs/06` §92.4）：`join_level_pop_up` 装上原版 `.tscn` 后，Cancel/Start 的
+##    字号被本类从原版 `IpPopUpMargin.gd` 算的 宽/40 **改回** 宽/30 ⇒ 按钮宽 194→257、
+##    218→289 px（真帧值 194/218）。所以别名形态必须一起认。
+func _is_view_owned(node: Node) -> bool:
+	if GwViews.owns(node):
+		return true
+	var script := node.get_script() as Script
+	if script == null:
+		return false
+	var path := String(script.resource_path)
+	if path.begins_with(GwViews.DIR):
+		return true
+	# 别名层形态：`res://<Name>.gd`（根级、无子目录），且 `src/views/<Name>.gd` 存在。
+	if path.begins_with("res://") and not path.substr(6).contains("/"):
+		return GwViews.has(path.substr(6))
+	return false
+
+
 func _apply_size_recursive(node: Node, size: int, width: float) -> void:
 	# 原版视图脚本（`client/src/views/*.gd`）驱动的子树**整棵跳过**：字号由原版自己算。
 	# 原版 105 个脚本里 `maxi`/`max(` 出现 0 次 ⇒ 没有下限，我们那套 `maxi(10, 宽/N)` 是自加的
 	# （`docs/16` §39.6）。两边都写就会变成"谁后连 size_changed 谁赢"，等于没换。
-	if GwViews.owns(node):
+	if _is_view_owned(node):
 		return
 	var local_size := size
 	var div := int(node.get_meta("font_divisor", 0)) if node.has_meta("font_divisor") else 0
