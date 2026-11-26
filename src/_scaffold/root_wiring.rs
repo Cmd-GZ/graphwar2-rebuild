@@ -221,6 +221,7 @@ use crate::Token;
 use crate::graphwar_function_manager::GraphwarFunctionManager;
 use crate::graphwar_obstacle_manager::GraphwarObstacleManager;
 // 任务 36：24 B 布局 + 位置表行为（`src/graphwar_plane_pos_manager.rs`，`docs/16` §44）
+use crate::graphwar_event_handler::{dispatch_name, GraphwarEventHandler};
 use crate::graphwar_event_queue::GraphwarEventQueue;
 // `ENTITY_REMOVED_EVENT_TAG`（= 14）本文件已经从 `graphwar_life_manager` 引进来了，
 // 本模块的同名常量与它同值（`graphwar_plane_pos_manager::tests` 里有一条断言钉住这一点）。
@@ -2067,12 +2068,11 @@ pub struct KernelBus {
     queue: Rc<RefCell<GraphwarEventQueue>>,
     /// 容器（22 个 manager，原版 `GraphwarBackend +0x220` 的那个 `Rc<RefCell<…>>`）。
     wiring: RootWiring,
-    /// 事件名 → 订阅者个数（原版 `GraphwarEventHandler` 里那些 `Vec<Box<dyn Fn(&GraphwarEvent)>>`）。
-    subscribers: HashMap<&'static str, usize>,
-    /// 已经投递给本地订阅者的事件（观测点；按投递顺序）。
-    delivered: Vec<Event>,
-    /// `pump()` 被调过几次（观测点）。
-    pumps: i64,
+    /// **原版那两条函数的归属地**（T49 搬回 `src/graphwar_event_handler.rs`）：
+    /// `subscribe_to_event`（`0x3d38f0`）的订阅表 + `process_events`（`0x3d3630`）的投递泵。
+    ///
+    /// 本层剩下的 `frames` / `ticks` / `probes` / `clock_override` 才是**我方接线**。
+    handler: GraphwarEventHandler,
     /// [`KernelBus::drive_frame`] 被调过几次（= 帧数，观测点）。
     frames: i64,
     /// `tick()`（`GraphwarGameClient::tick`，x86 `0x518240`）累计被调过几次（观测点）。
@@ -2102,59 +2102,43 @@ impl KernelBus {
         &self.wiring
     }
 
-    /// 订阅一个事件名（= `GraphwarEventHandler::subscribe_to_event` 的**登记**那一半）。
+    /// 订阅一个事件名 —— **薄转发**到 [`GraphwarEventHandler::subscribe_to_event`]
+    /// （原版 `0x3d38f0`，T49 把方法体搬回 `src/graphwar_event_handler.rs`）。
     ///
     /// 名字必须在 `0x3d38f0` 解出的那张表里（[`crate::events::DISPATCH_NAME_TAGS`]），
     /// 否则返回 `false`（原版那 6 条订阅名全部在表里，见 `docs/16` §46）。
     pub fn subscribe(&mut self, name: &str) -> bool {
-        match crate::events::DISPATCH_NAME_TAGS.iter().find(|(n, _)| *n == name) {
-            Some((n, _)) => {
-                *self.subscribers.entry(n).or_insert(0) += 1;
-                true
-            }
-            None => false,
-        }
+        self.handler.subscribe_to_event(name)
     }
 
-    /// 某个事件名上挂了几个订阅者。
+    /// 某个事件名上挂了几个订阅者（转发）。
     pub fn subscriber_count(&self, name: &str) -> usize {
-        self.subscribers.get(name).copied().unwrap_or(0)
+        self.handler.subscriber_count(name)
     }
 
-    /// 订阅表原样给出（`(名字, 个数)`，按名字排序 —— `HashMap` 序不可依赖）。
+    /// 订阅表原样给出（`(名字, 个数)`，转发）。
     pub fn subscribers(&self) -> Vec<(&'static str, usize)> {
-        let mut out: Vec<(&'static str, usize)> =
-            self.subscribers.iter().map(|(k, v)| (*k, *v)).collect();
-        out.sort_unstable_by_key(|(k, _)| *k);
-        out
+        self.handler.subscribers()
     }
 
-    /// **把出站队列里的事件投递给本地订阅者**（原版 `process_events` 的位置）。
+    /// **把出站队列里的事件投递给本地订阅者** —— **薄转发**到
+    /// [`GraphwarEventHandler::process_events`]（原版 `0x3d3630`；T49 搬回原版模块）。
     ///
     /// 返回值 = 这一次真正投递出去的事件（按队列顺序）。只有**有人订阅**的事件才会被记下来，
-    /// 没订阅的照原版口径丢掉（原版 `process_events` 也只调订阅表里有的那些）。
+    /// 没订阅的照原版口径丢掉。
     pub fn pump(&mut self) -> Vec<Event> {
-        self.pumps += 1;
         let drained = self.queue.borrow_mut().send_buffer();
-        let mut out = Vec::new();
-        for ev in drained {
-            let subscribed = dispatch_name(ev).is_some_and(|n| self.subscribers.contains_key(n));
-            if subscribed {
-                self.delivered.push(ev);
-                out.push(ev);
-            }
-        }
-        out
+        self.handler.process_events(drained)
     }
 
-    /// 已投递事件（按投递顺序）。
+    /// 已投递事件（按投递顺序，转发）。
     pub fn delivered(&self) -> &[Event] {
-        &self.delivered
+        self.handler.delivered()
     }
 
-    /// `pump()` 被调过几次。
+    /// `pump()` 被调过几次（转发）。
     pub fn pumps(&self) -> i64 {
-        self.pumps
+        self.handler.pumps()
     }
 
     /// 队列里还压着几条（没 `pump` 之前）。
@@ -2344,12 +2328,11 @@ impl KernelBus {
 }
 
 /// 事件 → `0x3d38f0` 那张表里的派发名（没有名字的两条 = `GameHeartbeat` / `VersionInfo`）。
-pub fn dispatch_name(event: Event) -> Option<&'static str> {
-    crate::events::DISPATCH_NAME_TAGS
-        .iter()
-        .find(|(_, e)| *e == event)
-        .map(|(name, _)| *name)
-}
+///
+/// **T49**：函数体搬到 [`crate::graphwar_event_handler::dispatch_name`]（它属于
+/// `GraphwarEventHandler` 那张订阅表的反向索引，不是接线层的东西）；这里 `pub use`
+/// 再导出，老路径 `root_wiring::dispatch_name` 不变。
+pub use crate::graphwar_event_handler::dispatch_name;
 
 thread_local! {
     /// 本线程那条事件通道（节点层 [`crate::_scaffold::entity_drawer_class`] 用它）。
@@ -2377,9 +2360,7 @@ pub fn install_kernel_bus() -> Rc<RefCell<KernelBus>> {
     let bus = Rc::new(RefCell::new(KernelBus {
         queue,
         wiring,
-        subscribers: HashMap::new(),
-        delivered: Vec::new(),
-        pumps: 0,
+        handler: GraphwarEventHandler::new(),
         frames: 0,
         ticks: 0,
         probes: 0,
