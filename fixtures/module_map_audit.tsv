@@ -1,0 +1,142 @@
+# fixtures/module_map_audit.tsv —— docs/02-module-map.md 三类系统性过时的逐处台账
+# 生成：2026-11-26 T22（task-19）；行号基准 commit c636bad（改前）
+# 判据：①archive-path = `docs/NN` 而 NN 只在 docs/archive/** 下（docs/ 根与 archive 同号的 09/10/11/12/13/14/15/16/19/20/21 是歧义号，一律不动）
+#       ②stale-status = §17.1/§17.2 状态列写 `未实现`，而 docs/coverage-matrix.tsv 该模块 status 是 逐位/观测（逐模块真值取矩阵的 status / orig_funcs）
+#       ③location-mismatch = 0x4500c0 被记在 server_connection_handler 名下，而它的 panic::Location 落在 graphwar_game_server.rs:219–222
+# 列：line | class | module | orig_funcs | now | truth | action
+# 本台账只记录**判据与计划**，改完不得回改（改动本身见同分支 commit 2 与 docs/06 §72）。
+# 计数：archive-path 81 行-token（= 86 处编号分量）/ stale-status 43 行（§17.1 33 + §17.2 10）/ location-mismatch 4 行（改 3 + 冻结登记 1）/ bookkeeping 4 行
+# 规格给的「78 处 / 60 行」是上一轮按「每个 token 只算第一个编号」数的；按**编号分量**重数是 86 处 / 63 行。多出的 8 处 = `docs/08/39` 的 39 ×2（行 838/840）+ `docs/07/24` 的 24（行 859）+ 链内第二/三个编号 5 个（`docs/136/142` 的 142、`docs/55/56/61` 的 56/61、`docs/103/126` 的 126、`docs/43/46` 的 46）
+line	class	module	orig_funcs	now	truth	action
+822	archive-path	-	-	`docs/98`	`98`(docs/archive/98-shooter-selection.md)	`docs/98` → [`docs/archive/98`](archive/98-shooter-selection.md)
+822	archive-path	-	-	`docs/117`	`117`(docs/archive/117-server-wiring.md)	`docs/117` → [`docs/archive/117`](archive/117-server-wiring.md)
+823	archive-path	-	-	`docs/71`	`71`(docs/archive/ai/71-token-weights.md)	`docs/71` → [`docs/archive/71`](archive/ai/71-token-weights.md)
+823	archive-path	-	-	`docs/74`	`74`(docs/archive/ai/74-fitness-formula-corrected.md)	`docs/74` → [`docs/archive/74`](archive/ai/74-fitness-formula-corrected.md)
+824	archive-path	-	-	`docs/135`	`135`(docs/archive/135-fire-fx.md)	`docs/135` → [`docs/archive/135`](archive/135-fire-fx.md)
+825	archive-path	-	-	`docs/65`	`65`(docs/archive/65-life-rules-confirmed.md)	`docs/65` → [`docs/archive/65`](archive/65-life-rules-confirmed.md)
+826	archive-path	-	-	`docs/91`	`91`(docs/archive/91-bisection-loop.md)	`docs/91` → [`docs/archive/91`](archive/91-bisection-loop.md)
+827	archive-path	-	-	`docs/133`	`133`(docs/archive/133-replay-player.md)	`docs/133` → [`docs/archive/133`](archive/133-replay-player.md)
+827	archive-path	-	-	`docs/136/142`	`136`(docs/archive/136-replay-diff.md) , `142`(docs/archive/142-diff-converge.md)	`docs/136/142` → [`docs/archive/136`](archive/136-replay-diff.md)/[`142`](archive/142-diff-converge.md)
+828	archive-path	-	-	`docs/35`	`35`(docs/archive/35-tick-clock.md)	`docs/35` → [`docs/archive/35`](archive/35-tick-clock.md)
+828	archive-path	-	-	`docs/42`	`42`(docs/archive/42-end-of-turn.md)	`docs/42` → [`docs/archive/42`](archive/42-end-of-turn.md)
+829	archive-path	-	-	`docs/55/56/61`	`55`(docs/archive/55-level-generator-closed.md) , `56`(docs/archive/56-levelgen-replay-complete.md) , `61`(docs/archive/61-levelgen-rust.md)	`docs/55/56/61` → [`docs/archive/55`](archive/55-level-generator-closed.md)/[`56`](archive/56-levelgen-replay-complete.md)/[`61`](archive/61-levelgen-rust.md)
+829	archive-path	-	-	`docs/103/126`	`103`(docs/archive/103-disk-levelgen.md) , `126`(docs/archive/126-level-obstacles.md)	`docs/103/126` → [`docs/archive/103`](archive/103-disk-levelgen.md)/[`126`](archive/126-level-obstacles.md)
+830	archive-path	-	-	`docs/86`	`86`(docs/archive/86-simultaneous-turns.md)	`docs/86` → [`docs/archive/86`](archive/86-simultaneous-turns.md)
+830	archive-path	-	-	`docs/122`	`122`(docs/archive/122-self-hit.md)	`docs/122` → [`docs/archive/122`](archive/122-self-hit.md)
+830	archive-path	-	-	`docs/86`	`86`(docs/archive/86-simultaneous-turns.md)	`docs/86` → [`docs/archive/86`](archive/86-simultaneous-turns.md)
+831	archive-path	-	-	`docs/114`	`114`(docs/archive/114-event-tags.md)	`docs/114` → [`docs/archive/114`](archive/114-event-tags.md)
+832	archive-path	-	-	`docs/114`	`114`(docs/archive/114-event-tags.md)	`docs/114` → [`docs/archive/114`](archive/114-event-tags.md)
+834	archive-path	-	-	`docs/41`	`41`(docs/archive/41-turn-state-machine.md)	`docs/41` → [`docs/archive/41`](archive/41-turn-state-machine.md)
+835	archive-path	-	-	`docs/112`	`112`(docs/archive/112-meta-managers.md)	`docs/112` → [`docs/archive/112`](archive/112-meta-managers.md)
+836	archive-path	-	-	`docs/43/46`	`43`(docs/archive/43-turn-message-sequence.md) , `46`(docs/archive/46-full-turn.md)	`docs/43/46` → [`docs/archive/43`](archive/43-turn-message-sequence.md)/[`46`](archive/46-full-turn.md)
+836	archive-path	-	-	`docs/62`	`62`(docs/archive/62-server-loop.md)	`docs/62` → [`docs/archive/62`](archive/62-server-loop.md)
+836	archive-path	-	-	`docs/117`	`117`(docs/archive/117-server-wiring.md)	`docs/117` → [`docs/archive/117`](archive/117-server-wiring.md)
+837	archive-path	-	-	`docs/33`	`33`(docs/archive/33-server-handshake.md)	`docs/33` → [`docs/archive/33`](archive/33-server-handshake.md)
+837	archive-path	-	-	`docs/112`	`112`(docs/archive/112-meta-managers.md)	`docs/112` → [`docs/archive/112`](archive/112-meta-managers.md)
+838	archive-path	-	-	`docs/08/39`	`39`(docs/archive/39-punch-hole.md)	`docs/08/39` → docs/08、[`docs/archive/39`](archive/39-punch-hole.md)
+839	archive-path	-	-	`docs/140`	`140`(docs/archive/140-plane-visual.md)	`docs/140` → [`docs/archive/140`](archive/140-plane-visual.md)
+840	archive-path	-	-	`docs/08/39`	`39`(docs/archive/39-punch-hole.md)	`docs/08/39` → docs/08、[`docs/archive/39`](archive/39-punch-hole.md)
+841	archive-path	-	-	`docs/132`	`132`(docs/archive/132-android-build.md)	`docs/132` → [`docs/archive/132`](archive/132-android-build.md)
+842	archive-path	-	-	`docs/111`	`111`(docs/archive/111-audio.md)	`docs/111` → [`docs/archive/111`](archive/111-audio.md)
+846	archive-path	-	-	`docs/134`	`134`(docs/archive/134-net-client.md)	`docs/134` → [`docs/archive/134`](archive/134-net-client.md)
+847	archive-path	-	-	`docs/102`	`102`(docs/archive/102-color-assignment.md)	`docs/102` → [`docs/archive/102`](archive/102-color-assignment.md)
+850	archive-path	-	-	`docs/140`	`140`(docs/archive/140-plane-visual.md)	`docs/140` → [`docs/archive/140`](archive/140-plane-visual.md)
+859	archive-path	-	-	`docs/07/24`	`24`(docs/archive/24-network-protocol.md)	`docs/07/24` → docs/07、[`docs/archive/24`](archive/24-network-protocol.md)
+861	archive-path	-	-	`docs/118`	`118`(docs/archive/118-campaign-data.md)	`docs/118` → [`docs/archive/118`](archive/118-campaign-data.md)
+862	archive-path	-	-	`docs/112`	`112`(docs/archive/112-meta-managers.md)	`docs/112` → [`docs/archive/112`](archive/112-meta-managers.md)
+863	archive-path	-	-	`docs/112`	`112`(docs/archive/112-meta-managers.md)	`docs/112` → [`docs/archive/112`](archive/112-meta-managers.md)
+864	archive-path	-	-	`docs/112`	`112`(docs/archive/112-meta-managers.md)	`docs/112` → [`docs/archive/112`](archive/112-meta-managers.md)
+866	archive-path	-	-	`docs/88`	`88`(docs/archive/88-coverage-matrix.md)	`docs/88` → [`docs/archive/88`](archive/88-coverage-matrix.md)
+869	archive-path	-	-	`docs/112`	`112`(docs/archive/112-meta-managers.md)	`docs/112` → [`docs/archive/112`](archive/112-meta-managers.md)
+870	archive-path	-	-	`docs/112`	`112`(docs/archive/112-meta-managers.md)	`docs/112` → [`docs/archive/112`](archive/112-meta-managers.md)
+873	archive-path	-	-	`docs/112`	`112`(docs/archive/112-meta-managers.md)	`docs/112` → [`docs/archive/112`](archive/112-meta-managers.md)
+874	archive-path	-	-	`docs/133`	`133`(docs/archive/133-replay-player.md)	`docs/133` → [`docs/archive/133`](archive/133-replay-player.md)
+876	archive-path	-	-	`docs/125`	`125`(docs/archive/125-playscreen.md)	`docs/125` → [`docs/archive/125`](archive/125-playscreen.md)
+877	archive-path	-	-	`docs/115`	`115`(docs/archive/115-broker.md)	`docs/115` → [`docs/archive/115`](archive/115-broker.md)
+879	archive-path	-	-	`docs/137`	`137`(docs/archive/137-pixel-fidelity.md)	`docs/137` → [`docs/archive/137`](archive/137-pixel-fidelity.md)
+881	archive-path	-	-	`docs/123`	`123`(docs/archive/123-target-reset.md)	`docs/123` → [`docs/archive/123`](archive/123-target-reset.md)
+904	archive-path	-	-	`docs/119`	`119`(docs/archive/119-token-to-text.md)	`docs/119` → [`docs/archive/119`](archive/119-token-to-text.md)
+905	archive-path	-	-	`docs/119`	`119`(docs/archive/119-token-to-text.md)	`docs/119` → [`docs/archive/119`](archive/119-token-to-text.md)
+906	archive-path	-	-	`docs/140`	`140`(docs/archive/140-plane-visual.md)	`docs/140` → [`docs/archive/140`](archive/140-plane-visual.md)
+908	archive-path	-	-	`docs/88`	`88`(docs/archive/88-coverage-matrix.md)	`docs/88` → [`docs/archive/88`](archive/88-coverage-matrix.md)
+915	archive-path	-	-	`docs/115`	`115`(docs/archive/115-broker.md)	`docs/115` → [`docs/archive/115`](archive/115-broker.md)
+930	archive-path	-	-	`docs/108`	`108`(docs/archive/108-client-rebuild.md)	`docs/108` → [`docs/archive/108`](archive/108-client-rebuild.md)
+930	archive-path	-	-	`docs/116`	`116`(docs/archive/116-kernel-api.md)	`docs/116` → [`docs/archive/116`](archive/116-kernel-api.md)
+931	archive-path	-	-	`docs/33`	`33`(docs/archive/33-server-handshake.md)	`docs/33` → [`docs/archive/33`](archive/33-server-handshake.md)
+932	archive-path	-	-	`docs/115`	`115`(docs/archive/115-broker.md)	`docs/115` → [`docs/archive/115`](archive/115-broker.md)
+934	archive-path	-	-	`docs/116`	`116`(docs/archive/116-kernel-api.md)	`docs/116` → [`docs/archive/116`](archive/116-kernel-api.md)
+935	archive-path	-	-	`docs/116`	`116`(docs/archive/116-kernel-api.md)	`docs/116` → [`docs/archive/116`](archive/116-kernel-api.md)
+936	archive-path	-	-	`docs/53`	`53`(docs/archive/53-rng-found.md)	`docs/53` → [`docs/archive/53`](archive/53-rng-found.md)
+937	archive-path	-	-	`docs/133`	`133`(docs/archive/133-replay-player.md)	`docs/133` → [`docs/archive/133`](archive/133-replay-player.md)
+938	archive-path	-	-	`docs/136`	`136`(docs/archive/136-replay-diff.md)	`docs/136` → [`docs/archive/136`](archive/136-replay-diff.md)
+939	archive-path	-	-	`docs/142`	`142`(docs/archive/142-diff-converge.md)	`docs/142` → [`docs/archive/142`](archive/142-diff-converge.md)
+976	archive-path	-	-	`docs/114`	`114`(docs/archive/114-event-tags.md)	`docs/114` → [`docs/archive/114`](archive/114-event-tags.md)
+977	archive-path	-	-	`docs/41`	`41`(docs/archive/41-turn-state-machine.md)	`docs/41` → [`docs/archive/41`](archive/41-turn-state-machine.md)
+977	archive-path	-	-	`docs/112`	`112`(docs/archive/112-meta-managers.md)	`docs/112` → [`docs/archive/112`](archive/112-meta-managers.md)
+978	archive-path	-	-	`docs/39`	`39`(docs/archive/39-punch-hole.md)	`docs/39` → [`docs/archive/39`](archive/39-punch-hole.md)
+978	archive-path	-	-	`docs/140`	`140`(docs/archive/140-plane-visual.md)	`docs/140` → [`docs/archive/140`](archive/140-plane-visual.md)
+979	archive-path	-	-	`docs/33`	`33`(docs/archive/33-server-handshake.md)	`docs/33` → [`docs/archive/33`](archive/33-server-handshake.md)
+979	archive-path	-	-	`docs/112`	`112`(docs/archive/112-meta-managers.md)	`docs/112` → [`docs/archive/112`](archive/112-meta-managers.md)
+980	archive-path	-	-	`docs/41`	`41`(docs/archive/41-turn-state-machine.md)	`docs/41` → [`docs/archive/41`](archive/41-turn-state-machine.md)
+981	archive-path	-	-	`docs/98`	`98`(docs/archive/98-shooter-selection.md)	`docs/98` → [`docs/archive/98`](archive/98-shooter-selection.md)
+981	archive-path	-	-	`docs/117`	`117`(docs/archive/117-server-wiring.md)	`docs/117` → [`docs/archive/117`](archive/117-server-wiring.md)
+982	archive-path	-	-	`docs/133`	`133`(docs/archive/133-replay-player.md)	`docs/133` → [`docs/archive/133`](archive/133-replay-player.md)
+983	archive-path	-	-	`docs/86`	`86`(docs/archive/86-simultaneous-turns.md)	`docs/86` → [`docs/archive/86`](archive/86-simultaneous-turns.md)
+983	archive-path	-	-	`docs/122`	`122`(docs/archive/122-self-hit.md)	`docs/122` → [`docs/archive/122`](archive/122-self-hit.md)
+984	archive-path	-	-	`docs/53`	`53`(docs/archive/53-rng-found.md)	`docs/53` → [`docs/archive/53`](archive/53-rng-found.md)
+984	archive-path	-	-	`docs/55`	`55`(docs/archive/55-level-generator-closed.md)	`docs/55` → [`docs/archive/55`](archive/55-level-generator-closed.md)
+1487	archive-path	-	-	`docs/119`	`119`(docs/archive/119-token-to-text.md)	`docs/119` → [`docs/archive/119`](archive/119-token-to-text.md)
+1514	archive-path	-	-	`docs/114`	`114`(docs/archive/114-event-tags.md)	`docs/114` → [`docs/archive/114`](archive/114-event-tags.md)
+1541	archive-path	-	-	`docs/114`	`114`(docs/archive/114-event-tags.md)	`docs/114` → [`docs/archive/114`](archive/114-event-tags.md)
+1541	archive-path	-	-	`docs/114`	`114`(docs/archive/114-event-tags.md)	`docs/114` → [`docs/archive/114`](archive/114-event-tags.md)
+841	stale-status	graphwar_ad_switch.rs	6	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_ad_switch.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+842	stale-status	graphwar_audio_control.rs	7	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_audio_control.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+843	stale-status	graphwar_backend.rs	6	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_backend.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+844	stale-status	graphwar_button.rs	6	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_button.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+845	stale-status	graphwar_campaign_control.rs	1	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_campaign_control.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+846	stale-status	graphwar_client_connection_handler.rs	8	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_client_connection_handler.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+847	stale-status	graphwar_color_manager.rs	4	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_color_manager.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+848	stale-status	graphwar_computer_player_manager.rs	5	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_computer_player_manager.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+849	stale-status	graphwar_crash_reporter.rs	0	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_crash_reporter.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+850	stale-status	graphwar_draw_util.rs	1	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_draw_util.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+851	stale-status	graphwar_effect_manager.rs	1	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_effect_manager.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+852	stale-status	graphwar_entity_effect_manager.rs	3	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_entity_effect_manager.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+853	stale-status	graphwar_function_input.rs	13	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_function_input.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+857	stale-status	graphwar_game_recorder.rs	2	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_game_recorder.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+858	stale-status	graphwar_graphics_manager.rs	6	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_graphics_manager.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+859	stale-status	graphwar_lan_broadcaster_v6.rs	4	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_lan_broadcaster_v6.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+860	stale-status	graphwar_lan_vbox.rs	11	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_lan_vbox.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+862	stale-status	graphwar_lobby_control.rs	1	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_lobby_control.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+863	stale-status	graphwar_local_player_manager.rs	3	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_local_player_manager.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+864	stale-status	graphwar_logger.rs	2	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_logger.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+865	stale-status	graphwar_long_press_animation.rs	7	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_long_press_animation.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+866	stale-status	graphwar_mode_manager.rs	2	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_mode_manager.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+869	stale-status	graphwar_name_manager.rs	3	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_name_manager.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+870	stale-status	graphwar_nodes.rs	11	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_nodes.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+871	stale-status	graphwar_player_manager.rs	3	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_player_manager.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+872	stale-status	graphwar_player_screen_control.rs	8	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_player_screen_control.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+873	stale-status	graphwar_rank_manager.rs	4	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_rank_manager.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+874	stale-status	graphwar_replay_control.rs	2	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_replay_control.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+877	stale-status	graphwar_server_broker_handler.rs	3	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_server_broker_handler.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+880	stale-status	graphwar_soldier_manager.rs	4	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_soldier_manager.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+881	stale-status	graphwar_target_manager.rs	3	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_target_manager.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+882	stale-status	graphwar_team_manager.rs	7	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_team_manager.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+883	stale-status	graphwar_video_writer.rs	3	`未实现`	矩阵 status=`观测`（ours_file=src/graphwar_video_writer.rs）	状态列 `未实现` → `观测`（依据列不动；--17.1）
+905	stale-status	polish_notation_converter.rs	1	`未实现`	矩阵 status=`逐位`（ours_file=src/polish_notation_converter.rs）	状态列 `未实现` → `逐位`（依据列不动；--17.2）
+907	stale-status	effect_drawer.rs	11	`未实现`	矩阵 status=`观测`（ours_file=src/effect_drawer.rs）	状态列 `未实现` → `观测`（依据列不动；--17.2）
+908	stale-status	axis_drawer.rs	6	`未实现`	矩阵 status=`观测`（ours_file=src/axis_drawer.rs）	状态列 `未实现` → `观测`（依据列不动；--17.2）
+909	stale-status	obstacle_drawer.rs	2	`未实现`	矩阵 status=`观测`（ours_file=src/obstacle_drawer.rs）	状态列 `未实现` → `观测`（依据列不动；--17.2）
+910	stale-status	function_drawer.rs	1	`未实现`	矩阵 status=`观测`（ours_file=src/function_drawer.rs）	状态列 `未实现` → `观测`（依据列不动；--17.2）
+911	stale-status	button_manager.rs	2	`未实现`	矩阵 status=`观测`（ours_file=src/button_manager.rs）	状态列 `未实现` → `观测`（依据列不动；--17.2）
+912	stale-status	function_button_manager.rs	2	`未实现`	矩阵 status=`观测`（ours_file=src/function_button_manager.rs）	状态列 `未实现` → `观测`（依据列不动；--17.2）
+913	stale-status	function_history_recorder.rs	1	`未实现`	矩阵 status=`观测`（ours_file=src/function_history_recorder.rs）	状态列 `未实现` → `观测`（依据列不动；--17.2）
+914	stale-status	player_showcase.rs	10	`未实现`	矩阵 status=`观测`（ours_file=src/player_showcase.rs）	状态列 `未实现` → `观测`（依据列不动；--17.2）
+915	stale-status	server_broker_request_connection.rs	0	`未实现`	矩阵 status=`观测`（ours_file=src/server_broker_request_connection.rs）	状态列 `未实现` → `观测`（依据列不动；--17.2）
+270	location-mismatch	-	-	外部调用者表：`0x4500c0` | 1 | `graphwar_server_connection_handler.rs`	`tools/addr_probe.py locs 0x4500c0` → `src/graphwar_game_server.rs` ×66 vs `graphwar_server_connection_handler.rs` ×4；`docs/06` §65 第 4 条：Location = `src/graphwar_game_server.rs:219–222`	模块列 → `graphwar_game_server.rs`（行内注明按 panic::Location 更正）
+609	location-mismatch	-	-	§15.3 正文：被 `0x4500c0`（`graphwar_server_connection_handler.rs`）在栈上逐项建出来	同上（Location `graphwar_game_server.rs:219–222`；locs 66:4）	括号里的模块名 → `graphwar_game_server.rs`（其余事实不动）
+979	location-mismatch	-	-	§17.4 行：graphwar_server_connection_handler.rs（主体：新连接 7 条同步，`0x4500c0`）	`0x4500c0` 的 Location 属 `graphwar_game_server.rs:219–222`（`docs/06` §65 第 4 条；本任务复算 locs 66:4）	把 `0x4500c0` 从 server_connection_handler 半句挪到 graphwar_game_server.rs 半句，并注明「按 panic::Location（docs/06 §65 / §72）」
+837	location-mismatch	graphwar_server_connection_handler.rs	6	§17.1 依据列：`docs/112` §15.3 指出建事件名数组的 `0x4500c0` 就在本模块	同 979（不一致）	**不改**：依据列是别人的证据、任务书冻结；只在 docs/06 §72 登记为遗留，指向本条台账
+841	bookkeeping	-	-	§17.1 「未实现」组第一行	组首无横幅	在本行前插入 2026-11-26 日期更正横幅（不删表、不动依据列）
+920	bookkeeping	-	-	§17.2 表尾（表后说明区）	§17.2 的 10 行 `未实现` 同批过期	在表后说明区加一条同款更正说明（不插进表格中，避免把表切开）
+788	bookkeeping	-	-	状态词表 `未实现` 行	本组改完后，`逐位`/`观测` 两个**证据档位**词会出现在状态列	在状态词表补一行 `逐位`/`观测`（说明这是证据档位，定义见 AGENTS.md §3 / docs/149）
+1004	bookkeeping	-	-	§17.4「判不清」第 1 条 + §17.5 末尾「那 43 行为什么不逐行改」	仍在说「状态词没有逐行改」	改成 2026-11-26 已按矩阵实测值改（结构归属列 `—` 与依据列仍冻结，另注）

@@ -10503,3 +10503,189 @@ ls $MAIN/.reference/replays/gw2-replays-snapshot/replays | wc -l    # → 403
 | 5 | 本轮真正卡住过的一步 | **LAN 发现被并行 agent 抢走**（共享网络命名空间 + 固定 `UDP 42968`）⇒ 客户端 LAN 大厅为空 ⇒ 服务器日志无 `accepted`、画面停在大厅。处置=重试（判据 `accepted`），**不是**改端口（`42968` 是客户端固定的） |
 | 6 | 另一次假象 | `match_serve.py` 默认 `--collect 8 s` 会在拍结算屏之前把连接关掉 ⇒ 我方拍成**断线弹窗**（§68.2.1）。改成 `--collect 120` 后假象消失。**这条要写下来**：谁以后用相位 >2 的剧本，都要注意连接寿命 |
 | 7 | 仍缺的情报 | 原版 `update_end_game_pop_up`（`0x3da130`）的**门控条件**（是否要求"某队零活实体"才弹、是否等弹道落地）本轮**没有**从指令层定；只用"发了 `EndingGame` 就弹了"这一条观测 |
+## 72. `docs/02-module-map.md` 三类系统性过时收口：归档路径 **86 处** + §17.1/§17.2 的 **43 行**「`未实现`」按矩阵实测改写 + `0x4500c0` 归属按 `panic::Location` 更正（2026-11-26，任务 T22 / `task-19`）
+
+**一句话**：`docs/02` 是"模块 ↔ 函数"的权威对照表，但它是分多轮长出来的。本轮**按判据（不认行号）**扫出三类系统性过时，并把三类都清成 0：
+① `docs/NN` 指向**已归档**分篇 —— **86 处 / 63 行**全部改成 `docs/archive/NN` 并转成 markdown 链接（歧义号 11 个、共 0 处触碰）；
+② 状态列写「`未实现`」的 **43 行**（§17.1 33 + §17.2 10）改成 `docs/coverage-matrix.tsv` 的**实测证据档位**（`观测` 42 / `逐位` 1）；
+③ `0x4500c0` 有 **3 处**记在 `server_connection_handler` 名下，按 `panic::Location` 改成 `graphwar_game_server.rs`。
+**改动只碰状态词 / 路径 / 归属**：「依据」列的事实陈述一个字没动（那批「依据」里仍留着"无实现 / 未落码"这类落码前描述，处理方式见 §72.6）。
+逐处台账（**改前**生成、单独 commit `f1b3abe`）：**`fixtures/module_map_audit.tsv`**，142 行 = 判据 + 现在写的 + 真值 + 打算怎么改。
+
+### 72.1 ① 归档路径：**86 处 / 63 行**（任务书写的是「78 处 / 60 行」，少算了 8 处）
+
+判据（**不认行号** —— 上一轮清单的行号 808–1527 在本轮已经漂到 822–1541）：
+1. 正文里形如 `docs/NN` 的引用，**包括** `` `docs/NN` `` 反引号形态、`docs/A/B` 链式形态、以及 `` `docs/86 §14` `` 这种"code span 里带尾巴"的形态；
+2. 该 `NN` 在 **`docs/archive/**`（递归，含 `archive/ai/`）** 下有 `NN-*.md`，而 **`docs/` 根下没有**同号文件；
+3. `docs/` 根与 `archive` **同号**的 `09/10/11/12/13/14/15/16/19/20/21` 是**歧义号**，**一律不动** —— 本轮实测 0 处触碰（这些引用本来就都有合法目标）。
+
+| 计数口径 | 处数 | 行数 |
+|---|---|---|
+| 上一轮清单 / 任务书（**每个 token 只算链首编号**） | 78 | 60 |
+| 本轮按**编号分量**重算 | **86** | **63** |
+| 差 | **+8** | **+3** |
+
+差的 8 处全是"链式引用里第二/三个编号"：`docs/08/39` 的 **39 ×2 行**、`docs/07/24` 的 **24**、
+`docs/136/142` 的 **142**、`docs/55/56/61` 的 **56** 与 **61**、`docs/103/126` 的 **126**、`docs/43/46` 的 **46**
+（台账行号按改前基准：838 / 840（`08/39`）、859（`07/24`）、827、829、829、836）。
+另有两个编号只有"**递归**扫 archive"才认得出来：`docs/71` 与 `docs/74` 的实体在 **`docs/archive/ai/`** 里（顶层没有 71/74），只扫归档顶层会漏掉这 2 处。
+
+改写形状（4 种，都能逐行 diff 对照）：
+
+| 原形态 | 改后形态 |
+|---|---|
+| `` `docs/98` `` | `` [`docs/archive/98`](archive/98-shooter-selection.md) `` |
+| `` `docs/136/142` ``（纯归档链） | `` [`docs/archive/136`](archive/136-replay-diff.md)/[`142`](archive/142-diff-converge.md) `` |
+| `` `docs/08/39` ``（混合链：一个是活的根文档） | `` `docs/08`、[`docs/archive/39`](archive/39-punch-hole.md) `` |
+| `` `docs/86 §14` ``（code span 带尾巴） | `` [`docs/archive/86 §14`](archive/86-simultaneous-turns.md) `` |
+
+链接目标一律**相对 `docs/02-module-map.md` 所在目录**写（`archive/…`）：**80 个带 `docs/archive/` 文本的链接 + 6 个链内简写 = 86 个新链接**，
+逐目标 `os.path.exists` 实测 **0 个失效**（`grep -o '](archive/[^)]*\.md)' docs/02-module-map.md | wc -l` 现在是 **89** = 86 新增 + 3 原有）。
+
+复算（纯 `python3`，不依赖 `.reference/`）：
+
+```bash
+python3 - <<'PY'
+import re, os
+root = {m.group(1) for f in os.listdir('docs') if os.path.isfile(os.path.join('docs', f))
+        for m in [re.match(r'^(\d+)-.*\.md$', f)] if m}
+arch = {}
+for dp, _, fn in os.walk('docs/archive'):
+    for f in fn:
+        if (m := re.match(r'^(\d+)-.*\.md$', f)):
+            arch[m.group(1)] = os.path.join(dp, f)
+bad = [(i, m.group(0)) for i, l in enumerate(open('docs/02-module-map.md', encoding='utf-8'), 1)
+       for m in re.finditer(r'docs/(\d+(?:/\d+)*)', l)
+       for n in m.group(1).split('/') if n not in root and n in arch]
+print('仍指向已归档分篇的引用：', len(bad), bad[:5])
+PY
+# → 仍指向已归档分篇的引用： 0 []
+```
+
+### 72.2 ② 状态列「`未实现`」43 行 → 矩阵实测档位（逐模块真值表）
+
+真值来源只有一个：`docs/coverage-matrix.tsv` 的 `status` / `orig_funcs` 列（`tools/coverage_matrix.py` 生成）。
+本机复算总账 = **527/527 已实现、未做 0、未知模块 0、逐位 89 / 观测 438 / 推断 0**，与 §17 开头 🔴 块写的口径一致。
+43 行 = §17.1 最后一段 **33 行** + §17.2 **10 行**（任务书写「约 44 行」= 2026-11-08 那次的 §17.1 34 + §17.2 10；
+`graphwar_texture_loader.rs` 按矩阵属 `scope=other`、只在 §17.2 出现，所以现在差 1 行）。「台账行」= `fixtures/module_map_audit.tsv` 里的**改前**行号。
+
+| 模块 | 台账行 | `orig_funcs` | 原状态 | 实测状态 | 矩阵 `ours_file` |
+|---|---|---|---|---|---|
+| `graphwar_ad_switch.rs` | 841 | 6 | `未实现` | `观测` | `src/graphwar_ad_switch.rs` |
+| `graphwar_audio_control.rs` | 842 | 7 | `未实现` | `观测` | `src/graphwar_audio_control.rs` |
+| `graphwar_backend.rs` | 843 | 6 | `未实现` | `观测` | `src/graphwar_backend.rs` |
+| `graphwar_button.rs` | 844 | 6 | `未实现` | `观测` | `src/graphwar_button.rs` |
+| `graphwar_campaign_control.rs` | 845 | 1 | `未实现` | `观测` | `src/graphwar_campaign_control.rs` |
+| `graphwar_client_connection_handler.rs` | 846 | 8 | `未实现` | `观测` | `src/graphwar_client_connection_handler.rs` |
+| `graphwar_color_manager.rs` | 847 | 4 | `未实现` | `观测` | `src/graphwar_color_manager.rs` |
+| `graphwar_computer_player_manager.rs` | 848 | 5 | `未实现` | `观测` | `src/graphwar_computer_player_manager.rs` |
+| `graphwar_crash_reporter.rs` | 849 | 0 | `未实现` | `观测` | `src/graphwar_crash_reporter.rs` |
+| `graphwar_draw_util.rs` | 850 | 1 | `未实现` | `观测` | `src/graphwar_draw_util.rs` |
+| `graphwar_effect_manager.rs` | 851 | 1 | `未实现` | `观测` | `src/graphwar_effect_manager.rs` |
+| `graphwar_entity_effect_manager.rs` | 852 | 3 | `未实现` | `观测` | `src/graphwar_entity_effect_manager.rs` |
+| `graphwar_function_input.rs` | 853 | 13 | `未实现` | `观测` | `src/graphwar_function_input.rs` |
+| `graphwar_game_recorder.rs` | 857 | 2 | `未实现` | `观测` | `src/graphwar_game_recorder.rs` |
+| `graphwar_graphics_manager.rs` | 858 | 6 | `未实现` | `观测` | `src/graphwar_graphics_manager.rs` |
+| `graphwar_lan_broadcaster_v6.rs` | 859 | 4 | `未实现` | `观测` | `src/graphwar_lan_broadcaster_v6.rs` |
+| `graphwar_lan_vbox.rs` | 860 | 11 | `未实现` | `观测` | `src/graphwar_lan_vbox.rs` |
+| `graphwar_lobby_control.rs` | 862 | 1 | `未实现` | `观测` | `src/graphwar_lobby_control.rs` |
+| `graphwar_local_player_manager.rs` | 863 | 3 | `未实现` | `观测` | `src/graphwar_local_player_manager.rs` |
+| `graphwar_logger.rs` | 864 | 2 | `未实现` | `观测` | `src/graphwar_logger.rs` |
+| `graphwar_long_press_animation.rs` | 865 | 7 | `未实现` | `观测` | `src/graphwar_long_press_animation.rs` |
+| `graphwar_mode_manager.rs` | 866 | 2 | `未实现` | `观测` | `src/graphwar_mode_manager.rs` |
+| `graphwar_name_manager.rs` | 869 | 3 | `未实现` | `观测` | `src/graphwar_name_manager.rs` |
+| `graphwar_nodes.rs` | 870 | 11 | `未实现` | `观测` | `src/graphwar_nodes.rs` |
+| `graphwar_player_manager.rs` | 871 | 3 | `未实现` | `观测` | `src/graphwar_player_manager.rs` |
+| `graphwar_player_screen_control.rs` | 872 | 8 | `未实现` | `观测` | `src/graphwar_player_screen_control.rs` |
+| `graphwar_rank_manager.rs` | 873 | 4 | `未实现` | `观测` | `src/graphwar_rank_manager.rs` |
+| `graphwar_replay_control.rs` | 874 | 2 | `未实现` | `观测` | `src/graphwar_replay_control.rs` |
+| `graphwar_server_broker_handler.rs` | 877 | 3 | `未实现` | `观测` | `src/graphwar_server_broker_handler.rs` |
+| `graphwar_soldier_manager.rs` | 880 | 4 | `未实现` | `观测` | `src/graphwar_soldier_manager.rs` |
+| `graphwar_target_manager.rs` | 881 | 3 | `未实现` | `观测` | `src/graphwar_target_manager.rs` |
+| `graphwar_team_manager.rs` | 882 | 7 | `未实现` | `观测` | `src/graphwar_team_manager.rs` |
+| `graphwar_video_writer.rs` | 883 | 3 | `未实现` | `观测` | `src/graphwar_video_writer.rs` |
+| `polish_notation_converter.rs` | 905 | 1 | `未实现` | `逐位` | `src/polish_notation_converter.rs` |
+| `effect_drawer.rs` | 907 | 11 | `未实现` | `观测` | `src/effect_drawer.rs` |
+| `axis_drawer.rs` | 908 | 6 | `未实现` | `观测` | `src/axis_drawer.rs` |
+| `obstacle_drawer.rs` | 909 | 2 | `未实现` | `观测` | `src/obstacle_drawer.rs` |
+| `function_drawer.rs` | 910 | 1 | `未实现` | `观测` | `src/function_drawer.rs` |
+| `button_manager.rs` | 911 | 2 | `未实现` | `观测` | `src/button_manager.rs` |
+| `function_button_manager.rs` | 912 | 2 | `未实现` | `观测` | `src/function_button_manager.rs` |
+| `function_history_recorder.rs` | 913 | 1 | `未实现` | `观测` | `src/function_history_recorder.rs` |
+| `player_showcase.rs` | 914 | 10 | `未实现` | `观测` | `src/player_showcase.rs` |
+| `server_broker_request_connection.rs` | 915 | 0 | `未实现` | `观测` | `src/server_broker_request_connection.rs` |
+
+改动形状：**只动第 4 列**（`未实现` → `观测`/`逐位`），另插两块日期更正说明（§17.1 该组开头的 🟢 横幅、§17.2 表后的 🟢 说明），
+并在 §17 的**状态词表**里补一行说明"`逐位`/`观测` 是证据档位、不是结构状态"。
+**「依据」列一个字没动**；**「我们的文件」列的 `—` 也没动** —— 后者是**结构判断**（那个文件的全部内容是否真属这个模块），
+`docs/02` §17.4「判不清」第 1 条早就写明要留给协调者裁；本轮只在同一处追加了"哪一半已处置、哪一半仍未做"的分界（见 §72.6 第 3 条）。
+
+### 72.3 ③ `0x4500c0`：before / after（3 处）
+
+| 位置（改前行号） | before | after |
+|---|---|---|
+| 第 270 行 · §8 外部调用者表 | `0x4500c0` \| 1 \| `graphwar_server_connection_handler.rs` | 模块列 → `graphwar_game_server.rs`（行内注明"2026-11-26 按 `panic::Location` 更正，原记 ……；`docs/06` §65 / §72"） |
+| 第 609 行 · §15.3 正文 | 被 `0x4500c0`（`graphwar_server_connection_handler.rs`）在栈上逐项建出来 | 括号里 → `graphwar_game_server.rs`（同款注明；其余事实不动） |
+| 第 979 行 · §17.4 登记表 | `graphwar_server_connection_handler.rs`（主体：新连接 7 条同步，`0x4500c0`）+ `graphwar_tick_handler.rs`（…） | 把 `0x4500c0` 从这一半句里**拿出来**，另写"**`0x4500c0` 不属这两个模块** —— 按 `panic::Location` 归 `graphwar_game_server.rs`（`src/graphwar_game_server.rs:219–222`，`docs/06` §65 / §72）" |
+
+证据（**本机复算，不是抄文档**）：
+
+```bash
+$PWD/.reference/venv/bin/python tools/addr_probe.py locs 0x4500c0
+#   src/graphwar_game_server.rs                  x66   e.g. src/graphwar_game_server.rs:352:41
+#   src/graphwar_server_connection_handler.rs    x4
+#   src/graphwar_game_state_manager.rs           x3   /  src/graphwar_mode_manager.rs x3  /  src/graphwar_player_manager.rs x1
+```
+
+外加 §65 第 4 条已经用 `panic::Location` 把它钉在 `src/graphwar_game_server.rs:219–222`（那个任务当时写明"§17.4 那一行本任务无权改"，
+这就是本条要接的班）。`x4` 那 4 个锚就是旧记录把它算给 `server_connection_handler` 的来源 —— 它是 `contested` 函数，
+项目规则是"归贡献锚点最多的模块"，66 : 4 没有悬念。`docs/02` 自己的 §21 表里 `game_server_thread` ↔ `0x4500c0` ↔ `src/graphwar_game_server.rs:219`
+是同一结论的另一处记录，改完这三处之后三处自洽。
+
+### 72.4 三条自检读数（改前 / 改后）
+
+| 检查 | 改前 | 改后 | 说明 |
+|---|---|---|---|
+| `tools/check_doc_refs.py` | **rc=0**；① `## NN.` 连续 1..69（69 节）+ 490 个子标题；② 指向 docs/16 的 §引用 共 **1251** / 解析 **1184** / 已搬迁 **16** / 白名单 **51** / 死链 **0** | **rc=0**；**逐项同值**（1251 / 1184 / 16 / 51 / 0） | 加 86 个 `archive/…` 链接**没有**改变任何 `§` 引用的归属（新标记仍判 `OTHER`，不是 `docs/16`） |
+| `COVERAGE_MATRIX_UPSTREAM=… tools/coverage_matrix.py --check` | **rc=1（红）** | **rc=1（同一处红，非本轮引入）** | 见 §72.6 第 1 条：生成物落后 `src/` 一个 `fn`；**生成物是禁区**，没有重跑，只登记 |
+| `grep -c '未实现' docs/02-module-map.md` | **53** | **14** | 剩下 14 行全是"合法 `未实现`"：状态词表定义 1、分组说明 1、2026-11-08 历史审计块 2、三行「依据」列里的历史描述 3、本轮 🟢 横幅/说明 3、§17.4 判不清原文 2、§17.5 尾巴 1、§22 引述 1 ⇒ **状态列里的 `未实现` = 0** |
+
+`docs/02` 行数 **5907 → 5929**（+22）；`git diff --numstat docs/02-module-map.md` = `113 / 91`。
+另外复跑 `docs/02` §17.5 自己的三条自查：① 表里每个 `src/*.rs` 路径都存在（无 `MISSING`）；③ §17.1/§17.2 覆盖矩阵 78 个模块（差集为空）。
+
+### 72.5 台账外补的 1 处（bookkeeping，判据没变）
+
+`docs/02` 状态词表下面那句"每个表里的行**按状态分组**（`一一对应` → `混装（待拆）` → `未实现`）"：状态词一改，
+那个组里就**没有 `未实现` 了**，这句话必须跟着改（改成"末段那批原标 `未实现` 的行，2026-11-26 起状态词换成证据档位"）。
+仍在"只改状态词/说明、不动依据列"的范围内。
+
+### 72.6 遗留 / 未做
+
+1. **`coverage_matrix.py --check` 在 master 上是红的，且本轮之前就是红的**。差异只有 4 行：
+   `docs/coverage-matrix.tsv` 的 `src_tree_sha256` 与 `src_fns`（**3183 → 3184**）、`docs/149` 页脚同两项，
+   外加 `docs/149` 一张历史对照表里写死的「57 个模块 / 58」与工具现值「58 / 59」不一致。
+   **修法只有一条**：`python3 tools/coverage_matrix.py` 重跑后提交那两个生成物（**不许手改**）。
+   本轮没做：生成物不在本任务允许清单（`docs/coverage-matrix.*` 是禁区），且它会改 `docs/149` 的字节 —— 应由 lead / coverage 线统一跑。
+   ⇒ 连带：`docs/02` §17 开头那句"`tools/coverage_matrix.py` 生成、`--check` 通过"现在**不成立**；
+   本轮**没有改那句话**，因为它属于生成物侧的事实，重跑后自动为真，改了反而会在重跑后失真。
+2. **§17.1 第 837 行「依据」列仍写着"建事件名数组的 `0x4500c0` 就在本模块"**（= §72.3 更正的同一个错误）。
+   台账把这一处登记为 `location-mismatch` → **不改**：依据列是别人的证据、任务书冻结。它现在与 §17.4 的更正同文件相矛盾，
+   读的时候**以 §17.4 + 本条为准**。
+3. **那 43 行的「我们的文件」列仍是 `—`、「依据」列仍有"无实现 / 未落码 / 除模块名外没有任何观测"**。
+   状态词改成 `观测` 之后，这些旧描述**逐行看起来自相矛盾**（已在两处 🟢 块里点明"现状看 `ours_file` 列 / 按 §17.5 第 1 条 `test -f`"）。
+   要把 `—` 填成矩阵的 `ours_file`、把依据列改写，属**结构判断 + 改别人的证据**，本轮按任务范围没做。
+4. `docs/02` 里还有更早的引用形态（**不带 `docs/` 前缀**的裸分篇名，如 `112-meta-managers`）**不在本轮三类判据内**，未扫、未改。
+5. 本轮没碰 `src/**`、`tests/**`、`client/**`、`tools/**`、`fixtures/guardrails.json`、`fixtures/frame_diff_thresholds*.txt`、
+   `docs/00-status.md`、`docs/HANDOVER.md`、`README.md`、`docs/coverage-matrix.*`、`docs/07`、`docs/16`、`docs/06` 既有节、`docs/archive/**`、403 份回放快照。
+
+### 72.7 我写错了 / 任务前提被证伪（照实记）
+
+1. **任务书写「78 处」偏少**：按"编号分量"重算是 **86 处 / 63 行**（+8 的构成见 §72.1）。上一轮的 78/60 是"每个 token 只数链首"的口径。
+2. **任务书写「§17.1 未实现组约 44 行」**：现在 §17.1 是 **33 行**、§17.2 另有 **10 行**（合计 **43**）。
+   44 是 2026-11-08 那次的 §17.1 34 + §17.2 10，`docs/02` 自己在 §17.4「判不清」第 1 条里解释过差的那 1 行。
+3. **任务书说 `coverage_matrix.py --check` 应为 OK —— 实测本机 master 基准上是红的**，且与本轮改动无关（§72.6 第 1 条）。
+   我没有为了让它变绿去手改生成物（那是禁区 + 会造成更严重的虚报）。
+4. **§17.4「判不清」第 1 条把"改状态词"归成"结构判断"，严格说不成立**：本轮改的是**证据档位**（矩阵 `status` 列），可以机械抄；
+   真正的结构判断是「我们的文件」列的 `—`（谁的文件、混没混别的模块）。两件事已在文档里分开写清。
+5. **行号整体漂了 +14**（上一轮 808–1527 ↔ 本轮 822–1541）⇒ 按判据扫、不按行号扫是对的；台账里的行号一律是**改前基准** `c636bad`。
+6. **`docs/71`、`docs/74` 不在 `docs/archive/` 顶层**，在 `docs/archive/ai/` 里 —— 只判"归档顶层有没有"会漏这 2 处（我第一版扫法就漏了，已改成递归）。
