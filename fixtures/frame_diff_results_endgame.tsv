@@ -3,3 +3,14 @@ screen	verdict	l1_size_ok	l1_ok	l1_dmean_max	l1_dmean	l1_top_color	l1_top_share_
 match_ready	不过（L2，4 块超限）	True	True	0.345	0.345,0.122,0.242	#FFFFFF,#FFFFFF	0.011	False	4	5.71	0,5	False	141591	0.063574	255	0,0,1919,1156	0.0005	0.0
 match_play	不过（L2，3 块超限）	True	True	0.717	0.186,0.551,0.717	#FFFFFF,#FFFFFF	0.327	False	3	22.19	2,2	False	151872	0.06819	255	0,0,1919,1156	0.006969	0.001718
 endgame_popup	不过（L1 主色/均值）	True	False	60.83	60.055,53.303,60.83	#1A3B2D,#FFFFFF	0.157	False	18	213.054	2,3	False	749142	0.33636	255	0,0,1919,1156	0.0	0.0
+# ---------------------------------------------------------------------------
+# 2026-11-26（T27 / docs/06 §77）：**接线后**重拍。两侧同日重采、同条件（`--collect 120`）、
+# 同一份剧本（fixtures/frame_endgame_events.txt）。上面的三行是 T18 的**改前**记录，
+# 一个字节没动；下面三行是同机同日改后的读数。复跑命令见 docs/06 §77.6。
+# 净变化：endgame_popup 33.636 %（749 142 px，L1 不过）→ **4.053 %（90 268 px，L1 过）**；
+#         面板区 (483,235) 955x690 内差异 652 123 px → **0 px**；
+#         match_ready 6.1892 % / match_play 6.4592 %（改前同日 6.1893 % / 6.4608 %，持平）。
+screen	verdict	l1_size_ok	l1_ok	l1_dmean_max	l1_dmean	l1_top_color	l1_top_share_pp	l2_ok	l2_blocks_over	l2_max_block_dmean	l2_worst_block	l3_evaluated	l3_diff_px	l3_diff_ratio	l3_max_channel_diff	l3_bbox	noise_max_orig	noise_max_mine
+match_ready	不过（L2，1 块超限）	True	True	0.124	0.124,0.052,0.018	#FFFFFF,#FFFFFF	0.016	False	1	2.873	0,0	False	137846	0.061892	255	0,0,1919,1156	0.000496	0.000131
+match_play	不过（L2，2 块超限）	True	True	0.726	0.263,0.497,0.726	#FFFFFF,#FFFFFF	0.285	False	2	14.982	2,2	False	143859	0.064592	255	0,0,1919,1159	0.006981	0.001485
+endgame_popup	不过（L2，1 块超限）	True	True	0.1	0.073,0.1,0.026	#1A3B2D,#1A3B2D	0.52	False	1	2.873	0,0	False	90268	0.04053	255	0,0,1919,1159	0.0	0.000128

@@ -1999,7 +1999,14 @@ func _on_shot_arrived(phase: String, stop: Vector2) -> void:
 	_pending_shot = {}
 	_shot_in_flight = false
 	if phase == "online":
-		return                      # 联机：生死与回合全在服务端，本地不结算
+		# 联机：生死与回合全在服务端，本地**不判**胜负（`_check_match_over()` 也直接 return）。
+		# 但服务端已经宣布收场（`_online_ending`）时，这一发落地就是本屏的最后一帧
+		# ⇒ 停掉本屏自己的流程；结算框由 `App._on_net_ended()` 开（`docs/06` §77）。
+		# `_online_ending` 以前**只被赋值、从不被读**，这里是它的读点。
+		if _online_ending:
+			_running = false
+			_status("%s ／ 本局已结束（服务端 `EndingGame`）" % _shot_status)
+		return
 	if _flow.settled():
 		return                      # 压平模式：这一发在开火那一刻已经结算过了
 	_finish_round()
@@ -3336,12 +3343,21 @@ func _on_online_message(kind: String, body: Dictionary) -> void:
 		"AddObstacle", "ClearObstacles", "QueueDestroyObstacle", "DestroyObstacle":
 			_build_online_obstacles(_online_room())
 			_refresh_plane()
-		"EndingGame":
-			# 服务端判完了胜负。**当前这一发可能还在飞** ⇒ 只记下来，收尾在弹道落地之后
-			# （`_on_shot_arrived()`）。这正好是 `docs/143` §5 要的"结算完成前不结束"。
-			_online_ending = true
-			_status("联机：服务端宣布本局结束（`EndingGame`）／当前弹道%s"
-				% ("还在飞，落地后收尾" if _shot_in_flight else "已落地"))
+		"GameStateInfo":
+			# 服务端判完了胜负：**线上原文是 `GameStateInfo{game_state:"EndingGame"}`**，
+			# 不是一条叫 `EndingGame` 的报文（`fixtures/frame_endgame_events.txt` 的
+			# `[phase3]` 末行；`docs/06` §77 更正 —— 这一支以前按事件名匹配，**从来没命中过**）。
+			# **当前这一发可能还在飞** ⇒ 只记下来，收尾在弹道落地之后（`_on_shot_arrived()`）。
+			# 这正好是 `docs/143` §5 要的"结算完成前不结束"。
+			if GwNetFrame.body_str(body, "game_state") == "EndingGame":
+				_online_ending = true
+				# 弹道还在飞 ⇒ 等它落地（`_on_shot_arrived()`）；已经不飞 ⇒ 立刻停本屏流程
+				# （`_running=false` 只挡输入/回合推进/时钟，**不动**画面：`_process` 里
+				#  `_advance_presentation()` 在它之前）。
+				if not _shot_in_flight:
+					_running = false
+				_status("联机：服务端宣布本局结束（`GameStateInfo{EndingGame}`）／当前弹道%s"
+					% ("还在飞，落地后收尾" if _shot_in_flight else "已落地"))
 		_:
 			pass
 

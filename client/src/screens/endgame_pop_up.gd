@@ -20,8 +20,19 @@ extends GwScreen
 ## 只有真的有人全灭才会出现（`docs/92` §4.13：档 5 的 Bot 31.7 s 后自然出现；
 ## 等时间不会出现）。本项目由 `App.report_match_result()` 触发。
 ##
-## ⚠️ 验收边界：**"填满图标之后长什么样"没有真值**（没法把正版打到结算），
-## 所以这一屏只对齐了"空结算框"的几何（面板/两条文案/返回键）与十个格子的属性。
+## 2026-11-26（`docs/06` §77）：**"填满"的真值有了** —— 用真回放的收场三条把原版打进结算，
+## 逐像素量到的（`fixtures/frame_diff_results_endgame.tsv` 那一列的来源，1920×1160）：
+##
+##   标题 `YOU WON`      白字 ink **329×65** @ x796..1124, y245..309（`title_theme` 手写体，70 px）
+##   胜利者头像（1 格）  合并 ink **395×289** @ x754..1148, y435..723
+##                       分层：`skins/face_paint_2` 黄底红带 251×199、`hats/asian_hat` 橙斗笠 376×204
+##   文案 `Team 1 Victory!` 白粗体 ink @ y882..921（40 px）
+##   **两条文案都是白字**（不是我们以前自定的强调色/警告色）。
+##
+## 文案**不再手写**：`SelfVictoryLabel` / `TeamVictoryLabel` 的字面量来自内核
+## `src/graphwar_play_screen_control.rs::VICTORY_TEXTS`（原版 `.rodata` `0x1bf91e` 起 6 条，
+## 观测）经 `GwEndGame.label_texts()` 选出来（`src/_scaffold/endgame_class.rs`）。
+## 以前那两句是**我方编的**（注释里写着"胜利一侧的原文未观测"）—— 现在观测到了。
 
 const VICTORY_SLOTS := 10
 ## 原版 `endgame_pop_up.tscn` 里两个 Label 的**静态**字号（逐字照抄，不参与缩放）。
@@ -51,6 +62,11 @@ func _ready() -> void:
 
 func build() -> void:
 	var frame := GwUI.frame(self)
+	# 原版 `endgame_pop_up.tscn` 的 `MarginContainer` 带 **`z_index = 5`**：棋盘/实体/特效是
+	# 播放屏的子层（我们的 `Z_OBSTACLE=1 / Z_CURVE=2 / Z_ENTITY=3 / Z_FX=4`），结算面板必须
+	# 盖在它们**上面**。不写这一行的话面板只盖住平面的 `_draw`（同一个 z + 树里更晚），
+	# 士兵精灵 / 名字标签 / 靶子会**画在面板之上**（实测：§77 第一次接通的那帧就是这样）。
+	frame.margin.z_index = 5
 	var bands: VBoxContainer = frame.vbox
 
 	# 三条竖带，比例 1 : 3 : 1（原版 `HBoxContainer2` 的 `stretch_ratio = 3.0`）
@@ -154,29 +170,20 @@ func on_enter() -> void:
 	if app_node == null:
 		return
 	var summary: Dictionary = app_node.match_summary()
-	var human_won := bool(summary.get("human_won", false))
 	var winner_team := int(summary.get("winner_team", 0))
-	var players: Array = summary.players
+	var human_team := int(summary.get("human_team", 0))
+	# 胜方字节：`0` = Team1、`1` = Team2、`2` = 没人赢（内核四行表，`docs/14` §11.4）。
+	# 本地/战役那条路没有字节（`report_match_result()` 只给队伍号）⇒ 用队伍号当字节，
+	# 语义相同（字节就是"哪一队赢"）。见 `app.gd::match_summary()`。
+	var byte := int(summary.get("winner_byte", winner_team))
+	var texts := _label_texts(app_node, byte, human_team)
+	_self_label.text = String(texts.get("self", ""))
+	_team_label.text = String(texts.get("team", ""))
+	# 原版两条都是**白字**（真帧 ink 里全是 #FFFFFF）；主题默认就是白，所以这里**不覆盖颜色**。
+	_self_label.remove_theme_color_override("font_color")
+	_team_label.remove_theme_color_override("font_color")
 
-	# 原版只观测到失败一侧的文案 "YOU lOST"（小写 l，docs/92 §4.13）。
-	# 胜利一侧的原文**没有观测**，所以赢的时候用一句明确标注的说明，不编造原文。
-	if human_won:
-		_self_label.text = "YOU WON"
-		_self_label.add_theme_color_override("font_color", GwThemeFactory.COL_ACCENT)
-		_self_label.tooltip_text = ("胜利一侧的原文未观测（只观测到 \"YOU lOST\"，docs/92 §4.13）；"
-			+ "这里用英文占位并明确标注")
-	else:
-		_self_label.text = "YOU lOST"    # 原版原文，含它的小写 l
-		_self_label.add_theme_color_override("font_color", GwThemeFactory.COL_BAD)
-		_self_label.tooltip_text = "原版原文如此（docs/92 §4.13：小写 l）"
-
-	_team_label.text = "Team %d Victory!" % (winner_team + 1)
-
-	var winners: Array = []
-	for p in players:
-		if int(p.team) == winner_team:
-			for i in int(p.soldiers):
-				winners.append(p)
+	var winners: Array = summary.get("winners", [])
 	for i in _slots.size():
 		var ar := _slots[i]
 		var m := ar.get_child(0) as MarginContainer
@@ -186,26 +193,44 @@ func on_enter() -> void:
 		if i < winners.size():
 			ar.visible = true
 			# ⚠️ 推断：原版运行时给这 10 个格子定多大**没有观测**（`.tscn` 里没有
-			# `custom_minimum_size`，而 `stretch_mode = 1` 会让唯一显示的格子撑到行高
-			# 453~543 px）。这里取"行高的一半"作正方形：1920×1160 下 = 271 px，
-			# 正好接近 HBox 按 `separation = -192` 分给 10 个格子的 268 px（见文件头）。
+			# `custom_minimum_size`，而 `stretch_mode = 1` 会让唯一显示的格子撑到行高）。
+			# 真帧的**内容**（三层贴图合并 ink）是 395×289 ⇒ 先用"行高的一半"作正方形
+			# （1920×1160 下 ≈ 271 px），本轮按 ROI 实测再调这个常数。
 			var row_h := _icons_row.size.y
 			var side := maxf(64.0, row_h * SLOT_ROW_FRACTION)
 			ar.custom_minimum_size = Vector2(side, side)
-			var p: Dictionary = winners[i]
-			var skin_idx := int(p.skin)
-			if skin_idx >= 0:
-				skin_icon.texture = GwIcons.get_icon("skin_%d" % skin_idx)
-			else:
-				skin_icon.texture = GwIcons.get_icon("bot_%d" % int(p.bot_tier))
-			# 观测：Bot 的脸/帽子分别是 faces/no_face.svg、hats/no_hat.svg（这里留空 = 无脸/无帽）
-			face_icon.texture = GwIcons.get_icon("face_%d" % int(p.face)) if int(p.face) >= 0 else null
-			hat_icon.texture = GwIcons.get_icon("hat_%d" % int(p.hat)) if int(p.hat) >= 0 else null
-			face_icon.visible = int(p.face) >= 0
-			hat_icon.visible = int(p.hat) >= 0
+			var w: Dictionary = winners[i]
+			# 三层贴图：值是**资产相对路径**（`skins/face_paint_2` 这种），空串 = 该层不画。
+			skin_icon.texture = _tex(String(w.get("skin", "")))
+			face_icon.texture = _tex(String(w.get("face", "")))
+			hat_icon.texture = _tex(String(w.get("hat", "")))
+			face_icon.visible = face_icon.texture != null
+			hat_icon.visible = hat_icon.texture != null
 		else:
 			ar.visible = false
 			ar.custom_minimum_size = Vector2.ZERO
 			skin_icon.texture = null
 			face_icon.visible = false
 			hat_icon.visible = false
+
+## 两条横幅文本：字面量在**内核**（`graphwar_play_screen_control::VICTORY_TEXTS`，
+## 原版 `.rodata` 6 条，观测），选哪条由 `GwEndGame.label_texts()` 按胜方字节 + 我方队伍算。
+## 缺内核 ⇒ 退化成 `.tscn` 的静态原文（`YOU lOST`，`docs/92` §4.13），**不编新文案**。
+func _label_texts(app_node, byte: int, human_team: int) -> Dictionary:
+	var m = null
+	if app_node.has_method("endgame_math"):
+		m = app_node.call("endgame_math")
+	if m != null:
+		return m.call("label_texts", byte, human_team)
+	var res: Dictionary = app_node.last_result
+	var team := int(res.get("winner_team", 0))
+	return {
+		"self": "YOU WON" if bool(res.get("human_won", false)) else "YOU lOST",
+		"team": "Team %d Victory!" % (team + 1) if team >= 0 else "Tie!",
+	}
+
+## 资产相对路径 → 真贴图（`GwAssets` 只返回 pck 里解出来的真资源，找不到是 `null`）。
+static func _tex(rel: String) -> Texture2D:
+	if rel == "":
+		return null
+	return GwAssets.texture(rel)

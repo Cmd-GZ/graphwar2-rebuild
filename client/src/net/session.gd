@@ -21,7 +21,7 @@ class_name GwNetSession
 ## idle → connecting ──TCP 连上──→ handshaking ──7 条到齐(或静默)──→ joined
 ##            │                        │                              │
 ##            └──连不上──→ failed       └──超时──→ failed              ├─ GameStart 数据 → started
-##                                                                    ├─ EndingGame     → ended
+##                                                                    ├─ GameStateInfo{EndingGame} → ended
 ##                                                                    └─ 对端关闭       → closed
 ## ```
 ##
@@ -35,7 +35,7 @@ signal joined                              ## 握手完成，可以进对局界�
 signal game_started                        ## 收到开局那一批（关卡/士兵/轮到谁）
 signal room_changed                        ## 房间状态有任何变化
 signal message_received(kind: String, body: Dictionary)
-signal ended(reason: String)               ## 对局正常结束（`EndingGame`）
+signal ended(reason: String)               ## 对局正常结束（线上原文 = `GameStateInfo{game_state:"EndingGame"}`）
 signal failed(reason: String)              ## 一次都没连上 / 握手超时
 signal closed(reason: String)              ## 连上之后被对端断开
 
@@ -260,6 +260,15 @@ func _apply(kind: String, body: Dictionary) -> void:
 			room["room_name"] = GwNetFrame.body_str(body, "game_name")
 		"GameStateInfo":
 			room["game_state"] = GwNetFrame.body_str(body, "game_state")
+			# 收场那一条的**线上原文就是它**，不是事件名 `EndingGame`
+			# （`fixtures/frame_endgame_events.txt` 的 `[phase3]` 末行 =
+			#  `{"GameStateInfo":{"game_state":"EndingGame"}}`；`docs/06` §77 复采一致）。
+			# ⚠️ 2026-11-26 更正：这里以前是**只**写 `room["game_state"]`，而下面
+			# `"EndingGame"` 那一支按**事件名**匹配 ⇒ 全网没有任何一条报文叫这个名字，
+			# 那一支**从来没执行过** ⇒ `ended` 信号从未发出、`phase` 从未变成 `"ended"`。
+			if String(room["game_state"]) == "EndingGame":
+				_end_session()
+				return
 		"AxisModeInfo":
 			room["axis_mode"] = GwNetFrame.body_str(body, "axis_mode")
 		"FunctionModeInfo":
@@ -441,17 +450,28 @@ func _apply(kind: String, body: Dictionary) -> void:
 					"function": GwNetFrame.body_str(body, "function"),
 					"corrected": GwNetFrame.body_str(body, "corrected_function"),
 				}
-		"EndingGame":
-			room["ending"] = true
-			phase = "ended"
-			changed = true
-			room_changed.emit()
-			ended.emit("EndingGame")
-			return
 		_:
 			changed = false      # 其余（本局用不到的事件）只记录名
 	if changed:
 		room_changed.emit()
+
+## 收场：**一局正常结束**（原版 `GraphwarGameStateManager::set_state(EndingGame)`）。
+##
+## 三条事实，各自有出处，别混：
+##
+## * **线上原文**：`GameStateInfo{game_state:"EndingGame"}`（`fixtures/frame_endgame_events.txt`
+##   的 `[phase3]` 末行；`docs/07` §3.3/WIRE_VALUE_ENUMS 的 `GameState` 取值表）——
+##   **不是**一条叫 `EndingGame` 的报文。所以触发点在 `"GameStateInfo"` 那一支（见上）。
+## * **不是断线**：`src/graphwar_game_server.rs` 在`EndingGame` 之后才关连接，所以
+##   `phase = "ended"` 让 [`_on_link_closed`] 直接 return ⇒ 不弹"你已断开"（`docs/06` §77 两侧各验一次）。
+## * **只发生一次**：重入直接 return（否则 `ended` 会重复触发 ⇒ 结算框重开、音效重复）。
+func _end_session() -> void:
+	if phase == "ended":
+		return
+	room["ending"] = true
+	phase = "ended"
+	room_changed.emit()
+	ended.emit("EndingGame")
 
 
 # ---------------------------------------------------------------- 喂给 Rust 侧（T17）
