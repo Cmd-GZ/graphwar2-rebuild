@@ -16766,3 +16766,28 @@ cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive 
 cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl   # 647
 cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict                                  # 637
 ```
+
+### 98.10 余力项（`game_client` 24 / `game_state_manager` 13）为什么**没做** —— 依赖是倒的
+
+规格写「余力再做 `game_client`(24) / `game_state_manager`(13)」。本轮把 `game_client` 的坑探到
+"能一句话说清卡在哪"，**没有落半截码**（宁可只报证据，也不要为了条数写猜的 body）：
+
+**`game_client` 的 24 条几乎全是"薄壳"，壳里那一跳落在 `graphwar_client_connection_handler` 上**，
+而那个模块自己就是 7/8 的 gap（`F1=0`）。逐条核过的三个地址：前两行的函数名与地址来自
+`fixtures/name_to_addr_v2.tsv`（`graphwar_client_connection_handler` 那两行），`0x46b180` 那个
+`get_module` 单态的归属来自 `docs/02` §22.3 的表：
+
+| 客户端侧（`graphwar_game_client.rs`） | 壳的 FDE | 壳里的核心一跳 | 落到的原版函数 | 我方那个函数 |
+|---|---|---|---|---|
+| `GraphwarGameClient::connect` `0x518320` | `0x518320..0x5183fb`（219 B） | `0x46b180`（`get_module::<GraphwarClientConnectionHandler>`）→ `0x518377 call 0x45a340` | `GraphwarClientConnectionHandler::connect` **`0x45a340`** | **没有函数体**（只在 `Func` 表里登记） |
+| `GraphwarGameClient::disconnect` `0x516370` | `0x516370..0x51644b`（219 B） | 同上 → `0x5163c7 call 0x4592d0` | `GraphwarClientConnectionHandler::disconnect` **`0x4592d0`** | **没有函数体** |
+| `GraphwarGameClient::tick` `0x518240` | `0x518240..0x518318`（216 B） | `0x46aa50`（`get_module::<GraphwarTickHandler>`）→ `0x518297 call 0x519840` | `0x519840`（本模块内，未定名） | — |
+
+`connect` / `disconnect` 两条的形状**逐条对齐**（同样的 borrow_mut + `unwrap` + `get_module` +
+一次转发 + 同样的 panic 冷段），所以"先做 `client_connection_handler`、再做 `game_client`"是
+能省一半工作的顺序；反过来做就得**先编一个 handler API**，那正是 `AGENTS.md` §0 禁的事。
+
+⇒ **建议的下一批顺序**：`graphwar_client_connection_handler`（7 条）→ `graphwar_setup_control`（9 条）
+→ `graphwar_game_client`（24 条）。`game_state_manager`（13 条）与它无依赖，可以并行
+（它的 33 条铺在 `game.rs` + `turnstate.rs` + `graphwar_game_state_manager.rs` 三处，
+按 §17.4 的规矩先拆文件再补函数会干净得多）。
