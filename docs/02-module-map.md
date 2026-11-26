@@ -1097,6 +1097,30 @@ comm -23 /tmp/all.txt /tmp/doc.txt
    一并改完，并用 §17.5 的两条命令自查过。
 
 
+### 17.7 文件**内部**的函数顺序：有证据了（2026-11-26，任务 T34 / `task-31`；只追加，不改上面任何事实列）
+
+本节 §17.1–§17.6 判的是**文件级**归属。2026-11-26 起多了一条此前没用过的证据：
+`panic::Location` 的 **line 是源码行号**，同一文件里两个函数的行号一比就是它们**在原版文件里的先后**。
+台账在 `fixtures/file_structure.tsv`（239 行「同锚组」/ 21 个原版文件 / 292 个 funcstart），
+判据先写死再跑（`fixtures/file_structure_plan.txt`），完整说明见 **`docs/06` §84**。三条要记住的：
+
+1. **我方有 8 处函数顺序与原版不同**（`docs/06` §84.4 有全表，全部可复核）：集中在
+   `src/graphwar_game_client.rs`（`tick` / `on_command`）、`src/graphwar_turn_manager.rs`
+   （`set_turn_mode` / `set_turn` / `send_all_info_events`）、`src/graphwar_function_input.rs`
+   （`move_caret_left`）、`src/graphwar_computer_player_manager.rs`
+   （`handle_turn_info_event` / `handle_entity_removed_event`）。
+   **本轮不重排**：21 个文件里只有 4 个有 ≥2 个可用的相邻对，定不了绝对位置；理由见 `docs/06` §84.6。
+2. **`funcstart` ≠ 源码函数**（`docs/06` §84.8 第 2 条）：宏展开 / 泛型单态化 / 多函数共享内联
+   panic 点，这三种来源的 `Location` **完全一样**，只能合成"同锚组"、标 `定序=否`。
+   ⇒ 本节与 `docs/coverage-matrix.tsv` 里按 funcstart 计的 `orig_funcs` 对这类文件是**上界**
+   （例：`weak_caller.rs` 记 39 个可归属函数，实际只有 2 行锚点、行号零分辨力）。
+3. **我方方法名与原版大面积不同**：原版 292 个 funcstart 里 **184** 个有 v2 真名，其中 **122 个
+   （66.3%）**的 method 名在我方 `src/` 里 **不存在**（不是"在别的文件"，是根本没有同名函数）。
+   这是"函数边界 1:1"离得还远的直接读数，
+   比模块级的 `coverage-matrix` 读数严格得多 ⇒ 下一轮该做的是**按 v2 真名改名/拆分**，
+   而不是继续加证据轴（`docs/06` §84.9 建议 1）。
+
+
 
 ## 18. 权威名字清单：未 strip 符号表（2026-11）
 
