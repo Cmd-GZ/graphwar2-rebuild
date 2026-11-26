@@ -1,0 +1,30 @@
+# client_handler_anchors.tsv —— T52 台账：F3 缺口函数的**指令级锚点**
+# 生成本表的方法（全部可复跑，不手抄任何地址）：
+#   PY=/home/CG/Myprojects/graphwar2-rebuild/.reference/venv/bin/python
+#   $PY tools/addr_probe.py fde <vaddr>      # 函数真实范围（.eh_frame FDE，不读 Ghidra 表）
+#   $PY tools/addr_probe.py dis <vaddr>      # 逐指令语义
+#   $PY tools/addr_probe.py callers <vaddr>  # 调用者（call rel32 + 函数指针三形态）
+#   $PY tools/addr_probe.py locs <vaddr>     # 该函数引用的 panic::Location → 源码行
+# 地址口径：**ELF vaddr（RVA）**；Ghidra/REA = vaddr + 0x100000。
+# 证据档（AGENTS.md §0.3）：逐位 / 观测 / 推断 / 未知。
+#   `观测` 在本表的口径 = 语义由**该函数自己的指令**读出（含 FDE 边界 + 被调者 + Location 行号），
+#   不是"照抄别处的描述"。本批 8 条全部达到 `观测`；`推断` 只用在**函数边界归属**这一列有争议处。
+#
+# 模块：graphwar_client_connection_handler（docs/coverage-matrix.tsv 第 24 行，status=观测，orig_funcs=8）
+# 关键更正（本轮实测，见 docs/06 §102.2）：`0x438880` **不是**订阅闭包，
+#   它是 `connect` 里 `thread::spawn` 的**连接线程本体闭包**：loc 135/136/137/140 全在连接线程体内，
+#   且唯一取址点 0x43b101 落在 `std::thread::spawn` 机制函数 0x43b070 内。
+#   三个订阅闭包是 0x459990 / 0x4599b0 / 0x4599d0（各自 tail-call 到 0x3d3250 / 0x3d1670 并传函数指针）。
+vaddr	fde_lo	fde_hi	size	真名	符号来源	语义一句话	调用者	成对/相关	Location 行	证据档	我方落点	备注
+0x438880	0x438880	0x438ca2	0x422	GraphwarClientConnectionHandler::connect::{{closure}}（连接线程本体）	无符号名；由 Location 行 + 取址点推定	tokio-free 的标准线程体：`TcpStream::connect_timeout(&addr, Duration{30,0})`；成功→`set_nonblocking(true)`→把 fd 写进 stream 槽→state=2；失败→state=3	唯一取址 0x43b101（in 0x43b070 = std::thread::spawn 机制）	与 connect(0x45a340) 成对：connect 造闭包环境 {SocketAddr@+0, Arc<stream>@+0x20, Arc<state>@+0x28} 再 spawn	135,136,137,140	观测	graphwar_client_connection_handler.rs connect_thread	spec 原文"0x438880=订阅闭包#1"**被证伪**，见文件头
+0x4592d0	0x4592d0	0x459685	0x3b5	GraphwarClientConnectionHandler::disconnect	v2唯一锚（name_to_addr 双向唯一）	若已握手(connected==1)→合成 ConnectionRemoved(tag 6, connection_id@+0x20) 写出去；然后 stream 槽置 None（drop TcpStream ⇒ close(fd)，fd 写 -1）；最后 state=0	call rel32 0x5163c7（in 0x516370 = GraphwarGameClient::disconnect）	与 connect 成对（同一把 state 锁，写 1 vs 写 0）	150,156,157	观测	graphwar_client_connection_handler.rs disconnect	三把锁各一个 unwrap ⇒ 三条 Location，逐条对上
+0x459690	0x459690	0x459834	0x1a4	GraphwarClientConnectionHandler::forward_event	v2唯一锚	把事件原样写进 socket；写失败且已握手(connected!=0) ⇒ 本地合成 ConnectionRemoved 派发；写成功或未握手 ⇒ 静默	lea 0x4599c2(in 0x4599b0 闭包) / 0x45dd4c(in 0x45dd30)	与 disconnect 同一个"断线动作"，但一个写 socket 一个本地派发	255	观测	graphwar_client_connection_handler.rs forward_event	唯一一条 Location 是 stream 锁的 unwrap
+0x459840	0x459840	0x459944	0x104	GraphwarClientConnectionHandler::get_connection_state	v2唯一锚	取 state 锁 → 返回 Mutex 数据首字节（`movzx eax,byte [r14+0x15]`）原样，不做合法性校验	call rel32 0x459f41（in tick）	被 tick 的闩锁判据消费	161	观测	graphwar_client_connection_handler.rs get_connection_state	返回值就是 ConnectionState 的 1 字节
+0x459950	0x459950	0x459986	0x36	GraphwarClientConnectionHandler::handle_connected_to_server	v2跨版本（边界审计里显示为 ::panic_cold_explicit）	若事件 tag != 0x8000000000000007 ⇒ `panic!()`；否则写 self.connected=1(+0x00)、self.connection_id=事件+8 (+0x04)	lea 0x4599e2(in 0x4599d0 闭包) / 0x45dc6c(in 0x45dc50)	与 disconnect 的 connected 判据成对（这里置 1，那里判 ==1 后清 0 语义）	249	观测	graphwar_client_connection_handler.rs handle_connected_to_server	0x36 字节里**热路径也在**，不是纯冷块
+0x4599f0	0x4599f0	0x459f17	0x527	GraphwarClientConnectionHandler::new	v2唯一锚	构造 handler 并注册 26 个订阅（24 转发 + tick + connected）；Rc::new_cyclic 重入 panic 在 65 行	0x409c70 = GraphwarGameClient::new（另见模块文档）	产出的三张订阅表由 0x459990/0x4599b0/0x4599d0 三个闭包消费	65	观测	（本轮不落码：F2 现状保留）	不在 F3 缺口清单内
+0x459f20	0x459f20	0x45a335	0x415	GraphwarClientConnectionHandler::tick	v2唯一锚	①闩锁未置时读状态：<2 什么都不做；==2 ⇒ 闩锁=1、join 连接线程、往事件队列塞 NewConnectionRequest；>2 ⇒ 闩锁=1、join、把 GameState 置 7。②无论上面走哪条，末尾都用 `try_lock` 拿 stream 锁并循环 `read_event`：Ok(Some)→派发；Ok(None)→退出循环；Err(kind==WouldBlock)→退出；Err(其它)→未断线则合成 ConnectionRemoved 本地派发后退出	lea 0x45999f(in 0x459990 闭包) / 0x45e099(in 0x45e080)	state 的唯一消费者；把 connect 线程 join 回来	190,198,199,206	观测	graphwar_client_connection_handler.rs tick	206 行两处同 Location ⇒ join 在**另一个被内联的函数**里（见 §推断）
+0x45a340	0x45a340	0x45a55d	0x21d	GraphwarClientConnectionHandler::connect	v2唯一锚	state 锁写 1(Connecting)→闩锁清 0→clone stream/state 两个 Arc→拷 32 字节 SocketAddr 进闭包环境→`thread::spawn`→把 JoinHandle 存进 +0x50（旧的非空则先 drop）；spawn 失败 ⇒ `expect("failed to spawn thread")`	call rel32 0x518377（in 0x518320 = GraphwarGameClient::connect）	与 disconnect 成对；产出的闭包即 0x438880	124	观测	graphwar_client_connection_handler.rs connect	Duration 实参 `edx=0x1e` 复证 30s
+# ---- 三个订阅闭包（x86 侧存在、但引用的 Location 数为 0 ⇒ 不在 boundary_audit 的 8 条里；本轮只登记不落码）----
+0x459990	0x459990	0x4599ad	0x1d	GraphwarClientConnectionHandler::subscribe_to_events_event_handler::{{closure}}#1	无（无 Location）	升级 weak 容器后 tail-call 0x3d3250，函数指针=0x459f20(tick)	由 new 的内联订阅循环取址	#1 ↔ tick_event	—	观测	（只登记）	arm64 对应 0x48afbc/48 字节
+0x4599b0	0x4599b0	0x4599d0	0x20	GraphwarClientConnectionHandler::subscribe_to_events_event_handler::{{closure}}#2	无（无 Location）	tail-call 0x3d1670，函数指针=0x459690(forward_event)	同上	#2 ↔ 24 个 *_request_event	—	观测	（只登记）	arm64 0x48afec/48
+0x4599d0	0x4599d0	0x4599f0	0x20	GraphwarClientConnectionHandler::subscribe_to_events_event_handler::{{closure}}#3	无（无 Location）	tail-call 0x3d1670，函数指针=0x459950(handle_connected_to_server)	同上	#3 ↔ connected_to_server_event	—	观测	（只登记）	arm64 0x48b01c/44
