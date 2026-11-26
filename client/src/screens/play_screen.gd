@@ -313,6 +313,10 @@ var _replay_play_btn: GwButton = null
 ## 键盘/开火行的持有者 —— 回放模式要整块藏掉（原版回放屏没有键盘、没有 Fire）。
 var _left_grid_holder: Control = null
 var _right_grid_holder: Control = null
+## 键盘 grid（`RightButtonGrid`）的**天然最小宽**：回放模式下原版右列宽度就是这个数
+## （@1920 = 337）。藏起来之前量一次记下来，见 `_set_replay_layout()`。
+var _right_grid_natural_w := 0.0
+var _right_grid_natural_w_set := false
 var _fire_row: Control = null
 var _fire_stack: Control = null
 
@@ -713,6 +717,32 @@ func _build_replay_controls(node_name: String, icons: Array, vertical: bool) -> 
 		box.add_child(b)
 	return box
 
+## 右回放三键的最小宽度 = **原版 `.tscn` 那串空格的宽度**（不是"右列宽度"）。
+##
+## 原版 `RightReplaysButtonsGrid` 的三颗键在 `play_screen.tscn` 里写的是
+## `text = "        "`（**八个空格**，逐位：`recovered-src/play_screen.tscn` 第 688/699/710 行），
+## 字号由 `ButtonGrid.gd` 的 `font_size = screen_size.x / 30` 给（= 64 @1920）；
+## Button 的最小宽 = 文本 advance + 主题 `Button/styles/normal` 左右各 3 px 边
+## （`graphwar_theme.tres` 的 StyleBoxFlat `border_width_left/right = 3`）
+## ⇒ 8 个空格 224 + 6 = **230 px @1920**（同一把尺子的旁证：五个空格的 `ShowExtraButtons`
+## 140+6 = 146，与真帧量到的 146×96 **逐项相同**）。
+##
+## ⚠️ **改前这里写的是 `w * 0.175521`（= 337.00032）**，理由是"337/1920"取自真帧的右列宽。
+## 但右列宽**不是这几颗键撑出来的**：`RightControls` 这个 VBox 的最小宽 = max(键盘
+## `RightButtonGrid`, 回放 grid)，而键盘 grid（回放时隐藏但**仍然贡献最小宽**）的天然
+## 最小宽就是 **337** ⇒ 右列 337、棋盘列 1279。写 337.00032 之后 `GridContainer` 向上取整
+## 成 **338**，右列变 338 ⇒ 棋盘列 1278 ⇒ 白底 1272（原版 1273）、轴线交点 (938,·) 而不是
+## (939,·) —— 这就是 `docs/06` §58.3 里占 75.9 % 的那条"每条网格线整体错 1 px"。
+func _replay_button_width() -> float:
+	var w := get_viewport_rect().size.x
+	var fs := int(w / 30.0)
+	var font := GwThemeFactory.font()
+	var blank := ""
+	for i in 8:
+		blank += " "
+	# + 6 = 主题 StyleBoxFlat 的左右边框（各 3 px）
+	return font.get_string_size(blank, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x + 2.0 * GwThemeFactory.PANEL_BORDER
+
 ## 回放版式：**原版回放屏长什么样，就摆成什么样**（`fixtures/replay_screen_targets.txt` §三）。
 ##
 ## 原版 `play_screen.tscn` 里这几块是**静态节点**，靠运行时 `visible` 切换
@@ -726,9 +756,29 @@ func _set_replay_layout(on: bool) -> void:
 	_replay_layout = on
 	var w := get_viewport_rect().size.x
 	var key := w * 0.15 / 3.0
-	for n in [_left_grid_holder, _right_grid_holder]:
-		if n != null:
-			n.visible = not on
+	if _left_grid_holder != null:
+		_left_grid_holder.visible = not on
+	# 右列：原版回放屏**不画键盘**，但右列宽度仍然是键盘 grid 的天然最小宽 **337**
+	# （真帧：右三键落在 x1583..1919 = 337 宽 ⇒ 棋盘列 1279、白底 1273）。
+	#
+	# ⚠️ **机制未知**（T4 记成"机制未知"，本轮只把这条观测做实）：如果只是把 holder
+	# `visible = false`，Godot 的 `Container` 会把整根子节点从最小宽里剔掉（本机实测），
+	# 右列于是缩到回放 grid 自己的 230 ⇒ 棋盘列变 1386，整块版式崩塌。原版"宽度还在、
+	# 高度不在"这一条**没有源码证据**（推断：原版可能在 Rust 侧只把键藏起来、或者
+	# `visible` 之后容器缓存没失效）。这里如实复现观测：holder 保持 `visible`（继续参与
+	# 最小宽）+ 把 grid 藏掉（高度归 0）+ 把 holder 的最小宽钉成 grid 藏之前量到的天然最小宽。
+	if _right_grid != null and _right_grid_holder != null:
+		if on:
+			if not _right_grid_natural_w_set:
+				_right_grid_natural_w = _right_grid.get_combined_minimum_size().x
+				_right_grid_natural_w_set = true
+			_right_grid.visible = false
+			_right_grid_holder.visible = true
+			_right_grid_holder.custom_minimum_size = Vector2(_right_grid_natural_w, 0.0)
+		else:
+			_right_grid.visible = true
+			_right_grid_holder.visible = true
+			_right_grid_holder.custom_minimum_size = Vector2.ZERO
 	# Fire 行：原版回放屏**右上角是空的但有那一行的高度**（真帧右三键落在 y433/533/633
 	# = 顶行 96 + 居中；若整行藏掉会整体上移 ~52 px）⇒ 藏按钮、留行高。
 	if _fire_row != null:
@@ -744,8 +794,7 @@ func _set_replay_layout(on: bool) -> void:
 		_replay_right.visible = on
 		_replay_right.size_flags_vertical = Control.SIZE_FILL
 		for b in _replay_right.get_children():
-			# 337/1920 = 0.175521 —— 原版 `.tscn` 的 `text = "        "`（8 空格）撑出来的宽度
-			(b as Control).custom_minimum_size = Vector2(w * 0.175521, key)
+			(b as Control).custom_minimum_size = Vector2(_replay_button_width(), key)
 	if _replay_left_pad != null:
 		_replay_left_pad.custom_minimum_size = Vector2(0, key + 4) if on else Vector2.ZERO
 	if _replay_bar != null:
@@ -796,7 +845,12 @@ func apply_font_scale() -> void:
 	if _fx_button != null:
 		_fx_button.custom_minimum_size = Vector2(key, key)
 	if _input != null:
-		_input.custom_minimum_size = Vector2(key * 2.0, key)
+		# **只给宽度**：高度必须由 `GwFunctionInput._get_minimum_size()` 按 LineEdit 的规则
+		# 算（字体高 + 样式盒上下 content_margin ⇒ 只读 98 / 可编辑 96）。改前这里写死 `key`
+		# (=96)，于是回放屏底栏比原版矮 2 px、`PlayMainHBox` 高 1060 而不是 1058、
+		# 棋盘整体下移 2 px（`docs/06` §58.3 的竖直分量）。
+		_input.custom_minimum_size = Vector2(key * 2.0, 0.0)
+		_input.call("refresh_minimum_size")
 	if _timer_label != null:
 		# 观测：原版**无限时限**时 TimerLabel 也占 140 px @1920（0.0729·x）宽度，只是没有字符
 		# （`orig_campaign_play.png` 左下角一片空白，但 GEOM 里 TimerContainer = 140 px）。
@@ -2546,7 +2600,19 @@ func _replay_draw_shot(d: Dictionary) -> void:
 	_set_curve(drawn.points, col, owner)
 	# 修正常数：只有 Normal 有。ODE 下内核给的是 `NaN` ⇒ `format_offset()` 出空串，
 	# 正好是原版 DiffEq 局右下角不显示修正文本的样子（`docs/92` §4.10、`docs/138`）。
-	_offset_label.text = GwCore.format_offset(float(result.offset))
+	# 修正常数文本：**多一个前导空格**（回放专用）。`docs/92` §4.10 的格式样本
+	# `+ 2.515` / `- 8.315` 是**战役/联机**里玩家自己填的那个值；回放里的这一串是从
+	# `FunctionInfo` 的函数串 `x+2sin(20x) - 3.694` **切出来的后缀**，所以带着前面那个分隔空格
+	# ⇒ 显示成 `" - 3.694"`。
+	#
+	# 档位 **推断**（不是逐位）：真帧上修正文本墨迹 x1764..1883、中心 **1823.5**；
+	# 若按"Label 居中 + 不带前导空格"，我方改前落在 x1773..1893、中心 1832.4（差 8.9 px）。
+	# 加**一个**前导空格（fs 32 下一个空格 14 px ⇒ 居中文本左移 7 px）后中心 = 1825.4，
+	# 与真帧差 **1.9 px**。缺的证据：原版播放屏把函数串切成"函数 / 修正"的**那条字符串
+	# 操作的指令**（未解），以及 `Label` 的字体（主题 `default_font` = ComicRelief-Bold，
+	# 不是 `Button/fonts/font`）在那个字号下的精确 advance。
+	var off_text := GwCore.format_offset(float(result.offset))
+	_offset_label.text = (" " + off_text) if off_text != "" else ""
 	var mode_name := "Ode(dy/dx)" if mode == "ode" else "Normal(y=f(x))"
 	_replay_shot_status = "内核重算（%s）：函数 %s ／ 修正 %s（回放记录：%s）／ %d 点%s" % [
 		mode_name, expr, GwCore.format_offset(float(result.offset)),
