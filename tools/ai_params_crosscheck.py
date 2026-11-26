@@ -669,6 +669,8 @@ def x_budget(elf, code):
             tgt = ins.operands[0].imm if ins.operands[0].type == CS_OP_IMM else None
             if tgt is not None and 0x51B7B0 <= tgt <= 0x51B7F0:
                 backs.append((ins.address, tgt))
+    # 真正的代循环回边是**向后跳**（源地址 > 目标），本地小分支不算
+    backs.sort(key=lambda x: (x[0] - x[1] <= 0, -(x[0] - x[1])))
     out["back_edges"] = backs
     return out
 
