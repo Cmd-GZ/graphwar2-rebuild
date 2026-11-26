@@ -1631,12 +1631,56 @@ func _unhandled_key_input(event: InputEvent) -> void:
 ## `docs/16` §49.5 第 1 条与 §50 是这条缺口的正式记录。
 func _on_function_text_changed(new_text: String) -> void:
 	_functions[_active] = new_text
-	if not _suppress_offset_clear:
-		_offset_label.text = ""   # 手改函数 → 上一发的修正不再对应当前输入
+	# 右下修正常数**跟着当前输入重算**（旧实现是"手改就清空"，那样 S7 空函数一开始就永远是空的，
+	# 而原版 S7 常显 `- 9.890` = `y0 − f(x0)` 在 `f ≡ 0` 时的值）。
+	# `_suppress_offset_clear` 的旧用途（"程序化改写时别把刚算出来的修正抹掉"）随之一并取消：
+	# 现在**唯一**来源是"当前输入 + 当前射手"，重算不会抹掉任何东西。
+	_refresh_offset_label()
 	_refresh_function_list()
 
 func _on_function_text_submitted(_new_text: String) -> void:
 	fire()
+
+## 右下 `OffsetLabel` = **当前输入对应的修正常数** `c`。常显（不是"开火后才写"、也不是"手改就清空"）。
+##
+## ## 公式（有真值）
+## `c = y0 − f(x0)`：`(x0, y0)` = 射手位置，`f` = 当前输入框里的函数。
+## 来源是内核自己的实现 `src/graphwar_shot_calculator.rs::correction_text`
+## （`docs/24` §6.2 的格式样本 + 抓包帧 143/144 的空函数负样本 `- 3.420` = 当时那个 `y0`），
+## 并且在本样本上能用**三个数**独立复核（全部逐位）：
+##   * 空函数（S7）：`f ≡ 0` ⇒ `c = y0 = −9.889980889…` ⇒ `format_offset(c)` = **`- 9.890`**
+##     —— 正是原版 S7 真帧上那一串；
+##   * 函数 `x+2sin(20x)`（S8 服务端下发的第一发）：`c = y0 − f(x0) = −3.694413988…`
+##     ⇒ **`- 3.694`**，与服务端 `corrected_function = "x+2sin(20x) - 3.694"` 的常数项一致；
+##   * 同一发的落点：`f(end_x) + c = 0.8236080576`，与 `EffectInfo{pos_y: 0.8236080576517795}`
+##     逐位相同 ⇒ 说明 `c` 的定义就是"让曲线过射手"的那个平移量。
+##
+## ## 为什么原版 S8 显示的仍是 `- 9.890`
+## 原版的输入框里**没有人打字**（线上事件不回填输入框）⇒ `f ≡ 0` ⇒ `c = y0`。
+## 旧实现是"开火后把内核按**收到的**函数串算出来的修正写进标签" ⇒ S8 显示 `- 3.694`、S7 空，
+## 数值与出现时机都与原版不同（`docs/06` §60.5 表最后一行）。现在只有**一个**来源。
+##
+## 回放屏不在这里：那边的修正文本来自录像（`_replay_draw_shot()`，还带一个前导空格，
+## 是"从 `corrected_function` 里切出来的后缀"，见那段注释）。
+func _refresh_offset_label() -> void:
+	if _offset_label == null or _replay_mode:
+		return
+	var app_node := app()
+	if app_node != null and int(app_node.state.function_mode) != 0:
+		_offset_label.text = ""     # DiffEq 局没有修正常数（观测：原版那一格为空）
+		return
+	var shooter := _active_soldier()
+	if shooter.is_empty():
+		return
+	var c := float(shooter.pos.y)   # 空函数 ⇒ f ≡ 0 ⇒ c = y0
+	var expr := String(_input.text).strip_edges() if _input != null else ""
+	if expr != "":
+		var direction := 1.0 if int(shooter.get("team", 0)) == 0 else -1.0
+		var res := GwCore.calculate_path(expr, shooter.pos, direction)
+		if not bool(res.get("ok", false)):
+			return                  # 半截表达式（如 `sin(`）算不出来：保持上一次的值，不写 0
+		c = float(res.get("offset", c))
+	_offset_label.text = GwCore.format_offset(c)
 
 ## 开火：算一条弹道并**开始播放**它。结算在弹道飞完时（`_on_shot_arrived()`）。
 ##
@@ -1694,7 +1738,9 @@ func fire() -> bool:
 	_set_curve(drawn.points, active_soldier.get("color", GwThemeFactory.COL_ACCENT), _active)
 	# 修正常数（`docs/24` §6.2 的样本格式：`+ 4.638` / `- 8.315`，三位小数、符号后一个空格）。
 	# DiffEq 模式下原版 OffsetLabel 为空（观测）。
-	_offset_label.text = GwCore.format_offset(float(result.offset)) if int(app_node.state.function_mode) == 0 else ""
+	# 修正常数：与"当前输入 + 当前射手"同一个来源（`_refresh_offset_label()`）——
+	# 内核这一发算出的 `result.offset` 就是 `y0 − f(x0)`，两处同值，这里不再各写一份。
+	_refresh_offset_label()
 	if bool(drawn.blocked):
 		_status("弹道撞到障碍，停在 (%.2f, %.2f) ／ 本局障碍 %d 个 ／ 点序列 %d 点（未截断）"
 			% [impact.x, impact.y, _obstacles.size(), pts.size()])
@@ -2220,7 +2266,8 @@ func _load_active_function() -> void:
 	_suppress_offset_clear = true
 	_input.text = String(_functions.get(_active, ""))
 	_suppress_offset_clear = false
-	# 注意：**不**在这里清 OffsetLabel —— 原版换手时 OffsetLabel 仍显示上一发的修正。
+	# 换手 = 换射手 ⇒ 修正常数也要重算（原版换手时右下那串**不消失**，它跟着"当前输入 + 当前射手"变）。
+	_refresh_offset_label()
 
 ## 判一局结束没有 —— **按关卡类型**（`docs/131` §2），不再只看两队士兵的存活数。
 ##
@@ -2869,6 +2916,7 @@ func _begin_online(app_node) -> void:
 	_replay_left.visible = false
 	_replay_right.visible = false
 	_running = true
+	_refresh_offset_label()
 	_status(_online_status_text())
 
 ## 退出联机局（`end_match()` 调用；断线时 App 也会调 `end_match()`）。幂等。
@@ -3225,9 +3273,10 @@ func _draw_online_shot(owner_id: int, start: Vector2, end_x: float) -> void:
 	# （联机下生死与回合都归服务端，本地只负责"飞到哪就收尾"）。
 	_flow.begin(cut.size(), [], [], impact, true)
 	_shot_in_flight = true
-	var app_node := app()
-	if app_node != null and int(app_node.state.function_mode) == 0:
-		_offset_label.text = GwCore.format_offset(float(result.offset))
+	# ⚠️ **不**在这里用 `result.offset` 覆盖右下标签：那一发用的是**服务端收到的函数串**，
+	# 而原版的标签跟的是**本地输入框**（本样本输入框是空的 ⇒ 原版 S8 仍显示 `y0` = `- 9.890`）。
+	# `docs/06` §60.5 那行"S7 不显示 / S8 显示 - 3.694 ⇒ 数值与出现时机都不同"就是这条。
+	_refresh_offset_label()
 	_online_shot = {
 		"owner": owner_id, "function": expr, "start": start, "end_x": end_x,
 		"direction": direction, "points": cut.size(), "offset": float(result.offset),
