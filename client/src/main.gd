@@ -104,6 +104,13 @@ func _instantiate_screens() -> void:
 			continue
 		var scene: PackedScene = load(path)
 		var node: Control = scene.instantiate()
+		# 原版 `.tscn` 的根节点**没有** script（原版的界面控制器在 Rust 里，见 AGENTS §0.4）。
+		# 我方把这屏的 GDScript 控制器在进树之前挂上去 —— 必须在 `add_child` 之前，
+		# 否则 `_ready` 不会补发。已经带 script 的场景（还没换上的那几屏存根）这里是空操作。
+		if node.get_script() == null:
+			var script_path := "res://src/screens/%s.gd" % file
+			if ResourceLoader.exists(script_path):
+				node.set_script(load(script_path))
 		node.name = screen_name
 		node.set_anchors_preset(Control.PRESET_FULL_RECT)
 		screens_control.add_child(node)

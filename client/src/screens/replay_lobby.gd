@@ -62,28 +62,15 @@ func _ready() -> void:
 	super()
 
 func build() -> void:
-	var f := GwUI.frame(self)
-	var vbox: VBoxContainer = f.vbox
-	var hdr := build_header(vbox, "REPLAYS", GwCommands.EXIT_REPLAY_LOBBY, true)
-	# 返回键的圆角：原版 `replay_lobby.tscn` 的 `ClipButton` 带 `clip_children = 2`
-	# （CLIP_CHILDREN_ONLY），所以它那个面板色的 `AnimationRect` 子节点被**裁到圆角形状内**，
-	# 四个弯角露出的是底色。少了这一条，弯角处会多出 152 个面板色像素（max|Δch|=22）。
-	# 真帧证据：原版 (0,0)=(14,37,28)=底色，我方 (26,59,45)=面板色（docs/06 §56.5）。
-	# ⚠️ 这是 `GwUI.exit_pair` 的**既有缺陷**（影响每一屏的返回键），但 `client/src/ui/ui.gd`
-	# 不在本任务允许改的文件里 ⇒ 这里就地补一条，并把根因写进 docs/16 §62.6 建议统一修。
-	var exit_holder: Node = hdr.exit
-	var clip_btn: Node = exit_holder.get_node_or_null("ClipButton") if exit_holder != null else null
-	if clip_btn is CanvasItem:
-		(clip_btn as CanvasItem).clip_children = CanvasItem.CLIP_CHILDREN_ONLY
+	# **节点树来自原版 `recovered-src/replay_lobby.tscn`（逐字节装进 `client/scenes/screens/`）**：
+	# MarginContainer(VBoxContainer → HBoxContainer(ExitButtonContainer/{ClipButton,LongPressButton},
+	# MarginContainer/Label("REPLAYS")) + ScrollContainer/ReplaysContainer + AdContainer)。
+	# 这里只做接线：取列表容器 + 把那 152 个弯角像素的裁切条件按 .tscn 的写法补上。
+	var vbox: VBoxContainer = get_node("MarginContainer/VBoxContainer")
+	_list = vbox.get_node("ScrollContainer/ReplaysContainer") as VBoxContainer
+	# 原版 `ClipButton` 的 `clip_children = 2`（CLIP_CHILDREN_ONLY）**已经写在 .tscn 里**了，
+	# 见 `docs/06` §56.5 / §62 那条弯角证据 —— 不再由代码补。
 
-	var scroll := GwUI.scroll("ScrollContainer")
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_list = GwUI.vbox("ReplaysContainer", 4)
-	_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.add_child(_list)
-	vbox.add_child(scroll)
-
-	vbox.add_child(GwUI.ad_bar())
 
 func on_enter() -> void:
 	_rebuild()

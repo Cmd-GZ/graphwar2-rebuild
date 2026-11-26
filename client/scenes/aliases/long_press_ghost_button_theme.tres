@@ -1,0 +1,118 @@
+[gd_resource type="Theme" format=3]
+
+[ext_resource type="FontFile" path="res://button_font.tres" id="1_3v5h8"]
+[ext_resource type="StyleBox" path="res://graphwar_style_box_flat_pressed.tres" id="2_xbsbh"]
+[ext_resource type="FontFile" path="res://ComicRelief-Bold.ttf" id="3_bwsh0"]
+[ext_resource type="StyleBox" path="res://tab_unselected.tres" id="4_kdmh6"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_b54nd"]
+bg_color = Color(0.219608, 0.219608, 0.219608, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0, 0, 0, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_oxxq5"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_u0ifg"]
+bg_color = Color(0.0588235, 0.156863, 0.113725, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_bw5kj"]
+bg_color = Color(0.0588235, 0.156863, 0.113725, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0, 0, 0, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_r5led"]
+bg_color = Color(0.0588235, 0.156863, 0.113725, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0, 0, 0, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_c3pm7"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_mqgns"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_f17ly"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_kmvco"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_io4ip"]
+bg_color = Color(0.101961, 0.231373, 0.176471, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_width_bottom = 3
+border_color = Color(0, 0, 0, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_t1w2e"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_7qouw"]
+bg_color = Color(0.101961, 0.231373, 0.176471, 1)
+border_width_left = 3
+border_width_top = 3
+border_width_right = 3
+border_color = Color(0, 0, 0, 1)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+expand_margin_right = 3.0
+expand_margin_bottom = 3.0
+
+[resource]
+default_font = ExtResource("3_bwsh0")
+default_font_size = 24
+Button/colors/font_color = Color(1, 1, 1, 1)
+Button/fonts/font = ExtResource("1_3v5h8")
+Button/styles/disabled = SubResource("StyleBoxFlat_b54nd")
+Button/styles/focus = SubResource("StyleBoxEmpty_oxxq5")
+Button/styles/hover = SubResource("StyleBoxFlat_u0ifg")
+Button/styles/normal = SubResource("StyleBoxFlat_bw5kj")
+Button/styles/pressed = SubResource("StyleBoxFlat_r5led")
+LineEdit/colors/caret_color = Color(1, 1, 1, 1)
+LineEdit/colors/font_color = Color(1, 1, 1, 1)
+LineEdit/styles/focus = SubResource("StyleBoxEmpty_c3pm7")
+LineEdit/styles/normal = SubResource("StyleBoxFlat_bw5kj")
+Panel/styles/panel = ExtResource("2_xbsbh")
+TabBar/constants/h_separation = 8
+TabBar/fonts/font = ExtResource("3_bwsh0")
+TabBar/styles/tab_hovered = SubResource("StyleBoxEmpty_mqgns")
+TabBar/styles/tab_selected = SubResource("StyleBoxEmpty_f17ly")
+TabBar/styles/tab_unselected = SubResource("StyleBoxEmpty_kmvco")
+TabContainer/constants/side_margin = 10
+TabContainer/font_sizes/font_size = 50
+TabContainer/styles/panel = SubResource("StyleBoxFlat_io4ip")
+TabContainer/styles/tab_focus = SubResource("StyleBoxEmpty_t1w2e")
+TabContainer/styles/tab_hovered = ExtResource("4_kdmh6")
+TabContainer/styles/tab_selected = SubResource("StyleBoxFlat_7qouw")
+TabContainer/styles/tab_unselected = ExtResource("4_kdmh6")
+TextEdit/fonts/font = ExtResource("3_bwsh0")
+TextEdit/styles/normal = SubResource("StyleBoxFlat_bw5kj")
