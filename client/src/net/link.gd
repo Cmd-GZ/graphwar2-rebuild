@@ -11,10 +11,13 @@ class_name GwNetLink
 ##                                              `↘ failed`
 ## `connected → closed`（对端关闭 / 读错 / 帧非法）。
 ##
-## * `connect_timeout`（默认 3 s）—— 只算**单次**尝试；
+## * `connect_timeout`（默认 **30 s**）—— 只算**单次**尝试。**这是原版真值，不是我们的选择**：
+##   值由 Rust 侧的 `graphwar_client_connection_handler::CONNECT_TIMEOUT_SECS` 经 `GwNetConsts`
+##   取来（arm64 `0x48dccc mov w1,#0x1e` = 30 → `0x48dcd4 bl std::net::tcp::TcpStream::connect_timeout`；
+##   逐位）。本文件**不写这个数字**（T42；改前是自造的 `3.0`）。
 ## * `retries`（默认 0）—— 失败后再试几次；两次之间等 `retry_delay`。
 ##   原版的连接重试策略**完全没有观测**（`docs/132` §3 只给了 `start_client_to_*` 的
-##   方法名），所以这两个值都是**本项目的选择**，不是复原结论。
+##   方法名），所以**这两个**值仍是**本项目的选择**，不是复原结论。
 ##
 ## # 为什么不在 `_ready` 里等
 ##
@@ -32,8 +35,10 @@ const READ_CHUNK := 16384
 var state := "idle"
 var host := ""
 var port := 0
-## 单次连接尝试的超时（秒）。**本项目选择**，非观测值。
-var connect_timeout := 3.0
+## 单次连接尝试的超时（秒）。**原版真值 30 s**，从 Rust 取（`GwNetConsts` ←
+## `graphwar_client_connection_handler::CONNECT_TIMEOUT_SECS`，arm64 `0x48dccc mov w1,#0x1e`；
+## 逐位）。**这里不许写数字**：改前那个 `3.0` 是自造值，把 30 s 的真值丢了（T35 审计 / `docs/06` §92）。
+var connect_timeout := GwNetConsts.connect_timeout_secs()
 ## 失败后的重试次数（**本项目选择**，默认不重试）。
 var retries := 0
 ## 两次尝试之间的等待（秒）。
