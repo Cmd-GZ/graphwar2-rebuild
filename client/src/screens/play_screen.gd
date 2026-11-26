@@ -318,7 +318,10 @@ var _right_grid_holder: Control = null
 var _right_grid_natural_w := 0.0
 var _right_grid_natural_w_set := false
 var _fire_row: Control = null
-var _fire_stack: Control = null
+## `FireContainer` 的两颗直接子节点（`ClipButton` / `FireButton`）。回放屏要把那颗
+## 可见的 `Fire!` 藏起来但**留着行高**（真帧右三键 y433/533/633 ⇒ 顶行 96 还在），
+## 所以这里存两颗的句柄而不是一个容器（与 `.tscn` 同形后再没有中间层，见 `build()`）。
+var _fire_parts: Array[Control] = []
 
 # --- 联机模式（`docs/139`；落实 `docs/134` §7.1 的交接清单） ---
 #
@@ -512,27 +515,32 @@ func build() -> void:
 	var fire_margin := GwUI.margin("FireContainer", 0)
 	fire_margin.name = "FireContainer"
 	fire_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var fire_stack := Control.new()
-	fire_stack.name = "FireStack"
-	_fire_stack = fire_stack
-	fire_stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# 原版 `FireContainer.gd`（`client/src/views/`）给子节点写 `custom_minimum_size.x = x*0.07`
-	# 和字号 宽/30；高度由文字撑到与左上按钮行同高（实测 FireButton = 337×96 @1920）。
+	# 原版 `FireContainer.gd`（`client/src/views/`）给**直接子节点**写
+	# `custom_minimum_size.x = 屏宽×0.07` 和字号 `屏宽/30`；高度由文字撑到与左上按钮行同高
+	# （实测 FireButton = 337×96 @1920）。
+	#
+	# ⚠️ **2026-11-26（T26）修**：`.tscn` 里 `FireContainer` 的直接子节点就是两个
+	# —— `ClipButton`（幽灵底板 + AnimationRect）与 `FireButton`（可见的那颗）。
+	# 我方以前多插了一层 `Control("FireStack")` 当叠放容器，而 `FireContainer.gd::update_sizes()`
+	# 只遍历 `get_children()` ⇒ 字号覆盖从没落到两颗按钮上：它们一直用主题默认
+	# `default_font_size = 24`，而原版是 **屏宽/30 = 64**。
+	# 真帧判据：`(1636,4)-(1916,112)` 内近白像素 **原版 1 857 / 我方 261**（`docs/06` §60.5），
+	# 块 `(0,5)` 的 `|Δmean| = 5.71` 就是这么来的。⇒ 去掉中间层，与 `.tscn` 同形。
+	# 两个子节点由 `MarginContainer` 摆成**同一块矩形**（容器把每个子节点都铺满内容区）
+	# ⇒ 叠放顺序 = 添加顺序（ClipButton 在下、FireButton 在上），与原版一致。
 	var clip := GwButton.make(" Fire! ")
 	clip.name = "ClipButton"
 	clip.flat = true
 	clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	clip.set_anchors_preset(Control.PRESET_FULL_RECT)
 	clip.add_child(_anim_rect())
-	fire_stack.add_child(clip)
+	fire_margin.add_child(clip)
 	_fire_button = GwButton.make(" Fire! ")
 	_fire_button.name = "FireButton"
 	_fire_button.long_press_input_text = GwCommands.FIRE   # 原版：FireButton 只有 long_press_input_text
-	_fire_button.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_fire_button.tooltip_text = "开火（fire）"
-	fire_stack.add_child(_fire_button)
+	fire_margin.add_child(_fire_button)
+	_fire_parts = [clip, _fire_button]
 	GwViews.attach(fire_margin, "FireContainer.gd")   # 最小宽 = 屏宽×0.07，字号 = 宽/30
-	fire_margin.add_child(fire_stack)
 	fire_row.add_child(fire_margin)
 
 	var right_top_pad := GwUI.margin("MarginContainer", 0, right)
@@ -792,8 +800,8 @@ func _set_replay_layout(on: bool) -> void:
 	if _fire_row != null:
 		_fire_row.visible = true
 		_fire_row.custom_minimum_size = Vector2(0, key) if on else Vector2.ZERO
-	if _fire_stack != null:
-		_fire_stack.visible = not on
+	for part in _fire_parts:
+		part.visible = not on
 	if _replay_left != null:
 		_replay_left.visible = on
 		for b in _replay_left.get_children():
