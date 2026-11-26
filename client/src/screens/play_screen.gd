@@ -1416,6 +1416,20 @@ func plane_state() -> Dictionary:
 ##
 ## 阵亡：`set_entity_dead_ticks(id, ENTITY_DEAD_TICKS)` ⇒ 标签与名字按 `death_alpha` 淡出；
 ## 联机的死者**整个撤掉**（服务端 `Match::fire` 就把死者 retain 掉了，`docs/139`）。
+## 局面 → `EntityDrawer` 的实体表。
+##
+## ## 2026-11-26（T26）**id 空间**修正（这是"事件全接上也画不对"的总根因）
+##
+## 旧实现交给 `EntityDrawer` 的 id 是**士兵下标** `i`（0,1,2…），而线上事件与 22 个复原
+## manager（位置/外观/名字/颜色/队伍/生命）用的都是**实体 id**（本样本：玩家 229、士兵 230、
+## 被删的 231、靶子 232）。两套编号互不相干 ⇒ T17 喂进 manager 的外观/名字/颜色
+## **一个消费者都没有**（`docs/06` §67.8 第 3 条就是这么记的）。
+## 现在：有实体 id 就用实体 id（联机 `entity_id`、回放 `id`），只有**本地战役局**
+## （士兵是界面自己摆的、线上没有实体 id）才退回下标 —— 那是唯一没有实体 id 的一条路。
+##
+## 靶子那条也一样：联机靶子的 id 就是 `TargetInfo{target_id}` 里的**实体 id**（232），
+## 不再映射到 `TARGET_ID_BASE + target_id`（那是本地战役/回放"靶子只有位置表、没有 id"时
+## 的自造编号）。`_view_targets()` 负责给出这个 id，本函数只管用。
 func _sync_entities() -> void:
 	if _entities == null:
 		return
@@ -1425,15 +1439,18 @@ func _sync_entities() -> void:
 		var alive := bool(s.get("alive", true))
 		if _online_mode and not alive:
 			continue
-		want[i] = {
+		# 实体 id 的三条来源（优先级从上到下）：联机 `entity_id` → 回放 `id` → 本地局下标。
+		var eid := int(s.get("entity_id", s.get("id", i)))
+		want[eid] = {
 			"pos": s.pos,
 			"name": (String(s.name) if _show_names else ""),
 			"dead": (-1 if alive else ENTITY_DEAD_TICKS),
-			"actor_id": int(s.get("id", i)),   # 回放的实体 id（外观表按它索引）
+			"actor_id": eid,                   # 外观表按实体 id 索引（回放/联机同一个口径）
 			"color": s.get("color", Color.WHITE),   # 名字标签的笔画色（队色）
+			"kind": "soldier",
 		}
 	for t in _view_targets():
-		want[int(t["id"])] = {"pos": t["pos"], "name": "", "dead": -1}
+		want[int(t["id"])] = {"pos": t["pos"], "name": "", "dead": -1, "kind": "target"}
 	# 先删：`EntityDrawer` 的句柄与节点同生共死（`remove_entity` 里 `queue_free`）。
 	for id in _drawn_entities.keys():
 		if not want.has(id):
@@ -1454,25 +1471,19 @@ func _sync_entities() -> void:
 		_drawn_entities[id] = true
 		# ---- 外观（`docs/16` §44）：原版由 `set_{skin,face,hat}_graphics` 的 51/53/55 事件喂
 		# `EntityDrawer` 的 `HashMap<i32,String>`；那条链路（`GraphwarGraphicsManager`）还没接，
-		# 所以这里按实体种类代填。默认三件套 `yellow/regular_eyes/soldier_helmet` 是
-		# `GraphwarPlayerConfig::new` 的字面量（arm64 `0x39152c..0x3915a4`），士兵不用显式设。
-		# 靶子得显式设成 `target/no_face/no_hat`（`res://skins/target.svg` 在表里）。
+		# 所以这里按"线上事件已经落在 `room` 里的那份事实"代填（`session.gd` 的
+		# `Skin/Face/HatGraphicsInfo` → `room["look"][entity_id]`）。**按实体 id 索引** ——
+		# 这与 manager 收的是同一批 id（见本函数头的 id 空间说明）。
+		# 没有 look 事实时才退回默认三件套 `yellow/regular_eyes/soldier_helmet`
+		# （= `GraphwarPlayerConfig::new` 的字面量，arm64 `0x39152c..0x3915a4`）；
+		# 靶子退回 `target/no_face/no_hat`（`res://skins/target.svg` 在表里）。
 		# ⚠️ 这是**我方接线**，原版是 graphics 事件驱动的（`docs/16` §44.0）。
-		if id >= TARGET_ID_BASE:
+		var look := _look_for(id)
+		if not look.is_empty():
+			_entities.call("set_entity_look", id, String(look.get("skin", "")),
+				String(look.get("face", "")), String(look.get("hat", "")))
+		elif String(e.get("kind", "")) == "target":
 			_entities.call("set_entity_look", id, "target", "no_face", "no_hat")
-		elif _replay_mode and _replay != null:
-			# 回放里**外观是录下来的**：`SkinGraphicsInfo` / `FaceGraphicsInfo` / `HatGraphicsInfo`
-			# 三条事件按实体 id 记着名字（本样本：士兵 230 = face_paint_2 / asian / asian_hat）。
-			# 以前这里只给靶子设外观、士兵一律用 `spawn_entity` 的默认三件套
-			# （yellow/regular_eyes/soldier_helmet）⇒ 真帧对拍会差一整个精灵。
-			# ⚠️ 这是**我方接线**：原版由 `GraphwarGraphicsManager` → `EntityDrawer` 的
-			# `set_{skin,face,hat}_graphics` 事件写表（`docs/16` §44.0），那条链路还没接。
-			var actor_id := int(e.get("actor_id", id))
-			var sk := String(_replay.graphics("skin", actor_id))
-			if sk != "":
-				_entities.call("set_entity_look", id, sk,
-					String(_replay.graphics("face", actor_id)),
-					String(_replay.graphics("hat", actor_id)))
 	# ---- 准备圈：**填 `prep` 表**（`docs/16` §50.6）----
 	#
 	# 原版 `EntityDrawer::draw`（`0x4b2890`）只画 `prep` 哈希表里的实体，而填表的是
@@ -1494,16 +1505,20 @@ func _sync_entities() -> void:
 	# 原版弧的门是 `get_alive` + `is_on_turn`（§46/§48 观测，`0x454950`/`0x462b50`）；回放侧
 	# 没有 turn 状态源（`_turn_driver` 那条链只在本地局走）⇒ 我方按"回放里**所有活着的士兵**"
 	# 画环。本样本只有 1 具士兵 ⇒ 与真帧一致；多士兵回放可能多画，**登记为遗留**（不是观测）。
+	# ⚠️ 环的键必须是**实体 id**（与 `want` 同一口径），不是士兵下标 —— 下标那条在
+	# 联机局是 0/1/2…，`want` 里根本没有那个键 ⇒ 环一个都画不出来（改前的现象）。
 	var ring_ids := {}
 	if _replay_mode:
 		for i in _soldiers.size():
 			var s: Dictionary = _soldiers[i]
-			if bool(s.get("alive", true)) and want.has(i):
-				ring_ids[i] = true
+			var seid := int(s.get("entity_id", s.get("id", i)))
+			if bool(s.get("alive", true)) and want.has(seid):
+				ring_ids[seid] = true
 	elif _active_soldier_idx >= 0 and _active_soldier_idx < _soldiers.size():
 		var acting: Dictionary = _soldiers[_active_soldier_idx]
-		if bool(acting.get("alive", true)) and want.has(_active_soldier_idx):
-			ring_ids[_active_soldier_idx] = true
+		var aeid := int(acting.get("entity_id", acting.get("id", _active_soldier_idx)))
+		if bool(acting.get("alive", true)) and want.has(aeid):
+			ring_ids[aeid] = true
 	# 箭头开不开：回放关（真帧径向直方图，见上）；本地局开（`match_ready` 真帧那份"带准备圈"
 	# 的形态里有箭头，`docs/06` §60.1 —— 那一屏还没对齐，开关先保持上一轮的行为）。
 	_entities.set("show_ring_arrows", not _replay_mode)
@@ -3028,6 +3043,29 @@ func _online_player_name(pi: int, pid: int, app_node) -> String:
 		return String(app_node.state.players[pi].name)
 	return "Player %d" % pid
 
+## 联机事件的"外观三件套"（`room["look"][entity_id]`，由 `Skin/Face/HatGraphicsInfo` 落进去）。
+## 回放那边同一件事由 `_replay.graphics(kind, entity_id)` 提供；本地局没有这条事实 ⇒ 空字典。
+##
+## `_sync_entities()` 只用它来决定"要不要显式 `set_entity_look`"：空字典 ⇒ 不调，
+## 保持 `spawn_entity` 的默认三件套（原版 `GraphwarPlayerConfig::new` 的字面量）。
+func _look_for(eid: int) -> Dictionary:
+	if _replay_mode and _replay != null:
+		var sk := String(_replay.graphics("skin", eid))
+		if sk == "":
+			return {}
+		return {
+			"skin": sk,
+			"face": String(_replay.graphics("face", eid)),
+			"hat": String(_replay.graphics("hat", eid)),
+		}
+	if _online_mode:
+		var look: Dictionary = _online_room().get("look", {})
+		if look.has(eid):
+			var l: Dictionary = look[eid]
+			if String(l.get("skin", "")) != "":
+				return l
+	return {}
+
 ## 障碍：`AddObstacle` 下发的 `{pos_x, pos_y, radius}`，顺序即服务端顺序。
 ## 形状与 `GwCore.level_obstacles()` 的产物一致（`{pos: Vector2, size: 半径}`），
 ## 因为 `_set_obstacles()` 与 `GwCore.hit_test()` 都吃这一种。
@@ -3119,6 +3157,11 @@ func _on_online_message(kind: String, body: Dictionary) -> void:
 	if not _online_mode:
 		return
 	match kind:
+		"NameInfo", "SkinGraphicsInfo", "FaceGraphicsInfo", "HatGraphicsInfo", "ColorInfo":
+			# 这五条改的是"实体的外观事实"（名字 / 三张图 / 颜色），消费者是 `_sync_entities()`。
+			# 它们**晚于** `begin_match()` 到（见本函数下面 PosInfo 的处理同理）⇒ 收到就重摆一次。
+			# 原版对应的是 `EntityDrawer` 订阅 graphics/name/color 事件后自己重画（`docs/16` §44）。
+			_refresh_plane()
 		"PlayerInfo":
 			# 会话侧已经判过"这条是不是给我的"（`GwNetSession._apply` 比对 connection_id），
 			# 这里只做镜像，不再自己判一次（免得出现两个真相源）。
