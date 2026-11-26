@@ -205,6 +205,13 @@ GPU 口径      比"计算时间"还是"进程墙钟"？（后者含 `import tor
               实测：全量 252×；小规模内部 4.83×、进程墙钟 1.25×。**报 GPU 必须同时给口径**
 ```
 
+**视觉对拍的两条并行陷阱（2026-11-26 实测）**：① **UDP `42968` 是本机共享资源** —— 多个 teammate
+同时起「脚本化协议服务器」时，客户端 LAN 发现会连到别人那一份（`accepted=0`、大厅空），
+处置是**重试/串行**，不能改端口（客户端固定 42968）；② `match_serve.py` 的 `--collect` 默认只有 8 s，
+**拍结算屏/结束局前连接就被关掉** ⇒ 我方拍到的是断线弹窗假象；要用 `ENDGAME_SERVER_COLLECT=120`（两侧同值）。
+③ TCP 端口来自**预注册 fixture 的 `[meta] tcp_port`** ⇒ 两个并发 run 用同一份 fixture 会 `Address already in use`，
+必须串行（或用 `--tcp-port` 显式错开）。
+
 **"改了但没生效"的三个静默陷阱**：新增 `.gd`/`.gdextension` 后没 `--import`；
 `cargo build` 后没 `cp` 进 `client/`（客户端跑旧 `.so`）；残留旧的 `target/…/serve_match`。
 `/tmp` 是逐命令 tmpfs，临时产物放工作区。

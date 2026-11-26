@@ -215,7 +215,7 @@
 |---|---|---|
 | 「544 个函数归属 / 56 个模块」 | `docs/02` §8 | 那张表把引用两个模块的函数在两个模块下**各算一次**。本表压平后不重复计数，并把跨模块数单独列为 `contested` |
 | 「885/13263，观测 441 + 推断 444」 | `docs/02` §10 | 那是**调用图扩散**，属推断层。本表只收硬证据，不把扩散数写进总账 |
-| 「57 个模块」 | 各处 | 按 `src/graphwar_[a-z_]+\.rs` 数是 **58**；**加数字字符后是 59**（`graphwar_lan_broadcaster_v6.rs` 被漏了）。本表一律算出来、不写死 |
+| 「57 个模块」 | 各处 | 旧读数 `57` 已作废（连它自己的两个口径都不对）：按**文件** `src/graphwar_*.rs` 是 **59** 个；只匹配 `[a-z_]+` 会漏掉`graphwar_lan_broadcaster_v6.rs` ⇒ **58**。本表的口径是**模块**：有同名文件的模块 **58** 个（59 个文件里有一个不是模块名，见 §17）。计数一律算出来、不写死 |
 | 「`fixtures/module_funcs.tsv` 的地址清单」 | `docs/02` §14.2 | 那张表已自我更正为「不能判定函数身份」；本表用 Ghidra 边界 + 冲突压平重算 |
 | 「解析器 `0x4ed670` 在 `graphwar_function_input.rs`」 | `docs/02` §1 | 该函数体内唯一的 Location 锚是 `math_function.rs:75`，按证据归 `math_function.rs`；所以函数语言的实现落在本表的 `other` 口径，不在带前缀的那 58 个模块里 |
 
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（116 个文件、3183 条 `fn`） | `2b166578c78d0f2ad8b60691ef1641e4a1805f65def79cc9a58b668c24af74d6` |
+| `src/` 树（116 个文件、3184 条 `fn`） | `017dae638eac2ea506ec5ffdd4abf45903323c2fa4df5ca997e279735252f9be` |
 
