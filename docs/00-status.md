@@ -305,7 +305,7 @@ PY
 | 3 | 音频播放 | ✅ 播放层通了（含 `humm` 的 generator 路径）；**事件映射仍是未知** | [`17`](17-resources.md) §4 |
 | 4 | AI 产物上线 | ✅ `token → 文本`（`0x4ec160`，1032/1032）已接进服务端 | [`13`](13-ai.md) §22 |
 | 5 | 战役数据 | ✅ 21 关真数据已接进界面 | [`10`](10-campaign.md) §11 |
-| 6 | 界面保真 | **15 屏有真值**（`docs/06` §53–§94）。**逐像素 0 px 八屏**：主菜单 / 回放列表 / **回放播放** / **回放结束** / 战役选择 / 关卡弹窗 / `join_level_popup` / `player_skins`；**结算框面板区 0 px**；**对局屏** `match_ready` **0.081 %（L2 0 块）** / `match_play` **0.385 %（L2 1 块 = 弹道相位，原版自身噪声 0.705 % > 跨侧差，不可判）**。**原版 `.tscn` 已装 8/15 份**（campaign / lan_lobby / game_setup / add_bot_pop_up / join_level_pop_up / replay_entry / chat_pop_up / replay_lobby / **play_screen 780 行/106 节点**），其余 7 屏仍是 12 行存根（main_menu / player_screen / endgame_pop_up / confirm_exit_pop_up / connecting_pop_up / disconnected_pop_up / join_ip_pop_up）；`client/src/screens/*.gd` 手抄节点树已删 **≈1 150 行**。⚠️ 像素只是判据不是目标（`HANDOVER` §0.0） | [`06`](06-verification.md) §53–§96 |
+| 6 | 界面保真 | **15 屏有真值**（`docs/06` §53–§101）。⚠️ **2026-11-26 更正：此前「八屏 0 px / 回放两屏归零」是假通过** —— `--flow replay` 不加 `--seed-replays` 时两侧都拍成空回放列表（亮像素 0.0 % vs 播种后 55.6 %），空 vs 空 = 「0 px」。**带 seed 的真实读数**：`menu` **0.000 %**、`replay_lobby` **0.000 %**、**`replay_play` 2.710 %（L2 2 块）**、**`replay_end` 2.723 %**、**`campaign` 0.172 %（L3）**、**`level_popup` 0.101 %（L3）**、`player_skins` **0.000 %**；**对局屏** `match_ready` **0.081 %（L2 0 块）** / `match_play` **0.385 %（L2 1 块，不可判：原版自身噪声 0.705 %）**；结算框面板区 0 px。**原版 `.tscn` 已装 16/16 份**（全部与 `recovered-src/` 逐字节相同）；`client/src/screens/*.gd` 手抄树累计删 ≈1 900 行。⚠️ 像素只是判据不是目标（`HANDOVER` §0.0） | [`06`](06-verification.md) §53–§101 |
 | 7 | 目标「打不全就复原」 | 实现了，但标 **推断**（判定点未知） | [`10`](10-campaign.md) §9 |
 | 8 | 两类非确定性 | A 类缺一份未捕获的熵、B 类只能退化口径 | [`06`](06-verification.md) §17 |
 

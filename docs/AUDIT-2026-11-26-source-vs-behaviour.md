@@ -169,7 +169,7 @@
 | 招牌指标 `527/527` | 已改为「**模块级** 527/527 + **函数级 145/527**」 |
 | 文档虚报（游戏资产 0 字节 / 15-15 全部实现 / selftest 当验收 / 过期 88-439） | 已按 T40 的 10 条清单逐条改正 |
 | 两处"把逐位真值丢了" | 已修：`link` 3 s → **30 s**、`discovery` 12 s → **10 s**（值改为向 Rust 取；`broker.gd` 那处覆盖也一并修掉） |
-| 棋盘几何链（阻止装 `play_screen`） | **已证明等价** 25/25（我方 `_fit_canvas` vs 原版 `unit=R.w/50`+`draw_set_transform`），并因此让 `match_ready` 0.122 → **0.081 %**、回放四屏 **0.000 %** |
+| 棋盘几何链（阻止装 `play_screen`） | **已证明等价** 25/25，并让 `match_ready` 0.122 → **0.081 %**。⚠️ **但同批「回放四屏 0.000 %」是假通过**（`--flow replay` 少了 `--seed-replays`，两侧空画面互比）——带 seed 的真实值是 `replay_play` **2.710 %** / `replay_end` **2.723 %**，且相对早期记录的 0.186 % 是**回归** |
 
 **仍未做（下一步队列）**：剩 7 屏 `.tscn` · F3 那 235 条按模块落码（先 `level_manager` 的 21 个 `setup_level_N`）·
 `_scaffold` 里 10 处游戏语义搬回原版模块（`ObstacleTable`/`FunctionTable`/事件派发层/`EntityDrawer` 方法体）·

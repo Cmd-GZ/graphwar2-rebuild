@@ -113,6 +113,10 @@ python3 tools/pck_extract.py --verify                            # 还原 rsc/�
   （`_DAT_004c2530` ↔ ELF `0x3c2530`）。**把这条套到文档地址上会定位到另一个函数**（已踩，见 `docs/06` §63.1）。
 - **调用图会骗人**：Rust 大量用函数指针派发，直接调用为零**不代表**没被使用。
   写"未观测到调用"，并用 `tools/ptr_slots.py` 补查。
+- **`--flow replay` 必须带 `--seed-replays`**（2026-11-26 实测）：不播种时两侧都停在**空的回放列表/黑画面**
+  （亮像素占比 0.0 % vs 播种后 55.6 %），`frame_diff` 会给出**漂亮的假 0 px**。
+  `tools/frame_capture.py` 已加硬闸（缺 `--seed-replays` 直接报错退出）。
+  同类陷阱：**任何「两侧都停在同一个错误画面」的采集都会假装通过**。
 - **护栏语料必须冻结**：三轴数字（`fire` / `batch` / `batch_conv`）是在
   `.reference/replays/gw2-replays-snapshot/replays` 这 **401 份回放的冻结快照**上量的。
   **把新样本拷进快照 ⇒ 三轴数字全变**（401→403 那次：内容 647→654、批 1080→1094，
