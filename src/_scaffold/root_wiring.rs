@@ -168,12 +168,11 @@
 //! 引擎那一侧（`GraphwarRootNode`）只调用这些，**不碰 `HashMap` 的内部**。
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::events::Event;
 use crate::function_history_recorder::History;
-use crate::game::{Match, DESTROY_DELAY_TICKS};
+use crate::game::Match;
 use crate::graphwar_color_manager::GraphwarColorManager;
 use crate::graphwar_computer_player_manager::ComputerPlayers;
 use crate::graphwar_effect_manager::{EffectType, GraphwarEffectManager};
@@ -198,8 +197,6 @@ use crate::graphwar_team_manager::{
 };
 use crate::graphwar_tick_handler::{GraphwarTickHandler, TICKS_PER_SECOND};
 use crate::graphwar_turn_manager::{Team, TurnManager};
-use crate::math_function;
-use crate::plane::{empty_mask, is_occupied, rasterize};
 use crate::server::RoomState;
 use crate::Token;
 
@@ -221,7 +218,7 @@ use crate::Token;
 use crate::graphwar_function_manager::GraphwarFunctionManager;
 use crate::graphwar_obstacle_manager::GraphwarObstacleManager;
 // 任务 36：24 B 布局 + 位置表行为（`src/graphwar_plane_pos_manager.rs`，`docs/16` §44）
-use crate::graphwar_event_handler::{dispatch_name, GraphwarEventHandler};
+use crate::graphwar_event_handler::GraphwarEventHandler;
 use crate::graphwar_event_queue::GraphwarEventQueue;
 // `ENTITY_REMOVED_EVENT_TAG`（= 14）本文件已经从 `graphwar_life_manager` 引进来了，
 // 本模块的同名常量与它同值（`graphwar_plane_pos_manager::tests` 里有一条断言钉住这一点）。
