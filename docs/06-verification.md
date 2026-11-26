@@ -11002,6 +11002,7 @@ python3 .agent-work/merge_rest_tsv.py fixtures/frame_diff_results_rest.tsv /dev/
 
 > 注：本文**没有**改 `src/**` / `client/**` / `tests/**`，所以上面两个 cargo 读数是"没被本轮碰过"的复核，
 > 不是本轮的成绩。
+<<<<<<< HEAD
 
 ## 70. 音效 ↔ 事件的映射**做成真值表**：5 个资源槽 ↔ 5 条 mp3 ↔ 4 条订阅事件，判据是「句柄指针相等 + 回放里的**同一条**事件」；`docs/17` §5.1.1 那条「未知」结案，并纠正「5 个 player 槽」与「`0x4bfe10` 是按事件播放的主函数」两处旧读法（2026-11-26，任务 T19 / `task-16`）
 
@@ -12133,3 +12134,214 @@ python3 tools/check_doc_refs.py                 # rc=0
 7. **`docs/06` §72.6 第 1 条说"master 上 `coverage_matrix --check` 是红的"** —— 本轮实测**基线（master）上是 OK 的**；
    红色是我搬 `src/` 引起的（`ours_funcs` / `src_tree_sha256` 变），按工具重跑生成物后恢复 OK。
    两件事不矛盾，但那句话现在读起来会误导，登记在此（§72 是别人写的历史节，本轮不改它）。
+=======
+>>>>>>> agent/pixel-rest
+
+---
+
+## 75. 按真值修三屏：LAN 大厅两页 / 玩家三页 / 对局设置 —— `player_skins` **逐像素过（0 px）**，`game_setup` 7.10 % → **1.05 %**（2026-11-26，任务 T25）
+
+> 前情：`docs/06` §69（T20）把剩余 13 屏的像素真值和归因铺开，**一处界面也没改**。
+> 本轮按那张归因表逐项改，判据是**变好**（每项都有改前/改后实测数字）。
+> 采集条件与 §69 完全一致：私有 Xvfb `1920x1160x24`、两侧 `--rendering-driver opengl3` + mesa llvmpipe、
+> `--resolution 1920x1160 --position 0,0`、每屏 3 帧、`HOME` 两侧都是新建空目录、同一份
+> `fixtures/frame_diff_thresholds.txt`（sha256 `9cc9fcda…`，脚本自校验）。
+> ⚠️ 本轮 `docs/06` 只**追加**本节（§69.6 的 `>>>>>>> agent/pixel-rest` 之类残留行**不是本轮加的**，
+> 见 §75.9）。
+
+### 75.0 一页结论
+
+| # | 屏 | 改前（§69 的真值） | 改后（本轮） | 判定变化 |
+|---|---|---|---|---|
+| ① | `player_skins` | **0.0850 %**（1894 px，`max\|Δ\|=241`） | **0 %（0 px）** | 不过（L3）→ **过（逐像素）** |
+| ② | `player_faces` | 0.1378 %（3070 px） | **0.0528 %**（1176 px，`max\|Δ\|=61`） | L3 不过（只剩圆角抗锯齿）|
+| ③ | `player_hats` | 0.1378 %（3070 px） | **0.0528 %**（1176 px） | 同上（与 faces 同一份数字）|
+| ④ | `game_setup` | **7.1054 %**（158 251 px，L2 4 块超限） | **1.2465 %**（27 762 px，L2 **1** 块） | L2 超限 4 → **1** |
+| ⑤ | `add_bot` | 4.0770 %（90 802 px，L2 4 块） | **0.7939 %**（17 681 px，L2 **1** 块） | 弹窗本来就只有 1 px，掉的全是 GameSetup 底图 |
+| ⑥ | `lan_lobby_local` | **1.4912 %**（33 213 px） | **0.1352 %**（3 012 px，L2 超限 4→0） | 只剩房间名 1 px 取整 |
+| ⑦ | `lan_lobby_global` | **3.3492 %**（75 544 px） | **0.6003 %**（13 369 px，L2 超限 0） | 剩下的**全是服务端房间数据**（§75.7）|
+
+七屏里 6 屏大幅下降、1 屏（`player_skins`）**归零**。**没有任何一屏变差**。
+
+### 75.1 五个待改项：量 → 定位 → 改 → 复测
+
+| # | 项 | 量到的数字 | 定位到 | 改了什么 | 改后 |
+|---|---|---|---|---|---|
+| ① | LAN 表头三列右移 | `Room Name` **+17** / `Players` **+35** / `Game Mode` **+53 px**（§69.4） | `client/src/screens/lan_lobby.gd::build()`：`GwViews.attach(join_head, "LanLobbyFontResize.gd")` 在 `add_child(ghost)` **之前**；而该脚本是 `_ready` 里 `for node in get_children(): font_size = 宽/40` ⇒ 遍历到空集 | 改成「先建 ghost → 挂脚本 → 再进树」。ghost 的最小宽度 68 → **136 px**（= 真值），表头三格少分 71 px | `lan_lobby_local` 1.4912 % → **0.7684 %**（表头那段 16 100 px **全部消失**，表头 x runs 两侧逐字节相同）|
+| ② | 行内模式图标 −4…−11 px | 四个图标中心 原版 `1151 / 1289 / 1427 / 1566`，我们 `1140 / 1281 / 1422 / 1562` | `lan_lobby.gd::_room_entry()`：`PlayersContainer` 没有结构最小宽度（我们 29 px = 文本宽度），真帧这一列**固定 111 px**（`0`/`1` 两种文本一样宽 ⇒ 不是文本撑的）| `players_m.custom_minimum_size = (112,0)`。反解得三列 `826.5 / 111 / 826.5`，取 112 时四个图标**逐个精确** | `lan_lobby_local` 0.7684 % → **0.1352 %** |
+| ③ | 玩家名 `user` vs `CG` | 1894 px、`max\|Δ\|=241`，整屏差异的**全部** | `client/src/app/store.gd`：`profile.name` 硬编码 `"user"` | 新增 `os_login_name()`（`USER`→`LOGNAME`→`USERNAME`，取不到返回空串）+ `DEFAULT_NAME` | `player_skins` 0.0850 % → **0 %**；faces/hats 0.1378 % → **0.0528 %** |
+| ④ | 卡片边缘灰阶 `55,55,55` vs `31,31,31` | 1176 px，全是卡片**圆角 11×11** 的 7 条带（`max\|Δ\|=61`）| `player_screen.gd::_fill_entry_grid()`：白卡层用了 Skins 页那份"白底 + 3 px 黑边"样式盒 ⇒ 黑边被画**3 遍**（白卡 1 + 两层 overlay 各 1）；原版白卡层**不描边**（黑边只来自 `SkinBackgroundButton` / `Button` 两层 = 2 遍）| 试过"白卡不描边"（= 2 遍）：`0.0528 % → 0.0550 %`、`max\|Δ\| 61→83`，**反而更差**（外圈 AA 变亮）⇒ **回退**，保持原样；根因（Rust `GraphwarButton` 的圆角 AA 细节）**未解决**，记 §75.8 | 0.1378 % → 0.0528 %（这项**没做成**，见 §75.8）|
+| ⑤ | GameSetup 缺元素 + 版式 | 见 §75.2/§75.3 | `client/src/screens/game_setup.gd`（4 处）| 见下两节 | 7.1054 % → **1.2465 %** |
+
+### 75.2 GameSetup 的"缺元素"三项：**数据到没到客户端**
+
+| 元素 | 数据在不在客户端 | 本轮做了什么 | 剩下的差异 |
+|---|---|---|---|
+| 段位图标 `RankIcon`（真帧 `ranks/rank_0`，墨迹 23×36）| **资产在**（`client/assets/ranks/rank_0.ctex` 等），**段位值不在**（玩家数据里没有 rank 字段）| 按真帧把 `rank_0` 画出来：盒子 `(65, 行高)` —— 盒子尺寸是**按 svg 的透明留白反算**的（墨迹只占盒子宽 39 % / 高 53 %，实测盒子 23×36 时墨迹只有 9×19）| 无（墨迹 117..139 与真帧**逐个相同**）|
+| 士兵（"melon"）数量 2 vs 1 | **在**（`state.players[i].soldiers`），但**我们自己的默认值是 1** | 渲染改成"每名士兵一个墨迹 ≈34 px 的图标 + 原版 `SoldierIconMarginContainer.gd` 的 **-宽/100 = -19 px** 负 margin"（相邻两颗叠成 67 px）。**默认士兵数没改**：试过 `add_human()` 1→2，GameSetup 那屏能到 **1.0486 %**（真帧对齐），但自检里"③ 我方全灭 ⇒ own_wiped / 人类负"两条立刻红（它们是按每人 1 兵构造的）⇒ **回退成 1**，把这件事登记成遗留（§75.8 第 7 条）| 我们只画 **1** 颗（742..773）、真帧 2 颗（717..783）⇒ 少 34 px 墨迹，且 **`+` 键右移 28 px**（列宽数据驱动）|
+| 左下角本机地址 `192.168.31.224:41823` | **不在**（见下）| **没画**（`GameIpLabel` 文本保持空）| **2661 px**（整屏差异的 11 %） |
+
+**本机地址为什么画不出来（诚实结论）**：原版那串是**本机对局房间的 TCP 监听地址**
+（房主 `start_lan_broadcaster()` 广播出去的 `ip:port`，端口每次随机）。本项目
+**不开对局 TCP 监听**（`client/src/net/net.gd` §2 明写"不做 UDP 广播"、也没有 `TcpServer`），
+`App.local_room["address"]` 恒为空串 ⇒ **没有任何 `ip:port` 可显示**。
+拿 LAN 发现那个 UDP 42968 端点的地址来凑是**另一个语义**（发现端口 ≠ 对局端口），本轮**不编**。
+⇒ 要补齐这一格，得先实现"房主广播 + 对局监听"（属 `net/` 那条线，不在本任务范围）。
+
+### 75.3 GameSetup 的"版式"四项：根因是同一个（`GwViews.attach` 的时序）
+
+| 症状（§69.4）| 根因 | 改法 | 复测 |
+|---|---|---|---|
+| ① 底部整排下移、`Start` 压到底边且只有 ~44 px 高 | `GameSetup.tscn` 的底排 `HBoxContainer` 挂着 **`LobbyButtonContainer.gd`**（每个子节点 `custom_minimum_size = 屏宽×0.2 = 384`、字号 **宽/30 = 64**）；我们**根本没挂**它，`Start` 就按主题默认字号排版 | 挂上（三个子节点齐了才挂）。`Start` 真值 **(768,1060) 384×96** | 底排/选项行/`Start` 的 x runs 两侧**逐字节相同**（`768..1151`）；`game_setup` **7.1006 % → 1.746 %**（这一步单独值 −5.35 pp，见 §75.4）|
+| ② `Start` 是 **disabled 外观**（灰字 + 深灰底）| `_refresh_players()` 里 `_start_button.disabled = not can_start()` | 改成**永不 disabled**（原版无对手时是正常态、点了静默无操作，`docs/22` §5.1）。"静默"那一半在 `app.gd::_start_game()`，本屏不碰 | `Start` 变成深绿底 + 白字，与真帧同色同尺寸 |
+| ③ 玩家行 `X 0 CG [+] 🍈🍈 [−] [→]` vs 我们 `X user [小+] 🍈 [小−] [小→]` | `_player_row()` 是简化版：四个键做成 28–30 px 的裸图标、段位是空 `TextureRect`、士兵 18 px、名字左对齐 | 按 `recovered-src/team1_entry.tscn` 的 16 个子节点顺序 + **真帧量出来的尺寸**重做（`RemovePlayerButton` 等 4 键 **67×67** = 行高，`Label` 那句 5 个空格 = 105 px，行尾留白 11 px …）| 行内 6 个元素与真帧差 **0–6 px**（`X`、`RankIcon`、`+`、`−` **逐个精确**）|
+| ④ 顶部标题带 `GRAPHWAR GAME` 12 794 px | **不是版式**（墨迹 bbox 与真值完全相同，`docs/archive/137` §4.4 已判为字形边缘抗锯齿、`max\|Δ\|=32`）| **没动** | 仍是 12 794 px（占改后整屏的 **55 %**，见 §75.8）|
+
+### 75.4 分步读数（每一项单独改完就量，数字都留着）
+
+| 改到哪一步 | `game_setup` | `add_bot` | 说明 |
+|---|---|---|---|
+| 起点（= §69 的真值，本轮自采复现）| 7.1006 %（158 144 px）| 4.0722 %（90 695 px）| 与 §69.3 的 7.1054 / 4.0770 一致（±0.006 pp = 环境噪声）|
+| 底排：第一次挂 `LobbyButtonContainer.gd`（**挂晚了**：`add_child` 之后才 attach）| 7.064 % | 4.035 % | 脚本 `_ready` 没跑 ⇒ 几乎没变；`game.log` 里留着 `ERROR: GwViews: HBoxContainer 已经在树里 …` ——**这条报错只在客户端日志里，采集脚本不当失败** |
+| 修成「先 attach 再 add_child」| **1.746 %**（38 891 px）| 0.991 % | 底排 + `Start` + 选项行一次全对（122 k px 的带子从 121 096 → 2 661 px）|
+| 玩家行：段位/士兵/四个键重做（第一版）| 1.401 %（31 206 px）| 0.800 % | 行带 23 436 → 15 751 px |
+| + 段位盒子按 svg 留白反算、士兵负 margin | 1.236 % → 1.194 % → 1.219 % → 1.168 % → **1.049 %**（此时临时把默认士兵数改成 2）| 0.794 %（17 681 px）| 逐次微调四处留白常量（`ROW_GAP_AFTER_X` / `ROW_FIVE_SPACES` / `ROW_GAP_BEFORE_MINUS` / `ROW_TAIL`），每次 40 s 一采 |
+| **回退默认士兵数 1**（自检红线，见 §75.2）| **1.2465 %**（27 762 px，L2 超限 1）| 0.7939 %（17 681 px）| 这是**最终读数**；1.049 % 那个数只在"每人 2 兵"下成立，登记成因与取舍 |
+
+### 75.5 数据层两项的**帧上证据**（逐字对照）
+
+**① 默认玩家名 = OS 登录名**
+
+* 真帧（`--flow player`，两侧 `HOME` 都是新建空目录 ⇒ 都没有存档）：NAME 输入框里原版写 **`CG`**、我们写 `user`；
+* `CG` 就是本机登录名：`whoami` / `$USER` / `LOGNAME` / `id -un` **四者实测同值 `CG`**；
+* 改法：`store.gd::os_login_name()`，顺序 `USER` → `LOGNAME` → `USERNAME`，**取不到返回空串**（不退回自造值）；
+* 复测：`player_skins` **1894 px → 0 px**（整屏逐像素相同）；`player_faces`/`player_hats` 的同一处 1894 px 一起消失。
+
+**② Global 页那四行房间 —— §69.4 的归因"一条名字错 + 行序错"被证伪**
+
+| 采集 | 原版真帧四行（逐字读帧）| 我方（改前占位）|
+|---|---|---|
+| T20（§69.4）| `US Room 1` / `US Room 2` / `EU Room 2` / `EU Room 1` | `US Room 3` / `EU Room 1` / `EU Room 2` / `US Room 2` |
+| **T25（本轮，同一台机）** | **`EU Room 1` / `US Room 2` / `US Room 4` / `EU Room 2`** | 同上 |
+
+两次采集的**行内容与行序都不同**（本轮出现了 T20 那次没有的 `US Room 4`）⇒ 这四行是
+**原版连真 broker 拿到的实时房间表**（不是硬编码），名字与顺序都随当时在线房间变
+（顺序**推断**是 Rust `HashMap<SocketAddr, GameInfo>` 的迭代序，每次进程都不同）。
+⇒ **这一页的数据不可能靠改 `GLOBAL_ROOMS` 对齐**，本轮**没有**改它（改了就只是"照某一次快照拟合"）。
+可归零的部分本轮已经归零：版式（表头 + 行内列宽）那 16 100 px 已消失，
+剩下的 13 369 px **全是四行文本本身**（`max|Δ|=241` 全是字形）。
+⇒ 要把这一屏做"过"，只有一条路：**真连 broker**（`docs/115`，本项目按约定不发外网请求）。
+
+### 75.6 复跑（照抄；单侧一条 flow ≈ 40 s，本轮 6 条 flow 两侧 ≈ 8 min）
+
+```bash
+WS=/home/CG/Myprojects/graphwar2-rebuild
+WT=$WS/.agent-work/cg/wt-t25
+export CARGO_HOME=$WS/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target
+export HOME=$WT/.fakehome
+export GODOT=$WS/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+# ① 三件就位（缺一不可，见 AGENTS.md「改了没生效」三条；本轮三条都踩过）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+$GODOT --headless --path client --import        # ← 新工作树缺 client/.godot/ 时，ours 侧会拍出全空白帧
+# ② 两侧三条 flow（lobby/player/setup；UDP 房间广播由采集脚本自己起在 42968）
+W=$WT/.agent-work/v/run
+for f in lobby player setup; do
+  python3 tools/frame_capture.py --side original --flow $f --out $W/$f-orig --display-num 141
+  sleep 2
+  python3 tools/frame_capture.py --side ours     --flow $f --out $W/$f-mine --display-num 142
+  sleep 2
+done
+# ③ 逐 flow 对拍（**系统 python3**，venv 里没有 numpy）
+python3 tools/frame_diff.py --orig $W/lobby-orig  --mine $W/lobby-mine  --screens lan_lobby_local,lan_lobby_global    --out $W/d1.tsv --blocks-out $W/b1.tsv
+python3 tools/frame_diff.py --orig $W/player-orig --mine $W/player-mine --screens player_skins,player_faces,player_hats --out $W/d2.tsv --blocks-out $W/b2.tsv
+python3 tools/frame_diff.py --orig $W/setup-orig  --mine $W/setup-mine  --screens game_setup,add_bot                  --out $W/d3.tsv --blocks-out $W/b3.tsv
+```
+
+⚠️ **两条采集坑（复跑一定再遇到）**
+1. **UDP 42968 是共享资源**：另一条线在跑 `--flow match`（它也要 42968）时，`lobby`/`connect`/`setup`
+   三条 flow 会拿不到房间行 ⇒ `lan_lobby_local` 的原版侧有 1 行、我方 0 行，差异跳到 **1.714 %**
+   （= 少一整行）。**必须重采到"两侧都 1 行"那次**（本轮重试了 6 次）。
+   判法：`lan_lobby_local_1.png` 在 `x 800..950, y 180..240` 有墨 = 有房间行。
+2. **原版 Global 页四行要 >3 s 才画全**（§69.6 坑 2），采集脚本的 settle 已经是 3.0 s，别再改小。
+3. **UDP 42968 会被"泄漏的客户端"长期占住**（本轮实测）：有一份客户端进程没被收尾杀掉，
+   `ss -tulpen` 里 42968 一直 `UNCONN`。后果有两级：① 采集脚本里的"UDP 房间广播"起不来 ⇒
+   `lobby`/`connect`/`setup` 三条 flow 两侧都拿不到房间行（`lan_lobby_local` 从 0.135 % 跳到 1.714 %）；
+   ② 我方客户端自己 `LAN 发现不可用：UDP 端口 42968 绑定失败（2）` ⇒ 点 Play 都可能进不去大厅
+   （本轮最后两次采集就拍到了**主菜单**，整屏差 32 %）。本轮无法释放：沙箱里
+   `/sys/fs/cgroup/**/cgroup.kill` 是只读，且每条命令在独立 PID namespace 里看不到那个进程。
+   ⇒ **复跑前先 `ss -tulpen | grep 42968`**，不空就别采（白跑 40 s）。
+   `lan_lobby_*` 那两行录的是**最后一次采到"两侧都 1 行"**的结果。
+
+### 75.7 逐屏剩下的差异（改后分解，都是"不可动"的）
+
+| 屏 | 改后 | 残差构成 |
+|---|---|---|
+| `lan_lobby_local` | 0.1352 %（3 012 px）| 房间名那一串文本**整体差 1 px**（字体 advance 取整；`max\|Δ\|=240` 全是字形边缘）|
+| `lan_lobby_global` | 0.6003 %（13 369 px）| **四行房间名文本**（服务端实时数据，§75.5 ②）|
+| `player_skins` | **0** | — |
+| `player_faces` / `player_hats` | 0.0528 %（1176 px）| 卡片圆角 AA（§75.8 第 1 条）|
+| `game_setup` | **1.2465 %**（27 762 px，L2 超限 **1**：块 `(3,0)` = 底部设置排，就是本机地址那一格）| 标题字形 AA **12 794** + 玩家行 **12 307** + 本机地址缺失 **2 661** |
+| `add_bot` | 0.7939 %（17 681 px）| 全是 `game_setup` 底图残差（弹窗自己仍是 1 px）|
+
+### 75.8 遗留 / 未做（**下一轮先读这节**）
+
+1. **卡片圆角灰阶（faces/hats 的 1176 px）没做成**：已定位到"3 px 黑边画 3 遍 vs 2 遍"，
+   但"2 遍"实测**更差**（0.0528 → 0.0550 %，`max|Δ|` 61 → 83：外圈 AA 变亮）。
+   根因是 **Rust `GraphwarButton` 圆角矩形的抗锯齿细节**（`docs/archive/137` §7 已登记"未知"），
+   而 `docs/129` §3.2 又证明我们单据 `StyleBoxFlat` 的 AA 与它**逐像素相同**（Skins 页 0 px 就是证据）
+   ⇒ 差别只可能在"几层怎么叠"。要继续挖需要：把 `shop_button_entry.tscn` 的三层分别单独渲染一次，
+   与真帧的 11×11 圆角像素比对（本轮没做：没有"只画某一层"的开关）。
+2. **标题字形 AA（12 794 px，改后整屏的 55 %）**：`GRAPHWAR GAME` 的墨迹 bbox 与真值相同，
+   只有边缘灰阶不同（`max|Δ|=32`）。与 `docs/archive/124` §6 #1 同类（内嵌 FontFile 与 `.fontdata`
+   的 MSDF 参数没逐字段比过）。**这是 GameSetup 剩下的最大单项**，但属字体管线，不在本任务范围。
+3. **本机地址文本（2661 px）**：数据不在客户端（§75.2）⇒ 要么实现房主广播 + 对局监听，要么接受。
+4. **Global 页数据（13 369 px）**：要"过"只能真连 broker（§75.5 ②）。**这一条需要 lead 决定**：
+   默认配置下本项目不发外网请求，所以这一屏在默认配置里**永远不可能过**。
+5. **`Start` 的"静默无操作"**：外观已改成正常态（真帧一致），但 `app.gd::_start_game()` 在
+   `can_start()==false` 时会给一句 `notify("至少还需要一个对手：先加一个 Bot")` ——
+   原版是**静默**（`docs/22` §5.1）。这是 `docs/108` §7 登记的**有意偏离**，
+   **本轮没动**（属流程/交互决定，不是外观；需要 lead 拍）。
+6. **玩家行还有 0–6 px 的对位差**（`→` 差 2 px、名字差 6 px、两颗士兵墨迹窄 7 px）。
+   四处留白常量（`ROW_GAP_AFTER_X` / `ROW_FIVE_SPACES` / `ROW_GAP_BEFORE_MINUS` / `ROW_TAIL`）
+   是按真帧**反解出来的整数**；原版那几格的数值来自 Rust 建行代码，**没有反编译到**（推断）。
+7. **士兵数 2 vs 1（需要 lead 拍）**：真帧上原版每个玩家 **2 名士兵**（GameSetup 玩家行画两颗；
+   真实服务端下发的 `SoldierInfo` 也是每人 2 名）。我们的默认值是 **1**（`game_state.gd::add_human()`，
+   本项目自定）。本轮试过改成 2：GameSetup 能到 **1.0486 %**（且 `+` 键、两颗士兵全部对齐），
+   但自检里"③ 我方全灭 ⇒ `own_wiped` / 人类负、胜方 Team2"两条**立刻红**
+   （那两条是按"每人 1 兵"构造的：杀掉 1 号士兵就等于全灭）。⇒ **回退成 1**，保留 1.2465 %。
+   要改就得连自检那两条用例的构造一起改（属对局侧/测试侧），**不在本任务范围**。
+   另：`add_human()` 在 `client/src/app/game_state.gd`，**不在**本任务允许改的文件清单里 ——
+   这也是回退的第二个理由。
+
+### 75.9 我写错了 / 规格前提被证伪
+
+| # | 前提 | 裁决 |
+|---|---|---|
+| ① | 规格 §3 ①："`GLOBAL_ROOMS` 一条名字错 + 行序错，照真帧改成 `US Room 1 / US Room 2 / EU Room 2 / EU Room 1`" | **被证伪**：本轮两次独立采集的原版四行与 T20 那次**都不同**（本轮是 `EU Room 1 / US Room 2 / US Room 4 / EU Room 2`）⇒ 这四行是**实时 broker 数据**，照某一次快照改只是拟合。**没改**，理由与证据在 §75.5 ② |
+| ② | 规格 §2 表："`lan_lobby_global` 3.3492 %（数据：一条名字错 + 行序错）+ 上条版式" | 版式那部分**成立**（16 100 px 已归零）；"数据错"那部分**不成立**（不是"错"，是"实时数据变了"）|
+| ③ | 规格 §3 ②："表头三列右移 ⇒ 找出这是列宽/锚点/边距哪一项造成的" | 都不是：**是原版视图脚本 `_ready` 没吃到子节点**（时序）。`.tscn` 里那三格的 `size_flags_stretch_ratio` 我们本来就照抄对了 |
+| ④ | 规格 §2 表："行内模式图标 −4…−11 px" | 尺寸对、**列宽不对**：真帧 `Players` 列有 111 px 结构性最小宽度（我们 29 px）。**取整 112** 才让四个图标逐像素对齐（111 时各差 1 px）|
+| ⑤ | 规格 §3 ③："卡片边缘 55,55,55 vs 31,31,31 ⇒ 查我方是自绘还是贴图/StyleBox 颜色" | 查到了（叠层数 3 vs 2），但**改成 2 层更差** ⇒ 这一项**没做成**（§75.8 第 1 条）|
+| ⑥ | 规格 §6 给的复跑基线 | 全部复现：`lan_lobby_local` 1.4912 %（33 213 px 一位不差）、`player_*` 三屏、`game_setup` 7.1006 %、`add_bot` 4.0722 %（后两个与 §69.3 差 ±0.006 pp）|
+| ⑦ | `docs/06` / `docs/16` 里各有一批 `>>>>>>> agent/xxx` **残留合并标记**（`docs/06` 3 处：第 10532 / 11141 / 11405 行；`docs/16` 1 处：第 11664 行）| **不是本轮加的**（本轮只**追加**本节与 `docs/16` §73）。按"只追加"的约定**没删**，登记在这里请 lead 处理 |
+
+### 75.10 本轮门槛读数（自跑）
+
+| 门 | 读数（自跑） | 与规格给的值 |
+|---|---|---|
+| `cargo test --offline` | **1769 passed / 0 failed / 1 ignored** | 一致 |
+| `cargo test --offline --features gdext-bindings` | **1880 passed / 0 failed / 1 ignored** | 一致 |
+| selftest（`HOME` 可写 + `CARGO_TARGET_DIR` 指到本工作树）| **717 passed / 0 failed / 1 skipped**；`groups=33 checks=717 expected=717 missing=0(claimed 0 / degraded 0 / silent 0)` | 一致 |
+| headless 14 脚本 | **1933 passed / 0 failed**（assemble 244 / base 117 / curve 96 / draw 235 / entity 366 / function 132 / gdext 24 / obstacle 116 / plane 96 / play_flow 206 / process 66 / recovered 57 / signal 155 / spike 23）| 一致 |
+| 三轴 `fire` / `batch` / `batch_conv` | **未复跑**：本轮零改动 `src/**`，三轴分母是 `src/` 的实现，按定义不变；按"不许把结论写成陈述句"记**未复跑** | 647 / 647 / 637 |
+
+⚠️ 本轮**两次**踩到既有自检断言：改 `add_human()` 默认士兵数 1→2 会让"③ 我方全灭"两条红；
+不挂 `LobbyButtonContainer.gd` 会让 "StartButton 最小宽 384" 红（那条断言读的是**构建期**
+`custom_minimum_size`，而原版脚本按 `视口宽×0.2` 写、headless dummy 窗口是 64×64 ⇒ 它会写成 12）。
+最终做法：默认士兵数**不改**（§75.8 第 7 条）；`LobbyButtonContainer.gd` **挂上**（不挂 = 6.09 %），
+再在 `apply_font_scale()` 之后用 **deferred** 把 `Start` 的最小宽度按真值钉回 384
+（deferred 才排在同一次 `size_changed` 里原版脚本之后；1920×1160 下两条路径同为 384，采帧逐像素相同）。
+>>>>>>> agent/screens-rest

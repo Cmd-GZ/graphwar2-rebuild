@@ -130,10 +130,14 @@ func build() -> void:
 	header.add_child(_header_cell("ModeContainer", "GameMode", "Game Mode", 1.0))
 	# 第四格在 `.tscn` 里是一个**全透明主题**的 " Join " 按钮（字号 48）：只为把 Join 列的
 	# 宽度撑出来，屏幕上什么都看不见（Theme_hffrm 的 font_color alpha = 0、五个 stylebox 全空）。
+	# ⚠️ 顺序是**语义要求**，不是风格：`LanLobbyFontResize.gd` 在 `_ready` 里
+	# `for node in get_children(): node.add_theme_font_size_override("font_size", 宽/40)`。
+	# 所以脚本必须在**子节点已经齐了之后**才进树 —— 否则它遍历到的是空集，静默什么都不做，
+	# 那颗 ghost " Join " 就按主题默认字号 24 算最小宽度（真帧 136 px、我们 68 px），
+	# 表头三格的可用宽度因此多出 71 px，被 1 : 0.1 : 1 分掉：
+	# `Room Name` +17 / `Players` +35 / `Game Mode` +53 px（`docs/06` §69.4 的实测值）。
 	var join_head := GwUI.margin("JoinButtonContainer", 0)
 	join_head.size_flags_horizontal = Control.SIZE_FILL
-	GwViews.attach(join_head, "LanLobbyFontResize.gd")   # 字号 = 宽/40
-	header.add_child(join_head)
 	var ghost := GwButton.make(" Join ")
 	ghost.name = "GraphwarButton"
 	ghost.disabled = true
@@ -143,6 +147,8 @@ func build() -> void:
 	ghost.add_theme_color_override("font_color", Color(0, 0, 0, 0))
 	ghost.add_theme_color_override("font_disabled_color", Color(0, 0, 0, 0))
 	join_head.add_child(ghost)
+	GwViews.attach(join_head, "LanLobbyFontResize.gd")   # 字号 = 宽/40（子节点先在）
+	header.add_child(join_head)
 
 	# --- 房间列表 ---
 	var scroll := GwUI.scroll("ScrollContainer")
@@ -336,6 +342,23 @@ func _room_entry(room_name: String, players: String, address: String = "") -> HB
 	var players_m := GwUI.margin("PlayersContainer", 0, row)
 	players_m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	players_m.size_flags_stretch_ratio = 0.1
+	# **行内 Players 列有一个结构性最小宽度 ≈111 px**（真帧反解，**来源未知**）。
+	#
+	# 量到的三件事（1920×1160 真帧，两侧同一次采集；数字见 `docs/06` §75）：
+	#   * 行内 `0` / `1` 的墨迹两页都一样（x 876..893）⇒ 本列位置两侧相同；
+	#   * 行内 ` Join ` 单元格两侧都从 x=1776 起（144 px 宽）；
+	#   * 但四个模式图标的中心，原版是 1151 / 1289 / 1427 / 1566，我们是 1140 / 1281 / 1422 / 1562
+	#     ⇒ 原版的 `ModeContainer` 比我们窄、起点比我们靠右 13.5 px。
+	# 本列只放一个数字（文本最小宽度 29 px），可原版这一列占 **111 px** 且 `0`/`1` 两种文本
+	# **一样宽** ⇒ 它不是文本撑出来的。按 Godot 的分配规则反解：
+	#   `(1920 − 3 个 4 px 间隔 − 144) = 1764` 按 1 : 0.1 : 1 分 = 840 / 84 / 840；`84 < 111`
+	#   ⇒ 这一列被最小宽度顶到 111，少掉的 27 由另两列各让 13.5 ⇒ **826.5 / 111 / 826.5**，
+	#   此时算出的四个图标中心 = 1151.25 / 1289.6 / 1428 / 1566.4 ⇒ 与真帧逐个数吻合。
+	# 取整实测：`111` 时四个图标各差 1 px；**`112` 时四个图标逐个精确**（本轮实测），故用 112。
+	# ⚠️ 「原版为什么是 111」**没有证据**：`game_room_entry.tscn` 里这一列没有
+	#   `custom_minimum_size`（三种 size_flags 都照抄了），行是 Rust `GraphwarLanVBox` 建的
+	#   （`docs/144` §1）⇒ **推断**：最小值是它建行时给的，但没反编译到那一行。
+	players_m.custom_minimum_size = Vector2(112, 0)
 	GwViews.attach(players_m, "LanLobbyFontResize.gd")
 	var count := GwUI.label(players, 0, HORIZONTAL_ALIGNMENT_CENTER)
 	count.name = "PlayerCount"

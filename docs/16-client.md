@@ -11729,3 +11729,125 @@ last_transform() -> PackedFloat64Array   # [pos.x, pos.y, scale.x, scale.y]（ro
 | 修正常数标签偏右 17 px | 1 788 | `play_screen.gd::_replay_draw_shot` 的 `_offset_label.text` 与 `OffsetContainer` 的最小宽。**机制未知**，别按"凑像素"改 |
 | 名字标签的字形被 1.279× 放大糊掉 | ~1 100 | `play_screen.gd::_fit_canvas` 的 `Control.scale` 画布模型（拆掉它 = 六个类按实尺寸画，`PIXEL_OFFSET`/`PX_PER_UNIT`/`CURVE_SCALE` 三个绝对常量都要改成按 `size` 推） |
 | `f(x)=` 图标 77×27 → 81×30 | 636 | `play_screen.gd::build()` 的 `_fx_button`：原版结构是 `FxContainer → AspectRatioContainer(stretch_mode=1) → FxTextureButton`（`text` 九个空格 + `expand_icon = true`），T4 的简化把 AR 那层省了。**会改 FxContainer 最小宽 ⇒ 挪动已对齐的输入框文本**，没做 |
+
+---
+
+## 74. 按真值修三屏（客户端侧）：三个**时序/取值**错误，一处结构性列宽，GameSetup 重做玩家行（2026-11-26，任务 T25）
+
+> 像素数字与逐项证据在 `docs/06` **§75**（含入库 TSV `fixtures/frame_diff_results_rest.tsv`）。
+> 本节只写**客户端侧**：改了哪个文件、哪一行、为什么、以及复跑时会再踩的坑。
+
+### 74.0 一页结论
+
+| 屏 | 改前 | 改后 | 落在哪个文件 |
+|---|---|---|---|
+| `player_skins` | 0.0850 % | **0 %（逐像素过）** | `client/src/app/store.gd`（默认玩家名）|
+| `player_faces` / `player_hats` | 0.1378 % | **0.0528 %** | `client/src/app/store.gd`（名字）；圆角灰阶那一项**没做成**（见 73.4）|
+| `game_setup` | 7.1006 % | **1.2465 %** | `client/src/screens/game_setup.gd`（4 处：底排脚本、`Start` 外观、玩家行重做、行内留白）|
+| `lan_lobby_local` | 1.4912 % | **0.1352 %** | `client/src/screens/lan_lobby.gd`（表头时序 + 行内列宽）|
+| `lan_lobby_global` | 3.3492 % | **0.6003 %** | 同上（数据那部分**不能也不该**改，见 73.3）|
+
+### 74.1 三个"看起来是版式、其实是时序/取值"的错误
+
+1. **`GwViews.attach()` 挂晚了 ⇒ 原版视图脚本静默不跑**（踩了两次，都是同一个根因）
+   * `lan_lobby.gd`：`GwViews.attach(join_head, "LanLobbyFontResize.gd")` 写在
+     `join_head.add_child(ghost)` **之前**，而 `join_head` 那时**已经在树里**（`header.add_child(join_head)`
+     在 attach 之前）⇒ `_ready` 立即跑，`for node in get_children()` 遍历到**空集** ⇒ 那颗 ghost 按钮
+     停在主题默认字号 24，最小宽度 68 px（真值 136）⇒ 表头三格多出 71 px 可分配宽度，
+     按 1 : 0.1 : 1 分掉 = **`Room Name` +17 / `Players` +35 / `Game Mode` +53 px**。
+   * `game_setup.gd`：底排 `HBoxContainer` 里的 `LobbyButtonContainer.gd` 也是 `add_child` 之后才 attach
+     ⇒ 脚本没跑 ⇒ 三个子节点都没有 `custom_minimum_size = (384,0)`、`Start` 也没吃到字号 64
+     ⇒ `Start` 只有 44 px 高、整排跟着矮一截（真帧 384×96）。
+   * **改法固定**：`var row := GwUI.hbox(...)`（**先不挂父节点**）→ 建子节点 → `GwViews.attach(row, ...)`
+     → `parent.add_child(row)`。`client/src/ui/gw_views.gd` 里对"已经进树"这种情况有 `push_error`，
+     但**只在客户端的 `game.log` 里**（`<out>/game.log`），`tools/frame_capture.py` 不当失败 ⇒
+     复跑时若看到某块"改了没反应"，先去 grep 这行：`ERROR: GwViews: ... 已经在树里`。
+
+2. **`PlayersContainer` 缺结构性最小宽度**（`lan_lobby.gd::_room_entry()`）
+   * 行内这一列只有一个数字（`1` / `0`，文本最小宽度 29 px），可真帧那一列**固定 111 px**，
+     且两种文本**一样宽** ⇒ 不是文本撑出来的。
+   * 反解（Godot 的分配规则）：`(1920 − 3×4 − 144) = 1764` 按 1 : 0.1 : 1 分 = 840 / 84 / 840，
+     `84 < 111` ⇒ 这一列被顶到 111，其余两列各让 13.5 ⇒ **826.5 / 111 / 826.5**；
+     此时四个模式图标中心 = 1151.25 / 1289.6 / 1428 / 1566.4，与真帧**逐个数吻合**。
+   * 取整实测：`111` 时四个图标各差 1 px，**`112` 时逐个精确** ⇒ `custom_minimum_size = (112, 0)`。
+   * ⚠️「原版为什么是 111」**没有证据**（`game_room_entry.tscn` 里这一列没有 `custom_minimum_size`，
+     行是 Rust `GraphwarLanVBox` 建的）⇒ 代码注释里标**推断**。
+
+3. **默认玩家名硬编码**（`store.gd`）：原版取 **OS 登录名**（真帧 `CG` = 本机 `USER`/`LOGNAME`/`id -un`）。
+   新增 `static func os_login_name()`（`USER` → `LOGNAME` → `USERNAME`，取不到返回空串，**不**退回自造值），
+   `DEFAULT_NAME` 在 `_static_init()` 里算。Godot 4 的 `OS` 单例**没有** `get_login_name`，只有
+   `get_environment()` —— 这是为什么只能读环境变量（`USER`/`LOGNAME` 在本机与 login name 实测同值）。
+
+### 74.2 GameSetup：`_player_row()` 按 `.tscn` 结构 + 真帧尺寸重做
+
+`recovered-src/team1_entry.tscn` 给的是**节点形状**（16 个子节点：4 个
+`AspectRatioContainer → GraphwarButton(text = "    ", icon, expand_icon)`、`RankIcon`、
+包 `PlayerNameLabel` 的 `MarginContainer`（挂 `GameSetupPlayerEntry.gd` = 宽/40）、
+行里那句 `Label text = "     "`、5 个 `MarginContainer`（挂 `SoldierIconMarginContainer.gd` 的**负 margin**）…），
+但**尺寸**只在真帧里：行高 67（= 名字 Label 在 48 px 下的最小高度）⇒ `AspectRatioContainer`
+的 `stretch_mode = 1`（高度控宽度）⇒ 四个键全是 **67×67**。逐元素真帧表在
+`game_setup.gd::_player_row()` 的注释里（含 `RankIcon` 墨迹 23×36、两颗士兵墨迹共 67 px、
+那句 5 个空格 = 105 px、行尾留白 11 px）。
+
+两个**反算**（都不是照抄 `.tscn` 能得到的，必须量）：
+* **`RankIcon` 的盒子**:= `(65, 行高)`：`ranks/rank_0.svg` 的画布留白很大，墨迹只占盒子宽 39 % / 高 53 %
+  （实测：盒子 23×36 时墨迹只有 9×19）。
+* **士兵槽 = 66 px 盒子 + `margin_left/right = -屏宽/100 = -19 px`**：负 margin 让相邻两颗叠起来
+  （真帧两颗 34 px 的墨迹并成 67 px）。原版这一层的脚本 `SoldierIconMarginContainer.gd` 在
+  `recovered-src/` 里有、但**不在** `client/src/views/` 那 27 份里（那份清单不能自己加第 28 个）
+  ⇒ 把那**一行**公式照抄进 `game_setup.gd`，注释里写明出处。
+
+**默认士兵数没改（仍是 1）**：真帧上原版每人 **2 名**士兵，本轮试过把
+`game_state.gd::add_human()` 改成 2 —— GameSetup 能到 **1.0486 %**，但自检
+"③ 我方全灭 ⇒ `own_wiped` / 人类负"两条立刻红（按每人 1 兵构造的），**回退**。
+另外 `game_state.gd` **不在本任务允许改的文件清单里**。⇒ 保留 1.2465 %，这条登记成遗留。
+
+### 74.3 `lan_lobby.gd::GLOBAL_ROOMS` **没改**（附证伪过程）
+
+`docs/06` §69.4 说这一页是"一条名字错 + 行序错"，据此可以照真帧把占位行改对。**本轮实测否定它**：
+
+| 采集 | 原版真帧四行 |
+|---|---|
+| T20（§69.4）| `US Room 1` / `US Room 2` / `EU Room 2` / `EU Room 1` |
+| T25（本轮）| `EU Room 1` / `US Room 2` / `US Room 4` / `EU Room 2` |
+
+内容与顺序都变了（本轮出现了 T20 那次没有的 `US Room 4`）⇒ 这四行是**原版连真 broker 拿的实时房间表**，
+名字随在线房间变、顺序**推断**是 `HashMap<SocketAddr, GameInfo>` 的迭代序（每进程不同）。
+⇒ 照某一帧改 `GLOBAL_ROOMS` 只是"拟合某一次快照"，**不是复原**（下一个采集日就全错）。
+所以：**版式那 16 100 px 归零、数据那 13 369 px 留着**，要"过"只能真连 broker（`docs/115`）。
+
+### 74.4 `_entry_card()` 试过、回退了（faces/hats 的 1176 px 没做成）
+
+已定位：`shop_button_entry.tscn` 里画 3 px 黑边的只有 **`SkinBackgroundButton` 与 `Button` 两层**，
+白卡层（`GraphwarButton` + 白 `ColorRect`）**不描边** ⇒ 圆角那一圈 AA 被合成 **2 遍**；
+我们给白卡也用了 Skins 页那份"白底 + 3 px 黑边"⇒ **3 遍**，圆角处更黑
+（真帧 `(20,510)` 原版 `55,55,55` vs 我们 `31,31,31`）。
+⇒ 试了"白卡不描边"（`player_screen.gd::_entry_card()`）：**0.0528 % → 0.0550 %、`max|Δ| 61 → 83`**，
+外圈 AA 反而变亮（原版最外那一圈还有点黑），**比原来差 ⇒ 已回退**（`git checkout player_screen.gd`）。
+根因是 **Rust `GraphwarButton` 的圆角矩形抗锯齿细节**（`docs/archive/137` §7 记"未知"），
+而 `docs/129` §3.2 已证明我们单据 `StyleBoxFlat` 的 AA 与它逐像素相同（Skins 页 0 px 即证据）
+⇒ 差别只可能在"几层怎么叠"。要继续挖：给三层各做一个"只画这一层"的开关分别拍帧。
+
+### 74.5 复跑（客户端侧三件必须就位）
+
+```bash
+WS=/home/CG/Myprojects/graphwar2-rebuild; WT=$WS/.agent-work/cg/wt-t25
+export CARGO_HOME=$WS/.reference/cargo-home CARGO_TARGET_DIR=$WT/.cargo-target HOME=$WT/.fakehome
+export GODOT=$WS/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/     # ← 不拷 = 跑旧内核，且不报错
+$GODOT --headless --path client --import                 # ← 新工作树缺 client/.godot/ ⇒ 空白的帧
+python3 tools/frame_capture.py --side ours --flow setup --out $WT/.agent-work/v/setup-mine --display-num 142
+grep -n "GwViews\|ERROR" $WT/.agent-work/v/setup-mine/game.log   # ← 原版脚本挂载失败的**唯一**痕迹
+```
+
+### 74.6 遗留（需要别条线/lead 决定的）
+
+1. **本机地址 `ip:port`（2661 px）**：数据不在客户端（不开对局 TCP 监听、不做 UDP 广播，
+   `App.local_room["address"]` 恒空）⇒ 要么实现房主广播 + 监听，要么接受这一格空着。
+2. **`Start` 的"静默无操作"**：外观已改成正常态；`app.gd::_start_game()` 在不能开始时仍会
+   `notify(...)`，原版是静默（`docs/108` §7 登记的有意偏离）⇒ **属交互决定，本轮没动**。
+3. **标题字形 AA（12 794 px）**：GameSetup 改后剩下的最大单项，属字体/MSDF 管线。
+4. **`add_human()` 默认 2 兵**：会影响"LAN 建房那一局的自机"士兵数，`play_screen` 那条线若对本值
+   有隐含假设需知会（本轮 `selftest` / headless 全绿）。

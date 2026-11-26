@@ -52,11 +52,14 @@ const DEFAULT_HAT_NAME := "soldier_helmet"
 static var DEFAULT_SKIN := 0
 static var DEFAULT_FACE := 0
 static var DEFAULT_HAT := 0
+## 默认玩家名 = OS 登录名（`os_login_name()` 的实现与证据见下面 `profile` 那里）。
+static var DEFAULT_NAME := ""
 
 static func _static_init() -> void:
 	DEFAULT_SKIN = resolve_look("skins", DEFAULT_SKIN_NAME)
 	DEFAULT_FACE = resolve_look("faces", DEFAULT_FACE_NAME)
 	DEFAULT_HAT = resolve_look("hats", DEFAULT_HAT_NAME)
+	DEFAULT_NAME = os_login_name()
 
 ## 名字 → `GwIcons` 表下标。找不到返回 -1（调用方自己决定兜底，别在这里瞎猜 0）。
 static func resolve_look(dir: String, short_name: String) -> int:
@@ -68,8 +71,27 @@ static func resolve_look(dir: String, short_name: String) -> int:
 		_: return -1
 	return table.find("%s/%s" % [dir, short_name])
 
+## 玩家的**默认名字 = OS 登录名**（不是自造的 `user`）。
+##
+## 依据：真帧（1920×1160，两侧同一次采集、`HOME` 都指向新建空目录 ⇒ 两边都没有存档）
+## 玩家页 NAME 输入框里原版写的是 **`CG`**，我方写的是 `user`；`CG` 就是本机 `USER`
+## （`whoami` / `$USER` / `id -un` 三者都是 `CG`）。见 `docs/06` §75。
+##
+## 取法与证据边界：
+##   * 用环境变量而不是 libc 的 `getpwuid`：Godot 4 的 `OS` 单例**没有** `get_login_name`，
+##     只有 `get_environment()`；而 `USER`/`LOGNAME` 与 login name 在本机一致（实测三者同值）。
+##   * 顺序 `USER` → `LOGNAME` → `USERNAME`（后两个是 BSD/macOS 与 Windows 的写法）。
+##   * **拿不到就留空串**，不退回自造值 —— 原版在拿不到时显示什么**未知**，
+##     与其编一个 `user`，不如把"拿不到"暴露出来。
+static func os_login_name() -> String:
+	for key in ["USER", "LOGNAME", "USERNAME"]:
+		var v := OS.get_environment(key).strip_edges()
+		if v != "":
+			return v
+	return ""
+
 var profile := {
-	"name": "user",
+	"name": DEFAULT_NAME,
 	"skin": DEFAULT_SKIN,
 	"face": DEFAULT_FACE,
 	"hat": DEFAULT_HAT,
