@@ -803,6 +803,13 @@ def main(argv=None):
                 # 拍出来的是旧客户端却不报错；现在事后可以只查这一行。
                 'repo': REPO, 'client': CLIENT, 'external': _EXT}
 
+    # ⚠️ 2026-11-26 加：`--flow replay` 不播种回放时，两侧都会停在空的回放列表/黑画面，
+    # 跨侧对拍会得到 **假 0 px**（实测亮像素占比 0.0% vs 播种后 55.6%）。
+    # 这条闸是为了让"忘记播种"变成显式失败，而不是静默变成一个漂亮数字。
+    if args.flow == 'replay' and not args.seed_replays:
+        ap.error('--flow replay 必须同时给 --seed-replays：否则两侧都拍成空回放列表，'
+                 'frame_diff 会得到假 0 px（见 AGENTS.md 采集坑、docs/06 §101）')
+
     if args.seed_replays:
         manifest['replays_seeded'] = seed_replays(args.side, home, args.snapshot)
         log('回放已就位: %s' % manifest['replays_seeded'])
