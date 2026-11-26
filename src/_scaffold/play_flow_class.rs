@@ -10,6 +10,10 @@
 //! | `client/src/game/level_rules.gd`（`GwLevelRules`） | 219 | `0x473520` + `0x4759f0` + `0x478133`–`0x478236` | [`GwLevelRules`]（本文件）→ [`crate::graphwar_play_screen_control::LevelRules`] |
 //! | `client/src/game/turn_driver.gd`（`GwTurnDriver`） | 121 | `0x463da0`（`TurnManager::next_turn`） | [`GwTurnDriver`]（本文件）→ [`crate::graphwar_turn_manager`] |
 //!
+//! 第三块（T31 本轮）不是"某份 `.gd` 的替身"，而是**本屏从来就没有过的那个东西**：
+//! 原版的**对局状态机**（8 个 `GameState`，`[self+0x120]` 那一个字节）。播放屏在此之前
+//! 只有一列 `_shot_in_flight` 布尔当投影 ⇒ [`GwTurnState`]（本文件）→ [`crate::turnstate::next_state`]。
+//!
 //! 两个类名**保持不变**（`GwLevelRules` / `GwTurnDriver`），所以播放屏的调用点只需从
 //! "`.gd` 里的实现"换成"扩展类的同名方法"，不需要重命名任何概念。
 //!
@@ -21,6 +25,8 @@
 //! | `GwTurnDriver.next_shooter()` | [`crate::graphwar_turn_manager::PlayerTurns::next_shooter`] | **逐位**（`0x463f40`–`0x463f58` 先自增再取；`0x463fc7` 最多试 len 次；`0x463fb6` 判活；`0x464016` 全灭哨兵 0） |
 //! | `GwTurnDriver.round_*()` | [`crate::graphwar_turn_manager::RoundCollection`] | **观测**（`docs/141` §4：130/130 批按公告顺序） |
 //! | `GwTurnDriver` 的**玩家之间**轮转 | 本文件的 `cursor` | **未知**（原版是 `HashMap` 迭代序，`docs/109` §6-A）；这里固定成调用方给的玩家顺序 |
+//! | `GwShotFlow.judge()` | [`crate::graphwar_shot_calculator::settle::resolve_points_owned`] | **逐位**（规则本体；射手按 id 排除 = `0x3c4452`/`0x3c3e81`） |
+//! | `GwTurnState.apply()` / `can_fire()` | [`crate::turnstate::next_state`] / `GameState::index` | 状态字节 **逐位**（变体表 `.data.rel.ro 0x9586d0`、`set_state` `0x4780cc`、`cmp BYTE [self+0x120],2` `0x470989`）；迁移序列 **观测**（真报文 `GameStateInfo`） |
 //!
 //! # 一处必须说明的编号换算
 //!
@@ -38,6 +44,7 @@ use crate::graphwar_play_screen_control::{
 };
 use crate::graphwar_shot_calculator::settle::{resolve_points_owned, Target};
 use crate::graphwar_turn_manager::{PlayerTurns, RoundCollection, SubmitResult, SOLDIER_ID_NONE};
+use crate::turnstate::{GameState, TurnEvent};
 
 /// 士兵下标 → `PlayerTurns` 内部 id 的偏移（见文件头"编号换算"）。
 const SOLDIER_ID_SHIFT: i64 = 1;
@@ -544,6 +551,36 @@ mod tests {
         assert_eq!(0 + SOLDIER_ID_SHIFT, 1, "0 号士兵的内部 id 必须非 0");
         assert_eq!(7 - SOLDIER_ID_SHIFT, 6, "返回值 = 内部 id − 1");
     }
+
+    /// `GwTurnState` 的字符串事件表必须覆盖 `TurnEvent` 的**每一个**变体。
+    ///
+    /// 这一条防的是"Rust 侧加了变体、GDScript 侧的名字表没跟上"：
+    /// 迁移表本体在 `turnstate::next_state`（有它自己的真值序列测试），这里只钉
+    /// **名字 → 变体**这一层，纯逻辑、不碰引擎。
+    #[test]
+    fn turn_event_names_cover_every_variant() {
+        use crate::turnstate::TurnEvent;
+        let all = [
+            ("fire", TurnEvent::Fire),
+            ("results_computed", TurnEvent::ResultsComputed),
+            ("activate", TurnEvent::Activate),
+            ("turn_ended", TurnEvent::TurnEnded),
+            ("game_ended", TurnEvent::GameEnded),
+            ("game_started", TurnEvent::GameStarted),
+            ("reset", TurnEvent::Reset),
+        ];
+        for (name, ev) in all {
+            assert_eq!(parse_turn_event(name), Some(ev), "事件名 `{name}` 必须映射到 {ev:?}");
+        }
+        assert_eq!(parse_turn_event("nope"), None, "不认识的名字必须给 None（不改状态）");
+        // 反向：每个 `TurnEvent` 变体都得有一个名字（少一个就等于 GDScript 永远发不出它）。
+        for ev in all.iter().map(|(_, e)| *e) {
+            assert!(
+                all.iter().any(|(n, e)| *e == ev && parse_turn_event(n) == Some(ev)),
+                "{ev:?} 没有对应的名字"
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -956,6 +993,140 @@ impl GwShotFlow {
         d.set("targets_landed", s.targets_landed);
         d.set("settled", s.settled);
         d.set("turns_used", s.turns_used);
+        d
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GwTurnState —— 对局**状态机本体**（8 个 `GameState` + `turnstate::next_state`）
+// ---------------------------------------------------------------------------
+//
+// **不是原版的东西**：原版没有这个类 —— 那台状态机是
+// `graphwar_game_state_manager` 里的一个**字节** `[self+0x120]`（`set_state` = `0x4780cc`），
+// 8 个变体的名字与判别值在 `.data.rel.ro 0x9586d0`–`0x958740` 那张表里。
+// 本类只是把那**一个字节 + 那张迁移表**抬到 GDScript 能问的地方。
+//
+// 逻辑本体在 [`crate::turnstate`]（`GameState` / `TurnEvent` / `next_state`），
+// 本文件**没有**第二份迁移表。
+
+/// 对局状态机（原版 `GraphwarGameState`，8 个变体）。
+///
+/// ```text
+/// var st := GwTurnState.new()          # 初始 = Setup（原版 `[+0x120]` 的新局值）
+/// st.apply("game_started")             # Setup -> WaitingForFunctions
+/// st.can_fire()                        # 只有 WaitingForFunctions 才是 true
+/// st.apply("fire")                     # -> CalculatingResults
+/// st.apply("results_computed")         # -> SynchronizingResults
+/// st.apply("activate")                 # -> ExecutingResults
+/// st.apply("turn_ended")               # -> WaitingForFunctions
+/// st.apply("game_ended")               # -> EndingGame（**只从 ExecutingResults** 出发）
+/// st.state()                           # 状态名（与协议里的 `GameStateInfo` 同名）
+/// st.state_byte()                      # 判别值（写进 `[+0x120]` 的那个字节）
+/// st.reset()                           # 换局 / 退出：**无条件**回 Setup
+/// ```
+///
+/// `apply()` 在"该事件在当前状态下无意义"时返回空串并**不改状态**
+/// （= 原版 `next_state` 的 `None`；`set_state` 不会被调 ⇒ 字节不动）。
+#[derive(GodotClass)]
+#[class(base = RefCounted)]
+pub struct GwTurnState {
+    base: Base<RefCounted>,
+    state: GameState,
+}
+
+#[godot_api]
+impl IRefCounted for GwTurnState {
+    fn init(base: Base<RefCounted>) -> Self {
+        // 原版新局的状态字节是 `Setup`（1）：`0x475bac` 那条 `mov BYTE [self+0x120], 6` 是
+        // 收场（`EndingGame`），开局则由 `root_node` 那侧写 —— 本类取 `turnstate` 表的起点。
+        Self { base, state: GameState::Setup }
+    }
+}
+
+/// GDScript 侧的事件名 → [`TurnEvent`]（名字与 `docs/14` §2 的状态图一一对应）。
+///
+/// `pub(crate)` 只为单测能直接验这张表；`#[func]` 走字符串入口。
+fn parse_turn_event(name: &str) -> Option<TurnEvent> {
+    Some(match name {
+        "fire" => TurnEvent::Fire,
+        "results_computed" => TurnEvent::ResultsComputed,
+        "activate" => TurnEvent::Activate,
+        "turn_ended" => TurnEvent::TurnEnded,
+        "game_ended" => TurnEvent::GameEnded,
+        "game_started" => TurnEvent::GameStarted,
+        "reset" => TurnEvent::Reset,
+        _ => return None,
+    })
+}
+
+#[godot_api]
+impl GwTurnState {
+    /// 当前状态名（= 协议 `GameStateInfo` 里的字符串，`turnstate::GameState::as_str`）。
+    #[func]
+    fn state(&self) -> GString {
+        GString::from(self.state.as_str())
+    }
+
+    /// 判别值（写进 `[+0x120]` 的那个字节；`turnstate::GameState::index`）。
+    #[func]
+    fn state_byte(&self) -> i64 {
+        self.state.index() as i64
+    }
+
+    /// 施加一个事件。返回**新**状态名；空串 = 该事件在当下无意义（状态没变）。
+    #[func]
+    fn apply(&mut self, event: GString) -> GString {
+        let Some(ev) = parse_turn_event(&event.to_string()) else {
+            return GString::new();
+        };
+        match crate::turnstate::next_state(self.state, ev) {
+            Some(next) => {
+                self.state = next;
+                GString::from(next.as_str())
+            }
+            None => GString::new(),
+        }
+    }
+
+    /// 现在能不能开火 = `state == WaitingForFunctions`。
+    ///
+    /// 依据：`turnstate::next_state` 里 `Fire` **只**从 `WaitingForFunctions` 出发；
+    /// 同一个字节也是 `handle_tick` 超时判据的第一项（`0x470989` 的
+    /// `cmp BYTE [self+0x120], 2`）—— 两处读的是**同一格**。
+    #[func]
+    fn can_fire(&self) -> bool {
+        self.state == GameState::WaitingForFunctions
+    }
+
+    /// 是不是开局态（`Setup`）。
+    #[func]
+    fn is_setup(&self) -> bool {
+        self.state == GameState::Setup
+    }
+
+    /// 是不是收场态（`EndingGame`）。
+    #[func]
+    fn is_ending(&self) -> bool {
+        self.state == GameState::EndingGame
+    }
+
+    /// 换局 / 退出对局：**无条件**回 `Setup`。
+    ///
+    /// 与 `apply("reset")` 的区别：迁移表里 `Reset` 只从 `EndingGame` 出发（表里那条），
+    /// 而本屏"中途退出对局"（`end_match()`）可能不在 `EndingGame` ⇒ 这是**我方**的
+    /// 清场入口，不假装它是一条原版迁移。
+    #[func]
+    fn reset(&mut self) {
+        self.state = GameState::Setup;
+    }
+
+    /// 只读快照（自检/诊断）。
+    #[func]
+    fn snapshot(&self) -> VarDictionary {
+        let mut d = VarDictionary::new();
+        d.set("state", &GString::from(self.state.as_str()));
+        d.set("state_byte", self.state.index() as i64);
+        d.set("can_fire", self.can_fire());
         d
     }
 }

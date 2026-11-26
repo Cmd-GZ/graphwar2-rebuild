@@ -254,6 +254,16 @@ var _judged: Dictionary = {}
 var _flow := GwShotFlow.new()
 ## 本地回合时钟（超时谓词 `0x470989`–`0x4709ec`）。
 var _turn_clock := GwTurnClock.new()
+## **对局状态机本体**（8 个 `GameState`，原版是 `[self+0x120]` 那一个字节）。
+##
+## 迁移表在 Rust（`GwTurnState` → `src/turnstate.rs::next_state`），本屏只**发事件、问状态**。
+## 在此之前本屏没有这台机器 —— 只有 `_shot_in_flight` 一列布尔当投影，而 `fire()` 的早退
+## 判断（"上一发还在飞"）就是那条投影的读点。现在那个判断改成 `can_fire()`
+## = `state == WaitingForFunctions`（`Fire` 只从这一态出发；同一个字节也是
+## `handle_tick` 超时判据的第一项，`0x470989`）。
+##
+## ⚠️ 联机局不驱动它：那边状态由**服务端** `GameStateInfo` 说了算（`docs/134` §7.1）。
+var _match_state := GwTurnState.new()
 ## AI 回合闸门（**我方自定**：原版 AI 时序未观测）。
 var _bot := GwBotTurn.new()
 ## 效果层（`docs/143` §1）。由 `build()` 挂到棋盘上。
@@ -1076,6 +1086,10 @@ func begin_match() -> void:
 	_turn_clock.set_time_mode(int(st.time_mode))
 	_bot.configure(BOT_THINK_SECONDS)
 	_bot.disarm()
+	# 开局：`Setup --GameStarted--> WaitingForFunctions`（`turnstate::next_state`）。
+	# 原版这一步在 `root_node` 那侧把状态字节写成 2（`0x475bac` 是同族的写点，
+	# 收场写 6）；我们没有那台 root_node，开局点就是这里。
+	_match_state.apply("game_started")
 	_status("关卡规则：%s ／ 靶子 %d ／ 回合上限 %s" % [_rules.kind_name(), _targets.total(),
 		"∞" if _rules.turn_limit() <= 0 else str(_rules.turn_limit())])
 
@@ -1836,8 +1850,11 @@ func fire() -> bool:
 		_status("回放模式不接管输入（这一局的每一发都来自录像）")
 		return false
 	# ① 发射期间不能再发（docs/143 §4）。原版的状态机里 `Fire` 只从
-	# `WaitingForFunctions` 出发，弹道在飞时服务端根本不收 `FunctionFire`。
-	if _shot_in_flight:
+	# `WaitingForFunctions` 出发（`turnstate::next_state`），弹道在飞时服务端根本不收
+	# `FunctionFire`。⇒ 这条早退**问 Rust 的状态机**（`GwTurnState.can_fire()`），
+	# 不再读 `_shot_in_flight` 那条投影。联机局不驱动本地状态机 ⇒ 仍旧读投影。
+	var can_fire := _match_state.can_fire() if not _online_mode else not _shot_in_flight
+	if not can_fire:
 		_status("上一发还在飞（服务端此时是 ExecutingResults）⇒ 不能再发")
 		return false
 	var active_soldier := _active_soldier()
@@ -1899,9 +1916,14 @@ func _commit_shot(shot: Dictionary) -> void:
 	var app_node := app()
 	if app_node == null:
 		return
+	# 状态机：`WaitingForFunctions --Fire--> CalculatingResults`（`turnstate::next_state`）。
+	# 原版这条迁移就是 `set_state`（`0x4780cc`）写 `[self+0x120] = 3`。
+	_match_state.apply("fire")
 	# 命中表在**开火这一刻**就算好（= 原版的 `SynchronizingResults`：服务端立刻算完），
 	# 但**不立刻生效**：哪一发什么时候落地由弹道自己的 tick 决定（`docs/65`）。
 	shot["judged"] = _judge_shots([shot])
+	# `CalculatingResults --ResultsComputed--> SynchronizingResults`（= 4）。
+	_match_state.apply("results_computed")
 	if int(app_node.state.turn_mode) == GwModes.Turn.SIMULTANEOUS:
 		# 同时回合：先全部记下，轮完再结算（真实结算在 src/graphwar_shot_calculator/settle.rs，docs/86）。
 		# **"本回合齐了没有"是流程** ⇒ 由 Rust 的 `RoundCollection` 判（`docs/141` §1：
@@ -1917,6 +1939,7 @@ func _commit_shot(shot: Dictionary) -> void:
 			_turn_driver.round_reset()
 			_next_turn(true)
 			_settle_round()
+			_match_state.apply("turn_ended")   # 整批结算完 ⇒ 回 WaitingForFunctions
 		else:
 			_next_turn(false)
 		return
@@ -1950,6 +1973,7 @@ func _reset_shot_state() -> void:
 	_pending_shot = {}
 	_judged = {}
 	_flow.reset()                     # 生命周期 + 回合计数一起归零（Rust）
+	_match_state.reset()              # 对局状态机回 `Setup`（Rust）
 	_bot.disarm()                     # AI 闸门（Rust）
 	_turn_driver.round_reset()        # 同时回合制的收集器（Rust 侧）
 	_fx_log.clear()
@@ -1992,6 +2016,8 @@ func _begin_shot(shot: Dictionary, already_settled := false) -> void:
 		_judged.get("target_kills", []),
 		_judged.get("stop", Vector2.ZERO),
 		already_settled)
+	# `SynchronizingResults --Activate--> ExecutingResults`（= 5）：弹道开始按 tick 执行。
+	_match_state.apply("activate")
 
 ## 每帧推进：把"画到第几个点"递给 Rust，执行它吐回来的事件。
 ##
@@ -2069,8 +2095,14 @@ func _on_shot_arrived(phase: String, stop: Vector2) -> void:
 			_status("%s ／ 本局已结束（服务端 `EndingGame`）" % _shot_status)
 		return
 	if _flow.settled():
-		return                      # 压平模式：这一发在开火那一刻已经结算过了
+		# 压平模式：这一发在开火那一刻已经结算过了 ⇒ 这里只补"回合结束"这一条迁移。
+		_match_state.apply("turn_ended")
+		return
 	_finish_round()
+	# `ExecutingResults --TurnEnded--> WaitingForFunctions`（= 2）：弹道执行完、回合结束。
+	# 放在 `_finish_round()` **之后**：`_settle_round()` 里的 `_check_match_over()` 可能已经
+	# 把状态推到 `EndingGame`（`ExecutingResults --GameEnded--> EndingGame`），那时这条是空操作。
+	_match_state.apply("turn_ended")
 
 ## 一个回合的收尾：回合轮转 → 回合结算（`_settle_round` 里含判胜负）。
 ## "这一发结算过没有"那个闩在 Rust（`ShotLifecycle::settle`）。
@@ -2117,7 +2149,9 @@ func advance_shot_for_test(seconds: float) -> void:
 func _tick_bot_turn(delta: float) -> void:
 	if _fast_forward():
 		return
-	if _bot.tick(delta, _running and not _shot_in_flight):
+	# `can_fire` 的判据是**状态机**（`Fire` 只从 `WaitingForFunctions` 出发），
+	# 不再是"弹道在飞没有"那条投影 —— 两处在真机时序下等价，但只有前者的语义是原版的。
+	if _bot.tick(delta, _running and _match_state.can_fire()):
 		bot_take_turn()
 
 ## AI 回合：由**它自己**开一发。
@@ -2128,8 +2162,10 @@ func _tick_bot_turn(delta: float) -> void:
 ## 函数串由 Rust 给（`GwBotTurn.aim_expression`：一条过射手、指向最近敌人的直线，
 ## **不是原版 AI** —— 原版是 `aigen` 进化器，`docs/AI.md`/`docs/143` §6.4）。
 func bot_take_turn() -> bool:
-	if not _running or _shot_in_flight or _online_mode or _replay_mode:
+	if not _running or _online_mode or _replay_mode:
 		return false
+	if not _match_state.can_fire():
+		return false            # 状态机不是 `WaitingForFunctions` ⇒ 这一发开不出去
 	var shooter := _active_soldier()
 	if shooter.is_empty() or not bool(shooter.alive) or not bool(shooter.get("is_bot", false)):
 		return false
@@ -2285,6 +2321,9 @@ func _resolve_shots(shots: Array) -> void:
 		_judged.get("stop", Vector2.ZERO), false)
 	_apply_shot_events(_flow.land_all())
 	_flow.abort()                     # 这一批没有单条弹道在飞 ⇒ 不收尾、不判到达
+	# 整批也走一次 `Activate`（这一批没有逐 tick 的 `_begin_shot()`）：
+	# `SynchronizingResults --Activate--> ExecutingResults`。之后由调用方换手 + 结算。
+	_match_state.apply("activate")
 	_note_shot_status()
 
 ## 靶子的绘制入口：真 `EntityDrawer` 里的实体表是**唯一**的画布来源，
@@ -2386,6 +2425,10 @@ func _check_match_over() -> void:
 	_last_verdict = verdict
 	if not bool(verdict.get("over", false)):
 		return
+	# 状态机：`ExecutingResults --GameEnded--> EndingGame`（= 6；`0x475bac` 那条
+	# `mov BYTE [self+0x120], 6` 就是收场写点）。只从 `ExecutingResults` 出发 ⇒
+	# 在 `WaitingForFunctions` 时施加会被忽略（迁移表的 `None`），那正是原版的行为。
+	_match_state.apply("game_ended")
 	_running = false
 	var human_won := bool(verdict.get("human_won", false))
 	var winner := int(verdict.get("winner_team", _human_team()))
@@ -2463,6 +2506,8 @@ func level_state() -> Dictionary:
 		"soldiers": _soldiers.size(),
 		"alive_soldiers": _alive_soldier_count(),
 		"turn_driver": _turn_driver.snapshot(),
+		# --- 对局状态机（T31）：**来自 Rust**（`GwTurnState.snapshot()`），只读 ---
+		"game_state": _match_state.snapshot(),
 		"bot_think_left": _bot.think_left(),
 		"status": _status_text,
 		"path_points": _curve_reveal(),
@@ -2499,7 +2544,10 @@ func apply_external_shot(points: PackedVector2Array, shooter_player: int,
 		_set_curve(drawn.points, shooter.get("color", GwThemeFactory.COL_ACCENT), shooter_player)
 		var shot := {"points": points, "drawn": drawn.points, "team": int(shooter.team),
 			"shooter": shooter_player, "soldier": shooter, "phase": "local"}
+		# 外部来弹同样是"别人的一次 Fire" ⇒ 同一条迁移链（这里没有 `_commit_shot()`）。
+		_match_state.apply("fire")
 		shot["judged"] = _judge_shots([shot])
+		_match_state.apply("results_computed")
 		_begin_shot(shot)
 		return true
 	_resolve_shots([{
@@ -2508,6 +2556,7 @@ func apply_external_shot(points: PackedVector2Array, shooter_player: int,
 	}])
 	_next_turn(true)
 	_settle_round()
+	_match_state.apply("turn_ended")   # 整批结算完 ⇒ 回 WaitingForFunctions
 	return true
 
 ## 某个玩家的（第一个）还活着的士兵；没有就返回空字典。
