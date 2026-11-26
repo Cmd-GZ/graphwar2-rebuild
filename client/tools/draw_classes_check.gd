@@ -116,7 +116,9 @@ func _check_effect_drawer() -> void:
 		return
 
 	drawer.set("flip_y", false)
-	ok(bool(drawer.get("flip_y")) == false, "属性 flip_y 往返一致（false）")
+	# T50（`docs/06` §100）：**契约断言，不含语义** —— 只证明 `@export` 属性真的接到了
+	# Rust 字段（setter/getter 转发），不证明这个值在游戏里被用对。同组的语义断言在下一行/本节后段。
+	ok(bool(drawer.get("flip_y")) == false, "属性 flip_y 往返一致（false）（契约断言）")
 
 	var c: Control = drawer
 	c.set_size(FX_SIZE)

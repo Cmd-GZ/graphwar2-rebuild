@@ -156,18 +156,26 @@ func _initialize() -> void:
 	# 3) 属性机制：三套基类的 `@export` 都能读写
 	# ------------------------------------------------------------------
 	root_node.set("ads_slot", true)
-	ok(bool(root_node.get("ads_slot")), "属性 ads_slot 往返一致（true）")
+	# T50（`docs/06` §100）：**契约断言，不含语义** —— 只证明 `@export` 属性真的接到了
+	# Rust 字段（setter/getter 转发），不证明这个值在游戏里被用对。同组的语义断言在下一行/本节后段。
+	ok(bool(root_node.get("ads_slot")), "属性 ads_slot 往返一致（true）（契约断言）")
 	root_node.set("ads_slot", false)
-	ok(not bool(root_node.get("ads_slot")), "属性 ads_slot 往返一致（false）")
+	# T50（`docs/06` §100）：**契约断言，不含语义** —— 只证明 `@export` 属性真的接到了
+	# Rust 字段（setter/getter 转发），不证明这个值在游戏里被用对。同组的语义断言在下一行/本节后段。
+	ok(not bool(root_node.get("ads_slot")), "属性 ads_slot 往返一致（false）（契约断言）")
 
 	vbox.set("show_global", true)
-	ok(bool(vbox.get("show_global")), "属性 show_global 往返一致（true）")
+	# T50（`docs/06` §100）：**契约断言，不含语义** —— 只证明 `@export` 属性真的接到了
+	# Rust 字段（setter/getter 转发），不证明这个值在游戏里被用对。同组的语义断言在下一行/本节后段。
+	ok(bool(vbox.get("show_global")), "属性 show_global 往返一致（true）（契约断言）")
 	ok(String(vbox.call("source_name")) == "Broker", "show_global = true ⇒ 源 = Broker")
 	vbox.set("show_global", false)
 	ok(String(vbox.call("source_name")) == "Lan", "show_global = false ⇒ 源 = Lan")
 
 	ad.set("owned", false)
-	ok(bool(ad.get("owned")) == false, "属性 owned 往返一致（false）")
+	# T50（`docs/06` §100）：**契约断言，不含语义** —— 只证明 `@export` 属性真的接到了
+	# Rust 字段（setter/getter 转发），不证明这个值在游戏里被用对。同组的语义断言在下一行/本节后段。
+	ok(bool(ad.get("owned")) == false, "属性 owned 往返一致（false）（契约断言）")
 	ok(bool(ad.call("are_ads_enabled")) == true, "owned = false ⇒ are_ads_enabled() = true")
 	ad.set("owned", true)
 	ok(bool(ad.call("owned_raw")) == true, "属性 owned 写回字段本身（owned_raw）")

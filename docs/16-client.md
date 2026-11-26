@@ -12696,3 +12696,71 @@ cmp client/scenes/screens/play_screen.tscn recovered-src/play_screen.tscn
 bash client/run.sh selftest | grep -E "SELFTEST|COVERAGE"      # 717 / 0 / 1 skip，missing=0 silent=0
 python3 $WT/tools/frame_capture.py --side ours --flow match ...  # ⚠️ 必须用**本工作树的** tools/
 ```
+
+## 84. 客户端侧：`client/tools/*_check.gd` 这批"验收脚本"自己的取证纪律 —— 什么是**契约断言**、什么是**屏幕像素真值**、以及怎么写才不会自洽地骗自己（2026-11-26，任务 T50 / `task-47`）
+
+### 84.1 问题：验收脚本自己也会自洽地骗人
+
+`client/tools/*_check.gd` 是 14 个 `extends SceneTree` 的 headless 验收脚本（合计 7 457 行、
+运行期 **1 961** 条断言）。它们一直是"客户端这一侧的行为证据"，但**从来没人审过它们的期望值是从哪来的**。
+
+最刺眼的一条：`entity_drawer_check.gd` 里有个 `expect_sprite()`，它把
+`src/entity_drawer.rs::sprite_transform` 的算式**逐字重写了一遍**（GDScript 版），
+然后断言 `kids[0].scale ≈ expect_sprite(...)["scale"]`。
+于是当 `update_sprite` 的 `scale.x` **漏了 `k`**（精灵恒 2.13 px 宽、看起来像"没画"）时，
+**两边一起错、断言全绿**，这个 bug 活了 **19 天 / 557 commit**（`docs/06` §58）。
+
+⇒ 客户端侧的规矩（与 `AGENTS.md` §0.5 同一条）：
+
+> **断言里出现的期望值，不许由被测实现的同一套算术算出。**
+> 想要「这条断言能抓住真错误」的最低门槛是：**把实现改错，它必须红**。
+
+### 84.2 三种断言，写的时候要自己先分清
+
+| 类型 | 长什么样 | 它证明什么 | 该不该写 |
+|---|---|---|---|
+| **契约断言** | `ClassDB.class_exists(...)`、方法表里有 `spawn_entity`、`signal` 连上了、`@export` 属性 set/get 往返 | 只证明**接线**（引擎↔Rust↔GDScript），**不证明语义** | **可以写，但注释里必须写「契约断言，不含语义」** |
+| **回归断言** | `ring_count() == 1`、`drawn_arc_total == 3 * draws`、冻结字面常量 | 证明"改坏了会红" ⇒ 有回归价值 | 可以写，但**别当成复原证据**（`AGENTS.md` §0.2） |
+| **真值断言** | 期望值有**外部出处**：反汇编 vaddr / 冻结语料 / 真帧像素 / `fixtures/` 里已入库的实测表 | 既是回归保护、又有证据档 | **越核心的路径越该往这里写** |
+
+### 84.3 具体做法：把"屏幕像素"变成可断言的量
+
+本轮在 `entity_drawer_check.gd` 里加了三个新口子，值得后面照抄：
+
+```gdscript
+## 屏幕上精灵四边形的边长（px）—— 只看两个**可观测**的量：贴图尺寸 × |scale|。
+func sprite_quad_px(s: Sprite2D) -> Vector2:
+	return Vector2(float(s.texture.get_width()) * absf(s.scale.x),
+		float(s.texture.get_height()) * absf(s.scale.y))
+```
+
+配三条真值（**都不是从实现抄的**）：
+
+1. **闭式 + 真机承载矩形**：`128·k/60`，`k = size.x/50`；用**真帧实测**的承载矩形
+   `R_w = 1279.0`（`fixtures/board_geometry_equiv.tsv` 行 `measured_live_1920x1160`）
+   ⇒ **54.57 px**；与 `docs/06` §59.8 记的真机读数 **54.6 px** 差 0.03 px（两条独立来源互证）。
+2. **各向同性**：屏幕上的**宽 == 高**。这条与算式无关，是"精灵必须是个正方形"的性质
+   ⇒ `scale.x` 漏 `k` 时立刻红（实测 0.426 vs 21.33 px）。
+3. **贴图宽度无关**：512×512 与 128×128 两层在屏幕上**一样大**（`tex×|scale|` 里 `tex_w` 约掉）。
+
+> 反面对照实测：把 `sprite_transform` 的 `scale.x` 改回历史 bug（`(s*k/60)*unit` → `s/60`），
+> 这三条里 **3 条变红**；而**改造前的那条镜像断言仍然是绿的**。
+
+### 84.4 这批脚本的现状（审完的读数，细节见 `docs/06` §100）
+
+* **1 482** 个静态断言调用点（运行期 **1 978** 条）：`M`-镜像 **3**（全部**保留并注明**：1 条降级为契约 +
+  2 条"两份独立实现的差分对照"）、`C`-契约 **1 378**、`G`-真值 **101**。
+* 修前是 `M` **27**：其中 14 条真镜像换成了真值/冻结真值/不变量，13 条属性往返**降级为契约断言**
+  并在源码里加注释。
+* 三条反面对照（改坏实现 ⇒ 必须红）全部通过，改的都是**临时**改动，`git diff src/` 为空。
+
+### 84.5 复跑
+
+```bash
+python3 tools/headless_audit.py --self-test        # 判据自检（正对照 5 + 反面对照 3 + 历史形状 3）
+python3 tools/headless_audit.py                    # 出表：fixtures/headless_assertion_audit.tsv
+python3 tools/headless_audit.py --list M           # 只看 M 档（逐条 文件:行 + 子码 + 理由）
+```
+
+`fixtures/headless_assertion_audit.tsv` 每行 = 一条断言的 `script / line / tier / sub / kept /
+reason / condition / message`，表头写了判据与"读这张表前必须知道的三件事"。

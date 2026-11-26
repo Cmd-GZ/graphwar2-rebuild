@@ -133,7 +133,9 @@ func _initialize() -> void:
 	ok(node != null and node is Control, "AxisDrawer 能实例化且是 Control")
 	if node != null:
 		node.set("axis_mode", 3)
-		ok(int(node.get("axis_mode")) == 3, "属性 axis_mode=3 往返一致")
+	# T50（`docs/06` §100）：**契约断言，不含语义** —— 只证明 `@export` 属性真的接到了
+	# Rust 字段（setter/getter 转发），不证明这个值在游戏里被用对。同组的语义断言在下一行/本节后段。
+		ok(int(node.get("axis_mode")) == 3, "属性 axis_mode=3 往返一致（契约断言）")
 		ok(int(node.call("axis_line_count")) == 102 and int(node.call("axis_line_count_formula")) == 102,
 			"axis_mode=3 ⇒ 枚举 102 条 / 公式 102 条")
 		node.set("axis_mode", 1)

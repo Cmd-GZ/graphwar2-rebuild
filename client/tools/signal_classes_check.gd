@@ -126,9 +126,13 @@ func _check_button() -> void:
 
 	# --- 导出属性（`#[export] GString`：§38.6 标"未验"的那一项）---
 	btn.set("input_text", "X")
-	ok(String(btn.get("input_text")) == "X", "属性 input_text 往返一致（\"X\"）")
+	# T50（`docs/06` §100）：**契约断言，不含语义** —— 只证明 `@export` 属性真的接到了
+	# Rust 字段（setter/getter 转发），不证明这个值在游戏里被用对。同组的语义断言在下一行/本节后段。
+	ok(String(btn.get("input_text")) == "X", "属性 input_text 往返一致（\"X\"）（契约断言）")
 	btn.set("long_press_input_text", "S")
-	ok(String(btn.get("long_press_input_text")) == "S", "属性 long_press_input_text 往返一致（\"S\"）")
+	# T50（`docs/06` §100）：**契约断言，不含语义** —— 只证明 `@export` 属性真的接到了
+	# Rust 字段（setter/getter 转发），不证明这个值在游戏里被用对。同组的语义断言在下一行/本节后段。
+	ok(String(btn.get("long_press_input_text")) == "S", "属性 long_press_input_text 往返一致（\"S\"）（契约断言）")
 
 	# --- 机制 1：自造信号注册了吗 ---
 	var sigs: PackedStringArray = _signal_names(btn)
@@ -248,7 +252,9 @@ func _check_function_input() -> void:
 
 	# `#[export] bool`
 	inp.set("caret_condition", true)
-	ok(bool(inp.get("caret_condition")) == true, "属性 caret_condition 往返一致（true）")
+	# T50（`docs/06` §100）：**契约断言，不含语义** —— 只证明 `@export` 属性真的接到了
+	# Rust 字段（setter/getter 转发），不证明这个值在游戏里被用对。同组的语义断言在下一行/本节后段。
+	ok(bool(inp.get("caret_condition")) == true, "属性 caret_condition 往返一致（true）（契约断言）")
 
 	# 机制 1：注册 + 从 GDScript 连
 	var sigs: PackedStringArray = _signal_names(inp)
