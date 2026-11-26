@@ -16040,3 +16040,176 @@ python3 $MAIN/tools/frame_diff.py --orig $WT/frames/orig_replay --mine $WT/frame
 8. **`lan_lobby_global` 的最差块变差了**（0.194 → 0.784 dmean，虽然总 diff px 少了 3 246）：
    最可能是原版 `game_menu_icon_theme` 真正生效之后，四个模式图标的底/边框与之前"退化到 app 主题"时不同。
    **未定位到具体块**（只到 L2 网格粒度），下一轮应该用 `--blocks-out` 逐块对照定位。
+
+## 95. T45：**两个"100% 缺口"模块的 14 条原版函数按地址落码** —— 函数级复原率 131/527 → **145/527**（27.5%），`F3`（只登记没函数体）249 → **235**（2026-11-26，任务 T45 / `task-43`）
+
+> 起点：T39 的函数级审计（本文件 §87、`fixtures/function_coverage.tsv`）把"模块级 527/527 已实现"打回
+> **函数级 131/527 = 24.9%**，其中 **249 条（47.2%）原版函数在源码层没有函数体**。
+> 两个模块**缺口 100%**：`graphwar_server_connection_handler.rs` 6 条、`graphwar_player_screen_control.rs` 8 条 ——
+> 文件里只有地址登记（`F3 register-only`），一条 `fn` 都没有。
+> 本轮把这 14 条**逐个取证据 → 反汇编读语义 → 落码到原版模块文件 → 单测**。
+
+### 95.1 一句话结论
+
+**14/14 全部落码**（每个函数体第一行给 `vaddr`、正文逐步给指令地址）；
+两个模块的 F3 缺口 **100% → 0%**；函数级复原率 **131/527（24.9%）→ 145/527（27.5%）**，`F3` **249 → 235**。
+**档位是 `观测`（控制流 + 立即数 + 数据结构偏移），不是"逐位"** —— 依据见 §95.5 的"我写错了"第 ① 条。
+
+### 95.2 每个函数一行（vaddr | 真名 | 语义 | 档位 | 落点）
+
+`graphwar_server_connection_handler.rs`（6/6，落点行号为本文件行号）：
+
+| vaddr | 真名 | 语义（一句话） | 档位 | 落点 |
+|---|---|---|---|---|
+| `0x45a560` | `GraphwarServerConnectionHandler::forward_event` | **广播**事件给表里每条连接；**发不出去**的那条推一条"变体 6"内部事件 | 观测 | `src/graphwar_server_connection_handler.rs:488` |
+| `0x45a6b0` | `handle_clear_bans_request_event` | 把封禁表**整体清空**（hashbrown `clear`：ctrl 全写 `0xFF` + `growth_left` 重算）；**不看事件实参** | 观测 | `:586` |
+| `0x45a7b0` | `handle_connection_removed_event` | 收到变体 6 ⇒ ①先把它转给那条连接 ②再从**三张表**删掉该 id（`+0x08` → `+0x38` → registry） | 观测 | `:547` |
+| `0x45aab0` | `forward_connection_specific_event` | 按变体取目标 id（5/0xa → `+8`、6 → `+0x20`）→ 只发给那一条；失败也推变体 6 | 观测 | `:518` |
+| `0x45ad30` | `handle_ban_connection_request_event` | 变体 `0x48` ⇒ 读 `+8`=id、`+0xc`=状态，查连接表存在则把状态写进封禁表 | 观测 | `:608` |
+| `0x45b020` | `tick` | 三段：①排空"新连接"接收队列并插两张表 ②把每条连接收件箱抽干交给 `handle_client_remote_event`（跳过变体 `0x4a`/`0x4b`）③按 `0x258`(=600) 超时清扫，超时项推变体 6 | 观测（阶段划分/常量）+ 推断（五个内联被调者语义） | `:667` |
+
+`graphwar_player_screen_control.rs`（8/8）：
+
+| vaddr | 真名 | 语义 | 档位 | 落点 |
+|---|---|---|---|---|
+| `0x4f57d0` | `GraphwarPlayerScreenControl::load_items` | 载入 `res://shop_button_entry.tscn` → 按三张表往 `SkinsVbox`/`FacesVbox`/`HatsVbox` 造按钮 → 收尾刷一次底色 | 观测（骨架）+ 推断（条目名表） | `src/graphwar_player_screen_control.rs:746` |
+| `0x4f77a0` | `hat_button_pressed` | 写档案 `set_hat`（`+0x90` + 计数），**不刷底色** | 观测 | `:652` |
+| `0x4f7870` | `face_button_pressed` | 写档案 `set_face`（`+0x78`），不刷底色 | 观测 | `:659` |
+| `0x4f7940` | `skin_button_pressed` | 写档案 `set_skin`（`+0x60`）→ 取 `GraphwarRootNode` → **再调** `update_buttons_background` | 观测 | `:672` |
+| `0x4f8050` | `update_buttons_background` | 贴图表为空则**早退**；否则查当前皮肤 → 依次刷新 `FacesVbox`(9) 与 `HatsVbox`(8) 的每个按钮 | 观测 | `:719` |
+| `0x4f8850` | `lock` | `SkinBlock`=显示(1)、`PendingBlock`=隐藏(0) | 观测 | `:685` |
+| `0x4f8ad0` | `pending` | `SkinBlock`=0、`PendingBlock`=1 | 观测 | `:693` |
+| `0x4f8990` | `unlock` | 两个块都 0 | 观测 | `:701` |
+
+### 95.3 落码用的关键指令（每个函数至少一条；完整清单在源码注释里）
+
+**`forward_event` `0x45a560`**：`0x45a607 call 0x3d89e0`（发送前哨）→ `0x45a60c test rax,rax / je`（**非 0 = 失败**）→
+`0x45a629 mov eax,[rax-0x28]`（取表项 id）→ `0x45a652 call *[0x9bac80] → 0x3d3530`（push，72 字节/元素）。
+发送前哨 `0x3d89e0` 的 `.rodata` 里是 **`"Failed to serialize event."` / `"Message too long."` /
+`"Failed to write to tcp_stream."`** —— 这就是"它到底在干什么"的证据（**观测**），不是猜的。
+
+**`handle_clear_bans_request_event` `0x45a6b0`**：`0x45a6f4 lea rdx,[r14+0x11]` + `0x45a6f8 mov esi,0xff` +
+`0x45a6fd call *[0x9bad08]` = `memset(ctrl, 0xFF, bucket_mask+17)`（= hashbrown `clear`，`+17 = 1 + 16`）；
+`0x45a703..0x45a743` = `growth_left` 重算 + `items=0`。**该函数体没有一条指令读 `rsi`** ⇒ 签名不带 `event`。
+
+**`handle_connection_removed_event` `0x45a7b0`**：`0x45a7c7 lea rax,[r14+6]` + `0x45a7cb cmp [rsi],rax`（只认变体 6）→
+`0x45a8d8 call 0x45aab0`（**先转发**）→ `0x45a8fe call 0x4864d0` / `0x45a982 call 0x486bc0` /
+`0x45a9e1 call 0x486270`（**三张表 remove**，地址升序 = 删除顺序）。
+
+**`forward_connection_specific_event` `0x45aab0`**：`0x45aae4 cmp rcx,5` → `[r14+8]`；`0x45aaea cmp rcx,6` → `0x45ab13 mov ebp,[r14+0x20]`；
+`0x45aaf0 cmp rcx,0xa`；其它 ⇒ `0x45ac20 explicit panic`。
+
+**`handle_ban_connection_request_event` `0x45ad30`**：`0x45ad48 lea rax,[r14+0x49]`（`0x7fff…+0x49 = 0x8000000000000048`）+
+`0x45ad4c cmp [rsi],rax` → `0x45ad55 mov ebp,[rsi+8]` / `0x45ad58 mov eax,[rsi+0xc]` → `0x45af72 call 0x43f550`（hashbrown `insert`）。
+
+**`tick` `0x45b020`**：`0x45b0f0 lock xadd dword [0x9c10c0],1`（每条消息动一次静态计数器）→
+`0x45b40b call 0x3d86a0`（取连接自己的队列）→ `0x45b418/0x45b42b` 两个变体 `0x4a`/`0x4b` 的跳过 →
+`0x45b480/0x45b4fd call 0x3dee00`（= `graphwar_remote_event_handler::GraphwarRemoteEventHandler::handle_client_remote_event`，
+**同一地址在 `fixtures/boundary_audit.tsv` 里就是这个函数**）→ `0x45b5b0 mov esi,0x258`（超时阈值 600）→
+`0x45b62e add ecx,esi` + `0x45b630 cmp ebp,ecx / jbe`（`now <= deadline+600` 不算超时）。
+
+**`lock` `0x4f8850`**：`0x4f88da mov esi,1`（SkinBlock）/ `0x4f8955 xor esi,esi`（PendingBlock）；
+**`pending` `0x4f8ad0`**：`0x4f8b62`/`0x4f8bdd`；**`unlock` `0x4f8990`**：`0x4f8a22`/`0x4f8a9d`。
+三条都是 `call *[rip+0x4c…] → 0x8ab200`（槽 `0x9ba978`）。
+
+**`update_buttons_background` `0x4f8050`**：`0x4f805e cmp qword [rcx+0x168],0 / je 0x4f82dd`（表空早退）→
+`0x4f820f call 0x4f8330`（`FacesVbox`，`r8d=9`）/ `0x4f8287 call 0x4f8330`（`HatsVbox`，`r8d=8`）。
+
+**`load_items` `0x4f57d0`**：`0x4f5fe9 mov esi,0x1c`（= 28 = `res://shop_button_entry.tscn` 的长度）→
+`0x4f5fee lea rdi` → `0x4de050`（`load::<PackedScene>`）；`0x4f60d6 mov r8d,6` + `0x4f60e1 lea rcx` = `"Button"`；
+三条 `call 0x4f7bb0`（`0x4f5d1b` / `0x4f6359` / `0x4f6a20`）；收尾 `0x4f6fc7 call 0x4f8050`。
+
+### 95.4 **顺手解决的两条旧"未知"**（`src/graphwar_player_screen_control.rs` 的 unknowns 1 与 6）
+
+1. **`insert_button_in_vbox` / `update_buttons_background_in_vbox` 的 x86 地址**（旧记"只有歧义候选"）：
+   `load_items` 里有 **三条** `call 0x4f7bb0`（每张表一条）、`update_buttons_background` 里有 **两条** `call 0x4f8330`
+   ⇒ 这两个 per-vbox 助手的 **x86 入口已定**（`0x4f7bb0` 体 `0x49d`、`0x4f8330` 体 `0x438`）。
+   **仍未定**的是"哪个 arm64 名字对哪个 x86 入口"（两者静态形状都是"遍历子节点 + 碰 `Button::set_button_icon`"），
+   按 `AGENTS.md` §0.3 **不替人选**。
+2. **`load_items` 三组内联块 ↔ 三个 Vbox 的先后**：三次 `call 0x4f7bb0` 的地址升序
+   （`0x4f5d1b` → `0x4f6359` → `0x4f6a20`）与三个节点名（`SkinsVbox` → `FacesVbox` → `HatsVbox`）、
+   与三组锚点行号（`135` → `156` → `183`）**三路同序** ⇒ 顺序可定死。
+
+### 95.5 遗留 / 我写错了 / 规格前提被证伪
+
+**① 规格里"覆盖矩阵给它标逐位"这条要改口径。** `docs/coverage-matrix.tsv` 的
+`graphwar_server_connection_handler.rs` 那行 `status=逐位` 指的是 **`on_new_connection` 那条"与真客户端抓包逐字节一致"**
+（`docs/33`），**不是**这 6 个函数。本轮落码后这 6 条的档位是 **`观测`**（控制流 + 立即数 + 偏移），
+**不是逐位**（逐位要有可对拍的输出）。⚠ 矩阵那行的 `evidence` 文字还写着"那 6 个有锚函数的函数体仍未落码（§80）"，
+**已经过期**；但 `docs/coverage-matrix.*` 是 `tools/coverage_matrix.py` 生成物、文字来自工具内的常量表，
+**本轮按规格不手改**（`--check` 必须过）⇒ 登记在这里，等下一轮改工具。
+
+**② 函数级复原率的分母/分子口径：`F1` 是"名字 pin + 模块档位有物证"，本轮 14 条都拿 `F1 pinned`。**
+这只说明"我方有一个同名函数、且能指到原版函数"，**不说明行为已逐位验证**（见①）。
+三种口径现值：`F1` **145/527 = 27.5%**、`F1+F2` 292/527 = 55.4%、`F1+F2+F3` 527/527（**不得使用**）。
+
+**③ 本轮踩到并修掉的一个"工具误判"（重要，别人也会踩）**：`tools/function_coverage.py` 的 **P2（按地址 pin）**
+规则 `_attach_one` 规则①是"注释行落在这个 fn 的行区间里 ⇒ 贴到它"。
+于是**在函数体注释里引用一个"被调者"的原版地址**，就会被判成"我方实现了那个原版函数"。
+实测：`handle_clear_bans_request_event` / `tick` 的注释里写了裸 `0x46d260` / `0x46d040`
+（= `graphwar_module_container::GraphwarModuleContainer::get_module_wk`），
+`module_container` 那两行从 `F2 hyb-only` **虚报成 `F1 pinned`**（+2）。
+**修法**：把这两个地址移进常量 `EXTERNAL_GET_MODULE_WK`（代码，不进注释），
+`cites` 只收注释 ⇒ 账本恢复（这两行回到 `F2`）。
+⚠ **下划线写法没用**：`HEX_RE` 是 `0x([0-9a-fA-F][0-9a-fA-F_]*)`，解析前会 `replace("_","")`。
+
+**④ 本轮自己写错的一个测试**（已修，记下来）：`Event::u32_at` 原先假设偏移是 8 的倍数，
+而 `handle_ban_connection_request_event` 的两个字段在 **`+8` 与 `+0xc`**（同一个字的两半）⇒ 改成按字节偏移取值/写入。
+
+**⑤ `fixtures/function_coverage.tsv` 在我改动前就有 8 行陈旧行号**：
+`graphwar_root_node.rs::ready`(×6) / `math_function.rs::FunctionRandomizer::mutate_fine_tune` /
+`graphwar_function_evolutionator.rs::score_function` 的 `pin_where` 行号与**当前 `src/`** 对不上
+（那 8 个源文件与 master 逐字节相同 ⇒ 是 T39 生成后又有合并改了行号，没重跑）。
+本轮按规格重跑该工具（改了 `src/` 必须重跑），这 8 行被**顺带校正**，`F` 档一个没变（见 git diff）。
+
+**⑥ 只登记、没解出来的（写在这里当下一轮输入）**：
+三张表的键/值 Rust 类型名（只知 `i32` 键 + 元素宽 40/128/24 字节）、变体号 ↔ 信号名字面量
+（`.rodata` 有 `connection_removed_event` / `ban_connection_request_event` / `clear_bans_request_event` 等一串名字，
+但**没有一处**把变体号与名字对上）、发送前哨 `0x3d89e0` 的返回类型、`tick` 里
+`0x8f44f0`/`0x43f390`/`0x440b50`/`0x442330` 四个内联被调者的精确语义、静态计数器 `0x9c10c0` 谁在读、
+超时阈值 `0x258` 的单位（ms / tick 数）、`0x447470` 返回 `0xd` 的语义。
+
+**⑦ 边界（别把模型当原件）**：这 14 条落的是**「控制流 + 数据结构」的模型**。
+真实网络 I/O（`0x3d89e0` 里 serde 序列化 + 写 `TcpStream`）与 Godot 动作（`set_visible` / `set_button_icon`）
+经 `Connection::send` 与 `PlayerScreenHost` 两个接缝交给 `src/server.rs` / `src/_scaffold/*_class.rs`；
+本模块文件里**没有**复制这些桥接逻辑（`AGENTS.md` §4）。
+
+### 95.6 门槛读数（本轮，`wt-t45` 工作树）
+
+| 项 | 读数 | 基线 |
+|---|---|---|
+| `cargo test --offline` | **1794 / 0 failed / 1 ignored**（72 个 test 二进制） | 1774 → +20 条（本轮新增单测） |
+| `cargo test --offline --features gdext-bindings` | **1916 / 0 failed / 1 ignored** | 1896 → +20 |
+| `tools/coverage_matrix.py --check` | **OK**（重跑生成物后；`COVERAGE_MATRIX_UPSTREAM=$MAIN/.reference/upstream`） | OK |
+| `tools/check_doc_refs.py` | **rc=0** | rc=0 |
+| 三轴 `fire` | 内容命中 **647**（文件 286、结算批 1080） | 647 |
+| 三轴 `batch` | 内容命中 **647** | 647 |
+| 三轴 `batch_conv` | 内容命中 **637 / 1080**（种类 1075/1080） | 637 |
+| `tools/boundary_audit.py --check` | **OK；match 441 / mismatch 0 / multi 86** | mismatch 0 |
+| `tools/function_coverage.py` | `F1` **145**（27.5%）/ `F2` 147 / `F3` **235**（44.6%）/ `F4` 0 | `F1` 131 / `F3` 249 |
+
+### 95.7 复跑命令
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export CARGO_HOME=$MAIN/.reference/cargo-home CARGO_TARGET_DIR=$MAIN/.reference/cargo-home/target
+export PY=$MAIN/.reference/venv/bin/python
+
+# 证据（任取一条函数体注释里的地址）
+cd $MAIN && $PY tools/addr_probe.py fde 0x45a560 && $PY tools/addr_probe.py dis 0x45a560
+$PY tools/addr_probe.py fde 0x4f8850 && $PY tools/addr_probe.py dis 0x4f8850
+
+# 单测
+cargo test --offline --lib graphwar_server_connection_handler
+cargo test --offline --lib graphwar_player_screen_control
+cargo test --offline --test graphwar_player_screen_control
+
+# 账本 / 门槛
+$PY tools/function_coverage.py --stats
+COVERAGE_MATRIX_UPSTREAM=$MAIN/.reference/upstream $PY tools/coverage_matrix.py --check
+$PY tools/boundary_audit.py --check && $PY tools/check_doc_refs.py
+SNAP=$MAIN/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json /tmp/f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json /tmp/b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict
+```

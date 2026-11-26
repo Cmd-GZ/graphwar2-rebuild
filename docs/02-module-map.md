@@ -758,6 +758,15 @@ strings -a -t x libgraphwarrust.so | grep -o 'graphwarrust::[a-z_]*::[A-Za-z]*' 
 > 后三个已按 `panic::Location` 各建同名文件（`fixtures/boundary_audit.tsv` 的 10 条 `mismatch` 清零，`docs/06` §80）。
 > 62 个文件 = 61 个 graphwar 作用域模块 + **`graphwar_texture_loader.rs`**（它带前缀，
 > 但在矩阵里是 `scope=other`，见 §17.2）。
+
+> 📌 **T45（2026-11-26）补的两条 `ours_file` 说明**（`docs/06` §95）：
+> * `src/graphwar_server_connection_handler.rs` 的 6 个可归属函数（`0x45a560` `forward_event` / `0x45a6b0`
+>   `handle_clear_bans_request_event` / `0x45a7b0` `handle_connection_removed_event` / `0x45aab0`
+>   `forward_connection_specific_event` / `0x45ad30` `handle_ban_connection_request_event` / `0x45b020` `tick`）
+>   **本文件内都有函数体了**（此前只有地址登记）；网络 I/O 与 Godot 动作走接缝，不在本文件复制。
+> * `src/graphwar_player_screen_control.rs` 的 8 个可归属函数同理全部落码；该文件现在依赖
+>   `src/graphwar_player_config.rs`（原版 `+0x00` 就是 `Rc<RefCell<GraphwarPlayerConfig>>`），
+>   所以 `tests/graphwar_player_screen_control.rs` 这个独立 crate 也 `#[path]` 引了它。
 > **过期的旧读数：**「58 个 `graphwar_*.rs` + 12 个非 `graphwar_` 模块」（那是按文件名前缀数的旧口径，
 > 既漏了 5 个后来定性的模块，又把 `graphwar_texture_loader.rs` 算进了 graphwar）；总账一律以
 > [`149-coverage-matrix.md`](149-coverage-matrix.md)（生成物）为准。

@@ -14,6 +14,12 @@ mod graphwar_player_screen_control;
 #[path = "../src/graphwar_nodes.rs"]
 mod graphwar_nodes;
 
+// T45：本模块的 `load_items` / 三个按钮回调落码后要摸档案
+// （原版 `+0x00` = `Rc<RefCell<GraphwarPlayerConfig>>`），
+// 独立 crate 里同样要 `#[path]` 引进来（该文件自己不再引用 `crate::`）。
+#[path = "../src/graphwar_player_config.rs"]
+mod graphwar_player_config;
+
 use graphwar_player_screen_control::*;
 
 /// 判据 1：8 个可归属函数，8 条 `唯一锚`（`fixtures/name_to_addr.tsv`）。

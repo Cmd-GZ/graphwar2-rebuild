@@ -18,6 +18,26 @@
 //!    再用 `GraphwarTextureLoader::get_skin_texture` 给每个按钮刷底色
 //!    —— 这就是 `docs/16` §7.5 "Faces / Hats 的底色 = 当前皮肤"的**实现位置**。
 //!
+//! # 函数体（T45 落码：**8/8**，见本文件 §7）
+//!
+//! 下面 8 个原版函数**此前只有登记（`fixtures/function_coverage.tsv` 判 `F3 register-only`）**，
+//! T45 按地址逐个读反汇编后落码，每个函数体第一行给 vaddr、正文里逐步给指令地址：
+//!
+//! | 函数 | vaddr | 落码后能指到的东西 |
+//! |---|---|---|
+//! | [`GraphwarPlayerScreenControl::load_items`] | `0x4f57d0` | 场景 `res://shop_button_entry.tscn`（`esi=0x1c`）、子节点 `Button`（`r8d=6`）、三个容器名与长度、三条 `call 0x4f7bb0`、收尾 `call 0x4f8050` |
+//! | [`GraphwarPlayerScreenControl::hat_button_pressed`] | `0x4f77a0` | `call *[0x9bb6e0] → 0x417c70`（`set_hat`） |
+//! | [`GraphwarPlayerScreenControl::face_button_pressed`] | `0x4f7870` | `call *[0x9bb6e8] → 0x417d50`（`set_face`） |
+//! | [`GraphwarPlayerScreenControl::skin_button_pressed`] | `0x4f7940` | `→0x417e20`（`set_skin`）、取 `GraphwarRootNode`（`r8d=0x10`）、再 `call 0x4f8050` |
+//! | [`GraphwarPlayerScreenControl::update_buttons_background`] | `0x4f8050` | 贴图表空则早退（`cmp qword [rcx+0x168],0`）、`FacesVbox`→`HatsVbox` 两条 `call 0x4f8330` |
+//! | [`GraphwarPlayerScreenControl::lock`] | `0x4f8850` | `SkinBlock`=`1`（`0x4f88da`）、`PendingBlock`=`0`（`0x4f8955`） |
+//! | [`GraphwarPlayerScreenControl::pending`] | `0x4f8ad0` | `SkinBlock`=`0`（`0x4f8b62`）、`PendingBlock`=`1`（`0x4f8bdd`） |
+//! | [`GraphwarPlayerScreenControl::unlock`] | `0x4f8990` | 两个块都 `0`（`0x4f8a22` / `0x4f8a9d`） |
+//!
+//! **档位**：可见性/节点名/长度/调用顺序 = **观测**；条目名表逐条内容 = **推断**（[`VBOXES`]）；
+//! 宿主侧动作（`set_visible` / `set_button_icon`）经 [`PlayerScreenHost`] 交给
+//! `src/_scaffold/*_class.rs`，本文件不模拟 Godot。
+//!
 //! # 8 个可归属函数（`fixtures/name_to_addr.tsv` 的 8 条 `唯一锚`）
 //!
 //! 每条的 join 都是**双向唯一**的 `(file, line, col)` 锚，所以"名字 ↔ x86 地址"这一跳可信。
@@ -385,8 +405,8 @@ pub const NODES_BY_FUNC: [(&str, &[&str]); 6] = [
 /// 本模块用的 `graphwar_nodes` 单态化（x86 vaddr）。
 ///
 /// 档位：**观测**（`call rel32`）。三个不同的 `T`：
-/// `0x3aafa0`（容器类，实参全是 `*Vbox` + 容器）、`0x3ab190`（控件类，实参是
-/// `*Grid`/`*Block`/`FireContainer`）、`0x3ab590`（`GraphwarRootNode`）。
+/// `0x3a_afa0`（容器类，实参全是 `*Vbox` + 容器）、`0x3a_b190`（控件类，实参是
+/// `*Grid`/`*Block`/`FireContainer`）、`0x3a_b590`（`GraphwarRootNode`）。
 /// ⚠️ `T` 的确切类型**未知**（见 `src/graphwar_nodes.rs` 的 unknowns 第 1 条）。
 pub const NODE_ACCESSORS_USED: [u64; 3] = [0x3a_afa0, 0x3a_b190, 0x3a_b590];
 
@@ -495,17 +515,286 @@ pub const LOAD_ITEMS_GODOT_CALLS: [&str; 8] = [
 ];
 
 // ---------------------------------------------------------------------------
-// 7. 诚实清单
+// 7. 函数体（T45 落码：8/8）
+//
+// 每个函数第一行注释 = **x86 vaddr + 档位**。落码口径：
+// 控制流 / 节点名 / 长度立即数 / 可见性实参 / 调用顺序全部照反汇编；
+// **Godot 侧的动作**（`get_node` / `set_visible` / `set_button_icon`）经
+// [`PlayerScreenHost`] 交给宿主，原版那些调用点都写在各方法注释里。
+// 本文件不模拟 Godot，也不复制 `client/` 的仿制品逻辑（`AGENTS.md` §0 第 4 条）。
+// ---------------------------------------------------------------------------
+
+/// `load_items` 里 `godot_core::tools::save_load::load` 的实参。**观测**：
+/// `0x4f5fe9 mov esi,0x1c`（= 28 = 本串字节数）+ `0x4f5fee lea rdi,[0x1c4545]` → `0x4de050`。
+pub const SHOP_BUTTON_ENTRY_SCENE: &str = "res://shop_button_entry.tscn";
+
+/// 每个条目里取子节点 `Button`。**观测**：`0x4f60e1 lea rcx,[0x1c4561]` + `0x4f60d6 mov r8d,6`
+/// → `0x3ad570`（`Node::get_node` 一类的单态化）。
+pub const BUTTON_CHILD: &str = "Button";
+
+/// `SkinsVbox`：`load_items` 第一个容器。**观测**（`0x1c4567` + `mov r8d,9`）。
+pub const SKINS_VBOX: &str = "SkinsVbox";
+/// `FacesVbox`：`load_items` 第二个容器、`update_buttons_background` 第一个。**观测**（`0x1c44bb` + `mov r8d,9`）。
+pub const FACES_VBOX: &str = "FacesVbox";
+/// `HatsVbox`：第三 / 第二个容器。**观测**（`0x19f0b0` + `mov r8d,8`）。
+pub const HATS_VBOX: &str = "HatsVbox";
+
+/// 三张表落进哪个容器 + 容器名的长度立即数 + 条目名表。
+///
+/// * 容器名与长度：**观测**（上面三个常量各自的 `lea` + `mov r8d,<len>`）；
+/// * **顺序**（Skins → Faces → Hats）：**观测** —— `load_items` 里三次
+///   `get_node_by_name` 的地址升序跟三次 `0x4f7bb0` 调用点（`0x4f5d1b` / `0x4f6359` / `0x4f6a20`）同序；
+/// * 条目名表：**推断** —— 内容取自 `.rodata` 的拼接串（`0x1c44bb` 起：`regular_eyes…`、
+///   `SkinsVbox` 之后的 `purple…`、`no_hat` 之后的 `soldier_helmet…`），
+///   与 `client/src/ui/icons.gd` 已登记的 `.rodata` 顺序表一致；
+///   **缺的证据**：本函数给每条 `String` 的长度立即数没有逐条核对 ⇒ 每条边界仍可能是"拼错一两个字母"。
+pub const VBOXES: [VboxSpec; 3] = [
+    VboxSpec { node: SKINS_VBOX, name_len: 9, items: SKIN_ITEMS },
+    VboxSpec { node: FACES_VBOX, name_len: 9, items: FACE_ITEMS },
+    VboxSpec { node: HATS_VBOX, name_len: 8, items: HAT_ITEMS },
+];
+
+/// 一个"容器 + 它的条目表"。
+#[derive(Debug, Clone, Copy)]
+pub struct VboxSpec {
+    /// 容器节点名。
+    pub node: &'static str,
+    /// 该名字的字节数（原版是 `mov r8d,<len>` 立即数）。
+    pub name_len: usize,
+    /// 要造按钮的条目名（原版从 `.rodata` 取，见 [`VBOXES`] 的档位说明）。
+    pub items: &'static [&'static str],
+}
+
+/// 皮肤条目表。**推断**（内容见 [`VBOXES`]），长度 = `.rodata` 里 `SkinsVbox` 之后那一段。
+pub const SKIN_ITEMS: &[&str] = &[
+    "purple", "red", "white_skin", "yellow", "green", "light_green", "true_purple", "brown",
+    "calico", "wargod", "arrow", "face_paint_1", "face_paint_2",
+];
+
+/// 脸条目表。**推断**（见 [`VBOXES`]）。
+pub const FACE_ITEMS: &[&str] = &[
+    "regular_eyes", "blue_eyes", "green_eyes", "purple_eyes", "anime_eyes", "aviator_glare",
+    "cute_eyes", "nerd_glasses", "baggy_eyes", "asian", "eye_patch", "baby_eyes", "alien_eyes",
+];
+
+/// 帽子条目表。**推断**（见 [`VBOXES`]）。
+pub const HAT_ITEMS: &[&str] = &[
+    "no_hat", "soldier_helmet", "mohawk", "cowboy", "straw_hat", "blonde_boy", "blonde_girl",
+    "brunette_girl", "powdered_wig", "brown_boy", "witch_hat", "mohawk_red", "horned_helmet",
+    "hair_band", "unicorn", "roman_helmet", "anime_hair", "top_hat", "tricone", "asian_hat",
+    "baseball_cap", "crown",
+];
+
+/// 玩家页在 Godot 侧要做的动作。**一个方法 = 一条能指到指令的动作**。
+///
+/// 归属：这些都是 gdext 调用（原版经 GOT 槽 `call *[rip+…]` 或单态化包装），
+/// 宿主侧真实转发见 `src/_scaffold/*_class.rs`；本 trait 只声明意图。
+pub trait PlayerScreenHost {
+    /// `get_node_by_name::<T>(name)`（`0x3a_afa0` 容器 / `0x3a_b190` 控件 / `0x3a_b590` 根节点）。
+    /// 返回 `false` 表示取节点失败 ⇒ 原版走 `unwrap` 的 panic 臂（例如 `0x4f82ec`），
+    /// 这里选择提前返回（**推断**：不 panic 是为可测；原版行为是 panic）。
+    fn has_node(&mut self, name: &str) -> bool;
+
+    /// `call *0x9ba978`（**推断 = `CanvasItem::set_visible`**，见 [`SET_VISIBLE_SLOT`]）。
+    fn set_block_visible(&mut self, block: &str, visible: bool);
+
+    /// `godot_core::tools::save_load::load::<PackedScene>`（`0x4de050`，实参 = [`SHOP_BUTTON_ENTRY_SCENE`]）。
+    fn load_scene(&mut self, path: &str);
+
+    /// `0x4f7bb0`（`load_items` 对每个容器调一次，**观测**）：
+    /// 把条目 `item` 造成的按钮插进容器 `vbox`。返回是否真的插进去了。
+    fn insert_button(&mut self, vbox: &str, child: &str, item: &str) -> bool;
+
+    /// 取当前皮肤对应的**底色贴图**。原版是 `0x41ce80`（`推断` = `GraphwarTextureLoader::get_skin_texture`）
+    /// 加一次 `HashMap` 查表（4 号实参 `[rcx+0x168]` = 表项数、`[rcx+0x170]` = hasher）。
+    /// 返回 `None` = 表里没有该皮肤（原版 `0x4f805e` 的 `cmp qword [rcx+0x168],0` 早退）。
+    fn background_texture(&mut self, skin: &str) -> Option<String>;
+
+    /// `0x4f8330`（`update_buttons_background` 对每个容器调一次，**观测**）：
+    /// 把 `tex` 刷到容器 `vbox` 的每个按钮上。
+    fn set_icon_on_children(&mut self, vbox: &str, tex: &str) -> usize;
+}
+
+/// 玩家页控制器的**可测模型**。
+///
+/// 原版这个对象是 gdext 的 `Node` 扩展，字段布局见模块文档 §结构体：
+/// `+0x00` = `Rc<RefCell<GraphwarPlayerConfig>>`（**观测**：本文件 8 个函数里有 4 个用
+/// `[self+0]` → `[+0x10]` 借用计数 → `[+0x18]` 载荷的路径），`+0x10/+0x18` = `Base<Node>` 句柄。
+/// 这里只保留**能被证据钉住**的那部分：档案（`Rc<RefCell<…>>`）与最近一次造好的条目。
+#[derive(Debug, Clone, Default)]
+pub struct GraphwarPlayerScreenControl {
+    /// 原版 `+0x00`：档案的共享句柄。三个按钮回调都**通过它**写字段。
+    pub config: std::rc::Rc<std::cell::RefCell<crate::graphwar_player_config::GraphwarPlayerConfig>>,
+    /// 最近一次 `load_items` 的产物（几个容器各造出多少个按钮）。
+    pub built: [usize; 3],
+}
+
+impl GraphwarPlayerScreenControl {
+    /// `GraphwarPlayerConfig::new` 的调用方模型（原版 `init` 里 `Rc::new(RefCell::new(config))`）。
+    pub fn new(config: crate::graphwar_player_config::GraphwarPlayerConfig) -> Self {
+        Self {
+            config: std::rc::Rc::new(std::cell::RefCell::new(config)),
+            built: [0; 3],
+        }
+    }
+
+    /// 当前档案例（读）。
+    pub fn config(&self) -> std::cell::Ref<'_, crate::graphwar_player_config::GraphwarPlayerConfig> {
+        self.config.borrow()
+    }
+
+    /// `hat_button_pressed` —— **`0x4f77a0`**（`0xd0` 字节）。
+    ///
+    /// **观测**：`0x4f782d` 组 24 字节实参 → `0x4f7833 call *[0x9bb6e0]` → `0x417c70`
+    /// （= `GraphwarPlayerConfig` 的 `set_hat`，写 `+0x90` 并 `inc dword [+0xa8]`）。
+    /// 体内**没有**第二次调用 ⇒ 帽子按钮不改按钮底色（`update_buttons_background` 只被
+    /// `skin_button_pressed` 与 `load_items` 调用：全 `.text` 仅 `0x4f7ac0` / `0x4f6fc7` 两处 `call`）。
+    pub fn hat_button_pressed<H: PlayerScreenHost + ?Sized>(&mut self, _host: &mut H, value: &str) {
+        self.config.borrow_mut().set_hat(value);
+    }
+
+    /// `face_button_pressed` —— **`0x4f7870`**（`0xd0` 字节）。
+    ///
+    /// **观测**：`0x4f7903 call *[0x9bb6e8]` → `0x417d50`（`set_face`，写 `+0x78` + 计数）。
+    pub fn face_button_pressed<H: PlayerScreenHost + ?Sized>(&mut self, _host: &mut H, value: &str) {
+        self.config.borrow_mut().set_face(value);
+    }
+
+    /// `skin_button_pressed` —— **`0x4f7940`**（`0x270` 字节，三个回调里最长的那个）。
+    ///
+    /// **观测**，三步：
+    /// 1. `0x4f79e1 call *[0x9bb6f0]` → `0x417e20`（`set_skin`，写 `+0x60` + 计数）；
+    /// 2. `0x4f7a1a..0x4f7a32`：取节点 `GraphwarRootNode`（`0x19e490`，`r8d=0x10`）→
+    ///    `0x3a_b590`；再 `[root+0x16a0]` 取**同一个档案 Rc 的另一份克隆**并借用
+    ///    （`0x4f7aa3..0x4f7aaf` 的 `0x7fff…` 上限检查 + `+0x10` 借用计数）；
+    /// 3. `0x4f7ac0 call 0x4f8050` = [`Self::update_buttons_background`] ——
+    ///    **这就是"换皮肤之后 Faces/Hats 按钮底色跟着变"的实现位置**。
+    pub fn skin_button_pressed<H: PlayerScreenHost + ?Sized>(&mut self, host: &mut H, value: &str) {
+        self.config.borrow_mut().set_skin(value); // ① 0x417e20
+        if host.has_node(ROOT_NODE) {
+            // ②③ 取根节点、借用档案、刷底色（`0x4f7a1a` → `0x4f7ac0`）
+            self.update_buttons_background(host, value);
+        }
+    }
+
+    /// `lock` —— **`0x4f8850`**（`0x133` 字节）。
+    ///
+    /// **观测**（指令地址 → 可见性实参）：
+    /// `SkinBlock`（`0x1c45e6`，`r8d=9`）→ `0x4f88da mov esi,1` → `call *0x9ba978`；
+    /// `PendingBlock`（`0x1c45ef`，`r8d=0xc`）→ `0x4f8955 xor esi,esi`。
+    pub fn lock<H: PlayerScreenHost + ?Sized>(&mut self, host: &mut H) {
+        for (block, visible) in BlockState::Locked.blocks() {
+            host.set_block_visible(block, visible);
+        }
+    }
+
+    /// `pending` —— **`0x4f8ad0`**（`0x140` 字节）：`SkinBlock` 隐藏（`0x4f8b62 xor esi,esi`）、
+    /// `PendingBlock` 显示（`0x4f8bdd mov esi,1`）。
+    pub fn pending<H: PlayerScreenHost + ?Sized>(&mut self, host: &mut H) {
+        for (block, visible) in BlockState::Pending.blocks() {
+            host.set_block_visible(block, visible);
+        }
+    }
+
+    /// `unlock` —— **`0x4f8990`**（`0x13d` 字节）：两个块都隐藏
+    /// （`0x4f8a22` / `0x4f8a9d` 各一条 `xor esi,esi`）。
+    pub fn unlock<H: PlayerScreenHost + ?Sized>(&mut self, host: &mut H) {
+        for (block, visible) in BlockState::Unlocked.blocks() {
+            host.set_block_visible(block, visible);
+        }
+    }
+
+    /// `update_buttons_background` —— **`0x4f8050`**（`0x2e0` 字节）。
+    ///
+    /// 实参：`(self, 节点句柄, 皮肤名, 贴图表)`。**观测**：
+    /// * `0x4f805e cmp qword [rcx+0x168],0 / je 0x4f82dd` —— 贴图表为空就**整体早退**（什么都不写）；
+    /// * `0x4f8077 lea rdi,[rcx+0x170]` + `0x4f8081 call 0x47daa0` = 用 `rdx`（皮肤名）查表；
+    /// * 命中后 `0x41ce80` 取贴图，然后 `FacesVbox`（`0x1c44bb`，`r8d=9`，`0x3a_afa0`）
+    ///   → `0x4f820f call 0x4f8330`；`HatsVbox`（`0x19f0b0`，`r8d=8`）→ `0x4f8287 call 0x4f8330`；
+    /// * 之后 `0x4f8296..0x4f82d7` 还有一段 gdext 收尾（`0x405d20` / `*0x9ba8b8 → 0x88d750` /
+    ///   静态 `0x9c18f0` 的 `[+0x14f0]` 开关 → `[+0x418]` 虚调用）。**推断**：那是
+    ///   "标脏 / 请求重绘"一类；缺的证据：`0x88d750` 与 `[0x9c18f0+0x418]` 的成员名。
+    ///
+    /// 返回 `false` = 贴图表里没有这个皮肤（原版早退），`true` = 刷了两个容器。
+    pub fn update_buttons_background<H: PlayerScreenHost + ?Sized>(
+        &mut self,
+        host: &mut H,
+        skin: &str,
+    ) -> bool {
+        let Some(tex) = host.background_texture(skin) else {
+            return false; // 0x4f805e：表项数 0 ⇒ 早退
+        };
+        // 顺序 = 两条 call 的地址升序（Faces 先、Hats 后）
+        host.set_icon_on_children(FACES_VBOX, &tex); // 0x4f820f
+        host.set_icon_on_children(HATS_VBOX, &tex); // 0x4f8287
+        true
+    }
+
+    /// `load_items` —— **`0x4f57d0`**（`0x1fa0` = 8096 字节，本模块最大的函数）。
+    ///
+    /// **观测**（外骨架，逐条给地址）：
+    /// 1. `0x4f5fe9 mov esi,0x1c` + `0x4f5fee lea rdi` → `0x4de050`：`load(SHOP_BUTTON_ENTRY_SCENE)`；
+    /// 2. 三次 `get_node_by_name`：`SkinsVbox`（`0x1c4567`/9）、`FacesVbox`（`0x1c44bb`/9）、
+    ///    `HatsVbox`（`0x19f0b0`/8）；
+    /// 3. 每次取到容器后 `call 0x4f7bb0`（`0x4f5d1b` / `0x4f6359` / `0x4f6a20`）= 往该容器造按钮
+    ///    （每次还先 `get_node("Button", 6)`，`0x4f60d6`/`0x4f60e1`）；
+    /// 4. 收尾 `0x4f6fc7 call 0x4f8050` = 刷一次底色。
+    ///
+    /// 体内那 8 条 `panic::Location` 锚（`113/135/139/156/159/165/183/186/192`）说明它把
+    /// `load_skins`/`load_faces`/`load_hats` 三个 loader 全**内联**了（见 [`INLINED_LOADERS`]）。
+    /// **未落码**：每个条目从 `.rodata` 取名的长度立即数（逐条边界），见 [`VBOXES`] 档位。
+    pub fn load_items<H: PlayerScreenHost + ?Sized>(&mut self, host: &mut H) -> LoadItemsReport {
+        host.load_scene(SHOP_BUTTON_ENTRY_SCENE); // ① 0x4de050
+        let mut counts = [0usize; 3];
+        for (i, spec) in VBOXES.iter().enumerate() {
+            if !host.has_node(spec.node) {
+                continue; // 原版此处 unwrap panic（0x4f82ec 一类的臂）
+            }
+            for item in spec.items {
+                if host.insert_button(spec.node, BUTTON_CHILD, item) {
+                    counts[i] += 1; // ③ 0x4f7bb0
+                }
+            }
+        }
+        self.built = counts;
+        // ④ 0x4f6fc7：用**当前**皮肤刷一次底色
+        let skin = self.config.borrow().skin.clone();
+        let background_updated = self.update_buttons_background(host, &skin);
+        LoadItemsReport {
+            buttons: counts,
+            background_updated,
+        }
+    }
+}
+
+/// `skin_button_pressed` 里 `get_node_by_name` 的根节点名。**观测**：
+/// `0x4f7a1a lea rcx,[0x19e490]` + `0x4f7a26 mov r8d,0x10`（16 字节）→ `0x3a_b590`。
+pub const ROOT_NODE: &str = "GraphwarRootNode";
+
+/// `load_items` 的产出（便于对拍"三个容器各造了几个"）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LoadItemsReport {
+    /// 三个容器（Skins / Faces / Hats，顺序同 [`VBOXES`]）各成功插入几个按钮。
+    pub buttons: [usize; 3],
+    /// 收尾那次 `0x4f8050` 是否真的刷了（贴图表里有没有当前皮肤）。
+    pub background_updated: bool,
+}
+
+// ---------------------------------------------------------------------------
+// 8. 诚实清单
 // ---------------------------------------------------------------------------
 
 /// 本节**没解出来**的东西（照实写，不许乐观）。
 ///
 /// 1. **`insert_button_in_vbox` / `update_buttons_background_in_vbox` 的 x86 地址**——
-///    arm64 有符号（1012 / 1180 字节，具名被调者是 `Node::add_child_full`、
-///    `Node::get_children_full`、`Button::set_button_icon`、`ClassId::to_cow_str`），
-///    但 2.0.60 x86 侧没有一对一 `Location` 锚，`fixtures` 只给到 `歧义`。
-///    **不替人选**（`AGENTS.md` §0.3）：候选里混着 `graphwar_nodes` 的单态化，
-///    本轮**不**做这个判断。
+///    arm64 有符号（1012 / 1180 字节），但 2.0.60 x86 侧没有一对一 `Location` 锚。
+///    **T45 部分解决**：`0x4f57d0`（`load_items`）里有**三条** `call 0x4f7bb0`
+///    （`0x4f5d1b` / `0x4f6359` / `0x4f6a20`，每张表一条），`0x4f8050`
+///    （`update_buttons_background`）里有**两条** `call 0x4f8330`（`0x4f820f` / `0x4f8287`，
+///    `FacesVbox` / `HatsVbox` 各一条）⇒ **这两个 per-vbox 助手的 x86 入口已定**
+///    （`0x4f7bb0` 体 `0x49d`、`0x4f8330` 体 `0x438`）。
+///    **仍未定**的是"哪个 arm64 名字对哪个 x86 入口"（两者都遍历子节点 + 碰
+///    `Button::set_button_icon`，静态形状分不开）—— 不替人选（`AGENTS.md` §0.3）。
 /// 2. **`+0x10` / `+0x18` 那个两字宽句柄的确切类型**——只知道两半各自做非零检查、
 ///    并被当作 `get_node_by_name` 的查找起点。`Gd<T>` 在 gdext 里是 1 个字宽，
 ///    所以 2 个字宽**不是**单个 `Gd`；缺的证据：`Base<Node>` 之外还有一个字段
@@ -521,7 +810,11 @@ pub const LOAD_ITEMS_GODOT_CALLS: [&str; 8] = [
 ///    里被直接调用（`docs/16` §22.6），但本模块三个 setter 之后**没有** `save` 调用
 ///    ⇒ 改外观不立即落盘，落盘靠别处（可能是 `_exit_tree` / 切屏）。
 ///    缺的证据：没找到调用 `save` 的唯一时机。
-/// 6. **`load_items` 那 3 组内联块的行号 ↔ `SkinsVbox`/`FacesVbox`/`HatsVbox` 的先后**（见 [`LOADER_LINES`]）。
+/// 6. **`load_items` 那 3 组内联块的行号 ↔ `SkinsVbox`/`FacesVbox`/`HatsVbox` 的先后**。
+///    **T45 部分解决**：三次 `call 0x4f7bb0` 的地址升序（`0x4f5d1b` → `0x4f6359` → `0x4f6a20`）
+///    与三次 `get_node_by_name` 的名字（`SkinsVbox` → `FacesVbox` → `HatsVbox`）同序，
+///    也与锚点行号（`135` → `156` → `183`）同序 ⇒ **三块 = Skins/Faces/Hats 这个顺序可以定死**。
+///    仍缺：条目名表里**每条**的长度立即数（[`VBOXES`] 的 `items` 是 `推断`）。
 pub fn unknowns() -> &'static [&'static str] {
     &[
         "insert_button_in_vbox / update_buttons_background_in_vbox 的 x86 地址（只有歧义候选）",
@@ -685,5 +978,195 @@ mod tests {
     #[test]
     fn unknowns_are_listed() {
         assert_eq!(unknowns().len(), 6);
+    }
+
+    // ---------------------------------------------------------------------
+    // T45：函数体测试。**每个期望值都来自反汇编的立即数/调用点**，
+    // 不是"我方实现输出"（`AGENTS.md` §0.5）。出处写在断言上一行。
+    // ---------------------------------------------------------------------
+
+    /// 记录宿主动作顺序的假宿主。
+    ///
+    /// `textures` 为空 ⇒ 模拟原版 `0x4f805e` 的 `cmp qword [rcx+0x168],0` 早退。
+    #[derive(Default)]
+    struct Recorder {
+        log: Vec<String>,
+        nodes: Vec<String>,
+        /// 贴图表：皮肤名 → 底色贴图名。
+        textures: Vec<(&'static str, String)>,
+        /// `has_node` 对哪些名字返回假（模拟取节点失败）。
+        missing: Vec<&'static str>,
+    }
+
+    impl Recorder {
+        fn with_texture(skin: &'static str, tex: &str) -> Self {
+            Self {
+                textures: vec![(skin, tex.to_string())],
+                ..Default::default()
+            }
+        }
+    }
+
+    impl PlayerScreenHost for Recorder {
+        fn has_node(&mut self, name: &str) -> bool {
+            if self.missing.contains(&name) {
+                return false;
+            }
+            self.nodes.push(name.to_string());
+            true
+        }
+        fn set_block_visible(&mut self, block: &str, visible: bool) {
+            self.log.push(format!("visible {block} {}", visible as u8));
+        }
+        fn load_scene(&mut self, path: &str) {
+            self.log.push(format!("load {path}"));
+        }
+        fn insert_button(&mut self, vbox: &str, child: &str, item: &str) -> bool {
+            self.log.push(format!("insert {vbox}/{child}/{item}"));
+            true
+        }
+        fn background_texture(&mut self, skin: &str) -> Option<String> {
+            self.textures
+                .iter()
+                .find(|(k, _)| *k == skin)
+                .map(|(_, v)| v.clone())
+        }
+        fn set_icon_on_children(&mut self, vbox: &str, tex: &str) -> usize {
+            self.log.push(format!("icons {vbox}={tex}"));
+            1
+        }
+    }
+
+    fn ctrl() -> GraphwarPlayerScreenControl {
+        let mut cfg = crate::graphwar_player_config::GraphwarPlayerConfig::default();
+        cfg.skin = "yellow".into();
+        cfg.face = "regular_eyes".into();
+        cfg.hat = "soldier_helmet".into();
+        GraphwarPlayerScreenControl::new(cfg)
+    }
+
+    /// `lock` / `pending` / `unlock` 的两个块与可见性实参，全部照指令立即数：
+    /// `0x4f88da mov esi,1` / `0x4f8955 xor esi,esi`（lock = 1,0）、
+    /// `0x4f8b62` / `0x4f8bdd`（pending = 0,1）、`0x4f8a22` / `0x4f8a9d`（unlock = 0,0）。
+    #[test]
+    fn three_state_functions_write_exact_visibility_in_binary_order() {
+        let cases: [(&str, [bool; 2], u64); 3] = [
+            ("lock", [true, false], FN_LOCK),
+            ("pending", [false, true], FN_PENDING),
+            ("unlock", [false, false], FN_UNLOCK),
+        ];
+        for (name, expect, addr) in cases {
+            let mut c = ctrl();
+            let mut h = Recorder::default();
+            match name {
+                "lock" => c.lock(&mut h),
+                "pending" => c.pending(&mut h),
+                "unlock" => c.unlock(&mut h),
+                _ => unreachable!(),
+            }
+            // 顺序 = 二进制里两条 call 的先后：先 SkinBlock（len 9）后 PendingBlock（len 0xc）
+            assert_eq!(h.log.len(), 2, "{name} 必须写两次 set_visible（{addr:#x}）");
+            assert_eq!(h.log[0], format!("visible SkinBlock {}", expect[0] as u8));
+            assert_eq!(h.log[1], format!("visible PendingBlock {}", expect[1] as u8));
+        }
+    }
+
+    /// 三个按钮回调各写**自己的**字段；只有 `skin` 回调会再刷底色。
+    /// 判据：`call 0x4f8050` 在 `.text` 里只有 `0x4f7ac0`（skin 回调）与 `0x4f6fc7`（load_items）两处。
+    #[test]
+    fn only_skin_callback_refreshes_background() {
+        let mut c = ctrl();
+        let mut h = Recorder::with_texture("red", "red_bg");
+
+        c.hat_button_pressed(&mut h, "witch_hat");
+        assert_eq!(c.config().hat, "witch_hat");
+        assert!(h.log.is_empty(), "hat 回调体内没有第二次调用");
+
+        c.face_button_pressed(&mut h, "alien_eyes");
+        assert_eq!(c.config().face, "alien_eyes");
+        assert!(h.log.is_empty(), "face 回调体内没有第二次调用");
+
+        c.skin_button_pressed(&mut h, "red");
+        assert_eq!(c.config().skin, "red");
+        assert_eq!(h.nodes, vec![ROOT_NODE.to_string()], "先取根节点（len 16）");
+        assert_eq!(
+            h.log,
+            vec![
+                "icons FacesVbox=red_bg".to_string(),
+                "icons HatsVbox=red_bg".to_string()
+            ],
+            "Faces 先、Hats 后（0x4f820f < 0x4f8287）"
+        );
+    }
+
+    /// `update_buttons_background`：贴图表空 ⇒ 早退（`0x4f805e`），一个字都不写。
+    #[test]
+    fn background_refresh_short_circuits_on_empty_table() {
+        let mut c = ctrl();
+        let mut h = Recorder::default(); // 表空
+        assert!(!c.update_buttons_background(&mut h, "yellow"));
+        assert!(h.log.is_empty());
+
+        let mut h2 = Recorder::with_texture("yellow", "yellow_bg");
+        assert!(c.update_buttons_background(&mut h2, "yellow"));
+        assert_eq!(h2.log.len(), 2);
+        // 容器名与长度立即数：FacesVbox/9（0x4f81d6）、HatsVbox/8（0x4f824b）
+        assert_eq!(FACES_VBOX.len(), 9);
+        assert_eq!(HATS_VBOX.len(), 8);
+    }
+
+    /// `load_items` 的外骨架：先 `load("res://shop_button_entry.tscn")`（`esi=0x1c`=28），
+    /// 三个容器按 Skins→Faces→Hats 顺序，最后刷一次底色（`0x4f6fc7`）。
+    #[test]
+    fn load_items_order_and_scene_path_match_binary() {
+        assert_eq!(SHOP_BUTTON_ENTRY_SCENE.len(), 0x1c, "esi=0x1c 是这条串的长度");
+        assert_eq!(BUTTON_CHILD.len(), 6, "r8d=6 是 'Button' 的长度"); // 0x4f60d6
+        assert_eq!(ROOT_NODE.len(), 0x10); // 0x4f7a26 r8d=0x10
+
+        let mut c = ctrl();
+        let mut h = Recorder::with_texture("yellow", "yellow_bg");
+        let r = c.load_items(&mut h);
+
+        // ① 第一条动作是 load
+        assert_eq!(h.log[0], format!("load {SHOP_BUTTON_ENTRY_SCENE}"));
+        // ② 三个容器的取节点顺序（名字长度 9/9/8）
+        let want_nodes: Vec<String> = vec![SKINS_VBOX.into(), FACES_VBOX.into(), HATS_VBOX.into()];
+        assert_eq!(h.nodes, want_nodes);
+        assert_eq!(VBOXES[0].name_len, 9);
+        assert_eq!(VBOXES[1].name_len, 9);
+        assert_eq!(VBOXES[2].name_len, 8);
+        // ③ 每个容器都被插过按钮，且最后刷底色
+        assert_eq!(r.buttons, [SKIN_ITEMS.len(), FACE_ITEMS.len(), HAT_ITEMS.len()]);
+        assert!(r.background_updated);
+        assert_eq!(
+            h.log.last().unwrap(),
+            "icons HatsVbox=yellow_bg",
+            "收尾那次 0x4f8050 以 Hats 为最后一步"
+        );
+        // ④ 每个容器都被调过 0x4f7bb0（per-vbox 助手）
+        for spec in VBOXES {
+            assert!(
+                h.log.iter().any(|l| l.starts_with(&format!("insert {}/", spec.node))),
+                "{} 没有插入调用",
+                spec.node
+            );
+        }
+    }
+
+    /// 条目表本身要自洽（不重复、都非空），避免"推断"表里混进空串。
+    #[test]
+    fn item_tables_are_sane() {
+        for spec in VBOXES {
+            assert!(!spec.items.is_empty(), "{} 的表是空的", spec.node);
+            let mut seen = std::collections::BTreeSet::new();
+            for it in spec.items {
+                assert!(!it.is_empty());
+                assert!(seen.insert(*it), "{} 里 {} 重复", spec.node, it);
+            }
+        }
+        // 原版默认三件套必须在表里（`docs/16` §22.9）
+        assert!(SKIN_ITEMS.contains(&"yellow"));
+        assert!(FACE_ITEMS.contains(&"regular_eyes"));
+        assert!(HAT_ITEMS.contains(&"soldier_helmet"));
     }
 }
