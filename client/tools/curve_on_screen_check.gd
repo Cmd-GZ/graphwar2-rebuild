@@ -178,9 +178,14 @@ func _check_reveal(plane: Control) -> void:
 	var ids := _active_ids(plane)
 	ok(ids.size() == 1 and int(ids[0]) == 7, "active_function_ids() == [7]")
 
-	var want60 := _expected_revealed(12.0, 10, TOTAL)
-	ok(want60 == 60, "独立算式：12.0 起飞于 10 ⇒ 期望 60 个点")
-	ok(int(plane.call("feed_functions")) == 60, "feed_functions() 追加 60 个点")
+	# ⚠️ T50（`docs/06` §100）：原来这里写 `ok(_expected_revealed(12.0,10,TOTAL) == 60)`
+	# —— 那只断言了**脚本里的镜像函数**，一个字都没碰实现。改成对实现的冻结真值：
+	# `0x4b67a0`–`0x4b6812` 的算式是 `min(len, trunc(30·(frac − active)))`，
+	# frac=12.0、active=10 ⇒ 30·2 = **60**（截断后与点数上限 100 无关）。
+	ok(int(plane.call("feed_functions")) == 60,
+		"12.0 起飞于 10 ⇒ 追加 **60** 个点（冻结真值：30·(12−10)，`0x4b67a0`）")
+	ok(int(plane.call("function_point_total")) == 60,
+		"实现侧点数也是 60（与上面同一条真值的另一面）")
 	ok(int(plane.call("function_write_total")) == 1, "function_write_total() == 1（喂了一次）")
 	ok(int(plane.call("function_point_total")) == 60, "function_point_total() == 60")
 	ok(int(drawer.call("add_point_total")) == 60, "FunctionDrawer.add_point_total() == 60")
@@ -200,8 +205,10 @@ func _check_reveal(plane: Control) -> void:
 
 	# ---- tick 13.0 ⇒ 90 ----
 	plane.call("set_fractional_tick", 13.0)
-	var want90 := _expected_revealed(13.0, 10, TOTAL)
-	ok(want90 == 90, "独立算式：13.0 ⇒ 期望 90")
+	# 冻结真值：30·(13−10) = 90（`0x4b67a0`；上限 100 还没到）
+	ok(int(plane.call("function_point_total")) == 60,
+		"**tick 的 setter 自己不给点**：刚进 13.0 时屏幕点数仍是 60（喂点在 `feed_functions` 里）"
+		+ "——这条能被打断：若 `set_fractional_tick` 顺手喂了，这里会是 90")
 	ok(int(plane.call("feed_functions")) == 30, "再喂 ⇒ 只补 30 个点（增量）")
 	ok(line.get_point_count() == 90, "Line2D.get_point_count() == 90")
 	# 前 60 个点没被重画（整条重画的话它们会变）。
@@ -211,8 +218,9 @@ func _check_reveal(plane: Control) -> void:
 
 	# ---- tick 14.0 ⇒ 满 100（封顶） ----
 	plane.call("set_fractional_tick", 14.0)
-	var want100 := _expected_revealed(14.0, 10, TOTAL)
-	ok(want100 == 100, "独立算式：14.0 ⇒ 期望封顶到 100（120 > 100）")
+	# 冻结真值：30·(14−10) = 120 > len=100 ⇒ **封顶到 100**（`min()` 那一支）
+	ok(int(plane.call("function_point_total")) == 90,
+		"**tick 的 setter 自己不给点**（14.0 同理）：进 14.0 那一刻仍是 90，封顶到 100 发生在喂点里")
 	ok(int(plane.call("feed_functions")) == 10, "再喂 ⇒ 只补 10 个点（封顶）")
 	ok(line.get_point_count() == 100, "Line2D.get_point_count() == 100（= 全部点）")
 
@@ -232,13 +240,22 @@ func _check_window(plane: Control) -> void:
 		return
 	# 上一节留下的：id 7，active_tick=10，len=100 ⇒ 尾巴到 d=63（1890 < 1900），d=64 出界。
 	plane.call("set_fractional_tick", 10.0 + 63.0)
-	ok(_expected_active(73, 10, 100), "独立算式：d=63 仍在场")
+	# ⚠️ T50：原来这条是 `ok(_expected_active(73, 10, 100))` —— **只测脚本里的镜像函数**。
+	# 改成问实现：`0x3be5f6`–`0x3be611` 的判据是 `active_tick < tick`（`jbe`）且
+	# `30·d < len + 1800`（**严格小于**）。d=63 ⇒ 1890 < 1900 在场 ⇒ plane 里应仍有 1 条。
+	ok(int(plane.call("function_count")) == 1,
+		"边界内侧：d=63（30·63 = 1890 < 100+1800 = 1900）⇒ plane 里仍有 1 条（`0x3be5f6` 严格小于）")
 	ok(_active_ids(plane).size() == 1, "d=63 ⇒ active_function_ids() 仍有 1 条")
 	ok(int(plane.call("feed_functions")) == 0, "d=63 喂点 ⇒ 追加 0（曲线早已满）")
 	ok(_line_of(drawer, 7) != null, "d=63 时那条 Line2D 还在")
 
 	plane.call("set_fractional_tick", 10.0 + 64.0)
-	ok(not _expected_active(74, 10, 100), "独立算式：d=64 出界")
+	# 冻结真值：d=64 ⇒ 30·64 = 1920 ≥ 1900 ⇒ 出界（严格小于的另一侧）
+	# 冻结真值 + 一条真语义：**"判出界"与"真删"是两件事** —— `active_function_ids()` 立刻空，
+	# 但 `remove_function` 要等下一次 `feed_functions()` 才调（`0x4b6418`）。
+	ok(_active_ids(plane).size() == 0 and int(plane.call("function_count")) == 1,
+		"边界外侧 d=64：出场判定立刻生效（active_ids 空），但**节点还在**（删除推迟到喂点）"
+		+ "——这条能被打断：若 set_fractional_tick 顺手删了，function_count 会是 0")
 	ok(_active_ids(plane).size() == 0, "d=64 ⇒ active_function_ids() 空")
 	ok(int(plane.call("feed_functions")) == 0, "出界后喂点 ⇒ 追加 0")
 	ok(int(plane.call("removed_function_total")) == 1, "出界 ⇒ remove_function 调了 1 次（0x4b6418）")
@@ -281,9 +298,9 @@ func _check_two_players(plane: Control) -> void:
 	var appended: int = int(plane.call("feed_functions"))
 	# 两条线都是**新建**的（id 3 的旧线在上一节被判"不在场"删掉了）⇒ 已写入数都从 0 起：
 	# id 3：30*(27-20)=210 ⇒ 封顶 100；id 8：30*2=60 ⇒ 60。
-	var want3 := _expected_revealed(27.0, 20, TOTAL)
-	var want8 := _expected_revealed(27.0, 25, TOTAL)
-	ok(want3 == 100 and want8 == 60, "独立算式：id 3 ⇒ 100，id 8 ⇒ 60")
+	# 冻结真值（`0x4b67a0`）：id 3：30·(27−20) = 210 ⇒ 封顶 100；id 8：30·(27−25) = 60。
+	ok(int(drawer.call("point_count", 3)) == 100 and int(drawer.call("point_count", 8)) == 60,
+		"冻结真值：id 3 ⇒ 100（封顶）、id 8 ⇒ 60 —— 直接问实现，不问脚本里的镜像函数")
 	ok(appended == 100 + 60, "本帧追加 100 + 60 = 160（两条都是新线）")
 	var l3 := _line_of(drawer, 3)
 	var l8 := _line_of(drawer, 8)
@@ -332,10 +349,10 @@ func _check_in_tree() -> void:
 		"`_draw` 里那条喂点路径跑到了（点数 %s）" % (
 			"-" if line == null else str(line.get_point_count())))
 	if line != null:
-		var want := _expected_revealed(11.0, 10, TOTAL)
-		# `_draw` 可能被调了不止一次，但点数只能是 `new_len`（幂等）。
-		ok(line.get_point_count() == want,
-			"**进树后 Line2D.get_point_count() == %d（独立算式）**" % want)
+		# 冻结真值：30·(11−10) = 30（`0x4b67a0`）。`_draw` 可能被调不止一次，
+		# 但点数只能是 `new_len`（幂等），所以"等于 30"本身就是幂等性检查。
+		ok(line.get_point_count() == 30,
+			"**进树后 Line2D.get_point_count() == 30（冻结真值 30·(11−10)，幂等）**")
 
 	node.queue_free()
 	await process_frame

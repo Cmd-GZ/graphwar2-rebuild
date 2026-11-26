@@ -740,8 +740,18 @@ func _initialize() -> void:
 	ok(int(rd.call("batch_count")) == 3 and String(rd.call("batch_note")) == "",
 		"切出 3 个结算批、没有降级原因（实际 %d / '%s'）"
 		% [int(rd.call("batch_count")), String(rd.call("batch_note"))])
+	# ⚠️ T50（`docs/06` §100）：下面这条原来是**唯一**的批边界断言，而它比的是
+	# `_expected_batches()`（本脚本自己扫回放文本的**另一份实现**）——"两份独立实现
+	# 互相当 oracle"，抓单边错误有用，但**没有外部真值**，两份错成一样就全绿。
+	# 所以先加一条**冻结真值**（合成回放写死在 `SYNTHETIC_REPLAY` 里，边界是可手算的常量）：
+	#   每批 = (CalculatingResults.tick, ExecutingResults.tick, 批结束 tick)
+	#   ⇒ [[10,20,60], [60,70,100], [100,110,120]]
+	ok(_batch_bounds(got_batches) == [[10, 20, 60], [60, 70, 100], [100, 110, 120]],
+		("**批边界 == [[10,20,60],[60,70,100],[100,110,120]]**（冻结真值，"
+			+ "手算自 SYNTHETIC_REPLAY；驱动实际 %s）") % str(_batch_bounds(got_batches)))
+	# 下面这条是**差分对照**（两份独立实现），保留但不再当唯一证据。
 	ok(_batch_bounds(got_batches) == _batch_bounds(want_batches),
-		"批边界与独立扫描一致（驱动 %s ／ 扫描 %s）"
+		"差分对照：驱动 vs 独立扫描一致（驱动 %s ／ 扫描 %s）"
 		% [str(_batch_bounds(got_batches)), str(_batch_bounds(want_batches))])
 	var shots_ok := true
 	for i in got_batches.size():

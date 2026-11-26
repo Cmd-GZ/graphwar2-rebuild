@@ -63,21 +63,28 @@ func _initialize() -> void:
 	var default_mode: int = int(inst.get("axis_mode"))
 	ok(default_mode == 0, "axis_mode 默认值 = 0（NoAxis；我方选择，非二进制证据）")
 	inst.set("axis_mode", 3)
-	ok(int(inst.get("axis_mode")) == 3, "set/get axis_mode=3 往返一致")
+	# T50（`docs/06` §100）：**契约断言，不含语义** —— 只证明 `@export` 属性真的接到了
+	# Rust 字段（setter/getter 转发），不证明这个值在游戏里被用对。同组的语义断言在下一行/本节后段。
+	ok(int(inst.get("axis_mode")) == 3, "set/get axis_mode=3 往返一致（契约断言）")
 	ok(int(inst.call("get_axis_mode")) == 3, "get_axis_mode() 与属性读一致")
 
 	# 3) 两条"数线"路径全对拍：图元枚举（axis_primitives）vs 闭式公式（line_count）。
 	#    期望值 0 / 2 / 20 / 102 见 docs/16 §21。
+	# ⚠️ T50（`docs/06` §100）：这里原来是
+	#   `ok(by_prims == expected[mode] and by_formula == expected[mode])`
+	# —— 一条断言里同时比"两个我方实现"（枚举 vs 闭式公式），只要两边一起错就全绿。
+	# 现在**拆成两条**，各自只对**冻结真值表**（0/2/20/102 来自 `docs/16` §21 的分支结构：
+	# mode=1 画 2 条轴、mode=2 加 18 条粗网格、mode=3 再加 82 条细网格）。
+	# 这样"枚举"和"公式"任何一侧错都会红，且不再互为 oracle。
 	var expected := {0: 0, 1: 2, 2: 20, 3: 102}
 	for mode in [0, 1, 2, 3]:
 		inst.call("set_axis_mode", mode)
 		var by_prims: int = int(inst.call("axis_line_count"))
 		var by_formula: int = int(inst.call("axis_line_count_formula"))
-		ok(
-			by_prims == expected[mode] and by_formula == expected[mode],
-			"axis_mode=%d -> 枚举 %d 条 / 公式 %d 条（期望 %d）"
-				% [mode, by_prims, by_formula, expected[mode]]
-		)
+		ok(by_prims == expected[mode],
+			"axis_mode=%d -> **枚举** %d 条 == 冻结真值 %d" % [mode, by_prims, expected[mode]])
+		ok(by_formula == expected[mode],
+			"axis_mode=%d -> **闭式公式** %d 条 == 冻结真值 %d" % [mode, by_formula, expected[mode]])
 	# 越界判别值：原版只比较 ==3 / >=2 / !=0，所以 200 应当画"粗网格 + 主轴" = 20 条。
 	inst.call("set_axis_mode", 200)
 	ok(int(inst.call("axis_line_count")) == 20, "axis_mode=200（越界）→ 20 条（原版分支）")

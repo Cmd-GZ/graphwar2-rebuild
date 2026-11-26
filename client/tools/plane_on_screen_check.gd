@@ -160,9 +160,14 @@ func _initialize() -> void:
 	ok(plane.get_class() == PLANE, "那个节点是 Rust 扩展类（get_class() == %s）" % PLANE)
 	ok(plane.is_class("Control"), "GraphwarPlane 是 Control（%s）" % plane.get_class())
 	# `board_scale` 现在只是"尺寸还没定下来时的兜底"，原版没有这个属性（§48.2）
+	# T50（`docs/06` §100）：**契约断言，不含语义** —— 只证明 `.tscn` 里的值真的被场景加载器写进了 Rust 属性。
+	# 语义断言在下面：`line.scale == (s, −s)` / `line.position == size/2` 才是「这个值被用对了」。
 	ok(absf(float(plane.get("board_scale")) - 20.0) < 1e-6,
-		".tscn 里的 board_scale = 20.0 读回来了（%s；现在只当兜底用）" % str(plane.get("board_scale")))
-	ok(bool(plane.get("flip_y")), ".tscn 里的 flip_y = true 读回来了")
+		".tscn 里的 board_scale = 20.0 读回来了（%s；现在只当兜底用）（契约断言）"
+		% str(plane.get("board_scale")))
+	# T50（`docs/06` §100）：**契约断言，不含语义** —— 只证明 `.tscn` 里的值真的被场景加载器写进了 Rust 属性。
+	# 语义断言在下面：`line.scale == (s, −s)` / `line.position == size/2` 才是「这个值被用对了」。
+	ok(bool(plane.get("flip_y")), ".tscn 里的 flip_y = true 读回来了（契约断言）")
 	ok(bool(plane.get("mirror_x")) == false, "mirror_x（= 原版 flip 位）默认 false")
 	var names := _method_names(plane)
 	for w in ["draw_call_count", "drawn_rect_total", "set_function_points", "feed_functions",
@@ -221,15 +226,28 @@ func _initialize() -> void:
 	ok(int(plane.call("transform_total")) >= 1,
 		"平面自己调过 update_transform（0x4b6147，%d 次）" % int(plane.call("transform_total")))
 	var lt: Dictionary = plane.call("last_transform")
-	ok(is_equal_approx(float(lt.get("x", -1)), plane_size.x * 0.5)
-		and is_equal_approx(float(lt.get("y", -1)), plane_size.y * 0.5)
-		and is_equal_approx(float(lt.get("s", -1)), derived_s)
+	# ⚠️ T50：原来这三项与 `plane_size`（= 运行时读回来的自己的尺寸）比 —— 镜像。
+	# 改成与 `BOARD_PIXELS`（`.tscn` 的 offset_right/offset_bottom，500×300 的固定契约）
+	# 和字面量 20.0（= 500/50，`0x1b9fc8` 的 50.0）比 ⇒ 冻结真值，能被打断。
+	ok(is_equal_approx(float(lt.get("x", -1)), BOARD_PIXELS.x * 0.5)
+		and is_equal_approx(float(lt.get("y", -1)), BOARD_PIXELS.y * 0.5)
+		and is_equal_approx(float(lt.get("s", -1)), 20.0)
 		and bool(lt.get("flip", true)) == bool(plane.get("mirror_x"))
 		and bool(lt.get("flip_y", false)) == bool(plane.get("flip_y")),
 		"last_transform == {x=%s, y=%s, s=%s, flip=%s}（照 0x4b6147 的实参；flip = 原版镜像位）"
 		% [str(lt.get("x", -1)), str(lt.get("y", -1)), str(lt.get("s", -1)), str(lt.get("flip", false))])
 	ok(is_equal_approx(line.width, 0.125),
 		"Line2D.width == 0.125（.rodata 0x1baff8 的逐位常量；scale=20 ⇒ 2.5 像素）")
+	# T50 新增：把"像素"这一步真的算出来 —— `width` 是**棋盘单位**，屏幕上要乘 `scale.x`。
+	# 2.5 px 是可观测的真值（0.125 × 20），`scale` 若算错这条立刻红。
+	ok(is_equal_approx(line.width * absf(line.scale.x), 2.5),
+		"**屏幕上的弹道线宽 = 2.5 px**（0.125 × size.x/50 = 0.125×20）")
+	# T50 新增：棋盘 1 个单位 = 20 px ⇒ 屏幕上 5 单位主格线间距 = 100 px。
+	# 与 `fixtures/board_geometry_equiv.tsv` 的 `minor_step_x_0_to_1` 同口径
+	# （那行在真机承载矩形 1279 px 下量到 25.58 px = 1279/50，本脚本的矩形是 500 ⇒ 20 px）。
+	ok(absf(BOARD_WIDTH_UNITS * absf(line.scale.x) - BOARD_PIXELS.x) <= 1e-6,
+		"**棋盘 50 单位 × 20 px/单位 = 1000 px = 平面宽**（`size.x/50 × 50 ≡ size.x`，"
+		+ "与 fixtures/board_geometry_equiv.tsv 的 25.58 px = 1279/50 同口径）")
 
 	# 5) 逐 tick 揭示：**一次 feed_functions 都不调**，点数只由 `_draw` 里的喂点循环产生
 	print("--- 逐 tick 揭示（_draw 里的喂点循环；本脚本不调 feed_functions）")
@@ -239,36 +257,42 @@ func _initialize() -> void:
 	ok(draws_before >= 1, "进树后 `_draw` 已经被调到（%d 次）" % draws_before)
 	ok(int(plane.call("drawn_rect_total")) == draws_before,
 		"每次 `_draw` 都画了一条棋盘框（draw_rect 累计 == draw 次数 == %d）" % draws_before)
-	var want1 := _expected_revealed(1.0, active_tick, total)
-	ok(want1 == 30, "独立算式：tick 1.0 ⇒ 30 点（30×1）")
-	ok(line.get_point_count() == want1,
-		"**tick 1.0：Line2D.get_point_count() == %d**" % line.get_point_count())
-	ok(int(drawer.call("point_count", player_id)) == want1,
-		"FunctionDrawer.point_count(%d) == %d" % [player_id, want1])
+	# ⚠️ T50（`docs/06` §100）：这三条以前全部对着 `_expected_revealed()`（镜像函数）比。
+	# 改成**冻结真值 30** —— 出处：`0x4b67a0`–`0x4b6812` 的 `trunc(30·(frac − active))`，
+	# frac=1.0、active=0 ⇒ 30；上限 `total=100` 还没到。改算式/改常数这条立刻红。
+	ok(line.get_point_count() == 30,
+		"**tick 1.0：Line2D.get_point_count() == 30**（冻结真值 30·(1−0)，`0x4b67a0`）")
+	ok(int(drawer.call("point_count", player_id)) == 30,
+		"FunctionDrawer.point_count(%d) == 30（同一条真值的另一面）" % player_id)
 	# tick 源：`get_fractional_tick`（0x519530）在**内核里**算，场景只是把时钟摆过去。
 	ok(is_equal_approx(float(plane.call("fractional_tick")), 1.0),
 		"fractional_tick() 读回 1.0（内核 get_fractional_tick 的整数边界 ⇒ 逐位相等）")
 	ok(int(plane.call("integer_tick_now")) == 1,
 		"integer_tick_now() == 1（原版 M+0x40 的 u32 tick，不是 f64 取整）")
-	ok(int(plane.call("function_point_total")) == want1,
-		"平面的喂点累计 == %d（来自 `_draw`，脚本没手动喂）" % want1)
+	ok(int(plane.call("function_point_total")) == 30,
+		"平面的喂点累计 == 30（来自 `_draw`，脚本没手动喂）——冻结真值")
 
 	var line_id := line.get_instance_id()
 	var ticks: Array[float] = [2.0, 3.0, 10.0, 60.0, 177.0]
+	# 冻结真值表：`0x4b67a0` 的 `min(total, trunc(30·t))`，`active_tick = 0`，
+	# `total = total_points = 5314`（场景常量）⇒ 揭满要到 tick 178（ceil(5314/30) = 178）
+	#   t=2 → 60 / t=3 → 90 / t=10 → 300 / t=60 → 1800 / t=177 → 5310（还没满，差 4 个点）
+	var REVEALED_AT := {2.0: 60, 3.0: 90, 10.0: 300, 60.0: 1800, 177.0: 5310}
 	for t in ticks:
 		var before_draws := int(plane.call("draw_call_count"))
 		scene.call("advance_to", t)
 		await process_frame
 		await process_frame
-		var want := _expected_revealed(t, active_tick, total)
+		var want: int = int(REVEALED_AT[t])
 		var got := line.get_point_count()
-		ok(got == want, "tick %.0f：Line2D 点数 %d == 独立算式 %d" % [t, got, want])
+		ok(got == want, "tick %.0f：Line2D 点数 %d == 冻结真值 %d（30·t 封顶 100）"
+			% [t, got, want])
 		ok(int(plane.call("draw_call_count")) > before_draws or got == total,
 			"tick %.0f：`_draw` 又被调了（%d → %d）"
 			% [t, before_draws, int(plane.call("draw_call_count"))])
 		ok(line.get_instance_id() == line_id, "tick %.0f：还是同一条 Line2D（增量，不是重建）" % t)
-	ok(int(drawer.call("written", player_id)) == _expected_revealed(177.0, active_tick, total),
-		"value 里的已写入数跟着涨（%d）" % int(drawer.call("written", player_id)))
+	ok(int(drawer.call("written", player_id)) == 5310,
+		"value 里的已写入数 == **5310**（冻结真值 30·177；`0x4b67a0`，比 total 5314 少 4 ⇒ 还没揭满）")
 	ok(int(drawer.call("add_point_total")) == int(line.get_point_count()),
 		"add_point 调用次数 == Line2D 点数（%d）" % int(drawer.call("add_point_total")))
 
@@ -306,14 +330,15 @@ func _initialize() -> void:
 	# 6) 揭完：点数 == 喂进去的点数（本轮验收口径）
 	print("--- 揭完（tick = final_tick）")
 	var final_tick := float(scene.call("final_tick"))
-	ok(is_equal_approx(final_tick, _expected_final_tick(total, active_tick)),
-		"场景的 final_tick() == 独立算式 ceil(%d/30) = %.0f" % [total, final_tick])
+	# 冻结真值：ceil(5314/30) = **178**（`0x4b67a0` 的反解；`active_tick = 0`）
+	ok(is_equal_approx(final_tick, 178.0),
+		"场景的 final_tick() == **178.0**（冻结真值 ceil(5314/30)+0，实测 %.0f）" % final_tick)
 	scene.call("advance_to", final_tick)
 	await process_frame
 	await process_frame
 	await process_frame
-	var want_full := _expected_revealed(final_tick, active_tick, total)
-	ok(want_full == total, "独立算式：tick %.0f ⇒ 封顶到全部 %d 点" % [final_tick, total])
+	ok(int(drawer.call("written", player_id)) == 5314 and int(plane.call("function_point_total")) == 5314,
+		"揭完后喂点累计 == **5314** = 全部点（冻结真值；以前这里断的是镜像函数自己）")
 	ok(line.get_point_count() == total,
 		"**Line2D.get_point_count() == 喂进去的点数（%d == %d）**"
 		% [line.get_point_count(), total])

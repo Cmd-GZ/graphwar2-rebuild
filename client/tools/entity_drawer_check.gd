@@ -137,7 +137,43 @@ func _same_ids(a: PackedInt64Array, b: PackedInt64Array) -> bool:
 			return false
 	return true
 
+## 屏幕上**精灵四边形**的边长（px）—— 只看两个**可观测**的量：贴图尺寸 × |scale|。
+##
+## 它是 T50 用来替掉镜像断言的那把尺子：一条断言如果只比 `scale` 与
+## `expect_sprite()` 的 `scale`，两边是同一套算术（实例 A 就是这么绿的）；换成
+## "tex × |scale| = 多少 px" 之后，期望值可以**从真帧/二进制闭式**取，而不是从实现抄。
+func sprite_quad_px(s: Sprite2D) -> Vector2:
+	return Vector2(float(s.texture.get_width()) * absf(s.scale.x),
+		float(s.texture.get_height()) * absf(s.scale.y))
+
+## 真值：**屏幕上精灵四边形的边长**（px），两套几何各一个。
+##
+## 来源（不是把实现的中间量抄一遍）：
+##
+## 1. **二进制闭式**（x86 `0x4b9530` 尾部 / arm64 `0x4bf418`，指令表见 `docs/06` §58）：
+##    `|scale| = (k/60)·(128/tex_w)`，`k = size.x/50`
+##    ⇒ 四边形边长 = `tex_h·|scale.y| = 128·k/60`（方形贴图 `tex_h = tex_w`）
+##    ⇒ **与 tex_w 无关**（这是下面"各向同性 / 贴图宽度无关"两条的根据）。
+## 2. **真机承载矩形实测**（`fixtures/board_geometry_equiv.tsv` 行 `measured_live_1920x1160`）：
+##    原版帧黑框实测 `R_w = 1279.0000`，两侧运行时同值 ⇒ 真机 `k = 1279/50 = 25.58`
+##    ⇒ 四边形边长 = **54.5707 px**。
+##
+## 但**真正的外部真值是真帧量到的**：`docs/06` §59.8 第 1 条记着原版真机上
+## "三层 sprite 各 **54.6 屏幕 px**"（同处还给出 `scale=(±0.083333, −0.083333)`、
+## 512×512 贴图 ⇒ 42.67 画布 px，再乘 1273/1000 的画布放大）。上面闭式给的 54.5707
+## 与它差 **0.03 px** —— 两条独立来源（指令闭式 / 真帧像素）互相印证。
+## 另外同参数下真帧士兵三层**合成 bbox** = 73×72 px、靶子**可见内容** = 26×26 px
+## （`docs/06` §58）：内容小于四边形，因为贴图内容并不填满 128×128 的画布。
+const SPRITE_QUAD_K10 := 21.333333    # 21.3333… = 128·10/60（验收控件 500×300 ⇒ k = 10）
+const SPRITE_QUAD_REAL := 54.5707     # = 128·(1279.0/50)/60；真帧实测读数 54.6（§59.8）
+
 ## `entity_drawer::sprite_transform` 的 GDScript 版（**独立重算，不调 Rust**）。
+##
+## ⚠️ T50 审计（`docs/06` §100）：**这个函数是镜像 helper**（与 `src/entity_drawer.rs::
+## sprite_transform` 是同一套算术）。它保留只用于"契约/接线"类断言（变换有没有被调用、
+## 符号对不对），**不许再拿它当"算式对不对"的证据** —— 它证明不了算式对不对，
+## 实例 A（`scale.x` 漏 `k`，活了 19 天 / 557 commit）就是它跟着一起错。真正验算式的
+## 是下面 `sprite_quad_px()` 那几条（屏幕像素真值 + 各向同性 + 贴图宽度无关）。
 ##
 ## ```text
 ## k = size.x / 50
@@ -236,9 +272,14 @@ func _initialize() -> void:
 		ok(names.has(w), "方法 %s() 存在" % w)
 
 	drawer.set("team_color", TEAM_COLOR)
-	ok(int(drawer.get("team_color")) == TEAM_COLOR, "属性 team_color 往返一致（%d）" % TEAM_COLOR)
+	# T50（`docs/06` §100）：**契约断言，不含语义** —— 只证明 `@export` 属性接到了 Rust 字段。
+	# 队色的**语义**断言在准备圈那一段（`RING_COLOR` / 画出来的 `last_polygon()` 颜色），不在这里。
+	ok(int(drawer.get("team_color")) == TEAM_COLOR, "属性 team_color 往返一致（%d）（契约断言）" % TEAM_COLOR)
 	drawer.set("texture_size", 8)
-	ok(int(drawer.get("texture_size")) == 8, "属性 texture_size 往返一致（8）")
+
+	# T50（`docs/06` §100）：**契约断言，不含语义** —— 只证明 `@export` 属性接到了 Rust 字段。
+	# 队色的**语义**断言在准备圈那一段（`RING_COLOR` / 画出来的 `last_polygon()` 颜色），不在这里。
+	ok(int(drawer.get("texture_size")) == 8, "属性 texture_size 往返一致（8）（契约断言）")
 
 	# 2) 摆位置用的输入：控件尺寸（原版 `process` 每帧读的就是它）
 	var control: Control = drawer
@@ -340,15 +381,54 @@ func _initialize() -> void:
 		% [kids[0].position, kids[0].scale, kids[0].flip_h])
 	print("      期望   position=%s scale=%s flip_h=%s"
 		% [want["position"], want["scale"], want["flip_h"]])
-	ok(kids[0].position.is_equal_approx(want["position"]),
-		"位置 == (300, 100)（k=10: 250+10·5, 150−10·5；与 tex_w 无关）")
-	ok(kids[0].scale.is_equal_approx(want["scale"]),
-		"缩放 == ((±k/60)·(128/%d), (k/−60)·(128/%d))（读出的是这一层自己的 tex_w）"
-		% [tex_w0, tex_w0])
+	# ⚠️ T50（`docs/06` §100）：下面这两条原来是**纯镜像** —— 期望值由本脚本的
+	# `expect_sprite()` 用**同一套算术**算出（实例 A 的第 3 处：`update_sprite` 的
+	# `scale.x` 漏 `k` 时两边一起错、断言全绿，bug 活了 19 天 / 557 commit）。
+	# 现在：
+	#   · position 的期望值写成**字面量**（冻结真值），出处 `0x4b9530`：`size×0.5 ± k·x`
+	#     / `size×0.5 − k·y`，k = 10 时就是 250+50 / 150−50；
+	#   · scale **不再**与 `expect_sprite()` 比，改问"这具精灵在屏幕上多大"
+	#     （`sprite_quad_px()`：贴图尺寸 × |scale|，见下面三条）。
+	ok(kids[0].position.is_equal_approx(Vector2(300.0, 100.0)),
+		"位置 == (300, 100)（k=10: 250+10·5, 150−10·5；与 tex_w 无关）——冻结真值，不是镜像")
+	var q0: Vector2 = sprite_quad_px(kids[0])
+	print("      屏幕上精灵四边形 = %.4f × %.4f px（k=10 ⇒ 闭式 128·k/60 = %.4f）"
+		% [q0.x, q0.y, SPRITE_QUAD_K10])
+	ok(absf(q0.y - SPRITE_QUAD_K10) <= 0.05,
+		"**屏幕上的精灵高度 = 21.333 px ±0.05**（真值 = 128·k/60，k=10；来源见 SPRITE_QUAD_K10 注释）")
+	ok(absf(q0.x - q0.y) <= 0.01,
+		"屏幕上的精灵**宽 == 高**（各向同性）——`scale.x` 漏 k 时这条立刻红（实测会是 0.426 vs 21.33 px）")
+	ok(absf(kids[0].scale.x + kids[0].scale.y) <= 1e-6,
+		"scale.x == −scale.y（`0x4b9745`/`0x4b9749` 两条 mulss 的绝对值相同）——漏 k 时红")
 	ok(kids[0].flip_h == true, "x > 0 ⇒ flip_h = true")
 	ok(kids[1].position.is_equal_approx(kids[0].position)
 			and kids[2].position.is_equal_approx(kids[0].position),
 		"三层 sprite 位置相同（同一具士兵）")
+
+	# 6b) **真机几何上的屏幕尺寸真值**（T50 新增；这是"这具精灵在屏幕上多大"的正主）
+	#
+	# 用**真帧实测的承载矩形** 1279.0 × 767.4（`fixtures/board_geometry_equiv.tsv` 行
+	# `measured_live_1920x1160`：原版帧黑框 300..1578 × 195..961，两侧运行时同值）建一具，
+	# 于是 k = 1279/50 = 25.58、四边形边长 = 128·k/60 = **54.5707 px**。
+	# 这条断言**与 `update_sprite` 的内部量无关**：它把 `tex × |scale|` 换算成屏幕像素，
+	# 再与上面那个由真帧承载矩形算出的数比 —— 漏 `k` 时会变成 0.426×128/60 = 0.9 px。
+	var real_drawer: Object = EntityDrawer.new()
+	if real_drawer != null:
+		var rc: Control = real_drawer
+		rc.set_size(Vector2(1279.0, 767.4))
+		ok(int(real_drawer.call("spawn_entity", 0, 1.0, 1.0)) == 4,
+			"真机几何实例 spawn_entity(0, 1, 1) == 4")
+		var r_sprite: Sprite2D = rc.get_child(0)
+		if r_sprite != null:
+			var qr: Vector2 = sprite_quad_px(r_sprite)
+			print("      真机几何(1279×767.4)：屏幕精灵 = %.4f × %.4f px（真值 %.4f）"
+				% [qr.x, qr.y, SPRITE_QUAD_REAL])
+			ok(absf(qr.y - SPRITE_QUAD_REAL) <= 0.5,
+				"**屏幕上的精灵高度 = 54.57 px ±0.5**（真值 = 128·(1279/50)/60；R_w=1279 是真帧实测，"
+				+ "见 fixtures/board_geometry_equiv.tsv、docs/06 §58/§59.8 的真帧 54.6 px）")
+			ok(absf(qr.x - qr.y) <= 0.01,
+				"真机几何下同样**宽 == 高**（各向同性，与 tex_w 无关）")
+		rc.free()
 
 	# 7) 名字标签：属性照 `recovered-src/name_label.tscn`
 	var label: RichTextLabel = kids[3]
@@ -360,10 +440,32 @@ func _initialize() -> void:
 
 	drawer.call("set_entity_name", 0, "Bob")
 	ok(String(label.text) == "Bob", "set_entity_name 后 text == \"Bob\"（实际 \"%s\"）" % label.text)
+	# ⚠️ T50（`docs/06` §100）：原来这里只有一条**镜像**断言
+	# `label.position ≈ expect_label_position(...)`（同一套算术，`docs/06` §59 记的那次
+	# "w 取成 label.size 而不是控件 size" 就是这么绿过去的）。现在留一条契约断言
+	# （变换有没有被写下，**契约断言，不含语义**），再补两条**能被真实错误打破**的
+	# 几何不变量 —— 布局意图是"标签水平居中在精灵上、垂直在精灵上方"，这两句与
+	# `name_label_layout` 的具体算式无关，算错就红。
 	var want_label: Vector2 = expect_label_position(label, Vector2(W, H), TEAM_COLOR, 5.0, 5.0)
-	print("      label position=%s（期望 %s）min_size=%s"
+	print("      label position=%s（镜像算 %s）min_size=%s"
 		% [label.position, want_label, label.get_minimum_size()])
-	ok(label.position.is_equal_approx(want_label), "名字标签位置 == name_label_layout 的手算结果")
+	ok(label.position.is_equal_approx(want_label),
+		"名字标签位置 == name_label_layout 的手算结果（**契约断言，不含语义**：镜像）")
+	# 布局用的是 `get_minimum_size()`（= 原版 `mw/mh`），**不是** `label.size`。
+	# ⚠️ headless 下没有字体 ⇒ `mw = mh = 0`，所以这里只能说"标签左上角落在精灵 x 上、
+	# 上沿在精灵中心上方"；真窗口下才是"标签矩形居中"。这一点写在断言消息里，免得误读。
+	var mw: float = label.get_minimum_size().x
+	var mh: float = label.get_minimum_size().y
+	var label_cx: float = label.position.x + mw * 0.5
+	var label_cy: float = label.position.y + mh * 0.5
+	print("      [T50] label.position=%s mw/mh=%s ; sprite0.position=%s"
+		% [str(label.position), str(Vector2(mw, mh)), str(kids[0].position)])
+	ok(absf(label_cx - kids[0].position.x) <= 0.5,
+		"标签**水平中心**落在精灵 x 上（按 mw 计；headless 下 mw=0 ⇒ 左上角对齐）"
+		+ "——`w` 取错成 `label.size` 时这条会红")
+	ok(label_cy <= kids[0].position.y,
+		"标签**垂直中心**在精灵中心上方（k·(−1.5) 那一段；headless 下 mh=0 ⇒ 上沿在上方）"
+		+ "——布局被夹到下方时红")
 
 	# 8) 死亡淡出：alpha 来自 `entity_drawer::death_alpha`（0→1.0 / 30→0.5 / ≥60→0）
 	var a30: float = float(drawer.call("set_entity_dead_ticks", 0, 30))
@@ -380,9 +482,12 @@ func _initialize() -> void:
 	ok(int(drawer.call("entity_count")) == 2, "entity_count() == 2")
 	ok(control.get_child_count() == 8, "两个实体 ⇒ 8 个子节点（实际 %d）" % control.get_child_count())
 	var s1: Sprite2D = control.get_child(4)
-	var want2: Dictionary = expect_sprite(Vector2(W, H), TEAM_COLOR, 8, -5.0, 3.5)
 	print("      sprite4 position=%s flip_h=%s" % [s1.position, s1.flip_h])
-	ok(s1.position.is_equal_approx(want2["position"]), "第二个实体位置 == (200, 115)")
+	# 冻结真值（`0x4b9530`：size×0.5 + s·k·x / size×0.5 − k·y，k=10、x=−5、y=3.5、s=+1）
+	ok(s1.position.is_equal_approx(Vector2(200.0, 115.0)),
+		"第二个实体位置 == (250−50, 150−35) = (200, 115)——冻结真值，不是镜像")
+	ok(absf(sprite_quad_px(s1).y - SPRITE_QUAD_K10) <= 0.05,
+		"第二个实体的屏幕精灵高度同样是 21.333 px ±0.05（尺寸与实体无关）")
 	ok(s1.flip_h == false, "x < 0 ⇒ flip_h = false")
 
 	# 10) remove_entity：queue_free 真的释放（要等一帧，延迟释放）
@@ -512,6 +617,25 @@ func _initialize() -> void:
 	ok(_near(absf((p0[1] - center).angle_to(p0[2] - center)), 2.0 * ARROW_HALF_SPREAD),
 		"底边张角 == 2×6° = 12°（槽 0x19fb68 / 0x19fc80）")
 
+	# 13.3b **队色的语义**（替掉第 1 组那条 `team_color` 往返契约断言 T50）：
+	# 改 `team_color` 之后画出来的图元颜色必须跟着变 —— 这条能被打断
+	# （属性没接到 Rust 字段、或画的时候没用队色，都会红）。
+	# `last_arc()` 的 [8..11] 是颜色的 r/g/b/a 四个分量（见上面那条 #7D6800 断言）
+	var arc_ca: PackedFloat64Array = drawer.call("last_arc", 0)
+	drawer.set("team_color", 0xff0000)      # 0x0000ff 打包 ⇒ 低字节 R = 0xff
+	drawer.call("set_ring", 0, 5.0, 5.0, RING_POS_RADIUS, 0.0)
+	await process_frame
+	await process_frame
+	var arc_cb: PackedFloat64Array = drawer.call("last_arc", 0)
+	print("      team_color 0x%x ⇒ 图元色 r=%.3f ／ 0xff0000 ⇒ r=%.3f"
+		% [RING_COLOR, arc_ca[8], arc_cb[8]])
+	ok(not _near(arc_ca[8], arc_cb[8]),
+		"**改 team_color ⇒ 画出来的图元颜色跟着变**（队色真的接进了绘制，不只是 set/get 往返）")
+	drawer.set("team_color", RING_COLOR)
+	drawer.call("set_ring", 0, 5.0, 5.0, RING_POS_RADIUS, 0.0)
+	await process_frame
+	await process_frame
+
 	# 13.4 闭合：base 命中 ⇒ H = min(π/6 + (V−base)/60, 61.5°)，V = 60 ⇒ 封顶
 	ok(bool(drawer.call("set_ring_base", 0, 0.0)) == true,
 		"set_ring_base(0, 0.0) 命中哈希表（0x4b34e6 的 je 不跳）⇒ true")
@@ -546,10 +670,15 @@ func _initialize() -> void:
 	await process_frame
 	var resized_calls: int = int(drawer.call("resized_call_count"))
 	ok(resized_calls >= 1, "resized 信号真的连上了（on_resized 被调到 %d 次）" % resized_calls)
-	var want3: Dictionary = expect_sprite(Vector2(W * 2.0, H * 2.0), TEAM_COLOR, tex_w0, 5.0, 5.0)
-	print("      放大后 sprite0 position=%s（期望 %s）" % [kids[0].position, want3["position"]])
-	ok(kids[0].position.is_equal_approx(want3["position"]),
-		"控件放大到 1000×600 ⇒ 位置重摆成 (600, 200)")
+	print("      放大后 sprite0 position=%s" % [kids[0].position])
+	# 冻结真值（k 从 10 变 20 ⇒ 500+20·5 / 300−20·5）
+	ok(kids[0].position.is_equal_approx(Vector2(600.0, 200.0)),
+		"控件放大到 1000×600 ⇒ 位置重摆成 (600, 200)——冻结真值")
+	# 屏幕尺寸**随 k 线性**（k 翻倍 ⇒ 四边形边长翻倍）。这条与"抄一遍算式"无关：
+	# 只要 k 的取法错（例如取成控件高度的一半、或忘了 /50），比例就不再是 2。
+	var q_resized: Vector2 = sprite_quad_px(kids[0])
+	ok(absf(q_resized.y - 2.0 * SPRITE_QUAD_K10) <= 0.05,
+		"控件宽翻倍 ⇒ 屏幕精灵高度翻倍 = 42.667 px ±0.05（k = size.x/50 的线性性）")
 
 	# 15) 贴图链的三种取法（§51）——**三种都要验**，因为"有 assets"不是所有机器都成立
 	#
@@ -588,14 +717,21 @@ func _initialize() -> void:
 				"bot 皮肤 512×512、脸 no_face 128×128（pck 里就是这样，%d/%d）"
 				% [b0.texture.get_width(), b1.texture.get_width()])
 			# `update_sprite` 的 `unit = 128/tex_w` 是**每层自己的**贴图宽度 ⇒ 两层的 scale 不同
-			var want_b0: Dictionary = expect_sprite(Vector2(W, H), TEAM_COLOR, 512, 5.0, 5.0)
-			var want_b1: Dictionary = expect_sprite(Vector2(W, H), TEAM_COLOR, 128, 5.0, 5.0)
-			ok(b0.scale.is_equal_approx(want_b0["scale"]),
-				"皮肤层缩放按 tex_w = 512 算（unit = 128/512）")
-			ok(b1.scale.is_equal_approx(want_b1["scale"]),
-				"脸层缩放按 tex_w = 128 算（unit = 128/128）⇒ 与皮肤层不同，%s vs %s"
-				% [b0.scale, b1.scale])
+			# 冻结真值（`0x4b9745`：|scale| = (k/60)·(128/tex_w)，k=10）
+			#   tex 512 ⇒ |scale| = (10/60)·(128/512) = 0.0416667
+			#   tex 128 ⇒ |scale| = (10/60)·(128/128) = 0.1666667
+			ok(absf(absf(b0.scale.y) - 0.0416667) <= 1e-6,
+				"皮肤层 |scale| = (10/60)·(128/512) = 0.0416667（冻结真值，tex_w=512）")
+			ok(absf(absf(b1.scale.y) - 0.1666667) <= 1e-6,
+				"脸层 |scale| = (10/60)·(128/128) = 0.1666667（冻结真值，tex_w=128）")
 			ok(not b0.scale.is_equal_approx(b1.scale), "两层 scale 不同（各读自己的贴图宽度）")
+			# **真正咬 k 与 tex_w 关系的那条**：屏幕上两层一样大（= 128·k/60，与 tex_w 无关）。
+			# `unit = 128/tex_w` 若漏掉或 tex_w 取错，这条立刻红。
+			var qb0: Vector2 = sprite_quad_px(b0)
+			var qb1: Vector2 = sprite_quad_px(b1)
+			print("      512 层屏幕 %s px / 128 层屏幕 %s px" % [str(qb0), str(qb1)])
+			ok(absf(qb0.y - qb1.y) <= 0.01 and absf(qb0.y - SPRITE_QUAD_K10) <= 0.05,
+				"**512 层与 128 层在屏幕上一样大 = 21.333 px**（unit 各读自己的 tex_w ⇒ tex×|scale| 与 tex_w 无关）")
 		bc.free()
 
 	# 15.2 没有 assets 的机器：`assets_root = ""` 就是同一件事（不读盘）
@@ -802,11 +938,10 @@ func _initialize() -> void:
 		pos_a.call("relayout")
 		var sp0: Sprite2D = ca.get_child(0)
 		var texw: int = int(sp0.texture.get_width())
-		var want_sprite: Dictionary = expect_sprite(Vector2(W, H), TEAM_COLOR, texw, 0.0, 4.0)
-		print("      sprite0 position=%s（按表坐标 (0,4) 的期望 %s）"
-			% [sp0.position, want_sprite["position"]])
-		ok(sp0.position.is_equal_approx(want_sprite["position"]),
-			"spawn_entity 的 (9,9) 被表里的 (0,4) 覆盖 ⇒ sprite 位置 == 表坐标的投影")
+		print("      sprite0 position=%s（按表坐标 (0,4) ⇒ 冻结真值 (250, 110)）" % sp0.position)
+		# 冻结真值（`0x4b9530`：250 + 10·0 = 250、150 − 10·4 = 110）——**不是**镜像
+		ok(sp0.position.is_equal_approx(Vector2(250.0, 110.0)),
+			"spawn_entity 的 (9,9) 被表里的 (0,4) 覆盖 ⇒ sprite 位置 == (250, 110)（冻结真值）")
 
 		# ⑤ 删表：只认 tag 14，返回"原来有没有"
 		ok(bool(pos_a.call("pos_remove", 7)) == true, "pos_remove(7) == true（表里有）")

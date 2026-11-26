@@ -17162,3 +17162,207 @@ python3 $MAIN/tools/frame_diff.py --orig $WT/.agent-work/a/end_o --mine $WT/.age
    实际静态骨架摊在 `build()` + `_shop_page` + `_build_right_column` + `_build_skin_block` +
    `_build_pending_block` 五个函数里（净删 **118** 行）。台账的"手抄区间"列只覆盖 `build()`，
    **对"helper 里造树"的屏会低估**。
+## 100. T50：`client/tools/*_check.gd` 那 1 961 条 headless 断言的**期望值来源**第一次被审 —— `M`-镜像 **27 → 3**（3 条保留且注明）、断言 **1961 → 1978**、三条反面对照全部变红（2026-11-26，任务 T50 / `task-47`）
+
+### 100.1 为什么审这块（T37 点了名但没审）
+
+* `docs/06` §85（T37 测试自洽审计）原话：「**未审** `client/tools/*_check.gd` 那 717 条（属另一面，
+  但实例 A 的第 2/3 处说明那批也有同样的镜像问题）」。
+* 实例 A（`src/entity_drawer.rs::update_sprite` 的 `scale.x` 漏 `k`，**活了 19 天 / 557 commit**）
+  的第 3 处镜像**就在这块**：`client/tools/entity_drawer_check.gd::expect_sprite()`。
+  当时三处镜像（`tests/entity_drawer.rs` / `src/_scaffold/entity_drawer_class.rs` /
+  这份 GDScript）同时绿，**全仓没有一条断言问过"这具精灵在屏幕上多大"**。
+* `AGENTS.md` §0.5：「写测试的人不许同时是"判定测试通过标准的人"——自写断言只能证明自洽。」
+
+### 100.2 判据：只问一句「把实现改错，它会不会红」
+
+| 档 | 定义 | 含义 |
+|---|---|---|
+| `M` **镜像** | 期望值**由被测代码的同一套算术算出** ⇒ 改错**不会**红 | 零证据，且会**掩盖**真错误 |
+| `C` **契约** | 接口形状/节点存在/信号连上/**我方插桩计数**/**冻结字面常量** ⇒ 改错会红 | 回归保护，**不是**复原证据（`AGENTS.md` §0.2） |
+| `G` **真值** | 期望值有**外部出处**（反汇编 vaddr / 冻结语料 / 真帧像素 / 已入库 `fixtures/`） | 最强的回归保护 + 有证据档 |
+
+判据落在 `tools/headless_audit.py` 头部（**可复算**），实现里用两件东西：
+①**子句级**拆分（`a and b` 分开判，避免一条断言里的镜像被合取项掩盖）；
+②**局部变量污染传递**（`var want := expect_sprite(...)` ⇒ `kids[0].scale ≈ want["scale"]` 判 R2）。
+
+子码：`R1` 调本地重算 helper / `R2` 经变量传递 / `R3` 两个我方实现互证 / `R4` 我方计数的比例不变式 /
+`R5` set→get 往返 / `R6` 断言自己写着「镜像」；`C1` 接口形状 / `C2` 插桩计数 / `C3` 冻结常量 /
+`C4` 聚合布尔 / `C6` 两个运行期观测互比；`G1` 带 vaddr / `G2` 带语料-真帧出处。
+
+### 100.3 口径 · 两处**解析 bug**（本轮自己写错、自己抓到、自己修）
+
+第一版判据（commit `238cc1c` 那张表）报的是 **1468 条 / M 32**。修完两处 bug 后**同一份代码**复算是
+**1468 条 / M 27**，差 5 条全是第一版的误判：
+
+| # | bug | 症状 | 修法 |
+|---|---|---|---|
+| 1 | 扫描 `ok(` 时**没有屏蔽 `#` 注释** | 本轮写的**取证注释**里会出现 `ok(_expected_active(73,10,100))` 这种**历史写法**，被当成现存断言 ⇒ 虚增 | `_mask()` 同时屏蔽注释与字符串内容 |
+| 2 | 污染分析的正则不认 `:=` | GDScript 里 `var want := expect_sprite(...)` 是主流写法，`:=` 没被识别 ⇒ 镜像全漏判 | `ASSIGN_RE` 改成 `:?=` |
+
+另外撤掉了 3 条第一版的误判：`curve_on_screen_check._point_at()` 是**测试自己喂进去的输入**的
+生成式副本（断言 `line.point[k] == 输入[k]` 是"回声测试"，不是镜像）。
+
+⇒ **本节的最终读数一律用修好后的判据**。修复前的 27 条是拿最终判据跑 `238cc1c` 的 14 份脚本量出来的
+（`git show 238cc1c:client/tools/<f>.gd` 落到临时目录 + `GW2_AUDIT_TOOLS=<dir>`）。
+
+### 100.4 分布（14 个脚本，逐 `ok(...)` **静态调用点**）
+
+| 脚本 | all | M(修前) | M(修后) | C(修后) | G(修后) | 行数 |
+|---|---|---|---|---|---|---|
+| `assemble_check` | 133 | 2 | 0 | 111 | 22 | 753 |
+| `base_classes_check` | 90 | 4 | 0 | 89 | 1 | 402 |
+| `curve_on_screen_check` | 84 | 5 | 0 | 78 | 6 | 394 |
+| `draw_classes_check` | 128 | 1 | 0 | 125 | 3 | 570 |
+| `entity_drawer_check` | 310 | 12 | **1**（保留） | 268 | 41 | 1270 |
+| `function_drawer_check` | 113 | 0 | 0 | 111 | 2 | 420 |
+| `gdext_check` | 20 | 1 | 0 | 20 | 0 | 166 |
+| `obstacle_drawer_check` | 97 | 0 | 0 | 95 | 2 | 363 |
+| `plane_on_screen_check` | 69 | 2 | 0 | 58 | 11 | 410 |
+| `play_flow_check` | 186 | 0 | **2**（保留） | 172 | 12 | 1245 |
+| `process_loop_check` | 66 | 0 | 0 | 65 | 1 | 299 |
+| `recovered_view_check` | 40 | 0 | 0 | 40 | 0 | 447 |
+| `signal_classes_check` | 125 | 0 | 0 | 125 | 0 | 579 |
+| `spike_class_check` | 21 | 1 | 0 | 21 | 0 | 139 |
+| **合计** | **1482** | **27** | **3** | **1378** | **101** | 7457 |
+
+> 静态调用点 1468 → 1482（+14）是因为本轮**加**的断言多于删的；**运行期** 1 961 → **1 978**（+17，
+> 差额来自循环）。逐脚本：`entity_drawer` 367→**378**、`spike` 23→**27**、`plane` 96→**97**、
+> `play_flow` 233→**234**，其余 10 份**逐项不变**（一条都没少）。
+
+### 100.5 27 条 M 逐条：镜像的是谁 → 改成什么 → 真值从哪来 → 结果
+
+**A. 真镜像（14 条，`R1`/`R2`）—— 换成真值或"能被真实错误打破"的断言**
+
+| # | 位置 | 镜像的是谁的算术 | 改成什么（新真值从哪来） | 结果 |
+|---|---|---|---|---|
+| A01 | `entity_drawer_check` `kids[0].scale ≈ want["scale"]` | `src/entity_drawer.rs::sprite_transform`（`expect_sprite()` 是它的逐字副本） | **3 条屏幕像素真值**：`tex×|scale| = 21.333 px ±0.05`（闭式 `128·k/60`，k=10）、**宽==高（各向同性）**、`scale.x == −scale.y`（`0x4b9745`/`0x4b9749` 两条 `mulss`） | 绿；反面对照 A1 变 **3 红** |
+| A02 | `entity_drawer_check` `kids[0].position ≈ want["position"]` | 同上（position 分量） | **字面量 `Vector2(300, 100)`**（`0x4b9530`：`size×0.5 ± k·x`，k=10、x=5、y=5） | 绿 |
+| A03 | `entity_drawer_check` `label.position ≈ want_label` | `src/entity_drawer.rs::name_label_layout` | 镜像**降级为契约断言**（注释写明"契约断言，不含语义"）+ **2 条几何不变量**：标签水平中心落在精灵 x 上、垂直中心在精灵中心上方 | 绿（**2 条新断言**） |
+| A04 | `entity_drawer_check` `s1.position ≈ want2["position"]` | 同上 | 字面量 `Vector2(200, 115)`（k=10、x=−5、y=3.5）+ **屏幕高度 21.333 px** 一条 | 绿（**+1**） |
+| A05 | `entity_drawer_check` `kids[0].position ≈ want3["position"]` | 同上 | 字面量 `Vector2(600, 200)`（k=20）+ **k 翻倍 ⇒ 屏幕尺寸翻倍 = 42.667 px**（线性性） | 绿（**+1**） |
+| A06 | `entity_drawer_check` `b0.scale ≈ want_b0["scale"]` | 同上 | 字面量 `|scale| = 0.0416667`（`(10/60)·(128/512)`） | 绿 |
+| A07 | `entity_drawer_check` `b1.scale ≈ want_b1["scale"]` | 同上 | 字面量 `|scale| = 0.1666667`（`(10/60)·(128/128)`） | 绿 |
+| A08 | `entity_drawer_check` 512 层 vs 128 层的 `scale` 差异 | 同上 | **两层在屏幕上一样大 = 21.333 px**（`tex×|scale|` 与 `tex_w` 无关 ⇒ `unit` 若漏/取错立刻红） | 绿（**+1**） |
+| A09 | `entity_drawer_check` `sp0.position ≈ want_sprite["position"]` | 同上（位置表那条路） | 字面量 `Vector2(250, 110)`（表坐标 (0,4)、k=10） | 绿 |
+| A10 | `curve_on_screen_check` `_expected_revealed(12.0,10,100) == 60` | `0x4b67a0` 的 `min(len, trunc(30·(frac−active)))` | **只断言脚本里的镜像函数** ⇒ 换成实现侧冻结真值：`feed_functions == 60` + `function_point_total == 60`（`0x4b67a0`） | 绿；反面对照 B 变红 |
+| A11 | `curve_on_screen_check` `_expected_active(73,10,100)` | `0x3be5f6` 的 `active_tick<tick && 30·d < len+1800`（**严格小于**） | 换成问实现：`function_count == 1`（d=63 ⇒ 1890<1900） | 绿（**+1**） |
+| A12 | `curve_on_screen_check` `not _expected_active(74,10,100)` | 同上 | 换成一条**真语义**：`active_ids 空 但 function_count == 1` ⇒ **「判出界」与「真删」是两件事**（删除推迟到喂点） | 绿（**+1**） |
+| A13 | `plane_on_screen_check` `written == _expected_revealed(177.0,…)` | 同 A10 | 冻结真值 `5310`（`30·177`，比 `total=5314` 少 4 ⇒ 还没揭满） | 绿 |
+| A14 | `plane_on_screen_check` `final_tick ≈ _expected_final_tick(…)` | `ceil(total/30)+active` | 冻结真值 `178.0`（`ceil(5314/30)`） | 绿 |
+
+**B. 冻结真值 / 真帧尺寸（2 条，`R1`/`R6` 误判纠正后的真改造）**
+
+| # | 位置 | 原判 | 改成什么 | 结果 |
+|---|---|---|---|---|
+| B01 | `plane_on_screen_check` `last_transform.x/y/s` ≈ `plane_size*0.5` / `derived_s` | 与**自己读回来的尺寸**比 ⇒ 镜像 | 与 `BOARD_PIXELS`（`.tscn` 契约常量）与字面量 `20.0`（`500/50`，`0x1b9fc8` 的 50.0）比 | 绿 |
+| B02 | `spike_class_check` `by_prims == expected and by_formula == expected` | 一条断言里**两个我方实现互为 oracle** | **拆成两条**，各自只对**冻结真值表** `{0:0, 1:2, 2:20, 3:102}`（`docs/16` §21 的分支结构）⇒ 任一侧错都红 | 绿（**+4**）；反面对照 C 变 **4 红** |
+
+**C. 属性接线（13 条，`R5` 往返）—— 源码里加「契约断言，不含语义」，判档改成 `C1-shape`**
+
+`base_classes_check`（`ads_slot`×2 / `show_global` / `owned`）、`draw_classes_check`（`flip_y`）、
+`entity_drawer_check`（`team_color` / `texture_size`）、`gdext_check`（`axis_mode`）、
+`plane_on_screen_check`（`board_scale` / `flip_y`）、`signal_classes_check`（`input_text` /
+`long_press_input_text` / `caret_condition`）、`spike_class_check`（`axis_mode`）。
+
+它们测的是「`@export` 属性有没有接到 Rust 字段」（**本来就该自洽**），不是算法。
+处置：①每处上方加 `# T50：**契约断言，不含语义**` 注释 + 断言消息尾加「（契约断言）」；
+②**补语义**：`team_color` 加了「**改队色 ⇒ 画出来的图元颜色跟着变**」（`last_arc()` 的 [8] 分量），
+`flip_y`/`board_scale`/`axis_mode` 的语义断言本来就在相邻行（`line.scale=(s,−s)` / 线数 102 等）。
+
+**D. 保留的 3 条 M（`kept=y`，注释里写清它保什么、不保什么）**
+
+| # | 位置 | 为什么保留 |
+|---|---|---|
+| D01 | `entity_drawer_check` `label.position ≈ want_label` | 只验「布局被写下」；语义在紧接的两条几何不变量上 |
+| D02 | `play_flow_check` `_batch_bounds(got) == _batch_bounds(want)` | **差分对照**：Rust 驱动 vs 本脚本独立扫描（两份实现、两份语言）。抓单边错误有效，但**没有外部真值可换**；真正的冻结真值断言就在它上一行 `== [[10,20,60],[60,70,100],[100,110,120]]`（本轮新增） |
+| D03 | `play_flow_check` `_batch_bounds(rb) == _batch_bounds(wb)` | 同上，跑在**冻结回放语料**上；边界无外部真值表可对，语料本身登记在 `fixtures/guardrails.json` 的 corpus sha256 |
+
+### 100.6 反面对照：**临时把被测实现改坏，确认那几条变红**（三次都复原，`git diff src/` 为空）
+
+脚本：`.t50/counter_test.sh`（**不进仓库**；配方写在这里可复跑）：
+
+```bash
+cp <impl.rs> /tmp/bak                     # 1) 备份
+sed -i '<改坏>' <impl.rs>                  # 2) 改坏
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+"$GODOT" --headless --path client --script res://tools/<check>.gd    # 3) 必须红
+cp /tmp/bak <impl.rs> && cargo build … && cp …                        # 4) 复原 + 再跑必须绿
+```
+
+| # | 把哪处实现改坏 | 期望变红的断言 | 实测 |
+|---|---|---|---|
+| **A** | `src/entity_drawer.rs::sprite_transform` 的 `scale.x` **改回历史 bug**（`(s*k/60)*unit` → `s/60`，实例 A 原样） | A01 的三条（各向同性 / `scale.x==−scale.y` / 真机几何下各向同性） | **3 红**（`ENTITY_DRAWER 375/3`）⇒ 复原后 `378/0`。**注意：改造前的镜像那条仍然是绿的** —— 这正是实例 A 能活 19 天的原因 |
+| **B** | `src/_scaffold/graphwar_plane_class.rs` 的 `REVEAL_POINTS_PER_TICK` `30.0 → 20.0` | A10 的冻结真值 60（以及整条链上的 60/90/100） | **27 红**（`CURVE_ON_SCREEN 69/27`）⇒ 复原后 `96/0` |
+| **C** | `src/axis_drawer.rs::line_count` 主轴条数 `2 → 3` | B02 拆开后的「闭式公式 == 冻结真值」三条 + `.tscn` 那条 | **4 红**（`SPIKE 23/4`）⇒ 复原后 `27/0` |
+
+### 100.7 门槛（本批全部跑过）
+
+| 项 | 读数 | 命令 |
+|---|---|---|
+| headless 14 脚本 | **1978 / 0**（基线 1961 / 0；逐脚本见 §100.4） | `for f in …; do "$GODOT" --headless --path client --script res://tools/$f.gd; done` |
+| `selftest` | **717 / 0 / 1 skip**，`missing=0(claimed 0 / degraded 0 / silent 0)` | `HOME=$WT/.fakehome CARGO_TARGET_DIR=$WT/.cargo-target bash client/run.sh selftest` |
+| `cargo test --offline` | **1795 / 0 / 1 ignored** | 同左 |
+| `cargo test --offline --features gdext-bindings` | **1917 / 0 / 1 ignored** | 同左 |
+| 三轴 `fire` | **647**（`结算批 1080；内容命中 647`） | `cargo run --release --offline -q --example replay_attrib -- --dir <快照> --drive fire --policy default --json f.jsonl` |
+| 三轴 `batch` | **647** | 同上 `--drive batch` |
+| 三轴 `batch_conv` | **637**（`内容命中 637/1080 (59.0%)`） | `cargo run --release --offline -q --example batch_conv -- --dir <快照> --policy strict` |
+| `tools/check_doc_refs.py` | **rc=0** | `python3 tools/check_doc_refs.py` |
+| 判据自检 | `python3 tools/headless_audit.py --self-test` **PASS**（正对照 5 + 反面对照 3 + 历史形状 3） | 同左 |
+
+### 100.8 复跑
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild WT=$MAIN/.agent-work/cg/wt-t50
+export CARGO_HOME=$MAIN/.reference/cargo-home CARGO_TARGET_DIR=$WT/.cargo-target HOME=$WT/.fakehome
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+
+cargo build --offline --features gdext-bindings            # 1) 客户端内核（**必须带这个 feature**：
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so   #    EntityDrawer 等类只在它下面注册）
+"$GODOT" --headless --path client --import
+
+python3 tools/headless_audit.py --self-test               # 2) 判据自检（必须 PASS）
+python3 tools/headless_audit.py                           # 3) 出表 + 统计
+#    想复算"修复前"：git show 238cc1c:client/tools/<f>.gd 落到一个目录，再
+#    GW2_AUDIT_TOOLS=<那目录> python3 tools/headless_audit.py
+
+for f in assemble_check base_classes_check curve_on_screen_check draw_classes_check entity_drawer_check \
+         function_drawer_check gdext_check obstacle_drawer_check plane_on_screen_check play_flow_check \
+         process_loop_check recovered_view_check signal_classes_check spike_class_check; do
+  "$GODOT" --headless --path client --script res://tools/$f.gd | grep -E '[0-9]+ passed'; done   # 1978
+```
+
+### 100.9 遗留 / 下一批挑什么 / 我写错了什么
+
+**遗留（下一批的靶子，按"离核心路径远近"排序）**
+
+1. **`C2-probe` 仍有 718 条**（占 48%）：`int(x.call("ring_count")) == 1` 这类"我方插桩计数 == 字面量"。
+   它们**不是**镜像（改错会红），但**不证数值语义** —— 是这批脚本"全绿却漏 bug"的结构性原因。
+   下一批该挑 `entity_drawer_check` / `plane_on_screen_check` 里**能换成屏幕像素真值**的计数断言。
+2. **`C3-frozen` 232 条**：冻结字面常量，能防回归，但常量是我方按同一套理解手算的
+   ⇒ **不构成复原证据**（`AGENTS.md` §0.2）。值得把其中"能在真帧上量到"的（棋盘几何、窗口尺寸、
+   按钮 bbox）换成 `fixtures/` 里的实测值。
+3. **`G2-corpus` 只有 11 条**：整批脚本里真正指到冻结语料/真帧的只有 11 条，剩下 90 条 `G1` 全靠
+   反汇编 vaddr。**下一步该做的是**：给 `curve_on_screen_check` / `plane_on_screen_check` 接上
+   `fixtures/board_geometry_equiv.tsv` 那类**真帧实测表**（本轮只在 `entity_drawer_check` 用了它）。
+4. **本轮的 3 条 `kept` M**（D01–D03）：D02/D03 是差分对照，要换成真值得先做一张
+   **结算批边界的冻结真值表**（在 403 份快照上跑一遍、入库成 `fixtures/`）。本轮没做。
+
+**我写错了什么（不藏）**
+
+* 第一版判据有**两处解析 bug**（注释没屏蔽、`:=` 没识别），commit `238cc1c` 报的是
+  **1468/32**，修好后同一份代码是 **1468/27** —— 差 5 条全是误判（详见 §100.3）。
+  本轮**没有** amend 那个 commit，而是在这里和 `fixtures/headless_assertion_audit.tsv` 的表头
+  同时改正，并保留两套读数对照。
+* 第一版还把 `curve_on_screen_check._point_at()` 当成镜像 helper（它其实是**测试输入**的生成式
+  副本，断言 `line.point[k] == 输入[k]` 是回声测试）⇒ 已从 `LOCAL_REIMPL` 里撤掉。
+* `plane_on_screen_check` 的 `total` 我先猜成 100（那是 `curve_on_screen_check` 的 `TOTAL`），
+  实测是 **5314**（`scene.total_points`）、`final_tick = 178`。写死真值之前必须**先量**，
+  这一条我量了两次才对。
+* **`expect_label_position()` 的两个新不变量第一版判错了**：我按 `label.size`（25×40）算，
+  实际布局用的是 `get_minimum_size()`，而 headless 没有字体 ⇒ `mw=mh=0`。
+  改成按 `mw/mh` 算、并在断言消息里写明"headless 下 mw=0 ⇒ 左上角对齐"，才既绿又有意义。
+* 判据的**口径边界**（可能漏什么）：纯静态判据，只看文本与局部数据流，**不看跑起来会不会红**。
+  `C3-frozen` 里仍可能混着"抄错的常量"（恒真）；`R3-two-ours` 用正则识别"两边都不像字面量"，
+  可能把"观测值 vs 有出处的字面量"误判成 M（**偏严**，宁多报 M 不漏 M）。
