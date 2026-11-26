@@ -13313,3 +13313,159 @@ PY
 4. **`docs/06` §76.6 第 6 条"修正常数横向 10 px 机制未知"** —— 现在有解，而且是**两条**：
    `Label` 该是 LEFT（不是 CENTER）+ 修正串该带**内核 `correction_text` 那个前导空格**
    （§79.4(a) 的四选一表）。不是"容器几何/HBox 分配"。
+
+## 82. 数据结构还原审计（第一轮）：80 个结构体逐项对表 —— **78 `match` / 1 `mismatch`(只登记) / 1 `unknown`**；评分 sret 从 3 字段**补到 4 字段**、48 字节个体补齐第 4 分量（2026-11-26，任务 T32 / `task-29`）
+
+> 这一节补的是 `AGENTS.md` §0 里**最没被系统审过的一条**：「数据结构能对上」。
+> 之前 527 个可归属函数已按文件/边界对齐（§74），但**没有任何一轮逐项对过字段集合/顺序/偏移/大小**。
+> 这类偏差**不会让 `cargo test` 变红**（多一个/少一个字段，行为可以完全一致），
+> 所以在缺陷表上是空白 —— 本轮把它变成一张**可复算的表**：
+> [`fixtures/struct_audit.tsv`](../fixtures/struct_audit.tsv)（80 行），
+> 判据与清单**先预注册**在 [`fixtures/struct_audit_plan.txt`](../fixtures/struct_audit_plan.txt)（`b8faeec`，早于本表）。
+
+### 82.1 取证方法（四档，判据先写死）
+
+| 档 | 名字 | 怎么取证 | 给出什么 | 为什么可信 |
+|---|---|---|---|---|
+| **E1** | serde 名串 | **`.data.rel.ro` 的 `&'static str` 槽**：槽 = `{ptr,len}` 两字，`ptr` 的 `R_X86_64_RELATIVE` addend 是串首址、`len` 是**编译期长度**；`read(addend,len)` 必须**整体**匹配 `struct <Name> with N element(s)` | **字段数 N** | `serde_derive` 从字段个数直接生成这条串，改一个字段数它就变 |
+| **E2** | `Serialize` 代码顺序 | `lea rsi,[rip+名]` + `mov edx,LEN` + `call <serialize_field 单态>` 三条连续指令；**代码顺序 = 声明顺序 = 线上键序** | **字段名 + 顺序** | `#[derive(Serialize)]` 生成的代码**就是**线格式定义；`LEN` 必须等于文件里读到的字节数（自校验） |
+| **E3** | 单态/偏移 | 同一 `serialize_field` **单态地址 = 同一类型**；不同地址 = 不同类型（枚举各一个单态）。`Serialize(&self)` 里读 `self+0xNN` 给出**字段偏移** | **类型类 + 偏移** | 指令立即数与 `self+偏移` 都是编译期常量 |
+| **E4** | sret 尺寸 | **下界** = 被调方写回的最后一个偏移 + 宽度；**上界** = 调用方只从返回缓冲拷走多少字节 | 非 serde 结构体的**大小** | 两侧夹逼；单侧只算推断 |
+
+**两条踩过的坑（必记）**：
+
+1. **Rust 字面量没有 NUL 终止**，`.rodata` 里相邻串**背靠背**。E1 若"在 `.rodata` 里正搜 `struct X with N elements`"，
+   贪婪的 `elements?` 会把下一个串的首字母 `s` 吃进去（`struct LockInfoEvent with 1 element` + `struct NameInfoEvent…`），
+   **下一个结构体整体漏掉** —— 实测这样只找到 **57/67** 条（漏的 10 个里就有 `NameInfoEvent`）。
+   ⇒ E1 必须走**槽里的编译期长度**，不能靠搜串。
+2. **`tools/addr_probe.py callers` 的两种形态都要收**：串地址可能只写在 `.data.rel.ro` 的槽里
+   （报成「reloc slot addend」），rip 直引为 0 —— 只看 `lea` 会得出「这个串没有引用者」的错结论。
+
+### 82.2 统计（80 行 = 74 个线上事件 + 3 个负载结构体 + 2 个 sret/布局结构体 + 1 个 unknown）
+
+| 判定 | 行数 | 说明 |
+|---|---|---|
+| `match` | **78** | 74 个事件行 **全部 match**（字段数/名字/顺序逐项相同；10 个空体事件按"无 `with N elements` 串"核对）＋ `GraphwarColor` / `GameInfo` / `Individual` |
+| `mismatch` | **1** | `EventInfo` —— **我方根本没有这个结构体**（只登记，见 §82.4） |
+| `unknown` | **1** | `ScoringContext`（我方结构体）—— 二进制里评分核心是**自由函数**，无法证明原版"没有"这个结构体（见 §82.5） |
+
+**本轮审计发现的偏差共 4 处**，处置如下（表里的判定按**当前源码**记，所以修好的两处现在是 `match`，
+备注里写明"审计发现 = mismatch、改后 = match"）：
+
+| # | 结构体 | 偏差 | 处置 |
+|---|---|---|---|
+| 1 | `Evaluation` | 二进制 4 字段 / 我方 3 字段（**大小都是 24，只看 `size_of` 发现不了**） | **已修**（§82.3-a） |
+| 2 | `Individual` | 二进制 `+0x2c` 还有第 4 个评分分量 / 我方空着（**大小都是 48**） | **已修**（§82.3-b） |
+| 3 | `EventInfo` | 原版有这个 2 字段结构体 / **我方完全没有** | 只登记（§82.4-2，缺字段顺序与宽度证据） |
+| 4 | `GameInfo` | 5 个字段原版是**枚举**、`current_player_count` 是整数、`address`/`room_name` 是两个不同串类型 / 我方用 `u8/u32/String` | 只登记（§82.4-1，改它要引入 5 个枚举 + 清理重复定义） |
+
+协议侧为什么几乎全 `match` 而且要**如实说明**：`WIRE_SPEC` 的字段表本来就是从同一条取证链
+（`tools/wire_fields.py`，自带 N / 长度 / 反序列化三条自校验）生成的。本轮的价值不是"发现协议错"，
+而是把它变成**可复算、可回归的表**，并且第一次把**类型**（E3 单态）也纳入比对 —— 类型这一列逮到了
+`GameInfo` 的 5 个枚举字段（§82.4），那是此前从没记过的一类偏差。
+
+### 82.3 已修（每处一个 commit，门槛与三轴见 §82.6）
+
+#### (a) `Evaluation`：**3 字段 → 4 字段**（24 字节 sret）
+
+`src/graphwar_function_evolutionator.rs`。`逐位` 证据 = 评分核心 `0x51a750` 对 sret 指针 `%rcx` 的四个写回点：
+
+```text
+0x51b10d  movsd qword ptr [rcx],       xmm1   ; +0x00  f64  score
+0x51b11d  movsd qword ptr [rcx + 8],   xmm0   ; +0x08  f64  dist
+0x51b111  mov   dword ptr [rcx + 0x10], eax   ; +0x10  u32  hits
+0x51b114  mov   dword ptr [rcx + 0x14], esi   ; +0x14  u32  ← 本轮补上的第 4 字段
+```
+
+**尺寸夹逼（`推断` 档）**：下界 = 最后写回 `[rcx+0x14]` 宽 4 ⇒ ≥ `0x18`；上界 = 调用点 `0x51bc93`
+（在 `0x51b440` 内）用 `lea rdi,[rsp+0x170]` 传 sret，返回后**只拷 24 字节**出去
+（`0x51bce5 movdqu xmm0,[rsp+0x170]` 16 字节 + `0x51bcf4 mov rdx,[rsp+0x180]` 8 字节）⇒ **24 字节**。
+
+⚠️ **改前为什么一直没被发现**：3 个字段 = `f64+f64+u32` = 20 字节，**靠 `f64` 的 8 字节对齐被补到 24**
+⇒ 只看 `size_of` 是"对"的，只有数**字段**才看得出少一个。第 4 字段的语义（T28 §78.3 的指令链）：
+开火结果项里 `kind == i64::MIN+3` 的 `payload >> 32` 累加（唯一累加点 `0x51acc8`），
+分数里只以 `−(esi·step·100)` 出现且仅当"有效命中数 > 0"。**本实现恒 0 ⇒ 行为影响 0**
+（`addsd` 加 `+0.0`，逐位相同），所以这一处改的是**数据结构**，不是行为。
+原版字段名未知（只能看到它被 `%esi` 写）⇒ 我方字段名就叫 `esi` 并在文档里写明这一点。
+
+#### (b) `Individual`：48 字节个体**补齐第 4 个评分分量**
+
+`逐位` 证据：`0x51bccf lea rcx,[r14+r14*2]` + `0x51bcd3 shl rcx,4` ⇒ 步长 `n*3*16` = **48 字节**；
+评分四元组被拷进 `+0x18` / `+0x20` / `+0x28`（`0x51bce5 movdqu` → `+0x18`；`0x51bcf4 mov rdx,[rsp+0x180]`
++ `0x51bcfc mov [rax+rcx+0x28],rdx` ⇒ `{hits,esi}` 是**一次 8 字节整体拷贝**）。
+改动前我方 `+0x28` 只放 `hits`、`+0x2c` 空着 —— 同样是"大小对、字段少一个"。
+
+两处都加了 **layout 断言**（`std::mem::size_of` + `offset_of!`），把偏移钉死：
+`Evaluation` 0/8/0x10/0x14、`Individual` 0/0x18/0x20/0x28/0x2c。
+
+### 82.4 只登记、不改（**证据一边倒但改动超出本轮范围**，或证据不足）
+
+| # | 结构体/事实 | 二进制证据 | 我方现状 | 为什么不改 |
+|---|---|---|---|---|
+| 1 | `GameInfo` 的**字段类型** | 9 个字段各有 `serialize_field` 单态：`game_state`=`0x3cc260`(enum GameState)、`axis_mode`=`0x3cb560`、`function_mode`=`0x3cb670`、`turn_mode`=`0x3cbf70`、`time_mode`=`0x3cbce0`（**各自一个独立枚举单态**）、`current_player_count`=`0x3cc060`（整数族）、`room_name`=`0x3cb250` 而 `address`=`0x3cbab0`（**两个不同的串类型**）、`locked`=`0x3cbb80`(bool) | 两处定义：`src/_scaffold/protocol.rs:1844` 用 `String/i64/bool`；`src/events.rs:356` 用 `u8/u32/String`（注释自认"类型未证实"） | 要引入 5 个枚举类型并决定用哪一份重复定义（我方另有 7 处 `AxisMode`/`TurnMode`/`TimeMode`/`GameState` 的重复枚举），是**重构**不是修一处字段；本轮按规格"只修证据一边倒的最小改动"处理 ⇒ 登记 |
+| 2 | `EventInfo`（N=2） | E1 `slot=0x950560→0x1bcba0 N=2`；E2（`Deserialize` visitor `0x396de0`）读到字段名 **`event`@`0x1bc845`**、**`tick`@`0x1b925c`** | **我方完全没有这个结构体** | 字段**顺序与宽度都未知**：全 `.text` 没有函数按 `lea rsi/mov edx/…/call` 形状序列化 `event`+`tick` ⇒ 拿不到 `serialize_field` 单态就定不了类型与顺序。**缺的证据**：需要 frida 在它的构造/序列化点取样 |
+| 3 | 源码构造差异：原版**每个事件一个 `struct <Name>Event`**（67 个 serde 结构体名串为证） | E1 的 67 条串 | 我方是一张 `WIRE_SPEC` 表（`&'static [(&'static str, ValType)]`） | 字段集合/顺序能逐项对上，但**「结构体」这个语言构造没对上**。改它 = 把 74 行表拆成 74 个结构体 + 重写全部序列化路径 ⇒ 只登记 |
+| 4 | 重复定义：`GameInfo`（2 处）、`GraphwarColor`（2 处，字段一致） | 原版各只有**一条** serde 结构体名串 | 两处定义 | 合并要动 `lan_broadcaster` 等调用点；登记待后续轮次 |
+
+### 82.5 `unknown` 清单（缺什么证据，一条条写清）
+
+| 结构体 | 已有证据 | 缺的证据 | 要拿到它需要 |
+|---|---|---|---|
+| `ScoringContext`（我方） | `推断`：评分核心 `0x51a750` 的参数是 `rdi`=sret、`rsi`/`rdx`=两个指针、`ecx`=u32、`xmm0`=f64（调用点 `0x51bc7a`–`0x51bc93`）⇒ **没有任何上下文结构体被传进去** | 无法证明原版**没有**这个结构体（可能只是内联/拆参） | frida 在构造点看栈/寄存器，或找到 `ScoringContext` 对应的原版函数边界 |
+| 非 serde 结构体（本轮没审的） | — | 没有 E1（没有 `struct … with N elements`）可用，只有 E3/E4 | 优先挑**被 `movaps/movdqu` 按固定偏移读写**的那些，逐个做 E4 夹逼 |
+
+### 82.6 门槛与三轴（每处改动后跑，一位不许退）
+
+| 项 | 读数 | 命令 |
+|---|---|---|
+| `cargo test --offline` | **1774 通过 / 0 失败 / 1 ignored**（基线 1772 + 本轮新增 2 条 layout 断言） | `cargo test --offline` |
+| `cargo test --offline --features gdext-bindings` | **1889 通过 / 0 失败 / 1 ignored**（基线 1887 + 同 2 条） | 同上 + `--features gdext-bindings` |
+| `tools/coverage_matrix.py --check` | **OK**（527 函数；逐位 **89** / 观测 **438** / 推断 0；改了 `src/` ⇒ 重跑 `tools/coverage_matrix.py`，生成物一并在本 commit 里） | `$PY tools/coverage_matrix.py --check`（需 `COVERAGE_MATRIX_UPSTREAM`） |
+| `tools/check_doc_refs.py` | **退出码 0**（无死链，白名单条目逐条有理由） | `$PY tools/check_doc_refs.py` |
+| 三轴 `fire` / `batch` / `batch_conv` | **647 / 647 / 637**（一位没退；火/批两轴另含种类 1075、死亡 366/385、挖洞 207/294 全绿；`batch_conv` 死亡 347/385） | 见 §82.7 |
+
+> 三轴读数逐项（`--check-baseline` 自带语料指纹前置比对，语料未动）：
+> `fire` = 结算批 1080 · 内容 **647** · 种类 1075 · 死亡 366/385 · 挖洞 207/294 —— 全部一致；
+> `batch` 同上；`batch_conv` = 内容 **637** · 种类 1075 · 死亡 347/385 · 挖洞 207/294 —— 全部一致。
+
+### 82.7 复跑命令（全套）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=<你的 target>
+export PY=$MAIN/.reference/venv/bin/python
+R=$MAIN/.reference/replays/gw2-replays-snapshot/replays
+
+# ① 审计表（重算 = 现场跑一遍二进制取证；--check = 只比不写）
+$PY tools/struct_audit.py tsv            # 写 fixtures/struct_audit.tsv
+$PY tools/struct_audit.py tsv --check    # 与磁盘上的表逐字节比
+$PY tools/wire_fields.py --verify        # 协议侧 E1/E2 的既有自校验（N 自校验失败 0 条）
+$PY tools/struct_audit.py serde          # 全部 67 条 serde 名串 + 引用函数
+$PY tools/struct_audit.py fields GameInfo --offsets   # 单个结构体的取证明细
+
+# ② 门槛
+cargo test --offline
+cargo test --offline --features gdext-bindings
+COVERAGE_MATRIX_UPSTREAM=$MAIN/.reference/upstream $PY tools/coverage_matrix.py --check
+$PY tools/check_doc_refs.py
+
+# ③ 三轴（分开跑，数字必须带轴名）
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive fire  --policy default --json f.jsonl
+$PY tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire  --snapshot $R
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive batch --policy default --json b.jsonl
+$PY tools/bit_exact_attrib.py --json b.jsonl --check-baseline --axis batch --snapshot $R
+cargo run --release --offline -q --example batch_conv   -- --dir $R --policy strict --drive batch --json c.jsonl
+$PY tools/bit_exact_attrib.py --json c.jsonl --check-baseline --axis batch_conv --snapshot $R
+```
+
+### 82.8 遗留 / 下一轮建议
+
+1. **`GameInfo` 的类型**（§82.4-1）：把 5 个枚举字段改成真枚举 + `current_player_count` 定宽度
+   （`0x3cc060` 是整数族单态，i64/u64/usize 三者未分），并合并两处定义。要一起做的还有
+   **重复枚举清理**（我方 7 处 `AxisMode` 等）。
+2. **`EventInfo` 的字段顺序与宽度**（§82.4-2）：需要 frida 在构造点取样，或找到它的 `Serialize` 内联点。
+3. **`address` vs `room_name` 是两个不同的串类型**（`0x3cbab0` ≠ `0x3cb250`）：是 `String` vs `&'static str`？
+   还是 `Cow`？⇒ 需要看 `GameRemoved.game_address` 的构造点。
+4. **非 serde 结构体只审了 2 个**（`Evaluation` / `Individual`）。下一轮挑"被 `movaps/movdqu`
+   按固定偏移读写"的结构体做 E4 夹逼 —— 收益最大的是**返回结构体**（sret）和**按值传的结构体**。
