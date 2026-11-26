@@ -1,4 +1,4 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://src/main.gd" id="1_main"]
 
@@ -16,6 +16,7 @@
 [ext_resource type="Script" path="res://src/views/IAP_IOS.gd" id="4_iaplus"]
 [ext_resource type="Script" path="res://src/views/IOS_album_holder.gd" id="5_iosalbum"]
 [ext_resource type="Script" path="res://src/views/Android_mediastore_holder.gd" id="6_ms"]
+[ext_resource type="Script" path="res://tools/recovered_ad_holder_stub.gd" id="7_adh"]
 
 [node name="GraphwarRootNode" type="GraphwarRootNode"]
 
@@ -75,3 +76,11 @@ anchors_preset = 0
 offset_right = 40.0
 offset_bottom = 40.0
 script = ExtResource("6_ms")
+
+; 【2026-11-26 T41】`Ad_holder` 节点：原版 `main.tscn` 里它有 `Ad_holder.gd`（AdMob 插件脚本），
+; 那份依赖 7 个原生类型、物理不可得（T33 判 impossible）。但**原版 `AdContainer.gd`** 只用到它两个
+; 成员（`signal ad_loaded` / `var ad_size`）—— 这两个由我方替身补上，于是原版 `AdContainer.gd`
+; 一行不改就能跑（`campaign`/`replay_lobby`/`play_screen`/`player_screen`/`lan_lobby` 五屏都有它）。
+; ⚠️ 这个节点的**脚本不是我方原版字节**，是我方替身：`client/tools/recovered_ad_holder_stub.gd`。
+[node name="Ad_holder" type="GraphwarAdSwitch" parent="."]
+script = ExtResource("7_adh")

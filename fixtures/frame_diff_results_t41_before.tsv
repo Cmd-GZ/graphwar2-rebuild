@@ -1,0 +1,6 @@
+# 门槛 = fixtures/frame_diff_thresholds.txt sha256 9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873（预注册）
+screen	verdict	l1_size_ok	l1_ok	l1_dmean_max	l1_dmean	l1_top_color	l1_top_share_pp	l2_ok	l2_blocks_over	l2_max_block_dmean	l2_worst_block	l3_evaluated	l3_diff_px	l3_diff_ratio	l3_max_channel_diff	l3_bbox	noise_max_orig	noise_max_mine
+menu	过	True	True	0.0	0.0,0.0,0.0	#0E251C,#0E251C	0.0	True	0	0.0	0,0	True	0	0.0	0	None	0.0	0.0
+replay_lobby	过	True	True	0.0	0.0,0.0,0.0	#0E251C,#0E251C	0.0	True	0	0.0	0,0	True	0	0.0	0	None	0.0	0.0
+replay_play	不过（L3）	True	True	0.018	0.018,0.016,0.009	#0E251C,#0E251C	0.0	True	0	0.42	2,2	True	1714	0.00077	255	770,447,1202,846	0.000121	0.000121
+replay_end	不过（L3）	True	True	0.018	0.011,0.011,0.018	#0E251C,#0E251C	0.0	True	0	0.692	3,3	True	1984	0.000891	255	770,447,1202,1155	0.0	0.000121
