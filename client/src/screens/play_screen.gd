@@ -2238,85 +2238,30 @@ func _simultaneous_announced() -> Array:
 				break
 	return out
 
-## 命中的**纯计算**（不改任何状态）：谁被打中、弹道第几个点打中的、停在哪。
-## 拆出来是为了让"算结果"（= 原版 `SynchronizingResults`）与"结果落地"
-## （= `ExecutingResults` 的 tick）分开 —— 后者在 Rust 的 `ShotLifecycle`（docs/16 §53）。
+## 命中表（= 原版 **`SynchronizingResults`** 那一步的结果：服务端在开火那一刻就把谁死算完）。
 ##
-## 规则走**内核掩膜**（`docs/120`，真值在 `shot_calculator::settle::resolve_points`）：
-## 障碍决定停点，士兵与靶子都不挡弹道，只在"点落在半径内"时判死；射手本人不参与。
-## ⚠️ 靶子与士兵塞进**同一个** `hit_test` 数组（`docs/131` §3.1）：内核第 3 个入参只当
-## "半径实体"用、回的 `hits` 是**下标**，所以下标 → 实体的映射靠下面的 `owners` 表。
-## **靶子必须在这里**，否则打靶关的靶子只是"画着玩的"（`docs/131` §1 的 bug）。
+## **判定本体在 Rust**：`GwShotFlow.judge()` → `src/graphwar_shot_calculator/settle.rs::resolve_points_owned`
+## —— 与内核 `hit_test`、以及 `settle::resolve` **同一个函数**（`docs/120` 的逐位等价性测试钉住）。
+## 掩膜规则（障碍决定停点、士兵/靶子都不挡弹道、点落进半径即死）、射手排除
+## （`0x3c4452` 有弹道点 / `0x3c3e81` 空弹道，两处比的都是开火记录 `+0x18` 的射手 **id**）、
+## 以及"第几点打中的"（`Hit.index`）全部由它给。
+##
+## 本函数只**递数据、收表**：`_soldiers` 原表（含 `alive`，死者由 Rust 排掉）、
+## `GwTargetSet.entities()`、`_obstacles`；射手用**士兵下标**（-1 = 不排除任何人）。
+## 旧实现里那张 `owners` 表与 `_first_point_within()` 的第二次半径扫描都删了 ——
+## 它们是同一条规则的重复实现（`docs/06` §81）。
 func _judge_shots(shots: Array) -> Dictionary:
-	var kills: Array = []
-	var target_kills: Array = []
-	var sources: Array[String] = []
-	var note := ""
-	var blocked := false
-	var stop := Vector2.ZERO
+	var rows: Array = []
 	for shot in shots:
-		var pts: PackedVector2Array = shot.points
-		var entities: Array = []        # hit_test 第 3 个入参：[{pos, radius}, …]
-		var owners: Array = []          # 与 entities 同下标：{kind: "soldier"/"target", …}
-		for si in _soldiers.size():
-			var s: Dictionary = _soldiers[si]
-			if not bool(s.alive):
-				continue
-			if is_same(s, shot.get("soldier", null)):
-				continue                      # 射手本人不参与致死判定
-			entities.append({"pos": s.pos, "radius": GwCore.SOLDIER_HIT_RADIUS})
-			# `index` = **士兵下标**：Rust 侧的落地队列只拿它认人
-			# （`ShotLifecycle` 不持有 GDScript 字典，见 `docs/16` §53.2）。
-			owners.append({"kind": "soldier", "index": si, "soldier": s, "pos": s.pos,
-				"radius": GwCore.SOLDIER_HIT_RADIUS})
-		for t in _targets.entities():
-			entities.append(t)
-			owners.append({"kind": "target", "target_id": int(t["target_id"]),
-				"pos": t["pos"], "radius": float(t.get("radius", GwTargetSet.HIT_RADIUS))})
-		if pts.size() == 0:
-			continue
-		stop = pts[pts.size() - 1]
-		# 没有实体但**有障碍**也要判：墙会把弹道拦住，实体在墙后就是安全的
-		# （`docs/30`：掩膜决定停点，士兵不挡弹道）。`_obstacles` 与画的是同一个数组。
-		if entities.is_empty() and _obstacles.is_empty():
-			continue
-		var judged := GwCore.hit_test(pts, entities, _obstacles)
-		sources.append(String(judged.source))
-		note = String(judged.note)
-		blocked = blocked or bool(judged.get("blocked", false))
-		var st = judged.get("stop", stop)
-		if st is Vector2:
-			stop = st
-		for idx in judged.hits:
-			var i := int(idx)
-			if i < 0 or i >= owners.size():
-				continue
-			var owner: Dictionary = owners[i]
-			var at := _first_point_within(pts, owner["pos"], float(owner["radius"]))
-			if String(owner["kind"]) == "soldier":
-				kills.append({"soldier": owner["soldier"], "index": int(owner["index"]),
-					"point": at, "pos": owner["pos"], "kind": "soldier"})
-			else:
-				target_kills.append({"target_id": int(owner["target_id"]), "point": at,
-					"pos": owner["pos"], "kind": "target"})
-	# 按**弹道先后**排：多个死者时，先被打到的先落（`docs/65` §1 的 tick 语义）。
-	kills.sort_custom(func(a, b): return int(a["point"]) < int(b["point"]))
-	target_kills.sort_custom(func(a, b): return int(a["point"]) < int(b["point"]))
-	return {
-		"kills": kills, "target_kills": target_kills, "stop": stop,
-		"blocked": blocked, "sources": sources, "note": note,
-	}
-
-## 弹道点序列里**第一个**落进 `radius` 的点序号。
-##
-## 与内核判死是同一条规则（`src/graphwar_shot_calculator/settle.rs::resolve_points`：点落在半径内即死），
-## 只是内核把它当内部细节（`SoldierHit.point` 没有出现在返回的 Dictionary 里），
-## 所以这里按同一个判据再算一次序号。找不到（不该发生）⇒ 取最后一点。
-func _first_point_within(pts: PackedVector2Array, pos: Vector2, radius: float) -> int:
-	for i in pts.size():
-		if pts[i].distance_to(pos) <= radius:
-			return i
-	return maxi(0, pts.size() - 1)
+		rows.append({"points": shot.get("points", PackedVector2Array()),
+			"shooter": _soldiers.find(shot.get("soldier", null))})
+	# `_soldiers` 是 `Array[Dictionary]`（**有类型的**数组），而扩展方法收的是无类型 `Array`：
+	# godot-rust 在边界上拒绝"把有类型的数组塞进无类型形参"（`copied array should have
+	# same type`，0.5.5 `array.rs:1225`）⇒ 这里显式铺一份无类型表。
+	var soldier_rows: Array = []
+	soldier_rows.assign(_soldiers)
+	return _flow.judge(rows, soldier_rows, _targets.entities(), _obstacles,
+		GwCore.SOLDIER_HIT_RADIUS)
 
 ## 命中表 → 状态行（`_shot_status` 那一行**不显示**，只给自检/诊断，`docs/125` §5）。
 func _note_shot_status() -> void:

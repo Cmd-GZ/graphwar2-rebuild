@@ -36,10 +36,19 @@ use crate::graphwar_game_state_manager::{PlannedKill, ShotEvent, ShotLifecycle};
 use crate::graphwar_play_screen_control::{
     BotTurn, LevelKind, LevelRules, MatchState, TurnAction, TurnClock, TARGET_TEAM,
 };
+use crate::graphwar_shot_calculator::settle::{resolve_points_owned, Target};
 use crate::graphwar_turn_manager::{PlayerTurns, RoundCollection, SubmitResult, SOLDIER_ID_NONE};
 
 /// 士兵下标 → `PlayerTurns` 内部 id 的偏移（见文件头"编号换算"）。
 const SOLDIER_ID_SHIFT: i64 = 1;
+
+/// 靶子 id 在 `Target` 表里的上偏移（区分"士兵下标"与"靶子 id"）。
+///
+/// 数值与 `client/src/screens/play_screen.gd` 的 `TARGET_ID_BASE` **同值**（1000），
+/// 但两处用途不同：界面上它给**实体 id** 编不撞的号；这里只用来把
+/// [`crate::graphwar_shot_calculator::settle::Target`] 的一张表切成两类。
+/// 它是我方的映射约定，**不是**原版常量。
+const TARGET_ID_BASE: i64 = 1000;
 
 /// 从 `Variant` 读一个整数（缺键/类型不对 ⇒ 默认值）。GDScript 的 `int(d.get(k, def))`。
 fn dict_int(d: &VarDictionary, key: &str, default: i64) -> i64 {
@@ -772,6 +781,166 @@ impl GwShotFlow {
     #[func]
     fn turns_used(&self) -> i64 {
         self.flow.turns_used()
+    }
+
+    /// 一次开火的**命中表**（原版 `SynchronizingResults`：服务端在开火那一刻就算完结果）。
+    ///
+    /// 这一格原来在 `.gd` 的 `_judge_shots()` 里 —— 它自己建实体表、自己调内核
+    /// `hit_test`、再**用同一个判据重算一遍点序号**（`_first_point_within()` 的注释
+    /// 写着"与内核判死是同一条规则…所以这里按同一个判据再算一次序号"）。
+    /// 现在判定本体只走 [`crate::graphwar_shot_calculator::settle::resolve_points_owned`]
+    /// **一份**，它回的 `Hit{index, arc}` 就是"第几点打中的"，不需要第二次扫描。
+    ///
+    /// 与 `.gd` 旧实现的三处**语义对齐**（不是改写，是照原版指令）：
+    ///
+    /// 1. **射手按实体 id 排除**：`0x3c4452`（有弹道点的分支）/ `0x3c3e81`（空弹道分支）
+    ///    比较的都是开火记录 `+0x18` 的射手 id；旧 `.gd` 用的是 `is_same()` 对象同一性
+    ///    （界面侧没有实体 id，只能拿字典引用比）。这里改成传**士兵下标**当 id。
+    /// 2. **死者不进表**：命中表是开火那一刻对着存活表算的（原版同样在 `SynchronizingResults`）。
+    /// 3. **`stop` 取弹道实际停点**（撞障碍 = 撞击点，否则最后一点）—— 与 `docs/14` §12.1 一致。
+    ///
+    /// 入参形状（与 `.gd` 一一对应）：
+    ///
+    /// ```text
+    /// shots       [{points: PackedVector2Array, shooter: int}]   # shooter = 士兵下标，-1 = 不排除
+    /// soldiers    _soldiers 原表：[{pos: Vector2, alive: bool}, …]   # 下标 = 士兵下标
+    /// target_rows GwTargetSet.entities()：[{pos, radius, target_id}, …]（只含活的）
+    /// obstacles   _obstacles：[{pos: Vector2, size: float}, …]
+    /// soldier_radius  GwCore.SOLDIER_HIT_RADIUS（PosInfo.radius 恒 0.5，docs/150 §Q1）
+    /// ```
+    ///
+    /// 返回 `{kills, target_kills, stop, blocked, sources, note}`：
+    /// `kills[i] = {kind:"soldier", index, point, pos}`、
+    /// `target_kills[i] = {kind:"target", target_id, point, pos}`（都按 `point` 升序 = 弹道先后）。
+    #[func]
+    fn judge(
+        &mut self,
+        shots: VarArray,
+        soldiers: VarArray,
+        target_rows: VarArray,
+        obstacles: VarArray,
+        soldier_radius: f64,
+    ) -> VarDictionary {
+        // ① 掩膜只放**障碍**（`docs/30` §2：把士兵画进掩膜会让弹道错误地停在士兵处）。
+        let mut mask = crate::plane::empty_mask();
+        for i in 0..obstacles.len() {
+            let Some(v) = obstacles.get(i) else { continue };
+            let o = v.to::<VarDictionary>();
+            let (x, y) = vec2_of(o.get("pos"));
+            let size = o.get("size").map(|v| v.to::<f64>()).unwrap_or(0.0);
+            crate::plane::rasterize(&mut mask, x, y, size, 0x00);
+        }
+
+        // ② 参评实体表：士兵（id = **士兵下标**）+ 靶子（id = TARGET_ID_BASE + target_id）。
+        let mut targets: Vec<Target> = Vec::new();
+        let mut soldier_pos: Vec<(f64, f64)> = vec![(0.0, 0.0); soldiers.len()];
+        for i in 0..soldiers.len() {
+            let Some(v) = soldiers.get(i) else { continue };
+            let s = v.to::<VarDictionary>();
+            let pos = vec2_of(s.get("pos"));
+            soldier_pos[i] = pos;
+            if !s.get("alive").map(|v| v.to::<bool>()).unwrap_or(false) {
+                continue; // 死者不进表（③ 命中表对着**开火那一刻**的存活表算）
+            }
+            targets.push(Target { id: i as i64, x: pos.0, y: pos.1, radius: soldier_radius });
+        }
+        let mut target_pos: Vec<(i64, (f64, f64))> = Vec::new();
+        for i in 0..target_rows.len() {
+            let Some(v) = target_rows.get(i) else { continue };
+            let t = v.to::<VarDictionary>();
+            let pos = vec2_of(t.get("pos"));
+            let radius = t.get("radius").map(|v| v.to::<f64>()).unwrap_or(soldier_radius);
+            let tid = dict_int(&t, "target_id", -1);
+            if tid < 0 {
+                continue;
+            }
+            target_pos.push((tid, pos));
+            targets.push(Target { id: TARGET_ID_BASE + tid, x: pos.0, y: pos.1, radius });
+        }
+
+        // ③ 逐发判定。停点/拦下是**跨发**累计的（同时回合的整批结算要合并成一份）。
+        let mut kills: Vec<(usize, i64, (f64, f64))> = Vec::new();
+        let mut target_kills: Vec<(usize, i64, (f64, f64))> = Vec::new();
+        let mut stop = (0.0f64, 0.0f64);
+        let mut blocked = false;
+        let mut judged: i64 = 0;
+        for i in 0..shots.len() {
+            let Some(v) = shots.get(i) else { continue };
+            let sh = v.to::<VarDictionary>();
+            let points: Vec<(f64, f64)> = match sh.get("points") {
+                Some(p) => p
+                    .to::<PackedVector2Array>()
+                    .as_slice()
+                    .iter()
+                    .map(|p| (p.x as f64, p.y as f64))
+                    .collect(),
+                None => Vec::new(),
+            };
+            if points.is_empty() {
+                continue; // 没有弹道点 ⇒ 这一发不参与（旧 `.gd` 同一个 `continue`）
+            }
+            let shooter = dict_int(&sh, "shooter", -1);
+            let owner = if shooter >= 0 { Some(shooter) } else { None };
+            // ↓ 判定本体：与 `graphwar_shot_calculator::settle::resolve`（以及内核
+            //   `hit_test`）**同一个函数**，这里没有第二份实现。
+            let out = resolve_points_owned(&mask, &targets, &points, owner);
+            judged += 1;
+            blocked = blocked || out.blocked;
+            stop = out.stop;
+            // `hits` 的顺序 = 弹道经过的先后（`Hit.arc` 递增）；`index` = 第几点打中的。
+            for h in &out.hits {
+                if h.id >= TARGET_ID_BASE {
+                    let tid = h.id - TARGET_ID_BASE;
+                    let pos = target_pos
+                        .iter()
+                        .find(|(t, _)| *t == tid)
+                        .map(|(_, p)| *p)
+                        .unwrap_or((0.0, 0.0));
+                    target_kills.push((h.index, tid, pos));
+                } else {
+                    let pos = soldier_pos.get(h.id as usize).copied().unwrap_or((0.0, 0.0));
+                    kills.push((h.index, h.id, pos));
+                }
+            }
+        }
+        // 按**弹道点序号**升序（多个死者时先被打到的先落；`docs/65` §1 的 tick 语义）。
+        kills.sort_by_key(|k| k.0);
+        target_kills.sort_by_key(|k| k.0);
+
+        let mut kill_rows = VarArray::new();
+        for (point, index, pos) in &kills {
+            let mut d = VarDictionary::new();
+            d.set("kind", &GString::from("soldier"));
+            d.set("index", *index);
+            d.set("point", *point as i64);
+            d.set("pos", to_vec2(*pos));
+            kill_rows.push(&d);
+        }
+        let mut target_rows_out = VarArray::new();
+        for (point, tid, pos) in &target_kills {
+            let mut d = VarDictionary::new();
+            d.set("kind", &GString::from("target"));
+            d.set("target_id", *tid);
+            d.set("point", *point as i64);
+            d.set("pos", to_vec2(*pos));
+            target_rows_out.push(&d);
+        }
+        let mut out = VarDictionary::new();
+        out.set("kills", &kill_rows);
+        out.set("target_kills", &target_rows_out);
+        out.set("stop", to_vec2(stop));
+        out.set("blocked", blocked);
+        // `sources` / `note` 只是状态行（`_status_label.visible = false`，自检读）的措辞，
+        // 不参与任何分支；旧 `.gd` 从 `GwCore.hit_test` 拿的那两个键在 gdext 版里
+        // 其实不存在（`HIT_KEYS` 只有 ok/hits/hit_points/first_hit/stop/blocked/error），
+        // 一直是 `"<null>"`。这里给一个真实的来源名。
+        let mut sources = VarArray::new();
+        for _ in 0..judged {
+            sources.push(&GString::from("resolve_points_owned"));
+        }
+        out.set("sources", &sources);
+        out.set("note", &GString::from(""));
+        out
     }
 
     /// 只读快照（自检/诊断）。
