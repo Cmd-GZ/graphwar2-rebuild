@@ -28,7 +28,7 @@ JSON）。本工具就是那条路的"按固定剧本发帧"版本：
   完整载荷），这也是"两侧吃到的字节一模一样"的证据。
 * 两侧用**同一份 fixture**：唯一的差别是 `--side` 标签与采集脚本的点击坐标。
 
-## 用法（一般由 `tools/frame_capture.py --flow match` 起；也可单独跑）
+## 用法（一般由 `tools/frame_capture.py --flow match|endgame` 起；也可单独跑）
 
     python3 tools/match_serve.py --fixture fixtures/frame_match_events.txt \\
         --tcp-port 46702 --udp-port 42968 --out <工作区>/serve.jsonl \\
@@ -36,6 +36,14 @@ JSON）。本工具就是那条路的"按固定剧本发帧"版本：
 
 触发：`--trigger-file` 指定的文件一出现 ⇒ 等 `--phase-gap` 秒 ⇒ 发 phase2。
 没给 `--trigger-file` 时用 `--auto-phase2 <秒>`（从 phase1 发完算起），默认 12 s。
+
+## T18：多相位（`--flow endgame` 用）
+
+fixture 里可以有**任意个** `[phaseN:屏名]` 小节：第 1 个连上就发，第 2..N 个各等一个触发文件。
+多相位用 `--trigger-files a,b,...`（逗号分隔，第 i 项 = 相位 i+2 的触发），
+每个相位的 tick 基准取 `[meta] tick_phase<k>`。**两相位 + `--trigger-file` 的老路
+（T8 的 `--flow match`）行为与日志逐行保持不变** —— 只是把 `if len(phases) > 1` 那一段
+写成了 `for index in range(1, len(phases))`，两相位时循环体恰好跑一次。
 """
 import argparse
 import hashlib
@@ -244,25 +252,22 @@ def pump_for(reader, seconds, stats, ctx=None):
                 return
 
 
-def serve(conn, addr, args, phases, stats, meta):
-    reader = FrameReader(conn)
-    log({'type': 'accepted', 'peer': '%s:%d' % addr})
-    # tick 轴（见 tick_now）：phase1 = 快照 tick，phase2 = 开火 tick（两者都来自真回放）
-    ctx = {'tick_base': (float(meta.get('tick_phase1', 6)), time.time()),
-           'tick_hz': float(meta.get('tick_hz', 60)), 'reply_tick': args.reply_tick,
-           'phase': phases[0][0], 'meta': meta}
-    stats['ticks'] = 0
+def phase_tick_base(meta, index):
+    """第 `index`（0 起）个相位期间服务器 tick 的**基准值**。
 
-    # ① 客户端连上后第一帧（真客户端发 NewConnectionRequest；`docs/07` 判别值 4）
-    first = reader.read_frame(args.handshake_wait)
-    if first:
-        log({'type': 'recv', 'name': first[0], 'body': first[1], 'bytes': len(first[2])})
-        stats['recv'].append({'name': first[0], 'body': first[1]})
-    else:
-        log({'type': 'no_client_frame', 'note': '客户端没说第一句，仍按剧本发 phase1'})
+    依次取 `[meta] tick_phase<index+1>`，没有就退化到 `tick_phase2`（2 相位的旧剧本只有
+    `tick_phase1`/`tick_phase2` 两个键，行为与 T8 时**逐字一致**）。
+    """
+    key = 'tick_phase%d' % (index + 1)
+    if key in meta:
+        return float(meta[key])
+    if index == 0:
+        return float(meta.get('tick_phase1', 6))
+    return float(meta.get('tick_phase2', 550))
 
-    # ② phase1 逐帧发出（**原样字节**，来自 fixture）
-    phase_name, payloads = phases[0]
+
+def send_phase(conn, phase_name, payloads, args, stats):
+    """把一个相位的帧**原样**按顺序发出（夹 `--frame-gap`）；每帧进日志。"""
     log({'type': 'phase_begin', 'phase': phase_name, 'frames': len(payloads)})
     for i, payload in enumerate(payloads, 1):
         conn.sendall(enc(payload))
@@ -273,38 +278,79 @@ def serve(conn, addr, args, phases, stats, meta):
     stats['sent'].append({'phase': phase_name, 'frames': len(payloads)})
     log({'type': 'phase_done', 'phase': phase_name})
 
-    # ③ 等触发：采集脚本拍完 S7 后 touch 触发文件（比 sleep 稳，不会与截图抢时间）
-    if len(phases) > 1:
-        ctx['tick_base'] = (float(meta.get('tick_phase2', 550)), time.time())
-        ctx['phase'] = phases[1][0]
-        log({'type': 'tick_base', 'value': ctx['tick_base'][0], 'why': 'phase2 = 真回放第一发的 tick'})
-        if args.trigger_file:
-            t_wait = 0.0
-            while not os.path.exists(args.trigger_file):
-                pump_for(reader, 0.1, stats, ctx)
-                t_wait += 0.1
-                if args.duration and (time.time() - T0) > args.duration:
-                    log({'type': 'trigger_timeout', 'waited': round(t_wait, 2)})
-                    return
-            log({'type': 'trigger_seen', 'waited': round(t_wait, 2)})
+
+def wait_trigger(reader, args, stats, ctx, trigger, index):
+    """等第 `index` 个相位（0 起，1 = phase2）的触发文件；没给就退回定时。
+
+    `--trigger-files a,b`（T18 新增，多相位用）或旧的单数 `--trigger-file`（T8 的两相位剧本）
+    都收。两相位 + 单数那条路 **逐行保持 T8 的行为**（`trigger_seen` / `auto_phase2` / 超时返回）。
+    """
+    if trigger:
+        t_wait = 0.0
+        while not os.path.exists(trigger):
+            pump_for(reader, 0.1, stats, ctx)
+            t_wait += 0.1
+            if args.duration and (time.time() - T0) > args.duration:
+                rec = {'type': 'trigger_timeout', 'waited': round(t_wait, 2)}
+                if index > 1:
+                    rec.update({'phase_index': index + 1, 'trigger': trigger})
+                log(rec)
+                return False
+        rec = {'type': 'trigger_seen', 'waited': round(t_wait, 2)}
+        if index > 1:
+            rec.update({'phase_index': index + 1, 'trigger': trigger})
+        log(rec)
+        return True
+    deadline = time.time() + args.auto_phase2
+    while time.time() < deadline:
+        pump_for(reader, 0.1, stats, ctx)
+    if index == 1 and not args.trigger_files:
+        log({'type': 'auto_phase2', 'after': args.auto_phase2})   # T8 的旧日志行，别改
+    else:
+        log({'type': 'auto_phase', 'phase_index': index + 1, 'after': args.auto_phase2})
+    return True
+
+
+def serve(conn, addr, args, phases, stats, meta):
+    reader = FrameReader(conn)
+    log({'type': 'accepted', 'peer': '%s:%d' % addr})
+    # tick 轴（见 tick_now）：phase1 = 快照 tick，phase2 = 开火 tick（两者都来自真回放）
+    ctx = {'tick_base': (phase_tick_base(meta, 0), time.time()),
+           'tick_hz': float(meta.get('tick_hz', 60)), 'reply_tick': args.reply_tick,
+           'phase': phases[0][0], 'meta': meta}
+    stats['ticks'] = 0
+    # 每个相位 2..N 各一个触发文件：`--trigger-files`（多相位）优先，否则沿用 `--trigger-file`
+    triggers = args.trigger_files or ([args.trigger_file] if args.trigger_file else [])
+
+    # ① 客户端连上后第一帧（真客户端发 NewConnectionRequest；`docs/07` 判别值 4）
+    first = reader.read_frame(args.handshake_wait)
+    if first:
+        log({'type': 'recv', 'name': first[0], 'body': first[1], 'bytes': len(first[2])})
+        stats['recv'].append({'name': first[0], 'body': first[1]})
+    else:
+        log({'type': 'no_client_frame', 'note': '客户端没说第一句，仍按剧本发 phase1'})
+
+    # ② phase1 逐帧发出（**原样字节**，来自 fixture）
+    send_phase(conn, phases[0][0], phases[0][1], args, stats)
+
+    # ③ 相位 2..N：每个都「等触发（采集脚本拍完上一屏后 touch）→ 等 phase_gap → 原样发」
+    for index in range(1, len(phases)):
+        ctx['tick_base'] = (phase_tick_base(meta, index), time.time())
+        ctx['phase'] = phases[index][0]
+        if index == 1:
+            why = 'phase2 = 真回放第一发的 tick'          # T8 的旧日志行，别改
         else:
-            deadline = time.time() + args.auto_phase2
-            while time.time() < deadline:
-                pump_for(reader, 0.1, stats, ctx)
-            log({'type': 'auto_phase2', 'after': args.auto_phase2})
+            why = 'phase%d = fixture [meta] tick_phase%d' % (index + 1, index + 1)
+        rec = {'type': 'tick_base', 'value': ctx['tick_base'][0], 'why': why}
+        if index > 1:            # T18：多相位才多这一列（两相位时日志与 T8 逐字相同）
+            rec['phase_index'] = index + 1
+        log(rec)
+        trigger = triggers[index - 1] if index - 1 < len(triggers) else None
+        if not wait_trigger(reader, args, stats, ctx, trigger, index):
+            return
         if args.phase_gap > 0:
             time.sleep(args.phase_gap)
-
-        phase_name, payloads = phases[1]
-        log({'type': 'phase_begin', 'phase': phase_name, 'frames': len(payloads)})
-        for i, payload in enumerate(payloads, 1):
-            conn.sendall(enc(payload))
-            obj = json.loads(payload.decode())
-            log({'type': 'send', 'phase': phase_name, 'index': i, 'name': next(iter(obj)),
-                 'bytes': len(payload) + 2, 'payload': payload.decode()})
-            time.sleep(args.frame_gap)
-        stats['sent'].append({'phase': phase_name, 'frames': len(payloads)})
-        log({'type': 'phase_done', 'phase': phase_name})
+        send_phase(conn, phases[index][0], phases[index][1], args, stats)
 
     # ④ 收尾：把客户端后续发来的帧记下来（判"它有没有回话"/"它以为自己在哪一屏"）
     deadline = time.time() + args.collect
@@ -327,7 +373,10 @@ def main():
     ap.add_argument('--side', default='?', help='只写进日志（original / ours）')
     ap.add_argument('--out', required=True, help='逐帧发送日志（JSONL）')
     ap.add_argument('--trigger-file', default=None,
-                    help='这个文件一出现就发 phase2（采集脚本在两个屏之间 touch）')
+                    help='这个文件一出现就发 phase2（采集脚本在两个屏之间 touch）；两相位剧本用')
+    ap.add_argument('--trigger-files', default=None,
+                    help='T18：多相位用 —— 逗号分隔，第 i 项 = 相位 i+2 的触发文件'
+                         '（`--flow endgame` 给两个：phase2 / phase3）。给了就优先于 --trigger-file')
     ap.add_argument('--auto-phase2', type=float, default=12.0,
                     help='没给 --trigger-file 时：phase1 发完等这么久就发 phase2')
     ap.add_argument('--phase-gap', type=float, default=None,
@@ -346,11 +395,18 @@ def main():
                     help='服务几条连接（客户端重连时 >1；每条都从头喂同一份剧本）')
     args = ap.parse_args()
 
+    # T18：`--trigger-files a,b` ⇒ 每个相位 2..N 一个触发文件；不给就沿用 T8 的单数形式
+    args.trigger_files = ([t for t in args.trigger_files.split(',') if t]
+                          if args.trigger_files else [])
+
     meta, phases, sha = load_fixture(args.fixture)
     tcp_port = args.tcp_port if args.tcp_port is not None else int(meta.get('tcp_port', 46702))
     udp_port = args.udp_port if args.udp_port is not None else int(meta.get('udp_port', 42968))
     if args.phase_gap is None:
         args.phase_gap = float(meta.get('phase_gap_s', 1.0))
+    if args.trigger_files and len(args.trigger_files) < len(phases) - 1:
+        raise SystemExit('--trigger-files 给了 %d 个，但 fixture 有 %d 个相位（需要 %d 个触发）'
+                         % (len(args.trigger_files), len(phases), len(phases) - 1))
 
     global LOG
     LOG = open(args.out, 'w', encoding='utf-8')

@@ -11379,3 +11379,107 @@ $PWD/.reference/venv/bin/python tools/unknowns_probe.py chain add_point     # �
 $PWD/.reference/venv/bin/python tools/unknowns_probe.py dis 0x498c70 --len 0x3e0
 $PWD/.reference/venv/bin/python tools/unknowns_probe.py dis 0x4b67a0 --len 0x90
 ```
+
+## 70. `EndingGame` 之后**没有**结算弹窗：联机模式下这条链在我方根本不存在（2026-11-26，任务 T18 / `task-15`）
+
+> 判据与真值的完整记录在 **`docs/06` §68**（三层判据、逐元素归因、对 `docs/00` 那条 "~9.8 %" 的裁决）。
+> 本节只写**客户端侧**：真机真值长什么样、我方卡在哪几行、要接哪几处、哪些是**推断**。
+> ⚠️ 本轮硬红线：`client/**` **一行都没改**（另一名 teammate 正在改 `session.gd`）——本节**全部是测量与建议**。
+> ⚠️ 编号说明：任务书（`specs/T18` §4）预分配的是 `## 71.`，本节**落 70** —— 因为
+> `tools/check_doc_refs.py` 要求 `## NN.` **连续无空洞**，而 rebase 到当时的 master 后
+> `docs/16` 最新是 **69**（`## 68` = T7、`## 69` = T14）⇒ 下一个空号是 70。
+> 这与 T7 拿 68（预分配 65）、T14 拿 69 是同一条惯例。若 T17 的 `## 70` 先落，
+> 合并时把两条重编成 70/71 即可，内容不用动。
+
+### 70.0 一句话
+
+用真回放的收场三条（`LifeInfo{232,false}` → `TurnCountInfo{2}` → `GameStateInfo{EndingGame}`）喂两侧：
+**原版弹出填满的 `EndGamePopUp`，我方停在同一个对局屏上、什么都不弹。**
+原因不是"画错了"，是**没有这条路**：`EndGamePopUp` 这张界面存在、也画得出来（selftest 里
+`report_match_result()` 能把它弹出来），但**联机**模式下 `EndingGame` 这条事件**接不到**它。
+
+### 70.1 四处阻断点（逐行，`master 5b9795b`）
+
+| # | 位置 | 现状 | 后果 |
+|---|---|---|---|
+| 1 | `client/src/net/session.gd:314`（`"EndingGame"` 分支） | `room["ending"]=true; phase="ended"; ended.emit("EndingGame")` | 事件本身**收到了**，也**正确**地当成"正常结束"（不是断线） |
+| 2 | `client/src/net/net.gd:119`（`_on_session_ended`） | `ended.emit(reason)` | 只是转发，没有副作用 |
+| 3 | `client/src/app/app.gd:577`（`_on_net_ended`） | `print("[gw2/net] match ended (%s)")` + `online = false` | **到头了** —— 没有任何界面动作 |
+| 4 | `client/src/screens/play_screen.gd:3008`（`"EndingGame"` 分支） | `_online_ending = true` + 一句 `_status(...)` | `_online_ending` 全文**只被赋值、从不被读**（3 处：`352` 声明 / `2754` 复位 / `3008` 赋值）⇒ 死变量 |
+
+另外两处把"本地结算"那条路也堵死了（它们是**故意的**，但正好把联机收场漏掉）：
+
+* `play_screen.gd:1752` `_on_shot_arrived()`：`if phase == "online": return` —— 联机弹道落地后**不结算**；
+* `play_screen.gd:2123` `_check_match_over()`：`if _online_mode: return` —— 联机**不做本地胜负判定**
+  （理由是对的：`docs/131` 说胜负只能有一个真相源 = 服务端）。⇒ 而唯一的
+  `open_popup("EndGamePopUp")` 就在这条路的下游（`app.gd:738`，在 `report_match_result()` 里）。
+
+**全网 `open_popup("EndGamePopUp")` 只有一个调用点**（`app.gd:738`），它的上游只有两个：
+`play_screen._check_match_over()`（联机被挡）与 `client/tools/selftest.gd:1367`（测试）。
+⇒ **联机模式下不存在任何通路**。这是**观测**（读代码），并被真机真帧复核（§70.2）。
+
+### 70.2 真机那一侧长什么样（这是判据，不是"应该"）
+
+原版同一份剧本、同一时刻的帧（1920×1160，三帧 sha256 相同 ⇒ 静止屏），逐像素量出来的：
+
+| 元素 | 实测 | 与既有文档的关系 |
+|---|---|---|
+| 结算面板 | **(483,235) 956×691**，不透明，底色 `#1A3B2D`，近黑描边 + 圆角 | 与 `docs/130` §3.4 从 `.tscn` 推的**完全一致**（当年是逐位级，现在有真机复核） |
+| 面板**不压暗背景** | 原版自己的 `endgame_popup` vs `match_play`：面板**外**只差 10 489 px（0.67 %，是第二发弹道残迹） | 新增事实：所以"整屏百分比"必然把对局屏的既有差异一起算进去 |
+| 标题 | **`YOU WON`**，`title_theme`（Eraser 手写体），白字 ink bbox **327×60**（x 797..1123, y 248..307） | `.tscn` 静态是 `YOU lOST`；胜方侧运行时会改写成 `YOU WON` |
+| 胜利者头像 | **只有 1 个格子显示**（Team1 只有玩家 229）：黄脸 `#FFCC00` **251×199** + 橙斗笠 `#FFBE33` **376×204** + 红带 `#960000`；合并 ink bbox **376×281**（x 762..1137, y 439..719） | **`docs/130` §4.2 的"543 px 大头像"推断作废**：格子可以是 543 px，但**画出来的头像只有 376×281**（3 张 TextureRect 按自己尺寸叠画，不跟格子拉伸） |
+| 底部文案 | **`Team 1 Victory!`**，白粗体，ink bbox **309×38**（x 805..1113, y 882..919） | 与 `.tscn` 静态字号 **40** 一致 |
+
+⚠️ 我方 `endgame_pop_up.gd:31` 的 `SLOT_ROW_FRACTION = 0.5`（行高 ×0.5 ≈ **271 px** 的格子）**比真值小**：
+真帧里头像墨迹就是 **376×281**，光斗笠宽度（376）就超了 271。⇒ 下一轮按 `376×281` 反推，
+别再沿用 271（本轮只登记，**不改代码**）。
+
+### 70.3 要接哪几处（**建议**，本轮没动代码）
+
+按 `src/graphwar_game_server.rs` / `docs/07` §8 的语义，"服务端发 `EndingGame`"= **正常结束**，
+不是断线（`app.gd:576` 的注释自己也这么写）。所以最小接线是：
+
+1. `app.gd::_on_net_ended()`：**不要只 print** —— 应该像 `report_match_result()` 那样
+   `open_popup("EndGamePopUp")`，并**先把胜负/胜方写进 `last_result`**。胜方从哪来？
+   * 联机时服务端**不发**胜方字段（`GameStateInfo{EndingGame}` 只有状态），
+     所以胜方只能像原版那样**由客户端按自己的生命表算**（原版 `set_state(EndingGame)` 里
+     `0x478136 call get_alive_teams` → `[self+0x11f]`，四行表见 `docs/14` §11.4）——
+     我方 `turnstate::winner_byte(t1_alive, t2_alive, turn_limit_set)` **已经复现了那张表**
+     （`src/turnstate.rs:190`），接线时直接用它，不要再造一个判据；
+   * `get_alive_teams` 的口径要按**我方已有的生命表**（`play_screen._online_lives` + `_targets`），
+     注意靶子与士兵**同表**（`docs/14` §11.5）。
+2. `play_screen.gd`：`_online_ending` 这个死变量要么**删掉**，要么真被读——
+   推荐后者：`_on_shot_arrived()` 里 `phase == "online"` 那一支**在 `_online_ending` 为真时**
+   走收尾（而不是无条件 `return`）。
+3. ⚠️ **别把"服务端关连接"翻成断线弹窗**：`net.gd::_on_session_closed` 现在无条件
+   `disconnected.emit` ⇒ `DisconnectedPopUp`。真服务器在 `EndingGame` 之后会关连接，
+   所以**已经正常结束**的会话关连接时**不该**弹"你已断开"。
+   本轮实测到过这个假象：把服务器换成默认 `--collect 8 s`（发完 phase3 就关连接），
+   我方画面变成 `You have been disconnected.` + `Ok` —— 而**原版**同一条件仍是结算弹窗。
+   ⇒ 接线时必须区分"`ended` 之后的关闭"与"意外断线"。
+
+### 70.4 这一屏的判据（照抄即可复现）
+
+门槛仍是 `fixtures/frame_diff_thresholds.txt`（`9cc9fcda…`，一个数没改）；
+数字入库 `fixtures/frame_diff_results_endgame.tsv` + `frame_diff_blocks_endgame.tsv`：
+
+| 屏 | 判定 | 跨侧差异像素 | L1 | L2 超限块 |
+|---|---|---|---|---|
+| `match_ready` | 不过（L2，4 块） | 141 591（6.3574 %） | 过 | 4（最差 `(0,5)` 5.71） |
+| `match_play` | 不过（L2，3 块） | 151 872（6.8190 %） | 过 | 3（最差 `(2,2)` 22.19） |
+| **`endgame_popup`** | **不过（L1 主色/均值）** | **749 142（33.6360 %）** | **不过**（\|Δmean\| 60.055/53.303/60.830；主色 `#1A3B2D` vs `#FFFFFF`） | 18（最差 `(2,3)` **213.054**） |
+
+**下一轮改完接线之后，这一屏的验收目标**（可执行的判据，不用再讨论口径）：
+
+1. 我方截图上必须出现 `(483,235) 956×691` 的不透明面板，且该区第一主色 = `#1A3B2D`；
+2. 标题行白字 ink bbox ≈ **327×60**、底部文案 ≈ **309×38**、头像内容 ≈ **376×281**；
+3. 面板外只剩 `match_play` 那一批已知版式差异（§60.5 那几项），**不能**再引入新的整块差异。
+
+### 70.5 遗留 / 未做
+
+1. **没接线、没验证"接上就同屏"** —— 本轮红线。上面 §70.3 是**推断**（读代码 + 真值），不是实测。
+2. 只有一种收场（Team1 胜 / 1 个胜利者）。**对战关（`YOU lOST`）、平局（胜方字节 2）、10 格全满**
+   都没有真值；换一份真回放的收场尾部进 `fixtures/frame_endgame_events.txt` 就能采，管线不用改。
+3. "弹窗在收到 `EndingGame` 之后第几帧出现"没量（本轮单点采样，`--endgame-wait` 可调）。
+4. `_online_ending` 这个死变量是**本轮新发现的**；它连注释都没有，`docs/143` §5 想要的那条
+   "结算完成前不结束"因此**只做了一半**（记了标记、没人读）。
