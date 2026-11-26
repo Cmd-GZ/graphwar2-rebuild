@@ -202,6 +202,12 @@ var _obstacles: Array = []
 ## 之前这里只有靶子绘制（纯绘制），靶子**根本没进命中判定**，
 ## 于是打靶关的胜负永远由"两队士兵存活数"决定 ⇒ 第一发就通关（`docs/131` §1）。
 var _targets := GwTargetSet.new()
+## 联机靶子的 **`GwTargetSet` 下标 → 线上实体 id** 映射（`_build_online_targets()` 填）。
+##
+## 为什么要这张表：`GwTargetSet` 的 `target_id` 是**下标**（它只存位置 + 生死），
+## 而线上事件与 22 个复原 manager 说的是**实体 id**（本样本靶子 = 232）。
+## 只在下标与 id 一一对应时才翻译（`_view_targets()` 会先比长度，对不上就退回自造编号）。
+var _target_entity_ids: Array[int] = []
 ## 本局的胜负规则（`docs/131` §2 / `docs/150`）：**判定在 Rust**（`GwLevelRules` =
 ## `src/_scaffold/play_flow_class.rs` → `graphwar_play_screen_control::LevelRules`），
 ## 本屏只读它的结论去排版文案（`docs/16` §52）。
@@ -229,8 +235,6 @@ var _last_result := {}
 var _shot_status := ""
 ## 状态行当前文本（`_status()` 写入；诊断用）。
 var _status_text := ""
-## 程序化改写输入框（换手时回填）期间不要清 OffsetLabel —— 否则会把刚算出来的修正抹掉。
-var _suppress_offset_clear := false
 
 # ---------------------------------------------------------------- 一发弹道的生命周期（docs/143）
 #
@@ -318,7 +322,10 @@ var _right_grid_holder: Control = null
 var _right_grid_natural_w := 0.0
 var _right_grid_natural_w_set := false
 var _fire_row: Control = null
-var _fire_stack: Control = null
+## `FireContainer` 的两颗直接子节点（`ClipButton` / `FireButton`）。回放屏要把那颗
+## 可见的 `Fire!` 藏起来但**留着行高**（真帧右三键 y433/533/633 ⇒ 顶行 96 还在），
+## 所以这里存两颗的句柄而不是一个容器（与 `.tscn` 同形后再没有中间层，见 `build()`）。
+var _fire_parts: Array[Control] = []
 
 # --- 联机模式（`docs/139`；落实 `docs/134` §7.1 的交接清单） ---
 #
@@ -512,27 +519,32 @@ func build() -> void:
 	var fire_margin := GwUI.margin("FireContainer", 0)
 	fire_margin.name = "FireContainer"
 	fire_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var fire_stack := Control.new()
-	fire_stack.name = "FireStack"
-	_fire_stack = fire_stack
-	fire_stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# 原版 `FireContainer.gd`（`client/src/views/`）给子节点写 `custom_minimum_size.x = x*0.07`
-	# 和字号 宽/30；高度由文字撑到与左上按钮行同高（实测 FireButton = 337×96 @1920）。
+	# 原版 `FireContainer.gd`（`client/src/views/`）给**直接子节点**写
+	# `custom_minimum_size.x = 屏宽×0.07` 和字号 `屏宽/30`；高度由文字撑到与左上按钮行同高
+	# （实测 FireButton = 337×96 @1920）。
+	#
+	# ⚠️ **2026-11-26（T26）修**：`.tscn` 里 `FireContainer` 的直接子节点就是两个
+	# —— `ClipButton`（幽灵底板 + AnimationRect）与 `FireButton`（可见的那颗）。
+	# 我方以前多插了一层 `Control("FireStack")` 当叠放容器，而 `FireContainer.gd::update_sizes()`
+	# 只遍历 `get_children()` ⇒ 字号覆盖从没落到两颗按钮上：它们一直用主题默认
+	# `default_font_size = 24`，而原版是 **屏宽/30 = 64**。
+	# 真帧判据：`(1636,4)-(1916,112)` 内近白像素 **原版 1 857 / 我方 261**（`docs/06` §60.5），
+	# 块 `(0,5)` 的 `|Δmean| = 5.71` 就是这么来的。⇒ 去掉中间层，与 `.tscn` 同形。
+	# 两个子节点由 `MarginContainer` 摆成**同一块矩形**（容器把每个子节点都铺满内容区）
+	# ⇒ 叠放顺序 = 添加顺序（ClipButton 在下、FireButton 在上），与原版一致。
 	var clip := GwButton.make(" Fire! ")
 	clip.name = "ClipButton"
 	clip.flat = true
 	clip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	clip.set_anchors_preset(Control.PRESET_FULL_RECT)
 	clip.add_child(_anim_rect())
-	fire_stack.add_child(clip)
+	fire_margin.add_child(clip)
 	_fire_button = GwButton.make(" Fire! ")
 	_fire_button.name = "FireButton"
 	_fire_button.long_press_input_text = GwCommands.FIRE   # 原版：FireButton 只有 long_press_input_text
-	_fire_button.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_fire_button.tooltip_text = "开火（fire）"
-	fire_stack.add_child(_fire_button)
+	fire_margin.add_child(_fire_button)
+	_fire_parts = [clip, _fire_button]
 	GwViews.attach(fire_margin, "FireContainer.gd")   # 最小宽 = 屏宽×0.07，字号 = 宽/30
-	fire_margin.add_child(fire_stack)
 	fire_row.add_child(fire_margin)
 
 	var right_top_pad := GwUI.margin("MarginContainer", 0, right)
@@ -792,8 +804,8 @@ func _set_replay_layout(on: bool) -> void:
 	if _fire_row != null:
 		_fire_row.visible = true
 		_fire_row.custom_minimum_size = Vector2(0, key) if on else Vector2.ZERO
-	if _fire_stack != null:
-		_fire_stack.visible = not on
+	for part in _fire_parts:
+		part.visible = not on
 	if _replay_left != null:
 		_replay_left.visible = on
 		for b in _replay_left.get_children():
@@ -836,6 +848,17 @@ func _update_replay_pause_icon() -> void:
 ## `_apply_font_scale` 由基类在 viewport resize 时调用，这里接在后面。
 func apply_font_scale() -> void:
 	super.apply_font_scale()
+	# `EntityDrawer` 的名字标签**不走本屏的字号表**：原版那一层是 `name_label.tscn` 的
+	# `RichTextLabel`，字号取**主题默认**（`graphwar_theme.tres` 的 `default_font_size = 24`，
+	# 真帧上 `cmdgz` 的墨迹高 ~22 px 就是它）。基类 `_apply_size_recursive()` 会遍历整棵树给
+	# **所有** `RichTextLabel` 写 `normal_font_size = 宽/N × 0.85`；本屏 N 小 ⇒ 那串被放大到
+	# ~68 px（实测我方名字墨迹 202 px 宽 vs 原版 72 px）。这里把那层覆盖撤掉。
+	# 为什么回放屏以前"看起来是对的"：回放的名字标签是在 `apply_font_scale()` **之后**才
+	# `spawn_entity` 出来的，没吃到那次遍历 —— 也就是**顺序碰巧**，不是设计；这里把它定死。
+	if _entities != null:
+		for child in _entities.get_children():
+			if child is RichTextLabel:
+				(child as RichTextLabel).remove_theme_font_size_override("normal_font_size")
 	if not _built:
 		return
 	var w := get_viewport_rect().size.x
@@ -868,9 +891,8 @@ func apply_font_scale() -> void:
 		# 字号（`screen.x / 60`，无下限）现在由**原版** `OffsetContainer.gd` 写，
 		# 这里只保留最小宽那一条（与原版同值 0.09·x，重复写不会打架）。
 		_offset_label.custom_minimum_size = Vector2(w * 0.09, 0)
-	var fire_stack := find_child("FireStack", true, false)
-	if fire_stack != null:
-		(fire_stack as Control).custom_minimum_size = Vector2(key * 1.4, key)
+	# `Fire!` 那一行不再有 `FireStack` 中间层（item ⑤ 与 `.tscn` 同形）⇒ 它的最小尺寸由
+	# 原版 `FireContainer.gd` 直接写给两颗子节点（0.07·屏宽），这里不再插手。
 	if _view_functions_label != null:
 		_view_functions_label.add_theme_font_size_override("normal_font_size", maxi(8, int(w / 60.0)))
 	_update_view_geometry()
@@ -1049,15 +1071,26 @@ func _target_positions(level_index: int, count: int) -> Array:
 
 ## 画面上"靶子在哪"的**唯一**来源。
 ##
-## 战役/联机：`GwTargetSet` 里还活着的那些（`target_id` 就是稳定 id）。
-## 回放：回放播放器自己的 `target_positions()`（那是一张位置表，**没有 id**）⇒
-## 用下标当 id。两边的 id 都落在 `TARGET_ID_BASE` 之上，士兵的 id（下标）不会撞。
+## 三条路的 id 口径不一样，别混：
+## * **联机**：`_target_entity_ids[i]` = 线上 `TargetInfo{target_id}` 的**实体 id**（本样本 232）。
+##   靶子的位置/生死仍由 `GwTargetSet` 存（`target_id` 是它的**下标**），
+##   所以这里做一次 `下标 → 实体 id` 的翻译；这样 `EntityDrawer` 拿到的 id 与
+##   名字/外观/颜色 manager 拿到的是同一个（= id 空间一致）。
+## * **回放**：`target_positions()` 是一张**纯位置表**（没有 id）⇒ 用下标当 id，
+##   落在 `TARGET_ID_BASE` 之上，与士兵 id 不撞。
+## * **本地战役/关卡**：`GwTargetSet` 的 `target_id` 由关卡生成器给（小整数）⇒ 同样
+##   `TARGET_ID_BASE + target_id`，理由同上。
 func _view_targets() -> Array:
 	var out := []
 	if _replay_mode:
 		var positions: Array = (_replay.target_positions() if _replay != null else [])
 		for i in positions.size():
 			out.append({"id": TARGET_ID_BASE + i, "pos": positions[i]})
+		return out
+	if _online_mode and _target_entity_ids.size() == _targets.total():
+		for t in _targets.entities():
+			var idx := int(t["target_id"])
+			out.append({"id": _target_entity_ids[idx], "pos": t["pos"]})
 		return out
 	for t in _targets.entities():
 		out.append({"id": TARGET_ID_BASE + int(t["target_id"]), "pos": t["pos"]})
@@ -1408,6 +1441,20 @@ func plane_state() -> Dictionary:
 ##
 ## 阵亡：`set_entity_dead_ticks(id, ENTITY_DEAD_TICKS)` ⇒ 标签与名字按 `death_alpha` 淡出；
 ## 联机的死者**整个撤掉**（服务端 `Match::fire` 就把死者 retain 掉了，`docs/139`）。
+## 局面 → `EntityDrawer` 的实体表。
+##
+## ## 2026-11-26（T26）**id 空间**修正（这是"事件全接上也画不对"的总根因）
+##
+## 旧实现交给 `EntityDrawer` 的 id 是**士兵下标** `i`（0,1,2…），而线上事件与 22 个复原
+## manager（位置/外观/名字/颜色/队伍/生命）用的都是**实体 id**（本样本：玩家 229、士兵 230、
+## 被删的 231、靶子 232）。两套编号互不相干 ⇒ T17 喂进 manager 的外观/名字/颜色
+## **一个消费者都没有**（`docs/06` §67.8 第 3 条就是这么记的）。
+## 现在：有实体 id 就用实体 id（联机 `entity_id`、回放 `id`），只有**本地战役局**
+## （士兵是界面自己摆的、线上没有实体 id）才退回下标 —— 那是唯一没有实体 id 的一条路。
+##
+## 靶子那条也一样：联机靶子的 id 就是 `TargetInfo{target_id}` 里的**实体 id**（232），
+## 不再映射到 `TARGET_ID_BASE + target_id`（那是本地战役/回放"靶子只有位置表、没有 id"时
+## 的自造编号）。`_view_targets()` 负责给出这个 id，本函数只管用。
 func _sync_entities() -> void:
 	if _entities == null:
 		return
@@ -1417,15 +1464,32 @@ func _sync_entities() -> void:
 		var alive := bool(s.get("alive", true))
 		if _online_mode and not alive:
 			continue
-		want[i] = {
+		# 实体 id 的三条来源（优先级从上到下）：联机 `entity_id` → 回放 `id` → 本地局下标。
+		var eid := int(s.get("entity_id", s.get("id", i)))
+		want[eid] = {
 			"pos": s.pos,
-			"name": (String(s.name) if _show_names else ""),
+			# 名字：**`room["names"]` 的真值优先**（`NameInfo` 的实体 id 可能只指玩家、
+			# 也可能指士兵 ⇒ 先实体再 `player_id`，见 `_online_entity_name()`）。
+			# 旧实现读本地 profile 名（`app_node.state.players[pi].name`，默认 `"user"`），
+			# 那不是这一局的真值 —— 真值是 `NameInfo{229:"cmdgz"}`（`docs/06` §67.8 第 2 条）。
+			# **现读**（不是建屏时缓存）：`NameInfo` 比 `begin_match()` 晚到（本剧本事件 36 vs 35），
+			# 每次 `_sync_entities()` 都按 `room` 的当前值算，晚到就能自己补上。
+			"name": (_online_entity_name(eid, int(s.get("player_id", -1)),
+				int(s.get("player", 0)), app()) if _online_mode and _show_names
+				else (String(s.name) if _show_names else "")),
 			"dead": (-1 if alive else ENTITY_DEAD_TICKS),
-			"actor_id": int(s.get("id", i)),   # 回放的实体 id（外观表按它索引）
-			"color": s.get("color", Color.WHITE),   # 名字标签的笔画色（队色）
+			"actor_id": eid,                   # 外观表按实体 id 索引（回放/联机同一个口径）
+			# 颜色：**现读** `room["colors"]`（`ColorInfo` 同样比 `begin_match()` 晚到）。
+			# 这个值同时喂 ①名字标签的笔画色（`set_entity_name_color`）②准备圈的环色
+			# （`EntityDrawer` 的 `team_color`，下面逐实体设）⇒ 两项的原文都要求"= 该实体 ColorInfo"：
+			# 真帧上名字笔画色与环色**逐值相同** = `(125,104,0)`（`docs/06` §60.5 / §71.1-B 两处量过）。
+			"color": (_online_entity_color(eid, int(s.get("player_id", -1)),
+				s.get("color", Color.WHITE)) if _online_mode
+				else s.get("color", Color.WHITE)),
+			"kind": "soldier",
 		}
 	for t in _view_targets():
-		want[int(t["id"])] = {"pos": t["pos"], "name": "", "dead": -1}
+		want[int(t["id"])] = {"pos": t["pos"], "name": "", "dead": -1, "kind": "target"}
 	# 先删：`EntityDrawer` 的句柄与节点同生共死（`remove_entity` 里 `queue_free`）。
 	for id in _drawn_entities.keys():
 		if not want.has(id):
@@ -1446,25 +1510,19 @@ func _sync_entities() -> void:
 		_drawn_entities[id] = true
 		# ---- 外观（`docs/16` §44）：原版由 `set_{skin,face,hat}_graphics` 的 51/53/55 事件喂
 		# `EntityDrawer` 的 `HashMap<i32,String>`；那条链路（`GraphwarGraphicsManager`）还没接，
-		# 所以这里按实体种类代填。默认三件套 `yellow/regular_eyes/soldier_helmet` 是
-		# `GraphwarPlayerConfig::new` 的字面量（arm64 `0x39152c..0x3915a4`），士兵不用显式设。
-		# 靶子得显式设成 `target/no_face/no_hat`（`res://skins/target.svg` 在表里）。
+		# 所以这里按"线上事件已经落在 `room` 里的那份事实"代填（`session.gd` 的
+		# `Skin/Face/HatGraphicsInfo` → `room["look"][entity_id]`）。**按实体 id 索引** ——
+		# 这与 manager 收的是同一批 id（见本函数头的 id 空间说明）。
+		# 没有 look 事实时才退回默认三件套 `yellow/regular_eyes/soldier_helmet`
+		# （= `GraphwarPlayerConfig::new` 的字面量，arm64 `0x39152c..0x3915a4`）；
+		# 靶子退回 `target/no_face/no_hat`（`res://skins/target.svg` 在表里）。
 		# ⚠️ 这是**我方接线**，原版是 graphics 事件驱动的（`docs/16` §44.0）。
-		if id >= TARGET_ID_BASE:
+		var look := _look_for(id, String(e.get("kind", "")))
+		if not look.is_empty():
+			_entities.call("set_entity_look", id, String(look.get("skin", "")),
+				String(look.get("face", "")), String(look.get("hat", "")))
+		elif String(e.get("kind", "")) == "target":
 			_entities.call("set_entity_look", id, "target", "no_face", "no_hat")
-		elif _replay_mode and _replay != null:
-			# 回放里**外观是录下来的**：`SkinGraphicsInfo` / `FaceGraphicsInfo` / `HatGraphicsInfo`
-			# 三条事件按实体 id 记着名字（本样本：士兵 230 = face_paint_2 / asian / asian_hat）。
-			# 以前这里只给靶子设外观、士兵一律用 `spawn_entity` 的默认三件套
-			# （yellow/regular_eyes/soldier_helmet）⇒ 真帧对拍会差一整个精灵。
-			# ⚠️ 这是**我方接线**：原版由 `GraphwarGraphicsManager` → `EntityDrawer` 的
-			# `set_{skin,face,hat}_graphics` 事件写表（`docs/16` §44.0），那条链路还没接。
-			var actor_id := int(e.get("actor_id", id))
-			var sk := String(_replay.graphics("skin", actor_id))
-			if sk != "":
-				_entities.call("set_entity_look", id, sk,
-					String(_replay.graphics("face", actor_id)),
-					String(_replay.graphics("hat", actor_id)))
 	# ---- 准备圈：**填 `prep` 表**（`docs/16` §50.6）----
 	#
 	# 原版 `EntityDrawer::draw`（`0x4b2890`）只画 `prep` 哈希表里的实体，而填表的是
@@ -1486,16 +1544,20 @@ func _sync_entities() -> void:
 	# 原版弧的门是 `get_alive` + `is_on_turn`（§46/§48 观测，`0x454950`/`0x462b50`）；回放侧
 	# 没有 turn 状态源（`_turn_driver` 那条链只在本地局走）⇒ 我方按"回放里**所有活着的士兵**"
 	# 画环。本样本只有 1 具士兵 ⇒ 与真帧一致；多士兵回放可能多画，**登记为遗留**（不是观测）。
+	# ⚠️ 环的键必须是**实体 id**（与 `want` 同一口径），不是士兵下标 —— 下标那条在
+	# 联机局是 0/1/2…，`want` 里根本没有那个键 ⇒ 环一个都画不出来（改前的现象）。
 	var ring_ids := {}
 	if _replay_mode:
 		for i in _soldiers.size():
 			var s: Dictionary = _soldiers[i]
-			if bool(s.get("alive", true)) and want.has(i):
-				ring_ids[i] = true
+			var seid := int(s.get("entity_id", s.get("id", i)))
+			if bool(s.get("alive", true)) and want.has(seid):
+				ring_ids[seid] = true
 	elif _active_soldier_idx >= 0 and _active_soldier_idx < _soldiers.size():
 		var acting: Dictionary = _soldiers[_active_soldier_idx]
-		if bool(acting.get("alive", true)) and want.has(_active_soldier_idx):
-			ring_ids[_active_soldier_idx] = true
+		var aeid := int(acting.get("entity_id", acting.get("id", _active_soldier_idx)))
+		if bool(acting.get("alive", true)) and want.has(aeid):
+			ring_ids[aeid] = true
 	# 箭头开不开：回放关（真帧径向直方图，见上）；本地局开（`match_ready` 真帧那份"带准备圈"
 	# 的形态里有箭头，`docs/06` §60.1 —— 那一屏还没对齐，开关先保持上一轮的行为）。
 	_entities.set("show_ring_arrows", not _replay_mode)
@@ -1521,6 +1583,29 @@ func _sync_entities() -> void:
 		else:
 			_entities.call("clear_ring", id)
 			_ring_base.erase(id)
+
+## 联机的靶子图层（**原版是独立图层**，`docs/131`）。
+##
+## 数据来源全是 T17 已经落进 `room` 的事实（`client/src/net/session.gd`）：
+##   `TargetInfo{target_id}`      → `room["targets"]`（**实体 id** 列表，按到达顺序）
+##   `PosInfo{entity_id,pos_x…}`  → `room["entities"][id].x/.y`
+## ⇒ 这里只做"搬进 `GwTargetSet`"这一件事，**不新增语义**。
+##
+## `GwTargetSet` 的 `target_id` 是**下标**（它只存位置 + 生死，`docs/131` §3），
+## 所以同时留住 `下标 → 实体 id`：`_view_targets()` 用它把实体 id 交给 `EntityDrawer`，
+## 这样靶子的位置/外观/名字（manager 按实体 id 说的）与绘制是同一个 id 空间。
+func _build_online_targets(room: Dictionary) -> void:
+	var ids: Array = room.get("targets", [])
+	var ents: Dictionary = room.get("entities", {})
+	var positions: Array = []
+	_target_entity_ids.clear()
+	for tid in ids:
+		var e: Dictionary = ents.get(int(tid), {})
+		positions.append(Vector2(float(e.get("x", 0.0)), float(e.get("y", 0.0))))
+		_target_entity_ids.append(int(tid))
+	_targets.setup(positions)
+	if not ids.is_empty():
+		_status("联机靶子 %d 个（实体 id %s）" % [ids.size(), str(_target_entity_ids)])
 
 # ---------------------------------------------------------------- 障碍（docs/126）
 
@@ -1623,12 +1708,56 @@ func _unhandled_key_input(event: InputEvent) -> void:
 ## `docs/16` §49.5 第 1 条与 §50 是这条缺口的正式记录。
 func _on_function_text_changed(new_text: String) -> void:
 	_functions[_active] = new_text
-	if not _suppress_offset_clear:
-		_offset_label.text = ""   # 手改函数 → 上一发的修正不再对应当前输入
+	# 右下修正常数**跟着当前输入重算**（旧实现是"手改就清空"，那样 S7 空函数一开始就永远是空的，
+	# 而原版 S7 常显 `- 9.890` = `y0 − f(x0)` 在 `f ≡ 0` 时的值）。
+	# 旧实现里那个 `_suppress_offset_clear` 开关（"程序化改写时别把刚算出来的修正抹掉"）
+	# 随之一并删掉：现在**唯一**来源是"当前输入 + 当前射手"，重算不会抹掉任何东西。
+	_refresh_offset_label()
 	_refresh_function_list()
 
 func _on_function_text_submitted(_new_text: String) -> void:
 	fire()
+
+## 右下 `OffsetLabel` = **当前输入对应的修正常数** `c`。常显（不是"开火后才写"、也不是"手改就清空"）。
+##
+## ## 公式（有真值）
+## `c = y0 − f(x0)`：`(x0, y0)` = 射手位置，`f` = 当前输入框里的函数。
+## 来源是内核自己的实现 `src/graphwar_shot_calculator.rs::correction_text`
+## （`docs/24` §6.2 的格式样本 + 抓包帧 143/144 的空函数负样本 `- 3.420` = 当时那个 `y0`），
+## 并且在本样本上能用**三个数**独立复核（全部逐位）：
+##   * 空函数（S7）：`f ≡ 0` ⇒ `c = y0 = −9.889980889…` ⇒ `format_offset(c)` = **`- 9.890`**
+##     —— 正是原版 S7 真帧上那一串；
+##   * 函数 `x+2sin(20x)`（S8 服务端下发的第一发）：`c = y0 − f(x0) = −3.694413988…`
+##     ⇒ **`- 3.694`**，与服务端 `corrected_function = "x+2sin(20x) - 3.694"` 的常数项一致；
+##   * 同一发的落点：`f(end_x) + c = 0.8236080576`，与 `EffectInfo{pos_y: 0.8236080576517795}`
+##     逐位相同 ⇒ 说明 `c` 的定义就是"让曲线过射手"的那个平移量。
+##
+## ## 为什么原版 S8 显示的仍是 `- 9.890`
+## 原版的输入框里**没有人打字**（线上事件不回填输入框）⇒ `f ≡ 0` ⇒ `c = y0`。
+## 旧实现是"开火后把内核按**收到的**函数串算出来的修正写进标签" ⇒ S8 显示 `- 3.694`、S7 空，
+## 数值与出现时机都与原版不同（`docs/06` §60.5 表最后一行）。现在只有**一个**来源。
+##
+## 回放屏不在这里：那边的修正文本来自录像（`_replay_draw_shot()`，还带一个前导空格，
+## 是"从 `corrected_function` 里切出来的后缀"，见那段注释）。
+func _refresh_offset_label() -> void:
+	if _offset_label == null or _replay_mode:
+		return
+	var app_node := app()
+	if app_node != null and int(app_node.state.function_mode) != 0:
+		_offset_label.text = ""     # DiffEq 局没有修正常数（观测：原版那一格为空）
+		return
+	var shooter := _active_soldier()
+	if shooter.is_empty():
+		return
+	var c := float(shooter.pos.y)   # 空函数 ⇒ f ≡ 0 ⇒ c = y0
+	var expr := String(_input.text).strip_edges() if _input != null else ""
+	if expr != "":
+		var direction := 1.0 if int(shooter.get("team", 0)) == 0 else -1.0
+		var res := GwCore.calculate_path(expr, shooter.pos, direction)
+		if not bool(res.get("ok", false)):
+			return                  # 半截表达式（如 `sin(`）算不出来：保持上一次的值，不写 0
+		c = float(res.get("offset", c))
+	_offset_label.text = GwCore.format_offset(c)
 
 ## 开火：算一条弹道并**开始播放**它。结算在弹道飞完时（`_on_shot_arrived()`）。
 ##
@@ -1686,7 +1815,9 @@ func fire() -> bool:
 	_set_curve(drawn.points, active_soldier.get("color", GwThemeFactory.COL_ACCENT), _active)
 	# 修正常数（`docs/24` §6.2 的样本格式：`+ 4.638` / `- 8.315`，三位小数、符号后一个空格）。
 	# DiffEq 模式下原版 OffsetLabel 为空（观测）。
-	_offset_label.text = GwCore.format_offset(float(result.offset)) if int(app_node.state.function_mode) == 0 else ""
+	# 修正常数：与"当前输入 + 当前射手"同一个来源（`_refresh_offset_label()`）——
+	# 内核这一发算出的 `result.offset` 就是 `y0 − f(x0)`，两处同值，这里不再各写一份。
+	_refresh_offset_label()
 	if bool(drawn.blocked):
 		_status("弹道撞到障碍，停在 (%.2f, %.2f) ／ 本局障碍 %d 个 ／ 点序列 %d 点（未截断）"
 			% [impact.x, impact.y, _obstacles.size(), pts.size()])
@@ -2209,10 +2340,9 @@ func _next_turn(advance: bool) -> void:
 func _load_active_function() -> void:
 	if _input == null:
 		return
-	_suppress_offset_clear = true
 	_input.text = String(_functions.get(_active, ""))
-	_suppress_offset_clear = false
-	# 注意：**不**在这里清 OffsetLabel —— 原版换手时 OffsetLabel 仍显示上一发的修正。
+	# 换手 = 换射手 ⇒ 修正常数也要重算（原版换手时右下那串**不消失**，它跟着"当前输入 + 当前射手"变）。
+	_refresh_offset_label()
 
 ## 判一局结束没有 —— **按关卡类型**（`docs/131` §2），不再只看两队士兵的存活数。
 ##
@@ -2500,9 +2630,7 @@ func _replay_sync_bottom_text() -> void:
 	if text == "" and _replay != null:
 		text = String(_replay.function_of(int(shot.get("owner", -1))))
 	if _input.text != text:
-		_suppress_offset_clear = true
 		_input.text = text
-		_suppress_offset_clear = false
 	_input.key_input(GwCommands.KEY_END)      # 光标到末尾（原版载入态光标就在末尾）
 
 ## 主循环里的回放推进（`_process` 的回放分支）。
@@ -2743,9 +2871,7 @@ func _set_replay_input_enabled(enabled: bool) -> void:
 	if _input != null and not enabled:
 		# `GwFunctionInput` 不是 LineEdit（自绘，没有 `editable`），禁用的做法是清空 +
 		# `key_input()`/`fire()` 两个入口直接 return。
-		_suppress_offset_clear = true
 		_input.text = ""
-		_suppress_offset_clear = false
 
 # ---- 自检 / 诊断用的只读入口（不参与游戏逻辑） ----
 
@@ -2839,6 +2965,7 @@ func _begin_online(app_node) -> void:
 	_last_result = {}
 	_soldiers.clear()
 	_targets = GwTargetSet.new()
+	_target_entity_ids.clear()
 	_destroyed_this_shot.clear()
 	_last_verdict = {}
 	_reset_shot_state()
@@ -2848,6 +2975,10 @@ func _begin_online(app_node) -> void:
 	_rebuild_pid_index(room)
 	_build_online_soldiers(room, app_node)
 	_build_online_obstacles(room)
+	# 靶子图层：**原版是独立图层**（`docs/131`），而 `GwTargetSet` 只能装"位置 + 生死"。
+	# 旧实现到这里只有 `_targets = GwTargetSet.new()` 就再也没填过 ⇒ 联机局**一个靶子都画不出来**
+	# （T17 把这条记成 §67.8 第 1 条：数据已经在 `room["targets"]`，缺的是界面侧接线）。
+	_build_online_targets(room)
 	_apply_online_turn(room)
 	# 胜负规则只做占位：联机局由服务端判（`_check_match_over()` 的联机分支直接返回）。
 	_rules = GwLevelRules.new()
@@ -2861,6 +2992,7 @@ func _begin_online(app_node) -> void:
 	_replay_left.visible = false
 	_replay_right.visible = false
 	_running = true
+	_refresh_offset_label()
 	_status(_online_status_text())
 
 ## 退出联机局（`end_match()` 调用；断线时 App 也会调 `end_match()`）。幂等。
@@ -2964,13 +3096,82 @@ func _build_online_soldiers(room: Dictionary, app_node) -> void:
 			"player": pi,
 			"player_id": pid,
 			"entity_id": int(eid),
-			"color": colors[pi] if pi < colors.size() else GwThemeFactory.COL_ACCENT,
+			# 颜色：**`ColorInfo` 的真值优先**（同样先实体 id、再 `player_id`；缺席才用本队色表）。
+			"color": _online_entity_color(int(eid), pid,
+				colors[pi] if pi < colors.size() else GwThemeFactory.COL_ACCENT),
 		})
 
+## 玩家的**本地 profile 名**（`App.state.players[pi].name` ⇒ `store.profile.name`）。
+##
+## ⚠️ 这不是联机局的真值：真值在 `room["names"]`（`NameInfo`）。本函数只当**兜底**
+## （线上没给 `NameInfo` 时才有意义），联机士兵的名字走 `_online_entity_name()`。
 func _online_player_name(pi: int, pid: int, app_node) -> String:
 	if app_node != null and pi >= 0 and pi < app_node.state.players.size():
 		return String(app_node.state.players[pi].name)
 	return "Player %d" % pid
+
+## 联机实体的名字：**线上 `NameInfo` 优先**，其次它的 `player_id` 那条，最后才退回本地 profile 名。
+##
+## 为什么要"先实体再 player_id"：本样本的 `NameInfo` 只有一条
+## `NameInfo{entity_id: 229, name: "cmdgz"}`，而**射手是玩家 229 名下的士兵 230**
+## （`SoldierInfo{230, player_id: 229}`）⇒ 只查 `names[eid]` 会查空。
+## 这条链就是真帧上射手头顶那个 `cmdgz` 的来源（`docs/06` §60.5 的"名字标签"那一行）。
+func _online_entity_name(eid: int, pid: int, pi: int, app_node) -> String:
+	var names: Dictionary = _online_room().get("names", {})
+	if names.has(eid) and String(names[eid]) != "":
+		return String(names[eid])
+	if names.has(pid) and String(names[pid]) != "":
+		return String(names[pid])
+	return _online_player_name(pi, pid, app_node)
+
+## 联机实体的颜色：**线上 `ColorInfo` 优先**，同样先实体 id、再它的 `player_id`。
+##
+## 本样本只有 `ColorInfo{229: (125,104,0)}`（玩家实体），射手 230 与靶子 232 都没有自己那条
+## ⇒ 士兵的队色/环色由它所属玩家那条 `ColorInfo` 决定，这正是真帧上的橄榄色 `(125,104,0)`
+## （名字笔画色与准备环色**逐值相同**，`docs/06` §60.5 / §71.1-B 两处独立量过）。
+## 真值缺席才退回本队色表 —— 那是**我方自定**（`assign_colors()`，`docs/139` §6 已登记）。
+func _online_entity_color(eid: int, pid: int, fallback: Color) -> Color:
+	var colors: Dictionary = _online_room().get("colors", {})
+	var c: Variant = colors.get(eid, colors.get(pid, null))
+	if c is Dictionary:
+		return Color(float(c.get("r", 0)) / 255.0, float(c.get("g", 0)) / 255.0,
+			float(c.get("b", 0)) / 255.0)
+	return fallback
+
+## 联机事件的"外观三件套"（`room["look"][entity_id]`，由 `Skin/Face/HatGraphicsInfo` 落进去）。
+## 回放那边同一件事由 `_replay.graphics(kind, entity_id)` 提供；本地局没有这条事实 ⇒ 空字典。
+##
+## `_sync_entities()` 只用它来决定"要不要显式 `set_entity_look`"：空字典 ⇒ 不调，
+## 保持 `spawn_entity` 的默认三件套（原版 `GraphwarPlayerConfig::new` 的字面量）。
+func _look_for(eid: int, kind: String = "") -> Dictionary:
+	if _replay_mode and _replay != null:
+		var sk := String(_replay.graphics("skin", eid))
+		if sk == "":
+			return {}
+		return {
+			"skin": sk,
+			"face": String(_replay.graphics("face", eid)),
+			"hat": String(_replay.graphics("hat", eid)),
+		}
+	var got := {}
+	if _online_mode:
+		var look: Dictionary = _online_room().get("look", {})
+		if look.has(eid):
+			got = look[eid]
+	# **缺项按种类补默认值**：`EntityDrawer::spawn_entity` 的默认三件套是
+	# `yellow/regular_eyes/soldier_helmet`（`GraphwarPlayerConfig::new` 的字面量），而靶子
+	# 在原版里是 `target/no_face/no_hat`（`res://skins/target.svg` 在表里）。
+	# 这一步**必须**补齐：`set_entity_look()` 是三件一起换的，传进去的空串会让那两层精灵
+	# 落到"纯色兜底"上 —— 实测靶子会变成一个 55×55 的蓝色方块（2 970 px），而原版是 25×25 的环。
+	var out := {
+		"skin": "target" if kind == "target" else "yellow",
+		"face": "no_face" if kind == "target" else "regular_eyes",
+		"hat": "no_hat" if kind == "target" else "soldier_helmet",
+	}
+	for k in ["skin", "face", "hat"]:
+		if String(got.get(k, "")) != "":
+			out[k] = String(got[k])
+	return out
 
 ## 障碍：`AddObstacle` 下发的 `{pos_x, pos_y, radius}`，顺序即服务端顺序。
 ## 形状与 `GwCore.level_obstacles()` 的产物一致（`{pos: Vector2, size: 半径}`），
@@ -3063,6 +3264,11 @@ func _on_online_message(kind: String, body: Dictionary) -> void:
 	if not _online_mode:
 		return
 	match kind:
+		"NameInfo", "SkinGraphicsInfo", "FaceGraphicsInfo", "HatGraphicsInfo", "ColorInfo":
+			# 这五条改的是"实体的外观事实"（名字 / 三张图 / 颜色），消费者是 `_sync_entities()`。
+			# 它们**晚于** `begin_match()` 到（见本函数下面 PosInfo 的处理同理）⇒ 收到就重摆一次。
+			# 原版对应的是 `EntityDrawer` 订阅 graphics/name/color 事件后自己重画（`docs/16` §44）。
+			_refresh_plane()
 		"PlayerInfo":
 			# 会话侧已经判过"这条是不是给我的"（`GwNetSession._apply` 比对 connection_id），
 			# 这里只做镜像，不再自己判一次（免得出现两个真相源）。
@@ -3100,6 +3306,11 @@ func _on_online_message(kind: String, body: Dictionary) -> void:
 				"tick": GwNetFrame.body_int(body, "start_tick", 0),
 			})
 			_spawn_effect(fx_type, fx_pos)
+		"TargetInfo", "EntityRemoved":
+			# 靶子层是 `GwTargetSet`（只存位置 + 生死）：`TargetInfo` 增、`EntityRemoved` 减，
+			# 两条都要求重建一次（原版 `GraphwarTargetManager` 收到就改表，`docs/131`）。
+			_build_online_targets(_online_room())
+			_refresh_plane()
 		"TurnInfo":
 			_apply_online_turn(_online_room())
 			_status(_online_status_text())
@@ -3217,9 +3428,10 @@ func _draw_online_shot(owner_id: int, start: Vector2, end_x: float) -> void:
 	# （联机下生死与回合都归服务端，本地只负责"飞到哪就收尾"）。
 	_flow.begin(cut.size(), [], [], impact, true)
 	_shot_in_flight = true
-	var app_node := app()
-	if app_node != null and int(app_node.state.function_mode) == 0:
-		_offset_label.text = GwCore.format_offset(float(result.offset))
+	# ⚠️ **不**在这里用 `result.offset` 覆盖右下标签：那一发用的是**服务端收到的函数串**，
+	# 而原版的标签跟的是**本地输入框**（本样本输入框是空的 ⇒ 原版 S8 仍显示 `y0` = `- 9.890`）。
+	# `docs/06` §60.5 那行"S7 不显示 / S8 显示 - 3.694 ⇒ 数值与出现时机都不同"就是这条。
+	_refresh_offset_label()
 	_online_shot = {
 		"owner": owner_id, "function": expr, "start": start, "end_x": end_x,
 		"direction": direction, "points": cut.size(), "offset": float(result.offset),

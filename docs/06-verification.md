@@ -11002,7 +11002,6 @@ python3 .agent-work/merge_rest_tsv.py fixtures/frame_diff_results_rest.tsv /dev/
 
 > 注：本文**没有**改 `src/**` / `client/**` / `tests/**`，所以上面两个 cargo 读数是"没被本轮碰过"的复核，
 > 不是本轮的成绩。
-<<<<<<< HEAD
 
 ## 70. 音效 ↔ 事件的映射**做成真值表**：5 个资源槽 ↔ 5 条 mp3 ↔ 4 条订阅事件，判据是「句柄指针相等 + 回放里的**同一条**事件」；`docs/17` §5.1.1 那条「未知」结案，并纠正「5 个 player 槽」与「`0x4bfe10` 是按事件播放的主函数」两处旧读法（2026-11-26，任务 T19 / `task-16`）
 
@@ -11214,6 +11213,7 @@ $PY tools/audio_replay_align.py \
   ⇒ 仍标 `观测`（行为）+ `推断`（清空动作）；
 * 建议下一步：跑一份**有士兵阵亡 + `DeathEffect`** 的局把第 2 行的实例数从 1 提到多条；
   以及一份 `AshEffect` 与 `ExplosionEffect` 同时出现的局，验证兜底臂在压力下不串槽。
+
 ## 71. 回放屏残余 4 836 px 的逐项裁决：**最大那块不是"士兵合成尺寸"，是缺了三段准备弧**；"画布模型 1 970 px"被证伪（真正的载体是**修正常数标签**与**名字标签的字形栅格化**）；光标是**闪烁相位**（原版自己两轮运行就不一样）（2026-11-26，任务 T21）
 
 > 前情：**§59**（t7）把回放播放屏从 8.062 % 压到 **0.2171 %（4 836 px）**，L1/L2 全过、L3 不过，
@@ -11480,22 +11480,6 @@ for f in assemble_check base_classes_check curve_on_screen_check draw_classes_ch
    `set_fractional_tick(_, _curve_tick)` **没动**，而且回放的钟是 `ReplayDriver` 自己的定步累加器、
    不是 `KernelBus::drive_frame` ⇒ 按定义 **T1 未到达**，决策「不接 `drive_frame`」不变。
    ⚠️ 这条脚本不在本轮"允许改"清单里，但硬门槛要求 headless 全绿 ⇒ **如实登记**。
-
-### 71.9 **lead 复核更正：那个"逐运行随机"是**我们**的闪烁，不是原版的**
-
-T21 报告里写"原版自己的光标相位逐运行随机 ⇒ L3 在回放屏上不存在可复现解"。**这条被 lead 复测推翻**：
-
-| 测法 | 结果 |
-|---|---|
-| 同一命令连跑两轮，取**原版**侧 `replay_play_*` / `replay_end_*` 的 sha256 | **两轮 × 各 3 帧全部逐字节相同**（`8330fad1c4e3d6f2…`，且 play 与 end 也是同一张 —— 因为原版载入即暂停、根本不播） |
-| 同一命令连跑两轮，取**我方**侧同 6 张 | `replay_play`：两轮都是 `6b24…/8418…/6b24…`（**闪烁**，交替）；`replay_end`：run1 = `6b24/8418/8418`、run2 = `8418/6b24/8418` ⇒ **相位随运行漂** |
-
-⇒ 方差来自**我方**（我们自己在 `function_input.gd` 里实现了"半周期翻边重画"），而
-`recovered-src` 的 `.tscn` 自带的 `caret_force_displayed = true` 意味着**原版光标是常显、不闪的**。
-所以结论应改成：**L3 在回放屏上仍不可达，但原因是真实的绘制差（文本栅格化 ~1 100 px + 修正常数标签平移 ~1 788 px），
-不是"随机的骰子"**；而光标那 270 px **是可确定性消掉的**（把闪烁去掉、改成常显即可）。
-`docs/16` §73 里"相位不可控"的措辞按本条理解。**修法留给下一轮（T26）**，本例只做更正、不改代码。
-
 
 ## 72. `docs/02-module-map.md` 三类系统性过时收口：归档路径 **86 处** + §17.1/§17.2 的 **43 行**「`未实现`」按矩阵实测改写 + `0x4500c0` 归属按 `panic::Location` 更正（2026-11-26，任务 T22 / `task-19`）
 
@@ -12134,10 +12118,6 @@ python3 tools/check_doc_refs.py                 # rc=0
 7. **`docs/06` §72.6 第 1 条说"master 上 `coverage_matrix --check` 是红的"** —— 本轮实测**基线（master）上是 OK 的**；
    红色是我搬 `src/` 引起的（`ours_funcs` / `src_tree_sha256` 变），按工具重跑生成物后恢复 OK。
    两件事不矛盾，但那句话现在读起来会误导，登记在此（§72 是别人写的历史节，本轮不改它）。
-=======
->>>>>>> agent/pixel-rest
-
----
 
 ## 75. 按真值修三屏：LAN 大厅两页 / 玩家三页 / 对局设置 —— `player_skins` **逐像素过（0 px）**，`game_setup` 7.10 % → **1.05 %**（2026-11-26，任务 T25）
 
@@ -12274,6 +12254,21 @@ python3 tools/frame_diff.py --orig $W/setup-orig  --mine $W/setup-mine  --screen
    `/sys/fs/cgroup/**/cgroup.kill` 是只读，且每条命令在独立 PID namespace 里看不到那个进程。
    ⇒ **复跑前先 `ss -tulpen | grep 42968`**，不空就别采（白跑 40 s）。
    `lan_lobby_*` 那两行录的是**最后一次采到"两侧都 1 行"**的结果。
+   **绕行方案（T26 提供、本轮实测有效）**：把采集整条搬进**私有 netns**，就完全不碰宿主的 42968：
+   ```bash
+   bwrap --unshare-user --unshare-net --uid 0 --gid 0 \
+     --ro-bind / / --bind $WS $WS --dev /dev --proc /proc --tmpfs /tmp \
+     --setenv __EGL_VENDOR_LIBRARY_FILENAMES /usr/share/glvnd/egl_vendor.d/50_mesa.json \
+     --setenv LIBGLX_VENDOR_LIBRARY_NAME mesa --setenv LIBGL_ALWAYS_SOFTWARE 1 \
+     --setenv GALLIUM_DRIVER llvmpipe --setenv DISPLAY 127.0.0.1:<num> \
+     --chdir $WT python3 tools/frame_capture.py --side ours --flow lobby --out ... --display-num <num>
+   ```
+   两个**静默**坑：① 那四个 MESA 变量必须显式给（否则 Xvfb 直接 segfault、日志空）；
+   ② 继承的 `DISPLAY` 必须已经指向将要起的 `127.0.0.1:<num>`（`frame_capture.py::wait_display()`
+   探的是 `os.environ['DISPLAY']`，不是它自己算出来的 display）。
+   **本轮复跑确认**：私有 netns 里重采三条 flow，`lan_lobby_local` 仍是 **3012 px / 0.1352 %**、
+   `lan_lobby_global` 仍是 **13369 px / 0.6003 %**（与入库那两行一位不差）⇒ 泄漏 socket
+   只挡"能不能采"，**不影响已录的数字**。
 
 ### 75.7 逐屏剩下的差异（改后分解，都是"不可动"的）
 
@@ -12344,4 +12339,244 @@ python3 tools/frame_diff.py --orig $W/setup-orig  --mine $W/setup-mine  --screen
 最终做法：默认士兵数**不改**（§75.8 第 7 条）；`LobbyButtonContainer.gd` **挂上**（不挂 = 6.09 %），
 再在 `apply_font_scale()` 之后用 **deferred** 把 `Start` 的最小宽度按真值钉回 384
 （deferred 才排在同一次 `size_changed` 里原版脚本之后；1920×1160 下两条路径同为 384，采帧逐像素相同）。
->>>>>>> agent/screens-rest
+
+## 76. `play_screen` 收口：回放光标**节奏**修回引擎口径（"原版常显"被证伪）＋ 对局屏 S7/S8 **六项接线**（id 空间 / 靶子 / 名字 / 队色 / `Fire!` / 偏移量）—— 143 696→**137 854** px、153 106→**143 692** px，L2 超限 4→**1** / 3→**2**（2026-11-26，任务 T26 / `task-23`）
+
+> 规格：`.agent-work/specs/T26-play-screen-final.md`；预注册：`fixtures/play_screen_final_targets.txt`
+> （**先于任何代码改动**单独 commit `9f49314`，判据事后一个数没改）。
+> 工作树 `.agent-work/cg/wt-t26`、分支 `agent/play-screen-final`。
+> 原版 = `.reference/game/{Graphwar.x86_64,Graphwar.pck,libgraphwarrust.so}`（2.0.60，内嵌 Godot 4.7.0）；
+> 我方 = `client/` + `libgw2_rebuild.so`（Godot **4.7.2**）。地址一律 **vaddr**；证据档按 `AGENTS.md` §0.3 标。
+
+**一句话**：六项接线**全部落地**（其中 ⑤`Fire!` 是**逐像素级**：ROI 差异 3 098→**10** px、近白像素 273→**2 357**
+= 原版 2 357 逐值相同；②靶子的蓝环红心 0→**267** px = 原版 267 逐值相同；③名字 `user`→**`cmdgz`**；
+④环色/名字笔画色 → **`(125,104,0)`** = `ColorInfo`；⑥右下 `- 9.890` 出现且 S8 不再误显 `- 3.694`）；
+但**总差异只降了 4.1 % / 6.2 %**，远没到预注册的 75 % 目标 —— 因为剩下的大头**不在**这六项里
+（棋盘格线整体错 1 px 13 006 px、左右键盘字形 15 723+21 674 px、`f(x)` 行 6 230 px、左上两键 13 413 px、
+match_play 的**弹道相位** ~15 000 px）。**A 项的规格前提被实测证伪**（原版光标确实在闪），
+所以**没有改成常显**，改的是"闪烁周期错了一倍"（0.5 s → 引擎的 1.0 s）。
+
+### 76.0 一页结论
+
+| # | 项 | 做成什么 | 档 | 判据 |
+|---|---|---|---|---|
+| A | 回放屏光标 | 周期 0.5 s → **1.0 s**（`caret_blink_interval` 是**翻边**间隔）；**两轮 6 帧逐字节稳定**（改前 `replay_end_3` 两轮不同）。**没改常显**：原版实测在闪 | **观测**（真帧两态 + 两轮 sha）+ 引擎语义 | A3 ✅ / A4 play 持平、end +270 px ⚠️ |
+| ① | id 空间（总根因） | `_sync_entities()` 的 id：士兵下标 → `s["entity_id"]` / 回放 `s["id"]`；环键同步；**补"外观事件→重摆"的触发** | **观测**（`sync id=0`→`230`；精灵换装） | ✅ |
+| ② | 靶子图层 | `_begin_online()` 按 `room["targets"]` 填 `GwTargetSet` + `下标→实体 id` 映射 + 外观三件套补默认 | **观测**（蓝环红心 267 px = 原版 267） | B2b ✅ / B2a ⚠️（判据本身不成立，见 §76.6） |
+| ③ | 名字标签 | 读 `room["names"]`（先实体 id、再 `player_id`），**现读**不是缓存；名字标签不再吃本屏字号表（改前被放大 3 倍） | **观测**（墨迹 bbox 202×60 → 68×45，原版 73×47） | B3a ✅ / B3b ✅ |
+| ④ | 准备圈/名字颜色 | `assign_colors()`（界面自定）→ `room["colors"]`（`ColorInfo`，先实体、再 `player_id`） | **观测**（队色像素 0→839，界面绿 2 969→0） | B4a ✅ / B4b ✅ |
+| ⑤ | `Fire!` 按钮 | 删掉多插的 `FireStack` 中间层 ⇒ `FireContainer.gd` 的字号覆盖终于落到按钮上（24 → 64 px） | **观测**（ROI 差异 3 098→**10** px；近白 273→**2 357** = 原版） | B5a ✅ B5b ✅（**逐值**） |
+| ⑥ | 右下偏移量 | OffsetLabel 常显 `c = y0 − f(x0)`（空函数 ⇒ `c = y0`），不再"手改就清空 / 只开火后写" | **观测**（近白 0→804 = 原版 804，两屏） | B6a ✅ B6c ✅ / B6b ⚠️（10 px 横向偏移，见 §76.6） |
+
+**必须一起读的一条**：①"把 id 空间改对"本身**不降像素**（−32 px）、②"把靶子画出来"也只降 **−38 px** ——
+语义对了但被别的元素盖住（名字字号 3 倍、环色错），**是 ③④ 才把这两项的收益兑现的**。
+这与 T17 §67.5 那条"错的东西比没有更接近原版"是同一类现象，别只看总数字判断单项成败。
+
+### 76.1 A 项：光标 —— 规格前提被证伪，但真找到了一条错
+
+**前提（任务书）**：原版 `caret_force_displayed = true` ⇒ 光标常显不闪，我方在自己实现闪烁。
+**实测反了**（同一命令各跑两轮，sha256 前 8 位，`O` = 光标画出来的那一态）：
+
+| 轮 | 侧 | `replay_play_1..3` | `replay_end_1..3` |
+|---|---|---|---|
+| `ro` | 原版 | `8330fad1`(灭) / `1af32964`(**O**) / `1af32964`(**O**) | `8330fad1` ×3（灭） |
+| `ro2` | 原版 | `8330fad1` ×3（灭） | `8330fad1` ×3（灭） |
+| `rm`（改前） | 我方 | `84188ffa`(灭) / `6b248445`(**O**) / `84188ffa` | `84188ffa` / `6b248445` / `84188ffa` |
+| `rm2`（改前） | 我方 | 同 `rm` | `84188ffa` / `6b248445` / **`6b248445`**（≠ `rm`） |
+
+* 两态之差 **270 px = 光标矩形 3×90**（bbox `x1182..1184 × y1066..1155`）：一态是**纯白 (255,255,255)**
+  （= 主题 `LineEdit/colors/caret_color`），另一态是只读样式盒底 `(17,33,27)`。⇒ **原版光标在闪**。
+* 原版**两轮之间**采样态也不同（`ro` 有亮帧、`ro2` 全灭帧）⇒ lead 那次"原版 6 帧两轮逐字节相同"
+  是**采样巧合**，与 `docs/06` §71.5-B 自己那张表（base 轮 play=亮 / ring 轮 play=灭）自洽。
+* 顺带解出我方一处**真错**：引擎 `caret_blink_interval`（默认 0.5 s）是**翻边间隔** ⇒ 亮 0.5 / 灭 0.5、
+  **整周期 1.0 s**；T21 把它当"半周期"（`_caret_blink < 0.5×0.5`，回绕在 0.5）⇒ 周期 **0.5 s**。
+  **判据**：原版 `ro` 轮 play 三帧（间隔 1.2 s）是 **灭/亮/亮**；0.5 s 周期下 1.2 s 采样（相位步进 0.2 s、
+  亮窗 0.25 s）**只能**给出 灭/亮/灭 ⇒ 只有 1.0 s 周期排得出 灭/亮/亮。
+
+**改法**（`client/src/play/function_input.gd`，13 行）：`caret_on()` = `_caret_blink < CARET_BLINK_INTERVAL`、
+回绕在 `CARET_BLINK_PERIOD = 2 × 0.5`。**没有**改成 `return true`：把原版确实在闪的东西删掉，
+是用"删元素"去对齐一次采样的骰子（`AGENTS.md` §0 第 3 条）。若 lead 仍要常显，代价**已实测**：
+我方帧 1 会永远带光标，而原版帧 1 在 4 次实测里 **4 次都没有** ⇒ 两屏各 +270 px（0.1858 % → 0.1979 %）。
+
+### 76.2 B 六项：定位链（哪一行 → 改成什么 → 喂进哪个消费端）
+
+| 项 | 改的文件/函数 | 改前 | 改后（喂进哪个消费端） |
+|---|---|---|---|
+| ① id 空间 | `play_screen.gd::_sync_entities()` | `want[i] = {...}`（士兵下标） | `want[eid] = {...}`，`eid = s["entity_id"]`（联机）/ `s["id"]`（回放）/ 下标（本地局）⇒ `EntityDrawer` 与 22 个 manager 同一个 id 空间 |
+| ① 环键 | 同上 `ring_ids` | 键 = 下标 ⇒ 联机局 `want.has(i)` 全 miss | 键 = 实体 id |
+| ① 触发 | `_on_online_message()` | 只对 `PosInfo` 重摆 | `NameInfo` / `Skin|Face|HatGraphicsInfo` / `ColorInfo` 也重摆（这些事件**晚于** `begin_match()` 到） |
+| ② 靶子 | `_begin_online()` + `_view_targets()` + 新 `_build_online_targets()` | `_targets = GwTargetSet.new()` 之后**从不填** | `room["targets"]`（`TargetInfo` 的实体 id）+ `room["entities"][id].x/.y`（`PosInfo`）⇒ `GwTargetSet.setup()`；`_view_targets()` 把下标翻成实体 id |
+| ② 外观 | `_look_for()` | 空串 face/hat ⇒ 纯色兜底（55×55 蓝方块 2 970 px） | 按种类补默认：靶子 `target/no_face/no_hat`、士兵 `yellow/regular_eyes/soldier_helmet` |
+| ③ 名字 | `_online_entity_name()`（新） | `app_node.state.players[pi].name`（本地 profile `user`） | `room["names"][eid]` → `room["names"][player_id]` → profile 兜底 |
+| ③ 字号 | `apply_font_scale()` | 基类遍历把**所有** `RichTextLabel` 写成 宽/N×0.85（本屏 ~68 px） | 把 `EntityDrawer` 那层的 `normal_font_size` 覆盖撤掉（原版 = 主题默认 24） |
+| ④ 队色 | `_online_entity_color()`（新） | `assign_colors(teams,1)`（界面自定 6 色表） | `room["colors"][eid]` → `[player_id]` → 本队色表兜底；同时喂 `set_entity_name_color()` 与 `EntityDrawer.team_color`（环色） |
+| ⑤ `Fire!` | `build()` 的 Fire 行 | `FireContainer → Control("FireStack") → [ClipButton, FireButton]` | 与 `.tscn` 同形：`FireContainer → [ClipButton, FireButton]`（`MarginContainer` 把两个子节点铺满同一矩形 ⇒ 叠放顺序 = 添加顺序） |
+| ⑥ 偏移量 | `_refresh_offset_label()`（新） | 两处各自写：手改清空 / 开火后写 `result.offset` | 唯一来源 `c = y0 − f(x0)`，在"输入变化 / 换手 / 进联机局 / 开火"四处重算 |
+
+### 76.3 改前 / 改后数字（三层判据 + 逐块）
+
+两侧重拍：原版 `A`=`.agent-work/v/base2/mo`（改前控制帧）与 `.agent-work/v/final_mo`（改后同日重拍），
+我方 `.agent-work/v/base2/mm`（改前）/ `.agent-work/v/final_mm`（改后）。同一份剧本
+（`fixtures/frame_match_events.txt`，sha256 `2278c30d…`）、同一台机、1920×1160、llvmpipe、每屏 3 帧。
+
+| 屏 | 判定 | L1 尺寸 | L1 平均色 \|Δ\|max | L1 主色 | L1 占比差 | L2 超限块 | L2 最差块 | L3 差异像素 | L3 max\|Δ\| |
+|---|---|---|---|---|---|---|---|---|---|
+| `match_ready` **改前** | 不过（L2，4 块） | ✅ 1920×1160 | **0.603** ✓ | `#FFFFFF`/`#FFFFFF` ✓ | ✓ | **4 / 24** | `(2,2)` 7.759 | 143 696（**6.4519 %**） | 255 |
+| `match_ready` **改后** | 不过（L2，**1** 块） | ✅ | **0.124** ✓ | ✓ | ✓ | **1 / 24** | `(0,0)` **2.873** | **137 854（6.1896 %）** | 255 |
+| `match_play` **改前** | 不过（L2，3 块） | ✅ | 0.325 ✓ | ✓ | ✓ | **3 / 24** | `(2,2)` 10.110 | 153 106（**6.8744 %**） | 255 |
+| `match_play` **改后** | 不过（L2，**2** 块） | ✅ | 0.771 ✓ | ✓ | ✓ | **2 / 24** | `(2,2)` **16.135** | **143 692（6.4517 %）** | 255 |
+
+**净变化**：`match_ready` **−5 842 px / −0.2623 pp**（−4.1 %）；`match_play` **−9 414 px / −0.4227 pp**（−6.1 %）。
+L2 超限块 **4→1** / **3→2**。**预注册 B0（≤ 改前 75 %、L2 ≤2 / ≤2）没过**，原因见 §76.5。
+
+逐块（6×4，块 320×290，`|Δmean|`；只列改后有变化的 / 仍超限的）：
+
+| 屏 | 块 | 改前 | 改后 | 画面上是什么 |
+|---|---|---|---|---|
+| 两屏 | `(0,5)` | **5.710**（超限） | **0.065** | ⑤ `Fire!`（字号 24→64） |
+| ready | `(3,5)` | **2.724**（超限） | **0.059** | ⑥ 右下偏移量标签（空 → `- 9.890`） |
+| ready | `(2,2)` | **7.759**（超限） | **1.201**（过） | 射手精灵 + 名字 + 准备圈（①③④） |
+| ready/play | `(1,3)` | 1.584 / 1.578 | 0.698 / 0.691 | 靶子 232（②） |
+| play | `(2,5)` | 0.309 | 0.309 | 右键盘字形（不在六项内） |
+| play | `(2,2)` | 10.110（超限） | **16.135**（超限，**不可判**） | **弹道**：我方不发 `TickRequest`、一次画完 ⇒ 逐次采集都在变（同一块在相邻两次采集里 10.199 / 15.183 / 16.135，而这几次的代码改动只碰名字/颜色）⇒ **这一块的读数不能当判据** |
+| 两屏 | `(0,0)` | 2.873（超限） | 2.873（超限） | 左上 返回/确认 两键：底板圆角 + 图标边缘（`max|Δ|`=30，色板完全相同）—— **不在六项内** |
+
+### 76.4 ROI 逐元素（人工框，`d>0` 像素数；判据见 `fixtures/play_screen_final_targets.txt` §B）
+
+| ROI (x0,y0)-(x1,y1) | 改前 | 改后 | 说明 |
+|---|---|---|---|
+| `Fire!` (1636,4)-(1916,112) | 3 098（10.115 %） | **10（0.033 %）** | 近白像素 273 → **2 357**（原版 **2 357**，逐值）；`max|Δ|` 229 → **6** |
+| 偏移量 (1740,1080)-(1916,1140) | S7 1 336 / S8 1 858 | **1 901 / 1 901** | **近白 0 / 748 → 804 / 804 = 原版 804**（值对了），但整串墨迹**偏右 10 px**（见 §76.6） |
+| 射手名字带 (760,740)-(1000,830) | 816 | 816 | 墨迹 bbox 202×60 → **68×45**（原版 73×47）；文本 `user` → **`cmdgz`** |
+| 射手精灵 + 环 (760,760)-(900,880) | 6 102（35.77 %） | **3 796（22.25 %）** | 精灵三件套 → `face_paint_2/asian/asian_hat`；环色/名字色 → `(125,104,0)` |
+| 靶子 (1140,400)-(1250,510) | 1 574（12.78 %） | **1 536（12.47 %）** | 靶子自身：蓝环红心 **0 → 267 px = 原版 267**；ROI 的大头是棋盘格线（7.3 % 不动） |
+| 棋盘格线 (303,198)-(1100,420) | 13 006（7.31 %） | 13 006（7.31 %） | 对照组：**不动**（整体错 1 px，不在本轮范围） |
+| 左键盘 (0,276)-(300,1010) | 15 723（7.11 %） | 15 723（7.11 %） | 对照组：**不动** |
+| `f(x)` 行 (140,1030)-(1620,1160) | 6 512（3.38 %） | 6 230（3.24 %） | 对照组：只被 ⑤⑥ 连带 |
+
+`match_ready` 剩下的 137 854 px 的构成（按 ROI 量，合计 ≈ 66 000，其余是 ROI 之外的白底/边缘）：
+左键盘 15 723 + 右键盘 21 674 + 棋盘格线 13 006 + 左上两键 13 413 + `f(x)` 行 6 230 + 靶子 1 536 +
+偏移量 1 901 + 精灵/名字 4 612 —— **没有一项是这六项该管的**（六项自身的 ROI 已经降到 10 / 804 / 14 / 267 量级）。
+
+### 76.5 遗留 / 没做（含"我判断不该做"的理由）
+
+| # | 项 | 量 | 状态 | 理由 / 缺什么 |
+|---|---|---|---|---|
+| 1 | 棋盘格线**整体错 1 px**（含多画一层虚线片段） | 13 006 | 没做 | 不在六项内；根因是 `_fit_canvas` 的 `Control.scale` 画布模型的取整（`docs/06` §58.3/§71.2 两次记录） |
+| 2 | 左上 `返回`/`确认` 两键的底板圆角与图标边缘 | 13 413 | 没做 | 不在六项内；`max|Δ|`=30、色板完全相同（纯抗锯齿/圆角栅格差） |
+| 3 | 左右键盘的字形 | 15 723 + 21 674 | 没做 | 不在六项内；这是**字体栅格化**（`docs/06` §59/§62 的既知项） |
+| 4 | `f(x)=` 图标 636 px | 636 | **不做** | 要动 `FxContainer` 结构（原版 `FxContainer → AspectRatioContainer → FxTextureButton`），会挪动现在 0 px 的输入框文本（任务书 §2C 明确不做） |
+| 5 | 文本栅格化 ~1 100 px | ~1 100 | **不做** | 要拆 `Control.scale` 画布模型 = 整屏坐标系重构（任务书 §2C 明确不做） |
+| 6 | 修正常数标签横向 10 px | ~1 100（两屏合计） | **不做** | 任务书 §2C 说"机制未知、不做"。本轮把它**量准了**（17 px → **10 px**）并**排除两条候选机制**（§76.6），真因在 `OffsetContainer` 的容器几何/底栏 HBox 分配 —— 与 `f(x)` 行同源 |
+| 7 | match_play 的弹道**相位** | ~15 000 | 不做 | 我方不发 `TickRequest`，弹道"一次画完"再动（`docs/06` §60.8 第 2 条）⇒ 拿不到同一个 tick |
+| 8 | 准备圈**多画 3 个箭头** | 环 ROI 内 | 遗留 | `show_ring_arrows = not _replay_mode` 是我方开关；原版 `match_ready` 真帧上有"2 个箭头尖"、回放屏 0 个（§71.1）。3 vs 2 的差别**没查**（缺"原版箭头条数由哪个量决定"的证据） |
+| 9 | 名字标签字号在**回放屏**的历史说法 | — | 更正 | `docs/16` §73.4 说"名字标签的字形被 1.279× 放大糊掉 ~1 100 px"：那是**画布模型**那条；本轮发现**对局屏**另有**一个 3 倍的放大**（本屏字号表覆盖到 `RichTextLabel`），两条不是一回事 |
+
+### 76.6 我写错了 / 规格前提被证伪（三条，都带实测）
+
+1. **A 项前提被证伪**（最要紧）："原版 `caret_force_displayed = true` ⇒ 光标常显不闪"**不成立**，
+   原版真帧**同屏内就有两态**（§76.1 表）。⇒ 本轮**没有**改常显，改的是"闪烁周期 0.5 s → 1.0 s"。
+   **判据也改了（写定于改动之前，理由写在预注册文件里）**：把"差异下降"改成"差异**不升**"——
+   光标态是逐运行的骰子，写"下降"就是拿骰子当成绩。实测：`replay_play` **持平**（4 138 px）、
+   `replay_end` **+270 px**（0.1858 % → 0.1979 %，我方帧 1 落在亮的半周期）⇒ **这一条部分不过**，如实记录。
+2. **预注册 B2a 判据本身不成立**："靶子 ROI 差异 ≤ 改前 40 %"——改前那 1 574 px 里**大头是棋盘格线**
+   （该 ROI 的白底/格线自身就有 7.3 % 的 1 px 错位差），靶子自身只有 ~330 px ⇒ 判据不可能过。
+   真正可判的 B2b（蓝环红心出现）**过了，而且是逐值**（267 vs 267 px）。
+3. **预注册 B6b 判据没过，且我原来对它的解释是错的**：ROI 差异像素 1 336 → **1 901**（升了），
+   但**数值是对的**（近白 804 = 原版 804、字符串 `- 9.890`）。原因是我方整串墨迹
+   **横向偏右 10 px**（真帧 `x1764..1883` / 我方 `x1773..1893`，y 只差 1 px）——就是任务书 §2C 那条
+   "修正常数标签平移"。本轮把它量准（17 → 10 px）并**排除了两条候选机制**（各自实测更差）：
+   * `Label.horizontal_alignment` 改 **LEFT**（`.tscn` 没覆盖，默认就是 LEFT）⇒ 墨迹跑到 `x1750..1870`（偏左 14 px）；
+   * 文本加**前导空格**（回放屏那条老补丁的思路）⇒ 居中下反而**右移 8 px**（`x1781..1900`）。
+   ⇒ 真因在 `OffsetContainer` 的**容器几何**（我方容器中心 1833.6、原版文本中心 1823.5，差 10 px），
+   与整条底栏 HBox 的分配同源。按"不许用拟合常数赌像素"的规矩**不动**。
+
+### 76.7 复跑（每条都在本机跑过）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t26
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target          # ⚠️ 单独一行
+export HOME=$WT/.fakehome
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+
+# ① 内核三步（改了 src/_scaffold/ 才需要；本轮只改 client/*.gd，但 .so 要已在位）
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+$GODOT --headless --path client --import        # ⚠️ 新工作树里没有 client/.godot 时**必做**，否则我方帧全空白
+
+# ② A：回放四屏（两侧；同一命令连跑两轮看稳定度）
+python3 tools/frame_capture.py --side original --flow replay --seed-replays --out $WT/.agent-work/v/ro --display-num 151
+python3 tools/frame_capture.py --side ours     --flow replay --seed-replays --out $WT/.agent-work/v/rm --display-num 152
+python3 tools/frame_diff.py --orig $WT/.agent-work/v/ro --mine $WT/.agent-work/v/rm \
+    --screens menu,replay_lobby,replay_play,replay_end --out $WT/.agent-work/v/replay.tsv \
+    --blocks-out $WT/.agent-work/v/replay_blocks.tsv --json $WT/.agent-work/v/replay.json
+
+# ③ B：对局两屏（两侧）。⚠️ **必须走私有 netns 包装器**，理由见 §76.8：
+bash .agent-work/cap_in_netns.sh --side original --flow match --out $WT/.agent-work/v/mo --display-num 196
+bash .agent-work/cap_in_netns.sh --side ours     --flow match --out $WT/.agent-work/v/mm --display-num 197
+python3 tools/frame_diff.py --orig $WT/.agent-work/v/mo --mine $WT/.agent-work/v/mm \
+    --screens match_ready,match_play --out $WT/.agent-work/v/match.tsv \
+    --blocks-out $WT/.agent-work/v/match_blocks.tsv --json $WT/.agent-work/v/match.json
+
+# ④ 逐 ROI（判据表；`d>0` 像素数 / 近白像素数 / 主色）
+python3 .agent-work/roi.py $WT/.agent-work/v/mo $WT/.agent-work/v/mm
+```
+
+`.agent-work/cap_in_netns.sh` 的内容（8 行 bwrap）：`--unshare-user --unshare-net --uid 0 --gid 0`
++ `--ro-bind / /` + `--bind $MAIN $MAIN` + `--dev /dev --proc /proc --tmpfs /tmp`
++ MESA 四个环境变量（`__EGL_VENDOR_LIBRARY_FILENAMES` / `LIBGLX_VENDOR_LIBRARY_NAME=mesa` /
+`LIBGL_ALWAYS_SOFTWARE=1` / `GALLIUM_DRIVER=llvmpipe`）+ `DISPLAY=127.0.0.1:<num>`，然后 `python3 tools/frame_capture.py "$@"`。
+
+### 76.8 采集管线的四个陷阱（本轮全部踩过，都会**静默**给出错误结果）
+
+| # | 症状 | 根因 | 判据 / 修法 |
+|---|---|---|---|
+| 1 | `--side ours` 拍到**整屏单一色 `#0E251C`（410 字节帧）** | 新工作树里 **没有 `client/.godot/`** ⇒ Godot 静默不加载任何 GDScript 类（`Identifier "GwThemeFactory" not declared`），界面起不来 | `$GODOT --headless --path client --import`（3.7 s）。**判据：看帧内容**（近白像素占比），不要看退出码 |
+| 2 | `--flow match` 永远拍到 **LAN 大厅**（近白 1.2 %，不是 40 %） | 宿主上有个**泄漏的客户端进程**长期占着 **UDP 42968**（`Frame_capture` 里 LAN 发现绑定该端口）⇒ 两侧都拿不到房间行 ⇒ 点空。实测占用者：cgroup scope `dsh-subprocess-3069-f7421a18b23a`（41 pid / 565 MB，从 11:54 起）；**沙箱内 `/sys/fs/cgroup` 是只读挂载 ⇒ `cgroup.kill` 不可用**，`ps` 也看不到别的 PID namespace | **绕过**：`bwrap --unshare-user --unshare-net` 起一个**私有 netns**（里面 `lo` 已 UP），Xvfb + 服务器 + 客户端全在里面 ⇒ 端口私有（§76.7 的 `cap_in_netns.sh`）。撞端口的判据 = 帧里近白像素 < 20 % |
+| 3 | `Xvfb 起不来`（Xvfb 直接 segfault） | 少了 `frame_capture.py` 里那四个 MESA 环境变量（`LIBGL_ALWAYS_SOFTWARE` 等）⇒ Xvfb 的 GLX 初始化崩 | 照抄 `MESA_ENV`；自测：`DISPLAY=127.0.0.1:<n> xdotool getdisplaygeometry` 应返回 `1920 1160` |
+| 4 | `frame_capture` 报"Xvfb 起不来"，但 Xvfb 明明活着 | `wait_display(display, env)` 用的是**从 `os.environ` 继承的 `DISPLAY`**（不是它自己算的 `127.0.0.1:<n>`）；在私有 netns 里宿主 `:0` 不可达 ⇒ 探测永远失败 | 包装器里把继承的 `DISPLAY` 设成将被起的那个 Xvfb 号 |
+
+### 76.9 本轮改动的文件
+
+```text
+fixtures/play_screen_final_targets.txt   新增（预注册判据，先于代码单独 commit）
+client/src/play/function_input.gd        A：闪烁周期 0.5 s → 1.0 s（+ 注释更正）
+client/src/screens/play_screen.gd        ①~⑥ 六项接线 + 两处辅助函数 + `apply_font_scale` 一处
+docs/06-verification.md                  本节（§76）
+docs/16-client.md                        §74（客户端视角 + 复跑）
+```
+
+**没有改**：`client/src/net/**`（T17 那层）、其它 screens、`client/src/views/**` 的 27 份原版脚本、
+`tools/frame_capture.py` / `tools/frame_diff.py`、门槛/护栏文件、`docs/00` / `HANDOVER` / `README` /
+`coverage-matrix.*`、`src/` 原版模块、`fixtures/frame_match_events.txt` 与 `frame_diff_thresholds*.txt`（一个数没改）。
+
+### 76.10 硬门槛读数（本轮末端实测，改完后）
+
+| 闸 | 门槛 | 实测 |
+|---|---|---|
+| `cargo test --offline` | 1769 / 0 / 1 ignored | **1769 / 0 / 1** ✓ |
+| `cargo test --offline --features gdext-bindings` | 1880 / 0 / 1 ignored | **1880 / 0 / 1** ✓ |
+| `bash client/run.sh selftest` | 717 / 0 / 1 skip（missing=0 silent=0） | **717 / 0 / 1 skip**（`missing=0(claimed 0 / degraded 0 / silent 0)`）✓ |
+| headless 14 脚本 | 1935 / 0 | **1935 / 0** ✓（244+117+96+235+367+132+24+116+96+207+66+57+155+23） |
+| 三轴 | fire 647 / batch 647 / batch_conv 637 | **647 / 647 / 637** ✓（`内容命中`） |
+| 快照 | 403 份（只读，未动） | 403 份；`文件 286（读失败 117）` = 目录里 MANIFEST/SHA256SUMS 等非回放文件与无结算批的样本，与既有口径一致 |
+
+复跑（照抄）：
+```bash
+export CARGO_HOME=$MAIN/.reference/cargo-home CARGO_TARGET_DIR=$WT/.cargo-target
+cd $WT
+cargo test --offline 2>&1 | grep -E "^test result:" | awk -F'[ ;]+' '{p+=$4;f+=$6;i+=$8} END{print p,f,i}'
+cargo test --offline --features gdext-bindings 2>&1 | grep -E "^test result:" | awk -F'[ ;]+' '{p+=$4;f+=$6;i+=$8} END{print p,f,i}'
+bash client/run.sh selftest | grep -E "SELFTEST|COVERAGE"        # 用 $GODOT / .reference 布局
+for f in assemble_check base_classes_check curve_on_screen_check draw_classes_check \
+         entity_drawer_check function_drawer_check gdext_check obstacle_drawer_check \
+         plane_on_screen_check play_flow_check process_loop_check recovered_view_check \
+         signal_classes_check spike_class_check; do
+  $GODOT --headless --path client --script res://tools/$f.gd | grep -E "passed, [0-9]+ failed"; done
+SNAP=$MAIN/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict
+```

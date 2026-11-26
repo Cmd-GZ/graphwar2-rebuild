@@ -1,0 +1,144 @@
+# fixtures/play_screen_final_targets.txt —— T26「play_screen 收口」的**预注册判据**（2026-11-26）
+#
+# 这份文件在**任何代码改动之前**写定并单独 commit（任务书 §3 的硬要求）：
+# 每项改什么、判据是什么。**跑完不许改判据**；若实测发现判据本身不成立（前提被证伪），
+# 只能如实记录并说明——不许把判据改成"刚好能过"的数。
+#
+# 门槛文件一个数都没改：三层判据仍是 `fixtures/frame_diff_thresholds.txt`
+# （sha256 9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873）、
+# 对局剧本仍是 `fixtures/frame_match_events.txt`（sha256 2278c30d…，一字未改）、
+# 回放快照 403 份只读。
+#
+# 采集条件（照抄 `docs/06` §71.7 / §67.4）：
+#   私有 Xvfb 1920×1160×24（TCP）、llvmpipe 软渲染、`import -window <id>`、
+#   每屏 3 帧 / 帧间隔 1.2 s；两侧同一台机、同一条命令、同一份点击脚本。
+#   ⚠️ 对局流的两侧采集要独占 TCP 46702 / UDP 42968（端口写死在剧本 `[meta]` 里，不许改）
+#   ⇒ 与别的 agent 撞端口时只能重试；判据是"帧里近白像素 > 20 %"（对局屏有大块白棋盘，
+#   LAN 大厅只有 1.2 %），撞端口时拍到的必是 LAN 大厅。
+#
+# ---------------------------------------------------------------------------
+# §A 回放屏：光标（`client/src/play/function_input.gd`）
+# ---------------------------------------------------------------------------
+# 任务书的前提是"原版光标常显不闪（`caret_force_displayed=true`）、我方自己在实现闪烁"，
+# 判据是"我方 6 帧两轮逐字节稳定 + 差异下降"。**本文件写定前先实测了这个前提**，结论：前提被证伪。
+#
+# 实测（同一台机、同一命令、各跑两轮；sha256 前 8 位；O = 光标画出来的那一态）：
+#
+#   轮  侧       replay_play_1..3        replay_end_1..3        两态之间的差
+#   --  ------   ---------------------   ---------------------  --------------
+#   ro  原版     8330fad1 / 1af32964 / 1af32964   8330fad1 ×3   270 px（正好 3×90 = 光标矩形）
+#   ro2 原版     8330fad1 ×3             8330fad1 ×3            0
+#   rm  我方     84188ffa / 6b248445 / 84188ffa   84188ffa / 6b248445 / 84188ffa  270 px
+#   rm2 我方     84188ffa / 6b248445 / 84188ffa   84188ffa / 6b248445 / 6b248445  270 px
+#
+# 差分定位：两态的差异 bbox = x1182..1184 × y1066..1155（= 3×90，`caret_width = 3`、
+# 内容高 90），一态是该矩形**白色 (255,255,255)**（= 主题 `LineEdit/colors/caret_color`），
+# 另一态是只读样式盒底 (17,33,27)。⇒ **原版光标确实在闪**（`ro` 轮内三帧就有两态），
+# `caret_force_displayed = true` **不等于**"常显不闪"。而原版**两轮的采样态还不一样**
+# （`ro` 有 O 态、`ro2` 全无 O 态）⇒ "原版两轮 6 帧逐字节相同"是**采样巧合**，
+# 与 `docs/06` §71.5-B 自己那张表（base 轮 play=亮 / ring 轮 play=灭）一致。
+#
+# 顺带解出我方实现里的一处**真错**：Godot 的 `caret_blink_interval` 是**翻边间隔**
+# （默认 0.5 s ⇒ 亮 0.5 s / 灭 0.5 s，**周期 1.0 s**），而我方 `caret_on()` 写成
+# `_caret_blink < 0.5 * 0.5` ⇒ 周期 **0.5 s**，快一倍。
+#   * 判据：原版 `ro` 轮 play 三帧（间隔 1.2 s）的态序列是 灭/亮/亮；1.2 s 采样下
+#     0.5 s 周期**只能**给出 灭/亮/灭（相位步进 0.2 s、亮窗 0.25 s）⇒ 原版周期必是 1.0 s。
+#
+# A 的判据（**修订过，理由见上；这就是"不许改判据"的那一版**）：
+#   A1 表现判据（放弃）：不要求"我方帧逐字节稳定"作为验收线——原版自己也不稳（`ro` vs `ro2`）。
+#   A2 **节奏**：我方光标的翻边间隔 = 0.5 s（亮 0.5 / 灭 0.5，周期 1.0 s），与引擎
+#      `caret_blink_interval` 默认值、与原版 `ro` 轮三帧的态序列**同构**。
+#   A3 **两轮稳定度**：我方 replay_play/replay_end 的 6 帧，两轮之间**逐字节相同的帧数 ≥ 5/6**
+#      （改前基线实测 6/6 也成立——这条只是"别改坏"）。记录实际值，不拿它当"做成"的唯一依据。
+#   A4 **不许变差**：两屏跨侧差异像素 ≤ 改前实测（replay_play 4 138 px / 0.1858 %、
+#      replay_end 4 138 px / 0.1858 %，本文件写定前实测）。光标态是逐运行的骰子，
+#      所以判据写成"不升"，不写"下降"——写"下降"就是拿骰子当成绩。
+#   A5 若 lead 仍要"常显"：`function_input.gd` 的 `caret_on()` 一行改成 `return true` 即可，
+#      **代价**已实测：我方帧 1 会永远带光标，而原版帧 1 在 4 次实测里 4 次都没有光标
+#      ⇒ 两屏各 +270 px（0.1858 % → 0.1979 %，差 0.0121 pp）。本文件记下这个代价，不改判据。
+#
+# ---------------------------------------------------------------------------
+# §B 对局屏六项接线（`client/src/screens/play_screen.gd`）
+# ---------------------------------------------------------------------------
+# 基线（任务书给定、`docs/06` §67.10 表 ② 实测）：match_ready 6.4459 %（6.3568→ 见 §67.10）、
+# L2 超限 **4** 块、最差块 (0,5) 5.71；match_play 6.8788 %、L2 超限 **3** 块、最差块 (2,2) 18.138。
+# 本机基线以 §D 的实测为准（同一份剧本、同一台机），下列判据全部写成**相对改前实测**的比值，
+# 所以基线读数不需要事先钉死。
+#
+# ① id 空间（总根因）
+#    要改：`_sync_entities()` 交给 `EntityDrawer` 的 id 从"士兵下标"改成 `s["entity_id"]`
+#          （回放用 `s["id"]`，本地局无实体 id 时退回下标）；靶子同理用真实体 id（联机 232）。
+#    判据：B1a `online_state()`/`level_state()` 里 `drawn_soldiers` 的 id 集合 == {230, 232}
+#          （改前是 {0, 1000+0}）；B1b 棋盘正中 (0,0) 那一块 `(1,2)` 的 `|Δmean|` **不再上升**
+#          （改前实测见 §D 记录）；B1c 总差异**下降**（这一项单独降，另外五项未动时）。
+# ② 靶子图层
+#    要改：`_begin_online()` 里按 `room["targets"]` + `room["entities"][id]` 的坐标
+#          `_targets.setup()`，并把 target_id → 实体 id 的映射交给 `_view_targets()`。
+#    判据：B2a 靶子 ROI (1140,400)-(1250,510) 的差异像素 ≤ 改前 **40 %**（改前 1 565 px 量级）；
+#          B2b 帧上该 ROI 出现"蓝环红心"（`res://skins/target.svg` 的贴图墨迹），不再画成士兵。
+# ③ 名字标签
+#    要改：`_online_player_name()` 改读 `room["names"][entity_id]`（缺则退回该士兵
+#          `player_id` 那条 `NameInfo`），标签颜色用 `ColorInfo`（`set_entity_name_color`）。
+#    判据：B3a 射手名字 ROI (760,700)-(900,760) 出现 `cmdgz` 的字形墨迹（改前是本地 profile 名
+#          `user`）；B3b 该 ROI 差异像素 ≤ 改前 **60 %**；B3c 名字笔画色的众数 = `(125,104,0)` ±8/通道
+#          （= `ColorInfo{entity_id:229}` 的 RGB，`docs/06` §60.5 实测原版同一颜色）。
+# ④ 准备圈颜色
+#    要改：联机士兵的 `color` 取 `room["colors"][entity_id]`（缺则退回其 `player_id` 那条），
+#          不再用界面 `assign_colors()` 的自定色。
+#    判据：B4a 准备圈像素（环带 r∈[15,24] px @ 屏幕尺度）的颜色众数 = `(125,104,0)` ±6/通道
+#          （改前是界面红 `(0.88,0.45,0.31)` 一档）；B4b `(2,2)` 块 `|Δmean|` **下降**。
+# ⑤ `Fire!` 按钮
+#    要改：`FireContainer` 的子节点必须与 `.tscn` 同形（`ClipButton` / `FireButton` 两个**直接**
+#          子节点）——我方多了个 `FireStack` 中间层，`FireContainer.gd::update_sizes()` 只遍历
+#          直接子节点 ⇒ 字号覆盖从没落到按钮上（= 主题默认 24 而不是 屏宽/30 = 64）。
+#    判据：B5a `Fire!` ROI (1636,4)-(1916,112) 的差异像素 ≤ 改前 **35 %**（改前 3 096 px）；
+#          B5b 该 ROI 内近白像素数进入原版同量级：**原版 / 4 ≤ 我方 ≤ 原版 × 2**（原版 1 857、
+#          改前 261）。
+# ⑥ 右下偏移量标签
+#    要改：OffsetLabel 常显"当前输入对应的修正常数"`c = y0 − f(x0)`
+#          （`src/graphwar_shot_calculator.rs::correction_text` 的公式；空函数 ⇒ `f≡0` ⇒ `c = y0`），
+#          不再"手改就清空 / 只有开火后才写"。
+#    判据：B6a S7 的 ROI (1740,1080)-(1916,1140) 出现墨迹（改前空）；B6b 该 ROI 的墨迹字符串
+#          与**同屏原版**逐像素比：差异像素 ≤ 改前 **40 %**（改前 S7 1 336 px / S8 1 858 px）；
+#          B6c 数值可判：S7 = `format_offset(y0)` = `- 9.890`（y0 = −9.889980889…）；
+#          S8 = 与原版同屏同串（原版 S8 实测也是 `- 9.890`，因为原版输入框里没有人打字 ⇒ f≡0）。
+#
+# 总判据 B0：match_ready / match_play 的跨侧差异像素 **≤ 改前实测的 75 %**（两屏各自），
+#            且 L2 超限块 **4 → ≤ 2**（ready）/ **3 → ≤ 2**（play）。
+#            （75 % 是预算，不是拟合：六项里靶子/名字/Fire!/偏移量四项的 ROI 改前合计
+#             9 856 px 量级，占总 143 563 px 的 6.9 %，再算上准备圈与弹道渲染的连带。
+#             若实测降不到，如实记录并说明卡在哪一项，**不改这个数**。）
+#
+# ---------------------------------------------------------------------------
+# §C 明确不做（沿用任务书 §2C 的结论，本文件只登记，不重新论证）
+# ---------------------------------------------------------------------------
+#   * `f(x)=` 图标 636 px：要动 `FxContainer` 结构，会挪动现在 0 px 的输入框。
+#   * 文本栅格化 ~1 100 px：要拆 `Control.scale` 画布模型 = 整屏坐标系重构。
+#   * 修正常数标签平移 17 px：机制未知（缺"原版把修正串切进 OffsetLabel"的那条指令）。
+#   * 弹道相位（tick）：我方不发 `TickRequest`，不在本轮。
+#
+# ---------------------------------------------------------------------------
+# §D 复跑命令（两侧重拍 + 三层判据；改前/改后的实测数直接抄进报告）
+# ---------------------------------------------------------------------------
+#   export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+#   export WT=$MAIN/.agent-work/cg/wt-t26
+#   export CARGO_HOME=$MAIN/.reference/cargo-home
+#   export CARGO_TARGET_DIR=$WT/.cargo-target      # ⚠️ 单独一行
+#   export HOME=$WT/.fakehome
+#   export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+#   cd $WT
+#   # 内核三步（改了 src/_scaffold 必做）
+#   cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+#   $GODOT --headless --path client --import
+#   # A：回放四屏（两侧）
+#   python3 tools/frame_capture.py --side original --flow replay --seed-replays --out $WT/.agent-work/v/ro --display-num 151
+#   python3 tools/frame_capture.py --side ours     --flow replay --seed-replays --out $WT/.agent-work/v/rm --display-num 152
+#   python3 tools/frame_diff.py --orig $WT/.agent-work/v/ro --mine $WT/.agent-work/v/rm \
+#       --screens menu,replay_lobby,replay_play,replay_end --out $WT/.agent-work/v/replay.tsv \
+#       --blocks-out $WT/.agent-work/v/replay_blocks.tsv --json $WT/.agent-work/v/replay.json
+#   # B：对局两屏（两侧；撞端口/拍到大厅就重试，判据见文件头）
+#   python3 tools/frame_capture.py --side original --flow match --out $WT/.agent-work/v/mo --display-num 153
+#   python3 tools/frame_capture.py --side ours     --flow match --out $WT/.agent-work/v/mm --display-num 154
+#   python3 tools/frame_diff.py --orig $WT/.agent-work/v/mo --mine $WT/.agent-work/v/mm \
+#       --screens match_ready,match_play --out $WT/.agent-work/v/match.tsv \
+#       --blocks-out $WT/.agent-work/v/match_blocks.tsv --json $WT/.agent-work/v/match.json

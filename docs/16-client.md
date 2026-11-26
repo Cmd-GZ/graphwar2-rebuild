@@ -11513,7 +11513,7 @@ $PWD/.reference/venv/bin/python tools/unknowns_probe.py dis 0x4b67a0 --len 0x90
 |---|---|---|---|
 | ① 解析 + 我方模型 | `client/src/net/session.gd`（`_apply`） | 线上字段 → `room` 的那几张表（界面层要读的） | 有（但只是"我方模型"，**不是**游戏规则） |
 | ② 派发 | 同文件 `_feed_managers()` + `GwNetEvents`（`src/_scaffold/net_events_class.rs`） | 线上字段 → **复原 manager 的具体方法**（一事件一方法，落点逐条带地址） | **没有**：不重算任何规则 |
-| ③ 消费 | `EntityDrawer` / `EffectDrawer` / `GraphwarPlane` …（既有类） | 从 manager 表拉数据画 | 有（`play_screen.gd` 的两处代偿还在，见 §70.4） |
+| ③ 消费 | `EntityDrawer` / `EffectDrawer` / `GraphwarPlane` …（既有类） | 从 manager 表拉数据画 | 有（`play_screen.gd` 的两处代偿还在，见 §71.4） |
 
 `GwNetEvents` 的用法（GDScript）：
 
@@ -11535,7 +11535,7 @@ ev.call("dump")                                              # 各表快照（�
 | `_ensure_entity()` 默认 `kind = "soldier"` | 默认 `kind = ""`；只有 `SoldierInfo` 造 soldier、`TargetInfo` 标 target | 玩家实体 229 与已删除的士兵 231 不再变成"停在 `(0,0)` 的士兵" |
 | `TeamInfo` 无条件建实体 | **不建实体**（`TeamInfo` 的 `entity_id` 也可能是"玩家自己"） | 同上；棋盘正中那具假士兵 + 假准备圈消失 |
 | `EntityRemoved` / `RemoveTeam` 没处理器 | 真的从 `entities`、玩家的 `soldiers`、边表里删 | 死人不复活、圈不再落到尸体上 |
-| `ColorInfo` 是 `pass` | 记账（原版 `color_manager::set_color` 是**直接采纳**服务端颜色） | 界面层还没读（§70.4 第 3 条） |
+| `ColorInfo` 是 `pass` | 记账（原版 `color_manager::set_color` 是**直接采纳**服务端颜色） | 界面层还没读（§71.4 第 3 条） |
 | 没有"先到的事实"这一层 | 新增边表 `targets/teams/names/look/colors/entity_effects/effects/shots/active_ticks` | 事件乱序（`TeamInfo` 比 `SoldierInfo` 先到）也不丢信息 |
 
 **为什么准备圈以前画在棋盘正中**（t8 §60.5 只记了现象）：`_soldiers` 原来是 `[229, 230, 231, 232]`
@@ -11592,8 +11592,8 @@ python3 tools/frame_capture.py --side ours --flow match --out $WT/.agent-work/v/
 | ① | 13 屏里只有 `join_level_popup` 逐像素过（0 px）；其余 12 屏不过，但 **L1 13/13 全过**（尺寸/全局均值/第一主色都对）| `docs/06` §69.3 |
 | ② | **弹窗不是问题**：`add_bot` 面板 1 px、`connecting`/`disconnected` 面板四角 38 px（`max\|Δ\|≤15`）、`join_ip` 面板 179 px、`confirm_exit` 面板 1 725 px、`chat_popup` 聊天条带 136 px | `docs/06` §69.4 |
 | ③ | 残差几乎全在**三块底图**：LAN 大厅表区（33 213 px，在两屏里一位不差地重复出现）、GameSetup（90 801 px）、对局屏（§60.5 已归因）| 同上 |
-| ④ | 最便宜、最该先改的 4 条：`GLOBAL_ROOMS` 一条名字 + 行序、`Start` 的 `disabled`、默认玩家名 `user`→OS 登录名、LAN 表头三列右移 | §68.1 |
-| ⑤ | 发现 6 条**行为**差异（不是版式）：聊天浮层盖住顶栏开关、默认名硬编码、`Start` 被 disabled、缺本机地址、Connecting 2 s 自超时、Global 占位行内容 | §68.2 |
+| ④ | 最便宜、最该先改的 4 条：`GLOBAL_ROOMS` 一条名字 + 行序、`Start` 的 `disabled`、默认玩家名 `user`→OS 登录名、LAN 表头三列右移 | §72.1 |
+| ⑤ | 发现 6 条**行为**差异（不是版式）：聊天浮层盖住顶栏开关、默认名硬编码、`Start` 被 disabled、缺本机地址、Connecting 2 s 自超时、Global 占位行内容 | §72.2 |
 
 ### 72.1 逐屏 → 落到哪个文件/函数（下一轮直接照这张表派活）
 
@@ -11609,10 +11609,10 @@ python3 tools/frame_capture.py --side ours --flow match --out $WT/.agent-work/v/
 | —— 底部排 + Start + 地址 | 121 711 px | ① 左下角**本机地址文本整条缺失**；② 整排与 `Start` 纵向偏低（`Start` 压到 1105 起）；③ `Start` 是 **disabled 外观** | ① `game_setup.gd` 没有"本机地址"这个 `Label`（原版从 `start_graphwar.sh` 那台服务器取 `ip:port`）；②③ `_bottom_row()` / `Start` 按钮的 `disabled = not state.can_start()` |
 | `add_bot` | 4.0770 % | **底图**（GameSetup）；弹窗本身 **1 px** | 不用改 `add_bot_pop_up.gd`；改 `game_setup.gd` 就会掉 |
 | `join_ip` | 1.8327 % | 底图 LAN 大厅 + 输入框四角（179 px）+ 底部 ` Join IP ` 按钮 **hover 态** 5 075 px | `client/src/screens/connect_popups.gd` 的 `LineEdit` 圆角（`StyleBoxFlat` 的 `corner_radius`）+ LAN 大厅底排按钮的 hover 主题 |
-| `connecting` | 1.4965 % | 弹窗本身四角 38 px（`max\|Δ\|=9`）+ 底图 | 基本不用改；见 §68.2 ⑤ 的超时行为 |
+| `connecting` | 1.4965 % | 弹窗本身四角 38 px（`max\|Δ\|=9`）+ 底图 | 基本不用改；见 §72.2 ⑤ 的超时行为 |
 | `disconnected` | 1.4965 % | 同上（四角 38 px，`max\|Δ\|=15`）| 同上 |
 | `confirm_exit` | 5.1297 % | **底图**（对局屏），弹窗只占 1 725 px / 1.5 % | 不用改 `confirm_exit_pop_up.gd`；改对局屏（§60.5 的清单）|
-| `chat_popup` | 6.9948 % | 浮层第二条带 136 px；多出的是**我方叠在白板上的两串白字** | `client/src/screens/chat_pop_up.gd`（消息区初始内容）+ 对局屏的名字标签接线（§60.5）；另见 §68.2 ① |
+| `chat_popup` | 6.9948 % | 浮层第二条带 136 px；多出的是**我方叠在白板上的两串白字** | `client/src/screens/chat_pop_up.gd`（消息区初始内容）+ 对局屏的名字标签接线（§60.5）；另见 §72.2 ① |
 | `join_level_popup` | **0** | 逐像素相同 | 不用改 |
 
 ### 72.2 采集过程中发现的 6 条**客户端行为**差异（不是版式，都是真帧上看到的）
@@ -11654,7 +11654,7 @@ python3 tools/frame_capture.py --side ours --flow setup --out $WT/.agent-work/v/
 
 ### 72.4 遗留 / 未做
 
-1. **客户端一处也没改**（任务约定"只测量 + 归因"）：§68.1 的 12 行全是**待办**。
+1. **客户端一处也没改**（任务约定"只测量 + 归因"）：§72.1 的 12 行全是**待办**。
 2. 只测了一个局面（`fixtures/frame_match_events.txt` 的 S7）；`confirm_exit` / `chat_popup` 的底图残差只对这一个局面成立。
 3. 没测"换过皮肤之后"的 Faces / Hats（本轮都是默认 `yellow`）。
 4. **`ChatPopUp` 的 z 序/浮层范围**只从"点不到那颗开关"反推出"我方浮层盖住顶栏"，
@@ -11729,8 +11729,6 @@ last_transform() -> PackedFloat64Array   # [pos.x, pos.y, scale.x, scale.y]（ro
 | 修正常数标签偏右 17 px | 1 788 | `play_screen.gd::_replay_draw_shot` 的 `_offset_label.text` 与 `OffsetContainer` 的最小宽。**机制未知**，别按"凑像素"改 |
 | 名字标签的字形被 1.279× 放大糊掉 | ~1 100 | `play_screen.gd::_fit_canvas` 的 `Control.scale` 画布模型（拆掉它 = 六个类按实尺寸画，`PIXEL_OFFSET`/`PX_PER_UNIT`/`CURVE_SCALE` 三个绝对常量都要改成按 `size` 推） |
 | `f(x)=` 图标 77×27 → 81×30 | 636 | `play_screen.gd::build()` 的 `_fx_button`：原版结构是 `FxContainer → AspectRatioContainer(stretch_mode=1) → FxTextureButton`（`text` 九个空格 + `expand_icon = true`），T4 的简化把 AR 那层省了。**会改 FxContainer 最小宽 ⇒ 挪动已对齐的输入框文本**，没做 |
-
----
 
 ## 74. 按真值修三屏（客户端侧）：三个**时序/取值**错误，一处结构性列宽，GameSetup 重做玩家行（2026-11-26，任务 T25）
 
@@ -11851,3 +11849,101 @@ grep -n "GwViews\|ERROR" $WT/.agent-work/v/setup-mine/game.log   # ← 原版脚
 3. **标题字形 AA（12 794 px）**：GameSetup 改后剩下的最大单项，属字体/MSDF 管线。
 4. **`add_human()` 默认 2 兵**：会影响"LAN 建房那一局的自机"士兵数，`play_screen` 那条线若对本值
    有隐含假设需知会（本轮 `selftest` / headless 全绿）。
+
+## 75. 客户端侧：对局屏 S7/S8 的**消费端**接线（id 空间 / 靶子 / 名字 / 队色 / `Fire!` 字号 / 右下偏移量）+ 回放光标的**节奏**（2026-11-26，任务 T26 / `task-23`）
+
+> 验收数字与逐块表在 `docs/06` §76（本节只写**客户端这边动哪个文件、为什么这么动、怎么复跑**）。
+> 预注册判据：`fixtures/play_screen_final_targets.txt`（先于代码改动单独 commit）。
+
+**一句话**：T17 把 11 个事件处理器接进了 `GwNetEvents`，但**消费端没接** —— 播放屏交给
+`EntityDrawer` 的 id 是"士兵下标"，而事件/manager 说的是**实体 id**；靶子层从不填；名字读本地
+profile；颜色用界面自定色表；`Fire!` 的字号覆盖被自己多插的一层容器挡住；右下偏移量只有开火后才写。
+本节把这六条**在客户端这一侧**一条条接上，并给两条"看起来像小事、其实是真 bug"的发现
+（`FireContainer.gd` 只遍历**直接**子节点、`Screen._apply_size_recursive` 会**遍历整棵树**）。
+
+### 75.1 六个消费端的接法（都在 `client/src/screens/play_screen.gd`，一个文件）
+
+| # | 函数 | 关键一行 | 为什么是这一行 |
+|---|---|---|---|
+| ① | `_sync_entities()` | `var eid := int(s.get("entity_id", s.get("id", i)))` | 联机 `entity_id` / 回放 `id` / 本地局才退回下标。**这一个键**决定"manager 里的事实能不能被画出来" |
+| ① | `_sync_entities()` 的 `ring_ids` | 键用 `eid` | 环的键与 `want` 必须同口径，否则 `want.has(i)` 在联机局**全 miss**（环一个都画不出来） |
+| ① | `_on_online_message()` | 五条外观事件 → `_refresh_plane()` | 这些事件**晚于** `begin_match()` 到（本剧本：`begin_match` 在事件 35，名字/三张图在 36..42）⇒ 建屏那一刻 `room` 的边表还是空的，而且之后**没有任何东西**会再读它 |
+| ② | `_build_online_targets()`（新，30 行） | `_targets.setup(positions)` + `_target_entity_ids` | `GwTargetSet` 只存"位置 + 生死"，`target_id` 是**下标**；而绘制/manager 要**实体 id** ⇒ 必须留一张映射 |
+| ② | `_view_targets()` | 联机分支返回 `_target_entity_ids[idx]` | 与 ① 同一个 id 空间 |
+| ② | `_look_for()` | 缺项按种类补默认（靶子 `target/no_face/no_hat`） | `set_entity_look()` 是**三件一起换**的：传空串会让那两层精灵落到"纯色兜底"（实测靶子变成 55×55 蓝方块 2 970 px） |
+| ③ | `_online_entity_name()`（新） | `names[eid]` → `names[player_id]` → profile 兜底 | 本样本 `NameInfo` 只有 `{229:"cmdgz"}` 一条，而射手是玩家 229 名下的**士兵 230** ⇒ 只查 `names[eid]` 会查空 |
+| ③ | `apply_font_scale()` | 撤掉 `EntityDrawer` 那层的 `normal_font_size` 覆盖 | 见 §75.3 |
+| ④ | `_online_entity_color()`（新） | `colors[eid]` → `colors[player_id]` → 本队色表 | 同上：`ColorInfo` 只有玩家实体那条；这个值同时喂名字笔画色与环色（真帧上两处**同色**） |
+| ⑤ | `build()` 的 Fire 行 | `fire_margin.add_child(clip/fire)`，不再套 `Control("FireStack")` | 见 §75.2 |
+| ⑥ | `_refresh_offset_label()`（新，45 行） | `c = y0 − f(x0)`（空函数 ⇒ `c = y0`） | 原版标签跟的是**本地输入框 + 当前射手**；旧实现"手改清空 / 开火后写内核这一发的修正"两处都在跟别的东西 |
+
+### 75.2 两个"看起来像小事"的真 bug
+
+**① `FireContainer.gd` 只遍历直接子节点。** 原版 `.tscn` 里 `FireContainer` 的直接子节点就是
+`ClipButton` + `FireButton`；`FireContainer.gd::update_sizes()` 是
+
+```gdscript
+for node in get_children():
+    node.custom_minimum_size = Vector2(screen_size.x * 0.07, 0.0)
+    node.add_theme_font_size_override("font_size", screen_size.x / 30)
+```
+
+我方 `build()` 多插了一层 `Control("FireStack")` 当叠放容器 ⇒ 字号只写到了那个**空容器**上，
+两颗按钮一直用主题默认 `default_font_size = 24`（原版是 屏宽/30 = **64**）。真帧判据：
+`(1636,4)-(1916,112)` 里近白像素 原版 **2 357** / 我方 **261**；去掉中间层后我方 **2 357**（逐值），
+该 ROI 差异 3 098 → **10 px**。
+⚠️ 这也是 T25 那条"`GwViews.attach()` 必须在 `add_child()` 之前"的**同族陷阱**：
+原版视图脚本的 `_ready` 只跑一次，**它遍历谁、什么时候跑**都得与实际结构对上。
+
+**② `Screen._apply_size_recursive()` 会遍历整棵树。** 它给**所有** `Label/Button/LineEdit/TabContainer`
+写 `font_size`、给**所有** `RichTextLabel` 写 `normal_font_size = 宽/N × 0.85`。
+`EntityDrawer` 里每具实体的名字标签就是 `RichTextLabel` ⇒ 对局屏里被写成 ~68 px
+（实测名字墨迹 **202×60 px**，原版 **73×47**）。而原版那一层是 `name_label.tscn` 的 `RichTextLabel`、
+字号取**主题默认 24**。回放屏"看着对"只是因为它的标签在 `apply_font_scale()` **之后**才
+`spawn_entity` —— **顺序碰巧**，不是设计。现在在 `apply_font_scale()` 里显式撤掉那层覆盖，两屏定死。
+
+### 75.3 回放光标的节奏（`client/src/play/function_input.gd`）
+
+* 引擎 `LineEdit.caret_blink_interval`（主题默认 **0.5 s**）是**翻边间隔**：亮 0.5 / 灭 0.5、**整周期 1.0 s**。
+* 我方 T21 的写法把它当"半周期"（`_caret_blink < 0.5 × 0.5`、回绕在 0.5）⇒ 周期 **0.5 s**，快一倍。
+  本轮改回 1.0 s（`caret_on()` = `_caret_blink < CARET_BLINK_INTERVAL`、回绕在 `2 × interval`）。
+* **没有**改成常显：原版真帧**同屏内就有两态**（`replay_play_1` 灭、`_2/_3` 亮，差 270 px = 3×90 的光标矩形）
+  ⇒ "`caret_force_displayed = true` ⇒ 常显"这个推论**被实测推翻**（细节与两轮 sha 表见 `docs/06` §76.1）。
+  若要常显，`caret_on()` 改成 `return true` 一行；代价是两屏各 +270 px（0.1858 % → 0.1979 %），已实测。
+
+### 75.4 复跑（客户端侧最小集）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t26
+export HOME=$WT/.fakehome
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+
+# ① 新工作树第一次：必须 import（否则我方帧全空白，见 docs/06 §76.8 第 1 条）
+$GODOT --headless --path client --import
+
+# ② 回放两屏（我方两轮，看光标稳定度）+ 两侧对拍
+python3 tools/frame_capture.py --side ours --flow replay --seed-replays --out $WT/.agent-work/v/rm1 --display-num 156
+python3 tools/frame_capture.py --side ours --flow replay --seed-replays --out $WT/.agent-work/v/rm2 --display-num 157
+#   判据：6 张帧两轮 sha256 **逐字节相同**（本轮改后成立；改前 replay_end_3 两轮不同）
+
+# ③ 对局两屏（**必须**走私有 netns 包装器：宿主 UDP 42968 被别人泄漏占用时，
+#    直接跑会一直拍到 LAN 大厅；理由与包装器内容见 docs/06 §76.7/§76.8）
+bash .agent-work/cap_in_netns.sh --side original --flow match --out $WT/.agent-work/v/mo --display-num 196
+bash .agent-work/cap_in_netns.sh --side ours     --flow match --out $WT/.agent-work/v/mm --display-num 197
+python3 tools/frame_diff.py --orig $WT/.agent-work/v/mo --mine $WT/.agent-work/v/mm \
+    --screens match_ready,match_play --out $WT/.agent-work/v/match.tsv \
+    --blocks-out $WT/.agent-work/v/match_blocks.tsv --json $WT/.agent-work/v/match.json
+```
+
+### 75.5 客户端侧的遗留（与 `docs/06` §76.5 同一张表，这里只列"动哪个函数"）
+
+| 项 | 量 | 动哪里 |
+|---|---|---|
+| 棋盘格线整体错 1 px / 多一层虚线片段 | 13 006 px | `_fit_canvas()` 的 `Control.scale` 取整（`docs/06` §58.3） |
+| 左上 返回/确认 两键的圆角与图标边缘 | 13 413 px | 那两颗键的 stylebox 底板 / 图标尺寸（不在本轮六项） |
+| 左右键盘字形 | 15 723 + 21 674 px | 字体栅格化（既知项，`docs/06` §59/§62） |
+| `f(x)=` 图标 636 px | 636 | `build()` 的 `_fx_button`：原版是 `FxContainer → AspectRatioContainer(stretch_mode=1) → FxTextureButton`，我方省了 AR 那层。**会挪动已对齐的输入框**，不做 |
+| 修正常数标签横向 10 px | ~1 100（两屏） | `OffsetContainer` 的容器几何 / 底栏 HBox 分配。本轮量准（17→10 px）并排除 LEFT 对齐、前导空格两条（见 `docs/06` §76.6） |
+| 准备圈箭头 **3 个 vs 原版 2 个** | 环 ROI 内 | `show_ring_arrows` 开关 + `entity_drawer::entity_primitives` 的箭头条数（缺"条数由哪个量决定"的证据） |
