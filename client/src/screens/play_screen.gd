@@ -1482,7 +1482,13 @@ func _sync_entities() -> void:
 				else (String(s.name) if _show_names else "")),
 			"dead": (-1 if alive else ENTITY_DEAD_TICKS),
 			"actor_id": eid,                   # 外观表按实体 id 索引（回放/联机同一个口径）
-			"color": s.get("color", Color.WHITE),   # 名字标签的笔画色（队色）
+			# 颜色：**现读** `room["colors"]`（`ColorInfo` 同样比 `begin_match()` 晚到）。
+			# 这个值同时喂 ①名字标签的笔画色（`set_entity_name_color`）②准备圈的环色
+			# （`EntityDrawer` 的 `team_color`，下面逐实体设）⇒ 两项的原文都要求"= 该实体 ColorInfo"：
+			# 真帧上名字笔画色与环色**逐值相同** = `(125,104,0)`（`docs/06` §60.5 / §71.1-B 两处量过）。
+			"color": (_online_entity_color(eid, int(s.get("player_id", -1)),
+				s.get("color", Color.WHITE)) if _online_mode
+				else s.get("color", Color.WHITE)),
 			"kind": "soldier",
 		}
 	for t in _view_targets():
@@ -3099,7 +3105,9 @@ func _build_online_soldiers(room: Dictionary, app_node) -> void:
 			"player": pi,
 			"player_id": pid,
 			"entity_id": int(eid),
-			"color": colors[pi] if pi < colors.size() else GwThemeFactory.COL_ACCENT,
+			# 颜色：**`ColorInfo` 的真值优先**（同样先实体 id、再 `player_id`；缺席才用本队色表）。
+			"color": _online_entity_color(int(eid), pid,
+				colors[pi] if pi < colors.size() else GwThemeFactory.COL_ACCENT),
 		})
 
 ## 玩家的**本地 profile 名**（`App.state.players[pi].name` ⇒ `store.profile.name`）。
@@ -3124,6 +3132,20 @@ func _online_entity_name(eid: int, pid: int, pi: int, app_node) -> String:
 	if names.has(pid) and String(names[pid]) != "":
 		return String(names[pid])
 	return _online_player_name(pi, pid, app_node)
+
+## 联机实体的颜色：**线上 `ColorInfo` 优先**，同样先实体 id、再它的 `player_id`。
+##
+## 本样本只有 `ColorInfo{229: (125,104,0)}`（玩家实体），射手 230 与靶子 232 都没有自己那条
+## ⇒ 士兵的队色/环色由它所属玩家那条 `ColorInfo` 决定，这正是真帧上的橄榄色 `(125,104,0)`
+## （名字笔画色与准备环色**逐值相同**，`docs/06` §60.5 / §71.1-B 两处独立量过）。
+## 真值缺席才退回本队色表 —— 那是**我方自定**（`assign_colors()`，`docs/139` §6 已登记）。
+func _online_entity_color(eid: int, pid: int, fallback: Color) -> Color:
+	var colors: Dictionary = _online_room().get("colors", {})
+	var c: Variant = colors.get(eid, colors.get(pid, null))
+	if c is Dictionary:
+		return Color(float(c.get("r", 0)) / 255.0, float(c.get("g", 0)) / 255.0,
+			float(c.get("b", 0)) / 255.0)
+	return fallback
 
 ## 联机事件的"外观三件套"（`room["look"][entity_id]`，由 `Skin/Face/HatGraphicsInfo` 落进去）。
 ## 回放那边同一件事由 `_replay.graphics(kind, entity_id)` 提供；本地局没有这条事实 ⇒ 空字典。
