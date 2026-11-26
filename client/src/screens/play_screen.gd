@@ -202,6 +202,12 @@ var _obstacles: Array = []
 ## 之前这里只有靶子绘制（纯绘制），靶子**根本没进命中判定**，
 ## 于是打靶关的胜负永远由"两队士兵存活数"决定 ⇒ 第一发就通关（`docs/131` §1）。
 var _targets := GwTargetSet.new()
+## 联机靶子的 **`GwTargetSet` 下标 → 线上实体 id** 映射（`_build_online_targets()` 填）。
+##
+## 为什么要这张表：`GwTargetSet` 的 `target_id` 是**下标**（它只存位置 + 生死），
+## 而线上事件与 22 个复原 manager 说的是**实体 id**（本样本靶子 = 232）。
+## 只在下标与 id 一一对应时才翻译（`_view_targets()` 会先比长度，对不上就退回自造编号）。
+var _target_entity_ids: Array[int] = []
 ## 本局的胜负规则（`docs/131` §2 / `docs/150`）：**判定在 Rust**（`GwLevelRules` =
 ## `src/_scaffold/play_flow_class.rs` → `graphwar_play_screen_control::LevelRules`），
 ## 本屏只读它的结论去排版文案（`docs/16` §52）。
@@ -1057,15 +1063,26 @@ func _target_positions(level_index: int, count: int) -> Array:
 
 ## 画面上"靶子在哪"的**唯一**来源。
 ##
-## 战役/联机：`GwTargetSet` 里还活着的那些（`target_id` 就是稳定 id）。
-## 回放：回放播放器自己的 `target_positions()`（那是一张位置表，**没有 id**）⇒
-## 用下标当 id。两边的 id 都落在 `TARGET_ID_BASE` 之上，士兵的 id（下标）不会撞。
+## 三条路的 id 口径不一样，别混：
+## * **联机**：`_target_entity_ids[i]` = 线上 `TargetInfo{target_id}` 的**实体 id**（本样本 232）。
+##   靶子的位置/生死仍由 `GwTargetSet` 存（`target_id` 是它的**下标**），
+##   所以这里做一次 `下标 → 实体 id` 的翻译；这样 `EntityDrawer` 拿到的 id 与
+##   名字/外观/颜色 manager 拿到的是同一个（= id 空间一致）。
+## * **回放**：`target_positions()` 是一张**纯位置表**（没有 id）⇒ 用下标当 id，
+##   落在 `TARGET_ID_BASE` 之上，与士兵 id 不撞。
+## * **本地战役/关卡**：`GwTargetSet` 的 `target_id` 由关卡生成器给（小整数）⇒ 同样
+##   `TARGET_ID_BASE + target_id`，理由同上。
 func _view_targets() -> Array:
 	var out := []
 	if _replay_mode:
 		var positions: Array = (_replay.target_positions() if _replay != null else [])
 		for i in positions.size():
 			out.append({"id": TARGET_ID_BASE + i, "pos": positions[i]})
+		return out
+	if _online_mode and _target_entity_ids.size() == _targets.total():
+		for t in _targets.entities():
+			var idx := int(t["target_id"])
+			out.append({"id": _target_entity_ids[idx], "pos": t["pos"]})
 		return out
 	for t in _targets.entities():
 		out.append({"id": TARGET_ID_BASE + int(t["target_id"]), "pos": t["pos"]})
@@ -1478,7 +1495,7 @@ func _sync_entities() -> void:
 		# （= `GraphwarPlayerConfig::new` 的字面量，arm64 `0x39152c..0x3915a4`）；
 		# 靶子退回 `target/no_face/no_hat`（`res://skins/target.svg` 在表里）。
 		# ⚠️ 这是**我方接线**，原版是 graphics 事件驱动的（`docs/16` §44.0）。
-		var look := _look_for(id)
+		var look := _look_for(id, String(e.get("kind", "")))
 		if not look.is_empty():
 			_entities.call("set_entity_look", id, String(look.get("skin", "")),
 				String(look.get("face", "")), String(look.get("hat", "")))
@@ -1544,6 +1561,29 @@ func _sync_entities() -> void:
 		else:
 			_entities.call("clear_ring", id)
 			_ring_base.erase(id)
+
+## 联机的靶子图层（**原版是独立图层**，`docs/131`）。
+##
+## 数据来源全是 T17 已经落进 `room` 的事实（`client/src/net/session.gd`）：
+##   `TargetInfo{target_id}`      → `room["targets"]`（**实体 id** 列表，按到达顺序）
+##   `PosInfo{entity_id,pos_x…}`  → `room["entities"][id].x/.y`
+## ⇒ 这里只做"搬进 `GwTargetSet`"这一件事，**不新增语义**。
+##
+## `GwTargetSet` 的 `target_id` 是**下标**（它只存位置 + 生死，`docs/131` §3），
+## 所以同时留住 `下标 → 实体 id`：`_view_targets()` 用它把实体 id 交给 `EntityDrawer`，
+## 这样靶子的位置/外观/名字（manager 按实体 id 说的）与绘制是同一个 id 空间。
+func _build_online_targets(room: Dictionary) -> void:
+	var ids: Array = room.get("targets", [])
+	var ents: Dictionary = room.get("entities", {})
+	var positions: Array = []
+	_target_entity_ids.clear()
+	for tid in ids:
+		var e: Dictionary = ents.get(int(tid), {})
+		positions.append(Vector2(float(e.get("x", 0.0)), float(e.get("y", 0.0))))
+		_target_entity_ids.append(int(tid))
+	_targets.setup(positions)
+	if not ids.is_empty():
+		_status("联机靶子 %d 个（实体 id %s）" % [ids.size(), str(_target_entity_ids)])
 
 # ---------------------------------------------------------------- 障碍（docs/126）
 
@@ -2909,6 +2949,7 @@ func _begin_online(app_node) -> void:
 	_last_result = {}
 	_soldiers.clear()
 	_targets = GwTargetSet.new()
+	_target_entity_ids.clear()
 	_destroyed_this_shot.clear()
 	_last_verdict = {}
 	_reset_shot_state()
@@ -2918,6 +2959,10 @@ func _begin_online(app_node) -> void:
 	_rebuild_pid_index(room)
 	_build_online_soldiers(room, app_node)
 	_build_online_obstacles(room)
+	# 靶子图层：**原版是独立图层**（`docs/131`），而 `GwTargetSet` 只能装"位置 + 生死"。
+	# 旧实现到这里只有 `_targets = GwTargetSet.new()` 就再也没填过 ⇒ 联机局**一个靶子都画不出来**
+	# （T17 把这条记成 §67.8 第 1 条：数据已经在 `room["targets"]`，缺的是界面侧接线）。
+	_build_online_targets(room)
 	_apply_online_turn(room)
 	# 胜负规则只做占位：联机局由服务端判（`_check_match_over()` 的联机分支直接返回）。
 	_rules = GwLevelRules.new()
@@ -3048,7 +3093,7 @@ func _online_player_name(pi: int, pid: int, app_node) -> String:
 ##
 ## `_sync_entities()` 只用它来决定"要不要显式 `set_entity_look`"：空字典 ⇒ 不调，
 ## 保持 `spawn_entity` 的默认三件套（原版 `GraphwarPlayerConfig::new` 的字面量）。
-func _look_for(eid: int) -> Dictionary:
+func _look_for(eid: int, kind: String = "") -> Dictionary:
 	if _replay_mode and _replay != null:
 		var sk := String(_replay.graphics("skin", eid))
 		if sk == "":
@@ -3058,13 +3103,25 @@ func _look_for(eid: int) -> Dictionary:
 			"face": String(_replay.graphics("face", eid)),
 			"hat": String(_replay.graphics("hat", eid)),
 		}
+	var got := {}
 	if _online_mode:
 		var look: Dictionary = _online_room().get("look", {})
 		if look.has(eid):
-			var l: Dictionary = look[eid]
-			if String(l.get("skin", "")) != "":
-				return l
-	return {}
+			got = look[eid]
+	# **缺项按种类补默认值**：`EntityDrawer::spawn_entity` 的默认三件套是
+	# `yellow/regular_eyes/soldier_helmet`（`GraphwarPlayerConfig::new` 的字面量），而靶子
+	# 在原版里是 `target/no_face/no_hat`（`res://skins/target.svg` 在表里）。
+	# 这一步**必须**补齐：`set_entity_look()` 是三件一起换的，传进去的空串会让那两层精灵
+	# 落到"纯色兜底"上 —— 实测靶子会变成一个 55×55 的蓝色方块（2 970 px），而原版是 25×25 的环。
+	var out := {
+		"skin": "target" if kind == "target" else "yellow",
+		"face": "no_face" if kind == "target" else "regular_eyes",
+		"hat": "no_hat" if kind == "target" else "soldier_helmet",
+	}
+	for k in ["skin", "face", "hat"]:
+		if String(got.get(k, "")) != "":
+			out[k] = String(got[k])
+	return out
 
 ## 障碍：`AddObstacle` 下发的 `{pos_x, pos_y, radius}`，顺序即服务端顺序。
 ## 形状与 `GwCore.level_obstacles()` 的产物一致（`{pos: Vector2, size: 半径}`），
@@ -3199,6 +3256,11 @@ func _on_online_message(kind: String, body: Dictionary) -> void:
 				"tick": GwNetFrame.body_int(body, "start_tick", 0),
 			})
 			_spawn_effect(fx_type, fx_pos)
+		"TargetInfo", "EntityRemoved":
+			# 靶子层是 `GwTargetSet`（只存位置 + 生死）：`TargetInfo` 增、`EntityRemoved` 减，
+			# 两条都要求重建一次（原版 `GraphwarTargetManager` 收到就改表，`docs/131`）。
+			_build_online_targets(_online_room())
+			_refresh_plane()
 		"TurnInfo":
 			_apply_online_turn(_online_room())
 			_status(_online_status_text())
