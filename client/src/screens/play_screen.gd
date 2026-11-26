@@ -339,6 +339,10 @@ var _fire_parts: Array[Control] = []
 #   * 障碍 = `room.obstacles`（`AddObstacle` 的顺序），**不再**用内核的关卡生成器；
 #   * 靶子 = 没有（服务端的 `Match` 里只有士兵，`docs/117`）。
 var _online_mode := false
+## 左列回放三键所在的那一层（`--flow replay` 才显示；对局屏**必须整层隐藏**，
+## 否则它作为一个「可见的 0 高容器」在 `LeftControls` 的 VBox 里多吃一条 4 px separation，
+## 左键盘因此比右键盘高 2 px —— 真帧两侧都在 y=281，见 `docs/06` §79）。
+var _left_replay_box: Node = null
 ## 正在订阅的会话。`begin_match()` 会被 App 调用**两次**（`joined` 一次、开局批到齐一次），
 ## 所以订阅必须可重入（先断后连）。
 var _online_session: GwNetSession = null
@@ -367,6 +371,7 @@ var _online_lives := {}
 func _ready() -> void:
 	font_divisor = 30        # ButtonGrid.gd / FireContainer.gd / ExtraOptionsHBox.gd 都是 /30
 	super()
+
 
 # ---------------------------------------------------------------- 搭界面
 
@@ -423,6 +428,7 @@ func build() -> void:
 	# —— 回放块夹在两个展开垫中间 ⇒ 竖直居中。以前我方把回放块加在**最后一个** child 位置，
 	# 两个展开垫就把它一路推到屏幕底部（实测 y 964，原版 581）。
 	var left_replay_box := GwUI.vbox("LeftReplaysBox", 0, left)
+	_left_replay_box = left_replay_box
 	# `GwUI.vbox` 默认 `size_flags_vertical = EXPAND_FILL`；回放键这一块是"贴内容高度"的方块
 	# ⇒ 退回 FILL，否则它自己也去抢剩余高度。
 	left_replay_box.size_flags_vertical = Control.SIZE_FILL
@@ -588,16 +594,28 @@ func build() -> void:
 	# 不是一个 Label + 一个小图标 —— 原版 FxLabel 实测 visible=0。
 	var fx_m := GwUI.margin("FxContainer", 0)
 	fx_m.size_flags_horizontal = Control.SIZE_FILL
-	_fx_button = GwButton.make("")
+	# 原版结构（`recovered-src/play_screen.tscn:736-773`，逐个节点）：
+	#   FxContainer(MarginContainer) → [FxLabel(visible=0), FxTexture(visible=0),
+	#                                   AspectRatioContainer(stretch_mode=1) → FxTextureButton]
+	# 我方 T29 之前省了 AR 那层、直接放按钮 ⇒ 底栏最小高 96（原版 98，GEOM 真值
+	# `docs/archive/125` §4「底栏 y/高 1062/98」「f(x)= 图标 96×98」），连带
+	# PlayMainHBox 高 1060（原版 1058）⇒ 棋盘整体下移 1 px、左右键盘各错 1 px。
+	var fx_ar := AspectRatioContainer.new()
+	fx_ar.name = "AspectRatioContainer"
+	# `.tscn` 里写的是 `stretch_mode = 1` = **STRETCH_HEIGHT_CONTROLS_WIDTH**（高定宽），
+	# 不是 0。区别能量出来：底栏高 98 ⇒ 子节点 98×98（居中溢出 1 px 左右），
+	# 而 mode 0 给 96×96 ⇒ `f(x)=` 图标比原版小 1 px（真帧墨迹 原版 x170..249 / 我方 x170..248）。
+	fx_ar.stretch_mode = AspectRatioContainer.STRETCH_HEIGHT_CONTROLS_WIDTH
+	fx_m.add_child(fx_ar)
+	# `.tscn` 的 `text = "         "`（**九个空格**）+ `icon = fx_option`
+	_fx_button = GwButton.make("         ")
 	_fx_button.name = "FxTextureButton"
 	_fx_button.flat = true
 	_fx_button.icon = GwIcons.get_icon("fx_option")
-	# 原版 `FxTextureButton` 在 `.tscn` 里也写 `icon_alignment = 1`（CENTER，逐位）；
-	# FxContainer 只有 96 宽时两者等价，写出来是为了与 .tscn 一致。
 	_fx_button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_fx_button.expand_icon = true
 	_fx_button.tooltip_text = "函数模式指示（Normal / DiffEq）"
-	_fx_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	fx_m.add_child(_fx_button)
+	fx_ar.add_child(_fx_button)
 	GwViews.attach(fx_m, "FxContainer.gd")   # 字号 = 宽/60
 	info.add_child(fx_m)
 
@@ -611,7 +629,9 @@ func build() -> void:
 
 	var offset_m := GwUI.margin("OffsetContainer", 0)
 	offset_m.size_flags_horizontal = Control.SIZE_FILL
-	_offset_label = GwUI.label("", 0, HORIZONTAL_ALIGNMENT_CENTER)
+	# 原版 `.tscn` 的 `OffsetLabel` **没有**写 `horizontal_alignment` ⇒ Label 默认 LEFT。
+	# （改前我方写成 CENTER ⇒ 修正文本比原版右 9 px；四条候选的算账见 `_offset_display()`。）
+	_offset_label = GwUI.label("", 0, HORIZONTAL_ALIGNMENT_LEFT)
 	_offset_label.name = "OffsetLabel"
 	_offset_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	offset_m.add_child(_offset_label)
@@ -678,6 +698,13 @@ func _fill_grid(grid: GridContainer, keys: Array) -> void:
 		else:
 			b = GwButton.make("", String(spec.cmd))
 			b.icon = GwIcons.get_icon(String(spec.icon))
+			# 纯图标键：图标在**内容矩形里居中**（原版真帧的判据见下）。
+			#
+			# 真帧量法：右键盘第 6 行三颗图标键，原版图标墨迹 bbox 的中心与按钮
+			# **内容矩形**（`rect` 去掉 3px 边框）的中心在 x 上相差 ≤1.5 px；
+			# 我方默认 `icon_alignment`（LEFT）下三颗分别偏左 7.5 / 4 / 11 px
+			# ⇒ 把对齐写成 CENTER，三颗一次对上（`docs/06` §79 的改前/改后表）。
+			b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		b.name = "GraphwarButton%d" % (i + 1)
 		if String(spec.cmd) == "y":
 			b.name = "YButton"
@@ -806,6 +833,10 @@ func _set_replay_layout(on: bool) -> void:
 		_fire_row.custom_minimum_size = Vector2(0, key) if on else Vector2.ZERO
 	for part in _fire_parts:
 		part.visible = not on
+	if _left_replay_box != null:
+		# 原版 `LeftControls` / `RightControls` 各 5 个 child，`*ReplaysButtonsGrid` 在对局屏
+		# `visible = false` ⇒ 两侧都只剩 4 个可见 child ⇒ 列内算术完全对称。
+		_left_replay_box.visible = on
 	if _replay_left != null:
 		_replay_left.visible = on
 		for b in _replay_left.get_children():
@@ -874,7 +905,10 @@ func apply_font_scale() -> void:
 	if exit_pair != null:
 		(exit_pair as Control).custom_minimum_size = Vector2(key, key)
 	if _fx_button != null:
-		_fx_button.custom_minimum_size = Vector2(key, key)
+		# 只钉**宽**（= key = 96 = 原版九个空格在字号 24 下的自然最小宽 90+6）。
+		# **不钉高**：高度由 `AspectRatioContainer`（`stretch_mode=1`，高定宽）从底栏
+		# 高度算出来（98 ⇒ 子节点 98×98）；钉成 96 会让 `f(x)=` 图标比原版小 1 px。
+		_fx_button.custom_minimum_size = Vector2(key, 0.0)
 	if _input != null:
 		# **只给宽度**：高度必须由 `GwFunctionInput._get_minimum_size()` 按 LineEdit 的规则
 		# 算（字体高 + 样式盒上下 content_margin ⇒ 只读 98 / 可编辑 96）。改前这里写死 `key`
@@ -913,6 +947,17 @@ func _update_view_geometry() -> void:
 	if _extra_pad != null:
 		_extra_pad.custom_minimum_size = Vector2(0, toolbar_h if show else 0)
 		_extra_pad.visible = show
+	# `ShowExtraButtons` 的 disabled 是**原版脚本自己算的**，不是回放模式专有：
+	# `recovered-src/ShowExtraButtons.gd::_on_size_changed()`（挂在 `plane_container.
+	# item_rect_changed` 上）——
+	#   `extra_y = plane.size.y − plane.size.x/1.66667`，
+	#   `extra_y >= LeftTopButtonsContainer.size.y` ⇒ `self.disabled = true`。
+	# 也就是说**竖直余量够（附加按钮区已经自动展开）时这颗开关是灰的**（按不动），
+	# 竖直余量不够时才可点。判据（**观测**）：真帧上它是灰面 `#383838` + 暗图标
+	# `#888888`，而我们此前把它画成可用的绿面白图标 —— 单这一颗 12 560 px（`docs/06` §79）。
+	# 我方 `show` 用的就是同一个谓词（余量够 ⇒ 附加按钮区显示）⇒ 直接复用。
+	if _show_extra_button != null:
+		_show_extra_button.disabled = show
 
 # ---------------------------------------------------------------- 对局流程
 
@@ -1718,6 +1763,22 @@ func _on_function_text_changed(new_text: String) -> void:
 func _on_function_text_submitted(_new_text: String) -> void:
 	fire()
 
+## 修正文本的**显示串**：`" - 9.890"` —— **串首一个空格**。
+##
+## 那个空格不是我们挑的：内核自己的格式函数 `src/graphwar_shot_calculator.rs::correction_text()`
+## 返回的就是 `format!(" - {:.3}", c)` / `format!(" + {:.3}", c)`；同一个函数喂
+## `corrected_text()` 才拼得出 `x+2sin(20x) - 3.694` 这种"函数 + 空格 + 修正"的形态
+## （`docs/24` §6.2、`docs/127` §2.1）。
+##
+## 而 `GwCore.format_offset()` 是 scaffold 侧的**数值**格式（`"- 9.890"`，不带那个空格），
+## 所以显示前在这里补。真帧判据（**观测**，`docs/06` §79.4(a)）：原版右下修正文本墨迹
+## `x1764..1883`（1200 ink px）；`Label` 内容矩形左边界 1745.4、fs=32 一个空格 advance = 14、
+## `-` 的左侧 bearing ≈ 4.6 ⇒ 四个候选里只有"**LEFT 对齐 + 前导空格**"落在 **1764.0**
+## （CENTER+空格 1780 / CENTER 无空格 1773 / LEFT 无空格 1750）。
+static func _offset_display(offset: float) -> String:
+	var txt := GwCore.format_offset(offset)
+	return (" " + txt) if txt != "" else ""
+
 ## 右下 `OffsetLabel` = **当前输入对应的修正常数** `c`。常显（不是"开火后才写"、也不是"手改就清空"）。
 ##
 ## ## 公式（有真值）
@@ -1757,7 +1818,7 @@ func _refresh_offset_label() -> void:
 		if not bool(res.get("ok", false)):
 			return                  # 半截表达式（如 `sin(`）算不出来：保持上一次的值，不写 0
 		c = float(res.get("offset", c))
-	_offset_label.text = GwCore.format_offset(c)
+	_offset_label.text = _offset_display(c)
 
 ## 开火：算一条弹道并**开始播放**它。结算在弹道飞完时（`_on_shot_arrived()`）。
 ##
@@ -2792,19 +2853,15 @@ func _replay_draw_shot(d: Dictionary) -> void:
 	_set_curve(drawn.points, col, owner)
 	# 修正常数：只有 Normal 有。ODE 下内核给的是 `NaN` ⇒ `format_offset()` 出空串，
 	# 正好是原版 DiffEq 局右下角不显示修正文本的样子（`docs/92` §4.10、`docs/138`）。
-	# 修正常数文本：**多一个前导空格**（回放专用）。`docs/92` §4.10 的格式样本
-	# `+ 2.515` / `- 8.315` 是**战役/联机**里玩家自己填的那个值；回放里的这一串是从
-	# `FunctionInfo` 的函数串 `x+2sin(20x) - 3.694` **切出来的后缀**，所以带着前面那个分隔空格
-	# ⇒ 显示成 `" - 3.694"`。
+	# 修正常数文本的前导空格由 `_offset_display()` 给（= 内核 `correction_text` 的格式
+	# `" - {:.3}"`），这里**不再**手工加第二个。
 	#
-	# 档位 **推断**（不是逐位）：真帧上修正文本墨迹 x1764..1883、中心 **1823.5**；
-	# 若按"Label 居中 + 不带前导空格"，我方改前落在 x1773..1893、中心 1832.4（差 8.9 px）。
-	# 加**一个**前导空格（fs 32 下一个空格 14 px ⇒ 居中文本左移 7 px）后中心 = 1825.4，
-	# 与真帧差 **1.9 px**。缺的证据：原版播放屏把函数串切成"函数 / 修正"的**那条字符串
-	# 操作的指令**（未解），以及 `Label` 的字体（主题 `default_font` = ComicRelief-Bold，
-	# 不是 `Button/fonts/font`）在那个字号下的精确 advance。
-	var off_text := GwCore.format_offset(float(result.offset))
-	_offset_label.text = (" " + off_text) if off_text != "" else ""
+	# ⚠️ **2026-11-26（T29）更正**：上一轮在这里记的是"加一个前导空格（居中 ⇒ 左移 7 px）
+	# 后与真帧差 1.9 px，档位推断"。**不是**——`Label` 还该是 **LEFT 对齐**（原版 `.tscn`
+	# 没有写 `horizontal_alignment` ⇒ Label 默认 LEFT）。四个候选一起算只有
+	# "LEFT + 前导空格" 落在真帧的 1764（其余 1750 / 1773 / 1780），改后整串墨迹
+	# `(1764,1100)-(1883,1125)`、1200 ink px，与原版**逐像素相同**（`docs/06` §79.4）。
+	_offset_label.text = _offset_display(float(result.offset))
 	var mode_name := "Ode(dy/dx)" if mode == "ode" else "Normal(y=f(x))"
 	_replay_shot_status = "内核重算（%s）：函数 %s ／ 修正 %s（回放记录：%s）／ %d 点%s" % [
 		mode_name, expr, GwCore.format_offset(float(result.offset)),
