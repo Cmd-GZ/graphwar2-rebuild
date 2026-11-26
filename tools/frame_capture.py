@@ -164,10 +164,13 @@ FRAME_GAP_S = 1.2
 # 我方主菜单与原版**整屏 0 像素差**（`docs/06` §53.0 ①）⇒ 同一个坐标。
 MENU_PLAY = (1344, 622)
 # LAN 列表第 1 行的 `Join`：`docs/06` §48.2 ① 量出来的原版坐标（1920×1160 的 (1842, 209)）。
-# 我方这一格的位置本轮实测后填（见 docs/06 §60）。
+# 我方这一个流**实测也用同一格**（T8：`--side ours` 一发点中，服务器 t=7.548 s 收到
+# `NewConnectionRequest`；见 `docs/06` §60.3）⇒ 两侧同一串坐标，不分开配。
 LAN_JOIN_ROW1 = {'original': (1842, 209), 'ours': (1842, 209)}
-# S8 的等待：phase2 触发后有 `phase_gap_s`(1.0 s) 才发，再等 1.6 s 让弹道/爆炸落到半程
-# （两侧同一条时间线 ⇒ 相位差只来自各自动画实现，噪声地板会量它）。
+# S8 的等待：phase2 触发后服务器还要等 `[meta] phase_gap_s`(1.0 s) 才发那 8 帧，
+# 再等 5.0 s 让服务端 tick 轴走过 `FunctionActive.active_tick=615`、弹道长出来
+# （**这条等待是必要的**：1.6 s 时 client tick 还没到 615，S8 里看不到弹道，见 docs/06 §60.2.1）。
+# 两侧同一条时间线 ⇒ 相位差只来自各自动画实现，噪声地板会量它。
 MATCH_PLAY_WAIT = 5.0
 
 # ── 增补 1（`fixtures/frame_diff_thresholds_amend1.txt` §3）：用冻结回放当"固定局面" ──

@@ -10962,3 +10962,101 @@ t.set_color("font_focus_color",   "Button", Color(0.95,  0.95,  0.95,  1.0))   #
 
 见 `docs/06` §57.8（两侧 `--flow static` + `frame_diff.py --screens campaign,level_popup`）。
 本条的两个改动都是 `.gd`，**不需要**重编 `libgw2_rebuild.so`，也不需要 `--import`（没有新文件）。
+
+## 66. `tools/frame_capture.py --flow match`：**对局屏**怎么采（脚本化协议服务器 + 两侧同一份剧本）（2026-11-26，任务 T8）
+
+> 数字、逐元素差异与结论在 `docs/06` §60。本节只讲**怎么用**这个 flow、两侧怎么起、已知限制。
+> 编号说明：本节按任务书定为 **66**；master 当前最后一节是 §64（t7 的 §65 先合则顺延，正文引用一并改）。
+
+### 66.1 它解决的问题
+
+`--flow campaign/replay/static` 覆盖的屏都不需要"服务端"：战役关卡的落点**不可复现**（`docs/06` §53.5 第 1 条），
+所以对局屏（准备圈 / 棋盘 / 回合 HUD）一直没有真值。`--flow match` 把局面钉死在**一份写死的事件序列**上：
+
+```text
+tools/match_serve.py（服务器）  ← 读 fixtures/frame_match_events.txt，**原样发**，不改一个字节
+        ↓ UDP 42968（LAN 发现，裸 9 字段 GameInfo + "\n"）
+        ↓ TCP 46702（u16 大端长度 + {"<EventName>":{…}}）
+client（原版真机 或 我方 client）→ 对局屏
+frame_capture 每屏 3 帧、间隔 1.2 s → tools/frame_diff.py（既有三层判据，未改）
+```
+
+`--flow match` **只新增分支**：`campaign` / `replay` / `static` 三支一字未改，`tools/frame_diff.py` 一字未动。
+
+### 66.2 两侧各一条命令（服务器由采集脚本自己起，**不要**另开一个终端起）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t8
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+W=$WT/.agent-work/frames
+
+python3 tools/frame_capture.py --side original --flow match --out $W/match-orig --display-num 83
+python3 tools/frame_capture.py --side ours     --flow match --out $W/match-mine --display-num 84
+
+python3 tools/frame_diff.py --orig $W/match-orig --mine $W/match-mine --screens match_ready,match_play \
+  --out fixtures/frame_diff_results_match.tsv --blocks-out fixtures/frame_diff_blocks_match.tsv
+```
+
+为什么必须一条命令跑完一侧：本机每条 bash 命令是独立 PID namespace（§53.7 第 2 条），
+所以**Xvfb → 脚本化服务器 → 游戏 → 截图**都在 `frame_capture.py` 这一个进程树里起。
+`--side ours` 还需要 `client/libgw2_rebuild.so` 已就位（`cargo build --features gdext-bindings` 后拷进去）+ 跑过一次 `--import`。
+
+### 66.3 新增开关（都有默认值，不传就和既有三支完全无关）
+
+| 开关 | 默认 | 说明 |
+|---|---|---|
+| `--flow match` | — | 新增的这一支：`match_ready`（S7 准备态）→ `match_play`（S8 对局中） |
+| `--match-fixture` | `<repo>/fixtures/frame_match_events.txt` | 剧本（预注册文件，含 `[meta]` + 两个 `[phaseN:屏名]`） |
+| `--match-tcp-port` | `46702` | 脚本化服务器的 TCP 端口；**必须**与 fixture `[meta] tcp_port` 一致，否则 LAN 广播里的 `address` 指向错的地方 |
+| `--match-udp-port` | `42968` | LAN 发现端口（原版 LAN 大厅绑这个口，观测值） |
+| `--match-server-duration` | `300` | 服务器进程最长活多久（秒） |
+
+点击脚本（两侧同一串坐标，`steps_for('match', side)`）：
+
+```text
+主菜单 Play(1344,622) → 等 2.5 s
+LAN 列表第 1 行 Join(1842,209) → 等 3.0 s          ← 这一发之后服务器已经把 phase1 发完了
+拍 match_ready 3 帧（间隔 1.2 s）
+touch <out>/phase2.trigger → 等 5.0 s              ← 服务器看到触发文件才发 phase2（比 sleep 稳，不会与截图抢时间）
+拍 match_play 3 帧
+```
+
+`(1344,622)` 与 `(1842,209)` 是**原版真机**实测坐标（`docs/06` §48.8 的点击串）；我方主菜单与原版**整屏 0 像素差**
+（`docs/06` §53.0 ①），LAN 列表第 1 行的 `Join` 本轮实测也落在同一格 ⇒ 两侧用同一串坐标。
+
+### 66.4 服务器怎么说话（`tools/match_serve.py`）
+
+* **LAN 发现**：UDP 裸 9 字段 `GameInfo` + 结尾 `"\n"`，每 0.5 s 一次（变体 C，`docs/06` §48.2 ①：
+  加事件外壳的 `{"GameInfo":…}` 会被真客户端丢弃）。`address` 字段用 `127.0.0.1:<tcp_port>`；
+* **对局 TCP**：`u16` 大端长度 + 一个 JSON 对象（`docs/09` §1.1）。收 `NewConnectionRequest` 后发 `[phase1]`，
+  再等触发文件 → 发 `[phase2]`；
+* **`TickReply`**：客户端 1 Hz 发 `TickRequest`，服务器回 `TickReply{current_tick}`。
+  tick 轴**不是我编的**：`[meta] tick_phase1=6`（真回放里快照那段的 tick）、`tick_phase2=550`（第一发的 tick）、`tick_hz=60`。
+  **这一条决定原版的弹道会不会动**：没有它时 S8 里没有弹道（见 `docs/06` §60.2.1）；
+* **逐帧发送日志**：`--out` 指定的 JSONL，每帧一条 `{t, type, phase, index, name, bytes, payload}`，
+  另有 `config`（含 `fixture_sha256`）/`listening`/`recv`/`summary`。
+  **两侧 `fixture_sha256` 相同**就是"喂的是同一份字节"的证据。
+
+单独跑（调试用）：
+
+```bash
+python3 tools/match_serve.py --fixture fixtures/frame_match_events.txt \
+  --out $W/serve.jsonl --trigger-file $W/phase2.trigger --side debug --duration 120
+# 另一个终端（同机）真客户端进 LAN 大厅点 Join 即可；触发文件不出现时可用 --auto-phase2 12 兜底
+```
+
+### 66.5 已知限制（都在 `docs/06` §60.8/§60.9 有更细的记录）
+
+1. **一次只服务一"侧"**：LAN 发现要绑 `UDP 42968`，同机同时跑两个实例会互抢 ⇒ 两侧**分两次**跑，
+   靠"同一份 fixture + 同一份 sha256"保证可比（`--connections N` 只为客户端重连准备，不是给两侧同时用的）。
+2. **弹道相位不可对齐**：原版动画吃服务端 tick（`TickReply`），我方客户端**不发** `TickRequest`、不吃服务端 tick
+   ⇒ S8 只能比形状/位置/配色，不能比"同一 tick"。
+3. **剧本只有一份局面**（真回放 `1793897298` = `Level 0`：1 士兵 + 1 靶子、无障碍）。要多士兵/障碍/2 人对局，
+   换一份真回放的事件流进 fixture 即可，管线不用改。
+4. **我方三帧同 sha256**（S7）：我方准备圈不随时间动 —— 这是"我方没接那条链"，不是采集问题。
+5. 本轮**没有**用 `--game-arg` 传地址（地址走 LAN 广播就够了；原版的 CLI 参数是死的，`docs/06` §48.1）。
+
