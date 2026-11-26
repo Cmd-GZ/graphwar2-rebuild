@@ -1,0 +1,131 @@
+# source_audit_docs.tsv —— 审计面④（文档档位声明 vs 物证）抽样台账
+# 生成：审计员 t40 / 2026-11-26，分支 agent/audit-docs；规格 .agent-work/specs/AUDIT-4-docs.md
+# 列：id 类别 文档:行 原文摘录 声称档位 判据(可复核) 判定 A-E 建议改法
+# 判定只取三值：有物证 / 无物证 / 档位不匹配（=物证存在但撑不住所标的档位或结论句）
+# A-E：A-source-level 达标 / B-behavioural-only 行为对了但无原版对应物 / C-duplicated 两处实现 /
+#      D-self-consistent 期望值来自我方实现 / E-unknown —— 对文档行取"该结论当前实际支撑力度"的最近档
+# 类别：分层=分层抽样（5 篇各≥20）；定向=定向抽最可疑；③=把行为/像素/测试条数当进度；④=诚实标记；
+#      ⑤=527/527 口径专项
+id	类别	文档:行	原文摘录	声称档位	判据(可复核)	判定	A-E	建议改法
+D00-01	分层	docs/00-status.md:13-16	客户端自检条数是回归保护，不是复原证据…617→717 passed/0 failed/1 skipped	无（口径声明）	与 AGENTS.md §0.2 一致；`bash client/run.sh selftest` 输出含 missing=0/silent=0	有物证	A	保留。这条是全文抽样里最好的正对照：把条数明确排除在证据之外
+D00-02	分层	docs/00-status.md:34	① 函数身份 527 / 13,263 有归属（4.0%）	逐位/观测（归属）	`wc -l fixtures/boundary_audit.tsv` 去注释=527；13,263=analysis/funcstarts_ghidra_va.pkl 条数（同口径见 docs/02:1919-1926）	有物证	A	保留；建议把"归属"与"已实现"在表头分两列（现在混在同一行）
+D00-03	分层	docs/00-status.md:36	② 名字 348 / 527 有原版真名（66%）	观测	tools/callgraph_fingerprint.py:1147-1183 named_linux() 三份夹具并集；我复算=355，∩527=348（与文档一致；355 vs 文档 354 差 1 个在 527 之外，不影响结论）	有物证	A	保留；括号里补全三个夹具名（现只写 name_to_addr.tsv）
+D00-04	分层	docs/00-status.md:37	③ 行为一致 647 / 1080 批逐位相同（59.9%）（fire 轴 + --policy default）	逐位	轴名+policy+分母+复跑命令齐全（§0.4 表与 AGENTS 合并纪律 C 一致）；本轮未复跑 cargo，标转引	有物证	A	保留（数字必须带轴名这条它做对了）
+D00-05	分层	docs/00-status.md:119	客户端控制器 client/src/screens/*.gd 仍有 6,062 行仿制品	无（进度量）	`wc -l client/src/screens/*.gd` = 7050（我实跑）；同一事实在 HANDOVER:27 写 ~7,050、HANDOVER:142 写 ≈6,062	档位不匹配	B	改成 7,050 并注明"现算：wc -l client/src/screens/*.gd"；行数不写死或写命令
+D00-06	分层	docs/00-status.md:122	收敛层 diffconv 未跟 S3 … batch_conv 内容 637/1080、种类 1075/1080	有物证（指针齐全）	指 docs/06 §34c（73 号），带轴名与分母；未复跑	有物证	A	保留
+D00-07	分层	docs/00-status.md:124	弹道"打不全就复原"…已结案：用户打了两炮就拿到（docs/06 §34b）	观测	"用户实测"按 AGENTS §1b 属观测证据（不是线索），且同文给出整组 alive:true 的判据	有物证	A	保留；建议把"用户实测"标成 `观测` 字样，与 §1b 三档词表对齐
+D00-08	分层	docs/00-status.md:126	1 ulp 的正主…四条路都没复现 ⇒ 停做（这不等于证明它不存在）	未知	写明"没复现"+"不证明不存在"，是 §0.3 要求的诚实形态	有物证	A	保留（正面样板）
+D00-09	定向	docs/00-status.md:149	口径：原版可归属函数里，我们还原并验证了多少	per-function	假：tools/coverage_matrix.py:36-45 明确 status 是**模块级**五档，:747-758 的聚合是 `t[status] += orig_funcs`（把模块档位乘到该模块全部函数上）	档位不匹配	A	改成"口径：模块级 status × 该模块可归属函数数；逐函数验证没有元数据（见 docs/06 §74.10 第 2 条）"
+D00-10	分层	docs/00-status.md:153	分布在 78 个模块（58 个 graphwar_*.rs 占 430、16 个 scope=other 的模块占 97）	无	`ls src/graphwar_*.rs | wc -l` = 59（我实跑）；58 是"有同名文件的模块数"（docs/02:753-758 的口径），此处未注明	无物证	A	写成"59 个同前缀文件（其中 58 个是 graphwar 作用域模块的同名文件，另 1 个是 scope=other 的 texture_loader）"
+D00-11	⑤	docs/00-status.md:154	已实现 527（逐位 89 / 观测 438 / 推断 0）｜ 未做 0 ｜ 完全未知模块 0	逐位/观测（逐函数）	89/438 是模块档位 × orig_funcs 的求和（我用 docs/coverage-matrix.tsv 复算：status=逐位 的 12 个模块 orig_funcs 合计正好 89）。函数级反例：同为该表 status=观测 的 graphwar_root_node.rs（23 个）在 docs/16:1381 写"2 条部分落码、21 条未落码"	档位不匹配	A	改成"527 个可归属函数所属模块的档位：模块级 逐位 12 个模块/89 函数、观测 66 个模块/438 函数；函数级已验证数**未测**（唯一可复核上界：435/527 在我方 src 里被地址点到，92 条完全没有）"
+D00-12	⑤	docs/00-status.md:155	2026-11-26：polish_notation_converter 的 0x4f5450 对拍 18/18 逐位 ⇒ 88→89	逐位	fixtures/bit_exact_sweep.tsv:404 行：reorder_recursive 0x4f5450 needs_state 跑成 18 是 "升档：观测→逐位"；boundary_audit.tsv:488 该地址 loc_main_file=src/polish_notation_converter.rs	有物证	A	保留。但它同时暴露口径：一次单函数升档把模块档位抬一级 ⇒ 89 是"模块升档后该模块函数总数"，不是"89 个函数被逐位比过"
+D00-13	定向	docs/00-status.md:156	439 里本质可隔离执行的只有 129（29.4%），其余 310 要 Godot/分配器	观测(可及上限)	fixtures/bit_exact_sweep.tsv 我复算：442 行=439+3 正对照；档位列 isolated_impossible 310 / needs_state 103 / executable 26 ⇒ 103+26=129 ✓；但"跑成"只有 4 行（3 正对照 + 0x4f5450）	有物证	A	保留数字；建议补一句"129 是**可跑上限**，实际跑到 1 个"（后者在 docs/06 §64 标题已写，docs/00 这行没写）
+D00-14	分层	docs/00-status.md:165	527 是可度量下限，不是模块规模——求值器 0x4eb9d0、采样器 0x3c2530 全函数体零 Location 引用	观测	与 docs/06 §74.2 正对照一致（0x4eb9d0 按 Ghidra 边界确实无锚）	有物证	A	保留
+D00-15	⑤	docs/00-status.md:177	⇒ 527/527 是当前口径（改分母那次之后，分子在 2026-11-06 深夜也补齐了）	陈述句	"补齐"指每个模块都有了 ours_file；不是每个函数都有对应实现体	档位不匹配	A	改成"527 个函数所属模块在 2026-11-06 后都有了 ours_file（模块级补齐）"
+D00-16	分层	docs/00-status.md:251-253	527 个可归属函数里 348 个有原版真名…名字 ↔ x86 地址见 fixtures/name_to_addr.tsv（§20 是当轮的 327 条单表口径）	观测	我复算 name_to_addr.tsv 单表：唯一 x86_addr 326、∩527=319 ⇒ 单表撑不住 348；348 来自三表并集（同 D00-03）	有物证	A	保留（它已注明单表=327），但"名字↔地址见 name_to_addr.tsv"需补"+ name_to_addr_v2.tsv + windows_name_to_addr.tsv"
+D00-17	定向	docs/00-status.md:257	内核（函数语言/弹道/掩膜/命中/协议/broker/回合与生命/服务端/关卡/战役数据/AI 参数）已复原到"逐位验证"或"强观测"；client/ 里 15/15 界面能启动	混合	总体性陈述：11 类部件共用一句两档结论，无逐项指针；后半"15/15 能启动"是行为指标不是源码指标	无物证	B	拆成逐项表（部件|档位|判据），或改成"见 §2 已完成表（逐项带判据）"；"能启动"移出本句
+D00-18	定向	docs/00-status.md:266	90 例文法 + 37/70 条真值夹具；to_text 1032/1032	观测	"37/70"语义不明（是"70 条里过 37 条"还是"37 条 70 例"？）；同仓其它处写"70 条真值夹具与真二进制对拍"（coverage-matrix 的 math_function 行）	无物证	D	写成"70 条真值夹具全部逐位相同（命令/夹具路径 XXX）"，或若确实只过 37 条则必须写"37/70 未全过，缺 YYY"
+D00-19	③	docs/00-status.md:281	客户端 15 界面 + 内核接缝 ｜ 验收：bash client/run.sh selftest（717 / 0 / 1 skip）	观测	把 selftest 条数放在"已完成/验收"列 —— AGENTS §0.2 与本文档 :13-16 自己都写着"条数不是复原证据"	档位不匹配	D	验收列改成源码级判据（哪些原版 .gd 原件在用 / 哪些控制器已迁 Rust），条数降级为附注
+D00-20	④	docs/00-status.md:289	目标「打不全就全部复原」的判定点 ｜ 未知…397 份回放里 0 次部分命中	未知	与同文件 :124"已结案：用户打了两炮就拿到（docs/06 §34b）"**直接矛盾**	无物证	E	本行已过期：改成"判定点已由 docs/06 §34b 结案（观测）；397 份 0 次部分命中是**旧语料**的事实，保留作历史"
+D00-21	④	docs/00-status.md:303	音频播放 ｜ 播放层通了…事件映射仍是未知	未知	与同文件 :290"音效↔事件映射 ✅ 2026-11-26 结案（T19，观测）"+ fixtures/audio_event_map.tsv 矛盾	无物证	E	改成"事件映射已结案（观测，fixtures/audio_event_map.tsv）；仍未知的是'入队≠播放'那一层"
+D00-22	④	docs/00-status.md:307	目标「打不全就复原」｜ 实现了，但标 推断（判定点未知）	推断	同 D00-20：声明"推断/判定点未知"的诚实标记被 :124 结案后**没有回改**，两者并存	无物证	D	改成"已结案（观测，§34b）"；若仍认为判定点未知，必须写明与 §34b 冲突在哪
+D00-23	分层	docs/00-status.md:306	界面保真 ｜ 18 屏有真值…逐像素 0 px 八屏…match_ready 0.122%（L2 0 块）	观测（像素）	指 docs/06 §53–§79，有预注册门槛与 L2 块数；属行为/像素指标，位于 §4「交付侧」尚可接受	有物证	B	保留，但建议在行首加"（行为指标，不是源码级进度）"——与 §0.1b 的分维度表对齐
+D02-01	分层	docs/02-module-map.md:742-752	78 个模块 = scope=graphwar 62 + scope=other 16（附 awk 复算命令）	无（结构）	`awk -F'\t' '$2=="graphwar"' docs/coverage-matrix.tsv | wc -l`=62、other=16（命令随文给出）	有物证	A	保留
+D02-02	分层	docs/02-module-map.md:753-758	62 = 58 个有同名文件的模块 + 4 个没有；59 = 58 + graphwar_texture_loader.rs（scope=other）	无（结构）	`ls src/graphwar_*.rs | wc -l`=59（我实跑）⇒ 该行口径自洽	有物证	A	保留（这是全库对"58/59"讲得最准的一处）
+D02-03	⑤	docs/02-module-map.md:801-803	这 44 个模块 + §17.2 的 15 个模块在 src/ 里全部有同名文件（test -f 59/59 存在）…且 coverage_matrix --check 的总账是 527/527 已实现、未做 0	逐函数已实现	tools/coverage_matrix.py:753 的聚合是按**模块 status** 乘 orig_funcs；"文件存在"是模块级事实，不能推出函数级"已实现"	档位不匹配	B	把"已实现"改成"已归属到有同名文件的模块"；"⇔ 进度一律以 149 为准"保留但要注明 149 的口径是模块级
+D02-04	②	docs/02-module-map.md:834	graphwar_event_handler.rs（2/4）：0x3d3630 … 未实现，所以本模块没有 handler 行为，只有数据	无（诚实）	与 fixtures/boundary_audit.tsv 一致（0x3d3630 在 527 里，verdict=mismatch，我方位置 src/events.rs）；本条是 honest 标记 —— 但它与"已实现 527/未做 0"矛盾	有物证	A	保留原样；总账侧必须吸收它（见 D00-11 改法）：这 2 个函数应计入"未实现"
+D02-05	②	docs/02-module-map.md:835	graphwar_remote_event_handler.rs（3/171）：我方未实现其分发/订阅行为；旧矩阵把 events.rs 记成它的实现，口径偏宽	无（诚实）	同 D02-04；boundary_audit 里 0x3dee00/0x3e5910 两条 mismatch，我复算该 10 条 mismatch 中 7 条在 src/ 里连地址字面量都没有	有物证	A	同上：3 个函数应计入"未实现"
+D02-06	⑤	docs/02-module-map.md:843-844	本组原标 未实现 的 33 行已全部过期。按 coverage_matrix 重算的总账是 527/527 已实现、未做 0（逐位 89/观测 438）	逐函数	"原标未实现⇒现已实现"用的是 status 逐行改写（下文 :1029 自己承认"改的只有状态词"），不是补实现	档位不匹配	B	改成"33 行的**状态词**已按生成物改写；实现体是否补上未逐行核（§17.4 判不清第 1 条）"
+D02-07	分层	docs/02-module-map.md:940	weak_caller.rs（39 个函数）已补进总账…430 + 97 = 527	观测	判据给的是符号表 27 个 direct 符号 + docs/149 scope=other 97，可复算	有物证	A	保留
+D02-08	④	docs/02-module-map.md:995	src/events.rs 行末端：0x3d3630/0x3d38f0 与 0x3dee00/0x3e5910 四个函数我们都放在本文件 ⇒ 台账判 mismatch 4 条	有物证（台账）	我复算 fixtures/boundary_audit.tsv：mismatch 共 10 条，其中 4 条的 loc_main_file ∈ {graphwar_event_handler.rs, graphwar_remote_event_handler.rs} ✓	有物证	A	保留。诚实标记（"没有同名文件"）原样在，未被后续轮次改成陈述句
+D02-09	④	docs/02-module-map.md:998	src/server.rs 行末端：0x45a560/0x45a6b0/0x45a7b0/0x45aab0/0x45ad30/0x45b020 六个函数…判 mismatch 6 条	有物证（台账）	我复算：该 6 个地址在 boundary_audit.tsv 里 verdict 全 = mismatch ✓；其中 5 条在我方 src/ 里无地址字面量	有物证	A	保留
+D02-10	②	docs/02-module-map.md:1002	src/graphwar_shot_calculator/settle.rs：0x3c2bc0 没有 panic 锚，函数体也没有逐条还原（逐位的是行为）	无（诚实）	与 coverage-matrix.tsv 的 graphwar_shot_calculator.rs status=逐位（1 个 orig_funcs）并列即矛盾：模块判逐位，而本节说主体函数体没还原	有物证	A	保留；建议在 matrix 该行 evidence 里也写这句（现在写在 evidence 尾部，但 status 仍是逐位）
+D02-11	分层	docs/02-module-map.md:1005	LevelRules 也结案了：0x473520/0x4759f0/0x4780c0 的 panic::Location 全在 src/graphwar_game_state_manager.rs	观测（Location）	我直接复算 boundary_audit.tsv：三行 loc_main_file 全 = src/graphwar_game_state_manager.rs ✓（100%/match）	有物证	A	保留（这条是本表抽查中"物证-结论"咬得最紧的一条）
+D02-12	分层	docs/02-module-map.md:1007-1019	现值核对表（每行给 grep 判据，如 grep -n '已搬走' src/plane.rs）	无（结构）	判据全是可复跑 grep；抽查 §17.4 "events.rs 未拆" 与 src/events.rs 实际内容一致	有物证	A	保留
+D02-13	④	docs/02-module-map.md:1021-1044	⚖️ 判不清 / 不在本任务允许清单的（并列保留，给协调者裁；不改、不猜）+ 6 条	无（诚实标记）	6 条全部原样在（未被后续轮次删/改成陈述句）；本轮抽查第 2 条（coverage_matrix 三处 ours_file 指旧文件）与 D02-11 的现状一致	有物证	A	保留（本审计面④的核心结论之一：这两处诚实标记**没有被顺手收尾**）
+D02-14	④	docs/02-module-map.md:1046-1057	✅ 2026-11-26 逐条处置 | 2 已修 … 6 已修 | 剩下 1（状态词没有逐行改）仍未做	无（处置记录）	处置带复验命令（如 `python3 tools/coverage_matrix.py --check`、`cargo test --test campaign_data`）；第 1 条明确写"仍未做"，未粉饰	有物证	A	保留
+D02-15	④	docs/02-module-map.md:1083	那 43 行「未实现/—」：状态词已在 2026-11-26（T22）按 coverage-matrix 的 status 逐行改成 逐位/观测	逐位/观测	同 D02-06：改的是"抄生成物"，而 §17.4 判不清第 1 条自承"结构判断仍未做" ⇒ 这一句读起来像"43 行已收尾"，实际只改了状态词	档位不匹配	D	改成"43 行的**状态词**按生成物改写（`观测` 42 / `逐位` 1）；文件列与依据列未动，结构判断仍未做"
+D02-16	分层	docs/02-module-map.md:1807	在拿到可达性证据之前，不要把它写进任何模块的"已复原"	无（原则）	与 AGENTS §0.5 一致，且本节确实留了"仅地址/未解"的行（如 §15 的 0x3afcf0 标推断）	有物证	A	保留
+D02-17	分层	docs/02-module-map.md:1919-1926	arm64 带 src/*.rs 锚 532 / x86 527（同一张两侧口径表）	观测	两列分母都写明来源（.symtab 12,609 / Ghidra 13,263）；与 coverage_matrix 的 527 同口径	有物证	A	保留
+D02-18	分层	docs/02-module-map.md:1970	采样器 0x3c2530：没有名字，0 个 Location 引用…名字仍是 未知	未知	判据给到函数体字节数（1,680 B）+ 零引用 + 指针槽 0x9bac98 两个使用者	有物证	A	保留
+D02-19	分层	docs/02-module-map.md:254	✅ 已结案（2026-11，docs/151 §2.7）：这一簇不是游戏代码，是三方 X.509/CRL 栈	观测	指向 docs/151 §2.7（本仓有该文件）；本轮未逐条复核其内部证据	有物证	A	保留（指针齐全；复核级别=转引）
+D02-20	定向	docs/02-module-map.md:287	致死规则已结案（无血量 / 友军致死 / 按弹道先后，用户实测 + 我方实现一致）	观测	"我方实现一致"是**自洽**判据（AGENTS §0.5：自写断言只能证明自洽），本句未给逐位/真二进制出处	档位不匹配	D	补一条真二进制或回放级判据（该线 docs/06 §65 有），否则把"已结案"降为"我方实现自洽 + 用户口径一致"
+D02-21	定向	docs/02-module-map.md:293	原 12 的标题是"评分规则未还原"，现在已全部还原：参数表、权重、长度…	陈述句（全称）	"已全部还原"是总体性陈述；本行未给地址/夹具（同节下方才有），读者无法从本句复核	无物证	A	改成"已还原（判据见本节表 X 行 + fixtures/YYY）；参数/权重/长度三类分别标档"
+D02-22	分层	docs/02-module-map.md:3492-3498	本版把标签口径改对了：named_linux() = 354（三份夹具名字并集），正对照用的 348 是再 ∩527…三个数本节复算过且一致	观测	我复算三表并集=355、∩527=348 ⇒ 348 与 347 都对得上，named_linux() 差 1（在 527 外），不影响主结论	有物证	A	保留；把 354 改成"现算 355（我 2026-11-26 复算）"或注明"随夹具增长会变"
+D02-23	分层	docs/02-module-map.md:5584	(a)① crash 栈能用吗：不能。无 .symtab/.debug_*、.dynsym 136 条全 UND、0 份崩溃产物 ⇒ 新锚 0	观测（feas1，逐项）	四条否证都有可复核读数，且标了"观测"而非"证明不可能"	有物证	A	保留（负结论写法样板：给正/负两方面的读数）
+D06-01	定向	docs/06-verification.md:56-59	analysis/difftest.py 定点网格 … 704 全部逐位相同；analysis/final_verify.py 端到端 648 序列 + 40 串 全部相同	逐位	判据是旁仓 analysis/ 的脚本，本仓无入库产物/夹具路径；"全部相同"无地址、无夹具、无复跑命令	无物证	E	二选一：把产物（或抽样行）落到 fixtures/ 并给命令，或改成"当轮读数（analysis/ 旁仓，产物未入库）"
+D06-02	分层	docs/06-verification.md:596	"能跑"是必要条件，"逐位"是验收条件…谁要是把"能跑起来"写成"已复原"，就是没读这一节	无（原则）	与 AGENTS §0.2/§0.5 一致；本审计面③的正对照	有物证	A	保留
+D06-03	③	docs/06-verification.md:1106-1109	三轴各自 --check-baseline … 全部一致 ｜ coverage_matrix --check OK（527 函数；逐位 88 / 观测 439）	逐位（"一致"）	"全部一致"=与**我方已登记的护栏基线**自比（回归保护），不是与原版比；同一行 88/439 是升级前的旧值（现值 89/438）	档位不匹配	D	两个病：①把"与基线一致"写成"逐位/全部一致"（应写"护栏未漂移"）；②88/439 过期 ⇒ 改 89/438
+D06-04	③	docs/06-verification.md:1581-1582	fire 轴 … 全部一致 | batch 轴 … 全部一致	逐位（"一致"）	同上：比的是 fixtures/guardrails.json 的登记值	档位不匹配	D	同 D06-03 改法
+D06-05	⑤	docs/06-verification.md:4111	coverage_matrix.py --check OK（527 个函数 / 78 模块，逐位 88 / 观测 439）	逐函数	过期：按 docs/coverage-matrix.tsv 复算为 89/438（docs/00:154 与 docs/02:844 已是新值）	档位不匹配	A	改 89/438；或干脆不写这两个数，只写"rc=0"
+D06-06	③	docs/06-verification.md:4746-4751	三轴 全部一致 … 覆盖率 OK（原版可归属 527 个函数，逐位 88 / 观测 439 / 推断 0 / 未做 0）	逐位/逐函数	同 D06-03（"一致"=基线自比）+ 过期数；"未做 0"是模块级口径	档位不匹配	D	拆成两行：护栏未漂移（命令）/ 覆盖率模块级口径（注明）
+D06-07	分层	docs/06-verification.md:4886	三条轴各跑一次：全部一致（结算批 1080、内容 647/647/637、种类 1075、死亡 366/366/347…）	观测（护栏）	轴名/分母/数值齐全，比较对象是登记基线，上下文明确	有物证	A	保留（同一措辞在 D06-03 那种与覆盖率混排的场合才出问题）
+D06-08	分层	docs/06-verification.md:6531	三轴 fire/batch/batch_conv = 647/647/637；--check-baseline 三轴全部一致，语料 403 份指纹未变	观测	语料指纹 + 轴名 + 命令齐全；403=401 回放+2 元数据	有物证	A	保留
+D06-09	分层	docs/06-verification.md:7241	三轴 … 全部一致（结算批 1080、种类 1075、死亡 366/385、挖洞 207/294）｜没退	观测	同上，且"没退"是对上一轮的相对判断，措辞准确	有物证	A	保留
+D06-10	分层	docs/06-verification.md:8205	fire 轴 结算批 1080、内容命中 647…（--check-baseline 全部一致）+ 完整复跑命令	观测	命令可照抄	有物证	A	保留
+D06-11	②	docs/06-verification.md:8477	这条错活过了三轮：docs/16 §33/§40 写着"update_sprite 的全部算术已复原"，而它是逐位标注的函数；三轮里没有一条断言问过"这具精灵在屏幕上有多大"	（自述纠错）	§58.2/§58.3 有 diff、修前/修后像素数与 bbox 对照 ⇒ 纠错本身有物证；docs/16 现已改成 §21.6/§44.4 并带"2026-11-26 更正"	有物证	A	保留（全库最好的"结论句式虚报被抓"样本）；只需修掉"§33/§40"的过期节号
+D06-12	分层	docs/06-verification.md:8793	三轴（各自 --check-baseline）… 三条全部 校验结果：全部一致	观测（护栏）	比的是登记基线，上下文明确	有物证	A	保留
+D06-13	③	docs/06-verification.md:9184	本轮所有"换上去"都是观测级"原版字节在场"，不是"行为已复原"	观测	主动把"字节在场"与"行为复原"切开，正是 §0.3/§0.5 要的写法	有物证	A	保留（正对照）
+D06-14	分层	docs/06-verification.md:9435	⑦ 静态与 frida 一致吗：七个字段/五个常数/四条控制流全部一致，无一处矛盾（逐项见 §63.6）	观测（双证）	有逐项子表 + 真机读数；"一致"有明确两侧来源	有物证	A	保留
+D06-15	⑤	docs/06-verification.md:9673	§64 标题：439 个 观测 级函数里只有 1 个能真正隔离对拍（0x4f5450，18/18 逐位）——这就是 439 分母的可及上限	观测	fixtures/bit_exact_sweep.tsv 我复算：442 行、跑成 4 行（3 正对照+0x4f5450）、isolated_impossible 310	有物证	A	保留（与 527/527 的乐观表述并存，正好互相校正）
+D06-16	⑤	docs/06-verification.md:9685	439 里本质可隔离执行的 = 129（executable 26 + needs_state 103；判据见 §64.3）	观测	我复算 sweep：executable 26 + needs_state 103 = 129 ✓	有物证	A	保留
+D06-17	分层	docs/06-verification.md:9744	不做这两条：439 个里 264 个被 panic 连坐 → isolated_impossible 439/439	观测	分类可复算（fixture 档位列）；"若不做这两条则全不可跑"是条件句，写法正确	有物证	A	保留
+D06-18	⑤	docs/06-verification.md:9837	fixtures/bit_exact_sweep.tsv：442 行 = 439 + 3 条正对照；列：… 跑没跑 / 是否全逐位相同	观测	我复算 442 行、12 列，列名与描述一致 ✓	有物证	A	保留
+D06-19	分层	docs/06-verification.md:9892	③ 掩膜：持有者 = GraphwarObstacleManager 的 self+0x18（ArcInner<Mutex<Vec<u8>>>，锁字 +0x10、数据 +0x20/+0x28）；创建 0x523020（alloc 600000 + memset 0xFF）	观测	地址链到字段偏移与立即数；"没有每帧重建"给了三处增量路径	有物证	A	保留
+D06-20	分层	docs/06-verification.md:11006	§70 音效↔事件映射做成真值表：5 资源槽 ↔ 5 条 mp3 ↔ 4 条订阅事件，判据=句柄指针相等 + 回放里同一条事件	观测	我复核 fixtures/audio_event_map.tsv 存在（14667 B），文件头含可原地复跑的生成命令（tools/audio_replay_align.py 两轮 R1/R2 标签）	有物证	A	保留
+D06-21	⑤	docs/06-verification.md:11563	本机复算总账 = 527/527 已实现、未做 0、未知模块 0、逐位 89 / 观测 438 / 推断 0，与 §17 开头 🔴 块写的口径一致	逐函数	"与 §17 一致"=与模块级文案一致；函数级无物证（见 D00-11）	档位不匹配	A	改"模块级总账"；并加一句函数级反例（root_node 21 条未落码 / event_handler 未实现）
+D06-22	分层	docs/06-verification.md:11897	§74 标题：527 行 match 431 / mismatch 10 / multi 86	逐函数（边界）	我直接数 fixtures/boundary_audit.tsv：527 行、verdict 计数 = match 431 / mismatch 10 / multi 86 ✓	有物证	A	保留（本审计面抽查中"结论=一行脚本可复算"的样板）
+D06-23	④	docs/06-verification.md:11974	§74.4 mismatch 10 条：清单、证据、处置（一条都没搬，为什么）+ 10 行地址表	无（处置说明）	10 条地址与 boundary_audit.tsv 逐行对照一致；"一条都没搬"与 docs/02 §17.4 现值表一致	有物证	A	保留（诚实标记**没有被顺手收尾**：若被收尾，这里会写成"已切出"）
+D06-24	④	docs/06-verification.md:12019	§74.5 multi 86 条：一律不搬（AGENTS.md §4）…主文件证据占优但没有一边倒的边界证据，动它就是猜	无（判定规则）	与 boundary_audit.tsv 的 86 条 multi 一致；处置是"只登记"，未被改成"已按数据流判定"	有物证	A	保留
+D06-25	④	docs/06-verification.md:12091-12106	§74.9 遗留/未做 7 条（10 条 mismatch 一条都没搬 / split-N 44 条 / multi 只登记 / 39 无名 / 8 条名字≠文件…）	无（遗留）	7 条全部还在，且第 1 条与 HANDOVER:32 "10 条 mismatch 已按 Location 切出"**直接矛盾**	有物证	A	保留；HANDOVER 侧按 D-T527 的建议改
+D06-26	⑤	docs/06-verification.md:12112-12119	§74.10 第 2 条：规格说"527 个可归属函数逐个与 ours_file 对照"——但 ours_file 是模块级映射…ours_hit 因此定义为"主文件锚点占比"，不是"我方实现命中率"（后者没有元数据可算）	（口径自述）	这是"527 只能到模块级"的**作者自述**，与 tools/boundary_audit.py 文件头一致；总账侧（README/00/HANDOVER）没吸收这条	有物证	A	把这条口径搬到 README:108 与 docs/00:149 的"口径"句里（一句话即可截断后面的误读）
+D06-27	分层	docs/06-verification.md:12992-12994	三轴 fire/batch/batch_conv … 全部一致（含死亡 347/385 与挖洞 207/294）	观测（护栏）	三轴分开报、分母一致	有物证	A	保留
+D16-01	定向	docs/16-client.md:59	界面 ｜ 15/15 全部实现（7 个基础界面 + 8 个弹窗），可按原版路由互相跳转	观测（"全部实现"）	"实现"=我方 .gd 仿制品能跑；AGENTS 0.4 条 明确 client/src/screens 是仿制品、控制器在 Rust；"全部实现"读起来像源码级	档位不匹配	B	改成"15/15 屏**可跑**（我方 GDScript 仿制品，非原版源码）；其中 27 份视图已换原版 .gd 字节（§66）"
+D16-02	③	docs/16-client.md:66	自动验收 ｜ bash run.sh selftest → 93 条断言全绿（退出码 0）	观测（测试条数）	把自检条数当"自动验收"的唯一判据，且 93 是极老读数（现行 717；见 docs/00:14-16）	档位不匹配	D	改成"回归保护：selftest 717/0/1skip（判据 missing=0 silent=0）——**不构成复原证据**"；验收列另设源码级判据
+D16-03	分层	docs/16-client.md:68	游戏资产 ｜ 0 字节：无 .tscn/.gd/.ttf/.svg 原件，无字体文件，图标全部现画	无	实测：client/ 下 18 个 .tscn、74 个 .gd、client/src/views 27 份、client/assets 142 个 .ctex（与 docs/00:142-143 一致）；只有 .ttf/.svg 确实 0	无物证	A	改成"源资产（.ttf/.svg）0 份；.tscn 18 份、.gd 74 份（含 27 份原版字节）、.ctex 142 个"
+D16-04	③	docs/16-client.md:400-401	cargo test --offline 205 → 218（+13，全绿）｜ bash run.sh selftest 93 passed, 0 failed	观测（条数）	当轮日志，用作"本轮改了什么"可以；但它是条数不是复原进度，且 93 已过时	档位不匹配	D	注"（当轮）"；条数一律不进「AGENTS 0 级」进度
+D16-05	①	docs/16-client.md:485	新方法 GW2Rebuild.hit_test | 逐位验证（get_method_list 与"注册成功"日志，6.3 节）	逐位	判据是"方法注册成功的日志" —— 证明方法存在，**不证明**与真二进制逐位相同（无 oracle 比对）	档位不匹配	D	降为 观测（"gdext 注册成功"）；逐位要另指 fixtures/ 的真值（如 settle 的 oracle 对拍）
+D16-06	①	docs/16-client.md:486	返回 {ok,hits,…}（顺序固定）| 逐位验证（单测 result_shape_is_exactly_the_contract）	逐位	判据是我方单测（自写断言）—— AGENTS 0.5 条 明令：自写断言只能证明自洽	档位不匹配	D	降为 推断/自洽；若"顺序固定"有原版依据，补指令/结构体偏移出处
+D16-07	①	docs/16-client.md:487	坐标系 三个入参全是棋盘坐标…换算只在 plane::to_pixel 里做一次 | 逐位验证（§2 三条测试）	逐位	同一张表里 §2 三条测试是我方测试；且"棋盘坐标"这条的真正物证应是 plane 的 px=x*1000/50+500（docs/02:840 有）	档位不匹配	D	改成"观测（换算指令 0x4be3e0 + 自洽测试）"；把真二进制出处写进判据列
+D16-08	①	docs/16-client.md:488	用的是不是真规则：是…只有一份实现 | 逐位验证（等价性测试 agrees_with_settle_resolve_on_captured_shots）	逐位	"等价性测试"=两份我方实现互比（C-duplicated 风险 + 自洽），不是与真二进制比	档位不匹配	C	降为 观测；并把"只有一份实现"这条（属实的源码级优点）与档位分开写
+D16-09	分层	docs/16-client.md:1066	网络 ｜ 没有网络层…真实 TCP 握手已复原（09-network.md、src/_scaffold/protocol.rs），未接进界面	观测	把"已复原"与"未接进界面"分开写，未夸大	有物证	A	保留
+D16-10	⑤	docs/16-client.md:1381-1382	进度口径：23 条可归属函数里，2 条部分落码（0x3b0830、0x3a2e10），21 条未落码；cargo test 全绿不改变这个分母	观测（函数级）	本行是**函数级**诚实口径，且与 coverage-matrix 的 graphwar_root_node.rs（orig_funcs=23、status=观测、计入"已实现 23"）**直接冲突**	有物证	A	保留；并且它是 527 改写的一等证据：这 21 条应计入"未实现"
+D16-11	分层	docs/16-client.md:2847	update_sprite | 0x4bf418 | 632 B | 0x4b9530 | 736 B | 1.16（体量比）	观测	体量比与地址并列，可复核	有物证	A	保留
+D16-12	②	docs/16-client.md:2967-2977	scale = ((s·k/60)·(128/tex_w), (k/−60)·(128/tex_w)) ← 2026-11-26 更正（旧式漏了 x 的 k，见 docs/06 §58）+ 常量表（x86 槽/指令 + arm64 立即数）	逐位（常量）	常量表给 x86 只读地址 + arm64 立即数双证；更正痕迹保留原位	有物证	A	保留（正面样板：虚报被抓后不改历史、加更正行）
+D16-13	分层	docs/16-client.md:3090	update_sprite | sprite_transform / SpriteTransform / 4 个常量 | 全 | 观测	观测	与 D16-12 同类内容却标 观测（保守）—— 保守方向的不一致可接受	有物证	A	保留
+D16-14	分层	docs/16-client.md:3853	docs/16 §23.2 的地址表（draw 0x4b5df0 / ready 0x4b7a70 …）| 本工具逐条复核：全部一致（那张表是手算 + REA 得出的）	观测	说明复核工具与另一来源（手算+REA），并点明原表来路	有物证	A	保留
+D16-15	④	docs/16-client.md:7005	§38.6 与原版的差别（逐条，别当成"已复原"）+ 逐项给档位（22 是观测 / 3 是本轮范围 / 我方选择…）	观测	主动把"我方选择"与"原版观测"分列，是 AGENTS 0.3 条要的形态	有物证	A	保留
+D16-16	③	docs/16-client.md:7867	client/tools/*.gd 全量 ｜ 2018 passed / 0 failed / 12 个脚本 rc=0 ｜ 与改动前逐条相同	观测（条数）	"逐条相同"=与**我方上一轮**相同（回归保护）；这里把它当作改动验收，语境尚可，但同一形态在别处被当成复原证据	有物证	A	保留；建议全库统一改成"回归保护：条数未变（不是复原证据）"
+D16-17	③	docs/16-client.md:8042/8275	plane_on_screen_check.gd ｜ 96 ｜ 96（改动前后同值）	观测（条数）	同值只能说明"没退化"，不构成任何与原版一致的证据	无物证	D	保留数字但去掉"验收/证据"语义，或与真帧对拍结论一起给
+D16-18	④	docs/16-client.md:9090-9100	§49.5 仍是推断 / 未知（诚实清单）6 条（含"门仍然默认走 prep"、"不能写成门控已复原到画面"）	推断/未知	6 条逐项写缺什么；"不能写成…"是对后续轮次的明示禁令	有物证	A	保留（本审计面④正对照：诚实清单原样在）
+D16-19	分层	docs/16-client.md:9563	回放驱动（_replay_* 等）~380 行 ｜ graphwar_replay_player.rs 已复原；本屏的播放控制（tick/seek/速度）我方自定	混合	同一行两个方向的事实拼在一句里，"已复原"与"我方自定"未分档；原版回放界面控制器行为明确写"未观测"	档位不匹配	B	拆两句：①rust 侧 已复原（观测，判据）②本屏控制 我方自定（原版未观测）
+D16-20	④	docs/16-client.md:11028-11030	原版字节 + 已接线 27 份（cmp 与 recovered-src 逐字节相同）；仍是我们写的 25（9 红线 / 7 死文件 / 9 真缺口）	观测	cmp 逐字节可复核（recovered-src 已入库 164 文件）；缺口分类具体	有物证	A	保留
+D16-21	④	docs/16-client.md:11035	⚠️ "原版字节在场"≠"行为已复原"。这些视图脚本全是布局/字号…一个按钮行为都没有——行为在 Rust 控制器里…不能说"这一屏复原了"	无（禁令）	与 AGENTS 0.4/0.5 条 完全一致；本审计面③的最佳反例	有物证	A	保留
+D16-22	分层	docs/16-client.md:10732	⚠️ 2026-11-26：这行是错的公式，已修成 (s·k/60)·(128/tex_w)，见 docs/06 §58	逐位	错公式原位留档 + 指向证据节	有物证	A	保留
+DHO-01	分层	docs/HANDOVER.md:11-13	还原 Graphwar II 的源代码…行为一致只是第一步，源码级还原才是终点…cargo test/selftest 的条数是回归保护，不是复原证据	无（原则）	与 AGENTS §0/§0.2 一致；本文件头部即正确	有物证	A	保留
+DHO-02	分层	docs/HANDOVER.md:27	P1 控制器迁回 Rust——client/src/screens/*.gd 现有 ~7,050 行仿制品	无（规模）	`wc -l client/src/screens/*.gd` = 7050 ✓（我实跑）	有物证	A	保留
+DHO-03	②	docs/HANDOVER.md:32	P3 模块/函数边界——10 条 mismatch 已按 Location 切出；multi 86 条待数据流判定；19 个模块还没有同名文件	陈述句（已完成）	docs/06 §74.4 原话"一条都没搬"、§74.9 第 1 条"10 条 mismatch 一条都没搬"；docs/02 §17.4 说有同名文件的判定是"登记"。⇒ "已按 Location 切出"（=切出文件/切走）与物证相反	档位不匹配	B	改成"10 条 mismatch 已按 Location **定位并登记**（未搬，docs/06 §74.4）；multi 86 条按 §74.5 一律不搬（不是待判定）"
+DHO-04	定向	docs/HANDOVER.md:32	同上后半：multi 86 条待数据流判定	陈述句	docs/06 §74.5：multi 的来源是内联，"一律不搬"，且 §74.9 第 3 条说"要让它们可判需要一套我方元数据，现在没有" ⇒ 不是"待判定"而是"不可判（缺元数据）"	档位不匹配	E	改成"multi 86 条不可判（缺'我方函数↔原版 Location'元数据），按 §74.5 一律不搬"
+DHO-05	分层	docs/HANDOVER.md:34	P4 命名——真名 348/527；179 无名（138 族级 + 41 未知）	观测	我复算三表并集∩527=348 ✓（同 D00-03）	有物证	A	保留
+DHO-06	⑤	docs/HANDOVER.md:46	可归属函数 527 / 527 = 100%（逐位 89 / 观测 438 / 推断 0）｜78 模块｜未做 0	逐函数	模块级 status × orig_funcs（coverage_matrix.py:753）；反例：root_node 21 条未落码、event_handler/remote_event_handler 5 条未实现	档位不匹配	A	见文末"527 该怎么改写"（README/00/HANDOVER 三处同一改法）
+DHO-07	⑤	docs/HANDOVER.md:47	2026-11-26：polish_notation_converter 唯一可归属函数 0x4f5450 对拍成 18/18 逐位 ⇒ 88→89	逐位	fixtures/bit_exact_sweep.tsv:404 ✓（我复核）；本句恰好暴露：一次函数级升档 ⇒ 模块档位+1 ⇒ 总账 +1	有物证	A	保留，但补一句"（模块级升档，函数级已验证数不变）"
+DHO-08	⑤	docs/HANDOVER.md:48	439 里本质可隔离执行的只有 129（29.4%），其余 310 要 Godot/分配器 ⇒ 这是「观测」分母的可及上限	观测	我复算 sweep：26+103=129 ✓，isolated_impossible 310 ✓（且实际跑成只有 1 个非对照函数）	有物证	A	保留；补"实际跑成 1 个"
+DHO-09	分层	docs/HANDOVER.md:53	协议 74 / 74 全字段 + 74 条判别值 + 7 个线上枚举全集（无未知）	观测	判据链在 docs/07 §5；README:58 给出 tools/wire_fields.py --verify 与三道交叉验证（67/67、67/67、133 行）	有物证	A	保留
+DHO-10	③	docs/HANDOVER.md:54	GDExtension 原版 12 类 + 我方 3 = 15 个，全部节点化；headless 14 个 SceneTree 脚本 / 1933 条 / 0 failed	观测	把测试条数（1933）并列进"§1 现在的数"——AGENTS §0.2 明令条数不是复原证据；"全部节点化"是源码级事实，其实不需要条数背书	档位不匹配	D	拆开：节点化=源码级（判据：原版 12 类清单 + 我方类名对应）；1933 条移到"回归保护"区
+DHO-11	③	docs/HANDOVER.md:55-56	cargo 1769 / 0 / 1 ignored（--features 1875）｜selftest 717 / 0 / 1 skip	观测（条数）	与 DHO-10 同：条数放在"现在的数"最显眼处，正是 §0.2/§0.0 要纠正的排序	档位不匹配	D	整块移到文末"回归保护（不是进度）"，或标注"← 不作为进度"
+DHO-12	分层	docs/HANDOVER.md:63-71	客户端像素 18 屏有真值…逐像素 0 px 八屏…match_ready 0.122%（L2 0 块）/ match_play 0.428%	观测（像素）	指 docs/06 §53–§79，含预注册门槛、L2 块数、"L2 不可判"的自我限定	有物证	B	保留（§0.0 已把像素定位为判据而非目标）；建议行首标"（行为指标）"
+DHO-13	分层	docs/HANDOVER.md:74	两张最容易混的口径：527 vs 13,263（可归属 vs 全部函数）、1075 vs 647（种类 vs 内容）	无（口径）	两个分母都能复算（pkl 13,263；boundary_audit 527）	有物证	A	保留
+DHO-14	分层	docs/HANDOVER.md:105	"音效↔事件映射证不到"｜已结案（观测）…真值表 fixtures/audio_event_map.tsv（复跑逐字节可复现）	观测	我复核该文件存在（14667 B）且文件头含两轮标签与生成命令	有物证	A	保留
+DHO-15	分层	docs/HANDOVER.md:106	"AI 只有参数对上了"｜扩展了：参数层逐位 71/71；注入同一 ChaCha key 后 27 行逐 token 与真二进制相同	逐位	指 fixtures/ai_gen_parity.tsv + docs/13 §26 + docs/06 §78；分档明确（仍未复原的也写了）	有物证	A	保留
+DHO-16	分层	docs/HANDOVER.md:107	"段位算法在客户端"｜否 ⇒ E 档：rank_manager 4 个函数算术指令 = 0（正对照 Plane::draw 1158 条有 div/mul）	观测	负结论带正对照（正是 AGENTS 合并纪律 A4 要求的做法）	有物证	A	保留（负结论写法样板）
+DHO-17	①	docs/HANDOVER.md:110-111	已被证实、且已落地的：像素级真值能抓源码复原错误（update_sprite 的 scale.x 漏了 k…活了三轮、docs/16 §33 还标着"全部算术已复原"）	（历史叙述）	docs/16 现已无 §33=该内容（§33 是 AshEffect 登记表），错公式已在 §21.6/§44.4 改正 ⇒ 引用的节号失效（"还标着"现在是假）	档位不匹配	A	把"docs/16 §33"改成"docs/16 §21.6（原 §33，已按 docs/06 §58 更正）"，并把"还标着"改成"当时标着"
+DHO-18	分层	docs/HANDOVER.md:121	"1 ulp 正主"｜仍未复现…⇒ 停做（不是证明它不存在）	未知	诚实负结论 + 边界声明	有物证	A	保留
+DHO-19	③	docs/HANDOVER.md:141	Ａ 缺工程 ① 客户端像素保真：回放三屏有真值——replay_lobby 4.114%、replay_play 41.330%、replay_end 52.460%…当前主线（t4/t5/t6 在做）	观测（像素）	与同文件 :63-64"逐像素 0 px 八屏（含回放播放/回放结束）"**直接矛盾**；且把像素列为 §4 档 A① 与 §0.0 的 P1=控制器迁回 Rust 排序冲突	无物证	B	整行替换为当前值（0 px），并把"当前主线"改成 §0.0 的 P1
+DHO-20	定向	docs/HANDOVER.md:142	② client/src/screens/*.gd ≈6,062 行仿制流程；控制器要迁回 Rust	无（规模）	`wc -l client/src/screens/*.gd`=7050；同文件 :27 已写 ~7,050 ⇒ 自相矛盾	无物证	A	改 7,050（或写"现算"命令）
+DHO-21	③	docs/HANDOVER.md:150-151	2026-11-26 这一轮已落地：t4 回放播放屏、t5 回放列表行（0 像素）、t6 静态两屏（0 像素）；另由 lead 修掉 update_sprite 的源码级复原错误	（成果叙述）	前三项是像素成果，第四项才是源码级修复；§0.0 明写"别再把像素全 0 当主目标"	档位不匹配	B	改成"本轮源码级产出：update_sprite 复原错误修复（§58）；像素归零三屏是**它的判据**，不是成果本身"
+DHO-22	⑤	docs/HANDOVER.md:182	python3 tools/coverage_matrix.py --check # 527 可归属 / 逐位 88 / 观测 439	逐函数	过期（现值 89/438，同 D06-05）+ 模块级口径	档位不匹配	A	改 89/438，并注"（模块级）"
+DHO-23	分层	docs/HANDOVER.md:191-193	fire 内容 647 / 种类 1075 ｜ batch 同 ｜ batch_conv 内容 637 / 种类 1075；死亡 366/385、挖洞 207/294	观测（护栏）	带轴名 + 分母 + 冻结语料口径	有物证	A	保留（报数带轴名这条做对了）
+T527-01	⑤	README.md:96	### 还原进度：527 / 527 可归属函数 = 100%	逐函数	见 D00-11/DHO-06：模块级 status×orig_funcs；函数级反例≥26 条（root_node 21 + event_handler 2 + remote_event_handler 3，均出自 docs 自述）	档位不匹配	A	改成："模块归属 527/527（每个可归属函数所属模块都有我方文件）；**函数级还原**:未测，可复核上界 435/527（我方 src 里被地址点到），已知 26 条自述未落码"
+T527-02	⑤	README.md:101	可归属函数 527 个 / 78 个模块 已实现 527（逐位 88 / 观测 439 / 推断 0）	逐函数	双错：①模块级口径 ②88/439 过期（现值 89/438，见 docs/00:154、docs/02:844、docs/149:8）	档位不匹配	A	见 T527-01；并把 88/439→89/438 或干脆删掉这两个数
+T527-03	⑤	README.md:108-109	"100%" 的准确含义：所有能被 panic::Location 锚定的游戏函数，都有一个能指到证据（地址或文档小节）的 Rust 实现	逐函数	可证伪：527 条台账里 **92 条**在我方 src/ 里连地址字面量都没出现（我复算 ADDR_RE ∩ boundary_audit）；边界台账的 ours_hit 是"锚点占比"不是命中率（docs/06 §74.10 第 2 条自述）	档位不匹配	A	把"准确含义"改成"准确含义：527 个函数**所属模块**都有我方文件；其中 435 个函数在我方 src 里被地址点到（线索档），92 个没有 ⇒ 函数级'有实现'没有可复核判据"
+T527-04	⑤	docs/149-coverage-matrix.md:8	我们已实现 527 个函数，其中 逐位 89 / 观测 438 / 推断 0；未做 0；完全未知的模块 0 个	逐函数	生成物文案（源头 tools/coverage_matrix.py:1135 的打印模板），把模块级 status 写成"已实现 N 个函数"	档位不匹配	A	改生成脚本的文案：模块级 N 个函数 + 逐函数未测（这是生成物，改脚本不改产物）
