@@ -92,3 +92,62 @@ static func make(text_: String, cmd: String = "", icon_: Texture2D = null) -> Gw
 		b.icon = icon_
 		b.add_theme_constant_override("h_separation", 6)
 	return b
+
+# ---------------------------------------------------------------- 原生 `GraphwarButton` 的互操作
+#
+# 原版 `.tscn` 里的按钮是 **GDExtension 原生类 `GraphwarButton`**
+# （`src/_scaffold/graphwar_button_class.rs`：`#[class(base = Button)]`），
+# **不是**本文件这个 `extends Button` 的仿制类。原版 `.tscn` 一装进 `client/`，
+# 那一屏的按钮就全是原生类 ⇒ 它们**不会**走本文件的 `_fire()`。
+#
+# 原版里"按钮 → 行为"的接线在 Rust 控制器里（`GraphwarButton::subscribe` 那张闭包表 +
+# `input_selected` 信号）；我方客户端的命令总线是 `App.command`（`client/src/app/app.gd`）。
+# 所以这里补一层：把原生按钮的两个出口接到命令总线 ——
+#   * `input_selected(text)`  ← 对应原版 `pressed`（`0x4ef560`）派发的命令键（`input_text`）
+#   * `long_press_finished`   ← 对应原版 `process`（`0x4e42a0`）的长按派发，命令键是
+#                                `long_press_input_text`（`FireButton` = "fire"）
+#
+# 证据档：**观测**（结构）/ **推断**（接线点）。`input_selected` 与 `long_press_finished`
+# 是本项目 Rust 类里**自造的两条信号**（原版 6 个方法里一个 `emit_signal` 都没有，见
+# `graphwar_button_class.rs` 文件头"机制 1"）—— 它们存在的唯一理由就是让 GDScript 能观察到
+# 派发，所以拿它们当接线点是那个设计意图的直接用法，不是猜。**原版真正的订阅者（Rust 控制器
+# 里那张闭包表）我方还没复原完**，这一步是"把原生按钮接到我方命令总线"的临时桥，
+# 等控制器迁回 Rust（AGENTS §0.4）之后应当由 Rust 侧订阅取代（docs/06 §92.6）。
+
+## 一棵子树里的原生 `GraphwarButton`（深度优先前序；不含仿制类 `GwButton`）。
+static func native_buttons(root: Node) -> Array:
+	var out: Array = []
+	_collect_native_buttons(root, out)
+	return out
+
+static func _collect_native_buttons(n: Node, out: Array) -> void:
+	if n == null:
+		return
+	for c in n.get_children():
+		if c.get_class() == "GraphwarButton":
+			out.append(c)
+		_collect_native_buttons(c, out)
+
+
+## 把 `root` 子树里所有原生按钮接到 `App.command`（幂等：打过 `gw2_command_bound` 标记的跳过）。
+## 返回本次新接上的按钮个数。
+static func bind_native(root: Node) -> int:
+	if root == null:
+		return 0
+	var bound := 0
+	for b in native_buttons(root):
+		if b.has_meta("gw2_command_bound"):
+			continue
+		b.set_meta("gw2_command_bound", true)
+		# 单击/普通键：原版 `pressed` → `input_selected(input_text)`。
+		b.connect("input_selected", func(text: String) -> void:
+			var app: Node = b.get_node_or_null("/root/App")
+			if app != null and app.has_method("command"):
+				app.command(text))
+		# 长按键（`FireButton`）：原版 `process` 到 500 ms 后派发 `long_press_input_text`。
+		b.connect("long_press_finished", func() -> void:
+			var app: Node = b.get_node_or_null("/root/App")
+			if app != null and app.has_method("command"):
+				app.command(String(b.get("long_press_input_text"))))
+		bound += 1
+	return bound

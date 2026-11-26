@@ -114,6 +114,11 @@ func _instantiate_screens() -> void:
 		node.name = screen_name
 		node.set_anchors_preset(Control.PRESET_FULL_RECT)
 		screens_control.add_child(node)
+		# 原版 `.tscn` 的按钮是**原生 `GraphwarButton`**（GDExtension 类），它们不认我方
+		# `GwButton` 那套 `App.command` 派发 ⇒ 进树之后统一接一次（幂等）。
+		# 必须在 `add_child` 之后：子脚本（如 `CampaingLevelsButtons.gd`）在 `_ready` 里
+		# 才把按钮造出来（docs/06 §92.2）。
+		GwButton.bind_native(node)
 		App.register_screen(screen_name, node)
 
 func _build_toast() -> void:

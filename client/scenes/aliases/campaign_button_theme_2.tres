@@ -1,0 +1,43 @@
+; ！！这是我方 shim，**不是原版字节** —— 原版 `campaign_button_theme_2.tres` 是 2.5 MB，
+; 其中 2.44 MB 是内嵌字形图集（`FontFile` 的 `cache/...` + `Image` 子资源），导出器把
+; **字体字节本身丢掉了**：`recovered-src/campaign_button_theme_2.tres` 里那个
+; `FontFile_6pbbx` 的 `data` 是空的，实测 `FontFile.data.size() == 0`、加载即刷
+; `Invalid image: image is empty` ⇒ 原件**物理装不上**（docs/06 §91.5 的 B 类）。
+;
+; 这里的做法（与 `title_theme.tres` 别名同一套，见 docs/16 §80.1）：
+;   把内嵌 `FontFile` 换成 **同一个字体在 `client/assets/` 里的导入产物**
+;   （`res://assets/EraserRegular.fontdata`，MANIFEST 登记的 sha256
+;   d488120e605e90e67f9a76c131df1cee9b03c990794e46941751bf145fef4dbb），
+;   Theme 层的 6 个属性**逐条照抄原版**（下面 [resource] 段：default_font +
+;   2 个颜色 + 5 个 StyleBoxEmpty）。
+;
+; 证据档：结构 = 观测（原版 .tres 的 [resource] 段逐条抄）；字体字节 = 观测
+; （assets/ 里的导入产物就是从原版 pck 提的）；**字形度量/图集布局 = 推断**
+; （原件里的 2.44 MB 字形缓存丢了，只能由同一个 ttf 的导入器重算 ⇒ 抗锯齿/字宽
+;   可能与原件差 1 px，只能靠真帧像素对拍验证）。
+;
+; ⚠️ 这份是别名层（我方接线）的一部分，不进 `recovered-src/`。`res://campaign_button_theme_2.tres`
+; 由同目录 `client/campaign_button_theme_2.tres.remap` 指过来。
+[gd_resource type="Theme" load_steps=7 format=3]
+
+[ext_resource type="FontFile" path="res://assets/EraserRegular.fontdata" id="1_eraser"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_disabled"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_focus"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_hover"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_normal"]
+
+[sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_pressed"]
+
+[resource]
+default_font = ExtResource("1_eraser")
+Button/colors/font_disabled_color = Color(0.87451, 0.87451, 0.87451, 0)
+Button/colors/icon_normal_color = Color(1, 1, 1, 0)
+Button/styles/disabled = SubResource("StyleBoxEmpty_disabled")
+Button/styles/focus = SubResource("StyleBoxEmpty_focus")
+Button/styles/hover = SubResource("StyleBoxEmpty_hover")
+Button/styles/normal = SubResource("StyleBoxEmpty_normal")
+Button/styles/pressed = SubResource("StyleBoxEmpty_pressed")
