@@ -57,6 +57,15 @@ var _meta_cache := {}
 ## 四个模式图标的节点名（`replay_entry.tscn` 的顺序，不带 `2/3/4` 后缀的那个是第一格）。
 const MODE_NODE_NAMES := ["AxisModeButton", "FunctionModeButton", "TurnModeButton", "TimeModeButton"]
 
+## 原版**行场景**（`replay_entry.tscn`）。行是运行时按回放条数实例化的，不是本屏 `.tscn` 的子节点。
+const ENTRY_SCENE_PATH := "res://scenes/screens/replay_entry.tscn"
+var _entry_packed: PackedScene
+
+func _entry_scene() -> PackedScene:
+	if _entry_packed == null:
+		_entry_packed = load(ENTRY_SCENE_PATH) as PackedScene
+	return _entry_packed
+
 func _ready() -> void:
 	font_divisor = 30        # 标题/返回键的除数由各自的视图脚本管；这里只兜底
 	super()
@@ -95,123 +104,56 @@ func _rebuild() -> void:
 
 # ---------------------------------------------------------------- 一行
 
-## 一条回放（原版 `replay_entry.tscn`，21 节点；节点名/层数都照它）。
+## 一条回放 —— **直接把原版 `replay_entry.tscn` 实例化**（`client/scenes/screens/replay_entry.tscn`
+## 与 `recovered-src/replay_entry.tscn` **逐字节相同**，130 行 / 21 节点）。我方只填这一行要显示的
+## 数据、接 ▶ 的线；节点与布局**一行都不手抄**（原来这里约 120 行 `HBoxContainer.new()` 手抄树）。
+##
+## 原版这一行的形状（全部来自 `.tscn`，不在这里）：
+##   HBoxContainer[graphwar_theme]
+##     ├ ScrollContainer/NameContainer(`LanLobbyFontResize.gd` 宽/40)/ReplayName  ← 录制时间
+##     ├ GameNameContainer[`GameNameContainer.gd`]/GameName                       ← 关卡名
+##     ├ ModeContainer/OptionsContainer/[M, 4×(AR→模式按钮), M2]                  ← 四个模式图标
+##     ├ AspectRatioContainer(stretch_mode=1,align=2)/PlayReplayButton(`play_option`)
+##     └ MarginContainer（尾部等宽占位，ratio 0.1）
+##
+## 行的身份仍挂在**元数据**上（`replay_path` / `replay_ts`）：`ReplayName` 里是录制时间，不是
+## 文件名，所以"这一行是哪份回放"只能从元数据读（自检 `_replay_play_button` 用它，docs/16 §62.7）。
 func _entry(entry: Dictionary) -> HBoxContainer:
 	var meta := _meta_for(String(entry.path))
-
-	var row := HBoxContainer.new()
-	row.name = "HBoxContainer"
-	row.add_theme_constant_override("separation", GwUI.SEPARATION)
-	# 行的身份挂在元数据上：`ReplayName` 标签里现在是**录制时间**（原版如此，不再是文件名），
-	# 所以"这一行是哪份回放"只能从元数据读（自检 `_replay_play_button` 用它，见 docs/16 §62.7）。
+	var row := _entry_scene().instantiate() as HBoxContainer
+	if row == null:
+		push_error("[gw2] 实例化 %s 失败" % ENTRY_SCENE_PATH)
+		return null
 	row.set_meta("replay_path", String(entry.path))
 	row.set_meta("replay_ts", int(entry.get("ts", -1)))
-	# 原版这一层挂 `graphwar_theme.tres`（默认字体 Comic Relief Bold）⇒ 我们自己不设字体，
-	# 由 app 主题给（`GwThemeFactory` 的 default_font = 原版 `button_font`），见 docs/06 §56.4。
 
-	# ---- 第 1 段：录制时间（带秒，UTC）------------------------------------
-	var name_scroll := ScrollContainer.new()
-	name_scroll.name = "ScrollContainer"
-	name_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# 原版只关了**竖直**滚动（`vertical_scroll_mode = 0`）；水平仍是默认 auto。
-	name_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	var name_m := MarginContainer.new()
-	name_m.name = "NameContainer"
-	name_m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# 原版这一层挂 `LanLobbyFontResize.gd`（字号 = 屏宽/40）⇒ 直接挂同一份原版脚本。
-	GwViews.attach(name_m, "LanLobbyFontResize.gd")
-	var name_label := GwUI.label(_recorded_at(entry), 0, HORIZONTAL_ALIGNMENT_CENTER)
-	name_label.name = "ReplayName"
-	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	name_m.add_child(name_label)
-	name_scroll.add_child(name_m)
-	row.add_child(name_scroll)
+	var name_label := row.find_child("ReplayName", true, false) as Label
+	if name_label != null:
+		name_label.text = _recorded_at(entry)
+	var game_label := row.find_child("GameName", true, false) as Label
+	if game_label != null:
+		game_label.text = String(meta.game_name())
 
-	# ---- 第 2 段：关卡名 --------------------------------------------------
-	var game_m := MarginContainer.new()
-	game_m.name = "GameNameContainer"
-	game_m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	game_m.size_flags_stretch_ratio = 0.1        # 原版：size_flags_stretch_ratio = 0.1
-	var game_label := GwUI.label(String(meta.game_name()), 0, HORIZONTAL_ALIGNMENT_CENTER)
-	game_label.name = "GameName"
-	game_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	# **原版字节**：`recovered-src/GameNameContainer.gd` 挂在 `replay_entry.scn` 的这个
-	# `MarginContainer(GameNameContainer)` 上（观测：31 份 .scn 里 `res://GameNameContainer.gd`
-	# 只出现在 replay_entry.scn）。它自己算两条：子节点 `min.x = 屏宽×0.24`、字号 `屏宽/40`
-	# —— 我方原来的 `_scale_game_label()`（含自加的 `maxi(10, …)` 下限）已整份删除。
-	# 挂法：建 → 填子节点 → attach → 再 add_child（原版 `_ready` 只遍历当次的 get_children()）。
-	game_m.add_child(game_label)
-	GwViews.attach(game_m, "GameNameContainer.gd")
-	row.add_child(game_m)
-
-	# ---- 第 3 段：四个模式图标 --------------------------------------------
-	var mode_m := MarginContainer.new()
-	mode_m.name = "ModeContainer"
-	mode_m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var options := HBoxContainer.new()
-	options.name = "OptionsContainer"
-	options.size_flags_stretch_ratio = 0.5       # 原版：size_flags_stretch_ratio = 0.5
-	options.add_theme_constant_override("separation", GwUI.SEPARATION)
-	mode_m.add_child(options)
-	# 原版 `OptionsContainer` 是 **6 个槽**：首尾两个空 MarginContainer 与 4 个
-	# AspectRatioContainer 各占 1 份 stretch ⇒ 图标块左右对称留白。
-	var lead := MarginContainer.new()
-	lead.name = "MarginContainer"
-	lead.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	options.add_child(lead)
+	# 四个模式图标随回放内容变（坐标 / 函数 / 回合 / 时限）。读不到就**不画**（置空），
+	# 不拿 `.tscn` 里的默认图标冒充（原版对读不到的回放也不会画）。
 	var icons := meta.mode_icons()
-	for i in 4:
-		var holder := AspectRatioContainer.new()
-		holder.name = "AspectRatioContainer" if i == 0 else "AspectRatioContainer%d" % (i + 1)
-		holder.ratio = 1.0                       # 原版：ratio = 1.0（默认）
-		holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		# 原版**没有**写 stretch_mode ⇒ 默认 STRETCH_FIT（等比塞进格子）。
-		holder.stretch_mode = AspectRatioContainer.STRETCH_FIT
-		var b := GwButton.make("")
-		b.name = String(MODE_NODE_NAMES[i])
-		b.icon = GwIcons.get_icon(icons[i]) if String(icons[i]) != "" else null
-		b.expand_icon = true                     # 原版：expand_icon = true
-		b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		# 底色：原版第一格挂 `axis_button_theme.tres` = **白底**，其余三格挂
-		# `game_menu_icon_theme.tres` = 面板色；两者除底色逐字段相同（docs/129 §4.5）。
-		var sb := GwThemeFactory.mode_icon_stylebox(i == 0)
-		for state in ["normal", "hover", "pressed", "disabled"]:
-			b.add_theme_stylebox_override(state, sb)
-		holder.add_child(b)
-		options.add_child(holder)
-	var trail := MarginContainer.new()
-	trail.name = "MarginContainer2"
-	trail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	options.add_child(trail)
-	row.add_child(mode_m)
+	for i in MODE_NODE_NAMES.size():
+		var b := row.find_child(String(MODE_NODE_NAMES[i]), true, false) as Button
+		if b == null:
+			continue
+		var want := "" if i >= icons.size() else String(icons[i])
+		b.icon = GwIcons.get_icon(want) if want != "" else null
 
-	# ---- 第 4 段：▶ -------------------------------------------------------
-	var play_holder := AspectRatioContainer.new()
-	play_holder.name = "AspectRatioContainer"
-	play_holder.ratio = 1.0
-	# 原版 `replay_entry.tscn`：`stretch_mode = 1` = **高度定宽度**（默认是 2 = FIT，
-	# 所以 `.tscn` 才会把它显式写出来）、`alignment_horizontal = 2` = 靠右。
-	# 靠"高度定宽度" + 行高 67 ⇒ 子节点 67×67；靠右 ⇒ 贴住行右缘（真帧 1780..1846）。
-	play_holder.stretch_mode = AspectRatioContainer.STRETCH_HEIGHT_CONTROLS_WIDTH
-	play_holder.alignment_horizontal = AspectRatioContainer.ALIGNMENT_END
-	var play := GwButton.make("")
-	play.name = "PlayReplayButton"
-	play.icon = GwIcons.get_icon("play_option")
-	play.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	play.expand_icon = true
-	play.pressed.connect(_on_play.bind(String(entry.path)))
-	play_holder.add_child(play)
-	row.add_child(play_holder)
-
-	# ---- 第 5 段：尾部等宽占位（原版 `replay_entry.tscn` 最后一个 MarginContainer）----
-	var tail := MarginContainer.new()
-	tail.name = "MarginContainer"
-	tail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tail.size_flags_stretch_ratio = 0.1
-	row.add_child(tail)
-
+	# ▶：原版这一格 `input_text = "play_replay"`（由 Rust 控制器按行派发）；我方客户端的
+	# 命令总线**不知道是哪一行** ⇒ 这里按行绑一个闭包，只走 `_on_play(path)`。
+	# ⚠️ 用字符串形式连信号：原生 `GraphwarButton` 自己有个 `#[func] pressed()`，
+	# 会遮蔽 `BaseButton.pressed` 信号（docs/06 §92.2）。
+	var play := row.find_child("PlayReplayButton", true, false) as Button
+	if play != null:
+		play.connect("pressed", _on_play.bind(String(entry.path)))
 	return row
+
+
 
 ## 录制时间：**文件名**是 unix 时间戳（`docs/78` §1），按 **UTC** 显示到秒。
 ##
@@ -260,3 +202,4 @@ func _on_play(path: String) -> void:
 
 func selected_replay() -> String:
 	return _selected
+
