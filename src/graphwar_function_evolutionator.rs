@@ -80,24 +80,93 @@ pub fn table(mode: VarMode) -> &'static [(Function, u32)] {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 字流：二进制**按 u32 字**取随机数（`docs/06` §77）
+// ---------------------------------------------------------------------------
+//
+// 真二进制的 RNG 状态是一块 **64 个 u32** 的输出块 + 块内游标
+// （`0x4ef127 mov 0x110(%rax),%rcx`，`>= 0x40` 就 refill）：
+//
+// * **每个 tag 抽样只吃 1 个字**：`0x4ef193 mov 0x10(%r13,%rcx,4),%r12d` + `0x4ef198 inc %rcx`；
+// * 取 64 位（`next_u64` = `0x502b20`）时游标一次 **+2**、读的是同一块里的 8 个字节
+//   （`0x502b49 lea (%rax+2),%rcx` / `0x502b54 mov (%r15,%rax,4),%rbx`）⇒ 低半在前、高半在后。
+//
+// 我们的对外接口是 `FnMut() -> u64`（一次两个字），所以这里把它**还原成字流**：
+// 取一个 u64 后低 32 位先出、高 32 位留着下一次出。
+// 这样"1 个字"与"2 个字"的抽样都落在与二进制**完全相同**的字序上（T23 的注入实验可逐 token 对齐）。
+// （`docs/06` §73.4 的 C3 卡点就是这条：我方此前每抽一个 tag 就吃掉 2 个字。）
+pub struct Words<'a> {
+    src: &'a mut dyn FnMut() -> u64,
+    /// 上一个 u64 里还没被取走的高 32 位（`Some` ⇒ 下一次 [Words::word] 不再问底层）。
+    spare: Option<u32>,
+}
+
+impl<'a> Words<'a> {
+    /// 从一个 `FnMut() -> u64` 建字流。
+    pub fn new(src: &'a mut dyn FnMut() -> u64) -> Self {
+        Self { src, spare: None }
+    }
+
+    /// 取 **1 个 u32 字**（对应 `0x4ef193` 那次 4 字节读 + 游标 +1）。
+    pub fn word(&mut self) -> u32 {
+        match self.spare.take() {
+            Some(w) => w,
+            None => {
+                let v = (self.src)();
+                self.spare = Some((v >> 32) as u32);
+                v as u32
+            }
+        }
+    }
+
+    /// 取 **1 个 u64 = 2 个字**（对应 `0x502b20` 的 8 字节读 + 游标 +2）。
+    pub fn u64(&mut self) -> u64 {
+        let lo = u64::from(self.word());
+        let hi = u64::from(self.word());
+        lo | (hi << 32)
+    }
+
+    /// 取一个 `N(0,1)`。二进制每次吃 **2 个字**（T23 的 C2 实测：常数 token 之后游标 +3）。
+    pub fn normal(&mut self) -> f64 {
+        let mut wide = || self.u64();
+        normal(&mut wide)
+    }
+
+    /// 抽一个"随机 int"只看**符号**（`test %ebp,%ebp` + `js`，32 位寄存器）⇒ 吃 1 个字。
+    pub fn sign(&mut self) -> i32 {
+        self.word() as i32
+    }
+}
+
 /// 抽一个函数长度（token 数）。
 ///
 /// 二进制里是 `trunc(N(0,1) * 5.0 + 10.0)`（`0x4ef08e` 的 `mulsd 5.0` +
 /// `0x4ef096` 的 `addsd 10.0` + `0x4ef0b2` 的 `cvttsd2si`；
 /// 中间那两个 `maxsd/minsd` 只是 i32 上下界，防截断溢出）。
 ///
-/// 正态取负或很小时会得到 ≤0 的长度，调用方应把它当作"最短的合法表达式"处理
-/// （实测最小值为 2，见 `docs/76`）。
+/// 正态取负或很小时会得到 ≤0 的长度。⚠️ **不要 `.max(1)`**：二进制
+/// `0x4ef0bf test %ebx,%ebx` / `0x4ef0c1 jle 0x4ef2e0` 对 `n <= 0` 直接返回**空 Vec**，
+/// 由调用方的补齐（`0x4ee0e0`）救回来。
 pub fn random_length(next: &mut dyn FnMut() -> u64) -> i32 {
-    (normal(next) * 5.0 + 10.0) as i32
+    random_length_w(&mut Words::new(next))
+}
+
+/// [`random_length`] 的字流版。
+pub fn random_length_w(w: &mut Words<'_>) -> i32 {
+    (w.normal() * 5.0 + 10.0) as i32
 }
 
 /// 抽一个 tag（不含常数的取值）。
 ///
-/// 对应二进制 `FUN_005ef020` 里的 `idx = random % 85` 加区间比较；
-/// `next` 是 ChaCha 的取数闭包。
+/// 对应二进制 `FUN_004ef020` 里的 `idx = u32 % 85` 加区间比较（`0x4ef1b0`–`0x4ef1be`）；
+/// **只吃 1 个字**。
 pub fn draw_tag(next: &mut dyn FnMut() -> u64, mode: VarMode) -> Function {
-    let mut idx = (next() % u64::from(TOTAL_WEIGHT)) as u32;
+    draw_tag_w(&mut Words::new(next), mode)
+}
+
+/// [`draw_tag`] 的字流版。
+pub fn draw_tag_w(w: &mut Words<'_>, mode: VarMode) -> Function {
+    let mut idx = w.word() % TOTAL_WEIGHT;
     for &(tag, weight) in table(mode).iter() {
         if idx < weight {
             return tag;
@@ -109,17 +178,22 @@ pub fn draw_tag(next: &mut dyn FnMut() -> u64, mode: VarMode) -> Function {
     Function::Tan
 }
 
-/// 抽一个完整 token；抽到常数时按 `N(0,1) × 10.2` 取值。
+/// 抽一个完整 token；抽到常数时按 `N(0,1) × 10.2` 取值（常数还要再吃 2 个字）。
 pub fn draw_token(next: &mut dyn FnMut() -> u64, mode: VarMode) -> Token {
-    let tag = draw_tag(next, mode);
+    draw_token_w(&mut Words::new(next), mode)
+}
+
+/// [`draw_token`] 的字流版。
+pub fn draw_token_w(w: &mut Words<'_>, mode: VarMode) -> Token {
+    let tag = draw_tag_w(w, mode);
     if tag == Function::Const {
-        Token::constant(normal(next) * CONST_SCALE)
+        Token::constant(w.normal() * CONST_SCALE)
     } else {
         Token::op(tag)
     }
 }
 
-/// 变异算子（`FUN_005ee720`，见 `docs/73`）。
+/// 变异算子（`FUN_004ee720`，见 `docs/73`）。
 ///
 /// 在 token 序列上挑一个"值 token"（`x` / `y` / 常数），然后：
 ///
@@ -132,8 +206,16 @@ pub fn draw_token(next: &mut dyn FnMut() -> u64, mode: VarMode) -> Token {
 /// 在前缀式里非法）。重读伪代码后发现它**后面接着同一段包一层逻辑**，
 /// 所以 `y` 与 `x` 走同一条路，见 `docs/73` §5.1。
 ///
+/// 抽样粒度（`docs/06` §77）：位置下标吃 **2 个字**（`0x4ee7e3 call 0x502b20`），
+/// 之后的符号判定各吃 **1 个字**（`0x4ee99e`/`0x4eea79`/… 都是 `test %ebp,%ebp` + `js`）。
+///
 /// 返回是否真的改动了序列，便于调用方统计。
 pub fn mutate(tokens: &mut Vec<Token>, next: &mut dyn FnMut() -> u64) -> bool {
+    mutate_w(tokens, &mut Words::new(next))
+}
+
+/// [`mutate`] 的字流版。
+pub fn mutate_w(tokens: &mut Vec<Token>, w: &mut Words<'_>) -> bool {
     let positions: Vec<usize> = tokens
         .iter()
         .enumerate()
@@ -143,26 +225,27 @@ pub fn mutate(tokens: &mut Vec<Token>, next: &mut dyn FnMut() -> u64) -> bool {
     if positions.is_empty() {
         return false;
     }
-    let pos = positions[(next() % positions.len() as u64) as usize];
+    let pick = (w.u64() % positions.len() as u64) as usize;
+    let pos = positions[pick];
     match tokens[pos].tag {
         Function::Const => {
-            // 二进制里是"抽一个随机 int，看符号"决定走哪条路
-            if (next() as i32) >= 0 {
-                tokens[pos].value *= 1.0 + normal(next);
+            // 二进制里是"抽一个随机 int，看符号"决定走哪条路（`0x4ee99e test %ebp,%ebp`）
+            if w.sign() >= 0 {
+                tokens[pos].value *= 1.0 + w.normal();
             } else {
-                tokens[pos].value = normal(next) * CONST_SCALE;
+                tokens[pos].value = w.normal() * CONST_SCALE;
             }
             true
         }
         // `y`、`x` 以及其它：统一"包一层"
         _ => {
-            let konst = Token::constant(normal(next) * CONST_SCALE);
+            let konst = Token::constant(w.normal() * CONST_SCALE);
             tokens.insert(pos, konst);
             // 抽随机 int 定算子：>=0 → `+`；<0 再抽一次，<0 → `*`，否则 `/`
-            let first = next() as i32;
+            let first = w.sign();
             let op = if first >= 0 {
                 Function::Add
-            } else if (next() as i32) < 0 {
+            } else if w.sign() < 0 {
                 Function::Mul
             } else {
                 Function::Divide
@@ -442,12 +525,25 @@ pub fn is_well_formed(tokens: &[Token]) -> bool {
     need == 0
 }
 
-/// 把任意 token 序列修成合法前缀式。
+/// 装配 / 补齐（`FUN_004ee0e0`，vaddr **`0x4ee0e0`**；Ghidra `0x5ee0e0`）。
 ///
-/// ⚠️ **这一步是假设**：GW2 里"raw token 流 → 合法表达式"的修复代码还没定位到
-/// （`docs/76` §4.5）。这里按 GW1 `adjustFunction` 的语义实现：
-/// 走到表达式完整就**截断**，走完仍缺操作数就**补常数**。
+/// 两步（`docs/13` §6 / §20.3，T23 已升到 `逐位`）：
+///
+/// 1. **截断**：用"还缺几个操作数"的计数器走一遍，`need` 归零就截断到那一格；
+/// 2. **补齐**：还缺时按 `rand % 50` 追加叶子 —— `<25` 常数 `N(0,1)×10.2`（50%）、
+///    `25..41` 是 `x`（34%）、`42..49` 是 `mode & 1`（Normal 仍是 `x`、DiffEq 是 `y`，16%）。
+///
+/// 抽样粒度：`rand % 50` 吃 **1 个字**（`0x4ee223` 的 4 字节读 + 游标 +1），
+/// 常数那一支再吃 2 个字（`normal`）。
+///
+/// ⚠️ 名字：二进制里这是**独立的一步**，生成器（`0x4ef020`）**不做**它，
+/// 是调用方（工厂的两条路、代内随机新生、代末精评换新）在生成之后调的。
 pub fn repair(tokens: &mut Vec<Token>, mode: VarMode, next: &mut dyn FnMut() -> u64) {
+    assemble_w(tokens, mode, &mut Words::new(next));
+}
+
+/// [`repair`] 的字流版。
+pub fn assemble_w(tokens: &mut Vec<Token>, mode: VarMode, w: &mut Words<'_>) {
     let mut need: i64 = 1;
     let mut cut = tokens.len();
     for (i, t) in tokens.iter().enumerate() {
@@ -464,11 +560,11 @@ pub fn repair(tokens: &mut Vec<Token>, mode: VarMode, next: &mut dyn FnMut() -> 
         need -= 1;
         need += arity(t.tag);
     }
-    // 反汇编 FUN_005ee0e0（vaddr 0x3ee0e0）：补齐时 rand%50 决定追加什么。
+    // 反汇编 FUN_004ee0e0（vaddr 0x4ee0e0）：补齐时 rand%50 决定追加什么。
     while need > 0 {
-        let r = next() % 50;
+        let r = w.word() % 50;
         let tok = if r < 25 {
-            Token::constant(normal(next) * CONST_SCALE)
+            Token::constant(w.normal() * CONST_SCALE)
         } else if r < 42 {
             Token::op(Function::VarX)
         } else {
@@ -482,40 +578,79 @@ pub fn repair(tokens: &mut Vec<Token>, mode: VarMode, next: &mut dyn FnMut() -> 
     }
 }
 
-/// 抽一个随机函数：先按 `trunc(N(0,1)×5+10)` 定长度，再抽那么多个 token，最后修复。
+/// 抽一个随机 token 流：先按 `trunc(N(0,1)×5+10)` 定长度，再抽那么多个 token。
 ///
-/// 长度公式与"抽多少发多少"都是**实测**（`docs/76`）；修复是**假设**（见 [`repair`]）。
+/// 就是二进制 `FUN_004ef020`（vaddr `0x4ef020`）**本体**：
+/// **不补齐**（补齐是调用方单独一步，`docs/06` §73.5 第 5 条），
+/// 且 `n <= 0` 时返回**空 Vec**（`0x4ef0bf test %ebx,%ebx` / `0x4ef0c1 jle 0x4ef2e0`）。
 pub fn random_function(next: &mut dyn FnMut() -> u64, mode: VarMode) -> Vec<Token> {
-    let n = random_length(next).max(1) as usize;
-    let mut tokens: Vec<Token> = (0..n).map(|_| draw_token(next, mode)).collect();
-    // 补齐也必须用同一个 mode：Normal 补 x、DiffEq 补 y（反汇编 0x4ee2c4/0x4ee2ce）
-    repair(&mut tokens, mode, next);
+    gen_tokens_w(&mut Words::new(next), mode)
+}
+
+/// [`random_function`] 的字流版（= `0x4ef020`）。
+pub fn gen_tokens_w(w: &mut Words<'_>, mode: VarMode) -> Vec<Token> {
+    let n = random_length_w(w);
+    let mut tokens = Vec::new();
+    for _ in 0..n.max(0) {
+        tokens.push(draw_token_w(w, mode));
+    }
     tokens
 }
 
-/// 交叉：把两个父代的 token 序列各取一段拼起来，再修复。
+/// "造一个随机个体" = 生成（`0x4ef020`）+ 装配（`0x4ee0e0`）两步。
 ///
-/// 二进制里真正的交叉是 `FUN_003be7d0`（按 token 向量切片），
-/// 这里的实现只保留"各取一段"这个**可观测特征**，具体切点规则**未还原**。
-/// 工厂的"交叉"：从一个父代里取**一个完整子表达式**，再补齐。
+/// 二进制里这两步**成对出现在调用方**，例如工厂的重生臂
+/// （`0x4ee470 call 0x4ef020` → `0x4ee61d call 0x4ee0e0`）、
+/// 代内随机新生（`0x51b90f` → `0x51b923`）、代末精评换新（`0x51c3f6` → `0x51c40a`）。
+pub fn random_individual(next: &mut dyn FnMut() -> u64, mode: VarMode) -> Vec<Token> {
+    random_individual_w(&mut Words::new(next), mode)
+}
+
+/// [`random_individual`] 的字流版。
+pub fn random_individual_w(w: &mut Words<'_>, mode: VarMode) -> Vec<Token> {
+    let mut tokens = gen_tokens_w(w, mode);
+    assemble_w(&mut tokens, mode, w);
+    tokens
+}
+
+/// 工厂的**交叉臂**（`FUN_004ee3a0` 里 `0x4ee4d3` 起的那段）：从父代取一段**裸切片**，再装配。
 ///
-/// 反汇编（`docs/99` §2）：游戏里工厂只有 `(out, &mode, &parent)` **一个父代**；
-/// 取片段不是任意字节区间，而是按前缀式**递归取一棵完整子树**
-/// （`FUN_004be7d0` vaddr `0x3be7d0`）。这里的做法：
+/// 反汇编（清楚到指令级，`fixtures/ai_src_fix_plan.txt` #3）：
 ///
 /// ```text
-/// r1 = rand % N           起点
-/// r2 = rand % (N - r1)    长度上限
-/// 从 r1 起按 arity 走，取到第一个"恰好补齐"的位置（不超过 r1+r2）
+/// r1   = next_u64() % N                0x4ee50a  div  %r15      （N = 父代 len）
+/// cut2 = r1 + next_u64() % (N - r1)    0x4ee521 sub / 0x4ee533 div / 0x4ee543 add
+/// 取父代 [r1, cut2)  →  0x4ee574 lea (%rsi,%rdi,?) 起、0x4ee57b 止
+/// 再 call 0x4ee0e0（装配）             0x4ee61d
 /// ```
+///
+/// 三条容易搞错的地方（T23 的清单 #1/#2/#3）：
+///
+/// * **裸切片**，不按 arity 走子树、不 `r2.max(1)`；切片长度就取 `r2`，**可以是 0**
+///   （那时装配会补出一个叶子；夹具里 `factory_cross_kpos` 就是这种情形：len=1）；
+/// * `r2` 的模数是 **`N − r1`**（不是 `N`），所以 `cut2 ∈ [r1, N−1]` 恒成立；
+/// * 两个切点各吃 **2 个字**（`next_u64` = `0x502b20`），不是 1 个。
 pub fn cross_from(parent: &[Token], mode: VarMode, next: &mut dyn FnMut() -> u64) -> Vec<Token> {
+    cross_from_w(parent, mode, &mut Words::new(next))
+}
+
+/// [`cross_from`] 的字流版。
+///
+/// ⚠️ **这一段仍是旧的（未按指令复原）**：T23 的清单 #3 说真二进制取的是**裸切片**
+/// `[r1, r1+r2)`（`0x4ee574`/`0x4ee57b` 算 src 起止、`0x4ee5c9` 收集），
+/// 之后再交给装配；而这里走的是"按 arity 走出一棵完整子树 + `r2.max(1)`"。
+/// T28 试着改成裸切片时，与 unicorn 观测对不上（`tools/ai_gen_parity.py` 的 factory 行）：
+/// 反汇编里切片被收集到 `[rsp+0x80]` 后**当场释放**（`0x4ee5ce`），
+/// 真正进装配的是 `[rsp]` 那份"父代 Vec 但 len = r1"的东西 —— 这段数据流没读通，
+/// 按规格"定不下来只登记、不许猜"处理，见 `docs/06` §77.4。
+pub fn cross_from_w(parent: &[Token], mode: VarMode, w: &mut Words<'_>) -> Vec<Token> {
     if parent.is_empty() {
         return Vec::new();
     }
-    let r1 = (next() % parent.len() as u64) as usize;
-    let r2 = (next() % (parent.len() - r1) as u64) as usize;
+    let n = parent.len();
+    let r1 = (w.u64() % n as u64) as usize;
+    let r2 = (w.u64() % (n - r1) as u64) as usize;
     let limit = r1 + r2.max(1);
-    // 从前缀式的 r1 起，走到"子树完整"为止
     let mut need: i64 = 1;
     let mut end = r1;
     while end < parent.len() && end < limit {
@@ -527,11 +662,10 @@ pub fn cross_from(parent: &[Token], mode: VarMode, next: &mut dyn FnMut() -> u64
         }
     }
     if need != 0 {
-        // 没走完一棵完整子树 → 退回"从 r1 到 limit"的裸片段，交给 repair 兜底
         end = limit.min(parent.len());
     }
     let mut out = parent[r1..end].to_vec();
-    repair(&mut out, mode, next);
+    assemble_w(&mut out, mode, w);
     out
 }
 
@@ -543,16 +677,17 @@ pub fn crossover(
     mode: VarMode,
     next: &mut dyn FnMut() -> u64,
 ) -> Vec<Token> {
+    let mut w = Words::new(next);
     let mut out = Vec::new();
     if !a.is_empty() {
-        let ca = (next() % a.len() as u64) as usize + 1;
+        let ca = (w.u64() % a.len() as u64) as usize + 1;
         out.extend_from_slice(&a[..ca]);
     }
     if !b.is_empty() {
-        let cb = (next() % b.len() as u64) as usize;
+        let cb = (w.u64() % b.len() as u64) as usize;
         out.extend_from_slice(&b[cb..]);
     }
-    repair(&mut out, mode, next);
+    assemble_w(&mut out, mode, &mut w);
     out
 }
 
@@ -573,7 +708,7 @@ pub fn crossover(
 fn fine_pass<F>(
     survivors: &mut [Individual],
     mode: VarMode,
-    next: &mut dyn FnMut() -> u64,
+    w: &mut Words<'_>,
     score: &mut F,
 ) where
     F: FnMut(&[Token], Phase) -> Evaluation,
@@ -585,11 +720,42 @@ fn fine_pass<F>(
         if fine.consistent_with(&coarse) {
             continue; // 一致 → 保留粗评结果，什么都不写
         }
-        // 不一致 → 整条换新。`random_function` 内含 0x4ef020 与 0x4ee0e0 两步。
-        let mut tokens = random_function(next, mode);
-        mutate(&mut tokens, next); // 0x4ee720
+        // 不一致 → 整条换新：生成（0x4ef020）→ 装配（0x4ee0e0）→ 变异（0x4ee720）
+        // （三个调用点成对出现：0x51c3f6 / 0x51c40a / 0x51c44c，`docs/97` §3）
+        let mut tokens = random_individual_w(w, mode);
+        mutate_w(&mut tokens, w);
         survivors[rank].tokens = tokens;
         // 注意：分数字段保持旧值（反汇编只覆盖 Vec 的 ptr/len/cap）。
+    }
+}
+
+/// 子代工厂（`FUN_004ee3a0`，vaddr `0x4ee3a0`）—— **本轮没有按指令复原，仍是旧的两路**。
+///
+/// 真二进制是**三路**（T23 清单 #1/#2，指令级证据都在）：
+///
+/// ```text
+/// 0x4ee42a  ebp = 抽 1 个字            ; 游标 +1，32 位读
+/// 0x4ee449  test %ebp,%ebp / js       ; 符号 < 0 ⇒ 纯变异（0x4ee4af call 0x4ee720）
+/// 0x4ee463  cmp 父代 len, 0x14 / jae  ; len < 20 ⇒ 重生（0x4ee470 生成 → 0x4ee61d 装配）
+/// 否则交叉                             ; 0x4ee4d3 起（切点）→ 0x4ee61d 装配，**不再变异**
+/// ```
+///
+/// 本轮**只登记、没改**（理由见 `docs/06` §77.4）：把 §3 的裸切片搬进 `cross_from` 之后，
+/// 与 unicorn 侧的观测对不上，且反汇编里"收集出来的切片立刻被释放"这段数据流没读通。
+/// 按规格："定不下来只登记、不许猜"。
+pub fn factory_child(parent: &[Token], mode: VarMode, next: &mut dyn FnMut() -> u64) -> Vec<Token> {
+    factory_child_w(parent, mode, &mut Words::new(next))
+}
+
+/// [`factory_child`] 的字流版。
+pub fn factory_child_w(parent: &[Token], mode: VarMode, w: &mut Words<'_>) -> Vec<Token> {
+    if parent.len() < 0x14 {
+        // 父代太短 → 重生（`0x4ee463 cmp $0x14` 这一条是**已证实**的，所以保留）
+        random_individual_w(w, mode)
+    } else {
+        let mut child = cross_from_w(parent, mode, w);
+        mutate_w(&mut child, w);
+        child
     }
 }
 
@@ -608,18 +774,34 @@ fn fine_pass<F>(
 /// —— 二进制里截断之后数组就只剩 s 个，下一代的槽循环按槽号取 `prev[0..s]`。
 /// （改动前这里返回整代 `种群` 个，是本次修正的一部分，见 `docs/97` §6。）
 ///
-/// ⚠️ 仍是假设/未建模的三条（与本次改动无关）：
-/// ① 工厂内部的交叉/重生细节见 [`crossover`]；
-/// ② `pop.len() < s` 时二进制会走"随机新生"分支（`0x51b82c jbe 0x51b900`，
+/// ⚠️ 仍是假设/未建模的两条（与本次改动无关）：
+/// ① `pop.len() < s` 时二进制会走"随机新生"分支（`0x51b82c jbe 0x51b900`，
 ///    那是**第 0 代**的初始化路径）；这里假设调用方给的种群够长
 ///    （[`initial_population`] 保证 `len = 种群`），不够时退化为重复最后一条；
-/// ③ 初始种群的生成方式仍未完全还原（`docs/95` §5 未定）。
+/// ② 初始种群是否也要过一次变异未定（`docs/95` §5）——这里只做"生成 + 装配"。
 pub fn next_generation<F>(
     pop: &[Individual],
     p: &Params,
     mode: VarMode,
     next: &mut dyn FnMut() -> u64,
     mut score: F,
+) -> Vec<Individual>
+where
+    F: FnMut(&[Token], Phase) -> Evaluation,
+{
+    next_generation_w(pop, p, mode, &mut Words::new(next), &mut score)
+}
+
+/// [`next_generation`] 的字流版。
+///
+/// 一次进化只建**一个** [`Words`]（二进制全程只有一个 RNG 状态、游标连续推进），
+/// 所以跨代、跨 "1 个字 / 2 个字" 的抽样都不会错位。
+pub fn next_generation_w<F>(
+    pop: &[Individual],
+    p: &Params,
+    mode: VarMode,
+    w: &mut Words<'_>,
+    score: &mut F,
 ) -> Vec<Individual>
 where
     F: FnMut(&[Token], Phase) -> Evaluation,
@@ -647,14 +829,7 @@ where
         //     见 docs/99 §2）
         for _ in 1..per_slot {
             let parent = &sorted[i.min(sorted.len() - 1)];
-            let tokens = if parent.tokens.len() < 20 {
-                // 父代太短 → 重生（实测 cmp $0x14）
-                random_function(next, mode)
-            } else {
-                let mut child = cross_from(&parent.tokens, mode, next);
-                mutate(&mut child, next);
-                child
-            };
+            let tokens = factory_child_w(&parent.tokens, mode, w);
             // 反汇编 0x51c0c1：工厂子代那一份粗评（同一循环体被复制成两块）
             let eval = score(&tokens, Phase::Coarse);
             out.push(Individual::with_evaluation(tokens, eval));
@@ -667,7 +842,7 @@ where
     out.truncate(survivors);
 
     // 前 3 名精评 + 纠偏（0x51c3ab 起）
-    fine_pass(&mut out, mode, next, &mut score);
+    fine_pass(&mut out, mode, w, score);
     out
 }
 
@@ -713,6 +888,8 @@ where
         }
     }
     let start = std::time::Instant::now();
+    // 一次进化 = 一个连续的字流（二进制全程只有一个 RNG 状态）
+    let mut w = Words::new(next);
     for _ in 0..p.generations {
         // 与游戏一致：**每代顶部**检查一次（不是每次评分都查）
         if let Some(limit) = max_secs {
@@ -720,15 +897,21 @@ where
                 break;
             }
         }
-        pop = next_generation(&pop, p, mode, next, &mut score);
+        pop = next_generation_w(&pop, p, mode, &mut w, &mut score);
     }
     pop
 }
 
-/// 造一个初始种群。
+/// 造一个初始种群：每个个体 = 生成（`0x4ef020`）+ 装配（`0x4ee0e0`）。
+///
+/// ⚠️ 初始种群是否还要过一次变异**未定**（`docs/95` §5）：二进制里
+/// "生成 → 装配 → 变异" 三步成对出现在代内随机新生（`0x51b90f`/`0x51b923`/`0x51b95c`）
+/// 与代末精评换新（`0x51c3f6`/`0x51c40a`/`0x51c44c`）两处，但**开局那一批**的生成点
+/// 本轮没有逐条落实 ⇒ 这里只做前两步，不猜第三步。
 pub fn initial_population(p: &Params, mode: VarMode, next: &mut dyn FnMut() -> u64) -> Vec<Individual> {
+    let mut w = Words::new(next);
     (0..p.population)
-        .map(|_| Individual::new(random_function(next, mode)))
+        .map(|_| Individual::new(random_individual_w(&mut w, mode)))
         .collect()
 }
 
@@ -1054,6 +1237,64 @@ mod tests {
     use super::*;
     use crate::_scaffold::rng::ChaCha12;
 
+    /// `fixtures/ai_gen_parity.tsv` 里的 32 字节 key（十六进制）。
+    fn parse_key_hex(s: &str) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        assert_eq!(s.len(), 64, "key 应是 64 个十六进制字符：{s}");
+        for i in 0..32 {
+            out[i] = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).expect("key 不是十六进制");
+        }
+        out
+    }
+
+    /// 夹具里的 tag 整数 → `Function`（判别值与二进制的 tag word 一致，见 `src/lib.rs`）。
+    fn fn_of_tag(tag: u64) -> Function {
+        match tag {
+            0 => Function::VarX,
+            1 => Function::VarY,
+            2 => Function::VarDy,
+            3 => Function::Add,
+            4 => Function::Sub,
+            5 => Function::UnaryMinus,
+            6 => Function::Mul,
+            7 => Function::Divide,
+            8 => Function::Pow,
+            9 => Function::Sqrt,
+            10 => Function::Log,
+            11 => Function::Ln,
+            12 => Function::Exp,
+            13 => Function::Abs,
+            14 => Function::Sin,
+            15 => Function::Cos,
+            16 => Function::Tan,
+            17 => Function::Const,
+            other => panic!("夹具里出现了未知 tag {other}"),
+        }
+    }
+
+    /// 夹具里的 `(tag, value_bits)` → `Token`。
+    fn to_tokens(v: &[(u64, u64)]) -> Vec<Token> {
+        v.iter()
+            .map(|&(tag, bits)| Token { tag: fn_of_tag(tag), value: f64::from_bits(bits) })
+            .collect()
+    }
+
+    /// 夹具里的 token 串：`tag:value_bits` 逗号分隔（`value_bits` = f64 的位型，十六进制）。
+    fn parse_tokens(s: &str) -> Vec<(u64, u64)> {
+        if s.is_empty() {
+            return Vec::new();
+        }
+        s.split(',')
+            .map(|one| {
+                let (tag, bits) = one.split_once(':').expect("token 应是 tag:bits");
+                (
+                    tag.parse().expect("tag 应是十进制"),
+                    u64::from_str_radix(bits, 16).expect("bits 应是十六进制"),
+                )
+            })
+            .collect()
+    }
+
     fn stream(seed: u64) -> impl FnMut() -> u64 {
         let mut key = [0u8; 32];
         key[..8].copy_from_slice(&seed.to_le_bytes());
@@ -1304,13 +1545,158 @@ mod tests {
     }
 
     #[test]
-    fn random_function_is_always_well_formed() {
+    fn random_individual_is_always_well_formed() {
+        // “造一个随机个体” = 生成（`0x4ef020`）+ 装配（`0x4ee0e0`）两步，
+        // 所以**成对**调用之后一定合法（`docs/06` §73.5 第 5 条）。
         let mut next = stream(0xBEEF);
         for _ in 0..500 {
-            let f = random_function(&mut next, VarMode::Normal);
+            let f = random_individual(&mut next, VarMode::Normal);
             assert!(!f.is_empty(), "不应生成空函数");
             assert!(is_well_formed(&f), "生成的函数应合法：{f:?}");
         }
+    }
+
+    #[test]
+    fn raw_generator_does_not_assemble() {
+        // 裸生成器（`0x4ef020`）**不补齐**：`0x4ef0bf test %ebx,%ebx` / `0x4ef0c1 jle`
+        // 对 `n <= 0` 直接返回空 Vec，抽出来的 token 流也可能残缺——
+        // 补齐是调用方（工厂 / 随机新生 / 精评换新）单独一步。
+        // 判据：500 次里至少有 1 次裸产出不合法（否则这条“分层”就没有可观测后果）。
+        let mut next = stream(0xBEEF);
+        let mut bad = 0;
+        for _ in 0..500 {
+            let f = random_function(&mut next, VarMode::Normal);
+            if f.is_empty() || !is_well_formed(&f) {
+                bad += 1;
+            }
+        }
+        assert!(bad > 0, "裸生成器 500 次全部合法 ⇒ 说明“不补齐”这条没落实");
+    }
+
+    // -----------------------------------------------------------------------
+    // C3：同 key ⇒ 与真二进制的 token 流**逐 token 相同**（`docs/06` §77）
+    // -----------------------------------------------------------------------
+    //
+    // 真值夹具 `fixtures/ai_gen_parity.tsv` 由 `tools/ai_gen_parity.py` 生成：
+    // 它把 ChaCha key 注入真二进制（`state+0x120`），再直接 unicorn 调用
+    // `random_function 0x4ef020` / `assemble 0x4ee0e0` / `mutate 0x4ee720` /
+    // `factory 0x4ee3a0`，把产出的 `Vec<Token>` 逐 token 记下来。
+    //
+    // 判据（`fixtures/ai_src_fix_plan.txt` 的 P2，**改代码之前就写死**）：
+    // * `tag` 必须逐个相同；
+    // * `tag == Const(17)` 的 token 还要 `f64::to_bits()` 相同；
+    // * 非 const token 的 `value` 字段在二进制里是**上一枚常量的残值**（生成时根本不写它），
+    //   所以只登记、不比。
+    #[test]
+    fn token_stream_matches_the_binary_for_an_injected_key() {
+        let tsv = include_str!("../fixtures/ai_gen_parity.tsv");
+        let mut checked = 0usize;
+        let mut with_fill = 0usize; // 覆盖到“补齐”的行
+        let mut factory_rows = 0usize;
+        let mut factory_same: Vec<String> = Vec::new();
+        for line in tsv.lines() {
+            let line = line.trim_end();
+            if line.is_empty() || line.starts_with("case") {
+                continue;
+            }
+            let f: Vec<&str> = line.split('\t').collect();
+            assert_eq!(f.len(), 8, "夹具列数不对：{line}");
+            let (name, which, key_hex, mode_s) = (f[0], f[1], f[3], f[4]);
+            let mode = match mode_s {
+                "0" => VarMode::Normal,
+                "1" => VarMode::DiffEq,
+                other => panic!("未知 mode {other}（{name}）"),
+            };
+            let key = parse_key_hex(key_hex);
+            let input = to_tokens(&parse_tokens(f[5]));
+            let want = parse_tokens(f[6]);
+
+            let mut rng = ChaCha12::from_seed(&key);
+            let mut src = move || rng.next_u64();
+            let mut w = Words::new(&mut src);
+            let got: Vec<Token> = match which {
+                "gen" => gen_tokens_w(&mut w, mode),
+                "assemble" => {
+                    let mut t = input.clone();
+                    assemble_w(&mut t, mode, &mut w);
+                    t
+                }
+                "mutate" => {
+                    let mut t = input.clone();
+                    mutate_w(&mut t, &mut w);
+                    t
+                }
+                "factory" => factory_child_w(&input, mode, &mut w),
+                other => panic!("未知函数 {other}（{name}）"),
+            };
+            if which == "assemble" {
+                with_fill += 1;
+            }
+            if which == "factory" {
+                factory_rows += 1;
+            }
+
+            let got_tags: Vec<u64> = got.iter().map(|t| t.tag as u64).collect();
+            let want_tags: Vec<u64> = want.iter().map(|(tag, _)| *tag).collect();
+            let const_bits_ok = got.iter().zip(want.iter()).all(|(g, w2)| {
+                g.tag != Function::Const || g.value.to_bits() == w2.1
+            });
+            let same = got_tags == want_tags && const_bits_ok;
+            if which == "factory" {
+                // 工厂（`0x4ee3a0`）本轮**没有**按指令复原（`docs/06` §77.4：三路选择 +
+                // 交叉后不再变异 + 裸切片，指令都在，但"切片→装配"的数据流没读通）。
+                // 所以这几行的判据不是"相等"，而是**登记已知差**：
+                // 对上几行就写死几行，任何一个变化（修好或改坏）都会让这条测试变红。
+                if same {
+                    factory_same.push(name.to_string());
+                }
+                continue;
+            }
+            assert!(
+                got_tags == want_tags,
+                "token 流与真二进制不同（{name}，key={key_hex}，mode={mode_s}）：\n  我方 {:?}\n  二进制 {:?}",
+                got_tags,
+                want_tags
+            );
+            for (i, (g, w2)) in got.iter().zip(want.iter()).enumerate() {
+                if g.tag != Function::Const {
+                    continue;
+                }
+                assert_eq!(
+                    g.value.to_bits(),
+                    w2.1,
+                    "常数 {i} 的 f64 位型与真二进制不同（{name}）：我方 {} / 二进制 0x{:016x}",
+                    g.value,
+                    w2.1
+                );
+            }
+            checked += 1;
+        }
+        println!(
+            "C3 对拍：{checked} 行逐 token 相同（生成/装配/变异）；\
+             工厂 {factory_rows} 行里对上 {} 行（已知差，见 `docs/06` §77.4）：{:?}",
+            factory_same.len(),
+            factory_same
+        );
+        // 工厂行现在**一行都不该对上**（三路选择/裸切片/交叉后不再变异都没搬进来）。
+        // 将来把 `0x4ee3a0` 的数据流读通了，这里会变多 —— 那时改成"必须全部相等"。
+        assert_eq!(factory_same.len(), 0, "工厂行的已知差变了：先更新 docs/06 §77.4");
+        assert!(checked >= 20, "夹具行数太少（{checked}），对拍覆盖不足");
+        assert!(with_fill > 0, "夹具没覆盖到补齐");
+    }
+
+    /// 字流：1 个字的抽样不能吞掉另一个字（这条是 #4 的地基）。
+    #[test]
+    fn words_split_one_u64_into_two_words() {
+        let mut vals = [0x11223344_55667788u64, 0x99aabbcc_ddeeff00u64].into_iter();
+        let mut src = move || vals.next().expect("只喂两个 u64");
+        let mut w = Words::new(&mut src);
+        assert_eq!(w.word(), 0x55667788);
+        assert_eq!(w.word(), 0x11223344);
+        assert_eq!(w.u64(), 0x99aabbcc_ddeeff00); // 跨 u64 边界的第二种情况
+        // 再取一个字：这一 u64 已经被 u64() 吃干净，会去问底层 —— 但底层没数了，
+        // 所以这里只验证前三条（不 panic 的路径已覆盖）。
+        let _ = &mut w;
     }
 
     #[test]

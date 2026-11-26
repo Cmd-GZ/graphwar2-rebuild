@@ -1,0 +1,92 @@
+# T28 预注册：按对拍结果修 AI 进化器（`src/graphwar_function_evolutionator.rs`）
+#
+# 规格：`.agent-work/specs/T28-ai-src-fixes.md`；对拍来源：`docs/06` §73 / `docs/13` §26（任务 T23）。
+# 这个文件在**动任何 `src/` 代码之前**单独提交（预注册），改完的读数追加在 `fixtures/ai_src_fix_plan_readings.tsv`。
+# 地址口径：全部是 ELF vaddr（RVA），不加 0x100000。
+#
+# ── 判据（改之前就写死，避免事后挑标准）────────────────────────────────────────
+#  P1 指令：每处改动必须指到具体指令地址（下面 `EV` 列）。
+#  P2 词流对拍（C3）：注入 ChaCha key 后，我方产出的 token 流必须与真二进制**逐 token 相同**
+#     （tag 逐个相同；const token 还要 f64 位型相同）。用例：key=00..1f、mode=0/1。
+#     §P2 的真值由 unicorn 直接调二进制 `0x4ef020` 产生（T23 的注入链，`tools/ai_rng_inject.py` 同款机制）。
+#  P3 三轴不退：fire 647 / batch 647 / batch_conv 637，逐轴 `--check-baseline` 必须“全部一致”。
+#  P4 回归：`cargo test --offline` 全绿（1769/0/1ignored；gdext 1880/0/1ignored）、
+#     `coverage_matrix.py --check` OK、`check_doc_refs.py` rc=0。
+#
+# ── 逐条 ─────────────────────────────────────────────────────────────────────
+# [1] 子代工厂是三路选择（我方两路）
+#   EV 0x4ee42a `mov ebp,[r15+rcx*4+0x10]` + `inc rcx`（抽 **1 个 u32** 字）
+#      0x4ee449 `test ebp,ebp` / 0x4ee44b `js 0x4ee4af` → 变异臂（0x4ee4af: call 0x4ee720）
+#      0x4ee44d `r15 = [r14+0x10]`（父代 len）；0x4ee463 `cmp r15,0x14` / `jae 0x4ee4d3`
+#      0x4ee467 未达 20 → 0x4ee470 `call 0x4ef020`（random_function）→ 0x4ee61d `call 0x4ee0e0`（补齐）
+#      0x4ee4d3 起 = 交叉臂
+#   CHANGE: 选择用**新抽的 1 个字**的 i32 符号决定变异；否则父代 len<20 → 生成+补齐；否则交叉+补齐。
+#           我方现状：没有“符号→变异”这一路，且 len<20 只重生、否则交叉后又 mutate。
+#           注：变异臂的输入是**父代本身**（`rsi=&[rsp+0x30]` 是父代 Vec 的浅拷贝），不是新个体。
+#   期望：同一 key 下工厂产出的 token 流与二进制逐 token 相同（P2 扩展用例：给固定父代）。
+#
+# [2] 交叉之后不再变异
+#   EV 0x4ee5c9 `call 0x3be7d0`（区间拷贝）→ 0x4ee61d `call 0x4ee0e0`（补齐）→ 0x4ee642 返回。
+#      该路径上**没有** `call 0x4ee720`（变异）；全二进制 `call 0x4ee720` 的 7 个调用点里
+#      只有 0x4ee4c9 在工厂内（= 变异臂那一处）。
+#   CHANGE: 删掉 `cross_from` 之后的 `mutate`。
+#
+# [3] 取片段是**裸切片** `[r1, r1+r2)`，不按 arity 走子树、不 `r2.max(1)`
+#   EV 0x4ee4ee / 0x4ee4f6 两次 `call 0x502b20`（= `next_u64`，**每次吃 2 个字**：
+#      0x502b54 `mov rbx,[r15+rax*4+0x10]` 8 字节读 + 0x502b49 `rcx=rax+2` 游标 +2）
+#      第一次：0x4ee50a `div r15` → r1 = u64 % N（N = 父代 len）
+#      第二次：0x4ee521 `rsi = N - r1`；0x4ee533 `div rsi` → rdx = u64 % (N-r1)；0x4ee543 `rdx += rdi` → cut2 = r1 + r2
+#      0x4ee574 `rdi = parent.ptr + r1*16`（src 起）；0x4ee57b `r8 = parent.ptr + cut2*16`（src 止）
+#      ⇒ 切片 = parent[r1 .. cut2)，**长度就是 r2，可以为 0**；先补边界检查（0x4ee556 / 0x4ee55c）再拷。
+#   CHANGE: `r2 = u64 % (N-r1)`；`end = r1 + r2`；`out = parent[r1..end].to_vec()`；不按 arity 走子树。
+#
+# [4] 抽样粒度：tag / 符号 / `% 50` 都是 **1 个 u32 字**；下标与切点是 **1 个 u64 = 2 个字**
+#   EV tag: 0x4ef193 `mov r12d,[r13+rcx*4+0x10]`（4 字节读）+ 0x4ef198 `inc rcx`
+#      0x4ef1b0..0x4ef1be `imul 0x51eb851f / shr 0x26 / imul 0x55 / sub` = u32 % 85
+#      符号：0x4ee449 / 0x4ee99e / 0x4eea79 / 0x4eeb7f / 0x4eece7 / 0x4eede9 全是 `test ebp,ebp` + `js`（32 位寄存器）
+#      `% 50`（补齐）：0x4ee223 `mov r12d,[r13+rcx*4+0x10]` + 0x4ee24e `imul eax,eax,0x32`
+#      next_u64：0x502b20（游标 +2、8 字节读）—— 只用在切点（0x4ee4ee/0x4ee4f6）与变异的位置下标（0x4ee7e3）
+#   CHANGE: 模块内部引入“字流”适配器：把外部 `FnMut() -> u64` 拆成两个 u32 字（低半在前、高半在后，
+#           与 `ChaCha12::next_u64` / `next_u32` 共用同一条字流的事实一致），
+#           于是 tag/符号/`%50` 各吃 1 字，切点/下标各吃 2 字。**外部签名不变**（`FnMut() -> u64` 的
+#           调用点一个都不用改，避免碰别人的文件）。
+#   期望（P2 主判据）：key=00..1f、mode=0 下我方 `0x4ef020` 等价物产出
+#           tags = [0,17,12,13,17,3,17,6,14]、consts = [9.342923, -3.714320, 7.495141]、
+#           总耗字 = 17（= 长度 normal 2 + 9 个 tag + 3 个 const 的 normal 各 2）。
+#           以上真值来自 unicorn 直接调二进制（本文件同批提交）。
+#
+# [5] 生成器**不补齐**（补齐是调用方单独一步）；且 `n <= 0` 产出**空 Vec**（不是 max(1)）
+#   EV 0x4ef0bf `test ebx,ebx` / 0x4ef0c1 `jle 0x4ef2e0` ⇒ n<=0 直接返回空 Vec；
+#      0x4ef114 `dec ebx` / 0x4ef116 `je 0x4ef2e0` = 抽 n 个 token 后返回；
+#      函数体里**没有** `call 0x4ee0e0`（补齐）——补齐在调用方：0x4ee470→0x4ee61d（重生臂）、
+#      0x51b90f→0x51b923（代内随机新生）、0x51c3f6→0x51c40a（代末精评换新）等成对出现。
+#   CHANGE: `random_function` 只做“抽长度 + 抽 n 个 token”；新增 `assemble`（= 0x4ee0e0，即原 `repair`）
+#           由调用方在生成之后显式调用；删掉 `.max(1)`。
+#
+# [6] 适应度里 `V²/100` 之前那项 `−(esi·step·100)`
+#   EV 见 `docs/06` 新增节（本轮把 `esi = [rsp+0x34]` 的来源读全了）。
+#   处置：**只登记、不改代码**（触发条件未定性）。理由写在 `docs/06`。
+#
+# [7] `docs/13` §8 与 §10.1 自相矛盾 —— 复核：§8 已改成“视机器”，§10.1 一致 ⇒ 无需再改（只做一次复核记录）。
+# [8] 补齐函数真 vaddr 是 `0x4ee0e0`（`src` 注释与 `docs/13` §20.1 写成 `0x3ee0e0`）——
+#   复核：`0x4ee0e0` 的 FDE = `0x4ee0e0..0x4ee712`（= Ghidra `0x5ee0e0` − 0x100000），
+#   反汇编 0x3ee0e0 得到的不是补齐函数 ⇒ 照改注释与文档。
+#
+# ── 顺序 ─────────────────────────────────────────────────────────────────────
+# 先 [6]（定性、只登记）→ 本预注册文件单独 commit → [4]（词流；其它项的判据都依赖它）
+# → [5]（生成/补齐分层）→ [1][2][3]（工厂三路）→ [7][8]（文档/注释）。
+# 每步之后跑 P3 三轴；终局跑 P4。
+# ── 事后追加（跑完之后写，不改上面的预注册）─────────────────────────────────
+# 结果与预注册的偏差（诚实记录，详见 `docs/06` §77）：
+#  * [4][5] 按上面写的改了，判据 P2 **达成**：`fixtures/ai_gen_parity.tsv` 里
+#    gen/assemble/mutate 共 27 行逐 token（tag + const 位型）与真二进制相同。
+#  * [1][2][3] **没有改**（= 预注册里写的 CHANGE 全部撤销）：把裸切片搬进 `cross_from` 之后，
+#    夹具里 40 行工厂用例**一行都对不上**，逐指令追到 `0x4ee5ce`/`0x4ee5f2`/`0x4ee478`
+#    三处数据流接不上（收集出来的切片当场被释放、送进装配的是 `(父代.cap, 父代.ptr, r1)`、
+#    重生臂会跳进交叉臂中间），按规格"定不下来只登记、不许猜"处理。
+#    ⇒ 处置：`src` 保持旧的两路；`docs/06` §77.4 记下全部指令证据与断点。
+#  * [6] 只登记，但这一轮把**机制的每一环**都读出来了（`docs/06` §77.3 的表），
+#    并且用两条硬事实把"为什么不改"钉住：实测恒 0 + `0x3c2bc0` 只造两种 kind。
+#  * [7] 复核：已一致，不用改。[8] 已改准（`src` 注释 + `docs/13` §20.1）。
+#  * P3 三轴：fire 647 / batch 647 / batch_conv 637，逐轴 `--check-baseline` 全部一致
+#    （AI 不在这三条轴的驱动路径上）。

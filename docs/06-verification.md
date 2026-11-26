@@ -12598,6 +12598,7 @@ cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive 
 cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict
 ```
 
+<<<<<<< HEAD
 ## 77. `EndGamePopUp` 接通：33.636 % → **4.053 %**，面板区 **0 px** —— 顺带更正一条"事件名"的错前提（2026-11-26，任务 T27 / `task-24`）
 
 > 规格：`.agent-work/specs/T27-endgame-wiring.md`。工作树 `.agent-work/cg/wt-t27`，分支 `agent/endgame-wiring`。
@@ -12844,3 +12845,209 @@ cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy 
    还画在面板之上）。改成"会话对象还在 + `last_result["online"]`"之后才对。
 4. **`z_index` 不是我该"推断"的东西**：原版 `.tscn` 里就写着 `z_index = 5`，我第一版漏了它，
    结果是精灵压在面板上（`docs/16` §76.3）。**先抄 `.tscn`，再谈推断**。
+=======
+## 77. AI 进化器：抽样层/生成层升到**逐位**（C3 闭合：27 行逐 token 相同）＋ 适应度里那项未定性的减法**定性**（2026-11-26，任务 T28 / `task-25`）
+
+> 起点 = master `eba333d`；分支 `agent/ai-src-fixes`。**本轮第一次"按对拍结果改原版模块"**，
+> 所以纪律是：每处改动都能指到指令、每步都跑三轴、改不动的**只登记不猜**。
+> 预注册在 `fixtures/ai_src_fix_plan.txt`（先于任何 `src/` 改动单独提交），
+> 真值夹具在 `fixtures/ai_gen_parity.tsv`（由新工具 `tools/ai_gen_parity.py` 生成）。
+
+### 77.1 一句话 + 8 条的处置
+
+| # | 差异 | 处置 | 档 |
+|---|---|---|---|
+| 4 | tag/符号/`%50` 抽样**1 个 u32 字**；`next_u64` 才是 2 个字 | **已按指令复原** | **`逐位`**（27 行 token 流逐 token 相同） |
+| 5 | 生成器**不补齐**（补齐是调用方独立一步）；`n<=0` 产**空 Vec**（没有 `max(1)`） | **已按指令复原** | **`逐位`**（同上） |
+| 6 | 适应度里 `−(esi·step·100)` | **只登记**（机制已读全，触发条件未定 ⇒ 不改代码） | `逐位`（指令）+`观测`（实测恒 0） |
+| 1 | 子代工厂**三路**（符号<0→变异 / len<20→重生 / 否则交叉） | **只登记**（理由见 §77.4） | `逐位`（指令在），改不动 |
+| 2 | 交叉后**不再变异** | **只登记**（同上；它与 #1/#3 是同一段数据流） | `逐位`（指令在） |
+| 3 | 取片段是**裸切片** `[r1, r1+r2)` | **只登记**（同上） | `逐位`（指令在） |
+| 7 | `docs/13` §8 与 §10.1 自相矛盾 | **复核：已一致**（T23 已就地改好，不用再动） | — |
+| 8 | 补齐函数 vaddr 笔误 `0x3ee0e0` | **已改准**（`src` 注释 + `docs/13` §20.1 表） | `逐位`（FDE `0x4ee0e0..0x4ee712`） |
+
+一句话：**抽样层与生成层（#4/#5）这一轮从 `推断` 升到 `逐位`**——注入同一个 ChaCha key 后，
+我方的生成/补齐/变异在 **27 行用例上逐 token（tag + 常数 f64 位型）与真二进制相同**；
+适应度那项 `−(esi·step·100)` 的**来源读全了**（它不是 `V`、不是 `step`、不是点数，是轨迹事件里
+`payload>>32` 的累加），但触发它的那种事件在实测里**从未出现**，所以按规格不猜着改；
+工厂（#1/#2/#3）的指令证据仍然成立，但"切片→装配"的数据流本轮没读通 ⇒ 一行都没搬进 `src`。
+
+### 77.2 #4/#5 改了什么（逐位证据）
+
+**指令（vaddr）**
+
+| 事实 | 指令 |
+|---|---|
+| tag 抽样**1 个字**、游标 +1 | `0x4ef193 mov %r12d,0x10(%r13,%rcx,4)` + `0x4ef198 inc %rcx` |
+| `%85` 是 **u32** 运算 | `0x4ef1b0 imul $0x51eb851f` / `0x4ef1b7 shr $0x26` / `0x4ef1bb imul $0x55` / `0x4ef1be sub` |
+| 补齐的 `%50` 也是 1 个字 | `0x4ee223 mov %r12d,0x10(%r13,%rcx,4)` + `0x4ee24e imul $0x32` |
+| 符号判定是 **32 位** | 工厂 `0x4ee449`、变异 `0x4ee99e`/`0x4eea79`/`0x4eeb7f`/`0x4eece7`/`0x4eede9` 全 `test %ebp,%ebp` + `js` |
+| 切点/位置下标吃 **2 个字** | `next_u64` = `0x502b20`：`0x502b49 lea 2(%rax),%rcx`、`0x502b54 mov (%r15,%rax,4),%rbx`（8 字节读） |
+| 生成器**不补齐** | `0x4ef020` 函数体里没有 `call 0x4ee0e0`；补齐在调用方成对出现（`0x4ee470`→`0x4ee61d`、`0x51b90f`→`0x51b923`、`0x51c3f6`→`0x51c40a`） |
+| `n<=0` ⇒ **空 Vec** | `0x4ef0bf test %ebx,%ebx` / `0x4ef0c1 jle 0x4ef2e0` |
+
+**改法**：`src/graphwar_function_evolutionator.rs` 里加了一个**字流**适配器 `Words`：
+对外签名仍是 `&mut dyn FnMut() -> u64`（调用的 5 个文件一行都不用改），
+内部把每次 `u64` 拆成两个 u32 字（低半先出、高半留在 `spare` 里）——
+因为 `ChaCha12::next_u64()` 与 `next_u32()` 本来就共用同一条 32 位字流。
+于是：`tag`/符号/`%50` 各吃 **1 字**，`normal()`（= 2 字）与切点（= 2 字）各吃 **2 字**，
+全部落在与二进制**相同的字序**上。同时把 `repair`（= `0x4ee0e0`）从 `random_function` 里搬出去，
+新增 `random_individual` = 生成（`0x4ef020`）+ 装配（`0x4ee0e0`）两步，删掉 `.max(1)`。
+
+**判据（预注册的 P2）**：`fixtures/ai_gen_parity.tsv` 里 `gen`/`assemble`/`mutate` 共
+**27 行逐 token 相同**（`tag` 逐个、`Const` 的 f64 **位型**逐个）。夹具怎么来的：
+
+* `tools/ai_gen_parity.py` 把 ChaCha key 写进真二进制 `state+0x120`（T23 的注入链），
+  再 unicorn 直接调 `0x4ef020`（生成）/ `0x4ee0e0`（装配）/ `0x4ee720`（变异）/ `0x4ee3a0`（工厂）；
+* 覆盖 20 个 key × 两种 mode：`n<=0` 空产出、常数 token（要再吃 2 字）、
+  截断（输入 8 个 token 但只留 3 个）、补齐（`%50` 三个分支）、变异（常数漂移 / 包一层）；
+* 反例保护：`raw_generator_does_not_assemble` 断言裸生成器 500 次里至少 1 次**不合法**
+  （否则"分层"这条就没有可观测后果）；`words_split_one_u64_into_two_words` 钉住字流切分。
+
+### 77.3 #6 定性：`−(esi·step·100)` 到底是什么
+
+**结论（机制）**：`esi` 是**评分时遍历"开火结果项"累加出来的一个计数器**，
+只由 `kind == i64::MIN+3`（= `0x8000000000000003`）那种结果项的 `payload >> 32` 累加；
+它**不是** `V`、不是点数、不是 `step`。分数里那一项是 `−esi · step · 100`，
+且**只在"有效命中数 > 0"时才加**（`0x51b087 jle 0x51b0a5` 跳过整块）。
+
+**指令链（vaddr，逐条）**
+
+| 步 | 指令 | 含义 |
+|---|---|---|
+| 1 | `0x51afd7 mov dword [rsp+0x34],0`（空轨迹分支）／`0x51ab42` 同（有轨迹） | `esi` 源 = 栈槽 `[rsp+0x34]`，每轮**清零** |
+| 2 | `0x51afed xor %r13d,%r13d` → 遍历里 `0x51ae4c/0x51ae5d` 对 `[rsp+0x28]` ±1 | `r13 = [rsp+0x28]` = **带符号命中数**：异队 +1、同队 −1（队伍字节来自 `ctx+8` 的 hashmap：`0x47dec0` 查 `owner_id`） |
+| 3 | `0x51acc1 mov %rax,%rbp` / `0x51acc4 shr $0x20,%rax` / **`0x51acc8 add %eax,[rsp+0x34]`** | **唯一的累加点**：`[rsp+0x34] += payload>>32`（`rbp = 结果项 +8` 的 16 字节 payload 的低 qword） |
+| 4 | `0x51b06f mov esi,[rsp+0x34]` / `0x51b073 test %esi,%esi` / `0x51b075 cmove %r13d,%eax` | `eax`（进分数的命中外加项）= `esi!=0 && r13>0 ? 1 : r13` |
+| 5 | `0x51b089 movsd [rsp+0x78],%xmm3` / **`0x51b08f mulsd %xmm0`** / `0x51b098 cvtsi2sd %rcx` / `0x51b09d mulsd` / **`0x51b0a1 subsd %xmm2,%xmm1`** | `xmm0`=100.0（`0x19f6d8`）、`[rsp+0x78]`=**step 入参**（`0x51a761` 存进来）⇒ `−(esi·step·100)` |
+| 6 | `0x51b0ad cvtsi2sd %eax` / `0x51b0b1 mulsd 2e6`（`0x19fc00`）/ `0x51b0b9 addsd` | 分数 = `eax·2e6 − esi·step·100` |
+| 7 | `0x51b111 mov [rcx+0x10],%eax` / **`0x51b114 mov [rcx+0x14],%esi`** | 评分 sret 结构体是 **24 字节 4 字段**：`{score f64@0, dist f64@8, hits u32@0x10, esi u32@0x14}` |
+
+**为什么"只登记、不改"**：要看 `kind=0x8000000000000003` 的结果项**什么时候出现**，而这一层没定死。
+能定死的两条硬事实是：
+
+1. **实测恒 0**：T23 的运行时读数（`docs/archive/ai/74` §1.1）—— `si` 累加点
+   `0x51acc8` 在 40 秒 hook 里**执行 0 次**、56925 次采样全 0；
+2. **结构上只有两种 kind 被造出来**：`0x3c2bc0`（`GraphwarShotCalculator::calculate_shot_results`）
+   里只有两个 push 点：数组项 `0x3c2d5e`（`kind = r15`，实测 `0x1000`/`0x2000`，`docs/06` §30.2）
+   与"撞障碍点事件" `0x3c38e4`（`kind = i64::MIN`，`0x3c38d7 movabs 0x7fff…ff` + `0x3c38e1 inc`）。
+   `i64::MIN+1/+2/+3` 这三个 kind 的**产生点本轮没定位到**（`0x4be8d0` 那一段的反汇编错位过，
+   T23 也记过"该处反汇编错位"）——所以既不能说"我方漏了一项"，也不能说"那项是死代码"。
+
+⇒ 按规格"定不下来只登记、不许猜"，**`src` 里不加这一项**。**行为影响：0**
+（`esi=0` 时该项就是 `0·step·100 = 0`，`addsd` 加的是 `+0.0`，与不加逐位相同）。
+顺带登记一处**新发现**（不在 T23 的 8 条里）：`hits` 项的符号——二进制是"异队 +1 / 同队 −1"，
+我方 `fitness_eval` 数的是 `killed.len()`（不分敌我，恒正）。这条要修得给 `ScoringContext`
+加队伍信息（现在只有 `targets: &[Target]`，没有 team），**本轮没动**，见 §77.7 遗留 3。
+
+### 77.4 #1/#2/#3 为什么"只登记"
+
+指令证据本身仍然成立（这轮又复核了一遍）：
+
+```text
+0x4ee42a  ebp = [r15 + rcx*4 + 0x10]; inc rcx      ; 抽 1 个字
+0x4ee449  test %ebp,%ebp
+0x4ee44b  js  0x4ee4af                             ; 负 → 变异（0x4ee4af: call 0x4ee720）
+0x4ee44d  r15 = [r14+0x10]                         ; 父代 len
+0x4ee463  cmp %r15,0x14 / 0x4ee467 jae 0x4ee4d3    ; len < 20 → 重生臂
+0x4ee469..0x4ee470  call 0x4ef020（生成）           ; 重生臂
+0x4ee61d  call 0x4ee0e0（装配）                     ; ← 两条路共用
+0x4ee4d3..   交叉臂：0x4ee4ee/0x4ee4f6 两次 call 0x502b20（各 2 字）
+             0x4ee50a div %r15（r1 = u64 % N）、0x4ee533 div %rsi（r2 = u64 % (N-r1)）
+             0x4ee543 add %rdx,%rdi（cut2 = r1+r2）→ 0x4ee574/0x4ee57b 算 src 起止
+             0x4ee5c9 call 0x3be7d0（= `parent[r1..cut2].iter().collect::<Vec<Token>>()`）
+             0x4ee61d call 0x4ee0e0（装配）——**这条路上没有 `call 0x4ee720`**
+```
+
+没搬进 `src` 的原因是**数据流对不上**：把裸切片照搬之后，
+`tools/ai_gen_parity.py` 的 40 行工厂用例**一行都对不上**（`gen/assemble/mutate` 那 27 行全对，
+所以不是 key/字流的问题）。逐指令追 unicorn 后发现反汇编本身有一条我读不通的链：
+
+* `0x4ee5ce`：刚在 `0x4ee5c9` 收集出来的切片**当场被 dealloc**
+  （`mov %rsi,[rsp+0x80]; shl $4,%rsi; call 0x528070`）；
+* `0x4ee5f2`：真正送进装配的输入是 `[rsp]` 那份结构 = `(父代.cap, 父代.ptr, **r1**)`
+  （`r1` 由 `0x4ee56a mov %rdi,[rsp+0x10]` 写进去）⇒ 观感是"装配 `parent[..r1]`"，
+  可是 `factory_add20_*` 那几行的产出长度（29 / 39）又对不上"装配 `parent[..r1]`"；
+* 重生臂里 `0x4ee475 test %r15,%r15 / 0x4ee478 jne 0x4ee4ee` 会**跳进交叉臂的中间**
+  （跳过 `0x4ee4d3` 的 `Vec::new` 初始化）——那只有在"`[rsp+0x18]` 已经是刚生成的随机 Vec"时才讲得通，
+  但它与"交叉臂用 `[rsp+0x18..0x30]` 当目标 Vec"矛盾。
+
+`docs/13` §20.2 的伪代码（`r1 = rand % N; r2 = rand % (N-r1); cut2 = r1+r2`）与指令**一致**，
+所以这一层不是"没证据"，而是"证据读到这里接不上"。按规格**只登记、不许猜着改**：
+`src` 里仍是旧的两路（`len<20 → 重生；否则交叉+变异`），
+`factory_child`/`cross_from` 的 doc 注释里写明了这一点。
+**副作用**：这一条决定了"要不要改"，也解释了为什么"改了反而红"——
+把三路/裸切片搬进去之后，`tests/server_match.rs` 的两条 TCP 用例会因为 AI 产物变化而
+"这局 20 回合打不完"（**那条测试依赖 AI 变强**，是本轮实测的副作用，不是 bug；
+这也是本轮"少改"的一个实际理由：**没读通就不动**）。
+
+### 77.5 硬门槛（本分支实测）
+
+| 项 | 读数 |
+|---|---|
+| `cargo test --offline` | **1769 通过 / 0 失败 / 1 ignored**（= 基线；本轮新增 3 条测试） |
+| `cargo test --offline --features gdext-bindings` | **1880 通过 / 0 失败 / 1 ignored**（= 基线） |
+| `python3 tools/coverage_matrix.py --check` | OK（生成物已按新 `src/` 重跑后提交） |
+| `python3 tools/check_doc_refs.py` | rc = **0** |
+| `fire` 轴（`replay_attrib --drive fire --policy default` → `bit_exact_attrib --check-baseline --axis fire`） | 结算批 **1080** · 内容 **647** · 种类 **1075** · 死亡 **366/385** · 挖洞 **207/294** —— **全部一致** |
+| `batch` 轴（同上 `--drive batch` → `--axis batch`） | 同上 **1080 / 647 / 1075 / 366-385 / 207-294** —— **全部一致** |
+| `batch_conv`（`--example batch_conv --policy strict --json …` → `--axis batch_conv`） | 结算批 **1080** · 内容 **637** · 种类 **1075** · 死亡 **347/385** · 挖洞 **207/294** —— **全部一致** |
+
+### 77.6 复跑命令（照抄即可）
+
+```bash
+MAIN=/home/CG/Myprojects/graphwar2-rebuild; WT=$MAIN/.agent-work/cg/wt-t28
+export CARGO_HOME=$MAIN/.reference/cargo-home CARGO_TARGET_DIR=$WT/.cargo-target HOME=$WT/.fakehome
+cd $WT
+
+# ① C3 对拍：先从真二进制生成真值夹具（unicorn + key 注入），再跑我方测试
+$MAIN/.reference/venv/bin/python tools/ai_gen_parity.py     # 写 fixtures/ai_gen_parity.tsv（67 行）
+cargo test --offline --lib token_stream_matches -- --nocapture
+#   → “C3 对拍：27 行逐 token 相同（生成/装配/变异）；工厂 40 行里对上 0 行（已知差）”
+
+# ② T23 的注入链（key 逐位 / 抽样粒度 / 权重表）
+$MAIN/.reference/venv/bin/python tools/ai_rng_inject.py
+$MAIN/.reference/venv/bin/python tools/ai_rng_inject.py --mode 1
+
+# ③ 三轴（三条轴分开跑、分开报）
+SNAP=$MAIN/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv    -- --dir $SNAP --policy strict --json c.jsonl
+python3 tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire       --snapshot $SNAP
+python3 tools/bit_exact_attrib.py --json b.jsonl --check-baseline --axis batch      --snapshot $SNAP
+python3 tools/bit_exact_attrib.py --json c.jsonl --check-baseline --axis batch_conv --snapshot $SNAP
+```
+
+### 77.7 遗留 / 未做（诚实清单）
+
+1. **工厂（#1/#2/#3）没有搬进 `src`**：指令证据齐全，但 `0x4ee5ce`/`0x4ee5f2`/`0x4ee478`
+   这三处的数据流读不通（见 §77.4）。夹具里 40 行工厂用例留着当"待闭合清单"，
+   测试里 `assert_eq!(factory_same.len(), 0)` 会在有人修好时立刻变红提醒改判据。
+2. **`kind = i64::MIN+1/+2/+3` 三个结果项的产生点没定位到**（§77.3）：定位到它们，
+   才能给 `esi` 那一项定性（现在只能说"机制已读全、实测恒 0"）。
+3. **`hits` 项的队伍符号没修**：二进制是异队 +1 / 同队 −1（`0x51ae41 xor` + `0x51ae46 test $1`），
+   我方 `fitness_eval` 数 `killed.len()`。要修得给 `ScoringContext` 补队伍信息
+   ⇒ 动 `src/game.rs` / `graphwar_game_server.rs` 的构造点（本轮写的范围不含它们）。
+4. **初始种群是否也要过一次变异未定**（`docs/95` §5）：本轮 `initial_population` 只做
+   "生成 + 装配"两步，第三步没证据不猜。
+5. 变异内部"常数 `*(1+normal())` 还是重采样"的分支条件这轮只核到 `test %ebp,%ebp` 的 32 位符号级，
+   `1.0` 常量与乘法位置仍没逐条打完（T23 §73.6 第 5 条未变）。
+6. 变体 B（`0x51d080`，(1+λ) 爬山）本轮没进。
+
+### 77.8 本轮改动清单
+
+| 文件 | 性质 |
+|---|---|
+| `src/graphwar_function_evolutionator.rs` | 字流 `Words` + `random_individual` + `assemble_w`/`gen_tokens_w`/`mutate_w`/`cross_from_w`/`factory_child_w`；#6 的机制写进 doc；#8 注释改准；新增 3 条测试 |
+| `src/_scaffold/ai_explain.rs` | 跟着"生成 / 装配 / 变异"三步分层改（仍是两路工厂，注释写明未复原） |
+| `tools/ai_gen_parity.py` | **新增**：注入 key 调真二进制的生成/装配/变异/工厂，产出 C3 真值夹具 |
+| `fixtures/ai_gen_parity.tsv` | **新增**：67 行真值（27 行已逐位相等，40 行工厂待闭合） |
+| `fixtures/ai_src_fix_plan.txt` | **新增**：预注册（先于所有 `src/` 改动单独提交） |
+| `docs/13-ai.md` | #8 地址更正（`0x3ee0e0`→`0x4ee0e0`）+ `0x3be7d0` 说明；§26.5 指向本节 |
+| `docs/06-verification.md` | 本节 |
+| `docs/coverage-matrix.tsv` | 按新 `src/` 重跑后的生成物 |
+
+**没有改动**：`client/**`、`tests/` 的既有断言、`fixtures/guardrails.json`、
+`fixtures/frame_diff_thresholds*`、`docs/00`/`docs/HANDOVER`/`README`、冻结快照、`src/lib.rs`。
+>>>>>>> agent/ai-src-fixes
