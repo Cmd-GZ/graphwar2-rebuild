@@ -43,14 +43,24 @@ var _caret_blink := 0.0
 const CARET_WIDTH := 3.0
 ## 主题 `LineEdit/constants/caret_blink_interval` 的**引擎默认值**（秒）。
 ##
-## 为什么用它：原版 `recovered-src/play_screen.tscn` 的 `GraphwarFunctionInput` 节点上
-## **逐位**写着 `caret_blink = true` + `caret_force_displayed = true`
-## ⇒ 原版光标**按引擎默认周期闪**（不是常亮、也不是靠焦点）。
+## ⚠️ 这个数的语义是**翻边间隔**，不是"亮半周期"：引擎每满
+## `caret_blink_interval` 秒 `_toggle_caret()` 一次 ⇒ **亮 0.5 s、灭 0.5 s，整周期 1.0 s**。
+## 依据（两条独立）：
+##   * Godot 4 `LineEdit::caret_blink_interval` 的文档/实现口径就是"翻边间隔"（默认 0.5 s）；
+##   * 原版真帧的**采样序列**能判死周期（`fixtures/play_screen_final_targets.txt` §A 的表）：
+##     每屏 3 帧、帧间隔 1.2 s，`ro` 轮 `replay_play` 的三态是 **灭/亮/亮**。若整周期是 0.5 s，
+##     1.2 s 采样下相位步进 (1.2 mod 0.5)=0.2 s、亮窗 0.25 s ⇒ 三帧**只能**是 灭/亮/灭；
+##     只有整周期 1.0 s（亮窗 0.5 s）才排得出 灭/亮/亮 ⇒ **原版周期 = 1.0 s**。
 ##
-## ⚠️ **相位不可控**：本机两轮真帧（同一份冻结回放、同一串点击）拿到的是**两个相位**
-## —— 第一轮 `replay_play` 亮 / `replay_end` 灭；第二轮两屏**都灭**。闪的起点取决于进程
-## 起来后的墙钟 ⇒ 这是一个**逐运行随机**的量（见 `docs/06` §71）。
+## 为什么它同时说明"常显"不成立：原版 `recovered-src/play_screen.tscn` 的
+## `GraphwarFunctionInput` 节点上逐位写着 `caret_blink = true` + `caret_force_displayed = true`，
+## 而**真帧显示它在闪**（同一轮内 `replay_play_1` 灭、`replay_play_2/3` 亮，差 270 px
+## = 正好光标矩形 3×90）。⇒ `caret_force_displayed` **不等于**"常显不闪"；
+## T21 那条"原版相位逐运行随机"反而成立（`ro` 轮有亮帧、`ro2` 轮全灭帧）。
+## 我方也照它闪：这是**原版行为**，不是"我方自造"。
 const CARET_BLINK_INTERVAL := 0.5
+## 整周期 = 两次翻边：`_caret_blink` 在 `[0, 2·interval)` 上循环，前半亮、后半灭。
+const CARET_BLINK_PERIOD := CARET_BLINK_INTERVAL * 2.0
 var _rejected := false
 ## 只读态（回放模式）：原版回放屏的函数框是**不可编辑**的，Godot 用
 ## `LineEdit/colors/font_uneditable_color`（默认 `(0.875, 0.875, 0.875, 0.5)`）画文字
@@ -74,18 +84,21 @@ func _ready() -> void:
 	set_process(true)
 	focus_mode = Control.FOCUS_NONE
 
-## 光标此刻亮不亮：每个 `CARET_BLINK_INTERVAL` 周期的**前半**亮（`LineEdit` 的口径）。
+## 光标此刻亮不亮：**每 `CARET_BLINK_INTERVAL` 秒翻一次边**（引擎 `_toggle_caret()` 的口径），
+## 所以是"整周期的前半亮、后半灭"，不是"每半周期翻一次"。
 func caret_on() -> bool:
-	return _caret_blink < CARET_BLINK_INTERVAL * 0.5
+	return _caret_blink < CARET_BLINK_INTERVAL
 
 ## **2026-11-26（T21）更正**：以前只在"累计 > 0.55 s 就归零"那一刻 `queue_redraw()`，
 ## 而那一刻 `_caret_blink == 0.0`（在亮的半周期里）⇒ **每次重画都画亮的光标**，看上去是
-## 常亮、实际从不熄灭。现在按半周期**翻边时**重画一次，才是真的闪。
+## 常亮、实际从不熄灭。T21 改成"翻边时重画"，但把翻边间隔当成了半周期
+## （`_caret_blink < 0.5 * 0.5`、回绕在 0.5）⇒ **整周期 0.5 s，比引擎快一倍**。
+## T26 按引擎口径改回来：回绕在 `CARET_BLINK_PERIOD`（= 1.0 s），亮窗是前 0.5 s。
 func _process(delta: float) -> void:
 	var was_on := caret_on()
 	_caret_blink += delta
-	if _caret_blink >= CARET_BLINK_INTERVAL:
-		_caret_blink = fmod(_caret_blink, CARET_BLINK_INTERVAL)
+	if _caret_blink >= CARET_BLINK_PERIOD:
+		_caret_blink = fmod(_caret_blink, CARET_BLINK_PERIOD)
 	if caret_on() != was_on:
 		queue_redraw()
 
