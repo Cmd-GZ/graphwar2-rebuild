@@ -8523,7 +8523,27 @@ python3 tools/frame_diff.py --orig <W>/orig --mine <W>/mine --screens menu,repla
 ### 62.1 台账：52 份的分布与"新增的那条硬证据"
 
 [`fixtures/view_layer_ledger.tsv`](../fixtures/view_layer_ledger.tsv)（52 数据行 × 7 列；
-生成器 `.agent-work/ledger/gen.py` 会断言"status 与是否逐字节在场"一致 —— 标 blocked 却在场直接失败）。
+`why` / `need` 两列是人写的判断；机械列（`lines` / `shipped_scn_refs` / `client_path`）与
+"status 与是否逐字节在场"这条不变量可以用下面这条命令**原地复算**（不依赖任何 `.agent-work` 里的脚本）：
+
+```bash
+MAIN=/home/CG/Myprojects/graphwar2-rebuild
+python3 - "$MAIN" <<'PY2'
+import glob, os, sys
+main = sys.argv[1]
+scn = {os.path.basename(p).split('-', 2)[-1]: open(p, 'rb').read()
+       for p in glob.glob(os.path.join(main, 'rsc/.godot/exported/133200997/*.scn'))}
+views = {os.path.basename(p) for p in glob.glob('client/src/views/*.gd')}
+for p in sorted(glob.glob('recovered-src/*.gd')):
+    n = os.path.basename(p)
+    refs = sorted(k for k, v in scn.items() if ('res://' + n).encode() in v)
+    same = n in views and open('client/src/views/' + n, 'rb').read() == open(p, 'rb').read()
+    print('%-40s lines=%-3d scn_refs=%-2d view_in_place=%s' % (n, sum(1 for _ in open(p)), len(refs), same))
+PY2
+```
+
+断言（脚本里已核过一遍）：`status ∈ {already-original, swap} ⇔ view_in_place=True`，
+`status = blocked ⇔ view_in_place=False`。
 
 | status | 份数 | 含义 |
 |---|---:|---|
@@ -8661,8 +8681,8 @@ cd $WT
 # ① 原版副本逐字节（27 份，无输出才是过）
 for f in client/src/views/*.gd; do cmp "$f" "recovered-src/$(basename $f)" || echo "DIFF $f"; done
 
-# ② 台账与判据复算（读主工作区 rsc/ 下 31 份 .scn 的原始字节，只读）
-python3 .agent-work/ledger/gen.py                  # 重写 fixtures/view_layer_ledger.tsv 并断言 status 自洽
+# ② 台账的机械列 + "status 与是否在场"不变量（读主工作区 rsc/ 下 31 份 .scn 原始字节，只读）
+#    内联脚本见 §62.1 那个 heredoc —— 不依赖 .agent-work/ 里的任何脚本（那棵树是可丢弃的）
 
 # ③ 内核 + 绑定（本轮没动 src/，但 selftest 要 gdext 版 .so + serve_match）
 cargo build --offline --features gdext-bindings

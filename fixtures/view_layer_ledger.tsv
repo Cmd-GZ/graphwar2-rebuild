@@ -7,7 +7,10 @@
 #                      0 = 包里没有任何场景挂它（= 包内死文件，不是我们没换）。
 # 复跑：
 #   for f in client/src/views/*.gd; do cmp "$f" "recovered-src/$(basename $f)" || echo DIFF $f; done   # 27 份全同
-#   引用计数：python3 .agent-work/ledger/gen.py（本文件就是它生成的；读 <MAIN>/rsc 下的 31 份 .scn，只读）
+#   引用计数（内联，读 <MAIN>/rsc 下 31 份 .scn 原始字节，只读；完整版见 docs/06 §62.1）：
+#     python3 -c "import glob,os;m='/home/CG/Myprojects/graphwar2-rebuild';s={os.path.basename(p):open(p,'rb').read() for p in glob.glob(m+'/rsc/.godot/exported/133200997/*.scn')};[print(n,sum(('res://'+n).encode() in v for v in s.values())) for n in sorted(os.path.basename(p) for p in glob.glob('recovered-src/*.gd'))]"
+#   一句话不变量：status ∈ {already-original,swap} ⇔ client/src/views/<name>.gd 与 recovered-src/<name>.gd 逐字节相同；
+#                status = blocked ⇔ 该文件不在 client/src/views/ 里。
 # 计数：already-original 24 / swap 3 / blocked 25 = 52（另有 7 份是包内死文件，见 shipped_scn_refs=0 的行）
 recovered_path	client_path	status	why	need	lines	shipped_scn_refs
 recovered-src/ChatBox.gd	client/src/views/ChatBox.gd	already-original	上一轮（docs/16 §43）已换；本轮复核 cmp client/src/views/ChatBox.gd recovered-src/ChatBox.gd 逐字节相同，且运行时由 GwViews.attach() 真的挂在 chat_pop_up 的 ChatBox（RichTextLabel）上。档位=观测（原版 .gdc 反编译产物）	-	21	1 (chat_pop_up)
