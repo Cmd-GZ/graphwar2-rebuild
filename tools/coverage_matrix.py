@@ -80,6 +80,11 @@ def _find_upstream():
     """
     forced = os.environ.get("COVERAGE_MATRIX_UPSTREAM")
     cands = [forced] if forced else []
+    # 2026-11-26：本机（主线机）的外部件全在 checkout 内的 `.reference/` 里，
+    # 既不是"兄弟目录"也不是上溯 4 层能找到的位置 —— 旧写法在这台机上直接报
+    # 「找不到原版二进制 /home/CG/Myprojects/libgraphwarrust.so」（同类陷阱见 docs/18 §10.3.4）。
+    cands.append(os.path.join(ROOT, ".reference", "upstream"))
+    cands.append(os.path.join(ROOT, ".reference", "game"))
     d = ROOT
     for _ in range(4):
         d = os.path.dirname(d)
@@ -90,7 +95,11 @@ def _find_upstream():
         if (os.path.exists(os.path.join(c, "libgraphwarrust.so"))
                 and os.path.exists(os.path.join(c, "analysis", "funcstarts_ghidra_va.pkl"))):
             return c
-    return os.path.dirname(ROOT)
+    raise SystemExit(
+        "coverage_matrix: 找不到上游分析目录（需要同时有 libgraphwarrust.so 与 "
+        "analysis/funcstarts_ghidra_va.pkl）。\n"
+        "本机应为 %s/.reference/upstream；可用 COVERAGE_MATRIX_UPSTREAM=<dir> 硬指。"
+        % ROOT)
 
 
 UPSTREAM = _find_upstream()                  # 主仓库（分析仓库）
