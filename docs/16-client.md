@@ -11579,13 +11579,13 @@ python3 tools/frame_capture.py --side ours --flow match --out $WT/.agent-work/v/
 也就是说：本轮这一层（事件派发 + 实体模型）单独值 **−0.81 pp / −0.79 pp**；
 `Fire!` / 键盘 / `f(x)` 行 / 右下偏移量几块**一格都没变**（那些要改播放屏的版式与字体）。
 =======
-## 68. 剩余 13 屏第一次有像素真值：**四个小弹窗本身几乎逐像素相同**，残差全在 LAN 大厅 / GameSetup / 对局屏三块底图；附 6 条**客户端视角**的发现（2026-11-26，任务 T20）
+## 72. 剩余 13 屏第一次有像素真值：**四个小弹窗本身几乎逐像素相同**，残差全在 LAN 大厅 / GameSetup / 对局屏三块底图；附 6 条**客户端视角**的发现（2026-11-26，任务 T20）
 
 > 数字与逐屏归因在 `docs/06` **§69**（含入库 TSV `fixtures/frame_diff_results_rest.tsv` / `frame_diff_blocks_rest.tsv`）。
 > 本节只写**客户端侧**：这批差异分别落在哪个文件/哪个函数上，以及采集过程中发现的 6 条
 > "我方行为与原版不同"的观测。**本轮不改客户端一行**（任务约定），所以下面全是**待办**，不是已完成。
 
-### 68.0 一页结论
+### 72.0 一页结论
 
 | # | 结论 | 证据 |
 |---|---|---|
@@ -11595,7 +11595,7 @@ python3 tools/frame_capture.py --side ours --flow match --out $WT/.agent-work/v/
 | ④ | 最便宜、最该先改的 4 条：`GLOBAL_ROOMS` 一条名字 + 行序、`Start` 的 `disabled`、默认玩家名 `user`→OS 登录名、LAN 表头三列右移 | §68.1 |
 | ⑤ | 发现 6 条**行为**差异（不是版式）：聊天浮层盖住顶栏开关、默认名硬编码、`Start` 被 disabled、缺本机地址、Connecting 2 s 自超时、Global 占位行内容 | §68.2 |
 
-### 68.1 逐屏 → 落到哪个文件/函数（下一轮直接照这张表派活）
+### 72.1 逐屏 → 落到哪个文件/函数（下一轮直接照这张表派活）
 
 | 屏 | 差异比例 | 归因 | 客户端侧落点（**待改，本轮没改**）|
 |---|---|---|---|
@@ -11615,7 +11615,7 @@ python3 tools/frame_capture.py --side ours --flow match --out $WT/.agent-work/v/
 | `chat_popup` | 6.9948 % | 浮层第二条带 136 px；多出的是**我方叠在白板上的两串白字** | `client/src/screens/chat_pop_up.gd`（消息区初始内容）+ 对局屏的名字标签接线（§60.5）；另见 §68.2 ① |
 | `join_level_popup` | **0** | 逐像素相同 | 不用改 |
 
-### 68.2 采集过程中发现的 6 条**客户端行为**差异（不是版式，都是真帧上看到的）
+### 72.2 采集过程中发现的 6 条**客户端行为**差异（不是版式，都是真帧上看到的）
 
 1. **我方 `ChatPopUp` 是整屏浮层，把顶栏那颗 `toggle_chat` 开关盖住了**（原版不盖：原版聊天浮层打开后，
    顶栏那排开关仍然**亮**、还能再点一次把聊天关掉）。证据：同一串点击 `(1013,48)` 在原版能关掉聊天、
@@ -11634,7 +11634,7 @@ python3 tools/frame_capture.py --side ours --flow match --out $WT/.agent-work/v/
    （原版 `US Room 1 / US Room 2 / EU Room 2 / EU Room 1`）。这一页原版**离线时也画这四行固定内容**（真帧），
    所以它可以做到更接近 —— 但这四行的**来源**（是否 hardcode 在原版 Rust 里）**未知**，本轮只记观测。
 
-### 68.3 复跑（客户端侧注意：三件必须就位）
+### 72.3 复跑（客户端侧注意：三件必须就位）
 
 ```bash
 WS=/home/CG/Myprojects/graphwar2-rebuild; WT=$WS/.agent-work/cg/wt-t20
@@ -11652,7 +11652,7 @@ python3 tools/frame_capture.py --side ours --flow setup --out $WT/.agent-work/v/
   `client/assets/` 必须已用 `python3 tools/extract_assets.py` 从 `Graphwar.pck` 解出来（仓库不含媒体文件）。
 * 完整 6 条 flow 的两侧复跑命令在 `docs/06` **§69.7**（照抄即可）。
 
-### 68.4 遗留 / 未做
+### 72.4 遗留 / 未做
 
 1. **客户端一处也没改**（任务约定"只测量 + 归因"）：§68.1 的 12 行全是**待办**。
 2. 只测了一个局面（`fixtures/frame_match_events.txt` 的 S7）；`confirm_exit` / `chat_popup` 的底图残差只对这一个局面成立。
