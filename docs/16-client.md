@@ -11467,3 +11467,10 @@ python3 tools/frame_capture.py --side ours --flow match --out $WT/.agent-work/v/
 3. **id 空间**（总根因）：`_sync_entities()` 给 `EntityDrawer` 的 id 是**士兵下标**与
    `TARGET_ID_BASE+tid`，而事件/manager 用的是**实体 id**。⇒ 外观/名字/颜色即便全部进了 manager
    也**没有消费者**。要么播放屏改用实体 id，要么在桥里加一张"下标 → 实体 id"的别名表并由播放屏填。
+
+### 70.5 并入 master 之后的重测（同一棵树上的对照）
+
+`docs/06` §67.10 是这一节的数字版：把 `session.gd` 换回 master 版再拍一次，**别的都不动**，
+得到 `match_ready` 7.2565 % → **6.4459 %**（L2 超限 6 → 4）、`match_play` 7.6648 % → **6.8788 %**（6 → 3）。
+也就是说：本轮这一层（事件派发 + 实体模型）单独值 **−0.81 pp / −0.79 pp**；
+`Fire!` / 键盘 / `f(x)` 行 / 右下偏移量几块**一格都没变**（那些要改播放屏的版式与字体）。
