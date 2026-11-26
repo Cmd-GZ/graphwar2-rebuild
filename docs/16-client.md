@@ -11379,3 +11379,70 @@ $PWD/.reference/venv/bin/python tools/unknowns_probe.py chain add_point     # �
 $PWD/.reference/venv/bin/python tools/unknowns_probe.py dis 0x498c70 --len 0x3e0
 $PWD/.reference/venv/bin/python tools/unknowns_probe.py dis 0x4b67a0 --len 0x90
 ```
+## 74. 客户端侧：回放屏的**准备圈**（三段弧）怎么接；光标 3 px 的落点；`EntityDrawer::draw` 的坐标系定死了（2026-11-26，任务 T21）
+
+> 本节只写**客户端侧**的接线与语义（算术在 `src/entity_drawer.rs`，指令证据在
+> `docs/06` §71）。前情：§68（t7）把回放屏的右列宽 / 底栏高 / 无框输入框 / 士兵外观与名字标签接上，
+> 跨侧差异压到 0.217 %；本节补的是**准备圈**那条链路的一个接线缺口。
+
+### 74.1 一条定死的坐标系：`EntityDrawer::draw` 的实参是**棋盘单位**
+
+`0x4b2890` 的第一条图元是 `draw_set_transform`（槽 `0x9bc018`，调用点 **`0x4b2af8`**）：
+`pos = size × 0.5`、`rotation = 0`、`scale = (mirror ? −k : k, −k)`、`k = size.x / 50`
+（`0x4b2a80 divss [0x1b9fc8]`，`0x1b9fc8 = 0x42480000`）⇒ 之后所有
+`draw_arc` / `draw_polygon` 的坐标都是**棋盘单位**。`GraphwarPlane::draw`（`0x4b5df0`）与
+`AxisDrawer::draw`（`0x4e05b0`）**同一条**（前者的调用点 `0x4b607d`）。
+
+这一条同时解释了两件旧账：
+
+* `entity_drawer_class.rs` 里"准星坐标单位是**推断**"那条可以撤了 —— 是棋盘单位，**观测**；
+* 旧实现把 `0.3` 的线宽与角度**原样**当像素送进屏幕坐标系 ⇒ 环只有 0.3 px 宽（看不见）、
+  而且方位是上下镜像的。现在按原版发一条 `draw_set_transform`，实参保持棋盘单位。
+
+```text
+@export show_ring_arrows : bool   # 默认 true（= 与上一轮逐字相同）
+last_transform() -> PackedFloat64Array   # [pos.x, pos.y, scale.x, scale.y]（rotation 恒 0）
+```
+
+### 74.2 回放屏为什么**要**画准备圈（旧注释是被证伪的）
+
+旧注释（`play_screen.gd::_sync_entities`）写"回放模式不画准备圈（原版真帧：棋盘上 0 个红箭头）"。
+真帧复测把这句话说准了：**红箭头确实没有，但三段弧有**（`docs/06` §71.1-B 的圆拟合）。
+两件事一起看才通：
+
+| 图元 | 回放真帧 | 闸门（指令） |
+|---|---|---|
+| 3 段 `draw_arc`（半径 `pos_radius×1.5`、宽 `0.3`、H=π/6、A0=V/120） | **有** | 弧侧 `0x4b32e2 test %r14b,%r14b` |
+| 3 个 `draw_polygon`（外凸箭头） | **无**（径向直方图 r>23.3 px 为 0） | 箭头侧 `0x4b2fc0 cmp [rax+rdx],ebx` / `0x4b2fc3 je 0x4b37f0`：id 不在 `[[rsp+0x120]+0x20]` 那张 `Vec<u32>` 里 ⇒ 整块跳过。**那张表是什么 = 未知** |
+
+⇒ 播放屏在回放分支：`set_ring` + `set_ring_base`（`V = base = _replay.tick()`）+ `show_ring_arrows = false`。
+`V` 的语义（`0x4b2e10 call 0x519530` = `get_fractional_tick`）与真帧反解出的 **558**
+（= 载入 tick，§63.0⑥ 的真机读数）独立吻合 —— 这也是"回放播放头就是那个 tick"的第三个旁证。
+
+**门没解出来之前只能按观测选**：环画给"回放里所有活着的士兵"（原版是 `get_alive` ∧ `is_on_turn`，
+回放侧没有 turn 状态源）。本样本 1 具士兵 ⇒ 与真帧一致；多士兵回放**可能多画**。
+环色 = 这具士兵自己的队色（`team_color` 只有一个 ⇒ 异色多士兵会同色，**我方化简**）。
+
+### 74.3 光标：3 px 落在哪里，以及"它为什么永远对不准"
+
+* **落点**：真帧 `x1182..1184 × y1066..1155`。左边界 = 文本 advance 的 x
+  ⇒ 引擎画的是 `Rect2(caret_x, top, 3, 90)`，**不是居中的 3 px 线**（旧实现画线 ⇒ `1181..1183`，偏 1 px）。
+  已改 `client/src/play/function_input.gd::_draw`。
+* **闪烁**：`recovered-src/play_screen.tscn` 的 `GraphwarFunctionInput` 节点上逐位写着
+  `caret_blink = true` + `caret_force_displayed = true` ⇒ 按引擎默认周期（`caret_blink_interval`
+  默认 **0.5 s**）闪。旧实现只在"归零"那一刻 `queue_redraw()`，而那一刻相位在"亮"的半周期
+  ⇒ **每次重画都画亮的**（看上去常亮、实际从不熄灭）。已按半周期翻边重画。
+* ⚠️ **相位逐运行随机**：同一台机、同一份冻结回放，**原版自己两轮**拿到的是两种帧
+  （一轮 `replay_play` 亮 / `replay_end` 灭；另一轮两屏都灭）。所以 `tools/frame_diff.py` 的
+  L3 `max|Δch| ≤ 8` 在这两屏上**没有可复现的解** —— 每轮约 1/2 概率多出 270 px / `max|Δch| = 238`。
+  这不是接线问题，**不去凑相位**（理由见 `docs/06` §71.5-B）。
+
+### 74.4 回放屏残余（客户端侧还没做的三件）
+
+逐块数字与理由见 `docs/06` §71.3 / §71.6，这里只记"改哪个文件"：
+
+| 项 | px | 动手的地方 |
+|---|---|---|
+| 修正常数标签偏右 17 px | 1 788 | `play_screen.gd::_replay_draw_shot` 的 `_offset_label.text` 与 `OffsetContainer` 的最小宽。**机制未知**，别按"凑像素"改 |
+| 名字标签的字形被 1.279× 放大糊掉 | ~1 100 | `play_screen.gd::_fit_canvas` 的 `Control.scale` 画布模型（拆掉它 = 六个类按实尺寸画，`PIXEL_OFFSET`/`PX_PER_UNIT`/`CURVE_SCALE` 三个绝对常量都要改成按 `size` 推） |
+| `f(x)=` 图标 77×27 → 81×30 | 636 | `play_screen.gd::build()` 的 `_fx_button`：原版结构是 `FxContainer → AspectRatioContainer(stretch_mode=1) → FxTextureButton`（`text` 九个空格 + `expand_icon = true`），T4 的简化把 AR 那层省了。**会改 FxContainer 最小宽 ⇒ 挪动已对齐的输入框文本**，没做 |

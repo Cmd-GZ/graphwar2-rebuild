@@ -10191,3 +10191,248 @@ $PY tools/wire_fields.py --verify                  # ⑥ 上一轮工具（已�
 4. **`_struct_counts`（上一轮工具的 N 串口径）本身没错**，它读的是 `.data.rel.ro` 的 `(ptr,len)` 槽，
    读数就是 67；只是它**看不见** `.rodata` 里被 `strings` 行扫描/非重叠正则漏掉的东西，
    而这两条正是得出 57 / 0 / 47 的路径。**没有为了对上 67 改任何口径。**
+## 71. 回放屏残余 4 836 px 的逐项裁决：**最大那块不是"士兵合成尺寸"，是缺了三段准备弧**；"画布模型 1 970 px"被证伪（真正的载体是**修正常数标签**与**名字标签的字形栅格化**）；光标是**闪烁相位**（原版自己两轮运行就不一样）（2026-11-26，任务 T21）
+
+> 前情：**§59**（t7）把回放播放屏从 8.062 % 压到 **0.2171 %（4 836 px）**，L1/L2 全过、L3 不过，
+> 并把残余归成四块（士兵合成尺寸 1 961 / `f(x)=` 图标 636 / 光标 270 / "画布模型"1 970）。
+> 本节就是**逐块拿证据**：一块做成了、一块的前提被证伪、两块没做（写清为什么）。
+>
+> 分支 `agent/s3-residual`（从 master `c636bad`），工作树 `.agent-work/cg/wt-t21`，
+> 私有 `CARGO_HOME` + `CARGO_TARGET_DIR=<WT>/.cargo-target`。
+> 采集：`--flow replay --seed-replays`，原版 display 111 / 我方 112，同一份冻结回放
+> `1793897298`（Level 0，1 士兵 `cmdgz` + 1 靶子，104 事件 / tick 1..2276）。
+> **预注册目标值一个数没动**（`fixtures/replay_screen_targets.txt` 只追加了第六节复跑读数）。
+
+### 71.0 一页结论
+
+| 项 | 改前（master `c636bad`） | 改后（本节） | 档 |
+|---|---|---|---|
+| L3 差异像素 / 比例（`replay_play`） | 4 746 px / 0.2131 % | **4 408 px / 0.1979 %** | **观测** |
+| L3 差异像素 / 比例（`replay_end`） | 4 836 px / 0.2171 % | **4 138 px / 0.1858 %** | **观测** |
+| L1 / L2 | 过 / 24 块全过（最差 0.968） | 过 / 24 块全过（最差 0.42/0.387/0.221） | **观测** |
+| 块 `(2,2)` 士兵区 | 1 961 px | **1 533 px**：环 **≤3/通道全对**，剩 **~1 100 px 是名字标签的字形栅格化**（§71.3） | **观测** |
+| L3 `max|Δch|` | 255 | 255（**仍不过**，原因见 §71.6） | **观测** |
+| `menu` / `replay_lobby` | 0.000 % / 0 块 | 0.000 % / 0 块（回归护栏没动） | **观测** |
+
+**一句话**：`(2,2)` 那 1 961 px 里**没有"士兵合成尺寸"这回事** —— 三层 sprite 一直是对的
+（§58 的 `scale.x` 修好之后就是），缺的是 `EntityDrawer::draw` 在士兵周围画的**三段准备弧**
+（原版有、我方一条都没画）。补上之后环的位置/半径/弧张角**逐项对上（每通道差 ≤ 3）**。
+剩下的大头是两个**根本没被 §59 点名**的东西：**名字标签的字形被 1.279× 放大糊掉了**（~1 100 px）
+与**修正常数标签整体偏右 17 px**（1 788 px）；`f(x)=` 图标（636）与光标（270）见 §71.4/§71.5。
+
+### 71.1 ① 块 `(2,2)`：缺的是 `EntityDrawer::draw` 的**三段准备弧**（不是精灵尺寸）
+
+#### 71.1-A 指令链（`0x4b2890` = `EntityDrawer::draw`，5984 B）
+
+```text
+4b2a3d  call 0x8925f0            ; Control::get_size()（槽 0x9bb000）→ w(xmm0) h(xmm1)
+4b2a43  movss [rsp+0xb8],xmm0    ; w
+4b2a5a  call 0x4be6e0            ; GraphwarDrawUtil::get_team_overview → packed 色（镜像位）
+4b2a80  divss xmm1,[0x1b9fc8]    ; k = w / 50.0f（0x1b9fc8 = 0x42480000）
+4b2a88  movss xmm3,[0x1ba128]    ; 0.5f
+4b2ac0  mulss xmm0,xmm3          ; pos.x = w × 0.5
+4b2ad3  mulss xmm1,xmm3          ; pos.y = h × 0.5
+4b2a9a …4b2ae7                   ; 镜像判据（与 update_sprite 的 team_mirror 逐条同型）
+4b2aef  xorps xmm2,xmm2          ; rotation = 0
+4b2af8  call *[0x9bc018]         ; CanvasItem::draw_set_transform(pos, rot=0, scale=(mirror? -k : k, **-k**))
+```
+
+⇒ **`draw_arc` / `draw_polygon` 收到的实参全是棋盘单位**（`PosInfo` 的 f64 原值、`pos_radius×1.5`、
+线宽 `0.3`），投影由这一条变换做。**这一条把 `docs/140` §2.2 与 `entity_drawer_class.rs` 里长期
+标着"未知/推断"的"环心是不是像素"定死了：不是像素，是棋盘单位。**
+
+```text
+4b2e10  call 0x519530            ; GraphwarTickHandler::get_fractional_tick → V（[rsp+0x128]）
+4b2e94  movsd xmm0,[rsp+0x128]
+4b2e9d  divsd xmm0,[0x19f620]    ; A0 = V / 120.0（f64 @0x19f620 = 0x405e000000000000）
+4b2eb1  addsd xmm2,xmm1          ; A1 = A0 + 2π/3（@0x19f9e8）
+4b2ebe  addsd xmm1,xmm2          ; A2 = A0 + 4π/3（@0x19fbf8）
+4b366c / 4b36fd / 4b378a         ; call *[0x9bc020] = draw_arc ×3（10 折点 / 宽 0.3 / 关 AA）
+4b307d …4b3119                   ; call 0x4b9a70 ×3 = 箭头顶点 → draw_polygon ×3
+4b2fc0  cmp [rax+rdx],ebx
+4b2fc3  je  0x4b37f0             ; ★ id 不在 [[rsp+0x120]+0x20] 那张 Vec<u32> 里 ⇒ **整块箭头跳过**
+```
+
+⇒ 箭头与弧**各有各的门**（弧侧是 `0x4b32e2 test %r14b,%r14b`）。
+
+#### 71.1-B 真帧反解（原版 `replay_play_1.png`，队色像素做圆拟合）
+
+尺子：取像素**严格等于**队色 `(125,104,0)`（±6）的全部像素 → 代数圆拟合 → 半径直方图 → 方位角直方图。
+
+| 量 | 量到的值 | 反解出的原版实参 | 档 |
+|---|---|---|---|
+| 环心 | **(807.09, 830.93)** | = 士兵的棋盘坐标投影（与 sprite 同一条 `(w/2+k·x, h/2−k·y)`） | **观测** |
+| 半径带 | `r ∈ [15.30, 23.25]`，**中值 19.28** | `pos_radius×1.5×k = 0.5×1.5×25.58 = 19.19` ⇒ **`pos_radius` = 0.5**（= `GwCore.SOLDIER_HIT_RADIUS`） | **观测** |
+| 带宽 | 7.95 px | 线宽 `0.3` 棋盘单位 × k 25.58 = **7.67 px** ✓ | **观测**（`.rodata 0x1bb2b4`） |
+| 三段弧张角 | 59.44° / 59.07° / 60.13° | 半张角 **H = π/6 = 30°** ⇒ `half_angle` 走了"base 未命中"那条（`0x4b34e6 je 0x4b35b4`） | **观测** |
+| 三段弧方位 | 中心 **25.9° / 147.0° / 266.7°**（两两差 121.1°/119.7°） | `A0 = V/120` ⇒ **V = 4.654 rad × 120 = 558.5** = **载入 tick 558**（§63.0⑥ 真机读数）+ 0.5 个 tick 的余量 | **观测** |
+| 箭头 | 径向直方图在 `r ∈ [15.3, 23.3] px` **之外一个像素都没有**（箭头外沿会到 `r+0.5` 单位 ≈ 32 px） | **本样本不画箭头** | **观测** |
+
+#### 71.1-C 改了什么（三处，都是接线/语义更正，算术一个字没改）
+
+| # | 文件 | 改法 | 证据档 |
+|---|---|---|---|
+| 1 | `src/_scaffold/entity_drawer_class.rs::draw` | 图元实参**改回棋盘单位**，投影交给一条 `draw_set_transform`（新增 `ring_transform()` 逐条对应 `0x4b2a3d`…`0x4b2af8`）。**修掉两个此前看不出来的错**：① 线宽 `0.3` 是棋盘单位，旧实现直接当像素 ⇒ 环是 0.3 px 的"看不见的线"；② y 轴在变换里被取负，旧实现把角度原样送进屏幕坐标系 ⇒ 三段弧的方位是**上下镜像**的。两个错叠在一起，所以"环从来没被看见过" | **观测**（逐条指令 + 常量槽） |
+| 2 | 同上 | 新增导出属性 `show_ring_arrows`（默认 `true` = 与上一轮逐字相同）；回放分支设 `false` | 门未解（§71.1-A 末两条）⇒ **我方接线**，按观测到的形态选 |
+| 3 | `client/src/screens/play_screen.gd::_sync_entities` | 回放模式**也**填 `prep` 表：给"回放里所有活着的士兵"调 `set_ring`/`set_ring_base`，`V` = **回放播放头** `_replay.tick()`（载入态 = 第 1 批 `exec_tick` = 558），`base` = 同一个 `V`（⇒ `H = π/6`）；并把 `team_color` 设成**这名士兵自己的队色**（环色，真帧 377 px 全是 `(125,104,0)`） | `V` **观测**（反解 558 与 §63.0⑥ 的真机 tick 558 独立吻合）；环色 **观测**；多士兵同色是**我方化简** |
+
+**判据达成**：环的径向/角向几何与原版**逐项对上**（改后该区每通道差 ≤ 3，见 §71.3 的行表）；
+块 `(2,2)` 从 1 961 → **1 533** px（少掉的 428 px 是环的实色部分，环本身的 AA 还差 3/255）。
+
+### 71.2 ② "画布模型 1 970 px"：**前提被证伪**，但发现了一个真的载体
+
+§59.5 把 1 970 px 记成"我方把 1000×600 缩放到 1279×767.4、原版直接按实尺寸画 ⇒ 网格线 1.28 px
+抗锯齿"。本节逐条否掉这条归因：
+
+1. **原版的坐标也是棋盘单位**（`GraphwarPlane::draw` `0x4b5df0`：`0x4b60ce get_size` →
+   `0x4b6104 divss [0x1b9fc8]=50.0` ⇒ k = w/50；`0x4b6066`–`0x4b607d` `draw_set_transform`
+   `(pos=size×0.5, rot=0, scale=(±k,−k))`；`0x4b61ab` `draw_rect(Rect2(-25,-15,50,30), …宽 0.2)`）。
+   `AxisDrawer::draw`（`0x4e05b0`）同型，网格线宽 `0.05` / 轴线 `0.075` **也是棋盘单位**。
+2. ⇒ 原版网格线的**设备像素宽度** = `0.05 × 25.58 = 1.279 px`，与我方
+   `0.05 × 20 = 1.0` 画布 px `× 1.279` = **1.279 px** —— 同一个数。而且 Godot 的
+   `CanvasItem` **直接画到视口**（`Control.scale` 是几何变换，没有中间缓冲）⇒ 线宽/位置/纹理采样
+   **逐项相同**。
+3. **实测**：24 块里与棋盘/网格/弹道/靶子/特效相关的 **18 块 diff_px = 0**（改前改后都是）
+   ⇒ "画布模型"对网格线**贡献 0 px**。
+
+**那 1 970 px 的真身**（本节逐块量掉）：
+
+| 真身 | px | 为什么 §59 没看见 |
+|---|---|---|
+| **修正常数标签整体偏右 17 px**（块 `(3,5)`，我方墨迹 `x1781..1901`、原版 `x1764..1884`；**墨迹逐像素同为 1 136 px、bbox 同为 121×26** ⇒ 纯平移） | **1 788** | §59.2-B 当时量到的是"差 2 px"，之后底栏布局又变过（本机 `OffsetContainer` 实测 `x1746 w173`，与原版 `.tscn`+`.gd` 推出来的 172.8 **一致**，但原版墨迹中心 1824 比容器中心 1833.5 左 9.5 px，**机制没有证据**） |
+| 靶子的抗锯齿（块 `(1,3)`，`max|Δch| = 2`） | **181** | 被并进"其余" |
+
+⇒ **画布模型确实是存在的，但它只影响一件事：`Control.scale` 下的**文本字形栅格化**。**
+名字标签（`RichTextLabel`）是这一层里唯一的文本：我方字形被 1.279× 线性放大
+（实测标签区 **750 种中间色**、实色 `(125,104,0)` 只有 **59 px**），原版在实尺寸上直画
+（**360 种中间色**、实色 **406 px**）⇒ 这一条值 **~1 100 px**（块 `(2,2)` y785..811 那 27 行）。
+**本轮没做**（见 §71.6 第 2 条）：修法是把平面按实尺寸画，但那要动 `PIXEL_OFFSET` /
+`PX_PER_UNIT` / `CURVE_SCALE` 三个**绝对**常量（现在写死 500/300/20），属于整屏坐标系重构。
+
+### 71.3 改后逐块表（`replay_play`，块 = 320×290，`row,col` 从 0 起）
+
+| 块 | 改前 diff_px | 改后 diff_px | 改后 `dmean`(RGB) | 差在哪 |
+|---|---|---|---|---|
+| `(2,2)` | 1 961 | **1 533** | 0.42 / 0.387 / 0.221 | 环 ≤3/通道（~430 px）；**名字标签字形栅格化 ~1 100 px** |
+| `(3,5)` | 1 788 | 1 788（**未动**） | 0.061 / 0.055 / 0.057 | 修正常数标签偏右 17 px |
+| `(3,0)` | 636 | 636（**未动**） | 0.061 | `f(x)=` 图标（§71.4） |
+| `(3,3)` | 180 / 270 | **0 或 270**（逐运行） | 0.692 / 0.645 / 0.663 | 光标**闪烁相位**（§71.5） |
+| `(1,3)` | 181 | 181 | 0.0 / 0.0 / 0.0 | 靶子 AA（`max|Δch| = 2`） |
+| 其余 19 块 | 0 | **0** | 0,0,0 | 全过 |
+
+### 71.4 ③ `f(x)=` 图标（块 `(3,0)` 636 px）：**没做**
+
+`.tscn` 把结构写得很清楚（`recovered-src/play_screen.tscn` 751–762 行）：
+
+```text
+FxContainer (MarginContainer, script FxContainer.gd=字号 x/60)
+  ├ FxLabel        (visible=0)   text=" f(x) = "
+  ├ FxTexture      (visible=0)
+  └ AspectRatioContainer (stretch_mode=1)
+      └ FxTextureButton (GraphwarButton) text="         "（九个空格）icon=fx_option.svg
+                                          flat=1 icon_alignment=1 expand_icon=1
+```
+
+我方现在是 `FxContainer → FxTextureButton` 直挂（T4 的简化），**没有 AR 容器、没有 text、没有
+`expand_icon`** ⇒ 图标按贴图原生尺寸画（墨迹 77×27），原版 81×30。
+**没做的理由**：① 三者里任何一个都会改变 `FxContainer` 的最小宽（现在 = 左上键宽 96），
+进而挪动 `GraphwarFunctionInput`（它的文本是居中的 ⇒ 文本会跟着挪，而块 `(3,1)(3,2)`
+现在是 **0 px**，是最干净的回归护栏）；② 81×30 与 77×27 的**纵横比不同**（2.70 vs 2.85）
+⇒ 不是纯缩放，得先把 AR 容器的实际分配算出来；③ 收益 636 px（占残余 14 %），
+**风险面覆盖已经对齐的三段**。⇒ 如实留遗留。
+
+### 71.5 ④ 光标（块 `(3,3)`，180/270 px）：几何对上了，**相位是逐运行随机的**
+
+#### 71.5-A 几何
+
+真帧光标是 `x1182..1184 × y1066..1155`（3×90），**左边界正好落在文本 advance 上**。
+我方旧实现是 `draw_line(..., width=3.0)` —— 那是**以 `caret_x` 为中心**的（占
+`caret_x−1 … caret_x+1`，实测 `1181..1183`）⇒ 偏 1 px、2 列 × 90 行 = **180 px**。
+改成 `draw_rect(Rect2(caret_x, content_top, 3, 90))`（引擎 `LineEdit` 的口径）⇒ 与真帧**逐像素相同**。
+
+#### 71.5-B 闪烁：`caret_blink = true`，但**相位不可控 ⇒ L3 的 `max|Δch|` 这条判据对回放屏不可达**
+
+原版 `.tscn` 的 `GraphwarFunctionInput` 节点上**逐位**写着 `caret_blink = true` +
+`caret_force_displayed = true` ⇒ 它**真的在按引擎默认周期闪**（`caret_blink_interval` 默认 0.5 s）。
+我方旧实现只在"累计 > 0.55 s 就归零"那一刻 `queue_redraw()`，而那一刻相位恰好在"亮"的半周期里
+⇒ **每次重画都画亮的光标**（看上去常亮、实际从不熄灭）。已改成"半周期翻边时重画"。
+
+**关键观测（这决定了 L3 能不能过）**：同一台机、同一份冻结回放、同一串点击，**原版自己两轮
+运行拿到的是两个不同的帧**：
+
+| 轮 | `replay_play` 光标 | `replay_end` 光标 | 两屏 PNG |
+|---|---|---|---|
+| 本文件 §71 的基线轮（`v/base`） | **亮**（1182..1184） | **灭** | 两屏不同（差 270 px） |
+| 同一命令再跑一轮（`v/ring`） | **灭** | **灭** | 两屏**逐位相同** |
+
+⇒ 光标是"**逐运行随机的相位**"，不是"载入态亮 / 结束态灭"的状态差。
+**由此得出一条对门槛本身的结论**：L3 的 `max|Δch| ≤ 8`（要求逐像素全等）**在回放这两屏上
+没有可复现的解** —— 只要原版的光标还在闪，每轮都有约 1/2 的概率凭空多出 270 px / `max|Δch| = 238`。
+这不是"我们没做完"，是**判据本身没考虑一个逐运行随机量**。本轮**不去凑这个相位**
+（`AGENTS.md` §0 第 3 条：不把推断写成结论；用拟合常数去赌相位 = 造假）。
+
+### 71.6 遗留 / 没做（逐条写清为什么）
+
+| # | 项 | px | 状态 | 卡在哪 |
+|---|---|---|---|---|
+| 1 | 修正常数标签偏右 17 px | **1 788** | **没做** | `.tscn`+`OffsetContainer.gd` 推出来的容器宽 172.8 与本机实测**一致**，但原版墨迹中心 1824 比容器中心 1833.5 **左 9.5 px** ⇒ 机制**未知**。要么"容器右边还有 9.5 px 的东西"，要么"标签文本带 ~17 px 尾随空格"，两种都能拟合到 ~1.5 px 但不精确。**缺的证据**：原版把修正串切成"函数/修正"并写进 `OffsetLabel` 的那条指令（Rust 侧，未解） |
+| 2 | 名字标签字形栅格化 | ~1 100 | **没做** | 要拆掉 `Control.scale` 画布模型（§71.2）：`PIXEL_OFFSET`(500,300) / `PX_PER_UNIT`(20) / `CURVE_SCALE`(20,−20) 三个**绝对**常量都得改成按 `size` 推。那是整屏坐标系重构，风险覆盖现在 0 px 的 18 块 |
+| 3 | `f(x)=` 图标 636 px | 636 | **没做** | 见 §71.4：AR 容器会改 `FxContainer` 最小宽 ⇒ 挪动已对齐的输入框文本 |
+| 4 | 光标闪烁相位 270 px | 270 | **做到"不可达"这一步** | 机制已解（`caret_blink=true`）；**相位逐运行随机**（§71.5-B 两轮真帧）⇒ 无法确定性对齐 |
+| 5 | 靶子 AA 181 px | 181 | 没动 | `max|Δch| = 2`，是抗锯齿的亚像素差，不破 L2 也不破 `max|Δch| ≤ 8` |
+| 6 | 多士兵回放的环色 | — | **我方化简** | 原版环色是**逐实体**从哈希表取的；本类的 `team_color` 只有一个 ⇒ 异色多士兵会同色。本样本 1 具士兵，够用 |
+
+**规格前提被证伪的两条**（写给 lead）：
+
+1. **"士兵合成尺寸 ~1 961 px（我方 36×29 vs 原版 54×43，缺 `0x4bb6b0` 逐部件摆位的证据）"**：
+   精灵的尺寸/位置一直是**对的**（§58 修好 `scale.x` 之后）。`0x4bb6b0` 一族只负责"建 3 个
+   `Sprite2D` 子节点 + 按名字查贴图"，**没有任何逐部件的额外摆位** —— 摆位全在 `update_sprite`
+   （`0x4b9530`，§58 已逐条复原）。36×29 vs 54×43 差的那一圈**是准备圈**，它由
+   `EntityDrawer::draw` 画（不是子节点、不是 sprite），归 `0x4b2890` 那一段。
+2. **"画布模型 ~1 970 px"**：对网格线**贡献 0 px**（§71.2 的三条：坐标同为棋盘单位、
+   设备像素线宽同为 1.279、18 块 diff=0）。那 1 970 px 是**修正常数标签 1 788 + 靶子 AA 181**。
+   画布模型的真实代价在**文本栅格化**（~1 100 px，块 `(2,2)`），§59 把它并进了"士兵"那一块。
+
+### 71.7 复跑（每条都在本机跑过）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t21        # 或任意工作树
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target    # ⚠️ 单独一行
+export HOME=$WT/.fakehome                    # 可写目录，含 replays/1793897298
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+
+# ① 内核三步（改了 src/_scaffold/ 就必须做）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+$GODOT --headless --path client --import
+
+# ② 两侧真帧（**必须用本工作树**的 tools/frame_capture.py；两侧不同 display）
+python3 tools/frame_capture.py --side original --flow replay --seed-replays --out /tmp/orig --display-num 111
+python3 tools/frame_capture.py --side ours     --flow replay --seed-replays --out /tmp/mine --display-num 112
+
+# ③ 三层判据（同一个 frame_diff.py、同一份门槛文件）
+python3 tools/frame_diff.py --orig /tmp/orig --mine /tmp/mine \
+    --screens menu,replay_lobby,replay_play,replay_end \
+    --out /tmp/fd.tsv --blocks-out /tmp/fdb.tsv --json /tmp/fd.json
+#   期望：menu 0.000 % / replay_lobby 0.000 % /
+#        replay_play 4 408 px = 0.1979 %、replay_end 4 138 px = 0.1858 %（L2 0 块）
+#        ⚠️ 块 (3,3) 的 270 px 是**光标相位骰子**，逐运行可能变 0（§71.5-B）
+
+# ④ 环的尺子（队色圆拟合，本文件 §71.1-B 的表就是这么量的；系统 python3，venv 没 numpy）
+#    python3 - <<'PY'  … 取 |px-(125,104,0)|max≤6 的像素 → 代数圆拟合 → 半径/方位直方图 …
+#    原版 replay_play_1.png：中心 (807.09,830.93)、r 15.30..23.25、三段 59.1°–60.1°、方位 25.9/147.0/266.7
+#    我方改后：同三组数（每通道差 ≤3）
+
+# ⑤ 回归六项（读数见 §71.8）
+cargo test --offline                                   # 1769 / 0 / 1 ignored
+cargo test --offline --features gdext-bindings          # 1875 / 0 / 1 ignored
+bash client/run.sh selftest                             # 717 / 0 / 1 skip（missing=0 silent=0）
+for f in assemble_check base_classes_check curve_on_screen_check draw_classes_check \
+         entity_drawer_check function_drawer_check gdext_check obstacle_drawer_check \
+         plane_on_screen_check play_flow_check process_loop_check recovered_view_check \
+         signal_classes_check spike_class_check; do
+    $GODOT --headless --path client --script res://tools/$f.gd; done   # 合计 1934 / 0
+```
