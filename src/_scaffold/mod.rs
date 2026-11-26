@@ -100,6 +100,13 @@ pub mod net_events_class;
 // 只在 `gdext-bindings` 下编译。
 #[cfg(feature = "gdext-bindings")]
 pub mod net_constants_class;
+// 函数输入 / 键盘的**规则出口**（T42 ③）：把 `client/src/play/function_input.gd` 的编辑规则
+// （8 个 `match` 分支）与 `keyboard_input.gd` 的"按键 → 字符"规则收进 Rust ——
+// 落点是 `graphwar_function_input::Buffer`（`0x4f3210`/`0x4f3910`/`0x4f44c0`）与
+// `classify_key`（`gui_input` 折叠跳转表 `0x1c3d5c`，198 项里 28 项）。`.gd` 只留视图。
+// 只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod function_input_rules_class;
 // `PlayerShowcase` 的真节点类（§39）：读档案 + 三层 `draw_texture_rect` + 计数器闸门。
 #[cfg(feature = "gdext-bindings")]
 pub mod player_showcase_class;
