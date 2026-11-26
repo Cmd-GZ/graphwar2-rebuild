@@ -26,6 +26,7 @@
 //! | `GwTurnDriver.round_*()` | [`crate::graphwar_turn_manager::RoundCollection`] | **观测**（`docs/141` §4：130/130 批按公告顺序） |
 //! | `GwTurnDriver` 的**玩家之间**轮转 | 本文件的 `cursor` | **未知**（原版是 `HashMap` 迭代序，`docs/109` §6-A）；这里固定成调用方给的玩家顺序 |
 //! | `GwShotFlow.judge()` | [`crate::graphwar_shot_calculator::settle::resolve_points_owned`] | **逐位**（规则本体；射手按 id 排除 = `0x3c4452`/`0x3c3e81`） |
+//! | `GwLevelRules.evaluate_soldiers()` | [`crate::game::Match::get_alive_teams`] 的入参整形 + 同一个 `evaluate` | **逐位**（`0x473520`：枚举生命表 → `0x454950` 判活 → `0x3c2120` 查队伍；只数"有没有"） |
 //! | `GwTurnState.apply()` / `can_fire()` | [`crate::turnstate::next_state`] / `GameState::index` | 状态字节 **逐位**（变体表 `.data.rel.ro 0x9586d0`、`set_state` `0x4780cc`、`cmp BYTE [self+0x120],2` `0x470989`）；迁移序列 **观测**（真报文 `GameStateInfo`） |
 //!
 //! # 一处必须说明的编号换算
@@ -223,7 +224,61 @@ impl GwLevelRules {
             targets_alive: dict_int(&state, "targets_alive", 0),
             turns_used: dict_int(&state, "turns_used", 0),
         };
-        let v = self.rules.evaluate(&st);
+        self.evaluate_state(&st)
+    }
+
+    /// 与 [`GwLevelRules::evaluate`] 同一个判据，但**入参是实体表**而不是已经数好的两队人数。
+    ///
+    /// 这一步原来在 `.gd` 的 `_alive_by_team()` + `_teams_present()` 里：两个纯循环，
+    /// 一个数"每队几个活的"、一个取"开局就有士兵的队伍"。它们的原版对应物是
+    /// **`get_alive_teams`（`0x473520`，640 字节，逐位）**：遍历**生命表**的 id →
+    /// `0x454950` 判活 → `0x3c2120` 查队伍，返回 `(Team1 有活体, Team2 有活体)` 两位。
+    /// 注意原版**只数"有没有"，不数"几个"**（`docs/150` §2.1）—— 所以这里的计数只是
+    /// 中间量，判据仍然只问 `> 0` / `== 0`（[`MatchState::survivors_of`]）。
+    ///
+    /// `soldiers` = `_soldiers` 原表：`[{team: int, alive: bool}, …]`。**开局在场的队伍**
+    /// 来自全表（含已阵亡的），否则一队全灭后 `enemy_present` 永远为假、对战关判不出胜负。
+    #[func]
+    fn evaluate_soldiers(
+        &self,
+        soldiers: VarArray,
+        targets_total: i64,
+        targets_alive: i64,
+        turns_used: i64,
+    ) -> VarDictionary {
+        let mut alive_team0 = 0i64;
+        let mut alive_team1 = 0i64;
+        let mut teams_present: Vec<i64> = Vec::new();
+        for i in 0..soldiers.len() {
+            let Some(v) = soldiers.get(i) else { continue };
+            let d = v.to::<VarDictionary>();
+            let team = dict_int(&d, "team", 0);
+            if !teams_present.contains(&team) {
+                teams_present.push(team);
+            }
+            if !d.get("alive").map(|v| v.to::<bool>()).unwrap_or(false) {
+                continue;
+            }
+            match team {
+                0 => alive_team0 += 1,
+                1 => alive_team1 += 1,
+                _ => {} // 其它队伍号不进 `MatchState` 的两个计数位（与原 `.gd` 同形）
+            }
+        }
+        let st = MatchState {
+            alive_team0,
+            alive_team1,
+            teams_present,
+            targets_total,
+            targets_alive,
+            turns_used,
+        };
+        self.evaluate_state(&st)
+    }
+
+    /// `MatchState` → GDScript 字典（两个入口共用这一份整形，键与旧 `.gd` 一致）。
+    fn evaluate_state(&self, st: &MatchState) -> VarDictionary {
+        let v = self.rules.evaluate(st);
         let mut out = VarDictionary::new();
         out.set("over", v.over);
         out.set("human_won", v.human_won);
@@ -541,7 +596,7 @@ mod tests {
     //! （`PlayerTurns` 的轮转规则本身有它自己的单测）。`VarArray` 之类需要引擎初始化，
     //! 所以这里不测 `#[func]` 的搬运层，那部分由 `client/tools/play_flow_check.gd` 覆盖。
 
-    use super::SOLDIER_ID_SHIFT;
+    use super::{parse_turn_event, SOLDIER_ID_SHIFT};
 
     #[test]
     fn soldier_index_shift_avoids_the_sentinel() {

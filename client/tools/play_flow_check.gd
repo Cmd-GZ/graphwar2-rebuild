@@ -47,12 +47,16 @@ const RULES_CLASS := "GwLevelRules"
 const DRIVER_CLASS := "GwTurnDriver"
 
 ## 播放屏仍然**必须**走的两个 Rust 入口（少一个就说明流程又回 GDScript 了）。
-const FLOW_CALLS := ["_rules.evaluate(", "_turn_driver.next_shooter(", "_turn_driver.setup_flat("]
+## T31 起胜负入口是 `evaluate_soldiers(`（入参 = 实体表，判据 `0x473520` 只数"有没有"）；
+## 旧的 `evaluate(` 需要调用方先把两队人数数好，那一步已经搬进 Rust。
+const FLOW_CALLS := ["_rules.evaluate_soldiers(", "_turn_driver.next_shooter(", "_turn_driver.setup_flat("]
 ## 旧流程里已经被删掉的函数/写法（出现任何一个都算回流）。
 const GONE_PATTERNS := [
 	"func _all_alive_players_shot", "func _shot_owners",
 	"GwLevelRules.for_campaign", "GwLevelRules.for_versus", "GwLevelRules.for_match",
 	"SOLDIER_ID_NONE", "wiped.append",
+	# T31：两队存活/在场那两圈计数搬进 `GwLevelRules.evaluate_soldiers()`（`0x473520`）
+	"func _alive_by_team", "func _teams_present",
 ]
 
 ## 67 号搬走的三块流程（`docs/16-client.md` §53）：出现任何一个都说明流程又回到 GDScript 了。
@@ -277,6 +281,53 @@ func _initialize() -> void:
 	ok(String(rboth.call("kind_name")) == "both",
 		"规则：目标 + 对手 ⇒ both（21 关数据里不存在，docs/131 §2.2）")
 	ok(int(r0.call("target_team")) == 1, "靶子属于 Team2（`0x46f310` 的队伍是入参；docs/150 §Q1）")
+
+	# --- 1.1 `evaluate_soldiers()`：入参是**实体表**（T31；判据 `0x473520` 只数"有没有"）---
+	# 与 `evaluate()`（已数好的两队人数）必须**同结论**：同一份局面用两条入口问一遍。
+	# 表形与播放屏的 `_soldiers` 一致：`[{team: int, alive: bool}, …]`。
+	var pairs := [
+		# [soldiers, targets_total, targets_alive, turns_used, 期望 reason, 期望 over]
+		[[{"team": 0, "alive": true}, {"team": 1, "alive": true}], 0, 0, 0, "playing", false],
+		[[{"team": 0, "alive": true}, {"team": 1, "alive": false}], 0, 0, 1, "enemy_wiped", true],
+		[[{"team": 0, "alive": false}, {"team": 1, "alive": false}], 0, 0, 1, "mutual_wipe", true],
+		[[{"team": 0, "alive": true}, {"team": 1, "alive": false}], 0, 0, 0, "enemy_wiped", true],
+	]
+	var survivors_bad := PackedStringArray()
+	for case in pairs:
+		var got: Dictionary = r5.call("evaluate_soldiers", case[0], int(case[1]), int(case[2]),
+			int(case[3]))
+		if String(got.get("reason", "")) != String(case[4]) or bool(got.get("over", false)) != bool(case[5]):
+			survivors_bad.append("%s⇒%s/%s" % [str(case[0]), str(got.get("reason", "")),
+				str(got.get("over", false))])
+	ok(survivors_bad.is_empty(),
+		"判定入口：`evaluate_soldiers()` 四条局面真相表（含「两队都活 ⇒ 不结束」；不符：%s）"
+		% str(survivors_bad))
+	# 同一份局面、两条入口必须给出**完全相同**的四个字段（不能有两个真相源）。
+	var same_bad := PackedStringArray()
+	for case in pairs:
+		var by_table: Dictionary = r5.call("evaluate_soldiers", case[0], int(case[1]),
+			int(case[2]), int(case[3]))
+		var alive := {0: 0, 1: 0}
+		var present: Array = []
+		for srow in case[0]:
+			if not present.has(int(srow.team)):
+				present.append(int(srow.team))
+			if bool(srow.alive):
+				alive[int(srow.team)] = int(alive[int(srow.team)]) + 1
+		var by_count: Dictionary = r5.call("evaluate", {"alive_by_team": alive,
+			"teams_present": present, "targets_total": int(case[1]),
+			"targets_alive": int(case[2]), "turns_used": int(case[3])})
+		for k in ["over", "human_won", "winner_team", "reason", "verdict_byte"]:
+			if str(by_table.get(k, null)) != str(by_count.get(k, null)):
+				same_bad.append("%s:%s/%s" % [k, str(by_table.get(k, null)), str(by_count.get(k, null))])
+	ok(same_bad.is_empty(),
+		"判定入口：`evaluate_soldiers()` 与 `evaluate()` 在同一局面上同结论（不符：%s）"
+		% str(same_bad))
+	# 在场队伍取**全表**（含已阵亡者）—— 否则一队全灭后永远判不出胜负。
+	var wiped_both: Dictionary = r5.call("evaluate_soldiers",
+		[{"team": 0, "alive": false}, {"team": 1, "alive": false}], 0, 0, 1)
+	ok(bool(wiped_both.over) and String(wiped_both.get("reason", "")) == "mutual_wipe",
+		"判定入口：两队全灭 ⇒ `mutual_wipe`（在场队伍来自全表；实际 %s）" % str(wiped_both))
 
 	var v: Dictionary = r0.call("evaluate",
 		{"alive_by_team": {0: 1}, "teams_present": [0],

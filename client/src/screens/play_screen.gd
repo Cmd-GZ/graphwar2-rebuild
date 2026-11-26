@@ -2291,12 +2291,7 @@ func _judge_shots(shots: Array) -> Dictionary:
 	for shot in shots:
 		rows.append({"points": shot.get("points", PackedVector2Array()),
 			"shooter": _soldiers.find(shot.get("soldier", null))})
-	# `_soldiers` 是 `Array[Dictionary]`（**有类型的**数组），而扩展方法收的是无类型 `Array`：
-	# godot-rust 在边界上拒绝"把有类型的数组塞进无类型形参"（`copied array should have
-	# same type`，0.5.5 `array.rs:1225`）⇒ 这里显式铺一份无类型表。
-	var soldier_rows: Array = []
-	soldier_rows.assign(_soldiers)
-	return _flow.judge(rows, soldier_rows, _targets.entities(), _obstacles,
+	return _flow.judge(rows, _soldier_rows(), _targets.entities(), _obstacles,
 		GwCore.SOLDIER_HIT_RADIUS)
 
 ## 命中表 → 状态行（`_shot_status` 那一行**不显示**，只给自检/诊断，`docs/125` §5）。
@@ -2415,13 +2410,11 @@ func _check_match_over() -> void:
 	if _rules == null:
 		_rules = GwLevelRules.new()
 		_rules.from_versus(_human_team())
-	var verdict := _rules.evaluate({
-		"alive_by_team": _alive_by_team(),
-		"teams_present": _teams_present(),
-		"targets_total": _targets.total(),
-		"targets_alive": _targets.alive_count(),
-		"turns_used": _flow.turns_used(),
-	})
+	# 入参是**实体表**，不是"已经数好的两队人数"：`0x473520 get_alive_teams` 的原版行为就是
+	# 遍历生命表 → `0x454950` 判活 → `0x3c2120` 查队伍，只数"有没有"（`docs/150` §2.1）。
+	# 旧实现里的 `_alive_by_team()` / `_teams_present()` 两个循环是同一条规则的第二次实现。
+	var verdict := _rules.evaluate_soldiers(_soldier_rows(), _targets.total(),
+		_targets.alive_count(), _flow.turns_used())
 	_last_verdict = verdict
 	if not bool(verdict.get("over", false)):
 		return
@@ -2436,22 +2429,13 @@ func _check_match_over() -> void:
 		String(verdict.get("reason", "?"))])
 	app_node.report_match_result(human_won, winner)
 
-## 每队的**存活士兵数**（键固定 0/1，与旧实现的形状一致）。
-func _alive_by_team() -> Dictionary:
-	var alive := {0: 0, 1: 0}
-	for s in _soldiers:
-		if bool(s.alive):
-			alive[int(s.team)] = int(alive[int(s.team)]) + 1
-	return alive
-
-## **开局时**就有士兵的队伍（不是"当前还活着的队伍" —— 一队全灭后它必须仍在表里，
-## 否则 `enemy_present` 会永远为假，对战关就永远判不出胜负）。
-func _teams_present() -> Array:
-	var out := []
-	for s in _soldiers:
-		if not out.has(int(s.team)):
-			out.append(int(s.team))
-	return out
+## `_soldiers` 的**无类型副本**：扩展方法收的是无类型 `Array`，而 `_soldiers` 是
+## `Array[Dictionary]`（godot-rust 在边界上拒绝"有类型数组塞进无类型形参"，
+## 0.5.5 `array.rs:1225` 的 `copied array should have same type`）。
+func _soldier_rows() -> Array:
+	var rows: Array = []
+	rows.assign(_soldiers)
+	return rows
 
 ## 人类玩家所在队伍。与 `app.gd::match_summary()` 用同一条规则（第一个非 Bot 玩家），
 ## 这样"谁赢了"与结算框的文案永远一致。
