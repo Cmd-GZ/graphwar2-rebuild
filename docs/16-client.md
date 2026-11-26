@@ -12245,3 +12245,90 @@ root = get_node("/root/GraphwarRootNode")
    它们都**不需要**动版式。play_screen 那几份要动的是**容器形状**，代价高一档。
 3. **`log()` 的方法体我只有推断**（见 §78.2 那张表）。如果下一轮能定位 x86 侧 body，请把它换掉 ——
    现在的实现只保证"原版脚本调用它不会报错 + 有可观测缓冲"。
+
+## 79. 客户端侧：**原版 `.tscn` 回来了两份** —— 节点树从"代码手抄"改成"原版场景"，`res://` 扁平别名层怎么铺，以及为什么剩下 13 屏装不上（2026-11-26，任务 T41 / `task-38`）
+
+> 数值/门槛/复跑命令在 `docs/06` §91；本节只讲**客户端结构**：挂载点、时序、别名层、以及"我方树 vs 原版 `.tscn`"的差异清单。
+
+### 79.1 为什么装原版 `.tscn` 需要先补一层 `res://` 扁平别名
+
+原版工程把场景/脚本/主题/图标**全放在 `res://` 根**：`[ext_resource type="Script" path="res://MarginContainer.gd"]`、
+`path="res://return.svg"`、`res://button_font.tres`。我们的东西住在 `res://src/views/`、`res://assets/`。
+`.tscn` 又要**逐字节**不改 ⇒ 只能让那些扁平路径**解析得到**。所以 `client/` 根多了一层别名（**全是接线，不是原版内容**）：
+
+```text
+client/                          # = res://
+├── <Name>.gd                    # 符号链接 → src/views/<Name>.gd（原版字节）
+├── <name>.svg.import            # [remap] path="res://assets/<name>.ctex"      ← 图标
+├── <font>.ttf.import            # [remap] path="res://assets/<font>.fontdata"  ← 字体
+├── button_font.tres.remap       # [remap] path="res://assets/button_font.res"  ← 包里那份 2.8 MB 真 FontFile
+├── <theme>.tres.remap           # [remap] path="res://scenes/aliases/<theme>.tres"
+└── scenes/aliases/<theme>.tres  # 8 份 status=完整 的主题，原版字节副本
+```
+
+这不是我们发明的机制：**导出包自己就这么干** —— `rsc/graphwar_theme.tres.remap` 里是
+`path="res://.godot/exported/…-graphwar_theme.res"`，`rsc/return.svg.import` 里是 `path="…-return.ctex"`。
+我们只是把 target 换成仓库里真实存在的 `assets/` 产物（`client/assets/MANIFEST.tsv` 逐条登记 sha256）。
+
+### 79.2 原版 `.tscn` 的根节点**没有 script** ⇒ 脚本必须在**进树之前**挂
+
+原版的界面控制器在 Rust 里（`AGENTS.md` §0.4），所以 `recovered-src/*.tscn` 的根节点块里 `script =` 出现 **0 次**
+（`play_screen.tscn` 的 16 处 `script =` 全在**子节点**上）。我们那 12 行存根是把 `script` 写死在根上的 ——
+换成原版 `.tscn` 后这层就没了。改法（`client/src/main.gd::_instantiate_screens`）：
+
+```gdscript
+if node.get_script() == null:                       # 原版场景：根节点无 script
+    node.set_script(load("res://src/screens/%s.gd" % file))
+node.name = screen_name
+screens_control.add_child(node)                     # ⚠️ 必须在 add_child 之前，`_ready` 不会补发
+```
+
+还没换上的那 13 屏存根自带 `script` ⇒ 这段是空操作，**同一份代码兼容两种场景**。
+
+### 79.3 两项已验收的替换（`cmp` 逐字节）
+
+| 屏 | 原版 `.tscn` | 之前 | 之后 | 删掉的代码 |
+|---|---|---|---|---|
+| `ChatPopUp` | `chat_pop_up.tscn` 214 行 / **7 节点** / 9 ext | 12 行存根 + `build()` 手抄 7 个节点 | 原版字节；`build()` 只剩 `get_node` 两句 + `text_submitted` 接线 | `chat_pop_up.gd` **138 → 75**（`build()` 62 行 + `_invisible_theme()` 15 行整段删） |
+| `ReplayLobby` | `replay_lobby.tscn` 92 行 / **13 节点** / 8 ext | 12 行存根 + `build()` 手抄 13 个节点 | 原版字节；`build()` 只剩取 `ReplaysContainer` | `replay_lobby.gd` **275 → 262**（`GwUI.frame`/`build_header`/`scroll`/`ad_bar` 24 行骨架删） |
+
+两处**节点名/路径一个字都没改**（改的是我方 `get_node` 的查找路径）。`chat_pop_up.tscn` 里那个
+`ChatContainer` 的脚本是**场景内联子资源**（`[sub_resource type="GDScript"]`），装了以后
+我方原来手写的"宽/50 字号"那一段也一并不需要了 —— 原版就在那个内联脚本里。
+
+`replay_lobby` 那条 152 个弯角像素的 `ClipButton.clip_children = 2` 现在**写在 `.tscn` 里**，
+`replay_lobby.gd::build()` 里那段"就地补一条 + 把根因写进文档"的补丁**已删除**（根因在 `docs/06` §56.5）。
+
+### 79.4 `Ad_holder`：只补原版 `AdContainer.gd` 真正用到的两个成员
+
+`replay_lobby.tscn` / `campaign.tscn` / `play_screen.tscn` / `player_screen.tscn` / `lan_lobby.tscn` 五屏都有
+`AdContainer` 节点，挂的是**原版** `AdContainer.gd`，它 `_ready` 里 `get_node("/root/GraphwarRootNode/Ad_holder")`
+拿两个成员：`signal ad_loaded`、`var ad_size`。`docs/16` §78.1 记的是"`Ad_holder` 没抄（`impossible`）"——
+那条结论**没变**（`Ad_holder.gd` 要 7 个 AdMob 原生类型，一个都没有）。本轮只是把**那两个成员**用我方替身
+`client/tools/recovered_ad_holder_stub.gd` 补上，节点加在 `client/scenes/main.tscn` 的**原版那个路径**
+（`/root/GraphwarRootNode/Ad_holder`）。效果：`Ad_holder`/`AdContainer` 相关 ERROR **20 行 → 0**。
+
+### 79.5 剩下 13 屏为什么一份都装不上：**我们的断言把方向挡住了**
+
+`selftest.gd` 找按钮是这么写的：
+
+```gdscript
+var n := root.find_child(node_name, true, false); return n as GwButton   # _find_button()
+...
+if child is GwButton and String(child.name).begins_with("level_"): level_buttons += 1
+```
+
+而 `GwButton`（`client/src/ui/gw_button.gd`）是 **`extends Button`** 的**我方仿制品**（它自己的注释写着
+"复刻原版 `GraphwarButton` 的**契约**，不是它的实现"）。原版 `.tscn` 里的按钮是**原生 `GraphwarButton`**。
+⇒ 一装原版场景，`Campaign 生成 21 个关卡按钮（实际 0）` 起 9 条 + `JoinLevelPopUp` 级联共 **14 条红**（实测）。
+本任务不许改既有断言 ⇒ `campaign.tscn` **原地回退**（已 `cmp` 过的原版字节也一并撤掉，不留半成品）。
+
+**下一步（要 lead 决策的一条）**：要么允许把这批断言从 `GwButton` 放宽到 `GraphwarButton`
+（`is Button` + `input_text` 判断，本来 `input_text` 就在原生类上），要么把 `GwButton` 整个换成原生类
+（跨 `ui/`、`screens/`、`tools/` 的大改）。**在这条解决前，13 屏装了也过不了门槛。**
+
+### 79.6 别名层是我方接线：它有漂移风险，下一轮应改成生成物
+
+`scenes/aliases/` 那 8 份 `.tres` 是 `recovered-src/` 的**副本**（原版字节，但复制了一份）。
+下游若改 `recovered-src/`，这 8 份不会自动跟 ⇒ 下一轮应把整层别名改成**生成物**
+（`tools/` 里一个小脚本从 `recovered-src/` + `client/assets/MANIFEST.tsv` 生成），并加一条 `cmp` 断言。

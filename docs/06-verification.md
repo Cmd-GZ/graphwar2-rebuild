@@ -14883,3 +14883,144 @@ $PWD/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path client 
 # ⑤ 控制器在 Rust 里（57 条 Location 字面量 + 16 个屏根节点无 script）
 grep -ao 'src/graphwar_[a-z_]*\.rs' .reference/game/libgraphwarrust.so | sort -u | wc -l
 grep -c 'script =' recovered-src/play_screen.tscn     # 16（全是**子节点**；根节点块 0 条）
+## 91. T41：把**原版 `.tscn` 装回 `client/`** 的第一批 —— 2 份**逐字节装上并接通**（`chat_pop_up` 214 行／`replay_lobby` 92 行），13 份屏的拦路石是**我们自己的断言**（2026-11-26，任务 T41 / `task-38`）
+
+> 判据/口径：`.agent-work/specs/T41-tscn-import.md`。工作树 `.agent-work/cg/wt-t41`、分支 `agent/tscn-import`，
+> 基线 `origin/master` = `eeecd07`（工作树初建时落后 17 个 commit，**已 rebase 到 master 再复测**，见 §91.7）。
+> 台账（先出台账再动手）：`fixtures/tscn_import_plan.tsv`（31 行 + 表头，判据写死在生成器里）。
+
+### 91.0 一页结论
+
+**31 份原版 `.tscn` 里装上了 2 份**（`chat_pop_up.tscn` 214 行 / `replay_lobby.tscn` 92 行）——每份都与
+`recovered-src/` **`cmp` 逐字节相同**，并且**是被 `client/` 真正加载、真正渲染的那一份**（不是躺在仓库里的副本）。
+`client/scenes/screens/*.tscn` 合计 **180 行（15 × 12 行存根）→ 462 行**；两份屏的 `.gd` 里**手抄节点树被删掉 90 行**
+（`chat_pop_up.gd` 138→75、`replay_lobby.gd` 275→262；其中 `build()` 内的造节点/设主题/挂布局代码共 **86 行**）。
+
+**装不上 13 份屏的原因不是资产、也不是路径，而是 `client/tools/selftest.gd` 的类型断言**：
+它按我们自造的 `GwButton`（`extends Button`）找按钮（`child is GwButton`、`_find_button() as GwButton`），
+而原版 `.tscn` 里的按钮是 **GDExtension 类 `GraphwarButton`** ⇒ 一装原版场景，`Campaign` 那 9 条
+（"生成 21 个关卡按钮"等）立刻红。**改断言不在本任务允许范围内**，所以这类屏原地回退，
+把"要放宽哪几条断言"写进 §91.5 —— 这是**我们自己的度量挡住了正确的方向**，必须由 lead 决定。
+
+### 91.1 机制：原版 `res://` 是**扁平**的，装原版场景必须先补一层别名
+
+原版工程把 `.tscn`/`.gd`/`.tres`/`.svg` 全放在 `res://` **根**（`[ext_resource path="res://MarginContainer.gd"]`、
+`res://return.svg`、`res://button_font.tres`）。我们的布局不一样（`res://src/views/*.gd`、`res://assets/*.ctex`）。
+要**同时**做到"`.tscn` 逐字节不改"和"引用解析得到"，只有一条路：在 `client/` 根（= `res://` 根）铺一层**别名**。
+别名层的内容（本轮，全部是我方接线，**不是原版的东西**）：
+
+| 别名 | 做法 | 为什么 |
+|---|---|---|
+| `res://<Name>.gd` | 符号链接 → `src/views/<Name>.gd` | 视图脚本是原版字节，只是住的位置不同 |
+| `res://<name>.svg` | `<name>.svg.import` 里 `[remap] path="res://assets/<name>.ctex"` | `.svg` 的**源文件不在包里**（导出器只留导入产物），`assets/` 里那份 `.ctex` 就是真像素 |
+| `res://<font>.ttf` | `<font>.ttf.import` → `res://assets/<font>.fontdata` | 同上，`.fontdata` 是导入后的 `FontFile` |
+| `res://button_font.tres` | `button_font.tres.remap` → `res://assets/button_font.res` | 资产清单（`client/assets/MANIFEST.tsv`）本来就登记了这条映射；**原件**（2.8 MB，含内嵌字形图集）在 assets 里 |
+| `res://<theme>.tres`（另 8 份） | `<theme>.tres.remap` → `res://scenes/aliases/<theme>.tres` | 这 8 份 `status=完整`，原版字节复制到 `scenes/aliases/` 后逐字引用 |
+
+**这一层不是猜测**：`.remap`/`.import` 正是**导出包自己用的**机制 —— `rsc/graphwar_theme.tres.remap` 里就是
+`path="res://.godot/exported/…-graphwar_theme.res"`，`rsc/return.svg.import` 里就是 `path="…-return.ctex"`。
+我们只是把 target 指向仓库里真实存在的 `assets/` 产物。**证据档：观测**（`rsc/` 里那 158 份 remap 是包内原件；
+别名指向的产物在 `client/assets/MANIFEST.tsv` 里逐条登记、逐字节 sha256）。
+
+### 91.2 装上的两份
+
+| 原版文件 | 原版 | 我方存根 | `cmp` | 删掉的代码 |
+|---|---|---|---|---|
+| `chat_pop_up.tscn`（7 节点） | 214 行 | 12 行 | **逐字节相同** | `chat_pop_up.gd` **138 → 75 行**：`build()` 里那段手抄树（`GwUI.margins`/`vbox`/`margin`/`LineEdit.new`/`rich` + 逐项 `add_theme_stylebox_override`，37–98 行 = 62 行）与 `_invisible_theme()`（95–109 行 = 15 行）**整段删除**；改为 `get_node("ChatContainer/ChatContainer2/...")` 两句取句柄 + `text_submitted` 接线 |
+| `replay_lobby.tscn`（13 节点） | 92 行 | 12 行 | **逐字节相同** | `replay_lobby.gd` **275 → 262 行**：`build()` 里 `GwUI.frame`/`build_header`/`GwUI.scroll`/`GwUI.ad_bar` 共 **24 行**手抄骨架删除，改为 `get_node("MarginContainer/VBoxContainer/ScrollContainer/ReplaysContainer")`；那 152 个弯角像素依赖的 `ClipButton.clip_children = 2` 现在**写在 `.tscn` 里**，代码不再补 |
+
+装上后**新增的原版字节脚本**：`client/src/views/AdContainer.gd`（`replay_lobby` 的 `AdContainer` 节点要它；
+`client/src/views/` 34 → **35**，与 `recovered-src/AdContainer.gd` `cmp` 逐字节相同）。
+
+**节点名/路径全按原版**：没有为了迁就我们改过一个节点名 —— 改的是**我方代码的查找路径**（`get_node` 那两句）。
+
+### 91.3 `Ad_holder`：原版 `AdContainer.gd` 的两个成员用**我方替身**补上（不是原版字节，必须声明）
+
+`replay_lobby.tscn` 的 `AdContainer` 节点挂的是**原版** `AdContainer.gd`，它 `_ready` 第一行是
+`get_node("/root/GraphwarRootNode/Ad_holder")`。master 上 T33 已把根节点换成原版类（`docs/16` §78），
+但 **`Ad_holder` 节点没抄**（`Ad_holder.gd` 依赖 7 个 AdMob 原生类型，物理不可得 ⇒ T33 判 `impossible`）。
+于是原版 `AdContainer.gd` 一挂就报 `Node not found` + `Invalid access to property 'ad_loaded'`（每帧刷）。
+
+本轮补法：`client/scenes/main.tscn` 里加一个 `Ad_holder` 节点（`type="GraphwarAdSwitch"`，位置 = 原版那个
+`/root/GraphwarRootNode/Ad_holder`），脚本用**我方替身** `client/tools/recovered_ad_holder_stub.gd`
+（它只补原版 `AdContainer.gd` 真正用到的两个成员：`signal ad_loaded` / `var ad_size = Vector2i(0,0)`）。
+**T33 那条 `impossible` 结论仍然成立**：7 个 AdMob 原生类型一个都没复原，被补上的只是这两个成员。
+效果：`Ad_holder`/`AdContainer` 相关 ERROR **20 行 → 0 行**（selftest 日志实测）。
+
+### 91.4 门槛读数（rebase 到 `eeecd07` 之后重测，全部本机自跑）
+
+| 门槛 | 读数 |
+|---|---|
+| `cmp`（2 份装上的 `.tscn` + `AdContainer.gd`） | **逐字节相同**（`cmp` 无输出，退出码 0） |
+| `selftest` | **717 passed / 0 failed / 1 skipped**，`missing=0(claimed 0 / degraded 0 / silent 0)`，`code=0` |
+| headless 14 脚本 | **1935 / 0**（244+117+96+235+367+132+24+116+96+207+66+57+155+23，逐脚本与 master 基线一致） |
+| `cargo test --offline` | **绿**（`rc=0`；本分支**未改 `src/`**，这一条是"没弄坏"的旁证） |
+| 像素基线（`replay` 流四屏，两侧**串行**重拍，改前/改后各一次） | `menu` **0 px（0.000% / max\|Δ\|=0）改前改后都是 0**；`replay_lobby` **0 px 改前改后都是 0**（装上原版 `.tscn` 后仍逐像素相同）；`replay_play` 0.077% → 0.0891%（增量 0.012 个百分点 = 该侧**噪声地板** 0.012%）；`replay_end` 0.0891% 不变。⇒ **本基线（含 master 17 个新 commit）上 `replay_play`/`replay_end` 本来就不是 0**（`docs/06` §79.6 那个"归零"是旧基线的读数），**与本轮改动无关**（改前 0.077%、改后 0.0891%，都在 0.089% 这一档） |
+| `chat_pop_up` 像素 | **没有真值帧**：5 个采集 flow（replay/static/match/endgame/campaign）都不开聊天浮层 ⇒ 本轮只能给"节点树/脚本/主题都来自原版字节 + 两道门槛没变差" |
+
+### 91.5 装不上的 13 份屏：三类具体拦路石（按"要动谁"分）
+
+| 类 | 份数 | 拦路石 | 结论/要谁决定 |
+|---|---|---|---|
+| **A. 我方断言按 `GwButton` 写死** | `main_menu` / `campaign` / `lan_lobby` / `GameSetup` / `player_screen` / `join_level_pop_up` / `confirm_exit_pop_up` / `connecting_pop_up` / `disconnected_pop_up` / `join_ip_pop_up` / `add_bot_pop_up` / `endgame_pop_up` / `play_screen`（**13**） | 原版 `.tscn` 的按钮是 **`GraphwarButton`**（GDExtension 类），而我方 `selftest.gd` 用 `child is GwButton` / `_find_button(...) as GwButton` 找按钮；`GwButton` 是 `extends Button` 的**我方**仿制品（`docs/16` 自述"复刻契约"）。一装原版场景，按钮类型就对不上 ⇒ 断言红 | **实测**：`campaign.tscn` 装上后 `selftest` = **697 passed / 14 failed**（`Campaign 生成 21 个关卡按钮（实际 0）` 起 9 条 + `JoinLevelPopUp` 级联）。已**原地回退**。要装这批，必须先决定：把断言从 `GwButton` 放宽到 `GraphwarButton`（**改断言 ∈ 禁区**），或把 `GwButton` 彻底换成原生类（跨任务大改） |
+| **B. 依赖 `status=省略` 的 `.tres`（内嵌字形图集/字体字节被导出器丢弃）** | `play_screen` / `join_level_pop_up` / `player_screen` / `campaign` 等 8 份引用骨架主题 | 实测骨架里 `FontFile.data.size() == 0` ⇒ 加载即刷 `Invalid image: image is empty`，字形全丢 | 已做出可用 shim 的唯一一种（`campaign_button_theme_2`：把内嵌 `FontFile` 换成 `assets/EraserRegular.fontdata`，`font_name="Eraser" style="Regular"` 逐项同名）——**但它随 campaign 一起回退了**，因为 A 类先挡住了。其余骨架主题没有 `assets/` 对应产物 ⇒ **本任务范围内装不上**（要 `tools/extract_assets.py` 扩到主题 `.res`，不在允许改的文件里） |
+| **C. 缺 AdMob 原生插件** | `AdContainer`/`Ad_holder`（`addons/admob/sample/*.tscn` 5 份） | 包内零个原生二进制 | 物理不可得（与 T33 结论一致）；`Ad_holder` 只补了两个被 `AdContainer.gd` 用到的成员（§91.3） |
+
+**另外 16 份不是屏（`function_buttons` / `team1_entry` / `line_2d` / `name_label` / `main` …）本轮一份都没装**：
+它们在 `client/` 里**没有消费者**（我方用代码画这些行/标签/轨迹），装进去只会变成"躺在仓库里没人加载的副本" ——
+那和 `recovered-src/` 里那份没有区别，等于**零进步**。要装它们必须同时把消费者（原版脚本或对应 Rust 侧）接上，
+那是下一轮的事（台账 `fixtures/tscn_import_plan.tsv` 里每份都给了风险与依赖）。
+
+### 91.6 复跑命令
+
+```bash
+# 0) 环境
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild WT=$MAIN/.agent-work/cg/wt-t41
+export CARGO_HOME=$MAIN/.reference/cargo-home CARGO_TARGET_DIR=$WT/.cargo-target HOME=$WT/.fakehome
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+
+# 1) 台账（判据在生成器里）
+python3 tools_t41_plan.py > fixtures/tscn_import_plan.tsv
+
+# 2) 逐字节核对（本轮装上的是 2 份）
+cmp client/scenes/screens/chat_pop_up.tscn    recovered-src/chat_pop_up.tscn
+cmp client/scenes/screens/replay_lobby.tscn   recovered-src/replay_lobby.tscn
+cmp client/src/views/AdContainer.gd           recovered-src/AdContainer.gd
+
+# 3) 导入 + 自检 + headless 14
+"$GODOT" --headless --path client --import
+bash client/run.sh selftest | tail -3          # 717 passed / 0 failed / 1 skipped
+for f in assemble_check base_classes_check curve_on_screen_check draw_classes_check entity_drawer_check \
+         function_drawer_check gdext_check obstacle_drawer_check plane_on_screen_check play_flow_check \
+         process_loop_check recovered_view_check signal_classes_check spike_class_check; do
+  "$GODOT" --headless --path client --script res://tools/$f.gd | grep -E '[0-9]+ passed'; done   # 合计 1935
+
+# 4) 像素（replay 流四屏；两侧串行，产物不入库）
+python3 $MAIN/tools/frame_capture.py --side original --out $WT/frames/orig --display-num 91 --flow replay --seed-replays
+python3 $MAIN/tools/frame_capture.py --side ours     --out $WT/frames/mine --display-num 93 --flow replay --seed-replays
+python3 $MAIN/tools/frame_diff.py --orig $WT/frames/orig --mine $WT/frames/mine \
+    --screens menu,replay_lobby,replay_play,replay_end \
+    --out fixtures/frame_diff_results_t41.tsv --blocks-out fixtures/frame_diff_blocks_t41.tsv \
+    --json $WT/frame_diff_t41.json
+```
+
+### 91.7 遗留 / 我写错了 / 规格前提被证伪
+
+1. **前提被证伪（最重要的一条）**：本任务书假设"装原版 `.tscn` 的主要风险是资产/脚本缺失"（台账的风险列也是这么分的）。
+   实测风险排第一的是 **`selftest.gd` 的类型断言把我们的仿制品 `GwButton` 当成原版按钮的替身** ——
+   于是**13 份屏一份都装不上**，而它们**并不缺任何资产**（台账 `图标缺=0`、`字体缺=0`、`BLOCK-ASSET=0` 那份统计是真的）。
+2. **我起手的工作树落后 master 17 个 commit**（`main.tscn` 根节点、`replay_lobby.gd` 275 行这些 T33 的成果我一开始都没有）。
+   中途发现后 `git rebase origin/master` 到你看到的 `eeecd07` 再**重跑全部门槛**，所以 §91.4 的数字是**新基线**上的。
+3. **本分支的 `client/libgw2_rebuild.so` 是 `.cargo-target/debug` 里的既有产物**（落后于 rebase 拉进来的 `src/` 改动）
+   ⇒ 自检日志里 `Invalid call. Nonexistent function 'log' in base 'GraphwarRootNode'` 那两条是 **so/src 不同步**，
+   与本轮改动无关（本分支未改 `src/`）。合并后按常规重建 gdext 即可。
+4. **`chat_pop_up` 没有真值帧**（见 §91.4 末行）。
+5. **别名层是我方接线**（`client/` 根那 6 个 `.gd` 符号链接 + 9 个 `.remap` + 3 个 `.import` + `scenes/aliases/` 里 8 份
+   `.tres` 副本）。它们**不是原版的东西**，而且 `scenes/aliases/` 那 8 份是 `recovered-src/` 的副本 ⇒ **有漂移风险**：
+   下游若改了 `recovered-src/` 里那 8 份，这 8 份不会自动跟。下一轮应把别名层改成**生成物**（从 `recovered-src/` + `assets/` 生成），
+   并加一条 `cmp` 断言。
+6. **`replay_lobby` 的 `.tscn` 装了，但它的**行**还是我方代码画的**：`replay_entry.tscn`（21 节点／130 行）没装，
+   `_rebuild()` 里仍是我方的行构造。这是下一份该装的（台账风险 `HIGH-THEME`：它引用 `campaign_spacer_theme.tres` 骨架）。
+7. **我犯的一个错**：本轮把 §91 第一次追加到了**主工作区**（`/home/CG/Myprojects/graphwar2-rebuild/docs/06`）而不是工作树，
+   发现后已 `git checkout --` 还原主工作区（`git status` 干净），本节内容是在工作树里重写的。
