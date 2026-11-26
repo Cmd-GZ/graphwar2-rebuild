@@ -16688,6 +16688,24 @@ T33/T35 记的那条死链是：`src/graphwar_play_screen_control.rs` 里 `OTHER
 
 ⇒ 于是"我方写的节点"与"原版 `0x3da130` 写的节点"是**同一批同名节点**；节点名少一个就会在
 selftest/headless 日志里吵。§97.5 的像素读数（面板区 **0 px**）是它没走样的旁证。
+
+**实测（内核吐出来的就是这张表）**：
+
+```text
+$ "$GODOT" --headless --path client --script res://<临时脚本>.gd     # ClassDB.instantiate("GwEndGame")
+@@JSON count=7
+@@JSON name=TeamVictoryLabel        fn=0x3da130 numbered=false ev=observed
+@@JSON name=SelfVictoryLabel        fn=0x3da130 numbered=false ev=observed
+@@JSON name=SkinIcon                fn=0x3da130 numbered=false ev=observed
+@@JSON name=FaceIcon                fn=0x3da130 numbered=false ev=observed
+@@JSON name=HatIcon                 fn=0x3da130 numbered=false ev=observed
+@@JSON name=VictoryPlayerContainer1 fn=0x3d9000 numbered=false ev=observed
+@@JSON name=VictoryPlayerContainer  fn=0x3da130 numbered=true  ev=inferred
+@@JSON addrs=show_victory=0x3da130 ready_labels=0x3d9000
+```
+
+`--flow endgame` 我方侧 `game.log` 里 `0x3da130` 相关报错 **0 条** ⇒ 7 项在装好的原版
+`endgame_pop_up.tscn`（69 节点）里**全部取到**（含 `VictoryPlayerContainer1..10` 10 个格子）。
 **仍未做的**：函数体本身（`0x3da130` 的分支如何选横幅）没搬进 Rust —— 见 §97.8 遗留 2。
 
 ### 97.5 门槛读数（全部本机自跑）
