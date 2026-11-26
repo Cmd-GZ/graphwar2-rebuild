@@ -12054,3 +12054,92 @@ z_index = 5                      ← recovered-src/endgame_pop_up.tscn:28
    等价替代（可达输入上等价，`docs/14` §11.4 的注）⇒ **这一格是推断**。
 3. **上一轮"我方编文案"的理由不成立**：`endgame_pop_up.gd` 原来的注释写"胜利一侧的原文未观测，
    所以用占位"——可 `"YOU WON"` 一直躺在 `VICTORY_TEXTS` 里（`.rodata` 观测）。本轮换掉。
+
+## 77. 客户端侧：对局屏**底图**收口 —— 一条"底栏高度"根因修掉键盘/棋盘/四个角，`match_ready` **6.19 % → 0.122 %**（2026-11-26，任务 T29 / `task-26`）
+
+> 判据、三层数字、逐 ROI、复跑命令在 **`docs/06` §79**。本节只写**客户端这边动了哪几行、
+> 为什么这么动、还剩什么**。
+> 原版 = `.reference/game/{Graphwar.x86_64,Graphwar.pck,libgraphwarrust.so}`（2.0.60，内嵌 Godot 4.7.0）；
+> 我方 = `client/` + `libgw2_rebuild.so`（Godot **4.7.2**）。证据档按 `AGENTS.md` §0.3 标。
+
+**一句话**：`docs/16` §76.5 那张"遗留表"里排前四的项（键盘字形 / 棋盘 1 px / 左上两键 / `f(x)` 行）
+**都不是各自独立的外观问题**：其中三项是**同一个版式根因**（底栏最小高 96 vs 98）的四个下游，
+第四项（左上两键）是**原版脚本里躺着一条 disabled 规则**我方没接。
+
+### 77.0 一页结论（动哪一行 → 改什么 → 归零了哪些像素）
+
+| # | 文件 :: 位置 | 改前 | 改后 | 归零的项 |
+|---|---|---|---|---|
+| ① | `client/src/play/function_input.gd::_line_edit_style()` | 可编辑态 `StyleBoxFlat` **没有** `content_margin` ⇒ 取边框宽 3 ⇒ 最小高 90+6 = **96** | `set_content_margin_all(4)` ⇒ **98** | 棋盘 77 871 → 2 596、右键盘 21 674 → 0、精灵/靶子跟着 1 px、修正文本竖向 |
+| ② | `client/src/screens/play_screen.gd::_set_replay_layout()` | 左列回放块是个**可见但 0 高**的 `LeftReplaysBox`(VBox) ⇒ `LeftControls` 有 5 个可见 child / 4 条 separation（右列只有 3 条）⇒ 左键盘比右键盘**高 2 px** | 对局屏 `_left_replay_box.visible = false`（原版 `.tscn` 里那个 `LeftReplaysButtonsGrid` 就是对局屏 `visible=false`，是**直接** child ⇒ 不贡献 separation） | 左键盘 15 722 → 0 |
+| ③ | `play_screen.gd::_update_view_geometry()` | 没有给 `ShowExtraButtons` 设 `disabled` | `_show_extra_button.disabled = show`（`show` = 原版脚本里**同一个谓词** `extra_y >= 左上键行高`） | 左上两键 13 413 → 0 |
+| ④ | `play_screen.gd::_fill_grid()` | 纯图标键用默认 `icon_alignment`（LEFT）⇒ 三颗图标分别偏左 7.5 / 4 / 11 px | `icon_alignment = CENTER` | 右键盘图标那三颗 |
+| ⑤ | `client/src/ui/theme_factory.gd::build()` | `Button/font_disabled_color = COL_TEXT_DIM (199,199,199)`（**我方自选**） | 引擎默认 `(0.875,0.875,0.875,0.5)` ⇒ 叠在 `#383838` 上 = **(140,140,140)** | `y` 键（disabled 文本）821 px |
+| ⑥ | `play_screen.gd::_offset_display()`（新）+ `OffsetLabel` | 格式 `"- 9.890"`（丢了前导空格）+ `Label` CENTER ⇒ 墨迹 `x1773..1893` | 格式 `" - 9.890"`（= 内核 `graphwar_shot_calculator::correction_text` 的格式）+ `Label` **LEFT**（= 原版 `.tscn` 的默认值） ⇒ 墨迹 `x1764..1883` | 修正文本 1 901 → 0（**逐像素相同**） |
+| ⑦ | `play_screen.gd::build()` 的 `FxContainer` | 省了原版那层 `AspectRatioContainer`，按钮直接放（96×96） | 按 `recovered-src/play_screen.tscn:751-773` 补齐：`FxContainer → AspectRatioContainer(stretch_mode=1) → FxTextureButton(text="         " 九个空格)` | `f(x)=` 图标 658 → 22（墨迹 705 px **逐像素相同**） |
+
+### 77.1 ① 是**本轮唯一真正的根因**，其余都是它的下游（或独立的一条规则）
+
+`function_input.gd::_line_edit_style()` 里那个 `content_margin` **改前根本没写**，于是走
+`StyleBoxFlat` 的默认（= 边框宽 3）。三条**观测**说原版是 4：
+
+1. 对局屏输入框外框在真帧上是 `y1062..1159` = **98** 行；`docs/archive/125` §4 的 GEOM 表
+   （从**原版**运行日志里读的）独立给出「底栏 y / 高 = **1062 / 98**」「`f(x)=` 图标 = **96×98**」；
+2. 字体在 64 号下 `get_height(64) = 90` ⇒ 98 = 90 + 2×**4**；
+3. 原版**回放屏**光标是 `y1066..1155` = **90** 行（`docs/06` §76.1 的 bbox）⇒ 内容矩形上下各让 4
+   （`1062+4 = 1066`、`1159−4 = 1155`）—— 与 ② 同一个 4，**两屏同一条规则**。
+
+**为什么 `.tres` 里查不到这条**：`recovered-src/graphwar_theme.tres` 的 `LineEdit/styles/normal`
+（`StyleBoxFlat_bw5kj`）只有 `border_width_* = 3`、**没有** `content_margin` 字段 ⇒ 按 Godot 规则
+就是 3。原版是 4 ⇒ 这条**不是 Godot 默认算出来的**。旁证：`libgraphwarrust.so` 的字符串池里有
+`get_minimum_size`（`strings .reference/game/libgraphwarrust.so | grep minimum_size` 命中），
+即某个 Rust 类**绑定了**这个虚函数；`GraphwarFunctionInput` 是 `LineEdit` 的 Rust 子类
+（`docs/16` §2） ⇒ "它覆盖了最小尺寸"是**推断**（缺"哪个类绑定"的指令证据），
+但"98 / 内容矩形各让 4"是**真帧两条独立读数**，这才是改的依据。
+
+**一条改动的收益要按下游算**（这条值得记住）：底栏 96→98 一处，直接让
+`PlayMainHBox` 1060→1058、`PlaneContainer` 960→958、`PlaneCanvas.y` 196.30→195.30、
+左右列 VBox 各少 2 px 余量 ⇒ **棋盘整块 1 px、两个键盘各 1 px、底栏三项全部对齐**。
+
+### 77.2 ③ 的规则是**原版脚本写着的**，不是我们挑的
+
+`recovered-src/ShowExtraButtons.gd`（38 行，`ButtonGrid.gd` 那一批原版 `.gd` 之一）：
+
+```gdscript
+func _on_size_changed():
+    var target_size = left_top_button_container.size.y
+    var minimum_y   = plane_container.size.x / 1.66667
+    var extra_y     = plane_container.size.y - minimum_y
+    if extra_y >= target_size:
+        self.disabled = true
+```
+
+我方 `_update_view_geometry()` 本来就有 `show = extra_y >= toolbar_h`（决定附加按钮区显不显示），
+**同一个谓词** ⇒ 一行接上。**教训与 §76.3 的 `z_index = 5` 同型：先抄 `.tscn` / 原版 `.gd`，再谈推断。**
+
+### 77.3 ⑥ 的"前导空格"也有出处：内核自己的格式函数
+
+`src/graphwar_shot_calculator.rs::correction_text()`（原版那段行为的复原）返回
+`format!(" - {:.3}", c)` —— **串首一个空格**；同一个函数喂 `corrected_text()` 才拼得出
+`x+2sin(20x) - 3.694`。我方 `GwCore.format_offset()` 是 scaffold 侧的**数值**格式（不带那个空格）⇒ 显示前由
+`PlayScreen._offset_display()` 补上；`Label` 也要回到原版 `.tscn` 的默认 LEFT。
+`docs/16` §75.5 那条"修正常数标签横向 10 px、机制未知"就在这里收口：**不是容器几何**，
+是"格式串少一个空格 + `Label` 对齐方式与原版不同"。四个候选算下来只有
+"LEFT + 空格 = 1764.0" 与真帧（1764）相符（表在 `docs/06` §79.4）。
+
+### 77.4 客户端侧的遗留（与 `docs/06` §79.7 同一张表，这里只列"动哪个函数"）
+
+| # | 项 | 动哪里 | 缺什么 |
+|---|---|---|---|
+| 1 | 名字标签的字号 / 描边 | `src/_scaffold/entity_drawer_class.rs::new_name_label()`（`outline_size` 现在写死 4，注释里已标**推断**） | 墨迹 `73×47` vs `70×47`、纯色 px 585 vs 320：**字号**与**描边宽**两个自由度只有一个方程 ⇒ 缺第二条独立读数 |
+| 2 | 准备圈箭头的角度/半径 | `entity_drawer_class.rs` 的 `arrow_primitives` / `ring_primitives` | 条数已对（3）；角度要让 `0x4b9a70` 的立即数解出来 |
+| 3 | `match_play` 的弹道相位 | 不在客户端：要发 `TickRequest` | 服务端 tick 轴（`docs/06` §60.8 第 2 条） |
+| 4 | 靶心 181 px | `entity_drawer_class.rs` 的靶子贴图缩放 | `max|Δ|=2`，收益 < 0.007 % ⇒ **判断不做** |
+
+### 77.5 我写错了（客户端侧两条）
+
+1. **`docs/16` §76.5 第 3 条"左右键盘字形 = 字体栅格化"错** ⇒ 不搬去 §77 而是就地更正：
+   这是**整块 1 px 垂直位移**（18/18 键墨迹质量相同、平移后 ROI=0，`docs/06` §79.1）。
+   连带"要动字体管线"这个结论也撤掉 —— 本轮**一个字体文件/字号都没碰**。
+2. **`docs/16` §76.5 第 2 条把左上两键记成"圆角/图标抗锯齿"** 也错：第一颗 0 px，
+   13 413 px 全在第二颗的 **disabled 态**上（`ShowExtraButtons.gd` 那条规则）。
