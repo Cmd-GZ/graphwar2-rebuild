@@ -1628,10 +1628,13 @@ impl BotAdded {
 //
 // ## 与抓包、与 serde 的 `N` 对得上（三道交叉验证）
 //
-// 1. **`N`**：字段个数与 `.rodata` 里 `struct <Name>Event with N elements` 的 N
-//    逐个相等（67/67）；剩下 7 个事件没有这条串，它们的体实测是空 `{}`。
+// 1. **`N`**：字段个数与 `.rodata` 里 `struct <Name>Event with N element(s)` 的 N
+//    逐个相等（**64/64 有字段事件**）。`.rodata` 里这条串共 **67** 条 = 上面 64 个事件结构体
+//    + 3 个**非事件负载**结构体（`GameInfo`9 / `GraphwarColor`3 / `EventInfo`2）；
+//    其余 **10** 个事件是空体（`{}`），serde 对 0 字段结构体只产出短形式 `struct <Name>Event`
+//    ⇒ 它们**本来就没有**这条串。2026-11-26 复核见 `docs/07` §3.2 的就地更正 与 `docs/06` §66。
 // 2. **反序列化侧**：每个事件 `Deserialize` 的 `visit_map` 里都能找到同名键的字节比较
-//    （67/67 全部字段被比到）。注意它常用**合并后的 16 字节窗口**，所以字面量地址与
+//    （有字段的 64 个事件全部字段被比到）。注意它常用**合并后的 16 字节窗口**，所以字面量地址与
 //    `Serialize` 侧那份不是同一处 —— 这是正常的（`.rodata` 会去重/合并）。
 // 3. **抓包**：`fixtures/protocol*.jsonl` 里 49 种事件的键序与这张表**逐个相同**
 //    （含嵌套的 `color` / `game_info`）。见 `tests/wire_format.rs`。
