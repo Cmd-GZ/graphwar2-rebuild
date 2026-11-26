@@ -13483,3 +13483,242 @@ cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy 
    `AGENTS.md` §0/目录里那两处同样的旧读数**不在本任务允许清单**，未动。
 4. **`docs/02` §17.4 的两处旧"现值核对"行**（`events.rs` / `server.rs` 都写"未拆"）已按实测改掉，
    并附了可复跑的单行判据。
+
+## 87. 「527 / 527 已实现」是**模块级**口径 —— 函数级诚实复原率 = **131 / 527 = 24.9%**（逐函数 F1–F4 判档；47.2% 的原版函数**在源码层没有函数体**）（2026-11-26，任务 T39 / `task-37`）
+
+### 87.0 一句话结论
+
+`coverage_matrix` 的「原版可归属函数 **527 / 527 已实现**」不是函数级判断，是**模块级**判断
+（模块条目存在 + `mod()` 里写了一行档位）。按**预注册判据**逐函数判档后：
+
+| 口径 | 分子 / 分母 | 百分比 | 含义 |
+|---|---|---|---|
+| **M1 = F1**（**招牌数字应当用这个**） | **131 / 527** | **24.9 %** | 我方有一个函数**能指到**该原版函数（符号表真名 / 地址引用），且模块档位有可复核出处 |
+| M2 = F1 + F2 | 278 / 527 | 52.8 % | 加上「有对应代码但指不到原版函数」（预测名 / 只在 `_scaffold` / 只贴到邻居） |
+| M3 = F1 + F2 + F3 | 527 / 527 | 100 % | **不得使用**：把「只有文件/骨架」也数成「已实现」——**这正是 T30 揭穿的那个算法** |
+
+⇒ **「527 / 527」必须撤回。** 诚实说法是：**78/78 个模块条目都存在、都指向一个 `src/` 文件、
+都写了档位**（这是真的，F4 = 0 就是证据：527 条里没有一条连文件都没有；527 条分布在 69 个
+`orig_funcs ≥ 1` 的模块上，另 10 个模块 `orig_funcs = 0`）；但**函数边界**这一层只复原了
+**131 / 527 = 24.9 %**，另有 **249 条（47.2 %）只有文件/骨架、没有函数体**。
+
+### 87.1 为什么这条要单独审计（口径问题，不是"再测一遍"）
+
+* `tools/coverage_matrix.py` 的 `grand_line()`（≈ 1133 行）把 `implemented` 定义成
+  「`status != 未做` 的模块的 `orig_funcs` 之和」——**只要模块有同名文件 + 写了档位就算"已实现"**；
+  渲染出的 `docs/149-coverage-matrix.md:8` 因此写着「我们已实现 527 个函数」。
+* `docs/00-status.md:154` / `README.md:101` / `docs/HANDOVER.md:46` 直接引用这个数。
+* T30（§80）在切文件时撞见反例：`boundary_audit` 的 10 条 `mismatch` 里**只有 1 条我方有函数体**，
+  其余 9 条原版函数从未落码（`events.rs` 里从来只有 `enum` + 一张表）。
+* `AGENTS.md` §0.2：进度按原版分母算、**`cargo test`/`selftest` 条数是回归保护不是复原证据**；
+  §0 的终点是「文件 / 模块 / **函数边界** / 数据结构能对上」⇒ 必须单独量一次函数级。
+
+### 87.2 预注册判据（`fixtures/function_coverage_plan.txt`，**先 commit 后跑**，commit `b35edf8`）
+
+四档（照抄 `T39` 规格 §2①）：
+
+```
+F1 有实现 + 有物证   我方存在一个函数，能指到该原版函数（名字/表/结构/指令一条以上），且其档位有可复核出处
+F2 有实现 + 无物证   有对应代码，但指不到原版函数（= 推断级）
+F3 只有文件/骨架     文件在、档位也写了，但**没有函数体**（T30 那 9 条就是这一类）
+F4 完全没有         连文件/条目都没有
+```
+
+三层机判（`tools/function_coverage.py`，可复跑）：
+
+1. **S0/S1**：`ours_file` 不存在 → F4；存在但**没有实现函数**（`fn` 定义，且**剔除 `#[cfg(test)]` 块**）→ F3。
+   ⚠️ 必须剔除测试 fn：`coverage_matrix` 的 `ours_funcs` **把测试 fn 也算进去了**
+   （例：`graphwar_game_client.rs` 的 `ours_funcs=31`，其中实现函数只有 **12**）。
+2. **P1 NAME（强）**：原版名来自符号表**真名**（`name_src=v2*`，`fixtures/name_to_addr_v2.tsv` 三向匹配落地名），
+   取其函数段（`...::Type::method` → `method`；`::{{closure}}` 取父函数）在 `ours_file` 里找同名实现函数。
+3. **P2 ADDR（强）**：原版地址（**ELF vaddr**）出现在我方**注释**里，且该注释能贴到一个 `fn` 上
+   （落在 fn 行区间内，或 doc 注释块直接终结于 fn 头）。
+4. **P3 HYB（弱）**：只有结构指纹**预测名**（`name_src=hyb:*`）命中 ⇒ **只能到 F2**（候选名不能当结论）。
+5. **定档**：`pin∈{name,addr}` 且档位∈{逐位,观测} ⇒ F1；档位=推断 ⇒ F2；`pin∈{hyb,scaffold,free-fn}` ⇒ F2；
+   无 pin ⇒ F3（按子类再分「确证缺」/「判不了」/「宏产物」）。
+
+**六条判定口径细化**（跑之前写进工具头部注释，逐条可复核）：
+
+| # | 细化 | 为什么 |
+|---|---|---|
+| R1 | 同名实现**只在 `src/_scaffold/`** ⇒ 记 F2（`scaffold-only`），不落 F1 | `AGENTS.md` §4：自造桥接不进复原层（例：`0x3d3630` 的泵在 `root_wiring.rs:2553`） |
+| R2 | `::{{closure}}` / `::panic_cold_explicit` 取**父函数**做 pin | 闭包体住在父 fn 里；冷 panic 路径是编译器从父函数体里劈出来的 |
+| R3 | gdext 宏产物：`__register_methods` → F3 子类 `na:macro-generated`（源码层无对应 fn，等价物是 `#[func]` 属性）；`_::__init::__inner_init` → 找本模块的 `fn init` | 两侧都是宏生成的，不该算「缺」 |
+| R4 | 只有**声明没有函数体**的 `fn`（trait 方法、`fn x();`）不算实现 | 例：`src/graphwar_game_client.rs:712` 的 `EventHost::process_events` 只是 trait 声明 |
+| R5 | 同名函数存在时**优先挑 impl 类型一致**的；只找到「另一个类型下的同名函数」⇒ 记 F1 但 `type_check=renamed`（敏感度口径见 87.4）；只找到**跨模块自由函数**⇒ F2 子类 `free-fn-name` | 反例：`fn new` 在 9 个 `*_class.rs` 与 `function_token.rs` 里都有，只取第一个会挑到无关函数 |
+| R6 | P2 的 39 条命中**逐条人工复核**，7 条机制命中但语义不成立 ⇒ 改判（4 条 F2 `addr-neighbor`、3 条 F3 `register-only`），理由逐条写死在工具的 `ADDR_MANUAL` 表里 | 机制判据抓不到「引用出现在**邻居函数**的 doc 里」（调用者/被调用者/测试投影） |
+
+### 87.3 正 / 反面对照（判法自校验，`--control`）
+
+**正对照（T30 三个新文件，形态已知）**
+
+| 模块 | 规格期望 | 实测 | 结论 |
+|---|---|---|---|
+| `graphwar_event_handler.rs`（2 条） | F1/F3 各 1 | **F1=1**（`0x3d38f0` 名字表）、**F2=1**（`0x3d3630` → `scaffold-only`） | ✅ 方向一致：`0x3d3630` **没有**被记成复原层实现。差异只在 F2/F3 的分界（它的泵在 `src/_scaffold/root_wiring.rs:2553`，按 R1 记 F2） |
+| `graphwar_remote_event_handler.rs`（3 条） | 全 F4 | **F3/skel ×3** | ⚠️ **定义差异**：F4 的定义是「连文件/条目都没有」，而该模块有 126 行文件 + 一张逐条列 `0x3dee00/0x3e5910` 的 `FUNCTIONS` 表 ⇒ 按定义是 F3。**对 M1/M2 无影响** |
+| `graphwar_server_connection_handler.rs`（6 条） | 部分 F2 | **F3/register-only ×6** | ⚠️ 比规格期望更差：6 条只写进 `FUNCTIONS` 证据表，没有同类型实现、也没有 scaffold 实现 ⇒ 连 F2 的「有对应代码」都不成立 |
+
+**T30 那 10 条 `mismatch` 上的独立复现**：F1 = **1** / F2 = 1 / F3 = **8** —— 与 §80 的
+「**只有 1 条我方有函数体，其余 9 条从未落码**」**独立吻合**。
+
+**反面对照（已知扎实的模块）**
+
+| 模块 | 实测 | 逐条 |
+|---|---|---|
+| `graphwar_tick_handler.rs`（2 条） | **F1 = 2** | `0x519630 handle_connected_to_server_event`（真名 pin）、`0x519840 tick`（地址 pin 到 `tick_handler.rs:407`） |
+| `math_function.rs`（7 条） | F1 = 1、F2 = 1、F3 = 5 | F1：`0x4ee720 mutate_fine_tune`（地址 pin）；F2：`0x4ed670 MathFunction::new`（同名函数在 `src/function_token.rs:90`，是**自由函数** ⇒ `free-fn-name`）；F3：`remove_offset` / `to_string_recursive`（真名无同名实现）、`simplify_recursive`（预测名未命中）、2 条无名 |
+
+⚠️ **`math_function.rs` 这条反面对照的结果要读对**：它「扎实」指的是**行为**（求值器/解析器已逐位对拍），
+**不代表函数边界还原**——我方是 `lex / parse / eval` 的 token 式设计，原版是
+`MathFunction::new / to_string_recursive / remove_offset` 的递归 AST 方法；`to_string` 的行为在
+`src/math_function/to_text.rs` 里以实现，但**函数边界/名字对不上** ⇒ 按本审计口径是 F3（`named-miss`），
+不是「没做」。这正是 §0「行为一致 ≠ 源码级还原」的一个实例。
+
+**判法自校验结论**：反面对照违反数 = **0**（没有任何「真名 + 同 impl 同名函数」的行被误判成缺）；
+正对照 3 项里 1 项完全一致、2 项差异都被四档定义解释掉，且核心断言（那 9 条从未落码）**复现**。
+
+### 87.4 统计（分母 527；产物 `fixtures/function_coverage.tsv`，527 行）
+
+| 档 | 条数 | 占比 | 内部构成 |
+|---|---|---|---|
+| **F1** 有实现 + 有物证 | **131** | 24.9 % | pin：`name` 53（同模块同 impl 类型）/ `name-soft` 45（同名但 impl 类型被改名/合并）/ `addr` 32（地址引用）/ `name-other` 1 |
+| **F2** 有实现 + 无物证 | **147** | 27.9 % | `hyb-only` 72（只有预测名）/ `scaffold-only` 57（实现只在 `src/_scaffold/`）/ `free-fn-name` 14（只有跨模块自由函数同名）/ `addr-neighbor` 4 |
+| **F3** 只有文件/骨架 | **249** | 47.2 % | ①**确证缺函数边界 161** = `register-only` 100（只登记了地址、无函数体）+ `named-miss` 40（真名在，无同名实现）+ `parent-missing` 18（编译器子函数的父函数不存在）+ `skel` 3（文件里 0 个实现函数）；②**判不了 62** = `hyb-miss` 41 + `noname` 21；③`na:macro-generated` 26（gdext 宏产物，源码层本无独立 fn） |
+| **F4** 完全没有 | **0** | 0 % | 527 条里没有一条连模块文件都没有 |
+
+**五条敏感度（同一份台账、不同严格度，都可从 TSV 复算）**
+
+| 口径 | 数字 | 说明 |
+|---|---|---|
+| M1（预注册） | **131 / 527 = 24.9 %** | 招牌数字建议用这个 |
+| M2（有对应代码上限） | 278 / 527 = 52.8 % | F1 + F2 |
+| M1_strict（R5：同名函数还得在**同一个 impl 类型**下） | 86 / 527 = 16.3 % | 剔掉 45 条 `type_check=renamed`（原版的 `GraphwarXxxManager::foo` 在我方住在 `TeamTable`/`LifeTable`/`TurnTable` 这类数据表类型上） |
+| M2_noscaffold（R1：实现必须住在 `src/` **原版模块**里） | 221 / 527 = 41.9 % | 剔掉 57 条 `scaffold-only` |
+| M1_1to1（R6：**1:1 函数边界**） | 119 / 527 = 22.6 % | F1 的 131 条只落在 **119 个**不同的我方函数上（8 个目标被 ≥2 个原版函数共用：合并实现，如 `request_new_player`+`add_soldier_to_player` → 一个 `Match::register_player`） |
+| 分母修正（剔除 26 条宏产物） | 131 / 501 = 26.1 % | 这 26 条的「原版函数」是 gdext 宏生成，源码层本就没有独立 fn |
+
+**符号表真名侧（312 条 `name_src=v2*`）**：同模块**同名同 impl 类型**实现 **53（17 %）**；
+`src/` 里能找到任意同名函数 **175（56 %）**；**完全没有同名函数 137（44 %）**；其中实现只在
+`src/_scaffold/` 的 **56** 条。
+
+### 87.5 按模块：**确证缺函数边界**（gap）最多的模块
+
+`gap` = F3 里 `skel` + `register-only` + `named-miss` + `parent-missing`（**有证据表明没有这个函数体**）；
+`unk` = 判不了（`hyb-miss`/`noname`）；`na` = gdext 宏产物。**按 gap 占比**（`orig_funcs ≥ 5` 的 35 个模块）：
+
+| 模块 | 台账 orig | F1 | F2 | **gap** | gap 占比 | unk | na | 矩阵档位 |
+|---|---|---|---|---|---|---|---|---|
+| `graphwar_player_screen_control.rs` | 8 | 0 | 0 | **8** | 100 % | 0 | 0 | 观测 |
+| `graphwar_server_connection_handler.rs` | 6 | 0 | 0 | **6** | 100 % | 0 | 0 | 逐位 |
+| `graphwar_client_connection_handler.rs` | 8 | 0 | 1 | **7** | 87.5 % | 0 | 0 | 观测 |
+| `graphwar_play_screen_control.rs` | 10 | 1 | 1 | **8** | 80.0 % | 0 | 0 | 观测 |
+| `graphwar_replay_player.rs` | 5 | 1 | 0 | **4** | 80.0 % | 0 | 0 | 观测 |
+| `graphwar_level_manager.rs` | 40 | 4 | 0 | **31** | 77.5 % | 5 | 0 | 观测 |
+| `graphwar_game_client.rs` | 36 | 4 | 8 | **24** | 66.7 % | 0 | 0 | 观测 |
+| `graphwar_lan_vbox.rs` | 11 | 0 | 2 | **7** | 63.6 % | 0 | 2 | 观测 |
+| `graphwar_ad_switch.rs` | 6 | 0 | 1 | **3** | 50.0 % | 0 | 2 | 观测 |
+| `graphwar_setup_control.rs` | 21 | 0 | 10 | **9** | 42.9 % | 0 | 2 | 观测 |
+
+**按 gap 绝对条数**：`graphwar_level_manager.rs` **31** > `graphwar_game_client.rs` **24** >
+`graphwar_game_state_manager.rs` **13** > `graphwar_setup_control.rs` **9** >
+`graphwar_player_screen_control.rs` **8** = `graphwar_play_screen_control.rs` **8** >
+`graphwar_client_connection_handler.rs` **7** = `graphwar_lan_vbox.rs` **7** >
+`graphwar_server_connection_handler.rs` **6** > `graphwar_replay_player.rs` **4**。
+
+**读法**：这些模块的档位全是 **逐位/观测**（`graphwar_server_connection_handler.rs` 甚至标了**逐位**），
+但函数级最多只到 24.9 %；`graphwar_level_manager.rs` 尤其典型——原版 21 个 `setup_level_N`
+（含 21 个 `setup_level_N::{{closure}}`，锚点 15–18 个/条）在我方**被压成一张
+`SETUPS` 数据表 + 一个 `level_setup(index)`**，函数边界整族消失。
+
+### 87.6 最严重的 12 个具体函数（F3 + 符号表真名；按 `Location` 锚点数/后果排序）
+
+| # | 地址(ELF vaddr) | 原版文件 | 原版函数 | 判档 | 我方有什么 |
+|---|---|---|---|---|---|
+| 1 | `0x3e2830` | `graphwar_remote_event_handler.rs` | `GraphwarRemoteEventHandler::handle_server_remote_event`（锚 **88**） | F3/skel | 文件 126 行：`MODULE`/`FUNCTIONS` 证据表，**0 个实现函数** |
+| 2 | `0x3dee00` | `graphwar_remote_event_handler.rs` | `handle_client_remote_event`（锚 **80**） | F3/skel | 同上 |
+| 3 | `0x3c2bc0` | `graphwar_shot_calculator.rs` | `GraphwarShotCalculator::calculate_shot_results`（锚 12） | F3/register-only | 只剩地址登记（`AGENTS.md`「常用命令」里 `tools/ptr_slots.py 0x3c2bc0` 举的就是这个地址；我方 `graphwar_shot_calculator.rs` 里没有同名实现函数） |
+| 4 | `0x3da130` | `graphwar_play_screen_control.rs` | `update_end_game_pop_up`（锚 11） | F3/register-only | 只有 `FN_SHOW_VICTORY`/`VICTORY_TEXTS` 常量与横幅枚举 |
+| 5 | `0x465a70` | `graphwar_level_generator.rs` | `place_entity`（锚 9） | F3/register-only | 只有地址登记 |
+| 6 | `0x4f57d0` | `graphwar_player_screen_control.rs` | `GraphwarPlayerScreenControl::load_items`（锚 9） | F3/register-only | 该模块 8 条**全 F3**（已实现的全是配置表/字段映射） |
+| 7 | `0x4a33f0`（族 ×21） | `graphwar_level_manager.rs` | `GraphwarLevelManager::setup_level_4..20`（每条锚 15–18） | F3/named-miss | 压成 `SETUPS` 数据表 + `level_setup(index)`；**21 个函数 + 16 个闭包 = 37 条** |
+| 8 | `0x4737a0` | `graphwar_game_state_manager.rs` | `GraphwarGameStateManager::remove_all_players` | F3/named-miss | 无同名实现 |
+| 9 | `0x516370` / `0x518320` | `graphwar_game_client.rs` | `GraphwarGameClient::disconnect` / `connect` | F3/named-miss | 无同名实现（连接生命周期在 `_scaffold` 侧另有实现） |
+| 10 | `0x4ba4a0` | `entity_drawer.rs` | `EntityDrawer::get_entity_name_label` | F3/named-miss | 无同名实现 |
+| 11 | `0x4592d0` / `0x459690` / `0x459840` / `0x459950` | `graphwar_client_connection_handler.rs` | `GraphwarClientConnectionHandler::{disconnect, …}` | F3/named-miss | 该模块 8 条里 7 条 gap |
+| 12 | `0x3d61a0` / `0x3d68b0` / `0x3d6a40` / `0x3d6bb0` | `graphwar_replay_player.rs` | `inject_events` / `go_to_{next,first,previous}_checkpoint` | F3/named-miss | 回放播放控件的跳转函数没有同名实现（`toggle_pause`/`pause`/`is_paused` 有） |
+
+### 87.7 与三条独立审计的交叉印证
+
+| 来源 | 它的数字 | 与本节的对应关系 |
+|---|---|---|
+| **T30**（§80，10 条 `mismatch`） | 「只有 **1** 条我方有函数体，其余 **9** 条从未落码」 | 本节在这 10 条上判出 **F1=1 / F2=1 / F3=8** ⇒ **独立复现** |
+| **T36**（§86，`src/` 结构） | 348 个真名里只有 **106（36 %）在本模块文件**、**57 只在 `_scaffold`**、**125 无同名**；生产 fn 2388 个里 **1163（48.7 %）住在 `_scaffold`** | 本节在 312 条 v2 真名上：**同模块同名同类型 53（17 %）**、**只在 `_scaffold` 56**、**完全无同名 137（44 %）**；F2 里 **57 条 `scaffold-only`** ⇒ 同一现象、独立口径、方向一致 |
+| **T37**（§85，测试自洽） | 1772 条测试里 **341（19.3 %）纯自洽**；真正逐值对拍只有 **~170（9.6 %）** | 本节量的是**另一条轴**（源码函数边界），两者叠加说明：**行为/测试绿 ≠ 函数复原** |
+
+### 87.8 §判法可能漏什么（先说做不到的）
+
+1. **F3 的 `named-miss`/`hyb-miss`/`noname` 不能读成「行为一定没做」**。我方可能把逻辑
+   **内联进别的函数、合并成一张数据表、或改名**（`math_function` 的 `to_string_recursive` →
+   `to_text.rs` 的 `emit/to_text` 就是实例）。本节判的是「**函数边界/名字有没有对上**」，
+   按 §0 这是源码级还原的标准，但它**不等于**「这段行为不存在」。
+2. **P1 只证明「我方有个同名函数」，不证明它实现的是原版那套逻辑**（同名不同义在 Rust 里很常见）。
+   反过来的漏法更实际：**合并实现会被记成 F1**（R6 用「F1 只落在 119 个不同函数」把上限标出来）。
+3. **P2（地址引用）的 39 条已逐条人工复核**，但「注释里写了地址」始终只是**指认**，不是实现；
+   39 条里 7 条被人工否决（`ADDR_MANUAL`），**剩下 32 条也仍可能把「常量出处」当「实现」**。
+4. **闭包/单态化**：原版那 24 个 `::{{closure}}`、21 个 `panic_cold_explicit`、24 个
+   `__register_methods` 在 Rust 源码里**本来就不是独立的 `fn`**。用父函数/宏属性判是合理的，
+   但「一个原版函数 ≠ 一个源码 `fn`」这件事说明：**527 这个分母本身就含 ~26 条宏产物 + 45 条编译器产物**，
+   把它当「源码函数总数」会系统性偏高。
+5. **`weak_caller.rs` 的 39 条**（泛型 `call`/`call_0` 的 26 个单态化实例）`name_src` 是 `hyb`，
+   按预注册判据只能到 **F2**；但 `coverage-matrix` 的 evidence 列写着「40 个符号定位：x86 目标
+   39/39 个单态化」——即这批**其实有更强的独立证据**。⇒ 这类「矩阵有证据、`boundary_audit` 没真名」的
+   行会被本审计低估（数量不大，但要知道方向）。
+6. **人工复核只覆盖了 P2 的 39 条 + 正/反面对照 + 35 个 `orig_funcs≥5` 模块的抽样**；F1 的
+   131 条抽了 12 条读码核对（全部成立）。**没有做 527 条的全人工复核**，所以 M1 有 ±几点的摆动空间。
+
+### 87.9 §我写错了 / 规格前提被证伪
+
+1. **规格 §2 的正对照期望有两条与四档定义不自洽**（已在 87.3 逐条写清）：
+   `remote_event_handler` 期望「全 F4」，但 F4 的定义是「连文件/条目都没有」，而 T30 落地了
+   一个 126 行、带 `FUNCTIONS` 表的文件 ⇒ 按定义是 **F3**；`server_connection_handler` 期望
+   「部分 F2」，实测**连 F2 都不成立**（6 条只有登记）⇒ 规格对这两处的期望偏乐观。
+   **对分子无影响**（两者都不进 M1/M2），但「正对照必须全对上」这句话按字面做不到。
+2. **我最初的口径漏了「测试 fn」**：`coverage_matrix.ours_funcs` 含 `#[cfg(test)]` 块里的 fn
+   （`graphwar_game_client.rs` 31 个里 19 个是测试），拿它当「实现函数数」会把 gap 系统性地**低估**。
+   已改成本审计自己数（剔除测试块）。
+3. **第一版 P1 只取「第一个同名 fn」**，把 `fn ready`/`fn new`/`fn init` 这类通用名挑到了
+   **无关的类/模块**（实测：16 条 `Type::new` 全被指到 `src/function_token.rs:90` 的自由函数）。
+   改成「遍历全部同名候选、优先 impl 类型一致」（R5）后才对。
+4. **`ours_file` 可能是多文件**（`src/game.rs+src/turnstate.rs+src/graphwar_game_state_manager.rs`，
+   用 `+` 连接）。第一版把它当单路径 ⇒ 33 条 `graphwar_game_state_manager` 的判定全错成 F4。
+5. **`hyb:歧义` 的 `Type::?::_` 不是名字**（40 条），按「预测名」处理会误配；已改成按无名处理。
+
+### 87.10 复跑命令（全部只读，不建 cargo）
+
+```bash
+export PY=$PWD/.reference/venv/bin/python
+$PY tools/function_coverage.py                 # 重算 fixtures/function_coverage.tsv（527 行）
+$PY tools/function_coverage.py --stats         # 只看统计（四档 + 五条敏感度 + 模块排名 + 最严重函数）
+$PY tools/function_coverage.py --control       # 正/反面对照（判法自校验）
+$PY tools/function_coverage.py --module graphwar_level_manager.rs   # 单模块逐条
+```
+
+口径与判据写在 `fixtures/function_coverage_plan.txt`（**先于工具提交**，commit `b35edf8`）；
+逐函数台账在 `fixtures/function_coverage.tsv`（13 列，含「我方实现位置 / 判档 / 子类 / 指认方式 /
+类型核对 / 判据 / 缺什么」，可自行按 `type_check`/`sub` 复算任何一档）。
+
+### 87.11 给 lead 的文档改法建议（本节**不改** `docs/00`/`HANDOVER`/`README`/`docs/02`）
+
+| 位置 | 现在 | 建议改成 |
+|---|---|---|
+| `docs/00-status.md:154` | `已实现 527（逐位 89 / 观测 438 / 推断 0）｜ 未做 0` | `**模块级**已实现 527（逐位 89 / 观测 435 / 推断 3；= 每个模块都有同名文件 + 写了档位）` + 新增一行 `**函数级** F1 131 / 527 = 24.9%（F2 147 / F3 249 / F4 0，见 docs/06 §87）` |
+| `docs/00-status.md:30` | 「只用 §0.2 那一个数（527/527）会被误读成"做完了"」 | 保留这句，但把"四个维度"改成"五个维度"，第 ⑤ 维 = **函数边界**（131/527） |
+| `README.md:96` / `:101` | `### 还原进度：**527 / 527 可归属函数 = 100%**` | `### 还原进度：**模块 78/78 有文件**；**函数级 131 / 527 = 24.9%**（`fixtures/function_coverage.tsv`）` |
+| `docs/HANDOVER.md:46` | `可归属函数 527 / 527 = 100%（逐位 89 / 观测 438 / 推断 0）` | 同上拆两行，并把「= 100%」限定成「**模块级=100%**」 |
+| `docs/02-module-map.md:805` / `:846` | 「总账是 **527 / 527 已实现、未做 0**」 | 「总账是 **模块级 527 / 527**（函数级 131 / 527，`docs/06` §87）」 |
+| `tools/coverage_matrix.py` `grand_line()`（≈1133 行） | `我们已实现 %d 个函数，其中 逐位…` | ①`我们已实现` → `**模块级**已实现（同名文件 + 档位）`；②末尾追加一句函数级读数（可读 `fixtures/function_coverage.tsv`，或直接写"函数级见 `docs/06` §87"）；③同步重跑 `docs/149-coverage-matrix.md` |
+| `docs/149-coverage-matrix.md:8` | 生成物 | 不手改；改完 `grand_line()` 后 `python3 tools/coverage_matrix.py` 重生成 |
+
+**一句话给 lead**：招牌数字不是「527/527 已实现」，而是
+**「78/78 模块有同名文件 + 档位（模块级 100%）；函数边界 131/527 = 24.9%，其中 249 条（47.2%）原版函数在源码层没有函数体」**，
+并把「逐位 89 / 观测 435 / 推断 3」明确标成**模块级档位**（它本来就不是函数级读数）。
