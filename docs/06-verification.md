@@ -13805,6 +13805,303 @@ export MAIN=/home/CG/Myprojects/graphwar2-rebuild
 export WT=$MAIN/.agent-work/cg/wt-t33
 export CARGO_HOME=$MAIN/.reference/cargo-home
 export CARGO_TARGET_DIR=$WT/.cargo-target          # ⚠️ 单独一行
+## 84. **文件内部结构**还原：`panic::Location` 的行号反推原版文件里的**函数顺序** —— 292 funcstart / **239 同锚组** / 21 个原版文件；我方顺序一致率 **S/W 口径 8/13 = 61.5%**（扩展 9/19 = 47.4%）；缺口 G1 **0**（τ_eff=394）· 灵敏度 τ=100 → **11** · G2 50 · G3 6 · G4 12；**不做重排**（理由见 §84.6）（2026-11-26，任务 T34 / `task-31`）
+
+### 84.0 一页结论
+
+| 问题 | 读数 | 证据等级 |
+|---|---|---|
+| 「行号 → 函数顺序」这条前提站得住吗？ | **站得住**：用我方自己的 `cargo build` 产物做闭环，`Δ=lo−源码起始行` **中位数 3 行**（p99 72），**相邻对顺序一致率 53/53 = 100.00%** | 观测（同一管线跑我方二进制 + 我方真实源码） |
+| 取了多少锚点 / 文件 | `Location` 槽 5301 → 原版 crate 路径 **2042 个槽**（3259 个第三方 crate 路径按预注册口径排除）；按预注册规则（槽数降序）取 **21 个原版文件**（合计 1752 槽）；**292 个 funcstart / 239 个同锚组 / 214 个可定序** | 观测 |
+| 我方顺序与原版顺序一致率 | **S/W 主口径 8/13 = 61.5%**（剔除"同一我方函数被 ≥2 个原版组匹配"后 7/11 = 64%）；扩展 +A 口径 **9/19 = 47.4%** | 观测（匹配档 S/W = v2 三向真名） |
+| 疑似缺口 | 主口径 τ_eff=394 ⇒ **G1 = 0**；预注册灵敏度 τ=100 ⇒ **11**、τ=200 ⇒ **2**、τ=400 ⇒ 0。另有 G2（内联/行号交错）**50**、G3（共享行被 ≥2 个可定序位点引用）**6**、G4（同锚组 ≥3 funcstart，**我们分辨不出这些函数**）**12** | G1 = 推断（只有行号空白，无地址证据）；G2/G3/G4 = 观测 |
+| 做了哪些重排 | **一条也没做**，理由见 §84.6（不是"风险大"，是"证据不足以确定绝对位置"） | — |
+
+### 84.1 这条证据为什么是新的，以及预注册
+
+`panic::Location` 在本项目里一直只当**文件级**证据（"函数属于哪个模块"，T24 `fixtures/boundary_audit.tsv`）。
+但它的结构体是 `{file: &'static str, line: u32, col: u32}` —— **line 就是源码行号**。
+同一个文件里两个函数的 `(文件,行)` 一比，就多出两条此前没人用的信息：
+
+1. **顺序**：函数 A 的锚点行 < 函数 B 的锚点行 ⇒ A 在原版文件里大概率在 B 前面；
+2. **缺口**：两个相邻锚点之间行号空白很大 ⇒ 那一段里**还有我们没归属的函数**。
+
+判据**先写死再跑**：`fixtures/file_structure_plan.txt`（预注册件：锚点口径、位置序、一致率定义、
+G1 阈值与 τ 的标定程序、两级正对照，以及**事前决策规则** —— 自对照 ≥95% 才铺开，<80% 就改交付形态）。
+事后修正全部登记在该文件 **§9 事后修正**（正文判据没改过）。
+
+管线只有一条：`tools/file_structure.py`（新文件；只读 `.so` 的 `.rela.dyn` / `.data.rel.ro` /
+`.eh_frame`，经 `tools/loc_xrefs.py`，**不读** `analysis/*.pkl`；我方侧只读 `src/**/*.rs` 与
+`docs/coverage-matrix.tsv`）。产物：
+
+* `fixtures/file_structure.tsv` —— **239 行，一行 = 一个同锚组**（列：原版文件 / 行号 / 我方函数 /
+  我方文件:行 / 位置序 / 与前一锚行号差 / 判定 / 与前锚无锚空白 / 锚点数 / 行号跨度 /
+  同锚组funcstart数 / 定序 / 函数地址 / 匹配档 / hyb 候选）；
+* `fixtures/file_structure_gaps.tsv` —— **79 行**（G1/G2/G3/G4）。
+
+**地址口径**：全部 ELF vaddr（RVA），不是 Ghidra 的 `+0x100000`。
+
+### 84.2 两级正对照：前提成立（这是本轮最该先看的一节）
+
+**正对照 A（规格点名的两个已知函数 + LevelRules，口径同 T24）**
+
+| 地址 | 应该落 | 锚点行 | 结果 |
+|---|---|---|---|
+| `0x4ed670`（解析器） | `src/math_function.rs` | `lo=75` | ✓ |
+| `0x4eb9d0`（求值器） | `src/math_function.rs` | `lo=184` | ✓ |
+| `0x473520`（LevelRules `get_alive_teams`） | `src/graphwar_game_state_manager.rs` | 5 行 | ✓（与 `boundary_audit.tsv` 同读数） |
+| `0x4759f0`（`queue_end_turn_trigger`） | 同上 | 12 行 | ✓ |
+| `0x4780c0`（`set_state`） | 同上 | 5 行 | ✓ |
+
+而且**原版先后与我方先后一致**：原版 `解析器 lo=75 < 求值器 lo=184`，我方
+`src/math_function.rs` 里解析器一侧最早是 `parse@459`、求值器一侧是 `eval@523` ⇒ 两边都是"解析器在前"。
+
+**正对照 B（决定性）：拿我方自己的二进制跑同一套管线，与真实源码顺序比**
+
+目标 = `cargo build --offline` 的 `.cargo-target/debug/libgw2_rebuild.so`
+（sha256 `8f7044f2…5023c6b`）。我方函数身份用 `.symtab`（`nm` + `c++filt`）对源码，
+ground truth 是 `src/**/*.rs` 里 `fn` 的**真实起始行**：
+
+| 度量 | 读数 |
+|---|---|
+| 能把 Location ↔ 我方源码行对上的函数 | 83（另有 3 个"Location 主文件 ≠ 符号模块名"被丢弃） |
+| `Δ = lo(二进制) − 源码起始行` | 中位数 **3** / p90 **9** / p99 **72** / 最大 **72** |
+| **相邻对顺序一致率 `adj_rate_self`** | **53/53 = 100.00%** |
+| 逆序率最高的我方文件 | `src/plane.rs` 0/6、`src/math_function.rs` 0/55、`src/graphwar_turn_manager.rs` 0/6 … 全是 **0%** |
+
+⇒ 按预注册的事前决策规则（≥95% 铺开、<80% 改交付形态）：**「行号 → 顺序」成立**，铺开到 21 个文件。
+（附注：同一套管线跑 **release** 产物只剩 8 个我方 Location 槽、3 个可对上的函数、1 个相邻对（1/1），
+太薄，不足以单独支撑结论 —— 原版是优化构建，这条局限必须和上面的 100% 一起读，见 §84.7。）
+
+### 84.3 21 个原版文件的内部骨架
+
+列口径：`槽` = 该文件名下 `Location` 结构体数（plan §6 的排序口径；与 `docs/coverage-matrix.tsv`
+的 `anchors` 列同口径）；`锚点行` = 被引用的**不同行号**数；`同锚组` = 一行 TSV；
+`可定序` = 组内只有 1 个 funcstart 因而可用行号定序的组数；`orig/ours` = `coverage-matrix.tsv`
+的 `orig_funcs`/`ours_funcs`（**注意**：`orig_funcs` 按 funcstart 计，对宏/泛型文件是上界）。
+
+| 原版文件 | 槽 | 锚点行 | 同锚组 | 可定序 | funcstart | 行号范围 | orig / ours | 一致率 S/W | 扩展 +A | G1/G2/G3/G4 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `graphwar_level_manager.rs` | 590 | 449 | 40 | 40 | 40 | 121..1867 | 40 / 20 | n/a | n/a | 0/14/0/0 |
+| `graphwar_game_state_manager.rs` | 207 | 191 | 33 | 33 | 33 | 116..1187 | 33 / 173 | **80% (4/5)** | 83% (5/6) | 0/9/3/0 |
+| `graphwar_remote_event_handler.rs` | 171 | 170 | 3 | 3 | 3 | 135..871 | 3 / 2 | n/a | n/a | 0/0/0/0 |
+| `graphwar_root_node.rs` | 178 | 161 | 16 | 11 | 23 | 114..1348 | 23 / 57 | n/a | n/a | 0/3/0/1 |
+| `graphwar_game_server.rs` | 86 | 69 | 3 | 3 | 3 | 130..290 | 3 / 23 | n/a | n/a | 0/1/0/0 |
+| `graphwar_play_screen_control.rs` | 64 | 64 | 10 | 10 | 10 | 71..625 | 10 / 58 | n/a | n/a | 0/1/0/0 |
+| `graphwar_setup_control.rs` | 70 | 62 | 17 | 15 | 21 | 46..802 | 21 / 48 | n/a | n/a | 0/2/0/1 |
+| `graphwar_game_client.rs` | 59 | 54 | 24 | 15 | 36 | 53..222 | 36 / 31 | n/a | 0% (0/3) | 0/9/3/1 |
+| `graphwar_turn_manager.rs` | 45 | 45 | 14 | 14 | 14 | 80..428 | 14 / 98 | **50% (3/6)** | 50% (3/6) | 0/1/0/0 |
+| `entity_drawer.rs` | 36 | 35 | 11 | 10 | 14 | 38..576 | 14 / 19 | n/a | n/a | 0/2/0/1 |
+| `graphwar_function_input.rs` | 33 | 32 | 10 | 9 | 13 | 27..607 | 13 / 41 | **0% (0/1)** | 0% (0/1) | 0/0/0/1 |
+| `graphwar_level_generator.rs` | 26 | 26 | 4 | 4 | 4 | 49..261 | 4 / 28 | n/a | n/a | 0/1/0/0 |
+| `graphwar_player_screen_control.rs` | 22 | 22 | 8 | 8 | 8 | 113..271 | 8 / 19 | n/a | n/a | 0/1/0/0 |
+| `graphwar_computer_player_manager.rs` | 27 | 20 | 5 | 5 | 5 | 84..331 | 5 / 33 | **100% (1/1)** | 33% (1/3) | 0/0/0/0 |
+| `graphwar_server_connection_handler.rs` | 24 | 20 | 6 | 6 | 6 | 206..350 | 6 / 7 | n/a | n/a | 0/2/0/0 |
+| `graphwar_function_evolutionator.rs` | 25 | 19 | 6 | 4 | 16 | 67..331 | 16 / 112 | n/a | n/a | 0/1/0/2 |
+| `graphwar_lan_vbox.rs` | 19 | 19 | 5 | 3 | 11 | 30..145 | 11 / 37 | n/a | n/a | 0/1/0/2 |
+| `graphwar_plane.rs` | 19 | 19 | 7 | 6 | 10 | 33..256 | 10 / 37 | n/a | n/a | 0/1/0/1 |
+| `player_showcase.rs` | 18 | 18 | 7 | 6 | 10 | 9..82 | 10 / 44 | n/a | n/a | 0/1/0/1 |
+| `graphwar_replay_player.rs` | 18 | 15 | 5 | 5 | 5 | 151..250 | 5 / 53 | n/a | n/a | 0/0/0/0 |
+| `math_function.rs` | 15 | 15 | 5 | 4 | 7 | 52..478 | 7 / 54 | n/a | n/a | 0/0/0/1 |
+| **合计（21 个文件）** | **1752** | **1525** | **239** | **214** | **292** | — | — | **8/13 = 61.5%** | **9/19 = 47.4%** | **0/50/6/12** |
+
+每行函数的完整骨架（行号 + 地址 + 我方函数 + 位置序 + 判定 + 匹配档）在 `fixtures/file_structure.tsv`。
+几条读得出来的结构事实（**观测**）：
+
+* `graphwar_remote_event_handler.rs`：170 个锚点行只摊在 **3** 个 funcstart 上（135..871 行）——
+  这个模块在原版里就是**极少数超大函数**；我方 `src/events.rs` 只有 2 个 fn
+  （与 `coverage-matrix` 的 `orig_funcs=3 / ours_funcs=2` 一致）。
+* `graphwar_level_manager.rs`：40 个同锚组**全部可定序、全部未匹配** —— 我方 `level_setup()` 是
+  "数据表 + 一个大 match"，原版是 `setup_level_0..19` 一族函数。这是"我们结构上与它不同"最清楚的一处。
+* `graphwar_root_node.rs` / `graphwar_game_client.rs`：同锚组 16 / 24 个但只有 11 / 15 个可定序 ——
+  剩下的是**多函数共享同一位点**（见 §84.5 的 G4）。
+* `graphwar_computer_player_manager.rs`：5 个位点全部有名且可定序 —— 这是本轮**唯一**
+  能把整文件函数序列排出来的模块（§84.4）。
+
+### 84.4 顺序一致率：主口径与扩展口径都报
+
+| 口径 | 匹配依据 | 参与位点 | 相邻对一致 | 全局（1−逆序率） |
+|---|---|---|---|---|
+| **S/W（主）** | v2 三向真名（`fixtures/name_to_addr_v2.tsv`：Windows COFF + Android arm64 `.symtab` × 本 Linux 二进制，落地键 = `(file,line,col)` 双向唯一） | 21 | **8/13 = 61.5%** | 42.1% |
+| **S/W + A（扩展）** | 再加"我方源码注释里自己点名的原版地址"（**线索档**，plan §9.2） | 34 | 9/19 = 47.4% | 41.8% |
+
+**为什么主口径这么小**：292 个 funcstart 里只有 **184** 个有 v2 真名，而这 184 个里 **122 个（66.3%）**
+的 method 名在我方整个 `src/` 里**根本不存在**（不是"在别的文件"，是**没有同名函数**：原版
+`GraphwarTeamManager::add_to_team` ↔ 我方 `TeamTable::add_to_team` 这种还算好的，原版
+`setup_level_13` 我方压根没有）。这个 66.3% 本身就是一条重要的结构结论（§84.9 建议 1）。
+
+**8 条"顺序错"（本轮唯一能指名道姓的结构差异，全部可复核）**
+
+| 原版文件 | 原版 lo | 我方函数 | 我方位置 | 匹配档 |
+|---|---|---|---|---|
+| `graphwar_game_client.rs` | 139 | `GraphwarGameClient::tick` | `src/graphwar_game_client.rs:708` | A |
+| `graphwar_game_client.rs` | 186 | `GraphwarGameClient::on_command` | `src/graphwar_game_client.rs:379` | A |
+| `graphwar_turn_manager.rs` | 159 | `TurnManager::set_turn_mode` | `src/graphwar_turn_manager.rs:729` | W |
+| `graphwar_turn_manager.rs` | 379 | `TurnManager::set_turn` | `src/graphwar_turn_manager.rs:783` | W |
+| `graphwar_turn_manager.rs` | 410 | `TurnManager::send_all_info_events` | `src/graphwar_turn_manager.rs:653` | W |
+| `graphwar_function_input.rs` | 253 | `Buffer::move_caret_left` | `src/graphwar_function_input.rs:767` | W |
+| `graphwar_computer_player_manager.rs` | 276 | `ComputerPlayers::handle_turn_info_event` | `src/graphwar_computer_player_manager.rs:560` | A |
+| `graphwar_computer_player_manager.rs` | 331 | `ComputerPlayers::handle_entity_removed_event` | `src/graphwar_computer_player_manager.rs:541` | A |
+
+最干净的一例是 `graphwar_computer_player_manager`（5 个位点全有名、全可定序）：
+原版 `add_computer_player` lo=195 → `handle_tick` 221 → `handle_turn_info_event` 276 →
+`handle_entity_removed_event` 331；我方顺序是 `add`(536) → `removed`(541) → `turn_info`(560) →
+`tick`(620) ⇒ **后三者的顺序与原版不同**（标 **推断**：A 档是线索，但与 W 档的 `add`/`tick` 交叉印证，
+且两侧都是小的纯函数，`lo` 离函数起点不会远）。
+
+### 84.5 缺口：G1 主口径 0、灵敏度 11；G2/G3/G4 是三类不同的东西
+
+| 形态 | 定义 | 读数 | 证据等级 |
+|---|---|---|---|
+| **G1**（主口径） | 相邻两锚之间**无锚行数** `blank ≥ τ_eff`（τ_eff = max(200, 我方真实相邻 blank 的 p99) = **394**） | **0** | — |
+| **G1（预注册灵敏度档）** | 同一条判据、τ ∈ {100,200,400} | **τ=100 → 11**、τ=200 → 2、τ=400 → 0 | 推断（只有行号空白） |
+| **G2** | 两个**不同**同锚组的锚点行区间交叠 ⇒ 内联/交错（**不是缺口**） | **50** | 观测（行号交错是硬事实） |
+| **G3** | 同一 `(文件,行)` 被 **≥2 个可定序位点**引用 ⇒ 真内联或共享 panic 点 | **6** | 观测 |
+| **G4** | 一个同锚组里有 **≥3 个 funcstart** ⇒ 宏/泛型/共享位点，**我们分辨不出这些函数** | **12** | 观测（阈值 3 是事后挑的） |
+
+**τ_eff 为什么偏保守（必须一起读）**：我方源码的锚点密度比原版低一个量级
+（原版 `graphwar_level_manager.rs` 590 个槽 / 40 组；我方 `math_function.rs` 只有 36 个 Location 槽 / 54 个 fn），
+拿我方的空白分布当"正常上界"必然过宽 ⇒ 主口径 0 条。按预注册灵敏度档，**τ=100 时 11 条**，最大的四条：
+
+| 原版文件 | 无锚空白行区间 | 空白行数 | 说明 |
+|---|---|---|---|
+| `graphwar_root_node.rs` | 905..1245 | **341** | 该文件还有 11 个 funcstart 被 hybrid 名预测属于它但**无锚点** |
+| `graphwar_game_state_manager.rs` | 661..866 | **206** | 同文件 hybrid 未锚定 5 个 |
+| `graphwar_game_state_manager.rs` | 877..1063 | **187** | 同上 |
+| `graphwar_root_node.rs` | 677..860 | **184** | 同上 |
+
+G3 里最值得注意的一条：`graphwar_game_state_manager.rs:203` 被 **19** 个 funcstart 引用、
+`graphwar_game_client.rs:152` 被 **45** 个引用 —— 这种行几乎肯定是 `lock().unwrap()` 一类
+**被内联进每个调用者的共享 panic 点**，它的行号只能说明"这里有一次失败"，**不能当函数位置用**。
+G4 里同理：`math_function.rs:184`（求值器的锚点行）被 3 个 funcstart（`0x4eb920`/`0x4eb9d0`/`0x4ebbe0`）
+共享 —— 求值器一族本身就有内联副本。
+
+### 84.6 重排：**一条也没做**，以及为什么
+
+规格 §③ 允许"若有明确证据 ⇒ 按原版顺序**纯重排**我方文件里的函数（不改语义）"，并允许跳过但要说明。
+本轮**不做**，理由是**证据量不足以确定绝对位置**，不是"风险 > 收益"：
+
+1. **可用相邻对太少**：21 个文件里 S/W 只有 21 个位点，只有 4 个文件有 ≥2 个可用的相邻对
+   （`game_state_manager` 5 个、`turn_manager` 6 个、`function_input` 1 个、`computer_player_manager` 1 个）。
+   重排需要**整个文件的函数序**，2–5 个已知点定不了其余 15–30 个函数的绝对位置。
+2. **我方与它的函数不是 1:1**：`graphwar_level_manager` 我方 20 个 fn vs 原版 40 个位点；
+   `graphwar_function_evolutionator` 我方 112 vs 原版 16；`graphwar_turn_manager` 我方 98 vs 原版 14；
+   `graphwar_game_state_manager` 我方 173 vs 原版 33。这种 1:N / N:1 混着的布局下
+   "按原版顺序重排"先要决定**哪些我方函数该合并/拆分**，那是函数边界问题（T24 的口径），不是排序问题。
+3. **代价真实**：`docs/*.md` 里有 **415 处** `src/xxx.rs:行号` 形式的引用（本轮实测 `grep -c`），
+   重排会让它们全部指向错的函数，而这些引用**没有任何工具机器校验**
+   （`tools/check_doc_refs.py` 只校验 `docs/16` 的 `§编号`）—— 属于"静默失效"那一类坑
+   （`AGENTS.md`「反复踩过的坑」）。
+4. 所以本轮把"**应该改成什么顺序**"作为**证据**留在 `fixtures/file_structure.tsv`
+   （`位置序` 列 + `判定=顺序错`），交给后续任务在**函数边界已经 1:1 之后**再做 —— 那时重排才有定义。
+
+### 84.7 遗留 / 未做（诚实边界）
+
+1. **自对照是 debug 构建，原版是优化构建**。debug 的 53 个相邻对 100% 一致；但原版有内联，
+   内联会把**被调函数的行号**带进调用者（§84.5 的 G2/G3 就是它的量化痕迹）。所以"100%"
+   只证明**机制成立**，不证明"原版每个函数的 `lo` 都紧贴它的第一行"。已量化的补偿：
+   `Δ` 中位数 3 / p99 72；release 自对照只有 1 个相邻对（太薄）。
+2. **G1 主口径 0 条**：不是"没有缺口"，是 τ_eff 太宽（§84.5）。可用的读数是 τ=100 的 11 条。
+3. **A 档是线索**：我方注释可能过期，扩展口径比主口径低（47.4% vs 61.5%）——
+   两个数并排给，不用扩展口径替换主口径。
+4. **同一我方函数被 ≥2 个原版组匹配 3 处**（`src/graphwar_game_client.rs:743` ×2、
+   `src/graphwar_turn_manager.rs:819` ×2、`:842` ×2）⇒ 说明那里是 1:N；本轮**没**从一致率里剔除
+   （剔除后主口径 7/11 = 64%，量级不变）。
+5. **没做 arm64 `.symtab` 的"按文件函数条数"交叉**：那是另一条证据链
+   （`.reference/steam/android-2.0.60`），能给 G1/G4 提供"这里应该还有几个函数"的上界；
+   本轮只在 gaps 文件的「缺什么证据」列里写了它。
+6. **没做**逐函数人工复核（239 行 × 我方 3 千多个 fn）—— 只对 §84.4 那 8 条"顺序错"和
+   `computer_player_manager` 一例做了人工读码。
+7. **模块集合按"槽数降序前 20 + `math_function.rs`"**，所以 `weak_caller.rs`（只有 2 个槽，
+   39 个 funcstart 全挤在 2 行）**不在**这 21 个文件里 —— 它的内容由 `coverage-matrix` 的
+   `orig_funcs=39` 记着，但按 §9.3 的结论那是**上界**（见 plan §9.7/§9.8）。
+
+### 84.8 我写错了 / 规格前提被证伪（五条）
+
+1. **规格点名的"前提可能被证伪"→ 结论是前提成立**，但成立的样子和规格猜的不一样：规格担心
+   `#[track_caller]` / 泛型实例化会把 `line` 弄错。实测 `#[track_caller]` 恰恰是**帮手**
+   （`Option::unwrap` 的 Location 落在**调用者**那一行，正是我们要的）；真正会骗人的是
+   **内联**（把被调函数的行带进调用者）和**宏展开**（N 个函数共享 1 行）。前者用
+   `main_file(F)=锚点行最多的文件` 吸收，后者见下一条。
+2. **我把 `funcstart` 当成了"源码函数"，这条错得最狠**。第一版把「同一 `(文件,行集合)` 的多个
+   funcstart」合并成"同一函数的多个单态化实例"并计数。真相是泛型单态化 / `macro_rules!` 展开出
+   多个**不同**函数 / 多个函数共享同一内联 panic 点 —— 三者 `Location` **完全一样**，行号分辨不了。
+   改成一个「同锚组」一行、`定序=否`、**不合并计数**。改了以后 G2 143→50、G3 39→6
+   （原来大半是同一个共享位点的重复计数）。预注册件 §9.3 有完整说明，正文判据没动。
+3. **G2 的论证写错了**：原文写"两个函数的锚点区间交叠**物理上不可能**（函数体在文件里连续）"。
+   错 —— 内联让它成为常态（本轮实测 50 处）。判据保留、论证改掉、不进缺口数字（预注册件 §9.4）。
+4. **τ 的标定方法有偏**：拿我方源码的 blank p99 当原版的正常上界，方向对了但**尺子不同**
+   （锚点密度差一个量级）⇒ 主口径 0 条。已按预注册的灵敏度档并排报（预注册件 §9.5），
+   **没有**事后改判据。
+5. **"取前 20 个模块"的锚点口径我一开始用错了**：预注册写的是"锚点数 = 被引用的 `Location` 槽数"
+   （与 `coverage-matrix` 的 `anchors` 列同口径），第一版却用了"funcstart 的锚点行数之和" ——
+   后者会把 `weak_caller.rs`（39 个 funcstart 挤在 2 行）排进前 20、把
+   `graphwar_server_connection_handler.rs` 挤出。换成槽数口径后模块集合与 `coverage-matrix` 一致
+   （预注册件 §9.8 有对照读数）。
+
+### 84.9 建议下一步（按性价比排序）
+
+1. **先解决 66.3% 的"方法名不存在"**：184 个有名 funcstart 里 122 个的 method 名在我方 `src/` 里
+   根本没有。这说明"函数边界 1:1"离得比 `coverage-matrix` 的模块级读数远得多。
+   下一步该做的是**按 v2 真名把我方函数改名/拆分**（顺手就能算出真实的一致率），
+   而不是继续加证据轴。现成材料：`fixtures/name_to_addr_v2.tsv` + `file_structure.tsv` 的
+   「我方函数」列。
+2. **G4 的 12 处**（`file_structure_gaps.tsv` 里 `形态=G4`）是"找回未归属函数"的最短路径：
+   `graphwar_function_evolutionator.rs:169/273`（各 6 个 funcstart）、`graphwar_game_client.rs:152`
+   （5 个）、`entity_drawer.rs:56`、`graphwar_function_input.rs:434`、`graphwar_lan_vbox.rs:54/59`、
+   `graphwar_plane.rs:68`、`graphwar_root_node.rs:161`、`graphwar_setup_control.rs:95`、
+   `player_showcase.rs:27`、`math_function.rs:184`。它们是**确定存在但分不开**的函数，只差一个符号表。
+3. **G1 灵敏度 11 条**（τ=100）按空白最大排序去查：`graphwar_root_node.rs 905..1245`（341 行）
+   最值得先看 —— 那一带两侧函数都还没有我方实现，且该文件有 11 个 funcstart 被 hybrid 名预测
+   属于它却无锚点。
+4. **arm64 `.symtab` 交叉**：能一次给出"每个原版文件有多少个函数"的上界，把 G1/G4 从"疑似"
+   变成"有几条、大概多长"。
+5. 最后才是**重排**（§84.6）：等 1、2 做完、函数边界 1:1 之后再做，一次一个模块 + 四门槛。
+
+### 84.10 复跑命令（照抄；`$MAIN` = 主工作区）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t34          # 本轮工作树（.agent-work 会被回收，只需重建工作树）
+export PY=$MAIN/.reference/venv/bin/python
+cd $WT
+
+# 正对照 A（两个已知函数 + LevelRules）
+$PY tools/file_structure.py control-a          # 期望：5 个 ✓ + "原版先后 == 我方先后" ✓
+
+# 正对照 B（用我方自己的二进制做闭环；需要先 cargo build）
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target
+cargo build --offline
+$PY tools/file_structure.py control-b          # 期望：Δ 中位数 3 / 相邻对一致率 100.00%（53/53）
+
+# 生成两张表（先自动跑两级正对照标定 τ，正对照失败则**不写**文件）
+$PY tools/file_structure.py build              # 写 fixtures/file_structure.tsv + _gaps.tsv
+
+# 只校验已入库的两张表与重算结果逐字符一致
+$PY tools/file_structure.py check
+```
+
+`build` 的墙钟：约 63 s（`loc_xrefs` 扫原版 `.so` ~14 s + 我方 debug `.so` ~14 s + 文本处理）。
+
+### 84.11 硬门槛读数
+
+**`src/` 一个字节没动**（本轮只加 `tools/file_structure.py`、3 个 `fixtures/` 文本、两处 `docs/`），
+所以四条门槛里与行为/像素/回放无关的部分不受影响；仍然跑了两条与文档/生成物有关的：
+
+| 门槛 | 读数 |
+|---|---|
+| `cargo test --offline` | 未跑（`src/`、`tests/` **零改动**，本轮没有任何代码改动可回归） |
+| `cargo test --offline --features gdext-bindings` | 同上 |
+| `COVERAGE_MATRIX_UPSTREAM=… $PY tools/coverage_matrix.py --check` | **OK**（527 / 78 模块，与 baseline 一致；`src/` 未动，生成物无需重算） |
+| `$PY tools/check_doc_refs.py` | **rc=0**（无死链） |
+| 三轴 `fire`/`batch`/`batch_conv` | 未跑（护栏语料与 `src/` 都未动；本轮不产生任何行为变化） |
+
+**本轮新增/改动的文件**：`tools/file_structure.py`（新，1047 行）、
+`fixtures/file_structure_plan.txt`（新，预注册件 + §9 事后修正）、
+`fixtures/file_structure.tsv`（新，239 行数据）、`fixtures/file_structure_gaps.tsv`（新，79 行数据）、
+`docs/06`（本节）、`docs/02` §17.7（只追加一条指向本节）。
+
 ## 85. 审计③：`fixtures/` 与测试的**期望值来源**分档 —— 1772 条里有多少条真正构成复原证据（2026-11-26，审计员 t37 / `task-35`）
 
 > 规格：`.agent-work/specs/AUDIT-3-tests.md` + `AUDIT-CRITERIA.md`。
