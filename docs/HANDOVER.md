@@ -42,7 +42,7 @@ P4  命名 —— 真名 348/527；179 无名（138 族级 + 41 未知）
 
 「**允许连接官服抓包**」。⇒ `LockInfo` / `ChatMessage` / `GameHeartbeat` / `GameRemoved` / `TurnLimitInfo` /
 `ClearBans` / `BanConnection` / `EndingGame` 这 8 类在 403 份冻结回放里**零真实帧**的事件，现在可以升到 `观测`。
-**规格已写好：`docs/06` 下一节 / 任务规格 `.agent-work/specs/T53-official-capture.md`**（含前置核查、frida 优先的抓法、
+**任务书已入库：[`docs/plan-official-capture.md`](plan-official-capture.md)**（含前置核查、frida 优先的抓法、
 三张要产出的表、硬门槛、以及"只读观测 + 正文打码"的边界）。
 **开工前必须先做前置核查**：官方 broker 地址从哪来、能不能在这台机器上真的建立会话；做不到就如实报"不可达"，不许用推断填。
 
