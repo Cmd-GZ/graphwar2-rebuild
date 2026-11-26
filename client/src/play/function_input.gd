@@ -174,16 +174,37 @@ func _line_edit_style() -> StyleBox:
 	sb.border_color = GwThemeFactory.COL_BAD if _rejected else GwThemeFactory.COL_PANEL_EDGE
 	sb.set_border_width_all(GwThemeFactory.PANEL_BORDER)
 	sb.set_corner_radius_all(GwThemeFactory.PANEL_RADIUS)
+	# content_margin = **4**（不是边框宽 3）：真帧量出来的，不是抄 `.tres` 推出来的。
+	#
+	# 证据三条（都是**观测**）：
+	#   ① 对局屏输入框的外框在真帧上是 `y1062..1159` = **98** 行（`docs/archive/125` §4 的
+	#      GEOM 表独立读到「底栏 y/高 1062/98」，两条读数一致）；
+	#   ② 字体在 64 号下 `get_height(64) = 90` ⇒ 98 = 90 + 2×**4**；
+	#   ③ 原版**回放屏**光标是 `y1066..1155` = 90 行（`docs/06` §76.1 的 bbox）⇒ 内容矩形
+	#      上下各让 4 px（`1062+4 = 1066`、`1159−4 = 1155`）—— 与 ② 同一个 4，两屏同一条规则。
+	#
+	# 为什么 `.tres` 里没有这条：`graphwar_theme.tres` 的 `LineEdit/styles/normal`
+	# （`StyleBoxFlat_bw5kj`）只有 `border_width_* = 3`、**没有** `content_margin` 字段 ⇒
+	# 按 Godot 规则应退到边框宽 3（我方的 96 就是这么来的）。原版是 4 ⇒ **原版这条不是
+	# Godot 默认算出来的**：`libgraphwarrust.so` 的字符串池里有 `get_minimum_size`
+	# （`strings libgraphwarrust.so | grep minimum_size` 命中），即某个 Rust 类**绑定了**
+	# 这个虚函数；`GraphwarFunctionInput` 是 `LineEdit` 的 Rust 子类（`docs/16` §2），
+	# 它覆盖了最小尺寸是**推断**（缺"哪个类绑定"的指令证据），但"98 / 内容矩形 90 各让 4"
+	# 是**真帧两条独立读数**，这才是改的依据。
+	sb.set_content_margin_all(4)
 	return sb
 
 ## 最小尺寸：**LineEdit 的规则** = `字体高 + 样式盒的上下 content_margin`
 ## （`LineEdit::get_minimum_size` 的 `font->get_height(font_size) + style minimum size`）。
 ##
 ## 这条不是凑出来的：@1920 时字号 = 64、字体 `button_font` 的 `get_height(64) = 90`
-## ⇒ 可编辑 90+2·3 = **96**、只读 90+2·4 = **98**。原版回放屏底栏（`HBoxContainer2`）
-## 高 **98**（`docs/archive/125` §3.3 的 GEOM 表 + 真帧输入框底 `1062..1157`）——
-## 我方改前拿"左上按钮键宽 = 96"当输入框最小高 ⇒ 底栏 96、整个 `PlayMainHBox` 变成 1060、
-## 棋盘跟着下移 2 px（`docs/06` §58.3 那条"每条网格线整体错 1 px"的竖直分量）。
+## ⇒ 两种状态都是 90+2·**4** = **98**（可编辑态的 content_margin 也是 4，见
+## `_line_edit_style()` 里那三条真帧证据）。改前可编辑态按边框宽 3 算得 96 ⇒ 底栏 96、
+## `PlayMainHBox` 1060（原版 1058）、棋盘整体下移 1 px、左右键盘各错 1 px
+## （`docs/06` §58.3 那条"每条网格线整体错 1 px"的竖直分量 —— 本轮把它收口了，见 `docs/06` §79）。
+##
+## 原版回放屏底栏（`HBoxContainer2`）高 **98**（`docs/archive/125` §3.3 的 GEOM 表 +
+## 真帧输入框底 `1062..1157`）。
 func _get_minimum_size() -> Vector2:
 	var fs := _font_size()
 	var style := _line_edit_style()
