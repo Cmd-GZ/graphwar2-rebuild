@@ -18,7 +18,7 @@
 ; 只能由同一个 ttf 的导入器重算 ⇒ 抗锯齿/字宽可能与原件差 1 px，只能靠真帧像素对拍验证）。
 [gd_resource type="Theme" load_steps=8 format=3]
 
-[ext_resource type="StyleBox" path="res://game_menu_icon_button_theme.tres" id="1_btn"]
+[ext_resource type="StyleBox" path="res://game_menu_icon_button_theme.tres" id="1_t0n1t"]
 [ext_resource type="FontFile" path="res://assets/ComicRelief-Bold.fontdata" id="2_comic"]
 
 [sub_resource type="StyleBoxEmpty" id="StyleBoxEmpty_db4vv"]
