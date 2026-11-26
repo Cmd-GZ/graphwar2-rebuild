@@ -12149,7 +12149,7 @@ func _on_size_changed():
 > **编号说明**（照 §67.1 的先例如实记）：规格指定本节用 **78**（本分支上 `## NN.` 从 77 接续，
 > `check_doc_refs.py` 的连续性检查过）。但 `master` 上 **§78 已被任务 T33（原版 `GraphwarRootNode`
 > 类）占用** —— 本分支的 base 是 `8dddfc4`，`master` 已前进 29 个 commit。⇒ **若 T33 先合，
-> 本节顺延为 §79**，正文里的自引用一并改。
+> 本节顺延为第 79 节**，正文里的自引用一并改。
 
 > 验收数字、证据表与逐条指令地址在 **`docs/06` §81**（那节是验收，本节是**怎么接的**）。
 > 台账：`fixtures/controller_migration_ledger.tsv`（38 行）。规格：`.agent-work/specs/T31-controller-rust.md`。
