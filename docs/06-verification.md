@@ -11541,6 +11541,21 @@ python3 tools/frame_diff.py --orig $W/setup-orig  --mine $W/setup-mine  --screen
    `/sys/fs/cgroup/**/cgroup.kill` 是只读，且每条命令在独立 PID namespace 里看不到那个进程。
    ⇒ **复跑前先 `ss -tulpen | grep 42968`**，不空就别采（白跑 40 s）。
    `lan_lobby_*` 那两行录的是**最后一次采到"两侧都 1 行"**的结果。
+   **绕行方案（T26 提供、本轮实测有效）**：把采集整条搬进**私有 netns**，就完全不碰宿主的 42968：
+   ```bash
+   bwrap --unshare-user --unshare-net --uid 0 --gid 0 \
+     --ro-bind / / --bind $WS $WS --dev /dev --proc /proc --tmpfs /tmp \
+     --setenv __EGL_VENDOR_LIBRARY_FILENAMES /usr/share/glvnd/egl_vendor.d/50_mesa.json \
+     --setenv LIBGLX_VENDOR_LIBRARY_NAME mesa --setenv LIBGL_ALWAYS_SOFTWARE 1 \
+     --setenv GALLIUM_DRIVER llvmpipe --setenv DISPLAY 127.0.0.1:<num> \
+     --chdir $WT python3 tools/frame_capture.py --side ours --flow lobby --out ... --display-num <num>
+   ```
+   两个**静默**坑：① 那四个 MESA 变量必须显式给（否则 Xvfb 直接 segfault、日志空）；
+   ② 继承的 `DISPLAY` 必须已经指向将要起的 `127.0.0.1:<num>`（`frame_capture.py::wait_display()`
+   探的是 `os.environ['DISPLAY']`，不是它自己算出来的 display）。
+   **本轮复跑确认**：私有 netns 里重采三条 flow，`lan_lobby_local` 仍是 **3012 px / 0.1352 %**、
+   `lan_lobby_global` 仍是 **13369 px / 0.6003 %**（与入库那两行一位不差）⇒ 泄漏 socket
+   只挡"能不能采"，**不影响已录的数字**。
 
 ### 75.7 逐屏剩下的差异（改后分解，都是"不可动"的）
 

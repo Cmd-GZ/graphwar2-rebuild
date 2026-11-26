@@ -16,7 +16,7 @@ chat_popup	不过（L2，4 块超限）	True	True	0.671	0.478,0.671,0.513	#5F5F5
 join_level_popup	过	True	True	0.0	0.0,0.0,0.0	#1A3B2D,#1A3B2D	0.0	True	0	0.0	0,0	True	0	0.0	0	None	0.0	0.0
 # T25（2026-11-26）改动后重测：同一份原版帧 + 最终代码的我方帧；门槛仍是 fixtures/frame_diff_thresholds.txt sha256 9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873
 # 采集条件与 §69 一致；逐屏改前/改后与归因见 docs/06 §75（上面那批行是 T20 的改前读数，按约定不删不改）
-# 注：lan_lobby_* 两行取自本轮最后一批成功采到『两侧都 1 行』的帧（此后 UDP 42968 被一个泄漏进程占住，再采只能拍到 0 行/主菜单，见 docs/06 §75.6）
+# 注：lan_lobby_* 两行取自本轮最后一批成功采到『两侧都 1 行』的帧；此后 UDP 42968 被一个泄漏进程占住（采不到行），改用**私有 netns** 重采复现，数字一位不差（3012 px / 13369 px），见 docs/06 §75.6
 lan_lobby_local	不过（L3）	True	True	0.0	0.0,0.0,0.0	#0E251C,#0E251C	0.0	True	0	0.099	0,0	True	3012	0.001352	240	231,186,592,237	0.0	0.0
 lan_lobby_global	不过（L3）	True	True	0.002	0.002,0.002,0.002	#0E251C,#0E251C	0.001	True	0	0.194	0,1	True	13369	0.006003	241	285,187,540,455	0.0	0.0
 player_skins	过	True	True	0.0	0.0,0.0,0.0	#0E251C,#0E251C	0.0	True	0	0.0	0,0	True	0	0.0	0	None	0.0	0.0
