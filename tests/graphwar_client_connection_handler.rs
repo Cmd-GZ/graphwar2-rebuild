@@ -9,12 +9,13 @@
 //! （`readelf -sW` 口径，可 `objdump` 复核）；**x86 地址**来自 steam 2026-08-28 构建
 //! （`fixtures/name_to_addr.tsv` 的 Location 锚）。
 //!
-//! 本文件用 `#[path]` 直接包含源文件：`src/lib.rs` 里暂时没有 `pub mod`
-//! （改 `lib.rs` 不在本轮白名单），所以不能写 `gw2_rebuild::…`。
-//! 等 `pub mod graphwar_client_connection_handler;` 落地后可以把这两行删掉。
+//! 本文件**曾经**用 `#[path]` 直接包含源文件（那时 `src/lib.rs` 里还没有 `pub mod`）。
+//! `pub mod graphwar_client_connection_handler;` 已经落地，按当时的注释把这两行换成真 crate 引用
+//! —— T52 落函数体后本模块开始 `use crate::…`（帧层/事件队列/模块容器），
+//! `#[path]` 包含会让 `crate::` 指到测试二进制根、编不过；换成真 crate 引用即可，
+//! 且测试从此验的是**库里真正被编译的那份**代码。
 
-#[path = "../src/graphwar_client_connection_handler.rs"]
-mod ch;
+use gw2_rebuild::graphwar_client_connection_handler as ch;
 
 /// 判据 1：本模块在 arm64 `.symtab` 里是 **11 个 `FUNC`**（8 个方法 + 3 个订阅闭包），
 /// 另加连接线程本体（它挂在 `__rust_begin_short_backtrace` 的一个实例化名下，靠 4 条
