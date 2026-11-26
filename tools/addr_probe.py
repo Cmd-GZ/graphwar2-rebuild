@@ -48,26 +48,43 @@ from capstone.x86 import X86_OP_MEM, X86_OP_IMM, X86_OP_REG, X86_REG_RIP
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUB = os.path.dirname(HERE)
-ROOT = os.path.dirname(SUB)
+# 2026-11-26 修（路径陷阱第 4 例）：旧值 `ROOT = dirname(SUB)` 假设"checkout 在 workspace 下一层"，
+# 而本机 **checkout 本身就是 workspace**（`.reference/` 在 checkout 里）⇒ ROOT 指到父目录，
+# 于是 `locs` 去读 `/home/CG/Myprojects/.reference/steam/...`（不存在）而 `FileNotFoundError`。
+# 现在：ROOT = checkout 根；`_WS_FALLBACK` 保留旧布局的上一层作为**兜底**候选。
+ROOT = SUB
+_WS_FALLBACK = os.path.dirname(SUB)
 sys.path.insert(0, HERE)
 
 from loc_xrefs import Elf, parse_eh_frame, parse_eh_frame_hdr  # noqa: E402
 
 def _find_so():
-    """目标 `.so` 在 `gw2/.reference/steam/<tag>/`；克隆比 `gw2/` 深几层时逐级向上找。"""
+    """目标 `.so`：环境变量 > **本 checkout 自己的** `.reference/steam/<tag>/` > 逐级向上找。
+
+    2026-11-26 修：旧写法从 `ROOT` 起就直接往上走，而本机 checkout 的**父目录**里也有一个
+    `.reference/`（不是我方 checkout 的）⇒ `addr_probe locs` 会静默读到另一份 `.so` 并抛
+    `FileNotFoundError`。这和 `coverage_matrix` / `loc_xrefs` / `client/run.sh` 是同一类
+    路径陷阱（第 4 例，见 `HANDOVER` §7 ⑨/⑬）：**自己的 checkout 优先，向上找只作兜底**。
+    """
     env = os.environ.get("GW2_SO")
     if env:
         return env
-    base = ROOT
+    cands = [ROOT, _WS_FALLBACK]
+    d = ROOT
     for _ in range(6):
-        d = os.path.join(base, ".reference", "steam")
-        if os.path.isdir(d):
-            tags = sorted(t for t in os.listdir(d) if t.startswith("2026-"))
-            for t in reversed(tags or sorted(os.listdir(d))):
-                c = os.path.join(d, t, "libgraphwarrust.so")
-                if os.path.exists(c):
-                    return c
-        base = os.path.dirname(base)
+        d = os.path.dirname(d)
+        if not d or d == os.path.dirname(d):
+            break
+        cands.append(d)
+    for base in cands:
+        sd = os.path.join(base, ".reference", "steam")
+        if not os.path.isdir(sd):
+            continue
+        tags = sorted(t for t in os.listdir(sd) if t.startswith("2026-"))
+        for t in reversed(tags or sorted(os.listdir(sd))):
+            c = os.path.join(sd, t, "libgraphwarrust.so")
+            if os.path.exists(c):
+                return c
     return os.path.join(ROOT, ".reference", "steam", "2026-08-28", "libgraphwarrust.so")
 
 
