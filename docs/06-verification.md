@@ -11538,8 +11538,15 @@ Ghidra 入口    : 0x4eb9d0 / 0x4ebb01 / 0x4ebb59 / 0x4ebb68（同一 FDE 被切
 | 调用方改动 | — | **0 行**（`src/_scaffold/play_flow_class.rs` 的 import 与本文 test 模块都照旧，靠再导出生效） |
 | 证据注释 | 「为什么这一段在 play_screen_control 里」 | 改成「为什么这一段在 graphwar_game_state_manager.rs 里」+ 三行 Location 证据表（行号 / 锚点数 / 符号名） |
 
-门槛（每搬一项都跑，四条全绿）：`cargo test --offline` **1769 / 0 / 1 ignored**；
-`--features gdext-bindings` **1875 / 0 / 1 ignored**；`coverage_matrix.py --check` **OK**；`check_doc_refs.py` **rc=0**。
+门槛（每搬一项都跑，四条全绿）。两组读数**都记**（分支基线与合入 master 后不同，别混着引用）：
+
+| 树 | `cargo test --offline` | `--features gdext-bindings` | `coverage_matrix --check` | `check_doc_refs` |
+|---|---|---|---|---|
+| 分支基线 `e912939`（搬完那一步） | 1769 / 0 / 1 ignored | **1875** / 0 / 1 ignored | OK | rc=0 |
+| 合 master `a77e7e0` 之后（本分支现态） | **1769** / 0 / 1 ignored | **1880** / 0 / 1 ignored | OK | rc=0 |
+
+差的 +5 全部来自 master 那 11 条（T17/T20 等），与本轮改动无关：`#[test]` 条数在两棵树上**同为 1454**
+（本轮搬的是函数归属，**不新增也不删测试**）。
 ⚠️ 搬 `src/` 会改 `docs/coverage-matrix.tsv` 的 `ours_funcs` / `src_tree_sha256`，所以**按工具重跑那两个生成物**
 （`python3 tools/coverage_matrix.py`）——这是生成物的唯一正确修法，不是手改。
 
@@ -11626,6 +11633,11 @@ python3 tools/check_doc_refs.py                 # rc=0
    自校验里钉住了。所以不存在"两套 527"的隐患。
 5. **`docs/02` §17.4 里 `0x4eb9d0` 的自校验口径写错**（"`0x4eb9d0`/`0x4ed670` → `math_function.rs` 通过"），
    本轮已就地更正为 `0x4ed670` 通过 + `0x4eb9d0` 的 Ghidra/FDE 双口径说明（`AGENTS.md` §0 第 6 条）。
-6. **`docs/06` §72.6 第 1 条说"master 上 `coverage_matrix --check` 是红的"** —— 本轮实测**基线（master）上是 OK 的**；
+6. **master 的 `docs/06-verification.md` 自带 9 个"已提交"的冲突标记**（3 组 `<<<<<<< HEAD` /
+   `=======` / `>>>>>>> agent/net-events` + `>>>>>>> agent/pixel-rest`，来自 T17/T20 那两次合并）——
+   这是本轮合 master 时撞上的：git 见到它们就"冲突套冲突"。本分支**按两侧内容完整重建**（自校验：
+   "只在 master 有"的行 = 0，多出来的只有 §67/§68 两个代码块共用的 4 行），并把这个事实写进 merge commit。
+   ⚠️ 谁再合 master，只要 master 还没修这个文件，就会再撞一次 —— **建议 lead 在本分支合入后以它为准**。
+7. **`docs/06` §72.6 第 1 条说"master 上 `coverage_matrix --check` 是红的"** —— 本轮实测**基线（master）上是 OK 的**；
    红色是我搬 `src/` 引起的（`ours_funcs` / `src_tree_sha256` 变），按工具重跑生成物后恢复 OK。
    两件事不矛盾，但那句话现在读起来会误导，登记在此（§72 是别人写的历史节，本轮不改它）。
