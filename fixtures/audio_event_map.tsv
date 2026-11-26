@@ -1,0 +1,64 @@
+# fixtures/audio_event_map.tsv —— **音效 ↔ 事件映射的真机真值表**（T19 / `task-16`，2026-11-26）
+#
+# 生成命令（**可原地复跑**，离线、不跑游戏；两轮标签 R1/R2 见下）：
+#   .reference/venv/bin/python tools/audio_replay_align.py \
+#       --run <w>/r1.jsonl --replay 1793897298 --label R1 \
+#       --run <w>/r2.jsonl --replay 1782640836 --label R2 \
+#       --replay-dir .reference/replays/gw2-replays-snapshot/replays --out fixtures/audio_event_map.tsv
+#   R1 = 冻结回放 1793897298（1 士兵 + 1 靶子；ExplosionEffect×2 + SparkEffect×1 + SoldierInfo×3 + EntityRemoved×1）
+#   R2 = 冻结回放 1782640836（DeathEffect×1 + AshEffect×2 + ExplosionEffect×2 + SoldierInfo×8）
+# 观测命令（真机，起 Xvfb + 起游戏 + attach + 采样在**同一条命令同一个进程树**里）：
+#   .reference/venv/bin/python tools/frida_audio_map.py --out <run>.jsonl --data-dir <w>/gd \
+#       --display-num 119 --replay <冻结回放名> --after-play <秒>
+#
+# 读法：
+#   kind=rule    —— 「事件类型 + 关键字段 → 音频资源」的**结论行**（`备注` 里给证据链）；
+#   kind=inst    —— **每一条**真机观测实例（一轮一条），`备注` 里给该轮的 tick / 播放情况；
+#   kind=coverage—— 覆盖/未覆盖清单（下一步要什么样的局）。
+# 地址口径：ELF vaddr（Ghidra = 本地址 + 0x100000）；构建 = steam 2026-08-28 libgraphwarrust.so。
+# 证据档：**观测** = 运行时三条独立指证同时成立（资源句柄指针相等 / 静态臂==运行时槽 / 回放同一条事件）；
+#          **推断** = 只成立前两条；**未知** = 只有资源一条。`cargo test` 不构成任何一级证据。
+序号	事件类型	关键字段	音频资源	触发源函数地址	置信度	备注
+rule-01	EffectInfo	effect_type=ExplosionEffect(0)	res://sounds/explosion.mp3	handler=0x4bf090 → EffectAudioData::new@0x4bf249 → 槽 self+0x80	观测	判别值 44；槽 self+0x80 与载入序第 1 个资源指针相等；音量 -15.0 dB；真机实例 4 条（R1 + R2）；派发方 retaddr=0x3d1e35
+rule-02	EffectInfo	effect_type=DeathEffect(1)	res://sounds/squash.mp3	handler=0x4bf090 → EffectAudioData::new@0x4bf28f → 槽 self+0x90	观测	判别值 44；槽 self+0x90 与载入序第 2 个资源指针相等；音量 -15.0 dB；真机实例 1 条（R2）；派发方 retaddr=0x3d1e35
+rule-03	EffectInfo	effect_type=SparkEffect(2)	res://sounds/spark.mp3	handler=0x4bf090 → EffectAudioData::new@0x4bf1af → 槽 self+0xa0	观测	判别值 44；槽 self+0xa0 与载入序第 3 个资源指针相等；音量 -15.0 dB；真机实例 1 条（R1）；派发方 retaddr=0x3d1e35
+rule-04	EffectInfo	effect_type=AshEffect(3)	res://sounds/spark.mp3	handler=0x4bf090 → EffectAudioData::new@0x4bf1fc → 槽 self+0xa0	观测	判别值 44；槽 self+0xa0 与载入序第 3 个资源指针相等；音量 -15.0 dB；真机实例 2 条（R2）；派发方 retaddr=0x3d1e35；（同一槽还收 `effect_type` 的其余值 ⇒ 这是 match 的**兜底臂**）
+rule-05	SoldierInfo	(无判别字段，一律响)	res://sounds/pop.mp3	handler=0x4bf340 → EffectAudioData::new@0x4bf3a3 → 槽 self+0xb0	观测	判别值 15；槽 self+0xb0 与载入序第 4 个资源指针相等；音量 0.0 dB；真机实例 11 条（R1 + R2）；派发方 retaddr=0x3d1e35
+rule-06	EntityRemoved	(无判别字段，一律响)	res://sounds/unpop.mp3	handler=0x4bf480 → EffectAudioData::new@0x4bf4e8 → 槽 self+0xc0	观测	判别值 14；槽 self+0xc0 与载入序第 5 个资源指针相等；音量 -5.0 dB；真机实例 1 条（R1）；派发方 retaddr=0x3d1e35
+inst-01	SoldierInfo	soldier_id=230 player_id=229	res://sounds/pop.mp3	0x4bf340 → self+0xb0	观测	R1；臂 ret=0x4bf3a3；槽 self+0xb0；EffectAudioData.value=0；play@tick=557（value=0 的条目有 4 条候选，按序记首条 ⇒ 归属推断）；量表 tick=-1（TickHandler 还没跑过 ⇒ 回放载入期批量注入）；回放第 10 行 tick=5「SoldierInfo」
+inst-02	SoldierInfo	soldier_id=231 player_id=229	res://sounds/pop.mp3	0x4bf340 → self+0xb0	观测	R1；臂 ret=0x4bf3a3；槽 self+0xb0；EffectAudioData.value=0；play@tick=**未观测到 play()**（入队后被丢弃，见 cx-04）；量表 tick=-1（TickHandler 还没跑过 ⇒ 回放载入期批量注入）；回放第 13 行 tick=5「SoldierInfo」
+inst-03	EntityRemoved	entity_id=231	res://sounds/unpop.mp3	0x4bf480 → self+0xc0	观测	R1；臂 ret=0x4bf4e8；槽 self+0xc0；EffectAudioData.value=0；play@tick=**未观测到 play()**（入队后被丢弃，见 cx-04）；量表 tick=-1（TickHandler 还没跑过 ⇒ 回放载入期批量注入）；回放第 18 行 tick=6「EntityRemoved」
+inst-04	SoldierInfo	soldier_id=230 player_id=229	res://sounds/pop.mp3	0x4bf340 → self+0xb0	观测	R1；臂 ret=0x4bf3a3；槽 self+0xb0；EffectAudioData.value=0；play@tick=**未观测到 play()**（入队后被丢弃，见 cx-04）；量表 tick=-1（TickHandler 还没跑过 ⇒ 回放载入期批量注入）；回放第 43 行 tick=6「SoldierInfo」
+inst-05	EffectInfo	effect_id=234 effect_type=ExplosionEffect(0) start_tick=1281 pos=(2.579357, 0.823608)	res://sounds/explosion.mp3	0x4bf090 → self+0x80	观测	R1；臂 ret=0x4bf249；槽 self+0x80；EffectAudioData.value=1281；play@tick=1280；量表 tick=558；回放第 82 行 tick=558「EffectInfo」
+inst-06	EffectInfo	effect_id=235 effect_type=SparkEffect(2) start_tick=2169 pos=(9.782073, 4.595394)	res://sounds/spark.mp3	0x4bf090 → self+0xa0	观测	R1；臂 ret=0x4bf1af；槽 self+0xa0；EffectAudioData.value=2169；play@tick=2168；量表 tick=1492；回放第 97 行 tick=1492「EffectInfo」
+inst-07	EffectInfo	effect_id=236 effect_type=ExplosionEffect(0) start_tick=2216 pos=(10.359006, 7.715823)	res://sounds/explosion.mp3	0x4bf090 → self+0x80	观测	R1；臂 ret=0x4bf249；槽 self+0x80；EffectAudioData.value=2216；play@tick=2215；量表 tick=1492；回放第 99 行 tick=1492「EffectInfo」
+inst-08	SoldierInfo	soldier_id=877 player_id=876	res://sounds/pop.mp3	0x4bf340 → self+0xb0	观测	R2；臂 ret=0x4bf3a3；槽 self+0xb0；EffectAudioData.value=0；play@tick=25（value=0 的条目有 8 条候选，按序记首条 ⇒ 归属推断）；量表 tick=-1（TickHandler 还没跑过 ⇒ 回放载入期批量注入）；回放第 10 行 tick=11「SoldierInfo」
+inst-09	SoldierInfo	soldier_id=878 player_id=876	res://sounds/pop.mp3	0x4bf340 → self+0xb0	观测	R2；臂 ret=0x4bf3a3；槽 self+0xb0；EffectAudioData.value=0；play@tick=**未观测到 play()**（入队后被丢弃，见 cx-04）；量表 tick=-1（TickHandler 还没跑过 ⇒ 回放载入期批量注入）；回放第 13 行 tick=11「SoldierInfo」
+inst-10	SoldierInfo	soldier_id=880 player_id=879	res://sounds/pop.mp3	0x4bf340 → self+0xb0	观测	R2；臂 ret=0x4bf3a3；槽 self+0xb0；EffectAudioData.value=0；play@tick=**未观测到 play()**（入队后被丢弃，见 cx-04）；量表 tick=-1（TickHandler 还没跑过 ⇒ 回放载入期批量注入）；回放第 22 行 tick=14「SoldierInfo」
+inst-11	SoldierInfo	soldier_id=881 player_id=879	res://sounds/pop.mp3	0x4bf340 → self+0xb0	观测	R2；臂 ret=0x4bf3a3；槽 self+0xb0；EffectAudioData.value=0；play@tick=**未观测到 play()**（入队后被丢弃，见 cx-04）；量表 tick=-1（TickHandler 还没跑过 ⇒ 回放载入期批量注入）；回放第 25 行 tick=14「SoldierInfo」
+inst-12	SoldierInfo	soldier_id=880 player_id=879	res://sounds/pop.mp3	0x4bf340 → self+0xb0	观测	R2；臂 ret=0x4bf3a3；槽 self+0xb0；EffectAudioData.value=0；play@tick=**未观测到 play()**（入队后被丢弃，见 cx-04）；量表 tick=-1（TickHandler 还没跑过 ⇒ 回放载入期批量注入）；回放第 69 行 tick=14「SoldierInfo」
+inst-13	SoldierInfo	soldier_id=877 player_id=876	res://sounds/pop.mp3	0x4bf340 → self+0xb0	观测	R2；臂 ret=0x4bf3a3；槽 self+0xb0；EffectAudioData.value=0；play@tick=**未观测到 play()**（入队后被丢弃，见 cx-04）；量表 tick=-1（TickHandler 还没跑过 ⇒ 回放载入期批量注入）；回放第 70 行 tick=14「SoldierInfo」
+inst-14	SoldierInfo	soldier_id=881 player_id=879	res://sounds/pop.mp3	0x4bf340 → self+0xb0	观测	R2；臂 ret=0x4bf3a3；槽 self+0xb0；EffectAudioData.value=0；play@tick=**未观测到 play()**（入队后被丢弃，见 cx-04）；量表 tick=-1（TickHandler 还没跑过 ⇒ 回放载入期批量注入）；回放第 71 行 tick=14「SoldierInfo」
+inst-15	SoldierInfo	soldier_id=878 player_id=876	res://sounds/pop.mp3	0x4bf340 → self+0xb0	观测	R2；臂 ret=0x4bf3a3；槽 self+0xb0；EffectAudioData.value=0；play@tick=**未观测到 play()**（入队后被丢弃，见 cx-04）；量表 tick=-1（TickHandler 还没跑过 ⇒ 回放载入期批量注入）；回放第 72 行 tick=14「SoldierInfo」
+inst-16	EffectInfo	effect_id=883 effect_type=ExplosionEffect(0) start_tick=208 pos=(-24.999330, 6.118000)	res://sounds/explosion.mp3	0x4bf090 → self+0x80	观测	R2；臂 ret=0x4bf249；槽 self+0x80；EffectAudioData.value=208；play@tick=207；量表 tick=26；回放第 125 行 tick=26「EffectInfo」
+inst-17	EffectInfo	effect_id=884 effect_type=DeathEffect(1) start_tick=3566 pos=(-13.387961, -0.175616)	res://sounds/squash.mp3	0x4bf090 → self+0x90	观测	R2；臂 ret=0x4bf28f；槽 self+0x90；EffectAudioData.value=3566；play@tick=3566；量表 tick=3467；回放第 173 行 tick=3464「EffectInfo」
+inst-18	EffectInfo	effect_id=885 effect_type=AshEffect(3) start_tick=3743 pos=(9.163170, 6.118324)	res://sounds/spark.mp3	0x4bf090 → self+0xa0	观测	R2；臂 ret=0x4bf1fc；槽 self+0xa0；EffectAudioData.value=3743；play@tick=3742；量表 tick=3467；回放第 174 行 tick=3464「EffectInfo」
+inst-19	EffectInfo	effect_id=886 effect_type=AshEffect(3) start_tick=3786 pos=(9.709372, 1.724416)	res://sounds/spark.mp3	0x4bf090 → self+0xa0	观测	R2；臂 ret=0x4bf1fc；槽 self+0xa0；EffectAudioData.value=3786；play@tick=**超出观测窗**（触发 tick=3786 > 本轮最后 tick=3775）；量表 tick=3467；回放第 175 行 tick=3464「EffectInfo」
+inst-20	EffectInfo	effect_id=887 effect_type=ExplosionEffect(0) start_tick=3834 pos=(21.501204, 0.000000)	res://sounds/explosion.mp3	0x4bf090 → self+0x80	观测	R2；臂 ret=0x4bf249；槽 self+0x80；EffectAudioData.value=3834；play@tick=**超出观测窗**（触发 tick=3834 > 本轮最后 tick=3775）；量表 tick=3467；回放第 177 行 tick=3464「EffectInfo」
+cov-01	EffectInfo	effect_type=ExplosionEffect(0) → explosion.mp3	—	—	观测	已覆盖（多局多条）
+cov-02	EffectInfo	effect_type=DeathEffect(1) → squash.mp3	—	—	观测	已覆盖（1782640836 一例）
+cov-03	EffectInfo	effect_type=SparkEffect(2) → spark.mp3	—	—	观测	已覆盖
+cov-04	EffectInfo	effect_type=AshEffect(3) → spark.mp3（兜底臂）	—	—	观测	已覆盖（1782640836 两例）
+cov-05	EffectInfo	effect_type>=4（非法判别值）	—	—	未知	**无法覆盖**：构造上 JSON 里只有 4 个串，反序列化闸（`0x40b834` 的首字符集合 `{E,D,S,A}`）挡住其余 ⇒ 兜底臂的"其余"永远走不到
+cov-06	SoldierInfo	→ pop.mp3	—	—	观测	已覆盖（入队 11 条；每局只有 1 条真的 play()，见 docs/06 §70.6）
+cov-07	EntityRemoved	→ unpop.mp3	—	—	观测	已覆盖（入队；同样多数没 play()）
+cov-08	GameStateInfo	state==1(Setup) 清队列 / 其余状态	—	—	观测	已覆盖：**不出声**（负对照）
+cov-09	SoundHandler::process	humm generator 路（`0x4c01de`）	—	—	观测	已观测 2 次/每局：play tick == 回放 `FunctionActive.active_tick`；**不属于 5 个槽**，不出映射行
+cov-10	—	`tear.mp3` / `humm_2` / `humm_b` / `shepard_2`	—	—	未知	**仍无引用**：本轮 2 局里 `load` 只见到 5 个 mp3 + `humm.wav` 一次 ⇒ 与 docs/17 §5.1.2 的负结果一致
+cov-11	—	`humm.wav`（Rust 自己读，走 `FileAccess::get_file_as_bytes`）	—	—	观测	已观测：每局恰好 1 次读 `res://sounds/humm.wav`
+cx-01	反例检查	撞车（两条事件 → 同一音频）	—	—	观测	`EffectInfo(effect_type=2 SparkEffect)` 与 `EffectInfo(effect_type=3 AshEffect)` **都落 `self+0xa0` → `spark.mp3`**（详见 rule-03 / rule-04） ⇒ **确认存在，且是设计**：`0x4bf090` 是"四臂落三槽"，第 4 臂是兜底臂
+cx-02	反例检查	撞车（同一条音频被两条不同种类的**事件**用）	—	—	观测	`self+0xa0` 只被 `EffectInfo` 用；`pop`/`unpop`/`explosion`/`squash` 各自独占一个槽 ⇒ **5 个槽 ↔ 5 条资源一一对应**，没有跨事件类型复用 ⇒ 确认（5 槽 = 5 资源，来自 ctor 载荷顺序 + `qslot` 读数）
+cx-03	反例检查	孤儿 1（有音频、找不到事件）	—	—	观测	`SoundHandler::process` 的 **humm generator 路**（`play` 的 ret = `0x4c01de`）不由 4 条订阅事件触发；实测 play 的 tick 与回放 `FunctionActive.active_tick` **相等**（615 / 1550、87 / 3525） ⇒ 已归属：它不是"事件音效"，是弹道在飞时的连续音（本轮只观测，不出映射行）
+cx-04	反例检查	孤儿 2（入队了但没播）	—	—	观测	R1: 入队 eaud=7、队列路 play=4、humm 路 play=2、入队后真的 play 了=4；R2: 入队 eaud=13、队列路 play=4、humm 路 play=2、入队后真的 play 了=4。**入队 ≠ 播放**：载入期批量入队的那一批里，只有 1 条走到 `play()`，其余被 `process` 尾部的清理调用 `0x3caef0`（`Vec::retain(tick < entry.value || AudioStreamPlayer::is_playing(entry))`，is_playing = 绑定 `0x8adc70`，名字串 `0x29effb`）移走 ⇒ **映射仍成立，但"响了几次"要按 play 计** ⇒ **观测到丢弃 + 机制部分闭合**；为什么同一帧里它们既没播又被删 **未闭合 ⇒ 推断**
+cx-05	反例检查	沉默（有事件、没音频）	—	—	观测	两局里 `game_state_info_event` 被派发了 12/11 次、`EntityEffectInfo`/`LifeInfo`/`PosInfo`/`FunctionInfo`/`FunctionFire` 全都有出现 —— 前者一次 `eaud` 都没有、后者**一次 handler 都没进**（音效侧只订阅 4 条） ⇒ 负对照成立：不是"钩子没挂上"，因为同一时刻 `EffectInfo`/`SoldierInfo`/`EntityRemoved` 都抓到了
+cx-06	反例检查	负对照（探针有效性）	—	—	观测	每局 `load` 恰好 **5 次**（explosion/squash/spark/pop/unpop，长度 26/23/22/20/22）、`FileAccess::get_file_as_bytes` 恰好 **1 次**（`res://sounds/humm.wav`）、`ctor` 恰好 1 次 ⇒ 成立 ⇒ 本文的"没抓到"可以当"没发生"用

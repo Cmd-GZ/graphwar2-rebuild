@@ -526,7 +526,13 @@ VORBIS 坏 ⟺ ① 三个头包魔数/版本/framing 不对；② granule 数量
 
 ### 5.1 仍未确定（写明缺什么）
 
-#### 5.1.1 音效 ↔ 游戏事件（**未知**）
+#### 5.1.1 音效 ↔ 游戏事件（**未知** → **已结案，见 §7**）
+
+> **2026-11-26（任务 T19 / `task-16`）已解决，本节保留原文作为历史记录。** 真机 frida 观测把
+> 5 条 mp3 的归属钉到了指针级，见 **§7**（真值表 `fixtures/audio_event_map.tsv`、过程 `docs/06` §70）。
+> 同时本节下面这两段有**两处要改**：①`0x4bfe10` **不是**"按事件播放"的主函数（它只做 `humm` 泵 +
+> 队列 drain，从不调 `0x4bed70`/`0x4bf090`）；②`+0x80…+0xc0` 是 **5 个资源槽**不是 5 个 player 槽。
+> 理由与证据见 `docs/06` §70.5。
 
 `0x4bfe10` 是"按事件播放"的主函数（第二参数 `rsi` 是事件数据；入口 `cmpq $0x0,0x1e0(%rsi)`），
 它内部对事件分支、每个分支选 player 槽并 `set_stream`/`play`。要把"哪个事件放哪个音"钉死，需要：
@@ -576,3 +582,54 @@ VORBIS 坏 ⟺ ① 三个头包魔数/版本/framing 不对；② granule 数量
 3. **`.so` 里的 `corrupt deflate stream` 不属于音频**，是 miniz_oxide（§2.7）；
    音频的 WAV 错误串属于 **hound-3.5.1**。
 
+
+## 7. 音效 ↔ 事件：**5 条 mp3 各自的归属已经钉死**（运行时指针级证据），`humm.wav` 归到 `FunctionActive`，4 条孤儿资源仍然孤儿
+
+> 本节是**追加**："哪个事件放哪个音"这条在 §5.1.1 里标的是 `未知`，2026-11-26（任务 T19 / `task-16`）
+> 用 frida 挂原版真机的播放链路 + 同一份**冻结回放**的逐条事件把它做成了真值表。
+> **真值表**：`fixtures/audio_event_map.tsv`；**预注册**：`fixtures/audio_event_map_plan.txt`；
+> 完整过程、对齐判据、反例检查、复跑命令见 `docs/06` §70。本节只写**资源视角**的结论。
+
+### 7.1 5 条 mp3 的归属（**观测**，不是"名字像"）
+
+| 资源（`rsc` 里的导入产物） | 装在哪 | 谁触发（事件 + 关键字段） | 音量 | 真机实例 |
+|---|---|---|---|---|
+| `res://sounds/explosion.mp3` | `SoundHandler+0x80` | `EffectInfo{effect_type=ExplosionEffect}` | −15.0 dB | 4 |
+| `res://sounds/squash.mp3` | `+0x90` | `EffectInfo{effect_type=DeathEffect}` | −15.0 dB | 1 |
+| `res://sounds/spark.mp3` | `+0xa0` | `EffectInfo{effect_type=SparkEffect **或** AshEffect}`（match 兜底臂） | −15.0 dB | 3 |
+| `res://sounds/pop.mp3` | `+0xb0` | `SoldierInfo` | 0.0 dB | 11 |
+| `res://sounds/unpop.mp3` | `+0xc0` | `EntityRemoved` | −5.0 dB | 1 |
+
+**"资源身份"的判据只有一条：指针相等。** `ResourceLoader::load`(`0x4b1da0`) 返回的 16 字节句柄，
+与 `SoundHandler` 构造收尾(`0x5238c0`)载荷里 `+0x18/+0x28/+0x38/+0x48/+0x58` 的五对、
+与 `0x41d060(self+0x80/+0x90/+0xa0/+0xb0/+0xc0)` 取出来的五对、与 `EffectAudioData::new`(`0x4bed70`)
+里当资源传下去的那一对、与 `set_stream` 绑定(`0x3eb8b0`) 的第二个实参 —— **五处逐对相等**
+（两局各测一遍；载入序 explosion→squash→spark→pop→unpop，长度 26/23/22/20/22）。
+
+⚠ **`+0x80…+0xc0` 是 5 个"资源槽"，不是 5 个"player 槽"** —— §4.1.5 的旧读法要按这条改
+（详见 `docs/06` §70.5 第 1 条）。音量是**逐资源**写死的立即数，跟着槽走。
+
+### 7.2 `humm.wav`（第 6 个资源）的运行时归属
+
+* 它**不在**上面 5 个槽里：走 `AudioStreamGenerator`（`set_mix_rate(16000.0f)` /
+  `set_buffer_length(0.1f)` / `push_buffer`，全在 `SoundHandler::process` = `0x4bfe10` 里）；
+* 实测触发时刻 = 回放里的 **`FunctionActive.active_tick`**（615/1550、87/3525，**差 0 tick**）⇒
+  它是"弹道在飞"的连续音，**不挂任何联机事件**；
+* 读取路径也复核了一遍：每局恰好 1 次 `FileAccess::get_file_as_bytes("res://sounds/humm.wav")`
+  （`0x3eaa00`，**不走** `ResourceLoader`）⇒ §4.1.3 的结论成立。
+
+### 7.3 4 条孤儿资源（**仍然没有引用**，本轮没有推翻 §5.1.2）
+
+`tear.mp3` / `humm_2.wav` / `humm_b.wav` / `shepard_2.wav`：两局真机里 `ResourceLoader::load` 只被调了
+**5 次**（就是上面 5 条 mp3），`FileAccess::get_file_as_bytes` 只被调了 **1 次**（`humm.wav`）。
+⇒ "代码里没有引用点"这个负结果**多了一条运行时证据**，但**依然只是负结果**
+（判"死资源"还要扫 `.gdc` 字节码的字符串常量，§5.1.2 说明了这一步没做）。
+
+### 7.4 覆盖不到的资源/分支（下一步需要什么局）
+
+| 没覆盖的 | 为什么 | 需要什么 |
+|---|---|---|
+| `squash.mp3` 的**多实例** | 只有 1 局出现了 `DeathEffect`（`1782640836` 一例） | 一份"士兵被炸死且出生时登记 `DeathEffect`"的局（靶子死掉走的是 `SparkEffect`，见 `graphwar_entity_effect_manager`） |
+| `effect_type >= 4` 的兜底臂 | `deserialize`(`0x40b834`) 的首字符闸 `{E,D,S,A}` 让其余串**进不来** | 除非线上事件绕过 serde；本轮判"正常客户端不可达" |
+| `AshEffect` 与 `ExplosionEffect` **交错** | `1782640836` 里 3 条 `AshEffect` 集中在 tick 3743–3786 | 一份两者交错的局，验证兜底臂在压力下不串槽 |
+| `pop`/`unpop` 的**播放次数** | 入队 11/1 条，实际只 `play` 了 1 条（队列清理路径，`docs/06` §70.6 列为本轮新未知） | 修完 §70.6 的机制问题后重跑同一份回放即可 |
