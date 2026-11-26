@@ -12696,3 +12696,124 @@ cmp client/scenes/screens/play_screen.tscn recovered-src/play_screen.tscn
 bash client/run.sh selftest | grep -E "SELFTEST|COVERAGE"      # 717 / 0 / 1 skip，missing=0 silent=0
 python3 $WT/tools/frame_capture.py --side ours --flow match ...  # ⚠️ 必须用**本工作树的** tools/
 ```
+
+---
+
+## 84. 客户端侧：**最后 7 屏的节点树回到原版** —— `client/scenes/screens/` 16 份逐字节全等、0 份存根；三个新坑（`ShopButtonsSize` 的 deferred 负数、GDScript 类型推断、`PlayerShowcase` 替身）与 `FN_SHOW_VICTORY` 节点层的接法（2026-11-26，任务 T47 / `task-44`）
+
+> 数据与门槛读数在 `docs/06` §97；本节只写**客户端这一侧的机制**：装一份原版 `.tscn` 要补什么、
+> 三个新坑怎么绕、以及下一次接别的控制器时该照抄什么。
+
+### 84.1 现在 `client/scenes/screens/` 是什么
+
+16 份 `.tscn` **全部**与 `recovered-src/` 逐字节相同（T41 装 2 份、T43 装 6 份、T44 装 `play_screen`、
+本轮 T47 装最后 7 份），合计 **3 933 行 / 601 个 `[node]`**，**12 行存根 0 份**。
+每一屏的**静态**节点树（含 `GraphwarButton`、`theme = ExtResource(...)`、`z_index`、
+`theme_override_font_sizes/font_size`、`offset_*`）现在都是原版字节，不再是 `.gd::build()` 手抄。
+
+`client/src/screens/*.gd` 因此只剩三类东西：
+
+| 类 | 例子 | 归属 |
+|---|---|---|
+| ① **找不到消费者就不该搬的控制器逻辑** | `main_menu.gd` 的版本号文本、`connect_popups.gd` 的回车=Join / `current_text()` / 焦点 | 我方（原版在 Rust / 网络层） |
+| ② **动态填充**（原版在 Rust 里造） | `player_screen.gd::_build_*_page()`（15+15+27 个格子）、`play_screen.gd` 的回合流程 | 我方**仿制**，必须声明 |
+| ③ **接线**（把内核数据/节点表接到已装好的节点上） | `endgame_pop_up.gd::build()` 按 `0x3da130` 的节点表取句柄 | 接线 |
+
+⚠️ 判断标准仍然是 `AGENTS.md` §0.4：**这行代码是原版字节还是我们写的**。②类一个字都没变"复原"。
+
+### 84.2 三个新坑（T43/T44 那四个坑本轮一次没踩，但踩了这三个）
+
+**坑① `ShopButtonsSize.gd` 的 deferred `update_sizes()` 会把格子边长写成负数。**
+`player_screen.tscn` 的三个网格 VBox（`SkinsVbox`/`FacesVbox`/`HatsVbox`）挂的是**原版**
+`ShopButtonsSize.gd`：
+
+```gdscript
+func _ready():
+    get_tree().root.size_changed.connect(_on_viewport_size_changed)
+    call_deferred("update_sizes")          # ← 延迟到空闲期
+func update_sizes():
+    var minimum_size = (DisplayServer.get_display_safe_area().size.x / 2 - 50) / 3
+    set_visible(false); update_sizes_rec(self, minimum_size); call_deferred("set_visible", true)
+```
+
+它把该 VBox 的**所有非 Container 后代**（= 我们刚造的格子）的 `custom_minimum_size` 设成
+`(安全区宽/2 − 50)/3`。**原版没有下限**（`docs/16` §39.6：105 个原版脚本里 `maxi`/`max(` 出现 0 次），
+所以 headless 64×64 下算出来是 **−6**；而我方 `selftest` 有一条既有断言要求格子边长 = **32**
+（我方口径 `maxf(32, …)`）⇒ 一装上就 **selftest 716/1**：
+
+```
+FAIL 玩家页 15 个皮肤格子边长 = (安全区宽/2−50)/3 取整 = 32（对 0/15）
+```
+
+处置（不动 `.tscn`、不动断言）：在**父节点**的 `_ready`（= `build()` 之后）里
+`call_deferred("_reapply_cell_sizes")`。延迟回调按注册顺序执行，子节点 `_ready` 先注册 ⇒
+同一帧里**最后写入的是我方数值**。1920 下两者是 303（我方取整）vs 303.33（原版公式），
+在 917 px 的可用宽里收缩后像素一致（`player_skins` 改前改后**都是 0 px**）。
+
+**坑② GDScript 的类型推断会让整屏脚本不加载。**
+`var bridge := _endgame_math()`（`_endgame_math()` 无返回类型标注）⇒
+`Parse Error: Cannot infer the type of "bridge" variable` ⇒ **整个 `endgame_pop_up.gd` 不加载**，
+`selftest` 只掉 2 条，日志里那两条还不说"哪个屏"。改成 `var bridge = _endgame_math()`（`=` 而非 `:=`）。
+⇒ **改 `.gd` 之后先看 selftest 条数**：条数掉了一定是脚本没加载 / 解析错，不是"功能差一点"。
+
+**坑③ 我方 `PlayerShowcase`（Rust 类）和原版那个节点不等价。**
+`player_screen.tscn` 里 `[node name="PlayerShowcase" type="PlayerShowcase"]` —— 这是**原版**
+GDExtension 类名，我方也有同名类（`src/_scaffold/player_showcase_class.rs`），但它只画
+**三个纯色方块**（`solid_texture`）；真贴图来源（根节点 `+0x16a8` 的档案 + 纹理加载器）没接。
+挂上去 = 右列那块预览变成三块色块，**像素直接坏**。处置：`build()` 里把这个节点
+`remove_child` + `queue_free`，在同一位置放我方 `GwPlayerShowcase`（`client/src/play/player_showcase.gd`，
+用真图标三层合成）。**这是替身，不是复原**，`docs/06` §97.8 遗留第 4 条挂着。
+
+### 84.3 `FN_SHOW_VICTORY 0x3da130` 怎么接的（下次接别的控制器照这个形状）
+
+原版 `graphwar_play_screen_control::OTHER_NODES` 那张"节点名 → 归属函数"表以前**没有消费者**
+（T33/T35 记的"死链"）。本轮：
+
+```
+src/graphwar_play_screen_control.rs   OTHER_NODES / VICTORY_LABELS / VICTORY_ICONS（观测，串+调用点）
+        │
+        ▼  #[func] show_victory_nodes() → [{name, fn, numbered, evidence}]      （_scaffold/endgame_class.rs）
+client/src/screens/endgame_pop_up.gd::build()
+        │   只按这张表去 client/scenes/screens/endgame_pop_up.tscn（原版字节）里取节点
+        │   取不到 ⇒ push_error（不静默退化）
+        ▼
+    _self_label / _team_label / 10 × VictoryPlayerContainerN / 每格 SkinIcon·FaceIcon·HatIcon
+        │
+        ▼  on_enter() 写两条横幅 + 三层贴图（字面量来自 VICTORY_TEXTS，观测）
+```
+
+要点三条，下次照抄：①**表在 Rust 侧**（原版模块文件里那张表就是证据，不要在 `.gd` 里重抄节点名）；
+②`.gd` **只按表取节点**，缺一个就吵；③**档位写在表里**（`evidence` 字段）——`numbered` 那一项是
+**推断**（`VictoryPlayerContainer` 前缀 vs `.tscn` 里的 `…Container1..10`），不许在文档里写成观测。
+
+### 84.4 别名层：本轮又补了 9 个 `.gd` + 1 份 `.tres`
+
+装原版 `.tscn` 必须先让它的 `res://` 依赖解析得到（原版 `res://` 是**扁平**的，
+我方视图脚本住在 `res://src/views/`）。本轮补的（做法与 T41 完全相同，见 §80.1）：
+
+```bash
+# 9 个符号链接（视图脚本是原版字节，只是住的位置不同）
+for n in MainMenuButtonResize TitleSize VersionLabel PlayerNameLineEdit PlayerTabContainer \
+         ShowcaseMarginContainer UnlockButtonSize ShopButtonsSize HBoxVictoryIcon; do
+  ln -sfn "src/views/$n.gd" "client/$n.gd"
+done
+# 一份 status=完整 的主题（内嵌的全是 StyleBoxFlat/Empty，没有丢字形图集）
+cp recovered-src/shop_theme.tres client/scenes/aliases/shop_theme.tres
+printf '[remap]\n\npath="res://scenes/aliases/shop_theme.tres"\n' > client/shop_theme.tres.remap
+```
+
+⚠️ 只有 `ShopButtonsSize.gd` 是**本轮新拷进 `src/views/`** 的（前 8 份 T33 早就挂上了，只是没建别名）；
+拷完 `cmp` 必须过。`scenes/aliases/` 那 16 份是 `recovered-src/` 的副本 ⇒ 有漂移风险，
+`cmp` 要一起跑（`docs/06` §97.7 第 1 步）。
+
+### 84.5 下一步该装的（都不是"屏"，是**消费者**）
+
+`recovered-src/` 里剩下 15 份 `.tscn` 一份都没装：5 份 AdMob（`addons/admob/sample/*`，物理不可得）、
+10 份"有原件没消费者"的行/标签/入口场景（`shop_button_entry` / `team1_entry` / `team2_entry` /
+`name_label` / `line_2d` / `function_buttons` / `function_buttons_no_control` / `game_room_entry` /
+`shop_button_entry` / `main`）。其中最想装的两份：
+
+| 场景 | 谁需要它 | 缺什么 |
+|---|---|---|
+| `shop_button_entry.tscn` | `player_screen` 的 Faces/Hats 27+15 个格子（原版就是它 5 个节点一层层叠的） | 需要先把 `player_screen_control::load_items`（`0x4f57d0`，T45 已落码）接到节点层（`docs/06` §97.8 第 1 条） |
+| `main.tscn` | 我方根节点现在是 `client/scenes/main.tscn`（自己搭的 25 节点） | 装它 = 换整个根结构（`ScreensControl` + `Ad_holder` + Rust `GraphwarRootNode`），风险最高，单独一轮 |
