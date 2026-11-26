@@ -17367,6 +17367,7 @@ for f in assemble_check base_classes_check curve_on_screen_check draw_classes_ch
   `C3-frozen` 里仍可能混着"抄错的常量"（恒真）；`R3-two-ours` 用正则识别"两边都不像字面量"，
   可能把"观测值 vs 有出处的字面量"误判成 M（**偏严**，宁多报 M 不漏 M）。
 
+<<<<<<< HEAD
 ## 101. 回放屏「回归」裁决：**0.1858 % 是真的、不是空画面**；master 的 2.710 % 是**真回归**，窗口已收窄到 `(a3ed8c7, 5f74a29]`，差异 = **右三键列整体下移 48 px**（2026-11-26，任务 T51 / `task-48`）
 
 > 前情：`docs/06` §71（任务 T21）记录 `replay_play` 4 408 px = 0.1979 %、`replay_end` 4 138 px = 0.1858 %（L2 **0** 块）。
@@ -17619,3 +17620,149 @@ python3 -c "import json;d=json.load(open('$TMP/fd.json'));print(d)"   # 三层�
 * **一处口径提醒**：lead 记的 `replay_end` **2.723 %** 与本轮 `5f74a29` 的 **2.7104 %** 是两次独立采集
   （同一屏同一量级，差 0.013 pp = 约 280 px，量级上等于光标闪烁相位那类的逐运行方差，§71.5-B 记过）。
   引用时以同一次采集的 **2.7104 %** 为准。
+=======
+## 102. T52：`client_connection_handler` 的 **7 条 F3 全部落成真函数**（8 行的 F3 缺口 **7 → 0**），函数级复原率 194/527 → **202/527（38.3%）**；顺带**证伪**了本模块文档两条旧结论（2026-11-26，任务 T52 / `task-49`）
+
+### 102.1 做了什么
+
+`fixtures/function_coverage.tsv` 里 `graphwar_client_connection_handler.rs` 只有 8 行、其中 **7 条 F3**
+（`F1 = 0`）。本轮把这 7 条按 **"每个函数指到它自己的 `.eh_frame` FDE 范围"** 逐条落成函数体，
+落在原版模块文件 `src/graphwar_client_connection_handler.rs`（不是 `_scaffold`），
+函数名用真名、函数体第 1 行写 vaddr、关键指令给地址注释。
+
+| # | vaddr | FDE 范围 / 字节 | 真名 | 落点（`src/graphwar_client_connection_handler.rs`） | 证据档 | 关键指令证据 |
+|---|---|---|---|---|---|---|
+| 1 | `0x438880` | `0x438880..0x438ca2` / `0x422` | `connect::{{closure}}`（连接线程本体） | `connect_thread` :724 | 观测 | `0x4388a0 call *[0x9bafd0]→0x8f40a0`（`connect_timeout`，实参 `edx=0x1e`）；`0x4388ee`/`0x438a0e` 写 state 3 / 2 |
+| 2 | `0x4592d0` | `0x4592d0..0x459685` / `0x3b5` | `disconnect` | `disconnect` :754 | 观测 | `0x4592eb cmp dword [rdi],1`；`0x4593ed mov dword [r13+0x18],-1`；`0x45944c mov byte [r14+0x15],0` |
+| 3 | `0x459690` | `0x459690..0x459834` / `0x1a4` | `forward_event` | `forward_event` :788 | 观测 | `0x4596ec cmp dword [r15+0x18],-1`；`0x459705 cmp byte [r14],0`；`0x459735 call 0x3e2830` |
+| 4 | `0x459840` | `0x459840..0x459944` / `0x104` | `get_connection_state` | `get_connection_state` :807 | 观测 | `0x45987e movzx eax,byte [r14+0x15]`（**不校验**合法性） |
+| 5 | `0x459950` | `0x459950..0x459986` / `0x36` | `handle_connected_to_server` | `handle_connected_to_server` :828 | 观测 | `0x45995a cmp qword [rsi],0x8000000000000007`；`0x459962 mov dword [rdi],1`；`0x459968 mov dword [rdi+4],eax` |
+| 6 | `0x459f20` | `0x459f20..0x45a335` / `0x415` | `tick` | `tick` :871（+ `join_thread`、`read_loop`） | 观测 | `0x459f46 cmp al,2 / jb`；`0x45a030 mov esi,7`；`0x45a065 jne`（`try_lock`）；`0x45a0dc call 0x3d86a0` |
+| 7 | `0x45a340` | `0x45a340..0x45a55d` / `0x21d` | `connect` | `connect` :684 | 观测 | `0x45a39b mov byte [r15+0x15],1`；`0x45a3bf mov byte [rbx+0x68],0`；`0x45a41e call 0x439e80` |
+
+唯一没动的是 `0x4599f0 new`（它是 **F2**，不在 F3 缺口清单里；写它的 234 条指令不划算且会超出本轮范围）。
+
+**读数**（`tools/function_coverage.py`，本机可复跑）：
+`graphwar_client_connection_handler.rs` 8 行 **F1 0 → 7、F2 1、F3 7 → 0**；
+全仓 **F1 = 194/527（36.8%）→ 202/527（38.3%）**，F3 缺口 **196 → 188**。
+（`194` 是本轮基线，不是 T48 报告里的 `181` —— 中间并进来的 T48/T49/T50 各自也动了这个数，
+所以**别拿 181 直接减**。）
+
+### 102.2 ⚠️ 我证伪了本模块文档的两条既有结论（就地更正）
+
+**① `0x438880` 不是订阅闭包 #1，而是 `connect` 的连接线程本体。**
+
+原 `FUNCTIONS` 表把它挂在
+`subscribe_to_events_event_handler::{{closure}}#1` 上并标 `Link::NoAnchor`（同行注释自承
+"没逐条对上它到底是哪一个闭包"）。四条**互相独立**的证据推翻它：
+
+1. 它引用的 4 条 `panic::Location` 是 **`135:61`（`set_nonblocking` 的 `expect`）**、
+   `136:40`、`137:46`、**`140:46`** —— 全部落在"连接线程体"那段源码里，**一条都不在订阅闭包上**；
+2. 唯一取址点 `0x43b101` 落在 `0x43b070`（`std::thread::spawn` 机制）内 —— 订阅闭包是被
+   `subscribe_to_event` 存进回调表的，取址点不会在 spawn 里；
+3. 它自己调 `0x8f40a0`（`TcpStream::connect_timeout`，`.rodata` 有 `cannot set a 0 duration timeout`）
+   并写 `ConnectionState` 2/3；
+4. 闭包环境布局 `{SocketAddr@+0（32 B）, Arc<stream>@+0x20, Arc<state>@+0x28}` 与
+   `connect` 里 `0x45a3df..0x45a3f6` 摆出来的环境**逐字段相同**。
+
+⇒ 三个订阅闭包实测是 **`0x459990` / `0x4599b0` / `0x4599d0`**（各自 tail-call 到
+`0x3d3250` / `0x3d1670` 并传函数指针 `0x459f20` / `0x459690` / `0x459950`），
+已登记进 `fixtures/client_handler_anchors.tsv` 末尾三行（只登记、不落码：它们引用的
+`panic::Location` 数为 0，`boundary_audit` 的 8 条里本来也没有它们）。
+
+**② `LOCATIONS` 表把 `124:39` 记成 `thread::spawn().unwrap()`，其实它是 state 锁的 `unwrap`。**
+
+`0x45a49f lea r8,slot 0x956d90` 落在 `0x45a350 lock [r15+0x10]`（`self+0x48` = `Arc<Mutex<ConnectionState>>`）
+的 **poison 分支**（`0x45a488`）里，msg 是 `called Result::unwrap() on an Err value`（`0x2b` = 43 字节）。
+`std::thread::spawn` 的 `expect("failed to spawn thread")` 自带 std 侧的 Location
+（`0x45a4ed` 引用的 `0x956b98` → `library/std/src/thread/functions.rs:131:29`），**不占本文件的 Location**。
+⇒ 第 124 行是 `*self.state.lock().unwrap() = ConnectionState::Connecting;`。
+
+### 102.3 三个**函数边界**是推断（写清缺什么）
+
+1. **`join_thread`**：`tick` 里两处 `expect("Failed to join connection thread.")` 引用的是**同一个**
+   `Location`（`206:32`，`0x45a257` 与 `0x45a288` 都 `lea r8,slot 0x956cd0`）⇒ 源码里只有**一处**
+   `.expect`，被 LLVM 尾部复制到两条路径。⇒ 它只能住在一个被内联的小函数里。
+   缺的证据：arm64 未 strip 侧的 11 个 `FUNC` 里**没有** `join_thread`（说明完全内联、没有独立符号），
+   所以"它是个独立函数"只能到**推断**。
+2. **`read_loop`**：同上，是 `tick` 尾段的结构化切分（原文可能是内联的 `if let Ok(..) { loop { .. } }`）。
+3. **`connect_thread`**：见 §102.2 ①，**闭包 → 函数的提出**是源码级偏差（Rust 无法给闭包字面量命名）。
+
+### 102.4 判据/做法为什么可信（可复跑）
+
+```
+PY=/home/CG/Myprojects/graphwar2-rebuild/.reference/venv/bin/python
+$PY tools/addr_probe.py fde     0x4592d0    # 函数真实范围（.eh_frame FDE，不读 Ghidra 表）
+$PY tools/addr_probe.py dis     0x4592d0    # 逐指令
+$PY tools/addr_probe.py callers 0x4592d0    # 调用者：call rel32 + 函数指针三形态
+$PY tools/addr_probe.py locs    0x4592d0    # panic::Location → 源码行
+```
+`locs` 只给聚合值，本轮另写了 `.agent-work/locmap.py`（一次性工具，**不入库**）把
+`指令地址 → file:line:col` 逐条打出来 —— 上表里"哪条指令对应哪个源行"就是它给的。
+自校验：`0x459950` 的 `panic!` 必须落 `249:18`（`LOCATIONS` 表里独立可读）、
+`disconnect` 的三把锁必须落 `150/156/157`（三把锁的源码顺序 = 行号顺序）—— 两条都成立。
+
+### 102.5 门槛读数（本分支 `agent/f3-client-handler`，基于 `5f74a29`，**未 rebase**）
+
+| 门槛 | 读数 | 结论 |
+|---|---|---|
+| `cargo test --offline` | **1826 / 0 failed / 1 ignored** | 改前 1817（差 +9 = 本轮新增的 9 条 `function_bodies_tests`） |
+| `cargo test --offline --features gdext-bindings` | **1956 / 0 failed / 1 ignored** | 同上 |
+| `python3 tools/coverage_matrix.py --check` | **OK**（`COVERAGE_MATRIX_UPSTREAM=<MAIN>/.reference/upstream`） | 改了 `src/` ⇒ 已重跑生成物（`docs/coverage-matrix.tsv`、`docs/149-coverage-matrix.md`）一起提交；重跑后 观测 435（原 434） |
+| `python3 tools/check_doc_refs.py` | **rc=0**（豁免 1 条，白名单逐条有理由） | ✅ |
+| 三轴 `fire` | 文件 286（读失败 117）/ 结算批 1080 / **内容命中 647** | 一位未退 ✅ |
+| 三轴 `batch` | 同上：结算批 1080 / **内容命中 647** | 一位未退 ✅ |
+| 三轴 `batch_conv`（`--policy strict`） | 种类 1075/1080、**内容 637/1080**、变差 0 批 | 一位未退 ✅ |
+| `python3 tools/boundary_audit.py --check` | 527 个可归属函数：**match 441 / mismatch 0 / multi 86** | ✅ |
+
+复跑命令（快照 = 冻结的 403 份，只读）：
+```
+SNAP=<MAIN>/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict
+```
+⚠️ **`cargo` 绝对条数不要横向比 master**：lead 提示 master 已前进到 `0c768cb`（T47 16/16
+原版 `.tscn`、T48 `level_manager`、T49 scaffold 搬回、T50 headless 去镜像），本分支基于
+`5f74a29` 且**按要求没有 rebase**，所以只能比"本分支改前 / 改后"。
+
+**顺带改了两份 `tests/` 的取源方式**（不改任何断言）：`tests/graphwar_client_connection_handler.rs`
+与 `tests/graphwar_backend.rs` 原来用 `#[path = "../src/graphwar_client_connection_handler.rs"]`
+直接把源文件编进测试二进制，那是"`src/lib.rs` 里还没 `pub mod`"时的权宜之计
+（前者的文件头当时就写着"等 `pub mod` 落地后可以把这两行删掉"）。本轮该模块开始
+`use crate::…`（帧层/事件队列/模块容器/事件枚举），而 `#[path]` 包含时 `crate::` 指到
+**测试二进制根**、编不过 ⇒ 前者换成真 crate 引用（`use gw2_rebuild::… as ch;`），
+后者把被依赖的 5 个模块按 `#[path]` 挂到测试根上。**断言一条没动，测试条数不变（11 / 26）。**
+
+### 102.6 我方差异 / 语义损失（登记，不许当成原版结构）
+
+1. **传输层是泛型 `S`**：原版把 `TcpStream` 写死。泛型只为让测试能换假实现
+   （`graphwar_stream_buffer::GraphwarStreamBuffer<S>` 早就是这么做的）。
+2. **`enum Event` 无载荷**：`handle_connected_to_server` 的 `connection_id`
+   （原版 `0x45995f mov eax,dword [rsi+8]`）与 `forward_event` 的序列化负载由调用方给。
+3. **两个接缝是真缺口**：`GraphwarRemoteEventHandler::handle_server_remote_event`（`0x3e2830`，
+   89 条 Location）与 `GraphwarGameStateManager::set_state`（`0x4780c0`，真名由
+   `fixtures/name_to_addr.tsv` 唯一锚定）**我方都还没落码** ⇒ 落成两个我方观测钩子字段
+   `local_dispatch` / `requested_game_state`。**控制流（什么时候派发、派发什么）已复原，
+   被派发到的那一侧没有。**
+4. **`ReadError` 丢了 `ErrorKind`（真语义损失）**：`tick` 用 `io::Error::kind()==0xd`
+   （`0x447470` + `0x45a156 cmp al,0xd`）分"非阻塞空读"与真错误；
+   我方 `graphwar_stream_buffer::ReadError` 只有 4 个变体、把底层 io 错误并成 `Io` ⇒
+   本层只能近似（`Io` 当非阻塞空读）。**要修得先给 `ReadError::Io` 带上 `ErrorKind`**，
+   那是 `graphwar_stream_buffer.rs` 的改动，超出本任务允许范围 ⇒ 只登记。
+5. **`ConnectionRemoved` 的 JSON 键序未对拍**：字段名/类型是 `逐位`（`docs/07` §3.3 第 155 行），
+   键序与空白**没有抓包样本** ⇒ 那一层是 `推断`。
+6. **`encode_connection_removed` 的 `reason` 只走 `None` 分支**：`+0x08` 那 24 字节的语义
+   在 `docs/02`/`graphwar_player_manager.rs` 里仍标**未知**（"该字段在这里恒为哨兵值"）。
+
+### 102.7 遗留 / 下一步
+
+* **`setup_control` 的 9 条 F3 本会话没做**（时间用完）：`0x4c1e40 update_name`、`0x4c2140 update_rank`、
+  `0x4c2b90 is_leader_local`、`0x4c2ef0 update_soldiers`、`0x4c4c20 connect_entry_buttons`、
+  `0x4bd030`/`0x4bd280`（`axis_drawer::?::_`）、`0x4bce80`（`graphwar_button::?::_`）、`0x4d88b0`（无名）。
+  `boundary_audit` 已经给出它们的 **Location 行号**（178/180、187/189、310/312、202…251、257…281），
+  下一任按本节的同一套 `fde→dis→callers→locs` 直接开工即可。
+* `game_client` 的 `connect 0x518320` / `disconnect 0x516370` 也没动（它们就是 `0x45a340` / `0x4592d0`
+  的唯一调用者，本条落完后这两条已经**有被调者**了）。
+* `new`（`0x4599f0`）仍是 F2。
+>>>>>>> agent/f3-client-handler

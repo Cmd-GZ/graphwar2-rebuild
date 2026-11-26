@@ -11,6 +11,20 @@
 //! 所以下面前两行 `mod` 是**成对**的：`graphwar_backend.rs` 里用
 //! `crate::graphwar_client_connection_handler::Link`，少一个就编不过。
 
+// T52：`src/graphwar_client_connection_handler.rs` 落了函数体之后开始 `use crate::…`
+// （帧层 / 事件队列 / 模块容器 / 事件枚举），`#[path]` 包含时 `crate::` 指到**测试二进制根**，
+// 所以下面把它的四个依赖也一并按 `#[path]` 挂到测试根上（`graphwar_event_queue` 只用
+// `crate::events::Event`，所以 `events` 必须在前）。
+#[path = "../src/graphwar_event_handler.rs"]
+mod graphwar_event_handler;
+#[path = "../src/events.rs"]
+mod events;
+#[path = "../src/graphwar_stream_buffer.rs"]
+mod graphwar_stream_buffer;
+#[path = "../src/graphwar_module_container.rs"]
+mod graphwar_module_container;
+#[path = "../src/graphwar_event_queue.rs"]
+mod graphwar_event_queue;
 #[path = "../src/graphwar_client_connection_handler.rs"]
 mod graphwar_client_connection_handler;
 #[path = "../src/graphwar_backend.rs"]
