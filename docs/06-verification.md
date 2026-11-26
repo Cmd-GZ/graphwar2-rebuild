@@ -17367,7 +17367,6 @@ for f in assemble_check base_classes_check curve_on_screen_check draw_classes_ch
   `C3-frozen` 里仍可能混着"抄错的常量"（恒真）；`R3-two-ours` 用正则识别"两边都不像字面量"，
   可能把"观测值 vs 有出处的字面量"误判成 M（**偏严**，宁多报 M 不漏 M）。
 
-<<<<<<< HEAD
 ## 101. 回放屏「回归」裁决：**0.1858 % 是真的、不是空画面**；master 的 2.710 % 是**真回归**，窗口已收窄到 `(a3ed8c7, 5f74a29]`，差异 = **右三键列整体下移 48 px**（2026-11-26，任务 T51 / `task-48`）
 
 > 前情：`docs/06` §71（任务 T21）记录 `replay_play` 4 408 px = 0.1979 %、`replay_end` 4 138 px = 0.1858 %（L2 **0** 块）。
@@ -17620,7 +17619,6 @@ python3 -c "import json;d=json.load(open('$TMP/fd.json'));print(d)"   # 三层�
 * **一处口径提醒**：lead 记的 `replay_end` **2.723 %** 与本轮 `5f74a29` 的 **2.7104 %** 是两次独立采集
   （同一屏同一量级，差 0.013 pp = 约 280 px，量级上等于光标闪烁相位那类的逐运行方差，§71.5-B 记过）。
   引用时以同一次采集的 **2.7104 %** 为准。
-=======
 ## 102. T52：`client_connection_handler` 的 **7 条 F3 全部落成真函数**（8 行的 F3 缺口 **7 → 0**），函数级复原率 194/527 → **202/527（38.3%）**；顺带**证伪**了本模块文档两条旧结论（2026-11-26，任务 T52 / `task-49`）
 
 ### 102.1 做了什么
@@ -17765,4 +17763,3 @@ cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy 
 * `game_client` 的 `connect 0x518320` / `disconnect 0x516370` 也没动（它们就是 `0x45a340` / `0x4592d0`
   的唯一调用者，本条落完后这两条已经**有被调者**了）。
 * `new`（`0x4599f0`）仍是 F2。
->>>>>>> agent/f3-client-handler
