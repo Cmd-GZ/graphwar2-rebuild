@@ -233,7 +233,15 @@ static func build() -> Theme:
 	t.set_color("font_color", "Button", COL_TEXT)
 	t.set_color("font_hover_color", "Button", COL_TEXT)
 	t.set_color("font_pressed_color", "Button", COL_TEXT)
-	t.set_color("font_disabled_color", "Button", COL_TEXT_DIM)
+	# **disabled 字色 = 引擎默认主题那一档 `(0.875, 0.875, 0.875, 0.5)`**，不是我方自选色。
+	#
+	# 依据：恢复出的 `graphwar_theme.tres` 里 `Button/colors/*` **只有 `font_color = 白`**
+	# 这一条（`recovered-src/graphwar_theme.tres:95-96`），没有 `font_disabled_color`
+	# ⇒ 原版落到 Godot 默认主题，即 `(0.875,0.875,0.875,0.5)`。叠在 disabled 底
+	# `#383838`(56) 上：`0.5·223.1 + 0.5·56 = 139.6 ⇒ (140,140,140)`。
+	# 真帧判据（**观测**）：对局屏键盘那颗 disabled 的 `y` 键，字形核心色实测 **140**
+	# （我方改前 199 = 当时的 `COL_TEXT_DIM`）⇒ 单这一颗 821 px。
+	t.set_color("font_disabled_color", "Button", Color(0.875, 0.875, 0.875, 0.5))
 	t.set_font_size("font_size", "Button", BASE_FONT_SIZE)
 
 	# --- Label ---
