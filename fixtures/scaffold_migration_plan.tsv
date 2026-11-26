@@ -1,0 +1,66 @@
+# T49 台账：`src/_scaffold/` 里哪些东西是**原版的游戏语义**（要搬回同名模块），哪些是**原版没有的桥接**（留原地）
+#
+# 判据（`AGENTS.md` §4「文件名就是证据」+ 本任务规格 §2）：
+#   搬（B/M）= 能指到**原版函数名 + ELF vaddr**（符号表真名 / `fixtures/name_to_addr*.tsv` / `panic::Location`），
+#              且它判的是**游戏语义**（状态/表/规则/事件落点），不是"把 Godot 与 Rust 接起来"的胶水。
+#   留（A）  = 原版**没有对应物**：GDExtension 外壳、C ABI、报文装配、thread-local 接线、broker、ChaCha12、gzip；
+#              或原版**有**但本仓是**无第二份实现的纯转发**（T36 记的正对照）。
+#   待拆（D）= 文件里既有桥接又有语义，本轮只搬语义那部分，壳留原地；剩余部分登记不猜。
+#
+# 列：id | scaffold_loc | what_it_does | orig_module | orig_func_vaddr | evidence | decision | callers_kept_by | note
+# 地址口径：ELF vaddr（RVA = 模块内偏移）。Ghidra/REA 文本地址 = 本列 + 0x100000。
+#
+# 本文件是**预注册台账**（先出台账再搬，规格 §2①）；`decision` 列在动手前写死，跑完不回填。
+#
+# ---- ① ObstacleTable：我方"障碍表"其实是 GraphwarObstacleManager 的 6 个方法 ----
+o-00	src/_scaffold/root_wiring.rs:993	struct ObstacleTable（我方类型名）	src/graphwar_obstacle_manager.rs	GraphwarObstacleManager（80 B，5 字段）	观测：字段布局见 graphwar_obstacle_manager.rs 文件头（三构建逐偏移）	M	类型定义整体搬到原版模块，root_wiring `pub use` 再导出	我方"表"这个形状不是原版的（原版把行为写在 manager 上），所以搬的是**方法体**；类型名保留以免调用方改动
+o-01	src/_scaffold/root_wiring.rs:1019	`ObstacleTable::new`：空掩膜 + 空表 + 一条订阅	src/graphwar_obstacle_manager.rs	GraphwarObstacleManager::new 0x3f2360	观测：0x3f2360 末尾 subscribe 'tick_event'(0x3f23f0 经 GOT 0x9bac88)	B	pub use	订阅计数那一半与 `GraphwarEventHandler` 的接线不同形（见 e-02）
+o-02	src/_scaffold/root_wiring.rs:1024	`add_obstacle`：掩膜画实心圆 + 发 AddObstacle(40)	src/graphwar_obstacle_manager.rs	GraphwarObstacleManager::add_obstacle 0x3f17a0	**逐位**：0x3f1815 `xor edx,edx` = draw_circle 第 5 实参(fill)=**0x00**；0x3f1876 `add r13,0x29` = tag 40；载荷 [rsp+0x28]=pos 对、[rsp+0x38]=radius	B	pub use	原文档把 fill 记成"未知/推断"，本轮从指令定死
+o-03	src/_scaffold/root_wiring.rs:1031	`is_obstacle`：单点碰撞（越界算命中）	src/graphwar_obstacle_manager.rs	GraphwarObstacleManager::is_obstacle 0x3f15b0	**逐位**：0x3f1628/0x3f1669 `mov al,1` **先置真**，0x3f166b `cmp ecx,0x3e7; ja` / 0x3f1673 `cmp edx,0x257; ja` ⇒ 越界直接返回真；界内 0x3f1697 `cmp byte[idx],0xff; setne` ⇒ 0xff=空	B	pub use	越界=命中这条有玩法含义，不是防御编程
+o-04	src/_scaffold/root_wiring.rs:1037	`queue_destroy_obstacle`：登记延迟销毁 + 发 QueueDestroyObstacle(42)	src/graphwar_obstacle_manager.rs	GraphwarObstacleManager::queue_destroy_obstacle 0x3f20f0	**逐位**：0x3f20fe `mov ebx,edx` = 键就是**调用方传进来的 tick**（无加法）；0x3f210c..0x3f211c 以该 u32 作键查表；0x3f2275/0x3f227f 插入 `[f64;3]`=(x,y,radius)；0x3f22b2 tag 42	M	pub use	⚠️ **scaffold 的 `now_tick + DESTROY_DELAY_TICKS` 是我方自造**（原版函数体内没有那个加法）⇒ 按指令改回"键=实参 tick"
+o-05	src/_scaffold/root_wiring.rs:1043	`destroy_obstacle`：立刻挖洞 + 发 DestroyObstacle(41)	src/graphwar_obstacle_manager.rs	GraphwarObstacleManager::destroy_obstacle 0x3f1b30	**逐位**：0x3f1ba5 `mov edx,0xff` = fill=0xff（刷回空）；0x3f1c09 `add r13,0x2a` = tag 41	B	pub use	—
+o-06	src/_scaffold/root_wiring.rs:1050	`clear_obstacles`：整张掩膜刷空 + 发 ClearObstacles(39)	src/graphwar_obstacle_manager.rs	GraphwarObstacleManager::clear_obstacles 0x3f19a0	**逐位**：0x3f19fa `mov esi,0xff` → memset(ptr,0xff,len)（GOT 0x9bad08）	B	pub use	—
+o-07	src/_scaffold/root_wiring.rs:1059	`handle_tick_event`：按 tick 销毁到期项	src/graphwar_obstacle_manager.rs	GraphwarObstacleManager::handle_tick_event 0x3f1d30	**逐位**：0x3f1d40 `cmp rax,0x8000000000000000; jno → panic` ⇒ 判别值必须是 **0**(TickEvent) 否则**panic**；0x3f1d56 键=事件载荷 tick；0x3f1d80 `remove_entry`（**按等值 tick 删整条**，0x18 步长遍历调 destroy_obstacle 0x3f1dd0）	M	pub use	⚠️ scaffold 的 `due <= now` 扫全部到期项是**我方化简**；原版按键等值删。保留 `Result` 返回以不改调用方，`Err` 分支注明原版是 panic
+o-08	src/_scaffold/root_wiring.rs:682..1102	附：`mask`/`obstacles`/`pending_len`/`take_outbox`/`outbox_len` 访问器	src/graphwar_obstacle_manager.rs	（原版无对应访问器）	推断：原版没有 getter，字段直接被方法读	M	pub use	`obstacles()` 是**我方发明的第二份状态**（原版 80 B 里没有这张表）⇒ 搬过去时删掉，只留 data+pending 两个字段
+#
+# ---- ② FunctionTable：我方"函数表"其实是 GraphwarFunctionManager 的 6 个方法 ----
+f-00	src/_scaffold/root_wiring.rs:858	struct FunctionTable（我方类型名）	src/graphwar_function_manager.rs	GraphwarFunctionManager（32 B，4 字段）	观测：字段布局见 graphwar_function_manager.rs 文件头	M	root_wiring `pub use` 再导出	同 o-00
+f-01	src/_scaffold/root_wiring.rs:886	`FunctionTable::new`	src/graphwar_function_manager.rs	GraphwarFunctionManager::new（**内联**，x86 0x5236e0 / arm64 0x419c80）	观测：无独立符号，构造体内联在 Rc::new_cyclic_in	B	pub use	原版 new 要一条真事件队列 + 容器弱句柄，我方 skeleton 只给空壳（差异照实写）
+f-02	src/_scaffold/root_wiring.rs:891	`set_function`：写一格	src/graphwar_function_manager.rs	GraphwarFunctionManager::set_function 0x455e30	**逐位**：0x456377/0x456381 `movabs 0x7fff…ffff; add rax,0x24` = **发 tag 0x23=35 FunctionInfo**（载荷 id/文本/tick：0x456346..0x456370）；调用 0x45638f → GOT 0x9bac80 → add_event 0x3d3530	M	pub use	⚠️ scaffold 注释承认"发方向未接"，代码 `outbox` 一条不写 ⇒ 搬过去时**按指令补上发事件**（这是本轮唯一会改变可观察行为的一处，见报告）
+f-03	src/_scaffold/root_wiring.rs:896	`get_function`：读一格	src/graphwar_function_manager.rs	GraphwarFunctionManager::get_function 0x455b60	观测：函数体首句读 `self+0x18`（Arc<Mutex<Data>>）	B	pub use	—
+f-04	src/_scaffold/root_wiring.rs:902	`get_function_text`：一格文本	src/graphwar_function_manager.rs	GraphwarFunctionManager::get_function_text 0x4565f0	观测：Location :169:26；文本走 math_function::to_text（我方 1032/1032 对拍）	B	pub use	—
+f-05	src/_scaffold/root_wiring.rs:907	`set_function_active_tick`	src/graphwar_function_manager.rs	GraphwarFunctionManager::set_function_active_tick 0x456b80	**逐位**：0x456cd3 `lea rax,[r9+0x25]` = **tag 0x24=36 FunctionActive**；调用 0x456ce1	M	pub use	同 f-02：补上发事件
+f-06	src/_scaffold/root_wiring.rs:917	`set_function_points`	src/graphwar_function_manager.rs	GraphwarFunctionManager::set_function_points 0x456810	**逐位**：0x4569d3 `lea rax,[r8+0x26]` = **tag 0x25=37 FunctionPoints**；调用 0x4569e1	M	pub use	同上
+f-07	src/_scaffold/root_wiring.rs:933	`get_active_functions_on_tick`：在场判据	src/graphwar_function_manager.rs	GraphwarFunctionManager::get_active_functions_on_tick 0x456df0	观测：谓词 = `tick > active_tick` 严格 + `30*(tick-active) < points.len()+1800`（docs/16 §42.2；本函数体只看到闭包/查表骨架，谓词在闭包侧）	B	pub use	证据档为**观测**不是逐位（谓词没在本函数体内逐条读到）
+f-08	src/_scaffold/root_wiring.rs:912/922/950..967	附：`active_tick_of`/`points_of`/`len`/`is_empty`/`take_outbox`/`outbox_len`	src/graphwar_function_manager.rs	（原版无 getter）	推断	B	pub use	探针用；搬过去照旧
+#
+# ---- ③ KernelBus 的 subscribe / process_events = GraphwarEventHandler 的那两条 ----
+e-00	src/_scaffold/root_wiring.rs:2318	struct KernelBus（订阅表 + 投递记录那几格）	src/graphwar_event_handler.rs	GraphwarEventHandler（订阅表容器）	观测：`0x3d38f0` 的 Location 主文件 = src/graphwar_event_handler.rs（boundary_audit 判 mismatch，T30 已切文件）	D	KernelBus 只留薄转发	KernelBus 里的队列/容器/时钟/virtual-clock 是**我方接线**，不搬
+e-01	src/_scaffold/root_wiring.rs:2362	`KernelBus::subscribe`：名字 → 订阅表	src/graphwar_event_handler.rs	GraphwarEventHandler::subscribe_to_event 0x3d38f0	观测：72 条名字全部解出（DISPATCH_NAME_TAGS，两道自校验 72/72、17/17）	B	KernelBus::subscribe 转发	名字不在表 ⇒ false（原版走 len-10 跳表 + 逐字节比较）
+e-02	src/_scaffold/root_wiring.rs:2389	`KernelBus::pump`：把出站队列投给本地订阅者	src/graphwar_event_handler.rs	GraphwarEventHandler::process_events 0x3d3630	观测：单 Location 锚（:467）；订阅表容器/投递顺序未逐条还原 ⇒ **只搬"名字查表 + 有人订阅才记"这条已观测到的语义**，不伪造顺序细节	B	KernelBus::pump 转发	差异照实写：原版订阅者是闭包，我方只有计数
+e-03	src/_scaffold/root_wiring.rs:2600	`dispatch_name(event)`：事件 → 派发名	src/graphwar_event_handler.rs	0x3d38f0 的反向索引	推断（反向查 DISPATCH_NAME_TAGS）	B	root_wiring `pub use`	—
+e-04	src/_scaffold/root_wiring.rs:2373/2378/2409	附：`subscriber_count`/`subscribers`/`pumps` 探针	src/graphwar_event_handler.rs	（原版无）	推断	B	转发到搬过去的结构	探针值是 assemble_check.gd 的既有断言输入 ⇒ 读数必须一字不变
+#
+# ---- ④ net_events_class.rs：派发层语义 → GraphwarRemoteEventHandler ----
+n-00	src/_scaffold/net_events_class.rs:91	`enum WireEvent`（30 个线上变体）	src/graphwar_remote_event_handler.rs	GraphwarRemoteEventHandler::handle_client_remote_event 0x3dee00	观测：tag 表来自 protocol.rs WIRE_SPEC（74/74 逐位）；Location 87/80 锚落本文件	M	net_events_class `pub use`	原版吃 0x48 B tagged union，我方吃解析后字段（形态差异照实登记）
+n-01	src/_scaffold/net_events_class.rs:156/192	`WireEvent::tag` / `::name`	src/graphwar_remote_event_handler.rs	0x3dee00 的分派键（tag）	观测	M	pub use	—
+n-02	src/_scaffold/net_events_class.rs:242	`dispatch(ev) -> Calls`：一条事件 → 哪个 manager 的哪个方法	src/graphwar_remote_event_handler.rs	GraphwarRemoteEventHandler::handle_client_remote_event 0x3dee00	逐事件分档见文件头表：PosInfo/NameInfo/Skin|Face|HatGraphics/EntityEffect/EffectInfo/EntityRemoved/TeamInfo/RemoveTeam/ColorInfo/SoldierInfo/模式三条 = **观测**；TargetInfo/LifeInfo/PlayerInfo/Function* = **推断**；FunctionFire = **未知（不接）**	M	pub use（`net_events_class::dispatch`）	这是本文件唯一"游戏语义"体；`GwNetEvents` 的 40 个 `#[func]` 是 GDExtension 外壳 ⇒ 留原地（n-05）
+n-03	src/_scaffold/net_events_class.rs:553..618	`parse_team`/`parse_*_mode`/`parse_effect_type`/`is_bot_skin`（7 个）	src/graphwar_remote_event_handler.rs	0x3dee00 体内对 payload 串的判等（如 `"Team One"`）	推断（串面量来自 UI/协议两侧，未见逐条反汇编对照）	M	pub use	搬过去标注推断档
+n-04	src/_scaffold/net_events_class.rs:622..651	`manager`/`drain`/`set_graphics` 三个 helper	src/graphwar_remote_event_handler.rs	—	我方接线（原版直接调 manager 的 setter，无 helper）	A：留 scaffold 是对的	—	它们读 `KernelBus`（thread-local）⇒ 属接线，不搬；dispatch 搬走后由 net_events_class 传给 dispatch
+n-05	src/_scaffold/net_events_class.rs:667..	`struct GwNetEvents` + 40 个 `#[func]` + `ensure_installed`/`dispatch_installed`	src/graphwar_remote_event_handler.rs	（GDExtension 外壳，原版没有）	—	A：留 scaffold 是对的	—	原版是 Rust 直接调；Godot 侧这一层是本仓自造
+#
+# ---- 反例（规格 §3 点名：留原地并标 A）----
+a-01	src/_scaffold/api.rs	`hit_test` 等：转发 `settle::resolve_points`	—	—	无第二份实现	**A：留 scaffold 是对的**	—	T36 §86 正对照
+a-02	src/_scaffold/endgame_class.rs	转发 `turnstate::winner_byte`	—	—	无第二份实现	**A：留 scaffold 是对的**	—	T36 §86 正对照
+a-03	src/_scaffold/play_flow_class.rs	转发 `LevelRules::evaluate`	—	—	无第二份算法	**A：留 scaffold 是对的**	—	T36 §86 正对照
+a-04	src/_scaffold/capi.rs	C ABI 导出	—	—	原版没有 C ABI	**A：留 scaffold 是对的**	—	AGENTS §4 列举
+a-05	src/_scaffold/gdext.rs / gdext_class.rs / gdext_mod.rs	GDExtension 入口与注册	—	—	原版没有	**A：留 scaffold 是对的**	—	同上
+a-06	src/_scaffold/broker.rs	broker 服务端（我方对局服务器）	—	—	原版客户端里没有服务端	**A：留 scaffold 是对的**	—	同上
+a-07	src/_scaffold/rng.rs	ChaCha12	—	—	原版用 rand_chacha crate	**A：留 scaffold 是对的**	—	同上
+a-08	src/_scaffold/replay_inflate.rs	gzip 解压	—	—	原版用 flate2	**A：留 scaffold 是对的**	—	同上
+a-09	src/_scaffold/root_wiring.rs 其余（RootWiring 装载器、KernelBus 的队列/时钟/thread-local、Demo 数据）	我方装配体	—	—	原版的对象图不同（节点→backend→容器）	**A：留 scaffold 是对的**	—	本轮只把 ③ 的订阅/投递两格搬走，容器与队列留原地
+#
+# ---- 统计（预注册时写死，跑完核对）----
+# 搬（B/M）：o-00..o-08（9 行，含 1 行访问器附注）、f-00..f-08（9 行）、e-00..e-04（5 行）、n-00..n-03（4 行）= 27 行
+# 留（A）：n-04、n-05、a-01..a-09 = 11 行
+# 待拆（D）：e-00（KernelBus 本体）= 1 行
