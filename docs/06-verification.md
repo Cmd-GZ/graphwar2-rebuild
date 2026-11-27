@@ -19272,3 +19272,212 @@ $PY tools/bit_exact_attrib.py --json c.jsonl --check-baseline --axis batch_conv 
    （`subscribed`/`saves`），而 E7 窗口给出 `0x08/0x18/0x40/0x48` 四个偏移、下界 `0x49`
    ⇒ **原版这个结构体有 4 个字段、我方少了 2 个**（`Vec<EventInfo>@0x18` 与
    `Weak<RefCell<ModuleContainer>>@0x40`）—— 只是按判据只能记 `unknown`。
+
+---
+
+## 110. T53 连官服抓包：**8 类「403 份冻结回放里零真实帧」的协议事件，6 类拿到真帧、1 类证伪、3 类仍抓不到**（2026-11-27，任务 `task-51` / 分支 `agent/live-capture`）
+
+任务书是仓库内的 [`docs/plan-official-capture.md`](plan-official-capture.md)（用户 2026-11-26 授权「允许连接官服抓包」）。
+本节按任务书 §5 的七问逐条写。**只提交解析后的文本**，pcap/二进制不进仓库；
+`ChatMessage` 正文连 hex 一起打码（只留 `<len=N>`）。
+
+### 110.1 抓到几类 / 各几帧
+
+| 任务书里的名字 | 线上事件名 | tag | 真帧 | 方向 | 证据档 |
+|---|---|---|---|---|---|
+| `LockInfo` | `LockInfo` | 69 | **2** | server→client | **观测** |
+| `ChatMessage` | `ChatMessage` | 71 | **1** | server→client | **观测** |
+| `GameRemoved` | `GameRemoved` | 64 | **1** | broker→client | **观测** |
+| `LockRequest`（9 条断言之一） | `LockRequest` | 68 | **2** | client→server | **观测** |
+| `ChatMessageRequest`（同上） | `ChatMessageRequest` | 70 | **1** | client→server | **观测** |
+| `EndingGame` | **`GameStateInfo` 的取值** | 30 | **1** | server→client | **观测** |
+| `TurnLimitInfo` | `TurnLimitInfo` | 57 | **21（冻结语料）** | 回放 | **观测**（见 §110.5，非本轮抓包） |
+| `GameHeartbeat` | `GameHeartbeat` | 63 | **0** | — | 仍 `推断` |
+| `ClearBans` | `ClearBansRequest` | 73 | **0** | — | 仍 `推断` |
+| `BanConnection` | `BanConnectionRequest` | 72 | **0** | — | 仍 `推断` |
+
+总帧数：**1 717 条**（5 份会话 JSONL 去重后；去重合并 0 —— 房主局两端同进程但方向由 `role` 分开，
+见 §110.2）。事件种类 56 个。
+
+产物（三张任务书要求的表 + 一张给单测的小表）：
+
+* `fixtures/protocol_live_frames.jsonl`（1 718 行 = 1 行会话头 + 1 717 帧）
+* `fixtures/protocol_zero_frame_events.tsv`（8 类 + 2 条对偶断言）
+* `fixtures/protocol_enum_domains.tsv`（7 个线上枚举）
+* `fixtures/protocol_live_expected.tsv`（真帧字节，给 `src/_scaffold/protocol.rs` 的单测编译进来）
+
+### 110.2 采集怎么做的（三次会话，各自解决一个"抓不到"的原因）
+
+| 会话 | 场景 | 客户端/对端 | 抓到什么 |
+|---|---|---|---|
+| F5 | 自建本地服务器完整一局：建房 → 加 2 个 Bot → 锁房/解锁 → Start → 聊天 → 等 120 s（Bot 互殴 5 回合） | `Graphwar.x86_64` 2.0.60 + 真 `.so`；对端 = **自己进程里的**游戏服务器 `[::1]:42235` | `LockInfo`×2 / `LockRequest`×2 / `ChatMessage` / `ChatMessageRequest` + 整局状态机 |
+| G2 | 走 broker 加入**官服房间** `US Room 1`（`69.164.213.144:37933`）→ 加 2 个 Bot → Start → 等 150 s | 对端 = 官方服务器上的游戏服务器 | `{"GameStateInfo":{"game_state":"EndingGame"}}`（第 5 回合后本队被全灭）+ `BotAdded` 等 |
+| A1/L4/G1 | broker 大堂（Global 列表）静置 45–80 s | 对端 = broker `69.164.213.144:42970` | `GameRemoved`（房间被回收时的广播）+ 房间列表 |
+
+**探针** `tools/live_capture/live_wire.js`（源头是 §51 已验证的 `tools/frida_gate5_wire.js` A 半，
+只做加法：加 `role`/`peer`/`hex`）与 `tools/live_capture/diag_syscalls.js`（纯计数诊断）。
+四个坑，都实测踩过并写进探针文件头：
+
+1. **`recv` 与 `read` 双喂会错位**（D1 跑：解出 `n=8762` 的假帧）。读侧是
+   `peek(MSG_PEEK)` 取前缀 + `read_exact` 取正文（`docs/02` §17 已逐位复原），
+   `MSG_PEEK` 必须跳过。
+2. **挂 `write`/`writev` 会自噬**：Frida 自己的消息通道在目标进程里也走 libc 写，
+   `emit()→send()→write()→onEnter→feed()→emit()` 无限递归 —— 实测 F1 只出 2 帧、F2 整整 160 s
+   **一条消息都没有**（连每秒一次的 LAN 广播都停了）。所以写方向**一律不挂**；
+   房主局里 `client→server` 由**服务端 fd 的 `recv`** 拿到，远端官服房间只拿 `server→client`。
+3. **分帧只能靠"嗅 `{`/`}` 重同步"**：正文由 `read_exact` 单独交付，缓冲里可能没有长度前缀。
+   改成"等够 n 字节再切"的严格写法会永远等下去（实测 F3/F4：**0 帧**）。
+4. **负载过长会静默丢**：`readBytes` 的上限必须远大于 `MAX_PAYLOAD`（0xffff），
+   一次 syscall 可能读回多条帧。
+
+### 110.3 与 `WIRE_SPEC` 的逐项差异：**0 处**
+
+判据三类，全部由 `tools/live_capture/parse_live.py` 机判（不手抄表：`WIRE_SPEC` 直接从
+`src/_scaffold/protocol.rs` 抽出）：
+
+| 判据 | 结果 |
+|---|---|
+| 字段**顺序**（JSON 键序 = serde 声明序） | 6 类抓到的事件**逐项相同** |
+| 字段**名** | 逐项相同（无多出、无缺失） |
+| 字段**类型**（实测 JSON 形态 → `ValType`） | 逐项相容（`bool`/`i64`/`str` 三类都对） |
+
+⇒ `docs/07` §3.3 全表 **74 行一个字都没改**；只把 §7.7 那 6 行的证据档从「逐位（无抓包）」
+改成「逐位 + **观测**（真帧）」，并在 §7.8 补逐事件核对表。
+
+**线上枚举**（`fixtures/protocol_enum_domains.tsv`）：本次会话实测到
+`axis_mode`=EveryUnit、`function_mode`=NormalFunction、`turn_mode`=SequentialTurns、
+`time_mode`=Timer1m、`game_state`={Setup, WaitingForFunctions, CalculatingResults,
+SynchronizingResults, ExecutingResults, **EndingGame**}、`team`={Team1,Team2}、
+`effect_type`={ExplosionEffect,DeathEffect,AshEffect} ——
+**多出来的取值 0 个**（`missing_in_live` 只是"本次会话没出现"，不是文档缺项），
+⇒ `docs/07` §5.2 的 7 张枚举表与真实流量**无冲突**。
+
+### 110.4 9 条自洽断言：**换了 6 条**（3 条仍换不了）
+
+`docs/07` §7.7 那 9 条「无抓包」断言 = `src/_scaffold/protocol.rs::supplemented_event_tests`
+里样本标 `合成` 的那 9 条。本轮：
+
+* **换掉 6 条**（样本串改成**线上真字节**，注释标 `真帧`）：
+  `LockInfo` / `LockRequest` / `ChatMessage` / `ChatMessageRequest` / `GameRemoved` / `TurnLimitInfo`
+  （其中 `ChatMessage*` 的 `entity_id` 由 229/232 改成线上实测 **228**，`GameRemoved` 的地址改成实测值，
+  `TurnLimitInfo` 的 `20` 改成语料实测的 `5`）。
+* **新增 1 条硬闸** `captured_samples_are_the_live_wire_bytes`：把
+  `fixtures/protocol_live_expected.tsv` 编译进测试，断言每条 `真帧` 样本的 UTF-8 字节与
+  线上负载**逐字节相同**（7 行：6 条抓包 + `EndingGame` 那条 `GameStateInfo`）。
+  **反面对照**：把 `LockInfo.lock` 从 `true` 改成 `false` ⇒ 立即红
+  （`LockInfo 的样本打码后与线上真帧原文不一致（方向 server→client）`），改回即绿。
+* **3 条仍换不了**，注释里写明缺什么：`GameHeartbeat`（0 帧）、
+  `ClearBansRequest`（0 帧）、`BanConnectionRequest`（0 帧）。
+  它们的形状仍是 `逐位`（`serialize_field` 调用序），语义仍是 **`推断`**。
+
+### 110.5 两条**证伪/口径修正**（我判断错的前提，照实记）
+
+1. **`TurnLimitInfo` 不是「零真实帧」**（T46 的清单错了一条）。
+   T46 判"9 类零真实帧"时是在**压缩字节**上搜字符串，而回放是 **gzip** 的 ⇒ 搜不到。
+   本轮把 403 份回放**全部解压**后扫：
+   `TurnLimitInfo` **21 帧 / 21 份回放**（值 `1 / 5 / 6 / 10`），
+   其余 8 类确实 **0 帧**（`LockInfo`/`LockRequest`/`ChatMessage`/`ChatMessageRequest`/
+   `GameRemoved`/`BanConnectionRequest`/`GameHeartbeat`/`ClearBansRequest`）。
+   ⇒ 任务书的"8 类"里应划掉 `TurnLimitInfo`（lead 已按 t59 的实测同步这一条）。
+2. **`EndingGame` 不是线上事件**（见 §110.1 表与 `docs/07` §7.8）。
+   任务书把它与事件并列，但它只是 `GraphwarGameState` 枚举的取值；线上信号是
+   `GameStateInfo{"game_state":"EndingGame"}`。本轮抓到 1 帧（官服房间里本队被全灭后）。
+
+### 110.6 仍抓不到的三类：**缺什么触发条件**（不许用推断填）
+
+| 事件 | 本轮负结果 | 我的判断（标明是推断） |
+|---|---|---|
+| `GameHeartbeat` | 三个会话共 **1 717 帧**全无：broker 大堂 45 s ×2 没有、官服房间 Setup 80 s 没有、**官服房间里跑完一整局（853 帧，含 `EndingGame`）也没有**；本地自建服务器一整局（632 帧）同样没有 | **推断**：它由**客户端之外的组件**构造（`docs/07` §5.1.1 已证本 `.so` 里只有序列化实现、没有构造点），最可能是 **broker↔游戏服务器**之间的保活，客户端既不发也不收。要证到需要**服务端二进制**或中间人（本轮**不做**注入/伪造，任务书红线） |
+| `BanConnectionRequest` | 0 帧（有构造点，但没有 UI 入口） | **推断**：客户端界面里根本没有"封禁"按钮 —— `.pck` 与 `.so` 的 UI 字符串只有 `RemovePlayerButton`/`RemoveSoldierButton`，没有 ban 项；猜测走的是"房主长按/二次确认"或**只在 LAN 房主**才出现的入口。要证到需要**两实例（房主 + 加入者）+ 房主对被踢者二次确认**的一局，本轮时间不够 |
+| `ClearBansRequest` | 0 帧 | 同上；而且"清空封禁列表"的入口只在**封禁列表非空**时才可能显示 ⇒ 必须先造出一次 `BanConnectionRequest` |
+
+### 110.7 门槛读数（本分支 `agent/live-capture`）
+
+全部在**本分支工作树**（`.agent-work/cg/wt-t53`，基线 = master `7091277`）原地跑：
+
+| 门槛 | 任务书要求 | 本轮读数 | 判定 |
+|---|---|---|---|
+| `cargo test --offline` | 1826 / 0 / 1ignored | **1853 / 0 / 1ignored** | 过（高于门槛：基线 master 已含 T54–T59 的测试，本分支**净增 1 条** = 新增的 `captured_samples_are_the_live_wire_bytes`） |
+| `--features gdext-bindings` | 1956 / 0 / 1ignored | **1983 / 0 / 1ignored** | 过（同上，净增 1） |
+| `coverage_matrix.py --check` | OK | **OK** | 过（改了 `src/_scaffold/protocol.rs` ⇒ 按仓库规矩**重跑生成物** `docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md` 后一致） |
+| `check_doc_refs.py` | rc=0 | **rc=0**（无死链） | 过 |
+| 三轴 `fire` | 647 | **647** | 过 |
+| 三轴 `batch` | 647 | **647** | 过 |
+| 三轴 `batch_conv` | 637 | **637**（内容命中 637/1080；种类序列 1075/1080；变好 128 批 / 变差 0 批） | 过 |
+| `boundary_audit.py --check` | mismatch 0 | **match 441 / mismatch 0 / multi 86** | 过 |
+
+复跑（工作树里，`CARGO_TARGET_DIR` 指共享 target 目录）：
+
+```bash
+export CARGO_HOME=<WS>/.reference/cargo-home CARGO_TARGET_DIR=<WS>/.reference/cargo-home/target
+cargo test --offline                                        # 1853/0/1
+cargo test --offline --features gdext-bindings               # 1983/0/1
+COVERAGE_MATRIX_UPSTREAM=<WS>/.reference/upstream $PY tools/coverage_matrix.py --check
+$PY tools/check_doc_refs.py                                  # rc=0
+SNAP=<WS>/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict
+$PY tools/boundary_audit.py --check
+```
+
+`cargo test` 的实测条数**高于**任务书写门槛时的读数，原因是**分支基线更新**（master `7091277`
+已并入 T54–T59 的测试）——不是本轮偷偷加了测试来凑数：本分支 `src/` 只改了
+`_scaffold/protocol.rs` 的样本表与测试模块，**净增 1 条**测试。
+
+### 110.8 复跑（每条都能原地跑；样本只写 `.agent-work/`，不进冻结快照）
+
+```bash
+export PY=<WS>/.reference/venv/bin/python
+R=<WS>/.agent-work/cg/wt-t53/run            # 绝对路径；HOME/XDG 一律指到这儿，绝不污染仓库
+mkdir -p /tmp/.X11-unix
+__EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/50_mesa.json LIBGL_ALWAYS_SOFTWARE=1 \
+  Xvfb :95 -screen 0 1920x1160x24 -listen tcp -ac -nolisten unix &      # ⚠️ 必须用 managed 后台作业常驻
+
+# ① 自建本地服务器一局（锁房/解锁/加 Bot/开局/聊天）→ LockInfo & LockRequest & ChatMessage(±Request)
+HOME=$R/home $PY tools/gw2_step_drive.py --display 127.0.0.1:95 --data-dir $R/gdA \
+  --out $R/F5.jsonl --js tools/live_capture/live_wire.js --settle 30 --tail 4 --steps \
+  's boot, w3, c 1344 622, w3, c 765 1109, w5, c 1648 980, w2, c 1276 742, w2, c 1648 980, w2,
+   c 1276 742, w2, c 1832 56, w2, c 1832 56, w2, c 958 1111, w6, c 1010 56, w2, c 960 600, w1,
+   t "gg", w1, k Return, w3, w120'
+
+# ② 官服房间一整局 → EndingGame（房间地址从 ③ 的 GameInfo 里取，端口会变）
+HOME=$R/home $PY tools/gw2_step_drive.py --display 127.0.0.1:95 --data-dir $R/gdA \
+  --out $R/G2.jsonl --js tools/live_capture/live_wire.js --settle 30 --tail 4 --steps \
+  's boot, w3, c 1344 622, w6, c 1197 1094, w3, c 1006 530, w1, t "69.164.213.144:37933", w1,
+   c 1065 727, w10, c 1648 980, w3, c 1276 742, w3, c 1648 980, w3, c 1276 742, w3, c 958 1111,
+   w10, w150'
+
+# ③ broker 大堂静置 → GameRemoved
+HOME=$R/home $PY tools/gw2_step_drive.py --display 127.0.0.1:95 --data-dir $R/gdA \
+  --out $R/A1.jsonl --js tools/live_capture/live_wire.js --settle 30 --tail 3 --steps \
+  's boot, w3, c 1344 622, w8, c 1466 50, w60'
+
+# ④ 三张表 + 单测真值表（`--corpus-snapshot` 给冻结语料，找"回放里其实有"的那些）
+$PY tools/live_capture/parse_live.py --raw $R/F5.jsonl --raw $R/G2.jsonl --raw $R/A1.jsonl \
+  --corpus-snapshot <WS>/.reference/replays/gw2-replays-snapshot/replays --session-note "..."
+
+# ⑤ 断言的硬闸（含反面对照：改一个样本必须变红）
+cargo test --offline --lib captured_samples_are_the_live_wire_bytes
+```
+
+### 110.9 遗留 + 我写错了什么
+
+**遗留**
+
+1. `GameHeartbeat` / `ClearBansRequest` / `BanConnectionRequest` 三类仍 `推断`（缺什么见 §110.6）。
+2. 探针**看不见 `client→broker` 的帧**（写方向挂不了，见 §110.2 第 2 条）⇒
+   若 `GameHeartbeat` 真是"房主→broker"的保活，本路线永远抓不到，需要服务端或包过滤（pcap）路线；
+   **pcap 不进仓库**，所以即便抓到也要先把字节转成文本再说。
+3. `ChatMessage` 只抓到 1 帧（操作者自己发的 2 字节消息），**正文长度分布**没有样本量
+   （任务书要求"只留字段形状与长度分布"，长度分布这一栏目前只有 1 个点）。
+4. 官服房间里我作为**唯一玩家**加 Bot 开局 —— 若真人加入同一房间，抓到的帧会混入别人的
+   `PlayerInfo`/`NameInfo`（本轮没有发生；后续若要复跑请注意礼貌与隐私）。
+
+**我写错了什么（本轮自查）**
+
+* 一开始把"房主局两端同进程"当成"帧会重复"⇒ 写了配对去重；实测**一条都不会重复**
+  （写方向抓不到、读方向两端各读自己方向），去重合并数 = 0。去重逻辑留着当保险，但**没有起作用**。
+* 一开始以为聊天按钮点开就有输入焦点；实测**弹窗是全屏透明覆盖层**，
+  必须先点 `ChatBox` 才把焦点交给 `ChatLineEdit`（`recovered-src/ChatBox.gd::_gui_input`）。
+* 一开始把 `EndingGame` 当事件找 `{"EndingGame":…}` 帧，白跑一轮才发现它不是事件（§110.5 第 2 条）。

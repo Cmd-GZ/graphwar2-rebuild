@@ -1,0 +1,11 @@
+任务书名字	线上事件名	tag	抓到次数	方向	字段顺序（实测 vs WIRE_SPEC）	与 WIRE_SPEC 差异	升档后该改什么	sha256（首帧负载）
+LockInfo	LockInfo	69	2	server→client	['lock']（实测） vs ['lock']（WIRE_SPEC）	字段顺序与类型逐项相同	观测（真帧 2 条）	4e3b6ddeaf47df090f8df66ff88bc59ae2064baee8d2d940eede8f5c1e26be02
+ChatMessage	ChatMessage	71	1	server→client	['entity_id', 'message']（实测） vs ['entity_id', 'message']（WIRE_SPEC）	字段顺序与类型逐项相同	观测（真帧 1 条）	7c31096349a022ad8ebe276c97f981090d8bd2e9b566f32206b95546c4d9adaa
+GameHeartbeat	GameHeartbeat	63	0	—	—	—	线上 0 帧、冻结语料 0 帧（本轮三会话共 1717 帧里没有），保持 推断（缺的触发条件见 docs/06 §103.6）	—
+GameRemoved	GameRemoved	64	1	server→client	['game_address']（实测） vs ['game_address']（WIRE_SPEC）	字段顺序与类型逐项相同	观测（真帧 1 条）	450cd9044c44ea1a9488b56626fc3d1ebdc4013e715d4be73fff43627f0a2f40
+TurnLimitInfo	TurnLimitInfo	57	0（线上）/ 21（冻结语料）	回放	—	线上未抓到；语料里的取值={"TurnLimitInfo":{"turn_limit":10}} | {"TurnLimitInfo":{"turn_limit":1}} | {"TurnLimitInfo":{"turn_limit":5}} | {"TurnLimitInfo":{"turn_limit":6}}	观测（语料真帧，21 份回放）	—
+ClearBans	ClearBansRequest	73	0	—	—	—	线上 0 帧、冻结语料 0 帧（本轮三会话共 1717 帧里没有），保持 推断（缺的触发条件见 docs/06 §103.6）	—
+BanConnection	BanConnectionRequest	72	0	—	—	—	线上 0 帧、冻结语料 0 帧（本轮三会话共 1717 帧里没有），保持 推断（缺的触发条件见 docs/06 §103.6）	—
+EndingGame	GameStateInfo	30	1	server→client	['game_state']（实测） vs ['game_state']（WIRE_SPEC）	字段顺序与类型逐项相同	观测（真帧 1 条）	27f739665b18aaae8e0a5bdeab92f3ba1c7a37ff9ad984a4e0cc589c8802d910
+LockRequest（补：9 条断言之一）	LockRequest	68	2	client→server	['lock']（实测） vs ['lock']（WIRE_SPEC）	字段顺序与类型逐项相同	观测（真帧 2 条）	37f81af99fe37d182b8dc8bc0070fecb7a35189b04997597a95c44b8d4f4938a
+ChatMessageRequest（补：9 条断言之一）	ChatMessageRequest	70	1	client→server	['entity_id', 'message']（实测） vs ['entity_id', 'message']（WIRE_SPEC）	字段顺序与类型逐项相同	观测（真帧 1 条）	ac33f3025a6bd0f5f029e5387c338d62ead79e820d3908917d46f701be880b5e

@@ -513,22 +513,26 @@ x86 版是 stripped，拿不到符号；arm64 版有符号，可以直接读 `Se
 | `VersionInfo` | 2 | 强类型 `version,system` | **逐位**（夹具 1 行） |
 | `BotAdded` | 3 | 强类型 `connection_id,player_id,level` | **逐位**（夹具 2 行） |
 | `ClearObstacles` | 无此串（空体） | 强类型（无字段，体恒 `{}`） | **逐位** + 观测（夹具 1 行，空体） |
-| `LockInfo` | 1 | 强类型 `lock: bool` | **逐位**（无抓包；键名由 `0x50ca30` 读出） |
-| `LockRequest` | 1 | 强类型 `lock: bool` | **逐位**（无抓包；`0x50e420`） |
-| `ChatMessage` | 2 | 强类型 `entity_id: i64, message: str` | **逐位**（无抓包；`0x511320`） |
-| `ChatMessageRequest` | 2 | 强类型 `entity_id: i64, message: str` | **逐位**（无抓包；`0x5124e0`） |
-| `GameRemoved` | 1 | 强类型 `game_address: str`（与 `GameInfo.address` 同类型） | **逐位**（无抓包；`0x511de0`） |
-| `TurnLimitInfo` | 1 | 强类型 `turn_limit: i64\|null`（与 `RankInfo.rank` 同类型） | **逐位**（无抓包；`0x50f5d0`） |
-| `BanConnectionRequest` | 2 | 强类型 `player_connection_id: i64, leader_connection_id: i64` | **逐位**（无抓包；`0x513cd0`） |
-| `GameHeartbeat` | 无此串（空体） | 强类型（无字段，体恒 `{}`） | **逐位**（无抓包；`0x510a90` 一次 `serialize_field` 都没有） |
-| `ClearBansRequest` | 无此串（空体） | 强类型（无字段，体恒 `{}`） | **逐位**（无抓包；`0x5137c0` 同上） |
+| `LockInfo` | 1 | 强类型 `lock: bool` | **逐位** + **观测**（T53 真帧 2 条：`{"lock":true}`/`{"lock":false}`；`0x50ca30`） |
+| `LockRequest` | 1 | 强类型 `lock: bool` | **逐位** + **观测**（T53 真帧 2 条，client→server；`0x50e420`） |
+| `ChatMessage` | 2 | 强类型 `entity_id: i64, message: str` | **逐位** + **观测**（T53 真帧 1 条；`0x511320`） |
+| `ChatMessageRequest` | 2 | 强类型 `entity_id: i64, message: str` | **逐位** + **观测**（T53 真帧 1 条，client→server；`0x5124e0`） |
+| `GameRemoved` | 1 | 强类型 `game_address: str`（与 `GameInfo.address` 同类型） | **逐位** + **观测**（T53 真帧 1 条，broker 广播；`0x511de0`） |
+| `TurnLimitInfo` | 1 | 强类型 `turn_limit: i64\|null`（与 `RankInfo.rank` 同类型） | **逐位** + **观测**（冻结语料 **21 份回放**各有 1 帧，值 `1/5/6/10`；`0x50f5d0`） |
+| `BanConnectionRequest` | 2 | 强类型 `player_connection_id: i64, leader_connection_id: i64` | **逐位**（T53 仍未抓到；`0x513cd0`） |
+| `GameHeartbeat` | 无此串（空体） | 强类型（无字段，体恒 `{}`） | **逐位**（T53 三会话 1717 帧仍 0 帧；`0x510a90` 一次 `serialize_field` 都没有） |
+| `ClearBansRequest` | 无此串（空体） | 强类型（无字段，体恒 `{}`） | **逐位**（T53 仍未抓到；`0x5137c0` 同上） |
 
 汇总：**23 个名字全部是强类型、能解析、能逐字节回放、也能从零构造**（`emit_*`）。
-其中 **14 种（41 行）** 有真实抓包；**其余 9 种**从未抓到过真实流量
-（`LockInfo`、`LockRequest`、`ChatMessage`、`ChatMessageRequest`、`GameRemoved`、
-`TurnLimitInfo`、`BanConnectionRequest`、`GameHeartbeat`、`ClearBansRequest`）——
-它们的键名与键序**改由二进制的 `serialize_field` 调用序定死**，
-档位从**推断/未知**升到**逐位**（口径见 §3.2）。
+其中 **14 种（41 行）** 有冻结语料抓包；另有 **6 种**由 **T53 连官服抓包**补上真实流量
+（`LockInfo`、`LockRequest`、`ChatMessage`、`ChatMessageRequest`、`GameRemoved`、`TurnLimitInfo`）——
+真帧与逐项核对见 **§7.8**；**剩 3 种**（`BanConnectionRequest`、`GameHeartbeat`、`ClearBansRequest`）
+到 T53 为止仍无任何真实流量，键名与键序只能靠二进制的 `serialize_field` 调用序定死
+（**逐位**，语义仍是**推断**）。
+
+> ⚠️ 旧版本这里写的是"其余 9 种从未抓到过真实流量"，其中 **`TurnLimitInfo` 是假阴性**：
+> T46 当初是在**压缩回放字节**上搜字符串，而回放是 gzip 的 ⇒ 21 份回放里的真帧没被看见
+> （T53 解压后 403/403 全扫，见 `docs/06` §110.5）。
 
 #### 6.2.1 那 10 个原来为什么只做"透传"（**已作废，留档**）
 
@@ -1001,6 +1005,49 @@ early2026 的 21 处折叠**逐条落在订阅 tag 上**（RVA ⇒ tag）：`0xa
 
 ---
 
+
+
+### 7.8 逐事件核对：T53 连官服抓包（**观测**，2026-11-27）
+
+三张证据表（**只提交解析后的文本**，pcap/二进制不进仓库）：
+
+| 文件 | 内容 |
+|---|---|
+| [`fixtures/protocol_live_frames.jsonl`](../fixtures/protocol_live_frames.jsonl) | 1 717 条真帧（去重后）：方向 / 事件名 / tag / 负载 hex / sha256 / 解析出的字段与取值 / 时间戳 / 对端 |
+| [`fixtures/protocol_zero_frame_events.tsv`](../fixtures/protocol_zero_frame_events.tsv) | 8 类「零真实帧」事件逐类判定（抓到几次 / 字段顺序 vs `WIRE_SPEC` / 差异 / 升档后该改什么） |
+| [`fixtures/protocol_enum_domains.tsv`](../fixtures/protocol_enum_domains.tsv) | 7 个线上枚举的**实测取值全集** vs §5.2 已知集合 |
+| [`fixtures/protocol_live_expected.tsv`](../fixtures/protocol_live_expected.tsv) | 给单测编译进来的真帧字节（`src/_scaffold/protocol.rs` 的 `SAMPLES` 期望值来源） |
+
+采集路线：真客户端 `2.0.60`（`.reference/game/Graphwar.x86_64` + 真 `libgraphwarrust.so`，
+sha256 `9a5381…`）→ 真 broker `69.164.213.144:42970`（`curl https://graphwar.com/graphwar_II_ip.txt`）
+→ 三个场景：①自建本地服务器完整一局（锁/聊天/Bot/5 回合）②官服房间 `US Room 1`（`69.164.213.144:37933`）
+完整一局直到 `EndingGame` ③broker 大堂 45 s ×2。探针 `tools/live_capture/live_wire.js` 只挂
+`recv/send/sendto/recvfrom`（**不挂** `read`/`write`/`writev`，理由见该文件头"三条实测结论"）。
+
+| 事件 | tag | 真帧 | 方向 | 与 §7.7 的键序 | 实测原文（正文已打码） |
+|---|---|---|---|---|---|
+| `LockInfo` | 69 | 2 | server→client | **一致** | `{"LockInfo":{"lock":true}}` / `{"lock":false}` |
+| `LockRequest` | 68 | 2 | client→server | **一致** | `{"LockRequest":{"lock":true}}` / `{"lock":false}` |
+| `ChatMessage` | 71 | 1 | server→client | **一致** | `{"ChatMessage":{"entity_id":228,"message":"<len=2>"}}` |
+| `ChatMessageRequest` | 70 | 1 | client→server | **一致** | `{"ChatMessageRequest":{"entity_id":228,"message":"<len=2>"}}` |
+| `GameRemoved` | 64 | 1 | broker→client | **一致** | `{"GameRemoved":{"game_address":"69.164.213.144:42409"}}` |
+| `TurnLimitInfo` | 57 | 21（冻结语料） | 回放 | **一致** | `{"TurnLimitInfo":{"turn_limit":5}}`（另有 `1/6/10`） |
+| `GameStateInfo` = `EndingGame` | 30 | 1 | server→client | **一致** | `{"GameStateInfo":{"game_state":"EndingGame"}}` |
+| `GameHeartbeat` | 63 | **0** | — | — | 三会话 1 717 帧全无（见 `docs/06` §110.6） |
+| `ClearBansRequest` | 73 | **0** | — | — | 客户端 UI 无此入口（`.pck`/`.so` 字符串里没有 ban 按钮） |
+| `BanConnectionRequest` | 72 | **0** | — | — | 同上 |
+
+**两条口径修正**（本轮实测得出）：
+
+1. **`EndingGame` 不是线上事件**。`WIRE_SPEC`（74 条）与 §3.3 全表里都没有这个事件名，
+   它是 `GraphwarGameState` 枚举的第 6 个取值（§5.2），线上形态就是
+   `{"GameStateInfo":{"game_state":"EndingGame"}}`。任务书把它列进"8 类事件"是按"结局信号"讲的，
+   严格按事件名核对应记作 **`GameStateInfo` 的一个取值**。
+2. **`ClearBans` / `BanConnection` 的线上事件名带 `Request` 后缀**
+   （`ClearBansRequest` tag 73 / `BanConnectionRequest` tag 72）。
+
+**零差异**：6 类抓到的事件里，字段名、字段顺序、类型三类判据与 `WIRE_SPEC`
+**逐项相同（0 处不一致）**，`docs/07` §3.3 全表一字未改。
 
 ## 8. 一回合的报文顺序（原 `43` / `46`）
 

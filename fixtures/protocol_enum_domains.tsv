@@ -1,0 +1,16 @@
+field	enum	observed_values（实测，本次会话全集）	known_values（docs/07 §5.2 已定死）
+		missing_in_live（已知但本次没出现）	extra_in_live（实测多出来的 = 文档漏项）
+axis_mode	AxisMode	EveryUnit	NoAxis,OnlyMain,EveryFive,EveryUnit
+		NoAxis,OnlyMain,EveryFive	-
+function_mode	FunctionMode	NormalFunction	NormalFunction,DiffEqFunction
+		DiffEqFunction	-
+turn_mode	TurnMode	SequentialTurns	SequentialTurns,SimultaneousTurns
+		SimultaneousTurns	-
+time_mode	TimeMode	Timer1m	Timer30s,Timer1m,Timer2m,Timer3m,Timer5m,TimerInf
+		Timer30s,Timer2m,Timer3m,Timer5m,TimerInf	-
+game_state	GraphwarGameState	CalculatingResults,EndingGame,ExecutingResults,Setup,SynchronizingResults,WaitingForFunctions	Connecting,Setup,WaitingForFunctions,CalculatingResults,SynchronizingResults,ExecutingResults,EndingGame,Disconnected
+		Connecting,Disconnected	-
+team	GraphwarTeam	Team1,Team2	Team1,Team2
+		-	-
+effect_type	EffectType	AshEffect,DeathEffect,ExplosionEffect	ExplosionEffect,DeathEffect,SparkEffect,AshEffect
+		SparkEffect	-

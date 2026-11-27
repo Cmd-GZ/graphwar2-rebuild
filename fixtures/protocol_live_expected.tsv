@@ -1,0 +1,11 @@
+# T53 真帧字节表（给 src/_scaffold/protocol.rs 的单测编译进来）
+# 产出：tools/live_capture/parse_live.py；采集：tools/live_capture/live_wire.js
+# 口径：payload_hex 是线上负载字节（不含 u16 长度前缀）；打码帧（ChatMessage）的 message 值已替换为 <len=N>，原始长见 wire_n
+event	task_name	direction	payload_hex	payload_text	wire_n
+LockInfo	LockInfo	server→client	7b224c6f636b496e666f223a7b226c6f636b223a747275657d7d	{"LockInfo":{"lock":true}}	26
+ChatMessage	ChatMessage	server→client	7b22436861744d657373616765223a7b22656e746974795f6964223a3232382c226d657373616765223a223c6c656e3d323e227d7d	{"ChatMessage":{"entity_id":228,"message":"<len=2>"}}	48
+GameRemoved	GameRemoved	server→client	7b2247616d6552656d6f766564223a7b2267616d655f61646472657373223a2236392e3136342e3231332e3134343a3432343039227d7d	{"GameRemoved":{"game_address":"69.164.213.144:42409"}}	55
+TurnLimitInfo	TurnLimitInfo	回放	7b225475726e4c696d6974496e666f223a7b227475726e5f6c696d6974223a357d7d	{"TurnLimitInfo":{"turn_limit":5}}	34
+GameStateInfo	EndingGame	server→client	7b2247616d655374617465496e666f223a7b2267616d655f7374617465223a22456e64696e6747616d65227d7d	{"GameStateInfo":{"game_state":"EndingGame"}}	45
+LockRequest	LockRequest（补：9 条断言之一）	client→server	7b224c6f636b52657175657374223a7b226c6f636b223a747275657d7d	{"LockRequest":{"lock":true}}	29
+ChatMessageRequest	ChatMessageRequest（补：9 条断言之一）	client→server	7b22436861744d65737361676552657175657374223a7b22656e746974795f6964223a3232382c226d657373616765223a223c6c656e3d323e227d7d	{"ChatMessageRequest":{"entity_id":228,"message":"<len=2>"}}	55

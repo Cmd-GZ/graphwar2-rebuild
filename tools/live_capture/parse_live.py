@@ -41,9 +41,29 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 
-# ── 目标：8 个「403 份冻结回放里零真实帧」的事件（docs/plan-official-capture.md §0）──
-TARGETS = ['LockInfo', 'ChatMessage', 'GameHeartbeat', 'GameRemoved',
-           'TurnLimitInfo', 'ClearBans', 'BanConnection', 'EndingGame']
+# ── 目标：任务书 §0 的 8 类「403 份冻结回放里零真实帧」的协议事件 ──
+#
+# ⚠️ 两处**任务书口径需要修正**（本轮实测得出，报告里点名）：
+#  ① `EndingGame` **不是线上事件**：`WIRE_SPEC`（74 条）与 `docs/07` §3.3 全表里都没有这个事件名；
+#     它是 `GraphwarGameState` 枚举的第 6 个值（`docs/07` §5.2），线上表现为
+#     `{"GameStateInfo":{"game_state":"EndingGame"}}`。所以本表按"状态值"判它。
+#  ② `ClearBans` / `BanConnection` 的线上**事件名**带 `Request` 后缀
+#     （`ClearBansRequest` tag 73 / `BanConnectionRequest` tag 72，见 WIRE_SPEC）。
+TARGETS = [
+    # (任务书里的名字, 线上事件名, 额外判据)
+    ('LockInfo', 'LockInfo', None),
+    ('ChatMessage', 'ChatMessage', None),
+    ('GameHeartbeat', 'GameHeartbeat', None),
+    ('GameRemoved', 'GameRemoved', None),
+    ('TurnLimitInfo', 'TurnLimitInfo', None),
+    ('ClearBans', 'ClearBansRequest', None),
+    ('BanConnection', 'BanConnectionRequest', None),
+    ('EndingGame', 'GameStateInfo', ('game_state', 'EndingGame')),
+    # 下面两条不在任务书的"8 类"里，但属 `docs/07` §7.7 那 9 条"无抓包"断言（与上面同源），
+    # 中文注释：它们是上面两条的**请求方向**对偶（client→server），本轮一起抓到，一并入表。
+    ('LockRequest（补：9 条断言之一）', 'LockRequest', None),
+    ('ChatMessageRequest（补：9 条断言之一）', 'ChatMessageRequest', None),
+]
 
 # 打码规则：值替换成 `<len=N>`（ChatMessage 正文与人名，见文件头口径 3）
 MASK_FIELDS = {'message'}
@@ -140,20 +160,41 @@ def load_raw(paths):
     for path in paths:
         name = os.path.basename(path)
         meta['raw_files'].append(name)
+        recs = []
         for line in open(path, encoding='utf-8', errors='replace'):
             line = line.strip()
             if not line:
                 continue
             try:
-                rec = json.loads(line)
+                recs.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
+        # 老探针（`frida_gate5_wire.js`）的帧记录**没有 `role` 字段** ⇒ 从同一份文件里的
+        # `connect` / `accept` 记录把 fd→role 反推出来（房主局两端同进程，方向必须靠 role 判）
+        legacy_role = {}
+        for rec in recs:
+            if rec.get('type') == 'connect':
+                legacy_role[rec.get('fd')] = 'client'
+            elif rec.get('type') == 'accept':
+                legacy_role[rec.get('fd')] = 'server'
+        for rec in recs:
             t = rec.get('type')
+            if t == 'frame' and not rec.get('role'):
+                rec['role'] = legacy_role.get(rec.get('fd'))
             if t == 'frame':
                 d = direction_of(rec)
                 if not d:
                     continue
-                frames.append({'dir': d, 'name': rec.get('name'), 'hex': rec.get('hex'),
+                hexs = rec.get('hex')
+                src_note = 'hex'
+                if not hexs:
+                    # 老探针（`tools/frida_gate5_wire.js`）只记 text，不记 hex。
+                    # 只要 `n == len(utf8(text))` 就说明负载是纯 ASCII/UTF-8 且未被截断 ⇒ 可无歧义复原。
+                    txt = rec.get('text') or ''
+                    if rec.get('n') is not None and len(txt.encode('utf-8')) == rec.get('n'):
+                        hexs = txt.encode('utf-8').hex()
+                        src_note = 'hex_reconstructed_from_text'
+                frames.append({'dir': d, 'name': rec.get('name'), 'hex': hexs, 'hex_src': src_note,
                                'n': rec.get('n'), 'text': rec.get('text'), 'fd': rec.get('fd'),
                                'role': rec.get('role'), 'peer': rec.get('peer'),
                                't': rec.get('t'), 'wall': rec.get('wall'),
@@ -246,6 +287,19 @@ def parse_frame(f, spec):
             mv, kind = mask_value(ev, k, v)
             fields.append((k, mv, kind))
     sp = spec.get(ev)
+    # 隐私（口径 3）：聊天正文**连 hex 一起打码** —— 帧里只留 `<len=N>`，
+    # 原始负载长度另存 `n`，这样"字段形状 + 长度分布"仍在，正文不在。
+    hexout, masked, masked_lens = f['hex'], [], {}
+    if ev in MASK_EVENTS and body:
+        for k, v in body.items():
+            if k in MASK_FIELDS:
+                masked.append('<len=%d>' % (len(v) if isinstance(v, str) else -1))
+                masked_lens[k] = len(v) if isinstance(v, str) else -1
+        mhex = bytes.fromhex(f['hex']).decode('utf-8', 'replace')
+        for k, ln in masked_lens.items():
+            mhex = re.sub(r'("%s"\s*:\s*)"(?:[^"\\]|\\.)*"' % k,
+                          lambda mm, _ln=ln: mm.group(1) + '"<len=%d>"' % _ln, mhex)
+        hexout = mhex.encode('utf-8').hex()
     return {
         'dir': f['dir'],
         'event': ev,
@@ -253,7 +307,10 @@ def parse_frame(f, spec):
         'sha256': sha,                                   # 负载字节的 sha256（不是整帧）
         'frame_sha256': hashlib.sha256(bytes([f['n'] >> 8, f['n'] & 0xff]) + payload).hexdigest(),
         'n': len(payload),
-        'hex': f['hex'],
+        'hex': hexout,
+        'hex_src': f.get('hex_src', 'hex'),
+        'hex_masked': bool(masked),
+        'masked_lens': masked_lens,
         'fields': [(k, v) for (k, v, _) in fields],
         'field_kinds': {k: kd for (k, _, kd) in fields},
         'empty_body': body == {} if ok else None,
@@ -290,6 +347,36 @@ def wire_spec_compare(parsed, spec):
     return ('一致' if not problems else '不一致', '; '.join(problems) or '字段顺序与类型逐项相同')
 
 
+
+def scan_corpus(snapshot, spec):
+    """扫冻结回放快照（gzip 压缩的 JSON 行）里出现过哪些目标事件。
+
+    为什么必须解压后再扫：T46 当初判"9 类零真实帧"时是在**压缩字节**上 grep 的，
+    于是 `TurnLimitInfo`（21 份回放里各有 1 帧 `{"turn_limit":5|10|6}`）被漏掉，
+    这条假阴性本轮实测纠正（见 docs/06 §103.5）。
+    """
+    import gzip
+    counts, samples = {}, {}
+    if not snapshot or not os.path.isdir(snapshot):
+        return counts, samples
+    names = [t[1] for t in TARGETS] + ['GameStateInfo']
+    for fn in sorted(os.listdir(snapshot)):
+        path = os.path.join(snapshot, fn)
+        try:
+            raw = open(path, 'rb').read()
+            try:
+                data = gzip.decompress(raw)
+            except OSError:
+                data = raw
+            txt = data.decode('utf-8', 'replace')
+        except OSError:
+            continue
+        for nm in names:
+            for m in re.finditer(r'\{"%s":\{[^}]*\}\}' % re.escape(nm), txt):
+                counts[nm] = counts.get(nm, 0) + 1
+                samples.setdefault(nm, []).append((fn, m.group(0)))
+    return counts, samples
+
 # ══════════════════════════════════════════════════════════════════════════
 # 主流程
 # ══════════════════════════════════════════════════════════════════════════
@@ -299,11 +386,16 @@ def main():
     ap.add_argument('--out-frames', default=os.path.join(REPO, 'fixtures', 'protocol_live_frames.jsonl'))
     ap.add_argument('--out-enums', default=os.path.join(REPO, 'fixtures', 'protocol_enum_domains.tsv'))
     ap.add_argument('--out-zero', default=os.path.join(REPO, 'fixtures', 'protocol_zero_frame_events.tsv'))
+    ap.add_argument('--out-expected', default=os.path.join(REPO, 'fixtures', 'protocol_live_expected.tsv'),
+                    help='给 src/_scaffold/protocol.rs 的单测编译进去的真帧字节表（9 条断言换真值用）')
     ap.add_argument('--spec', default=None, help='WIRE_SPEC 抽取源（默认 src/_scaffold/protocol.rs）')
     ap.add_argument('--session-note', default='', help='写进 frames.jsonl 头行的会话说明')
+    ap.add_argument('--corpus-snapshot', default=None,
+                    help='冻结回放快照目录（403 份）；给定时扫里面的目标事件帧，作为"回放里其实有"的证据源')
     args = ap.parse_args()
 
     spec = load_wire_spec(args.spec)
+    corpus_counts, corpus_samples = scan_corpus(args.corpus_snapshot, spec)
     frames, meta = load_raw(args.raw)
     uniq, merged = dedupe(frames)
     parsed = [parse_frame(f, spec) for f in uniq]
@@ -343,42 +435,80 @@ def main():
                 field, enum, ','.join(obs) or '(本次未出现)',
                 ','.join(known), ','.join(missing) or '-', ','.join(extra) or '-'))
 
-    # ── 表 3：8 个零帧事件逐类判定 ────────────────────────────────────────
+    # ── 表 3：8 类零帧事件逐类判定 ────────────────────────────────────────
     os.makedirs(os.path.dirname(args.out_zero), exist_ok=True)
-    counts = {}
-    examples = {}
+    counts, examples = {}, {}
     for p in parsed:
         counts[p['event']] = counts.get(p['event'], 0) + 1
         examples.setdefault(p['event'], []).append(p)
+
+    def task_hits(name, wire, extra):
+        """某类目标事件的命中帧（`extra` 用来把 EndingGame 按状态值筛出来）。"""
+        rows = examples.get(wire, [])
+        if extra:
+            k, v = extra
+            rows = [r for r in rows if dict(r['fields']).get(k) == v]
+        return rows
+
     with open(args.out_zero, 'w', encoding='utf-8') as fh:
-        fh.write('事件\ttag\t抓到次数\t字段顺序（实测 vs WIRE_SPEC）\t与 WIRE_SPEC 差异\t'
-                 '升档后该改什么\tsha256（首帧负载）\n')
-        for name in TARGETS:
-            n = 0
-            if name == 'ClearBans':                          # Request/Info 两条都算
-                n = counts.get('ClearBans', 0) + counts.get('ClearBansRequest', 0)
-            elif name == 'BanConnection':
-                n = counts.get('BanConnection', 0) + counts.get('BanConnectionRequest', 0)
-            else:
-                n = counts.get(name, 0)
-            ex = None
-            for cand in (name, name + 'Request'):
-                if examples.get(cand):
-                    ex = examples[cand][0]
-                    break
-            if ex:
+        fh.write('任务书名字\t线上事件名\ttag\t抓到次数\t方向\t'
+                 '字段顺序（实测 vs WIRE_SPEC）\t与 WIRE_SPEC 差异\t升档后该改什么\tsha256（首帧负载）\n')
+        for name, wire, extra in TARGETS:
+            rows = task_hits(name, wire, extra)
+            n = len(rows)
+            tag = (spec.get(wire) or {}).get('tag')
+            if rows:
+                ex = rows[0]
                 verdict, detail = wire_spec_compare(ex, spec)
                 order = '%s（实测） vs %s（WIRE_SPEC）' % (
                     [k for k, _ in ex['fields']],
-                    [k for k, _ in spec.get(ex['event'], {'fields': []})['fields']])
-                up = ('观测（真帧 %d 条，见 protocol_live_frames.jsonl）' % n
-                      if verdict == '一致' else '观测 + 需按实测修正：%s' % detail)
-                fh.write('%s\t%s\t%d\t%s\t%s\t%s\t%s\n' % (
-                    name, ex['tag'], n, order, detail, up, ex['sha256']))
+                    [k for k, _ in spec.get(wire, {'fields': []})['fields']])
+                dirs = sorted({r['dir'] for r in rows})
+                up = ('观测（真帧 %d 条）' % n if verdict == '一致'
+                      else '观测 + 需按实测修正：%s' % detail)
+                fh.write('%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\n' % (
+                    name, wire, tag, n, '/'.join(dirs), order, detail, up, ex['sha256']))
+            elif corpus_counts.get(wire):
+                # 回放语料里其实有 ⇒ 不是"零真实帧"，是"回放里能观测到、本轮没在线上抓到"
+                exs = corpus_samples[wire]
+                vals = sorted({re.sub(r'^.*?\{', '{', e[1]) for e in exs})
+                fh.write('%s\t%s\t%s\t0（线上）/ %d（冻结语料）\t回放\t%s\t'
+                         '线上未抓到；语料里的取值=%s\t观测（语料真帧，%d 份回放）\t—\n'
+                         % (name, wire, tag, len(exs), '—',
+                            ' | '.join(vals[:4]), len({e[0] for e in exs})))
             else:
-                fh.write('%s\t%s\t0\t—\t未能触发（见报告 §遗留：缺什么触发条件）\t'
-                         '保持 推断，不许用推断填\t—\n'
-                         % (name, (spec.get(name) or {}).get('tag', '—')))
+                note = '线上 0 帧、冻结语料 0 帧（本轮三会话共 %d 帧里没有）' % len(parsed)
+                fh.write('%s\t%s\t%s\t0\t—\t—\t—\t%s，保持 推断（缺的触发条件见 docs/06 §103.6）\t—\n'
+                         % (name, wire, tag, note))
+
+    # ── 表 4（小，给单测编译进来）：真帧负载的字节原文 ─────────────────────
+    # 目的：`src/_scaffold/protocol.rs` 的 `SAMPLES` 期望值从此**来自抓包**，
+    # 不再来自"我方实现自己跑出来的串"。测试逻辑：`payload_hex` 解码后必须与
+    # `SAMPLES` 里那条样本的 UTF-8 字节**逐字节相同** ⇒ 样本就是线上真字节。
+    exp_rows = []
+    for name, wire, extra in TARGETS:
+        rows = task_hits(name, wire, extra)
+        if not rows:
+            # 线上没抓到、但冻结语料里有（`TurnLimitInfo`）⇒ 用**回放里的真帧**当期望值，
+            # 这样那条断言一样是从抓包换来的真值，不是自洽。
+            if corpus_samples.get(wire):
+                txt = corpus_samples[wire][0][1]
+                exp_rows.append((wire, name, '回放', txt.encode('utf-8').hex(), txt,
+                                 len(txt.encode('utf-8'))))
+            continue
+        ex = rows[0]
+        # 打码过的（聊天）用打码后的 hex；其余用原始 hex
+        hexs = ex['hex']
+        txt = bytes.fromhex(hexs).decode('utf-8', 'replace')
+        exp_rows.append((wire, name, ex['dir'], hexs, txt, ex['n']))
+    with open(args.out_expected, 'w', encoding='utf-8') as fh:
+        fh.write('# T53 真帧字节表（给 src/_scaffold/protocol.rs 的单测编译进来）\n')
+        fh.write('# 产出：tools/live_capture/parse_live.py；采集：tools/live_capture/live_wire.js\n')
+        fh.write('# 口径：payload_hex 是线上负载字节（不含 u16 长度前缀）；'
+                 '打码帧（ChatMessage）的 message 值已替换为 <len=N>，原始长见 wire_n\n')
+        fh.write('event\ttask_name\tdirection\tpayload_hex\tpayload_text\twire_n\n')
+        for wire, name, dirn, hexs, txt, n in exp_rows:
+            fh.write('%s\t%s\t%s\t%s\t%s\t%d\n' % (wire, name, dirn, hexs, txt, n))
 
     # ── 摘要（打到 stderr，报告直接抄）────────────────────────────────────
     print('[*] 原始文件: %s' % ', '.join(meta['raw_files']), file=sys.stderr)
@@ -386,9 +516,12 @@ def main():
           file=sys.stderr)
     print('[*] 事件种类 %d' % len(counts), file=sys.stderr)
     print('[*] 目标事件命中:', file=sys.stderr)
-    for name in TARGETS:
-        hit = {k: v for k, v in counts.items() if k.startswith(name)}
-        print('    %-14s %s' % (name, hit or '0'), file=sys.stderr)
+    for name, wire, extra in TARGETS:
+        rows = examples.get(wire, [])
+        if extra:
+            k, v = extra
+            rows = [r for r in rows if dict(r['fields']).get(k) == v]
+        print('    %-14s %-22s %d' % (name, wire, len(rows)), file=sys.stderr)
     print('[*] peers: %s' % json.dumps(meta['peers'], ensure_ascii=False), file=sys.stderr)
 
 
