@@ -18,12 +18,30 @@ class_name GwNetSession
 ## # 状态机
 ##
 ## ```text
-## idle → connecting ──TCP 连上──→ handshaking ──7 条到齐(或静默)──→ joined
-##            │                        │                              │
-##            └──连不上──→ failed       └──超时──→ failed              ├─ GameStart 数据 → started
-##                                                                    ├─ GameStateInfo{EndingGame} → ended
-##                                                                    └─ 对端关闭       → closed
+## idle → connecting ──TCP 连上──→ handshaking ──7 条到齐──→ joined
+##            │                        │                       │
+##            └──连不上──→ failed       └──超时──→ failed       ├─ GameStart 数据 → started
+##                                                             ├─ GameStateInfo{EndingGame} → ended
+##                                                             └─ 对端关闭       → closed
 ## ```
+##
+## **2026-11-27（T84）删掉了"静默也算到齐"那条兜底**（原来 `JOIN_IDLE = 0.30`：
+## 见过 `NewConnection` 之后再静默 0.3 s 就 `joined`）。它不是原版行为，是我们自己的宽容，
+## 而且会造出**半成品对局屏**：
+##
+## * `joined` 一旦提前触发，`App._on_net_joined()` 立刻进 PlayScreen 并 `_sync_state_from_net()`，
+##   而那时 `room` 里还没有 `function_mode` / `time_mode` / 实体 ⇒ `function_mode_index("") = 1`、
+##   `time_mode_index("") = 1` ⇒ 底栏画出 **`dy/dx` 图标 + `00:5x` 倒计时**，棋盘**空**，
+##   直到 `TurnInfo` 到达（`game_started`）才修正；
+## * 帧长短时这条兜底必然踩中：`poll()` 里 `_idle += delta` 在**每帧**都加，
+##   llvmpipe 下 `delta` 常有 0.3 s+ ⇒ 第一个 poll 只要没把 47 帧全读完就立刻"静默达成"。
+##
+## 证据（**观测**，可复跑）：`docs/06` §131.2 —— T76 那三轮 `settle 1.5 s` 的采集里
+## `round1/round2 = 12 823 px（0.5757 %）`、`round3 = 13 390 px（0.6012 %）`，全部落在
+## 底栏左块（`00:5x` + `dy/dx`）与空棋盘上；同一时刻**原版**已是成品态。
+## 缺的证据：**原版在"对端只发一半状态同步"时怎么处理**（未观测，也没有可指的反汇编地址）。
+## 所以这里只做"去掉我方自造"：状态同步没到齐就**不许进屏**，到 `HANDSHAKE_TIMEOUT`（5.0 s）
+## 显式报"握手超时"，而不是静默进一块拼错的屏。
 ##
 ## # 谁是"我"
 ##
@@ -41,8 +59,7 @@ signal closed(reason: String)              ## 连上之后被对端断开
 
 ## 握手（从 TCP 连上开始算）的超时。**本项目选择**：原版没有可观测的超时值。
 const HANDSHAKE_TIMEOUT := 5.0
-## 7 条状态同步没到齐时的兜底：静默这么久也算握手完成（服务端可能只回一部分）。
-const JOIN_IDLE := 0.30
+## ⚠️ 2026-11-27（T84）：`JOIN_IDLE = 0.30` 那条"静默也算到齐"的兜底**已删除**（见文件头）。
 ## 收件箱（消息名）上限 —— 只为自检/文档取证，不参与逻辑。
 const MAX_RECEIVED := 512
 
@@ -79,7 +96,6 @@ var room := {}
 var received: Array[String] = []
 
 var _elapsed := 0.0
-var _idle := 0.0
 var _saw_new_connection := false
 var _state_seen := {}
 var _joined_once := false
@@ -135,7 +151,6 @@ func start(p_host: String, p_port: int) -> void:
 	_reset_room()
 	received.clear()
 	_elapsed = 0.0
-	_idle = 0.0
 	_saw_new_connection = false
 	_state_seen.clear()
 	_joined_once = false
@@ -158,12 +173,8 @@ func poll(delta: float) -> void:
 		link.poll(delta)
 	if phase == "connecting" or phase == "handshaking":
 		_elapsed += delta
-		_idle += delta
-		if phase == "handshaking":
-			if _can_join_by_idle():
-				_mark_joined()
-			elif _elapsed >= HANDSHAKE_TIMEOUT:
-				_fail("握手超时（%.1f s 内没收到完整状态同步）" % HANDSHAKE_TIMEOUT)
+		if phase == "handshaking" and _elapsed >= HANDSHAKE_TIMEOUT:
+			_fail("握手超时（%.1f s 内没收到完整状态同步）" % HANDSHAKE_TIMEOUT)
 
 
 func abort() -> void:
@@ -183,7 +194,6 @@ func is_live() -> bool:
 
 func _on_connected() -> void:
 	phase = "handshaking"
-	_idle = 0.0
 	_elapsed = 0.0
 	send_new_connection_request()
 
@@ -219,7 +229,6 @@ func _on_frame(text: String) -> void:
 		return
 	var kind := String(msg["kind"])
 	var body: Dictionary = msg["body"]
-	_idle = 0.0
 	_note(kind)
 	_apply(kind, body)
 	message_received.emit(kind, body)
@@ -711,10 +720,6 @@ func _can_join_by_state_sync() -> bool:
 		if not _state_seen.has(k):
 			return false
 	return true
-
-
-func _can_join_by_idle() -> bool:
-	return _saw_new_connection and _idle >= JOIN_IDLE
 
 
 func _mark_joined() -> void:
