@@ -24642,3 +24642,311 @@ $PY <scratch>/frame_capture_dense.py --side ours --flow replay --seed-replays \
 #    取 phase2 后 5.0–7.8 s 的 14 帧比较（第 15 帧起 serve_match 退出，别用）
 ```
 
+
+## 136. T87 跨构建符号映射：用同源 **Android 2.0.60 arm64** 未剥离的 `.symtab` 给 **Linux x86-64** 定名 —— 179 条无名里 **52 条定到真名（观测档）**、**21 条判成标准库单态化**、**106 条判不了（写清缺什么）**；348 条真名独立核对 **0 冲突**，但夹具内**同一地址多名** 37 处（24 父子同址 + **13 条真冲突**，Android 逐条裁决）；函数级复原率三口径 **A 279→309 / B 279→309 · 52.9→58.6 % / 63.6→70.4 %**（2026-11-27，任务 `task-83` / 分支 `agent/naming-android`）
+
+> **判据先写死再跑**：[`fixtures/naming_android_plan.txt`](../fixtures/naming_android_plan.txt)（单独 commit `ff4256d`，**跑数之前**）。
+> **工具**：`tools/naming_android.py`（新脚本，1,176 行；subcommand `build/control/verify/name/all`）。
+> **逐条产物**：[`fixtures/naming_android.tsv`](../fixtures/naming_android.tsv)（179 行 × 10 列）、
+> [`fixtures/naming_android_verify.tsv`](../fixtures/naming_android_verify.tsv)（331 行 A 区 + 37 行 B 区）。
+> **计分改动**：`tools/function_coverage.py` 加 `--no-android-names`（旧行为）+ `--android-na-report`（只诊断），
+> 生成物 `fixtures/function_coverage.tsv` 重跑。
+
+### 136.0 一页结论
+
+| 问题 | 答案 | 证据档 |
+|---|---|---|
+| Android 那份 `.so` 能不能当"名字字典"？ | **能**：`.symtab` 里 18,545 个带 size 的 FUNC ⇒ 按地址去重 **12,607** 个 `.text` 函数；其中 `graphwarrust` 本 crate **964** 个有规范名（797 fn + 167 closure 的源码身份） | 观测（直接读符号表） |
+| 两份构建怎么对上？ | **三条互相独立的轴**：S 顺序（`seq_align_conv93`）/ L `panic::Location` 键集 / F 结构（串+常量+**引擎导入符号**+立即数+尺寸）。**F 轴不含任何符号名** | 见 §136.2 |
+| 正对照过不过？ | C1 **同模块名字冲突 = 0**（331 条真名用它复现 296 条）；C2 规则自洽率 **284/284 = 1.0000**；C4 负对照拒绝率 **89.9 %** | 观测 |
+| 179 条定名多少？ | **52 条真名（全部 观测档）** + **21 条判 `na:std-mono`/`na:gdext-glue`** + **106 条判不了** | 观测 / 未知 |
+| 52 条真名是什么？ | **只对应 7 个不同源码函数**（`get_module_wk` 一条占 **20**）—— 这是泛型单态化/闭包副本，不是 52 个不同函数 | 观测 |
+| 348 条真名有冲突吗？ | **A 区 0 条**（用 Android 侧独立映射逐条复现，没有一条与符号表矛盾）；**B 区 37 条**夹具内"同址多名"，其中 **13 条是真冲突**（不同 `fn`），Android 逐条裁决 | 观测 |
+| 计分变了多少？ | F1 **279 → 309**；口径 A **52.9 % → 58.6 %**、B（招牌）**63.6 % → 70.4 %**、B′ **62.6 % → 69.3 %** | — |
+| ⚠ 这 30 条增量值多少？ | **只对应 4 个不同源码函数**（`get_module_wk` ×18、`connect_entry_buttons` 闭包 ×5、`update_game_list` 闭包 ×4、`ready` 闭包 ×3）⇒ **源码级口径的增量是 +4，不是 +30**。若按 1:1 边界（R6）**一条都不算** | — |
+
+**一句话**：Android 的符号表把「**179 条里能可靠定名的部分**」一次性钉死了（52 条），并把另外 21 条
+**从"我们的缺口"里剔除**（它们是 std/alloc 的单态化，本来就不该手写）——但剩下的 106 条
+**不是"再挖一挖就有"**，而是**两份构建的实例化/内联份数不同导致的原理性不可分**（见 §136.4.4）。
+
+### 136.1 口径：两份构建、地址、函数宇宙
+
+| | Android 2.0.60 | Linux 2.0.60 |
+|---|---|---|
+| 文件 | `.reference/steam/android-2.0.60/libgraphwarrust.so` | `.reference/steam/2026-08-28/libgraphwarrust.so` |
+| 架构 | aarch64（`e_machine=183`） | x86-64（`e_machine=62`） |
+| 符号 | **`.symtab` 未剥离** | stripped（`symtab` 节不存在，只有 `dynsym`） |
+| 函数宇宙 | `.text` 内 size>0 的 FUNC 去重 = **12,607** | `.eh_frame` FDE **13,430** ∪ Ghidra funcstarts **13,263** = **14,812** 个区间 |
+
+* 地址一律 **ELF vaddr**（= RVA）；Ghidra/REA 文本里的地址要 **+0x100000**，本节不用那一套。
+* Ghidra 有 **1,382** 个起点不在 FDE 表里（T86 §134 同口径），区间上界取下一个起点。
+* 目标集合 = `fixtures/unnamed_attrib.tsv` 的 **179** 行；交叉核对集合 = 527 里已有真名的 **331** 个地址。
+  ⇒ `527 = 179 无名 + 348 具名`，但 348 里有 17 个地址只有 `name_to_addr.tsv` 的名字、`name_to_addr_v2.tsv`
+  里没有，所以**本轮可交叉核对的 331**（口径写明，别和 348 混）。
+
+**三层身份**（这件事的关键）：
+
+```
+源码身份   module::Type::method（+ 是否 {{closure}}）   ← 唯一跨构建可比的层（本工具输出的就是它）
+实例身份   ...::h<hash>（16 位 hash）                  ← 每份构建自己的，不可比
+地址身份   vaddr                                       ← 不可比
+```
+
+### 136.2 三条**互相独立**的轴（数据来源不同，互不引用）
+
+| 轴 | 数据 | 要不要符号名 | 提取方法 |
+|---|---|---|---|
+| **S 顺序** | `fixtures/seq_align_conv93.tsv`（任务 93 的全序列单调对齐） | 否 | 直接读现成夹具 |
+| **L 位置** | `panic::Location` 键集 `(file, line)` | 否 | 编译器把 `src/<f>.rs:<line>:<col>` 写进 `.data.rel.ro`，`.rela.dyn` 的 `R_*_RELATIVE` 给出串指针。x86 取 `lea reg,[rip+d]`；arm64 取 `adrp+add` / `adr` / PC 相对字面量池；接受首址 / +8 / +16 三形态 |
+| **F 结构** | `.rodata` 串集（同一份源码同一批字节）、8 字节常量集、**引擎导入符号集**、小立即数（≤0xFFFF）集、FDE 尺寸比、直接被调者数 | **否**（Android 的名字只当答案，不当特征） | 引擎导入符号 = `.got` 的 `R_*_GLOB_DAT` / `JUMP_SLOT` → `.dynsym` 名；`.plt` 条目按 **16 字节/条、第 0 条是解析器、第 i+1 条 ↔ `.rela.plt` 第 i 条**映射 |
+
+**特征覆盖率**（`tools/naming_android.py build` 逐行打印）：
+
+```
+android  locs>0  2454  strs>0   969  consts>0  4203  imps>0  2452  imms>0 10820   (共 12,607)
+linux    locs>0  3168  strs>0  1306  consts>0  5036  imps>0  2492  imms>0 12157   (共 14,812)
+```
+
+⚠ **引擎导入符号**这一列是本轮新加的，不是锦上添花：gdext 代码里**所有**引擎调用都是
+`call qword ptr [rip+X]`（x86）/ `bl <PLT 条目>`（arm64），只看 `call rel32` 会得出
+"这个函数什么都不调用"（AGENTS.md「间接调用与函数归属」第 1 条同一个坑，本轮在 arm64 侧又踩了一次：
+第一版抽取 `imps>0` 的函数是 **0**，因为 Android 的引擎调用全部走 `.plt` 而不是 `.got` 间接调用）。
+
+### 136.3 正 / 负对照（C1–C4；`tools/naming_android.py control`）
+
+| 组 | 条数 | 判据 | 结果 | 闸 |
+|---|---|---|---|---|
+| **C1** L 轴复现已有真名 | 331 | 用 L 轴在 Android **全量** Location 共享池里挑同模块具名候选，应与夹具里的真名一致 | 命中 **254** + 命中（Android 同名实例 ≥2）**42** = **296**；Android 侧无同名函数 **32**；跨模块具名候选（**内联痕迹**）**2**；首选候选全无名 **1**；**同模块名字冲突 0** | `WRONG == 0` **通过** |
+| **C2** 定名规则 R1 的自洽性 | 12,607 | **把 R1 反过来喂 Android 自己**：用每个 Android 具名函数的键集走一遍 R1，看给的唯一名是否等于它自己的名字。**这是 179 所处境地里唯一可测的校准** | 规则唯一 **284**：与自身名字一致 **284 / 284 = 1.0000**；规则多名（判不了）**261**；键无具名引用 **418** | 一致率 ≥ 0.95 **通过** |
+| **C3** F 轴判别力 | 331 | 只给模块先验（不给方法名），量各子特征的 top-1 | 引擎导入 7 命中 / 231 打平 / **61 错**；串 8/268/**23 错**；常量 110/173/**16 错**；立即数 147/68/**84 错**；尺寸比 138/41/**120 错**；预注册权重复合 135/39/**125 错** | 不设闸；结论 = **F 轴不能单独定名**（预注册 §4-R5 已写死） |
+| **C4** 负对照 | 327 | 把真目标换成同模块里**另一个** Android 具名函数，L 轴必须不认 | 正确拒绝 **294**；假目标 L 分 ≥ 真目标 **33**（这 33 个假目标与真目标**共享 Location 键**，L 轴原理上分不开）⇒ 拒绝率 **89.9 %** | 不设数值闸（见下「口径细化」） |
+
+#### 136.3.1 口径细化（预注册没写死、跑完才定的两处；**不改判据，只写清**）
+
+1. **C1 的"冲突"定义**。第一版把"L 轴首选候选的名字 ≠ 夹具名字"一律记 WRONG，跑出 3 条，
+   逐条查完发现**没有一条是真冲突**：
+   * `0x3a2e10`（现名 `ButtonManager::new`，size **9,928**）→ L 轴指到跨模块的 `GraphwarRootNode::ready`
+     —— 是 `ButtonManager::new` 被**内联进**了 `ready`，Android 侧没有独立的 `ButtonManager::new`；
+   * `0x3e2830`（现名 `GraphwarColorManager::set_color`，size **12,505**）→ 同上（内联）；
+   * `0x4ed670`（解析器 `MathFunction::new`）→ L 轴首选候选在 Android 侧**没有名字**。
+   ⇒ 改成：**只有"同模块、名字不同"才算冲突**；跨模块 / 无名候选分列并注明是内联痕迹。
+2. **C4 不设数值闸**。预注册原文只要求"证明扫描器不是总说同意"，没给数。实现时我先写了 0.90 的闸，
+   实测 **0.8991** 差 0.001 不过 —— **没有把闸降到 0.85**，改成只报数 + 逐类解释那 33 个样本
+   （它们与真目标共享 Location 键，正是 §136.4.4 说"原理上不可分"的那一类）。
+
+### 136.4 179 条无名函数的定名结果
+
+**规则**（预注册 §4，按顺序判定、命中即停）。记 `K(f)` = 函数引用的 `src/*.rs` 键集，
+`N(k)` = 所有引用键 k 的 Android 函数的**源码级名字集合**：
+
+| 规则 | 判据 | 条数 | 档位 | 产物 |
+|---|---|---|---|---|
+| **R1 键名共识（唯一）** | `∪_{k∈K(f)} N(k)` 恰好 1 个名字，且 K(f) 每个键都有具名引用 | **52** | **观测** | 真名 |
+| **R3 非游戏 crate 单态化** | 键只被 std/alloc/core/gdext/三方的具名函数引用 | **21**（`na:std-mono` 19 + `na:gdext-glue` 2） | 观测 | `na:*`，**不给游戏名** |
+| **R2 键名共识（多个）** | 键被多个不同名函数引用 | **105** | 未知 | 候选名字集（2–4 个） |
+| **R4 键无具名引用** | 键在 Android 侧没有任何具名引用 | **1** | 未知 | 缺什么 |
+| 合计 | | **179** | | |
+
+#### 136.4.1 52 条真名 = **7 个不同源码函数**
+
+| 次数 | 源码级名字 |
+|---|---|
+| **20** | `graphwar_module_container::GraphwarModuleContainer::get_module_wk` |
+| **10** | `graphwar_setup_control::GraphwarSetupControl::ready::{{closure}}` |
+| **8** | `graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons::{{closure}}` |
+| **6** | `graphwar_root_node::GraphwarRootNode::ready::{{closure}}` |
+| **4** | `graphwar_lan_vbox::GraphwarLanVBox::update_game_list::{{closure}}` |
+| **2** | `button_manager::ButtonManager::new::{{closure}}` |
+| **2** | `graphwar_backend::GraphwarBackend::subscribe_to_event_with_id::{{closure}}` |
+
+**为什么同一个名字能对 20 个地址**：R1 给的是**源码身份**（哪个 `fn`），不是实例身份。
+`get_module_wk<T>` 是泛型，原版对它做了 20 次单态化 ⇒ 20 份机器码，源码里只有 **1** 个 `fn`。
+⇒ **"52 条"是机器码函数的条数，源码函数的增量是 7**。两个数都要写，只写一个都会误导。
+
+#### 136.4.2 21 条 `na:*` 是本轮**独立复核了 T82 的判据**
+
+这 21 条的名字来自 Android 侧**引用同一个键**的函数的名字（不是它们自己的名字）：
+
+| 引用者 crate | 条数 | 例（Android 符号） |
+|---|---|---|
+| `core` / `alloc` / `std` | 19 | `core::slice::sort::stable::quicksort::quicksort`、`alloc::vec::Vec<T,A>::retain`、`std::thread::local::LocalKey<T>::with` |
+| `godot_core` | 2 | `godot_core::obj::raw_gd::RawGd<T>::check_rtti` |
+
+⇒ 这 21 个 Linux 函数是**标准库/引擎代码用游戏类型单态化出来的**，不是游戏源码函数。
+**这与 T82 §129 的人工裁决方向一致**（独立的第二条证据），但也暴露出 T82 台账只覆盖 153 条 F3：
+这 21 条里有几条当前还挂在 `real-missing`（见 §136.7 的"建议"）。
+
+#### 136.4.3 106 条为什么判不了（**不许猜**）
+
+* **105 条 R2**：它们的 `src/*.rs` 键在 Android 侧被**多个不同名**函数引用。典型：
+  `src/graphwar_nodes.rs:8` 一个键被 **59** 个 Android 函数引用（gdext 宏展开行），
+  光凭键无法指认。TSV 里逐条给了**候选名字集**（2–4 个）与 F 轴旁证，**没有给结论**。
+* **1 条 R4**：键在 Android 侧没有任何具名引用（引用它的全是无名函数）。
+* 缺的证据同一句话：**能区分 `h<hash>` 实例的证据**。两份构建的实例化/内联份数不同
+  （同源码 arm64 12,607 vs x86-64 14,812 个函数），单态化副本的**份数与顺序都不保证相同**
+  ⇒ 族内的实例级 1:1 对应**没有可用的不变量**。这不是"再挖一挖就有"，是原理性的。
+
+#### 136.4.4 一处必须说清的边界：为什么不能靠"顺序"硬凑
+
+`fixtures/seq_align_conv93.tsv` 的顺序轴在**已有真名**上的 top-1 只有 **26.4 %**（本轮实测），
+但任务 93 量过它在**族内**是 84 %（tier A 100 %）。⇒ 对 106 条里的"族内挑一个"，
+**顺序轴能给出 84 % 的答案**——但那**不是真名**，是 84 % 概率的猜。按 AGENTS.md §0.3
+（不许把推断写成陈述句）与预注册 §4-R5（不许用 S 单独定名），**本轮不给**这种答案。
+需要的话可以另开一条"84 % 的族内排序"产物，档位只能是 `推断`，不能进 F1。
+
+### 136.5 交叉核对已有真名（`tools/naming_android.py verify`）
+
+#### 136.5.1 A 区：331 条逐条判（**0 冲突**）
+
+| 判定 | 条数 | 含义 |
+|---|---|---|
+| **V1 一致** | **254** | Android 侧存在同 `module::Type::method` 的函数，且 L 轴唯一的具名候选就是它 |
+| **V4 一致（同名多实例）** | **42** | 一致，但 Android 侧同名函数 ≥2 个（单态化/闭包副本） |
+| **V3 Android 侧无同名函数** | **32** | 跨构建内联/裁剪差异；**既不能证实也不能证伪**，如实登记 |
+| **V5 同名存在、但 L 轴首选不是它** | **3** | Android 侧**确实有**同名函数，只是 L 轴（键集 Jaccard）首选了另一个共享键更多的候选。三条 = `0x3a2e10`（首选 `ready`）/ `0x3e2830`（首选 `handle_server_remote_event`）/ `0x4ed670`（首选一个无名 Android 函数；Android 侧 `MathFunction::new` 在 `0x446c4c`）。⇒ **不算冲突、也不算「无同名」**，单列一档 |
+| **V2 冲突** | **0** | 用 Android 符号表**没有发现一条**与现有真名矛盾 |
+
+⇒ **名字层面的复原错误：A 区 0 条**。296 条被一个**完全独立的构建 + 完全独立的轴**复现。
+
+> **口径修正（跑完第一版才拆出来的档）**：第一版把「same 非空但 L 轴首选不是它」也记进 V3（当时 V3=35），
+> 那是措辞错——V3 的字面意思是「Android 侧**没有**同名函数」，而这 3 条明明是有的。
+> 现在拆成 V5 单列（V3 32 + V5 3 = 原来的 35），**判定逻辑没变，只是分类变准**。
+> 这 3 条同时也是 §136.5.2 里 B 区真冲突的前两条 —— 两处独立分析指向同一批地址，是好事。
+
+#### 136.5.2 B 区：夹具内"同一地址多个名字" 37 处 —— **13 条是真冲突**
+
+`fixtures/name_to_addr_v2.tsv` 里有 **37 个地址**在 527 内对应 ≥2 个**不同**名字。
+按 Android 裁决逐条看（完整表在 `fixtures/naming_android_verify.tsv` 的 B 区）：
+
+* **24 条是父子同址**（`X` 与 `X::{{closure}}` / `X::panic_cold_explicit`）—— 不是错，是**同一个函数的两级精度**。
+  Android 裁决多数指向 `::{{closure}}`（说明那 24 个地址**本体就是闭包**，夹具里写父函数名是"精度不足"而不是"错"）。
+* **13 条是真冲突**（两个与父/子无关的不同 `fn` 挂同一个地址）。这 13 条**是真的复原错误线索**：
+
+| 地址 | 函数大小 | 夹具里打架的名字 | **Android 裁决** |
+|---|---|---|---|
+| `0x3a2e10` | **9,928** | `button_manager::ButtonManager::new` ｜ `graphwar_root_node::GraphwarRootNode::ready` | **`GraphwarRootNode::ready`**（9,928/7,932）——`ButtonManager::new` 是构造器，不可能是 9.9 KB |
+| `0x3e2830` | **12,505** | `graphwar_color_manager::…::set_color` ｜ `graphwar_game_state_manager::…::report_fired_function` ｜ `graphwar_remote_event_handler::…::handle_server_remote_event` | **`…::handle_server_remote_event`**（12,505/11,116） |
+| `0x4500c0` | **14,745** | `graphwar_game_server::_::game_server_thread` ｜ `graphwar_server_connection_handler::GraphwarServerConnectionHandler::new` | **`graphwar_game_server::_::game_server_thread`**（14,745/13,308） |
+| `0x499740` | **20,010** | `…::setup_level` ｜ `…::setup_level_10` ｜ `…::setup_level_11` ｜ `…::setup_level_12` ｜ `…::setup_level_13` | **`…::setup_level`**（20,010/20,956） |
+| `0x3ee190` | 5,202 | `graphwar_obstacle_manager::…::get_image` ｜ `obstacle_drawer::ObstacleDrawer::update` | **`ObstacleDrawer::update`**（5,202/4,688） |
+| `0x46f690` | 4,521 | `graphwar_game_state_manager::…::start_game` ｜ `graphwar_turn_manager::…::initialize_turns` | **`…::start_game`**（4,521/3,996） |
+| `0x45b020` | 2,138 | `…::subscribe_to_events_event_handler::{{closure}}` ｜ `…::tick` | **`…::tick`**（2,138/1,796） |
+| `0x519d80` | 442 | `…::subscribe_to_events_event_handler::{{closure}}` ｜ `…::tick` | **`…::tick`**（442/424） |
+| `0x3d4fa0` | 696 | `…::save_event` ｜ `…::subscribe_to_events::{{closure}}` | **`…::subscribe_to_events::{{closure}}`**（696/744） |
+| `0x465870` | 94 | `…::handle_entity_removed_event` ｜ `…::subscribe_to_events_event_handler` （+闭包） | **`…::subscribe_to_events_event_handler::{{closure}}`**（94/404） |
+| `0x4782f0` | 243 | `…::send_all_info_events` ｜ `…::subscribe_to_events_event_handler` （+闭包） | **`…::subscribe_to_events_event_handler::{{closure}}`**（243/744） |
+| `0x465780` | 231 | `…::send_all_info_events` ｜ `…::subscribe_to_events_event_handler` | Android 首选 `…::subscribe_to_events_event_handler::{{closure}}`，**与夹具里任何一个名字都不同**（尺寸 231/740 也不接近）⇒ **判不了** |
+| `0x4783f0` | 94 | `…::handle_entity_removed_event` ｜ `…::subscribe_to_events_event_handler` | 同上（94/404）⇒ **判不了** |
+
+**这 13 条的形状说明一件事**：它们大多是**巨型合并函数**（9.9 KB / 12.5 KB / 14.7 KB / 20 KB），
+把被内联的小函数全并进来了 ⇒ 夹具里"同址多名"其实是**内联导致的多锚**。
+**处理建议（不在本轮写范围内）**：`name_to_addr_v2.tsv` 里同一地址多名字时应按
+「size 最大的那个外层函数」保留一个，其余登记为"内联锚"，否则任何按名字判定的计分工具都会随机取一个
+（本轮 `function_coverage.py` 就是按 `join_kind=唯一锚` 优先 + 方法名最短排序取第一条，取到了
+`0x3a2e10 = ButtonManager::new`、`0x3e2830 = set_color` 这种明显错的那一条）。
+
+#### 136.5.3 与 T82 `na` 台账的 **5 条冲突**（机判名字 vs 人工裁决）
+
+`tools/function_coverage.py` 的 M6 闸（na:* 行被名字指认命中 ⇒ 拒绝出数）在本轮**第一次真的响了**：
+
+| 地址 | T82 台账（`f3_triage.tsv`） | T87 Android 符号表说 |
+|---|---|---|
+| `0x3aae60` | `na:gdext-glue` | `button_manager::ButtonManager::new::{{closure}}` |
+| `0x3b6e00` | `na:gdext-glue` | `graphwar_root_node::GraphwarRootNode::ready::{{closure}}` |
+| `0x3b6ed0` | `na:gdext-glue` | 同上 |
+| `0x3b7020` | `na:gdext-glue` | 同上 |
+| `0x3b70b0` | `na:gdext-glue` | `button_manager::ButtonManager::new::{{closure}}` |
+
+两边都没错，是**口径**问题：它们**是**用户代码里的闭包（符号表这么说），但**闭包不是独立可手写的 fn**
+（T82 的 `na:gdext-glue` 关心的是"要不要手写"）。
+**处理**：按"人工裁决优先"，本轮**不叠加**这 5 条名字（否则 M6 判矛盾、拒绝出数），
+并在工具输出里每次打印这 5 条。要收敛的话得由 lead 决定是改台账还是改规则。
+
+### 136.6 计分：三口径变化（**判据一个字没改**）
+
+`tools/function_coverage.py` 唯一改动：新增**名字来源** `naming_android`，与 `v2*` **同级**走 P1
+（预注册 §6）；`name_src=v2*` 的行**不被覆盖**（v2 优先级更高）；T82 台账判 `na:*` 的行**不叠加**。
+`--no-android-names` = 旧行为，**实测生成物与改动前逐字节相同**（`cmp` 通过）。
+
+| 口径 | 改前 | 改后 | Δ |
+|---|---|---|---|
+| F1 | 279 | **309** | **+30** |
+| F2 | 97 | 70 | −27 |
+| F3 | 151 | 148 | −3 |
+| **A**（含 na，分母 527） | 279/527 = **52.9 %** | **309/527 = 58.6 %** | **+5.7 pt** |
+| **B**（剔 na，分母 439，**招牌**） | 279/439 = **63.6 %** | **309/439 = 70.4 %** | **+6.8 pt** |
+| **B′**（只剔强 na，分母 446） | 279/446 = **62.6 %** | **309/446 = 69.3 %** | **+6.7 pt** |
+| R6 1:1 边界上限 | 244/527 = 46.3 % | 242/527 = 45.9 % | −0.4 pt |
+| 口径 C（含 F2 参照） | 376/439 = 85.6 % | 379/439 = 86.3 % | +0.7 pt |
+
+**30 条增量的构成（必须读）**：
+
+* 27 条 `F2/hyb-only → F1/pinned(pin=name)`，3 条 `F3 → F1`，12 条本来 F1（pin 由 `addr` 变 `name`，证据变强）；
+* 变化行共 **47** 行 = 52 条名字 − 5 条 na 台账冲突（§136.5.3）；
+* **30 条增量只对应 4 个不同源码函数**：`GraphwarModuleContainer::get_module_wk` **18** 条 →
+  **全部 pin 到我方同一个函数** `src/graphwar_module_container.rs:608`；`connect_entry_buttons` 闭包 5 条、
+  `update_game_list` 闭包 4 条（同一个 `src/graphwar_lan_vbox.rs:1435`）、`ready` 闭包 3 条（同一个
+  `src/graphwar_root_node.rs:2371`）。
+  ⇒ **源码级口径的增量是 +4，不是 +30**；若要求"一个原版函数对应一个我方函数"（R6），
+  这 30 条**一条都不该算**（R6 从 244 掉到 242 就是这个原因）。
+  三个数（+30 机器码 / +4 源码 / +0 严格 1:1）**都写在这里**，用哪个由读者按口径取。
+
+**na 口径本轮不动**：21 条 R3 判定里 7 条当前挂在 `real-missing`（不在 T82 台账里），
+如果采纳会把分母变小（A/B/B′ 都变小）。但 `fixtures/f3_triage.tsv` 是 T82 的**人工裁决**台账，
+T87 的写范围不含它 ⇒ **默认不采纳**，只提供 `--android-na-report` 打印清单（工具每次运行都注明"不进计分"）。
+
+### 136.7 遗留 / 未做（**这段比上面的数字重要**）
+
+1. **106 条判不了**（105 R2 + 1 R4）。要收敛需要"能区分单态化实例"的不变量 —— 目前没有。
+   唯一可行的下一步是 **84 % 上报**（族内顺序轴），档位只能是 `推断`。
+2. **13 条 B 区真冲突没有修**。修的地方是 `fixtures/name_to_addr_v2.tsv`（不在 T87 写范围）
+   与 `tools/boundary_audit.py` 的合并规则。**这是本轮最值得接着做的一件**：它会改 `boundary_audit.tsv`
+   的 `name` 列（进而改 `function_coverage.tsv` 的指认），需要 lead 派一条专门的活。
+3. **5 条 T82 台账 vs T87 名字的冲突**待裁决（§136.5.3）。
+4. **7 条 `real-missing` 应当改成 `na:std-mono`**（§136.4.2），需要改 `f3_triage.tsv`。
+5. **T87 的定名只覆盖 527 内部**。Android 符号表还能给 **12,736 条无 Location 的函数**定名吗？
+   本轮**没做**：那批函数没有 `src/` 键 ⇒ R1 这条最强规则直接不适用，只剩 F 轴（C3 已证单独不可靠）。
+   若要做，得先解决"怎么在没有 Location 的函数上验证准确率"（目前没有真值）。
+6. **`hips` 口径的一个已知漏检**（预注册 §7-D1）：arm64 侧 Location 提取是指令模式匹配，
+   2,454/12,607 个函数抽到键（x86 侧 3,168/14,812）。漏检只让 R1 **覆盖率偏低**，不会造假名字。
+7. **`.plt` 条目步长**按 16 字节写死（x86-64 与 aarch64 都是这样，实测 `imps>0` 从 0 变成 2,452 就是证据），
+   但没做"步长自校验"。改用某种 32 字节 PLT 的构建会静默错位。
+
+### 136.8 复跑命令
+
+```bash
+# 环境：capstone 只在 .reference/venv 里有（系统 python3 没有，会直接报错退出，不会静默降级）
+PY=.reference/venv/bin/python
+
+# ① 建特征缓存（约 25 s；写到 .agent-work/naming-android/features.pkl，可 --rebuild 强制重建）
+$PY tools/naming_android.py build
+
+# ② 正 / 负对照 C1–C4（闸：C1 同模块名字冲突 == 0、C2 一致率 ≥ 0.95）
+$PY tools/naming_android.py control
+
+# ③ 交叉核对已有真名 → fixtures/naming_android_verify.tsv（A 区逐条 + B 区同址多名裁决）
+$PY tools/naming_android.py verify
+
+# ④ 179 条定名 → fixtures/naming_android.tsv
+$PY tools/naming_android.py name
+
+# ⑤ 计分（三口径）；--no-android-names 是旧行为，生成物与改动前逐字节相同
+$PY tools/function_coverage.py --stats
+$PY tools/function_coverage.py                       # 写 fixtures/function_coverage.tsv
+$PY tools/function_coverage.py --no-android-names --stats   # 旧口径对照
+$PY tools/function_coverage.py --android-na-report   # 21 条 R3 清单（诊断，不进计分）
+$PY tools/function_coverage.py --control             # 计分工具自己的正/反面对照
+
+# 逐字节回归（旧行为不能被改动）
+git stash list >/dev/null; $PY tools/function_coverage.py --no-android-names >/dev/null
+git diff --exit-code fixtures/function_coverage.tsv   # 只有在先 checkout 干净版本时才有意义
+
+# 门槛
+python3 tools/docsec.py check docs/06-verification.md
+python3 tools/check_doc_refs.py
+COVERAGE_MATRIX_UPSTREAM=$PWD/.reference/upstream $PY tools/coverage_matrix.py --check
+python3 tools/merge_check.py --branch agent/naming-android --base master --no-report
+```
+
+**本节可复算的数**：12,607 / 14,812 / 331 / 179 / 52 / 21 / 106 / 37（24+13）/ 296 / 284 / 294·327 /
+279→309 · 52.9→58.6 · 63.6→70.4 · 62.6→69.3。

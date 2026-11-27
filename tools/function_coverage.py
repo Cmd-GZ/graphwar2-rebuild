@@ -46,7 +46,7 @@ T82（`docs/06` §129）把 F3 的 153 条逐条裁决成五类：53 `real-missi
 三层机判：
   S0 ours 文件不存在 / 空                     -> F4
   S1 ours 文件没有任何**实现函数**（非 #[cfg(test)]）-> F3 子类 skel
-  P1 NAME 原版真名（name_src=v2*）的函数段在我方同名实现函数里命中 -> pin=name
+  P1 NAME 原版真名（name_src=v2* 或 naming_android）的函数段在我方同名实现函数里命中 -> pin=name
   P2 ADDR 原版地址出现在我方注释里且能贴到一个 fn 上                 -> pin=addr
   P3 HYB  只有结构指纹预测名（name_src=hyb:*）命中                  -> pin=hyb（只能到 F2）
   定档：pin∈{name,addr} 且 grade≠推断 -> F1；pin∈{hyb,scaffold} 或 grade=推断 -> F2；
@@ -512,6 +512,63 @@ def load_matrix():
 # ---------------------------------------------------------------------------
 # T85：读 + 闸 `fixtures/f3_triage.tsv`（T82 的人工裁决台账）
 # ---------------------------------------------------------------------------
+# T87：Android .symtab 跨构建定名（`fixtures/naming_android.tsv`，判据见
+# `fixtures/naming_android_plan.txt`）。**只把档位=观测、名字来源含 android 符号的行**当新真名来源，
+# 与 `v2*` 同级走 P1；预测名/未定行一个字都不进计分。
+ANDROID_NAMES = "fixtures/naming_android.tsv"
+ANDROID_SRC = "naming_android"
+
+
+def load_android_names():
+    """→ {addr(lower): (name, 依据)}。只有 观测 + `android符号+位置键` 的行。
+
+    `fixtures/naming_android.tsv` 的档位口径与 AGENTS.md 一致：观测 = 名字直接从
+    Android `.symtab` 读出、链接靠 `panic::Location` 键集这个编译期常量；
+    R3（判 na）与 R2/R4（未定）**不**进名字表。
+    """
+    path = os.path.join(ROOT, ANDROID_NAMES)
+    if not os.path.exists(path):
+        return {}
+    out = {}
+    for line in open(path, encoding="utf-8"):
+        if line.startswith("#") or line.startswith("vaddr\t"):
+            continue
+        c = line.rstrip("\n").split("\t")
+        if len(c) < 6:
+            continue
+        addr, _cur, new, src, basis, tier = c[0], c[1], c[2], c[3], c[4], c[5]
+        if not new or tier != "观测" or "android符号+位置键" not in src:
+            continue
+        out[addr.strip().lower()] = (new, basis)
+    return out
+
+
+def load_android_na():
+    """→ [(addr, 类别, 依据)]：T87 R3 判出的「非游戏 crate 单态化」。
+
+    **只用于诊断打印**（`--android-na-report`），默认**不进计分**：na 台账的唯一权威来源是
+    `fixtures/f3_triage.tsv`（T82 人工裁决），改它不在 T87 的写范围内。
+    """
+    path = os.path.join(ROOT, ANDROID_NAMES)
+    if not os.path.exists(path):
+        return []
+    out = []
+    for line in open(path, encoding="utf-8"):
+        if line.startswith("#") or line.startswith("vaddr\t"):
+            continue
+        c = line.rstrip("\n").split("\t")
+        if len(c) < 10 or c[5] != "观测" or "android符号(非游戏)" not in c[3]:
+            continue
+        miss = c[9]
+        cat = ""
+        for k in ("na:std-mono", "na:gdext-glue", "na:other"):
+            if k in miss:
+                cat = k
+        if cat:
+            out.append((c[0].strip().lower(), cat, c[4]))
+    return out
+
+
 def load_na_ledger():
     """读台账的**主表**（153 行），返回 {addr(lower): dict(...)}。
 
@@ -702,6 +759,8 @@ def judge(row, matrix, idx, na=None):
 
     cands, kind, note = name_candidates(row["name"], row["name_src"])
     v2 = row["name_src"].startswith("v2")
+    # T87：`naming_android` 与 `v2*` **同级**（都是真名来源，预注册 §6）⇒ 一起走 P1
+    true_name = v2 or row["name_src"] == ANDROID_SRC
     hyb = row["name_src"].startswith("hyb")
 
     hit = None
@@ -756,7 +815,7 @@ def judge(row, matrix, idx, na=None):
                 hit, pin, pin_where = f, "scaffold", f"{f.file}:{f.line}"
 
     # ---- P1 NAME（真名，强）------------------------------------------------
-    if not hit and v2 and cands:
+    if not hit and true_name and cands:
         f, q = _match(cands, tuple(ours_present), want_soft=False)
         if f:
             hit, pin = f, "name"
@@ -906,12 +965,41 @@ def judge(row, matrix, idx, na=None):
 # ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
-def build(ledger=None):
+def build(ledger=None, android_names=None):
     """ledger=None ⇒ 旧行为（--no-na）；ledger=dict ⇒ na 口径 + P2 负向排除（T85 默认）。
+
+    `android_names` = T87 的跨构建真名叠加表 `{addr: (name, basis)}`；None/{} ⇒ 不叠加（旧行为）。
+    叠加规则（预注册 `fixtures/naming_android_plan.txt` §6）：**同 v2 的优先级之下**，
+    只在原有名字不是 `v2*`（即还不是真名）时才换，`name_src` 记 `naming_android`。
 
     闸（M1/M2/M3/M4/M5/M7）在 `load_na_ledger` + `validate_na_ledger` 里做，M6 在本函数尾部。
     """
     rows = load_boundary()
+    n_over = 0
+    na_skip = []
+    if android_names:
+        for r in rows:
+            hit = android_names.get(r["addr"].lower())
+            if not hit:
+                continue
+            if (r["name_src"] or "").startswith("v2"):
+                continue          # 已有三向真名：不覆盖（v2 优先级更高）
+            ent = (ledger or {}).get(r["addr"].lower())
+            if ent and ent["category"].startswith(NA_PREFIX):
+                # T82 的人工 na 裁决优先于 T87 的机判名字：na 台账说"源码层本无独立 fn、不该手写"，
+                # 这种行**不给名字**（否则 M6 会判"台账与代码矛盾"）。冲突本身登记在 docs/06 §136。
+                na_skip.append((r["addr"], ent["category"], hit[0]))
+                continue
+            r["name"] = hit[0]
+            r["name_src"] = ANDROID_SRC
+            n_over += 1
+        if n_over:
+            print(f"\n叠加 {ANDROID_SRC} 真名 {n_over} 条（T87 跨构建立符号映射，档位=观测）")
+        if na_skip:
+            print(f"  ⚠ {len(na_skip)} 条 T87 有名字但 T82 台账判 na:* ⇒ 按'人工裁决优先'**不叠加**，"
+                  f"冲突登记在 docs/06 §136：")
+            for a, c, nm in na_skip:
+                print(f"     {a}  台账 {c}  ← T87 名字 {nm}")
     matrix = load_matrix()
     idx = SrcIndex()
     out = []
@@ -1168,6 +1256,10 @@ def main(argv=None):
     ap.add_argument("--stats", action="store_true", help="只打印统计，不写文件")
     ap.add_argument("--control", action="store_true", help="只跑正/反面对照")
     ap.add_argument("--module", default="", help="只打印某个模块的逐条判定")
+    ap.add_argument("--no-android-names", dest="no_android", action="store_true",
+                    help="不叠加 T87 的跨构建真名（fixtures/naming_android.tsv）⇒ 与 T87 之前逐字节相同")
+    ap.add_argument("--android-na-report", dest="android_na", action="store_true",
+                    help="只打印 T87 R3 判出的「非游戏 crate 单态化」候选（**不进计分**，na 台账权威来源仍是 f3_triage.tsv）")
     ap.add_argument("--no-na", dest="no_na", action="store_true",
                     help="旧行为（T85 之前）：不读 na 台账、不写 na 列、不做 P2 负向排除；"
                          "生成物与 --stats 与改动前逐字节相同")
@@ -1178,7 +1270,23 @@ def main(argv=None):
     if use_na:
         ledger = load_na_ledger()
         validate_na_ledger(ledger, load_boundary())    # M1/M2/M4/M5/M7（M3 在读取时已挡）
-    out = build(ledger)
+    android_names = None if args.no_android else load_android_names()
+    out = build(ledger, android_names)
+    if args.android_na:
+        cand = load_android_na()
+        have = ledger or {}
+        print(f"\n=== T87 R3：非游戏 crate 单态化候选 {len(cand)} 条（**诊断，不进计分**）")
+        new_c = 0
+        for addr, cat, basis in sorted(cand):
+            cur = have.get(addr)
+            if cur:
+                tag = f"台账已有 {cur['category']}"
+            else:
+                tag = "台账未收录（建议下一轮加进 f3_triage.tsv 后由 T85 的闸复验）"
+                new_c += 1
+            print(f"  {addr}  {cat:14s} {tag}")
+        print(f"  其中台账未收录 {new_c} 条 ⇒ 若采纳，口径 A/B/B′ 的分母都会变小（不是放宽判据，是"
+              f"把标准库单态化从'我们的缺口'里剔掉）；本工具**默认不采纳**。")
     if args.control:
         control(out)
         return 0
