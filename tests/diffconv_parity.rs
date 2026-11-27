@@ -25,7 +25,7 @@
 //! 本文件默认只跑一个**固定样本**（语料在时），并支持 `GW2_PARITY_FULL=1` 跑全语料。
 
 use gw2_rebuild::_scaffold::diffconv::{parity_dir, parity_file, Parity};
-use gw2_rebuild::_scaffold::replaydiff::default_corpus_dir;
+use gw2_rebuild::_scaffold::replaydiff::{default_corpus_dir, split_batches, Msg, Replay};
 
 /// 固定样本：覆盖 Normal 单发自由飞行 / Normal 单发撞障碍 / Normal 多发批（11 批）/
 /// Normal 撞障碍但零死亡 / DiffEq（**现在也要求逐位相同**，见 `docs/06` §33）。
@@ -92,6 +92,42 @@ fn conv_layer_matches_the_kernel_bit_for_bit_on_the_fixed_sample() {
         p.shots_identical, p.shots,
         "五项逐位全同的发数必须等于参评发数"
     );
+    // ---- T59：把"真报文"接进来（此前本文件是**纯 parity**：我方收敛层 vs 我方内核，
+    // 两条路径一起错也绿）。下面直接从真回放里读那一发的真实 `FunctionPoints.end_x`，
+    // 与我方内核算出来的停点逐位比 —— 这一半是**真值**，不再是自洽。
+    //
+    // 真值来源（观测，冻结语料）：`.reference/replays/gw2-replays-snapshot/replays/1782640359`
+    // 第 0 批（tick 3422，单发，sha256 b4615ff7267f9ab657d9bc1907cb2a36ca28622951e4282764c12901898a75d2）；
+    // 期望值 `end_x = 4.988566611566738` 是**回放原文里的那个值**，由
+    // `tools/gen_test_expectations2.py` 的 `D01/D02` 段复算登记。
+    let real = dir.join("1782640359");
+    if real.is_file() {
+        let replay = Replay::load(&real).expect("真回放应能读");
+        let batches = split_batches(&replay);
+        assert_eq!(batches.len(), 1, "1782640359 只有 1 个结算批");
+        assert_eq!(batches[0].shots.len(), 1, "该批只有 1 发");
+        let real_end: Vec<f64> = replay.msgs[batches[0].start..]
+            .iter()
+            .filter(|m| m.kind == "FunctionPoints")
+            .filter_map(|m| m.get_f64("end_x"))
+            .collect();
+        assert_eq!(real_end.len(), 1, "真报文里 1 条 FunctionPoints");
+        assert_eq!(
+            real_end[0].to_bits(),
+            4.988566611566738_f64.to_bits(),
+            "真回放里那一发的 end_x（逐位）"
+        );
+        // 真报文里"爆炸点 x == end_x"（同一发）—— 与 `docs/06` 的爆炸点规则一致
+        let expl: Vec<f64> = replay.msgs[batches[0].start..]
+            .iter()
+            .filter(|m| m.kind == "EffectInfo" && m.get_str("effect_type").as_deref() == Some("ExplosionEffect"))
+            .filter_map(|m| m.get_f64("pos_x"))
+            .collect();
+        assert_eq!(expl.len(), 1, "真报文里 1 条爆炸特效");
+        assert_eq!(real_end[0].to_bits(), expl[0].to_bits(), "真报文：爆炸点 x == end_x（逐位）");
+        assert!(Msg::parse_wire("{\"TickReply\":{\"current_tick\":5}}").is_ok());
+    }
+
     // 正对照（反向）：这条轴确实在"比东西" —— 挖洞点必须真的被比到过，
     // 否则"逐位相同"可能只是"没比较"（§30.5 的正对照 ①②）。
     assert!(p.destroy_compared > 0, "样本里应当有撞障碍的批（挖洞点要真的被比过）");

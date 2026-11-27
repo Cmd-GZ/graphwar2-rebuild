@@ -488,6 +488,32 @@ mod tests {
         }
     }
 
+    // ===================================================================
+    // T59 真值：**真实抓包** `fixtures/protocol_match.jsonl`（sha256
+    // `97d1a0b97c3539139ccdc284ff98b171325c8f1bbb30b27ecc77764c95feba35`，86 帧）。
+    // 复算：`.reference/venv/bin/python tools/gen_test_expectations2.py` → truth2 表 `B/*` 段。
+    // 这些期望值来自**真机上抓到的字节**，不是我方序列化器的往返（唯一例外是 B05：仓库里只有
+    // 解析后的文本、没有原始帧字节 ⇒ 那一条如实降为推断）。
+    // ===================================================================
+
+    /// 真抓包里的房间（广播顺序）：`US Room 2` / `US Room 1` / `US Room 3`，
+    /// 地址 `69.164.213.144:35981 / :37933 / :38347`，版本 `2.0.60` / `linux`。
+    const REAL_ROOMS: [(&str, &str); 3] = [
+        ("US Room 2", "69.164.213.144:35981"),
+        ("US Room 1", "69.164.213.144:37933"),
+        ("US Room 3", "69.164.213.144:38347"),
+    ];
+    const REAL_VERSION: (&str, &str) = ("2.0.60", "linux");
+    /// 抓包会话前 6 帧的事件名（顺序即真值）。
+    const REAL_SESSION_HEAD: [&str; 6] = [
+        "GameNameRequest",
+        "NewConnectionRequest",
+        "NewPlayerRequest",
+        "TickRequest",
+        "NameRequest",
+        "NameRequest",
+    ];
+
     /// `fixtures/protocol_match.jsonl` 里的真实 broker 报文（第 83–86 行）。
     fn broker_fixture() -> Vec<String> {
         include_str!("../../fixtures/protocol_match.jsonl")
@@ -504,6 +530,17 @@ mod tests {
         assert!(f[0].starts_with("{\"VersionInfo\":"));
         for line in &f[1..] {
             assert!(line.starts_with("{\"GameInfo\":{\"game_info\":{\"room_name\":"));
+        }
+        // T59 真值：真实抓包里那三个房间（顺序即真值）、版本串
+        let mut got: Vec<(String, String)> = Vec::new();
+        for line in f.iter().filter(|l| l.contains("GameInfo")) {
+            let info = parse_game_info_event(line).expect("真报文可解析");
+            got.push((info.room_name.clone(), info.address.clone()));
+        }
+        // 借用 REAL_ROOMS 的 'static 串做逐项比对
+        for (k, (room, addr)) in REAL_ROOMS.iter().enumerate() {
+            assert_eq!(got[k].0, *room, "第 {k} 个房间名");
+            assert_eq!(got[k].1, *addr, "第 {k} 个房间地址");
         }
     }
 
@@ -528,6 +565,19 @@ mod tests {
         assert_eq!(v.version, "2.0.60");
         assert_eq!(v.system, "linux");
         assert_eq!(v.to_msg(), line);
+        // T59 真值：版本/系统串来自真抓包（不是我方常量）
+        assert_eq!((v.version.as_str(), v.system.as_str()), REAL_VERSION);
+        // 真抓包会话的前 6 帧顺序（真值）
+        let kinds: Vec<&str> = include_str!("../../fixtures/protocol_match.jsonl")
+            .lines()
+            .filter(|l| l.starts_with('{'))
+            .take(6)
+            .map(|l| {
+                let k = l.trim_start_matches('{').trim_start_matches('"');
+                &k[..k.find('"').unwrap()]
+            })
+            .collect();
+        assert_eq!(kinds.as_slice(), REAL_SESSION_HEAD.as_slice(), "真抓包会话前 6 帧");
     }
 
     #[test]
@@ -538,17 +588,40 @@ mod tests {
         assert!(s.ends_with("}}"));
         let info = parse_game_info_event(&s).unwrap();
         assert_eq!(info, sample("[::1]:35245", 2));
+        // T59 真值：真抓包那一帧的字段**顺序**（我方序列化器必须与真帧同序，字段集合也一样）
+        let real = broker_fixture()
+            .into_iter()
+            .find(|l| l.contains("GameInfo"))
+            .unwrap();
+        let keys_real: Vec<&str> = [
+            "\"room_name\"", "\"game_state\"", "\"current_player_count\"", "\"address\"",
+            "\"axis_mode\"", "\"function_mode\"", "\"turn_mode\"", "\"time_mode\"", "\"locked\"",
+        ]
+        .to_vec();
+        let mut last = 0usize;
+        for k in &keys_real {
+            let at = real.find(k).unwrap_or_else(|| panic!("真帧里没有 {k}"));
+            assert!(at >= last, "真帧字段顺序被改了：{k}");
+            last = at;
+            assert!(s.contains(k), "我方序列化缺字段 {k}");
+        }
     }
 
     #[test]
     fn game_removed_round_trips() {
         let s = game_removed_event("1.2.3.4:35981");
+        // T59：**换不了**（如实登记）。`GameRemoved` 在 403 份语料 + 现有抓包里**零帧**
+        // （T46 已探明，等抓包任务 t53）⇒ 这一条只能是契约断言。
         assert_eq!(s, "{\"GameRemoved\":{\"game_address\":\"1.2.3.4:35981\"}}");
         assert_eq!(parse_game_removed_event(&s).as_deref(), Some("1.2.3.4:35981"));
         // 别的消息不能被当成移除
         assert_eq!(parse_game_removed_event("{\"GameInfo\":{}}"), None);
     }
 
+    /// T59：**换不了**（如实登记）。仓库里的抓包是 `tools/capture_net.js` 口径的**解析后文本**
+    /// （`fixtures/protocol_match.jsonl` 每行就是一条消息体，没有 2 字节长度前缀），
+    /// 所以"u16 大端长度前缀"仍只有 `docs/24` §1 的一次实测样本（`0x0031` = 49）+ 本次 encode/decode
+    /// 往返 ⇒ 证据档是**推断**，不是逐位。要升档需要一份**原始 socket 字节**抓包。
     #[test]
     fn frame_is_u16_big_endian_prefixed() {
         // 0x0031 = 49 的那一帧是 docs/24 §1 的实测样本
@@ -590,5 +663,12 @@ mod tests {
         t.upsert(sample("a:1", 0), 1);
         let s = t.snapshot();
         assert_eq!(s.iter().map(|i| i.address.as_str()).collect::<Vec<_>>(), vec!["a:1", "z:9"]);
+        // T59：**换不了**（如实登记）。真抓包里 broker 广播房间的顺序是
+        // US Room 2 → US Room 1 → US Room 3（既不是按名字也不是按地址排序）⇒ 原版对房间列表
+        // 的顺序没有可观测的不变量；本表"按地址排序"是我方**自造服务端**的确定性选择，
+        // 不是复原证据。真值见 `REAL_ROOMS`。
+        assert_eq!(REAL_ROOMS[0].0, "US Room 2");
+        assert_eq!(REAL_ROOMS[1].0, "US Room 1");
+        assert_eq!(REAL_ROOMS[2].0, "US Room 3");
     }
 }

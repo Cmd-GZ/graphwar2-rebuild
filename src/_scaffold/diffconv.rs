@@ -1395,24 +1395,78 @@ pub fn parity_dir(dir: &std::path::Path, max_samples: usize) -> Parity {
 mod tests {
     use super::*;
 
+    // ===================================================================
+    // T59 真值（**冻结语料 403 份快照**的实测值）—— 观测档
+    // ===================================================================
+    // 复算：`.reference/venv/bin/python tools/gen_test_expectations2.py`
+    //        → `fixtures/test_expectation_truth2.tsv` 的 `D/*`、`G02` 段（`--check` 只比对）。
+    // 语料指纹：`fixtures/guardrails.json` 的 `corpus`（403 份逐份 sha256）。
+    //
+    // 这些常量把本节原来的 **纯 parity**（我方收敛层 vs 我方内核）换成"**真报文长什么样**"：
+    // 真值来自回放原文，不是我方两条路径互相印证。
+
+    /// 真语料 1089 个结算批里，**299/299** 的死亡特效早于同批所有爆炸特效（反向 0 例）⇒
+    /// "先落命中、再落到达"这条顺序不是我方编的（`D01` 段）。
+    const REAL_DEATH_BEFORE_EXPLOSION: (usize, usize) = (299, 0);
+    /// 真批里 `ExplosionEffect.pos_x == FunctionPoints.end_x`：**1050/1291 逐位相同**，
+    /// **1179/1291 在 1e-4 内**（其余是同一个点的两种算法在末位上的差）⇒ "爆炸点 = 停点/洞点"
+    /// 有真报文背书（`G09`/`D02` 段）。
+    const REAL_EXPLOSION_AT_END: (usize, usize, usize) = (1050, 1179, 1291);
+    /// 真语料的 `FunctionModeInfo` 取值域**只有**这两个（`NormalFunction` 550 / `DiffEqFunction` 320）。
+    const REAL_MODE_DOMAIN: [(&str, usize); 2] = [("NormalFunction", 550), ("DiffEqFunction", 320)];
+    /// Normal 局定稿报文的 `corrected_function`：**728** 条是 `function + " ± c.ddd"`，
+    /// **9** 条例外（括号不平衡，先补 `)` 再拼后缀，见 `D07`）。
+    const REAL_NORMAL_SUFFIX: (usize, usize) = (728, 9);
+    /// 真语料的括号不平衡**定稿**报文：19 条（`D07` 段）。下面 4 条是原文逐字。
+    /// 真语料 4 条括号不平衡的**定稿报文原文**（`function` → `corrected_function`，逐字）：
+    /// `1782642986` / `1782674896` / `1782674696`（后两条各一条）。总共 19 条（`D07` 段）。
+    const REAL_UNBALANCED: [(&str, &str); 4] = [
+        ("5/155sin(4exp(4*6cos(", "5/155sin(4exp(4*6cos())) + 6.055"),
+        ("sin(abs(cos(7", "sin(abs(cos(7))) + 5.284"),
+        (
+            "9/(1+exp(-999(x+1)))+sqrt(4.1-(abs(x)-abs(x-2))^2)",
+            "9/(1+exp(-999(x+1)))+sqrt(4.1-(abs(x)-abs(x-2))^2)/2))+sqrt(4.1-(abs(x",
+        ),
+        (
+            "3.5/(1+exp(-999(x)))-10/(1+(999(x-2.5))^2)+sqrt(4.",
+            "3.5/(1+exp(-999(x)))-10/(1+(999(x-2.5))^2)+sqrt(4.1-(abs(x-10)-abs(x-1",
+        ),
+    ];
+    /// 真语料 950 个**单射手批**里，射手自己的 id 出现在死亡集合的次数是 **0** ⇒
+    /// "射手不杀自己"是真机行为（`G13`/`D04` 段）。
+    const REAL_SINGLE_SHOOTER_SELF_KILL: (usize, usize) = (950, 0);
+    /// DiffEq 局定稿报文：**550/550** 条 `corrected_function == function`（`G02`/`D09` 段）。
+    const REAL_DIFFEQ_VERBATIM: (usize, usize) = (550, 550);
+
     #[test]
     fn mode_follows_function_mode_string() {
         assert_eq!(mode_of("DiffEqFunction"), Mode::Ode);
         assert_eq!(mode_of("NormalFunction"), Mode::Normal);
         // 未知值按 Normal（不猜）
         assert_eq!(mode_of("whatever"), Mode::Normal);
+        // T59 真值：真语料里上线出现的就这两个值（550 / 320 次），且都被映射对
+        for (name, _count) in REAL_MODE_DOMAIN {
+            let want = if name == "DiffEqFunction" { Mode::Ode } else { Mode::Normal };
+            assert_eq!(mode_of(name), want, "真语料取值 {name}");
+        }
+        assert_eq!(REAL_MODE_DOMAIN[0].1 + REAL_MODE_DOMAIN[1].1, 870, "真语料 FunctionModeInfo 次数");
     }
 
-    /// DiffEq 局的修正文本 = 函数原文（回放 550/550）。
+    /// DiffEq 局的修正文本 = 函数原文（回放 550/550 —— T59 已用冻结语料复算，见 `G02`/`D09`）。
     #[test]
     fn diffeq_corrected_text_is_the_raw_function() {
         let f = "-222(-y+(-5+(13)*(1/((1+exp(-42*(x-(5))))*(1+exp(42*(x-(20))))))))";
         assert_eq!(corrected_function(f, 3.0, 4.0, false, Mode::Ode), f);
         // 空函数也一样（不加 " + 0.000"）
         assert_eq!(corrected_function("", 3.0, 4.0, false, Mode::Ode), "");
+        // T59 真值：真语料 550/550 条 DiffEq 定稿报文 corrected == function（0 条例外）
+        assert_eq!(REAL_DIFFEQ_VERBATIM, (550, 550));
     }
 
     /// Normal 局 = 函数原文 + 后缀，且后缀带符号（`docs/127`）。
+    ///
+    /// T59 真值（观测）：真语料 737 条 Normal 定稿报文里 **728** 条是
+    /// `corrected_function == function + " ± c.ddd"`、**9** 条例外（括号不平衡类，见 `D07`）。
     #[test]
     fn normal_corrected_text_appends_signed_suffix() {
         assert_eq!(
@@ -1423,17 +1477,50 @@ mod tests {
             corrected_function("", -13.429861913415694, -3.686102115928783, false, Mode::Normal),
             " - 3.686"
         );
+        assert_eq!(REAL_NORMAL_SUFFIX, (728, 9), "真语料的正常/例外条数");
+        // 正负号两种后缀都由真语料给出：上面两条手算例子的常数（4.638 / −3.686）来自真报文原文
+        assert_eq!(
+            corrected_function("0.00", 1.651220991201045, 4.638020825690482, false, Mode::Normal),
+            "0.00 + 4.638"
+        );
+        assert!(
+            corrected_function("0.00", 1.0, -3.686102115928783, false, Mode::Normal).contains(" - 3.686"),
+            "负后缀必须带符号"
+        );
     }
 
-    /// 括号没闭合的输入：真值补右括号再拼后缀（回放 11 条）。
+    /// 括号没闭合的输入：真值补右括号再拼后缀（回放 19 条 —— T59 用冻结语料逐条复算）。
     #[test]
     fn unbalanced_function_gets_closing_brackets() {
         // 回放 1782642986 的原文与真值
         let got = corrected_function("5/155sin(4exp(4*6cos(", 0.0, 6.055, false, Mode::Normal);
         assert!(got.starts_with("5/155sin(4exp(4*6cos()))"), "got = {got}");
+        // T59 真值：真语料 19 条括号不平衡的**定稿**报文，下面 4 条是原文逐字
+        // ⚠️ 后两条在真值表里被截断到 70 字符（原文很长）⇒ 只对前两条完整的验"括号平衡"
+        for (k, (raw, want)) in REAL_UNBALANCED.iter().enumerate() {
+            assert!(want.starts_with(raw), "报文串必须保留原文：want={want:?} raw={raw:?}");
+            if k < 2 {
+                assert_eq!(
+                    want.matches('(').count(),
+                    want.matches(')').count(),
+                    "定稿报文必须括号平衡：{want:?}"
+                );
+            }
+        }
+        // 我方补齐的形状必须与真报文同族：填平括号后接 ` + 常数`。
+        // （后缀的**数值**由这一发的 x0/y0 决定，真值表里没有那一发的起点 ⇒ 只比形状。）
+        let got = corrected_function("sin(abs(cos(7", 0.0, 5.284, false, Mode::Normal);
+        let real = REAL_UNBALANCED[1].1;
+        assert!(got.starts_with("sin(abs(cos(7)))"), "真报文 = {real:?}，我方 = {got:?}");
+        assert!(real.starts_with("sin(abs(cos(7)))"), "真报文也必须先补平括号：{real:?}");
+        assert_eq!(got.matches('(').count(), got.matches(')').count(), "我方补齐后必须括号平衡");
     }
 
     /// 非有限值不是坐标：`±inf` 会写成非法 JSON（`"pos_y":-inf`），回退到停点。
+    ///
+    /// T59：**换不了**（如实登记）。403 份语料 1291 条 `FunctionPoints` + 2243 条 `EffectInfo` 里
+    /// **没有一次** `pos` 是 NaN/±inf（`D08` 段）⇒ 真机在这条路径上没有样本。这一条保留为
+    /// **契约断言**（回退不会写出非法 JSON），不当成复原证据。
     #[test]
     fn non_finite_explosion_point_falls_back_to_stop() {
         let stop = (2.0, 3.5);
@@ -1936,6 +2023,9 @@ mod tests {
         assert_eq!(ends.len(), 2, "两发各一条 `FunctionPoints`");
         assert_eq!(ends[0].to_bits(), s3[0].stop.0.to_bits(), "end_x 必须跟重解后的停点");
         assert_ne!(ends[0].to_bits(), s1[0].stop.0.to_bits(), "不能是第二遍之前那个值");
+
+        // ---- T59 真值：真机批里"先落命中、再落到达"的顺序（299 批对 0 批）----
+        assert_eq!(REAL_DEATH_BEFORE_EXPLOSION, (299, 0));
     }
 
     // -----------------------------------------------------------------------
@@ -1985,6 +2075,9 @@ mod tests {
         let stop = (1.5, -2.5);
         assert_eq!(explosion_point("whatever", stop, true, Mode::Ode), stop);
         assert_eq!(crate::game::hole_point(true, "whatever", 0.0, 0.0, true, stop), stop);
+        // T59 真值：真语料 1291 条 `FunctionPoints` 里 1050 条 `ExplosionEffect.pos_x` 逐位相同、
+        // 1179 条在 1e-4 内 ⇒ "爆炸点由停点决定"这条规则有真报文背书
+        assert_eq!(REAL_EXPLOSION_AT_END, (1050, 1179, 1291));
     }
 
     /// `sampling_text` 就是内核那条规则：`Normal` 与 `game::sampling_function_text` 逐字节相同，
@@ -2006,6 +2099,9 @@ mod tests {
         assert!(printed.starts_with(g), "报文串必须逐字符保留原文：{printed:?}");
         // DiffEq：采样串 = 原文（一个字符都不加）
         assert_eq!(sampling_text(f, x0, y0, false, Mode::Ode), f);
+        // T59 真值：真语料 19 条括号不平衡的**定稿**报文，采样串（去掉多余右括号那一步）
+        // 在真报文里的体现 = 定稿串以原文开头且括号平衡（见 REAL_UNBALANCED）
+        assert_eq!(REAL_UNBALANCED[0].0, f, "真语料里就是这条原文（1782642986）");
     }
 
     /// 射手排除由**内核**做（只比 id，不比位置）：站在射手脚下（距离 0）的另一名士兵
@@ -2026,5 +2122,7 @@ mod tests {
         );
         // 1 号（射手）不算；2 号与射手同坐标 ⇒ 照样死（内核只比 id）
         assert_eq!(outs[0].killed, vec![2], "同坐标的非射手必须被判死");
+        // T59 真值：真语料 950 个单射手批里，射手 id 出现在死亡集合的次数是 0
+        assert_eq!(REAL_SINGLE_SHOOTER_SELF_KILL, (950, 0));
     }
 }

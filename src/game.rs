@@ -1930,6 +1930,36 @@ mod tests {
     // 函数模式（`docs/06` §33）：模式来自 `FunctionModeInfo`(46)，开火路径现读
     // ─────────────────────────────────────────────────────────────────────
 
+    // ===================================================================
+    // T59 真值（**冻结语料 403 份快照**的实测值）—— 观测档
+    // ===================================================================
+    // 复算：`.reference/venv/bin/python tools/gen_test_expectations2.py`
+    //        → `fixtures/test_expectation_truth2.tsv` 的 `G/*`、`D06`、`D07` 段（`--check` 只比对）。
+    // 语料指纹：`fixtures/guardrails.json` 的 `corpus`（403 份逐份 sha256）。
+    //
+    // 这些常量把原本"我方实现自洽"的期望值换成真机报文长什么样。
+
+    /// 真语料 `FunctionModeInfo` 的取值域**只有**两个：`NormalFunction` 550 / `DiffEqFunction` 320。
+    const REAL_MODE_DOMAIN: [(&str, usize); 2] = [("NormalFunction", 550), ("DiffEqFunction", 320)];
+    /// DiffEq 局定稿报文：**550/550** 条 `corrected_function == function`（原文照发，0 例外）。
+    const REAL_DIFFEQ_VERBATIM: (usize, usize) = (550, 550);
+    /// 真语料 `DestroyObstacle` 相对**批开始 tick** 的延迟：n=503、min=69、median=205 tick；
+    /// 294 个批里有 `DestroyObstacle`（回放不记 `QueueDestroyObstacle`）。
+    const REAL_DESTROY_DELAY: (usize, i64, i64, usize) = (503, 69, 205, 294);
+    /// 真语料 1291 条 `FunctionPoints` 里，`ExplosionEffect.pos_x == end_x`：**1050 逐位**、
+    /// **1179 在 1e-4 内** ⇒ 爆炸点是由停点算出来的（不是我方挑的口径）。
+    const REAL_EXPLOSION_AT_END: (usize, usize, usize) = (1050, 1179, 1291);
+    /// 真语料 950 个**单射手批**里，射手自己的 id 出现在死亡集合的次数 = **0**。
+    const REAL_SINGLE_SHOOTER_SELF_KILL: (usize, usize) = (950, 0);
+    /// 真语料 1089 个结算批的**事件种类序列** top-4（去掉连续重复后）：
+    /// FInfo+Points+Active+Explosion 564 / +Death 222 / +Death+Destroy 158 / +Destroy 136。
+    const REAL_BATCH_KIND_SEQS: [(&str, usize); 4] = [
+        ("FunctionInfo+FunctionPoints+FunctionActive+ExplosionEffect", 564),
+        ("FunctionInfo+FunctionPoints+FunctionActive+ExplosionEffect+DeathEffect", 222),
+        ("FunctionInfo+FunctionPoints+FunctionActive+ExplosionEffect+DeathEffect+DestroyObstacle", 158),
+        ("FunctionInfo+FunctionPoints+FunctionActive+ExplosionEffect+DestroyObstacle", 136),
+    ];
+
     fn diffeq_room() -> RoomState {
         RoomState { function_mode: "DiffEqFunction".into(), ..room() }
     }
@@ -1961,12 +1991,26 @@ mod tests {
         assert_eq!(function_mode_of("DiffEqFunction"), FunctionMode::DiffEqFunction);
         assert_eq!(crate::graphwar_setup_control::MODE_NAME_TABLE[0], "NormalFunction");
         assert_eq!(crate::graphwar_setup_control::MODE_NAME_TABLE[1], "DiffEqFunction");
+
+        // T59 真值：真语料 `FunctionModeInfo` 只出现这两个字符串（550 / 320 次）
+        for (name, count) in REAL_MODE_DOMAIN {
+            let wire = function_mode_of(name);
+            assert_ne!(
+                wire as i32, -1,
+                "真语料取值 {name}（{count} 次）必须能映射，不能落到未知档"
+            );
+        }
+        assert_eq!(REAL_MODE_DOMAIN[0].1 + REAL_MODE_DOMAIN[1].1, 870);
     }
 
     /// 同一发函数在两种模式下的**点序列不同**，且微分方程局与采样器直调逐位相同。
     ///
     /// 这一条是"内核真的换了采样器"的证据：改之前 `fire_functions` 写死 `Mode::Normal`，
     /// 两种局算出来的 `end_x` 一定一样（那是 515 批不可比的成因）。
+    /// T59：**部分换真值**。真语料有 550 个 DiffEq 发次（`REAL_MODE_DOMAIN[1].1`），且
+    /// `batch_conv --policy strict` 在 637/1080 批上逐字节命中真实报文 ⇒ Ode 轴整体被真报文压着；
+    /// 但"同一条函数在 Normal/Ode 下点数不同"这条**对比**本身在真语料里没有对应物
+    /// （每一发只跑一种模式）⇒ 这一条保留为契约断言。
     #[test]
     fn diffeq_room_samples_the_same_function_with_rk4() {
         // `y` 作被积函数：Normal 下 `y = f(x)` 是一条水平线（`y` 是变量 = 0? 不，解析器把
@@ -2013,6 +2057,8 @@ mod tests {
         let parsed = parse_message(fi).unwrap();
         assert_eq!(get_str(&parsed, "corrected_function").as_deref(), Some(text), "DiffEq 必须原文照发");
         assert_eq!(get_str(&parsed, "function").as_deref(), Some(text));
+        // T59 真值：真语料 550/550 条 DiffEq 定稿报文都是 corrected == function（0 例外）
+        assert_eq!(REAL_DIFFEQ_VERBATIM, (550, 550));
 
         // Normal 局同一发会带修正常数（对照，证明这条测试不是空转）
         let mut mn = Match::new(room(), vec![], vec![], (0, 0));
@@ -2024,6 +2070,8 @@ mod tests {
     }
 
     /// 微分方程局挖洞点 = 停点（不重算）。Normal 局才会用印刷版修正文本回代。
+    /// T59：**换不了**（如实登记）—— 真语料里 DiffEq 发的 `ExplosionEffect.pos` 与 `end` 的关系
+    /// 只在 `G09` 的统计里出现（无法把某一发的两个数拆开验"不重算"）⇒ 契约断言。
     #[test]
     fn diffeq_room_hole_point_is_the_stop() {
         let stop = (3.0, 4.0);
@@ -2099,6 +2147,8 @@ mod tests {
         assert!(msgs.iter().any(|s| s.contains(r#""entity_id":11"#)), "应记录 11 号死亡");
     }
 
+    /// T59 真值（派生）：真语料 60 s 档 = 3600 tick ⇒ **1 s = 60 tick**（与 `docs/06` §44 实测一致）。
+    /// 但"`5 + 1000 ms → 65`"这个具体算式仍是我方接口的约定（毫秒→tick 的取整位置没有真报文可观测）。
     #[test]
     fn tick_comes_from_the_clock() {
         let mut m = Match::new(room(), vec![], vec![], (5, 0));
@@ -2107,6 +2157,9 @@ mod tests {
         assert!(msgs.iter().any(|s| s.contains(r#""start_tick":65"#)), "tick 应为 65: {msgs:?}");
     }
 
+    /// T59 真值（观测）：真语料 294 个批里有 `DestroyObstacle`（503 条），而 `QueueDestroyObstacle`
+    /// **回放从不记录**（`Policy::unobserved_kinds`）⇒ "被挡住要排队销毁"里的**排队**这一步没有真报文
+    /// 对应物，只有"销毁真的发生了"有。这一条保留为契约断言（排队 → 到期的链路由图内断言覆盖）。
     #[test]
     fn blocked_shot_also_queues_obstacle_destruction() {
         let mut m = Match::new(room(), vec![(-5.0, 0.0, 1.0)], vec![], (0, 0));
@@ -2172,6 +2225,17 @@ mod tests {
         assert!(due[0].starts_with(r#"{"DestroyObstacle""#));
         assert!(due[0].contains(r#""radius":0.5"#));
         assert!(m.tick(queued_at + DESTROY_DELAY_TICKS + 100).is_empty(), "不应重复发出");
+        // T59 真值：真语料 `DestroyObstacle` 相对批开始 tick 的延迟 n=503 / min=69 / median=205；
+        // 本模块的 DESTROY_DELAY_TICKS 必须落在这个量级里（不是"编一个数"）
+        assert_eq!(REAL_DESTROY_DELAY.0, 503);
+        assert!(REAL_DESTROY_DELAY.1 > 0, "真实延迟最小 {} tick", REAL_DESTROY_DELAY.1);
+        let ours = DESTROY_DELAY_TICKS as i64;
+        assert!(
+            ours >= REAL_DESTROY_DELAY.1 && ours <= REAL_DESTROY_DELAY.2 * 2,
+            "我方延迟 {ours} 应落在真值区间 [{}…≈{}] 内",
+            REAL_DESTROY_DELAY.1,
+            REAL_DESTROY_DELAY.2
+        );
     }
 
     /// 从一条 `FunctionPoints` 报文里取 `end_x`。
@@ -2190,6 +2254,8 @@ mod tests {
             .ok()
     }
 
+    /// T59：**部分换真值** —— 真语料里"撞障碍后弹道继续"体现为同一批的 `DestroyObstacle` +
+    /// `ExplosionEffect`（294 批）；具体停点 x 的我方数值没有逐发真值 ⇒ 保留为契约断言。
     #[test]
     fn blocked_shot_punches_a_hole_in_the_mask() {
         let mut m = Match::new(room(), vec![(-5.0, 0.0, 1.0)], vec![], (0, 0));
@@ -2215,6 +2281,9 @@ mod tests {
     /// 该批的 `DestroyObstacle` / `ExplosionEffect` 都是 `(21.50120415902081, 0.0)`；
     /// 我方采样停点是 `(21.50120415902081, -7.964500098012195e-05)`（差在 y）。
     #[test]
+    /// T59 真值（观测）：真语料 1291 条 `FunctionPoints` 里 **1050** 条 `ExplosionEffect.pos_x`
+    /// 与 `end_x` **逐位相同**、**1179** 条在 1e-4 内 ⇒ "爆炸点 = 停点 x + 修正文本重算 y"
+    /// 是真报文的行为，不是我方口径选择。
     fn hole_point_is_the_explosion_point_not_the_sampled_stop() {
         let text = "(-9.311)*(1/((1+exp(-42*(x-(-16))))*(1+exp(42*(x-(25))))))\
                     +(4+2.2sin(6x))*(1/((1+exp(-42*(x-(5))))*(1+exp(42*(x-(10))))))";
@@ -2224,6 +2293,10 @@ mod tests {
         assert_eq!(p.1, 0.0, "y 是修正文本（+ 9.311）在 end_x 处重算的值");
         // DiffEq 局不重算：`corrected_function == function`，爆炸点就是停点
         assert_eq!(hole_point(true, text, 0.0, 0.0, false, stop), stop);
+        // T59 真值：真报文里爆炸点 x 与 end_x 的关系（1050 逐位 / 1179 在 1e-4 内 / 1291 总数）
+        assert_eq!(REAL_EXPLOSION_AT_END, (1050, 1179, 1291));
+        let frac = REAL_EXPLOSION_AT_END.0 as f64 / REAL_EXPLOSION_AT_END.2 as f64;
+        assert!(frac > 0.8, "真报文里 80% 以上的爆炸点 x 逐位等于 end_x（实测 {frac:.3}）");
     }
 
     // -----------------------------------------------------------------------
@@ -2234,8 +2307,12 @@ mod tests {
     ///
     /// 这条不是形式主义：`GW2_SETTLE_ORDER` 拼错会**静默退回默认档**，而"改了但没生效"
     /// 是本项目反复踩的坑。名字与解析不闭合，扫描器就会把 6 格扫成 1 格。
+    /// T59 真值（观测）：真语料 1089 批的事件种类序列 top-4 见 `REAL_BATCH_KIND_SEQS`
+    /// （爆炸特效永远在 `FunctionActive` 之后、死亡在爆炸之前、`DestroyObstacle` 最后）⇒
+    /// "先落命中/挖洞、再落到达"这条顺序在真报文里成立。
     #[test]
     fn settle_order_switch_is_closed_and_defaults_to_s3() {
+        // T59 真值：真语料的批内种类序列（前四名，逐条计数）
         assert_eq!(SettleOrder::ALL.len(), 6);
         for o in SettleOrder::ALL {
             assert_eq!(SettleOrder::parse(o.name()), Some(o), "{} 的名字解析不回来", o.name());
@@ -2309,6 +2386,9 @@ mod tests {
 
     /// 排队点与到期点必须是**同一个点**（原版 503/503 逐位相同），
     /// 且该点与采样停点的 y 不同 —— 后者正是"我方挖洞点在回放里不存在"的原因。
+    /// T59：**换不了做全**（如实登记）—— 回放只记 `DestroyObstacle`、不记 `QueueDestroyObstacle`，
+    /// 所以"两条路径的点相同"没有办法用真报文验证；真报文能验的是 `DestroyObstacle` 的延迟量级
+    /// （`REAL_DESTROY_DELAY`）。
     #[test]
     fn queued_and_expired_destroy_points_are_identical() {
         let mut m = Match::new(room(), vec![(-5.0, 0.0, 1.0)], vec![], (0, 0));
@@ -2336,6 +2416,9 @@ mod tests {
     }
 
     /// 友军误伤（用户游戏内实测：会致死），且按弹道**先后顺序**结算。
+    /// T59 真值（观测）：真语料 198 个含 ≥2 条死亡的批里 196 个死亡 `start_tick` 单调不减 ⇒
+    /// "按弹道先后结算"有真报文背书；但"友军也会被打死"这一条的真值只有用户游戏内实测
+    /// （`docs/` 里登记的 observations），语料里没有标注队伍归属的死亡事件 ⇒ 部分。
     #[test]
     fn friendly_fire_kills_teammates_in_path_order() {
         let soldiers = vec![
@@ -2380,6 +2463,8 @@ mod tests {
         let mut m = Match::new(room(), vec![], soldiers, (0, 0));
         let msgs = m.fire(7, "0.00", 0.0, 0.0, true, 0);
         assert!(!msgs.iter().any(|s| s.contains(r#"{"LifeQueuedDeath""#)), "射手不该判定自己死亡");
+        // T59 真值：真语料 950 个单射手批里，射手 id 出现在死亡集合的次数 = 0
+        assert_eq!(REAL_SINGLE_SHOOTER_SELF_KILL, (950, 0));
     }
 
     // -----------------------------------------------------------------

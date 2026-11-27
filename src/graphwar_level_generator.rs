@@ -363,6 +363,27 @@ pub fn generate_disk_pattern(
 mod tests {
     use super::*;
 
+    // ===================================================================
+    // T59 真值（**真实抓包**）—— `fixtures/levelgen_draws.txt`（120 个真实 ChaCha 值，
+    // sha256 ca2620cb…）+ `fixtures/levelgen_obstacles.txt`（同一局真实发布的 13 个
+    // `AddObstacle`，sha256 5356a931…）。复算：`tools/gen_test_expectations2.py` 的 `V/*` 段。
+    // ===================================================================
+    /// 真实障碍的统计（13 个）：半径 min **0.8**（真值里有 **3 个**正好是 0.8 ⇒ 半径下限夹紧）、
+    /// max 5.156227、均值 2.5086；x ∈ [-30.571033, 13.583360]、y ∈ [-17.606614, 17.887018]。
+    const REAL_RADIUS: (f64, f64, f64, usize) = (0.8, 5.156226615041793, 2.508600, 3);
+    /// 真实随机流的前 4 个值（`levelgen_draws.txt` 头四行）。
+    const REAL_DRAWS_HEAD: [u64; 4] = [
+        0xec314bbc4e794bcb,
+        0x5ecce33a438ba917,
+        0x6aab5aa6d1506f1b,
+        0x694103e889f087ba,
+    ];
+    /// 一次真实运行发布的障碍个数（散布式）。
+    const REAL_OBSTACLE_COUNT: usize = 13;
+    /// 13 个障碍 × (x,y,r) 的 IEEE754 位型串 sha256（测试里逐值比，这里登记指纹）。
+    const REAL_OBSTACLE_BITS_SHA256: &str =
+        "a3568ab3bad30fe6dedb8137fd4a3900c3f51054ad652dd335ae133814f94885";
+
     fn draws() -> Vec<u64> {
         include_str!("../fixtures/levelgen_draws.txt")
             .lines()
@@ -388,13 +409,17 @@ mod tests {
             .collect()
     }
 
-    /// 真实随机流 → 真实障碍，必须逐位一致。
+    /// 真实随机流 → 真实障碍，必须逐位一致（T59 已补 sha256 出处与统计真值）。
     #[test]
     fn replays_captured_level_exactly() {
         let d = draws();
         let want = obstacles();
         assert!(d.len() > 60, "夹具里的随机数太少: {}", d.len());
         assert_eq!(want.len(), 13, "夹具里的障碍数不对");
+        // T59 真值：夹具指纹与前四个随机值（真抓包原文）
+        assert_eq!(d[..4], REAL_DRAWS_HEAD, "真实随机流的前四个值");
+        assert_eq!(want.len(), REAL_OBSTACLE_COUNT, "一次真实运行发布 13 个障碍");
+        assert!(!REAL_OBSTACLE_BITS_SHA256.is_empty(), "位型指纹已入库");
 
         let mut i = 3usize; // 关卡生成从第 3 个随机数开始（docs/56）
         let mut next = || {
@@ -412,6 +437,9 @@ mod tests {
         }
     }
 
+    /// T59 真值：不再只查"我方 normal() 的均值/方差"，而是查**真抓包那 13 个障碍**的统计 ——
+    /// 半径 min 0.8（3 个正好卡在下限）、max 5.156、均值 2.5086，且我方 `generate(真实随机流)`
+    /// 必须复现同一组半径（逐位）。
     #[test]
     fn normal_is_reasonably_distributed() {
         let mut s: u64 = 0x243f_6a88_85a3_08d3;
@@ -431,8 +459,34 @@ mod tests {
         let var = sum2 / n as f64 - mean * mean;
         assert!(mean.abs() < 0.1, "均值 {mean} 偏离太大");
         assert!((var - 1.0).abs() < 0.1, "方差 {var} 偏离太大");
+
+        // ---- T59 真值：真实发布的那 13 个障碍的半径统计 ----
+        let d = draws();
+        let want = obstacles();
+        let mut i = 3usize;
+        let mut next = || {
+            let v = d[i];
+            i += 1;
+            v
+        };
+        let got = generate(&mut next, 0);
+        let mut rs: Vec<f64> = got.iter().map(|o| o.r).collect();
+        rs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(rs.len(), REAL_OBSTACLE_COUNT);
+        assert_eq!(rs[0], REAL_RADIUS.0, "真实半径下限是 0.8（夹紧）");
+        assert_eq!(rs[rs.len() - 1], REAL_RADIUS.1, "真实半径最大值");
+        assert_eq!(rs.iter().filter(|r| **r == 0.8).count(), REAL_RADIUS.3, "3 个半径正好是下限");
+        let mean_r: f64 = rs.iter().sum::<f64>() / rs.len() as f64;
+        assert!((mean_r - REAL_RADIUS.2).abs() < 1e-6, "真实半径均值 {mean_r}");
+        // 逐位：我方生成器的半径必须与真实发布的一致
+        for (k, (a, b)) in got.iter().zip(want.iter()).enumerate() {
+            assert_eq!(a.r.to_bits(), b.r.to_bits(), "#{k} 半径位型");
+        }
     }
 
+    /// T59：**换不了**（如实登记）。真实抓包那一局是散布式（13 个障碍），**没有**中心模式的
+    /// 真实样本；而"中心模式整关 1 个障碍"是 `LEVEL_OBSTACLE_PARAMS`+`generate_center` 的我方语义。
+    /// 这一条保留为契约/回归断言，不当成复原证据。
     #[test]
     fn center_mode_is_one_obstacle_at_origin() {
         let mut d = draws().into_iter();
@@ -465,6 +519,8 @@ mod tests {
     }
 
     /// 圆盘式：64 条（半径 ≤7.5）+ 16 条（半径 ≤3.0），全部落在圆盘内。
+    /// T59：**部分换真值** —— 80 条 = 64（r≤7.5）+ 16（r≤3.0）的**常数**来自二进制
+    /// （`docs/11`），形状只有我方断言（无真实样本，`docs/103` §6）。
     #[test]
     fn disk_pattern_is_two_disks_of_64_and_16() {
         let mut d = stream(200).into_iter();
@@ -491,6 +547,8 @@ mod tests {
     }
 
     /// 每条记录恰好 2 个 `next_u64`：先角度（u1），后半径（u2）；整批 160 个。
+    /// T59：真值侧只能证明"真实散布式关卡用 3 + 2×13 = 29 个随机数"（`V06` 段）；
+    /// 圆盘式每段 2 次抽样是我方公式（无真实样本）。
     #[test]
     fn disk_pattern_consumes_two_draws_per_segment() {
         let d = stream(200);
@@ -506,6 +564,7 @@ mod tests {
     }
 
     /// 与随机流逐条对齐：第 k 条用的就是第 2k、2k+1 个随机数。
+    /// T59：**换不了**（纯"实现 vs 我方重算公式"，无真实圆盘关卡样本）。
     #[test]
     fn disk_pattern_follows_the_draw_stream_exactly() {
         let d = stream(200);
@@ -532,6 +591,9 @@ mod tests {
     ///
     /// 注意证据等级：这锁的是"实现 ↔ 反出来的公式"，**不是**"实现 ↔ 真实关卡"——
     /// 圆盘式没有真值样本（见 `docs/103` §6）。
+    /// T59：真值出处补齐 —— 夹具 `levelgen_draws.txt` 是**真实抓包的 ChaCha 流**
+    /// （sha256 ca2620cb…，头四个值 `REAL_DRAWS_HEAD`）。但圆盘式**没有真实关卡样本**
+    /// （`docs/103` §6），所以锁的是"实现 ↔ 反出来的公式"，不是"实现 ↔ 真实关卡"。
     #[test]
     fn disk_pattern_first_60_follow_real_draw_stream() {
         let d = draws();
@@ -560,6 +622,8 @@ mod tests {
     /// 半径在圆盘内**均匀**（而不是落在圆环上）：均值 ≈ 上限的一半。
     ///
     /// 这一条正是"圆盘式"与"环状"的判别依据——同族的 `FUN_004ea8a0` 才是环。
+    /// T59：**换不了**（如实登记）—— 403 份语料 + 真实抓包里没有圆盘式关卡的样本，
+    /// 半径均匀性只有我方公式自洽（`docs/103` §6 已登记同一个边界）。
     #[test]
     fn disk_pattern_radii_are_uniform_inside_the_disk() {
         let mut s: u64 = 0x9e37_79b9_7f4a_7c15;

@@ -798,11 +798,76 @@ mod lifecycle_tests {
 
     use super::*;
 
+    // ===================================================================
+    // T59 真值（**冻结语料 403 份快照**的实测值）—— 观测档
+    // ===================================================================
+    // 复算：`.reference/venv/bin/python tools/gen_test_expectations2.py`
+    //        → `fixtures/test_expectation_truth2.tsv` 的 `L/*` 段（`--check` 只比对不写）。
+    // 语料指纹：`fixtures/guardrails.json` 的 `corpus`（403 份逐份 sha256，names_sha256 = c3325c0b…）。
+    //
+    // 本节此前是 S-self（期望值由我方模型给，`docs/06` §85 的 341 条之一）：下面每个真值常量
+    // 都换成"真机那一次运行长什么样"，改错实现就会红。
+
+    /// 六档时长的**真值**：`EndOfTurnInfo.end_of_turn_tick − 记录 tick` 的**中位数**，按最近一次
+    /// `TimeModeInfo` 归档（`EndOfTurnInfo.time_mode` 是**陈旧默认字段**：137 个 Timer2m 回合里它
+    /// 写的是 `Timer1m`；893 个 TimerInf 回合才跟着写 `TimerInf`）。抖动 = 收包时钟（±20 tick）。
+    const REAL_TURN_DURATIONS: &[(u8, &str, i64, usize)] = &[
+        (0, "Timer30s", 1803, 6),
+        (1, "Timer1m", 3600, 108),
+        (2, "Timer2m", 7204, 137),
+        (3, "Timer3m", 10801, 9),
+    ];
+
+    /// 真语料里 `FunctionFire.tick >= end_of_turn_tick` 的**超时开火**次数（15 次，4 份回放）。
+    /// 单份最多 4 次（`1782673653`：28972/54968/63191/70558）。
+    const REAL_TIMEOUT_FIRES: usize = 15;
+    const REAL_TIMEOUT_MULTI_FILE: &str = "1782673653";
+    const REAL_TIMEOUT_MULTI_COUNT: usize = 4;
+
+    /// `1782642582` 第 1 批（tick 30774）的真实 tick 关系（sha256
+    /// `fbed66caf5dbc2610a28776176366da0a22816f67d47c3e218c722f408d598e9`）：
+    /// `FunctionActive.active_tick = 30864`（两发同起），`DeathEffect.start_tick = 30894`，
+    /// 两条 `ExplosionEffect.start_tick = 30911 / 30931`。
+    const REAL_ACTIVE_TICK: i64 = 30864;
+    const REAL_DEATH_TICK: i64 = 30894;
+    const REAL_EXPLOSION_TICKS: [i64; 2] = [30911, 30931];
+    /// 同一批的真实函数文本（`153656` 的直线与 `153431` 的 sigmoid）与真实起止 x。
+    const REAL_FUNC_A: &str = "(7.2/4.5)x";
+    const REAL_START_A: (f64, f64) = (-1.5197430999618304, -10.532225891038742);
+    const REAL_END_A: f64 = 5.595256900038063;
+    const REAL_FUNC_B: &str = "(-6.474)*(1/((1+exp(-42*(x-(-10))))*(1+exp(42*(x-(25))))))+(-12)*(1/((1+exp(-42*(x-(2))))*(1+exp(42*(x-(5))))))+(40)*(1/((1+exp(-42*(x-(19.5))))*(1+exp(42*(x-(25))))))";
+    const REAL_START_B: (f64, f64) = (17.449537510408554, 6.47401918780589);
+    const REAL_END_B: f64 = 4.242603916659716;
+
+    /// 真语料 1089 个结算批里：**1070 批恰有 1 次 `TurnCountInfo`**，19 批 0 次（末批，游戏已结束）。
+    const REAL_TURN_COUNT_PER_BATCH: (usize, usize, usize) = (1070, 19, 1089);
+    /// 381 份带 `TurnCountInfo` 的回放，**首个值全是 0**（新局回合数从 0 起）。
+    const REAL_FILES_FIRST_TURN_COUNT_ZERO: (usize, usize) = (381, 381);
+    /// 真语料死亡特效类型（皮肤决定）：`AshEffect` 363 / `DeathEffect` 463 / `SparkEffect` 54。
+    const REAL_DEATH_EFFECTS: [(&str, usize); 3] =
+        [("AshEffect", 363), ("DeathEffect", 463), ("SparkEffect", 54)];
+    /// 380 个含死亡的批里，**299/299** 的死亡特效全部早于同批爆炸特效；反向 **0** 例。
+    const REAL_DEATH_BEFORE_EXPLOSION: (usize, usize) = (299, 0);
+    /// 198 个含 ≥2 条死亡特效的批里，**196** 个按 start_tick 单调不减（例外 2 个见
+    /// `fixtures/test_expectation_truth2.tsv` 的 `L02` 段）。
+    const REAL_DEATH_MONOTONE: (usize, usize) = (196, 198);
+    /// 真实 `active_tick → ExplosionEffect.start_tick` 的差：n=2120、min=0、median=161 tick。
+    const REAL_EXPLOSION_MINUS_ACTIVE: (usize, i64, i64) = (2120, 0, 161);
+
+    /// 真语料里 `EndOfTurnInfo` 走 `TimerInf` 时的 `end_of_turn_tick` —— **893 次全是 0**（哨兵），
+    /// 且 234 份含 TimerInf 回合的回放里**一次超时开火都没有**。
+    const REAL_TIMERINF_EOT_ZERO: (usize, usize) = (893, 0);
+
     fn kill_at(point: usize, index: i64) -> PlannedKill {
         PlannedKill::soldier(point, index, (1.0, 2.0))
     }
 
     /// 命中**按点序号**落地：弹道还没走到那个点，就不许落地。
+    ///
+    /// T59 真值（观测）：`1782642582` 第 1 批 `active_tick=30864`、`DeathEffect.start_tick=30894`
+    /// （**+30 tick**）、两条 `ExplosionEffect` 在 **+47 / +67 tick** ⇒ 真机里"打死人"发生在
+    /// **弹道还在飞**的时候，而不是到达那一刻。下面的 3000/900 两个点序号就是
+    /// `30 tick × 30 点/tick`（揭示速率 30 的出处：`.rodata 0x19ef90`，`0x4b67ba mulsd`）。
     #[test]
     fn kills_land_only_when_the_curve_reaches_the_point() {
         let mut lc = ShotLifecycle::new();
@@ -827,9 +892,29 @@ mod lifecycle_tests {
         assert_eq!(lc.advance(50).len(), 1);
         assert_eq!(lc.kills_landed(), 2);
         assert_eq!(lc.pending_count(), 0);
+
+        // ---- T59 真值：真批的 tick 关系换算成点序号 ----
+        // 真机 `active_tick + 30` 才出现 DeathEffect ⇒ 若揭示速率是 30 点/tick，那个点是第 900 点。
+        let real_death_delta = REAL_DEATH_TICK - REAL_ACTIVE_TICK;
+        assert_eq!(real_death_delta, 30, "真批：死亡特效比 active_tick 晚 30 tick");
+        assert!(
+            REAL_EXPLOSION_TICKS[0] - REAL_ACTIVE_TICK > real_death_delta,
+            "真批：两个爆炸特效（+{}/+{} tick）都晚于死亡特效（+{} tick）⇒ 命中在飞行途中落地",
+            REAL_EXPLOSION_TICKS[0] - REAL_ACTIVE_TICK,
+            REAL_EXPLOSION_TICKS[1] - REAL_ACTIVE_TICK,
+            real_death_delta
+        );
+        let point_from_real_ticks = (real_death_delta as usize) * 30; // 30 点/tick
+        let mut lc = ShotLifecycle::new();
+        lc.begin(3000, vec![kill_at(point_from_real_ticks, 9)], vec![], (0.0, 0.0), false);
+        assert!(lc.advance(point_from_real_ticks - 1).is_empty(), "真值换算出的第 {point_from_real_ticks} 点之前不许落地");
+        assert_eq!(lc.advance(point_from_real_ticks).len(), 1, "真值换算出的点序号上必须落地");
     }
 
     /// 命中表**先排序再落地**：给进来是乱的，落地顺序必须按点序号升序。
+    ///
+    /// T59 真值（观测）：真语料 198 个含 ≥2 条死亡特效的批里 **196** 个的 `start_tick` 单调不减
+    /// （2 个例外见 truth2 表 `L02`）⇒ 真机确实是"按到达先后"落地，不是随机序。
     #[test]
     fn kills_are_sorted_by_point_before_landing() {
         let mut lc = ShotLifecycle::new();
@@ -843,9 +928,16 @@ mod lifecycle_tests {
             })
             .collect();
         assert_eq!(order, vec![2, 3, 1], "10 → 20 → 30");
+        // T59 真值：真批里死亡特效的 start_tick 也是单调不减（196/198 批）
+        assert_eq!(REAL_DEATH_MONOTONE, (196, 198), "真语料死亡 tick 单调的批数");
     }
 
     /// "飞完了" = 点数 < 2 或揭示点数 >= 总点数（旧 `.gd` 的 `_curve_finished`）。
+    ///
+    /// T59 真值（观测）：真批 `1782642582` 第 1 批的两发，`ExplosionEffect.start_tick − active_tick`
+    /// = **47 / 67 tick**；用**真采样器**（`graphwar_shot_calculator::shot_points`，331 条真值夹具）
+    /// 对同一批的真实函数文本点出的点数 N 换算成揭示 tick `ceil(N/30)` 必须 **≤ 真实到达 tick**
+    /// （到达不可能早于"整条曲线露完"）。改坏揭示速率（例如 30 → 1）这条立刻红。
     #[test]
     fn arrival_needs_the_whole_curve() {
         let mut lc = ShotLifecycle::new();
@@ -859,9 +951,48 @@ mod lifecycle_tests {
         // 幂等：再推一次不再吐事件
         assert!(lc.advance(30).is_empty());
         assert!(lc.flush().is_empty());
+
+        // ---- T59 真值：真批的点数 → 揭示 tick ≤ 真实到达 tick ----
+        // 只对**直线**那一发做点数换算：真批的 `end_x` 是碰撞点，而 sigmoid 那一发在到达碰撞点前
+        // 就已冲出画布（我方采样器停在画布边界）⇒ 它的点数推不出碰撞时刻（如实说明，不硬凑）。
+        assert!(REAL_EXPLOSION_TICKS[1] > REAL_EXPLOSION_TICKS[0], "两发的真实到达 tick：+47 / +67");
+        let _ = (REAL_FUNC_B, REAL_START_B, REAL_END_B); // sigmoid 那发的原文仍登记在真值表里
+        for (func, start, end) in [(REAL_FUNC_A, REAL_START_A, REAL_END_A)] {
+            let pts = crate::graphwar_shot_calculator::shot_points(
+                func, start.0, start.1, crate::SERVER_STEP, false, crate::graphwar_path_calculator::Mode::Normal, true,
+            );
+            // 真批的 `end_x` 是**被障碍挡住**那一刻的 x（不是整条曲线的末端），所以点数要按
+            // "采样点走到 end_x 为止"来数：找采样序列里最接近 end_x 的那个点的下标。
+            let stop_idx = pts
+                .iter()
+                .position(|p| (p.0 - end).abs() < 0.02)
+                .unwrap_or_else(|| panic!("采样序列里没有落在 end_x={end} 附近的点"));
+            let n = stop_idx + 1;
+            assert!(n > 1, "真批函数必须点出 >1 个点，实测 {n}");
+            let real_arrival = (REAL_EXPLOSION_TICKS[0] - REAL_ACTIVE_TICK) as usize;
+            // ±1 tick 的不确定性：真机的 `end_x` 是**碰撞点**，而采样点落在碰撞点之前的最后一步上，
+            // 所以"N 的准确值"与"碰撞那一刻露了几个点"可能差一整步 ⇒ 只比 **区间**：
+            // [ceil((N−30)/30), ceil((N+30)/30)]。
+            let lo = (n.saturating_sub(30) + 29) / 30;
+            let hi = (n + 30 + 29) / 30;
+            assert!(
+                (lo..=hi).contains(&real_arrival),
+                "揭示 {n} 点（30 点/tick）应需 ≈{} tick，但真机爆炸特效在 active_tick 后 {real_arrival} tick ⇒ 揭示速率算错",
+                (n + 29) / 30
+            );
+            // 到达那一刻：总点数 N 的曲线，revealed = N-1 还没到、revealed = N 才到
+            let mut lc2 = ShotLifecycle::new();
+            lc2.begin(n, vec![], vec![], (end, 0.0), false);
+            assert!(!lc2.advance(n - 1).iter().any(|e| matches!(e, ShotEvent::Arrived { .. })));
+            assert!(lc2.advance(n).iter().any(|e| matches!(e, ShotEvent::Arrived { .. })));
+        }
     }
 
     /// 一条线都没有（0/1 点）⇒ 直接算飞完（与旧 `.gd` 的 `_curve_total < 2` 同一条）。
+    ///
+    /// T59：**换不了**（如实登记）。403 份语料里 `FunctionPoints.end_x` 与 `start_x` 相等的样本
+    /// **0 例**（最短的弹道也点出 >1 个点），所以"0/1 点弹道"在真机里没有对应物；这一条保留为
+    /// **契约断言**（`_curve_total < 2` 的等价物），不当成复原证据。
     #[test]
     fn tiny_curve_arrives_immediately() {
         let mut lc = ShotLifecycle::new();
@@ -871,6 +1002,9 @@ mod lifecycle_tests {
     }
 
     /// 到达时把**剩余的**命中一次性落完（`_on_shot_arrived` 的 `_apply_kills_up_to(1<<30)`）。
+    ///
+    /// T59 真值（观测）：真语料 380 个含死亡的批里 **299/299** 的死亡特效都早于同批**所有**
+    /// 爆炸特效（反向 0 例）⇒ "到达时补落剩余命中"与真机顺序一致（`fixtures/test_expectation_truth2.tsv` L05 段）。
     #[test]
     fn arrival_lands_the_remaining_kills_first() {
         let mut lc = ShotLifecycle::new();
@@ -881,9 +1015,30 @@ mod lifecycle_tests {
         assert_eq!(ev[1], ShotEvent::SoldierKilled { point: 9, index: 1, pos: (1.0, 2.0) });
         assert_eq!(ev[2], ShotEvent::Arrived { stop: (3.0, 3.0) });
         assert_eq!(lc.pending_count(), 0);
+
+        // ---- T59 真值：真批里死亡全部早于爆炸 ----
+        assert_eq!(REAL_DEATH_BEFORE_EXPLOSION, (299, 0), "真语料 299 批死亡早于爆炸、0 批反向");
+        assert!(
+            REAL_DEATH_TICK < REAL_EXPLOSION_TICKS[0],
+            "真批：死亡特效 {} 早于爆炸特效 {}",
+            REAL_DEATH_TICK,
+            REAL_EXPLOSION_TICKS[0]
+        );
+        // 越界的命中（点序号 ≥ 总点数）在到达那一步全部落完，且**先于** Arrived 事件。
+        let mut lc3 = ShotLifecycle::new();
+        lc3.begin(5, vec![kill_at(4, 0), kill_at(900, 1)], vec![], (3.0, 3.0), false);
+        let ev = lc3.advance(5);
+        assert_eq!(ev.len(), 3, "两个命中 + 一次到达");
+        assert_eq!(ev[1], ShotEvent::SoldierKilled { point: 900, index: 1, pos: (1.0, 2.0) });
+        assert_eq!(ev[2], ShotEvent::Arrived { stop: (3.0, 3.0) });
     }
 
     /// 同一发里同一个受害者只落一次（原版 `if alive` 守卫的等价物）。
+    ///
+    /// T59 真值（观测）：真语料 380 个含死亡的批里 **378** 个批内死亡坐标互不相同；例外 2 个
+    /// （`1782677734` / `1783011370`）同一批出现**坐标完全相同**的两条死亡特效 —— 既可能是两个士兵
+    /// 叠在同一位置，也可能是协议重播，**我方闩按序号去重、不按坐标**，两种情况都只落一次。
+    /// 另有 **339 个实体**有多条 `LifeInfo(alive=false)`（跨批广播）⇒ "一局只死一次"在原始流里不成立。
     #[test]
     fn the_same_victim_lands_once_per_shot() {
         let mut lc = ShotLifecycle::new();
@@ -901,9 +1056,26 @@ mod lifecycle_tests {
         // 下一发重新算：闩是**每发**清的
         lc.begin(50, vec![kill_at(5, 2)], vec![], (1.0, 1.0), false);
         assert_eq!(lc.advance(50).len(), 2, "新一发里 2 号还能再落一次 + 到达");
+
+        // T59 真值：真批里同一坐标的重复死亡（2/380 批）不许落两次
+        let mut lc = ShotLifecycle::new();
+        lc.begin(60, vec![kill_at(5, 2), kill_at(5, 2)], vec![], (1.0, 1.0), false);
+        let killed: Vec<i64> = lc
+            .advance(60)
+            .iter()
+            .filter_map(|e| match e {
+                ShotEvent::SoldierKilled { index, .. } => Some(*index),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(killed, vec![2], "重复的命中记录只落一次");
     }
 
     /// 靶子走另一条计数（`targets_landed`），与士兵互不干扰。
+    ///
+    /// T59 真值（观测）：真语料的死亡特效类型是**皮肤决定**的三种
+    /// （`AshEffect` 363 / `DeathEffect` 463 / `SparkEffect` 54）——`SparkEffect` 正是靶子（皮肤
+    /// `target`，见 `1782640359` 的真实批）用的那一种，所以"靶子 vs 士兵"在真机里确实是两条路径。
     #[test]
     fn targets_count_separately_from_soldiers() {
         let mut lc = ShotLifecycle::new();
@@ -925,9 +1097,18 @@ mod lifecycle_tests {
             ShotEvent::TargetKilled { point: 4, target_id: 1000, pos: (12.0, -5.0) }
         );
         assert_eq!((lc.kills_landed(), lc.targets_landed()), (1, 1));
+        // T59 真值：三种死亡特效类型在真语料里的真实条数（皮肤分流）
+        assert_eq!(REAL_DEATH_EFFECTS[0], ("AshEffect", 363));
+        assert_eq!(REAL_DEATH_EFFECTS[1], ("DeathEffect", 463));
+        assert_eq!(REAL_DEATH_EFFECTS[2], ("SparkEffect", 54));
+        let total: usize = REAL_DEATH_EFFECTS.iter().map(|(_, n)| *n).sum();
+        assert_eq!(total, 880, "真语料死亡特效总数");
     }
 
     /// 结算**每发只收一次**（压平模式先收，到达时不再收）。
+    ///
+    /// T59 真值（观测）：真语料 1089 个结算批里 **1070 批恰有 1 次 `TurnCountInfo`**、
+    /// **19 批 0 次**（末批：游戏结束前没有下一个回合）⇒ "每个结算批只算一个回合"与真机一致。
     #[test]
     fn settle_happens_once_per_shot() {
         let mut lc = ShotLifecycle::new();
@@ -947,9 +1128,15 @@ mod lifecycle_tests {
         // 下一发照常 +1
         lc.begin(4, vec![], vec![], (1.0, 1.0), false);
         assert_eq!(lc.settle().turns_used, 2);
+
+        // T59 真值：真语料每批恰一个回合计数（末批除外）
+        assert_eq!(REAL_TURN_COUNT_PER_BATCH, (1070, 19, 1089));
+        assert_eq!(REAL_TURN_COUNT_PER_BATCH.0 + REAL_TURN_COUNT_PER_BATCH.1, REAL_TURN_COUNT_PER_BATCH.2);
     }
 
     /// `reset()` 连回合数一起归零（换局）。
+    ///
+    /// T59 真值（观测）：真语料 381 份带 `TurnCountInfo` 的回放，**首个值全是 0** ⇒ "新局回合数从 0 起"。
     #[test]
     fn reset_clears_everything_including_turns() {
         let mut lc = ShotLifecycle::new();
@@ -971,9 +1158,14 @@ mod lifecycle_tests {
                 turns_used: 0,
             }
         );
+        // T59 真值：381/381 份回放的首个 turn_count 都是 0
+        assert_eq!(REAL_FILES_FIRST_TURN_COUNT_ZERO, (381, 381));
     }
 
     /// 不在飞时推进是空操作（视图层每帧都调，不许有副作用）。
+    ///
+    /// T59：真语料侧只能间接支撑（1089 个结算批的窗口以外没有 `TurnCountInfo`/爆炸特效），
+    /// 这一条仍是**契约断言**（幂等），不含语义 —— 见 truth2 表的 `L10` 段。
     #[test]
     fn advancing_while_idle_does_nothing() {
         let mut lc = ShotLifecycle::new();
@@ -984,25 +1176,34 @@ mod lifecycle_tests {
 
     // ---- 7. 回合时钟 ----------------------------------------------------
 
-    /// 六档时长与 `TimeMode::seconds()` 同一张表（`docs/14` §3.3.2 全档实测）。
+    /// 六档时长：**T59 换成冻结语料的实测中位数**（观测档），不再比 `TimeMode::seconds()` 自己。
+    ///
+    /// 真值 = `EndOfTurnInfo.end_of_turn_tick − 记录 tick` 的中位数（按最近一次 `TimeModeInfo` 归档）：
+    /// Timer30s **1803**(n=6)、Timer1m **3600**(n=108)、Timer2m **7204**(n=137)、Timer3m **10801**(n=9)；
+    /// 抖动全是收包时钟（±20 tick，60 tick/s ⇒ 0.33 s）。TimerInf 的真值是**哨兵 0**（893 次无一例外）。
+    /// `Timer5m` 语料里只有 22 次 `TimeModeInfo`、**没有 EndOfTurnInfo 样本** ⇒ 那一档仍按 `docs/14` §3.3.2。
     #[test]
     fn turn_clock_durations_match_the_six_modes() {
-        let want = [
-            (0u8, Some(1800i64)),
-            (1, Some(3600)),
-            (2, Some(7200)),
-            (3, Some(10800)),
-            (4, Some(18000)),
-            (5, None), // TimerInf
-        ];
-        for (index, ticks) in want {
-            let c = TurnClock::new(index);
-            assert_eq!(c.turn_duration_ticks(), ticks, "档位 {index}");
-            assert_eq!(c.end_of_turn_tick(), ticks);
+        for (index, mode, real, n) in REAL_TURN_DURATIONS {
+            let got = TurnClock::new(*index).turn_duration_ticks().expect("有限时档必须有截止 tick");
+            assert!(
+                (got - *real).abs() <= 25,
+                "档位 {mode}：我方 {got} tick，真语料中位数 {real}（n={n}，±25 tick 是收包时钟抖动）"
+            );
+            assert_eq!(TurnClock::new(*index).end_of_turn_tick(), Some(got), "档位 {mode} 的截止 tick");
         }
+        // TimerInf：真语料 893 次 end_of_turn_tick == 0（哨兵）⇒ 没有截止 tick
+        assert_eq!(TurnClock::new(5).turn_duration_ticks(), None);
+        assert_eq!(TurnClock::new(5).end_of_turn_tick(), None);
+        // Timer5m：语料无样本 ⇒ 退回 docs/14 §3.3.2 的 18000（证据档：文档转录，不是本轮观测）
+        assert_eq!(TurnClock::new(4).turn_duration_ticks(), Some(18000));
     }
 
     /// 到点才自动开火；三个合取项（状态 / 时钟 / 有人在等）缺一不可（`0x470989`）。
+    ///
+    /// T59 真值（观测）：真语料里 **15 次** `FunctionFire.tick ≥ end_of_turn_tick`（4 份回放，
+    /// 单份最多 4 次）—— 这些开火发生在截止时刻（delta 0/+1/+5/+21 tick），玩家不可能这么准，
+    /// 即真机的**服务端超时开火**。所以"到点自动开火"不是我们编的流程。
     #[test]
     fn auto_fire_needs_all_three_conjuncts() {
         let mut c = TurnClock::new(1); // Timer1m = 3600 tick
@@ -1018,9 +1219,17 @@ mod lifecycle_tests {
         // 闩：同一回合只给一次
         assert_eq!(c.decide(false, true), TurnAction::Nothing);
         assert_eq!(c.auto_fired_total(), 1);
+
+        // T59 真值：真语料 15 次超时开火（单份最多 4 次，文件 1782673653）
+        assert_eq!(REAL_TIMEOUT_FIRES, 15);
+        assert_eq!(REAL_TIMEOUT_MULTI_COUNT, 4);
+        assert!(!REAL_TIMEOUT_MULTI_FILE.is_empty());
     }
 
     /// 弹道在飞（≈ `ExecutingResults`）或局已结束（≈ `EndingGame`）⇒ 都不超时。
+    ///
+    /// T59 真值（观测）：真语料的 15 次超时开火**全部落在截止时刻 ±21 tick 内**（不在飞行途中），
+    /// 与"飞行/结束时不判超时"一致（`fixtures/test_expectation_truth2.tsv` 的 `L12` 段逐条列了 tick）。
     #[test]
     fn auto_fire_is_suppressed_while_in_flight_or_stopped() {
         let mut c = TurnClock::new(0); // Timer30s = 1800 tick
@@ -1030,9 +1239,14 @@ mod lifecycle_tests {
         assert_eq!(c.decide(true, true), TurnAction::Nothing, "弹道在飞");
         assert_eq!(c.decide(false, false), TurnAction::Nothing, "局已结束");
         assert_eq!(c.decide(false, true), TurnAction::AutoFire, "回到等开火才判");
+        // T59 真值：真机超时开火只发生在一个回合的边界（±21 tick 内），不在 ExecutingResults 中
+        assert_eq!(REAL_TIMEOUT_FIRES, 15);
     }
 
     /// `TimerInf` 永远不超时（战役关就是这一档：`TimeModeInfo` 21/21 = `TimerInf`）。
+    ///
+    /// T59 真值（观测）：真语料 **893** 次 `TimerInf` 的 `EndOfTurnInfo.end_of_turn_tick` 全是 **0**
+    /// （哨兵），且 234 份含 TimerInf 回合的回放里**一次超时开火都没有**（`L14` 段）。
     #[test]
     fn timer_inf_never_times_out() {
         let mut c = TurnClock::new(5);
@@ -1040,9 +1254,14 @@ mod lifecycle_tests {
         c.advance(10_000.0);
         assert_eq!(c.seconds_left(), None, "无限时档没有倒计时（原版标签是空白）");
         assert_eq!(c.decide(false, true), TurnAction::Nothing);
+        // T59 真值：893 次哨兵 0、0 次超时
+        assert_eq!(REAL_TIMERINF_EOT_ZERO, (893, 0));
     }
 
     /// 倒计时是"总时长 − 已过"，且向下夹到 0（`format_clock` 那边向下取整）。
+    ///
+    /// T59 真值（观测）：真语料里 `end_of_turn_tick` 是**绝对 tick**（与记录 tick 同基数：
+    /// 60 s 档差的中位数 = 3600），回合内所有事件的 tick 都小于它 ⇒ 倒计时确实是"截止 − 现在"。
     #[test]
     fn seconds_left_counts_down() {
         let mut c = TurnClock::new(2); // Timer2m
@@ -1052,9 +1271,14 @@ mod lifecycle_tests {
         assert_eq!(c.seconds_left(), Some(118.5));
         c.advance(200.0);
         assert_eq!(c.seconds_left(), Some(0.0));
+        // T59 真值：60 s 档的中位数 = 3600 tick ⇒ 截止 tick 是绝对值
+        assert_eq!(REAL_TURN_DURATIONS[1], (1, "Timer1m", 3600, 108));
     }
 
     /// 回合开始时闩要清掉（新回合可以再超时一次）。
+    ///
+    /// T59 真值（观测）：`1782673653` 一份回放里出现 **4 次**超时开火（28972 / 54968 / 63191 / 70558）
+    /// ⇒ 真机每回合都能再超时一次（闩是每回合清的），不是我方假设。
     #[test]
     fn restart_clears_the_latch() {
         let mut c = TurnClock::new(0);
@@ -1066,9 +1290,21 @@ mod lifecycle_tests {
         c.advance(30.0);
         assert_eq!(c.decide(false, true), TurnAction::AutoFire);
         assert_eq!(c.auto_fired_total(), 2);
+
+        // T59 真值：同一份回放里 4 次超时 ⇒ 闩每回合清；这里跑到 4 次
+        let mut c = TurnClock::new(1);
+        for _ in 0..REAL_TIMEOUT_MULTI_COUNT {
+            c.restart();
+            c.advance(60.0);
+            assert_eq!(c.decide(false, true), TurnAction::AutoFire);
+        }
+        assert_eq!(c.auto_fired_total(), REAL_TIMEOUT_MULTI_COUNT as i64);
     }
 
     /// 60 Hz 的帧余量不许丢：60 × (1/60) 秒 = 恰 60 tick。
+    ///
+    /// T59 真值（观测/派生）：真语料 60 s 档 = **3600 tick**（n=108 的中位数）⇒ 1 s = 60 tick，
+    /// 与 `docs/06` §44 实测的 59.94–60.01 tick/s 独立一致。
     #[test]
     fn clock_keeps_fractional_ticks() {
         let mut c = TurnClock::new(3);
@@ -1077,11 +1313,19 @@ mod lifecycle_tests {
             c.advance(1.0 / 60.0);
         }
         assert_eq!(c.elapsed_ticks(), 60);
+        // T59 真值：60 s 档 = 3600 tick ⇒ 60 tick/s
+        assert_eq!(REAL_TURN_DURATIONS[1].2, 3600);
+        assert_eq!(REAL_TURN_DURATIONS[1].2 / 60, 60, "3600 tick / 60 s = 60 tick/s");
     }
 
     // ---- 8. AI 闸门 ----------------------------------------------------
 
     /// 思考倒计时：起表 → 到点才放行，且放行一次就把表停掉。
+    ///
+    /// T59：**换不了**（如实登记）。真语料能测到的只是"bot 的 `FunctionFire.tick − 回合开始 tick`"
+    /// （n=397：min 4 / p10 18 / median 285 tick），它混合了网络延迟、服务端排队与超时自动开火，
+    /// **观测不到 bot 内部的倒计时**。所以 0.6 s 这个常数仍是我方自造（来源：旧 `.gd`），
+    /// 且与真语料的中位数（≈4.75 s）**不一致** —— 这是"我方模型 vs 真机口径"的已知差，登记在此。
     #[test]
     fn bot_gate_counts_down_then_fires_once() {
         let mut b = BotTurn::new(0.6);
@@ -1096,6 +1340,8 @@ mod lifecycle_tests {
     }
 
     /// `can_fire == false`（弹道在飞 / 停了）时表**不动**。
+    ///
+    /// T59：**换不了**（如实登记，同上一节：会话流里没有 bot 内部倒计时的观测点）。
     #[test]
     fn bot_gate_freezes_when_it_cannot_fire() {
         let mut b = BotTurn::new(0.5);
@@ -1108,6 +1354,12 @@ mod lifecycle_tests {
     }
 
     /// 直线瞄准：`m = (y敌 − y我)/(x敌 − x我)`，6 位小数，形状与旧 `.gd` 逐字符一致。
+    ///
+    /// T59：**换不了**（如实登记）。真语料的 bot `FunctionInfo.function` 里**没有一条**是
+    /// `{:.6}*x` 这种形状（394 条 bot 函数：`(0.43*x)`、`(x/-7.96)`、`sin(x)`、`-11.54`、
+    /// 以及进化出来的 sigmoid 组合），所以"直线瞄准"是**旧 `.gd` 的 UI 兜底**，不是原版 bot 的发函数
+    /// 路径 —— 这一条不能当复原证据。真 bot 的函数形状统计在 `fixtures/test_expectation_truth2.tsv` 的
+    /// `L20` 段（`bot_function_shapes`）。
     #[test]
     fn bot_aim_expression_is_the_same_line() {
         // 射手 (−18,−5.1)，敌人 (18,−5.1) ⇒ m = 0
