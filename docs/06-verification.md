@@ -23872,7 +23872,7 @@ $PY tools/global_triage.py --stats         # 内部统计：引用 crate-local�
 
 ### 132.2 为什么 527 是"可度量下限"而不是"模块规模"：12,736 条 + 同源构建真名普查
 
-`13,263 − 527 = 12,736` 条**一个 `src/` Location 都不引用**（96.05%）。本轮第一次把它们**逐条**过了一遍判据
+`13,263 − 527 = 12,736` 条**一个 `src/` Location 都不引用**（96.03%）。本轮第一次把它们**逐条**过了一遍判据
 （§132.3），但更硬的证据来自**同一份源码的另一份构建**：
 
 **Android 2.0.60 的 `libgraphwarrust.so` 的 `.symtab` 没被剥离**（12,609 个 `.text` 函数 / 18,549 个 FUNC 符号）。
@@ -23940,7 +23940,7 @@ $PY tools/global_triage.py --stats         # 内部统计：引用 crate-local�
 
 | 轮 | 样本 | `real-missing` 假阳性 | 抓到什么 | 之后的修改（§7 勘误） |
 |---|---|---|---|---|
-| 1 | 70 | **37/70 = 52.7%** | ① 423 条 "游戏串" 其实是 **serde derive**（`struct XEvent with N elements`）② openh264 的 C++ 函数被调用图扩散成 game | **E1** derive 特征串单列 `na:other`；**E2** 加 **L5 布局局部性** |
+| 1 | 70 | **29/55 可判 = 52.7%** | ① 423 条 "游戏串" 其实是 **serde derive**（`struct XEvent with N elements`）② openh264 的 C++ 函数被调用图扩散成 game | **E1** derive 特征串单列 `na:other`；**E2** 加 **L5 布局局部性** |
 | 2 | 77 | **34/63 可判 = 54.0%**（新样本） | ③ 弱游戏词（`fire/shot/effect/_event`）在**串粘连**下大量假阳性 ④ gdext 的 git-checkout Location 被算成 `na:other` | **E2** 把游戏串分**强/弱**：弱词降 `unknown`；gdext 路径族单列；region 优先于扩散 |
 | 3 | 54 | **8/54 = 17.0%**（可判 47 条） | 剩的是 gdext 方法注册壳（类名字符串）、serde 字段名 blob、clap 参数表 | 未再改（登记为已知残差） |
 
