@@ -1,5 +1,9 @@
 # protocol.rs 全部 parse / from_str / as_* 入口台账（T75，2026-11-27）
 #
+# 收口读数（T75 做完后实测）：51 行里 38 行本轮改/新增；改后 49 行严格（含 1 行『严格（形状）』
+#   与 2 行『严格（未使用）』），只剩 2 行登记不改（parse_message 的载重契约、split_fields 的宽容契约）。
+#   改前：严格 13 / 子串式 33 / 宽容语法 3 / 半严 1（第 51 行是本轮新增的严格入口）。
+#
 # 判档（verdict_before / verdict_after 只用这 4 个词 + 括号限语）：
 #   严格       = 变体名（若有）精确、字段只认顶层且按线上类型精确校验、缺必填 ⇒ None/Err、多余字段 ⇒ 忽略（serde 默认）
 #   子串式     = 用 body.find("key":) 之类在**任意深度**找字段（嵌套对象内、别的字符串值内部都能命中）
@@ -15,10 +19,16 @@
 #   exp115   = docs/archive/115-broker.md §5.3 原版客户端受控实验（变体 A/B/C/D/E，只有 C 被接受）。
 #   serde    = serde derive 语义（未知变体=失败、缺必填=失败、类型不符=失败、未知字段=忽略、Option 字段缺失=None）。
 #
-# 复算命令：
-#   1) 1717 帧顶层键集/键序 vs WIRE_SPEC：python3 - <<'EOF'（见 docs/06 §120.3 的脚本正文）
-#   2) 真帧硬闸：cargo test --offline live_wire_bytes / replays_every_live_frame
-#   3) 变体 B：cargo test --offline variant_b（本节新增负向测试）
+# 复算命令（全部在 docs/06 §120.8 有一份可照抄的完整版）：
+#   1) 1717 帧顶层键集/键序 vs WIRE_SPEC —— 已变成常驻测试（真值机核，逐帧断言）：
+#        cargo test --offline every_live_frame_has_exactly_the_wire_spec_top_level_fields
+#      （未改动前的机核口径：本轮用它跑出 1717 帧 0 mismatch，见 docs/06 §120.2）
+#   2) 两条真帧硬闸：
+#        cargo test --offline captured_samples_are_the_live_wire_bytes
+#        cargo test --offline replays_every_live_frame_of_the_supplemented_kinds
+#   3) 变体 B 负向测试（任务要求的那条）：
+#        cargo test --offline broadcast_parse_rejects_the_event_wrapped_variant_b
+#   4) 客户端侧（兜底闸已删）：HOME=<可写> bash client/run.sh selftest   # 757/0/1skip
 
 entry	loc	layer	verdict_before	defects	truth_basis	action	verdict_after
 Frame::decode	protocol.rs:41	A 传输	严格	-	spec74:F=u16 大端长度=负载长度（docs/07 §2；frame_length_prefix_matches_payload_length）	不改	严格
