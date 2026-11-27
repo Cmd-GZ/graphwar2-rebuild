@@ -112,7 +112,7 @@ const REPLACEMENTS: [(&str, &str); 1] = [("√", "sqrt(")];
 ///
 /// `'^'` 那条在 [`finput::classify_key`] 里有个**语义未知**的附加条件
 /// （`0x4fee94`/`0x4feea5`/`0x4feee3` 三次引擎属性读取）；这里按"条件不成立"传
-/// `caret_condition = false`（与 `graphwar_function_input_class.rs` 的默认值一致）。
+/// `caret_condition = false`（与 `graphwar_function_input.rs` 的默认值一致）。
 fn key_text_impl(unicode: u32, keycode: i64) -> String {
     // `unicode > 0` 优先：它已经是"按当前键盘布局 + Shift 换算过"的字符。
     let ch = if unicode > 0 {

@@ -21,22 +21,24 @@
 //! | `od_*` | `obstacle_drawer`：`update` 的比值 / 7 个 Location / 字面量 |
 #![allow(dead_code)]
 
-#[path = "../src/function_drawer.rs"]
-mod function_drawer;
+// 2026-11-27（T57）：`function_drawer` / `obstacle_drawer` 两个模块的取源方式从 `#[path]` 包含
+// 改成**真 crate 引用**。原因：这两个文件里的 gdext 节点类按「文件名就是证据」搬回同名模块后，
+// `#[cfg(feature = "gdext-bindings")]` 的类层会引用 crate 内的 `plane` / `_scaffold` —— 用 `#[path]`
+// 直接编进测试二进制时那些 `crate::` 路径不存在（`--features gdext-bindings` 编不过）。
+// 另外 3 个模块没有类层，仍按原样 `#[path]` 包含（它们的 3 条单测本来就在本二进制里再跑一遍）。
+// **断言一条没动**。
 #[path = "../src/function_history_recorder.rs"]
 mod function_history_recorder;
 #[path = "../src/function_button_manager.rs"]
 mod function_button_manager;
 #[path = "../src/button_manager.rs"]
 mod button_manager;
-#[path = "../src/obstacle_drawer.rs"]
-mod obstacle_drawer;
 
 use button_manager as bm;
 use function_button_manager as fbm;
-use function_drawer as fd;
+use gw2_rebuild::function_drawer as fd;
 use function_history_recorder as fhr;
-use obstacle_drawer as od;
+use gw2_rebuild::obstacle_drawer as od;
 
 /// 同源闸：x86 字节数 ÷ arm64 字节数 必须落在 `0.61–1.19`。
 fn inside_same_source_gate(r: f64) -> bool {

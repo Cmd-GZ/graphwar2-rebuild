@@ -122,8 +122,8 @@
 //!
 //! ⚠️ 本类**故意不实现任何虚方法**（`ready` / `process` 都没有）：原版证据里就没有
 //! （这正是基类定不出来的原因）。想在 headless 里区分「引擎没回调」和「回调了没干活」，
-//! 请用 [`super::graphwar_root_node_class::GraphwarRootNode`]（它有 `INode` 的
-//! `ready` / `process`）与 [`super::graphwar_lan_vbox_class::GraphwarLanVBox`]
+//! 请用 [`crate::graphwar_root_node::GraphwarRootNode`]（它有 `INode` 的
+//! `ready` / `process`）与 [`crate::graphwar_lan_vbox::GraphwarLanVBox`]
 //! （它有 `IVBoxContainer` 的 `process`）。
 
 use godot::classes::{INode, Node};

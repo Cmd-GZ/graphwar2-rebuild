@@ -30,38 +30,29 @@ pub mod axis_drawer_class;
 pub mod broker;
 pub mod capi;
 pub mod diffconv;
-// `FunctionDrawer` 的真节点类（`docs/16-client.md` §38）：每个 player id 一条 `Line2D`，
-// `update_function` 走纯逻辑的增量追加窗口（`function_drawer::append_window`）。
-// 只在 `gdext-bindings` 下编译。
-#[cfg(feature = "gdext-bindings")]
-pub mod function_drawer_class;
-// `EntityDrawer` 的真节点类（`docs/16-client.md` §33）：把 `entity_drawer.rs` 的纯逻辑挂成
-// 3 个 `Sprite2D` + 1 个 `RichTextLabel` 的子节点树。只在 `gdext-bindings` 下编译。
-#[cfg(feature = "gdext-bindings")]
-pub mod entity_drawer_class;
+// T57：`function_drawer_class` 的 gdext 节点类已搬回 `src/function_drawer.rs` —— 原版把 `#[derive(GodotClass)]`
+// struct 与方法体写在同一个 `function_drawer.rs` 里（`panic::Location` 为证）。
+// T57：`entity_drawer_class` 的 gdext 节点类已搬回 `src/entity_drawer.rs` —— 原版把 `#[derive(GodotClass)]`
+// struct 与方法体写在同一个 `entity_drawer.rs` 里（`panic::Location` 为证）。
 // 三个「基类不是 Control」的类：`GraphwarRootNode`（`Node`）、`GraphwarLanVBox`
 // （`VBoxContainer`）、`GraphwarAdSwitch`（基类未定，按 `Node` 落）。用同一套模板，
 // 只有虚方法块不同（`docs/16-client.md` 本轮新增的那一节）。只在 `gdext-bindings` 下编译。
 #[cfg(feature = "gdext-bindings")]
 pub mod graphwar_ad_switch_class;
-#[cfg(feature = "gdext-bindings")]
-pub mod graphwar_lan_vbox_class;
-#[cfg(feature = "gdext-bindings")]
-pub mod graphwar_root_node_class;
+// T57：`graphwar_lan_vbox_class` 的 gdext 节点类已搬回 `src/graphwar_lan_vbox.rs` —— 原版把 `#[derive(GodotClass)]`
+// struct 与方法体写在同一个 `graphwar_lan_vbox.rs` 里（`panic::Location` 为证）。
+// T57：`graphwar_root_node_class` 的 gdext 节点类已搬回 `src/graphwar_root_node.rs` —— 原版把 `#[derive(GodotClass)]`
+// struct 与方法体写在同一个 `graphwar_root_node.rs` 里（`panic::Location` 为证）。
 
-// 三个"要信号接线"的类（`docs/16-client.md` §35）：`Button` / `LineEdit` / `Control` 子类，
-// 验自造 `#[signal]`、连引擎原生信号、外部注册闭包表这三条路。同样只在 `gdext-bindings` 下编译。
-#[cfg(feature = "gdext-bindings")]
-pub mod graphwar_button_class;
-#[cfg(feature = "gdext-bindings")]
-pub mod graphwar_function_input_class;
+// T57：`graphwar_button_class` 的 gdext 节点类已搬回 `src/graphwar_button.rs` —— 原版把 `#[derive(GodotClass)]`
+// struct 与方法体写在同一个 `graphwar_button.rs` 里（`panic::Location` 为证）。
+// T57：`graphwar_function_input_class` 的 gdext 节点类已搬回 `src/graphwar_function_input.rs` —— 原版把 `#[derive(GodotClass)]`
+// struct 与方法体写在同一个 `graphwar_function_input.rs` 里（`panic::Location` 为证）。
 #[cfg(feature = "gdext-bindings")]
 pub mod graphwar_setup_control_class;
 
-// `EffectDrawer` 的真节点类（`docs/16-client.md` §35）：把 `effect_drawer.rs` 的图元清单落到
-// 真的 `draw_circle` / `draw_polygon` / `draw_line` 上。只在 `gdext-bindings` 下编译。
-#[cfg(feature = "gdext-bindings")]
-pub mod effect_drawer_class;
+// T57：`effect_drawer_class` 的 gdext 节点类已搬回 `src/effect_drawer.rs` —— 原版把 `#[derive(GodotClass)]`
+// struct 与方法体写在同一个 `effect_drawer.rs` 里（`panic::Location` 为证）。
 // 结算弹窗（`EndGamePopUp`）的**数据桥**（`docs/06` §77）：把胜方字节
 // （`turnstate::winner_byte`，`0x478133`–`0x478236`）与 `.rodata` 里那 6 条胜负横幅
 // （`graphwar_play_screen_control::VICTORY_TEXTS`，`0x3da130`）接给 GDScript。
@@ -76,17 +67,12 @@ pub mod gdext_class;
 // 官方 gdext 版的绑定层骨架（`docs/18-build.md` §10）。默认不编译，不引入任何依赖。
 #[cfg(feature = "gdext-bindings")]
 pub mod gdext_mod;
-// `GraphwarPlane` 的真节点类（§39）：3 个占位子节点 + 脏矩形队列 + 棋盘框。
-#[cfg(feature = "gdext-bindings")]
-pub mod graphwar_plane_class;
-// `GraphwarLongPressAnimation` 的真节点类（§39）：两次 `draw_arc` + `_process` 推进相位。
-#[cfg(feature = "gdext-bindings")]
-pub mod long_press_animation_class;
-// `ObstacleDrawer` 的真节点类（§45）：障碍掩膜 → `LA8` `ImageTexture` → **一个** `Sprite2D`
-// 子节点，按平面的 `Control::get_size()` 摆位置/缩放（原版这一层是平面的普通字段，不是节点）。
-// 只在 `gdext-bindings` 下编译。
-#[cfg(feature = "gdext-bindings")]
-pub mod obstacle_drawer_class;
+// T57：`graphwar_plane_class` 的 gdext 节点类已搬回 `src/graphwar_plane.rs` —— 原版把 `#[derive(GodotClass)]`
+// struct 与方法体写在同一个 `graphwar_plane.rs` 里（`panic::Location` 为证）。
+// T57：`long_press_animation_class` 的 gdext 节点类已搬回 `src/graphwar_long_press_animation.rs` —— 原版把 `#[derive(GodotClass)]`
+// struct 与方法体写在同一个 `graphwar_long_press_animation.rs` 里（`panic::Location` 为证）。
+// T57：`obstacle_drawer_class` 的 gdext 节点类已搬回 `src/obstacle_drawer.rs` —— 原版把 `#[derive(GodotClass)]`
+// struct 与方法体写在同一个 `obstacle_drawer.rs` 里（`panic::Location` 为证）。
 // 客户端侧「线上事件 → 复原 manager」的**派发桥**（`docs/06` §67 那一轮）：
 // 原版 `GraphwarRemoteEventHandler::handle_server_remote_event`（x86 `0x3e6df0`）那个模块
 // 我方**没有复元**，客户端收到事件后 22 个 manager 一个字节都拿不到。本模块按"线上事件 →
@@ -107,9 +93,8 @@ pub mod net_constants_class;
 // 只在 `gdext-bindings` 下编译。
 #[cfg(feature = "gdext-bindings")]
 pub mod function_input_rules_class;
-// `PlayerShowcase` 的真节点类（§39）：读档案 + 三层 `draw_texture_rect` + 计数器闸门。
-#[cfg(feature = "gdext-bindings")]
-pub mod player_showcase_class;
+// T57：`player_showcase_class` 的 gdext 节点类已搬回 `src/player_showcase.rs` —— 原版把 `#[derive(GodotClass)]`
+// struct 与方法体写在同一个 `player_showcase.rs` 里（`panic::Location` 为证）。
 // 播放屏的**流程权威**（`dispatch/54`，`docs/16-client.md` §52）：把原来写在
 // `client/src/game/level_rules.gd`（219 行）与 `turn_driver.gd`（121 行）里的流程搬进 Rust。
 // `GwLevelRules` = 胜负判定（`0x473520`/`0x4759f0`/`0x478133`–`0x478236`）；

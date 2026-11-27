@@ -160,7 +160,7 @@ fn gdext_entries_are_labelled_as_inference_when_they_are() {
 
 #[test]
 fn ready_connects_resized_and_subscribes_three_events() {
-    let mut p = GraphwarPlane::new();
+    let mut p = PlaneIntent::new();
     let ((signal, handler), events) = p.ready_plan();
     // 字面量槽 0x1c2a8e / 0x1c2a7a（长 7 / 10）
     assert_eq!(signal, "resized");
@@ -174,7 +174,7 @@ fn ready_connects_resized_and_subscribes_three_events() {
 
 #[test]
 fn init_makes_three_function_drawers() {
-    let mut p = GraphwarPlane::new();
+    let mut p = PlaneIntent::new();
     p.init_children(|class| {
         assert_eq!(class, "FunctionDrawer");
         7
@@ -185,7 +185,7 @@ fn init_makes_three_function_drawers() {
 
 #[test]
 fn process_updates_obstacles_twice_a_frame() {
-    let p = GraphwarPlane::new();
+    let p = PlaneIntent::new();
     let (updates, reads_team_color) = p.process_plan();
     assert_eq!(updates, 2, "两侧都是 2× ObstacleDrawer::update");
     assert!(reads_team_color, "0x4be6e0 get_team_overview 每帧一次");

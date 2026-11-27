@@ -24,7 +24,7 @@
 //! 所以扫描器是灵的；`GraphwarPlane::draw`（`0x4b5df0`）**不在**这 35 个里。
 //!
 //! ⇒ `GraphwarPlane::update_transform` 的三实参**不是**本管理器提供的，我方
-//! `client/tools/plane_on_screen_check.gd` 与 `_scaffold/graphwar_plane_class.rs` 那三个值
+//! `client/tools/plane_on_screen_check.gd` 与 `graphwar_plane.rs` 那三个值
 //! **不动**（§48.2 的"算出来的"仍然是原版的来源）。
 //!
 //! # 一、这个模块里有什么（`观测`）
@@ -193,7 +193,7 @@
 //!   `src/graphwar_plane.rs::to_pixel`（`graphwar_plane.rs:174` 的锚，`docs/16` §42）；
 //! * `EntityDrawer::draw`（`0x4b2890`）与 `EntityDrawer::process`（`0x4b4b60`）**都读**
 //!   `get_all_positions` / `get_position` ⇒ 准备圈/实体绘制的位置来源就是这张表
-//!   （接法见 §八；`src/_scaffold/entity_drawer_class.rs` 从任务 41 起读这张表）。
+//!   （接法见 §八；`src/entity_drawer.rs` 从任务 41 起读这张表）。
 //!
 //! # 八、读表接口：原版的顺序是**散列序**，消费方必须自己排序（任务 41）
 //!
