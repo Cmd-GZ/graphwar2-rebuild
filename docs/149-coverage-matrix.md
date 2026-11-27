@@ -127,7 +127,7 @@
 | `graphwar_root_node.rs` | 23 | 178 | `src/graphwar_root_node.rs` | 119 | 观测 |
 | `graphwar_server_broker_handler.rs` | 3 | 5 | `src/graphwar_server_broker_handler.rs` | 19 | 观测 |
 | `graphwar_server_connection_handler.rs` | 6 | 24 | `src/graphwar_server_connection_handler.rs` | 31 | 逐位 |
-| `graphwar_setup_control.rs` | 21 | 70 | `src/graphwar_setup_control.rs` | 172 | 观测 |
+| `graphwar_setup_control.rs` | 21 | 70 | `src/graphwar_setup_control.rs` | 185 | 观测 |
 | `graphwar_shot_calculator.rs` | 1 | 12 | `src/graphwar_shot_calculator.rs+src/graphwar_shot_calculator/settle.rs` | 36 | 逐位 |
 | `graphwar_soldier_manager.rs` | 4 | 5 | `src/graphwar_soldier_manager.rs` | 21 | 观测 |
 | `graphwar_stream_buffer.rs` | 0 | 0 | `src/graphwar_stream_buffer.rs` | 22 | 观测 |
@@ -141,7 +141,7 @@
 
 | module | orig_funcs | anchors | ours_file | ours_funcs | status |
 |---|---|---|---|---|---|
-| `axis_drawer.rs` | 6 | 3 | `src/axis_drawer.rs` | 12 | 观测 |
+| `axis_drawer.rs` | 6 | 3 | `src/axis_drawer.rs` | 21 | 观测 |
 | `backtracer.rs` | 0 | 0 | `src/backtracer.rs` | 2 | 观测 |
 | `button_manager.rs` | 2 | 3 | `src/button_manager.rs` | 7 | 观测 |
 | `effect_drawer.rs` | 11 | 17 | `src/effect_drawer.rs` | 51 | 观测 |
@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（119 个文件、3829 条 `fn`） | `d2918fe798e777f35b2dc21f69ed71bc7a2a05627feb8784c39fbb59c9eeac88` |
+| `src/` 树（119 个文件、3851 条 `fn`） | `9ee076e413b5f6f94329863fc14cb0d03c86243d55358343757bd1737df37993` |
 
