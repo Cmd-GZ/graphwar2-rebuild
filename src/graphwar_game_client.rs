@@ -2074,8 +2074,13 @@ mod f3_landing_tests {
     fn two_get_module_monomorphizations_take_different_modules() {
         let mut h = GraphwarTickHandler::new(0, 0);
         h.current_tick = 41;
-        let mut r = GraphwarGameRecorder::new();
-        r.saves = 3;
+        // `GraphwarGameRecorder` 本轮按真值改成 **5 字段 / 0x38**（`docs/06` §128）：
+        // 结构体里**没有** `saves` 计数（原版 0x38 = Vec+Weak+Rc+Weak+u8），也没有无参
+        // `new`（原版 `new` 必带 3 个实参）⇒ 这里改用本 crate 自造的 `detached()`，
+        // 并用"缓冲里有 1 条记录"当区分标志。**断言强度不变**（仍要求取到的是 recorder
+        // 而不是 tick_handler）。
+        let mut r = GraphwarGameRecorder::detached();
+        r.record_game_state(7, 5);
         let mut c = FakeContainer {
             tick: Some(h),
             recorder: Some(r),
@@ -2083,7 +2088,7 @@ mod f3_landing_tests {
             recorder_calls: Cell::new(0),
         };
         assert_eq!(GraphwarGameClient::get_module_tick_handler(&mut c).current_tick, 41);
-        assert_eq!(GraphwarGameClient::get_module_game_recorder(&mut c).saves, 3);
+        assert_eq!(GraphwarGameClient::get_module_game_recorder(&mut c).len(), 1);
         assert_eq!(c.tick_calls.get(), 1);
         assert_eq!(c.recorder_calls.get(), 1);
     }

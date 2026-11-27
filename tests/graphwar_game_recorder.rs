@@ -12,6 +12,11 @@
 //! | `path_is_dir_plus_unix_seconds` | `user://replays/<secs>`，无扩展名 | **逐位**（`0x3d81a8` + `0x3d81f4`） |
 //! | `one_line_json_has_event_before_tick` | `{"event":…,"tick":N}` | **逐位**（字面量顺序）+ **观测**（400 份回放） |
 //! | `event_info_is_80_bytes` | 0x50 = 0x48(事件) + tick | **逐位**（`mov w8,#0x50` + `madd`） |
+//! | `save_game_bytes_are_frozen_across_the_layout_change` | 落盘字节改结构前后**完全相同** | 改布局**前**的实现真跑出来的 golden |
+//! | `new_subscribes_all_32_into_a_real_handler` | `new` 的 3 条接线 + 32 条订阅落地 | **逐位**（`0x3d52c8`/`0x3d52cc`/`0x3d52d0`/`0x3d80c4`） |
+//!
+//! 结构体布局（`size_of` / `offset_of`）的 pin 在模块内的 `layout_pins`（单测，能碰私有字段），
+//! 逐位依据见 `docs/06` §128。
 #![allow(dead_code)]
 
 use gw2_rebuild::events;
@@ -27,7 +32,6 @@ use turnstate::GameState;
 #[test]
 fn subscribes_to_32_info_events_only() {
     assert_eq!(SUBSCRIPTIONS.len(), 32);
-    assert_eq!(GraphwarGameRecorder::new().subscribed.len(), 32);
     // 25 条 `*_info_event` + 7 条同样单向广播但不带 `_info` 的
     let non_info = [
         "entity_removed_event",
@@ -78,26 +82,32 @@ fn ending_game_is_six_and_setup_is_one() {
 
 #[test]
 fn save_on_ending_game_rising_edge() {
-    let mut r = GraphwarGameRecorder::new();
+    let mut r = GraphwarGameRecorder::detached();
+    // 原版的结构体里**没有**计数器字段（0x38 = Vec+Weak+Rc+Weak+u8）⇒
+    // "落了几次盘"由返回值自己数，不许再往结构体里塞字段。
+    let mut saves = 0usize;
     assert!(!r.record_game_state(100, 5)); // ExecutingResults
     assert_eq!(r.len(), 1);
 
     // 进入 EndingGame ⇒ 落盘
-    assert!(r.record_game_state(110, STATE_ENDING_GAME));
-    assert_eq!(r.saves, 1);
+    if r.record_game_state(110, STATE_ENDING_GAME) {
+        saves += 1;
+    }
+    assert_eq!(saves, 1);
 
     // 再来一条 EndingGame ⇒ 不再落盘（`last_state == 6` 时 `b.eq` 跳过）
-    assert!(!r.record_game_state(111, STATE_ENDING_GAME));
-    assert_eq!(r.saves, 1);
+    if r.record_game_state(111, STATE_ENDING_GAME) {
+        saves += 1;
+    }
+    assert_eq!(saves, 1);
 }
 
 #[test]
 fn setup_after_ending_clears_the_buffer() {
-    let mut r = GraphwarGameRecorder::new();
+    let mut r = GraphwarGameRecorder::detached();
     r.record(1, Event::TeamInfo, "{}");
-    r.record_game_state(2, STATE_ENDING_GAME);
+    assert!(r.record_game_state(2, STATE_ENDING_GAME), "落盘");
     assert_eq!(r.len(), 2, "落盘时缓冲还在（原版不清）");
-    assert_eq!(r.saves, 1);
 
     // Setup 且上一条是 EndingGame ⇒ 清空
     assert!(!r.record_game_state(3, STATE_SETUP));
@@ -137,7 +147,7 @@ fn one_line_json_has_event_before_tick() {
     assert_eq!(e.to_json_line(), "{\"event\":{\"GameStartRequest\":{}},\"tick\":1}");
 
     // 逐行落盘：一行一个事件
-    let mut r = GraphwarGameRecorder::new();
+    let mut r = GraphwarGameRecorder::detached();
     r.record(9, Event::TurnInfo, "{\"player_id\":1}");
     r.record_game_state(10, STATE_ENDING_GAME);
     let text = r.save_game_text();
@@ -157,13 +167,13 @@ fn event_info_is_80_bytes() {
 
 /// 本文件的**构造入口** —— 两个 commit 之间**只改这一行**：
 ///
-/// * 冻结 golden 的那次 commit：走无参 `GraphwarGameRecorder::new()`（当时的旧形态）；
+/// * 冻结 golden 的那次 commit：走无参 `GraphwarGameRecorder::detached()`（当时的旧形态）；
 /// * 布局对齐真值之后：走 `GraphwarGameRecorder::detached()` —— 原版 `new`
 ///   （arm64 `0x3d7e3c` / x86 `0x3d5260`）**必须带 3 个实参**
 ///   （`&mut GraphwarEventHandler` + `Rc<RefCell<GraphwarEventQueue>>` + `Weak<RefCell<GraphwarModuleContainer>>`），
 ///   证据见 `docs/06` §128；无参构造是本 crate 自造的测试入口，原版没有。
 fn recorder() -> GraphwarGameRecorder {
-    GraphwarGameRecorder::new()
+    GraphwarGameRecorder::detached()
 }
 
 /// 改布局**之前**（`master` a27a0aa）跑出来的字节，逐字节冻结（`{:?}` 转义字面量，非手写）。
@@ -204,4 +214,30 @@ fn save_game_bytes_are_frozen_across_the_layout_change() {
 
     r.record(14, Event::ColorInfo, "{\"color\":255}");
     assert_eq!(r.save_game_text(), GOLDEN_SAVE_NEXT_GAME);
+}
+
+/// `new`（arm64 `0x3d7e3c` / x86 `0x3d5260`）的**三条接线**：自指 Weak、队列 Rc、容器 Weak，
+/// 外加 32 条订阅真的落到一个**真 handler** 上（不是我们自报的 `subscribed` 字段 ——
+/// 那个字段原版没有，本轮已删）。
+#[test]
+fn new_subscribes_all_32_into_a_real_handler() {
+    use gw2_rebuild::graphwar_event_queue::GraphwarEventQueue;
+    use std::cell::RefCell;
+    use std::rc::{Rc, Weak};
+
+    let mut handler = graphwar_event_handler::GraphwarEventHandler::new();
+    let queue = Rc::new(RefCell::new(GraphwarEventQueue::new()));
+    let rec = GraphwarGameRecorder::new(&mut handler, queue.clone(), Weak::new());
+
+    for name in SUBSCRIPTIONS {
+        assert_eq!(handler.subscriber_count(name), 1, "{name} 没订上");
+    }
+    assert_eq!(handler.subscribers().len(), SUBSCRIPTIONS.len());
+    // 队列是同一个 Rc（原版 `[+0x38] = 实参1`）
+    assert!(Rc::ptr_eq(rec.borrow().event_queue(), &queue));
+    // 自指 Weak（原版 `[+0x30] = 自身 RcInner`）
+    assert!(Rc::ptr_eq(&rec.borrow().self_weak().upgrade().unwrap(), &rec));
+    // `detached()` 是自造入口 ⇒ 它的 Weak 必须是空的（不许假装接了容器）
+    assert!(GraphwarGameRecorder::detached().self_weak().upgrade().is_none());
+    assert!(GraphwarGameRecorder::detached().module_container().upgrade().is_none());
 }
