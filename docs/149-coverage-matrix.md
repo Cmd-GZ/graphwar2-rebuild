@@ -232,5 +232,5 @@ python3 tools/coverage_matrix.py           # 重新生成 TSV 与本页
 |---|---|
 | `libgraphwarrust.so` | `9a53811518e74b7575c1b9dd1f21cdd1f4f015bfdcd8eaeee4dfdf0bcabed187` |
 | `analysis/funcstarts_ghidra_va.pkl` | `b9bba35bbca95ce1040109b0a711cf77d0ff2d678b7e0b5f7220db588df74c3a` |
-| `src/` 树（115 个文件、3696 条 `fn`） | `18b3bf8937f058c4aa685d2a412386da680542ae67077219227bf5bee1c7120b` |
+| `src/` 树（119 个文件、3760 条 `fn`） | `ee5ba292c6d11317acb3f8a658f6cc2992cd0c27584237b412980e2e32ee5173` |
 

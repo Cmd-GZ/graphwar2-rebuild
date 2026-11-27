@@ -4,7 +4,8 @@
 //! 1. `src/graphwar_campaign_control.rs` 的 [`LEVEL_INFO`] 与
 //!    `docs/archive/118-campaign-data.md` **§7.1** 的 21 行逐字段相等；
 //! 2. 存档语义（§3.1 + 附录 A）：`level_<n>`、0 基、无尾换行、只增不减、启动不创建；
-//! 3. `client/src/app/campaign.gd` 的表与内核同一份（关卡名/描述**逐字节**）。
+//! 3. `client/src/app/campaign.gd` **不再有第二份表**（T67 搬回 Rust：`.gd` 只调
+//!    `GwCampaignControl`，那个类逐字段读 `LEVEL_INFO`）；本文件盯住"表没被抄回来"。
 //!
 //! ⚠️ 按 `AGENTS.md` §0 第 2 条：本文件的断言是**回归保护**，不是复原证据。
 //! 复原证据是 `docs/archive/118-campaign-data.md` §7.1 里逐格标注的 `S`/`C`/`R`
@@ -823,124 +824,96 @@ fn campaign_progress_resets_to_zero_on_a_bad_file() {
 }
 
 // ===========================================================================
-// 5. 客户端 `client/src/app/campaign.gd` 与内核同一份表
+// 5. 客户端 `client/src/app/campaign.gd`：**表已经搬回 Rust**（不再有第二份）
 // ===========================================================================
+//
+// 历史：这条位置原来是 `client_campaign_table_matches_the_kernel_table`，它把
+// `campaign.gd` 里那份 `const LEVELS`（21 条）逐字段、逐字节地与内核 `LEVEL_INFO` 比对。
+// 那说明**同一张表存在两份**：改内核不改 `.gd`，界面就显示旧数据；只靠一条测试拉着。
+//
+// T67（`docs/06` §115 / 台账 `fixtures/controller_migration3_ledger.tsv` C02/C04/C05/C07）
+// 把表搬走了：`campaign.gd` 现在只调 `GwCampaignControl`（`src/_scaffold/campaign_control_class.rs`），
+// 而那个类**没有自己的数据** —— 它逐字段读 `graphwar_campaign_control::LEVEL_INFO`。
+// ⇒ "客户端表 == 内核表"这件事从"两条拷贝互相钉住"变成"**只有一份**，结构上不可能漂移"。
+//
+// 因此本条断言改成盯住**搬走这件事本身**（防止有人再把表抄回来）：
+//   ① 数据不在 `.gd` 里了：没有 `const LEVELS`，21 条描述的原文一条都不出现；
+//   ② 数据从 Rust 来：`.gd` 里出现了 `GwCampaignControl.level(` / `.level_count()`；
+//   ③ 关卡数不再写死：`.gd` 里没有 `21` 这个字面量的 `LEVEL_COUNT`。
+// 逐字段的正确性由本文件 §1/§2/§3（内核 vs 文档 §7.1）与客户端 headless 自检
+// （`client/tools/selftest.gd` 对 `GwCampaign.level(i)` 的读数断言）负责。
+//
+// ⚠️ 按 `AGENTS.md` §0 第 2 条：这些断言是**回归保护**，不是复原证据。
 
 fn campaign_gd_source() -> String {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("client/src/app/campaign.gd");
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("读不到 {}：{e}", path.display()))
 }
 
-/// 从一段 GD 字典文本里取整数：`"axis": 3,` → 3。
-fn gd_int(s: &str, key: &str) -> i64 {
-    let pat = format!("\"{key}\":");
-    let p = s
-        .find(&pat)
-        .unwrap_or_else(|| panic!("campaign.gd 里没有 \"{key}\"：{s}"));
-    let rest = &s[p + pat.len()..];
-    let end = rest.find(|c| c == ',' || c == '}').unwrap_or(rest.len());
-    rest[..end]
-        .trim()
-        .parse()
-        .unwrap_or_else(|_| panic!("\"{key}\" 不是整数：{:?}", &rest[..end]))
-}
-
-/// 从一段 GD 字典文本里取字符串（描述里没有引号/转义，直接找下一个 `"`）。
-fn gd_str(s: &str, key: &str) -> String {
-    let pat = format!("\"{key}\": \"");
-    let p = s
-        .find(&pat)
-        .unwrap_or_else(|| panic!("campaign.gd 里没有 \"{key}\"：{s}"));
-    let rest = &s[p + pat.len()..];
-    let end = rest.find('"').expect("字符串没有收尾引号");
-    rest[..end].to_string()
-}
-
-/// 客户端表逐项等于内核表（标题/描述**逐字节**），且 `PLACEHOLDER` 已经清掉。
 #[test]
-fn client_campaign_table_matches_the_kernel_table() {
+fn client_campaign_table_is_gone_and_reads_the_kernel() {
     let src = campaign_gd_source();
+
+    // ① 那 21 条数据（标题 + 描述）不许再出现在客户端。
+    // 只看**声明**（`const LEVELS := [`），不看注释里对历史的引用。
+    assert!(
+        !src
+            .lines()
+            .any(|l| l.trim_start().starts_with("const LEVELS")),
+        "client/src/app/campaign.gd 里不许再有 `const LEVELS` 声明（表已搬进 Rust，T67）"
+    );
+    for lv in cc::LEVEL_INFO.iter() {
+        assert!(
+            !src.contains(lv.description),
+            "campaign.gd 里还留着 level_{} 的描述原文 —— 那是内核 `LEVEL_INFO` 的第二份拷贝",
+            lv.index
+        );
+        assert!(
+            !src.contains(&format!("\"title\": \"{}\"", lv.title)),
+            "campaign.gd 里还留着 level_{} 的标题条目",
+            lv.index
+        );
+    }
     assert!(
         !src.contains("PLACEHOLDER"),
         "client/src/app/campaign.gd 里不许再有 PLACEHOLDER（验收：grep -c == 0）"
     );
 
-    let lines: Vec<&str> = src.lines().collect();
-    let start = lines
-        .iter()
-        .position(|l| l.contains("const LEVELS := ["))
-        .expect("找不到 const LEVELS := [");
-
-    // 每条记录是"标题行 + 描述行"两行（写入时就是这个形状）
-    let mut pairs: Vec<(String, String)> = Vec::new();
-    let mut i = start + 1;
-    while i < lines.len() {
-        let head = lines[i].trim_start();
-        if head.starts_with("{\"title\"") {
-            let tail = lines.get(i + 1).copied().unwrap_or("");
-            pairs.push((lines[i].to_string(), tail.to_string()));
-            i += 2;
-            continue;
-        }
-        if head == "]" {
-            break;
-        }
-        i += 1;
-    }
-    assert_eq!(pairs.len(), 21, "客户端表必须是 21 条");
-
-    for (idx, (head, tail)) in pairs.iter().enumerate() {
-        let joined = format!("{head}\n{tail}");
-        let lv = &cc::LEVEL_INFO[idx];
-        let ctx = format!("campaign.gd 第 {idx} 条");
-
-        assert_eq!(
-            gd_str(head, "title"),
-            lv.title,
-            "{ctx}：标题必须与内核逐字节一致"
-        );
-        assert_eq!(
-            gd_str(tail, "description"),
-            lv.description,
-            "{ctx}：描述必须与内核逐字节一致"
-        );
-        assert_eq!(gd_int(head, "axis") as u8, lv.modes.axis(), "{ctx}：axis");
-        assert_eq!(
-            gd_int(head, "function") as u8,
-            lv.modes.function(),
-            "{ctx}：function"
-        );
-        assert_eq!(gd_int(head, "turn") as u8, lv.modes.turn(), "{ctx}：turn");
-        assert_eq!(gd_int(head, "time") as u8, lv.modes.time(), "{ctx}：time");
-        assert_eq!(
-            gd_int(head, "soldiers") as u32,
-            lv.soldiers,
-            "{ctx}：soldiers"
-        );
-        assert_eq!(gd_int(head, "targets") as u32, lv.targets, "{ctx}：targets");
-        assert_eq!(
-            gd_int(head, "bot_tier"),
-            lv.bot.map(|b| b.tier as i64).unwrap_or(-1),
-            "{ctx}：bot_tier（-1 = 无对手）"
-        );
-        assert_eq!(
-            gd_int(head, "turn_limit") as u32,
-            lv.turn_limit.unwrap_or(0),
-            "{ctx}：turn_limit（0 = 无上限）"
-        );
-        assert_eq!(
-            gd_int(head, "obstacle_min") as u32,
-            lv.min_count,
-            "{ctx}：obstacle_min"
-        );
-        let want_gd_obstacle = match lv.obstacles {
-            cc::ObstacleMode::None => "Obstacles.NONE",
-            cc::ObstacleMode::Center => "Obstacles.CENTER",
-            cc::ObstacleMode::Scatter => "Obstacles.SCATTER",
-        };
+    // ② 数据必须从内核类来。
+    for needle in [
+        "GwCampaignControl.level(",
+        "GwCampaignControl.level_count()",
+    ] {
         assert!(
-            joined.contains(&format!("\"obstacles\": {want_gd_obstacle}")),
-            "{ctx}：障碍模式必须是 {want_gd_obstacle}"
+            src.contains(needle),
+            "campaign.gd 必须经 `{needle}` 向 Rust 取关卡数据（T67 的接线）"
+        );
+    }
+
+    // ③ 关卡数不许写死：定义必须是一行 `static func level_count()`，里面问内核。
+    //    （`const` 不行：GDScript 的 `const` 要求常量表达式，跨语言调 GDExtension 静态方法
+    //    会让引用方在**解析期**报 "Could not resolve external class member"。）
+    assert!(
+        !src
+            .lines()
+            .any(|l| l.trim_start().starts_with("const LEVEL_COUNT")),
+        "campaign.gd 里不许再写死 `const LEVEL_COUNT`（要问内核）"
+    );
+    let count_fn = src
+        .split("static func level_count()")
+        .nth(1)
+        .expect("campaign.gd 里必须有 `static func level_count()`");
+    let body: String = count_fn.lines().take(3).collect::<Vec<_>>().join("\n");
+    assert!(
+        body.contains("GwCampaignControl.level_count()"),
+        "`level_count()` 必须来自内核（`LEVEL_INFO` 的长度），实际是：{body}"
+    );
+
+    // ④ 视图层那两样（自造种子 + 原版布局算法）必须留着。
+    for needle in ["static func level_seed(", "static func layout_buttons("] {
+        assert!(
+            src.contains(needle),
+            "campaign.gd 应当保留 `{needle}`（不属于内核：前者自造、后者是原版视图 .gd）"
         );
     }
 }

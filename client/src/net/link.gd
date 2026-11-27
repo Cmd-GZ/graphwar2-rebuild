@@ -5,20 +5,26 @@ class_name GwNetLink
 ## 用 Godot 的 `StreamPeerTCP`（非阻塞）：每帧 `poll()` 一次，就绪后把字节读进
 ## 内部缓冲区、按 `u16` 大端长度切帧、逐帧发 `frame_received`。
 ##
-## # 时间与状态
-##
-## 状态机：`idle → connecting →(失败, 还有重试次数) connecting … → connected`
-##                                              `↘ failed`
-## `connected → closed`（对端关闭 / 读错 / 帧非法）。
-##
-## * `connect_timeout`（默认 **30 s**）—— 只算**单次**尝试。**这是原版真值，不是我们的选择**：
-##   值由 Rust 侧的 `graphwar_client_connection_handler::CONNECT_TIMEOUT_SECS` 经 `GwNetConsts`
-##   取来（arm64 `0x48dccc mov w1,#0x1e` = 30 → `0x48dcd4 bl std::net::tcp::TcpStream::connect_timeout`；
-##   逐位）。本文件**不写这个数字**（T42；改前是自造的 `3.0`）。
-## * `retries`（默认 0）—— 失败后再试几次；两次之间等 `retry_delay`。
-##   原版的连接重试策略**完全没有观测**（`docs/132` §3 只给了 `start_client_to_*` 的
-##   方法名），所以**这两个**值仍是**本项目的选择**，不是复原结论。
-##
+## # 分工（T67 之后：状态机在 Rust）
+#
+# | 这一层干什么 | 在哪 |
+# |---|---|
+# | `StreamPeerTCP` 的建/连/poll/读/写、信号 | **本文件**（引擎侧） |
+# | 连接状态机（4 态判别值）、超时阈值、握手时机、失败后的 `GameState` | **Rust**：`GwClientLink` ← `graphwar_client_connection_handler` |
+#
+# 改前本文件自己维护一套 `"idle"/"connecting"/…` 字符串状态机（第二份实现），
+# T67 接回 Rust（台账 `fixtures/controller_migration3_ledger.tsv` 的 L05–L09/L12）。
+#
+# # 证据
+#
+# * 内核 4 态 `ConnectionState { Disconnected=0, Connecting=1, Connected=2, Failed=3 }`，
+#   判别值来自 4 个写入点的 `strb` 立即数（arm64 `0x48b900`/`0x48de10`/`0x48dd1c`/`disconnect`）**逐位**；
+# * `connect_timeout`（30 s）= `CONNECT_TIMEOUT_SECS`，arm64 `0x48dccc mov w1,#0x1e` **逐位**；
+#   本文件不写这个数字，判定也交给 Rust（`GwClientLink.step`）；
+# * `retries` / `retry_delay`：原版重试策略**完全没有观测**（`docs/132` §3）⇒ **本项目选择**（台账 L04）；
+# * **第 5 态 `ST_CLOSED`**（`-1`）是我方多出来的：原版 `disconnect` 直接写 0，会丢掉
+#   "曾经连上过"，而 `link_closed` 信号要靠它区分"从没连上"。**自造**（台账 L05/L11）。
+#
 ## # 为什么不在 `_ready` 里等
 ##
 ## `GwNet`（`net.gd`）是唯一的驱动者：它每帧 `poll(delta)` 一次所有连接。
@@ -31,15 +37,22 @@ signal link_failed(reason: String)      ## 一次都没连上（重试也用完�
 
 const READ_CHUNK := 16384
 
-## "idle" | "connecting" | "connected" | "closed" | "failed"
-var state := "idle"
+## 内核 4 态（判别值从 Rust 取，见 `GwClientLink`）。**本文件不写 0/1/2/3**。
+static var ST_DISCONNECTED: int = GwClientLink.state_disconnected()
+static var ST_CONNECTING: int = GwClientLink.state_connecting()
+static var ST_CONNECTED: int = GwClientLink.state_connected()
+static var ST_FAILED: int = GwClientLink.state_failed()
+## 我方多出来的第 5 态（**自造**，见文件头）。用它区分"连上后断开"与"从没连上"。
+const ST_CLOSED := -1
+
+## 当前状态（内核判别值，或 `ST_CLOSED`）。
+var state := GwClientLink.state_disconnected()
 var host := ""
 var port := 0
-## 单次连接尝试的超时（秒）。**原版真值 30 s**，从 Rust 取（`GwNetConsts` ←
-## `graphwar_client_connection_handler::CONNECT_TIMEOUT_SECS`，arm64 `0x48dccc mov w1,#0x1e`；
-## 逐位）。**这里不许写数字**：改前那个 `3.0` 是自造值，把 30 s 的真值丢了（T35 审计 / `docs/06` §92）。
+## 单次连接尝试的超时（秒）。**原版真值 30 s**，从 Rust 取。这里只用于**人话提示**，
+## 判定在 `GwClientLink.step` 里（超时阈值同一个常量）。
 var connect_timeout := GwNetConsts.connect_timeout_secs()
-## 失败后的重试次数（**本项目选择**，默认不重试）。
+## 失败后的重试次数（**本项目选择**，默认不重试；原版策略未观测 —— 台账 L04）。
 var retries := 0
 ## 两次尝试之间的等待（秒）。
 var retry_delay := 0.25
@@ -85,20 +98,23 @@ func _begin_attempt() -> void:
 	# ⚠️ 必须**在 connect 之后**调：socket 还没建时 Godot 会报
 	# `_sock.is_null() || !_sock->is_open()`（这条错误本轮实测踩到过）。
 	_peer.set_no_delay(true)
-	state = "connecting"
+	# 内核语义：`connect()` 写 1（`strb #1,[x21,#0x15]`，arm64 `0x48b900`）。
+	state = GwClientLink.state_connecting()
 
 
 func is_open() -> bool:
-	return state == "connected"
+	return GwClientLink.is_open(state)
 
 
 func is_busy() -> bool:
-	return state == "connecting"
+	return GwClientLink.is_busy(state)
 
 
-## 每帧调用一次。`delta` 是秒。
+## 每帧调用一次。`delta` 是秒。状态迁移**全部**由 `GwClientLink.step()` 决定
+## （内核 `state_after_connect_attempt` + 超时常量）；本函数只做重试倒计时、
+## 把决定落到 `state` 并发信号、读字节。
 func poll(delta: float) -> void:
-	if state == "failed" or state == "closed" or state == "idle":
+	if state == ST_FAILED or state == ST_CLOSED or state == ST_DISCONNECTED:
 		return
 	if _waiting_retry:
 		_retry_left -= delta
@@ -109,20 +125,23 @@ func poll(delta: float) -> void:
 		return
 	_peer.poll()
 	var st := _peer.get_status()
-	if state == "connecting":
-		if st == StreamPeerTCP.STATUS_CONNECTING:
-			_elapsed += delta
-			if _elapsed >= connect_timeout:
-				_attempt_failed("连接 %s:%d 超时（%.1f s）" % [host, port, connect_timeout])
-			return
-		if st == StreamPeerTCP.STATUS_ERROR or st == StreamPeerTCP.STATUS_NONE:
-			_attempt_failed("连接 %s:%d 失败（status %d）" % [host, port, st])
-			return
-		# STATUS_CONNECTED —— 首次连上，之后同一帧就把可能已经到达的字节读掉。
-		state = "connected"
-		connected.emit()
-		if state != "connected":
-			return
+	if state == ST_CONNECTING:
+		_elapsed += delta
+		var step := GwClientLink.step(state, st, _elapsed)
+		match String(step.get("action", "wait")):
+			"wait":
+				return
+			"connected":
+				state = int(step.get("next_state", GwClientLink.state_connected()))
+				connected.emit()
+				if state != ST_CONNECTED:
+					return
+			_:
+				if bool(step.get("timed_out", false)):
+					_attempt_failed("连接 %s:%d 超时（%.1f s）" % [host, port, connect_timeout])
+				else:
+					_attempt_failed("连接 %s:%d 失败（status %d）" % [host, port, st])
+				return
 	if st == StreamPeerTCP.STATUS_ERROR or st == StreamPeerTCP.STATUS_NONE:
 		# 对端关闭。Godot 4 的 `StreamPeerTCP` 一旦 poll 到 EOF/ERROR 就**不再交数据**
 		# （`get_available_bytes()` 会打 `!is_open()` 并返回 -1），所以这里只能报关闭；
@@ -163,7 +182,7 @@ func _read_available() -> void:
 	for text in decoded["frames"]:
 		frames_in += 1
 		frame_received.emit(String(text))
-		if state == "closed" or state == "failed":
+		if state == ST_CLOSED or state == ST_FAILED:
 			return
 
 
@@ -188,8 +207,8 @@ func shutdown() -> void:
 	_drop_socket()
 	_waiting_retry = false
 	_buf = PackedByteArray()
-	if state != "failed":
-		state = "closed"
+	if state != ST_FAILED:
+		state = ST_CLOSED
 
 
 ## 放掉 socket。**只有真的开着才调 `disconnect_from_host()`** ——
@@ -209,16 +228,17 @@ func _attempt_failed(reason: String) -> void:
 	if attempts <= retries:
 		_waiting_retry = true
 		_retry_left = retry_delay
-		state = "connecting"
+		state = GwClientLink.state_connecting()
 		return
-	state = "failed"
+	# 内核：连接线程失败 ⇒ 写 3（`strb #3`，arm64 `0x48dd1c`）。
+	state = GwClientLink.after_connect_attempt(false)
 	link_failed.emit(reason)
 
 
 func _peer_closed(reason: String) -> void:
 	_drop_socket()
-	if state == "closed" or state == "failed":
+	if state == ST_CLOSED or state == ST_FAILED:
 		return
-	state = "closed"
+	state = ST_CLOSED
 	last_error = reason
 	link_closed.emit(reason)
