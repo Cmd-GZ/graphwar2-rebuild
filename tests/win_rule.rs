@@ -339,8 +339,82 @@ fn mutual_wipe_has_no_winner() {
 }
 
 /// 一队都没登记（回放模式/空局）：**判不了**，不能"0 == 0 ⇒ 有人赢"。
+///
+/// ## 真值来源（T73 / 计划 C06）：从「我方分支」升到 **`0x473520` 的指令级分支**
+///
+/// 原计划是 unicorn 直调 `0x473520`（`GraphwarGameStateManager::get_alive_teams`）喂空生命表。
+/// 实测**跑不成**：该函数第一步就 `lea 0xe0(%rdi),%rdi` 后调 `0x46e7a0`（`Rc/RefCell` 借用），
+/// 要把 `GameStateManager` + `LifeManager`（`HashMap`）的**内部布局**都造出来 ⇒ `needs_state`，
+/// 本轮没有那份布局。**换成的等价证据**是**静态指令级**的（同样是主证据，只是没跑起来）：
+///
+/// ```text
+/// 0x4735a9  48 8b 5c 24 30      mov    0x30(%rsp),%rbx   ; rbx = 生命表长度（0x453c60 的输出三元组）
+/// 0x4735ae  48 85 db            test   %rbx,%rbx
+/// 0x4735b1  0f 84 b7 00 00 00   je     0x47366e          ; **空表 ⇒ 直接跳到清零块**
+/// ...
+/// 0x47366e  c7 44 24 04 00 00 00 00  movl $0x0,0x4(%rsp) ; Team2 有活体 = false
+/// 0x473676  c7 04 24 00 00 00 00     movl $0x0,(%rsp)     ; Team1 有活体 = false
+/// 0x47367d  ...（公共收尾：释放借用、按 (%rsp) / 0x4(%rsp) 返回两个 bool）
+/// ```
+///
+/// 循环里都没找到活人时（`0x4735e3 je 0x47367d`）也落同一处，而两个返回值在进入循环前
+/// 就被 `0x4735be`/`0x4735c5` 清成 0。⇒ **空生命表 ⇒ `get_alive_teams` = (false,false)**。
+///
+/// 本测试把这些字节**从真值表里读出来再解码一遍**（不信任我抄的注释）：
+/// `je` 的 rel32 自己算跳转目标、清零块的两条 `movl` 自己解立即数。
+///
+/// ⚠️ 仍然**是推断**的那一半：「(false,false) ⇒ 不结束游戏」这一步在 `LevelRules`（`0x4759f0`）
+/// 里，而 `0x475a80` 判的是**单队** `al == 0` / `dl == 0`；双 false 时它落到哪一支本轮没读
+/// （`docs/150` 也记着「双零时 winner 写什么」未解）⇒ 我方 `ending() == None` 的**语义依据**
+/// 仍是推断，本测试钉的是它的**输入侧**（空表 ⇒ 双 false）。
 #[test]
 fn empty_match_has_no_verdict() {
+    // ── 真值：`0x473520` 在空生命表上的返回值（从真二进制字节解码）───────────
+    const TRUTH4: &str = include_str!("../fixtures/test_expectation_truth4.tsv");
+    let row = |key: &str| -> &'static str {
+        for line in TRUTH4.lines() {
+            let mut it = line.split('\t');
+            if it.next() == Some("R") && it.next() == Some(key) {
+                return it.next().unwrap_or("");
+            }
+        }
+        panic!("truth4 里没有 R/{key}")
+    };
+    let parse_addr = |s: &str| u64::from_str_radix(s.trim().trim_start_matches("0x"), 16).unwrap();
+
+    assert_eq!(row("alive_teams_function"),
+               "GraphwarGameStateManager::get_alive_teams");
+    assert_eq!(row("alive_teams_addr"), "0x473520");
+    assert_eq!(row("alive_teams_len"), "640");
+
+    // ① `test %rbx,%rbx` + `je rel32`：非 0（有生命表）才进循环
+    let guard: Vec<&str> = row("alive_teams_guard").split(':').collect();
+    let guard_addr = parse_addr(guard[0]);
+    let bytes: Vec<u8> = (0..guard[1].len() / 2)
+        .map(|i| u8::from_str_radix(&guard[1][i * 2..i * 2 + 2], 16).unwrap())
+        .collect();
+    assert_eq!(&bytes[..3], &[0x48, 0x85, 0xdb], "0x4735ae 应是 `test %rbx,%rbx`");
+    assert_eq!(&bytes[3..5], &[0x0f, 0x84], "0x4735b1 应是 `je rel32`");
+    let rel = i32::from_le_bytes([bytes[5], bytes[6], bytes[7], bytes[8]]) as i64;
+    let target = guard_addr as i64 + 3 + 6 + rel; // 3(test) + 6(je) 之后再加 rel
+    assert_eq!(format!("0x{target:x}"), row("alive_teams_guard_target"),
+               "`je` 的跳转目标与真值表不一致（字节被改过？）");
+
+    // ② 空表分支：两条 `movl $0x0`（Team1 与 Team2 的"有活体"都写成 false）
+    let zero_t2: Vec<&str> = row("alive_teams_zero_t2").split(':').collect();
+    assert_eq!(parse_addr(zero_t2[0]), target as u64, "清零块应正好在 je 的目标处");
+    assert_eq!(zero_t2[1], "c744240400000000",
+               "`movl $0x0,0x4(%rsp)`（Team2 = false）");
+    let zero_t1: Vec<&str> = row("alive_teams_zero_t1").split(':').collect();
+    assert_eq!(parse_addr(zero_t1[0]), target as u64 + 8);
+    assert_eq!(zero_t1[1], "c7042400000000",
+               "`movl $0x0,(%rsp)`（Team1 = false）");
+    // 立即数确实是 0（不靠我抄的字面量：直接看编码里的 imm32）
+    assert_eq!(&zero_t2[1][8..], "00000000", "清零块的立即数必须是 0"); // c7 44 24 04 | imm32
+    assert_eq!(&zero_t1[1][6..], "00000000", "清零块的立即数必须是 0"); // c7 04 24 | imm32
+
+    // ── 我方行为：空局不判胜负 ─────────────────────────────────────────
     let m = Match::new(room(), vec![], vec![], (0, 0));
-    assert_eq!(m.ending(), None);
+    assert_eq!(m.ending(), None,
+               "空生命表 ⇒ get_alive_teams = (false,false) ⇒ 不结束（我方不得判出胜方）");
 }

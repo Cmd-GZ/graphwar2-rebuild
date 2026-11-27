@@ -1104,6 +1104,42 @@ mod tests {
     use super::*;
     use std::collections::BTreeSet;
 
+    // ===================================================================
+    // T73 真值表：`fixtures/test_expectation_truth4.tsv` 的 `T/*` 段
+    // （生成器 `tools/gen_test_expectations4.py --section turns`，`--check` 可复算）
+    //
+    // 真值来源 = **冻结语料 401 份回放快照**（403 条目 = 401 回放 + MANIFEST + SHA256SUMS；
+    // 逐份 sha256 见 `fixtures/guardrails.json` 的 `corpus.files`）。扫描口径：
+    //   * 士兵表 = `SoldierInfo` 的**首见顺序去重**（同一 soldier 的重复注册不算两个兵）；
+    //   * 生命表 = `LifeInfo{alive}` + `EntityRemoved` + `RemoveTeam`（**玩家不算生命表实体**，
+    //     T64 §115.5 踩过：把玩家算进去会把对战局全判成有人）；
+    //   * 逐条 `TurnInfo` 判「该玩家的士兵此刻有几个还活着」。
+    // ===================================================================
+    const TRUTH4: &str = include_str!("../fixtures/test_expectation_truth4.tsv");
+
+    fn truth4(section: &str, key: &str) -> &'static str {
+        for line in TRUTH4.lines() {
+            let mut it = line.split('\t');
+            if it.next() == Some(section) && it.next() == Some(key) {
+                return it.next().unwrap_or("");
+            }
+        }
+        panic!("truth4 里没有 {section}/{key}")
+    }
+
+    fn truth4_usize(section: &str, key: &str) -> usize {
+        truth4(section, key).parse().unwrap_or_else(|_| panic!("{section}/{key} 不是整数"))
+    }
+
+    /// 把 `file:tick:player:count[:ids]` 的分号列表拆成字段元组。
+    fn truth4_rows(section: &str, key: &str) -> Vec<Vec<String>> {
+        truth4(section, key)
+            .split(';')
+            .filter(|s| !s.is_empty())
+            .map(|row| row.split(':').map(str::to_string).collect())
+            .collect()
+    }
+
     /// 用"活着的士兵集合"造状态字节查询：集合里是 1，不在里面是 0（死）。
     fn alive_set(ids: &[i64]) -> impl Fn(i64) -> u8 + '_ {
         let set: BTreeSet<i64> = ids.iter().copied().collect();
@@ -1248,14 +1284,49 @@ mod tests {
     /// 试满 `len` 次仍无活人 ⇒ `Some(0)`；且再次调用还是 `Some(0)`（游标回到原点）。
     #[test]
     fn all_dead_returns_some_zero() {
-        let mut p = PlayerTurns::new(vec![7, 8, 9]);
+        // ── 真值（T73 / 计划 C01，观测·冻结语料）────────────────────────────
+        // 1494 条 `TurnInfo` 里 **23 条** `soldier_id == 0`；其中 **20 条**是该玩家有
+        // 士兵（2–5 个）而**发帧那一刻全死**（6 份回放）。下面直接用真 replay 里的
+        // 士兵表（首见顺序）驱动我方 `PlayerTurns`。
+        assert_eq!(truth4_usize("T", "turninfo_frames"), 1494, "语料 TurnInfo 帧数变了");
+        assert_eq!(truth4_usize("T", "soldier_zero_frames"), 23, "soldier_id=0 帧数变了");
+        assert_eq!(truth4_usize("T", "soldier_zero_all_dead"), 20);
+        assert_eq!(truth4_usize("T", "soldier_zero_empty_roster"), 3);
+
+        let rows = truth4_rows("T", "soldier_zero_all_dead_list");
+        assert_eq!(rows.len(), 20, "全灭明细行数应与计数一致");
         let dead = alive_set(&[]);
+        for row in &rows {
+            // file:tick:player:n:ids
+            let (file, tick, player, ids) = (&row[0], &row[1], &row[2], &row[4]);
+            let soldiers: Vec<i64> = ids.split(',').map(|x| x.parse().expect("士兵 id")).collect();
+            assert_eq!(soldiers.len(), row[3].parse::<usize>().expect("士兵数"), "{file}:{tick}");
+            let mut p = PlayerTurns::new(soldiers.clone());
+            // 真 replay 那一刻广播的就是 soldier_id = 0 ⇒ 我方必须也返回 Some(0)
+            assert_eq!(p.next_shooter_by_state(&dead), Some(SOLDIER_ID_NONE),
+                       "真回放 {file} tick {tick} 玩家 {player} 全灭时应广播 soldier_id = 0");
+            // 再取一次仍然是 0（游标试满 len 次后回到起点）
+            assert_eq!(p.next_shooter_by_state(&dead), Some(SOLDIER_ID_NONE));
+            assert_eq!(p.index(), 0, "试满 len 次后游标回到起点");
+        }
+
+        // 算术自校（1 个兵、3 个兵）：语义与上面一致
+        let mut p = PlayerTurns::new(vec![7, 8, 9]);
         assert_eq!(p.next_shooter_by_state(&dead), Some(SOLDIER_ID_NONE));
-        assert_eq!(p.next_shooter_by_state(&dead), Some(SOLDIER_ID_NONE));
-        assert_eq!(p.index(), 0, "试满 len 次后游标回到起点");
     }
 
     /// `Some(0)` 与 `None` 的**协议后果**不同：前者发 `TurnInfo{0}`，后者不发。
+    ///
+    /// ## 真值来源（T73 / 计划 C02，观测·冻结语料）
+    ///
+    /// 「空士兵表时到底发不发 0」原先只有两个来源打架：`docs/98` §7 伪代码的**注释**
+    /// （`if n == 0 { return None }  // 不发 TurnInfo`）vs 指令 `0x463f2f` 的 `je 0x463fd0`
+    /// （与"全灭"共用同一个发 0 的块）。语料给了第三方裁决：
+    ///
+    /// 401 份回放里有 **3 帧** `soldier_id == 0` 的玩家**从来没有任何 `SoldierInfo`**
+    /// （`1793883985/405`、`1793884702/1038`、`1793884817/1038`）⇒ **空队也广播 0**，
+    /// 默认策略 [`EmptyRoster::AnnounceZero`] 由「推断」升到**观测**。
+    /// [`EmptyRoster::Skip`] 仍保留（给"按 §7 字面"的调用方），但语料里**没有它的对应物**。
     #[test]
     fn some_zero_broadcasts_but_none_does_not() {
         // 全灭：Some(0) → 仍然广播
@@ -1271,6 +1342,26 @@ mod tests {
         let none = skip.begin_turn(621, alive_set(&[]), false);
         assert_eq!(none, TurnDecision::Skip { player_id: 621, reason: SkipReason::NoSoldiers });
         assert_eq!(none.broadcast(), None, "None 语义：不发 TurnInfo");
+
+        // ★ 真值侧（语料）：空队玩家**照样收到** TurnInfo{soldier_id:0}
+        let rows = truth4_rows("T", "soldier_zero_empty_roster_list");
+        assert_eq!(rows.len(), truth4_usize("T", "soldier_zero_empty_roster"));
+        assert_eq!(rows.len(), 3, "语料里空队玩家只有 3 例");
+        for row in &rows {
+            // file:tick:player
+            let (file, tick, player) = (&row[0], &row[1], &row[2]);
+            let pid: i64 = player.parse().expect("player id");
+            let mut manager = TurnManager::new(); // 默认策略 = AnnounceZero
+            manager.add_player(pid, Team::One, vec![]); // 该玩家**没有**士兵（真 replay 就是这样）
+            let d = manager.begin_turn(pid, alive_set(&[]), false);
+            assert_eq!(
+                d,
+                TurnDecision::Announce { player_id: pid, soldier_id: 0, flip: false },
+                "真回放 {file} tick {tick} 玩家 {player} 空队时仍然广播了 soldier_id = 0"
+            );
+            assert_eq!(d.broadcast(), Some((pid, 0)),
+                       "空队也必须发 TurnInfo（真 replay 有这 3 帧）");
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -1278,10 +1369,36 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// `len == 1`：`(0+1)%1 = 0`，永远是同一个人；死了就是全灭。
+    ///
+    /// ## 真值来源（T73 / 计划 C03，观测·冻结语料）
+    ///
+    /// 401 份回放里 `1793874543` 有 **6 个只带 1 个士兵的玩家**，他们的 `TurnInfo` 连发
+    /// 6–9 次**全是同一个 `soldier_id`**（不交替、不回 0）⇒ "单士兵每回合都是同一个人"
+    /// 是**观测**，不是我方算术自洽。
     #[test]
     fn single_soldier_is_taken_every_turn() {
+        let rows = truth4_rows("T", "single_soldier_list");
+        assert_eq!(rows.len(), truth4_usize("T", "single_soldier_players"));
+        assert_eq!(rows.len(), 6, "语料里「单士兵且连发 ≥2 次」的玩家有 6 个");
+        for row in &rows {
+            // file:player:soldier:count
+            let (file, player, sid, count) =
+                (&row[0], &row[1], row[2].parse::<i64>().expect("soldier id"),
+                 row[3].parse::<usize>().expect("连发次数"));
+            let mut p = PlayerTurns::new(vec![sid]);
+            for i in 0..count {
+                assert_eq!(p.next_shooter_by_state(all_alive), Some(sid),
+                           "真回放 {file} 玩家 {player} 第 {i} 发应还是 {sid}");
+            }
+            assert_eq!(p.index(), 0);
+            // 死了就是全灭
+            assert_eq!(p.next_shooter_by_state(alive_set(&[])), Some(SOLDIER_ID_NONE),
+                       "真回放 {file} 的单士兵死了 ⇒ 广播 0");
+            assert_eq!(p.len(), 1);
+        }
+
+        // 算术自校
         let mut p = PlayerTurns::new(vec![42]);
-        assert_eq!(p.next_shooter_by_state(all_alive), Some(42));
         assert_eq!(p.next_shooter_by_state(all_alive), Some(42));
         assert_eq!(p.next_shooter_by_state(alive_set(&[])), Some(SOLDIER_ID_NONE));
         assert_eq!(p.len(), 1);
@@ -1292,6 +1409,15 @@ mod tests {
     // -----------------------------------------------------------------------
 
     /// 空 `Vec`：原语返回 `None`（getter 没有"当前士兵"），不 panic、不推进。
+    ///
+    /// ## 口径（T73 / 计划 C04）：**getter 层是契约，广播层是观测**
+    ///
+    /// 两层必须分开看：
+    /// * [`PlayerTurns::next_shooter`] / `next_shooter_by_state` 对空表返回 `None` ——
+    ///   依据是 `0x4628d0` 的 getter（`docs/98` §1.4：不 push、返回"没有"），**指令级观测**，
+    ///   但"空表"这个输入在语料里只以**广播层**形态出现 ⇒ 本条仍是**契约**；
+    /// * **广播层**对空表的答案是**观测**：语料 3 帧 `TurnInfo{soldier_id:0}` 的玩家
+    ///   从来没有 `SoldierInfo`（见 `some_zero_broadcasts_but_none_does_not`）。
     #[test]
     fn empty_roster_returns_none() {
         let mut p = PlayerTurns::new(vec![]);
@@ -1299,6 +1425,12 @@ mod tests {
         assert_eq!(p.current(), None);
         assert_eq!(p.next_shooter_by_state(all_alive), None);
         assert_eq!(p.index(), 0, "空表不该改游标");
+
+        // 广播层真值（语料）：空队玩家**确实收到了** TurnInfo{0} ⇒ 上层不要把它丢掉
+        assert_eq!(truth4_usize("T", "soldier_zero_empty_roster"), 3,
+                   "语料里空队玩家应恰好 3 例");
+        assert_eq!(truth4_usize("T", "empty_roster_players"), 3,
+                   "语料里「有 TurnInfo 但从来没有 SoldierInfo」的玩家应恰好 3 个");
     }
 
     /// 广播层：默认（`0x463fd0` 观测）空表也发 `soldier_id = 0`。

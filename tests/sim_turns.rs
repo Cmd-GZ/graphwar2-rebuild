@@ -21,6 +21,47 @@ use gw2_rebuild::server::RoomState;
 use gw2_rebuild::graphwar_shot_calculator::settle::Target;
 use gw2_rebuild::graphwar_turn_manager::{RoundCollection, SubmitResult};
 
+// ===========================================================================
+// T73 真值表：`fixtures/test_expectation_truth4.tsv` 的 `T/S*` 段
+// （生成器 `tools/gen_test_expectations4.py --section turns`，`--check` 可复算）
+//
+// 真值来源 = **冻结语料 401 份回放快照**里 **91 份 `SimultaneousTurns`** 的回放，
+// 共 **145 个回合**：每回合 `TurnInfo` 帧数 = 该回合玩家数，且全部同 tick、
+// `EndOfTurnInfo` 在全部 `TurnInfo` **之后**（145/145）。
+// ===========================================================================
+const TRUTH4: &str = include_str!("../fixtures/test_expectation_truth4.tsv");
+
+fn truth4(section: &str, key: &str) -> &'static str {
+    for line in TRUTH4.lines() {
+        let mut it = line.split('\t');
+        if it.next() == Some(section) && it.next() == Some(key) {
+            return it.next().unwrap_or("");
+        }
+    }
+    panic!("truth4 里没有 {section}/{key}")
+}
+
+fn truth4_usize(section: &str, key: &str) -> usize {
+    truth4(section, key).parse().unwrap_or_else(|_| panic!("{section}/{key} 不是整数"))
+}
+
+/// 把 `{"2": 102, "3": 25}` 这种直方图拆成 `(值, 次数)` 列表。
+fn parse_hist(text: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    for part in text.trim_matches(['{', '}']).split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let (k, v) = part.split_once(':').expect("直方图格式");
+        out.push((
+            k.trim().trim_matches('"').parse().expect("键是整数"),
+            v.trim().parse().expect("值是整数"),
+        ));
+    }
+    out
+}
+
 fn room(turn_mode: &str) -> RoomState {
     RoomState {
         room_name: "Graphwar Game".into(),
@@ -351,19 +392,58 @@ fn single_shot_is_byte_identical_to_fire() {
 // 7. 收集阶段
 // ---------------------------------------------------------------------------
 
-/// 攒齐就结算；没攒齐不结算。
+/// 攒齐就结算；没攒齐不结算。**名单规模取自真回放**。
+///
+/// ## 真值来源（T73 / 计划 C05，观测·冻结语料）
+///
+/// 语料里 **91 份 `SimultaneousTurns` 回放**共 **145 个回合**，每回合的 `TurnInfo`
+/// 帧数 = 该回合玩家数（直方图 `{2:102, 3:25, 4:4, 5:1, 7:3, 8:6, 9:4}`），全部同 tick，
+/// 且 `EndOfTurnInfo` 在这些 `TurnInfo` **之后**（145/145，0 例外）。
+/// ⇒ 「一个回合要等它公告过的每个玩家」这件事有了真形状；本测试用**真实的名单规模**
+/// （1..9 人）逐个走一遍，而不是随手写的 3 个人。
+///
+/// 仍然是**契约**的部分：`RoundCollection` 本身是我方服务端收集器（原版没有服务端源码），
+/// `resolve()` 按公告顺序**不在**语料里直接可见（回放不记提交到达顺序）。
 #[test]
 fn collection_waits_for_every_announced_player() {
+    // ── 真值：真回合的形状 ────────────────────────────────────────────
+    assert_eq!(truth4_usize("S", "sim_files"), 91, "语料里 SimultaneousTurns 回放份数变了");
+    let rounds = truth4_usize("S", "sim_rounds");
+    assert_eq!(rounds, 145, "语料里同时回合数变了");
+    assert_eq!(truth4_usize("S", "end_of_turn_after_all_turninfo"), rounds,
+               "真回放里每一个同时回合的 EndOfTurnInfo 都在全部 TurnInfo 之后");
+    assert_eq!(truth4_usize("S", "function_fire_request_frames"), 0,
+               "回放不录 client→server 的 FunctionFireRequest");
+    let hist = parse_hist(truth4("S", "turninfo_per_round"));
+    assert_eq!(hist.iter().map(|(_, c)| c).sum::<usize>(), rounds);
+
+    // ── 用真实名单规模走一遍收集器 ────────────────────────────────────
+    for (players, _rounds) in &hist {
+        let n = *players;
+        assert!(n >= 1 && n <= 9, "真回放的每回合玩家数应在 1..=9（实测 {n}）");
+        let ids: Vec<i64> = (0..n).map(|i| 7 + i as i64).collect();
+        let mut c = RoundCollection::<&str>::new(ids.clone(), None);
+        assert!(!c.is_complete(), "{n} 人回合：没人交时不该完整");
+        assert!(!c.should_resolve(0), "{n} 人回合：没人交 ⇒ 不该结算");
+        // 交到最后一人才算齐
+        for (i, id) in ids.iter().enumerate().take(n - 1) {
+            assert_eq!(c.submit(*id, "x"), SubmitResult::Accepted);
+            assert!(!c.should_resolve(0), "{n} 人回合：只交了 {}/{n} ⇒ 不该结算", i + 1);
+        }
+        let last = ids[n - 1];
+        assert_eq!(c.submit(last, "z"), SubmitResult::Accepted);
+        assert!(c.is_complete(), "{n} 人回合：攒齐应完整");
+        assert!(c.should_resolve(0), "{n} 人回合：攒齐就该结算");
+        // 顺序 = 公告顺序（契约：回放不记提交到达顺序）
+        let got: Vec<i64> = c.resolve().into_iter().map(|(p, _)| p).collect();
+        assert_eq!(got, ids, "{n} 人回合：结算顺序应等于公告顺序");
+    }
+
+    // 3 人回合的具体例子（`docs/141` §4 的口径）
     let mut c = RoundCollection::<&str>::new([7i64, 3, 5], None);
-    assert!(!c.is_complete());
-    assert!(!c.should_resolve(0), "没人交 ⇒ 不该结算");
     assert_eq!(c.submit(3, "b"), SubmitResult::Accepted);
-    assert!(!c.should_resolve(0), "只交了 1/3 ⇒ 不该结算");
     assert_eq!(c.submit(5, "c"), SubmitResult::Accepted);
     assert_eq!(c.submit(7, "a"), SubmitResult::Accepted);
-    assert!(c.is_complete());
-    assert!(c.should_resolve(0), "攒齐就该结算");
-    // **顺序 = 公告顺序**（`docs/141` §4，130/130 批），不是提交到达顺序。
     assert_eq!(c.resolve(), vec![(7, "a"), (3, "b"), (5, "c")]);
 }
 

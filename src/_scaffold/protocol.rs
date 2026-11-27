@@ -239,6 +239,78 @@ fn read_object(s: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    // ===================================================================
+    // T73 真值表：`fixtures/test_expectation_truth4.tsv`
+    // （生成器 `tools/gen_test_expectations4.py`；`--check` 可复算）
+    //
+    // 三段和本文件的测试对应：
+    //   `F/*` = 线上真 wire 字节（1717 帧里 1715 帧，逐帧核 sha256/frame_sha256/n）
+    //   `L/*` = 线上真帧的字段数与键序（含 `GameInfo` 52 帧的内层 9 字段）
+    //   `R/*` = arm64 二进制指令（crash reporter 端口，见 `tests/misc_modules.rs`）
+    // ===================================================================
+    const TRUTH4: &str = include_str!("../../fixtures/test_expectation_truth4.tsv");
+
+    /// 取一条真值（`section` + `key`）。
+    pub(super) fn truth4(section: &str, key: &str) -> &'static str {
+        for line in TRUTH4.lines() {
+            let mut it = line.split('\t');
+            if it.next() == Some(section) && it.next() == Some(key) {
+                return it.next().unwrap_or("");
+            }
+        }
+        panic!("truth4 里没有 {section}/{key}")
+    }
+
+    pub(super) fn truth4_usize(section: &str, key: &str) -> usize {
+        truth4(section, key).parse().unwrap_or_else(|_| panic!("{section}/{key} 不是整数"))
+    }
+
+    pub(super) fn truth4_u64(section: &str, key: &str) -> u64 {
+        let v = truth4(section, key);
+        u64::from_str_radix(v.trim_start_matches("0x"), 16)
+            .unwrap_or_else(|_| panic!("{section}/{key} 不是 hex"))
+    }
+
+    /// FNV-1a 64（与 `tools/gen_test_expectations4.py::fnv1a64` 同口径）。
+    fn fnv1a64(bytes: &[u8]) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in bytes {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        h
+    }
+
+    /// 抓包里的每一帧：`(事件名, n, 负载字节, 是否打码)`，按抓包顺序。meta 行跳过。
+    fn live_frames() -> Vec<(String, usize, Vec<u8>, bool)> {
+        const JSONL: &str = include_str!("../../fixtures/protocol_live_frames.jsonl");
+        let mut out = Vec::new();
+        for line in JSONL.lines() {
+            // 只用最小 JSON 切片：这个夹具每行都是扁平对象，键固定
+            let Some(epos) = line.find("\"event\": \"") else { continue };
+            let rest = &line[epos + 10..];
+            let Some(eend) = rest.find('"') else { continue };
+            let event = &rest[..eend];
+            if event == "null" || event.is_empty() {
+                continue; // meta 行（`"event": null`）
+            }
+            let Some(hpos) = line.find("\"hex\": \"") else { continue };
+            let hrest = &line[hpos + 8..];
+            let Some(hend) = hrest.find('"') else { continue };
+            let hexs = &hrest[..hend];
+            let npos = line.find("\"n\": ").expect("每帧都有 n");
+            let nrest = &line[npos + 5..];
+            let nend = nrest.find(|c: char| !c.is_ascii_digit()).unwrap_or(nrest.len());
+            let n: usize = nrest[..nend].parse().expect("n 是整数");
+            let masked = line.contains("\"hex_masked\": true");
+            let bytes: Vec<u8> = (0..hexs.len() / 2)
+                .map(|i| u8::from_str_radix(&hexs[i * 2..i * 2 + 2], 16).expect("抓包 hex"))
+                .collect();
+            out.push((event.to_string(), n, bytes, masked));
+        }
+        out
+    }
+
     /// **结构 pin（T66）**：`GameInfo` 在本 crate 里**只有一份定义**，且 9 个字段/键序/严格解析都被钉住。
     ///
     /// 为什么要有这条：原版只有**一个** `struct GameInfo`（`0x5060d0`，9 字段），
@@ -274,7 +346,10 @@ mod tests {
             locked: _,
         } = info.clone();
 
-        // ② 键序：`to_json` 的键必须等于字段表（同一个顺序 = 二进制 `0x5060d0` 的键序）。
+        // ② 键序：`to_json` 的键必须等于字段表（同一个顺序 = 二进制 `0x5060d0` 的键序），
+        //    **且**必须等于线上 52 帧 `GameInfo` 的**真帧内层键序**（T73 / 计划 R04）：
+        //    期望值不再是"我方这张表"，而是抓包字节（`truth4` 的 `L/GameInfo/inner_keyorder`
+        //    由 `tools/gen_test_expectations4.py` 从每一帧的负载字节解 JSON 得到）。
         let keys: Vec<String> = split_fields(
             info.to_json().trim_start_matches('{').trim_end_matches('}'),
         )
@@ -282,6 +357,14 @@ mod tests {
         .map(|(k, _)| k)
         .collect();
         assert_eq!(keys, GAME_INFO_FIELDS.map(str::to_string).to_vec());
+        let live_order: Vec<String> = truth4("L", "GameInfo/inner_keyorder")
+            .split('|')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        assert_eq!(keys, live_order,
+                   "GameInfo 的键序与线上真帧不一致（真值见 fixtures/test_expectation_truth4.tsv）");
+        assert_eq!(live_order.len(), GAME_INFO_FIELDS.len(), "真帧内层字段数应等于我方字段表");
 
         // ③ serde 两个方向：`to_json` → `parse` 必须回到原样（枚举按变体名严格往返）。
         let m = parse_message(&format!("{{\"X\":{}}}", info.to_json())).unwrap();
@@ -314,17 +397,60 @@ mod tests {
         assert_eq!(get_str(&msgs[0], "game_name").as_deref(), Some("Graphwar Game"));
     }
 
+    /// 帧格式 = `u16 大端长度前缀 + UTF-8 负载`。
+    ///
+    /// ## 真值来源（T73 / 计划 R01，`逐位`）
+    ///
+    /// **不再**只做我方 `encode → decode` 往返（那样编码/解码同时错也恒绿）。真值是
+    /// **线上抓到的 wire 字节**：`fixtures/protocol_live_frames.jsonl` 的 1717 帧里
+    /// **1715 帧**（2 条打码帧除外）每帧自带 `frame_sha256 = sha256(u16be(n) ‖ payload)`
+    /// 与 `sha256 = sha256(payload)`（生成器 `tools/gen_test_expectations4.py::verify_live`
+    /// 已逐帧核过这两项）。本测试用**我方 `Frame::encode`** 重建每一帧，把 1715 个完整帧
+    /// 按抓包顺序拼起来算 FNV-1a 64，必须等于抓包字节的 FNV（`truth4` 的 `F/wire_fnv`）；
+    /// 只要前缀字节序反了、把前缀长度算成负载+2、或写成 u32，FNV 立刻不同。
+    ///
+    /// 复跑：`.reference/venv/bin/python tools/gen_test_expectations4.py --check`
     #[test]
     fn frame_length_prefix_matches_payload_length() {
-        let f = Frame { payload: "{\"TickRequest\":{}}".into() };
-        let wire = f.encode();
-        assert_eq!(wire.len(), f.payload.len() + 2);
-        assert_eq!(&wire[..2], &(f.payload.len() as u16).to_be_bytes());
-        let (back, used) = Frame::decode(&wire).unwrap();
-        assert_eq!(back, f);
-        assert_eq!(used, wire.len());
+        let frames = live_frames();
+        let masked = frames.iter().filter(|f| f.3).count();
+        assert_eq!(frames.len(), truth4_usize("F", "frames_total"),
+                   "抓包帧数与真值表不符（夹具被换过）");
+        assert_eq!(masked, truth4_usize("F", "frames_masked"), "打码帧数不符");
+        let verified: Vec<&(String, usize, Vec<u8>, bool)> =
+            frames.iter().filter(|f| !f.3).collect();
+        assert_eq!(verified.len(), truth4_usize("F", "frames_verified"));
+
+        let mut wire: Vec<u8> = Vec::new();
+        let mut n_checked = 0usize;
+        for (event, n, payload, _) in &verified {
+            assert_eq!(payload.len(), *n, "{event}: 抓包 n 与负载字节数不符");
+            let payload = std::str::from_utf8(payload).expect("线上负载应是 UTF-8");
+            let f = Frame { payload: payload.to_string() };
+            let w = f.encode();
+            assert_eq!(w.len(), n + 2, "{event}: 帧长应为负载 + 2");
+            assert_eq!(&w[..2], &(*n as u16).to_be_bytes(),
+                       "{event}: 长度前缀必须是大端 u16 且等于负载字节数（不含前缀自身）");
+            // 解码方向：同一份 wire 字节必须解回同一帧
+            let (back, used) = Frame::decode(&w).expect("整帧应能解码");
+            assert_eq!(back.payload, payload, "{event}: 解码回来的负载变了");
+            assert_eq!(used, w.len(), "{event}: 解码消耗字节数应为整帧");
+            wire.extend_from_slice(&w);
+            n_checked += 1;
+        }
+        assert_eq!(n_checked, verified.len());
+        assert_eq!(wire.len(), truth4_usize("F", "wire_len"),
+                   "1715 帧完整 wire 字节总数与抓包不符");
+        assert_eq!(fnv1a64(&wire), truth4_u64("F", "wire_fnv"),
+                   "1715 帧完整 wire 字节与抓包**逐字节**不一致（前缀口径错了）");
     }
 
+    /// 「半个长度字段 / 负载不完整 ⇒ `None`」是**我方解码器的契约**。
+    ///
+    /// ⚠️ **契约断言，不含语义**（T73 / 计划 R07）：真流量里不会有半帧，原版
+    /// `graphwar_stream_buffer` 的半帧行为没有抓到。等价的**真值侧**覆盖是
+    /// `frame_length_prefix_matches_payload_length`：抓包 1715 个整帧的 wire 字节
+    /// 我方逐帧重建后 FNV 一致（整帧能解、能编）。**不能把这条当复原证据。**
     #[test]
     fn decode_waits_for_complete_frame() {
         let f = Frame { payload: "{\"TickRequest\":{}}".into() };
@@ -342,6 +468,11 @@ mod tests {
         assert_eq!(get_int(&c, "entity_id"), Some(229));
     }
 
+    /// 非 JSON 输入必须拒绝。
+    ///
+    /// ⚠️ **契约断言，不含语义**（T73 / 计划 R08）：真流量里不会有非法帧（1717 帧真帧
+    /// 0 条非法，`fixtures/protocol_live_frames.jsonl` 的 `parse_ok` 全为 true）⇒
+    /// 原版的失败路径**没有对应物**。这条只证我方解析器不吞垃圾。
     #[test]
     fn rejects_non_json() {
         assert!(parse_message("not json").is_none());
@@ -743,6 +874,7 @@ mod death_tests {
 
 #[cfg(test)]
 mod broadcast_tests {
+    use super::tests::{truth4, truth4_usize};
     use super::*;
 
     fn captured_broadcasts() -> Vec<String> {
@@ -765,16 +897,33 @@ mod broadcast_tests {
     }
 
     /// 广播本身不带长度前缀；对局 TCP 帧才带 `u16` 大端长度。
+    ///
+    /// ## 真值来源（T73 / 计划 R05）
+    ///
+    /// 两侧都是抓到的真实字节：
+    /// * **LAN 广播**（`fixtures/protocol_match.jsonl` 的 `{"room_name"…}` 行，UDP 侧原文）
+    ///   首字节 = `{`（0x7b）⇒ **没有**前缀（若带前缀，首字节会是长度高位 `0x00`）；
+    /// * **对局 TCP 帧**（`fixtures/protocol_live_frames.jsonl`）**有**前缀：1715 帧的
+    ///   `frame_sha256 = sha256(u16be(n) ‖ payload)`（见 `frame_length_prefix_matches_payload_length`）。
+    ///
+    /// 两条一起钉死「前缀只在 `Frame` 层，广播载荷里没有」。
     #[test]
     fn frame_prefix_is_not_part_of_broadcast() {
         let line = captured_broadcasts().remove(0);
+        assert_eq!(line.as_bytes()[0], 0x7b,
+                   "LAN 广播原文首字节应为 `{{`（0x7b）");
         let b = Broadcast::parse(&line).unwrap();
         let json = b.to_json();
         assert!(!json.starts_with('\u{0}'), "广播不应带二进制长度前缀");
+        assert_eq!(truth4("F", "lan_broadcast_first_byte"), "0x7b",
+                   "真值表里 LAN 广播首字节口径变了");
         // 而 Frame 编码会加 2 字节前缀，长度等于负载字节数
         let f = Frame { payload: json.clone() };
         let wire = f.encode();
         assert_eq!(wire.len(), json.len() + 2);
+        // 真 wire 侧：抓包里**确实**存在带前缀的对局帧（数字来自抓包，不是我方假设）
+        assert!(truth4_usize("F", "frames_verified") > 1700,
+                "抓包里能逐字节重建的对局帧应上千");
     }
 }
 
@@ -1010,6 +1159,13 @@ mod emit_f64_tests {
         assert!(n >= 20, "抓包夹具里的浮点字面量太少（{n}），这条护栏失去意义");
     }
 
+    /// `ryu` 与 `Display` 的已知差异。
+    ///
+    /// ⚠️ **契约断言（我方格式化器的行为），不含语义**（T73 / 计划 R09）：期望串是
+    /// 「serde_json 会这么写」的**推断**，真帧里只有其中几种形态出现过。真值侧的覆盖是
+    /// `ryu_fixtures_roundtrip`（输入 = 抓包里的浮点原文，逐字往返）与
+    /// `emit_*_matches_captured`（我方产出的整帧与抓包逐字节）。这条钉的是
+    /// 「我方 `emit_f64` 不退化成 `Display`」，**不是**「ryu 已逐位复原」。
     #[test]
     fn ryu_known_divergences() {
         // (值, 旧写法 `{}`, serde_json/ryu 写法)
@@ -1041,6 +1197,11 @@ mod emit_f64_tests {
         assert_eq!(emit_f64(f64::INFINITY), "null");
     }
 
+    /// 我方 `emit_*` 对整数值浮点带 `.0`。
+    ///
+    /// ⚠️ **契约断言**（T73 / 计划 R09）：期望串是我方构造的（`150.0`/`-9.0`/`15.0`），
+    /// 不是抓到的字节。真值侧见 `emitted_function_points_matches_captured_floats`
+    /// 与 `emit_f64` 对抓包浮点原文的往返（`ryu_fixtures_roundtrip`）。
     #[test]
     fn emit_message_uses_ryu() {
         // 整数值的 `end_x` / `pos_y` 必须带 `.0`
@@ -2772,6 +2933,12 @@ mod supplemented_event_tests {
     }
 
     /// 23 个名字一个不多一个不少；三张表（名字 / 字段数 / 抓包档）互相一致。
+    ///
+    /// ⚠️ **契约断言（表结构不变量），不含语义**（T73 / 计划 R06）：这条只证
+    /// 「我方三张表彼此不矛盾」，**不构成复原证据** —— 三张表都是我方的代码。
+    /// 每个事件的语义/形状真值在别处：字段数与键序见 `typed_events_have_exactly_the_serde_field_count`
+    /// 与 `upgraded_events_declare_the_binary_field_names`（期望值来自抓包字节），
+    /// 逐帧回放见 `replays_every_live_frame_of_the_supplemented_kinds`（352 帧逐字节）。
     #[test]
     fn all_twenty_three_names_are_implemented() {
         assert_eq!(SUPPLEMENTED_EVENT_NAMES.len(), 23);
@@ -2795,21 +2962,87 @@ mod supplemented_event_tests {
         }
     }
 
-    /// 强类型那 13 个：样本的字段数必须与 serde 的 N **逐个相等**。
+    /// 强类型那 13 个：**线上真帧的字段数**必须与我方解析出的字段数逐个相等。
+    ///
+    /// ## 真值来源（T73 / 计划 R02）
+    ///
+    /// 改前：期望值 = 我方 `SERDE_FIELD_COUNTS`（人工从 `.rodata` 抄进源码的 N）—— 抄错一位、
+    /// 或我方解析把嵌套逗号当分隔符/把空体算成 1 个字段，两边同错就恒绿。
+    ///
+    /// 改后：期望值 = **抓包字节里数出来的字段数**（`truth4` 的 `L/<事件>/fieldcounts`，
+    /// 由 `tools/gen_test_expectations4.py` 从每一帧负载解 JSON 后数顶层字段；每种事件的
+    /// 直方图只有一个键 ⇒ 逐帧恒定）。`SERDE_FIELD_COUNTS` 降为**交叉核对**：
+    /// `.rodata` 的 N 与真帧实测必须一致（这一句仍然有价值：它把两个独立来源对上）。
+    ///
+    /// `VersionInfo` 线上 1717 帧没有它 ⇒ 用旧抓包 `fixtures/protocol_match.jsonl` 的 1 帧
+    /// （`L/VersionInfo/fixture_*`）。
+    ///
+    /// 复跑：`.reference/venv/bin/python tools/gen_test_expectations4.py --check`
     #[test]
     fn typed_events_have_exactly_the_serde_field_count() {
+        use super::tests::{truth4, truth4_usize};
+
         assert_eq!(CAPTURED_TYPED_EVENTS.len(), 13);
+        assert_eq!(truth4_usize("L", "GameInfo/frames"), 52, "GameInfo 真帧数变了");
         for kind in CAPTURED_TYPED_EVENTS {
-            let n = SERDE_FIELD_COUNTS
-                .iter()
-                .find(|(k, _)| *k == kind)
-                .and_then(|(_, n)| *n)
-                .unwrap_or_else(|| panic!("{kind} 应有 serde 字段数"));
+            // `VersionInfo` 线上 0 帧 ⇒ 真值来自旧抓包夹具的 1 帧（单独一行）
+            if kind == "VersionInfo" {
+                let want = truth4_usize("L", "VersionInfo/fixture_fieldcount");
+                let line = sample_of(kind);
+                let m = parse_message(&line).expect("旧抓包 VersionInfo 应能解析");
+                let got = split_fields(m.body.trim()).len();
+                assert_eq!(got, want, "VersionInfo: 字段数与旧抓包真帧不符");
+                assert_eq!(
+                    SERDE_FIELD_COUNTS.iter().find(|(k, _)| *k == kind).and_then(|(_, n)| *n),
+                    Some(want), "VersionInfo: `.rodata` 的 N 与旧抓包真帧字段数不一致"
+                );
+                continue;
+            }
+            // ① 真值：抓包里数出来的字段数（直方图必须只有一个键）
+            let hist = truth4("L", &format!("{kind}/fieldcounts"));
+            let mut counts: Vec<usize> = Vec::new();
+            for part in hist.trim_matches(['{', '}']).split(',') {
+                if part.trim().is_empty() {
+                    continue;
+                }
+                let (k, v) = part.split_once(':').expect("直方图格式");
+                let n: usize = k.trim().trim_matches('"').parse().expect("字段数是整数");
+                let c: usize = v.trim().parse().expect("计数是整数");
+                for _ in 0..c {
+                    counts.push(n);
+                }
+            }
+            let frames = live_payloads(kind).len();
+            assert_eq!(counts.len(), frames,
+                       "{kind}: 真值表的字段数样本数与实际帧数不一致（夹具被换过）");
+            assert!(
+                counts.windows(2).all(|w| w[0] == w[1]),
+                "{kind}: 抓包里的字段数不是恒定的（{hist}）⇒ 不能直接钉一个数"
+            );
+            let want = counts[0];
+
+            // ② 实测：我方在这条事件**每一帧**上数出来的字段数
+            for payload in live_payloads(kind) {
+                let line = std::str::from_utf8(&payload).expect("线上负载应是 UTF-8");
+                let m = parse_message(line).expect("线上帧应能解析");
+                let body = m.body.trim();
+                let got = if body.is_empty() { 0 } else { split_fields(body).len() };
+                assert_eq!(got, want,
+                           "{kind}: 线上真帧的字段数 {got} 与抓包真值 {want} 不符");
+            }
             let line = sample_of(kind);
             let m = parse_message(&line).expect("样本应能解析");
             let body = m.body.trim();
             let got = if body.is_empty() { 0 } else { split_fields(body).len() };
-            assert_eq!(got, n, "{kind} 的实测字段数 {} 与 serde 的 N={} 不符", got, n);
+            assert_eq!(got, want, "{kind}: 样本字段数与真帧不符");
+
+            // ③ 交叉核对：`.rodata` 的 N 与真帧实测要一致（不一致 ⇒ 两个来源打架，必须查）
+            let rodata = SERDE_FIELD_COUNTS
+                .iter()
+                .find(|(k, _)| *k == kind)
+                .and_then(|(_, n)| *n);
+            assert_eq!(rodata, Some(want),
+                       "{kind}: `.rodata` 的 serde N 与线上真帧实测字段数不一致");
         }
     }
 
@@ -2821,14 +3054,33 @@ mod supplemented_event_tests {
     /// （`serialize_field` 的调用序 + 单态类型），前提已不成立。
     /// 这是本轮**唯一**改动的既有断言，且改后更强：从"不许有字段"变成
     /// "字段名与键序必须逐字等于从二进制读出的值"。
+    ///
+    /// ## T73 / 计划 R03：键序的期望值从「我方 WIRE_SPEC」换成「抓包真帧」
+    ///
+    /// 改前：期望键序 = 我方 `wire_field_order(kind)`（`WIRE_SPEC` 表，人工从指令流抄的）。
+    /// 那份表与实现若同时错（键名拼错 / 键序颠倒），往返测试是拿**同一个 `sample_of`** 比的 ⇒
+    /// 恒绿。改后：
+    ///
+    /// * **7 个有真帧的**（LockInfo / LockRequest / ChatMessage / ChatMessageRequest /
+    ///   GameRemoved / ClearObstacles + 语料里的 `TurnLimitInfo` 21 帧）：期望键序取
+    ///   `truth4` 的 `L/<事件>/keyorder`（`tools/gen_test_expectations4.py` 从**负载字节**解
+    ///   JSON 得到；每种事件现场键序唯一）；
+    /// * **3 个零真帧的**（`GameHeartbeat` / `ClearBansRequest` / `BanConnectionRequest`）：
+    ///   线上 1717 帧 0 帧 ⇒ **仍是 `WIRE_SPEC`（推断）**，逐条注明。
     #[test]
     fn upgraded_events_declare_the_binary_field_names() {
+        use super::tests::truth4;
+
         let upgraded: Vec<&str> = SUPPLEMENTED_EVENT_NAMES
             .iter()
             .copied()
             .filter(|k| !CAPTURED_TYPED_EVENTS.contains(k))
             .collect();
         assert_eq!(upgraded.len(), 10);
+        // 三个零真帧事件（T53 三会话 1717 帧全无）⇒ 键序只能来自 WIRE_SPEC（推断）
+        const NO_LIVE_FRAME: [&str; 3] =
+            ["GameHeartbeat", "ClearBansRequest", "BanConnectionRequest"];
+        let mut from_capture = 0usize;
         for kind in upgraded {
             let line = sample_of(kind);
             let m = parse_message(&line).expect("样本应能解析");
@@ -2837,16 +3089,49 @@ mod supplemented_event_tests {
                 ev.extra_fields().is_empty(),
                 "{kind}: 已知字段应全部进强类型槽位，extra 必须为空"
             );
-            let order = wire_field_order(kind)
+            let spec_order = wire_field_order(kind)
                 .unwrap_or_else(|| panic!("{kind} 不在 WIRE_SPEC 里"));
             let out = ev.to_msg();
             assert_eq!(out, line, "{kind} 往返后字节不一致");
             let m2 = parse_message(&out).expect("重新解析");
             let got: Vec<String> =
                 split_fields(&m2.body).into_iter().map(|(k, _)| k).collect();
-            let want: Vec<String> = order.iter().map(|s| s.to_string()).collect();
-            assert_eq!(got, want, "{kind} 的线上键序与 WIRE_SPEC 不一致");
+            let spec: Vec<String> = spec_order.iter().map(|s| s.to_string()).collect();
+            assert_eq!(got, spec, "{kind} 的键序与 WIRE_SPEC 不一致");
+
+            // ★ 真值侧：有真帧的事件，键序必须等于**抓包现场键序**
+            if NO_LIVE_FRAME.contains(&kind) {
+                // 零真帧：明确标推断（真值表里 frames=0）
+                assert_eq!(truth4("L", &format!("{kind}/frames")), "0",
+                           "{kind} 原先零真帧，现在有真帧了 ⇒ 该条可以再升一档，请更新本测试");
+                continue;
+            }
+            // `TurnLimitInfo` 线上 0 帧，真帧在**冻结语料**里（21 帧）⇒ 键序取 `T/` 段
+            let live_key = if kind == "TurnLimitInfo" {
+                "T".to_string()
+            } else {
+                "L".to_string()
+            };
+            let live_key2 = if kind == "TurnLimitInfo" {
+                "turn_limit_keyorder".to_string()
+            } else {
+                format!("{kind}/keyorder")
+            };
+            let live_order: Vec<String> =
+                truth4(&live_key, &live_key2)
+                    .split('|')
+                    .filter(|s| !s.is_empty()) // 空体事件（ClearObstacles）的键序就是空列表
+                    .map(str::to_string)
+                    .collect();
+            assert_eq!(spec, live_order,
+                       "{kind} 的键序与**抓包真帧**不一致（WIRE_SPEC 可能抄错了）");
+            assert_eq!(got, live_order,
+                       "{kind} 序列化出的键序与抓包真帧不一致");
+            from_capture += 1;
         }
+        assert_eq!(from_capture, 7,
+                   "应有 7 个事件的键序被钉在抓包字节上（LockInfo/LockRequest/ChatMessage/\
+                    ChatMessageRequest/GameRemoved/ClearObstacles/TurnLimitInfo）");
     }
 
     /// 夹具里属于这 23 个事件的行，必须能**逐字节**回放。

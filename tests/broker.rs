@@ -154,9 +154,27 @@ fn host_disconnect_removes_its_rooms() {
     );
 }
 
+/// 房间表过期：TTL 一到，静默房间被清掉。
+///
+/// ## 口径（T73 / 计划 B03）：**换不了，只改注释**
+///
+/// 这条在 T37 审计里是 `U` 档（判不出）。本轮查清后判**换不了**，理由是结构性的：
+///
+/// * **broker 服务端是原版没有的**（`AGENTS.md` §4：`_scaffold/` 装的就是"原版没有对应物"
+///   的东西：GDExtension 入口、C ABI、报文装配、**broker 服务端**…）。原版客户端只做
+///   「连 broker → 收 `GameInfo`/`GameRemoved`」，**房间表的 TTL 在服务端**，客户端二进制里
+///   不存在这段逻辑 ⇒ 没有任何物证可对拍。
+/// * 唯一相关的二进制常量是 **LAN 广播**的房间条目 TTL：`graphwar_lan_broadcaster_v6::
+///   ENTRY_TTL_SECS = 10`（arm64 `0x3de6e4` `cmp x0,#0xa` + `b.lo`，见 T42 / `docs/06` §92），
+///   广播周期 1 s（`0x3de7c8`–`0x3de7d4`）。那是**另一个机制**（UDP 多播的 LAN 房间列表），
+///   **不能**挪来当 broker 的 TTL —— 两者协议不同（TCP broker vs UDP LAN）、生命周期不同。
+///
+/// ⇒ 本测试只证 `RoomTable::expire` 的**契约**（TTL 0 ⇒ 立刻过期；表随之清空），
+/// **不构成复原证据**。`RoomTable::room_ttl` 的默认 120 s 是**我方推断值**（`broker.rs` 里
+/// 已标注），原版真值**未知**。
 #[test]
 fn room_table_expires_silent_rooms() {
-    // 不需要网络：直接测过期逻辑（真实 TTL 未知，见 docs/115）。
+    // 不需要网络：直接测过期逻辑。⚠️ TTL 的真值**未知**（broker 服务端原版没有对应物）。
     let mut t = RoomTable::new();
     t.upsert(sample("a:1", 0, "Setup"), 1);
     assert_eq!(t.expire(Duration::from_secs(0)), vec!["a:1".to_string()]);
