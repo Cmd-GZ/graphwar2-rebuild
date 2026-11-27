@@ -64,7 +64,10 @@ P4  命名 —— 真名 348/527；179 无名（138 族级 + 41 未知）
 - `src/` = **原版文件名 + 我们的内部结构**；生产函数 2 388 里 **48.7% 在 `_scaffold`**（T49 已搬回 4 处、1191→1150）。
 - 测试：1772 条里 **341 条纯自洽**，**真正逐值对拍仅 ~9.6%**；`client/tools/*_check.gd` 那 1 961 条**从没审过**（T50 已审，修 24 条 M 镜像 → 1978）。
 - 文档：抽样 122 条，**27.9% 档位与物证不匹配**；最不可信的恰是最常读的三篇（`docs/00`/`docs/16`/`HANDOVER`）——已按清单改正。
-- **招牌 `527/527` 是模块级口径**，函数级当时只有 **131/527**（现 181）。
+             **函数级 **312/527 = 59.2%**（口径 A：分母含 na）／**312/439 = 71.1%**（口径 B：分母剔除 `na:*`，即 std 单态化 12 + gdext 宏产物 69 + 同体泛型实例 7）**
+             —— **两种口径必须同时报**（`docs/06` §129 是这套口径的审计：F3 的 153 条里只有 **53 条是 real-missing**，
+             88 条不该我们手写；**7 个模块的 F3 是 100% 的 na** ⇒ 按"条数"排工作量会一半白干）。
+             `fixtures/f3_triage.tsv` 是逐条台账（153 行 + F2 扫描 21 行），`tools/f3_triage.py --control` 可复算判定。
 
 **今天新增的工具（别重复造）**：`tools/docsec.py`（按节号合并 docs，**同号拒跑**，为此丢过一节正文）、
 `tools/headless_audit.py`（headless 断言 M/C/G 分档）、`tools/function_coverage.py`、`tools/struct_audit.py`、
@@ -94,7 +97,10 @@ bisect 把窗口收窄到 **(a3ed8c7, 5f74a29]**；**60 367 px 里 98.6 % 是右
 
 ```
 可归属函数   **模块级** 527/527（每模块都有文件+档位；逐位 89 / 观测 438 是模块档位加权）
-             **函数级 **275/527 = 52.2%**（2026-11-27 重算：F1 275 / F2 97 / F3 155）**（`docs/06` §87 首次实测 131/527；此后 T45/T48/T52/T55/T62 逐批落码 + T57/T63 把 402+57 个函数从 scaffold 搬回模块使 F2→F1）｜F3 缺口 249→**155**（T48 诚实拆账：`level_manager` 的 40/40 里只有 14 条是外层函数、26 条是闭包行，27 个闭包未还原）
+             **函数级 **312/527 = 59.2%**（口径 A：分母含 na）／**312/439 = 71.1%**（口径 B：分母剔除 `na:*`，即 std 单态化 12 + gdext 宏产物 69 + 同体泛型实例 7）**
+             —— **两种口径必须同时报**（`docs/06` §129 是这套口径的审计：F3 的 153 条里只有 **53 条是 real-missing**，
+             88 条不该我们手写；**7 个模块的 F3 是 100% 的 na** ⇒ 按"条数"排工作量会一半白干）。
+             `fixtures/f3_triage.tsv` 是逐条台账（153 行 + F2 扫描 21 行），`tools/f3_triage.py --control` 可复算判定。
              （2026-11-26：`polish_notation_converter` 唯一可归属函数 `0x4f5450` 对拍成 18/18 逐位 ⇒ 88→89）
              **439 里本质可隔离执行的只有 129（29.4%）**，其余 310 要 Godot/分配器 ⇒ 这是「观测」分母的可及上限（`docs/06` §64）
              但这只是 13,263 个 Ghidra 函数里的 4.0% —— 见 §3「信息天花板」
@@ -228,7 +234,10 @@ t6 静态两屏（0 像素）；另由 lead 修掉 `update_sprite` 的源码级�
 export CARGO_HOME=$PWD/.reference/cargo-home CARGO_TARGET_DIR=$PWD/.reference/cargo-home/target
 cargo test --offline                                  # 2026-11-26 实测 1761 / 0 / 1 ignored
 cargo test --offline --features gdext-bindings        # 2026-11-26 实测 1867 / 0 / 1 ignored
-python3 tools/coverage_matrix.py --check              # 527 可归属（**模块级**）/ 逐位 89 / 观测 438；函数级见 §87
+             **函数级 **312/527 = 59.2%**（口径 A：分母含 na）／**312/439 = 71.1%**（口径 B：分母剔除 `na:*`，即 std 单态化 12 + gdext 宏产物 69 + 同体泛型实例 7）**
+             —— **两种口径必须同时报**（`docs/06` §129 是这套口径的审计：F3 的 153 条里只有 **53 条是 real-missing**，
+             88 条不该我们手写；**7 个模块的 F3 是 100% 的 na** ⇒ 按"条数"排工作量会一半白干）。
+             `fixtures/f3_triage.tsv` 是逐条台账（153 行 + F2 扫描 21 行），`tools/f3_triage.py --control` 可复算判定。
 python3 tools/check_doc_refs.py                       # rc=0
 R=.reference/replays/gw2-replays-snapshot/replays     # 403 个文件（401 回放 + 2 元数据），只读
 cargo run --release --offline -q --example replay_attrib -- --dir $R --drive fire  --policy default --json f.jsonl
