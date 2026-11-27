@@ -1098,7 +1098,7 @@ func _set_curve(points: PackedVector2Array, color: Color, player_id: int) -> voi
 		# **联机不摆时钟**：tick 轴由 `_drive_clock()` 每帧 `drive_frame()` 推、由
 		# `TickReply` 对齐（原版同一条链），这里只把已知的起飞 tick 灌进去。
 		# ⚠️ 以前这里摆成 `1.0` ⇒ `active_tick=0` 时当帧就"已飞 1 tick"，从第 1 个 tick
-		# 开始长——**那就是 T84 查出来的"多画了一条原版没有的弹道"**（`docs/06` §135.3/§136）。
+		# 开始长——**那就是 T84 查出来的"多画了一条原版没有的弹道"**（`docs/06` §135.3/§137）。
 		# 这里**不**喂点：喂点由 `_drive_clock()` 每帧做（原版是 `draw` 尾部那段循环每帧跑）。
 		# 抢在 `FunctionActive` 之前喂一帧，等于拿"默认 active_tick=0"去判在场 —— 那正是
 		# 旧版多画一条弹道的机制之一。
@@ -1184,7 +1184,7 @@ func _advance_curve(seconds: float) -> void:
 
 ## **每帧的时钟驱动**（原版 `GraphwarGameClient::process` → `drive_frame` 那条链）。
 ##
-## 三条路径分开，`docs/06` §136 有每一条的证据与差别：
+## 三条路径分开，`docs/06` §137 有每一条的证据与差别：
 ## * **联机** = 原版口径：`GraphwarPlane::drive_frame(delta)` 按定步 16_666_666 ns 推
 ##   `GraphwarTickHandler`（`0x519840`），再用 `TickReply{current_tick}` 把轴对齐到服务端
 ##   （`docs/06` §60.2.1 的观测：不回这条时原版 S8 里没有弹道）。

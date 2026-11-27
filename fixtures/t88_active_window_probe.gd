@@ -8,7 +8,7 @@
 #   $GODOT --headless --path client --script res://tools/t88_probe.gd    # 期望 fails=0
 #   rm client/tools/t88_probe.gd client/tools/t88_probe.gd.uid
 #
-# 判据（全部来自反汇编，不来自实现自证；`docs/06` §136）：
+# 判据（全部来自反汇编，不来自实现自证；`docs/06` §137）：
 #   * `drive_frame(0.5)` ⇒ tick 30（定步 `16_666_666 ns`，`0x519840`）；
 #   * `set_fractional_tick(550)` = 把轴对齐到服务端 tick（`TickReply` 那条路）；
 #   * `FunctionPoints` 先到、`FunctionActive{active_tick=615}` 后到 ⇒ entry 仍在、

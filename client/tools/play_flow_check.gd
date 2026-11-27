@@ -478,9 +478,9 @@ func _initialize() -> void:
 	# ⚠️ **T88（2026-11-27）改判**：§58.3 的"不接"已被反转 —— 联机路径每帧调
 	# `GraphwarPlane::drive_frame(delta)`（原版 `GraphwarGameClient::process` `0x518400` →
 	# `0x518240` → `0x519840` 那条链），弹道的揭示量从此按真 tick 现算，
-	# 不再由 `_curve_tick`（帧 delta 累加）当累计量。证据与前后读数见 `docs/06` §136。
+	# 不再由 `_curve_tick`（帧 delta 累加）当累计量。证据与前后读数见 `docs/06` §137。
 	ok(src.contains("\"drive_frame\", delta"),
-		"播放屏里**有** `drive_frame` 调用（决策已改判：接了，`docs/06` §136）")
+		"播放屏里**有** `drive_frame` 调用（决策已改判：接了，`docs/06` §137）")
 	var writers: PackedStringArray = _scan_src_symbols(
 		["pos_set_position(", "kernel_push_position", "gate_attach"])
 	ok(writers.is_empty(),

@@ -37,7 +37,7 @@ const CLIENT_SRC_DIR := "res://src"
 ##
 ## ⚠️ **T88（2026-11-27）改判**：`drive_frame` 已从这张表里**拿掉** —— 播放屏的联机路径现在
 ## 每帧调 `GraphwarPlane::drive_frame(delta)`（原版 `GraphwarGameClient::process` `0x518400`
-## 的那条链），这是**决策反转**，证据与前后读数见 `docs/06` §136。
+## 的那条链），这是**决策反转**，证据与前后读数见 `docs/06` §137。
 ## 剩下三个仍然禁止：它们指的是 `KernelProcessHost`/内核队列这套**另一条**通道
 ## （§58.3 说"不接"的那个），本轮的驱动走的是平面自己的时钟，与它无关。
 const PRODUCTION_FORBIDDEN := [
@@ -249,7 +249,7 @@ func _initialize() -> void:
 	# T88 改判：**接上了**（原版那条链：`0x518400` → `0x518240` → `0x519840`）。判据从
 	# "没有调用"翻成"确实调了"，并钉住它调的是**平面**的入口（不是 `KernelProcessHost`）。
 	ok(play_src.contains("\"drive_frame\", delta"),
-		"播放屏**每帧**调 `GraphwarPlane::drive_frame(delta)`（决策已改判：接了，`docs/06` §136）")
+		"播放屏**每帧**调 `GraphwarPlane::drive_frame(delta)`（决策已改判：接了，`docs/06` §137）")
 	ok(not play_src.contains("KernelProcessHost"),
 		"播放屏仍**没有** `KernelProcessHost`（内核队列那条通道依旧不接）")
 	var hits: PackedStringArray = _scan_client_sources(PRODUCTION_FORBIDDEN)

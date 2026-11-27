@@ -42,5 +42,5 @@ mech	—	—	ours	reveal_points_per_tick	—	30	点/tick	`0x4b67a0`–`0x4b6812`
 mech	—	—	ours	fade_alpha_d27	—	0.9833333	alpha	`max(0, 1 − (d − len/30)/60)`（`0x455a40`）；alpha@d=26 = 1.0、@d=85 = 0.0166667、@d=86 已出窗口
 mech	—	—	ours	active_tick_from_event	0 (恒 0)	615	tick	`FunctionActive{active_tick}`（`0x456b80` 写 `value+0x74`）；写入计数 = 1（来路可证）
 mech	—	—	ours	entry_survives_out_of_window	—	1	条	`0x4b6418 remove_function` 是 drawer 的方法 ⇒ 管理器那一格留着（`FunctionPoints` 先到 / `FunctionActive` 后到才成立）
-mech	—	—	ours	probe_fails	—	0	条	探针 = fixtures/t88_active_window_probe.gd（19 条断言；跑法见文件头）。命令与输出在 docs/06 §136.4
-# 复跑命令（照抄）见 docs/06 §136.7；探针与两轮采集的完整清单在同一节。
+mech	—	—	ours	probe_fails	—	0	条	探针 = fixtures/t88_active_window_probe.gd（19 条断言；跑法见文件头）。命令与输出在 docs/06 §137.4
+# 复跑命令（照抄）见 docs/06 §137.7；探针与两轮采集的完整清单在同一节。

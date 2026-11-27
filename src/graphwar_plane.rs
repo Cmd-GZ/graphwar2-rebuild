@@ -2005,7 +2005,7 @@ impl GraphwarPlane {
     /// 返回推进后的 `get_fractional_tick()`。
     ///
     /// ⚠️ 本方法**不**喂点、不重画：喂点仍是原版那条路（`draw` 尾部 → [`feed_functions`]），
-    /// 由 GDScript 侧每帧调 `queue_redraw`（`docs/06` §136）。
+    /// 由 GDScript 侧每帧调 `queue_redraw`（`docs/06` §137）。
     #[func]
     fn drive_frame(&mut self, delta: f64) -> f64 {
         /// 一帧最多补几个 tick（10 s @ 60 Hz）：长卡顿后不让一帧追几千个。
@@ -2025,7 +2025,7 @@ impl GraphwarPlane {
         );
         // 原版 `tick()` 把 `TickEvent`/`TickRequest` 推进事件队列；本类没有那条队列
         // （订阅者是 `GraphwarEventHandler`，我方走 GDScript 的 net 会话）⇒ 这里丢掉，
-        // 否则每帧一条会无限长。**这是本层的差**，登记在 `docs/06` §136。
+        // 否则每帧一条会无限长。**这是本层的差**，登记在 `docs/06` §137。
         self.tick_source.outbox.clear();
         self.fractional_tick()
     }
