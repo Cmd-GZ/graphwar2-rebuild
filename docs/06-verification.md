@@ -21167,3 +21167,236 @@ $PY tools/bit_exact_attrib.py --json c.jsonl --check-baseline --axis batch_conv 
 5. `address` 的 32 字节枚举身份（`SocketAddr` = 推断）：仍缺符号或构造点 32 字节读证据。
 6. 本轮**没有把任何推断写成结论**：E8 上界一律标 `推断`、`address` 身份仍 `推断`、
    `PatternSegment` 那行的窗口归属明写"存疑、不许当结论"。
+
+## 120. T71 F3 重活：`evolutionator` / `root_node` / `lan_vbox` 三模块 **35 条 F3 缺口**的逐指令判决 —— 只有 **2 条**是模块业务函数（已落码，函数级 **275 → 277**/527），**12 条查明是 std 排序单态化、21 条是 gdext 宏产物**（2026-11-27，任务 T71 / `task-68` / 分支 `agent/f3-heavy`）
+
+> **节号**：`tools/docsec.py check docs/06-verification.md` 现读数 `1..119`（断号 `43/89` 是历史缺口），
+> 本节 = 下一个空号 `120`。
+> **台账**（单独 commit `70ccb27`）：[`fixtures/f3_heavy_anchors.tsv`](../fixtures/f3_heavy_anchors.tsv)
+> —— 35 行 × 10 列 `vaddr|真名|FDE范围|字节|语义|被调者|调用者|Location|档位|落点`。
+> **口径**：一律 **ELF vaddr（= RVA）**；函数范围由 `.eh_frame` FDE 自解（不读 Ghidra 表）；
+> 文件归属一律 `panic::Location`（`tools/addr_probe.py locs`）。
+
+### 120.0 一页结论
+
+任务书按「缺口条数」点的三个重模块（`fixtures/function_coverage.tsv` 的 F3 行）**逐条**取证后：
+
+| 模块 | F3 行数 | 判决 | 落码 | 该模块 F1/F3（复算） |
+|---|---|---|---|---|
+| `graphwar_function_evolutionator.rs` | 13 | **12 条 = std `core::slice::sort` 单态化**（不是模块逻辑）+ 1 条（`calculate_functions_old`）规模未读完 | **0** | `1/13` → `1/13` |
+| `graphwar_root_node.rs` | 13 | 2 条 = 真业务方法（**落码**）+ 11 条 = gdext 宏产物 | **2** | `7/13` → `9/13`（F3 `13` → `11`） |
+| `graphwar_lan_vbox.rs` | 9 | 9 条全是 gdext 宏产物 / 源码闭包（父函数无真名） | **0** | `1/9` → `1/9` |
+| 合计 | 35 | 2 可落码 + 12 std + 21 宏产物 | **2** | F3 `155` → **`153`** |
+
+**函数级复原率（`fixtures/function_coverage.tsv` 重跑）：`275/527 = 52.2%` → `277/527 = 52.6%`**
+（F1 `275 → 277`、F2 `97` 不变、F3 `155 → 153`）。
+
+⚠️ 这条结论不好看但必须留：**三个模块的 F3 缺口里 94%（33/35）不是"我们还没写的业务函数"**。
+把它们的地址当工作量排下去，下一轮会白干 —— 这正是 §0 第 2 条要防的东西。
+
+### 120.1 判决一：evolutionator 的 12 条 = **std `core::slice::sort` 的单态化**（5 条证据）
+
+| # | 证据 | 具体读数 |
+|---|---|---|
+| ① | **成对同尺寸** | 12 条排成 **6 对**，每对 FDE 尺寸**逐对相同**：`0x164 / 0x158 / 0x564 / 0x100 / 0x721 / 0x66f` |
+| ② | **只有两个 Location** | 每对里一条的 `panic::Location` = `graphwar_function_evolutionator.rs:**169:94**`、另一条 = **`:273:90`** ⇒ 同一批内核 × 两个比较器站点 |
+| ③ | **元素步长 + 三段自递归** | 归并那条：`0x4600e0` 里 `call 0x4600e0` × 3（`0x46012b` / `0x460144` / `0x460162`）、`imul r13,rcx,0x150`（元素 0x150 字节）；小数组那条 `0x41a9d0` 是 4 元排序网络（步长 **0x30**），`movups` 整块搬 0x30 字节 |
+| ④ | **比较器 = `partial_cmp().unwrap()`** | `movsd xmm,[elem+0x18]` → `ucomisd` → **`jp <panic>`**（NaN 立刻炸，不退化）；panic 路径 `0x4601d3` 载入的正是 `0x1b6aeb` = 字面量 `"src/graphwar_function_evolutionator.rs"`，即 **`panic::Location` 记录**（不是自定义消息） |
+| ⑤ | **调用侧配对** | `169:94` 那一族只被变体 A `calculate_functions` 调用；`273:90` 那一族只被变体 B `calculate_functions_old` 调用（`addr_probe.py callers`）—— 两个变体各自"按评分排一遍候选"，符合 `sort_by` 的用法 |
+
+⇒ 这 12 个函数**没有一个是模块自己的函数体**：模块贡献的只有被内联进去的**比较器**
+（源码 `169:94` / `273:90`）。与 T13 的独立结论一致（§64.7 第 3 条：元素 0x150 + 三段自递归 ⇒ merge-sort 单态化）。
+⇒ **落码**：只落比较器（`src/graphwar_function_evolutionator.rs` 的 `score_ordering` + `sort_scores`，
+含 NaN ⇒ panic 的单测）；**排序本体不重写**（重写 std 等于凭空造一份没有物证的实现）。
+
+⚠️ **推断**（写明缺什么）：①`169` 与 `273` 两处在机器码层面**看不出差别** ⇒ 是否同一个源码比较器**未证**
+（缺：两处捕获集合的差异）；②排序方向（升序）**推断**（缺：能区分 `cmp(a,b)`/`cmp(b,a)` 的操作数序 —— 被内联优化掉了）。
+
+### 120.2 判决二：21 条 = **gdext 宏产物**（类注册胶水 / 属性访问器 / `#[func]` 分发壳）
+
+**正对照（先做，否则负结论不算数）**：已知 na 样本 `0x4b1f60`（`entity_drawer.rs`，
+`function_coverage.tsv` 早判 `na:macro-generated`）与本批 `0x3aa6a0` / `0x3b5910` / `0x4e3b00`
+**逐指令同形**：
+
+```text
+push r15/r14/r13/r12/rbx ; sub rsp,0x10
+mov ecx,1 ; xor eax,eax ; lock cmpxchg dword [rip+<每类不同的全局>], ecx
+mov r14,[rip+…] slot 0x9ba9c0 -> 0x9c3988   ; gdext 的注册表单例
+mov rax,[r14] ; shl rax,1 ; test rax,rax   ; Vec/Option 布局探测
+…  往全局 Vec 追加 0x78 字节记录（0x3b5910: {tag=1, ptrcall 0x40e650, call_func 0x40dac0(=ret)}）
+```
+
+这 21 条的三种形态：
+1. **类注册**（`0x3aa6a0` / `0x3aa820` / `0x3b56c0` / `0x3b5910` / `0x3b5ce0` / `0x4e3b00` / `0x4e3c80` / `0x4e8f80` / `0x4e91d0` / `0x4e9380` / `0x4e9590`）：写入 `lock cmpxchg` 保护的全局注册表；
+   **全 `.text` 无调用点**，只作为 `.data.rel.ro` 表项出现（`addr_probe.py callers` = 0 处 `call rel32` + 1 处 reloc 槽）。
+2. **属性访问器**（`0x3b6e00` / `0x3b6ed0` / `0x3b7020`）：`[rdi]`→单元 → `[单元+0x10]` 借用标记 `0→-1` →
+   `call 0x514a10(&单元+0x18)` → `dec [单元]`；三条的表项 `0x9513d0/0x951310/0x951338` 在
+   `{name_ptr, 0x3b8a00/0x8a10, 本函数}` 的 24 字节记录里 —— 与 `0x3a54e0…0x3a5660`（`ready` 单态化）同一张表。
+3. **`#[func]` 分发壳**（`0x426430` / `0x433c00`）：各只有一个调用者（`0x3b6190` / `0x3b6430` = gdext 的
+   `ptrcall`/`call_func` 注册回调），两条同 Location `886:28` ⇒ 同一个方法的两条包装。
+4. `lan_vbox` 的 3 条（`0x500070` / `0x5005b0` / `0x4dec00`）Location 是 `59:40`（**列 40 ⇒ 源码闭包**），
+   `0x5005b0` 引用的字面量池里有 `on_text_changed` / `text_changed` ⇒ **信号接线闭包**。
+   闭包在源码层确实存在，但按预注册规则 R2 只能 pin 到**父函数**，而父函数**没有真名**
+   （本模块唯一 v2 锚 `process` 的原版行号 90 > 59）⇒ 本轮**不落码**，如实登记。
+
+### 120.3 判决三：2 条落码（`graphwar_root_node.rs`，v2 真名 + 同类型实现 ⇒ F3 → **F1**）
+
+| vaddr | 真名（`fixtures/boundary_audit.tsv`） | 自己的函数体 | 落点 |
+|---|---|---|---|
+| `0x3afcf0` | `GraphwarRootNode::check_save_level` | **413 字节**（`0x3afcf0..0x3afe8d`），3 个 panic 出口 + 1 个真调用 | `src/graphwar_root_node.rs` 第 8 节（纯逻辑：`pub mod save_level` + `SaveLevelInputs`/`SaveLevelDecision`）+ `impl GraphwarRootNode` 里的 `pub fn check_save_level`（关联函数） |
+| `0x3b4ec0` | `GraphwarRootNode::request_permissions_result` | **968 字节**（`0x3b4ec0..0x3b5288`） | 同文件第 8 节（`pub mod permissions_result` + `PermissionsResult`）+ `impl GraphwarRootNode` 里的 `pub fn request_permissions_result`（关联函数） |
+
+#### 120.3.1 `check_save_level` 读到的新东西（比旧判「进屏前是否对局中」精确得多）
+
+旧文档（`docs/16` §15.1）把它记成「进屏前的『当前是否对局中』判定，**推断**，函数体未解」。
+逐条读下来，它的**可观测效果**是「**满足 5 个条件时把当前关卡进度写进 `campaign.save`**」：
+
+```text
+3afd0a cmp qword [rdi+0xb0], 0x8000000000000000  ; ← 0x3afcfc movabs r15,0x7fff…ff; 0x3afd06 lea rax,[r15+1]
+3afd1a cmp byte  [rdi+0x1705], 6                 ; GAME_STATE（枚举未解，只给判别值 6）
+3afd27 mov r14,[rbx+0x1668]                      ; 对局控制器（Rc<RefCell<_>> 的 RcBox 指针）
+3afd43 cmp qword [r14+0x1f8], 0                  ; ← 载荷 +0x1e0 的闸门
+3afd51 mov r12,[r14+0x238]                       ; 模块容器（= docs/16 §41 那条 +0x238）
+3afd73 call 0x46be70 → get_module::<T>()         ; 返回 Option；None ⇒ panic（Location 在 game_client.rs）
+3afd95 movzx ebp, byte [rax+0x137]               ; 该 manager 的 bool，非 0 就不写
+3afdb5 mov r14,[rbx+0x16d0]                      ; 战役控制器（None ⇒ 不写）
+3afdde call 0x4183b0                             ; **写存档**；全 .text 只有这一个调用点
+```
+
+- **新证据**：`0x4183b0` 的 `addr_probe.py callers` = **1 处，就是 `0x3afdde`** ——
+  这坐实了 `graphwar_campaign_control.rs` 文件头那条「`save_current_level` ← `RootNode::check_save_level`」
+  （该表列的是 arm64 `0x393128`；x86 侧写者 = `0x4183b0`，`docs/10-campaign.md` §12.1 记作「写/更新 `0x4183b0(self,&String)`」）。
+- **新证据**：第 2 实参就是 `self+0xb0`（`0x3afddb mov rsi,rbx`，`rbx = rdi+0xb0`）⇒ `+0xb0` 是**关卡标识字符串**；
+  但 `[+0xb0]` 那 8 字节与哨兵 `0x8000_0000_0000_0000` 比较的**语义仍未知**（缺：`+0xb0` 的写入点）。
+- **新证据**：`+0x16d0` 是**战役控制器**，与 `field::OTHER_CONTROL`（`0x16c8`）**不是**同一个字段（旧注释未区分）。
+- **`0x3afcf0` 的第 2 个 Location 在 `src/graphwar_game_client.rs:152:22`** —— 那个 `get_module::<T>().unwrap()`
+  写在该文件、被内联进来（`boundary_audit.tsv` 的「Location 跨 2 个文件」由此有了语义解释）。
+
+⚠️ **推断（缺什么写在代码里）**：三个未知位 —— `+0xb0` 的哨兵、`+0x1f8` 的闸门（候选：控制器是否已挂子对象）、
+`+0x137` 是哪个 manager 的哪一位（缺 `0x46be70` 的 `TypeId`）。代码把它们做成 [`SaveLevelInputs`] 的显式输入，
+**不命名**成「是否对局中」那种猜测。
+
+#### 120.3.2 `request_permissions_result` 的三步效果（都有指令）
+
+```text
+3b4fad lea rsi,[0x1a95d0]   ; 首字节 0x1e = 30，串 = "Request permissions returned. "（逐位读回）
+3b4ff2 mov r12,[r15+0x16b0] ; 日志缓冲 Rc<RefCell<Vec<String>>>（0x3b5093 步长 24 字节 = String）
+3b5097 … push 进 Vec 尾     ; ②
+3b50d4 mov byte [rax+0x1703], 0   ; ③ **GATE_B 清零**（field::GATE_B 的注里早有这条写入点，本轮才知道属于谁）
+3b50db … call [rax+0x11e0]  ; ④ 全局单例 [0x9c18f0+0x14f0] 为真时虚调一次（未定名，不模拟）
+```
+
+旧注释里 `field::GATE_B` 的三条写入点 `0x3b2130(1)` / `0x3b3ad4(1)` / `0x3b50d4(0)` ——
+本轮把**第 3 条归了位**：它是 `request_permissions_result` 在「权限结果回来了」时清掉挂起位。
+
+⚠️ **推断**：消息前缀之后的**两个占位符**是什么（缺：`0x3b4f10` / `0x3b4fc3` 两次 `Arguments` 的
+占位符数组没展开，那 2 个 `&str` 表在 `.data.rel.ro`）。代码里按「权限名 + 是否授予」拼，并在注里写明这是推断。
+
+
+#### 120.3.3 形态说明：为什么是**关联函数**（无 `self`），以及第 8 节为什么在 `mod node_class` 之外
+
+本仓（与原版唯一的结构差异）把 `GraphwarRootNode` 的 gdext 类整体挂在
+`#[cfg(feature = "gdext-bindings")] mod node_class` 下（T57 的搬迁，`pub use node_class::*` 抬平对外路径）。
+因此两个**方法体**必须写在那里面（否则 `cargo test` 不带 feature 时连类型都不存在），
+而它们的**纯逻辑**（判据常数 / 输入结构 / 判定枚举）放在文件第 8 节（`mod node_class` 之外），
+这样不带 feature 也能编、也能审。
+
+两个方法取**关联函数**（`fn check_save_level(inputs: &SaveLevelInputs)`，没有 `self`）而不是真方法：
+本仓节点并不持有 `+0xb0` / `+0x1705` / `+0x1668` 这批原始字节（那些偏移只作为**证据**留在
+`save_level` / `permissions_result` 两个常量模块里），状态由调用方显式喂进来。
+⚠️ 这是**源码形态差异**，如实登记：原版是 `fn check_save_level(&self)`。
+
+`tools/function_coverage.py` 的 P1 判据要求「同名函数在**同一个 impl 类型**下」，所以第一版把它们写成
+**自由函数**时机判只给了 **F2（`free-fn-name`）**；改成 `impl GraphwarRootNode` 下的关联函数后才到 **F1**。
+这条也说明：**F 档不只看有没有写，还要看挂在哪**。
+
+### 120.4 顺带纠正 4 处旧判（`function_coverage.tsv` 的 hyb 名挂错模块）
+
+那批 F3 行里 4 条被 hyb 预测名记成 `axis_drawer::AxisDrawer::__register_methods`，
+但它们的 `panic::Location` 分别是：
+
+| vaddr | TSV 的 hyb 名 | **Location 实测** |
+|---|---|---|
+| `0x3aa6a0` | `axis_drawer::AxisDrawer::__register_methods` | `src/graphwar_root_node.rs:161:1` |
+| `0x3aa820` | 同上 | `src/graphwar_root_node.rs:161:1` |
+| `0x4e3b00` | 同上 | `src/graphwar_lan_vbox.rs:54:1` |
+| `0x4e3c80` | 同上 | `src/graphwar_lan_vbox.rs:54:1` |
+
+⇒ hyb 名在这 4 条上是错的（`axis_drawer` 那条是**结构指纹**，不是证据）。结论不变（仍是宏产物 `na`），
+但**归属**要按 Location 改：它们属于各自的类文件，`161:1` / `54:1` = 那一类的 `#[godot_api]`/`#[derive]` 站点。
+（本轮**不改** `tools/function_coverage.py`：它是 T39 的计分工具，改它等于改计分口径，超出本任务范围 —— 见 §120.5。）
+
+### 120.5 ⚠️ 陷阱：P2 机制判据会把「被内联进 std 的比较器地址」当成「那 12 条有实现」
+
+`tools/function_coverage.py` 的 P2 判据是「**地址出现在注释里且能贴到一个 `fn` 上 ⇒ 有实现**」。
+本轮第一版把比较器的 doc 注释写在 evolutionator 里，并引用了那 12 条中几条的 vaddr（为了可追溯），
+**机判立刻假抬了 5 条 F1**（实测）：`0x41a9d0` / `0x4600e0` / `0x481140`（F3→F1）、
+`0x51b440`（F2→F1）、`0x51d080`（F3→F1）—— 而本轮**只落了比较器**，那 5 条一条都没落。
+⇒ 处理：①把那 12 个 vaddr 从 fn 的 doc 里**移走**（放到 `fixtures/f3_heavy_anchors.tsv` 与本节），
+机判回到基线；②在代码注释里写明这个陷阱，避免下一轮再踩。
+**建议（给 lead / 下一轮）**：`function_coverage.py` 应加两类 `na:` 子类 —— `na:std-mono`（标准库单态化）
+与 `na:gdext-glue`（注册/属性/分发胶水），否则这 33 条的"缺口"会一直被当成工作量。
+按本轮 35 条的实际构成估算，若采纳，诚实的函数级分母会从 `527` 降到 ~`494`（`277/494 = 56.1%`），
+但**那是新口径，必须先预注册再改**，本轮**不动**。
+
+### 120.6 门槛读数（每批都跑）
+
+见 §120.7 的复跑命令。读数（全部本机实跑，**不是**抄基线）：
+
+| 门槛 | 读数 | 与基线比 |
+|---|---|---|
+| `cargo test --offline` | **1523 passed / 0 failed / 1 ignored** | 基线 1520 ⇒ **+3**（本轮新增的 3 条比较器单测，**不是**退化） |
+| `cargo test --offline --features gdext-bindings` | **1659 passed / 0 failed / 1 ignored** | 基线 1650 ⇒ **+9**（+3 比较器 +6 本节 6 条 `t71_tests`，后者必须挂 feature，见 §120.3.3） |
+| `coverage_matrix.py --check` | **OK** | 生成物已重跑（`docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md`；`src_fns` `3772 → 3786`） |
+| `check_doc_refs.py` | **rc=0**（无死链） | — |
+| 三轴 `bit_exact_attrib --check-baseline` | `fire` **647** / `batch` **647** / `batch_conv` **637**，三条都 `校验结果：全部一致` | 一位未退 |
+| `boundary_audit.py --check` | **mismatch 0** | — |
+| `docsec.py check docs/06` | 节数 **118**、范围 `1..120`、断号 `43/89`（历史缺口）、**无重号无冲突标记** | — |
+
+### 120.7 复跑命令
+
+```bash
+WT=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/wt-t71 ; cd $WT
+PY=$WT/.reference/venv/bin/python
+# ① 台账里每一条的原始取证（示例：落码的那条）
+$PY tools/addr_probe.py fde 0x3afcf0 && $PY tools/addr_probe.py dis 0x3afcf0
+$PY tools/addr_probe.py locs 0x3afcf0 && $PY tools/addr_probe.py callers 0x3afcf0
+# ② 判决一（std 单态化）：三段自递归 + 元素步长 + 比较器 panic
+$PY tools/addr_probe.py dis 0x4600e0 | grep -E "call +0x4600e0|imul|ucomisd|jp"
+# ③ 判决二的正对照（已知 na 样本 vs 本批）
+$PY tools/addr_probe.py dis 0x4b1f60 | head -14 ; $PY tools/addr_probe.py dis 0x3aa6a0 | head -14
+# ④ 函数级复原率（会重写 fixtures/function_coverage.tsv）
+python3 tools/function_coverage.py --stats
+# ⑤ 生成物 + 文档自检
+COVERAGE_MATRIX_UPSTREAM=/home/CG/Myprojects/graphwar2-rebuild/.reference/upstream \
+  $PY tools/coverage_matrix.py --check
+python3 tools/check_doc_refs.py ; python3 tools/docsec.py check docs/06-verification.md
+$PY tools/boundary_audit.py --check
+# ⑥ 全门槛（本机一次跑完的口径：cargo 两档 + 三轴逐条对基线）
+export CARGO_HOME=$WT/.reference/cargo-home CARGO_TARGET_DIR=$WT/.reference/cargo-home/target
+cargo test --offline                      # 1523 / 0 / 1ignored
+cargo test --offline --features gdext-bindings   # 1659 / 0 / 1ignored
+R=/home/CG/Myprojects/graphwar2-rebuild/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive fire  --policy default --json f.jsonl
+$PY tools/bit_exact_attrib.py --json f.jsonl --check-baseline --axis fire  --snapshot $R
+cargo run --release --offline -q --example replay_attrib -- --dir $R --drive batch --policy default --json b.jsonl
+$PY tools/bit_exact_attrib.py --json b.jsonl --check-baseline --axis batch --snapshot $R
+cargo run --release --offline -q --example batch_conv   -- --dir $R --policy strict --drive batch --json c.jsonl
+$PY tools/bit_exact_attrib.py --json c.jsonl --check-baseline --axis batch_conv --snapshot $R
+```
+
+### 120.8 遗留 / 下一轮
+
+1. **`calculate_functions_old`（`0x51d080`，6918 字节 = 1407 条指令）未落码**：语义已定性（变体 B，(1+λ) 单点爬山），
+   调用面已量到（`0x51a750` score_function / `0x4eb9d0`+`0x4ebbe0` 求值器 / `0x47dec0` / f64 常量 `0x19f6d0 = 0.5`），
+   **但没读完就不写**（编语义是红线）。下一轮要的是把 1407 条按基本块过一遍（优先：25 s 预算判据、λ 的来源、
+   接受判据）。
+2. **`get_media_storage_path`（`0x3b00d0`，1876 字节）未落码**：字面量已定（`save_path = ` / `user://graphwar_media/level_replay`），
+   调用序列已量到 20+ 个引擎调用（`upcast_ref` / `String::new` / 2 次 fmt / `Object::call`）——
+   缺的是**逐分支**判定，属"引擎耦合最重"的那一类。
+3. **`std` 单态化 / gdext 宏产物这两类没有 `na` 子类**（§120.5）：建议先预注册 `na:std-mono` / `na:gdext-glue`
+   的判据（可机判：`lock cmpxchg` 全局注册表模式、`imul …元素步长` + 三段自递归），再改计分工具。
+4. **`+0xb0` / `+0x1f8` / `+0x137` 三个未知位**（§120.3.1）：需要 `+0xb0` 的写入点扫描（`mov …,0xb0(%reg)` 全 `.text`）
+   与 `0x46be70` 的 `TypeId` 反查（`.data.rel.ro` 的 16 字节 TypeId 常量）。
+5. **`lan_vbox` 的 3 条源码闭包**（Location `59:40`）：要落码得先定父函数（`59` 行之前那个函数），
+   而本模块唯一 v2 锚是 `process`（原版行号 90）⇒ 需要 arm64 符号表或另一版本的 Location 行号来定名。

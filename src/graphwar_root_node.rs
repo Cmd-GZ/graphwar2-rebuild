@@ -969,6 +969,136 @@ pub fn apply_show_screen<H: ScreenHost + ?Sized>(
 //    `"ConfirmPlayExitPopUp"`（`0x3b3783` → 尾调用 `0x3af700`）。它到底是
 //    「原版写错了键名（于是查不到、无动作）」还是「屏表里真有一个 20 字节的键」，**未解**。
 
+// ---------------------------------------------------------------------------
+// 8. `check_save_level`（`0x3afcf0`）与 `request_permissions_result`（`0x3b4ec0`）
+//    —— 2026-11-27（T71）按指令落码；本节的**纯逻辑**放在这里（不带 gdext 也能编），
+//    两个方法体挂在该文件末尾的 `impl GraphwarRootNode` 上（那个 impl 在
+//    `#[cfg(feature = "gdext-bindings")] mod node_class` 里，见该模块头注）。
+// ---------------------------------------------------------------------------
+//
+// 两条都是 `GraphwarRootNode` 的 **v2 真名**方法（`fixtures/boundary_audit.tsv` 的
+// `v2唯一锚`；`docs/02-module-map.md` §18.3 给了 `x86 地址 → 原版源行`：
+// `check_save_level` = `0x3afcf0` ↔ `graphwar_root_node.rs:656`、
+// `request_permissions_result` = `0x3b4ec0` ↔ `:861`）。本轮之前**只有地址、没有函数体**
+// （`fixtures/function_coverage.tsv` 判 F3 `register-only` / `named-miss`）。
+// 逐条反汇编、判决与门槛读数见 `docs/06` §120；台账见 `fixtures/f3_heavy_anchors.tsv`。
+//
+// 落码口径：本文件**不调 Godot**（见文件头「本文件不做什么」），所以这里落的是
+// **纯逻辑 + 显式输入**：原版从 `self` 的固定偏移读字段、从 `Rc<RefCell<_>>` 里取对象，
+// 这里把这些都变成入参，由调用方（节点层或测试）负责喂。字段偏移一律保留，
+// 因为**偏移本身就是证据**（每一条都能指到一条 `mov/cmp [reg+off]`）。
+
+/// `check_save_level` 用到的 `GraphwarRootNode` 字段偏移与判据常数。
+/// 档位：**观测**（每条都给了指令地址；地址口径 ELF vaddr）。
+pub mod save_level {
+    /// `self+0x1668` = 对局控制器（`Rc<RefCell<_>>`：`+0` 强引用计数、
+    /// `+0x10` 借用标记、`+0x18` 载荷）。同 [`super::field::PLAY_CONTROL`]。
+    pub const PLAY_CONTROL: usize = 0x1668;
+    /// 载荷 `+0x1e0`（= 单元 `+0x1f8`）那个 qword：**为 0 就直接返回**。
+    /// 判据：`0x3afd43` `cmp qword [r14+0x1f8], 0` / `0x3afd4b je`。
+    /// 语义**未知**（候选：控制器是否已挂上某个子对象）——缺的证据：该字段的写入点。
+    pub const PLAY_CONTROL_GATE: usize = 0x1f8;
+    /// 载荷 `+0x220`（= 单元 `+0x238`）= 模块容器 `Rc<RefCell<>>`（`docs/16` §41）。
+    /// 判据：`0x3afd51` `mov r12,[r14+0x238]`。
+    pub const MODULE_CONTAINER: usize = 0x238;
+    /// `get_module::<T>()` 返回对象 `+0x137` 的 bool：**非 0 就不写存档**。
+    /// 判据：`0x3afd95` `movzx ebp, byte [rax+0x137]` + `0x3afdb0 test bpl,bpl`。
+    /// 哪个 manager、哪一位**未知**（缺：`0x46be70` 的 `TypeId`）。
+    pub const MODULE_FLAG: usize = 0x137;
+    /// `self+0x16d0` = 战役控制器（`None` ⇒ 不写）。判据：`0x3afdb5` `mov r14,[rbx+0x16d0]`。
+    /// ⚠️ 与 [`super::field::OTHER_CONTROL`]（`0x16c8`）**不是**同一个字段（旧注释未区分）。
+    pub const CAMPAIGN_CONTROL: usize = 0x16d0;
+    /// `self+0xb0`：它同时是「关卡标识」那个 `&String` 实参（`0x3afddb mov rsi,rbx`，
+    /// `rbx = self+0xb0`，随后 `call 0x4183b0` 的第 2 实参），又是一个 8 字节字。
+    /// 那 8 字节位**未知**（候选：`Option`/`GString` 的 niche 哨兵、或"未初始化"标记）。
+    pub const LEVEL_KEY: usize = 0xb0;
+    /// `[+0x1705]`（[`super::field::GAME_STATE`]）必须等于这个值才继续。
+    /// 判据：`0x3afd1a` `cmp byte [rdi+0x1705], 6` / `0x3afd21 jne`。
+    /// ⚠️ 该枚举的**定义没解出来**（见未知清单第 1 条）⇒ 这里只给原始判别值，**不命名**。
+    pub const REQUIRED_GAME_STATE: u8 = 6;
+    /// `[self+0xb0]` 与之相等就直接返回。判据：`0x3afcfc` `movabs r15,0x7fff…ff`、
+    /// `0x3afd06` `lea rax,[r15+1]`、`0x3afd0a` `cmp [rdi+0xb0],rax` ⇒ `i64::MAX as u64 + 1`。
+    pub const LEVEL_KEY_SENTINEL: u64 = (i64::MAX as u64) + 1;
+    /// 写存档那一步的**唯一**被调者：`0x3afdde` `call 0x4183b0`
+    /// （= `campaign.save` 的写者；`addr_probe.py callers 0x4183b0` = 全 `.text` 仅此 1 处）。
+    pub const SAVE_WRITER: u64 = 0x41_83b0;
+}
+
+/// `check_save_level` 的判定结果。档位：**观测**（每个变体 = 一条返回指令）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveLevelDecision {
+    /// `0x3afd11` / `0x3afd21` / `0x3afd4b` / `0x3afdb3` / `0x3afdbf`：直接返回。
+    NotNow(SaveLevelSkip),
+    /// `0x3afdde`：调 `0x4183b0`（`campaign.save` 的写者），实参 = (战役控制器载荷, `&self+0xb0`)。
+    SaveCurrentLevel,
+}
+
+/// `SaveLevelDecision::NotNow` 的五个早退点（顺序 = 指令顺序）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveLevelSkip {
+    /// `0x3afd11`：`[self+0xb0] == 0x8000_0000_0000_0000`。
+    LevelKeySentinel,
+    /// `0x3afd21`：`[self+0x1705] != 6`。
+    GameStateNotRequired,
+    /// `0x3afd4b`：对局控制器载荷 `+0x1e0`（单元 `+0x1f8`）为 0。
+    PlayControlGate,
+    /// `0x3afdb3`：`get_module::<T>()` 对象的 `+0x137` 非 0。
+    ModuleFlagSet,
+    /// `0x3afdbf`：`self+0x16d0`（战役控制器）为 `None`。
+    NoCampaignControl,
+}
+
+/// `check_save_level` 的输入（= 原版从 `self` 与两个 `Rc<RefCell<_>>` 里读到的全部东西）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SaveLevelInputs {
+    /// `[self+0xb0]` 那 8 字节（原样，不解释；见 [`save_level::LEVEL_KEY`]）。
+    pub level_key_word: u64,
+    /// `[self+0x1705]`。
+    pub game_state: u8,
+    /// 对局控制器 `[载荷+0x1e0]` 是否非 0（原版 `[单元+0x1f8] != 0`）。
+    pub play_control_gate: bool,
+    /// `get_module::<T>()` 对象的 `[+0x137] != 0`。
+    ///
+    /// 原版这一跳是 `ModuleContainer::get_module::<T>().unwrap()`：`0x3afd73` 取 `Option`、
+    /// `0x3afd78` 为 `None` 时走 `0x3afe16` 的 panic（panic 的 `Location` 指向
+    /// **`src/graphwar_game_client.rs:152:22`**，说明那个 `.unwrap()` 写在该文件、被内联进本函数）。
+    /// 本模型把"模块在不在"也当输入：`None` ⇒ 原版**会 panic**，这里也用 panic（不静默返回）。
+    pub module_flag: Option<bool>,
+    /// 战役控制器在不在（`self+0x16d0` 是否 `Some`）。
+    pub campaign_control: bool,
+}
+
+/// `request_permissions_result`（`0x3b4ec0`）用的偏移与字面量。档位：**观测**。
+pub mod permissions_result {
+    /// `self+0x16b0` = 日志缓冲：`Rc<RefCell<Vec<String>>>`。
+    ///
+    /// 判据：`0x3b4ff2` `mov r12,[r15+0x16b0]`；`0x3b4ff9`/`0x3b5014`/`0x3b50ad` 是
+    /// `RefCell` 的 borrow/释放（`[单元+0x10]` = 借用标记，`[单元+0x18]` = `Vec` 头：
+    /// `+0x18` ptr、`+0x20` cap、`+0x28` len）；`0x3b5093` `lea rcx,[r15+r15*2]` +
+    /// `0x3b5097` 三个 qword 写入 ⇒ **元素 24 字节 = `String`**。
+    pub const LOG_BUFFER: usize = 0x16b0;
+    /// `self+0x1703` = [`super::field::GATE_B`]：本函数把它**写 0**。
+    /// 判据：`0x3b50d4` `mov byte [rax+0x1703], 0`（`field::GATE_B` 的注里早就登记了这条
+    /// 写入点，本轮才知道它属于哪个函数）。另外两个写 1 的点是 `0x3b2130` / `0x3b3ad4`。
+    pub const GATE_B: usize = 0x1703;
+    /// 消息前缀，`.rodata` `0x1a95d0`（首字节 `0x1e` = **长度 30**，串从 `0x1a95d1` 起）。
+    /// 档位：**逐位**（字节读回 = `"Request permissions returned. "`，30 字节）。
+    pub const MESSAGE_PREFIX: &str = "Request permissions returned. ";
+    /// 那个「取虚表第 0x11e0 项调用」的全局单例槽：`0x3b50db` `mov rax,[0x9c18f0]`、
+    /// `0x3b50e2` `movzx ecx, byte [rax+0x14f0]`、`0x3b50f6` `call [rax+0x11e0]`。
+    /// **未定名**（缺：`0x9c18f0` 这个类的符号）⇒ 本文件不模拟它。
+    pub const GLOBAL_HOOK: u64 = 0x9c_18f0;
+}
+
+/// 一次权限询问的结果（`request_permissions_result` 的三个入参去掉 `self`）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PermissionsResult {
+    /// 第 2 实参（`0x3b4ed4` `mov [rsp+0x50], rsi`）：权限名（字符串类）。
+    pub permission: String,
+    /// 第 3 实参的低字节（`0x3b4ed9` `mov [rsp+6], dl`）：是否授予。
+    pub granted: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1494,6 +1624,126 @@ mod tests {
         }
     }
 }
+// ---------------------------------------------------------------------------
+// T71：`check_save_level`（0x3afcf0）/ `request_permissions_result`（0x3b4ec0）
+// 期望值**全部来自反汇编立即数**，不是本实现的输出（`AGENTS.md` §0 第 2 条）。
+// ⚠️ 必须 `feature = "gdext-bindings"`：被调的 `GraphwarRootNode` 在本仓挂在
+// `#[cfg(feature = "gdext-bindings")] mod node_class`（原版不需要 cfg，见该模块头注）。
+// ---------------------------------------------------------------------------
+#[cfg(all(test, feature = "gdext-bindings"))]
+mod t71_tests {
+    use crate::graphwar_root_node::*;
+
+    fn ok_inputs() -> SaveLevelInputs {
+        SaveLevelInputs {
+            level_key_word: 0x1234, // 任意非哨兵值
+            game_state: save_level::REQUIRED_GAME_STATE,
+            play_control_gate: true,
+            module_flag: Some(false),
+            campaign_control: true,
+        }
+    }
+
+    /// 哨兵 = `0x3afd06 lea rax,[r15+1]`（r15 = `0x3afcfc movabs 0x7fffffffffffffff`）。
+    #[test]
+    fn sentinel_is_i64_max_plus_one() {
+        assert_eq!(save_level::LEVEL_KEY_SENTINEL, 0x8000_0000_0000_0000);
+        assert_eq!(save_level::LEVEL_KEY_SENTINEL, i64::MAX as u64 + 1);
+        assert_eq!(save_level::LEVEL_KEY_SENTINEL.to_le_bytes(), [0, 0, 0, 0, 0, 0, 0, 0x80]);
+    }
+
+    /// 常数 = 指令里的立即数本体（不是从本实现反推的）。
+    #[test]
+    fn constants_are_the_instruction_immediates() {
+        assert_eq!(save_level::REQUIRED_GAME_STATE, 6);       // 0x3afd1a cmp byte [rdi+0x1705], 6
+        assert_eq!(save_level::PLAY_CONTROL, 0x1668);         // 0x3afd27 mov r14,[rbx+0x1668]
+        assert_eq!(save_level::MODULE_CONTAINER, 0x238);      // 0x3afd51 mov r12,[r14+0x238]
+        assert_eq!(save_level::PLAY_CONTROL_GATE, 0x1f8);     // 0x3afd43 cmp qword [r14+0x1f8],0
+        assert_eq!(save_level::MODULE_FLAG, 0x137);           // 0x3afd95 movzx ebp,byte [rax+0x137]
+        assert_eq!(save_level::CAMPAIGN_CONTROL, 0x16d0);     // 0x3afdb5 mov r14,[rbx+0x16d0]
+        assert_eq!(save_level::LEVEL_KEY, 0xb0);              // 0x3afddb mov rsi,rbx (rbx = self+0xb0)
+        assert_eq!(save_level::SAVE_WRITER, 0x41_83b0);       // 0x3afdde call 0x4183b0
+        assert_eq!(permissions_result::GATE_B, 0x1703);       // 0x3b50d4 mov byte [rax+0x1703],0
+        assert_eq!(permissions_result::GATE_B, field::GATE_B);
+        assert_eq!(permissions_result::LOG_BUFFER, 0x16b0);   // 0x3b4ff2 mov r12,[r15+0x16b0]
+        assert_eq!(permissions_result::MESSAGE_PREFIX.len(), 0x1e); // 0x1a95d0 首字节 0x1e
+    }
+
+    /// 每个提前返回点都**单独**可触发（顺序 = 指令顺序，前者优先）。
+    #[test]
+    fn each_skip_point_is_reachable() {
+        let i = ok_inputs();
+        assert_eq!(GraphwarRootNode::check_save_level(&i), SaveLevelDecision::SaveCurrentLevel);
+
+        let mut i = ok_inputs();
+        i.level_key_word = save_level::LEVEL_KEY_SENTINEL;
+        assert_eq!(GraphwarRootNode::check_save_level(&i),
+                   SaveLevelDecision::NotNow(SaveLevelSkip::LevelKeySentinel));
+
+        let mut i = ok_inputs();
+        i.game_state = 8; // 0x3afd1a 只认 6；8 是 GAME_STATE 的另一已知值（field::GAME_STATE 的注）
+        assert_eq!(GraphwarRootNode::check_save_level(&i),
+                   SaveLevelDecision::NotNow(SaveLevelSkip::GameStateNotRequired));
+
+        let mut i = ok_inputs();
+        i.play_control_gate = false;
+        assert_eq!(GraphwarRootNode::check_save_level(&i),
+                   SaveLevelDecision::NotNow(SaveLevelSkip::PlayControlGate));
+
+        let mut i = ok_inputs();
+        i.module_flag = Some(true);
+        assert_eq!(GraphwarRootNode::check_save_level(&i),
+                   SaveLevelDecision::NotNow(SaveLevelSkip::ModuleFlagSet));
+
+        let mut i = ok_inputs();
+        i.campaign_control = false;
+        assert_eq!(GraphwarRootNode::check_save_level(&i),
+                   SaveLevelDecision::NotNow(SaveLevelSkip::NoCampaignControl));
+    }
+
+    /// 优先级：哨兵先于 game_state（`0x3afd11` 在 `0x3afd1a` 之前）。
+    #[test]
+    fn skip_points_are_ordered_like_the_instructions() {
+        let i = SaveLevelInputs {
+            level_key_word: save_level::LEVEL_KEY_SENTINEL,
+            game_state: 0,
+            play_control_gate: false,
+            module_flag: Some(true),
+            campaign_control: false,
+        };
+        assert_eq!(GraphwarRootNode::check_save_level(&i),
+                   SaveLevelDecision::NotNow(SaveLevelSkip::LevelKeySentinel));
+    }
+
+    /// `get_module::<T>()` 为 `None` 时原版**panic**（`0x3afd78 je 0x3afe16`）⇒ 本模型也 panic。
+    #[test]
+    #[should_panic(expected = "0x3afd78")]
+    fn missing_module_panics_like_the_original() {
+        let mut i = ok_inputs();
+        i.module_flag = None;
+        let _ = GraphwarRootNode::check_save_level(&i);
+    }
+
+    /// 三步效果：push 一条进日志缓冲、GATE_B 清零、返回被 push 的那条。
+    #[test]
+    fn permissions_result_logs_and_clears_gate_b() {
+        let mut log: Vec<String> = Vec::new();
+        let mut gate_b = true; // 别的写入点（0x3b2130 / 0x3b3ad4）会把它置 1
+        let msg = GraphwarRootNode::request_permissions_result(
+            &mut log,
+            &mut gate_b,
+            &PermissionsResult {
+                permission: "android.permission.WRITE_EXTERNAL_STORAGE".to_string(),
+                granted: true,
+            },
+        );
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0], msg);
+        assert!(!gate_b, "0x3b50d4 把 GATE_B 写 0");
+        assert!(msg.starts_with("Request permissions returned. "));
+        assert!(msg.contains("WRITE_EXTERNAL_STORAGE"));
+    }
+}
 
 
 // ===========================================================================
@@ -1658,6 +1908,12 @@ use crate::graphwar_ad_switch::GraphwarAdSwitch;
 use crate::graphwar_plane::GraphwarPlane;
 use crate::graphwar_setup_control::GraphwarSetupControl;
 use crate::_scaffold::root_wiring::{self, RootWiring, DEMO_SOLDIERS, Wired};
+// T71：`check_save_level` / `request_permissions_result` 的纯逻辑写在本文件的第 8 节
+// （`mod node_class` 之外，这样不带 `gdext-bindings` 也能编），这里把它们抬进来。
+use crate::graphwar_root_node::{
+    permissions_result, save_level, PermissionsResult, SaveLevelDecision, SaveLevelInputs,
+    SaveLevelSkip,
+};
 
 /// `_ready` 里三个 holder 的节点名（[`READY_NODES`]，**观测**）。
 ///
@@ -1968,6 +2224,121 @@ impl GraphwarRootNode {
     /// 根节点当前有几个直接子节点（观测点）。
     fn child_slot_count(&self) -> i64 {
         self.base().get_child_count() as i64
+    }
+
+    // =======================================================================
+    // T71 落码的两个原版方法（**关联函数**形态：本仓节点不持有 `+0xb0`/`+0x1705`
+    // 这批原始字节，状态由 [`SaveLevelInputs`] / [`PermissionsResult`] 显式喂进来；
+    // 偏移证据保留在 `save_level` / `permissions_result` 两个常量模块里）
+    // =======================================================================
+
+    /// `GraphwarRootNode::check_save_level` —— **x86 `0x3afcf0`**
+    /// （FDE `0x3afcf0..0x3afe8d`，`0x19d` = 413 字节）。
+    ///
+    /// 逐步指令（3 个 panic 出口 + 1 个真调用）：
+    /// ```text
+    /// 3afcfc movabs r15,0x7fffffffffffffff
+    /// 3afd06 lea    rax,[r15+1]              ; = 0x8000000000000000
+    /// 3afd0a cmp    qword [rdi+0xb0], rax    ; 关卡标识哨兵？
+    /// 3afd11 je     0x3afded                 ; ⇒ 直接返回
+    /// 3afd1a cmp    byte [rdi+0x1705], 6     ; GAME_STATE == 6 ?
+    /// 3afd21 jne    0x3afded                 ; ⇒ 直接返回
+    /// 3afd27 mov    r14,[rbx+0x1668]         ; 对局控制器（Rc<RefCell<_>> 的 RcBox 指针）
+    /// 3afd2e…3afd3f                          ; RefCell::borrow()（计数 +1，溢出 panic @0x3afdfa）
+    /// 3afd43 cmp    qword [r14+0x1f8], 0     ; 载荷 +0x1e0
+    /// 3afd4b je     0x3afde9                 ; ⇒ 撤销 borrow 后返回
+    /// 3afd51 mov    r12,[r14+0x238]          ; 模块容器
+    /// 3afd58…3afd69                          ; RefCell::borrow()（溢出 panic @0x3afe07）
+    /// 3afd73 call   0x46be70                 ; get_module::<T>(&容器) → Option
+    /// 3afd78 je     0x3afe16                 ; None ⇒ panic（Location = game_client.rs:152:22）
+    /// 3afd95 movzx  ebp, byte [rax+0x137]    ; 该 manager 的 bool
+    /// 3afdac dec    [r14+0x10]               ; 释放第一次 borrow
+    /// 3afdb0 test   bpl,bpl / jne 0x3afded   ; 非 0 ⇒ 直接返回
+    /// 3afdb5 mov    r14,[rbx+0x16d0]         ; 战役控制器
+    /// 3afdc1 cmp    qword [r14+0x10],0 / jne ; 已借用 ⇒ panic @0x3afe34
+    /// 3afdcf mov    qword [r14+0x10],-1      ; RefCell::borrow_mut
+    /// 3afddb mov    rsi,rbx                  ; 第 2 实参 = &self+0xb0
+    /// 3afdde call   0x4183b0                 ; **写存档**（campaign.save 的写者，全 .text 唯一调用点）
+    /// 3afde3 inc    qword [r14+0x10]         ; 释放 borrow_mut
+    /// 3afded … ret
+    /// ```
+    ///
+    /// 档位：**观测**（控制流、每个字段偏移、唯一被调者都对到指令）。
+    /// ⚠️ **推断**（缺什么写在 [`SaveLevelInputs`] 各字段上）：三个未知位的**语义**
+    /// （`+0xb0` 的哨兵、`+0x1f8` 的闸门、`+0x137` 的 manager flag）。旧文档
+    /// （`docs/16` §15.1）按调用点把它记成「进屏前的当前是否对局中判定」；本轮读下来
+    /// 它的**效果**明确是「满足 5 个条件时把当前关卡进度写进 `campaign.save`」。
+    pub fn check_save_level(inputs: &SaveLevelInputs) -> SaveLevelDecision {
+        // 0x3afd0a / 0x3afd11
+        if inputs.level_key_word == save_level::LEVEL_KEY_SENTINEL {
+            return SaveLevelDecision::NotNow(SaveLevelSkip::LevelKeySentinel);
+        }
+        // 0x3afd1a / 0x3afd21
+        if inputs.game_state != save_level::REQUIRED_GAME_STATE {
+            return SaveLevelDecision::NotNow(SaveLevelSkip::GameStateNotRequired);
+        }
+        // 0x3afd43 / 0x3afd4b
+        if !inputs.play_control_gate {
+            return SaveLevelDecision::NotNow(SaveLevelSkip::PlayControlGate);
+        }
+        // 0x3afd73 → 0x3afd78：原版是 `.unwrap()`（None ⇒ panic）⇒ 本模型也不静默返回。
+        let module_flag = inputs
+            .module_flag
+            .expect("原版 0x3afd78 在 get_module::<T>() 为 None 时 panic（Location: game_client.rs:152:22）");
+        // 0x3afd95 / 0x3afdb0
+        if module_flag {
+            return SaveLevelDecision::NotNow(SaveLevelSkip::ModuleFlagSet);
+        }
+        // 0x3afdb5 / 0x3afdbf
+        if !inputs.campaign_control {
+            return SaveLevelDecision::NotNow(SaveLevelSkip::NoCampaignControl);
+        }
+        // 0x3afdde：call 0x4183b0(&mut 战役控制器载荷, &self+0xb0)
+        SaveLevelDecision::SaveCurrentLevel
+    }
+
+    /// `GraphwarRootNode::request_permissions_result` —— **x86 `0x3b4ec0`**
+    /// （FDE `0x3b4ec0..0x3b5288`，`0x3c8` = 968 字节）。
+    ///
+    /// 可观测的**三步效果**（顺序即指令顺序）：
+    /// ```text
+    /// 3b4ed4 mov [rsp+0x50], rsi             ; 第 2 实参（权限名）
+    /// 3b4ed9 mov [rsp+6], dl                 ; 第 3 实参（bool）
+    /// 3b4ee5 call *0x9ba768 → 0x74b510       ; String::new
+    /// 3b4f10 call *0x9ba718 → 0x91ded0       ; ① format（字面量 0x1a0d63 那片）
+    /// 3b4fad lea rsi,[0x1a95d0]              ; "Request permissions returned. "（len 0x1e）
+    /// 3b4fc3 call *0x9ba718 → 0x91ded0       ; ② format
+    /// 3b4ff2 mov r12,[r15+0x16b0]            ; 日志缓冲 Rc<RefCell<Vec<String>>>
+    /// 3b5014 mov qword [r12+0x10],-1         ; borrow_mut（已借用 ⇒ panic @0x3b5138）
+    /// 3b5079 cmp r15,[r12+0x18] / 0x3b5085   ; Vec 满了 ⇒ grow（0x8f9480 / 0x461100）
+    /// 3b5093 lea rcx,[r15+r15*2]             ; 元素 24 字节
+    /// 3b5097 mov [rax+rcx*8], rbx            ; 把 String 三个字段写进 Vec 尾
+    /// 3b50a5 inc r15 / 3b50a8 mov [r12+0x28],r15   ; len += 1
+    /// 3b50d4 mov byte [rax+0x1703], 0        ; ③ GATE_B = 0
+    /// 3b50db mov rax,[0x9c18f0]              ; ④ 全局单例
+    /// 3b50e2 movzx ecx,byte [rax+0x14f0]     ; 该单例的开关
+    /// 3b50f1 call [rax+0x11e0]               ; 开则虚调一次（**未定名**，本模型不模拟）
+    /// ```
+    /// 档位：**观测**（②③④ 的效果 + 前缀字面量都指到指令）；
+    /// ⚠️ **推断**：消息里前缀之后的**两个占位符**是什么（缺证据：`0x3b4f10` / `0x3b4fc3`
+    /// 两次 `Arguments` 的占位符数组没展开 —— 那 2 个 `&str` 表在 `.data.rel.ro`）。
+    /// 本实现按「权限名 + 是否授予」拼，**这一句是推断**，不写成结论。
+    pub fn request_permissions_result(
+        log: &mut Vec<String>,
+        gate_b: &mut bool,
+        result: &PermissionsResult,
+    ) -> String {
+        // ①②：0x3b4fc3 的格式串（前缀逐位）+ 推断的占位符
+        let message = format!(
+            "{}{} {}",
+            permissions_result::MESSAGE_PREFIX, result.permission, result.granted
+        );
+        // ③：0x3b5097..0x3b50a8 —— push 进日志缓冲
+        log.push(message.clone());
+        // ④：0x3b50d4 —— GATE_B 清零
+        *gate_b = false;
+        // （原版 0x3b50db..0x3b50f6 的全局单例虚调不模拟：未定名 + 属引擎层）
+        message
     }
 }
 
