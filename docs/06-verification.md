@@ -24358,3 +24358,287 @@ $PY tools/function_coverage.py --stats ; $PY tools/f3_triage.py --stats
 5. **建议 lead 决定**：① 招牌数要不要改成"原版模块函数 ≈ 964 / 已实现 409 / 还差 ≈ 555"（**换口径**，不动实现）；
    ② 是否让 `function_coverage.py` 的台账 owner 重跑一次 `f3_triage.py`（35 条已变档）；
    ③ 下一轮排工作量按 **≈555** 排，优先 5 个模块（§134.6）。
+
+## 135. T84 复核 §130 报的三处"源码层差异"：**① 证伪（原版也画那根光标）**、**② 真差异已修（根因 = 我方自造的"静默也算握手完成"兜底）**、**③ 改判（不是揭示相位差，是我方多画了一条原版没有的弹道）**（2026-11-27，任务 T84 / `task-80` / 分支 `agent/client-pixel-fix`）
+
+> 起因：§130（T76）把停帧钉成"按 tick"、噪声地板降到 0 之后，报出三处"**确定的源码层差异**"，
+> 登记给下一轮（§130.6 第 1/2/3 条）。本轮逐条复核：**一条被证伪、一条是真差异并已修好、
+> 一条的归因被推翻并改判**。门槛文件 [`fixtures/frame_diff_thresholds.txt`](../fixtures/frame_diff_thresholds.txt)
+> **一个数没改**（sha256 `9cc9fcda…`）；排除区（[`fixtures/frame_capture_freeze_plan.txt`](../fixtures/frame_capture_freeze_plan.txt) §2）**也没改**。
+> 读数 = [`fixtures/client_pixel_fix_results.tsv`](../fixtures/client_pixel_fix_results.tsv)。
+
+### 135.0 一页结论
+
+| # | §130 的说法 | 本轮判决 | 证据档 |
+|---|---|---|---|
+| ① | 我方回放屏**多画**了一根 270 px 闪烁光标，删掉后 1126 → 856 | **证伪。没有多画。**原版回放屏**同一根**光标（同 3 列 × 90 行、同 `(255,255,255)`、同 1.0 s 周期）**在闪**；`1126 = 856 + 270` 是**相位骰子**。删掉我方光标**不会**变好（期望值不变），且违反原版 `.tscn` 的 `caret_force_displayed = true` | **观测**：两侧 2 屏 × 24 帧密集采样（§135.1） |
+| ② | 我方 `match_ready` 有进屏**过渡态**（`00:5x` + `dy/dx`，5–6 s 才切 `f(x)=`） | **真差异，已修。** 它不是"过渡态"而是**半成品对局屏**：空棋盘 + `00:5x` + `dy/dx` + 多一列修正文本 —— 因为我方自造的 `_can_join_by_idle()`（静默 0.30 s 也算握手完成）在 **7 条状态同步只到 1 条**时就 `joined` 进屏，`_sync_state_from_net()` 拿到空 `room`。删掉这条兜底后**进屏路径只剩一条**（7 条到齐） | **观测**：机制探针（确定性）+ 改前 T76 三轮像素复算（§135.2） |
+| ③ | `match_play` 的 5 739 px（94.8 %）是**弹道揭示量的相位差**，要接 `get_fractional_tick` | **改判：那是"我方画了一条原版根本没画的弹道"。** 同一份点击串、时间对齐采样下，原版棋盘上橄榄色像素的 bbox **就是士兵本人**（`x772..843`），我方扩到 `x925 × y643..861`（一条正弦弹道，逐帧揭示） | **观测**：两侧各 24 帧时间对齐采样（§135.3） |
+
+**这一轮没有改 `src/**`**（三处的修法都不需要），改了 `client/src/net/session.gd` 一处（②）+ 新增
+一个诊断脚本 `client/tools/join_handshake_probe.gd`（不进 14 脚本门槛）。
+
+### 135.1 ①「回放屏多画光标」——**证伪**（观测）
+
+§130.2 的判据是"原版两轮 6 帧、跨 50 s，光标列上一次都没画过"。本轮把采样从
+"每屏 3 帧 × 1.2 s + `--stop-plan` 冻结"换成**每 0.2 s 一帧 × 24 帧、不冻结**（`--flow replay --seed-replays`）：
+
+| 侧 | 屏 | 24 帧里"亮"的帧数 | 亮的那块 |
+|---|---|---|---|
+| 原版 | `replay_play` | **11 / 24** | `x1182..1184` × `y1066..1155`、纯白 `(255,255,255)`、270 px |
+| 原版 | `replay_end` | **13 / 24** | 同上 |
+| 我方 | `replay_play` | **12 / 24** | 同上（逐像素同 bbox、同白色） |
+| 我方 | `replay_end` | **13 / 24** | 同上 |
+
+* **原版**那 24 帧里，相邻两帧的差分**恰好 270 px、bbox 恰好 `x1182..1184 × y1066..1155`**，
+  亮/灭游程 = `2~3 帧亮 / 2 帧灭`（0.2 s 采样 ⇒ 亮窗 ≈ 0.5 s、周期 ≈ **1.0 s** = 引擎
+  `caret_blink_interval` 默认 0.5 s 的**翻边**间隔）；
+* **我方**那根光标**几何逐像素相同**（同 3 列、同 90 行、同纯白），**占空比也相同**（12–13/24）；
+* ⇒ `270 px` 是"两侧同相才抵消、异相就显形"的骰子。
+
+**§130.2 为什么得出"从未画过"**（这不是批评，是把采样条件写清楚）：`--stop-plan` 的 `frozen` 判据
+在"回放载入即暂停"这一屏上，停帧时刻是**相对进屏的确定量**（探针值连续 3 次采样不变就停），
+而光标相位也是相对进屏的确定量 ⇒ **每轮都停在同一相位**，"6 帧全灭"是**必然**。
+第 3 轮 `replay_play` 变成 856 也只说明那一轮的 `frozen` 采样点挪了一格（`_caret_blink` 是帧 delta 累加，
+帧率抖动就会挪）。**结论：本轮对 ① 不改任何代码。**
+
+> **就地更正一条历史记录冲突**（`AGENTS.md` §0 第 6 条）：
+> [`fixtures/play_screen_final_targets.txt`](../fixtures/play_screen_final_targets.txt) §A 记过原版一轮
+> `灭/亮/亮`（T26 实拍）。§130.2 / §130.6 第 3 条把它改判成"原版从不画"。**本轮 48 帧判 T26 那轮对**，
+> §130.2 那条结论作废；`fixtures/play_screen_final_targets.txt` 与本轮结论一致的部分**不需要改**，
+> 需要改的是 §130.2 的表述（已在本节写明，§130 正文按项目惯例**不回改**，以免破坏已合入的验收记录）。
+
+### 135.2 ②「match_ready 进屏过渡态」——**真差异，已修**（观测）
+
+#### 131.2.1 先把它到底是什么看清楚
+
+§130.3.2 把它描述成"`00:5x` 倒计时 + `dy/dx` 输入行"的**过渡态**。本轮把 T76 那几轮落在盘上的原始帧
+**自己重算**了一遍（不抄报告；帧若已被回收，按 §135.8 ④ 的同一台仪器重跑即可复现同一口径）：
+
+| 轮（T76 口径：`settle 1.5 s` + 无内容稳定闸） | 跨侧 `match_ready` | 底栏左块 `(0,1030)-(360,1160)` | 底栏右块 `(1700,1080)-(1920,1160)` |
+|---|---|---|---|
+| `round1` / `round2` | **12 823 px = 0.5757 %** | **7 165 px** | 1 523 px |
+| `round3` | **13 390 px = 0.6012 %** | **7 463 px** | 1 523 px |
+| `round4`（同一批，撞在过渡之后） | 2 316 px = 0.1040 % | 22 px | 11 px |
+
+把 T76 `round1` 我方那张 `match_ready_1` 摊开,四处特征**同时**成立：
+
+1. 棋盘**空**（无士兵、无靶子，只有中心十字点）；
+2. 底栏左 = **`00:57`** 大号倒计时 + **`dy/dx`** 图标（成品态是 `f(x) =`、无倒计时）；
+3. 底栏右 = **`- 9.890`** 一列修正文本（成品态这里是空）；
+4. 但**版式已经是对局屏**（36 键键盘、`Fire!`、底栏位置都对）。
+
+⇒ 不是"版式切换动画"，是**对局屏已经建起来了、但 `room` 还是空的**。
+
+#### 131.2.2 根因：`_can_join_by_idle()`（我方自造）
+
+| 环节 | 代码（`client/src/net/session.gd`） | 后果 |
+|---|---|---|
+| 正常路径 | `_can_join_by_state_sync()`：`STATE_SYNC_KINDS` 那 7 条**全到齐**才 `_mark_joined()` | 没问题 |
+| **我方自造** | `poll()` 里还有一条 `_can_join_by_idle()`：`_saw_new_connection && _idle >= JOIN_IDLE(0.30)` | 见过 `NewConnection` 后再"静默" 0.3 s 就 `joined` —— **剩下 6 条一条都没到也算** |
+| 为什么慢机器必然踩 | `poll(delta)` **每帧**调一次：先读帧（读到就把 `_idle` 清 0）→ 再 `_idle += delta`。llvmpipe 下 `delta` 常有 0.3 s+，而服务端那 47 帧是**逐条 `sendall`**（`tools/match_serve.py`）⇒ 只要某次 poll 没读完，`_idle` 立刻 ≥ 0.30 | 提前 `joined`，且**跨轮会飘**（取决于那一轮读了几次 TCP） |
+| 进屏 | `App._on_net_joined()` → `_sync_state_from_net()` + `PlayScreen.begin_match()` | 拿**空 `room`** 去查表 |
+| 空表退化成什么 | `function_mode_index("") = 1` ⇒ **DiffEq**（`dy/dx`）；`time_mode_index("") = 1` ⇒ **Timer1m**（60 s ⇒ `00:5x`）；`state.players` / `room["entities"]` 皆空 ⇒ 棋盘空 | **逐项对上 §135.2.1 的四处特征** |
+| 什么时候恢复 | 那一批到齐后 `TurnInfo`/`EndOfTurnInfo` 触发 `_mark_started()` → `App._on_net_game_started()` 再同步 + 重建 | 恢复时刻 = "那一轮 TCP 读了几次" ⇒ 就是 §130 用"内容稳定闸"兜住的量 |
+
+#### 131.2.3 改了什么（`client/src/net/session.gd`，一处删除）
+
+删掉 `_can_join_by_idle()` 与它在 `poll()` 里的调用，连带删掉只为它服务的 `JOIN_IDLE` 常量与 `_idle`
+计数器（删后无读者）：
+
+```text
+- const JOIN_IDLE := 0.30        # "7 条没到齐时，静默这么久也算握手完成"
+- func _can_join_by_idle() -> bool:
+-     return _saw_new_connection and _idle >= JOIN_IDLE
+  func poll(delta: float) -> void:
+      if link != null: link.poll(delta)
+      if phase == "connecting" or phase == "handshaking":
+          _elapsed += delta
+-         _idle += delta
+          if phase == "handshaking":
+-             if _can_join_by_idle(): _mark_joined()
+-             elif _elapsed >= HANDSHAKE_TIMEOUT: _fail(...)
++             if _elapsed >= HANDSHAKE_TIMEOUT:
++                 _fail("握手超时（%.1f s 内没收到完整状态同步）" % HANDSHAKE_TIMEOUT)
+```
+
+进屏从此只有**一条**路径：7 条状态同步到齐。状态同步永远到不齐时不再"静默进一块拼错的屏"，
+而是走 `HANDSHAKE_TIMEOUT = 5.0 s` 的**显式**失败。
+
+**证据档**：机制与退化值 = **观测**（代码路径 + 下面的确定性探针 + 与真帧四处特征逐项对上）；
+"**原版**遇到半套状态同步会怎么办" = **未知**（没抓到这种线上流量，也没有可指的反汇编地址）。
+所以本轮只做"**去掉我方自造**"（任务书 §② 允许的口径），不假装知道原版的兜底策略。
+
+#### 131.2.4 改前 / 改后读数
+
+**(a) 机制层（确定性，不靠时序）**：`client/tools/join_handshake_probe.gd`
+（喂 1/7 条状态同步 + 一次 `poll(0.4)`，模拟慢帧）：
+
+| | `A after_poll`（1/7 条 + 0.4 s） | `B after_all`（7/7 条） |
+|---|---|---|
+| **改前**（`0631ff3`） | `phase=**joined** sync=1 joined=true`（room 空、`function_mode`/`time_mode` 未设） | `joined`，7/7 |
+| **改后**（本轮） | `phase=**handshaking** sync=1 joined=false`（**不进屏**） | `joined`，7/7，`NormalFunction`/`Timer1m` |
+
+退化值（机判，对上 §135.2.1 那两处元素）：`function_mode_index("") = 1`、`time_mode_index("") = 1`。
+
+**(b) 像素层**：本机（32 核）**改前也踩不中**（跨轮概率性；不加压 3 轮、加压 2 轮全是成品态
+2 046 px = 0.0919 %），所以**像素 A/B 在本机没有区分力** —— 如实记下，不拿它当"改好了"的证据。
+"改前像素读数"只能取 T76 那三轮（同仪器 `settle 1.5` + 无稳定闸，帧还在盘上）：
+
+| 轮 | 改前（T76 `round1..3`，本轮复算） | 改后（本轮同仪器 3 轮 + 加压 2 轮） |
+|---|---|---|
+| r1 | **12 823 px = 0.5757 %**（底栏左 7 165） | 2 046 px = 0.0919 %（底栏左 22 px） |
+| r2 | **12 823 px = 0.5757 %** | 2 046 px = 0.0919 % |
+| r3 | **13 390 px = 0.6012 %**（底栏左 7 463） | 2 046 px = 0.0919 % |
+
+**(c) 判定口径（预注册停帧表，两侧各一次）**：见 §135.4 的回归表（`match_ready` 落在预注册带
+`[0.070, 0.100] %` 内）。
+
+### 135.3 ③「`match_play` 残差是弹道揭示相位差」——**改判**（观测）
+
+#### 131.3.1 残差长什么样
+
+判定采集（`--flow match` + 预注册停帧表）：`match_play` 掩膜后 **5 743 px = 0.2580 %**（原始 6 013，
+光标占 270），其中**棋盘区 `(265,556)-(1738,900)` 占 5 699 px**。把差分像素叠到原版帧上，红点
+是**一条高频正弦曲线的骨架**——但原版那张帧上棋盘是**干净的**。
+
+#### 131.3.2 时间对齐密集采样（决定性）
+
+两侧**同一份点击串**、各 24 帧 × 0.2 s、**时间对齐**（不加 `--stop-plan`）。取 phase2 触发后
+5.0–7.8 s 那 14 帧（第 15 帧起 `serve_match` 收尾退出，原版弹出 "You have been disconnected."）：
+
+| 指标 | 原版 | 我方 |
+|---|---|---|
+| 棋盘上橄榄色 `(125,104,0)±40` 像素数 | **1 265 … 1 314（恒定）** | 5 569 → **10 564**（逐帧增长 = 揭示中） |
+| 同一批像素的 bbox | **`x772..843 × y783..862`** = 士兵 + 名字标签本身 | `x773..925 × y643..861`（**多出**一条正弦） |
+| 棋盘区跨侧差异 | — | 5 855 → 10 871 px（我方揭示越多、差得越多） |
+
+⇒ **原版这段时间里一条弹道都没画**；我方的残差不是"揭示量差几个 tick"，是"多画了一整条弹道"。
+§130.3.3 的"相位差"归因**不成立**（相位差最多差十几个 tick = 几十个点，不会差出一条完整曲线）。
+
+#### 131.3.3 源码层根因（两处，都在客户端；修法需要 Rust 侧先定语义）
+
+| 处 | 我方代码 | 原版（依据） |
+|---|---|---|
+| 揭示起点 | `play_screen.gd` `_feed_curve()` 之前那句 `set_function_points(player_id, flat, **0**, color)` —— 起飞 tick 恒取 **0**（源码注释自己写着"**我方选择**：那个模块还没有 `src/` 文件"） | `FunctionActive{active_tick:615}` 事件里带着真值（`session.gd` 已把它存进 `room["active_ticks"]`），`GraphwarPlane` 的 `is_active_function` 要求 `active_tick < tick` |
+| 时钟 | `_advance_curve(delta)`：`_curve_tick += seconds × 60`（**墙钟**累加），再 `set_fractional_tick(_curve_tick)` | 每帧读 `GraphwarTickHandler::get_fractional_tick`（`0x519530`）——**定步整数 tick + tick 内小数**，且那台 handler 由 `GraphwarGameClient::process` 每帧 `drive_frame` 推进 |
+| 谁在驱动 | `KernelProcessHost::drive_frame` **不接**（`docs/16-client.md` §58.3 的决策）⇒ 我方没有一台与 `EntityDrawer`/`GraphwarPlane` 共享的 tick 时钟 | `drive_frame` 每帧一次、泵跟着 tick（`docs/06` §44 的五条真值） |
+
+**这一条本轮不落码**，理由与缺的证据写在 §135.6 第 1 条：客户端侧的接缝**已经在了**
+（`GraphwarPlane.set_fractional_tick` / `fractional_tick` / `integer_tick_now` 都是 `#[func]` 暴露的），
+缺的是 **Rust 侧的两件**：① 谁 `drive_frame`（把平面/`EntityDrawer` 那台 handler 真正推起来）；
+② `FunctionManager` 的"活跃窗口"语义（`get_active_functions_on_tick` 什么时候把一条函数判为不再画）。
+在这两件定下来之前改客户端的相位驱动 = 拿一个未知去对另一个未知。
+
+### 135.4 回归基线（逐屏，改动前 / 改动后）
+
+判定口径一律是预注册那套（`fixtures/frame_diff_thresholds.txt` §3 三层 + `--stop-plan` 停帧 + 排除区），
+两侧**串行**、私有 netns。本轮改的是 `client/src/net/session.gd`（只在联机握手路径上），
+所以**不联网的那几屏按构造不变**，下面两张表分开报：
+
+**（a）联网两屏（改动的直接作用面，两侧各采一次）**
+
+| 屏 | 预注册带 | 改动前（本轮基线轮） | 改动后 | 判 |
+|---|---|---|---|---|
+| `match_ready` | `[0.070, 0.100] %` | 2 046 px = 0.0919 %（L2 0） | **2 048 px = 0.0920 %（L2 0）** | **在带内 ✓**（原始 2 318 = 2 048 + 光标 270） |
+| `match_play` | `≤ 0.450 %`（实测带 `[0.2565,0.2630] %`） | 5 743 px = 0.2580 %（L2 1 块） | **5 710 px = 0.2565 %（L2 1 块）** | **✓ 且更好**（本轮没动 ③，这就是它的"不变"读数） |
+
+**（b）不联网的屏（本轮**没有**碰它们的代码路径；下面这行是改动**前**的读数，逐 px 复现 §130/§118.7）**
+
+| 屏 | 基线（要求） | 本轮实测 | 说明 |
+|---|---|---|---|
+| `menu` | **0 px** | **0 px**（6 帧、逐字节） | 改动后不重跑：`session.gd` 不在菜单路径上 |
+| `replay_lobby` | **0 px** | **0 px** | 同上 |
+| `replay_play` | 856 px（掩膜）/ 856–1126（原始） | 856 / 856 | 同上；① 已证明原始读数的抖动是光标相位 |
+| `replay_end` | 856 px（掩膜）/ 856–1126（原始） | 856 / 1 126 | 同上 |
+| `player_skins` | **0 px** | 未重跑（§135.6 第 4 条） | 该屏不经过 `GwNetSession` |
+| `campaign` | 0.1718 % | 未重跑（同上） | 残差 = theme 字色（§130.5，本轮不动） |
+| `level_popup` | 0.1008 % | 未重跑（同上） | 同上 |
+| 结算框面板区 | **0 px** | 未重跑（同上） | 该屏不经过 `GwNetSession` |
+
+### 135.5 这一轮**新发现**的差异（不在任务书里）
+
+1. **我方在联机对局里画了一条原版不画的弹道**（§135.3）——本轮最大的一条，影响 `match_play` 的 5 699 px。
+2. **原版断线时会弹 "You have been disconnected." + `Ok`，我方在同一时刻没弹**（`timealigned24` 第 15–24 帧，
+   跨侧差异 22 925 px）。根因未查（我方 `_on_net_disconnected` 会关 `DisconnectedPopUp` 之外的屏，
+   何时弹窗要看 `App` 的 `closed` 分支）——**登记为遗留**（§135.6 第 2 条）。
+3. **`serve_match` 收尾退出会让两侧状态分叉**：原版把它当断线（弹窗 + 留下棋盘），我方留在对局屏。
+   ⚠️ 采集脚本的 `MATCH_PLAY_WAIT=5.0` 刚好在它之前，所以**判定读数不受影响**；但**密集采样
+   （>7.8 s）会踩到它**，别拿那段帧做判据。
+4. **`--flow match` 的 `match_ready` 在两台机器上"踩不踩得到半成品屏"不一样**：T76 那台 4 轮踩到 3 轮，
+   本机 12 轮（含加压 5 轮）**一次都没踩到**。⇒ 这条差异是**概率性暴露**，验收必须带机制判据
+   （本轮的 `join_handshake_probe.gd`），不能只靠像素轮次。
+
+### 135.6 遗留 / 未做 / 缺的证据（诚实登记）
+
+1. **③ 的落码需要 Rust 侧先定两件事**（本轮只到"指到源码层"这一步）：
+   (a) 谁 `drive_frame` —— 把 `GraphwarPlane` / `EntityDrawer` 共享的那台 `GraphwarTickHandler` 真正推起来
+   （现在 `docs/16-client.md` §58.3 的决策是"不接"）；
+   (b) `FunctionManager` 的活跃窗口语义（`get_active_functions_on_tick` `0x456df0` 的判据、以及
+   `update_function_fade` —— 那个函数**没有 x86 落点**，走 GOT 槽 `0x9bbd08`，算式未知）。
+   缺这两件，客户端改相位驱动只是换一个未知去对另一个未知。**建议下一轮开一个 Rust 侧任务**。
+2. **断线弹窗时机**（§135.5 第 2 条）：未查根因，未落码。
+3. **原版在"状态同步只到一半"时的行为**：**未知**（缺的证据 = 一段只发部分状态同步的线上流量，
+   或原版 `GraphwarGameClient` 那条路径的反汇编）。本轮只做了"去掉我方自造兜底"。
+4. **不联网的四屏没有在改动后重跑**（`player_skins` / `campaign` / `level_popup` / 结算框）；
+   理由 = 本轮唯一改动的 `client/src/net/session.gd` 只有联机路径会走到（`GwNetSession`），
+   而 `menu` / `replay_lobby` / `replay` 两屏**已经在改动前采过并逐 px 复现 §130**。
+   下一轮若要"全屏重跑"，按 §135.8 的命令把对应 `--flow` 补上即可。
+5. **`--stop-plan` 的 `frozen` 停帧在"载入即暂停"的屏上是相位偏置源**（§135.1 的根因）。
+   本轮不改工具（`tools/frame_capture.py` 是 T76 刚改的、`AGENTS.md` 也要求不动）；
+   登记成工具层建议：某侧若是"周期性闪烁元素"，停帧必须**随机化**停帧时刻，否则读数带系统偏置。
+
+### 135.7 门槛（本轮实测，全部自己跑）
+
+| 门槛 | 读数 |
+|---|---|
+| `cargo test --offline` | **1576 passed / 0 failed / 1 ignored**（74 个 test 二进制求和） |
+| `cargo test --offline --features gdext-bindings` | **1724 passed / 0 failed / 1 ignored** |
+| `selftest` | **757 passed / 0 failed / 1 skipped**，`@@SELFTEST_COVERAGE groups=34 checks=757 expected=757 missing=0(claimed 0 / degraded 0 / silent 0)`；⚠️ 前置两件：`cargo build --offline --example serve_match` + `HOME` 里有原版目录的两份真回放（缺前者会少 76 条 = 681，**不是回归**） |
+| headless 14 脚本 | **1978 / 0**（14 份逐个跑：assemble 244 / base 117 / curve 96 / draw 235 / entity 378 / function 132 / gdext 24 / obstacle 116 / plane 97 / play_flow 234 / process 66 / recovered 57 / signal 155 / spike 27） |
+| 三轴 | `fire` **647** ｜ `batch` **647** ｜ `batch_conv` **637**（`结算批 1080` 一位未退） |
+| `coverage_matrix.py --check` | **OK**（527 个可归属函数：逐位 89 / 观测 435 / 推断 3 / 未做 0；rc=0）。⚠️ 必须用 `.reference/venv/bin/python` 跑（capstone 5.0.7 只在 venv 里；系统 python3 会报"缺 capstone"） |
+| `check_doc_refs.py` | **rc=0**（无死链，白名单逐条有理由） |
+| 像素 | 见 §135.1–§135.4 |
+
+### 135.8 复跑命令（照抄）
+
+```bash
+WT=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/wt-t84     # 换你自己的树
+MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export PY=$WT/.reference/venv/bin/python                            # frida 只在 venv 里
+export HOME=$WT/.fakehome
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target                           # ⚠️ 单独一行
+
+# ① 内核三件套（本轮**没改 src/**，但换了工作树就必须重做这三步）
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so $WT/client/
+$GODOT --headless --path $WT/client --import      # 少这步 = 空帧
+
+# ② 机制判据（2 s，确定性；不进 14 脚本门槛）
+$GODOT --headless --path $WT/client --script res://tools/join_handshake_probe.gd
+#   期望：A after_poll phase=handshaking sync=1 joined=false ／ B after_all joined 7/7
+
+# ③ 判定采集（两侧串行、私有 netns；bwrap 模板见 docs/06 §79.8）
+$PY $WT/tools/frame_capture.py --side original --flow match \
+    --stop-plan $WT/fixtures/frame_capture_freeze_plan.txt --out <orig> --display-num 133
+$PY $WT/tools/frame_capture.py --side ours     --flow match \
+    --stop-plan $WT/fixtures/frame_capture_freeze_plan.txt --out <mine> --display-num 134
+python3 $WT/tools/frame_diff.py --orig <orig> --mine <mine> --screens match_ready,match_play \
+    --exclude-rect 999,1062,1008,1160 --out <r.tsv>
+
+# ④ ① 的密集采样（**不加** --stop-plan！就是要采样多个相位）
+#    把 FRAMES_PER_SCREEN 改 24、FRAME_GAP_S 改 0.2 的临时副本放 .agent-work 下跑，
+#    **不要改 tools/frame_capture.py**
+$PY <scratch>/frame_capture_dense.py --side original --flow replay --seed-replays \
+    --out <o> --display-num 161
+$PY <scratch>/frame_capture_dense.py --side ours --flow replay --seed-replays \
+    --out <m> --display-num 162
+#    判据：两侧 replay_play/replay_end 的 24 帧里"亮"的帧数都在 11~13/24，
+#          bbox 都是 x1182..1184 × y1066..1155、纯白
+
+# ⑤ ③ 的时间对齐密集采样（两侧同一份点击串、各 24 帧 × 0.2 s，不加 --stop-plan）
+#    取 phase2 后 5.0–7.8 s 的 14 帧比较（第 15 帧起 serve_match 退出，别用）
+```
+

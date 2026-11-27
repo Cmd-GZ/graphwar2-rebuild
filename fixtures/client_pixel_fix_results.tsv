@@ -1,0 +1,70 @@
+# fixtures/client_pixel_fix_results.tsv —— T84：§130 报的三处"源码层差异"的判决读数（2026-11-27）
+#
+# 判据文件 = fixtures/frame_diff_thresholds.txt（sha256 9cc9fcda764b6c3dc7036c6cd2f1c049e0a2d44ed74b15745ff68f3ec4da2873，**本轮一个数没改**）；
+# 排除区 = fixtures/frame_capture_freeze_plan.txt §2（replay 1179,1062,1188,1160 / match 999,1062,1008,1160，**没改**）；
+# 停帧表 = 同上（`--stop-plan`，两侧**串行**、私有 netns，模板 docs/06 §79.8）。完整论证见 docs/06 §131。
+#
+# 列：issue ⇥ screen ⇥ side ⇥ round ⇥ instrument ⇥ px ⇥ ratio ⇥ px_raw ⇥ note
+#   `instrument` 说明"这一行是怎么采样/停帧的"，**不同 instrument 的行不许互相比较**。
+#   `px` = 判定用的差异像素（有排除区时为掩膜后）；`px_raw` = 未掩膜的原始读数（`-` = 未区分）。
+#   `px` 为 `-` 的行是**元素层判据**（某块区域里有没有那个元素、bbox 是多少），不是跨侧差异像素。
+#
+# ---------------------------------------------------------------------------
+# ① §130.2「我方回放屏多画了一根 270 px 闪烁光标」——**证伪**：原版同位置同一根，1.0 s 周期在闪
+# ---------------------------------------------------------------------------
+# instrument = `dense24`：每 0.2 s 一帧 × 24 帧（不加 --stop-plan）。为什么要密采：冻结会把光标相位钉死在一个点上，
+#   而光标是墙钟 1.0 s 周期元素 ⇒ 2 轮 × 3 帧的"全灭"只是相位偏置（§131.1）。
+# 元素层读数：光标 = 纯白 (255,255,255)、3 列 × 90 行 = 270 px，bbox 见 note。
+issue	screen	side	round	instrument	px	ratio	px_raw	note
+①	replay_play	original	dense24-A	-	-	-	-	亮 11/24 帧；bbox x1182..1184 y1066..1155（270 px 纯白）
+①	replay_end	original	dense24-A	-	-	-	-	亮 13/24 帧；同 bbox
+①	replay_play	ours	dense24-B	-	-	-	-	亮 12/24 帧；同 bbox（逐像素同位置、同白色）
+①	replay_end	ours	dense24-B	-	-	-	-	亮 13/24 帧；同 bbox
+# 冻结口径下的判定读数（改动前 / 改动后**都应该**是这样：本轮 ① 不改任何代码）
+①	replay_play	both	R0(基线)	tick-frozen	856	0.000384	856	掩膜后 856；本侧光标这一轮是灭的
+①	replay_end	both	R0(基线)	tick-frozen	856	0.000384	1126	掩膜后 856；本侧光标这一轮是亮的（+270）
+#
+# ---------------------------------------------------------------------------
+# ② §130.3.2「match_ready 有进屏过渡态」——**真差异**，根因 = 我方自造 `_can_join_by_idle()`
+# ---------------------------------------------------------------------------
+# 真身：不是"过渡态"，是**半成品对局屏**（棋盘空 + 底栏左 `00:5x` + `dy/dx` + 底栏右多一列修正文本）。
+#
+# instrument = `settle1.5-nogate`：复刻 T76 撞上它的那套口径（match/match_ready/ours 的 stop_value=1.5 s，
+#   且**关掉内容稳定闸**）。改前读数 = T76 落在盘上的原始帧（`.agent-work/cg/wt-t76/.agent-work/t76/round1..4`），
+#   由本轮**重新逐像素复算**（不是抄报告）。
+#   `px` 里的原版侧 = `round*/orig_match/frames/match_ready_1.png`（tick 900 冻结）。
+issue	screen	side	round	instrument	px	ratio	px_raw	note
+②	match_ready	both	T76-round1	settle1.5-nogate	12823	0.005757	12823	底栏左块 7165 px、底栏右块 1523 px（半成品）
+②	match_ready	both	T76-round2	settle1.5-nogate	12823	0.005757	12823	同上（与 round1 逐像素同值）
+②	match_ready	both	T76-round3	settle1.5-nogate	13390	0.006012	13390	底栏左块 7463 px、底栏右块 1523 px
+# 同一批但撞在过渡态之后的对照（说明这一屏本身只有 ~2 千 px 的残差）
+②	match_ready	both	T76-round4	settle1.5-nogate	2316	0.001040	2316	底栏左 22 px、底栏右 11 px（成品态）
+# 本轮自己跑的 A/B（本机 32 核，**不加压时改前也踩不中**：跨轮概率性，见 §131.2.4）
+②	match_ready	ours	CHG-before-r1	settle1.5-nogate	2046	0.000919	2046	vs 原版 tick900 冻结帧；半成品**未出现**
+②	match_ready	ours	CHG-before-r2	settle1.5-nogate	2046	0.000919	2046	同上
+②	match_ready	ours	CHG-before-r3	settle1.5-nogate	2046	0.000919	2046	同上
+issue	screen	side	round	instrument	px	ratio	px_raw	note
+②	match_ready	ours	CHG-after-r1	settle1.5-nogate	2046	0.000919	2046	vs 原版 tick900 冻结帧；半成品**未出现**
+②	match_ready	ours	CHG-after-r2	settle1.5-nogate	2046	0.000919	2046	同上
+②	match_ready	ours	CHG-after-r3	settle1.5-nogate	2046	0.000919	2046	同上
+# 判定口径（预注册停帧表 `--stop-plan`，两侧各一次；这是**验收读数**，与上面的加压 A/B 不同 instrument）
+②	match_ready	both	judged-after	tick-frozen	2048	0.000920	2318	L2 0 块；原始 2318 = 掩膜 2048 + 光标 270（本侧这一轮是亮的）
+②	match_ready	both	judged-before	tick-frozen	2046	0.000919	2046	L2 0 块；改动前基线轮
+# **机制层**判据（确定性，不靠时序）：client/tools/join_handshake_probe.gd，喂 1/7 条状态同步 + poll(0.4)
+②	handshake	ours	probe-before	probe	-	-	-	phase=**joined**（sync=1/7，room 空 ⇒ function_mode/time_mode 未设）
+②	handshake	ours	probe-after	probe	-	-	-	phase=**handshaking**（sync=1/7，不进屏）；喂满 7 条才 joined=true
+# 空 room 的退化值（半成品屏上那两处元素的来源，机判）
+②	-	ours	probe	probe	-	-	-	function_mode_index("")=1（DiffEq ⇒ dy/dx 图标）；time_mode_index("")=1（Timer1m ⇒ 00:5x）
+#
+# ---------------------------------------------------------------------------
+# ③ §130.3.3「match_play 的 5739 px 是弹道揭示量的相位差」——**改判**：我方画了原版没画的弹道
+# ---------------------------------------------------------------------------
+# instrument = `timealigned24`：两侧**同一份点击串**、各 24 帧 × 0.2 s、**时间对齐**（不加 --stop-plan）。
+#   取 phase2 触发后 5.0–7.8 s 那 14 帧（第 15 帧起 serve_match 收尾退出，原版弹 "You have been disconnected."）。
+issue	screen	side	round	instrument	px	ratio	px_raw	note
+③	match_play	both	judged-before	tick-frozen	5743	0.002580	6013	掩膜后 5743（L2 1 块）；棋盘区 (265,556)-(1738,900) 占 5699 px
+③	match_play	both	judged-after	tick-frozen	5710	0.002565	5980	L2 1 块；**本轮没改这一条**（= 预期不变，实测也确实不变）
+# 棋盘上"橄榄色 (125,104,0)±40"像素的 bbox —— 原版只有士兵本人，我方多出一条正弦弹道
+③	board(olive bbox)	original	timealigned24	-	-	-	-	x772..843（= 士兵 + 名字标签，1265..1314 px 恒定）
+③	board(olive bbox)	ours	timealigned24	-	-	-	-	x773..925 × y643..861（5569→10564 px，逐帧揭示中）
+③	board(diff)	both	timealigned24	-	-	-	-	棋盘区跨侧差异逐帧 5855 → 10871 px（我方揭示越多、差得越多）
