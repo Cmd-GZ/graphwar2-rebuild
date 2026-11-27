@@ -34,7 +34,9 @@ use godot::prelude::*;
 
 use crate::axis_drawer::{self, AxisMode, Primitive};
 
-use super::api::{self, hit_result_pairs, obstacle_pairs, result_pairs, ApiValue};
+// T72 归一：本文件原来有一份与 `api.rs` 逐字符相同的 `triples`（台账 C 档）。
+// 入参形状检查只该有一处 ⇒ 直接用 `api::triples`。
+use super::api::{self, hit_result_pairs, obstacle_pairs, result_pairs, triples, ApiValue};
 
 // ---------------------------------------------------------------------------
 // 1. 类型搬运（Rust 域 → Godot 域）
@@ -193,17 +195,6 @@ impl GW2Rebuild {
 
 /// 绑定层自己的标签（`ping` 用它区分 gdext 版与手写版）。
 const BINDING_TAG: &str = "gdext";
-
-/// `[a, b, c, d, e, f]` → `[(a,b,c), (d,e,f)]`；长度不是 3 的倍数返回 `None`。
-///
-/// 与 `api.rs` 里的同名私有函数**语义相同**（那边是 `unsafe extern "C"` 回调的入口检查，
-/// 这边是 `#[func]` 的入口检查）；判定本体仍然只有 `api::hit_test` 一份。
-fn triples(flat: &[f64]) -> Option<Vec<(f64, f64, f64)>> {
-    if flat.len() % 3 != 0 {
-        return None;
-    }
-    Some(flat.chunks_exact(3).map(|c| (c[0], c[1], c[2])).collect())
-}
 
 /// `hit_test` 的入参形状不对时的返回值。
 ///

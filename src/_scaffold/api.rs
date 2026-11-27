@@ -1418,7 +1418,14 @@ unsafe extern "C" fn level_obstacles_call(
 }
 
 /// `[a, b, c, d, e, f]` → `[(a,b,c), (d,e,f)]`；长度不是 3 的倍数返回 `None`。
-fn triples(flat: &[f64]) -> Option<Vec<(f64, f64, f64)>> {
+///
+/// # 为什么在这里（T72 归一，不是原版的东西）
+///
+/// "扁平数组按 3 分组"是**我方**两个入口层（手写 C ABI 与官方 gdext）共用的入参形状检查：
+/// 原版 `hit_test` 的入参是 Rust 侧的结构体切片，没有这一层。T72 之前
+/// `_scaffold/gdext_mod.rs` 里有一份**逐字符相同**的拷贝（台账 C 档 `triples`）；
+/// 现在只留这一份，`gdext_mod` 改 `api::triples`，两边**共用同一套错误码路径**。
+pub(crate) fn triples(flat: &[f64]) -> Option<Vec<(f64, f64, f64)>> {
     if flat.len() % 3 != 0 {
         return None;
     }
