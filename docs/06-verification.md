@@ -17763,3 +17763,211 @@ cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy 
 * `game_client` 的 `connect 0x518320` / `disconnect 0x516370` 也没动（它们就是 `0x45a340` / `0x4592d0`
   的唯一调用者，本条落完后这两条已经**有被调者**了）。
 * `new`（`0x4599f0`）仍是 F2。
+
+## 105. T58：控制器迁回 Rust **第二批** —— audio / expr / frame / color 四段；挖出**改前就与真值不符的 9 处**（其中 `expr.gd` 那台求值器在 4 条语义上是错的、`gw_audio.gd` 的资源槽表 5 条全错）（2026-11-27，任务 T58 / `task-56`）
+
+### 105.1 这一批为什么做、判据是什么
+
+`AGENTS.md` §0.4 说原版的界面控制器在 **Rust** 里，`client/src/**.gd` 是仿制品；仿制品最坏的地方
+不是"画得不像"，而是**把同一条规则在 GDScript 里又写了一遍**（两个真相源：Rust 侧修好了 `.gd`
+不会跟着变）。T35 审计（§90）从 `client/src/` 14 000 行生产代码里判出 **C 档 4 941 行 / 27 段**，
+并给了"最该先搬的 10 段"排序；第一批（T31 / §81）只做了第 7 项（对局屏流程状态机）。
+本批做**第 2 / 4 / 8 / 9** 项 —— audio / expr / frame / color，四段彼此独立、（原本）与别人不冲突。
+
+判据（沿用 T31 规格 §3①）：**只有"Rust 侧已有复原实现且能指到地址"的才搬**；
+纯视图（节点属性/字号/动画/资源加载/引擎 API 调用）不搬 —— 搬了只是把引擎侧代码在 Rust 里再抄一遍。
+
+台账：**`fixtures/controller_migration2_ledger.tsv`（36 行：24 `move` / 5 `partial` / 7 `keep`）**，
+单独 commit（`03c18df`），先写台账再动代码。每行的"来源证据档"与"不搬缺什么"都在表里。
+
+**范围声明**（`tools/merge_check.py` 的禁区放行；这四个是任务书指定的迁移目标，逐个都写了理由）：
+`声明：client/src/audio/gw_audio.gd`（第 2 段，规则移出、只留引擎播放）、
+`声明：client/src/core/expr.gd`（第 4 段，整台求值器搬到 `math_function`）、
+`声明：client/src/net/frame.gd`（第 8 段，帧层搬到 `graphwar_stream_buffer`）、
+`声明：client/src/net/link.gd`（帧层新增的 `failed` 通道要有人处理，217→224，+7 行）、
+`声明：client/tools/selftest.gd`（+15 条真值断言，期望值全部来自 Rust/二进制）。
+**没有碰** `client/src/screens/play_screen.gd`（t54 的回放布局）、`src/graphwar_setup_control.rs` /
+`src/graphwar_game_client.rs`（t55）、任何 `_scaffold/*_class.rs` 的既有方法体（t57）——
+`_scaffold/` 本轮只**新增**文件 + `mod.rs` 里加注册说明。
+
+### 105.2 四段的落点与 `.gd` 行数
+
+| # | 段（`docs/06` §90 的排序号） | `.gd` 改前 → 改后 | 搬到哪（Rust 文件:函数） | 出口类（`src/_scaffold/`） | 证据档 |
+|---|---|---|---|---|---|
+| 2 | `client/src/audio/gw_audio.gd` | **400 → 385**（−15） | `src/graphwar_audio_control.rs`：`SoundSlot::{path,volume_db}` :153/:167、`slot_for_effect_kind` :308、`HUM_MIX_RATE/HUM_BUFFER_LENGTH/PCM_FULL_SCALE` :196/:198/:200、`effective_mute` :379；新增 `_scaffold/audio_wav.rs`（原版 `hound` 的等价物 + `÷32767` 归一化） | `GwAudioControl` | 逐位 |
+| 4 | `client/src/core/expr.gd` | **229 → 65**（−164） | `src/math_function.rs`：`lex` :76（解析器 `0x4ed670`）/ `parse` :459 / `eval` :523（求值器 `0x4eb9d0`）/ `m_sqrt` :482 / `m_div` :497 / `m_log10` :513 | `GwMathExpr` | 逐位 |
+| 8 | `client/src/net/frame.gd` | **175 → 172**（−3） | `src/graphwar_stream_buffer.rs`：`LEN_PREFIX_LEN` :109、`MAX_MESSAGE_LEN` :114（读侧 `0x1000`）、`MAX_FRAME_PAYLOAD` :119（写侧 `0xffff`）、`encode_len` :335、`decode_len` :343、`ReadError/WriteError` + 5 条错误原文 :122-:134 | `GwStreamBuffer` | 逐位 |
+| 9 | `client/src/screens/play_screen.gd` 的 `TEAM_COLORS` + `assign_colors()` | **未改**（见 105.7） | `src/graphwar_color_manager.rs`：`TEAM1/2_COLORS` :302/:312、`TEAM_POOL_LEN` :221、`RANDOM_COLOR_MODULO` :223、`add_team_color` → `pick_from_pool` → `random_color` :451/:465/:483 | `GwColorManager` | 逐位 |
+
+合计：三份被搬的 `.gd` **804 → 622 行（−182）**；Rust 侧新增 5 个文件 **987 行**（含 6 条单测）
++ `_scaffold/mod.rs` 28 行注册说明。`client/src/net/link.gd` **+7 行**（217 → 224，新增"帧层真错误"通道，见 105.3 第 8 条）。`client/tools/selftest.gd` **+15 条断言**（717 → **732**，见 105.5）。
+
+⚠️ **行数不是本批的主指标**：`frame.gd` 里被搬走的帧层只有约 26 行，其余 115 行是
+"Godot JSON ↔ Dictionary"与 Variant 类型转换（原版由 serde 做，属 B 类）；`gw_audio.gd` 剩下的
+385 行里约 250 行是**引擎播放**（`load()` / `AudioStreamPlayer` / `push_buffer` / `AudioServer`），
+原版也是调引擎。真正有价值的是**同一条规则只剩一处**，以及下面这 9 条。
+
+### 105.3 挖出来的 9 处"改前就与真值不符"（本批最有价值的部分）
+
+这些**不是**本轮改出来的新错，是"两份真相源"造成的存量错 —— `.gd` 那份写错了、Rust 那份是对的，
+而没有任何东西在比对它们。逐条都给改前/真值/证据：
+
+| # | 位置 | 改前的行为（自造） | 真值（Rust / 二进制） | 证据 | 后果 |
+|---|---|---|---|---|---|
+| 1 | `gw_audio.gd` `SOUNDS[].slot` | `explosion→0xa0`、`squash→0x80`、`spark→0x90`、`pop→0xa0`、`unpop→0x80` | `explosion→+0x80`、`squash→+0x90`、`spark→+0xa0`、`pop→+0xb0`、`unpop→+0xc0` | 逐位：构造函数的 5 次 `load()` `0x4bf550` 写入 `+0x80..+0xc0` 的顺序 | 槽位语义全错（`play()` 用的是**槽**的音量） |
+| 2 | 同上，音量后果 | `pop` 按 −15 dB、`unpop` 按 −15 dB 播 | `pop` = **0 dB**、`unpop` = **−5 dB** | 逐位：`movi d0,#0`（`0x4bf39e` 那支）/ `movss 0x1b9ba0`(−5.0f) | `pop` 小 **15 dB**、`unpop` 小 **10 dB** |
+| 3 | 同上，`humm` 的槽 | 写成占 `0xc0`（"第五个槽给 humm"） | `0xc0` 的固定表项是 **`unpop.mp3`**；`humm` 走 `AudioStreamGenerator`，**不在 5 个资源槽里** | 逐位（`graphwar_audio_control` 模块文档 §3 末段已纠正 `docs/111` §4.5 的旧归类） | humm 与 unpop 抢同一个 player 槽 ⇒ 互踩 |
+| 4 | `expr.gd` `_tokenize` | 未匹配字符 ⇒ 报错"不认识的字符" | 词法器**跳过**未匹配字符（`Π → []`、`$` 同理） | 逐位（`docs/03` 的差分矩阵） | 合法表达式被判非法（界面"解析失败"） |
+| 5 | `expr.gd` `eval` | token 序列不足 ⇒ 返回 `NaN` | 返回 **`0.0`**（"缺操作数也照样出图"的来源） | 逐位（`docs/03`） | 预览曲线在该点断开 vs 原版画到 0 |
+| 6 | `expr.gd` `_apply_func` | `sqrt(-1)` ⇒ 正 `NaN`（显式 `if a>=0`） | `sqrtsd`（`0x4ebb26`）给**负** NaN `fff8000000000000` | 逐位（`docs/06` §30） | 逐位判等会不等（符号位） |
+| 7 | `expr.gd` `_apply_op` | 除零一律返回正 `NaN` | `divsd`（`0x4ebb4e`）：`1/0=+inf`、`1/-0=-inf`、`0/0=负 NaN` | 逐位（`docs/06` §30） | 同上；`log(0)` 真值是 **−inf**，改前给 NaN |
+| 8 | `frame.gd` `decode_buffer` | **没有读侧上限**（只挡写侧 `0xffff`） | 读侧单帧上限 **`0x1000` = 4096**，超了报 `Message too large` | 逐位：arm64 `0x45c590 cmp w24,#1,lsl #12`；x86 `0x3d8713` | 一个 5000 字节的伪造长度前缀就能让 `.gd` 收下一帧非法数据（原版会断开） |
+| 9 | `play_screen.gd` `assign_colors` | ① 6 色全被占时**没有兜底**；② `used` 判重是跨队共享（这点对）但**没有 `%180` 兜底**；③ 起点用 Godot `RandomNumberGenerator` | ① 兜底 = 三个独立 `random::<u8>() % 180`；② 起点 = `rand::random::<u64>() % 6`（`udiv`+`msub`）；③ 池长 6 | 逐位：`add_team_color` 全函数（`0x464d10`），模块文档 §3 | 6 人以上同队时会**撞色**（拿到已在用的颜色） |
+
+第 8 条的连带改动：`link.gd` 现在把帧层 `failed` 当**连接错误**处理（`_peer_closed`）——
+否则 `Message too large` 这种"这帧永远切不出来"的情况会让 `rest` 缓冲无限增长。
+
+### 105.4 门槛（本分支 `agent/controller-batch2`，2026-11-27 实测）
+
+| 门槛 | 读数 | 判定 |
+|---|---|---|
+| `cargo test --offline` | **1832 passed / 0 failed / 1 ignored** | ✅（门槛 1826；+6 = 新增 `audio_wav.rs` 的 6 条 RIFF 解析单测） |
+| `cargo test --offline --features gdext-bindings` | **1962 passed / 0 failed / 1 ignored** | ✅（门槛 1956；同上 +6） |
+| `selftest` | **732 passed / 0 failed / 1 skipped**，`@@SELFTEST_COVERAGE missing=0(claimed 0 / degraded 0 / silent 0)` | ✅（门槛 717/0/1skip，本轮 **+15 条真值断言**） |
+| headless 14 个 `client/tools/*_check.gd` | **1978 passed / 0 failed** | ✅（门槛 ≥1978） |
+| 三轴 `fire` / `batch` / `batch_conv` | **647 / 647 / 637** | ✅ 一位未退 |
+| `coverage_matrix.py --check` | OK（重跑生成物：`src_files` 123→128、`src_fns` 3447→3497、树 sha 变） | ✅ |
+| `check_doc_refs.py` | rc=0（无死链） | ✅ |
+
+新增的 15 条 selftest 断言（**期望值全部来自 Rust/二进制，不是来自我方实现**）：
+`audio` 组 +4（5 个资源槽 ↔ 资源名逐位、`pop→0xb0`/`unpop→0xc0`、humm 不占 5 槽、
+有效静音 = 用户∥隐式）、`net_framing` 组 +4（读侧 4096/写侧 0xffff/前缀 2；>4096 ⇒
+`Message too large`；半帧 ⇒ `pending` 不是错误；0 字节 ⇒ `connection_lost`）、
+`core_path_mode` 组 +7（`sqrt(-1)` 是 NaN、`1/0=+inf`、`0/0=NaN`、`Π` 被跳过、`2x@3=6`、
+`log(100)=2`、出处档位=逐位）。
+
+### 105.5 像素（两侧串行 + 私有 `bwrap --unshare-net`，同一天同一配方）
+
+判据 = **`fixtures/frame_diff_thresholds.txt`（预注册，本轮一个数没改）**；
+两侧各自 `--flow` 采 3 帧、第 1 帧跨侧比。**关键：既有基线在这一轮里被逐个复现到小数点后 4 位**
+（`campaign` 0.1718 % / `level_popup` 0.1008 % / `replay_play` 2.7104 % / `replay_end` 2.7226 %
+与 `docs/06` §99.6、§101 的入库值逐字相同）⇒ 采集配方与那两轮一致，下面的差异不是配方漂移。
+
+| 屏 | 本轮读数 | 任务书门槛 | 判定 |
+|---|---|---|---|
+| `menu` | **0.000 %（0 px）** | 0 px | ✅ |
+| `replay_lobby` | **0.000 %（0 px）** | 0 px | ✅ |
+| `player_skins` | **0.000 %（0 px）** | 0 px | ✅ |
+| `campaign` | **0.1718 %（3 827 px，max\|Δ\|=32）** | 0 px（**旧基线**） | ⚠️ 与 `docs/06` §99.6 / §101 记录的**当前 master 值 3 827 px 逐 px 相同** —— 台账里"0 px"是 §75 时代的旧结论，§99.6 已登记"与文档 0 px 不一致"。本轮**没变差** |
+| `level_popup` | **0.1008 %（2 244 px，max\|Δ\|=13）** | 同上 | ⚠️ 同上（§99.6 记录的当前值就是 2 244 px） |
+| `join_level_popup` | **0.101 %（2 244 px）** | 同上 | ⚠️ 同上（同一个 `.tscn`） |
+| 结算框面板区 `(483,235) 956×691` | **0 px（三帧全 0）** | 0 px | ✅ |
+| `replay_play` | **2.7104 %** | 2.710 %（t54 的既有回归，不算我的） | ✅ 未弄差 |
+| `replay_end` | **2.7226 %** | 2.723 % | ✅ 未弄差 |
+| `match_ready` | **0.097 %（2 161 px，L2 0 块）**／第二轮 **0.093 %** | 0.081 % | ⚠️ +0.016 / +0.012 pp，见下 |
+| `match_play` | **0.3873 %（L2 2 块）**／第二轮 **0.385 %（L2 1 块）** | 0.385 %（L2 1 块） | ✅ 第二轮与基线逐位相同 |
+
+**`match_ready` 那 +0.012…+0.016 pp 的归因：采集相位噪声，不是本轮改动** —— 为此**多拍了一整轮**
+（两轮都是两侧串行 + 私有 netns），先量"**同一份二进制跨轮的方差**"再比：
+
+| 对照 | `match_ready` | `match_play` |
+|---|---|---|
+| **原版 vs 原版**（跨轮，同一份 `libgraphwarrust.so`） | **0.023 %** | **0.050 %** |
+| **我方 vs 我方**（跨轮，同一份 `libgw2_rebuild.so`） | **0.012 %** | **0.014 %** |
+| 原版 vs 我方（第 1 轮） | 0.097 % | 0.3873 % |
+| 原版 vs 我方（第 2 轮） | 0.093 % | 0.385 % |
+
+⇒ **同一份二进制跨轮的差异（0.012–0.023 pp）≥ 与基线 0.081 % 的偏差（0.012–0.016 pp）**
+⇒ 那条偏差落在**相位噪声**里，不能判成本质变化。三条旁证：
+
+1. 差异**集中在一个块**：第 1 轮 2 161 px 里 **1 847 px（85 %）** 在 bbox `(770,782)-(844,861)`
+   —— 正是 `docs/06` §94 记的**士兵三件套 bbox `(771,783)-(843,854)`**，也就是会动的那个元素；
+2. 同侧噪声地板（同一轮三帧之间）：**原版 0.048 % / 我方 0.012 %** —— 原版自己就抖 0.048 %；
+3. 本轮的 diff **没有任何一处改到渲染路径**（`expr.gd` 的预览层只在"内核给不出弹道"时用；
+   `frame.gd`/`link.gd` 只碰网络字节；`gw_audio.gd` 只碰音频总线；配色第 9 段**没接**），
+   而同一批采集里**五个静态屏全部复现入库基线到小数点后 4 位**。
+
+`match_play` 第 2 轮 **0.385 % / L2 1 块 = 基线逐位相同**、第 1 轮 0.3873 % / L2 2 块 —— 同样是相位。
+
+### 105.6 复跑命令（照抄）
+
+```bash
+WT=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/wt-t58
+export CARGO_HOME=$WT/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target                 # 每棵树自己的 target，别共用
+
+# 1) 构建 + 覆盖 .so + import（三件套，少一件就静默跑旧内核）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so $WT/client/libgw2_rebuild.so
+$WT/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path $WT/client --import
+
+# 2) cargo（两种 feature 各一次）
+cargo test --offline
+cargo test --offline --features gdext-bindings
+
+# 3) selftest（四个前置：assets / serve_match / 两份真回放 / 可写 HOME）
+cargo build --offline --example serve_match
+H=$WT/.agent-work/tmp/home
+mkdir -p "$H/.local/share/godot/app_userdata/Graphwar/replays"
+cp $WT/.reference/replays/gw2-replays-snapshot/replays/{1793897298,1783255495} \
+   "$H/.local/share/godot/app_userdata/Graphwar/replays/"
+HOME=$H GW2_NET_SERVER=$CARGO_TARGET_DIR/debug/examples/serve_match bash $WT/client/run.sh selftest
+
+# 4) headless 14 个巡检脚本
+for f in $WT/client/tools/*_check.gd; do n=$(basename $f .gd); \
+  $WT/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path $WT/client \
+     --script res://tools/$n.gd 2>&1 | grep -E '^[A-Z_]+ [0-9]+ passed'; done
+
+# 5) 三轴（冻结快照 403 份，只读）
+SNAP=$WT/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv    -- --dir $SNAP --policy strict
+
+# 6) 两个文档/矩阵检查
+COVERAGE_MATRIX_UPSTREAM=/home/CG/Myprojects/graphwar2-rebuild/.reference/upstream \
+  $WT/.reference/venv/bin/python $WT/tools/coverage_matrix.py --check
+python3 $WT/tools/check_doc_refs.py
+
+# 7) 像素（两侧串行、私有 netns；脚本见 .agent-work/tmp/cap.sh 的 bwrap 配方）
+```
+
+### 105.7 遗留 / 未做（按"下次该动谁"排）
+
+1. **第 9 段（color）的 `.gd` 收口没做** —— 任务书明令"不要动 `client/src/screens/play_screen.gd`
+   （t54 正在改它的回放布局）"。**Rust 侧已就绪**：`GwColorManager.pick(team, rand_u64, r0,r1,r2, used)`
+   直接复用 `graphwar_color_manager::add_team_color`（逐位），随机**流**由 `.gd` 的确定性 RNG 给
+   （原版 `rand::random` 不可复现，也不需要复现）、**算法**全在 Rust。要接的三处：
+   ```gdscript
+   # play_screen.gd 的 assign_colors()：删掉 TEAM_COLORS 常量与 20 行算法，换成
+   static func assign_colors(team_keys: Array[int], seed_value: int) -> Array[Color]:
+       var rng := RandomNumberGenerator.new(); rng.seed = seed_value
+       var fb := RandomNumberGenerator.new(); fb.seed = seed_value ^ 0x5a5a   # 兜底色专用，不动主流
+       var used := PackedColorArray(); var out: Array[Color] = []
+       for team in team_keys:
+           var c := GwColorManager.pick(team, rng.randi(), fb.randi() & 0xFF, fb.randi() & 0xFF,
+               fb.randi() & 0xFF, used)
+           used.append(c); out.append(c)
+       return out
+   ```
+   （`rng` 每队只抽 1 次 ⇒ **改前改后配色逐色相同**，像素不该变；`fb` 单独一条流，
+   兜底色由我方确定性决定。改完请重跑 match 两屏像素。）
+2. **`docs/06` §90 的 C 档清单还剩 4 段**（#3 `app/app.gd`→`graphwar_root_node.rs`、
+   #5 `net/link.gd`→`client_connection_handler`、#6 `net/discovery.gd`→`lan_broadcaster_v6`、
+   #10 `app/campaign.gd`→`campaign_control::LEVEL_INFO`）。其中 #5/#6 的**常数值**已由 T42 接进
+   Rust，剩的是流程。
+3. **`frame.gd` 的 `parse_message` / `as_*`（115 行）没搬**，`keep` 理由在台账 F06/F09/F10：
+   入参已是 Godot `JSON` 解析出的 `Dictionary`，搬回 Rust 要自己写一个 JSON 解析器（本 crate 零依赖），
+   而原版 serde 那一侧的等价物本来就在服务端 `_scaffold/protocol.rs`。这是 **B 类**，不是 C 类。
+4. **`humm` 的音量仍是推断**：`-5.0f` 属于 `unpop` 那个槽；generator 所在的 player 音量
+   **没有观测**（`graphwar_audio_control` 模块文档 §6）。本批把它显式标成 `HUMM_VOLUME_DB = -5.0`（**推断**），
+   没有假装它来自某个立即数。
+5. **隐藏静音（`+0xd1`）没有接线**：规则已在 Rust（`effective_mute`）、`.gd` 也有
+   `set_hidden_muted()`，但**谁在什么时机置这一位**未观测 ⇒ 客户端没有调用方。
+6. **`GwColorManager.pick` 的 `used` 用 `PackedColorArray` 传**（每次挑色一次 FFI 拷贝）。
+   若第 1 条接上后发现性能问题，可以改成"在 Rust 侧持有 manager 状态"的实例类 —— 但现在
+   `assign_colors` 每局只跑一次，不值得先做优化。
+7. **`match_ready` 基线 0.081 % 本轮没逐位复现**（0.093 / 0.097 %）。已用"同一份二进制跨轮"
+   把结论定在**相位噪声**（同二进制跨轮 0.012–0.023 pp ≥ 偏差 0.012–0.016 pp；§105.5 表）。
+   若要把这条读数也做成**可复现的单一数字**，需要把采集时刻与游戏时间对齐（现在按墙钟 4.0 s 点击，
+   相位天然漂）—— 那是 `tools/frame_capture.py` 的活，不在本任务范围。
