@@ -21796,3 +21796,184 @@ PY
 
 **节号说明**：`## 120.` 已被 T74（`task-69` / 分支 `agent/guide-evidence`，任务书明写"下一个空号 = §120"）占
 ⇒ 本节按协作约定用 **121**。若合并顺序反转，**由合并者按"先合先占"重编号，不要删内容**（同 §117.9 的约定）。
+## 122. T76 `_scaffold/protocol.rs` 解析入口**全盘审计 + 收严**：51 个入口里 **33 处子串式 / 3 处宽容语法 / 1 处半严**，逐个收严后 `Broadcast::parse` 在 **protocol.rs 层**就拒变体 B（`is_bare_object()` 删除）（2026-11-27，任务 T76 / `task-73`，分支 `agent/protocol-strict`）
+
+> **节号 / 任务号**：本节**已 rebase 到当时的 master（`8aa8a8f`）**，现场读数
+> `python3 tools/docsec.py check docs/06-verification.md` = `节数 119｜范围 1..121｜断号 [43, 89]（历史缺口）`
+> ⇒ 本节取**下一个空号 §122**（master 的 §120 是 T73、§121 是另一件事）。
+> 任务号用 **T76**：本会话任务板上的条目是 **`task-73`**，最初写的是 "T75"，但 **`T75` 已被
+> 已合并进 master 的 §121（`docs` 引文机核）占用** ⇒ 为避免"两个 T75"混淆，本节的标签改记 **T76**；
+> 本轮 4 个修复 commit 的信息里仍写 T75（历史不改写），对应关系以本节为准。
+>
+> **起点（两次被点名的那条证据缺口）**：
+> * §118.4（T67）：`Broadcast::parse` 是子串查找式的，`{"GameInfo":{"game_info":{…9 字段…}}}` 也能
+>   "解析成功" ⇒ 原版丢弃的**变体 B**漏过去；当时只在 `GwLanV6` 里补了一道 `is_bare_object()` 形状闸，
+>   并写明"下一轮应由 `protocol.rs` 的属主把这条闸收进去"。
+> * §119（T66）：`GameInfo` 收敛成 1 处后 `parse` 已能"严格按变体名解析、未知名字 ⇒ None"，但
+>   **`Broadcast` 那一层是否也跟着严起来没验**。
+>
+> **预注册（先 commit、后改动）**：[`fixtures/protocol_parse_audit.tsv`](../fixtures/protocol_parse_audit.tsv)
+> （`2ac8526`）。判档口径、真值依据、复算命令都写在该文件头部；本节的数字全部可以按它对账。
+
+### 122.1 盘出来什么：51 行 = 50 个既存入口 + 1 个本轮新增；既存的 50 个里**只有 13 个本来严格，37 个不严**（33 子串式 + 3 宽容语法 + 1 半严）
+
+台账 51 行按层分：**A 传输 3 / B 字段读取 8 / C 强类型（手写）17 / D 宏生成 8（=19 个实例）/
+E 负载结构体 2 + 输入适配 1 / F 分发与查表 2 / G 外部枚举（`from_str`/`as_str`）10**。
+
+| 判档（改前） | 条数 | 说明 |
+|---|---|---|
+| **严格** | **13** | `Frame::decode`、5 个枚举 `from_str` + 5 个 `as_str`、`JsonObject`、`wire_spec`/`wire_field_order` |
+| **子串式** | **33** | 6 个 `get_*` + 17 个手写 typed `parse` + 19 个宏实例（占 8 行）+ `GraphwarColor::parse` + `GameInfo::parse` |
+| **宽容语法** | **3** | `parse_message`（前缀式）、`split_fields`（遇畸形即停）、`extra_fields`（继承前者） |
+| **半严** | **1** | `AnyEvent::parse`：名字白名单严格，但**委托的 typed `parse` 全不严** ⇒ 实际可被穿透 |
+
+子串式的两种形态（这是**根因**，不是细节）：
+
+1. **字段查找不看深度**：`body.find("\"key\":")` 在**任意深度**命中 —— 嵌套对象里的同名字段、
+   甚至**别的字符串值内部**出现的 `"key":` 都算命中。
+2. **名字这一维根本没校验**：17 个手写 + 19 个宏实例的 `parse` 里**没有一处**比较 `m.kind`。
+   `PosInfo::parse` 拿到 `{"TurnInfo":{…PosInfo 的字段…}}` 也会"解析成功"。
+
+另外两种"静默"：`get_int`/`get_f64` 只取**数字前缀**（`1.5`→1、`12abc`→12）、`get_color` 与
+`GraphwarColor::parse` 用 `as u8` 静默回绕（`r:300`→44）、`FunctionInfo::parse` /
+`FunctionUpdateRequest::parse` 用 `unwrap_or_default()` 把**缺字段**静默变成空串。
+
+### 122.2 真值依据：只有四类物证，且都机核过
+
+| 物证 | 读数 | 用在哪些行 |
+|---|---|---|
+| [`fixtures/protocol_live_frames.jsonl`](../fixtures/protocol_live_frames.jsonl)（T53 官服/自建局抓包） | **1717 帧 / 56 种事件**；本轮机核：**每一帧**的顶层键集与键序**逐帧等于** `WIRE_SPEC`（0 mismatch） | 全部 typed 入口 + `GameInfo` |
+| `WIRE_SPEC`（`protocol.rs` 的 74 条） | 74 = 64 有字段 + 10 空体；**114 个字段**（I64 58 / Str 29 / F64 17 / Bool 3 / OptI64 3 / OptStr 2 / Color 1 / GameInfo 1） | 字段名 + 类型 + 键序 |
+| `.rodata` 的 serde `struct <Name>Event with N element(s)` | `SERDE_FIELD_COUNTS` 23 条（`docs/96` §3） | 补齐的 23 个事件的字段数 |
+| `WIRE_VALUE_ENUMS` 7 张变体名表（结构性穷尽扫描，`docs/07` §5.2 + §109.4 E6） | `GameState` 8 / `AxisMode` 4 / `FunctionMode` 2 / `TurnMode` 2 / `TimeMode` 6 / `GraphwarTeam` 2 / `EffectType` 4 | 5 个枚举 `from_str`/`as_str` + `GameInfo` 的 5 个枚举字段 |
+| [`docs/archive/115-broker.md`](archive/115-broker.md) §5.3（原版客户端受控实验） | 5 个变体只有"裸 9 字段对象 + 换行"（C）被接受；**A/B/D/E 全部被原版丢弃** | `Broadcast::parse` 的严格性方向 |
+
+**这条真值机核已经变成常驻测试**：`every_live_frame_has_exactly_the_wire_spec_top_level_fields`
+逐帧断言（1717 帧、56 种、`TickReply` 504 帧），谁把解析改严到"拒真帧"或改松到"认嵌套字段"都会立刻红。
+
+### 122.3 收严做了什么：四刀，各自单独 commit
+
+| # | commit | 改前行为 | 改后行为 | 负向测试（改前**红** → 改后绿） |
+|---|---|---|---|---|
+| 1 | `ae77241` | `get_*` 是 `body.find` 子串查找；`get_int`/`get_f64` 取数字前缀；`get_color` `as u8` 回绕 | 新增严格层：`scan_pairs`（合法 JSON 对象文法、顶层键不重复、不许尾随逗号/垃圾）+ `top_level_value`（**只认顶层、绝不下钻**）+ `as_i64_literal`/`as_f64_literal`/`as_u8_literal`/`as_string_literal`；6 个 `get_*` 全部转发到它 | `nested_or_quoted_field_names_are_not_top_level_fields`（嵌套字段 / 字符串值内部的 `"entity_id":` 都能被改前命中）、`non_json_number_literals_are_rejected`（`1.5`→1、`12abc`→12）、`color_channel_out_of_u8_range_is_rejected`（`r:300`→44）；**三条在基线 `38f217e` 上实测红** |
+| 2 | `6bda577` | 17 + 19 个 typed `parse` **不校验变体名**；`FunctionInfo`/`FunctionUpdateRequest` 缺 `function` ⇒ 静默空串；`extra` 用宽容切分 | 每个 typed `parse` 第一句 `kind_is(m, "<变体名>")`；`function` 改 `get_str(..)?`；`extra` 改 `strict_extra_fields(..)?` | `typed_parse_requires_its_own_variant_name`（`NameInfo`/`NameRequest` **字段形状完全相同**，只能靠名字区分）、`missing_required_string_field_is_rejected`（正对照：空串 `""` 是**合法**取值，真帧里有）；**两条在刀 1 之后的代码上实测红** |
+| 3 | `bbc83c8` | `Broadcast::parse` 在嵌套里搜到 `"room_name":` 就算成功 ⇒ 变体 B/D 漏网；兜底在 `lan_v6_class::is_bare_object()` | `JsonObject` 新增 `is_event_payload()`：**输入形态由类型定**。`&str`（LAN 数据报原文）= 必须本身就是 9 字段裸对象、**绝不下钻**；`&RawMessage`（事件负载）= 顶层有 `game_info` 才下钻一层。另加 `parse_frame_message`（严格帧解析：单键 + 值必须对象 + 尾部只许空白），线上路径 `broker.rs` 3 处切换；**删 `is_bare_object()`** | `broadcast_parse_rejects_the_event_wrapped_variant_b`（**任务要求的那条**：正对照裸对象必须解得开 + 变体 B/D/E + 全字段藏嵌套对象 + 房名带 `{` 必须合法）；**在基线 `38f217e` 上实测红**（`变体 B（事件外壳）必须被拒：{"GameInfo":{"game_info":{…}}}`），改后绿。另加 `game_info_event_wrapper_round_trips`（拒变体 B 不能把**真帧**一起拒掉：52 条 `GameInfo` 帧的形状必须解得开且逐字节往返）与 `frame_message_parser_rejects_trailing_and_multiple_keys` |
+| 4 | `6585a85` | （刀 1 的遗漏）`GraphwarColor::parse` 仍 `get_int(..)? as u8` ⇒ `r:300`→44 | 走 `top_level_value` + `as_u8_literal` | 颜色测试扩到该入口（含"嵌套对象里的 r/g/b 不算顶层字段"） |
+
+⭐ **一个必须写清的事实**：变体 B 的**实际生效点**是**刀 1**（字段只认顶层）—— 刀 3 是把
+"两种输入形态"写成显式的类型区分、把兜底闸删掉，并补上任务要求的**负向测试**。
+所以"变体 B 在 `protocol.rs` 层被拒"这件事从 `ae77241` 起就成立了；`bbc83c8` 之后连
+`lan_v6_class.rs` 里那道形状闸也不需要了。
+
+**`is_bare_object()` 为什么可以删（三句话说清）**：
+
+1. 它要拦的是"带事件外壳的变体 B/D" ⇒ 现在 `Broadcast::parse` 只认顶层 9 字段，这两条**缺顶层
+   `room_name`**，解析层直接 `None`；
+2. 它是一道**形状启发式**（"裸对象里没有 `{`"），会**误拒房名里带 `{` 的合法广播**（§118.4 记的
+   推断级缺陷）—— 删掉之后这个误拒也没有了（负向测试第 ⑥ 条钉住 `room_name = "a{b"` 必须解得开）；
+3. 严格性该由**语义**（字段在哪一层、什么类型）决定，而不是由"文里有没有某个字符"决定。
+
+### 122.4 验证：两条真帧硬闸仍绿、selftest 的变体 B 断言通过
+
+| 验证项 | 读数 | 判据 |
+|---|---|---|
+| `captured_samples_are_the_live_wire_bytes` | **绿**（7 条真帧逐字节，未改一个字） | 真帧样本与抓包字节相同 |
+| `replays_every_live_frame_of_the_supplemented_kinds` | **绿**（18 种 × **352 帧**逐帧解析→重序列化逐字节相同） | 一帧都没被改严改掉 |
+| `broadcast_parse_rejects_the_event_wrapped_variant_b` | **绿**（改前在同一输入上红，见 §122.3 刀 3） | 负向测试（反面对照） |
+| `every_live_frame_has_exactly_the_wire_spec_top_level_fields` | **绿（新增）**：1717 帧逐帧核键集/键序 = `WIRE_SPEC` | 真值机核 |
+| `client/tools/selftest.gd` 的**变体 B 断言**（`discovery` 与 `GwLanV6` 两条，`selftest.gd:3299`/`:5044`） | **绿**（`selftest` 757/0/1skip，断言**一字未改**） | 这说明子串式确实已消除：**兜底闸都删了**，变体 B 仍然被丢弃 |
+
+### 122.5 顺带核的第 4 项：`graphwar_lan_broadcaster_v6` 的房间表**没有** wire 视图残留
+
+| 项 | 读数 |
+|---|---|
+| 房间表 | `rooms: HashMap<SocketAddr, Room>`，`Room { info: Broadcast, seen_at: Instant }` |
+| `Broadcast` 是什么 | **就是** `crate::events::GameInfo`（`pub use` 别名）。全仓 `pub struct GameInfo` **只有 1 处定义**（`src/events.rs:321`，5 个真枚举 + `u32` + `String` + `bool`） |
+| 收/查/写/发四个方向 | `ingest` → `Broadcast::parse`；`get_game_info` → `&Broadcast`；`set_room_info(Broadcast, port)`；`broadcast_payload` → `info.to_json()` |
+| 有没有第二份形态 | **无**：没有第二份 9 字段 `String` 结构，也没有 `GameInfo` 的 `to_wire`/`from_wire` 转换（全仓只有一处 `to_wire`，是 `graphwar_server_connection_handler.rs:166` 的**分帧**函数，与本结构体形态无关） |
+
+⇒ T66 的"3 处形态 → 1 处"在这条路上**已经到位**，本轮没有需要改的地方。
+（`src/graphwar_lan_vbox.rs` 里的 `room_name: String` 那组字段是**UI 行节点**的视图模型
+—— 原版 `GraphwarLanVBox` 的行控件，不是 wire 视图；那份文件归 t71，本轮没碰。）
+
+### 122.6 门槛（全部自己跑，读数都是本轮实测）
+
+| 门槛 | 读数 | 与基线 |
+|---|---|---|
+| `cargo test --offline` | **1529 passed / 0 failed / 1 ignored** | 1520 → +9（新增 9 条测试，无回归） |
+| `cargo test --offline --features gdext-bindings` | **1659 / 0 / 1** | 1650 → +9 |
+| `selftest` | **757 / 0 / 1 skip**，`groups=34 checks=757 expected=757 missing=0(claimed 0 / degraded 0 / silent 0)` | 不变 |
+| headless 14 脚本 | **1978 / 0**（assemble 244 / base_classes 117 / curve 96 / draw_classes 235 / entity_drawer 378 / function_drawer 132 / gdext 24 / obstacle_drawer 116 / plane_on_screen 97 / play_flow 234 / process_loop 66 / recovered_view 57 / signal_classes 155 / spike_class 27） | 不变 |
+| 三轴 | `fire` **647** ｜ `batch` **647** ｜ `batch_conv` **637**（一位未退） | 不变 |
+| `coverage_matrix.py --check` | **OK**（生成物已重跑：`src_fns` 3772 → **3802**，`src_tree_sha256` 更新；归属口径 527/13263 不变） | 必需 |
+| `check_doc_refs.py` | **rc=0** | 不变 |
+| `boundary_audit.py --check` | **match 441 / mismatch 0 / multi 86** | 不变 |
+| `docsec.py check docs/06-verification.md` | 无重复号、无冲突标记（断号仅历史缺口 43/89） | — |
+
+### 122.7 ⚠️ 没做的 / 不动的 / 下一步（**这些不是"做完了"，是明确登记**）
+
+1. **`parse_message` 保留前缀语义是"载重契约"，不是偷懒**：回放行是
+   `{"event":{…},"tick":N}`（多键），`src/graphwar_replay_reader.rs:209/215` 靠
+   `parse_message` 的**前缀语义**取 `event` 对象、再回原文取 `tick`。把它改严会让**整条回放读取链路**
+   失效，而该文件不在本轮允许范围 ⇒ 本轮做法是**另加** `parse_frame_message`（严格版），
+   把**线上路径**（`_scaffold/broker.rs` 3 处）切过去。
+   **遗留**：`src/graphwar_game_server.rs:274` 仍用宽容版（该文件不在本轮范围）；
+   建议下一步把"回放行格式"从 wire 解析器里拆出去（回放是**文件格式**，不是线上帧），
+   拆完 `parse_message` 就可以直接删。
+2. **`WIRE_SPEC` 的 `ValType::Str` 把 7 个枚举塌成了一个标记** ⇒ 29 个 `Str` 字段里按名字看有
+   **9 个**落在 `WIRE_VALUE_ENUMS` 上（`axis_mode` 1 / `effect_type` 2 / `function_mode` 1 /
+   `game_state` 1 / `team` 1 / `time_mode` 2 / `turn_mode` 1），但**"字段→枚举"的映射没有入库**
+   （只有 `GameInfo` 的 5 个有 §109.4 E6 逐位证据）⇒ 这 9 个字段本轮只能收严到
+   "必须是 JSON 字符串"，**值域的枚举校验缺证据，没做**。
+   下一步：把 `serialize_field` 的单态地址（`0x3cb330`/`0x3cb560`/`0x3cb670`/`0x3cbce0`/
+   `0x3cbf70`/`0x3cbe80`/`0x3cc260` 七张表）逐字段记进 `WIRE_SPEC`，就能把"宽容枚举"这一档彻底收掉。
+3. `src/graphwar_replay_reader.rs:228` 的 `int_field` 是它**自己的一份**宽容整数读取（与 `get_int`
+   不同口径）；同一"宽容"问题在别的文件里还有副本，本轮只收了 `protocol.rs` 这一个入口面。
+4. `graphwar_game_server.rs:668` 的 `get_str(..).unwrap_or_default()` 是**调用点**的静默丢字段
+   （不是 `protocol.rs` 的入口），该文件不在本轮范围 ⇒ 登记。
+5. `is_known_time_mode`（`lan_v6_class.rs`）保留为第二道形状闸：档位是**推断**（判定发生在哪一层
+   没观测到），T66 之后对已知枚举名恒真 —— 即**恒不改变行为**，只是把那条推断写在一处。
+
+### 122.8 复跑命令（照抄即可，全部自己跑过）
+
+```bash
+WT=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/wt-t77       # 换成你的工作树
+export CARGO_HOME=$WT/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target                            # 每棵树自己的 target
+
+# ① 解析入口的台账/真值（1717 帧机核已变成常驻测试）
+cargo test --offline every_live_frame_has_exactly_the_wire_spec_top_level_fields
+cargo test --offline broadcast_parse_rejects_the_event_wrapped_variant_b
+cargo test --offline captured_samples_are_the_live_wire_bytes
+cargo test --offline replays_every_live_frame_of_the_supplemented_kinds
+
+# ② 全量
+cargo test --offline                                                 # 1529 / 0 / 1
+cargo test --offline --features gdext-bindings                       # 1659 / 0 / 1
+
+# ③ 客户端（改 .so 后必须三件套：build → cp → import，少一件就静默跑旧内核）
+cargo build --offline --features gdext-bindings
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/libgw2_rebuild.so
+HOME=$WT/.fakehome bash client/run.sh selftest                       # 757 / 0 / 1 skip
+
+# ④ 三轴（冻结快照 401 份回放）
+SNAP=$WT/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json /tmp/f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json /tmp/b.jsonl
+cargo run --release --offline -q --example batch_conv    -- --dir $SNAP --policy strict
+
+# ⑤ 文档/边界/覆盖
+python3 tools/check_doc_refs.py                                      # rc=0
+python3 tools/docsec.py check docs/06-verification.md
+$WT/.reference/venv/bin/python tools/boundary_audit.py --check        # match 441 / mismatch 0
+COVERAGE_MATRIX_UPSTREAM=$WT/.reference/upstream $WT/.reference/venv/bin/python tools/coverage_matrix.py --check
+```
+
+### 122.9 本轮**证伪/纠正**的旧说法
+
+| 旧说法 | 实际 | 证据 |
+|---|---|---|
+| §118.4"`Broadcast::parse` 是子串查找式，变体 B 会漏" | 成立（本轮基线实测红） | `broadcast_parse_rejects_…` 在 `38f217e` 上红 |
+| §118.4"这道闸（`is_bare_object`）对房名带 `{` 会误拒" | 成立，且**删闸后误拒消失** | 负向测试第 ⑥ 条（`room_name = "a{b"` 必须解得开） |
+| §119"`GameInfo` 的 `parse` 已严格按变体名解析" | **枚举那一维**成立；但**字段那一维**改前仍是子串式（`&str` 路径连事件外壳都认）⇒ 两层要分开说 | 台账 `GameInfo::parse` 行 + 本轮刀 1/刀 3 |
+| 台账里 `FunctionInfo` 的 `function` 缺失"解析成空串是宽容" | 补一条边界：**空串是合法取值**（真帧 `{"function":"",…}` 有），本轮收严的是**缺字段**，不是空串 | `missing_required_string_field_is_rejected` 的正对照 |
