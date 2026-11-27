@@ -24,7 +24,20 @@ arm64 引文（`bl <名字>` / `stp q0,q1` 这类）对 `.reference/steam/androi
 .reference/venv/bin/python tools/doc_cite_check_docs3.py                # 统计 + 逐条（有问题的才打印）
 .reference/venv/bin/python tools/doc_cite_check_docs3.py --tsv /tmp/x.tsv
 .reference/venv/bin/python tools/doc_cite_check_docs3.py --only docs/162 --all
+
+# 2026-11-27（T75）新增：把同一套判法扩到**全 `docs/`**（`docs/**/*.md`，含 archive/ 与 guide/）。
+# 默认仍是原来那 19 篇（口径不变、旧结果可复跑）；全仓口径必须显式 --all-docs：
+.reference/venv/bin/python tools/doc_cite_check_docs3.py --all-docs
+.reference/venv/bin/python tools/doc_cite_check_docs3.py --all-docs --tsv fixtures/doc_cite_check_alldocs.tsv
+.reference/venv/bin/python tools/doc_cite_check_docs3.py --all-docs --exclude docs/guide,docs/21
 ```
+
+⚠️ **判定的语义边界**（T75 复跑时逐条人工过了一遍这 25 类命中，请看 `docs/06` §121.5）：
+`ADDR-OFF` / `MISMATCH` / `OPS-DIFF` 是**机器可疑命中**，不等于"引文错"。其中三类是**写法口径**（不是错）：
+① **块首 / 多步合并**（`0xADDR` 指向"这一步的第一条指令"，助记符写的是合并后的语义）；
+② **符号化操作数**（`[ctx+0x58]` / `[sret+0x00]` / `ucomisd cand_y,px`）；
+③ **记槽不记寄存器**（`call *0x9baca8` 而实际编码是 `call rbp`）。
+真错 = 地址上**确实不是**那条指令、且不能用上面三种口径解释 —— 这一类必须改文档（见 §121）。
 
 ## 口径与已知盲区
 
@@ -74,6 +87,22 @@ DOCS = [
     "docs/archive/157-name-matching.md",
 ]
 
+def discover_all_docs():
+    """全 `docs/`：`docs/**/*.md` 递归（含 archive/ 与 guide/），路径用仓库相对 posix 形式并排序。
+
+    `docs/INDEX.md` 之类纯索引也包含在内 —— 它们里面若有「地址+指令」引文，同样值得核。
+    """
+    out = []
+    for dirpath, _dirnames, filenames in os.walk(os.path.join(ROOT, "docs")):
+        for fn in filenames:
+            if not fn.endswith(".md"):
+                continue
+            full = os.path.join(dirpath, fn)
+            rel = os.path.relpath(full, ROOT).replace(os.sep, "/")
+            out.append(rel)
+    return sorted(out)
+
+
 MNEMS = set("""
 mov add sub lea cmp test xor and or not shl shr sar sal imul idiv div mul inc dec neg
 jmp je jne jz jnz ja jae jb jbe jg jge jl jle js jns jo jno jp call ret leave push pop
@@ -92,6 +121,10 @@ ARM_ONLY = {"bl", "b", "ldr", "str", "adr", "cbz", "cbnz", "tbz", "tbnz", "fmov"
             "udiv", "fmadd", "scvtf", "fcvtzs", "movz", "movk", "stp", "ldp", "blr",
             "ldur", "stur", "ldrsb", "ldrb", "ldrh", "strb", "cmeq", "fcvt"}
 ARM_OPS = re.compile(r"\b[dsqvh]\d+\b|\b[wx]\d+\b|\bsp\b|\b#[-\d]")
+# 2026-11-27 T75：arm64 的条件后缀写法（`cmp / b.eq`、`b.eq`、`b.hs`）
+# 也是 ARM 专属信号 —— 旧版漏了它，`0x440e50 cmp / b.eq`（docs/16:3267，**本来就是 arm64**）
+# 被当成 x86 去核，产生假 MISMATCH。
+ARM_COND = re.compile(r"\bb\.[a-z]{2}\b")
 
 CITE_RE = re.compile(
     r"(?:\b0x([0-9a-f]{5,7})\b|\|?\s*(?:0x)?([0-9a-f]{5,7})\s+)\s*[`|]?\s*"
@@ -115,10 +148,20 @@ def clean_ops(ops):
     return ops.strip().rstrip(".,:）")
 
 
-def harvest(path):
-    """返回 (引文列表, 只有地址的行数)。"""
+STRIKE_RE = re.compile(r"~~.+?~~")
+
+
+def harvest(path, strip_strike=True):
+    """返回 (引文列表, 只有地址的行数)。
+
+    `strip_strike=True`（缺省）先剥掉 `~~…~~` 片段：本仓库的约定是"原引文划线保留 + 就地加更正"，
+    划线部分**已经声明作废**，若仍参与机核，一条已更正的引文会永远出现在"需人工看"里，
+    这台检查就没法当合并前闸门用了（2026-11-27 T75 加）。
+    """
     cites, addrlines = [], 0
     lines = open(path, encoding="utf-8", errors="replace").read().split("\n")
+    if strip_strike:
+        lines = [STRIKE_RE.sub(" ", ln) for ln in lines]
     for i, ln in enumerate(lines, 1):
         if not re.search(r"[0-9a-f]{5,7}", ln):
             continue
@@ -428,6 +471,13 @@ def main(argv=None):
     ap.add_argument("--tsv", help="把逐条结果写成 TSV")
     ap.add_argument("--only", help="只跑某篇（子串匹配）")
     ap.add_argument("--all", action="store_true", help="打印每一条，不只打印有问题的")
+    ap.add_argument("--all-docs", action="store_true",
+                    help="扩到**全 docs/**（docs/**/*.md 递归，含 archive/ 与 guide/）；"
+                         "缺省仍是原来那 19 篇，保证旧结果可复跑")
+    ap.add_argument("--exclude", default="",
+                    help="--all-docs 时按逗号分隔的子串排除文件（如 docs/guide,docs/21）")
+    ap.add_argument("--by-dir", action="store_true",
+                    help="统计按目录（docs/ / docs/archive/ / docs/guide/ …）拆开打印")
     args = ap.parse_args(argv)
 
     try:
@@ -444,7 +494,13 @@ def main(argv=None):
     ctx._md = _Cs(CS_ARCH_X86, CS_MODE_64)
     elk = AnyElf(A64_SO)
 
-    docs = [d for d in DOCS if not args.only or args.only in d]
+    if args.all_docs:
+        docs = discover_all_docs()
+        for pat in [x for x in (args.exclude or "").split(",") if x.strip()]:
+            docs = [d for d in docs if pat.strip() not in d]
+    else:
+        docs = list(DOCS)
+    docs = [d for d in docs if not args.only or args.only in d]
     rows, stat, per_doc = [], {}, {}
     addr_only = 0
     for doc in docs:
@@ -453,7 +509,7 @@ def main(argv=None):
         for c in cites:
             va = int(c["addr"], 16)
             is_arm = c["mnem"] in ARM_ONLY or (
-                bool(ARM_OPS.search(c["ops"])) and
+                (bool(ARM_OPS.search(c["ops"])) or bool(ARM_COND.search(c["ops"]))) and
                 not re.search(r"\[|rip|xmm|r\d+[dwb]", (c["ops"] or "").lower()))
             v = (judge_arm64 if is_arm else judge_x86)(elk if is_arm else ctx, va,
                                                        c["mnem"], c["ops"])
@@ -465,7 +521,13 @@ def main(argv=None):
                              doc_ops="%s %s" % (c["mnem"], c["ops"]),
                              verdict=v, arch="a64" if is_arm else "x86", text=c["text"]))
 
-    bad = [r for r in rows if r["verdict"].split("(")[0] in ("ADDR-OFF", "MISMATCH", "OPS-DIFF")]
+    def is_bad(v):
+        # 2026-11-27 T75：原版漏了 A64- 前缀 ⇒ arm64 的地址错位（如 0x3b5870 stp 真址 0x3b587c）
+        # 只在 --all 时能看到、从不进"需人工看"清单。补上。
+        return v.split("(")[0] in ("ADDR-OFF", "MISMATCH", "OPS-DIFF",
+                                   "A64-ADDR-OFF", "A64-MISMATCH")
+
+    bad = [r for r in rows if is_bad(r["verdict"])]
     print("== 引文机核（%d 篇）==" % len(docs))
     for k in sorted(stat):
         print("  %-16s %d" % (k, stat[k]))
@@ -476,6 +538,21 @@ def main(argv=None):
         d = per_doc.get(doc, {})
         print("  %-42s %3d 条  %s" % (doc, sum(d.values()),
                                       " ".join("%s=%d" % kv for kv in sorted(d.items()))))
+    if args.by_dir:
+        print("\n== 按目录 ==")
+        dirs = {}
+        for doc in docs:
+            d = per_doc.get(doc, {})
+            key = "/".join(doc.split("/")[:2]) + "/" if doc.count("/") >= 2 else doc.rsplit("/", 1)[0] + "/"
+            slot = dirs.setdefault(key, [0, 0, 0])
+            slot[0] += 1
+            slot[1] += sum(d.values())
+            slot[2] += sum(v for k, v in d.items()
+                           if is_bad(k))
+        print("  %-22s %3s 篇  %5s 条  %5s 条机器可疑" % ("目录", "", "", ""))
+        for k in sorted(dirs):
+            n_docs, n_cites, n_bad = dirs[k]
+            print("  %-22s %3d 篇  %5d 条  %5d 条机器可疑" % (k, n_docs, n_cites, n_bad))
     print("\n== 需人工看的 %d 条 ==" % len(bad))
     for r in bad if not args.all else rows:
         print("  %s:%d %s [%s] doc[%s] → %s" %

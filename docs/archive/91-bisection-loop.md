@@ -328,6 +328,12 @@ else:
 
 ODE 模式**没有**这段复检（`0x3c2840` 在容差满足时直接接受），
 所以 `graphwar_path_calculator.rs`/`graphwar_curve.py` 的 `ode` 分支无需改动。【逐位：`0x3c27ee ja 3c2840` 后无 mid2】
+> **【T75 更正框（2026-11-27）—— 上面的 `0x3c27ee ja 3c2840` 地址错位，正文不改】**
+> `0x3c27ee` 实为 **`ucomisd xmm3, xmm1`**；`ja 0x3c2840` 在 **`0x3c27f2`**（+4）。
+> 依据 `addr_probe.py dis 0x3c25f0`：`0x3c27e6 movsd xmm3,[rip-0x222b76]` →
+> `0x3c27ee ucomisd xmm3,xmm1` → **`0x3c27f2 ja 0x3c2840`** → `0x3c27f4 movapd xmm1,xmm2`。
+> 结论（该分支后没有 `mid2`）**不受影响**，只是"址"要写成 `0x3c27f2`。
+
 
 ---
 

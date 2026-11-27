@@ -34,7 +34,7 @@
 export CARGO_HOME=<WS>/.cargo-home CARGO_TARGET_DIR=<WS>/.agent-work/docsaudit/target
 cargo test --offline                             # 69 个二进制；求和 = 1585 passed / 0 failed
 cargo test --offline --features gdext-bindings   # 69 个二进制；求和 = 1669 passed / 0 failed
-python3 tools/coverage_matrix.py --check         # OK（527/527，逐位 88 / 观测 439 / 推断 0）
+python3 tools/coverage_matrix.py --check         # OK（527/527，逐位 88 / 观测 439 / 推断 0）【T75 更正：本轮实测打印是 逐位 89 / 观测 435 / 推断 3；`--check` 仍 rc=0】
 python3 tools/check_doc_refs.py                  # 退出码 0
 cat fixtures/guardrails.json                     # 三轴护栏值
 ```
@@ -47,7 +47,7 @@ cat fixtures/guardrails.json                     # 三轴护栏值
 
 | # | 文件:行 | 原文（摘要） | 问题 | 处置 |
 |---|---|---|---|---|
-| A1 | `docs/00-status.md:74-79` | 三轴表 内容 `325 / 346 / 595`、种类序列 `819 / 919 / 1074` | 2026-11-07 深夜当轮值，却被当成"现行基线"给下一轮排序用 | 换成 `647 / 647 / 633` 与 `1075 ×3`；旧值移进注里并注明出处 `docs/06` §24–§29 |
+| A1 | `docs/00-status.md:74-79` | 三轴表 内容 `325 / 346 / 595`、种类序列 `819 / 919 / 1074` | 2026-11-07 深夜当轮值，却被当成"现行基线"给下一轮排序用 | 换成 ~~`647 / 647 / 633`~~ **`647 / 647 / 637`** 与 `1075 ×3`；旧值移进注里并注明出处 `docs/06` §24–§29。**【T75 更正：本条"处置"列自己就把旧值当新值用了 —— `batch_conv` 轴是 637 不是 633；依据 `fixtures/guardrails.json` → `axes.batch_conv.content_ok = 637`，该文件 `_updated` 明写"旧记 633 系 Ode 修复后的漂移未同步"。照本条处置执行的人会把 633 抄进 `docs/00` 并顶掉 A1 原来的 595，等于用另一个旧值替换旧值】** |
 | A2 | `docs/00-status.md:81` | 延迟段 死亡 `215 / 379`、挖洞 `140 / 262` | 同上 | 换成 `366 / 385`、`207 / 294` |
 | A3 | `docs/00-status.md:15-18` | 「前置条件齐 = **694 / 0 / 0**」 | 已涨到 709（`docs/16` §49.7 +15 条） | 694 → **709**，并标另外三档是当轮读数、本次未复测 |
 | A4 | `docs/00-status.md:122` | 「**327 个函数**的原版真名 ↔ x86 地址」 | 327 是 §20 的**单表**口径；三表并集是 348（527 内） | 327 → **348 / 527**（并集 351；无名 179 = 138+41） |
