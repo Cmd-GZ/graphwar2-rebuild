@@ -1,0 +1,79 @@
+id	pri	file	test	域	为什么最会掩盖错误	改前期望值来源	预注册真值来源	取证手段（工具 + 命令）	目标档
+L01	1	src/graphwar_play_screen_control.rs	kills_land_only_when_the_curve_reaches_the_point	弹道生命周期	命中的是第几点、几时落地全由我方模型编（点 10/50、tick 无出处）；旧实现「到点就全落」照样绿	我方实现自洽	冻结语料真批：死亡特效 start_tick − FunctionActive.active_tick 的真实差（1782642582 批1 = 30 tick、1782640359 = 29 tick）	tools/gen_test_expectations2.py 扫 403 份冻结快照（sha256 登记在 fixtures/guardrails.json）→ fixtures/test_expectation_truth2.tsv	观测
+L02	2	src/graphwar_play_screen_control.rs	kills_are_sorted_by_point_before_landing	弹道生命周期	「先排序再落地」只有我方断言；真实批里多人同时死时的先后从没对过	我方实现自洽	冻结语料：299 个含死亡的批里批内死亡特效 start_tick 单调不减（真实先后）	同上 + L/death_order 段	观测
+L03	3	src/graphwar_play_screen_control.rs	arrival_needs_the_whole_curve	弹道生命周期/揭示速率	「飞完 = 揭示点数 >= 总点数」里的 30 点/tick 只有常量出处、没有真批的到达时刻	我方实现自洽	冻结语料：真批 active_tick → ExplosionEffect.start_tick 的差 + 真采样器给的 N（点数）	同上 + L/reveal 段	观测
+L04	4	src/graphwar_play_screen_control.rs	tiny_curve_arrives_immediately	弹道边界	0/1 点弹道在真实语料里不存在 ⇒ 本批换不了（如实登记，不当成已换）	我方实现自洽	无（缺：一份 end_x == start_x 的真实回放）	403 份快照全扫 0 例	换不了
+L05	5	src/graphwar_play_screen_control.rs	arrival_lands_the_remaining_kills_first	弹道生命周期/结算顺序	「到达时先把剩余命中落完」是我方规则；真批里死亡与爆炸的先后从未核过	我方实现自洽	冻结语料：299/299 批「所有死亡特效都在所有爆炸特效之前」（含 start_tick 逐值）	同上 + L/batch_effect_order 段	观测
+L06	6	src/graphwar_play_screen_control.rs	the_same_victim_lands_once_per_shot	弹道生命周期/去重	「同一发里同一受害者只落一次」是我方闩；真实批里有没有重复死亡记录从没查	我方实现自洽	冻结语料：1088 个批内死亡位置零重复（重复只发生在跨批广播：339 个实体有多条 LifeInfo）	同上 + L/death_dup 段	观测
+L07	7	src/graphwar_play_screen_control.rs	targets_count_separately_from_soldiers	靶子/士兵分流	靶子与士兵走两条计数只有我方断言	我方实现自洽	冻结语料：死亡特效类型由皮肤决定（target→SparkEffect、bot→AshEffect、人类→DeathEffect），真实批里逐类可数	同上 + L/effect_types 段	观测
+L08	8	src/graphwar_play_screen_control.rs	settle_happens_once_per_shot	回合结算计数	「每发只结算一次」是我方回合数模型	我方实现自洽	冻结语料：每批恰有一次 TurnCountInfo 增量（1088 批逐批核）	同上 + L/turn_count 段	观测
+L09	9	src/graphwar_play_screen_control.rs	reset_clears_everything_including_turns	换局复位	reset 后回合归零只有我方断言	我方实现自洽	冻结语料：每份回放的 turn_count 都从 0 起（真实「新局归零」）	同上	观测
+L10	10	src/graphwar_play_screen_control.rs	advancing_while_idle_does_nothing	视图层幂等	「不在飞时推进是空操作」近乎恒真	我方实现自洽	冻结语料：WaitingForFunctions 区间内不出现 TurnCountInfo/ExplosionEffect（空转期无结算副作用）	同上	观测（弱）
+L11	11	src/graphwar_play_screen_control.rs	turn_clock_durations_match_the_six_modes	回合时钟	六档时长只有 docs/14 全档实测（转录），测试比的是我方 TimeMode::seconds() 自己	我方实现自洽 + docs 转录	冻结语料 EndOfTurnInfo：Timer30s→1800 / Timer1m→3600 / Timer2m→7200 / Timer3m→10800 / TimerInf→0 哨兵（n=1234 逐档逐值）	同上 + L/clock_durations 段	观测
+L12	12	src/graphwar_play_screen_control.rs	auto_fire_needs_all_three_conjuncts	回合时钟/超时开火	「到点自动开火」的三个合取项只有我方状态机	我方实现自洽	冻结语料：真实超时开火 15 次（FunctionFire.tick >= end_of_turn_tick，最小 −21）	同上 + L/timeouts 段	观测
+L13	13	src/graphwar_play_screen_control.rs	auto_fire_is_suppressed_while_in_flight_or_stopped	回合时钟/闸门	「在飞/停局不超时」是我方规则	我方实现自洽	冻结语料：ExecutingResults 区间内无 FunctionFire、无超时（逐批核）	同上	观测（弱）
+L14	14	src/graphwar_play_screen_control.rs	timer_inf_never_times_out	回合时钟	TimerInf 永不超时只有我方断言的 None	我方实现自洽	冻结语料：907 个 TimerInf EndOfTurnInfo 全部 end_of_turn_tick == 0（真实哨兵），且这些局无超时开火	同上	观测
+L15	15	src/graphwar_play_screen_control.rs	seconds_left_counts_down	回合时钟/倒计时	倒计时 = 总时长 − 已过 是我方算式	我方实现自洽	冻结语料：真实回合内事件 tick 全部 < end_of_turn_tick（deadline 是绝对值）	同上	观测
+L16	16	src/graphwar_play_screen_control.rs	restart_clears_the_latch	回合时钟/闩	「新回合可以再超时一次」只有我方断言	我方实现自洽	冻结语料：同一份回放里出现 2 次超时开火（1782673653：54968 / 63191）⇒ 闩每回合清	同上	观测
+L17	17	src/graphwar_play_screen_control.rs	clock_keeps_fractional_ticks	回合时钟/帧余量	60 Hz 由我方 advance(1/60) 自证	我方实现自洽	冻结语料派生：60 s 档 = 3600 tick（31 份）⇒ 1 s = 60 tick（与 docs/06 §44 实测 59.94–60.01/s 独立一致）	同上	观测（派生）
+L18	18	src/graphwar_play_screen_control.rs	bot_gate_counts_down_then_fires_once	AI 闸门	思考 0.6 s 是我方自造常数	我方实现自洽	冻结语料：bot 的 FunctionFire − 回合开始 tick（真实 bot 出手延迟分布）	同上 + L/bot_delay 段	观测（待核）
+L19	19	src/graphwar_play_screen_control.rs	bot_gate_freezes_when_it_cannot_fire	AI 闸门	「被挡住时倒计时不走」无任何我方之外证据	我方实现自洽	无（缺：能观测 bot 内部倒计时的样本；会话流只给出手时刻）	—	换不了
+L20	20	src/graphwar_play_screen_control.rs	bot_aim_expression_is_the_same_line	AI 瞄准	「直线瞄准」照旧 .gd 写，真 bot 发的函数形状没对过	我方自洽（旧 .gd 形状）	冻结语料：bot 玩家 FunctionInfo.function 的真实形状（是否 m*x 一条直线）	同上 + L/bot_function 段	观测（待核）
+G01	21	src/game.rs	diffeq_room_samples_the_same_function_with_rk4	微分方程局	两种模式点数不同是我方两条路径互证	我方实现自洽	冻结语料 DiffEq 真批：真实 FunctionPoints.end_x 与真采样器（RK4）逐位	同上 + G/diffeq 段	观测
+G02	22	src/game.rs	diffeq_room_emits_the_function_text_verbatim	微分方程局	「原文照发」只有代码注释里的 550 发普查，测试不核真实字符串	我方实现自洽	冻结语料：320 次 DiffEqFunction 下 FunctionInfo 的真实 function/corrected_function 原文	同上 + G/diffeq_text 段	观测
+G03	23	src/game.rs	diffeq_room_hole_point_is_the_stop	微分方程局/挖洞点	挖洞点 = 停点是我方规则	我方实现自洽	冻结语料：DiffEq 真批 ExplosionEffect.pos 与 FunctionPoints.end 的真实关系	同上	观测
+G04	24	src/game.rs	function_mode_comes_from_the_room_and_from_the_info_event	函数模式枚举	线上字符串集合是我方表	我方实现自洽	冻结语料：FunctionModeInfo 真实取值域 + docs/07 枚举判别值（逐位）	同上 + G/mode_domain 段	观测
+G05	25	src/game.rs	tick_comes_from_the_clock	回合时钟/毫秒换算	5 + 1000 ms→65 tick 是我方算式	我方实现自洽	冻结语料：真实 tick 推进 60 tick/s（L17）+ 真批 active/effect tick 差	同上	观测
+G06	26	src/game.rs	blocked_shot_also_queues_obstacle_destruction	障碍/挖洞	「被挡住要排队销毁」我方规则	我方实现自洽	冻结语料：真批里 DestroyObstacle 与 ExplosionEffect 的真实共存关系	同上 + G/destroy 段	观测
+G07	27	src/game.rs	destroy_is_delayed_by_measured_ticks	障碍/延迟	延迟 tick 是我方 measured 常数	我方实现自洽	冻结语料：真实 DestroyObstacle.start_tick − 批 tick 的分布	同上	观测
+G08	28	src/game.rs	blocked_shot_punches_a_hole_in_the_mask	障碍/挖洞	「被挡住后弹道继续」是我方模型	我方实现自洽	冻结语料：真实 blocked 批的 end_x 落在障碍边界（真批逐值）	同上	观测
+G09	29	src/game.rs	hole_point_is_the_explosion_point_not_the_sampled_stop	障碍/挖洞点	爆炸点口径是我方选择	我方实现自洽	冻结语料：真实 ExplosionEffect.pos_x == FunctionPoints.end_x（逐位）	同上	观测
+G10	30	src/game.rs	settle_order_switch_is_closed_and_defaults_to_s3	结算顺序	S3 默认值是我方枚举	我方实现自洽	冻结语料：真实批内事件种类顺序（1088 批）	同上 + G/batch_order 段	观测
+G11	31	src/game.rs	arrival_order_makes_earlier_holes_visible	结算顺序	多洞可见顺序是我方规则	我方实现自洽	冻结语料：真实批内 DestroyObstacle 顺序与 tick	同上	观测
+G12	32	src/game.rs	queued_and_expired_destroy_points_are_identical	障碍/延迟	两条路径互证（我方 A vs 我方 B）	我方实现自洽	冻结语料：回放只记 DestroyObstacle，Queue 种类不记 ⇒ 用真实 DestroyObstacle 点反查	同上	观测
+G13	33	src/game.rs	shooter_never_kills_itself	命中/自伤	「射手不会打到自己」是我方守卫	我方实现自洽	冻结语料：1088 批里射手 id 从不出现在死亡集合（真实）	同上	观测
+G14	34	src/game.rs	friendly_fire_kills_teammates_in_path_order	命中/友伤	友伤顺序是我方路径模型	我方实现自洽	冻结语料：真实批内死亡顺序 = start_tick 升序（含队友）	同上	观测
+B01	35	src/_scaffold/broker.rs	game_info_event_round_trips_byte_exactly	broker/协议	GameInfo 报文形状是我方序列化器自证	我方实现自洽	真实抓包 fixtures/protocol_match.jsonl 的 GameInfo 帧逐字节	读入已入库真抓包（sha256 入报告）	逐位（帧）
+B02	36	src/_scaffold/broker.rs	game_info_event_shape_matches_the_serializer	broker/协议	形状比对还是拿我方序列化器当 oracle	我方实现自洽	同上：真帧的字段集合/顺序/类型	同上	逐位（帧）
+B03	37	src/_scaffold/broker.rs	version_info_fixture_parses	broker/协议	VersionInfo 版本串是我方常量	我方实现自洽	真实抓包 VersionInfo 帧	同上	逐位（帧）
+B04	38	src/_scaffold/broker.rs	fixture_has_the_captured_broker_session	broker/会话	夹具自述一致即绿	我方实现自洽	真实抓包会话的事件顺序（GameNameRequest→NewConnectionRequest→…）	同上	逐位（帧）
+B05	39	src/_scaffold/broker.rs	frame_is_u16_big_endian_prefixed	broker/帧	「u16 大端长度前缀」只有我方 encode/decode 往返	我方实现自洽	真实抓包的帧长前缀（原始字节）	raw 抓包样本（若只有解析后文本则如实降为推断并登记）	逐位（帧）/推断
+B06	40	src/_scaffold/broker.rs	room_table_upsert_remove_expire	broker/房间表	房间表语义完全是自造服务端	我方实现自洽	真实抓包的 GameInfo 房间列表演进（增删）	同上	观测
+B07	41	src/_scaffold/broker.rs	snapshot_is_sorted_and_stable	broker/房间表	排序/稳定是我方实现	我方实现自洽	真实 GameInfo 广播里的房间顺序	同上	观测
+B08	42	src/_scaffold/broker.rs	game_removed_round_trips	broker/协议	GameRemoved 零真实帧（T46 已探明，等 t53 抓包）	我方实现自洽	无（403 份语料 + 现有抓包里 0 帧）	—	换不了
+V01	43	src/graphwar_level_generator.rs	disk_pattern_first_60_follow_real_draw_stream	关卡生成/磁盘形态	我方生成器拿真实随机流自证	我方实现自洽	真实抓包的发布障碍列表 fixtures/levelgen_obstacles.txt（13 个 AddObstacle 真值）	tools/gen_test_expectations2.py 读夹具 + predict_obstacles.py 口径	观测
+V02	44	src/graphwar_level_generator.rs	replays_captured_level_exactly	关卡生成	已锚在真值上（保留，补 sha256/命令）	真实抓包	同上	同上	观测
+V03	45	src/graphwar_level_generator.rs	normal_is_reasonably_distributed	关卡生成/分布	分布合理性是我方统计自证（真生成器歪了也「合理」）	我方实现自洽	真实 13 个障碍的半径/位置统计（min/max/均值）+ 真实随机流	同上	观测
+V04	46	src/graphwar_level_generator.rs	center_mode_is_one_obstacle_at_origin	关卡生成/中心形态	中心模式只有我方断言	我方实现自洽	真实 AddObstacle 里的 (0,0) 样本数（13 个里有 1 个）	同上	观测
+V05	47	src/graphwar_level_generator.rs	disk_pattern_is_two_disks_of_64_and_16	关卡生成/磁盘形态	两盘 64/16 是我方常数	我方实现自洽	二进制立即数 + 真实障碍计数（docs/11 / fixtures）	—	逐位（常量）+观测
+V06	48	src/graphwar_level_generator.rs	disk_pattern_consumes_two_draws_per_segment	关卡生成/随机流消费	每段消费 2 个随机数是我方模型	我方实现自洽	真实随机流 120 值 → predict_obstacles 复算 13 障碍逐值	同上	观测
+V07	49	src/graphwar_level_generator.rs	disk_pattern_follows_the_draw_stream_exactly	关卡生成/随机流	我方生成 vs 我方复算	我方实现自洽	同上（真流→真障碍逐值）	同上	观测
+V08	50	src/graphwar_level_generator.rs	disk_pattern_radii_are_uniform_inside_the_disk	关卡生成/半径分布	均匀性自查	我方实现自洽	真实 13 个半径与真随机流给的半径序列	同上	观测
+V09	51	src/graphwar_level_generator.rs	scatter_counts_vary_with_the_seed	关卡生成/种子	「随种子变化」是不变量自查	我方实现自洽	真实 AddObstacle 计数（13）+ 真流	同上	观测
+V10	52	src/graphwar_level_generator.rs	seeded_generation_is_reproducible_and_seed_dependent	关卡生成/种子	确定性自查	我方实现自洽	真实抓包只能给一次运行 ⇒ 只能证「同流同输出」	同上	观测（弱）
+V11	53	src/graphwar_level_generator.rs	degenerate_seeds_are_safe	关卡生成/边界	no-panic 不变量	我方实现自洽	无对应物（真实运行样本里没有退化种子）	—	换不了
+E01	54	src/graphwar_function_evolutionator.rs	distribution_matches_table	AI 进化/权重表	拿我方 RNG 抽样 vs 我方权重表 ⇒ 同一份实现自己印证	我方实现自洽	unicorn 直调真二进制 random_function 0x4ef020（注入 ChaCha key）+ weights 表	tools/gen_test_expectations2.py 复用 tools/ai_gen_parity.py 的 emulator	逐位
+E02	55	src/graphwar_function_evolutionator.rs	weights_sum_to_85	AI 进化/权重表	表是我们抄的，和 = 85 自查	我方实现自洽	同上：真二进制在固定 key 下的 tag 直方图	同上	逐位
+E03	56	src/graphwar_function_evolutionator.rs	never_emits_y_or_neg	AI 进化/取值域	我方生成器不出 y/neg 自查	我方实现自洽	真二进制 random_function(mode=0) 的输出 tag 集合（大样本）	同上	逐位
+E04	57	src/graphwar_function_evolutionator.rs	random_length_is_normal_10_5	AI 进化/长度	长度分布（10,5）自查	我方实现自洽	真二进制 random_function 的 out_len 分布（大样本）	同上	逐位
+E05	58	src/graphwar_function_evolutionator.rs	constants_are_normal_scaled_by_10_2	AI 进化/常数分布	N(0,10.2) 自查	我方实现自洽	真二进制输出里 const token 的位型统计	同上	逐位
+E06	59	src/graphwar_function_evolutionator.rs	mutate_does_nothing_without_value_tokens	AI 进化/变异	无值 token 时不改动是我方语义	我方实现自洽	unicorn 直调 mutate 0x4ee720（同输入真输出）	同上	逐位
+E07	60	src/graphwar_function_evolutionator.rs	mutate_wraps_y_like_x	AI 进化/变异	y 包一层只有我方断言	我方实现自洽	真 mutate(VarY) 的输出 token 序列	同上	逐位
+E08	61	src/graphwar_function_evolutionator.rs	mutate_constant_is_multiplicative_drift_or_refresh	AI 进化/变异	乘性漂移是我方规则	我方实现自洽	真 mutate(Const) 在固定 key 下的输出位型	同上	逐位
+E09	62	src/graphwar_function_evolutionator.rs	mutate_spreads_constants_over_many_rounds	AI 进化/变异	多轮漂移自查	我方实现自洽	真 mutate 多轮（同 key）的常数序列	同上	逐位
+E10	63	src/graphwar_function_evolutionator.rs	mutate_wraps_x_in_an_operation	AI 进化/变异	x 包一层自查	我方实现自洽	真 mutate(VarX) 的输出 token 序列	同上	逐位
+E11	64	src/graphwar_function_evolutionator.rs	mutation_only_grows_or_keeps_the_sequence	AI 进化/变异	长度不缩自查	我方实现自洽	真 mutate 多轮的输出长度	同上	逐位
+E12	65	src/graphwar_function_evolutionator.rs	mutations_keep_the_sequence_well_formed	AI 进化/变异	合法性是我方判据	我方实现自洽	真 mutate 输出在前缀式判据下合法	同上	逐位
+E13	66	src/graphwar_function_evolutionator.rs	repair_fixes_arbitrary_sequences	AI 进化/补齐	补齐规则自查	我方实现自洽	真二进制 assemble 0x4ee0e0 对同一批输入的输出	同上	逐位
+E14	67	src/graphwar_function_evolutionator.rs	random_individual_is_always_well_formed	AI 进化/合法性	合法性自查	我方实现自洽	真 random_function 输出全合法（大样本）	同上	逐位
+E15	68	src/graphwar_function_evolutionator.rs	raw_generator_does_not_assemble	AI 进化/两段式	「不补齐」是我方推断	我方实现自洽	真 random_function 输出长度 vs assemble 后长度	同上	逐位
+D01	69	src/_scaffold/diffconv.rs	arrival_order_follows_the_kernel_bit_for_bit	收敛层/结算	我方收敛层 vs 我方内核（纯 parity）	我方实现自洽	冻结语料真批：1782642582 批0/批1 + 1782640359 的逐条原文（含 start_tick 顺序）	tools/gen_test_expectations2.py 扫快照→常量入测试	观测
+D02	70	src/_scaffold/diffconv.rs	explosion_point_is_the_kernel_hole_point	收敛层/挖洞点	同上 parity	我方实现自洽	冻结语料：真批 ExplosionEffect.pos 与 end_x 的逐位关系	同上	观测
+D03	71	src/_scaffold/diffconv.rs	sampling_text_is_the_kernel_rule	收敛层/采样文本	同上 parity	我方实现自洽	冻结语料：真批 FunctionInfo 的 function/corrected_function 原文	同上	观测
+D04	72	src/_scaffold/diffconv.rs	owner_exclusion_is_the_kernels_not_prose	收敛层/自伤排除	「射手不打自己」是我方口径	我方实现自洽	冻结语料：1088 批里射手 id 不在死者集合	同上	观测
+D05	73	src/_scaffold/diffconv.rs	mode_follows_function_mode_string	收敛层/模式	线上字符串→模式是我方映射	我方实现自洽	冻结语料：真实 FunctionModeInfo 取值域 + 真批修正文本形态	同上	观测
+D06	74	src/_scaffold/diffconv.rs	normal_corrected_text_appends_signed_suffix	收敛层/修正文本	后缀形态只有我方断言	我方实现自洽	冻结语料 29091 条 FunctionInfo 的真实 corrected_function 形态	同上	观测
+D07	75	src/_scaffold/diffconv.rs	unbalanced_function_gets_closing_brackets	收敛层/括号	补括号规则只有我方断言	我方实现自洽	冻结语料里括号不平衡的真实 function/corrected_function 原文	同上	观测
+D08	76	src/_scaffold/diffconv.rs	non_finite_explosion_point_falls_back_to_stop	收敛层/非有限值	回退规则是我方	我方实现自洽	冻结语料：真实批里 pos 是否出现过非有限值（若 0 例 ⇒ 如实记「无对应物」）	同上	观测/换不了
+D09	77	src/_scaffold/diffconv.rs	diffeq_corrected_text_is_the_raw_function	收敛层/DiffEq	DiffEq 原文照发只有我方断言	我方实现自洽	冻结语料：320 次 DiffEq 的 function==corrected_function 原文	同上	观测
+D10	78	tests/diffconv_parity.rs	（2 条 parity）	收敛层/对拍	我方收敛层 vs 我方内核逐位一致（纯 parity）	我方实现自洽	冻结语料真批（同 D01/D02）	同上	观测
