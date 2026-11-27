@@ -92,9 +92,12 @@ fn main() {
 
     let p = graphwar_function_evolutionator::params(level);
     let real_tokens = parse(&func);
+    // 这里没有队伍信息（回放里的队伍要靠 `TeamInfo` 事件喂）：只把射手记成队 0，
+    // 其余实体查不到 = `TEAM_UNKNOWN` ⇒ 走真值的"敌人"分支（`0x51ae3f`）。
     let ctx = ScoringContext {
         x0: shooter.0, y0: shooter.1, flip, step: gw2_rebuild::SERVER_STEP,
         mask: &mask, targets: &targets, limit: p.limit,
+        shooter_id: 0, teams: &[(0, 0)],
     };
     let real_score = graphwar_function_evolutionator::fitness(&real_tokens, &ctx);
 

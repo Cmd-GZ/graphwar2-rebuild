@@ -1196,8 +1196,10 @@ impl Match {
         let pop = self.ai_pops.remove(&key);
         // 评分上下文借用 mask/soldiers，写回借用 functions/ai_rng —— 拆开借，互不重叠。
         let out = {
-            let Match { soldiers, mask, functions, ai_rng, .. } = self;
+            let Match { soldiers, mask, functions, ai_rng, teams, .. } = self;
             let others: Vec<Target> = soldiers.iter().filter(|t| t.id != soldier_id).copied().collect();
+            // 队伍表铺成扁平切片（评分核心要的是"id → 队伍字节"的查表）。
+            let team_pairs: Vec<(i64, u8)> = teams.iter().map(|(k, v)| (*k, *v)).collect();
             let ctx = graphwar_function_evolutionator::ScoringContext {
                 x0,
                 y0,
@@ -1207,6 +1209,11 @@ impl Match {
                 mask: &mask[..],
                 targets: &others,
                 limit: params.limit,
+                // 评分核心的第 4 个参数 + `ctx+8` 那张队列表：
+                // 命中项是**带符号**的（异队 +1 / 同队 −1，`0x51ae51`/`0x51ae62`），
+                // 没有这张表就只能把误伤算成命中（旧实现在这里确实算错了，见 `docs/06` §128）。
+                shooter_id: soldier_id,
+                teams: &team_pairs,
             };
             let evolver = SoldierEvolver::new(params, mode, ctx).with_budget(budget);
             let mut next = || ai_rng.next_u64();
