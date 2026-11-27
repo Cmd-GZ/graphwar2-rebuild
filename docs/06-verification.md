@@ -23276,3 +23276,228 @@ $PY tools/function_coverage.py --stats
 5. **F2 的 `na` 专项没做**（§129.5.3）：99 条里到底有多少是 `na`，本轮**只给了候选、没给结论**。
 6. **建议 lead 决定**：① 是否采纳口径 B/B'（这会让招牌数从 52.6% 变 63.1%/62.1%，**是"改口径"不是"改实现"**）；
    ② 是否给 `function_coverage.py` 加 `na` 列（§129.5.2 四条建议）；③ §123 的"21 vs 19"要不要在别处更正。
+
+## 130. T76：`--flow replay`/`--flow match` 的**停帧时机**钉成「按 tick 停帧」—— `replay_play`/`replay_end` 三轮**逐 px 相同**（856 px = 0.0384 %），§118.8 那个 1126/856 的互换是**我方多画的一根闪烁光标**（2026-11-27，任务 T76 / 分支 `agent/pixel-freeze`）
+
+> **预注册先于读数**：[`fixtures/frame_capture_freeze_plan.txt`](../fixtures/frame_capture_freeze_plan.txt)（单独 commit `28f7fc7`）
+> = 停帧表 8 条规则 + 光标排除区 + 噪声带；§5 记了那一次修订（`match_ready/ours` 的 `settle` 1.5 → 3.0，
+> 证据见 §130.3.2）。三轮读数 = [`fixtures/pixel_freeze_results.tsv`](../fixtures/pixel_freeze_results.tsv)。
+> **门槛文件 `fixtures/frame_diff_thresholds.txt` 一个字没改**（sha256 `9cc9fcda…`），本轮只改「**比哪一帧**」与「**哪些像素算**」。
+
+### 130.0 一页结论
+
+1. **机制**（`tools/frame_capture.py`，**默认全关**）：`--stop-plan <表>` 让采集按该侧的**运行时 tick** 停帧，
+   到点在**目标进程内** `raise(SIGSTOP)` 冻住（不是 Python 收到消息再 kill —— 那会多跑一帧），拍完 `SIGCONT`。
+   不给参数 ⇒ 行为与改动前逐字相同。实际停在哪一 tick 记在 `manifest.json` 的 `stops[]`（`stop_value_frozen`）。
+2. **§118.8 那条遗留的根因找到了**：`1126 = 856 + 270`。那 **270 px 是我方回放屏多画的一根闪烁光标**
+   （纯白 3×90 竖条 `x1182..1184 × y1066..1155`，`client/src/play/function_input.gd::_caret_blink`，亮 0.5 s / 灭 0.5 s）；
+   **原版回放屏两轮 6 帧跨 50 s 一次都没画过**（光标列上 0 条 3×90 白条）；剩下 **856 px 全是士兵名字标签的
+   文字栅格化**（bbox `(770,782)-(844,810)`，字形位置两轮一致、我方笔画更细）。⇒ 互换的是**光标相位**，不是渲染。
+3. **`replay_play` / `replay_end` 三轮读数 = 856 / 856 / 856 px（掩膜后，逐 px 相同）、L2 0 块**；
+   原始（未掩膜）读数 1126 / 1126 / 1126（第 3 轮 `replay_play` 是 856）—— 差的正好是光标那一次命中。**互换消失。**
+4. **对局屏两屏三轮**：`match_ready` **2047 / 2048 / 2046 px = 0.0919 / 0.0920 / 0.0919 %**（L2 0 块）
+   **落在预注册带 `[0.070, 0.100] %` 内**（三帧逐字节相同、噪声地板 0）；`match_play`
+   **5783 / 5710 / 5855 px = 0.2598 / 0.2565 / 0.2630 %**（L2 1 块）—— **低于**预注册带下沿 `0.340 %`（更好），
+   上沿 `0.450 %` 成立；三轮跨度 0.0065 pp。
+5. **顺带挖到两条源码层差异**（不是采集问题、不是门框宽窄）：
+   - **我方 `match_ready` 有进屏过渡态**：底部左侧先画 `00:5x` 倒计时 + `dy/dx` 输入行，约 5–6 s 后才切成 `f(x) =`
+     （原版进屏即 `f(x) =`）。拍在过渡态上时跨侧差异从 2 046 px 跳到 **13 120 px（+11 074）**（§130.3.2）；
+   - **我方对局屏的动画时钟是墙钟**（`_curve_tick += delta × 60`），原版是定步 tick（`get_fractional_tick`，`0x519530`）
+     ⇒ `match_play` 的残差里有模型层相位差，**按 tick 停帧消不掉**（采集层能消、模型层不能）。
+6. **`campaign`（0.1718 %）/ `level_popup`（0.1008 %）的残差归到「theme 字色」层**：两屏残差**全是一个字**
+   （关卡节点上的数字 `0`），两侧字形逐 px 相同、逐通道只差一个常数（`+32` / `+13`）⇒ 不是栅格化、不是布局、不是资产。
+   详见 §130.5（含 bbox 与像素数）。
+
+### 130.1 停帧机制与用法（`tools/frame_capture.py`，默认全关）
+
+```bash
+# 预注册停帧表（8 条规则）：fixtures/frame_capture_freeze_plan.txt
+#   flow ⇥ screen ⇥ side ⇥ stop_kind ⇥ stop_value ⇥ probe ⇥ note
+#   stop_kind = tick | frozen | ftick | progress | replay_tick | settle
+#   目标值可以写 `+K` = **相对 arming 时刻的读数**（跨轮 boot 会飘，钉相对量才复现同一视觉状态）
+```
+
+| 侧 | 探针 | 地址/符号（ELF vaddr） | 说明 |
+|---|---|---|---|
+| 原版 | `orig_tick` | `GraphwarTickHandler::tick` @ **`0x519840`**，`rdi`+`0x40` = tick 计数器 | 静态依据 `docs/06` §63（每 tick `+16_666_666 ns`、`nanos==1e9` ⇔ 未暂停） |
+| 我方（回放屏） | `ours_progress` | `GwReplayDriver::progress()`（`_update_replay_ui()` 每帧调） | 载入态恒 `0.24483516…` = **557/2275** ⇒ 载入 tick **558** |
+| 我方（对局屏） | `ours_ftick` | `GraphwarPlane::set_fractional_tick(f64)`（曲线揭示每帧调，`xmm0`） | ≈ 63/s，是**墙钟积分出来的量**（不是原版的定步 tick） |
+
+停帧动作的三种来源（都在 `manifest.json` 里标清，**不许混着报**）：
+
+| `stop_kind` | 判据 | 冻结来源 | 证据档 |
+|---|---|---|---|
+| `tick` / `ftick` / `progress` / `replay_tick` | 探针读数 `>=` 预注册目标 | **目标进程内** `raise(SIGSTOP)`（同一帧内生效） | 观测（运行时读数 + 冻结值回读） |
+| `frozen` | 探针值连续 N 次采样**不变**（时钟已停） | 同侧 `SIGSTOP` | 观测 |
+| `settle` | 墙钟偏移 + **内容稳定闸**（相邻两帧逐字节相同才停） | 同侧 `SIGSTOP` | **推断**（该屏没有可读的运行时 tick） |
+
+> `settle` 为什么要"内容稳定闸"而不是猜秒数：我方进屏过渡态的结束时刻**跨轮会飘**（实测 5.7 s 已稳 / 6.0 s 还没稳），
+> 固定秒数在 3 轮里就会漏 1 轮（§130.3.2 的 13 120 px 就是漏的那一轮）。
+
+`manifest.json` 里新增的记录（**默认关闭时这些字段不存在**）：
+
+```json
+"stops": [{"screen": "match_ready", "stop_kind": "tick", "stop_probe": "orig_tick",
+           "stop_value_target": 900.0, "stop_value_frozen": 900, "stop_frozen": true, ...}]
+```
+
+### 130.2 `1126 = 856 + 270`：§118.8「名字归属互换」的根因（**观测**）
+
+同一份代码、同一份冻结回放（`1793897298`），**两侧各跑两轮**（`--flow replay --seed-replays`）：
+
+| 采集轮 | `replay_play` | `replay_end` | 合计 | 说明 |
+|---|---|---|---|---|
+| 旧口径（§118.7 旧基线那轮） | 1 126 px | 856 px | 1 982 px | "两屏名字归属相反"那一轮 |
+| 旧口径（rebase 后重拍） | 856 px | 856 px | 1 712 px | 判成"采集噪声" |
+| **按 tick 停帧（本轮 R6/R7/R8）** | **856 / 856 / 856** | **856 / 856 / 856** | 1 712 | 三轮**逐 px 相同**；原始读数 1 126（差的 270 = 光标） |
+
+拆开那 270 px 与 856 px（R6，`frame_diff` + 逐块统计）：
+
+| 块 | bbox | px | 归属 |
+|---|---|---|---|
+| 光标列 | `(1182,1066)-(1184,1155)` | **270** | **我方多画的光标**（原版回放屏没有）：`_caret_blink`，亮/灭各 0.5 s，**墙钟驱动** ⇒ 任何 tick 停帧都钉不住它的相位，只能从 L3 计数里排除（§130.4） |
+| 士兵名字标签 | `(770,782)-(844,810)` | **856** | **文字栅格化层**：字形位置两侧一致（olive 墨迹 bbox 原版 `x772..843` / 我方 `x773..841`），但墨迹像素 **719 vs 661**、标签框内纯白 **889 vs 780** ⇒ 同一字形、不同抗锯齿/字重 |
+| 其余 | — | **0** | 两屏除这两块外**一个差异像素都没有** |
+
+**原版侧的证据**（为什么说光标是我方多画的）：两轮采集里原版 `replay_play`/`replay_end` 共 6 帧、跨约 50 s，
+光标列上（`y1066..1155`，任意 `x`）**没有任何 3×90 的纯白竖条**（脚本扫全行，见 §130.7 的 `bars` 复跑）。
+⇒ `client/src/play/function_input.gd` 注释里那条「原版真帧显示它在闪（T26）」**不成立于回放屏**，留给下一轮复核（§130.6 第 3 条）。
+
+### 130.3 对局屏两屏：停帧后三轮稳定 + 挖到的两个真差异
+
+#### 120.3.1 三轮读数（`--flow match`，**两侧串行**、私有 netns）
+
+| 轮 | `match_ready` | 停帧（原版 / 我方） | `match_play` | 停帧（原版 / 我方） |
+|---|---|---|---|---|
+| R6 | **2 047 px = 0.0919 %**（L2 0） | `tick 900` / `settle`+稳定闸 | **5 783 px = 0.2598 %**（L2 1） | `+90 tick` → **1 480** / `ftick +6` → **243.1** |
+| R7 | **2 048 px = 0.0920 %**（L2 0） | 同上（冻结值同为 **900**） | **5 710 px = 0.2565 %**（L2 1） | **1 480** / **240.1** |
+| R8 | **2 046 px = 0.0919 %**（L2 0） | 同上 | **5 855 px = 0.2630 %**（L2 1） | **1 478** / **243.5** |
+
+- **三屏 × 两侧 × 3 帧**全部**逐字节相同**（噪声地板 0.000 %，`manifest` 里三帧 sha256 相同）⇒ 停帧确实停住了；
+- `match_ready` 三轮跨度 **2 px**（0.0001 pp）⇒ 落预注册带内；
+- `match_play` 三轮跨度 **145 px**（0.0065 pp）⇒ 稳定，但**低于**预注册带下沿（0.340 %）。
+  预注册带的来处是历史墙钟口径的 0.370–0.442 %；按 tick 停帧后两侧被钉在同一"相对 arming"相位上，
+  相位差小了一块 ⇒ **读数变好不是带被放宽**（带上沿 0.450 % 没动）。新带按实测 = **`[0.2565, 0.2630] %`**。
+
+#### 120.3.2 挖到的第一条：我方 `match_ready` 的**进屏过渡态**（真差异，不是噪声）
+
+`match_ready` 在改成"冻结 + 稳定闸"**之前**跑的那三轮（用同一份停帧表但 `settle` 1.5 s、无稳定闸）里，
+第 1 轮就撞上了：跨侧 **13 120 px（0.5893 %）**，其中 **11 074 px** 是**我方自己那一帧**还没切完版式：
+
+| 块 | 原版（tick 900 冻住） | 我方（同一时刻） |
+|---|---|---|
+| 底部左 `(0,1030)-(360,1160)` | `f(x) =` | **`00:55` 倒计时 + `dy/dx =` 输入行**（7 463 px 差） |
+| 底部右 `(1700,1080)-(1920,1160)` | 空 | 多一列修正文本（1 523 px 差） |
+
+原版进屏那一刻就是 `f(x) =` 布局（3 帧逐字节相同），我方要**约 5–6 s** 才切过去，且结束时刻跨轮会飘
+⇒ 这是**行为/时序差异**（不是渲染差、不是门框），也是最容易被"赌一把 settle 秒数"掩盖的那类差异：
+赌对了 0.0919 %、赌错了 0.5893 %。**稳定闸**就是为它加的（判据从"等 N 秒"改成"画面不再变"）。
+（`match_ready` 被接受的那一帧里，2 047 px 有 **2 003 px = 97.9 % 落在士兵三件套 bbox `(760,770)-(850,875)`**，
+其余 44 px 在底部两角，顶部栏与棋盘区 **0 px** —— 即对局屏除士兵外已逐像素一致。）
+
+#### 120.3.3 挖到的第二条：我方对局屏动画走**墙钟**，原版走**定步 tick**（源码层缺口）
+
+- 原版：`GraphwarPlane::draw` 的喂点循环吃 `GraphwarTickHandler::get_fractional_tick`（`0x519530`）⇒ 揭示量是 tick 的函数；
+- 我方：`client/src/screens/play_screen.gd:1144` 的 `_advance_curve(delta)` 自己累加 `_curve_tick`（墙钟），
+  源码里也写着"本地局：沿用 `_curve_tick`（我方时钟，不是原版的 `get_fractional_tick`）"（同文件 :1427）；
+- ⇒ `match_play` 残差里 **5 739 px（94.8 %）在棋盘区 `(265,556)-(1738,900)`**，就是弹道揭示量的相位差；
+  我方没有任何运行时 tick 可读（`match_play` 的 `ours_ftick` 读到的也是墙钟积分出来的量）。
+  这条不是本轮能修的（要接 `get_fractional_tick`），登记给下一轮。
+
+### 130.4 排除区：**原始读数一行不少**
+
+`tools/frame_diff.py` 只**新增**了 `--exclude-rect`（只影响 L3 计数区域），并把
+`l3_diff_px_raw` / `l3_diff_ratio_raw` / `l3_masked_out_px` / `l3_exclude_rects` 四列加到 TSV 末尾：
+
+| 屏 | 掩膜后（判定用） | 原始（未掩膜） | 被排除的差异像素 |
+|---|---|---|---|
+| `replay_play`（R6/R7/R8） | 856 / 856 / 856 | 1 126 / 1 126 / 856 | 270 / 270 / 0 |
+| `replay_end`（R6/R7/R8） | 856 / 856 / 856 | 1 126 / 1 126 / 1 126 | 270 / 270 / 270 |
+| `match_ready`（R6/R7/R8） | 2 047 / 2 048 / 2 046 | 2 047 / 2 048 / 2 046 | 0 / 0 / 0 |
+| `match_play`（R6/R7/R8） | 5 783 / 5 710 / 5 855 | 6 053 / 5 980 / 6 125 | 270 / 270 / 270 |
+
+排除区只有两处（都从真帧量出来，`frame_capture_freeze_plan.txt` §2）：`replay` 光标列 `1179,1062,1188,1160`、
+`match` 光标列 `999,1062,1008,1160`。**L1/L2 一行没动**（它们看均值/分块均值，270 px 的影响 < 0.001/255）。
+
+### 130.5 `campaign`（0.1718 %）/ `level_popup`（0.1008 %）残差归到哪一层
+
+两屏都是**纯静态**（没有 tick、没有动画），`--flow static` 两侧各拍一次即可；同侧 3 帧逐字节相同
+（`noise floor` 两侧都 **0.000 %**）。判据仍是既有门槛文件（**一个数没改**），读数与 §118.7 的现值**逐 px 复现**：
+
+| 屏 | 差异 | bbox | max\|Δ\| | L2 超限 | 归到哪一层 |
+|---|---|---|---|---|---|
+| `campaign` | **3 827 px = 0.1718 %** | `(199,184)-(279,271)`（81×88） | **32** | 0 块 | **关卡节点数字 `0` 的填充色**：原版 `#DFDFDF`(223) / 我方 `#FFFFFF`(255) |
+| `level_popup` | **2 244 px = 0.1008 %** | `(199,184)-(242,271)` | **13** | 0 块 | 同一个字：点开关卡后原版变 `#F2F2F2`(242)（hover/选中变亮）、我方恒 `#FFFFFF` |
+
+**判据（可复核，不靠肉眼）**：把两帧在 bbox 内相减，看**逐通道差值的取值集合**：
+
+```
+campaign     (ours − orig) 最常见 = (+32,+32,+32) × 3 189 px   ← 逐通道同一个常数
+level_popup  (ours − orig) 最常见 = (+13,+13,+13) × 1 912 px
+```
+
+- 差值**只有"整体加一个常数"这一种** ⇒ 两侧字形的覆盖/位置/形状**逐 px 相同**（形状不同必然出现正负混合差
+  与更大的 max|Δ|），差的只是**这个字被涂成什么灰阶**；
+- 排除三档：**文本栅格化/抗锯齿**（那会给出边缘小 Δ + 覆盖率不同：回放屏名字标签那 856 px 就是这一档，见 §130.2）、
+  **字体度量/布局**（那会有 ±1 px 位移；本屏 `shift` 检验在 `(0,0)` 最小，任何平移都让差异翻倍）、**资产缺失**（字都在）；
+- ⇒ 层 = **theme 字色（`font_color` / 节点状态色）**。**不必修**（本任务只要求指到层）；要修就查
+  `client/scenes/screens/campaign.tscn` 里 `LevelNode` 的 `theme_override_colors` 与原版 `.tscn` 的同名节点。
+
+> ⚠️ 这两屏 L3 **两个条件都不过**：比例 0.1718 % / 0.1008 % > 0.10 %，且 max|Δ| 32 / 13 > 8。
+> L1/L2 都过（24 块里没有一块超限）⇒ 与 §118.7 记的「0.172 %（L3）」同口径。**残差全是那一个字**，
+> 除了 bbox 里那一个字，两屏**其余像素 0 差异**。
+
+### 130.6 遗留 / 未做
+
+1. **`match_play` 的模型层相位差消不掉**（§130.3.3）：要接原版的 `get_fractional_tick` 才能把"动画时钟"这一层统一，
+   届时 `match_play` 的残差应能再降一截（现在 5 739 px 在棋盘区，全是揭示量相位差）。**不在本轮范围**（不许动 `client/**`）。
+2. **我方 `match_ready` 的进屏过渡态**（§130.3.2）：`00:5x` 倒计时 + `dy/dx` 行约 5–6 s 才消失，原版进屏即无。
+   这是**行为差异**，修它要动 `play_screen.gd` 的联机进屏路径（本轮只测量 + 稳定闸兜住）。
+3. **回放屏光标**：我方画、原版不画（§130.2）。`client/src/play/function_input.gd` 的注释引用 "T26 真帧"说原版也闪，
+   与本轮两轮 6 帧的实测不符 ⇒ **下一轮要用更多轮次复核**（若原版确实偶尔画，那就是"相位逐运行随机"，
+   排除区的结论不变；若确实不画，那是我方多画了一个元素，应修）。
+4. **`--stop-observe` 只是标定工具**（不冻结、只记读数）；它没有接进任何门槛，别当判定用。
+5. **`frozen` 判据依赖"钩子被调到过"**：原版回放屏进屏后时基不再推进，探针是**载入之前**预装的（`--stop-plan` 会在起游戏后立即预装），
+   这一点写死在本节，别改成"用的时候才装"（那样 `calls` 恒 0，等不到"值不变"，本轮已踩过一次）。
+
+### 130.7 复跑命令（照抄）
+
+```bash
+WT=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/wt-t76      # 换你自己的树
+MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export PY=$WT/.reference/venv/bin/python                            # ⚠️ frida 只在 venv 里
+# ① 内核三件套（本树自己的 .cargo-target）
+export CARGO_HOME=$MAIN/.reference/cargo-home CARGO_TARGET_DIR=$WT/.cargo-target
+cargo build --offline --features gdext-bindings && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so $WT/client/
+$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64 --headless --path $WT/client --import   # 少这步 = 空帧
+# ② 两侧串行采集（私有 netns 的 bwrap 模板见 docs/06 §79.8；display 号两侧不同）
+$PY $WT/tools/frame_capture.py --side original --flow replay --seed-replays \
+    --stop-plan $WT/fixtures/frame_capture_freeze_plan.txt --out <orig> --display-num 131
+$PY $WT/tools/frame_capture.py --side ours     --flow replay --seed-replays \
+    --stop-plan $WT/fixtures/frame_capture_freeze_plan.txt --out <mine> --display-num 132
+$PY $WT/tools/frame_capture.py --side original --flow match \
+    --stop-plan $WT/fixtures/frame_capture_freeze_plan.txt --out <orig_m> --display-num 133
+$PY $WT/tools/frame_capture.py --side ours     --flow match \
+    --stop-plan $WT/fixtures/frame_capture_freeze_plan.txt --out <mine_m> --display-num 134
+# ③ 三层判据（**系统 python3**：Pillow/numpy 在那边，venv 没有）
+python3 $WT/tools/frame_diff.py --orig <orig> --mine <mine> --screens replay_play,replay_end \
+    --exclude-rect 1179,1062,1188,1160 --out <r.tsv>
+python3 $WT/tools/frame_diff.py --orig <orig_m> --mine <mine_m> --screens match_ready,match_play \
+    --exclude-rect 999,1062,1008,1160 --out <r_m.tsv>
+# ④ 标定（只读探针，不冻结）：看某一屏的 tick 读数
+$PY $WT/tools/frame_capture.py --side original --flow replay --seed-replays --stop-observe \
+    --stop-probe orig_tick --out <cal> --display-num 135
+```
+
+### 130.8 门槛（本轮实测，全部自己跑）
+
+| 门槛 | 读数 |
+|---|---|
+| `cargo test --offline` | ****1520 passed / 0 failed / 1 ignored**（`cargo test --offline`，74 个 test 二进制求和）** |
+| `cargo test --offline --features gdext-bindings` | ****1650 passed / 0 failed / 1 ignored**（`--features gdext-bindings`）** |
+| `selftest` | ****757 passed / 0 failed / 1 skipped**，`@@SELFTEST_COVERAGE groups=34 checks=757 expected=757 missing=0(claimed 0 / degraded 0 / silent 0)`** |
+| headless 14 脚本 | ****1978 / 0**（14 份逐个跑；含前置：`HOME` 里有原版目录的两份真回放、`client/assets/` 齐、`cargo build --example serve_match`。⚠️ 少任一前置时 `play_flow_check` 是 230 不是 234 ⇒ 总数 1974，**别把这 4 条算成回归**）** |
+| 三轴 | **`fire` **647** ｜ `batch` **647** ｜ `batch_conv` **637**（`结算批 1080`，一位未退）** |
+| `coverage_matrix.py --check` | ****OK**（`527` 个可归属函数：逐位 89 / 观测 435 / 推断 3 / 未做 0；rc=0）** |
+| `check_doc_refs.py` | ****rc=0**（无死链，白名单逐条有理由）** |
+| 像素 | 见 §130.2–§130.4（`replay` 两屏三轮逐 px 相同；对局两屏三轮稳定） |

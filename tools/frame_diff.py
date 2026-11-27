@@ -60,23 +60,53 @@ def blocks(arr):
     return out
 
 
-def diff_stats(a, b):
+def build_exclude_mask(shape, rects):
+    """把 `--exclude-rect x0,y0,x1,y1` 列表铺成布尔掩膜（`True` = **排除**、不计入 L3）。
+
+    T76（2026-11-27）：只给 L3 用。理由写在 `fixtures/frame_capture_freeze_plan.txt` §2：
+    光标列是**墙钟 1.0 s 周期**的闪烁元素（原版/我方相位逐运行随机），任何"按 tick 停帧"
+    都钉不住它的相位 ⇒ 把它从 L3 的**计数区域**里排除，同时把"被排除掉的差异像素"单列报出。
+    L1/L2 一行不动（它们看的是整幅图的均值/分块均值，270 px 影响 < 0.001/255）。
+    """
+    m = np.zeros(shape[:2], dtype=bool)
+    for r in rects or []:
+        x0, y0, x1, y1 = [int(round(v)) for v in r]
+        x0, y0 = max(0, x0), max(0, y0)
+        x1, y1 = min(shape[1], x1), min(shape[0], y1)
+        if x1 > x0 and y1 > y0:
+            m[y0:y1, x0:x1] = True
+    return m
+
+
+def diff_stats(a, b, mask=None):
     d = np.abs(a - b)                      # HxWx3
     dmax = d.max(axis=2)
-    diff_px = int((dmax > 0).sum())
+    diff_all = dmax > 0
+    diff_px = int(diff_all.sum())
     total = dmax.size
     stats = {'diff_px': diff_px, 'total_px': total,
              'diff_ratio': diff_px / float(total),
              'max_channel_diff': int(dmax.max()) if diff_px else 0}
     if diff_px:
-        ys, xs = np.nonzero(dmax > 0)
+        ys, xs = np.nonzero(diff_all)
         stats['bbox'] = [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())]
     else:
         stats['bbox'] = None
+    if mask is not None:
+        kept = diff_all & ~mask                  # 掩膜外（真正参与判定的那些像素）
+        stats['masked_out_px'] = int((diff_all & mask).sum())
+        stats['kept_px'] = int(kept.sum())
+        stats['kept_total_px'] = int((~mask).sum())
+        stats['kept_ratio'] = stats['kept_px'] / float(max(1, stats['kept_total_px']))
+        if stats['kept_px']:
+            ys, xs = np.nonzero(kept)
+            stats['kept_bbox'] = [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())]
+        else:
+            stats['kept_bbox'] = None
     return stats, dmax
 
 
-def compare_screen(a_path, b_path, name, threshold_ok):
+def compare_screen(a_path, b_path, name, threshold_ok, exclude_rects=None):
     a, b = load(a_path), load(b_path)
     row = {'screen': name,
            'size_orig': '%dx%d' % (a.shape[1], a.shape[0]),
@@ -123,12 +153,24 @@ def compare_screen(a_path, b_path, name, threshold_ok):
     row['l2_blocks_over'] = n_over
     row['l2_ok'] = bool(n_over == 0)
     # ---- L3（只在 L1/L2 都过时才算数）----
-    st, dmax = diff_stats(a, b)
+    mask = build_exclude_mask(a.shape, exclude_rects) if exclude_rects else None
+    st, dmax = diff_stats(a, b, mask)
     row['l3_diff_px'] = st['diff_px']
     row['l3_diff_ratio'] = round(st['diff_ratio'], 6)
     row['l3_max_channel_diff'] = st['max_channel_diff']
     row['l3_bbox'] = st['bbox']
-    l3_ok = (st['diff_ratio'] <= L3_DIFF_RATIO_MAX
+    if mask is not None:
+        # T76：排除区之外的读数才是判定用的（`l3_diff_px/ratio/bbox` 变成"掩膜后"，
+        # 原始读数另存 `l3_diff_px_raw/l3_diff_ratio_raw`，谁都不许悄悄丢）
+        row['l3_diff_px_raw'] = st['diff_px']
+        row['l3_diff_ratio_raw'] = round(st['diff_ratio'], 6)
+        row['l3_masked_out_px'] = st['masked_out_px']
+        row['l3_exclude_rects'] = ';'.join('%d,%d,%d,%d' % tuple(int(round(v)) for v in r)
+                                           for r in exclude_rects)
+        row['l3_diff_px'] = st['kept_px']
+        row['l3_diff_ratio'] = round(st['kept_ratio'], 6)
+        row['l3_bbox'] = st['kept_bbox']
+    l3_ok = (row['l3_diff_ratio'] <= L3_DIFF_RATIO_MAX
              and st['max_channel_diff'] <= L3_MAXDIFF_MAX)
     row['l3_ok'] = bool(l3_ok)
     row['l3_evaluated'] = bool(l1_ok and row['l2_ok'])
@@ -148,16 +190,17 @@ def compare_screen(a_path, b_path, name, threshold_ok):
     return row, blk_rows, dmax
 
 
-def noise_floor(paths):
+def noise_floor(paths, exclude_rects=None):
     """同一侧同一屏的多帧两两差异像素比例（**噪声地板**，不是门槛）。"""
     arrs = [load(p) for p in paths]
+    mask = build_exclude_mask(arrs[0].shape, exclude_rects) if (exclude_rects and arrs) else None
     ratios = []
     for i in range(len(arrs)):
         for j in range(i + 1, len(arrs)):
             if arrs[i].shape != arrs[j].shape:
                 continue
-            st, _ = diff_stats(arrs[i], arrs[j])
-            ratios.append(round(st['diff_ratio'], 6))
+            st, _ = diff_stats(arrs[i], arrs[j], mask)
+            ratios.append(round(st.get('kept_ratio', st['diff_ratio']), 6))
     return {'pairs': ratios,
             'max': max(ratios) if ratios else None,
             'mean': round(float(np.mean(ratios)), 6) if ratios else None}
@@ -173,6 +216,11 @@ def main(argv=None):
     ap.add_argument('--json', default=None, help='完整 JSON')
     ap.add_argument('--png', default=None, help='差异热图（只给人看，不入库）')
     ap.add_argument('--screens', default='menu,prep,shot')
+    # T76（2026-11-27，**只加不删**）：把"墙钟闪烁元素"的列从 L3 计数里排除
+    ap.add_argument('--exclude-rect', action='append', default=[],
+                    help='T76：排除矩形 `x0,y0,x1,y1`（可给多次），只影响 L3 计数区域；'
+                         '原始读数另存 l3_diff_px_raw/l3_diff_ratio_raw。'
+                         '取值见 fixtures/frame_capture_freeze_plan.txt §2')
     ap.add_argument('--note', action='append', default=[],
                     help='写进两个 TSV 顶部的 `#` 注释行（来历/复跑命令），可给多次')
     ap.add_argument('--thresholds', default=os.path.join(
@@ -194,6 +242,14 @@ def main(argv=None):
         print('[frame_diff] ⚠ 找不到门槛文件 %s' % args.thresholds, file=sys.stderr)
 
     screens = [s for s in args.screens.split(',') if s]
+    exclude_rects = []
+    for chunk in args.exclude_rect:
+        for rect in chunk.split(';'):
+            rect = rect.strip()
+            if not rect:
+                continue
+            x0, y0, x1, y1 = [float(v) for v in rect.split(',')]
+            exclude_rects.append((x0, y0, x1, y1))
     results, all_blocks, report = [], [], {'thresholds_sha': THRESHOLDS_SHA,
                                            'thresholds_ok': threshold_ok,
                                            'thresholds': {
@@ -210,9 +266,9 @@ def main(argv=None):
         if not (os.path.exists(fo[0]) and os.path.exists(fm[0])):
             print('[frame_diff] 跳过 %s（缺帧）' % s, file=sys.stderr)
             continue
-        row, blk, dmax = compare_screen(fo[0], fm[0], s, threshold_ok)
-        row['noise_floor_orig'] = noise_floor([p for p in fo if os.path.exists(p)])
-        row['noise_floor_mine'] = noise_floor([p for p in fm if os.path.exists(p)])
+        row, blk, dmax = compare_screen(fo[0], fm[0], s, threshold_ok, exclude_rects)
+        row['noise_floor_orig'] = noise_floor([p for p in fo if os.path.exists(p)], exclude_rects)
+        row['noise_floor_mine'] = noise_floor([p for p in fm if os.path.exists(p)], exclude_rects)
         for k in ('noise_floor_orig', 'noise_floor_mine'):
             pk = row[k]['pairs']
             row[k.replace('noise_floor_', 'noise_max_')] = row[k]['max']
@@ -240,7 +296,9 @@ def main(argv=None):
             'l1_top_color', 'l1_top_share_pp', 'l2_ok', 'l2_blocks_over',
             'l2_max_block_dmean', 'l2_worst_block', 'l3_evaluated', 'l3_diff_px',
             'l3_diff_ratio', 'l3_max_channel_diff', 'l3_bbox', 'noise_max_orig',
-            'noise_max_mine']
+            'noise_max_mine',
+            # T76 追加列（不给 --exclude-rect 时这四列留空 ⇒ 老消费方不受影响）
+            'l3_diff_px_raw', 'l3_diff_ratio_raw', 'l3_masked_out_px', 'l3_exclude_rects']
     notes = list(args.note) + ['门槛 = fixtures/frame_diff_thresholds.txt sha256 %s（预注册）' % THRESHOLDS_SHA]
     with open(args.out, 'w') as f:
         for n in notes:

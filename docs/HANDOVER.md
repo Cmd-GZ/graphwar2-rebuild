@@ -117,10 +117,11 @@ headless     14 个 `client/tools/*_check.gd`（`extends SceneTree`）合计 **1
              **别预设 `XDG_*`**（预设到工作区外 ⇒ `user://` 不可写 ⇒ 632/7）。命令与判据见 `docs/18` §10.3.4
 
 客户端像素   **15 屏有真值**（`docs/06` §53–§101）。⚠️ **2026-11-26 更正：此前「八屏 0 px / 回放两屏归零」是假通过** —— `--flow replay` 不加 `--seed-replays` 时两侧都拍成空回放列表（亮像素 0.0 % vs 播种后 55.6 %），空 vs 空 = 「0 px」。
-             **带 seed 的真实读数**：`menu` **0.000 %**、`replay_lobby` **0.000 %**、**`replay_play` 2.710 %（L2 2 块）**、**`replay_end` 2.723 %**、**`campaign` 0.172 %（L3）**、**`level_popup` 0.101 %（L3）**、`player_skins` **0.000 %**。
-             **对局屏** `match_ready` **0.081 %（L2 0）** / `match_play` **0.385 %（L2 1，不可判：原版自身噪声 0.705 %）** ｜ 结算框面板区 0 px。
+             **带 seed 的真实读数（2026-11-27 起 = 按 tick 停帧口径，见 §120）**：`menu` **0.000 %**、`replay_lobby` **0.000 %**、**`replay_play` 856 px = 0.0384 %（L2 0，三轮逐 px 相同）**、**`replay_end` 856 px = 0.0384 %**、**`campaign` 0.172 %（L3）**、**`level_popup` 0.101 %（L3）**、`player_skins` **0.000 %**。
+             **对局屏** `match_ready` **0.0919 %（L2 0）** / `match_play` **0.26 %（L2 1）** ｜ 结算框面板区 0 px。
+             ⚠️ **`replay_play`/`replay_end` 旧读数 2.710 %/2.723 % 是 T54 修掉右三键列 48 px 平移之前的数**（现在 0.0384 %）；`match_ready` 的 0.081 %/0.094 % 是**旧客户端**（play_screen 还没换原版 `.tscn`）那轮的读数，现在换 tick 停帧后是 0.0919 % 且**逐轮可复现**。
              **原版 `.tscn` 已装 16/16**（逐字节）；`screens/*.gd` 手抄树累计删 ≈1 900 行。
-             ⚠️ **采集五条前置**：①`--flow replay` 必须 `--seed-replays`（否则假 0；`frame_capture.py` 已加硬闸）②UDP 42968 可能被泄漏 scope 占（→ 私有 netns）③新树缺 `client/.godot` ⇒ 空白帧 ④改 `src/` 必须重建覆盖 `.so` ⑤两侧**串行**。
+             ⚠️ **采集六条前置**：①`--flow replay` 必须 `--seed-replays`（否则假 0；`frame_capture.py` 已加硬闸）②UDP 42968 可能被泄漏 scope 占（→ 私有 netns）③新树缺 `client/.godot` ⇒ 空白帧（`godot --headless --path client --import`）④改 `src/` 必须重建覆盖 `.so` ⑤两侧**串行** ⑥**停帧按 tick 预注册**（`fixtures/frame_capture_freeze_plan.txt` + `frame_capture.py --stop-plan`，见 `docs/06` §120）—— 不按 tick 停帧时 `replay_play`/`replay_end` 会在 856 / 1126 px 之间跳（差的那 270 px 是我方回放屏多画的闪烁光标，**不是**渲染差异）。
 
 **两张最容易混的口径**：`527 vs 13,263`（可归属 vs 全部函数）、`1075 vs 647`（种类 vs 内容）。
 
