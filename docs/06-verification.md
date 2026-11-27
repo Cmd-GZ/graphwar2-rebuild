@@ -15642,7 +15642,7 @@ cargo run --release --offline -q --example replay_attrib -- --dir $MAIN/.referen
 cargo run --release --offline -q --example batch_conv   -- --dir $MAIN/.reference/replays/gw2-replays-snapshot/replays --policy strict
 ```
 
-### 91.1 像素基线的**八屏复测**（含一处**前置残差**的反事实证明）
+### 91.8 像素基线的**八屏复测**（含一处**前置残差**的反事实证明）
 
 同一天、同一配方（私有 netns、两侧串行、`--seed-replays`），四条 flow 各采一次两侧：
 
