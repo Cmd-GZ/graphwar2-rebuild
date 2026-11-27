@@ -179,6 +179,13 @@ LifeInfo {entity_id: 1099, alive: false}
 ...
 4659cd  lea rsi,[rip-0x2fd5e0]  # 0x1c18c1      ; "entity_removed_event"   (len 0x14 = 20)
 4659d6  mov edx,0x14
+> **【T75 更正框（2026-11-27）—— 上面 `4659d6 mov edx,0x14` 地址错位，正文不改】**
+> `mov edx, 0x14` 在 **`0x4659db`**（+5）。`0x4659d6` 落在 `0x4659d4 lea r8,[rip+0x4f24d5]`
+> （7 B）这条指令内部 ⇒ **不是指令边界**。
+> 依据 `addr_probe.py dis 0x4659b0`：`0x4659c8 je` / `0x4659ca mov [rax],r15` /
+> `0x4659cd lea rsi,[rip-0x2a4113]` / `0x4659d4 lea r8,[rip+0x4f24d5]` /
+> **`0x4659db mov edx,0x14`** / `0x4659e0 mov rdi,r14` / `0x4659e3 mov rcx,rax` / `0x4659e6 call [rip+0x55529c]`。
+
 4659e6  call qword ptr [rip+…]  # 0x9bac88
 ```
 

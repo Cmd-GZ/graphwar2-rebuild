@@ -951,7 +951,7 @@ Godot 4 里 `user://` 映射到 `$XDG_DATA_HOME/godot/app_userdata/<项目名>/`
 | ⑫ | 两组（箭头/弧）会不会同时画 | **未知**。箭头侧在 `0x4b307d` 之后、弧侧在 `0x4b32e2 test %r14b,%r14b` 与 `0x4b34c3 test %bl,%bl` 之后，两处的分支目标都是同一个循环尾 `0x4b37f0`；两个哈希表的语义没解出来 ⇒ **不能断言互斥，也不能断言并存** | **未知** |
 | ⑬ | 地址序 | 箭头组（`0x4b30b7`…）在弧组（`0x4b366c`…）**之前** | **观测** |
 
-> **⑦ 的自我更正**：本节初稿写"整口 24°"。按指令 `0x4b9ab8 addsd θ+12°` 与
+> **⑦ 的自我更正**：本节初稿写"整口 24°"。按指令 ~~`0x4b9ab8 addsd θ+12°`~~ **T75 更正 + 加强：`0x4b9ab8 movsd xmm0, [0x19fb68]` → `0x4b9ac0 addsd xmm0, [rsp+0x68]`**（`addsd` 在 0x4b9ac0，`0x4b9ab8` 是给 `xmm0` 装常量那一步）。**顺带把常量从 `.rodata` 逐字节读出**：`0x19fb68` = bits `d5eb7bf3e9ceca3f` = **0.20943951023931953 rad = 12.000000°**，`0x19fc80` = bits `d5eb7bf3e9cecabf` = **−12.000000°** ⇒ 「12°」这个结论现在是**立即数级**的，不再只是"两处 addsd"的推断 与
 > `0x4b9b74 addsd θ−12°` 两处看，张角半宽是 **12°**（整口 24°）；
 > 先前文档里的"6°"是把它当成了半宽的一半，**没有证据**。以两处 `addsd` 的立即数为准。
 
@@ -9369,8 +9369,8 @@ grep -a -c gate_announce_turn client/libgw2_rebuild.so   # 4（判据：.so 真�
 | `51840b`…`518434` `get_module::<GraphwarTickHandler>` | `KernelBus::time_to_tick` → `wiring.tick_handler()` | 仍是**按类型从容器里取**（`0x46aa50`），不是另存一份 |
 | `518484 call 0x519450` | `ProcessLoop::time_to_tick()` | 读容器里那台 handler 的 `get_time_to_tick()` |
 | `51848e cmp edx,0x3b9aca00` / `518494 jne` | `tick_is_due()` + `if !due { break }` | 哨兵 `1e9` = 欠一个 tick |
-| `518496 call r13`（`0x518240`） | `ProcessLoop::tick()` | `handler.tick()`：`TickEvent` + 每 60 个一条 `TickRequest` |
-| `51849c call rbp`（`0x3d3630`） | `ProcessLoop::process_events()` → `KernelBus::pump()` | 投递给订阅者 |
+| ~~`518496 call r13`~~ **T75 更正：`0x518499 call r13`**（`0x518496` 实为 `mov rdi, rbx`）（`0x518240`） | `ProcessLoop::tick()` | `handler.tick()`：`TickEvent` + 每 60 个一条 `TickRequest` |
+| ~~`51849c call rbp`~~ **T75 更正：`0x51849f call rbp`**（`0x51849c` 实为 `mov rdi, r15`）（`0x3d3630`） | `ProcessLoop::process_events()` → `KernelBus::pump()` | 投递给订阅者 |
 | `5184a1 jmp 518470` | `loop { … }` | **追赶**，不是"每帧最多补一次" |
 | 全程不读 `xmm0`（arm64 不读 `d0`） | `_delta` 参数被忽略 | 时基是 handler 里的 `SystemTime::now` |
 

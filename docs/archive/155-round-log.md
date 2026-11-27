@@ -1530,6 +1530,14 @@ cargo run --release --offline -q --example batch_conv    -- --dir $R --policy st
 | A | `0x4729d6` | `[rsp+0xf0]` = 队列记录所指点表的**最后一个点**（`0x47286b`） | **常量 0**（`0x472948 mov byte [rsp+0x90], 0`） | `[管理器+0x58] + X/30 + 60` |
 | B | `0x472e4d` | `[rsp+0xc0]`（16 字节） | **记录里的一个字节**（`0x472d75 → 0x472e2e`） | 记录里的一个 u32（`0x472dc2`） |
 
+> **【T75 更正框（2026-11-27）—— 上表 A 行操作数错，正文按归档约定不改】**
+> A 行写的 `0x472948 mov byte [rsp+0x90], 0` 是**操作数错**（不是地址错）：真指令是
+> **`0x472948 mov byte ptr [rsp + 0x84], 0`** —— 偏移是 **`+0x84`**，不是 `+0x90`。
+> 依据 `addr_probe.py dis 0x472930` 输出：`0x472948  mov  byte ptr [rsp + 0x84], 0`；
+> 邻近两条佐证 `0x472950 mov dword ptr [rsp + 0x80], r13d` / `0x472997 movdqa xmm0,[rsp+0xf0]`。
+> 语义不变（`effect_type` 常量 0）；但它与 `[rsp+0x80]` 一起构成 `EffectInfo` 的**入参结构体**，
+> 所以字段在 `+0x84` / `+0x80` 上，`+0x90` 会指到结构体外。
+
 两处都从同一个全局原子计数器取 `effect_id`（`lock xadd dword [0x9c10c0], …`，`0x472930` / `0x472d9f`），
 `effect_type` 在 `+0x20` 上是**一个字节**——与 `docs/16` §33.6 的 72 字节布局、以及两个消费者
 （`0x4bf09b` 音频 `GraphwarAudioControl::effect_info_event`=`0x4bf090`、
@@ -1720,6 +1728,14 @@ $PY tools/destroy_dup_attrib.py --dir $R
           mov    rax,[rcx+rdx]      ; tag（16 字节/token：{tag:u64, value:f64}）
 0x4eba0b  bt 0x1fe20,rax          ; 一元算子集合 {5,9,10,11,12,13,14,15,16}
 0x4eba16  bt 0xe0007,rax          ; 叶子集合   {0,1,2,17,18,19}
+
+> **【T75 更正框（2026-11-27）—— 上面两条 `bt` 是"两步合并"写法，地址指到取立即数那一条】**
+> * `0x4eba0b bt 0x1fe20,rax` —— 真编码是**两条**：`0x4eba0b mov ecx,0x1fe20` →
+>   **`0x4eba10 bt rcx,rax`**（`jb 0x4eba77`）。
+> * `0x4eba16 bt 0xe0007,rax` —— 同样两条：`0x4eba16 mov ecx,0xe0007` →
+>   **`0x4eba1b bt rcx,rax`**（`jb 0x4ebaad`）。
+> * 语义（一元算子集合 `{5,9,10,11,12,13,14,15,16}` = 位集 `0x1fe20`；叶子集合 `{0,1,2,17,18,19}` = 位集 `0xe0007`）
+>   **完全正确**，只是"址"指到了 `mov ecx,imm`。依据 `addr_probe.py dis 0x4eb9d0`。
           ... else 两次递归（4eba44 / 4eba66）= 二元 {3,4,6,7,8}
 0x4ebab7  lea rcx,0x1c3c6c; movsxd rax,[rcx+rax*4]; add rax,rcx; jmp rax   ; 18 项跳转表
 ```
@@ -1984,6 +2000,15 @@ cargo test --offline
 | `+0x18` | `id: u32` | `0x3b5890 str w28, [x8, #0x18]` | `0x3c38a3 mov 0x18(%r14,%r13,1),%r14d` |
 | `+0x1c` | `flag: u8` | `0x3b5894 strb w10, [x8, #0x1c]` | — |
 
+> **【T75 更正框（2026-11-27）—— 上表 `+0x00` 行地址错位，正文不改】**
+> `0x3b5870 stp x27, x10, [x8]` 的地址错：arm64 `0x3b5870` 实为 **`ldr x8, [sp, #0xa8]`**；
+> `stp x27, x10, [x8]` 在 **`0x3b587c`**（中间还有 `0x3b5874 ldp x9,x10,[sp,#0x40]`、
+> `0x3b5878 add x8,x8,x19,lsl #5`）。依据 arm64 `.so` 按 4 B 对齐直解：
+> `0x3b587c  a900291b  stp x27, x10, [x8]`，目标库 `.reference/steam/android-2.0.60/libgraphwarrust.so`。
+> 上表其余三个 arm64 地址 **都对**（逐条复核）：`0x3b5884 str x9,[x8,#0x10]` /
+> `0x3b5890 str w28,[x8,#0x18]` / `0x3b5894 strb w10,[x8,#0x1c]`。
+> **结论（`Vec` 字段序 `(cap,ptr,len)`）不受影响。**
+
 类型名是**符号表原文**：`core::ptr::drop_in_place<alloc::vec::Vec<graphwarrust::graphwar_shot_calculator::GraphwarShotResult>>`
 与 `…<alloc::vec::into_iter::IntoIter<…::FunctionResult>>`（都在 `calculate_shot_results` 的 `bl` 目标里）。
 `Vec` 在本构建里的字段序是 **`(cap, ptr, len)`**（`stur q0,[x22,#0x30]` 写 16 B = cap+ptr、`stur x8,[x22,#0x40]` 写 len），
@@ -2002,6 +2027,11 @@ cargo test --offline
 | 5 | 存进 `HashMap` 桶 | `0x489278` | `0x456810` | arm `0x489478 str q0,[x22]` + `0x48947c str x8,[x22,#0x10]`；x86 `0x456a2b movups (%rbx),%xmm0` + `0x456a2e movups %xmm0,(%r15)` | **否**（24 B 头） |
 | 6 | 取 `points[len-1]` 当爆炸点 | `0x4a8558` | `0x472470` | arm `0x4a891c ldp d9, d8, [x8, #-0x10]`；x86 `0x4724cc/0x4724dd` 取 len×32 | **否**（只读两个 f64） |
 
+> **【T75 更正框（2026-11-27）—— 上表第 2 行 arm 侧地址错位（与 §33.2 同源）】**
+> `arm 0x3b5870 stp x27,x10,[x8]` → 真址 **`0x3b587c`**（`0x3b5870` 是 `ldr x8,[sp,#0xa8]`）。
+> 该行其余两条 `str x9,[x8,#0x10]`（`0x3b5884`）/ `str w28,[x8,#0x18]`（`0x3b5890`）**地址正确**。
+> 第 1 行的 `arm64 0x3b5374 stp d9, d12, [x8]` 与第 3–6 行的 arm/x86 地址我逐条抽核，**未发现第二处错**。
+
 **第 1 跳里 `y` 是怎么来的（这一跳是唯一的算术，也是唯一可能的偏差源）**：
 
 ```text
@@ -2018,6 +2048,14 @@ arm64 0x3b56f4  stp  d9, d12, [x8]   ; ★ point = (±x, f(x))，y 就是求值�
 * 采样点**不在均匀 x 网格上**：`0x3b551c`–`0x3b5538` 每次用 `Vector2D::length`（`0x7ac7b4`）
   量上一段弧长，与 `h` 比，`|len-h| < 1e-3` 才收（容差字面量 `0x19fc78 = 0.001`；
   步长 `h` 来自 `fire_functions` 的 `movabs 0x3f847ae147ae147b = 0.01`）。
+
+> **【T75 更正框（2026-11-27）—— 上面那条 arm64 `tbz` 引文地址错位，正文不改】**
+> `0x3b5404 tbz w22, #0x0` → 真址 **`0x3b5408`**（`tbz w22,#0,0x3b55c8`）。
+> `0x3b5404` 实为 **`adrp x8, #0x179000`**；下一条 `0x3b5408` 才是 `tbz`。
+> 依据 arm64 `.so` 4 B 对齐直解：`0x3b5404 90ffee28 adrp x8,#0x179000` /
+> `0x3b5408 36000e16 tbz w22,#0,#0x3b55c8`（跳转目标 `0x3b55c8` 与原文**一致**，只是地址指错了）。
+> 同段的 `0x3b5618 bl 0x4452d4` / `0x3b561c fmov d12,d0` / `0x3b56f4 stp d9,d12,[x8]` /
+> `0x3b55b4 stp d8,d13,[x8]` 我逐条抽核，**未见第二处错**。
 
 ⇒ **`y` 与"采样器返回值"逐位相同，且这就是求值器的输出**；§32.5 的"写 y 这一步"到此**排除**。
 
@@ -3641,6 +3679,22 @@ Ode 分支入口：x86 `0x3c25f5 test %r15b,%r15b` / `0x3c25f8 je 0x3c2923`（**
 | x 越界 | `0x3c2887`取 `mid` → `0x3c2890 andpd` → `0x3c2898 ucomisd [0x19fbc8]` → `0x3c28a0 ja` | `0x3b556c fabs d0,d10` + `0x3b5574`（25） | `\|mid\| > 25` |
 | y 越界 | `0x3c28a6`取 `cand_y` → `0x3c28b2 andpd` → `0x3c28b4 ucomisd [0x19fd40]` → `0x3c28bc ja` | `0x3b5564 fabs d1,d13` + `0x3b557c`（15） | `\|cand_y\| > 15` |
 | 点数用尽 | `0x3c2915 cmp %r13d,%r12d` / `0x3c2918 jne 0x3c260d` / `0x3c291e jmp 0x3c2b5d` | `0x3b55ac cmp w22,w23` / `0x3b55c0 b.ne` | `count == n` |
+
+> **【T75 更正框（2026-11-27）—— 上表 y 越界行的 `andpd` 地址落在指令内部，正文不改】**
+> `0x3c28b2 andpd` → 真址 **`0x3c28ac`**：这条 `andpd` 是 **8 字节**指令（`0x3c28ac..0x3c28b3`），
+> 所以 `0x3c28b2` **落在指令中间**，反汇编器在那里解不出合法指令（`addr_probe.py dis` 于 `0x3c28b2` 无输出）。
+> 依据 `addr_probe.py dis 0x3c28a0`：`0x3c28a6 movapd xmm0,[rsp+0x50]` →
+> **`0x3c28ac andpd xmm0,[rip-0x226864] @0x19c050`**（掩码 `0x7fff…ffff`）→
+> `0x3c28b4 ucomisd xmm0,[rip-0x222b7c] @0x19fd40`（`15.0`）→ `0x3c28bc ja 0x3c2b5d`。
+> 上表同节的 **x 越界**行（`0x3c2887` / `0x3c2890 andpd` / `0x3c2898` / `0x3c28a0`）**全对**
+> （`0x3c2890` 处是另一条 8 B `andpd`，起点正确）；`0x19fbc8=25.0` / `0x19fd40=15.0` 两个常量也对。
+>
+> 同节另两条机核提示，**核过、不是错**：
+> * `0x3c287d ucomisd cand_y,px` —— 地址与助记符都对（真编码 `ucomisd xmm0, xmm1`）；
+>   操作数写**语义名**是本文的记法，不是地址错。
+> * `0x3c27ce call *0x9baca8` —— 地址对，但**实际编码是 `call rbp`**：槽 `0x9baca8`（→ `0x887090`，`sqrt`）
+>   在函数头 `0x3c2606 mov rbp,qword ptr [rip+0x5f869b]` 就载进 `rbp` 了。写 `call *0x9baca8`
+>   是"记槽不记寄存器"，读者别以为它是内存间接调用。
 
 常量全部是**从 `.rodata` 逐字节读出来的**（不是从反编译器的注释抄的）：
 

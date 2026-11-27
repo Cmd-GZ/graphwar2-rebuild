@@ -69,7 +69,7 @@
 ```asm
 46f31e  mov    ebp,esi                  ; ① 第 2 个参数 = team
 46f323  add    r14,0xe0                 ; 管理器注册表
-46f32a  call   46ee00                   ;   取 target_manager（集合在 +0x30）
+46f32a  call   46ee00                   ;   取 target_manager（集合在 +0x30）【T75 更正：地址错位 —— 0x46f32a 实为 `mov rdi,r14`；`call 46ee00` 在 **0x46f32d**，依据 `addr_probe.py dis 0x46f310`】
 46f389  lock xadd [0x9c10c0],ebx        ; ② 全局原子计数器 ⇒ 新实体 id
 46f398  call   43e390                   ; ③ 把 id 插进 target 集合
 46f3ad  movabs r15,0x8000000000000017   ; ④ tag 23 = TargetInfo
@@ -136,7 +136,7 @@
 ### 2.2 `0x4759f0`：回合末的三个结束入口（**逐位**）
 
 ```asm
-4759fe  inc DWORD [rsi+0x118]         ; turn_count += 1
+4759fe  inc DWORD [rsi+0x118]         ; turn_count += 1【T75 注：这是"三步合并"写法，`inc` 本身在 **0x475a05**；真实三步 = `0x4759fe mov r15d,[rsi+0x118]` → `0x475a05 inc r15d` → `0x475a08 mov [rsi+0x118],r15d`，依据 `addr_probe.py dis 0x4759f0`。语义不变，只是"指到指令"要求下这个地址指不到那条 `inc`】
 475a42  add rax,0x3b ; push           ; tag 58 = TurnCountInfo
 475a5e  mov ebp,[rbx+0xc8]            ; 上限"有没有设过"（0x472400 写的那个 dword）
 475a64  cmp r15d,[rbx+0xcc]           ; turn_count vs turn_limit
@@ -153,7 +153,7 @@
 **胜方**（写进 `[self+0x11f]` 的那个字节，`0`=Team1 / `1`=Team2 / `2`=没人赢）：
 
 ```asm
-475bf3  call 473520                   ; 再数一次
+475bf3  call 473520                   ; 再数一次【T75 更正：地址错位 —— 0x475bf3 实为 `mov rdi,rbx`；`call 473520` 在 **0x475bf6**，依据 `addr_probe.py dis 0x475be8`】
 475bfb  test al,1 ; je 475c0d
 475bff  xor  eax,eax                  ; 候选 = 0 (Team1)
 475c01  test dl,1 ; je 475c14          ;   Team2 没人 ⇒ 胜方 = 0
@@ -222,7 +222,7 @@
 475b83  call 454950                            ;   is_alive(id)
 475b8c  test al,1 ; jne 475c79                 ;   **只要有一个靶子还活着** ⇒ 去复原
 475ba1  jne 475b20                             ;   否则继续扫；扫完 ⇒ 475d45（什么都不做）
-475d2d  call 454b40 (rdi=life+0x18, esi=id, edx=1, ecx=0)   ; ← 复原：alive := 1
+475d2d  call 454b40 (rdi=life+0x18, esi=id, edx=1, ecx=0)   ; ← 复原：alive := 1【T75 复核：地址正确（0x475d2d 确为 `call 0x454b40`）；括号里是**调用前的实参来源**（`0x475d23 mov esi,[rcx-4]` / `0x475d26 mov edx,1` / `0x475d2b xor ecx,ecx`，rdi 在循环外设置），不是本行操作数 ⇒ 不是错】
 475d43  jne 475cd0                             ;   对**集合里每一个** target id 都做一遍
 ```
 

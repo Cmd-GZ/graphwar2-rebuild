@@ -17,7 +17,7 @@
 | 问题 | 答案 | 等级 |
 |---|---|---|
 | 适应度在优化什么 | `净击杀 × 2e6 − 距离项 − V²/100 − (超长 ? 5e7)`。**净击杀 = 敌人 − 自己人**（误伤与击杀等权，一命换一命） | **观测** |
-| 有没有"友军惩罚" | **有**。[`docs/archive/AI.md`](archive/AI.md) §4 说"友军项恒为 0、是死代码"**是错的**（`0x51ae4c dec` / `0x51ae5d inc` 两支都在） | **观测**（本文更正） |
+| 有没有"友军惩罚" | **有**。[`docs/archive/AI.md`](archive/AI.md) §4 说"友军项恒为 0、是死代码"**是错的**（~~`0x51ae4c dec`~~ / ~~`0x51ae5d inc`~~ **T75 更正：真址 `0x51ae51 dec eax` / `0x51ae62 inc eax`** —— `0x51ae4c`/`0x51ae5d` 是这两支各自的第一步 `mov rax,[rsp+0x28]`，依据 `addr_probe.py dis 0x51a750` 输出；两支都在） | **观测**（本文更正） |
 | 候选从哪来 | 第 0 代 = 每槽一条"随机函数 + 补齐 + 再变异一次"当**父代**，再产 4 个工厂子代；之后每代 = 前 20% 各克隆 1 份 + 4 个共用父代的工厂子代 | **观测**（[`docs/archive/110`](archive/110-gen0-and-variantb.md)/[`docs/archive/95`](archive/95-elite5.md)，本轮复核） |
 | 每代评价几次 | `种群 + 3`（3 = 前 3 名精评） | **观测** |
 | 估计命中是不是真模拟 | **是**。它调的是**真开火用的那个结算函数** `0x3c2bc0`（全库只有两个调用点），内部用**同一个弦长采样器** `0x3c2530`，并按同一份 config 把**障碍光栅化进掩膜** | **观测**（调用链）/ **推断（强）**（AI 那份 config 的 +0x38 也是 1） |
@@ -198,7 +198,7 @@ score = 净击杀 × 2_000_000
 51b0d9  subsd xmm1,[rsp+0x8]       ; − 距离项
 51b0eb  divsd xmm3,xmm0            ; V²/100
 51b0ef  subsd xmm1,xmm3
-51b0f3  mov   ecx,[ctx+0x58]       ; limit
+51b0f3  mov   ecx,[ctx+0x58]       ; limit【T75 注：两步合并写法 —— `0x51b0f3` 实为 `mov rcx,[rsp+0x38]`（`ctx` 入寄存器），`mov ecx,[rcx+0x58]` 在 **0x51b0f8**；语义无误，但"址"指在取指针那一步，依据 `addr_probe.py dis 0x51b000`】
 51b0fb  cmp   rdx,rcx / jbe        ; V <= limit 跳过
 51b100  addsd xmm1,[0x19f478]      ; + (−5e7)
 51b10d  movsd [sret+0x00],xmm1     ; score
@@ -222,8 +222,9 @@ score = 净击杀 × 2_000_000
 ### 3.3 三处更正
 
 1. **友军不是"死代码"。** [`docs/archive/AI.md`](archive/AI.md) §4 写"友军惩罚项在反汇编里恒为 0"，
-   本轮的指令级证据相反：`0x51ae21`–`0x51ae5a` 是一段完整的"同队 ⇒ 减、不同队 ⇒ 加"，
-   每命中一个实体都要查一次队伍表。[`docs/archive/97`](archive/97-two-phase-scoring.md) §3.1 的记法（`0x51ae4c dec` / `0x51ae5d inc`）
+   本轮的指令级证据相反：~~`0x51ae21`–`0x51ae5a`~~ **（T75 更正：`0x51ae21`–`0x51ae69`）** 是一段完整的"同队 ⇒ 减、不同队 ⇒ 加"，
+   每命中一个实体都要查一次队伍表。[`docs/archive/97`](archive/97-two-phase-scoring.md) §3.1 的记法（~~`0x51ae4c dec`~~ / ~~`0x51ae5d inc`~~）
+   **T75 更正：真址 `0x51ae51 dec eax` / `0x51ae62 inc eax`（`0x51ae4c`/`0x51ae5d` 各是这两支的第一步 `mov rax,[rsp+0x28]`），依据 `addr_probe.py dis 0x51a750`；范围内最后一条是 `0x51ae69 jmp 0x51aef0`，故区段终点是 `0x51ae69`，`0x51ae5a` 连指令边界都不是（`0x51ae58 jmp` 占 2 B，下一条在 `0x51ae5d`）**
    才是对的。**运行时为什么看起来恒 0**：常规对局 AI 几乎打不到自己人，不是代码不扣分。
 2. **`sret+0x14` 不是"未定"**，它是 tag 4 的累加器，且它会**反过来压制净击杀**
    （`0x51b06b cmovle` / `0x51b075 cmove`）。`docs/archive/ai/74` 把它记成"掩膜扫描累加器、
@@ -415,7 +416,7 @@ cargo run --offline --example ai_explain -- --difficulty 250 --seed 11 \
 | # | 结论 | 依据 | 等级 |
 |---|---|---|---|
 | 1 | 适应度 = 净击杀×2e6 − d − V²/100 − (超限?5e7) − (累加器项) | `0x51b079`–`0x51b11d` | 观测 |
-| 2 | 净击杀 = 敌人 − 自己人（误伤等权） | `0x51ae21`–`0x51ae5a` | 观测 |
+| 2 | 净击杀 = 敌人 − 自己人（误伤等权） | ~~`0x51ae21`–`0x51ae5a`~~ **T75 更正：`0x51ae21`–`0x51ae69`**（末条 `0x51ae69 jmp 0x51aef0`；`0x51ae5a` 非指令边界且漏掉 `0x51ae62 inc eax` 那一支，依据 `addr_probe.py dis 0x51a750`） | 观测 |
 | 3 | 距离项只在 tag 3 更新，常规对局恒 1e6 | `0x51aed6`–`0x51aee2` + 转引实测 | 观测 / 转引 |
 | 4 | 累加器非 0 时净击杀被压到 1 | `0x51b063`–`0x51b075` | 观测 |
 | 5 | 评分核心调用真开火结算函数 `0x3c2bc0` | `0x51a9a1` + `.rela.dyn 0x9bacb0` | 观测 |
