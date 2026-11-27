@@ -1379,6 +1379,14 @@ GraphwarPlane::set_fractional_tick(t)                                        # *
 ```text
 4b60a0  mov  rdi,[rax+0x70]  ; 4b60a4 call 0x44ac60（拿 Gd 句柄）→ 4b60c9 前一路 upcast
 4b60c9  call *0x9bb000 (0x8925f0)  ; Control::get_size() → xmm0 = w, xmm1 = h
+
+> **【T75 更正框（2026-11-27）—— 上面 `4b60c9 call *0x9bb000` 地址错位，正文不改】**
+> `0x4b60c9` 实为 **`lea rdi,[rsp+0x40]`**（给被调者准备返回值空间）；
+> `call qword ptr [rip+0x504f2c]`（槽 **`0x9bb000`** → `0x8925f0`）在 **`0x4b60ce`** —— 差 5 B，正好是那条 `lea` 的长度。
+> **槽 `0x9bb000` 与 addend `0x8925f0` 都对。**
+> 依据 `addr_probe.py dis 0x4b60c0`：`0x4b60c9 lea rdi,[rsp+0x40]` /
+> `0x4b60ce call [rip+0x504f2c] slot 0x9bb000 -> 0x8925f0`。
+> 本段其余地址（`0x4b60a4`/`0x4b60d4`/`0x4b60e3`/`0x4b60e8`/`0x4b6132`/`0x4b6147`）抽核**未见错**。
 4b60d4  movss [rsp+8],xmm0         ; w
 4b60da  movss [rsp+0x10],xmm1      ; h
 4b60e3  call 0x4be6e0              ; get_team_overview(...) → eax = **u32 的 4 个位**
@@ -1498,6 +1506,15 @@ x86 侧**不是内联**（`docs/10` §15.2 记的"内联"要改成这个地址�
 4b6842  call 0x47dec0             ; hash(key = player id)
 4b68a3  cmp ebp,[r10-8]           ; 比 key
 4b68de  mov r15d,[rcx+r8*8-4]     ; value = 表1[player id]（4 字节）⇒ 当表 2 的 key
+
+> **【T75 更正框（2026-11-27）—— 上面 `4b68de mov r15d,[rcx+r8*8-4]` 地址错位，正文不改】**
+> `0x4b68de` 实为 **`neg r8`**（把索引变成"从尾部数"，**这一步是有意义的**，不能跳过）；
+> `mov r15d, dword ptr [rcx+r8*8-4]` 在 **`0x4b68e1`**。
+> 依据 `addr_probe.py dis 0x4b68d8`：`0x4b68de neg r8` / `0x4b68e1 mov r15d,[rcx+r8*8-4]` /
+> `0x4b68e6 mov [rsp+0x40],r15d`。
+> 语义（`value = 表1[player id]`，再当表 2 的 key）不变；引这条时请写成
+> 「`0x4b68de neg r8` + **`0x4b68e1`** `mov r15d,[rcx+r8*8-4]`」。
+> 本段其余地址（`0x4b681d`/`0x4b6842`/`0x4b68a3`/`0x4b68eb`/`0x4b69a7`/`0x4b69ad`/`0x4b69b3`）抽核**未见错**。
 4b68eb  mov rax,[rsp+0xc8]        ; 表 2
 4b69a7  movzx eax,[rcx+r8*8-4]    ; 3 个**字节**：r
 4b69ad  movzx edx,[rcx+r8*8-3]    ;                  g

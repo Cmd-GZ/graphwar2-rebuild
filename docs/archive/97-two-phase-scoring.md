@@ -166,6 +166,15 @@
 ```
 
 * `hits`：`0x51ae4c dec %eax`（友方）/ `0x51ae5d inc %eax`（敌方）累加的那个计数器
+> **【T75 更正框（2026-11-27）—— 本篇 `0x51ae4c dec` / `0x51ae5d inc` 地址指到了前一条 `mov`，正文不改】**
+> 真址：**`0x51ae51 dec eax`**（友方）/ **`0x51ae62 inc eax`**（敌方）。`0x51ae4c` / `0x51ae5d` 各是这两支的
+> **第一步** `mov rax, qword ptr [rsp+0x28]`（把计数器装进 `rax`），`dec`/`inc` 在它后面 5 B。
+> 依据 `addr_probe.py dis 0x51a750`（该函数 FDE `0x51a750..0x51b440`）：
+> `0x51ae4c mov rax,[rsp+0x28]` / `0x51ae51 dec eax` / `0x51ae53 mov [rsp+0x28],rax` /
+> `0x51ae5d mov rax,[rsp+0x28]` / `0x51ae62 inc eax` / `0x51ae64 mov [rsp+0x28],rax`。
+> ⚠️ 这一条尤其重要：`docs/147` §3.3 把**本篇的记法当"正确的那个"**去纠 `docs/archive/AI.md`，
+> 而本篇自己也有同一个错 —— 两篇都要按 `0x51ae51` / `0x51ae62` 读（T75 已同时修 `docs/147`）。
+
   （清零点 `0x51ab42`，敌方/友方判定 `0x51ae21`–`0x51ae4a`），最后落到 `eax`。
   ⇒ "命中数项 = 敌人数 − 友军数"，就是适应度里乘 2e6 的整数（`0x51b0ad`–`0x51b0b9`）。
 * `dist`：栈槽 `0x8(%rsp)`。初值 `0x51ab2d`/`0x51afdf` 从 `0x19fb30` 取 **1e6**，

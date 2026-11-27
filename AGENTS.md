@@ -170,6 +170,19 @@ python3 tools/pck_extract.py --verify                            # 还原 rsc/�
    ③ 二进制/压缩产物 **任何大小都拦** —— 后两档 `--allow-large` **无效**。
    自测：`python3 tools/merge_check.py --self-test`（造 10 个假分支，只看退出码）。
 
+### A.6 **`docs/06` / `docs/16` 的合并必须过 `docsec.py check`**（2026-11-27 增补）
+
+起因：一次真实事故 —— 手工解 `docs/06` 冲突时把 **§113 的 217 行正文整体吞掉**（只剩标题）、
+还造出一个"正文是别的节、标题套错的幽灵 §118"，而 `check_doc_refs.py` **只查编号连续性，抓不到**。
+
+```bash
+python3 tools/docsec.py check docs/06-verification.md   # 重复号 / 冲突标记 / 空心节
+python3 tools/docsec.py check docs/16-client.md
+```
+判据：**空节**（正文 <3 行且紧邻下一节）= 错；**重复号** = 错；残留 `<<<<<<<` = 错。
+`docs/06` 的两个**历史缺口**不当错误：**§43** 是 `a94520f` 归档删除、**§89** 全史从未存在（编号 88→90 跳号）。
+更稳的做法：**新节整段从分支抽出、由脚本按号插入**，不要靠三路合并硬解。
+
 ### B. 合并**后**，在 master 侧跑"四件套"
 
 ```bash

@@ -955,8 +955,8 @@ x86 侧还有第二条**独立**证据：`res://game_room_entry.tscn` 字面量�
 |---|---|---|
 | 0 `Disconnected` | `disconnect()`，关流之后**无条件**写 | `0x48aa10 strb wzr` |
 | 1 `Connecting` | `connect()`，起线程**之前** | `0x48b900 strb #1` |
-| 2 `Connected` | 连接线程：TCP 握手成功（`set_nonblocking` 之后） | `0x48de10 strb #2` |
-| 3 `Failed` | 连接线程：`connect_timeout` 返回 `Err` | `0x48dd1c strb #3` |
+| 2 `Connected` | 连接线程：TCP 握手成功（`set_nonblocking` 之后） | ~~`0x48de10 strb #2`~~ **T75 更正：两步 —— `0x48de10 mov w8, #2` → `0x48de18 strb w8, [x21, #0x15]`**（arm64 没有 `strb #imm` 这种编码，"存值 2"是伪码，地址指到了取立即数那一步；依据 `android-2.0.60` 的 arm64 `.so` 4 B 对齐直解） |
+| 3 `Failed` | 连接线程：`connect_timeout` 返回 `Err` | ~~`0x48dd1c strb #3`~~ **T75 更正：`0x48dd1c mov w8, #3` → `0x48dd24 strb w8, [x21, #0x15]`** |
 
 唯一的读取者是 `tick()`，判据是 `cmp w8,#2; b.lo` + `b.ne`（`0x48b4a4`/`0x48b4b0`），
 把 `0..=3` 切成三段：
