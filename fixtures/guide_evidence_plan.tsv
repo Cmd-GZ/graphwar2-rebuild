@@ -1,0 +1,65 @@
+# T74 预注册计划：docs/guide/ 的 50 条 I 档（T68 §111.6 遗留 1）+ docs/21 §8.5 的 10 条（遗留 2）
+# 列：id | file | line_t68（回改前行号，取自 fixtures/guide_marker_triage.tsv） | line_now（本轮开工时的行号） | excerpt | tier_now | plan_add（打算补什么） | attainable（能/部分/不可升） | tier_target（补到后档位）
+# 判据沿用 fixtures/guide_marker_triage.tsv 的 T/O/I 三档（R1 值级字节 / R2 同输入输出一致 / R3 只有地址指令 / R4 混合条按弱的判）
+# 「不可升」= 结构上到不了更高档，原因写进 plan_add；执行结果与偏差写在 docs/06 §120
+id	file	line_t68	line_now	excerpt	tier_now	plan_add	attainable	tier_target
+G007	docs/guide/01-对局规则.md	104	106	SimultaneousTurns(turn=1) 只在 Level 11/14	[推断]	指向 03 §2 参数表 t 列（21 关逐关值，源=level_info() 立即数）+ 385 份回放 TurnModeInfo 21/21	能	[观测]
+G015	docs/guide/01-对局规则.md	223	225	⑤ 广播 FunctionPoints{start_x,start_y,end_x,points}	[推断]	指向 docs/05 §1 字段表 + 冻结语料里的 FunctionPoints 报文（协议侧无二进制输出 ⇒ 上限观测）	能	[观测]
+G029	docs/guide/02-函数与弹道.md	11	14	输入被解析成前缀顺序 token 列表（16 字节/token）	[推断]	真解析器 0x4ed670 15 组 tag 流 + fixtures/parse_matrix_truth.tsv 行 id（tag 序=前缀序，CONST 位型逐位）	能	[逐位]
+G031	docs/guide/02-函数与弹道.md	30	33	整串转小写（SIN(x) 合法）	[推断]	真解析器 SIN(X)→tags 14,0 与 sin(x) 相同；docs/03 §14.6 R3（3/157 逐位）+ 小写化循环 0x4ed7a3..0x4ed7ba	能	[逐位]
+G032	docs/guide/02-函数与弹道.md	31	34	pi→n / π→n（n 是 π 别名）	[推断]	真解析器 π*x / n*x / pi*x 全部出 CONST 0x400921fb54442d18；str::replace 两处 0x4ed7ce(@0x1c4342 "pi") / 0x4ed831	能	[逐位]
+G033	docs/guide/02-函数与弹道.md	38	41	切词正则（77 字节模式）	[推断]	.rodata 0x1c4347 + 长度 0x4d=77 + 内容（0x4ed884 lea 0x1c4347; mov $0x4d,%edx）⇒ R1 三段齐	能	[逐位]
+G034	docs/guide/02-函数与弹道.md	50	53	^ 左结合 2^3^2=64	[推断]	真解析器 tag 流 8,8,CONST2,CONST3,CONST2 + 真求值器 64.0（parse_matrix_truth id=644）	能	[逐位]
+G035	docs/guide/02-函数与弹道.md	51	54	一元负号比 ^ 松 ⇒ -x^2=(-x)^2	[推断]	真解析器 tag 流 5,8,0,CONST2（=NEG POW x 2）+ 求值 -9.0（id=449）⇒ 实际是 -(x^2)，与原结论后半句相反（只补证据、结论留待裁决）	能（含矛盾）	[逐位]
+G037	docs/guide/02-函数与弹道.md	60	63	隐式乘法（2x/2sin(x)/(x+1)(x-1)/xy）	[推断]	真解析器 4 组 tag 流 + parse_matrix_truth id 747/749/752/750	能	[逐位]
+G038	docs/guide/02-函数与弹道.md	61	64	函数可不带括号（sinx/sqrt x）	[推断]	真解析器 sinx→e,0、sqrtx→9,0；id 505/529 + 求值 = sin(x)/sqrt(x) 逐位	能	[逐位]
+G039	docs/guide/02-函数与弹道.md	62	65	sin^2(x) 解析成 sin(空)^2*x	[推断]	真解析器 tag 流 6,8,e,CONST2,0 + 7 组求值全 0.0（id=576）⇒「值恒 0」逐位成立；中间结构与本行写法有出入（记进 docs/06 §120）	能（部分修正）	[逐位]
+G040	docs/guide/02-函数与弹道.md	63	66	缺操作数填 CONST 0	[推断]	真解析器 x+ → tags 3,0,CONST(0.0)（id=3589）+ 求值 1.0；+ 侧补 0 另见 docs/03 §14.5（4/157 逐位）	能	[逐位]
+G042	docs/guide/02-函数与弹道.md	65	68	y 在普通模式恒 0	[推断]	0x4eb9d0 的调用点清单（addr_probe callers）+ 各点第三/四实参为 0 的指令	能（指令级）	[观测]
+G043	docs/guide/02-函数与弹道.md	67	70	y' 在全部 7 个求值点都传 0	[推断]	同上调用点清单（7 处）逐点给地址	能（指令级）	[观测]
+G054	docs/guide/02-函数与弹道.md	115	118	sqrt(abs(x))/log(abs(x)+1) 是安全写法	[推断]	真采样器对照：sqrt(abs(x))-1 → 2879 点、log(abs(x)+1)-0.30103 → 2786 点，而 sqrt(x)/log(x)/x^0.5 → 1 点（哑弹）	能	[逐位]
+G055	docs/guide/02-函数与弹道.md	143	146	对每个新点在 x 区间上二分	[推断]	采样器 0x3c2530 的二分分支（0x3c2858..0x3c2a6x）+ fixtures/path.tsv 24/24 点序列逐位 + 本轮 12 组探针逐位	能	[逐位]
+G061	docs/guide/02-函数与弹道.md	238	241	求值出 NaN ⇒ 曲线收线	[推断]	真采样器：sqrt(x)/log(x)/x^0.5 在内部 x<0 起手 → 点序列 = 1 点（只剩起点），NaN 判据 0x3c2a8b ucomisd/upe	能	[逐位]
+G062	docs/guide/02-函数与弹道.md	239	242	越界 |x|>25 / |y|>15 在入列前检查	[推断]	真采样器：20*x+20 停在 last_y=14.9906（越界点未入列）；1/x+1 停在 (-0.0625,-14.9988)；常量 25.0@0x19fbc8 / 15.0@0x19fd40	能	[逐位]
+G063	docs/guide/02-函数与弹道.md	240	243	二分 100 次不收敛 ⇒ 子弹消失	[推断]	真采样器：跳变函数（0.5*abs(x+0.995)/(x+0.995)+0.5）→ 1 点；未置修正 c 的 sin(x) → 1 点；上限立即数 100 在 0x3c28xx	能	[逐位]
+G064	docs/guide/02-函数与弹道.md	241	244	弧长预算耗尽 = 跑满 200/step 点	[推断]	真采样器：sin(100*x)-0.50636 返回恰好 20001 点（= (200/0.01)+1）⇒ 预算公式逐值成立；常量 200.0@0x19f8c0	能	[逐位]
+G066	docs/guide/02-函数与弹道.md	259	262	修正 c 用文本 "f(x) + c" 重解析（非数值加偏移）	[推断]	构造点 0x3c5c50 + 93/93 逐字符（docs/archive/86 §7）；结构级，不能升值级	能（上限观测）	[观测]
+G076	docs/guide/02-函数与弹道.md	341	344	圆按逐行硬填（row=py+dy）	[推断]	光栅化 0x4f11e0 逐行循环指令 + 与真二进制逐字节一致（§9.1）；实现细节 ⇒ 观测	能（上限观测）	[观测]
+G081	docs/guide/02-函数与弹道.md	386	389	子弹半空停住没撞墙 = 不收敛或越界	[推断]	指向 §6.4 的四因与真采样器探针（n09/n10/n12）	能	[逐位]
+G082	docs/guide/02-函数与弹道.md	387	390	中途消失但没爆炸 = 越界/NaN，不产生洞	[推断]	指向 §6.4 探针 + 掩膜只在命中点挖洞（§9.2 frida 28 次光栅化 8 次 fill=0xFF）	能	[逐位]
+G083	docs/guide/02-函数与弹道.md	388	391	命中用连续折线距离；自伤按 id 排除	[推断]	点测试/命中距离 0x4f15b0（300 随机点一致）+ 「射手 id 排除」需命中循环地址	部分	[观测]
+G084	docs/guide/02-函数与弹道.md	391	394	sin^2(x) 值恒 0	[推断]	真解析器+真求值器 7 组输入全 0.0（parse_matrix_truth id=576）	能	[逐位]
+G096	docs/guide/03-关卡与战役.md	101	104	参数表 C 列口径更正（混了代码/数据两类）	[推断]	逐地址实测：0x49fe80 FDE=0x18 + be 0f000000（min_count=15）；0x49f1c0 FDE=0x191；0x95a350 无 FDE	能	[观测]
+G098	docs/guide/03-关卡与战役.md	167	170	两处原版自带细节（writting 拼写 / level_9 描述另处）	[推断]	.rodata 0x1c25b6 起的 level_16 描述含 writting 双 t；level_9 描述 .rodata 0x1bcaa0 长 0x20（写者 0x4ae0c3 mov $0x20）	能	[逐位]
+G120	docs/guide/03-关卡与战役.md	202	205	三条横向结论（f=1 五关 / t=1 两关 / a 单调降）	[推断]	指向 03 §2 参数表 21 行（源是 level_info() 立即数）+ §4.2 交叉表	能	[观测]
+G121	docs/guide/03-关卡与战役.md	209	212	level_3 描述没提的 3 个目标	[推断]	指向 03 §2 参数表 level_3 行（士兵 2 / 目标 3）	能	[观测]
+G123	docs/guide/03-关卡与战役.md	220	223	campaign.save 纯文本 FileAccess+store_string	[推断]	写者 0x4183b0 + 读 0x417ef0 + 路径常量 .rodata 0x1bfe28 len 0x14 ⇒ 观测	能（上限观测）	[观测]
+G126	docs/guide/03-关卡与战役.md	224	227	文件行尾必须没有任何字节	[推断]	读侧 0x417ef0 整文件 parse::<u32> 不跳空白 + 用户实测（docs/archive/118 附录 A）8 字节 vs 9 字节	能	[观测]
+G127	docs/guide/03-关卡与战役.md	226	229	0 基（字符串就是 level_0…level_20）	[推断]	`.rodata` 里 level_0..level_20 串 + 写者 0x4183b0 拼串；字节级可截	能	[逐位]
+G134	docs/guide/03-关卡与战役.md	291	294	游戏已结束不复原；靶子全死什么都不做	[推断]	需靶子管理器复原路径地址（docs/150 §5 / target_manager）	部分	[观测]
+G147	docs/guide/04-AI与难度.md	18	18	AI 在 25 s 墙钟内进化并当回合开火	[推断]	0x51b7cf cmp $0x19 + 秒表 0x8f5bf0 + 调用链 0x47a300→0x47a41e→0x51b440	能	[观测]
+G153	docs/guide/04-AI与难度.md	114	114	精英 = 每代前 20%（s=种群/5），克隆 s 个	[推断]	ai_params_crosscheck T.s 行（s=10/20/30/40/50 @0x3e3d95/0x3e3daa/0x3e3dc3/0x3e4573/0x3e45a3）+ T.per_slot（0x3e45c7 mov r8d,5）	能	[逐位]
+G156	docs/guide/04-AI与难度.md	117	117	每代评 种群+3 次（无缓存）	[推断]	ai_params_crosscheck S.score_calls（7 个调用点）+ 3 段精评展开；运行时 250 代全同	能	[观测]
+G158	docs/guide/04-AI与难度.md	121	121	NaN 算一致（ucomisd + jbe）	[推断]	0x51c3dc/0x51c717/0x51c9d1 三个 ucomisd + 紧随的 jbe + 容差常量 0.5@0x19f6d0	能	[逐位]
+G159	docs/guide/04-AI与难度.md	122	122	精评不写回分数（只覆写个体数据）	[推断]	个体记录 48 字节（0x51bccf lea rcx,[r14+r14*2]; shl rcx,4）+ 精评三分支无回写点（否定结论仍以 docs/archive/97 为准）	部分	[观测]
+G160	docs/guide/04-AI与难度.md	123	123	正好 3 名（三段展开，没有循环常量）	[推断]	0.01 精评步长在 0x51b440 内恰好 3 处载入（0x51c3ab/0x51c6e6/0x51c9a0）⇒ ai_params_crosscheck S.fine_ranks	能	[逐位]
+G165	docs/guide/04-AI与难度.md	261	264	token 权重表（总和 85）	[推断]	ai_params_crosscheck W.total（imul $0x55 @0x4ef1bb）+ W.normal.* 15 行区间切点 ⇒ 权重 = 区间宽度	能	[逐位]
+G166	docs/guide/04-AI与难度.md	263	266	变量槽随模式变化（Normal x=10；DiffEq x=6+y=4；y' 不产生）	[推断]	ai_params_crosscheck W.diffeq.VarX [(11,17)] / VarY [(17,21)] 对 W.normal.VarX [(11,21)]	能	[逐位]
+G167	docs/guide/04-AI与难度.md	277	280	随机函数长度 n=(normal*5+10) trunc	[推断]	docs/13 §26.2 + ai_params_crosscheck 长度行（5.0/10.0 与 .rodata 逐位相等）+ 截断方向行 G.len_trunc 0x4ef0b2	能	[逐位]
+G168	docs/guide/04-AI与难度.md	286	289	补齐按 rand%50 分三档（<25 / 25..41 / 42..49）	[推断]	ai_params_crosscheck P.mod 0x4ee24e imul $0x32 / P.thr_const 0x4ee254 cmp $0x19 / P.thr_x 0x4ee2c0 cmp $0x2a / P.const_tag 0x4ee2a3	能	[逐位]
+G169	docs/guide/04-AI与难度.md	298	301	变异规则（常数缩放 / 包一层算子）	[推断]	ai_params_crosscheck M.op_tags（写入点 0x4ee9db/0x4eeab2/0x4eeaf1）+ M.op_split 0x4ee9a0/0x4eea29 + M.const_scale 0x4ee8a8→0x19f758	能	[逐位]
+G174	docs/guide/04-AI与难度.md	321	321	回合时限不参与 AI 决策	[推断]	AI 调用链三函数体内对秒表 0x8f5bf0 的引用只有 0x51b7cf/0x51d398 两处（正对照：同一函数里 tick 读的是 +0x58）	部分	[观测]
+G176	docs/guide/04-AI与难度.md	337	337	+0x30 = time_mode（6 档）	[推断]	单例 +0x30 的消费点（docs/147 §2/§4 地址链）	部分	[观测]
+G225	docs/guide/06-时钟与回合推进.md	72	72	25 秒≈1500 tick 没有意义（预算墙钟 vs tick 计数）	[推断]	0x51b7cf cmp $0x19 + 秒表 0x8f5bf0（clock_gettime）+ tick 取模块容器 +0x58 ⇒ 两者不同源 ⇒ 无换算	能	[观测]
+G253	docs/guide/07-联机协议.md	129	133	4 个 *ModeChangeRequest 是空体（切到下一档？）	[推断]	空体部分：docs/07 §3.3 + WIRE_SPEC（64/64 抓包字段数）；「切档」语义仍缺真实报文 ⇒ 只升空体那半	部分	[观测]
+G282	docs/guide/08-回放格式.md	91	91	录缓冲没有上限（一局长则线性增长）	[推断]	不可升：负命题（要证明闭包里没有任何上限检查）；只能补「单局记录数最大值仍完整落盘」的语料实测	不可升	[推断]（显式写不可升）
+T74-01	docs/guide/06-时钟与回合推进.md			06 §2 AI 25 s 墙钟（cmp $0x19）	[观测]	拆条：值条（25 = 0x19）给 [逐位]；行为条（每代开头查一次）保持 [观测]	能	[逐位]（值）+ [观测]（行为）
+T74-02	docs/guide/04-AI与难度.md			04 §6 常量=立即数 25 秒、六档共用	[观测]	补编码：0x51b7cf cmp $0x19 / 变体 B 0x51d398 cmp $0x19（六档共用同一处 ⇒ 无配置读）	能	[逐位]
+T74-03	docs/guide/02-函数与弹道.md			02 §3 ^ 左结合 + 02 §4 sin^2(x)=0（解析器 0x4ed670）	[推断]	真解析器 tag 流 + parse_matrix_truth id 644 / 576 ⇒ 值级	能	[逐位]
+T74-04	docs/guide/01-对局规则.md			01 §2.2 只有 level_11/14 同时回合	[推断]	补 03 §2 的 t 列（21 关逐关）；t 源是 level_info() 立即数	能	[观测]
+T74-05	docs/guide/04-AI与难度.md			04 §2 精英=前 20% / 字面量 5 = 每槽个体数	[推断]	补 archive/95 的逐条汇编地址 + ai_params_crosscheck T.s/T.per_slot	能	[逐位]
+T74-06	docs/guide/03-关卡与战役.md			03 §4.1 21 关逐关参数表	[观测]	每行补 .rodata/立即数坐标（目标/士兵/难度/bot）+ 21/21 交叉	能	[观测]（描述原文那条 [逐位]）
+T74-07	docs/guide/07-联机协议.md			07 §3 74 事件 / 10 空体	[观测]	tag→名字字节级对拍：docs/06 §66 的 serialize_struct N 串 + WIRE_SPEC；协议侧无二进制输出 ⇒ 上限 [观测]	能（上限观测）	[观测]（不可升 [逐位]）
+T74-08	docs/guide/04-AI与难度.md			04 §1 适应度公式（值级做不到）	[逐位]（常量）/ [观测]（公式）	显式写「不可升」：fixtures/bit_exact_sweep.tsv:104 判 0x51a750 isolated_impossible（engine_dispatch）	不可升	[观测]（常量仍 [逐位]）
+T74-09	docs/guide/06-时钟与回合推进.md			06 tick 会话级计数	[观测]	补语料实测（399/401 份、114 份首条 >1000）+ 语义部分明写 [推断]（缺同进程连开两局对照）	能	[观测]（语义仍 [推断]）
+T74-10	docs/guide/05-武器与技巧.md			05 章 30 处机制引用	[观测]/[推断]	逐处补 02 §x 一行指针（本章无独立证据来源，全部转引）	能	[观测]（转引级 + 指针）
