@@ -272,7 +272,7 @@ class Corpus:
             elif k in ("EntityRemoved", "RemoveTeam"):
                 # 实体**离开生命表**：实战里对战局的收场大量走这条路（不是 `LifeInfo{alive:false}`）。
                 # 实测踩过：只认 LifeInfo 时 217 个终局里有 33 个「双方都还有活人」，
-                # 补上 EntityRemoved/RemoveTeam 后降到 0（见 docs/06 §111）。
+                # 补上 EntityRemoved/RemoveTeam 后降到 0（见 docs/06 §112）。
                 eid = body.get("entity_id")
                 if eid is not None:
                     alive[eid] = False
@@ -406,7 +406,7 @@ def build_corpus_section(c, rows):
 #
 # ⇒ 真值一律 = 把**这份 token 序列**直接喂 `PolishNotationConverter::reorder_recursive 0x4f5450`。
 # ⚠️ 不要改成喂 `0x4ed670` 解析器：那是「文本 → 前缀」，中间还夹着一趟分词，
-#    而测试的输入是**已经分好词的中缀 token**（口径不同，见 `docs/06` §111.4）。
+#    而测试的输入是**已经分好词的中缀 token**（口径不同，见 `docs/06` §112.4）。
 REORDER_CASES = [
     ("M01", "empty_input_stays_empty", []),
     ("M02", "single_atom_passes_through", [(0, 0.0)]),
