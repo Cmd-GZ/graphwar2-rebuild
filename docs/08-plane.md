@@ -595,13 +595,24 @@ arm64 侧同一结论（符号名直接可读）：`place_entity`×3、`calculat
 ```text
 0x3f17b4  mov   r15, qword ptr [rdi + 0x18]      ; self+0x18 → 掩膜的 ArcInner 指针
 0x3f17b8  lea   rbx, [r15 + 0x10]                ; 锁字在 +0x10
-0x3f17c3  lock cmpxchg dword ptr [r15 + 0x10], 1 ; ★ Mutex::lock（0 期望 → 1）
+0x3f17c3  lock cmpxchg dword ptr [r15 + 0x10], ecx ; ★ Mutex::lock（eax=0 期望 → ecx=1）
 0x3f17cf  jne   0x3f189d                         ; 抢不到 ⇒ 走 futex 慢路径
 0x3f17ee  movzx eax, byte ptr [r15 + 0x14]       ; +0x14 = 中毒（poison）标志
 0x3f17fb  mov   rdi, qword ptr [r15 + 0x20]      ; +0x20 = 数据指针（600000 字节）
 0x3f17ff  mov   rax, qword ptr [r15 + 0x28]      ; +0x28 = 长度
 0x3f1817  call  0x3f11e0                         ; → 光栅化（写）
 ```
+
+> **T69 更正（2026-11-27）· 两处引文写错（结论"Mutex 锁字在 +0x10、抢不到走 futex 慢路径"不变）。**
+> 1. 原文 `0x3f17c3 lock cmpxchg dword ptr [r15 + 0x10], 1` —— **新值是 `ecx`，不是立即数 `1`**。
+>    实测：`0x3f17b8 lea rbx,[r15+0x10]` → `0x3f17bc mov ecx,1` → `0x3f17c1 xor eax,eax` →
+>    `0x3f17c3 lock cmpxchg dword ptr [r15+0x10], ecx` → `0x3f17c9 … jne 0x3f189d`。
+>    ⇒ `1` 这个数来自前一条 `mov ecx,1`，期望值 0 来自 `xor eax,eax`。
+> 2. 原文 `0x3f17bd`（`docs/06`/本节旧写法里出现过）**不是指令边界**：`0x3f17bd` 落在 `mov ecx,1`
+>    的第 2 字节上（`addr_probe dis 0x3f17bd` 会解出 `add dword ptr [rax], eax` 这种垃圾）⇒ 引用该段必须从
+>    `0x3f17b4`（`mov r15,[rdi+0x18]`）或 `0x3f17c3` 起。
+>
+> 复跑：`python3 tools/addr_probe.py dis 0x3f17b8` / `dis 0x3f17c3`。
 
 `is_obstacle`（`0x3f15b0`）与挖洞（`0x3f1b30`）同样从 `[rdi+0x18]` 取、同样 `lock cmpxchg [r14+0x10],1`。
 ⇒ **"带锁结构"这个说法落实了：`ArcInner<Mutex<Vec<u8>>>`，锁字在 `ArcInner+0x10`。**

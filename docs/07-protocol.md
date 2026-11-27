@@ -160,7 +160,7 @@ $PY tools/wire_fields.py --verify                      # 上一轮的工具（�
 | `ChangeTeamRequest` | `11` | `player_id`: i64 | 逐位（无抓包） |
 | `RemovePlayerRequest` | `12` | `player_id`: i64 | 逐位（无抓包） |
 | `PlayerInfo` | `13` | `player_id`: i64, `connection_id`: i64 | 逐位 + 观测（3 行） |
-| `EntityRemoved` | `14` | `entity_id`: i64 | 逐位（无抓包） |
+| `EntityRemoved` | `14` | `entity_id`: i64 | 逐位（无抓包）→ **逐位 + 观测**（T69 更正：T53 真帧 3 条、冻结语料 658 帧） |
 | `SoldierInfo` | `15` | `soldier_id`: i64, `player_id`: i64 | 逐位 + 观测（4 行） |
 | `AddSoldierRequest` | `16` | `player_id`: i64 | 逐位（无抓包） |
 | `RemoveSoldierRequest` | `17` | `player_id`: i64 | 逐位（无抓包） |
@@ -169,9 +169,9 @@ $PY tools/wire_fields.py --verify                      # 上一轮的工具（�
 | `TurnModeChangeRequest` | `20` | （空体 `{}`） | 逐位 + 观测（1 行） |
 | `TimeModeChangeRequest` | `21` | （空体 `{}`） | 逐位 + 观测（1 行） |
 | `GameNameRequest` | `22` | `game_name`: str | 逐位 + 观测（2 行） |
-| `TargetInfo` | `23` | `target_id`: i64 | 逐位（无抓包） |
+| `TargetInfo` | `23` | `target_id`: i64 | 逐位（无抓包）→ **逐位 + 观测**（T69 更正：冻结语料 254 帧；T53 未抓到） |
 | `TeamInfo` | `24` | `entity_id`: i64, `team`: enum(str) | 逐位 + 观测（4 行） |
-| `RemoveTeam` | `25` | `entity_id`: i64 | 逐位（无抓包） |
+| `RemoveTeam` | `25` | `entity_id`: i64 | 逐位（无抓包）→ **逐位 + 观测**（T69 更正：T53 真帧 3 条、冻结语料 443 帧） |
 | `PosInfo` | `26` | `entity_id`: i64, `pos_x`: f64, `pos_y`: f64, `radius`: f64 | 逐位 + 观测（3 行） |
 | `LifeInfo` | `27` | `entity_id`: i64, `alive`: bool | 逐位 + 观测（8 行） |
 | `LifeQueuedDeath` | `28` | `entity_id`: i64, `tick`: i64 | 逐位 + 观测（2 行） |
@@ -182,13 +182,13 @@ $PY tools/wire_fields.py --verify                      # 上一轮的工具（�
 | `FunctionFire` | `33` | `soldier_id`: i64 | 逐位 + 观测（1 行） |
 | `FunctionUpdateRequest` | `34` | `player_id`: i64, `function`: str | 逐位 + 观测（2 行） |
 | `FunctionInfo` | `35` | `owner_id`: i64, `function`: str, `corrected_function`: str\|null | 逐位 + 观测（3 行） |
-| `FunctionActive` | `36` | `owner_id`: i64, `active_tick`: i64 | 逐位（无抓包） |
-| `FunctionPoints` | `37` | `owner_id`: i64, `start_x`: f64, `start_y`: f64, `end_x`: f64 | 逐位（无抓包） |
-| `FunctionsCalculated` | `38` | （空体 `{}`） | 逐位（无抓包） |
+| `FunctionActive` | `36` | `owner_id`: i64, `active_tick`: i64 | 逐位（无抓包）→ **逐位 + 观测**（T69 更正：T53 真帧 8 条、冻结语料 1290 帧） |
+| `FunctionPoints` | `37` | `owner_id`: i64, `start_x`: f64, `start_y`: f64, `end_x`: f64 | 逐位（无抓包）→ **逐位 + 观测**（T69 更正：T53 真帧 8 条、冻结语料 1291 帧） |
+| `FunctionsCalculated` | `38` | （空体 `{}`） | 逐位（无抓包）→ **逐位 + 观测**（T69 更正：T53 真帧 4 条） |
 | `ClearObstacles` | `39` | （空体 `{}`） | 逐位 + 观测（1 行） |
 | `AddObstacle` | `40` | `pos_x`: f64, `pos_y`: f64, `radius`: f64 | 逐位 + 观测（3 行） |
 | `DestroyObstacle` | `41` | `pos_x`: f64, `pos_y`: f64, `radius`: f64 | 逐位 + 观测（1 行） |
-| `QueueDestroyObstacle` | `42` | `pos_x`: f64, `pos_y`: f64, `radius`: f64, `tick`: i64 | 逐位（无抓包） |
+| `QueueDestroyObstacle` | `42` | `pos_x`: f64, `pos_y`: f64, `radius`: f64, `tick`: i64 | 逐位（无抓包）→ **逐位 + 观测**（T69 更正：T53 真帧 4 条） |
 | `TurnInfo` | `43` | `player_id`: i64, `soldier_id`: i64 | 逐位 + 观测（2 行） |
 | `EffectInfo` | `44` | `effect_id`: i64, `pos_x`: f64, `pos_y`: f64, `effect_type`: enum(str), `start_tick`: i64 | 逐位 + 观测（5 行） |
 | `AxisModeInfo` | `45` | `axis_mode`: enum(str) | 逐位 + 观测（2 行） |
@@ -203,23 +203,95 @@ $PY tools/wire_fields.py --verify                      # 上一轮的工具（�
 | `HatGraphicsRequest` | `54` | `entity_id`: i64, `graphics_str`: str | 逐位 + 观测（3 行） |
 | `HatGraphicsInfo` | `55` | `entity_id`: i64, `graphics_str`: str | 逐位 + 观测（4 行） |
 | `EntityEffectInfo` | `56` | `entity_id`: i64, `effect_type`: enum(str) | 逐位 + 观测（4 行） |
-| `TurnLimitInfo` | `57` | `turn_limit`: i64\|null | 逐位（无抓包） |
+| `TurnLimitInfo` | `57` | `turn_limit`: i64\|null | 逐位（无抓包）→ **逐位 + 观测**（T69 更正，见 §3.3.1） |
 | `TurnCountInfo` | `58` | `turn_count`: i64 | 逐位 + 观测（1 行） |
 | `NameRequest` | `59` | `entity_id`: i64, `name`: str | 逐位 + 观测（3 行） |
 | `NameInfo` | `60` | `entity_id`: i64, `name`: str | 逐位 + 观测（3 行） |
 | `ColorInfo` | `61` | `entity_id`: i64, `color`: `{r,g,b}` | 逐位 + 观测（3 行） |
 | `GameInfo` | `62` | `game_info`: `GameInfo` | 逐位 + 观测（3 行） |
 | `GameHeartbeat` | `63` | （空体 `{}`） | 逐位 + 逐位（arm64 跳转表，§5.1） |
-| `GameRemoved` | `64` | `game_address`: str（地址） | 逐位（无抓包） |
+| `GameRemoved` | `64` | `game_address`: str（地址） | 逐位（无抓包）→ **逐位 + 观测**（T69 更正，见 §3.3.1） |
 | `VersionInfo` | `65` | `version`: str, `system`: str | 逐位 + 观测（1 行）+ 逐位（arm64 跳转表，§5.1） |
 | `RankRequest` | `66` | `entity_id`: i64, `rank`: i64\|null | 逐位 + 观测（3 行） |
 | `RankInfo` | `67` | `entity_id`: i64, `rank`: i64\|null | 逐位 + 观测（3 行） |
-| `LockRequest` | `68` | `lock`: bool | 逐位（无抓包） |
-| `LockInfo` | `69` | `lock`: bool | 逐位（无抓包） |
-| `ChatMessageRequest` | `70` | `entity_id`: i64, `message`: str | 逐位（无抓包） |
-| `ChatMessage` | `71` | `entity_id`: i64, `message`: str | 逐位（无抓包） |
+| `LockRequest` | `68` | `lock`: bool | 逐位（无抓包）→ **逐位 + 观测**（T69 更正，见 §3.3.1） |
+| `LockInfo` | `69` | `lock`: bool | 逐位（无抓包）→ **逐位 + 观测**（T69 更正，见 §3.3.1） |
+| `ChatMessageRequest` | `70` | `entity_id`: i64, `message`: str | 逐位（无抓包）→ **逐位 + 观测**（T69 更正，见 §3.3.1） |
+| `ChatMessage` | `71` | `entity_id`: i64, `message`: str | 逐位（无抓包）→ **逐位 + 观测**（T69 更正，见 §3.3.1） |
 | `BanConnectionRequest` | `72` | `player_connection_id`: i64, `leader_connection_id`: i64 | 逐位（无抓包） |
 | `ClearBansRequest` | `73` | （空体 `{}`） | 逐位（无抓包） |
+
+#### 3.3.1 T69 更正：6 行的「逐位（无抓包）」与 §7.8 自相矛盾
+
+**改了什么**：上表 6 行的档位列原来是 `逐位（无抓包）`（原句保留在上表里，未删），
+现改为 `逐位 + 观测`。**结论本身没变**（字段名/顺序/类型一处未改），变的是"有没有真实报文"这一判据。
+
+| # | 事件 | 真帧来源 | 帧数 |
+|---|---|---|---:|
+| 1 | `LockInfo` (69) | T53 官服抓包（server→client） | 2 |
+| 2 | `LockRequest` (68) | T53 官服抓包（client→server） | 2 |
+| 3 | `ChatMessage` (71) | T53 官服抓包（server→client） | 1 |
+| 4 | `ChatMessageRequest` (70) | T53 官服抓包（client→server） | 1 |
+| 5 | `GameRemoved` (64) | T53 官服抓包（broker→client） | 1 |
+| 6 | `TurnLimitInfo` (57) | **冻结语料 403 个文件 / 401 份回放**（非本轮抓包） | 21 |
+
+**依据（T69 复算，2026-11-27）**：
+
+* 真帧在 [`fixtures/protocol_live_frames.jsonl`](../fixtures/protocol_live_frames.jsonl)（1 717 条，T53 产出）；
+  本文件 **§7.8** 的逐事件表早就写着这 6 类有真帧 ⇒ 原来的档位列是**同一文件内自相矛盾**。
+  复算（逐事件计数）：
+  ```bash
+  python3 -c "import json,collections;c=collections.Counter(json.loads(l)['event'] for l in open('fixtures/protocol_live_frames.jsonl') if l.strip().startswith('{\"dir\"'));print({k:c[k] for k in ['LockInfo','LockRequest','ChatMessage','ChatMessageRequest','GameRemoved']})"
+  # {'LockInfo': 2, 'LockRequest': 2, 'ChatMessage': 1, 'ChatMessageRequest': 1, 'GameRemoved': 1}
+  ```
+* `TurnLimitInfo` 的 21 帧在冻结回放里（T46 当年在 **gzip 压缩字节**上 grep ⇒ 假阴性，见 §6.2 的更正注）：
+  ```bash
+  python3 - <<'PY'
+  import glob,gzip,json
+  n=0
+  for p in glob.glob('.reference/replays/gw2-replays-snapshot/replays/*'):
+      try: lines=gzip.open(p,'rt',encoding='utf-8',errors='replace').read().splitlines()
+      except Exception: continue
+      for ln in lines:
+          if 'TurnLimitInfo' in ln: n+=1
+  print(n)   # 21
+  PY
+  ```
+* **T69 顺带发现：还有 7 行同类虚报**（T65 抽样没抓到；本轮按事件名逐个查了 §3.3 全部 25 行「无抓包」，
+  拿冻结语料 401 份回放 + T53 真帧逐名对表）。除上面 6 行外，**还有 7 行其实有真实流量**，已一并改档：
+  `EntityRemoved`(14) / `TargetInfo`(23) / `RemoveTeam`(25) / `FunctionActive`(36) / `FunctionPoints`(37) /
+  `FunctionsCalculated`(38) / `QueueDestroyObstacle`(42)。
+* **确实还没有任何真实报文的只剩 12 行**（别为了整齐把整列都改掉）：
+  `Tick`(0) / `Subscribe`(3) / `ConnectionRemoved`(6) / `ConnectedToServer`(7) / `ChangeTeamRequest`(11) /
+  `RemovePlayerRequest`(12) / `AddSoldierRequest`(16) / `RemoveSoldierRequest`(17) /
+  `AxisModeChangeRequest`(18) / `FunctionModeChangeRequest`(19) / `BanConnectionRequest`(72) / `ClearBansRequest`(73)
+  —— 这些**既不在冻结回放里、T53 三会话 1 717 帧也没抓到**，「无抓包」成立。
+  复算：
+  ```bash
+  python3 - <<'PY'
+  import glob,gzip,json,collections
+  # ① 冻结语料里的事件名计数
+  c=collections.Counter()
+  for p in glob.glob('.reference/replays/gw2-replays-snapshot/replays/*'):
+      try: lines=gzip.open(p,'rt',encoding='utf-8',errors='replace').read().splitlines()
+      except Exception: continue
+      for ln in lines:
+          try: e=json.loads(ln).get('event') or {}
+          except Exception: continue
+          c.update(e.keys())
+  # ② T53 真帧里的事件名计数
+  live=collections.Counter(json.loads(l)['event'] for l in open('fixtures/protocol_live_frames.jsonl')
+                           if l.startswith('{"dir"'))
+  names=['Tick','Subscribe','ConnectionRemoved','ConnectedToServer','ChangeTeamRequest','RemovePlayerRequest',
+         'EntityRemoved','AddSoldierRequest','RemoveSoldierRequest','AxisModeChangeRequest','FunctionModeChangeRequest',
+         'TargetInfo','RemoveTeam','FunctionActive','FunctionPoints','FunctionsCalculated','QueueDestroyObstacle',
+         'BanConnectionRequest','ClearBansRequest']
+  for n in names: print(n, c.get(n,0), live.get(n,0))
+  PY
+  ```
+
+**同日另一条更正（`EventInfo`，§3.4 表）**：那个表的 `EventInfo` 行原来写的是 `tick`, `event`（顺序反了），
+已就地改成 `event`, `tick` 并加了更正注（依据 `fixtures/struct_audit2.tsv` 的 E1/E3 两列）。
 
 ### 3.4 三个负载结构体（嵌在上面的字段里）
 
@@ -227,7 +299,27 @@ $PY tools/wire_fields.py --verify                      # 上一轮的工具（�
 |---|---|---|---|
 | `GameInfo` | `room_name`, `game_state`, `current_player_count`, `address`, `axis_mode`, `function_mode`, `turn_mode`, `time_mode`, `locked` | `GameInfo.game_info`；**以及 LAN 广播的裸对象** | 逐位 + 观测（3 行） |
 | `GraphwarColor` | `r`, `g`, `b` | `ColorInfo.color` | 逐位 + 观测（3 行） |
-| `EventInfo` | `tick`, `event` | 未观测到上线（内部排序用） | 逐位（无抓包） |
+| `EventInfo` | `event`, `tick`（**T69 更正**：原写 `tick`, `event`，顺序反了，见下） | 未观测到上线（内部排序用） | 逐位（E1 槽 + E3 内存布局，见下） |
+
+> **T69 更正（2026-11-27）· `EventInfo` 的字段顺序是 `event` → `tick`，不是 `tick` → `event`。**
+>
+> 原表述保留在上面（`tick`, `event`），但它与同仓库 `16-client.md` §29.5 的
+> `{"event":<GraphwarEvent>,"tick":N}` 以及 T56 的结构审计**互相矛盾** ⇒ 错的是本节。
+>
+> **依据（三条，均可复跑）**：
+> 1. `fixtures/struct_audit2.tsv` 的 `EventInfo` 行：E1 `serialize_struct` 槽 `0x950560` 的
+>    **N=2**，字段名取自 `Deserialize` visitor 的 `missing_field` 路径（`event` 串在 `0x1bc845`、
+>    `tick` 在 `0x1b925c`），**顺序 = `missing_field` 调用序**：`event`@`0x397592` 先于 `tick`@`0x397843`；
+>    E3 内存布局：`event`@`+0x00`（`GraphwarEvent` 占 `0x48`）、`tick`@`+0x48`（u32，
+>    `0x3d62ac mov ecx,dword ptr [rax+rsi+0x48]`，在 `save_game` `0x3d5740` 内）、元素步长 `0x50`。
+> 2. `src/graphwar_game_recorder.rs:188` 的 `EventInfo` 本轮已改成 `{ event: GraphwarEvent, tick: u32 }`
+>    （T56 改的），录像读写两侧都按这个顺序。
+> 3. 反汇编自证：`python3 tools/addr_probe.py dis 0x397592`（visitor 分支）与
+>    `python3 tools/addr_probe.py dis 0x3d62ac`（`tick` 读 `+0x48`）。
+>
+> **为什么重要**：`EventInfo` 是录像格式的唯一结构体（`save_game` 手写拼接、`replay_player` 解析），
+> 顺序反了会让照文档写录像读写的人把 `event`/`tick` 两个键换个位置。
+
 
 LAN 广播（UDP 发现，§1）的负载**就是** `GameInfo` 这 9 个字段，**没有外层键**：
 

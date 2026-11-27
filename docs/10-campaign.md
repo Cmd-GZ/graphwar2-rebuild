@@ -518,7 +518,12 @@ r8  = 0x95b010         # 闭包 B 的 vtable
 
 #### 运行时交叉验证（385 份 replay，21/21 全对）
 
-本机 `~/.local/share/godot/app_userdata/Graphwar/replays/` 有 **385 份** replay
+> **T69 注（2026-11-27）**：小节标题与下面的 **385 份**是**当时**的语料读数（原文保留）。
+> 当前冻结快照 = **403 个文件 = 401 份回放 + `MANIFEST.tsv` + `SHA256SUMS`**
+> （`fixtures/guardrails.json` 的 `corpus.count` / `corpus.replays`；其中 286 份可读）。
+> 别拿 385/397/400/401 当"现在的份数"，也别拿 403 当"回放份数"——**403 是目录条目数**。
+
+本机 `~/.local/share/godot/app_userdata/Graphwar/replays/` 有 **385 份** replay（T69：当时读数；冻结快照现为 **401 份回放**）
 （gzip 的 **JSONL**，事件名是外部标签，见 `07-protocol.md`）。按 `GameNameInfo.game_name`
 分组，**21 关全部有样本**（关 1 有 31 份、关 16 有 57 份、关 21 有 26 份…）。
 
@@ -676,7 +681,7 @@ func _check_match_over() -> void:
 依据：
 
 * **目标数 / Bot 数 / 回合上限** 三列来自 `10-campaign.md` §7.1（`S` 立即数 + `C` 闭包预设 + `R`
-  385 份回放，21/21 对齐）；本实现直接读 `GwCampaign.LEVELS`（同一个数据源，`campaign.gd` 文件头有出处表）。
+  ~~385 份回放~~ **T69：当时读数，冻结快照现为 401 份回放**，21/21 对齐）；本实现直接读 `GwCampaign.LEVELS`（同一个数据源，`campaign.gd` 文件头有出处表）。
 * **对战关 = 对方全灭**：`15-target-life.md` §1 与 `15-target-life.md` §4.5 —— 45/45 份出现 `EndingGame` 的回放里，
   胜方都是"某队全灭"，`Team2` 存活实体为 0。**观测**。
 * **打靶关 = 靶子全清**：`15-target-life.md` §2.1 证明靶子就是 `Team2` 里的普通实体（`0x46f310` 里发
@@ -735,9 +740,9 @@ func _check_match_over() -> void:
 
 | 结论 | 依据 | 档位 |
 |---|---|---|
-| 复原**不是**重建实体（不新分配 id、不发 `TargetInfo`、不发 `EntityRemoved`） | 造目标的 `0x46f310` **只有 13 个调用点，全在关卡开场**；109 份含目标的回放里目标**从未**被 `EntityRemoved`（`15-target-life.md` §2.2、§4.3 ③） | 逐位验证 + 观测 |
+| 复原**不是**重建实体（不新分配 id、不发 `TargetInfo`、不发 `EntityRemoved`） | 造目标的 `0x46f310` ~~只有 13 个调用点~~ **T69 更正：21 个 call 点**（经 GOT 槽 `0x9bbed8`，全部落在关卡构造函数里，见 `15-target-life.md` §2.2 的更正块）；~~109 份~~ **111 份**含目标的回放里目标**从未**被 `EntityRemoved`（`15-target-life.md` §2.2、§4.3 ③） | 逐位验证 + 观测 |
 | 复原只能表现为 **`LifeInfo{alive:true}`** | 目标只有 `TargetInfo`/`LifeInfo` 两种状态事件；分派器 `0x3e2830` 的 70 个分支里没有一处构造 `life_info`（`15-target-life.md` §3.4） | 逐位验证 + 推断 |
-| 复原**不碰掩膜**（障碍的洞留着） | 掩膜整局只建一次、`ClearObstacles` 397 份里从不中途出现（`15-target-life.md` §3.2 问题 5） | 观测 |
+| 复原**不碰掩膜**（障碍的洞留着） | 掩膜整局只建一次、`ClearObstacles` ~~397 份~~ **T69 复算 401 份**里从不中途出现（`15-target-life.md` §3.2 问题 5） | 观测 |
 | 目标整局**不移动、不重生、不计时** | `PosInfo` 只在开场与开局快照出现（`15-target-life.md` §5.3 #7） | 观测 |
 
 #### 判定点与条件（**推断，且必须当作推断读**）
@@ -754,7 +759,7 @@ func _check_match_over() -> void:
   最强推断（"等价说法：结算后 `Team2` 仍有存活 ⇒ 全部复原"）。
 * **判定时刻**：放在**一次射击结算结束时**（`_settle_round()` 里、判胜负之前）。
   `15-target-life.md` §3.2 问题 1 明确这是**三种候选之一**（射击结算 / `end_turn` / 下次开火前），
-  **二进制里没找到判定点**，语料里 **397 份回放 0 次部分命中**（`15-target-life.md` §4.3 ①）
+  **二进制里没找到判定点**，语料里 **~~397 份~~ T69 复算 401 份回放 0 次部分命中**（`15-target-life.md` §4.3 ①）
   ⇒ **没有真值可以对**。
 * **为什么不写进文档当结论**：`AGENTS.md` 硬规矩 1。本文与代码注释都把它标成
   `推断（依据用户实测 + 15-target-life.md 的形状结论）`。
@@ -793,7 +798,7 @@ func _check_match_over() -> void:
 
 | # | 问题 | 状态 | 缺什么 |
 |---|---|---|---|
-| 1 | 复原的**判定点**（射击结算 / `end_turn` / 下次开火前） | **未知**（本文取"射击结算结束时"） | 二进制里的判定点，或一份**部分命中**的回放（语料 0/397） |
+| 1 | 复原的**判定点**（射击结算 / `end_turn` / 下次开火前） | **未知**（本文取"射击结算结束时"） | 二进制里的判定点，或一份**部分命中**的回放（语料 ~~0/397~~ **T69 复算 0/401**） |
 | 2 | "全部复原"还是"只复原本发打掉的" | **未知**（实现取"全部已摧毁的"，单发场景下两者等价） | 跨回合累积的样本 |
 | 3 | 复原会不会**重置回合计数** | **未知**（实现：不重置） | `15-target-life.md` §5.3 #3，同上缺样本 |
 | 4 | 复原有没有**视觉效果**（火花） | **未知**（实现：无） | 同上 |
@@ -1135,7 +1140,7 @@ fn assign(manager, entity_id: u32, team_key: u8) {      // team_key = 0 → Team
 | 项 | 内容 | 档位 |
 |---|---|---|
 | `LEVELS[21]` | `level_<n>` 键 / `Level <n>` 标题 / `.rodata` 描述原文 / `description_len` / 模式四元组 | **逐位**（21 条 `mov qword [rsp+0x38], len` + 21 条 `mov dword [rsp+0x58], imm32`；描述串在 `.rodata` 首尾相接，长度 21/21 相符） |
-| `SETUPS[21]` | `start_fn` / `preset_fn` / `preset`(+`min_count`) / `second_fn` / 士兵数 / 目标数 / Bot 难度 / 回合上限 | **逐位**（闭包记录 + 立即数）+ **运行时**（385 份回放，§4 的 `R` 列 21/21） |
+| `SETUPS[21]` | `start_fn` / `preset_fn` / `preset`(+`min_count`) / `second_fn` / 士兵数 / 目标数 / Bot 难度 / 回合上限 | **逐位**（闭包记录 + 立即数）+ **运行时**（~~385 份~~ **T69：当时读数，现 401 份**回放，§4 的 `R` 列 21/21） |
 | `campaign.save` | `CAMPAIGN_SAVE_PATH` / `parse_level_key` / `decode_save` / `encode_save` / `save_action` / `save_level` / `refresh_index` | **逐位**（0x417ef0 / 0x418170 / 0x4183b0）；`refresh_index` 的钳位是**观测**（`cmp ebp, 0x14`） |
 | `is_unlocked` | `level_<n>` ⇒ 已解锁到 n（含 n）；刷新按钮那一侧是 `bool = (i <= n+1)` ⇒ **下一关也可玩** | **观测**（谓词 `setbe` + 调用点 `n+1`，`docs/151` §2.3）；属性名仍是推断 |
 | `generate_obstacles` | 按关选生产者：`None` / `generate_center` / `generate(min_count)` | **逐位**（预设本体 + `11-levelgen.md` §5.2 的 13/13 逐位复现） |
@@ -1658,7 +1663,7 @@ objdump -d --start-address=0x464d10 --stop-address=0x46500c <x86>/libgraphwarrus
 >
 > **就地更正 §1 的一句话**：§1 末尾写"要精确复刻每关的障碍/敌人布局，只能靠人补（§7 表格）"
 > —— 这句话在 2026-11-06 的 §12 之后**已经过期**：21 关的六项参数全部从二进制解出、
-> 并与 385 份回放 21/21 对上，**不需要人补任何一格**（§7 表尾那句话也是这个意思）。
+> 并与 385 份回放 21/21 对上，**不需要人补任何一格**（§7 表尾那句话也是这个意思；**T69 注**：385 是当时读数，冻结快照现为 401 份回放，见 §4 的注）。
 > 保留原文不动是为了留痕，以本节为准。
 
 ### 16.1 一句话结论
@@ -1713,10 +1718,10 @@ objdump -d --start-address=0x464d10 --stop-address=0x46500c <x86>/libgraphwarrus
 
 | 参数 | 字段 | 依据 | 档 |
 |---|---|---|---|
-| 障碍模式 | `obstacles` | `C` = `.data.rel.ro` 闭包记录地址（`0x95a350`…`0x95deb0`）+ `R` = 385 份回放 21/21 | **逐位 + 运行时** |
+| 障碍模式 | `obstacles` | `C` = `.data.rel.ro` 闭包记录地址（`0x95a350`…`0x95deb0`）+ `R` = ~~385 份~~ **T69：当时读数，现 401 份**回放 21/21 | **逐位 + 运行时** |
 | `min_count` | `min_count` | `C`（预设 thunk 里 `esi=15/5/10/6`）+ `R`（关 11/18/20 出现过恰好 10、关 5/21 恰好 15） | **逐位 + 运行时** |
 | 士兵数 | `soldiers` | `S` = 开场臂立即数 `edx=N` → `0x476320(mgr, player, N)`；`R` 同值 | **逐位 + 运行时** |
-| 目标数 | `targets` | `S` = `0x46f310(team)` 的调用次数；`R` 同值 | **逐位 + 运行时** |
+| 目标数 | `targets` | `S` = `0x46f310(team)` 的调用次数（**T69 注**：逐关的个数来自关卡构造闭包里的立即数 / 逐关 `start_level` 臂，**不是**把全仓 21 个 call 点加起来数出来的；全仓 call 点 = **21** 个，见 `15-target-life.md` §2.2 的更正块）；`R` 同值 | **逐位 + 运行时** |
 | Bot 难度 | `bot.difficulty` / `bot.tier` | `S`（`bot_added_event` 载荷第 3 个 u32）+ `R`（`bot_N` 皮肤、Bot 名字随机） | **逐位 + 运行时**；⚠️ 与 [`docs/archive/AI.md`](archive/AI.md) 六档表的映射是**推断**，且关 12 的 `50` 对不上任何一列（§6、118 §12.4，**不圆**） |
 | 回合上限 | `turn_limit` | `S` = `turn_limit_info` 载荷 `(1, N)` 的 `N`；`R` = 运行时 `TurnLimitInfo` 21/21 | **逐位 + 运行时** |
 | 标题 + 描述 | `title` / `description` | 21 条 `movabs`/`mov dword` 拼串 + `.rodata` 21 段首尾相接；长度 = `mov qword [rsp+0x38], len` 立即数 21/21 | **逐位** |

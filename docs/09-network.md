@@ -286,6 +286,16 @@ FunctionFireRequest   -> begin_turn -> fire（8 条）-> tick（到期销毁）-
    首回合 `TurnInfo`、最后一条是 `GameStateInfo`；
 4. 按 `TurnInfo` 轮流开火（直线 `0.00`），最多 12 回合，**要求出现 `EndingGame`**。
 
+> **T69 更正（2026-11-27）· 线上没有名为 `EndingGame` 的报文，断言实际是"子串匹配"。**
+> 原句保留。事实：**`EndingGame` 不是事件名**，它是 `GraphwarGameState` 枚举的一个取值（第 6 个，tag 见 `07-protocol.md` §5.2），
+> 线上形态是 `{"GameStateInfo":{"game_state":"EndingGame"}}`（T53 抓到 1 条真帧；
+> `fixtures/protocol_live_frames.jsonl`；另见 `07-protocol.md` §7.8 的口径修正 ①、`16-client.md` §76.1）。
+> 测试里的写法是 `got.iter().any(|m| m.contains("EndingGame"))`（`tests/server_match.rs:407`、`:536`、`:730`、`:893`）——
+> **子串**命中的正是上面那条 `GameStateInfo` JSON 的文本，所以测试是有效的；但把这句话读成"存在 `EndingGame` 事件"
+> 就会去找一个不存在的报文名（`docs/16` §76.1 已把同一写法更正过一次，这里属**回归性复发**）。
+> ⇒ 语义正确的说法是「要求出现 `GameStateInfo` 且 `game_state == "EndingGame"`」；
+> 若以后改成结构化断言，必须用后者（`contains("EndingGame")` 也会命中任意含该串的文本）。
+
 实测：`test result: ok. 1 passed ... finished in 7.03s`。
 
 手工跑同样的事：
@@ -1216,6 +1226,16 @@ EOF 走 peek 返回 0 字节那条（`Err("Connection Lost")`）。
   `GString` 大小：arm64 `lsl x23,x21,#3`，x86 `mov $0x8,%r14d`）；
 * `load_game` **坏行跳过、不中断**（`Result` 被 `drop` 后回到循环头）。
 
+> **T69 复核（2026-11-27）· 这一条的档位是 `观测`，不是"无物证"。**
+> T65 台账（`fixtures/source_audit_docs2.tsv` 行 `09-08`）把它判成 `无物证`，理由是"原始采样没入库"；
+> 但本条的指针是**指令 + 地址**（arm64 `lsl x23,x21,#3`、x86 `mov $0x8,%r14d`，外加 `"user://replays/"` 两版的
+> `.rodata` 偏移与 `mov #len`），符合 `观测`（能指到反汇编）⇒ **不需要降档**，只需要给复跑命令：
+> ```bash
+> python3 tools/addr_probe.py dis 0x3da190      # arm64 load_games（需 --so 指 android 那份）
+> objdump -d --start-address=0x3d76f0 --stop-address=0x3d7950 .reference/game/libgraphwarrust.so | grep -E 'mov.*0x8,'
+> ```
+> 缺的只是"当时那次 `readelf/objdump` 的原始输出"，不影响结论。
+
 ### 12.4 `graphwar_lan_broadcaster_v6`（5 个函数，4 个有 x86 对位）
 
 | 函数 | arm64 | x86 | 比 |
@@ -1244,7 +1264,7 @@ EOF 走 peek 返回 0 字节那条（`Err("Connection Lost")`）。
 
 * **广播里的 `address` 恒为 `[::1]:<port>`**：`set_room_info` 内部
   `IpAddr::from_str("::1")`（arm64 `0x3ddf08`；x86 字面量 `::1` 在 `0x4572ee`）。
-  这给 §1.1 那 385 个 `"[::1]:35245"` 样本提供了**成因**（当时只记"观测"）；
+  这给 §1.1 那 385 个 `"[::1]:35245"` 样本提供了**成因**（当时只记"观测"；**T69 注**：385 是当时的样本读数，见 §1.1 的注）；
 * **帧边界 = UDP 数据报边界**：收侧 `recv_from` 到 **1000 字节**栈缓冲
   （`mov w2,#0x3e8`），`str::from_utf8` → `serde_json` → 插表；发侧 `send_to` 一条
   序列化好的 JSON，**不追加 `\n`、不追加 NUL**。⇒ §11.5 说的"换行分帧"应理解为

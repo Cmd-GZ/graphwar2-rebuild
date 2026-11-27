@@ -276,6 +276,18 @@ editor_plugins/enabled        = ["res://addons/admob/plugin.cfg",
 | 反编译源码可信度 | **105/105 脚本逐 token 与 `.gdc` 字节码一致** | 逐位对照（`tools/gdc_verify_source.py`） |
 | `20-source-recovery.md` 的 5 个行为脚本 | **0 处更正**（5/5 与我用字节码推的伪源码语义一致） | 观测 |
 
+**T69 可复核性声明（2026-11-27）**：本表全部是**运行时/静态 dump 的当场读数**，
+其中**运行时侧用到的 33 个快照没有入库**（当时在 `.agent-work/`）；GDRE 恢复产物在 `rsc/`（**gitignore**）。
+
+* 可复跑（工具都在仓库）：`python3 tools/pck_extract.py --verify`（还原 `rsc/`）→
+  `python3 tools/tscn_inventory.py`（静态节点/连接清单）→ `--runtime`（需要**自己重采**运行时快照，
+  这一步的采集脚本/快照本轮未见入库）；
+  `python3 tools/gdc_verify_source.py`（105 个 `.gd` 逐 token 对 `.gdc`，判"反编译源码可信度"）。
+* 缺什么：那 33 个运行时快照、以及 `--runtime` 对齐所用的快照路径/脚本。
+  ⇒ 表里"静态 vs 运行时（33 个快照）"那一行属 **`观测（当时读数；快照未入库 ⇒ 不可复核）`**，
+  其余几行可用上面三条命令重算（GDRE 恢复、静态节点、`[connection]` 数、`.gd` token 一致）。
+* 结论方向**没有被反证**：T65 本轮只判"无物证"，没有找到与源码/产物冲突之处。
+
 三句话：
 
 1. **静态能补的比想的多**：`theme_override_font_sizes` 有 9 处、`custom_minimum_size` 有 29 处、

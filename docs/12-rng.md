@@ -201,6 +201,31 @@ seed[4] : 19b3275d 35046228 a326ae14 a49a51cd
 
 任何"按 id 排序""按创建顺序""按创建逆序""按队伍交替固定排列"的组合，都无法同时解释这 10 局。
 
+> **⚠️ T69 可复核性声明（2026-11-27）—— 本篇 §3.2 与 §6 的"观测"原始采样不在仓库里。**
+>
+> 受影响的 5 处（T65 审计 §112 / 台账 `fixtures/source_audit_docs2.tsv` 判 `无物证`）：
+> §3.2 的 getrandom 事件序列（3×16 字节）、§6.2 的 10 局 `TurnInfo` 序列、§6.3 的 6 局随机流
+> （`to_4.json` … `to_9.json`，每局 ~20000 个 `next_u64` 值）、§6 的各局 `SoldierInfo` 创建顺序、
+> 「回合出场顺序不从 ChaCha 抽取」这条**负结论**的样本。
+> ⇒ 这些文件当时放在 `.agent-work/`，按 `AGENTS.md`「`.agent-work/` 是可丢弃的」**已不可取**。
+>
+> **档位就地降一级**：上面这些结论的等级从 `观测` 改为
+> **`观测（当时读数；原始采样未入库 ⇒ 现在不可复核）`**，缺的正是"采样本身"。
+> 结论**方向**没有反证（T61/T65 都没推翻"出场顺序不可确定复现"），但**不许当已复核物证引用**。
+>
+> **怎么复跑（探针已在仓库）**：
+> ```bash
+> # ① getrandom / 播种顺序
+> frida -f Graphwar.x86_64 -l tools/hook_getrandom.js --runtime=v8
+> frida -f Graphwar.x86_64 -l tools/hook_seed_order.js
+> # ② 出场顺序 + 随机流（本篇 §6 用的就是它）
+> frida -f Graphwar.x86_64 -l tools/capture_turnorder_rng.js
+> ```
+> 重跑后**把汇总表写进 `fixtures/`**（列表：局号 / 前 3 个 getrandom 长度 / `TurnInfo` 顺序 /
+> 各局关卡生成结束点偏移），不要再引用 `.agent-work/` 路径。
+> ⚠️ 重跑时别把新样本拷进冻结快照（`AGENTS.md`「护栏语料必须冻结」）。
+
+
 ### 6.3 否证一：不来自**我们能看到的** ChaCha 流（原 `59`）
 
 抓 6 局（`to_4.json` … `to_9.json`），每局记录随机流前 ~20000 个值与 `SoldierInfo`/`TurnInfo` 序列。

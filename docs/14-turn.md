@@ -139,6 +139,29 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 
 均值 **165 tick ≈ 2.75 秒**，三次非常一致，所以取常量 `165`。
 
+> **⚠️ T69 可复核性声明（2026-11-27）—— §3.3.2 的六档表与 §4.2 的 165 tick 配对样本都不在仓库里。**
+>
+> T65 审计（`docs/06` §112 / `fixtures/source_audit_docs2.tsv`）把这两处判成 `无物证`：
+> 结论写着 `观测`，但**原始抓包/日志没入库**（当时在 `.agent-work/`，已不可取）。
+>
+> **本轮能补到的（T53 真帧，`fixtures/protocol_live_frames.jsonl`，1 717 条）**：
+> * `QueueDestroyObstacle` / `DestroyObstacle` **各 4 条**，且**两两同坐标成对**：
+>   (15.0528, −12.477) tick=6030 ／ (23.2692, −0.3989) tick=7904 ／ (−9.0509, −13.846) tick=8838 ／
+>   (−24.5537, 3.036) tick=186893。⇒ "先排队、后销毁、坐标逐位相同"这条结构**有新物证**。
+> * **但仍算不出间隔**：帧记录里只有序号 `n`，**没有时间戳**；`DestroyObstacle` 的负载里也**没有 tick 字段**
+>   （只有 `QueueDestroyObstacle` 有）⇒ §4.2 的 `165` 依然只能算"当时读数"。
+> * `EndOfTurnInfo` **9 条，全部 `time_mode=Timer1m`**（`end_of_turn_tick` = 4987/5883/9690/11564/185610/187420/189773/190553…）
+>   ⇒ §3.3.2 的另外五档（`Timer2m/3m/5m/Inf/30s`）**到 T53 仍无真帧**。
+>
+> **档位就地降一级**：六档表与 165 tick 从 `观测` 改为
+> **`观测（当时读数；原始采样未入库 ⇒ 现在不可复核）`**；`165` 在实现里仍是常量（回归保护），
+> 但**不许再写成已复核的真值**。
+>
+> **怎么复跑**：按键循环那六档要人肉点按钮（`TimerInf` 的哨兵 0 尤其），抓包一律走
+> `tools/live_capture/live_wire.js`（T53 的探针，只挂 `recv/send/sendto/recvfrom`）；
+> 想拿间隔就必须**给帧记录加时间戳**（T53 的 `parse_live.py` 只记 `n`）——这一步是缺口，写在这里备查。
+
+
 
 ## 5. 回合计数与结束条件
 
@@ -306,7 +329,7 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
    **一个连续的块**，按 `start_tick` 升序（106/106）；
 4. `(FunctionActive(owner_i), EffectInfo(ExplosionEffect))` —— **每发一对**，
    顺序与①②相同（130/130）；
-5. `QueueDestroyObstacle` 的位置**回放里没有证据**（`06-verification.md` §1.2：400 份里 0 次），
+5. `QueueDestroyObstacle` 的位置**回放里没有证据**（`06-verification.md` §1.2：~~400 份~~ **T69 复算 401 份回放**里 0 次；T53 真帧里有 4 条，见 §4.2 的更正），
    本实现沿用单发实现的"死亡块之后、`FunctionActive` 之前"，这样 `N = 1` 时与旧代码逐字节相同。
 
 #### 7.3.2 "谁排前面"：`TurnInfo` 的公告顺序（**不是** A 类的自由处置）
@@ -352,7 +375,7 @@ Timer1m → Timer2m → Timer3m → Timer5m → TimerInf → Timer30s → (回�
 | 1 | `TurnInfo` / 批内玩家排列的**具体置换** | 与 `12-rng.md` 同一份 `getrandom(16)` 熵；本实现照抄调用方顺序 | **A 类**（不可由输入决定） |
 | 2 | **收集阶段的超时**：多久算超时、超时后那名玩家是否仍消耗一次轮转 | 二进制或抓包里的超时路径；`EndOfTurnInfo.end_of_turn_tick` 在真回放里**恒为 0**（`1793884702` 三回合），60Hz tick 已上万 ⇒ 那个字段不能当截止。`Config::sim_turn_timeout_ticks` 只留旋钮，**不猜数值** | **未知** |
 | 3 | `DeathEffect` vs `AshEffect` 的选择规则 | `EffectInfo` 发射路径的复核；本轮只观测到"两者混排、整体按 `start_tick` 升序" | **未知** |
-| 4 | `QueueDestroyObstacle` 在批里的位置 | 回放不记录这类消息（400 份 0 次）；抓包里能拿到但没做逐批对位 | **未知**（实现里显式声明是重建版规则） |
+| 4 | `QueueDestroyObstacle` 在批里的位置 | 回放不记录这类消息（~~400 份~~ **T69 复算 401 份** 0 次）；抓包里能拿到（T53 真帧 4 条，`fixtures/protocol_live_frames.jsonl`）但没做逐批对位 | **未知**（实现里显式声明是重建版规则） |
 | 5 | **两发同时到达**同一士兵（真并列）谁赢 | 样本里最小间隔 4.0 tick，没有并列（`14-turn.md` §7） | **未知**；实现用 `(弧长, 发序号, id)` 兜底 |
 | 6 | 弹丸飞行速度 | 只知道中位 ≈0.29 单位/tick（p10~p90 0.255~0.300）；**排序不需要它**，只有"绝对时刻"才需要 | **推断** |
 | 7 | `active_tick` 的取值 | 观测到"同批所有发相同"，但绝对值来自哪个时钟没解；实现里用 `now_tick` | **推断** |
@@ -1120,13 +1143,24 @@ d) 的子因（同一套工具输出）：
 `execute_results`（`0x472470`–`0x47351a`）**不是在遍历弹道点，而是在排空一个事件队列**：
 
 ```text
-0x4727c0  mov rax, rbx / add rbx, 0x20      ; 每条记录 0x20 字节
+0x4727c0  cmp rbx, r14 ; je 0x472ed7        ; 循环边界（不在记录体内）
+0x4727c9  mov rax, rbx / add rbx, 0x20      ; 每条记录 0x20 字节
 0x4727d0  mov rbp, [rax]                    ; +0x00 判别值
 0x4727e1  mov r15d, [rax+0x8]               ; +0x08 两个 u32（变体 0 当"点数组指针"用）
 0x4727e5  mov r12d, [rax+0xc]
-0x472804  movsxd rcx, [rip-0x2b100b + rdx*4] ; 跳表 @0x1c1800
+0x472804  lea rsi, [rip-0x2b100b]           ; 跳表基址 @0x1c1800
+0x47280b  movsxd rcx, [rsi + rdx*4]         ; 表项 = int32 相对偏移
 0x472812  jmp rcx
 ```
+
+> **T69 更正（2026-11-27）· 这段的三处地址/操作数写错了（结论不受影响）。**
+> 原文三条：`0x4727c0 mov rax, rbx / add rbx, 0x20`、`0x472804 movsxd rcx, [rip-0x2b100b + rdx*4]`、
+> `0x472812 jmp rcx`。实测（`python3 tools/addr_probe.py dis 0x4727c0` / `dis 0x472804`）：
+> * **`0x4727c0` 是 `cmp rbx, r14`（+`je 0x472ed7`）**；`mov rax, rbx` 在 **`0x4727c9`**、`add rbx, 0x20` 在 **`0x4727cc`**。
+> * `0x472804` 是 **`lea rsi, [rip-0x2b100b]`**（目标 `0x1c1800`，**跳表基址原文是对的**）；
+>   `movsxd rcx, …` 在 **`0x47280b`**，且操作数是 **`[rsi + rdx*4]`** 而**不是** `[rip-… + rdx*4]`
+>   （rip 相对寻址**不能**再叠加变址寄存器，原文那写法在 x86-64 里不存在）。
+> * `0x4727d0 / 0x4727e1 / 0x4727e5 / 0x472812` 四行**与实测逐条相同**。
 
 跳表实测（`tools/` 里没有专用脚本，用 capstone 读 0x1c1800 的 32 位偏移）：
 

@@ -28,6 +28,14 @@ TurnCountInfo
 - 有死亡的回合里，`LifeQueuedDeath` + `EffectInfo(DeathEffect)` 出现在
   `SynchronizingResults` 之后、`FunctionActive` 之前。
 
+> **T69 备注（2026-11-27，归档正文未改）**：上面这几条来自**旧抓包**，原始 `pcap/JSONL` 未入库
+> （T65 台账行 `arx-10` 记作 `无物证`）。
+> 现在有可复核的替代物：T53 官服真帧 `fixtures/protocol_live_frames.jsonl`（1 717 条）里
+> `QueueDestroyObstacle` / `DestroyObstacle` **各 4 条、同坐标成对**（如 `tick=6030` 的
+> `(15.0528,−12.477)`、`tick=7904` 的 `(23.2692,−0.3989)`），足以复核"先排队、后销毁、坐标逐位相同"这条**结构**；
+> 但 **"要等若干 tick"这个量**仍算不出来 —— 帧记录里没有时间戳，`DestroyObstacle` 也没有 `tick` 字段
+> （见 `docs/14-turn.md` §4.2 的 T69 声明）。⇒ 这一条**结构部分=观测（有真帧）**、**延迟量=当时读数**。
+
 ## 2. 实现
 
 `game::Match::fire` 现在按这个顺序产出报文：

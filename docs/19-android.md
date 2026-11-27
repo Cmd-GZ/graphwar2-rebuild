@@ -52,6 +52,33 @@
 | Android `.so` | `0x179000` == `0x179000`（相同） | **`0x4000`** |
 | Windows DLL | `.rdata` 文件偏移 `0x14c4400`（PE 节表） | `.text` 文件偏移 `0x400` |
 
+> **T69 更正（2026-11-27）· Android 那列写"单一差值 `0x4000`"是错的 —— 差值**按段**不同，必须查段表。**
+>
+> 用 `readelf -lW` 读两份 `.so` 的 `PT_LOAD`（`python3` 解析 program header 亦可），实测：
+>
+> | 段 | Android `android-2.0.60/libgraphwarrust.so`（vaddr − offset） | Linux `.reference/game/libgraphwarrust.so` |
+> |---|---:|---:|
+> | LOAD#1（含 ELF 头 + `.rodata` 起始段） | `0x0` | `0x0` |
+> | LOAD#2（**`.text`**） | **`0x4000`** | **`0x1000`** |
+> | LOAD#3（`.data.rel.ro` 等） | **`0x8000`** | `0x2000` |
+> | LOAD#4 | `0xc000` | `0x3000` |
+>
+> ⇒ 原文那一行只对**写 `.text` 里的地址**成立；换算 `.data.rel.ro` / `.data` 里的地址时会**错 `0x4000`**。
+> 复跑：
+> ```bash
+> python3 - <<'PY'
+> import struct
+> for path in ['.reference/steam/android-2.0.60/libgraphwarrust.so','.reference/game/libgraphwarrust.so']:
+>     d=open(path,'rb').read(64)
+>     phoff=struct.unpack_from('<Q',d,0x20)[0]; phes=struct.unpack_from('<H',d,0x36)[0]; phn=struct.unpack_from('<H',d,0x38)[0]
+>     f=open(path,'rb'); f.seek(phoff); ph=f.read(phes*phn)
+>     print('==',path)
+>     for i in range(phn):
+>         o=i*phes; t,fl=struct.unpack_from('<II',ph,o); off,va,_,fs,ms,al=struct.unpack_from('<QQQQQQ',ph,o+8)
+>         if t==1: print('  LOAD off=0x%x vaddr=0x%x delta=0x%x'%(off,va,va-off))
+> PY
+> ```
+
 > ⚠️ `AGENTS.md` 的"Ghidra 地址 = 虚地址 + `0x100000`"只对 **Linux 那份**成立。
 > 拿 Android 的地址去 REA/Ghidra 里查之前必须先按上表换算，否则会命中无关函数
 > （正是 `AGENTS.md` 记的那个"静默按文件偏移重解释"的坑）。
