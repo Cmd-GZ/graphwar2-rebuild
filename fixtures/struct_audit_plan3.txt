@@ -226,3 +226,18 @@ COVERAGE_MATRIX_UPSTREAM=$MAIN/.reference/upstream $PY tools/coverage_matrix.py 
 $PY tools/check_doc_refs.py
 $PY tools/boundary_audit.py --check
 ```
+
+## 7. 追记（预注册**之后**发生的事；判据/期望一个字没改，只记事实）
+
+* **rebase**：本分支从基点 `6ff8938` rebase 到 `f5a43d0`（master，晚 22 个 commit：T53/T54/T55/T57/T58/
+  T59/T61/T62/T63/T64/T65/T68/T69）。冲突解在 `docs/06` §117.6 逐条写了；
+  `src/_scaffold/protocol.rs` 是**自动合并**（T53 真帧硬闸 + T64 的真帧 round-trip 都保住）。
+* **节号顺延**：§111 已被 T68 占、§112=T65、§113=T62、§114=T63、§115=T64、§116=T69
+  （`tools/docsec.py check` 现场读数）⇒ 本轮记录顺延到 **§117**。
+* **§2.3 的"3 处 → 2 处"变成"3 处 → 1 处"**：lead 批准了 §2.3 里点名的两条硬约束（改
+  `tests/wire_format.rs` 的 `"Timers1m"` 错字 + `_scaffold/broker.rs` 的 `i64`→`u32`），
+  所以 JSON 视图本身也被消掉，`protocol::GameInfo` 变成 `pub use crate::events::GameInfo;`
+  的**同一类型**（只留 serde 两个进出口）。判据 P-A1..P-A4 与 E8 判据不受影响。
+* **§3.3 的预测 vs 实际**：预测"≥9 行仍 unknown、至多 2–3 行能升档"。实际：4 行拿到上界、
+  1 行升到 mismatch（`PatternSegment`）、其余 7–8 行仍 unknown（其中 3 行补了函数指针槽证据）。
+  ⇒ **预测偏保守**（多 1–2 行拿到上界），如实记在这里。

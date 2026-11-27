@@ -1188,14 +1188,14 @@ def cmd_tsv2(p, args):
         judge = "match" if (len(bnames) == len(ofields) == (k or -1) and bnames == ofields and not bad) else "mismatch"
         note = ("**字段数/键序 match；5 个枚举字段已落地成真类型**（T66）：" + "；".join(ok)
                 if not bad else "**类型 mismatch**：" + "；".join(bad))
-        note += ("｜**我方 3 处 → 2 处（T66）**：权威 = `src/events.rs`（本行「我方字段集」列）；"
-                 "JSON 视图 = `src/_scaffold/protocol.rs`（字段同名同序、枚举用线上串承载），"
-                 "`Broadcast` 是该视图的**别名**（原版只有一个 `struct GameInfo`）。"
-                 "为什么没压到「1 处定义」：见 `fixtures/struct_audit_plan3.txt` §2.3 的两条硬约束"
-                 "（`_scaffold/broker.rs` 的 i64 测试助手、`tests/wire_format.rs` 的 `\"Timers1m\"` 错字断言）")
+        note += ("｜**我方 3 处 → 1 处（T66，lead 授权后达成）**：结构体定义只剩 `src/events.rs` 一处"
+                 "（本行「我方字段集」列）；`src/_scaffold/protocol.rs` 里的是 `pub use crate::events::GameInfo;`"
+                 "（**同一类型**，只提供 serde 两个进出口 `to_json`/`parse`），`Broadcast` 是该类型的**别名**"
+                 "（原版只有一个 `struct GameInfo`）。达成条件 = lead 批准改 `tests/wire_format.rs` 的 "
+                 "`\"Timers1m\"` 错字（真值 `Timer1m`）+ `_scaffold/broker.rs` 的 `i64`→`u32`")
         note += "｜**仍登记**：`address` 身份（32B/1B tag/2 变体，形状=观测、身份=推断）"
         rows.append([name,
-                     "%s（权威；`GameInfo`）；JSON 视图在 src/_scaffold/protocol.rs（`Broadcast` 为其别名）" % ours_path,
+                     "%s（`GameInfo`，**唯一结构体定义**；`_scaffold/protocol.rs` 里是同一类型的 `pub use` + serde 进出口，`Broadcast` = 别名）" % ours_path,
                      "%d 字段：%s" % (len(ofields), ",".join("%s:%s" % (f, t) for f, t in mine[2]) if mine else "?"),
                      "E1 slot=%s→%s N=%s；E2 ser=%s；E3 值偏移见括号；E5 单态：%s" % (
                          fmt(slot), fmt(sva), k, fmt(serf),
@@ -1311,8 +1311,16 @@ def cmd_tsv2(p, args):
                 e8txt += "；…共 %d 条合格源，取 min" % len(found)
         else:
             callers = sorted({p.ix.func_of(x) for x in p.ix.calls.get(anchor, [])} - {None})
-            e8txt = "E8a/E8b **无合格源**（直接调用者 %d 个：%s；判据要求 U≥下界）" % (
-                len(callers), ", ".join(fmt(c) for c in callers[:4]) or "无") + "；E8c 无自夹逼"
+            slots = [sl for sl, ad in p.rel.items() if ad == anchor]
+            disp = []
+            for sl in slots:
+                for rec in p.ix.refs.get(sl, ()):
+                    f = p.ix.func_of(rec[0])
+                    disp.append("%s@%s" % (fmt(f) if f else "?", fmt(rec[0])))
+            e8txt = ("E8a/E8b **无合格源**（直接调用者 %d 个：%s；函数指针槽 %d 个%s；判据要求 U≥下界）" % (
+                len(callers), ", ".join(fmt(c) for c in callers[:4]) or "无",
+                len(slots), ("（派发点 " + ", ".join(disp[:4]) + "）") if disp else "（连静态槽都没有）")
+                + "；E8c 无自夹逼")
         inside = [o for o in offs if u is not None and o < u]
         # --- 判定 ---
         ours_off = _ours_offsets(ofields) if ofields else None
@@ -1391,7 +1399,7 @@ def cmd_tsv2(p, args):
 FRAME_MNEMS = ("sub",)
 
 
-def _e8_dataflow(p, f, call_targets):
+def _e8_dataflow(p, f, call_targets, dispatch_addrs=frozenset()):
     """在 f 里做**直线**数据流：reg → ("stack", k) / ("heap_imm", n) / ("mem", 0)。
 
     ⚠️ 跨 `call/jmp/j*/ret` 一律清空（陈旧值会伪造夹逼）；因此只会**漏**，不会凭空造。
@@ -1443,8 +1451,8 @@ def _e8_dataflow(p, f, call_targets):
                 state["rax"] = ("heap_imm", size)
             # 目标：`call rel32` 的立即数在 call_targets 里
             im = _imms(x)
-            if im and im[0] in call_targets:
-                out.append((x.address, im[0], state.get("rdi"), state.get("rcx"),
+            if (im and im[0] in call_targets) or (x.address in dispatch_addrs):
+                out.append((x.address, im[0] if im else 0, state.get("rdi"), state.get("rcx"),
                             state.get("rdx"), state.get("r8")))
         if x.mnemonic.startswith(("ret", "call", "jmp", "j", "loop")):
             state.clear()
@@ -1458,12 +1466,24 @@ def e8_bounds(p, anchor):
     w = _struct_window(p, anchor)
     lower = w[2] if w else 0
     found = []
+    # 直接 `call rel32` 的调用者 + **函数指针槽派发**的调用者（T66 第二轮：
+    # 3 个类 0 个直接调用者，走 `.data.rel.ro` 的 R_X86_64_RELATIVE 槽 ⇒ 那条链也要算进来；
+    # 这就是 `tools/ptr_slots.py` 的判据，只是搬进本工具、不再另起一套）
     callers = sorted({p.ix.func_of(s) for s in p.ix.calls.get(anchor, [])} - {None})
+    slots = [sl for sl, ad in p.rel.items() if ad == anchor]
+    dispatch = set()
+    for sl in slots:
+        for rec in p.ix.refs.get(sl, ()):
+            dispatch.add(rec[0])
+            f = p.ix.func_of(rec[0])
+            if f is not None:
+                callers.append(f)
+    callers = sorted(set(callers))
     targets = {anchor, 0}
     for f in callers:
-        frame, calls, _ = _e8_dataflow(p, f, targets)
+        frame, calls, _ = _e8_dataflow(p, f, targets, frozenset(dispatch))
         for (addr, tgt, rdi, rcx, rdx, r8) in calls:
-            if tgt != anchor:
+            if tgt != anchor and addr not in dispatch:
                 continue
             if rdi is not None and rdi[0] == "stack":
                 u = frame - rdi[1]
