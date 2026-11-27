@@ -284,6 +284,27 @@ impl TurnMode {
     pub const fn is_sequential(self) -> bool {
         matches!(self, TurnMode::SequentialTurns)
     }
+
+    /// 协议里用的名字（serde 外部表示的变体名）。
+    ///
+    /// **逐位**：单态 `0x3cbf70` 没有跳表（2 变体走 `cmp byte,1` + `jne`），两个变体名
+    /// 都由 `Serialize` 的 `lea r?,[rip+变体名]` + `mov r32,LEN` 取用（LEN 自校验）。
+    /// 见 `fixtures/struct_audit2.tsv` 的 `TurnMode` 行与 `docs/06` §109.4。
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TurnMode::SequentialTurns => "SequentialTurns",
+            TurnMode::SimultaneousTurns => "SimultaneousTurns",
+        }
+    }
+
+    /// 从协议名解析（= serde 的 `visit_str` 逐名字比较；未知名字 ⇒ `None`）。
+    pub fn from_str(s: &str) -> Option<Self> {
+        Some(match s {
+            "SequentialTurns" => TurnMode::SequentialTurns,
+            "SimultaneousTurns" => TurnMode::SimultaneousTurns,
+            _ => return None,
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
