@@ -17777,7 +17777,7 @@ cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy 
 判据（沿用 T31 规格 §3①）：**只有"Rust 侧已有复原实现且能指到地址"的才搬**；
 纯视图（节点属性/字号/动画/资源加载/引擎 API 调用）不搬 —— 搬了只是把引擎侧代码在 Rust 里再抄一遍。
 
-台账：**`fixtures/controller_migration2_ledger.tsv`（36 行：24 `move` / 5 `partial` / 7 `keep`）**，
+台账：**`fixtures/controller_migration2_ledger.tsv`（36 行：**20 `move` / 3 `partial` / 13 `keep`**）**，
 单独 commit（`03c18df`），先写台账再动代码。每行的"来源证据档"与"不搬缺什么"都在表里。
 
 **范围声明**（`tools/merge_check.py` 的禁区放行；这四个是任务书指定的迁移目标，逐个都写了理由）：

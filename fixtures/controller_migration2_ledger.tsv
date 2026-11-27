@@ -18,7 +18,12 @@
 # 判据（沿用 T31 规格 §3①）：**只有"Rust 侧已有复原实现且能指到地址"的才搬**；
 # 纯视图（节点属性/颜色/字号/动画表现/资源加载）不搬 —— 搬了只是把引擎侧代码在 Rust 里再抄一遍。
 #
-# 统计（本表 36 行）：move 24 段 / partial 5 段 / keep 7 段。
+# 统计（本表 36 行，按实际 `verdict` 列复算：`awk -F'\t' 'NR>1&&$1!~/^#/&&NF>1{print $7}' | sort | uniq -c`）：
+#   **move 20 段 / partial 3 段 / keep 13 段**。
+#   move：A02/A03/A04/A07（音频 4）、E02–E09（求值 8）、F02–F05/F08（帧层 5）、C01–C03（配色 3）；
+#   partial：A06（加载：文件名从 Rust 取、`load()` 留 .gd）、A11（generator 常数搬、push 循环留）、
+#            A12（有效静音规则搬、`AudioServer` 调用留）；
+#   keep：13 段全部是"视图/引擎侧/给人读的对照表"（每行的理由在 `missing_if_kept` 列）。
 # 落成 4 个 scaffold 出口（`src/_scaffold/`，原版没有这些类，只做"取值/规则"出口）：
 #   `GwAudioControl`（audio_control_class.rs）、`GwMathExpr`（math_expr_class.rs）、
 #   `GwStreamBuffer`（stream_buffer_class.rs）、`GwColorManager`（color_manager_class.rs）。
