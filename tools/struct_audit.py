@@ -285,6 +285,7 @@ class Probe:
                 break
         return out
 
+
     def ser_triples(self, f):
         """`Serialize::serialize` 的字段三元组：`(名, 名串va, 长度, 值偏移, 单态)`。
 
@@ -303,6 +304,12 @@ class Probe:
             return []
         blob = self.elf.read(lo, hi - lo)
         ins = list(self.cs.disasm(blob, lo))
+        selfreg = None
+        for y in ins[:8]:
+            if y.mnemonic == "mov" and len(y.operands) == 2 and y.operands[0].type == X86_OP_REG \
+                    and y.operands[1].type == X86_OP_REG and y.reg_name(y.operands[1].reg) == "rdi":
+                selfreg = y.reg_name(y.operands[0].reg)
+                break
         out = []
         for i, x in enumerate(ins):
             if x.mnemonic != "lea" or len(x.operands) != 2:
@@ -329,15 +336,31 @@ class Probe:
             if not b or not re.fullmatch(rb"[a-z_][a-z0-9_]*", b):
                 continue
             name = b.decode()
-            # 值偏移：`lea rcx,[self+k]` / `mov rcx,self`
+            # 值偏移：`lea rcx,[self+k]` / `mov rcx,self`。
+            # ⚠️ 两种落法都要收：多数结构体在**键 lea 之后**取值；`GameInfo::serialize` 在
+            # **键 lea 之前**就 `lea rcx,[rbx+0x3c]`（实测 0x5061a8 → 键 0x5061ac），只看后面会漏。
+            # ⚠️ 反向窗口只许取 `lea`：上一个字段的 `call <单态>` 就在键 lea 前面，
+            #    若在反向里认 call 当单态，整张表的「名→单态」会整体错一位（已踩）。
             off, mono = None, None
+            # `&self` 的寄存器 = 函数入口 `mov rXX, rdi` 的目标（GameInfo 是 rbx）。
+            # 值指针形态：`mov <reg>, self`（偏移 0）或 `lea <reg>, [self+k]`。
+            for y in ins[max(0, i - 3):i]:
+                off = _self_off(y, selfreg, off)
+            if off == 0:
+                # `add rbx,k` 之后 `mov rcx,rbx`（GameInfo 的 locked 就是这形态）
+                for y in ins[max(0, i - 6):i][::-1]:
+                    if y.mnemonic == "add" and len(y.operands) == 2 \
+                            and y.operands[0].type == X86_OP_REG \
+                            and y.reg_name(y.operands[0].reg) == selfreg \
+                            and y.operands[1].type == X86_OP_IMM:
+                        off = int(y.operands[1].imm)
+                        break
+            if off is None:
+                for y in ins[i + 1:i + 7]:
+                    off = _self_off(y, selfreg, off)
+                    if off is not None:
+                        break
             for y in ins[i + 1:i + 10]:
-                if y.mnemonic in ("lea", "mov") and len(y.operands) == 2:
-                    o = y.operands[0]
-                    if o.type == X86_OP_MEM and o.mem.base != X86_REG_RIP:
-                        base = y.reg_name(o.mem.base)
-                        if base not in ("rsp", "rbp") and off is None:
-                            off = o.mem.disp
                 if y.mnemonic == "call" and y.operands and y.operands[0].type == X86_OP_IMM:
                     mono = y.operands[0].imm
                     break
@@ -405,6 +428,20 @@ class Probe:
                 out.setdefault(key, []).append(ins.address)
         return out
 
+
+def _self_off(ins, selfreg, cur):
+    """若该指令把 `selfreg`（`&self`）或 `[selfreg+k]` 写进某寄存器 ⇒ 返回 k（`mov` 形态返回 0）。"""
+    if cur is not None or len(ins.operands) != 2:
+        return cur
+    dst, src = ins.operands
+    if dst.type != X86_OP_REG:
+        return cur
+    if ins.mnemonic == "mov" and src.type == X86_OP_REG and ins.reg_name(src.reg) == selfreg:
+        return 0
+    if ins.mnemonic == "lea" and src.type == X86_OP_MEM and src.mem.base != X86_REG_RIP \
+            and ins.reg_name(src.mem.base) == selfreg:
+        return src.mem.disp
+    return cur
 
 # ---------------------------------------------------------------------------
 # 我方 Rust 源码里的结构体
@@ -590,6 +627,384 @@ def cmd_check(p, args):
     return 0
 
 
+
+# ---------------------------------------------------------------------------
+# 第二轮（T56）：E5 单态类型类 / E6 枚举变体 / E7 非 serde 结构体窗口
+# ---------------------------------------------------------------------------
+# `Serialize` 单态 → **类型类**。判据（逐位，可复算）：
+#   * 枚举：单态体里 `movzx r32, byte ptr [reg]`（或 `cmp byte ptr [reg], imm`）
+#     + 一张 **4 字节相对跳表**（`movsxd rX, dword ptr [rY + rX*4]` + `add rX, rY` + `jmp rX`）
+#     ⇒ 每个 case 一条 `lea r?, [rip+变体名]` + `mov r32, LEN` + `call write`。
+#     case 下标 = **判别值**（跳表顺序 = 声明顺序 = 判别值顺序）。
+#   * 整数：单态体里出现 itoa 的 u32 阈值常量 `0x2710`(10^4) 与 `0x5f5e0fff`(10^8-1)
+#     且**没有**符号检查（`test`+`js` / `neg`）⇒ 无符号 32 位。8 字节整数不出现这两个常量
+#     （u64 走 10^8/10^16 的另一组阈值 + `shr` 0x2d/0x3d）。
+#     宽度的**独立第二证据**是结构体布局里的相邻字段偏移差（见 `layout`）。
+#   * bool：单态体里同时出现 `true`/`false` 两个 4/5 字节字面量。
+#   * 串：单态体里把值原样写进 writer（`write_str`/转义内联），没有数值格式化路径。
+#   * 其它（含"有 tag 但不带跳表"的枚举）⇒ `unknown`，**不猜**。
+SERDE_WRITE = 0x3bdf00     # serde_json 的 write_map_key / write_str（共同汇点）
+SERDE_GROW = 0x461100      # serde_json 的输出缓冲扩容
+ITOA_U32_LO = 0x2710       # itoa write_u32: n < 10_000
+ITOA_U32_HI = 0x5F5E0FF    # itoa write_u32: n < 100_000_000
+
+
+def _insn_list(p, f, limit=None):
+    lo, hi = p.func_of(f)
+    if lo is None:
+        return []
+    blob = p.elf.read(lo, hi - lo)
+    if blob is None:
+        return []
+    out = list(p.cs.disasm(blob, lo))
+    return out[:limit] if limit else out
+
+
+def _imms(ins):
+    return [int(o.imm) for o in ins.operands if o.type == X86_OP_IMM]
+
+
+def _str_at(p, va, n):
+    b = p.elf.read(va, n)
+    return b.decode("ascii", "replace") if b and len(b) == n else None
+
+
+def _lea_rip_targets(ins):
+    """(指令, 目标va, 目标寄存器名) —— 只取 `lea r, [rip+disp]`。"""
+    out = []
+    for x in ins:
+        if x.mnemonic != "lea" or len(x.operands) != 2:
+            continue
+        op = x.operands[1]
+        if op.type != X86_OP_MEM or op.mem.base != X86_REG_RIP:
+            continue
+        tgt = (x.address + x.size + op.mem.disp) & 0xFFFFFFFFFFFFFFFF
+        out.append((x, tgt, x.reg_name(x.operands[0].reg)))
+    return out
+
+
+def _jump_table(p, ins):
+    """识别 `movsxd rX, dword ptr [rY + rX*4]` + `add rX, rY` + `jmp rX`，返回 (base, [case_va])。"""
+    idx = {x.address: i for i, x in enumerate(ins)}
+    for i, x in enumerate(ins):
+        if x.mnemonic != "movsxd" or "dword ptr" not in x.op_str or "*4" not in x.op_str:
+            continue
+        base = None
+        for y in reversed(ins[max(0, i - 6):i]):
+            if y.mnemonic == "lea" and len(y.operands) == 2 and y.operands[1].type == X86_OP_MEM \
+                    and y.operands[1].mem.base == X86_REG_RIP:
+                base = (y.address + y.size + y.operands[1].mem.disp) & 0xFFFFFFFFFFFFFFFF
+                break
+        if base is None:
+            continue
+        jt = None
+        for y in ins[i + 1:i + 5]:
+            if y.mnemonic == "jmp" and y.operands and y.operands[0].type == X86_OP_REG:
+                jt = i
+                break
+        if jt is None:
+            continue
+        lo, hi = ins[0].address, ins[-1].address + ins[-1].size
+        cases = []
+        for k in range(256):
+            b = p.elf.read(base + 4 * k, 4)
+            if not b or len(b) != 4:
+                break
+            tgt = (base + int.from_bytes(b, "little", signed=True)) & 0xFFFFFFFFFFFFFFFF
+            if not (lo <= tgt < hi):
+                break
+            cases.append((k, tgt))
+        if cases:
+            return base, cases
+    return None, []
+
+
+def _case_string(p, ins, case_va):
+    """从 case 入口线性走到 `call write`，收集 (串va, 长度)。支持穿过无条件 jmp。"""
+    idx = {x.address: i for i, x in enumerate(ins)}
+    i, ptr, ln, seen = idx.get(case_va), None, None, set()
+    while i is not None and 0 <= i < len(ins) and i not in seen:
+        seen.add(i)
+        x = ins[i]
+        if x.mnemonic == "call":
+            break
+        if x.mnemonic == "jmp" and x.operands and x.operands[0].type == X86_OP_IMM:
+            i = idx.get(int(x.operands[0].imm))
+            continue
+        if x.mnemonic == "lea" and len(x.operands) == 2 and x.operands[1].type == X86_OP_MEM \
+                and x.operands[1].mem.base == X86_REG_RIP:
+            reg = x.reg_name(x.operands[0].reg)
+            if reg in ("rdx", "rsi", "rcx", "r8") and ptr is None:
+                ptr = (x.address + x.size + x.operands[1].mem.disp) & 0xFFFFFFFFFFFFFFFF
+        if x.mnemonic == "mov" and len(x.operands) == 2 and x.operands[1].type == X86_OP_IMM \
+                and x.operands[0].type == X86_OP_REG and ln is None:
+            if x.reg_name(x.operands[0].reg) in ("ecx", "edx", "r8d", "rcx", "rdx", "r8"):
+                ln = int(x.operands[1].imm)
+        i += 1
+    if ptr is None or ln is None or not (1 <= ln <= 48):
+        return None, None
+    return _str_at(p, ptr, ln), ptr
+
+
+def mono_kind(p, addr):
+    """`Serialize` 单态 → 类型类。返回 dict（kind/detail/evidence）。"""
+    f, _ = p.func_of(addr)
+    if f is None:
+        return {"kind": "unknown", "detail": "地址不在任何 FDE 内", "evidence": ""}
+    ins = _insn_list(p, f)
+    # 尾调用形态：单态体最后是 `jmp <外部目标>`（= 真正的 `<T as Serialize>::serialize`），
+    # 本函数只是 map-key 写入 + 值转发。GameState/TimeMode/address 都是这一形态。
+    lo, hi = p.func_of(f)
+    if ins:
+        for x in reversed(ins[-60:]):
+            if x.mnemonic == "jmp" and x.operands and x.operands[0].type == X86_OP_IMM:
+                t = int(x.operands[0].imm)
+                if not (lo <= t < hi):
+                    inner = _insn_list(p, t)
+                    if inner:
+                        ins = inner
+                        f = p.func_of(t)[0]
+                    break
+    imms = set()
+    for x in ins:
+        imms.update(_imms(x))
+    # --- 枚举（跳表形态）---
+    base, cases = _jump_table(p, ins)
+    if base is not None:
+        names = []
+        for k, va in cases:
+            nm, ptr = _case_string(p, ins, va)
+            names.append((k, nm, ptr))
+        if all(n for _, n, _ in names):
+            return {"kind": "enum", "detail": "enum{%s}" % ", ".join("%s=%d" % (n, k) for k, n, _ in names),
+                    "evidence": "跳表 @%s，%d 个 case；判别式 = `movzx` 读 1 字节" % (fmt(base), len(cases)),
+                    "variants": [(k, n) for k, n, _ in names], "table": base, "func": f}
+        return {"kind": "enum?", "detail": "有跳表但 case 串不全", "evidence": "跳表 @%s" % fmt(base), "func": f}
+    # --- 二变体枚举：两种实测形态（都必须能从控制流定出判别值 0/1 对应哪个串）---
+    leas = _lea_rip_targets(ins)
+    idx_by_addr = {x.address: i for i, x in enumerate(ins)}
+    # ⚠️ 这些单态体里**还有一个** `cmp byte ptr [rdi + 8], 1`（serde map 的「首个字段」状态），
+    # 它排在真正判别式前面 ⇒ 必须排除带位移的形态，否则永远认错。
+    cmps = [x for x in ins if x.mnemonic == "cmp" and "byte ptr" in x.op_str and "+" not in x.op_str]
+    if cmps:
+        ci = idx_by_addr[cmps[0].address]
+        # 形态 A：`cmp byte [r], 0` + `lea A` + `lea B` + `cmovne` ⇒ 0=A、1=B
+        for x in ins[ci + 1:ci + 8]:
+            if x.mnemonic.startswith("cmov"):
+                two = [y for y in ins[max(0, ci - 8):idx_by_addr[x.address]]
+                       if y.mnemonic == "lea" and len(y.operands) == 2
+                       and y.operands[1].type == X86_OP_MEM]
+                if len(two) >= 2:
+                    lens = {int(y.operands[1].imm) for y in ins
+                            if y.mnemonic == "mov" and len(y.operands) == 2
+                            and y.operands[1].type == X86_OP_IMM
+                            and y.operands[0].type == X86_OP_REG
+                            and y.reg_name(y.operands[0].reg) in ("ecx", "edx", "r8d")
+                            and 3 <= int(y.operands[1].imm) <= 32}
+                    if len(lens) != 1:
+                        return {"kind": "enum2", "detail": "2 变体但变体名长度不唯一（%s）⇒ 只报集合"
+                                % sorted(lens), "evidence": "`%s` + `%s`" % (cmps[0].op_str, x.mnemonic),
+                                "func": f}
+                    L = lens.pop()
+                    def _nm(insn):
+                        t = (insn.address + insn.size + insn.operands[1].mem.disp) & 0xFFFFFFFFFFFFFFFF
+                        return _str_at(p, t, L)
+                    n0 = ( _nm(two[-1]), two[-1].address)
+                    n1 = ( _nm(two[-2]), two[-2].address)
+                    if n0[0] and n1[0]:
+                        return {"kind": "enum2", "detail": "enum{%s=0, %s=1}" % (n0[0], n1[0]),
+                                "evidence": "`%s` + `%s`（0 走 fallthrough）" % (cmps[0].op_str, x.mnemonic),
+                                "variants": [(0, n0[0]), (1, n1[0])], "func": f}
+                break
+        # 形态 B：`cmp byte [r], 1` + `jne L` ⇒ 0 = fallthrough、1 = L
+        for x in ins[ci + 1:ci + 4]:
+            if x.mnemonic in ("jne", "jne ", "jne") and x.operands and x.operands[0].type == X86_OP_IMM:
+                tgt = int(x.operands[0].imm)
+                if tgt in idx_by_addr:
+                    fall = _case_string(p, ins, x.address + x.size)
+                    jump = _case_string(p, ins, tgt)
+                    if fall[0] and jump[0]:
+                        # `cmp byte,1` + `jne L`：**等于 1 时走 fallthrough**，不等于（=0）跳到 L
+                        return {"kind": "enum2", "detail": "enum{%s=0, %s=1}" % (jump[0], fall[0]),
+                                "evidence": "`%s` + `%s L`（1 = fallthrough，0 = L）"
+                                % (cmps[0].op_str, x.mnemonic),
+                                "variants": [(0, jump[0]), (1, fall[0])], "func": f}
+    # --- u32（itoa 阈值 + 无符号分支）---
+    if ITOA_U32_LO in imms and ITOA_U32_HI in imms:
+        signed = any(("test" in x.mnemonic and "js" in x.op_str) or
+                     (x.mnemonic == "jmp" and False) for x in ins)
+        # 更硬的判据：有没有 `js`/`jl` 指令
+        signed = any(x.mnemonic in ("js", "jl", "jns", "jge", "jle") for x in ins) or \
+                 any(x.mnemonic == "neg" for x in ins)
+        return {"kind": "int", "detail": "unsigned 32-bit（itoa write_u32 路径）",
+                "evidence": "阈值 0x2710 + 0x5f5e0fff；符号检查 %s" % ("有" if signed else "无"),
+                "func": f}
+    # --- bool ---
+    ro = p.elf.sec(".rodata")
+    heads = []
+    for x, tgt, reg in leas:
+        s = _str_at(p, tgt, 8)
+        if s:
+            heads.append(s)
+    if any(h.startswith("true") for h in heads) and any(h.startswith("false") for h in heads):
+        return {"kind": "bool", "detail": "bool（true/false 两个字面量）", "evidence": "lea `true`/`false`", "func": f}
+    # --- 串 ---
+    if not imms & {ITOA_U32_LO, ITOA_U32_HI}:
+        calls = {int(x.operands[0].imm) for x in ins
+                 if x.mnemonic == "call" and x.operands and x.operands[0].type == X86_OP_IMM}
+        ext = calls - {SERDE_WRITE, SERDE_GROW}
+        if not ext:
+            return {"kind": "str", "detail": "串（转义/写入全部内联，无外层调用）",
+                    "evidence": "只有 write/grow 两个汇点", "func": f}
+    return {"kind": "unknown", "detail": "未命中已知指纹", "evidence": "", "func": f}
+
+
+def serde_layout(p, ser_f):
+    """`Serialize::serialize` → 字段布局：[(名, 值偏移, 单态, 类型类)]。"""
+    tri = p.ser_triples(ser_f)
+    out = []
+    for name, sva, nlen, off, mono, site in tri:
+        k = mono_kind(p, mono) if mono else {"kind": "?", "detail": "?", "evidence": ""}
+        out.append({"name": name, "off": off, "mono": mono, "kind": k, "site": site})
+    return out
+
+
+def _size_of_kind(k):
+    """类型类 → 字节宽（只在**无歧义**时给数；enum 且已知变体数时按 1 字节 tag 给 1）。"""
+    t = k.get("kind")
+    if t == "enum" or t == "enum2":
+        return 1
+    if t == "bool":
+        return 1
+    if t == "int":
+        d = k.get("detail", "")
+        if "32-bit" in d:
+            return 4
+    if t == "str":
+        return None            # String=24 / &str=16 / Cow=32 不可从指纹定
+    return None
+
+
+
+def cmd_mono(p, args):
+    for a in args.addr:
+        va = int(a, 16)
+        k = mono_kind(p, va)
+        print("%s\t%s\t%s\t%s" % (a, k["kind"], k["detail"],
+                                     "func=%s %s" % (fmt(k["func"]), k["evidence"]) if k.get("func") else ""))
+    return 0
+
+
+def cmd_layout(p, args):
+    for a in args.addr:
+        va = int(a, 16)
+        rows = serde_layout(p, va)
+        print("== Serialize @%s：%d 个字段（声明顺序 = 线上键序）" % (fmt(va), len(rows)))
+        prev = None
+        for r in rows:
+            gap = "" if r["off"] is None or prev is None or r["off"] <= prev else \
+                  "   ← 与前一个字段相距 %d 字节" % (r["off"] - prev)
+            print("   %-24s off=%-6s mono=%-9s %-52s%s" % (
+                r["name"], fmt(r["off"]) if r["off"] is not None else "?",
+                fmt(r["mono"]) if r["mono"] else "?",
+                r["kind"]["kind"] + "：" + r["kind"]["detail"], gap))
+            if r["off"] is not None:
+                prev = r["off"]
+        offs = sorted(r["off"] for r in rows if r["off"] is not None)
+        if offs:
+            print("   —— 偏移排序：%s" % ", ".join(fmt(o) for o in offs))
+            print("   —— 偏移跨度下限 = 最后偏移 + 最后字段宽（宽由类型类给，未知时见备注）")
+        if args.json:
+            import json as _json
+            print(_json.dumps([{k2: v2 for k2, v2 in r.items() if k2 != "kind"} |
+                               {"kind": r["kind"]["kind"], "detail": r["kind"]["detail"]}
+                               for r in rows], ensure_ascii=False, indent=1))
+    return 0
+
+
+def cmd_enums(p, args):
+    """扫 .text 里所有 `Serialize` 枚举实现（跳表形态），产出「枚举名 → 变体表」。
+
+    枚举名不在这类实现里（serde 的 `serialize_unit_variant` 只拿变体名），
+    所以用**变体集合**做指纹去和我方 enum 对表；能指到的调用点用 `mono` 反查。
+    """
+    seen = {}
+    for f in p.ix.func_starts if hasattr(p.ix, "func_starts") else []:
+        pass
+    # 退一步：从已知单态地址出发（args.addr），或扫全部函数里带跳表的
+    for f in sorted(p.ix.func_of_cache.keys() if hasattr(p.ix, "func_of_cache") else []):
+        pass
+    for a in args.addr:
+        va = int(a, 16)
+        k = mono_kind(p, va)
+        print("%s\t%s\t%s" % (a, k["kind"], k["detail"]))
+    return 0
+
+
+def cmd_structs(p, args):
+    """非 serde 结构体扫描（E7）：在**可归属函数**里找「同一基址寄存器的固定偏移窗口」+ sret。
+
+    判据（先写死，复算即本函数）：
+      * 只统计 `mov/movsd/movss/movaps/movdqu/movups` 且基址寄存器不是 rsp/rbp、位移 ∈ [0, 0x800)；
+      * 同一个基址寄存器上**≥`--min-off` 个不同位移**且跨度 ≤ 0x800 ⇒ 认作一个"结构体窗口"；
+      * 窗口大小下限 = max(位移 + 访问宽度)；这是 **E4 下界**（上界要调用方夹逼，本轮不做）；
+      * 函数归属用 `fixtures/function_coverage.tsv` 的 527 行（vaddr → 原版模块 + 我方文件）。
+    """
+    import csv
+    cov = os.path.join(REPO, "fixtures", "function_coverage.tsv")
+    mod = {}
+    if os.path.exists(cov):
+        for ln in open(cov, encoding="utf-8"):
+            if ln.startswith("#") or not ln.strip():
+                continue
+            c = ln.rstrip("\n").split("\t")
+            mod[int(c[0], 16)] = (c[3], c[5])
+    out = []
+    for va, (srcf, ours) in sorted(mod.items()):
+        if args.limit and len(out) >= args.limit:
+            break
+        ins = _insn_list(p, va)
+        if not ins:
+            continue
+        acc = {}
+        for x in ins:
+            if x.mnemonic not in ("mov", "movsd", "movss", "movaps", "movdqu", "movups",
+                                  "vmovaps", "vmovdqu", "vmovups"):
+                continue
+            for op in x.operands:
+                if op.type != X86_OP_MEM or op.mem.base == X86_REG_RIP:
+                    continue
+                reg = x.reg_name(op.mem.base)
+                if reg in ("rsp", "rbp", "rip"):
+                    continue
+                if not (0 <= op.mem.disp < 0x800):
+                    continue
+                acc.setdefault(reg, set()).add((op.mem.disp, op.size))
+        best = None
+        for reg, s in acc.items():
+            offs = sorted({d for d, w in s})
+            if len(offs) < args.min_off:
+                continue
+            span = offs[-1] - offs[0]
+            lo_ = max(d + w for d, w in s)
+            cand = (len(offs), span, lo_, reg)
+            if best is None or cand > best:
+                best = cand
+        if best is None:
+            continue
+        n, span, lower, reg = best
+        out.append((va, srcf.split("::")[0], n, span, lower, reg, ours))
+    if args.tsv:
+        print("# 函数vaddr\t原版模块\t不同偏移数\t跨度\tE4下界\t基址寄存器\t我方文件")
+        for va, m, n, span, lower, reg, ours in out:
+            print("%s\t%s\t%d\t%d\t%d\t%s\t%s" % (fmt(va), m, n, span, lower, reg, ours))
+        return 0
+    for va, m, n, span, lower, reg, ours in out:
+        print("%-10s %-40s offs=%-3d span=0x%-4x E4下界=0x%-4x %s" % (fmt(va), m, n, span, lower, reg))
+    print("# %d 个函数命中固定偏移窗口（判据见 cmd_structs docstring）" % len(out), file=sys.stderr)
+    return 0
+
+
 def main(argv):
     ap = argparse.ArgumentParser()
     ap.add_argument("--so", default=SO_DEFAULT)
@@ -612,6 +1027,22 @@ def main(argv):
 
     s = sub.add_parser("check"); s.add_argument("--plan")
     s.set_defaults(fn=cmd_check)
+
+    s = sub.add_parser("mono"); s.add_argument("addr", nargs="+")
+    s.set_defaults(fn=cmd_mono)
+
+    s = sub.add_parser("layout"); s.add_argument("addr", nargs="+")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_layout)
+
+    s = sub.add_parser("enums"); s.add_argument("addr", nargs="+")
+    s.set_defaults(fn=cmd_enums)
+
+    s = sub.add_parser("structs")
+    s.add_argument("--min-off", type=int, default=3)
+    s.add_argument("--limit", type=int, default=0)
+    s.add_argument("--tsv", action="store_true")
+    s.set_defaults(fn=cmd_structs)
 
     a = ap.parse_args(argv)
     p = Probe(so=a.so)

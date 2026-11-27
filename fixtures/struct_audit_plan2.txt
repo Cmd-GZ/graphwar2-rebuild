@@ -1,0 +1,111 @@
+# T56 数据结构审计 · 第二轮 · 预注册（fixtures/struct_audit_plan2.txt）
+#
+# 生成于 2026-11-27，**提交早于** fixtures/struct_audit2.tsv 的判定列。
+# 判据（§1）、清单（§2–§4）、以及每个结构体「我方几个字段 / 期望对上几个」都先写死；
+# 跑完不许改判据、不许改期望。
+#
+# ⚠️ 盲测边界（诚实登记 —— 它决定这份预注册值多少）：
+#   * **Group A（`EventInfo` / `GameInfo`）不是盲测**：这两条是 T32（`docs/06` §82）留下的
+#     明确未完成项，我在写本文件**之前**已经做过取证（`Serialize` 的值偏移、单态、跳表）。
+#     §2 的「我方字段」列来自我方源码（写前读），「期望」列是我按判据推出的结论 ——
+#     **判据本身可复算**才是它的价值，不在「盲」。
+#   * **Group B（5 个枚举）半盲**：变体名/判别值此前只在 `docs/07` §5.2 里有「逐位」声明，
+#     我没有复算过；本轮第一次用**跳表 + 变体名字面量**独立复核。⇒ 期望列是**独立复算前的预测**。
+#   * **Group C（非 serde 结构体）真盲**：清单由 §4 的机械规则产生（扫 `fixtures/function_coverage.tsv`
+#     的 527 个可归属函数），我在写本文件时只看到「模块 + 偏移数 + 跨度 + E4 下界」，
+#     **没有**把它们和我方 `struct` 逐字段对过。
+#
+# 复算工具：`tools/struct_audit.py`（T32 建的第 1 轮工具，本轮**扩展**它，没有另起一套）：
+#   mono <addr>…  layout <addr>…  structs --tsv  tsv2 [--check]
+# 判据与 T32 的 E1–E4 完全兼容（同一份 `.so`、同一地址口径），新增 E5–E7 见 §1。
+
+## 1. 判据（跑完不许改）
+
+### 沿用 T32 的四档
+* **E1** 字段数：`.data.rel.ro` 的 `&'static str` 槽 `(ptr,len)` ⇒ `read(addend,len)` 整体匹配
+  `struct <Name> with N element(s)`。**逐位**。
+* **E2** 字段名 + 声明顺序：`Serialize` 的 `lea rsi,[rip+名] ; mov edx,LEN ; … ; call <单态>` 序列，
+  代码顺序 = 声明顺序 = 线上键序。**逐位**（`LEN` 自校验）。
+* **E3** 字段偏移：同一函数里 `lea rcx,[self+k]` / `mov rcx,self` 给出**值指针偏移**。**观测**。
+* **E4** 结构体尺寸：只给**下界**（被调方写回的最后一个偏移 + 宽度）。**推断**。
+
+### 本轮新增（工具已实现，命令见文件头）
+* **E5 单态 → 类型类**：`serialize_field<T>` 的单态地址按 T 唯一化（T32 已用它判「枚举/串/整数」）。
+  本轮把「单态体指纹」写死成可复算判据：
+  - 跳表形态（`movsxd rX,dword ptr [rY+rX*4]` + `add rX,rY` + `jmp rX`）⇒ **枚举**，
+    case 下标 = 判别值（跳表顺序 = 声明顺序 = 判别值顺序）；
+  - `cmp byte ptr [reg], N` + `cmovne` / `cmp byte,1 + jne L` ⇒ **2 变体枚举**；
+  - itoa 的 u32 阈值 `0x2710` 与 `0x5f5e0ff` 且**无** `js/jl/neg` ⇒ **无符号 32 位**；
+  - 只有 `write_str`/缓冲扩容两个汇点、无数值格式化 ⇒ **串**。
+* **E6 变体名字面量**：枚举 `Serialize` 的每个 case 一条 `lea r?,[rip+变体名]` + `mov r32,LEN`
+  （LEN 自校验：`read(ptr,LEN)` 必须是 `[A-Za-z][A-Za-z0-9]*`）。**逐位**。
+  ⚠️ 两个坑（已写进工具注释）：①跳表的 `case` 顺序**不等于**代码地址顺序，必须按跳表项下标读；
+  ②`cmp byte ptr [rdi + 8], 1` 是 serde map 的「首个字段」状态字节，**不是**判别式，带位移的 `cmp` 必须排除。
+* **E7 非 serde 结构体窗口**：在一个**可归属函数**里找「同一基址寄存器上 ≥4 个不同固定偏移」的
+  读写窗口（`mov/movsd/movss/movaps/movdqu/movups`，基址 ∉ {rsp,rbp,rip}，位移 ∈ [0,0x800)），
+  窗口下界 = `max(位移 + 访问宽度)`。**推断**（只给下界；上界要调用方夹逼，本轮不做）。
+
+### 判定规则（与 T32 完全一致，跑完不许改）
+* **match**：E1 的 N == 我方字段数，**且** E2 的名字集合与顺序与我方一致（Group B 用
+  E6 的变体名+判别值替换 E2，即「变体集合 + 判别值」全等才算 match）；Group C 里
+  「只有 E7 下界」的行**一律 unknown**（T32 原话：「只登记，不猜」）。
+* **mismatch**：E1/E2（或 E6）任一不一致。
+* **unknown**：拿不到 E1/E2/E6 之一，或只有 E4/E7 的下限。
+* 只修「mismatch 且证据一边倒」的；模棱两可只登记。
+
+## 2. 清单 A：本轮主目标（2 个）
+
+# 结构体 | 我方位置 | 我方字段数 | 我方字段(声明顺序) | 取证方法 | 期望
+EventInfo  | src/graphwar_game_recorder.rs:162（**我方有**，T32 记成「没有」= 错的） | 3 | tick, event, body | E1+E2(缺失⇒改用 Deserialize visitor 的 missing_field 顺序)+E3(内存布局)+E7 | 二进制 **2** 字段（event, tick，event 在前）；tick=u32 ⇒ 期望 **mismatch**（我方多 `body`、顺序反了）
+GameInfo   | src/_scaffold/protocol.rs:1844 + src/events.rs:304 +（T32 漏了）src/_scaffold/protocol.rs:80 `Broadcast` | 9 | room_name, game_state, current_player_count, address, axis_mode, function_mode, turn_mode, time_mode, locked | E1+E2+E3+E5+E6 | 9 字段、键序同上 ⇒ **字段数/键序 match**；但**类型 mismatch**（5 个枚举 + 1 个 u32 + 地址是 32 字节枚举）
+
+## 3. 清单 B：`GameInfo` 那 5 个枚举字段的真类型（5 个）
+
+# 枚举 | 我方位置 | 我方变体数 | 我方变体(判别值) | 取证方法 | 期望
+GameState     | src/turnstate.rs:38        | 8 | Connecting=0, Setup=1, WaitingForFunctions=2, CalculatingResults=3, SynchronizingResults=4, ExecutingResults=5, EndingGame=6, Disconnected=7 | E6（跳表 + 8 个变体名） | **match**
+AxisMode      | src/graphwar_mode_manager.rs:57 | 4 | NoAxis=0, OnlyMain=1, EveryFive=2, EveryUnit=3 | E6 | **match**
+FunctionMode  | src/graphwar_mode_manager.rs:68 | 2 | NormalFunction=0, DiffEqFunction=1 | E6（cmp byte,0 + cmovne） | **match**
+TurnMode      | src/graphwar_turn_manager.rs:250 | 2 | SequentialTurns=0, SimultaneousTurns=1 | E6（cmp byte,1 + jne） | **match**
+TimeMode      | src/graphwar_mode_manager.rs:77 | 6 | Timer30s=0, Timer1m=1, Timer2m=2, Timer3m=3, Timer5m=4, TimerInf=5 | E6 | **match**（若 `Timer30s` 其实是 `Timer30` 则 mismatch —— 名字长度 8 vs 7 会被 E6 的 LEN 自校验逮到）
+
+## 4. 清单 C：非 serde 结构体（12 个，含 `EventInfo` 之外的独立行）
+
+# 候选由机械规则产生（`tools/struct_audit.py structs --min-off 4 --tsv`：
+# 对 527 个可归属函数逐个找「同一基址 ≥4 个固定偏移」的窗口）。**我在写本文件时只看到
+# 模块 + 偏移数 + 跨度 + E4 下界，没和我方 struct 逐字段对过**。
+#
+# 结构体 | 我方位置 | 我方字段数 | 二进制取证（函数 vaddr / E4 下界） | 取证方法 | 期望
+EffectAudioData   | src/graphwar_audio_control.rs:269 | 4 | 0x3d10c0? 待本轮定位 / E7 下界 0x18 | E7+E3 | 期望：窗口下界 0x18 且 4 个字段 0/0x10/0x14(+判 0-16 是 16 字节 Option<Gd>) ⇒ **match**
+PatternSegment    | src/graphwar_level_generator.rs:295 | 7 | E7 下界 0x30（0x00..0x28） | E7+E3 | 期望 **match**（7 字段 0/8/0x10/0x18/0x20/0x24/0x28）
+GraphwarGameRecorder | src/graphwar_game_recorder.rs（`GraphwarGameRecorder`） | 4 | 记录闭包 0x3d4fa0 的 `[rbx+0x48]`；E7 下界 0x50 | E7+E3 | 期望 **match**（+0x08/+0x18/+0x40/+0x48）
+GraphwarShotCalculator | src/graphwar_shot_calculator.rs | ? | 0x?/E7 下界 0xf8 | E7 | 期望 **unknown**（只有下界）
+FunctionEvolutionator | src/graphwar_function_evolutionator.rs | ? | E7 下界 0xc0 | E7 | 期望 **unknown**
+GraphwarPlane     | src/_scaffold/graphwar_plane_class.rs | ? | E7 下界 0xa0 | E7 | 期望 **unknown**
+GraphicsManager   | src/graphwar_graphics_manager.rs | ? | E7 下界 0x98 | E7 | 期望 **unknown**
+ReplayControl     | src/graphwar_replay_control.rs | ? | E7 下界 0xa0 | E7 | 期望 **unknown**
+LevelManager      | src/graphwar_level_manager.rs | ? | E7 下界 0xf8 | E7 | 期望 **unknown**
+ClientConnectionHandler | src/graphwar_client_connection_handler.rs | ? | E7 下界 0x69 | E7 | 期望 **unknown**
+AxisDrawer        | src/axis_drawer.rs | ? | E7 下界 0x73 | E7 | 期望 **unknown**
+GraphwarLanVBox   | src/_scaffold/graphwar_lan_vbox_class.rs | ? | E7 下界 0x92 | E7 | 期望 **unknown**
+
+> 说明：清单 C 的「期望 unknown」不是偷懒 —— 这是 T32 判据原文（「只有 E4 的下限 ⇒ 只登记，不猜」）。
+> 本轮若能在这些函数里顺带取到 **E3 的具体偏移**（值偏移而不是仅下界），允许从 unknown 升到
+> match/mismatch，但**判据不变**（判据要求字段集合与顺序两边都有）。
+
+## 5. 本轮**不审**的东西（写在这里，防止事后找补）
+
+* 协议 58 个共用整数单态 `0x3cc060` 的字段（`player_id`/`connection_id`/…）：本轮只在
+  `GameInfo.current_player_count` 这一处把「该单态 = 无符号 32 位」落成结论并**登记**其余 57 处；
+  全量改 `WIRE_SPEC` 的 `ValType::I64` 属于跨模块重构，超出「修证据一边倒的最小改动」。
+* `GameInfo.address` 的**类型身份**（32 字节、1 字节 tag、2 变体、线上字符串）：形状是 E3+E5 观测，
+  但「是不是 `std::net::SocketAddr`」拿不到符号 ⇒ 本轮**只登记**，不改类型。
+* 原版 `struct GameInfo` 属于哪个模块文件：`panic::Location` 对这几个生成函数**没有**归属
+  （`locs_of_func` 为空）⇒ 未知，只登记。
+* serde 派生 vs 我方手写 JSON（§82.4-3 已登记）：本轮不动。
+
+## 6. 预期的 unknown（写在这里，防止事后找补）
+
+* 清单 C 里 9 个「只有 E7 下界」的行 ⇒ **unknown**（按判据）。
+* `GameInfo.address` ⇒ 形状 match、类型身份 unknown。
+* `EventInfo` 的 `event: GraphwarEvent`（0x48 字节的 serde 外部标签枚举）：我方用
+  `event: String + body: String` 承载 ⇒ 字段数可以对齐到 2，但**载荷表示**仍是登记项。

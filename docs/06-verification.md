@@ -17764,6 +17764,311 @@ cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy 
   的唯一调用者，本条落完后这两条已经**有被调者**了）。
 * `new`（`0x4599f0`）仍是 F2。
 
+## 103. T54 回放屏 48 px **定案并修掉**：多出来的 96 px 全在 `RightControls/HBoxContainer`（Fire 行）这一层的 `custom_minimum_size.y`；原版藏的是 `FireContainer` 一个节点（`0x3d9b50`）⇒ 行高 0（2026-11-27，任务 T54 / `task-50`）
+
+> 前情：`docs/06` §101（T51）把 `replay_play`/`replay_end` 的 **60 367 px（2.710 %）** 归到
+> 「右三键列整体下移 48 px（59 511 px，98.6 %）」，并把病灶指到 `_set_replay_layout()` 的
+> `_fire_row.custom_minimum_size = (0, key=96)` 一处 —— 但那是**推断**，缺运行时读数。
+> 本轮把那份读数拿到手：**48 px 定案在 `RightControls/HBoxContainer` 这一层**，
+> 修法照原版指令做，`replay_play`/`replay_end` **60 637 px → 1 126 px（0.0506 %）、L2 2 块 → 0 块**。
+> 工作树 `.agent-work/cg/wt-t54`（分支 `agent/replay-fix`，基 `71d1ef2`）。采集全部
+> `bwrap --unshare-net` 私有 netns、两侧**串行**、每棵树自己的 `CARGO_TARGET_DIR`。
+
+### 103.0 一页结论
+
+| 问题 | 结论 | 档 |
+|---|---|---|
+| 48 px 是哪一层贡献的？ | **`RightControls/HBoxContainer`（Fire 那一行）自己**：它的 `combined_minimum_size.y` 是 **96**，而**天然最小高是 0**（`FireContainer` 的两颗子按钮被藏 ⇒ `min=(0,0)`）⇒ 这 96 **只可能来自我方那句 `custom_minimum_size = (0, 96)`** | **观测**（真窗口 `@@LAYOUT` dump，见 103.1） |
+| 为什么平移是 48 而不是 96？ | 列高 `H=1058` 两侧相同、grid 高 396 两侧相同 ⇒ 96 的余量被**两个** `size_flags_vertical=3` 的间隔**均分**，三键组只移动 96/2 = 48 | **观测**（dump 出的 spacer 277→325）+ **推导**（`y = f + sep + (H−f−G−3·sep)/2 + sep`） |
+| 原版在回放屏到底做什么？ | 只把 **5 个节点 `set_visible`**（`0x3d9b50`），其中 **`FireContainer` = false**（`0x3d9ce6`）。**没有**任何 `custom_minimum_size` 补丁 ⇒ 那一行自然塌成 0 高（但它仍是 VBox 的可见子节点，占掉一个 separation） | **观测**（指令 + 名字表串 + GOT 槽解析，见 103.2） |
+| 修了什么 | `client/src/screens/play_screen.gd::_set_replay_layout()`：① 藏 **`FireContainer`**（= 原版的第 3 条 `set_visible(false)`）；② **删掉**给 Fire 行的 `custom_minimum_size`（保留 `_fire_row.visible = true` 与"行占一个 separation"的事实）；③ 顺手把 `_fire_parts` 那对按钮句柄换成 `_fire_container` 单句柄 | — |
+| 效果 | 三颗保存键 y **481/581/681 → 433/533/633**（原版真帧 433..528/533..628/633..728，**逐项 0 px**）；`replay_play` **60 637 px（2.7226 %，L2 2 块）→ 856 px（0.0384 %）**、`replay_end` → **1 126 px（0.0506 %）**，两者 L2 **0 块**，都比 T29 的 1 714 px / T21 的 4 408 px 低 | **观测**（真帧 + frame_diff） |
+
+### 103.1 定案：把 5 个节点的真实矩形 dump 出来（`fixtures/replay_layout_dump.tsv`）
+
+`--headless --script` 的根窗口不是 1920×1160（§101.4 第 2 条已提过），所以 dump 走**真窗口**：
+`play_screen.gd::_dump_replay_layout()` 由 `GW2_REPLAY_LAYOUT_DUMP=1` 打开（默认关、不参与判定），
+在 `_set_replay_layout()` 之后等 2 帧，把右列 5 个节点 + 左右列容器打一行 `@@LAYOUT` 到 stdout，
+采帧时自然落进 `game.log`（复跑命令见 103.6）。改前 / 改后各跑一次，**逐项**（删掉路径前缀）：
+
+```text
+节点                                             改前                                          改后
+RightControls                                  size=(337,1058) min=(337,504)              size=(337,1058) min=(337,408)
+  HBoxContainer  (Fire 行)                     vis=true  size=(337, 96) min=(0, 96)        vis=true  size=(337,  0) min=(0, 0)
+                                                cmin=(0, 96)  ← ★ 96 只在这里               cmin=(0, 0)  ← ★
+    FireContainer                              vis=true  min=(0,0)                        vis=false min=(200,96)
+      ClipButton / FireButton                  vis=false（天然 min 都不算进父容器）         vis=true（被父容器藏 ⇒ 一样不画）
+  MarginContainer  (间隔 1)                     size=(337,277) @y=100  vflag=3            size=(337,325) @y=4
+  RightButtonGrid                              vis=false                                  vis=false
+  RightReplaysButtonsGrid                      size=(337,396) @y=381                     size=(337,396) @y=333
+    HBoxContainer（第 0 行，不画东西）           size=(337, 96) @y=381                     size=(337, 96) @y=333
+    GraphwarButton  (save_screenshot)          size=(337, 96) @y=481                     size=(337, 96) @y=433
+    GraphwarButton3 (save_summary)             size=(337, 96) @y=581                     size=(337, 96) @y=533
+    GraphwarButton4 (save_clip)                size=(337, 96) @y=681                     size=(337, 96) @y=633
+  MarginContainer2 (间隔 2)                     size=(337,277) @y=781                     size=(337,325) @y=733
+LeftControls                                   size=(296,1058)                            size=(296,1058)          ← 对照：没动
+  LeftTopButtonsContainer                      size=(296, 96)                             size=(296, 96)
+  LeftReplaysButtonsGrid                       size=(296,196) @y=481                      size=(296,196) @y=481    ← 对照：没动
+PlayMainHBox                                   size=(1920,1058)                           size=(1920,1058)
+```
+
+**读这张表就能把 96 定死在哪一层**：
+
+1. `RightControls` 自己 `cmin=(0,0)`、`size.y=1058` 两侧相同 ⇒ **列高不是病根**；
+2. `RightReplaysButtonsGrid` 的 `size.y=396` 两侧相同、`cmin.x=337`（我方"留宽"补丁）也相同 ⇒ **grid 不是病根**；
+3. `FireContainer` 的 `min=(0,0)` —— 改前也是 `(0,0)`（两颗子按钮已藏）；
+4. 而 Fire 行 `min=(0,96)`、`cmin=(0,96)` ⇒ 这 96 **没有第二个来源**，就是 `_set_replay_layout()` 里那句
+   `_fire_row.custom_minimum_size = Vector2(0, key)`（`key = w*0.15/3 = 96`，§101.3-C 候选①**成立**，
+   候选②③**不成立**）；
+5. 两个 `vflag=3` 的间隔从 277 变 325（各 +48），grid 顶从 381 变 333（−48）——**均分**这件事也从 dump 里直接看见 ⇒ **平移 48 = 96/2**；
+6. 与原版真帧对账：原版右列逐行非背景段 = `433..528 / 533..628 / 633..728`，改后 dump 的 `gpos.y` = **433/533/633**，逐项 0 px。
+
+**只把 96 删掉够不够？** 不够优雅但够用；照原版指令做更对（103.2）：原版是**用 `visible` 让那一行塌掉**，
+不是"给一个 0 高的补丁"。两条都做 ⇒ 几何与原版同源，不是"凑数"。
+
+### 103.2 原版指令：回放视图只做 5 个 `CanvasItem::set_visible`，第 3 个就是 `FireContainer`
+
+`src/graphwar_play_screen_control.rs` 早已把 `0x3d9b50` / `0x3d9e40` 记成"5 个节点的布尔对"
+（`UiMode::widget_flags`），但当时标了两处**推断**：①第 3 个节点是 `FireContainer` 这个
+`MarginContainer`（而不是 `FireContainer` 所在的 `HBoxContainer` 行）；②`*0x9ba978` 这个 GOT 槽
+到底是 `set_visible` 还是 `set_disabled`。本轮两条都补上了，**用同一条反汇编链**（自己跑的，不是抄表）：
+
+```text
+0x3d9b94  lea rcx,[0x1bf8c7]   # 名字表 'LeftButtonGrid|RightButtonGrid|FireContainer|LeftReplays…|RightReplays…'
+          r8d 依次 = 0xe / 0xf / 0xd / 0x16 / 0x17  ⇒ 14 / 15 / 13 / 22 / 23 字符
+                        = "LeftButtonGrid"(14) "RightButtonGrid"(15) "FireContainer"(13) "LeftReplaysButtonsGrid"(22) "RightReplaysButtonsGrid"(23) ✓
+0x3d9be2  xor esi,esi ; 0x3d9be4 call *[0x9ba978]   # 1 LeftButtonGrid        = 0 (0x3d9be2)
+0x3d9c64  xor esi,esi ; 0x3d9c66 call *[0x9ba978]   # 2 RightButtonGrid       = 0 (0x3d9c64)
+0x3d9ce6  xor esi,esi ; 0x3d9ce8 call *[0x9ba978]   # 3 **FireContainer**     = 0 (0x3d9ce6)  ← 定案用它
+0x3d9d65  mov esi,1   ; 0x3d9d6a call *[0x9ba978]   # 4 LeftReplaysButtonsGrid = 1 (0x3d9d65)
+0x3d9de3  mov esi,1   ; …                           # 5 RightReplaysButtonsGrid= 1
+# 槽 0x9ba978 → 0x8ab200，里面：
+0x8ab253  lea rax,[0x29ef2d] ; [rsp+0x38]=0xa      # class  'CanvasItem'   (10 字符)
+0x8ab268  lea rax,[0x29ef4c] ; [rsp+0x48]=0xb      # method **'set_visible'** (11 字符)
+0x8ab27d  mov eax,0x9a2976c2 ; [rsp+0x50]=rax       # 方法 hash
+```
+
+⇒ ① 第 3 条作用在 **`FireContainer`** 这个 `MarginContainer` 上（不是那一行、不是行里的两颗按钮）；
+② 那个槽是 **`set_visible`**（class/method 串都逐字对上；hash `0x9a2976c2` 未离线复算，但**行为已由真帧反证**：
+原版回放屏右上角 y0..432 逐行非背景像素 = 0，`Fire` 键没画 ⇒ 是"不可见"不是"禁用"）。
+`src/graphwar_play_screen_control.rs` 里那两处 `推断` 据此可升 **观测**（本轮**没改**那个文件——
+它对应的 Rust 控制器还没接到节点层，改它超出本任务范围，已登记 §103.7）。
+
+公式（把 dump 的三个数与真帧的 433 对上）：设 Fire 行高 `f`、列高 `H = 1058`、grid 高 `G = 396`、
+VBox 里可见子节点 4 个 ⇒ 3 个 separation（各 4），两个间隔各得 `(H − f − G − 12)/2`：
+
+```text
+三键组顶 = f + 4 + (H − f − G − 12)/2 + 4
+ f = 0  (原版) ⇒ 0 + 8 + (1058 − 0 − 396 − 12)/2 = 8 + 325 = 333 ⇒ 三颗 433 / 533 / 633  ✓ 真帧
+ f = 96 (我方改前) ⇒ 96 + 8 + (1058 − 96 − 396 − 12)/2 = 104 + 277 = 381 ⇒ 481 / 581 / 681  ✓ 改前真帧
+```
+
+### 103.3 修法（两处，都在 `client/src/screens/play_screen.gd`）
+
+```gdscript
+# 改前（T4 时代为**手搭树**补的"藏按钮、留行高"）：
+if _fire_row != null:
+    _fire_row.visible = true
+    _fire_row.custom_minimum_size = Vector2(0, key) if on else Vector2.ZERO   # ← +96 的来源
+for part in _fire_parts:
+    part.visible = not on
+
+# 改后（照 0x3d9b50：藏的是 FireContainer 这个节点本身；不给任何高度补丁）：
+if _fire_container != null:
+    _fire_container.visible = not on
+if _fire_row != null:
+    _fire_row.visible = true
+    _fire_row.custom_minimum_size = Vector2.ZERO
+```
+
+* `_fire_parts: Array[Control]`（`ClipButton`/`FireButton` 两个句柄）**删掉**，换成 `_fire_container: Control` 一个句柄；
+  `var w / var key` 随之删掉（`key` 只被那一行用过）。
+* 右列**宽度**那条补丁（`_replay_right.custom_minimum_size.x = 键盘 grid 天然最小宽 337`）**原样保留** ——
+  它管的是宽度、与 y 无关，而且 dump 证明它把 `min.x` 钉在 337（改前改后都 ≥337，真帧左右边界 1583..1919 逐项相同）。
+* 仍然**不改** `recovered-src/`、不改 `.tscn`（`client/scenes/screens/play_screen.tscn` 与
+  `recovered-src/play_screen.tscn` 逐字节相同，本来就是对的）。
+
+### 103.4 验收：`replay_play` 60 637 → **856 px**、`replay_end` 60 637 → **1 126 px**（L2 2 块 → **0** 块）
+
+同一条配方（`bwrap --unshare-net`、两侧串行、`--flow replay --seed-replays`；原版侧一份帧复用两次，
+因为原版二进制与 `frame_capture.py` 的点击串本轮**一字未改**）：
+
+| 屏 | 改前（本轮实测） | 改后（**最终代码**那次采集） | 判据（`task-50`） | 结论 |
+|---|---|---|---|---|
+| `replay_play` | **60 637 px = 2.7226 %**，L2 超限 **2** 块（(1,5)+(2,5)，`l2_max_block_dmean` 4.713），bbox `770,433..1919,1155` | **856 px = 0.0384 %**，L2 超限 **0** 块（worst (2,2) dmean 0.474），bbox `770,782..844,810`（= 名字标签） | ≤ 1 714 px（0.077 %）、L2 **0** | ✅ **−59 781 px（−98.6 %）** |
+| `replay_end` | 60 637 px = 2.7226 %，L2 2 块 | **1 126 px = 0.0506 %**，L2 **0** 块（worst (3,3) dmean 0.692），bbox `770,782..1184,1155` | 同上 | ✅ **−59 511 px（−98.1 %）** |
+| `menu` | 0 px | **0 px** | 不许变差 | ✅ |
+| `replay_lobby` | 0 px | **0 px** | 不许变差 | ✅ |
+
+> 本轮**两次**改后采集（`m2` 加保护前、`m5` = 最终代码）结论相同：两次都是 **L2 0 块**；
+> 差别只在 `856`（m5 的 `replay_play`）与 `1 126`（其余三次）之间那一档 —— 就是下面那个
+> **逐帧闪烁的 270 px**，撞上"`frame_diff` 取每屏 frame 1"的相位而已。故 `replay_play` 记 856、
+> `replay_end` 记 1 126（更保守的那次）。**同一份代码的两个数不矛盾，是同一档残差的两种相位。**
+
+逐 ROI（`d>0` 的像素数，改后 vs 原版，`m5` 那次采集；右三键列与名字标签三帧同值）：
+
+| ROI | 改前 | 改后 |
+|---|---|---|
+| 右三键列 `x∈[1583,1919] y∈[429,782]` | **59 511**（50.03 %） | **0**（`replay_play`/`replay_end` 六帧全 0） |
+| 名字标签 `x∈[760,860] y∈[770,830]` | 856 | 856（**既有残差**，本轮不碰） |
+| 底行 `y∈[1040,1159]`（`x≈1182..1184` 的 3 px 竖条） | 270 | 270 或 0（**逐帧闪**，见下） |
+| 棋盘 `(303,198)-(1575,959)` | 856 | 856（就是名字标签那 856 px，棋盘本身 0） |
+| 顶栏 `y∈[0,199]` / 左三键 `x∈[0,300] y∈[560,690]` | 0 / 0 | **0 / 0** |
+
+⇒ 剩余 **856（名字标签）+ 270（底行那条 3 px 竖条）**，两项都是 T29 时代就存在的残差，
+**与本次 48 px 无关**。
+
+**⚠️ 顺带查出一条既有缺陷（不是本轮引入，也不是本轮修的）**：底行那 270 px 是
+`bbox=(1182,1066)-(1184,1155)` 的 **3×90 竖条**，它在**同一屏的 3 帧之间闪烁**——
+我方 `replay_play` 三帧 sha256 不全同（`df13 = 270 px`），而**原版同一屏 3 帧逐字节全同**（`o1` 实测：
+`replay_play`/`replay_end` 三帧 sha 分别全等，`df12=df13=0`）。改前（`m1`）也有这条 ⇒ **与本次改动无关**。
+形态（3 px 宽 × 90 px 高、正在底行函数文本右端）像**文本光标/插入符在闪**：回放屏 `_input.read_only = true`
+之后插入符仍在闪，而原版回放屏不闪。这解释了：
+① `frame_diff` 取 frame 1 ⇒ 同一份代码两次采集可能差 270 px（0.0121 pp）；
+② 本轮改前实测 **60 637**、T51 记 **60 367**，差 270 px 也落在这一档；
+③ T4 时代"`replay_play` 3 帧 sha256 全同"这条判据我方**至今不满足**（原版满足）。
+⇒ 已登记为遗留（§103.8），修它要另开一条（属 `function_input`/`GwFunctionInput` 的插入符行为）。
+
+三颗保存键的行段（真帧，逐键量"非背景"行段；改后三帧同值）：
+
+```text
+               y 行段（各 96 高、步距 100）        宽 / 高 / 左右边界
+原版            433..528 / 533..628 / 633..728      337 × 96 · x 1583..1919 · 步距 100
+我方改前        481..576 / 581..676 / 681..776      同上（整体 +48）
+我方改后        433..528 / 533..628 / 633..728      同上 —— **逐项 0 px**
+```
+
+### 103.5 其它屏一个都没变差（对局两屏 + 结算弹窗面板区）
+
+本轮改的是 `_set_replay_layout()`，`on=false` 那条分支的行为**逐行等价**（藏 `FireContainer` 取代藏两颗按钮、
+`custom_minimum_size` 两侧本来就都是 ZERO）——但判据按"自己跑出来的"报，不看推理：
+
+| 屏 | 入库基线（`docs/06` §99.5 / T18/T17 口径） | 本轮改后实测 | 结论 |
+|---|---|---|---|
+| `match_ready` | 1 812 px / **0.0814 %**，L2 0 | **1 804 px / 0.081 %**，L2 **0** | ✅ 同值（−8 px，噪声地板 原版 0.049 %） |
+| `match_play` | 8 667 px / **0.3891 %**，L2 1 | **8 626 px / 0.387 %**，L2 **1** | ✅ 同值（−41 px，噪声地板 我方 0.161 %） |
+| `endgame_popup` **面板区** `(483,235) 956×691` | **0 px**（三帧全 0） | **0 px（三帧全 0）** | ✅ |
+| `endgame_popup` 整屏 | 44 px | 44 px = 0.002 %，L2 0 块（bbox 只在底行 `y≥1065`） | ✅ |
+
+（`match_ready`/`match_play` 的两个数是 `--flow match` 那次采集；`--flow endgame` 那次采集里同两屏是
+0.090 % / 0.440 %、L2 0/2 块 —— 那是**另一条相位时间线**（原版噪声地板 0.053 % / 0.703 %），
+与入库基线不同源，故以 `--flow match` 那次为准。两次都**不比基线差**。）
+
+### 103.6 门槛读数（本分支 `agent/replay-fix`，基 `71d1ef2`）
+
+| 门槛 | 读数 | 结论 |
+|---|---|---|
+| `cargo test --offline` | **1826 / 0 failed / 1 ignored** | 与基线同值（本轮**没动 Rust**） |
+| `cargo test --offline --features gdext-bindings` | **1956 / 0 failed / 1 ignored** | 同上 |
+| `bash client/run.sh selftest` | **717 passed, 0 failed, 1 skipped**；`missing=0(claimed 0/degraded 0/silent 0)` | ✅ |
+| headless 14 脚本（`client/tools/*_check.gd`） | **1 978 / 0**（逐脚本 244+117+96+235+378+132+24+116+97+234+66+57+155+27） | ✅ 与 T50 入库基线 **同值**（本轮只改了 `play_screen.gd`，没动任何 `*_check.gd`） |
+| 三轴 `fire` / `batch` / `batch_conv` | 内容命中 **647 / 647 / 637** | ✅ 一位未退 |
+| `python3 tools/coverage_matrix.py --check` | **OK** | ✅（没动 `src/`） |
+| `python3 tools/check_doc_refs.py` | **rc=0** | ✅ |
+
+### 103.7 复跑命令
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export WT=$MAIN/.agent-work/cg/wt-t54          # 本树
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target      # ⚠️ 每棵树自己的（共享 target 会静默不重建，§101.5）
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+cd $WT
+cargo build --offline --features gdext-bindings
+md5sum $CARGO_TARGET_DIR/debug/libgw2_rebuild.so   # 本轮 = 719c98bfddc7ea78f154255e2377a9a0（只改 .gd ⇒ 与改前同值，见 §103.8）
+cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so client/
+HOME=$WT/.fakehome $GODOT --headless --path client --import
+
+CAP() {  # CAP <side> <out> <display> <flow> [额外 env…]
+  bwrap --unshare-user --unshare-net --uid 0 --gid 0 --ro-bind / / --bind $MAIN $MAIN \
+    --dev /dev --proc /proc --tmpfs /tmp --setenv DISPLAY 127.0.0.1:$3 --chdir $WT \
+    python3 tools/frame_capture.py --side $1 --flow $4 --out $WT/.agent-work/t54/$2 --display-num $3
+}
+# ① 布局 dump（两组命令同一条，只多一个环境变量）
+bwrap --unshare-user --unshare-net --uid 0 --gid 0 --ro-bind / / --bind $MAIN $MAIN \
+  --dev /dev --proc /proc --tmpfs /tmp --setenv DISPLAY 127.0.0.1:253 \
+  --setenv GW2_REPLAY_LAYOUT_DUMP 1 --chdir $WT \
+  python3 tools/frame_capture.py --side ours --flow replay --seed-replays \
+          --out $WT/.agent-work/t54/m2 --display-num 253
+grep '@@LAYOUT' $WT/.agent-work/t54/m2/game.log      # 20 行 × 2 组（`on=true`）
+# ② 两侧帧（**串行**；原版侧可复用）
+CAP original o1 251 replay   # ⚠️ replay 流必须带 --seed-replays（脚本里有硬闸）
+CAP ours     m2 253 replay
+python3 tools/frame_diff.py --orig $WT/.agent-work/t54/o1 --mine $WT/.agent-work/t54/m2 \
+  --screens menu,replay_lobby,replay_play,replay_end \
+  --out $WT/.agent-work/t54/fd_after.tsv --blocks-out $WT/.agent-work/t54/fdb_after.tsv \
+  --json $WT/.agent-work/t54/fd_after.json
+# 期望：replay_play / replay_end = 1 126 px / 0.0506 % / L2 0；menu 与 replay_lobby 0 px
+# ③ 其它屏（对局两屏 + 结算弹窗；原版侧一份、我方侧一份，串行）
+CAP original o2 254 match   ; CAP ours m3 255 match
+CAP original o3 256 endgame ; CAP ours m4 257 endgame
+python3 tools/frame_diff.py --orig $WT/.agent-work/t54/o2 --mine $WT/.agent-work/t54/m3 \
+  --screens match_ready,match_play --out $WT/.agent-work/t54/fd_match.tsv \
+  --blocks-out $WT/.agent-work/t54/fdb_match.tsv --json $WT/.agent-work/t54/fd_match.json
+python3 tools/frame_diff.py --orig $WT/.agent-work/t54/o3 --mine $WT/.agent-work/t54/m4 \
+  --screens match_ready,match_play,endgame_popup --out $WT/.agent-work/t54/fd_endgame.tsv \
+  --blocks-out $WT/.agent-work/t54/fdb_endgame.tsv --json $WT/.agent-work/t54/fd_endgame.json
+# 结算框面板区（基线口径 (483,235) 956×691）0 px 的复算：
+python3 -c "
+import numpy as np; from PIL import Image
+L=lambda p: np.asarray(Image.open(p).convert('RGB')).astype(np.int16)
+for i in (1,2,3):
+    a=L('$WT/.agent-work/t54/o3/frames/endgame_popup_%d.png'%i)[235:926,483:1439]
+    b=L('$WT/.agent-work/t54/m4/frames/endgame_popup_%d.png'%i)[235:926,483:1439]
+    print(i, int((np.abs(a-b).max(axis=2)>0).sum()))"
+# ④ 指令证据（ELF vaddr 口径；Ghidra 地址要 +0x100000）
+PY=$MAIN/.reference/venv/bin/python
+$PY tools/addr_probe.py dis 0x3d9b50     # 5 个 set_visible：0x3d9be2/0x3d9c64/**0x3d9ce6**/0x3d9d65/0x3d9de3
+$PY tools/addr_probe.py dis 0x8ab200     # 槽 0x9ba978 的目标：'CanvasItem' + 'set_visible' + hash 0x9a2976c2
+# ⑤ 门槛
+cargo test --offline && cargo test --offline --features gdext-bindings
+HOME=$WT/.fakehome bash client/run.sh selftest | tail -3
+for f in $WT/client/tools/*_check.gd; do "$GODOT" --headless --path client --script "res://tools/$(basename $f)"; done
+SNAP=$MAIN/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy strict
+COVERAGE_MATRIX_UPSTREAM=$MAIN/.reference/upstream python3 tools/coverage_matrix.py --check
+python3 tools/check_doc_refs.py
+```
+
+### 103.8 遗留 / 我写错了什么 / §101 的推断哪些被证实、哪些被证伪
+
+* **§101.3-C 候选①成立、②③不成立**：病根就是那一行 `custom_minimum_size`；不是间隔被别的写点改过，
+  也不是"换父级尺寸策略"。§101 的公式 `H + f ≈ 1162 / 1258` 与我本轮 dump 对得上（`H=1058`、`f=0/96`）。
+* **§101 缺的那条证据补上了**：`_set_replay_layout()` 的那几行**现在能指到原版指令**（`0x3d9b50` 的 5 条
+  `set_visible`，第 3 条 `FireContainer`）。**但仍然是我方实现照原版行为的重写，不是"原版源码里就有
+  `_set_replay_layout()` 这个函数"** —— 原版那段逻辑在 Rust 控制器里（`graphwar_play_screen_control`），
+  我方这本 GDScript 是仿制层，这一点没变（`AGENTS.md` §0.4）。
+* **没做（留给下一任）**：`src/graphwar_play_screen_control.rs` 里 `UiMode` 的注释仍写着"`*0x9ba978`
+  成员名未知（推断）"和"`FireContainer` 只是节点名"。本轮把证据摆进了本节，但**没有改那个文件**
+  （它属于"原版模块文件"，按 §0.3/§0.5 改动要单独报告 + 不影响本轮验收）。建议下一任把
+  `UiMode` 的两处 `推断` 升成 `观测` 并把 `0x8ab200` 的 class/method 串写进注释。
+* **`play_flow_check` 那 2 条保留的 `M` 档**和 `entity_drawer_check` 那 1 条（§100.4）与本节无关，未动。
+* **`_fire_parts` 这个句柄没了**：`docs/06` §? 与 `docs/16` 里若有"`_fire_parts`"的描述即为历史记录
+  （本轮只把 `play_screen.gd` 里那一段换成 `_fire_container`）。
+* **那条闪烁的 270 px（3×90 竖条 @ `x1182..1184, y1066..1155`）只查到"是什么形态"，没修**：
+  §103.4 已证它与本次改动无关（改前也有）、原版没有。它像**插入符闪烁**（回放屏 `_input.read_only = true`
+  之后 caret 仍闪），但**没验证**到底是 `GwFunctionInput` 的 caret 还是 `ViewFunctionsLabel` 的
+  `size.x` 取整差 —— 要定案得量两者在回放屏的 `size`/`visible`（同一条 `@@LAYOUT` 路子加两行即可）。
+  影响：`frame_diff` 的 `L3 diff_px` 会在 856 / 1 126 之间摆 ±270 px，**不影响 L2 块数，也不影响
+  本节任何结论**，但会一直给"replay 两屏残差"加 0.0121 pp 的底噪。
+
+### 103.9 允许改 / 没改的边界（`merge_check` 禁区声明）
+
+* **声明：client/src/screens/play_screen.gd** —— 本轮**唯一**的生产代码改动就是这一个文件
+  （`_set_replay_layout()` 的两处 + 一个诊断函数）。它落在 `merge_check.py` 的
+  `client/src/**` 禁区清单里（该清单的规矩是"要么在报告里声明、要么 `--allow` 放行"），
+  所以在这里显式声明：**这条 48 px 的病根就长在这个文件里，不碰它无法修**（§103.1 的 dump 已定位到
+  `_set_replay_layout()` 那两行）。`git diff --name-only` 的其余 3 个文件是
+  `fixtures/replay_layout_dump.tsv`（新增真值表）、`docs/06`（本节）、`docs/16`（§86）。
+* **没改**：`recovered-src/`（一行未动）、`client/scenes/**`（`.tscn` 与 `recovered-src/` 逐字节相同，
+  `cmp` 过，本来就是对的）、`src/**`（Rust 一行未动 ⇒ `.so` md5 与改前同值 `719c98bf…`）、
+  `tests/**`、`client/tools/*_check.gd`（headless 条数 1978 不变）、门槛/护栏文件、
+  `docs/00-status.md` / `HANDOVER.md` / `README.md` / `coverage-matrix.*`。
+* **主工作区**：只读（本轮全程只在 `.agent-work/cg/wt-t54` 里跑；主 checkout 的
+  `git status` 里与本任务相关的改动为 0）。
 ## 107. 审计面④补审：`docs/guide/` 的「档位声明 vs 物证」—— **155 条抽样：有物证 115 / 档位与物证不匹配 21 / 无物证 11 / 与源码冲突 7 / 与回放冲突 1**；手册自己的统计全对，但 **AI 适应度的敌我项是反的**、`docs/21` 台账 6 处过期（2026-11-27，审计员 t60）
 
 > 规格：`docs/06` §88.9 第 6 条留下的未审区（"`docs/guide/` 自称每条结论带四档证据标记，最该下一轮用同一套方法抽"）。
