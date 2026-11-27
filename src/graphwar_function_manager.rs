@@ -110,6 +110,54 @@
 //! | `+0x00` 弱自句柄**谁在用** | **未知** | 7 个方法**没有一处**读 `m+0x00`；本模块又不订阅事件（构造体内无 `subscribe`）⇒ 只能靠"别的模块替它订阅"来解释，未观测到 |
 //! | `get_active_functions_on_tick` 的两条谓词语义 | **未知** | §42.5 已列（`value+0x70 == 1`、`value+0x50 != i64::MIN`） |
 //! | 我们这份布局的**行为** | **已落码**（T49） | 见 §七：`FunctionTable` 的 6 个方法（原位在 `_scaffold/root_wiring.rs`）；`src/game.rs` 的自由函数是另一条（对局服务器侧的求值） |
+//! | 「函数多久算活跃」 | **已解开**（T88，见 §八） | 窗口 = `len/30 + 60` tick（揭示 `len/30` + 淡出 `60`）；**不**再是未知 |
+//! | `get_function_fade_on_tick` 的算式 | **已解开**（T88，见 §八） | x86 落点 = **`0x455a40`**（此前记为"没有落点、走 GOT 槽 `0x9bbd08`"——那个槽的 addend 就是它） |
+//!
+//! # 八、活跃窗口与淡出（T88 落码；逐位翻自 x86 `0x3be540` / `0x3bf620` / `0x455a40`）
+//!
+//! 三个函数构成"一条弹道画多久"的全部语义，**之前全是空白**：
+//!
+//! | 函数 | 地址 | 算式（原版指令） |
+//! |---|---|---|
+//! | `get_active_functions_on_tick` | `0x456df0` → 内联谓词 `0x3be540` | `+0x70 == 1` ∧ `+0x50 != i64::MIN` ∧ `tick > active_tick`（**严格**）∧ `30·d < len + 1800` |
+//! | `get_active_functions_on_tick_no_fade` | `0x456f80` → 谓词 `0x3bf620` | 同上，但末项是 `30·d < len`（**没有** `+1800` 的尾巴） |
+//! | `get_function_fade_on_tick` | **`0x455a40`** | 前三个条件不满足 ∨ `d ≤ len/30` ⇒ **`1.0`**；否则 `max(0.0, 1.0 − (d − len/30)/60)` |
+//!
+//! 关键指令（`0x3be5e6`–`0x3be613`，`get_active_functions_on_tick` 的过滤循环体）：
+//!
+//! ```text
+//! 3be5e6  cmpl $0x1,-0x8(%rbp,%rcx,1)   ; value+0x70 == 1
+//! 3be5f0  cmp  %r13,-0x28(%rcx)         ; r13 = 0x8000_0000_0000_0000 = i64::MIN
+//! 3be5f6  mov  %eax,%edx / sub -0x4(%rcx),%edx   ; d = tick - value+0x74（u32）
+//! 3be5fb  jbe  skip                     ; tick <= active_tick ⇒ 不在场（**严格大于**）
+//! 3be5fd  mov  -0x18(%rcx),%rdi         ; len = value+0x60（u32）
+//! 3be601  lea  (%rdx,%rdx,1),%r8d / shl $5,%edx / sub %r8d,%edx   ; 30·d
+//! 3be60b  add  $0x708,%edi              ; len + 1800（0x708）
+//! 3be611  cmp  %edi,%edx / jae skip     ; 30·d >= len+1800 ⇒ 不在场
+//! ```
+//!
+//! 淡出（`0x455a40`，全部指令）：
+//!
+//! ```text
+//! 455afc  cmpl $0x1,-0x8(%rcx) / jne  default   ; +0x70 != 1 ⇒ 1.0
+//! 455b04  cmp  %rax,-0x28(%rcx) / jo   default  ; +0x50 == i64::MIN ⇒ 1.0
+//! 455b0a  sub  -0x4(%rcx),%ebx / jbe   default  ; d <= 0 ⇒ 1.0
+//! 455b0f  mov  -0x18(%rcx),%rax / mov %eax,%eax  ; len（u64 → 截成 u32）
+//! 455b15  mov  $0x88888889,%ecx / imul %rax,%rcx / shr $0x24,%rcx  ; len/30（无符号）
+//! 455b22  sub  %ecx,%ebx / jbe  default          ; d <= len/30 ⇒ 1.0（还在揭示）
+//! 455b29  cvtsi2sd %rbx,%xmm0
+//! 455b2e  divsd  0x19fab0,%xmm0                  ; 0xc04e… = **-60.0**
+//! 455b36  addsd  0x19f570,%xmm0                  ; 0x3ff0… = **1.0**
+//! 455b42  maxsd  %xmm1,%xmm0                     ; max(alpha, 0.0)；xmm1 = 0
+//! 455b48  default: movq 0x19f570,%xmm0 ⇒ 1.0
+//! ```
+//!
+//! ⇒ **活跃窗口 = 揭示 `len/30` tick + 淡出 `60` tick**（60 Hz ⇒ 满打满算 `len/30 + 60` tick ≈ 1 s 淡出）。
+//! 窗口一过，`GraphwarPlane::draw` 走 `FunctionDrawer::remove_function`（`0x4b6418`，`0x498b70`）把线删掉；
+//! 淡出期间每帧走 `update_function_fade(id, alpha)`（`0x4b6a0e` → `0x4992b0`）。
+//!
+//! ⚠️ `+0x70` / `+0x50` 两个字段的**名字与语义仍未知**；本层用"表里有这一格"代替这两个判定
+//! （登记为本层的差，不是原版行为）。
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -176,6 +224,88 @@ const _: () = assert!(std::mem::size_of::<GraphwarFunctionManager>() == 32);
 const _: () = assert!(std::mem::size_of::<GraphwarFunctionData>() == 48);
 /// 编译期硬闸：`FunctionState` 的占位必须是 **112 字节**（`推断`，见类型文档）。
 const _: () = assert!(std::mem::size_of::<FunctionState>() == 112);
+
+// ---------------------------------------------------------------------------
+// 八、活跃窗口 / 淡出（T88；纯函数，逐条翻自 x86 指令，见文件头 §八）
+// ---------------------------------------------------------------------------
+
+/// 每 tick 揭示几个点（`0x3be601`–`0x3be608` 的 `30·d`；同一常量在
+/// `GraphwarPlane::draw` 的喂点循环 `0x4b67a0`–`0x4b6812` 里也是 30）。
+pub const REVEAL_POINTS_PER_TICK: u32 = 30;
+
+/// 揭示完之后还能在场的"尾巴"（`0x3be60b` 的 `add $0x708,%edi` = **1800** 点）。
+///
+/// `1800 / 30 = 60` tick —— 与 [`function_fade_on_tick`] 的分母 `60` 是同一个数
+/// （淡出窗口 1 s @ 60 Hz）。
+pub const ACTIVE_TAIL_POINTS: u64 = 1800;
+
+/// 一条函数在本 tick **还在场**（`get_active_functions_on_tick` `0x456df0` 的谓词，
+/// 真身在 `0x3be540`；见文件头 §八的指令表）。
+///
+/// ```text
+/// tick > active_tick（**严格**） ∧ 30·(tick-active_tick) < points.len() + 1800
+/// ```
+///
+/// 另两条原版条件（`value+0x70 == 1`、`value+0x50 != i64::MIN`）在本层用"表里有这一格"
+/// 代替 —— 那两个字段的语义**未知**（见文件头 §六）。
+pub fn is_active_on_tick(tick: u32, active_tick: u32, points_len: usize) -> bool {
+    // 0x3be5fb：`jbe skip` —— tick <= active_tick ⇒ 不在场
+    let Some(d) = tick.checked_sub(active_tick).filter(|&d| d > 0) else {
+        return false;
+    };
+    // 0x3be601–0x3be611：30·d 与 len+1800 的**无符号**比较
+    let revealed = (d as u64) * (REVEAL_POINTS_PER_TICK as u64);
+    revealed < (points_len as u64).saturating_add(ACTIVE_TAIL_POINTS)
+}
+
+/// `get_active_functions_on_tick_no_fade`（**`0x456f80`**，真身在 `0x3bf620`）的谓词：
+/// 同样的三条前置，末项是 `30·d < points.len()`（**没有** `+1800` 的尾巴）。
+///
+/// 用它问"这条函数**还在揭示**吗"（而不是"还在出生窗口里吗"）。
+pub fn is_active_on_tick_no_fade(tick: u32, active_tick: u32, points_len: usize) -> bool {
+    let Some(d) = tick.checked_sub(active_tick).filter(|&d| d > 0) else {
+        return false;
+    };
+    let revealed = (d as u64) * (REVEAL_POINTS_PER_TICK as u64);
+    revealed < points_len as u64
+}
+
+/// 还在场的**最大 `d`**（`d = tick − active_tick`），`d` 从这里+1 起就不在场。
+///
+/// 由 [`is_active_on_tick`] 直接解出来：`30·d < len+1800` ⇔ `d ≤ ⌊(len+1799)/30⌋`。
+/// `len = 0`（还没注入点）⇒ **59**；`len = 780` ⇒ **85**。
+pub fn active_window_ticks(points_len: usize) -> u64 {
+    let n = (points_len as u64).saturating_add(ACTIVE_TAIL_POINTS - 1);
+    n / REVEAL_POINTS_PER_TICK as u64
+}
+
+/// 原版 `GraphwarFunctionData::get_function_fade_on_tick`（x86 **`0x455a40`**）的算式。
+///
+/// 返回这一帧该给的 **alpha**：
+///
+/// * 未到场 / 还在揭示（`d <= len/30`） ⇒ **`1.0`**；
+/// * 揭示完之后线性淡出：`alpha = max(0.0, 1.0 − (d − len/30)/60)`；
+/// * 窗口外（`d ≥ len/30 + 60`）⇒ 被 `max(...,0.0)` 夹到 **`0.0`**
+///   （此后再过一两 tick 就被 `remove_function` 删掉）。
+///
+/// 调用点：`GraphwarPlane::draw` 的喂点循环尾部
+/// `0x4b69fe call [0x9bbd08]` → `0x455a40`，结果直接进 `FunctionDrawer::update_function_fade`
+/// （`0x4b6a0e`）。**此前文档把这条记为"没有 x86 落点"**：那是只看 `call rel32` 的结论；
+/// 槽 `0x9bbd08` 的 `.rela.dyn` addend 就是 `0x455a40`（`tools/addr_probe.py callers` 可复算）。
+pub fn function_fade_on_tick(tick: u32, active_tick: u32, points_len: usize) -> f64 {
+    // 0x455b0a：`sub %ecx,%ebx` / `jbe default`（d <= 0 ⇒ 1.0）
+    let Some(d) = tick.checked_sub(active_tick).filter(|&d| d > 0) else {
+        return 1.0;
+    };
+    // 0x455b0f–0x455b1e：`len`（截成 u32）无符号除 30（magic 0x88888889 >> 36）
+    let reveal_ticks = (points_len as u32) / REVEAL_POINTS_PER_TICK;
+    // 0x455b22：`sub %ecx,%ebx` / `jbe default`（还在揭示 ⇒ 1.0）
+    let Some(d2) = d.checked_sub(reveal_ticks).filter(|&x| x > 0) else {
+        return 1.0;
+    };
+    // 0x455b2e–0x455b42：`d2 / (-60.0) + 1.0` 再 `max(…, 0.0)`
+    (1.0 - d2 as f64 / 60.0).max(0.0)
+}
 
 impl GraphwarFunctionManager {
     /// 原版尺寸（32 B），给 `root_wiring` 的台账用。
@@ -247,6 +377,12 @@ pub struct FunctionTable {
     active_tick: HashMap<u32, u32>,
     /// `set_function_points` 写进去的终点（`FunctionPoints.end_x/end_y`）。
     points: HashMap<u32, (f64, f64)>,
+    /// `set_function_points` 那条点序列的**长度**（原版 `value+0x60` 的 `Vec` len）。
+    ///
+    /// 活跃窗口的两条判据都要它（`30·d < len + 1800` / `30·d < len`，见 §八），
+    /// 而本层只存终点 ⇒ 由调用方（`GraphwarPlane` 注点时）把长度一并报进来。
+    /// **T88 新增**：在这之前本层按 `len = 0` 算，窗口退化成恒 60 tick（那是错的）。
+    points_len: HashMap<u32, usize>,
     /// 订阅名（**恒空 = 原版这一型也不订阅**，这是正面证据：构造体内无
     /// `EventHandler::subscribe`，见模板文档 §三）。
     pub subscribed: Vec<&'static str>,
@@ -260,6 +396,7 @@ impl Default for FunctionTable {
             slots: HashMap::new(),
             active_tick: HashMap::new(),
             points: HashMap::new(),
+            points_len: HashMap::new(),
             subscribed: Vec::new(),
             outbox: Vec::new(),
         }
@@ -319,10 +456,26 @@ impl FunctionTable {
     ///
     /// tag 证据：`0x4569d3 lea rax,[r8+0x26]`（`r8 = 0x7fff…ffff`）⇒ `0x8000…0025` = 37；
     /// 载荷 `xmm` 两个 f64 + `[rsp+0x30]` 的 id；投递 `0x4569e1`。
+    ///
+    /// 第三个实参在原版是**整条点序列**（`Vec<(f64,f64)>`，16 B/点，见 `0x4569a2`–`0x4569ce`
+    /// 里那段"取首点 + 取末点 x"的载荷拼装），本层只留终点 + 长度两样东西。
     pub fn set_function_points(&mut self, soldier_id: u32, x: f64, y: f64) {
         // 0x456810 — 写终点后 add_event(tag 37 FunctionPoints)
         self.points.insert(soldier_id, (x, y));
         self.outbox.push(Event::FunctionPoints);
+    }
+
+    /// 把点序列的**长度**一并报进来（原版那一步就是 `set_function_points` 的
+    /// `Vec` len；本层拆成两个入口是因为我们只存终点）。
+    ///
+    /// 活跃窗口的两条判据都要它（见 §八），不报就按 `len = 0` 算（窗口恰好 60 tick）。
+    pub fn set_function_points_len(&mut self, soldier_id: u32, len: usize) {
+        self.points_len.insert(soldier_id, len);
+    }
+
+    /// 读回点序列长度（原版没有单独的 getter，两个 `get_active_*` 内联读 `value+0x60`）。
+    pub fn points_len_of(&self, soldier_id: u32) -> usize {
+        self.points_len.get(&soldier_id).copied().unwrap_or(0)
     }
 
     /// 读回终点（原版没有单独的 getter）。
@@ -332,27 +485,44 @@ impl FunctionTable {
 
     /// 原版 `get_active_functions_on_tick`（x86 **`0x456df0`**）：本 tick 还在场的那些 id。
     ///
-    /// 在场判据（**观测**，`docs/16-client.md` §42.2 的三条指令级结论）：
-    /// `tick > active_tick`（**严格**大于），且 `30*(tick-active_tick) < points.len() + 1800`。
+    /// 判据 = [`is_active_on_tick`]（`tick > active_tick` **严格**，且
+    /// `30·(tick−active_tick) < points.len() + 1800`），逐条翻自 `0x3be5e6`–`0x3be613`。
     ///
-    /// ⚠️ 本表不存整条曲线（曲线点由 `FunctionDrawer` 那边持有）⇒ **点的条数按 0 算**，
-    /// 窗口退化成 `1800/30 = 60` tick。这是本层的**差异**，不是原版行为。
+    /// **T88 更正**：此前这里按 `points.len() = 0` 算（窗口恒 60 tick），因为本层当时
+    /// 不知道点序列有多长；现在由 [`FunctionTable::set_function_points_len`] 报进来。
     pub fn get_active_functions_on_tick(&self, tick: u32) -> Vec<u32> {
-        // 0x456df0 — 谓词：tick > active_tick（严格）且 30*(tick-active) < len+1800
         let mut ids: Vec<u32> = self
             .active_tick
             .iter()
-            .filter(|&(_id, &active)| {
-                if tick <= active {
-                    return false;
-                }
-                let d = tick - active;
-                30u64 * d as u64 <= 1800
-            })
+            .filter(|&(&id, &active)| is_active_on_tick(tick, active, self.points_len_of(id)))
             .map(|(&id, _)| id)
             .collect();
         ids.sort_unstable();
         ids
+    }
+
+    /// 原版 `get_active_functions_on_tick_no_fade`（x86 **`0x456f80`**）：只问"还在揭示吗"
+    /// （末项没有 `+1800` 的尾巴，见 [`is_active_on_tick_no_fade`]）。
+    pub fn get_active_functions_on_tick_no_fade(&self, tick: u32) -> Vec<u32> {
+        let mut ids: Vec<u32> = self
+            .active_tick
+            .iter()
+            .filter(|&(&id, &active)| is_active_on_tick_no_fade(tick, active, self.points_len_of(id)))
+            .map(|(&id, _)| id)
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// 原版 `get_function_fade_on_tick`（x86 **`0x455a40`**）：这一帧该给的 alpha。
+    ///
+    /// 表里没有这一格（或还没 `set_function_active_tick` / `set_function_points`）
+    /// ⇒ **`1.0`**（原版那三条 `default` 臂都是 `movsd 0x19f570` = 1.0）。
+    pub fn get_function_fade_on_tick(&self, soldier_id: u32, tick: u32) -> f64 {
+        let Some(&active) = self.active_tick.get(&soldier_id) else {
+            return 1.0;
+        };
+        function_fade_on_tick(tick, active, self.points_len_of(soldier_id))
     }
 
     /// 槽数（原版没有；验收用）。
@@ -421,5 +591,79 @@ mod tests {
         assert!(!m.data_mutex_ptr().is_null());
         assert_eq!(m.event_queue.borrow().len(), 0);
         assert_eq!(GraphwarFunctionManager::SIZE, 32);
+    }
+
+    // ── §八：活跃窗口 / 淡出（T88；期望值全部来自反汇编，不来自本实现）──────────────
+
+    /// `get_active_functions_on_tick`（`0x3be5e6`–`0x3be613`）：
+    /// `tick > active_tick` **严格**，且 `30·d < len + 1800`。
+    #[test]
+    fn active_window_is_strict_and_has_an_1800_point_tail() {
+        // 严格大于：tick == active_tick 不在场（0x3be5fb 的 `jbe`）
+        assert!(!is_active_on_tick(615, 615, 780));
+        assert!(is_active_on_tick(616, 615, 780));
+
+        // 0 点（还没注入）⇒ 尾巴 1800/30 = 60 tick：d=59 ⇒ 30·59 = 1770 < 1800 还在场
+        assert!(is_active_on_tick(59, 0, 0), "d=59 ⇒ 1770 < 1800");
+        assert!(!is_active_on_tick(60, 0, 0), "d=60 ⇒ 1800 不 < 1800");
+        assert_eq!(active_window_ticks(0), 59);
+
+        // 780 点 = 26 tick 揭示完 ⇒ d ≤ 85（30·85 = 2550 < 2580）
+        assert_eq!(active_window_ticks(780), 85);
+        assert!(is_active_on_tick(615 + 85, 615, 780), "d=85 ⇒ 2550 < 2580 ⇒ 还在场");
+        assert!(!is_active_on_tick(615 + 86, 615, 780), "d=86 ⇒ 30·86 = 2580 = 780+1800 ⇒ 不在场");
+    }
+
+    /// `get_active_functions_on_tick_no_fade`（`0x3bf620`）：末项 `30·d < len`，**没有**尾巴。
+    #[test]
+    fn no_fade_variant_stops_as_soon_as_reveal_completes() {
+        assert!(is_active_on_tick_no_fade(615 + 25, 615, 780), "d=25: 750 < 780 还在揭示");
+        assert!(!is_active_on_tick_no_fade(615 + 26, 615, 780), "d=26: 780 不 < 780 ⇒ 揭完");
+        assert!(!is_active_on_tick_no_fade(615, 615, 780), "tick == active_tick 不成立");
+    }
+
+    /// `get_function_fade_on_tick`（`0x455a40`）：未在场 / 还在揭示 ⇒ **1.0**；
+    /// 之后 `max(0, 1 − (d − len/30)/60)`。
+    #[test]
+    fn fade_is_one_until_reveal_ends_then_linear_over_60_ticks() {
+        // len = 780 ⇒ len/30 = 26（magic 除法，无符号）
+        assert_eq!(function_fade_on_tick(615, 615, 780), 1.0, "d=0 ⇒ 1.0（0x455b0d 的 jbe）");
+        assert_eq!(function_fade_on_tick(614, 615, 780), 1.0, "tick < active ⇒ 1.0（无符号下溢支）");
+        assert_eq!(function_fade_on_tick(615 + 26, 615, 780), 1.0, "d == len/30 ⇒ 1.0（0x455b24）");
+        // d = 27 ⇒ d2 = 1 ⇒ 1 − 1/60
+        assert!((function_fade_on_tick(615 + 27, 615, 780) - (1.0 - 1.0 / 60.0)).abs() < 1e-12);
+        // d = 86 ⇒ d2 = 60 ⇒ 恰好 0.0
+        assert_eq!(function_fade_on_tick(615 + 86, 615, 780), 0.0);
+        // 再往后被 max(…, 0.0) 夹住（0x455b42 的 `maxsd`）
+        assert_eq!(function_fade_on_tick(615 + 200, 615, 780), 0.0);
+        // len = 0 ⇒ len/30 = 0 ⇒ d=1 就开始淡出（第 1 tick 后 alpha = 1−1/60）
+        assert!((function_fade_on_tick(1, 0, 0) - (1.0 - 1.0 / 60.0)).abs() < 1e-12);
+        // 0x455a4c：HashMap 空/没这一格 ⇒ 1.0（本层由 `get_function_fade_on_tick` 兜）
+        let f = FunctionTable::new();
+        assert_eq!(f.get_function_fade_on_tick(7, 1000), 1.0, "没这一格 ⇒ 1.0");
+    }
+
+    /// `FunctionTable` 的三张表接线：`active_tick` + `points_len` 一起决定窗口，
+    /// 淡出走同一份算式（这张表是**我方形状**，原版状态在 `FunctionState` 里）。
+    #[test]
+    fn table_window_uses_the_reported_point_count() {
+        let mut f = FunctionTable::new();
+        f.set_function_active_tick(230, 615);
+        // 没报长度 ⇒ 尾巴 1800/30 = 60 tick（d ≤ 59）
+        assert!(f.get_active_functions_on_tick(616).contains(&230));
+        assert!(f.get_active_functions_on_tick(674).contains(&230), "d=59 ⇒ 1770 < 1800 ⇒ 还在场");
+        assert!(f.get_active_functions_on_tick(675).is_empty(), "d=60 ⇒ 1800 不 < 1800 ⇒ 出窗口");
+
+        // 报 780 点 ⇒ d ≤ 85
+        f.set_function_points_len(230, 780);
+        assert!(f.get_active_functions_on_tick(615 + 85).contains(&230));
+        assert!(f.get_active_functions_on_tick(615 + 86).is_empty());
+        // no_fade：揭完即退（26 tick）
+        assert!(f.get_active_functions_on_tick_no_fade(615 + 25).contains(&230));
+        assert!(f.get_active_functions_on_tick_no_fade(615 + 26).is_empty());
+        // 淡出在表上也能读
+        assert_eq!(f.get_function_fade_on_tick(230, 641), 1.0, "d=26 = len/30 ⇒ 1.0");
+        assert!((f.get_function_fade_on_tick(230, 642) - (1.0 - 1.0 / 60.0)).abs() < 1e-12);
+        f.take_outbox();
     }
 }
