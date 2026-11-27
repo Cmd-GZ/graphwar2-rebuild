@@ -1,0 +1,78 @@
+# fixtures/controller_migration3_ledger.tsv —— 控制器迁回 Rust **第三批**逐段台账
+# （任务 T67 / `task-60`，2026-11-27；规格 = lead 任务书，依据 `docs/06` §90 的 C 档清单 + §90.4 的两条真错）
+#
+# 为什么要这份台账：`AGENTS.md` §0.4 —— 原版的界面控制器在 **Rust** 里，`client/src/**.gd` 是仿制品；
+# 仿制品最坏的地方不是"画得不像"，而是**把同一条规则在 GDScript 里又写了一遍**（同一规则两个真相源，
+# Rust 侧修好了 `.gd` 不会跟着变）。T35 审计（`docs/06` §90）从 `client/src/` 14 000 行生产代码里
+# 判出 C 档 4 941 行 / 27 段，并给了"最该先搬的 10 段"排序。第一批 T31/§81 做了 #7，第二批 T58/§105
+# 做了 #2/#4/#8/#9 + T42 做了 #1，**本批做剩下的四段： #3 / #5 / #6 / #10**。
+#
+# 口径：
+#   * 行号 = **改前**（本分支 HEAD 的 `client/src/...`：`app/app.gd` 958、`app/campaign.gd` 157、
+#     `net/discovery.gd` 215、`net/link.gd` 224 —— 注意 §90 表里的 352/157/207/212 是审计时的行数，
+#     `app.gd` 之后又长了两百多行，本表按**现在**的行号重新量）；改动后行数以 `git diff --stat` 为准；
+#   * 地址一律 **ELF vaddr**（`AGENTS.md` 口径；Ghidra/REA = 本表 + 0x100000）；
+#   * `verdict` 三种：`move`（搬进 Rust）/ `keep`（留 .gd，写清理由）/ `partial`（搬一部分）；
+#   * `evidence` 四档 `逐位` / `观测` / `推断` / `未知`；外加三个非档位标记：
+#     `自造`（本项目自己的选择，**不是**复原结论）、`引擎`（Godot 侧 API/节点属性/资源，原版也在引擎侧）、
+#     `视图`（原版视图层 `.gd`/`.tscn` 里的内容 —— 真值在 `recovered-src/`，不在 Rust 侧）。
+#
+# 判据（沿用 T31/T58）：**只有"Rust 侧已有复原实现且能指到地址"的才搬**；
+# 纯视图（节点属性/颜色/字号/动画表现/资源加载/布局算式）不搬 —— 搬了只是把引擎侧代码在 Rust 里再抄一遍。
+#
+# 统计（本表 44 行，按实际 `verdict` 列复算：`awk -F'\t' 'NR>1&&$1!~/^#/&&NF>1{print $7}' | sort | uniq -c`）：
+#   **move 20 段 / partial 3 段 / keep 21 段**。
+#   move：#10 的 C02/C04/C05/C07/C09（关卡表与解析 5）、#6 的 D03/D04/D08/D10/D12/D13（广播流程 6）、
+#         #5 的 L03/L05/L06/L07/L08/L09（连接状态机 6）、#3 的 A02/A04/A06（屏表/切屏/命令键 3）——
+#         合计 5+6+6+3 = 20（其中 C07/C09/D03/L03/L09 是"改调用点"：逻辑原地不动，只改取值来源）。
+#   partial：D01（文件头拆分）/ D07（`poll` 的收包循环留 .gd）/ L12（失败收尾只搬"状态 = 3"）；
+#   keep：全部是"视图/引擎侧/给人读的对照表/自造策略"（每行理由在 `missing_if_kept` 列）。
+# 落成 4 个 scaffold 出口（`src/_scaffold/`，原版没有这些类，只做"取值/规则"出口）：
+#   `GwCampaignControl`（campaign_control_class.rs）、`GwLanV6`（lan_v6_class.rs）、
+#   `GwClientLink`（client_link_class.rs）、`GwRootNode`（root_node_class.rs）。
+#
+# id	file	lines_pre	segment（这段在判断什么）	rust_side（文件:行 / 函数）	evidence	verdict	moved_to	missing_if_kept
+C01	campaign.gd	1-29	文件头"这表是内核同名表的客户端副本"+ 逐字段来源/证据档表	src/graphwar_campaign_control.rs:1-130 模块文档 + `docs/archive/118-campaign-data.md`	逐位	keep	—	这是**给人读的对照表**；搬进 Rust 只会变成第二份注释。表本身在 C05 搬
+C02	campaign.gd	30	`LEVEL_COUNT := 21`	src/graphwar_campaign_control.rs:206 `LEVEL_INFO` 的长度（`[CampaignLevel; 21]`，类型里就钉死了）	逐位	move	GwCampaignControl.level_count()	—
+C03	campaign.gd	34-35	`GRID_COLUMNS := 8` / `GRID_ROWS := 4`	—	视图（`recovered-src/CampaingLevelsButtons.gd::place_buttons` 的 `size.x/8`、`size.y/4`）	keep	—	这是**原版视图算法**的参数，不是 Rust 控制器的规则；真值在恢复出的原版 `.gd` 里
+C04	campaign.gd	38	`enum Obstacles { NONE, CENTER, SCATTER }`	src/graphwar_campaign_control.rs:59 `enum ObstacleMode { None, Center, Scatter }`（`0x49e570`/`0x49f1c0`/`0x3f1e50` 三条生成路径）	观测	move	GwCampaignControl.obstacle_modes() → 名字表；行数据里给同一套编码	**改前是"名字相同但编码是 .gd 自己排的"**：`NONE=0/CENTER=1/SCATTER=2` 没有任何人证过；本轮以 Rust 的判别值为准（`None=0`、`Center=1`、`Scatter=2`，与 `.gd` 现存编码恰好一致，所以是"钉住"而不是"改变"）
+C05	campaign.gd	56-101	`const LEVELS` **21 条全参数**（标题/描述/四模式/士兵/靶子/Bot 档/回合上限/障碍/下界）	src/graphwar_campaign_control.rs:206-540 `LEVEL_INFO`（= 原版 `level_info()` `0x4ad380`：`.rodata` 21 段描述 + 21 条 `mov dword [rsp+0x58], imm32` + 立即数/闭包预设；运行时 385 份 replay 三源对照 21/21）	逐位+运行时	move	GwCampaignControl.levels() / .level(i)	—
+C06	campaign.gd	103-105	`level_seed(index)`：`0x9E3779B9 * (i+1)` 确定性种子	—	自造（原版种子由运行时 ChaCha 抽，`docs/102` §1，拿不到）	keep	—	**不能搬**：Rust 侧没有这条（原版没有确定性种子）。留着并保持"自造"标注
+C07	campaign.gd	107-114	`level(index)`：取一行 + 补 `index` / `seed`	src/graphwar_campaign_control.rs:541 `level_info(index)`	逐位	move（改调用点）	GwCampaignControl.level(i) + 本文件只补 `seed`	—
+C08	campaign.gd	117-157	`layout_buttons(area)`：字号 `w/15`、x 步长 `w/8`、y 步长 `h/4`、碰 9/10 或 1/10 回弹换行	—	视图（`recovered-src/CampaingLevelsButtons.gd::place_buttons`，token 级与 GDRE 源码一致，`docs/101` §4.1）	keep	—	**原版这份算法是 `.gd`**（视图层），不是 Rust 控制器；搬进 Rust = 把原版视图代码换个语言再写一遍
+C09	app.gd	224-232（`level_<n>` 前缀分支）	`int(cmd.substr(6))`：把 `level_<n>` 的命令键转成关号	src/graphwar_campaign_control.rs:570 `parse_level_key`（原版 `0x417ef0` 的 `rsplit('_')` + 严格 `parse::<u32>()`；命令分派 `0x499740` 的 21 条比较）	逐位	move（改调用点）	GwCampaignControl.parse_level_key()	**这是本轮挖到的语义错**：改前是**宽容**解析 —— `"level_x"` 经 `int()` 得 0 ⇒ 静默选中第 0 关；真值那一步是解析**失败**（`get_current_level` 里三次 `unwrap` ⇒ 原版会 panic）。现在失败 ⇒ 拒绝该命令并报错，不猜关号
+D01	discovery.gd	1-48	文件头"监听方分工"+"两件本项目选择"（TTL 已拿到逐位真值）+ `DEFAULT_PORT`/TTL/`MAX_ROOMS`/`GAME_STATES`	src/graphwar_lan_broadcaster_v6.rs:1-190 模块文档（§3.1 周期 1 s、§3.2 表键=发送方地址+TTL 10 s、§3.3 `address` 恒 `[::1]:port`）	逐位/观测	partial	见 D03/D04/D05	—
+D02	discovery.gd	39	`DEFAULT_PORT := 42968`	—	观测（`ss -ltnup` 实测原版绑 `0.0.0.0:42968`，`docs/115` §5.3）+ 引擎（端口是 `PacketPeerUDP::bind` 的入参）	keep	—	**Rust 侧没有这个数**：`GraphwarLanBroadcasterV6::new(port)` 的端口是入参，42968 是**观测到的调用方常量**（在 `GraphwarBackend` 里）。要在 Rust 侧落它得先解那条调用点，本轮不做
+D03	discovery.gd	43	`room_ttl_ms := GwNetConsts.entry_ttl_ms()`	src/graphwar_lan_broadcaster_v6.rs:154 `ENTRY_TTL_SECS`（arm64 `0x3de6e4 cmp x0,#0xa`；逐位）	逐位	move（改调用点）	过期算术整体搬进 `GwLanV6`（D10），本行不再需要	—
+D04	discovery.gd	44	`MAX_ROOMS := 64` 房间表上限	src/graphwar_lan_broadcaster_v6.rs:198 的表是 `HashMap<SocketAddr,(GameInfo,Instant)>`，**没有容量闸**（`process`/`ingest` 里没有 `len()` 上限比较）	推断	move	删除这条闸（`GwLanV6` 不收上限）	**改前这条是我方自造的上限**：64 个房间以上原版照样收。删掉即与真值一致；原来的"防洪水"理由不足（表键是 SocketAddr，一个 sender 只占一条）
+D05	discovery.gd	48	`GAME_STATES := ["Setup","WaitingForFunctions","ExecutingResults","EndingGame"]`	`src/events.rs` 的 `GameState` 枚举 / `_scaffold/protocol.rs` 的 `Broadcast.game_state`（**原版是枚举**，`docs/06` §103 已定案 `game_state` = `enum GameState`）	观测	keep	—	本行**没有任何消费者**（`grep -c GAME_STATES client/` 只有定义处）；真值是枚举，硬编码 4 个字符串反而是第二份（可能不全的）枚举表 —— 本轮保留但标注"无消费者、不算证据"
+D06	discovery.gd	50-84	`listen()` / `stop()`：UDP socket 建/绑/关	—	引擎（`PacketPeerUDP`）	keep	—	socket 生命周期是引擎侧；原版这一层在 `GraphwarLanBroadcasterV6::start` 的 `socket2` 调用里，我方没有等价 Rust socket 层
+D07	discovery.gd	86-101	`poll(delta_ms)`：推进时钟 → 收包 → 解析 → 过期 → 发信号	src/graphwar_lan_broadcaster_v6.rs:324 `process(now, incoming)`（清理 → 收包 → 到点发，纯逻辑骨架）	观测	partial	GwLanV6.pump()（收 → 过期 → 到点发；socket 留 .gd）	收包循环留 .gd；`GwLanV6.pump()` 做"收 → 过期 → 到点发"
+D08	discovery.gd	103-123	`_ingest(text)`：按行切 + 解析 + **按 `address` 字段去重** + `MAX_ROOMS` 闸	src/graphwar_lan_broadcaster_v6.rs:281 `ingest(from, bytes, now)` —— 表键 = **发送方 `SocketAddr`**（`0x3de638 insert`），不是 `address` 字段	逐位	move	GwLanV6.ingest(from, bytes)	**改前是语义错**：真值按**发送方地址**去重，我方按报文里的 `address` 字段去重 ⇒ 两个不同 host 广播同一个 `address` 时原版是**两行**、我方合成一行；反过来同一 host 改 `address` 原版仍是一行、我方变两行（§3.2 明写"换个 host 发同样房名则是两条"）
+D09	discovery.gd	125-131	`_same_row(a,b)`：内容没变就只刷新时间戳（抑制 `rooms_changed`）	src/graphwar_lan_broadcaster_v6.rs —— 原版**没有**这层抑制：`GraphwarLanVBox::process` 每帧重取（`docs/144` §3）	推断	keep（改成"比较 Rust 给的整张表"）	—	信号抑制是**我方 UI 节流**，不是复原结论；改后仍保留，但判据从"逐字段比"变成"比 Rust 返回的整表"（`Array ==` 逐元素）
+D10	discovery.gd	133-142	`_expire()`：`_clock_ms - last_seen > room_ttl_ms` 就删	src/graphwar_lan_broadcaster_v6.rs:269 `expire_stale(now)`（判据 `secs >= 10`，arm64 `0x3de6e4 cmp x0,#0xa` + `b.lo 保留`）	逐位	move	GwLanV6.expire_stale()	**改前是边界错**：真值 `>=`（满 10 s 就删），我方写 `>`（要 10 s **多**一点才删）⇒ 每个消失的房间在我方列表里**多留一帧**。搬走即修正
+D11	discovery.gd	144-151	`rooms()`：按 `address` 排序后返回副本	src/graphwar_lan_broadcaster_v6.rs:299 `get_game_info(from)`（按发送方地址查）；**迭代序未知**（HashMap）	未知	keep（排序仍在我方）	—	原版列表顺序**未知**；排序只为可复现（与 `_scaffold/broker.rs` 同口径），不作为复原结论
+D12	discovery.gd	165-203	`parse_broadcast(line)`：裸 JSON 对象 + 9 字段类型校验（`game_info` 外壳丢弃、`locked` 必须 bool、`current_player_count` 数值）	src/_scaffold/protocol.rs:80 `struct Broadcast` + :92 `Broadcast::parse`（9 字段逐个取，缺一个就 `None`；`to_json` 的键序来自抓包）	观测（`docs/24` §1.1 的报文形状）+ 逐位（9 字段顺序与 `Broadcast` 一致）	move	GwLanV6.ingest（内部调 `Broadcast::parse`）	—
+D13	discovery.gd	205-215	`is_known_time_mode(s)`：`Timer<正整数><s|m>` 形状闸，否则整条丢弃	src/_scaffold/protocol.rs `Broadcast::parse` **不做**这个校验（`time_mode` 是 `String`）	推断（只观测到"带 `Timers1m` 的变体被原版丢弃"，`docs/115` §5.3 变体 E；判定发生在哪一层未知）	move（原样搬进 scaffold）	GwLanV6.ingest 内的 `time_mode` 闸（文档里逐字标 **推断**）	**这不是"复原"而是"把推断钉在一处"**：留在 `.gd` 会变成第二份；搬进 `GwLanV6` 后只有一处，且注释里写明它是变体 E 反推出的行为、缺"哪一层丢弃"的证据
+L01	link.gd	1-26	文件头：状态机形状 + "超时 30 s 是原版真值、重试策略是本项目选择"	src/graphwar_client_connection_handler.rs:1-160 模块文档（`ConnectionState` 4 态 + tick 闩锁）	逐位/观测	keep	—	给人读的对照表；真值在 L05–L09 搬
+L02	link.gd	32	`READ_CHUNK := 16384`	—	引擎（`StreamPeerTCP.get_partial_data` 的块大小）	keep	—	读块大小是引擎侧参数，原版用 `read` 到 `BufReader`，没有这个数
+L03	link.gd	41	`connect_timeout := GwNetConsts.connect_timeout_secs()`	src/graphwar_client_connection_handler.rs:261 `CONNECT_TIMEOUT_SECS = 30`（arm64 `0x48dccc mov w1,#0x1e`；逐位）	逐位	move（改调用点）	GwClientLink.step()（超时判定）；本行只给提示文案用	超时判定搬进 `GwClientLink.step()`（L09），本行保留为"只用来显示"的值
+L04	link.gd	43-45 / 53-55	`retries` / `retry_delay` / `_retry_left` / `_waiting_retry`：失败后重试策略	src/graphwar_client_connection_handler.rs:261 的文档写明"**没有**重连退避、没有心跳周期"（唯一时间常量就是 30 s）	未知（原版重试策略完全没有观测，`docs/132` §3 只有 `start_client_to_*` 的方法名）	keep	—	**不能搬**：Rust 侧没有重试逻辑（原版的连接线程失败即写 3）。留着并保持"本项目选择"标注
+L05	link.gd	35	`state`：`"idle"|"connecting"|"connected"|"closed"|"failed"` 字符串	src/graphwar_client_connection_handler.rs:168 `enum ConnectionState { Disconnected=0, Connecting=1, Connected=2, Failed=3 }`（`doc` 表 4 个写入点）	逐位（4 个写入点 `strb` 立即数）	move	GwClientLink 的 4 个判别值（`state_ids()`）	GwClientLink 用 Rust 的 4 个编码（0..3）；`"closed"` 是**我方多出来的第 5 态**，见 L11
+L06	link.gd	72-89	`_begin_attempt()`：把状态置 `connecting`	src/graphwar_client_connection_handler.rs:684 `connect()`：`strb #1,[x21,#0x15]` + `strb wzr,[x19,#0x68]`（闩锁清零）	观测	move	GwClientLink.connect() → {state, latched}	—
+L07	link.gd	100-133	`poll(delta)` 的状态迁移段：`connecting` + 超时 ⇒ 失败；`status==ERROR/NONE` ⇒ 失败；`STATUS_CONNECTED` ⇒ 连上	src/graphwar_client_connection_handler.rs:272 `state_after_connect_attempt(tcp_established)`+ :233 `tick_action(latched,state)`	观测/推断	move	GwClientLink.step(tcp_status, elapsed_s) → {state, action}	原版的 30 s 是**阻塞在 `connect_timeout` 里**的，不是每帧比 `elapsed`；我方是单线程非阻塞 ⇒ 框架差异登记 L10
+L08	link.gd	91-98	`is_open()` / `is_busy()`	src/graphwar_client_connection_handler.rs:807 `get_connection_state()`（读 `Mutex` 字节 + `from_u8`）	观测	move	GwClientLink.is_open(state) / is_busy(state)	—
+L09	link.gd	187-195	`shutdown()`：主动关（不触发 `link_closed`）	src/graphwar_client_connection_handler.rs:754 `disconnect()`（写 0 = Disconnected）	观测	move（改调用点）	GwClientLink.disconnect_state()	GwClientLink.disconnect() → state 0
+L10	link.gd	135-169	`_read_available()`：读字节 → `GwNetFrame.decode_buffer` → 逐帧发信号	`graphwar_stream_buffer`（T58 已搬帧层）+ `graphwar_client_connection_handler`:788 `forward_event`	逐位（帧层）	keep	—	**读循环是引擎 API 序列**（`get_partial_data`）；帧层规则已经在 Rust（`GwStreamBuffer`、`GwNetFrame`）
+L11	link.gd	171-185	`send_text()`：成帧 + `put_data`	src/graphwar_stream_buffer.rs:335 `encode_len` / :317 `write_event`（T58 已搬 `GwNetFrame.encode`）	逐位	keep	—	同 L10：socket 写在引擎侧，成帧在 Rust
+L12	link.gd	206-224	`_attempt_failed()` / `_peer_closed()`：失败/断开的收尾（含重试分支）	src/graphwar_client_connection_handler.rs:754 `disconnect()` / :233 `tick_action` 的 `SetGameState(7)`	观测	partial	"失败 ⇒ 状态 3"问 Rust；重试分支（L04）留 .gd	—
+A01	app.gd	1-20	文件头：原版 `GraphwarRootNode` 的职责 vs 本项目的分工	`src/graphwar_root_node.rs:1-140` 模块文档（`FN_SHOW_SCREEN=0x3af850`、`FN_COMMAND_BUS=0x3b0830`、`SCREEN_TABLE` 15 项）	观测	keep	—	给人读的对照表
+A02	app.gd	22-26	`BASE_SCREENS` 7 个基础屏名	src/graphwar_root_node.rs:206 `SCREEN_TABLE`（7 个名字逐个带 `.rodata` 地址与长度立即数；`Screen::name()` 逐位）	逐位	move	GwRootNode.base_screen_names()	—
+A03	app.gd	27-31	`POPUPS` 8 个弹窗名	src/graphwar_root_node.rs:206 `SCREEN_TABLE` 的另外 8 项 —— **对不上**：表里是 `ConfirmPlay` + `ExitPopUp` **两项**、没有 `ChatPopUp`；我方是 `ConfirmPlayExitPopUp` **一项** + 多一个 `ChatPopUp`	逐位（表项）+ 未知（我方这两个命名从哪来）	keep（并登记两处不一致）	—	**这是本轮挖到的语义错（命名层）**：①`ConfirmPlay`(0x1bdb0d,11)+`ExitPopUp`(0x1bdb18,9) 在 `.rodata` 里是**紧邻的两项**，合起来正好是 `"ConfirmPlayExitPopUp"`(20)，而 `0x3b3783` 处的长度立即数是 `0x14=20` ⇒ 原版屏表把**两个名字**放进两个槽、`FN_SHOW_SCREEN` 的调用方用的却是**拼起来的 20 字节串**（它对不上任何一个槽）；②`ChatPopUp` 全库**没有**对应的 `.rodata` 名字/长度立即数（`docs/06` §90 的 15 屏表里也没有），它是我方自造的屏。两条都登记，**本轮不改屏表**（改它要动 `.tscn` 节点名 ⇒ 像素风险，见 `docs/06` §111.6）
+A04	app.gd	137-139 / 141-158	`is_popup()` / `show_screen()`：把 7 个基础屏 `visible = (name == 目标)`	src/graphwar_root_node.rs:859 `screen_swap(entry, queried, ads_slot, play_screen_visible)` + :922 `apply_screen_swap` + :935 `apply_show_screen`（原版 `0x3af850` 的循环体：屏表逐项 `set_visible(命中)`，`PlayScreen` 进出动广告，`background` **完全不动**）	观测（控制流逐条对上）	move	GwRootNode.show_plan(queried, ads_slot, play_visible) → 每项 {name, visible(-1/0/1), deferred}；`.gd` 只做 `set_visible`/`call_deferred`	我方**没有** `AdHolder` 节点，所以 `ads_slot` 恒传 `false`（原版只在 `0x3a7bed` 切到 `PlayScreen` 那一条调用点写 `true`）；`background` 条目不在我方屏表里（原版那个键从哪来仍 **未知**，`docs/16` §15.10 未知③）
+A05	app.gd	160-177	`open_popup()` / `close_popup()` / `close_all_popups()`：**叠层模型**（基础屏留着，弹窗盖上去）	src/graphwar_root_node.rs:935 `apply_show_screen` —— 原版是**单可见**：弹窗也走同一个函数，所以"显示 `JoinLevelPopUp`"会把 `Campaign` 也置不可见	观测	keep（并登记**模型分叉**）	—	**这是本轮挖到的语义分叉**：原版 15 个屏同一时刻只有**一个**可见（`background` 除外），我方是"基础屏 + 弹窗叠层"。像素上目前等价（弹窗面板不透明），但**节点的 visible 状态不同**，会影响任何"读 visible 判断当前屏"的代码（我方 `current_screen` 自己维护）。改它会动所有弹窗的进入/退出时序 ⇒ 本轮**不改**，登记进 `docs/06` §111.6 作为下一步
+A06	app.gd	224-338	`command(cmd)`：唯一命令入口（前缀 `add_bot_`/`level_` + 键盘键 + 30 余条 `match`）	src/graphwar_root_node.rs:546 `enum Command`（`0x3b0830` 的 **12 条**已解键）+ :607 `Command::from_name`	观测	move（只搬"识别/规范化"）	GwRootNode.command_kind(cmd) —— 12 条键的原文/长度/两次窗口比对地址都在 Rust；`match` 的**动作**是客户端视图/状态，留 .gd	原版 `0x3b0830` 是 131 KB、键**远不止** 12 条（`docs/16` §15.6 的未知清单第 2 条）⇒ 只能是"12 条已知键与 Rust 对齐"，不能声称命令全集
+A07	app.gd	340-353	`_is_keypad_key(cmd)`：37 个键盘键的字符串清单	src/_scaffold/function_input_rules_class.rs:79-106（`CMD_*` 常量；出处是 `graphwar_function_input` 的折叠跳转表 `0x1c3d5c`，198 项里 28 项，T42 已搬）	观测（跳转表）+ 视图（键位表 = 键盘 `.tscn` 的 `input_text` 集合）	keep	—	**键位清单是视图数据**（哪几个键画在键盘上，真值在 `recovered-src/*keyboard*.tscn`），而"按下这个键怎么编辑"的规则已经在 Rust（`GwFunctionEdit`）。而且那张清单现在活在 `_scaffold/function_input_rules_class.rs`（T42 的文件，本轮**不许动**），所以搬它要么造第三份、要么改别人的文件 ⇒ 原地保留（台账口径：纯视图不搬）
+A08	app.gd	179-202	`_on_screen_entered()`：进屏钩子（`on_enter` + PlayScreen 的静音/对齐）	—	引擎/视图	keep	—	纯视图钩子；原版没有 `on_enter` 这套（控制器直接在 Rust 里改节点），这是仿制品的接缝
+A09	app.gd	204-222	`notify()` / `changed()` / `goto()`：气泡与信号 + 内部标记扫描	src/graphwar_root_node.rs 的屏切换广播未复原	自造/视图	keep	—	`INTERNAL_MARKERS` 那套是我方自检装置，不是原版行为
+A10	app.gd	355-958	联机层接线（`_install_net` / `connect_to` / `_on_net_*` / `online_result` / `_sync_state_from_net` …）	src/graphwar_client_connection_handler.rs（T55 已落 connect/disconnect）、`turnstate::winner_byte`（已走 `GwEndGame`）	观测	keep	—	**不在本批范围**：这一段是 `net/session.gd` 那 520 行 C 档（§90 的"候补"清单）的接线，搬它要先搬会话模型；本批只做 #3/#5/#6/#10 四段
