@@ -44,6 +44,10 @@
 
 * `fixtures/name_to_addr_v2.tsv` —— **三向符号匹配**（Windows COFF + Android arm64 `.symtab`
   × 本 Linux 二进制，落地键是 `(file,line,col)` 双向唯一）。**这是真名字**，`name_src=v2*`。
+  同址多名（大函数把小函数内联掉，小函数的名字仍然合法地指向同一个地址）已由
+  `three_way_match.py::assign_roles` 裁决：**一个地址只有一条 `role=outer` 行**当身份，
+  其余降为 `inline-alias` 写在该行的 `inline_alias` 列（判据与正对照见 `docs/06` §137）。
+  本脚本**只认 outer**；同一地址出现两条 outer 直接 `SystemExit`。
 * `fixtures/hybrid_names.tsv` —— 结构指纹/顺序轴**预测**的候选名，`name_src=hyb:*`
   （高置信/推断/歧义/未知 四档）。候选名可用于阅读定位，**不能当结论**。
 * 都没有 ⇒ `name_src=—`。
@@ -117,27 +121,44 @@ def read_tsv(path):
 
 
 def load_names():
-    """返回 {addr: (name, name_src)}。
+    """返回 ({addr: (name, name_src)}, {addr: [被降级的别名…]})。
 
     优先级：name_to_addr_v2（三向真名）> hybrid_names（候选）。
+
+    **同址多名**（`docs/06` §137）：v2 夹具里 `role=outer` 才是该地址的源码级身份，
+    `role=inline-alias` 是**被内联掉**的同址别名 —— 旧实现（本函数 2026-11-27 之前）是
+    「文件序最后一行赢」，没有任何判据，实测挑错 7 处（`0x4500c0` 挑到 `...::new`，
+    真值是 `game_server_thread`；`0x499740` 挑到 `setup_level_13`，真值是 `setup_level` …）。
+    现在：**只认 outer**；同名地址出现 >1 条 outer 就 `SystemExit`（宁缺勿错，别静默挑一个）。
     """
     names = {}
+    aliases = {}
     v2 = os.path.join(ROOT, "fixtures", "name_to_addr_v2.tsv")
     if os.path.exists(v2):
         rows = read_tsv(v2)
         hdr = rows[0]
         imod, ityp, imet, iadr = hdr.index("module"), hdr.index("type"), hdr.index("method"), hdr.index("x86_addr")
         ijoin = hdr.index("join_kind")
+        irole = hdr.index("role") if "role" in hdr else None
+        ialias = hdr.index("inline_alias") if "inline_alias" in hdr else None
         for r in rows[1:]:
             try:
                 a = int(r[iadr], 16)
             except ValueError:      # 「歧义」行没有地址
                 continue
+            if irole is not None and r[irole] != "outer":
+                continue            # inline-alias：不是身份，只进 alias 注记
             mod = r[imod] + ".rs" if r[imod] and not r[imod].endswith(".rs") else r[imod]
             name = "::".join(x for x in (mod, r[ityp], r[imet]) if x)
             join = r[ijoin]
             src = "v2唯一锚" if join == "唯一锚" else "v2跨版本"
+            if a in names:
+                raise SystemExit(
+                    "boundary_audit: name_to_addr_v2.tsv 里 0x%x 有 >1 条 role=outer"
+                    "（%s vs %s）—— 同址多名裁决失效，先修 tools/three_way_match.py" % (a, names[a][0], name))
             names[a] = (name, src)
+            if ialias is not None and r[ialias]:
+                aliases[a] = r[ialias].split("; ")
 
     hyb = os.path.join(ROOT, "fixtures", "hybrid_names.tsv")
     if os.path.exists(hyb):
@@ -163,7 +184,7 @@ def load_names():
             else:
                 tier = "未知"
             names[a] = (r[iname], "hyb:" + tier)
-    return names
+    return names, aliases
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +240,7 @@ def pick_main(bymod):
 # ---------------------------------------------------------------------------
 # 汇编文本：每行的判定
 # ---------------------------------------------------------------------------
-def build_rows(votes, names):
+def build_rows(votes, names, aliases=None):
     rows = []
     for addr in sorted(votes):
         bymod = module_votes(votes[addr])
@@ -253,6 +274,11 @@ def build_rows(votes, names):
             nm_mod = name.split("::", 1)[0]
             if nm_mod.endswith(".rs") and nm_mod != main:
                 basis += "；名字模块≠主文件(名字=%s)" % nm_mod
+        al = (aliases or {}).get(addr) or []
+        if al:
+            # 同址多名已裁决（docs/06 §137）：本行名字是 outer，其余是 inline-alias
+            basis += "；同址裁决：降 %d 条内联别名(%s)" % (
+                len(al), "; ".join(a.split("(")[0] for a in al))
         hit = 100.0 * len(bymod[main]) / total if total else 0.0
         rows.append(dict(
             addr="0x%06x" % addr,
@@ -312,8 +338,8 @@ def build():
     locs = CM.resolve_locations(E, CM.find_literals(E))
     funcstarts = CM.load_funcstarts(CM.FUNCSTARTS)
     votes = scan_votes(E, locs, funcstarts)
-    names = load_names()
-    rows = build_rows(votes, names)
+    names, aliases = load_names()
+    rows = build_rows(votes, names, aliases)
 
     # ---- 自校验 1：总数与跨模块数与 coverage_matrix 一致（同口径的硬证据） ----
     assert len(rows) == EXPECT_ATTRIBUTED, \
@@ -347,6 +373,12 @@ def build():
             "boundary_audit: %s(0x%x) 锚点数 %s != %d" % (
                 label, addr, row["loc_main_anchors"], want_anchors)
 
+    # ---- 自校验 4：同址多名已裁决（docs/06 §137）----
+    # `load_names()` 已经保证「一个地址只有一条 outer」；这里只报裁决规模，并把数字写进表头。
+    n_alias_addr = len(aliases)
+    n_alias = sum(len(v) for v in aliases.values())
+    control_bits.append("同址多名裁决：%d 个地址 / 降 %d 条 inline-alias ✓" % (n_alias_addr, n_alias))
+
     meta = dict(
         rows=len(rows),
         match=sum(1 for r in rows if r["verdict"] == "match"),
@@ -364,6 +396,7 @@ def summary(rows, meta):
     print()
     print("%d 个可归属函数：match %d / mismatch %d / multi %d"
           % (meta["rows"], meta["match"], meta["mismatch"], meta["multi"]))
+    print("名字：同址多名已裁决（role=outer 唯一）——降为 inline-alias 的见各行的 basis")
     by_mod = collections.Counter(r["loc_main_file"] for r in rows)
     print()
     print("multi 的来源（主文件:次文件 锚点行数分布）：")

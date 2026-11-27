@@ -25252,3 +25252,348 @@ python3 tools/frame_diff.py --orig $WT/.agent-work/v/mo --mine $WT/.agent-work/v
 #    （脚本放在 `<repo>/.agent-work/dense/` 里 ⇒ `_find_repo()` 走上去仍命中本棵树；
 #     把 `--flow match` 的两侧各跑一遍，然后按"棋盘区彩色像素"逐帧数）
 ```
+
+## 138. T89 命名台账收口：同址多名裁决（**一个地址只有一条 `outer` 身份**）+ T82 的 5 条 `na:gdext-glue` 与 T87 的 Android 定名**打架定案** + T87 的 7 条 `na:std-mono` 诊断**采纳 6 驳回 1** + 52/47/400 三数对齐 —— 三口径 A `58.6→59.2 %` / B `70.4→**71.2 %**`（招牌）/ B′ `69.3→70.1 %`（2026-11-27，任务 T89 / `task-85` / 分支 `agent/naming-hygiene`）
+
+> **动机**：§136（T87）把 179 条无名函数定名 **52** 条，同时在夹具里暴露出 **37 处「同一地址多个名字」**
+> （24 条是 `X` vs `X::{{closure}}` 的精度问题，**13 条是真冲突：不同 `fn` 抢一个地址**），
+> 并留下 3 件事没做：13 条真冲突怎么裁、5 条与 T82 `na` 台账矛盾的行谁对、7 条 `na:std-mono` 诊断采不采纳。
+> 再加上 `docs/HANDOVER.md` P4 写「400/527 具名」而工具只认「叠加 47 条」（T87 报 52），**三个数打架**。
+> 本节把四件事一次做完，**每一件都给可复跑的判据 + 正对照**，并且**没有为了让数字好看而改判据**。
+>
+> **工具改动**（两处，都带自校验）：
+> * `tools/three_way_match.py` —— 新增 `assign_roles()` / `pick_outer()` / `name_sizes()`：
+>   `fixtures/name_to_addr_v2.tsv` 由「每名字一行」改成「**一地址一身份**」，新增 `role` 与 `inline_alias` 两列。
+> * `tools/boundary_audit.py` —— `load_names()` 只认 `role=outer`（同址出现两条 outer 直接 `SystemExit`），
+>   被降级的内联别名写进该行 `basis`（`同址裁决：降 N 条内联别名(…)`）。
+> * 计分侧 `tools/function_coverage.py` **一个字符没改**（口径一字不动）。
+>
+> ⚠️ **写范围说明（偏离任务书的部分）**：任务书写「改 `fixtures/name_to_addr_v2.tsv` + `tools/boundary_audit.py`」，
+> 但「size 最大的外层函数」所需的**每名字字节数只存在于生成期**（三份参照构建的 `feats[addr]["size"]`），
+> 消费侧拿不到 ⇒ 规则必须落在生成器 `tools/three_way_match.py` 里，`boundary_audit.py` 只负责**只认 outer**。
+> 手改 `name_to_addr_v2.tsv` 会违反它自己表头的「不要手改（重跑会覆盖）」，所以没那么做。
+
+### 138.0 一页结论
+
+| 问题 | 答案 | 证据档 |
+|---|---|---|
+| 同址多名怎么裁？ | **源码级身份 = 在 android 2.0.60 / win 2.0.60 / win early2026 三份参照构建里「是自己这一组最大函数」得票最多**的那个名字（内联只让外层变大）；其余降为 `inline-alias` 备注 | 观测（三份符号表的 size） |
+| 这个规则可信吗？ | **正对照 11/11**：T87 已用 Android `.symtab` 逐条裁决过的 11 个同址真冲突，规则逐条复现（§138.2） | 观测 |
+| 夹具现状 | `name_to_addr_v2.tsv` **980 行/30 个同址多行 → 945 行/0 个**；312 个地址各 1 条 `role=outer`，30 个地址带 `inline_alias` 注记；`boundary_audit.tsv` **7 行名字被改正**（match/mismatch/multi 不动：441/0/86） | 观测 |
+| 13 条 B 区真冲突清了吗？ | **v2 内部同址多名 13 → 0**；B 区从 **37 行降到 31 行**，剩 4 行**全是 v1/v2 跨表**（2 条渲染/旧规则产物 + 2 条 T87 判不了），**不是** v2 内部冲突（§138.4） | 观测 |
+| 5 条 `na:gdext-glue` 裁成什么？ | **全部 `real-missing`** —— 产出它的 G2 判据在 527 上命中 87 条、其中 **68 条是已实现 F1**（正对照），且同键同签名的孪生行**本来就是 F1**（§138.3） | 观测 |
+| T87 的 7 条 `na:std-mono` 呢？ | **采纳 6 条**（5 条 `real-missing→na:std-mono` + **新增** `0x523410`）、**驳回 1 条 `0x438880`** —— 它入口就是 `connect_timeout(addr, 30 s)`，是游戏 `connect` 的线程闭包体，不是 std 单态化（§138.5） | **逐位**（常数 `0x1e` = 30 与 arm64 `0x48dccc` 交叉一致） |
+| 52 / 47 / 400 三个数？ | **52** = T87 定名条数；**47** = 其中**实际能进计分**的（5 条被 T82 的 `na` 台账压住）；**400** = `348（三份名字夹具并集）+ 52`。② 改判后三处**统一**：工具也报**叠加 52 条**，`348∪52 = 400` 实测成立，T87 那 52 条与 348 **重叠 0 条**（§138.7） | 观测 |
+| 三口径变了多少？ | A `309/527 = 58.6 %` → **`312/527 = 59.2 %`**；B（招牌）`309/439 = 70.4 %` → **`312/438 = 71.2 %`**；B′ `309/446 = 69.3 %` → **`312/445 = 70.1 %`** | — |
+| ⚠️ 这 +3 值多少？ | **源码级增量 = +0**：+3 是 3 条 `ready::{{closure}}` 按预注册 R2（闭包按父函数判）计成 F1 —— **父函数 `ready` 已还原**，闭包本体写没写进去机器判不了（§138.6） | — |
+
+### 138.1 ① 同址多名的根因与裁决判据
+
+**根因（不是"抓错了"）**：`decide()` 只在「`panic::Location` 三元组**双向唯一**」上落地。
+而**大函数会把小函数内联掉** —— 被内联者的 Location 键还在、独立符号却没了，
+于是**多个名字合法地指向同一个 Linux 地址**。实测 `name_to_addr_v2.tsv` 有 **30 个地址挂多名（35 行）**，
+其中 **11 个是不同 `fn` 抢一个地址**（不是精度问题）。
+
+**旧行为有多随便**（两个消费者各挑各的，都没判据）：
+| 消费者 | 旧规则 | 实测挑错 |
+|---|---|---|
+| `tools/boundary_audit.py::load_names()` | **文件序最后一行赢** | **7 处**：`0x4500c0`→`GraphwarServerConnectionHandler::new`（真值 `game_server_thread`）、`0x499740`→`setup_level_13`（真值 `setup_level`）、`0x46f690`→`initialize_turns`（真值 `start_game`）、`0x3ee190`→`get_image`（真值 `ObstacleDrawer::update`）、`0x3d4fa0`→`save_event`、`0x465870`→`...panic_cold_explicit`、`0x4782f0`→`send_all_info_events` |
+| `tools/naming_android.py::load_targets()` | **最短方法名赢** | 更差（`new` 比 `ready` 短 ⇒ `0x3a2e10` 挑成 `ButtonManager::new`） |
+
+**新判据（在 `tools/three_way_match.py` 里写死，跑数前定）**：
+
+```
+一个地址的全部候选名 → 对每份参照构建 tag ∈ {android 2.0.60, win 2.0.60, win early2026}：
+    取该构建里 size 严格最大的名字为一票（并列则该构建不投票）
+源码级身份 = 得票最多的名字；票数打平 ⇒ 看 android 字节数、再看名字字典序（保证确定性）
+其余名字降为 inline-alias，写进这条 outer 行的 inline_alias 列（含各自三份 size）
+```
+
+> **三份参照构建都不参与 Linux 落地**（落地键是 Location 双向唯一），它们只提供 **size**。
+> android/win 与目标**同版本**（2.0.60）各一票，win_old 是**不同版本**、只当第三票 ——
+> 与 `decide()` 里「跨版本锚单列、不进唯一锚计数」同一条纪律。
+
+### 138.2 正对照：规则必须复现 T87 的 11 条逐条裁决（**11/11**）
+
+T87 已用 Android `.symtab`（size + Location 键集）逐条裁决过的 11 个地址，本规则必须一致 —— **跑完 11/11 全中**：
+
+| addr | Linux size | 规则选出的 outer（= T87 裁决） | 得票 |
+|---|---|---|---|
+| `0x3a2e10` | 9928 | `GraphwarRootNode::ready`（不是 `ButtonManager::new`） | android+win+win_old |
+| `0x3d4fa0` | 696 | `GraphwarGameRecorder::subscribe_to_events::{{closure}}` | android+win+win_old |
+| `0x3e2830` | 12505 | `GraphwarRemoteEventHandler::handle_server_remote_event`（降 2 条） | android+win+win_old |
+| `0x3ee190` | 5202 | `ObstacleDrawer::update`（不是 `GraphwarObstacleManager::get_image`） | android+win+win_old |
+| `0x4500c0` | 14745 | `graphwar_game_server::_::game_server_thread` | android+win |
+| `0x45b020` | 2138 | `GraphwarServerConnectionHandler::tick`（不是 `...::{{closure}}`） | android+win |
+| `0x465870` | 94 | `GraphwarTargetManager::subscribe_to_events_event_handler::{{closure}}`（降 2 条） | android+win+win_old |
+| `0x46f690` | 4521 | `GraphwarGameStateManager::start_game`（不是 `initialize_turns`） | android+win+win_old |
+| `0x4782f0` | 243 | `GraphwarEntityEffectManager::subscribe_to_events_event_handler::{{closure}}` | android+win+win_old |
+| `0x499740` | 20010 | `GraphwarLevelManager::setup_level`（降 4 条 `setup_level_10..13`） | android+win |
+| `0x519d80` | 442 | `GraphwarEffectManager::tick`（不是 `...::{{closure}}`） | android+win+win_old |
+
+**「我写错了」1 处（自己抓到、已修，留档）**：第一次实现时 `name_sizes()` 的键没归一化 ——
+`name_landings()` 里自由函数的 `owner` 是 `None`，夹具行写的是空串，两边不相等，
+于是自由函数 `_::game_server_thread` 查不到尺寸（当 0），**输给了同址的 `...::new`（win 3228 字节）**。
+⇒ `0x4500c0` 第一次跑出来是 `GraphwarServerConnectionHandler::new`。正对照逐条比 T87 的裁决才发现（第 5 条不符），
+归一化后 11/11。**教训：正对照要逐条比，不要只看"大多数对"。**
+
+### 138.3 ② 5 条 `na:gdext-glue` ↔ T87 Android 定名 的冲突：**全部裁成 `real-missing`**
+
+**争议**：T82 的台账把这 5 条判成 `na:gdext-glue`（源码层无独立 fn、不该手写），
+T87 用 Android `.symtab` 把它们定成**游戏 crate 的闭包**（档位 观测）。两边不可能都对。
+
+| addr | size | T82 机器判据（`hits`） | T87 的 Android 定名 |
+|---|---|---|---|
+| `0x3aae60` | `0x3d` | `BORROW=1\|SLOT=1\|G4-CLOSURE` | `button_manager::ButtonManager::new::{{closure}}` |
+| `0x3b70b0` | `0x86` | `BORROW=1\|SLOT=1\|G4-CLOSURE` | 同上（同键 `button_manager.rs:29:26`） |
+| `0x3b6ed0` | `0x14a` | `BORROW=1\|SLOT=1` | `graphwar_root_node::GraphwarRootNode::ready::{{closure}}` |
+| `0x3b7020` | `0x85` | `PAIR=0x85\|BORROW=1\|SLOT=1` | 同上（键 `graphwar_root_node.rs:1324:25`） |
+| `0x3b6e00` | `0x85` | `PAIR=0x85\|BORROW=1\|SLOT=1` | 同上（键 `graphwar_root_node.rs:1348:25`） |
+
+**裁决：`real-missing`。四条证据，逐条可复跑。**
+
+1. **产出 `na:gdext-glue` 的那条机器规则（G2）不可靠 —— 正对照**。
+   G2 = `f.borrow and f.callers <= 1 and f.slots >= 1`（"写 `[reg+0x10] ← -1` 的借用标记 + 地址在表里"）。
+   把 G2 跑遍 **527 全集 ⇒ 命中 87 条，其中 68 条是已实现且有真名的 F1/F2**：
+   `EntityDrawer::ready`(0x4b4130)、`GraphwarPlane::draw`(0x4b5df0)、`GraphwarBackend::button_pressed`(0x514a10)、
+   `GraphwarGameClient::update_function`(0x516ad0)、`GraphwarSetupControl::ready::{{closure}}` 一族 8 条
+   （0x4d1ca0/0x4d1d50/0x4d1e00/0x4d1e60/0x4d2550/0x4d88b0/0x4d95f0/0x4d96e0）……
+   ⇒ 这条规则的**精度极低**，不能单独定 `na`。
+   T82 自己的结论也写在同一份夹具里：**F2-scan 段（21 行样本）里同一判据把 19 行判成 `na:gdext-glue`**，
+   含 `GraphwarGameClient::new`/`tick`/`process`、`GraphwarModeManager::set_time_mode` 这类显然的真业务函数。
+   > 机械上「`[reg+0x10] ← -1`」是 gdext `GdCell::borrow_mut`（即 `Gd::bind_mut()`）**内联**留下的痕迹；
+   > 任何 `&mut self` 方法、任何捕获 `Gd<T>` 并 `bind_mut()` 的闭包都有它 ⇒ 它只说明"这里借了对象"，不说明"这是胶水"。
+2. **Android 侧是正向证据（与 §138.5 那批的负向推断相反）**：`fixtures/naming_android.tsv` 这 5 行 `kind=unique`，
+   即该 Location 键集在 Android `.symtab` 里**只有具名游戏 crate 函数引用、并集只有 1 个源码级名字**；
+   §136 的闸 C2 自洽率 **284/284 = 1.0000**、C4 负对照拒绝率 **89.9 %**；F 轴旁证 `sr=0.64–0.74`（结构支持）。
+3. **同键同签名的孪生行本来就是 F1（最硬的一条）**：527 里引用**同一 Location 键**、机器签名**完全一致**
+   （`borrow=1 / slots=1 / callers=0`）的孪生是 `0x3a54e0`（键 1319）/ `0x3a55e0`（1324）/ `0x3a5620`（1348）
+   —— 它们已按 T87 的 Android 名计成 **F1 `ready::{{closure}}`**。
+   **同一个源码构造不可能一半"不是我们的缺口（na）"、一半"已实现"。**
+4. **反汇编否掉"属性访问器"读法**：`0x3b6ed0`（82 条指令）的函数体是
+   `GdCell::borrow_mut`（`[r13+0x10] ← -1`）→ 分配/搬一段 `(ptr,len)` → 写对象 `+0xf8/+0x100/+0x108`
+   三个连续字段（= 一个 `Vec`/`String` 的 ptr/cap/len）→ 对 `+0x1f8` 调一次（槽 `0x9ba888`→`0x516ad0`）
+   → 释放借用 → `dec` 引用计数。**有实质业务逻辑**，不是薄访问器（T82 依据里只看了借用标记这一条）。
+
+**逐行改动（`fixtures/f3_triage.tsv`，谁改了什么一目了然）**
+| `fixtures/f3_triage.tsv` 行 | addr | 改前 `category` | 改后 | 改了什么 |
+|---|---|---|---|---|
+| **L79** | `0x3aae60` | `na:gdext-glue` | **`real-missing`** | 只改类别列；`evidence` 追加 `**人工改判**(2026-11-27 T89 \`docs/06\` §138.3 …)`（上列 4 条证据，逐条可复跑） |
+| **L83** | `0x3b6e00` | `na:gdext-glue` | **`real-missing`** | 同上（`evidence` 里的孪生指向 `0x3a5620`） |
+| **L84** | `0x3b6ed0` | `na:gdext-glue` | **`real-missing`** | 同上（孪生 `0x3a54e0`） |
+| **L85** | `0x3b7020` | `na:gdext-glue` | **`real-missing`** | 同上（孪生 `0x3a55e0`） |
+| **L86** | `0x3b70b0` | `na:gdext-glue` | **`real-missing`** | 同上（与 `0x3aae60` 同键 `button_manager.rs:29:26`） |
+
+> 行号（本节提交时的实物）会随插行漂，**以 `addr` 为准**；复跑核对：
+> `grep -P '^0x3aae60\t|^0x3b6ed0\t|^0x3b6e00\t|^0x3b7020\t|^0x3b70b0\t' fixtures/f3_triage.tsv | cut -f1,5`
+> ⇒ 5 行全部 `real-missing`。`hits` 列（机器候选）与 `name`/`size` 列**原样保留**，
+> 符合 T82「机器规则只是候选、类别列是人工裁决结果」的约定；`size` 未变（都 < `0x800` 上限，M4 不触发）。
+
+### 138.4 13 条 B 区真冲突的去向：**v2 内部 13 → 0**，B 区 37 行 → 31 行
+
+复跑方式（会把 `fixtures/naming_android_verify.tsv` 重写，**跑完 `git checkout --` 还原**，因为它是 T87 的原始台账）：
+```bash
+$PY tools/naming_android.py verify   # 看 stdout 的「B 区夹具内同址多名 N 条」
+git checkout -- fixtures/naming_android_verify.tsv
+```
+
+| | 改前 | 改后 |
+|---|---|---|
+| B 区总行数 | **37** | **31** |
+| 其中**真冲突**（同址不同 `fn`，剥离 `::{{closure}}`/`::panic_cold_*` 后仍 >1 个基名） | **13** | **4** |
+| 其中父子同址（`X` vs `X::{{closure}}` 精度类） | 24 | 27 |
+| v2 **内部**同址多名（本任务的裁决对象） | **11 个地址** | **0**（312 个地址各 1 条 `role=outer`） |
+
+**消解 9 条**（`0x3a2e10` / `0x3d4fa0` / `0x3ee190` / `0x45b020` / `0x465870` / `0x46f690` / `0x4782f0` / `0x499740` / `0x519d80`）。
+**剩 4 条，全部是 v1/v2 跨表，不是 v2 内部冲突**：
+* `0x4500c0` —— B 区看到 `graphwar_game_server::::game_server_thread`（v1）与 `graphwar_game_server::_::game_server_thread`（v2）
+  两个串。**是同一个函数的渲染差异**（自由函数的 `type` 一列，v1 写空串、v2 写 `_`），不是两个名字。
+* `0x3e2830` —— `handle_server_remote_event`（v2，已裁决的唯一 outer）以外，v1 还在这个地址上多认了
+  `set_color` / `report_fired_function`；那两条正是**被内联进大函数**的小函数 —— v1（`name_bridge.py`）的粗键规则
+  不做同址裁决。v2 已经把它们的真身放在自己的地址上或降为别名。
+* `0x465780` / `0x4783f0` —— v2 里**各只有 1 个名字**（`send_all_info_events` / `handle_entity_removed_event::panic_cold_explicit`），
+  与 v1 的 `subscribe_to_events_event_handler` 不一致。Android 侧首选 `subscribe_to_events_event_handler::{{closure}}`
+  （size 231/740、94/404），**与两边给的任何一个名字都不同 ⇒ T87 判不了，本节也判不了**（缺：能区分这三个名字的证据）。
+  这两条的冲突源是 `naming_android.py::load_targets()` **无条件把 v1 的名字并进 `allnames`** —— 建议 T87 的工具改成
+  「v2 已落地的地址忽略 v1」（不在本任务写范围，只登记）。
+
+### 138.5 ③ T87 的 7 条 `na:std-mono` 诊断：**采纳 6、驳回 1**
+
+T87 的 `--android-na-report` 列出 21 条「非游戏 crate 单态化」候选，其中 **7 条**与台账不一致：
+5 条台账里是 `real-missing`（`0x3b6c70` / `0x3bfdd0` / `0x3caa20` / `0x522070` / `0x5238c0`）+ 2 条台账未收录
+（`0x438880` / `0x523410`）。**逐条复核，不照抄诊断。**
+
+**两条独立判据（跑前写死）**
+1. **Android 侧命中物是什么**：该 Location 键集在 Android `.symtab` 里命中的函数名 —— 是**标准库泛型本体**
+   （`LocalKey::with` / `Vec::retain` / `Vec::from_iter` / `Rc::new_cyclic_in`）⇒ `na`；是**游戏 crate 的闭包** ⇒ 不是 `na`。
+2. **调用形态**：泛型单态化是**被直接调用**的（`call rel32 ≥ 1`、地址不被取走）；交给 API 的闭包，其地址
+   **只出现在数据槽里**（`call rel32 = 0`、`slot ≥ 1`）。实测 **6/6 采纳项都是"直接调用"形态**，
+   **唯一驳回项 `0x438880` 是 `call rel32=0 / slot=1`**。
+
+| addr | Linux size | Android 侧命中（size） | 调用形态 | 裁决 |
+|---|---|---|---|---|
+| `0x3b6c70` | `0xd0` | `std::thread::local::LocalKey<T>::with`（std，`0x10c`） | rel32=1 / slot=0 | **`na:std-mono`**（原 `real-missing`） |
+| `0x3bfdd0` | `0x25b` | `<Vec<T> as SpecFromIterNested<T,I>>::from_iter`（alloc，`0x23c`） | rel32=1 / slot=0 | **`na:std-mono`**（原 `real-missing`） |
+| `0x3caa20` | `0x426` | `Vec<T,A>::retain`（alloc，`0x388`） | rel32=1 / slot=0 | **`na:std-mono`**（原 `real-missing`） |
+| `0x522070` | `0x477` | `Rc<T,A>::new_cyclic_in`（alloc，`0x3ec`） | rel32=1 / slot=0 | **`na:std-mono`**（原 `real-missing`） |
+| `0x5238c0` | `0x358` | `Rc<T,A>::new_cyclic_in`（alloc，`0x2c4`） | rel32=1 / slot=0 | **`na:std-mono`**（原 `real-missing`） |
+| `0x523410` | `0x2c1` | `Rc<T,A>::new_cyclic_in`（alloc，`0x208`） | rel32=1（`0x4c6c50`，在 `0x4c6b40` 内）/ slot=0 | **`na:std-mono`（新增行）** |
+| `0x438880` | `0x422` | `std::sys::backtrace::__rust_begin_short_backtrace`（std，`0x484`） | **rel32=0 / slot=1** | **驳回，保持 real（现为 F1）** |
+
+**驳回 `0x438880` 的证据（逐位，本节最硬的一条）**：反汇编它的**头三条实参就是连接超时** ——
+```
+0x438896  mov  edx, 0x1e                      ; 30 = CONNECT_TIMEOUT_SECS
+0x43889e  xor  ecx, ecx
+0x4388a0  call qword ptr [rip + 0x58272a]     ; slot 0x9bafd0 -> 0x8f40a0
+0x4388a6  cmp  dword ptr [rsp + 0x18], 1      ; Result 判别（Ok/Err）
+```
+`0x8f40a0` = `std::net::tcp::TcpStream::connect_timeout`，`rsi` = sockaddr、`rdi` = `&mut Result`。
+⇒ 这个函数体**第一件事就是 `connect_timeout(addr, 30 s)`**，它是游戏 `connect()` 的**线程闭包本体**；
+`__rust_begin_short_backtrace` 那个 wrapper 只做 `catch_unwind(f())`，**不会**调 `connect_timeout`。
+与 T42 的逐位结论交叉一致：arm64 `0x48dccc mov w1,#0x1e` → `bl TcpStream::connect_timeout`
+（`CONNECT_TIMEOUT_SECS = 30`，见 `docs/06` §92 / `docs/16` §81）。
+**T87 的 R3 是负向推断**（"该键只被非游戏 crate 具名函数引用"），它在这里失效的原因是
+**游戏闭包在 Android 上被整体内联进了 std 的 spawn wrapper** ⇒ Android 侧没有游戏符号可命中，
+但 Linux 侧这个函数是**独立存在的游戏闭包体**。⇒ `na` 的判据必须补上"调用形态"这一条，否则会把
+"被内联进 std 的游戏闭包"全判成 std 单态化。
+
+**逐行改动（`fixtures/f3_triage.tsv`）**
+| `fixtures/f3_triage.tsv` 行 | addr | 改前 | 改后 | 备注 |
+|---|---|---|---|---|
+| **L12** | `0x3b6c70` | `real-missing` | **`na:std-mono`** | `evidence` 追加 `**人工改判**(2026-11-27 T89 …)` |
+| **L13** | `0x3bfdd0` | `real-missing` | **`na:std-mono`** | 同上 |
+| **L15** | `0x3caa20` | `real-missing` | **`na:std-mono`** | 同上；其 hyb 预测名 `request_update_function` 是**假预测**（该址是 `Vec::retain` 的单态化） |
+| **L62** | `0x522070` | `real-missing` | **`na:std-mono`** | 同上 |
+| **L64** | `0x5238c0` | `real-missing` | **`na:std-mono`** | 同上 |
+| **L63（新插一行，主表 153→154 行）** | `0x523410` | 未收录 | **`na:std-mono`** | `evidence` 写 `**新增**(2026-11-27 T89 …)`；插在 `0x522070` 与 `0x5238c0` 之间保持地址升序 |
+| 无（不在台账里） | `0x438880` | 未收录 | **不改**（保持 F1，`pin=addr`） | 驳回理由见上；**别再把它加进 na 台账**（那会把一条已落地、逐位有据的函数算成"不该手写"） |
+
+> ⚠️ **`0x523410` 顺带暴露我方一处注释错**：`src/graphwar_replay_control.rs:142-145` 把它注释成
+> 「`update_replay_list` 的后台半边（arm64 闭包 `0x4cac88` / x86 `0x523410`）」。按本节判据它是
+> `Rc::new_cyclic_in` 的实例（`call rel32=1 / slot=0`、键 `:65:107` 是第 65 行第 107 列那个**闭包字面量**的位置、
+> 串含 `cloneinit_ref() failed`）⇒ **注释错**。`src/` 不在本任务写范围，只登记；
+> 后果是 T85 的 P2 负向排除（`na:*` 地址出现在我方注释里不算 F1）把它从 F1 扣掉了（F1 313→312）。
+
+### 138.6 计分：三口径与诚实拆解
+
+`tools/function_coverage.py --stats`（口径一字未改，`fixtures/function_coverage.tsv` 重跑）：
+
+| | 本轮起点（§136 末） | ① 合并规则后 | ② 5 条改判后 | ③ 6 采纳 / 1 驳回后（**最终**） |
+|---|---|---|---|---|
+| F1 / F2 / F3 | 309 / 70 / 148 | 310 / 69 / 148 | 313 / 71 / 143 | **312 / 71 / 144** |
+| 口径 A（分母 527） | `309 = 58.6 %` | `310 = 58.8 %` | `313 = 59.4 %` | **`312 = 59.2 %`** |
+| 口径 B（剔 `na:*`，**招牌**） | `309/439 = 70.4 %` | `310/439 = 70.6 %` | `313/444 = 70.5 %` | **`312/438 = 71.2 %`** |
+| 口径 B′（只剔强 na） | `309/446 = 69.3 %` | `310/446 = 69.5 %` | `313/451 = 69.4 %` | **`312/445 = 70.1 %`** |
+| 台账 `na:*` / 强 na | 88 / 81 | 88 / 81 | 83 / 76 | **89 / 82** |
+| P2 负向排除条数 | 33 | 33 | 33 | **34** |
+
+**净变化：A +0.6 pp · B +0.8 pp · B′ +0.8 pp（三口径全部上行，且没有一条是把有证据的真函数改成 na 换来的）。**
+
+**必须看穿的三点（否则这三个数会被误读）**
+1. **+3 的 F1 增量，源码级是 +0**。② 里计成 F1 的 3 条是 `GraphwarRootNode::ready::{{closure}}` 的 3 份机器码副本，
+   按预注册 R2（`{{closure}}` 按**父函数**判）算 —— 只说明**父函数 `ready`（`src/graphwar_root_node.rs:2371`）已还原**，
+   **闭包本体有没有写进我方 `ready` 里，机器判不了**。另外 2 条 `ButtonManager::new::{{closure}}` 落 F2（我方没有 `new` 本体）。
+   ⇒ 5 条机器码副本只对应 **2 个源码级闭包**，与 §136「+30 条只对应 4 个源码函数」是同一个诚实拆解口径。
+2. **② 那一步 B/B′ 各降 0.1 pp 是真的**（分母 +5 > 分子 +3）。没改判据、没挑数字；③ 才把分母缩回来。
+3. **分母是"标准库单态化"这一档**：③ 剔掉 6 条 std/alloc 泛型实例后 B 分母 `444→438`。这**不是放宽判据**，
+   是把"本来就不该手写的 std 泛型实例"从"我们的缺口"里拿出去 —— 每一条都有 Android 符号表的**正向**指名（泛型本体名 + size）。
+
+### 138.7 ④ 52 / 47 / 400 三个数的差异原因与统一结果
+
+| 数 | 定义（口径） | 实测 |
+|---|---|---|
+| **348** | 527 里「`fixtures/name_to_addr.tsv`（v1）∪ `name_to_addr_v2.tsv`（v2）∪ `windows_name_to_addr.tsv` 三份**名字夹具**至少一份给了名字」的地址数（`unnamed_attrib.py::named_map()` 口径，`join_kind` 不筛） | **348**（来源分布：v1+v2+win 293 / v1+v2 7 / v1+win 12 / v1 7 / v2+win 9 / v2 3 / win 17） |
+| **179** | `527 − 348` = 三份夹具都没名字的 ⇒ `fixtures/unnamed_attrib.tsv` 的 179 行（T87 的目标集） | **179** |
+| **52** | `fixtures/naming_android.tsv` 里「档位=`观测` 且 名字来源含 `android符号+位置键`」的行数 = T87 给 179 无名集定到的真名条数 | **52**，且与上面的 348 **重叠 0 条** |
+| **400** | `348 ∪ 52` = `docs/HANDOVER.md` P4 的「400/527 具名」 | **400**（实测 `len(348 ∪ 52) = 400`） |
+| **47** | **工具**以前能看到的叠加条数：52 条里 **5 条被 T82 的 `na` 台账压住**（`function_coverage.py::build()` 的 `na_skip` 分支，按"人工裁决优先"不叠加，只打印 ⚠） | **47** = 52 − 5 |
+
+**差异原因（一句话）**：**`400` 从来没写错，是工具没跟上** —— `348 + 52 = 400` 一直成立，
+但 `function_coverage.py` 因为「T82 的人工 na 裁决优先」把其中 5 条（正是 §138.3 那 5 条）挡在计分外，
+于是只能报 `47`，看起来和 HANDOVER 的 400、T87 的 52 都差 5。
+**② 把 5 条改判成 `real-missing` 之后，压制的理由消失，工具现在报「叠加 naming_android 真名 52 条」**
+⇒ 52 / (348+52=400) / 工具读数 **三处统一**。
+复跑：`grep '叠加 naming_android 真名' <(tools/function_coverage.py --stats)` 必须是 **52**。
+
+**另一处容易混的口径（顺手记下，不要混用）**：`fixtures/boundary_audit.tsv` 的 `name` 列**只认 v2 + hybrid**，
+所以从它数出来是「v2 真名 312 个地址 + hyb 预测名 177 = 489 有名字 / 38 无名」——
+**这是第三种口径**（v2+预测），与 348/179（三份夹具并集）、400（并集 ∪ T87）都不同。
+三者都对，但**报数时必须说清是哪一种**。
+
+### 138.8 门槛读数与复跑命令
+
+```bash
+export CARGO_HOME=$PWD/.reference/cargo-home
+export CARGO_TARGET_DIR=$PWD/.agent-work/cg/wt-t89/.cargo-target   # 每棵树自己的 target，别共享
+$PY=tools 用的 .reference/venv/bin/python
+
+# ① 合并规则（生成器 + 消费者）
+$PY tools/three_way_match.py build        # 缓存命中后秒级；会打印「同址多名裁决：30 个地址 ⇒ 保留 1 条 outer / 降 35 条」
+$PY tools/boundary_audit.py               # 自校验 4：同址多名裁决 30 个地址 / 降 35 条
+$PY tools/boundary_audit.py --check       # rc=0
+$PY tools/function_coverage.py            # 生成 fixtures/function_coverage.tsv + 三口径
+$PY tools/function_coverage.py --stats    # 只看统计
+
+# ② / ③ 的台账改动只有 tsv，没有脚本（改写原因见 §138.9 第 1 条）
+grep -P '^0x3aae60\t|^0x3b6ed0\t|^0x3b6e00\t|^0x3b7020\t|^0x3b70b0\t' fixtures/f3_triage.tsv | cut -f1,5   # 5 行 real-missing
+grep -P '^0x3b6c70\t|^0x3bfdd0\t|^0x3caa20\t|^0x522070\t|^0x5238c0\t|^0x523410\t' fixtures/f3_triage.tsv | cut -f1,5  # 6 行 na:std-mono
+
+# ④ B 区计数（会重写 T87 的台账，跑完还原）
+$PY tools/naming_android.py verify && git checkout -- fixtures/naming_android_verify.tsv
+
+# 门槛
+cargo test --offline                                   # 1588 / 0 / 1 ignored
+cargo test --offline --features gdext-bindings         # 1736 / 0 / 1 ignored
+COVERAGE_MATRIX_UPSTREAM=$PWD/.reference/upstream $PY tools/coverage_matrix.py --check   # OK
+$PY tools/check_doc_refs.py                            # rc=0
+$PY tools/docsec.py check docs/06-verification.md      # 通过
+# 三轴（冻结快照 401 份回放）：fire 647 / batch 647 / batch_conv 637
+```
+
+**门槛实测（2026-11-27，本分支，`CARGO_TARGET_DIR` 用本树自己的 `.cargo-target`）**
+
+| 门槛 | 读数 | 与任务书 |
+|---|---|---|
+| `cargo test --offline` | **1588 / 0 / 1 ignored** | == 1588/0/1 ✅ |
+| `cargo test --offline --features gdext-bindings` | **1736 / 0 / 1 ignored** | == 1736/0/1 ✅ |
+| `tools/coverage_matrix.py --check` | **OK**（527 可归属 / 78 模块 / 逐位 89 · 观测 435 · 推断 3） | OK ✅ |
+| `tools/check_doc_refs.py` | **rc=0**，无死链 | rc=0 ✅ |
+| `tools/docsec.py check docs/06-verification.md` | **通过**（135 节 / 范围 1..137 / 断号 43·89 为历史缺口） | 通过 ✅ |
+| `tools/boundary_audit.py --check` | **rc=0**，match **441** / **mismatch 0** / multi 86 | mismatch 0 ✅（441/86 与改前一致） |
+| 三轴 `fire` | 内容命中 **647**（结算批 1080） | 647 ✅ |
+| 三轴 `batch` | 内容命中 **647**（结算批 1080） | 647 ✅ |
+| 三轴 `batch_conv` | 内容命中 **637**（种类序列 1075 / 1080 = 99.5 %） | 637 ✅ |
+| `tools/merge_check.py --branch agent/naming-hygiene --base master --no-report` | **rc=0**「可以合」（禁区未碰、无二进制/大文件、6 文件：4 fixtures + 2 tools） | — |
+
+> 三轴读的是 `.reference/replays/gw2-replays-snapshot/replays`（**403 条目 = 401 份回放 + MANIFEST + SHA256SUMS**，
+> 冻结快照，本任务没往里加过任何样本）。本轮**没有动任何 Rust 代码**，三轴与 cargo 条数按预期逐位不变。
+
+**本节可复算的数**：30 个同址多名地址 / 35 条降级 / 11 正对照全中 / B 区 37→31（真冲突 13→4，v2 内部 11→0）/
+87·68（G2 命中与其中已实现数）/ 5 条 real-missing / 6 采纳 1 驳回 / 348·179·52·47·400 /
+`309→310→313→312` · `58.6→58.8→59.4→59.2` · `70.4→70.6→70.5→71.2` · `69.3→69.5→69.4→70.1` / 1588·1736·647·647·637·441·0。
+
+### 138.9 遗留 / 我写错了 / 建议下一步
+
+1. **⚠️ 台账的人工裁决不在生成器里，而且这张表已经不是"当前 F3 集合的快照"（最需要注意的一条）**。
+   `fixtures/f3_triage.tsv` 名义上是 `tools/f3_triage.py` 的生成物（人工裁决在它的 `MANUAL` 字典，31 条），
+   但**实测重跑一次就对不上**（本节做完后实测，未入库）：`tools/f3_triage.py` 现在只产出 **144 行**主表，
+   而台账是 **153 行**（+ 本节新增 1 条 = 154）⇒ **10 条已被口径变化（T85 的 na、T87 的定名、本节的合并规则）
+   从 F3 挪到 F1/F2，台账仍保留**（这是对的：台账是**历史裁决记录**，不是 F3 的派生视图）。
+   重跑的完整后果（`diff` 65 行）：① 本节 6 条裁决**全部被冲掉**（5 条回 `na:gdext-glue`/`real-missing`，
+   `0x523410` 整行消失）；② 10 条已不在 F3 的行被**删掉**；③ `evidence` 列被重算覆盖。
+   ⇒ **重跑前必须先把这 6 条补进 `MANUAL`**（`tools/f3_triage.py:234`，格式 `addr: (category, 依据)`），
+   条目与理由就是 §138.3 / §138.5 的表。为什么本轮没直接改：任务书写范围是 `fixtures/f3_triage.tsv`，
+   而 `tools/f3_triage.py` 是 T82 的脚本、重跑会整表重写（含 `hits`/`size`/F2-scan 采样），一次动两个面风险更大
+   ⇒ 登记在此，**建议下一轮单独做一次「把 §137 的裁决搬进 `MANUAL` + 重跑对拍 + 决定那 10 条历史行怎么归档」**。
+2. **4 条 B 区残留**（§138.4）：2 条是 v1/v2 跨表渲染/旧规则产物（`0x4500c0` / `0x3e2830`），
+   2 条 T87 判不了（`0x465780` / `0x4783f0`）。要清前两条只需让 `naming_android.py::load_targets()`
+   「v2 已落地的地址忽略 v1」；后两条缺**能区分三个候选名字**的证据（现有三轴都打平）——
+   可行的下一步是拿 Windows early2026 的**调用者**序列做 S 顺序对齐，但那是新工作。
+3. **`0x438880` 的教训要写进下次的 R3**：`na` 判据必须加"调用形态"（`call rel32` vs 数据槽），
+   否则"被内联进 std wrapper 的游戏闭包"会被系统性误判成 std 单态化。**别再按 `--android-na-report`
+   的清单直接改台账**；那 21 条里已经证明有 1 条是假阳性。
+4. **闭包按父函数判（R2）的代价**：§138.3 的 3 条 `ready::{{closure}}` 计成 F1 只代表父函数已还原。
+   要真正回答"闭包本体写了没"，需要一个"父函数内的闭包表达式 ↔ 机器码副本"的对照工具 —— 现在没有。
+5. **不做的事**：没有改任何 `src/**`、`client/**`、`tests/**`、护栏/门槛、`docs/00`、`docs/02`、`docs/07`、
+   `fixtures/naming_android*.tsv`（T87 原始台账，只读引用）、`fixtures/name_to_addr.tsv`（v1，只读引用）、
+   `tools/naming_android.py`、`tools/f3_triage.py`、`tools/function_coverage.py`。
