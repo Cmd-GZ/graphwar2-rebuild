@@ -1,0 +1,24 @@
+# fixtures/pixel_freeze_results.tsv —— **按 tick 停帧**口径下的三轮读数（T76，2026-11-27）
+# 采集口径（预注册）：fixtures/frame_capture_freeze_plan.txt（sha256 见本波 commit）
+#   两侧采集命令（每轮四次，**串行**、私有 netns）：
+#     .reference/venv/bin/python tools/frame_capture.py --side {original|ours} --flow {replay|match} --seed-replays --stop-plan fixtures/frame_capture_freeze_plan.txt ...
+#   对拍命令（系统 python3，Pillow/numpy 在那边）：
+#     python3 tools/frame_diff.py --orig <orig> --mine <mine> --screens ... --exclude-rect <§2 的框> --out ...
+# 列意：l3_diff_px/ratio = **排除光标列之后**的读数（判定用）；*_raw = 未排除的原始读数；
+#       l3_masked_out_px = 被排除掉的差异像素（= 光标那 270 px 的一次命中）；
+#       frozen_orig/frozen_ours = 冻结/停帧时记录的**运行时 tick**（我方 match_ready 无 tick ⇒ settle）。
+round	flow	screen	stop_orig	frozen_orig	stop_ours	frozen_ours	verdict	l1_ok	l2_blocks_over	l3_diff_px	l3_diff_ratio	l3_diff_px_raw	l3_masked_out_px	l3_max_channel_diff	l3_bbox	noise_max_orig	noise_max_mine	band	band_ok
+6	replay	replay_play	frozen	557	frozen	0.244835	不过（L3）	True	0	856	0.000384	1126	270	255	770,782,844,810	0.0	0.0	掩膜后必须逐 px = 856	ok
+6	replay	replay_end	frozen	557	frozen	0.244835	不过（L3）	True	0	856	0.000384	1126	270	255	770,782,844,810	0.0	0.0	掩膜后必须逐 px = 856	ok
+6	match	match_ready	tick	900	settle		不过（L3）	True	0	2047	0.000919	2047	0	255	265,782,1738,1156	0.0	0.0	L3 ∈ [0.070,0.100]% 且 L2 0 块	ok
+6	match	match_play	tick	1480	ftick	243.106	不过（L2，1 块超限）	True	1	5783	0.002598	6053	270	255	265,556,1738,1156	0.0	0.0	L3 ≤0.450%（预注册带 [0.340,0.450]%）且 L2 ≤1 块	below(更好)
+7	replay	replay_play	frozen	557	frozen	0.244835	不过（L3）	True	0	856	0.000384	1126	270	255	770,782,844,810	0.0	0.0	掩膜后必须逐 px = 856	ok
+7	replay	replay_end	frozen	557	frozen	0.244835	不过（L3）	True	0	856	0.000384	1126	270	255	770,782,844,810	0.0	0.0	掩膜后必须逐 px = 856	ok
+7	match	match_ready	tick	900	settle		不过（L3）	True	0	2048	0.00092	2048	0	255	265,782,1738,1156	0.0	0.0	L3 ∈ [0.070,0.100]% 且 L2 0 块	ok
+7	match	match_play	tick	1480	ftick	240.071	不过（L2，1 块超限）	True	1	5710	0.002565	5980	270	255	265,556,1738,1156	0.0	0.0	L3 ≤0.450%（预注册带 [0.340,0.450]%）且 L2 ≤1 块	below(更好)
+8	replay	replay_play	frozen	557	frozen	0.244835	不过（L3）	True	0	856	0.000384	856	0	255	770,782,844,810	0.0	0.0	掩膜后必须逐 px = 856	ok
+8	replay	replay_end	frozen	557	frozen	0.244835	不过（L3）	True	0	856	0.000384	1126	270	255	770,782,844,810	0.0	0.0	掩膜后必须逐 px = 856	ok
+8	match	match_ready	tick	900	settle		不过（L3）	True	0	2046	0.000919	2046	0	255	265,782,1738,1156	0.0	0.0	L3 ∈ [0.070,0.100]% 且 L2 0 块	ok
+8	match	match_play	tick	1478	ftick	243.473	不过（L2，1 块超限）	True	1	5855	0.00263	6125	270	255	265,556,1738,1156	0.0	0.0	L3 ≤0.450%（预注册带 [0.340,0.450]%）且 L2 ≤1 块	below(更好)
+S1	static	campaign	static-screen	—	static-screen	—	不过（L3）	True	0	3827	0.001718		0	32	199,184,279,271	0.0	0.0	静态屏：无 tick（同侧 3 帧逐字节相同）；残差 = 节点数字 `0` 的字色（+32/通道）	n/a（只做归因，不进 tick 带）
+S1	static	level_popup	static-screen	—	static-screen	—	不过（L3）	True	0	2244	0.001008		0	13	199,184,242,271	0.0	0.0	静态屏：无 tick（同侧 3 帧逐字节相同）；残差 = 节点数字 `0` 的字色（+13/通道）	n/a（只做归因，不进 tick 带）

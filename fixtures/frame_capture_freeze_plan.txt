@@ -39,7 +39,7 @@ replay	replay_play	ours	frozen	3	ours_progress	同一口径；实测恒 0.244835
 replay	replay_end	original	frozen	3	orig_tick	与 replay_play **同一停帧规则**：原版进屏后不播，两屏本就是同一个载入态
 replay	replay_end	ours	frozen	3	ours_progress	同上（我方也不自动播；`_begin_replay()` 不调 `play()`）
 match	match_ready	original	tick	900	orig_tick	**绝对** tick：准备态是静态的，只有士兵待机动画按 tick 走相位 ⇒ 钉绝对 tick 才能把相位也钉死
-match	match_ready	ours	settle	1.5	none	我方对局屏**没有运行时 tick 可读**（动画走墙钟 `_curve_tick`，见 §4）⇒ 只能墙钟停帧，登记为推断
+match	match_ready	ours	settle	3.0	none	我方对局屏**没有运行时 tick 可读**（动画走墙钟 `_curve_tick`，见 §4）⇒ 墙钟停帧 + SIGSTOP 静帧，登记为推断；3.0 s 是 §5 修订里量到的**过渡态之后**
 match	match_play	original	tick	+90	orig_tick	**相对** tick：弹道揭示的起点取决于 phase2 到达时客户端的 tick（跨轮 boot 会飘）⇒ 钉"arming 之后 90 tick"（1.5 s）比钉绝对 tick 稳
 match	match_play	ours	ftick	+6.0	ours_ftick	我方披露时钟是 `_curve_tick`（≈63/s）⇒ `+6` ≈ 0.1 s 的揭牌量；同一口径
 
@@ -89,3 +89,25 @@ match	match_play	ours	ftick	+6.0	ours_ftick	我方披露时钟是 `_curve_tick`�
 #    按 tick 停帧只能消掉**采集**这一层的模糊，消不掉那一块 —— 预注册带就是按这个前提给的。
 # 3. `campaign` / `level_popup` 两屏**不进本表**：它们没有 tick（纯静态屏），本轮只做残差归因
 #    （`docs/06` §120.5），停帧口径仍按 `fixtures/static_screens_targets.txt` 的 2.0 s。
+
+# ## 5. 修订记录（**第一版预注册之后**、三轮验收之前，2026-11-27）
+#
+# **改了什么**：`match / match_ready / ours` 的 `stop_value` 1.5 → **3.0**（其余 7 条规则一字未动，
+# 判据、排除区、噪声带一个数没改）。
+#
+# **为什么改**（证据在 `docs/06` §120.3，可复跑）：第一版按 1.5 s 停帧时，我方 `match_ready`
+# 那一帧还停在**进屏过渡态**上：底部左侧是 `dy/dx =` + 大计时器（`00:57`），而 1.2 s 之后的下一帧
+# 已经切成 `f(x) =`（= 原版的布局）⇒ 单屏跨侧差异 **12 823 px（0.575 %）**，其中约 12.6 k
+# 是**我方自己的帧间变化**（噪声地板 0.572 %），不是渲染差异。
+# 原版在进屏那一刻就已是 `f(x) =` 布局（真帧 3 帧逐字节相同）⇒ **这一屏的判据只有在过渡态之后才有意义**。
+# 3.0 s 落在我方过渡态之后（实测第 2 帧 = 进屏后 5.7 s 已稳定；3.0 s 停帧 = 进屏后约 6.0 s）。
+#
+# **没有改的是什么**：历史带宽（§3）没动、排除区没动、帧号（比第 1 帧）没动、门槛文件没动。
+# 三轮验收读数（`fixtures/pixel_freeze_results.tsv`）用的是**本版**停帧表。
+
+# ## 6. `settle` 的语义补充（代码层，**不改变任何预注册值**）
+#
+# `settle` 的实现 = 「墙钟等到 `stop_value` 秒」+「**内容稳定闸**：连拍（0.6 s 间隔）直到相邻两帧
+# 逐字节相同才停」。加这道闸是因为 §5 那个过渡态的**结束时刻跨轮会飘**（实测 5.7 s 已稳 / 6.0 s 还没稳）：
+# 固定秒数会在 3 轮里漏 1 轮（漏的那轮跨侧 13 120 px，命中那轮 2 046 px）。
+# 闸的判据是"画面不再变"这件事本身，不是猜秒数；`manifest` 里 `stop_stable_probes` 记下了那几帧的 sha256。
