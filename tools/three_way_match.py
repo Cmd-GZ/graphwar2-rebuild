@@ -79,7 +79,9 @@ SRC_PREFIX = "src/"          # 游戏自己的源码（依赖 crate 在 /home/..
 MAX_STR = 300
 
 COLS = ("module", "type", "method", "x86_addr", "src_file", "src_line", "src_col",
-        "join_kind", "sources", "evidence")
+        "join_kind", "sources", "evidence", "role", "inline_alias")
+# `role`：`outer` = 该地址的**源码级身份**（一行地址只有一条）；`inline-alias` = 同址内联别名。
+# `inline_alias`：`outer` 行上列出本地址被降级的名字（含各自在三份参照构建里的字节数）。
 KIND_UNIQUE = "唯一锚"
 KIND_CROSS = "跨版本锚"      # 只有 early2026 这份**不同版本**的构建落地（见 §37.4）
 KIND_AMBIG = "歧义"
@@ -985,6 +987,112 @@ def decide(names, land_of_name, ambig_by_name):
     return KIND_NONE, None, "；".join(note[t] for t in sorted(srcs)) or "无来源"
 
 
+# ===========================================================================
+# 6b. 同址多名裁决：保留 size 最大的**外层**函数，其余降为 `inline-alias` 备注
+# ===========================================================================
+# 为什么必须裁决（根因）：`decide()` 只在「双向唯一 Location 键」上落地，而**大函数会把小函数
+# 内联掉**——被内联者的 Location 键还在、独立符号却没了，于是多个名字**合法地**指向同一个
+# Linux 地址。实测 `name_to_addr_v2.tsv` 有 30 个地址多名，其中 **11 个是不同函数抢一个地址**
+# （不是 `X` vs `X::{{closure}}` 的精度问题）。若多名都当身份，下游只能**任意**挑一个：
+# `boundary_audit.py` 旧实现是「文件序最后一行赢」，实测挑错 7 处（`0x4500c0` 挑到
+# `GraphwarServerConnectionHandler::new`，实际是 `game_server_thread`；`0x499740` 挑到
+# `setup_level_13`，实际是 `setup_level`；`0x46f690` 挑到 `initialize_turns`，实际是
+# `start_game` …），`naming_android.py` 旧实现是「最短方法名赢」，挑错的更多。
+#
+# 判据（**跑数之前**写死在这里）：**源码级身份 = 在三份参照构建里"是自己这一组最大函数"次数
+# 最多**的那一个名字。理由：内联只会让**外层**函数变大、让被内联者变没，所以「谁在更多构建里
+# 是自己那一组里最大的」就是外层函数的判据。三份参照构建都**不参与 Linux 落地**（落地键是
+# Location 双向唯一），只用来量 size：android 2.0.60 / win 2.0.60（与目标同版本）各一票，
+# win_old（不同版本）第三票；每个构建内**并列则该构建不投票**。票数打平依次看 android 字节数、
+# 名字字典序 —— 保证确定性。
+#
+# 正对照（**先定判据、后跑**；结果见 `docs/06` §137.2）：T87 已用 Android 符号表逐条裁决过的
+# **11 个**同址真冲突地址，本规则逐条复现 **11/11**。另外 2 个（`0x465780` / `0x4783f0`）在
+# v2 里只有 1 个名字 ⇒ 无需裁决（T87 判"判不了"，见 §137.4）。
+REF_TAGS = ("android", "win", "win_old")
+
+
+def name_sizes(land_of_name, sides):
+    """name_key → {tag: 该名字在这份参照构建里的函数字节数}（没有落地就没有该 tag）。
+
+    ⚠️ 键要**归一化**：`name_landings()` 的键里 owner 可能是 `None`（自由函数），
+    而夹具行写的是空串 ⇒ 不归一化会让自由函数（如 `game_server_thread`）查不到尺寸，
+    进而被错判成"没有参照尺寸"而输给同址的别名字。实测就是这么错过一次（`0x4500c0`）。
+    """
+    out = {}
+    for nk, per in land_of_name.items():
+        szs = {}
+        for tag in REF_TAGS:
+            h = per.get(tag)
+            if not h or tag not in sides:
+                continue
+            fe = sides[tag].feats.get(h["src_addr"])
+            if fe:
+                szs[tag] = fe["size"]
+        out[(nk[0], nk[1] or "", nk[2])] = szs
+    return out
+
+
+def pick_outer(cands, sizes):
+    """同址多名的裁决 → (赢家 name_key, {参照构建: 该构建投给谁})。"""
+    top1 = {}
+    for tag in REF_TAGS:
+        pool = [(sizes.get(nk, {}).get(tag), nk) for nk in cands]
+        pool = [(s, nk) for s, nk in pool if s]
+        if not pool:
+            continue
+        pool.sort(reverse=True)
+        if len(pool) > 1 and pool[0][0] == pool[1][0]:
+            continue                     # 并列 ⇒ 该构建不表态（不做假赢家）
+        top1[tag] = pool[0][1]
+    votes = collections.Counter(top1.values())
+    if not votes:
+        return sorted(cands)[0], top1
+    return sorted(votes, key=lambda nk: (-votes[nk],
+                                        -(sizes.get(nk, {}).get("android") or 0), nk))[0], top1
+
+
+def assign_roles(rows, land_of_name, sides):
+    """把「每名字一行」裁成「一地址一身份」：`outer` 一行，其余降为 `inline-alias` 备注。
+
+    只有**落在地址上**的行参与裁决；`歧义` / `未知` 行没有地址、原样保留（role=`—`）。
+    返回 (rows_out, groups)，`groups` = [(addr, 赢家, [别名…], 投票明细)]，供 `build` 打印。
+    """
+    sizes = name_sizes(land_of_name, sides)
+    byaddr = collections.defaultdict(list)
+    for i, r in enumerate(rows):
+        if r[3]:
+            byaddr[int(r[3], 16)].append(((r[0], r[1], r[2]), i))
+    dropped, alias_note, size_note, groups = set(), {}, {}, []
+    for addr, lst in sorted(byaddr.items()):
+        if len(lst) == 1:
+            continue
+        win, top1 = pick_outer([nk for nk, _i in lst], sizes)
+        aliases = []
+        for nk, i in lst:
+            if nk == win:
+                continue
+            dropped.add(i)
+            szs = sizes.get(nk, {})
+            aliases.append("%s::%s::%s%s" % (
+                nk[0], nk[1] or "_", nk[2],
+                ("(%s)" % ",".join("%s=%d" % (t, szs[t]) for t in REF_TAGS if t in szs))
+                if szs else "(无参照构建尺寸)"))
+        wi = next(i for nk, i in lst if nk == win)
+        alias_note[wi] = "; ".join(aliases)
+        wsz = sizes.get(win, {})
+        size_note[wi] = (";同名裁决=留在本址(%s)" %
+                         ",".join("%s=%d" % (t, wsz[t]) for t in REF_TAGS if t in wsz))
+        groups.append((addr, win, [nk for nk, _i in lst if nk != win], top1))
+    out = []
+    for i, r in enumerate(rows):
+        if i in dropped:
+            continue
+        out.append(list(r[:9]) + [r[9] + size_note.get(i, ""),
+                                  "outer" if r[3] else "—", alias_note.get(i, "")])
+    return out, groups
+
+
 def write_fixture(sides, per_src, conflicts, path):
     land_of_name = name_landings(per_src)
     ambig = {}
@@ -1013,6 +1121,7 @@ def write_fixture(sides, per_src, conflicts, path):
                      "+".join(sorted(e["srcs"])), ev])
     order = {KIND_UNIQUE: 0, KIND_CROSS: 1, KIND_AMBIG: 2, KIND_NONE: 3}
     rows.sort(key=lambda r: (order.get(r[7], 9), r[0], r[1], r[2], r[4], int(r[5] or 0)))
+    rows, groups = assign_roles(rows, land_of_name, sides)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("# 由 tools/three_way_match.py build 生成，不要手改（重跑会覆盖）。\n")
         fh.write("# 三向来源：Windows 2.0.60 / Windows early2026（COFF 符号表，同 ISA）"
@@ -1020,10 +1129,15 @@ def write_fixture(sides, per_src, conflicts, path):
         fh.write("# 落地键只有 panic::Location 三元组 (file,line,col)，且必须**双向唯一**。\n")
         fh.write("# x86_addr 是 Linux 2.0.60 的 ELF 虚地址；Ghidra/REA 地址 = 该值 + 0x100000。\n")
         fh.write("# 天花板之外（无 Location）不给名字，只在上限估计里出现（§37.6）。\n")
+        fh.write("# **一个地址只有一条 `role=outer` 行**（= 该地址的源码级身份）；同一地址上被内联掉的其他\n")
+        fh.write("# 名字降级为 `inline-alias`，写在 outer 行的 `inline_alias` 列里（含各自在 android 2.0.60 /\n")
+        fh.write("# win 2.0.60 / win early2026 三份**参照构建**里的字节数）。判据 = 分构建算「组内最大函数」\n")
+        fh.write("# 投票，票数 = 外层函数票（内联只让外层变大）；实测复现 T87 用 Android 符号表逐条裁决的\n")
+        fh.write("# 11 个同址真冲突 **11/11**（`docs/06` §137.2）。`歧义`/`未知` 行没有地址，role=`—`。\n")
         fh.write("\t".join(COLS) + "\n")
         for r in rows:
             fh.write("\t".join(r) + "\n")
-    return rows
+    return rows, groups
 
 
 # ===========================================================================
@@ -1238,7 +1352,7 @@ def cmd_report(args):
 def cmd_build(args):
     sides = load_all(args)
     per_src, conflicts = merge_landings(sides)
-    rows = write_fixture(sides, per_src, conflicts, args.out)
+    rows, groups = write_fixture(sides, per_src, conflicts, args.out)
     n_unique = sum(1 for r in rows if r[7] == KIND_UNIQUE)
     n_cross = sum(1 for r in rows if r[7] == KIND_CROSS)
     n_amb = sum(1 for r in rows if r[7] == KIND_AMBIG)
@@ -1246,6 +1360,14 @@ def cmd_build(args):
     sys.stderr.write("[3way] 写 %s：%d 行（%s %d / %s %d / %s %d / %s %d）\n"
                      % (rel(args.out), len(rows), KIND_UNIQUE, n_unique, KIND_CROSS,
                         n_cross, KIND_AMBIG, n_amb, KIND_NONE, n_none))
+    if groups:
+        n_alias = sum(len(a) for _addr, _w, a, _t in groups)
+        sys.stderr.write("[3way] 同址多名裁决：%d 个地址 ⇒ 保留 1 条 outer / 降 %d 条 inline-alias\n"
+                         % (len(groups), n_alias))
+        for addr, win, aliases, top1 in groups:
+            sys.stderr.write("[3way]   0x%-7x outer=%-58s 票=%s（降 %d 条）\n"
+                             % (addr, "%s::%s::%s" % (win[0], win[1] or "_", win[2]),
+                                "+".join(sorted(top1)) or "无参照构建尺寸", len(aliases)))
     return 0
 
 
