@@ -1,0 +1,28 @@
+# ① 合成结果项：不弹道、不模型，直接把 0x51a750 要吃的开火结果项铺进去。
+# 生成：.reference/venv/bin/python tools/score_truth.py --write
+# 判据：score/dist/hits 必须与「按 0x51b063–0x51b108 指令顺序重算」逐位相同。
+# net/dist 两列是脚本按结果项汇总出来的三项（带符号命中数 / 距离项 / esi 累加），
+# 用来让 Rust 侧单测直接喂 `score_from_terms`（分数算术只有那一份实现）。
+case	v	step	limit	owner_id	teams	items	net	truth_score_bits	truth_dist_bits	truth_hits	truth_esi
+Y01_empty_v1	1	0.5	25	101			0	c12e8480051eb852	412e848000000000	0	0
+Y02_empty_v10	10	0.5	25	101			0	c12e848200000000	412e848000000000	0	0
+Y03_empty_over_limit	30	0.5	25	101			0	c188519648000000	412e848000000000	0	0
+Y04_one_enemy_hit	2	0.5	25	101	101:0,201:1	hit(201)	1	412e847feb851eb8	412e848000000000	1	0
+Y05_one_friendly_hit	2	0.5	25	101	101:0,202:0	hit(202)	-1	c146e360051eb852	412e848000000000	4294967295	0
+Y06_two_enemy_hits	2	0.5	25	101	101:0,201:1,203:1	hit(201) hit(203)	2	4146e35ffae147ae	412e848000000000	2	0
+Y07_enemy_minus_friendly	2	0.5	25	101	101:0,201:1,202:0	hit(201) hit(202)	0	c12e8480147ae148	412e848000000000	0	0
+Y08_hit_plus_dist	2	0.5	25	101	101:0,201:1	hit(201) dist(201,0.25)	1	413e847fb5c28f5c	3fd0000000000000	1	0
+Y09_dist_only	2	0.5	25	101	101:0,201:1	dist(201,0.125)	0	bfc51eb851eb851f	3fc0000000000000	0	0
+Y10_friendly_dist_skipped	2	0.5	25	101	101:0,202:0	dist(202,0.125)	0	c12e8480147ae148	412e848000000000	0	0
+Y11_unknown_team_hit	2	0.5	25	101	101:0	hit(201)	1	412e847feb851eb8	412e848000000000	1	0
+Y12_unknown_both	2	0.5	25	101	101:2,201:2	hit(201)	-1	c146e360051eb852	412e848000000000	4294967295	0
+Y13_min_dist_two_items	2	0.5	25	101	101:0,201:1,203:1	dist(201,0.4) dist(203,0.1)	0	bfc1eb851eb851ec	3fb999999999999a	0	0
+Y14_esi_plus_hit	2	0.5	25	101	101:0,201:1	hit(201) esi(3)	1	412e8353eb851eb8	412e848000000000	1	3
+Y15_esi_no_hit	2	0.5	25	101	101:0	esi(3)	0	c12e8480147ae148	412e848000000000	0	3
+Y16_esi_negative_total	2	0.5	25	101	101:0,202:0	hit(202) esi(3)	-1	c146e360051eb852	412e848000000000	4294967295	3
+Y17_esi_fine_step	2	0.01	25	101	101:0,201:1	hit(201) esi(7)	1	412e8471eb851eb8	412e848000000000	1	7
+Y18_obstacle_ignored	2	0.5	25	101	101:0	obstacle()	0	c12e8480147ae148	412e848000000000	0	0
+Y19_all_kinds	4	0.5	25	101	101:0,201:1,202:0,203:1	obstacle() hit(201) hit(202) dist(203,0.05) esi(2)	0	bfcae147ae147ae2	3fa999999999999a	0	2
+Y20_penalty_and_hit	30	0.5	25	101	101:0,201:1	hit(201) dist(201,0.3)	1	c186e3604a666666	3fd3333333333333	1	0
+Y21_two_hits_plus_esi	2	0.5	25	101	101:0,201:1,203:1	hit(201) hit(203) esi(5)	2	412e828beb851eb8	412e848000000000	1	5
+Y22_dist_over_radius_value	2	0.5	25	101	101:0,201:1	dist(201,3.5)	0	c00c51eb851eb852	400c000000000000	0	0
