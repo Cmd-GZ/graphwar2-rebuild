@@ -507,18 +507,14 @@ impl ConvPredictor {
         (msgs, outs)
     }
 
-    /// 到期的 `DestroyObstacle`（与 `Match::tick` 同义）。
+    /// 到期的 `DestroyObstacle`（与 `Match::tick` **同一份实现**）。
+    ///
+    /// T72 归一（台账 C 档 `diffconv::tick`）：这里原来有一份与本文件外
+    /// [`crate::game::Match::tick`] **逐字符相同**的队列扫描拷贝。真值实现留在
+    /// `game.rs`（原版 `handle_tick 0x470840` 的那一段、`Match` 的字段），
+    /// 本处改调 [`crate::game::drain_due_destroy`]，**不再有第二份扫描规则**。
     pub fn tick(&mut self, now_tick: i64) -> Vec<String> {
-        let mut due = Vec::new();
-        let mut i = 0;
-        while i < self.pending_destroy.len() {
-            if self.pending_destroy[i].0 <= now_tick {
-                due.push(self.pending_destroy.remove(i).1);
-            } else {
-                i += 1;
-            }
-        }
-        due
+        crate::game::drain_due_destroy(&mut self.pending_destroy, now_tick)
     }
 }
 

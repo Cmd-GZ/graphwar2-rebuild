@@ -225,13 +225,31 @@ pub fn line_count_calls() -> usize {
 ///
 /// 原版判别值是 `u8` 且只比较 `==3` / `>=2` / `!=0`（见 [`AxisMode`] 的文档），
 /// 所以收窄后语义不变；这里**不做**"只接受 0..=3"的校验，因为原版对越界值是**有行为**的。
-fn clamp_mode(value: i64) -> u8 {
+/// `variant` 里的整数收窄成**模式判别值**（`0..=255`，越界夹到端点）。
+///
+/// # 为什么在这里（T72 归一，不是原版的东西）
+///
+/// 原版这两个类的 `#[func]` 方法由 gdext 宏生成，参数收窄是宏的事；我方两个入口层
+/// （手写 C ABI 从 `variant` 读 `i64`、官方 gdext 从 `#[func]` 收 `i32`）各自要收窄一次。
+/// T72 之前 `_scaffold/gdext_mod.rs` 里另有一份按 `i32` 收窄的同规则实现（台账 C 档
+/// `clamp_mode`）；现在**只有这一份 i64 版**（规则本体），`gdext_mod` 那份改成薄转发
+/// （`i32 → i64` 是无损提升，收窄结果不变）。
+pub(crate) fn clamp_mode(value: i64) -> u8 {
     value.clamp(0, u8::MAX as i64) as u8
 }
 
 /// 某个判别值下 `draw_line` 的**实际条数**：跑 [`axis_drawer::axis_primitives`] 数
 /// `Primitive::Line`。这是"复原逻辑真的被执行了"的那个观测点。
-fn line_primitive_count(raw_mode: u8) -> usize {
+///
+/// # 为什么在这里（T72 归一，不是原版的东西）
+///
+/// 原版没有"数线"这种函数 —— 它只是真的去 `draw_line`；这是我方为了"证明复原逻辑
+/// 被执行了"加的观测钩子（两个入口层各注册一个同名方法）。T72 之前
+/// `_scaffold/gdext_mod.rs` 里另有一份同规则实现（连 `BOARD_SIZE` 常量都各抄一份），
+/// 现在只留这一份；`gdext_mod` 改 `use`，并删掉自己那份 `BOARD_SIZE`
+/// （`50.0 × 30.0` = [`crate::graphwar_plane::BOARD_RECT`] 的宽高，
+/// 与本文件 [`BOARD_SIZE`] 同源）。
+pub(crate) fn line_primitive_count(raw_mode: u8) -> usize {
     let mode = AxisMode::from_raw(raw_mode);
     axis_drawer::axis_primitives(mode, BOARD_SIZE)
         .iter()
@@ -428,12 +446,11 @@ unsafe extern "C" fn axis_line_count_formula_call(
 // 6. 注册
 // ---------------------------------------------------------------------------
 
-unsafe fn sym(get: GetProc, name: &str) -> usize {
-    let mut c = Vec::with_capacity(name.len() + 1);
-    c.extend_from_slice(name.as_bytes());
-    c.push(0);
-    get(c.as_ptr()) as usize
-}
+// `sym` **不在这里**（T72 归一）：本文件原来有一份与 `_scaffold/api.rs` 逐字符相同的
+// 实现（台账 C 档 `sym`）。两个手写入口层（C ABI / gdext）都要按名字查引擎指针 ⇒
+// 真值实现留在 `api::sym`，这里只 import。类型别名 `GetProc` 在两边是同一个函数指针
+// 类型（`unsafe extern "C" fn(*const u8) -> *mut c_void`），不需要转换。
+use crate::_scaffold::api::sym;
 
 /// 造一个 `StringName`（拉丁 1 字符即可，这里全是 ASCII）。
 unsafe fn sn(f_sn: FnSnNew, text: &str) -> Box<Slot> {

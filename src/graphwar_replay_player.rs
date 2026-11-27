@@ -663,7 +663,16 @@ pub struct ReplayPlayer {
     /// 下一条待消费事件在 `replay.events` 里的下标。
     pub cursor: usize,
     /// 当前 tick（浮点保留亚 tick 余数，取整后才算"当前"）。
+    ///
+    /// T72 之后 [`ReplayPlayer::advance_dt`] 只按**整数 tick** 推进，
+    /// 亚 tick 余数改由 [`ReplayPlayer::accum_ns`] 承担（定步 `NANOS_PER_TICK`）。
     pub tick: f64,
+    /// **定步累加器**（纳秒，T72 归一）：`advance_dt` 的亚 tick 余数。
+    ///
+    /// 原版播放器**没有**这个东西 —— 累加器在 `GraphwarTickHandler`
+    /// （`elapsed_nanos`，`docs/06` §63.2），播放器只是把它的 `tick` 镜像到自己的 `+0x58`。
+    /// 我方 headless 没有墙钟，所以这个替身必须跟着驱动走；档位：**我方投影**。
+    pub accum_ns: u64,
     pub playing: bool,
     /// 播放倍速（1.0 = 真实速度 = 60 tick/秒）。
     pub speed: f64,
@@ -679,6 +688,7 @@ impl ReplayPlayer {
             replay,
             cursor: 0,
             tick: first as f64,
+            accum_ns: 0,
             playing: false,
             speed: 1.0,
             first_tick: first,
@@ -742,12 +752,25 @@ impl ReplayPlayer {
     }
 
     /// 按墙钟时间推进一帧；返回本帧消费的事件下标。
+    ///
+    /// # T72 归一（台账 C 档 `replay_driver::drive_frame`）
+    ///
+    /// 这里原来是**第二套时钟**：`tick += dt × 60 × speed` 的 **f64 累加**（旧
+    /// `client/src/play/replay_player.gd::advance_dt` 的模型）。真值是定步
+    /// `16 666 666 ns`（`NANOS_PER_TICK` / `0xfe502a`，`docs/06` §63.2），而 `1/60` 与它
+    /// 不是同一个数 ⇒ 两套时钟在长序列上必然漂。
+    ///
+    /// 现在定步折叠只有一份：[`crate::graphwar_tick_handler::fold_dt_into_ticks`]
+    /// （余数进 [`ReplayPlayer::accum_ns`]，与 `0x51948f` 的进位分支同源）。
+    /// `dt` 仍夹到 1.0 s（掉帧不跳一大截，这是旧 `.gd` 的行为，`docs/16` §56 有登记）。
     pub fn advance_dt(&mut self, dt_seconds: f64) -> Vec<usize> {
         if !self.playing {
             return Vec::new();
         }
         let dt = dt_seconds.max(0.0).min(1.0); // 掉帧时不跳一大截
-        self.tick += dt * TICKS_PER_SECOND as f64 * self.speed.max(0.0);
+        let dt = dt * self.speed.max(0.0);
+        let n = crate::graphwar_tick_handler::fold_dt_into_ticks(dt, &mut self.accum_ns);
+        self.tick += n as f64;
         let target = self.tick.floor() as i64;
         if target > self.last_tick {
             self.tick = self.last_tick as f64;

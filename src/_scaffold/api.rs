@@ -678,7 +678,42 @@ fn api() -> Option<&'static Api> {
     API.get()
 }
 
-unsafe fn sym(get: GetProc, name: &str) -> usize {
+/// 把一串字符串接成 `a|b|c`（空表 → `""`）。
+///
+/// # 为什么在这里（T72 归一，不是原版的东西）
+///
+/// **原版没有这个函数**：它是纯 Rust 侧的文本助手，只为两个节点类
+/// （`GraphwarButton` / `GraphwarSetupControl`）的验收钩子服务（`label_texts` /
+/// `dispatch_log` / `missing_nodes` / `chat_log` 都以 `|` 分隔给 GDScript 切）。
+/// 返回 `String` 而不是 `GString` 是硬约束：`GString::from` 要调引擎构造函数，没有 Godot
+/// 进程就 panic（`single_threaded.rs:170`），所以纯 Rust 那一半必须留在 `String` 上，
+/// 到 `#[func]` 边界才转。
+///
+/// T63 把两个 `*_class.rs` 搬回模块时，把这份助手**各带了一份进模块**（两份**逐字符相同**，
+/// 台账 C 档 `join_text`）；T72 把它收回这里，两个模块文件改 `use`，模块里不再有我方助手。
+/// 只在 `gdext-bindings` 下编译（两个消费者都在那一档里）。
+#[cfg(feature = "gdext-bindings")]
+pub(crate) fn join_text<S: AsRef<str>>(items: &[S]) -> String {
+    let mut out = String::new();
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            out.push('|');
+        }
+        out.push_str(item.as_ref());
+    }
+    out
+}
+
+/// 引擎接口名 → 函数指针（`get_proc_address` 包装）。
+///
+/// # 为什么在这里（T72 归一，不是原版的东西）
+///
+/// `get_proc_address` 本身是 GDExtension 的入口 API，原版由 `#[gdextension]` 宏生成、
+/// 源码里没有这层。我方有**两个**手写入口层（`gdext_class`/`axis_drawer_class` 的 C ABI
+/// 与 `gdext_mod` 的官方 gdext），它们都要按名字查引擎指针。T72 之前 `api.rs` 与
+/// `_scaffold/axis_drawer_class.rs` 里各有一份**逐字符相同**的实现（台账 C 档 `sym`）；
+/// 现在只留这一份，`axis_drawer_class.rs` 改 `use crate::_scaffold::api::sym`。
+pub(crate) unsafe fn sym(get: GetProc, name: &str) -> usize {
     let mut c = Vec::with_capacity(name.len() + 1);
     c.extend_from_slice(name.as_bytes());
     c.push(0);
@@ -1409,7 +1444,14 @@ unsafe extern "C" fn level_obstacles_call(
 }
 
 /// `[a, b, c, d, e, f]` → `[(a,b,c), (d,e,f)]`；长度不是 3 的倍数返回 `None`。
-fn triples(flat: &[f64]) -> Option<Vec<(f64, f64, f64)>> {
+///
+/// # 为什么在这里（T72 归一，不是原版的东西）
+///
+/// "扁平数组按 3 分组"是**我方**两个入口层（手写 C ABI 与官方 gdext）共用的入参形状检查：
+/// 原版 `hit_test` 的入参是 Rust 侧的结构体切片，没有这一层。T72 之前
+/// `_scaffold/gdext_mod.rs` 里有一份**逐字符相同**的拷贝（台账 C 档 `triples`）；
+/// 现在只留这一份，`gdext_mod` 改 `api::triples`，两边**共用同一套错误码路径**。
+pub(crate) fn triples(flat: &[f64]) -> Option<Vec<(f64, f64, f64)>> {
     if flat.len() % 3 != 0 {
         return None;
     }

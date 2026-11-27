@@ -179,6 +179,35 @@ pub struct Match {
     pub events: crate::graphwar_game_state_manager::GsmEvents,
 }
 
+/// 把**到期**（`到期 tick <= now_tick`）的 `DestroyObstacle` 从待删队列里取出来。
+///
+/// # 为什么是一个自由函数（T72 归一，不是原版边界）
+///
+/// 原版 `handle_tick`（`0x470840`）里这一段是 `Match` 的内联逻辑；我方把它写成
+/// [`Match::tick`]。但 `_scaffold/diffconv.rs` 的 `ConvPredictor`（第三轴 `batch_conv`
+/// 的对拍器）里**还有一份逐字符相同的拷贝**（台账 C 档 `diffconv::tick`）。
+/// 真值只该有一份 ⇒ 队列扫描规则收在这里，`Match::tick` 与
+/// `ConvPredictor::tick` 都调它，谁都不再自带第二份。
+///
+/// 判据（两侧当年逐字符相同，不是"语义相近"）：函数体归一空白后完全一致。
+/// 行为：**按队列顺序**把到期项逐个 `remove(i)`（保留未到期项的相对顺序，
+/// 不做 `retain` 那种一次重排），已到期项按"在原队列里的先后"返回。
+pub(crate) fn drain_due_destroy(
+    pending: &mut Vec<(i64, String)>,
+    now_tick: i64,
+) -> Vec<String> {
+    let mut due = Vec::new();
+    let mut i = 0;
+    while i < pending.len() {
+        if pending[i].0 <= now_tick {
+            due.push(pending.remove(i).1);
+        } else {
+            i += 1;
+        }
+    }
+    due
+}
+
 /// 进化种群的归属（`docs/98` §6-A **未定**）。
 ///
 /// 二进制里 `computer_player_manager` 那张 `HashMap<i32, V>` 的键是 `player_id`
@@ -1521,16 +1550,7 @@ impl Match {
     // 真值的三段职责见 `Match::handle_tick` 的文档与 `docs/14` §11.3。
     // ─────────────────────────────────────────────────────────────────────
     pub fn tick(&mut self, now_tick: i64) -> Vec<String> {
-        let mut due = Vec::new();
-        let mut i = 0;
-        while i < self.pending_destroy.len() {
-            if self.pending_destroy[i].0 <= now_tick {
-                due.push(self.pending_destroy.remove(i).1);
-            } else {
-                i += 1;
-            }
-        }
-        due
+        drain_due_destroy(&mut self.pending_destroy, now_tick)
     }
 
     // ─────────────────────────────────────────────────────────────────────

@@ -34,7 +34,11 @@ use godot::prelude::*;
 
 use crate::axis_drawer::{self, AxisMode, Primitive};
 
-use super::api::{self, hit_result_pairs, obstacle_pairs, result_pairs, ApiValue};
+// T72 归一：本文件原来有一份与 `api.rs` 逐字符相同的 `triples`（台账 C 档）。
+// 入参形状检查只该有一处 ⇒ 直接用 `api::triples`。
+use super::api::{self, hit_result_pairs, obstacle_pairs, result_pairs, triples, ApiValue};
+// T72 归一：`line_primitive_count` 的规则本体在 `axis_drawer_class`（与本文件原来那份同规则）。
+use super::axis_drawer_class::line_primitive_count;
 
 // ---------------------------------------------------------------------------
 // 1. 类型搬运（Rust 域 → Godot 域）
@@ -194,17 +198,6 @@ impl GW2Rebuild {
 /// 绑定层自己的标签（`ping` 用它区分 gdext 版与手写版）。
 const BINDING_TAG: &str = "gdext";
 
-/// `[a, b, c, d, e, f]` → `[(a,b,c), (d,e,f)]`；长度不是 3 的倍数返回 `None`。
-///
-/// 与 `api.rs` 里的同名私有函数**语义相同**（那边是 `unsafe extern "C"` 回调的入口检查，
-/// 这边是 `#[func]` 的入口检查）；判定本体仍然只有 `api::hit_test` 一份。
-fn triples(flat: &[f64]) -> Option<Vec<(f64, f64, f64)>> {
-    if flat.len() % 3 != 0 {
-        return None;
-    }
-    Some(flat.chunks_exact(3).map(|c| (c[0], c[1], c[2])).collect())
-}
-
 /// `hit_test` 的入参形状不对时的返回值。
 ///
 /// 手写层是在 `unsafe extern "C"` 回调里直接建这个结构；gdext 版没有那块内存，
@@ -258,23 +251,23 @@ pub struct AxisDrawer {
 
 /// 棋盘尺寸（`BOARD_RECT.size`）：只影响 `axis_primitives` 里的像素换算，
 /// **不影响线的条数**，所以没有 `Control::get_size` 也能数线。
-const BOARD_SIZE: axis_drawer::Vec2 = axis_drawer::Vec2::new(50.0, 30.0);
+// T72 归一：`BOARD_SIZE` 不再在这里定义 —— 它随 `line_primitive_count` 一起收进
+// `_scaffold/axis_drawer_class.rs`（`graphwar_plane::BOARD_RECT` 的宽高 50 × 30），
+// 两个入口层共用那一份。
 
 /// 把任意 `i32` 收成判别值 `u8`：负数当 0，大于 255 当 255。
 ///
 /// 与 `axis_drawer_class.rs::clamp_mode` **同一条规则**（原版判别值是 `u8` 且只比较
 /// `==3` / `>=2` / `!=0`，所以收窄后语义不变；越界值在原版里**有行为**，不能拒绝）。
+/// `#[func]` 收到的 `i32` → 模式判别值。**薄转发**（T72 归一，台账 C 档 `clamp_mode`）：
+/// 规则本体在 [`super::axis_drawer_class::clamp_mode`]（i64 版，C ABI 从 `variant` 取的就是 i64）。
+/// `i32 → i64` 无损，`clamp(0, 255)` 的结果与原来那份按 `i32` 收窄的实现**逐值相同**。
 fn clamp_mode(value: i32) -> u8 {
-    value.clamp(0, u8::MAX as i32) as u8
+    super::axis_drawer_class::clamp_mode(value as i64)
 }
 
 /// 某判别值下 `draw_line` 的条数（跑 `axis_primitives` 数 `Line`）。
-fn line_primitive_count(raw_mode: u8) -> usize {
-    axis_drawer::axis_primitives(AxisMode::from_raw(raw_mode), BOARD_SIZE)
-        .iter()
-        .filter(|p| matches!(p, Primitive::Line { .. }))
-        .count()
-}
+
 
 /// `axis_drawer::Vec2` → Godot `Vector2`。
 fn vec2_of(v: axis_drawer::Vec2) -> Vector2 {

@@ -65,12 +65,15 @@ use std::path::Path;
 
 use crate::graphwar_replay_player::{Replay, ReplayError, ReplayPlayer, TICKS_PER_SECOND};
 
-/// 定步周期（纳秒）。`1e9 / 60 = 16 666 666.67`，取整数部分。
+/// 定步周期（纳秒）—— **不在这里定义**（T72 归一）：真值是
+/// [`crate::graphwar_tick_handler::NANOS_PER_TICK`]（`0xfe502a` = 16 666 666，
+/// 原版 `tick()` 里那条 `add eax, 0xfe502a`）。本文件原来自己抄了一份 16_666_666，
+/// 与模块侧那份是第二个真值源；现在只是别名。
 ///
 /// 用整数纳秒而不是 `1.0/60.0` 的 f64 累加：后者在 70 秒上会攒出可见的漂移
 /// （§44.4 实测"70 秒零漂移"，原版是纳秒判决点 `cmp edx,0x3b9aca00`）。
 /// 取整带来的速率是 `1e9 / 16 666 666 = 60.0000024 /s`，即每分钟多 0.00015 个 tick。
-pub const TICK_PERIOD_NS: u64 = 16_666_666;
+pub const TICK_PERIOD_NS: u64 = crate::graphwar_tick_handler::NANOS_PER_TICK as u64;
 
 /// 一帧最多认多长的 `dt`（纳秒）。**不是节奏上限**，只是防 f64 溢出/恶意入参：
 /// 3600 s = 216 000 个 tick，已经远超 §44.4 那条"1.5 s 冻结 ⇒ 91 圈"的实测范围。
@@ -370,12 +373,12 @@ impl ReplayDriver {
         }
         let speed = self.player.speed;
         let dt = if dt_seconds.is_finite() { dt_seconds.max(0.0) * speed.max(0.0) } else { 0.0 };
-        let ns = ((dt * 1e9).round() as u64).min(MAX_FRAME_NS);
+        // 先夹到 `MAX_FRAME_NS`（防 f64 溢出/恶意入参），再交给**唯一的**定步折叠：
+        // `graphwar_tick_handler::fold_dt_into_ticks`（T72 归一，台账 C 档 `drive_frame`）。
+        let dt = dt.min(MAX_FRAME_NS as f64 / 1e9);
         self.stats.frames += 1;
         report.frames = 1;
-        self.accum_ns = self.accum_ns.saturating_add(ns);
-        let mut n = self.accum_ns / TICK_PERIOD_NS;
-        self.accum_ns %= TICK_PERIOD_NS;
+        let mut n = crate::graphwar_tick_handler::fold_dt_into_ticks(dt, &mut self.accum_ns);
         if n == 0 {
             self.stats.zero_tick_frames += 1;
         }
