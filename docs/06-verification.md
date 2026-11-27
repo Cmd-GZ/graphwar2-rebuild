@@ -23937,3 +23937,158 @@ python3 tools/check_doc_refs.py ; python3 tools/docsec.py check docs/06-verifica
    **提交进仓库的是默认模式那份**（15 列）；要验旧口径就 `--no-na` 重生成再 `git diff`（期望无输出，见 §132.3）。
 5. **口径切换（招牌数从 A 改 B）需要 lead 追认**（T82 §129.8-6① 挂的那一项）。本轮只把它做成**可机读、
    同时打印**；若 lead 决定仍用 A 当招牌，只改 `docs/00`/`HANDOVER` 那两行，**工具不用动**。
+
+## 133. T83：`GraphwarGameRecorder` 按二进制改到 **0x38**（Vec + 自指 `Weak` + `Rc` + `Weak` + u8）—— **证伪** T78 的「0x50 = 结构体 = 3×24B 字段 + byte@0x48」；`save_game` 落盘字节冻结后**逐字节未变**（2026-11-27，任务 `task-76` / 分支 `agent/recorder-layout`）
+
+起点是 T78（§127）在 `fixtures/struct_audit4.tsv` ⑤ 行留下的判决：**我方 `GraphwarGameRecorder` 与真二进制结构不符（mismatch）**，尺寸「精确 0x50 = 3 个 24 字节字段 + 1 个 byte@0x48」，我方 4 字段只 0x40 且 `last_state` 错位在 `0x18`。本轮把它改掉，顺带**证伪了那条尺寸口径**。
+
+### 133.1 三行结论
+
+1. **`0x50` 不是结构体尺寸**，是 `RcInner<RefCell<GraphwarGameRecorder>>`：`0x50 = strong(8) + weak(8) + RefCell 借用标志(8) + 结构体(0x38)`。
+   ⇒ 结构体 = **0x38 = 56 字节**，5 个字段：`Vec<EventInfo>`(24) + `Weak<RefCell<Self>>`(8, **自指**) + `Rc<RefCell<GraphwarEventQueue>>`(8) + `Weak<RefCell<GraphwarModuleContainer>>`(8) + `u8`(1)。
+2. T78 那半句「byte@0x48」**没错，只是口径是"从 RcInner 基址算"**：`last_state` 在**结构体内**是 `+0x30`、从 RcInner 基址算是 `+0x48`。旧注释写 `+0x48`、旧字段排在 `0x18`，两个口径混着写就成了自相矛盾。
+3. 判 mismatch 的方向对、**结论错**：我方不是"少一个 24 字节字段"，而是"**多两个原版没有的自造字段**（`subscribed`/`saves`）且**少了 1 个 `Weak` + 1 个 `Rc` + 1 个 `Weak`**"。现在 5 字段与真值同序同偏移，`size_of`/`offset_of!` 由 pin 单测钉死。
+
+### 133.2 「0x50 是 RcInner」的四条独立证据
+
+| # | 证据 | 指令 / 数据 |
+|---|---|---|
+| A | 分配尺寸 = 0x50，且**同一个 `rax` 上先写 strong=1** | x86 `new` `0x3d528c mov edi,0x50` + `0x3d5291 mov esi,8` → `__rust_alloc`；`0x3d52d8 mov qword ptr [rax],1`；`0x3d52a8 mov qword ptr [rax+8],2`（weak 初值 2 = Rc::new 的 1 + 自指 `downgrade` 的 1） |
+| B | 释放时机 = **weak 归零**，不是 strong 归零 | arm64 `drop_in_place<RefCell<GraphwarGameRecorder>>`（`0x4b2864`）：先 drop 值里的字段，再 `ldr x8,[x0,#0x8]; subs x8,#1; str` ⇒ 归零时 `mov w1,#0x50 / mov w2,#8; bl __rust_dealloc`（`0x4b28b8`）—— `RcInner` 的典型生命周期 |
+| C | `+0x10` 是 **RefCell 借用标志**（不是普通字段） | x86 闭包 `0x3d4ff4 cmp qword ptr [rbx+0x10],0` → 非 0 走 panic 臂；`0x3d5002 mov qword ptr [rbx+0x10],-1`（`borrow_mut`）；结尾 `0x3d5155 inc qword ptr [rbx+0x10]`（-1 → 0 释放）。`RcInner` 布局 = strong/weak/value ⇒ value 从 `+0x10` 起、且 value 是 `RefCell<…>` |
+| D | 结构体尺寸必须 0x38 才自洽 | `0x50 - 0x10 - 0x08 = 0x38`；`add_module` 传的 size 实参就是 **56**（`src/graphwar_module_container.rs:396`）；arm64 drop glue 的字段偏移（`+0x20/+0x28/+0x30` 相对 `&RefCell`）只在 0x38 下成立 |
+
+⇒ T78 的「3 个 24 字节字段 + byte」是把 **`RcInner` 头 0x18 字节 + 结构体** 当成"4 个字段"数的结果。**我方实现里不重建 `RcInner`**（`Rc` 是 std 的），所以要对齐的窗口是**结构体的 0x38**，而那 0x50 由 `Rc<RefCell<Self>>` 自己产生 —— 这条由 pin 单测 `rust_alloc_0x50_is_the_rc_inner_not_the_struct` 机检（`size_of::<RefCell<GraphwarGameRecorder>>() + 2*8 == 0x50`）。
+
+### 133.3 五个字段分别是什么（档位：4 条逐位 + 1 条"值逐位/写法推断"）
+
+逐条证据（含 x86 与 arm64 双锚、drop glue 类型推导）落在 **`fixtures/game_recorder_layout.tsv`**，摘要：
+
+| 结构体内偏移 | RcInner 偏移 | 真值类型 | 证据档 | 关键指令 |
+|---|---|---|---|---|
+| `+0x00` | `+0x18` | `Vec<EventInfo>`（字段序 **cap/ptr/len**） | **逐位** | 闭包 `0x3d5049 lea r12,[rbx+0x18]`（`&Vec` → `grow_one`）、`0x3d5090 [rbx+0x28]`=len、`0x3d5094 cmp [rbx+0x18]`=cap、`0x3d50a3 [rbx+0x20]`=ptr；`0x3d50a7 lea rcx,[r13*4]; add rcx,r13; shl rcx,4` ⇒ 步长 0x50 |
+| `+0x18` | `+0x30` | `Weak<RefCell<GraphwarGameRecorder>>`（**自指**） | **逐位** | `new` `0x3d52c8 mov qword ptr [rax+0x30],rax`；`0x3d5658 inc qword ptr [rbx+8]` ×32（每订阅 clone 一份 `Weak`）；arm64 符号 `drop_in_place<alloc..rc..Weak<RefCell<GraphwarGameRecorder>>>` `0x417434` + `Rc::drop_slow<RefCell<GraphwarGameRecorder>>` `0x41c228` |
+| `+0x20` | `+0x38` | `Rc<RefCell<GraphwarEventQueue>>`（`new` 实参 1） | **逐位** | `0x3d52cc mov qword ptr [rax+0x38],rsi`；arm64 `0x41c228` 在 `+0x38` dec 后调 `0x41a4b8` = `Rc<RefCell<GraphwarEventQueue>>::drop_slow`，其内 `dealloc(0x58)` ⇒ `RcInner<RefCell<Queue>>`=0x58 ⇒ Queue=0x40 |
+| `+0x28` | `+0x40` | `Weak<RefCell<GraphwarModuleContainer>>`（`new` 实参 2） | **逐位** | `0x3d52d0 mov qword ptr [rax+0x40],rdx`；闭包 `0x3d500a lea rdi,[rbx+0x40]` → `GraphwarModuleContainer::get_module_wk`（arm64 `0x4a34c4` 首句 `ldr x20,[x0]` + `cmn x20,#-1` = 读 `Weak`）；`Weak::drop` 的 `dealloc(0x48)` ⇒ 容器 0x30 = `HashMap<TypeId, Rc<dyn Any>>`，与本仓库 `src/graphwar_module_container.rs:546` 的 48 字节一致 |
+| `+0x30` | `+0x48` | `u8`：上一条 `GameStateInfo` 的 `game_state`，**初值 8** | **逐位（值）** / 写法 **推断** | `0x3d52d4 mov byte ptr [rax+0x48],8`；闭包 `0x3d510a cmp byte ptr [rbx+0x48],6`、`0x3d51a3 mov …,6`、`0x3d5141 mov …,bpl` |
+
+* 最后一条的「初值 8」是**读出来的值**（逐位），但**源码里它是怎么写出来的**只有推断档：
+  `GameState` 只有 0..=7 八个变体（`src/turnstate.rs:38`）⇒ 8 是"还没见过任何状态"的哨兵；
+  闭包里对它的比较**只有** `== 6` 与 `== 1` 两处 ⇒ 初值取任何 ∉{1,6} 的值行为完全相同，
+  所以这条**不影响行为**（不影响也就没法靠"行为对拍"升档，缺的是源码字面量）。
+* 顺带记一条**没解决但不影响布局**的：闭包里 tick 的来源是
+  `get_module_wk(&self.module_container)?.borrow()[+0x58]`，那个 `get_module_wk::<T>` 的 `T`
+  泛型被擦除（arm64 符号表里也只有 `get_module_wk` 一个 hash）⇒ **仍未定**，与
+  `src/graphwar_effect_manager.rs:117` 是同一处未结案。我方 `record(tick, …)` 由调用方传 tick。
+
+### 133.4 改前 / 改后布局对照（我方 `src/graphwar_game_recorder.rs`）
+
+```text
+改前（0x40，4 字段）                              改后（0x38，5 字段 = 真值）
++0x00 events: Vec<EventInfo>    24B              +0x00 events: Vec<EventInfo>                 24B
++0x18 last_state: u8             1B  ← 错位       +0x18 self_weak: Weak<RefCell<Self>>          8B
++0x20 subscribed: Vec<&str>     24B  ← 自造       +0x20 event_queue: Rc<RefCell<GraphwarEventQueue>>   8B
++0x38 saves: usize               8B  ← 自造       +0x28 module_container: Weak<RefCell<GraphwarModuleContainer>> 8B
+= 0x40                                           +0x30 last_state: u8（初值 8）                 1B
+                                                 = 0x38
+```
+
+* `new` 也同步成真值形态：`new(&mut GraphwarEventHandler, Rc<RefCell<GraphwarEventQueue>>, Weak<RefCell<GraphwarModuleContainer>>) -> Rc<RefCell<Self>>`，
+  内部 `Rc::new` → 构造期 `borrow_mut` → `Rc::downgrade(&this)` 写自指 `Weak` → 32 次 `subscribe_to_event` → 释放 borrow，
+  与 x86 `0x3d528c..0x3d52d4` + `0x3d5658` + `0x3d569a` + `0x3d56aa` 一一对应（`new` 自己的 FDE = `0x3d5260..0x3d5738`，0x4d8 字节 —— 旧注释写的"无锚（内联进宿主）"是错的）。
+* 我方的两个自造字段（`subscribed`/`saves`）**删除**：原版 0x38 里没有位置放它们，留着就是结构不符。
+  统计改由调用方自己数（`record_game_state` 的返回值就是"这一次是否落盘"）。
+* 自造的无参构造改名 `detached()` 并显式标注"**原版没有**"（原版 `new` 必带 3 个实参）。
+
+### 133.5 回归：`save_game` 的落盘字节**逐字节未变**（怎么验的）
+
+`save_game` 是这个模块的**唯一产出**（gzip JSONL 的每一行），所以"改结构不许改内容"是硬约束。验法：
+
+1. **先**在改布局**之前**加一条冻结测试（commit `ce46b6e`，旧实现下绿）：把 3 条事件 +
+   `EndingGame` 落盘行 + 清缓冲后重开一局首行跑出来的字符串，用 `{:?}` 转义成字面量写死
+   （不是手写，是**真跑出来的**）；
+2. **再**改结构（commit `3e5b1dc`），同一条测试**仍然绿** ⇒ 逐字节相同；
+3. 判据覆盖到字符级：行尾 `\n`、键序 `event`→`tick`、空体走 `{}` 分支、`tick` 数字格式。
+
+测试名：`tests/graphwar_game_recorder.rs::save_game_bytes_are_frozen_across_the_layout_change`。
+另有一条 `save_game_takes_shared_borrow` 钉住真值签名（原版 `fn save_game(&self)` 是**不可变**借用，改前我方是 `&mut self` 还带 `saves += 1`）。
+
+### 133.6 pin 单测（都断言**真值**、不是断言我方现状）
+
+模块内 `#[cfg(test)] mod layout_pins`（7 条，能碰私有字段）+ `tests/graphwar_game_recorder.rs` 1 条：
+
+| 测试 | 钉住什么 | 真值来源 |
+|---|---|---|
+| `recorder_layout_matches_the_binary_window` | `size_of`=0x38/56、`align_of`=8、`offset_of!` 五个字段 = `0x00/0x18/0x20/0x28/0x30`，且 `Vec`=24B、两个 `Weak`/一个 `Rc` 各 8B | 129.2 D + 129.3 |
+| `rust_alloc_0x50_is_the_rc_inner_not_the_struct` | `size_of::<RefCell<Self>>()`=0x40，`+2*8` = **0x50**；且 `0x10+8+0x30 = 0x48`（旧口径） | `0x3d528c` 的 `__rust_alloc(0x50,8)` |
+| `event_info_stride_constants_are_0x50` | 步长常量 0x50 / 事件本体 0x48 / 差 8；**并显式钉住我方占位形态**（`GraphwarEvent`={String,String}=0x30 ⇒ 我方 `EventInfo`=0x38，登记差异） | `0x3d50a7` 的 ×5×16；`0x3d62ac` 读 tick |
+| `new_wires_self_weak_queue_container_and_32_subscriptions` | 自指 `Weak` upgrade 回同一个 `Rc`、队列 `Rc::ptr_eq`、容器 `Weak` upgrade 回同一个、32 条订阅各 1 次；并断言我方 `weak_count`=1（**原版 33**：34 - 1，差的 32 是闭包用的 `Weak` clone —— 我方不注册闭包） | `0x3d52c8/0x3d52cc/0x3d52d0` + `0x3d5658` + `0x3d569a` |
+| `initial_last_state_is_eight_and_outside_the_game_state_range` | 初值 = 8，且 8 **不是**任何 `GameState` 判别值（哨兵）；`detached()` 与 `new()` 两路都给 8 | `0x3d52d4` |
+| `state_machine_pins` | 上升沿落盘 / 重复不落盘 / 落盘不清缓冲 / `Setup` 且上一条 `EndingGame` ⇒ 清缓冲 | 闭包 `0x3d7d5c`/`0x3d7c80`/`0x3d7c8c` |
+| `save_game_takes_shared_borrow` | `&self` 可调、不改缓冲 | `0x3d8184` 的签名 |
+| `new_subscribes_all_32_into_a_real_handler`（`tests/`） | 32 条订阅落到**真 handler**（`subscriber_count`) —— 替换掉被删的 `subscribed` 自造字段；`detached()` 的 `Weak` 必须为空（不许假装接了容器） | `0x3d569a` ×32 |
+
+### 133.7 门槛读数
+
+| 门槛 | baseline（`master` `85f53a4`，**干净重建**） | 本分支（`3e5b1dc`，同样干净重建） | 判 |
+|---|---|---|---|
+| `cargo test --offline`（两侧各 `cargo clean -p gw2-rebuild` 后跑） | **1579 / 0 / 0**（当前基座；`85f53a4` 时实测 1576） | **1588 / 0 / 0**（+9 = 7 条 pin + 2 条 `tests/`；在 `85f53a4` 上量到 1576→1585，同一基座上**两次都是 +9**） | 只增 ✓ |
+| `cargo test --offline --features gdext-bindings` | **1727 / 0 / 0**（`85f53a4` 时 1724） | **1736 / 0 / 0**（+9） | 只增 ✓ |
+| `coverage_matrix.py --check` | rc=0 | rc=0（**改 src 后先 rc=1，重跑生成物**：`src_fns` 3951→3964、`graphwar_game_recorder.rs` ours_funcs 16→29、`src_tree_sha256` 变） | ✓ |
+| `check_doc_refs.py` | rc=0 | rc=0 | ✓ |
+| 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **647 / 647 / 637**（`内容命中`：fire 647、batch 647、`batch_conv` 637/1080） | 一位未退 ✓ |
+| `boundary_audit.py --check` | rc=0 | rc=0 | ✓ |
+| `struct_audit.py tsv / tsv2 / tsv4 --check` | **rc=1 / 1 / 1（基线就是红的，与本轮无关）** | **rc=0 / 0 / 0** | ✓（见下） |
+| `selftest`（`HOME=<fakehome> bash client/run.sh selftest`） | 隔离工作树里缺 `client/assets/`（gitignore 生成物）⇒ 一大批 UI 断言 FAIL（`code=1`） | **749 passed / 0 failed / 11 skipped**、`missing=8`（`claimed 0 / degraded 8 / silent 0`） | 见 §133.7 第 5 条 |
+
+**两条方法论踩坑（都给后来的人）**：
+
+1. **共享 `CARGO_TARGET_DIR` 会让两个 worktree 的 cargo 结果互相串味**。我第一次量"改前/改后"直接跑
+   `cargo test`，拿到 `1576 → 1578`（只 +2）—— 因为 cwd 换了目录但 target 里那份 lib 测试二进制是
+   **另一个工作树**编的，cargo 按 mtime 判 fresh 就不再重编 ⇒ 我新加的 7 条 pin **根本没进二进制**。
+   正解：两侧各 `cargo clean -p gw2-rebuild` 再跑（本节两个数都是这样做出来的），或者每棵树一个
+   `CARGO_TARGET_DIR`。`--features gdext-bindings` 同理（`1688→1724` 那次也是串味）。
+2. **`struct_audit` 的三张 TSV 在 baseline 上就已经 `--check` 红**（`tsv`/`tsv2`/`tsv4` 全 rc=1）：
+   `tsv` 是 `protocol.rs` 行号列过期、`tsv2` 是 `AxisDrawer`/`GraphwarPlane` 行号列过期（T80 改过那两个
+   文件）、`tsv4` 是本轮要改的 ⑤ 行。⇒ 门槛表里这条**不是本轮弄红的**；我把工具 ⑤ 行的**错误结论**
+   就地改正（`mismatch` → `match`，口径改成「0x50 是 RcInner」）后**重跑三张生成物**，三条 `--check` 才
+   全绿。这一步动到了 `tools/struct_audit.py`（⑤ 行文案是**硬编码**的，不是算出来的）—— 属于
+   "改了 src 必须重跑生成物 + 发现旧结论是错的就地改正"，不是范围外乱改。
+
+### 133.8 遗留 / 下一步
+
+1. **`GraphwarEvent` 的真枚举**（0x48 = 74 变体）仍是 F3/F4 缺口 ⇒ 我方 `EventInfo` 只有 0x38 而不是 0x50。
+   这条**不是本轮引入的**，pin 测试里已显式钉住"我方占位 = 0x30"，谁做真枚举时那条会红并提示同步文档。
+   缺的东西：74 个载荷结构体（`docs/06` §82.4-3 已登记）。
+2. **`get_module_wk::<T>` 的 `T` 未定** ⇒ 我方 `record(tick, …)` 收外部 tick；接上"自己取 tick"还差一步。
+3. **不注册闭包**：原版 `new` 把同一个闭包 `Box` 32 次交给 `subscribe_to_event(name, closure)`；
+   我方 `GraphwarEventHandler` 目前只登记名字。要让"收到事件自动录"这条路真跑起来，需要
+   handler 支持存 `Box<dyn FnMut(&GraphwarEvent)>`（那是 handler 模块的活，本轮不动）。
+4. **`save_game` 不真写盘**（原版建目录 + `FileAccess::open` + `GzEncoder`）：本 crate 无 `flate2` 依赖，
+   压缩口径在 `src/_scaffold/replay_inflate.rs`。要逐位复现 gzip 字节得先引依赖（决策项，不是本轮范围）。
+5. **`selftest` 的读数是"环境不完全准备的 749/0/11"，不是门槛的 757/0/1**：隔离工作树的
+   `client/assets/`（gitignore 生成物）本来没有 ⇒ 第一次 `@@SELFTEST_DONE code=1`（一批 UI/文本断言 FAIL）；
+   从主线工作区把 `client/assets/` + `client/.godot` 拷进来后重跑得
+   **`SELFTEST 749 passed, 0 failed, 11 skipped`**、`@@SELFTEST_COVERAGE groups=34 checks=749 expected=757
+   missing=8(claimed 0 / degraded 8 / silent 0)`，差的 8 条是 `audio` 6 + `play_flow` 2，**全部 degraded（显式
+   认领的 skip）**，`silent=0`。**关键判据 `silent=0` 满足**；`passed` 差 8 条是这份隔离环境的音频/时序前置
+   （`fakehome` + 无音频设备），不是本轮回归 —— 本轮改动**结构上不可能影响客户端**：
+   `git diff --name-only master..HEAD` 里 `client/**` **零文件**，且 `GraphwarGameRecorder` **没有任何
+   gdext 类绑定**（`src/_scaffold/` 下只有 `root_wiring.rs` / `graphwar_game_client.rs` 的**单测**提到它，
+   没有 `*_class.rs` 暴露它）。请在主线工作区复核这一条。
+
+### 133.9 复跑命令
+
+```bash
+# 逐字段证据（x86 主证据）
+.reference/venv/bin/python tools/addr_probe.py fde 0x3d5260      # new 的 FDE = 0x3d5260..0x3d5738
+.reference/venv/bin/python tools/addr_probe.py dis 0x3d5260      # __rust_alloc(0x50,8) @0x3d528c + 字段初值
+.reference/venv/bin/python tools/addr_probe.py dis 0x3d4fa0      # 闭包：borrow/vec/容器/0x48
+.reference/venv/bin/python tools/addr_probe.py dis 0x3d5740      # save_game
+# 类型名（arm64 未 strip）+ drop glue 推导
+OBJDUMP=llvm-objdump .reference/venv/bin/python tools/arm64_sym.py \
+  --so .reference/steam/android-2.0.60/libgraphwarrust.so dis 0x4b2864   # drop_in_place<RefCell<GGR>>
+# 我方布局机检
+cargo test --offline --lib layout_pins
+cargo test --offline --test graphwar_game_recorder
+```

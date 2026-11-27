@@ -1,0 +1,22 @@
+# game_recorder_layout.tsv —— `GraphwarGameRecorder` 的**逐字段布局真值**（T83 / `docs/06` §132）
+# 重算/复跑：`../.reference/venv/bin/python tools/addr_probe.py dis 0x3d5260`（new）、`dis 0x3d4fa0`（闭包）、`dis 0x3d5740`（save_game）
+#           arm64 侧配名字：`OBJDUMP=llvm-objdump ../.reference/venv/bin/python tools/arm64_sym.py --so .reference/steam/android-2.0.60/libgraphwarrust.so dis 0x4b2864`（= drop_in_place<RefCell<GraphwarGameRecorder>>）
+#           drops：`arm64_sym.py dis 0x41c228`（Rc<RefCell<GGR>>::drop_slow）/ `0x41a4b8`（Rc<RefCell<GraphwarEventQueue>>::drop_slow）/ `0x4a34c4`（get_module_wk）
+# 口径：地址一律 ELF vaddr（RVA）；x86 = `.reference/steam/2026-08-28`（stripped，主证据），arm64 = `.reference/steam/android-2.0.60`（未 strip，只用来配类型名，布局同 LP64）
+# 判据：`逐位` = 与真二进制指令/数据逐位对上；`推断` = 有依据但缺证据（写明缺什么）
+# **本表更正 T78 的 ⑤ 行**：`0x50` 是 `RcInner<RefCell<GraphwarGameRecorder>>`，不是结构体尺寸；结构体是 0x38。
+# arm64 `new` 把前 32 字节（0x00..0x20）直接从一个 **rodata 常量** 搬进去（`0x3d7eb0 stp q0,q1,[x0]`，
+#   q0 = `ldr q0,[0x197980]` / q1 = `ldr q1,[0x198d50]`）；那两个 16 字节常量实测 = **{1, 2}** 与 **{-1, 0}**
+#   ⇒ strong=1 / weak=2 / borrow=-1 / Vec.cap=0（读法：`llvm-objdump -s` 按节偏移换算，脚本见 §132.9）。
+#   注意 borrow 的 **-1 是编译期常量**：`RefCell::new`(0) + 构造期 `borrow_mut`(-1) 被折叠成 -1。
+对象	偏移	大小	真值类型	我方类型	证据（x86 = 2026-08-28 目标构建 / arm64 = 2.0.60 未 strip）	证据档	备注
+RcInner<RefCell<GraphwarGameRecorder>>	0x00	8	strong: usize = 1	（由 std 的 Rc 提供）	x86 `0x3d52d8 mov qword ptr [rax],1`；arm64 `0x3d7eb0 stp q0,q1,[x0]`（rodata `0x197980` = **1**）	逐位	Rc::new 的强计数
+RcInner<RefCell<GraphwarGameRecorder>>	0x08	8	weak: usize，初值 2	（由 std 的 Rc 提供）	x86 `0x3d52a8 mov qword ptr [rax+8],2`；arm64 同处 rodata `0x197980+8` = **2**；之后 `0x3d5658 inc qword ptr [rbx+8]` ×32（每条订阅 clone 一份 Weak）	逐位	初值 2 = Rc::new(1) + 自指 downgrade(1)
+RcInner<RefCell<GraphwarGameRecorder>>	0x10	8	RefCell 借用标志；构造期 = -1（独占借用）	（由 std 的 RefCell 提供）	x86 `0x3d52e3 mov qword ptr [rax+0x10],-1`（arm64 同处 rodata `0x198d50` = **-1**，编译期常量）；闭包 `0x3d4ff4 cmp qword ptr [rbx+0x10],0` + `0x3d5002` 写 -1、`0x3d5155 inc qword ptr [rbx+0x10]`（-1→0 释放）	逐位	闭包本体整段跑在 borrow_mut 里
+GraphwarGameRecorder	+0x00（RcInner +0x18）	24	Vec<EventInfo>（cap/ptr/len = +0x00/+0x08/+0x10）	Vec<EventInfo>	x86 闭包 `0x3d5049 lea r12,[rbx+0x18]`（&Vec 传 grow_one）、`0x3d5090 [rbx+0x28]`=len、`0x3d5094 cmp [rbx+0x18]`=cap、`0x3d50a3 [rbx+0x20]`=ptr；arm64 `0x3d7bec/0x3d7bf0/0x3d7c30` 同形	逐位	字段序是 cap/ptr/len，不是 ptr/cap/len
+GraphwarGameRecorder	+0x18（RcInner +0x30）	8	Weak<RefCell<GraphwarGameRecorder>>（**自指**）	同	x86 `new` `0x3d52c8 mov qword ptr [rax+0x30],rax`；arm64 符号 `drop_in_place<alloc..rc..Weak<RefCell<GraphwarGameRecorder>>>`（`0x417434`）、`Rc::drop_slow<RefCell<GraphwarGameRecorder>>`（`0x41c228`）在 `+0x30` 递减 weak、归零时 `dealloc(0x50)`	逐位	闭包捕捉的就是它（upgrade 回 Rc）
+GraphwarGameRecorder	+0x20（RcInner +0x38）	8	Rc<RefCell<GraphwarEventQueue>>	同	x86 `new` `0x3d52cc mov qword ptr [rax+0x38],rsi`（实参 1）；arm64 `0x41c228` 在 `+0x38` dec 后调 `0x41a4b8` = `Rc<RefCell<GraphwarEventQueue>>::drop_slow`，其内 `dealloc(0x58)` ⇒ RcInner<RefCell<Queue>> = 0x58 ⇒ Queue = 0x40	逐位	直接存实参 Rc，不拆
+GraphwarGameRecorder	+0x28（RcInner +0x40）	8	Weak<RefCell<GraphwarModuleContainer>>	同	x86 `new` `0x3d52d0 mov qword ptr [rax+0x40],rdx`（实参 2）；闭包 `0x3d500a lea rdi,[rbx+0x40]` → `GraphwarModuleContainer::get_module_wk`（arm64 `0x4a34c4` 第一句 `ldr x20,[x0]` + `cmn x20,#-1` 就是读 Weak）；`Weak::drop` 的 `dealloc(0x48)` ⇒ 容器 = 0x30 = `HashMap<TypeId, Rc<dyn Any>>`（`src/graphwar_module_container.rs:546`）	逐位	取 tick 的那条路（`get_module_wk(&weak)?.borrow()[+0x58]`）
+GraphwarGameRecorder	+0x30（RcInner +0x48）	1	u8：上一条 GameStateInfo 的 game_state，**初值 8**	u8（初值 8）	x86 `0x3d52d4 mov byte ptr [rax+0x48],8`；闭包 `0x3d510a cmp byte ptr [rbx+0x48],6`、`0x3d51a3 mov byte ptr [rbx+0x48],6`、`0x3d5141 mov byte ptr [rbx+0x48],bpl`；arm64 `0x3d7fd0 strb w23,[x0,#0x48]`、`0x3d7c80 ldrb w8,[x19,#0x48]`、`0x3d7cac strb w23,[x19,#0x48]`	逐位（值）/ 推断（8 在源码里怎么写）	`GameState` 只有 0..=7 ⇒ 8 是哨兵；只与 6/1 比较 ⇒ 初值行为无差别
+GraphwarGameRecorder	总尺寸	0x38 = 56	size_of = 0x38	同	① `0x50(alloc) - 0x10(strong+weak) - 0x08(借用标志) = 0x38`；② `add_module` 的 size 实参 **56**（`src/graphwar_module_container.rs:396`）；③ arm64 `drop_in_place<RefCell<GraphwarGameRecorder>>`（`0x4b2864`）的字段偏移只在 0x38 下自洽	逐位	T78 把 0x50 当结构体尺寸 ⇒ 判 mismatch 的方向对、结论错
+EventInfo	步长	0x50	0x48（GraphwarEvent 枚举）+ tick(4) + 4 填充	我方 0x38（`GraphwarEvent` 仍是 {String,String} 占位 = 0x30）	x86 闭包 `0x3d50a7 lea rcx,[r13*4]` + `0x3d50af add rcx,r13` + `shl rcx,4` ⇒ 元素地址 = ptr + len×5×16 = len×0x50；`save_game` `0x3d62ac mov ecx, dword ptr [rax+rsi+0x48]` 读 tick	逐位（真值）/ 登记（我方占位）	`GraphwarEvent` 的真枚举仍是 F3/F4 缺口（`docs/06` §82.4-3）
