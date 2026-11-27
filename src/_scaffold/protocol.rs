@@ -1844,7 +1844,7 @@ impl GraphwarColor {
 pub struct GameInfo {
     pub room_name: String,
     pub game_state: String,
-    pub current_player_count: i64,
+    pub current_player_count: u32,
     /// socket 地址（`"[::1]:35245"`）。线上是 JSON 字符串；
     /// 与 `GameRemoved.game_address` 同一个 `serialize_field` 单态 `0x3cbab0`。
     pub address: String,
@@ -1880,7 +1880,7 @@ impl GameInfo {
         Some(Self {
             room_name: get_str_unescaped(m, "room_name")?,
             game_state: get_str_unescaped(m, "game_state")?,
-            current_player_count: get_int(m, "current_player_count")?,
+            current_player_count: get_int(m, "current_player_count")? as u32,
             address: get_str_unescaped(m, "address")?,
             axis_mode: get_str_unescaped(m, "axis_mode")?,
             function_mode: get_str_unescaped(m, "function_mode")?,

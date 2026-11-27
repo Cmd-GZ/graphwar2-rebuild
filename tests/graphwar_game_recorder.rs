@@ -123,9 +123,12 @@ fn path_is_dir_plus_unix_seconds() {
 #[test]
 fn one_line_json_has_event_before_tick() {
     let e = EventInfo {
+        // 声明顺序 = 二进制字段顺序（event 在前）—— 只改构造写法，断言未动。
+        event: GraphwarEvent {
+            name: "FunctionInfo".to_string(),
+            body: "{\"owner_id\":635}".to_string(),
+        },
         tick: 1234,
-        event: "FunctionInfo".to_string(),
-        body: "{\"owner_id\":635}".to_string(),
     };
     assert_eq!(
         e.to_json_line(),
@@ -134,9 +137,8 @@ fn one_line_json_has_event_before_tick() {
 
     // 空体也要是合法对象
     let e = EventInfo {
+        event: GraphwarEvent { name: "GameStartRequest".to_string(), body: String::new() },
         tick: 1,
-        event: "GameStartRequest".to_string(),
-        body: String::new(),
     };
     assert_eq!(e.to_json_line(), "{\"event\":{\"GameStartRequest\":{}},\"tick\":1}");
 
