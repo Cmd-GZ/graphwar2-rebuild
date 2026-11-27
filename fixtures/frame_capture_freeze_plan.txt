@@ -1,0 +1,91 @@
+# fixtures/frame_capture_freeze_plan.txt —— **按 tick 停帧**的预注册（T76，2026-11-27）
+#
+# 这份文件**先于** `fixtures/pixel_freeze_results.tsv` 的任何一行读数写定并单独 commit。
+# 它管的是「两侧采集时，**停在哪一帧**」这件事 —— 不是渲染判据：
+# 渲染门槛仍是 `fixtures/frame_diff_thresholds.txt`（sha256 9cc9fcda…，预注册，一个数没改）。
+#
+# ## 0. 为什么要有这份东西
+#
+# `docs/06` §118.8 遗留 1：`--flow replay` 的两屏读数在两次采集里**名字归属互换**
+# （`replay_play`/`replay_end` = 1126/856 px，而上一轮是 856/1126，**总数 1982 px 逐位相同**）。
+# 沿用下来的采集口径是「点完 → 墙钟等 2.0 s（或 45 s）→ 连拍 3 帧、跨侧比第 1 帧」，
+# 于是**停帧时机**（= 那一刻墙上过了多久、动画在哪一相位）进了读数。
+#
+# T76 实测归因（见 `docs/06` §120）：
+#   * 1982 = 856 + 856 + **270**；那 270 px 是**我方回放屏多画的一根闪烁光标**
+#     （3×90 px 纯白竖条，bbox `x1182..1184 × y1066..1155`，`client/src/play/function_input.gd`
+#     的 `_caret_blink`：亮 0.5 s / 灭 0.5 s，**由帧 delta 累加**）；
+#   * 原版回放屏在这两轮里**一次都没画过光标**（6 帧跨 50 s，光标列上没有一条 3×90 白条）；
+#   * ⇒ 856 px 是**稳定的渲染残差**（士兵名/头部那一层的 bbox `(770,782)-(844,810)`），
+#     1126 px = 856 + 光标的偶发命中。**互换的是光标，不是渲染。**
+#
+# ## 1. 停帧表（本文件唯一被 `tools/frame_capture.py --stop-plan` 解析的部分）
+#
+# 列：`flow ⇥ screen ⇥ side ⇥ stop_kind ⇥ stop_value ⇥ probe ⇥ note`
+#   stop_kind：
+#     `tick`        = 该侧运行时 tick 探针读到 `>= stop_value` 时，**在目标进程内**
+#                     `raise(SIGSTOP)` 冻住那一帧（本行的 `stop_value` 允许写 `+K` = 相对 arming 时刻）；
+#     `frozen`      = 探针值连续 `stop_value` 次采样不变（= 时钟已停）⇒ 冻结后连拍；
+#     `ftick`       = 我方 `GraphwarPlane::set_fractional_tick(f64)` 的实参（曲线揭示量）；
+#     `settle`      = 该侧这一屏**没有可读的运行时 tick**，只能墙钟等（登记为**推断**，见 §4）；
+#   probe：`orig_tick` = 原版 `GraphwarTickHandler::tick`（`0x519840` 的 `rdi` + `0x40`，
+#          静态依据 `docs/06` §63：每 tick `+16_666_666 ns`、`nanos==1e9` ⇔ 未暂停）；
+#          `ours_progress` = `GwReplayDriver::progress()`（每帧被 `_update_replay_ui()` 调，回放屏）；
+#          `ours_ftick` = `GraphwarPlane::set_fractional_tick`（对局中曲线揭示每帧调）；
+#          `none` = 不用探针。
+# flow	screen	side	stop_kind	stop_value	probe	note
+replay	replay_play	original	frozen	3	orig_tick	回放**载入即暂停** ⇒ 时钟本就停着；值连续 3 次采样不变才拍（实测恒 557 tick）
+replay	replay_play	ours	frozen	3	ours_progress	同一口径；实测恒 0.24483516…（= 557/2275 ⇒ 载入 tick 558）
+replay	replay_end	original	frozen	3	orig_tick	与 replay_play **同一停帧规则**：原版进屏后不播，两屏本就是同一个载入态
+replay	replay_end	ours	frozen	3	ours_progress	同上（我方也不自动播；`_begin_replay()` 不调 `play()`）
+match	match_ready	original	tick	900	orig_tick	**绝对** tick：准备态是静态的，只有士兵待机动画按 tick 走相位 ⇒ 钉绝对 tick 才能把相位也钉死
+match	match_ready	ours	settle	1.5	none	我方对局屏**没有运行时 tick 可读**（动画走墙钟 `_curve_tick`，见 §4）⇒ 只能墙钟停帧，登记为推断
+match	match_play	original	tick	+90	orig_tick	**相对** tick：弹道揭示的起点取决于 phase2 到达时客户端的 tick（跨轮 boot 会飘）⇒ 钉"arming 之后 90 tick"（1.5 s）比钉绝对 tick 稳
+match	match_play	ours	ftick	+6.0	ours_ftick	我方披露时钟是 `_curve_tick`（≈63/s）⇒ `+6` ≈ 0.1 s 的揭牌量；同一口径
+
+# ## 2. 冻结后**不算进 L3**的固定区域（`tools/frame_diff.py --exclude-rect`，只影响 L3 计数）
+#
+# 理由：光标是**墙钟 1.0 s 周期**的闪烁元素，相位逐运行随机 —— 任何"按 tick 停帧"都钉不住它
+# （它不是 tick 驱动的）。所以把它从 L3 的**计数区域**里排除，同时把"被排除掉的差异像素"
+# 单列成 `l3_masked_out_px`，**原始读数**单列成 `l3_diff_px_raw`（不许悄悄丢）。
+# L1/L2 一行不动（270 px 对 24 块均值的影响 < 0.001/255）。
+#
+# 矩形都是**从真帧量出来的**（`#FFFFFF` 纯白竖条 3×90，上下各留 1 px 余量、左右各 3 px）：
+# flow	screen	side	rect	note
+# replay	replay_play	both	1179,1062,1188,1160	我方回放屏光标列（实测 x1182..1184 × y1066..1155）
+# replay	replay_end	both	1179,1062,1188,1160	同上
+# match	match_ready	both	999,1062,1008,1160	我方对局屏光标列（实测 x1002..1004 × y1066..1155）
+# match	match_play	both	999,1062,1008,1160	同上（对局中光标在 x1002：光标停在末尾而函数串更短）
+
+# ## 3. 判据与**噪声带**（预注册；来源写明，跑完不许为了对上而改）
+#
+# 三层判据本身不变（`fixtures/frame_diff_thresholds.txt` §3）：L1 尺寸/均值/主色、L2 24 块、
+# L3 差异像素比例 ≤ 0.10 % 且 max|Δchannel| ≤ 8。**本轮新增的只是"比哪一帧"与"哪些像素算"。**
+#
+# 取帧：每屏连拍 **3 帧**（帧间隔 1.2 s；冻结期间三帧**逐字节相同**，manifest 里有 sha256 可证），
+#      **跨侧比第 1 帧**（与门槛文件 §2 的老口径一致）。
+#
+# 噪声带（**允许落在哪个区间**）：
+#   屏          判据上限（预注册带）                        来源
+#   replay_play  掩膜后 **恰好 856 px（±0）**；原始（未掩膜）856–1126 px
+#                  —— 856 是 `docs/06` §118.7 两轮都复现的稳定残差；1126 = 856 + 光标 270
+#   replay_end   同 replay_play（两屏本就是同一个载入态）
+#   match_ready  L1 过、L2 0 块、L3 ∈ [0.070 %, 0.100 %]
+#                  —— 历史同侧跨轮 0.0820 % / 0.0938 %（`docs/06` §118.7），上下各留 0.02 pp
+#   match_play   L1 过、L2 ≤ 1 块、L3 ∈ [0.340 %, 0.450 %]
+#                  —— 历史 0.370 % / 0.386 % / 0.442 %（§118.7 与 §(T44)），上下各留 ~0.03 pp
+#
+# `replay_play`/`replay_end` 用 **±0**（不是宽带来遮丑）：两侧都冻在**同一个暂停载入态**、
+# 三帧逐字节相同、光标列已排除 ⇒ 读数必须**逐 px 相同**；只要换个数字，就是这条口径没生效。
+#
+# ## 4. 诚实登记的边界（**推断/未知**，不许当结论用）
+#
+# 1. 我方**对局屏**（`match_ready`/`match_play`）的动画时钟是**墙钟**（`play_screen.gd` 的
+#    `_curve_tick += delta × 60`），不是原版的定步 tick（`GraphwarTickHandler::get_fractional_tick`）。
+#    这是**源码层缺口**（`docs/16` §43.6(d) 第 2 条），不是采集问题 ⇒ `match_ready` 上我方
+#    **没有任何运行时 tick 可读**，只能用墙钟停帧并标 `settle`/推断。`match_play` 能读到
+#    `set_fractional_tick` 的实参（曲线揭示量 ≈ 63/s），但那也是墙钟积分出来的量。
+# 2. 因此 `match_*` 两屏的跨侧残差里有一块是**模型层的相位差**（两侧揭示/待机动画的驱动源不同），
+#    按 tick 停帧只能消掉**采集**这一层的模糊，消不掉那一块 —— 预注册带就是按这个前提给的。
+# 3. `campaign` / `level_popup` 两屏**不进本表**：它们没有 tick（纯静态屏），本轮只做残差归因
+#    （`docs/06` §120.5），停帧口径仍按 `fixtures/static_screens_targets.txt` 的 2.0 s。
