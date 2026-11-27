@@ -239,30 +239,29 @@ fn read_object(s: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// **结构 pin（T66）**：JSON 视图与权威形态 `crate::events::GameInfo` 必须是**同一套字段**。
+    /// **结构 pin（T66）**：`GameInfo` 在本 crate 里**只有一份定义**，且 9 个字段/键序/严格解析都被钉住。
     ///
     /// 为什么要有这条：原版只有**一个** `struct GameInfo`（`0x5060d0`，9 字段），
-    /// 而我方在 T66 之前有 **3 处**形态（`events.rs` / 本文件的 `GameInfo` / 本文件的
-    /// `Broadcast`）。收敛之后只剩「1 权威 + 1 JSON 视图」两处**定义**，这条测试把两者
-    /// 钉在一起，谁在任一侧加/删/改名一个字段，这里立刻编不过或测红。
+    /// 而我方在 T66 之前有 **3 处**形态（`events.rs` / 本文件的 `GameInfo` / 本文件的 `Broadcast`）。
+    /// 收敛之后剩 **1 处定义**（`crate::events::GameInfo`，本文件 `pub use` 它、`Broadcast` 是它的别名），
+    /// 这条测试把「字段集 + 键序 + serde 两方向」钉死：谁加/删/改名一个字段，这里立刻编不过或测红。
     #[test]
-    fn wire_view_pins_the_canonical_field_set() {
+    fn game_info_has_one_definition_with_pinned_fields_and_key_order() {
         use crate::graphwar_game_info::GAME_INFO_FIELDS;
 
-        let dto = GameInfo {
+        let info = GameInfo {
             room_name: "Graphwar Game".into(),
-            game_state: "Setup".into(),
+            game_state: crate::turnstate::GameState::Setup,
             current_player_count: 2,
             address: "[::1]:35245".into(),
-            axis_mode: "EveryUnit".into(),
-            function_mode: "NormalFunction".into(),
-            turn_mode: "SequentialTurns".into(),
-            time_mode: "Timer1m".into(),
+            axis_mode: crate::graphwar_mode_manager::AxisMode::EveryUnit,
+            function_mode: crate::graphwar_mode_manager::FunctionMode::NormalFunction,
+            turn_mode: crate::graphwar_turn_manager::TurnMode::SequentialTurns,
+            time_mode: crate::graphwar_mode_manager::TimeMode::Timer1m,
             locked: false,
         };
 
-        // ① 字段集：两处 `let` 解构都要求**恰好**这 9 个字段
-        //    （多一个 / 少一个 / 改名 ⇒ 编译错误，这条判据在编译期）。
+        // ① 字段集：`let` 解构要求**恰好**这 9 个字段（多一个 / 少一个 / 改名 ⇒ 编译错误）。
         let GameInfo {
             room_name: _,
             game_state: _,
@@ -273,34 +272,29 @@ mod tests {
             turn_mode: _,
             time_mode: _,
             locked: _,
-        } = dto.clone();
-        let crate::events::GameInfo {
-            room_name: _,
-            game_state: _,
-            current_player_count: _,
-            address: _,
-            axis_mode: _,
-            function_mode: _,
-            turn_mode: _,
-            time_mode: _,
-            locked: _,
-        } = crate::events::GameInfo::default();
+        } = info.clone();
 
-        // ② 键序：`to_json` 的键必须等于权威侧的字段表（同一个顺序 = 二进制的键序）。
+        // ② 键序：`to_json` 的键必须等于字段表（同一个顺序 = 二进制 `0x5060d0` 的键序）。
         let keys: Vec<String> = split_fields(
-            dto.to_json().trim_start_matches('{').trim_end_matches('}'),
+            info.to_json().trim_start_matches('{').trim_end_matches('}'),
         )
         .into_iter()
         .map(|(k, _)| k)
         .collect();
         assert_eq!(keys, GAME_INFO_FIELDS.map(str::to_string).to_vec());
 
-        // ③ 两个方向的转换：视图 → 权威 → 视图 必须回到原样；
-        //    未知枚举名在严格方向（`TryFrom`）必须报错（serde 同口径）。
-        let canon = crate::events::GameInfo::try_from(&dto).expect("9 个值都是合法枚举名");
-        assert_eq!(GameInfo::from(&canon), dto);
-        let bad = GameInfo { game_state: "Bogus".into(), ..dto.clone() };
-        assert!(crate::events::GameInfo::try_from(&bad).is_err(), "未知枚举名必须失败");
+        // ③ serde 两个方向：`to_json` → `parse` 必须回到原样（枚举按变体名严格往返）。
+        let m = parse_message(&format!("{{\"X\":{}}}", info.to_json())).unwrap();
+        assert_eq!(GameInfo::parse(&m).unwrap(), info);
+
+        // ④ 严格性：未知枚举名 ⇒ `None`（与 serde「未知变体 = 反序列化失败」同口径）。
+        let bad_json = info.to_json().replace("\"Setup\"", "\"Bogus\"");
+        let bad = RawMessage {
+            kind: "GameInfo".into(),
+            body: bad_json.trim_start_matches('{').trim_end_matches('}').to_string(),
+            text: bad_json.clone(),
+        };
+        assert!(GameInfo::parse(&bad).is_none(), "未知枚举名必须解析失败");
     }
 
     /// 夹具每行就是一条**原始报文**（抓包时去掉了 2 字节长度前缀）。
@@ -622,7 +616,8 @@ mod match_tests {
         let b = Broadcast::parse(line).expect("广播应能解析");
         assert_eq!(b.room_name, "Graphwar Game");
         assert!(b.address.contains(':'));
-        assert_eq!(b.time_mode, "Timer1m", "实测广播与 TCP 用的是同一种拼写");
+        assert_eq!(b.time_mode, crate::graphwar_mode_manager::TimeMode::Timer1m,
+                   "实测广播与 TCP 用的是同一种拼写");
     }
 
     #[test]
@@ -1872,7 +1867,7 @@ impl GraphwarColor {
     }
 }
 
-/// LAN 广播 / `GameInfoEvent` 负载的 **JSON 视图**：房间信息，**9 个字段**。
+/// LAN 广播 / `GameInfoEvent` 负载：**房间信息，9 个字段** —— 本 crate 里**只有这一份定义**。
 ///
 /// **原版只有一个** `struct GameInfo`：serde 名串 `struct GameInfo with 9 elements`
 /// （槽 `0x9502f0` → `0x1bc121`），`Serialize` 在 **`0x5060d0`**，键序
@@ -1880,88 +1875,29 @@ impl GraphwarColor {
 /// turn_mode, time_mode, locked`（`tools/wire_fields.py --struct 0x5060d0`；与真实 LAN 广播
 /// 报文逐字节一致 —— `docs/07` §1、`docs/06` §109.4）。
 ///
-/// ## 为什么这里还有一份结构体（T66 收敛结论，`docs/06` §111）
+/// ## 形态归属（T66，`docs/06` §112）
 ///
-/// 原版那 9 个字段的类型是 **5 个枚举 + 1 个 `u32` + 2 个不同串类型 + 1 个 `bool`**
-/// （`docs/06` §109.4 逐位）。那套**权威形态**在 [`crate::events::GameInfo`]
-/// （真枚举、`current_player_count: u32`、`address` 仍 `String` 并已登记）。
-/// 本类型只承载 **JSON 表示**那一层差异（枚举 ↔ 线上串），两个方向：
-/// `From<&crate::events::GameInfo>`（枚举 → 串）与
-/// `TryFrom<&GameInfo> for crate::events::GameInfo`（串 → 枚举，未知名字 ⇒ `Err`）。
+/// **权威形态 = [`crate::events::GameInfo`]**（该文件是原版 `graphwar_game_info` 模块的结构体本体，
+/// 经 [`crate::graphwar_game_info`] 再导出）。本模块**不再定义第二个 `GameInfo`**：
+/// 这里是 `pub use` 的**同一类型**，只额外提供两个**线上进出口**：
+/// * [`GameInfo::to_json`] —— serde 的 `Serialize`（键序 = `0x5060d0` 的 `serialize_field` 顺序）；
+/// * [`GameInfo::parse`] —— serde 的 `Deserialize`（5 个枚举字段按**变体名**严格解析，
+///   未知名字 ⇒ `None`，与 serde「未知变体 = 反序列化失败」同口径）。
 ///
-/// 字段类型是 **wire 类型**：`current_player_count: i64` 是 JSON 数字的载体
-/// （`get_int` 返回 `i64`；源类型 `u32` 的证据在权威形态上）。
+/// `Broadcast` 是本类型的**别名**（LAN 广播是裸对象、事件负载是 `{"GameInfo":{"game_info":…}}`，
+/// 两者在原版里用的是同一个结构体）⇒ 我方 `GameInfo` 的结构体**定义数：3 → 1**。
 ///
-/// ⚠️ 注意与 [`LockInfo`]/[`LockRequest`] 的字段名**不同**：这里是 `locked`，
-/// 那两条是 `lock`。两个名字都在 `.rodata` 里、都实测存在，别互相套用。
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct GameInfo {
-    pub room_name: String,
-    pub game_state: String,
-    pub current_player_count: i64,
-    /// socket 地址（`"[::1]:35245"`）。线上是 JSON 字符串；
-    /// 与 `GameRemoved.game_address` 同一个 `serialize_field` 单态 `0x3cbab0`。
-    pub address: String,
-    pub axis_mode: String,
-    pub function_mode: String,
-    pub turn_mode: String,
-    pub time_mode: String,
-    pub locked: bool,
-}
-
-/// 权威形态（[`crate::events::GameInfo`]）→ JSON 视图：枚举 → 线上串。
+/// **字段类型**（逐位证据见 `docs/06` §109.4）：5 个枚举（`GameState`/`AxisMode`/`FunctionMode`/
+/// `TurnMode`/`TimeMode`）+ `current_player_count: u32`（4 字节 + itoa u32 路径）+ `address: String`
+/// （原版是 32 字节 / 1 字节 tag / 2 变体的枚举，形状 = 观测、身份 = 推断 ⇒ 仍用 `String` 并登记）。
 ///
-/// 串的名字来自各枚举 `Serialize` 的变体名字面量（`docs/06` §109.4 E6 逐位）。
-impl From<&crate::events::GameInfo> for GameInfo {
-    fn from(info: &crate::events::GameInfo) -> Self {
-        Self {
-            room_name: info.room_name.clone(),
-            game_state: info.game_state.as_str().to_string(),
-            current_player_count: i64::from(info.current_player_count),
-            address: info.address.clone(),
-            axis_mode: info.axis_mode.as_str().to_string(),
-            function_mode: info.function_mode.as_str().to_string(),
-            turn_mode: info.turn_mode.as_str().to_string(),
-            time_mode: info.time_mode.as_str().to_string(),
-            locked: info.locked,
-        }
-    }
-}
-
-/// JSON 视图 → 权威形态：线上串 → 枚举。
-///
-/// 未知枚举名 / 越界整数 ⇒ `Err`：与 serde「未知变体名 = 反序列化失败」同口径。
-/// ⚠️ 只在**这里**严格；[`GameInfo::parse`] 本身是 JSON 文本视图，对枚举名不校验
-/// （`tests/wire_format.rs` 有一条历史断言用了我方自造串 `"Timers1m"`，见
-/// `fixtures/struct_audit_plan3.txt` §0-b —— 那条断言本轮**不许改**）。
-impl TryFrom<&GameInfo> for crate::events::GameInfo {
-    type Error = &'static str;
-
-    fn try_from(dto: &GameInfo) -> Result<Self, Self::Error> {
-        Ok(Self {
-            room_name: dto.room_name.clone(),
-            game_state: crate::turnstate::GameState::from_str(&dto.game_state)
-                .ok_or("game_state")?,
-            current_player_count: u32::try_from(dto.current_player_count)
-                .map_err(|_| "current_player_count")?,
-            address: dto.address.clone(),
-            axis_mode: crate::graphwar_mode_manager::AxisMode::from_str(&dto.axis_mode)
-                .ok_or("axis_mode")?,
-            function_mode: crate::graphwar_mode_manager::FunctionMode::from_str(&dto.function_mode)
-                .ok_or("function_mode")?,
-            turn_mode: crate::graphwar_turn_manager::TurnMode::from_str(&dto.turn_mode)
-                .ok_or("turn_mode")?,
-            time_mode: crate::graphwar_mode_manager::TimeMode::from_str(&dto.time_mode)
-                .ok_or("time_mode")?,
-            locked: dto.locked,
-        })
-    }
-}
+/// ⚠️ 注意与 [`LockInfo`]/[`LockRequest`] 的字段名**不同**：这里是 `locked`，那两条是 `lock`。
+pub use crate::events::GameInfo;
 
 impl GameInfo {
     /// 键序 = 二进制里的 `serialize_field` 顺序（9 个，`docs/06` §109.4）。
     ///
-    /// 串按 JSON 规则转义（与 serde_json 对 `String` 的表示一致）；布尔小写。
+    /// 串按 JSON 规则转义（与 serde_json 对 `String` 的表示一致）；枚举写变体名；布尔小写。
     pub fn to_json(&self) -> String {
         format!(
             concat!(
@@ -1970,19 +1906,22 @@ impl GameInfo {
                 r#""turn_mode":{},"time_mode":{},"locked":{}}}"#
             ),
             json_str(&self.room_name),
-            json_str(&self.game_state),
+            json_str(self.game_state.as_str()),
             self.current_player_count,
             json_str(&self.address),
-            json_str(&self.axis_mode),
-            json_str(&self.function_mode),
-            json_str(&self.turn_mode),
-            json_str(&self.time_mode),
+            json_str(self.axis_mode.as_str()),
+            json_str(self.function_mode.as_str()),
+            json_str(self.turn_mode.as_str()),
+            json_str(self.time_mode.as_str()),
             self.locked,
         )
     }
 
     /// 解析（两种输入形态见 [`JsonObject`]）：广播 = 整段对象文本，
     /// 事件负载 = [`RawMessage`]（取它的 `body`）。
+    ///
+    /// 5 个枚举字段**严格**按变体名解析（`GameState::from_str` 等），未知名字 ⇒ `None`：
+    /// 与 serde 派生出来的 `Deserialize` 同口径（未知变体 = 反序列化失败）。
     pub fn parse(obj: impl JsonObject) -> Option<Self> {
         let text = obj.json_object_text().trim();
         let body = if text.starts_with('{') {
@@ -1996,13 +1935,21 @@ impl GameInfo {
         let m = RawMessage { kind: "GameInfo".into(), body, text: text.to_string() };
         Some(Self {
             room_name: get_str_unescaped(&m, "room_name")?,
-            game_state: get_str_unescaped(&m, "game_state")?,
-            current_player_count: get_int(&m, "current_player_count")?,
+            game_state: crate::turnstate::GameState::from_str(&get_str_unescaped(&m, "game_state")?)?,
+            current_player_count: u32::try_from(get_int(&m, "current_player_count")?).ok()?,
             address: get_str_unescaped(&m, "address")?,
-            axis_mode: get_str_unescaped(&m, "axis_mode")?,
-            function_mode: get_str_unescaped(&m, "function_mode")?,
-            turn_mode: get_str_unescaped(&m, "turn_mode")?,
-            time_mode: get_str_unescaped(&m, "time_mode")?,
+            axis_mode: crate::graphwar_mode_manager::AxisMode::from_str(
+                &get_str_unescaped(&m, "axis_mode")?,
+            )?,
+            function_mode: crate::graphwar_mode_manager::FunctionMode::from_str(
+                &get_str_unescaped(&m, "function_mode")?,
+            )?,
+            turn_mode: crate::graphwar_turn_manager::TurnMode::from_str(
+                &get_str_unescaped(&m, "turn_mode")?,
+            )?,
+            time_mode: crate::graphwar_mode_manager::TimeMode::from_str(
+                &get_str_unescaped(&m, "time_mode")?,
+            )?,
             locked: get_bool(&m, "locked")?,
         })
     }

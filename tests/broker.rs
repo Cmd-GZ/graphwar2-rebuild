@@ -12,16 +12,16 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-fn sample(addr: &str, players: i64, state: &str) -> Broadcast {
+fn sample(addr: &str, players: u32, state: &str) -> Broadcast {
     Broadcast {
         room_name: "Graphwar Game".into(),
-        game_state: state.into(),
+        game_state: gw2_rebuild::turnstate::GameState::from_str(state).expect("合法状态名"),
         current_player_count: players,
         address: addr.into(),
-        axis_mode: "EveryUnit".into(),
-        function_mode: "NormalFunction".into(),
-        turn_mode: "SequentialTurns".into(),
-        time_mode: "Timer1m".into(),
+        axis_mode: gw2_rebuild::graphwar_mode_manager::AxisMode::EveryUnit,
+        function_mode: gw2_rebuild::graphwar_mode_manager::FunctionMode::NormalFunction,
+        turn_mode: gw2_rebuild::graphwar_turn_manager::TurnMode::SequentialTurns,
+        time_mode: gw2_rebuild::graphwar_mode_manager::TimeMode::Timer1m,
         locked: false,
     }
 }

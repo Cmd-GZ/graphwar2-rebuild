@@ -474,16 +474,16 @@ fn serve_conn(mut sock: TcpStream, id: u64, state: Arc<Mutex<State>>) -> std::io
 mod tests {
     use super::*;
 
-    fn sample(addr: &str, players: i64) -> Broadcast {
+    fn sample(addr: &str, players: u32) -> Broadcast {
         Broadcast {
             room_name: "Graphwar Game".into(),
-            game_state: "Setup".into(),
+            game_state: crate::turnstate::GameState::Setup,
             current_player_count: players,
             address: addr.into(),
-            axis_mode: "EveryUnit".into(),
-            function_mode: "NormalFunction".into(),
-            turn_mode: "SequentialTurns".into(),
-            time_mode: "Timer1m".into(),
+            axis_mode: crate::graphwar_mode_manager::AxisMode::EveryUnit,
+            function_mode: crate::graphwar_mode_manager::FunctionMode::NormalFunction,
+            turn_mode: crate::graphwar_turn_manager::TurnMode::SequentialTurns,
+            time_mode: crate::graphwar_mode_manager::TimeMode::Timer1m,
             locked: false,
         }
     }
