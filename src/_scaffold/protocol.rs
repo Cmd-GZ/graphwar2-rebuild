@@ -975,6 +975,14 @@ mod tests {
         let m = parse_message(r#"{"ColorInfo":{"entity_id":1,"color":{"r":149,"g":5,"b":62}}}"#)
             .expect("外壳合法");
         assert_eq!(get_color(&m, "color"), Some((149, 5, 62)), "真帧取值照旧解得开");
+        // `GraphwarColor::parse`（值结构体入口）同样不许回绕
+        let m = parse_message(r#"{"X":{"r":300,"g":0,"b":0}}"#).expect("合成外壳合法");
+        assert_eq!(GraphwarColor::parse(&m), None, "GraphwarColor::parse 也不许把 r=300 回绕");
+        let m = parse_message(r#"{"X":{"r":149,"g":5,"b":62}}"#).expect("合成外壳合法");
+        assert_eq!(GraphwarColor::parse(&m), Some(GraphwarColor::new(149, 5, 62)));
+        // 嵌套在别的字段里的 r/g/b 不算顶层字段
+        let m = parse_message(r#"{"X":{"c":{"r":149,"g":5,"b":62}}}"#).expect("合成外壳合法");
+        assert_eq!(GraphwarColor::parse(&m), None, "嵌套对象里的 r/g/b 不是顶层字段");
     }
 
     /// **反面对照（T75）**：变体名是 serde 外部标签的"选路键" —— 名字不同就是**别的**类型，
@@ -2691,11 +2699,19 @@ impl GraphwarColor {
         format!(r#"{{"r":{},"g":{},"b":{}}}"#, self.r, self.g, self.b)
     }
 
+    /// `{"r":..,"g":..,"b":..}` 的三个通道。
+    ///
+    /// **严格（T75）**：三个键都必须是**顶层**字段、值都必须是 `u8` 范围（serde 的 `u8`
+    /// 越界/负数 = 反序列化失败；改前 `get_int(..)? as u8` 会把 `r:300` 静默回绕成 44）。
+    /// 多加的字段忽略（serde derive 默认）。
+    ///
+    /// ⚠️ 这里**没有**变体名闸：本结构体是 `ColorInfo.color` 的值（不是事件），
+    /// `tests/wire_format.rs` 用 `{"X":{"r":…}}` 这种合成外壳解它。
     pub fn parse(m: &RawMessage) -> Option<Self> {
         Some(Self {
-            r: get_int(m, "r")? as u8,
-            g: get_int(m, "g")? as u8,
-            b: get_int(m, "b")? as u8,
+            r: as_u8_literal(top_level_value(&m.body, "r")?)?,
+            g: as_u8_literal(top_level_value(&m.body, "g")?)?,
+            b: as_u8_literal(top_level_value(&m.body, "b")?)?,
         })
     }
 }
