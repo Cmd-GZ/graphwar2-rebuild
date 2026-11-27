@@ -1,4 +1,6 @@
-# game_client_anchors.tsv —— T62 台账：`graphwar_game_client` 19 条 + `graphwar_play_screen_control` 8 条 F3 的锚点
+# game_client_anchors.tsv —— T62 台账：`graphwar_game_client` 19 条 + `graphwar_play_screen_control` 6 条 F3 的锚点
+#   ⚠️ 任务书写「play_screen_control 剩的 8 条」；实测该模块 10 行 = F1 1 / F2 3 / **F3 6**（第 8 条不存在，
+#      T55 做过的是另一个模块 `setup_control` 的 9 条）。更正记录见 docs/06 §111.1 与 §111.6。
 # 生成本表的方法（全部可复跑；真名/Location 不手抄，FDE/字节不手抄）：
 #   PY=/home/CG/Myprojects/graphwar2-rebuild/.reference/venv/bin/python
 #   $PY tools/addr_probe.py fde <vaddr>      # 函数真实范围（.eh_frame FDE，不读 Ghidra 表）
