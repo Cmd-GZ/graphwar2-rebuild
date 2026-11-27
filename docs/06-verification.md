@@ -24950,3 +24950,305 @@ python3 tools/merge_check.py --branch agent/naming-android --base master --no-re
 
 **本节可复算的数**：12,607 / 14,812 / 331 / 179 / 52 / 21 / 106 / 37（24+13）/ 296 / 284 / 294·327 /
 279→309 · 52.9→58.6 · 63.6→70.4 · 62.6→69.3。
+## 137. T88 Rust 侧弹道时钟：**「多画的那条弹道」= 我方自己那条永远不退场的曲线**（不是旧函数、不是重画）；`active_tick` 改成服务端真值 **615**、`FunctionManager` 活跃窗口语义落码（**揭示 `len/30` + 淡出 60 tick**）⇒ `match_play` **5 798 px → 1 740 px（0.2604 % → 0.0782 %）**（2026-11-27，任务 `task-84` / 分支 `agent/rust-trajectory`）
+
+> 起因：§135.3（T84）把 `match_play` 的残差改判成"**我方多画了一条原版没有的弹道**"，
+> 并把落码需要的两件事留给 Rust 侧：① 谁 `drive_frame`；② `FunctionManager` 的活跃窗口语义。
+> 本轮把这两件都做完，并把 ③（客户端相位）按真值改掉。**判据文件一个数没改**：
+> [`fixtures/frame_diff_thresholds.txt`](../fixtures/frame_diff_thresholds.txt)（sha256 `9cc9fcda…`）、
+> 停帧表 [`fixtures/frame_capture_freeze_plan.txt`](../fixtures/frame_capture_freeze_plan.txt)（sha256 `aa23b64d…`）、
+> 排除区 `999,1062,1008,1160` 三样都没动。
+> 读数 = [`fixtures/rust_trajectory_results.tsv`](../fixtures/rust_trajectory_results.tsv)；
+> 机制判据 = [`fixtures/t88_active_window_probe.gd`](../fixtures/t88_active_window_probe.gd)（19 条断言、`fails=0`）。
+
+### 137.0 一页结论
+
+| # | 问 | 答 | 证据档 |
+|---|---|---|---|
+| ① | 「多画的那条弹道」是 `FunctionManager` 里仍活跃的旧函数吗？ | **不是。** 它是**我方自己刚画上去的那一条**：`active_tick` 恒 0 让它在本地 tick=1 就开画，而"揭示量"被当成累计量存着、涨到 `ceil(len/30)` 就停 ⇒ 在场谓词 `30·d < len+1800` **永远成立** ⇒ `remove_function` 一次都没跑，线就永远留在棋盘上 | **观测**（前后帧 + 机制探针）+ **逐位**（谓词/常量） |
+| ② | 是 `set_function_points` 传错 tick 导致重画吗？ | **是"传错 tick"但不是"重画"**：起飞 tick 恒传 **0**（真值 615）⇒ 起点比原版早 **615 tick**；线只画一次，之后一直不老 | **逐位**（`0x3be5f6` 的 `jbe` + `0x456b80` 的载荷） |
+| ③ | 是我方轨迹在**非活跃窗口**里没停吗？ | **是**（这是①的另一面）。根因是**没有真时钟**：`_curve_tick += Δt×60` 是墙钟积分出来的"已揭示量"，不是 tick 轴上的位置；原版每帧现算 `30·(get_fractional_tick − active_tick)`（`0x4b67a0`），**没有**这条状态 | **观测**（`0x4b6317`/`0x4b631a` 的读者链）+ 反面对照 |
+| ④ | 谁 `drive_frame`（§135.6 遗留 1a）？ | **播放屏每帧调 `GraphwarPlane::drive_frame(delta)`**（联机路径）。原版那条链：`GraphwarGameClient::{0x515dc0,0x516fd0}` → 槽 `0x9bc468` → **`0x518400`** → 槽 `0x9baf38` → **`0x518240`** → **`0x519840 tick()`** | **观测**（调用链 + 定步常量） |
+| ⑤ | 活跃窗口到底是多久（§135.6 遗留 1b）？ | **窗口 = 揭示 `len/30` tick + 淡出 `60` tick**（`len` = 点序列长度）。淡出 `alpha = max(0, 1 − (d − len/30)/60)`；窗口外 `remove_function`（只删线、**不删**管理器那一格） | **逐位**（`0x3be540`/`0x3bf620`/`0x455a40` 全部指令，见 §137.3） |
+| ⑥ | 像素变好了吗？ | `match_play` **5 798 → 1 740 px（0.2604 % → 0.0782 %）**、L2 超限 **1 → 0** 块、棋盘区 5 642 → 1 598 px；`match_ready` 2 046 → 2 110 px（0.0948 %，预注册带内） | **观测**（停帧判据 + 密集采样） |
+
+**本轮改了什么**（5 个 commit，见 §137.8）：`src/graphwar_function_manager.rs`（窗口/淡出算式）、
+`src/graphwar_plane.rs`（`drive_frame` + 淡出接线 + `set_function_active_tick` + 出窗口只删线）、
+`client/src/screens/play_screen.gd`（起飞 tick 改真值 + 时钟改真 tick）、三处**被推翻的既有断言**、
+fixtures 两份。**没改**：门槛/停帧表/排除区、`recovered-src/`、别的 `screens`。
+
+### 137.1 ①「多画的那条弹道」到底是什么（决定性证据）
+
+#### 136.1.1 先看画面：原版棋盘是干净的，我方多一条正弦
+
+停帧判据那一帧（`--stop-plan`，两侧串行 + 私有 netns）的棋盘区
+`(265,556)-(1738,900)`，同一口径（橄榄色 `(125,104,0)±40`）量两侧：
+
+| | 橄榄色像素 | bbox | 画面 |
+|---|---|---|---|
+| **原版** | **1 742** | `x772..843 × y783..857` | 只有士兵 + 名字标签 `cmdgz` |
+| **我方（改前）** | **5 718** | `x773..880 × y683..861` | 士兵 + **一条部分揭示的高频正弦**（`x+2sin(20x)`） |
+| **我方（改后）** | **1 257** | `x773..841 × y783..861` | 士兵 + 名字标签（与原版同形，见 §137.5.3） |
+
+#### 136.1.2 为什么它会永远留着：把"揭示量"当成了时钟
+
+改前 `play_screen.gd` 里那条链（**每一环都读得出来，不是猜**）：
+
+```text
+_set_curve()   → set_function_points(player_id, flat, 0, color)      ; 起飞 tick = 0（恒）
+               → _curve_tick = 1.0 ; set_fractional_tick(1.0)        ; 摆时钟 = "已揭示 1 tick"
+_process()     → _curve_tick = min(_curve_tick + Δt×60, ceil(len/30)) ; 墙钟积分，涨到"揭完"就停住
+               → set_fractional_tick(_curve_tick) ; feed_functions()
+平面           → is_active_function(tick=_curve_tick, active=0, total=len)
+```
+
+把 `tick = ceil(len/30)` 代进谓词（`30·d < len + 1800`）：
+
+```text
+d = ceil(len/30) − 0        ; 30·d ≥ len（刚揭完）
+30·d < len + 1800           ; 30·(len/30 + 1) = len + 30 < len + 1800 ⇒ **恒成立**
+```
+
+⇒ **在场谓词永远为真 ⇒ `remove_function`（`0x4b6418`）一次都不会调 ⇒ 线永远留在棋盘上。**
+这不是"旧函数没清掉"，也不是"重画"，就是**这条曲线自己的退场条件从来没被满足**。
+
+**反面对照（证明"没有真时钟"是必要条件）**：把 `active_tick` 换成真值 615、时钟不动时，
+曲线仍是"从 tick=1 长到 `ceil(len/30)` 就停在 0.26 那条线上"，只是起点差 615 个 tick；
+两者一起换成真 tick 之后（§137.5.2 的密集采样）**两侧的弹道出现在同一帧、消失也几乎同帧**。
+
+#### 136.1.3 顺带证伪两条"看起来像"的解释
+
+* **"`FunctionManager` 里仍活跃的旧函数"**：`match_play` 这一发之前没有任何 `FunctionPoints`
+  事件（`fixtures/frame_match_events.txt` [phase2] 只发一条），管理器里最多一格；
+  而且改后同一帧 `function_count()==1`、线被删（§137.4 第 14/15 条），
+  ⇒ 有"格子"和"有线"是两件独立的事，原版也如此（`0x4b6418` 是 drawer 的方法，见 §137.3.3）。
+* **"传错 tick 导致重画"**：改成真值后弹道**一次都没有被重画**（`function_write_total`
+  只在揭示期增长，出窗口即停），像素差异与"重画"无关。
+
+### 137.2 ② `active_tick` 改成什么（真值依据 + 改前/改后）
+
+| 项 | 改前 | 改后 | 真值依据 |
+|---|---|---|---|
+| 起飞 tick 的来路 | `set_function_points(…, **0**, …)`（注释自己写着"我方选择"） | `_curve_active_tick(player_id)` → 联机取 `room["active_ticks"][owner_id]`（`session.gd` 收 `FunctionActive` 时记的），本样本 **615** | `fixtures/frame_match_events.txt` [phase2] 末行 `{"FunctionActive":{"owner_id":230,"active_tick":615}}` |
+| 谁写这一格 | 无 | `set_function_active_tick(player_id, tick)`（**新入口**，`#[func]`），并在 `_on_online_message` 的 `"FunctionActive"` 分支里调 | 原版 `GraphwarFunctionManager::set_function_active_tick`（x86 **`0x456b80`**）：`0x456cd3 lea rax,[r9+0x25]` ⇒ tag **36**；载荷 `[rsp+0x18]=id`、`[rsp+0x1c]=active_tick`；投递 `0x456ce1` → `0x3d3530 add_event` |
+| 它为什么必须"迟到也能生效" | —— | 出窗口只删 `Line2D`、**entry 留着** | `0x4b6418` 调的是 **`FunctionDrawer::remove_function`**（`0x498b70`：`queue_free` + 删抽屉自己的 `BTreeMap`）；`GraphwarFunctionManager` 的 `HashMap` 那一格没被碰 |
+| 严格边界 | `active_tick < tick`（我方早就写对） | 不变 | `0x3be5f6 mov %eax,%edx / sub -0x4(%rcx),%edx` → `0x3be5fb **jbe** skip`（无符号 ≤ ⇒ 不在场） |
+
+**改前行为**：本地 tick 一到 1（第一条 `set_fractional_tick(1.0)`）就开始长弹道 ⇒ 比原版早 615 tick。
+**改后行为**：本地 tick 追上 615 才开始长；且 `FunctionPoints` 先到、`FunctionActive` 后到也正确
+（探针第 5–7 条：注入时 `active_tick=0` + tick=550 ⇒ 不画线；`set_function_active_tick(615)` 命中 entry）。
+
+### 137.3 ⑤ 活跃窗口 / 淡出的**完整语义**（逐条翻自三段反汇编）
+
+#### 136.3.1 三个函数、两块判据
+
+| 函数 | 地址 | 算式 |
+|---|---|---|
+| `get_active_functions_on_tick` | `0x456df0`，真身 **`0x3be540`** | `+0x70 == 1` ∧ `+0x50 != i64::MIN` ∧ `tick > active_tick`（**严格**）∧ `30·d < len + 1800` |
+| `get_active_functions_on_tick_no_fade` | `0x456f80`，真身 **`0x3bf620`** | 同上，末项 `30·d < len`（**没有** `+1800`） |
+| `get_function_fade_on_tick` | **`0x455a40`** | 不满足前三条 ∨ `d ≤ len/30` ⇒ **`1.0`**；否则 `max(0.0, 1.0 − (d − len/30)/60)` |
+
+关键指令（`0x3be5e6`–`0x3be613`，过滤循环体）：
+
+```text
+3be5e6  cmpl $0x1,-0x8(%rbp,%rcx,1)   ; value+0x70 == 1
+3be5f0  cmp  %r13,-0x28(%rcx)         ; r13 = 0x8000_0000_0000_0000 = i64::MIN
+3be5f6  mov  %eax,%edx / sub -0x4(%rcx),%edx   ; d = tick − value+0x74（u32）
+3be5fb  jbe  skip                     ; tick <= active_tick ⇒ 不在场
+3be5fd  mov  -0x18(%rcx),%rdi         ; len = value+0x60（u32）
+3be601  lea  (%rdx,%rdx,1),%r8d / shl $5,%edx / sub %r8d,%edx   ; 30·d
+3be60b  add  $0x708,%edi              ; len + 1800
+3be611  cmp  %edi,%edx / jae skip     ; 30·d >= len+1800 ⇒ 不在场
+```
+
+淡出（`0x455a40` 全函数）：`0x455b15` 的 `0x88888889 >> 36` = 无符号 `len/30`；
+`0x455b2e divsd 0x19fab0` = 除 **−60.0**（`0xc04e…`，`0x455b36 addsd 1.0` 之后就是 `1 − d2/60`）；
+`0x455b42 maxsd` 夹 0；四条 `default` 臂都是 `movq 0x19f570 = 1.0`。
+
+#### 136.3.2 就地更正一条旧记录：`update_function_fade` **有** x86 落点
+
+[`src/graphwar_plane.rs`](../src/graphwar_plane.rs) 与 `docs/archive/156-client-rounds.md` 都记过
+「`get_function_fade_on_tick` **没有 x86 落点**，走 GOT 槽 `0x9bbd08`，算式未知」。
+**一半是错的**：槽在，算式也在，只是调用点不是 `call rel32` —— 正是 `AGENTS.md`
+「间接调用与函数归属」第 1 条那个坑的又一次复现：
+
+```text
+0x4b69ec  call 0x498c70              ; FunctionDrawer::update_function
+0x4b69f1  lea  rdi,[rbx+0x18]        ; &GraphwarFunctionData（Arc<Mutex> 里那格）
+0x4b69f5  mov  esi,ebp               ; id
+0x4b69f7  mov  edx,[rsp+0x11c]       ; **整数 tick**（0x4b6317 读的 M+0x40）
+0x4b69fe  call qword [rip+…]  slot 0x9bbd08 -> **0x455a40**
+0x4b6a04  mov  rdi,[rsp+0x90] / mov esi,ebp
+0x4b6a0e  call 0x4992b0              ; FunctionDrawer::update_function_fade(id, alpha=xmm0)
+```
+
+自校验：`tools/addr_probe.py callers 0x455a40` 会打出 `slot 0x9bbd08 used by 1 site(s) 0x4b69fe`。
+
+#### 136.3.3 出窗口之后：**只删线**，不删管理器那一格
+
+```text
+0x4b6410  mov rdi,[rsp+0x90]         ; drawer
+0x4b6418  call 0x498b70              ; FunctionDrawer::remove_function —— queue_free + 删抽屉的表
+```
+
+`GraphwarFunctionManager` 的 `HashMap` 那一格**没有**任何删除路径 ⇒ 起飞 tick 迟到（联机常态）
+还能让同一条函数重新进窗口、重新建线。我方改前 `feed_functions` 顺手 `self.functions.remove(&id)`，
+这一条等于把迟到的起飞 tick 永久丢掉。
+
+#### 136.3.4 定到了什么程度 / 还有什么没定
+
+| 项 | 档位 | 说明 |
+|---|---|---|
+| 窗口长度 = `len/30 + 60` tick | **逐位** | 由 `0x3be60b` 的 `$0x708` 与 `0x455b2e` 的 −60.0 两处独立给出 |
+| 淡出算式 `max(0, 1 − (d − len/30)/60)` | **逐位** | `0x455a40` 全部指令已翻（§137.3.1） |
+| `get_active_*` 的两条前置（`+0x70 == 1`、`+0x50 != MIN`） | **未知（字段语义）** | 本层用"表里有这一格"代替这两条；**这不是原版行为**，是差 |
+| `FunctionState` 里 `len` 到底存在 `+0x58` 还是 `+0x60` | **观测** | 读它的指令是 `0x3be5fd mov -0x18(%rcx)`（`rcx` = bucket 末尾）⇒ 相对值起点 = `+0x60`；另一个 8 字节在 `+0x58`（ptr） |
+| `len` 的语义 | **推断** | 与 `GraphwarPlane::draw` 的喂点循环 `new_len = min(points.len(), …)` 用的是同一个数 ⇒ 建 `Line2D` 时那条点序列的长度 |
+
+### 137.4 机制判据（确定性，不靠像素）
+
+`fixtures/t88_active_window_probe.gd`（**19 条断言**，跑法见文件头；不入 14 脚本门槛）：
+
+```text
+  ok   drive_frame(0.5) ⇒ tick 30（定步 16_666_666 ns）          ← 0x519840
+  ok   drive_frame(1.0) ⇒ tick 90
+  ok   set_fractional_tick(550) ⇒ 读数 550                       ← TickReply 那条路
+  ok   注入 780 点
+  ok   entry 还在管理器里（不在场只删线，不删 entry）             ← 0x4b6418 是 drawer 的方法
+  ok   tick=550/active=0 ⇒ 超窗口，没画线
+  ok   set_function_active_tick 命中 entry                        ← 0x456b80
+  ok   active_tick ⇒ 615（FunctionActive 真值）
+  ok   写入计数 +1（来路可证，不是恒 0）
+  ok   tick==active_tick ⇒ 0 点（严格大于）                       ← 0x3be5fb 的 jbe
+  ok   tick=616 ⇒ 30 点（每 tick 30 点）                          ← 0x4b67a0
+  ok   tick=641（26 tick）⇒ 780 点全揭
+  ok   alpha@d=26 ⇒ 1.0（还在揭示）                                ← 0x455b24
+  ok   alpha@d=27 ⇒ 1-1/60（线性淡出 60 tick）                     ← 0x455b2e/b36
+  ok   alpha@d=85 ⇒ 1-59/60
+  ok   tick=700（d=85）⇒ 线还在场（只是 alpha 很低）
+  ok   tick=701（d=86）⇒ 出窗口，线已删                            ← 30·86 = 780+1800
+  ok   d=87 ⇒ 线仍不在（0x4b6418 只删一次）
+  ok   entry 仍在（原版管理器不删）
+== fails=0 ==
+```
+
+**正对照**：探针第 1/2 条钉的是"定步 30/60 tick"，如果 `drive_frame` 只是摆设（比如按帧累加不按纳秒），
+这两条会红；第 5/7 条钉的是"entry 活着"，如果恢复旧的"顺手删 entry"，第 7 条会红。
+
+### 137.5 ⑥ 验收读数
+
+#### 136.5.1 停帧判据（`--stop-plan`，两侧**串行** + 私有 netns，同一棵树同一份 `.so`）
+
+| 屏 | 判据 | 改前（本分支基线轮） | 改后 | 判 |
+|---|---|---|---|---|
+| `match_play` | `l3_diff_px` / `ratio` | **5 798 px / 0.2604 %** | **1 740 px / 0.0782 %** | **−70.0 %**，目标 ≤0.150 % ✓ |
+| `match_play` | L2 超限块 | **1**（dmean 11.46） | **0**（最大块 0.67） | ✓ |
+| `match_play` | 棋盘区 `(265,556)-(1738,900)` | 5 642 px | **1 598 px** | 剩的是士兵精灵 + 名字标签那一层（§137.5.3） |
+| `match_play` | 排除区掩掉多少 | 270 px（光标列命中） | 0 | 光标是墙钟 1.0 s 周期，跨轮随机 |
+| `match_ready` | `l3_diff_px` / `ratio` | 2 046 px / 0.0919 % | **2 110 px / 0.0948 %** | **在预注册带 [0.070,0.100] % 内** ✓（+64 px 见下） |
+| 我方自噪声 | 同一份代码连跑两轮 | —— | **0 px**（两屏逐像素相同） | 改前逐轮不同（墙钟相位） |
+
+> `match_ready` 那 +64 px 的归因：差分只落在 `x785..838 × y801..861` = **士兵待机动画**那一小块。
+> 该屏 `settle` 停帧、两侧相位本来就不同源；改后我方时钟改由 `drive_frame` 推，
+> 待机相位随之平移了一点（原版该屏 900 tick 绝对停帧、我方 3.0 s 墙钟停帧，本来就不是同一相位）。
+> 读数仍在预注册带内，**登记为"相位类差异，不是回归"**。
+
+#### 136.5.2 时间对齐密集采样（每 0.2 s 一帧，从 phase2+1.0 s 起；**不加** `--stop-plan`）
+
+判据 = 棋盘区"彩色"像素（通道极差 > 60）扣掉士兵 bbox 后的个数：
+
+| 帧 | #01 | #02 | #04 | #06 | #08 | #10 | #12 | #13 | #14 | #15 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **原版** | 0 | 8 369 | 9 156 | 9 891 | 10 654 | 11 439 | 12 250 | **12 370** | 1 743（淡出中） | **0** |
+| **我方** | 0 | 8 164 | 8 928 | 9 649 | 10 407 | 11 131 | 11 929 | **0** | 0 | 0 |
+
+⇒ **两侧弹道都在 #02 帧出现**（= `FunctionActive` 的 615 被本地 tick 追上那一刻），
+揭示速率也一致（约 190 px / 帧）；差异只剩**淡出尾巴**：原版揭完还留 60 tick 线性淡出（#14 那 1 743 px），
+我方在 `_on_shot_arrived()` 里立刻 `_clear_curve()`（§137.6 第 1 条）。
+**这条采样也顺手证明"改后不是不画了"**：改前我方 24/24 帧都有弹道（且逐帧变长），改后 0/24，
+而**同一次运行里**它在 #02–#12 是画出来的 —— 与原版同窗。
+
+#### 136.5.3 剩下的 1 598 px 是什么（**不是**弹道）
+
+改后 `match_play` 的棋盘区差分全部落在士兵/名字标签那一小片：`x760..879 × y760..879`
+（`(125,104,0)` 橄榄色 vs 白色、`(230,230,230)` 网格 vs 白），属**既有的非逐位差异**
+（`match_ready` 的 2 046/2 110 px 也是同一层：`docs/06` §118.7 记的 `replay_play` 856 px 残差同源）。
+改前改后**没有变差**，且它同时解释了"我方彩色像素 1 930 vs 原版 2 390"那 460 px 的缺口。
+
+### 137.6 遗留 / 未证（诚实登记）
+
+1. **淡出尾巴我没照原版做完**：原版揭完之后还有 `60` tick 的线性淡出（§137.5.2 的 #14），
+   我方 `_on_shot_arrived()` 一到"揭完"就 `_clear_curve()`（`docs/143` §2 的既有口径）。
+   改它的连带面在弹道生命周期那一层（不在"动画相位"），本轮**没动**；判据帧上两侧都是干净的，
+   所以这 1 帧（1 743 px）只在密集采样里看得见。**登记为下一步。**
+2. **`TickReply` → tick 轴的机制只到"观测"**：证据是 `docs/06` §60.2.1 的两次运行对照
+   （不回答 `TickRequest` 时原版 S8 里没有弹道）+ 本轮实测原版停帧时 tick = 900/1 390（manifest）。
+   我方实现是"收到就 `set_fractional_tick(current_tick)` **跳到**服务端那格"（**推断**）——
+   原版是"跳"还是"漂移校正"，**没有指令级证据**。
+3. **我方与平面的时钟仍是两份**：原版只有容器里**一台** `GraphwarTickHandler`（`EntityDrawer` 读的
+   `V` 与平面读的是同一台，`0x4b2dc3 get_module` + `0x4b2e10`/`0x4b631a`）；我方是"平面自己握一份
+   `tick_source` + GDScript 摆 `set_fractional_tick`"。这就是 §137.5.1 那 64 px 的结构性原因。
+4. **本地局（非联机/非回放）仍走墙钟** `_advance_curve`：`advance_shot_for_test()` 与一批自检
+   依赖它的确定性，本轮**刻意不动**。它现在与原版的口径差一份记录（§137.2 那条改的是联机路径）。
+5. **回放两屏口径未动**（仍 `856 px` 基线）：回放喂的 `fractional_tick` 本身就是"已揭示量"，
+   `active_tick` 必须留 0；要统一得先把回放播放头的口径改成"绝对 tick"，那是另一件事。
+6. **`FunctionState+0x70` / `+0x50` 的字段语义仍未知**（见 §137.3.4）。
+7. **我改了 3 份 `client/tools/*_check.gd` 的既有断言**（不是被测实现）：两条钉的是
+   "出窗口后管理器那一格被删"、三条钉的是"§58.3 决策 = 不接 `drive_frame`"。
+   后者是**任务书要求反转的决策**，前者已被 `0x4b6418`/`0x498b70` 的归属推翻。每处都写了理由与地址。
+   headless 合计 **1 978 → 1 979**（多出的 1 条是把一条断言拆成两条）。
+8. **停帧表的 §4 已过期**（不是改了它，是它描述的世界变了）：它写"我方对局屏没有运行时 tick 可读、
+   动画走墙钟" ⇒ 现在联机路径有真 tick 了。**表里的值一个没改**（`match_play/ours` 仍是
+   `ftick +6.0`，它的读数现在落在这条真轴上的"arming 之后 6 tick"），下一轮可以按新世界重写。
+
+### 137.7 门槛（本轮实测，全部自己跑）
+
+| 门槛 | 读数 |
+|---|---|
+| `cargo test --offline` | **1 592 passed / 0 failed / 1 ignored**（基线 1 588 ⇒ **+4**） |
+| `cargo test --offline --features gdext-bindings` | **1 741 passed / 0 failed / 1 ignored**（基线 1 736 ⇒ **+5**） |
+| `selftest` | **757 passed / 0 failed / 1 skipped**，`@@SELFTEST_COVERAGE groups=34 checks=757 expected=757 missing=0(claimed 0 / degraded 0 / silent 0)` |
+| headless 14 脚本 | **1 979 / 0**（assemble 244 / base 117 / curve 96 / draw 235 / entity 378 / function 132 / gdext 24 / obstacle 116 / plane 97 / play_flow 234 / process **67** / recovered 57 / signal 155 / spike 27） |
+| 三轴 | `fire` **647** ｜ `batch` **647** ｜ `batch_conv` **637**（结算批 **1 080**；一位未退） |
+| `coverage_matrix.py --check` | **OK**（527 个可归属函数：逐位 89 / 观测 435 / 推断 3 / 未做 0；生成物已重跑并一起提交） |
+| `check_doc_refs.py` | **rc=0** |
+| `boundary_audit.py --check` | **OK**（527 个可归属函数：match **441** / mismatch **0** / multi 86） |
+| 判据文件 | `frame_diff_thresholds.txt` sha256 `9cc9fcda…`（`--json` 里 `thresholds_ok=true`）、停帧表 `aa23b64d…` |
+
+### 137.8 复跑命令（照抄）
+
+```bash
+WT=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/wt-t88   # 换你自己的树
+MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export PY=$MAIN/.reference/venv/bin/python                       # frida 只在 venv 里
+export HOME=$WT/.agent-work/fakehome                             # 可写 HOME
+export GODOT=$MAIN/.reference/godot/Godot_v4.7.2-stable_linux.x86_64
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target                        # ⚠️ 单独一行
+
+# ① 内核三件套（改了 src/ 之后缺一不可）
+cargo build --offline --features gdext-bindings \
+  && cp $CARGO_TARGET_DIR/debug/libgw2_rebuild.so $WT/client/
+$GODOT --headless --path client --import                         # 少这步 = 空帧
+
+# ② 机制判据（确定性，2 s；探针在 fixtures/ 里，跑完删掉临时副本）
+cp fixtures/t88_active_window_probe.gd client/tools/t88_probe.gd
+$GODOT --headless --path client --script res://tools/t88_probe.gd  # 期望 == fails=0 ==
+rm -f client/tools/t88_probe.gd client/tools/t88_probe.gd.uid
+
+# ③ 停帧判据（两侧串行、私有 netns；wrapper = bwrap --unshare-user --unshare-net + MESA 四变量，
+#    逐行见 docs/06 §76.7/§76.8。⚠️ 宿主有泄漏进程占 UDP 42968，不走私有 netns 会拍到 LAN 大厅）
+bash $WT/.agent-work/cap_in_netns.sh --side original --flow match \
+    --stop-plan $WT/fixtures/frame_capture_freeze_plan.txt --out $WT/.agent-work/v/mo  --display-num 133
+bash $WT/.agent-work/cap_in_netns.sh --side ours     --flow match \
+    --stop-plan $WT/fixtures/frame_capture_freeze_plan.txt --out $WT/.agent-work/v/mm3 --display-num 134
+python3 tools/frame_diff.py --orig $WT/.agent-work/v/mo --mine $WT/.agent-work/v/mm3 \
+    --screens match_ready,match_play --exclude-rect 999,1062,1008,1160 \
+    --out $WT/.agent-work/v/match3.tsv --blocks-out $WT/.agent-work/v/b3.tsv --json $WT/.agent-work/v/m3.json
+#   期望：match_play 1740 px / 0.0782 %（L2 0 块）；match_ready 2110 px / 0.0948 %
+
+# ④ 时间对齐密集采样（**不要改** tools/frame_capture.py：拷一份到 .agent-work/ 里改两个常量）
+#    FRAMES_PER_SCREEN 3→20、FRAME_GAP_S 1.2→0.2、MATCH_PLAY_WAIT 5.0→1.0
+#    （脚本放在 `<repo>/.agent-work/dense/` 里 ⇒ `_find_repo()` 走上去仍命中本棵树；
+#     把 `--flow match` 的两侧各跑一遍，然后按"棋盘区彩色像素"逐帧数）
+```
