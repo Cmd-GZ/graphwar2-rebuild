@@ -255,8 +255,11 @@ const BOARD_SIZE: axis_drawer::Vec2 = axis_drawer::Vec2::new(50.0, 30.0);
 ///
 /// 与 `axis_drawer_class.rs::clamp_mode` **同一条规则**（原版判别值是 `u8` 且只比较
 /// `==3` / `>=2` / `!=0`，所以收窄后语义不变；越界值在原版里**有行为**，不能拒绝）。
+/// `#[func]` 收到的 `i32` → 模式判别值。**薄转发**（T72 归一，台账 C 档 `clamp_mode`）：
+/// 规则本体在 [`super::axis_drawer_class::clamp_mode`]（i64 版，C ABI 从 `variant` 取的就是 i64）。
+/// `i32 → i64` 无损，`clamp(0, 255)` 的结果与原来那份按 `i32` 收窄的实现**逐值相同**。
 fn clamp_mode(value: i32) -> u8 {
-    value.clamp(0, u8::MAX as i32) as u8
+    super::axis_drawer_class::clamp_mode(value as i64)
 }
 
 /// 某判别值下 `draw_line` 的条数（跑 `axis_primitives` 数 `Line`）。
