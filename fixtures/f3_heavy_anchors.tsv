@@ -1,0 +1,56 @@
+# f3_heavy_anchors.tsv —— T71 台账：三个重模块（evolutionator / root_node / lan_vbox）的 **F3 缺口函数逐条指令级取证**
+#
+# 生成方法（全部可复跑，不手抄任何地址）：
+#   PY=/home/CG/Myprojects/graphwar2-rebuild/.reference/venv/bin/python
+#   $PY tools/addr_probe.py fde <vaddr>        # 函数真实范围（.eh_frame FDE，不读 Ghidra 表）
+#   $PY tools/addr_probe.py dis <vaddr>        # 控制流 + .rodata 串 + GOT 槽
+#   $PY tools/addr_probe.py locs <vaddr>       # panic::Location → 原版源文件:行:列（归属的硬证据）
+#   $PY tools/addr_probe.py callers <vaddr>    # call rel32 + 函数指针三形态
+#   本轮汇总脚本（把上面四条的输出存成 JSON 再填人判列）：.agent-work 下的一次性脚本，不入库。
+# 地址口径：一律 **ELF vaddr（= RVA）**；Ghidra/REA 地址 = 本表 + 0x100000（只加一次）。
+#
+# 列：vaddr | 真名 | FDE范围 | 字节 | 语义 | 被调者 | 调用者 | Location | 档位 | 落点
+# 档位：观测 = 指到指令/重定位/字面量；推断 = 有依据并写明缺什么；na（宏/标准库产物）= 源码层无独立 fn
+# 结论摘要：35 条里 **2 条落码**（0x3afcf0 / 0x3b4ec0），其余 33 条经取证**不是可落码的模块业务函数**：
+#   12 条 = std `core::slice::sort` 单态化（比较器是本模块的，函数体是标准库的）
+#   21 条 = gdext 类注册/属性/分发宏产物（`lock cmpxchg` 全局注册表 + .data.rel.ro 表项，全 .text 无调用点）
+#   另 1 条（0x51d080 calculate_functions_old）与 1 条（0x3b00d0 get_media_storage_path）语义已定性但规模过大，本轮只登记
+vaddr	真名	FDE范围	字节	语义	被调者	调用者	Location	档位	落点
+# --- graphwar_function_evolutionator.rs（13 条，F3 13 / 13 / 9 与 fixtures/function_coverage.tsv 一致）
+0x41a9d0	—	0x41a9d0..0x41ab34	0x164	std 排序内核：4 元小数组排序，元素 0x30 字节、按元素 +0x18 的 f64 排	无（叶子；自身被 0x… 调用 2 处）	0x41b880	src/graphwar_function_evolutionator.rs:169:94（补充：169:94）	观测(形状)/推断(=core::slice::sort 单态化)	不落码：std 泛型单态化，源码层无独立 fn
+0x41ab40	—	0x41ab40..0x41aca4	0x164	同上形状（元素 0x30 / +0x18 f64），比较器来自另一处源码行	无（叶子）	0x41bdf0	src/graphwar_function_evolutionator.rs:273:90（补充：273:90）	观测(形状)/推断(=std 排序单态化)	不落码：同上
+0x41b500	—	0x41b500..0x41b658	0x158	std 排序内核：小数组排序分支 A（0x158）	无	0x51b440	src/graphwar_function_evolutionator.rs:169:94（补充：169:94）	观测(形状)/推断(=std)	不落码：std 单态化
+0x41b720	—	0x41b720..0x41b878	0x158	std 排序内核：小数组排序分支 B（0x158，与 0x41b500 同尺寸）	无	0x51d080	src/graphwar_function_evolutionator.rs:273:90（补充：273:90）	观测(形状)/推断(=std)	不落码：std 单态化
+0x41b880	—	0x41b880..0x41bde4	0x564	std 排序内核：中块稳定排序（0x564，2 处自递归）	自身	0x482c20	src/graphwar_function_evolutionator.rs:169:94（补充：169:94）	观测(形状)/推断(=std)	不落码：std 单态化
+0x41bdf0	—	0x41bdf0..0x41c354	0x564	同上（0x564，比较器来自 273:90）	自身	0x4825b0	src/graphwar_function_evolutionator.rs:273:90（补充：273:90）	观测(形状)/推断(=std)	不落码：std 单态化
+0x4600e0	—	0x4600e0..0x4601e0	0x100	std 排序内核：三段自递归 2 路归并（`call 0x4600e0` @0x46012b/0x460144/0x460162，`imul rcx,0x150` 元素步长 0x150）	自身 ×3；panic 0x925410	0x4600e0, 0x482c20	src/graphwar_function_evolutionator.rs:169:94（补充：169:94）	观测(形状)/推断(=std merge-sort 单态化)	不落码：std 单态化（T13 §64.7-3 独立得出同结论）
+0x4602f0	—	0x4602f0..0x4603f0	0x100	同上（0x100，比较器来自 273:90）	自身 ×3；panic 0x925410	0x4602f0, 0x4825b0	src/graphwar_function_evolutionator.rs:273:90（补充：273:90）	观测(形状)/推断(=std)	不落码：std 单态化
+0x481140	—	0x481140..0x481861	0x721	std 排序内核：递归分块排序主体（0x721）	自身 ×2	0x4605f0, 0x482c20	src/graphwar_function_evolutionator.rs:169:94（补充：169:94）	观测(形状)/推断(=std)	不落码：std 单态化
+0x481870	—	0x481870..0x481f91	0x721	同上（0x721，比较器来自 273:90）	自身 ×2	0x4604c0, 0x4825b0	src/graphwar_function_evolutionator.rs:273:90（补充：273:90）	观测(形状)/推断(=std)	不落码：std 单态化
+0x4825b0	—	0x4825b0..0x482c1f	0x66f	std 排序内核：收尾/搬移（0x66f；引用 GOT 槽 0x9bbf40 = memcpy 族）	5 处 + GOT 0x9bbf40	0x481870, 0x4825b0	src/graphwar_function_evolutionator.rs:273:90（补充：273:90）	观测(形状)/推断(=std)	不落码：std 单态化
+0x482c20	—	0x482c20..0x48328f	0x66f	同上（0x66f；GOT 槽 0x9bbf38）	5 处 + GOT 0x9bbf38	0x481140, 0x482c20	src/graphwar_function_evolutionator.rs:169:94（补充：169:94）	观测(形状)/推断(=std)	不落码：std 单态化
+0x51d080	GraphwarFunctionEvolutionator::calculate_functions_old	0x51d080..0x51eb86	0x1b06	AI 变体 B：(1+λ) 单点爬山（1407 条指令；调 0x51a750 score_function、0x4eb9d0/0x4ebbe0 求值器、0x47dec0；读 f64 常量 0x19f6d0=0.5）	0x51a750/0x4eb9d0/0x4ebbe0/0x47dec0/0x4558c0	0x47a300	src/graphwar_function_evolutionator.rs:203:54（补充：203:54）	观测(调用/常量)	本轮未落码：6918 字节未读完 ⇒ 只登记（不编语义）
+# --- graphwar_root_node.rs（13 条，F3 13 / 13 / 9 与 fixtures/function_coverage.tsv 一致）
+0x3aa6a0	（hyb 名 axis_drawer::__register_methods 是**错的**；Location 落在本文件）	0x3aa6a0..0x3aa819	0x179	gdext 类注册胶水：全局锁 + `[0x9c3988]` 迭代（`lock cmpxchg` @0x3aa6b4 起，与已知 na 样本 0x4b1f60 逐指令同形）	注册表写入	0x40e650	src/graphwar_root_node.rs:161:1（补充：161:1）	观测（宏产物）	不落码：源码层是 `#[godot_api]`/`#[export]` 属性产物（TSV 已判 na:macro-generated）
+0x3aa820	（同上，hyb 名错）	0x3aa820..0x3aa999	0x179	gdext 类注册胶水（与 0x3aa6a0 同 377 字节、同形）	注册表写入	0x40e650	src/graphwar_root_node.rs:161:1（补充：161:1）	观测（宏产物）	不落码：同上
+0x3afcf0	GraphwarRootNode::check_save_level	0x3afcf0..0x3afe8d	0x19d	进屏前「要不要写存档」判定：guard→game_state==6→play_control.borrow()→[+0x1f8]→module_container.borrow().get_module().unwrap()→[+0x137]≠0 早退→campaign.borrow_mut().save_current_level(&self+0xb0)	0x46be70(get_module)、0x4183b0(campaign.save 写者，全 .text 唯一调用点)	0x3a5760, 0x3b0830	src/graphwar_root_node.rs:656:54, src/graphwar_game_client.rs:152:22（补充：656:54 + game_client.rs:152:22）	观测（控制流/每次调用）	**落码** src/graphwar_root_node.rs
+0x3b00d0	GraphwarRootNode::get_media_storage_path	0x3b00d0..0x3b0824	0x754	拼 `user://graphwar_media/level_replay…` 归档路径：`upcast_ref`(0x1bd8f2)+`String::new`(0x74b510)+2 次 fmt(0x91ded0)+`Object::call`(0x89d700)；涉及字面量 0x1a559e `save_path = `、0x1bda84 `user://graphwar_media/level_replay`	0x8ba080/0x8b5bc0/0x74b510/0x91ded0/0x8f9480/0x896310/0x89d700/0x8901d0/0x4072a0/0x39f290	0x3a5760	src/graphwar_root_node.rs:904:9（补充：904:9）	观测（字面量+调用序列）	本轮未落码：1876 字节里 20+ 次引擎调用，未逐条判定 ⇒ 只登记
+0x3b4ec0	GraphwarRootNode::request_permissions_result	0x3b4ec0..0x3b5288	0x3c8	权限结果回调：`format!` 出 `Request permissions returned. `(0x1a95d1, len 0x1e=30) → **push 进 self+0x16b0 的 Rc<RefCell<Vec<String>>>**（步长 0x18 三元组，@0x3b5093）→ **self+0x1703(GATE_B)=0**(@0x3b50d4) → 全局 `[0x9c18f0+0x14f0]` 为真时虚调 `[+0x11e0]`	0x74b510(String::new)/0x91ded0(fmt)/0x8f9480(Vec grow)/0x461100/0x8cf4b0/0x528070(drop)	0x4243c0, 0x4287f0	src/graphwar_root_node.rs:861:9（补充：861:9）	观测（3 步效果）+推断（消息里两个占位符）	**落码** src/graphwar_root_node.rs
+0x3b56c0	（hyb 名 ?::_ 未定）	0x3b56c0..0x3b590f	0x24f	gdext 类注册胶水：锁 `[0x9c1800]` + 往全局 Vec 追加 0x78 字节记录（`{tag=2, 0, fn 0x4114a0…}`）	0x460bb0(Vec grow)	无（仅 .data.rel.ro/间接）	src/graphwar_root_node.rs:1246:1（补充：1246:1）	观测（宏产物）	不落码：属性宏产物
+0x3b5910	（hyb 名 ?::_ 未定）	0x3b5910..0x3b5ab6	0x1a6	gdext 类注册胶水：同形，记录 `{tag=1, ptrcall 0x40e650, call_func 0x40dac0(`ret`)}`	0x460bb0	无（仅 .data.rel.ro/间接）	src/graphwar_root_node.rs:161:1（补充：161:1）	观测（宏产物）	不落码：属性宏产物
+0x3b5ce0	（hyb 名 ?::_ 未定）	0x3b5ce0..0x3b5e88	0x1a8	gdext 类注册胶水（与 0x3b5910 同形，422 vs 424 字节）	0x460bb0	无（仅 .data.rel.ro/间接）	src/graphwar_root_node.rs:161:1（补充：161:1）	观测（宏产物）	不落码：属性宏产物
+0x3b6e00	—	0x3b6e00..0x3b6e85	0x85	属性 getter 胶水：`[rdi]`→单元；`[单元+0x10]` 借用标记（0→-1）、`call 0x514a10(&单元+0x18)` 取/克隆值、`dec [单元]` 释放；只作为 `.data.rel.ro` 表项 0x9513d0 出现（无 .text 调用点）	0x514a10/0x525f60/0x9252f0	无（仅 .data.rel.ro/间接）	src/graphwar_root_node.rs:1348:25（补充：1348:25）	观测（形状）／推断（=属性访问器）	不落码：gdext 属性宏产物
+0x3b6ed0	—	0x3b6ed0..0x3b701a	0x14a	同上（含 `test rdx,rdx` 的 Option 臂与 `[单元+0xf8/0x100/0x108]` 三字段写入）；表项 0x951310	0x5280a0/0x528060/0x528070	无（仅 .data.rel.ro/间接）	src/graphwar_root_node.rs:1319:25（补充：1319:25）	观测（形状）／推断	不落码：属性宏产物
+0x3b7020	—	0x3b7020..0x3b70a5	0x85	同上（与 0x3b6e00 逐指令同形，133 字节）；表项 0x951338	0x514a10/0x525f60	无（仅 .data.rel.ro/间接）	src/graphwar_root_node.rs:1324:25（补充：1324:25）	观测（形状）／推断	不落码：属性宏产物
+0x426430	—	0x426430..0x4267dc	0x3ac	gdext `#[func]` 分发壳（call_func/ptrcall 之一）：唯一调用者 0x3b6190（注册回调表内），panic 点 886:28	间接	0x3b6190	src/graphwar_root_node.rs:886:28（补充：886:28）	观测（被调者=注册回调）／推断（哪个方法）	不落码：宏产物（R2/R3 同类）
+0x433c00	—	0x433c00..0x4340b7	0x4b7	同上，另一条分发壳（0x4b7 vs 0x3ac，同 Location 886:28）；调用者 0x3b6430	间接	0x3b6430	src/graphwar_root_node.rs:886:28（补充：886:28）	观测／推断	不落码：宏产物
+# --- graphwar_lan_vbox.rs（9 条，F3 13 / 13 / 9 与 fixtures/function_coverage.tsv 一致）
+0x4dec00	—	0x4dec00..0x4dee05	0x205	gdext 注册/接线胶水：`lock cmpxchg` 全局 + `0x501b30`/`0x3d05a0`/`0x461100`；引用池字面量 0x1c4175 段	0x501b30/0x3d05a0/0x893820/0x461100	0x500810	src/graphwar_lan_vbox.rs:59:40（补充：59:40）	推断（列 40 ⇒ 源码闭包；父函数无真名）	不落码：闭包/宏产物，父函数无人选
+0x4e3b00	（hyb 名 axis_drawer::__register_methods 是**错的**；Location 落在本文件）	0x4e3b00..0x4e3c79	0x179	gdext 类注册胶水：`lock cmpxchg [0x9c1008]` + `[0x9c1018/0x9c1020]` 遍历（与已知 na 样本 0x4b1f60 同形）	注册表遍历	0x40e6d0	src/graphwar_lan_vbox.rs:54:1（补充：54:1）	观测（宏产物）	不落码：属性宏产物
+0x4e3c80	（同上，hyb 名错）	0x4e3c80..0x4e3df9	0x179	同上（与 0x4e3b00 同 377 字节）	注册表遍历	0x40e6d0	src/graphwar_lan_vbox.rs:54:1（补充：54:1）	观测（宏产物）	不落码：属性宏产物
+0x4e8f80	（hyb/文档曾记 graphwar_button——**与 Location 不符**）	0x4e8f80..0x4e91c5	0x245	gdext 注册胶水（表项 0x9ba338，全 .text 无调用点）	注册表写入	无（仅 .data.rel.ro/间接）	src/graphwar_lan_vbox.rs:145:1（补充：145:1）	观测（宏产物）	不落码：属性宏产物
+0x4e91d0	（hyb 名错）	0x4e91d0..0x4e937a	0x1aa	gdext 注册胶水（表项 0x9ba348）	注册表写入	无（仅 .data.rel.ro/间接）	src/graphwar_lan_vbox.rs:54:1（补充：54:1）	观测（宏产物）	不落码：属性宏产物
+0x4e9380	（hyb 名错）	0x4e9380..0x4e958f	0x20f	gdext 注册胶水（表项 0x9ba340，`lock cmpxchg` 同形）	注册表写入	无（仅 .data.rel.ro/间接）	src/graphwar_lan_vbox.rs:30:10（补充：30:10）	观测（宏产物）／推断（30:10 是哪个属性）	不落码：属性宏产物
+0x4e9590	（hyb 名错）	0x4e9590..0x4e972c	0x19c	gdext 注册胶水（表项 0x9ba350）	注册表写入	无（仅 .data.rel.ro/间接）	src/graphwar_lan_vbox.rs:54:1（补充：54:1）	观测（宏产物）	不落码：属性宏产物
+0x500070	—	0x500070..0x5001ab	0x13b	gdext 接线胶水：`lock cmpxchg` 全局 + 0x3f4970/0x403400/0x501360（表项 0x960200/0x960228 各指本函数一次）	0x457110/0x458030/0x3f4970/0x403400/0x501360	无（仅 .data.rel.ro/间接）	src/graphwar_lan_vbox.rs:59:40（补充：59:40）	推断（源码闭包，父函数无真名）	不落码：闭包/宏产物
+0x5005b0	—	0x5005b0..0x500808	0x258	gdext 接线胶水：池字面量含 `on_text_changed`/`text_changed` ⇒ 信号接线；`0x8a47a0`/`0x893820`/`0x8a0b80` 引擎槽	0x8a47a0/0x893820/0x8a0b80/0x501360/0x502230	无（仅 .data.rel.ro/间接）	src/graphwar_lan_vbox.rs:59:40（补充：59:40）	推断（=信号 connect 闭包）	不落码：闭包/宏产物
