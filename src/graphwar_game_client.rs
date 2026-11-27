@@ -988,3 +988,266 @@ mod process_loop_tests {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// 10. 连接门面 `connect` / `disconnect`：两条 F3 落成**有函数体**
+// ---------------------------------------------------------------------------
+//
+// 这两条在 `fixtures/function_coverage.tsv` 里原来是 **F3**（"地址有登记、没有 fn"）。
+// 它们就是 T52 落码的两个被调者（`graphwar_client_connection_handler::connect 0x45a340` /
+// `disconnect 0x4592d0`）的**唯一门面**：本模块取连接模块 → `borrow_mut()` → 调一跳 → 掉引用。
+//
+// 边界/体量取自 `.eh_frame` FDE（`tools/addr_probe.py fde`）；真名取自
+// `fixtures/windows_name_to_addr.tsv`（Windows 2.0.60 同版本同指令集，经 `panic::Location`
+// 一对一锚）：`connect` = `93:57`、`disconnect` = `118:57`，两者都还引用**同一条**
+// `152:22`（那是本模块所有"取模块 + `unwrap`"共用的那一行 —— `request_lock_change` 的
+// 唯一锚也是 `152:22`，见 `fixtures/name_to_addr_v2.tsv`）。
+//
+// 逐条台账在 `fixtures/setup_control_anchors.tsv`（下半张表）。
+
+use crate::graphwar_client_connection_handler::{GraphwarClientConnectionHandler, Transport};
+use std::cell::RefCell;
+use std::rc::Rc;
+
+/// `GraphwarGameClient::connect` —— **x86 `0x518320`**（FDE `0x518320..0x5183fb`，`0xdb` = **219 B**）。
+pub const FN_GAMECLIENT_CONNECT: u64 = 0x51_8320;
+
+/// `GraphwarGameClient::disconnect` —— **x86 `0x516370`**（FDE `0x516370..0x51644b`，`0xdb` = **219 B**）。
+pub const FN_GAMECLIENT_DISCONNECT: u64 = 0x51_6370;
+
+/// `ModuleContainer::get::<GraphwarClientConnectionHandler>()` —— **x86 `0x46b180`**。
+///
+/// 档位：**逐位**（`docs/02-module-map.md` §22.3 的 25 模块表：x86 `get` 一列；三路证据交集）。
+pub const FN_GET_CONNECTION_HANDLER: u64 = 0x46_b180;
+
+/// 两条门面的 `(vaddr, fde_lo, fde_hi, size, 真名)`。
+///
+/// 档位：**逐位**（`.eh_frame`；`tools/addr_probe.py fde` 可复跑）。两条**同为 `0xdb` 字节**
+/// ——它们本来就是同一个模板的两份实例化（只差内层被调者）。
+pub const CONN_FACADE_ANCHORS: &[(u64, u64, u64, u32, &str)] = &[
+    (0x51_8320, 0x51_8320, 0x51_83fb, 0xdb, "GraphwarGameClient::connect"),
+    (0x51_6370, 0x51_6370, 0x51_644b, 0xdb, "GraphwarGameClient::disconnect"),
+];
+
+/// 两条门面调的内层函数（`call rel32`，**逐位**）。
+pub const CONN_FACADE_TARGETS: &[(u64, u64, &str)] = &[
+    (0x51_8320, 0x45_a340, "GraphwarClientConnectionHandler::connect"),
+    (0x51_6370, 0x45_92d0, "GraphwarClientConnectionHandler::disconnect"),
+];
+
+/// 两条门面被**虚拟调用**的槽（`call rel32` 为 0 —— 它们是虚表项）。
+///
+/// 档位：**逐位**（`addr_probe.py callers` 的 `.rela.dyn` addend 引用点）。
+pub const CONN_FACADE_VIRTUAL_SLOTS: &[(u64, u64, &[u64])] = &[
+    (0x51_83fb_u64 - 0xdb, 0x9b_c460, &[0x51_5666, 0x51_5a1d]),
+    (0x51_6370, 0x9b_a958, &[0x3a_719e, 0x3b_7df6, 0x51_480b, 0x52_5f86]),
+];
+
+/// 原版 `unwrap()` 在 `None` 上的 panic 文案（std 侧常量）。
+pub const MSG_OPTION_UNWRAP: &str = "called `Option::unwrap()` on a `None` value";
+
+/// `RefCell::borrow_mut` 冲突臂的文案。
+///
+/// ⚠️ **推断**：该臂在原版是 std 的 `RefCell` 借用冲突 panic（`0x5183b6` 引 Location 槽
+/// `0x9625d8`，即本函数 `93:57`）；**具体文案串未在 `.rodata` 定位**（std 侧常量）。
+/// "会 panic" 是观测的，"文案" 是推断。
+pub const MSG_ALREADY_MUTABLY_BORROWED: &str = "already mutably borrowed";
+
+/// 原版 `self+0x40` 那个「模块容器」（`Rc<RefCell<ModuleContainer>>`）的接缝。
+///
+/// 判据：`0x518329 mov r15,[rdi+0x40]` / `0x516379` 同；随后 `[r15+0x10]` 是
+/// **`RefCell` 借用标志**（不是 `Arc` 强计数！）：`0x51832d mov rax,[r15+0x10]` 上界
+/// `isize::MAX` 检查 = borrow 计数溢出，`0x5183b6` 的 `jne` = 已有借用。
+pub trait ClientModules {
+    /// `0x51834b call 0x46b180` —— 取连接模块。`None` ⇒ 原版 `0x5183a7` panic
+    /// （Location `152:22`，槽 `0x9ba870`）。
+    fn conn_handler(&self) -> Option<Rc<RefCell<dyn ConnHandlerSeam>>>;
+}
+
+/// 连接模块上这两条门面需要的两个动作。
+///
+/// 我方对应物是 T52 落的 `GraphwarClientConnectionHandler`（见下面的 blanket impl）；
+/// 用 trait 是为了让门面本体能拿假句柄验借用/panic 序列。
+pub trait ConnHandlerSeam {
+    /// `GraphwarClientConnectionHandler::connect`（**x86 `0x45a340`**）。
+    fn connect(&mut self);
+    /// `GraphwarClientConnectionHandler::disconnect`（**x86 `0x4592d0`**）。
+    fn disconnect(&mut self);
+}
+
+/// 把 T52 落码的真类型接上（**不是**自造语义：两个方法各转发一跳）。
+///
+/// 用自由函数转发是为了避开"trait 方法与同名固有方法"的方法解析歧义（固有方法优先，
+/// 但 UFCS 路径在两种写法间容易写错；自由函数把这件事写死）。
+fn conn_handler_connect<S: Transport + Send + 'static>(h: &mut GraphwarClientConnectionHandler<S>) {
+    GraphwarClientConnectionHandler::connect(h); // 固有方法，0x45a340
+}
+
+fn conn_handler_disconnect<S: Transport + Send + 'static>(h: &mut GraphwarClientConnectionHandler<S>) {
+    GraphwarClientConnectionHandler::disconnect(h); // 固有方法，0x4592d0
+}
+
+impl<S: Transport + Send + 'static> ConnHandlerSeam for GraphwarClientConnectionHandler<S> {
+    fn connect(&mut self) {
+        conn_handler_connect(self)
+    }
+    fn disconnect(&mut self) {
+        conn_handler_disconnect(self)
+    }
+}
+
+/// 原版这个"游戏客户端"类型（Godot 类 `GraphwarGameClient`）。
+///
+/// 只落**标记类型**：gdext 侧那份在 `src/_scaffold/graphwar_game_client_class.rs`（`AGENTS.md` §4
+/// 不算复原层）。本文件用同名类型把两条原版**方法**（符号表真名
+/// `graphwarrust::graphwar_game_client::GraphwarGameClient::{connect,disconnect}`）按原版类型归属落下来。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+    pub struct GraphwarGameClient;
+
+    impl GraphwarGameClient {
+        /// `GraphwarGameClient::connect` —— **x86 `0x518320`**（`0xdb` = 219 B）。
+    ///
+    /// ```text
+    /// 518329 mov r15,[rdi+0x40]        ; self+0x40 = Rc<RefCell<ModuleContainer>>
+    /// 51832d mov rax,[r15+0x10]        ; RefCell 借用计数
+    /// 518331 movabs rcx,0x7fff…ff / 51833b cmp / 51838e jae 0x51839a
+    ///                                  ; 借用计数溢出 ⇒ panic（槽 0x9ba878 → 0x925320）
+    /// 518390 inc rax / 518393 mov [r15+0x10],rax   ; borrow()
+    /// 518397 lea rdi,[r15+0x18] / 51839b call 0x46b180  ; get::<GraphwarClientConnectionHandler>()
+    /// 5183a3 test rax,rax / 5183a6 je 0x5183a7         ; None ⇒ panic（槽 0x9ba870 → 0x925410）
+    /// 5183a8 dec qword [r15+0x10]                       ; 结束那次 borrow（临时值）
+    /// 5183b1 cmp qword [rbx+0x10],0 / 5183b6 jne 0x518406 ; 已被可变借用 ⇒ panic（槽 0x9ba6d0）
+    /// 5183b8 mov qword [rbx+0x10],-1                    ; borrow_mut
+    /// 5183c3 add rdi,0x18 / 5183c7 call 0x45a340        ; **内层 connect**
+    /// 5183cc inc qword [rbx+0x10]                       ; 解除 borrow_mut
+    /// 5183d0 dec qword [rbx] / 5183d3 jne / 5183da call *0x9bae78 = 0x524520  ; 掉句柄引用
+    /// ```
+    ///
+    /// 档位：**观测**（三条 panic 臂 + 借用标志偏移 `+0x10` + 句柄数据 `+0x18` + 被调者）。
+    pub fn connect(modules: &dyn ClientModules) {
+        // 0x518320  —— 本函数起点；FDE 0x518320..0x5183fb（0xdb = 219 B）
+        // 0x51834b：取连接模块（原版是 `borrow()` 后 `get`，这里由接缝一并给出）
+        let handler = modules.conn_handler().expect(MSG_OPTION_UNWRAP); // panic 槽 0x9ba870
+        // 0x5183b1 / 0x5183b8：`[+0x10]` 必须为 0，否则 panic，然后置 -1
+        let mut guard = handler
+            .try_borrow_mut()
+            .expect(MSG_ALREADY_MUTABLY_BORROWED); // panic 槽 0x9ba6d0
+        // 0x5183c7 call 0x45a340
+        guard.connect();
+        // 0x5183cc..0x5183da：解除借用 + 掉引用 + drop（`Rc` 在这里自然完成）
+    }
+
+    /// `GraphwarGameClient::disconnect` —— **x86 `0x516370`**（`0xdb` = 219 B）。
+    ///
+    /// 与 [`connect`] **逐项同形**（同 `0xdb` 字节、同 `0x46b180`、同三条 panic 臂、同借用/掉引用
+    /// 序列），唯一差别是内层被调者：`0x5183c7` 的 `0x45a340` ↔ 这里的 `0x5163c7` 的 `0x4592d0`。
+    ///
+    /// 档位：**观测**。
+    pub fn disconnect(modules: &dyn ClientModules) {
+        // 0x516370  —— 本函数起点；FDE 0x516370..0x51644b（0xdb = 219 B）
+        let handler = modules.conn_handler().expect(MSG_OPTION_UNWRAP); // 0x5163a7
+        let mut guard = handler
+            .try_borrow_mut()
+            .expect(MSG_ALREADY_MUTABLY_BORROWED); // 0x5163b6
+        // 0x5163c7 call 0x4592d0
+        guard.disconnect();
+    }
+
+}
+
+// ---------------------------------------------------------------------------
+// 11. 单测（期望值来自反汇编：一跳 / 三条 panic 臂 / FDE 体量）
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod conn_facade_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    /// 假连接模块：记调用次数（原版这两个门面各自**只**调一跳）。
+    #[derive(Default)]
+    struct FakeHandler {
+        connects: Cell<u32>,
+        disconnects: Cell<u32>,
+    }
+
+    impl ConnHandlerSeam for FakeHandler {
+        fn connect(&mut self) {
+            self.connects.set(self.connects.get() + 1);
+        }
+        fn disconnect(&mut self) {
+            self.disconnects.set(self.disconnects.get() + 1);
+        }
+    }
+
+    struct FakeModules(Option<Rc<RefCell<dyn ConnHandlerSeam>>>);
+
+    impl ClientModules for FakeModules {
+        fn conn_handler(&self) -> Option<Rc<RefCell<dyn ConnHandlerSeam>>> {
+            self.0.clone()
+        }
+    }
+
+    /// FDE 表自洽：两条 `0xdb`、vaddr 就是 FDE 起点、互不相同。
+    #[test]
+    fn conn_facade_anchor_table_is_self_consistent() {
+        assert_eq!(CONN_FACADE_ANCHORS.len(), 2);
+        for (va, lo, hi, size, name) in CONN_FACADE_ANCHORS {
+            assert_eq!(va, lo, "{name}");
+            assert_eq!(hi - lo, *size as u64, "{name}");
+            assert_eq!(*size, 0xdb, "{name}：两条都是 0xdb = 219 字节");
+        }
+        assert_ne!(CONN_FACADE_ANCHORS[0].0, CONN_FACADE_ANCHORS[1].0);
+    }
+
+    /// 两条门面各自**只**调一跳（`0x5183c7` / `0x5163c7`；别处没有内层调用）。
+    #[test]
+    fn each_facade_calls_exactly_one_inner_method() {
+        assert_eq!(CONN_FACADE_TARGETS.len(), 2);
+        for (_, target, _) in CONN_FACADE_TARGETS {
+            assert!(*target == 0x45_a340 || *target == 0x45_92d0);
+        }
+        let h = Rc::new(RefCell::new(FakeHandler::default()));
+        let m = FakeModules(Some(h.clone()));
+        GraphwarGameClient::connect(&m);
+        assert_eq!(h.borrow().connects.get(), 1);
+        assert_eq!(h.borrow().disconnects.get(), 0);
+        GraphwarGameClient::disconnect(&m);
+        assert_eq!(h.borrow().connects.get(), 1);
+        assert_eq!(h.borrow().disconnects.get(), 1);
+    }
+
+    /// 虚表槽：`connect` 2 个引用点、`disconnect` 4 个引用点（`addr_probe.py callers`）。
+    #[test]
+    fn virtual_slot_usage_counts_match_the_binary() {
+        assert_eq!(CONN_FACADE_VIRTUAL_SLOTS[0].2.len(), 2);
+        assert_eq!(CONN_FACADE_VIRTUAL_SLOTS[1].2.len(), 4);
+        assert_eq!(CONN_FACADE_VIRTUAL_SLOTS[0].1, 0x9b_c460);
+        assert_eq!(CONN_FACADE_VIRTUAL_SLOTS[1].1, 0x9b_a958);
+    }
+
+    /// `0x5183a7` / `0x5163a7`：容器里没有这个模块 ⇒ `unwrap()` panic。
+    #[test]
+    #[should_panic(expected = "None")]
+    fn missing_module_panics_like_the_original_unwrap() {
+        let m = FakeModules(None);
+        GraphwarGameClient::connect(&m);
+    }
+
+    /// `0x5183b6` / `0x5163b6`：句柄已被可变借用 ⇒ `RefCell` 冲突 panic。
+    #[test]
+    #[should_panic(expected = "already mutably borrowed")]
+    fn already_borrowed_panics_like_the_original_refcell() {
+        let h = Rc::new(RefCell::new(FakeHandler::default()));
+        let _held = h.borrow_mut();
+        let m = FakeModules(Some(h.clone()));
+        GraphwarGameClient::disconnect(&m);
+    }
+
+    /// 取模块的地址 = `docs/02` §22.3 表里 `GraphwarClientConnectionHandler` 的 x86 `get`。
+    #[test]
+    fn connection_handler_getter_address_matches_the_module_table() {
+        assert_eq!(FN_GET_CONNECTION_HANDLER, 0x46_b180);
+        assert_eq!(FN_GAMECLIENT_CONNECT - FN_GAMECLIENT_DISCONNECT, 0x1f_b0);
+    }
+}

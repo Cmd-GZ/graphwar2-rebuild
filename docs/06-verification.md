@@ -18318,3 +18318,178 @@ PY
 
 > ⚠️ 与并行分支的落点冲突：本节按**本分支基线 `6b5f925`** 写成（`docs/06` 当时最后一节是 §102）。
 > 若合并时 `## 107.` 已被占用，按任务书顺延（§103–§106 正被 t53/t54/t55/t57 使用），并把上面的节号同步改掉。
+## 108. T55：`setup_control` 的 **9 条 F3 全部落成真函数**（F3 缺口 **11/21 → 2/21**，剩 2 条是 gdext 宏产物）+ `game_client` 的 `connect`/`disconnect` 2 条；函数级复原率 202/527 → **214/527（40.6%）**；**证伪**本模块一条旧结论（2026-11-27，任务 T55 / `task-49` 续）
+
+### 108.1 做了什么
+
+`fixtures/function_coverage.tsv` 里 `graphwar_setup_control.rs` 21 行 **F1 = 0 / F3 = 11**、
+`graphwar_game_client.rs` 36 行 **F3 = 24**。本轮把 **11 条 F3** 按"每个函数指到它自己的
+`.eh_frame` FDE 范围"落成**有函数体**，落在原版模块文件（不是 `_scaffold`），
+函数名用真名、**函数体第 1 行写 vaddr**、正文关键指令给地址注释。
+
+| # | vaddr | FDE 范围 / 字节 | 真名（名字来源） | 落点 | 证据档 |
+|---|---|---|---|---|---|
+| 1 | `0x4c1e40` | `0x4c1e40..0x4c213e` / `0x2fe` 766 | `GraphwarSetupControl::update_name`（唯一锚 178:127） | `graphwar_setup_control.rs` `GraphwarSetupControl::update_name` | 观测 |
+| 2 | `0x4c2140` | `0x4c2140..0x4c27e7` / `0x6a7` 1703 | `update_rank`（唯一锚 187:121） | 同上 `update_rank` | 观测 |
+| 3 | `0x4c2b90` | `0x4c2b90..0x4c2ee2` / `0x352` 850 | `is_leader_local`（唯一锚 310:45） | 同上 `is_leader_local` | 观测 |
+| 4 | `0x4c2ef0` | `0x4c2ef0..0x4c44a3` / `0x15b3` 5555 | `update_soldiers`（唯一锚 202:47） | 同上 `update_soldiers` | 观测 |
+| 5 | `0x4c4c20` | `0x4c4c20..0x4c5b43` / `0xf23` 3875 | `connect_entry_buttons`（唯一锚 257:133） | 同上 `connect_entry_buttons` | 观测 |
+| 6 | `0x4bd030` | `0x4bd030..0x4bd27f` / `0x24f` 591 | `_::__init::__inner_init`（**唯一锚 608:1**，两套名字表互证） | 同上 `GraphwarSetupControl::init` | 观测 |
+| 7 | `0x4bd280` | `0x4bd280..0x4bd426` / `0x1a6` 422 | `__init::__inner_init` 实例 #2（**同族推断**） | 同上 `init` | 观测（体）/ 推断（是哪一份） |
+| 8 | `0x4bce80` | `0x4bce80..0x4bd028` / `0x1a8` 424 | **名未定**（候选 `__register_constants`，4 选 1 歧义） | 同上 `register_constants_candidate` | 观测（体）/ 未知（名） |
+| 9 | `0x4d88b0` | `0x4d88b0..0x4d8957` / `0xa7` 167 | **名未定**（候选 `ready`，2 选 1 歧义） | 同上 `ready_candidate` | 观测（体）/ 未知（名） |
+| 10 | `0x518320` | `0x518320..0x5183fb` / `0xdb` 219 | `GraphwarGameClient::connect`（唯一锚 93:57） | `graphwar_game_client.rs` `GraphwarGameClient::connect` | 观测 |
+| 11 | `0x516370` | `0x516370..0x51644b` / `0xdb` 219 | `GraphwarGameClient::disconnect`（唯一锚 118:57） | 同上 `disconnect` | 观测 |
+
+台账（FDE / 体量 / 语义一句话 / 调用者 / 成对关系 / Location 行号 / 档位 / 我方落点）：
+**`fixtures/setup_control_anchors.tsv`**（单独 commit `984aa57`）。
+
+**读数**（`tools/function_coverage.py`，本机可复跑）：
+
+| 模块 | F1 | F2 | F3 |
+|---|---|---|---|
+| `graphwar_setup_control.rs`（21 行） | **0 → 10** | 10 → 9 | **11 → 2** |
+| `graphwar_game_client.rs`（36 行） | **4 → 6** | 8 → 11 ⚠️ | **24 → 19** |
+| 全仓（527） | **202 → 214（40.6 %）** | 137 → 139 | **188 → 174** |
+
+⚠️ 那两个 **F2 +3** 不是我做的，是**审计工具的 hyb 误配**（见 §108.5），别当成进展。
+
+### 108.2 ⚠️ 我证伪了本模块文档的一条既有结论：`0x4c2b90` 不是"模式面板同步"
+
+我方 `src/graphwar_setup_control.rs` 一路把它叫 **`FN_MODE_PANEL_SYNC`**，并在模块文档里写
+"**唯一**同时被命令总线 `0x3b0830` 与列表重建 `0x4d3180` 调用的函数（观测）；
+函数体形状与 `set_button_icon` 一致（**推断**）"。**两处都错**：
+
+1. **真名是 `GraphwarSetupControl::is_leader_local`**。三路独立证据：
+   `fixtures/windows_name_to_addr.tsv`（Windows 2.0.60 同版本**同指令集**，`panic::Location`
+   一对一锚 `src/graphwar_setup_control.rs:310:45`）、`fixtures/name_to_addr_v2.tsv`（三向，同锚）、
+   Android 2.0.60 arm64 `.symtab`（`graphwar_setup_control::GraphwarSetupControl::is_leader_local`
+   988 B，位置在 `on_text_change` 与 `update_soldiers` **之间**，与 x86 侧
+   `0x4c27f0 → 0x4c2b90 → 0x4c2ef0` 的顺序一致）。
+2. **它返回 `bool`，不是"同步面板"**：`0x4c2db9 mov bl,1`（命中）/ `0x4c2e03 xor ebx,ebx`（未命中）/
+   `0x4c2e15 mov eax,ebx`（返回值）。语义是：遍历 `GraphwarPlayerManager` 的玩家表，
+   对每条记录经 `0x3bf230` 取一个 `i32`（`0x4c2d5c mov eax,[rdi]`），再到
+   `GraphwarLocalPlayerManager` 的 `Vec<u32>`（`+0x20` 数据 / `+0x28` 个数，步长 4 B：
+   `0x4c2d66 shl rdx,2`）里线性比对（`0x4c2d75 cmp dword [rcx+rsi],eax`）—— **命中即返回 true**。
+
+⇒ 已就地更正：新增 `FN_IS_LEADER_LOCAL`，并在 `FN_MODE_PANEL_SYNC` 的文档里写明它指的是同一条
+地址、旧名字与旧语义被证伪。**旧常量名保留**（`tests/` 里可能还在用），但结论以本节为准。
+
+### 108.3 三条**名字未定**的（不许把推断写成结论）
+
+| vaddr | 体（观测） | 名字为什么定不了 | 缺什么 |
+|---|---|---|---|
+| `0x4bce80` | **`Once` 式惰性初始化**：`lock cmpxchg [0x9c0e80]` 抢执行 → 把 `0x4d98d0`/`0x4d9820` 两个函数指针装进两张注册表（`0x9c0e88`+`0x9c0e98`、`0x9c0ea0`+`0x9c0eb0`）→ 置 `0x9c0e84`=1 → 调 gdext 胶水 `0x4da330`/`0x4da440` | `fixtures/name_to_addr.tsv` 把 `__register_constants` 判成**歧义**，候选 4 个（`{0x4b88d0, 0x4b8a50, 0x4bce80, 0x4bd280}`） | 4 个候选各引用哪条 Location 的一对一锚（现只有 `95:1` 这一条，且 `0x4bce80`/`0x4bd280` **共用**它） |
+| `0x4bd280` | 与 `0x4bd030`（**已确认**的 `__init::__inner_init`）**逐项同形**：同 `.data` 静态 `0x9c0dc0`/`0x9c0dc4`、同三条调用（`0x4ffc96` / `0x4da1e0` / `0x4da440`） | x86 侧这 4 条（`0x4bcc6 0`/`0x4bce80`/`0x4bd030`/`0x4bd280`）**地址连续**，arm64 侧也正好有连续 4 份 `__init::__inner_init`（448/464/436/472 B）⇒ 同族无疑；"哪一份对应哪个 `#[godot_api] impl I*` 块"定不了 | gdext 版本的 vtable 槽序（把 `0x9c0dc0` 那块登记存储的槽位和 `impl I*` 对上） |
+| `0x4d88b0` | `self.0`（`Rc<RefCell<..>>`）`borrow_mut` → `[env+0x1f8]` 非空则 `call *[0x9bc160]` = **`GraphwarGameClient::request_lock_change`**（`0x517490`，唯一锚 152:22） | `fixtures/name_to_addr.tsv` 判 `ready` **歧义**，候选 2 个（`{0x4d1e00, 0x4d88b0}`） | `0x4d1e00` 与 `0x4d88b0` 的 Location 键（`705:76` vs 别的）归谁；`__before_ready`/`__godot_user_init` 的槽序 |
+
+### 108.4 判据/做法（可复跑）
+
+```
+PY=/home/CG/Myprojects/graphwar2-rebuild/.reference/venv/bin/python
+$PY tools/addr_probe.py fde   <vaddr>     # 边界（.eh_frame，不读 Ghidra 表）
+$PY tools/addr_probe.py dis   <vaddr>     # 逐指令 + .rodata 注解 + GOT 槽解析
+$PY tools/addr_probe.py callers <vaddr>   # call rel32 + 指针三形态
+$PY tools/addr_probe.py locs  <vaddr>     # panic::Location → 源码行
+# 真名（三路）：从 .rodata 读名字串 + 长度立即数自校验
+$PY - <<'EOF'
+import sys; sys.path.insert(0,'tools')
+from loc_xrefs import Elf
+so=Elf('.reference/game/libgraphwarrust.so')
+print(so.read(0x1c2d61, 11))   # b'set_texture'
+EOF
+$PY tools/function_coverage.py --module graphwar_setup_control.rs   # 逐条判档
+```
+
+**正对照（证明这套判法有效，不是只看"看起来像"）**：
+① 每条的 `fde_lo == vaddr` 且 `fde_hi - fde_lo == size`（11/11 命中，写成了单测
+`f3_anchor_table_is_self_consistent` / `conn_facade_anchor_table_is_self_consistent`）；
+② `.rodata` 字面量的**长度立即数**与串长逐条相等（`PlayerNameLabel` 15、`RankIcon` 8、
+`SoldierIconContainer` 20、`SkinIcon` 8、`FaceIcon` 8、`HatIcon` 7、`EmptyIcon` 9、
+`GraphwarRootNode` 16、`ChangeTeamButton` 16、`RemovePlayerButton` 18、`AddSoldierButton` 16、
+**`RemoveSoldierButton` 19**、`clone` 5、`upcast_ref` 10、`to_godot` 8、`set_texture` 11、
+`Upcast failed…` 47）—— **这一条当场抓到我自己的一个错**：台账初稿把 `RemoveSoldierButton`
+写成 18，单测红了，回反汇编看 `0x4c5262 mov r8d,0x13` 是 **19**，已改。
+③ 每个被调模块的 `get` 地址与 `docs/02-module-map.md` §22.3 的 25 模块表逐条对上
+（`0x46ba20`=NameManager、`0x46bfe0`=RankManager、`0x46a490`=PlayerManager、
+`0x46c430`=LocalPlayerManager、`0x46a770`=SoldierManager、`0x46b8b0`=TeamManager、
+`0x46a8e0`=GraphicsManager、`0x46b180`=ClientConnectionHandler）。
+
+### 108.5 两条**必须知道**的口径问题（否则数字会虚高）
+
+1. **审计工具的 P1 `__ALL__` 分支会把"我引用了它"判成"我实现了它"。** 初稿把
+   `fn init` 写成**自由函数**，`tools/function_coverage.py` 立刻多出 **2 条假 F1**
+   （`0x4bd430` `long_press_animation` 与 `0x4e7470` `axis_drawer` 的 `__init::__inner_init`）；
+   同理在 `ready_candidate` 的 doc 里写被调者裸地址 `0x517490`，把
+   `GraphwarGameClient::request_lock_change` 判成我实现的（**+1 条假 F1**）。
+   ⇒ 修法：`init` 放进 `impl GraphwarSetupControl`（`impl_type` 非空 ⇒ 别的模块的
+   `__inner_init` 不再 exact 命中）；被调者地址一律写成常量引用而不是裸字面量。
+   **三条假 F1 已全部消掉**，214 这个数里没有它们。
+2. **剩下 3 条 `F3 → F2` 是工具误配，不是我做的**：`0x4c5c00` / `0x4c5cb0` / `0x4c5d60`
+   的真身是 `*_request_event` 构造器（`docs/16-client.md` §17.6），但 `name_src=hyb` 给它们
+   预测的名字是 `GraphwarSetupControl::connect_entry_buttons`；本轮一旦在
+   `impl GraphwarSetupControl` 里落下**真的** `connect_entry_buttons`，P3（hyb）就把这 3 条
+   也配上了 ⇒ `F3 → F2`。**它们既没被我实现、也没被我证伪**，`F2 +3` 纯属工具口径。
+   ⇒ 引用本节的数字时：全仓 **F1 214 / F2 139 / F3 174**，其中 `F2` 有 **3 条是误配**，
+   "干净的 F2" = 136。
+
+### 108.6 我方差异 / 语义损失（写清，不粉饰）
+
+* **函数是"关联函数/方法"还是"自由函数"**：`update_name`/`update_rank`/`update_soldiers`/
+  `connect_entry_buttons` 在原版是 `GraphwarSetupControl` 的**关联函数**（无 `self` 接收者，
+  首参就是 `index: i32`），`is_leader_local` 是**方法**（`rdi` = self，`[self+0x40]` = 模块容器）。
+  本项目 `src/graphwar_setup_control.rs` 原来没有这个类型（gdext 类本体在 `_scaffold`），
+  本轮补了一个**标记类型** `pub struct GraphwarSetupControl;` 把这些关联函数按原版类型归属放进去。
+* **引擎侧（Godot）接缝**：`0x3ac770`/`0x3acb00`/`0x3ab590`/`0x3ad570`/`0x3adc50`（5 个
+  `get_node_by_name` 单态化）、`0x4066c0`（`Gd` 操作包装 B，操作名 `clone`）、
+  `0x447e20`/`0x4061a0`（`upcast_ref`）、`0x407580`（`to_godot`）、`0x3a01a0`（`set_texture`）、
+  `0x4b1640`（`Gd::from_obj_sys` 形态）、`0x4095a0`/`0x4098f0`（接信号）、
+  `0x41ce80`/`0x405d20`（引用计数包装）——全部用 trait `SetupEngine` 接出来。
+  **这些调用的"引擎侧成员名"仍未解**（缺：运行时读 GOT 槽的成员名，`docs/16` §48 的老缺口），
+  所以本层只落"调了它 + 实参是什么 + 顺序"，不编它的语义。
+* **`0x3ec130`**（`update_name` 尾段把查到的行数据交给标签）同样只到"被调 + 实参"。
+* **`OpaqueValue`（3 个字）**：管理器里查到的值，字段语义**未解**（缺 `GraphwarNameManager` /
+  `GraphwarRankManager` 的值类型定义），只透传不解释。
+* **`update_soldiers` 的 4 个图标不做条件跳过**：反汇编里**没有**"按槽占用跳过"的分支证据，
+  所以本层**无条件**走完 4 段（宁可少一个语义，也不编一条 `if`）。缺的观测：真机在
+  "0 兵 / 有空槽 / 满槽"三种局面下 `SkinIcon`/`FaceIcon`/`HatIcon`/`EmptyIcon` 的可见性。
+* **`update_rank` 的 3 段 `set_texture` 为什么是 3**：**推断**是 `RankIcon` 的 3 层贴图
+  （3 个段位档也说得通）—— 缺真机读 `RankIcon` 子节点。
+* `connect`/`disconnect` 的 `RefCell` 冲突文案（"already mutably borrowed"）是**推断**
+  （std 侧常量，未在 `.rodata` 定位）；"会 panic"是观测。
+
+### 108.7 门槛读数
+
+| 项 | 读数（本轮实测） |
+|---|---|
+| `cargo test --offline` | **1842 passed / 0 failed / 1 ignored**（基线 1826 → **+16**，全部是本轮新增的单测；**只增不减**） |
+| `cargo test --offline --features gdext-bindings` | **1972 passed / 0 failed / 1 ignored**（基线 1956 → **+16**） |
+| `tools/coverage_matrix.py --check` | **OK**（生成物已重跑：`docs/coverage-matrix.tsv`（`src_fns` 3447 → 3533、`src_tree_sha256` 变）、`docs/149-coverage-matrix.md`；`graphwar_setup_control.rs` 的 `ours_funcs` 48 → 116、`graphwar_game_client.rs` 31 → 49） |
+| `tools/check_doc_refs.py` | **rc = 0**（"✓ 无死链"） |
+| 三轴（403 份冻结快照，`fire`/`batch`/`batch_conv` 分开跑） | `fire` 内容命中 **647** ／ `batch` 内容命中 **647** ／ `batch_conv` 内容命中 **637** —— **一位未退** |
+| `tools/boundary_audit.py --check` | **OK**：527 个可归属函数 match **441** / mismatch **0** / multi 86 |
+| `tools/function_coverage.py` | 全仓 F1 **202 → 214**、F2 137 → 139（其中 3 条是 hyb 误配，见 §108.5）、F3 **188 → 174**；`setup_control` F3 **11 → 2**、`game_client` F3 **24 → 19** |
+
+复跑（本机）：
+```bash
+export CARGO_HOME=$PWD/.reference/cargo-home
+export CARGO_TARGET_DIR=$PWD/.reference/cargo-home/target     # 必须单独一行
+cargo test --offline && cargo test --offline --features gdext-bindings
+COVERAGE_MATRIX_UPSTREAM=$PWD/.reference/upstream python3 tools/coverage_matrix.py --check
+python3 tools/check_doc_refs.py && python3 tools/boundary_audit.py --check
+SNAP=$PWD/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv    -- --dir $SNAP --policy strict
+```
+
+### 108.8 遗留 / 下一步
+
+* `setup_control` 剩的 2 条 F3 是 **gdext 宏产物**（`0x4b88d0`/`0x4b8a50`
+  `AxisDrawer::__register_methods`，`name_src` 本身是 hyb 错名）—— 它们**不是**这个模块的函数，
+  真要修得先把 `fixtures/boundary_audit.tsv` 的归属改对，不在函数级任务范围内。
+* `0x4bce80` / `0x4d88b0` / `0x4bd280` 三个**名字**还定不了（§108.3 的缺件表）。
+* `game_client` 还剩 **19 条 F3**（`0x515590`/`0x5159a0`/`0x516450`/`0x5164b0`/`0x516510`/
+  `0x516970`/`0x5172d0`/`0x518240`… 大半是"取 `+0x40` 句柄 → 调内层一次"的同一模板），
+  下一任可以照本轮的 `connect`/`disconnect` 模板批量落。
+* `0x3bf230` / `0x41ce80` / `0x405d20` / `0x3ec130` 四个被调者的语义仍未解（引擎侧 / 管理器内部）。
