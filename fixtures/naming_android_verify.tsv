@@ -1,0 +1,374 @@
+# naming_android_verify.tsv —— T87 用 Android .symtab 交叉核对已有真名（tools/naming_android.py verify）
+# 判据 = fixtures/naming_android_plan.txt §5。地址 = Linux ELF vaddr。名字一律源码级 module::Type::method。
+# 【A 区】逐条：V1 一致 / V2 冲突 / V3 Android 侧无可比同名函数 / V4 同名多实例 / V0 无特征
+区域	vaddr	现用真名	判定	结论	L轴指到的Android名字	L轴地址	说明
+A	0x3a2e10	button_manager::ButtonManager::new	V3	Android 侧无可比的同名函数	graphwar_root_node::Graphw	0x39a6f0	L 轴首选是同模块外/无名候选（内联痕迹）；不构成名字冲突
+A	0x3a5660	graphwar_root_node::GraphwarRootNode::ready::{{closure}}	V3	Android 侧无同名函数	graphwar_root_node::Graphw	0x39c6e0	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x3a5760	graphwar_root_node::GraphwarRootNode::process	V1	一致	graphwar_root_node::Graphw	0x39c8a0	L 轴 + Android 同名，双向对上
+A	0x3afb00	graphwar_root_node::GraphwarRootNode::purchase_denied	V1	一致	graphwar_root_node::Graphw	0x3a610c	L 轴 + Android 同名，双向对上
+A	0x3afcf0	graphwar_root_node::GraphwarRootNode::check_save_level	V1	一致	graphwar_root_node::Graphw	0x3a62ec	L 轴 + Android 同名，双向对上
+A	0x3afe90	graphwar_root_node::GraphwarRootNode::purchase_confirmed	V1	一致	graphwar_root_node::Graphw	0x3a64e4	L 轴 + Android 同名，双向对上
+A	0x3b00d0	graphwar_root_node::GraphwarRootNode::get_media_storage_path	V1	一致	graphwar_root_node::Graphw	0x3a670c	L 轴 + Android 同名，双向对上
+A	0x3b0830	graphwar_root_node::GraphwarRootNode::process_button_pressed	V1	一致	graphwar_root_node::Graphw	0x3a6d48	L 轴 + Android 同名，双向对上
+A	0x3b4ec0	graphwar_root_node::GraphwarRootNode::request_permissions_result	V1	一致	graphwar_root_node::Graphw	0x3aae7c	L 轴 + Android 同名，双向对上
+A	0x3b5ac0	graphwar_root_node::_::_::__init::__inner_init	V4	一致（Android 同名实例 14 个）	graphwar_root_node::_::_::	0x3abad8	源码级同一 fn 的多份机器码
+A	0x3c17d0	graphwar_team_manager::GraphwarTeamManager::add_to_team	V1	一致	graphwar_team_manager::Gra	0x498f8c	L 轴 + Android 同名，双向对上
+A	0x3c1980	graphwar_team_manager::GraphwarTeamManager::remove_from_team	V1	一致	graphwar_team_manager::Gra	0x499154	L 轴 + Android 同名，双向对上
+A	0x3c1b40	graphwar_team_manager::GraphwarTeamManager::get_most_empty_team	V3	Android 侧无同名函数	graphwar_game_state_manage	0x4a9894	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x3c1cf0	graphwar_team_manager::GraphwarTeamManager::send_all_info_events	V1	一致	graphwar_team_manager::Gra	0x49933c	L 轴 + Android 同名，双向对上
+A	0x3c1f40	graphwar_team_manager::GraphwarTeamManager::handle_entity_removed_event	V1	一致	graphwar_team_manager::Gra	0x499570	L 轴 + Android 同名，双向对上
+A	0x3c1fc0	graphwar_team_manager::GraphwarTeamManager::new	V1	一致	graphwar_team_manager::Gra	0x49960c	L 轴 + Android 同名，双向对上
+A	0x3c2120	graphwar_team_manager::GraphwarTeamManager::get_team	V1	一致	graphwar_team_manager::Gra	0x499798	L 轴 + Android 同名，双向对上
+A	0x3c2bc0	graphwar_shot_calculator::GraphwarShotCalculator::calculate_shot_results	V1	一致	graphwar_shot_calculator::	0x3b5770	L 轴 + Android 同名，双向对上
+A	0x3c62b0	graphwar_plane_pos_manager::GraphwarPlanePosManager::get_position	V1	一致	graphwar_plane_pos_manager	0x3b7f58	L 轴 + Android 同名，双向对上
+A	0x3c64c0	graphwar_plane_pos_manager::GraphwarPlanePosManager::set_position	V1	一致	graphwar_plane_pos_manager	0x3b8160	L 轴 + Android 同名，双向对上
+A	0x3c66a0	graphwar_plane_pos_manager::GraphwarPlanePosManager::get_all_positions	V1	一致	graphwar_plane_pos_manager	0x3b8348	L 轴 + Android 同名，双向对上
+A	0x3c6a10	graphwar_plane_pos_manager::GraphwarPlanePosManager::send_all_info_events	V1	一致	graphwar_plane_pos_manager	0x3b8660	L 轴 + Android 同名，双向对上
+A	0x3c6b40	graphwar_plane_pos_manager::GraphwarPlanePosManager::handle_entity_removed_event	V1	一致	graphwar_plane_pos_manager	0x3b8798	L 轴 + Android 同名，双向对上
+A	0x3c6d30	graphwar_plane_pos_manager::GraphwarPlanePosManager::new	V1	一致	graphwar_plane_pos_manager	0x3b89a0	L 轴 + Android 同名，双向对上
+A	0x3d3630	graphwar_event_handler::GraphwarEventHandler::process_events	V1	一致	graphwar_event_handler::Gr	0x486970	L 轴 + Android 同名，双向对上
+A	0x3d38f0	graphwar_event_handler::GraphwarEventHandler::subscribe_to_event	V1	一致	graphwar_event_handler::Gr	0x486bc8	L 轴 + Android 同名，双向对上
+A	0x3d4fa0	graphwar_game_recorder::GraphwarGameRecorder::subscribe_to_events::{{closure}}	V3	Android 侧无同名函数	graphwar_game_recorder::Gr	0x3d7b54	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x3d5740	graphwar_game_recorder::GraphwarGameRecorder::save_game	V1	一致	graphwar_game_recorder::Gr	0x3d8184	L 轴 + Android 同名，双向对上
+A	0x3d6080	graphwar_replay_player::GraphwarReplayPlayer::toggle_pause	V1	一致	graphwar_replay_player::Gr	0x3d8c24	L 轴 + Android 同名，双向对上
+A	0x3d61a0	graphwar_replay_player::GraphwarReplayPlayer::inject_events	V1	一致	graphwar_replay_player::Gr	0x3d8d9c	L 轴 + Android 同名，双向对上
+A	0x3d68b0	graphwar_replay_player::GraphwarReplayPlayer::go_to_next_checkpoint	V1	一致	graphwar_replay_player::Gr	0x3d929c	L 轴 + Android 同名，双向对上
+A	0x3d6a40	graphwar_replay_player::GraphwarReplayPlayer::go_to_first_checkpoint	V1	一致	graphwar_replay_player::Gr	0x3d94a0	L 轴 + Android 同名，双向对上
+A	0x3d6bb0	graphwar_replay_player::GraphwarReplayPlayer::go_to_previous_checkpoint	V1	一致	graphwar_replay_player::Gr	0x3d9658	L 轴 + Android 同名，双向对上
+A	0x3d7270	graphwar_replay_player::GraphwarReplayPlayer::pause	V1	一致	graphwar_replay_player::Gr	0x3d9cbc	L 轴 + Android 同名，双向对上
+A	0x3d7380	graphwar_replay_player::GraphwarReplayPlayer::process	V1	一致	graphwar_replay_player::Gr	0x3d9e1c	L 轴 + Android 同名，双向对上
+A	0x3d7630	graphwar_replay_player::GraphwarReplayPlayer::is_paused	V1	一致	graphwar_replay_player::Gr	0x3da094	L 轴 + Android 同名，双向对上
+A	0x3d9000	graphwar_play_screen_control::GraphwarPlayScreenControl::add_tie_icon	V1	一致	graphwar_play_screen_contr	0x3deb3c	L 轴 + Android 同名，双向对上
+A	0x3d9b50	graphwar_play_screen_control::GraphwarPlayScreenControl::enable_replay_buttons	V1	一致	graphwar_play_screen_contr	0x3df60c	L 轴 + Android 同名，双向对上
+A	0x3d9e40	graphwar_play_screen_control::GraphwarPlayScreenControl::disable_replay_buttons	V1	一致	graphwar_play_screen_contr	0x3df8dc	L 轴 + Android 同名，双向对上
+A	0x3da130	graphwar_play_screen_control::GraphwarPlayScreenControl::update_end_game_pop_up	V1	一致	graphwar_play_screen_contr	0x3dfbac	L 轴 + Android 同名，双向对上
+A	0x3db3e0	graphwar_play_screen_control::GraphwarPlayScreenControl::add_player_victory_icon	V1	一致	graphwar_play_screen_contr	0x3e0b64	L 轴 + Android 同名，双向对上
+A	0x3dc470	graphwar_play_screen_control::GraphwarPlayScreenControl::update_names_button_texture	V1	一致	graphwar_play_screen_contr	0x3e1718	L 轴 + Android 同名，双向对上
+A	0x3dc630	graphwar_play_screen_control::GraphwarPlayScreenControl::update_view_function_button_texture	V1	一致	graphwar_play_screen_contr	0x3e18d0	L 轴 + Android 同名，双向对上
+A	0x3dc7f0	graphwar_play_screen_control::GraphwarPlayScreenControl::new	V4	一致（Android 同名实例 2 个）	graphwar_play_screen_contr	0x3e1a88	源码级同一 fn 的多份机器码
+A	0x3dcbb0	graphwar_play_screen_control::GraphwarPlayScreenControl::process	V1	一致	graphwar_play_screen_contr	0x3e1ea0	L 轴 + Android 同名，双向对上
+A	0x3dee00	graphwar_remote_event_handler::GraphwarRemoteEventHandler::handle_client_remote_event	V1	一致	graphwar_remote_event_hand	0x3e3ad0	L 轴 + Android 同名，双向对上
+A	0x3e2830	graphwar_color_manager::GraphwarColorManager::set_color	V3	Android 侧无可比的同名函数	graphwar_remote_event_hand	0x3e6df0	L 轴首选是同模块外/无名候选（内联痕迹）；不构成名字冲突
+A	0x3e5910	graphwar_remote_event_handler::GraphwarRemoteEventHandler::is_leader	V1	一致	graphwar_remote_event_hand	0x3e995c	L 轴 + Android 同名，双向对上
+A	0x3ee190	obstacle_drawer::ObstacleDrawer::update	V1	一致	obstacle_drawer::ObstacleD	0x422590	L 轴 + Android 同名，双向对上
+A	0x3ef990	graphwar_lobby_control::GraphwarLobbyControl::new	V4	一致（Android 同名实例 3 个）	graphwar_lobby_control::Gr	0x423de4	源码级同一 fn 的多份机器码
+A	0x3f0270	function_button_manager::FunctionButtonManager::new	V4	一致（Android 同名实例 2 个）	function_button_manager::F	0x42464c	源码级同一 fn 的多份机器码
+A	0x3f06b0	function_button_manager::FunctionButtonManager::new::{{closure}}	V3	Android 侧无同名函数	function_button_manager::F	0x4249e8	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x3f0e40	function_history_recorder::FunctionHistoryRecorder::handle_function_fire_event	V1	一致	function_history_recorder:	0x49d71c	L 轴 + Android 同名，双向对上
+A	0x3f11e0	graphwar_obstacle_manager::GraphwarObstacleData::draw_circle	V1	一致	graphwar_obstacle_manager:	0x4251e0	L 轴 + Android 同名，双向对上
+A	0x3f15b0	graphwar_obstacle_manager::GraphwarObstacleManager::is_obstacle	V1	一致	graphwar_obstacle_manager:	0x425474	L 轴 + Android 同名，双向对上
+A	0x3f17a0	graphwar_obstacle_manager::GraphwarObstacleManager::add_obstacle	V1	一致	graphwar_obstacle_manager:	0x425684	L 轴 + Android 同名，双向对上
+A	0x3f19a0	graphwar_obstacle_manager::GraphwarObstacleManager::clear_obstacles	V1	一致	graphwar_obstacle_manager:	0x425870	L 轴 + Android 同名，双向对上
+A	0x3f1b30	graphwar_obstacle_manager::GraphwarObstacleManager::destroy_obstacle	V1	一致	graphwar_obstacle_manager:	0x425a34	L 轴 + Android 同名，双向对上
+A	0x3f1d30	graphwar_obstacle_manager::GraphwarObstacleManager::handle_tick_event	V1	一致	graphwar_obstacle_manager:	0x425c20	L 轴 + Android 同名，双向对上
+A	0x3f20f0	graphwar_obstacle_manager::GraphwarObstacleManager::queue_destroy_obstacle	V1	一致	graphwar_obstacle_manager:	0x426094	L 轴 + Android 同名，双向对上
+A	0x3f2360	graphwar_obstacle_manager::GraphwarObstacleManager::new	V4	一致（Android 同名实例 2 个）	graphwar_obstacle_manager:	0x426300	源码级同一 fn 的多份机器码
+A	0x418820	graphwar_campaign_control::GraphwarCampaignControl::show_hide_campaign_levels	V1	一致	graphwar_campaign_control:	0x393558	L 轴 + Android 同名，双向对上
+A	0x437ce0	server_broker_request_connection::ServerBrokerRequestConnectionClient::new	V3	Android 侧无同名函数		0x48e130	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x44dd60	graphwar_logger::GraphwarLogger::new	V1	一致	graphwar_logger::GraphwarL	0x45bce0	L 轴 + Android 同名，双向对上
+A	0x44e8f0	graphwar_game_server::GameServerData::subscribe_to_room_info_updates::{{closure}}	V3	Android 侧无同名函数	graphwar_game_server::Game	0x4820a8	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x44f990	graphwar_game_server::GraphwarGameServer::start	V1	一致	graphwar_game_server::Grap	0x483090	L 轴 + Android 同名，双向对上
+A	0x4500c0	graphwar_server_connection_handler::GraphwarServerConnectionHandler::new	V3	Android 侧无同名函数	graphwar_game_server::_::g	0x483574	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x453a60	graphwar_life_manager::GraphwarLifeManager::get_death_tick	V1	一致	graphwar_life_manager::Gra	0x496af0	L 轴 + Android 同名，双向对上
+A	0x453c60	graphwar_life_manager::GraphwarLifeManager::get_all_entities	V1	一致	graphwar_life_manager::Gra	0x496d0c	L 轴 + Android 同名，双向对上
+A	0x453de0	graphwar_life_manager::GraphwarLifeManager::set_queued_death	V1	一致	graphwar_life_manager::Gra	0x496ea4	L 轴 + Android 同名，双向对上
+A	0x454020	graphwar_life_manager::GraphwarLifeManager::handle_tick_event	V1	一致	graphwar_life_manager::Gra	0x4970e4	L 轴 + Android 同名，双向对上
+A	0x454120	graphwar_life_manager::GraphwarLifeManager::send_all_info_events	V1	一致	graphwar_life_manager::Gra	0x4971dc	L 轴 + Android 同名，双向对上
+A	0x454420	graphwar_life_manager::GraphwarLifeManager::handle_entity_removed_event	V1	一致	graphwar_life_manager::Gra	0x4974a0	L 轴 + Android 同名，双向对上
+A	0x454790	graphwar_life_manager::GraphwarLifeManager::new	V1	一致	graphwar_life_manager::Gra	0x4977b8	L 轴 + Android 同名，双向对上
+A	0x454950	graphwar_life_manager::GraphwarLifeManager::get_alive	V1	一致	graphwar_life_manager::Gra	0x4979a8	L 轴 + Android 同名，双向对上
+A	0x454b40	graphwar_life_manager::GraphwarLifeManager::set_alive	V1	一致	graphwar_life_manager::Gra	0x497bb0	L 轴 + Android 同名，双向对上
+A	0x454d80	graphwar_rank_manager::GraphwarRankManager::send_all_info_events	V1	一致	graphwar_rank_manager::Gra	0x498b5c	L 轴 + Android 同名，双向对上
+A	0x454e80	graphwar_rank_manager::GraphwarRankManager::handle_entity_removed_event	V1	一致	graphwar_rank_manager::Gra	0x498c58	L 轴 + Android 同名，双向对上
+A	0x454f30	graphwar_rank_manager::GraphwarRankManager::new	V1	一致	graphwar_rank_manager::Gra	0x498d2c	L 轴 + Android 同名，双向对上
+A	0x455090	graphwar_rank_manager::GraphwarRankManager::set_rank	V1	一致	graphwar_rank_manager::Gra	0x498eb8	L 轴 + Android 同名，双向对上
+A	0x455160	graphwar_player_manager::GraphwarPlayerManager::send_all_info_events	V1	一致	graphwar_player_manager::G	0x49ceb0	L 轴 + Android 同名，双向对上
+A	0x455250	graphwar_player_manager::GraphwarPlayerManager::handle_entity_removed_event	V1	一致	graphwar_player_manager::G	0x49cfa0	L 轴 + Android 同名，双向对上
+A	0x455410	graphwar_player_manager::GraphwarPlayerManager::new	V1	一致	graphwar_player_manager::G	0x49d170	L 轴 + Android 同名，双向对上
+A	0x455570	graphwar_soldier_manager::GraphwarSoldierManager::send_all_info_events	V1	一致	graphwar_soldier_manager::	0x49d38c	L 轴 + Android 同名，双向对上
+A	0x4556d0	graphwar_soldier_manager::GraphwarSoldierManager::handle_entity_removed_event	V1	一致	graphwar_soldier_manager::	0x49d4d4	L 轴 + Android 同名，双向对上
+A	0x455760	graphwar_soldier_manager::GraphwarSoldierManager::new	V1	一致	graphwar_soldier_manager::	0x49d590	L 轴 + Android 同名，双向对上
+A	0x455b60	graphwar_function_manager::GraphwarFunctionManager::get_function	V1	一致	graphwar_function_manager:	0x4887f4	L 轴 + Android 同名，双向对上
+A	0x455e30	graphwar_function_manager::GraphwarFunctionManager::set_function	V1	一致	graphwar_function_manager:	0x488a9c	L 轴 + Android 同名，双向对上
+A	0x4565f0	graphwar_function_manager::GraphwarFunctionManager::get_function_text	V1	一致	graphwar_function_manager:	0x489050	L 轴 + Android 同名，双向对上
+A	0x456810	graphwar_function_manager::GraphwarFunctionManager::set_function_points	V1	一致	graphwar_function_manager:	0x489278	L 轴 + Android 同名，双向对上
+A	0x456b80	graphwar_function_manager::GraphwarFunctionManager::set_function_active_tick	V1	一致	graphwar_function_manager:	0x4895ec	L 轴 + Android 同名，双向对上
+A	0x456df0	graphwar_function_manager::GraphwarFunctionManager::get_active_functions_on_tick	V1	一致	graphwar_function_manager:	0x489858	L 轴 + Android 同名，双向对上
+A	0x456f80	graphwar_function_manager::GraphwarFunctionManager::get_active_functions_on_tick_no_fade	V1	一致	graphwar_function_manager:	0x4899f8	L 轴 + Android 同名，双向对上
+A	0x4572c0	graphwar_lan_broadcaster_v6::GraphwarLanBroadcasterV6::set_room_info	V1	一致	graphwar_lan_broadcaster_v	0x3ddeb4	L 轴 + Android 同名，双向对上
+A	0x457480	graphwar_lan_broadcaster_v6::GraphwarLanBroadcasterV6::new	V1	一致	graphwar_lan_broadcaster_v	0x3de064	L 轴 + Android 同名，双向对上
+A	0x457600	graphwar_lan_broadcaster_v6::GraphwarLanBroadcasterV6::start	V1	一致	graphwar_lan_broadcaster_v	0x3de19c	L 轴 + Android 同名，双向对上
+A	0x457790	graphwar_lan_broadcaster_v6::GraphwarLanBroadcasterV6::process	V1	一致	graphwar_lan_broadcaster_v	0x3de310	L 轴 + Android 同名，双向对上
+A	0x4586d0	graphwar_server_broker_handler::GraphwarServerBrokerHandler::stop	V1	一致	graphwar_server_broker_han	0x489e50	L 轴 + Android 同名，双向对上
+A	0x4588d0	graphwar_server_broker_handler::GraphwarServerBrokerHandler::process	V1	一致	graphwar_server_broker_han	0x48a078	L 轴 + Android 同名，双向对上
+A	0x4592d0	graphwar_client_connection_handler::GraphwarClientConnectionHandler::disconnect	V1	一致	graphwar_client_connection	0x48a8a0	L 轴 + Android 同名，双向对上
+A	0x459690	graphwar_client_connection_handler::GraphwarClientConnectionHandler::forward_event	V1	一致	graphwar_client_connection	0x48ac54	L 轴 + Android 同名，双向对上
+A	0x459840	graphwar_client_connection_handler::GraphwarClientConnectionHandler::get_connection_state	V1	一致	graphwar_client_connection	0x48ae24	L 轴 + Android 同名，双向对上
+A	0x459950	graphwar_client_connection_handler::GraphwarClientConnectionHandler::handle_connected_to_server	V1	一致	graphwar_client_connection	0x48af7c	L 轴 + Android 同名，双向对上
+A	0x4599f0	graphwar_client_connection_handler::GraphwarClientConnectionHandler::new	V1	一致	graphwar_client_connection	0x48b048	L 轴 + Android 同名，双向对上
+A	0x459f20	graphwar_client_connection_handler::GraphwarClientConnectionHandler::tick	V1	一致	graphwar_client_connection	0x48b468	L 轴 + Android 同名，双向对上
+A	0x45a340	graphwar_client_connection_handler::GraphwarClientConnectionHandler::connect	V1	一致	graphwar_client_connection	0x48b8a4	L 轴 + Android 同名，双向对上
+A	0x45a560	graphwar_server_connection_handler::GraphwarServerConnectionHandler::forward_event	V1	一致	graphwar_server_connection	0x48badc	L 轴 + Android 同名，双向对上
+A	0x45a6b0	graphwar_server_connection_handler::GraphwarServerConnectionHandler::handle_clear_bans_request_event	V1	一致	graphwar_server_connection	0x48bc28	L 轴 + Android 同名，双向对上
+A	0x45a7b0	graphwar_server_connection_handler::GraphwarServerConnectionHandler::handle_connection_removed_event	V1	一致	graphwar_server_connection	0x48bd30	L 轴 + Android 同名，双向对上
+A	0x45aab0	graphwar_server_connection_handler::GraphwarServerConnectionHandler::forward_connection_specific_event	V1	一致	graphwar_server_connection	0x48c02c	L 轴 + Android 同名，双向对上
+A	0x45ad30	graphwar_server_connection_handler::GraphwarServerConnectionHandler::handle_ban_connection_request_event	V1	一致	graphwar_server_connection	0x48c32c	L 轴 + Android 同名，双向对上
+A	0x45b020	graphwar_server_connection_handler::GraphwarServerConnectionHandler::tick	V1	一致	graphwar_server_connection	0x48c644	L 轴 + Android 同名，双向对上
+A	0x4627c0	graphwar_turn_manager::GraphwarTurnData::get_current_turn_players	V1	一致	graphwar_turn_manager::Gra	0x499c74	L 轴 + Android 同名，双向对上
+A	0x4628d0	graphwar_turn_manager::GraphwarTurnData::get_current_turn_soldiers	V1	一致	graphwar_turn_manager::Gra	0x499d7c	L 轴 + Android 同名，双向对上
+A	0x462c10	graphwar_turn_manager::GraphwarTurnManager::get_turn_mode	V1	一致	graphwar_turn_manager::Gra	0x49a0a8	L 轴 + Android 同名，双向对上
+A	0x462d20	graphwar_turn_manager::GraphwarTurnManager::set_turn_mode	V1	一致	graphwar_turn_manager::Gra	0x49a1f4	L 轴 + Android 同名，双向对上
+A	0x462ec0	graphwar_turn_manager::GraphwarTurnManager::get_end_of_turn_tick	V1	一致	graphwar_turn_manager::Gra	0x49a3d4	L 轴 + Android 同名，双向对上
+A	0x462fe0	graphwar_turn_manager::GraphwarTurnManager::send_all_info_events	V1	一致	graphwar_turn_manager::Gra	0x49a53c	L 轴 + Android 同名，双向对上
+A	0x463170	graphwar_turn_manager::GraphwarTurnManager::set_end_of_turn_tick	V1	一致	graphwar_turn_manager::Gra	0x49a708	L 轴 + Android 同名，双向对上
+A	0x463340	graphwar_turn_manager::GraphwarTurnManager::get_current_turn_players	V1	一致	graphwar_turn_manager::Gra	0x49a918	L 轴 + Android 同名，双向对上
+A	0x463460	graphwar_turn_manager::GraphwarTurnManager::get_current_turn_soldiers	V1	一致	graphwar_turn_manager::Gra	0x49aa78	L 轴 + Android 同名，双向对上
+A	0x463580	graphwar_turn_manager::GraphwarTurnManager::handle_entity_removed_event	V1	一致	graphwar_turn_manager::Gra	0x49abd8	L 轴 + Android 同名，双向对上
+A	0x463790	graphwar_turn_manager::GraphwarTurnManager::new	V1	一致	graphwar_turn_manager::Gra	0x49adf8	L 轴 + Android 同名，双向对上
+A	0x4638f0	graphwar_turn_manager::GraphwarTurnManager::set_turn	V1	一致	graphwar_turn_manager::Gra	0x49af84	L 轴 + Android 同名，双向对上
+A	0x463da0	graphwar_turn_manager::GraphwarTurnManager::next_turn	V1	一致	graphwar_turn_manager::Gra	0x49b3e8	L 轴 + Android 同名，双向对上
+A	0x464d10	graphwar_color_manager::GraphwarColorManager::add_team_color	V1	一致	graphwar_color_manager::Gr	0x49c244	L 轴 + Android 同名，双向对上
+A	0x465460	graphwar_color_manager::GraphwarColorManager::send_all_info_events	V1	一致	graphwar_color_manager::Gr	0x49ca10	L 轴 + Android 同名，双向对上
+A	0x465570	graphwar_color_manager::GraphwarColorManager::handle_entity_removed_event	V1	一致	graphwar_color_manager::Gr	0x49cb14	L 轴 + Android 同名，双向对上
+A	0x465620	graphwar_color_manager::GraphwarColorManager::new	V1	一致	graphwar_color_manager::Gr	0x49cbe8	L 轴 + Android 同名，双向对上
+A	0x465780	graphwar_target_manager::GraphwarTargetManager::send_all_info_events	V3	Android 侧无同名函数	graphwar_target_manager::G	0x3da9bc	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x465870	graphwar_target_manager::GraphwarTargetManager::handle_entity_removed_event	V3	Android 侧无同名函数	graphwar_target_manager::G	0x3daca0	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x465910	graphwar_target_manager::GraphwarTargetManager::new	V1	一致	graphwar_target_manager::G	0x3dae34	L 轴 + Android 同名，双向对上
+A	0x465a70	graphwar_level_generator::GraphwarLevelGenerator::place_entity	V1	一致	graphwar_level_generator::	0x3dafc0	L 轴 + Android 同名，双向对上
+A	0x4661a0	graphwar_level_generator::GraphwarLevelGenerator::generate_level::{{closure}}	V3	Android 侧无同名函数	graphwar_level_generator::	0x3db8a8	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x466c40	graphwar_level_generator::GraphwarLevelGenerator::generate_terrain	V1	一致	graphwar_level_generator::	0x3dc164	L 轴 + Android 同名，双向对上
+A	0x466d20	graphwar_level_generator::GraphwarLevelGenerator::generate_level_custom	V1	一致	graphwar_level_generator::	0x3dc29c	L 轴 + Android 同名，双向对上
+A	0x467530	graphwar_path_calculator::GraphwarPathCalculator::calculate_paths	V1	一致	graphwar_path_calculator::	0x3dca1c	L 轴 + Android 同名，双向对上
+A	0x468a50	graphwar_graphics_manager::GraphwarGraphicsManager::set_hat_graphics	V1	一致	graphwar_graphics_manager:	0x49dad8	L 轴 + Android 同名，双向对上
+A	0x468b60	graphwar_graphics_manager::GraphwarGraphicsManager::set_face_graphics	V1	一致	graphwar_graphics_manager:	0x49dbec	L 轴 + Android 同名，双向对上
+A	0x468c70	graphwar_graphics_manager::GraphwarGraphicsManager::set_skin_graphics	V1	一致	graphwar_graphics_manager:	0x49dd00	L 轴 + Android 同名，双向对上
+A	0x468d80	graphwar_graphics_manager::GraphwarGraphicsManager::send_all_info_events	V1	一致	graphwar_graphics_manager:	0x49de14	L 轴 + Android 同名，双向对上
+A	0x469220	graphwar_graphics_manager::GraphwarGraphicsManager::handle_entity_removed_event	V1	一致	graphwar_graphics_manager:	0x49e220	L 轴 + Android 同名，双向对上
+A	0x469390	graphwar_graphics_manager::GraphwarGraphicsManager::new	V1	一致	graphwar_graphics_manager:	0x49e394	L 轴 + Android 同名，双向对上
+A	0x46f310	graphwar_game_state_manager::GraphwarGameStateManager::add_target	V1	一致	graphwar_game_state_manage	0x4a5704	L 轴 + Android 同名，双向对上
+A	0x46f690	graphwar_game_state_manager::GraphwarGameStateManager::start_game	V1	一致	graphwar_game_state_manage	0x4a5b38	L 轴 + Android 同名，双向对上
+A	0x470840	graphwar_game_state_manager::GraphwarGameStateManager::handle_tick	V1	一致	graphwar_game_state_manage	0x4a6ad4	L 轴 + Android 同名，双向对上
+A	0x470b70	graphwar_game_state_manager::GraphwarGameStateManager::set_all_alive	V1	一致	graphwar_game_state_manage	0x4a6de4	L 轴 + Android 同名，双向对上
+A	0x470eb0	graphwar_game_state_manager::GraphwarGameStateManager::fire_functions	V1	一致	graphwar_game_state_manage	0x4a7160	L 轴 + Android 同名，双向对上
+A	0x472400	graphwar_game_state_manager::GraphwarGameStateManager::set_turn_limit	V1	一致	graphwar_game_state_manage	0x4a84dc	L 轴 + Android 同名，双向对上
+A	0x472470	graphwar_game_state_manager::GraphwarGameStateManager::execute_results	V1	一致	graphwar_game_state_manage	0x4a8558	L 轴 + Android 同名，双向对上
+A	0x473520	graphwar_game_state_manager::GraphwarGameStateManager::get_alive_teams	V1	一致	graphwar_game_state_manage	0x4a93d8	L 轴 + Android 同名，双向对上
+A	0x4737a0	graphwar_game_state_manager::GraphwarGameStateManager::remove_all_players	V1	一致	graphwar_game_state_manage	0x4a9680	L 轴 + Android 同名，双向对上
+A	0x4739c0	graphwar_game_state_manager::GraphwarGameStateManager::request_new_player	V1	一致	graphwar_game_state_manage	0x4a9894	L 轴 + Android 同名，双向对上
+A	0x473d00	graphwar_game_state_manager::GraphwarGameStateManager::handle_chat_message	V1	一致	graphwar_game_state_manage	0x4a9de0	L 轴 + Android 同名，双向对上
+A	0x473e50	graphwar_game_state_manager::GraphwarGameStateManager::request_change_team	V1	一致	graphwar_game_state_manage	0x4a9f5c	L 轴 + Android 同名，双向对上
+A	0x4741a0	graphwar_game_state_manager::GraphwarGameStateManager::handle_graphics_info	V1	一致	graphwar_game_state_manage	0x4aa304	L 轴 + Android 同名，双向对上
+A	0x474490	graphwar_game_state_manager::GraphwarGameStateManager::setup_and_start_game	V1	一致	graphwar_game_state_manage	0x4aa614	L 轴 + Android 同名，双向对上
+A	0x474a10	graphwar_game_state_manager::GraphwarGameStateManager::add_soldier_to_player	V1	一致	graphwar_game_state_manage	0x4aaab4	L 轴 + Android 同名，双向对上
+A	0x4754c0	graphwar_game_state_manager::GraphwarGameStateManager::request_fire_function	V1	一致	graphwar_game_state_manage	0x4ab6c8	L 轴 + Android 同名，双向对上
+A	0x475590	graphwar_game_state_manager::GraphwarGameStateManager::request_remove_player	V1	一致	graphwar_game_state_manage	0x4ab7a8	L 轴 + Android 同名，双向对上
+A	0x4758b0	graphwar_game_state_manager::GraphwarGameStateManager::handle_function_points	V1	一致	graphwar_game_state_manage	0x4abad4	L 轴 + Android 同名，双向对上
+A	0x4759f0	graphwar_game_state_manager::GraphwarGameStateManager::queue_end_turn_trigger::{{closure}}	V3	Android 侧无同名函数	graphwar_game_state_manage	0x4abc00	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x475f50	graphwar_game_state_manager::GraphwarGameStateManager::request_update_function	V1	一致	graphwar_game_state_manage	0x4ac18c	L 轴 + Android 同名，双向对上
+A	0x476320	graphwar_game_state_manager::GraphwarGameStateManager::set_player_num_soldiers	V1	一致	graphwar_game_state_manage	0x4ac520	L 轴 + Android 同名，双向对上
+A	0x4764b0	graphwar_game_state_manager::GraphwarGameStateManager::request_axis_mode_change	V1	一致	graphwar_game_state_manage	0x4ac6ec	L 轴 + Android 同名，双向对上
+A	0x4765f0	graphwar_game_state_manager::GraphwarGameStateManager::request_time_mode_change	V1	一致	graphwar_game_state_manage	0x4ac868	L 轴 + Android 同名，双向对上
+A	0x476730	graphwar_game_state_manager::GraphwarGameStateManager::request_turn_mode_change	V1	一致	graphwar_game_state_manage	0x4ac9e8	L 轴 + Android 同名，双向对上
+A	0x476830	graphwar_game_state_manager::GraphwarGameStateManager::remove_soldier_from_player	V1	一致	graphwar_game_state_manage	0x4acb34	L 轴 + Android 同名，双向对上
+A	0x476a20	graphwar_game_state_manager::GraphwarGameStateManager::handle_entity_removed_event	V1	一致	graphwar_game_state_manage	0x4acd44	L 轴 + Android 同名，双向对上
+A	0x477140	graphwar_game_state_manager::GraphwarGameStateManager::handle_new_connection_event	V1	一致	graphwar_game_state_manage	0x4ad3b4	L 轴 + Android 同名，双向对上
+A	0x477410	graphwar_game_state_manager::GraphwarGameStateManager::request_function_mode_change	V1	一致	graphwar_game_state_manage	0x4ad698	L 轴 + Android 同名，双向对上
+A	0x477540	graphwar_game_state_manager::GraphwarGameStateManager::handle_connection_removed_event	V1	一致	graphwar_game_state_manage	0x4ad808	L 轴 + Android 同名，双向对上
+A	0x477bc0	graphwar_game_state_manager::GraphwarGameStateManager::new	V1	一致	graphwar_game_state_manage	0x4ade6c	L 轴 + Android 同名，双向对上
+A	0x477fa0	graphwar_game_state_manager::GraphwarGameStateManager::set_lock	V1	一致	graphwar_game_state_manage	0x4ae258	L 轴 + Android 同名，双向对上
+A	0x478010	graphwar_game_state_manager::GraphwarGameStateManager::set_name	V1	一致	graphwar_game_state_manage	0x4ae2d4	L 轴 + Android 同名，双向对上
+A	0x4780c0	graphwar_game_state_manager::GraphwarGameStateManager::set_state	V1	一致	graphwar_game_state_manage	0x4ae398	L 轴 + Android 同名，双向对上
+A	0x4782f0	graphwar_entity_effect_manager::GraphwarEntityEffectManager::subscribe_to_events_event_handler::{{closure}}	V3	Android 侧无同名函数	graphwar_entity_effect_man	0x3e9c58	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x4783f0	graphwar_entity_effect_manager::GraphwarEntityEffectManager::handle_entity_removed_event::panic_cold_explicit	V3	Android 侧无同名函数	graphwar_entity_effect_man	0x3e9ac4	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x478490	graphwar_entity_effect_manager::GraphwarEntityEffectManager::new	V1	一致	graphwar_entity_effect_man	0x3e9f40	L 轴 + Android 同名，双向对上
+A	0x4785f0	graphwar_computer_player_manager::GraphwarComputerPlayerManager::handle_tick	V1	一致	graphwar_computer_player_m	0x4ae624	L 轴 + Android 同名，双向对上
+A	0x478fc0	graphwar_computer_player_manager::GraphwarComputerPlayerManager::add_computer_player	V1	一致	graphwar_computer_player_m	0x4aedb8	L 轴 + Android 同名，双向对上
+A	0x479520	graphwar_computer_player_manager::GraphwarComputerPlayerManager::handle_turn_info_event	V1	一致	graphwar_computer_player_m	0x4af258	L 轴 + Android 同名，双向对上
+A	0x47a520	graphwar_computer_player_manager::GraphwarComputerPlayerManager::handle_entity_removed_event	V1	一致	graphwar_computer_player_m	0x4b0098	L 轴 + Android 同名，双向对上
+A	0x47a720	graphwar_computer_player_manager::GraphwarComputerPlayerManager::new	V1	一致	graphwar_computer_player_m	0x4b02a4	L 轴 + Android 同名，双向对上
+A	0x498c70	function_drawer::FunctionDrawer::update_function	V1	一致	function_drawer::FunctionD	0x390b40	L 轴 + Android 同名，双向对上
+A	0x499740	graphwar_level_manager::GraphwarLevelManager::setup_level	V1	一致	graphwar_level_manager::Gr	0x3f0644	L 轴 + Android 同名，双向对上
+A	0x49e570	graphwar_level_manager::GraphwarLevelManager::setup_level_0	V4	一致（Android 同名实例 2 个）	graphwar_level_manager::Gr	0x3f5a7c	源码级同一 fn 的多份机器码
+A	0x49e650	graphwar_level_manager::GraphwarLevelManager::setup_level_0	V4	一致（Android 同名实例 2 个）	graphwar_level_manager::Gr	0x3f5820	源码级同一 fn 的多份机器码
+A	0x49e880	graphwar_level_manager::GraphwarLevelManager::setup_level_1	V4	一致（Android 同名实例 2 个）	graphwar_level_manager::Gr	0x3f5ba8	源码级同一 fn 的多份机器码
+A	0x49eab0	graphwar_level_manager::GraphwarLevelManager::setup_level_1::{{closure}}	V3	Android 侧无同名函数	graphwar_level_manager::Gr	0x3f5e04	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x49eb90	graphwar_level_manager::GraphwarLevelManager::setup_level_2	V4	一致（Android 同名实例 2 个）	graphwar_level_manager::Gr	0x3f5f30	源码级同一 fn 的多份机器码
+A	0x49f1c0	graphwar_level_manager::GraphwarLevelManager::setup_level_2::{{closure}}	V3	Android 侧无同名函数	graphwar_level_manager::Gr	0x3f64ec	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x49f370	graphwar_level_manager::GraphwarLevelManager::setup_level_3::{{closure}}	V3	Android 侧无同名函数	graphwar_level_manager::Gr	0x3f676c	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x49f510	graphwar_level_manager::GraphwarLevelManager::setup_level_4	V4	一致（Android 同名实例 3 个）	graphwar_level_manager::Gr	0x3f69e4	源码级同一 fn 的多份机器码
+A	0x49fea0	graphwar_level_manager::GraphwarLevelManager::setup_level_4::{{closure}}	V3	Android 侧无同名函数	graphwar_level_manager::Gr	0x3f7400	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x4a04d0	graphwar_level_manager::GraphwarLevelManager::setup_level_5	V4	一致（Android 同名实例 3 个）	graphwar_level_manager::Gr	0x3f79fc	源码级同一 fn 的多份机器码
+A	0x4a0db0	graphwar_level_manager::GraphwarLevelManager::setup_level_5::{{closure}}	V3	Android 侧无同名函数	graphwar_level_manager::Gr	0x3f8370	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x4a1310	graphwar_level_manager::GraphwarLevelManager::setup_level_6	V4	一致（Android 同名实例 3 个）	graphwar_level_manager::Gr	0x3f87fc	源码级同一 fn 的多份机器码
+A	0x4a1cd0	graphwar_level_manager::GraphwarLevelManager::setup_level_6::{{closure}}	V3	Android 侧无同名函数	graphwar_level_manager::Gr	0x3f9298	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x4a2430	graphwar_level_manager::GraphwarLevelManager::setup_level_7	V4	一致（Android 同名实例 3 个）	graphwar_level_manager::Gr	0x3f98e0	源码级同一 fn 的多份机器码
+A	0x4a2dc0	graphwar_level_manager::GraphwarLevelManager::setup_level_7::{{closure}}	V3	Android 侧无同名函数	graphwar_level_manager::Gr	0x3fa31c	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x4a33f0	graphwar_level_manager::GraphwarLevelManager::setup_level_8	V4	一致（Android 同名实例 2 个）	graphwar_level_manager::Gr	0x3fa8f4	源码级同一 fn 的多份机器码
+A	0x4a3df0	graphwar_level_manager::GraphwarLevelManager::setup_level_8::{{closure}}	V3	Android 侧无同名函数	graphwar_level_manager::Gr	0x3fb3a8	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x4a43a0	graphwar_level_manager::GraphwarLevelManager::setup_level_9	V4	一致（Android 同名实例 2 个）	graphwar_level_manager::Gr	0x3fb8f8	源码级同一 fn 的多份机器码
+A	0x4a4c80	graphwar_level_manager::GraphwarLevelManager::setup_level_9::{{closure}}	V3	Android 侧无同名函数	graphwar_level_manager::Gr	0x3fc26c	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x4a5390	graphwar_level_manager::GraphwarLevelManager::setup_level_10::{{closure}}	V3	Android 侧无同名函数	graphwar_level_manager::Gr	0x3fc898	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x4a5940	graphwar_level_manager::GraphwarLevelManager::setup_level_11::{{closure}}	V3	Android 侧无同名函数	graphwar_level_manager::Gr	0x3fcde8	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x4a5e80	graphwar_level_manager::GraphwarLevelManager::setup_level_12	V4	一致（Android 同名实例 2 个）	graphwar_level_manager::Gr	0x3fd610	源码级同一 fn 的多份机器码
+A	0x4a6020	graphwar_level_manager::GraphwarLevelManager::setup_level_12	V4	一致（Android 同名实例 2 个）	graphwar_level_manager::Gr	0x3fd250	源码级同一 fn 的多份机器码
+A	0x4a63d0	graphwar_level_manager::GraphwarLevelManager::setup_level_13::{{closure}}	V3	Android 侧无同名函数	graphwar_level_manager::Gr	0x3fd888	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x4a6980	graphwar_level_manager::GraphwarLevelManager::setup_level_14	V4	一致（Android 同名实例 2 个）	graphwar_level_manager::Gr	0x3fddd8	源码级同一 fn 的多份机器码
+A	0x4a73b0	graphwar_level_manager::GraphwarLevelManager::setup_level_14::{{closure}}	V3	Android 侧无同名函数	graphwar_level_manager::Gr	0x3fe8b0	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x4a78f0	graphwar_level_manager::GraphwarLevelManager::setup_level_15	V4	一致（Android 同名实例 2 个）	graphwar_level_manager::Gr	0x3fed18	源码级同一 fn 的多份机器码
+A	0x4a8320	graphwar_level_manager::GraphwarLevelManager::setup_level_15::{{closure}}	V3	Android 侧无同名函数	graphwar_level_manager::Gr	0x3ff7ec	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x4a8860	graphwar_level_manager::GraphwarLevelManager::setup_level_16	V4	一致（Android 同名实例 3 个）	graphwar_level_manager::Gr	0x3ffc54	源码级同一 fn 的多份机器码
+A	0x4a91b0	graphwar_level_manager::GraphwarLevelManager::setup_level_16	V4	一致（Android 同名实例 3 个）	graphwar_level_manager::Gr	0x400794	源码级同一 fn 的多份机器码
+A	0x4a93e0	graphwar_level_manager::GraphwarLevelManager::setup_level_16	V4	一致（Android 同名实例 3 个）	graphwar_level_manager::Gr	0x400668	源码级同一 fn 的多份机器码
+A	0x4a94c0	graphwar_level_manager::GraphwarLevelManager::setup_level_17	V4	一致（Android 同名实例 2 个）	graphwar_level_manager::Gr	0x4009f0	源码级同一 fn 的多份机器码
+A	0x4a9f00	graphwar_level_manager::GraphwarLevelManager::setup_level_17::{{closure}}	V3	Android 侧无同名函数	graphwar_level_manager::Gr	0x4014e4	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x4aa640	graphwar_level_manager::GraphwarLevelManager::setup_level_18	V4	一致（Android 同名实例 2 个）	graphwar_level_manager::Gr	0x401b2c	源码级同一 fn 的多份机器码
+A	0x4aafc0	graphwar_level_manager::GraphwarLevelManager::setup_level_18::{{closure}}	V3	Android 侧无同名函数	graphwar_level_manager::Gr	0x40252c	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x4ab500	graphwar_level_manager::GraphwarLevelManager::setup_level_19	V4	一致（Android 同名实例 2 个）	graphwar_level_manager::Gr	0x402994	源码级同一 fn 的多份机器码
+A	0x4abf00	graphwar_level_manager::GraphwarLevelManager::setup_level_19::{{closure}}	V3	Android 侧无同名函数	graphwar_level_manager::Gr	0x403414	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x4ac440	graphwar_level_manager::GraphwarLevelManager::setup_level_20	V4	一致（Android 同名实例 2 个）	graphwar_level_manager::Gr	0x40387c	源码级同一 fn 的多份机器码
+A	0x4ace40	graphwar_level_manager::GraphwarLevelManager::setup_level_20::{{closure}}	V3	Android 侧无同名函数	graphwar_level_manager::Gr	0x4042f8	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x4b2890	entity_drawer::EntityDrawer::draw	V1	一致	entity_drawer::EntityDrawe	0x4b9430	L 轴 + Android 同名，双向对上
+A	0x4b4130	entity_drawer::EntityDrawer::ready	V4	一致（Android 同名实例 2 个）	entity_drawer::EntityDrawe	0x4bab44	源码级同一 fn 的多份机器码
+A	0x4b4b60	entity_drawer::EntityDrawer::process	V1	一致	entity_drawer::EntityDrawe	0x4bb508	L 轴 + Android 同名，双向对上
+A	0x4b5df0	graphwar_plane::GraphwarPlane::draw	V1	一致	graphwar_plane::GraphwarPl	0x4bc54c	L 轴 + Android 同名，双向对上
+A	0x4b7380	graphwar_plane::GraphwarPlane::init	V1	一致	graphwar_plane::GraphwarPl	0x4bd73c	L 轴 + Android 同名，双向对上
+A	0x4b7a70	graphwar_plane::GraphwarPlane::ready	V4	一致（Android 同名实例 3 个）	graphwar_plane::GraphwarPl	0x4bdc74	源码级同一 fn 的多份机器码
+A	0x4b83f0	graphwar_plane::GraphwarPlane::process	V1	一致	graphwar_plane::GraphwarPl	0x4be534	L 轴 + Android 同名，双向对上
+A	0x4b9530	entity_drawer::EntityDrawer::update_sprite	V1	一致	entity_drawer::EntityDrawe	0x4bf418	L 轴 + Android 同名，双向对上
+A	0x4b9e70	entity_drawer::EntityDrawer::get_entity_hat_sprite	V1	一致	entity_drawer::EntityDrawe	0x4bfbb0	L 轴 + Android 同名，双向对上
+A	0x4ba4a0	entity_drawer::EntityDrawer::get_entity_name_label	V1	一致	entity_drawer::EntityDrawe	0x4c0084	L 轴 + Android 同名，双向对上
+A	0x4bb0a0	entity_drawer::EntityDrawer::get_entity_face_sprite	V1	一致	entity_drawer::EntityDrawe	0x4c0b94	L 轴 + Android 同名，双向对上
+A	0x4bb6b0	entity_drawer::EntityDrawer::get_entity_skin_sprite	V1	一致	entity_drawer::EntityDrawe	0x4c1068	L 轴 + Android 同名，双向对上
+A	0x4bcc60	graphwar_setup_control::_::_::__init::__inner_init	V4	一致（Android 同名实例 12 个）	graphwar_setup_control::_:	0x4c28b8	源码级同一 fn 的多份机器码
+A	0x4bd430	graphwar_long_press_animation::_::_::__init::__inner_init	V4	一致（Android 同名实例 4 个）	graphwar_long_press_animat	0x4c2fd4	源码级同一 fn 的多份机器码
+A	0x4be3e0	graphwar_plane::GraphwarPlane::obstacle_partial_update_event	V1	一致	graphwar_plane::GraphwarPl	0x4c38d8	L 轴 + Android 同名，双向对上
+A	0x4be6e0	graphwar_draw_util::GraphwarDrawUtil::get_team_overview	V1	一致	graphwar_draw_util::Graphw	0x4c3b38	L 轴 + Android 同名，双向对上
+A	0x4bef20	graphwar_audio_control::GraphwarAudioControl::game_state_event	V1	一致	graphwar_audio_control::Gr	0x4c42c8	L 轴 + Android 同名，双向对上
+A	0x4bf090	graphwar_audio_control::GraphwarAudioControl::effect_info_event	V1	一致	graphwar_audio_control::Gr	0x4c442c	L 轴 + Android 同名，双向对上
+A	0x4bf550	graphwar_audio_control::GraphwarAudioControl::new	V1	一致	graphwar_audio_control::Gr	0x4c4964	L 轴 + Android 同名，双向对上
+A	0x4bfe10	graphwar_audio_control::GraphwarAudioControl::process	V1	一致	graphwar_audio_control::Gr	0x4c5040	L 轴 + Android 同名，双向对上
+A	0x4c11d0	graphwar_audio_control::GraphwarAudioControl::set_muted	V1	一致	graphwar_audio_control::Gr	0x4c60ec	L 轴 + Android 同名，双向对上
+A	0x4c1ae0	graphwar_setup_control::GraphwarSetupControl::clear_state	V1	一致	graphwar_setup_control::Gr	0x4c6878	L 轴 + Android 同名，双向对上
+A	0x4c1e40	graphwar_setup_control::GraphwarSetupControl::update_name	V1	一致	graphwar_setup_control::Gr	0x4c6b9c	L 轴 + Android 同名，双向对上
+A	0x4c2140	graphwar_setup_control::GraphwarSetupControl::update_rank	V1	一致	graphwar_setup_control::Gr	0x4c6eb4	L 轴 + Android 同名，双向对上
+A	0x4c27f0	graphwar_setup_control::GraphwarSetupControl::on_text_change	V1	一致	graphwar_setup_control::Gr	0x4c74e0	L 轴 + Android 同名，双向对上
+A	0x4c2b90	graphwar_setup_control::GraphwarSetupControl::is_leader_local	V1	一致	graphwar_setup_control::Gr	0x4c7840	L 轴 + Android 同名，双向对上
+A	0x4c2ef0	graphwar_setup_control::GraphwarSetupControl::update_soldiers	V1	一致	graphwar_setup_control::Gr	0x4c7c1c	L 轴 + Android 同名，双向对上
+A	0x4c44b0	graphwar_setup_control::GraphwarSetupControl::on_chat_submitted	V1	一致	graphwar_setup_control::Gr	0x4c8aec	L 轴 + Android 同名，双向对上
+A	0x4c4850	graphwar_setup_control::GraphwarSetupControl::force_title_update	V1	一致	graphwar_setup_control::Gr	0x4c8e54	L 轴 + Android 同名，双向对上
+A	0x4c4c20	graphwar_setup_control::GraphwarSetupControl::connect_entry_buttons	V4	一致（Android 同名实例 5 个）	graphwar_setup_control::Gr	0x4c9270	源码级同一 fn 的多份机器码
+A	0x4c6f40	graphwar_replay_control::GraphwarReplayScreenControl::process	V1	一致	graphwar_replay_control::G	0x4cb138	L 轴 + Android 同名，双向对上
+A	0x4cf670	graphwar_setup_control::GraphwarSetupControl::ready	V4	一致（Android 同名实例 9 个）	graphwar_setup_control::Gr	0x4cceb8	源码级同一 fn 的多份机器码
+A	0x4d1f10	graphwar_setup_control::GraphwarSetupControl::ready	V4	一致（Android 同名实例 9 个）	graphwar_setup_control::Gr	0x4cfa30	源码级同一 fn 的多份机器码
+A	0x4d2600	graphwar_setup_control::GraphwarSetupControl::ready	V4	一致（Android 同名实例 9 个）	graphwar_setup_control::Gr	0x4cef94	源码级同一 fn 的多份机器码
+A	0x4d2f70	graphwar_setup_control::GraphwarSetupControl::ready	V4	一致（Android 同名实例 9 个）	graphwar_setup_control::Gr	0x4cf804	源码级同一 fn 的多份机器码
+A	0x4d3180	graphwar_setup_control::GraphwarSetupControl::process	V1	一致	graphwar_setup_control::Gr	0x4d00a8	L 轴 + Android 同名，双向对上
+A	0x4d8100	graphwar_long_press_animation::GraphwarLongPressAnimation::draw	V1	一致	graphwar_long_press_animat	0x4d44f4	L 轴 + Android 同名，双向对上
+A	0x4e1520	effect_drawer::EffectDrawer::draw	V1	一致	effect_drawer::EffectDrawe	0x43c578	L 轴 + Android 同名，双向对上
+A	0x4e25b0	effect_drawer::EffectDrawer::ready	V4	一致（Android 同名实例 3 个）	effect_drawer::EffectDrawe	0x43d294	源码级同一 fn 的多份机器码
+A	0x4e2a30	effect_drawer::EffectDrawer::ready::{{closure}}	V3	Android 侧无同名函数	effect_drawer::EffectDrawe	0x43d930	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
+A	0x4e2d50	effect_drawer::EffectDrawer::ready	V4	一致（Android 同名实例 3 个）	effect_drawer::EffectDrawe	0x43d748	源码级同一 fn 的多份机器码
+A	0x4e2f80	effect_drawer::EffectDrawer::process	V1	一致	effect_drawer::EffectDrawe	0x43dbf4	L 轴 + Android 同名，双向对上
+A	0x4e5400	player_showcase::PlayerShowcase::draw	V1	一致	player_showcase::PlayerSho	0x43fe7c	L 轴 + Android 同名，双向对上
+A	0x4e6480	player_showcase::PlayerShowcase::ready	V1	一致	player_showcase::PlayerSho	0x4408d8	L 轴 + Android 同名，双向对上
+A	0x4e68f0	player_showcase::PlayerShowcase::process	V1	一致	player_showcase::PlayerSho	0x440d2c	L 轴 + Android 同名，双向对上
+A	0x4e7470	axis_drawer::_::_::__init::__inner_init	V4	一致（Android 同名实例 4 个）	axis_drawer::_::_::__init:	0x441a14	源码级同一 fn 的多份机器码
+A	0x4e7bc0	effect_drawer::_::_::__init::__inner_init	V4	一致（Android 同名实例 4 个）	effect_drawer::_::_::__ini	0x442178	源码级同一 fn 的多份机器码
+A	0x4e8020	graphwar_button::_::_::__init::__inner_init	V4	一致（Android 同名实例 10 个）	graphwar_button::_::_::__i	0x4428e4	源码级同一 fn 的多份机器码
+A	0x4e9c90	graphwar_ad_switch::_::_::__init::__inner_init	V4	一致（Android 同名实例 8 个）	graphwar_ad_switch::_::_::	0x443f08	源码级同一 fn 的多份机器码
+A	0x4ea480	graphwar_function_input::_::_::__init::__inner_init	V4	一致（Android 同名实例 12 个）	graphwar_function_input::_	0x444674	源码级同一 fn 的多份机器码
+A	0x4eb86a	math_function::MathFunction::remove_offset	V1	一致	math_function::MathFunctio	0x44510c	L 轴 + Android 同名，双向对上
+A	0x4eccb3	math_function::MathFunction::to_string_recursive	V1	一致	math_function::MathFunctio	0x445a38	L 轴 + Android 同名，双向对上
+A	0x4ed670	math_function::MathFunction::new	V3	Android 侧无可比的同名函数		0x4d4cf8	L 轴首选是同模块外/无名候选（内联痕迹）；不构成名字冲突
+A	0x4ee720	math_function::FunctionRandomizer::mutate_fine_tune	V1	一致	math_function::FunctionRan	0x4478bc	L 轴 + Android 同名，双向对上
+A	0x4efd70	player_showcase::PlayerShowcase::on_text_change	V1	一致	player_showcase::PlayerSho	0x448d10	L 轴 + Android 同名，双向对上
+A	0x4f0610	graphwar_video_writer::GraphwarVideoWriter::write_video	V1	一致	graphwar_video_writer::Gra	0x4494e4	L 轴 + Android 同名，双向对上
+A	0x4f0bb0	graphwar_video_writer::GraphwarVideoWriter::new	V1	一致	graphwar_video_writer::Gra	0x449964	L 轴 + Android 同名，双向对上
+A	0x4f0e20	graphwar_video_writer::GraphwarVideoWriter::add_frame	V1	一致	graphwar_video_writer::Gra	0x449b74	L 轴 + Android 同名，双向对上
+A	0x4f2200	graphwar_function_input::GraphwarFunctionInput::force_update_cb	V1	一致	graphwar_function_input::G	0x44ac3c	L 轴 + Android 同名，双向对上
+A	0x4f3210	graphwar_function_input::GraphwarFunctionInput::move_caret_left	V1	一致	graphwar_function_input::G	0x44b9c0	L 轴 + Android 同名，双向对上
+A	0x4f3910	graphwar_function_input::GraphwarFunctionInput::move_caret_right	V1	一致	graphwar_function_input::G	0x44c054	L 轴 + Android 同名，双向对上
+A	0x4f44c0	graphwar_function_input::GraphwarFunctionInput::delete_token_at_caret	V1	一致	graphwar_function_input::G	0x44ccc0	L 轴 + Android 同名，双向对上
+A	0x4f4a60	graphwar_function_input::GraphwarFunctionInput::delete_token_after_caret	V1	一致	graphwar_function_input::G	0x44d218	L 轴 + Android 同名，双向对上
+A	0x4f5450	polish_notation_converter::PolishNotationConverter::reorder_recursive	V1	一致	polish_notation_converter:	0x44db78	L 轴 + Android 同名，双向对上
+A	0x4f57d0	graphwar_player_screen_control::GraphwarPlayerScreenControl::load_items	V1	一致	graphwar_player_screen_con	0x44ded0	L 轴 + Android 同名，双向对上
+A	0x4f77a0	graphwar_player_screen_control::GraphwarPlayerScreenControl::hat_button_pressed	V1	一致	graphwar_player_screen_con	0x44f5fc	L 轴 + Android 同名，双向对上
+A	0x4f7870	graphwar_player_screen_control::GraphwarPlayerScreenControl::face_button_pressed	V1	一致	graphwar_player_screen_con	0x44f6d0	L 轴 + Android 同名，双向对上
+A	0x4f7940	graphwar_player_screen_control::GraphwarPlayerScreenControl::skin_button_pressed	V1	一致	graphwar_player_screen_con	0x44f7a4	L 轴 + Android 同名，双向对上
+A	0x4f8050	graphwar_player_screen_control::GraphwarPlayerScreenControl::update_buttons_background	V1	一致	graphwar_player_screen_con	0x44fe3c	L 轴 + Android 同名，双向对上
+A	0x4f8850	graphwar_player_screen_control::GraphwarPlayerScreenControl::lock	V1	一致	graphwar_player_screen_con	0x4504bc	L 轴 + Android 同名，双向对上
+A	0x4f8990	graphwar_player_screen_control::GraphwarPlayerScreenControl::unlock	V1	一致	graphwar_player_screen_con	0x450600	L 轴 + Android 同名，双向对上
+A	0x4f8ad0	graphwar_player_screen_control::GraphwarPlayerScreenControl::pending	V1	一致	graphwar_player_screen_con	0x450744	L 轴 + Android 同名，双向对上
+A	0x4f90b0	graphwar_lan_vbox::GraphwarLanVBox::process	V1	一致	graphwar_lan_vbox::Graphwa	0x450c20	L 轴 + Android 同名，双向对上
+A	0x4fd1b0	graphwar_function_input::GraphwarFunctionInput::ready	V1	一致	graphwar_function_input::G	0x4544dc	L 轴 + Android 同名，双向对上
+A	0x4fd4a0	graphwar_function_input::GraphwarFunctionInput::process	V1	一致	graphwar_function_input::G	0x4547a0	L 轴 + Android 同名，双向对上
+A	0x514a10	graphwar_backend::GraphwarBackend::button_pressed	V1	一致	graphwar_backend::Graphwar	0x406d3c	L 轴 + Android 同名，双向对上
+A	0x514b40	graphwar_backend::GraphwarBackend::subscribe_to_event	V1	一致	graphwar_backend::Graphwar	0x406e80	L 轴 + Android 同名，双向对上
+A	0x514d80	graphwar_backend::GraphwarBackend::resubscribe_to_events	V1	一致	graphwar_backend::Graphwar	0x407114	L 轴 + Android 同名，双向对上
+A	0x514f20	graphwar_backend::GraphwarBackend::start_client_to_replay	V1	一致	graphwar_backend::Graphwar	0x4072b0	L 轴 + Android 同名，双向对上
+A	0x515dc0	graphwar_backend::GraphwarBackend::process	V1	一致	graphwar_backend::Graphwar	0x407ef0	L 轴 + Android 同名，双向对上
+A	0x516370	graphwar_game_client::GraphwarGameClient::disconnect	V1	一致	graphwar_game_client::Grap	0x4087fc	L 轴 + Android 同名，双向对上
+A	0x516510	graphwar_game_client::GraphwarGameClient::fire_function	V1	一致	graphwar_game_client::Grap	0x408a0c	L 轴 + Android 同名，双向对上
+A	0x516970	graphwar_game_client::GraphwarGameClient::request_add_bot	V1	一致	graphwar_game_client::Grap	0x408e7c	L 轴 + Android 同名，双向对上
+A	0x516ad0	graphwar_game_client::GraphwarGameClient::update_function	V1	一致	graphwar_game_client::Grap	0x409028	L 轴 + Android 同名，双向对上
+A	0x516fd0	graphwar_game_client::GraphwarGameClient::wait_for_players	V1	一致	graphwar_game_client::Grap	0x4094ec	L 轴 + Android 同名，双向对上
+A	0x5172d0	graphwar_game_client::GraphwarGameClient::send_chat_message	V1	一致	graphwar_game_client::Grap	0x409818	L 轴 + Android 同名，双向对上
+A	0x517490	graphwar_game_client::GraphwarGameClient::request_lock_change	V1	一致	graphwar_game_client::Grap	0x409a30	L 轴 + Android 同名，双向对上
+A	0x517690	graphwar_game_client::GraphwarGameClient::new	V1	一致	graphwar_game_client::Grap	0x409c70	L 轴 + Android 同名，双向对上
+A	0x518240	graphwar_game_client::GraphwarGameClient::tick	V1	一致	graphwar_game_client::Grap	0x40a9bc	L 轴 + Android 同名，双向对上
+A	0x518320	graphwar_game_client::GraphwarGameClient::connect	V1	一致	graphwar_game_client::Grap	0x40aae0	L 轴 + Android 同名，双向对上
+A	0x518400	graphwar_game_client::GraphwarGameClient::process	V1	一致	graphwar_game_client::Grap	0x40ac00	L 轴 + Android 同名，双向对上
+A	0x518530	graphwar_mode_manager::GraphwarModeManager::set_time_mode	V1	一致	graphwar_mode_manager::Gra	0x497e44	L 轴 + Android 同名，双向对上
+A	0x5185a0	graphwar_mode_manager::GraphwarModeManager::send_all_info_events	V1	一致	graphwar_mode_manager::Gra	0x497f3c	L 轴 + Android 同名，双向对上
+A	0x518f10	graphwar_name_manager::GraphwarNameManager::send_all_info_events	V1	一致	graphwar_name_manager::Gra	0x40ad58	L 轴 + Android 同名，双向对上
+A	0x519030	graphwar_name_manager::GraphwarNameManager::handle_entity_removed_event	V1	一致	graphwar_name_manager::Gra	0x40ae74	L 轴 + Android 同名，双向对上
+A	0x519350	graphwar_name_manager::GraphwarNameManager::set_name	V1	一致	graphwar_name_manager::Gra	0x40b190	L 轴 + Android 同名，双向对上
+A	0x519630	graphwar_tick_handler::GraphwarTickHandler::handle_connected_to_server_event	V1	一致	graphwar_tick_handler::Gra	0x40b4b8	L 轴 + Android 同名，双向对上
+A	0x519840	graphwar_tick_handler::GraphwarTickHandler::tick	V1	一致	graphwar_tick_handler::Gra	0x40b6e0	L 轴 + Android 同名，双向对上
+A	0x519d80	graphwar_effect_manager::GraphwarEffectManager::tick	V1	一致	graphwar_effect_manager::G	0x40bdd4	L 轴 + Android 同名，双向对上
+A	0x519f40	graphwar_local_player_manager::GraphwarLocalPlayerManager::handle_player_info	V1	一致	graphwar_local_player_mana	0x4115d0	L 轴 + Android 同名，双向对上
+A	0x51a570	graphwar_local_player_manager::GraphwarLocalPlayerManager::handle_connected_to_server	V1	一致	graphwar_local_player_mana	0x411be8	L 轴 + Android 同名，双向对上
+A	0x51a610	graphwar_local_player_manager::GraphwarLocalPlayerManager::handle_entity_removed_event	V1	一致	graphwar_local_player_mana	0x411c9c	L 轴 + Android 同名，双向对上
+A	0x51a750	graphwar_function_evolutionator::GraphwarFunctionEvolutionator::score_function	V1	一致	graphwar_function_evolutio	0x411ddc	L 轴 + Android 同名，双向对上
+A	0x51b440	graphwar_function_evolutionator::GraphwarFunctionEvolutionator::calculate_functions	V1	一致	graphwar_function_evolutio	0x412900	L 轴 + Android 同名，双向对上
+A	0x51d080	graphwar_function_evolutionator::GraphwarFunctionEvolutionator::calculate_functions_old	V1	一致	graphwar_function_evolutio	0x413da0	L 轴 + Android 同名，双向对上
+A	0x51eb90	graphwar_function_evolutionator::GraphwarFunctionEvolutionator::new	V1	一致	graphwar_function_evolutio	0x415158	L 轴 + Android 同名，双向对上
+# 【B 区】夹具内**同一地址出现多个不同名字**（名字层面的复原冲突）＋ Android 侧裁决
+区域	vaddr	size	夹具里的名字	Android 裁决
+B	0x3a2e10	9928	button_manager::ButtonManager::new; graphwar_root_node::GraphwarRootNode::ready	Android 支持 `graphwar_root_node::GraphwarRootNode::ready`（size 9928/7932）
+B	0x3a5660	246	graphwar_root_node::GraphwarRootNode::ready; graphwar_root_node::GraphwarRootNode::ready::{{closure}}	Android 支持 `graphwar_root_node::GraphwarRootNode::ready::{{closure}}`（size 246/264）
+B	0x3d4fa0	696	graphwar_game_recorder::GraphwarGameRecorder::save_event; graphwar_game_recorder::GraphwarGameRecorder::subscribe_to_events; graphwar_game_recorder::GraphwarGameRecorder::subscribe_to_events::{{closure}}	Android 支持 `graphwar_game_recorder::GraphwarGameRecorder::subscribe_to_events::{{closure}}`（size 696/744）
+B	0x3e2830	12505	graphwar_color_manager::GraphwarColorManager::set_color; graphwar_game_state_manager::GraphwarGameStateManager::report_fired_function; graphwar_remote_event_handler::GraphwarRemoteEventHandler::handle_server_remote_event	Android 支持 `graphwar_remote_event_handler::GraphwarRemoteEventHandler::handle_server_remote_event`（size 12505/11116）
+B	0x3ee190	5202	graphwar_obstacle_manager::GraphwarObstacleManager::get_image; obstacle_drawer::ObstacleDrawer::update	Android 支持 `obstacle_drawer::ObstacleDrawer::update`（size 5202/4688）
+B	0x3f06b0	1924	function_button_manager::FunctionButtonManager::new; function_button_manager::FunctionButtonManager::new::{{closure}}	Android 支持 `function_button_manager::FunctionButtonManager::new::{{closure}}`（size 1924/2040）
+B	0x44e8f0	2297	graphwar_game_server::GameServerData::subscribe_to_room_info_updates; graphwar_game_server::GameServerData::subscribe_to_room_info_updates::{{closure}}	Android 支持 `graphwar_game_server::GameServerData::subscribe_to_room_info_updates::{{closure}}`（size 2297/2260）
+B	0x4500c0	14745	graphwar_game_server::::game_server_thread; graphwar_game_server::_::game_server_thread; graphwar_server_connection_handler::GraphwarServerConnectionHandler::new	Android 支持 `graphwar_game_server::_::game_server_thread`（size 14745/13308）
+B	0x45b020	2138	graphwar_server_connection_handler::GraphwarServerConnectionHandler::subscribe_to_events_event_handler::{{closure}}; graphwar_server_connection_handler::GraphwarServerConnectionHandler::tick	Android 支持 `graphwar_server_connection_handler::GraphwarServerConnectionHandler::tick`（size 2138/1796）
+B	0x465780	231	graphwar_target_manager::GraphwarTargetManager::send_all_info_events; graphwar_target_manager::GraphwarTargetManager::subscribe_to_events_event_handler	Android 首选 `graphwar_target_manager::GraphwarTargetManager::subscribe_to_events_event_handler::{{closure}}`（size 231/740）—— 与夹具里任何一个名字都不同
+B	0x465870	94	graphwar_target_manager::GraphwarTargetManager::handle_entity_removed_event; graphwar_target_manager::GraphwarTargetManager::subscribe_to_events_event_handler; graphwar_target_manager::GraphwarTargetManager::subscribe_to_events_event_handler::{{closure}}	Android 支持 `graphwar_target_manager::GraphwarTargetManager::subscribe_to_events_event_handler::{{closure}}`（size 94/404）
+B	0x4661a0	2677	graphwar_level_generator::GraphwarLevelGenerator::generate_level; graphwar_level_generator::GraphwarLevelGenerator::generate_level::{{closure}}	Android 支持 `graphwar_level_generator::GraphwarLevelGenerator::generate_level::{{closure}}`（size 2677/2192）
+B	0x46f690	4521	graphwar_game_state_manager::GraphwarGameStateManager::start_game; graphwar_turn_manager::GraphwarTurnManager::initialize_turns	Android 支持 `graphwar_game_state_manager::GraphwarGameStateManager::start_game`（size 4521/3996）
+B	0x4759f0	1376	graphwar_game_state_manager::GraphwarGameStateManager::queue_end_turn_trigger; graphwar_game_state_manager::GraphwarGameStateManager::queue_end_turn_trigger::{{closure}}	Android 支持 `graphwar_game_state_manager::GraphwarGameStateManager::queue_end_turn_trigger::{{closure}}`（size 1376/1420）
+B	0x4782f0	243	graphwar_entity_effect_manager::GraphwarEntityEffectManager::send_all_info_events; graphwar_entity_effect_manager::GraphwarEntityEffectManager::subscribe_to_events_event_handler; graphwar_entity_effect_manager::GraphwarEntityEffectManager::subscribe_to_events_event_handler::{{closure}}	Android 支持 `graphwar_entity_effect_manager::GraphwarEntityEffectManager::subscribe_to_events_event_handler::{{closure}}`（size 243/744）
+B	0x4783f0	94	graphwar_entity_effect_manager::GraphwarEntityEffectManager::handle_entity_removed_event; graphwar_entity_effect_manager::GraphwarEntityEffectManager::subscribe_to_events_event_handler	Android 首选 `graphwar_entity_effect_manager::GraphwarEntityEffectManager::subscribe_to_events_event_handler::{{closure}}`（size 94/404）—— 与夹具里任何一个名字都不同
+B	0x499740	20010	graphwar_level_manager::GraphwarLevelManager::setup_level; graphwar_level_manager::GraphwarLevelManager::setup_level_10; graphwar_level_manager::GraphwarLevelManager::setup_level_11; graphwar_level_manager::GraphwarLevelManager::setup_level_12; graphwar_level_manager::GraphwarLevelManager::setup_level_13	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level`（size 20010/20956）
+B	0x49eab0	217	graphwar_level_manager::GraphwarLevelManager::setup_level_1; graphwar_level_manager::GraphwarLevelManager::setup_level_1::{{closure}}	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level_1::{{closure}}`（size 217/300）
+B	0x49f1c0	401	graphwar_level_manager::GraphwarLevelManager::setup_level_2; graphwar_level_manager::GraphwarLevelManager::setup_level_2::{{closure}}	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level_2::{{closure}}`（size 401/632）
+B	0x49f370	401	graphwar_level_manager::GraphwarLevelManager::setup_level_3; graphwar_level_manager::GraphwarLevelManager::setup_level_3::{{closure}}	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level_3::{{closure}}`（size 401/632）
+B	0x49fea0	1583	graphwar_level_manager::GraphwarLevelManager::setup_level_4; graphwar_level_manager::GraphwarLevelManager::setup_level_4::{{closure}}	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level_4::{{closure}}`（size 1583/1496）
+B	0x4a0db0	1340	graphwar_level_manager::GraphwarLevelManager::setup_level_5; graphwar_level_manager::GraphwarLevelManager::setup_level_5::{{closure}}	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level_5::{{closure}}`（size 1340/1128）
+B	0x4a1cd0	1845	graphwar_level_manager::GraphwarLevelManager::setup_level_6; graphwar_level_manager::GraphwarLevelManager::setup_level_6::{{closure}}	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level_6::{{closure}}`（size 1845/1608）
+B	0x4a2dc0	1583	graphwar_level_manager::GraphwarLevelManager::setup_level_7; graphwar_level_manager::GraphwarLevelManager::setup_level_7::{{closure}}	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level_7::{{closure}}`（size 1583/1496）
+B	0x4a3df0	1451	graphwar_level_manager::GraphwarLevelManager::setup_level_8; graphwar_level_manager::GraphwarLevelManager::setup_level_8::{{closure}}	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level_8::{{closure}}`（size 1451/1360）
+B	0x4a4c80	1340	graphwar_level_manager::GraphwarLevelManager::setup_level_9; graphwar_level_manager::GraphwarLevelManager::setup_level_9::{{closure}}	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level_9::{{closure}}`（size 1340/1128）
+B	0x4a5390	1451	graphwar_level_manager::GraphwarLevelManager::setup_level_10; graphwar_level_manager::GraphwarLevelManager::setup_level_10::{{closure}}	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level_10::{{closure}}`（size 1451/1360）
+B	0x4a5940	1340	graphwar_level_manager::GraphwarLevelManager::setup_level_11; graphwar_level_manager::GraphwarLevelManager::setup_level_11::{{closure}}	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level_11::{{closure}}`（size 1340/1128）
+B	0x4a63d0	1451	graphwar_level_manager::GraphwarLevelManager::setup_level_13; graphwar_level_manager::GraphwarLevelManager::setup_level_13::{{closure}}	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level_13::{{closure}}`（size 1451/1360）
+B	0x4a73b0	1340	graphwar_level_manager::GraphwarLevelManager::setup_level_14; graphwar_level_manager::GraphwarLevelManager::setup_level_14::{{closure}}	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level_14::{{closure}}`（size 1340/1128）
+B	0x4a8320	1340	graphwar_level_manager::GraphwarLevelManager::setup_level_15; graphwar_level_manager::GraphwarLevelManager::setup_level_15::{{closure}}	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level_15::{{closure}}`（size 1340/1128）
+B	0x4a9f00	1845	graphwar_level_manager::GraphwarLevelManager::setup_level_17; graphwar_level_manager::GraphwarLevelManager::setup_level_17::{{closure}}	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level_17::{{closure}}`（size 1845/1608）
+B	0x4aafc0	1340	graphwar_level_manager::GraphwarLevelManager::setup_level_18; graphwar_level_manager::GraphwarLevelManager::setup_level_18::{{closure}}	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level_18::{{closure}}`（size 1340/1128）
+B	0x4abf00	1340	graphwar_level_manager::GraphwarLevelManager::setup_level_19; graphwar_level_manager::GraphwarLevelManager::setup_level_19::{{closure}}	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level_19::{{closure}}`（size 1340/1128）
+B	0x4ace40	1340	graphwar_level_manager::GraphwarLevelManager::setup_level_20; graphwar_level_manager::GraphwarLevelManager::setup_level_20::{{closure}}	Android 支持 `graphwar_level_manager::GraphwarLevelManager::setup_level_20::{{closure}}`（size 1340/1128）
+B	0x4e2a30	791	effect_drawer::EffectDrawer::ready; effect_drawer::EffectDrawer::ready::{{closure}}	Android 支持 `effect_drawer::EffectDrawer::ready::{{closure}}`（size 791/708）
+B	0x519d80	442	graphwar_effect_manager::GraphwarEffectManager::subscribe_to_events_event_handler::{{closure}}; graphwar_effect_manager::GraphwarEffectManager::tick	Android 支持 `graphwar_effect_manager::GraphwarEffectManager::tick`（size 442/424）
