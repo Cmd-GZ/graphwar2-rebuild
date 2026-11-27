@@ -1,8 +1,8 @@
 # naming_android_verify.tsv —— T87 用 Android .symtab 交叉核对已有真名（tools/naming_android.py verify）
 # 判据 = fixtures/naming_android_plan.txt §5。地址 = Linux ELF vaddr。名字一律源码级 module::Type::method。
-# 【A 区】逐条：V1 一致 / V2 冲突 / V3 Android 侧无可比同名函数 / V4 同名多实例 / V0 无特征
+# 【A 区】逐条：V1 一致 / V2 冲突 / V3 Android 侧**没有**同名函数 / V4 同名多实例 / V5 同名存在但 L 轴首选不是它（不算冲突、也不算无同名） / V0 无特征
 区域	vaddr	现用真名	判定	结论	L轴指到的Android名字	L轴地址	说明
-A	0x3a2e10	button_manager::ButtonManager::new	V3	Android 侧无可比的同名函数	graphwar_root_node::Graphw	0x39a6f0	L 轴首选是同模块外/无名候选（内联痕迹）；不构成名字冲突
+A	0x3a2e10	button_manager::ButtonManager::new	V5	同名存在，但 L 轴首选不是它	graphwar_root_node::Graphw	0x39a6f0	Android 同名实例 1 个（0x3a1c24）；L 轴按 Location 键集首选了 0x39a6f0（graphwar_root_node::GraphwarRootNode::ready）——该函数的键在 Android 侧被别的函数共享得更多
 A	0x3a5660	graphwar_root_node::GraphwarRootNode::ready::{{closure}}	V3	Android 侧无同名函数	graphwar_root_node::Graphw	0x39c6e0	跨构建内联/裁剪差异或名字形态不同；既不能证实也不能证伪
 A	0x3a5760	graphwar_root_node::GraphwarRootNode::process	V1	一致	graphwar_root_node::Graphw	0x39c8a0	L 轴 + Android 同名，双向对上
 A	0x3afb00	graphwar_root_node::GraphwarRootNode::purchase_denied	V1	一致	graphwar_root_node::Graphw	0x3a610c	L 轴 + Android 同名，双向对上
@@ -48,7 +48,7 @@ A	0x3dc630	graphwar_play_screen_control::GraphwarPlayScreenControl::update_view_
 A	0x3dc7f0	graphwar_play_screen_control::GraphwarPlayScreenControl::new	V4	一致（Android 同名实例 2 个）	graphwar_play_screen_contr	0x3e1a88	源码级同一 fn 的多份机器码
 A	0x3dcbb0	graphwar_play_screen_control::GraphwarPlayScreenControl::process	V1	一致	graphwar_play_screen_contr	0x3e1ea0	L 轴 + Android 同名，双向对上
 A	0x3dee00	graphwar_remote_event_handler::GraphwarRemoteEventHandler::handle_client_remote_event	V1	一致	graphwar_remote_event_hand	0x3e3ad0	L 轴 + Android 同名，双向对上
-A	0x3e2830	graphwar_color_manager::GraphwarColorManager::set_color	V3	Android 侧无可比的同名函数	graphwar_remote_event_hand	0x3e6df0	L 轴首选是同模块外/无名候选（内联痕迹）；不构成名字冲突
+A	0x3e2830	graphwar_color_manager::GraphwarColorManager::set_color	V5	同名存在，但 L 轴首选不是它	graphwar_remote_event_hand	0x3e6df0	Android 同名实例 1 个（0x49cd74）；L 轴按 Location 键集首选了 0x3e6df0（graphwar_remote_event_handler::GraphwarRemoteEventHandler::handle_server_remote_event）——该函数的键在 Android 侧被别的函数共享得更多
 A	0x3e5910	graphwar_remote_event_handler::GraphwarRemoteEventHandler::is_leader	V1	一致	graphwar_remote_event_hand	0x3e995c	L 轴 + Android 同名，双向对上
 A	0x3ee190	obstacle_drawer::ObstacleDrawer::update	V1	一致	obstacle_drawer::ObstacleD	0x422590	L 轴 + Android 同名，双向对上
 A	0x3ef990	graphwar_lobby_control::GraphwarLobbyControl::new	V4	一致（Android 同名实例 3 个）	graphwar_lobby_control::Gr	0x423de4	源码级同一 fn 的多份机器码
@@ -279,7 +279,7 @@ A	0x4e9c90	graphwar_ad_switch::_::_::__init::__inner_init	V4	一致（Android �
 A	0x4ea480	graphwar_function_input::_::_::__init::__inner_init	V4	一致（Android 同名实例 12 个）	graphwar_function_input::_	0x444674	源码级同一 fn 的多份机器码
 A	0x4eb86a	math_function::MathFunction::remove_offset	V1	一致	math_function::MathFunctio	0x44510c	L 轴 + Android 同名，双向对上
 A	0x4eccb3	math_function::MathFunction::to_string_recursive	V1	一致	math_function::MathFunctio	0x445a38	L 轴 + Android 同名，双向对上
-A	0x4ed670	math_function::MathFunction::new	V3	Android 侧无可比的同名函数		0x4d4cf8	L 轴首选是同模块外/无名候选（内联痕迹）；不构成名字冲突
+A	0x4ed670	math_function::MathFunction::new	V5	同名存在，但 L 轴首选不是它		0x4d4cf8	Android 同名实例 1 个（0x446c4c）；L 轴按 Location 键集首选了 0x4d4cf8（无名候选）——该函数的键在 Android 侧被别的函数共享得更多
 A	0x4ee720	math_function::FunctionRandomizer::mutate_fine_tune	V1	一致	math_function::FunctionRan	0x4478bc	L 轴 + Android 同名，双向对上
 A	0x4efd70	player_showcase::PlayerShowcase::on_text_change	V1	一致	player_showcase::PlayerSho	0x448d10	L 轴 + Android 同名，双向对上
 A	0x4f0610	graphwar_video_writer::GraphwarVideoWriter::write_video	V1	一致	graphwar_video_writer::Gra	0x4494e4	L 轴 + Android 同名，双向对上

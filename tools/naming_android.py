@@ -1075,9 +1075,15 @@ def cmd_verify(args):
                 st, verdict = "V2", "**冲突**"
                 note = "L 轴在 Android 全量 Location 共享池里指到另一个同模块名字：%s" % lnames
             else:
-                st, verdict = "V3", "Android 侧无可比的同名函数"
-                note = ("L 轴首选是同模块外/无名候选（内联痕迹）；不构成名字冲突"
-                        if top else "L 轴无候选")
+                # 同名函数在 Android 侧**是存在的**（`same` 非空），只是 L 轴首选了另一个
+                # （常是无名 / 跨模块）候选 ⇒ 既不是冲突，也不该记成"Android 无同名函数"。
+                st, verdict = "V5", "同名存在，但 L 轴首选不是它"
+                note = ("Android 同名实例 %d 个（%s）；L 轴按 Location 键集首选了 %s"
+                        "（%s）——该函数的键在 Android 侧被别的函数共享得更多"
+                        % (len(same), ",".join(hex(x) for x in sorted(same)[:3]),
+                           hex(top[0]) if top else "—",
+                           "无名候选" if top and not ax.and_srcnames.get(top[0]) else
+                           ",".join(lnames[:2])))
         stat[st] += 1
         rows.append((va, stated, st, verdict, ",".join(n[:26] for n in lnames[:3]),
                      hex(top[0]) if top else "", note))
@@ -1118,7 +1124,8 @@ def cmd_verify(args):
     with open(out, "w") as f:
         f.write("# naming_android_verify.tsv —— T87 用 Android .symtab 交叉核对已有真名（tools/naming_android.py verify）\n")
         f.write("# 判据 = fixtures/naming_android_plan.txt §5。地址 = Linux ELF vaddr。名字一律源码级 module::Type::method。\n")
-        f.write("# 【A 区】逐条：V1 一致 / V2 冲突 / V3 Android 侧无可比同名函数 / V4 同名多实例 / V0 无特征\n")
+        f.write("# 【A 区】逐条：V1 一致 / V2 冲突 / V3 Android 侧**没有**同名函数 / V4 同名多实例 / "
+                "V5 同名存在但 L 轴首选不是它（不算冲突、也不算无同名） / V0 无特征\n")
         f.write("区域\tvaddr\t现用真名\t判定\t结论\tL轴指到的Android名字\tL轴地址\t说明\n")
         for row in rows:
             f.write("A\t" + "\t".join([hex(row[0])] + list(row[1:])) + "\n")
