@@ -196,6 +196,21 @@ cargo test --offline            # 296 → 308 条
 
 这些**不计入分歧**，但也不计入通过——它们就是 §6 的待办。
 
+> **⚠️ T69 更正框（2026-11-27）——上表是旧快照读数，正文数字保留原样。**
+>
+> 当前冻结快照 = **403 个文件 = 401 份回放 + `MANIFEST.tsv` + `SHA256SUMS`**。同口径复算，被下游引用最多的三处：
+>
+> | 项 | 本文旧值 | T69 现值（401 份回放） |
+> |---|---:|---:|
+> | `Skin/Face/HatGraphicsInfo` | 4518 ×3 | **4522 ×3** |
+> | `AddObstacle` | 4410 | **4410**（未变） |
+> | `TargetInfo` / `TurnLimitInfo` | 252 / 21 | **254 / 21** |
+>
+> 其余随之变化（`EntityEffectInfo 6889→6894`、`LifeInfo 6584→6588`、`SoldierInfo 4553→4556`、
+> `TeamInfo 6427→6435`、`PosInfo 5318→5324`、`ColorInfo 1556→1558`、`ClearObstacles 380→381`、
+> `FunctionFire 1301→1302`、`EntityRemoved 657→658`、`RemoveTeam 442→443`）。结论与分歧归因不受影响。
+> 复跑命令见 `123-target-reset.md` §4.1 的 T69 更正框。
+
 ### 4.4 分歧集中在哪
 
 全部字段级差异（不只第一处）：

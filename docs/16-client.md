@@ -814,13 +814,13 @@ Godot 4 里 `user://` 映射到 `$XDG_DATA_HOME/godot/app_userdata/<项目名>/`
 
 | 问题 | 结论 | 级别 |
 |---|---|---|
-| 回放文件长什么样 | gzip + JSONL，每行 `{"event":{"<事件名>":{…}},"tick":N}` | **观测**（400 份实文件） |
+| 回放文件长什么样 | gzip + JSONL，每行 `{"event":{"<事件名>":{…}},"tick":N}` | **观测**（~~400 份~~ **T69：当时读数；冻结快照现 401 份回放**） |
 | 事件名/字段名和网络协议是同一套吗 | 是。解析直接复用 `src/_scaffold/protocol.rs` 的 `parse_message` 与 `get_*` | **观测 + 逐位验证** |
-| 一局有多少事件 | 真实语料 400 份、**103 104** 条；单局 2 … 1471 条（另有 2 份空回放） | **观测** |
+| 一局有多少事件 | 真实语料 400 份、**103 104** 条；单局 2 … 1471 条（另有 2 份空回放）——**T69 在 401 份回放上复算：103 183 条 / 单局 max 1471 / 空回放 2 份**（旧数字原文保留） | **观测** |
 | 播放按什么推进 | **按 tick**（不是按墙钟/按事件）。60 tick/秒 | **观测**（`14-turn.md`）+ 我们自定的取整规则 |
-| 回放的弹道点序列在哪 | **没有**。只有 `FunctionPoints{start_x,start_y,end_x}` | **观测**（400 份里 0 例带点序列） |
+| 回放的弹道点序列在哪 | **没有**。只有 `FunctionPoints{start_x,start_y,end_x}` | **观测**（~~400 份~~ **T69 复算 401 份**里 0 例带点序列） |
 | 那弹道怎么画 | 用内核重算：`GwCore.calculate_path(函数文本, 起点, 队伍方向, "ode"/"normal")`，`mode` **取自这一局的 `FunctionModeInfo`** | 我们的做法（走内核，不绕过） |
-| `DiffEqFunction` 局（320/400）的弹道 | 走 **`Mode::Ode`**（RK4）⇒ 能画了。内核钩子是 `GW2Rebuild.path_calculate_mode(…, mode: String)`，取 `"normal"` / `"ode"`（`05-shot-pipeline.md` 交付，已进 main）；`path_calculate` 的签名一字未动 | **逐位验证**（§5.3 第 7 组、§5.6：4 发 `end_x` 全中） |
+| `DiffEqFunction` 局（~~320/400~~ **T69 更正：172/401 份末态为 `DiffEqFunction`（173 份出现过）；`320` 是 `FunctionModeInfo` 事件数，不是局数**）的弹道 | 走 **`Mode::Ode`**（RK4）⇒ 能画了。内核钩子是 `GW2Rebuild.path_calculate_mode(…, mode: String)`，取 `"normal"` / `"ode"`（`05-shot-pipeline.md` 交付，已进 main）；`path_calculate` 的签名一字未动 | **逐位验证**（§5.3 第 7 组、§5.6：4 发 `end_x` 全中） |
 | 回放界面长什么样 | **未知**（只有场景名 `replay_lobby.tscn` / `replay_entry.tscn`） | **未知** ⇒ 播放控件我们自定 |
 | 播放/暂停/进度 | **我们自定**（原版无观测） | 自定，显式标注 |
 | 能播了吗 | 能。真实回放读、解析、按 tick 播、死亡事件生效、弹道由内核重算 | **逐位验证**（§5） |
@@ -1059,7 +1059,7 @@ Godot 4 里 `user://` 映射到 `$XDG_DATA_HOME/godot/app_userdata/<项目名>/`
 |---|---|---|---|---|
 | 1 | ~~弹道~~ | ✅ **已消除**：`GW2Rebuild.path_calculate` 已暴露并被客户端使用，`source=kernel`，等弦长 0.01（`16-client.md`） | 等弦长 0.01 二分采样 | PlayScreen |
 | 2 | ~~命中/致死~~ | ✅ **已消除**：`GW2Rebuild.hit_test` 走 `graphwar_shot_calculator::settle::resolve_points`（掩膜 + 数据字段半径），旧 0.8 近似已删（`16-client.md`）。⚠️ 残留：原版按实体 id 排除射手，`game.rs::fire` 仍有一条 1e-12 位置排除（`15-target-life.md`） | 掩膜逐点采样、穿过即死、友军也会死 | PlayScreen |
-| 3 | ~~关卡数据~~ | ✅ **已消除**：21 关标题 / 描述 / 参数（障碍模式、`min_count`、士兵数、目标数、Bot 难度、回合上限）**全部解出**，并与 385 份回放交叉验证 21/21（`10-campaign.md`）。⚠️ 客户端已接入（`10-campaign.md`）；**仅障碍物仍不画**（公式有、原版的随机流没有） | 硬编码在 `level_info()`（`0x4ad380`） | Campaign / JoinLevelPopUp |
+| 3 | ~~关卡数据~~ | ✅ **已消除**：21 关标题 / 描述 / 参数（障碍模式、`min_count`、士兵数、目标数、Bot 难度、回合上限）**全部解出**，并与 ~~385 份~~ **T69：当时读数，现 401 份**回放交叉验证 21/21（`10-campaign.md`）。⚠️ 客户端已接入（`10-campaign.md`）；**仅障碍物仍不画**（公式有、原版的随机流没有） | 硬编码在 `level_info()`（`0x4ad380`） | Campaign / JoinLevelPopUp |
 | 4 | ~~关卡解锁~~ | ✅ **规则已还原**：`campaign.save` = 单行 `level_<n>`（0 基、**无尾换行**、只增不减、启动不创建），写点在 `0x4183b0`；客户端是否已接入见 `16-client.md` | 同左（`10-campaign.md` 附录 A） | Campaign |
 | 5 | **Bot 分队** | 第 1 个 Bot 去对面（team 1），之后按人数奇偶 | 未观测 | GameSetup |
 | 6 | **Bot 名字 ↔ 难度** | 固定把 `ChatGPT/Wolfram/Alpha Zordon/Multivac/Deep Blue/Deep Thought` 依次给 0..5 档 | **对应关系未观测**（`16-client.md` §4.6 明写），且名字池与难度不是 1:1 | AddBotPopUp |
@@ -2583,7 +2583,7 @@ pressed     (0x4ef560)
 4d8337  half = n/2（i32，`shr 31`/`add`/`sar 1`）；条件 `(float)half > c`
 4d82f3  v8 = 正分支 p0+v48+v44+s0+v10 ／ 负分支 p0-v48-v44-v10
 4d8347  y  = p1 + s1*0.5
-4d83a0  call *[0x9bafe8] on [rsp+0x78]            ; Instant::elapsed()（只吃启动时刻）
+4d83a0  lea rdi,[rsp+0x78] ; 4d83a5 call *[0x9bafe8]  ; Instant::elapsed()（只吃启动时刻）
 4d83fb  (double)nanos / 1e9 + (double)secs         ; = elapsed（f64）
 4d8407  ×2 ; ×2 ; ×π                               ; = elapsed × 4π ← 角度
 4d8485  draw #1  xmm0=v8 xmm1=y xmm2=v10 xmm3=-0.2 xmm4=angle+0.2 xmm5=2*0.2*v4c+v4c
@@ -2592,6 +2592,11 @@ pressed     (0x4ef560)
                 rdx=.rodata 0x19ed00（Color{1,1,1,1}）  esi=0x1e ecx=0
 4d8503  if (angle > 2π) [rdi+0x20] = 0x3b9aca00     ; 结束
 ```
+
+> **T69 更正（2026-11-27）· 原第 6 行把两条指令写成一条（结论"这里取 `Instant::elapsed()`"不变）。**
+> 原文：`4d83a0  call *[0x9bafe8] on [rsp+0x78]`。实测 `python3 tools/addr_probe.py dis 0x4d83a0`：
+> `0x4d83a0 lea rdi,[rsp+0x78]`、**`0x4d83a5 call qword ptr [rip+0x4e2c3d]`（槽 `0x9bafe8` → `0x8f3a20`）**
+> ⇒ `call` 不在 `0x4d83a0`，差 5 字节（已就地改成两行）。
 
 `.rodata` 常量（**原始比特**，改一个就等于宣称二进制变了）：
 
@@ -4138,11 +4143,17 @@ objdump -d --start-address=0x3aaea0 --stop-address=0x3ab990 \
 **x86 侧的独立确认**（三个 setter 的体内逐指令）：
 
 ```text
-0x417c70  cmp byte ptr [rdi+0xac], 0     ; 解锁标记（=1 才同时更新"原始值"）
+0x417c7f  cmp byte ptr [rdi+0xac], 0     ; 解锁标记（=1 才同时更新"原始值"）
           ... 把新 String 拷到 [rbx+0x48]  ; "原始"帽子
           ... 把新 String 拷到 [rbx+0x90]  ; 帽子（当前）
           inc dword ptr [rbx+0xa8]         ; 变更计数器 +1
 ```
+
+> **T69 更正（2026-11-27）· 块首地址是函数起点，不是第一条指令（字段吻合的结论不变）。**
+> `0x417c70` 是槽 `0x9bb6e0` 指向的**函数起点**（FDE `0x417c70..0x417d42`，首条 `push r15`）；
+> 上文那句 `cmp byte ptr [rdi+0xac], 0` 实际在 **`0x417c7f`**
+> （`0x417c70 push r15 / 0x417c79 mov r14,rsi / 0x417c7c mov rbx,rdi / 0x417c7f cmp …`，已就地改）。
+> `+0x48`/`+0x90`/`+0xa8`/`+0xac` 四个偏移实测都对。复跑：`python3 tools/addr_probe.py dis 0x417c70`。
 
 `+0x48` / `+0x90` / `+0xa8` / `+0xac` 与 §22.9 的 `GraphwarPlayerConfig` 布局表
 **逐字段吻合**（那一节是从 `GraphwarPlayerConfig::lock` 与 `draw` 反推的，
@@ -4673,7 +4684,7 @@ save_game : DirAccess::make_dir_recursive_absolute("user://replays/", 15)
 
 `EventInfo` = **0x50 字节** = `GraphwarEvent` 0x48 + `tick`（u32 + 对齐）。
 写侧（反汇编 + flate2 的 `panic::Location`）与读侧（`src/graphwar_replay_player.rs`
-解析 400 份真实回放）**逐字吻合**。
+解析 400 份真实回放）**逐字吻合**（T69：当时 400 份，现快照 401 份）。
 
 ### 29.5 (d) `video_writer` 到底是什么
 
@@ -8382,10 +8393,15 @@ grep -a -c line_instance_id client/libgw2_rebuild.so    # 必须是 3（判据�
 0x4b314b  call 0x3c62b0           ; get_position(id)（None ⇒ 0x4b3155 跳过）
 0x4b315b  movsd xmm0, [rsp+0x80]  ; pos[0] → [rsp+0xb0]
 0x4b316d  movsd xmm0, [rsp+0x88]  ; pos[1] → [rsp+0xa8]
-0x4b317f  movsd xmm0, [rsp+0x90]  ; pos[2] → [rsp+0x60]（描边半径 = 它 × 1.5f32）
+0x4b317f  movq  xmm0, [rsp+0x90]  ; pos[2] → [rsp+0x60]（描边半径 = 它 × 1.5f32）
 0x4b3199  call 0x454950           ; GraphwarLifeManager::get_alive(id)   ← 门 1（本轮新证）
 0x4b31ac  call 0x462b50           ; GraphwarTurnManager::is_on_turn(id) ← 门 2（本轮新证）
 ```
+
+> **T69 更正（2026-11-27）· `0x4b317f` 是 `movq` 不是 `movsd`（结论"pos[2] 当描边半径"不变）。**
+> 实测 `python3 tools/addr_probe.py dis 0x4b3140`：`0x4b315b movsd xmm0,[rsp+0x80]` →
+> `0x4b316d movsd xmm0,[rsp+0x88]` → **`0x4b317f movq xmm0,[rsp+0x90]`**。前两条确是标量 double 载入，
+> **第三条是 SSE 整数搬移 `movq`**（按 bit 搬、不做 double 解释）——与"它被当描边半径、再乘 1.5f32"自洽。
 
 同一张表的**第二个读点**：`EntityDrawer::process`（x86 `0x4b4b60`）在 `0x4b4f24` 调
 `get_all_positions`、`0x4b5004` 调 `get_position`，拿到的 x/y 给 `update_sprite` 用。

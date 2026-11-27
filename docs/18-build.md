@@ -145,6 +145,23 @@ RESULT: PASS
 合计 10493 个点逐位相同，含修正项。这条比符号检查强得多：
 **它证明从复原源码构建出的二进制，行为与游戏一致。**
 
+> **✅ T69 复核（2026-11-27）：§4.5 / §4.6 是"可复跑"的，产物与探针都在仓库里。**
+>
+> T65 审计把这 11 条里的两处判成 `无物证`（"原始采样没入库"），**这一处的判法是过严**：
+> §4.5 的接口名单与 `resolved=0`、§4.6 的 5 组用例与 10493 个点，都是**当场跑探针/脚本打印的输出**，
+> 而**探针与脚本本身就是入库的证据链**（不是 `.agent-work/` 里会消失的截图）。复核用的确切命令：
+> ```bash
+> # §4.5 接口请求：探针源码在仓库，现场编译现场跑
+> gcc -O1 -o ./gdext_probe tools/gdext_probe.c -ldl
+> ./gdext_probe $CARGO_TARGET_DIR/release/libgw2_rebuild.so      # 期望：逐条打印请求名 + resolved=0
+> # §4.6 C ABI 功能证据：ctypes 直调构建产物，对照上游 graphwar_curve.py
+> python3 tools/capi_check.py                                    # 期望：RESULT: PASS / 5 组全 ok
+> ```
+> **仍然缺的**：当时那次运行的**原始输出文本没有入库**（两组数字只能靠重跑重现）。
+> 建议（下一步）：把这两条命令的输出 `tee` 到 `fixtures/gdext_probe_output.txt` /
+> `fixtures/capi_check_output.txt`，并在 `cargo test` 之外挂一条 CI 式校验——这样"观测"就有了可 diff 的快照。
+
+
 ## 4.7 类注册：先调研，当时的结论是"不硬写"（**后来改成硬写并成功了**）
 
 取到权威头文件（`godot-cpp/4.4/gdextension/gdextension_interface.h`）后确认：

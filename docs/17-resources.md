@@ -250,6 +250,25 @@ music.oggvorbisstr 1854570B block@411+1854501  consumed_to_eof=True  end='RSRC' 
 外部解码器复核（`run_external_checks.sh`）：6 个 mp3 用 **ffmpeg** 与 **mpg123** 各解一遍，
 两者都**零告警**（`ALL EXTERNAL CHECKS PASSED`）。
 
+> **⚠️ T69 可复核性声明（2026-11-27）—— 帧链表与外部解码器复核的原始产物/脚本都不在仓库里。**
+>
+> T65 审计（`docs/06` §112）判这条为 `无物证`：表里的"内层字节 / 帧数 / 帧链覆盖 / Xing 对账"是真观测，
+> 但**原始 mp3 与运行脚本都没入库**。具体缺什么：
+>
+> * mp3 本体：在 `rsc/`（**gitignore**，版权原因不入库）——可还原：
+>   `python3 tools/pck_extract.py --verify`（纯标准库，需要 `.reference/game/Graphwar.pck`）。
+> * **`run_external_checks.sh` 不在仓库里**（本轮 `ls tools/ | grep run_external` 为空，只有本文提到这个名字）；
+>   帧链表是**手算 + 当时脚本**得出，脚本没留存 ⇒ 每个数字现在只能当"当时读数"。
+>
+> **档位就地降一级**：§3.1.3 的帧链结果从 `观测` 改为
+> **`观测（当时读数；mp3 可从 `rsc/` 还原、但帧链脚本未入库 ⇒ 现在不可一键复核）`**。
+> 结论本身**没有被反证**（第 4 道的内层流语义、`humm` 的 generator 路径不依赖这张表）。
+>
+> **怎么复跑（可写的最小版本）**：还原 `rsc/` 后用 `ffprobe -show_packets`（或本文 §3.1.3 的 5 条判据自己写 20 行）
+> 逐帧累加，末帧末尾必须等于内层流长度；外部解码器用 `ffmpeg -v error -i <f> -f null -` 与
+> `mpg123 -t <f>` 各跑一遍，期望零告警。重跑后把**每文件的判据结果**写进 `fixtures/`。
+
+
 #### 3.1.4 第 4 道：内层流语义（PCM / Vorbis 包）
 
 ##### `.sample`（AudioStreamWAV）
