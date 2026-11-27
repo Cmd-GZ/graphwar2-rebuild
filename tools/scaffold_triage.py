@@ -236,9 +236,12 @@ TRIVIAL_IDENTICAL = {"p", "init", "v2", "error"}
 # ---------------------------------------------------------------------------
 D_LIST = {
     ("play_flow_class.rs", "next_shooter"):
-        "玩家之间的**轮转顺序**未知（`docs/06` §86.4 B18：原版是 HashMap 迭代序）；本函数把顺序固定成调用方给的序，士兵级那半转发 `PlayerTurns::next_shooter`（有据）。缺：原版玩家轮转的指令/观测证据。",
+        "玩家之间的**轮转顺序**未知（`docs/06` §86.4 B18：原版是 HashMap 迭代序）；本函数把顺序固定成调用方给的序，士兵级那半转发 `PlayerTurns::next_shooter`（有据）。"
+        "T72 用语料量了：401 份冻结回放里能抽出玩家开火序的 177 份 2 人局 / 134 份 4 人局 —— 2 人局首发射手是 **id 大的 95 / 144**（不是 50/50、也不是「总 id 小」）；"
+        "4 人局首轮顺序既不是 id 升序也不是 `PlayerInfo` 出现序的有 **27 / 134**；4 人局里首轮顺序恰为 id 升序的只有 **1 / 6**（可比份数少）。"
+        "⇒ 没有可复现的轮转规则可从语料反推，与「HashMap 随机迭代序」一致。**缺**：`HashMap` 的构造点/插入点指令（`RandomState` 种子来源），或同进程内二次进局的顺序对照（回放只有一份文件 ⇒ 做不到）。",
     ("play_flow_class.rs", "first_shooter"):
-        "轮转起点：`cursor` 的初值与语义无原版证据（B18，原版是 HashMap 迭代序）。",
+        "轮转起点：`cursor` 的初值与语义无原版证据（B18）。T72 语料：2 人局首发射手 = id 大的占 95/144 ⇒ 起点**不是**「最小 id」。缺原版指令/观测证据。",
     ("play_flow_class.rs", "current_shooter"):
         "「当前射手」由我方 `cursor` 决定；原版口径未知（B18）。",
     ("play_flow_class.rs", "push_group"):
@@ -247,20 +250,30 @@ D_LIST = {
         "`GwTurnDriver` 的初始化（谁是第一个射手）缺原版证据（B18：轮转顺序/起点未知）。",
     ("play_flow_class.rs", "setup_flat"):
         "扁平化的分组初始化：分组表形状是我方模型（B18/E01），缺原版容器证据。",
-    ("replay_meta.rs", "parse_head"):
-        "T36 §86.4 判 B16（回放头部解析属 `graphwar_replay_reader` 职责）、T57 §104.0 判 A（我方自造元数据）—— **两处结论冲突**。缺：原版「回放列表显示关卡名」那段的函数名/Location。",
-    ("replay_meta.rs", "parse_with_cap"):
-        "解析本体：T36 判 B16 / T57 判 A 冲突；缺原版元数据读取那段的函数名/Location。",
-    ("replay_meta.rs", "apply_line"):
-        "逐行归约（GameNameInfo + 四种模式字段）：T36 判 B16 / T57 判 A 冲突；缺原版那段的函数名/Location。",
-    ("replay_meta.rs", "string_field"):
-        "字段抽取：同上冲突（B16 vs A），缺原版证据。",
-    ("replay_meta.rs", "first_quoted"):
-        "字符串扫描器：同上冲突（B16 vs A），缺原版证据。",
-    ("replay_meta.rs", "from_raw"):
-        "原始文本 → 元数据：同上冲突（B16 vs A），缺原版证据。",
-    ("replay_meta.rs", "from_path"):
-        "读盘 + gzip 头：同上冲突（B16 vs A），缺原版证据。",
+}
+
+# T72 已裁决的 D 档（不计入 D 计数；`--resolved` 打印）
+# `replay_meta.rs` 的 7 条：T36 §86.4 B16（属 replay_reader）与 T57 §104.0 A（我方自造）冲突，
+# T72 用 `tools/loc_xrefs.py` 裁决 —— **两处都对一半**：
+#   * 原版**确实**有 `GraphwarReplayReader::{load_game, load_games}`（`fixtures/name_to_addr_v2.tsv`
+#     里 arm64/win/win_old 三份构建都有这名字），所以「回放读盘/解析是独立职责」= 真；
+#   * 但**全库 543 个 Location 源文件里没有一条是 `src/graphwar_replay_reader.rs`**
+#     （正对照：同一份 dump 里 `graphwar_replay_player.rs` / `graphwar_replay_control.rs` 的锚都在）
+#     ⇒ 该模块在 Linux 侧**零 Location 锚** ⇒ 我方 `replay_meta.rs` 的每一行都是我方的实现，
+#     没有一条原版指令/行号证据 ⇒ 「我方自造」= 真。
+#   于是 `replay_meta.rs` 的 7 条定档 **A（我方自造）**，同时登记原版同职责的候选函数（见 D_RESOLVED 文本）。
+D_RESOLVED = {
+    ("replay_meta.rs", fn): (
+        "A",
+        "T72 裁决（原 D：T36 B16 vs T57 A 冲突）：**两处都对一半**。"
+        "(1) 原版有 `GraphwarReplayReader::load_game` / `load_games`（三份构建符号表均有名）⇒ 读盘/解析是独立于 UI 的职责；"
+        "(2) 但 Linux 侧 `src/graphwar_replay_reader.rs` 的 `panic::Location` 锚 **0 条**（`tools/loc_xrefs.py dump locs`：543 个源文件名里没有它；"
+        "正对照：`graphwar_replay_player.rs` / `graphwar_replay_control.rs` 的锚都在）⇒ 本方实现**没有**任何原版行号/指令证据，属我方自造。"
+        "同职责候选（**推断**，未证名字）：`0x3d7950`(3408 B) / `0x3d76f0`(608 B) —— 二者都直引 `user://replays/`（字面量 `0x1bf7d7`），"
+        "且分别被 `0x4c6f40`（`graphwar_replay_control.rs::process` 内有 8 条 Location 锚）的 `0x4c70f2` 与邻居 `0x4c69a0`/`0x4c6cc0` 调用。"
+        "这 7 个函数因此**留原地（A）**，但缺「原版列表行怎么读关卡名」的指令级证据（下一步：按 `0x3d7950` 的 FDE 反汇编找 inflate/JSON 解析调用点）。")
+    for fn in ("parse_head", "parse_with_cap", "apply_line", "string_field",
+               "first_quoted", "from_raw", "from_path")
 }
 
 # 逐函数补充证据/遗留（只改 evidence/note 文本，不改档位）
@@ -269,6 +282,33 @@ D_LIST = {
 # `graphwar_setup_control_class.rs`）⇒ 键再也匹配不到任何行，删掉（证据本身已随文件进了
 # `src/graphwar_ad_switch.rs` / `src/graphwar_setup_control.rs` 与 `docs/06` §114.3）。
 EXTRA_EVIDENCE = {}
+
+# T72 已收口的 C 档（不计入 C 计数；`--resolved` 打印）。每条都单独 commit，行为 0 变化。
+C_RESOLVED = {
+    ("diffconv.rs", "tick"):
+        ("A", "T72 收口 0ed169b：`tick` 改调 `crate::game::drain_due_destroy`（真值实现留 `game.rs`，"
+              "原版 `handle_tick 0x470840` 那一段）；本文件不再有第二份扫描规则。"),
+    ("replay_driver.rs", "drive_frame"):
+        ("A", "T72 收口 a8ec6d9：定步折叠归一 —— 真值实现留 `graphwar_tick_handler::fold_dt_into_ticks`"
+              "（`NANOS_PER_TICK = 16_666_666` / `0xfe502a`），`TICK_PERIOD_NS` 改成它的别名；"
+              "`graphwar_replay_player::advance_dt` 的 f64 时钟一并改调同一个函数。"),
+    ("axis_drawer_class.rs", "sym"):
+        ("A", "T72 收口 817a64b：唯一实现在 `_scaffold/api.rs::sym`（本文件改 `use`）。"),
+    ("axis_drawer_class.rs", "clamp_mode"):
+        ("A", "T72 收口 8023960：规则本体留在本文件（i64 版）；`gdext_mod` 那份改成薄转发。"),
+    ("axis_drawer_class.rs", "line_primitive_count"):
+        ("A", "T72 收口 8e0cd1a：规则本体留在本文件（连同 `BOARD_SIZE`）；`gdext_mod` 那份删掉改 `use`。"),
+    ("gdext_mod.rs", "clamp_mode"):
+        ("A", "T72 收口 8023960：本处已是薄转发（`value as i64` → `axis_drawer_class::clamp_mode`），无第二份规则。"),
+    ("gdext_mod.rs", "line_primitive_count"):
+        ("A", "T72 收口 8e0cd1a：本处已删，改 `use super::axis_drawer_class::line_primitive_count`。"),
+    ("gdext_mod.rs", "triples"):
+        ("A", "T72 收口 a77eca9：唯一实现在 `_scaffold/api.rs::triples`（本文件改 `use`）。"),
+    ("api.rs", "triples"):
+        ("A", "T72 收口 a77eca9：本处是真值实现（`gdext_mod` 已改调它）。"),
+    ("api.rs", "sym"):
+        ("A", "T72 收口 817a64b：本处是真值实现（`axis_drawer_class` 已改调它）。"),
+}
 
 # ABI / 验收钩子的函数名词表（A 档判据②的一部分；只用于 note，不改变档位）
 ABI_NAMES = {
@@ -445,7 +485,13 @@ def build_rows(orig, orig_structs, files):
             note = ""
             om, of, va, other = "", "", "", ""
             ev = why
-            if (fname, name) in C_LIST:
+            if (fname, name) in C_RESOLVED:
+                cls, ev = C_RESOLVED[(fname, name)]
+                ev += "（已收口；覆盖文件级 %s）" % dcls
+            elif (fname, name) in D_RESOLVED:
+                cls, ev = D_RESOLVED[(fname, name)]
+                ev += "（已裁决；覆盖文件级 %s）" % dcls
+            elif (fname, name) in C_LIST:
                 cls = "C"
                 other, crev = C_LIST[(fname, name)]
                 ev = crev
@@ -597,12 +643,31 @@ def cmd_identical(files):
     return 0
 
 
+def cmd_resolved(files):
+    """T72 的收口/裁决台账（不计入 A/B/C/D 的那部分）。"""
+    left = sorted(set(C_LIST) - set(C_RESOLVED))
+    print("C 档已收口 %d 条 ⇒ 另有 %d 条未收口：" % (len(C_RESOLVED), len(left)))
+    for (fname, name), (cls, txt) in sorted(C_RESOLVED.items()):
+        print("  [%s] %-24s %-22s %s" % (cls, fname, name, txt[:110]))
+    print()
+    print("D 档已裁决（%d 条，全部改判 A）：" % len(D_RESOLVED))
+    for (fname, name), (cls, txt) in sorted(D_RESOLVED.items()):
+        print("  [%s] %-24s %-22s" % (cls, fname, name))
+    print("  " + D_RESOLVED[("replay_meta.rs", "parse_head")][1])
+    print()
+    print("D 档仍未定（%d 条，= play_flow_class 的玩家轮转）：" % len(D_LIST))
+    for (fname, name) in sorted(D_LIST):
+        print("  [D] %-24s %-22s" % (fname, name))
+    return 0
+
+
 def main(argv=None):
     global orig_structs_global
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--tsv", action="store_true", help="打印台账 TSV")
     ap.add_argument("--control", action="store_true", help="正/反对照")
     ap.add_argument("--identical", action="store_true", help="跨文件逐字相同组（与 C 表交叉核对）")
+    ap.add_argument("--resolved", action="store_true", help="T72 的收口/裁决台账")
     ap.add_argument("--out", default=None, help="写 TSV 到文件（默认 stdout）")
     ap.add_argument("--id-prefix", default="T63",
                     help="台账 id 前缀（默认 T63 以保 `fixtures/scaffold_triage.tsv` 可复现；T72 重算用 T72）")
@@ -619,6 +684,8 @@ def main(argv=None):
         return cmd_control(files)
     if args.identical:
         return cmd_identical(files)
+    if args.resolved:
+        return cmd_resolved(files)
 
     rows = build_rows(load_orig(), orig_structs, files)
     if args.id_prefix != "T63":
