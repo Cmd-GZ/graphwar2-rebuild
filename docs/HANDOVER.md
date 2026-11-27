@@ -38,13 +38,19 @@ P4  命名 —— 真名 348/527；179 无名（138 族级 + 41 未知）
 **别再把"像素全 0"当主目标**：像素对拍的最大价值是**抓源码级复原错误**（已抓到 `update_sprite` 的 `scale.x` 漏 `k`、
 `name_label_layout` 实参语义错、`draw_set_transform` 棋盘单位、底栏最小高 96 vs 98 等）——用它的产出反推源码，而不是为了让截图一样。
 
-### 0.0.0 **用户已授权的、此前判定"物理不可得"的那件事**（2026-11-26）
+### 0.0.0 **官服抓包已完成**（2026-11-27，用户 2026-11-26 授权）
 
-「**允许连接官服抓包**」。⇒ `LockInfo` / `ChatMessage` / `GameHeartbeat` / `GameRemoved` / `TurnLimitInfo` /
-`ClearBans` / `BanConnection` / `EndingGame` 这 8 类在 403 份冻结回放里**零真实帧**的事件，现在可以升到 `观测`。
-**任务书已入库：[`docs/plan-official-capture.md`](plan-official-capture.md)**（含前置核查、frida 优先的抓法、
-三张要产出的表、硬门槛、以及"只读观测 + 正文打码"的边界）。
-**开工前必须先做前置核查**：官方 broker 地址从哪来、能不能在这台机器上真的建立会话；做不到就如实报"不可达"，不许用推断填。
+真客户端 2.0.60 + 真 `.so` 连真 broker `69.164.213.144:42970`，三会话 **1717 条真帧 / 56 种事件**（本地完整一局、官服房间
+`US Room 1 @69.164.213.144:37933` 完整一局到结局、broker 大堂静置）。产物 `fixtures/protocol_live_frames.jsonl`（1718 行）
++ `protocol_live_expected.tsv` + `protocol_zero_frame_events.tsv` + `protocol_enum_domains.tsv`；`docs/06` §110 / `docs/07` §7.8。
+- **升档 6 类 → `观测`**：`LockInfo`(2) · `LockRequest`(2) · `ChatMessage`(1) · `ChatMessageRequest`(1) · `GameRemoved`(1) · `EndingGame`(1)；
+  **与 `WIRE_SPEC` 逐项差异 0 处**（键序/字段名/类型三判据机判）。
+- **两条口径修正**：`EndingGame` **不是线上事件**（线上是 `GameStateInfo{"game_state":"EndingGame"}`）；
+  `ClearBans`/`BanConnection` 线上名带 **`Request` 后缀**（tag 73/72）。
+- **证伪 `TurnLimitInfo` 零帧之说**：T46 当年在 **gzip 压缩字节**上 grep ⇒ 假阴性；解压重扫 403 份得 **21 帧**。
+- **仍抓不到 3 类（写清缺什么）**：`GameHeartbeat`（1717 帧全无，含官服完整一局 ⇒ 推断由客户端之外的组件构造；
+  客户端写方向挂 `write` 会自噬递归）、`ClearBansRequest`/`BanConnectionRequest`（要"房主+加入者两实例+被踢者"那一局，或本版客户端根本没有 UI 入口）。
+- 新增硬闸测试 `captured_samples_are_the_live_wire_bytes`（把真帧字节编译进测试，改 1 字节即红）。
 
 ### 0.0.1 今天（2026-11-26）这一程干了什么（下一条会话先读这段）
 
