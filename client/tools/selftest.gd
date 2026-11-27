@@ -263,14 +263,14 @@ const GROUP_EXPECT := {
 	"fonts_and_icons": 3,
 	"assets_and_original_settings": 6,
 	"geometry_and_campaign_save": 47,
-	"core_path_mode": 11,
-	"audio": 35,
+	"core_path_mode": 18,
+	"audio": 39,
 	"level_rules": 51,
 	"fire_fx": 72,
 	"play_flow": 55,
 	"replay_player": 52,
 	"replay_ode": 16,
-	"net_framing": 33,
+	"net_framing": 37,
 	"net_join_fake_server": 29,
 	"net_failure_path": 11,
 	"net_link_retry": 4,
@@ -1699,19 +1699,39 @@ func _test_audio() -> void:
 	# ---- 表结构（不依赖资产）----
 	_expect(audio.master_bus() == AudioServer.get_bus_index("Master"),
 		"音频：Master 总线下标 == AudioServer.get_bus_index(\"Master\")")
-	# docs/111 §4.5：四个 player 臂 -15.0f，第五个槽 -5.0f，0xb0 那支没设（Godot 默认 0 dB）
-	_expect(is_equal_approx(float(GwAudio.SLOT_VOLUME_DB["0xa0"]), -15.0)
-		and is_equal_approx(float(GwAudio.SLOT_VOLUME_DB["0x80"]), -15.0)
-		and is_equal_approx(float(GwAudio.SLOT_VOLUME_DB["0x90"]), -15.0),
-		"音频：0xa0/0x80/0x90 三个槽的 volume_db == -15.0（docs/111 §4.5）")
-	_expect(is_equal_approx(float(GwAudio.SLOT_VOLUME_DB["0xc0"]), -5.0),
-		"音频：第五个槽 0xc0 的 volume_db == -5.0（humm 那一路）")
-	_expect(is_equal_approx(float(GwAudio.SLOT_VOLUME_DB["0xb0"]), 0.0),
-		"音频：0xb0 槽没有 set_volume_db ⇒ Godot 默认 0 dB")
-	_expect(is_equal_approx(GwAudio.GEN_MIX_RATE, 16000.0)
-		and is_equal_approx(GwAudio.GEN_BUFFER_LENGTH, 0.1)
-		and is_equal_approx(GwAudio.PCM_NORMALIZE, 32767.0),
-		"音频：generator 常数 16000.0/0.1/32767.0（docs/111 §4.4b）")
+	# docs/111 §4.5：三个特效臂 -15.0f，pop 那支 0 dB，unpop 那支 -5.0f。
+	# **取值来源已改成 Rust**（`GwAudioControl` ← `graphwar_audio_control::SoundSlot`）：
+	# 这些数以前写死在 `gw_audio.gd` 的 `const SLOT_VOLUME_DB` 里（C 档两份真相源）。
+	_expect(is_equal_approx(GwAudioControl.slot_volume_db("0xa0"), -15.0)
+		and is_equal_approx(GwAudioControl.slot_volume_db("0x80"), -15.0)
+		and is_equal_approx(GwAudioControl.slot_volume_db("0x90"), -15.0),
+		"音频：0xa0/0x80/0x90 三个槽的 volume_db == -15.0（Rust：SoundSlot::volume_db）")
+	_expect(is_equal_approx(GwAudioControl.slot_volume_db("0xc0"), -5.0),
+		"音频：第五个槽 0xc0 的 volume_db == -5.0（entity_removed → unpop.mp3）")
+	_expect(is_equal_approx(GwAudioControl.slot_volume_db("0xb0"), 0.0),
+		"音频：0xb0 槽没有 set_volume_db ⇒ Godot 默认 0 dB（soldier_info → pop.mp3）")
+	_expect(is_equal_approx(GwAudioControl.hum_mix_rate(), 16000.0)
+		and is_equal_approx(GwAudioControl.hum_buffer_length(), 0.1)
+		and is_equal_approx(GwAudioControl.pcm_full_scale(), 32767.0),
+		"音频：generator 常数 16000.0/0.1/32767.0（Rust：HUM_MIX_RATE/HUM_BUFFER_LENGTH/PCM_FULL_SCALE）")
+	# 槽 ↔ 资源（**逐位**：构造函数的 5 次 load() 顺序 = +0x80..+0xc0）。改前 `.gd` 这张表五条全错。
+	_expect(String(GwAudioControl.slot_path("0x80")).ends_with("explosion.mp3")
+		and String(GwAudioControl.slot_path("0x90")).ends_with("squash.mp3")
+		and String(GwAudioControl.slot_path("0xa0")).ends_with("spark.mp3")
+		and String(GwAudioControl.slot_path("0xb0")).ends_with("pop.mp3")
+		and String(GwAudioControl.slot_path("0xc0")).ends_with("unpop.mp3"),
+		"音频：5 个资源槽 = explosion/squash/spark/pop/unpop（+0x80..+0xc0，逐位）")
+	# 名字 → 槽：改前 pop 落 0xa0(-15 dB)、unpop 落 0x80；真值 0xb0(0 dB) / 0xc0(-5 dB)
+	_expect(audio.slot_of("pop") == "0xb0" and audio.slot_of("unpop") == "0xc0",
+		"音频：pop→0xb0、unpop→0xc0（改前是 0xa0/0x80，音量差 15/10 dB）")
+	# humm 不在 5 个资源槽里（0xc0 是 unpop.mp3）；改前它被写成占 0xc0
+	_expect(audio.slot_of("humm") != "0xc0",
+		"音频：humm 走 generator、不占 5 槽之一（改前被写成占 0xc0）")
+	# 有效静音 = 用户静音 ∥ 隐式静音（`orr w8, w19, w22`）
+	_expect(GwAudioControl.effective_mute(true, false) and GwAudioControl.effective_mute(false, true)
+		and GwAudioControl.effective_mute(true, true)
+		and not GwAudioControl.effective_mute(false, false),
+		"音频：有效静音 = 用户静音 ∥ 隐式静音（原版两个标志 +0xd0/+0xd1）")
 	# 每一条音效都必须能指到"它凭什么这么播"；不允许出现"原版映射"这种没证据的说法
 	var all_evidence := true
 	for n in GwAudio.SOUNDS:
@@ -2194,6 +2214,29 @@ func _fire_function(play: Node, expr_text: String) -> void:
 #   3. ODE 的 `offset` 是 `NaN`（没有修正常数，`format_offset()` 显示空串）；
 #   4. 未知 mode 直接 `ok:false`（不猜默认值）。
 func _test_core_path_mode() -> void:
+	# --- 函数语言的真值（**逐位**；规则在 Rust `math_function`，T58 从 expr.gd 搬走） ---
+	# 改前 expr.gd 那台求值器在四处与真值不同，这里把四条都钉住。
+	var e_neg := GwExpr.compile("sqrt(0-1)")
+	_expect(e_neg.is_ok() and is_nan(e_neg.eval(0.0)),
+		"函数语言：sqrt(-1) 是 NaN（sqrtsd 给**负** NaN fff8…）")
+	var e_div := GwExpr.compile("1/x")
+	_expect(is_inf(e_div.eval(0.0)) and e_div.eval(0.0) > 0.0,
+		"函数语言：1/0 = +inf（divsd；改前 expr.gd 一律给正 NaN）")
+	var e_zero := GwExpr.compile("x/x")
+	_expect(is_nan(e_zero.eval(0.0)),
+		"函数语言：0/0 = NaN（divsd 给负 NaN；只判 isnan，不判符号位）")
+	# 未匹配字符被**跳过**（不是报错）：`Π` 是 U+03A0，只折 ASCII 大写 ⇒ 不认 ⇒ 空 token 串
+	var e_pi := GwExpr.compile("\u03a0")
+	_expect(not e_pi.is_ok(), "函数语言：未匹配字符被跳过（Π 折不成 π ⇒ 空 token 串）")
+	var e_implicit := GwExpr.compile("2x")
+	_expect(e_implicit.is_ok() and is_equal_approx(e_implicit.eval(3.0), 6.0),
+		"函数语言：隐式乘法 2x @x=3 = 6（内核怪癖，docs/03）")
+	var e_log := GwExpr.compile("log(x)")
+	_expect(is_equal_approx(e_log.eval(100.0), 2.0),
+		"函数语言：log 是 log10（log(100) = 2，docs/03）")
+	_expect(String(GwMathExpr.new().provenance().get("grade", "")) == "逐位",
+		"函数语言：GwMathExpr 的出处档位是「逐位」（解析 0x4ed670 / 求值 0x4eb9d0）")
+
 	var start := Vector2(5.0, 2.0)
 	var norm_default := GwCore.calculate_path("sin(x)", start, 1.0)
 	var norm_explicit := GwCore.calculate_path("sin(x)", start, 1.0, "normal")
@@ -3257,7 +3300,7 @@ func _test_net_framing() -> void:
 		"广播：缺字段的行被丢弃")
 
 	# --- 超长负载：原版 Message too large，不许截断 ---
-	_expect(GwNetFrame.encode("x".repeat(GwNetFrame.MAX_PAYLOAD + 1)).is_empty(),
+	_expect(GwNetFrame.encode("x".repeat(int(GwStreamBuffer.max_payload()) + 1)).is_empty(),
 		"分帧：超过 u16 的负载拒绝成帧（原版 Message too large）")
 
 	# --- 地址解析（原版只写 IP 时毫无反应，docs/92 §4.7）---
@@ -3278,6 +3321,33 @@ func _test_net_framing() -> void:
 		and GwNetSession.function_mode_index("NormalFunction") == 0, "档位：axis/function 串 → 索引")
 	_expect(GwNetSession.team_index("Team2") == 1 and GwNetSession.team_index("Team1") == 0,
 		"档位：Team1/Team2 → 0/1")
+
+	# --- 读侧规则（逐位，T58 搬进 Rust）：4096 上限、半帧不是错误、2 字节大端 ---
+	_expect(int(GwStreamBuffer.max_read_len()) == 4096
+		and int(GwStreamBuffer.max_payload()) == 65535 and int(GwStreamBuffer.length_prefix_len()) == 2,
+		"帧层：读侧 0x1000=4096 / 写侧 0xffff / 前缀 2 字节（Rust 常量，逐位）")
+	# 4097 字节负载：写侧合法（< 65535）、读侧超限 ⇒ failed/too_large
+	var big := PackedByteArray()
+	big.append(0x10)
+	big.append(0x01)                     # 0x1001 = 4097
+	for i in 4097:
+		big.append(0x20)
+	var r_big := GwStreamBuffer.decode_one(big, 0)
+	_expect(String(r_big.get("status", "")) == "failed"
+		and String(r_big.get("reason", "")) == "too_large"
+		and String(r_big.get("message", "")) == "Message too large",
+		"帧层：读侧 >4096 ⇒ failed/too_large + 原版原文 Message too large（改前没有这条闸）")
+	# 头到了、身子没到 ⇒ pending（**不是错误**，原版 Ok(None)）
+	var half := PackedByteArray()
+	half.append(0x00)
+	half.append(0x31)                    # 声明 49 字节，只给 10 字节
+	for i in 10:
+		half.append(0x20)
+	_expect(String(GwStreamBuffer.decode_one(half, 0).get("status", "")) == "pending",
+		"帧层：半帧 ⇒ pending（原版 Ok(None)，不是错误）")
+	_expect(String(GwStreamBuffer.decode_one(PackedByteArray(), 0).get("reason", ""))
+		== "connection_lost",
+		"帧层：0 字节 ⇒ connection_lost（原版 peek 0 = 对端关了）")
 
 
 # ---------------------------------------------------------------- 2. 假服务器 → 进对局

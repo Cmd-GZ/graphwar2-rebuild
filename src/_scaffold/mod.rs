@@ -26,6 +26,11 @@
 
 pub mod ai_explain;
 pub mod api;
+// `humm.wav` 的 RIFF/PCM 解析 + 归一化（T58）：原版这一步是第三方 **hound**
+// （`0x50a080` @`0x4bf6c3`）+ 归一化 `32767.0f`（`0x4c08f6`）。本 crate 零依赖，
+// 所以这里是 hound 的最小等价物：只收 PCM 16-bit 单声道，其余显式报错。
+// 纯逻辑、无 gdext ⇒ `cargo test` 直接测（文件末尾有 6 条）。
+pub mod audio_wav;
 pub mod axis_drawer_class;
 pub mod broker;
 pub mod capi;
@@ -86,6 +91,18 @@ pub mod net_events_class;
 // 只在 `gdext-bindings` 下编译。
 #[cfg(feature = "gdext-bindings")]
 pub mod net_constants_class;
+// 表达式求值器的出口（T58 / `docs/06` §90 C 档第 4 段）：`client/src/core/expr.gd`（229 行）
+// 原本是**完整的第二实现**（词法 + 隐式乘法 + 优先级 + shunting-yard + 栈式求值 + 8 个数学
+// 函数）。真值在 `math_function`（解析 `0x4ed670` / 求值 `0x4eb9d0`，逐位）⇒ `.gd` 改薄壳。
+// 只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod math_expr_class;
+// 帧层规则的出口（T58 / §90 C 档第 8 段）：`client/src/net/frame.gd` 的 `u16` 大端前缀、
+// 写侧 `0xffff`、**读侧 `0x1000`**（`.gd` 改前缺这条）、`Ok(None)` vs `Err` 三档语义。
+// 真值在 `graphwar_stream_buffer`（`read_event 0x45c51c` / `write_event 0x45c818`，逐位）。
+// 只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod stream_buffer_class;
 // 函数输入 / 键盘的**规则出口**（T42 ③）：把 `client/src/play/function_input.gd` 的编辑规则
 // （8 个 `match` 分支）与 `keyboard_input.gd` 的"按键 → 字符"规则收进 Rust ——
 // 落点是 `graphwar_function_input::Buffer`（`0x4f3210`/`0x4f3910`/`0x4f44c0`）与
@@ -93,8 +110,18 @@ pub mod net_constants_class;
 // 只在 `gdext-bindings` 下编译。
 #[cfg(feature = "gdext-bindings")]
 pub mod function_input_rules_class;
-// T57：`player_showcase_class` 的 gdext 节点类已搬回 `src/player_showcase.rs` —— 原版把 `#[derive(GodotClass)]`
-// struct 与方法体写在同一个 `player_showcase.rs` 里（`panic::Location` 为证）。
+// 音频规则出口（T58 / `docs/06` §90 C 档第 2 段）：把 `client/src/audio/gw_audio.gd`
+// 里的**槽位/音量/事件→音效/generator 常数/静音双标志**换成问 `graphwar_audio_control` 要 ——
+// 改前那份 `.gd` 的槽位表**五条全错**（`pop` 应 `0xb0`=0 dB、`unpop` 应 `0xc0`=-5 dB、`0xc0`
+// 不是 humm）。`.gd` 只留"加载资源/建 player/推缓冲/调 AudioServer"。只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod audio_control_class;
+// 选色规则出口（T58 / §90 C 档第 9 段）：`play_screen.gd` 的 `TEAM_COLORS` + `assign_colors()`
+// 换成 `graphwar_color_manager::add_team_color`（`0x464d10`，逐位：两池各 6 色、`%6` 起点、
+// 线性探测、`%180` 兜底）。只在 `gdext-bindings` 下编译。
+#[cfg(feature = "gdext-bindings")]
+pub mod color_manager_class;
+#[cfg(feature = "gdext-bindings")]
 // 播放屏的**流程权威**（`dispatch/54`，`docs/16-client.md` §52）：把原来写在
 // `client/src/game/level_rules.gd`（219 行）与 `turn_driver.gd`（121 行）里的流程搬进 Rust。
 // `GwLevelRules` = 胜负判定（`0x473520`/`0x4759f0`/`0x478133`–`0x478236`）；

@@ -1,6 +1,6 @@
 extends RefCounted
 class_name GwNetFrame
-## 线上分帧与消息解析 —— `src/_scaffold/protocol.rs` 的 GDScript 对应物。
+## 线上分帧与消息解析 —— **帧层规则在 Rust**，本文件只留"JSON ↔ Dictionary"与拼原文。
 ##
 ## 传输层（**观测**，`docs/24` §1）：`u16` **大端**长度 + JSON 负载，长度只算负载。
 ## 实测量到的帧头 `0x0031` = 49 字节，后面正好 49 字节 JSON。
@@ -10,40 +10,34 @@ class_name GwNetFrame
 ## **没有观测到数组**。`docs/96` §4 另证：线上走的是 serde 的**外部标签**枚举
 ## （变体名就是键），**没有数值判别值** —— 所以补一条消息只需要名字 + 字段。
 ##
-## 本文件只做三件事：编码一帧、从缓冲区切帧、把一帧解成 `{kind, body, text}`。
-## 业务语义（状态机、房间表）在 `link.gd` / `session.gd` / `discovery.gd` / `broker.gd`。
+## **帧层在 Rust**（`src/graphwar_stream_buffer.rs`：`read_event` arm64 `0x45c51c` /
+## `write_event` arm64 `0x45c818`，逐位），一律经 `GwStreamBuffer` 问。本文件留的是
+## "Godot JSON ↔ Dictionary"与报文原文拼装（原版由 serde derive 生成，属 B 类）。
+## 逐段判定见 `fixtures/controller_migration2_ledger.tsv` F01–F10。
+##
+## ⚠️ 改前**漏了一条真值**：读侧单帧上限 `0x1000`=4096（arm64 `0x45c590`，超了报
+## `Message too large`）；原来只挡写侧 `0xffff`。已补（见 `decode_buffer` 的 `error`）。
 
-## `u16` 长度字段的上限。原版同一个写入函数 `0x3d89e0` 里有 `cmp $0xffff`，
-## 超了记 `Failed to write to tcp_stream. Message too long.`（`docs/115` §1）。
-const MAX_PAYLOAD := 65535
-
-# ---------------------------------------------------------------- 编码
+# ---------------------------------------------------------------- 编码（规则在 Rust）
 
 ## 一帧 = `[hi, lo] + UTF-8 负载`。负载超过 `u16` 时返回空 `PackedByteArray`
-## （调用方必须把"空"当成错误 —— 原版在这里报 Message too long 而不是截断）。
+## （调用方必须把"空"当成错误 —— 原版在这里报 `Message too long.` 而不是截断）。
 static func encode(payload: String) -> PackedByteArray:
-	var body := payload.to_utf8_buffer()
-	var n := body.size()
-	if n > MAX_PAYLOAD:
-		return PackedByteArray()
-	var out := PackedByteArray()
-	out.append((n >> 8) & 0xFF)
-	out.append(n & 0xFF)
-	out.append_array(body)
-	return out
+	return GwStreamBuffer.encode_frame(payload)
 
 ## 把若干条消息编码成一段字节流（等价于 `src/server.rs::to_wire`）。
 static func encode_many(payloads: Array) -> PackedByteArray:
-	var out := PackedByteArray()
+	var parts := PackedStringArray()
 	for p in payloads:
-		out.append_array(encode(String(p)))
-	return out
+		parts.append(String(p))
+	return GwStreamBuffer.encode_frames(parts)
 
-## 构造一条消息原文：`{"Kind":<body_json>}`。`body_json` 必须是**已经写好的 JSON 正文**。
-##
-## 为什么不让调用方传 `Dictionary` 再序列化：`JSON.stringify` 会重排/加空格，
-## 而线上字节要能逐字节对拍（`docs/96` §7 的"逐位验证"档）。所以我们像
-## `src/_scaffold/protocol.rs` 一样**拼原文**，不做"解析再序列化"。
+# 单帧上限**不在这里写常量**：写侧 `0xffff` = `GwStreamBuffer.max_payload()`、
+# 读侧 `0x1000` = `GwStreamBuffer.max_read_len()`（逐位，见文件头）。
+
+## 构造一条消息原文：`{"Kind":<body_json>}`，`body_json` 必须是**已写好的 JSON 正文**。
+## 不让调用方传 `Dictionary` 再序列化的理由：`JSON.stringify` 会重排/加空格，而线上字节
+## 要能逐字节对拍（`docs/96` §7）⇒ 像 `src/_scaffold/protocol.rs` 一样拼原文。
 static func message(kind: String, body_json: String) -> String:
 	return '{"%s":%s}' % [kind, body_json]
 
@@ -61,39 +55,42 @@ static func json_string(s: String) -> String:
 			_: out += c
 	return out + "\""
 
-# ---------------------------------------------------------------- 切帧
+# ---------------------------------------------------------------- 切帧（规则在 Rust）
 
-## 从缓冲区头部尽量多地切出帧。
+## 从缓冲区头部尽量多地切出帧（判据全在 `GwStreamBuffer.decode_one`）。
 ##
-## 返回 `{"frames": Array[String], "rest": PackedByteArray, "bad_utf8": bool}`：
-## * `frames` —— 已经完整的帧（按到达顺序）；
-## * `rest` —— **没切走**的尾部字节（半帧必须留着，下一批数据接上）；
-## * `bad_utf8` —— 某帧负载不是合法 UTF-8。原版 `Frame::decode` 在这里返回 `None`，
-##   调用方（`read_frame`）当成"对端关了"处理，所以这里也只报一个标志位，由连接层断开。
+## 返回 `{"frames", "rest", "bad_utf8", "error"}`：
+## * `frames` —— 完整帧（按到达顺序）；`rest` —— **没切走**的尾部字节（半帧留着）；
+## * `bad_utf8` —— 负载不是合法 UTF-8（原版 `Frame::decode` 给 `None` ⇒ 当"对端关了"）；
+## * `error` —— 其它**真错误**原文（读侧 4096 上限 ⇒ `Message too large`）。非空 ⇒ 这帧永远
+##   切不出来，连接层必须断开（否则 `rest` 无限增长）。
 static func decode_buffer(buf: PackedByteArray) -> Dictionary:
 	var frames: Array[String] = []
 	var pos := 0
 	var bad := false
-	while buf.size() - pos >= 2:
-		var n := (int(buf[pos]) << 8) | int(buf[pos + 1])
-		if buf.size() - pos - 2 < n:
-			break
-		var payload := buf.slice(pos + 2, pos + 2 + n)
-		pos += 2 + n
-		var text := payload.get_string_from_utf8()
-		if text.to_utf8_buffer() != payload:
-			bad = true
-			break
-		frames.append(text)
-	return {"frames": frames, "rest": buf.slice(pos), "bad_utf8": bad}
+	var error := ""
+	while pos < buf.size():
+		var r := GwStreamBuffer.decode_one(buf, pos)
+		var status := String(r.get("status", "failed"))
+		if status == "event":
+			frames.append(String(r.get("frame", "")))
+			pos += int(r.get("consumed", 0))
+			continue
+		if status == "failed":
+			if String(r.get("reason", "")) == "bad_utf8":
+				bad = true
+			else:
+				var msg := String(r.get("message", ""))
+				error = msg if msg != "" else String(r.get("reason", ""))
+		break
+	return {"frames": frames, "rest": buf.slice(pos), "bad_utf8": bad, "error": error}
 
 # ---------------------------------------------------------------- 解消息
 
-## 解一帧：返回 `{"kind": String, "body": Dictionary, "text": String}`，解不出返回 `{}`。
-##
-## 判据照 `src/_scaffold/protocol.rs::parse_message`：外层必须是**恰好一个**键的对象，
-## 它的值必须也是对象（`ClearObstacles` 的空体 `{}` 也算对象）。花括号配平由 JSON
-## 解析器负责 —— 半截帧在切帧阶段就已经被挡掉了。
+## 解一帧：`{"kind", "body", "text"}`，解不出返回 `{}`。判据照 `_scaffold/protocol.rs::parse_message`：
+## 外层**恰好一个**键的对象、它的值也是对象（`ClearObstacles` 的空体 `{}` 也算）。
+## 留在 .gd 的理由见台账 F09：入参已是引擎解析出的文本、返回值是 `Dictionary`，
+## 真正的"事件 → 结构体"反序列化在原版是 serde（arm64 `0x4691a4`）。
 static func parse_message(text: String) -> Dictionary:
 	var t := text.strip_edges()
 	if t == "" or not t.begins_with("{"):
@@ -110,10 +107,10 @@ static func parse_message(text: String) -> Dictionary:
 		return {}
 	return {"kind": kind, "body": body, "text": t}
 
-# ---------------------------------------------------------------- 取字段
+# ---------------------------------------------------------------- 取字段（Variant 转换，留 .gd）
 #
-# 原版是**文本查找**（`src/_scaffold/protocol.rs::get_str/get_int`），这里用 JSON 解析后的字典。
-# 差异只有一个：Godot 的 JSON 把所有数字都读成 float，所以 `as_int` 要显式取整。
+# 原版是**文本查找**（`_scaffold/protocol.rs::get_str/get_int`），这里用解析后的字典；
+# 唯一差异：Godot 把数字都读成 float，所以 `as_int` 显式取整。台账 F10。
 
 static func has(msg: Dictionary, key: String) -> bool:
 	var body: Dictionary = msg.get("body", {})
