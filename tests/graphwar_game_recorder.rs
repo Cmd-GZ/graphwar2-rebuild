@@ -16,7 +16,7 @@
 //! | `new_subscribes_all_32_into_a_real_handler` | `new` 的 3 条接线 + 32 条订阅落地 | **逐位**（`0x3d52c8`/`0x3d52cc`/`0x3d52d0`/`0x3d80c4`） |
 //!
 //! 结构体布局（`size_of` / `offset_of`）的 pin 在模块内的 `layout_pins`（单测，能碰私有字段），
-//! 逐位依据见 `docs/06` §131。
+//! 逐位依据见 `docs/06` §132。
 #![allow(dead_code)]
 
 use gw2_rebuild::events;
@@ -171,7 +171,7 @@ fn event_info_is_80_bytes() {
 /// * 布局对齐真值之后：走 `GraphwarGameRecorder::detached()` —— 原版 `new`
 ///   （arm64 `0x3d7e3c` / x86 `0x3d5260`）**必须带 3 个实参**
 ///   （`&mut GraphwarEventHandler` + `Rc<RefCell<GraphwarEventQueue>>` + `Weak<RefCell<GraphwarModuleContainer>>`），
-///   证据见 `docs/06` §131；无参构造是本 crate 自造的测试入口，原版没有。
+///   证据见 `docs/06` §132；无参构造是本 crate 自造的测试入口，原版没有。
 fn recorder() -> GraphwarGameRecorder {
     GraphwarGameRecorder::detached()
 }

@@ -1,4 +1,4 @@
-# game_recorder_layout.tsv —— `GraphwarGameRecorder` 的**逐字段布局真值**（T83 / `docs/06` §131）
+# game_recorder_layout.tsv —— `GraphwarGameRecorder` 的**逐字段布局真值**（T83 / `docs/06` §132）
 # 重算/复跑：`../.reference/venv/bin/python tools/addr_probe.py dis 0x3d5260`（new）、`dis 0x3d4fa0`（闭包）、`dis 0x3d5740`（save_game）
 #           arm64 侧配名字：`OBJDUMP=llvm-objdump ../.reference/venv/bin/python tools/arm64_sym.py --so .reference/steam/android-2.0.60/libgraphwarrust.so dis 0x4b2864`（= drop_in_place<RefCell<GraphwarGameRecorder>>）
 #           drops：`arm64_sym.py dis 0x41c228`（Rc<RefCell<GGR>>::drop_slow）/ `0x41a4b8`（Rc<RefCell<GraphwarEventQueue>>::drop_slow）/ `0x4a34c4`（get_module_wk）
@@ -7,7 +7,7 @@
 # **本表更正 T78 的 ⑤ 行**：`0x50` 是 `RcInner<RefCell<GraphwarGameRecorder>>`，不是结构体尺寸；结构体是 0x38。
 # arm64 `new` 把前 32 字节（0x00..0x20）直接从一个 **rodata 常量** 搬进去（`0x3d7eb0 stp q0,q1,[x0]`，
 #   q0 = `ldr q0,[0x197980]` / q1 = `ldr q1,[0x198d50]`）；那两个 16 字节常量实测 = **{1, 2}** 与 **{-1, 0}**
-#   ⇒ strong=1 / weak=2 / borrow=-1 / Vec.cap=0（读法：`llvm-objdump -s` 按节偏移换算，脚本见 §131.9）。
+#   ⇒ strong=1 / weak=2 / borrow=-1 / Vec.cap=0（读法：`llvm-objdump -s` 按节偏移换算，脚本见 §132.9）。
 #   注意 borrow 的 **-1 是编译期常量**：`RefCell::new`(0) + 构造期 `borrow_mut`(-1) 被折叠成 -1。
 对象	偏移	大小	真值类型	我方类型	证据（x86 = 2026-08-28 目标构建 / arm64 = 2.0.60 未 strip）	证据档	备注
 RcInner<RefCell<GraphwarGameRecorder>>	0x00	8	strong: usize = 1	（由 std 的 Rc 提供）	x86 `0x3d52d8 mov qword ptr [rax],1`；arm64 `0x3d7eb0 stp q0,q1,[x0]`（rodata `0x197980` = **1**）	逐位	Rc::new 的强计数

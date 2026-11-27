@@ -1601,7 +1601,7 @@ def cmd_tsv4(p, args):
             w5[0] if w5 else "?", " ".join(w5[1]) if w5 else "?"),
         "match",
         "逐位（T83：`new`/闭包/drop glue 三路 + `add_module` 的 56）",
-        "**T78 的 `mismatch` 与「3 个 24 字节字段 + byte@0x48 = 0x50」口径已作废**（见 `docs/06` §131）："
+        "**T78 的 `mismatch` 与「3 个 24 字节字段 + byte@0x48 = 0x50」口径已作废**（见 `docs/06` §132）："
         "0x50 是 RcInner，结构体是 0x38、5 字段；`last_state` 在结构体内 +0x30、从 RcInner 基址算才是 +0x48"
         "（旧注释与本表都把两个口径混写了）。我方已按真值改成 5 字段 0x38 且 `size_of`/`offset_of!` 有 pin 单测；"
         "剩余差异只有 `GraphwarEvent` 的内部表示（占位 0x30 vs 真值 0x48 ⇒ 我方 `EventInfo` 0x38）",
