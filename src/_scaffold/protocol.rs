@@ -2393,58 +2393,127 @@ any_event!(
 mod supplemented_event_tests {
     use super::*;
 
-    /// 每条事件的样本行。三种来源，**必须**如实标：
+    /// 每条事件的样本行。**T64 之后这张表只剩「兜底」作用**：`sample_of` 会优先取
+    /// `fixtures/protocol_live_frames.jsonl` 里该事件的**首帧**（18 种事件有真帧），
+    /// 这里的串只在这 5 种事件上才会被用到。
     ///
-    /// * `fixture` — 冻结语料（`fixtures/protocol*.jsonl`）里的真实抓包原文；
-    /// * `真帧` — **T53 连官服抓包**抓到的真帧（`fixtures/protocol_live_frames.jsonl`，
-    ///   字节另存在 `fixtures/protocol_live_expected.tsv`，由下方
-    ///   `captured_samples_are_the_live_wire_bytes` 逐字节校验）；
-    /// * `合成` — 纯构造：**本仓库至今没有任何一本抓包含该事件**，形状只由二进制的
-    ///   `serialize_field` 调用序定死（`逐位`），语义仍是 `推断`。
+    /// 四种来源，**必须**如实标：
+    ///
+    /// * `线上真帧` — **T53 连官服/自建局抓包**（1717 帧）里该事件的首帧（**18 种**）：
+    ///   `sample_of` 直接返回抓到的字节，`replays_every_live_frame_of_the_supplemented_kinds`
+    ///   逐帧回放全部 352 帧；
+    /// * `语料真帧` — `TurnLimitInfo`：线上 1717 帧抓不到它，但 403 份冻结回放里有 **21 帧**
+    ///   （T53 §110.5 解压重扫；T46 记的「零真实帧」是 gzip-grep 假阴性）；
+    /// * `fixture` — 旧抓包（`fixtures/protocol_match.jsonl`）里的真帧：只剩 `VersionInfo`；
+    /// * `合成` — 纯构造：**本仓库至今没有任何一本抓包含该事件**（`GameHeartbeat`/
+    ///   `ClearBansRequest`/`BanConnectionRequest`），形状只由二进制的 `serialize_field`
+    ///   调用序定死（`逐位`），**语义仍是 `推断`** —— 这三条按 `fixtures/test_expectation_plan3.tsv`
+    ///   的 P21–P23 **换不了**，只改注释口径，不新增"真值"。
     const SAMPLES: &[(&str, &str)] = &[
-        ("NameRequest", r#"{"NameRequest":{"entity_id":229,"name":"user"}}"#), // fixture
-        ("NameInfo", r#"{"NameInfo":{"entity_id":232,"name":"Skynet"}}"#),     // fixture
-        ("RankRequest", r#"{"RankRequest":{"entity_id":232,"rank":null}}"#),   // fixture
-        ("RankInfo", r#"{"RankInfo":{"entity_id":229,"rank":0}}"#),            // fixture
-        // T53 真帧：2 条（`protocol_live_frames.jsonl`），本行是首帧。
-        ("LockInfo", r#"{"LockInfo":{"lock":true}}"#),                         // 真帧（自建局 锁房/解锁各 1 帧）
-        ("LockRequest", r#"{"LockRequest":{"lock":true}}"#),                   // 真帧（client→server；与 LockInfo 成对，各 2 帧）
-        ("ChatMessage", r#"{"ChatMessage":{"entity_id":228,"message":"gg"}}"#), // 真帧（server→client，1 帧；正文打码后见 fixture）
-        ("ChatMessageRequest", r#"{"ChatMessageRequest":{"entity_id":228,"message":"gg"}}"#), // 真帧（client→server，1 帧）
-        ("SkinGraphicsRequest", r#"{"SkinGraphicsRequest":{"entity_id":232,"graphics_str":"bot_0"}}"#), // fixture
-        ("SkinGraphicsInfo", r#"{"SkinGraphicsInfo":{"entity_id":229,"graphics_str":"yellow"}}"#), // fixture
-        ("FaceGraphicsRequest", r#"{"FaceGraphicsRequest":{"entity_id":232,"graphics_str":"no_face"}}"#), // fixture
-        ("FaceGraphicsInfo", r#"{"FaceGraphicsInfo":{"entity_id":229,"graphics_str":"regular_eyes"}}"#), // fixture
-        ("HatGraphicsRequest", r#"{"HatGraphicsRequest":{"entity_id":232,"graphics_str":"no_hat"}}"#), // fixture
-        ("HatGraphicsInfo", r#"{"HatGraphicsInfo":{"entity_id":229,"graphics_str":"soldier_helmet"}}"#), // fixture
-        ("GameHeartbeat", r#"{"GameHeartbeat":{}}"#),                          // 合成：T53 三会话 1717 帧、官服房间一整局都没有它（缺触发条件见 docs/06 §103.6）
-        ("GameRemoved", r#"{"GameRemoved":{"game_address":"69.164.213.144:42409"}}"#), // 真帧（broker 广播，1 帧）
-        ("VersionInfo", r#"{"VersionInfo":{"version":"2.0.60","system":"linux"}}"#), // fixture
-        ("BotAdded", r#"{"BotAdded":{"connection_id":228,"player_id":232,"level":3}}"#), // fixture
-        ("TurnLimitInfo", r#"{"TurnLimitInfo":{"turn_limit":5}}"#),             // 真帧（冻结语料 21 份回放，值 1/5/6/10）
-        ("EntityEffectInfo", r#"{"EntityEffectInfo":{"entity_id":230,"effect_type":"DeathEffect"}}"#), // fixture
-        ("ClearObstacles", r#"{"ClearObstacles":{}}"#),                        // fixture
-        ("ClearBansRequest", r#"{"ClearBansRequest":{}}"#),                    // 合成：客户端 UI 里没有"清空封禁"入口（`.pck`/`.so` 字符串里无 ban 按钮）
+        ("NameRequest", r#"{"NameRequest":{"entity_id":229,"name":"user"}}"#), // 线上真帧（3 帧）
+        ("NameInfo", r#"{"NameInfo":{"entity_id":232,"name":"Skynet"}}"#),     // 线上真帧（20 帧）
+        ("RankRequest", r#"{"RankRequest":{"entity_id":232,"rank":null}}"#),   // 线上真帧（3 帧）
+        ("RankInfo", r#"{"RankInfo":{"entity_id":229,"rank":0}}"#),            // 线上真帧（14 帧，含 rank:null）
+        ("LockInfo", r#"{"LockInfo":{"lock":true}}"#),                         // 线上真帧（2 帧：自建局锁房/解锁）
+        ("LockRequest", r#"{"LockRequest":{"lock":true}}"#),                   // 线上真帧（2 帧，client→server）
+        ("ChatMessage", r#"{"ChatMessage":{"entity_id":228,"message":"gg"}}"#), // 线上真帧（1 帧；正文打码成 <len=2>）
+        ("ChatMessageRequest", r#"{"ChatMessageRequest":{"entity_id":228,"message":"gg"}}"#), // 线上真帧（1 帧，client→server）
+        ("SkinGraphicsRequest", r#"{"SkinGraphicsRequest":{"entity_id":232,"graphics_str":"bot_0"}}"#), // 线上真帧（3 帧）
+        ("SkinGraphicsInfo", r#"{"SkinGraphicsInfo":{"entity_id":229,"graphics_str":"yellow"}}"#), // 线上真帧（60 帧）
+        ("FaceGraphicsRequest", r#"{"FaceGraphicsRequest":{"entity_id":232,"graphics_str":"no_face"}}"#), // 线上真帧（3 帧）
+        ("FaceGraphicsInfo", r#"{"FaceGraphicsInfo":{"entity_id":229,"graphics_str":"regular_eyes"}}"#), // 线上真帧（60 帧）
+        ("HatGraphicsRequest", r#"{"HatGraphicsRequest":{"entity_id":232,"graphics_str":"no_hat"}}"#), // 线上真帧（3 帧）
+        ("HatGraphicsInfo", r#"{"HatGraphicsInfo":{"entity_id":229,"graphics_str":"soldier_helmet"}}"#), // 线上真帧（60 帧）
+        // ⚠️ 换不了（P21）：T53 三会话 1717 帧、官服房间一整局都没有它 ⇒ 形状逐位、语义推断
+        ("GameHeartbeat", r#"{"GameHeartbeat":{}}"#),
+        ("GameRemoved", r#"{"GameRemoved":{"game_address":"69.164.213.144:42409"}}"#), // 线上真帧（broker 广播，1 帧）
+        ("VersionInfo", r#"{"VersionInfo":{"version":"2.0.60","system":"linux"}}"#), // fixture（旧抓包 protocol_match.jsonl，1 帧；线上 1717 帧里没有它）
+        ("BotAdded", r#"{"BotAdded":{"connection_id":228,"player_id":232,"level":3}}"#), // 线上真帧（4 帧；真机 level=1000）
+        ("TurnLimitInfo", r#"{"TurnLimitInfo":{"turn_limit":5}}"#),             // 语料真帧（21 份回放，值 1/5/6/10；见 turn_limit_samples_are_the_corpus_frames）
+        ("EntityEffectInfo", r#"{"EntityEffectInfo":{"entity_id":230,"effect_type":"DeathEffect"}}"#), // 线上真帧（110 帧）
+        ("ClearObstacles", r#"{"ClearObstacles":{}}"#),                        // 线上真帧（2 帧）
+        // ⚠️ 换不了（P22）：1717 帧 0 帧；客户端 UI 里没有「清空封禁」入口 ⇒ 形状逐位、语义推断
+        ("ClearBansRequest", r#"{"ClearBansRequest":{}}"#),
         ("BanConnectionRequest",
-         r#"{"BanConnectionRequest":{"player_connection_id":228,"leader_connection_id":229}}"#), // 合成
+         r#"{"BanConnectionRequest":{"player_connection_id":228,"leader_connection_id":229}}"#), // ⚠️ 换不了（P23）：1717 帧 0 帧
     ];
 
-    fn sample_of(kind: &str) -> &'static str {
+    /// 线上真帧：`fixtures/protocol_live_frames.jsonl`（T53 连官服/自建局抓包，**1717 帧**）。
+    ///
+    /// 证据链：`tools/live_capture/live_wire.js`（hex 直接来自 `recv` 缓冲）
+    /// → `tools/live_capture/parse_live.py`（切帧 + 打码 + 落表）
+    /// → `fixtures/protocol_live_frames.jsonl`（每帧自带负载 `sha256` / 带前缀 `frame_sha256` / `n`）
+    /// → `tools/gen_test_expectations3.py`（逐帧核 sha256/n，再算每类事件的负载 FNV 与帧数）
+    /// → `fixtures/test_expectation_truth3.tsv`（`P/<事件>/fnv1a64`、`P/<事件>/frames`）→ **本测试**。
+    ///
+    /// ⚠️ 打码帧（只有 `ChatMessage*` 的正文）的 `hex` 是**打码后**文本（`<len=N>`），
+    /// 与 `n`/`sha256`（原始负载口径）不同长 —— 这是 T53 的隐私口径（`docs/plan-official-capture.md` §1.3）。
+    const LIVE_FRAMES_JSONL: &str = include_str!("../../fixtures/protocol_live_frames.jsonl");
+
+    /// `hex` → 字节。
+    fn hex_bytes(hex: &str) -> Vec<u8> {
+        (0..hex.len() / 2)
+            .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).expect("抓包 hex"))
+            .collect()
+    }
+
+    /// 抓包里某事件的**全部线上负载字节**（按抓包顺序）。没有该事件 ⇒ 空。
+    fn live_payloads(kind: &str) -> Vec<Vec<u8>> {
+        let mut out = Vec::new();
+        for line in LIVE_FRAMES_JSONL.lines() {
+            let Some(pos) = line.find("\"event\": \"") else { continue };
+            let rest = &line[pos + 10..];
+            let Some(end) = rest.find('"') else { continue };
+            if &rest[..end] != kind {
+                continue;
+            }
+            let Some(pos) = line.find("\"hex\": \"") else { continue };
+            let rest = &line[pos + 8..];
+            let Some(end) = rest.find('"') else { continue };
+            out.push(hex_bytes(&rest[..end]));
+        }
+        out
+    }
+
+    /// FNV-1a 64（与 `tools/gen_test_expectations3.py::fnv1a64` 同口径）。
+    fn fnv1a64(bytes: &[u8]) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in bytes {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        h
+    }
+
+    /// 样本：**优先取线上真帧的首帧**（18 种事件有），否则退回 `SAMPLES`（4 种抓不到 + 语料样本）。
+    ///
+    /// 这样 23 条 `round_trip_*` 里 19 条的期望值就是抓到的字节本身，而不是手抄串。
+    fn sample_of(kind: &str) -> String {
+        if let Some(first) = live_payloads(kind).into_iter().next() {
+            return String::from_utf8(first).expect("线上负载应是 UTF-8");
+        }
         SAMPLES
             .iter()
             .find(|(k, _)| *k == kind)
             .unwrap_or_else(|| panic!("样本表里没有 {kind}"))
             .1
+            .to_string()
     }
 
     /// 每个补齐事件一条往返测试：`解析 → 重新序列化` 必须逐字节相同。
+    ///
+    /// **期望值来源**（`fixtures/test_expectation_plan3.tsv` 的 P01–P23）：
+    /// `sample_of` 优先给**线上真帧的首帧**（18 种事件，352 帧里的第一帧）⇒ 这里比的是
+    /// **抓到的字节**，不是手抄串；`TurnLimitInfo` 是冻结语料的真帧文本；
+    /// `VersionInfo` 是旧抓包原文；`GameHeartbeat`/`ClearBansRequest`/`BanConnectionRequest`
+    /// **换不了**（1717 帧 0 帧）⇒ 仍是 `合成` 样本，形状逐位、**语义推断**。
     macro_rules! round_trip_tests {
         ($($name:ident => $ty:ident),* $(,)?) => {
             $(
                 #[test]
                 fn $name() {
                     let line = sample_of(stringify!($ty));
-                    let m = parse_message(line).expect("样本应能解析成单键消息");
+                    let m = parse_message(&line).expect("样本应能解析成单键消息");
                     assert_eq!(m.kind, stringify!($ty));
                     let ev = AnyEvent::parse(&m).expect("应被识别为补齐事件");
                     assert_eq!(ev.kind(), stringify!($ty));
@@ -2490,6 +2559,11 @@ mod supplemented_event_tests {
         let body = start + KEY.len();
         let rest = &line[body..];
         let Some(end) = rest.find('"') else { return line.to_string() };
+        // **幂等**：`sample_of` 现在优先给线上真帧，而抓包夹具里的 `ChatMessage` 正文**已经在
+        // T53 落表时打码过**（`<len=N>`）⇒ 再打一次会把 `<len=2>` 变成 `<len=7>`（踩过）。
+        if rest[..end].starts_with("<len=") && rest[..end].ends_with('>') {
+            return line.to_string();
+        }
         let msg_len = rest[..end].chars().count();
         format!("{}{}<len={}>{}", &line[..body], "", msg_len, &rest[end..])
     }
@@ -2526,7 +2600,7 @@ mod supplemented_event_tests {
                 checked += 1;
                 continue;
             }
-            let sample = mask_chat(sample_of(event));
+            let sample = mask_chat(&sample_of(event));
             assert_eq!(sample, text,
                        "{event} 的样本打码后与线上真帧原文不一致（方向 {dir}）");
             let bytes: Vec<u8> = (0..hexs.len() / 2)
@@ -2539,6 +2613,98 @@ mod supplemented_event_tests {
         assert_eq!(checked, 7,
                    "真帧条数应为 7：LockInfo/ChatMessage/GameRemoved/TurnLimitInfo/\
                     LockRequest/ChatMessageRequest + EndingGame(GameStateInfo)");
+    }
+
+    /// **线上真帧的全量硬闸**：18 种补齐事件 × **352 帧**，逐帧「解析 → 重新序列化」必须逐字节相同。
+    ///
+    /// 与上面那条（T53 只钉 7 条样本）的分工：那条证「样本串就是抓到的字节」，这条证
+    /// 「**抓到的每一帧**我们都能原样回放」——`SkinGraphicsInfo`(60) / `FaceGraphicsInfo`(60) /
+    /// `HatGraphicsInfo`(60) / `EntityEffectInfo`(110) 这些取值组合，任何手抄样本都覆盖不到。
+    ///
+    /// 帧数与负载指纹（`fixtures/test_expectation_truth3.tsv` 的 `P/<事件>/frames` 与 `fnv1a64`）
+    /// 钉死在这里 ⇒ 抓包被改一帧、或有人拿新抓包覆盖夹具，这条立刻红。
+    #[test]
+    fn replays_every_live_frame_of_the_supplemented_kinds() {
+        // (事件, 帧数, 负载按抓包顺序拼接的 FNV-1a 64)
+        const LIVE: [(&str, usize, u64); 18] = [
+            ("NameRequest", 3, 0x93dd_c46f_0175_f6a6),
+            ("NameInfo", 20, 0x5600_1fee_ea8d_b908),
+            ("RankRequest", 3, 0xc657_f1c4_b285_29f9),
+            ("RankInfo", 14, 0x82ed_f648_b9db_3507),
+            ("LockInfo", 2, 0x830e_047d_a4ce_0458),
+            ("LockRequest", 2, 0x7b7f_99bc_8287_6c0a),
+            ("ChatMessage", 1, 0x9a9d_ba88_a7b9_b38c),
+            ("ChatMessageRequest", 1, 0x52ef_a3e1_b341_f80f),
+            ("SkinGraphicsRequest", 3, 0x5739_accf_b33d_476a),
+            ("SkinGraphicsInfo", 60, 0x5910_42a6_7d08_37ed),
+            ("FaceGraphicsRequest", 3, 0xb021_6553_994b_7f57),
+            ("FaceGraphicsInfo", 60, 0xefd3_25e7_45e8_d117),
+            ("HatGraphicsRequest", 3, 0xd726_1229_245a_f66e),
+            ("HatGraphicsInfo", 60, 0xe3d8_02b8_3361_7465),
+            ("GameRemoved", 1, 0x1b1e_3b53_b3be_9174),
+            ("BotAdded", 4, 0x16d2_48d3_c3db_3390),
+            ("EntityEffectInfo", 110, 0x4d18_3fe0_fe98_3ab3),
+            ("ClearObstacles", 2, 0x8596_1ecf_2132_d5e3),
+        ];
+        let mut total = 0usize;
+        for (kind, want_n, want_fnv) in LIVE {
+            let payloads = live_payloads(kind);
+            assert_eq!(
+                payloads.len(), want_n,
+                "{kind}: 线上帧数与 fixtures/test_expectation_truth3.tsv 不符"
+            );
+            let joined: Vec<u8> = payloads.iter().flatten().copied().collect();
+            assert_eq!(
+                fnv1a64(&joined), want_fnv,
+                "{kind}: 线上负载指纹变了（真帧被改过 / 换了抓包）"
+            );
+            for p in &payloads {
+                let text = std::str::from_utf8(p).expect("线上负载应是 UTF-8");
+                let m = parse_message(text)
+                    .unwrap_or_else(|| panic!("{kind}: 线上帧解析失败：{text}"));
+                assert_eq!(m.kind, kind, "线上帧的事件名与抓包记录不符：{text}");
+                let ev = AnyEvent::parse(&m)
+                    .unwrap_or_else(|| panic!("{kind}: 应被识别为补齐事件"));
+                assert_eq!(ev.kind(), kind);
+                assert_eq!(ev.to_msg(), text, "{kind}: 线上真帧回放后字节不一致（实现有偏差）");
+                total += 1;
+            }
+        }
+        assert_eq!(
+            total, 352,
+            "线上补齐事件帧总数应为 352（fixtures/protocol_live_frames.jsonl 1717 帧的子集）"
+        );
+    }
+
+    /// `TurnLimitInfo` 的真帧在**冻结语料**里（线上 1717 帧抓不到它）：21 帧 / 21 份回放，
+    /// 取值 `{1,5,6,10}`。T46 曾把它记成「零真实帧」，是**在 gzip 压缩字节上 grep** 的假阴性
+    /// （T53 §110.5 解压重扫纠正）。
+    ///
+    /// ⚠️ 这一行的档位是 `观测（回放记录）`：文本是「回放记录的 event 对象 → 紧凑 JSON」**重建**的，
+    /// 不是线上负载字节（线上负载抓不到它，见 `docs/06` §110.6 的缺触发条件）。
+    #[test]
+    fn turn_limit_samples_are_the_corpus_frames() {
+        // 21 份回放里该事件的取值，**按快照文件名顺序**（truth3 的 `P/TurnLimitInfo` 段就是按这个顺序算 FNV 的）
+        const CORPUS_ORDER: [i64; 21] = [
+            5, 5, 10, 10, 10, 6, 1, 6, 6, 6, 5, 5, 5, 6, 6, 5, 5, 5, 10, 10, 6,
+        ];
+        // 21 条重建文本按上面顺序拼接的 FNV-1a 64 = `P/TurnLimitInfo/fnv1a64`（truth3）
+        const CORPUS_FNV: u64 = 0x48e2_39f8_596c_54ce;
+        let mut joined: Vec<u8> = Vec::new();
+        for value in CORPUS_ORDER {
+            let text = format!(r#"{{"TurnLimitInfo":{{"turn_limit":{value}}}}}"#);
+            let m = parse_message(&text).expect("重建文本应能解析");
+            let ev = AnyEvent::parse(&m).expect("应识别为 TurnLimitInfo");
+            assert_eq!(ev.to_msg(), text, "TurnLimitInfo({value}) 往返后字节不一致");
+            joined.extend_from_slice(text.as_bytes());
+        }
+        assert_eq!(fnv1a64(&joined), CORPUS_FNV, "语料里的 TurnLimitInfo 重建文本变了");
+        // 取值直方图：{1:1, 5:8, 6:7, 10:5}
+        let mut hist = std::collections::BTreeMap::new();
+        for v in CORPUS_ORDER {
+            *hist.entry(v).or_insert(0usize) += 1;
+        }
+        assert_eq!(hist, [(1, 1), (5, 8), (6, 7), (10, 5)].into_iter().collect());
     }
 
     /// 23 个名字一个不多一个不少；三张表（名字 / 字段数 / 抓包档）互相一致。
@@ -2576,7 +2742,7 @@ mod supplemented_event_tests {
                 .and_then(|(_, n)| *n)
                 .unwrap_or_else(|| panic!("{kind} 应有 serde 字段数"));
             let line = sample_of(kind);
-            let m = parse_message(line).expect("样本应能解析");
+            let m = parse_message(&line).expect("样本应能解析");
             let body = m.body.trim();
             let got = if body.is_empty() { 0 } else { split_fields(body).len() };
             assert_eq!(got, n, "{kind} 的实测字段数 {} 与 serde 的 N={} 不符", got, n);
@@ -2601,7 +2767,7 @@ mod supplemented_event_tests {
         assert_eq!(upgraded.len(), 10);
         for kind in upgraded {
             let line = sample_of(kind);
-            let m = parse_message(line).expect("样本应能解析");
+            let m = parse_message(&line).expect("样本应能解析");
             let ev = AnyEvent::parse(&m).expect("应识别");
             assert!(
                 ev.extra_fields().is_empty(),
@@ -2679,6 +2845,9 @@ mod supplemented_event_tests {
     }
 
     /// 未知事件名不能被当成已知事件吞掉。
+    ///
+    /// ⚠️ **契约断言，不含语义**（P26）：真流量里不会有非法帧，原版的失败路径没抓到；
+    /// 这条钉的是「我方解析器不许把不懂的事件当成已知事件吞下去」。
     #[test]
     fn unknown_kind_is_not_accepted() {
         for line in [
@@ -2692,6 +2861,10 @@ mod supplemented_event_tests {
     }
 
     /// 未知字段：原样保留（键 + 原始值文本）并原样回发。
+    ///
+    /// ⚠️ **契约断言，不含语义**（P25）：原版 serde 的未知字段行为没有抓到（真流量里不会有
+    /// 我们不认识的字段）；这条钉的是**我方 `_scaffold::protocol` 的接缝契约** —— 客户端转发
+    /// 一帧它不认识的字段时不能丢。**不能当复原证据。**
     #[test]
     fn unknown_fields_are_preserved_and_replayed() {
         // 强类型事件上的未知标量字段
@@ -2732,6 +2905,10 @@ mod supplemented_event_tests {
 
     /// **转义与字符串内的逗号**必须一字节不动地保留。
     ///
+    /// ⚠️ **契约断言，不含语义**（P27）：1717 帧线上真帧里没有一条带引号/转义字符的
+    /// `NameInfo`/`ChatMessage`（`ChatMessage` 正文还被 T53 打码成 `<len=N>`）⇒ 这条的输入是
+    /// 构造的，不是观测到的报文。
+    ///
     /// ⚠️ 本测试原先用 `ChatMessage` 走"透传"路径断言 `extra` 里有两个字段；
     /// `ChatMessage` 本轮升级成强类型后，`message` 落在强类型槽位里。
     /// 断言意图（转义 / 串内逗号不能被当成分隔符）保持不变并**加强**：
@@ -2759,22 +2936,43 @@ mod supplemented_event_tests {
         assert_eq!(chat2.to_msg(), line2);
     }
 
-    /// 抓包里机器人的段位是 `null`：`Option` 必须把 `None` 发回成 `null`。
+    /// 真帧里机器人的段位是 `null`、人类的段位是整数：`Option` 必须把 `None` 发回成 `null`。
+    ///
+    /// **真值来源（P28）**：线上真帧 14 条 `RankInfo`（`fixtures/protocol_live_frames.jsonl`），
+    /// 既有 `"rank":null`（bot）也有 `"rank":0`（人类）——本测试直接从抓包取这两条原文，
+    /// 而不是用构造串。
     #[test]
     fn rank_null_round_trips_as_json_null() {
-        let line = r#"{"RankInfo":{"entity_id":232,"rank":null}}"#;
-        let m = parse_message(line).unwrap();
-        let AnyEvent::RankInfo(r) = AnyEvent::parse(&m).expect("应识别") else {
-            panic!("应解析为 RankInfo")
-        };
-        assert_eq!(r.rank, None);
-        assert_eq!(r.to_msg(), line);
+        let payloads = live_payloads("RankInfo");
+        assert_eq!(payloads.len(), 14, "线上 RankInfo 帧数变了");
+        let mut seen_null = 0;
+        let mut seen_int = 0;
+        for p in &payloads {
+            let line = std::str::from_utf8(p).expect("UTF-8");
+            let m = parse_message(line).expect("线上 RankInfo 应能解析");
+            let AnyEvent::RankInfo(r) = AnyEvent::parse(&m).expect("应识别") else {
+                panic!("应解析为 RankInfo")
+            };
+            if line.contains(r#""rank":null"#) {
+                assert_eq!(r.rank, None, "线上 rank:null 应解析成 None");
+                seen_null += 1;
+            } else {
+                assert!(r.rank.is_some(), "线上整数段位应解析成 Some：{line}");
+                seen_int += 1;
+            }
+            assert_eq!(r.to_msg(), line, "线上 RankInfo 往返后字节不一致");
+        }
+        assert!(seen_null > 0, "线上应至少有一条 rank:null（bot）");
+        assert!(seen_int > 0, "线上应至少有一条整数 rank（人类）");
 
         let r = RankInfo { entity_id: 229, rank: Some(0), extra: Vec::new() };
         assert_eq!(r.to_msg(), r#"{"RankInfo":{"entity_id":229,"rank":0}}"#);
     }
 
     /// 强类型事件的字符串字段：带引号的名字要能转义写出、解转义读回。
+    ///
+    /// ⚠️ **契约断言，不含语义**（P29）：线上 20 条 `NameInfo` 里没有带引号的名字 ⇒
+    /// 输入是构造的；真帧覆盖的是「普通字符串逐字节回放」（见 352 帧硬闸）。
     #[test]
     fn typed_string_field_escapes_quotes_both_ways() {
         let name = r#"a "quoted" name"#;
@@ -2790,6 +2988,8 @@ mod supplemented_event_tests {
     }
 
     /// 解析不出来的样本不能被"猜"成默认值。
+    ///
+    /// ⚠️ **契约断言，不含语义**：真流量里没有缺字段/类型错的帧。
     #[test]
     fn missing_or_mistyped_required_field_is_rejected() {
         // `BotAdded` 少 `level`

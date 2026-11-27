@@ -1,0 +1,178 @@
+section	key	value	source	note
+P/live	frames	1717	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	会话头 frames_deduped=1717；未打码的 1715 帧逐帧 sha256/frame_sha256/n 自校验通过，打码帧 2 条（只核打码键）
+P/live	kinds	56	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	56 种事件
+P/live	supplemented_kinds	18	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	23 个补齐事件里有 18 种抓到真帧
+P/live	supplemented_frames	352	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	这 18 种事件的帧总数（新增硬闸要逐帧回放）
+P/NameRequest	frames	3	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	方向 {'client→server': 3}
+P/NameRequest	fnv1a64	93ddc46f0175f6a6	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	3 帧负载按抓包顺序拼接的 FNV-1a 64（测试里用同一个 FNV 复算）
+P/NameRequest	sha256	3271d2fe7d5b6bdd6d6ee189cd0036e647283b1485fa44cf8b804653304be1f8	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	同上，sha256 口径
+P/NameRequest	first	{"NameRequest":{"entity_id":229,"name":"CG"}}	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	首帧原文
+P/NameInfo	frames	20	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	方向 {'server→client': 20}
+P/NameInfo	fnv1a64	56001feeea8db908	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	20 帧负载按抓包顺序拼接的 FNV-1a 64（测试里用同一个 FNV 复算）
+P/NameInfo	sha256	0e648feeac17351ce6d970117a9f19eb233fc873629b795da2fa54a94fd12cff	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	同上，sha256 口径
+P/NameInfo	first	{"NameInfo":{"entity_id":229,"name":"CG"}}	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	首帧原文
+P/RankRequest	frames	3	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	方向 {'client→server': 3}
+P/RankRequest	fnv1a64	c657f1c4b28529f9	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	3 帧负载按抓包顺序拼接的 FNV-1a 64（测试里用同一个 FNV 复算）
+P/RankRequest	sha256	ceeba4c95e8336a3ec842cb16bd82ff68e3e5a0b87f38c2fe3f008749a88f232	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	同上，sha256 口径
+P/RankRequest	first	{"RankRequest":{"entity_id":229,"rank":0}}	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	首帧原文
+P/RankInfo	frames	14	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	方向 {'server→client': 14}
+P/RankInfo	fnv1a64	82edf648b9db3507	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	14 帧负载按抓包顺序拼接的 FNV-1a 64（测试里用同一个 FNV 复算）
+P/RankInfo	sha256	5b674ecb11a0d138bcf77d54fb44485082ec9808b44d6f450734a08133eb3ec8	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	同上，sha256 口径
+P/RankInfo	first	{"RankInfo":{"entity_id":229,"rank":0}}	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	首帧原文
+P/LockInfo	frames	2	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	方向 {'server→client': 2}
+P/LockInfo	fnv1a64	830e047da4ce0458	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	2 帧负载按抓包顺序拼接的 FNV-1a 64（测试里用同一个 FNV 复算）
+P/LockInfo	sha256	c8d51ece5dcc18928f022e090f3f471cf10c217e2c3d349a2da41bb4b9dac24e	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	同上，sha256 口径
+P/LockInfo	first	{"LockInfo":{"lock":true}}	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	首帧原文
+P/LockRequest	frames	2	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	方向 {'client→server': 2}
+P/LockRequest	fnv1a64	7b7f99bc82876c0a	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	2 帧负载按抓包顺序拼接的 FNV-1a 64（测试里用同一个 FNV 复算）
+P/LockRequest	sha256	c5042f0abc7c3f30b6cfa3833babf3ad71f2aa138a5a017a6446efec6d03820d	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	同上，sha256 口径
+P/LockRequest	first	{"LockRequest":{"lock":true}}	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	首帧原文
+P/ChatMessage	frames	1	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	方向 {'server→client': 1}；打码帧 1 条
+P/ChatMessage	fnv1a64	9a9dba88a7b9b38c	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	1 帧负载按抓包顺序拼接的 FNV-1a 64（测试里用同一个 FNV 复算）
+P/ChatMessage	sha256	459a4d25bf01fa7d710db839f5ac9bd3ab7509a497ae6054559cddd79fe6b194	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	同上，sha256 口径
+P/ChatMessage	first	{"ChatMessage":{"entity_id":228,"message":"<len=2>"}}	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	首帧原文
+P/ChatMessageRequest	frames	1	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	方向 {'client→server': 1}；打码帧 1 条
+P/ChatMessageRequest	fnv1a64	52efa3e1b341f80f	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	1 帧负载按抓包顺序拼接的 FNV-1a 64（测试里用同一个 FNV 复算）
+P/ChatMessageRequest	sha256	cc55a3079c70366cbae5d1a30ea307dab8fd2b7cc8c85c60c73d984e7f758812	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	同上，sha256 口径
+P/ChatMessageRequest	first	{"ChatMessageRequest":{"entity_id":228,"message":"<len=2>"}}	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	首帧原文
+P/SkinGraphicsRequest	frames	3	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	方向 {'client→server': 3}
+P/SkinGraphicsRequest	fnv1a64	5739accfb33d476a	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	3 帧负载按抓包顺序拼接的 FNV-1a 64（测试里用同一个 FNV 复算）
+P/SkinGraphicsRequest	sha256	1b2327202f6aa7ea6f585c71705589216b4ae15a5428e35ef556b5d4a1a967b9	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	同上，sha256 口径
+P/SkinGraphicsRequest	first	{"SkinGraphicsRequest":{"entity_id":229,"graphics_str":"yellow"}}	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	首帧原文
+P/SkinGraphicsInfo	frames	60	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	方向 {'server→client': 60}
+P/SkinGraphicsInfo	fnv1a64	591042a67d0837ed	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	60 帧负载按抓包顺序拼接的 FNV-1a 64（测试里用同一个 FNV 复算）
+P/SkinGraphicsInfo	sha256	0be0563e155c46e27b8ff83eeac4769bab7a481e83d2c191acd4e68b87ac28fa	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	同上，sha256 口径
+P/SkinGraphicsInfo	first	{"SkinGraphicsInfo":{"entity_id":229,"graphics_str":"yellow"}}	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	首帧原文
+P/FaceGraphicsRequest	frames	3	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	方向 {'client→server': 3}
+P/FaceGraphicsRequest	fnv1a64	b0216553994b7f57	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	3 帧负载按抓包顺序拼接的 FNV-1a 64（测试里用同一个 FNV 复算）
+P/FaceGraphicsRequest	sha256	b24f9eacebae5f8ca13d8a93a65263856e9f93c0bf1e5c7994658cb72f67b308	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	同上，sha256 口径
+P/FaceGraphicsRequest	first	{"FaceGraphicsRequest":{"entity_id":229,"graphics_str":"regular_eyes"}}	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	首帧原文
+P/FaceGraphicsInfo	frames	60	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	方向 {'server→client': 60}
+P/FaceGraphicsInfo	fnv1a64	efd325e745e8d117	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	60 帧负载按抓包顺序拼接的 FNV-1a 64（测试里用同一个 FNV 复算）
+P/FaceGraphicsInfo	sha256	3b3dd2c0e5e0e9509aa90665ad61999bfb984693cb8db3deaa5e1e5794fcec14	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	同上，sha256 口径
+P/FaceGraphicsInfo	first	{"FaceGraphicsInfo":{"entity_id":229,"graphics_str":"regular_eyes"}}	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	首帧原文
+P/HatGraphicsRequest	frames	3	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	方向 {'client→server': 3}
+P/HatGraphicsRequest	fnv1a64	d7261229245af66e	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	3 帧负载按抓包顺序拼接的 FNV-1a 64（测试里用同一个 FNV 复算）
+P/HatGraphicsRequest	sha256	9ceb0b6b7073fd6ffb6fe99ff9e57e0f692db4614877e903c75d268e29e50456	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	同上，sha256 口径
+P/HatGraphicsRequest	first	{"HatGraphicsRequest":{"entity_id":229,"graphics_str":"soldier_helmet"}}	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	首帧原文
+P/HatGraphicsInfo	frames	60	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	方向 {'server→client': 60}
+P/HatGraphicsInfo	fnv1a64	e3d802b833617465	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	60 帧负载按抓包顺序拼接的 FNV-1a 64（测试里用同一个 FNV 复算）
+P/HatGraphicsInfo	sha256	a973a8b6ba50e8d801168087a3193c411345021d23dade5294e869fc455b044b	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	同上，sha256 口径
+P/HatGraphicsInfo	first	{"HatGraphicsInfo":{"entity_id":229,"graphics_str":"soldier_helmet"}}	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	首帧原文
+P/GameHeartbeat	frames	0	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	换不了：1717 帧 0 帧（docs/06 §110.6 的缺触发条件）
+P/GameRemoved	frames	1	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	方向 {'server→client': 1}
+P/GameRemoved	fnv1a64	1b1e3b53b3be9174	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	1 帧负载按抓包顺序拼接的 FNV-1a 64（测试里用同一个 FNV 复算）
+P/GameRemoved	sha256	450cd9044c44ea1a9488b56626fc3d1ebdc4013e715d4be73fff43627f0a2f40	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	同上，sha256 口径
+P/GameRemoved	first	{"GameRemoved":{"game_address":"69.164.213.144:42409"}}	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	首帧原文
+P/VersionInfo	frames	0	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	换不了：1717 帧 0 帧（docs/06 §110.6 的缺触发条件）
+P/BotAdded	frames	4	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	方向 {'server→client': 4}
+P/BotAdded	fnv1a64	16d248d3c3db3390	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	4 帧负载按抓包顺序拼接的 FNV-1a 64（测试里用同一个 FNV 复算）
+P/BotAdded	sha256	aa1d6c5b7ec25622f0b02ad97e0fb8edd7f3a82973c2bb21071d82eff1fee774	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	同上，sha256 口径
+P/BotAdded	first	{"BotAdded":{"connection_id":228,"player_id":232,"level":1000}}	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	首帧原文
+P/TurnLimitInfo	frames	0	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	换不了：1717 帧 0 帧（docs/06 §110.6 的缺触发条件）
+P/EntityEffectInfo	frames	110	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	方向 {'server→client': 110}
+P/EntityEffectInfo	fnv1a64	4d183fe0fe983ab3	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	110 帧负载按抓包顺序拼接的 FNV-1a 64（测试里用同一个 FNV 复算）
+P/EntityEffectInfo	sha256	5238280c8b72c29fc861de3e3e718beac93c7f6a891608434f628b2a1026f43d	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	同上，sha256 口径
+P/EntityEffectInfo	first	{"EntityEffectInfo":{"entity_id":230,"effect_type":"DeathEffect"}}	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	首帧原文
+P/ClearObstacles	frames	2	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	方向 {'server→client': 2}
+P/ClearObstacles	fnv1a64	85961ecf2132d5e3	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	2 帧负载按抓包顺序拼接的 FNV-1a 64（测试里用同一个 FNV 复算）
+P/ClearObstacles	sha256	dfaf80ac6938952aae493d262afaa4bf1f547416466640b1893ec1aef345a10c	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	同上，sha256 口径
+P/ClearObstacles	first	{"ClearObstacles":{}}	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	首帧原文
+P/ClearBansRequest	frames	0	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	换不了：1717 帧 0 帧（docs/06 §110.6 的缺触发条件）
+P/BanConnectionRequest	frames	0	线上真帧 fixtures/protocol_live_frames.jsonl（T53 抓包；探针 tools/live_capture/live_wire.js）	换不了：1717 帧 0 帧（docs/06 §110.6 的缺触发条件）
+corpus	names_sha256	c3325c0b72402085c8c89a90b62441e753bd4be5fb1e871985bdf78938703907	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	文件名集合指纹（与 guardrails.json corpus.names_sha256 同口径）
+corpus	files	403	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	401 份回放 + MANIFEST.tsv + SHA256SUMS
+P/TurnLimitInfo	corpus_frames	21	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	21 份回放各 1 帧；T53 §110.5 用解压重扫纠正了 T46 的 gzip-grep 假阴性
+P/TurnLimitInfo	corpus_values	{"1": 1, "5": 8, "6": 7, "10": 5}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	取值直方图（T53 记的是 1/5/6/10）
+P/TurnLimitInfo	corpus_files	21	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	含该事件的回放份数
+P/TurnLimitInfo	fnv1a64	48e239f8596c54ce	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	21 条重建文本按文件名顺序拼接的 FNV-1a 64
+P/TurnLimitInfo	first	{"TurnLimitInfo":{"turn_limit":5}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	首帧：回放记录的 event 对象 → 紧凑 JSON（口径见文件头第 2 条）
+P/TurnLimitInfo/5	payload	{"TurnLimitInfo":{"turn_limit":5}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 5 的重建文本
+P/TurnLimitInfo/5	payload	{"TurnLimitInfo":{"turn_limit":5}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 5 的重建文本
+P/TurnLimitInfo/10	payload	{"TurnLimitInfo":{"turn_limit":10}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 10 的重建文本
+P/TurnLimitInfo/10	payload	{"TurnLimitInfo":{"turn_limit":10}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 10 的重建文本
+P/TurnLimitInfo/10	payload	{"TurnLimitInfo":{"turn_limit":10}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 10 的重建文本
+P/TurnLimitInfo/6	payload	{"TurnLimitInfo":{"turn_limit":6}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 6 的重建文本
+P/TurnLimitInfo/1	payload	{"TurnLimitInfo":{"turn_limit":1}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 1 的重建文本
+P/TurnLimitInfo/6	payload	{"TurnLimitInfo":{"turn_limit":6}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 6 的重建文本
+P/TurnLimitInfo/6	payload	{"TurnLimitInfo":{"turn_limit":6}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 6 的重建文本
+P/TurnLimitInfo/6	payload	{"TurnLimitInfo":{"turn_limit":6}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 6 的重建文本
+P/TurnLimitInfo/5	payload	{"TurnLimitInfo":{"turn_limit":5}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 5 的重建文本
+P/TurnLimitInfo/5	payload	{"TurnLimitInfo":{"turn_limit":5}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 5 的重建文本
+P/TurnLimitInfo/5	payload	{"TurnLimitInfo":{"turn_limit":5}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 5 的重建文本
+P/TurnLimitInfo/6	payload	{"TurnLimitInfo":{"turn_limit":6}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 6 的重建文本
+P/TurnLimitInfo/6	payload	{"TurnLimitInfo":{"turn_limit":6}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 6 的重建文本
+P/TurnLimitInfo/5	payload	{"TurnLimitInfo":{"turn_limit":5}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 5 的重建文本
+P/TurnLimitInfo/5	payload	{"TurnLimitInfo":{"turn_limit":5}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 5 的重建文本
+P/TurnLimitInfo/5	payload	{"TurnLimitInfo":{"turn_limit":5}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 5 的重建文本
+P/TurnLimitInfo/10	payload	{"TurnLimitInfo":{"turn_limit":10}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 10 的重建文本
+P/TurnLimitInfo/10	payload	{"TurnLimitInfo":{"turn_limit":10}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 10 的重建文本
+P/TurnLimitInfo/6	payload	{"TurnLimitInfo":{"turn_limit":6}}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	值 6 的重建文本
+W/corpus	replays	401	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	401 份回放
+W/corpus	ending_frames	217	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	含 GameStateInfo{game_state:EndingGame} 的回放数（**T46「403 份 0 次」是 gzip-grep 假阴性**）
+W/corpus	one_team_wiped	193	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	恰好一队零活实体
+W/corpus	both_teams_wiped	24	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	双方同时零活体（W02 的真值：24 例）
+W/corpus	turn_limit_reached	1	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	终局时 turn_count 已到上限（真上限用尽的收场；W04 相关）
+W/corpus	ending_with_target	45	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	终局里含靶子的（打靶关）
+W/corpus	ending_soldiers_only	172	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	终局里全是士兵的（对战/联机局）
+W01/target_level	file	1782640359	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	回放 id（快照里的文件名）
+W01/target_level	ending_tick	3621	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	GameStateInfo{EndingGame} 的 tick
+W01/target_level	alive	{"0": 1, "1": 0}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	终局两队活实体数（Team1/Team2）
+W01/target_level	wiped_team	1	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	零活体的一队 = 输的一队
+W01/target_level	winner	0	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	另一队 = 真值里的胜方
+W01/target_level	composition	347:0:unknown:a|348:0:soldier:a|349:0:soldier:d|350:1:target:d	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	终局队伍构成 id:team:soldier|target:alive(a)/dead(d)；测试按这个重建 Match
+W01/target_level	targets	1	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	其中的靶子个数
+W01/target_level	turn_limit	None	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	该局有没有 TurnLimitInfo
+W01/versus_level	file	1782640836	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	回放 id（快照里的文件名）
+W01/versus_level	ending_tick	3894	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	GameStateInfo{EndingGame} 的 tick
+W01/versus_level	alive	{"0": 1, "1": 0}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	终局两队活实体数（Team1/Team2）
+W01/versus_level	wiped_team	1	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	零活体的一队 = 输的一队
+W01/versus_level	winner	0	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	另一队 = 真值里的胜方
+W01/versus_level	composition	876:0:unknown:a|877:0:soldier:d|878:0:soldier:a|879:1:unknown:a|880:1:soldier:d|881:1:soldier:d	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	终局队伍构成 id:team:soldier|target:alive(a)/dead(d)；测试按这个重建 Match
+W01/versus_level	targets	0	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	其中的靶子个数
+W01/versus_level	turn_limit	None	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	该局有没有 TurnLimitInfo
+W02/corpus	both_wiped	24	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	`tests/win_rule.rs::mutual_wipe_has_no_winner` 的注释写着「语料里没有这种收场」——**本轮证伪**：24 例真终局双方零活体
+W02/corpus	file	1782642754	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	真终局样本
+W02/corpus	composition	153429:1:unknown:a|153430:1:soldier:d|153431:1:soldier:d|153654:0:unknown:a|153655:0:soldier:d|153656:0:soldier:d	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	终局构成 id:team:kind:a/d；两队士兵全 d、只剩 player 实体 a
+W02/corpus	alive	{"0": 0, "1": 0}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	两队活实体数
+W02/corpus	targets	0	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	0 = 对战局
+W04/corpus	file	1782641048	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	终局时 turn_count 已到上限的真实回放
+W04/corpus	turn_limit	1	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	该局的 TurnLimitInfo 值
+W04/corpus	turn_count	1	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	终局时的 turn_count
+W04/corpus	alive	{"0": 1, "1": 0}	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	两队活实体数
+W04/corpus	composition	1313:0:unknown:a|1314:0:soldier:a|1315:0:soldier:d|1316:1:target:d	冻结语料 403 份快照（fixtures/guardrails.json corpus，逐份 sha256 已核）	终局构成
+P/VersionInfo	frames	1	真实抓包 fixtures/protocol_match.jsonl（tools/capture_net*.js）	旧抓包里的真帧（线上 1717 帧里没有它）
+P/VersionInfo	payload	{"VersionInfo":{"version":"2.0.60","system":"linux"}}	真实抓包 fixtures/protocol_match.jsonl（tools/capture_net*.js）	原文
+P/VersionInfo	sha256	aa70f1cdd60561f2e02f90ecac03c2f7dbef59f3f42f0cfde7bfcaeb71cc34ad	真实抓包 fixtures/protocol_match.jsonl（tools/capture_net*.js）	payload sha256
+M/M01	input	[]	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	中缀 token 序列（empty_input_stays_empty）
+M/M01	expected		unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	真 reorder 0x4f5450 给出的前缀 token（len=0）
+M/M02	input	[[0, "0000000000000000"]]	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	中缀 token 序列（single_atom_passes_through）
+M/M02	expected	0	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	真 reorder 0x4f5450 给出的前缀 token（len=1）
+M/M03	input	[[17, "3ff0000000000000"], [3, "0000000000000000"], [17, "4000000000000000"], [6, "0000000000000000"], [17, "4008000000000000"]]	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	中缀 token 序列（multiplication_binds_tighter_than_addition）
+M/M03	expected	3,17:3ff0000000000000,6,17:4000000000000000,17:4008000000000000	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	真 reorder 0x4f5450 给出的前缀 token（len=5）
+M/M04	input	[[18, "0000000000000000"], [17, "3ff0000000000000"], [3, "0000000000000000"], [17, "4000000000000000"], [19, "0000000000000000"], [6, "0000000000000000"], [17, "4008000000000000"]]	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	中缀 token 序列（brackets_change_the_root）
+M/M04	expected	6,3,17:3ff0000000000000,17:4000000000000000,17:4008000000000000	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	真 reorder 0x4f5450 给出的前缀 token（len=5）
+M/M05	input	[[18, "0000000000000000"], [17, "3ff0000000000000"], [3, "0000000000000000"], [17, "4000000000000000"], [19, "0000000000000000"], [6, "0000000000000000"], [17, "4008000000000000"]]	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	中缀 token 序列（brackets_never_reach_the_output）
+M/M05	expected	6,3,17:3ff0000000000000,17:4000000000000000,17:4008000000000000	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	真 reorder 0x4f5450 给出的前缀 token（len=5）
+M/M06	input	[[17, "3ff0000000000000"], [4, "0000000000000000"], [17, "4000000000000000"], [4, "0000000000000000"], [17, "4008000000000000"]]	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	中缀 token 序列（subtraction_is_left_associative）
+M/M06	expected	4,4,17:3ff0000000000000,17:4000000000000000,17:4008000000000000	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	真 reorder 0x4f5450 给出的前缀 token（len=5）
+M/M07	input	[[17, "4000000000000000"], [8, "0000000000000000"], [17, "4008000000000000"], [8, "0000000000000000"], [17, "4000000000000000"]]	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	中缀 token 序列（pow_is_left_associative）
+M/M07	expected	8,8,17:4000000000000000,17:4008000000000000,17:4000000000000000	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	真 reorder 0x4f5450 给出的前缀 token（len=5）
+M/M08	input	[[17, "3ff0000000000000"], [7, "0000000000000000"], [17, "4000000000000000"], [6, "0000000000000000"], [17, "4008000000000000"]]	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	中缀 token 序列（mixed_same_precedence_is_left_associative）
+M/M08	expected	6,7,17:3ff0000000000000,17:4000000000000000,17:4008000000000000	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	真 reorder 0x4f5450 给出的前缀 token（len=5）
+M/M09	input	[[14, "0000000000000000"], [18, "0000000000000000"], [0, "0000000000000000"], [19, "0000000000000000"]]	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	中缀 token 序列（unary_function_wraps_everything_to_its_right）
+M/M09	expected	14,0	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	真 reorder 0x4f5450 给出的前缀 token（len=2）
+M/M10	input	[[14, "0000000000000000"], [15, "0000000000000000"], [0, "0000000000000000"]]	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	中缀 token 序列（unary_functions_are_right_associative）
+M/M10	expected	14,15,0	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	真 reorder 0x4f5450 给出的前缀 token（len=3）
+M/M11	input	[[4, "0000000000000000"], [0, "0000000000000000"]]	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	中缀 token 序列（tokenizer_never_produces_unary_minus）
+M/M11	expected	4,17:0000000000000000,0	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	真 reorder 0x4f5450 给出的前缀 token（len=3）
+M/M12	input	[[5, "0000000000000000"], [0, "0000000000000000"], [8, "0000000000000000"], [17, "4000000000000000"]]	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	中缀 token 序列（unary_minus_token_if_present_binds_looser_than_pow）
+M/M12	expected	5,8,0,17:4000000000000000	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	真 reorder 0x4f5450 给出的前缀 token（len=4）
+M/M13	input	[[17, "3ff0000000000000"], [3, "0000000000000000"]]	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	中缀 token 序列（missing_right_operand_of_plus_becomes_const_zero）
+M/M13	expected	3,17:3ff0000000000000,17:0000000000000000	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	真 reorder 0x4f5450 给出的前缀 token（len=3）
+M/M14	input	[[3, "0000000000000000"], [17, "3ff0000000000000"]]	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	中缀 token 序列（missing_left_operand_of_minus_becomes_const_zero）
+M/M14	expected	3,17:0000000000000000,17:3ff0000000000000	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	真 reorder 0x4f5450 给出的前缀 token（len=3）
+M/M15	input	[[6, "0000000000000000"], [17, "4000000000000000"]]	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	中缀 token 序列（only_plus_and_minus_fill_holes）
+M/M15	expected	6,17:4000000000000000	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	真 reorder 0x4f5450 给出的前缀 token（len=2）
+M/M16	input	[[18, "0000000000000000"], [18, "0000000000000000"], [0, "0000000000000000"], [19, "0000000000000000"], [19, "0000000000000000"]]	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	中缀 token 序列（deep_nesting_still_reaches_atoms）
+M/M16	expected	0	unicorn 直调真二进制：解析器 0x4ed670 / PolishNotationConverter::reorder_recursive 0x4f5450	真 reorder 0x4f5450 给出的前缀 token（len=1）

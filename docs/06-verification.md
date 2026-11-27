@@ -20214,3 +20214,208 @@ $V tools/check_doc_refs.py && $V tools/boundary_audit.py --check
 * **正对照第一次没过**（把 `axis_drawer_class` 期望成"全 A"）：实际是 **A 21 + C 3**，
   而 T57 §104.7-4 **自己就写着** `clamp_mode` 是"C 档小项（同一规则两份）"。
   改成"0 个 B"才是那条结论的正确表述 —— 台账的档位与"留原地/搬走"是两个维度，别混。
+
+## 115. T64：第三批 S-self 换真值 —— `protocol.rs` 的 **352 帧线上真帧**、`polish_notation` 的 **16 条 reorder unicorn 真值**、`win_rule` 的 **217 份真终局**（2026-11-27，任务 `task-62` / 分支 `agent/tests-batch3`）
+
+### 115.1 一句话结论
+
+T37（§85）判出 **341 条 `S-self`**（期望值来自我方实现 ⇒ 零证据）；T46 换 19 条（§96）、T59 换 50 条
+（§106）⇒ 还剩约 276 条。T59 给的下一批顺序是 ①`protocol.rs` 的 9 条（等 t53 抓包）②`replay_driver`/`api`
+（换不了）③`misc_modules`/`win_rule`（缺整局回放）。
+
+本轮按那份顺序做，结论是：
+
+| 块 | 换了几条 | 关键读数 |
+|---|---|---|
+| `src/_scaffold/protocol.rs` | **23 条 round_trip 里 19 条**换成真值（18 种**线上真帧** + `TurnLimitInfo` 的**语料真帧**）+ **新增 2 条硬闸**（352 帧逐帧 + 语料 21 帧） | 线上 1717 帧里属于这 23 个事件的 **352 帧**，逐帧「解析 → 序列化」**全部字节相同**（0 处差异） |
+| `tests/misc_modules.rs`（`polish_tests`） | **16 条**（预注册 M01–M15 + 顺带 M16）换成 **unicorn 直调 `0x4f5450`** | 16/16 与真二进制输出逐 token 一致（tag 序列 + CONST 位型） |
+| `tests/win_rule.rs` | **3 条**（W01/W02/W04）换成**冻结语料的真终局**，另把 2 条旧结论**证伪** | 含 `EndingGame` 的回放 **217/401 份**（T46 记的「0 次」是 **gzip-grep 假阴性**） |
+| `src/_scaffold/api.rs`(43) / `replay_driver.rs`(20) | **0 条**（我方自造物，换不了）⇒ 按块写清口径 | 模块头逐类登记：`parity` / `契约` / `合成几何` / `外部锚`，并明写「**不构成复原证据**」 |
+
+**真 bug 报告 0 条**（新真值下旧实现一条都没变红）；但**证伪了 2 条旧文档/注释结论 + 定位了 1 条
+「未知」**，见 §115.6。反面对照 3 条全部按预期变红（§115.5）。
+
+### 115.2 预注册（`fixtures/test_expectation_plan3.tsv`，单独 commit `a8100d8`）
+
+50 行，每行写死「为什么最会掩盖错误 / 改前期望值来源 / 预注册真值来源 / 取证手段 / 目标档」。
+跑完**没有为了对上而改判据**；落空的（B01/B02 整块、P21–P23、W03）如实登记在 §115.7。
+
+真值表：`fixtures/test_expectation_truth3.tsv`（**177 行**，`section/key/value/source/note`），
+生成器 `tools/gen_test_expectations3.py`（`--check` 只比对不写）。三段的语料/抓包**指纹先行**：
+
+* 1717 条真帧：逐帧核 `sha256`(负载) / `frame_sha256`(带 u16 前缀) / `n` —— 1715 帧全过；
+  2 条 `ChatMessage*` 是**打码帧**（正文换成 `<len=N>`），只核打码键（口径见脚本文件头）；
+* 403 份回放：按 `fixtures/guardrails.json` 的 `corpus.files` 逐份 sha256（`names_sha256 = c3325c0b…`）。
+
+### 115.3 块 A：`protocol.rs` 的 23 条往返（19 条换真值 + 2 条新硬闸）
+
+T53（§110.4）已经把 9 条「合成」样本里的 **6 条**换成线上真帧，并加了一条只钉 **7 条样本**的硬闸。
+本轮把覆盖面推到**每一帧**并补上剩下的两类：
+
+1. **`sample_of` 优先取线上真帧**：18 种事件（`NameInfo` 20 帧、`RankInfo` 14、`SkinGraphicsInfo` 60、
+   `FaceGraphicsInfo` 60、`HatGraphicsInfo` 60、`EntityEffectInfo` 110、`NameRequest` 3、`RankRequest` 3、
+   `SkinGraphicsRequest` 3、`FaceGraphicsRequest` 3、`HatGraphicsRequest` 3、`LockInfo` 2、`LockRequest` 2、
+   `ChatMessage` 1、`ChatMessageRequest` 1、`GameRemoved` 1、`BotAdded` 4、`ClearObstacles` 2）的往返
+   期望值 = **抓到的首帧字节**；没有真帧的 5 种退回 `SAMPLES` 并**逐行标清来源与档位**。
+2. **`TurnLimitInfo` 用冻结语料**（线上 1717 帧抓不到它）：21 帧 / 21 份回放、取值 `{1:1, 5:8, 6:7, 10:5}`
+   ⇒ 新增 `turn_limit_samples_are_the_corpus_frames`（4 个取值全往返 + 直方图 + 21 条重建文本的 FNV 钉死）。
+3. **新增硬闸 `replays_every_live_frame_of_the_supplemented_kinds`**：18 种 × **352 帧**逐帧
+   「解析 → `AnyEvent::parse` → `to_msg()`」要求与抓包字节**逐字节相同**，并把每种的**帧数 + 负载 FNV-1a 64**
+   钉在测试里（抓包被改一帧就红）。
+4. **契约 5 条改口径**（`unknown_fields_are_preserved_and_replayed` / `unknown_kind_is_not_accepted` /
+   `passthrough_keeps_escaped_strings_verbatim` / `typed_string_field_escapes_quotes_both_ways` /
+   `missing_or_mistyped_required_field_is_rejected`）：逐条写明「**契约断言，不含语义**」+ 为什么换不了
+   （真流量里不会有非法帧/未知字段；线上 `NameInfo` 20 条没有一条带引号的名字）。
+5. **`rank_null_round_trips_as_json_null` 换成真帧驱动**：线上 14 条 `RankInfo` 里既有 `"rank":null`（bot）
+   也有整数（人类），逐条往返 —— 不再用构造串。
+
+**结果：23 条往返全绿，352 帧全绿，0 处字节差异。** ⇒ 我方 `_scaffold/protocol.rs` 对这 23 个补齐事件的
+序列化形状与线上真帧**逐字节一致**（这是「形状」结论；**语义**仍是各自的档位：6 类有真帧 = 观测，
+`GameHeartbeat`/`ClearBansRequest`/`BanConnectionRequest` = 仍推断）。
+
+### 115.4 块 B：`polish_notation_converter` 的 16 条 reorder（unicorn 直调 `0x4f5450`）
+
+`tests/misc_modules.rs::polish_tests` 里 15 条期望的**前缀 token 序列**原先是我方手推的 ⇒ 算法整体错
+（优先级表/补 0/结合性）时只要实现与推导同错就恒绿。本轮把真值换成**真二进制**：
+
+* 真值来源：`tools/bitexact_run.py::Real.pnc`（unicorn 隔离执行 `.so`，`PolishNotationConverter::reorder_recursive` = ELF vaddr **`0x4f5450`**，
+  布局逐指令读出：`+0x00/+0x08/+0x10` = 输入 Vec 的 cap/ptr/len、`+0x18/+0x20/+0x28` = 输出 Vec）。
+  输入**就是测试里那份中缀 token 序列**（`13` = `+` … 见 `src/lib.rs::Function`），不是文本。
+* 口径：只钉 **tag 序列 + CONST 的 value 位型** —— 真函数**只给 CONST 写 value**，非 CONST token 的
+  value 槽是**堆上残留**（第一版把 `0x4ed670` 解析器的输出喂 `0x4f5450` 得到「5 个 token 变 3 个」的假差异，
+  就是因为混了口径：解析器输出的是**前缀式**，转换器要的是**中缀**输入）。
+* 结果：**16/16 与我方输出逐 token 一致**（M01 空输入、M02 `x`、M03 `1+2*3`、M04 `(1+2)*3`、
+  M05 括号不进输出、M06 `1-2-3` 左结合、M07 `2^3^2` 左结合、M08 `1/2*3`、M09 `sin(x)`、M10 `sin cos x`
+  右结合、M11 `-x` 补 CONST0、M12 一元负号比 `^` 松、M13 `1+` 右缺、M14 `+1` 左缺、M15 `*2` 不补、M16 `((x))`）。
+
+### 115.5 块 C：`win_rule` 的 4 条（3 条换真值 + 前提被证伪）
+
+**T46 的前提被证伪**：它把 `win_rule` 判成「换不了：403 份回放里 `EndingGame` 出现 0 次 ⇒ 缺一份打到结束的
+整局回放」。本轮把 403 份回放**全部解压**后扫（T46 那次数的是 gzip **压缩字节** —— 与 `TurnLimitInfo`
+的假阴性同一类错误）：
+
+| 事实（`fixtures/test_expectation_truth3.tsv` 的 `W/` 段，可复算） | 读数 |
+|---|---|
+| 含 `GameStateInfo{"game_state":"EndingGame"}` 的回放 | **217 / 401** |
+| 终局时**恰好一队**零活实体 | **193** 份 |
+| 终局时**双方都**零活实体（互相全灭） | **24** 份 ⇒ `tests/win_rule.rs` 旧注释「语料里没有这种收场」**是错的** |
+| 终局里含靶子（打靶关）/ 全是士兵（对战局） | 45 / 172 份 |
+| 终局时 `turn_count` 已到 `TurnLimitInfo` 上限 | 1 份（`1782641048`，上限 1） |
+| `TurnLimitInfo` 帧数 | 21 帧 / 21 份 ⇒ **382 份无回合上限** |
+
+扫描口径（**踩过两次**，写在这里给下一个人）：终局状态要按 `TeamInfo`/`SoldierInfo`(`soldier_id` 不是
+`entity_id`!)/`SkinGraphicsInfo=="target"`/`LifeInfo`/`EntityRemoved`/`RemoveTeam` 重建，
+并且**玩家实体不算生命表实体**（原版 `0x473520` 数的是生命表）——
+第一版把玩家算进去 ⇒ 217 个终局只认出 45 个「一队全灭」（172 个对战局全被判成双方都有人）；
+补上 `EntityRemoved`/`RemoveTeam` 才把 33 个「都不灭」归零。
+
+换掉的三条：
+
+* `wiped_team_goes_through_the_same_predicate_in_both_level_kinds`：两侧局面改成**语料真终局**
+  （打靶关 `1782640359`：`Team1` = 2 士兵 + 玩家、`Team2` = 1 个**已死靶子**；
+  对战关 `1782640836`：`Team2` = 2 个**全死士兵** + 玩家）⇒ 两种关卡的 `Ending` 必须相等且都等于语料收场。
+* `mutual_wipe_has_no_winner`：改成**语料里 24 份双零终局**的构成（示例 `1782642754`）驱动；胜方字段在语料里
+  没有对应物 ⇒ `winner: None` 仍是我方模型（**推断**），但「必须判 `TeamWiped`、不许判某人赢」有了真值。
+* `without_a_turn_limit_the_game_never_ends_on_time`：前半段换成语料真值（21 + 382 = 403），
+  后半段（我方循环 50 回合不结束）仍是**契约**。
+* 未换：`empty_match_has_no_verdict`（W03）—— 语料 403/403 份都有实体，零实体开局**没有对应物**。
+
+### 115.6 块 D：`api`(43) / `replay_driver`(20) —— 换不了，只改口径
+
+两者都是 `src/_scaffold/` 里的**我方自造物**（`api` = 自造 C ABI 接缝；`ReplayDriver` 不是原版
+`GraphwarReplayScreenControl::process 0x3c6f40` + `GraphwarReplayPlayer` 的等价物，播放时钟历史上就是
+「自定模型」，`docs/00` §0.1b.2 D 档）⇒ 期望值只能由我方定义。本轮**没删断言**（门槛要求条数只增不减），
+改为在 `#[cfg(test)] mod tests` 头写一张**逐类登记表**：
+
+* `api.rs` 43 条 = `parity` 6 / `契约` 17 / `合成几何` 14 / `外部锚` 6，并明写
+  「**`cargo test` 绿在这里只证明接缝没坏**」；
+* `replay_driver.rs` 20 条 = `我方时钟模型自洽` 11 / `外部档位·表` 9，并指回 `docs/06` §63 的 frida 真值。
+
+### 115.7 反面对照（临时改坏**被测实现**，确认变红，全部已复原）
+
+| # | 改坏哪处实现 | 期望变红的断言 | 实测 |
+|---|---|---|---|
+| 1 | `_scaffold/protocol.rs` 的 `str_field_event!` 把字段名加了个 `x`（`game_address` → `game_addressx`） | 352 帧硬闸 + 往返 + 键序 | **3 红**：`replays_every_live_frame_of_the_supplemented_kinds`（`left "{"GameRemoved":{"game_addressx":…}}" / right …"game_address"…`）、`round_trip_game_removed`、`upgraded_events_declare_the_binary_field_names` |
+| 2 | `src/polish_notation_converter.rs` 的 `PRECEDENCE`：`+ -` 7→6、`* /` 6→7 | M03 / M08 / 优先级表 | **3 红**：`multiplication_binds_tighter_than_addition`（`第 0 个 token 的 tag 与真二进制 0x4f5450 不一致`）、`mixed_same_precedence_is_left_associative`、`precedence_table_is_the_binary_copy` |
+| 3 | `src/game.rs::team_has_survivor` 对 `Team2` 恒 `true` | W01 / W02 等 | **5 红**：`wiped_team_…`、`mutual_wipe_has_no_winner`、`target_level_all_cleared_is_a_win`、`versus_level_enemy_wiped_is_a_win`、`team2_with_soldier_and_target_does_not_end_on_targets_alone` |
+
+⇒ 新断言都**能被真实实现错误打破**，不是「怎么写都绿」。三次改动都还原了（`git diff src/game.rs`、
+`git diff src/polish_notation_converter.rs` 里不留痕）。
+
+### 115.8 门槛读数（每批都跑）
+
+| 门槛 | 基线 | 本批实测 | 判定 |
+|---|---|---|---|
+| `cargo test --offline` | 1853 / 0 / 1ignored | **1863 / 0 / 0ignored** | 过（+10 = 新增 2 条 × 5 个编译产物：`protocol.rs` 的测试在 lib + 4 个 `#[path]` 引用者里各跑一遍） |
+| `--features gdext-bindings` | 1983 / 0 / 1ignored | **1993 / 0 / 0ignored** | 过（同样 +10） |
+| 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **647 / 647 / 637** | 一步未退（语料指纹 `c3325c0b…` 先核；`batch_conv` 种类 1075/1080、变好 128 批 / 变差 0 批，与 T59 读数相同） |
+| `tools/check_doc_refs.py` | rc=0 | **rc=0** | 过 |
+| `tools/gen_test_expectations3.py --check` | — | **OK（177 行）** | 真值表可复算 |
+
+### 115.9 我写错了什么 / 旧结论被证伪（**这一节比上面的数字重要**）
+
+1. **`win_rule` 的「换不了」前提是错的**（T46 §96.7 表第 5 行、`docs/150` 引用的那份判断）：
+   403 份回放里 `EndingGame` **不是 0 次，是 217 次**（T46 在 **gzip 压缩字节**上 grep ⇒ 假阴性，
+   与 `TurnLimitInfo` 同一类错误）。⇒ 下一批不必再等"打到结束的整局回放"，`EndingGame` 现成 217 份。
+2. **`tests/win_rule.rs::mutual_wipe_has_no_winner` 的旧注释「语料里没有这种收场」也被证伪**：
+   **24 份**真终局是双方同时零活体。语料只记 `GameStateInfo{EndingGame}`、**不记胜方** ⇒
+   「双零时原版把 winner 写什么」仍是**推断**（`0x4759f0` 三条跳转在双零时的落点没解）。
+3. **`-x` 的 tag 5（`UnaryMinus`）产生点定位了**：`src/polish_notation_converter.rs` 文件头写
+   「转换器本身认识 tag 5，但产生点本轮未定位（未知）」。本轮证据：把 **tag 4（Sub）** 的中缀输入喂
+   `0x4f5450` ⇒ 输出仍是 **tag 4 + 补 CONST0**（`M11`）；而完整路径 `MathFunction::new 0x4ed670`
+   对 `-` 给 **tag 5**、对 `--x` 给 `[5,5,0]`（`fixtures/parse.tsv` 的真值，unicorn 直调）⇒
+   **产生点在分词那一趟**，不在转换器里。
+   ⚠️ 本轮**没有改** `src/polish_notation_converter.rs`（不在本文写入范围，且属原版模块文件）——
+   那条注释留给下一轮带指令级证据的人改。
+4. **`TurnLimitInfo` 的 21 条真帧文本是「回放记录的 event 对象 → 紧凑 JSON」重建**，不是线上负载字节
+   （线上抓不到它）⇒ 这一行的档位写 `观测（回放记录）`，不写「逐位」。
+5. **打码帧的口径**：`ChatMessage*` 的 `hex` 是打码**后**文本（`<len=N>`），与 `n`/`sha256`（原始负载）
+   不同长。第一版硬闸对打码帧也判 `n`，直接报「真帧自校验失败」；第二版 `mask_chat` 会把
+   `<len=2>` 再打成 `<len=7>`（**二次打码**，测试红）⇒ 现在 `mask_chat` 是**幂等**的。
+
+### 115.10 复跑（一条链）
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild WT=$MAIN/.agent-work/cg/wt-t64
+export CARGO_HOME=$MAIN/.reference/cargo-home CARGO_TARGET_DIR=$WT/.cargo-target
+cd $WT
+# 1) 真值表：抓包逐帧核 sha256 + 语料指纹核 sha256 → 扫 live/语料/unicorn 三段（≈2 min）
+$MAIN/.reference/venv/bin/python tools/gen_test_expectations3.py            # 写 fixtures/test_expectation_truth3.tsv
+$MAIN/.reference/venv/bin/python tools/gen_test_expectations3.py --check    # 只比对
+$MAIN/.reference/venv/bin/python tools/gen_test_expectations3.py --skip-emu # 不跑 unicorn 的快速版
+# 2) 三块被测对象
+cargo test --offline --lib supplemented_event_tests
+cargo test --offline --test misc_modules polish_tests
+cargo test --offline --test win_rule
+# 3) 门槛
+cargo test --offline && cargo test --offline --features gdext-bindings
+SNAP=$MAIN/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json b.jsonl
+cargo run --release --offline -q --example batch_conv    -- --dir $SNAP --policy strict
+$MAIN/.reference/venv/bin/python tools/bit_exact_attrib.py --json f.jsonl --check-baseline --snapshot $SNAP --axis fire
+python3 tools/check_doc_refs.py
+```
+
+### 115.11 遗留：还剩多少 S-self、下一批挑什么
+
+* 本轮**换真值 38 条**：`protocol.rs` **19**（18 种线上真帧 + `TurnLimitInfo` 的语料真帧）+
+  `misc_modules` **16** + `win_rule` **3**；另 `protocol.rs` 4 条**改口径**（契约）+ **新增 2 条硬闸** +
+  `version_info` 1 条改用旧抓包原文机器校验。按 T37 的 341 条分母，扣掉 T46 的 19、T59 的 50、
+  本轮的 38 ⇒ **还剩约 234 条**。
+* **下一批的顺序（按"被测对象有没有对应物"重排）**：
+  1. **`_scaffold/protocol.rs` 剩下的契约条**（`unknown_*`/转义/字段数/键序）：其中
+     `typed_events_have_exactly_the_serde_field_count` 与 `upgraded_events_declare_the_binary_field_names`
+     现在有了真帧输入，可以再升一档（把「字段数 = serde 的 N」换成「真帧里的第一个键序」）。
+  2. **`src/_scaffold/broker.rs` 余下几条**（真广播顺序、`GameRemoved` 已有 1 帧）+
+     **`tests/broker.rs` 的 `room_table_expires`**（U 档）。
+  3. **`tests/sim_turns.rs` / `graphwar_turn_manager.rs` 余下的 S-self**：语料里有 1494 条 `TurnInfo`，
+     现成的模板（F01/F02 那套）可以继续套。
+  4. **`misc_modules` 里非 polish 的 S-self**：`event_queue` 的 FIFO 契约、`crash_reporter` 的端口号
+     （端口 42972 是 `.rodata` 常量，可升 `逐位`）。
+  5. **`win_rule` 剩下的 1 条**（`empty_match_has_no_verdict`）：语料里没有零实体开局 ⇒ 换不了，
+     要么保持契约，要么用 `0x473520` 的 unicorn 直调造"空生命表"输入（`needs_state`，需要先解
+     `LifeManager` 的内部布局）。
+* **两个"可继续做深"的口子**：①`docs/150` 里"217/217 都有一队零活实体"这句现在有了细分
+  （193 一队 + 24 双方），值得回填；②`tests/win_rule.rs` 的「双零终局 winner 字段」缺
+  `0x4759f0` 的落点证据。

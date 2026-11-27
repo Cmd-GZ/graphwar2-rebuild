@@ -570,6 +570,35 @@ pub fn time_index(s: &str) -> i64 {
 // ===========================================================================
 // 断言（纯逻辑；不依赖任何外部文件 —— 语料是 `.agent-work/` 里的易失物）
 // ===========================================================================
+//
+// # ⚠️ 这 20 条断言**不构成复原证据**（T64 口径登记，`fixtures/test_expectation_plan3.tsv` B02）
+//
+// `ReplayDriver` 是我方**自造的回放播放驱动**：原版对应物是
+// `GraphwarReplayScreenControl::process`（ELF vaddr **`0x3c6f40`**，8784 字节）+
+// `GraphwarReplayPlayer`，而**我方这个驱动不是它的等价物** —— 播放时钟/暂停语义历史上就是
+// 「自定模型」（`docs/00` §0.1b.2 的 D 档）。T12 已经把原版时钟的真值单独挖过一次
+// （`docs/06` §63，frida 真机读数 + 静态指令），那才是本模块该对的东西。
+//
+// 因此 20 条断言分两类：
+//
+// | 类 | 条数 | 在证明什么 |
+// |---|---|---|
+// | `我方时钟模型自洽` | 11 | `sixty_hz_frames_give_one_tick_each`、`long_frame_catches_up_without_cap`、
+// | | | `drive_ticks_is_the_deterministic_primitive`、`settlement_fires_exactly_on_the_executing_tick`、
+// | | | `long_frame_settles_every_batch_it_crosses_in_order`、`tick_is_monotonic_while_driving`、
+// | | | `seek_does_not_report_settlements`、`paused_driver_drives_nothing`、
+// | | | `stops_at_last_tick_and_clears_playing`、`loads_and_starts_at_first_tick`、
+// | | | `pumps_equal_ticks_and_zero_tick_frames_pump_nothing` —— **期望值由我方模型给出** |
+// | `外部档位/表` | 9 | `period_gives_sixty_ticks_per_second`（真机观测 59.94–60.01 tick/s，
+// | | | `docs/06` §44）、`mode_index_matches_wire_enums`（`docs/07` 的线上枚举）、
+// | | | `retired_gdscript_table_is_reproduced_value_by_value` /
+// | | | `unknown_strings_fall_back_like_the_retired_table`（`recovered-src` 里退役 `.gd` 的转录）、
+// | | | `dirty_flags_follow_the_old_gd_dispatch_table`、`canonical_matches_the_kernel_state_at_the_same_tick`、
+// | | | `replay_without_batches_still_plays`、`batches_come_from_split_batches`、
+// | | | `delta_is_used_only_as_a_wall_clock_stand_in` —— 有外部出处，但**粒度是表/档位，不是时序行为** |
+//
+// ⇒ 一句话：**这 20 条只防「我方驱动退化」**。要判"回放播放时序与原版一致"，得回到
+// `docs/06` §63 的 frida 读数 / `0x3c6f40` 的指令级证据 —— 不是这张表。
 
 #[cfg(test)]
 mod tests {
