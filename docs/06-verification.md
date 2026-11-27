@@ -24646,7 +24646,7 @@ $PY <scratch>/frame_capture_dense.py --side ours --flow replay --seed-replays \
 ## 136. T87 跨构建符号映射：用同源 **Android 2.0.60 arm64** 未剥离的 `.symtab` 给 **Linux x86-64** 定名 —— 179 条无名里 **52 条定到真名（观测档）**、**21 条判成标准库单态化**、**106 条判不了（写清缺什么）**；348 条真名独立核对 **0 冲突**，但夹具内**同一地址多名** 37 处（24 父子同址 + **13 条真冲突**，Android 逐条裁决）；函数级复原率三口径 **A 279→309 / B 279→309 · 52.9→58.6 % / 63.6→70.4 %**（2026-11-27，任务 `task-83` / 分支 `agent/naming-android`）
 
 > **判据先写死再跑**：[`fixtures/naming_android_plan.txt`](../fixtures/naming_android_plan.txt)（单独 commit `ff4256d`，**跑数之前**）。
-> **工具**：`tools/naming_android.py`（新脚本，1,257 行；subcommand `build/control/verify/name/all`）。
+> **工具**：`tools/naming_android.py`（新脚本，1,176 行；subcommand `build/control/verify/name/all`）。
 > **逐条产物**：[`fixtures/naming_android.tsv`](../fixtures/naming_android.tsv)（179 行 × 10 列）、
 > [`fixtures/naming_android_verify.tsv`](../fixtures/naming_android_verify.tsv)（331 行 A 区 + 37 行 B 区）。
 > **计分改动**：`tools/function_coverage.py` 加 `--no-android-names`（旧行为）+ `--android-na-report`（只诊断），
