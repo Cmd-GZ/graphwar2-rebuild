@@ -1,0 +1,253 @@
+# T78 数据结构审计 · 第四轮 · 预注册（fixtures/struct_audit_plan4.txt）
+#
+# 生成于 2026-11-27，**提交早于**本轮任何 `src/` 改动与 `fixtures/struct_audit4.tsv` 的判定。
+# §1 判据、§2–§4 的**取证方法**与**我方期望值**、§5 的**预测结果**先写死；
+# 跑完不许改判据、不许改期望（对不上就如实写"期望错在哪"）。
+#
+# 本轮接的是 `docs/06` §119（T66 第三轮）§119.9 留下的 6 条遗留 —— **全部是数据结构问题**：
+#   ① 两处带固有 impl 的重复枚举没收敛（`axis_drawer::AxisMode` / `graphwar_setup_control::TimeMode`）；
+#   ② `GraphwarPlane` / `ShotCalculator` 的**构造点**（E8b 完整版：分配尺寸立即数）没拿到；
+#   ③ `AxisDrawer` / `GraphicsManager` 「0 直接调用 + 0 静态槽」⇒ 按 T66 建议先做**正对照**；
+#   ④ `GraphwarGameRecorder` 窗口 6 偏移 vs 我方 4 字段；
+#   ⑤ `GameInfo.address` 的 32 字节枚举身份（疑似 `SocketAddr`）缺符号/构造点证据；
+#   ⑥ `PatternSegment` 的 mismatch，且「窗口归属存疑」——再找一条独立证据。
+#
+# 取证工具：**仍然只用现成的**，不另起一套：
+#   * `tools/struct_audit.py`：`tsv2`（E1–E8 现场重算）/ `layout` / `mono` / `structs` / `bounds`；
+#   * `tools/addr_probe.py`：`fde` / `dis` / `callers` / `locs` / `str`（指令级取证 + 引用三形态）；
+#   * `tools/ptr_slots.py`：函数指针槽（本轮只用于**正对照**，不新增扫描器）；
+#   * **符号桥夹具**（T32/T37 已入库，本轮只用不改）：
+#     `fixtures/name_to_addr_v2.tsv`（arm64 `.symtab` 名 × `panic::Location` → x86 地址，986 行）、
+#     `fixtures/sym_match.tsv`（arm64 名 × 字节特征 → x86 地址，1311 行）。
+#     ⚠️ 这两张表是**别人生成的夹具**，本轮 `--check` 不重跑（会覆盖），只读引用；
+#     引用时一律写清「表里第几列的哪个值」，让下一个人能自己 `grep` 复核。
+#
+# ⚠️ 盲测边界（诚实登记 —— 它决定这份预注册值多少）：
+#   * **§2（枚举收敛）不是盲测**：两条遗留是 T66 §119.5/§119.9-1 点名的明确下一步，
+#     写前我已经读过两处 `impl` 与规范位置。§2 的价值在「合并后的**判据与验收断言**先写死」。
+#   * **§3/§4/§6 是半盲**：写前我**已经**做了下面这些读取（所以预测不是凭空）：
+#       a) `grep fixtures/name_to_addr_v2.tsv`：`graphwar_plane::GraphwarPlane::draw 0x4b5df0`、
+#          `GraphwarPlane::init 0x4b7380`（Location 落在 `src/obstacle_drawer.rs:37:97`）、
+#          `graphwar_graphics_manager::GraphwarGraphicsManager::new 0x469390`、
+#          `graphwar_game_recorder::GraphwarGameRecorder::save_event 0x3d4fa0`（= E7 锚点）、
+#          `graphwar_shot_calculator::GraphwarShotCalculator::calculate_shot_results 0x3c2bc0`（= E7 锚点）、
+#          `graphwar_level_generator::GraphwarLevelGenerator::generate_level_custom 0x466d20`（= E7 锚点）；
+#       b) `grep fixtures/sym_match.tsv`：`IControl>::draw → 0x4e05b0`（AxisDrawer）、
+#          `AxisDrawer as ImplementsGodotVirtual>::__virtual_call::virtual_fn → 0x4e01f0`、
+#          `GraphwarPlane as IControl>::init → 0x4b7380`、`GraphwarGameRecorder::new → 0x3d5260`、
+#          `GraphwarGraphicsManager::new → 0x469390`；
+#       c) `addr_probe.py callers 0x4b7380` ⇒ 只有 **1 个 reloc 槽** `0x9bb730`、使用点 `0x420dca`（在 `0x420d80` 里）；
+#       d) `addr_probe.py dis 0x420d80` ⇒ 那里是「填实例」函数：调 `[0x9bb730]`（= `init`）后，
+#          把返回结构按 8 + 16 + **`mov edx,0xf8`** 三段拷进 `[rbx]`/`[rbx+8]`/`[rbx+0x18]`；
+#       e) `addr_probe.py callers 0x420d80` ⇒ 直接调用者 2 个（`0x412510` / `0x414ba0`）；
+#       f) `addr_probe.py callers 0x3d5260`（GameRecorder::new）⇒ 2 个；`0x469390`（GraphicsManager::new）⇒ 2 个；
+#       g) `addr_probe.py dis 0x4e01f0` ⇒ 它体内是 `'AxisDrawer'`/`'process'`/`'upcast_ref'`/`'EffectDrawer'`/
+#          `'GraphwarSetupControl'`/`'GraphwarFunctionInput'` 一串名字 + 一个 `call 0x42f010` ⇒ 形状是 gdext 的
+#          `virtual_fn` 名字派发器（**不是** `AxisDrawer::draw` 本体）。
+#     ⇒ **§5 的预测只针对「还没跑的那一步」**（分配尺寸立即数 / 窗口归属 / 有没有构造点），不是事后找补。
+#   * **写前已知的两条硬事实**（读数，不是预测）：
+#     i) 本分支基线 `struct_audit.py tsv2 --check` 是**绿的**（80/19 行两张表都 OK，见 §6）；
+#        T66 的 19 行表当前读数是 `match 7 / mismatch 1 / unknown 11`。
+#     ii) `src/graphwar_setup_control.rs:253` 的 `TimeMode` **没有 `#[repr(u8)]`**，而规范位置
+#        `src/graphwar_mode_manager.rs:77` 的有 —— 这是**收敛顺带修掉的缺陷**（见 §2.2 P-B4）。
+#
+# 复算工具（全部现成）：
+#   tsv2 [--check] | layout <addr> | mono <addr> | structs --tsv | bounds <addr>…
+#   addr_probe.py fde|dis|callers|locs|str <addr>
+#   ptr_slots.py <addr>          （**只**用于正对照）
+
+## 1. 判据（跑完不许改）
+
+### 1.1 沿用（E1–E7 一字未改，见 `fixtures/struct_audit_plan2.txt` §1）
+**E1** 字段数（serde 名串槽）；**E2** 字段名 + 顺序；**E3** 值偏移；**E4** 尺寸下界；
+**E5** 单态 → 类型类；**E6** 枚举变体名 + 判别值；**E7** 非 serde 结构体窗口（同基址 ≥4 固定偏移 ⇒ 下界）。
+判定规则同 plan2 §1：`match` = 字段数/名字/顺序（或变体集合+判别值）两边全等；
+`unknown` = 只有下界；`mismatch` = 有上界/名字证据且不一致。
+
+### 1.2 本轮把 E8 的 **E8b 完整版**写死（T66 只做到 E8a/E8c）
+
+E8b 要回答「这块对象**恰好**多大」。三种落地形态，全部**指令级**：
+
+| 形态 | 判据（可复算） | 给出 | 档 |
+|---|---|---|---|
+| **E8b-1 分配尺寸立即数** | 找到**构造点**（对 gdext 类 = `init` 的填实例函数；对普通结构体 = `new`/`Box::new`/`Rc::new(RefCell::new(…))` 调用点），在分配器调用（`__rust_alloc`/`malloc`/引擎 `memalloc` 的 GOT 槽）**之前**有一次尺寸materialize：`mov edi,imm` / `mov esi,imm` / `lea rsi,[rip+imm]`+`shl/imul`；得到的 `N` 就是**精确尺寸**（不是下界） | 精确尺寸 | **观测**（指令级；精确性靠"分配器实参就是它"） |
+| **E8b-2 定长拷贝/清零立即数** | 同一函数里对**该对象**（同一基址寄存器）有 `mov edx,imm` 的 `memcpy`/`memset`（GOT 槽）或 `rep stosq` 计数 —— 且前面已有证据证明这块就是该对象（如紧接 `init` 返回、或 `drop_in_place<该类型>` 的同一调用链） | 尺寸 | **推断**（拷贝长度 ≤ 对象尺寸，除非证明是整体拷贝） |
+| **E8b-3 `drop_in_place` 链** | `drop_in_place<Type>` 体内对**每个**字段调 drop，最后不写 `[self+size-1]` ⇒ 只给字段序列，不给尺寸 | 字段序列 | 推断 |
+
+**拒绝规则（写死，防止自欺）**：
+1. `N` 必须 **≥ E7 下界**，否则该源不成立（说明拿到的是别的缓冲区）；
+2. 多个源取**最小**；E8b-1 与 E8b-2 同时成立且不等 ⇒ 记 **矛盾**，判 `unknown` 并写清差多少；
+3. 一条源都不成立 ⇒ 该行仍 `unknown`，且必须写清**具体卡点**（"该类没有 `new`/`init` 符号" /
+   "分配点在别的函数里且拿不到实参"）；
+4. 拿到精确尺寸后，**仍然不许**把窗口偏移裁到 `[0,U)` 就当对上：裁掉的偏移要记下来。
+
+### 1.3 判定的四档（与 `AGENTS.md` §0 一致）
+`逐位` / `观测` / `推断` / `未知`。本轮新增一条纪律：
+**凡是"扫不到 / 零调用 / 没有槽"的负结论，必须先做正对照**（§3.2），否则只能标 `未知`。
+
+## 2. 清单 A：两处带 impl 的重复枚举收敛（本轮**唯一改 `src/`** 的部分）
+
+### 2.1 现状（写前读数，行号即事实）
+| 枚举 | 规范位置（E5/E6 逐位） | 重复定义 | 两处固有 impl 的项 |
+|---|---|---|---|
+| `AxisMode` | `src/graphwar_mode_manager.rs:57`（4 变体，`Default`） | `src/axis_drawer.rs:191`（4 变体） | 规范侧：**无**；重复侧：`ALL[4]`/`from_discriminant`/`draws_minor_grid`/`draws_major_grid`/`draws_main_axis`/`from_raw`；另有 `graphwar_setup_control.rs:382` 给**规范类型**写的 `impl`：`ALL[4]`/`as_u8`/`icon_path`/`name`/`next`/`prev` |
+| `TimeMode` | `src/graphwar_mode_manager.rs:77`（6 变体，`#[repr(u8)]`，`Default`） | `src/graphwar_setup_control.rs:253`（6 变体，**无 `#[repr(u8)]`**，多 `PartialOrd/Ord/Hash`） | 规范侧：`seconds`/`icon`/`as_str`/`from_str`；重复侧：`ALL[6]`/`from_u8`/`as_u8`/`name`/`icon_path`/`duration_secs`/`initial_timer_secs`/`timer_label`/`next`/`prev`/`from_level_byte` + `ALL_TIME_MODES` |
+
+`ALL` 撞名的**机制**：`AxisMode` 的 `ALL` 出现在两个 `impl` 里（`axis_drawer.rs:204` 与
+`graphwar_setup_control.rs:382`）。今天它们是**两个不同类型**的 `ALL` 所以不冲突；
+一旦把定义合成一个类型，两个 `impl` 就有同名关联常量 ⇒ `E0592` ⇒ **必须先去重**（这是 T66 说"行为风险"的具体含义）。
+
+### 2.2 判据（先写死，跑完对照）
+* **P-B1 唯一定义**：`grep -rn 'pub enum AxisMode|pub enum TimeMode' src/` 每个类型**只剩 1 处**（`graphwar_mode_manager.rs`），
+  其余位置是 `pub use crate::graphwar_mode_manager::{AxisMode, TimeMode};`。
+* **P-B2 固有项零丢失**：上表两侧 `impl` 的项**全集**在合并后仍可调用（用 §2.3 的 pin 测试逐项点名），
+  且**没有同名项**（`E0592` 编过即是必要条件，但不算充分 —— 还要 pin 行为）。
+* **P-B3 变体集合/判别值不变**：4+6 个变体名与判别值逐项等于 E6 读数
+  （`AxisMode`: NoAxis=0, OnlyMain=1, EveryFive=2, EveryUnit=3；`TimeMode`: Timer30s=0 … TimerInf=5）。
+* **P-B4 布局档升一档**：合并后 `TimeMode` **有** `#[repr(u8)]`（今天重复侧没有）⇒ 线上 1 字节判别值这件事
+  从"靠 `self as u8` 隐式成立"变成"显式 `repr` 保证"。档位仍 `观测`（缺 `<TimeMode as Serialize>` 的
+  单态反汇编逐字节比对；T66 §109.4 已给 `0x3cbce0`/跳表 `0x1c6350`）。
+* **P-B5 行为不变**：下列既存断言全绿且**一条不改**（它们就是行为风险的护栏）：
+  `axis_drawer` 的 `line_count`（`NoAxis=0 / OnlyMain=2 / EveryFive=20 / EveryUnit=102`）、
+  `_scaffold/axis_drawer_class.rs` 的 4 个判别值 → 条数表、`gdext_mod::AxisDrawer` 的 `from_raw` 越界行为、
+  `graphwar_setup_control` 的 `SetupOptions::default()`（`time: TimeMode::Timer1m`）、
+  `cycle_probe`（`next()/prev()` 编译期可用）、`MODE_NAME_TABLE` 12 项、`TIME_MODE_ICONS` 6 项。
+* **P-B6 不引入新重复**：`ALL` 在 `AxisMode`/`TimeMode` 上各**恰好 1 处**（`grep -c 'const ALL'`）。
+* **P-B7 语义去重**：`TimeMode` 的 4 对重复实现（`seconds`↔`duration_secs`、`icon`↔`icon_path`、
+  `as_str`↔`name`、`from_str`↔名字表反查）合并成**一处真值 + 三处转发**，且每条转发都有
+  pin 测试覆盖（4 对 × 6 档 = 24 条等值断言）。
+
+### 2.3 期望（写死，跑完对照）
+* 定义数：`AxisMode` 2 → **1**、`TimeMode` 2 → **1**。
+* `impl` 数（同一类型）：`AxisMode` 2 → **2**（一处绘图侧、一处界面侧；同为 inherent impl，合法）
+  但**关联项不重名**；`TimeMode` 2 → **2**（同上），4 对重复实现变 1 处真值 + 转发。
+* 若某处**改不动**：必须在报告里点名**卡在哪个文件的哪一行、缺什么**（不许含糊）。
+
+## 3. 清单 B：`GraphwarPlane` / `ShotCalculator` 构造点 + `AxisDrawer`/`GraphicsManager` 可达性
+
+### 3.1 构造点（E8b-1 主路径）
+| 类 | 我方期望（我方源的结构体边界） | 二进制已知（写前读数） | 取证方法（写死） |
+|---|---|---|---|
+| `GraphwarPlane` | `src/graphwar_plane.rs:1058` 的 gdext 类：`base: Base<Control>` + **23 字段**（见 `struct_audit2.tsv` 该行） | `IControl>::init → 0x4b7380`（唯一锚）；`callers 0x4b7380` = 槽 `0x9bb730`，使用点 `0x420dca`（在 `0x420d80`）；`0x420d80` 内 `mov edx,0xf8` 尾部拷贝；`callers 0x420d80` = `0x412510` / `0x414ba0` | 在 `0x412510`/`0x414ba0`（及其被调者）里找分配器调用 + 尺寸立即数；再回到 `0x420d80` 验"同一块" |
+| `ShotCalculator` | 我方**没有** `ShotCalculator` 结构体（只有 `Obstacle`/`ShotOutcome`）；`src/graphwar_shot_calculator.rs` | `GraphwarShotCalculator::calculate_shot_results 0x3c2bc0`（= E7 锚点）；`calculate_function 0x3c2530`、`calculate_corrected_function 0x3c5c50`、`calculate_function_offset_str 0x3c5f70`；⚠️ **写前读数：arm64 `.symtab`/符号桥里 `GraphwarShotCalculator` 只有 `calculate_*` 与 `drop_in_place`，没有 `new`/`init`** | 先 `callers 0x3c2bc0`（2 处派发）追**被构造的对象**；若追不到构造点，就改判"锚点窗口不是该结构体"并给独立证据（栈缓冲/混采） |
+
+### 3.2 `AxisDrawer` / `GraphicsManager`：**先正对照再下结论**（照 T66 建议）
+* **正对照（必做，缺了整条判 `未知`）**：用 `tools/ptr_slots.py 0x9bb7f0` 与 `addr_probe.py callers`
+  扫一个**已知有槽**的函数（`GraphwarPlane::draw 0x4b5df0`，T66 §119.4 已定位派发点 `0x42937a`）
+  ⇒ 扫描器**必须**报出该派发点。报不出 = 扫描器本身有问题，本条不得下任何结论。
+* **反面对照**：拿一个**确定不该有静态槽**的项（gdext 虚方法）验证"没有槽"是不是假象。
+* 判据：**P-C1** 正对照报出 `0x42937a`；**P-C2** `AxisDrawer`/`GraphicsManager` 的可达性结论
+  必须指到至少一条**指令或槽**（能指到 `init`/`new`/`__register_methods`/`virtual_fn` 之一），
+  否则只能写 `未知` 并写清扫描边界（是否只扫了 527 个 Location 锚函数）。
+
+### 3.3 期望（写死）
+* `GraphwarPlane`：**期望拿到 E8b-1 精确尺寸**。预测值见 §5。
+* `ShotCalculator`：**期望拿不到**构造点（符号桥里没有 `new`/`init`）⇒ 预测仍 `unknown`，
+  但要把"锚点窗口到底是什么"这条**说清**（这是本轮该条的交付）。
+* `AxisDrawer`：预测**可达**（Godot 类，经 gdext `virtual_fn`/`__register_methods`），
+  「0 槽」是**扫描边界**造成的假象，不是"原版没有这个东西"。
+* `GraphicsManager`：预测**可达**（普通结构体，`new 0x469390` 有 2 个直接调用者）。
+
+## 4. 清单 C：`GraphwarGameRecorder` / `address` / `PatternSegment`
+
+### 4.1 `GraphwarGameRecorder`：窗口 6 偏移 vs 我方 4 字段
+* 我方（`src/graphwar_game_recorder.rs:226`）：`events: Vec<EventInfo>`、`last_state: u8`、
+  `subscribed: Vec<&'static str>`、`saves: usize` ⇒ 字段偏移期望 `0x0/0x8/0x10`(events) `0x18`(last_state)
+  `0x20/0x28/0x30`(subscribed) `0x38`(saves)，尺寸 `0x40`。
+* 二进制 E7（`0x3d4fa0`）：6 个不同偏移 `0x0,0x8,0x10,0x20,0x28,0x48`，下界 **0x49**。
+* **期望值写死**：我方布局与二进制**至少两处不同**（我方有 `0x18`，二进制无；二进制有 `0x48`，我方无）
+  ⇒ 判 `mismatch`；拿 E8b 精确尺寸后再定字段数。
+* 取证：`GraphwarGameRecorder::new 0x3d5260`（callers `0x515590`/`0x5159a0`）→ `Rc::new(RefCell::new(…))`
+  的分配尺寸立即数；`drop_in_place<GraphwarGameRecorder>` 的字段 drop 序列（E8b-3）。
+
+### 4.2 `GameInfo.address` 的 32 字节枚举身份
+* 已有（T56/T66）：`address` 占 `0x18..0x38`（32 字节）、1 字节 tag、2 变体、线上是字符串 ⇒ **形状 = 观测**；
+  身份 `std::net::SocketAddr` = **推断**（拿不到符号）。
+* 本轮判据：**P-D1** 必须给出"32 字节"的**指令级**证据（`movups` 两个 16 字节 / `mov` 4×8 的写回），
+  否则形状降档；**P-D2** 身份**只有在拿到符号或构造点**时才允许升档；拿不到就**仍 `推断`**，
+  并写清**具体缺什么**（缺 x86 侧 `SocketAddr` 的名字映射 / 缺 `parse_ascii` 的调用点）。
+* **明确禁止**：因为"32 字节 + 2 变体"像 `SocketAddr` 就把身份写成结论。
+
+### 4.3 `PatternSegment`：再找一条独立证据
+* 我方（`src/graphwar_level_generator.rs:295`）：7 字段 `a,b,c,d: f64` + `kind: u32` + `style: u32` + `flag: u8`
+  ⇒ 偏移 `0x0/0x8/0x10/0x18/0x20/0x24/0x28`，尺寸 `0x2c`→对齐 `0x30`。
+* 二进制 E7（`0x466d20` = `GraphwarLevelGenerator::generate_level_custom`）：`0x0/0x8/0x10/0x48`，E8a U=**0x50**。
+* **本轮要的第三条独立证据**（任一条即算；写死顺序）：
+  1. **元素步长**：`Vec<PatternSegment>` 增长路径里的 `imul`/`shl`/分配尺寸 ⇒ 元素尺寸立即数（期望 0x30 或 0x50）；
+  2. **消费者**：读 `PatternSegment` 字段的函数（跳表/绘制/保存）里同一基址的偏移集合；
+  3. **`drop_in_place` 链**：若是 `Copy` 类型则无 drop（这条只能证"没有 drop glue"，价值低）。
+* 判据：**P-E1** 三条里至少一条落地；**P-E2** 若三条都拿不到 ⇒ 维持 T66 的 `mismatch` + "窗口归属存疑"，
+  **不许**升级也不许降级。
+
+## 5. 预测（先写死，跑完对照；预测错就如实写错了）
+
+| # | 项 | 预测 |
+|---|---|---|
+| P1 | `GraphwarPlane` E8b-1 | **拿到**精确尺寸，且与 `0x420d80` 的 `8 + 16 + 0xf8` 三段拷贝**自洽**（即尺寸 = 0x110 或能解释三段之差）。若实际是别的数，如实记 |
+| P2 | `ShotCalculator` 构造点 | **拿不到**（符号桥无 `new`/`init`）⇒ 该行仍 `unknown`；并且我预测**锚点窗口不是 `ShotCalculator` 结构体**（11 个偏移 `0x0,0x8,0x10,0x18,0x30,0x50,…` 里 `0x0/0x8/0x10` 是 `Vec` 头，`0x30,0x50,0x70,0x90,0xb0,0xd0,0xf0` 是步长 `0x20` 的**数组**元素基址 ⇒ 多对象混采） |
+| P3 | `AxisDrawer` 可达性 | **可达**；0 槽的解释 = gdext 虚方法经 `__virtual_call::virtual_fn`（`0x4e01f0`）+ `__register_methods`（`0x3e9a30`）运行时注册 |
+| P4 | `GraphicsManager` 可达性 | **可达**；`new 0x469390` 有 2 个直接调用者（`0x4500c0` / `0x517690`），T66 的"0 直接调用"只针对 E7 锚点 `0x468d80` |
+| P5 | `GraphwarGameRecorder` | 判 **mismatch**（至少 2 处布局不同）；期望拿到尺寸 `0x50` 或能解释 `0x48` 那个字段 |
+| P6 | `address` 身份 | **仍推断**（拿不到符号就升不上去）；形状证据本轮能补到指令级 |
+| P7 | `PatternSegment` | **维持 mismatch + 窗口归属存疑**；三条独立证据里**最多拿到 1–2 条**，大概率拿不到元素步长（`Vec` 生长在别的函数里） |
+
+## 6. 门槛（每处改动后跑，一位不许退）
+
+* `cargo test --offline` **1520 / 0 / 1ignored**（口径见 `docs/06` §119.2：旧 1853 含 356 条 `#[path]` 重复实例）
+* `cargo test --offline --features gdext-bindings` **1650 / 0 / 1ignored**
+* `tools/coverage_matrix.py --check` OK（`COVERAGE_MATRIX_UPSTREAM=<主工作区>/.reference/upstream`）
+* `tools/check_doc_refs.py` rc=0
+* 三轴 `fire 647 / batch 647 / batch_conv 637`（`bit_exact_attrib.py --check-baseline` 三轴全 OK）
+* `tools/boundary_audit.py --check` mismatch **0**
+* `tools/struct_audit.py tsv --check` 与 `tsv2 --check` 都 OK
+* `tools/docsec.py check docs/06-verification.md` 无重号/无冲突标记
+* 冻结快照 403 条目未动
+
+## 7. 复跑命令（本轮所有读数都能重算）
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+export PY=$MAIN/.reference/venv/bin/python
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=<你的 target>
+
+# ① 结构审计表（现场重算判定列）
+$PY tools/struct_audit.py tsv2 --check            # 19 行（T66）
+$PY tools/struct_audit.py tsv4                    # 本轮新表（若本轮新增子命令）
+$PY tools/struct_audit.py tsv  --check            # 80 行（第一轮）
+$PY tools/struct_audit.py layout 0x5060d0         # GameInfo 9 字段键序/偏移/单态/类型类
+$PY tools/struct_audit.py bounds 0x4b5df0 0x3c2bc0 0x3e2a00 0x468d80 0x3d4fa0 0x466d20
+
+# ② 指令级取证（构造点 / 可达性 / 正对照）
+$PY tools/addr_probe.py callers 0x4b7380          # GraphwarPlane::init 的唯一引用形态
+$PY tools/addr_probe.py dis     0x420d80          # 填实例（8+16+0xf8 三段拷贝）
+$PY tools/addr_probe.py dis     0x412510          # 分配点候选 1
+$PY tools/addr_probe.py dis     0x414ba0          # 分配点候选 2
+$PY tools/addr_probe.py callers 0x3d5260          # GraphwarGameRecorder::new
+$PY tools/addr_probe.py callers 0x469390          # GraphwarGraphicsManager::new
+$PY tools/addr_probe.py dis     0x4e01f0          # AxisDrawer 的 virtual_fn thunk
+$PY tools/ptr_slots.py 0x9bb7f0                   # 正对照：已知有槽（GraphwarPlane::draw 派发点 0x42937a）
+
+# ③ 符号桥（只读引用，不重跑生成）
+grep -n 'GraphwarPlane\|AxisDrawer\|GraphicsManager\|ShotCalculator\|GameRecorder' \
+     fixtures/name_to_addr_v2.tsv fixtures/sym_match.tsv
+
+# ④ 门槛（见 §6）
+cargo test --offline
+cargo test --offline --features gdext-bindings
+COVERAGE_MATRIX_UPSTREAM=$MAIN/.reference/upstream $PY tools/coverage_matrix.py --check
+$PY tools/check_doc_refs.py
+$PY tools/boundary_audit.py --check
+$PY tools/docsec.py check docs/06-verification.md
+```
+
+## 8. 本轮**不审**的东西（写在这里，防止事后找补）
+* `docs/06` §119.4 的 `GraphwarLanVBox` / `EffectAudioData` / `ClientConnectionHandler` 等其余 unknown 行
+  （T66 已给上界，本轮不动）。
+* 协议 58 个共用整数单态 `0x3cc060` 的 `WIRE_SPEC` 类型（T56 §109.6-3，跨模块重构）。
+* `graphwar_setup_control::AxisMode/FunctionMode/TurnMode` 的 `impl`：那三处**本来就在给规范类型写 impl**
+  （`graphwar_setup_control.rs:72` 从 `graphwar_level_manager` 导入），不是重复定义，**只处理 `ALL` 去重**。
+* `_scaffold/**` / `client/**` / `fixtures/protocol_live_frames.jsonl`：**禁区，一行不动**。
+* 我方 23 字段的 `GraphwarPlane` 与原版字段集的**逐字段**对齐（缺 E2 字段名证据）——本轮只给尺寸/构造点。
+
+## 9. 追记（预注册**之后**发生的事；判据/期望一个字没改，只记事实）
+（本节在跑完后补：范围偏差、预测 vs 实际、门槛读数。）
