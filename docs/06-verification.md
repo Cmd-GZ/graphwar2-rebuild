@@ -20023,3 +20023,194 @@ cargo run --release --offline -q --example batch_conv   -- --dir $SNAP --policy 
    作用于刚取到的节点"。这条从 T30 就标着，本轮没有新增证据。
 7. **`fixtures/function_coverage.tsv` 的 diff 里 35 行不是本任务的**（见 §113.1）：
    34 条 `F2→F1` + `0x4bd430` 是 T57/T58/T59 已落地但生成物没重算的，本轮按纪律一并带进来。
+## 114. T63：`_scaffold` 剩下 **793** 个生产函数的**逐函数归属台账**（A 707 / B 56 / C 17 / D 13）+ 把最后 2 个「装着原版模块方法体」的 `*_class.rs` 搬完（**57 个函数 / 793 → 736**）（2026-11-27，任务 T63 / `task-58`）
+
+> 起点：T49（§97）搬了 4 处 / 41 个函数，T57（§104）搬了 11 处 / 402 个函数 ⇒ `_scaffold` 生产函数
+> **1163 → 793**（T57 报的 1152 → 750 是**它那个时点**；本轮的基线用同一条命令 `tools/audit_src.py scaffold`
+> 复算是 **793** —— 中间 T42/T58 又往 `_scaffold` 加过 `Gw*` 桥接类。分子分母一律按 793 报，不拿 750 凑数）。T57 §104.0 留了一句**可执行的判决**：
+> 「装着原版模块方法体的 `*_class.rs` **只剩 2 个**：`graphwar_setup_control_class.rs`(50，当时是别人禁区)
+> 与 `graphwar_ad_switch_class.rs`(7)」。本轮把这两个都搬完，并把"还剩什么"变成**逐函数的台账**，
+> 不再靠"看着像"。
+
+### 114.0 一句话判决
+
+`_scaffold` 剩下的 793 个生产函数里，**707 个是真自造**（原版没有对应物：GDExtension 入口 / C ABI /
+报文装配 / 对拍器 / ChaCha12 / gzip / broker 服务端 / 我方回放驱动与接线容器 / `Gw*` 前缀桥接类），
+**56 个装游戏语义**（全在两个 `*_class.rs`，本轮**已全部搬回**同名模块），**17 个是重复实现**（另一处已点名），
+**13 个分不清**（缺什么已写清）。搬完之后 `_scaffold` 生产函数 **793 → 736**，
+且**不再有"本名"的 Godot 类**——剩下 8 个 `#[derive(GodotClass)]` 全是 `Gw*` 前缀（我方自造的 GDScript 桥），
+符合 `AGENTS.md` §4（自造的东西不许挂原版名）。
+
+### 114.1 台账（预注册，先出台账再搬）：`fixtures/scaffold_triage.tsv` + `tools/scaffold_triage.py`
+
+台账 793 行（单独 commit `43896d1`），列 = `id / file / fn_line / fn / class / orig_module / orig_func /
+vaddr / other_impl / evidence / note`。判据写在 `tools/scaffold_triage.py` 头（可复算），四档互斥、
+优先级 **B > C > D > A**：
+
+| 档 | 定义 | 判据（机判条件） | 计数 |
+|---|---|---|---|
+| **A** 真自造 | 原版**没有对应物** ⇒ 留原地是对的 | ① 文件角色表 `FILE_ROLE`（每行给出处：GDExtension 入口 / 手写 C ABI / 报文装配 / 对拍器 / `rand_chacha` 替代 / `flate2` 替代 / broker 服务端 / 我方回放驱动·接线 / `Gw*` 桥接类）；② 函数级 C ABI·验收钩子·薄转发 | **707** |
+| **B** 装游戏语义 | 原版本该在 `src/graphwar_*.rs` 里 | 文件里有 `derive(GodotClass) struct <T>`、`<T>` 是**原版类名**（`fixtures/name_to_addr_v2.tsv` 第 2 列 + 该类有落 `src/*.rs` 的 `panic::Location` 锚）、且该文件不是 GDExtension 入口 ⇒ 按**文件整体**判（`docs/06` §104.1「同一个 impl 块/同一个文件与类同生共死」） | **56** |
+| **C** 重复实现 | 同一条规则/助手两处 ⇒ 指出另一处 | ① 函数体**逐字符相同**（`identical_body_groups()` 机判）；② 语义相同（例 `diffconv::fire_batch*` 复刻 `game.rs::Match::fire*` 的结算路径） | **17** |
+| **D** 分不清 | 缺证据 | 写明缺什么（`D_LIST`） | **13** |
+
+**三条正/反对照（`--control`，全绿才准提交）**：
+
+| 对照 | 期望 | 实测 |
+|---|---|---|
+| 正对照①：`src/_scaffold/axis_drawer_class.rs`（现役 24 fn） | 0 个 B | **A 21 / C 3 / B 0** ✅（3 个 C 是 T57 §104.7-4 自己登记的 `clamp_mode`，加 `line_primitive_count`/`sym` 两个逐字相同助手） |
+| 正对照②：`src/_scaffold/entity_drawer_class.rs`（历史版 `cda427c^`，97 fn） | 全 B | **B 97 / 非 B 0** ✅（T57 §104.2 第 1 行确实整份搬走） |
+| 反面对照：把上面那份的类名换成 `GwEntityDrawer` | 翻成 A | **A 97 / B 0** ✅ |
+
+⇒ 判 B 靠的是「**原版类名 + Location 锚**」，不是「见 `*_class.rs` 就判 B」（也能解释为什么 8 个 `Gw*` 类判 A）。
+
+**逐文件分布（预注册读数，搬之前）**——只有 4 个文件出现 B/C/D：
+
+| 文件 | prod | A | B | C | D | 备注 |
+|---|---|---|---|---|---|---|
+| `play_flow_class.rs` | 90 | 84 | 0 | 0 | **6** | D = `GwTurnDriver` 的玩家轮转（§86.4 B18） |
+| `replay_meta.rs` | 14 | 7 | 0 | 0 | **7** | D = 头部解析（T36 B16 vs T57 A 冲突） |
+| `graphwar_setup_control_class.rs` | 50 | 0 | **49** | 1 | 0 | B 已搬；1 个 C = `join_text` |
+| `graphwar_ad_switch_class.rs` | 7 | 0 | **7** | 0 | 0 | B 已搬 |
+| `diffconv.rs` | 29 | 23 | 0 | **6** | 0 | C06 复刻开火/结算路径 |
+| `gdext_mod.rs` / `axis_drawer_class.rs` / `api.rs` | 22/24/56 | 19/21/54 | 0 | 3/3/2 | 0 | 逐字相同的助手 |
+| `replay_driver.rs` | 41 | 40 | 0 | **1** | 0 | C02 回放时钟两份 |
+| `ai_explain.rs` | 22 | 21 | 0 | **1** | 0 | C07 评分链第二份 |
+| 其余 20 个文件 | — | 全 A | 0 | 0 | 0 | 见 TSV |
+
+### 114.2 搬的 2 处（原位置 → 新落点 → 原版函数 + vaddr → 调用方怎么保持）
+
+| # | 原位置（`src/_scaffold/`） | 生产 fn | 新落点（原版模块） | 原版类 + Location 锚 | 调用方保持方式 |
+|---|---|---|---|---|---|
+| ① | `graphwar_ad_switch_class.rs` | **7** | `src/graphwar_ad_switch.rs` | `GraphwarAdSwitch`；`_::__init::__inner_init 0x4e9c90`（FDE `0x4e9c90..0x4e9ed5`，`0x245`）→ Location **`src/graphwar_ad_switch.rs:45:1`** | `graphwar_root_node.rs` 只改 **1 行 import 路径**；类名/方法表/信号/GDScript **0 改动** |
+| ② | `graphwar_setup_control_class.rs` | **50** | `src/graphwar_setup_control.rs` | `GraphwarSetupControl`；`_::__init::__inner_init 0x4bcc60`（FDE `0x4bcc60..0x4bce79`，`0x219`）→ Location **`src/graphwar_setup_control.rs:46:10`**；另有 `ready 0x4cf670` / `on_text_change 0x4c27f0` / `on_chat_submitted 0x4c44b0` / `force_title_update 0x4c4850` / `connect_entry_buttons 0x4c4c20` | 同上（`graphwar_root_node.rs` 1 行 import；GDScript 0 改动） |
+
+**唯一的结构差异（诚实登记，与 T57 的 11 处同款）**：原版整个 crate 都是 gdext 扩展，不需要 `cfg`；
+本仓 `cargo test`（不带 `gdext-bindings`）必须能编 ⇒ 节点类挂在
+`#[cfg(feature = "gdext-bindings")] mod node_class { … }` 下，由 `pub use node_class::*;` 抬平对外路径
+⇒ `crate::graphwar_ad_switch::GraphwarAdSwitch`、`crate::graphwar_setup_control::GraphwarSetupControl`
+与原版一致。**搬的时候一字未改语义**（逐字节对比：只多 `mod` 包裹 + 文档头）。
+
+**撞名的处置（T57 踩过的同一个坑）**：`src/graphwar_setup_control.rs:1097` 原来有一个**纯意图标记类型**
+`struct GraphwarSetupControl;`（T55 为了把原版**关联函数**按类型归属落下来而占了这个名字）。
+真类搬回来后必然撞名 ⇒ 标记类型改名 **`SetupControlIntent`**（T57 在 `graphwar_plane.rs` 是
+`GraphwarPlane` → `PlaneIntent`，处置相同），文件里写明「原版**没有**这个类型」，**测试断言一条未改**。
+
+### 114.3 反汇编复核（不是只搬位置）
+
+`tools/addr_probe.py dis 0x4cf670`（`GraphwarSetupControl::ready`，FDE `0x4cf670..0x4d1c92` = **0x2622 = 9762 B**）
+逐条对上我方移过去的 `ready`：
+
+* **3 条** `call 0x3a0fb0`（引擎 `connect` 包装）= `0x4cf8e9` / `0x4cf96f` / `0x4d09ba` ⇒ 我方 `ready` 里正好 **3 条 `connect`**；
+* 信号→回调字面量**逐对**：`text_changed`@`0x1c399b` → `on_text_change`@`0x1c2d33`；
+  `visibility_changed`@`0x1c39a7` → `on_visibility_change`@`0x1c2d1f`；
+  `text_submitted`@`0x1c3a0a`（`0x4d0996 mov edx,0xa`…`0x4d09b2 mov edx,0xe` 长度立即数）→ `on_chat_submitted`@`0x1c2d41`（`mov ecx,0x11`）；
+* `get_node` 名字 **11 条**与搬过去那份的 `ALL_GET_NODE_NAMES` **逐条相同**：
+  `RoomNameLineEdit`@`0x19ea20` / `Axis|Function|Turn|TimeModeButton`@`0x1c2eb2` / `TurnTimeButton`@`0x1c39b9` /
+  `LockButton`@`0x1c39c7` / `ChatButtonSetup`@`0x1c39d1` / `ChatButtonPlay`@`0x1c39e0` / `ChatPopUp`@`0x1c39ee` /
+  `ChatBox|ChatLineEdit`@`0x1c39f7`。
+
+⇒ 结论：搬的是**同一个语义**，不是「换个文件重写」。`graphwar_ad_switch_class.rs` 的那两个 getter
+**只有 arm64 一侧的指令证据**（`are_ads_enabled` = `!owned`，arm64 `0x377cf4` 的 `ldrb`/`eor`；
+`get_ad_unit_id` = `.rodata` 的 38 字节字面量），Linux 侧无符号锚 —— 这一点在台账的 `note` 列写明，
+不假装有。
+
+### 114.4 17 条 C 与 13 条 D（明细在 TSV；这里给汇总结论）
+
+**C 17 条**（`other_impl` 列点名另一处）：
+`diffconv` 6（`fire`/`fire_batch`/`fire_batch_with`/`tick`/`explosion_point`/`death_effect_type` —— C06，
+其中 `tick` 与 `game.rs:1523` **逐字符相同**）、`ai_explain::evaluate` 1（C07）、`replay_driver::drive_frame` 1（C02 回放时钟两份）、
+`gdext_mod`+`api`+`axis_drawer_class` 的 8 个逐字相同助手（`triples`×2 / `sym`×2 / `clamp_mode`×2 /
+`line_primitive_count`×2）、`graphwar_setup_control_class::join_text` 1（与 `graphwar_button.rs:1157` 逐字符相同）。
+
+**D 13 条**：`play_flow_class` 的 `GwTurnDriver` 玩家轮转 6 条（§86.4 B18：原版是 HashMap 迭代序，
+顺序未知；士兵级那半**有据**——转发 `PlayerTurns::next_shooter`）；`replay_meta` 的头部解析 7 条
+（**T36 §86.4 B16 判「属 replay_reader 职责」、T57 §104.0 判「我方自造元数据」—— 两处结论冲突**，
+缺原版「回放列表读关卡名」那段的函数名/Location）。
+
+### 114.5 门槛读数（每处都跑）
+
+| 门槛 | 基线 | 本轮 | 结论 |
+|---|---|---|---|
+| `cargo test --offline` | 1853 / 0 / 1ignored | **1853 / 0 / 1ignored** | 一致 |
+| `cargo test --offline --features gdext-bindings` | 1983 / 0 / 1ignored | **1983 / 0 / 1ignored** | 一致（57 个搬过去的函数与它们的 **3 + 7 = 10 条单测**仍在同一个 feature 档里，条数一位没变） |
+| `coverage_matrix.py --check` | OK | **OK**（生成物已重跑：`src_files` 117 → **115**，两个类的 `ours_funcs` 随搬家变化） | 一致 |
+| `check_doc_refs.py` | rc=0 | **rc=0**（无死链） | 一致 |
+| 三轴 `fire` / `batch` / `batch_conv` | 647 / 647 / 637 | **647 / 647 / 637**（文件 286、读失败 117、结算批 1080 三轴同；`batch_conv` 种类序列 1075/1080） | 一位没退 |
+| `boundary_audit.py --check` | match 441 / mismatch 0 / multi 86 | **match 441 / mismatch 0 / multi 86** | 一致 |
+| `client/run.sh selftest` | 732 / 0 / 1skip（missing=0 silent=0） | **732 / 0 / 1skip，`groups=33 checks=732 expected=732 missing=0(claimed 0 / degraded 0 / silent 0)`** | 一致（改过 `_scaffold` ⇒ build gdext → `cp .so` → `--import` 三步都做了，`libgw2_rebuild.so` md5 与 target 里的相同） |
+| headless 14 脚本 | ≥1978 / 0 | **1978 / 0**（assemble 244 / base_classes 117 / curve 96 / draw_classes 235 / entity_drawer 378 / function_drawer 132 / gdext 24 / obstacle_drawer 116 / plane_on_screen 97 / play_flow 234 / process_loop 66 / recovered_view 57 / signal_classes 155 / spike_class 27） | 一致 |
+
+**另记一条"看着像回归、其实不是"**：selftest 日志里 `res://src/screens/game_setup.gd:136`
+（`on_enter` 给 `_lock_button.icon` 赋值时对象是 `Nil`）的 SCRIPT ERROR 在本轮**改动前的 HEAD 上同样出现**
+（把 `src/` 暂存起来重编 `.so` 跑了一遍对照）⇒ 既有问题，不是 T63 引入；selftest 732 条断言里也没有它。
+
+### 114.6 复跑命令
+
+```bash
+export MAIN=/home/CG/Myprojects/graphwar2-rebuild
+WT=$MAIN/.agent-work/cg/wt-t63
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target
+cd $WT
+V=$MAIN/.reference/venv/bin/python
+
+# ① 台账与判据（本节的 A/B/C/D 全部由这两条复现）
+$V tools/scaffold_triage.py             # 793→736 的分母 + 逐文件分布（搬之前跑是 793，现在是 736）
+$V tools/scaffold_triage.py --control   # 三条正/反对照，必须 rc=0
+$V tools/scaffold_triage.py --tsv      # 与 fixtures/scaffold_triage.tsv 逐行相同（预注册，不回填）
+$V tools/audit_src.py scaffold          # 分母同口径（prod 列合计）
+
+# ② 搬迁证据链
+$V tools/addr_probe.py fde 0x4e9c90 && $V tools/addr_probe.py locs 0x4e9c90   # AdSwitch 的类 init → 模块文件 45:1
+$V tools/addr_probe.py fde 0x4bcc60 && $V tools/addr_probe.py locs 0x4bcc60   # SetupControl 的类 init → 模块文件 46:10
+$V tools/addr_probe.py dis 0x4cf670 | grep -c 'call    0x3a0fb0'              # = 3（三条 connect）
+
+# ③ 门槛（与 §104.6 同款；三轴/客户端两档都要单独跑）
+cargo test --offline && cargo test --offline --features gdext-bindings
+COVERAGE_MATRIX_UPSTREAM=$MAIN/.reference/upstream $V tools/coverage_matrix.py --check
+$V tools/check_doc_refs.py && $V tools/boundary_audit.py --check
+```
+
+### 114.7 遗留（**最该搬但本轮没搬的 5 个** + 缺什么）
+
+1. **`root_wiring.rs::RootWiring`（99 个生产函数里与我方容器有关的那一大块，T36 B04）**：
+   原版 `GraphwarGameClient::new 0x517690` 的 **22 条 `add_module` 注册序**与 `game_server_thread 0x4500c0`
+   的装配现在住在我方容器里。**缺**：22 条注册序的**指令级**证据（现在只有文件头那张表 + 名字夹具），
+   以及 `GraphwarBackend +0x220` 容器 → 模块的取回路径地址 ⇒ 搬不成"照原版形状装配"。
+2. **`root_wiring.rs::KernelBus` 本体（队列/虚拟时钟/frames/ticks/probes，T49 §97.7-1 判 D 待拆）**：
+   原版是「节点 → `GraphwarRootNode +0x1668` → `GraphwarBackend +0x220` → 容器」这条**对象图**，
+   我方用 thread-local 替身。**缺**：节点侧那条链的地址证据（本轮没有）。
+3. **`play_flow_class.rs::GwTurnDriver` 的玩家轮转 6 个函数（D 档）**：**缺**原版玩家轮转顺序
+   （HashMap 迭代序）的指令/观测证据（§86.4 B18）。
+4. **`replay_meta.rs` 头部解析 7 个函数（D 档）**：**缺**原版「回放列表显示关卡名」那段的函数名/Location
+   （T36 B16 与 T57 §104.0 的结论冲突，谁对都还没证）。
+5. **`replay_driver.rs::drive_frame`（C02）**：不是"搬"而是"归一"——把整数 ns 定步并进
+   `graphwar_replay_player.rs` 的时钟。**缺**：先定"哪一份是原版时钟"（`0x3c6f40` 的回放时钟时钟形状
+   T12 已挖到，但还没有把 `advance_dt` 的 f64 累加与定步版本对上）。
+
+**顺带登记的三条（不是"该搬"，是"该收口"）**：
+* `build_stub_children` 的**前提已被 T43 推翻**：它的头注释还写着「`client/` 里没有 GameSetup 这一屏的场景」，
+  而 T43 已把原版 `game_setup.tscn` 装进 `client/scenes/screens/`（节点 `GraphwarSetupControl/RoomName/
+  RoomNameLineEdit` 由场景提供）。本轮**只搬位置、不改行为**（删替身会动屏幕像素，属另一条任务）。
+* `join_text` 随类搬进了模块，但它与 `graphwar_button.rs:1157` 那份**逐字符相同**（C 档）——
+  合并要动 `graphwar_button` 的可见性，没做。
+* `client/tools/recovered_ad_holder_stub.gd:15` 的注释仍写 `src/_scaffold/graphwar_ad_switch_class.rs`
+  （**`client/**` 是本任务禁区**，没动）；`docs/16` 里同款历史路径属**历史轮次记录**，不改
+  （与 T57 的处置一致：改了会把历史记录改错）。
+
+### 114.8 我写错了 / 前提被证伪
+
+* **规格里"793 个生产函数"对得上**：`tools/audit_src.py scaffold` 复算 prod 合计 **793**（与任务书一致）；
+  但**逐文件对不上 T57 的 750** —— 那是 T57 的基线时点，T55/T58 之后 `_scaffold` 又加过常量口，本轮基线就是 793，
+  不拿 750 凑数。
+* **一次环境变量写错差点误判成"cargo 解析坏了"**：`export MAIN=… CARGO_HOME=$MAIN/…` 写在**同一个 export 语句**里时
+  `$MAIN` 尚未生效 ⇒ `CARGO_HOME=/.reference/cargo-home` ⇒ 报 `no matching package named godot`（与代码无关）。
+  本轮复跑命令一律**分行 export**，见 §114.6。
+* **"B 56"与"搬了 57"不是矛盾**：B 档按函数判出 56 个（`join_text` 因为是 C 被排除在 B 外），
+  但搬是按**文件整体**搬的 ⇒ `_scaffold` 少了 **57** 个生产函数（50 + 7）。这个差必须一起读。
+* **章节号改过**：本节最初写成 **§111**（当时本工作树的 `docs/06` 最后一节是 §110/T53）；
+  变基到 master 时 §111 已被 T68、§112 已被 T65 的审计占用 ⇒ 本节改为 **§113**（内部小节号同步）。
+* **正对照第一次没过**（把 `axis_drawer_class` 期望成"全 A"）：实际是 **A 21 + C 3**，
+  而 T57 §104.7-4 **自己就写着** `clamp_mode` 是"C 档小项（同一规则两份）"。
+  改成"0 个 B"才是那条结论的正确表述 —— 台账的档位与"留原地/搬走"是两个维度，别混。

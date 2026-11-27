@@ -1530,7 +1530,7 @@ mod node_class {
 //!
 //! * 建出 `_ready` 里真的 `get_node` 过的那 3 个 holder（[`READY_NODES`]，**观测**）：
 //!   `ScreensControl` / `IAP_holder` / `Ad_holder`，其中 `ScreensControl` 下挂 15 个屏节点、
-//!   `Ad_holder` 是**另一个扩展类** [`super::graphwar_ad_switch_class::GraphwarAdSwitch`]；
+//!   `Ad_holder` 是**另一个扩展类** [`super::graphwar_ad_switch::GraphwarAdSwitch`]；
 //! * [`GraphwarRootNode::show_screen`] 真正跑一遍 `graphwar_root_node::apply_show_screen`
 //!   （`0x3af850` 决策表的纯逻辑版），把 `set_visible` **转发到真子节点**上；
 //! * [`GraphwarRootNode::purchase_confirmed`] / [`GraphwarRootNode::purchase_denied`]
@@ -1654,9 +1654,9 @@ use crate::graphwar_module_container::{self, MODULES};
 use crate::graphwar_root_node::{apply_show_screen, Screen, ScreenHost, ALL_SCREENS, READY_NODES};
 
 use crate::entity_drawer::EntityDrawer;
-use crate::_scaffold::graphwar_ad_switch_class::GraphwarAdSwitch;
+use crate::graphwar_ad_switch::GraphwarAdSwitch;
 use crate::graphwar_plane::GraphwarPlane;
-use crate::_scaffold::graphwar_setup_control_class::GraphwarSetupControl;
+use crate::graphwar_setup_control::GraphwarSetupControl;
 use crate::_scaffold::root_wiring::{self, RootWiring, DEMO_SOLDIERS, Wired};
 
 /// `_ready` 里三个 holder 的节点名（[`READY_NODES`]，**观测**）。

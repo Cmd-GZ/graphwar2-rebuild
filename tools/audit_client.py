@@ -558,7 +558,7 @@ SEGMENTS = {
          "`src/graphwar_mode_manager.rs:57-110`（三套枚举 + `TimeMode::seconds()` = 同 6 个秒数，"
          "`docs/07` §5.2 **逐位**）+ `src/graphwar_setup_control.rs:351-461`（`TimeMode::next/prev`、"
          "`AxisMode::next/prev`、`FunctionMode::next`、`TurnMode::next`；`initial_timer_secs`/`timer_label`）"
-         "⇒ 四个 next 与秒数表两处实现；`_scaffold/graphwar_setup_control_class.rs:28` 已经暴露 "
+         "⇒ 四个 next 与秒数表两处实现；`graphwar_setup_control.rs` 的节点类（T63 从 `_scaffold` 搬回）已经暴露 "
          "`#[func] cycle_*_mode()` 却没人调",
          "P1 GDScript 改调 `GwSetupControl.cycle_*_mode()`；`format_clock` 改调 Rust `timer_label`",
          "GameSetup 四个按钮 + 对局计时显示"),
