@@ -225,6 +225,86 @@ def features(ctx, va, index):
     return f
 
 
+
+# ---------------------------------------------------------------------------
+# 人工裁决表（预注册 §3 纪律 3：机器规则只是**候选**，类别是人工裁决结果）
+# 键 = ELF vaddr；值 = (最终类别, 改判理由)。未列的条目用机器候选。
+# 每条改判都能否掉一条机器规则，理由里写否定它的**具体指令/尺寸/名字来源**。
+# ---------------------------------------------------------------------------
+MANUAL = {
+    # --- R-STD 误判：0x308d 字节的业务函数恰好有 ucomisd/jp/movups，中了 B 组 ---
+    "0x3c2bc0": ("real-missing",
+                 "R-STD-B 误判：size 0x308d/2624 insn（本批最大），STRIDE=0x3e8=1000=画布宽（业务常量），"
+                 "v2 真名 GraphwarShotCalculator::calculate_shot_results，Location 跨 obstacle_manager/shot_calculator"
+                 " ⇒ 业务函数，不是排序单态化"),
+    # --- G3 误判：唯一调用者没有 Location 也可能是线程闭包/虚调用，不是 gdext 回调 ---
+    "0x44e8f0": ("real-missing",
+                 "G3 误判：v2 真名 GameServerData::subscribe_to_room_info_updates::{{closure}}，size 0x8f9、"
+                 "有分支与多处业务调用 ⇒ 业务闭包，不是 #[func] 分发壳"),
+    "0x44f990": ("real-missing",
+                 "G3 误判：v2 真名 GraphwarGameServer::start（boundary 锚行 130），size 0x72c ⇒ 业务函数"),
+    "0x4661a0": ("real-missing",
+                 "G3 误判：v2 真名 GraphwarLevelGenerator::generate_level::{{closure}}（锚行 94,95,96,102,111），"
+                 "size 0xa75 ⇒ 业务闭包（关卡生成），不是分发壳"),
+    "0x51d080": ("real-missing",
+                 "G3 误判：v2 真名 GraphwarFunctionEvolutionator::calculate_functions_old（T71 §123.8 已定性："
+                 "变体 B 的 (1+λ) 爬山，6918 字节）⇒ 业务函数，只是没读完"),
+    # --- G2 误判：RefCell 借用 + 字段写/读 之外还有业务动作 ---
+    "0x477fa0": ("real-missing",
+                 "G2 误判：写 [+0x11e] 布尔字段后又 emit 信号（call 0x3d3530，打包 tag 0x8000000000000045）"
+                 " ⇒ 手写 setter（带副作用），不是 gdext 生成的纯属性包装"),
+    "0x478010": ("real-missing",
+                 "G2 误判：把 24 字节结构体拷进 [+0]/[+0x10] 后借 [+0xd8] 并 emit 信号（tag …1d）"
+                 " ⇒ 手写 setter，不是纯属性包装"),
+    "0x4764b0": ("real-missing",
+                 "G2 误判：先判 [+0x120]==1，再 get_module(0x46e140)，再做 0x2010003>>shift 的位运算 ⇒ 业务 getter"),
+    "0x4765f0": ("real-missing",
+                 "G2 误判：同 0x4764b0 形态（判 [+0x120]、get_module、位运算）⇒ 业务 getter"),
+    "0x477410": ("real-missing",
+                 "G2 误判：同 0x4764b0 形态 ⇒ 业务 getter"),
+    "0x4737a0": ("real-missing",
+                 "G2 误判：size 0x214、call 0x46d8c0 + 0x3bea40 多次、多分支 ⇒ 业务方法"),
+    "0x473e50": ("real-missing",
+                 "G2 误判：size 0x343、call 0x46e7a0/0x3c2120/0x3c17d0/0x46dd00/0x464d10/0x46e580 ⇒ 业务方法"),
+    "0x475590": ("real-missing",
+                 "G2 误判：size 0x316、先判 [+0x120] 再 call 0x46d8c0/0x47dec0 ⇒ 业务方法"),
+    "0x3d4fa0": ("real-missing",
+                 "G2 误判：v2 真名 GraphwarGameRecorder::save_event，size 0x2b8、165 条指令、6 个业务调用 ⇒ 业务方法"),
+    # --- G2 命中但判不了：信号 connect/emit 闭包体，父函数不可定 ---
+    "0x4c5c00": ("unknown",
+                 "G2 命中但判不了：整函数只有「借 self → 取 [+0x1f8] 模块 → 借它 → emit 信号(tag …10) → 释放」，"
+                 "Location 在 graphwar_setup_control.rs:270:72（另一模块的行列）⇒ 信号闭包体；"
+                 "缺：父函数是谁（.gd/.tscn 的 connect 站点）"),
+    "0x4c5cb0": ("unknown", "同 0x4c5c00（Location setup_control.rs:277:72、size/形态逐条相同）"),
+    "0x4c5d60": ("unknown", "同 0x4c5c00（Location setup_control.rs:284:72、size/形态逐条相同）"),
+    "0x5153f0": ("unknown",
+                 "G2 命中但判不了：借 [+0x30] 后 call 0x47dec0 + 一串位运算；Location graphwar_backend.rs:359:49；"
+                 "缺：它是 backend 的闭包体还是独立方法（符号表无名字）"),
+    "0x520100": ("unknown", "同 0x5153f0（与它同处 .data.rel.ro 表 0x961fc0/0x961fc8 相邻两项）"),
+    # --- 泛型单态化：7 条同尺寸同 Location=1 个源码 fn 的实例 ---
+    **{a: ("na:other",
+           "我方源码层是**一个泛型 fn**（hyb 名 GraphwarNodes::get_node_by_name）：7 条 FDE 尺寸逐字节相同 0xf9、"
+           "Location 全是 graphwar_nodes.rs:8:62、调用点数各自不同（9/4/7/5/1/2/1）⇒ 同一 fn 的 7 份单态化实例，"
+           "不是 7 个缺口（写 1 个泛型即覆盖）")
+       for a in ("0x3aaea0", "0x3ab290", "0x3ab390", "0x3ab490", "0x3ab690", "0x3ab790", "0x3ab890")},
+    # --- math_function：地址不是 .eh_frame 函数起点 ---
+    "0x4eb86a": ("unknown",
+                 "地址 0x4eb86a **不是** .eh_frame 函数起点（落在 FDE 0x4eb830..0x4eb920 内）⇒ 原版边界本身不可判；"
+                 "缺：Ghidra funcstart 与 .eh_frame 的边界裁决（v2 名 remove_offset 是对的，但边界是切出来的）"),
+    "0x4eb94b": ("unknown",
+                 "地址 0x4eb94b **不是** .eh_frame 函数起点（落在 0x4eb920..0x4eb9cb 内），从起点反汇编即错位"
+                 "（jno/add r10b/subps）⇒ 边界不可判"),
+    "0x4ebb68": ("unknown",
+                 "地址 0x4ebb68 **不是** .eh_frame 函数起点（落在 0x4eb9d0..0x4ebbe0 内），反汇编错位 ⇒ 边界不可判"),
+    "0x4eccb3": ("unknown",
+                 "地址 0x4eccb3 **不是** .eh_frame 函数起点（落在 0x4ec160..0x4ed66e 内，Ghidra 把大函数切了）"
+                 "⇒ 边界不可判；缺：Ghidra/.eh_frame 边界裁决"),
+    "0x4ebbe0": ("real-missing",
+                 "size 0x574 真实函数体（正规 prologue + 分支），Location math_function.rs:184:24；"
+                 "机器 G4 是因为它与上面两条无名地址共享同一 Location 才判 unknown，但它自己有名字（hyb:高置信 "
+                 "simplify_recursive）⇒ 语义档位仍是推断（名字只是结构指纹），缺口是实的"),
+}
+
 # ---------------------------------------------------------------------------
 # 判决（规则见 fixtures/f3_triage_plan.txt §3）
 # ---------------------------------------------------------------------------
@@ -295,6 +375,14 @@ def rule_hits(f, size_freq, row=None, shared_locs=None):
         other.append("O-ret")
     return dict(hits=hits, A=A, B=B, C=C, cmp_hit=cmp_hit, pair=pair,
                 std=std, gdext=gdext, other=other, g4=g4, g4why=g4why)
+
+
+def final_class(addr, f, hits):
+    """最终类别 = 人工裁决表优先，否则机器候选。返回 (类别, 机器候选)。"""
+    m = machine_class(f, hits)
+    if addr in MANUAL:
+        return MANUAL[addr][0], m
+    return m, m
 
 
 def machine_class(f, hits, manual=None):
@@ -390,6 +478,13 @@ def evidence(f, h, row, bnd):
             bits.append("唯一调用者不引用任何 Location（gdext ptrcall/call_func 注册回调）")
     if f.locs:
         bits.append("Location=" + ";".join("%s×%d" % (l, n) for l, n in f.locs[:2]))
+    if f.callees:
+        bits.append("被调者 %d 个（%s…）" % (len(f.callees), ",".join("%#x" % c for c in f.callees[:3])))
+    biz = [t for t in f.strings if "res://" in t]
+    if biz:
+        bits.append("业务串=" + biz[0][:70])
+    elif f.strings:
+        bits.append("串=" + f.strings[0][:40])
     if row and row.get("name_src"):
         bits.append("名字来源=%s" % row["name_src"])
     if bnd and bnd.get("loc_main_lines"):
@@ -485,14 +580,105 @@ def main(argv=None):
     if args.control:
         return control(rows, feats, size_freq, shared_locs)
 
-    # ---- 人工复核产物（fixtures/f3_triage.tsv）的自动部分 -------------------
-    print("\n=== 机器候选分布（**人工裁决会覆盖它**）")
-    c = collections.Counter(machine_class(f, h) for _, f, h in rows)
-    for k, v in c.most_common():
-        print("  %-16s %3d" % (k, v))
-    print("\n=== 全量明细（机器特征，供人工复核）")
+    # ---- 全量：落 fixtures/f3_triage.tsv + 统计 -------------------------------
+    out = []
     for r, f, h in rows:
-        print("%s\t%-58s\t%#6x\t%s" % (r["addr"], (r["name"] or FAKE)[:58], f.size, fmt_feat(f, h)))
+        cat, mach = final_class(r["addr"], f, h)
+        out.append(dict(row=r, f=f, h=h, cat=cat, mach=mach))
+    if args.stats:
+        return stats(out)
+    return write(out, args.json)
+
+
+def _cat_key(o):
+    order = {"real-missing": 0, "na:std-mono": 1, "na:gdext-glue": 2,
+             "na:other": 3, "unknown": 4}
+    return (order.get(o["cat"], 9), int(o["row"]["addr"], 16))
+
+
+def write(out, json_path=None):
+    lines = []
+    lines.append("# f3_triage.tsv —— T82：F3 缺口 153 条**逐条**分类（度量口径审计，只审计不改码）")
+    lines.append("# 判据 = **预注册** fixtures/f3_triage_plan.txt（先提交后跑）+ 同文件 §9 勘误（追加式）")
+    lines.append("# 复跑：PY=.reference/venv/bin/python ; $PY tools/f3_triage.py --control   # 先验判法（rc=0 才许信）")
+    lines.append("#       $PY tools/f3_triage.py                                             # 重写本文件 + 打印统计")
+    lines.append("# 口径：地址 = ELF vaddr（RVA）；FDE 尺寸 = .eh_frame 自解；归属 = panic::Location；")
+    lines.append("#       **机器规则只是候选，「类别」列是人工裁决结果**（改判的条目在「依据」里写明否定机器候选的理由）")
+    lines.append("# 类别：real-missing=真的缺（进诚实缺口）/ na:std-mono=std 单态化 / na:gdext-glue=gdext 宏产物")
+    lines.append("#       na:other=其它不该手写（含泛型单态化实例）/ unknown=判不了（计入缺口，保守）")
+    lines.append("# 列：vaddr | 名字（function_coverage.tsv 的符号名） | FDE尺寸 | 判据命中 | 类别 | 依据")
+    lines.append("vaddr\tname\tsize\thits\tcategory\tevidence")
+    for o in sorted(out, key=_cat_key):
+        r, f, h = o["row"], o["f"], o["h"]
+        hits = "|".join(h["hits"]) if h["hits"] else "—"
+        if o["cat"] != o["mach"]:
+            hits += " ⇒机器候选=%s" % o["mach"]
+        ev = evidence(f, h, r, None)
+        if r["addr"] in MANUAL:
+            ev = (ev + "；" if ev else "") + "**人工改判**：" + MANUAL[r["addr"]][1]
+        lines.append("\t".join([r["addr"], r["name"] or FAKE, "%#x" % f.size,
+                                hits, o["cat"], ev.replace("\t", " ")]))
+    # ---- F2 顺带扫描（不进 153 的算术，预注册 §5） ----
+    lines.append("")
+    lines.append("# ---- F2-scan：F2（有实现无物证）97 条的同一套规则扫描 —— **单独计数，不进上面 153 的算术** ----")
+    lines.append("# 意义：F2 若也大量是 na，则 M2=F1+F2 同样虚高；命中不等于改判 F2 的档位（那是 function_coverage 的事）")
+    lines.append("vaddr\tname\tsize\thits\tcategory_machine\tevidence")
+    ctx, cov, bnd, f3, f2, feats, size_freq, shared, mv2 = build(verbose=False)
+    n_f2_na = collections.Counter()
+    for r in f2:
+        f = feats[r["addr"]]
+        h = rule_hits(f, size_freq, r, shared)
+        cat = machine_class(f, h)
+        n_f2_na[cat] += 1
+        if cat.startswith("na:") or cat == "unknown":
+            lines.append("\t".join([r["addr"], r["name"] or FAKE, "%#x" % f.size,
+                                    "|".join(h["hits"]) or "—", cat,
+                                    evidence(f, h, r, None).replace("\t", " ")]))
+    open(OUT_TSV, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+    print("写出 %s（F3 %d 行 + F2-scan %d 行）" %
+          (OUT_TSV, len(out), sum(1 for x in lines if x.startswith("0x")) - len(out)))
+    return stats(out)
+
+
+def stats(out):
+    c = collections.Counter(o["cat"] for o in out)
+    n = len(out)
+    cov = read_cov()
+    total = len(cov)
+    f1 = sum(1 for r in cov if r["bucket"] == "F1")
+    f2n = sum(1 for r in cov if r["bucket"] == "F2")
+    na = c["na:std-mono"] + c["na:gdext-glue"] + c["na:other"]
+    na_strong = c["na:std-mono"] + c["na:gdext-glue"]
+    rm = c["real-missing"]
+    unk = c["unknown"]
+    print("\n=== F3 %d 条分类（人工裁决后）" % n)
+    for k in ("real-missing", "na:std-mono", "na:gdext-glue", "na:other", "unknown"):
+        print("  %-16s %3d  (%5.1f%%)" % (k, c[k], c[k] * 100.0 / n))
+    print("  合计 %d（应 = 153）%s" % (sum(c.values()), "✓" if sum(c.values()) == n else "✗"))
+    print("\n=== 三个数字")
+    print("  ① 诚实缺口：F3 里 real-missing = **%d** 条（unknown %d 条另计；na:* %d 条不该手写）"
+          % (rm, unk, na))
+    print("  ② 口径 A（现行，含 na）：F1/527 = %d/%d = %.1f%%" % (f1, total, f1 * 100.0 / total))
+    print("     口径 B（不含 na）：F1/(527-%d) = %d/%d = **%.1f%%**"
+          % (na, f1, total - na, f1 * 100.0 / (total - na)))
+    print("     口径 B'（只剔强 na：std-mono+gdext-glue %d 条）：F1/(527-%d) = %d/%d = **%.1f%%**"
+          % (na_strong, na_strong, f1, total - na_strong, f1 * 100.0 / (total - na_strong)))
+    print("     口径 C（不含 na，分子含 F2）：(F1+F2)/(527-%d) = %d/%d = **%.1f%%**"
+          % (na, f1 + f2n, total - na, (f1 + f2n) * 100.0 / (total - na)))
+    print("     参考：口径 A 的 M2=F1+F2 = %d/%d = %.1f%%" % (f1 + f2n, total,
+                                                       (f1 + f2n) * 100.0 / total))
+    bymod = collections.defaultdict(collections.Counter)
+    for o in out:
+        bymod[o["row"]["module"]][o["cat"]] += 1
+    print("\n=== 按模块：na 占比最高的 8 个（F3 行数 >= 3）")
+    rank = sorted([(m, cc) for m, cc in bymod.items() if sum(cc.values()) >= 3],
+                  key=lambda x: -(x[1]["na:std-mono"] + x[1]["na:gdext-glue"] + x[1]["na:other"])
+                  * 1.0 / sum(x[1].values()))
+    for m, cc in rank[:8]:
+        t = sum(cc.values())
+        na_ = cc["na:std-mono"] + cc["na:gdext-glue"] + cc["na:other"]
+        print("  %-40s F3=%2d na=%2d (%5.1f%%) real=%2d unk=%2d" %
+              (m, t, na_, na_ * 100.0 / t, cc["real-missing"], cc["unknown"]))
     return 0
 
 
