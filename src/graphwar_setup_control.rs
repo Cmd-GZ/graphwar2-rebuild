@@ -771,3 +771,926 @@ pub const fn join_level_start() -> SetupAction {
 pub const fn join_level_cancel() -> SetupAction {
     SetupAction::Back(Screen::Campaign)
 }
+
+// ===========================================================================
+// 10. 行构件与接线：9 条 F3 函数落成**有函数体**（vaddr / FDE / 逐指令证据）
+// ===========================================================================
+//
+// 这 9 条在 `fixtures/function_coverage.tsv` 里原来是 **F3**（"地址有登记、但没有 fn"）。
+// 落地判据是 `AGENTS.md` §0.5：**每个函数能指到它自己的指令范围**。
+//   * 边界：`.eh_frame` FDE（`tools/addr_probe.py fde <vaddr>`）—— 不读 Ghidra 表；
+//   * 真名：`fixtures/windows_name_to_addr.tsv`（Windows 2.0.60 DLL **同版本 + 同指令集**
+//     的 COFF 符号表，经 `panic::Location` 一对一锚落到 Linux .so 地址）
+//     + `fixtures/name_to_addr_v2.tsv`（三向：Win 2.0.60 / Win early2026 / Android 2.0.60）；
+//     旁证 = Android arm64 未 strip `.symtab` 里同模块函数的**相对顺序 + 体量**；
+//   * 语义：该函数自己的指令（被调者地址、`.rodata` 字面量 + 长度立即数、字段偏移、分支）。
+//
+// 逐条台账（FDE 范围 / 体量 / 调用者 / Location / 档位）在
+// `fixtures/setup_control_anchors.tsv`；推翻了旧结论的那一条记在 `docs/06` §103.2。
+//
+// ⚠️ **三条名字未定**（`AGENTS.md` §0.1：不许把推断写成结论）：
+//   * `0x4b_d280` —— 体与 `0x4b_d030`（已确认的 `__init::__inner_init`）**逐项同形**，
+//     名字按同族取；**哪一份对应哪个 `#[godot_api] impl I*` 块是推断**（缺 gdext 版本的
+//     vtable 槽序对齐）。
+//   * `0x4b_ce80` —— 候选 `__register_constants`，但 `fixtures/name_to_addr.tsv` 给的是
+//     **4 选 1 的歧义**（{0x4b88d0, 0x4b8a50, 0x4bce80, 0x4bd280}）⇒ 名字标 `?`。
+//   * `0x4d_88b0` —— 候选 `ready`，同样是 2 选 1 歧义（{0x4d1e00, 0x4d88b0}）⇒ 名字标 `?`。
+
+/// `GraphwarSetupControl::update_name` —— **x86 `0x4c1e40`**（FDE `0x4c1e40..0x4c213e`，`0x2fe` = **766 B**）。
+///
+/// 名字来源：`windows_name_to_addr.tsv` 唯一锚（`src/graphwar_setup_control.rs:178:127`）。
+/// 既有常量 [`FN_PLAYER_NAME`] 指的就是这条。
+pub const FN_UPDATE_NAME: u64 = 0x4c_1e40;
+
+/// `GraphwarSetupControl::update_rank` —— **x86 `0x4c2140`**（FDE `0x4c2140..0x4c27e7`，`0x6a7` = **1703 B**）。
+/// 名字来源：唯一锚（`187:121`）。既有常量 [`FN_RANK_ICON`]。
+pub const FN_UPDATE_RANK: u64 = 0x4c_2140;
+
+/// `GraphwarSetupControl::is_leader_local` —— **x86 `0x4c2b90`**（FDE `0x4c2b90..0x4c2ee2`，`0x352` = **850 B**）。
+///
+/// ⚠️ 既有常量 [`FN_MODE_PANEL_SYNC`] 也指 `0x4c2b90`，但它把这条叫「模式面板同步」并注明
+/// **推断**成"形状像 `set_button_icon`"。**本轮证伪**：真名 `is_leader_local`，
+/// 返回 **`bool`**（`0x4c2db9 mov bl,1` / `0x4c2e03 xor ebx,ebx` / `0x4c2e15 mov eax,ebx`）。
+/// 见 `docs/06` §103.2 与台账文件头。
+pub const FN_IS_LEADER_LOCAL: u64 = 0x4c_2b90;
+
+/// `GraphwarSetupControl::update_soldiers` —— **x86 `0x4c2ef0`**（FDE `0x4c2ef0..0x4c44a3`，`0x15b3` = **5555 B**）。
+/// 名字来源：唯一锚（`202:47`）。既有常量 [`FN_SOLDIER_ICONS`]。
+pub const FN_UPDATE_SOLDIERS: u64 = 0x4c_2ef0;
+
+/// `GraphwarSetupControl::connect_entry_buttons` —— **x86 `0x4c4c20`**（FDE `0x4c4c20..0x4c5b43`，`0xf23` = **3875 B**）。
+/// 名字来源：唯一锚（`257:133`）。既有常量 [`FN_PLAYER_ROW`]。
+pub const FN_CONNECT_ENTRY_BUTTONS: u64 = 0x4c_4c20;
+
+/// `graphwar_setup_control::_::__init::__inner_init`（第 1 份实例）—— **x86 `0x4bd030`**
+/// （FDE `0x4bd030..0x4bd27f`，`0x24f` = **591 B**；唯一 Location `608:1`）。
+///
+/// 档位：**观测**（名字 = `windows_name_to_addr.tsv` 唯一锚 + `name_to_addr_v2.tsv` 唯一锚）。
+/// 体是 gdext 宏产物：把某个 `#[godot_api] impl I*` 块的接口登记进静态存储。
+pub const FN_SETUP_INNER_INIT: u64 = 0x4b_d030;
+
+/// `__init::__inner_init` 的**第 2 份实例** —— **x86 `0x4bd280`**（FDE `0x4bd280..0x4bd426`，`0x1a6` = **422 B**；Location `95:1`）。
+///
+/// 档位：**观测**（体）/**推断**（它是 4 份里的哪一份）。依据见该函数的文档。
+pub const FN_SETUP_INNER_INIT_V2: u64 = 0x4b_d280;
+
+/// 候选 `__register_constants` —— **x86 `0x4bce80`**（FDE `0x4bce80..0x4bd028`，`0x1a8` = **424 B**；Location `95:1`）。
+///
+/// ⚠️ **名字未定**：`fixtures/name_to_addr.tsv` 把 `__register_constants` 判成"歧义"，
+/// 候选 4 个（`{0x4b88d0, 0x4b8a50, 0x4bce80, 0x4bd280}`）。体是观测的，名是未知的。
+pub const FN_SETUP_REGISTER_CONSTANTS_CANDIDATE: u64 = 0x4b_ce80;
+
+/// 候选 `GraphwarSetupControl::ready` —— **x86 `0x4d88b0`**（FDE `0x4d88b0..0x4d8957`，`0xa7` = **167 B**；Location `705:76`）。
+///
+/// ⚠️ **名字未定**：`fixtures/name_to_addr.tsv` 判"歧义"，候选 2 个（`{0x4d1e00, 0x4d88b0}`）。
+/// 体是观测的，且**被调者已知**：`0x51_7490` = `GraphwarGameClient::request_lock_change`
+/// （`docs/02` §22 的函数表 + `fixtures/name_to_addr_v2.tsv` 唯一锚）。
+pub const FN_SETUP_READY_CANDIDATE: u64 = 0x4d_88b0;
+
+/// 本批 9 条的 `(vaddr, fde_lo, fde_hi, size, 真名或候选名, 名字档位)`。
+///
+/// 档位：**逐位**（FDE 范围 = `.eh_frame` 解出来的边界，`tools/addr_probe.py fde` 可复跑）。
+/// 这张表是为了让"每条都能指到自己的指令范围"变成**可断言的数据**，
+/// 而不是散在 9 份 doc 注释里。
+pub const F3_ANCHORS: &[(u64, u64, u64, u32, &str, Evidence)] = &[
+    (0x4c_1e40, 0x4c_1e40, 0x4c_213e, 0x2fe, "GraphwarSetupControl::update_name", Evidence::Observed),
+    (0x4c_2140, 0x4c_2140, 0x4c_27e7, 0x6a7, "GraphwarSetupControl::update_rank", Evidence::Observed),
+    (0x4c_2b90, 0x4c_2b90, 0x4c_2ee2, 0x352, "GraphwarSetupControl::is_leader_local", Evidence::Observed),
+    (0x4c_2ef0, 0x4c_2ef0, 0x4c_44a3, 0x15b3, "GraphwarSetupControl::update_soldiers", Evidence::Observed),
+    (0x4c_4c20, 0x4c_4c20, 0x4c_5b43, 0xf23, "GraphwarSetupControl::connect_entry_buttons", Evidence::Observed),
+    (0x4b_d030, 0x4b_d030, 0x4b_d27f, 0x24f, "_::__init::__inner_init", Evidence::Observed),
+    (0x4b_d280, 0x4b_d280, 0x4b_d426, 0x1a6, "_::__init::__inner_init (实例 #2)", Evidence::Inferred),
+    (0x4b_ce80, 0x4b_ce80, 0x4b_d028, 0x1a8, "__register_constants（候选，未定）", Evidence::Unknown),
+    (0x4d_88b0, 0x4d_88b0, 0x4d_8957, 0xa7, "GraphwarSetupControl::ready（候选，未定）", Evidence::Unknown),
+];
+
+/// 一条结论的档位（`AGENTS.md` §0.3 的四档）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Evidence {
+    /// 与真二进制逐字节/逐位对拍。
+    BitExact,
+    /// 能指到反汇编地址 / `.rodata` 字节。
+    Observed,
+    /// 有依据但未证；**必须**在文档里写清缺什么。
+    Inferred,
+    /// 不知道。
+    Unknown,
+}
+
+/// `.rodata` 里的节点名字面量 + 长度（**逐位**：`lea` 目标 + 紧随的 `mov r<n>d,<len>` 立即数）。
+///
+/// 生成方法（可复跑）：`tools/addr_probe.py dis <vaddr>`，找 `lea rcx,[rip+X]` 与
+/// 紧随的长度立即数，再用 `loc_xrefs.Elf.read(va, len)` 读出字节自校验。
+pub const NODE_NAME_LITERALS: &[(&str, u64, usize)] = &[
+    ("PlayerNameLabel", 0x1c_2d52, 15),
+    ("RankIcon", 0x19_fb70, 8),
+    ("SoldierIconContainer", 0x1c_2da6, 20),
+    ("SkinIcon", 0x19_f3d0, 8),
+    ("FaceIcon", 0x19_f180, 8),
+    ("HatIcon", 0x1c_2dba, 7),
+    ("EmptyIcon", 0x1c_2dc1, 9),
+    ("GraphwarRootNode", 0x19_e490, 16),
+    ("ChangeTeamButton", 0x19_e030, 16),
+    ("RemovePlayerButton", 0x1c_2de5, 18),
+    ("AddSoldierButton", 0x19_e740, 16),
+    ("RemoveSoldierButton", 0x1c_2df7, 19),
+];
+
+/// `Gd` 操作包装用的**操作名字面量**（`.rodata` + 长度立即数）。
+///
+/// 与 `src/graphwar_nodes.rs` 的 [`GdOp`] 是同一批名字（那里已逐条验过 4 个操作名穷举）。
+pub const GD_OP_LITERALS: &[(&str, u64, usize)] = &[
+    ("clone", 0x1b_fe73, 5),
+    ("upcast_ref", 0x1c_2a84, 10),
+    ("to_godot", 0x19_f850, 8),
+    ("set_texture", 0x1c_2d61, 11),
+];
+
+/// `upcast_ref` 失败臂的 panic 文案（`.rodata` `0x1c2a4b`，长度立即数 `0x2f` = **47**）。
+///
+/// 档位：**逐位**（`0x4c2096` 的 `lea` + `0x4c20b0 mov esi,0x2f`）。
+pub const MSG_UPCAST_FAILED: &str = "Upcast failed. This is a bug; please report it.";
+
+/// 原版经 `unwrap()` 在 `None` 上 panic 时的文案（std 侧常量，**逐位**：这就是 std 的串）。
+///
+/// 用它的地方逐条记在调用点的 doc 里（每个函数都有自己的 panic 槽地址）。
+pub const MSG_OPTION_UNWRAP: &str = "called `Option::unwrap()` on a `None` value";
+
+/// `RefCell::borrow_mut` 冲突臂的文案。
+///
+/// ⚠️ **推断**：这一臂在原版是 std 的 `RefCell` 借用冲突 panic（`0x4c2e40`/`0x4d891c`
+/// 引的是 `src/graphwar_setup_control.rs` 的 Location 槽 + `BorrowMutError` 路径）；
+/// **具体文案串未在 `.rodata` 定位**（std 侧按版本会变）⇒ 这里用我方文案，
+/// "会 panic" 是观测的，"文案" 是推断。
+pub const MSG_ALREADY_MUTABLY_BORROWED: &str = "already mutably borrowed";
+
+// ---------------------------------------------------------------------------
+// 10.1 两条接缝（原版这里是 gdext / 引擎调用）
+// ---------------------------------------------------------------------------
+
+/// 原版一个 `Gd<T>` 句柄 = **两个字**。
+///
+/// 判据（**观测**）：这 5 个函数把入参 `rsi:rdx` **成对**存储/传递（`0x4c1e57`/`0x4c1e5c`），
+/// 再整对交给 `0x4066c0`（`Gd` 操作包装 B）与 `0x447e20`（`upcast_ref` 单态化）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GdHandle {
+    /// 引擎对象指针。
+    pub obj: usize,
+    /// 缓存的 RTTI 指针（gdext 的 `Gd` 第二字）。
+    pub rtti: usize,
+}
+
+impl GdHandle {
+    /// 空句柄（`obj == 0`）。`0x4c1e9e test r14,r14 / je` 判的就是它。
+    pub const NULL: GdHandle = GdHandle { obj: 0, rtti: 0 };
+
+    pub const fn new(obj: usize, rtti: usize) -> GdHandle {
+        GdHandle { obj, rtti }
+    }
+
+    pub const fn is_null(&self) -> bool {
+        self.obj == 0
+    }
+}
+
+/// 管理器里查到的一个值（**不透明，3 个字**）。
+///
+/// 判据（**观测**）：`0x4c1fd9..0x4c2002` 用 `0x91e260`（`Rc::clone` 垫片）克隆前两字，
+/// 再单独搬一个字（`0x4c1ff2 mov rax,[rsp+0x38]`）。
+/// **字段语义未解**（缺：`GraphwarNameManager` / `GraphwarRankManager` 的值类型定义），
+/// 所以本层只透传，不解释 —— 这是"宁可标未知也不编语义"。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct OpaqueValue {
+    pub a: usize,
+    pub b: usize,
+    pub c: usize,
+}
+
+/// 模块容器里拿到的一个模块句柄（`ModuleContainer::get::<M>()` 的结果）。
+///
+/// 原版的 `M` 是 72–296 字节的对象本体，**内部字段布局只有被本批函数读到的那几处是观测的**
+/// （逐处写在 [`SetupModules`] 的方法文档里）。用 `Copy` 的句柄是为了让"取出模块 → 继续用"
+/// 不引入借用冲突（原版是 `Rc<RefCell<..>>`，`borrow()` 标志在 `+0x10`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModuleSlot(pub &'static str);
+
+/// 引擎侧（Godot）接缝：原版这些调用都走 GOT 槽 / gdext 包装，引擎侧成员名**未解**的
+/// 一律在方法文档里标出来（`AGENTS.md`：间接调用不能只看 `call rel32`）。
+pub trait SetupEngine {
+    /// `0x4066c0` + 操作名 `"clone"`(5 B @`0x1bfe73`) —— `Gd` 操作包装 B 的 clone 臂。
+    /// 失败形态是 `Result`（原版 `0x4066c0` 多一条成败判别，见 `src/graphwar_nodes.rs`）。
+    fn gd_clone(&mut self, src: GdHandle) -> Option<GdHandle>;
+
+    /// `0x447e20`（`update_name`/`update_rank`/`update_soldiers`/`connect_entry_buttons` 共用）
+    /// 与 `0x4061a0`（`update_name` 尾段）—— `upcast_ref` 单态化。
+    /// 返回 `None` ⇒ 原版走 `MSG_UPCAST_FAILED` 的 panic 臂。
+    fn upcast_ref(&mut self, src: GdHandle) -> Option<GdHandle>;
+
+    /// `0x3ac770` / `0x3acb00` / `0x3ab590` / `0x3ad570` / `0x3adc50`
+    /// —— 11 个 `get_node_by_name` 单态化里的 5 个（按返回类型分，`src/graphwar_nodes.rs` §3）。
+    /// 返回 `None` ⇒ 原版 `unwrap()` panic。
+    fn get_node_by_name(&mut self, base: GdHandle, name: &str) -> Option<GdHandle>;
+
+    /// `0x407580` + 操作名 `"to_godot"`(8 B @`0x19f850`)。
+    fn to_godot(&mut self, src: GdHandle) -> Option<GdHandle>;
+
+    /// `0x3a01a0` + 操作名 `"set_texture"`(11 B @`0x1c2d61`)。
+    fn set_texture(&mut self, icon: GdHandle, tex: GdHandle);
+
+    /// `0x4b1640` —— 把 `connect_entry_buttons` 入参的**裸对象指针**（`rdi`）做成 `Gd`
+    /// （`Gd::from_obj_sys` 形态：出参两字，`0x4c4c68`/`0x4c4c72` 各判一次非空）。
+    fn gd_from_obj(&mut self, raw: usize) -> Option<GdHandle>;
+
+    /// `0x4095a0`（`GraphwarRootNode` 那一支）/ `0x4098f0`（按钮那一支）—— 把按钮的
+    /// `pressed` 连到一个回调。**引擎侧成员名未解**（缺：`0x4095a0` 体内的 GOT 槽成员名）。
+    fn connect_button(&mut self, button: GdHandle, handler: GdHandle);
+
+    /// `0x41ce80` / `0x405c70` / `0x405d20` / `0x4068f0` 一族 —— `Gd` 引用计数/借用包装。
+    /// **语义未解**（缺：引擎侧成员名）；本层只记"发生了这一步"。
+    fn gd_touch(&mut self, src: GdHandle);
+}
+
+/// 模块容器接缝：每个方法 = **一个** `ModuleContainer::get::<M>()` 单态化。
+///
+/// 返回 `None` ⇒ 原版 `get` 返回 `None`，由**各调用点自己的** `unwrap()` panic
+/// （每个函数的 panic 槽地址写在该函数文档里）。
+/// 七个 `get` 的地址来自 `docs/02-module-map.md` §22.3 的 25 模块表（**逐位**：三路证据交集）。
+pub trait SetupModules {
+    /// `0x46ba20` = `get::<GraphwarNameManager>()`。**观测**（§22.3 表 + `0x4c1e84`）。
+    fn name_manager(&mut self) -> Option<ModuleSlot>;
+    /// `0x46bfe0` = `get::<GraphwarRankManager>()`。**观测**（`0x4c218e`）。
+    fn rank_manager(&mut self) -> Option<ModuleSlot>;
+    /// `0x46a490` = `get::<GraphwarPlayerManager>()`。**观测**（`0x4c2bc8`）。
+    fn player_manager(&mut self) -> Option<ModuleSlot>;
+    /// `0x46c430` = `get::<GraphwarLocalPlayerManager>()`。**观测**（`0x4c2c10`）。
+    fn local_player_manager(&mut self) -> Option<ModuleSlot>;
+    /// `0x46a770` = `get::<GraphwarSoldierManager>()`。**观测**（`0x4c2f46`）。
+    fn soldier_manager(&mut self) -> Option<ModuleSlot>;
+    /// `0x46b8b0` = `get::<GraphwarTeamManager>()`。**观测**（`0x4c2f90`）。
+    fn team_manager(&mut self) -> Option<ModuleSlot>;
+    /// `0x46a8e0` = `get::<GraphwarGraphicsManager>()`。**观测**（`0x4c2fdd`）。
+    fn graphics_manager(&mut self) -> Option<ModuleSlot>;
+
+    /// `GraphwarNameManager` 的 `HashMap<i32, _>` 查找。
+    ///
+    /// 字段偏移（**观测**，全在 `0x4c1f37..0x4c1fd9`）：
+    /// `+0x48` = `len`（为 0 直接跳过，`0x4c1f37 cmp qword [r14+0x48],0`）、
+    /// `+0x30` = 桶控制字节、`+0x38` = 桶掩码、`+0x50` = hasher 状态、
+    /// 键比较 `0x4c1fa6 cmp ebx,[rsi-0x20]`（键在桶里 −0x20 处）、值自 `+0x18` 起。
+    fn name_row(&mut self, mgr: ModuleSlot, index: i32) -> Option<OpaqueValue>;
+
+    /// `GraphwarRankManager` 的按 rank 查找（`0x4c2255 call 0x47dec0` = 哈希，随后 hashbrown 探测）。
+    /// 字段偏移**未解**（本函数只用了 `0x47dec0` 之后的探测，桶基址在寄存器里转手多次）。
+    fn rank_row(&mut self, mgr: ModuleSlot, rank_id: u32) -> Option<OpaqueValue>;
+
+    /// 遍历 `GraphwarPlayerManager` 的玩家表 —— 返回每条记录的**不透明** id（`OpaqueValue::a`）。
+    ///
+    /// 判据（**观测**）：`0x4c2c3f mov rax,[rbx+0x48]`（len）、`0x4c2c4f mov rcx,[rbx+0x30]`
+    /// （桶）、`0x4c2c53` 起是 hashbrown 的迭代器（`pmovmskb` + `xor 0xffff` 找有效桶）。
+    fn player_rows(&mut self, mgr: ModuleSlot) -> Vec<OpaqueValue>;
+
+    /// `GraphwarLocalPlayerManager` 的**本地玩家 id 向量**（`Vec<u32>`）。
+    ///
+    /// 字段偏移（**观测**，`0x4c2d5e..0x4c2d75`）：`+0x20` = 数据指针、`+0x28` = 元素个数，
+    /// 线性扫描步长 4 字节（`0x4c2d66 shl rdx,2`、`0x4c2d78 lea rsi,[rsi+4]`）。
+    fn local_player_ids(&mut self, mgr: ModuleSlot) -> Vec<u32>;
+
+    /// `0x3bf230` —— 从一条玩家记录里取出参与比对的那个 `i32`。
+    ///
+    /// 判据（**观测**）：`0x4c2d4a call 0x3bf230` 之后 `0x4c2d57 mov rdi,[rsp+0x20]` /
+    /// `0x4c2d5c mov eax,[rdi]`。**`0x3bf230` 本身语义未解**（缺：它体内的字段读法），
+    /// 只能确定"它产出一个带 `i32` 首字段的东西"。
+    fn player_ident(&mut self, row: OpaqueValue) -> i32;
+
+    /// `GraphwarTeamManager::get_team`（**x86 `0x3c2120`**，`docs/02` §… 函数表；
+    /// 也是 `0x473520 get_alive_teams` 的同一个被调者）。返回队伍句柄。
+    fn get_team(&mut self, mgr: ModuleSlot, team_id: u32) -> Option<ModuleSlot>;
+
+    /// `GraphwarSoldierManager` 上的"这支队伍里几个兵"—— `update_soldiers` 用它决定
+    /// 画几个 `SkinIcon`。**语义推断**（缺：`0x3bf230` 之外那几条被调者的字段读法），
+    /// 只有"遍历 + 上限 5"两处是观测（[`MAX_SOLDIERS_PER_PLAYER`]）。
+    fn soldier_slots(&mut self, mgr: ModuleSlot, team: ModuleSlot) -> Vec<bool>;
+
+    /// `0x3ec130`（`update_name` 尾段，`rdi=&标签`、`rsi=&查到的值`）—— 把行数据交给标签。
+    /// **引擎侧成员名未解**（缺：`0x3ec130` 体内的 GOT 槽成员名）。
+    fn apply_name_row(&mut self, label: GdHandle, row: OpaqueValue);
+}
+
+/// `5` 个槽（[`MAX_SOLDIERS_PER_PLAYER`]）里"该画哪几种图标"的**顺序**。
+///
+/// 判据（**观测**）：`0x4c2ef0` 里 `get_node` 的字面量顺序就是
+/// `SoldierIconContainer` → `SkinIcon` → `FaceIcon` → `HatIcon` → `EmptyIcon`。
+pub const SOLDIER_ICON_ORDER: [&str; 4] = ["SkinIcon", "FaceIcon", "HatIcon", "EmptyIcon"];
+
+// ---------------------------------------------------------------------------
+// 10.2 五个行构件 / 接线函数
+// ---------------------------------------------------------------------------
+
+/// 原版这个屏的控制器类型（Godot 类 `GraphwarSetupControl`，`AGENTS.md` §0.4 的"文件名 = 原版模块名"）。
+///
+/// 这里只落**标记类型**，不重复定义 gdext 类本体：gdext 侧那份（带 `#[derive(GodotClass)]`、
+/// `Base<Self>`、信号与方法注册）在 `src/_scaffold/graphwar_setup_control_class.rs`，
+/// 按 `AGENTS.md` §4 它**不算复原层**。本文件用同名类型只是为了把这些原版
+/// **关联函数/方法**（符号表真名 `graphwarwarrust::graphwar_setup_control::GraphwarSetupControl::*`）
+/// 按原版的类型归属落下来 —— 函数边界与归属都对得上，桥接仍留在 `_scaffold`。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GraphwarSetupControl;
+
+/// `RankIcon` 上被 `set_texture` 的层数。
+///
+/// 档位：**观测**（`0x4c2140` 里 `"set_texture"` 字面量出现 **3** 次：
+/// `0x4c235f` / `0x4c2509` / `0x4c2639`，每段前各一条 `"upcast_ref"` 与 `"to_godot"`）。
+pub const RANK_ICON_LAYERS: usize = 3;
+
+/// `connect_entry_buttons` 取的 4 个按钮节点名（顺序 = `.rodata` 字面量顺序）。
+///
+/// 档位：**逐位**（名字 + 长度立即数，见 [`NODE_NAME_LITERALS`]）。
+pub const ENTRY_BUTTONS: [&str; 4] = [
+    "ChangeTeamButton",
+    "RemovePlayerButton",
+    "AddSoldierButton",
+    "RemoveSoldierButton",
+];
+
+impl GraphwarSetupControl {
+    /// `GraphwarSetupControl::is_leader_local` —— **x86 `0x4c2b90`**。
+    ///
+    /// 关联**方法**（`rdi` = self，`[self+0x40]` = 模块容器 `Rc<RefCell<..>>`）。
+    /// 返回 **`bool`**（`0x4c2e15 mov eax,ebx`）。
+    ///
+    /// ```text
+    /// 4c2ba6 mov r12,[rdi+0x40]        ; self+0x40 = 模块容器 Rc（借用标志 @+0x10）
+    /// 4c2baf cmp rax,0x7fff…ff / jae   ; borrow() 计数溢出 ⇒ panic 0x925320（槽 0x9620c8）
+    /// 4c2bc8 call 0x46a490             ; get::<GraphwarPlayerManager>()，None ⇒ panic 0x4c2e31
+    /// 4c2c10 call 0x46c430             ; get::<GraphwarLocalPlayerManager>()，None ⇒ panic 0x4c2e5e
+    /// 4c2c3f mov rax,[rbx+0x48]        ; 玩家表 len
+    /// 4c2c4f mov rcx,[rbx+0x30]        ; 玩家表桶
+    /// 4c2c53..4c2c72                   ; hashbrown 迭代（pmovmskb / xor 0xffff）
+    /// 4c2d4a call 0x3bf230             ; 取本条记录的 id
+    /// 4c2d5c mov eax,[rdi]             ; = 那个 i32
+    /// 4c2d5e mov rcx,[r14+0x20]        ; LocalPlayerManager 的 Vec 数据
+    /// 4c2d66 shl rdx,2                 ; len*4（元素 4 字节）
+    /// 4c2d70/4c2d75/4c2d7c             ; 线性比对 cmp dword [rcx+rsi],eax
+    /// 4c2db9 mov bl,1                  ; 命中 ⇒ true
+    /// 4c2e03 xor ebx,ebx               ; 扫完 ⇒ false
+    /// ```
+    ///
+    /// 档位：**观测**（控制流 + 字段偏移 + 返回值位置全部出自本函数自己的指令）。
+    pub fn is_leader_local<M: SetupModules + ?Sized>(modules: &mut M) -> bool {
+        // 0x4c2b90  —— 本函数起点；FDE 0x4c2b90..0x4c2ee2（0x352 = 850 B）
+        // 0x4c2bc8 / 0x4c2c10：两次 get，各自的 None 臂是独立的 panic 点
+        let players = modules.player_manager().expect(MSG_OPTION_UNWRAP);
+        let locals = modules.local_player_manager().expect(MSG_OPTION_UNWRAP);
+        // 0x4c2d5e..0x4c2d75：本地 id 向量（+0x20 数据 / +0x28 个数 / 步长 4 B）
+        let local_ids = modules.local_player_ids(locals);
+        // 0x4c2c3f..0x4c2c72：遍历玩家表
+        for row in modules.player_rows(players) {
+            // 0x4c2d4a → 0x4c2d5c
+            let ident = modules.player_ident(row);
+            // 0x4c2d75 cmp dword [rcx+rsi],eax —— 命中就返回 true（0x4c2db9）
+            if local_ids.contains(&(ident as u32)) {
+                return true;
+            }
+        }
+        // 0x4c2e03 xor ebx,ebx
+        false
+    }
+
+    /// `GraphwarSetupControl::update_name` —— **x86 `0x4c1e40`**。
+    ///
+    /// 关联函数（无 `self`）：`(index: i32, label: Gd, modules: &Rc<RefCell<ModuleContainer>>)`。
+    /// 实参形态由**调用点**读出（`0x4d3ff5` 一族：`edi=r14d`、`rsi=rbp`、`rdx=r13`、
+    /// `rcx=[[rsp+0x68]+0x238]`）。
+    ///
+    /// ```text
+    /// 4c1e61..4c1e8c  borrow() + get::<GraphwarNameManager>()(0x46ba20)，None ⇒ panic 0x4c207b
+    /// 4c1e9e/4c1ea8   test r14/r15                    ; 空 Gd 跳过 clone
+    /// 4c1ebe call 0x4066c0                            ; Gd 包装 B，"clone"(5 B)
+    /// 4c1ed2 call 0x447e20                            ; upcast_ref；4c1ed7 cmp [rsp+0x10],1 ⇒ 失败臂
+    /// 4c2096 lea <"Upcast failed…">(0x1c2a4b) + esi=0x2f  ; panic 47 字节文案
+    /// 4c1ef3 call 0x3ac770 + "PlayerNameLabel"(15, r8d=0xf @0x4c1ef8)  ; get_node_by_name
+    /// 4c1f37 cmp qword [r14+0x48],0 / je 0x4c2047     ; NameManager 的表为空 ⇒ 收尾
+    /// 4c1f4b call 0x47dec0                            ; 对 index 求哈希
+    /// 4c1fa6 cmp ebx,[rsi-0x20]                       ; 键比较（键在桶里 −0x20）
+    /// 4c1fe2 call *[0x9ba8f0] = 0x91e260              ; Rc::clone 查到的值
+    /// 4c2019 call 0x4061a0                            ; Gd 包装，"upcast_ref"(10 B)
+    /// 4c2028 call 0x3ec130(rdi=&标签, rsi=&值)        ; 交给标签（引擎侧成员名未解）
+    /// ```
+    ///
+    /// 档位：**观测**（顺序、字面量、偏移、panic 槽）。`0x3ec130` / `0x4061a0` 的
+    /// 引擎侧成员名**未解**，只落"调了它 + 实参是什么"。
+    pub fn update_name<E: SetupEngine + ?Sized, M: SetupModules + ?Sized>(
+        engine: &mut E,
+        modules: &mut M,
+        index: i32,
+        label: GdHandle,
+    ) {
+        // 0x4c1e40  —— 本函数起点；FDE 0x4c1e40..0x4c213e（0x2fe = 766 B）
+        // 0x4c1e84 call 0x46ba20 —— 第一个动作就是取 NameManager
+        let names = modules.name_manager().expect(MSG_OPTION_UNWRAP); // panic 槽 0x4c207b
+        // 0x4c1e9e / 0x4c1ea8：Gd 非空才 clone（`test r14,r14` + `test r15,r15`）
+        let mut owned = label;
+        if !label.is_null() && label.rtti != 0 {
+            owned = engine.gd_clone(label).expect(MSG_OPTION_UNWRAP); // 0x4c1ebe call 0x4066c0
+        }
+        // 0x4c1ed2：upcast_ref；失败臂 0x4c208a → panic(47 字节文案)
+        let up = engine.upcast_ref(owned).expect(MSG_UPCAST_FAILED);
+        // 0x4c1ef3：节点名 "PlayerNameLabel"（15 B @0x1c2d52）
+        let node = engine
+            .get_node_by_name(up, NODE_NAME_LITERALS[0].0)
+            .expect(MSG_OPTION_UNWRAP); // 0x4c20bd
+        // 0x4c1f37..0x4c1fd9：按 index 查 NameManager 的表；查不到就什么都不做
+        if let Some(row) = modules.name_row(names, index) {
+            // 0x4c1fe2 Rc::clone → 0x4c2019 upcast_ref → 0x4c2028 交给标签
+            engine.gd_touch(node);
+            modules.apply_name_row(node, row);
+        }
+        // 0x4c2047 起：收尾（解除 borrow、掉引用、drop）
+    }
+
+    /// `GraphwarSetupControl::update_rank` —— **x86 `0x4c2140`**。
+    ///
+    /// 关联函数：`(index: i32, node: Gd, modules: &Rc<..>, rank_id: u64)` ——
+    /// 第 4 项从 `r8` 进来（调用点 `0x4d3a5f mov r8,[rsp+0xa0]`）。
+    ///
+    /// ```text
+    /// 4c2168..4c2196  borrow() + get::<GraphwarRankManager>()(0x46bfe0)，None ⇒ panic 0x4c26de
+    /// 4c21b7/4c21c8   Gd 包装 B "clone"(5 B)，随后 4c21dc call 0x447e20 = upcast_ref
+    /// 4c21f6 call 0x3acb00 + "RankIcon"(8 B @0x19fb70, r8d=8 @0x4c2202)
+    /// 4c2255 call 0x47dec0                            ; rank 值哈希 + hashbrown 探测
+    /// ---- 3 段同形块（每段：upcast_ref → to_godot → set_texture → gd_touch）----
+    /// 4c22e9 "upcast_ref"(10) / 4c2309 0x41ce80 / 4c231e "to_godot"(8) 0x407580
+    /// 4c235f "set_texture"(11) 0x3a01a0 / 4c23bd 0x405d20
+    /// 4c2493 / 4c24b3 / 4c24c8 / 4c2509 / 4c255f     ; 第 2 段
+    /// 4c25e2 / 4c25cd / 4c25f8 / 4c2639 / 4c2697     ; 第 3 段
+    /// ```
+    ///
+    /// 档位：**观测**（3 段的存在与每段的字面量顺序）。**推断**：为什么是 3 段
+    /// （缺：`RankIcon` 有 3 层贴图 还是 3 个段位档 —— 需要真机读 `RankIcon` 的子节点）。
+    pub fn update_rank<E: SetupEngine + ?Sized, M: SetupModules + ?Sized>(
+        engine: &mut E,
+        modules: &mut M,
+        rank_id: u32,
+        node: GdHandle,
+    ) {
+        // 0x4c2140  —— 本函数起点；FDE 0x4c2140..0x4c27e7（0x6a7 = 1703 B）
+        let ranks = modules.rank_manager().expect(MSG_OPTION_UNWRAP); // 0x46bfe0
+        let mut owned = node;
+        if !node.is_null() && node.rtti != 0 {
+            owned = engine.gd_clone(node).expect(MSG_OPTION_UNWRAP); // 0x4c21b7
+        }
+        let up = engine.upcast_ref(owned).expect(MSG_UPCAST_FAILED); // 0x4c21dc
+        let icon = engine
+            .get_node_by_name(up, "RankIcon")
+            .expect(MSG_OPTION_UNWRAP); // 0x4c21f6
+        // 4c2255：先按 rank 值查一次
+        let _ = modules.rank_row(ranks, rank_id);
+        // 3 段同形块（4c22e9 / 4c2493 / 4c25e2）
+        for _layer in 0..RANK_ICON_LAYERS {
+            let tex = engine
+                .upcast_ref(icon)
+                .expect(MSG_UPCAST_FAILED); // "upcast_ref"(10)
+            engine.gd_touch(tex); // 0x41ce80 / 0x405d20
+            let gd = engine.to_godot(tex).expect(MSG_OPTION_UNWRAP); // "to_godot"(8)
+            engine.set_texture(icon, gd); // "set_texture"(11)
+        }
+    }
+
+    /// `GraphwarSetupControl::update_soldiers` —— **x86 `0x4c2ef0`**（本屏最大的函数，`0x15b3` = 5555 B）。
+    ///
+    /// 关联函数：`(index: i32, node: Gd, modules: &Rc<..>, extra: u64)`（第 4 项从 `r8`）。
+    ///
+    /// ```text
+    /// 4c2f1b..4c2f4e  borrow() + get::<GraphwarSoldierManager>()(0x46a770)，None ⇒ panic 0x4c419a
+    /// 4c2f90 call 0x46b8b0   get::<GraphwarTeamManager>()
+    /// 4c2fdd call 0x46a8e0   get::<GraphwarGraphicsManager>()
+    /// 4c3029 call 0x3c2120   GraphwarTeamManager::get_team
+    /// 4c3086 call 0x3bf230   （与 is_leader_local 同一个被调者）
+    /// 4c30e6 call 0x3adc50 + "SoldierIconContainer"(20 B @0x1c2da6, r8d=0x14 @0x4c30f2)
+    /// 4c337b "SkinIcon"(8 B @0x19f3d0, r8d=8 @0x4c3370)    → 4c33b5 upcast_ref / 4c3608 to_godot / 4c3653 set_texture
+    /// 4c3734 "FaceIcon"(8 B @0x19f180, r8d=8 @0x4c3729)    → 同三步
+    /// 4c3aef "HatIcon"(7 B @0x1c2dba, r8d=7 @0x4c3ae4)     → 同三步
+    /// 4c3ebf "EmptyIcon"(9 B @0x1c2dc1, r8d=9 @0x4c3eb4)  → 同三步
+    /// ```
+    ///
+    /// 档位：**观测**（4 个图标名 + 长度、3 个 `get` 的顺序、`get_team`/`0x3bf230` 的被调）。
+    /// **推断**：每个图标应不应该画由槽占用决定 —— 槽数 5 是逐位（[`MAX_SOLDIERS_PER_PLAYER`]），
+    /// "占用则画 Skin/Face/Hat、否则画 Empty" 这一层是**推断**（缺：真实局面下 4 个图标的显示组合观测）。
+    pub fn update_soldiers<E: SetupEngine + ?Sized, M: SetupModules + ?Sized>(
+        engine: &mut E,
+        modules: &mut M,
+        team_id: u32,
+        node: GdHandle,
+    ) {
+        // 0x4c2ef0  —— 本函数起点；FDE 0x4c2ef0..0x4c44a3（0x15b3 = 5555 B）
+        let soldiers = modules.soldier_manager().expect(MSG_OPTION_UNWRAP); // 0x46a770
+        let teams = modules.team_manager().expect(MSG_OPTION_UNWRAP); // 0x46b8b0
+        let _graphics = modules.graphics_manager().expect(MSG_OPTION_UNWRAP); // 0x46a8e0
+        let team = modules
+            .get_team(teams, team_id)
+            .expect(MSG_OPTION_UNWRAP); // 0x3c2120
+        let mut owned = node;
+        if !node.is_null() && node.rtti != 0 {
+            owned = engine.gd_clone(node).expect(MSG_OPTION_UNWRAP);
+        }
+        let up = engine.upcast_ref(owned).expect(MSG_UPCAST_FAILED);
+        let container = engine
+            .get_node_by_name(up, "SoldierIconContainer")
+            .expect(MSG_OPTION_UNWRAP); // 0x4c30e6
+        // 4 类图标，顺序即 0x4c2ef0 里 get_node 的字面量顺序。
+        //
+        // ⚠️ **不编语义**：4 段在反汇编里**没有**"按槽占用跳过"的分支证据（缺：真机在
+        // "有空槽 / 满槽 / 0 兵"三种局面下这 4 个节点的可见性观测），所以这里**无条件**走完
+        // 4 段，只把槽占用读出来留给调用方 —— 这比编一条 `if` 更诚实。
+        let _occupied = modules.soldier_slots(soldiers, team);
+        for name in SOLDIER_ICON_ORDER {
+            let icon = engine
+                .get_node_by_name(container, name)
+                .expect(MSG_OPTION_UNWRAP);
+            let tex = engine.upcast_ref(icon).expect(MSG_UPCAST_FAILED);
+            engine.gd_touch(tex);
+            let gd = engine.to_godot(tex).expect(MSG_OPTION_UNWRAP);
+            engine.set_texture(icon, gd);
+        }
+    }
+
+    /// `GraphwarSetupControl::connect_entry_buttons` —— **x86 `0x4c4c20`**。
+    ///
+    /// 关联函数：`(obj: usize, index: i32, a: u64, b: u64)` —— 第 1 项是**裸对象指针**
+    /// （`0x4c4c33 mov rsi,rdi` 把它转手给 `0x4b1640` 做成 `Gd`）。
+    ///
+    /// ```text
+    /// 4c4c63 call 0x4b1640                        ; Gd::from_obj_sys(rdi) → 两字出参
+    /// 4c4c7c/4c4c8d "clone"(5 B) 0x4066c0         ; 两个分量都非空才 clone
+    /// 4c4ca5 call 0x447e20 = upcast_ref
+    /// 4c4cbf call 0x3ab590 + "GraphwarRootNode"(16 B @0x19e490, r8d=0x10 @0x4c4ccb)
+    /// 4c4d00 call 0x47fb90 / 4c4d0d call 0x4095a0 ; 根节点那一支的接线
+    /// ---- 4 段同形块（每段：clone/upcast → get_node → 0x3ad570 → 0x4098f0）----
+    /// 4c4d75..4c4dcf "ChangeTeamButton"(16 B @0x19e030, r8d=0x10 @0x4c4dc9)  → 4c4e28 0x4098f0
+    /// 4c4f0e..4c4f56 "RemovePlayerButton"(18 B @0x1c2de5, r8d=0x12 @0x4c4f62) → 4c4fba 0x4098f0
+    /// 4c508e..4c50d6 "AddSoldierButton"(16 B @0x19e740, r8d=0x10 @0x4c50e2)   → 4c513a 0x4098f0
+    /// 4c520e..4c5256 "RemoveSoldierButton"(19 B @0x1c2df7, r8d=0x13 @0x4c5262)→ 4c52ba 0x4098f0
+    /// ```
+    ///
+    /// 档位：**观测**（4 个按钮字面量 + 长度 + 4 段的存在 + 每段的被调地址）。
+    /// **推断**：每段连到哪个 `*_request_event` 构造器 —— 依据是 `docs/16-client.md` §17.6
+    /// 记的"本函数经 `.data.rel.ro` 槽引用 A 组 8 张表"，**缺**按钮 → 构造器的直接跳转证据
+    /// （`connect` 的回调是函数指针，不在 `call rel32` 里）。
+    pub fn connect_entry_buttons<E: SetupEngine + ?Sized>(
+        engine: &mut E,
+        obj: usize,
+        _index: i32,
+        _a: u64,
+        _b: u64,
+    ) {
+        // 0x4c4c20  —— 本函数起点；FDE 0x4c4c20..0x4c5b43（0xf23 = 3875 B）
+        // 0x4c4c63：裸对象指针 → Gd（出参两字；`0x4c4c6d`/`0x4c4c77` 各判一次非空）
+        let root = engine.gd_from_obj(obj).expect(MSG_OPTION_UNWRAP);
+        let mut owned = root;
+        if !root.is_null() && root.rtti != 0 {
+            owned = engine.gd_clone(root).expect(MSG_OPTION_UNWRAP); // 0x4c4c8d
+        }
+        let up = engine.upcast_ref(owned).expect(MSG_UPCAST_FAILED); // 0x4c4ca5
+        let base = engine
+            .get_node_by_name(up, "GraphwarRootNode")
+            .expect(MSG_OPTION_UNWRAP); // 0x4c4cbf
+        engine.gd_touch(base); // 0x4c4d00
+        engine.connect_button(base, base); // 0x4c4d0d → 0x4095a0
+        for name in ENTRY_BUTTONS {
+            let button = engine
+                .get_node_by_name(base, name)
+                .expect(MSG_OPTION_UNWRAP);
+            engine.gd_touch(button); // 0x3ad570 之后的引用计数包装
+            engine.connect_button(button, button); // 0x4098f0
+        }
+    }
+
+}
+
+// ---------------------------------------------------------------------------
+// 10.3 三条 gdext 宏产物 / 未定的（体是观测、名可能未定）
+// ---------------------------------------------------------------------------
+
+/// `graphwar_setup_control::_::__init::__inner_init` 的**调用序列**（`0x4bd030` 与 `0x4bd280` 共用）。
+///
+/// 判据（**观测**，两份各自的指令）：
+/// * 读 `.data` 静态 `0x9c0dc0`（`mov eax,dword [rip+0x503d18]`）+ `0x9c0dc4`（`movzx ebp,word`）
+///   —— 是**同一块**登记存储；
+/// * 调 `0x4ffc96`（把两个内嵌函数指针常量装进登记项）→ `0x4da1e0` → `0x4da440`（gdext 胶水）。
+/// 两份唯一的差别就是内嵌的那两个函数指针常量（`0x4bd030`: `0x40d3a0`/`0x415560`；
+/// `0x4bd280`: `0x40dac0`/`0x40e6c0`）⇒ 它们是**不同接口**的 `__init`。
+pub const INNER_INIT_SEQUENCE: &[(u64, u64, &str)] = &[
+    (0x4b_d0a2, 0x9c_0dc0, "读登记存储（dword）"),
+    (0x4b_d0b0, 0x9c_0dc4, "读登记存储（word）"),
+    (0x4b_d25e, 0x4d_a1e0, "gdext 胶水 A"),
+    (0x4b_d26e, 0x4d_a440, "gdext 胶水 B"),
+];
+
+/// `__init::__inner_init` 的**源码层对应物** —— gdext 的 `#[godot_api] impl I*` 块里
+/// 用户写的 `fn init(base: Base<Self>)`。
+///
+/// 一个源函数 → 机器层的**多份** `__init::__inner_init`（每个 `#[godot_api] impl I*` 块一份）：
+///   * **x86 `0x4bd030`**（FDE `0x4bd030..0x4bd27f`，`0x24f` = 591 B；唯一 Location `608:1`）
+///   * **x86 `0x4bd280`**（FDE `0x4bd280..0x4bd426`，`0x1a6` = 422 B；Location `95:1`）
+///   * **x86 `0x4bcc60`**（Location `46:10`，`fixtures/name_to_addr_v2.tsv` 唯一锚）
+/// 这三条在 x86 侧**地址连续**，arm64 侧也正好有连续 4 份 `__init::__inner_init`
+/// （448/464/436/472 B，`tools/arm64_sym.py mod graphwar_setup_control`）⇒ 是同一族的多次单态化。
+///
+/// 档位：**观测**（三份各自的 FDE + 调用序列 + 内嵌函数指针常量）；
+/// **推断**（"哪一份对应哪个 `impl I*` 块" —— 缺 gdext 版本的 vtable 槽序对齐）。
+/// 按 `tools/function_coverage.py` 的 R3（"gdext 宏产物在源码层的对应物是用户写的 fn"）
+/// 落成 `fn init`，不假装它是手写函数。
+impl GraphwarSetupControl {
+        pub fn init(registration: &mut dyn SetupEngine, init_a: u64, init_b: u64) {
+        // 0x4bd030 / 0x4bd280 / 0x4bcc60 —— 本 fn 对应的三条机器函数
+        // 0x4bd0a2 / 0x4bd0b0：读登记存储的两个字（.data 静态 0x9c0dc0 / 0x9c0dc4）
+        let slot = GdHandle::new(init_a as usize, init_b as usize);
+        // 0x4bd214 call 0x4ffc96（装项）→ 0x4bd25e 0x4da1e0 → 0x4bd26e 0x4da440（gdext 胶水）
+        registration.gd_touch(slot);
+        }
+}
+
+/// `0x4bd030` 内嵌的两个函数指针常量（`.text` 里的 `lea` 目标）。
+/// 档位：**逐位**（`0x4bd11b`/`0x4bd127` 的 `lea rdx,[rip-X]`）。
+pub const INNER_INIT_V1_PTRS: (u64, u64) = (0x40_d3a0, 0x41_5560);
+
+/// `0x4bd280` 内嵌的两个函数指针常量。档位：**逐位**（`0x4bd303`/`0x4bd30f`）。
+pub const INNER_INIT_V2_PTRS: (u64, u64) = (0x40_dac0, 0x40_e6c0);
+
+/// `0x4bce80`（候选 `__register_constants`）的落码体：**`Once` 式惰性初始化**。
+///
+/// ```text
+/// 4bce90 lock cmpxchg dword [0x9c0e80], ecx   ; 抢一次执行（状态字）
+/// 4bceb6 movzx eax,byte [0x9c0e84]            ; 完成标志
+/// 4bcec5..4bcefe 两张注册表：{0x9c0e88 槽, 0x9c0e98}, {0x9c0ea0 槽, 0x9c0eb0}
+/// 4bcee9 lea rcx,[0x4d98d0] / 4bcf22 lea rcx,[0x4d9820]   ; 装进去的两个函数指针
+/// 4bcfe5 mov byte [0x9c0e84],1                ; 置完成
+/// 4bd007 call 0x4da330 / 4bd017 call 0x4da440 ; gdext 胶水
+/// ```
+///
+/// 档位：**观测**（体）/ **未知**（名：4 选 1 歧义）。
+pub fn register_constants_candidate(
+    engine: &mut dyn SetupEngine,
+    done: &mut bool,
+    ptr_a: u64,
+    ptr_b: u64,
+) {
+    // 0x4bce80  —— 本函数起点；FDE 0x4bce80..0x4bd028（0x1a8 = 424 B）
+    // 0x4bce90：抢执行（本层用 `done` 表达"已完成就跳过"）
+    if *done {
+        return;
+    }
+    // 0x4bcec5..0x4bcf30：两张注册表各装一个函数指针
+    engine.gd_touch(GdHandle::new(ptr_a as usize, 0x9c_0e88));
+    engine.gd_touch(GdHandle::new(ptr_b as usize, 0x9c_0ea0));
+    // 0x4bcfe5 mov byte [0x9c0e84],1
+    *done = true;
+    // 0x4bd007 / 0x4bd017
+    engine.gd_touch(GdHandle::new(0x9c_0e80, 0x9c_0e84));
+}
+
+/// `0x4bce80` 装进两张注册表的两个函数指针。档位：**逐位**（`0x4bcee9` / `0x4bcf22`）。
+pub const REGISTER_CONSTANTS_PTRS: (u64, u64) = (0x4d_98d0, 0x4d_9820);
+
+/// `0x4d88b0`（候选 `ready`）用到的客户端内层字段偏移。
+///
+/// 判据（**观测**）：`0x4d88b4 mov r14,[rdi]` → `0x4d88bb cmp qword [r14+0x10],0`
+/// （`RefCell` 借用标志）→ `0x4d88ca cmp qword [r14+0x1f8],0`。
+/// `+0x1f8` 与 `graphwar_game_client` 那 8 个请求构造器取的**同一个**内层单元
+/// （`0x4d8a28 mov rbx,[r14+0x1f8]`）。
+pub const READY_CANDIDATE_INNER_FIELD: u64 = 0x1f8;
+
+/// 原版 `0x4d88b0` 里唯一的一跳：`call *[0x9bc160]` = **`0x51_7490`**。
+///
+/// 档位：**逐位**（GOT 槽 `0x9bc160` 的 `R_X86_64_RELATIVE` addend = `0x51_7490`）。
+pub const FN_REQUEST_LOCK_CHANGE: u64 = 0x51_7490;
+
+/// `0x4d88b0` 的落码体。
+///
+/// 档位：**观测**（体）/ **未知**（名：`ready` 2 选 1 歧义）。
+/// 被调者已知：`GraphwarGameClient::request_lock_change`（地址见常量
+/// [`FN_REQUEST_LOCK_CHANGE`]；这里不重复写地址字面量，否则审计工具会把
+/// "我引用了它" 误判成 "我实现了它" —— `tools/function_coverage.py` 的 P2 就是这么判的）。
+pub fn ready_candidate<C: LockChangeClient + ?Sized>(client: &mut C) {
+    // 0x4d88b0  —— 本函数起点；FDE 0x4d88b0..0x4d8957（0xa7 = 167 B）
+    // 0x4d88bb cmp qword [r14+0x10],0 / jne 0x4d891c —— 已被可变借用 ⇒ panic
+    // 0x4d88c2 mov qword [r14+0x10],-1         —— 置"已可变借用"
+    // 0x4d88ca cmp qword [r14+0x1f8],0 / je    —— 内层为空 ⇒ 什么都不做
+    if let Some(inner) = client.inner_unit() {
+        // 0x4d88db call *[0x9bc160] → FN_REQUEST_LOCK_CHANGE（值见该常量的定义）
+        client.request_lock_change(inner);
+    }
+    // 0x4d88e9..0x4d88ec：解除借用
+}
+
+/// `ready_candidate` 需要的客户端句柄（原版是 `Rc<RefCell<GraphwarGameClient 内层>>`）。
+pub trait LockChangeClient {
+    /// 内层单元（`[env+0x1f8]`）；`None` = 原版那处 `je 0x4d88fd` 走"什么都不做"。
+    fn inner_unit(&mut self) -> Option<()>;
+    /// `GraphwarGameClient::request_lock_change`（地址见 [`FN_REQUEST_LOCK_CHANGE`]）。
+    fn request_lock_change(&mut self, inner: ());
+}
+
+// ---------------------------------------------------------------------------
+// 10.4 单测：期望值全部来自反汇编（.rodata 字面量 / FDE / 分支），不来自本实现
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod f3_landing_tests {
+    use super::*;
+
+    /// 一个记录型的假引擎：把每次调用按顺序记下来，值都透传。
+    #[derive(Default)]
+    struct FakeEngine {
+        trace: Vec<String>,
+        fail_upcast: bool,
+    }
+
+    impl SetupEngine for FakeEngine {
+        fn gd_clone(&mut self, src: GdHandle) -> Option<GdHandle> {
+            self.trace.push(format!("clone({:#x})", src.obj));
+            Some(src)
+        }
+        fn upcast_ref(&mut self, src: GdHandle) -> Option<GdHandle> {
+            self.trace.push(format!("upcast_ref({:#x})", src.obj));
+            if self.fail_upcast { None } else { Some(src) }
+        }
+        fn get_node_by_name(&mut self, _base: GdHandle, name: &str) -> Option<GdHandle> {
+            self.trace.push(format!("get_node({name})"));
+            Some(GdHandle::new(0x1000, 0x2000))
+        }
+        fn to_godot(&mut self, src: GdHandle) -> Option<GdHandle> {
+            self.trace.push("to_godot".into());
+            Some(src)
+        }
+        fn set_texture(&mut self, icon: GdHandle, _tex: GdHandle) {
+            self.trace.push(format!("set_texture({:#x})", icon.obj));
+        }
+        fn gd_from_obj(&mut self, raw: usize) -> Option<GdHandle> {
+            self.trace.push(format!("from_obj({raw:#x})"));
+            Some(GdHandle::new(raw, 0x2000))
+        }
+        fn connect_button(&mut self, button: GdHandle, _handler: GdHandle) {
+            self.trace.push(format!("connect({:#x})", button.obj));
+        }
+        fn gd_touch(&mut self, _src: GdHandle) {
+            self.trace.push("touch".into());
+        }
+    }
+
+    /// 假模块容器：七个 get 都成功，表查找按构造给值。
+    #[derive(Default)]
+    struct FakeModules {
+        local_ids: Vec<u32>,
+        rows: Vec<i32>,
+        name_rows: Vec<(i32, OpaqueValue)>,
+        empty_name_table: bool,
+    }
+
+    impl SetupModules for FakeModules {
+        fn name_manager(&mut self) -> Option<ModuleSlot> { Some(ModuleSlot("name")) }
+        fn rank_manager(&mut self) -> Option<ModuleSlot> { Some(ModuleSlot("rank")) }
+        fn player_manager(&mut self) -> Option<ModuleSlot> { Some(ModuleSlot("player")) }
+        fn local_player_manager(&mut self) -> Option<ModuleSlot> { Some(ModuleSlot("local")) }
+        fn soldier_manager(&mut self) -> Option<ModuleSlot> { Some(ModuleSlot("soldier")) }
+        fn team_manager(&mut self) -> Option<ModuleSlot> { Some(ModuleSlot("team")) }
+        fn graphics_manager(&mut self) -> Option<ModuleSlot> { Some(ModuleSlot("graphics")) }
+        fn name_row(&mut self, _m: ModuleSlot, index: i32) -> Option<OpaqueValue> {
+            if self.empty_name_table { return None; }
+            self.name_rows.iter().find(|(k, _)| *k == index).map(|(_, v)| *v)
+        }
+        fn rank_row(&mut self, _m: ModuleSlot, _rank: u32) -> Option<OpaqueValue> { Some(OpaqueValue::default()) }
+        fn player_rows(&mut self, _m: ModuleSlot) -> Vec<OpaqueValue> {
+            self.rows.iter().map(|id| OpaqueValue { a: *id as usize, b: 0, c: 0 }).collect()
+        }
+        fn local_player_ids(&mut self, _m: ModuleSlot) -> Vec<u32> { self.local_ids.clone() }
+        fn player_ident(&mut self, row: OpaqueValue) -> i32 { row.a as i32 }
+        fn get_team(&mut self, _m: ModuleSlot, _t: u32) -> Option<ModuleSlot> { Some(ModuleSlot("team")) }
+        fn soldier_slots(&mut self, _m: ModuleSlot, _t: ModuleSlot) -> Vec<bool> {
+            vec![true, true, false, false, false]
+        }
+        fn apply_name_row(&mut self, _label: GdHandle, _row: OpaqueValue) {}
+    }
+
+    /// FDE 表逐条自洽：`fde_hi - fde_lo == size`，且 9 条地址互不相同。
+    #[test]
+    fn f3_anchor_table_is_self_consistent() {
+        assert_eq!(F3_ANCHORS.len(), 9, "本批 9 条");
+        for (i, (va, lo, hi, size, name, ev)) in F3_ANCHORS.iter().enumerate() {
+            assert_eq!(va, lo, "{name}：vaddr 必须就是 FDE 起点");
+            assert_eq!(hi - lo, *size as u64, "{name}：size 与 FDE 范围必须一致");
+            for (va2, ..) in &F3_ANCHORS[i + 1..] {
+                assert_ne!(va, va2, "地址不许重复");
+            }
+            assert!(
+                !matches!(ev, Evidence::Inferred | Evidence::Unknown) || name.contains("候选") || name.contains("实例"),
+                "{name}：非观测档必须在名字里标明"
+            );
+        }
+    }
+
+    /// `.rodata` 字面量的长度必须等于字符串自身长度（**逐位**自校验）。
+    ///
+    /// 真值：`lea` 目标 + 紧随的 `mov r<n>d,<leg>` 立即数（本轮已用
+    /// `loc_xrefs.Elf.read(va,len)` 逐条读出来核对过）。
+    #[test]
+    fn node_name_literal_lengths_match_the_bytes() {
+        for (name, _va, len) in NODE_NAME_LITERALS {
+            assert_eq!(name.len(), *len, "{name}：立即数长度必须等于串长");
+        }
+        for (op, _va, len) in GD_OP_LITERALS {
+            assert_eq!(op.len(), *len, "{op}：立即数长度必须等于串长");
+        }
+        // 0x2f = 47（0x4c20b0 mov esi,0x2f）
+        assert_eq!(MSG_UPCAST_FAILED.len(), 47);
+    }
+
+    /// `is_leader_local` 返回 bool：命中本地 id ⇒ true，扫完 ⇒ false。
+    ///
+    /// 真值来源：`0x4c2db9 mov bl,1` / `0x4c2e03 xor ebx,ebx` / `0x4c2e15 mov eax,ebx`。
+    #[test]
+    fn is_leader_local_returns_true_iff_a_local_id_is_in_the_player_table() {
+        let mut hit = FakeModules { local_ids: vec![7], rows: vec![3, 7], ..Default::default() };
+        assert!(GraphwarSetupControl::is_leader_local(&mut hit));
+        let mut miss = FakeModules { local_ids: vec![9], rows: vec![3, 7], ..Default::default() };
+        assert!(!GraphwarSetupControl::is_leader_local(&mut miss));
+        let mut none = FakeModules { local_ids: vec![], rows: vec![3], ..Default::default() };
+        assert!(!GraphwarSetupControl::is_leader_local(&mut none));
+    }
+
+    /// `update_name` 的节点名必须是 `PlayerNameLabel`（`0x4c1ef3` + 15 字节立即数）。
+    #[test]
+    fn update_name_asks_for_the_player_name_label() {
+        let mut e = FakeEngine::default();
+        let mut m = FakeModules { name_rows: vec![(2, OpaqueValue::default())], ..Default::default() };
+        GraphwarSetupControl::update_name(&mut e, &mut m, 2, GdHandle::new(0x10, 0x20));
+        assert!(e.trace.iter().any(|s| s == "get_node(PlayerNameLabel)"), "{:?}", e.trace);
+        // 0x4c1ebe "clone"(5) 先于 0x4c1ef3 get_node
+        let clone_at = e.trace.iter().position(|s| s.starts_with("clone")).unwrap();
+        let node_at = e.trace.iter().position(|s| s == "get_node(PlayerNameLabel)").unwrap();
+        assert!(clone_at < node_at);
+    }
+
+    /// 空表（`0x4c1f37 cmp qword [r14+0x48],0`）⇒ 不往下走、也不 panic。
+    #[test]
+    fn update_name_with_empty_name_table_does_nothing_extra() {
+        let mut e = FakeEngine::default();
+        let mut m = FakeModules { empty_name_table: true, ..Default::default() };
+        GraphwarSetupControl::update_name(&mut e, &mut m, 0, GdHandle::new(0x10, 0x20));
+        assert!(!e.trace.iter().any(|s| s == "touch"), "{:?}", e.trace);
+    }
+
+    /// `update_rank` 的 `set_texture` 必须**恰好 3 次**（`0x4c235f`/`0x4c2509`/`0x4c2639`）。
+    #[test]
+    fn update_rank_sets_three_texture_layers() {
+        let mut e = FakeEngine::default();
+        let mut m = FakeModules::default();
+        GraphwarSetupControl::update_rank(&mut e, &mut m, 5, GdHandle::new(0x10, 0x20));
+        assert_eq!(e.trace.iter().filter(|s| s.starts_with("set_texture")).count(), 3);
+        assert_eq!(RANK_ICON_LAYERS, 3);
+        assert!(e.trace.iter().any(|s| s == "get_node(RankIcon)"));
+    }
+
+    /// `update_soldiers` 取的容器与 4 个图标名（顺序 = `.rodata` 顺序）。
+    #[test]
+    fn update_soldiers_walks_the_four_icon_names_in_order() {
+        let mut e = FakeEngine::default();
+        let mut m = FakeModules::default();
+        GraphwarSetupControl::update_soldiers(&mut e, &mut m, 1, GdHandle::new(0x10, 0x20));
+        let names: Vec<&str> = e.trace.iter().filter_map(|s| s.strip_prefix("get_node(").and_then(|r| r.strip_suffix(')'))).collect();
+        assert_eq!(names.first().copied(), Some("SoldierIconContainer"));
+        let icons: Vec<&str> = names.iter().skip(1).copied().collect();
+        assert_eq!(icons, vec!["SkinIcon", "FaceIcon", "HatIcon", "EmptyIcon"]);
+        assert_eq!(SOLDIER_ICON_ORDER.to_vec(), icons);
+    }
+
+    /// `connect_entry_buttons`：先根节点、再 4 个按钮，顺序 = `.rodata` 字面量顺序。
+    #[test]
+    fn connect_entry_buttons_walks_root_then_four_buttons() {
+        let mut e = FakeEngine::default();
+        GraphwarSetupControl::connect_entry_buttons(&mut e, 0xDEAD, 0, 0, 0);
+        let nodes: Vec<&str> = e.trace.iter().filter_map(|s| s.strip_prefix("get_node(").and_then(|r| r.strip_suffix(')'))).collect();
+        assert_eq!(nodes, vec!["GraphwarRootNode", "ChangeTeamButton", "RemovePlayerButton", "AddSoldierButton", "RemoveSoldierButton"]);
+        assert_eq!(ENTRY_BUTTONS.len(), 4);
+    }
+
+    /// `upcast_ref` 失败 ⇒ 原版走 `MSG_UPCAST_FAILED` 的 panic 臂（`0x4c208a`）。
+    #[test]
+    #[should_panic(expected = "Upcast failed")]
+    fn upcast_failure_panics_with_the_binary_message() {
+        let mut e = FakeEngine { fail_upcast: true, ..Default::default() };
+        let mut m = FakeModules::default();
+        GraphwarSetupControl::update_name(&mut e, &mut m, 0, GdHandle::new(0x10, 0x20));
+    }
+
+    /// 三条宏产物 / 未定名的常量：`.text` 里的内嵌函数指针与 GOT 槽被调者。
+    #[test]
+    fn macro_generated_and_unknown_entries_keep_their_instruction_evidence() {
+        assert_eq!(INNER_INIT_V1_PTRS, (0x40_d3a0, 0x41_5560));
+        assert_eq!(INNER_INIT_V2_PTRS, (0x40_dac0, 0x40_e6c0));
+        assert_eq!(REGISTER_CONSTANTS_PTRS, (0x4d_98d0, 0x4d_9820));
+        assert_eq!(FN_REQUEST_LOCK_CHANGE, 0x51_7490);
+        assert_eq!(READY_CANDIDATE_INNER_FIELD, 0x1f8);
+        assert_eq!(INNER_INIT_SEQUENCE.len(), 4);
+    }
+}
