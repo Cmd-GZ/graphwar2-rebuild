@@ -19482,7 +19482,6 @@ cargo test --offline --lib captured_samples_are_the_live_wire_bytes
   必须先点 `ChatBox` 才把焦点交给 `ChatLineEdit`（`recovered-src/ChatBox.gd::_gui_input`）。
 * 一开始把 `EndingGame` 当事件找 `{"EndingGame":…}` 帧，白跑一轮才发现它不是事件（§110.5 第 2 条）。
 
-<<<<<<< HEAD
 ## 111. T68 `docs/guide/` 的 `[逐位]` 逐条收紧：**293 条正文标记 → 真逐位 22 / 降观测 209 / 降推断 50**，回改 **259 处**（2026-11-27，任务 T68 / 分支 `agent/guide-marker-fix`）
 
 上游遗留来自 T61（§107 的审计 + `agent/guide-fix`）：它把 `[逐位]` 的**定义**收紧到 `AGENTS.md` §0.3
@@ -20748,17 +20747,15 @@ PY
 > 上面第 1 条（`§117.10` 没进 master）**成立**，但那属于 T70 节的内容，**未动**，仍待 lead 处理。
 > 另：`§117.6` 第 2/9 条写"待改"的三处（`archive/148` 友军项、401/403 口径）**当天已修**
 > （t69 `fe40094` / lead `AGENTS.md`），按 `AGENTS.md` §0.6 建议 lead 或 t70 就地加"已修复（谁/哪轮）"。
-=======
----
 
-## 115. T67 控制器迁回 Rust 第三批：**#3 屏表/切屏 + #5 连接状态机 + #6 LAN 广播流程 + #10 战役关卡表** —— 四份 `.gd` 的**代码行 984 → 901（−83）**、`selftest` **732 → 757**；挖出 **5 处"改前就与真值不符"**（其中 4 处本轮修掉、1 处只登记）+ **2 处屏表不一致**（本轮不改，登记）（2026-11-27，任务 T67 / `task-60`，分支 `agent/controller-batch3`）
+## 118. T67 控制器迁回 Rust 第三批：**#3 屏表/切屏 + #5 连接状态机 + #6 LAN 广播流程 + #10 战役关卡表** —— 四份 `.gd` 的**代码行 984 → 901（−83）**、`selftest` **732 → 757**；挖出 **5 处"改前就与真值不符"**（其中 4 处本轮修掉、1 处只登记）+ **2 处屏表不一致**（本轮不改，登记）（2026-11-27，任务 T67 / `task-60`，分支 `agent/controller-batch3`）
 
 > 台账：`fixtures/controller_migration3_ledger.tsv`（**44 行**：`move 20 / partial 3 / keep 21`，单独 commit `7d4368e`）。
 > 判据沿用 T31/T58：**只有"Rust 侧已有复原实现且能指到地址"的才搬**；纯视图/引擎侧/自造策略不搬。
 > 依据：`docs/06` §90 的 C 档清单（"最该先搬的 10 段"里剩下的 #3 / #5 / #6 / #10）。
 > 地址口径 **ELF vaddr**（Ghidra/REA = +`0x100000`）。
 
-### 115.0 一页结论
+### 118.0 一页结论
 
 **判决：这四段都是"Rust 侧早就复原了、GDScript 又写了一遍"，搬完之后 `.gd` 里不再有第二份真相源。**
 但**别把这理解成"行为变好了"**——四段的规则改前大体对，错的只有 5 条边界（见 111.4）；
@@ -20771,7 +20768,7 @@ PY
 | 6 | `client/src/net/discovery.gd`（215 行） | `graphwar_lan_broadcaster_v6`：`ingest`（`insert 0x3de638`）、`expire_stale`（`0x3de6e4 cmp x0,#0xa`）、周期闸（`0x3de7c8`）、`Broadcast::parse` | 解析/去重/TTL/周期 → `GwLanV6`；`.gd` 只留 `PacketPeerUDP` 与信号 |
 | 10 | `client/src/app/campaign.gd`（157 行） | `graphwar_campaign_control::LEVEL_INFO`（= 原版 `level_info()` `0x4ad380`，逐位 + 运行时 21/21） | 21 关全参数表 → `GwCampaignControl`；`.gd` 只留自造种子 + 原版布局算法 |
 
-### 115.1 `.gd` 行数：总行数 −68，**代码行 −83**（`app.gd` 反而变长，原因写在下面）
+### 118.1 `.gd` 行数：总行数 −68，**代码行 −83**（`app.gd` 反而变长，原因写在下面）
 
 | 文件 | 总行（前 → 后） | 代码行（前 → 后，去注释/空行） | 说明 |
 |---|---|---|---|
@@ -20783,9 +20780,9 @@ PY
 
 ⚠️ **行数不是成绩单**（`AGENTS.md` §0.2）。`app.gd`/`link.gd` 变长的原因必须如实写：
 原版把节点/状态直接握在手里，`.gd` 只是"同一进程里的调用"；我们是**跨语言**，规则搬走之后
-每一次判定都要多一次取值+拆包。真正的收益是 §115.0 那段（单一真相源），不是行数。
+每一次判定都要多一次取值+拆包。真正的收益是 §118.0 那段（单一真相源），不是行数。
 
-### 115.2 四个出口（`src/_scaffold/`，都只在 `gdext-bindings` 下编译）
+### 118.2 四个出口（`src/_scaffold/`，都只在 `gdext-bindings` 下编译）
 
 | 出口 | 文件（行） | 搬的是什么 | 原版里没有这个类（为什么是 scaffold） |
 |---|---|---|---|
@@ -20795,7 +20792,7 @@ PY
 | `GwRootNode` | `root_node_class.rs`（290） | `base_screen_names()`/`all_screen_names()`/`screen_table()`（名字+`.rodata` 地址+长度立即数）、`show_plan()`（`screen_swap` 决策）、`command_kind()`/`command_keys()`/`command_evidence()` | 原版屏表与命令总线是 `GraphwarRootNode` 的方法（`[+0x1704]`、`0x3b0830`） |
 | — | `_scaffold/mod.rs` **+29 行**（4 条 `pub mod` 说明） | — | 注册 |
 
-### 115.3 五处"改前就与真值不符"（4 处修掉、1 处只登记）
+### 118.3 五处"改前就与真值不符"（4 处修掉、1 处只登记）
 
 | # | 段 | 改前（我方） | 真值（证据） | 本轮怎么处理 |
 |---|---|---|---|---|
@@ -20819,7 +20816,7 @@ PY
 否则整条广播丢弃。依据只是 `docs/115` §5.3 变体 E 的受控实验（"带 `Timers1m` 的被丢弃"），
 **判定发生在哪一层没有观测到**。改前写在 `.gd`，现在在 `GwLanV6::is_known_time_mode`（注释里标 **推断**）。
 
-### 115.4 顺手挖到的一个"解析器证据缺口"（供下一轮修 `_scaffold/protocol.rs` 的人）
+### 118.4 顺手挖到的一个"解析器证据缺口"（供下一轮修 `_scaffold/protocol.rs` 的人）
 
 `_scaffold/protocol.rs::Broadcast::parse` 是**子串查找**式的：它对 `{"GameInfo":{"game_info":{…9 字段…}}}`
 也能"解析成功"（在嵌套里找到了 `"room_name":`）⇒ 原版**丢弃**的变体 B 会漏过去
@@ -20828,15 +20825,15 @@ PY
 **没有**去动 `protocol.rs`（它在 t63 的范围里）。⇒ 下一轮应由 `protocol.rs` 的属主把这条闸收进去，
 或者把 `Broadcast::parse` 换成真正的 JSON 解析。⚠️ 这条闸对"房名里带 `{`"会误拒（语料/抓包里没有这种样本，**推断**）。
 
-### 115.5 门槛（本轮实测，全部自己跑）
+### 118.5 门槛（本轮实测，全部自己跑）
 
 | 门槛 | 读数 | 复跑命令 |
 |---|---|---|
 | `cargo test --offline` | **1853 passed / 0 failed / 1 ignored** | `cargo test --offline` |
 | `cargo test --features gdext-bindings` | **1983 / 0 / 1** | `cargo test --offline --features gdext-bindings` |
-| `selftest` | **757 passed / 0 failed / 1 skipped**，`@@SELFTEST_COVERAGE groups=34 checks=757 expected=757 missing=0(claimed 0 / degraded 0 / silent 0)`（门槛 732/0/1skip；本轮 **+25 条**新组 `controller_migration`） | 见 §115.6 |
-| headless 14 脚本 | **1978 / 0**（14 份逐个跑，无失败） | 见 §115.6 |
-| 三轴 | `fire` **647** ｜ `batch` **647** ｜ `batch_conv` **637**（一位未退） | 见 §115.6 |
+| `selftest` | **757 passed / 0 failed / 1 skipped**，`@@SELFTEST_COVERAGE groups=34 checks=757 expected=757 missing=0(claimed 0 / degraded 0 / silent 0)`（门槛 732/0/1skip；本轮 **+25 条**新组 `controller_migration`） | 见 §118.6 |
+| headless 14 脚本 | **1978 / 0**（14 份逐个跑，无失败） | 见 §118.6 |
+| 三轴 | `fire` **647** ｜ `batch` **647** ｜ `batch_conv` **637**（一位未退） | 见 §118.6 |
 | `coverage_matrix.py --check` | **OK**（生成物已重跑并入库） | `COVERAGE_MATRIX_UPSTREAM=<ws>/.reference/upstream .reference/venv/bin/python tools/coverage_matrix.py --check` |
 | `check_doc_refs.py` | **rc=0**（无死链） | `python3 tools/check_doc_refs.py` |
 
@@ -20846,7 +20843,7 @@ PY
 超时 29.9 s/30.0 s 边界、LAN 表键 = 发送方地址（同 host 换 address 仍一行 / 不同 host 同 address 两行）、
 TTL 9999 ms/10000 ms 边界、变体 B/E 被丢弃、`ConfirmPlay`+`ExitPopUp` 而**无** `ChatPopUp`。
 
-### 115.6 复跑命令（照抄）
+### 118.6 复跑命令（照抄）
 
 ```bash
 WT=/home/CG/Myprojects/graphwar2-rebuild/.agent-work/cg/wt-t67
@@ -20883,7 +20880,7 @@ COVERAGE_MATRIX_UPSTREAM=/home/CG/Myprojects/graphwar2-rebuild/.reference/upstre
   $WT/.reference/venv/bin/python $WT/tools/coverage_matrix.py --check
 python3 $WT/tools/check_doc_refs.py
 
-### 115.7 像素（两侧串行采集；**没有一个门槛变差**）
+### 118.7 像素（两侧串行采集；**没有一个门槛变差**）
 
 复跑（两侧各一次，`--side original` 用 display 81、`--side ours` 用 82；`replay` 必须 `--seed-replays`）：
 
@@ -20931,20 +20928,20 @@ for i in (1,2,3):
 > 两侧**串行**。噪声地板（同侧 3 帧互相差）原版 0.000 %／我方 0.012–0.164 %，已在表内逐屏列出。
 > ⚠️ 本轮 diff **没有一处改到渲染路径**（四段搬的都是流程/数据/状态判定），像素结论也与此一致。
 
-### 115.8 遗留 / 未做（按"下次该动谁"排）
+### 118.8 遗留 / 未做（按"下次该动谁"排）
 
 1. **`replay_play` / `replay_end` 的屏幕名归属在这一轮采集里是反的**：本轮 `replay_play` 拿到
    1 126 px（0.0506 %）、`replay_end` 拿到 856 px（0.0384 %），而 §(T54) 记的是 `replay_play` 856 /
    `replay_end` 1 126。**总数与两个数都逐位相同**（1 982 px，L2 0），所以不是回归；但说明
    `--flow replay` 的两屏"停在第几帧"对采集时机敏感（回放载入即暂停 + `REPLAY_END_WAIT`），
    下一个改这条流程的人应当把"停在哪一帧"钉成预注册值，而不是靠 `wait`。
-2. **弹窗"叠层 vs 单可见"的模型分叉没改**（§115.3 末段）：原版 `0x3af850` 让 15 个屏**同时只有一个可见**，
+2. **弹窗"叠层 vs 单可见"的模型分叉没改**（§118.3 末段）：原版 `0x3af850` 让 15 个屏**同时只有一个可见**，
    我方是叠层。改它要动所有弹窗的进入/退出时序 + 8 个弹窗的像素，建议单独一轮做，并先把
    `background` 这个键的来源（`docs/16` §15.10 未知③）解出来 —— 原版那条分支说明屏表里**还有一个
    我们没建模的条目**。
-3. **`ChatPopUp` / `ConfirmPlayExitPopUp` 两个屏名没对齐**（§115.3 第 5 条）：要改就得动 `.tscn` 节点名
+3. **`ChatPopUp` / `ConfirmPlayExitPopUp` 两个屏名没对齐**（§118.3 第 5 条）：要改就得动 `.tscn` 节点名
    ⇒ 会碰像素与 headless 断言（`_screen("ConfirmPlayExitPopUp")` 之类），单开一轮。
-4. **`_scaffold/protocol.rs` 的 `Broadcast::parse` 仍然是子串式**（§115.4）：本轮在 `GwLanV6` 里补了
+4. **`_scaffold/protocol.rs` 的 `Broadcast::parse` 仍然是子串式**（§118.4）：本轮在 `GwLanV6` 里补了
    `is_bare_object` 闸兜住，但正确的修法在 `protocol.rs`（属 t63 范围）。
 5. **`GwLanV6` 的房间表仍然只喂给"Local"页**：原版 `GraphwarLanVBox::process` 每帧从
    broadcaster + broker 两个源重取（`docs/144` §3），我方 broker 侧的 `GameInfo` 表还没接到
@@ -20958,4 +20955,3 @@ for i in (1,2,3):
 8. **`room_ttl_ms` 属性留着只为自检读数**（`client/tools/truth_fixes_probe.gd:55` 读它）——
    真正的判据已经在 Rust，`.gd` 里这个值不再参与任何计算。自检工具下次可以改成读
    `GwLanV6.provenance()`。
->>>>>>> agent/controller-batch3
