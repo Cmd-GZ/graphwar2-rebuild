@@ -75,18 +75,18 @@ TimeMode      | src/graphwar_mode_manager.rs:77 | 6 | Timer30s=0, Timer1m=1, Tim
 # 模块 + 偏移数 + 跨度 + E4 下界，没和我方 struct 逐字段对过**。
 #
 # 结构体 | 我方位置 | 我方字段数 | 二进制取证（函数 vaddr / E4 下界） | 取证方法 | 期望
-EffectAudioData   | src/graphwar_audio_control.rs:269 | 4 | 0x3d10c0? 待本轮定位 / E7 下界 0x18 | E7+E3 | 期望：窗口下界 0x18 且 4 个字段 0/0x10/0x14(+判 0-16 是 16 字节 Option<Gd>) ⇒ **match**
-PatternSegment    | src/graphwar_level_generator.rs:295 | 7 | E7 下界 0x30（0x00..0x28） | E7+E3 | 期望 **match**（7 字段 0/8/0x10/0x18/0x20/0x24/0x28）
+EffectAudioData   | src/graphwar_audio_control.rs:269 | 4 | E7 下界 0x18（模块文档 `+0x00`16B / `+0x10` u32 / `+0x14` bool） | E7+E3 | 期望 **match**（4 字段 0/0x10/0x14，size 0x18）
+PatternSegment    | src/graphwar_level_generator.rs:295 | 7 | E7 下界 0x30（模块文档 `+0x00`f64/`+0x08`f64/`+0x10`f64/`+0x18`f64/`+0x20`u32/`+0x24`u32/`+0x28`u8） | E7+E3 | 期望 **match**（7 字段 0/8/0x10/0x18/0x20/0x24/0x28）
 GraphwarGameRecorder | src/graphwar_game_recorder.rs（`GraphwarGameRecorder`） | 4 | 记录闭包 0x3d4fa0 的 `[rbx+0x48]`；E7 下界 0x50 | E7+E3 | 期望 **match**（+0x08/+0x18/+0x40/+0x48）
-GraphwarShotCalculator | src/graphwar_shot_calculator.rs | ? | 0x?/E7 下界 0xf8 | E7 | 期望 **unknown**（只有下界）
-FunctionEvolutionator | src/graphwar_function_evolutionator.rs | ? | E7 下界 0xc0 | E7 | 期望 **unknown**
-GraphwarPlane     | src/_scaffold/graphwar_plane_class.rs | ? | E7 下界 0xa0 | E7 | 期望 **unknown**
-GraphicsManager   | src/graphwar_graphics_manager.rs | ? | E7 下界 0x98 | E7 | 期望 **unknown**
-ReplayControl     | src/graphwar_replay_control.rs | ? | E7 下界 0xa0 | E7 | 期望 **unknown**
-LevelManager      | src/graphwar_level_manager.rs | ? | E7 下界 0xf8 | E7 | 期望 **unknown**
-ClientConnectionHandler | src/graphwar_client_connection_handler.rs | ? | E7 下界 0x69 | E7 | 期望 **unknown**
-AxisDrawer        | src/axis_drawer.rs | ? | E7 下界 0x73 | E7 | 期望 **unknown**
-GraphwarLanVBox   | src/_scaffold/graphwar_lan_vbox_class.rs | ? | E7 下界 0x92 | E7 | 期望 **unknown**
+graphwar_shot_calculator | src/graphwar_shot_calculator.rs | ? | 0x3c2bc0（11 个偏移 / 跨度 240 / E7 下界 **0xf8**） | E7 | 期望 **unknown**（只有下界）
+graphwar_function_evolutionator | src/graphwar_function_evolutionator.rs | ? | 0x41a9d0（12 个偏移 / 跨度 176 / E7 下界 **0xc0**） | E7 | 期望 **unknown**
+graphwar_plane     | src/_scaffold/graphwar_plane_class.rs:573 | ? | 0x4b5df0（6 个偏移 / 跨度 152 / E7 下界 **0xa0**） | E7 | 期望 **unknown**
+graphwar_graphics_manager | src/graphwar_graphics_manager.rs:463 | ? | 0x468d80（7 个偏移 / 跨度 136 / E7 下界 **0x98**） | E7 | 期望 **unknown**
+graphwar_replay_control | src/graphwar_replay_control.rs:165 | ? | 0x4c6f40（9 个偏移 / 跨度 152 / E7 下界 **0xa0**） | E7 | 期望 **unknown**
+graphwar_level_manager | src/graphwar_level_manager.rs:1055 | ? | 0x499740（8 个偏移 / 跨度 224 / E7 下界 **0xf8**） | E7 | 期望 **unknown**
+graphwar_client_connection_handler | src/graphwar_client_connection_handler.rs:871 | ? | E7 下界 **0x69**（6 个偏移） | E7 | 期望 **unknown**
+axis_drawer / graphwar_button 等 11 个模块 | 见 structs_scan | ? | 11 个偏移 / 跨度 114 / E7 下界 **0x73**（多个模块同形，是 Godot 对象头） | E7 | 期望 **unknown**
+graphwar_lan_vbox | src/_scaffold/graphwar_lan_vbox_class.rs | ? | 0x4dec00（13 个偏移 / 跨度 144 / E7 下界 **0x92**） | E7 | 期望 **unknown**
 
 > 说明：清单 C 的「期望 unknown」不是偷懒 —— 这是 T32 判据原文（「只有 E4 的下限 ⇒ 只登记，不猜」）。
 > 本轮若能在这些函数里顺带取到 **E3 的具体偏移**（值偏移而不是仅下界），允许从 unknown 升到
