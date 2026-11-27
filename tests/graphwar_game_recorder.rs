@@ -152,3 +152,56 @@ fn event_info_is_80_bytes() {
     assert_eq!(EVENT_INFO_STRIDE, 0x50);
     assert_eq!(EVENT_INFO_STRIDE - GRAPHWAR_EVENT_SIZE, 8, "tick + 对齐填充");
 }
+
+// ===== 落盘内容**逐字节冻结**（布局对齐前后必须一模一样） =====
+
+/// 本文件的**构造入口** —— 两个 commit 之间**只改这一行**：
+///
+/// * 冻结 golden 的那次 commit：走无参 `GraphwarGameRecorder::new()`（当时的旧形态）；
+/// * 布局对齐真值之后：走 `GraphwarGameRecorder::detached()` —— 原版 `new`
+///   （arm64 `0x3d7e3c` / x86 `0x3d5260`）**必须带 3 个实参**
+///   （`&mut GraphwarEventHandler` + `Rc<RefCell<GraphwarEventQueue>>` + `Weak<RefCell<GraphwarModuleContainer>>`），
+///   证据见 `docs/06` §128；无参构造是本 crate 自造的测试入口，原版没有。
+fn recorder() -> GraphwarGameRecorder {
+    GraphwarGameRecorder::new()
+}
+
+/// 改布局**之前**（`master` a27a0aa）跑出来的字节，逐字节冻结（`{:?}` 转义字面量，非手写）。
+const GOLDEN_SAVE_BEFORE_ENDING: &str = "{\"event\":{\"TurnInfo\":{\"player_id\":1}},\"tick\":9}\n\
+{\"event\":{\"TeamInfo\":{}},\"tick\":10}\n\
+{\"event\":{\"NameInfo\":{\"name\":\"cmdgz\"}},\"tick\":11}\n";
+
+/// `EndingGame` 那一条也在里面 ⇒ 落盘的行数与内容都被钉住。
+const GOLDEN_SAVE_AFTER_ENDING: &str = "{\"event\":{\"TurnInfo\":{\"player_id\":1}},\"tick\":9}\n\
+{\"event\":{\"TeamInfo\":{}},\"tick\":10}\n\
+{\"event\":{\"NameInfo\":{\"name\":\"cmdgz\"}},\"tick\":11}\n\
+{\"event\":{\"GameStateInfo\":{\"game_state\":6}},\"tick\":12}\n";
+
+/// 清缓冲之后重开一局，第一行必须还是同一个形状。
+const GOLDEN_SAVE_NEXT_GAME: &str = "{\"event\":{\"ColorInfo\":{\"color\":255}},\"tick\":14}\n";
+
+/// **逐字节回归**：`save_game` 的输出在「布局对齐真值」前后**完全相同**。
+///
+/// 判据不是"看起来一样"：三个 golden 都是**改布局之前**那版实现真跑出来的
+/// （先落这条测试、此时绿；再改结构、仍必须绿），行尾 `\n`、键序、空体 `{}`
+/// 分支、`tick` 数字格式全部逐字符比较。
+#[test]
+fn save_game_bytes_are_frozen_across_the_layout_change() {
+    let mut r = recorder();
+    r.record(9, Event::TurnInfo, "{\"player_id\":1}");
+    r.record(10, Event::TeamInfo, "{}");
+    r.record(11, Event::NameInfo, "{\"name\":\"cmdgz\"}");
+    assert_eq!(r.save_game_text(), GOLDEN_SAVE_BEFORE_ENDING);
+
+    // `EndingGame` 上升沿：先落盘再把这一行也留在缓冲里（原版不清缓冲）。
+    assert!(r.record_game_state(12, STATE_ENDING_GAME));
+    assert_eq!(r.len(), 4);
+    assert_eq!(r.save_game_text(), GOLDEN_SAVE_AFTER_ENDING);
+
+    // `Setup` 且上一条是 `EndingGame` ⇒ 清空（`0x3d7c8c`–`0x3d7ca8`）。
+    assert!(!r.record_game_state(13, STATE_SETUP));
+    assert_eq!(r.len(), 0);
+
+    r.record(14, Event::ColorInfo, "{\"color\":255}");
+    assert_eq!(r.save_game_text(), GOLDEN_SAVE_NEXT_GAME);
+}
