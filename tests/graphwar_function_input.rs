@@ -180,7 +180,8 @@ fn submit_path_passes_the_text_through_verbatim() {
 /// 真值：`0x4f4410` 的循环体（`0x4f4440`–`0x4f448e`）每轮
 /// `call 0x39fe10`，方法名是 `"delete_char_at_caret"`（`.rodata` `0x1c44a2`，
 /// 长度 `0x14` = 20）；`delete_token_at_caret` / `delete_token_after_caret`
-/// 分别调它 4 / 5 次。N 的算法本身未知（见 `fi::UNKNOWNS[0]`）。
+/// 分别调它 4 / 5 次。N 的算法 = 四张立即数表（`fi::token_len_at_caret` /
+/// `fi::token_len_after_caret`，T80 从 `0x4f44c0` / `0x4f4a60` 的 `cmp/xor` 立即数解出）。
 #[test]
 fn deleting_a_token_degrades_to_n_backspaces() {
     assert_eq!(fi::BACKSPACE_METHOD, "delete_char_at_caret");

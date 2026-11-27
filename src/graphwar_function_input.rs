@@ -139,8 +139,9 @@
 //! ```
 //!
 //! ⇒ "token 有多长"这个**判据本身**内联在四个方法里（各自调 `0x3e90f0` 若干次，
-//! 那是 `str`/`String` 的字符迭代辅助），**规则未解**。本文件因此只固定
-//! **可观测的那一半**：`N` 次退格 = [`delete_chars_at_caret_plan`]。
+//! 那是 `str`/`String` 的字符迭代辅助）。**T80 已解开**：判据是四张写死在立即数里的
+//! 字符串表（[`DELETE_TOKEN_TOKENS_AT_CARET`] / [`DELETE_TOKEN_TOKENS_AFTER_CARET`]），
+//! 见本文件第 7 节；`move_caret_*` 用的是同一套表（未逐条落码，见 UNKNOWNS 第 1 条）。
 //!
 //! # 提交路径：`on_text_submitted` → 弱回调 `"fire"`
 //!
@@ -835,13 +836,167 @@ pub fn submit_intent(text: &str) -> (&'static str, &str) {
 }
 
 // ---------------------------------------------------------------------------
-// 7. 未知（写清楚缺什么）
+// 7. token 删除：`delete_token_at_caret` / `delete_token_after_caret`
+// ---------------------------------------------------------------------------
+//
+// 这两个方法此前在本文件里只固定了"退格几次"（`delete_chars_at_caret_plan`），
+// "token 有多长"写成**未知**（T42 的 UNKNOWNS 第 1 条）。T80 逐指令读完后**解开了**：
+// 判据不是"字符类"，而是**四张写死在立即数里的字符串表**。
+//
+// ## `delete_token_at_caret`（`0x4f44c0`，FDE `0x4f44c0..0x4f4a5a`，`0x59a` = 1434 B）
+//
+// 控制流（每条都能指到地址）：
+// ```text
+// 4f44d8  call *0x9ba680 -> 0x89b170        ; 取节点/基类句柄
+// 4f44e2  call 0x44b1c0                     ; 取「文本」那一对字（ptr,len）
+// 4f44f1  lea  "upcast_ref"(0x1c41b7, 0xa)  ; 4f4505 call 0x406840 = Gd::upcast_ref 包装
+// 4f450d  call *0x9bc328 -> 0x8b8560        ; caret_column()  ⇒ %eax
+// 4f4513  test eax,eax ; 4f4515 js 4f4966   ; < 0 ⇒ Result::unwrap 的 Err 臂（panic）
+// 4f45e9  cmp ebp,4 ; 4f45ec jbe 4f4660     ; caret <= 4 ⇒ 跳过「5 字符」这一档
+// 4f461d  cmp [rsp+0x20],5 / 4f4625 exec 5  ; 与 5 字符表逐字节 xor 比较（见下表）
+// 4f46a2..4f46dc  6 次 cmp dword,imm        ; 4 字符表
+// 4f4753..4f4801  7 次 (word xor + byte xor) ; 3 字符表
+// 4f4870..4f48ad  7 次 cmp word,imm          ; 2 字符表
+// 4f46f8/4f481d/4f48d6/4f48e5  mov esi,N ; call 0x4f4410   ; 命中 ⇒ 退格 N 次
+// 4f48c7  mov esi,1 ; 4f48cf call 0x4f4410 ; 全不中 ⇒ 退格 1 次（默认臂）
+// ```
+// 每一档的"候选"是 **caret 左侧 n 个字符**：`lea rax,[rbx-n]` + `mov [rsp+0x48],n`
+// 组成一个 `Range{start,end,idx,len}` 交给 `0x3e90f0`（`str` 切片辅助），回来的是
+// `(ptr,len)`；先判 `len == n`（`cmp qword [rsp+0x20],n`）再逐字节比 ⇒ 这就是
+// "取左邻 n 个字符"的全部含义，**没有字符类判定**。
+//
+// ## `delete_token_after_caret`（`0x4f4a60`，FDE `0x4f4a60..0x4f53c5`，`0x965` = 2405 B）
+//
+// 同一套表，但候选是 **caret 右侧 n 个字符**，门槛是 `caret + n <= len`
+// （`0x4f4b93 cmp rbx,r13 ; jb`），命中后的动作是"先把 caret 右移 n
+// （`0x4f4fcf inc ebp` + `call *0x9bc318 -> 0x8b8830` = 设 caret 列），再退格 n 次"
+// （`0x4f4fee call 0x4f4410`）—— 因为 `0x4f4410` 只会删 caret **左侧**。
+// 右移的溢出检查逐档不同：`cmp ebp,0x7ffffffc`(+4) / `0x7ffffffd`(+3) /
+// `0x7ffffffe`(+5) / `0x7ffffffb`(+2)（`0x7fffffff` 是 +1 的默认臂），正好是
+// `i32::MAX - (n-1)` ⇒ 印证"右移 n"，不是"右移 1 再删 n"。
+// 它的表比 at_caret **多出一组"半截 token 的后缀"**（`qrt(` / `n(` / `t(` …），
+// 因为这些后缀正是把 caret 放在 token 中间时右侧看到的东西。
+
+/// `delete_token_at_caret`（`0x4f44c0`）的 token 表：**按长度降序**，逐条 = 立即数比较。
+///
+/// | n | token | 证据（`0x4f44c0` 体内的立即数） |
+/// |---|---|---|
+/// | 5 | `sqrt(` | `0x4f462a mov $0x74727173` + `0x4f4633 xor byte [r12+4],0x28` |
+/// | 4 | `abs( sin( cos( tan( exp( sqrt` | `0x4f46a2/4f46ac/4f46b6/4f46c0/4f46ca/4f46d4` 的 `cmp dword [r12],imm` |
+/// | 3 | `ln( abs sin cos tan exp sqr` | `0x4f4753..0x4f4801` 的 `xor word` + `xor byte [r12+2]` |
+/// | 2 | `ln ab si co ta ex sq` | `0x4f4870..0x4f48ad` 的 `cmp word [r12],imm` |
+///
+/// 档位：**观测**（每个 token 都能指到一条 `cmp/xor` 指令 + 它的立即数）。
+/// 语义（**推断**，理由在表里）：这些是函数名的**逐字符前缀**（`sq`/`sqr` 是
+/// `sqrt` 的前缀），加上带左括号的完整形态 ⇒ 退格把"正在打的函数名"整段删掉。
+pub const DELETE_TOKEN_TOKENS_AT_CARET: [(usize, &[&str]); 4] = [
+    (5, &["sqrt("]),
+    (4, &["abs(", "sin(", "cos(", "tan(", "exp(", "sqrt"]),
+    (3, &["ln(", "abs", "sin", "cos", "tan", "exp", "sqr"]),
+    (2, &["ln", "ab", "si", "co", "ta", "ex", "sq"]),
+];
+
+/// `delete_token_after_caret`（`0x4f4a60`）的 token 表。
+///
+/// 前四档与 [`DELETE_TOKEN_TOKENS_AT_CARET`] 同名，但**每个名字还多收"半截后缀"**：
+/// 4 档 `0x4f4ca7 cmp dword,0x28747271` = `qrt(`；3 档 `0x4f4dc8 xor word,0x7271` +
+/// `0x4f4dd3 xor byte [r12+2],0x74` = `qrt`，另有 `bs(`/`in(`/`os(`/`an(`/`xp(`/`rt(`；
+/// 2 档 `0x4f4eed cmp word,0x286e` = `n(`，另有 `bs`/`in`/`os`/`an`/`xp`/`rt`/`s(`/`p(`/`t(`。
+/// 档位：**观测**。
+pub const DELETE_TOKEN_TOKENS_AFTER_CARET: [(usize, &[&str]); 4] = [
+    (5, &["sqrt("]),
+    (4, &["abs(", "sin(", "cos(", "tan(", "exp(", "sqrt", "qrt("]),
+    (3, &["ln(", "qrt", "bs(", "in(", "os(", "an(", "xp(", "rt("]),
+    (2, &["n(", "ln", "bs", "in", "os", "an", "xp", "rt", "s(", "p(", "t("]),
+];
+
+/// 光标**左侧**要一次删掉几个字符（`delete_token_at_caret` 的那个 N）。
+///
+/// 档位：**观测** —— 档位顺序（5→4→3→2→1）、每档的"caret 至少 n"门槛
+/// （`cmp ebp,4` / `cmp ebp,2` 两处 `jbe`）与四张表全部来自指令。
+///
+/// * `caret >= 5` 才试 5 档；`caret >= 4` 才试 4 档（`pos > 4` 的 5 档不中时也回落试 4 档，
+///   所以 4 档的实际门槛是 `caret >= 4`）；3 档 `caret >= 3`；2 档 `caret >= 2`；
+/// * 全不中 ⇒ **1**（默认臂 `0x4f48c7 mov esi,1`），即使 caret 在 0 也返回 1
+///   （原版由 `0x4f4410` 的循环把"无可删"吸收掉：`delete_chars_at_caret` 会夹到 0）。
+pub fn token_len_at_caret(text: &str, caret: usize) -> usize {
+    let chars: Vec<char> = text.chars().collect();
+    for (n, tokens) in DELETE_TOKEN_TOKENS_AT_CARET.iter() {
+        if caret < *n {
+            continue;
+        }
+        let cand: String = chars[caret - n..caret].iter().collect();
+        if tokens.iter().any(|t| *t == cand) {
+            return *n;
+        }
+    }
+    1
+}
+
+/// 光标**右侧**要一次删掉几个字符（`delete_token_after_caret` 的那个 N）。
+///
+/// 档位：**观测**。与 [`token_len_at_caret`] 的差别有两处（都是指令给的）：
+/// 门槛是 `caret + n <= len`（`0x4f4b93` 那一族 `cmp/jb`），表里多一组"半截后缀"。
+/// `caret >= len` 时原版**直接结束**（`0x4f4f97 cmp rbx,r14 ; jbe`）⇒ 这里返回 0。
+pub fn token_len_after_caret(text: &str, caret: usize) -> usize {
+    let chars: Vec<char> = text.chars().collect();
+    if caret >= chars.len() {
+        return 0;
+    }
+    for (n, tokens) in DELETE_TOKEN_TOKENS_AFTER_CARET.iter() {
+        if caret + n > chars.len() {
+            continue;
+        }
+        let cand: String = chars[caret..caret + n].iter().collect();
+        if tokens.iter().any(|t| *t == cand) {
+            return *n;
+        }
+    }
+    1
+}
+
+impl Buffer {
+    /// `0x4f44c0 GraphwarFunctionInput::delete_token_at_caret` —— 删光标左侧的 token。
+    ///
+    /// 体：`caret_column()`（`0x4f450d`，负 ⇒ `unwrap` panic）→ [`token_len_at_caret`]
+    /// → `N` 次退格（`0x4f4410`）。返回实际退格数。
+    ///
+    /// 档位：**观测**（N 的判据 = 四张立即数表；退格 = `0x4f4410` 的循环）。
+    pub fn delete_token_at_caret(&mut self) -> usize {
+        // 0x4f450d call *0x9bc328 -> 0x8b8560 = caret_column()；0x4f4515 js = Err 臂
+        let n = token_len_at_caret(&self.text(), self.caret);
+        // 0x4f46f8 / 0x4f481d / 0x4f48d6 / 0x4f48e5 / 0x4f48c7 五处 mov esi,N
+        self.delete_chars_at_caret(n)
+    }
+
+    /// `0x4f4a60 GraphwarFunctionInput::delete_token_after_caret` —— 删光标右侧的 token。
+    ///
+    /// 体：`caret + n <= len` 判定 → [`token_len_after_caret`] → caret 右移 `n`
+    /// （`0x4f4fcf inc ebp` + `call *0x9bc318 -> 0x8b8830`）→ 退格 `n` 次
+    /// （`0x4f4fee call 0x4f4410`，它只删左侧）。`caret` 已在末尾（`0x4f4f97`）⇒ 什么都不做，返回 0。
+    ///
+    /// 档位：**观测**。
+    pub fn delete_token_after_caret(&mut self) -> usize {
+        let n = token_len_after_caret(&self.text(), self.caret);
+        if n == 0 {
+            return 0;
+        }
+        self.move_caret_right(n);
+        self.delete_chars_at_caret(n)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 8. 未知（写清楚缺什么）
 // ---------------------------------------------------------------------------
 
 /// 未解清单。写文档时照抄。
 pub const UNKNOWNS: [&str; 6] = [
-    "token 边界判据：move_caret_* / delete_token_* 里内联的 0x3e90f0 调用序列各代表什么\
-（字符类判定？只看左右各一个字符？），未逐指令还原 ⇒ 只固定“N 次退格”，不固定 N 的算法。",
+    "token 边界判据（第 1 条）：**T80 已解开** —— 八张立即数表见 \
+`DELETE_TOKEN_TOKENS_AT_CARET` / `DELETE_TOKEN_TOKENS_AFTER_CARET`。残留未知两项：\
+①`0x3e90f0` 取切片时按 **char** 还是按 **byte** 下标（表全是 ASCII ⇒ 结果相同，\
+但非 ASCII 文本下两者会分叉，缺一条非 ASCII 的运行时观测）；②`0x4f4410` 命中后 caret 的\
+最终位置（`delete_char_at_caret` 是引擎侧，未见其返回值）。",
     "`'^'` 的附加条件：gui_input 0x4feeeb–0x4fef06 三次读引擎属性（字符串 \"upcast_ref\" \
 经 0x407350）后与 '^' 比较，条件语义未知（shift？键盘布局？caret 是否为空？）。",
     "FN_CALL_FIRE 的 dyn 回调类型：[rdi+0x68] / [rax+0x20] 是个弱引用 trait 对象；\
@@ -849,18 +1004,385 @@ weak_caller 模块有同类 idiom，但没有证据把它钉死。",
     "move_caret_end / move_caret_home / insert_text_at_caret / delete_chars_at_caret / clear / \
 update_sizes 在 2.0.60 里**没有独立函数体**（name_to_addr.tsv 也把它们标“未知/歧义”）：\
 要么被内联进调用者，要么只以 gdext Callable 形式存在。本文件只按“被谁调用”记录语义。",
-    "FN_REGISTER_A..E 这 5 个 gdext 注册驱动各自注册的是 methods / constants / properties / \
-signals / virtuals 的哪一张表：形状（once 锁 + 遍历静态表）可观测，表的归属未逐项还原。\
-name_to_addr.tsv 把 __register_constants 标为“歧义”，候选正是 0x4e6dc0 / 0x4e6f40 / \
-0x4e9ee0 / 0x4ea2d0 这四个，本轮未能消歧。",
+    "FN_REGISTER_A..E 的表归属：T80 把 **A/B 定成 methods / constants 这一对**（同一个 3 指令 \
+thunk `0x40e670` 先 `call *0x9bb620`(A) 再 `jmp *0x9bb628`(B)；arm64 每类恰好两条 \
+`ImplementsGodotApi::__register_methods` / `__register_constants`，methods 地址更低）。\
+残留未知：C/D/E 各是哪一类 `_::__init::__inner_init`（4 槽相邻表里各占一槽，缺 gdext 版本的 \
+vtable 槽序对齐）；静态表 `[0x9c1088]/[0x9c1090]` 的**填充者**（`.data` 初值为零 ⇒ 静态状态下\
+不迭代，写者未知）。",
     "process（0x4fd4a0；6.4 KB / 60 个基本块）的逐块语义：已确认它两次 \
 call(\"force_update_cb\")、引用 src/graphwar_game_client.rs:152 的借用位置、入口构造 \
 \"src/graphwar_function_input.rs:519\" 位置串，但没有把与 game_client 的数据流画完。",
 ];
 
+// ---------------------------------------------------------------------------
+// T80. gdext 登记存储 / 注册驱动 / `__init::__inner_init`（本轮落码的 6 条宏产物）
+// ---------------------------------------------------------------------------
+//
+// 这 6 条是 `GraphwarFunctionInput` 的**宏产物**：源码层对应物是 `#[derive(GodotClass)]` /
+// `#[godot_api]` 属性，不是手写 fn（`tools/function_coverage.py` 的 R3 判法）。本仓把每条
+// **机器函数**落成一个 fn：文档给该机器函数的 FDE / `panic::Location` / `.data` 静态槽 /
+// 重定位槽 / 调用链，函数体复述它的**可观测动作**（遍历登记表 / 依次调用胶水）。
+// 台账：`fixtures/f3_rest_anchors.tsv`；审计：`docs/06` §122。
+//
+// ## `__registration_storage::STORAGE`（arm64 每类一份 56 B）
+//
+// arm64 `.symtab`：`GraphwarFunctionInput::__registration_storage::STORAGE` @ arm64 `0x8b4220`
+// （56 B；`tools/arm64_sym.py find __registration_storage` 共 12 份，每类一份）。
+// x86 侧同构的 `.data` 静态块（**观测**：每条地址都是本节某条指令的 rip 目标）：
+//
+// | 偏移 | x86 地址 | 读者 | 语义 |
+// |---|---|---|---|
+// | +0x00 | `0x9c1078` | 两条注册驱动的 `lock cmpxchg` / `xchg` | 状态字（原子） |
+// | +0x04 | `0x9c107c` | `movzx` 读 / `mov byte,1` 写 | poison 字节 |
+// | +0x10 | `0x9c1088` | `__register_methods` | 表 A 指针 |
+// | +0x18 | `0x9c1090` | `__register_methods` | 表 A 长度 |
+// | +0x20 | `0x9c1098` | 读全 8 槽那条 `__init::__inner_init` | 未定 |
+// | +0x28 | `0x9c10a0` | `__register_constants` | 表 B 指针 |
+// | +0x30 | `0x9c10a8` | `__register_constants` | 表 B 长度 |
+//
+// ⚠️ `.data` 初值（直接读 ELF）：`[0x9c1088]` = **8**、`[0x9c1090]` = **0**、
+// `[0x9c10a0]` = **8**、`[0x9c10a8]` = **0** ⇒ 指针初值不是合法指针、长度初值为 0 ⇒ **静态初值下循环不执行**；表在运行期被填充（填充者未知）。
+// 表的**填充者未知**（`UNKNOWNS` 里有这一条；缺运行时观测）。
+//
+// ## 两条注册驱动的名字 = **推断**；体 = 观测
+//
+// 它们被**同一个 3 指令 thunk** 依次取用：`0x40e670`: `push rax` /
+// `call *0x9bb620` / `pop rax` / `jmp *0x9bb628` ⇒ A 先于 B。
+// arm64 `.symtab` 每类恰好两条 `ImplementsGodotApi::__register_methods` /
+// `::__register_constants`（各 400 B，methods 地址更低）；Windows 2.0.60 COFF 同名两条
+// （`fixtures/windows_name_to_addr.tsv`，`无一对一锚`）。⇒ A = `__register_methods`、
+// B = `__register_constants`。**顺序是观测，名字本身仍是推断**（缺 gdext 版本的 trait 声明序）。
+
+/// 表 A 的两个 `.data` 槽：`(指针, 长度)` —— `__register_methods` 读它们。
+pub const REGISTER_METHODS_TABLE_SLOTS: (u64, u64) = (0x9c1088, 0x9c1090);
+/// 表 B 的两个 `.data` 槽：`(指针, 长度)` —— `__register_constants` 读它们。
+pub const REGISTER_CONSTANTS_TABLE_SLOTS: (u64, u64) = (0x9c10a0, 0x9c10a8);
+/// 依次取用这两条注册驱动的 thunk：`push rax` / `call *A` / `pop rax` / `jmp *B`。
+pub const REGISTER_THUNK: u64 = 0x40e670;
+/// 两条注册驱动在重定位表里的槽（A = methods，B = constants）。
+pub const REGISTER_SLOTS: (u64, u64) = (0x9bb620, 0x9bb628);
+
+/// 一条 gdext 胶水 / 引擎调用（原版 `call` 指令）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GlueCall {
+    /// 调用点（vaddr）。
+    pub site: u64,
+    /// 被调者（vaddr）；间接调用时是重定位槽的 addend。
+    pub target: u64,
+    /// 间接调用经过的重定位槽（直接 `call rel32` 时为 0）。
+    pub slot: u64,
+}
+
+/// gdext 胶水的宿主：原版每条 `call` 直接落到引擎 / gdext；本仓把它抽象成一个动作。
+pub trait GlueHost {
+    /// 执行一条调用。
+    fn call(&mut self, c: GlueCall);
+}
+
+/// 按地址顺序把该机器函数 FDE 内**全部** `call` 指令交给宿主，返回条数。
+///
+/// ⚠️ 清单是**普查**（census）：panic 冷臂、drop、全局构造的调用**都在里面**。
+/// 「哪几条属于直线路径」本轮没做控制流分析 ⇒ 清单**不是**执行序列（档位：清单=观测，
+/// 直线划分=未知）。
+pub fn replay_calls(calls: &[GlueCall], host: &mut dyn GlueHost) -> usize {
+    for c in calls {
+        host.call(*c);
+    }
+    calls.len()
+}
+
+/// 遍历一张「登记项表」并逐项调用，返回条数。
+///
+/// 原版的表是 `(ptr,len)` 两个静态槽（见本节 `STORAGE` 表）；这里把它作为参数表达 ——
+/// 本仓没有「gdext 全局登记存储」这一层（宏产物，见 `AGENTS.md` §4）。
+pub fn run_register_table(table: &[fn()]) -> usize {
+    for f in table {
+        f();
+    }
+    table.len()
+}
+
+/// `0x4e6dc0` —— `GraphwarFunctionInput::__register_methods`（**名字推断**，**体观测**）
+///
+/// FDE `0x4e6dc0..0x4e6f39`（`0x179` = 377 B）；`panic::Location` = `src/graphwar_function_input.rs:434:1`。
+/// 重定位槽 `0x9bb620`（同一 thunk 的 A 半）。
+///
+/// ```text
+/// 0x4e6dd4  lock cmpxchg dword ptr [rip + 0x4da29c], ecx  @0x9c1078 (<bin 0000000000000000>)
+/// 0x4e6dfa  movzx   eax, byte ptr [rip + 0x4da27b]   @0x9c107c (<bin 0000000000000000>)
+/// 0x4e6e09  mov     r15, qword ptr [rip + 0x4da280]  @0x9c1090 (<bin 0000000000000000>)
+/// 0x4e6e15  mov     r12, qword ptr [rip + 0x4da26c]  @0x9c1088 (<bin 0800000000000000>)
+/// 0x4e6e30  call    qword ptr [r12 + r13]
+/// 0x4e6e41  movabs  rax, 0x7fffffffffffffff          imm=0x7fffffffffffffff
+/// 0x4e6e59  xchg    dword ptr [rip + 0x4da219], eax  @0x9c1078 (<bin 0000000000000000>)
+/// 0x4e6efa  mov     byte ptr [rip + 0x4da17b], 1     @0x9c107c (<bin 0000000000000000>)
+/// ```
+///
+/// 状态机（逐条在上面）：抢状态字 → poison 字节检查 → **遍历表 A**（`call *(%r12,%r13)`，步长 8）
+/// → `xchg` 释放（老值 == 2 走唤醒）→ poison 时置字节 1；poison 后再进入走
+/// `Result::unwrap()` 的 Err 臂（panic 面 `0x1c3b13`）。
+///
+/// 落码：只落「逐项遍历登记表」这一步（状态机 / 唤醒 / poison panic 在本仓没有对应层，
+/// 见本节文档与 `UNKNOWNS`）。档位：**观测**（体）+ **推断**（名）。
+pub fn register_methods(table: &[fn()]) -> usize {
+    // 0x4e6dc0 本函数起点；FDE 0x4e6dc0..0x4e6f39（377 B）
+    // 0x4e6e30  call qword ptr [r12 + r13]   ← 本行模型：逐项调用表 A
+    run_register_table(table)
+}
+
+/// `0x4e6f40` —— `GraphwarFunctionInput::__register_constants`（**名字推断**，**体观测**）
+///
+/// 与 [`register_methods`] **逐指令同形**，唯一差别 = 读的是**表 B**
+/// （`0x9c10a0` 指针 / `0x9c10a8` 长度）。FDE `0x4e6f40..0x4e70b9`
+/// （`0x179` = 377 B）；`panic::Location` = `src/graphwar_function_input.rs:434:1`；重定位槽 `0x9bb628`。
+/// 档位：**观测**（体）+ **推断**（名）。
+pub fn register_constants(table: &[fn()]) -> usize {
+    // 0x4e6f40 本函数起点；FDE 0x4e6f40..0x4e70b9（377 B）
+    // 与 register_methods 同形：表 B 的指针/长度 = 0x9c10a0 / 0x9c10a8
+    run_register_table(table)
+}
+
+/// `0x4e9ee0` —— `GraphwarFunctionInput` 的 `_::__init::__inner_init`（Location `434:1`）
+///
+/// FDE `0x4e9ee0..0x4ea07c`（`0x19c` = 412 B）；重定位槽 `0x9ba388`
+/// （该类 4 个 `__init::__inner_init` 落在连续 4 槽里，见本节文档头）。
+/// 名字 / 归属：**推断**（4 槽连续 + arm64 每类 4 个同名符号；缺 gdext vtable 槽序对齐）。
+///
+/// 调用链（顺序 = 指令顺序，逐条见 [`INNER_INIT_L434A_CALLS`]）：
+/// * `0x4e9f4d` `call 0x460bb0`（槽 0x9baaf0）
+/// * `0x4e9fc4` `call 0x8f5cc0`（槽 0x9ba9c8）
+/// * `0x4e9fcf` `call 0x907300`（槽 0x9ba9d0）
+/// * `0x4ea00c` `call 0x925430`（槽 0x9ba678）
+/// * `0x4ea014` `call 0x4ffcda`
+/// * `0x4ea025` `call 0x8f5db0`（槽 0x9ba9d8）
+/// * `0x4ea02d` `call 0x907300`（槽 0x9ba9d0）
+/// * `0x4ea045` `call 0x925623`（槽 0x9ba668）
+/// * `0x4ea04b` `call 0x925623`（槽 0x9ba668）
+/// * `0x4ea05b` `call 0x501080`
+/// * `0x4ea062` `call 0x9254ab`（槽 0x9ba5b8）
+/// * `0x4ea06b` `call 0x501230`
+/// * `0x4ea070` `call 0x925623`（槽 0x9ba668）
+/// * `0x4ea076` `call 0x9254ab`（槽 0x9ba5b8）
+///
+/// 档位：**观测**（体：FDE + 槽 + 每条 `call`）。
+pub fn inner_init_l434a(host: &mut dyn GlueHost) -> usize {
+    // 0x4e9ee0 本函数起点；FDE 0x4e9ee0..0x4ea07c（412 B）
+    replay_calls(INNER_INIT_L434A_CALLS, host)
+}
+
+pub const INNER_INIT_L434A_CALLS: &[GlueCall] = &[
+    // 0x4e9f4d: call 0x460bb0（经槽 0x9baaf0）
+    GlueCall { site: 0x4e9f4d, target: 0x460bb0, slot: 0x9baaf0 },
+    // 0x4e9fc4: call 0x8f5cc0（经槽 0x9ba9c8）
+    GlueCall { site: 0x4e9fc4, target: 0x8f5cc0, slot: 0x9ba9c8 },
+    // 0x4e9fcf: call 0x907300（经槽 0x9ba9d0）
+    GlueCall { site: 0x4e9fcf, target: 0x907300, slot: 0x9ba9d0 },
+    // 0x4ea00c: call 0x925430（经槽 0x9ba678）
+    GlueCall { site: 0x4ea00c, target: 0x925430, slot: 0x9ba678 },
+    // 0x4ea014: call 0x4ffcda（直接）
+    GlueCall { site: 0x4ea014, target: 0x4ffcda, slot: 0x0 },
+    // 0x4ea025: call 0x8f5db0（经槽 0x9ba9d8）
+    GlueCall { site: 0x4ea025, target: 0x8f5db0, slot: 0x9ba9d8 },
+    // 0x4ea02d: call 0x907300（经槽 0x9ba9d0）
+    GlueCall { site: 0x4ea02d, target: 0x907300, slot: 0x9ba9d0 },
+    // 0x4ea045: call 0x925623（经槽 0x9ba668）
+    GlueCall { site: 0x4ea045, target: 0x925623, slot: 0x9ba668 },
+    // 0x4ea04b: call 0x925623（经槽 0x9ba668）
+    GlueCall { site: 0x4ea04b, target: 0x925623, slot: 0x9ba668 },
+    // 0x4ea05b: call 0x501080（直接）
+    GlueCall { site: 0x4ea05b, target: 0x501080, slot: 0x0 },
+    // 0x4ea062: call 0x9254ab（经槽 0x9ba5b8）
+    GlueCall { site: 0x4ea062, target: 0x9254ab, slot: 0x9ba5b8 },
+    // 0x4ea06b: call 0x501230（直接）
+    GlueCall { site: 0x4ea06b, target: 0x501230, slot: 0x0 },
+    // 0x4ea070: call 0x925623（经槽 0x9ba668）
+    GlueCall { site: 0x4ea070, target: 0x925623, slot: 0x9ba668 },
+    // 0x4ea076: call 0x9254ab（经槽 0x9ba5b8）
+    GlueCall { site: 0x4ea076, target: 0x9254ab, slot: 0x9ba5b8 },
+];
+
+/// `0x4ea080` —— `GraphwarFunctionInput` 的 `_::__init::__inner_init`（Location `466:1`）
+///
+/// FDE `0x4ea080..0x4ea2c5`（`0x245` = 581 B）；重定位槽 `0x9ba390`
+/// （该类 4 个 `__init::__inner_init` 落在连续 4 槽里，见本节文档头）。
+/// 名字 / Location：**观测**（`fixtures/windows_name_to_addr.tsv` 的 `唯一锚`）。
+///
+/// 调用链（顺序 = 指令顺序，逐条见 [`INNER_INIT_L466_CALLS`]）：
+/// * `0x4ea14c` `call 0x460bb0`（槽 0x9baaf0）
+/// * `0x4ea20d` `call 0x8f5cc0`（槽 0x9ba9c8）
+/// * `0x4ea218` `call 0x907300`（槽 0x9ba9d0）
+/// * `0x4ea255` `call 0x925430`（槽 0x9ba678）
+/// * `0x4ea25d` `call 0x4ffcda`
+/// * `0x4ea26e` `call 0x8f5db0`（槽 0x9ba9d8）
+/// * `0x4ea276` `call 0x907300`（槽 0x9ba9d0）
+/// * `0x4ea28e` `call 0x925623`（槽 0x9ba668）
+/// * `0x4ea294` `call 0x925623`（槽 0x9ba668）
+/// * `0x4ea2a4` `call 0x501080`
+/// * `0x4ea2ab` `call 0x9254ab`（槽 0x9ba5b8）
+/// * `0x4ea2b4` `call 0x501230`
+/// * `0x4ea2b9` `call 0x925623`（槽 0x9ba668）
+/// * `0x4ea2bf` `call 0x9254ab`（槽 0x9ba5b8）
+///
+/// 档位：**观测**（体：FDE + 槽 + 每条 `call`）。
+pub fn inner_init_l466(host: &mut dyn GlueHost) -> usize {
+    // 0x4ea080 本函数起点；FDE 0x4ea080..0x4ea2c5（581 B）
+    replay_calls(INNER_INIT_L466_CALLS, host)
+}
+
+pub const INNER_INIT_L466_CALLS: &[GlueCall] = &[
+    // 0x4ea14c: call 0x460bb0（经槽 0x9baaf0）
+    GlueCall { site: 0x4ea14c, target: 0x460bb0, slot: 0x9baaf0 },
+    // 0x4ea20d: call 0x8f5cc0（经槽 0x9ba9c8）
+    GlueCall { site: 0x4ea20d, target: 0x8f5cc0, slot: 0x9ba9c8 },
+    // 0x4ea218: call 0x907300（经槽 0x9ba9d0）
+    GlueCall { site: 0x4ea218, target: 0x907300, slot: 0x9ba9d0 },
+    // 0x4ea255: call 0x925430（经槽 0x9ba678）
+    GlueCall { site: 0x4ea255, target: 0x925430, slot: 0x9ba678 },
+    // 0x4ea25d: call 0x4ffcda（直接）
+    GlueCall { site: 0x4ea25d, target: 0x4ffcda, slot: 0x0 },
+    // 0x4ea26e: call 0x8f5db0（经槽 0x9ba9d8）
+    GlueCall { site: 0x4ea26e, target: 0x8f5db0, slot: 0x9ba9d8 },
+    // 0x4ea276: call 0x907300（经槽 0x9ba9d0）
+    GlueCall { site: 0x4ea276, target: 0x907300, slot: 0x9ba9d0 },
+    // 0x4ea28e: call 0x925623（经槽 0x9ba668）
+    GlueCall { site: 0x4ea28e, target: 0x925623, slot: 0x9ba668 },
+    // 0x4ea294: call 0x925623（经槽 0x9ba668）
+    GlueCall { site: 0x4ea294, target: 0x925623, slot: 0x9ba668 },
+    // 0x4ea2a4: call 0x501080（直接）
+    GlueCall { site: 0x4ea2a4, target: 0x501080, slot: 0x0 },
+    // 0x4ea2ab: call 0x9254ab（经槽 0x9ba5b8）
+    GlueCall { site: 0x4ea2ab, target: 0x9254ab, slot: 0x9ba5b8 },
+    // 0x4ea2b4: call 0x501230（直接）
+    GlueCall { site: 0x4ea2b4, target: 0x501230, slot: 0x0 },
+    // 0x4ea2b9: call 0x925623（经槽 0x9ba668）
+    GlueCall { site: 0x4ea2b9, target: 0x925623, slot: 0x9ba668 },
+    // 0x4ea2bf: call 0x9254ab（经槽 0x9ba5b8）
+    GlueCall { site: 0x4ea2bf, target: 0x9254ab, slot: 0x9ba5b8 },
+];
+
+/// `0x4ea2d0` —— `GraphwarFunctionInput` 的 `_::__init::__inner_init`（Location `434:1`）
+///
+/// FDE `0x4ea2d0..0x4ea478`（`0x1a8` = 424 B）；重定位槽 `0x9ba380`
+/// （该类 4 个 `__init::__inner_init` 落在连续 4 槽里，见本节文档头）。
+/// 名字 / 归属：**推断**（4 槽连续 + arm64 每类 4 个同名符号；缺 gdext vtable 槽序对齐）。
+///
+/// 调用链（顺序 = 指令顺序，逐条见 [`INNER_INIT_L434B_CALLS`]）：
+/// * `0x4ea32c` `call 0x8c5120`（槽 0x9baaf8）
+/// * `0x4ea365` `call 0x8c5120`（槽 0x9baaf8）
+/// * `0x4ea3bf` `call 0x8f5cc0`（槽 0x9ba9c8）
+/// * `0x4ea3ca` `call 0x907300`（槽 0x9ba9d0）
+/// * `0x4ea410` `call 0x925430`（槽 0x9ba678）
+/// * `0x4ea41f` `call 0x8f5db0`（槽 0x9ba9d8）
+/// * `0x4ea427` `call 0x907300`（槽 0x9ba9d0）
+/// * `0x4ea441` `call 0x925623`（槽 0x9ba668）
+/// * `0x4ea447` `call 0x925623`（槽 0x9ba668）
+/// * `0x4ea457` `call 0x501150`
+/// * `0x4ea45e` `call 0x9254ab`（槽 0x9ba5b8）
+/// * `0x4ea467` `call 0x501230`
+/// * `0x4ea46c` `call 0x925623`（槽 0x9ba668）
+/// * `0x4ea472` `call 0x9254ab`（槽 0x9ba5b8）
+///
+/// 档位：**观测**（体：FDE + 槽 + 每条 `call`）。
+pub fn inner_init_l434b(host: &mut dyn GlueHost) -> usize {
+    // 0x4ea2d0 本函数起点；FDE 0x4ea2d0..0x4ea478（424 B）
+    replay_calls(INNER_INIT_L434B_CALLS, host)
+}
+
+pub const INNER_INIT_L434B_CALLS: &[GlueCall] = &[
+    // 0x4ea32c: call 0x8c5120（经槽 0x9baaf8）
+    GlueCall { site: 0x4ea32c, target: 0x8c5120, slot: 0x9baaf8 },
+    // 0x4ea365: call 0x8c5120（经槽 0x9baaf8）
+    GlueCall { site: 0x4ea365, target: 0x8c5120, slot: 0x9baaf8 },
+    // 0x4ea3bf: call 0x8f5cc0（经槽 0x9ba9c8）
+    GlueCall { site: 0x4ea3bf, target: 0x8f5cc0, slot: 0x9ba9c8 },
+    // 0x4ea3ca: call 0x907300（经槽 0x9ba9d0）
+    GlueCall { site: 0x4ea3ca, target: 0x907300, slot: 0x9ba9d0 },
+    // 0x4ea410: call 0x925430（经槽 0x9ba678）
+    GlueCall { site: 0x4ea410, target: 0x925430, slot: 0x9ba678 },
+    // 0x4ea41f: call 0x8f5db0（经槽 0x9ba9d8）
+    GlueCall { site: 0x4ea41f, target: 0x8f5db0, slot: 0x9ba9d8 },
+    // 0x4ea427: call 0x907300（经槽 0x9ba9d0）
+    GlueCall { site: 0x4ea427, target: 0x907300, slot: 0x9ba9d0 },
+    // 0x4ea441: call 0x925623（经槽 0x9ba668）
+    GlueCall { site: 0x4ea441, target: 0x925623, slot: 0x9ba668 },
+    // 0x4ea447: call 0x925623（经槽 0x9ba668）
+    GlueCall { site: 0x4ea447, target: 0x925623, slot: 0x9ba668 },
+    // 0x4ea457: call 0x501150（直接）
+    GlueCall { site: 0x4ea457, target: 0x501150, slot: 0x0 },
+    // 0x4ea45e: call 0x9254ab（经槽 0x9ba5b8）
+    GlueCall { site: 0x4ea45e, target: 0x9254ab, slot: 0x9ba5b8 },
+    // 0x4ea467: call 0x501230（直接）
+    GlueCall { site: 0x4ea467, target: 0x501230, slot: 0x0 },
+    // 0x4ea46c: call 0x925623（经槽 0x9ba668）
+    GlueCall { site: 0x4ea46c, target: 0x925623, slot: 0x9ba668 },
+    // 0x4ea472: call 0x9254ab（经槽 0x9ba5b8）
+    GlueCall { site: 0x4ea472, target: 0x9254ab, slot: 0x9ba5b8 },
+];
+
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- T80：gdext 宏产物落码的自校验（期望值全部来自反汇编）-----------------
+
+    /// 记录宿主：把收到的调用按顺序存下来。
+    struct Recorder(Vec<GlueCall>);
+    impl GlueHost for Recorder {
+        fn call(&mut self, c: GlueCall) {
+            self.0.push(c);
+        }
+    }
+
+    /// `__register_methods` / `__register_constants` 同形：只落「遍历登记表」。
+    #[test]
+    fn register_tables_are_run_entry_by_entry() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static HITS: AtomicUsize = AtomicUsize::new(0);
+        fn t1() {
+            HITS.fetch_add(1, Ordering::SeqCst);
+        }
+        fn t2() {
+            HITS.fetch_add(10, Ordering::SeqCst);
+        }
+        let table: [fn(); 2] = [t1, t2];
+        assert_eq!(run_register_table(&table), 2);
+        assert_eq!(HITS.load(Ordering::SeqCst), 11);
+        assert_eq!(run_register_table(&[]), 0);
+    }
+
+    /// 表槽 / thunk / 重定位槽：每个数都是本节某条指令的 rip 目标。
+    #[test]
+    fn storage_slots_and_thunk_are_the_disassembly_constants() {
+        assert_eq!(REGISTER_THUNK & 0xf, 0, "thunk 表 16 字节对齐");
+        assert_eq!(REGISTER_SLOTS.1 - REGISTER_SLOTS.0, 8, "A/B 两个槽相邻");
+        assert_eq!(REGISTER_METHODS_TABLE_SLOTS.1 - REGISTER_METHODS_TABLE_SLOTS.0, 8);
+        assert_eq!(REGISTER_CONSTANTS_TABLE_SLOTS.1 - REGISTER_CONSTANTS_TABLE_SLOTS.0, 8);
+    }
+
+    /// 每条 `__init::__inner_init` 的调用**普查**条数（从各自指令流数出来的）。
+    #[test]
+    fn inner_init_call_census_matches_the_disassembly() {
+        assert_eq!(INNER_INIT_L434A_CALLS.len(), 14, "l434a 的 call 普查条数");
+        assert_eq!(INNER_INIT_L466_CALLS.len(), 14, "l466 的 call 普查条数");
+        assert_eq!(INNER_INIT_L434B_CALLS.len(), 14, "l434b 的 call 普查条数");
+    }
+
+    /// 普查里的每条调用点必须落在**该函数自己的 FDE** 内。
+    #[test]
+    fn inner_init_call_sites_lie_inside_their_own_fde() {
+        for c in INNER_INIT_L434A_CALLS {
+            assert!((0x4e9ee0..0x4ea07c).contains(&c.site), "l434a: {:#x} 不在 FDE", c.site);
+        }
+        for c in INNER_INIT_L466_CALLS {
+            assert!((0x4ea080..0x4ea2c5).contains(&c.site), "l466: {:#x} 不在 FDE", c.site);
+        }
+        for c in INNER_INIT_L434B_CALLS {
+            assert!((0x4ea2d0..0x4ea478).contains(&c.site), "l434b: {:#x} 不在 FDE", c.site);
+        }
+    }
 
     #[test]
     fn seven_unique_anchors_are_exactly_the_named_functions() {
@@ -1085,6 +1607,123 @@ mod tests {
         assert_eq!(CARET_CHAR, '^');
         assert_eq!(FOLD_TABLE_RANGE, ('\u{00b2}', '\u{0177}'));
     }
+
+    // ---- token 删除（T80：`0x4f44c0` / `0x4f4a60` 的立即数表）-------------
+
+    /// 期望值**逐条来自反汇编立即数**（不是照抄我方实现）：
+    /// `0x4f462a mov $0x74727173`+`xor byte[r12+4],0x28` = `sqrt(`；
+    /// `0x4f46a2..0x4f46d4` 六个 `cmp dword`；`0x4f4753..0x4f4801` 七组 `xor word`+`xor byte`；
+    /// `0x4f4870..0x4f48ad` 七个 `cmp word`。
+    #[test]
+    fn at_caret_tables_are_the_disassembly_immediates() {
+        assert_eq!(
+            DELETE_TOKEN_TOKENS_AT_CARET,
+            [
+                (5, &["sqrt("][..]),
+                (4, &["abs(", "sin(", "cos(", "tan(", "exp(", "sqrt"][..]),
+                (3, &["ln(", "abs", "sin", "cos", "tan", "exp", "sqr"][..]),
+                (2, &["ln", "ab", "si", "co", "ta", "ex", "sq"][..]),
+            ]
+        );
+    }
+
+    /// `0x4f4ca7 cmp dword,0x28747271` = `qrt(`（4 档）；`0x4f4eed cmp word,0x286e` = `n(`（2 档）。
+    #[test]
+    fn after_caret_tables_carry_the_half_token_suffixes() {
+        assert_eq!(
+            DELETE_TOKEN_TOKENS_AFTER_CARET,
+            [
+                (5, &["sqrt("][..]),
+                (
+                    4,
+                    &["abs(", "sin(", "cos(", "tan(", "exp(", "sqrt", "qrt("][..]
+                ),
+                (3, &["ln(", "qrt", "bs(", "in(", "os(", "an(", "xp(", "rt("][..]),
+                (
+                    2,
+                    &["n(", "ln", "bs", "in", "os", "an", "xp", "rt", "s(", "p(", "t("][..]
+                ),
+            ]
+        );
+    }
+
+    /// 每一档的 token 都真的能命中；末尾的 caret 在末尾 ⇒ 按"最长档"命中。
+    #[test]
+    fn every_at_caret_token_is_recognised_with_its_own_length() {
+        for (n, tokens) in DELETE_TOKEN_TOKENS_AT_CARET.iter() {
+            for t in tokens.iter() {
+                let text = format!("x+{t}");
+                assert_eq!(
+                    token_len_at_caret(&text, text.chars().count()),
+                    *n,
+                    "token {t:?} 应删 {n} 个"
+                );
+            }
+        }
+    }
+
+    /// 默认臂：`0x4f48c7 mov esi,1` —— 表外的字符只删 1 个。
+    #[test]
+    fn at_caret_default_arm_deletes_one() {
+        assert_eq!(token_len_at_caret("x+y", 3), 1);
+        assert_eq!(token_len_at_caret("x+z", 3), 1);
+        assert_eq!(token_len_at_caret("", 0), 1, "原版由 0x4f4410 吸收空删");
+        // 长度不够就落到更短的档：caret=3 时 "sin" 无法匹配（左边只有 3 个字符 ⇒ 恰好命中 3 档）
+        assert_eq!(token_len_at_caret("sin", 3), 3);
+        assert_eq!(token_len_at_caret("in", 2), 1, "「in」不在 2 档表里（只有 in( 在 3 档）");
+    }
+
+    /// 端到端：`Buffer` 上的删除效果（`0x4f4410` 的 N 次退格）。
+    #[test]
+    fn buffer_deletes_whole_tokens_leftwards() {
+        let mut b = Buffer::with_caret_at_end("x+sin(");
+        assert_eq!(b.delete_token_at_caret(), 4);
+        assert_eq!(b.text(), "x+");
+        let mut b = Buffer::with_caret_at_end("x+sqrt");
+        assert_eq!(b.delete_token_at_caret(), 4);
+        assert_eq!(b.text(), "x+");
+        let mut b = Buffer::with_caret_at_end("x+sqrt(");
+        assert_eq!(b.delete_token_at_caret(), 5);
+        assert_eq!(b.text(), "x+");
+        let mut b = Buffer::with_caret_at_end("x+sq");
+        assert_eq!(b.delete_token_at_caret(), 2);
+        assert_eq!(b.text(), "x+");
+        let mut b = Buffer::with_caret_at_end("x+q");
+        assert_eq!(b.delete_token_at_caret(), 1);
+        assert_eq!(b.text(), "x+");
+    }
+
+    /// 右删：候选是 caret **右侧** n 个字符；命中后 caret 先右移 n 再退格（`0x4f4fcf`/`0x4f4fee`）。
+    #[test]
+    fn buffer_deletes_whole_tokens_rightwards() {
+        // caret 在 "s|qrt(" ⇒ 右侧 4 个字符 "qrt(" ⇒ 删 4
+        let mut b = Buffer::new("sqrt(x)");
+        b.move_caret_right(1);
+        assert_eq!(b.delete_token_after_caret(), 4);
+        assert_eq!(b.text(), "sx)");
+        // caret 在 "sq|rt(" ⇒ 右侧 3 个字符 "rt(" ⇒ 删 3
+        let mut b = Buffer::new("sqrt(x)");
+        b.move_caret_right(2);
+        assert_eq!(b.delete_token_after_caret(), 3);
+        assert_eq!(b.text(), "sqx)");
+        // caret 在 "s|in(" ⇒ 右侧 3 个字符 "in(" ⇒ 删 3
+        let mut b = Buffer::new("sin(x)");
+        b.move_caret_right(1);
+        assert_eq!(b.delete_token_after_caret(), 3);
+        assert_eq!(b.text(), "sx)");
+        // 表外字符 ⇒ 删 1
+        let mut b = Buffer::new("q+z");
+        assert_eq!(b.delete_token_after_caret(), 1);
+        assert_eq!(b.text(), "+z");
+    }
+
+    /// caret 已在末尾 ⇒ 原版在 `0x4f4f97 cmp rbx,r14 ; jbe` 直接结束，什么都不删。
+    #[test]
+    fn after_caret_at_end_is_a_noop() {
+        let mut b = Buffer::with_caret_at_end("x+sin(");
+        assert_eq!(b.delete_token_after_caret(), 0);
+        assert_eq!(b.text(), "x+sin(");
+    }
 }
 
 
@@ -1142,7 +1781,7 @@ mod node_class {
 //! | `pi`/`π` → `n`、小写化 | **不在输入框**，在 `MathFunction::new`（解析器） | **本类不做**（也不该做） | **观测** |
 //! | `gui_input` 的 28 条折叠 | 跳转表 `0x1c3d5c`，198 项里 28 项不落默认 | 调 [`graphwar_function_input::intent_for_key`]（同一张表） | **观测** |
 //! | `'^'` 的附加条件 | `0x4feeeb`–`0x4fef06` 三次读引擎属性，**语义未知** | `#[export] caret_condition : bool` 显式暴露，默认 `false` | 条件**未知**（缺那三次读的语义） |
-//! | token 边界（`move_caret_*` / `delete_token_*` 的 N） | 内联的 `0x3e90f0` 调用序列，**规则未解** | **没实现**（只提供 `buffer` 级别的 `#[func]` 走纯逻辑的 `Buffer`） | **未解**（`graphwar_function_input::UNKNOWNS` 第 1 条） |
+//! | token 边界（`delete_token_*` 的 N） | 四张立即数表（5/4/3/2 字符），见 `DELETE_TOKEN_TOKENS_*` | 调 `token_len_at_caret` / `token_len_after_caret`（同一份表） | **观测** |
 //! | `process` 那 6.4 KB | 两次 `call("force_update_cb")` + 与 `graphwar_game_client` 交互 | 只做"每帧 `force_update_cb`"，game_client 那半**没接** | 交互**未做** |
 //! | 提交路径 | `[+0x68]` 的 dyn 回调 `"fire"`，文本**原样** | 同（`Option<Box<dyn FnMut(&str)>>`），文本原样 | **观测** |
 //!

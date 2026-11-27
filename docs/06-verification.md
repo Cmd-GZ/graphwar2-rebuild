@@ -22888,3 +22888,203 @@ $PY tools/docsec.py check docs/06-verification.md
 5. **`GraphwarPlane` 的 23 字段逐字段边界**：精确尺寸 0x110 有了，但字段名/顺序（E2）仍缺 ⇒ 不许按尺寸反推字段集。
 6. **范围偏差（需 lead 知悉）**：本分支动了 `src/axis_drawer.rs`（**不在任务书「只动」清单里**），
    原因与改法见 §127.1；lead 已在本轮明确授权，回退注意事项也写在该 commit 的 message 里。
+
+## 128. T80 F3 落码第七批：六个模块 **35 条** F3 缺口函数的指令级复原 —— 函数级复原率 **275/527 → 310/527（58.8%）**、F3 **155 → 120**；并解开 `delete_token_*` 的 token 长度判据（2026-11-27，任务 `task-75` / 分支 `agent/f3-rest`）
+
+### 128.1 起点、终点与口径（分母 527 不变）
+
+| 口径 | 起点（`8aa8a8f`，我按 `fixtures/function_coverage.tsv` 独立复算） | 终点（本节提交后同样复算） |
+|---|---|---|
+| **F1 有实现+有物证** | **275**（52.2%） | **310**（58.8%） |
+| F2 有实现+无物证 | 97 | 97（未动） |
+| **F3 只有文件/骨架** | **155**（29.4%） | **120**（22.8%） |
+| F4 完全没有 | 0 | 0 |
+
+* 复算命令：`python3 tools/function_coverage.py --stats`（工具会重写 TSV；只看统计用 `--stats`）。
+* **不是"33 条"而是 35 条**：任务书按 `graphwar_function_input` **5** 条算，但我按
+  `fixtures/function_coverage.tsv` 的 `判档=F3` 实测该模块 **7** 条（= 5 条真缺口 + 2 条
+  `na:macro-generated` 的 `__register_*`）。六模块实测：`nodes 7 / plane 6 / long_press 5 /
+  function_input 7 / button 5 / ad_switch 5 = 35`。**任务书的 33 是子集**，我按 35 做并在
+  `fixtures/f3_rest_anchors.tsv` 表头写明这处口径差。
+* 本轮**没有碰** T71 的三个重模块（`function_evolutionator` / `root_node` / `lan_vbox`），
+  也没碰 `src/_scaffold/**`、`src/graphwar_turn_manager.rs`、`client/**`。
+
+### 128.2 六模块 F3 缺口：逐模块从 **100%** 清到 **0%**
+
+| 模块 | 原版函数数（`orig_funcs`） | F3 缺口（前 → 后） | 本轮落码 |
+|---|---|---|---|
+| `graphwar_nodes` | 11 | **7/11 → 0/11** | 7 条单态化 |
+| `graphwar_plane` | 10 | **6/10 → 0/10** | 2 注册驱动 + 4 `__init::__inner_init` |
+| `graphwar_long_press_animation` | 7 | **5/7 → 0/7** | 2 + 3 |
+| `graphwar_function_input` | 13 | **7/13 → 0/13** | 2 注册驱动 + 3 `__inner_init` + **2 条真游戏逻辑** |
+| `graphwar_button` | 6 | **5/6 → 0/6** | 2 + 3 |
+| `graphwar_ad_switch` | 6 | **5/6 → 0/6** | 2 + 3 |
+
+### 128.3 四个**结构性**发现（后面每条落码都靠它们）
+
+**D1 `__registration_storage::STORAGE`（每类一份 56 B）**。arm64 `.symtab` 里
+`<Class>::__registration_storage::STORAGE` 共 **12 份、每份 56 B**
+（`python3 tools/arm64_sym.py find __registration_storage`）。x86 侧同构的 `.data` 静态块
+**以"状态字"为基址**，7 个 qword 全部被某条指令读到过：
+
+| 偏移 | 读者 | 语义 |
+|---|---|---|
+| `+0x00` | 两条注册驱动的 `lock cmpxchg` / `xchg` | 状态字（原子） |
+| `+0x04` | `movzx` 读 / `mov byte,1` 写 | poison 字节 |
+| `+0x10` / `+0x18` | `__register_methods` 的 `mov r12` / `mov r15` | 表 A `(指针, 长度)` |
+| `+0x20` | 读全 8 槽那条 `__init::__inner_init` | 未定 |
+| `+0x28` / `+0x30` | `__register_constants` | 表 B `(指针, 长度)` |
+
+⚠️ **自纠**：第一版台账把基址写成 `0x9c0e40`（因为 `entity_drawer` 的注册驱动读过它）。
+逐个类核对后，**基址 = 状态字地址**（`plane 0x9c0e48` / `long_press 0x9c0eb8` /
+`button 0x9c0f98` / `ad_switch 0x9c1040` / `function_input 0x9c1078`），五个类**正好落在
+`0x38` 步长的格点上**（`0x9c0e48, 0x9c0e80, 0x9c0eb8, 0x9c0ef0, …`），与 arm64 的 56 B 一致。
+`.data` 实读初值：表指针槽 = 8、表长度槽 = 0 ⇒ **静态初值下循环体不执行**；表的填充者**未知**。
+
+**D2 两条注册驱动的名字**：每类两条 0x179 的函数，被**同一个 3 指令 thunk** 依次取用
+（`0x40e620/660/670/690/6a0`：`push rax` / `call *槽A` / `pop rax` / `jmp *槽B`）⇒ **A 先于 B**；
+arm64 每类恰好两条 `ImplementsGodotApi::__register_methods` / `::__register_constants`（各 400 B，
+methods 地址更低）、Windows 2.0.60 COFF 同名两条 ⇒ A=methods、B=constants。
+**顺序是观测，名字本身是推断**（缺 gdext 版本的 trait 声明序）。
+
+**D3 每类四个 `_::__init::__inner_init`**：arm64 每类恰好 4 个同名符号；x86 侧落在**连续 4 槽**
+的函数指针表里（如 button `0x9ba2f8/300/308/310`）。其中 **6 条**有 Windows 2.0.60 COFF
+`join_kind=唯一锚`（`plane 33:10 / 179:1`、`long_press 31:1`、`button 111:1`、`ad_switch 7:10`、
+`function_input 466:1`），另 6 条只能到"4 槽相邻 + 同族同形"⇒ **推断**。
+
+**D4 `delete_token_at_caret` / `delete_token_after_caret` 的 token 长度判据**（本轮最重要的一条
+**源码级新知识**）：此前 `src/graphwar_function_input.rs` 的 `UNKNOWNS[0]` 写着「规则未解、
+只固定 N 次退格」。实际是**四张写死在立即数里的字符串表**：
+
+| n | `delete_token_at_caret`（`0x4f44c0`） | 立即数证据 |
+|---|---|---|
+| 5 | `sqrt(` | `0x4f462a mov $0x74727173` + `0x4f4633 xor byte[r12+4],0x28` |
+| 4 | `abs( sin( cos( tan( exp( sqrt` | `0x4f46a2/4f46ac/4f46b6/4f46c0/4f46ca/4f46d4` 六个 `cmp dword` |
+| 3 | `ln( abs sin cos tan exp sqr` | `0x4f4753..0x4f4801` 七组 `xor word` + `xor byte[r12+2]` |
+| 2 | `ln ab si co ta ex sq` | `0x4f4870..0x4f48ad` 七个 `cmp word` |
+| 1 | 默认臂 | `0x4f48c7 mov esi,1` |
+
+`delete_token_after_caret`（`0x4f4a60`）用同一套名字但**多收"半截后缀"**
+（4 档 `qrt(`；3 档 `qrt/bs(/in(/os(/an(/xp(/rt(`；2 档 `n(/bs/in/os/an/xp/rt/s(/p(/t(`），
+因为 caret 落在 token 中间时右侧看到的就是这些后缀；命中后先把 caret 右移 n
+（`0x4f4fcf inc ebp` + `call *0x9bc318`）再退格 n 次（`0x4f4410` 只删左侧）。
+右移的溢出检查逐档不同（`cmp ebp,0x7ffffffc/0x7ffffffd/0x7ffffffe/0x7ffffffb` = `i32::MAX-(n-1)`）
+⇒ 印证"右移 n"。
+
+**语义（推断，理由在表里）**：这些 token 是函数名的**逐字符前缀** + 带左括号的完整形态
+（`sq`/`sqr` 是 `sqrt` 的前缀）；注意 `docs/03` 的语法表里有 `log` 而**删除表里没有** `log`
+（有 `ln`），这是两套口径的真实差异，**照抄二进制为准**。
+
+### 128.4 35 条落点（vaddr | 真名 | 我方落点 | 档位）
+
+| vaddr | 真名 / 归属 | 我方落点（`src/`） | 档位 |
+|---|---|---|---|
+| `0x3aaea0` `0x3ab290` `0x3ab390` `0x3ab490` `0x3ab690` `0x3ab790` `0x3ab890` | `get_node_by_name::<T>` 的第 1/4/5/6/8/9/11 个单态化（尾调 `0x3ad570/0x3ac770/0x3af0a0/0x3ac3e0/0x3ace90/0x3ac050/0x3adc50`） | `graphwar_nodes.rs::get_node_by_name_mono_01..07` | 观测 |
+| `0x4f44c0` | `GraphwarFunctionInput::delete_token_at_caret`（N1 唯一锚 `97:63`） | `graphwar_function_input.rs::DELETE_TOKEN_TOKENS_AT_CARET` + `token_len_at_caret` + `Buffer::delete_token_at_caret` | 观测 |
+| `0x4f4a60` | `GraphwarFunctionInput::delete_token_after_caret`（N1 唯一锚 `198:63`） | `DELETE_TOKEN_TOKENS_AFTER_CARET` + `token_len_after_caret` + `Buffer::delete_token_after_caret` | 观测 |
+| `0x4b2260`/`0x4b23e0` | `GraphwarPlane::__register_methods` / `__register_constants` | `graphwar_plane.rs::register_methods` / `register_constants` | 观测（体）+ 推断（名） |
+| `0x4bc490`/`0x4bc6b0`/`0x4bc860`/`0x4bcab0` | `GraphwarPlane` 的 4 份 `_::__init::__inner_init`（`33:10` / `68:1` / `179:1` / `68:1`） | `graphwar_plane.rs::inner_init_l33/l68a/l179/l68b` | 观测 / 推断（哪一份） |
+| `0x4d7bc0`/`0x4d7d40` + `0x4bd650`/`0x4bd800`/`0x4bda50` | `GraphwarLongPressAnimation` 的 2 注册驱动 + 3 `__inner_init` | `graphwar_long_press_animation.rs::register_methods/register_constants/inner_init_l17a/l31/l17b` | 同上 |
+| `0x4e6dc0`/`0x4e6f40` + `0x4e9ee0`/`0x4ea080`/`0x4ea2d0` | `GraphwarFunctionInput` 的 2 注册驱动 + 3 `__inner_init`（`434:1` ×2 / `466:1`） | `graphwar_function_input.rs::register_methods/register_constants/inner_init_l434a/l466/l434b` | 同上 |
+| `0x4e0e60`/`0x4e0fe0` + `0x4e8230`/`0x4e83d0`/`0x4e8580` | `GraphwarButton` 的 2 注册驱动 + 3 `__inner_init`（`83:1` ×2 / `111:1`） | `graphwar_button.rs::register_methods/register_constants/inner_init_l83a/l83b/l111` | 同上 |
+| `0x4e5100`/`0x4e5280` + `0x4e9af0`/`0x4e9730`/`0x4e98e0` | `GraphwarAdSwitch` 的 2 注册驱动 + 3 `__inner_init`（`14:1` ×2 / `7:10`） | `graphwar_ad_switch.rs::register_methods/register_constants/inner_init_l14a/l14c/l7` | 同上 |
+
+* **每一行的指令级细节**（FDE 范围 / 字节数 / `.rodata` 字面量 / `.data` 静态 / 重定位槽 /
+  调用者）在 `fixtures/f3_rest_anchors.tsv`（单独提交 `6ac805e`），39 行表头 + 35 行数据。
+* **宏产物"落码"的边界**（诚实说明）：`__register_*` 与 `__init::__inner_init` 的**源码层对应物
+  是 `#[derive(GodotClass)]` / `#[godot_api]` 属性**，不是手写 fn。本轮的落法是：文档给每条机器
+  函数的完整证据，函数体**只复述可观测动作**（遍历登记表 / 按地址顺序把 FDE 内的 `call` 普查
+  交给 `GlueHost`）。**没做的事**：状态机（抢状态字 / poison / 唤醒）没有建模，`__inner_init`
+  的调用清单是**普查**（含 panic 冷臂与 drop）不是执行序列 —— 这两点都在代码注释里写明，
+  并按 `tools/function_coverage.py` 的 R6 口径记入"1:1 边界"备注。
+
+### 128.5 判档变化：**恰好 35 条 F3→F1，零连带**
+
+```bash
+git show HEAD:fixtures/function_coverage.tsv | awk -F'\t' '!/^#/{print $1"\t"$7"\t"$8}' | sort > /tmp/old
+awk -F'\t' '!/^#/{print $1"\t"$7"\t"$8}' fixtures/function_coverage.tsv | sort > /tmp/new
+join -t$'\t' /tmp/old /tmp/new | awk -F'\t' '$2!=$4'      # ⇒ 35 行，全部 F3→F1
+join -t$'\t' /tmp/old /tmp/new | awk -F'\t' '$2!=$4' | wc -l   # 35
+```
+
+**没有**任何别的行改档（F2 97 一条没动、F4 仍 0）。指认方式：**33 条 = P2（地址引用贴到 fn）**
++ **2 条 = P1 name-soft**（`0x4f44c0` / `0x4f4a60`：我方同名方法 `Buffer::delete_token_at_caret` /
+`_after_caret` 先被名字命中，而原版这两个方法在 `GraphwarFunctionInput` 上 ⇒
+`type_check=renamed`、TSV 的"缺什么"列写明类型边界不同）。
+P2 的判法要求"地址出现在注释里，且该注释能贴到一个 fn"（`tools/function_coverage.py::attach_addr`），
+所以每个落码 fn 的**文档注释第一行就是 vaddr**，函数体内再写关键指令地址。
+
+### 128.6 新增单测（**25 条**，期望值全部来自反汇编立即数/分支）
+
+| 位置 | 条数 | 期望值来源 |
+|---|---|---|
+| `graphwar_function_input.rs` | 7 | 四张 token 表（每条 → 一条 `cmp/xor` 立即数）、默认臂 `esi=1`、`0x4f4f97` 的空操作 |
+| `graphwar_plane/long_press/function_input/button/ad_switch.rs` | 各 3（共 15） | 表槽 `±8` 相邻、thunk 16 字节对齐、每个 `__init` 的 call 普查条数与调用点落在自己 FDE 内 |
+| `graphwar_nodes.rs` | 3 | 与 `ACCESSORS` 1:1、7 条尾调地址逐个核对（`0x3aaf47→0x3ad570` 等）、11 个实例转发同一模型 |
+
+⚠️ 这些是**回归保护，不是复原证据**（`AGENTS.md` §0.2）；复原证据是 §128.3/§128.4 里的地址。
+
+### 128.7 门槛读数（本轮自跑）
+
+| 门槛 | 读数 |
+|---|---|
+| `cargo test --offline` | **1521 → 1545**（+24），0 failed / 0 ignored |
+| `cargo test --offline --features gdext-bindings` | **1651 → 1687**（+36），0 failed |
+| 三轴（`fire` / `batch` / `batch_conv`，冻结快照 401 份回放） | **647 / 647 / 637**（fire=内容命中 647、batch=内容命中 647、batch_conv 驱动 B 内容命中 637/1080） |
+| `python3 tools/coverage_matrix.py --check` | **OK**（改了 `src/` ⇒ 已重跑生成物：`src_fns 3787 → 3887`、`src_tree_sha256` 更新、六模块 `ours_funcs` 同步上涨） |
+| `python3 tools/check_doc_refs.py` | rc=**0** |
+| `python3 tools/boundary_audit.py --check` | **mismatch 0**（本轮未动归属，`fixtures/boundary_audit.tsv` 无 diff；match 441 / multi 86） |
+
+* **两条 cargo 读数为什么不等差**（+24 vs +36）：本轮在 `src/` 里新增 **25 个**单测定义，
+  但 `tests/*.rs` 用 `#[path]` 把模块源码**再编一遍**，同一定义会在每个包含它的测试二进制里
+  各计一次；`gdext-bindings` 下多出若干 gdext-gated 集成测试文件 ⇒ 重复计数更多。
+  这是仓库既有机制（不是本轮引入），所以两个读数**都比基线高**即为通过。
+
+* **基线口径**（任务书要求写清）：我 rebase 到 `8aa8a8f`（= 当前 master）后**先测基线**
+  ——`cargo 1521 / gdext 1651`（用 `git stash push -- src/` 剥掉本轮改动后实测），与任务书
+  说的"master 已因 T73 涨到 1521/1651 左右"一致；**不是**旧基线 1520/1650。
+
+### 128.8 遗留 / 未做（写清楚缺什么）
+
+1. **`STORAGE` 静态表的填充者未知**：`.data` 初值下长度为 0（循环不执行），谁在运行期填这两张表
+   没有静态证据。缺：frida 在原版启动时读 `0x9c0e58/0x9c0e60` 的写入者。
+2. **`__inner_init` 的"哪一份对应哪个 `impl I*` 块"**：4 槽相邻 + arm64 4 个同名符号只到"同族"，
+   缺 gdext 版本的 vtable/注册表槽序对齐。
+3. **`T` 是什么类型（`graphwar_nodes` 的 11 个单态化）**：仍缺 `class_id` 表；台账里只按尾调编号。
+4. **`0x3e90f0` 的索引口径**（char vs byte）：token 表全是 ASCII ⇒ 结果相同，非 ASCII 文本下会分叉，
+   缺一条非 ASCII 的运行时观测。
+5. **`move_caret_left/right` 的 N**：本文件第 7 节的 token 表是从 `delete_token_*` 两条函数里
+   读出来的；`move_caret_*`（`0x4f3210` / `0x4f3910`）是否用**同一套**表**本轮没验**
+   （它们的落码在 T42 做过，但 token 表没逐条对）—— 所以"四个编辑方法共用一套表"仍是**推断**。
+6. **宏产物落码的建模边界**（见 §128.4 末）：状态机与执行序列没建模，只落"可观测动作"。
+
+### 128.9 复跑命令（全套）
+
+```bash
+PY=/home/CG/Myprojects/graphwar2-rebuild/.reference/venv/bin/python
+export CARGO_HOME=$PWD/.reference/cargo-home CARGO_TARGET_DIR=$PWD/.reference/cargo-home/target
+export RUSTUP_HOME=$PWD/.reference/rustup PATH=$PWD/.reference/cargo-home/bin:$PATH
+
+# ① 台账涉及的单条取证
+$PY tools/addr_probe.py fde 0x4f44c0 ; $PY tools/addr_probe.py dis 0x4f44c0 | head -60
+$PY tools/addr_probe.py locs 0x4ea080 ; $PY tools/arm64_sym.py find __registration_storage
+objdump -d --start-address=0x4f4620 --stop-address=0x4f48e0 .reference/steam/2026-08-28/libgraphwarrust.so
+
+# ② 判档与计数
+$PY tools/function_coverage.py --stats
+# ③ 门槛
+cargo test --offline && cargo test --offline --features gdext-bindings
+COVERAGE_MATRIX_UPSTREAM=/home/CG/Myprojects/graphwar2-rebuild/.reference/upstream $PY tools/coverage_matrix.py --check
+$PY tools/boundary_audit.py --check && python3 tools/check_doc_refs.py && python3 tools/docsec.py check docs/06-verification.md
+```
+
+### 128.10 本节改正的旧结论
+
+1. **`src/graphwar_function_input.rs` 的 `UNKNOWNS[0]`「token 边界判据未解」** → **已解**（§128.3 D4），
+   条目正文改写为"已解开 + 两项残留未知"，条数仍是 6（`tests/graphwar_function_input.rs` 断言 len=6）。
+2. **同文件 `UNKNOWNS[4]`「FN_REGISTER_A..E 五条各属哪张表未消歧」** → A/B 已定成
+   methods/constants 一对（thunk + arm64 + Windows 三路一致），C/D/E 仍是 `__init::__inner_init`
+   的"哪一份"推断。
+3. **本节自纠一处**：第一版台账 D1 把 `STORAGE` 基址写成 `0x9c0e40`（`entity_drawer` 读过它）——
+   逐类核对后基址是**状态字地址**（`0x9c0e48`/`0x9c0eb8`/`0x9c0f98`/`0x9c1040`/`0x9c1078`，
+   正好落在 `0x38` 格点上），台账已就地更正。

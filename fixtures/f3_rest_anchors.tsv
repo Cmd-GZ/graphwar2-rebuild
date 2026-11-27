@@ -1,0 +1,90 @@
+# f3_rest_anchors.tsv —— T80 台账：六个模块 **35 条 F3 缺口函数**的指令级锚点
+#
+# 为什么是 35 条而不是任务书的 33 条：任务书按 `graphwar_function_input` 5 条算，
+# 而 `fixtures/function_coverage.tsv`（T39 预注册判法）实测该模块 **7 条** F3
+# （= 5 条真缺口 + 2 条 `na:macro-generated` 的 `__register_*`）。六个模块逐行实测：
+#   graphwar_nodes 7 / graphwar_plane 6 / graphwar_long_press_animation 5 /
+#   graphwar_function_input 7 / graphwar_button 5 / graphwar_ad_switch 5 = **35**。
+# 本台账按 35 行做（任务书 33 是子集），并在 `docs/06` §122 写明口径差。
+#
+# 生成本表的方法（全部可复跑，不手抄任何地址）：
+#   PY=/home/CG/Myprojects/graphwar2-rebuild/.reference/venv/bin/python
+#   $PY tools/addr_probe.py fde <vaddr>      # 函数真实范围（.eh_frame FDE，不读 Ghidra 表）
+#   $PY tools/addr_probe.py dis <vaddr>      # 逐指令语义（含 .rodata 字面量 / GOT 槽 / Location）
+#   $PY tools/addr_probe.py callers <vaddr>  # 调用者（call rel32 + 函数指针三形态）
+#   $PY tools/addr_probe.py locs <vaddr>     # 该函数引用的 panic::Location → 源码行
+#   $PY tools/arm64_sym.py mod <module>      # Android 2.0.60 arm64 .symtab（未 strip）里的同模块符号
+#   grep -F <vaddr> fixtures/windows_name_to_addr.tsv   # Windows 2.0.60 COFF 符号（同版本 + 同 ISA）
+#   $SO=.reference/steam/2026-08-28/libgraphwarrust.so
+#   objdump -d --start-address=<vaddr> --stop-address=<end> $SO     # 原始字节复核
+# 地址口径：**ELF vaddr（RVA）**；Ghidra/REA = vaddr + 0x100000。
+# 证据档（AGENTS.md §0.3）：`观测` = 语义由**该函数自己的指令**读出（FDE 边界 + 被调者 +
+#   .rodata 字面量 / 立即数 + Location 行号 + `.data` 静态槽 + 重定位槽）；`推断` = 写明缺什么。
+#
+# ★ 本轮的四个**结构性发现**（后面每一行都用得上）：
+#   D1 `__registration_storage::STORAGE`（每类一份，arm64 符号 56 字节/份，共 12 份，
+#      见 `tools/arm64_sym.py find __registration_storage`）在 x86 侧是同构的 `.data` 块。
+#      **基址 = 状态字地址**（自纠：初版误把 `0x9c0e40` 当基址 —— 那是 entity_drawer 的驱动
+#      读过的一个字段），五个类的基址 `0x9c0e48 / 0x9c0eb8 / 0x9c0f98 / 0x9c1040 / 0x9c1078`
+#      正好落在 `0x38`（= 56 B）步长的格点上。布局（7 个 qword，全部被某条指令读过）：
+#      `+0x00` 状态字（`lock cmpxchg`/`xchg`）、`+0x04` poison 字节（`movzx`/`mov byte,1`）、
+#      `+0x10`/`+0x18` 表 A (ptr,len)、`+0x20` 未定（读全 8 槽那条 `__init` 读它）、
+#      `+0x28`/`+0x30` 表 B (ptr,len)。`.data` 实读初值：指针槽=8、长度槽=0 ⇒ 静态状态下
+#      **循环不执行**；填充者未知。
+#   D2 每类**两条 0x179 字节**的注册驱动各读一张表；它们被**同一个 3 指令 thunk** 依次
+#      `call *slotA; jmp *slotB`（thunk 表在 0x40e620..0x40e6a0，步长 0x10）⇒ **A 先于 B**。
+#      arm64 `.symtab` 里每类恰好两条 `ImplementsGodotApi::__register_methods` /
+#      `::__register_constants`（各 400 B，methods 地址更低）；Windows COFF 里同名两条。
+#      ⇒ A=`__register_methods`、B=`__register_constants`（**顺序论证 = 观测；名字本身 = 推断**）。
+#   D3 每类**四个** `_::__init::__inner_init` 实例（arm64 `.symtab` 每类恰好 4 个符号），
+#      x86 侧落在一段**连续 4 槽**的函数指针表里（类内槽基址见各行）；其中 6 条的
+#      名字有 Windows 2.0.60 **一对一锚**（`join_kind=唯一锚`）。
+#   D4 `delete_token_at_caret` / `delete_token_after_caret` 的「token 有多长」判据**解开了**：
+#      四张表全部由**立即数逐字节比较**给出（见该两行），此前 `src/graphwar_function_input.rs`
+#      的 UNKNOWNS 里写着"规则未解"。
+#
+# 模块：graphwar_nodes（7）· graphwar_plane（6）· graphwar_long_press_animation（5）·
+#       graphwar_function_input（7）· graphwar_button（5）· graphwar_ad_switch（5）
+vaddr	fde_lo	fde_hi	size	真名	名字来源	语义一句话	调用者	成对/相关	Location(file:line:col)	证据档	我方落点	备注
+# ---- graphwar_nodes：`get_node_by_name::<T>` 的 7 个单态化（另 4 个此前已 F1）----
+0x3aaea0	0x3aaea0	0x3aaf99	0xf9	graphwar_nodes::GraphwarNodes::get_node_by_name::<T>	N3 arm64 11 个同名单态化（204/228 B）+ hyb:高置信	薄壳：取 `%rsi/%rdx`（name 的 ptr/len）→ `upcast_ref` 包装 `0x4068f0`（字面量 `0x1bd8f2` 长度 `0xa`）→ GOT `0x9ba7d0`→`0x8b0890`（引擎调用 #1）→ `0x405a60` → GOT `0x9ba7d8`→`0x8aa9b0`（#2）→ `Option` 判别（`cmp [rsp+8],1`）→ `Result` 判别（`cmp byte [rsp+8],0`）→ **尾调类型专属尾巴 `0x3ad570`**	**0 条 `call rel32`**；80 个直接调用点（`docs/16` §28）都在调用方一侧	11 个单态化**逐指令同形**，唯一差别 = 尾调地址；`0x3aafa0/0x3ab0a0/0x3ab190/0x3ab590` 四条此前已 F1	src/graphwar_nodes.rs:8:62（槽 `0x951678`，`get_node_by_name` 的 `.unwrap()`；`0x3aaf5d` 的 panic 槽 `0x9ba870`→`0x925410`）	观测	src/graphwar_nodes.rs（新增 7 个 `get_node_by_name_*`，见 `GET_NODE_BY_NAME_FNS`）	尾调 = 该单态化的 `get_node_by_name_rec::<T>`（本文件 `ACCESSORS` 表）
+0x3ab290	0x3ab290	0x3ab389	0xf9	同上（第 2 个单态化）	N3 + hyb:高置信	与 `0x3aaea0` 逐指令同形；唯一差别 = 尾调 **`0x3ac770`**	同上	同上	src/graphwar_nodes.rs:8:62	观测	src/graphwar_nodes.rs	—
+0x3ab390	0x3ab390	0x3ab489	0xf9	同上（第 3 个）	N3 + hyb:高置信	同上；尾调 **`0x3af0a0`**	同上	同上	src/graphwar_nodes.rs:8:62	观测	src/graphwar_nodes.rs	—
+0x3ab490	0x3ab490	0x3ab589	0xf9	同上（第 4 个）	N3 + hyb:高置信	同上；尾调 **`0x3ac3e0`**	同上	同上	src/graphwar_nodes.rs:8:62	观测	src/graphwar_nodes.rs	—
+0x3ab690	0x3ab690	0x3ab789	0xf9	同上（第 5 个）	N3 + hyb:高置信	同上；尾调 **`0x3ace90`**	同上	同上	src/graphwar_nodes.rs:8:62	观测	src/graphwar_nodes.rs	—
+0x3ab790	0x3ab790	0x3ab889	0xf9	同上（第 6 个）	N3 + hyb:高置信	同上；尾调 **`0x3ac050`**	同上	同上	src/graphwar_nodes.rs:8:62	观测	src/graphwar_nodes.rs	—
+0x3ab890	0x3ab890	0x3ab989	0xf9	同上（第 7 个）	N3 + hyb:高置信	同上；尾调 **`0x3adc50`**	同上	同上	src/graphwar_nodes.rs:8:62	观测	src/graphwar_nodes.rs	—
+# ---- graphwar_function_input：2 条**真游戏逻辑**（token 删除）----
+0x4f44c0	0x4f44c0	0x4f4a5a	0x59a	GraphwarFunctionInput::delete_token_at_caret	N1 Windows 2.0.60 唯一锚 `src/graphwar_function_input.rs:97:63`	删光标**左侧**的 token：`caret_column`(`call *0x9bc328`→`0x8b8560`) 为负 ⇒ `unwrap` panic（`0x4f4966`）；否则按 **5→4→3→2** 依次比对「caret 左侧 n 个字符」，命中就 `delete_chars_at_caret(n)`（`0x4f4410`，n∈{5,4,3,2}），全不中 ⇒ 删 1（`0x4f48c7` `esi=1`）。四张表**全是立即数**：5=`sqrt(`；4=`abs( sin( cos( tan( exp( sqrt`；3=`ln( abs sin cos tan exp sqr`；2=`ln ab si co ta ex sq`	无直接调用者（gdext `ptr_onready` 风格）；方法名来自 gdext 注册表	与 `0x4f4a60` 成对（左删 / 右删）；调用 `0x4f4410`（`docs/03` 记的"退格 N 次"循环）	`src/graphwar_function_input.rs:97:63`（另引 `0x4f4931` 的 `1c470e`「a Display implementation returned an error unexpectedly」）	观测	src/graphwar_function_input.rs `DELETE_TOKEN_TOKENS_AT_CARET` + `token_len_at_caret` + `Buffer::delete_token_at_caret`	**此前 UNKNOWNS 写"token 边界判据未解"，本轮解开**
+0x4f4a60	0x4f4a60	0x4f53c5	0x965	GraphwarFunctionInput::delete_token_after_caret	N1 Windows 2.0.60 唯一锚 `src/graphwar_function_input.rs:198:63`	删光标**右侧**的 token：门槛是 `caret+n <= len`（`0x4f4b93 cmp rbx,r13; jb`）；比对「caret 右侧 n 个字符」，表是**同族 token 的后缀**（5=`sqrt(`；4=`abs( sin( cos( tan( exp( sqrt qrt(`；3=`ln( qrt bs( in( os( an( xp( rt(`；2=`n( ln bs in os an xp rt s( p( t(`）；命中 ⇒ 先把 caret 右移 n（`call *0x9bc318`→`0x8b8830`）再 `delete_chars_at_caret(n)`；全不中 ⇒ 删 1（`0x4f4fe9` `esi=1`）	同上	与 `0x4f44c0` 成对；溢出检查 `cmp ebp,0x7ffffffc/0x7ffffffd/0x7ffffffe/0x7ffffffb` = 右移 4/5/3/2 的 `i32` 上界	`src/graphwar_function_input.rs:198:63`（引用 6 个 Location，主锚 214:86）	观测	src/graphwar_function_input.rs `DELETE_TOKEN_TOKENS_AFTER_CARET` + `token_len_after_caret` + `Buffer::delete_token_after_caret`	同上
+# ---- graphwar_plane：`GraphwarPlane` 的 gdext 注册驱动 2 条 + `__init::__inner_init` 4 条 ----
+0x4b2260	0x4b2260	0x4b23d9	0x179	GraphwarPlane::__register_methods	**推断**：D2（同 thunk 里 A 先 B 后 + arm64 400 B 两条 + Windows 同名两条）	`Once` 驱动：`lock cmpxchg [0x9c0e48],1` 抢状态 → poison 检查（`0x4b2324`，byte `0x9c0e4c`）→ **遍历表 A**（`[0x9c0e58]`=ptr、`[0x9c0e60]`=len，`call *(%r12,%r13)` 步长 8）→ `xchg [0x9c0e48],0` 收尾 → poison ⇒ `0x4b239a mov byte [0x9c0e4c],1`；panic 面 = `1c3b13`「called `Result::unwrap()` on an `Err` value」	经重定位槽 `0x9bb5e0` 被 thunk **`0x40e620`** 调用（`0x40e621 call *0x9bb5e0` → `0x40e628 jmp *0x9bb5e8`）	与 `0x4b23e0`（表 B / constants）成对；共用 STORAGE 基址 `0x9c0e48`（= 状态字地址）	src/graphwar_plane.rs:68:1	观测（体）+ 推断（名）	src/graphwar_plane.rs `REG_METHODS` / `register_methods_once`	表长（`.data` 里 `[0x9c0e60]`=0、`[0x9c0e58]`=8）⇒ 静态初值下**不迭代**；表的填充者**未知**（见 §UNKNOWNS）
+0x4b23e0	0x4b23e0	0x4b2559	0x179	GraphwarPlane::__register_constants	**推断**：D2	与 `0x4b2260` 逐指令同形，唯一差别 = 读**表 B**（`[0x9c0e70]`/`[0x9c0e78]`）	经槽 `0x9bb5e8` 被 thunk `0x40e620` 尾调（`0x40e628 jmp *0x9bb5e8`）	同上	src/graphwar_plane.rs:68:1	观测（体）+ 推断（名）	src/graphwar_plane.rs `REG_CONSTANTS`	—
+0x4bc490	0x4bc490	0x4bc6a9	0x219	_::__init::__inner_init（Location 33:10）	N1 Windows 唯一锚 `src/graphwar_plane.rs:33:10`	`_::__init::__inner_init` 第 1 份：`lock cmpxchg [r14]` 抢 once → `call *0x9bb1b8`→`0x890850` → `call *0x9baaf0`→`0x460bb0` → `0x4ffbbb` → `call *0x9ba9d8`→`0x8f5db0` → `call *0x9ba668`→`0x925623`×2 → gdext 胶水 `0x4da1e0`	经重定位槽 `0x9ba260`；同族 4 槽 = `0x9ba258/0x9ba260/0x9ba268/0x9ba270`	4 个 `__init::__inner_init` 之一（D3）	src/graphwar_plane.rs:33:10	观测	src/graphwar_plane.rs `__inner_init_l33`	静态 `0x9c0ef8`/`0x9c0efc` = 该类的「已初始化」双槽
+0x4bc6b0	0x4bc6b0	0x4bc856	0x1a6	_::__init::__inner_init（Location 68:1）	**推断**：D3（4 槽相邻）+ arm64 每类 4 个同名符号；Windows 该条为「无一对一锚」	同族；`0x4bc71d call *0x9baaf0`→`0x460bb0`、`0x4bc7eb 0x4ffbbb`、`0x4bc835 0x4da1e0`；静态 `0x9c0ef8/0x9c0efc`	经槽 `0x9ba270`	同族 4 份之一（与 `0x4bc490/0x4bc860/0x4bcab0`）	src/graphwar_plane.rs:68:1	观测（体）+ 推断（哪一份）	src/graphwar_plane.rs `__inner_init_l68_a`	其 Location 与 `__register_*` 同行 ⇒ 68:1 这一行生成 4 个函数
+0x4bc860	0x4bc860	0x4bcaaf	0x24f	_::__init::__inner_init（Location 179:1）	N1 Windows 唯一锚 `src/graphwar_plane.rs:179:1`	同族；`0x4bc92c *0x9baaf0`、`0x4bca44 0x4ffbbb`、`0x4bca8e 0x4da1e0`	经槽 `0x9ba268`	同族 4 份之一	src/graphwar_plane.rs:179:1	观测	src/graphwar_plane.rs `__inner_init_l179`	—
+0x4bcab0	0x4bcab0	0x4bcc58	0x1a8	_::__init::__inner_init（Location 68:1，**读注册存储**的那一份）	**推断**：D3 + 体（读 STORAGE 全 8 槽）	同族 + **同时读 STORAGE 的 8 个槽**（`0x9c0e48/0x9c0e4c/0x9c0e50/0x9c0e58/0x9c0e60/0x9c0e68/0x9c0e70/0x9c0e78`）；`0x4bcb0c/0x4bcb45 call *0x9baaf8`→`0x8c5120`、`0x4bcc37 0x4da330`	经槽 `0x9ba258`	同族 4 份之一	src/graphwar_plane.rs:68:1	观测（体）+ 推断（名）	src/graphwar_plane.rs `__inner_init_l68_b`	**为什么构造路径读注册存储 = 未知**（缺：gdext 版本 vtable 槽序）
+# ---- graphwar_long_press_animation ----
+0x4d7bc0	0x4d7bc0	0x4d7d39	0x179	GraphwarLongPressAnimation::__register_methods	**推断**：D2	`Once` 驱动，遍历表 A（`[0x9c0ec8]`/`[0x9c0ed0]`，STORAGE 基址 `0x9c0eb8`）；同 `0x4b2260` 逐指令同形	经槽 `0x9bb610` 被 thunk **`0x40e660`**（`0x40e661` / `0x40e668`）	与 `0x4d7d40` 成对	src/graphwar_long_press_animation.rs:17:1	观测（体）+ 推断（名）	src/graphwar_long_press_animation.rs `REG_METHODS`	—
+0x4d7d40	0x4d7d40	0x4d7eb9	0x179	GraphwarLongPressAnimation::__register_constants	**推断**：D2	同上，读表 B（`[0x9c0ee0]`/`[0x9c0ee8]`）	经槽 `0x9bb618`；thunk `0x40e660` 尾调	与 `0x4d7bc0` 成对	src/graphwar_long_press_animation.rs:17:1	观测（体）+ 推断（名）	src/graphwar_long_press_animation.rs `REG_CONSTANTS`	—
+0x4bd650	0x4bd650	0x4bd7f6	0x1a6	_::__init::__inner_init（Location 17:1）	**推断**：D3	同族 `__inner_init`；静态 `0x9c0dc8`/`0x9c0dcc`	经槽 `0x9ba2a0`	4 份之一（另 `0x4bd430`(F1,10:10)、`0x4bd800`、`0x4bda50`）	src/graphwar_long_press_animation.rs:17:1	观测（体）+ 推断（哪一份）	src/graphwar_long_press_animation.rs `__inner_init_l17_a`	—
+0x4bd800	0x4bd800	0x4bda4f	0x24f	_::__init::__inner_init（Location 31:1）	N1 Windows 唯一锚 `src/graphwar_long_press_animation.rs:31:1`	同族；`0x4bd800` 体内引 `.rodata` `UAWAVATSH`/`AWAVATSH`（= 内联的 `draw` 前导字节被混淆进字符串窗口的假阳性，**不是**语义）	经槽 `0x9ba298`	4 份之一	src/graphwar_long_press_animation.rs:31:1	观测	src/graphwar_long_press_animation.rs `__inner_init_l31`	—
+0x4bda50	0x4bda50	0x4bdbfa	0x1aa	_::__init::__inner_init（Location 17:1，读注册存储）	**推断**：D3 + 体	同族 + 读 STORAGE 全 8 槽（基址 `0x9c0eb8`）	经槽 `0x9ba2b0`	4 份之一	src/graphwar_long_press_animation.rs:17:1	观测（体）+ 推断（名）	src/graphwar_long_press_animation.rs `__inner_init_l17_b`	与 plane `0x4bcab0` 同形
+# ---- graphwar_function_input：gdext 注册驱动 2 条 + `__init::__inner_init` 3 条 ----
+0x4e6dc0	0x4e6dc0	0x4e6f39	0x179	GraphwarFunctionInput::__register_methods	**推断**：D2	`Once` 驱动，表 A（`[0x9c1088]`/`[0x9c1090]`，基址 `0x9c1078`）	经槽 `0x9bb620` 被 thunk **`0x40e670`**	与 `0x4e6f40` 成对	src/graphwar_function_input.rs:434:1	观测（体）+ 推断（名）	src/graphwar_function_input.rs `REG_METHODS`	此前 UNKNOWNS 说"5 个注册驱动属哪张表未解"，本轮用 thunk + STORAGE 消歧到 2 类
+0x4e6f40	0x4e6f40	0x4e70b9	0x179	GraphwarFunctionInput::__register_constants	**推断**：D2	同上，表 B（`[0x9c10a0]`/`[0x9c10a8]`）	经槽 `0x9bb628`；thunk `0x40e670` 尾调	与 `0x4e6dc0` 成对	src/graphwar_function_input.rs:434:1	观测（体）+ 推断（名）	src/graphwar_function_input.rs `REG_CONSTANTS`	—
+0x4e9ee0	0x4e9ee0	0x4ea07c	0x19c	_::__init::__inner_init（Location 434:1）	**推断**：D3	同族 `__inner_init`；静态 `0x9c0f20`/`0x9c0f24`	经槽 `0x9ba388`	4 份之一（另 `0x4ea480`(F1)、`0x4ea080`、`0x4ea2d0`）	src/graphwar_function_input.rs:434:1	观测（体）+ 推断（哪一份）	src/graphwar_function_input.rs `__inner_init_l434_a`	—
+0x4ea080	0x4ea080	0x4ea2c5	0x245	_::__init::__inner_init（Location 466:1）	N1 Windows 唯一锚 `src/graphwar_function_input.rs:466:1`	同族；`0x4ea080` 体内引 `.rodata` `UAWAVAUATSH`/`AWAVATSH`（GOT/字符串窗口假阳性）	经槽 `0x9ba390`	4 份之一	src/graphwar_function_input.rs:466:1	观测	src/graphwar_function_input.rs `__inner_init_l466`	—
+0x4ea2d0	0x4ea2d0	0x4ea478	0x1a8	_::__init::__inner_init（Location 434:1，读注册存储）	**推断**：D3 + 体	同族 + 读 STORAGE 全 8 槽（基址 `0x9c1078`）	经槽 `0x9ba380`	4 份之一	src/graphwar_function_input.rs:434:1	观测（体）+ 推断（名）	src/graphwar_function_input.rs `__inner_init_l434_b`	—
+# ---- graphwar_button ----
+0x4e0e60	0x4e0e60	0x4e0fd9	0x179	GraphwarButton::__register_methods	**推断**：D2	`Once` 驱动，表 A（`[0x9c0fa8]`/`[0x9c0fb0]`，基址 `0x9c0f98`）	经槽 `0x9bb650` 被 thunk **`0x40e6a0`**（`0x40e6a1`/`0x40e6a8`）	与 `0x4e0fe0` 成对	src/graphwar_button.rs:83:1	观测（体）+ 推断（名）	src/graphwar_button.rs `REG_METHODS`	—
+0x4e0fe0	0x4e0fe0	0x4e1159	0x179	GraphwarButton::__register_constants	**推断**：D2	同上，表 B（`[0x9c0fc0]`/`[0x9c0fc8]`）	经槽 `0x9bb658`；thunk `0x40e6a0` 尾调	与 `0x4e0e60` 成对	src/graphwar_button.rs:83:1	观测（体）+ 推断（名）	src/graphwar_button.rs `REG_CONSTANTS`	—
+0x4e8230	0x4e8230	0x4e83cc	0x19c	_::__init::__inner_init（Location 83:1）	**推断**：D3	同族；静态 `0x9c0f00`/`0x9c0f04`	经槽 `0x9ba2f8`	4 份之一（另 `0x4e8020`(F1,14:10)、`0x4e83d0`、`0x4e8580`）	src/graphwar_button.rs:83:1	观测（体）+ 推断（哪一份）	src/graphwar_button.rs `__inner_init_l83_a`	—
+0x4e83d0	0x4e83d0	0x4e8578	0x1a8	_::__init::__inner_init（Location 83:1，读注册存储）	**推断**：D3 + 体	同族 + 读 STORAGE 全 8 槽（基址 `0x9c0f98`）	经槽 `0x9ba300`	4 份之一	src/graphwar_button.rs:83:1	观测（体）+ 推断（名）	src/graphwar_button.rs `__inner_init_l83_b`	—
+0x4e8580	0x4e8580	0x4e87c5	0x245	_::__init::__inner_init（Location 111:1）	N1 Windows 唯一锚 `src/graphwar_button.rs:111:1`	同族；引 `.rodata` `UAWAVAUATSH`/`AWAVATSH`（假阳性）	经槽 `0x9ba310`	4 份之一	src/graphwar_button.rs:111:1	观测	src/graphwar_button.rs `__inner_init_l111`	—
+# ---- graphwar_ad_switch ----
+0x4e5100	0x4e5100	0x4e5279	0x179	GraphwarAdSwitch::__register_methods	**推断**：D2	`Once` 驱动，表 A（`[0x9c1050]`/`[0x9c1058]`，基址 `0x9c1040`）	经槽 `0x9bb640` 被 thunk **`0x40e690`**	与 `0x4e5280` 成对	src/graphwar_ad_switch.rs:14:1	观测（体）+ 推断（名）	src/graphwar_ad_switch.rs `REG_METHODS`	—
+0x4e5280	0x4e5280	0x4e53f9	0x179	GraphwarAdSwitch::__register_constants	**推断**：D2	同上，表 B（`[0x9c1068]`/`[0x9c1070]`）	经槽 `0x9bb648`；thunk `0x40e690` 尾调	与 `0x4e5100` 成对	src/graphwar_ad_switch.rs:14:1	观测（体）+ 推断（名）	src/graphwar_ad_switch.rs `REG_CONSTANTS`	—
+0x4e9730	0x4e9730	0x4e98d8	0x1a8	_::__init::__inner_init（Location 14:1，读注册存储）	**推断**：D3 + 体	同族 + 读 STORAGE 全 8 槽（基址 `0x9c1040`）	经槽 `0x9ba360`	4 份之一（另 `0x4e9c90`(F1)、`0x4e9af0`、`0x4e98e0`）	src/graphwar_ad_switch.rs:14:1	观测（体）+ 推断（名）	src/graphwar_ad_switch.rs `__inner_init_l14_c`	—
+0x4e98e0	0x4e98e0	0x4e9aef	0x20f	_::__init::__inner_init（Location 7:10）	N1 Windows 唯一锚 `src/graphwar_ad_switch.rs:7:10`	同族；静态 `0x9c0f18`/`0x9c0f1c`	经槽 `0x9ba368`	4 份之一	src/graphwar_ad_switch.rs:7:10	观测	src/graphwar_ad_switch.rs `__inner_init_l7`	—
+0x4e9af0	0x4e9af0	0x4e9c8c	0x19c	_::__init::__inner_init（Location 14:1）	**推断**：D3	同族；静态 `0x9c0f18`/`0x9c0f1c`（与 `0x4e98e0` 同双槽 ⇒ 同一次「已初始化」判定）	经槽 `0x9ba358`	4 份之一	src/graphwar_ad_switch.rs:14:1	观测（体）+ 推断（哪一份）	src/graphwar_ad_switch.rs `__inner_init_l14_a`	—
