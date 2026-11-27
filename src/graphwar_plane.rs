@@ -1432,9 +1432,38 @@ pub fn is_active_function(integer_tick: i64, active_tick: i64, total: usize) -> 
     revealed < (total as u64).saturating_add(ACTIVE_TAIL_POINTS as u64)
 }
 
+/// 一帧该补几个 tick（[`GraphwarPlane::drive_frame`] 的纯逻辑；定步 16_666_666 ns/tick）。
+///
+/// 原版 `GraphwarTickHandler::tick`（`0x519840`）每调一次 `accum += 16_666_666 ns`、`tick += 1`，
+/// 而"该不该调"由调用者按帧决定（`graphwar_game_client.rs` 每帧一次，见 `drive_frame` 的
+/// 调用链注释）。本函数取 `(帧内余数纳秒, 帧间隔秒)`，返回 `(该补几个 tick, 新的余数)`。
+///
+/// * `delta` 非有限 / 负数 ⇒ 0 个 tick（余数不动）；
+/// * 一帧最多补 `max_catchup` 个（防长卡顿后一次追几千个），超了余数清零（不再滚雪球）。
+pub fn ticks_for_frame(accum_nanos: u64, delta_seconds: f64, max_catchup: u32) -> (u32, u64) {
+    let step = crate::graphwar_tick_handler::NANOS_PER_TICK as u64;
+    let add = if delta_seconds.is_finite() {
+        (delta_seconds.clamp(0.0, 3600.0) * crate::graphwar_tick_handler::NANOS_PER_SECOND as f64)
+            .round()
+            .max(0.0) as u64
+    } else {
+        0
+    };
+    let mut acc = accum_nanos.saturating_add(add);
+    let mut n = 0u32;
+    while acc >= step && n < max_catchup {
+        acc -= step;
+        n += 1;
+    }
+    if n == max_catchup && max_catchup > 0 {
+        acc = 0;
+    }
+    (n, acc)
+}
+
 /// 一条函数在本类里的存储（**替代未复原的 `GraphwarFunctionManager` 的 value**）。
 ///
-/// 字段与偏移来自 `GraphwarPlane::draw` 的读者（hashbrown bucket 步长 `0x78`，key 在 `+0x00`）：
+/// 字段与偏移来自 `GraphwarPlane::draw` 的读者（hashbrown bucket 步长 `0x78`，键在 `+0x00`）：
 ///
 /// ```text
 /// 4b6670  add %r12,%rsi                        ; rsi = 本条 bucket 末尾（键在 bucket+0x00）
@@ -1458,6 +1487,14 @@ struct FunctionEntry {
     active_tick: i64,
     /// 队色 `0x00RRGGBB`（原版由 `get_team_overview` 的两张表查出来；本类由调用方给，见 §41.5）。
     color: u32,
+    /// 这个 id 的 `active_tick` 被 [`GraphwarPlane::set_function_active_tick`] 改过几次
+    /// （**我方计数**：验收要证"起飞 tick 真的来自 `FunctionActive` 事件"）。
+    active_tick_writes: u32,
+    /// 这条函数的 `Line2D` 是不是已经被"不在场"那条路删掉了（`0x4b6418`）。
+    ///
+    /// **entry 本身不删**（见 `feed_functions` ① 的注释）：原版管理器那一格留着，
+    /// 所以 `set_function_active_tick` 迟到还能让它重新进窗口。
+    line_removed: bool,
     /// **我方记账**：这个 id 已经通过 `FunctionDrawer::update_function` 喂进去几个点。
     ///
     /// 原版这个数字也存在——在 `FunctionDrawer` 的 value 里（`usize` 已写入数，
@@ -1576,6 +1613,16 @@ pub struct GraphwarPlane {
 
     /// 累计调了几次 `FunctionDrawer::update_function`（**我方计数**）。
     function_write_total: i64,
+    /// 累计调了几次 `FunctionDrawer::update_function_fade`（`0x4b6a0e`；**我方计数**）。
+    function_fade_total: i64,
+    /// 上一次交给 `update_function_fade` 的 alpha（`0x455a40` 的返回值）。
+    last_fade_alpha: f64,
+    /// `drive_frame` 攒下的**帧内余数**纳秒（< 一个 tick 的量）。
+    frame_sub_nanos: u64,
+    /// 累计调了几次 `drive_frame`（**我方计数**）。
+    frame_drive_total: i64,
+    /// 累计被 `drive_frame` 推进了几个 tick（**我方计数**）。
+    frame_tick_total: i64,
     /// 累计追加了几个点（**我方计数**，与 `FunctionDrawer::add_point_total()` 应当一致）。
     function_point_total: i64,
     /// 累计因为"不在场"而 `remove_function` 掉几条（`0x4b6418`）。
@@ -1609,6 +1656,11 @@ impl IControl for GraphwarPlane {
             transform_total: 0,
             last_transform: (0.0, 0.0, 0.0, false),
             function_write_total: 0,
+            function_fade_total: 0,
+            last_fade_alpha: 1.0,
+            frame_sub_nanos: 0,
+            frame_drive_total: 0,
+            frame_tick_total: 0,
             function_point_total: 0,
             removed_function_total: 0,
             reveal_redraws: 0,
@@ -1897,6 +1949,12 @@ impl GraphwarPlane {
     /// （`now - accum == 0` ⇒ 小数部分恰好 0.0）——验收脚本按整数 tick 断言不会因浮点抖动变红。
     ///
     /// 返回读回的 `get_fractional_tick()`。
+    ///
+    /// **T88**：这是"把时钟**对齐**到某个 tick"的入口（= 原版客户端收到
+    /// `TickReply{current_tick}` 后把 `GraphwarTickHandler` 拨到服务端 tick 轴那件事，
+    /// 观测依据 `docs/06` §60.2.1：原版不回 `TickReply` 时 S8 里**没有弹道**——客户端
+    /// 刚连上时 tick ≈ 0，够不到 `FunctionActive.active_tick=615`）。
+    /// **每帧推进**走 [`GraphwarPlane::drive_frame`]，不要拿这个入口当帧驱动。
     #[func]
     fn set_fractional_tick(&mut self, tick: f64) -> f64 {
         let t = if tick.is_finite() { tick.max(0.0) } else { 0.0 };
@@ -1914,6 +1972,7 @@ impl GraphwarPlane {
             now / NANOS_PER_SECOND as u64,
             (now % NANOS_PER_SECOND as u64) as u32,
         );
+        self.frame_sub_nanos = 0; // 轴被拨过 ⇒ 帧内余数作废（否则会多补/少补一个 tick）
         self.fractional_tick()
     }
 
@@ -1921,6 +1980,66 @@ impl GraphwarPlane {
     #[func]
     fn fractional_tick(&self) -> f64 {
         self.tick_source.get_fractional_tick()
+    }
+
+    /// **每帧推进时钟**（原版 `GraphwarGameClient::process` 每帧一次的那条驱动链）。
+    ///
+    /// 原版调用链（`观测`，地址口径 ELF vaddr）：
+    ///
+    /// ```text
+    /// GraphwarGameClient::{0x515dc0, 0x516fd0}   per-frame（process / drive_frame）
+    ///   → 槽 0x9bc468 → 0x518400   (graphwar_game_client.rs:132)
+    ///     → 槽 0x9baf38 → 0x518240 (graphwar_game_client.rs:139)
+    ///       → 0x519840 GraphwarTickHandler::tick   ; accum += 16_666_666 ns; tick += 1
+    /// ```
+    ///
+    /// `tick()` 是**定步**的：每 `16_666_666 ns` 一个 tick（`0x51986c` 的 `add eax,0xfe502a`，
+    /// `docs/06` §63 的真机读数也是 60.00 tick/s）。所以这里按帧间隔 `delta` 攒纳秒，
+    /// 攒够一个 tick 就叫一次 [`GraphwarTickHandler::tick`]（一帧最多补
+    /// [`GraphwarPlane::MAX_CATCHUP_TICKS`] 个，防长卡顿后一次追几千个 tick）。
+    ///
+    /// 不变量与 [`GraphwarPlane::set_fractional_tick`] 一致：
+    /// `get_fractional_tick() == current_tick + (now-base-accum)/tick_seconds`，
+    /// 且 `now-base = accum + 帧内余数` ⇒ 整数 tick 读数稳定、小数部分是真实的帧内相位。
+    ///
+    /// 返回推进后的 `get_fractional_tick()`。
+    ///
+    /// ⚠️ 本方法**不**喂点、不重画：喂点仍是原版那条路（`draw` 尾部 → [`feed_functions`]），
+    /// 由 GDScript 侧每帧调 `queue_redraw`（`docs/06` §137）。
+    #[func]
+    fn drive_frame(&mut self, delta: f64) -> f64 {
+        /// 一帧最多补几个 tick（10 s @ 60 Hz）：长卡顿后不让一帧追几千个。
+        const MAX_CATCHUP_TICKS: u32 = 600;
+        let (n, acc) = ticks_for_frame(self.frame_sub_nanos, delta, MAX_CATCHUP_TICKS);
+        for _ in 0..n {
+            self.tick_source.tick();
+        }
+        self.frame_sub_nanos = acc;
+        self.frame_drive_total += 1;
+        self.frame_tick_total += n as i64;
+        // 时钟的 `now` 跟着累加器走（与 `set_fractional_tick` 同一条不变量）。
+        let total = self.tick_source.elapsed_nanos + self.frame_sub_nanos;
+        self.tick_source.set_now(
+            total / NANOS_PER_SECOND as u64,
+            (total % NANOS_PER_SECOND as u64) as u32,
+        );
+        // 原版 `tick()` 把 `TickEvent`/`TickRequest` 推进事件队列；本类没有那条队列
+        // （订阅者是 `GraphwarEventHandler`，我方走 GDScript 的 net 会话）⇒ 这里丢掉，
+        // 否则每帧一条会无限长。**这是本层的差**，登记在 `docs/06` §137。
+        self.tick_source.outbox.clear();
+        self.fractional_tick()
+    }
+
+    /// 累计调过几次 [`GraphwarPlane::drive_frame`]（**我方计数**，验收用）。
+    #[func]
+    fn frame_drive_total(&self) -> i64 {
+        self.frame_drive_total
+    }
+
+    /// 累计被 [`GraphwarPlane::drive_frame`] 推进过几个 tick（**我方计数**，验收用）。
+    #[func]
+    fn frame_tick_total(&self) -> i64 {
+        self.frame_tick_total
     }
 
     /// 原版 `draw` 里那个 u32 tick（`0x4b6317` 的 `mov 0x58(%rbp),%ebx` = `M+0x40`）。
@@ -2027,10 +2146,40 @@ impl GraphwarPlane {
                 points: pts,
                 active_tick,
                 color: (color as u32) & 0x00ff_ffff,
+                active_tick_writes: 0,
+                line_removed: false,
                 fed: 0,
             },
         );
         len
+    }
+
+    /// 原版 `GraphwarFunctionManager::set_function_active_tick`（x86 **`0x456b80`**）：
+    /// 写起飞 tick（`FunctionState.value+0x74`）并发一条 `FunctionActive`(36)。
+    ///
+    /// 为什么单独一个入口：原版就是**两个独立的 setter**（`set_function_points` `0x456810`
+    /// / `set_function_active_tick` `0x456b80`）⇒ 到达顺序无关。联机上 `FunctionPoints`
+    /// 先到、`FunctionActive` 后到是常态（`fixtures/frame_match_events.txt` [phase2] 就是这个顺序）。
+    ///
+    /// tag 证据（load 码）：`0x456cd3 lea rax,[r9+0x25]`（`r9 = 0x7fff…ffff`）⇒ `0x8000…0024` = 36；
+    /// 投递 `0x456ce1 call [0x9bac80]` → `0x3d3530 add_event`。
+    ///
+    /// 返回值：改到了几条（0 = 这个 id 还没有点序列 / 1 = 改了一条）。
+    #[func]
+    fn set_function_active_tick(&mut self, player_id: i64, active_tick: i64) -> i64 {
+        // 0x456b80 — 写 value+0x74 后 add_event(tag 36 FunctionActive)
+        let Ok(id) = i32::try_from(player_id) else {
+            godot_warn!("GraphwarPlane::set_function_active_tick player_id {player_id} 超出 i32");
+            return -1;
+        };
+        match self.functions.get_mut(&id) {
+            Some(entry) => {
+                entry.active_tick = active_tick.max(0);
+                entry.active_tick_writes += 1;
+                1
+            }
+            None => 0,
+        }
     }
 
     /// 清掉所有函数（下次 `draw` 会把对应的 `Line2D` 也删掉）。
@@ -2097,7 +2246,14 @@ impl GraphwarPlane {
         let tick = self.integer_tick();
         let ftick = self.fractional_tick();
 
-        // ① 已经不在场的：`remove_function`（`0x4b6418`）。
+        // ① 已经不在场的：`remove_function`（`0x4b6418` → `0x498b70`）。
+        //
+        // ⚠️ **只删 `Line2D`，不删管理器的 entry**（T88 更正）。原版 `0x4b6418` 调的是
+        // `FunctionDrawer::remove_function`（`queue_free` + 删抽屉自己那张表），
+        // `GraphwarFunctionManager` 里那一格**原样留着** —— 所以 `set_function_active_tick`
+        // 迟到（联机上 `FunctionPoints` 先到、`FunctionActive` 后到是常态）仍然能生效：
+        // 起飞 tick 一改，这条函数就能重新进窗口、重新建线画出来。
+        // 以前这里顺手 `self.functions.remove(&id)`，等于把"迟到的起飞 tick"永远丢掉。
         let stale: Vec<i32> = self
             .functions
             .iter()
@@ -2105,14 +2261,30 @@ impl GraphwarPlane {
             .map(|(id, _)| *id)
             .collect();
         for id in stale {
+            if let Some(e) = self.functions.get_mut(&id) {
+                if e.line_removed {
+                    continue; // 线已经删过了，别每帧重复调
+                }
+                e.line_removed = true;
+                e.fed = 0; // 线重建后 `append_window` 的"已写入数"从 0 起
+            }
             if drawer.bind_mut().remove_function(id as i64) {
                 self.removed_function_total += 1;
             }
-            self.functions.remove(&id);
         }
 
         // ② 还在场的：喂点。
-        let ids: Vec<i32> = self.functions.keys().copied().collect();
+        //
+        // ⚠️ 只喂**在场集合**里的（= `get_active_functions_on_tick(tick)` 的返回集，`0x4b6339`）。
+        // T88 更正：entry 现在不随"出窗口"删除了（见 ①），所以这里**不能**再遍历
+        // `self.functions.keys()`——那样会把已经出窗口的函数每帧重新画出来（探针实测：
+        // 出窗口后 `Line2D` 又长出 780 点，等于活跃窗口完全失效）。
+        let ids: Vec<i32> = self
+            .functions
+            .iter()
+            .filter(|(_, e)| is_active_function(tick, e.active_tick, e.points.len()))
+            .map(|(id, _)| *id)
+            .collect();
         let mut appended = 0i64;
         for id in ids {
             let mut prefix = PackedVector2Array::new();
@@ -2130,12 +2302,37 @@ impl GraphwarPlane {
             // `new_len` 在这里就是 `prefix.len()`：原版把全长与 `new_len` 分开传，
             // 而 `FunctionDrawer` 只补 `points[written..new_len]` ⇒ 传前缀是**等价**的
             // （§40.4b 已记过这条；`append_window` 仍是唯一判定）。
+            if let Some(entry) = self.functions.get_mut(&id) {
+                entry.line_removed = false;
+            }
             appended += drawer.bind_mut().update_function(id as i64, prefix, color);
             // 记账：本 id 现在"该喂到"哪一点（只增；曲线不会变短）。
             if let Some(entry) = self.functions.get_mut(&id) {
                 entry.fed = entry.fed.max(new_len);
             }
             self.function_write_total += 1;
+            // **淡出**：原版紧接着就调 `get_function_fade_on_tick`（`0x4b69fe` → 槽 `0x9bbd08`
+            // → `0x455a40`），把返回值当 alpha 交给 `FunctionDrawer::update_function_fade`
+            // （`0x4b6a0e` → `0x4992b0`）。算式与指令见 `graphwar_function_manager` §八。
+            //
+            // `update_function_fade` 是 `function_drawer.rs` 里的**非 `pub`** `#[func]`
+            // ⇒ 只能走动态调用（与本文件 `update_transform` 同一条路；原版本身也是
+            // 走重定位槽的间接调用 —— `0x4b69fe call *0x9bbd08`）。
+            let alpha = crate::graphwar_function_manager::function_fade_on_tick(
+                tick as u32,
+                self.functions[&id].active_tick as u32,
+                self.functions[&id].points.len(),
+            );
+            let applied = drawer
+                .call(
+                    "update_function_fade",
+                    &[(id as i64).to_variant(), alpha.to_variant()],
+                )
+                .to::<f64>();
+            if applied >= 0.0 {
+                self.function_fade_total += 1;
+                self.last_fade_alpha = applied;
+            }
         }
         self.function_point_total += appended;
         appended
@@ -2161,6 +2358,39 @@ impl GraphwarPlane {
     #[func]
     fn function_write_total(&self) -> i64 {
         self.function_write_total
+    }
+
+    /// 累计调了几次 `FunctionDrawer::update_function_fade`（`0x4b6a0e`；**我方计数**）。
+    #[func]
+    fn function_fade_total(&self) -> i64 {
+        self.function_fade_total
+    }
+
+    /// 上一次交给 `update_function_fade` 的 alpha（= `get_function_fade_on_tick` 的返回值）。
+    #[func]
+    fn last_fade_alpha(&self) -> f64 {
+        self.last_fade_alpha
+    }
+
+    /// 某条函数的 `active_tick` 被 `set_function_active_tick` 改过几次（**我方计数**：
+    /// 验收用它证"起飞 tick 真的来自 `FunctionActive` 事件"，而不是恒 0）。
+    #[func]
+    fn function_active_tick_writes(&self, player_id: i64) -> i64 {
+        i32::try_from(player_id)
+            .ok()
+            .and_then(|id| self.functions.get(&id))
+            .map(|e| e.active_tick_writes as i64)
+            .unwrap_or(-1)
+    }
+
+    /// 某条函数当前的起飞 tick（原版 `value+0x74`；没有这个 id ⇒ `-1`）。
+    #[func]
+    fn function_active_tick_of(&self, player_id: i64) -> i64 {
+        i32::try_from(player_id)
+            .ok()
+            .and_then(|id| self.functions.get(&id))
+            .map(|e| e.active_tick)
+            .unwrap_or(-1)
     }
 
     /// 累计追加了几个点（**我方计数**，应与 `FunctionDrawer::add_point_total()` 相等）。
@@ -2335,7 +2565,8 @@ impl GraphwarPlane {
     fn has_revealing_function(&self) -> bool {
         let tick = self.integer_tick();
         self.functions.values().any(|e| {
-            is_active_function(tick, e.active_tick, e.points.len())
+            !e.line_removed
+                && is_active_function(tick, e.active_tick, e.points.len())
                 && revealed_points(self.fractional_tick(), e.active_tick, e.points.len()) > e.fed
         })
     }
@@ -2472,6 +2703,32 @@ mod tests {
         // 空曲线也有 60 tick 的尾巴（len=0 ⇒ 只留 1800/30 = 60）。
         assert!(is_active_function(10 + 59, 10, 0));
         assert!(!is_active_function(10 + 60, 10, 0));
+    }
+
+    /// `drive_frame` 的定步逻辑（`0x519840` 的 `add $0xfe502a` = 16_666_666 ns/tick）：
+    /// 每过一个 tick 周期补 1 个 tick，余数留到下一帧（帧率抖动不会丢/多 tick）。
+    #[test]
+    fn drive_frame_advances_at_the_fixed_60hz_step() {
+        const P: u64 = crate::graphwar_tick_handler::NANOS_PER_TICK as u64;
+        // 正好一个周期（用纳秒精确表示，避免 `1.0/60.0` 的 0.67 ns 表示误差）⇒ 1 个 tick、余数 0
+        let step_s = P as f64 / crate::graphwar_tick_handler::NANOS_PER_SECOND as f64;
+        assert_eq!(ticks_for_frame(0, step_s, 600), (1, 0));
+        // 1/60 s 的 f64 表示是 16666666.67 ns ⇒ round **进到** 16666667 ⇒ 余 1 ns
+        // （原版同样按纳秒记累加器，1 ns 的余数不丢，下一帧会补进去）
+        assert_eq!(ticks_for_frame(0, 1.0 / 60.0, 600), (1, 1));
+        // 一秒 = 1e9 ns ⇒ 60 个 tick（60×16666666 = 999999960）⇒ 余 40 ns
+        assert_eq!(ticks_for_frame(0, 1.0, 600), (60, 40));
+        // 半周期 ⇒ 0 个 tick，余数 = 半个周期
+        assert_eq!(ticks_for_frame(0, 0.5 / 60.0, 600), (0, P / 2));
+        // 余数跨帧累计：两次半周期 ⇒ 1 个 tick
+        let (_, rest) = ticks_for_frame(0, 0.5 / 60.0, 600);
+        assert_eq!(ticks_for_frame(rest, 0.5 / 60.0, 600), (1, 0));
+        // 卡顿保护：一帧最多 600 个，超出把余数清零（不滚雪球）
+        assert_eq!(ticks_for_frame(0, 100.0, 600), (600, 0));
+        // 非有限 / 负数 ⇒ 不动
+        assert_eq!(ticks_for_frame(0, f64::NAN, 600), (0, 0));
+        assert_eq!(ticks_for_frame(0, -1.0, 600), (0, 0));
+        assert_eq!(ticks_for_frame(P / 3, f64::INFINITY, 600), (0, P / 3));
     }
 }
 }

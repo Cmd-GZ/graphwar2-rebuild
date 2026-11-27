@@ -1,0 +1,46 @@
+# fixtures/rust_trajectory_results.tsv —— **「多画的那条弹道」修掉前后的读数**（T88，2026-11-27 / task-84）
+#
+# 判据文件（**一个数没改**）：fixtures/frame_diff_thresholds.txt（sha256 9cc9fcda…）
+# 停帧表（**一个数没改**）：fixtures/frame_capture_freeze_plan.txt（sha256 aa23b64d… = manifest 记录值）
+# 排除区（**一个数没改**）：match 两屏 999,1062,1008,1160（光标列，见停帧表 §2）
+#
+# 采集口径（两侧**串行**、私有 netns；每次都是同一棵树、同一份 .so）：
+#   export HOME=$WT/.fakehome; export PY=<main>/.reference/venv/bin/python
+#   bash <wrapper> --side original --flow match --stop-plan fixtures/frame_capture_freeze_plan.txt --out <orig> --display-num 133
+#   bash <wrapper> --side ours     --flow match --stop-plan fixtures/frame_capture_freeze_plan.txt --out <mine> --display-num 134
+#   python3 tools/frame_diff.py --orig <orig> --mine <mine> --screens match_ready,match_play \
+#       --exclude-rect 999,1062,1008,1160 --out <r.tsv> --blocks-out <b.tsv> --json <r.json>
+#   （wrapper = bwrap --unshare-user --unshare-net + ro-bind / + MESA 四个环境变量 + DISPLAY=127.0.0.1:<n>，
+#     理由见 docs/06 §76.8 第 2/4 条与 §76.7；本轮的 wrapper 逐行抄那 8 行）
+#
+# 列意：
+#   kind       pixel = 停帧判据读数（frame_diff 同一台仪器）／dense = 时间对齐密集采样／mech = 机制探针
+#   before/after  before = 本分支改动**前**（基线轮，同一台仪器、同一棵树）；after = 改动后
+#   px/ratio    ratio = frame_diff 的 l3_diff_ratio（判定用，已按 §2 排除区掩膜）；raw = 未掩膜
+#
+kind	flow	screen	side	metric	before	after	unit	note
+pixel	match	match_ready	both	l3_diff_px	2046	2110	px	停帧：原版 tick 900 绝对／我方 settle 3.0（预注册值都没动）
+pixel	match	match_ready	both	l3_diff_ratio	0.000919	0.000948	ratio	预注册带 L3 ∈ [0.070,0.100]% ⇒ 0.0948% **在带内**（+64 px 见下一条）
+pixel	match	match_ready	both	l2_blocks_over	0	0	块	max|Δ|=255 是士兵精灵/名字标签那一层（既有的非逐位差异，未变）
+pixel	match	match_play	both	l3_diff_px	5798	1740	px	**−70.0%**；T84 同一台仪器的前值 5710（跨轮噪声 ±1.5%）
+pixel	match	match_play	both	l3_diff_ratio	0.002604	0.000782	ratio	**0.2604% → 0.0782%**；目标 ≤0.150% ✓（预注册带历史 [0.340,0.450]% 的下方）
+pixel	match	match_play	both	l3_diff_px_raw	6068	1740	px	改前 6068 = 5798 + 光标 270（我方命中/原版没命中）
+pixel	match	match_play	both	l3_masked_out_px	270	0	px	光标列（墙钟 1.0 s 周期，非 tick 驱动）
+pixel	match	match_play	both	l2_blocks_over	1	0	块	超限块从 1 块归 0；该块 dmean 11.46 → 0.67
+pixel	match	match_play	both	board_roi_diff_px	5642	1598	px	棋盘区 (265,556)-(1738,900)，本文件自己按 mask>8 数（与 T84 §135.3 同口径）
+pixel	match	match_play	ours	olive_px_bbox	5718 @ x773..880 y683..861	1257 @ x773..841 y783..861	px/bbox	橄榄色 (125,104,0)±40；原版同口径 = 1742 @ x772..843 y783..857（士兵+名字标签本人）
+pixel	match	match_play	ours	colored_px_board	6399	1930	px	棋盘区"彩色"（通道极差>60）；原版同一帧 2390 ⇒ 改前多 4 009 px 弹道，改后比原版还少 460（名字标签字重差）
+pixel	match	match_play	ours	run_to_run_noise_px	—	0	px	同一个 .so、同一份代码连拍两轮（mm2 vs mm3）：两屏逐像素相同 ⇒ 我方现在是**确定性**的
+dense	match	match_play	original	first_frame_with_curve	—	#02	帧	从 phase2 起 1.0 s 后开拍、每 0.2 s 一帧 ⇒ 弹道约在 phase2+1.2 s 出现（tick 615 之后）
+dense	match	match_play	ours	first_frame_with_curve	—	#02	帧	与**原版同帧**出现（改前：整条曲线从 phase2 起就在，且永不退场）
+dense	match	match_play	original	curve_px_series	—	8369→12370 (#02..#13) px	棋盘区彩色像素；#14=1743（淡出中）⇒ #15 起 0
+dense	match	match_play	ours	curve_px_series	—	8164→11929 (#02..#12) px	#13 起 0 —— 差的那一帧 = 我方 `_on_shot_arrived()` 立刻 `_clear_curve()`（原版还留 60 tick 淡出，登记遗留）
+dense	match	match_play	ours	curve_present_at_capture	yes	no	—	5.0 s 后那 24 帧：改前我方 24/24 帧都有（且逐帧变长），改后 0/24；原版 0/24
+mech	—	—	ours	drive_frame_0.5s_tick	—	30	tick	定步 16_666_666 ns（`0x519840`）；`tick_for_frame` 余数跨帧累计
+mech	—	—	ours	window_len780_ticks	—	d ≤ 85	tick	在场谓词 `30·d < len+1800`（`0x3be5f6`–`0x3be613`）；d=86 ⇒ 30·86 = 2580 = 780+1800 ⇒ 出窗口
+mech	—	—	ours	reveal_points_per_tick	—	30	点/tick	`0x4b67a0`–`0x4b6812`
+mech	—	—	ours	fade_alpha_d27	—	0.9833333	alpha	`max(0, 1 − (d − len/30)/60)`（`0x455a40`）；alpha@d=26 = 1.0、@d=85 = 0.0166667、@d=86 已出窗口
+mech	—	—	ours	active_tick_from_event	0 (恒 0)	615	tick	`FunctionActive{active_tick}`（`0x456b80` 写 `value+0x74`）；写入计数 = 1（来路可证）
+mech	—	—	ours	entry_survives_out_of_window	—	1	条	`0x4b6418 remove_function` 是 drawer 的方法 ⇒ 管理器那一格留着（`FunctionPoints` 先到 / `FunctionActive` 后到才成立）
+mech	—	—	ours	probe_fails	—	0	条	探针 = fixtures/t88_active_window_probe.gd（19 条断言；跑法见文件头）。命令与输出在 docs/06 §137.4
+# 复跑命令（照抄）见 docs/06 §137.7；探针与两轮采集的完整清单在同一节。

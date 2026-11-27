@@ -34,9 +34,14 @@ const DUE_SENTINEL_NANOS := 1_000_000_000
 const PLAY_SCREEN_SRC := "res://src/screens/play_screen.gd"
 const CLIENT_SRC_DIR := "res://src"
 ## 生产路径里**不许**出现的驱动/通道符号（它们只允许出现在 `tools/*_check.gd` 这类验收脚本里）。
-## 出现任何一个 ⇒ 有人把驱动接进了活动客户端 ⇒ 决策（§58.3）必须重做。
+##
+## ⚠️ **T88（2026-11-27）改判**：`drive_frame` 已从这张表里**拿掉** —— 播放屏的联机路径现在
+## 每帧调 `GraphwarPlane::drive_frame(delta)`（原版 `GraphwarGameClient::process` `0x518400`
+## 的那条链），这是**决策反转**，证据与前后读数见 `docs/06` §137。
+## 剩下三个仍然禁止：它们指的是 `KernelProcessHost`/内核队列这套**另一条**通道
+## （§58.3 说"不接"的那个），本轮的驱动走的是平面自己的时钟，与它无关。
 const PRODUCTION_FORBIDDEN := [
-	"drive_frame", "KernelProcessHost", "kernel_subscribe", "kernel_pump",
+	"KernelProcessHost", "kernel_subscribe", "kernel_pump",
 ]
 
 const METHODS := [
@@ -241,7 +246,12 @@ func _initialize() -> void:
 	#    （扫描器不是"永远返回空"）。`AGENTS.md` 合并纪律 A.4。
 	var play_src: String = FileAccess.get_file_as_string(PLAY_SCREEN_SRC)
 	ok(play_src.length() > 20000, "读到播放屏源码（%d 字符）" % play_src.length())
-	ok(not play_src.contains("drive_frame"), "播放屏里**没有** `drive_frame` 调用（决策：不接）")
+	# T88 改判：**接上了**（原版那条链：`0x518400` → `0x518240` → `0x519840`）。判据从
+	# "没有调用"翻成"确实调了"，并钉住它调的是**平面**的入口（不是 `KernelProcessHost`）。
+	ok(play_src.contains("\"drive_frame\", delta"),
+		"播放屏**每帧**调 `GraphwarPlane::drive_frame(delta)`（决策已改判：接了，`docs/06` §137）")
+	ok(not play_src.contains("KernelProcessHost"),
+		"播放屏仍**没有** `KernelProcessHost`（内核队列那条通道依旧不接）")
 	var hits: PackedStringArray = _scan_client_sources(PRODUCTION_FORBIDDEN)
 	ok(_scan_files > 20, "扫描器扫到 `client/src/**` 的 %d 个 .gd（正对照：不是空目录）" % _scan_files)
 	ok(hits.is_empty(), "生产客户端里没有驱动/通道符号（命中：%s）" % [hits])
