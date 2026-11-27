@@ -76,9 +76,23 @@ def report(path):
     if hollow:
         print("  ✗ 空心节（正文 <3 行，疑似合并时正文被吞）: "
               + ", ".join(f"§{n}(={bl}行)→下一个§{nx}" for n, bl, nx in hollow))
-    if not dup and not markers and not hollow:
-        print("  ✓ 无重复号、无冲突标记、无空心节")
-    return 1 if (dup or markers or hollow) else 0
+    # 子节重号检测（2026-11-27 加）：起因是 leads 手工搬正文时把 T74 的 `### 120.x`
+    # 与 T73 的 `### 120.x` 混在一起（父节只剩一个）⇒ 12 处外部 `§120.x` 引用全部指错节，
+    # 而 §N 层与冲突标记都正常 ⇒ 只看 ## 层查不出来。
+    sub = {}
+    for n, body in blocks:
+        for line in body:
+            m = re.match(r'^### (\d+)\.(\d+)\s', line)  # 要求后面是空白：`### 33.4b` 不算 33.4
+            if m:
+                key = (int(m.group(1)), int(m.group(2)))
+                sub[key] = sub.get(key, 0) + 1
+    subdup = sorted(k for k, v in sub.items() if v > 1)
+    if subdup:
+        print("  ✗ 子节重号（同一 ###) N.M 出现多次，外部 §N.M 引用会指错节）: "
+              + ", ".join(f"§{a}.{b}" for a, b in subdup[:8]))
+    if not dup and not markers and not hollow and not subdup:
+        print("  ✓ 无重复号、无冲突标记、无空心节、无子节重号")
+    return 1 if (dup or markers or hollow or subdup) else 0
 
 
 def sort_file(path):
