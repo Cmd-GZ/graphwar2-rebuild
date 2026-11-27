@@ -11,6 +11,31 @@ T30 已证伪（`docs/06` §80）：`boundary_audit` 的 10 条 mismatch 里**�
 本脚本按**预注册判据**（`fixtures/function_coverage_plan.txt`，先于本脚本提交）
 把 527 行逐函数判成 F1–F4，产出 `fixtures/function_coverage.tsv` 与三种口径的分子。
 
+## T85 追加：`na` 口径 + P2 负向排除（预注册 `fixtures/function_coverage_na_plan.txt`）
+
+T82（`docs/06` §129）把 F3 的 153 条逐条裁决成五类：53 `real-missing` / 12 `na:std-mono` /
+69 `na:gdext-glue` / 7 `na:other` / 12 `unknown`（台账 `fixtures/f3_triage.tsv`，**人工裁决**）。
+本脚本按 T82 §129.5.2 的四条建议把这份台账接进计分：
+
+1. **`na` 列**（+`na_basis` 依据列，追加在 13 列之后）：值域
+   `real-missing|na:std-mono|na:gdext-glue|na:other|unknown`，缺省 `real-missing`
+   （缺省语义是「**没有 na 证据**」，不是「已确认真的缺」——T82 只审了 153 条 F3）。
+   台账是**人工裁决**，本脚本**不重新判类别**，只做机判**闸**（M1–M7，见下）。
+2. **`--stats` 三口径**：A（含 na，分母 527）/ B（剔 `na:*`，分母 439）/ B′（只剔强 na
+   `std-mono+gdext-glue`，分母 446）；分子分母都打，**招牌数 = 口径 B**，并同时印出
+   **旧口径（不带负向排除）的 A** 供与历史读数（`docs/06` §129.0 的 277/527）对照。
+3. **P2 负向排除（N1）**：判了 `na:*` 的地址，即使出现在我方注释里（P2 会命中）**也不算 F1 证据**，
+   一律降 `F3`+子类 `na:<原类别>`。理由：T71 §123.5 实测假抬 5 条，T80 之后同一机制假抬 **33 条**
+   （文件顶部的"台账注释块"被 `attach_addr` 贴到第一个 fn 上 —— 那是**登记**不是实现）。
+4. **`--no-na` = 完全旧行为**：不读台账、不写 `na` 列、不做 N1，生成物与 `--stats` 与改动前**逐字节相同**。
+
+**闸**（任一不满足 ⇒ 打印全部违例后 `exit(2)`，不写 TSV、不出三口径）：
+`M1` 值域 / `M2` 台账 addr 必须在 `boundary_audit` 的 527 行里 / `M3` 台账 addr 不重复 /
+`M4` `na:*` 的 FDE 尺寸 ≤ **0x800**（实测 na 全 ≤0x721，≥0x800 上全是假阳性，见 §129.3）/
+`M5` 依据文本非空且 ≥40 字符、命中 5 个固定标记（`Location=`/`被调者`/`串=`/`名字来源=`/`人工改判`）里 ≥2 个
+（预注册写 ≥3；实测 4 条只命中 2 ⇒ 硬闸降到 2 并把那 4 条每次运行都打印，偏差登记 docs/06 §131.8-1）/
+`M6` `na:*` 行若被**名字**指认命中 ⇒ 台账与代码矛盾（报错）/ `M7` 台账 `name` 必须与 boundary 同名。
+
 ## 判据（照抄预注册文件，一字不改）
 
     F1 有实现 + 有物证   我方存在一个函数能指到该原版函数（真名/地址引用），且档位有可复核出处
@@ -39,10 +64,12 @@ R4 只有**声明没有函数体**的 fn（trait 方法声明、`fn x();`）不�
 
 ## 用法
 
-    python3 tools/function_coverage.py            # 生成 fixtures/function_coverage.tsv + 打印统计
+    python3 tools/function_coverage.py            # 生成 fixtures/function_coverage.tsv + 打印统计（含 na 列与三口径）
     python3 tools/function_coverage.py --stats    # 只打印统计（不写文件）
     python3 tools/function_coverage.py --control  # 只跑正/反面对照
     python3 tools/function_coverage.py --module graphwar_level_manager.rs   # 单模块逐条
+    python3 tools/function_coverage.py --no-na    # **旧行为**（T85 之前）：不读台账、不写 na 列、不做负向排除
+                                                  #   ⇒ 复跑历史数字（A = 312/527 那批）的唯一方式
 
 地址口径：一律 **ELF vaddr（RVA）**。只读 `src/**`，不改任何实现。
 """
@@ -59,9 +86,33 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BOUNDARY = "fixtures/boundary_audit.tsv"
 MATRIX = "docs/coverage-matrix.tsv"
 OUT = "fixtures/function_coverage.tsv"
+NA_LEDGER = "fixtures/f3_triage.tsv"
 
 GRADES_WITH_EVIDENCE = ("逐位", "观测")
 SCAFFOLD_PREFIX = "src/_scaffold/"
+
+# ---------------------------------------------------------------------------
+# T85：`na` 口径（预注册 fixtures/function_coverage_na_plan.txt §2–§6）
+# ---------------------------------------------------------------------------
+# 值域逐字照抄 T82 台账的「类别」列；缺省 = real-missing（语义 = **没有 na 证据**，不是"确认真的缺"）
+NA_DOMAIN = ("real-missing", "na:std-mono", "na:gdext-glue", "na:other", "unknown")
+NA_DEFAULT = "real-missing"
+NA_PREFIX = "na:"
+# 强 na = 函数体根本不在我们源码里（不可争议）⇒ 口径 B′ 的分母只剔这两类
+NA_STRONG = ("na:std-mono", "na:gdext-glue")
+# 体积上限（§4）：实测 na 全 ≤0x721，已知假阳性 0x3c2bc0 = 0x308d ⇒ 0x800 在空档里
+NA_SIZE_CAP = 0x800
+# 人工复核闸（§5）：依据文本必须够长，且命中下面 5 个固定标记里 ≥2 个（预注册写 ≥3，偏差见下）
+NA_EVIDENCE_MIN = 40
+NA_EVIDENCE_KEYS = ("Location=", "被调者", "串=", "名字来源=", "人工改判")
+# ⚠️ 预注册 §5 写的是「≥3 个标记」，实测**4 条** `na:std-mono` 只命中 2 个（`Location=` + `名字来源=`，
+#    长度 124–131；它们的依据靠 `hits` 列的 PAIR/SELF 特征成立，文本只是更简）。台账是 T82 的产物、
+#    本轮不许改 ⇒ 硬闸降到 **2**，但把「<3」的条目**每次运行都打出来**（下面的 WARN_KEYS）。
+#    这是**放宽**判据的偏差，已登记 docs/06 新节「§我写错了」。
+NA_EVIDENCE_MIN_KEYS = 2
+NA_EVIDENCE_WARN_KEYS = 3
+# 缺省行的依据列文案（必须能一眼分出「台账裁决过」与「只是缺省值」）
+NA_DEFAULT_BASIS = "—(未入 na 台账：T82 只审了 153 条 F3，本行是缺省值不是结论)"
 
 # ---------------------------------------------------------------------------
 # P2（地址指认）的**人工复核表**
@@ -459,6 +510,105 @@ def load_matrix():
 
 
 # ---------------------------------------------------------------------------
+# T85：读 + 闸 `fixtures/f3_triage.tsv`（T82 的人工裁决台账）
+# ---------------------------------------------------------------------------
+def load_na_ledger():
+    """读台账的**主表**（153 行），返回 {addr(lower): dict(...)}。
+
+    只读主表：读到 `# ----` 开头的行（F2-scan 分节横幅）即停 —— 那一节是**机判候选**，
+    T82 §129.5.3 明写"命中不等于改判 F2 的档位"（里面还有 4 条已知的真业务函数），
+    **绝不能**当 na 用（预注册 §1）。边界写死在这里，不靠缩进/空行猜。
+    """
+    path = os.path.join(ROOT, NA_LEDGER)
+    if not os.path.exists(path):
+        sys.exit(f"na 台账不存在：{NA_LEDGER}（旧行为请加 --no-na）")
+    raw = []
+    with open(path, encoding="utf-8") as fh:
+        for ln_no, line in enumerate(fh, 1):
+            if line.startswith("# ----"):
+                break
+            if line.startswith("#") or not line.strip():
+                continue
+            raw.append((ln_no, line.rstrip("\n").split("\t")))
+    if len(raw) < 2:
+        sys.exit(f"{NA_LEDGER}: 主表为空（只读到 {len(raw)} 行）")
+    hdr = raw[0][1]
+    need = ["vaddr", "name", "size", "hits", "category", "evidence"]
+    if hdr[:len(need)] != need:
+        sys.exit(f"{NA_LEDGER}: 主表表头应以前 6 列 {need} 开头，实得 {hdr}")
+    idx = {k: i for i, k in enumerate(hdr)}
+    ledger = {}
+    for ln_no, r in raw[1:]:
+        if len(r) < len(hdr):
+            sys.exit(f"{NA_LEDGER}:{ln_no}: 列数 {len(r)} < 表头 {len(hdr)}")
+        addr = r[idx["vaddr"]].strip().lower()
+        if addr in ledger:      # M3
+            sys.exit(f"{NA_LEDGER}:{ln_no}: 地址重复 {addr}（首次在 {ledger[addr]['line']} 行）")
+        try:
+            size = int(r[idx["size"]], 16)
+        except ValueError:
+            sys.exit(f"{NA_LEDGER}:{ln_no}: size 不是十六进制 {r[idx['size']]!r}")
+        ledger[addr] = dict(addr=r[idx["vaddr"]].strip(), name=r[idx["name"]],
+                            size=size, hits=r[idx["hits"]],
+                            category=r[idx["category"]].strip(),
+                            evidence=r[idx["evidence"]].strip(), line=ln_no)
+    return ledger
+
+
+def validate_na_ledger(ledger, boundary):
+    """§3–§5 的机判闸 M1/M2/M4/M5/M7（M3 在读取时已挡，M6 要判完档才能查）。
+
+    预注册要求「先打印**全部**违例，再 exit(2)」——所以这里只收集，不早退。
+    """
+    viol = []
+    warn = []
+    bmap = {r["addr"].lower(): r for r in boundary}
+    for addr, e in ledger.items():
+        # M1 值域
+        if e["category"] not in NA_DOMAIN:
+            viol.append(f"M1 {NA_LEDGER}:{e['line']} {e['addr']} 类别 {e['category']!r} 不在值域 {NA_DOMAIN}")
+            continue
+        # M2 台账 addr 必须在 527 行里（否则分母已经不是 527 = 台账漂移）
+        b = bmap.get(addr)
+        if b is None:
+            viol.append(f"M2 {NA_LEDGER}:{e['line']} {e['addr']} 不在 {BOUNDARY}（台账漂移：分母不是 527）")
+            continue
+        # M7 同名（最灵敏的漂移探针）
+        if e["name"] != b["name"]:
+            viol.append(f"M7 {NA_LEDGER}:{e['line']} {e['addr']} 名字与 boundary 不一致："
+                        f"台账 {e['name']!r} ≠ boundary {b['name']!r}")
+        # M4 体积上限（只对 na:* 生效）
+        if e["category"].startswith(NA_PREFIX) and e["size"] > NA_SIZE_CAP:
+            viol.append(f"M4 {NA_LEDGER}:{e['line']} {e['addr']} 尺寸 0x{e['size']:x} > 上限 "
+                        f"0x{NA_SIZE_CAP:x}（§4：大函数上的 na 特征全是假阳性）")
+        # M5 依据（n 人工复核闸：na 入库必须带依据）
+        ev = e["evidence"]
+        hits = [k for k in NA_EVIDENCE_KEYS if k in ev]
+        if len(ev) < NA_EVIDENCE_MIN or len(hits) < NA_EVIDENCE_MIN_KEYS:
+            viol.append(f"M5 {NA_LEDGER}:{e['line']} {e['addr']} 依据不足：长 {len(ev)} 字符、"
+                        f"命中 {hits}（要求 ≥{NA_EVIDENCE_MIN} 字符且 ≥{NA_EVIDENCE_MIN_KEYS} 个标记）")
+        elif len(hits) < NA_EVIDENCE_WARN_KEYS:
+            warn.append(f"{e['addr']}（{e['category']}）只命中 {len(hits)} 个标记 {hits}、"
+                        f"长 {len(ev)} —— 低于预注册 §5 的 ≥{NA_EVIDENCE_WARN_KEYS}，见 docs/06 的「§我写错了」")
+    if warn:
+        print(f"\n⚠ 依据偏薄（{len(warn)} 条，**不拒绝出数**，但每次运行都提示）：")
+        for w in warn:
+            print("   " + w)
+    if viol:
+        print(f"\n✗ na 台账没通过机判闸（{len(viol)} 条违例）—— 按预注册 §3，**拒绝出数**：")
+        for v in viol:
+            print("   " + v)
+        sys.exit(2)
+
+
+def na_counts(ledger):
+    """返回 (n_na, n_strong, n_total)：分母修正用（口径 A/B/B′）。"""
+    n_na = sum(1 for e in ledger.values() if e["category"].startswith(NA_PREFIX))
+    n_strong = sum(1 for e in ledger.values() if e["category"] in NA_STRONG)
+    return n_na, n_strong, len(ledger)
+
+
+# ---------------------------------------------------------------------------
 # 名字 → 候选 fn 名
 # ---------------------------------------------------------------------------
 COMPILER_CHILD = ("::{{closure}}", "::panic_cold_explicit", "::panic_cold_display",
@@ -515,15 +665,17 @@ def expected_type(name):
 # ---------------------------------------------------------------------------
 # 判档
 # ---------------------------------------------------------------------------
-def judge(row, matrix, idx):
+def judge(row, matrix, idx, na=None):
+    """na=None ⇒ 旧行为（不读台账、不做负向排除）；na=dict ⇒ T85 的 na 口径（预注册 §6）。"""
     module = os.path.basename(row["loc_main_file"])
     ours = row["ours_file"]
     grade = matrix.get(module, {}).get("status", "")
     module_evidence = matrix.get(module, {}).get("evidence", "")
+    na_entry = (na or {}).get(row["addr"].lower())
 
     base = dict(
         bucket="", sub="", pin="none", pin_where="", missing="", judge_method="",
-        type_check="n/a", type_note="",
+        type_check="n/a", type_note="", na_blocked=False,
     )
     # ours_file 可能是多文件（用 '+' 连接）：该模块被我方拆进 N 个文件
     ours_list = [p for p in (ours or "").split("+") if p]
@@ -629,9 +781,11 @@ def judge(row, matrix, idx):
             pin_where = f"{hit.file}:{hit.line}"
 
     # ---- P2 ADDR（地址引用，强）-------------------------------------------
+    p2_hit = False
     if not hit:
         a = idx.attach_addr(row["addr_int"], tuple(ours_present)) or idx.attach_addr(row["addr_int"], all_files)
         if a:
+            p2_hit = True
             f, rel, ln = a
             hit, pin, pin_where = f, "addr", f"{f.file}:{f.line}(注释 {rel}:{ln})"
             if rel.startswith(SCAFFOLD_PREFIX) or f.file.startswith(SCAFFOLD_PREFIX):
@@ -648,6 +802,18 @@ def judge(row, matrix, idx):
     # 只按地址"登记"过、但贴不到任何 fn（T30 那 9 条的样子）
     cited_anywhere = row["addr_int"] in idx.cites
     gh = idx.cites.get(row["addr_int"] + 0x100000)
+
+    # ---- N1 负向排除（T85；预注册 §6）：判了 na 的地址**不是**实现证据 ----
+    # 台账 = 人工裁决（T82）。只要该类别的函数体本就不该我们手写，它出现在我方注释里
+    # 最多是"登记/取证线索"。T71 §123.5 实测假抬 5 条；T80 后同一机制假抬 33 条。
+    if na_entry and na_entry["category"].startswith(NA_PREFIX) and p2_hit:
+        cat = na_entry["category"]
+        base.update(bucket="F3", sub=cat, pin="none", pin_where="",
+                    missing=f"台账判 {cat}（不该手写），但地址出现在我方注释里 —— "
+                            f"按 N1 负向排除，**不算实现证据**；台账依据：{NA_LEDGER}:{na_entry['line']}",
+                    judge_method=f"N1：P2 命中被 na 负向排除（{cat}）",
+                    na_blocked=True)
+        return base
 
     # ---- 人工复核（只作用于 P2 的命中；见 ADDR_MANUAL）---------------------
     if pin == "addr" and row["addr"] in ADDR_MANUAL:
@@ -740,7 +906,11 @@ def judge(row, matrix, idx):
 # ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
-def build(verbose=True):
+def build(ledger=None):
+    """ledger=None ⇒ 旧行为（--no-na）；ledger=dict ⇒ na 口径 + P2 负向排除（T85 默认）。
+
+    闸（M1/M2/M3/M4/M5/M7）在 `load_na_ledger` + `validate_na_ledger` 里做，M6 在本函数尾部。
+    """
     rows = load_boundary()
     matrix = load_matrix()
     idx = SrcIndex()
@@ -748,7 +918,7 @@ def build(verbose=True):
     GAP = ("skel", "register-only", "named-miss", "parent-missing")
     UNK = ("hyb-miss", "noname")
     for r in rows:
-        j = judge(r, matrix, idx)
+        j = judge(r, matrix, idx, ledger)
         if j["bucket"] in ("F1", "F2"):
             j["group"] = "ok"
         elif j["sub"] in GAP:
@@ -757,17 +927,38 @@ def build(verbose=True):
             j["group"] = "unk"
         else:
             j["group"] = "na"
+        j["na"] = (ledger or {}).get(r["addr"].lower())
         out.append(dict(row=r, **j))
+    # M6 台账 vs 代码矛盾：na:* 行被**名字**指认命中 ⇒ 要么台账错、要么名字指认错，人来判断
+    if ledger:
+        NAME_PINS = ("name", "name-other", "name-soft", "macro")
+        viol = [o for o in out
+                if o["na"] and o["na"]["category"].startswith(NA_PREFIX) and o["pin"] in NAME_PINS]
+        if viol:
+            print(f"\n✗ na 台账与代码矛盾（{len(viol)} 条）：台账判 na:*，却靠**名字**指认到了实现 —— "
+                  f"按预注册 §3-M6 **拒绝出数**：")
+            for o in viol:
+                print(f"   {o['row']['addr']}  {o['na']['category']:14s} pin={o['pin']:9s} "
+                      f"{o['pin_where']}  台账 {NA_LEDGER}:{o['na']['line']}")
+            print("   ⇒ 要么台账类别错（那是有实现、不该 na），要么名字指认错（同名不代表同一个函数）。"
+                  "P2（地址）命中**不算**矛盾 —— 那是 N1 要排除的对象。")
+            sys.exit(2)
     return out
 
 
-def fmt_row(o):
+def fmt_row(o, with_na=False):
     r = o["row"]
-    return "\t".join([
+    cols = [
         r["addr"], r["name"], r["name_src"], os.path.basename(r["loc_main_file"]),
         r["ours_file"], o["pin_where"], o["bucket"], o["sub"], o["pin"],
         o["type_check"], r["verdict"], o["judge_method"], o["missing"],
-    ])
+    ]
+    if with_na:
+        e = o.get("na")
+        cols.append(e["category"] if e else NA_DEFAULT)
+        cols.append((f"ledger#{e['line']} " + e["evidence"].replace("\t", " ")[:120]) if e
+                    else NA_DEFAULT_BASIS)
+    return "\t".join(cols)
 
 
 HEADER = ("# function_coverage.tsv —— 由 tools/function_coverage.py 生成，**不要手改**\n"
@@ -788,8 +979,19 @@ HEADER = ("# function_coverage.tsv —— 由 tools/function_coverage.py 生成�
           "#       hyb-only=只有预测名 / pinned=F1 的指认成立 / grade-inferred=档位=推断 /\n"
           "#       addr-neighbor=地址引用只贴到邻居函数（人工复核否决，见工具里的 ADDR_MANUAL）\n")
 
+# T85：启用 na 口径时追加的两列与说明（`--no-na` 时不追加 ⇒ 生成物与 T85 之前逐字节相同）
+NA_HEADER_EXTRA = (
+    "# ── T85 追加两列（预注册 fixtures/function_coverage_na_plan.txt）──────────────────────────\n"
+    "#   na       = 该原版函数**该不该由我们手写**的裁决（来自 fixtures/f3_triage.tsv，T82 人工裁决，\n"
+    "#              工具不重判）：real-missing（缺省 = **没有 na 证据**，不是「确认真的缺」）/ na:std-mono /\n"
+    "#              na:gdext-glue / na:other / unknown。只审过 153 条 F3，其余行是缺省值。\n"
+    "#   na_basis = 依据（ledger#行号 + 台账的「依据」列前 120 字）；缺省行写明「未入台账」。\n"
+    "#   **负向排除（N1）**：na:* 的地址出现在我方注释里**不算**实现证据（P2 否决）⇒ 该行判 F3 + 子类 na:*。\n"
+    "#   三口径见 --stats：A 含 na(分母 527) / B 剔 na(分母 439) / B′(只剔强 na, 分母 446)，招牌= B。\n"
+)
 
-def stats(out, verbose=True):
+
+def stats(out, verbose=True, na=None):
     c = collections.Counter(o["bucket"] for o in out)
     sub = collections.Counter(o["sub"] for o in out)
     pin = collections.Counter(o["pin"] for o in out)
@@ -830,12 +1032,44 @@ def stats(out, verbose=True):
         print(f"    {k:22s} {v:4d}")
     f3_gap = sum(v for k, v in sub.items() if k in ("skel", "register-only", "named-miss", "parent-missing"))
     f3_unk = sum(v for k, v in sub.items() if k in ("hyb-miss", "noname"))
-    f3_na = sub.get("na:macro-generated", 0)
-    print(f"\n  F3 三组：①缺函数边界（skel/register-only/named-miss/parent-missing）= {f3_gap}"
-          f"  ②判不了（hyb-miss/noname）= {f3_unk}  ③宏产物不算缺 = {f3_na}")
-    dm = n - f3_na
-    print(f"  分母修正（剔除 {f3_na} 条 gdext 宏生成、源码层本无独立 fn）："
-          f"{m1} / {dm} = {m1*100.0/dm:5.1f}%")
+    if not na:
+        # ---- 旧行为（--no-na）：这一段与 T85 之前**逐字节相同**（C1 的判据）----
+        f3_na = sub.get("na:macro-generated", 0)
+        print(f"\n  F3 三组：①缺函数边界（skel/register-only/named-miss/parent-missing）= {f3_gap}"
+              f"  ②判不了（hyb-miss/noname）= {f3_unk}  ③宏产物不算缺 = {f3_na}")
+        dm = n - f3_na
+        print(f"  分母修正（剔除 {f3_na} 条 gdext 宏生成、源码层本无独立 fn）："
+              f"{m1} / {dm} = {m1*100.0/dm:5.1f}%")
+    else:
+        # T85：na 子类 = 台账判 na:* 的降档行（含原有的 na:macro-generated）⇒ 一律不进 gap/unk
+        f3_na = sum(v for k, v in sub.items() if k.startswith(NA_PREFIX))
+        print(f"\n  F3 三组：①缺函数边界（skel/register-only/named-miss/parent-missing）= {f3_gap}"
+              f"  ②判不了（hyb-miss/noname）= {f3_unk}  ③na（源码层本无独立 fn / 不该手写）= {f3_na}")
+
+        # --------------------------------------------------------------
+        # T85：三种口径（预注册 §7）。分子 = 负向排除后的 F1，分母按 na 台账修正。
+        # --------------------------------------------------------------
+        n_na, n_strong, n_ledger = na_counts(na)
+        blocked = sum(1 for o in out if o.get("na_blocked"))
+        legacy_f1 = m1 + blocked        # 不做负向排除时的 F1 = 旧口径的分子
+        dA, dB, dBp = n, n - n_na, n - n_strong
+        cB = m2                          # 口径 C 的分子 = F1+F2（参照用，不许当招牌）
+        print(f"\n=== 函数级复原率**三口径**（na 台账 = {NA_LEDGER}，T82 人工裁决；"
+              f"覆盖 {n_ledger}/{n} 条，其中 na:* = {n_na}（强 na {n_strong}））")
+        print(f"  口径 A  含 na（分母 {dA}）：{m1:4d} / {dA}  = {m1*100.0/dA:5.1f}%"
+              f"   保守/历史对照（分母把'标准库/宏产物'也算成我们的缺口）")
+        print(f"  口径 B  剔 na（分母 {dB}）：{m1:4d} / {dB}  = {m1*100.0/dB:5.1f}%"
+              f"   <- **招牌数**（分子分母同口径剔 na）")
+        print(f"  口径 B′ 只剔强 na（分母 {dBp}）：{m1:4d} / {dBp}  = {m1*100.0/dBp:5.1f}%"
+              f"   区间下界（na:other 那 {n_na - n_strong} 条留回分母）")
+        print(f"  口径 C  参照（含 F2）：{cB:4d} / {dB}  = {cB*100.0/dB:5.1f}%"
+              f"   ⚠️ F2 未做 na 专项（T82 §129.5.3）⇒ 仍虚高")
+        print(f"  na 负向排除（N1）：{blocked} 条 na:* 的地址曾被我方注释引用（P2 假命中）⇒ "
+              f"不算 F1（F1 {legacy_f1} → {m1}）")
+        print(f"  [历史] 旧口径（`--no-na`，无负向排除）：A = {legacy_f1} / {dA} = "
+              f"{legacy_f1*100.0/dA:5.1f}%  —— **不可引用**，只用于与 T85 之前的读数对照")
+        print(f"  [禁止] 分子用含 na 的 {legacy_f1} + 分母剔 na 的 {dB} = "
+              f"{legacy_f1*100.0/dB:5.1f}% 是**双向占便宜**的口径错配（HANDOVER 曾误写 71.1%）")
 
     GAP = ("skel", "register-only", "named-miss", "parent-missing")
     UNK = ("hyb-miss", "noname")
@@ -934,19 +1168,28 @@ def main(argv=None):
     ap.add_argument("--stats", action="store_true", help="只打印统计，不写文件")
     ap.add_argument("--control", action="store_true", help="只跑正/反面对照")
     ap.add_argument("--module", default="", help="只打印某个模块的逐条判定")
+    ap.add_argument("--no-na", dest="no_na", action="store_true",
+                    help="旧行为（T85 之前）：不读 na 台账、不写 na 列、不做 P2 负向排除；"
+                         "生成物与 --stats 与改动前逐字节相同")
     args = ap.parse_args(argv)
 
-    out = build()
+    use_na = not args.no_na
+    ledger = None
+    if use_na:
+        ledger = load_na_ledger()
+        validate_na_ledger(ledger, load_boundary())    # M1/M2/M4/M5/M7（M3 在读取时已挡）
+    out = build(ledger)
     if args.control:
         control(out)
         return 0
-    c, sub, pin, bymod = stats(out)
+    c, sub, pin, bymod = stats(out, na=ledger)
     if args.module:
         rows = [o for o in out if os.path.basename(o["row"]["loc_main_file"]) == args.module]
         print(f"\n=== {args.module}: {len(rows)} 行")
         for o in sorted(rows, key=lambda x: x["row"]["addr"]):
+            natag = f" na={(o['na']['category'] if o.get('na') else NA_DEFAULT):14s}" if use_na else ""
             print(f"  {o['row']['addr']} {o['bucket']}/{o['sub']:18s} pin={o['pin']:7s} "
-                  f"{o['pin_where']:38s} {o['row']['name'][:60]}")
+                  f"{o['pin_where']:38s}{natag} {o['row']['name'][:60]}")
         return 0
     if args.stats:
         return 0
@@ -954,9 +1197,11 @@ def main(argv=None):
     path = os.path.join(ROOT, OUT)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(HEADER)
+        if use_na:
+            fh.write(NA_HEADER_EXTRA)
         for o in out:
-            fh.write(fmt_row(o) + "\n")
-    print(f"\n写出 {OUT}：{len(out)} 行")
+            fh.write(fmt_row(o, with_na=use_na) + "\n")
+    print(f"\n写出 {OUT}：{len(out)} 行{'（含 na/na_basis 两列）' if use_na else '（--no-na：旧 13 列）'}")
     return 0
 
 
