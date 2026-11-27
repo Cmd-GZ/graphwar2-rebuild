@@ -1085,19 +1085,29 @@ func _set_curve(points: PackedVector2Array, color: Color, player_id: int) -> voi
 	# `FunctionActive{active_tick}`，本样本 615；见 `_curve_active_tick()`）。
 	# 它决定这条弹道**开不开始画**：`GraphwarPlane::draw` 的在场谓词是
 	# `active_tick < tick`（严格，`0x3be5f6` 的 `jbe`）。
-	#
-	# 改前：这里恒传 **0**（注释写着"我方选择"）⇒ 只要本地 tick ≥ 1 就开始长，
-	# 而原版要等服务端那条 `FunctionActive` 的 615 被本地 tick 追上。
 	var active_tick := _curve_active_tick(player_id)
 	_plane.call("set_function_points", player_id, flat, active_tick, _packed_color(color))
-	#
-	# **回放不走墙钟**：曲线的揭示量是 `回放 tick − active_tick`（原版 `GraphwarPlane::draw`
-	# 把 `GraphwarTickHandler::get_fractional_tick` 喂给喂点循环，而 `is_active_function`
-	# 拿它和 `active_tick` 比）。以前这里给"揭完"⇒ 载入态就把整条弹道画了出来，
-	# 而真帧上原版载入态**没有弹道**（`docs/06` §53.4 ④）。
-	_curve_tick = (_replay_curve_tick() if _replay_mode else 1.0)
-	_plane.call("set_fractional_tick", _curve_tick)
-	_feed_curve()
+	if _replay_mode:
+		# **回放不走墙钟**：曲线的揭示量是 `回放 tick − active_tick`（`active_tick` 在回放口径里
+		# 留 0，喂进去的 `fractional_tick` 本身就是"已揭示多少 tick"）。以前这里给"揭完"⇒
+		# 载入态就把整条弹道画了出来，而真帧上原版载入态**没有弹道**（`docs/06` §53.4 ④）。
+		_curve_tick = _replay_curve_tick()
+		_plane.call("set_fractional_tick", _curve_tick)
+		_feed_curve()
+	elif _online_mode:
+		# **联机不摆时钟**：tick 轴由 `_drive_clock()` 每帧 `drive_frame()` 推、由
+		# `TickReply` 对齐（原版同一条链），这里只把已知的起飞 tick 灌进去。
+		# ⚠️ 以前这里摆成 `1.0` ⇒ `active_tick=0` 时当帧就"已飞 1 tick"，从第 1 个 tick
+		# 开始长——**那就是 T84 查出来的"多画了一条原版没有的弹道"**（`docs/06` §135.3/§136）。
+		# 这里**不**喂点：喂点由 `_drive_clock()` 每帧做（原版是 `draw` 尾部那段循环每帧跑）。
+		# 抢在 `FunctionActive` 之前喂一帧，等于拿"默认 active_tick=0"去判在场 —— 那正是
+		# 旧版多画一条弹道的机制之一。
+		_curve_tick = float(_plane.call("fractional_tick"))
+	else:
+		# 本地局：仍是墙钟（`_advance_curve`），等价于 `active_tick = 0` 且从第 1 个 tick 起。
+		_curve_tick = 1.0
+		_plane.call("set_fractional_tick", _curve_tick)
+		_feed_curve()
 
 ## 这条弹道的**起飞 tick**（原版 `GraphwarFunctionManager` 的 `FunctionState.value+0x74`）。
 ##
@@ -1171,6 +1181,53 @@ func _advance_curve(seconds: float) -> void:
 	_curve_tick = minf(_curve_tick + seconds * CURVE_TICKS_PER_SECOND, _curve_final_tick)
 	_plane.call("set_fractional_tick", _curve_tick)
 	_feed_curve()
+
+## **每帧的时钟驱动**（原版 `GraphwarGameClient::process` → `drive_frame` 那条链）。
+##
+## 三条路径分开，`docs/06` §136 有每一条的证据与差别：
+## * **联机** = 原版口径：`GraphwarPlane::drive_frame(delta)` 按定步 16_666_666 ns 推
+##   `GraphwarTickHandler`（`0x519840`），再用 `TickReply{current_tick}` 把轴对齐到服务端
+##   （`docs/06` §60.2.1 的观测：不回这条时原版 S8 里没有弹道）。
+##   揭示量由平面自己按 `30·(fractional_tick − active_tick)` 算（`0x4b67a0`），
+##   本屏只负责"每帧喂一次点"。
+## * **回放** = 回放播放器给 tick（`_replay_advance_curve()`，口径不变）。
+## * **本地局** = 仍是墙钟（`_advance_curve`，**未接 tick handler**，登记为差异）。
+func _drive_clock(delta: float) -> void:
+	if _plane == null:
+		return
+	if _replay_mode:
+		_advance_curve(delta)
+		return
+	if _online_mode:
+		_plane.call("drive_frame", delta)
+		_online_poll_tick(delta)
+		_curve_tick = float(_plane.call("fractional_tick"))
+		if _curve_player >= 0:
+			_feed_curve()
+		return
+	_advance_curve(delta)
+
+## 联机时钟的两件事：**1 Hz 要 tick** + **收到 `TickReply` 就把轴拨过去**。
+##
+## 原版：`GraphwarTickHandler::tick`（`0x519840`）每 60 个 tick（= 1 s @ 60 Hz）发一条
+## `TickRequest`（`current_tick % 60 == 0`），服务端回 `TickReply{current_tick}`；
+## 客户端的 tick 轴**就是**这样对齐到服务端的（`docs/06` §60.2.1，`tools/match_serve.py`
+## 也是照这个行为实现的）。`FunctionActive.active_tick` 就长在这条轴上。
+const TICK_REQUEST_PERIOD := 1.0
+var _tick_request_acc := 0.0
+var _online_tick_synced := -1
+
+func _online_poll_tick(delta: float) -> void:
+	if _online_session == null:
+		return
+	_tick_request_acc += delta
+	if _tick_request_acc >= TICK_REQUEST_PERIOD:
+		_tick_request_acc = fmod(_tick_request_acc, TICK_REQUEST_PERIOD)
+		_online_session.send_tick_request()
+	var cur := int(_online_room().get("current_tick", -1))
+	if cur >= 0 and cur != _online_tick_synced:
+		_online_tick_synced = cur
+		_plane.call("set_fractional_tick", float(cur))
 
 ## 画到第几个点 —— **读 `Line2D` 本身**（原版 `FunctionDrawer` 的 value 里那个"已写入数"，
 ## `docs/16` §40.3a），不是我们这边另记的账。
@@ -1803,6 +1860,11 @@ func _reset_shot_state() -> void:
 	if _effects != null:
 		_effects.clear()
 	_clear_curve()                    # 曲线 + tick 一起归零（幂等）
+	# tick 对齐状态跟着新局重置（`_online_poll_tick`）。累加器直接推到"该发"的门槛上：
+	# 原版连上服务器时会立刻发一条 `TickRequest`（`handle_connected_to_server_event`
+	# `0x519630`，不看载荷），所以第一条也该在第一帧就发出去，而不是等满 1 s。
+	_tick_request_acc = TICK_REQUEST_PERIOD
+	_online_tick_synced = -1
 
 ## 把 `_soldiers` 摊成"每玩家一张士兵表"，交给回合轮转（`docs/143` §6）。
 ##
@@ -3411,10 +3473,10 @@ func online_state() -> Dictionary:
 # ---------------------------------------------------------------- 每帧
 
 func _process(delta: float) -> void:
-	# 曲线的 tick 在**任何模式**下都推进：原版是 `GraphwarTickHandler::get_fractional_tick`
-	# （`0x519530`）每帧喂给 `GraphwarPlane::draw` 的喂点循环，那个模块还没接 ⇒ 本屏按帧间隔推
-	# （`docs/16` §43.6(d) 第 2 条就是这条缺口；`advance_shot_for_test()` 是自检的确定性入口）。
-	_advance_curve(delta)
+	# 曲线的 tick 在**任何模式**下都推进。原版是 `GraphwarTickHandler::get_fractional_tick`
+	# （`0x519530`）每帧喂给 `GraphwarPlane::draw` 的喂点循环；T88 起联机走**真时钟**
+	# （`drive_frame` + `TickReply` 对齐），回放/本地局口径不变 —— 见 `_drive_clock()`。
+	_drive_clock(delta)
 	if _replay_mode:
 		_replay_tick(delta)
 		return
