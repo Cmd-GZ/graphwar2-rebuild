@@ -23276,3 +23276,286 @@ $PY tools/function_coverage.py --stats
 5. **F2 的 `na` 专项没做**（§129.5.3）：99 条里到底有多少是 `na`，本轮**只给了候选、没给结论**。
 6. **建议 lead 决定**：① 是否采纳口径 B/B'（这会让招牌数从 52.6% 变 63.1%/62.1%，**是"改口径"不是"改实现"**）；
    ② 是否给 `function_coverage.py` 加 `na` 列（§129.5.2 四条建议）；③ §123 的"21 vs 19"要不要在别处更正。
+
+## 130. T81 评分核心真值对拍（unicorn 直调 `0x51a750`）：`fitness_eval` **错两处**（命中项带符号 + `−dist`）、`ai_explain` 的**公式**是对的；顺带把 C07 的"分数算术"收成唯一一份（2026-11-27，任务 `task-78` / 分支 `agent/fitness-truth`）
+
+> **预注册（先入库，再改实现）**：`tools/score_truth.py` + `fixtures/score_truth.tsv`(17) +
+> `fixtures/score_truth_synth.tsv`(22)，commit `1cec9a1`。夹具里**只有真值**（二进制算出来的位型），
+> 不含我方任何读数 ⇒ "改前红 / 改后绿"两态都能在 git 历史里复现。
+> **真值来源**：unicorn（`.reference/analysis-repo` 的 `gwemu`）**直调 vaddr `0x51a750`**。
+> **地址口径**：ELF vaddr（RVA）。
+
+### 130.0 一句话判决
+
+`docs/06` §126.5（T72）登记的疑似偏差**成立，而且比它写的更严重一条**：
+
+| 命中项 | 我方 `fitness_eval`（改前） | 真值 `0x51a750` | `ai_explain::evaluate` |
+|---|---|---|---|
+| 符号 | `killed.len()`，**恒正** | **带符号**：异队 `+1`（`0x51ae62 inc eax`）/ 同队 `−1`（`0x51ae51 dec eax`） | `kills − friendly`（**对**） |
+| 距离项 | **不减**（分数里保留常数 `−1e6`） | `0x51b0d9 subsd xmm1,[rsp+8]`：`[rsp+8]` 初值 1e6（`0x19fb30`→`0x51ab35`），命中敌人取 min（`0x51aee2`） | 减（**对**） |
+
+对拍读数（同一份真值夹具，**逐位**比 `f64::to_bits`）：
+
+| 段 | 用例 | 真值 vs 「按指令顺序重算」 | `fitness_eval` | `ai_explain` |
+|---|---|---|---|---|
+| ① 合成开火结果项 | 22 条 | **22/22 位型相同** | 改前 **9/22** → 改后 **22/22**（`score_from_terms`） | 19/19 可比行全同（3 条 `esi≠0` 不可比） |
+| ② 局面（同源弹道） | 17 条 | 每条都自检过 | 改前 **5/17** → 改后 **17/17** | **17/17** |
+
+⇒ **坏的是 `fitness_eval`，不是 `ai_explain`**。方向与 §126.5 最后的判断一致：
+"把 `ai_explain` 改成调 `fitness_eval`"这条路当时确实是反的；本轮先把 `fitness_eval` 改对，
+两边的**公式**才对齐（§130.6 再收口算术）。
+
+### 130.1 为什么这条"能隔离执行"（推翻 §64 的 `isolated_impossible` 判决）
+
+`fixtures/bit_exact_sweep.tsv:104` 把 `0x51a750` 判成 `isolated_impossible / engine_dispatch`
+（依据：体内 `0x51a9a1 call *0x9bacb0` → `0x3c2bc0`）。本轮的做法**不是**把整条链路跑通，而是
+**在 `0x3c2bc0` 这个边界上换掉它**：
+
+| 换了什么 | 为什么可以换 |
+|---|---|
+| `0x3c2bc0`（`calculate_shot_results`，产出"开火结果项"） | 评分核心只**消费**结果项；产生结果项是另一个函数（需要完整开火上下文：编译后的函数体、士兵表、障碍)。本轮的题目是**分数的算法**，不是弹道。 |
+| `0x47dec0`（`SipHash13` 算哈希，被三处查表用） | 返回一个让单桶命中的哈希 ⇒ 等价于"喂一张自定义的"实体 id → 队伍字节"表"，不改变被侧任何一条指令 |
+| `0x497410`（`Lazy` 表的初始化闭包）、`0x8f5cc0`/`0x8f5db0`/`0x907300`（`Once` 慢路径） | 表由 harness 铺好；`Once` 快路径（`xchg [obj+0x10]` 状态字）照走原码 |
+| `0x4413b0` / `0x45fd30`（取结果项之前的一次临时构造与 drop） | 与分数无关 |
+
+**没有替换的**：`0x51a750` 本体（含 `0x51ab6c`–`0x51aef0` 的结果项遍历、`0x51ae21`–`0x51ae4a`
+的敌我判定、`0x51b063`–`0x51b108` 的尾段）。所以"逐位相同"证的是**评分算法**，
+**不是**"开火结果项的产生规则"（后者仍是未决项，见 §130.4）。
+
+**调用形状**（从指令读出，`docs/06` §82.5 已记过一半）：
+
+```text
+0x51a750(sret rdi, &ctx rsi, &Vec<Token> rdx, owner_id ecx, step xmm0)
+   sret：{ score f64@0, dist f64@8, hits u32@0x10, esi u32@0x14 }   ← 24 字节 4 字段
+   ctx ：[+0]=射手表(自查队伍) [+8]=实体表(查命中实体) +0x18=step +0x58=limit
+   rdx ：只被读 `+0x10`（= V，`0x51a830 mov rdx,[r12+0x10]`）⇒ 传一个"长度对"的 Vec 就够
+```
+
+### 130.2 逐条指令链（判定就用这几段）
+
+**结果项遍历**（32 字节/条）：`0x51ab6c lea r14,[rax+0x20]`、`0x51ab78 mov r13,[rax]`（kind）、
+`0x51ab84 mov rbp,[rax+8]`（payload）。`0x51ab3b lea rbx,[r13+5]` ⇒ `i64::MIN+4` 是"结束标记"。
+跳表在 `0x1c63a0`（5 项，`0x51abaa movsxd` + `0x51abae add rcx,rsi` + `0x51abb1 jmp rcx`）：
+
+| kind | 表项 | 落点 | 语义（**实测确认**：`fixtures/score_truth_synth.tsv`） |
+|---|---|---|---|
+| `i64::MIN+0` | index 1 | `0x51aef0` | **忽略**（障碍事件） |
+| `i64::MIN+1` | index 2 | `0x51abb3` | 命中：payload 低 32 位 = 实体 id，查队伍后 `+1`/`−1` |
+| `i64::MIN+2` | index 3 | `0x51acd1` | 距离：`item+0x14` = 实体 id，payload = **f64**，只对敌人取 min |
+| `i64::MIN+3` | index 4 | `0x51acc1` | `esi += payload>>32`（唯一累加点 `0x51acc8`） |
+| 正数 | index 0 | `0x51aef0` | 释放型（`0x51aef9 shl r13,4` + `0x528070`），不参与计分 |
+
+**命中项符号**（`0x51ae21`–`0x51ae69`）：实体队 `2` / 射手队 `2` 各一条特例分支，其余
+`xor` + `test $1`（**比最低位，不是相等**）⇒ `0x51ae4c dec` 或 `0x51ae5d inc`。
+
+**尾段**（`0x51b063`–`0x51b108`，本轮提成 `score_from_terms`）：
+
+```text
+eax = (net<=0 ? net : 1)；esi==0 ⇒ eax = net                      ; 0x51b063/0x51b066/0x51b06b/0x51b075
+acc = eax>0 ? −(esi·step·100.0) : 0.0                            ; 0x51b079–0x51b0a1
+score = eax·2e6 + acc                                            ; 0x51b0ad/0x51b0b1/0x51b0b9
+score −= dist                                                    ; 0x51b0d9
+score −= (V·V)/100.0                                             ; 0x51b0bd imul / 0x51b0eb divsd / 0x51b0ef
+if V > limit { score += −5e7 }                                   ; 0x51b0f8/0x51b0fb/0x51b0fe/0x51b100
+sret.hits = eax（32 位视图，−1 ⇒ 0xFFFFFFFF）                     ; 0x51b111
+```
+
+常量直读：`0x19fb30 = 1e6`、`0x19fc00 = 2e6`、`0x19f6d8 = 100.0`、`0x19f478 = −5e7`。
+
+### 130.3 ① 22 条**合成结果项**：公式的逐位定案
+
+每行只给"结果项 + V + step + limit + 队伍表"，真值是二进制返回的 sret；
+另一侧是**按上面指令顺序在 Python 里重算**（与 harness 独立的第二份算式）。`22/22` 位型相同：
+
+| 覆盖的分支 | 用例 | 真值读数（`hits`/`dist`/`score`） |
+|---|---|---|
+| 空结果项 + `−1e6` 初值 | `Y01`(V=1) / `Y02`(V=10) | `0 / 1e6 / −1000000.01`、`−1000001.0` |
+| 上限惩罚 `−5e7` | `Y03`(V=30>25) | `−51000009.0` |
+| 异队命中 `+1` | `Y04` / `Y06`(两发) | `1 / 1e6 / +999999.96`、`2 / +2999999.96` |
+| **同队命中 `−1`** | `Y05` | `hits = 0xFFFFFFFF`（−1）/ `score = −3000000.04` |
+| 净 0（一敌一友） | `Y07` | `0 / −1000000.04` |
+| **减距离项** | `Y08`(命中+0.25) / `Y09`(只有距离 0.125) / `Y13`(取 min 0.1) | `+1999999.71`、`−0.165`、`−0.14` |
+| 距离项只对敌人 | `Y10`(自己人的距离项被跳过) | `dist` 仍 `1e6` |
+| 查不到队伍 | `Y11`(实体查不到) / `Y12`(两边都查不到) | `+1` / `−1` |
+| **`esi` 项** | `Y14`(`esi=3`) / `Y17`(`esi=7,step=0.01`) / `Y21`(`esi=5` 且 2 命中) | `−3·0.5·100` / `−7·0.01·100` / `hits` **被夹成 1** |
+| `esi` 但总命中 ≤0 | `Y15`/`Y16` | 该项**不加**（`0x51b087 jle`） |
+| 障碍项被忽略 | `Y18` | 与空结果项同值 |
+| 全分支混装 | `Y19` | `−0.21000000000000002` |
+| 惩罚 + 命中 + 距离 | `Y20` | `−48000009.3` |
+
+⇒ **公式本身逐位确定**，`−1e6` 是"`dist` 没被更新"的结果、不是常数项；
+命中项是带符号的；`hits` 在 `esi≠0 && net>0` 时被夹成 1。
+
+### 130.4 ② 17 条**局面用例**：谁错、错在哪一步
+
+做法：我方 `examples/score_probe.rs` 先跑一遍弹道（`correction` → `shifted_tokens` → `calculate`，
+与 `fitness_eval`/`evaluate` **同源**），脚本按同一份点列算命中，再按**声明过的模型**把结果项铺给真二进制。
+
+**结果项模型**（`docs/06` §78.7 遗留 2 的未决项，这里是**声明的假设**，不是结论）：
+
+* `fitness_eval` 的模型 = `ctx.targets` 每一条都进命中数 ⇒ 命中铺 `MIN+1`，敌人/无主再铺 `MIN+2`；
+* `ai_explain` 的模型 = `Entity::is_target` 分流 ⇒ 士兵只铺 `MIN+1`、靶只铺 `MIN+2`。
+
+两套模型各比各的真值列（同一份二进制、不同结果项），读数：
+
+| 用例 | 真值（`fitness_eval` 模型） | `fitness_eval` 改前 | 改后 | 差分（改前−真值） |
+|---|---|---|---|---|
+| `S01` 空场 V=1 | −1000000.01 | −1000000.01 ✓ | −1000000.01 ✓ | 0 |
+| `S04` 命中敌人一人 | **+1999999.97046875** | 999999.99 | +1999999.97046875 ✓ | **−999999.98**（`= −(1e6−d)`） |
+| `S05` 命中**自己人**一人 | **−3000000.01** | 999999.99 | −3000000.01 ✓ | **+4000000**（符号反了） |
+| `S06` 一敌一友 | **−0.02171875** | 2999999.99 | −0.02171875 ✓ | **+3000000** |
+| `S07` 两个敌人（取 min 距离） | **+3999999.8881105026** | 2999999.99 | +3999999.8881105026 ✓ | **−999999.90** |
+| `S09` 自己人的靶（距离项不更新） | −3000000.01 | 999999.99 | −3000000.01 ✓ | +4000000 |
+| `S11` 两边都查不到队伍 | **−3000000.01** | 999999.99 | −3000000.01 ✓ | +4000000 |
+| `S17` 混装（2 敌 1 友 + 2 靶） | −0.11030471153565022 | 6999999.99 | −0.11030471153565022 ✓ | **+7000000** |
+| 其余 9 条（空场/超限/flip/未命中） | — | ✓ | ✓ | 0 |
+| **合计** | 17 条 | **5/17** | **17/17** | — |
+
+`ai_explain`：改前改后都 **17/17**（它本来就没坏）。
+
+**错在哪一步、为什么改前"看起来自洽"**：`docs/archive/ai/74` §1 推的公式
+`hits·2e6 − 1e6 − V²/100` 在"`dist` 不被更新"时与真值同值 —— 而改前实现恰好把 `−1e6` 写死，
+于是 `docs/74` 的运行时读数与改前实现**互相印证**。真正暴露它的是两件改前从没测过的事：
+**①有命中时的分数**（改前从没跟二进制对过）与 **②友军命中**（改前数的是 `killed.len()`）。
+
+⚠️ **就地更正一处旧记法**：`docs/06` §126.5 写"`docs/74` §1.1 的运行时读数里 `dist` 恒为 1e6
+（更新分支没触发）"—— **`docs/74` §1.1 并没有测过 `dist`**，它测的是 `esi` 累加点
+（`0x51acc8` 40 秒执行 0 次、56925 次采样全 0）。"`dist` 恒 1e6"是**由公式反推的推断**，
+不是实测。⇒ 这条**仍缺证据**，见 §130.8-1（它决定"命中一人是 `+2e6−d` 还是 `+1e6`"）。
+
+**本轮新挖到的、与 `docs/06` §78.3 冲突的证据**（§78.3 说"结构上只有两种 kind 被造出来"）：
+`0x3c2bc0` 里其实有 **4 个** `MIN+k` 推送点：
+
+| 地址 | kind | 写了什么 |
+|---|---|---|
+| `0x3c38d7`/`0x3c38e1` | `MIN+0` | 16 字节 payload + `+0x18`/`+0x1c` 两个 u32 |
+| `0x3c439c` | `MIN+2` | `+8`/`+0xc` **两个 u32** |
+| `0x3c3dea` | `MIN+3` | `+8` = **f64::MAX**（`0x7fefffffffffffff`）+ `+0x10`/`+0x14` 两个 u32 |
+| `0x3c4323` | `MIN+3` | `+8` = 一个 f64 + `+0x10`/`+0x14` 两个 u32 |
+
+而**消费者**（`0x51a750`）的读法是：`MIN+2` 的 `+8` 是 **f64**、`+0x14` 是实体 id（本轮实测确认）。
+⇒ `0x3c439c` 那个 `MIN+2` 的**字段形状与消费者对不上**；`MIN+1`（命中项）在 `0x3c2bc0` 里
+**一个推送点都没找到**。这两件事一起说明："结果项的产生规则"没解完（§130.8-1）。
+
+### 130.5 反面对照（都实测过、都已还原）
+
+| # | 故意改坏什么 | 期望 | 实测 |
+|---|---|---|---|
+| ① | 删掉 `score -= dist;`（= 去掉 `0x51b0d9`） | 夹具测试红 | `cargo test --lib fitness` **FAILED**（`S01: score 与真值不同`）；`tools/score_truth.py --check` 报 **SCEN fitness_eval 17 条不一致 ⇒ rc=1** |
+| ② | 命中数改回恒正（`if false && is_friendly(..)`） | 夹具测试红 | **FAILED**（`S05: score 与真值不同`）；`--check` 报 **5 条不一致 ⇒ rc=1** |
+| ③ | 改前原样（两份都没改时） | 5/17 | 见 §130.4 表（这是"改前"那一列，不是人为改坏） |
+
+①② 还原后：`cargo test` 全绿、`--check` 三行全绿（`22/22 + 17/17 + 17/17`）。
+
+### 130.6 C07 收口：**公式**只有一份，**模型**仍是两份（有意保留）
+
+§126.5 把 `ai_explain::evaluate` 判"C 档重复真值"（C07）且裁决"不能收口"。本轮的收口方式与它不同：
+
+| 收口了什么 | 怎么收 | 依据 |
+|---|---|---|
+| 分数算术（`0x51b063`–`0x51b108`） | 提成 `graphwar_function_evolutionator::score_from_terms(v, net, dist, step, limit, esi) -> (score, hits)`，`fitness_eval` 与 `ai_explain::evaluate` **都调它** | 22 条合成结果项对它逐位对拍（含 `esi` 分支 —— 只有它能测到） |
+| `is_friendly`（`0x51ae21`–`0x51ae4a`） | `ai_explain` 改成 `pub use` 模块侧那一份（**路径不变**，`tests/ai_explain.rs` 在用） | 两处判据逐字符相同，且 §130.4 的敌我用例全对 |
+| `TEAM_UNKNOWN` | 同上 | — |
+
+**没有收口**的：`evaluate` 的**实体 → 结果项映射**（士兵 vs 靶）与 `fitness_eval` 的
+（`ctx.targets` 全进命中数）**不是同一套模型**，合并会丢掉 `is_target` 这一层。
+哪套模型等于原版，取决于 §130.8-1。
+
+### 130.7 门槛读数（rebase 到 `origin/master` = `65ab2c7` 之后实测；**自己跑，不看别人的报告**）
+
+| 门槛 | 改动前（master 基线） | 本轮 | 结论 |
+|---|---|---|---|
+| `cargo test --offline` | **1576 / 0 / 1ignored**（= 本轮实测 1579 − 本轮新增 3 条，**推算值**，没在 master 上直接跑） | **1579 / 0 / 1ignored** | +3 = 本轮新增的 3 条测试（夹具 2 条 + 针对性 1 条），一条没少 |
+| `cargo test --offline --features gdext-bindings` | **1724 / 0 / 1ignored**（同上推算） | **1727 / 0 / 1ignored** | 同上 +3 |
+| `tools/coverage_matrix.py --check` | OK | **OK**（`src/` 变了 ⇒ 重跑生成物：`docs/coverage-matrix.tsv` / `docs/149-coverage-matrix.md`，`src_fns` 3951→3957、evolutionator 121→128；**逐位 89 / 观测 435 / 推断 3 未变**） | 一致 |
+| `tools/check_doc_refs.py` | rc=0 | **rc=0** | 一致 |
+| 三轴 `fire` | 647 | **647**（结算批 1080、内容 647、种类 1075、死亡 366/385、挖洞 207/294 **全部一致**） | **一位没退** |
+| 三轴 `batch` | 647 | **647**（同上全部一致） | **一位没退** |
+| 三轴 `batch_conv` | 637 | **637**（死亡 347/385、挖洞 207/294 一致） | **一位没退** |
+| `tools/boundary_audit.py --check` | match 441 / mismatch 0 / multi 86 | **match 441 / mismatch 0 / multi 86** | 一致 |
+| `tools/docsec.py check docs/06-verification.md` | 无重复号/无空心节 | 同左（本节插入后复跑） | 一致 |
+
+**三轴为什么没变**（不是"碰巧"）：三条轴都只喂**回放里的既有 `FunctionFire`**（函数文本 → 弹道 →
+结算批），**不跑进化器** ⇒ 评分公式改动进不到这三条轴。受影响的是
+`Match::evolve_for_soldier`（bot 选函数），它不在三轴的驱动路径上。
+
+### 130.8 遗留 / 下一轮（含"本轮没证到的"）
+
+1. **`dist` 到底会不会被更新 —— 仍未证**（这是唯一还没闭合的真值问题）。两种可能：
+   * **会**（我方建模）：命中敌人 ⇒ 分数 `2e6−d`；
+   * **不会**（`dist` 恒 1e6）：命中敌人 ⇒ 分数 `2e6−1e6 = +1e6`，即改前那个读数才对。
+   决定它的证据只有两条路：**①frida hook `0x51aee2`**（取 min 的那条 `movsd`）在真机 AI 对局里
+   是否执行 —— `docs/74` 的 56925 次采样**没有** hook 这个点（只 hook 了 `0x51b08f`/`0x51acc8`）；
+   **②隔离跑真 `0x3c2bc0`** —— 需要把开火上下文（编译后函数体 `Vec<u32>` 形状、士兵表、障碍表）
+   逆向到能铺的程度；本轮没做（`0x3c2bc0` 12 429 字节，prologue 就要 4 张 `Lazy` 表）。
+   ⚠️ 影响面：若答案是"不会"，把 `fitness_eval` 里"敌人命中时更新 dist"改成"不更新"即可
+   （一行），分数会整体回到 `2e6·net − 1e6`；**夹具里 `S04`/`S07`/`S13`/`S14` 需要按新模型重生成**。
+2. **`MIN+1`（命中项）的推送点没找到**：`0x3c2bc0` 里没有；而真机 `hits` 分布实测有 1 和 2
+   （`docs/74` §1：`{0: 36939, 1: 9226, 2: 10760}`）⇒ 它**一定**有别的产生点。
+   下一步：拿 `MIN+1` 的立即数在 `.text` 里做**值级**扫描（本轮只扫了 `movabs` 形态，
+   486 处命中里没有一处落在一眼能认的"推送 Vec"形态上），或用 `0x51a750` 侧读到的
+   `[item]`/`[item+8]` 形状反查写入者。
+3. **`esi` 的触发条件仍未解**（`docs/06` §78.7 遗留 2 不变）：本轮只是**证明**了它在分数里的
+   形状（`−(esi·step·100)`、`esi≠0 && net>0` 时还把 `hits` 夹成 1），触发条件没动。
+4. **`ai_explain` 的"士兵 vs 靶"模型没有证据**（§130.4）：它是 T? 早期为了讲清
+   "tag 2 记命中、tag 3 只更新距离"而选的分法，与本轮的公式对拍**无关**。
+5. **"AI 选函数排序的前后对比"没做端到端**（诚实说明）：本轮给的是**逐用例的分数翻转**
+   （§130.4：误伤从 `+1e6` 变 `−3e6`、命中从 `+1e6` 变 `+2e6−d`），这已经决定了排序变化的方向；
+   端到端（同一物种群前后跑一遍进化、比选出函数）需要**改前的那份构建**，本轮没做。
+   若要做：`git worktree add` 到 `65ab2c7` 各跑一次 `examples/ai_explain`（它走 `ai_explain`
+   自己的评分，需改成传 `ScoringContext`）或用 `tools/gen_test_expectations*.py` 的路子做种群级夹具。
+6. **`docs/06` §82.5 的 `ScoringContext` 仍是 `unknown`**：本轮给它补了两个字段（`shooter_id`/`teams`）
+   并写明它们对应到真值的哪个参数/哪张表，但"原版有没有这个结构体"依旧没法证 —— 与 §82.5 一致。
+
+### 130.9 复跑命令
+
+```bash
+MAIN=/home/CG/Myprojects/graphwar2-rebuild
+WT=$MAIN/.agent-work/cg/wt-t81
+export CARGO_HOME=$MAIN/.reference/cargo-home
+export CARGO_TARGET_DIR=$WT/.cargo-target          # ⚠️ 单独一行
+V=$MAIN/.reference/venv/bin/python
+cd $WT
+
+# ① 真值对拍（22 条合成结果项 + 17 条局面）—— 这是本节所有数字的来源
+$V tools/score_truth.py                 # 打印两段对拍表
+$V tools/score_truth.py --write         # 重写 fixtures/score_truth*.tsv
+$V tools/score_truth.py --check         # 任一行不吻合 ⇒ rc=1（反面对照就靠它）
+
+# ② 夹具驱动的单测（期望值来自真二进制，不来自我方输出）
+cargo test --offline --lib fitness
+cargo test --offline --lib score_from_terms
+
+# ③ 门槛
+cargo test --offline && cargo test --offline --features gdext-bindings
+COVERAGE_MATRIX_UPSTREAM=$MAIN/.reference/upstream $V tools/coverage_matrix.py --check
+$V tools/check_doc_refs.py
+$V tools/boundary_audit.py --check
+python3 tools/docsec.py check docs/06-verification.md
+SNAP=$MAIN/.reference/replays/gw2-replays-snapshot/replays
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive fire  --policy default --json .agent-work/ev/f.jsonl
+cargo run --release --offline -q --example replay_attrib -- --dir $SNAP --drive batch --policy default --json .agent-work/ev/b.jsonl
+cargo run --release --offline -q --example batch_conv    -- --dir $SNAP --policy strict --json .agent-work/ev/c.jsonl
+python3 tools/bit_exact_attrib.py --json .agent-work/ev/f.jsonl --check-baseline --axis fire       --snapshot $SNAP
+python3 tools/bit_exact_attrib.py --json .agent-work/ev/b.jsonl --check-baseline --axis batch      --snapshot $SNAP
+python3 tools/bit_exact_attrib.py --json .agent-work/ev/c.jsonl --check-baseline --axis batch_conv --snapshot $SNAP
+
+# ④ 反面对照（改坏 → 红 → 还原）
+#   ①' 在 src/graphwar_function_evolutionator.rs 的 fitness_eval 里删掉 `score -= dist;`
+#       ⇒ cargo test --lib fitness 红 + score_truth.py --check rc=1
+#   ②' 把 `if is_friendly(team, shooter_team)` 改成 `if false && is_friendly(..)`
+#       ⇒ 同上（S05 红 / 5 条不一致）
+```
+
+### 130.10 改动清单（3 个 commit）
+
+| commit | 内容 | 触碰的文件 |
+|---|---|---|
+| `1cec9a1` | **预注册**：真值对拍工具 + 两份夹具 + 局面执行器（只含真值，不含实现改动） | `tools/score_truth.py`、`examples/score_probe.rs`、`fixtures/score_truth.tsv`、`fixtures/score_truth_synth.tsv` |
+| `4d8150d` | **修**：`fitness_eval` 命中项带符号 + 减 `dist`；尾段提成 `score_from_terms`；`ScoringContext` 增 `shooter_id`/`teams`；6 处构造点；3 条新测试 | `src/graphwar_function_evolutionator.rs`、`src/game.rs`（**禁区，仅 3 行，仅传参**）、`examples/replay_compare.rs` |
+| `b4a8553` | **收口 C07**：分数算术与 `is_friendly`/`TEAM_UNKNOWN` 转发模块侧（模型层不动） | `src/_scaffold/ai_explain.rs`、`docs/coverage-matrix.tsv`、`docs/149-coverage-matrix.md`（重跑生成物） |
+| 本提交 | 本节 + 生成物 | `docs/06-verification.md`、`docs/coverage-matrix.tsv`、`docs/149-coverage-matrix.md` |
+
+**回退**：三个 commit 互相独立，`git revert` 任一个都行；`b4a8553` 只依赖 `4d8150d` 引入的
+`score_from_terms`。改回旧行为 = revert `4d8150d`（b4a8553 前向兼容，因为 `score_from_terms` 会消失 ⇒
+先 revert b4a8553）。
