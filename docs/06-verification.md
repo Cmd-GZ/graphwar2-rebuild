@@ -25074,16 +25074,18 @@ T87 用 Android `.symtab` 把它们定成**游戏 crate 的闭包**（档位 观
    → 释放借用 → `dec` 引用计数。**有实质业务逻辑**，不是薄访问器（T82 依据里只看了借用标记这一条）。
 
 **逐行改动（`fixtures/f3_triage.tsv`，谁改了什么一目了然）**
-| 文件:行 | addr | 改前 `category` | 改后 | 改了什么 |
+| `fixtures/f3_triage.tsv` 行 | addr | 改前 `category` | 改后 | 改了什么 |
 |---|---|---|---|---|
-| `f3_triage.tsv:14` | `0x3aae60` | `na:gdext-glue` | **`real-missing`** | 类别列；`evidence` 追加 `**人工改判**(2026-11-27 T89 …)`（上列 4 条证据） |
-| `f3_triage.tsv:12` | `0x3b6ed0` | `na:gdext-glue` | **`real-missing`** | 同上 |
-| `f3_triage.tsv:13` | `0x3b7020` | `na:gdext-glue` | **`real-missing`** | 同上 |
-| `f3_triage.tsv:15` | `0x3b6e00` | `na:gdext-glue` | **`real-missing`** | 同上 |
-| `f3_triage.tsv:16` | `0x3aae60` 之后 | — | — | （行号以 `grep -n '^0x3b70b0'` 为准：`0x3b70b0` 同样 `na:gdext-glue→real-missing`） |
+| **L79** | `0x3aae60` | `na:gdext-glue` | **`real-missing`** | 只改类别列；`evidence` 追加 `**人工改判**(2026-11-27 T89 \`docs/06\` §137.3 …)`（上列 4 条证据，逐条可复跑） |
+| **L83** | `0x3b6e00` | `na:gdext-glue` | **`real-missing`** | 同上（`evidence` 里的孪生指向 `0x3a5620`） |
+| **L84** | `0x3b6ed0` | `na:gdext-glue` | **`real-missing`** | 同上（孪生 `0x3a54e0`） |
+| **L85** | `0x3b7020` | `na:gdext-glue` | **`real-missing`** | 同上（孪生 `0x3a55e0`） |
+| **L86** | `0x3b70b0` | `na:gdext-glue` | **`real-missing`** | 同上（与 `0x3aae60` 同键 `button_manager.rs:29:26`） |
 
-> 行号会漂，**以 `addr` 为准**；复跑核对：`grep -P '^0x3aae60\t|^0x3b6ed0\t|^0x3b6e00\t|^0x3b7020\t|^0x3b70b0\t' fixtures/f3_triage.tsv | cut -f1,5`
-> ⇒ 5 行全部 `real-missing`。`hits` 列（机器候选）**原样保留**，符合 T82「机器规则只是候选、类别是人工裁决结果」的约定。
+> 行号（本节提交时的实物）会随插行漂，**以 `addr` 为准**；复跑核对：
+> `grep -P '^0x3aae60\t|^0x3b6ed0\t|^0x3b6e00\t|^0x3b7020\t|^0x3b70b0\t' fixtures/f3_triage.tsv | cut -f1,5`
+> ⇒ 5 行全部 `real-missing`。`hits` 列（机器候选）与 `name`/`size` 列**原样保留**，
+> 符合 T82「机器规则只是候选、类别列是人工裁决结果」的约定；`size` 未变（都 < `0x800` 上限，M4 不触发）。
 
 ### 137.4 13 条 B 区真冲突的去向：**v2 内部 13 → 0**，B 区 37 行 → 31 行
 
@@ -25154,15 +25156,15 @@ T87 的 `--android-na-report` 列出 21 条「非游戏 crate 单态化」候选
 "被内联进 std 的游戏闭包"全判成 std 单态化。
 
 **逐行改动（`fixtures/f3_triage.tsv`）**
-| addr | 改前 | 改后 | 备注 |
-|---|---|---|---|
-| `0x3b6c70` | `real-missing` | **`na:std-mono`** | `evidence` 追加 `**人工改判**(2026-11-27 T89 …)` |
-| `0x3bfdd0` | `real-missing` | **`na:std-mono`** | 同上 |
-| `0x3caa20` | `real-missing` | **`na:std-mono`** | 同上（其 hyb 预测名 `request_update_function` 是**假预测**：该址是 `Vec::retain` 的单态化） |
-| `0x522070` | `real-missing` | **`na:std-mono`** | 同上 |
-| `0x5238c0` | `real-missing` | **`na:std-mono`** | 同上 |
-| （新增）`0x523410` | 未收录 | **`na:std-mono`** | 新增一行，`evidence` 写 `**新增**(2026-11-27 T89 …)` |
-| `0x438880` | 未收录 | **不改**（保持 F1，`pin=addr`） | 驳回理由见上；**别再把它加进 na 台账** |
+| `fixtures/f3_triage.tsv` 行 | addr | 改前 | 改后 | 备注 |
+|---|---|---|---|---|
+| **L12** | `0x3b6c70` | `real-missing` | **`na:std-mono`** | `evidence` 追加 `**人工改判**(2026-11-27 T89 …)` |
+| **L13** | `0x3bfdd0` | `real-missing` | **`na:std-mono`** | 同上 |
+| **L15** | `0x3caa20` | `real-missing` | **`na:std-mono`** | 同上；其 hyb 预测名 `request_update_function` 是**假预测**（该址是 `Vec::retain` 的单态化） |
+| **L62** | `0x522070` | `real-missing` | **`na:std-mono`** | 同上 |
+| **L64** | `0x5238c0` | `real-missing` | **`na:std-mono`** | 同上 |
+| **L63（新插一行，主表 153→154 行）** | `0x523410` | 未收录 | **`na:std-mono`** | `evidence` 写 `**新增**(2026-11-27 T89 …)`；插在 `0x522070` 与 `0x5238c0` 之间保持地址升序 |
+| 无（不在台账里） | `0x438880` | 未收录 | **不改**（保持 F1，`pin=addr`） | 驳回理由见上；**别再把它加进 na 台账**（那会把一条已落地、逐位有据的函数算成"不该手写"） |
 
 > ⚠️ **`0x523410` 顺带暴露我方一处注释错**：`src/graphwar_replay_control.rs:142-145` 把它注释成
 > 「`update_replay_list` 的后台半边（arm64 闭包 `0x4cac88` / x86 `0x523410`）」。按本节判据它是
