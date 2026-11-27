@@ -103,7 +103,9 @@ bisect 把窗口收窄到 **(a3ed8c7, 5f74a29]**；**60 367 px 里 98.6 % 是右
              （fp/order 都是**推断级候选名，逐条待核**）；近孪生族留出 56.8%→**95.5%**、可部署域 57.8%→93.3%、族外 −1 行（已定位）
 协议         74 / 74 全字段 + 74 条判别值 + 7 个线上枚举全集（无未知）
 GDExtension  **原版 12 类**（`docs/02` §16.2）+ 我方 3 = **15 个，全部节点化**；headless 14 个 SceneTree 脚本 / **1933** 条 / 0 failed（2026-11-26 本机实跑；play_flow 233）
-cargo        **1826** / 0 / 1 ignored（`--features gdext-bindings` **1956** / 0 / 1）；2026-11-26 收尾实测
+cargo        **1520** / 0 / 1 ignored（`--features gdext-bindings` **1650** / 0 / 1）；2026-11-27 收尾实测。
+             ⚠️ **计数口径变更（T66）**：旧读数 1853/1983 里含 **356 条 `#[path]` 重复实例**（同一 src 单元测试被多个测试二进制重复编译）；
+             T66 把 14 个 `#[path]` 取源改成真 crate 引用后，每个测试二进制只跑自己顶层 `#[test]`（17/17 实测相等）⇒ **以后基线用 1520/1650**，别再与旧数比大小。
 selftest     **717 / 0 / 1 skip**（2026-11-26 本轮实测；判据 = `missing=0` 且 `silent=0`）
 headless     14 个 `client/tools/*_check.gd`（`extends SceneTree`）合计 **1978 / 0**（T50 去镜像后 1961→1978）
              **四个前置**：① `client/assets/` 齐 ② `cargo build --example serve_match` ③ 可写 `HOME`
