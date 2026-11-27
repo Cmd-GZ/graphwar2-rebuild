@@ -1539,12 +1539,17 @@ def cmd_tsv4(p, args):
             w3[0] if w3 else "?", " ".join(w3[1][:12]) if w3 else "?"),
         "unknown",
         "观测 E7+槽 / 推断 窗口归属",
-        "卡点：该类型**没有 `new`/`init` 符号**（arm64 `.symtab` 实证）⇒ 拿不到 E8b；"
-        "E8c `U=0x148` 是**函数自己的栈工作区**（`rcx=[rsp+0xb0]`），不能当结构体上界",
+        "卡点：该类型**没有 `new`/`init` 符号**（arm64 `.symtab` 实证）⇒ 拿不到它的 E8b；"
+        "E8c `U=0x148` 是**函数自己的栈工作区**（`rcx=[rsp+0xb0]`），不能当结构体上界。"
+        "**线索（未证）**：调用者 `0x470eb0` 里有一处 `__rust_alloc(0x30, 8)` @0x471553"
+        "（初始化 `[0]=1/[8]=1/[0x10]dword/[0x14]byte/[0x18]/[0x20]/[0x28]`），"
+        "但派发点 @0x471825 的 `rdi=[rsp+0xb8]` 是**栈对象**、且该块存进 `[rsp+0x38]` 后未被装进 `rdi` "
+        "⇒ **两者是否同一对象未证**，下一轮从这里查",
     ])
 
     # ---- ④ AxisDrawer / GraphicsManager 可达性（正对照）----
     all_cites += [
+        "0x471553|mov edi, 0x30",      # ③ 的**线索**（未证）：调用者里的 0x30 分配
         "0x4b5df0|push rbp",           # 正对照锚点（GraphwarPlane::draw）入口
         "0x4e05b0|push rbp",           # AxisDrawer::IControl::draw 入口
         "0x4e01f0|push rbx",           # AxisDrawer 的 __virtual_call::virtual_fn thunk 入口
@@ -1571,6 +1576,8 @@ def cmd_tsv4(p, args):
     nf5, ours5 = struct_of("src/graphwar_game_recorder.rs", "GraphwarGameRecorder")
     w5 = _width_window(p, 0x3D5260)
     all_cites += [
+        "0x3d528c|mov edi, 0x50",      # E8b-1：__rust_alloc(0x50, 8) ⇒ 对象恰好 0x50
+        "0x3d5296|call qword ptr [rip + 0x5e5394]",
         "0x3d50a7|lea rcx, [r13*4]",   # EventInfo 步长 ×5
         "0x3d50af|add rcx, r13",
         "0x3d50b2|shl rcx, 4",         # ×16 ⇒ 元素 0x50
@@ -1580,17 +1587,20 @@ def cmd_tsv4(p, args):
     rows.append([
         "⑤ `GraphwarGameRecorder` 字段/偏移",
         ours5 or "?",
-        "`new` **0x3d5260** 的窗口基址 %s：`%s` ⇒ **8 个 qword(0x00..0x40) + 1 个 byte@0x48**"
-        "（0x48+1=0x49，8 对齐 ⇒ 尺寸 **0x50**）；E7 锚点 `0x3d4fa0`（`save_event`）只碰 "
+        "**E8b-1 精确尺寸**：`new` **0x3d5260** 开头 `mov edi,0x50 / mov esi,8 / call __rust_alloc`"
+        "（@0x3d528c..0x3d5296）⇒ 对象 = **0x50 字节**；同一 `rax` 上的窗口是 "
+        "`%s`（基址 %s）⇒ **8 个 qword(0x00..0x40) + 1 个 byte@0x48**（0x48+1=0x49 ≤ 0x50 ✓ 自洽）；"
+        "E7 锚点 `0x3d4fa0`（`save_event`）只碰 "
         "`0x0/0x8/0x10`(Vec₁) + `0x20/0x28` + `0x48`；元素步长 **0x50**（`lea rcx,[r13*4]` + "
         "`add rcx,r13` + `shl rcx,4` @0x3d50a7..0x3d50b2 ⇒ ×5×16）⇒ `EventInfo` 0x50 字节" % (
             w5[0] if w5 else "?", " ".join(w5[1]) if w5 else "?"),
         "mismatch",
-        "观测（E7+宽度，指令级）",
+        "观测（E8b-1 精确尺寸 + E7+宽度，指令级）",
         "我方 `events: Vec`(0x0) / `last_state: u8`(**0x18**) / `subscribed: Vec`(0x20) / `saves: usize`(0x38) = **0x40**；"
         "原版是 **3 个 24 字节字段(0x0/0x18/0x30) + 1 个 byte@0x48** = **0x50** ⇒ 我方 `last_state` 错位到 0x18"
         "（我方自己的文档注释写的是「原版 `+0x48`」，与字段顺序**自相矛盾**）+ 多一个 `saves`、少一个 24 字节字段。"
-        "E8b 精确尺寸未取到（Rc/RefCell 的分配点不在 `new` 的两个调用者里），但 10 个槽 + 0x48/1 已经夹死 0x50",
+        "尺寸已精确（E8b-1 = 0x50，与 10 槽/宽度自洽）；下一步是**逐字段语义**（3 个 24 字节字段各是什么、"
+        "`last_state` 归位到 0x48）",
     ])
 
     # ---- ⑥ address 身份 ----
