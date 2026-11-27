@@ -152,6 +152,13 @@ func _read_available() -> void:
 	if bool(decoded.get("bad_utf8", false)):
 		_peer_closed("收到非法 UTF-8 帧")
 		return
+	# 帧层**真错误**（读侧 4096 上限，原版 `Message too large`）：这一帧永远切不出来，
+	# 不断开的话 `rest` 会无限增长。判据与错误原文都来自 Rust（`GwStreamBuffer.decode_one`
+	# ← `graphwar_stream_buffer::read_event`，arm64 `0x45c590`）。
+	var frame_error := String(decoded.get("error", ""))
+	if frame_error != "":
+		_peer_closed("帧解码失败：%s" % frame_error)
+		return
 	_buf = decoded["rest"]
 	for text in decoded["frames"]:
 		frames_in += 1
@@ -167,7 +174,7 @@ func send_text(text: String) -> bool:
 		return false
 	var bytes := GwNetFrame.encode(text)
 	if bytes.is_empty():
-		last_error = "消息超过 %d 字节，无法成帧（原版：Message too large）" % GwNetFrame.MAX_PAYLOAD
+		last_error = "消息超过 %d 字节，无法成帧（原版：Message too long.）" % GwStreamBuffer.max_payload()
 		return false
 	var err := _peer.put_data(bytes)
 	if err != OK:
